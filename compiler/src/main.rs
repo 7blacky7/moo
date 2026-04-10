@@ -140,6 +140,10 @@ fn find_module(name: &str, dir: &std::path::Path) -> Option<PathBuf> {
             if installed_stdlib.exists() { return Some(installed_stdlib); }
         }
     }
+    // In stdlib/ relativ zum cwd (K4 Fix)
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let cwd_stdlib = cwd.join("stdlib").join(format!("{name}.moo"));
+    if cwd_stdlib.exists() { return Some(cwd_stdlib); }
     // In ~/.moo/packages/<name>/<name>.moo
     let pkg = packages_dir().join(name).join(format!("{name}.moo"));
     if pkg.exists() { return Some(pkg); }
@@ -302,9 +306,11 @@ fn resolve_modules(
                     let prefixed = prefix_functions(&mod_program.statements, mod_name);
 
                     if names.is_empty() {
-                        // "importiere mathe" → alle Funktionen direkt (ohne Prefix) verfuegbar
-                        // Kein Namespace-Prefix, wie Python "from X import *"
-                        imported_stmts.extend(mod_program.statements.clone());
+                        // "importiere mathe" → alle Funktionen mit Prefix + Aliases
+                        let all_names: Vec<String> = collect_function_names(&mod_program.statements);
+                        let aliases = create_alias_functions(&prefixed, mod_name, &all_names);
+                        imported_stmts.extend(prefixed);
+                        imported_stmts.extend(aliases);
                     } else {
                         // "aus mathe importiere sin, cos" → nur sin, cos ohne Prefix
                         // Alle Funktionen prefixed einfuegen, aber nur gewuenschte als Alias
