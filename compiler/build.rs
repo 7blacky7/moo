@@ -34,9 +34,8 @@ fn main() {
     // Link SDL2 for graphics support
     println!("cargo:rustc-link-lib=SDL2");
 
-    // Link OpenGL + GLEW + GLFW for 3D support
+    // Link OpenGL + GLFW for 3D support (kein GLEW noetig fuer Immediate Mode)
     println!("cargo:rustc-link-lib=GL");
-    println!("cargo:rustc-link-lib=GLEW");
     println!("cargo:rustc-link-lib=glfw");
 
     println!("cargo:rerun-if-changed=runtime/");

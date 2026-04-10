@@ -4,7 +4,8 @@
  */
 
 #include "moo_runtime.h"
-#include <GL/glew.h>
+#define GL_GLEXT_PROTOTYPES
+#include <GL/gl.h>
 #include <GLFW/glfw3.h>
 #include <math.h>
 
@@ -91,12 +92,7 @@ MooValue moo_3d_create(MooValue title, MooValue w, MooValue h) {
 
     glfwMakeContextCurrent(win);
 
-    GLenum err = glewInit();
-    if (err != GLEW_OK) {
-        glfwDestroyWindow(win);
-        moo_throw(moo_string_new("GLEW Init fehlgeschlagen"));
-        return moo_none();
-    }
+    // Kein GLEW noetig fuer Immediate Mode (GL 1.x/2.x Core)
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_LIGHTING);

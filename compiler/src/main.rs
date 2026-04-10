@@ -198,7 +198,6 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool) -> R
             "-lsqlite3",
             "-lSDL2",
             "-lGL",
-            "-lGLEW",
             "-lglfw",
         ])
         .status()
