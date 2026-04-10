@@ -41,6 +41,15 @@ void moo_index_set(MooValue container, MooValue index, MooValue value) {
     }
 }
 
+MooValue moo_length(MooValue v) {
+    switch (v.tag) {
+        case MOO_STRING: return moo_number((double)MV_STR(v)->length);
+        case MOO_LIST:   return moo_number((double)MV_LIST(v)->length);
+        case MOO_DICT:   return moo_number((double)MV_DICT(v)->count);
+        default:         return moo_number(0);
+    }
+}
+
 MooValue moo_range(MooValue start, MooValue end) {
     int32_t s = (int32_t)moo_as_number(start);
     int32_t e = (int32_t)moo_as_number(end);

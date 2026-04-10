@@ -271,6 +271,7 @@ MooValue moo_max(MooValue a, MooValue b);
 MooValue moo_random(void);
 MooValue moo_type_of(MooValue v);
 MooValue moo_input(MooValue prompt);
+MooValue moo_length(MooValue v);
 MooValue moo_range(MooValue start, MooValue end);
 
 // === Datei-I/O ===

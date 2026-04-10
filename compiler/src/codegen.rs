@@ -791,7 +791,7 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     "länge" | "len" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_rt(self.rt.moo_list_length, &[arg.into()], "len");
+                        return self.call_rt(self.rt.moo_length, &[arg.into()], "len");
                     }
                     "text" | "str" => {
                         let arg = self.compile_expr(&args[0])?;
