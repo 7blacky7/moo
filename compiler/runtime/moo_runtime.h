@@ -233,6 +233,15 @@ MooValue moo_type_of(MooValue v);
 MooValue moo_input(MooValue prompt);
 MooValue moo_range(MooValue start, MooValue end);
 
+// === Datei-I/O ===
+MooValue moo_file_read(MooValue path);
+MooValue moo_file_write(MooValue path, MooValue content);
+MooValue moo_file_append(MooValue path, MooValue content);
+MooValue moo_file_lines(MooValue path);
+MooValue moo_file_exists(MooValue path);
+MooValue moo_file_delete(MooValue path);
+MooValue moo_dir_list(MooValue path);
+
 // Universelle Index-Ops (dispatcht nach Container-Typ)
 MooValue moo_string_repeat(MooValue s, MooValue count);
 MooValue moo_index_get(MooValue container, MooValue index);

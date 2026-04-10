@@ -807,6 +807,36 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_input, &[arg.into()], "input");
                     }
+                    "datei_lesen" | "file_read" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_file_read, &[arg.into()], "file_read");
+                    }
+                    "datei_schreiben" | "file_write" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_file_write, &[a.into(), b.into()], "file_write");
+                    }
+                    "datei_anhängen" | "file_append" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_file_append, &[a.into(), b.into()], "file_append");
+                    }
+                    "datei_zeilen" | "file_lines" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_file_lines, &[arg.into()], "file_lines");
+                    }
+                    "datei_existiert" | "file_exists" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_file_exists, &[arg.into()], "file_exists");
+                    }
+                    "datei_löschen" | "file_delete" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_file_delete, &[arg.into()], "file_delete");
+                    }
+                    "verzeichnis_liste" | "dir_list" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_dir_list, &[arg.into()], "dir_list");
+                    }
                     _ => {}
                 }
 

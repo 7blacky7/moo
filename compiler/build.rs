@@ -10,6 +10,7 @@ fn main() {
         .file("runtime/moo_error.c")
         .file("runtime/moo_object.c")
         .file("runtime/moo_stdlib.c")
+        .file("runtime/moo_file.c")
         .include("runtime")
         .opt_level(2)
         .flag("-fPIC")

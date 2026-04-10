@@ -1,0 +1,7 @@
+datei_schreiben("/tmp/moo_test.txt", "Hallo moo!")
+zeige datei_lesen("/tmp/moo_test.txt")
+zeige datei_existiert("/tmp/moo_test.txt")
+datei_anhängen("/tmp/moo_test.txt", "\nZeile 2")
+zeige datei_zeilen("/tmp/moo_test.txt")
+datei_löschen("/tmp/moo_test.txt")
+zeige datei_existiert("/tmp/moo_test.txt")

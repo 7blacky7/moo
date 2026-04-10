@@ -92,6 +92,14 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_range: FunctionValue<'ctx>,
     pub moo_index_get: FunctionValue<'ctx>,
     pub moo_index_set: FunctionValue<'ctx>,
+    // File I/O
+    pub moo_file_read: FunctionValue<'ctx>,
+    pub moo_file_write: FunctionValue<'ctx>,
+    pub moo_file_append: FunctionValue<'ctx>,
+    pub moo_file_lines: FunctionValue<'ctx>,
+    pub moo_file_exists: FunctionValue<'ctx>,
+    pub moo_file_delete: FunctionValue<'ctx>,
+    pub moo_dir_list: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeBindings<'ctx> {
@@ -225,6 +233,14 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_range: decl_mv_mv!("moo_range", mv2),
             moo_index_get: decl_mv_mv!("moo_index_get", mv2),
             moo_index_set: module.add_function("moo_index_set", void_type.fn_type(mv3, false), None),
+            // File I/O
+            moo_file_read: decl_mv_mv!("moo_file_read", mv1),
+            moo_file_write: decl_mv_mv!("moo_file_write", mv2),
+            moo_file_append: decl_mv_mv!("moo_file_append", mv2),
+            moo_file_lines: decl_mv_mv!("moo_file_lines", mv1),
+            moo_file_exists: decl_mv_mv!("moo_file_exists", mv1),
+            moo_file_delete: decl_mv_mv!("moo_file_delete", mv1),
+            moo_dir_list: decl_mv_mv!("moo_dir_list", mv1),
         }
     }
 }
