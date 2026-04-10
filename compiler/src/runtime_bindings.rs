@@ -208,6 +208,12 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_profile_enter: FunctionValue<'ctx>,
     pub moo_profile_exit: FunctionValue<'ctx>,
     pub moo_profile_report: FunctionValue<'ctx>,
+    // Webserver
+    pub moo_web_server: FunctionValue<'ctx>,
+    pub moo_web_accept: FunctionValue<'ctx>,
+    pub moo_web_respond: FunctionValue<'ctx>,
+    pub moo_web_json: FunctionValue<'ctx>,
+    pub moo_web_close: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeBindings<'ctx> {
@@ -457,6 +463,12 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_profile_enter: module.add_function("moo_profile_enter", void_type.fn_type(mv1, false), None),
             moo_profile_exit: module.add_function("moo_profile_exit", void_type.fn_type(mv1, false), None),
             moo_profile_report: module.add_function("moo_profile_report", void_type.fn_type(&[], false), None),
+            // Webserver
+            moo_web_server: decl_mv_mv!("moo_web_server", mv1),
+            moo_web_accept: decl_mv_mv!("moo_web_accept", mv1),
+            moo_web_respond: decl_mv_mv!("moo_web_respond", mv3),
+            moo_web_json: decl_mv_mv!("moo_web_json", mv2),
+            moo_web_close: module.add_function("moo_web_close", void_type.fn_type(mv1, false), None),
         }
     }
 }

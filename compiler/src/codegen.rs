@@ -1760,6 +1760,10 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     // Netzwerk
+                    "web_server" | "web_erstelle" => {
+                        let port = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_web_server, &[port.into()], "web_server");
+                    }
                     "tcp_server" => {
                         let port = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_tcp_server, &[port.into()], "tcp_server");
@@ -2153,6 +2157,27 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_channel_close,
                             &[obj.into()], "chan_close")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // Webserver-Methoden
+                    "web_annehmen" | "web_accept" => {
+                        return self.call_rt(self.rt.moo_web_accept, &[obj.into()], "web_accept");
+                    }
+                    "antworten" | "respond" => {
+                        let body = self.compile_expr(&args[0])?;
+                        let status = if args.len() > 1 {
+                            self.compile_expr(&args[1])?
+                        } else {
+                            self.call_rt(self.rt.moo_number, &[self.context.f64_type().const_float(200.0).into()], "s200")?
+                        };
+                        return self.call_rt(self.rt.moo_web_respond, &[obj.into(), body.into(), status.into()], "respond");
+                    }
+                    "json_antworten" | "json_respond" => {
+                        let data = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_web_json, &[obj.into(), data.into()], "json");
+                    }
+                    "starten" | "start" => {
+                        // Alias fuer web_accept Loop — hier nur accept fuer einen Request
+                        return self.call_rt(self.rt.moo_web_accept, &[obj.into()], "start");
                     }
                     // Socket-Methoden
                     "annehmen" | "accept" => {

@@ -27,6 +27,7 @@ typedef enum {
     MOO_WINDOW3D = 13,
     MOO_REGEX    = 14,
     MOO_SOCKET   = 15,
+    MOO_WEBSERVER = 16,
 } MooTag;
 
 // === Forward Declarations ===
@@ -418,5 +419,12 @@ MooValue moo_socket_accept(MooValue server);
 MooValue moo_socket_read(MooValue sock, MooValue max_bytes);
 void moo_socket_write(MooValue sock, MooValue data);
 void moo_socket_close(MooValue sock);
+
+// === Webserver ===
+MooValue moo_web_server(MooValue port);
+MooValue moo_web_accept(MooValue server);
+MooValue moo_web_respond(MooValue request, MooValue body, MooValue status);
+MooValue moo_web_json(MooValue request, MooValue data);
+void moo_web_close(MooValue server);
 
 #endif // MOO_RUNTIME_H

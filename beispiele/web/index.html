@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>moo im Browser</title>
+    <style>
+        body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; padding: 2em; }
+        h1 { color: #00d4ff; }
+        #output { background: #0f0f1a; padding: 1em; border-radius: 8px; border: 1px solid #333;
+                  min-height: 200px; white-space: pre-wrap; font-size: 14px; }
+        .info { color: #888; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <h1>moo im Browser (WebAssembly)</h1>
+    <p class="info">Kompiliert mit: moo-compiler compile app.moo --target wasm</p>
+    <div id="output">Lade WASM...</div>
+
+    <script>
+        const output = document.getElementById('output');
+        const lines = [];
+
+        function print(text) {
+            lines.push(text);
+            output.textContent = lines.join('\n');
+        }
+
+        async function run() {
+            try {
+                const memory = new WebAssembly.Memory({ initial: 16 }); // 1MB
+
+                const importObject = {
+                    env: {
+                        memory: memory,
+                        __wasm_print_str: (ptr, len) => {
+                            const bytes = new Uint8Array(memory.buffer, ptr, len);
+                            const text = new TextDecoder().decode(bytes);
+                            print(text);
+                        },
+                        __wasm_print_num: (val) => {
+                            print(Number.isInteger(val) ? val.toString() : val.toFixed(6));
+                        },
+                    },
+                };
+
+                const response = await fetch('app.wasm');
+                if (!response.ok) {
+                    print('Fehler: app.wasm nicht gefunden!');
+                    print('Kompiliere mit: moo-compiler compile app.moo --target wasm');
+                    return;
+                }
+
+                const { instance } = await WebAssembly.instantiate(
+                    await response.arrayBuffer(), importObject
+                );
+
+                print('=== moo WASM gestartet ===\n');
+                instance.exports.main();
+                print('\n=== Fertig ===');
+            } catch (e) {
+                print('Fehler: ' + e.message);
+            }
+        }
+
+        run();
+    </script>
+</body>
+</html>

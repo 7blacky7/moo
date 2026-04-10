@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>moo Playground</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'JetBrains Mono', 'Fira Code', monospace; background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
+header { background: #16213e; padding: 12px 20px; display: flex; align-items: center; gap: 16px; border-bottom: 2px solid #0f3460; }
+header h1 { font-size: 20px; color: #e94560; }
+header h1 span { color: #0f3460; }
+.toolbar { display: flex; gap: 8px; align-items: center; }
+button { background: #e94560; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 14px; }
+button:hover { background: #c73650; }
+button.secondary { background: #0f3460; }
+button.secondary:hover { background: #1a4a8a; }
+select { background: #16213e; color: #e0e0e0; border: 1px solid #0f3460; padding: 6px 10px; border-radius: 4px; font-family: inherit; }
+main { flex: 1; display: flex; overflow: hidden; }
+.panel { flex: 1; display: flex; flex-direction: column; }
+.panel-header { background: #16213e; padding: 8px 16px; font-size: 13px; color: #888; border-bottom: 1px solid #0f3460; display: flex; justify-content: space-between; }
+.panel + .panel { border-left: 2px solid #0f3460; }
+textarea { flex: 1; background: #0a0a1a; color: #e0e0e0; border: none; padding: 16px; font-family: inherit; font-size: 14px; line-height: 1.6; resize: none; tab-size: 4; }
+textarea:focus { outline: none; }
+#output { flex: 1; background: #0a0a1a; padding: 16px; font-size: 14px; line-height: 1.6; overflow-y: auto; white-space: pre-wrap; }
+.error { color: #e94560; }
+.python-code { color: #666; font-size: 12px; border-top: 1px solid #0f3460; padding-top: 8px; margin-top: 8px; }
+.status { font-size: 12px; color: #4a4; }
+.status.error { color: #e94560; }
+kbd { background: #0f3460; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>moo<span>></span> Playground</h1>
+  <div class="toolbar">
+    <button onclick="runCode()">Ausfuehren <kbd>Ctrl+Enter</kbd></button>
+    <select id="examples" onchange="loadExample()">
+      <option value="">Beispiel laden...</option>
+      <option value="hallo">Hallo Welt</option>
+      <option value="fibonacci">Fibonacci</option>
+      <option value="klassen">Klassen</option>
+      <option value="listen">Listen</option>
+      <option value="match">Pattern Matching</option>
+      <option value="lambda">Lambdas</option>
+      <option value="dataclass">Data-Klassen</option>
+      <option value="spanisch">Spanisch</option>
+    </select>
+    <button class="secondary" onclick="clearOutput()">Ausgabe loeschen</button>
+  </div>
+</header>
+<main>
+  <div class="panel">
+    <div class="panel-header">
+      <span>moo Code</span>
+      <span id="line-count">Zeile 1</span>
+    </div>
+    <textarea id="editor" spellcheck="false" placeholder="# Schreibe moo-Code hier...
+zeige &quot;Hallo Welt!&quot;"></textarea>
+  </div>
+  <div class="panel">
+    <div class="panel-header">
+      <span>Ausgabe</span>
+      <span id="status"></span>
+    </div>
+    <div id="output"></div>
+  </div>
+</main>
+<script>
+const EXAMPLES = {
+  hallo: `# Hallo Welt in moo
+zeige "Hallo Welt!"
+zeige "moo ist die universelle Programmiersprache"
+zeige 2 + 2`,
+
+  fibonacci: `# Fibonacci-Folge
+funktion fib(n):
+    wenn n <= 1:
+        gib_zurueck n
+    setze a auf 0
+    setze b auf 1
+    fuer i in 2..n:
+        setze temp auf b
+        setze b auf a + b
+        setze a auf temp
+    gib_zurueck b
+
+fuer i in 0..10:
+    zeige fib(i)`,
+
+  klassen: `# Klassen und Vererbung
+klasse Tier:
+    funktion erstelle(name, art):
+        selbst.name = name
+        selbst.art = art
+    funktion vorstellen():
+        zeige "Ich bin " + selbst.name + ", ein " + selbst.art
+
+klasse Hund(Tier):
+    funktion erstelle(name):
+        selbst.name = name
+        selbst.art = "Hund"
+    funktion bellen():
+        zeige selbst.name + " sagt: Wuff!"
+
+setze rex auf neu Hund("Rex")
+rex.vorstellen()
+rex.bellen()`,
+
+  listen: `# Listen-Operationen
+setze zahlen auf [1, 2, 3, 4, 5]
+zeige zahlen
+
+# Map und Filter mit Lambdas
+setze doppelt auf zahlen.map((x) => x * 2)
+zeige doppelt
+
+setze gross auf zahlen.filter((x) => x > 3)
+zeige gross
+
+# List Comprehension
+setze quadrate auf [x * x fuer x in zahlen]
+zeige quadrate`,
+
+  match: `# Pattern Matching (Kotlin-Style When)
+setze note auf 85
+
+setze bewertung auf pruefe note:
+    fall n wenn n >= 90: "Sehr gut"
+    fall n wenn n >= 80: "Gut"
+    fall n wenn n >= 70: "Befriedigend"
+    fall n wenn n >= 60: "Ausreichend"
+    standard: "Mangelhaft"
+
+zeige bewertung`,
+
+  lambda: `# Lambdas und Higher-Order Functions
+setze addiere auf (a, b) => a + b
+zeige addiere(3, 4)
+
+# Pipe-Operator
+setze ergebnis auf [1, 2, 3, 4, 5] |> length()
+zeige ergebnis
+
+# Optional Chaining
+setze wert auf nichts
+zeige wert ?? "Standardwert"`,
+
+  dataclass: `# Data-Klassen (Kotlin-Style)
+daten klasse Punkt(x, y)
+
+setze p auf neu Punkt(3, 4)
+zeige p.x
+zeige p.y
+
+daten klasse Person(name, alter, stadt)
+setze anna auf neu Person("Anna", 25, "Berlin")
+zeige anna.name
+zeige anna.alter`,
+
+  spanisch: `# moo en espanol!
+establecer nombre to "Carlos"
+establecer edad to 25
+
+si edad >= 18:
+    mostrar "Adulto"
+sino:
+    mostrar "Nino"
+
+funcion saludar(nombre):
+    mostrar "Hola " + nombre
+
+saludar("Maria")`
+};
+
+const editor = document.getElementById('editor');
+const output = document.getElementById('output');
+const status = document.getElementById('status');
+const lineCount = document.getElementById('line-count');
+
+editor.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); runCode(); }
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const start = editor.selectionStart;
+    editor.value = editor.value.substring(0, start) + '    ' + editor.value.substring(editor.selectionEnd);
+    editor.selectionStart = editor.selectionEnd = start + 4;
+  }
+});
+
+editor.addEventListener('input', () => {
+  const lines = editor.value.split('\n').length;
+  lineCount.textContent = `${lines} Zeile${lines !== 1 ? 'n' : ''}`;
+});
+
+async function runCode() {
+  const code = editor.value;
+  if (!code.trim()) return;
+  status.textContent = 'Ausfuehren...';
+  status.className = 'status';
+  try {
+    const res = await fetch('/run', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({code})
+    });
+    const data = await res.json();
+    if (data.ok) {
+      output.innerHTML = esc(data.output || '(keine Ausgabe)');
+      if (data.python) {
+        output.innerHTML += '<div class="python-code">Python:\n' + esc(data.python) + '</div>';
+      }
+      status.textContent = 'OK';
+      status.className = 'status';
+    } else {
+      output.innerHTML = '<span class="error">' + esc(data.error) + '</span>';
+      if (data.output) output.innerHTML += '\n' + esc(data.output);
+      if (data.python) output.innerHTML += '<div class="python-code">Python:\n' + esc(data.python) + '</div>';
+      status.textContent = 'Fehler';
+      status.className = 'status error';
+    }
+  } catch(e) {
+    output.innerHTML = '<span class="error">Server nicht erreichbar. Starte: python server.py</span>';
+    status.textContent = 'Offline';
+    status.className = 'status error';
+  }
+}
+
+function loadExample() {
+  const sel = document.getElementById('examples');
+  const code = EXAMPLES[sel.value];
+  if (code) { editor.value = code; editor.dispatchEvent(new Event('input')); }
+  sel.value = '';
+}
+
+function clearOutput() { output.innerHTML = ''; status.textContent = ''; }
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// Starte mit Hallo-Welt
+editor.value = EXAMPLES.hallo;
+editor.dispatchEvent(new Event('input'));
+</script>
+</body>
+</html>
