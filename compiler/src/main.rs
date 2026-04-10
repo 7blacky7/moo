@@ -31,6 +31,15 @@ enum Commands {
         /// WebAssembly erzeugen (.wasm)
         #[arg(long)]
         target: Option<String>,
+        /// Bare-Metal: ohne Standard-Runtime (nur Zahlen + Bitops + Memory I/O)
+        #[arg(long)]
+        no_stdlib: bool,
+        /// Linker-Script (z.B. kernel.ld) — uebergibt -T an den Linker
+        #[arg(long)]
+        linker_script: Option<PathBuf>,
+        /// Entry-Point (z.B. _start statt main)
+        #[arg(long)]
+        entry: Option<String>,
     },
     /// Eine .moo-Datei kompilieren und sofort ausführen
     Run {
@@ -39,6 +48,8 @@ enum Commands {
     },
     /// Interaktiver Modus (REPL)
     Repl,
+    /// Verfuegbare Cross-Compilation Targets anzeigen
+    Targets,
     /// Paketverwaltung (install/list/remove)
     #[command(name = "paket", alias = "package")]
     Paket {
@@ -70,8 +81,8 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Compile { file, output, emit_ir, target } => {
-            if let Err(e) = compile(&file, output.as_deref(), emit_ir, target.as_deref()) {
+        Commands::Compile { file, output, emit_ir, target, no_stdlib, linker_script, entry } => {
+            if let Err(e) = compile(&file, output.as_deref(), emit_ir, target.as_deref(), no_stdlib, linker_script.as_deref(), entry.as_deref()) {
                 eprintln!("Fehler: {e}");
                 std::process::exit(1);
             }
@@ -84,6 +95,13 @@ fn main() {
         }
         Commands::Repl => {
             repl();
+        }
+        Commands::Targets => {
+            println!("Verfuegbare Targets fuer moo Cross-Compilation:\n");
+            for (name, desc) in codegen::CodeGen::list_targets() {
+                println!("  {:<12} {}", name, desc);
+            }
+            println!("\nVerwendung: moo-compiler compile datei.moo --target <name>");
         }
         Commands::Paket { action } => {
             if let Err(e) = handle_paket(action) {
@@ -232,7 +250,7 @@ fn resolve_modules(
     Ok(())
 }
 
-fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, target: Option<&str>) -> Result<(), String> {
+fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, target: Option<&str>, no_stdlib: bool, linker_script: Option<&std::path::Path>, entry_point: Option<&str>) -> Result<(), String> {
     // Haupt-Datei parsen
     let mut program = parse_file(file)?;
 
@@ -258,20 +276,46 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         return Ok(());
     }
 
-    // WebAssembly Target
-    if target == Some("wasm") {
+    let target_str = target.unwrap_or("native");
+
+    // Bare-Metal: nur Object-File ohne Runtime-Linking
+    if no_stdlib {
+        let obj_path = output
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| file.with_extension("o"));
+        compiler.write_object(&obj_path, target_str)?;
+        let resolved = codegen::CodeGen::resolve_triple(target_str);
+        println!("✓ Bare-Metal kompiliert ({}): {}", resolved, obj_path.display());
+        println!("  Ohne Runtime. Linken mit: cc {0} moo_bare.o -nostdlib -o firmware", obj_path.display());
+        return Ok(());
+    }
+
+    // Cross-Compilation: WASM als Sonderfall (kein Linking)
+    let resolved = codegen::CodeGen::resolve_triple(target_str);
+    if resolved.starts_with("wasm") {
         let wasm_path = output
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| file.with_extension("wasm"));
-        compiler.write_wasm(&wasm_path)?;
+        compiler.write_object(&wasm_path, target_str)?;
         println!("✓ WASM geschrieben: {}", wasm_path.display());
         println!("  Hinweis: .wasm Objektdatei ohne Runtime. Fuer volle Programme braucht es wasi-sdk/emscripten.");
         return Ok(());
     }
 
-    // Object-File erzeugen
+    // Cross-Compilation: Object-File fuer Ziel-Architektur (kein Linking)
+    if target_str != "native" && !target_str.is_empty() {
+        let obj_path = output
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| file.with_extension("o"));
+        compiler.write_object(&obj_path, target_str)?;
+        println!("✓ Cross-kompiliert fuer {}: {}", resolved, obj_path.display());
+        println!("  Hinweis: Object-File fuer {}. Linken muss auf dem Zielsystem erfolgen.", resolved);
+        return Ok(());
+    }
+
+    // Native: Object-File erzeugen + Linken
     let obj_path = file.with_extension("o");
-    compiler.write_object(&obj_path)?;
+    compiler.write_object(&obj_path, "native")?;
 
     // Mit cc/gcc linken
     let output_path = output
@@ -285,20 +329,35 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     let runtime_dir = PathBuf::from(env!("OUT_DIR"));
     let runtime_lib = runtime_dir.join("libmoo_runtime.a");
 
+    let mut link_args = vec![
+        obj_path.to_str().unwrap().to_string(),
+        runtime_lib.to_str().unwrap().to_string(),
+        "-o".to_string(),
+        output_path.to_str().unwrap().to_string(),
+        "-lm".to_string(),
+        "-lpthread".to_string(),
+        "-lcurl".to_string(),
+        "-lsqlite3".to_string(),
+        "-lSDL2".to_string(),
+        "-lGL".to_string(),
+        "-lglfw".to_string(),
+    ];
+
+    // Linker-Script: -T kernel.ld
+    if let Some(script) = linker_script {
+        link_args.push("-T".to_string());
+        link_args.push(script.to_str().unwrap().to_string());
+        link_args.push("-nostdlib".to_string()); // Kein Standard-Startup bei eigenem Linker-Script
+    }
+
+    // Entry-Point: -e _start
+    if let Some(entry) = entry_point {
+        link_args.push("-e".to_string());
+        link_args.push(entry.to_string());
+    }
+
     let link_status = Command::new("cc")
-        .args([
-            obj_path.to_str().unwrap(),
-            runtime_lib.to_str().unwrap(),
-            "-o",
-            output_path.to_str().unwrap(),
-            "-lm",
-            "-lpthread",
-            "-lcurl",
-            "-lsqlite3",
-            "-lSDL2",
-            "-lGL",
-            "-lglfw",
-        ])
+        .args(&link_args)
         .status()
         .map_err(|e| format!("Linker starten fehlgeschlagen: {e}"))?;
 
@@ -319,7 +378,7 @@ fn run(file: &PathBuf) -> Result<(), String> {
     let tmp_dir = std::env::temp_dir();
     let tmp_output = tmp_dir.join("moo_tmp_binary");
 
-    compile(file, Some(&tmp_output), false, None)?;
+    compile(file, Some(&tmp_output), false, None, false, None, None)?;
 
     let status = Command::new(&tmp_output)
         .status()
@@ -394,7 +453,7 @@ fn repl() {
         }
 
         unsafe { std::env::set_var("MOO_QUIET", "1"); }
-        match compile(&tmp_src, Some(&tmp_bin), false, None) {
+        match compile(&tmp_src, Some(&tmp_bin), false, None, false, None, None) {
             Ok(()) => {
                 // Erfolgreich kompiliert — ausfuehren (ohne den "Kompiliert" Output)
                 let _ = Command::new(&tmp_bin).status();

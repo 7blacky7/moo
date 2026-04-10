@@ -189,27 +189,84 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| format!("IR-Datei schreiben fehlgeschlagen: {}", e.to_string()))
     }
 
-    pub fn write_object(&self, path: &Path) -> Result<(), String> {
-        Target::initialize_native(&InitializationConfig::default())
-            .map_err(|e| format!("Target-Init fehlgeschlagen: {e}"))?;
+    /// Mapped einen kurzen Target-Namen auf ein LLVM Triple
+    pub fn resolve_triple(target: &str) -> String {
+        match target {
+            "native" | "" => TargetMachine::get_default_triple().to_string(),
+            "x86_64" | "x64" => "x86_64-unknown-linux-gnu".to_string(),
+            "x86" | "i686" | "i386" => "i686-unknown-linux-gnu".to_string(),
+            "arm" | "armv7" => "arm-unknown-linux-gnueabihf".to_string(),
+            "aarch64" | "arm64" => "aarch64-unknown-linux-gnu".to_string(),
+            "riscv64" => "riscv64-unknown-linux-gnu".to_string(),
+            "riscv32" => "riscv32-unknown-linux-gnu".to_string(),
+            "mips" => "mips-unknown-linux-gnu".to_string(),
+            "mips64" => "mips64-unknown-linux-gnuabi64".to_string(),
+            "ppc64" | "powerpc64" => "ppc64le-unknown-linux-gnu".to_string(),
+            "wasm" | "wasm32" => "wasm32-unknown-unknown".to_string(),
+            // Wenn es schon ein Triple ist, direkt verwenden
+            other if other.contains('-') => other.to_string(),
+            other => {
+                eprintln!("Warnung: Unbekanntes Target '{other}', verwende als Triple");
+                other.to_string()
+            }
+        }
+    }
 
-        let triple = TargetMachine::get_default_triple();
-        let target = Target::from_triple(&triple)
-            .map_err(|e| format!("Target-Fehler: {}", e.to_string()))?;
+    /// Verfuegbare Targets auflisten
+    pub fn list_targets() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("native", "Host-System (Standard)"),
+            ("x86_64", "64-bit x86 (Linux)"),
+            ("x86", "32-bit x86 (Linux)"),
+            ("arm", "ARMv7 (Linux, z.B. Raspberry Pi)"),
+            ("aarch64", "ARM 64-bit (Linux, z.B. Apple M-Serie)"),
+            ("riscv64", "RISC-V 64-bit (Linux)"),
+            ("riscv32", "RISC-V 32-bit"),
+            ("mips", "MIPS 32-bit (Linux)"),
+            ("mips64", "MIPS 64-bit (Linux)"),
+            ("ppc64", "PowerPC 64-bit LE (Linux)"),
+            ("wasm", "WebAssembly 32-bit"),
+        ]
+    }
 
-        let cpu = TargetMachine::get_host_cpu_name();
-        let features = TargetMachine::get_host_cpu_features();
+    pub fn write_object(&self, path: &Path, target: &str) -> Result<(), String> {
+        let is_native = target.is_empty() || target == "native";
+        let triple_str = Self::resolve_triple(target);
 
-        let machine = target
+        if triple_str.starts_with("wasm") {
+            return self.write_wasm(path);
+        }
+
+        // Alle LLVM Targets initialisieren fuer Cross-Compilation
+        Target::initialize_all(&InitializationConfig::default());
+
+        // Fuer native: direkt das Host-Triple verwenden (vermeidet Debug-Format)
+        let triple = if is_native {
+            TargetMachine::get_default_triple()
+        } else {
+            inkwell::targets::TargetTriple::create(&triple_str)
+        };
+        let target_obj = Target::from_triple(&triple)
+            .map_err(|e| format!("Target-Fehler fuer '{}': {}", triple_str, e.to_string()))?;
+        let (cpu_str, feat_str) = if is_native {
+            (
+                TargetMachine::get_host_cpu_name().to_string(),
+                TargetMachine::get_host_cpu_features().to_string(),
+            )
+        } else {
+            ("generic".to_string(), String::new())
+        };
+
+        let machine = target_obj
             .create_target_machine(
                 &triple,
-                cpu.to_str().unwrap(),
-                features.to_str().unwrap(),
+                &cpu_str,
+                &feat_str,
                 OptimizationLevel::Default,
                 RelocMode::PIC,
                 CodeModel::Default,
             )
-            .ok_or("Konnte TargetMachine nicht erstellen")?;
+            .ok_or(format!("Konnte TargetMachine fuer '{}' nicht erstellen", triple_str))?;
 
         machine
             .write_to_file(&self.module, FileType::Object, path)
