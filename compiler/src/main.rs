@@ -36,6 +36,31 @@ enum Commands {
     },
     /// Interaktiver Modus (REPL)
     Repl,
+    /// Paketverwaltung (install/list/remove)
+    #[command(name = "paket", alias = "package")]
+    Paket {
+        #[command(subcommand)]
+        action: PaketAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum PaketAction {
+    /// Paket von github.com/moo-packages/<name> installieren
+    #[command(alias = "installiere")]
+    Install {
+        /// Paketname
+        name: String,
+    },
+    /// Installierte Pakete auflisten
+    #[command(alias = "liste")]
+    List,
+    /// Paket entfernen
+    #[command(alias = "entferne")]
+    Remove {
+        /// Paketname
+        name: String,
+    },
 }
 
 fn main() {
@@ -56,6 +81,12 @@ fn main() {
         }
         Commands::Repl => {
             repl();
+        }
+        Commands::Paket { action } => {
+            if let Err(e) = handle_paket(action) {
+                eprintln!("Fehler: {e}");
+                std::process::exit(1);
+            }
         }
     }
 }
@@ -91,6 +122,14 @@ fn resolve_imports(file: &PathBuf, visited: &mut std::collections::HashSet<PathB
             let import_path = dir.join(format!("{name}.moo"));
             if import_path.exists() {
                 let imported = resolve_imports(&import_path, visited)?;
+                result.push_str(&imported);
+                result.push('\n');
+                continue;
+            }
+            // Fallback: in ~/.moo/packages/<name>/<name>.moo suchen
+            let pkg_path = packages_dir().join(name).join(format!("{name}.moo"));
+            if pkg_path.exists() {
+                let imported = resolve_imports(&pkg_path, visited)?;
                 result.push_str(&imported);
                 result.push('\n');
                 continue;
@@ -266,5 +305,72 @@ fn repl() {
 
         let _ = std::fs::remove_file(&tmp_src);
         let _ = std::fs::remove_file(&tmp_bin);
+    }
+}
+
+/// Paketverzeichnis: ~/.moo/packages/
+fn packages_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".moo").join("packages")
+}
+
+fn handle_paket(action: PaketAction) -> Result<(), String> {
+    let pkg_dir = packages_dir();
+
+    match action {
+        PaketAction::Install { name } => {
+            let target = pkg_dir.join(&name);
+            if target.exists() {
+                return Err(format!("Paket '{name}' ist bereits installiert"));
+            }
+            std::fs::create_dir_all(&pkg_dir)
+                .map_err(|e| format!("Verzeichnis erstellen fehlgeschlagen: {e}"))?;
+
+            let url = format!("https://github.com/moo-packages/{name}.git");
+            println!("Installiere {name} von {url} ...");
+            let status = Command::new("git")
+                .args(["clone", "--depth", "1", &url, target.to_str().unwrap()])
+                .status()
+                .map_err(|e| format!("git clone fehlgeschlagen: {e}"))?;
+
+            if !status.success() {
+                return Err(format!("Paket '{name}' konnte nicht installiert werden (git clone fehlgeschlagen)"));
+            }
+            println!("✓ Paket '{name}' installiert nach {}", target.display());
+            Ok(())
+        }
+        PaketAction::List => {
+            if !pkg_dir.exists() {
+                println!("Keine Pakete installiert.");
+                return Ok(());
+            }
+            let entries = std::fs::read_dir(&pkg_dir)
+                .map_err(|e| format!("Verzeichnis lesen fehlgeschlagen: {e}"))?;
+            let mut count = 0;
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    if entry.path().is_dir() {
+                        println!("  - {}", entry.file_name().to_string_lossy());
+                        count += 1;
+                    }
+                }
+            }
+            if count == 0 {
+                println!("Keine Pakete installiert.");
+            } else {
+                println!("{count} Paket(e) installiert.");
+            }
+            Ok(())
+        }
+        PaketAction::Remove { name } => {
+            let target = pkg_dir.join(&name);
+            if !target.exists() {
+                return Err(format!("Paket '{name}' ist nicht installiert"));
+            }
+            std::fs::remove_dir_all(&target)
+                .map_err(|e| format!("Paket loeschen fehlgeschlagen: {e}"))?;
+            println!("✓ Paket '{name}' entfernt.");
+            Ok(())
+        }
     }
 }
