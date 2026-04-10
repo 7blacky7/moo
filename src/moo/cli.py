@@ -1,0 +1,80 @@
+"""CLI für moo — die universelle Programmiersprache."""
+
+import argparse
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+from .generators.javascript import JavaScriptGenerator
+from .generators.python import PythonGenerator
+from .lexer import Lexer, LexerError
+from .parser import ParseError, Parser
+
+
+GENERATORS = {
+    "python": PythonGenerator,
+    "javascript": JavaScriptGenerator,
+    "js": JavaScriptGenerator,
+}
+
+
+def compile_source(source: str, target: str = "python") -> str:
+    gen_class = GENERATORS.get(target)
+    if not gen_class:
+        print(f"Fehler: Unbekannte Zielsprache '{target}'", file=sys.stderr)
+        print(f"Verfügbar: {', '.join(GENERATORS)}", file=sys.stderr)
+        sys.exit(1)
+
+    tokens = Lexer(source).tokenize()
+    ast = Parser(tokens).parse()
+    return gen_class().generate(ast)
+
+
+def cmd_build(args: argparse.Namespace):
+    source = Path(args.file).read_text()
+    output = compile_source(source, args.target)
+
+    if args.output:
+        Path(args.output).write_text(output)
+        print(f"✓ {args.file} → {args.output} ({args.target})")
+    else:
+        print(output, end="")
+
+
+def cmd_run(args: argparse.Namespace):
+    source = Path(args.file).read_text()
+    py_code = compile_source(source, "python")
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        f.write(py_code)
+        f.flush()
+        result = subprocess.run([sys.executable, f.name], capture_output=False)
+        sys.exit(result.returncode)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="moo", description="moo — die universelle Programmiersprache")
+    sub = ap.add_subparsers(dest="command")
+
+    # moo run <file>
+    run_p = sub.add_parser("run", help="Eine .moo-Datei ausführen")
+    run_p.add_argument("file", help="Die .moo-Datei")
+
+    # moo build <file>
+    build_p = sub.add_parser("build", help="Eine .moo-Datei transpilieren")
+    build_p.add_argument("file", help="Die .moo-Datei")
+    build_p.add_argument("-t", "--target", default="python", help="Zielsprache (python, javascript)")
+    build_p.add_argument("-o", "--output", help="Ausgabedatei")
+
+    args = ap.parse_args()
+    if args.command == "run":
+        cmd_run(args)
+    elif args.command == "build":
+        cmd_build(args)
+    else:
+        ap.print_help()
+
+
+if __name__ == "__main__":
+    main()

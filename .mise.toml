@@ -1,0 +1,14 @@
+[tools]
+python = "3.13"
+
+[tasks.dev]
+description = "Run moo REPL"
+run = "uv run python -m moo"
+
+[tasks.test]
+description = "Run tests"
+run = "uv run pytest tests/ -v"
+
+[tasks.run]
+description = "Run a .moo file"
+run = "uv run python -m moo run"

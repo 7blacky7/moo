@@ -1,0 +1,16 @@
+[project]
+name = "moo"
+version = "0.1.0"
+description = "Eine universelle, zweisprachige Programmiersprache (DE/EN) die nach Python, JS und mehr transpiliert"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+moo = "moo.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
