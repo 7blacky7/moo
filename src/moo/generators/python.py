@@ -2,10 +2,10 @@
 
 from ..ast_nodes import (
     Assignment, BinaryOp, BooleanLiteral, BreakStatement, ClassDef,
-    CompoundAssignment, ConstAssignment, ContinueStatement, DictLiteral,
+    CompoundAssignment, ConstAssignment, ContinueStatement, DataClassDef, DictLiteral,
     ExportStatement, ForLoop, FunctionCall, FunctionDef, Identifier,
     IfStatement, ImportStatement, IndexAccess, IndexAssignment, LambdaExpression,
-    ListComprehension, ListLiteral, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral,
+    ListComprehension, ListLiteral, MatchExpr, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral,
     NullishCoalesce, NumberLiteral, OptionalChain, Program, PropertyAccess,
     PropertyAssignment, RangeExpr,
     ReturnStatement, ShowStatement, StringLiteral, ThisExpression, ThrowStatement,
@@ -83,6 +83,9 @@ class PythonGenerator:
         return "\n".join(lines)
 
     def _gen_FunctionDef(self, node: FunctionDef) -> str:
+        lines = []
+        for dec in node.decorators:
+            lines.append(f"{self._prefix()}@{dec}")
         params_parts = []
         for i, p in enumerate(node.params):
             if node.defaults and node.defaults[i] is not None:
@@ -90,8 +93,34 @@ class PythonGenerator:
             else:
                 params_parts.append(p)
         params = ", ".join(params_parts)
-        lines = [f"{self._prefix()}def {node.name}({params}):"]
+        lines.append(f"{self._prefix()}def {node.name}({params}):")
         lines.extend(self._gen_block(node.body))
+        return "\n".join(lines)
+
+    def _gen_DataClassDef(self, node: DataClassDef) -> str:
+        fields = ", ".join(node.fields)
+        lines = [f"{self._prefix()}class {node.name}:"]
+        self.indent += 1
+        # __init__
+        init_params = ", ".join(["self"] + node.fields)
+        lines.append(f"{self._prefix()}def __init__({init_params}):")
+        self.indent += 1
+        for f in node.fields:
+            lines.append(f"{self._prefix()}self.{f} = {f}")
+        self.indent -= 1
+        # __repr__
+        repr_parts = ", ".join(f'{f}={{self.{f}!r}}' for f in node.fields)
+        lines.append(f"{self._prefix()}def __repr__(self):")
+        self.indent += 1
+        lines.append(f'{self._prefix()}return f"{node.name}({repr_parts})"')
+        self.indent -= 1
+        # __eq__
+        lines.append(f"{self._prefix()}def __eq__(self, other):")
+        self.indent += 1
+        eq_parts = " and ".join(f"self.{f} == other.{f}" for f in node.fields)
+        lines.append(f"{self._prefix()}return isinstance(other, {node.name}) and {eq_parts}")
+        self.indent -= 1
+        self.indent -= 1
         return "\n".join(lines)
 
     def _gen_ReturnStatement(self, node: ReturnStatement) -> str:
@@ -237,3 +266,22 @@ class PythonGenerator:
     def _gen_NullishCoalesce(self, node: NullishCoalesce) -> str:
         left = self._gen(node.left)
         return f"({left} if {left} is not None else {self._gen(node.right)})"
+
+    def _gen_MatchExpr(self, node: MatchExpr) -> str:
+        # Python hat kein match-als-expression; wir nutzen verschachtelte ternaries
+        val = self._gen(node.value)
+        result = "None"
+        # Rückwärts aufbauen: default zuerst, dann cases darüber
+        for pattern, guard, result_expr in reversed(node.cases):
+            res = self._gen(result_expr)
+            if pattern is None:
+                result = res
+            elif guard is not None:
+                # Binding-Pattern: n wird zu val substituiert
+                guard_str = self._gen(guard)
+                if isinstance(pattern, Identifier):
+                    guard_str = guard_str.replace(pattern.name, val)
+                result = f"({res} if {guard_str} else {result})"
+            else:
+                result = f"({res} if {val} == {self._gen(pattern)} else {result})"
+        return result

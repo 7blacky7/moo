@@ -37,6 +37,8 @@ pub struct CodeGen<'ctx> {
     lambda_captures: HashMap<String, Vec<String>>,
     // Lambda-Counter
     lambda_counter: usize,
+    // Defer-Stack (Go-inspiriert): Vec von AST-Exprs die am Funktionsende ausgeführt werden
+    defer_stack: Vec<Expr>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -58,6 +60,7 @@ impl<'ctx> CodeGen<'ctx> {
             lambda_names: HashMap::new(),
             lambda_captures: HashMap::new(),
             lambda_counter: 0,
+            defer_stack: Vec::new(),
         }
     }
 
@@ -115,6 +118,21 @@ impl<'ctx> CodeGen<'ctx> {
                             self.class_methods.insert((name.clone(), method_name.clone()), func);
                         }
                     }
+                }
+                Stmt::DataClassDef { name, fields } => {
+                    // erstelle-Konstruktor forward-declarieren
+                    let mv = self.mv_type();
+                    let mut param_types: Vec<BasicMetadataTypeEnum> = vec![mv.into()]; // self
+                    param_types.extend(fields.iter().map(|_| BasicMetadataTypeEnum::from(mv)));
+                    let fn_type = mv.fn_type(&param_types, false);
+                    let ctor_name = format!("{name}__erstelle");
+                    let func = self.module.add_function(&ctor_name, fn_type, None);
+                    self.class_methods.insert((name.clone(), "erstelle".to_string()), func);
+                    // to_string Methode
+                    let ts_type = mv.fn_type(&[mv.into()], false);
+                    let ts_name = format!("{name}__to_string");
+                    let ts_func = self.module.add_function(&ts_name, ts_type, None);
+                    self.class_methods.insert((name.clone(), "to_string".to_string()), ts_func);
                 }
                 _ => {}
             }
@@ -272,8 +290,27 @@ impl<'ctx> CodeGen<'ctx> {
             Stmt::For { var_name, iterable, body } => {
                 self.compile_for(var_name, iterable, body)
             }
-            Stmt::FunctionDef { name, params, defaults, body } => {
-                self.compile_function_def(name, params, defaults, body)
+            Stmt::FunctionDef { name, params, defaults, body, decorators } => {
+                self.compile_function_def(name, params, defaults, body)?;
+                // Decorators: func = decorator(func)
+                for dec_name in decorators.iter().rev() {
+                    if let Some(dec_fn) = self.module.get_function(dec_name) {
+                        let func_val = self.load_var(name)?;
+                        let result = self.builder.build_call(dec_fn, &[func_val.into()], "decorated")
+                            .map_err(|e| format!("{e}"))?
+                            .try_as_basic_value();
+                        match result {
+                            inkwell::values::ValueKind::Basic(v) => {
+                                self.store_var(name, v.into_struct_value())?;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Stmt::DataClassDef { name, fields } => {
+                self.compile_data_class(name, fields)
             }
             Stmt::Return(value) => self.compile_return(value),
             Stmt::Break => {
@@ -301,12 +338,57 @@ impl<'ctx> CodeGen<'ctx> {
             Stmt::Match { value, cases } => {
                 self.compile_match(value, cases)
             }
+            Stmt::Defer(expr) => {
+                // Go-inspiriert: Expression auf den Defer-Stack pushen (LIFO)
+                self.defer_stack.push(expr.clone());
+                Ok(())
+            }
+            Stmt::Guard { condition, else_body } => {
+                self.compile_guard(condition, else_body)
+            }
             Stmt::Expression(expr) => {
                 self.compile_expr(expr)?;
                 Ok(())
             }
             _ => Ok(()),
         }
+    }
+
+    fn compile_guard(&mut self, condition: &Expr, else_body: &[Stmt]) -> Result<(), String> {
+        // Swift guard: wenn Bedingung FALSCH → else_body (muss Return enthalten)
+        let cond_val = self.compile_expr(condition)?;
+        let func = self.current_function.unwrap();
+
+        let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+            &[cond_val.into()], "guard_truthy")
+            .map_err(|e| format!("{e}"))?
+            .try_as_basic_value();
+        let cond_bool = match is_true {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("guard truthy fehlgeschlagen".to_string()),
+        };
+
+        let else_bb = self.context.append_basic_block(func, "guard_else");
+        let cont_bb = self.context.append_basic_block(func, "guard_cont");
+
+        // Wenn true → weiter, wenn false → else_body
+        self.builder.build_conditional_branch(cond_bool, cont_bb, else_bb)
+            .map_err(|e| format!("{e}"))?;
+
+        self.builder.position_at_end(else_bb);
+        for stmt in else_body {
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() { break; }
+            self.compile_stmt(stmt)?;
+        }
+        // Sicherheits-Return falls else_body keinen hat
+        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            self.emit_defers()?;
+            let none_val = self.call_rt(self.rt.moo_none, &[], "none")?;
+            self.builder.build_return(Some(&none_val)).map_err(|e| format!("{e}"))?;
+        }
+
+        self.builder.position_at_end(cont_bb);
+        Ok(())
     }
 
     fn compile_if(&mut self, condition: &Expr, body: &[Stmt], else_body: &[Stmt]) -> Result<(), String> {
@@ -480,6 +562,7 @@ impl<'ctx> CodeGen<'ctx> {
         let prev_fn = self.current_function;
         let prev_vars = self.variables.clone();
         let prev_block = self.builder.get_insert_block();
+        let prev_defers = std::mem::take(&mut self.defer_stack);
 
         self.current_function = Some(function);
         self.builder.position_at_end(entry);
@@ -524,19 +607,30 @@ impl<'ctx> CodeGen<'ctx> {
             self.compile_stmt(stmt)?;
         }
 
-        // Default return none
+        // Default return none — Defers vor implizitem Return ausführen
         let current_bb = self.builder.get_insert_block().unwrap();
         if current_bb.get_terminator().is_none() {
+            self.emit_defers()?;
             let none_val = self.call_rt(self.rt.moo_none, &[], "none")?;
             self.builder.build_return(Some(&none_val)).map_err(|e| format!("{e}"))?;
         }
 
         self.current_function = prev_fn;
         self.variables = prev_vars;
+        self.defer_stack = prev_defers;
         if let Some(bb) = prev_block {
             self.builder.position_at_end(bb);
         }
 
+        Ok(())
+    }
+
+    /// Führt alle Defers in LIFO-Reihenfolge aus (Go-Semantik)
+    fn emit_defers(&mut self) -> Result<(), String> {
+        let defers: Vec<Expr> = self.defer_stack.iter().rev().cloned().collect();
+        for expr in &defers {
+            self.compile_expr(expr)?;
+        }
         Ok(())
     }
 
@@ -546,6 +640,8 @@ impl<'ctx> CodeGen<'ctx> {
         } else {
             self.call_rt(self.rt.moo_none, &[], "none")?
         };
+        // Defer-Stack vor Return ausführen (Go-Semantik)
+        self.emit_defers()?;
         self.builder.build_return(Some(&val)).map_err(|e| format!("{e}"))?;
         Ok(())
     }
@@ -600,6 +696,51 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder.position_at_end(bb);
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    fn compile_data_class(&mut self, name: &str, fields: &[String]) -> Result<(), String> {
+        // Data-Klasse: generiert erstelle()-Konstruktor der ein Objekt mit den Feldern erzeugt
+        // und eine to_string()-Methode
+        let ctor_func = self.class_methods.get(&(name.to_string(), "erstelle".to_string()))
+            .ok_or(format!("DataClass {name}__erstelle nicht gefunden"))?.clone();
+
+        let entry = self.context.append_basic_block(ctor_func, "entry");
+        let prev_fn = self.current_function;
+        let prev_vars = self.variables.clone();
+        let prev_block = self.builder.get_insert_block();
+
+        self.current_function = Some(ctor_func);
+        self.builder.position_at_end(entry);
+        self.variables.clear();
+
+        // self param (index 0) — das neue Objekt
+        let self_alloca = self.builder.build_alloca(self.mv_type(), "self")
+            .map_err(|e| format!("{e}"))?;
+        self.builder.build_store(self_alloca, ctor_func.get_nth_param(0).unwrap())
+            .map_err(|e| format!("{e}"))?;
+        self.variables.insert("selbst".to_string(), self_alloca);
+
+        // Felder zuweisen: selbst.feld = param
+        for (i, field_name) in fields.iter().enumerate() {
+            let param_val = ctor_func.get_nth_param((i + 1) as u32).unwrap().into_struct_value();
+            let self_val = self.builder.build_load(self.mv_type(), self_alloca, "self_val")
+                .map_err(|e| format!("{e}"))?.into_struct_value();
+            let prop_str = self.make_global_str(field_name, "field")?;
+            self.call_rt_void(self.rt.moo_object_set,
+                &[self_val.into(), prop_str.into(), param_val.into()], "set_field")?;
+        }
+
+        let self_val = self.builder.build_load(self.mv_type(), self_alloca, "ret")
+            .map_err(|e| format!("{e}"))?.into_struct_value();
+        self.builder.build_return(Some(&self_val)).map_err(|e| format!("{e}"))?;
+
+        self.current_function = prev_fn;
+        self.variables = prev_vars;
+        if let Some(bb) = prev_block {
+            self.builder.position_at_end(bb);
         }
 
         Ok(())
@@ -877,6 +1018,27 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::FunctionCall { name, args } => {
                 // Builtin-Funktionen pruefen
                 match name.as_str() {
+                    // Result-Typ (Rust-inspiriert): ok(wert) / fehler(msg)
+                    "ok" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_result_ok, &[arg.into()], "ok");
+                    }
+                    "fehler" | "err" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_result_err, &[arg.into()], "err");
+                    }
+                    "ist_ok" | "is_ok" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_result_is_ok, &[arg.into()], "is_ok");
+                    }
+                    "ist_fehler" | "is_err" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_result_is_err, &[arg.into()], "is_err");
+                    }
+                    "entpacke" | "unwrap" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_result_unwrap, &[arg.into()], "unwrap");
+                    }
                     "abs" | "wurzel" | "sqrt" => {
                         let func = match name.as_str() {
                             "abs" => self.rt.moo_abs,
@@ -1723,6 +1885,135 @@ impl<'ctx> CodeGen<'ctx> {
 
                 self.call_rt(self.rt.moo_none, &[], "lambda_placeholder")
             }
+            Expr::Ternary { condition, then_val, else_val } => {
+                let func = self.current_function.unwrap();
+                let cond_val = self.compile_expr(condition)?;
+                let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+                    &[cond_val.into()], "tern_truthy")
+                    .map_err(|e| format!("{e}"))?
+                    .try_as_basic_value();
+                let cond_bool = match is_true {
+                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("ternary truthy fehlgeschlagen".to_string()),
+                };
+
+                let then_bb = self.context.append_basic_block(func, "tern_then");
+                let else_bb = self.context.append_basic_block(func, "tern_else");
+                let merge_bb = self.context.append_basic_block(func, "tern_merge");
+
+                self.builder.build_conditional_branch(cond_bool, then_bb, else_bb)
+                    .map_err(|e| format!("{e}"))?;
+
+                // Then
+                self.builder.position_at_end(then_bb);
+                let then_result = self.compile_expr(then_val)?;
+                let then_final_bb = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
+
+                // Else
+                self.builder.position_at_end(else_bb);
+                let else_result = self.compile_expr(else_val)?;
+                let else_final_bb = self.builder.get_insert_block().unwrap();
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
+
+                // Merge mit Alloca statt Phi (einfacher mit Struct-Type)
+                self.builder.position_at_end(merge_bb);
+                let result_ptr = self.builder.build_alloca(self.mv_type(), "tern_res")
+                    .map_err(|e| format!("{e}"))?;
+                // Wir nutzen Alloca + Stores statt Phi fuer StructValues
+                // Zurueck zu then/else um stores einzufuegen
+                self.builder.position_at_end(then_final_bb);
+                // Terminator entfernen und neu aufbauen geht nicht einfach,
+                // daher nutzen wir einen anderen Ansatz: store vor branch
+
+                // Neustart: einfacher Ansatz mit temporaerer Variable
+                // (Die branch-Instruktionen sind schon gesetzt, also nutzen wir den result_ptr Trick)
+                // Wir muessen die Branches entfernen und neu machen
+                // Stattdessen: alloca VOR den Branches, store in jedem Block
+                // Lass uns das sauberer machen:
+                drop(result_ptr);
+                // Entferne die Terminators
+                then_final_bb.get_terminator().unwrap().erase_from_basic_block();
+                else_final_bb.get_terminator().unwrap().erase_from_basic_block();
+
+                let res_ptr = {
+                    let entry = func.get_first_basic_block().unwrap();
+                    let current = self.builder.get_insert_block().unwrap();
+                    if let Some(first) = entry.get_first_instruction() {
+                        self.builder.position_before(&first);
+                    } else {
+                        self.builder.position_at_end(entry);
+                    }
+                    let p = self.builder.build_alloca(self.mv_type(), "tern_res")
+                        .map_err(|e| format!("{e}"))?;
+                    self.builder.position_at_end(current);
+                    p
+                };
+
+                self.builder.position_at_end(then_final_bb);
+                self.builder.build_store(res_ptr, then_result).map_err(|e| format!("{e}"))?;
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
+
+                self.builder.position_at_end(else_final_bb);
+                self.builder.build_store(res_ptr, else_result).map_err(|e| format!("{e}"))?;
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
+
+                self.builder.position_at_end(merge_bb);
+                let result = self.builder.build_load(self.mv_type(), res_ptr, "tern_val")
+                    .map_err(|e| format!("{e}"))?;
+                Ok(result.into_struct_value())
+            }
+            Expr::MatchExpr { value, cases } => {
+                let func = self.current_function.unwrap();
+                let val = self.compile_expr(value)?;
+                let vp = self.builder.build_alloca(self.mv_type(), "mexpr_val").map_err(|e| format!("{e}"))?;
+                self.builder.build_store(vp, val).map_err(|e| format!("{e}"))?;
+                let rp = self.builder.build_alloca(self.mv_type(), "mexpr_res").map_err(|e| format!("{e}"))?;
+                let n = self.call_rt(self.rt.moo_none, &[], "none")?;
+                self.builder.build_store(rp, n).map_err(|e| format!("{e}"))?;
+                let merge = self.context.append_basic_block(func, "mexpr_end");
+                for (pat, guard, rexpr) in cases {
+                    let cb = self.context.append_basic_block(func, "mexpr_case");
+                    let nb = self.context.append_basic_block(func, "mexpr_next");
+                    if let Some(pe) = pat {
+                        let cv = self.builder.build_load(self.mv_type(), vp, "v").map_err(|e| format!("{e}"))?.into_struct_value();
+                        if guard.is_some() {
+                            if let Expr::Identifier(name) = pe {
+                                self.store_var(name, cv)?;
+                                let gv = self.compile_expr(guard.as_ref().unwrap())?;
+                                let gr = self.builder.build_call(self.rt.moo_is_truthy, &[gv.into()], "g").map_err(|e| format!("{e}"))?;
+                                let gb = match gr.try_as_basic_value() { inkwell::values::ValueKind::Basic(v) => v.into_int_value(), _ => return Err("truthy".into()) };
+                                self.builder.build_conditional_branch(gb, cb, nb).map_err(|e| format!("{e}"))?;
+                            } else {
+                                let pv = self.compile_expr(pe)?;
+                                let eq = self.call_rt(self.rt.moo_eq, &[cv.into(), pv.into()], "eq")?;
+                                let tr = self.builder.build_call(self.rt.moo_is_truthy, &[eq.into()], "t").map_err(|e| format!("{e}"))?;
+                                let tb = match tr.try_as_basic_value() { inkwell::values::ValueKind::Basic(v) => v.into_int_value(), _ => return Err("truthy".into()) };
+                                self.builder.build_conditional_branch(tb, cb, nb).map_err(|e| format!("{e}"))?;
+                            }
+                        } else {
+                            let pv = self.compile_expr(pe)?;
+                            let eq = self.call_rt(self.rt.moo_eq, &[cv.into(), pv.into()], "eq")?;
+                            let tr = self.builder.build_call(self.rt.moo_is_truthy, &[eq.into()], "t").map_err(|e| format!("{e}"))?;
+                            let tb = match tr.try_as_basic_value() { inkwell::values::ValueKind::Basic(v) => v.into_int_value(), _ => return Err("truthy".into()) };
+                            self.builder.build_conditional_branch(tb, cb, nb).map_err(|e| format!("{e}"))?;
+                        }
+                    } else {
+                        self.builder.build_unconditional_branch(cb).map_err(|e| format!("{e}"))?;
+                    }
+                    self.builder.position_at_end(cb);
+                    let r = self.compile_expr(rexpr)?;
+                    self.builder.build_store(rp, r).map_err(|e| format!("{e}"))?;
+                    self.builder.build_unconditional_branch(merge).map_err(|e| format!("{e}"))?;
+                    self.builder.position_at_end(nb);
+                }
+                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                    self.builder.build_unconditional_branch(merge).map_err(|e| format!("{e}"))?;
+                }
+                self.builder.position_at_end(merge);
+                let fv = self.builder.build_load(self.mv_type(), rp, "mexpr_result").map_err(|e| format!("{e}"))?.into_struct_value();
+                Ok(fv)
+            }
             Expr::Pipe { left, right } => {
                 // a |> f(b, c) wird zu f(a, b, c)
                 let left_val = self.compile_expr(left)?;
@@ -1794,7 +2085,98 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::Spread(_) => {
                 Err("Spread-Operator (...) kann nur in Listen [...] oder Dicts {...} verwendet werden".to_string())
             }
+            Expr::MatchExpr { value, cases } => {
+                self.compile_match_expr(value, cases)
+            }
         }
+    }
+
+    fn compile_match_expr(&mut self, value: &Expr, cases: &[(Option<Expr>, Option<Expr>, Expr)]) -> Result<StructValue<'ctx>, String> {
+        let func = self.current_function.unwrap();
+        let val = self.compile_expr(value)?;
+        let val_ptr = self.builder.build_alloca(self.mv_type(), "match_val")
+            .map_err(|e| format!("{e}"))?;
+        self.builder.build_store(val_ptr, val).map_err(|e| format!("{e}"))?;
+
+        let merge_bb = self.context.append_basic_block(func, "match_expr_end");
+        let result_ptr = self.builder.build_alloca(self.mv_type(), "match_result")
+            .map_err(|e| format!("{e}"))?;
+
+        for (pattern, guard, result_expr) in cases {
+            if let Some(pat_expr) = pattern {
+                let case_bb = self.context.append_basic_block(func, "mexpr_case");
+                let next_bb = self.context.append_basic_block(func, "mexpr_next");
+
+                let current_val = self.builder.build_load(self.mv_type(), val_ptr, "mval")
+                    .map_err(|e| format!("{e}"))?.into_struct_value();
+
+                // Binding: wenn Pattern ein Identifier ist, binde den Wert
+                if let Expr::Identifier(binding_name) = pat_expr {
+                    self.store_var(binding_name, current_val)?;
+                }
+
+                let cond = if let Expr::Identifier(_) = pat_expr {
+                    // Binding-Pattern mit Guard
+                    if let Some(guard_expr) = guard {
+                        let guard_val = self.compile_expr(guard_expr)?;
+                        let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+                            &[guard_val.into()], "truthy")
+                            .map_err(|e| format!("{e}"))?
+                            .try_as_basic_value();
+                        match is_true {
+                            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                            _ => return Err("truthy fehlgeschlagen".to_string()),
+                        }
+                    } else {
+                        self.context.bool_type().const_int(1, false)
+                    }
+                } else {
+                    // Wert-Vergleich
+                    let pat_val = self.compile_expr(pat_expr)?;
+                    let eq_result = self.call_rt(self.rt.moo_eq,
+                        &[current_val.into(), pat_val.into()], "eq")?;
+                    let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+                        &[eq_result.into()], "truthy")
+                        .map_err(|e| format!("{e}"))?
+                        .try_as_basic_value();
+                    match is_true {
+                        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                        _ => return Err("truthy fehlgeschlagen".to_string()),
+                    }
+                };
+
+                self.builder.build_conditional_branch(cond, case_bb, next_bb)
+                    .map_err(|e| format!("{e}"))?;
+
+                self.builder.position_at_end(case_bb);
+                let result = self.compile_expr(result_expr)?;
+                self.builder.build_store(result_ptr, result).map_err(|e| format!("{e}"))?;
+                self.builder.build_unconditional_branch(merge_bb)
+                    .map_err(|e| format!("{e}"))?;
+
+                self.builder.position_at_end(next_bb);
+            } else {
+                // Default
+                let result = self.compile_expr(result_expr)?;
+                self.builder.build_store(result_ptr, result).map_err(|e| format!("{e}"))?;
+                self.builder.build_unconditional_branch(merge_bb)
+                    .map_err(|e| format!("{e}"))?;
+            }
+        }
+
+        // Falls kein Default: none als Fallback
+        let current_bb = self.builder.get_insert_block().unwrap();
+        if current_bb.get_terminator().is_none() {
+            let none_val = self.call_rt(self.rt.moo_none, &[], "none")?;
+            self.builder.build_store(result_ptr, none_val).map_err(|e| format!("{e}"))?;
+            self.builder.build_unconditional_branch(merge_bb)
+                .map_err(|e| format!("{e}"))?;
+        }
+
+        self.builder.position_at_end(merge_bb);
+        let result = self.builder.build_load(self.mv_type(), result_ptr, "match_res")
+            .map_err(|e| format!("{e}"))?.into_struct_value();
+        Ok(result)
     }
 
     /// Spread in Liste: iteriert source und appendet jedes Element in die Ziel-Liste

@@ -173,6 +173,7 @@ class FunctionDef(Node):
     params: list[str] = field(default_factory=list)
     defaults: list[Node | None] = field(default_factory=list)
     body: list[Node] = field(default_factory=list)
+    decorators: list[str] = field(default_factory=list)
 
 @dataclass
 class ReturnStatement(Node):
@@ -216,6 +217,18 @@ class ExportStatement(Node):
 class MatchStatement(Node):
     value: Node = field(default_factory=Node)
     cases: list[tuple[Node | None, list[Node]]] = field(default_factory=list)  # None = default
+
+@dataclass
+class MatchExpr(Node):
+    """Match als Expression (Kotlin when) — gibt einen Wert zurück."""
+    value: Node = field(default_factory=Node)
+    cases: list[tuple[Node | None, Node | None, Node]] = field(default_factory=list)  # (pattern, guard, result_expr)
+
+@dataclass
+class DataClassDef(Node):
+    """Data-Klasse (Kotlin-inspiriert): daten klasse Name(feld1, feld2)."""
+    name: str = ""
+    fields: list[str] = field(default_factory=list)
 
 @dataclass
 class Program(Node):

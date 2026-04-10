@@ -478,6 +478,38 @@ wenn result == "Hello moo":
 sonst:
     fail += 1
 
+# === 26. RESULT-TYP (Rust) ===
+setze r auf ok(42)
+wenn ist_ok(r):
+    ok += 1
+sonst:
+    fail += 1
+
+setze r2 auf fehler("kaputt")
+wenn ist_fehler(r2):
+    ok += 1
+sonst:
+    fail += 1
+
+setze wert auf entpacke(ok(99))
+wenn wert == 99:
+    ok += 1
+sonst:
+    fail += 1
+
+# === 27. TERNARY-OPERATOR (Swift) ===
+setze s auf 5 > 3 ? "ja" : "nein"
+wenn s == "ja":
+    ok += 1
+sonst:
+    fail += 1
+
+setze t auf 1 > 10 ? "gross" : "klein"
+wenn t == "klein":
+    ok += 1
+sonst:
+    fail += 1
+
 # === ERGEBNIS ===
 zeige ""
 zeige "=" * 50

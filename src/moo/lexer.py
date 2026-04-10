@@ -131,6 +131,7 @@ class Lexer:
                 ")": TokenType.RPAREN, "[": TokenType.LBRACKET,
                 "]": TokenType.RBRACKET, "{": TokenType.LBRACE,
                 "}": TokenType.RBRACE, ".": TokenType.DOT,
+                "@": TokenType.AT,
             }.get(ch)
 
             if single:

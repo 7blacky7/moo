@@ -179,6 +179,8 @@ impl Lexer {
                 '{' => Some(TokenType::LBrace),
                 '}' => Some(TokenType::RBrace),
                 '.' => Some(TokenType::Dot),
+                '@' => Some(TokenType::At),
+                '?' => Some(TokenType::Question),
                 _ => Option::None,
             };
 

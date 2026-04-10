@@ -67,6 +67,18 @@ pub enum Expr {
         left: Box<Expr>,
         right: Box<Expr>,
     },
+    /// Ternary: bedingung ? dann_wert : sonst_wert
+    Ternary {
+        condition: Box<Expr>,
+        then_val: Box<Expr>,
+        else_val: Box<Expr>,
+    },
+    /// Match als Expression (Kotlin when): gibt einen Wert zurück
+    MatchExpr {
+        value: Box<Expr>,
+        /// (pattern, guard, result_expr)
+        cases: Vec<(Option<Expr>, Option<Expr>, Expr)>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +139,7 @@ pub enum Stmt {
         params: Vec<std::string::String>,
         defaults: Vec<Option<Expr>>,
         body: Vec<Stmt>,
+        decorators: Vec<std::string::String>,
     },
     Return(Option<Expr>),
     Break,
@@ -154,6 +167,19 @@ pub enum Stmt {
         cases: Vec<(Option<Expr>, Option<Expr>, Vec<Stmt>)>,
     },
     Expression(Expr),
+    /// Defer-Statement (Go-inspiriert): aufräumen: ausdruck / defer: ausdruck
+    /// Wird am Funktionsende (vor Return) ausgeführt, LIFO-Reihenfolge
+    Defer(Expr),
+    /// Guard-Statement (Swift-inspiriert): garantiere bedingung, sonst: body
+    Guard {
+        condition: Expr,
+        else_body: Vec<Stmt>,
+    },
+    /// Data-Klasse (Kotlin-inspiriert): daten klasse Name(feld1, feld2)
+    DataClassDef {
+        name: std::string::String,
+        fields: Vec<std::string::String>,
+    },
 }
 
 #[derive(Debug, Clone)]

@@ -2,10 +2,10 @@
 
 from ..ast_nodes import (
     Assignment, BinaryOp, BooleanLiteral, BreakStatement, ClassDef,
-    CompoundAssignment, ConstAssignment, ContinueStatement, DictLiteral,
+    CompoundAssignment, ConstAssignment, ContinueStatement, DataClassDef, DictLiteral,
     ExportStatement, ForLoop, FunctionCall, FunctionDef, Identifier,
     IfStatement, ImportStatement, IndexAccess, IndexAssignment, LambdaExpression,
-    ListComprehension, ListLiteral, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral,
+    ListComprehension, ListLiteral, MatchExpr, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral,
     NullishCoalesce, NumberLiteral, OptionalChain, Program, PropertyAccess,
     PropertyAssignment, RangeExpr,
     ReturnStatement, ShowStatement, StringLiteral, ThisExpression, ThrowStatement,
@@ -102,6 +102,30 @@ class JavaScriptGenerator:
         params = ", ".join(params_parts)
         lines = [f"{self._prefix()}function {node.name}({params}) {{"]
         lines.extend(self._gen_block(node.body))
+        lines.append(f"{self._prefix()}}}")
+        # Decorators: name = decorator(name)
+        for dec in node.decorators:
+            lines.append(f"{self._prefix()}{node.name} = {dec}({node.name});")
+        return "\n".join(lines)
+
+    def _gen_DataClassDef(self, node: DataClassDef) -> str:
+        fields = node.fields
+        lines = [f"{self._prefix()}class {node.name} {{"]
+        self.indent += 1
+        params = ", ".join(fields)
+        lines.append(f"{self._prefix()}constructor({params}) {{")
+        self.indent += 1
+        for f in fields:
+            lines.append(f"{self._prefix()}this.{f} = {f};")
+        self.indent -= 1
+        lines.append(f"{self._prefix()}}}")
+        lines.append(f"{self._prefix()}toString() {{")
+        self.indent += 1
+        repr_parts = ", ".join(f'{f}: ${{this.{f}}}' for f in fields)
+        lines.append(f'{self._prefix()}return `{node.name}({repr_parts})`;')
+        self.indent -= 1
+        lines.append(f"{self._prefix()}}}")
+        self.indent -= 1
         lines.append(f"{self._prefix()}}}")
         return "\n".join(lines)
 
@@ -264,3 +288,21 @@ class JavaScriptGenerator:
 
     def _gen_NullishCoalesce(self, node: NullishCoalesce) -> str:
         return f"({self._gen(node.left)} ?? {self._gen(node.right)})"
+
+    def _gen_MatchExpr(self, node: MatchExpr) -> str:
+        # IIFE mit switch
+        val = self._gen(node.value)
+        parts = [f"((_v) => {{"]
+        for pattern, guard, result_expr in node.cases:
+            res = self._gen(result_expr)
+            if pattern is None:
+                parts.append(f"  return {res};")
+            elif guard is not None:
+                guard_str = self._gen(guard)
+                if isinstance(pattern, Identifier):
+                    guard_str = guard_str.replace(pattern.name, "_v")
+                parts.append(f"  if ({guard_str}) return {res};")
+            else:
+                parts.append(f"  if (_v === {self._gen(pattern)}) return {res};")
+        parts.append(f"}})({val})")
+        return " ".join(parts)

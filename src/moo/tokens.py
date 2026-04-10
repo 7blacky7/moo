@@ -41,6 +41,8 @@ class TokenType(Enum):
     CASE = auto()       # fall / case
     DEFAULT = auto()    # standard / default
     AS = auto()         # als / as
+    DATA = auto()       # daten / data
+    AT = auto()         # @
 
     # Operators
     RANGE = auto()      # ..
@@ -118,6 +120,7 @@ KEYWORDS: dict[str, TokenType] = {
     "fall": TokenType.CASE,
     "standard": TokenType.DEFAULT,
     "als": TokenType.AS,
+    "daten": TokenType.DATA,
 
     # English
     "set": TokenType.SET,
@@ -151,6 +154,7 @@ KEYWORDS: dict[str, TokenType] = {
     "case": TokenType.CASE,
     "default": TokenType.DEFAULT,
     "as": TokenType.AS,
+    "data": TokenType.DATA,
 }
 
 # Boolean-Werte Mapping

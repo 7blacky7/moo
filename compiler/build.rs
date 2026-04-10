@@ -16,6 +16,7 @@ fn main() {
         .file("runtime/moo_http.c")
         .file("runtime/moo_crypto.c")
         .file("runtime/moo_db.c")
+        .file("runtime/moo_result.c")
         .include("runtime")
         .opt_level(2)
         .flag("-fPIC")

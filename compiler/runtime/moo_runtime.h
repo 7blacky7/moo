@@ -310,4 +310,11 @@ MooValue moo_db_execute(MooValue db, MooValue sql);
 MooValue moo_db_query(MooValue db, MooValue sql);
 void moo_db_close(MooValue db);
 
+// === Result-Typ ===
+MooValue moo_result_ok(MooValue value);
+MooValue moo_result_err(MooValue msg);
+MooValue moo_result_is_ok(MooValue result);
+MooValue moo_result_is_err(MooValue result);
+MooValue moo_result_unwrap(MooValue result);
+
 #endif // MOO_RUNTIME_H

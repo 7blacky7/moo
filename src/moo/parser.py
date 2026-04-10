@@ -2,10 +2,10 @@
 
 from .ast_nodes import (
     Assignment, BinaryOp, BooleanLiteral, BreakStatement, ClassDef,
-    CompoundAssignment, ConstAssignment, ContinueStatement, DictLiteral,
+    CompoundAssignment, ConstAssignment, ContinueStatement, DataClassDef, DictLiteral,
     ExportStatement, ForLoop, FunctionCall, FunctionDef, Identifier,
     IfStatement, ImportStatement, IndexAccess, IndexAssignment, LambdaExpression,
-    ListComprehension, ListLiteral, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral,
+    ListComprehension, ListLiteral, MatchExpr, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral,
     NullishCoalesce, OptionalChain, PipeExpr, RangeExpr,
     NumberLiteral, Program, PropertyAccess, PropertyAssignment, ReturnStatement,
     ShowStatement, SpreadExpr, StringLiteral, ThisExpression, ThrowStatement, TryCatch,
@@ -87,8 +87,12 @@ class Parser:
             return self._parse_while()
         if ct == TokenType.FOR:
             return self._parse_for()
+        if ct == TokenType.AT:
+            return self._parse_decorated_function()
         if ct == TokenType.FUNC:
             return self._parse_function_def()
+        if ct == TokenType.DATA:
+            return self._parse_data_class()
         if ct == TokenType.RETURN:
             return self._parse_return()
         if ct == TokenType.BREAK:
@@ -185,7 +189,17 @@ class Parser:
         body = self._parse_block_body()
         return ForLoop(var_name=var_tok.value, iterable=iterable, body=body, line=tok.line)
 
-    def _parse_function_def(self) -> FunctionDef:
+    def _parse_decorated_function(self) -> FunctionDef:
+        decorators: list[str] = []
+        while self._current().type == TokenType.AT:
+            self.pos += 1  # @
+            decorators.append(self._eat(TokenType.IDENTIFIER).value)
+            self._skip_newlines()
+        if self._current().type != TokenType.FUNC:
+            raise ParseError("funktion/func nach Decorator erwartet", self._current())
+        return self._parse_function_def(decorators)
+
+    def _parse_function_def(self, decorators: list[str] | None = None) -> FunctionDef:
         tok = self._eat(TokenType.FUNC)
         name_tok = self._eat(TokenType.IDENTIFIER)
         self._eat(TokenType.LPAREN)
@@ -198,7 +212,25 @@ class Parser:
                 self._parse_param(params, defaults)
         self._eat(TokenType.RPAREN)
         body = self._parse_block_body()
-        return FunctionDef(name=name_tok.value, params=params, defaults=defaults, body=body, line=tok.line)
+        return FunctionDef(name=name_tok.value, params=params, defaults=defaults, body=body,
+                           decorators=decorators or [], line=tok.line)
+
+    def _parse_data_class(self) -> DataClassDef:
+        tok = self._current()
+        self.pos += 1  # data/daten
+        if self._current().type != TokenType.CLASS:
+            raise ParseError("klasse/class nach daten/data erwartet", self._current())
+        self.pos += 1  # class/klasse
+        name_tok = self._eat(TokenType.IDENTIFIER)
+        self._eat(TokenType.LPAREN)
+        fields: list[str] = []
+        if self._current().type != TokenType.RPAREN:
+            fields.append(self._eat(TokenType.IDENTIFIER).value)
+            while self._current().type == TokenType.COMMA:
+                self.pos += 1
+                fields.append(self._eat(TokenType.IDENTIFIER).value)
+        self._eat(TokenType.RPAREN)
+        return DataClassDef(name=name_tok.value, fields=fields, line=tok.line)
 
     def _parse_param(self, params: list[str], defaults: list[Node | None]):
         name = self._eat(TokenType.IDENTIFIER).value
@@ -518,6 +550,9 @@ class Parser:
         if tok.type == TokenType.LBRACE:
             return self._parse_dict()
 
+        if tok.type == TokenType.MATCH:
+            return self._parse_match_expr()
+
         raise ParseError("Ausdruck erwartet", tok)
 
     def _parse_new(self) -> NewExpression:
@@ -594,3 +629,48 @@ class Parser:
             self._eat(TokenType.COLON)
             val = self._parse_expression()
             pairs.append((key, val))
+
+    def _parse_match_expr(self) -> MatchExpr:
+        """Match als Expression (Kotlin when): prüfe wert: fall x: ergebnis"""
+        tok = self._eat(TokenType.MATCH)
+        value = self._parse_expression()
+        self._eat(TokenType.COLON)
+        self._skip_newlines()
+        self._eat(TokenType.INDENT)
+
+        cases: list[tuple[Node | None, Node | None, Node]] = []
+        while True:
+            self._skip_newlines()
+            ct = self._current().type
+            if ct == TokenType.DEDENT:
+                self.pos += 1
+                break
+            if ct == TokenType.EOF:
+                break
+            if ct == TokenType.CASE:
+                self.pos += 1
+                # Wildcard: fall _
+                if (self._current().type == TokenType.IDENTIFIER
+                        and self._current().value == "_"):
+                    self.pos += 1
+                    self._eat(TokenType.COLON)
+                    result = self._parse_expression()
+                    cases.append((None, None, result))
+                    continue
+                pattern = self._parse_expression()
+                guard = None
+                if self._current().type == TokenType.IF:
+                    self.pos += 1
+                    guard = self._parse_expression()
+                self._eat(TokenType.COLON)
+                result = self._parse_expression()
+                cases.append((pattern, guard, result))
+            elif ct == TokenType.DEFAULT:
+                self.pos += 1
+                self._eat(TokenType.COLON)
+                result = self._parse_expression()
+                cases.append((None, None, result))
+            else:
+                raise ParseError("fall/case oder standard/default erwartet", self._current())
+
+        return MatchExpr(value=value, cases=cases, line=tok.line)

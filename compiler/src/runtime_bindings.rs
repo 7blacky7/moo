@@ -129,6 +129,12 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_db_execute: FunctionValue<'ctx>,
     pub moo_db_query: FunctionValue<'ctx>,
     pub moo_db_close: FunctionValue<'ctx>,
+    // Result-Typ
+    pub moo_result_ok: FunctionValue<'ctx>,
+    pub moo_result_err: FunctionValue<'ctx>,
+    pub moo_result_is_ok: FunctionValue<'ctx>,
+    pub moo_result_is_err: FunctionValue<'ctx>,
+    pub moo_result_unwrap: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeBindings<'ctx> {
@@ -299,6 +305,12 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_db_execute: decl_mv_mv!("moo_db_execute", mv2),
             moo_db_query: decl_mv_mv!("moo_db_query", mv2),
             moo_db_close: module.add_function("moo_db_close", void_type.fn_type(mv1, false), None),
+            // Result-Typ
+            moo_result_ok: decl_mv_mv!("moo_result_ok", mv1),
+            moo_result_err: decl_mv_mv!("moo_result_err", mv1),
+            moo_result_is_ok: decl_mv_mv!("moo_result_is_ok", mv1),
+            moo_result_is_err: decl_mv_mv!("moo_result_is_err", mv1),
+            moo_result_unwrap: decl_mv_mv!("moo_result_unwrap", mv1),
         }
     }
 }

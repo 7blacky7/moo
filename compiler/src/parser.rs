@@ -105,7 +105,9 @@ impl Parser {
             TokenType::If => self.parse_if(),
             TokenType::While => self.parse_while(),
             TokenType::For => self.parse_for(),
-            TokenType::Func => self.parse_function_def(),
+            TokenType::At => self.parse_decorated_function(),
+            TokenType::Func => self.parse_function_def_with_decorators(vec![]),
+            TokenType::Data => self.parse_data_class(),
             TokenType::Return => self.parse_return(),
             TokenType::Break => { self.pos += 1; Ok(Stmt::Break) }
             TokenType::Continue => { self.pos += 1; Ok(Stmt::Continue) }
@@ -116,6 +118,8 @@ impl Parser {
             TokenType::From => self.parse_from_import(),
             TokenType::Export => self.parse_export(),
             TokenType::Match => self.parse_match(),
+            TokenType::Defer => self.parse_defer(),
+            TokenType::Guard => self.parse_guard(),
             _ => {
                 let expr = self.parse_expression()?;
 
@@ -232,7 +236,24 @@ impl Parser {
         Ok(Stmt::For { var_name, iterable, body })
     }
 
-    fn parse_function_def(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_decorated_function(&mut self) -> Result<Stmt, ParseError> {
+        let mut decorators = Vec::new();
+        while matches!(self.current_type(), TokenType::At) {
+            self.pos += 1; // @
+            let name = self.eat_identifier()?;
+            decorators.push(name);
+            self.skip_newlines();
+        }
+        if !matches!(self.current_type(), TokenType::Func) {
+            return Err(ParseError {
+                message: "funktion/func nach Decorator erwartet".to_string(),
+                line: self.current().line,
+            });
+        }
+        self.parse_function_def_with_decorators(decorators)
+    }
+
+    fn parse_function_def_with_decorators(&mut self, decorators: Vec<String>) -> Result<Stmt, ParseError> {
         self.pos += 1;
         let name = self.eat_identifier()?;
         self.eat(&TokenType::LParen)?;
@@ -251,7 +272,35 @@ impl Parser {
         self.eat(&TokenType::RParen)?;
         let body = self.parse_block_body(false)?;
 
-        Ok(Stmt::FunctionDef { name, params, defaults, body })
+        Ok(Stmt::FunctionDef { name, params, defaults, body, decorators })
+    }
+
+    fn parse_data_class(&mut self) -> Result<Stmt, ParseError> {
+        self.pos += 1; // data/daten
+        // Erwarte "klasse"/"class"
+        if !matches!(self.current_type(), TokenType::Class) {
+            return Err(ParseError {
+                message: "klasse/class nach daten/data erwartet".to_string(),
+                line: self.current().line,
+            });
+        }
+        self.pos += 1; // class/klasse
+        let name = self.eat_identifier()?;
+        self.eat(&TokenType::LParen)?;
+        let mut fields = Vec::new();
+        if !matches!(self.current_type(), TokenType::RParen) {
+            fields.push(self.eat_identifier()?);
+            while matches!(self.current_type(), TokenType::Comma) {
+                self.pos += 1;
+                fields.push(self.eat_identifier()?);
+            }
+        }
+        self.eat(&TokenType::RParen)?;
+        Ok(Stmt::DataClassDef { name, fields })
+    }
+
+    fn parse_function_def(&mut self) -> Result<Stmt, ParseError> {
+        self.parse_function_def_with_decorators(vec![])
     }
 
     fn parse_param(&mut self, params: &mut Vec<String>, defaults: &mut Vec<Option<Expr>>) -> Result<(), ParseError> {
@@ -340,6 +389,25 @@ impl Parser {
         Ok(Stmt::Export(Box::new(stmt)))
     }
 
+    fn parse_defer(&mut self) -> Result<Stmt, ParseError> {
+        self.pos += 1; // defer/aufräumen
+        self.eat(&TokenType::Colon)?;
+        let expr = self.parse_expression()?;
+        Ok(Stmt::Defer(expr))
+    }
+
+    fn parse_guard(&mut self) -> Result<Stmt, ParseError> {
+        self.pos += 1; // guard/garantiere
+        let condition = self.parse_expression()?;
+        // Erwarte Komma vor sonst/else
+        if matches!(self.current_type(), TokenType::Comma) {
+            self.pos += 1;
+        }
+        self.eat(&TokenType::Else)?;
+        let else_body = self.parse_block_body(false)?;
+        Ok(Stmt::Guard { condition, else_body })
+    }
+
     fn parse_match(&mut self) -> Result<Stmt, ParseError> {
         self.pos += 1;
         let value = self.parse_expression()?;
@@ -393,7 +461,20 @@ impl Parser {
     // --- Expressions ---
 
     fn parse_expression(&mut self) -> Result<Expr, ParseError> {
-        self.parse_pipe()
+        let expr = self.parse_pipe()?;
+        // Ternary: expr ? then_val : else_val
+        if matches!(self.current_type(), TokenType::Question) {
+            self.pos += 1;
+            let then_val = self.parse_pipe()?;
+            self.eat(&TokenType::Colon)?;
+            let else_val = self.parse_pipe()?;
+            return Ok(Expr::Ternary {
+                condition: Box::new(expr),
+                then_val: Box::new(then_val),
+                else_val: Box::new(else_val),
+            });
+        }
+        Ok(expr)
     }
 
     fn parse_pipe(&mut self) -> Result<Expr, ParseError> {
@@ -637,6 +718,7 @@ impl Parser {
             }
             TokenType::LBracket => self.parse_list(),
             TokenType::LBrace => self.parse_dict(),
+            TokenType::Match => self.parse_match_expr(),
             _ => Err(ParseError {
                 message: format!("Ausdruck erwartet, bekommen {:?}", self.current_type()),
                 line: self.current().line,
@@ -741,6 +823,62 @@ impl Parser {
         }
         self.eat(&TokenType::RBrace)?;
         Ok(Expr::Dict(pairs))
+    }
+
+    /// Match als Expression (Kotlin when): prüfe wert: fall x: ergebnis
+    fn parse_match_expr(&mut self) -> Result<Expr, ParseError> {
+        self.pos += 1; // prüfe/match
+        let value = self.parse_expression()?;
+        self.eat(&TokenType::Colon)?;
+        self.skip_newlines();
+        self.eat(&TokenType::Indent)?;
+
+        let mut cases = Vec::new();
+        loop {
+            self.skip_newlines();
+            match self.current_type() {
+                TokenType::Dedent => { self.pos += 1; break; }
+                TokenType::Eof => break,
+                TokenType::Case => {
+                    self.pos += 1;
+                    // Wildcard: fall _
+                    if let TokenType::Identifier(name) = self.current_type().clone() {
+                        if name == "_" {
+                            self.pos += 1;
+                            self.eat(&TokenType::Colon)?;
+                            let result = self.parse_expression()?;
+                            cases.push((Option::None, Option::None, result));
+                            continue;
+                        }
+                    }
+                    let pattern = self.parse_expression()?;
+                    let guard = if matches!(self.current_type(), TokenType::If) {
+                        self.pos += 1;
+                        Some(self.parse_expression()?)
+                    } else {
+                        Option::None
+                    };
+                    self.eat(&TokenType::Colon)?;
+                    let result = self.parse_expression()?;
+                    cases.push((Some(pattern), guard, result));
+                }
+                TokenType::Default => {
+                    self.pos += 1;
+                    self.eat(&TokenType::Colon)?;
+                    let result = self.parse_expression()?;
+                    cases.push((Option::None, Option::None, result));
+                }
+                _ => return Err(ParseError {
+                    message: "fall/case oder standard/default erwartet".to_string(),
+                    line: self.current().line,
+                }),
+            }
+        }
+
+        Ok(Expr::MatchExpr {
+            value: Box::new(value),
+            cases,
+        })
     }
 
     fn parse_dict_entry(&mut self, pairs: &mut Vec<(Expr, Expr)>) -> Result<(), ParseError> {

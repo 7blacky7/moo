@@ -39,8 +39,12 @@ pub enum TokenType {
     From,       // aus / from
     Export,     // exportiere / export
     As,         // als / as
+    Defer,      // aufräumen / defer
+    Data,       // daten / data
+    Guard,      // garantiere / guard
 
     // Operators
+    At,           // @
     Plus,
     Minus,
     Multiply,
@@ -62,6 +66,7 @@ pub enum TokenType {
     NullishCoalesce, // ??
     Spread,          // ...
     Pipe,            // |>
+    Question,        // ?
 
     // Delimiters
     Colon,
@@ -130,6 +135,9 @@ pub fn keyword_lookup(word: &str) -> Option<TokenType> {
         "aus" => Some(TokenType::From),
         "exportiere" => Some(TokenType::Export),
         "als" => Some(TokenType::As),
+        "aufräumen" => Some(TokenType::Defer),
+        "daten" => Some(TokenType::Data),
+        "garantiere" => Some(TokenType::Guard),
 
         // English
         "set" => Some(TokenType::Set),
@@ -163,6 +171,9 @@ pub fn keyword_lookup(word: &str) -> Option<TokenType> {
         "from" => Some(TokenType::From),
         "export" => Some(TokenType::Export),
         "as" => Some(TokenType::As),
+        "defer" => Some(TokenType::Defer),
+        "data" => Some(TokenType::Data),
+        "guard" => Some(TokenType::Guard),
 
         _ => Option::None,
     }
