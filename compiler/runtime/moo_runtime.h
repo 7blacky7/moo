@@ -23,6 +23,7 @@ typedef enum {
     MOO_THREAD  = 9,
     MOO_CHANNEL = 10,
     MOO_DATABASE = 11,
+    MOO_WINDOW   = 12,
 } MooTag;
 
 // === Forward Declarations ===
@@ -309,6 +310,25 @@ MooValue moo_db_connect(MooValue url);
 MooValue moo_db_execute(MooValue db, MooValue sql);
 MooValue moo_db_query(MooValue db, MooValue sql);
 void moo_db_close(MooValue db);
+
+// === Grafik (SDL2) ===
+MooValue moo_window_create(MooValue title, MooValue width, MooValue height);
+MooValue moo_window_is_open(MooValue window);
+void moo_window_clear(MooValue window, MooValue color);
+void moo_window_update(MooValue window);
+void moo_window_close(MooValue window);
+void moo_draw_rect(MooValue win, MooValue x, MooValue y, MooValue w, MooValue h, MooValue color);
+void moo_draw_circle(MooValue win, MooValue cx, MooValue cy, MooValue r, MooValue color);
+void moo_draw_line(MooValue win, MooValue x1, MooValue y1, MooValue x2, MooValue y2, MooValue color);
+void moo_draw_pixel(MooValue win, MooValue x, MooValue y, MooValue color);
+
+// === Grafik Input (SDL2) ===
+MooValue moo_key_pressed(MooValue key);
+MooValue moo_mouse_x(MooValue window);
+MooValue moo_mouse_y(MooValue window);
+MooValue moo_mouse_pressed(MooValue window);
+void moo_delay(MooValue ms);
+void moo_pump_events(void);
 
 // === Result-Typ ===
 MooValue moo_result_ok(MooValue value);

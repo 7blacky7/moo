@@ -135,6 +135,22 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_result_is_ok: FunctionValue<'ctx>,
     pub moo_result_is_err: FunctionValue<'ctx>,
     pub moo_result_unwrap: FunctionValue<'ctx>,
+    // Grafik (SDL2)
+    pub moo_window_create: FunctionValue<'ctx>,
+    pub moo_window_clear: FunctionValue<'ctx>,
+    pub moo_window_update: FunctionValue<'ctx>,
+    pub moo_window_is_open: FunctionValue<'ctx>,
+    pub moo_window_close: FunctionValue<'ctx>,
+    pub moo_draw_rect: FunctionValue<'ctx>,
+    pub moo_draw_circle: FunctionValue<'ctx>,
+    pub moo_draw_line: FunctionValue<'ctx>,
+    pub moo_draw_pixel: FunctionValue<'ctx>,
+    // Grafik Input (SDL2)
+    pub moo_key_pressed: FunctionValue<'ctx>,
+    pub moo_mouse_x: FunctionValue<'ctx>,
+    pub moo_mouse_y: FunctionValue<'ctx>,
+    pub moo_mouse_pressed: FunctionValue<'ctx>,
+    pub moo_delay: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeBindings<'ctx> {
@@ -311,6 +327,22 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_result_is_ok: decl_mv_mv!("moo_result_is_ok", mv1),
             moo_result_is_err: decl_mv_mv!("moo_result_is_err", mv1),
             moo_result_unwrap: decl_mv_mv!("moo_result_unwrap", mv1),
+            // Grafik (SDL2)
+            moo_window_create: decl_mv_mv!("moo_window_create", mv3),
+            moo_window_clear: module.add_function("moo_window_clear", void_type.fn_type(mv2, false), None),
+            moo_window_update: module.add_function("moo_window_update", void_type.fn_type(mv1, false), None),
+            moo_window_is_open: decl_mv_mv!("moo_window_is_open", mv1),
+            moo_window_close: module.add_function("moo_window_close", void_type.fn_type(mv1, false), None),
+            moo_draw_rect: module.add_function("moo_draw_rect", void_type.fn_type(&[mv, mv, mv, mv, mv, mv], false), None),
+            moo_draw_circle: module.add_function("moo_draw_circle", void_type.fn_type(&[mv, mv, mv, mv, mv], false), None),
+            moo_draw_line: module.add_function("moo_draw_line", void_type.fn_type(&[mv, mv, mv, mv, mv, mv], false), None),
+            moo_draw_pixel: module.add_function("moo_draw_pixel", void_type.fn_type(&[mv, mv, mv, mv], false), None),
+            // Grafik Input (SDL2)
+            moo_key_pressed: decl_mv_mv!("moo_key_pressed", mv1),
+            moo_mouse_x: decl_mv_mv!("moo_mouse_x", mv1),
+            moo_mouse_y: decl_mv_mv!("moo_mouse_y", mv1),
+            moo_mouse_pressed: decl_mv_mv!("moo_mouse_pressed", mv1),
+            moo_delay: module.add_function("moo_delay", void_type.fn_type(mv1, false), None),
         }
     }
 }

@@ -1203,6 +1203,76 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_db_close, &[arg.into()], "db_close")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    // Grafik — Fenster
+                    "fenster_erstelle" | "window_create" => {
+                        let title = self.compile_expr(&args[0])?;
+                        let w = self.compile_expr(&args[1])?;
+                        let h = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_window_create, &[title.into(), w.into(), h.into()], "win");
+                    }
+                    "fenster_löschen" | "window_clear" => {
+                        let win = self.compile_expr(&args[0])?;
+                        let color = self.compile_expr(&args[1])?;
+                        self.call_rt_void(self.rt.moo_window_clear, &[win.into(), color.into()], "clear")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "fenster_aktualisieren" | "window_update" => {
+                        let win = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_window_update, &[win.into()], "update")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "fenster_offen" | "window_is_open" => {
+                        let win = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_window_is_open, &[win.into()], "is_open");
+                    }
+                    "fenster_schliessen" | "window_close" => {
+                        let win = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_window_close, &[win.into()], "close")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // Grafik — Zeichnen
+                    "zeichne_rechteck" | "draw_rect" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_draw_rect, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "rect")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "zeichne_kreis" | "draw_circle" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_draw_circle, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "circle")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "zeichne_linie" | "draw_line" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_draw_line, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "line")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "zeichne_pixel" | "draw_pixel" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_draw_pixel, &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "pixel")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // Grafik — Input (K4)
+                    "taste_gedrückt" | "key_pressed" => {
+                        let key = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_key_pressed, &[key.into()], "key");
+                    }
+                    "maus_x" | "mouse_x" => {
+                        let win = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_mouse_x, &[win.into()], "mx");
+                    }
+                    "maus_y" | "mouse_y" => {
+                        let win = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_mouse_y, &[win.into()], "my");
+                    }
+                    "maus_gedrückt" | "mouse_pressed" => {
+                        let win = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_mouse_pressed, &[win.into()], "mp");
+                    }
+                    "warte" | "delay" => {
+                        let ms = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_delay, &[ms.into()], "delay")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     _ => {}
                 }
 

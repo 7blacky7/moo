@@ -17,7 +17,9 @@ fn main() {
         .file("runtime/moo_crypto.c")
         .file("runtime/moo_db.c")
         .file("runtime/moo_result.c")
+        .file("runtime/moo_graphics.c")
         .include("runtime")
+        .include("/usr/include/SDL2")
         .opt_level(2)
         .flag("-fPIC")
         .compile("moo_runtime");
@@ -27,6 +29,9 @@ fn main() {
 
     // Link libsqlite3 for database support
     println!("cargo:rustc-link-lib=sqlite3");
+
+    // Link SDL2 for graphics support
+    println!("cargo:rustc-link-lib=SDL2");
 
     println!("cargo:rerun-if-changed=runtime/");
 }

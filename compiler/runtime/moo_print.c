@@ -62,6 +62,8 @@ MooValue moo_to_string(MooValue v) {
             return moo_string_new("<Kanal>");
         case MOO_DATABASE:
             return moo_string_new("<Datenbank>");
+        case MOO_WINDOW:
+            return moo_string_new("<Fenster>");
         default:
             return moo_string_new("<unbekannt>");
     }
