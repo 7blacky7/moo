@@ -225,6 +225,11 @@ impl Parser {
             TokenType::Match => self.parse_match(),
             TokenType::Defer => self.parse_defer(),
             TokenType::Guard => self.parse_guard(),
+            TokenType::Unsafe => {
+                self.pos += 1;
+                let body = self.parse_block_body(false)?;
+                Ok(Stmt::UnsafeBlock { body })
+            }
             _ => {
                 let expr = self.parse_expression()?;
 
@@ -758,7 +763,7 @@ impl Parser {
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
-        let mut left = self.parse_addition()?;
+        let mut left = self.parse_bitwise()?;
         loop {
             let op = match self.current_type() {
                 TokenType::Equals => BinOp::Eq,
@@ -767,6 +772,24 @@ impl Parser {
                 TokenType::Greater => BinOp::Greater,
                 TokenType::LessEq => BinOp::LessEq,
                 TokenType::GreaterEq => BinOp::GreaterEq,
+                _ => break,
+            };
+            self.pos += 1;
+            let right = self.parse_bitwise()?;
+            left = Expr::BinaryOp { left: Box::new(left), op, right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    fn parse_bitwise(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_addition()?;
+        loop {
+            let op = match self.current_type() {
+                TokenType::BitAnd => BinOp::BitAnd,
+                TokenType::BitOr => BinOp::BitOr,
+                TokenType::BitXor => BinOp::BitXor,
+                TokenType::LShift => BinOp::LShift,
+                TokenType::RShift => BinOp::RShift,
                 _ => break,
             };
             self.pos += 1;
@@ -829,6 +852,10 @@ impl Parser {
             self.pos += 1;
             let operand = self.parse_postfix()?;
             Ok(Expr::UnaryOp { op: UnaryOpKind::Neg, operand: Box::new(operand) })
+        } else if matches!(self.current_type(), TokenType::BitNot) {
+            self.pos += 1;
+            let operand = self.parse_postfix()?;
+            Ok(Expr::UnaryOp { op: UnaryOpKind::BitNot, operand: Box::new(operand) })
         } else {
             self.parse_postfix()
         }

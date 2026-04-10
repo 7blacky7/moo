@@ -58,6 +58,8 @@ pub struct CodeGen<'ctx> {
     // Crystal-inspiriert: Typ-Tracking fuer Warnungen (kein Enforcement!)
     variable_types: HashMap<String, &'static str>,
     warnings: Vec<String>,
+    // Rust-inspiriert: unsafe-Kontext Flag
+    unsafe_context: bool,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -82,6 +84,7 @@ impl<'ctx> CodeGen<'ctx> {
             defer_stack: Vec::new(),
             variable_types: HashMap::new(),
             warnings: Vec::new(),
+            unsafe_context: false,
         }
     }
 
@@ -420,6 +423,16 @@ impl<'ctx> CodeGen<'ctx> {
             Stmt::Guard { condition, else_body } => {
                 self.compile_guard(condition, else_body)
             }
+            Stmt::UnsafeBlock { body } => {
+                // Rust-inspiriert: unsafe_context erlaubt gefaehrliche Operationen
+                let prev = self.unsafe_context;
+                self.unsafe_context = true;
+                for s in body {
+                    self.compile_stmt(s)?;
+                }
+                self.unsafe_context = prev;
+                Ok(())
+            }
             Stmt::Expression(expr) => {
                 self.compile_expr(expr)?;
                 Ok(())
@@ -448,6 +461,13 @@ impl<'ctx> CodeGen<'ctx> {
                 self.call_rt_void(self.rt.moo_throw, &[msg_val.into()], "contract_throw")?;
                 self.builder.build_unconditional_branch(ok_bb).map_err(|e| format!("{e}"))?;
                 self.builder.position_at_end(ok_bb);
+                Ok(())
+            }
+            Stmt::UnsafeBlock { body } => {
+                // Unsafe-Block: kompiliert den Body normal (erlaubt syscall/asm Builtins)
+                for s in body {
+                    self.compile_stmt(s)?;
+                }
                 Ok(())
             }
             _ => Ok(()),
@@ -1206,6 +1226,12 @@ impl<'ctx> CodeGen<'ctx> {
                         BinOp::GreaterEq => self.rt.moo_gte,
                         BinOp::And => self.rt.moo_and,
                         BinOp::Or => self.rt.moo_or,
+                        // Bit-Operatoren: TODO — nutzen vorerst die logischen Ops als Fallback
+                        BinOp::BitAnd => self.rt.moo_bitand,
+                        BinOp::BitOr => self.rt.moo_bitor,
+                        BinOp::BitXor => self.rt.moo_bitxor,
+                        BinOp::LShift => self.rt.moo_lshift,
+                        BinOp::RShift => self.rt.moo_rshift,
                     };
                     let normal_result = self.call_rt(rt_func, &[lhs.into(), rhs.into()], "op_normal")?;
                     self.builder.build_store(result_ptr, normal_result).map_err(|e| format!("{e}"))?;
@@ -1232,6 +1258,11 @@ impl<'ctx> CodeGen<'ctx> {
                         BinOp::GreaterEq => self.rt.moo_gte,
                         BinOp::And => self.rt.moo_and,
                         BinOp::Or => self.rt.moo_or,
+                        BinOp::BitAnd => self.rt.moo_bitand,
+                        BinOp::BitOr => self.rt.moo_bitor,
+                        BinOp::BitXor => self.rt.moo_bitxor,
+                        BinOp::LShift => self.rt.moo_lshift,
+                        BinOp::RShift => self.rt.moo_rshift, // TODO: echte Bit-Ops
                     };
                     self.call_rt(func, &[lhs.into(), rhs.into()], "op")
                 }
@@ -1241,6 +1272,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let func = match op {
                     UnaryOpKind::Neg => self.rt.moo_neg,
                     UnaryOpKind::Not => self.rt.moo_not,
+                    UnaryOpKind::BitNot => self.rt.moo_bitnot,
                 };
                 self.call_rt(func, &[val.into()], "unary")
             }
@@ -1432,6 +1464,19 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_db_close, &[arg.into()], "db_close")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    // Raw Memory (GEFAEHRLICH)
+                    "speicher_lesen" | "mem_read" => {
+                        let addr = self.compile_expr(&args[0])?;
+                        let size = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_mem_read, &[addr.into(), size.into()], "mem_read");
+                    }
+                    "speicher_schreiben" | "mem_write" => {
+                        let addr = self.compile_expr(&args[0])?;
+                        let val = self.compile_expr(&args[1])?;
+                        let size = self.compile_expr(&args[2])?;
+                        self.call_rt_void(self.rt.moo_mem_write, &[addr.into(), val.into(), size.into()], "mem_write")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     // Grafik — Fenster
                     "fenster_erstelle" | "window_create" => {
                         let title = self.compile_expr(&args[0])?;
@@ -1505,6 +1550,11 @@ impl<'ctx> CodeGen<'ctx> {
                     // Freeze/Immutable
                     "zeit" | "time" => {
                         return self.call_rt(self.rt.moo_time, &[], "time");
+                    }
+                    "systemaufruf" | "syscall" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_syscall,
+                            &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "syscall");
                     }
                     "einfrieren" | "freeze" => {
                         let arg = self.compile_expr(&args[0])?;

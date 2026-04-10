@@ -152,6 +152,8 @@ impl Lexer {
                     "?." => Some(TokenType::OptionalChain),
                     "??" => Some(TokenType::NullishCoalesce),
                     "|>" => Some(TokenType::Pipe),
+                    "<<" => Some(TokenType::LShift),
+                    ">>" => Some(TokenType::RShift),
                     _ => Option::None,
                 };
                 if let Some(token_type) = op {
@@ -182,6 +184,10 @@ impl Lexer {
                 '.' => Some(TokenType::Dot),
                 '@' => Some(TokenType::At),
                 '?' => Some(TokenType::Question),
+                '&' => Some(TokenType::BitAnd),
+                '|' => Some(TokenType::BitOr),
+                '~' => Some(TokenType::BitNot),
+                '^' => Some(TokenType::BitXor),
                 _ => Option::None,
             };
 
@@ -243,18 +249,33 @@ impl Lexer {
 
     fn read_number(&self, chars: &[char], start: usize, line: usize, col: usize) -> (Token, usize) {
         let mut i = start;
-        let mut has_dot = false;
 
+        // Hex: 0xFF
+        if chars[i] == '0' && i + 1 < chars.len() && (chars[i + 1] == 'x' || chars[i + 1] == 'X') {
+            i += 2;
+            let hex_start = i;
+            while i < chars.len() && chars[i].is_ascii_hexdigit() { i += 1; }
+            let hex_str: String = chars[hex_start..i].iter().collect();
+            let value = u64::from_str_radix(&hex_str, 16).unwrap_or(0) as f64;
+            return (Token::new(TokenType::Number(value), line, col), i);
+        }
+
+        // Binary: 0b1010
+        if chars[i] == '0' && i + 1 < chars.len() && (chars[i + 1] == 'b' || chars[i + 1] == 'B') {
+            i += 2;
+            let bin_start = i;
+            while i < chars.len() && (chars[i] == '0' || chars[i] == '1') { i += 1; }
+            let bin_str: String = chars[bin_start..i].iter().collect();
+            let value = u64::from_str_radix(&bin_str, 2).unwrap_or(0) as f64;
+            return (Token::new(TokenType::Number(value), line, col), i);
+        }
+
+        // Dezimalzahl
+        let mut has_dot = false;
         while i < chars.len() && (chars[i].is_ascii_digit() || (chars[i] == '.' && !has_dot)) {
             if chars[i] == '.' {
-                // ".." ist Range-Operator, kein Dezimalpunkt
-                if i + 1 < chars.len() && chars[i + 1] == '.' {
-                    break;
-                }
-                // UFCS: 5.methode() — Punkt gefolgt von Buchstabe ist kein Dezimalpunkt
-                if i + 1 < chars.len() && !chars[i + 1].is_ascii_digit() {
-                    break;
-                }
+                if i + 1 < chars.len() && chars[i + 1] == '.' { break; }
+                if i + 1 < chars.len() && !chars[i + 1].is_ascii_digit() { break; }
                 has_dot = true;
             }
             i += 1;

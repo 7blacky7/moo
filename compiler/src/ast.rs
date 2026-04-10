@@ -94,12 +94,14 @@ pub enum BinOp {
     Add, Sub, Mul, Div, Mod, Pow,
     Eq, NotEq, Less, Greater, LessEq, GreaterEq,
     And, Or,
+    BitAnd, BitOr, BitXor, LShift, RShift,
 }
 
 #[derive(Debug, Clone)]
 pub enum UnaryOpKind {
     Neg,
     Not,
+    BitNot,
 }
 
 #[derive(Debug, Clone)]
@@ -208,6 +210,10 @@ pub enum Stmt {
     DataClassDef {
         name: std::string::String,
         fields: Vec<std::string::String>,
+    },
+    /// Unsafe-Block (Rust-inspiriert): unsicher: body
+    UnsafeBlock {
+        body: Vec<Stmt>,
     },
 }
 

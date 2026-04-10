@@ -51,6 +51,15 @@ pub enum TokenType {
     Parallel,       // parallel
     Precondition,   // vorbedingung / precondition
     Postcondition,  // nachbedingung / postcondition
+    Unsafe,         // unsicher / unsafe
+
+    // Bitwise Operators
+    BitAnd,       // &
+    BitOr,        // |
+    BitNot,       // ~
+    BitXor,       // ^
+    LShift,       // <<
+    RShift,       // >>
 
     // Operators
     At,           // @
@@ -150,6 +159,7 @@ pub fn keyword_lookup(word: &str) -> Option<TokenType> {
         "garantiere" => Some(TokenType::Guard),
         "schnittstelle" => Some(TokenType::Interface),
         "implementiert" => Some(TokenType::Implements),
+        "unsicher" => Some(TokenType::Unsafe),
         "parallel" => Some(TokenType::Parallel),
         "vorbedingung" => Some(TokenType::Precondition),
         "nachbedingung" => Some(TokenType::Postcondition),
@@ -195,6 +205,7 @@ pub fn keyword_lookup(word: &str) -> Option<TokenType> {
         "guard" => Some(TokenType::Guard),
         "interface" => Some(TokenType::Interface),
         "implements" => Some(TokenType::Implements),
+        "unsafe" => Some(TokenType::Unsafe),
         "precondition" => Some(TokenType::Precondition),
         "postcondition" => Some(TokenType::Postcondition),
         "where" => Some(TokenType::Where),

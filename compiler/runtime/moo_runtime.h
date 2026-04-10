@@ -271,6 +271,18 @@ MooValue moo_and(MooValue a, MooValue b);
 MooValue moo_or(MooValue a, MooValue b);
 MooValue moo_not(MooValue v);
 
+// === Bitwise ===
+MooValue moo_bitand(MooValue a, MooValue b);
+MooValue moo_bitor(MooValue a, MooValue b);
+MooValue moo_bitxor(MooValue a, MooValue b);
+MooValue moo_bitnot(MooValue v);
+MooValue moo_lshift(MooValue a, MooValue b);
+MooValue moo_rshift(MooValue a, MooValue b);
+
+// === Raw Memory (GEFAEHRLICH) ===
+MooValue moo_mem_read(MooValue addr, MooValue size);
+void moo_mem_write(MooValue addr, MooValue value, MooValue size);
+
 // === Ausgabe ===
 void moo_print(MooValue v);
 MooValue moo_to_string(MooValue v);
@@ -302,6 +314,7 @@ MooValue moo_input(MooValue prompt);
 MooValue moo_length(MooValue v);
 MooValue moo_range(MooValue start, MooValue end);
 MooValue moo_time(void);
+MooValue moo_syscall(MooValue nr, MooValue arg1, MooValue arg2, MooValue arg3);
 
 // === Datei-I/O ===
 MooValue moo_file_read(MooValue path);

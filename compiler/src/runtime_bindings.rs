@@ -35,6 +35,16 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_and: FunctionValue<'ctx>,
     pub moo_or: FunctionValue<'ctx>,
     pub moo_not: FunctionValue<'ctx>,
+    // Bitwise
+    pub moo_bitand: FunctionValue<'ctx>,
+    pub moo_bitor: FunctionValue<'ctx>,
+    pub moo_bitxor: FunctionValue<'ctx>,
+    pub moo_bitnot: FunctionValue<'ctx>,
+    pub moo_lshift: FunctionValue<'ctx>,
+    pub moo_rshift: FunctionValue<'ctx>,
+    // Memory
+    pub moo_mem_read: FunctionValue<'ctx>,
+    pub moo_mem_write: FunctionValue<'ctx>,
     // String
     pub moo_string_concat: FunctionValue<'ctx>,
     pub moo_string_length: FunctionValue<'ctx>,
@@ -100,6 +110,7 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_length: FunctionValue<'ctx>,
     pub moo_range: FunctionValue<'ctx>,
     pub moo_time: FunctionValue<'ctx>,
+    pub moo_syscall: FunctionValue<'ctx>,
     pub moo_index_get: FunctionValue<'ctx>,
     pub moo_index_set: FunctionValue<'ctx>,
     // Freeze/Immutable
@@ -255,6 +266,17 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_or: decl_mv_mv!("moo_or", mv2),
             moo_not: decl_mv_mv!("moo_not", mv1),
 
+            // Bitwise
+            moo_bitand: decl_mv_mv!("moo_bitand", mv2),
+            moo_bitor: decl_mv_mv!("moo_bitor", mv2),
+            moo_bitxor: decl_mv_mv!("moo_bitxor", mv2),
+            moo_bitnot: decl_mv_mv!("moo_bitnot", mv1),
+            moo_lshift: decl_mv_mv!("moo_lshift", mv2),
+            moo_rshift: decl_mv_mv!("moo_rshift", mv2),
+            // Memory
+            moo_mem_read: decl_mv_mv!("moo_mem_read", mv2),
+            moo_mem_write: module.add_function("moo_mem_write", void_type.fn_type(mv3, false), None),
+
             // String
             moo_string_concat: decl_mv_mv!("moo_string_concat", mv2),
             moo_string_length: decl_mv_mv!("moo_string_length", mv1),
@@ -325,6 +347,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_length: decl_mv_mv!("moo_length", mv1),
             moo_range: decl_mv_mv!("moo_range", mv2),
             moo_time: decl_mv_mv!("moo_time", &[]),
+            moo_syscall: decl_mv_mv!("moo_syscall", &[mv, mv, mv, mv]),
             moo_index_get: decl_mv_mv!("moo_index_get", mv2),
             moo_index_set: module.add_function("moo_index_set", void_type.fn_type(mv3, false), None),
             // Freeze/Immutable

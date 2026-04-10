@@ -1,5 +1,6 @@
 #include "moo_runtime.h"
 #include <time.h>
+#include <unistd.h>
 
 static bool random_seeded = false;
 
@@ -142,3 +143,31 @@ MooValue moo_time(void) {
     double secs = (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
     return moo_number(secs);
 }
+
+// === Syscall (Linux only) ===
+#ifdef __linux__
+#include <sys/syscall.h>
+
+MooValue moo_syscall(MooValue nr, MooValue arg1, MooValue arg2, MooValue arg3) {
+    long sys_nr = (long)moo_as_number(nr);
+    long a1 = 0, a2 = 0, a3 = 0;
+
+    // Argumente: Zahlen als long, Strings als Pointer
+    if (arg1.tag == MOO_STRING) a1 = (long)MV_STR(arg1)->chars;
+    else if (arg1.tag == MOO_NUMBER) a1 = (long)moo_as_number(arg1);
+
+    if (arg2.tag == MOO_STRING) a2 = (long)MV_STR(arg2)->chars;
+    else if (arg2.tag == MOO_NUMBER) a2 = (long)moo_as_number(arg2);
+
+    if (arg3.tag == MOO_STRING) a3 = (long)MV_STR(arg3)->chars;
+    else if (arg3.tag == MOO_NUMBER) a3 = (long)moo_as_number(arg3);
+
+    long result = syscall(sys_nr, a1, a2, a3);
+    return moo_number((double)result);
+}
+#else
+MooValue moo_syscall(MooValue nr, MooValue arg1, MooValue arg2, MooValue arg3) {
+    moo_throw(moo_string_new("syscall ist nur auf Linux verfuegbar"));
+    return moo_none();
+}
+#endif

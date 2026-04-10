@@ -190,3 +190,32 @@ MooValue moo_gte(MooValue a, MooValue b) { return moo_bool(moo_as_number(a) >= m
 MooValue moo_and(MooValue a, MooValue b) { return moo_bool(moo_is_truthy(a) && moo_is_truthy(b)); }
 MooValue moo_or(MooValue a, MooValue b) { return moo_bool(moo_is_truthy(a) || moo_is_truthy(b)); }
 MooValue moo_not(MooValue v) { return moo_bool(!moo_is_truthy(v)); }
+
+// Bitwise Operationen
+MooValue moo_bitand(MooValue a, MooValue b) { return moo_number((double)((int64_t)moo_as_number(a) & (int64_t)moo_as_number(b))); }
+MooValue moo_bitor(MooValue a, MooValue b) { return moo_number((double)((int64_t)moo_as_number(a) | (int64_t)moo_as_number(b))); }
+MooValue moo_bitxor(MooValue a, MooValue b) { return moo_number((double)((int64_t)moo_as_number(a) ^ (int64_t)moo_as_number(b))); }
+MooValue moo_bitnot(MooValue v) { return moo_number((double)(~(int64_t)moo_as_number(v))); }
+MooValue moo_lshift(MooValue a, MooValue b) { return moo_number((double)((int64_t)moo_as_number(a) << (int64_t)moo_as_number(b))); }
+MooValue moo_rshift(MooValue a, MooValue b) { return moo_number((double)((int64_t)moo_as_number(a) >> (int64_t)moo_as_number(b))); }
+
+// Raw Memory Access (GEFAEHRLICH — nur fuer Systemprogrammierung)
+MooValue moo_mem_read(MooValue addr, MooValue size) {
+    uintptr_t a = (uintptr_t)moo_as_number(addr);
+    int s = (int)moo_as_number(size);
+    if (s == 1) return moo_number((double)(*(volatile uint8_t*)a));
+    if (s == 2) return moo_number((double)(*(volatile uint16_t*)a));
+    if (s == 4) return moo_number((double)(*(volatile uint32_t*)a));
+    if (s == 8) return moo_number((double)(*(volatile uint64_t*)a));
+    return moo_none();
+}
+
+void moo_mem_write(MooValue addr, MooValue value, MooValue size) {
+    uintptr_t a = (uintptr_t)moo_as_number(addr);
+    uint64_t v = (uint64_t)moo_as_number(value);
+    int s = (int)moo_as_number(size);
+    if (s == 1) *(volatile uint8_t*)a = (uint8_t)v;
+    else if (s == 2) *(volatile uint16_t*)a = (uint16_t)v;
+    else if (s == 4) *(volatile uint32_t*)a = (uint32_t)v;
+    else if (s == 8) *(volatile uint64_t*)a = v;
+}
