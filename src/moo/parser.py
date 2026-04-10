@@ -24,10 +24,23 @@ class Parser:
     def __init__(self, tokens: list[Token]):
         self.tokens = tokens
         self.pos = 0
+        self.errors: list[ParseError] = []
 
     def parse(self) -> Program:
         statements = self._parse_block_body(top_level=True)
+        if self.errors:
+            msg = f"{len(self.errors)} Fehler gefunden:"
+            for err in self.errors:
+                msg += f"\n  {err}"
+            raise ParseError(msg, self.errors[0].token)
         return Program(statements=statements)
+
+    def _sync_to_next_statement(self):
+        """Springt zum nächsten Statement bei einem Parse-Fehler."""
+        while self._current().type not in (TokenType.NEWLINE, TokenType.EOF, TokenType.DEDENT):
+            self.pos += 1
+        if self._current().type == TokenType.NEWLINE:
+            self.pos += 1
 
     # --- Hilfsfunktionen ---
 
@@ -66,7 +79,14 @@ class Parser:
             if ct == TokenType.DEDENT and not top_level:
                 self.pos += 1
                 break
-            stmts.append(self._parse_statement())
+            try:
+                stmts.append(self._parse_statement())
+            except ParseError as err:
+                if top_level:
+                    self.errors.append(err)
+                    self._sync_to_next_statement()
+                else:
+                    raise
 
         return stmts
 
