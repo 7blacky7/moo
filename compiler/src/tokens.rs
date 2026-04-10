@@ -60,6 +60,8 @@ pub enum TokenType {
     Dot,
     OptionalChain,   // ?.
     NullishCoalesce, // ??
+    Spread,          // ...
+    Pipe,            // |>
 
     // Delimiters
     Colon,

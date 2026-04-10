@@ -129,6 +129,13 @@ impl Lexer {
             }
 
             // Zwei-Zeichen-Operatoren
+            // Drei-Zeichen-Operatoren (vor Zwei-Zeichen!)
+            if i + 2 < chars.len() && chars[i] == '.' && chars[i + 1] == '.' && chars[i + 2] == '.' {
+                tokens.push(Token::new(TokenType::Spread, line_num, col));
+                i += 3;
+                continue;
+            }
+
             if i + 1 < chars.len() {
                 let two: String = chars[i..=i + 1].iter().collect();
                 let op = match two.as_str() {
@@ -143,6 +150,7 @@ impl Lexer {
                     "=>" => Some(TokenType::Arrow),
                     "?." => Some(TokenType::OptionalChain),
                     "??" => Some(TokenType::NullishCoalesce),
+                    "|>" => Some(TokenType::Pipe),
                     _ => Option::None,
                 };
                 if let Some(token_type) = op {

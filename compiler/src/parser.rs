@@ -377,7 +377,17 @@ impl Parser {
     // --- Expressions ---
 
     fn parse_expression(&mut self) -> Result<Expr, ParseError> {
-        self.parse_nullish_coalesce()
+        self.parse_pipe()
+    }
+
+    fn parse_pipe(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_nullish_coalesce()?;
+        while matches!(self.current_type(), TokenType::Pipe) {
+            self.pos += 1;
+            let right = self.parse_nullish_coalesce()?;
+            left = Expr::Pipe { left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
     }
 
     fn parse_nullish_coalesce(&mut self) -> Result<Expr, ParseError> {
@@ -659,9 +669,10 @@ impl Parser {
         self.eat(&TokenType::LBracket)?;
         let mut elements = Vec::new();
         if !matches!(self.current_type(), TokenType::RBracket) {
-            let first = self.parse_expression()?;
+            let first = self.parse_list_element()?;
             // List comprehension: [expr für/for x in iterable wenn/if cond]
-            if matches!(self.current_type(), TokenType::For) {
+            // (nur wenn erstes Element kein Spread ist)
+            if !matches!(&first, Expr::Spread(_)) && matches!(self.current_type(), TokenType::For) {
                 self.pos += 1; // skip für/for
                 let var_name = self.eat_identifier()?;
                 self.eat(&TokenType::In)?;
@@ -683,31 +694,52 @@ impl Parser {
             elements.push(first);
             while matches!(self.current_type(), TokenType::Comma) {
                 self.pos += 1;
-                elements.push(self.parse_expression()?);
+                if matches!(self.current_type(), TokenType::RBracket) { break; }
+                elements.push(self.parse_list_element()?);
             }
         }
         self.eat(&TokenType::RBracket)?;
         Ok(Expr::List(elements))
     }
 
+    fn parse_list_element(&mut self) -> Result<Expr, ParseError> {
+        if matches!(self.current_type(), TokenType::Spread) {
+            self.pos += 1;
+            let expr = self.parse_expression()?;
+            Ok(Expr::Spread(Box::new(expr)))
+        } else {
+            self.parse_expression()
+        }
+    }
+
     fn parse_dict(&mut self) -> Result<Expr, ParseError> {
         self.eat(&TokenType::LBrace)?;
         let mut pairs = Vec::new();
         if !matches!(self.current_type(), TokenType::RBrace) {
-            let key = self.parse_expression()?;
-            self.eat(&TokenType::Colon)?;
-            let val = self.parse_expression()?;
-            pairs.push((key, val));
+            self.parse_dict_entry(&mut pairs)?;
             while matches!(self.current_type(), TokenType::Comma) {
                 self.pos += 1;
                 if matches!(self.current_type(), TokenType::RBrace) { break; }
-                let key = self.parse_expression()?;
-                self.eat(&TokenType::Colon)?;
-                let val = self.parse_expression()?;
-                pairs.push((key, val));
+                self.parse_dict_entry(&mut pairs)?;
             }
         }
         self.eat(&TokenType::RBrace)?;
         Ok(Expr::Dict(pairs))
+    }
+
+    fn parse_dict_entry(&mut self, pairs: &mut Vec<(Expr, Expr)>) -> Result<(), ParseError> {
+        if matches!(self.current_type(), TokenType::Spread) {
+            self.pos += 1;
+            let expr = self.parse_expression()?;
+            // Spread in Dict: Sentinel-Paar mit Spread-Marker
+            pairs.push((Expr::Spread(Box::new(expr)), Expr::None));
+            Ok(())
+        } else {
+            let key = self.parse_expression()?;
+            self.eat(&TokenType::Colon)?;
+            let val = self.parse_expression()?;
+            pairs.push((key, val));
+            Ok(())
+        }
     }
 }

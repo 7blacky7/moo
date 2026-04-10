@@ -1362,21 +1362,25 @@ impl<'ctx> CodeGen<'ctx> {
                 self.call_rt(self.rt.moo_range, &[s.into(), e.into()], "range")
             }
             Expr::List(elements) => {
-                let count = elements.len() as i32;
                 let list = self.call_rt(self.rt.moo_list_new,
-                    &[self.context.i32_type().const_int(count as u64, false).into()],
+                    &[self.context.i32_type().const_int(0, false).into()],
                     "list")?;
-                // Liste in Variable speichern damit wir sie fuer append verwenden koennen
                 let list_ptr = self.builder.build_alloca(self.mv_type(), "list_tmp")
                     .map_err(|e| format!("{e}"))?;
                 self.builder.build_store(list_ptr, list).map_err(|e| format!("{e}"))?;
 
                 for elem in elements {
-                    let val = self.compile_expr(elem)?;
-                    let current_list = self.builder.build_load(self.mv_type(), list_ptr, "list")
-                        .map_err(|e| format!("{e}"))?.into_struct_value();
-                    self.call_rt_void(self.rt.moo_list_append,
-                        &[current_list.into(), val.into()], "append")?;
+                    if let Expr::Spread(inner) = elem {
+                        // Spread: source-Liste iterieren und jedes Element appenden
+                        let src = self.compile_expr(inner)?;
+                        self.compile_spread_into_list(list_ptr, src)?;
+                    } else {
+                        let val = self.compile_expr(elem)?;
+                        let current_list = self.builder.build_load(self.mv_type(), list_ptr, "list")
+                            .map_err(|e| format!("{e}"))?.into_struct_value();
+                        self.call_rt_void(self.rt.moo_list_append,
+                            &[current_list.into(), val.into()], "append")?;
+                    }
                 }
 
                 let final_list = self.builder.build_load(self.mv_type(), list_ptr, "list")
@@ -1496,12 +1500,18 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.build_store(dict_ptr, dict).map_err(|e| format!("{e}"))?;
 
                 for (key, val) in pairs {
-                    let k = self.compile_expr(key)?;
-                    let v = self.compile_expr(val)?;
-                    let current_dict = self.builder.build_load(self.mv_type(), dict_ptr, "dict")
-                        .map_err(|e| format!("{e}"))?.into_struct_value();
-                    self.call_rt_void(self.rt.moo_dict_set,
-                        &[current_dict.into(), k.into(), v.into()], "dict_set")?;
+                    if let Expr::Spread(inner) = key {
+                        // Spread in Dict: keys holen, iterieren, get+set
+                        let src = self.compile_expr(inner)?;
+                        self.compile_spread_into_dict(dict_ptr, src)?;
+                    } else {
+                        let k = self.compile_expr(key)?;
+                        let v = self.compile_expr(val)?;
+                        let current_dict = self.builder.build_load(self.mv_type(), dict_ptr, "dict")
+                            .map_err(|e| format!("{e}"))?.into_struct_value();
+                        self.call_rt_void(self.rt.moo_dict_set,
+                            &[current_dict.into(), k.into(), v.into()], "dict_set")?;
+                    }
                 }
 
                 let final_dict = self.builder.build_load(self.mv_type(), dict_ptr, "dict")
@@ -1600,7 +1610,211 @@ impl<'ctx> CodeGen<'ctx> {
 
                 self.call_rt(self.rt.moo_none, &[], "lambda_placeholder")
             }
+            Expr::Pipe { left, right } => {
+                // a |> f(b, c) wird zu f(a, b, c)
+                let left_val = self.compile_expr(left)?;
+                match right.as_ref() {
+                    Expr::FunctionCall { name, args } => {
+                        // Builtin-Check ueberspringen, direkt als Funktionsaufruf mit left als erstem Arg
+                        let actual_name = self.lambda_names.get(name)
+                            .cloned()
+                            .unwrap_or(name.clone());
+                        let function = self.module.get_function(&actual_name)
+                            .ok_or(format!("Funktion '{name}' nicht gefunden (Pipe)"))?;
+                        let mut compiled_args: Vec<BasicMetadataValueEnum> = vec![left_val.into()];
+                        for a in args {
+                            compiled_args.push(self.compile_expr(a)?.into());
+                        }
+                        if let Some(captures) = self.lambda_captures.get(&actual_name).cloned() {
+                            for var_name in &captures {
+                                if let Ok(val) = self.load_var(var_name) {
+                                    compiled_args.push(val.into());
+                                } else {
+                                    let none_val = self.call_rt(self.rt.moo_none, &[], "cap_none")?;
+                                    compiled_args.push(none_val.into());
+                                }
+                            }
+                        }
+                        let expected_params = function.count_params() as usize;
+                        while compiled_args.len() < expected_params {
+                            let none_val = self.call_rt(self.rt.moo_none, &[], "none_arg")?;
+                            compiled_args.push(none_val.into());
+                        }
+                        self.call_rt(function, &compiled_args, "pipe_call")
+                    }
+                    Expr::MethodCall { object: _, method, args } => {
+                        // a |> obj.method(b) — left wird erstes Arg nach self
+                        // Aber typischerweise: a |> method() — left als erstes Arg
+                        Err(format!("Pipe in MethodCall noch nicht unterstuetzt"))
+                    }
+                    _ => {
+                        // a |> f — f ist ein Identifier/Lambda, rufe f(a) auf
+                        if let Expr::Identifier(name) = right.as_ref() {
+                            let actual_name = self.lambda_names.get(name)
+                                .cloned()
+                                .unwrap_or(name.clone());
+                            let function = self.module.get_function(&actual_name)
+                                .ok_or(format!("Funktion '{name}' nicht gefunden (Pipe)"))?;
+                            let mut compiled_args: Vec<BasicMetadataValueEnum> = vec![left_val.into()];
+                            if let Some(captures) = self.lambda_captures.get(&actual_name).cloned() {
+                                for var_name in &captures {
+                                    if let Ok(val) = self.load_var(var_name) {
+                                        compiled_args.push(val.into());
+                                    } else {
+                                        let none_val = self.call_rt(self.rt.moo_none, &[], "cap_none")?;
+                                        compiled_args.push(none_val.into());
+                                    }
+                                }
+                            }
+                            let expected_params = function.count_params() as usize;
+                            while compiled_args.len() < expected_params {
+                                let none_val = self.call_rt(self.rt.moo_none, &[], "none_arg")?;
+                                compiled_args.push(none_val.into());
+                            }
+                            self.call_rt(function, &compiled_args, "pipe_call")
+                        } else {
+                            Err("Pipe: rechte Seite muss Funktionsaufruf oder Identifier sein".to_string())
+                        }
+                    }
+                }
+            }
+            Expr::Spread(_) => {
+                Err("Spread-Operator (...) kann nur in Listen [...] oder Dicts {...} verwendet werden".to_string())
+            }
         }
+    }
+
+    /// Spread in Liste: iteriert source und appendet jedes Element in die Ziel-Liste
+    fn compile_spread_into_list(&mut self, target_list_ptr: PointerValue<'ctx>, source: StructValue<'ctx>) -> Result<(), String> {
+        let func = self.current_function.unwrap();
+        let i32_type = self.context.i32_type();
+
+        let src_ptr = self.builder.build_alloca(self.mv_type(), "spread_src")
+            .map_err(|e| format!("{e}"))?;
+        self.builder.build_store(src_ptr, source).map_err(|e| format!("{e}"))?;
+
+        let len_result = self.builder.build_call(self.rt.moo_list_iter_len,
+            &[source.into()], "spread_len")
+            .map_err(|e| format!("{e}"))?;
+        let len = match len_result.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("spread iter_len fehlgeschlagen".to_string()),
+        };
+
+        let idx_ptr = self.builder.build_alloca(i32_type, "spread_idx")
+            .map_err(|e| format!("{e}"))?;
+        self.builder.build_store(idx_ptr, i32_type.const_int(0, false))
+            .map_err(|e| format!("{e}"))?;
+
+        let cond_bb = self.context.append_basic_block(func, "spread_cond");
+        let body_bb = self.context.append_basic_block(func, "spread_body");
+        let after_bb = self.context.append_basic_block(func, "spread_after");
+
+        self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
+
+        self.builder.position_at_end(cond_bb);
+        let current_idx = self.builder.build_load(i32_type, idx_ptr, "idx")
+            .map_err(|e| format!("{e}"))?.into_int_value();
+        let cmp = self.builder.build_int_compare(
+            inkwell::IntPredicate::SLT, current_idx, len, "spread_cmp")
+            .map_err(|e| format!("{e}"))?;
+        self.builder.build_conditional_branch(cmp, body_bb, after_bb)
+            .map_err(|e| format!("{e}"))?;
+
+        self.builder.position_at_end(body_bb);
+        let src_loaded = self.builder.build_load(self.mv_type(), src_ptr, "src")
+            .map_err(|e| format!("{e}"))?.into_struct_value();
+        let idx_loaded = self.builder.build_load(i32_type, idx_ptr, "idx")
+            .map_err(|e| format!("{e}"))?.into_int_value();
+        let element = self.call_rt(self.rt.moo_list_iter_get,
+            &[src_loaded.into(), idx_loaded.into()], "spread_elem")?;
+        let target = self.builder.build_load(self.mv_type(), target_list_ptr, "tgt")
+            .map_err(|e| format!("{e}"))?.into_struct_value();
+        self.call_rt_void(self.rt.moo_list_append,
+            &[target.into(), element.into()], "spread_append")?;
+
+        let idx_now = self.builder.build_load(i32_type, idx_ptr, "idx")
+            .map_err(|e| format!("{e}"))?.into_int_value();
+        let idx_next = self.builder.build_int_add(idx_now, i32_type.const_int(1, false), "idx_next")
+            .map_err(|e| format!("{e}"))?;
+        self.builder.build_store(idx_ptr, idx_next).map_err(|e| format!("{e}"))?;
+        self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
+
+        self.builder.position_at_end(after_bb);
+        Ok(())
+    }
+
+    /// Spread in Dict: keys von source holen, iterieren, get+set in Ziel-Dict
+    fn compile_spread_into_dict(&mut self, target_dict_ptr: PointerValue<'ctx>, source: StructValue<'ctx>) -> Result<(), String> {
+        let func = self.current_function.unwrap();
+        let i32_type = self.context.i32_type();
+
+        let src_ptr = self.builder.build_alloca(self.mv_type(), "dspread_src")
+            .map_err(|e| format!("{e}"))?;
+        self.builder.build_store(src_ptr, source).map_err(|e| format!("{e}"))?;
+
+        // Keys als Liste holen
+        let keys = self.call_rt(self.rt.moo_dict_keys, &[source.into()], "dspread_keys")?;
+        let keys_ptr = self.builder.build_alloca(self.mv_type(), "dspread_keys_ptr")
+            .map_err(|e| format!("{e}"))?;
+        self.builder.build_store(keys_ptr, keys).map_err(|e| format!("{e}"))?;
+
+        let len_result = self.builder.build_call(self.rt.moo_list_iter_len,
+            &[keys.into()], "dspread_len")
+            .map_err(|e| format!("{e}"))?;
+        let len = match len_result.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("dict spread iter_len fehlgeschlagen".to_string()),
+        };
+
+        let idx_ptr = self.builder.build_alloca(i32_type, "dspread_idx")
+            .map_err(|e| format!("{e}"))?;
+        self.builder.build_store(idx_ptr, i32_type.const_int(0, false))
+            .map_err(|e| format!("{e}"))?;
+
+        let cond_bb = self.context.append_basic_block(func, "dspread_cond");
+        let body_bb = self.context.append_basic_block(func, "dspread_body");
+        let after_bb = self.context.append_basic_block(func, "dspread_after");
+
+        self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
+
+        self.builder.position_at_end(cond_bb);
+        let current_idx = self.builder.build_load(i32_type, idx_ptr, "idx")
+            .map_err(|e| format!("{e}"))?.into_int_value();
+        let cmp = self.builder.build_int_compare(
+            inkwell::IntPredicate::SLT, current_idx, len, "dspread_cmp")
+            .map_err(|e| format!("{e}"))?;
+        self.builder.build_conditional_branch(cmp, body_bb, after_bb)
+            .map_err(|e| format!("{e}"))?;
+
+        self.builder.position_at_end(body_bb);
+        // Key holen
+        let keys_loaded = self.builder.build_load(self.mv_type(), keys_ptr, "keys")
+            .map_err(|e| format!("{e}"))?.into_struct_value();
+        let idx_loaded = self.builder.build_load(i32_type, idx_ptr, "idx")
+            .map_err(|e| format!("{e}"))?.into_int_value();
+        let key = self.call_rt(self.rt.moo_list_iter_get,
+            &[keys_loaded.into(), idx_loaded.into()], "dspread_key")?;
+        // Value aus Source-Dict holen
+        let src_loaded = self.builder.build_load(self.mv_type(), src_ptr, "src")
+            .map_err(|e| format!("{e}"))?.into_struct_value();
+        let val = self.call_rt(self.rt.moo_dict_get,
+            &[src_loaded.into(), key.into()], "dspread_val")?;
+        // In Ziel-Dict setzen
+        let target = self.builder.build_load(self.mv_type(), target_dict_ptr, "tgt")
+            .map_err(|e| format!("{e}"))?.into_struct_value();
+        self.call_rt_void(self.rt.moo_dict_set,
+            &[target.into(), key.into(), val.into()], "dspread_set")?;
+
+        let idx_now = self.builder.build_load(i32_type, idx_ptr, "idx")
+            .map_err(|e| format!("{e}"))?.into_int_value();
+        let idx_next = self.builder.build_int_add(idx_now, i32_type.const_int(1, false), "idx_next")
+            .map_err(|e| format!("{e}"))?;
+        self.builder.build_store(idx_ptr, idx_next).map_err(|e| format!("{e}"))?;
+        self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
+
+        self.builder.position_at_end(after_bb);
+        Ok(())
     }
 
     /// Sammelt alle freien Variablen in einem Ausdruck (Identifier die nicht in params sind)
@@ -1640,6 +1854,17 @@ impl<'ctx> CodeGen<'ctx> {
                 if let Some(cond) = condition {
                     Self::collect_free_vars(cond, &inner_params, out);
                 }
+            }
+            Expr::Spread(inner) => {
+                Self::collect_free_vars(inner, params, out);
+            }
+            Expr::Pipe { left, right } => {
+                Self::collect_free_vars(left, params, out);
+                Self::collect_free_vars(right, params, out);
+            }
+            Expr::NullishCoalesce { left, right } => {
+                Self::collect_free_vars(left, params, out);
+                Self::collect_free_vars(right, params, out);
             }
             _ => {}
         }

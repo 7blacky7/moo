@@ -62,6 +62,11 @@ pub enum Expr {
         left: Box<Expr>,
         right: Box<Expr>,
     },
+    Spread(Box<Expr>),
+    Pipe {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone)]

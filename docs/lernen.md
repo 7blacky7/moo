@@ -17,19 +17,27 @@ Du schreibst auf Deutsch oder Englisch — moo übersetzt in Python, JavaScript 
 8. [Bedingungen](#bedingungen)
 9. [Schleifen](#schleifen)
 10. [Listen](#listen)
-11. [String-Methoden](#string-methoden)
-12. [Dictionaries](#dictionaries)
-13. [Funktionen](#funktionen)
-14. [Lambdas](#lambdas)
-15. [Standardbibliothek (Stdlib)](#standardbibliothek-stdlib)
-16. [Klassen & Objekte](#klassen--objekte)
-17. [Vererbung](#vererbung)
-18. [Fehlerbehandlung](#fehlerbehandlung)
-19. [Match / Switch](#match--switch)
-20. [Module & Imports](#module--imports)
-21. [Schlüsselwort-Tabelle](#schlüsselwort-tabelle)
-22. [CLI-Befehle](#cli-befehle)
-23. [Nativer Compiler](#nativer-compiler)
+11. [List Comprehensions](#list-comprehensions)
+12. [Map und Filter](#map-und-filter)
+13. [String-Methoden](#string-methoden)
+14. [Dictionaries](#dictionaries)
+15. [Funktionen](#funktionen)
+16. [Lambdas](#lambdas)
+17. [Optional Chaining & Nullish Coalescing](#optional-chaining--nullish-coalescing)
+18. [Standardbibliothek (Stdlib)](#standardbibliothek-stdlib)
+19. [JSON](#json)
+20. [HTTP](#http)
+21. [Kryptografie & Sicherheit](#kryptografie--sicherheit)
+22. [Datenbank](#datenbank)
+23. [Multithreading](#multithreading)
+24. [Klassen & Objekte](#klassen--objekte)
+25. [Vererbung](#vererbung)
+26. [Fehlerbehandlung](#fehlerbehandlung)
+27. [Match / Switch](#match--switch)
+28. [Module & Imports](#module--imports)
+29. [Schlüsselwort-Tabelle](#schlüsselwort-tabelle)
+30. [CLI-Befehle](#cli-befehle)
+31. [Nativer Compiler](#nativer-compiler)
 
 ---
 
@@ -306,6 +314,48 @@ zeige tiere.length
 
 ---
 
+## List Comprehensions
+
+Listen lassen sich elegant mit Comprehensions erzeugen:
+
+```
+# Deutsch
+setze quadrate auf [x * x für x in 0..10]
+zeige quadrate    # [0, 1, 4, 9, 16, 25, 36, 49, 64, 81]
+
+# Mit Bedingung
+setze gerade auf [x für x in 0..20 wenn x % 2 == 0]
+zeige gerade      # [0, 2, 4, 6, 8, 10, 12, 14, 16, 18]
+
+# English
+set squares to [x * x for x in 0..10]
+set evens to [x for x in 0..20 if x % 2 == 0]
+```
+
+---
+
+## Map und Filter
+
+Listen können mit `map` und `filter` transformiert werden:
+
+```
+setze zahlen auf [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+# Jedes Element verdoppeln
+setze doppelt auf zahlen.map((x) => x * 2)
+zeige doppelt     # [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
+
+# Nur Werte größer als 5 behalten
+setze gross auf zahlen.filter((x) => x > 5)
+zeige gross       # [6, 7, 8, 9, 10]
+
+# Kombiniert: verdoppeln, dann filtern
+setze ergebnis auf zahlen.map((x) => x * 2).filter((x) => x > 10)
+zeige ergebnis    # [12, 14, 16, 18, 20]
+```
+
+---
+
 ## String-Methoden
 
 Strings haben eingebaute Methoden zur Textverarbeitung. Jede Methode gibt es auf Deutsch und Englisch:
@@ -435,6 +485,42 @@ setze zahlen auf [1, 2, 3, 4, 5]
 
 ---
 
+## Optional Chaining & Nullish Coalescing
+
+### Optional Chaining
+
+Mit `?.` greifst du sicher auf Eigenschaften zu. Wenn das Objekt `nichts` ist, gibt es `nichts` zurueck statt einen Fehler:
+
+```
+# Deutsch
+setze person auf {"adresse": {"stadt": "Berlin"}}
+zeige person?.adresse?.stadt       # "Berlin"
+zeige person?.telefon?.nummer      # nichts (kein Crash!)
+
+# English
+set person to {"address": {"city": "Berlin"}}
+show person?.address?.city         # "Berlin"
+show person?.phone?.number         # none (no crash!)
+```
+
+### Nullish Coalescing
+
+Mit `??` kannst du einen Standardwert angeben, falls ein Wert `nichts` ist:
+
+```
+# Deutsch
+setze name auf eingabe ?? "Unbekannt"
+zeige name    # Wert von eingabe, oder "Unbekannt" wenn nichts
+
+# English
+set name to input ?? "Unknown"
+
+# Kombiniert mit Optional Chaining
+setze stadt auf person?.adresse?.stadt ?? "Nicht angegeben"
+```
+
+---
+
 ## Standardbibliothek (Stdlib)
 
 moo bringt nützliche Funktionen mit, die direkt verfügbar sind — ohne Import. Jede Funktion gibt es auf Deutsch und Englisch.
@@ -475,6 +561,144 @@ zeige type_of(42)               # "Zahl"
 zeige typ_von("Hallo")          # "Text"
 zeige typ_von([1, 2, 3])        # "Liste"
 zeige typ_von(wahr)             # "Wahrheitswert"
+```
+
+---
+
+## JSON
+
+JSON-Daten lesen und schreiben:
+
+```
+# Deutsch
+setze daten auf json_lesen('{"name": "Anna", "alter": 25}')
+zeige daten["name"]         # "Anna"
+
+setze text auf json_text(daten)
+zeige text                  # '{"name": "Anna", "alter": 25}'
+
+# English
+set data to json_parse('{"name": "Anna", "age": 25}')
+show data["name"]           # "Anna"
+
+set text to json_string(data)
+show text                   # '{"name": "Anna", "age": 25}'
+```
+
+---
+
+## HTTP
+
+HTTP-Anfragen senden:
+
+```
+# Deutsch
+setze antwort auf http_hole("https://api.example.com/daten")
+zeige antwort
+
+setze ergebnis auf http_sende("https://api.example.com/senden", {"name": "Anna"})
+zeige ergebnis
+
+# English
+set response to http_get("https://api.example.com/data")
+show response
+
+set result to http_post("https://api.example.com/submit", {"name": "Anna"})
+show result
+```
+
+---
+
+## Kryptografie & Sicherheit
+
+### Hashing und Zufall
+
+```
+# SHA-256 Hash erzeugen
+setze hash auf sha256("geheimer Text")
+zeige hash
+
+# Sicheren Zufall erzeugen (16 Bytes)
+setze token auf sichere_zufall(16)
+setze token auf secure_random(16)    # English
+```
+
+### Kodierung
+
+```
+setze kodiert auf base64_encode("Hallo Welt")
+zeige kodiert                        # "SGFsbG8gV2VsdA=="
+
+setze original auf base64_decode(kodiert)
+zeige original                       # "Hallo Welt"
+```
+
+### Bereinigung (Sanitizing)
+
+```
+# HTML-Tags entfernen / entschaerfen
+setze sicher auf html_bereinigen("<script>alert('hack')</script>")
+zeige sicher    # "&lt;script&gt;alert('hack')&lt;/script&gt;"
+
+# SQL-Injection verhindern
+setze sicher auf sql_bereinigen("'; DROP TABLE users; --")
+```
+
+---
+
+## Datenbank
+
+SQLite- und andere Datenbanken verwenden:
+
+```
+# Deutsch
+setze db auf db_verbinde("sqlite:///meine_daten.db")
+
+# Tabelle erstellen
+db_ausführen(db, "CREATE TABLE IF NOT EXISTS nutzer (id INTEGER PRIMARY KEY, name TEXT)")
+
+# Daten einfuegen
+db_ausführen(db, "INSERT INTO nutzer (name) VALUES ('Anna')")
+
+# Daten abfragen
+setze ergebnis auf db_abfrage(db, "SELECT * FROM nutzer")
+für zeile in ergebnis:
+    zeige zeile
+
+# Verbindung schliessen
+db_schliessen(db)
+
+# English
+set db to db_connect("sqlite:///my_data.db")
+db_execute(db, "INSERT INTO users (name) VALUES ('Anna')")
+set result to db_query(db, "SELECT * FROM users")
+db_close(db)
+```
+
+---
+
+## Multithreading
+
+### Channels
+
+Channels ermoeglichen die sichere Kommunikation zwischen Threads:
+
+```
+# Deutsch
+setze k auf kanal(16)       # Channel mit Puffer fuer 16 Nachrichten
+
+# In einem Thread senden
+k.senden("Hallo vom Thread!")
+
+# In einem anderen Thread empfangen
+setze nachricht auf k.empfangen()
+zeige nachricht              # "Hallo vom Thread!"
+
+# English
+set ch to channel(16)
+ch.send("Hello from thread!")
+set message to ch.receive()
+show message
 ```
 
 ---
@@ -670,6 +894,26 @@ Die komplette Referenz aller Schlüsselwörter:
 | `exportiere` | `export` | Funktion/Klasse exportieren |
 | `als` | `as` | Alias beim Import |
 | `eingabe` | `input` | Benutzereingabe lesen |
+| `für ... wenn` | `for ... if` | List Comprehension mit Bedingung |
+| `?.` | `?.` | Optional Chaining |
+| `??` | `??` | Nullish Coalescing (Standardwert) |
+| `json_lesen` | `json_parse` | JSON-Text in Objekt umwandeln |
+| `json_text` | `json_string` | Objekt in JSON-Text umwandeln |
+| `http_hole` | `http_get` | HTTP-GET-Anfrage senden |
+| `http_sende` | `http_post` | HTTP-POST-Anfrage senden |
+| `sha256` | `sha256` | SHA-256 Hash berechnen |
+| `sichere_zufall` | `secure_random` | Kryptografisch sicheren Zufall erzeugen |
+| `base64_encode` | `base64_encode` | Base64-Kodierung |
+| `base64_decode` | `base64_decode` | Base64-Dekodierung |
+| `html_bereinigen` | `html_bereinigen` | HTML-Tags entschaerfen |
+| `sql_bereinigen` | `sql_bereinigen` | SQL-Injection verhindern |
+| `db_verbinde` | `db_connect` | Datenbankverbindung oeffnen |
+| `db_abfrage` | `db_query` | Datenbank abfragen (SELECT) |
+| `db_ausführen` | `db_execute` | Datenbank-Befehl ausfuehren |
+| `db_schliessen` | `db_close` | Datenbankverbindung schliessen |
+| `kanal` | `channel` | Channel fuer Multithreading |
+| `senden` | `send` | Nachricht in Channel senden |
+| `empfangen` | `receive` | Nachricht aus Channel empfangen |
 
 ---
 
