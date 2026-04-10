@@ -8,3 +8,6 @@ test_native
 test_native.ll
 *.o
 compiler/target/
+compiler/runtime/check_size*
+compiler/runtime/test_runtime*
+compiler/runtime/*.o

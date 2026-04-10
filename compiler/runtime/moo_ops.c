@@ -38,42 +38,22 @@ MooValue moo_neg(MooValue v) {
 MooValue moo_eq(MooValue a, MooValue b) {
     if (a.tag != b.tag) return moo_bool(false);
     switch (a.tag) {
-        case MOO_NUMBER: return moo_bool(a.data.number == b.data.number);
+        case MOO_NUMBER: return moo_bool(MV_NUM(a) == MV_NUM(b));
         case MOO_STRING: return moo_string_compare(a, b);
-        case MOO_BOOL:   return moo_bool(a.data.boolean == b.data.boolean);
+        case MOO_BOOL:   return moo_bool(MV_BOOL(a) == MV_BOOL(b));
         case MOO_NONE:   return moo_bool(true);
         default:         return moo_bool(false);
     }
 }
 
 MooValue moo_neq(MooValue a, MooValue b) {
-    return moo_bool(!moo_eq(a, b).data.boolean);
+    return moo_bool(!MV_BOOL(moo_eq(a, b)));
 }
 
-MooValue moo_lt(MooValue a, MooValue b) {
-    return moo_bool(moo_as_number(a) < moo_as_number(b));
-}
-
-MooValue moo_gt(MooValue a, MooValue b) {
-    return moo_bool(moo_as_number(a) > moo_as_number(b));
-}
-
-MooValue moo_lte(MooValue a, MooValue b) {
-    return moo_bool(moo_as_number(a) <= moo_as_number(b));
-}
-
-MooValue moo_gte(MooValue a, MooValue b) {
-    return moo_bool(moo_as_number(a) >= moo_as_number(b));
-}
-
-MooValue moo_and(MooValue a, MooValue b) {
-    return moo_bool(moo_is_truthy(a) && moo_is_truthy(b));
-}
-
-MooValue moo_or(MooValue a, MooValue b) {
-    return moo_bool(moo_is_truthy(a) || moo_is_truthy(b));
-}
-
-MooValue moo_not(MooValue v) {
-    return moo_bool(!moo_is_truthy(v));
-}
+MooValue moo_lt(MooValue a, MooValue b) { return moo_bool(moo_as_number(a) < moo_as_number(b)); }
+MooValue moo_gt(MooValue a, MooValue b) { return moo_bool(moo_as_number(a) > moo_as_number(b)); }
+MooValue moo_lte(MooValue a, MooValue b) { return moo_bool(moo_as_number(a) <= moo_as_number(b)); }
+MooValue moo_gte(MooValue a, MooValue b) { return moo_bool(moo_as_number(a) >= moo_as_number(b)); }
+MooValue moo_and(MooValue a, MooValue b) { return moo_bool(moo_is_truthy(a) && moo_is_truthy(b)); }
+MooValue moo_or(MooValue a, MooValue b) { return moo_bool(moo_is_truthy(a) || moo_is_truthy(b)); }
+MooValue moo_not(MooValue v) { return moo_bool(!moo_is_truthy(v)); }

@@ -31,19 +31,41 @@ typedef struct MooFunc MooFunc;
 typedef struct MooValue MooValue;
 
 // === MooValue: Der universelle Wert ===
+// Layout: { uint64_t tag, uint64_t data } = 16 Bytes
+// data wird als uint64_t gespeichert und bei Bedarf zu double/pointer gecastet.
+// Das garantiert ABI-Kompatibilitaet mit LLVM { i64, i64 }.
 struct MooValue {
-    uint8_t tag;
-    union {
-        double number;
-        MooString* string;
-        bool boolean;
-        MooList* list;
-        MooDict* dict;
-        MooFunc* func;
-        MooObject* object;
-        char* error_msg;
-    } data;
+    uint64_t tag;
+    uint64_t data;
 };
+
+// Zugriff-Makros
+static inline double moo_val_as_double(MooValue v) {
+    double d;
+    memcpy(&d, &v.data, sizeof(double));
+    return d;
+}
+static inline void moo_val_set_double(MooValue* v, double d) {
+    memcpy(&v->data, &d, sizeof(double));
+}
+static inline void* moo_val_as_ptr(MooValue v) {
+    return (void*)(uintptr_t)v.data;
+}
+static inline void moo_val_set_ptr(MooValue* v, void* p) {
+    v->data = (uint64_t)(uintptr_t)p;
+}
+static inline bool moo_val_as_bool(MooValue v) { return (bool)v.data; }
+static inline void moo_val_set_bool(MooValue* v, bool b) { v->data = (uint64_t)b; }
+
+// Typ-spezifische Getter (Kurzformen)
+#define MV_NUM(v)    moo_val_as_double(v)
+#define MV_STR(v)    ((MooString*)moo_val_as_ptr(v))
+#define MV_LIST(v)   ((MooList*)moo_val_as_ptr(v))
+#define MV_DICT(v)   ((MooDict*)moo_val_as_ptr(v))
+#define MV_OBJ(v)    ((MooObject*)moo_val_as_ptr(v))
+#define MV_FUNC(v)   ((MooFunc*)moo_val_as_ptr(v))
+#define MV_BOOL(v)   moo_val_as_bool(v)
+#define MV_ERR(v)    ((char*)moo_val_as_ptr(v))
 
 // === String ===
 struct MooString {

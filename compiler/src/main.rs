@@ -2,6 +2,7 @@ mod ast;
 mod codegen;
 mod lexer;
 mod parser;
+mod runtime_bindings;
 mod tokens;
 
 use clap::{Parser as ClapParser, Subcommand};
@@ -91,9 +92,14 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool) -> R
             PathBuf::from(stem)
         });
 
+    // Runtime-Archiv finden (von build.rs kompiliert)
+    let runtime_dir = PathBuf::from(env!("OUT_DIR"));
+    let runtime_lib = runtime_dir.join("libmoo_runtime.a");
+
     let link_status = Command::new("cc")
         .args([
             obj_path.to_str().unwrap(),
+            runtime_lib.to_str().unwrap(),
             "-o",
             output_path.to_str().unwrap(),
             "-lm",

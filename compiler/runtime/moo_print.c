@@ -4,7 +4,7 @@ MooValue moo_to_string(MooValue v) {
     char buf[64];
     switch (v.tag) {
         case MOO_NUMBER: {
-            double n = v.data.number;
+            double n = MV_NUM(v);
             if (n == (int64_t)n)
                 snprintf(buf, sizeof(buf), "%lld", (long long)n);
             else
@@ -13,11 +13,11 @@ MooValue moo_to_string(MooValue v) {
         }
         case MOO_STRING: return v;
         case MOO_BOOL:
-            return moo_string_new(v.data.boolean ? "wahr" : "falsch");
+            return moo_string_new(MV_BOOL(v) ? "wahr" : "falsch");
         case MOO_NONE:
             return moo_string_new("nichts");
         case MOO_LIST: {
-            MooList* l = v.data.list;
+            MooList* l = MV_LIST(v);
             MooValue result = moo_string_new("[");
             for (int32_t i = 0; i < l->length; i++) {
                 if (i > 0) result = moo_string_concat(result, moo_string_new(", "));
@@ -33,7 +33,7 @@ MooValue moo_to_string(MooValue v) {
             return moo_string_concat(result, moo_string_new("]"));
         }
         case MOO_DICT: {
-            MooDict* d = v.data.dict;
+            MooDict* d = MV_DICT(v);
             MooValue result = moo_string_new("{");
             bool first = true;
             for (int32_t i = 0; i < d->capacity; i++) {
@@ -41,7 +41,9 @@ MooValue moo_to_string(MooValue v) {
                 if (!first) result = moo_string_concat(result, moo_string_new(", "));
                 first = false;
                 result = moo_string_concat(result, moo_string_new("\""));
-                MooValue key; key.tag = MOO_STRING; key.data.string = d->entries[i].key;
+                MooValue key;
+                key.tag = MOO_STRING;
+                moo_val_set_ptr(&key, d->entries[i].key);
                 result = moo_string_concat(result, key);
                 result = moo_string_concat(result, moo_string_new("\": "));
                 result = moo_string_concat(result, moo_to_string(d->entries[i].value));
@@ -49,11 +51,11 @@ MooValue moo_to_string(MooValue v) {
             return moo_string_concat(result, moo_string_new("}"));
         }
         case MOO_OBJECT: {
-            snprintf(buf, sizeof(buf), "<Objekt %s>", v.data.object->class_name);
+            snprintf(buf, sizeof(buf), "<Objekt %s>", MV_OBJ(v)->class_name);
             return moo_string_new(buf);
         }
         case MOO_ERROR:
-            return moo_string_new(v.data.error_msg);
+            return moo_string_new(MV_ERR(v));
         default:
             return moo_string_new("<unbekannt>");
     }
@@ -61,5 +63,5 @@ MooValue moo_to_string(MooValue v) {
 
 void moo_print(MooValue v) {
     MooValue s = moo_to_string(v);
-    printf("%s\n", s.data.string->chars);
+    printf("%s\n", MV_STR(s)->chars);
 }

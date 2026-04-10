@@ -5,9 +5,7 @@
 
 static uint32_t hash_string(const char* str) {
     uint32_t hash = 5381;
-    while (*str) {
-        hash = ((hash << 5) + hash) + (unsigned char)*str++;
-    }
+    while (*str) hash = ((hash << 5) + hash) + (unsigned char)*str++;
     return hash;
 }
 
@@ -19,7 +17,7 @@ MooValue moo_dict_new(void) {
     d->capacity = DICT_INITIAL_CAPACITY;
     d->entries = moo_alloc(sizeof(MooDictEntry) * d->capacity);
     memset(d->entries, 0, sizeof(MooDictEntry) * d->capacity);
-    v.data.dict = d;
+    moo_val_set_ptr(&v, d);
     return v;
 }
 
@@ -51,12 +49,12 @@ static void dict_grow(MooDict* d) {
 }
 
 void moo_dict_set(MooValue dict, MooValue key, MooValue value) {
-    MooDict* d = dict.data.dict;
+    MooDict* d = MV_DICT(dict);
     MooValue key_str = moo_to_string(key);
     if ((double)d->count / d->capacity > DICT_LOAD_FACTOR) dict_grow(d);
-    int32_t slot = dict_find_slot(d, key_str.data.string->chars);
+    int32_t slot = dict_find_slot(d, MV_STR(key_str)->chars);
     if (!d->entries[slot].occupied) {
-        d->entries[slot].key = key_str.data.string;
+        d->entries[slot].key = MV_STR(key_str);
         d->entries[slot].occupied = true;
         d->count++;
     }
@@ -64,28 +62,28 @@ void moo_dict_set(MooValue dict, MooValue key, MooValue value) {
 }
 
 MooValue moo_dict_get(MooValue dict, MooValue key) {
-    MooDict* d = dict.data.dict;
+    MooDict* d = MV_DICT(dict);
     MooValue key_str = moo_to_string(key);
-    int32_t slot = dict_find_slot(d, key_str.data.string->chars);
+    int32_t slot = dict_find_slot(d, MV_STR(key_str)->chars);
     if (d->entries[slot].occupied) return d->entries[slot].value;
     return moo_none();
 }
 
 MooValue moo_dict_has(MooValue dict, MooValue key) {
-    MooDict* d = dict.data.dict;
+    MooDict* d = MV_DICT(dict);
     MooValue key_str = moo_to_string(key);
-    int32_t slot = dict_find_slot(d, key_str.data.string->chars);
+    int32_t slot = dict_find_slot(d, MV_STR(key_str)->chars);
     return moo_bool(d->entries[slot].occupied);
 }
 
 MooValue moo_dict_keys(MooValue dict) {
-    MooDict* d = dict.data.dict;
+    MooDict* d = MV_DICT(dict);
     MooValue list = moo_list_new(d->count);
     for (int32_t i = 0; i < d->capacity; i++) {
         if (d->entries[i].occupied) {
             MooValue key;
             key.tag = MOO_STRING;
-            key.data.string = d->entries[i].key;
+            moo_val_set_ptr(&key, d->entries[i].key);
             moo_list_append(list, key);
         }
     }
@@ -93,25 +91,24 @@ MooValue moo_dict_keys(MooValue dict) {
 }
 
 MooValue moo_dict_values(MooValue dict) {
-    MooDict* d = dict.data.dict;
+    MooDict* d = MV_DICT(dict);
     MooValue list = moo_list_new(d->count);
     for (int32_t i = 0; i < d->capacity; i++) {
-        if (d->entries[i].occupied) {
+        if (d->entries[i].occupied)
             moo_list_append(list, d->entries[i].value);
-        }
     }
     return list;
 }
 
 MooValue moo_dict_length(MooValue dict) {
     if (dict.tag != MOO_DICT) return moo_number(0);
-    return moo_number((double)dict.data.dict->count);
+    return moo_number((double)MV_DICT(dict)->count);
 }
 
 void moo_dict_remove(MooValue dict, MooValue key) {
-    MooDict* d = dict.data.dict;
+    MooDict* d = MV_DICT(dict);
     MooValue key_str = moo_to_string(key);
-    int32_t slot = dict_find_slot(d, key_str.data.string->chars);
+    int32_t slot = dict_find_slot(d, MV_STR(key_str)->chars);
     if (d->entries[slot].occupied) {
         d->entries[slot].occupied = false;
         d->count--;

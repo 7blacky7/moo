@@ -9,32 +9,31 @@ MooValue moo_object_new(const char* class_name) {
     obj->prop_capacity = 8;
     obj->properties = moo_alloc(sizeof(MooProperty) * obj->prop_capacity);
     obj->parent = NULL;
-    v.data.object = obj;
+    moo_val_set_ptr(&v, obj);
     return v;
 }
 
 static int32_t find_property(MooObject* obj, const char* name) {
-    for (int32_t i = 0; i < obj->prop_count; i++) {
+    for (int32_t i = 0; i < obj->prop_count; i++)
         if (strcmp(obj->properties[i].name->chars, name) == 0) return i;
-    }
     return -1;
 }
 
 MooValue moo_object_get(MooValue obj_val, const char* prop) {
-    MooObject* obj = obj_val.data.object;
+    MooObject* obj = MV_OBJ(obj_val);
     int32_t idx = find_property(obj, prop);
     if (idx >= 0) return obj->properties[idx].value;
     if (obj->parent) {
         MooValue parent_val;
         parent_val.tag = MOO_OBJECT;
-        parent_val.data.object = obj->parent;
+        moo_val_set_ptr(&parent_val, obj->parent);
         return moo_object_get(parent_val, prop);
     }
     return moo_none();
 }
 
 void moo_object_set(MooValue obj_val, const char* prop, MooValue value) {
-    MooObject* obj = obj_val.data.object;
+    MooObject* obj = MV_OBJ(obj_val);
     int32_t idx = find_property(obj, prop);
     if (idx >= 0) {
         obj->properties[idx].value = value;
@@ -55,7 +54,6 @@ void moo_object_set(MooValue obj_val, const char* prop, MooValue value) {
 }
 
 void moo_object_set_parent(MooValue obj, MooValue parent) {
-    if (obj.tag == MOO_OBJECT && parent.tag == MOO_OBJECT) {
-        obj.data.object->parent = parent.data.object;
-    }
+    if (obj.tag == MOO_OBJECT && parent.tag == MOO_OBJECT)
+        MV_OBJ(obj)->parent = MV_OBJ(parent);
 }

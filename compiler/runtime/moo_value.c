@@ -3,28 +3,28 @@
 MooValue moo_number(double n) {
     MooValue v;
     v.tag = MOO_NUMBER;
-    v.data.number = n;
+    moo_val_set_double(&v, n);
     return v;
 }
 
 MooValue moo_bool(bool b) {
     MooValue v;
     v.tag = MOO_BOOL;
-    v.data.boolean = b;
+    moo_val_set_bool(&v, b);
     return v;
 }
 
 MooValue moo_none(void) {
     MooValue v;
     v.tag = MOO_NONE;
-    v.data.number = 0;
+    v.data = 0;
     return v;
 }
 
 MooValue moo_error(const char* msg) {
     MooValue v;
     v.tag = MOO_ERROR;
-    v.data.error_msg = strdup(msg);
+    moo_val_set_ptr(&v, strdup(msg));
     return v;
 }
 
@@ -37,12 +37,12 @@ bool moo_is_dict(MooValue v)   { return v.tag == MOO_DICT; }
 
 bool moo_is_truthy(MooValue v) {
     switch (v.tag) {
-        case MOO_NUMBER: return v.data.number != 0.0;
-        case MOO_STRING: return v.data.string->length > 0;
-        case MOO_BOOL:   return v.data.boolean;
+        case MOO_NUMBER: return MV_NUM(v) != 0.0;
+        case MOO_STRING: return MV_STR(v)->length > 0;
+        case MOO_BOOL:   return MV_BOOL(v);
         case MOO_NONE:   return false;
-        case MOO_LIST:   return v.data.list->length > 0;
-        case MOO_DICT:   return v.data.dict->count > 0;
+        case MOO_LIST:   return MV_LIST(v)->length > 0;
+        case MOO_DICT:   return MV_DICT(v)->count > 0;
         default:         return true;
     }
 }
@@ -63,8 +63,8 @@ const char* moo_type_name(MooValue v) {
 }
 
 double moo_as_number(MooValue v) {
-    if (v.tag == MOO_NUMBER) return v.data.number;
-    if (v.tag == MOO_BOOL) return v.data.boolean ? 1.0 : 0.0;
+    if (v.tag == MOO_NUMBER) return MV_NUM(v);
+    if (v.tag == MOO_BOOL) return MV_BOOL(v) ? 1.0 : 0.0;
     return 0.0;
 }
 
