@@ -18,6 +18,7 @@ fn main() {
         .file("runtime/moo_db.c")
         .file("runtime/moo_result.c")
         .file("runtime/moo_graphics.c")
+        .file("runtime/moo_3d.c")
         .include("runtime")
         .include("/usr/include/SDL2")
         .opt_level(2)
@@ -32,6 +33,11 @@ fn main() {
 
     // Link SDL2 for graphics support
     println!("cargo:rustc-link-lib=SDL2");
+
+    // Link OpenGL + GLEW + GLFW for 3D support
+    println!("cargo:rustc-link-lib=GL");
+    println!("cargo:rustc-link-lib=GLEW");
+    println!("cargo:rustc-link-lib=glfw");
 
     println!("cargo:rerun-if-changed=runtime/");
 }

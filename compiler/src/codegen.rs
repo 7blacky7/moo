@@ -1273,6 +1273,75 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_delay, &[ms.into()], "delay")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    // 3D Grafik
+                    "3d_erstelle" | "3d_create" | "raum_erstelle" | "space_create" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_3d_create, &[a[0].into(), a[1].into(), a[2].into()], "3d_win");
+                    }
+                    "3d_offen" | "3d_is_open" | "raum_offen" | "space_is_open" => {
+                        let win = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_3d_is_open, &[win.into()], "3d_open");
+                    }
+                    "3d_löschen" | "3d_clear" | "raum_löschen" | "space_clear" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_clear, &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "3d_clr")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "3d_aktualisieren" | "3d_update" | "raum_aktualisieren" | "space_update" => {
+                        let win = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_3d_update, &[win.into()], "3d_upd")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "3d_schliessen" | "3d_close" | "raum_schliessen" | "space_close" => {
+                        let win = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_3d_close, &[win.into()], "3d_cls")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "3d_perspektive" | "3d_perspective" | "raum_perspektive" | "space_perspective" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_perspective, &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "3d_persp")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "3d_kamera" | "3d_camera" | "raum_kamera" | "space_camera" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_camera, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into()], "3d_cam")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "3d_rotiere" | "3d_rotate" | "raum_rotiere" | "space_rotate" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_rotate, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "3d_rot")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "3d_verschiebe" | "3d_translate" | "raum_verschiebe" | "space_translate" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_translate, &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "3d_tr")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "3d_push" | "raum_push" | "space_push" => {
+                        let win = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_3d_push, &[win.into()], "3d_push")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "3d_pop" | "raum_pop" | "space_pop" => {
+                        let win = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_3d_pop, &[win.into()], "3d_pop")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "3d_dreieck" | "3d_triangle" | "raum_dreieck" | "space_triangle" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_triangle, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into(), a[7].into(), a[8].into(), a[9].into(), a[10].into()], "3d_tri")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "3d_würfel" | "3d_cube" | "raum_würfel" | "space_cube" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_cube, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "3d_cube")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "3d_kugel" | "3d_sphere" | "raum_kugel" | "space_sphere" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_sphere, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into()], "3d_sph")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     _ => {}
                 }
 

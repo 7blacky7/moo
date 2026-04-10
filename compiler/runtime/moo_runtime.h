@@ -24,6 +24,7 @@ typedef enum {
     MOO_CHANNEL = 10,
     MOO_DATABASE = 11,
     MOO_WINDOW   = 12,
+    MOO_WINDOW3D = 13,
 } MooTag;
 
 // === Forward Declarations ===
@@ -329,6 +330,26 @@ MooValue moo_mouse_y(MooValue window);
 MooValue moo_mouse_pressed(MooValue window);
 void moo_delay(MooValue ms);
 void moo_pump_events(void);
+
+// === 3D Grafik (OpenGL + GLFW) ===
+MooValue moo_3d_create(MooValue title, MooValue w, MooValue h);
+MooValue moo_3d_is_open(MooValue win);
+void moo_3d_clear(MooValue win, MooValue r, MooValue g, MooValue b);
+void moo_3d_update(MooValue win);
+void moo_3d_close(MooValue win);
+void moo_3d_triangle(MooValue win, MooValue x1, MooValue y1, MooValue z1,
+                     MooValue x2, MooValue y2, MooValue z2,
+                     MooValue x3, MooValue y3, MooValue z3, MooValue color);
+void moo_3d_cube(MooValue win, MooValue x, MooValue y, MooValue z, MooValue size, MooValue color);
+void moo_3d_sphere(MooValue win, MooValue x, MooValue y, MooValue z,
+                   MooValue radius, MooValue color, MooValue detail);
+void moo_3d_camera(MooValue win, MooValue eyeX, MooValue eyeY, MooValue eyeZ,
+                   MooValue lookX, MooValue lookY, MooValue lookZ);
+void moo_3d_perspective(MooValue win, MooValue fov, MooValue near_val, MooValue far_val);
+void moo_3d_rotate(MooValue win, MooValue angle, MooValue ax, MooValue ay, MooValue az);
+void moo_3d_translate(MooValue win, MooValue x, MooValue y, MooValue z);
+void moo_3d_push(MooValue win);
+void moo_3d_pop(MooValue win);
 
 // === Result-Typ ===
 MooValue moo_result_ok(MooValue value);

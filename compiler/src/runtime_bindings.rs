@@ -151,6 +151,21 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_mouse_y: FunctionValue<'ctx>,
     pub moo_mouse_pressed: FunctionValue<'ctx>,
     pub moo_delay: FunctionValue<'ctx>,
+    // 3D Grafik (OpenGL/Software)
+    pub moo_3d_create: FunctionValue<'ctx>,
+    pub moo_3d_is_open: FunctionValue<'ctx>,
+    pub moo_3d_clear: FunctionValue<'ctx>,
+    pub moo_3d_update: FunctionValue<'ctx>,
+    pub moo_3d_close: FunctionValue<'ctx>,
+    pub moo_3d_perspective: FunctionValue<'ctx>,
+    pub moo_3d_camera: FunctionValue<'ctx>,
+    pub moo_3d_rotate: FunctionValue<'ctx>,
+    pub moo_3d_translate: FunctionValue<'ctx>,
+    pub moo_3d_push: FunctionValue<'ctx>,
+    pub moo_3d_pop: FunctionValue<'ctx>,
+    pub moo_3d_triangle: FunctionValue<'ctx>,
+    pub moo_3d_cube: FunctionValue<'ctx>,
+    pub moo_3d_sphere: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeBindings<'ctx> {
@@ -343,6 +358,21 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_mouse_y: decl_mv_mv!("moo_mouse_y", mv1),
             moo_mouse_pressed: decl_mv_mv!("moo_mouse_pressed", mv1),
             moo_delay: module.add_function("moo_delay", void_type.fn_type(mv1, false), None),
+            // 3D Grafik
+            moo_3d_create: decl_mv_mv!("moo_3d_create", mv3),
+            moo_3d_is_open: decl_mv_mv!("moo_3d_is_open", mv1),
+            moo_3d_clear: module.add_function("moo_3d_clear", void_type.fn_type(&[mv, mv, mv, mv], false), None),
+            moo_3d_update: module.add_function("moo_3d_update", void_type.fn_type(mv1, false), None),
+            moo_3d_close: module.add_function("moo_3d_close", void_type.fn_type(mv1, false), None),
+            moo_3d_perspective: module.add_function("moo_3d_perspective", void_type.fn_type(&[mv, mv, mv, mv], false), None),
+            moo_3d_camera: module.add_function("moo_3d_camera", void_type.fn_type(&[mv, mv, mv, mv, mv, mv, mv], false), None),
+            moo_3d_rotate: module.add_function("moo_3d_rotate", void_type.fn_type(&[mv, mv, mv, mv, mv], false), None),
+            moo_3d_translate: module.add_function("moo_3d_translate", void_type.fn_type(&[mv, mv, mv, mv], false), None),
+            moo_3d_push: module.add_function("moo_3d_push", void_type.fn_type(mv1, false), None),
+            moo_3d_pop: module.add_function("moo_3d_pop", void_type.fn_type(mv1, false), None),
+            moo_3d_triangle: module.add_function("moo_3d_triangle", void_type.fn_type(&[mv, mv, mv, mv, mv, mv, mv, mv, mv, mv, mv], false), None),
+            moo_3d_cube: module.add_function("moo_3d_cube", void_type.fn_type(&[mv, mv, mv, mv, mv, mv], false), None),
+            moo_3d_sphere: module.add_function("moo_3d_sphere", void_type.fn_type(&[mv, mv, mv, mv, mv, mv, mv], false), None),
         }
     }
 }
