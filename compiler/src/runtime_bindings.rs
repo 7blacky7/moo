@@ -60,6 +60,9 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_object_get: FunctionValue<'ctx>,
     pub moo_object_set: FunctionValue<'ctx>,
     pub moo_object_set_parent: FunctionValue<'ctx>,
+    // Events
+    pub moo_event_on: FunctionValue<'ctx>,
+    pub moo_event_emit: FunctionValue<'ctx>,
     // Print & convert
     pub moo_print: FunctionValue<'ctx>,
     pub moo_to_string: FunctionValue<'ctx>,
@@ -267,6 +270,9 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_object_get: decl_mv_mv!("moo_object_get", &[mv, ptr_type.into()]),
             moo_object_set: module.add_function("moo_object_set", void_type.fn_type(&[mv, ptr_type.into(), mv], false), None),
             moo_object_set_parent: module.add_function("moo_object_set_parent", void_type.fn_type(mv2, false), None),
+            // Events
+            moo_event_on: module.add_function("moo_event_on", void_type.fn_type(mv3, false), None),
+            moo_event_emit: module.add_function("moo_event_emit", void_type.fn_type(mv2, false), None),
 
             // Print & convert
             moo_print: module.add_function("moo_print", void_type.fn_type(mv1, false), None),

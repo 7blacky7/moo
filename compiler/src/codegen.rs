@@ -1273,6 +1273,20 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_delay, &[ms.into()], "delay")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    // Events
+                    "ereignis_bei" | "event_on" => {
+                        let obj = self.compile_expr(&args[0])?;
+                        let event = self.compile_expr(&args[1])?;
+                        let cb = self.compile_expr(&args[2])?;
+                        self.call_rt_void(self.rt.moo_event_on, &[obj.into(), event.into(), cb.into()], "ev_on")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "ereignis_auslösen" | "event_emit" => {
+                        let obj = self.compile_expr(&args[0])?;
+                        let event = self.compile_expr(&args[1])?;
+                        self.call_rt_void(self.rt.moo_event_emit, &[obj.into(), event.into()], "ev_emit")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     // 3D Grafik
                     "3d_erstelle" | "3d_create" | "raum_erstelle" | "space_create" => {
                         let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
@@ -1643,6 +1657,20 @@ impl<'ctx> CodeGen<'ctx> {
                             .map_err(|e| format!("{e}"))?.into_struct_value();
                         return Ok(final_result);
                     }
+                    // Event-Methoden: obj.bei("klick", cb) / obj.on("click", cb)
+                    "bei" | "on" => {
+                        let event = self.compile_expr(&args[0])?;
+                        let cb = self.compile_expr(&args[1])?;
+                        self.call_rt_void(self.rt.moo_event_on,
+                            &[obj.into(), event.into(), cb.into()], "ev_on")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "auslösen" | "emit" => {
+                        let event = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_event_emit,
+                            &[obj.into(), event.into()], "ev_emit")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     _ => {
                         // Klassen-Methode aufrufen: suche nach class__method
                         // Wir muessen den Klassennamen herausfinden — schwierig zur Compile-Zeit
@@ -1656,6 +1684,14 @@ impl<'ctx> CodeGen<'ctx> {
                             if mname == method {
                                 return self.call_rt(*func, &call_args, "method_call");
                             }
+                        }
+                        // Fallback: Builder-Setter (1 Arg → object_set + return self)
+                        if args.len() == 1 {
+                            let val = self.compile_expr(&args[0])?;
+                            let prop_str = self.make_global_str(method, "bld_prop")?;
+                            self.call_rt_void(self.rt.moo_object_set,
+                                &[obj.into(), prop_str.into(), val.into()], "bld_set")?;
+                            return Ok(obj);
                         }
                         return Err(format!("Methode '{method}' nicht gefunden"));
                     }
@@ -2232,6 +2268,9 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::MatchExpr { value, cases } => {
                 self.compile_match_expr(value, cases)
             }
+            Expr::QueryExpr { var_name, source, where_cond, order_expr, select_expr } => {
+                self.compile_query_expr(var_name, source, where_cond, order_expr, select_expr)
+            }
         }
     }
 
@@ -2321,6 +2360,129 @@ impl<'ctx> CodeGen<'ctx> {
         let result = self.builder.build_load(self.mv_type(), result_ptr, "match_res")
             .map_err(|e| format!("{e}"))?.into_struct_value();
         Ok(result)
+    }
+
+    /// LINQ Query: von x in quelle [wo bed] [sortiere] wähle expr
+    fn compile_query_expr(&mut self, var_name: &str, source: &Expr,
+                          where_cond: &Option<Box<Expr>>, order_expr: &Option<Box<Expr>>,
+                          select_expr: &Expr) -> Result<StructValue<'ctx>, String> {
+        let func = self.current_function.unwrap();
+        let i32_type = self.context.i32_type();
+        let src_val = self.compile_expr(source)?;
+
+        // Hilfsfunktion: Iteriere Liste, wende closure auf jedes Element an
+        // 1. Filter (wo/where)
+        let filtered = if let Some(cond) = where_cond {
+            let filt = self.call_rt(self.rt.moo_list_new, &[i32_type.const_int(0, false).into()], "q_filt")?;
+            let fp = self.builder.build_alloca(self.mv_type(), "qfp").map_err(|e| format!("{e}"))?;
+            self.builder.build_store(fp, filt).map_err(|e| format!("{e}"))?;
+            let sp = self.builder.build_alloca(self.mv_type(), "qsp").map_err(|e| format!("{e}"))?;
+            self.builder.build_store(sp, src_val).map_err(|e| format!("{e}"))?;
+            let lr = self.builder.build_call(self.rt.moo_list_iter_len, &[src_val.into()], "l")
+                .map_err(|e| format!("{e}"))?;
+            let len = match lr.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                _ => return Err("len".into()),
+            };
+            let ip = self.builder.build_alloca(i32_type, "qi").map_err(|e| format!("{e}"))?;
+            self.builder.build_store(ip, i32_type.const_int(0, false)).map_err(|e| format!("{e}"))?;
+
+            let cb = self.context.append_basic_block(func, "qf_c");
+            let bb = self.context.append_basic_block(func, "qf_b");
+            let ab = self.context.append_basic_block(func, "qf_a");
+            self.builder.build_unconditional_branch(cb).map_err(|e| format!("{e}"))?;
+
+            self.builder.position_at_end(cb);
+            let ci = self.builder.build_load(i32_type, ip, "i").map_err(|e| format!("{e}"))?.into_int_value();
+            let cm = self.builder.build_int_compare(inkwell::IntPredicate::SLT, ci, len, "c")
+                .map_err(|e| format!("{e}"))?;
+            self.builder.build_conditional_branch(cm, bb, ab).map_err(|e| format!("{e}"))?;
+
+            self.builder.position_at_end(bb);
+            let sl = self.builder.build_load(self.mv_type(), sp, "s").map_err(|e| format!("{e}"))?.into_struct_value();
+            let il = self.builder.build_load(i32_type, ip, "i").map_err(|e| format!("{e}"))?.into_int_value();
+            let el = self.call_rt(self.rt.moo_list_iter_get, &[sl.into(), il.into()], "e")?;
+            self.store_var(var_name, el)?;
+
+            let cv = self.compile_expr(cond)?;
+            let tr = self.builder.build_call(self.rt.moo_is_truthy, &[cv.into()], "t")
+                .map_err(|e| format!("{e}"))?;
+            let tb = match tr.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                _ => return Err("t".into()),
+            };
+            let adb = self.context.append_basic_block(func, "qf_ad");
+            let skb = self.context.append_basic_block(func, "qf_sk");
+            self.builder.build_conditional_branch(tb, adb, skb).map_err(|e| format!("{e}"))?;
+
+            self.builder.position_at_end(adb);
+            let el2 = self.load_var(var_name)?;
+            let fl = self.builder.build_load(self.mv_type(), fp, "f").map_err(|e| format!("{e}"))?.into_struct_value();
+            self.call_rt_void(self.rt.moo_list_append, &[fl.into(), el2.into()], "a")?;
+            self.builder.build_unconditional_branch(skb).map_err(|e| format!("{e}"))?;
+
+            self.builder.position_at_end(skb);
+            let ni = self.builder.build_load(i32_type, ip, "i").map_err(|e| format!("{e}"))?.into_int_value();
+            let nn = self.builder.build_int_add(ni, i32_type.const_int(1, false), "n").map_err(|e| format!("{e}"))?;
+            self.builder.build_store(ip, nn).map_err(|e| format!("{e}"))?;
+            self.builder.build_unconditional_branch(cb).map_err(|e| format!("{e}"))?;
+
+            self.builder.position_at_end(ab);
+            self.builder.build_load(self.mv_type(), fp, "filtered").map_err(|e| format!("{e}"))?.into_struct_value()
+        } else {
+            src_val
+        };
+
+        // 2. Sort
+        let sorted = if order_expr.is_some() {
+            self.call_rt(self.rt.moo_list_sort, &[filtered.into()], "sorted")?
+        } else {
+            filtered
+        };
+
+        // 3. Map (wähle/select)
+        let res = self.call_rt(self.rt.moo_list_new, &[i32_type.const_int(0, false).into()], "q_res")?;
+        let rp = self.builder.build_alloca(self.mv_type(), "qrp").map_err(|e| format!("{e}"))?;
+        self.builder.build_store(rp, res).map_err(|e| format!("{e}"))?;
+        let sp2 = self.builder.build_alloca(self.mv_type(), "qsp2").map_err(|e| format!("{e}"))?;
+        self.builder.build_store(sp2, sorted).map_err(|e| format!("{e}"))?;
+        let lr2 = self.builder.build_call(self.rt.moo_list_iter_len, &[sorted.into()], "l2")
+            .map_err(|e| format!("{e}"))?;
+        let len2 = match lr2.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("len".into()),
+        };
+        let ip2 = self.builder.build_alloca(i32_type, "qi2").map_err(|e| format!("{e}"))?;
+        self.builder.build_store(ip2, i32_type.const_int(0, false)).map_err(|e| format!("{e}"))?;
+
+        let mc = self.context.append_basic_block(func, "qm_c");
+        let mb2 = self.context.append_basic_block(func, "qm_b");
+        let ma = self.context.append_basic_block(func, "qm_a");
+        self.builder.build_unconditional_branch(mc).map_err(|e| format!("{e}"))?;
+
+        self.builder.position_at_end(mc);
+        let ci2 = self.builder.build_load(i32_type, ip2, "i").map_err(|e| format!("{e}"))?.into_int_value();
+        let cm2 = self.builder.build_int_compare(inkwell::IntPredicate::SLT, ci2, len2, "c")
+            .map_err(|e| format!("{e}"))?;
+        self.builder.build_conditional_branch(cm2, mb2, ma).map_err(|e| format!("{e}"))?;
+
+        self.builder.position_at_end(mb2);
+        let sl2 = self.builder.build_load(self.mv_type(), sp2, "s").map_err(|e| format!("{e}"))?.into_struct_value();
+        let il2 = self.builder.build_load(i32_type, ip2, "i").map_err(|e| format!("{e}"))?.into_int_value();
+        let el3 = self.call_rt(self.rt.moo_list_iter_get, &[sl2.into(), il2.into()], "e")?;
+        self.store_var(var_name, el3)?;
+        let mapped = self.compile_expr(select_expr)?;
+        let rl = self.builder.build_load(self.mv_type(), rp, "r").map_err(|e| format!("{e}"))?.into_struct_value();
+        self.call_rt_void(self.rt.moo_list_append, &[rl.into(), mapped.into()], "a")?;
+
+        let ni2 = self.builder.build_load(i32_type, ip2, "i").map_err(|e| format!("{e}"))?.into_int_value();
+        let nn2 = self.builder.build_int_add(ni2, i32_type.const_int(1, false), "n").map_err(|e| format!("{e}"))?;
+        self.builder.build_store(ip2, nn2).map_err(|e| format!("{e}"))?;
+        self.builder.build_unconditional_branch(mc).map_err(|e| format!("{e}"))?;
+
+        self.builder.position_at_end(ma);
+        let fv = self.builder.build_load(self.mv_type(), rp, "q_result").map_err(|e| format!("{e}"))?.into_struct_value();
+        Ok(fv)
     }
 
     /// Spread in Liste: iteriert source und appendet jedes Element in die Ziel-Liste
@@ -2504,6 +2666,14 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::NullishCoalesce { left, right } => {
                 Self::collect_free_vars(left, params, out);
                 Self::collect_free_vars(right, params, out);
+            }
+            Expr::QueryExpr { var_name, source, where_cond, order_expr, select_expr } => {
+                Self::collect_free_vars(source, params, out);
+                let mut inner = params.to_vec();
+                inner.push(var_name.clone());
+                if let Some(c) = where_cond { Self::collect_free_vars(c, &inner, out); }
+                if let Some(o) = order_expr { Self::collect_free_vars(o, &inner, out); }
+                Self::collect_free_vars(select_expr, &inner, out);
             }
             _ => {}
         }

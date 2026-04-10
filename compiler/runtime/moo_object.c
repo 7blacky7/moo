@@ -57,3 +57,46 @@ void moo_object_set_parent(MooValue obj, MooValue parent) {
     if (obj.tag == MOO_OBJECT && parent.tag == MOO_OBJECT)
         MV_OBJ(obj)->parent = MV_OBJ(parent);
 }
+
+// === Event-System ===
+// Events werden als "__event_<name>" Property gespeichert (MooList von Callbacks)
+
+void moo_event_on(MooValue obj, MooValue event_name, MooValue callback) {
+    if (obj.tag != MOO_OBJECT || event_name.tag != MOO_STRING) return;
+    const char* name = MV_STR(event_name)->chars;
+
+    // Property-Key: "__event_<name>"
+    char key[256];
+    snprintf(key, sizeof(key), "__event_%s", name);
+
+    MooValue list = moo_object_get(obj, key);
+    if (list.tag != MOO_LIST) {
+        // Neue Event-Liste erstellen
+        list = moo_list_new(4);
+        moo_object_set(obj, key, list);
+    }
+    moo_list_append(list, callback);
+}
+
+void moo_event_emit(MooValue obj, MooValue event_name) {
+    if (obj.tag != MOO_OBJECT || event_name.tag != MOO_STRING) return;
+    const char* name = MV_STR(event_name)->chars;
+
+    char key[256];
+    snprintf(key, sizeof(key), "__event_%s", name);
+
+    MooValue list = moo_object_get(obj, key);
+    if (list.tag != MOO_LIST) return;
+
+    MooList* callbacks = MV_LIST(list);
+    for (int32_t i = 0; i < callbacks->length; i++) {
+        MooValue cb = callbacks->items[i];
+        if (cb.tag == MOO_FUNC) {
+            MooFunc* fn = MV_FUNC(cb);
+            // Callback mit Event-Name als Argument aufrufen
+            typedef MooValue (*MooFn1)(MooValue);
+            MooFn1 func = (MooFn1)fn->fn_ptr;
+            func(event_name);
+        }
+    }
+}

@@ -120,6 +120,13 @@ class PythonGenerator:
         eq_parts = " and ".join(f"self.{f} == other.{f}" for f in node.fields)
         lines.append(f"{self._prefix()}return isinstance(other, {node.name}) and {eq_parts}")
         self.indent -= 1
+        # Builder-Methoden (Dart Cascade-Pattern): jedes Feld bekommt Setter der self zurückgibt
+        for f in node.fields:
+            lines.append(f"{self._prefix()}def {f}(self, val):")
+            self.indent += 1
+            lines.append(f"{self._prefix()}self.{f} = val")
+            lines.append(f"{self._prefix()}return self")
+            self.indent -= 1
         self.indent -= 1
         return "\n".join(lines)
 

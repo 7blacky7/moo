@@ -719,11 +719,47 @@ impl Parser {
             TokenType::LBracket => self.parse_list(),
             TokenType::LBrace => self.parse_dict(),
             TokenType::Match => self.parse_match_expr(),
+            TokenType::QueryFrom | TokenType::From => self.parse_query_expr(),
             _ => Err(ParseError {
                 message: format!("Ausdruck erwartet, bekommen {:?}", self.current_type()),
                 line: self.current().line,
             }),
         }
+    }
+
+    fn parse_query_expr(&mut self) -> Result<Expr, ParseError> {
+        self.pos += 1; // von/from
+        let var_name = self.eat_identifier()?;
+        self.eat(&TokenType::In)?;
+        let source = self.parse_expression()?;
+
+        // Optional: wo/where
+        let where_cond = if matches!(self.current_type(), TokenType::Where) {
+            self.pos += 1;
+            Some(Box::new(self.parse_expression()?))
+        } else {
+            None
+        };
+
+        // Optional: sortiere/order
+        let order_expr = if matches!(self.current_type(), TokenType::Order) {
+            self.pos += 1;
+            Some(Box::new(self.parse_expression()?))
+        } else {
+            None
+        };
+
+        // Pflicht: wähle/select
+        self.eat(&TokenType::Select)?;
+        let select_expr = self.parse_expression()?;
+
+        Ok(Expr::QueryExpr {
+            var_name,
+            source: Box::new(source),
+            where_cond,
+            order_expr,
+            select_expr: Box::new(select_expr),
+        })
     }
 
     fn is_lambda(&self) -> bool {

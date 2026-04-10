@@ -125,6 +125,14 @@ class JavaScriptGenerator:
         lines.append(f'{self._prefix()}return `{node.name}({repr_parts})`;')
         self.indent -= 1
         lines.append(f"{self._prefix()}}}")
+        # Builder-Methoden (Dart Cascade-Pattern)
+        for f in fields:
+            lines.append(f"{self._prefix()}{f}(val) {{")
+            self.indent += 1
+            lines.append(f"{self._prefix()}this.{f} = val;")
+            lines.append(f"{self._prefix()}return this;")
+            self.indent -= 1
+            lines.append(f"{self._prefix()}}}")
         self.indent -= 1
         lines.append(f"{self._prefix()}}}")
         return "\n".join(lines)

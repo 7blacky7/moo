@@ -227,6 +227,10 @@ MooValue moo_object_get(MooValue obj, const char* prop);
 void moo_object_set(MooValue obj, const char* prop, MooValue value);
 void moo_object_set_parent(MooValue obj, MooValue parent);
 
+// === Event-System ===
+void moo_event_on(MooValue obj, MooValue event_name, MooValue callback);
+void moo_event_emit(MooValue obj, MooValue event_name);
+
 // === Arithmetik & Vergleiche ===
 MooValue moo_add(MooValue a, MooValue b);
 MooValue moo_sub(MooValue a, MooValue b);

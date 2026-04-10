@@ -79,6 +79,14 @@ pub enum Expr {
         /// (pattern, guard, result_expr)
         cases: Vec<(Option<Expr>, Option<Expr>, Expr)>,
     },
+    /// LINQ Query: von x in quelle [wo bedingung] [sortiere expr] wähle expr
+    QueryExpr {
+        var_name: std::string::String,
+        source: Box<Expr>,
+        where_cond: Option<Box<Expr>>,
+        order_expr: Option<Box<Expr>>,
+        select_expr: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone)]

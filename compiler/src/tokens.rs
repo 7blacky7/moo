@@ -42,6 +42,10 @@ pub enum TokenType {
     Defer,      // aufräumen / defer
     Data,       // daten / data
     Guard,      // garantiere / guard
+    Where,      // wo / where
+    Select,     // wähle / select
+    Order,      // sortiere / order
+    QueryFrom,  // von (Query-Kontext, nicht Import)
 
     // Operators
     At,           // @
@@ -138,6 +142,10 @@ pub fn keyword_lookup(word: &str) -> Option<TokenType> {
         "aufräumen" => Some(TokenType::Defer),
         "daten" => Some(TokenType::Data),
         "garantiere" => Some(TokenType::Guard),
+        "von" => Some(TokenType::QueryFrom),
+        "wo" => Some(TokenType::Where),
+        "wähle" => Some(TokenType::Select),
+        "sortiere" => Some(TokenType::Order),
 
         // English
         "set" => Some(TokenType::Set),
@@ -174,6 +182,9 @@ pub fn keyword_lookup(word: &str) -> Option<TokenType> {
         "defer" => Some(TokenType::Defer),
         "data" => Some(TokenType::Data),
         "guard" => Some(TokenType::Guard),
+        "where" => Some(TokenType::Where),
+        "select" => Some(TokenType::Select),
+        "order" => Some(TokenType::Order),
 
         _ => Option::None,
     }
