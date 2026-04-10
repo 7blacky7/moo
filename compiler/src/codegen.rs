@@ -1342,6 +1342,11 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_3d_sphere, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into()], "3d_sph")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    "raum_taste" | "space_key" | "3d_taste" | "3d_key_pressed" => {
+                        let win_arg = self.compile_expr(&args[0])?;
+                        let key_arg = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_3d_key_pressed, &[win_arg.into(), key_arg.into()], "3d_key");
+                    }
                     _ => {}
                 }
 

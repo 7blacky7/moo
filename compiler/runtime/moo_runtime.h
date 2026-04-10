@@ -351,6 +351,9 @@ void moo_3d_translate(MooValue win, MooValue x, MooValue y, MooValue z);
 void moo_3d_push(MooValue win);
 void moo_3d_pop(MooValue win);
 
+// === 3D Input ===
+MooValue moo_3d_key_pressed(MooValue win, MooValue key);
+
 // === Result-Typ ===
 MooValue moo_result_ok(MooValue value);
 MooValue moo_result_err(MooValue msg);

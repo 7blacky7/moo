@@ -182,7 +182,6 @@ void moo_3d_perspective(MooValue win, MooValue fov, MooValue near_val, MooValue 
     float n = (float)MV_NUM(near_val);
     float fa = (float)MV_NUM(far_val);
     float aspect = (float)mw->width / (float)mw->height;
-
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
 
@@ -208,7 +207,6 @@ void moo_3d_camera(MooValue win, MooValue eyeX, MooValue eyeY, MooValue eyeZ,
 
     float ex = (float)MV_NUM(eyeX), ey = (float)MV_NUM(eyeY), ez = (float)MV_NUM(eyeZ);
     float lx = (float)MV_NUM(lookX), ly = (float)MV_NUM(lookY), lz = (float)MV_NUM(lookZ);
-
     // LookAt-Matrix berechnen (Up = 0,1,0)
     // forward = normalize(look - eye)
     float fx = lx - ex, fy = ly - ey, fz = lz - ez;
@@ -376,4 +374,20 @@ void moo_3d_sphere(MooValue win, MooValue x, MooValue y, MooValue z,
         }
         glEnd();
     }
+}
+
+// GLFW-basierte Tastaturabfrage fuer 3D-Fenster
+MooValue moo_3d_key_pressed(MooValue win, MooValue key) {
+    MooWindow3D* mw = get_win3d(win);
+    if (!mw || key.tag != MOO_STRING) return moo_bool(false);
+    const char* name = MV_STR(key)->chars;
+    int glfw_key = 0;
+    if (strcmp(name, "oben") == 0 || strcmp(name, "up") == 0) glfw_key = GLFW_KEY_UP;
+    else if (strcmp(name, "unten") == 0 || strcmp(name, "down") == 0) glfw_key = GLFW_KEY_DOWN;
+    else if (strcmp(name, "links") == 0 || strcmp(name, "left") == 0) glfw_key = GLFW_KEY_LEFT;
+    else if (strcmp(name, "rechts") == 0 || strcmp(name, "right") == 0) glfw_key = GLFW_KEY_RIGHT;
+    else if (strcmp(name, "leertaste") == 0 || strcmp(name, "space") == 0) glfw_key = GLFW_KEY_SPACE;
+    else if (strcmp(name, "escape") == 0) glfw_key = GLFW_KEY_ESCAPE;
+    else return moo_bool(false);
+    return moo_bool(glfwGetKey(mw->window, glfw_key) == GLFW_PRESS);
 }
