@@ -188,6 +188,29 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| format!("Object-File schreiben fehlgeschlagen: {}", e.to_string()))
     }
 
+    pub fn write_wasm(&self, path: &Path) -> Result<(), String> {
+        Target::initialize_webassembly(&InitializationConfig::default());
+
+        let triple = inkwell::targets::TargetTriple::create("wasm32-unknown-unknown");
+        let target = Target::from_triple(&triple)
+            .map_err(|e| format!("WASM Target-Fehler: {}", e.to_string()))?;
+
+        let machine = target
+            .create_target_machine(
+                &triple,
+                "generic",
+                "",
+                OptimizationLevel::Default,
+                RelocMode::PIC,
+                CodeModel::Default,
+            )
+            .ok_or("Konnte WASM TargetMachine nicht erstellen")?;
+
+        machine
+            .write_to_file(&self.module, FileType::Object, path)
+            .map_err(|e| format!("WASM-Datei schreiben fehlgeschlagen: {}", e.to_string()))
+    }
+
     // === Hilfsfunktionen ===
 
     /// Ruft eine Runtime-Funktion auf und gibt das Ergebnis als StructValue zurueck

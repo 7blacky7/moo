@@ -1,19 +1,30 @@
 {
   "name": "moo-lang",
   "displayName": "moo Language",
-  "description": "Syntax-Highlighting für die zweisprachige Programmiersprache moo",
-  "version": "0.1.0",
+  "description": "Syntax-Highlighting und LSP für die mehrsprachige Programmiersprache moo",
+  "version": "0.2.0",
   "publisher": "moo-lang",
   "engines": {
     "vscode": "^1.75.0"
   },
-  "categories": ["Programming Languages"],
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:moo"
+  ],
+  "main": "./extension.js",
   "contributes": {
     "languages": [
       {
         "id": "moo",
-        "aliases": ["moo", "Moo"],
-        "extensions": [".moo"],
+        "aliases": [
+          "moo",
+          "Moo"
+        ],
+        "extensions": [
+          ".moo"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -24,5 +35,8 @@
         "path": "./syntaxes/moo.tmLanguage.json"
       }
     ]
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
   }
 }

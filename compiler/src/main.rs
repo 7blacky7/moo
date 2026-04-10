@@ -28,6 +28,9 @@ enum Commands {
         /// Nur LLVM IR erzeugen (.ll)
         #[arg(long)]
         emit_ir: bool,
+        /// WebAssembly erzeugen (.wasm)
+        #[arg(long)]
+        target: Option<String>,
     },
     /// Eine .moo-Datei kompilieren und sofort ausführen
     Run {
@@ -67,8 +70,8 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Compile { file, output, emit_ir } => {
-            if let Err(e) = compile(&file, output.as_deref(), emit_ir) {
+        Commands::Compile { file, output, emit_ir, target } => {
+            if let Err(e) = compile(&file, output.as_deref(), emit_ir, target.as_deref()) {
                 eprintln!("Fehler: {e}");
                 std::process::exit(1);
             }
@@ -229,11 +232,11 @@ fn resolve_modules(
     Ok(())
 }
 
-fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool) -> Result<(), String> {
+fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, target: Option<&str>) -> Result<(), String> {
     // Haupt-Datei parsen
     let mut program = parse_file(file)?;
 
-    // Module AST-basiert auflösen (kein Text-Copy mehr!)
+    // Module AST-basiert auflösen
     let file_dir = file.parent().unwrap_or(std::path::Path::new("."));
     let mut visited = std::collections::HashSet::new();
     let canonical = file.canonicalize().unwrap_or(file.clone());
@@ -252,6 +255,17 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool) -> R
             .unwrap_or_else(|| file.with_extension("ll"));
         compiler.write_ir(&ir_path)?;
         println!("✓ LLVM IR geschrieben: {}", ir_path.display());
+        return Ok(());
+    }
+
+    // WebAssembly Target
+    if target == Some("wasm") {
+        let wasm_path = output
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| file.with_extension("wasm"));
+        compiler.write_wasm(&wasm_path)?;
+        println!("✓ WASM geschrieben: {}", wasm_path.display());
+        println!("  Hinweis: .wasm Objektdatei ohne Runtime. Fuer volle Programme braucht es wasi-sdk/emscripten.");
         return Ok(());
     }
 
@@ -305,7 +319,7 @@ fn run(file: &PathBuf) -> Result<(), String> {
     let tmp_dir = std::env::temp_dir();
     let tmp_output = tmp_dir.join("moo_tmp_binary");
 
-    compile(file, Some(&tmp_output), false)?;
+    compile(file, Some(&tmp_output), false, None)?;
 
     let status = Command::new(&tmp_output)
         .status()
@@ -380,7 +394,7 @@ fn repl() {
         }
 
         unsafe { std::env::set_var("MOO_QUIET", "1"); }
-        match compile(&tmp_src, Some(&tmp_bin), false) {
+        match compile(&tmp_src, Some(&tmp_bin), false, None) {
             Ok(()) => {
                 // Erfolgreich kompiliert — ausfuehren (ohne den "Kompiliert" Output)
                 let _ = Command::new(&tmp_bin).status();

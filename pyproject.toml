@@ -3,7 +3,9 @@ name = "moo"
 version = "0.1.0"
 description = "Eine universelle, zweisprachige Programmiersprache (DE/EN) die nach Python, JS und mehr transpiliert"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pygls>=2.1.1",
+]
 
 [project.scripts]
 moo = "moo.cli:main"

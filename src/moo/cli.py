@@ -121,6 +121,9 @@ def main():
     # moo repl
     sub.add_parser("repl", help="Interaktiver Modus (REPL)")
 
+    # moo lsp
+    sub.add_parser("lsp", help="Language Server starten (LSP via stdio)")
+
     args = ap.parse_args()
     if args.command == "run":
         cmd_run(args)
@@ -128,6 +131,9 @@ def main():
         cmd_build(args)
     elif args.command == "repl":
         cmd_repl()
+    elif args.command == "lsp":
+        from moo.lsp import main as lsp_main
+        lsp_main()
     elif args.command is None:
         cmd_repl()
     else:
