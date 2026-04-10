@@ -438,7 +438,39 @@ wenn max(3, 7) == 7:
 sonst:
     fail += 1
 
-# === 24. ZWEISPRACHIG ===
+# === 24. SPREAD ===
+setze a auf [1, 2, 3]
+setze b auf [4, 5, 6]
+setze alles auf [...a, ...b]
+wenn alles[0] == 1:
+    ok += 1
+sonst:
+    fail += 1
+
+wenn alles[5] == 6:
+    ok += 1
+sonst:
+    fail += 1
+
+wenn länge(alles) == 6:
+    ok += 1
+sonst:
+    fail += 1
+
+# Dict Spread
+setze basis auf {"x": 1}
+setze merged auf {...basis, "y": 2}
+wenn merged["x"] == 1:
+    ok += 1
+sonst:
+    fail += 1
+
+wenn merged["y"] == 2:
+    ok += 1
+sonst:
+    fail += 1
+
+# === 25. ZWEISPRACHIG ===
 set greeting to "Hello"
 set result to greeting + " " + name
 wenn result == "Hello moo":
