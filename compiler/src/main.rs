@@ -55,9 +55,55 @@ fn main() {
     }
 }
 
-fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool) -> Result<(), String> {
+/// Liest eine .moo-Datei und löst Imports rekursiv auf
+fn resolve_imports(file: &PathBuf, visited: &mut std::collections::HashSet<PathBuf>) -> Result<String, String> {
+    let canonical = file.canonicalize().unwrap_or(file.clone());
+    if visited.contains(&canonical) {
+        return Ok(String::new()); // Zirkuläre Imports vermeiden
+    }
+    visited.insert(canonical);
+
     let source = std::fs::read_to_string(file)
-        .map_err(|e| format!("Datei lesen fehlgeschlagen: {e}"))?;
+        .map_err(|e| format!("Datei '{}' lesen fehlgeschlagen: {e}", file.display()))?;
+
+    let dir = file.parent().unwrap_or(std::path::Path::new("."));
+    let mut result = String::new();
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+        // "importiere <name>" oder "import <name>" — Datei einbinden
+        let import_module = if trimmed.starts_with("importiere ") {
+            Some(trimmed.strip_prefix("importiere ").unwrap().trim())
+        } else if trimmed.starts_with("import ") && !trimmed.contains(" from ") {
+            Some(trimmed.strip_prefix("import ").unwrap().trim())
+        } else {
+            None
+        };
+
+        if let Some(module_name) = import_module {
+            // "als" / "as" Alias entfernen
+            let name = module_name.split_whitespace().next().unwrap_or(module_name);
+            let import_path = dir.join(format!("{name}.moo"));
+            if import_path.exists() {
+                let imported = resolve_imports(&import_path, visited)?;
+                result.push_str(&imported);
+                result.push('\n');
+                continue;
+            }
+            // Datei nicht gefunden — Import-Zeile beibehalten (wird vom Parser ignoriert)
+        }
+
+        result.push_str(line);
+        result.push('\n');
+    }
+
+    Ok(result)
+}
+
+fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool) -> Result<(), String> {
+    // Imports rekursiv auflösen
+    let mut visited = std::collections::HashSet::new();
+    let source = resolve_imports(file, &mut visited)?;
 
     // Lexer → Parser → AST
     let mut lex = lexer::Lexer::new();

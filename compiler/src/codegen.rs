@@ -33,6 +33,8 @@ pub struct CodeGen<'ctx> {
     class_methods: HashMap<(String, String), FunctionValue<'ctx>>,
     // Lambda-Mapping: variable_name -> LLVM function name
     lambda_names: HashMap<String, String>,
+    // Lambda-Captures: lambda_fn_name -> [captured var names]
+    lambda_captures: HashMap<String, Vec<String>>,
     // Lambda-Counter
     lambda_counter: usize,
 }
@@ -54,6 +56,7 @@ impl<'ctx> CodeGen<'ctx> {
             class_constructors: HashMap::new(),
             class_methods: HashMap::new(),
             lambda_names: HashMap::new(),
+            lambda_captures: HashMap::new(),
             lambda_counter: 0,
         }
     }
@@ -802,6 +805,18 @@ impl<'ctx> CodeGen<'ctx> {
                     let v = self.compile_expr(a)?;
                     compiled_args.push(v.into());
                 }
+                // Closure-Captures anhaengen wenn vorhanden
+                if let Some(captures) = self.lambda_captures.get(&actual_name).cloned() {
+                    for var_name in &captures {
+                        if let Ok(val) = self.load_var(var_name) {
+                            compiled_args.push(val.into());
+                        } else {
+                            let none_val = self.call_rt(self.rt.moo_none, &[], "cap_none")?;
+                            compiled_args.push(none_val.into());
+                        }
+                    }
+                }
+
                 // Fehlende Argumente mit moo_none() auffuellen (fuer Default-Parameter)
                 let expected_params = function.count_params() as usize;
                 while compiled_args.len() < expected_params {
@@ -983,15 +998,35 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(obj)
             }
             Expr::Lambda { params, body } => {
-                // Lambdas als benannte Funktionen kompilieren
+                // Lambdas als benannte Funktionen mit Closure-Captures kompilieren
                 let lambda_name = format!("__lambda_{}", self.lambda_counter);
                 self.lambda_counter += 1;
                 let mv = self.mv_type();
-                let param_types: Vec<BasicMetadataTypeEnum> = params.iter()
+
+                // Freie Variablen finden (Closure-Captures)
+                let mut free_vars = Vec::new();
+                Self::collect_free_vars(body, params, &mut free_vars);
+                free_vars.sort();
+                free_vars.dedup();
+
+                // Capture-Werte VOR dem Funktionswechsel laden
+                // Nur Variablen behalten die tatsaechlich existieren
+                let free_vars: Vec<String> = free_vars.into_iter()
+                    .filter(|v| self.variables.contains_key(v))
+                    .collect();
+
+                // Funktion: explizite params + capture params
+                let total_params = params.len() + free_vars.len();
+                let param_types: Vec<BasicMetadataTypeEnum> = (0..total_params)
                     .map(|_| BasicMetadataTypeEnum::from(mv))
                     .collect();
                 let fn_type = mv.fn_type(&param_types, false);
                 let function = self.module.add_function(&lambda_name, fn_type, None);
+
+                // Capture-Mapping speichern fuer den Aufrufer
+                if !free_vars.is_empty() {
+                    self.lambda_captures.insert(lambda_name.clone(), free_vars.clone());
+                }
 
                 let entry = self.context.append_basic_block(function, "entry");
                 let prev_fn = self.current_function;
@@ -1002,12 +1037,23 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.position_at_end(entry);
                 self.variables.clear();
 
+                // Explizite Parameter
                 for (i, param_name) in params.iter().enumerate() {
                     let alloca = self.builder.build_alloca(mv, param_name)
                         .map_err(|e| format!("{e}"))?;
                     self.builder.build_store(alloca, function.get_nth_param(i as u32).unwrap())
                         .map_err(|e| format!("{e}"))?;
                     self.variables.insert(param_name.clone(), alloca);
+                }
+
+                // Capture-Parameter
+                for (i, var_name) in free_vars.iter().enumerate() {
+                    let param_idx = (params.len() + i) as u32;
+                    let alloca = self.builder.build_alloca(mv, var_name)
+                        .map_err(|e| format!("{e}"))?;
+                    self.builder.build_store(alloca, function.get_nth_param(param_idx).unwrap())
+                        .map_err(|e| format!("{e}"))?;
+                    self.variables.insert(var_name.clone(), alloca);
                 }
 
                 let result = self.compile_expr(body)?;
@@ -1019,10 +1065,41 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder.position_at_end(bb);
                 }
 
-                // Lambda als MooValue zurueckgeben - fuer jetzt einfach none
-                // (Lambdas werden ueber ihren Namen aufgerufen)
                 self.call_rt(self.rt.moo_none, &[], "lambda_placeholder")
             }
+        }
+    }
+
+    /// Sammelt alle freien Variablen in einem Ausdruck (Identifier die nicht in params sind)
+    fn collect_free_vars(expr: &Expr, params: &[String], out: &mut Vec<String>) {
+        match expr {
+            Expr::Identifier(name) => {
+                if !params.contains(name) {
+                    out.push(name.clone());
+                }
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                Self::collect_free_vars(left, params, out);
+                Self::collect_free_vars(right, params, out);
+            }
+            Expr::UnaryOp { operand, .. } => {
+                Self::collect_free_vars(operand, params, out);
+            }
+            Expr::FunctionCall { args, .. } => {
+                for a in args { Self::collect_free_vars(a, params, out); }
+            }
+            Expr::MethodCall { object, args, .. } => {
+                Self::collect_free_vars(object, params, out);
+                for a in args { Self::collect_free_vars(a, params, out); }
+            }
+            Expr::PropertyAccess { object, .. } => {
+                Self::collect_free_vars(object, params, out);
+            }
+            Expr::IndexAccess { object, index } => {
+                Self::collect_free_vars(object, params, out);
+                Self::collect_free_vars(index, params, out);
+            }
+            _ => {}
         }
     }
 }
