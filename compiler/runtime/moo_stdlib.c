@@ -171,3 +171,44 @@ MooValue moo_syscall(MooValue nr, MooValue arg1, MooValue arg2, MooValue arg3) {
     return moo_none();
 }
 #endif
+
+// === Interaktiver Debugger ===
+
+void moo_breakpoint(MooValue line_num) {
+    int line = (line_num.tag == MOO_NUMBER) ? (int)MV_NUM(line_num) : 0;
+    fprintf(stderr, "\n[Haltepunkt Zeile %d]\n", line);
+    fprintf(stderr, "  Befehle: weiter/continue, ende/quit\n");
+
+    char buf[256];
+    while (1) {
+        fprintf(stderr, "> ");
+        fflush(stderr);
+        if (!fgets(buf, sizeof(buf), stdin)) break;
+
+        // Newline entfernen
+        int len = strlen(buf);
+        if (len > 0 && buf[len - 1] == '\n') buf[len - 1] = '\0';
+
+        // Leere Eingabe ignorieren
+        if (buf[0] == '\0') continue;
+
+        // Befehle
+        if (strcmp(buf, "weiter") == 0 || strcmp(buf, "continue") == 0 || strcmp(buf, "c") == 0) {
+            return;
+        }
+        if (strcmp(buf, "ende") == 0 || strcmp(buf, "quit") == 0 || strcmp(buf, "q") == 0) {
+            fprintf(stderr, "Programm beendet.\n");
+            exit(0);
+        }
+        if (strcmp(buf, "hilfe") == 0 || strcmp(buf, "help") == 0 || strcmp(buf, "h") == 0) {
+            fprintf(stderr, "  weiter/continue/c — weiter bis zum naechsten Haltepunkt\n");
+            fprintf(stderr, "  ende/quit/q       — Programm beenden\n");
+            fprintf(stderr, "  hilfe/help/h      — diese Hilfe\n");
+            continue;
+        }
+
+        // Alles andere: Kann Variablen nicht inspizieren (ehrlich)
+        fprintf(stderr, "  Variablen-Inspektion nicht verfuegbar (nativer Compiler).\n");
+        fprintf(stderr, "  Tipp: 'zeige variable' vor dem Haltepunkt einfuegen.\n");
+    }
+}

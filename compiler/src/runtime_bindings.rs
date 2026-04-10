@@ -195,6 +195,14 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_regex_find: FunctionValue<'ctx>,
     pub moo_regex_find_all: FunctionValue<'ctx>,
     pub moo_regex_replace: FunctionValue<'ctx>,
+    // Netzwerk (TCP/UDP)
+    pub moo_tcp_server: FunctionValue<'ctx>,
+    pub moo_tcp_connect: FunctionValue<'ctx>,
+    pub moo_udp_socket: FunctionValue<'ctx>,
+    pub moo_socket_accept: FunctionValue<'ctx>,
+    pub moo_socket_read: FunctionValue<'ctx>,
+    pub moo_socket_write: FunctionValue<'ctx>,
+    pub moo_socket_close: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeBindings<'ctx> {
@@ -431,6 +439,14 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_regex_find: decl_mv_mv!("moo_regex_find", mv2),
             moo_regex_find_all: decl_mv_mv!("moo_regex_find_all", mv2),
             moo_regex_replace: decl_mv_mv!("moo_regex_replace", mv3),
+            // Netzwerk
+            moo_tcp_server: decl_mv_mv!("moo_tcp_server", mv1),
+            moo_tcp_connect: decl_mv_mv!("moo_tcp_connect", mv2),
+            moo_udp_socket: decl_mv_mv!("moo_udp_socket", mv1),
+            moo_socket_accept: decl_mv_mv!("moo_socket_accept", mv1),
+            moo_socket_read: decl_mv_mv!("moo_socket_read", mv2),
+            moo_socket_write: module.add_function("moo_socket_write", void_type.fn_type(mv2, false), None),
+            moo_socket_close: module.add_function("moo_socket_close", void_type.fn_type(mv1, false), None),
         }
     }
 }

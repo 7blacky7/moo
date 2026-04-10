@@ -26,6 +26,7 @@ typedef enum {
     MOO_WINDOW   = 12,
     MOO_WINDOW3D = 13,
     MOO_REGEX    = 14,
+    MOO_SOCKET   = 15,
 } MooTag;
 
 // === Forward Declarations ===
@@ -400,5 +401,14 @@ MooValue moo_result_err(MooValue msg);
 MooValue moo_result_is_ok(MooValue result);
 MooValue moo_result_is_err(MooValue result);
 MooValue moo_result_unwrap(MooValue result);
+
+// === Netzwerk (TCP/UDP) ===
+MooValue moo_tcp_server(MooValue port);
+MooValue moo_tcp_connect(MooValue host, MooValue port);
+MooValue moo_udp_socket(MooValue port);
+MooValue moo_socket_accept(MooValue server);
+MooValue moo_socket_read(MooValue sock, MooValue max_bytes);
+void moo_socket_write(MooValue sock, MooValue data);
+void moo_socket_close(MooValue sock);
 
 #endif // MOO_RUNTIME_H

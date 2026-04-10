@@ -52,6 +52,8 @@ pub enum TokenType {
     Precondition,   // vorbedingung / precondition
     Postcondition,  // nachbedingung / postcondition
     Unsafe,         // unsicher / unsafe
+    Test,           // teste / test
+    Expect,         // erwarte / expect
 
     // Bitwise Operators
     BitAnd,       // &
@@ -160,6 +162,8 @@ pub fn keyword_lookup(word: &str) -> Option<TokenType> {
         "schnittstelle" => Some(TokenType::Interface),
         "implementiert" => Some(TokenType::Implements),
         "unsicher" => Some(TokenType::Unsafe),
+        "teste" => Some(TokenType::Test),
+        "erwarte" => Some(TokenType::Expect),
         "parallel" => Some(TokenType::Parallel),
         "vorbedingung" => Some(TokenType::Precondition),
         "nachbedingung" => Some(TokenType::Postcondition),
@@ -206,6 +210,8 @@ pub fn keyword_lookup(word: &str) -> Option<TokenType> {
         "interface" => Some(TokenType::Interface),
         "implements" => Some(TokenType::Implements),
         "unsafe" => Some(TokenType::Unsafe),
+        "test" => Some(TokenType::Test),
+        "expect" => Some(TokenType::Expect),
         "precondition" => Some(TokenType::Precondition),
         "postcondition" => Some(TokenType::Postcondition),
         "where" => Some(TokenType::Where),

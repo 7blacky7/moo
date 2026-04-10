@@ -215,6 +215,13 @@ pub enum Stmt {
     UnsafeBlock {
         body: Vec<Stmt>,
     },
+    /// Test-Block: teste "name": body mit erwarte-Statements
+    TestDef {
+        name: std::string::String,
+        body: Vec<Stmt>,
+    },
+    /// Erwarte-Statement: erwarte expr (assertion)
+    Expect(Expr),
 }
 
 #[derive(Debug, Clone)]

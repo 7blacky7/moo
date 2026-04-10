@@ -125,6 +125,33 @@ def cmd_repl():
             print(f"Laufzeitfehler: {e}")
 
 
+def cmd_doc(args: argparse.Namespace):
+    from .docgen import extract_docs, generate_markdown
+
+    path = Path(args.file)
+    all_entries: list[dict] = []
+
+    if path.is_dir():
+        for moo_file in sorted(path.rglob("*.moo")):
+            source = moo_file.read_text()
+            entries = extract_docs(source, str(moo_file))
+            all_entries.extend(entries)
+    else:
+        source = path.read_text()
+        all_entries = extract_docs(source, str(path))
+
+    if not all_entries:
+        print("Keine dokumentierten Funktionen/Klassen gefunden.")
+        print("Tipp: Benutze ## Kommentare vor Funktionen/Klassen.")
+        return
+
+    markdown = generate_markdown(all_entries)
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(markdown)
+    print(f"✓ Dokumentation generiert: {output} ({len(all_entries)} Einträge)")
+
+
 def main():
     ap = argparse.ArgumentParser(prog="moo", description="moo — die universelle Programmiersprache")
     sub = ap.add_subparsers(dest="command")
@@ -150,6 +177,11 @@ def main():
     # moo lsp
     sub.add_parser("lsp", help="Language Server starten (LSP via stdio)")
 
+    # moo doc <file>
+    doc_p = sub.add_parser("doc", help="API-Dokumentation generieren")
+    doc_p.add_argument("file", help="Die .moo-Datei (oder Verzeichnis)")
+    doc_p.add_argument("-o", "--output", default="docs/api.md", help="Ausgabedatei (Standard: docs/api.md)")
+
     args = ap.parse_args()
     if args.command == "run":
         cmd_run(args)
@@ -159,6 +191,8 @@ def main():
         cmd_fmt(args)
     elif args.command == "repl":
         cmd_repl()
+    elif args.command == "doc":
+        cmd_doc(args)
     elif args.command == "lsp":
         from moo.lsp import main as lsp_main
         lsp_main()

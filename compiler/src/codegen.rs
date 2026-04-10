@@ -60,6 +60,8 @@ pub struct CodeGen<'ctx> {
     warnings: Vec<String>,
     // Rust-inspiriert: unsafe-Kontext Flag
     unsafe_context: bool,
+    // Test-Framework: registrierte Tests (display_name, fn_name)
+    test_names: Vec<(String, String)>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -85,6 +87,7 @@ impl<'ctx> CodeGen<'ctx> {
             variable_types: HashMap::new(),
             warnings: Vec::new(),
             unsafe_context: false,
+            test_names: Vec::new(),
         }
     }
 
@@ -527,8 +530,198 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 Ok(())
             }
+            Stmt::TestDef { name, body } => {
+                // Test-Framework: teste "name": body → generiert Funktion __test_<name>
+                // und registriert den Namen fuer teste_alle()
+                let fn_name = format!("__test_{}", name.replace(' ', "_").replace('"', ""));
+                let mv = self.mv_type();
+                let fn_type = mv.fn_type(&[], false);
+                let function = self.module.add_function(&fn_name, fn_type, None);
+                let entry = self.context.append_basic_block(function, "entry");
+
+                let prev_fn = self.current_function;
+                let prev_vars = self.variables.clone();
+                let prev_block = self.builder.get_insert_block();
+                let prev_defers = std::mem::take(&mut self.defer_stack);
+
+                self.current_function = Some(function);
+                self.builder.position_at_end(entry);
+                self.variables.clear();
+
+                for s in body {
+                    self.compile_stmt(s)?;
+                }
+
+                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                    // Test bestanden → return moo_bool(true)
+                    let bval = self.context.bool_type().const_int(1, false);
+                    let result = self.call_rt(self.rt.moo_bool_fn, &[bval.into()], "pass")?;
+                    self.builder.build_return(Some(&result)).map_err(|e| format!("{e}"))?;
+                }
+
+                self.current_function = prev_fn;
+                self.variables = prev_vars;
+                self.defer_stack = prev_defers;
+                if let Some(bb) = prev_block {
+                    self.builder.position_at_end(bb);
+                }
+
+                // Test-Name registrieren
+                self.test_names.push((name.clone(), fn_name));
+                Ok(())
+            }
+            Stmt::Expect(expr) => {
+                // erwarte expr → wenn falsch, print Fehler + return false
+                let val = self.compile_expr(expr)?;
+                let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+                    &[val.into()], "expect")
+                    .map_err(|e| format!("{e}"))?
+                    .try_as_basic_value();
+                let cond_bool = match is_true {
+                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("expect truthy fehlgeschlagen".to_string()),
+                };
+
+                let func = self.current_function.unwrap();
+                let fail_bb = self.context.append_basic_block(func, "expect_fail");
+                let ok_bb = self.context.append_basic_block(func, "expect_ok");
+
+                self.builder.build_conditional_branch(cond_bool, ok_bb, fail_bb)
+                    .map_err(|e| format!("{e}"))?;
+
+                // Fail: print Fehlermeldung + return false
+                self.builder.position_at_end(fail_bb);
+                let msg = self.make_global_str("  FEHLGESCHLAGEN: Erwartung nicht erfuellt", "expect_msg")?;
+                let msg_val = self.call_rt(self.rt.moo_string_new, &[msg.into()], "emsg")?;
+                self.call_rt_void(self.rt.moo_print, &[msg_val.into()], "eprint")?;
+                let bfalse = self.context.bool_type().const_int(0, false);
+                let fail_val = self.call_rt(self.rt.moo_bool_fn, &[bfalse.into()], "fail")?;
+                self.builder.build_return(Some(&fail_val)).map_err(|e| format!("{e}"))?;
+
+                self.builder.position_at_end(ok_bb);
+                Ok(())
+            }
             _ => Ok(()),
         }
+    }
+
+    /// Test-Framework: teste_alle() — ruft alle registrierten Tests auf
+    fn compile_run_tests(&mut self) -> Result<StructValue<'ctx>, String> {
+        let func = self.current_function.unwrap();
+        let i32_type = self.context.i32_type();
+
+        // Zaehler: ok, fail
+        let ok_ptr = self.builder.build_alloca(i32_type, "test_ok").map_err(|e| format!("{e}"))?;
+        let fail_ptr = self.builder.build_alloca(i32_type, "test_fail").map_err(|e| format!("{e}"))?;
+        self.builder.build_store(ok_ptr, i32_type.const_int(0, false)).map_err(|e| format!("{e}"))?;
+        self.builder.build_store(fail_ptr, i32_type.const_int(0, false)).map_err(|e| format!("{e}"))?;
+
+        // Header
+        let header = self.make_global_str("\n=== moo Tests ===", "test_header")?;
+        let header_val = self.call_rt(self.rt.moo_string_new, &[header.into()], "hdr")?;
+        self.call_rt_void(self.rt.moo_print, &[header_val.into()], "print_hdr")?;
+
+        let tests = self.test_names.clone();
+        for (display_name, fn_name) in &tests {
+            // Test-Name anzeigen
+            let name_str = format!("  teste \"{display_name}\"...");
+            let name_ptr = self.make_global_str(&name_str, "tname")?;
+            let name_val = self.call_rt(self.rt.moo_string_new, &[name_ptr.into()], "tn")?;
+            self.call_rt_void(self.rt.moo_print, &[name_val.into()], "print_tn")?;
+
+            // Test aufrufen
+            let test_fn = self.module.get_function(fn_name)
+                .ok_or(format!("Test-Funktion '{fn_name}' nicht gefunden"))?;
+            let result = self.call_rt(test_fn, &[], "test_result")?;
+
+            // Ergebnis pruefen (truthy = bestanden)
+            let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+                &[result.into()], "test_pass")
+                .map_err(|e| format!("{e}"))?
+                .try_as_basic_value();
+            let pass_bool = match is_true {
+                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                _ => return Err("test truthy fehlgeschlagen".to_string()),
+            };
+
+            let ok_bb = self.context.append_basic_block(func, "test_ok");
+            let fail_bb = self.context.append_basic_block(func, "test_fail");
+            let merge_bb = self.context.append_basic_block(func, "test_merge");
+
+            self.builder.build_conditional_branch(pass_bool, ok_bb, fail_bb)
+                .map_err(|e| format!("{e}"))?;
+
+            // OK
+            self.builder.position_at_end(ok_bb);
+            let ok_msg = self.make_global_str("    OK", "ok_msg")?;
+            let ok_val = self.call_rt(self.rt.moo_string_new, &[ok_msg.into()], "ok")?;
+            self.call_rt_void(self.rt.moo_print, &[ok_val.into()], "print_ok")?;
+            let cur_ok = self.builder.build_load(i32_type, ok_ptr, "cok")
+                .map_err(|e| format!("{e}"))?.into_int_value();
+            let new_ok = self.builder.build_int_add(cur_ok, i32_type.const_int(1, false), "nok")
+                .map_err(|e| format!("{e}"))?;
+            self.builder.build_store(ok_ptr, new_ok).map_err(|e| format!("{e}"))?;
+            self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
+
+            // FAIL
+            self.builder.position_at_end(fail_bb);
+            let fail_msg = self.make_global_str("    FAIL", "fail_msg")?;
+            let fail_val = self.call_rt(self.rt.moo_string_new, &[fail_msg.into()], "fail")?;
+            self.call_rt_void(self.rt.moo_print, &[fail_val.into()], "print_fail")?;
+            let cur_fail = self.builder.build_load(i32_type, fail_ptr, "cfail")
+                .map_err(|e| format!("{e}"))?.into_int_value();
+            let new_fail = self.builder.build_int_add(cur_fail, i32_type.const_int(1, false), "nfail")
+                .map_err(|e| format!("{e}"))?;
+            self.builder.build_store(fail_ptr, new_fail).map_err(|e| format!("{e}"))?;
+            self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
+
+            self.builder.position_at_end(merge_bb);
+        }
+
+        // Zusammenfassung: "X Tests: Y OK, Z FAIL"
+        let summary = self.make_global_str("=== Ergebnis ===", "summary")?;
+        let summary_val = self.call_rt(self.rt.moo_string_new, &[summary.into()], "sum")?;
+        self.call_rt_void(self.rt.moo_print, &[summary_val.into()], "print_sum")?;
+
+        // Anzahl als MooValue ausgeben
+        let final_ok = self.builder.build_load(i32_type, ok_ptr, "fok")
+            .map_err(|e| format!("{e}"))?.into_int_value();
+        let final_fail = self.builder.build_load(i32_type, fail_ptr, "ffail")
+            .map_err(|e| format!("{e}"))?.into_int_value();
+        let total = self.builder.build_int_add(final_ok, final_fail, "total")
+            .map_err(|e| format!("{e}"))?;
+
+        // Konvertiere zu f64 fuer moo_number
+        let total_f = self.builder.build_unsigned_int_to_float(total, self.context.f64_type(), "totalf")
+            .map_err(|e| format!("{e}"))?;
+        let ok_f = self.builder.build_unsigned_int_to_float(final_ok, self.context.f64_type(), "okf")
+            .map_err(|e| format!("{e}"))?;
+        let fail_f = self.builder.build_unsigned_int_to_float(final_fail, self.context.f64_type(), "failf")
+            .map_err(|e| format!("{e}"))?;
+
+        let total_mv = self.call_rt(self.rt.moo_number, &[total_f.into()], "total_mv")?;
+        let ok_mv = self.call_rt(self.rt.moo_number, &[ok_f.into()], "ok_mv")?;
+        let fail_mv = self.call_rt(self.rt.moo_number, &[fail_f.into()], "fail_mv")?;
+
+        // "X Tests: Y OK, Z FAIL" zusammenbauen
+        let total_s = self.call_rt(self.rt.moo_to_string, &[total_mv.into()], "ts")?;
+        let ok_s = self.call_rt(self.rt.moo_to_string, &[ok_mv.into()], "os")?;
+        let fail_s = self.call_rt(self.rt.moo_to_string, &[fail_mv.into()], "fs")?;
+        let t1 = self.make_global_str(" Tests: ", "t1")?;
+        let t1_val = self.call_rt(self.rt.moo_string_new, &[t1.into()], "t1v")?;
+        let t2 = self.make_global_str(" OK, ", "t2")?;
+        let t2_val = self.call_rt(self.rt.moo_string_new, &[t2.into()], "t2v")?;
+        let t3 = self.make_global_str(" FAIL", "t3")?;
+        let t3_val = self.call_rt(self.rt.moo_string_new, &[t3.into()], "t3v")?;
+
+        let s1 = self.call_rt(self.rt.moo_string_concat, &[total_s.into(), t1_val.into()], "s1")?;
+        let s2 = self.call_rt(self.rt.moo_string_concat, &[s1.into(), ok_s.into()], "s2")?;
+        let s3 = self.call_rt(self.rt.moo_string_concat, &[s2.into(), t2_val.into()], "s3")?;
+        let s4 = self.call_rt(self.rt.moo_string_concat, &[s3.into(), fail_s.into()], "s4")?;
+        let s5 = self.call_rt(self.rt.moo_string_concat, &[s4.into(), t3_val.into()], "s5")?;
+        self.call_rt_void(self.rt.moo_print, &[s5.into()], "print_result")?;
+
+        self.call_rt(self.rt.moo_none, &[], "none")
     }
 
     fn compile_guard(&mut self, condition: &Expr, else_body: &[Stmt]) -> Result<(), String> {
@@ -1534,6 +1727,24 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_mem_write, &[addr.into(), val.into(), size.into()], "mem_write")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    // Netzwerk
+                    "tcp_server" => {
+                        let port = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tcp_server, &[port.into()], "tcp_server");
+                    }
+                    "tcp_verbinde" | "tcp_connect" => {
+                        let host = self.compile_expr(&args[0])?;
+                        let port = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tcp_connect, &[host.into(), port.into()], "tcp_connect");
+                    }
+                    "udp_socket" => {
+                        let port = if args.is_empty() {
+                            self.call_rt(self.rt.moo_none, &[], "none")?
+                        } else {
+                            self.compile_expr(&args[0])?
+                        };
+                        return self.call_rt(self.rt.moo_udp_socket, &[port.into()], "udp_socket");
+                    }
                     // Grafik — Fenster
                     "fenster_erstelle" | "window_create" => {
                         let title = self.compile_expr(&args[0])?;
@@ -1735,6 +1946,10 @@ impl<'ctx> CodeGen<'ctx> {
                         let rep = self.compile_expr(&args[2])?;
                         return self.call_rt(self.rt.moo_regex_replace, &[text.into(), rx.into(), rep.into()], "replace");
                     }
+                    // Test-Framework
+                    "teste_alle" | "run_tests" => {
+                        return self.compile_run_tests();
+                    }
                     _ => {}
                 }
 
@@ -1895,6 +2110,23 @@ impl<'ctx> CodeGen<'ctx> {
                     "schliessen" | "close" => {
                         self.call_rt_void(self.rt.moo_channel_close,
                             &[obj.into()], "chan_close")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // Socket-Methoden
+                    "annehmen" | "accept" => {
+                        return self.call_rt(self.rt.moo_socket_accept, &[obj.into()], "accept");
+                    }
+                    "lesen" | "read" => {
+                        let max = if args.is_empty() {
+                            self.call_rt(self.rt.moo_number, &[self.context.f64_type().const_float(4096.0).into()], "max")?
+                        } else {
+                            self.compile_expr(&args[0])?
+                        };
+                        return self.call_rt(self.rt.moo_socket_read, &[obj.into(), max.into()], "read");
+                    }
+                    "schreiben" | "write" => {
+                        let data = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_socket_write, &[obj.into(), data.into()], "write")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     "map" | "abbilden" => {

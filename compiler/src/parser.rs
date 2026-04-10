@@ -230,6 +230,23 @@ impl Parser {
                 let body = self.parse_block_body(false)?;
                 Ok(Stmt::UnsafeBlock { body })
             }
+            TokenType::Test => {
+                self.pos += 1;
+                // teste "name":
+                let name = if let TokenType::String(s) = self.current_type().clone() {
+                    self.pos += 1;
+                    s
+                } else {
+                    self.eat_identifier()?
+                };
+                let body = self.parse_block_body(false)?;
+                Ok(Stmt::TestDef { name, body })
+            }
+            TokenType::Expect => {
+                self.pos += 1;
+                let expr = self.parse_expression()?;
+                Ok(Stmt::Expect(expr))
+            }
             _ => {
                 let expr = self.parse_expression()?;
 

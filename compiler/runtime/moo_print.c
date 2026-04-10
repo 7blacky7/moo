@@ -66,6 +66,8 @@ MooValue moo_to_string(MooValue v) {
             return moo_string_new("<Fenster>");
         case MOO_WINDOW3D:
             return moo_string_new("<3D-Fenster>");
+        case MOO_SOCKET:
+            return moo_string_new("<Socket>");
         default:
             return moo_string_new("<unbekannt>");
     }
