@@ -34,6 +34,8 @@ enum Commands {
         /// Die .moo-Quelldatei
         file: PathBuf,
     },
+    /// Interaktiver Modus (REPL)
+    Repl,
 }
 
 fn main() {
@@ -51,6 +53,9 @@ fn main() {
                 eprintln!("Fehler: {e}");
                 std::process::exit(1);
             }
+        }
+        Commands::Repl => {
+            repl();
         }
     }
 }
@@ -160,7 +165,9 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool) -> R
         return Err("Linken fehlgeschlagen".to_string());
     }
 
-    println!("✓ Kompiliert: {} → {}", file.display(), output_path.display());
+    if std::env::var("MOO_QUIET").is_err() {
+        println!("✓ Kompiliert: {} → {}", file.display(), output_path.display());
+    }
     Ok(())
 }
 
@@ -177,4 +184,84 @@ fn run(file: &PathBuf) -> Result<(), String> {
     let _ = std::fs::remove_file(&tmp_output);
 
     std::process::exit(status.code().unwrap_or(1));
+}
+
+fn repl() {
+    println!("moo REPL v0.1.0 (nativ) — Tippe 'quit' zum Beenden");
+    println!("Zweisprachig: Deutsch & Englisch\n");
+
+    let mut history: Vec<String> = Vec::new();
+    let mut buffer: Vec<String> = Vec::new();
+    let mut indent_level = 0u32;
+
+    loop {
+        let prompt = if indent_level > 0 { "... " } else { "moo> " };
+        eprint!("{prompt}");
+
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).unwrap_or(0) == 0 {
+            eprintln!("\nTschüss!");
+            break;
+        }
+        let line = line.trim_end_matches('\n').to_string();
+
+        if line.trim() == "quit" || line.trim() == "exit" || line.trim() == "ende" {
+            eprintln!("Tschüss!");
+            break;
+        }
+
+        buffer.push(line.clone());
+
+        let stripped = line.trim();
+        if stripped.ends_with(':') {
+            indent_level += 1;
+            continue;
+        } else if indent_level > 0 && stripped.is_empty() {
+            indent_level = 0;
+        } else if indent_level > 0 && !line.starts_with(' ') && !line.starts_with('\t') {
+            indent_level = 0;
+        } else if indent_level > 0 {
+            continue;
+        }
+
+        let new_code = buffer.join("\n");
+        buffer.clear();
+        indent_level = 0;
+
+        if new_code.trim().is_empty() {
+            continue;
+        }
+
+        // Bisherige History + neuer Code = komplettes Programm
+        let mut full_source = history.join("\n");
+        if !full_source.is_empty() {
+            full_source.push('\n');
+        }
+        full_source.push_str(&new_code);
+
+        // Kompilieren und ausführen
+        let tmp_dir = std::env::temp_dir();
+        let tmp_src = tmp_dir.join("moo_repl.moo");
+        let tmp_bin = tmp_dir.join("moo_repl_bin");
+
+        if std::fs::write(&tmp_src, &full_source).is_err() {
+            eprintln!("Fehler: Temporäre Datei schreiben fehlgeschlagen");
+            continue;
+        }
+
+        unsafe { std::env::set_var("MOO_QUIET", "1"); }
+        match compile(&tmp_src, Some(&tmp_bin), false) {
+            Ok(()) => {
+                // Erfolgreich kompiliert — ausfuehren (ohne den "Kompiliert" Output)
+                let _ = Command::new(&tmp_bin).status();
+                history.push(new_code);
+            }
+            Err(e) => {
+                eprintln!("Fehler: {e}");
+            }
+        }
+
+        let _ = std::fs::remove_file(&tmp_src);
+        let _ = std::fs::remove_file(&tmp_bin);
+    }
 }
