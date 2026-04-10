@@ -356,6 +356,11 @@ impl<'ctx> CodeGen<'ctx> {
             }
             let alloca = self.builder.build_alloca(self.mv_type(), name)
                 .map_err(|e| format!("{e}"))?;
+            // Sofort mit None initialisieren damit release auf definierten Wert trifft
+            let none_init = self.context.i64_type().const_int(3, false); // MOO_NONE tag
+            let zero_data = self.context.i64_type().const_int(0, false);
+            let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
+            self.builder.build_store(alloca, none_val).map_err(|e| format!("{e}"))?;
 
             self.builder.position_at_end(current_block);
             self.variables.insert(name.to_string(), alloca);

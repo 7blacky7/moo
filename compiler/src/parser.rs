@@ -818,10 +818,10 @@ impl Parser {
 
     fn parse_addition(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_multiplication()?;
-        // Range: 0..10
+        // Range: 0..10, 2..n+1 — rechte Seite als vollständige Addition parsen
         if matches!(self.current_type(), TokenType::Range) {
             self.pos += 1;
-            let right = self.parse_multiplication()?;
+            let right = self.parse_addition()?;
             return Ok(Expr::Range { start: Box::new(left), end: Box::new(right) });
         }
         loop {

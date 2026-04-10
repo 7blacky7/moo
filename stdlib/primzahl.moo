@@ -1,4 +1,4 @@
-# moo Standard-Bibliothek: Primzahlen
+# moo Primzahl-Bibliothek
 
 funktion ist_primzahl(n):
     wenn n < 2:
@@ -14,12 +14,16 @@ funktion ist_primzahl(n):
         setze i auf i + 2
     gib_zurück wahr
 
+funktion ggt(a, b):
+    solange b != 0:
+        setze temp auf b
+        setze b auf a % b
+        setze a auf temp
+    gib_zurück a
+
 funktion klemme(wert, lo, hi):
     wenn wert < lo:
         gib_zurück lo
     wenn wert > hi:
         gib_zurück hi
     gib_zurück wert
-
-funktion lerp(a, b, t):
-    gib_zurück a + (b - a) * t

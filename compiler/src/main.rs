@@ -151,46 +151,85 @@ fn find_module(name: &str, dir: &std::path::Path) -> Option<PathBuf> {
 }
 
 /// Sammelt alle Funktionsnamen aus einem AST
-fn collect_function_names(stmts: &[ast::Stmt]) -> Vec<String> {
+fn collect_function_names(stmts: &[ast::Stmt]) -> std::collections::HashSet<String> {
     stmts.iter().filter_map(|s| {
         if let ast::Stmt::FunctionDef { name, .. } = s { Some(name.clone()) } else { None }
     }).collect()
 }
 
-/// Prefixed FunctionCall-Namen in einer Expression
-fn prefix_expr(expr: &ast::Expr, prefix: &str, names: &[String]) -> ast::Expr {
+/// Prefixed FunctionCall-Namen in einer Expression — ALLE Varianten abgedeckt
+fn prefix_expr(expr: &ast::Expr, prefix: &str, names: &std::collections::HashSet<String>) -> ast::Expr {
+    let pe = |e: &ast::Expr| -> ast::Expr { prefix_expr(e, prefix, names) };
+    let pe_box = |e: &ast::Expr| -> Box<ast::Expr> { Box::new(pe(e)) };
+    let pe_vec = |v: &[ast::Expr]| -> Vec<ast::Expr> { v.iter().map(|e| pe(e)).collect() };
+    let pe_opt = |o: &Option<Box<ast::Expr>>| -> Option<Box<ast::Expr>> {
+        o.as_ref().map(|e| pe_box(e))
+    };
+
     match expr {
-        ast::Expr::FunctionCall { name, args } if names.contains(name) => {
-            ast::Expr::FunctionCall {
-                name: format!("{prefix}__{name}"),
-                args: args.iter().map(|a| prefix_expr(a, prefix, names)).collect(),
-            }
-        }
         ast::Expr::FunctionCall { name, args } => {
-            ast::Expr::FunctionCall {
-                name: name.clone(),
-                args: args.iter().map(|a| prefix_expr(a, prefix, names)).collect(),
-            }
+            let new_name = if names.contains(name) {
+                format!("{prefix}__{name}")
+            } else {
+                name.clone()
+            };
+            ast::Expr::FunctionCall { name: new_name, args: pe_vec(args) }
         }
+        ast::Expr::MethodCall { object, method, args } => ast::Expr::MethodCall {
+            object: pe_box(object), method: method.clone(), args: pe_vec(args),
+        },
         ast::Expr::BinaryOp { left, op, right } => ast::Expr::BinaryOp {
-            left: Box::new(prefix_expr(left, prefix, names)),
-            op: op.clone(),
-            right: Box::new(prefix_expr(right, prefix, names)),
+            left: pe_box(left), op: op.clone(), right: pe_box(right),
         },
         ast::Expr::UnaryOp { op, operand } => ast::Expr::UnaryOp {
-            op: op.clone(),
-            operand: Box::new(prefix_expr(operand, prefix, names)),
+            op: op.clone(), operand: pe_box(operand),
         },
+        ast::Expr::Lambda { params, body } => ast::Expr::Lambda {
+            params: params.clone(), body: pe_box(body),
+        },
+        ast::Expr::List(elems) => ast::Expr::List(pe_vec(elems)),
+        ast::Expr::Dict(pairs) => ast::Expr::Dict(
+            pairs.iter().map(|(k, v)| (pe(k), pe(v))).collect()
+        ),
+        ast::Expr::ListComprehension { expr, var_name, iterable, condition } => {
+            ast::Expr::ListComprehension {
+                expr: pe_box(expr), var_name: var_name.clone(),
+                iterable: pe_box(iterable), condition: pe_opt(condition),
+            }
+        }
+        ast::Expr::IndexAccess { object, index } => ast::Expr::IndexAccess {
+            object: pe_box(object), index: pe_box(index),
+        },
+        ast::Expr::PropertyAccess { object, property } => ast::Expr::PropertyAccess {
+            object: pe_box(object), property: property.clone(),
+        },
+        ast::Expr::Pipe { left, right } => ast::Expr::Pipe {
+            left: pe_box(left), right: pe_box(right),
+        },
+        ast::Expr::Spread(inner) => ast::Expr::Spread(pe_box(inner)),
+        ast::Expr::NullishCoalesce { left, right } => ast::Expr::NullishCoalesce {
+            left: pe_box(left), right: pe_box(right),
+        },
+        ast::Expr::OptionalChain { object, property } => ast::Expr::OptionalChain {
+            object: pe_box(object), property: property.clone(),
+        },
+        ast::Expr::Range { start, end } => ast::Expr::Range {
+            start: pe_box(start), end: pe_box(end),
+        },
+        ast::Expr::New { class_name, args } => ast::Expr::New {
+            class_name: class_name.clone(), args: pe_vec(args),
+        },
+        // Literale + einfache Knoten: keine Sub-Expressions
         other => other.clone(),
     }
 }
 
 /// Prefixed FunctionCall-Namen in Statements
-fn prefix_stmts(stmts: &[ast::Stmt], prefix: &str, names: &[String]) -> Vec<ast::Stmt> {
+fn prefix_stmts(stmts: &[ast::Stmt], prefix: &str, names: &std::collections::HashSet<String>) -> Vec<ast::Stmt> {
     stmts.iter().map(|s| prefix_stmt(s, prefix, names)).collect()
 }
 
-fn prefix_stmt(stmt: &ast::Stmt, prefix: &str, names: &[String]) -> ast::Stmt {
+fn prefix_stmt(stmt: &ast::Stmt, prefix: &str, names: &std::collections::HashSet<String>) -> ast::Stmt {
     match stmt {
         ast::Stmt::Assignment { name, value } => ast::Stmt::Assignment {
             name: name.clone(), value: prefix_expr(value, prefix, names),
@@ -233,11 +272,16 @@ fn prefix_functions(stmts: &[ast::Stmt], prefix: &str) -> Vec<ast::Stmt> {
                     decorators: decorators.clone(),
                 }
             }
-            // Export: FunctionDef darin prefixen
+            // Export: FunctionDef darin prefixen (KEIN rekursiver prefix_functions Aufruf!)
             ast::Stmt::Export(inner) => {
-                let prefixed = prefix_functions(&[*inner.clone()], prefix);
-                if let Some(s) = prefixed.into_iter().next() {
-                    ast::Stmt::Export(Box::new(s))
+                if let ast::Stmt::FunctionDef { name, params, defaults, body, decorators } = inner.as_ref() {
+                    ast::Stmt::Export(Box::new(ast::Stmt::FunctionDef {
+                        name: format!("{prefix}__{name}"),
+                        params: params.clone(),
+                        defaults: defaults.clone(),
+                        body: prefix_stmts(body, prefix, &func_names),
+                        decorators: decorators.clone(),
+                    }))
                 } else {
                     stmt.clone()
                 }
@@ -286,46 +330,44 @@ fn resolve_modules(
 
     for stmt in program.statements.drain(..) {
         match &stmt {
-            ast::Stmt::Import { module, names, alias } => {
-                let mod_name = alias.as_deref().unwrap_or(module.as_str());
+            ast::Stmt::Import { module, names, .. } => {
                 if let Some(mod_path) = find_module(module, file_dir) {
                     let canonical = mod_path.canonicalize().unwrap_or(mod_path.clone());
                     if visited.contains(&canonical) {
-                        continue; // Zirkulären Import vermeiden
+                        continue; // Zirkulaeren Import vermeiden
                     }
                     visited.insert(canonical);
 
                     // Modul parsen
+                    eprintln!("[DEBUG] parsing {}...", mod_path.display());
                     let mut mod_program = parse_file(&mod_path)?;
+                    eprintln!("[DEBUG] parsed {} statements", mod_program.statements.len());
 
-                    // Rekursiv Imports im Modul auflösen
+                    // Rekursiv Imports im Modul aufloesen
                     let mod_dir = mod_path.parent().unwrap_or(std::path::Path::new("."));
                     resolve_modules(&mut mod_program, mod_dir, visited)?;
 
-                    // Funktionen mit Namespace-Prefix versehen
-                    let prefixed = prefix_functions(&mod_program.statements, mod_name);
-
                     if names.is_empty() {
-                        // "importiere mathe" → alle Funktionen mit Prefix + Aliases
-                        let all_names: Vec<String> = collect_function_names(&mod_program.statements);
-                        let aliases = create_alias_functions(&prefixed, mod_name, &all_names);
-                        imported_stmts.extend(prefixed);
-                        imported_stmts.extend(aliases);
+                        // "importiere mathe" → ALLE Statements direkt einfuegen (kein Prefix!)
+                        imported_stmts.extend(mod_program.statements);
                     } else {
-                        // "aus mathe importiere sin, cos" → nur sin, cos ohne Prefix
-                        // Alle Funktionen prefixed einfuegen, aber nur gewuenschte als Alias
-                        let aliases = create_alias_functions(&prefixed, mod_name, names);
-                        imported_stmts.extend(prefixed);
-                        imported_stmts.extend(aliases);
+                        // "aus mathe importiere fakultaet" → nur gewuenschte Funktionen
+                        for mod_stmt in mod_program.statements {
+                            if let ast::Stmt::FunctionDef { ref name, .. } = mod_stmt {
+                                if names.contains(name) {
+                                    imported_stmts.push(mod_stmt);
+                                }
+                            }
+                        }
                     }
                 }
-                // Modul nicht gefunden → Import-Statement einfach droppen
+                // Modul nicht gefunden → Import-Statement droppen
             }
             _ => remaining_stmts.push(stmt),
         }
     }
 
-    // Importierte Funktionen VOR dem Hauptprogramm einfuegen
+    // Importierte Statements VOR dem Hauptprogramm einfuegen
     imported_stmts.extend(remaining_stmts);
     program.statements = imported_stmts;
     Ok(())

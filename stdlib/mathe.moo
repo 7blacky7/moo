@@ -1,4 +1,4 @@
-# moo Mathe-Bibliothek (Basis)
+# moo Mathe-Bibliothek
 
 funktion fakultaet(n):
     wenn n <= 1:
@@ -12,7 +12,8 @@ funktion fibonacci(n):
         gib_zurück 1
     setze a auf 0
     setze b auf 1
-    für i in 2..n + 1:
+    setze ende auf n + 1
+    für i in 2..ende:
         setze temp auf b
         setze b auf a + b
         setze a auf temp
@@ -20,3 +21,34 @@ funktion fibonacci(n):
 
 funktion ist_gerade(n):
     gib_zurück n % 2 == 0
+
+funktion ggt(a, b):
+    solange b != 0:
+        setze temp auf b
+        setze b auf a % b
+        setze a auf temp
+    gib_zurück a
+
+funktion ist_primzahl(n):
+    wenn n < 2:
+        gib_zurück falsch
+    wenn n < 4:
+        gib_zurück wahr
+    wenn n % 2 == 0:
+        gib_zurück falsch
+    setze i auf 3
+    solange i * i <= n:
+        wenn n % i == 0:
+            gib_zurück falsch
+        setze i auf i + 2
+    gib_zurück wahr
+
+funktion klemme(wert, lo, hi):
+    wenn wert < lo:
+        gib_zurück lo
+    wenn wert > hi:
+        gib_zurück hi
+    gib_zurück wert
+
+funktion lerp(a, b, t):
+    gib_zurück a + (b - a) * t
