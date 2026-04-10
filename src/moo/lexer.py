@@ -93,7 +93,14 @@ class Lexer:
                 i = self._read_identifier(line, i)
                 continue
 
-            # Drei-Zeichen-Operatoren (noch keine, aber Platz für Erweiterungen)
+            # Drei-Zeichen-Operatoren
+            if i + 2 < len(line):
+                three = line[i : i + 3]
+                if three == "...":
+                    self.tokens.append(Token(TokenType.SPREAD, three, self.line, self.column))
+                    i += 3
+                    self.column += 3
+                    continue
 
             # Zwei-Zeichen-Operatoren
             if i + 1 < len(line):
@@ -105,6 +112,7 @@ class Lexer:
                     "-=": TokenType.MINUS_ASSIGN, "=>": TokenType.ARROW,
                     "..": TokenType.RANGE, "?.": TokenType.OPTIONAL_CHAIN,
                     "??": TokenType.NULLISH_COALESCE,
+                    "|>": TokenType.PIPE,
                 }.get(two)
                 if op:
                     self.tokens.append(Token(op, two, self.line, self.column))

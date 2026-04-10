@@ -5,10 +5,10 @@ from .ast_nodes import (
     CompoundAssignment, ConstAssignment, ContinueStatement, DictLiteral,
     ExportStatement, ForLoop, FunctionCall, FunctionDef, Identifier,
     IfStatement, ImportStatement, IndexAccess, IndexAssignment, LambdaExpression,
-    ListLiteral, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral,
-    NullishCoalesce, OptionalChain, RangeExpr,
+    ListComprehension, ListLiteral, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral,
+    NullishCoalesce, OptionalChain, PipeExpr, RangeExpr,
     NumberLiteral, Program, PropertyAccess, PropertyAssignment, ReturnStatement,
-    ShowStatement, StringLiteral, ThisExpression, ThrowStatement, TryCatch,
+    ShowStatement, SpreadExpr, StringLiteral, ThisExpression, ThrowStatement, TryCatch,
     UnaryOp, WhileLoop,
 )
 from .tokens import Token, TokenType
@@ -302,7 +302,23 @@ class Parser:
         # Lambda: (x, y) => ausdruck
         if self._current().type == TokenType.LPAREN and self._is_lambda():
             return self._parse_lambda()
-        return self._parse_nullish_coalesce()
+        return self._parse_pipe()
+
+    def _parse_pipe(self) -> Node:
+        left = self._parse_nullish_coalesce()
+        while self._current().type == TokenType.PIPE:
+            self.pos += 1
+            right = self._parse_nullish_coalesce()
+            # Transform: left |> func(args) => func(left, args)
+            if isinstance(right, FunctionCall):
+                right.args.insert(0, left)
+                left = right
+            elif isinstance(right, MethodCall):
+                right.args.insert(0, left)
+                left = right
+            else:
+                left = PipeExpr(left=left, right=right, line=left.line)
+        return left
 
     def _parse_nullish_coalesce(self) -> Node:
         left = self._parse_or()
@@ -518,32 +534,63 @@ class Parser:
         self._eat(TokenType.RPAREN)
         return FunctionCall(name=name_tok.value, args=args, line=name_tok.line)
 
-    def _parse_list(self) -> ListLiteral:
+    def _parse_list(self) -> ListLiteral | ListComprehension:
         tok = self._eat(TokenType.LBRACKET)
         elements: list[Node] = []
         if self._current().type != TokenType.RBRACKET:
-            elements.append(self._parse_expression())
+            first = self._parse_expression()
+            # List comprehension: [expr für/for x in iterable wenn/if cond]
+            if self._current().type == TokenType.FOR:
+                self.pos += 1  # skip für/for
+                var_tok = self._eat(TokenType.IDENTIFIER)
+                self._eat(TokenType.IN)
+                iterable = self._parse_expression()
+                condition = None
+                if self._current().type == TokenType.IF:
+                    self.pos += 1  # skip wenn/if
+                    condition = self._parse_expression()
+                self._eat(TokenType.RBRACKET)
+                return ListComprehension(expr=first, var_name=var_tok.value,
+                                         iterable=iterable, condition=condition, line=tok.line)
+            elements.append(first)
             while self._current().type == TokenType.COMMA:
                 self.pos += 1
-                elements.append(self._parse_expression())
+                if self._current().type == TokenType.RBRACKET:
+                    break
+                elements.append(self._parse_list_element())
         self._eat(TokenType.RBRACKET)
         return ListLiteral(elements=elements, line=tok.line)
+
+    def _parse_list_element(self) -> Node:
+        if self._current().type == TokenType.SPREAD:
+            tok = self._current()
+            self.pos += 1
+            expr = self._parse_expression()
+            return SpreadExpr(expr=expr, line=tok.line)
+        return self._parse_expression()
 
     def _parse_dict(self) -> DictLiteral:
         tok = self._eat(TokenType.LBRACE)
         pairs: list[tuple[Node, Node]] = []
         if self._current().type != TokenType.RBRACE:
-            key = self._parse_expression()
-            self._eat(TokenType.COLON)
-            val = self._parse_expression()
-            pairs.append((key, val))
+            self._parse_dict_entry(pairs)
             while self._current().type == TokenType.COMMA:
                 self.pos += 1
                 if self._current().type == TokenType.RBRACE:
                     break
-                key = self._parse_expression()
-                self._eat(TokenType.COLON)
-                val = self._parse_expression()
-                pairs.append((key, val))
+                self._parse_dict_entry(pairs)
         self._eat(TokenType.RBRACE)
         return DictLiteral(pairs=pairs, line=tok.line)
+
+    def _parse_dict_entry(self, pairs: list[tuple[Node, Node]]):
+        if self._current().type == TokenType.SPREAD:
+            tok = self._current()
+            self.pos += 1
+            expr = self._parse_expression()
+            # Use SpreadExpr as key, None-equivalent as val to signal spread
+            pairs.append((SpreadExpr(expr=expr, line=tok.line), SpreadExpr(expr=expr, line=tok.line)))
+        else:
+            key = self._parse_expression()
+            self._eat(TokenType.COLON)
+            val = self._parse_expression()
+            pairs.append((key, val))

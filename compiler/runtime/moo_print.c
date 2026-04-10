@@ -60,6 +60,8 @@ MooValue moo_to_string(MooValue v) {
             return moo_string_new("<Thread>");
         case MOO_CHANNEL:
             return moo_string_new("<Kanal>");
+        case MOO_DATABASE:
+            return moo_string_new("<Datenbank>");
         default:
             return moo_string_new("<unbekannt>");
     }

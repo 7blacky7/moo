@@ -62,6 +62,8 @@ class TokenType(Enum):
     DOT = auto()          # .
     OPTIONAL_CHAIN = auto()   # ?.
     NULLISH_COALESCE = auto() # ??
+    PIPE = auto()             # |>
+    SPREAD = auto()           # ...
 
     # Delimiters
     COLON = auto()

@@ -22,6 +22,7 @@ typedef enum {
     MOO_ERROR   = 8,
     MOO_THREAD  = 9,
     MOO_CHANNEL = 10,
+    MOO_DATABASE = 11,
 } MooTag;
 
 // === Forward Declarations ===
@@ -301,5 +302,11 @@ MooValue moo_json_string(MooValue value);
 // === HTTP ===
 MooValue moo_http_get(MooValue url);
 MooValue moo_http_post(MooValue url, MooValue body);
+
+// === Datenbank ===
+MooValue moo_db_connect(MooValue url);
+MooValue moo_db_execute(MooValue db, MooValue sql);
+MooValue moo_db_query(MooValue db, MooValue sql);
+void moo_db_close(MooValue db);
 
 #endif // MOO_RUNTIME_H

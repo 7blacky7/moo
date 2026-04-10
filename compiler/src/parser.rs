@@ -659,7 +659,28 @@ impl Parser {
         self.eat(&TokenType::LBracket)?;
         let mut elements = Vec::new();
         if !matches!(self.current_type(), TokenType::RBracket) {
-            elements.push(self.parse_expression()?);
+            let first = self.parse_expression()?;
+            // List comprehension: [expr für/for x in iterable wenn/if cond]
+            if matches!(self.current_type(), TokenType::For) {
+                self.pos += 1; // skip für/for
+                let var_name = self.eat_identifier()?;
+                self.eat(&TokenType::In)?;
+                let iterable = self.parse_expression()?;
+                let condition = if matches!(self.current_type(), TokenType::If) {
+                    self.pos += 1; // skip wenn/if
+                    Some(Box::new(self.parse_expression()?))
+                } else {
+                    None
+                };
+                self.eat(&TokenType::RBracket)?;
+                return Ok(Expr::ListComprehension {
+                    expr: Box::new(first),
+                    var_name,
+                    iterable: Box::new(iterable),
+                    condition,
+                });
+            }
+            elements.push(first);
             while matches!(self.current_type(), TokenType::Comma) {
                 self.pos += 1;
                 elements.push(self.parse_expression()?);

@@ -155,6 +155,8 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool) -> R
             output_path.to_str().unwrap(),
             "-lm",
             "-lpthread",
+            "-lcurl",
+            "-lsqlite3",
         ])
         .status()
         .map_err(|e| format!("Linker starten fehlgeschlagen: {e}"))?;

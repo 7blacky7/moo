@@ -895,6 +895,26 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_sanitize_sql, &[arg.into()], "sanitize_sql");
                     }
+                    // Datenbank
+                    "db_verbinde" | "db_connect" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_db_connect, &[arg.into()], "db_connect");
+                    }
+                    "db_abfrage" | "db_query" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_db_query, &[a.into(), b.into()], "db_query");
+                    }
+                    "db_ausführen" | "db_execute" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_db_execute, &[a.into(), b.into()], "db_execute");
+                    }
+                    "db_schliessen" | "db_close" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_db_close, &[arg.into()], "db_close")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     _ => {}
                 }
 
@@ -1013,6 +1033,183 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_channel_close,
                             &[obj.into()], "chan_close")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "map" | "abbilden" => {
+                        // list.map((x) => expr) — create new list, iterate, apply lambda, append
+                        let lambda = &args[0];
+                        let obj_ptr = self.builder.build_alloca(self.mv_type(), "map_list")
+                            .map_err(|e| format!("{e}"))?;
+                        self.builder.build_store(obj_ptr, obj).map_err(|e| format!("{e}"))?;
+
+                        let len_result = self.builder.build_call(self.rt.moo_list_iter_len,
+                            &[obj.into()], "len")
+                            .map_err(|e| format!("{e}"))?;
+                        let len = match len_result.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                            _ => return Err("iter_len fehlgeschlagen".to_string()),
+                        };
+
+                        let result = self.call_rt(self.rt.moo_list_new,
+                            &[self.context.i32_type().const_int(0, false).into()], "map_result")?;
+                        let result_ptr = self.builder.build_alloca(self.mv_type(), "map_result_ptr")
+                            .map_err(|e| format!("{e}"))?;
+                        self.builder.build_store(result_ptr, result).map_err(|e| format!("{e}"))?;
+
+                        let i32_type = self.context.i32_type();
+                        let idx_ptr = self.builder.build_alloca(i32_type, "map_idx")
+                            .map_err(|e| format!("{e}"))?;
+                        self.builder.build_store(idx_ptr, i32_type.const_int(0, false))
+                            .map_err(|e| format!("{e}"))?;
+
+                        let func = self.current_function.unwrap();
+                        let cond_bb = self.context.append_basic_block(func, "map_cond");
+                        let body_bb = self.context.append_basic_block(func, "map_body");
+                        let after_bb = self.context.append_basic_block(func, "map_after");
+
+                        self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
+
+                        self.builder.position_at_end(cond_bb);
+                        let current_idx = self.builder.build_load(i32_type, idx_ptr, "idx")
+                            .map_err(|e| format!("{e}"))?.into_int_value();
+                        let cmp = self.builder.build_int_compare(
+                            inkwell::IntPredicate::SLT, current_idx, len, "map_cmp")
+                            .map_err(|e| format!("{e}"))?;
+                        self.builder.build_conditional_branch(cmp, body_bb, after_bb)
+                            .map_err(|e| format!("{e}"))?;
+
+                        self.builder.position_at_end(body_bb);
+                        let list_loaded = self.builder.build_load(self.mv_type(), obj_ptr, "list")
+                            .map_err(|e| format!("{e}"))?.into_struct_value();
+                        let idx_loaded = self.builder.build_load(i32_type, idx_ptr, "idx")
+                            .map_err(|e| format!("{e}"))?.into_int_value();
+                        let element = self.call_rt(self.rt.moo_list_iter_get,
+                            &[list_loaded.into(), idx_loaded.into()], "elem")?;
+
+                        // Apply lambda: store element in param var, compile body
+                        if let Expr::Lambda { params, body } = lambda {
+                            if let Some(param) = params.first() {
+                                self.store_var(param, element)?;
+                            }
+                            let mapped_val = self.compile_expr(body)?;
+                            let current_result = self.builder.build_load(self.mv_type(), result_ptr, "res")
+                                .map_err(|e| format!("{e}"))?.into_struct_value();
+                            self.call_rt_void(self.rt.moo_list_append,
+                                &[current_result.into(), mapped_val.into()], "append")?;
+                        }
+
+                        let idx_now = self.builder.build_load(i32_type, idx_ptr, "idx")
+                            .map_err(|e| format!("{e}"))?.into_int_value();
+                        let idx_next = self.builder.build_int_add(idx_now, i32_type.const_int(1, false), "idx_next")
+                            .map_err(|e| format!("{e}"))?;
+                        self.builder.build_store(idx_ptr, idx_next).map_err(|e| format!("{e}"))?;
+                        self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
+
+                        self.builder.position_at_end(after_bb);
+                        let final_result = self.builder.build_load(self.mv_type(), result_ptr, "map_final")
+                            .map_err(|e| format!("{e}"))?.into_struct_value();
+                        return Ok(final_result);
+                    }
+                    "filter" | "filtern" => {
+                        // list.filter((x) => cond) — create new list, iterate, test, append if truthy
+                        let lambda = &args[0];
+                        let obj_ptr = self.builder.build_alloca(self.mv_type(), "filter_list")
+                            .map_err(|e| format!("{e}"))?;
+                        self.builder.build_store(obj_ptr, obj).map_err(|e| format!("{e}"))?;
+
+                        let len_result = self.builder.build_call(self.rt.moo_list_iter_len,
+                            &[obj.into()], "len")
+                            .map_err(|e| format!("{e}"))?;
+                        let len = match len_result.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                            _ => return Err("iter_len fehlgeschlagen".to_string()),
+                        };
+
+                        let result = self.call_rt(self.rt.moo_list_new,
+                            &[self.context.i32_type().const_int(0, false).into()], "filter_result")?;
+                        let result_ptr = self.builder.build_alloca(self.mv_type(), "filter_result_ptr")
+                            .map_err(|e| format!("{e}"))?;
+                        self.builder.build_store(result_ptr, result).map_err(|e| format!("{e}"))?;
+
+                        let i32_type = self.context.i32_type();
+                        let idx_ptr = self.builder.build_alloca(i32_type, "filter_idx")
+                            .map_err(|e| format!("{e}"))?;
+                        self.builder.build_store(idx_ptr, i32_type.const_int(0, false))
+                            .map_err(|e| format!("{e}"))?;
+
+                        let func = self.current_function.unwrap();
+                        let cond_bb = self.context.append_basic_block(func, "filter_cond");
+                        let body_bb = self.context.append_basic_block(func, "filter_body");
+                        let after_bb = self.context.append_basic_block(func, "filter_after");
+
+                        self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
+
+                        self.builder.position_at_end(cond_bb);
+                        let current_idx = self.builder.build_load(i32_type, idx_ptr, "idx")
+                            .map_err(|e| format!("{e}"))?.into_int_value();
+                        let cmp = self.builder.build_int_compare(
+                            inkwell::IntPredicate::SLT, current_idx, len, "filter_cmp")
+                            .map_err(|e| format!("{e}"))?;
+                        self.builder.build_conditional_branch(cmp, body_bb, after_bb)
+                            .map_err(|e| format!("{e}"))?;
+
+                        self.builder.position_at_end(body_bb);
+                        let list_loaded = self.builder.build_load(self.mv_type(), obj_ptr, "list")
+                            .map_err(|e| format!("{e}"))?.into_struct_value();
+                        let idx_loaded = self.builder.build_load(i32_type, idx_ptr, "idx")
+                            .map_err(|e| format!("{e}"))?.into_int_value();
+                        let element = self.call_rt(self.rt.moo_list_iter_get,
+                            &[list_loaded.into(), idx_loaded.into()], "elem")?;
+
+                        // Apply lambda: store element in param var, compile body, check truthy
+                        if let Expr::Lambda { params, body } = lambda {
+                            if let Some(param) = params.first() {
+                                self.store_var(param, element)?;
+                            }
+                            let test_val = self.compile_expr(body)?;
+                            let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+                                &[test_val.into()], "truthy")
+                                .map_err(|e| format!("{e}"))?
+                                .try_as_basic_value();
+                            let cond_bool = match is_true {
+                                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                _ => return Err("truthy fehlgeschlagen".to_string()),
+                            };
+
+                            let append_bb = self.context.append_basic_block(func, "filter_append");
+                            let skip_bb = self.context.append_basic_block(func, "filter_skip");
+                            self.builder.build_conditional_branch(cond_bool, append_bb, skip_bb)
+                                .map_err(|e| format!("{e}"))?;
+
+                            // Append element if condition is true
+                            self.builder.position_at_end(append_bb);
+                            // Re-load element since we need it after the branch
+                            let elem_reload = self.call_rt(self.rt.moo_list_iter_get,
+                                &[list_loaded.into(), idx_loaded.into()], "elem_reload")?;
+                            let current_result = self.builder.build_load(self.mv_type(), result_ptr, "res")
+                                .map_err(|e| format!("{e}"))?.into_struct_value();
+                            self.call_rt_void(self.rt.moo_list_append,
+                                &[current_result.into(), elem_reload.into()], "append")?;
+                            let idx_now_a = self.builder.build_load(i32_type, idx_ptr, "idx")
+                                .map_err(|e| format!("{e}"))?.into_int_value();
+                            let idx_next_a = self.builder.build_int_add(idx_now_a, i32_type.const_int(1, false), "idx_next")
+                                .map_err(|e| format!("{e}"))?;
+                            self.builder.build_store(idx_ptr, idx_next_a).map_err(|e| format!("{e}"))?;
+                            self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
+
+                            // Skip: just increment
+                            self.builder.position_at_end(skip_bb);
+                            let idx_now_s = self.builder.build_load(i32_type, idx_ptr, "idx")
+                                .map_err(|e| format!("{e}"))?.into_int_value();
+                            let idx_next_s = self.builder.build_int_add(idx_now_s, i32_type.const_int(1, false), "idx_next")
+                                .map_err(|e| format!("{e}"))?;
+                            self.builder.build_store(idx_ptr, idx_next_s).map_err(|e| format!("{e}"))?;
+                            self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
+                        }
+
+                        self.builder.position_at_end(after_bb);
+                        let final_result = self.builder.build_load(self.mv_type(), result_ptr, "filter_final")
+                            .map_err(|e| format!("{e}"))?.into_struct_value();
+                        return Ok(final_result);
                     }
                     _ => {
                         // Klassen-Methode aufrufen: suche nach class__method
@@ -1173,6 +1370,112 @@ impl<'ctx> CodeGen<'ctx> {
                     .map_err(|e| format!("{e}"))?.into_struct_value();
                 Ok(final_list)
             }
+            Expr::ListComprehension { expr, var_name, iterable, condition } => {
+                // Create empty result list
+                let result_list = self.call_rt(self.rt.moo_list_new,
+                    &[self.context.i32_type().const_int(0, false).into()], "comp_list")?;
+                let result_ptr = self.builder.build_alloca(self.mv_type(), "comp_list_ptr")
+                    .map_err(|e| format!("{e}"))?;
+                self.builder.build_store(result_ptr, result_list).map_err(|e| format!("{e}"))?;
+
+                // Compile iterable and get length
+                let list_val = self.compile_expr(iterable)?;
+                let list_ptr = self.builder.build_alloca(self.mv_type(), "comp_iter_ptr")
+                    .map_err(|e| format!("{e}"))?;
+                self.builder.build_store(list_ptr, list_val).map_err(|e| format!("{e}"))?;
+
+                let len_result = self.builder.build_call(self.rt.moo_list_iter_len,
+                    &[list_val.into()], "len")
+                    .map_err(|e| format!("{e}"))?;
+                let len = match len_result.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("iter_len fehlgeschlagen".to_string()),
+                };
+
+                let i32_type = self.context.i32_type();
+                let idx_ptr = self.builder.build_alloca(i32_type, "comp_idx")
+                    .map_err(|e| format!("{e}"))?;
+                self.builder.build_store(idx_ptr, i32_type.const_int(0, false))
+                    .map_err(|e| format!("{e}"))?;
+
+                let func = self.current_function.unwrap();
+                let cond_bb = self.context.append_basic_block(func, "comp_cond");
+                let body_bb = self.context.append_basic_block(func, "comp_body");
+                let after_bb = self.context.append_basic_block(func, "comp_after");
+
+                self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
+
+                // Condition: idx < len
+                self.builder.position_at_end(cond_bb);
+                let current_idx = self.builder.build_load(i32_type, idx_ptr, "idx")
+                    .map_err(|e| format!("{e}"))?.into_int_value();
+                let cmp = self.builder.build_int_compare(
+                    inkwell::IntPredicate::SLT, current_idx, len, "comp_cmp")
+                    .map_err(|e| format!("{e}"))?;
+                self.builder.build_conditional_branch(cmp, body_bb, after_bb)
+                    .map_err(|e| format!("{e}"))?;
+
+                // Body: get element, optionally filter, compute expr, append
+                self.builder.position_at_end(body_bb);
+                let list_loaded = self.builder.build_load(self.mv_type(), list_ptr, "list")
+                    .map_err(|e| format!("{e}"))?.into_struct_value();
+                let idx_loaded = self.builder.build_load(i32_type, idx_ptr, "idx")
+                    .map_err(|e| format!("{e}"))?.into_int_value();
+                let element = self.call_rt(self.rt.moo_list_iter_get,
+                    &[list_loaded.into(), idx_loaded.into()], "elem")?;
+                self.store_var(var_name, element)?;
+
+                // If there's a condition, filter
+                let _append_bb = if let Some(cond_expr) = condition {
+                    let filter_bb = self.context.append_basic_block(func, "comp_filter");
+                    let skip_bb = self.context.append_basic_block(func, "comp_skip");
+                    let cond_val = self.compile_expr(cond_expr)?;
+                    let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+                        &[cond_val.into()], "truthy")
+                        .map_err(|e| format!("{e}"))?
+                        .try_as_basic_value();
+                    let cond_bool = match is_true {
+                        inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                        _ => return Err("truthy fehlgeschlagen".to_string()),
+                    };
+                    self.builder.build_conditional_branch(cond_bool, filter_bb, skip_bb)
+                        .map_err(|e| format!("{e}"))?;
+
+                    // Skip: just increment index
+                    self.builder.position_at_end(skip_bb);
+                    let idx_now = self.builder.build_load(i32_type, idx_ptr, "idx")
+                        .map_err(|e| format!("{e}"))?.into_int_value();
+                    let idx_next = self.builder.build_int_add(idx_now, i32_type.const_int(1, false), "idx_next")
+                        .map_err(|e| format!("{e}"))?;
+                    self.builder.build_store(idx_ptr, idx_next).map_err(|e| format!("{e}"))?;
+                    self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
+
+                    self.builder.position_at_end(filter_bb);
+                    filter_bb
+                } else {
+                    body_bb
+                };
+
+                // Compute expression and append to result
+                let val = self.compile_expr(expr)?;
+                let current_result = self.builder.build_load(self.mv_type(), result_ptr, "res_list")
+                    .map_err(|e| format!("{e}"))?.into_struct_value();
+                self.call_rt_void(self.rt.moo_list_append,
+                    &[current_result.into(), val.into()], "append")?;
+
+                // Increment index
+                let idx_now = self.builder.build_load(i32_type, idx_ptr, "idx")
+                    .map_err(|e| format!("{e}"))?.into_int_value();
+                let idx_next = self.builder.build_int_add(idx_now, i32_type.const_int(1, false), "idx_next")
+                    .map_err(|e| format!("{e}"))?;
+                self.builder.build_store(idx_ptr, idx_next).map_err(|e| format!("{e}"))?;
+                self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
+
+                self.builder.position_at_end(after_bb);
+                let final_list = self.builder.build_load(self.mv_type(), result_ptr, "comp_result")
+                    .map_err(|e| format!("{e}"))?.into_struct_value();
+                Ok(final_list)
+            }
             Expr::Dict(pairs) => {
                 let dict = self.call_rt(self.rt.moo_dict_new, &[], "dict")?;
                 let dict_ptr = self.builder.build_alloca(self.mv_type(), "dict_tmp")
@@ -1315,6 +1618,15 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::IndexAccess { object, index } => {
                 Self::collect_free_vars(object, params, out);
                 Self::collect_free_vars(index, params, out);
+            }
+            Expr::ListComprehension { expr, var_name, iterable, condition } => {
+                Self::collect_free_vars(iterable, params, out);
+                let mut inner_params: Vec<String> = params.to_vec();
+                inner_params.push(var_name.clone());
+                Self::collect_free_vars(expr, &inner_params, out);
+                if let Some(cond) = condition {
+                    Self::collect_free_vars(cond, &inner_params, out);
+                }
             }
             _ => {}
         }

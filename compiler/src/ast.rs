@@ -38,6 +38,12 @@ pub enum Expr {
         end: Box<Expr>,
     },
     List(Vec<Expr>),
+    ListComprehension {
+        expr: Box<Expr>,
+        var_name: std::string::String,
+        iterable: Box<Expr>,
+        condition: Option<Box<Expr>>,
+    },
     Dict(Vec<(Expr, Expr)>),
     New {
         class_name: std::string::String,

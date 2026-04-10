@@ -123,6 +123,11 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_base64_decode: FunctionValue<'ctx>,
     pub moo_sanitize_html: FunctionValue<'ctx>,
     pub moo_sanitize_sql: FunctionValue<'ctx>,
+    // Database
+    pub moo_db_connect: FunctionValue<'ctx>,
+    pub moo_db_execute: FunctionValue<'ctx>,
+    pub moo_db_query: FunctionValue<'ctx>,
+    pub moo_db_close: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeBindings<'ctx> {
@@ -287,6 +292,11 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_base64_decode: decl_mv_mv!("moo_base64_decode", mv1),
             moo_sanitize_html: decl_mv_mv!("moo_sanitize_html", mv1),
             moo_sanitize_sql: decl_mv_mv!("moo_sanitize_sql", mv1),
+            // Database
+            moo_db_connect: decl_mv_mv!("moo_db_connect", mv1),
+            moo_db_execute: decl_mv_mv!("moo_db_execute", mv2),
+            moo_db_query: decl_mv_mv!("moo_db_query", mv2),
+            moo_db_close: module.add_function("moo_db_close", void_type.fn_type(mv1, false), None),
         }
     }
 }

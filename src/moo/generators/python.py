@@ -5,7 +5,7 @@ from ..ast_nodes import (
     CompoundAssignment, ConstAssignment, ContinueStatement, DictLiteral,
     ExportStatement, ForLoop, FunctionCall, FunctionDef, Identifier,
     IfStatement, ImportStatement, IndexAccess, IndexAssignment, LambdaExpression,
-    ListLiteral, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral,
+    ListComprehension, ListLiteral, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral,
     NullishCoalesce, NumberLiteral, OptionalChain, Program, PropertyAccess,
     PropertyAssignment, RangeExpr,
     ReturnStatement, ShowStatement, StringLiteral, ThisExpression, ThrowStatement,
@@ -208,6 +208,15 @@ class PythonGenerator:
     def _gen_ListLiteral(self, node: ListLiteral) -> str:
         elements = ", ".join(self._gen(e) for e in node.elements)
         return f"[{elements}]"
+
+    def _gen_ListComprehension(self, node: ListComprehension) -> str:
+        expr = self._gen(node.expr)
+        var = node.var_name
+        iterable = self._gen(node.iterable)
+        if node.condition:
+            cond = self._gen(node.condition)
+            return f"[{expr} for {var} in {iterable} if {cond}]"
+        return f"[{expr} for {var} in {iterable}]"
 
     def _gen_DictLiteral(self, node: DictLiteral) -> str:
         pairs = ", ".join(f"{self._gen(k)}: {self._gen(v)}" for k, v in node.pairs)

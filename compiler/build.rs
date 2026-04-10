@@ -15,6 +15,7 @@ fn main() {
         .file("runtime/moo_json.c")
         .file("runtime/moo_http.c")
         .file("runtime/moo_crypto.c")
+        .file("runtime/moo_db.c")
         .include("runtime")
         .opt_level(2)
         .flag("-fPIC")
@@ -22,6 +23,9 @@ fn main() {
 
     // Link libcurl for HTTP support
     println!("cargo:rustc-link-lib=curl");
+
+    // Link libsqlite3 for database support
+    println!("cargo:rustc-link-lib=sqlite3");
 
     println!("cargo:rerun-if-changed=runtime/");
 }

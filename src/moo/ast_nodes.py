@@ -72,6 +72,13 @@ class ListLiteral(Node):
     elements: list[Node] = field(default_factory=list)
 
 @dataclass
+class ListComprehension(Node):
+    expr: Node = field(default_factory=Node)
+    var_name: str = ""
+    iterable: Node = field(default_factory=Node)
+    condition: Node | None = None
+
+@dataclass
 class DictLiteral(Node):
     pairs: list[tuple[Node, Node]] = field(default_factory=list)
 
@@ -98,6 +105,15 @@ class OptionalChain(Node):
 class NullishCoalesce(Node):
     left: Node = field(default_factory=Node)
     right: Node = field(default_factory=Node)
+
+@dataclass
+class PipeExpr(Node):
+    left: Node = field(default_factory=Node)
+    right: Node = field(default_factory=Node)  # Must be a FunctionCall or MethodCall
+
+@dataclass
+class SpreadExpr(Node):
+    expr: Node = field(default_factory=Node)
 
 
 # === Statements ===
