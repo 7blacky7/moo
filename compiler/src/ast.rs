@@ -142,6 +142,21 @@ pub enum Stmt {
         iterable: Expr,
         body: Vec<Stmt>,
     },
+    /// Fortran-inspiriert: parallel für i in 0..N: body
+    ParallelFor {
+        var_name: std::string::String,
+        iterable: Expr,
+        body: Vec<Stmt>,
+    },
+    /// Ada Contracts: vorbedingung expr, "msg" / nachbedingung expr, "msg"
+    Precondition {
+        condition: Expr,
+        message: std::string::String,
+    },
+    Postcondition {
+        condition: Expr,
+        message: std::string::String,
+    },
     FunctionDef {
         name: std::string::String,
         params: Vec<std::string::String>,

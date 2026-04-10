@@ -133,3 +133,12 @@ MooValue moo_curry(MooValue func, MooValue arg) {
     // Wir speichern die Daten, aber der Aufruf muss im Codegen passieren.
     return curried_obj;
 }
+
+// === Timing ===
+
+MooValue moo_time(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    double secs = (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+    return moo_number(secs);
+}

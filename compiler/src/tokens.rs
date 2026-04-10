@@ -48,6 +48,9 @@ pub enum TokenType {
     QueryFrom,  // von (Query-Kontext, nicht Import)
     Interface,  // schnittstelle / interface
     Implements, // implementiert / implements
+    Parallel,       // parallel
+    Precondition,   // vorbedingung / precondition
+    Postcondition,  // nachbedingung / postcondition
 
     // Operators
     At,           // @
@@ -147,6 +150,9 @@ pub fn keyword_lookup(word: &str) -> Option<TokenType> {
         "garantiere" => Some(TokenType::Guard),
         "schnittstelle" => Some(TokenType::Interface),
         "implementiert" => Some(TokenType::Implements),
+        "parallel" => Some(TokenType::Parallel),
+        "vorbedingung" => Some(TokenType::Precondition),
+        "nachbedingung" => Some(TokenType::Postcondition),
         "von" => Some(TokenType::QueryFrom),
         "wo" => Some(TokenType::Where),
         "wähle" => Some(TokenType::Select),
@@ -189,6 +195,8 @@ pub fn keyword_lookup(word: &str) -> Option<TokenType> {
         "guard" => Some(TokenType::Guard),
         "interface" => Some(TokenType::Interface),
         "implements" => Some(TokenType::Implements),
+        "precondition" => Some(TokenType::Precondition),
+        "postcondition" => Some(TokenType::Postcondition),
         "where" => Some(TokenType::Where),
         "select" => Some(TokenType::Select),
         "order" => Some(TokenType::Order),

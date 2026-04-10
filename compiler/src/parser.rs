@@ -206,6 +206,9 @@ impl Parser {
             TokenType::If => self.parse_if(),
             TokenType::While => self.parse_while(),
             TokenType::For => self.parse_for(),
+            TokenType::Parallel => self.parse_parallel_for(),
+            TokenType::Precondition => self.parse_precondition(),
+            TokenType::Postcondition => self.parse_postcondition(),
             TokenType::At => self.parse_decorated_function(),
             TokenType::Func => self.parse_function_def_with_decorators(vec![]),
             TokenType::Data => self.parse_data_class(),
@@ -340,6 +343,50 @@ impl Parser {
         let iterable = self.parse_expression()?;
         let body = self.parse_block_body(false)?;
         Ok(Stmt::For { var_name, iterable, body })
+    }
+
+    fn parse_parallel_for(&mut self) -> Result<Stmt, ParseError> {
+        self.pos += 1; // parallel
+        self.eat(&TokenType::For)?; // für/for
+        let var_name = self.eat_identifier()?;
+        self.eat(&TokenType::In)?;
+        let iterable = self.parse_expression()?;
+        let body = self.parse_block_body(false)?;
+        Ok(Stmt::ParallelFor { var_name, iterable, body })
+    }
+
+    fn parse_precondition(&mut self) -> Result<Stmt, ParseError> {
+        self.pos += 1; // vorbedingung/precondition
+        let condition = self.parse_expression()?;
+        let message = if matches!(self.current_type(), TokenType::Comma) {
+            self.pos += 1;
+            if let TokenType::String(s) = self.current_type().clone() {
+                self.pos += 1;
+                s
+            } else {
+                "Vorbedingung verletzt".to_string()
+            }
+        } else {
+            "Vorbedingung verletzt".to_string()
+        };
+        Ok(Stmt::Precondition { condition, message })
+    }
+
+    fn parse_postcondition(&mut self) -> Result<Stmt, ParseError> {
+        self.pos += 1; // nachbedingung/postcondition
+        let condition = self.parse_expression()?;
+        let message = if matches!(self.current_type(), TokenType::Comma) {
+            self.pos += 1;
+            if let TokenType::String(s) = self.current_type().clone() {
+                self.pos += 1;
+                s
+            } else {
+                "Nachbedingung verletzt".to_string()
+            }
+        } else {
+            "Nachbedingung verletzt".to_string()
+        };
+        Ok(Stmt::Postcondition { condition, message })
     }
 
     fn parse_decorated_function(&mut self) -> Result<Stmt, ParseError> {

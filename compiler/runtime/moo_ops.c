@@ -14,39 +14,102 @@ static MooValue scalar_div(double a, double b) {
 static MooValue scalar_mod(double a, double b) { return moo_number(fmod(a, b)); }
 static MooValue scalar_pow(double a, double b) { return moo_number(pow(a, b)); }
 
+// Prüft ob alle Elemente einer Liste Zahlen sind
+static bool list_all_numbers(MooList* l) {
+    for (int32_t i = 0; i < l->length; i++) {
+        if (l->items[i].tag != MOO_NUMBER) return false;
+    }
+    return true;
+}
+
+// Schneller Pfad: Direkte double-Array-Operationen fuer reine Zahlenlisten.
+// Der C-Compiler kann diese Schleifen mit -O2/-O3 auto-vektorisieren (SSE/AVX).
+typedef double (*FastOp)(double, double);
+static inline double fast_add(double a, double b) { return a + b; }
+static inline double fast_sub(double a, double b) { return a - b; }
+static inline double fast_mul(double a, double b) { return a * b; }
+static inline double fast_div(double a, double b) { return a / b; }
+
+// Schneller Pfad: Liste op Zahl (alle Numbers)
+__attribute__((optimize("O3")))
+static MooValue vec_op_fast_scalar(MooList* la, double bv, FastOp fop) {
+    int32_t len = la->length;
+    MooValue result = moo_list_new(len);
+    MooList* rl = MV_LIST(result);
+    // Direkt in den items-Array schreiben (kein append-Overhead)
+    for (int32_t i = 0; i < len; i++) {
+        double av = moo_val_as_double(la->items[i]);
+        rl->items[i] = moo_number(fop(av, bv));
+    }
+    rl->length = len;
+    return result;
+}
+
+// Schneller Pfad: Liste op Liste (beide nur Numbers)
+__attribute__((optimize("O3")))
+static MooValue vec_op_fast_pair(MooList* la, MooList* lb, FastOp fop) {
+    int32_t len = la->length < lb->length ? la->length : lb->length;
+    MooValue result = moo_list_new(len);
+    MooList* rl = MV_LIST(result);
+    for (int32_t i = 0; i < len; i++) {
+        double av = moo_val_as_double(la->items[i]);
+        double bv = moo_val_as_double(lb->items[i]);
+        rl->items[i] = moo_number(fop(av, bv));
+    }
+    rl->length = len;
+    return result;
+}
+
+// Mapping von ScalarOp zu FastOp
+static FastOp get_fast_op(ScalarOp op) {
+    if (op == scalar_add) return fast_add;
+    if (op == scalar_sub) return fast_sub;
+    if (op == scalar_mul) return fast_mul;
+    if (op == scalar_div) return fast_div;
+    return NULL; // mod, pow → kein schneller Pfad
+}
+
 static MooValue vec_op(MooValue a, MooValue b, ScalarOp op) {
+    FastOp fop = get_fast_op(op);
+
     if (a.tag == MOO_LIST && b.tag == MOO_LIST) {
-        // Liste + Liste → elementweise
-        int32_t len = moo_list_iter_len(a);
-        int32_t len_b = moo_list_iter_len(b);
-        if (len_b < len) len = len_b;
+        MooList* la = MV_LIST(a);
+        MooList* lb = MV_LIST(b);
+        // Schneller Pfad: beide nur Zahlen
+        if (fop && list_all_numbers(la) && list_all_numbers(lb)) {
+            return vec_op_fast_pair(la, lb, fop);
+        }
+        // Fallback: generisch
+        int32_t len = la->length < lb->length ? la->length : lb->length;
         MooValue result = moo_list_new(len);
         for (int32_t i = 0; i < len; i++) {
-            MooValue ea = moo_list_iter_get(a, i);
-            MooValue eb = moo_list_iter_get(b, i);
-            moo_list_append(result, op(moo_as_number(ea), moo_as_number(eb)));
+            moo_list_append(result, op(moo_as_number(la->items[i]), moo_as_number(lb->items[i])));
         }
         return result;
     }
     if (a.tag == MOO_LIST) {
-        // Liste op Zahl
-        int32_t len = moo_list_iter_len(a);
+        MooList* la = MV_LIST(a);
         double bv = moo_as_number(b);
+        if (fop && list_all_numbers(la)) {
+            return vec_op_fast_scalar(la, bv, fop);
+        }
+        int32_t len = la->length;
         MooValue result = moo_list_new(len);
         for (int32_t i = 0; i < len; i++) {
-            MooValue el = moo_list_iter_get(a, i);
-            moo_list_append(result, op(moo_as_number(el), bv));
+            moo_list_append(result, op(moo_as_number(la->items[i]), bv));
         }
         return result;
     }
     if (b.tag == MOO_LIST) {
-        // Zahl op Liste
-        int32_t len = moo_list_iter_len(b);
+        MooList* lb = MV_LIST(b);
         double av = moo_as_number(a);
+        if (fop && list_all_numbers(lb)) {
+            return vec_op_fast_scalar(lb, av, fop);
+        }
+        int32_t len = lb->length;
         MooValue result = moo_list_new(len);
         for (int32_t i = 0; i < len; i++) {
-            MooValue el = moo_list_iter_get(b, i);
-            moo_list_append(result, op(av, moo_as_number(el)));
+            moo_list_append(result, op(av, moo_as_number(lb->items[i])));
         }
         return result;
     }

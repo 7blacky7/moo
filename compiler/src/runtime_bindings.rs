@@ -99,6 +99,7 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_input: FunctionValue<'ctx>,
     pub moo_length: FunctionValue<'ctx>,
     pub moo_range: FunctionValue<'ctx>,
+    pub moo_time: FunctionValue<'ctx>,
     pub moo_index_get: FunctionValue<'ctx>,
     pub moo_index_set: FunctionValue<'ctx>,
     // Freeze/Immutable
@@ -323,6 +324,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_input: decl_mv_mv!("moo_input", mv1),
             moo_length: decl_mv_mv!("moo_length", mv1),
             moo_range: decl_mv_mv!("moo_range", mv2),
+            moo_time: decl_mv_mv!("moo_time", &[]),
             moo_index_get: decl_mv_mv!("moo_index_get", mv2),
             moo_index_set: module.add_function("moo_index_set", void_type.fn_type(mv3, false), None),
             // Freeze/Immutable

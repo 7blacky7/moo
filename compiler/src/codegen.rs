@@ -55,6 +55,9 @@ pub struct CodeGen<'ctx> {
     lambda_counter: usize,
     // Defer-Stack (Go-inspiriert): Vec von AST-Exprs die am Funktionsende ausgeführt werden
     defer_stack: Vec<Expr>,
+    // Crystal-inspiriert: Typ-Tracking fuer Warnungen (kein Enforcement!)
+    variable_types: HashMap<String, &'static str>,
+    warnings: Vec<String>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -77,6 +80,23 @@ impl<'ctx> CodeGen<'ctx> {
             lambda_captures: HashMap::new(),
             lambda_counter: 0,
             defer_stack: Vec::new(),
+            variable_types: HashMap::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Crystal-inspiriert: Bestimmt den statischen Typ einer Expression (wenn bekannt)
+    fn infer_type(&self, expr: &Expr) -> Option<&'static str> {
+        match expr {
+            Expr::Number(_) => Some("Zahl"),
+            Expr::String(_) => Some("Text"),
+            Expr::Boolean(_) => Some("Bool"),
+            Expr::None => Some("Nichts"),
+            Expr::List(_) | Expr::ListComprehension { .. } => Some("Liste"),
+            Expr::Dict(_) => Some("Dict"),
+            Expr::Range { .. } => Some("Liste"),
+            Expr::Identifier(name) => self.variable_types.get(name.as_str()).copied(),
+            _ => None,
         }
     }
 
@@ -105,6 +125,11 @@ impl<'ctx> CodeGen<'ctx> {
         if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
             self.builder.build_return(Some(&i32_type.const_int(0, false)))
                 .map_err(|e| format!("Return-Fehler: {e}"))?;
+        }
+
+        // Typ-Warnungen ausgeben (Crystal-inspiriert)
+        for w in &self.warnings {
+            eprintln!("Warnung: {w}");
         }
 
         self.module.verify().map_err(|e| format!("LLVM Verifikation fehlgeschlagen: {}", e.to_string()))
@@ -283,6 +308,10 @@ impl<'ctx> CodeGen<'ctx> {
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
             Stmt::Assignment { name, value } | Stmt::ConstAssignment { name, value } => {
+                // Crystal-inspiriert: Typ der Zuweisung tracken
+                if let Some(typ) = self.infer_type(value) {
+                    self.variable_types.insert(name.clone(), typ);
+                }
                 // Lambda-Zuweisung: merke den Lambda-Namen fuer spaetere Aufrufe
                 if let Expr::Lambda { .. } = value {
                     let lambda_name = format!("__lambda_{}", self.lambda_counter);
@@ -393,6 +422,32 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Stmt::Expression(expr) => {
                 self.compile_expr(expr)?;
+                Ok(())
+            }
+            Stmt::ParallelFor { var_name, iterable, body } => {
+                // Fallback: als normale For-Schleife kompilieren
+                // EHRLICH: Echte Parallelisierung braucht thread-sichere Codegen
+                self.compile_for(var_name, iterable, body)
+            }
+            Stmt::Precondition { condition, message } | Stmt::Postcondition { condition, message } => {
+                let cond_val = self.compile_expr(condition)?;
+                let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+                    &[cond_val.into()], "contract").map_err(|e| format!("{e}"))?;
+                let cond_bool = match is_true.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("truthy fehlgeschlagen".to_string()),
+                };
+                let func = self.current_function.unwrap();
+                let fail_bb = self.context.append_basic_block(func, "contract_fail");
+                let ok_bb = self.context.append_basic_block(func, "contract_ok");
+                self.builder.build_conditional_branch(cond_bool, ok_bb, fail_bb)
+                    .map_err(|e| format!("{e}"))?;
+                self.builder.position_at_end(fail_bb);
+                let msg_ptr = self.make_global_str(message, "contract_msg")?;
+                let msg_val = self.call_rt(self.rt.moo_string_new, &[msg_ptr.into()], "contract_str")?;
+                self.call_rt_void(self.rt.moo_throw, &[msg_val.into()], "contract_throw")?;
+                self.builder.build_unconditional_branch(ok_bb).map_err(|e| format!("{e}"))?;
+                self.builder.position_at_end(ok_bb);
                 Ok(())
             }
             _ => Ok(()),
@@ -1032,6 +1087,43 @@ impl<'ctx> CodeGen<'ctx> {
                     .or_else(|_| self.load_var("this"))
             }
             Expr::BinaryOp { left, op, right } => {
+                // Zig-inspiriert: Const-Folding — bei Number-Literalen zur Compile-Zeit berechnen
+                if let (Expr::Number(a), Expr::Number(b)) = (left.as_ref(), right.as_ref()) {
+                    let result = match op {
+                        BinOp::Add => Some(*a + *b),
+                        BinOp::Sub => Some(*a - *b),
+                        BinOp::Mul => Some(*a * *b),
+                        BinOp::Div if *b != 0.0 => Some(*a / *b),
+                        BinOp::Mod if *b != 0.0 => Some(a % b),
+                        BinOp::Pow => Some(a.powf(*b)),
+                        _ => None,
+                    };
+                    if let Some(val) = result {
+                        let f = self.context.f64_type().const_float(val);
+                        return self.call_rt(self.rt.moo_number, &[f.into()], "const");
+                    }
+                    // Bool-Vergleiche zur Compile-Zeit
+                    let bool_result = match op {
+                        BinOp::Eq => Some(*a == *b),
+                        BinOp::NotEq => Some(*a != *b),
+                        BinOp::Less => Some(*a < *b),
+                        BinOp::Greater => Some(*a > *b),
+                        BinOp::LessEq => Some(*a <= *b),
+                        BinOp::GreaterEq => Some(*a >= *b),
+                        _ => None,
+                    };
+                    if let Some(val) = bool_result {
+                        let bval = self.context.bool_type().const_int(val as u64, false);
+                        return self.call_rt(self.rt.moo_bool_fn, &[bval.into()], "const_cmp");
+                    }
+                }
+                // String-Concat von Literalen zur Compile-Zeit
+                if let (BinOp::Add, Expr::String(a), Expr::String(b)) = (op, left.as_ref(), right.as_ref()) {
+                    let combined = format!("{a}{b}");
+                    let ptr = self.make_global_str(&combined, "const_str")?;
+                    return self.call_rt(self.rt.moo_string_new, &[ptr.into()], "const_concat");
+                }
+
                 let lhs = self.compile_expr(left)?;
                 let rhs = self.compile_expr(right)?;
 
@@ -1411,6 +1503,9 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     // Freeze/Immutable
+                    "zeit" | "time" => {
+                        return self.call_rt(self.rt.moo_time, &[], "time");
+                    }
                     "einfrieren" | "freeze" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_freeze, &[arg.into()], "freeze");
@@ -1588,6 +1683,29 @@ impl<'ctx> CodeGen<'ctx> {
                 self.call_rt(function, &compiled_args, "call")
             }
             Expr::MethodCall { object, method, args } => {
+                // Crystal-inspiriert: Typ-Warnung bei inkompatiblen Methoden
+                if let Some(typ) = self.infer_type(object) {
+                    let list_methods = &["append", "hinzufügen", "pop", "sort", "sortieren", "reverse", "umkehren", "join"];
+                    let string_methods = &["upper", "gross", "lower", "klein", "trim", "trimmen", "split", "teilen", "replace", "ersetzen"];
+                    let dict_methods = &["keys", "schlüssel", "has", "hat"];
+
+                    let mismatch = match typ {
+                        "Zahl" => list_methods.contains(&method.as_str()) || string_methods.contains(&method.as_str()) || dict_methods.contains(&method.as_str()),
+                        "Text" => list_methods.contains(&method.as_str()) || dict_methods.contains(&method.as_str()),
+                        "Liste" => string_methods.contains(&method.as_str()) || dict_methods.contains(&method.as_str()),
+                        "Dict" => list_methods.contains(&method.as_str()) || string_methods.contains(&method.as_str()),
+                        "Bool" => list_methods.contains(&method.as_str()) || string_methods.contains(&method.as_str()) || dict_methods.contains(&method.as_str()),
+                        _ => false,
+                    };
+                    if mismatch {
+                        if let Expr::Identifier(name) = object.as_ref() {
+                            self.warnings.push(format!(
+                                "'{name}' ist vom Typ {typ}, aber '.{method}()' ist nicht fuer {typ} definiert"
+                            ));
+                        }
+                    }
+                }
+
                 let obj = self.compile_expr(object)?;
                 // Eingebaute Methoden
                 match method.as_str() {
