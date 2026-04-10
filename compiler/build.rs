@@ -11,10 +11,17 @@ fn main() {
         .file("runtime/moo_object.c")
         .file("runtime/moo_stdlib.c")
         .file("runtime/moo_file.c")
+        .file("runtime/moo_thread.c")
+        .file("runtime/moo_json.c")
+        .file("runtime/moo_http.c")
+        .file("runtime/moo_crypto.c")
         .include("runtime")
         .opt_level(2)
         .flag("-fPIC")
         .compile("moo_runtime");
+
+    // Link libcurl for HTTP support
+    println!("cargo:rustc-link-lib=curl");
 
     println!("cargo:rerun-if-changed=runtime/");
 }

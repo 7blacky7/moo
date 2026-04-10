@@ -102,6 +102,27 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_file_exists: FunctionValue<'ctx>,
     pub moo_file_delete: FunctionValue<'ctx>,
     pub moo_dir_list: FunctionValue<'ctx>,
+    // Thread & Channel
+    pub moo_thread_spawn: FunctionValue<'ctx>,
+    pub moo_thread_wait: FunctionValue<'ctx>,
+    pub moo_thread_done: FunctionValue<'ctx>,
+    pub moo_channel_new: FunctionValue<'ctx>,
+    pub moo_channel_send: FunctionValue<'ctx>,
+    pub moo_channel_recv: FunctionValue<'ctx>,
+    pub moo_channel_close: FunctionValue<'ctx>,
+    // JSON
+    pub moo_json_parse: FunctionValue<'ctx>,
+    pub moo_json_string: FunctionValue<'ctx>,
+    // HTTP
+    pub moo_http_get: FunctionValue<'ctx>,
+    pub moo_http_post: FunctionValue<'ctx>,
+    // Crypto & Security
+    pub moo_sha256: FunctionValue<'ctx>,
+    pub moo_secure_random: FunctionValue<'ctx>,
+    pub moo_base64_encode: FunctionValue<'ctx>,
+    pub moo_base64_decode: FunctionValue<'ctx>,
+    pub moo_sanitize_html: FunctionValue<'ctx>,
+    pub moo_sanitize_sql: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeBindings<'ctx> {
@@ -245,6 +266,27 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_file_exists: decl_mv_mv!("moo_file_exists", mv1),
             moo_file_delete: decl_mv_mv!("moo_file_delete", mv1),
             moo_dir_list: decl_mv_mv!("moo_dir_list", mv1),
+            // Thread & Channel
+            moo_thread_spawn: decl_mv_mv!("moo_thread_spawn", mv2),
+            moo_thread_wait: decl_mv_mv!("moo_thread_wait", mv1),
+            moo_thread_done: decl_mv_mv!("moo_thread_done", mv1),
+            moo_channel_new: decl_mv_mv!("moo_channel_new", mv1),
+            moo_channel_send: module.add_function("moo_channel_send", void_type.fn_type(mv2, false), None),
+            moo_channel_recv: decl_mv_mv!("moo_channel_recv", mv1),
+            moo_channel_close: module.add_function("moo_channel_close", void_type.fn_type(mv1, false), None),
+            // JSON
+            moo_json_parse: decl_mv_mv!("moo_json_parse", mv1),
+            moo_json_string: decl_mv_mv!("moo_json_string", mv1),
+            // HTTP
+            moo_http_get: decl_mv_mv!("moo_http_get", mv1),
+            moo_http_post: decl_mv_mv!("moo_http_post", mv2),
+            // Crypto & Security
+            moo_sha256: decl_mv_mv!("moo_sha256", mv1),
+            moo_secure_random: decl_mv_mv!("moo_secure_random", mv1),
+            moo_base64_encode: decl_mv_mv!("moo_base64_encode", mv1),
+            moo_base64_decode: decl_mv_mv!("moo_base64_decode", mv1),
+            moo_sanitize_html: decl_mv_mv!("moo_sanitize_html", mv1),
+            moo_sanitize_sql: decl_mv_mv!("moo_sanitize_sql", mv1),
         }
     }
 }

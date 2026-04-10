@@ -837,6 +837,64 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_dir_list, &[arg.into()], "dir_list");
                     }
+                    "starte" | "spawn" => {
+                        let func = self.compile_expr(&args[0])?;
+                        let arg = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_thread_spawn, &[func.into(), arg.into()], "spawn");
+                    }
+                    "kanal" | "channel" => {
+                        if args.is_empty() {
+                            let cap = self.call_rt(self.rt.moo_number, &[self.context.f64_type().const_float(16.0).into()], "cap16")?;
+                            return self.call_rt(self.rt.moo_channel_new, &[cap.into()], "channel");
+                        } else {
+                            let cap = self.compile_expr(&args[0])?;
+                            return self.call_rt(self.rt.moo_channel_new, &[cap.into()], "channel");
+                        }
+                    }
+                    // JSON
+                    "json_parse" | "json_lesen" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_json_parse, &[arg.into()], "json_parse");
+                    }
+                    "json_string" | "json_text" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_json_string, &[arg.into()], "json_string");
+                    }
+                    // HTTP
+                    "http_get" | "http_hole" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_http_get, &[arg.into()], "http_get");
+                    }
+                    "http_post" | "http_sende" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_http_post, &[a.into(), b.into()], "http_post");
+                    }
+                    // Crypto & Security
+                    "sha256" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_sha256, &[arg.into()], "sha256");
+                    }
+                    "sichere_zufall" | "secure_random" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_secure_random, &[arg.into()], "secure_random");
+                    }
+                    "base64_encode" | "base64_kodieren" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_base64_encode, &[arg.into()], "base64_encode");
+                    }
+                    "base64_decode" | "base64_dekodieren" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_base64_decode, &[arg.into()], "base64_decode");
+                    }
+                    "html_bereinigen" | "sanitize_html" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_sanitize_html, &[arg.into()], "sanitize_html");
+                    }
+                    "sql_bereinigen" | "sanitize_sql" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_sanitize_sql, &[arg.into()], "sanitize_sql");
+                    }
                     _ => {}
                 }
 
@@ -935,6 +993,26 @@ impl<'ctx> CodeGen<'ctx> {
                         let needle = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_string_contains,
                             &[obj.into(), needle.into()], "str_contains");
+                    }
+                    "warten" | "wait" => {
+                        return self.call_rt(self.rt.moo_thread_wait, &[obj.into()], "thread_wait");
+                    }
+                    "fertig" | "done" => {
+                        return self.call_rt(self.rt.moo_thread_done, &[obj.into()], "thread_done");
+                    }
+                    "senden" | "send" => {
+                        let val = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_channel_send,
+                            &[obj.into(), val.into()], "chan_send")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "empfangen" | "recv" => {
+                        return self.call_rt(self.rt.moo_channel_recv, &[obj.into()], "chan_recv");
+                    }
+                    "schliessen" | "close" => {
+                        self.call_rt_void(self.rt.moo_channel_close,
+                            &[obj.into()], "chan_close")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     _ => {
                         // Klassen-Methode aufrufen: suche nach class__method

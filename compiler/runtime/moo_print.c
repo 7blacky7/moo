@@ -56,6 +56,10 @@ MooValue moo_to_string(MooValue v) {
         }
         case MOO_ERROR:
             return moo_string_new(MV_ERR(v));
+        case MOO_THREAD:
+            return moo_string_new("<Thread>");
+        case MOO_CHANNEL:
+            return moo_string_new("<Kanal>");
         default:
             return moo_string_new("<unbekannt>");
     }

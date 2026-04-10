@@ -154,6 +154,7 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool) -> R
             "-o",
             output_path.to_str().unwrap(),
             "-lm",
+            "-lpthread",
         ])
         .status()
         .map_err(|e| format!("Linker starten fehlgeschlagen: {e}"))?;

@@ -20,6 +20,8 @@ typedef enum {
     MOO_FUNC    = 6,
     MOO_OBJECT  = 7,
     MOO_ERROR   = 8,
+    MOO_THREAD  = 9,
+    MOO_CHANNEL = 10,
 } MooTag;
 
 // === Forward Declarations ===
@@ -28,6 +30,8 @@ typedef struct MooList MooList;
 typedef struct MooDict MooDict;
 typedef struct MooObject MooObject;
 typedef struct MooFunc MooFunc;
+typedef struct MooThread MooThread;
+typedef struct MooChannel MooChannel;
 typedef struct MooValue MooValue;
 
 // === MooValue: Der universelle Wert ===
@@ -114,6 +118,40 @@ struct MooObject {
     int32_t prop_capacity;
     MooObject* parent;
 };
+
+// === Thread ===
+#include <pthread.h>
+
+struct MooThread {
+    pthread_t thread;
+    MooValue result;
+    bool done;
+    pthread_mutex_t mutex;
+};
+
+// === Channel (Go-Style, buffered) ===
+struct MooChannel {
+    MooValue* buffer;
+    int32_t capacity;
+    int32_t count;
+    int32_t read_pos;
+    int32_t write_pos;
+    pthread_mutex_t mutex;
+    pthread_cond_t not_empty;
+    pthread_cond_t not_full;
+    bool closed;
+};
+
+// === Thread-Funktionen ===
+MooValue moo_thread_spawn(MooValue func, MooValue arg);
+MooValue moo_thread_wait(MooValue thread);
+MooValue moo_thread_done(MooValue thread);
+
+// === Channel-Funktionen ===
+MooValue moo_channel_new(MooValue capacity);
+void moo_channel_send(MooValue channel, MooValue value);
+MooValue moo_channel_recv(MooValue channel);
+void moo_channel_close(MooValue channel);
 
 // === Fehlerbehandlung ===
 #define MOO_TRY_STACK_SIZE 64
@@ -243,9 +281,25 @@ MooValue moo_file_exists(MooValue path);
 MooValue moo_file_delete(MooValue path);
 MooValue moo_dir_list(MooValue path);
 
+// === Kryptografie & Sicherheit ===
+MooValue moo_sha256(MooValue input);
+MooValue moo_secure_random(MooValue length);
+MooValue moo_base64_encode(MooValue input);
+MooValue moo_base64_decode(MooValue input);
+MooValue moo_sanitize_html(MooValue input);
+MooValue moo_sanitize_sql(MooValue input);
+
 // Universelle Index-Ops (dispatcht nach Container-Typ)
 MooValue moo_string_repeat(MooValue s, MooValue count);
 MooValue moo_index_get(MooValue container, MooValue index);
 void moo_index_set(MooValue container, MooValue index, MooValue value);
+
+// === JSON ===
+MooValue moo_json_parse(MooValue json_string);
+MooValue moo_json_string(MooValue value);
+
+// === HTTP ===
+MooValue moo_http_get(MooValue url);
+MooValue moo_http_post(MooValue url, MooValue body);
 
 #endif // MOO_RUNTIME_H

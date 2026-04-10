@@ -1,0 +1,6 @@
+zeige sha256("hallo")
+zeige sichere_zufall(16)
+zeige base64_encode("Hallo Welt")
+zeige base64_decode("SGFsbG8gV2VsdA==")
+zeige html_bereinigen("<script>alert('xss')</script>")
+zeige sql_bereinigen("'; DROP TABLE users; --")
