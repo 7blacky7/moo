@@ -968,11 +968,105 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
             }
+            Expr::OptionalChain { object, property } => {
+                let obj = self.compile_expr(object)?;
+                let func = self.current_function.unwrap();
+
+                // Prüfe ob obj none ist
+                let is_none_result = self.builder.build_call(self.rt.moo_is_none,
+                    &[obj.into()], "is_none")
+                    .map_err(|e| format!("{e}"))?
+                    .try_as_basic_value();
+                let is_none = match is_none_result {
+                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("moo_is_none hat keinen Wert zurueckgegeben".to_string()),
+                };
+
+                let then_bb = self.context.append_basic_block(func, "opt_none");
+                let else_bb = self.context.append_basic_block(func, "opt_access");
+                let merge_bb = self.context.append_basic_block(func, "opt_merge");
+
+                self.builder.build_conditional_branch(is_none, then_bb, else_bb)
+                    .map_err(|e| format!("{e}"))?;
+
+                // None-Pfad
+                self.builder.position_at_end(then_bb);
+                let none_val = self.call_rt(self.rt.moo_none, &[], "none")?;
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
+                let then_end = self.builder.get_insert_block().unwrap();
+
+                // Access-Pfad
+                self.builder.position_at_end(else_bb);
+                let prop_str = self.make_global_str(property, "opt_prop")?;
+                let prop_val = self.call_rt(self.rt.moo_object_get,
+                    &[obj.into(), prop_str.into()], "opt_get")?;
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
+                let else_end = self.builder.get_insert_block().unwrap();
+
+                // Merge mit phi
+                self.builder.position_at_end(merge_bb);
+                let phi = self.builder.build_phi(self.mv_type(), "opt_result")
+                    .map_err(|e| format!("{e}"))?;
+                phi.add_incoming(&[
+                    (&none_val as &dyn BasicValue, then_end),
+                    (&prop_val as &dyn BasicValue, else_end),
+                ]);
+                Ok(phi.as_basic_value().into_struct_value())
+            }
+            Expr::NullishCoalesce { left, right } => {
+                let lhs = self.compile_expr(left)?;
+                let func = self.current_function.unwrap();
+
+                let is_none_result = self.builder.build_call(self.rt.moo_is_none,
+                    &[lhs.into()], "is_none")
+                    .map_err(|e| format!("{e}"))?
+                    .try_as_basic_value();
+                let is_none = match is_none_result {
+                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("moo_is_none hat keinen Wert zurueckgegeben".to_string()),
+                };
+
+                let then_bb = self.context.append_basic_block(func, "nc_none");
+                let else_bb = self.context.append_basic_block(func, "nc_keep");
+                let merge_bb = self.context.append_basic_block(func, "nc_merge");
+
+                self.builder.build_conditional_branch(is_none, then_bb, else_bb)
+                    .map_err(|e| format!("{e}"))?;
+
+                // None -> rechte Seite
+                self.builder.position_at_end(then_bb);
+                let rhs = self.compile_expr(right)?;
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
+                let then_end = self.builder.get_insert_block().unwrap();
+
+                // Nicht None -> linke Seite behalten
+                self.builder.position_at_end(else_bb);
+                self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
+                let else_end = self.builder.get_insert_block().unwrap();
+
+                // Merge
+                self.builder.position_at_end(merge_bb);
+                let phi = self.builder.build_phi(self.mv_type(), "nc_result")
+                    .map_err(|e| format!("{e}"))?;
+                phi.add_incoming(&[
+                    (&rhs as &dyn BasicValue, then_end),
+                    (&lhs as &dyn BasicValue, else_end),
+                ]);
+                Ok(phi.as_basic_value().into_struct_value())
+            }
             Expr::IndexAccess { object, index } => {
                 let obj = self.compile_expr(object)?;
-                let idx = self.compile_expr(index)?;
-                self.call_rt(self.rt.moo_index_get,
-                    &[obj.into(), idx.into()], "idx_get")
+                // String-Slicing: obj[start..end] -> moo_string_slice(obj, start, end)
+                if let Expr::Range { start, end } = index.as_ref() {
+                    let s = self.compile_expr(start)?;
+                    let e = self.compile_expr(end)?;
+                    self.call_rt(self.rt.moo_string_slice,
+                        &[obj.into(), s.into(), e.into()], "str_slice")
+                } else {
+                    let idx = self.compile_expr(index)?;
+                    self.call_rt(self.rt.moo_index_get,
+                        &[obj.into(), idx.into()], "idx_get")
+                }
             }
             Expr::Range { start, end } => {
                 let s = self.compile_expr(start)?;

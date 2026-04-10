@@ -377,7 +377,17 @@ impl Parser {
     // --- Expressions ---
 
     fn parse_expression(&mut self) -> Result<Expr, ParseError> {
-        self.parse_or()
+        self.parse_nullish_coalesce()
+    }
+
+    fn parse_nullish_coalesce(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_or()?;
+        while matches!(self.current_type(), TokenType::NullishCoalesce) {
+            self.pos += 1;
+            let right = self.parse_or()?;
+            left = Expr::NullishCoalesce { left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
     }
 
     fn parse_or(&mut self) -> Result<Expr, ParseError> {
@@ -510,6 +520,14 @@ impl Parser {
                             property: prop,
                         };
                     }
+                }
+                TokenType::OptionalChain => {
+                    self.pos += 1;
+                    let prop = self.eat_identifier()?;
+                    node = Expr::OptionalChain {
+                        object: Box::new(node),
+                        property: prop,
+                    };
                 }
                 TokenType::LBracket => {
                     self.pos += 1;

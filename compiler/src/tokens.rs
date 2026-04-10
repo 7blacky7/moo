@@ -58,6 +58,8 @@ pub enum TokenType {
     LessEq,
     GreaterEq,
     Dot,
+    OptionalChain,   // ?.
+    NullishCoalesce, // ??
 
     // Delimiters
     Colon,

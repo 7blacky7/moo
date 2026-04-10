@@ -129,6 +129,25 @@ MooValue moo_string_repeat(MooValue s, MooValue count) {
     return result;
 }
 
+MooValue moo_string_slice(MooValue s, MooValue start, MooValue end) {
+    if (s.tag != MOO_STRING) return moo_string_new("");
+    int32_t len = MV_STR(s)->length;
+    int32_t a = (int32_t)moo_as_number(start);
+    int32_t b = (int32_t)moo_as_number(end);
+    if (a < 0) a += len;
+    if (b < 0) b += len;
+    if (a < 0) a = 0;
+    if (b > len) b = len;
+    if (a >= b) return moo_string_new("");
+    int32_t slice_len = b - a;
+    char* buf = moo_alloc(slice_len + 1);
+    memcpy(buf, MV_STR(s)->chars + a, slice_len);
+    buf[slice_len] = '\0';
+    MooValue result = moo_string_new(buf);
+    moo_free(buf);
+    return result;
+}
+
 MooValue moo_string_lower(MooValue s) {
     if (s.tag != MOO_STRING) return s;
     char* buf = strdup(MV_STR(s)->chars);

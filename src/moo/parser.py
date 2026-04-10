@@ -5,7 +5,8 @@ from .ast_nodes import (
     CompoundAssignment, ConstAssignment, ContinueStatement, DictLiteral,
     ExportStatement, ForLoop, FunctionCall, FunctionDef, Identifier,
     IfStatement, ImportStatement, IndexAccess, IndexAssignment, LambdaExpression,
-    ListLiteral, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral, RangeExpr,
+    ListLiteral, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral,
+    NullishCoalesce, OptionalChain, RangeExpr,
     NumberLiteral, Program, PropertyAccess, PropertyAssignment, ReturnStatement,
     ShowStatement, StringLiteral, ThisExpression, ThrowStatement, TryCatch,
     UnaryOp, WhileLoop,
@@ -301,7 +302,15 @@ class Parser:
         # Lambda: (x, y) => ausdruck
         if self._current().type == TokenType.LPAREN and self._is_lambda():
             return self._parse_lambda()
-        return self._parse_or()
+        return self._parse_nullish_coalesce()
+
+    def _parse_nullish_coalesce(self) -> Node:
+        left = self._parse_or()
+        while self._current().type == TokenType.NULLISH_COALESCE:
+            self.pos += 1
+            right = self._parse_or()
+            left = NullishCoalesce(left=left, right=right, line=left.line)
+        return left
 
     def _is_lambda(self) -> bool:
         """Vorausschauen ob das eine Lambda-Expression ist."""
@@ -426,6 +435,10 @@ class Parser:
                     node = MethodCall(object=node, method=prop, args=args, line=node.line)
                 else:
                     node = PropertyAccess(object=node, property=prop, line=node.line)
+            elif self._current().type == TokenType.OPTIONAL_CHAIN:
+                self.pos += 1
+                prop = self._eat(TokenType.IDENTIFIER).value
+                node = OptionalChain(object=node, property=prop, line=node.line)
             elif self._current().type == TokenType.LBRACKET:
                 self.pos += 1
                 index = self._parse_expression()

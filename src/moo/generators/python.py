@@ -6,7 +6,8 @@ from ..ast_nodes import (
     ExportStatement, ForLoop, FunctionCall, FunctionDef, Identifier,
     IfStatement, ImportStatement, IndexAccess, IndexAssignment, LambdaExpression,
     ListLiteral, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral,
-    NumberLiteral, Program, PropertyAccess, PropertyAssignment, RangeExpr,
+    NullishCoalesce, NumberLiteral, OptionalChain, Program, PropertyAccess,
+    PropertyAssignment, RangeExpr,
     ReturnStatement, ShowStatement, StringLiteral, ThisExpression, ThrowStatement,
     TryCatch, UnaryOp, WhileLoop,
 )
@@ -197,6 +198,8 @@ class PythonGenerator:
         return f"{self._gen(node.object)}.{node.property}"
 
     def _gen_IndexAccess(self, node: IndexAccess) -> str:
+        if isinstance(node.index, RangeExpr):
+            return f"{self._gen(node.object)}[{self._gen(node.index.start)}:{self._gen(node.index.end)}]"
         return f"{self._gen(node.object)}[{self._gen(node.index)}]"
 
     def _gen_RangeExpr(self, node: RangeExpr) -> str:
@@ -217,3 +220,11 @@ class PythonGenerator:
     def _gen_LambdaExpression(self, node: LambdaExpression) -> str:
         params = ", ".join(node.params)
         return f"lambda {params}: {self._gen(node.body)}"
+
+    def _gen_OptionalChain(self, node: OptionalChain) -> str:
+        obj = self._gen(node.object)
+        return f"({obj}.{node.property} if {obj} is not None else None)"
+
+    def _gen_NullishCoalesce(self, node: NullishCoalesce) -> str:
+        left = self._gen(node.left)
+        return f"({left} if {left} is not None else {self._gen(node.right)})"

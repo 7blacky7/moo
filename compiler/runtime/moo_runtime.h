@@ -153,6 +153,7 @@ MooValue moo_string_replace(MooValue s, MooValue old_s, MooValue new_s);
 MooValue moo_string_trim(MooValue s);
 MooValue moo_string_upper(MooValue s);
 MooValue moo_string_lower(MooValue s);
+MooValue moo_string_slice(MooValue s, MooValue start, MooValue end);
 
 // === Listen-Funktionen ===
 MooValue moo_list_new(int32_t initial_capacity);

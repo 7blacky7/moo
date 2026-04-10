@@ -113,6 +113,13 @@ impl Lexer {
                 continue;
             }
 
+            // f-String: f"..." oder f'...'
+            if ch == 'f' && i + 1 < chars.len() && (chars[i + 1] == '"' || chars[i + 1] == '\'') {
+                let end = self.read_fstring(&chars, i + 1, line_num, col, tokens)?;
+                i = end;
+                continue;
+            }
+
             // Identifier / Keyword
             if ch.is_alphabetic() || ch == '_' {
                 let (tok, end) = self.read_identifier(&chars, i, line_num, col);
@@ -134,6 +141,8 @@ impl Lexer {
                     "+=" => Some(TokenType::PlusAssign),
                     "-=" => Some(TokenType::MinusAssign),
                     "=>" => Some(TokenType::Arrow),
+                    "?." => Some(TokenType::OptionalChain),
+                    "??" => Some(TokenType::NullishCoalesce),
                     _ => Option::None,
                 };
                 if let Some(token_type) = op {
@@ -255,5 +264,107 @@ impl Lexer {
             .unwrap_or(TokenType::Identifier(word));
 
         (Token::new(token_type, line, col), i)
+    }
+
+    fn read_fstring(
+        &self,
+        chars: &[char],
+        start: usize,
+        line: usize,
+        col: usize,
+        tokens: &mut Vec<Token>,
+    ) -> Result<usize, LexerError> {
+        let quote = chars[start];
+        let mut i = start + 1;
+        // Collect parts: (string_content, is_expr)
+        let mut parts: Vec<(String, bool)> = Vec::new();
+        let mut current = String::new();
+
+        while i < chars.len() && chars[i] != quote {
+            if chars[i] == '{' {
+                if !current.is_empty() {
+                    parts.push((current.clone(), false));
+                    current.clear();
+                }
+                i += 1;
+                let mut depth = 1;
+                let mut expr = String::new();
+                while i < chars.len() && depth > 0 {
+                    if chars[i] == '{' {
+                        depth += 1;
+                    } else if chars[i] == '}' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    expr.push(chars[i]);
+                    i += 1;
+                }
+                if i >= chars.len() {
+                    return Err(LexerError {
+                        message: "f-String: '}' fehlt".to_string(),
+                        line,
+                        column: col,
+                    });
+                }
+                i += 1; // skip }
+                parts.push((expr, true));
+            } else if chars[i] == '\\' && i + 1 < chars.len() {
+                let escaped = match chars[i + 1] {
+                    'n' => '\n',
+                    't' => '\t',
+                    '\\' => '\\',
+                    '"' => '"',
+                    '\'' => '\'',
+                    other => other,
+                };
+                current.push(escaped);
+                i += 2;
+            } else {
+                current.push(chars[i]);
+                i += 1;
+            }
+        }
+
+        if i >= chars.len() {
+            return Err(LexerError {
+                message: "f-String nicht geschlossen".to_string(),
+                line,
+                column: col,
+            });
+        }
+        i += 1; // skip closing quote
+
+        if !current.is_empty() {
+            parts.push((current, false));
+        }
+
+        if parts.is_empty() {
+            tokens.push(Token::new(TokenType::String(String::new()), line, col));
+            return Ok(i);
+        }
+
+        // Emit tokens: part1 + part2 + ...
+        let mut first = true;
+        for (content, is_expr) in &parts {
+            if !first {
+                tokens.push(Token::new(TokenType::Plus, line, col));
+            }
+            first = false;
+            if *is_expr {
+                // Emit text(<expr_tokens>)
+                tokens.push(Token::new(TokenType::Identifier("text".to_string()), line, col));
+                tokens.push(Token::new(TokenType::LParen, line, col));
+                // Sub-tokenize the expression
+                self.tokenize_line(content, line, 0, tokens)?;
+                // Remove the trailing Newline if tokenize_line doesn't add one (it shouldn't since we call tokenize_line directly)
+                tokens.push(Token::new(TokenType::RParen, line, col));
+            } else {
+                tokens.push(Token::new(TokenType::String(content.clone()), line, col));
+            }
+        }
+
+        Ok(i)
     }
 }

@@ -89,6 +89,16 @@ class LambdaExpression(Node):
     params: list[str] = field(default_factory=list)
     body: Node = field(default_factory=Node)
 
+@dataclass
+class OptionalChain(Node):
+    object: Node = field(default_factory=Node)
+    property: str = ""
+
+@dataclass
+class NullishCoalesce(Node):
+    left: Node = field(default_factory=Node)
+    right: Node = field(default_factory=Node)
+
 
 # === Statements ===
 

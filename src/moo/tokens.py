@@ -60,6 +60,8 @@ class TokenType(Enum):
     LESS_EQ = auto()      # <=
     GREATER_EQ = auto()   # >=
     DOT = auto()          # .
+    OPTIONAL_CHAIN = auto()   # ?.
+    NULLISH_COALESCE = auto() # ??
 
     # Delimiters
     COLON = auto()

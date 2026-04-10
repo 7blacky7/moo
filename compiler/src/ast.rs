@@ -48,6 +48,14 @@ pub enum Expr {
         params: Vec<std::string::String>,
         body: Box<Expr>,
     },
+    OptionalChain {
+        object: Box<Expr>,
+        property: std::string::String,
+    },
+    NullishCoalesce {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone)]
