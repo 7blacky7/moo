@@ -251,6 +251,10 @@ impl Lexer {
                 if i + 1 < chars.len() && chars[i + 1] == '.' {
                     break;
                 }
+                // UFCS: 5.methode() — Punkt gefolgt von Buchstabe ist kein Dezimalpunkt
+                if i + 1 < chars.len() && !chars[i + 1].is_ascii_digit() {
+                    break;
+                }
                 has_dot = true;
             }
             i += 1;

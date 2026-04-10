@@ -6,6 +6,7 @@ MooValue moo_list_new(int32_t initial_capacity) {
     v.tag = MOO_LIST;
     MooList* l = moo_alloc(sizeof(MooList));
     l->refcount = 1;
+    l->frozen = false;
     l->length = 0;
     l->capacity = initial_capacity;
     l->items = moo_alloc(sizeof(MooValue) * initial_capacity);
@@ -27,6 +28,7 @@ static void list_grow(MooList* l) {
 
 void moo_list_append(MooValue list, MooValue item) {
     MooList* l = MV_LIST(list);
+    if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return; }
     if (l->length >= l->capacity) list_grow(l);
     l->items[l->length++] = item;
 }
@@ -40,8 +42,9 @@ MooValue moo_list_get(MooValue list, MooValue index) {
 }
 
 void moo_list_set(MooValue list, MooValue index, MooValue value) {
-    int32_t i = (int32_t)moo_as_number(index);
     MooList* l = MV_LIST(list);
+    if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return; }
+    int32_t i = (int32_t)moo_as_number(index);
     if (i < 0) i += l->length;
     if (i >= 0 && i < l->length) l->items[i] = value;
 }
@@ -53,6 +56,7 @@ MooValue moo_list_length(MooValue list) {
 
 MooValue moo_list_pop(MooValue list) {
     MooList* l = MV_LIST(list);
+    if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return moo_none(); }
     if (l->length == 0) return moo_none();
     return l->items[--l->length];
 }

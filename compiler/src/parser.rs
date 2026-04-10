@@ -72,16 +72,42 @@ fn got_description(tt: &TokenType) -> String {
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    errors: Vec<ParseError>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0 }
+        Self { tokens, pos: 0, errors: Vec::new() }
     }
 
     pub fn parse(&mut self) -> Result<Program, ParseError> {
         let statements = self.parse_block_body(true)?;
+        if !self.errors.is_empty() {
+            // Gib den ersten Fehler als Result zurück, aber zeige alle
+            let mut msg = format!("{} Fehler gefunden:", self.errors.len());
+            for err in &self.errors {
+                msg.push_str(&format!("\n  Zeile {}: {}", err.line, err.message));
+            }
+            return Err(ParseError {
+                message: msg,
+                line: self.errors[0].line,
+            });
+        }
         Ok(Program { statements })
+    }
+
+    /// Springt zum nächsten Statement (nach Newline/Dedent) bei einem Parse-Fehler
+    fn sync_to_next_statement(&mut self) {
+        loop {
+            match self.current_type() {
+                TokenType::Newline => {
+                    self.pos += 1;
+                    return;
+                }
+                TokenType::Eof | TokenType::Dedent => return,
+                _ => self.pos += 1,
+            }
+        }
     }
 
     // --- Hilfsfunktionen ---
@@ -153,7 +179,17 @@ impl Parser {
                     self.pos += 1;
                     break;
                 }
-                _ => stmts.push(self.parse_statement()?),
+                _ => {
+                    match self.parse_statement() {
+                        Ok(stmt) => stmts.push(stmt),
+                        Err(err) if top_level => {
+                            // Error Recovery: Fehler sammeln, zum nächsten Statement springen
+                            self.errors.push(err);
+                            self.sync_to_next_statement();
+                        }
+                        Err(err) => return Err(err), // In Blöcken nicht recovern
+                    }
+                }
             }
         }
 
@@ -177,6 +213,7 @@ impl Parser {
             TokenType::Break => { self.pos += 1; Ok(Stmt::Break) }
             TokenType::Continue => { self.pos += 1; Ok(Stmt::Continue) }
             TokenType::Class => self.parse_class_def(),
+            TokenType::Interface => self.parse_interface_def(),
             TokenType::Try => self.parse_try_catch(),
             TokenType::Throw => self.parse_throw(),
             TokenType::Import => self.parse_import(),
@@ -435,8 +472,54 @@ impl Parser {
         } else {
             Option::None
         };
+        // Optional: implementiert/implements Interface1, Interface2
+        let mut interfaces = Vec::new();
+        if matches!(self.current_type(), TokenType::Implements) {
+            self.pos += 1;
+            interfaces.push(self.eat_identifier()?);
+            while matches!(self.current_type(), TokenType::Comma) {
+                self.pos += 1;
+                interfaces.push(self.eat_identifier()?);
+            }
+        }
         let body = self.parse_block_body(false)?;
-        Ok(Stmt::ClassDef { name, parent, body })
+        Ok(Stmt::ClassDef { name, parent, interfaces, body })
+    }
+
+    fn parse_interface_def(&mut self) -> Result<Stmt, ParseError> {
+        self.pos += 1; // schnittstelle/interface
+        let name = self.eat_identifier()?;
+        self.eat(&TokenType::Colon)?;
+        self.skip_newlines();
+        self.eat(&TokenType::Indent)?;
+
+        let mut methods = Vec::new();
+        loop {
+            self.skip_newlines();
+            match self.current_type() {
+                TokenType::Dedent => { self.pos += 1; break; }
+                TokenType::Eof => break,
+                TokenType::Func => {
+                    self.pos += 1;
+                    let method_name = self.eat_identifier()?;
+                    self.eat(&TokenType::LParen)?;
+                    // Parameter-Namen ueberspringen
+                    while !matches!(self.current_type(), TokenType::RParen) {
+                        self.pos += 1;
+                    }
+                    self.eat(&TokenType::RParen)?;
+                    methods.push(method_name);
+                }
+                _ => {
+                    return Err(ParseError {
+                        message: "funktion/func in Interface erwartet".to_string(),
+                        line: self.current().line,
+                    });
+                }
+            }
+        }
+
+        Ok(Stmt::InterfaceDef { name, methods })
     }
 
     fn parse_try_catch(&mut self) -> Result<Stmt, ParseError> {

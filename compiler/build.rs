@@ -19,6 +19,7 @@ fn main() {
         .file("runtime/moo_result.c")
         .file("runtime/moo_graphics.c")
         .file("runtime/moo_3d.c")
+        .file("runtime/moo_regex.c")
         .include("runtime")
         .include("/usr/include/SDL2")
         .opt_level(2)

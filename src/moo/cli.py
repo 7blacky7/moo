@@ -53,6 +53,27 @@ def cmd_run(args: argparse.Namespace):
         sys.exit(result.returncode)
 
 
+def cmd_fmt(args: argparse.Namespace):
+    from .formatter import format_source
+
+    source = Path(args.file).read_text()
+    try:
+        formatted = format_source(source)
+    except (LexerError, ParseError) as e:
+        print(f"Fehler: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.check:
+        if source == formatted:
+            print(f"✓ {args.file} ist formatiert")
+        else:
+            print(f"✗ {args.file} ist nicht formatiert", file=sys.stderr)
+            sys.exit(1)
+    else:
+        Path(args.file).write_text(formatted)
+        print(f"✓ {args.file} formatiert")
+
+
 def cmd_repl():
     print("moo REPL v0.1.0 — Tippe 'quit' zum Beenden")
     print("Zweisprachig: Deutsch & Englisch\n")
@@ -121,6 +142,11 @@ def main():
     # moo repl
     sub.add_parser("repl", help="Interaktiver Modus (REPL)")
 
+    # moo fmt <file>
+    fmt_p = sub.add_parser("fmt", help="Code formatieren")
+    fmt_p.add_argument("file", help="Die .moo-Datei")
+    fmt_p.add_argument("--check", action="store_true", help="Nur prüfen ob formatiert (Exit 1 wenn nicht)")
+
     # moo lsp
     sub.add_parser("lsp", help="Language Server starten (LSP via stdio)")
 
@@ -129,6 +155,8 @@ def main():
         cmd_run(args)
     elif args.command == "build":
         cmd_build(args)
+    elif args.command == "fmt":
+        cmd_fmt(args)
     elif args.command == "repl":
         cmd_repl()
     elif args.command == "lsp":

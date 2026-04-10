@@ -101,6 +101,9 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_range: FunctionValue<'ctx>,
     pub moo_index_get: FunctionValue<'ctx>,
     pub moo_index_set: FunctionValue<'ctx>,
+    // Freeze/Immutable
+    pub moo_freeze: FunctionValue<'ctx>,
+    pub moo_is_frozen: FunctionValue<'ctx>,
     // File I/O
     pub moo_file_read: FunctionValue<'ctx>,
     pub moo_file_write: FunctionValue<'ctx>,
@@ -174,6 +177,12 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_3d_triangle: FunctionValue<'ctx>,
     pub moo_3d_cube: FunctionValue<'ctx>,
     pub moo_3d_sphere: FunctionValue<'ctx>,
+    // Regex (POSIX)
+    pub moo_regex_new: FunctionValue<'ctx>,
+    pub moo_regex_match: FunctionValue<'ctx>,
+    pub moo_regex_find: FunctionValue<'ctx>,
+    pub moo_regex_find_all: FunctionValue<'ctx>,
+    pub moo_regex_replace: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeBindings<'ctx> {
@@ -316,6 +325,9 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_range: decl_mv_mv!("moo_range", mv2),
             moo_index_get: decl_mv_mv!("moo_index_get", mv2),
             moo_index_set: module.add_function("moo_index_set", void_type.fn_type(mv3, false), None),
+            // Freeze/Immutable
+            moo_freeze: decl_mv_mv!("moo_freeze", mv1),
+            moo_is_frozen: decl_mv_mv!("moo_is_frozen", mv1),
             // File I/O
             moo_file_read: decl_mv_mv!("moo_file_read", mv1),
             moo_file_write: decl_mv_mv!("moo_file_write", mv2),
@@ -388,6 +400,12 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_3d_triangle: module.add_function("moo_3d_triangle", void_type.fn_type(&[mv, mv, mv, mv, mv, mv, mv, mv, mv, mv, mv], false), None),
             moo_3d_cube: module.add_function("moo_3d_cube", void_type.fn_type(&[mv, mv, mv, mv, mv, mv], false), None),
             moo_3d_sphere: module.add_function("moo_3d_sphere", void_type.fn_type(&[mv, mv, mv, mv, mv, mv, mv], false), None),
+            // Regex
+            moo_regex_new: decl_mv_mv!("moo_regex_new", mv1),
+            moo_regex_match: decl_mv_mv!("moo_regex_match", mv2),
+            moo_regex_find: decl_mv_mv!("moo_regex_find", mv2),
+            moo_regex_find_all: decl_mv_mv!("moo_regex_find_all", mv2),
+            moo_regex_replace: decl_mv_mv!("moo_regex_replace", mv3),
         }
     }
 }

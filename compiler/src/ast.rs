@@ -155,7 +155,13 @@ pub enum Stmt {
     ClassDef {
         name: std::string::String,
         parent: Option<std::string::String>,
+        interfaces: Vec<std::string::String>,
         body: Vec<Stmt>,
+    },
+    /// Interface/Trait (Java/Rust-inspiriert): nur Methodennamen, kein Body
+    InterfaceDef {
+        name: std::string::String,
+        methods: Vec<std::string::String>,
     },
     TryCatch {
         try_body: Vec<Stmt>,

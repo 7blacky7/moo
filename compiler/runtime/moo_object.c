@@ -5,6 +5,7 @@ MooValue moo_object_new(const char* class_name) {
     v.tag = MOO_OBJECT;
     MooObject* obj = moo_alloc(sizeof(MooObject));
     obj->refcount = 1;
+    obj->frozen = false;
     obj->class_name = strdup(class_name);
     obj->prop_count = 0;
     obj->prop_capacity = 8;
@@ -35,6 +36,7 @@ MooValue moo_object_get(MooValue obj_val, const char* prop) {
 
 void moo_object_set(MooValue obj_val, const char* prop, MooValue value) {
     MooObject* obj = MV_OBJ(obj_val);
+    if (obj->frozen) { moo_throw(moo_string_new("Objekt ist eingefroren!")); return; }
     int32_t idx = find_property(obj, prop);
     if (idx >= 0) {
         obj->properties[idx].value = value;

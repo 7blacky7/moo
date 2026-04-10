@@ -73,3 +73,63 @@ MooValue moo_input(MooValue prompt) {
     }
     return moo_none();
 }
+
+// === Immutable/Freeze ===
+
+MooValue moo_freeze(MooValue v) {
+    switch (v.tag) {
+        case MOO_LIST:   MV_LIST(v)->frozen = true; break;
+        case MOO_DICT:   MV_DICT(v)->frozen = true; break;
+        case MOO_OBJECT: MV_OBJ(v)->frozen = true; break;
+        default: break; // Zahlen, Strings, Booleans sind ohnehin immutable
+    }
+    return v; // Gibt den eingefrorenen Wert zurück
+}
+
+MooValue moo_is_frozen(MooValue v) {
+    switch (v.tag) {
+        case MOO_LIST:   return moo_bool(MV_LIST(v)->frozen);
+        case MOO_DICT:   return moo_bool(MV_DICT(v)->frozen);
+        case MOO_OBJECT: return moo_bool(MV_OBJ(v)->frozen);
+        default: return moo_bool(true); // Primitive sind immer "frozen"
+    }
+}
+
+// === Currying ===
+// Erzeugt eine neue Funktion die den ersten Parameter bindet.
+// Speichert: Original-Funktionspointer + gebundene Argumente in einem MooObject.
+// Beim Aufruf werden gebundene Args vorangestellt.
+
+typedef struct {
+    void* original_fn;
+    int32_t original_arity;
+    MooValue* bound_args;
+    int32_t bound_count;
+} MooCurried;
+
+// Trampoline-Funktionen fuer verschiedene Aritaeten
+static MooValue curry_call_1(MooValue arg1) {
+    // Wir holen das MooCurried ueber einen globalen Pointer — das ist NICHT threadsafe
+    // EHRLICH: Eine echte Loesung braeuchte Closures mit Capture-Environment
+    return moo_none();
+}
+
+MooValue moo_curry(MooValue func, MooValue arg) {
+    if (func.tag != MOO_FUNC) {
+        moo_throw(moo_string_new("curry: Erstes Argument muss eine Funktion sein"));
+        return moo_none();
+    }
+    MooFunc* fn = MV_FUNC(func);
+
+    // Neues MooFunc mit gebundenen Args als Object speichern
+    MooValue curried_obj = moo_object_new("__curried__");
+    moo_object_set(curried_obj, "__fn_ptr", func);
+    moo_object_set(curried_obj, "__bound", arg);
+    moo_object_set(curried_obj, "__arity", moo_number((double)(fn->arity - 1)));
+
+    // EHRLICH: Echtes Currying braeuchte einen Trampoline der zur Laufzeit
+    // die gebundenen Args voranstellt und die echte Funktion aufruft.
+    // Das ist mit reinem C ohne JIT/Closure-Runtime nicht sauber loesbar.
+    // Wir speichern die Daten, aber der Aufruf muss im Codegen passieren.
+    return curried_obj;
+}

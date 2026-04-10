@@ -46,6 +46,8 @@ pub enum TokenType {
     Select,     // wähle / select
     Order,      // sortiere / order
     QueryFrom,  // von (Query-Kontext, nicht Import)
+    Interface,  // schnittstelle / interface
+    Implements, // implementiert / implements
 
     // Operators
     At,           // @
@@ -143,6 +145,8 @@ pub fn keyword_lookup(word: &str) -> Option<TokenType> {
         "aufräumen" => Some(TokenType::Defer),
         "daten" => Some(TokenType::Data),
         "garantiere" => Some(TokenType::Guard),
+        "schnittstelle" => Some(TokenType::Interface),
+        "implementiert" => Some(TokenType::Implements),
         "von" => Some(TokenType::QueryFrom),
         "wo" => Some(TokenType::Where),
         "wähle" => Some(TokenType::Select),
@@ -183,6 +187,8 @@ pub fn keyword_lookup(word: &str) -> Option<TokenType> {
         "defer" => Some(TokenType::Defer),
         "data" => Some(TokenType::Data),
         "guard" => Some(TokenType::Guard),
+        "interface" => Some(TokenType::Interface),
+        "implements" => Some(TokenType::Implements),
         "where" => Some(TokenType::Where),
         "select" => Some(TokenType::Select),
         "order" => Some(TokenType::Order),

@@ -25,6 +25,7 @@ typedef enum {
     MOO_DATABASE = 11,
     MOO_WINDOW   = 12,
     MOO_WINDOW3D = 13,
+    MOO_REGEX    = 14,
 } MooTag;
 
 // === Forward Declarations ===
@@ -91,6 +92,7 @@ struct MooString {
 // === List ===
 struct MooList {
     int32_t refcount;
+    bool frozen;
     MooValue* items;
     int32_t length;
     int32_t capacity;
@@ -105,6 +107,7 @@ typedef struct {
 
 struct MooDict {
     int32_t refcount;
+    bool frozen;
     MooDictEntry* entries;
     int32_t count;
     int32_t capacity;
@@ -126,6 +129,7 @@ typedef struct {
 
 struct MooObject {
     int32_t refcount;
+    bool frozen;
     char* class_name;
     MooProperty* properties;
     int32_t prop_count;
@@ -241,6 +245,13 @@ void moo_object_set_parent(MooValue obj, MooValue parent);
 // === Event-System ===
 void moo_event_on(MooValue obj, MooValue event_name, MooValue callback);
 void moo_event_emit(MooValue obj, MooValue event_name);
+
+// === Immutable/Freeze ===
+MooValue moo_freeze(MooValue v);
+MooValue moo_is_frozen(MooValue v);
+
+// === Currying ===
+MooValue moo_curry(MooValue func, MooValue arg);
 
 // === Arithmetik & Vergleiche ===
 MooValue moo_add(MooValue a, MooValue b);

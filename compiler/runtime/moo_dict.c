@@ -14,6 +14,7 @@ MooValue moo_dict_new(void) {
     v.tag = MOO_DICT;
     MooDict* d = moo_alloc(sizeof(MooDict));
     d->refcount = 1;
+    d->frozen = false;
     d->count = 0;
     d->capacity = DICT_INITIAL_CAPACITY;
     d->entries = moo_alloc(sizeof(MooDictEntry) * d->capacity);
@@ -51,6 +52,7 @@ static void dict_grow(MooDict* d) {
 
 void moo_dict_set(MooValue dict, MooValue key, MooValue value) {
     MooDict* d = MV_DICT(dict);
+    if (d->frozen) { moo_throw(moo_string_new("Wörterbuch ist eingefroren!")); return; }
     MooValue key_str = moo_to_string(key);
     if ((double)d->count / d->capacity > DICT_LOAD_FACTOR) dict_grow(d);
     int32_t slot = dict_find_slot(d, MV_STR(key_str)->chars);
@@ -108,6 +110,7 @@ MooValue moo_dict_length(MooValue dict) {
 
 void moo_dict_remove(MooValue dict, MooValue key) {
     MooDict* d = MV_DICT(dict);
+    if (d->frozen) { moo_throw(moo_string_new("Wörterbuch ist eingefroren!")); return; }
     MooValue key_str = moo_to_string(key);
     int32_t slot = dict_find_slot(d, MV_STR(key_str)->chars);
     if (d->entries[slot].occupied) {

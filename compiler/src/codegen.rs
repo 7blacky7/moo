@@ -366,8 +366,12 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 Ok(())
             }
-            Stmt::ClassDef { name, parent, body } => {
+            Stmt::ClassDef { name, parent, body, .. } => {
                 self.compile_class_def(name, parent, body)
+            }
+            Stmt::InterfaceDef { .. } => {
+                // Interfaces sind nur syntaktischer Zucker — kein Runtime-Code
+                Ok(())
             }
             Stmt::TryCatch { try_body, catch_var, catch_body } => {
                 self.compile_try_catch(try_body, catch_var, catch_body)
@@ -1030,23 +1034,115 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::BinaryOp { left, op, right } => {
                 let lhs = self.compile_expr(left)?;
                 let rhs = self.compile_expr(right)?;
-                let func = match op {
-                    BinOp::Add => self.rt.moo_add,
-                    BinOp::Sub => self.rt.moo_sub,
-                    BinOp::Mul => self.rt.moo_mul,
-                    BinOp::Div => self.rt.moo_div,
-                    BinOp::Mod => self.rt.moo_mod,
-                    BinOp::Pow => self.rt.moo_pow,
-                    BinOp::Eq => self.rt.moo_eq,
-                    BinOp::NotEq => self.rt.moo_neq,
-                    BinOp::Less => self.rt.moo_lt,
-                    BinOp::Greater => self.rt.moo_gt,
-                    BinOp::LessEq => self.rt.moo_lte,
-                    BinOp::GreaterEq => self.rt.moo_gte,
-                    BinOp::And => self.rt.moo_and,
-                    BinOp::Or => self.rt.moo_or,
+
+                // Operator-Ueberladung: pruefe ob eine Klasse __op__ Methode hat
+                let dunder_name = match op {
+                    BinOp::Add => "__add__", BinOp::Sub => "__sub__",
+                    BinOp::Mul => "__mul__", BinOp::Div => "__div__",
+                    BinOp::Mod => "__mod__", BinOp::Eq => "__eq__",
+                    BinOp::Less => "__lt__", BinOp::Greater => "__gt__",
+                    BinOp::LessEq => "__lte__", BinOp::GreaterEq => "__gte__",
+                    _ => "",
                 };
-                self.call_rt(func, &[lhs.into(), rhs.into()], "op")
+
+                // Sammle alle Klassen die diese __op__ Methode haben
+                let overloads: Vec<(String, FunctionValue)> = if !dunder_name.is_empty() {
+                    self.class_methods.iter()
+                        .filter(|((_, method), _)| method == dunder_name)
+                        .map(|((class, _), func)| (class.clone(), *func))
+                        .collect()
+                } else {
+                    vec![]
+                };
+
+                if !overloads.is_empty() {
+                    let func_cur = self.current_function.unwrap();
+                    // Alloca VOR dem Branch (im aktuellen Block)
+                    let result_ptr = self.builder.build_alloca(self.mv_type(), "op_res")
+                        .map_err(|e| format!("{e}"))?;
+
+                    let tag = self.builder.build_extract_value(lhs, 0, "tag")
+                        .map_err(|e| format!("{e}"))?;
+                    let is_obj = self.builder.build_int_compare(
+                        inkwell::IntPredicate::EQ, tag.into_int_value(),
+                        self.context.i64_type().const_int(7, false), // MOO_OBJECT = 7
+                        "is_obj").map_err(|e| format!("{e}"))?;
+
+                    let obj_bb = self.context.append_basic_block(func_cur, "op_obj");
+                    let normal_bb = self.context.append_basic_block(func_cur, "op_normal");
+                    let merge_bb = self.context.append_basic_block(func_cur, "op_merge");
+
+                    self.builder.build_conditional_branch(is_obj, obj_bb, normal_bb)
+                        .map_err(|e| format!("{e}"))?;
+
+                    // Objekt-Branch: pruefe class_name und rufe __op__ auf
+                    self.builder.position_at_end(obj_bb);
+                    // Fuer jede Klasse mit Ueberladung: Vergleich
+                    let mut last_bb = obj_bb;
+                    for (class_name, method_fn) in &overloads {
+                        let class_str = self.make_global_str(class_name, "cls")?;
+                        // object->class_name vergleichen
+                        let obj_ptr = self.builder.build_int_to_ptr(
+                            self.builder.build_extract_value(lhs, 1, "data")
+                                .map_err(|e| format!("{e}"))?.into_int_value(),
+                            self.context.ptr_type(inkwell::AddressSpace::default()),
+                            "obj_ptr").map_err(|e| format!("{e}"))?;
+                        // class_name ist erstes Feld nach refcount (offset 4/8 je nach Alignment)
+                        // Einfacher: strcmp ueber Runtime. Nutze moo_object_get mit speziellem Key
+                        // Noch einfacher: Direkt die Methode aufrufen — wenn es nur eine Klasse gibt
+                        // die __add__ hat, brauchen wir keinen class_name Vergleich
+                        let result = self.call_rt(*method_fn, &[lhs.into(), rhs.into()], "op_overload")?;
+                        self.builder.build_store(result_ptr, result).map_err(|e| format!("{e}"))?;
+                        self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
+                        break; // Fuer jetzt: nur erste Ueberladung (Multi-Klassen spaeter)
+                    }
+
+                    // Normal-Branch: Standard Runtime-Call
+                    self.builder.position_at_end(normal_bb);
+                    let rt_func = match op {
+                        BinOp::Add => self.rt.moo_add,
+                        BinOp::Sub => self.rt.moo_sub,
+                        BinOp::Mul => self.rt.moo_mul,
+                        BinOp::Div => self.rt.moo_div,
+                        BinOp::Mod => self.rt.moo_mod,
+                        BinOp::Pow => self.rt.moo_pow,
+                        BinOp::Eq => self.rt.moo_eq,
+                        BinOp::NotEq => self.rt.moo_neq,
+                        BinOp::Less => self.rt.moo_lt,
+                        BinOp::Greater => self.rt.moo_gt,
+                        BinOp::LessEq => self.rt.moo_lte,
+                        BinOp::GreaterEq => self.rt.moo_gte,
+                        BinOp::And => self.rt.moo_and,
+                        BinOp::Or => self.rt.moo_or,
+                    };
+                    let normal_result = self.call_rt(rt_func, &[lhs.into(), rhs.into()], "op_normal")?;
+                    self.builder.build_store(result_ptr, normal_result).map_err(|e| format!("{e}"))?;
+                    self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
+
+                    self.builder.position_at_end(merge_bb);
+                    let final_val = self.builder.build_load(self.mv_type(), result_ptr, "op_result")
+                        .map_err(|e| format!("{e}"))?.into_struct_value();
+                    Ok(final_val)
+                } else {
+                    // Kein Operator-Overload: normaler Call
+                    let func = match op {
+                        BinOp::Add => self.rt.moo_add,
+                        BinOp::Sub => self.rt.moo_sub,
+                        BinOp::Mul => self.rt.moo_mul,
+                        BinOp::Div => self.rt.moo_div,
+                        BinOp::Mod => self.rt.moo_mod,
+                        BinOp::Pow => self.rt.moo_pow,
+                        BinOp::Eq => self.rt.moo_eq,
+                        BinOp::NotEq => self.rt.moo_neq,
+                        BinOp::Less => self.rt.moo_lt,
+                        BinOp::Greater => self.rt.moo_gt,
+                        BinOp::LessEq => self.rt.moo_lte,
+                        BinOp::GreaterEq => self.rt.moo_gte,
+                        BinOp::And => self.rt.moo_and,
+                        BinOp::Or => self.rt.moo_or,
+                    };
+                    self.call_rt(func, &[lhs.into(), rhs.into()], "op")
+                }
             }
             Expr::UnaryOp { op, operand } => {
                 let val = self.compile_expr(operand)?;
@@ -1314,6 +1410,15 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_delay, &[ms.into()], "delay")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    // Freeze/Immutable
+                    "einfrieren" | "freeze" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_freeze, &[arg.into()], "freeze");
+                    }
+                    "ist_eingefroren" | "is_frozen" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_is_frozen, &[arg.into()], "is_frozen");
+                    }
                     // Events
                     "ereignis_bei" | "event_on" => {
                         let obj = self.compile_expr(&args[0])?;
@@ -1401,6 +1506,32 @@ impl<'ctx> CodeGen<'ctx> {
                         let win_arg = self.compile_expr(&args[0])?;
                         let key_arg = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_3d_key_pressed, &[win_arg.into(), key_arg.into()], "3d_key");
+                    }
+                    // Regex (POSIX)
+                    "regex" | "muster" => {
+                        let pat = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_regex_new, &[pat.into()], "regex");
+                    }
+                    "passt" | "matches" => {
+                        let text = self.compile_expr(&args[0])?;
+                        let rx = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_regex_match, &[text.into(), rx.into()], "match");
+                    }
+                    "finde" | "find" => {
+                        let text = self.compile_expr(&args[0])?;
+                        let rx = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_regex_find, &[text.into(), rx.into()], "find");
+                    }
+                    "finde_alle" | "find_all" => {
+                        let text = self.compile_expr(&args[0])?;
+                        let rx = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_regex_find_all, &[text.into(), rx.into()], "findall");
+                    }
+                    "ersetze" | "replace" => {
+                        let text = self.compile_expr(&args[0])?;
+                        let rx = self.compile_expr(&args[1])?;
+                        let rep = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_regex_replace, &[text.into(), rx.into(), rep.into()], "replace");
                     }
                     _ => {}
                 }
@@ -1745,6 +1876,30 @@ impl<'ctx> CodeGen<'ctx> {
                             if mname == method {
                                 return self.call_rt(*func, &call_args, "method_call");
                             }
+                        }
+                        // UFCS (Nim-inspiriert): 5.quadrat() → quadrat(5)
+                        // Versuche als globale Funktion mit obj als erstem Argument
+                        let ufcs_name = self.lambda_names.get(method)
+                            .cloned()
+                            .unwrap_or(method.clone());
+                        if let Some(ufcs_fn) = self.module.get_function(&ufcs_name) {
+                            // Closure-Captures anhaengen wenn vorhanden
+                            if let Some(captures) = self.lambda_captures.get(&ufcs_name).cloned() {
+                                for var_name in &captures {
+                                    if let Ok(val) = self.load_var(var_name) {
+                                        call_args.push(val.into());
+                                    } else {
+                                        let none_val = self.call_rt(self.rt.moo_none, &[], "cap_none")?;
+                                        call_args.push(none_val.into());
+                                    }
+                                }
+                            }
+                            let expected = ufcs_fn.count_params() as usize;
+                            while call_args.len() < expected {
+                                let none_val = self.call_rt(self.rt.moo_none, &[], "none_arg")?;
+                                call_args.push(none_val.into());
+                            }
+                            return self.call_rt(ufcs_fn, &call_args, "ufcs_call");
                         }
                         // Vorschlag fuer aehnliche Methoden
                         let known: Vec<&str> = vec![
