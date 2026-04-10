@@ -98,4 +98,20 @@ zeige wahr
 zeige falsch
 zeige nichts
 
+# 16. String-Methoden
+setze text auf "  Hallo Welt  "
+zeige text.trim()
+setze gross auf "hallo"
+zeige gross.upper()
+setze klein auf "WELT"
+zeige klein.lower()
+setze satz auf "eins-zwei-drei"
+zeige satz.split("-")
+setze original auf "Hallo Welt"
+zeige original.replace("Welt", "moo")
+
+# 17. Mischmasch DE/EN
+set greeting to "Hello"
+show greeting + " " + name
+
 zeige "=== ALLE TESTS BESTANDEN ==="

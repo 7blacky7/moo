@@ -208,9 +208,11 @@ MooValue moo_to_string(MooValue v);
 
 // === Fehlerbehandlung ===
 void moo_throw(MooValue error);
-int moo_try_begin(void);        // returns 0 = try, 1 = caught
-void moo_try_end(void);         // cleanup after try block
+void moo_try_enter(void);       // enter try block
+int moo_try_check(void);        // 1 = error occurred
+void moo_try_leave(void);       // leave try/catch
 MooValue moo_get_error(void);   // get the caught error
+extern int moo_error_flag;
 
 // === Speicher ===
 void* moo_alloc(size_t size);

@@ -64,10 +64,19 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_to_string: FunctionValue<'ctx>,
     // Error & truthiness
     pub moo_throw: FunctionValue<'ctx>,
-    pub moo_try_begin: FunctionValue<'ctx>,
-    pub moo_try_end: FunctionValue<'ctx>,
+    pub moo_try_enter: FunctionValue<'ctx>,
+    pub moo_try_check: FunctionValue<'ctx>,
+    pub moo_try_leave: FunctionValue<'ctx>,
     pub moo_get_error: FunctionValue<'ctx>,
     pub moo_is_truthy: FunctionValue<'ctx>,
+    // Stdlib
+    // String extras
+    pub moo_string_upper: FunctionValue<'ctx>,
+    pub moo_string_lower: FunctionValue<'ctx>,
+    pub moo_string_trim: FunctionValue<'ctx>,
+    pub moo_string_split: FunctionValue<'ctx>,
+    pub moo_string_replace: FunctionValue<'ctx>,
+    pub moo_string_contains: FunctionValue<'ctx>,
     // Stdlib
     pub moo_abs: FunctionValue<'ctx>,
     pub moo_sqrt: FunctionValue<'ctx>,
@@ -184,11 +193,19 @@ impl<'ctx> RuntimeBindings<'ctx> {
 
             // Error & truthiness
             moo_throw: module.add_function("moo_throw", void_type.fn_type(mv1, false), None),
-            moo_try_begin: module.add_function("moo_try_begin", i32_type.fn_type(&[], false), None),
-            moo_try_end: module.add_function("moo_try_end", void_type.fn_type(&[], false), None),
+            moo_try_enter: module.add_function("moo_try_enter", void_type.fn_type(&[], false), None),
+            moo_try_check: module.add_function("moo_try_check", i32_type.fn_type(&[], false), None),
+            moo_try_leave: module.add_function("moo_try_leave", void_type.fn_type(&[], false), None),
             moo_get_error: decl_mv_mv!("moo_get_error", &[]),
             moo_is_truthy: module.add_function("moo_is_truthy", bool_type.fn_type(mv1, false), None),
 
+            // String extras
+            moo_string_upper: decl_mv_mv!("moo_string_upper", mv1),
+            moo_string_lower: decl_mv_mv!("moo_string_lower", mv1),
+            moo_string_trim: decl_mv_mv!("moo_string_trim", mv1),
+            moo_string_split: decl_mv_mv!("moo_string_split", mv2),
+            moo_string_replace: decl_mv_mv!("moo_string_replace", &[mv, mv, mv]),
+            moo_string_contains: decl_mv_mv!("moo_string_contains", mv2),
             // Stdlib
             moo_abs: decl_mv_mv!("moo_abs", mv1),
             moo_sqrt: decl_mv_mv!("moo_sqrt", mv1),

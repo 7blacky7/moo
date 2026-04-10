@@ -641,47 +641,41 @@ impl<'ctx> CodeGen<'ctx> {
     fn compile_try_catch(&mut self, try_body: &[Stmt], catch_var: &Option<String>, catch_body: &[Stmt]) -> Result<(), String> {
         let func = self.current_function.unwrap();
 
-        // moo_try_begin() returns 0 = normal, 1 = caught error
-        let result = self.builder.build_call(self.rt.moo_try_begin, &[], "try_result")
-            .map_err(|e| format!("{e}"))?;
-        let try_val = match result.try_as_basic_value() {
-            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-            _ => return Err("moo_try_begin fehlgeschlagen".to_string()),
-        };
+        // moo_try_enter() — markiert dass wir in einem try-Block sind
+        self.call_rt_void(self.rt.moo_try_enter, &[], "try_enter")?;
 
-        let is_catch = self.builder.build_int_compare(
-            inkwell::IntPredicate::NE,
-            try_val,
-            self.context.i32_type().const_int(0, false),
-            "is_catch",
-        ).map_err(|e| format!("{e}"))?;
-
-        let try_bb = self.context.append_basic_block(func, "try_body");
-        let catch_bb = self.context.append_basic_block(func, "catch_body");
-        let after_bb = self.context.append_basic_block(func, "after_try");
-
-        self.builder.build_conditional_branch(is_catch, catch_bb, try_bb)
-            .map_err(|e| format!("{e}"))?;
-
-        // Try-Block
-        self.builder.position_at_end(try_bb);
+        // Try-Body ausfuehren
         for s in try_body {
             self.compile_stmt(s)?;
         }
-        // try_end() aufrufen wenn wir normal durchgekommen sind
-        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-            self.call_rt_void(self.rt.moo_try_end, &[], "try_end")?;
-            self.builder.build_unconditional_branch(after_bb).map_err(|e| format!("{e}"))?;
-        }
+
+        // Nach dem try-body: pruefen ob ein Fehler aufgetreten ist
+        let check_result = self.builder.build_call(self.rt.moo_try_check, &[], "check")
+            .map_err(|e| format!("{e}"))?;
+        let has_error = match check_result.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("moo_try_check fehlgeschlagen".to_string()),
+        };
+        let is_error = self.builder.build_int_compare(
+            inkwell::IntPredicate::NE, has_error,
+            self.context.i32_type().const_int(0, false), "is_error",
+        ).map_err(|e| format!("{e}"))?;
+
+        let catch_bb = self.context.append_basic_block(func, "catch_body");
+        let after_bb = self.context.append_basic_block(func, "after_try");
+
+        self.builder.build_conditional_branch(is_error, catch_bb, after_bb)
+            .map_err(|e| format!("{e}"))?;
 
         // Catch-Block
         self.builder.position_at_end(catch_bb);
         if let Some(var_name) = catch_var {
             let error_val = self.call_rt(self.rt.moo_get_error, &[], "error")?;
-            // Fehler zu String konvertieren fuer den User
             let error_str = self.call_rt(self.rt.moo_to_string, &[error_val.into()], "err_str")?;
             self.store_var(var_name, error_str)?;
         }
+        // try_leave raeumt auf
+        self.call_rt_void(self.rt.moo_try_leave, &[], "try_leave")?;
         for s in catch_body {
             self.compile_stmt(s)?;
         }
@@ -689,7 +683,9 @@ impl<'ctx> CodeGen<'ctx> {
             self.builder.build_unconditional_branch(after_bb).map_err(|e| format!("{e}"))?;
         }
 
+        // After — wenn kein Fehler, auch aufraeuemen
         self.builder.position_at_end(after_bb);
+        self.call_rt_void(self.rt.moo_try_leave, &[], "try_leave_ok")?;
         Ok(())
     }
 
@@ -852,14 +848,29 @@ impl<'ctx> CodeGen<'ctx> {
                             &[obj.into(), key.into()], "has");
                     }
                     "upper" | "gross" => {
-                        return self.call_rt(self.rt.moo_string_length, &[obj.into()], "upper");
-                        // TODO: moo_string_upper binding
+                        return self.call_rt(self.rt.moo_string_upper, &[obj.into()], "upper");
+                    }
+                    "lower" | "klein" => {
+                        return self.call_rt(self.rt.moo_string_lower, &[obj.into()], "lower");
+                    }
+                    "trim" | "trimmen" => {
+                        return self.call_rt(self.rt.moo_string_trim, &[obj.into()], "trim");
                     }
                     "split" | "teilen" => {
                         let delim = self.compile_expr(&args[0])?;
-                        return self.call_rt(self.rt.moo_string_index,
+                        return self.call_rt(self.rt.moo_string_split,
                             &[obj.into(), delim.into()], "split");
-                        // TODO: moo_string_split binding
+                    }
+                    "replace" | "ersetzen" => {
+                        let old_s = self.compile_expr(&args[0])?;
+                        let new_s = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_string_replace,
+                            &[obj.into(), old_s.into(), new_s.into()], "replace");
+                    }
+                    "str_contains" | "text_enthält" => {
+                        let needle = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_string_contains,
+                            &[obj.into(), needle.into()], "str_contains");
                     }
                     _ => {
                         // Klassen-Methode aufrufen: suche nach class__method
