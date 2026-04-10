@@ -94,6 +94,9 @@ MooValue moo_3d_create(MooValue title, MooValue w, MooValue h) {
 
     // Kein GLEW noetig fuer Immediate Mode (GL 1.x/2.x Core)
 
+    // WICHTIG: glViewport setzen!
+    glViewport(0, 0, width, height);
+
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_LIGHTING);
     glEnable(GL_LIGHT0);
@@ -107,6 +110,22 @@ MooValue moo_3d_create(MooValue title, MooValue w, MooValue h) {
     glLightfv(GL_LIGHT0, GL_POSITION, light_pos);
     glLightfv(GL_LIGHT0, GL_AMBIENT, light_amb);
     glLightfv(GL_LIGHT0, GL_DIFFUSE, light_dif);
+
+    // Default-Perspektive setzen damit man sofort was sieht
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    float aspect = (float)width / (float)height;
+    float fov_rad = 60.0f * (float)M_PI / 180.0f;
+    float th = tanf(fov_rad / 2.0f);
+    float proj[16] = {0};
+    proj[0]  = 1.0f / (aspect * th);
+    proj[5]  = 1.0f / th;
+    proj[10] = -(100.0f + 0.1f) / (100.0f - 0.1f);
+    proj[11] = -1.0f;
+    proj[14] = -(2.0f * 100.0f * 0.1f) / (100.0f - 0.1f);
+    glLoadMatrixf(proj);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
 
     MooWindow3D* mw = (MooWindow3D*)malloc(sizeof(MooWindow3D));
     mw->window = win;
@@ -131,8 +150,7 @@ void moo_3d_clear(MooValue win, MooValue r, MooValue g, MooValue b) {
     glfwMakeContextCurrent(mw->window);
     glClearColor((float)MV_NUM(r), (float)MV_NUM(g), (float)MV_NUM(b), 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    // Modelview zuruecksetzen
+    // MODELVIEW zuruecksetzen — Kamera wird danach per moo_3d_camera() neu gesetzt
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 }
@@ -192,41 +210,41 @@ void moo_3d_camera(MooValue win, MooValue eyeX, MooValue eyeY, MooValue eyeZ,
     float lx = (float)MV_NUM(lookX), ly = (float)MV_NUM(lookY), lz = (float)MV_NUM(lookZ);
 
     // LookAt-Matrix berechnen (Up = 0,1,0)
+    // forward = normalize(look - eye)
     float fx = lx - ex, fy = ly - ey, fz = lz - ez;
     float len = sqrtf(fx*fx + fy*fy + fz*fz);
     if (len > 0) { fx /= len; fy /= len; fz /= len; }
 
-    // Up = 0,1,0 → Side = forward x up
-    float sx = fy * 0.0f - fz * 1.0f;  // Nein: side = f cross up
-    float sy = fz * 0.0f - fx * 0.0f;
-    float sz = fx * 1.0f - fy * 0.0f;
-    // Korrektes Kreuzprodukt: f x up(0,1,0)
-    sx = fy * 0.0f - fz * 1.0f;  // fy*0 - fz*1 = -fz
-    sy = fz * 0.0f - fx * 0.0f;  // fz*0 - fx*0 = 0
-    sz = fx * 1.0f - fy * 0.0f;  // fx*1 - fy*0 = fx
-    // Hmm, richtig: side = normalize(cross(forward, up))
-    sx = fy * 0.0f - fz * 1.0f;  // -fz... Nein:
-    // cross(f, up) = (fy*uz - fz*uy, fz*ux - fx*uz, fx*uy - fy*ux)
-    // up = (0,1,0): cross = (fy*0 - fz*1, fz*0 - fx*0, fx*1 - fy*0) = (-fz, 0, fx)
-    sx = -fz; sy = 0; sz = fx;
-    len = sqrtf(sx*sx + sy*sy + sz*sz);
-    if (len > 0) { sx /= len; sy /= len; sz /= len; }
+    // side = normalize(cross(forward, up))
+    // up = (0,1,0): cross(f, up) = (fy*0 - fz*1, fz*0 - fx*0, fx*1 - fy*0) = (-fz, 0, fx)
+    float sx = -fz, sy = 0.0f, sz = fx;
+    len = sqrtf(sx*sx + sz*sz);
+    if (len > 0) { sx /= len; sz /= len; }
 
-    // Recompute up = side x forward
+    // recompute up = cross(side, forward)
     float ux = sy*fz - sz*fy;
     float uy = sz*fx - sx*fz;
     float uz = sx*fy - sy*fx;
 
+    // Translation direkt einbauen: dot(-eye, achse)
+    float tx = -(sx*ex + sy*ey + sz*ez);
+    float ty = -(ux*ex + uy*ey + uz*ez);
+    float tz = -(-fx*ex + -fy*ey + -fz*ez);
+
+    // OpenGL column-major: m[col*4 + row]
+    // Spalte 0: (sx, ux, -fx, 0)
+    // Spalte 1: (sy, uy, -fy, 0)
+    // Spalte 2: (sz, uz, -fz, 0)
+    // Spalte 3: (tx, ty, tz,  1)
     float m[16] = {
-        sx,  ux, -fx, 0,
-        sy,  uy, -fy, 0,
-        sz,  uz, -fz, 0,
-        0,   0,   0,  1
+         sx,  ux, -fx, 0,
+         sy,  uy, -fy, 0,
+         sz,  uz, -fz, 0,
+         tx,  ty,  tz, 1
     };
 
     glMatrixMode(GL_MODELVIEW);
     glLoadMatrixf(m);
-    glTranslatef(-ex, -ey, -ez);
 }
 
 // ============================================================
