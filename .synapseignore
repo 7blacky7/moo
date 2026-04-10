@@ -1,0 +1,8 @@
+*.moo
+compiler/target/
+.venv/
+__pycache__/
+*.pyc
+*.o
+uv.lock
+Cargo.lock

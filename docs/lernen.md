@@ -13,19 +13,23 @@ Du schreibst auf Deutsch oder Englisch — moo übersetzt in Python, JavaScript 
 4. [Datentypen](#datentypen)
 5. [Rechnen](#rechnen)
 6. [Ausgabe](#ausgabe)
-7. [Bedingungen](#bedingungen)
-8. [Schleifen](#schleifen)
-9. [Listen](#listen)
-10. [Dictionaries](#dictionaries)
-11. [Funktionen](#funktionen)
-12. [Lambdas](#lambdas)
-13. [Klassen & Objekte](#klassen--objekte)
-14. [Vererbung](#vererbung)
-15. [Fehlerbehandlung](#fehlerbehandlung)
-16. [Match / Switch](#match--switch)
-17. [Module & Imports](#module--imports)
-18. [Schlüsselwort-Tabelle](#schlüsselwort-tabelle)
-19. [CLI-Befehle](#cli-befehle)
+7. [Eingabe](#eingabe)
+8. [Bedingungen](#bedingungen)
+9. [Schleifen](#schleifen)
+10. [Listen](#listen)
+11. [String-Methoden](#string-methoden)
+12. [Dictionaries](#dictionaries)
+13. [Funktionen](#funktionen)
+14. [Lambdas](#lambdas)
+15. [Standardbibliothek (Stdlib)](#standardbibliothek-stdlib)
+16. [Klassen & Objekte](#klassen--objekte)
+17. [Vererbung](#vererbung)
+18. [Fehlerbehandlung](#fehlerbehandlung)
+19. [Match / Switch](#match--switch)
+20. [Module & Imports](#module--imports)
+21. [Schlüsselwort-Tabelle](#schlüsselwort-tabelle)
+22. [CLI-Befehle](#cli-befehle)
+23. [Nativer Compiler](#nativer-compiler)
 
 ---
 
@@ -155,6 +159,31 @@ show 42
 
 ---
 
+## Eingabe
+
+Mit `eingabe()` (oder `input()` auf Englisch) kannst du Text von der Tastatur lesen:
+
+```
+# Deutsch
+setze name auf eingabe("Wie heißt du? ")
+zeige "Hallo, " + name + "!"
+
+# English
+set name to input("What's your name? ")
+show "Hello, " + name + "!"
+```
+
+Die Funktion zeigt den Prompt-Text an und wartet, bis der Benutzer etwas eingibt und Enter drückt. Der eingegebene Wert wird immer als String zurückgegeben.
+
+```
+setze alter auf eingabe("Wie alt bist du? ")
+setze alter auf alter + 0    # in Zahl umwandeln
+wenn alter >= 18:
+    zeige "Du bist volljährig!"
+```
+
+---
+
 ## Bedingungen
 
 ### Einfache Bedingung
@@ -277,6 +306,52 @@ zeige tiere.length
 
 ---
 
+## String-Methoden
+
+Strings haben eingebaute Methoden zur Textverarbeitung. Jede Methode gibt es auf Deutsch und Englisch:
+
+### Groß-/Kleinschreibung
+
+```
+setze text auf "hallo welt"
+
+zeige text.gross()          # "HALLO WELT"
+zeige text.upper()          # "HALLO WELT"
+
+setze laut auf "LEISE BITTE"
+zeige laut.klein()          # "leise bitte"
+zeige laut.lower()          # "leise bitte"
+```
+
+### Leerzeichen entfernen
+
+```
+setze eingabe auf "  Hallo  "
+zeige eingabe.trimmen()     # "Hallo"
+zeige eingabe.trim()        # "Hallo"
+```
+
+### Text aufteilen
+
+```
+setze satz auf "Eins,Zwei,Drei"
+setze teile auf satz.teilen(",")    # ["Eins", "Zwei", "Drei"]
+setze teile auf satz.split(",")     # ["Eins", "Zwei", "Drei"]
+
+# Standardmäßig wird an Leerzeichen getrennt
+setze wörter auf "Hallo schöne Welt".teilen()   # ["Hallo", "schöne", "Welt"]
+```
+
+### Text ersetzen
+
+```
+setze text auf "Hallo Welt"
+zeige text.ersetzen("Welt", "moo")    # "Hallo moo"
+zeige text.replace("Welt", "moo")     # "Hallo moo"
+```
+
+---
+
 ## Dictionaries
 
 Dictionaries speichern Schlüssel-Wert-Paare:
@@ -341,7 +416,7 @@ sage_hallo("Welt")
 
 ## Lambdas
 
-Kurze Einmal-Funktionen:
+Kurze Einmal-Funktionen (auch anonyme Funktionen genannt):
 
 ```
 setze verdopple auf (x) => x * 2
@@ -349,6 +424,57 @@ zeige verdopple(21)      # 42
 
 setze addiere auf (a, b) => a + b
 zeige addiere(3, 4)      # 7
+```
+
+Lambdas eignen sich besonders als Argumente für andere Funktionen:
+
+```
+setze f auf (x) => x * 2
+setze zahlen auf [1, 2, 3, 4, 5]
+```
+
+---
+
+## Standardbibliothek (Stdlib)
+
+moo bringt nützliche Funktionen mit, die direkt verfügbar sind — ohne Import. Jede Funktion gibt es auf Deutsch und Englisch.
+
+### Mathematik
+
+```
+zeige abs(-42)              # 42 — Betrag
+
+zeige wurzel(16)            # 4.0
+zeige sqrt(16)              # 4.0
+
+zeige runde(3.7)            # 4
+zeige round(3.14)           # 3
+
+zeige boden(3.9)            # 3 — abrunden
+zeige floor(3.9)            # 3
+
+zeige decke(3.1)            # 4 — aufrunden
+zeige ceil(3.1)             # 4
+
+zeige min(3, 7)             # 3
+zeige max(3, 7)             # 7
+```
+
+### Zufall
+
+```
+setze zahl auf zufall()         # Zufallszahl zwischen 0 und 1
+setze zahl auf random()         # dasselbe auf Englisch
+```
+
+### Typ prüfen
+
+```
+zeige typ_von(42)               # "Zahl"
+zeige type_of(42)               # "Zahl"
+zeige typ_von("Hallo")          # "Text"
+zeige typ_von([1, 2, 3])        # "Liste"
+zeige typ_von(wahr)             # "Wahrheitswert"
 ```
 
 ---
@@ -543,13 +669,14 @@ Die komplette Referenz aller Schlüsselwörter:
 | `aus` | `from` | Import aus Modul |
 | `exportiere` | `export` | Funktion/Klasse exportieren |
 | `als` | `as` | Alias beim Import |
+| `eingabe` | `input` | Benutzereingabe lesen |
 
 ---
 
 ## CLI-Befehle
 
 ```bash
-# Programm ausführen
+# Programm ausführen (Transpiler — über Python)
 moo run datei.moo
 
 # Nach Python übersetzen
@@ -561,7 +688,54 @@ moo build datei.moo -t javascript
 # In Datei speichern
 moo build datei.moo -t python -o ausgabe.py
 moo build datei.moo -t javascript -o ausgabe.js
+
+# Nativer Compiler — direkt ausführen
+moo-compiler run datei.moo
+
+# Nativer Compiler — native Binary erzeugen
+moo-compiler compile datei.moo
 ```
+
+---
+
+## Nativer Compiler
+
+Neben dem Transpiler (der moo-Code nach Python oder JavaScript übersetzt) gibt es einen **nativen Compiler**. Dieser erzeugt direkt ausführbare Binärdateien — ohne Python oder Node.js.
+
+### Unterschied: Transpiler vs. Nativer Compiler
+
+| | Transpiler (`moo`) | Nativer Compiler (`moo-compiler`) |
+|---|---|---|
+| **Ausgabe** | Python-/JS-Quellcode | Native Binary |
+| **Laufzeit nötig** | Ja (Python/Node) | Nein |
+| **Geschwindigkeit** | Interpretiert | Nativ kompiliert |
+| **Anwendung** | Entwicklung, Prototyping | Produktion, Auslieferung |
+
+### Direkt ausführen
+
+```bash
+moo-compiler run hallo.moo
+```
+
+Kompiliert und führt das Programm in einem Schritt aus. Praktisch für die Entwicklung.
+
+### Binary erzeugen
+
+```bash
+moo-compiler compile hallo.moo
+```
+
+Erzeugt eine eigenständige Binary-Datei, die ohne moo ausgeführt werden kann:
+
+```bash
+./hallo
+```
+
+### Alle nativen Features
+
+Der native Compiler unterstützt alle in diesem Dokument beschriebenen Features:
+Variablen, Bedingungen, Schleifen, Funktionen, Lambdas, Klassen, Vererbung,
+String-Methoden, Eingabe, Stdlib-Funktionen, Fehlerbehandlung und Match/Switch.
 
 ---
 
