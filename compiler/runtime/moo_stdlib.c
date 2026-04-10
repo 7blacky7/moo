@@ -24,6 +24,23 @@ MooValue moo_random(void) {
     return moo_number((double)rand() / RAND_MAX);
 }
 
+MooValue moo_index_get(MooValue container, MooValue index) {
+    switch (container.tag) {
+        case MOO_LIST:   return moo_list_get(container, index);
+        case MOO_DICT:   return moo_dict_get(container, index);
+        case MOO_STRING: return moo_string_index(container, index);
+        default:         return moo_none();
+    }
+}
+
+void moo_index_set(MooValue container, MooValue index, MooValue value) {
+    switch (container.tag) {
+        case MOO_LIST: moo_list_set(container, index, value); break;
+        case MOO_DICT: moo_dict_set(container, index, value); break;
+        default: break;
+    }
+}
+
 MooValue moo_range(MooValue start, MooValue end) {
     int32_t s = (int32_t)moo_as_number(start);
     int32_t e = (int32_t)moo_as_number(end);

@@ -241,21 +241,8 @@ impl<'ctx> CodeGen<'ctx> {
                 let obj = self.compile_expr(object)?;
                 let idx = self.compile_expr(index)?;
                 let val = self.compile_expr(value)?;
-                // Koennte Liste oder Dict sein — beides geht ueber list_set/dict_set
-                // Wir verwenden list_set fuer Zahlen-Indices, dict_set fuer String-Indices
-                // Einfachster Ansatz: immer dict_set (Strings) oder list_set
-                // Da wir zur Compile-Zeit den Typ nicht kennen, nutzen wir eine Heuristik:
-                // Index ist Number-Literal -> list_set, sonst dict_set
-                match index {
-                    Expr::Number(_) => {
-                        self.call_rt_void(self.rt.moo_list_set,
-                            &[obj.into(), idx.into(), val.into()], "list_set")
-                    }
-                    _ => {
-                        self.call_rt_void(self.rt.moo_dict_set,
-                            &[obj.into(), idx.into(), val.into()], "dict_set")
-                    }
-                }
+                self.call_rt_void(self.rt.moo_index_set,
+                    &[obj.into(), idx.into(), val.into()], "idx_set")
             }
             Stmt::Show(expr) => {
                 let val = self.compile_expr(expr)?;
@@ -787,6 +774,20 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_type_of, &[arg.into()], "typeof");
                     }
+                    "länge" | "len" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_list_length, &[arg.into()], "len");
+                    }
+                    "text" | "str" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_to_string, &[arg.into()], "str");
+                    }
+                    "zahl" | "num" => {
+                        // Konvertiert zu Zahl — einfach moo_as_number über Wrapper
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_abs, &[arg.into()], "num_placeholder");
+                        // TODO: echte moo_to_number Funktion
+                    }
                     "eingabe" | "input" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_input, &[arg.into()], "input");
@@ -925,17 +926,8 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::IndexAccess { object, index } => {
                 let obj = self.compile_expr(object)?;
                 let idx = self.compile_expr(index)?;
-                // Koennte Liste oder Dict sein
-                match index.as_ref() {
-                    Expr::Number(_) => {
-                        self.call_rt(self.rt.moo_list_get,
-                            &[obj.into(), idx.into()], "idx_get")
-                    }
-                    _ => {
-                        self.call_rt(self.rt.moo_dict_get,
-                            &[obj.into(), idx.into()], "dict_get")
-                    }
-                }
+                self.call_rt(self.rt.moo_index_get,
+                    &[obj.into(), idx.into()], "idx_get")
             }
             Expr::Range { start, end } => {
                 let s = self.compile_expr(start)?;

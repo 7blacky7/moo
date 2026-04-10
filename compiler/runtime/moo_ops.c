@@ -11,6 +11,11 @@ MooValue moo_sub(MooValue a, MooValue b) {
 }
 
 MooValue moo_mul(MooValue a, MooValue b) {
+    // String * Zahl = Wiederholung
+    if (a.tag == MOO_STRING && b.tag == MOO_NUMBER)
+        return moo_string_repeat(a, b);
+    if (a.tag == MOO_NUMBER && b.tag == MOO_STRING)
+        return moo_string_repeat(b, a);
     return moo_number(moo_as_number(a) * moo_as_number(b));
 }
 

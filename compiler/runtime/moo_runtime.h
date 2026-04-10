@@ -233,4 +233,9 @@ MooValue moo_type_of(MooValue v);
 MooValue moo_input(MooValue prompt);
 MooValue moo_range(MooValue start, MooValue end);
 
+// Universelle Index-Ops (dispatcht nach Container-Typ)
+MooValue moo_string_repeat(MooValue s, MooValue count);
+MooValue moo_index_get(MooValue container, MooValue index);
+void moo_index_set(MooValue container, MooValue index, MooValue value);
+
 #endif // MOO_RUNTIME_H
