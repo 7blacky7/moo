@@ -6,9 +6,9 @@ from ..ast_nodes import (
     ExportStatement, ForLoop, FunctionCall, FunctionDef, Identifier,
     IfStatement, ImportStatement, IndexAccess, IndexAssignment, LambdaExpression,
     ListLiteral, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral,
-    NumberLiteral, Program, PropertyAccess, PropertyAssignment, ReturnStatement,
-    ShowStatement, StringLiteral, ThisExpression, ThrowStatement, TryCatch,
-    UnaryOp, WhileLoop,
+    NumberLiteral, Program, PropertyAccess, PropertyAssignment, RangeExpr,
+    ReturnStatement, ShowStatement, StringLiteral, ThisExpression, ThrowStatement,
+    TryCatch, UnaryOp, WhileLoop,
 )
 
 
@@ -198,6 +198,9 @@ class PythonGenerator:
 
     def _gen_IndexAccess(self, node: IndexAccess) -> str:
         return f"{self._gen(node.object)}[{self._gen(node.index)}]"
+
+    def _gen_RangeExpr(self, node: RangeExpr) -> str:
+        return f"range({self._gen(node.start)}, {self._gen(node.end)})"
 
     def _gen_ListLiteral(self, node: ListLiteral) -> str:
         elements = ", ".join(self._gen(e) for e in node.elements)

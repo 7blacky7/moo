@@ -24,6 +24,16 @@ MooValue moo_random(void) {
     return moo_number((double)rand() / RAND_MAX);
 }
 
+MooValue moo_range(MooValue start, MooValue end) {
+    int32_t s = (int32_t)moo_as_number(start);
+    int32_t e = (int32_t)moo_as_number(end);
+    int32_t len = e > s ? e - s : 0;
+    MooValue list = moo_list_new(len);
+    for (int32_t i = s; i < e; i++)
+        moo_list_append(list, moo_number((double)i));
+    return list;
+}
+
 MooValue moo_input(MooValue prompt) {
     if (prompt.tag == MOO_STRING) {
         printf("%s", MV_STR(prompt)->chars);

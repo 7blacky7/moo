@@ -33,6 +33,10 @@ pub enum Expr {
         object: Box<Expr>,
         index: Box<Expr>,
     },
+    Range {
+        start: Box<Expr>,
+        end: Box<Expr>,
+    },
     List(Vec<Expr>),
     Dict(Vec<(Expr, Expr)>),
     New {

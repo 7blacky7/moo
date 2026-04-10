@@ -844,6 +844,9 @@ impl<'ctx> CodeGen<'ctx> {
                     "reverse" | "umkehren" => {
                         return self.call_rt(self.rt.moo_list_reverse, &[obj.into()], "rev");
                     }
+                    "sort" | "sortieren" => {
+                        return self.call_rt(self.rt.moo_list_sort, &[obj.into()], "sort");
+                    }
                     "join" | "verbinden" => {
                         let delim = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_list_join,
@@ -933,6 +936,11 @@ impl<'ctx> CodeGen<'ctx> {
                             &[obj.into(), idx.into()], "dict_get")
                     }
                 }
+            }
+            Expr::Range { start, end } => {
+                let s = self.compile_expr(start)?;
+                let e = self.compile_expr(end)?;
+                self.call_rt(self.rt.moo_range, &[s.into(), e.into()], "range")
             }
             Expr::List(elements) => {
                 let count = elements.len() as i32;

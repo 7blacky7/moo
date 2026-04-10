@@ -431,6 +431,12 @@ impl Parser {
 
     fn parse_addition(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_multiplication()?;
+        // Range: 0..10
+        if matches!(self.current_type(), TokenType::Range) {
+            self.pos += 1;
+            let right = self.parse_multiplication()?;
+            return Ok(Expr::Range { start: Box::new(left), end: Box::new(right) });
+        }
         loop {
             let op = match self.current_type() {
                 TokenType::Plus => BinOp::Add,

@@ -5,7 +5,7 @@ from .ast_nodes import (
     CompoundAssignment, ConstAssignment, ContinueStatement, DictLiteral,
     ExportStatement, ForLoop, FunctionCall, FunctionDef, Identifier,
     IfStatement, ImportStatement, IndexAccess, IndexAssignment, LambdaExpression,
-    ListLiteral, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral,
+    ListLiteral, MatchStatement, MethodCall, NewExpression, Node, NoneLiteral, RangeExpr,
     NumberLiteral, Program, PropertyAccess, PropertyAssignment, ReturnStatement,
     ShowStatement, StringLiteral, ThisExpression, ThrowStatement, TryCatch,
     UnaryOp, WhileLoop,
@@ -373,6 +373,11 @@ class Parser:
 
     def _parse_addition(self) -> Node:
         left = self._parse_multiplication()
+        # Range: 0..10
+        if self._current().type == TokenType.RANGE:
+            self.pos += 1
+            right = self._parse_multiplication()
+            return RangeExpr(start=left, end=right, line=left.line)
         while self._current().type in (TokenType.PLUS, TokenType.MINUS):
             op = "+" if self._current().type == TokenType.PLUS else "-"
             self.pos += 1

@@ -53,6 +53,57 @@ def cmd_run(args: argparse.Namespace):
         sys.exit(result.returncode)
 
 
+def cmd_repl():
+    print("moo REPL v0.1.0 — Tippe 'quit' zum Beenden")
+    print("Zweisprachig: Deutsch & Englisch\n")
+
+    env: dict = {}
+    buffer = []
+    indent_level = 0
+
+    while True:
+        try:
+            prompt = "... " if indent_level > 0 else "moo> "
+            line = input(prompt)
+        except (EOFError, KeyboardInterrupt):
+            print("\nTschüss!")
+            break
+
+        if line.strip() in ("quit", "exit", "ende"):
+            print("Tschüss!")
+            break
+
+        buffer.append(line)
+
+        # Einrückung tracken
+        stripped = line.strip()
+        if stripped.endswith(":"):
+            indent_level += 1
+            continue
+        elif indent_level > 0 and stripped == "":
+            indent_level = 0
+        elif indent_level > 0 and not line.startswith(" ") and not line.startswith("\t"):
+            indent_level = 0
+        else:
+            if indent_level > 0:
+                continue
+
+        source = "\n".join(buffer)
+        buffer.clear()
+        indent_level = 0
+
+        if not source.strip():
+            continue
+
+        try:
+            py_code = compile_source(source, "python")
+            exec(py_code, env)
+        except (LexerError, ParseError) as e:
+            print(f"Fehler: {e}")
+        except Exception as e:
+            print(f"Laufzeitfehler: {e}")
+
+
 def main():
     ap = argparse.ArgumentParser(prog="moo", description="moo — die universelle Programmiersprache")
     sub = ap.add_subparsers(dest="command")
@@ -67,11 +118,18 @@ def main():
     build_p.add_argument("-t", "--target", default="python", help="Zielsprache (python, javascript)")
     build_p.add_argument("-o", "--output", help="Ausgabedatei")
 
+    # moo repl
+    sub.add_parser("repl", help="Interaktiver Modus (REPL)")
+
     args = ap.parse_args()
     if args.command == "run":
         cmd_run(args)
     elif args.command == "build":
         cmd_build(args)
+    elif args.command == "repl":
+        cmd_repl()
+    elif args.command is None:
+        cmd_repl()
     else:
         ap.print_help()
 

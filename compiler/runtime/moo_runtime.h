@@ -164,6 +164,7 @@ MooValue moo_list_length(MooValue list);
 MooValue moo_list_pop(MooValue list);
 MooValue moo_list_contains(MooValue list, MooValue item);
 MooValue moo_list_reverse(MooValue list);
+MooValue moo_list_sort(MooValue list);
 MooValue moo_list_join(MooValue list, MooValue delim);
 int32_t moo_list_iter_len(MooValue list);
 MooValue moo_list_iter_get(MooValue list, int32_t index);
@@ -230,5 +231,6 @@ MooValue moo_max(MooValue a, MooValue b);
 MooValue moo_random(void);
 MooValue moo_type_of(MooValue v);
 MooValue moo_input(MooValue prompt);
+MooValue moo_range(MooValue start, MooValue end);
 
 #endif // MOO_RUNTIME_H

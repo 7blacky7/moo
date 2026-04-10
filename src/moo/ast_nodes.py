@@ -63,6 +63,11 @@ class IndexAccess(Node):
     index: Node = field(default_factory=Node)
 
 @dataclass
+class RangeExpr(Node):
+    start: Node = field(default_factory=Node)
+    end: Node = field(default_factory=Node)
+
+@dataclass
 class ListLiteral(Node):
     elements: list[Node] = field(default_factory=list)
 

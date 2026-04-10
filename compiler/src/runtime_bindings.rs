@@ -45,6 +45,7 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_list_set: FunctionValue<'ctx>,
     pub moo_list_length: FunctionValue<'ctx>,
     pub moo_list_pop: FunctionValue<'ctx>,
+    pub moo_list_sort: FunctionValue<'ctx>,
     pub moo_list_reverse: FunctionValue<'ctx>,
     pub moo_list_join: FunctionValue<'ctx>,
     pub moo_list_contains: FunctionValue<'ctx>,
@@ -88,6 +89,7 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_random: FunctionValue<'ctx>,
     pub moo_type_of: FunctionValue<'ctx>,
     pub moo_input: FunctionValue<'ctx>,
+    pub moo_range: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeBindings<'ctx> {
@@ -170,6 +172,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_list_set: module.add_function("moo_list_set", void_type.fn_type(mv3, false), None),
             moo_list_length: decl_mv_mv!("moo_list_length", mv1),
             moo_list_pop: decl_mv_mv!("moo_list_pop", mv1),
+            moo_list_sort: decl_mv_mv!("moo_list_sort", mv1),
             moo_list_reverse: decl_mv_mv!("moo_list_reverse", mv1),
             moo_list_join: decl_mv_mv!("moo_list_join", mv2),
             moo_list_contains: decl_mv_mv!("moo_list_contains", mv2),
@@ -217,6 +220,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_random: decl_mv_mv!("moo_random", &[]),
             moo_type_of: decl_mv_mv!("moo_type_of", mv1),
             moo_input: decl_mv_mv!("moo_input", mv1),
+            moo_range: decl_mv_mv!("moo_range", mv2),
         }
     }
 }

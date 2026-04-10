@@ -43,6 +43,7 @@ class TokenType(Enum):
     AS = auto()         # als / as
 
     # Operators
+    RANGE = auto()      # ..
     PLUS = auto()
     MINUS = auto()
     MULTIPLY = auto()

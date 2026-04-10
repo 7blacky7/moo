@@ -129,6 +129,7 @@ impl Lexer {
                     "!=" => Some(TokenType::NotEquals),
                     "<=" => Some(TokenType::LessEq),
                     ">=" => Some(TokenType::GreaterEq),
+                    ".." => Some(TokenType::Range),
                     "**" => Some(TokenType::Power),
                     "+=" => Some(TokenType::PlusAssign),
                     "-=" => Some(TokenType::MinusAssign),
@@ -226,6 +227,10 @@ impl Lexer {
 
         while i < chars.len() && (chars[i].is_ascii_digit() || (chars[i] == '.' && !has_dot)) {
             if chars[i] == '.' {
+                // ".." ist Range-Operator, kein Dezimalpunkt
+                if i + 1 < chars.len() && chars[i + 1] == '.' {
+                    break;
+                }
                 has_dot = true;
             }
             i += 1;

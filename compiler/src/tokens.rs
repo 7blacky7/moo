@@ -46,6 +46,7 @@ pub enum TokenType {
     Multiply,
     Divide,
     Modulo,
+    Range,        // ..
     Power,        // **
     Assign,       // =
     PlusAssign,   // +=

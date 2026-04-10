@@ -98,6 +98,7 @@ class Lexer:
                     "<=": TokenType.LESS_EQ, ">=": TokenType.GREATER_EQ,
                     "**": TokenType.POWER, "+=": TokenType.PLUS_ASSIGN,
                     "-=": TokenType.MINUS_ASSIGN, "=>": TokenType.ARROW,
+                    "..": TokenType.RANGE,
                 }.get(two)
                 if op:
                     self.tokens.append(Token(op, two, self.line, self.column))
@@ -149,6 +150,9 @@ class Lexer:
         has_dot = False
         while i < len(line) and (line[i].isdigit() or (line[i] == "." and not has_dot)):
             if line[i] == ".":
+                # ".." ist Range-Operator, kein Dezimalpunkt
+                if i + 1 < len(line) and line[i + 1] == ".":
+                    break
                 has_dot = True
             i += 1
         value = float(line[start:i]) if has_dot else int(line[start:i])

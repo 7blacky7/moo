@@ -75,6 +75,25 @@ MooValue moo_list_reverse(MooValue list) {
     return list;
 }
 
+static int moo_sort_compare(const void* a, const void* b) {
+    MooValue va = *(const MooValue*)a;
+    MooValue vb = *(const MooValue*)b;
+    if (va.tag == MOO_NUMBER && vb.tag == MOO_NUMBER) {
+        double da = MV_NUM(va), db = MV_NUM(vb);
+        return (da > db) - (da < db);
+    }
+    if (va.tag == MOO_STRING && vb.tag == MOO_STRING) {
+        return strcmp(MV_STR(va)->chars, MV_STR(vb)->chars);
+    }
+    return 0;
+}
+
+MooValue moo_list_sort(MooValue list) {
+    MooList* l = MV_LIST(list);
+    qsort(l->items, l->length, sizeof(MooValue), moo_sort_compare);
+    return list;
+}
+
 int32_t moo_list_iter_len(MooValue list) {
     if (list.tag != MOO_LIST) return 0;
     return MV_LIST(list)->length;
