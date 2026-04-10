@@ -1638,11 +1638,11 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_input, &[arg.into()], "input");
                     }
-                    "datei_lesen" | "file_read" => {
+                    "datei_lesen" | "file_read" | "dl" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_file_read, &[arg.into()], "file_read");
                     }
-                    "datei_schreiben" | "file_write" => {
+                    "datei_schreiben" | "file_write" | "ds" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_file_write, &[a.into(), b.into()], "file_write");
@@ -1656,11 +1656,11 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_file_lines, &[arg.into()], "file_lines");
                     }
-                    "datei_existiert" | "file_exists" => {
+                    "datei_existiert" | "file_exists" | "de" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_file_exists, &[arg.into()], "file_exists");
                     }
-                    "datei_löschen" | "file_delete" => {
+                    "datei_löschen" | "file_delete" | "dd" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_file_delete, &[arg.into()], "file_delete");
                     }
@@ -1683,26 +1683,26 @@ impl<'ctx> CodeGen<'ctx> {
                         }
                     }
                     // JSON
-                    "json_parse" | "json_lesen" => {
+                    "json_parse" | "json_lesen" | "jp" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_json_parse, &[arg.into()], "json_parse");
                     }
-                    "json_string" | "json_text" => {
+                    "json_string" | "json_text" | "js" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_json_string, &[arg.into()], "json_string");
                     }
                     // HTTP
-                    "http_get" | "http_hole" => {
+                    "http_get" | "http_hole" | "hg" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_http_get, &[arg.into()], "http_get");
                     }
-                    "http_post" | "http_sende" => {
+                    "http_post" | "http_sende" | "hp" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_http_post, &[a.into(), b.into()], "http_post");
                     }
                     // Crypto & Security
-                    "sha256" => {
+                    "sha256" | "sh" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_sha256, &[arg.into()], "sha256");
                     }
@@ -1710,11 +1710,11 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_secure_random, &[arg.into()], "secure_random");
                     }
-                    "base64_encode" | "base64_kodieren" => {
+                    "base64_encode" | "base64_kodieren" | "b64e" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_base64_encode, &[arg.into()], "base64_encode");
                     }
-                    "base64_decode" | "base64_dekodieren" => {
+                    "base64_decode" | "base64_dekodieren" | "b64d" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_base64_decode, &[arg.into()], "base64_decode");
                     }
@@ -1727,21 +1727,21 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_sanitize_sql, &[arg.into()], "sanitize_sql");
                     }
                     // Datenbank
-                    "db_verbinde" | "db_connect" => {
+                    "db_verbinde" | "db_connect" | "dbv" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_db_connect, &[arg.into()], "db_connect");
                     }
-                    "db_abfrage" | "db_query" => {
+                    "db_abfrage" | "db_query" | "dba" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_db_query, &[a.into(), b.into()], "db_query");
                     }
-                    "db_ausführen" | "db_execute" => {
+                    "db_ausführen" | "db_execute" | "dbe" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_db_execute, &[a.into(), b.into()], "db_execute");
                     }
-                    "db_schliessen" | "db_close" => {
+                    "db_schliessen" | "db_close" | "dbs" => {
                         let arg = self.compile_expr(&args[0])?;
                         self.call_rt_void(self.rt.moo_db_close, &[arg.into()], "db_close")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
@@ -1778,19 +1778,19 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_udp_socket, &[port.into()], "udp_socket");
                     }
                     // Grafik — Fenster
-                    "fenster_erstelle" | "window_create" => {
+                    "fenster_erstelle" | "window_create" | "fe" => {
                         let title = self.compile_expr(&args[0])?;
                         let w = self.compile_expr(&args[1])?;
                         let h = self.compile_expr(&args[2])?;
                         return self.call_rt(self.rt.moo_window_create, &[title.into(), w.into(), h.into()], "win");
                     }
-                    "fenster_löschen" | "window_clear" => {
+                    "fenster_löschen" | "window_clear" | "fl" => {
                         let win = self.compile_expr(&args[0])?;
                         let color = self.compile_expr(&args[1])?;
                         self.call_rt_void(self.rt.moo_window_clear, &[win.into(), color.into()], "clear")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
-                    "fenster_aktualisieren" | "window_update" => {
+                    "fenster_aktualisieren" | "window_update" | "fa" => {
                         let win = self.compile_expr(&args[0])?;
                         self.call_rt_void(self.rt.moo_window_update, &[win.into()], "update")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
@@ -1805,12 +1805,12 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     // Grafik — Zeichnen
-                    "zeichne_rechteck" | "draw_rect" => {
+                    "zeichne_rechteck" | "draw_rect" | "zr" => {
                         let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
                         self.call_rt_void(self.rt.moo_draw_rect, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "rect")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
-                    "zeichne_kreis" | "draw_circle" => {
+                    "zeichne_kreis" | "draw_circle" | "zk" => {
                         let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
                         self.call_rt_void(self.rt.moo_draw_circle, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "circle")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
@@ -1889,7 +1889,7 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     // 3D Grafik
-                    "3d_erstelle" | "3d_create" | "raum_erstelle" | "space_create" => {
+                    "3d_erstelle" | "3d_create" | "raum_erstelle" | "space_create" | "re" => {
                         let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_3d_create, &[a[0].into(), a[1].into(), a[2].into()], "3d_win");
                     }
@@ -1917,7 +1917,7 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_3d_perspective, &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "3d_persp")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
-                    "3d_kamera" | "3d_camera" | "raum_kamera" | "space_camera" => {
+                    "3d_kamera" | "3d_camera" | "raum_kamera" | "space_camera" | "rk" => {
                         let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
                         self.call_rt_void(self.rt.moo_3d_camera, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into()], "3d_cam")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
