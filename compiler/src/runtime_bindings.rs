@@ -64,6 +64,9 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_to_string: FunctionValue<'ctx>,
     // Error & truthiness
     pub moo_throw: FunctionValue<'ctx>,
+    pub moo_try_begin: FunctionValue<'ctx>,
+    pub moo_try_end: FunctionValue<'ctx>,
+    pub moo_get_error: FunctionValue<'ctx>,
     pub moo_is_truthy: FunctionValue<'ctx>,
     // Stdlib
     pub moo_abs: FunctionValue<'ctx>,
@@ -181,6 +184,9 @@ impl<'ctx> RuntimeBindings<'ctx> {
 
             // Error & truthiness
             moo_throw: module.add_function("moo_throw", void_type.fn_type(mv1, false), None),
+            moo_try_begin: module.add_function("moo_try_begin", i32_type.fn_type(&[], false), None),
+            moo_try_end: module.add_function("moo_try_end", void_type.fn_type(&[], false), None),
+            moo_get_error: decl_mv_mv!("moo_get_error", &[]),
             moo_is_truthy: module.add_function("moo_is_truthy", bool_type.fn_type(mv1, false), None),
 
             // Stdlib

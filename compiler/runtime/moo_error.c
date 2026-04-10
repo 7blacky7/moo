@@ -15,3 +15,25 @@ void moo_throw(MooValue error) {
         exit(1);
     }
 }
+
+int moo_try_begin(void) {
+    if (moo_try_depth >= MOO_TRY_STACK_SIZE) {
+        fprintf(stderr, "moo: Zu viele verschachtelte try-Bloecke!\n");
+        exit(1);
+    }
+    int result = setjmp(moo_try_stack[moo_try_depth]);
+    if (result == 0) {
+        moo_try_depth++;
+    }
+    return result;
+}
+
+void moo_try_end(void) {
+    if (moo_try_depth > 0) {
+        moo_try_depth--;
+    }
+}
+
+MooValue moo_get_error(void) {
+    return moo_last_error;
+}

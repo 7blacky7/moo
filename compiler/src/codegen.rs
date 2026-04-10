@@ -31,6 +31,10 @@ pub struct CodeGen<'ctx> {
     class_constructors: HashMap<String, FunctionValue<'ctx>>,
     // Klassen-Methoden: (class_name, method_name) -> FunctionValue
     class_methods: HashMap<(String, String), FunctionValue<'ctx>>,
+    // Lambda-Mapping: variable_name -> LLVM function name
+    lambda_names: HashMap<String, String>,
+    // Lambda-Counter
+    lambda_counter: usize,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -49,6 +53,8 @@ impl<'ctx> CodeGen<'ctx> {
             loop_stack: Vec::new(),
             class_constructors: HashMap::new(),
             class_methods: HashMap::new(),
+            lambda_names: HashMap::new(),
+            lambda_counter: 0,
         }
     }
 
@@ -200,6 +206,12 @@ impl<'ctx> CodeGen<'ctx> {
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
             Stmt::Assignment { name, value } | Stmt::ConstAssignment { name, value } => {
+                // Lambda-Zuweisung: merke den Lambda-Namen fuer spaetere Aufrufe
+                if let Expr::Lambda { .. } = value {
+                    let lambda_name = format!("__lambda_{}", self.lambda_counter);
+                    self.lambda_names.insert(name.clone(), lambda_name);
+                    // Counter wird in compile_expr/Lambda erhoeht
+                }
                 let val = self.compile_expr(value)?;
                 self.store_var(name, val)
             }
@@ -255,8 +267,8 @@ impl<'ctx> CodeGen<'ctx> {
             Stmt::For { var_name, iterable, body } => {
                 self.compile_for(var_name, iterable, body)
             }
-            Stmt::FunctionDef { name, params, body, .. } => {
-                self.compile_function_def(name, params, body)
+            Stmt::FunctionDef { name, params, defaults, body } => {
+                self.compile_function_def(name, params, defaults, body)
             }
             Stmt::Return(value) => self.compile_return(value),
             Stmt::Break => {
@@ -275,14 +287,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.compile_class_def(name, parent, body)
             }
             Stmt::TryCatch { try_body, catch_var, catch_body } => {
-                // Vereinfachte Implementierung: try/catch wird zu normalem Code
-                // Echtes setjmp/longjmp Handling ist sehr komplex in LLVM IR
-                // Fuer jetzt: try-body ausfuehren, bei Fehler catch-body
-                for s in try_body {
-                    self.compile_stmt(s)?;
-                }
-                // catch-body wird erstmal ignoriert (TODO: setjmp integration)
-                Ok(())
+                self.compile_try_catch(try_body, catch_var, catch_body)
             }
             Stmt::Throw(expr) => {
                 let val = self.compile_expr(expr)?;
@@ -448,7 +453,7 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    fn compile_function_def(&mut self, name: &str, params: &[String], body: &[Stmt]) -> Result<(), String> {
+    fn compile_function_def(&mut self, name: &str, params: &[String], defaults: &[Option<Expr>], body: &[Stmt]) -> Result<(), String> {
         let function = self.module.get_function(name)
             .ok_or(format!("Funktion '{name}' nicht forward-declared"))?;
 
@@ -468,6 +473,33 @@ impl<'ctx> CodeGen<'ctx> {
             let param_val = function.get_nth_param(i as u32).unwrap();
             self.builder.build_store(alloca, param_val).map_err(|e| format!("{e}"))?;
             self.variables.insert(param_name.clone(), alloca);
+
+            // Default-Parameter: wenn der Wert none ist, den Default einsetzen
+            if let Some(Some(default_expr)) = defaults.get(i) {
+                let current_val = self.load_var(param_name)?;
+                // Pruefe ob tag == MOO_NONE (tag ist das erste i64 Feld)
+                let tag = self.builder.build_extract_value(current_val, 0, "tag")
+                    .map_err(|e| format!("{e}"))?;
+                let is_none = self.builder.build_int_compare(
+                    inkwell::IntPredicate::EQ,
+                    tag.into_int_value(),
+                    self.context.i64_type().const_int(3, false), // MOO_NONE = 3
+                    "is_none",
+                ).map_err(|e| format!("{e}"))?;
+
+                let default_bb = self.context.append_basic_block(function, "default");
+                let continue_bb = self.context.append_basic_block(function, "no_default");
+                self.builder.build_conditional_branch(is_none, default_bb, continue_bb)
+                    .map_err(|e| format!("{e}"))?;
+
+                self.builder.position_at_end(default_bb);
+                let default_val = self.compile_expr(default_expr)?;
+                self.store_var(param_name, default_val)?;
+                self.builder.build_unconditional_branch(continue_bb)
+                    .map_err(|e| format!("{e}"))?;
+
+                self.builder.position_at_end(continue_bb);
+            }
         }
 
         for stmt in body {
@@ -606,6 +638,61 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
+    fn compile_try_catch(&mut self, try_body: &[Stmt], catch_var: &Option<String>, catch_body: &[Stmt]) -> Result<(), String> {
+        let func = self.current_function.unwrap();
+
+        // moo_try_begin() returns 0 = normal, 1 = caught error
+        let result = self.builder.build_call(self.rt.moo_try_begin, &[], "try_result")
+            .map_err(|e| format!("{e}"))?;
+        let try_val = match result.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("moo_try_begin fehlgeschlagen".to_string()),
+        };
+
+        let is_catch = self.builder.build_int_compare(
+            inkwell::IntPredicate::NE,
+            try_val,
+            self.context.i32_type().const_int(0, false),
+            "is_catch",
+        ).map_err(|e| format!("{e}"))?;
+
+        let try_bb = self.context.append_basic_block(func, "try_body");
+        let catch_bb = self.context.append_basic_block(func, "catch_body");
+        let after_bb = self.context.append_basic_block(func, "after_try");
+
+        self.builder.build_conditional_branch(is_catch, catch_bb, try_bb)
+            .map_err(|e| format!("{e}"))?;
+
+        // Try-Block
+        self.builder.position_at_end(try_bb);
+        for s in try_body {
+            self.compile_stmt(s)?;
+        }
+        // try_end() aufrufen wenn wir normal durchgekommen sind
+        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            self.call_rt_void(self.rt.moo_try_end, &[], "try_end")?;
+            self.builder.build_unconditional_branch(after_bb).map_err(|e| format!("{e}"))?;
+        }
+
+        // Catch-Block
+        self.builder.position_at_end(catch_bb);
+        if let Some(var_name) = catch_var {
+            let error_val = self.call_rt(self.rt.moo_get_error, &[], "error")?;
+            // Fehler zu String konvertieren fuer den User
+            let error_str = self.call_rt(self.rt.moo_to_string, &[error_val.into()], "err_str")?;
+            self.store_var(var_name, error_str)?;
+        }
+        for s in catch_body {
+            self.compile_stmt(s)?;
+        }
+        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            self.builder.build_unconditional_branch(after_bb).map_err(|e| format!("{e}"))?;
+        }
+
+        self.builder.position_at_end(after_bb);
+        Ok(())
+    }
+
     // === Expression-Kompilierung ===
 
     fn compile_expr(&mut self, expr: &Expr) -> Result<StructValue<'ctx>, String> {
@@ -708,15 +795,23 @@ impl<'ctx> CodeGen<'ctx> {
                     _ => {}
                 }
 
-                let function = self.module.get_function(name)
+                // Lambda-Lookup: wenn name ein Lambda-Alias ist, den echten Namen nutzen
+                let actual_name = self.lambda_names.get(name)
+                    .cloned()
+                    .unwrap_or(name.clone());
+                let function = self.module.get_function(&actual_name)
                     .ok_or(format!("Funktion '{name}' nicht gefunden"))?;
-                let compiled_args: Result<Vec<BasicMetadataValueEnum>, String> = args.iter()
-                    .map(|a| {
-                        let v = self.compile_expr(a)?;
-                        Ok(BasicMetadataValueEnum::from(v))
-                    })
-                    .collect();
-                let compiled_args = compiled_args?;
+                let mut compiled_args: Vec<BasicMetadataValueEnum> = Vec::new();
+                for a in args {
+                    let v = self.compile_expr(a)?;
+                    compiled_args.push(v.into());
+                }
+                // Fehlende Argumente mit moo_none() auffuellen (fuer Default-Parameter)
+                let expected_params = function.count_params() as usize;
+                while compiled_args.len() < expected_params {
+                    let none_val = self.call_rt(self.rt.moo_none, &[], "none_arg")?;
+                    compiled_args.push(none_val.into());
+                }
                 self.call_rt(function, &compiled_args, "call")
             }
             Expr::MethodCall { object, method, args } => {
@@ -878,7 +973,8 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Expr::Lambda { params, body } => {
                 // Lambdas als benannte Funktionen kompilieren
-                let lambda_name = format!("__lambda_{}", self.module.get_functions().count());
+                let lambda_name = format!("__lambda_{}", self.lambda_counter);
+                self.lambda_counter += 1;
                 let mv = self.mv_type();
                 let param_types: Vec<BasicMetadataTypeEnum> = params.iter()
                     .map(|_| BasicMetadataTypeEnum::from(mv))
