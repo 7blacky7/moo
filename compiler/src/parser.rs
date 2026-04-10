@@ -15,6 +15,60 @@ impl std::fmt::Display for ParseError {
     }
 }
 
+/// Levenshtein-Distanz zwischen zwei Strings
+fn levenshtein(a: &str, b: &str) -> usize {
+    let (la, lb) = (a.len(), b.len());
+    let mut prev: Vec<usize> = (0..=lb).collect();
+    let mut curr = vec![0; lb + 1];
+    for (i, ca) in a.chars().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b.chars().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(curr[j] + 1);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[lb]
+}
+
+/// Menschenlesbare Beschreibung eines erwarteten TokenType
+fn token_description(tt: &TokenType) -> &'static str {
+    match tt {
+        TokenType::Indent => "Einrückung (4 Leerzeichen)",
+        TokenType::Dedent => "Ende der Einrückung",
+        TokenType::Colon => "Doppelpunkt ':'",
+        TokenType::LParen => "öffnende Klammer '('",
+        TokenType::RParen => "schließende Klammer ')'",
+        TokenType::LBracket => "öffnende eckige Klammer '['",
+        TokenType::RBracket => "schließende eckige Klammer ']'",
+        TokenType::LBrace => "öffnende geschweifte Klammer '{'",
+        TokenType::RBrace => "schließende geschweifte Klammer '}'",
+        TokenType::Assign => "Gleichheitszeichen '='",
+        TokenType::Arrow => "Pfeil '=>'",
+        TokenType::To => "'auf' / 'to'",
+        TokenType::Newline => "Zeilenende",
+        TokenType::Eof => "Dateiende",
+        TokenType::Comma => "Komma ','",
+        _ => "Token",
+    }
+}
+
+/// Beschreibung was der Parser tatsaechlich bekommen hat
+fn got_description(tt: &TokenType) -> String {
+    match tt {
+        TokenType::Identifier(name) => format!("'{name}'"),
+        TokenType::Number(n) => format!("Zahl {n}"),
+        TokenType::String(s) => format!("Text \"{s}\""),
+        TokenType::Boolean(b) => format!("{}", if *b { "wahr" } else { "falsch" }),
+        TokenType::None => "nichts".to_string(),
+        TokenType::Newline => "Zeilenende".to_string(),
+        TokenType::Eof => "Dateiende".to_string(),
+        TokenType::Indent => "Einrückung".to_string(),
+        TokenType::Dedent => "Ende der Einrückung".to_string(),
+        other => format!("{:?}", other),
+    }
+}
+
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -46,8 +100,18 @@ impl Parser {
             self.pos += 1;
             Ok(tok)
         } else {
+            let expected_desc = token_description(expected);
+            let got_desc = got_description(self.current_type());
+            let hint = match expected {
+                TokenType::Indent => " Hast du die Einrückung (4 Leerzeichen) vergessen?",
+                TokenType::Colon => " Nach Bedingungen und Funktionsköpfen muss ein ':' stehen.",
+                TokenType::RParen => " Schließende Klammer ')' fehlt.",
+                TokenType::RBracket => " Schließende eckige Klammer ']' fehlt.",
+                TokenType::To => " Nach 'setze name' kommt 'auf' (z.B. 'setze x auf 5').",
+                _ => "",
+            };
             Err(ParseError {
-                message: format!("Erwartet {:?}, bekommen {:?}", expected, self.current_type()),
+                message: format!("{expected_desc} erwartet, aber {got_desc} gefunden.{hint}"),
                 line: self.current().line,
             })
         }
@@ -58,8 +122,9 @@ impl Parser {
             self.pos += 1;
             Ok(name)
         } else {
+            let got_desc = got_description(self.current_type());
             Err(ParseError {
-                message: format!("Bezeichner erwartet, bekommen {:?}", self.current_type()),
+                message: format!("Name/Bezeichner erwartet, aber {got_desc} gefunden."),
                 line: self.current().line,
             })
         }
@@ -182,6 +247,8 @@ impl Parser {
     fn parse_assignment(&mut self) -> Result<Stmt, ParseError> {
         self.pos += 1; // set/setze
         let name = self.eat_identifier()?;
+        // Optionale Typ-Annotation: setze name: Typ auf wert
+        self.skip_type_annotation();
         self.eat(&TokenType::To)?;
         let value = self.parse_expression()?;
         Ok(Stmt::Assignment { name, value })
@@ -190,6 +257,8 @@ impl Parser {
     fn parse_const_assignment(&mut self) -> Result<Stmt, ParseError> {
         self.pos += 1; // const/konstante
         let name = self.eat_identifier()?;
+        // Optionale Typ-Annotation
+        self.skip_type_annotation();
         self.eat(&TokenType::To)?;
         let value = self.parse_expression()?;
         Ok(Stmt::ConstAssignment { name, value })
@@ -270,6 +339,8 @@ impl Parser {
         }
 
         self.eat(&TokenType::RParen)?;
+        // Optionaler Rückgabetyp: -> Typ
+        self.skip_return_type();
         let body = self.parse_block_body(false)?;
 
         Ok(Stmt::FunctionDef { name, params, defaults, body, decorators })
@@ -303,9 +374,38 @@ impl Parser {
         self.parse_function_def_with_decorators(vec![])
     }
 
+    /// Überspringt eine optionale Typ-Annotation (": Typ").
+    /// Nur Syntax — kein Type-Checking! (TypeScript-Ansatz: Typen als Dokumentation)
+    fn skip_type_annotation(&mut self) {
+        if matches!(self.current_type(), TokenType::Colon) {
+            // Prüfe ob danach ein Typ-Identifier kommt (nicht Indent/Newline = Block-Start)
+            if self.pos + 1 < self.tokens.len() {
+                match &self.tokens[self.pos + 1].token_type {
+                    TokenType::Identifier(_) => {
+                        self.pos += 1; // ":"
+                        self.pos += 1; // Typ-Name
+                    }
+                    _ => {} // Kein Typ → nichts tun (ist ein Block-Colon)
+                }
+            }
+        }
+    }
+
+    /// Überspringt einen optionalen Rückgabetyp ("-> Typ").
+    fn skip_return_type(&mut self) {
+        if matches!(self.current_type(), TokenType::ThinArrow) {
+            self.pos += 1; // "->"
+            if matches!(self.current_type(), TokenType::Identifier(_)) {
+                self.pos += 1; // Typ-Name
+            }
+        }
+    }
+
     fn parse_param(&mut self, params: &mut Vec<String>, defaults: &mut Vec<Option<Expr>>) -> Result<(), ParseError> {
         let name = self.eat_identifier()?;
         params.push(name);
+        // Optionale Typ-Annotation überspringen: param: Typ
+        self.skip_type_annotation();
         if matches!(self.current_type(), TokenType::Assign) {
             self.pos += 1;
             defaults.push(Some(self.parse_expression()?));
@@ -720,10 +820,13 @@ impl Parser {
             TokenType::LBrace => self.parse_dict(),
             TokenType::Match => self.parse_match_expr(),
             TokenType::QueryFrom | TokenType::From => self.parse_query_expr(),
-            _ => Err(ParseError {
-                message: format!("Ausdruck erwartet, bekommen {:?}", self.current_type()),
-                line: self.current().line,
-            }),
+            _ => {
+                let got = got_description(self.current_type());
+                Err(ParseError {
+                    message: format!("Hier wird ein Wert erwartet (Zahl, Text, Variable, ...), aber {got} gefunden."),
+                    line: self.current().line,
+                })
+            }
         }
     }
 

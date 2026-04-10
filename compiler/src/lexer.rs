@@ -147,6 +147,7 @@ impl Lexer {
                     "**" => Some(TokenType::Power),
                     "+=" => Some(TokenType::PlusAssign),
                     "-=" => Some(TokenType::MinusAssign),
+                    "->" => Some(TokenType::ThinArrow),
                     "=>" => Some(TokenType::Arrow),
                     "?." => Some(TokenType::OptionalChain),
                     "??" => Some(TokenType::NullishCoalesce),

@@ -174,6 +174,12 @@ class FunctionDef(Node):
     defaults: list[Node | None] = field(default_factory=list)
     body: list[Node] = field(default_factory=list)
     decorators: list[str] = field(default_factory=list)
+    is_async: bool = False
+
+@dataclass
+class AwaitExpr(Node):
+    """warte/await Expression."""
+    expr: Node = field(default_factory=Node)
 
 @dataclass
 class ReturnStatement(Node):

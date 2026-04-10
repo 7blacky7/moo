@@ -82,6 +82,7 @@ pub enum TokenType {
     LBrace,
     RBrace,
     Arrow,        // =>
+    ThinArrow,    // -> (Rueckgabetyp)
 
     // Special
     Newline,

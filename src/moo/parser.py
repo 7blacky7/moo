@@ -1,7 +1,7 @@
 """Parser für moo — wandelt Tokens in einen AST um."""
 
 from .ast_nodes import (
-    Assignment, BinaryOp, BooleanLiteral, BreakStatement, ClassDef,
+    Assignment, AwaitExpr, BinaryOp, BooleanLiteral, BreakStatement, ClassDef,
     CompoundAssignment, ConstAssignment, ContinueStatement, DataClassDef, DictLiteral,
     ExportStatement, ForLoop, FunctionCall, FunctionDef, Identifier,
     IfStatement, ImportStatement, IndexAccess, IndexAssignment, LambdaExpression,
@@ -89,6 +89,8 @@ class Parser:
             return self._parse_for()
         if ct == TokenType.AT:
             return self._parse_decorated_function()
+        if ct == TokenType.ASYNC:
+            return self._parse_async_function()
         if ct == TokenType.FUNC:
             return self._parse_function_def()
         if ct == TokenType.DATA:
@@ -198,6 +200,14 @@ class Parser:
         if self._current().type != TokenType.FUNC:
             raise ParseError("funktion/func nach Decorator erwartet", self._current())
         return self._parse_function_def(decorators)
+
+    def _parse_async_function(self) -> FunctionDef:
+        self.pos += 1  # async/asynchron
+        if self._current().type != TokenType.FUNC:
+            raise ParseError("funktion/func nach async/asynchron erwartet", self._current())
+        node = self._parse_function_def()
+        node.is_async = True
+        return node
 
     def _parse_function_def(self, decorators: list[str] | None = None) -> FunctionDef:
         tok = self._eat(TokenType.FUNC)
@@ -460,6 +470,11 @@ class Parser:
         return left
 
     def _parse_unary(self) -> Node:
+        if self._current().type == TokenType.AWAIT:
+            tok = self._current()
+            self.pos += 1
+            expr = self._parse_unary()
+            return AwaitExpr(expr=expr, line=tok.line)
         if self._current().type == TokenType.MINUS:
             tok = self._current()
             self.pos += 1

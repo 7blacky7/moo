@@ -1,7 +1,7 @@
 """JavaScript Code-Generator — erzeugt JS-Code aus dem moo AST."""
 
 from ..ast_nodes import (
-    Assignment, BinaryOp, BooleanLiteral, BreakStatement, ClassDef,
+    Assignment, AwaitExpr, BinaryOp, BooleanLiteral, BreakStatement, ClassDef,
     CompoundAssignment, ConstAssignment, ContinueStatement, DataClassDef, DictLiteral,
     ExportStatement, ForLoop, FunctionCall, FunctionDef, Identifier,
     IfStatement, ImportStatement, IndexAccess, IndexAssignment, LambdaExpression,
@@ -100,7 +100,8 @@ class JavaScriptGenerator:
             else:
                 params_parts.append(p)
         params = ", ".join(params_parts)
-        lines = [f"{self._prefix()}function {node.name}({params}) {{"]
+        prefix = "async " if node.is_async else ""
+        lines = [f"{self._prefix()}{prefix}function {node.name}({params}) {{"]
         lines.extend(self._gen_block(node.body))
         lines.append(f"{self._prefix()}}}")
         # Decorators: name = decorator(name)
@@ -246,6 +247,9 @@ class JavaScriptGenerator:
     def _gen_UnaryOp(self, node: UnaryOp) -> str:
         op = "!" if node.op == "not" else node.op
         return f"({op}{self._gen(node.operand)})"
+
+    def _gen_AwaitExpr(self, node: AwaitExpr) -> str:
+        return f"(await {self._gen(node.expr)})"
 
     def _gen_FunctionCall(self, node: FunctionCall) -> str:
         args = ", ".join(self._gen(a) for a in node.args)

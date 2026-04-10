@@ -18,6 +18,22 @@ use std::path::Path;
 use crate::ast::*;
 use crate::runtime_bindings::RuntimeBindings;
 
+/// Levenshtein-Distanz fuer "Meintest du...?" Vorschlaege
+fn levenshtein(a: &str, b: &str) -> usize {
+    let (la, lb) = (a.len(), b.len());
+    let mut prev: Vec<usize> = (0..=lb).collect();
+    let mut curr = vec![0; lb + 1];
+    for (i, ca) in a.chars().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b.chars().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            curr[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(curr[j] + 1);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[lb]
+}
+
 pub struct CodeGen<'ctx> {
     context: &'ctx Context,
     module: Module<'ctx>,
@@ -1369,7 +1385,27 @@ impl<'ctx> CodeGen<'ctx> {
                     .cloned()
                     .unwrap_or(name.clone());
                 let function = self.module.get_function(&actual_name)
-                    .ok_or(format!("Funktion '{name}' nicht gefunden"))?;
+                    .ok_or_else(|| {
+                        let mut suggestion = String::new();
+                        let mut best_dist = usize::MAX;
+                        let mut func_iter = self.module.get_first_function();
+                        while let Some(f) = func_iter {
+                            let fname = f.get_name().to_string_lossy().to_string();
+                            if !fname.starts_with("moo_") && !fname.starts_with("llvm.") && fname != "main" {
+                                let dist = levenshtein(name, &fname);
+                                if dist < best_dist && dist <= 3 {
+                                    best_dist = dist;
+                                    suggestion = fname;
+                                }
+                            }
+                            func_iter = f.get_next_function();
+                        }
+                        if suggestion.is_empty() {
+                            format!("Funktion '{name}' nicht gefunden.")
+                        } else {
+                            format!("Funktion '{name}' nicht gefunden. Meintest du '{suggestion}'?")
+                        }
+                    })?;
                 let mut compiled_args: Vec<BasicMetadataValueEnum> = Vec::new();
                 for a in args {
                     let v = self.compile_expr(a)?;
@@ -1685,7 +1721,22 @@ impl<'ctx> CodeGen<'ctx> {
                                 return self.call_rt(*func, &call_args, "method_call");
                             }
                         }
-                        return Err(format!("Methode '{method}' nicht gefunden"));
+                        // Vorschlag fuer aehnliche Methoden
+                        let known: Vec<&str> = vec![
+                            "append", "hinzufügen", "length", "länge", "pop",
+                            "reverse", "umkehren", "sort", "sortieren", "join", "verbinden",
+                            "contains", "enthält", "keys", "schlüssel", "has", "hat",
+                            "upper", "gross", "lower", "klein", "trim", "trimmen",
+                            "split", "teilen", "replace", "ersetzen", "bei", "on",
+                            "auslösen", "emit", "warten", "wait",
+                        ];
+                        let suggestion = known.iter()
+                            .filter(|k| levenshtein(method, k) <= 2)
+                            .min_by_key(|k| levenshtein(method, k));
+                        return match suggestion {
+                            Some(s) => Err(format!("Methode '{method}' nicht gefunden. Meintest du '{s}'?")),
+                            None => Err(format!("Methode '{method}' nicht gefunden.")),
+                        };
                     }
                 }
             }

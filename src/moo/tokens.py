@@ -43,6 +43,8 @@ class TokenType(Enum):
     AS = auto()         # als / as
     DATA = auto()       # daten / data
     AT = auto()         # @
+    ASYNC = auto()      # asynchron / async
+    AWAIT = auto()      # warte / await
 
     # Operators
     RANGE = auto()      # ..
@@ -121,6 +123,8 @@ KEYWORDS: dict[str, TokenType] = {
     "standard": TokenType.DEFAULT,
     "als": TokenType.AS,
     "daten": TokenType.DATA,
+    "asynchron": TokenType.ASYNC,
+    "warte": TokenType.AWAIT,
 
     # English
     "set": TokenType.SET,
@@ -155,6 +159,8 @@ KEYWORDS: dict[str, TokenType] = {
     "default": TokenType.DEFAULT,
     "as": TokenType.AS,
     "data": TokenType.DATA,
+    "async": TokenType.ASYNC,
+    "await": TokenType.AWAIT,
 }
 
 # Boolean-Werte Mapping

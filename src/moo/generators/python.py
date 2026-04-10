@@ -1,7 +1,7 @@
 """Python Code-Generator — erzeugt Python-Code aus dem moo AST."""
 
 from ..ast_nodes import (
-    Assignment, BinaryOp, BooleanLiteral, BreakStatement, ClassDef,
+    Assignment, AwaitExpr, BinaryOp, BooleanLiteral, BreakStatement, ClassDef,
     CompoundAssignment, ConstAssignment, ContinueStatement, DataClassDef, DictLiteral,
     ExportStatement, ForLoop, FunctionCall, FunctionDef, Identifier,
     IfStatement, ImportStatement, IndexAccess, IndexAssignment, LambdaExpression,
@@ -93,7 +93,8 @@ class PythonGenerator:
             else:
                 params_parts.append(p)
         params = ", ".join(params_parts)
-        lines.append(f"{self._prefix()}def {node.name}({params}):")
+        prefix = "async " if node.is_async else ""
+        lines.append(f"{self._prefix()}{prefix}def {node.name}({params}):")
         lines.extend(self._gen_block(node.body))
         return "\n".join(lines)
 
@@ -221,6 +222,9 @@ class PythonGenerator:
         if node.op == "not":
             return f"(not {self._gen(node.operand)})"
         return f"({node.op}{self._gen(node.operand)})"
+
+    def _gen_AwaitExpr(self, node: AwaitExpr) -> str:
+        return f"(await {self._gen(node.expr)})"
 
     def _gen_FunctionCall(self, node: FunctionCall) -> str:
         args = ", ".join(self._gen(a) for a in node.args)

@@ -1,0 +1,239 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "moo",
+  "scopeName": "source.moo",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#fstrings" },
+    { "include": "#numbers" },
+    { "include": "#keywords-control" },
+    { "include": "#keywords-declaration" },
+    { "include": "#keywords-operator" },
+    { "include": "#constants" },
+    { "include": "#builtins" },
+    { "include": "#operators" },
+    { "include": "#function-call" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.moo",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.moo",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.moo",
+              "match": "\\\\[nrt\\\\\"']"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.moo",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "name": "constant.character.escape.moo",
+              "match": "\\\\[nrt\\\\\"']"
+            }
+          ]
+        }
+      ]
+    },
+    "fstrings": {
+      "patterns": [
+        {
+          "name": "string.interpolated.moo",
+          "begin": "f\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.moo",
+              "match": "\\\\[nrt\\\\\"']"
+            },
+            {
+              "name": "meta.embedded.expression.moo",
+              "begin": "\\{",
+              "end": "\\}",
+              "patterns": [
+                { "include": "#numbers" },
+                { "include": "#constants" },
+                { "include": "#builtins" },
+                { "include": "#identifiers" },
+                { "include": "#operators" }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "string.interpolated.moo",
+          "begin": "f'",
+          "end": "'",
+          "patterns": [
+            {
+              "name": "constant.character.escape.moo",
+              "match": "\\\\[nrt\\\\\"']"
+            },
+            {
+              "name": "meta.embedded.expression.moo",
+              "begin": "\\{",
+              "end": "\\}",
+              "patterns": [
+                { "include": "#numbers" },
+                { "include": "#constants" },
+                { "include": "#identifiers" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.moo",
+          "match": "\\b\\d+\\.\\d+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.moo",
+          "match": "\\b\\d+\\b"
+        }
+      ]
+    },
+    "keywords-control": {
+      "patterns": [
+        {
+          "name": "keyword.control.moo",
+          "match": "\\b(wenn|if|sonst|else|solange|while|für|for|in|prüfe|match|fall|case|standard|default|versuche|try|fange|catch|wirf|throw|stopp|break|weiter|continue|gib_zurück|return|importiere|import|aus|from|exportiere|export|als|as|aufräumen|defer|garantiere|guard|von|wo|wähle|sortiere)\\b"
+        }
+      ]
+    },
+    "keywords-declaration": {
+      "patterns": [
+        {
+          "name": "keyword.declaration.moo",
+          "match": "\\b(setze|set|auf|to|funktion|func|klasse|class|daten|data|konstante|const|neu|new)\\b"
+        }
+      ]
+    },
+    "keywords-operator": {
+      "patterns": [
+        {
+          "name": "keyword.operator.logical.moo",
+          "match": "\\b(und|and|oder|or|nicht|not)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.moo",
+          "match": "\\b(wahr|true|falsch|false)\\b"
+        },
+        {
+          "name": "constant.language.null.moo",
+          "match": "\\b(nichts|none)\\b"
+        },
+        {
+          "name": "variable.language.this.moo",
+          "match": "\\b(selbst|this)\\b"
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.moo",
+          "match": "\\b(zeige|show|typ_von|type_of|länge|length|eingabe|input|text|zufall|random|abs|wurzel|sqrt|runden|round|boden|floor|decke|ceil|min|max|bereich|range)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "support.function.io.moo",
+          "match": "\\b(datei_lesen|file_read|datei_schreiben|file_write|datei_anhängen|file_append|datei_zeilen|file_lines|datei_existiert|file_exists|datei_löschen|file_delete)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "support.function.graphics.moo",
+          "match": "\\b(fenster_erstelle|window_create|fenster_löschen|window_clear|fenster_aktualisieren|window_update|fenster_offen|window_is_open|fenster_schliessen|window_close|zeichne_rechteck|draw_rect|zeichne_kreis|draw_circle|zeichne_linie|draw_line|zeichne_pixel|draw_pixel|taste_gedrückt|key_pressed|maus_x|mouse_x|maus_y|mouse_y|maus_gedrückt|mouse_pressed|warte|delay)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "support.function.3d.moo",
+          "match": "\\b(raum_erstelle|space_create|raum_offen|space_is_open|raum_löschen|space_clear|raum_aktualisieren|space_update|raum_schliessen|space_close|raum_perspektive|space_perspective|raum_kamera|space_camera|raum_rotiere|space_rotate|raum_verschiebe|space_translate|raum_push|space_push|raum_pop|space_pop|raum_würfel|space_cube|raum_kugel|space_sphere|raum_dreieck|space_triangle)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.pipe.moo",
+          "match": "\\|>"
+        },
+        {
+          "name": "keyword.operator.nullish.moo",
+          "match": "\\?\\?"
+        },
+        {
+          "name": "keyword.operator.optional-chain.moo",
+          "match": "\\?\\."
+        },
+        {
+          "name": "keyword.operator.spread.moo",
+          "match": "\\.\\.\\."
+        },
+        {
+          "name": "keyword.operator.range.moo",
+          "match": "\\.\\."
+        },
+        {
+          "name": "keyword.operator.power.moo",
+          "match": "\\*\\*"
+        },
+        {
+          "name": "keyword.operator.arrow.moo",
+          "match": "=>"
+        },
+        {
+          "name": "keyword.operator.comparison.moo",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.assignment.moo",
+          "match": "\\+=|-=|="
+        },
+        {
+          "name": "keyword.operator.arithmetic.moo",
+          "match": "[+\\-*/%]"
+        },
+        {
+          "name": "keyword.operator.decorator.moo",
+          "match": "@(?=[a-zA-Z_])"
+        }
+      ]
+    },
+    "function-call": {
+      "patterns": [
+        {
+          "name": "entity.name.function.moo",
+          "match": "\\b([a-zA-Z_äöüÄÖÜß][a-zA-Z0-9_äöüÄÖÜß]*)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.moo",
+          "match": "\\b[a-zA-Z_äöüÄÖÜß][a-zA-Z0-9_äöüÄÖÜß]*\\b"
+        }
+      ]
+    }
+  }
+}
