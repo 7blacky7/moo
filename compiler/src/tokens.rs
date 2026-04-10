@@ -1,0 +1,164 @@
+/// Token-Definitionen und zweisprachiges Keyword-Mapping für moo.
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TokenType {
+    // Literals
+    Number(f64),
+    String(std::string::String),
+    Boolean(bool),
+    None,
+    Identifier(std::string::String),
+
+    // Keywords
+    Set,        // setze / set
+    To,         // auf / to
+    If,         // wenn / if
+    Else,       // sonst / else
+    While,      // solange / while
+    For,        // für / for
+    In,         // in
+    Func,       // funktion / func
+    Return,     // gib_zurück / return
+    Show,       // zeige / show
+    And,        // und / and
+    Or,         // oder / or
+    Not,        // nicht / not
+    Class,      // klasse / class
+    New,        // neu / new
+    This,       // selbst / this
+    Try,        // versuche / try
+    Catch,      // fange / catch
+    Throw,      // wirf / throw
+    Break,      // stopp / break
+    Continue,   // weiter / continue
+    Const,      // konstante / const
+    Match,      // prüfe / match
+    Case,       // fall / case
+    Default,    // standard / default
+    Import,     // importiere / import
+    From,       // aus / from
+    Export,     // exportiere / export
+    As,         // als / as
+
+    // Operators
+    Plus,
+    Minus,
+    Multiply,
+    Divide,
+    Modulo,
+    Power,        // **
+    Assign,       // =
+    PlusAssign,   // +=
+    MinusAssign,  // -=
+    Equals,       // ==
+    NotEquals,    // !=
+    Less,
+    Greater,
+    LessEq,
+    GreaterEq,
+    Dot,
+
+    // Delimiters
+    Colon,
+    Comma,
+    LParen,
+    RParen,
+    LBracket,
+    RBracket,
+    LBrace,
+    RBrace,
+    Arrow,        // =>
+
+    // Special
+    Newline,
+    Indent,
+    Dedent,
+    Eof,
+}
+
+#[derive(Debug, Clone)]
+pub struct Token {
+    pub token_type: TokenType,
+    pub line: usize,
+    pub column: usize,
+}
+
+impl Token {
+    pub fn new(token_type: TokenType, line: usize, column: usize) -> Self {
+        Self { token_type, line, column }
+    }
+}
+
+/// Zweisprachiges Keyword-Mapping
+pub fn keyword_lookup(word: &str) -> Option<TokenType> {
+    match word {
+        // Deutsch
+        "setze" => Some(TokenType::Set),
+        "auf" => Some(TokenType::To),
+        "wenn" => Some(TokenType::If),
+        "sonst" => Some(TokenType::Else),
+        "solange" => Some(TokenType::While),
+        "für" => Some(TokenType::For),
+        "in" => Some(TokenType::In),
+        "funktion" => Some(TokenType::Func),
+        "gib_zurück" => Some(TokenType::Return),
+        "zeige" => Some(TokenType::Show),
+        "und" => Some(TokenType::And),
+        "oder" => Some(TokenType::Or),
+        "nicht" => Some(TokenType::Not),
+        "wahr" => Some(TokenType::Boolean(true)),
+        "falsch" => Some(TokenType::Boolean(false)),
+        "nichts" => Some(TokenType::None),
+        "klasse" => Some(TokenType::Class),
+        "neu" => Some(TokenType::New),
+        "selbst" => Some(TokenType::This),
+        "versuche" => Some(TokenType::Try),
+        "fange" => Some(TokenType::Catch),
+        "wirf" => Some(TokenType::Throw),
+        "stopp" => Some(TokenType::Break),
+        "weiter" => Some(TokenType::Continue),
+        "konstante" => Some(TokenType::Const),
+        "prüfe" => Some(TokenType::Match),
+        "fall" => Some(TokenType::Case),
+        "standard" => Some(TokenType::Default),
+        "importiere" => Some(TokenType::Import),
+        "aus" => Some(TokenType::From),
+        "exportiere" => Some(TokenType::Export),
+        "als" => Some(TokenType::As),
+
+        // English
+        "set" => Some(TokenType::Set),
+        "to" => Some(TokenType::To),
+        "if" => Some(TokenType::If),
+        "else" => Some(TokenType::Else),
+        "while" => Some(TokenType::While),
+        "for" => Some(TokenType::For),
+        "func" => Some(TokenType::Func),
+        "return" => Some(TokenType::Return),
+        "show" => Some(TokenType::Show),
+        "and" => Some(TokenType::And),
+        "or" => Some(TokenType::Or),
+        "not" => Some(TokenType::Not),
+        "true" => Some(TokenType::Boolean(true)),
+        "false" => Some(TokenType::Boolean(false)),
+        "none" => Some(TokenType::None),
+        "class" => Some(TokenType::Class),
+        "new" => Some(TokenType::New),
+        "this" => Some(TokenType::This),
+        "try" => Some(TokenType::Try),
+        "catch" => Some(TokenType::Catch),
+        "throw" => Some(TokenType::Throw),
+        "break" => Some(TokenType::Break),
+        "continue" => Some(TokenType::Continue),
+        "const" => Some(TokenType::Const),
+        "match" => Some(TokenType::Match),
+        "case" => Some(TokenType::Case),
+        "default" => Some(TokenType::Default),
+        "import" => Some(TokenType::Import),
+        "from" => Some(TokenType::From),
+        "export" => Some(TokenType::Export),
+        "as" => Some(TokenType::As),
+
+        _ => Option::None,
+    }
+}

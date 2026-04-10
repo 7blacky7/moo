@@ -1,0 +1,9 @@
+[package]
+name = "moo-compiler"
+version = "0.1.0"
+edition = "2024"
+description = "moo Compiler — erzeugt native Binaries über LLVM"
+
+[dependencies]
+inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm18-1"] }
+clap = { version = "4", features = ["derive"] }

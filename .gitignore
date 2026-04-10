@@ -4,3 +4,7 @@ __pycache__/
 dist/
 *.egg-info/
 .mypy_cache/
+test_native
+test_native.ll
+*.o
+compiler/target/
