@@ -21,6 +21,7 @@ fn main() {
         .file("runtime/moo_3d.c")
         .file("runtime/moo_regex.c")
         .file("runtime/moo_net.c")
+        .file("runtime/moo_profiler.c")
         .include("runtime")
         .include("/usr/include/SDL2")
         .opt_level(2)

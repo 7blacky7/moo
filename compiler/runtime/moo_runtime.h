@@ -301,6 +301,9 @@ void* moo_alloc(size_t size);
 void* moo_realloc(void* ptr, size_t size);
 void moo_free(void* ptr);
 
+// === Debugger ===
+void moo_breakpoint(MooValue line_num);
+
 // === Stdlib ===
 MooValue moo_abs(MooValue v);
 MooValue moo_sqrt(MooValue v);
@@ -401,6 +404,11 @@ MooValue moo_result_err(MooValue msg);
 MooValue moo_result_is_ok(MooValue result);
 MooValue moo_result_is_err(MooValue result);
 MooValue moo_result_unwrap(MooValue result);
+
+// === Profiler ===
+void moo_profile_enter(MooValue name);
+void moo_profile_exit(MooValue name);
+void moo_profile_report(void);
 
 // === Netzwerk (TCP/UDP) ===
 MooValue moo_tcp_server(MooValue port);

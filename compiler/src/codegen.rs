@@ -62,6 +62,8 @@ pub struct CodeGen<'ctx> {
     unsafe_context: bool,
     // Test-Framework: registrierte Tests (display_name, fn_name)
     test_names: Vec<(String, String)>,
+    // Profiling-Modus
+    profiling: bool,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -88,7 +90,12 @@ impl<'ctx> CodeGen<'ctx> {
             warnings: Vec::new(),
             unsafe_context: false,
             test_names: Vec::new(),
+            profiling: false,
         }
+    }
+
+    pub fn set_profiling(&mut self, enabled: bool) {
+        self.profiling = enabled;
     }
 
     /// Crystal-inspiriert: Bestimmt den statischen Typ einer Expression (wenn bekannt)
@@ -125,6 +132,14 @@ impl<'ctx> CodeGen<'ctx> {
 
         for stmt in &program.statements {
             self.compile_stmt(stmt)?;
+        }
+
+        // Profiling: Report am Ende von main ausgeben
+        if self.profiling {
+            if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                self.builder.build_call(self.rt.moo_profile_report, &[], "prof_report")
+                    .map_err(|e| format!("{e}"))?;
+            }
         }
 
         // Sicherstellen dass main terminiert ist
@@ -973,13 +988,25 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
 
+        // Profiling: Funktionsname am Anfang registrieren
+        if self.profiling {
+            let name_ptr = self.make_global_str(name, "prof_name")?;
+            let name_val = self.call_rt(self.rt.moo_string_new, &[name_ptr.into()], "prof_str")?;
+            self.call_rt_void(self.rt.moo_profile_enter, &[name_val.into()], "prof_enter")?;
+        }
+
         for stmt in body {
             self.compile_stmt(stmt)?;
         }
 
-        // Default return none — Defers vor implizitem Return ausführen
+        // Default return none — Defers + Profiling vor implizitem Return
         let current_bb = self.builder.get_insert_block().unwrap();
         if current_bb.get_terminator().is_none() {
+            if self.profiling {
+                let name_ptr = self.make_global_str(name, "prof_name")?;
+                let name_val = self.call_rt(self.rt.moo_string_new, &[name_ptr.into()], "prof_str")?;
+                self.call_rt_void(self.rt.moo_profile_exit, &[name_val.into()], "prof_exit")?;
+            }
             self.emit_defers()?;
             let none_val = self.call_rt(self.rt.moo_none, &[], "none")?;
             self.builder.build_return(Some(&none_val)).map_err(|e| format!("{e}"))?;
@@ -1818,6 +1845,16 @@ impl<'ctx> CodeGen<'ctx> {
                     // Freeze/Immutable
                     "zeit" | "time" => {
                         return self.call_rt(self.rt.moo_time, &[], "time");
+                    }
+                    "haltepunkt" | "breakpoint" => {
+                        // Zeilennummer als Argument übergeben
+                        let line_num = if args.is_empty() {
+                            self.call_rt(self.rt.moo_number, &[self.context.f64_type().const_float(0.0).into()], "bp_line")?
+                        } else {
+                            self.compile_expr(&args[0])?
+                        };
+                        self.call_rt_void(self.rt.moo_breakpoint, &[line_num.into()], "bp")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     "systemaufruf" | "syscall" => {
                         let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;

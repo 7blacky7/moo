@@ -40,6 +40,9 @@ enum Commands {
         /// Entry-Point (z.B. _start statt main)
         #[arg(long)]
         entry: Option<String>,
+        /// Profiling aktivieren (misst Zeit pro Funktion)
+        #[arg(long)]
+        profile: bool,
     },
     /// Eine .moo-Datei kompilieren und sofort ausführen
     Run {
@@ -81,8 +84,8 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Compile { file, output, emit_ir, target, no_stdlib, linker_script, entry } => {
-            if let Err(e) = compile(&file, output.as_deref(), emit_ir, target.as_deref(), no_stdlib, linker_script.as_deref(), entry.as_deref()) {
+        Commands::Compile { file, output, emit_ir, target, no_stdlib, linker_script, entry, profile } => {
+            if let Err(e) = compile(&file, output.as_deref(), emit_ir, target.as_deref(), no_stdlib, linker_script.as_deref(), entry.as_deref(), profile) {
                 eprintln!("Fehler: {e}");
                 std::process::exit(1);
             }
@@ -127,14 +130,94 @@ fn find_module(name: &str, dir: &std::path::Path) -> Option<PathBuf> {
     // Relativ zum aktuellen Verzeichnis
     let local = dir.join(format!("{name}.moo"));
     if local.exists() { return Some(local); }
+    // In stdlib/ relativ zum aktuellen Verzeichnis
+    let stdlib = dir.join("stdlib").join(format!("{name}.moo"));
+    if stdlib.exists() { return Some(stdlib); }
+    // In stdlib/ relativ zum Compiler-Binary (fuer installierte stdlib)
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            let installed_stdlib = exe_dir.join("stdlib").join(format!("{name}.moo"));
+            if installed_stdlib.exists() { return Some(installed_stdlib); }
+        }
+    }
     // In ~/.moo/packages/<name>/<name>.moo
     let pkg = packages_dir().join(name).join(format!("{name}.moo"));
     if pkg.exists() { return Some(pkg); }
     None
 }
 
-/// Prefixed alle FunctionDef-Namen in einem AST mit "modul__"
+/// Sammelt alle Funktionsnamen aus einem AST
+fn collect_function_names(stmts: &[ast::Stmt]) -> Vec<String> {
+    stmts.iter().filter_map(|s| {
+        if let ast::Stmt::FunctionDef { name, .. } = s { Some(name.clone()) } else { None }
+    }).collect()
+}
+
+/// Prefixed FunctionCall-Namen in einer Expression
+fn prefix_expr(expr: &ast::Expr, prefix: &str, names: &[String]) -> ast::Expr {
+    match expr {
+        ast::Expr::FunctionCall { name, args } if names.contains(name) => {
+            ast::Expr::FunctionCall {
+                name: format!("{prefix}__{name}"),
+                args: args.iter().map(|a| prefix_expr(a, prefix, names)).collect(),
+            }
+        }
+        ast::Expr::FunctionCall { name, args } => {
+            ast::Expr::FunctionCall {
+                name: name.clone(),
+                args: args.iter().map(|a| prefix_expr(a, prefix, names)).collect(),
+            }
+        }
+        ast::Expr::BinaryOp { left, op, right } => ast::Expr::BinaryOp {
+            left: Box::new(prefix_expr(left, prefix, names)),
+            op: op.clone(),
+            right: Box::new(prefix_expr(right, prefix, names)),
+        },
+        ast::Expr::UnaryOp { op, operand } => ast::Expr::UnaryOp {
+            op: op.clone(),
+            operand: Box::new(prefix_expr(operand, prefix, names)),
+        },
+        other => other.clone(),
+    }
+}
+
+/// Prefixed FunctionCall-Namen in Statements
+fn prefix_stmts(stmts: &[ast::Stmt], prefix: &str, names: &[String]) -> Vec<ast::Stmt> {
+    stmts.iter().map(|s| prefix_stmt(s, prefix, names)).collect()
+}
+
+fn prefix_stmt(stmt: &ast::Stmt, prefix: &str, names: &[String]) -> ast::Stmt {
+    match stmt {
+        ast::Stmt::Assignment { name, value } => ast::Stmt::Assignment {
+            name: name.clone(), value: prefix_expr(value, prefix, names),
+        },
+        ast::Stmt::ConstAssignment { name, value } => ast::Stmt::ConstAssignment {
+            name: name.clone(), value: prefix_expr(value, prefix, names),
+        },
+        ast::Stmt::Show(e) => ast::Stmt::Show(prefix_expr(e, prefix, names)),
+        ast::Stmt::Return(Some(e)) => ast::Stmt::Return(Some(prefix_expr(e, prefix, names))),
+        ast::Stmt::If { condition, body, else_body } => ast::Stmt::If {
+            condition: prefix_expr(condition, prefix, names),
+            body: prefix_stmts(body, prefix, names),
+            else_body: prefix_stmts(else_body, prefix, names),
+        },
+        ast::Stmt::While { condition, body } => ast::Stmt::While {
+            condition: prefix_expr(condition, prefix, names),
+            body: prefix_stmts(body, prefix, names),
+        },
+        ast::Stmt::For { var_name, iterable, body } => ast::Stmt::For {
+            var_name: var_name.clone(),
+            iterable: prefix_expr(iterable, prefix, names),
+            body: prefix_stmts(body, prefix, names),
+        },
+        ast::Stmt::Expression(e) => ast::Stmt::Expression(prefix_expr(e, prefix, names)),
+        other => other.clone(),
+    }
+}
+
+/// Prefixed alle FunctionDef-Namen UND interne Aufrufe in einem AST mit "modul__"
 fn prefix_functions(stmts: &[ast::Stmt], prefix: &str) -> Vec<ast::Stmt> {
+    let func_names = collect_function_names(stmts);
     stmts.iter().map(|stmt| {
         match stmt {
             ast::Stmt::FunctionDef { name, params, defaults, body, decorators } => {
@@ -142,7 +225,7 @@ fn prefix_functions(stmts: &[ast::Stmt], prefix: &str) -> Vec<ast::Stmt> {
                     name: format!("{prefix}__{name}"),
                     params: params.clone(),
                     defaults: defaults.clone(),
-                    body: body.clone(),
+                    body: prefix_stmts(body, prefix, &func_names),
                     decorators: decorators.clone(),
                 }
             }
@@ -219,20 +302,12 @@ fn resolve_modules(
                     let prefixed = prefix_functions(&mod_program.statements, mod_name);
 
                     if names.is_empty() {
-                        // "importiere mathe" → alle Funktionen als mathe__func verfuegbar
-                        // Zusaetzlich: Alias-Funktionen OHNE Prefix fuer alle exportierten
-                        let all_names: Vec<String> = prefixed.iter().filter_map(|s| {
-                            if let ast::Stmt::FunctionDef { name, .. } = s {
-                                name.strip_prefix(&format!("{mod_name}__")).map(|n| n.to_string())
-                            } else {
-                                None
-                            }
-                        }).collect();
-                        let aliases = create_alias_functions(&prefixed, mod_name, &all_names);
-                        imported_stmts.extend(prefixed);
-                        imported_stmts.extend(aliases);
+                        // "importiere mathe" → alle Funktionen direkt (ohne Prefix) verfuegbar
+                        // Kein Namespace-Prefix, wie Python "from X import *"
+                        imported_stmts.extend(mod_program.statements.clone());
                     } else {
                         // "aus mathe importiere sin, cos" → nur sin, cos ohne Prefix
+                        // Alle Funktionen prefixed einfuegen, aber nur gewuenschte als Alias
                         let aliases = create_alias_functions(&prefixed, mod_name, names);
                         imported_stmts.extend(prefixed);
                         imported_stmts.extend(aliases);
@@ -250,7 +325,7 @@ fn resolve_modules(
     Ok(())
 }
 
-fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, target: Option<&str>, no_stdlib: bool, linker_script: Option<&std::path::Path>, entry_point: Option<&str>) -> Result<(), String> {
+fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, target: Option<&str>, no_stdlib: bool, linker_script: Option<&std::path::Path>, entry_point: Option<&str>, profile: bool) -> Result<(), String> {
     // Haupt-Datei parsen
     let mut program = parse_file(file)?;
 
@@ -265,6 +340,9 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     let context = inkwell::context::Context::create();
     let module_name = file.file_stem().unwrap().to_str().unwrap();
     let mut compiler = codegen::CodeGen::new(&context, module_name);
+    if profile {
+        compiler.set_profiling(true);
+    }
     compiler.compile_program(&program)?;
 
     if emit_ir {
@@ -378,7 +456,7 @@ fn run(file: &PathBuf) -> Result<(), String> {
     let tmp_dir = std::env::temp_dir();
     let tmp_output = tmp_dir.join("moo_tmp_binary");
 
-    compile(file, Some(&tmp_output), false, None, false, None, None)?;
+    compile(file, Some(&tmp_output), false, None, false, None, None, false)?;
 
     let status = Command::new(&tmp_output)
         .status()
@@ -453,7 +531,7 @@ fn repl() {
         }
 
         unsafe { std::env::set_var("MOO_QUIET", "1"); }
-        match compile(&tmp_src, Some(&tmp_bin), false, None, false, None, None) {
+        match compile(&tmp_src, Some(&tmp_bin), false, None, false, None, None, false) {
             Ok(()) => {
                 // Erfolgreich kompiliert — ausfuehren (ohne den "Kompiliert" Output)
                 let _ = Command::new(&tmp_bin).status();

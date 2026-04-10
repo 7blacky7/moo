@@ -111,6 +111,7 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_range: FunctionValue<'ctx>,
     pub moo_time: FunctionValue<'ctx>,
     pub moo_syscall: FunctionValue<'ctx>,
+    pub moo_breakpoint: FunctionValue<'ctx>,
     pub moo_index_get: FunctionValue<'ctx>,
     pub moo_index_set: FunctionValue<'ctx>,
     // Freeze/Immutable
@@ -203,6 +204,10 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_socket_read: FunctionValue<'ctx>,
     pub moo_socket_write: FunctionValue<'ctx>,
     pub moo_socket_close: FunctionValue<'ctx>,
+    // Profiler
+    pub moo_profile_enter: FunctionValue<'ctx>,
+    pub moo_profile_exit: FunctionValue<'ctx>,
+    pub moo_profile_report: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeBindings<'ctx> {
@@ -356,6 +361,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_range: decl_mv_mv!("moo_range", mv2),
             moo_time: decl_mv_mv!("moo_time", &[]),
             moo_syscall: decl_mv_mv!("moo_syscall", &[mv, mv, mv, mv]),
+            moo_breakpoint: module.add_function("moo_breakpoint", void_type.fn_type(mv1, false), None),
             moo_index_get: decl_mv_mv!("moo_index_get", mv2),
             moo_index_set: module.add_function("moo_index_set", void_type.fn_type(mv3, false), None),
             // Freeze/Immutable
@@ -447,6 +453,10 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_socket_read: decl_mv_mv!("moo_socket_read", mv2),
             moo_socket_write: module.add_function("moo_socket_write", void_type.fn_type(mv2, false), None),
             moo_socket_close: module.add_function("moo_socket_close", void_type.fn_type(mv1, false), None),
+            // Profiler
+            moo_profile_enter: module.add_function("moo_profile_enter", void_type.fn_type(mv1, false), None),
+            moo_profile_exit: module.add_function("moo_profile_exit", void_type.fn_type(mv1, false), None),
+            moo_profile_report: module.add_function("moo_profile_report", void_type.fn_type(&[], false), None),
         }
     }
 }
