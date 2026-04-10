@@ -181,8 +181,23 @@ impl<'ctx> CodeGen<'ctx> {
         let ptr = if let Some(existing) = self.variables.get(name) {
             *existing
         } else {
+            // Alloca im Entry-Block der Funktion erstellen (nicht im aktuellen Block)
+            // Das verhindert "Instruction does not dominate all uses" Fehler
+            let func = self.current_function.unwrap();
+            let entry = func.get_first_basic_block().unwrap();
+            let current_block = self.builder.get_insert_block().unwrap();
+
+            // Am Anfang des Entry-Blocks einfuegen
+            if let Some(first_instr) = entry.get_first_instruction() {
+                self.builder.position_before(&first_instr);
+            } else {
+                self.builder.position_at_end(entry);
+            }
             let alloca = self.builder.build_alloca(self.mv_type(), name)
                 .map_err(|e| format!("{e}"))?;
+
+            // Zurueck zum aktuellen Block
+            self.builder.position_at_end(current_block);
             self.variables.insert(name.to_string(), alloca);
             alloca
         };
