@@ -5,6 +5,7 @@ MooValue moo_list_new(int32_t initial_capacity) {
     MooValue v;
     v.tag = MOO_LIST;
     MooList* l = moo_alloc(sizeof(MooList));
+    l->refcount = 1;
     l->length = 0;
     l->capacity = initial_capacity;
     l->items = moo_alloc(sizeof(MooValue) * initial_capacity);

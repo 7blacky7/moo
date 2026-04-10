@@ -74,8 +74,15 @@ static inline void moo_val_set_bool(MooValue* v, bool b) { v->data = (uint64_t)b
 #define MV_BOOL(v)   moo_val_as_bool(v)
 #define MV_ERR(v)    ((char*)moo_val_as_ptr(v))
 
+// === Reference Counting ===
+// Erstes Feld in jedem Heap-Objekt. Startet bei 1 bei Erstellung.
+// moo_retain() erhoeht, moo_release() verringert und gibt bei 0 frei.
+void moo_retain(MooValue v);
+void moo_release(MooValue v);
+
 // === String ===
 struct MooString {
+    int32_t refcount;
     char* chars;
     int32_t length;
     int32_t capacity;
@@ -83,6 +90,7 @@ struct MooString {
 
 // === List ===
 struct MooList {
+    int32_t refcount;
     MooValue* items;
     int32_t length;
     int32_t capacity;
@@ -96,6 +104,7 @@ typedef struct {
 } MooDictEntry;
 
 struct MooDict {
+    int32_t refcount;
     MooDictEntry* entries;
     int32_t count;
     int32_t capacity;
@@ -103,6 +112,7 @@ struct MooDict {
 
 // === Function ===
 struct MooFunc {
+    int32_t refcount;
     void* fn_ptr;
     int32_t arity;
     char* name;
@@ -115,6 +125,7 @@ typedef struct {
 } MooProperty;
 
 struct MooObject {
+    int32_t refcount;
     char* class_name;
     MooProperty* properties;
     int32_t prop_count;

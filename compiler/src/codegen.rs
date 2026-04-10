@@ -213,15 +213,16 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn store_var(&mut self, name: &str, val: StructValue<'ctx>) -> Result<(), String> {
         let ptr = if let Some(existing) = self.variables.get(name) {
+            // Release alten Wert bevor wir ueberschreiben
+            let old = self.builder.build_load(self.mv_type(), *existing, "old")
+                .map_err(|e| format!("{e}"))?.into_struct_value();
+            self.call_rt_void(self.rt.moo_release, &[old.into()], "release_old")?;
             *existing
         } else {
-            // Alloca im Entry-Block der Funktion erstellen (nicht im aktuellen Block)
-            // Das verhindert "Instruction does not dominate all uses" Fehler
             let func = self.current_function.unwrap();
             let entry = func.get_first_basic_block().unwrap();
             let current_block = self.builder.get_insert_block().unwrap();
 
-            // Am Anfang des Entry-Blocks einfuegen
             if let Some(first_instr) = entry.get_first_instruction() {
                 self.builder.position_before(&first_instr);
             } else {
@@ -230,11 +231,12 @@ impl<'ctx> CodeGen<'ctx> {
             let alloca = self.builder.build_alloca(self.mv_type(), name)
                 .map_err(|e| format!("{e}"))?;
 
-            // Zurueck zum aktuellen Block
             self.builder.position_at_end(current_block);
             self.variables.insert(name.to_string(), alloca);
             alloca
         };
+        // Retain neuen Wert
+        self.call_rt_void(self.rt.moo_retain, &[val.into()], "retain_new")?;
         self.builder.build_store(ptr, val).map_err(|e| format!("{e}"))?;
         Ok(())
     }

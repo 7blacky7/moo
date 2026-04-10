@@ -4,6 +4,7 @@ MooValue moo_string_new(const char* chars) {
     MooValue v;
     v.tag = MOO_STRING;
     MooString* s = moo_alloc(sizeof(MooString));
+    s->refcount = 1;
     int32_t len = strlen(chars);
     s->length = len;
     s->capacity = len + 1;

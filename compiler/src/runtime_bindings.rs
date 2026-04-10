@@ -74,6 +74,9 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_get_error: FunctionValue<'ctx>,
     pub moo_is_truthy: FunctionValue<'ctx>,
     pub moo_is_none: FunctionValue<'ctx>,
+    // Reference Counting
+    pub moo_retain: FunctionValue<'ctx>,
+    pub moo_release: FunctionValue<'ctx>,
     // Stdlib
     // String extras
     pub moo_string_upper: FunctionValue<'ctx>,
@@ -286,6 +289,9 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_get_error: decl_mv_mv!("moo_get_error", &[]),
             moo_is_truthy: module.add_function("moo_is_truthy", bool_type.fn_type(mv1, false), None),
             moo_is_none: module.add_function("moo_is_none", bool_type.fn_type(mv1, false), None),
+            // Reference Counting
+            moo_retain: module.add_function("moo_retain", void_type.fn_type(mv1, false), None),
+            moo_release: module.add_function("moo_release", void_type.fn_type(mv1, false), None),
 
             // String extras
             moo_string_upper: decl_mv_mv!("moo_string_upper", mv1),

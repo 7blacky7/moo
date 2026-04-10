@@ -13,6 +13,7 @@ MooValue moo_dict_new(void) {
     MooValue v;
     v.tag = MOO_DICT;
     MooDict* d = moo_alloc(sizeof(MooDict));
+    d->refcount = 1;
     d->count = 0;
     d->capacity = DICT_INITIAL_CAPACITY;
     d->entries = moo_alloc(sizeof(MooDictEntry) * d->capacity);

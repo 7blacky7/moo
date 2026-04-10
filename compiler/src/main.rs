@@ -91,69 +91,154 @@ fn main() {
     }
 }
 
-/// Liest eine .moo-Datei und löst Imports rekursiv auf
-fn resolve_imports(file: &PathBuf, visited: &mut std::collections::HashSet<PathBuf>) -> Result<String, String> {
-    let canonical = file.canonicalize().unwrap_or(file.clone());
-    if visited.contains(&canonical) {
-        return Ok(String::new()); // Zirkuläre Imports vermeiden
-    }
-    visited.insert(canonical);
-
+/// Parst eine .moo-Datei zu einem AST
+fn parse_file(file: &PathBuf) -> Result<ast::Program, String> {
     let source = std::fs::read_to_string(file)
         .map_err(|e| format!("Datei '{}' lesen fehlgeschlagen: {e}", file.display()))?;
-
-    let dir = file.parent().unwrap_or(std::path::Path::new("."));
-    let mut result = String::new();
-
-    for line in source.lines() {
-        let trimmed = line.trim();
-        // "importiere <name>" oder "import <name>" — Datei einbinden
-        let import_module = if trimmed.starts_with("importiere ") {
-            Some(trimmed.strip_prefix("importiere ").unwrap().trim())
-        } else if trimmed.starts_with("import ") && !trimmed.contains(" from ") {
-            Some(trimmed.strip_prefix("import ").unwrap().trim())
-        } else {
-            None
-        };
-
-        if let Some(module_name) = import_module {
-            // "als" / "as" Alias entfernen
-            let name = module_name.split_whitespace().next().unwrap_or(module_name);
-            let import_path = dir.join(format!("{name}.moo"));
-            if import_path.exists() {
-                let imported = resolve_imports(&import_path, visited)?;
-                result.push_str(&imported);
-                result.push('\n');
-                continue;
-            }
-            // Fallback: in ~/.moo/packages/<name>/<name>.moo suchen
-            let pkg_path = packages_dir().join(name).join(format!("{name}.moo"));
-            if pkg_path.exists() {
-                let imported = resolve_imports(&pkg_path, visited)?;
-                result.push_str(&imported);
-                result.push('\n');
-                continue;
-            }
-            // Datei nicht gefunden — Import-Zeile beibehalten (wird vom Parser ignoriert)
-        }
-
-        result.push_str(line);
-        result.push('\n');
-    }
-
-    Ok(result)
-}
-
-fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool) -> Result<(), String> {
-    // Imports rekursiv auflösen
-    let mut visited = std::collections::HashSet::new();
-    let source = resolve_imports(file, &mut visited)?;
-
-    // Lexer → Parser → AST
     let mut lex = lexer::Lexer::new();
     let tokens = lex.tokenize(&source).map_err(|e| e.to_string())?;
     let mut par = parser::Parser::new(tokens);
-    let program = par.parse().map_err(|e| e.to_string())?;
+    par.parse().map_err(|e| e.to_string())
+}
+
+/// Findet die .moo-Datei fuer ein Modul (relativ zum Import-Ort oder in packages)
+fn find_module(name: &str, dir: &std::path::Path) -> Option<PathBuf> {
+    // Relativ zum aktuellen Verzeichnis
+    let local = dir.join(format!("{name}.moo"));
+    if local.exists() { return Some(local); }
+    // In ~/.moo/packages/<name>/<name>.moo
+    let pkg = packages_dir().join(name).join(format!("{name}.moo"));
+    if pkg.exists() { return Some(pkg); }
+    None
+}
+
+/// Prefixed alle FunctionDef-Namen in einem AST mit "modul__"
+fn prefix_functions(stmts: &[ast::Stmt], prefix: &str) -> Vec<ast::Stmt> {
+    stmts.iter().map(|stmt| {
+        match stmt {
+            ast::Stmt::FunctionDef { name, params, defaults, body, decorators } => {
+                ast::Stmt::FunctionDef {
+                    name: format!("{prefix}__{name}"),
+                    params: params.clone(),
+                    defaults: defaults.clone(),
+                    body: body.clone(),
+                    decorators: decorators.clone(),
+                }
+            }
+            // Export: FunctionDef darin prefixen
+            ast::Stmt::Export(inner) => {
+                let prefixed = prefix_functions(&[*inner.clone()], prefix);
+                if let Some(s) = prefixed.into_iter().next() {
+                    ast::Stmt::Export(Box::new(s))
+                } else {
+                    stmt.clone()
+                }
+            }
+            // Nicht-Funktionen (z.B. Variablen-Initialisierung) auch mit reinnehmen
+            other => other.clone(),
+        }
+    }).collect()
+}
+
+/// Erzeugt Alias-Funktionen: func(args) → modul__func(args)
+/// Fuer "aus mathe importiere sin, cos" → sin ruft mathe__sin auf
+fn create_alias_functions(stmts: &[ast::Stmt], prefix: &str, names: &[String]) -> Vec<ast::Stmt> {
+    let mut aliases = Vec::new();
+    for stmt in stmts {
+        if let ast::Stmt::FunctionDef { name, params, .. } = stmt {
+            // Nur wenn der Name (ohne Prefix) in der Import-Liste ist
+            let bare_name = name.strip_prefix(&format!("{prefix}__")).unwrap_or(name);
+            if names.contains(&bare_name.to_string()) {
+                // Alias: funktion sin(a): gib_zurück mathe__sin(a)
+                let call = ast::Expr::FunctionCall {
+                    name: name.clone(), // prefixed name
+                    args: params.iter().map(|p| ast::Expr::Identifier(p.clone())).collect(),
+                };
+                aliases.push(ast::Stmt::FunctionDef {
+                    name: bare_name.to_string(),
+                    params: params.clone(),
+                    defaults: params.iter().map(|_| None).collect(),
+                    body: vec![ast::Stmt::Return(Some(call))],
+                    decorators: vec![],
+                });
+            }
+        }
+    }
+    aliases
+}
+
+/// Löst Imports AST-basiert auf: parst Module, prefixed Funktionen, erzeugt Aliases
+fn resolve_modules(
+    program: &mut ast::Program,
+    file_dir: &std::path::Path,
+    visited: &mut std::collections::HashSet<PathBuf>,
+) -> Result<(), String> {
+    let mut imported_stmts: Vec<ast::Stmt> = Vec::new();
+    let mut remaining_stmts: Vec<ast::Stmt> = Vec::new();
+
+    for stmt in program.statements.drain(..) {
+        match &stmt {
+            ast::Stmt::Import { module, names, alias } => {
+                let mod_name = alias.as_deref().unwrap_or(module.as_str());
+                if let Some(mod_path) = find_module(module, file_dir) {
+                    let canonical = mod_path.canonicalize().unwrap_or(mod_path.clone());
+                    if visited.contains(&canonical) {
+                        continue; // Zirkulären Import vermeiden
+                    }
+                    visited.insert(canonical);
+
+                    // Modul parsen
+                    let mut mod_program = parse_file(&mod_path)?;
+
+                    // Rekursiv Imports im Modul auflösen
+                    let mod_dir = mod_path.parent().unwrap_or(std::path::Path::new("."));
+                    resolve_modules(&mut mod_program, mod_dir, visited)?;
+
+                    // Funktionen mit Namespace-Prefix versehen
+                    let prefixed = prefix_functions(&mod_program.statements, mod_name);
+
+                    if names.is_empty() {
+                        // "importiere mathe" → alle Funktionen als mathe__func verfuegbar
+                        // Zusaetzlich: Alias-Funktionen OHNE Prefix fuer alle exportierten
+                        let all_names: Vec<String> = prefixed.iter().filter_map(|s| {
+                            if let ast::Stmt::FunctionDef { name, .. } = s {
+                                name.strip_prefix(&format!("{mod_name}__")).map(|n| n.to_string())
+                            } else {
+                                None
+                            }
+                        }).collect();
+                        let aliases = create_alias_functions(&prefixed, mod_name, &all_names);
+                        imported_stmts.extend(prefixed);
+                        imported_stmts.extend(aliases);
+                    } else {
+                        // "aus mathe importiere sin, cos" → nur sin, cos ohne Prefix
+                        let aliases = create_alias_functions(&prefixed, mod_name, names);
+                        imported_stmts.extend(prefixed);
+                        imported_stmts.extend(aliases);
+                    }
+                }
+                // Modul nicht gefunden → Import-Statement einfach droppen
+            }
+            _ => remaining_stmts.push(stmt),
+        }
+    }
+
+    // Importierte Funktionen VOR dem Hauptprogramm einfuegen
+    imported_stmts.extend(remaining_stmts);
+    program.statements = imported_stmts;
+    Ok(())
+}
+
+fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool) -> Result<(), String> {
+    // Haupt-Datei parsen
+    let mut program = parse_file(file)?;
+
+    // Module AST-basiert auflösen (kein Text-Copy mehr!)
+    let file_dir = file.parent().unwrap_or(std::path::Path::new("."));
+    let mut visited = std::collections::HashSet::new();
+    let canonical = file.canonicalize().unwrap_or(file.clone());
+    visited.insert(canonical);
+    resolve_modules(&mut program, file_dir, &mut visited)?;
 
     // LLVM Codegen
     let context = inkwell::context::Context::create();

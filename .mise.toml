@@ -12,3 +12,7 @@ run = "uv run pytest tests/ -v"
 [tasks.run]
 description = "Run a .moo file"
 run = "uv run python -m moo run"
+
+[tasks.test-compiler]
+description = "Run compiler test suite"
+run = "bash compiler/tests/run_all.sh"

@@ -4,6 +4,7 @@ MooValue moo_object_new(const char* class_name) {
     MooValue v;
     v.tag = MOO_OBJECT;
     MooObject* obj = moo_alloc(sizeof(MooObject));
+    obj->refcount = 1;
     obj->class_name = strdup(class_name);
     obj->prop_count = 0;
     obj->prop_capacity = 8;
