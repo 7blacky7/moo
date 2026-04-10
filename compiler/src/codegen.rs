@@ -331,6 +331,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         self.builder.position_at_end(then_bb);
         for stmt in body {
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() { break; }
             self.compile_stmt(stmt)?;
         }
         if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
@@ -339,6 +340,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         self.builder.position_at_end(else_bb);
         for stmt in else_body {
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() { break; }
             self.compile_stmt(stmt)?;
         }
         if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
@@ -374,6 +376,10 @@ impl<'ctx> CodeGen<'ctx> {
         self.loop_stack.push((cond_bb, after_bb));
         self.builder.position_at_end(body_bb);
         for stmt in body {
+            // Nach Break/Continue ist der Block terminiert — keine weiteren Statements
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                break;
+            }
             self.compile_stmt(stmt)?;
         }
         if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
@@ -412,6 +418,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         let cond_bb = self.context.append_basic_block(func, "for_cond");
         let body_bb = self.context.append_basic_block(func, "for_body");
+        let incr_bb = self.context.append_basic_block(func, "for_incr");
         let after_bb = self.context.append_basic_block(func, "for_after");
 
         self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
@@ -426,11 +433,11 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.build_conditional_branch(cond, body_bb, after_bb)
             .map_err(|e| format!("{e}"))?;
 
-        // Body
-        self.loop_stack.push((cond_bb, after_bb));
+        // Body — Continue springt zu incr_bb (nicht cond_bb!), Break zu after_bb
+        self.loop_stack.push((incr_bb, after_bb));
         self.builder.position_at_end(body_bb);
 
-        // Element holen: list_iter_get(list, idx)
+        // Element holen
         let list_loaded = self.builder.build_load(self.mv_type(), list_ptr, "list")
             .map_err(|e| format!("{e}"))?.into_struct_value();
         let idx_loaded = self.builder.build_load(i32_type, idx_ptr, "idx")
@@ -440,18 +447,24 @@ impl<'ctx> CodeGen<'ctx> {
         self.store_var(var_name, element)?;
 
         for stmt in body {
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() { break; }
             self.compile_stmt(stmt)?;
         }
 
-        // idx++
+        // Body → Inkrement
         if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-            let idx_now = self.builder.build_load(i32_type, idx_ptr, "idx")
-                .map_err(|e| format!("{e}"))?.into_int_value();
-            let idx_next = self.builder.build_int_add(idx_now, i32_type.const_int(1, false), "idx_next")
-                .map_err(|e| format!("{e}"))?;
-            self.builder.build_store(idx_ptr, idx_next).map_err(|e| format!("{e}"))?;
-            self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
+            self.builder.build_unconditional_branch(incr_bb).map_err(|e| format!("{e}"))?;
         }
+
+        // Inkrement-Block: idx++ → zurück zu cond
+        self.builder.position_at_end(incr_bb);
+        let idx_now = self.builder.build_load(i32_type, idx_ptr, "idx")
+            .map_err(|e| format!("{e}"))?.into_int_value();
+        let idx_next = self.builder.build_int_add(idx_now, i32_type.const_int(1, false), "idx_next")
+            .map_err(|e| format!("{e}"))?;
+        self.builder.build_store(idx_ptr, idx_next).map_err(|e| format!("{e}"))?;
+        self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
+
         self.loop_stack.pop();
 
         self.builder.position_at_end(after_bb);

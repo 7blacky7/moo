@@ -173,11 +173,29 @@ wenn summe == 10:
 sonst:
     fail += 1
 
-# Break (übersprungen — Break in While hat bekannten Bug mit Endlosschleife)
-ok += 1
+# Break
+setze r auf 0
+setze i auf 0
+solange i < 100:
+    wenn i == 5:
+        stopp
+    r += 1
+    i += 1
+wenn r == 5:
+    ok += 1
+sonst:
+    fail += 1
 
-# Continue (übersprungen — gleicher Mechanismus)
-ok += 1
+# Continue
+setze r auf 0
+für i in 0..10:
+    wenn i % 2 == 0:
+        weiter
+    r += 1
+wenn r == 5:
+    ok += 1
+sonst:
+    fail += 1
 
 # === 8. LISTEN ===
 setze l auf [5, 3, 8, 1]
