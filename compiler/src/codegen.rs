@@ -1685,14 +1685,6 @@ impl<'ctx> CodeGen<'ctx> {
                                 return self.call_rt(*func, &call_args, "method_call");
                             }
                         }
-                        // Fallback: Builder-Setter (1 Arg → object_set + return self)
-                        if args.len() == 1 {
-                            let val = self.compile_expr(&args[0])?;
-                            let prop_str = self.make_global_str(method, "bld_prop")?;
-                            self.call_rt_void(self.rt.moo_object_set,
-                                &[obj.into(), prop_str.into(), val.into()], "bld_set")?;
-                            return Ok(obj);
-                        }
                         return Err(format!("Methode '{method}' nicht gefunden"));
                     }
                 }
