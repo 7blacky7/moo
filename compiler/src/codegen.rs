@@ -605,30 +605,142 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    fn compile_match(&mut self, value: &Expr, cases: &[(Option<Expr>, Vec<Stmt>)]) -> Result<(), String> {
+    fn compile_match(&mut self, value: &Expr, cases: &[(Option<Expr>, Option<Expr>, Vec<Stmt>)]) -> Result<(), String> {
         let func = self.current_function.unwrap();
         let val = self.compile_expr(value)?;
+        // Match-Wert in Variable speichern fuer Bindings
+        let val_ptr = self.builder.build_alloca(self.mv_type(), "match_val")
+            .map_err(|e| format!("{e}"))?;
+        self.builder.build_store(val_ptr, val).map_err(|e| format!("{e}"))?;
         let merge_bb = self.context.append_basic_block(func, "match_end");
 
-        for (pattern, body) in cases {
+        for (pattern, guard, body) in cases {
             if let Some(pat_expr) = pattern {
-                let pat_val = self.compile_expr(pat_expr)?;
-                let eq = self.call_rt(self.rt.moo_eq, &[val.into(), pat_val.into()], "match_eq")?;
-                let is_true_result = self.builder.build_call(self.rt.moo_is_truthy,
-                    &[eq.into()], "truthy")
-                    .map_err(|e| format!("{e}"))?;
-                let is_true = match is_true_result.try_as_basic_value() {
-                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-                    _ => return Err("truthy fehlgeschlagen".to_string()),
-                };
-
                 let case_bb = self.context.append_basic_block(func, "case");
                 let next_bb = self.context.append_basic_block(func, "next_case");
-                self.builder.build_conditional_branch(is_true, case_bb, next_bb)
-                    .map_err(|e| format!("{e}"))?;
+
+                match pat_expr {
+                    Expr::Dict(pairs) => {
+                        // Dict-Destructuring: prüfe ob jeder Key existiert, binde Values
+                        let current_val = self.builder.build_load(self.mv_type(), val_ptr, "mval")
+                            .map_err(|e| format!("{e}"))?.into_struct_value();
+                        // Alle Keys prüfen — bei Fehlschlag zu next_bb
+                        let mut check_bb = self.builder.get_insert_block().unwrap();
+                        for (key_expr, _) in pairs {
+                            if matches!(key_expr, Expr::Spread(_)) { continue; }
+                            let key_val = self.compile_expr(key_expr)?;
+                            let has = self.call_rt(self.rt.moo_dict_has,
+                                &[current_val.into(), key_val.into()], "has_key")?;
+                            let is_true_result = self.builder.build_call(self.rt.moo_is_truthy,
+                                &[has.into()], "truthy")
+                                .map_err(|e| format!("{e}"))?;
+                            let is_true = match is_true_result.try_as_basic_value() {
+                                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                _ => return Err("truthy fehlgeschlagen".to_string()),
+                            };
+                            let cont_bb = self.context.append_basic_block(func, "destr_cont");
+                            self.builder.build_conditional_branch(is_true, cont_bb, next_bb)
+                                .map_err(|e| format!("{e}"))?;
+                            self.builder.position_at_end(cont_bb);
+                            check_bb = cont_bb;
+                        }
+
+                        // Guard prüfen falls vorhanden
+                        // Zuerst Bindings erstellen (damit Guard auf gebundene Variablen zugreifen kann)
+                        for (key_expr, val_expr) in pairs {
+                            if matches!(key_expr, Expr::Spread(_)) { continue; }
+                            if let Expr::Identifier(binding_name) = val_expr {
+                                let key_val = self.compile_expr(key_expr)?;
+                                let current_val = self.builder.build_load(self.mv_type(), val_ptr, "mval")
+                                    .map_err(|e| format!("{e}"))?.into_struct_value();
+                                let bound_val = self.call_rt(self.rt.moo_dict_get,
+                                    &[current_val.into(), key_val.into()], "bound")?;
+                                self.store_var(binding_name, bound_val)?;
+                            }
+                        }
+
+                        if let Some(guard_expr) = guard {
+                            let guard_val = self.compile_expr(guard_expr)?;
+                            let guard_true_result = self.builder.build_call(self.rt.moo_is_truthy,
+                                &[guard_val.into()], "guard")
+                                .map_err(|e| format!("{e}"))?;
+                            let guard_bool = match guard_true_result.try_as_basic_value() {
+                                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                _ => return Err("guard truthy fehlgeschlagen".to_string()),
+                            };
+                            self.builder.build_conditional_branch(guard_bool, case_bb, next_bb)
+                                .map_err(|e| format!("{e}"))?;
+                        } else {
+                            self.builder.build_unconditional_branch(case_bb)
+                                .map_err(|e| format!("{e}"))?;
+                        }
+                    }
+                    _ => {
+                        let current_val = self.builder.build_load(self.mv_type(), val_ptr, "mval")
+                            .map_err(|e| format!("{e}"))?.into_struct_value();
+
+                        // Guard mit Identifier-Pattern = Binding (fall n wenn n > 10)
+                        if guard.is_some() {
+                            if let Expr::Identifier(name) = pat_expr {
+                                // Identifier mit Guard: binde Variable, prüfe nur Guard
+                                self.store_var(name, current_val)?;
+                                let guard_val = self.compile_expr(guard.as_ref().unwrap())?;
+                                let guard_true_result = self.builder.build_call(self.rt.moo_is_truthy,
+                                    &[guard_val.into()], "guard")
+                                    .map_err(|e| format!("{e}"))?;
+                                let guard_bool = match guard_true_result.try_as_basic_value() {
+                                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                    _ => return Err("guard truthy fehlgeschlagen".to_string()),
+                                };
+                                self.builder.build_conditional_branch(guard_bool, case_bb, next_bb)
+                                    .map_err(|e| format!("{e}"))?;
+                            } else {
+                                // Normaler Vergleich + Guard
+                                let pat_val = self.compile_expr(pat_expr)?;
+                                let eq = self.call_rt(self.rt.moo_eq, &[current_val.into(), pat_val.into()], "match_eq")?;
+                                let is_true_result = self.builder.build_call(self.rt.moo_is_truthy,
+                                    &[eq.into()], "truthy")
+                                    .map_err(|e| format!("{e}"))?;
+                                let is_true = match is_true_result.try_as_basic_value() {
+                                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                    _ => return Err("truthy fehlgeschlagen".to_string()),
+                                };
+                                let guard_bb = self.context.append_basic_block(func, "guard");
+                                self.builder.build_conditional_branch(is_true, guard_bb, next_bb)
+                                    .map_err(|e| format!("{e}"))?;
+
+                                self.builder.position_at_end(guard_bb);
+                                let guard_val = self.compile_expr(guard.as_ref().unwrap())?;
+                                let guard_true_result = self.builder.build_call(self.rt.moo_is_truthy,
+                                    &[guard_val.into()], "guard")
+                                    .map_err(|e| format!("{e}"))?;
+                                let guard_bool = match guard_true_result.try_as_basic_value() {
+                                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                    _ => return Err("guard truthy fehlgeschlagen".to_string()),
+                                };
+                                self.builder.build_conditional_branch(guard_bool, case_bb, next_bb)
+                                    .map_err(|e| format!("{e}"))?;
+                            }
+                        } else {
+                            // Normaler Wert-Vergleich ohne Guard
+                            let pat_val = self.compile_expr(pat_expr)?;
+                            let eq = self.call_rt(self.rt.moo_eq, &[current_val.into(), pat_val.into()], "match_eq")?;
+                            let is_true_result = self.builder.build_call(self.rt.moo_is_truthy,
+                                &[eq.into()], "truthy")
+                                .map_err(|e| format!("{e}"))?;
+                            let is_true = match is_true_result.try_as_basic_value() {
+                                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                _ => return Err("truthy fehlgeschlagen".to_string()),
+                            };
+                            self.builder.build_conditional_branch(is_true, case_bb, next_bb)
+                                .map_err(|e| format!("{e}"))?;
+                        }
+                    }
+                }
 
                 self.builder.position_at_end(case_bb);
                 for stmt in body {
+                    if self.builder.get_insert_block().unwrap().get_terminator().is_some() { break; }
                     self.compile_stmt(stmt)?;
                 }
                 if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
@@ -637,8 +749,9 @@ impl<'ctx> CodeGen<'ctx> {
 
                 self.builder.position_at_end(next_bb);
             } else {
-                // Default case
+                // Default / Wildcard case
                 for stmt in body {
+                    if self.builder.get_insert_block().unwrap().get_terminator().is_some() { break; }
                     self.compile_stmt(stmt)?;
                 }
                 if self.builder.get_insert_block().unwrap().get_terminator().is_none() {

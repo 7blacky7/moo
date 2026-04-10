@@ -150,7 +150,8 @@ pub enum Stmt {
     Export(Box<Stmt>),
     Match {
         value: Expr,
-        cases: Vec<(Option<Expr>, Vec<Stmt>)>,
+        /// (pattern, guard, body) — pattern=None ist default, guard ist optionale wenn/if-Bedingung
+        cases: Vec<(Option<Expr>, Option<Expr>, Vec<Stmt>)>,
     },
     Expression(Expr),
 }

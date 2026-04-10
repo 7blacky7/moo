@@ -355,14 +355,30 @@ impl Parser {
                 TokenType::Eof => break,
                 TokenType::Case => {
                     self.pos += 1;
+                    // Wildcard: fall _ → wie default
+                    if let TokenType::Identifier(name) = self.current_type().clone() {
+                        if name == "_" {
+                            self.pos += 1;
+                            let body = self.parse_block_body(false)?;
+                            cases.push((Option::None, Option::None, body));
+                            continue;
+                        }
+                    }
                     let pattern = self.parse_expression()?;
+                    // Guard: fall n wenn n > 10: / fall n if n > 10:
+                    let guard = if matches!(self.current_type(), TokenType::If) {
+                        self.pos += 1;
+                        Some(self.parse_expression()?)
+                    } else {
+                        Option::None
+                    };
                     let body = self.parse_block_body(false)?;
-                    cases.push((Some(pattern), body));
+                    cases.push((Some(pattern), guard, body));
                 }
                 TokenType::Default => {
                     self.pos += 1;
                     let body = self.parse_block_body(false)?;
-                    cases.push((Option::None, body));
+                    cases.push((Option::None, Option::None, body));
                 }
                 _ => return Err(ParseError {
                     message: format!("fall/case oder standard/default erwartet"),
