@@ -40,6 +40,10 @@ pub struct CodeGen<'ctx> {
     builder: Builder<'ctx>,
     rt: RuntimeBindings<'ctx>,
     variables: HashMap<String, PointerValue<'ctx>>,
+    /// Globale Variablen (top-level Assignments) — als LLVM-Globals angelegt,
+    /// damit sie aus jeder Funktion sichtbar sind. load_var/store_var fallen
+    /// auf diese Map zurueck wenn die Variable nicht lokal ist.
+    globals: HashMap<String, PointerValue<'ctx>>,
     current_function: Option<FunctionValue<'ctx>>,
     // Fuer break/continue
     loop_stack: Vec<(inkwell::basic_block::BasicBlock<'ctx>, inkwell::basic_block::BasicBlock<'ctx>)>,
@@ -78,6 +82,7 @@ impl<'ctx> CodeGen<'ctx> {
             builder,
             rt,
             variables: HashMap::new(),
+            globals: HashMap::new(),
             current_function: None,
             loop_stack: Vec::new(),
             class_constructors: HashMap::new(),
@@ -130,16 +135,34 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.position_at_end(entry);
         self.current_function = Some(main_fn);
 
-        // Pre-Scan: Alle Variablennamen vorab im Entry-Block allokieren
+        // Top-Level-Assignments als LLVM-Globals anlegen — damit sie aus
+        // Funktionen heraus sichtbar sind (load_var/store_var fallen auf
+        // self.globals zurueck wenn eine Variable nicht lokal gefunden wird).
+        let none_init = self.context.i64_type().const_int(3, false);
+        let zero_data = self.context.i64_type().const_int(0, false);
+        let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
+        for stmt in &program.statements {
+            if let Stmt::Assignment { name, .. } | Stmt::ConstAssignment { name, .. } = stmt {
+                if !self.globals.contains_key(name) {
+                    let g = self.module.add_global(self.mv_type(), None, &format!("__moo_g_{name}"));
+                    g.set_initializer(&none_val);
+                    g.set_linkage(inkwell::module::Linkage::Internal);
+                    let ptr = g.as_pointer_value();
+                    self.globals.insert(name.clone(), ptr);
+                    // Im main-Frame sieht variables direkt den Global-Pointer,
+                    // damit store_var den existing-Path nimmt (release+retain).
+                    self.variables.insert(name.clone(), ptr);
+                }
+            }
+        }
+
+        // Pre-Scan: Alle restlichen Variablennamen vorab im Entry-Block allokieren
         // Verhindert dass alloca in bedingten Bloecken/Schleifen erzeugt wird
         let var_names = Self::collect_all_var_names(&program.statements);
         for name in &var_names {
             if !self.variables.contains_key(name.as_str()) {
                 let alloca = self.builder.build_alloca(self.mv_type(), name)
                     .map_err(|e| format!("{e}"))?;
-                let none_init = self.context.i64_type().const_int(3, false);
-                let zero_data = self.context.i64_type().const_int(0, false);
-                let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
                 self.builder.build_store(alloca, none_val).map_err(|e| format!("{e}"))?;
                 self.variables.insert(name.clone(), alloca);
             }
@@ -359,6 +382,12 @@ impl<'ctx> CodeGen<'ctx> {
                 .map_err(|e| format!("{e}"))?.into_struct_value();
             self.call_rt_void(self.rt.moo_release, &[old.into()], "release_old")?;
             *existing
+        } else if let Some(global_ptr) = self.globals.get(name) {
+            // Zuweisung auf globale Variable (z.B. aus einer Funktion heraus)
+            let old = self.builder.build_load(self.mv_type(), *global_ptr, "old_g")
+                .map_err(|e| format!("{e}"))?.into_struct_value();
+            self.call_rt_void(self.rt.moo_release, &[old.into()], "release_old_g")?;
+            *global_ptr
         } else {
             let func = self.current_function.unwrap();
             let entry = func.get_first_basic_block().unwrap();
@@ -389,6 +418,7 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn load_var(&self, name: &str) -> Result<StructValue<'ctx>, String> {
         let ptr = self.variables.get(name)
+            .or_else(|| self.globals.get(name))
             .ok_or(format!("Variable '{name}' nicht gefunden"))?;
         let val = self.builder.build_load(self.mv_type(), *ptr, name)
             .map_err(|e| format!("{e}"))?;
