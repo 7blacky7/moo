@@ -111,10 +111,40 @@ MooValue moo_list_iter_get(MooValue list, int32_t index) {
 MooValue moo_list_join(MooValue list, MooValue delim) {
     MooList* l = MV_LIST(list);
     if (l->length == 0) return moo_string_new("");
-    MooValue result = moo_to_string(l->items[0]);
-    for (int32_t i = 1; i < l->length; i++) {
-        result = moo_string_concat(result, delim);
-        result = moo_string_concat(result, moo_to_string(l->items[i]));
+
+    MooValue dstr = moo_to_string(delim);
+    int32_t dlen = MV_STR(dstr)->length;
+    const char* dchars = MV_STR(dstr)->chars;
+
+    MooValue* parts = moo_alloc(sizeof(MooValue) * l->length);
+    int64_t total = 0;
+    for (int32_t i = 0; i < l->length; i++) {
+        parts[i] = moo_to_string(l->items[i]);
+        total += MV_STR(parts[i])->length;
     }
-    return result;
+    total += (int64_t)dlen * (l->length - 1);
+
+    MooValue v;
+    v.tag = MOO_STRING;
+    MooString* s = moo_alloc(sizeof(MooString));
+    s->refcount = 1;
+    s->length = (int32_t)total;
+    s->capacity = (int32_t)total + 1;
+    s->chars = moo_alloc(s->capacity);
+
+    int64_t pos = 0;
+    for (int32_t i = 0; i < l->length; i++) {
+        if (i > 0 && dlen > 0) {
+            memcpy(s->chars + pos, dchars, dlen);
+            pos += dlen;
+        }
+        int32_t plen = MV_STR(parts[i])->length;
+        memcpy(s->chars + pos, MV_STR(parts[i])->chars, plen);
+        pos += plen;
+    }
+    s->chars[total] = '\0';
+    moo_val_set_ptr(&v, s);
+
+    moo_free(parts);
+    return v;
 }
