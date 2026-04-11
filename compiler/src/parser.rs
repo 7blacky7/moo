@@ -162,6 +162,9 @@ impl Parser {
         } else if matches!(self.current_type(), TokenType::Test) {
             self.pos += 1;
             Ok("teste".to_string())
+        } else if matches!(self.current_type(), TokenType::Match) {
+            self.pos += 1;
+            Ok("pruefe".to_string())
         } else {
             let got_desc = got_description(self.current_type());
             Err(ParseError {
@@ -283,7 +286,16 @@ impl Parser {
             TokenType::Import => self.parse_import(),
             TokenType::From => self.parse_from_import(),
             TokenType::Export => self.parse_export(),
-            TokenType::Match => self.parse_match(),
+            TokenType::Match => {
+                // Soft-Keyword: 'pruefe' als match-block nur wenn direkt ein
+                // Expression-Start folgt. Sonst als Identifier.
+                if self.is_expression_start_at(self.pos + 1) {
+                    self.parse_match()
+                } else {
+                    let expr = self.parse_expression()?;
+                    Ok(Stmt::Expression(expr))
+                }
+            }
             TokenType::Defer => self.parse_defer(),
             TokenType::Guard => self.parse_guard(),
             TokenType::Unsafe => {
@@ -1122,7 +1134,24 @@ impl Parser {
             }
             TokenType::LBracket => self.parse_list(),
             TokenType::LBrace => self.parse_dict(),
-            TokenType::Match => self.parse_match_expr(),
+            TokenType::Match => {
+                // Soft-Keyword: als match-Expression nur wenn direkt ein
+                // Expression-Start folgt. Sonst Identifier/FunctionCall.
+                if self.is_expression_start_at(self.pos + 1) {
+                    self.parse_match_expr()
+                } else {
+                    self.pos += 1;
+                    let name = "pruefe".to_string();
+                    if matches!(self.current_type(), TokenType::LParen) {
+                        self.pos += 1;
+                        let args = self.parse_args_list()?;
+                        self.eat(&TokenType::RParen)?;
+                        Ok(Expr::FunctionCall { name, args })
+                    } else {
+                        Ok(Expr::Identifier(name))
+                    }
+                }
+            }
             TokenType::QueryFrom | TokenType::From => self.parse_query_expr(),
             _ => {
                 let got = got_description(self.current_type());
@@ -1255,6 +1284,33 @@ impl Parser {
             TokenType::Newline | TokenType::Indent | TokenType::Dedent) {
             self.pos += 1;
         }
+    }
+
+    /// Prueft ob das Token an der gegebenen Position einen Ausdruck starten kann.
+    /// Wird von Soft-Keywords (match/pruefe) genutzt um zu entscheiden ob ein
+    /// Block-Keyword oder ein Identifier vorliegt.
+    fn is_expression_start_at(&self, pos: usize) -> bool {
+        let tok = match self.tokens.get(pos) {
+            Some(t) => &t.token_type,
+            None => return false,
+        };
+        matches!(tok,
+            TokenType::Identifier(_)
+            | TokenType::Number(_)
+            | TokenType::String(_)
+            | TokenType::Boolean(_)
+            | TokenType::None
+            | TokenType::This
+            | TokenType::New
+            | TokenType::LParen
+            | TokenType::LBracket
+            | TokenType::LBrace
+            | TokenType::Minus
+            | TokenType::Not
+            | TokenType::Data
+            | TokenType::Try
+            | TokenType::Test
+        )
     }
 
     fn parse_list_element(&mut self) -> Result<Expr, ParseError> {
