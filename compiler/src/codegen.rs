@@ -2499,6 +2499,11 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_socket_write_bytes, &[obj.into(), data.into()], "write_bytes")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    "timeout_setzen" | "set_timeout" => {
+                        let ms = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_socket_set_timeout, &[obj.into(), ms.into()], "set_timeout")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     "map" | "abbilden" => {
                         // list.map((x) => expr) — create new list, iterate, apply lambda, append
                         let lambda = &args[0];

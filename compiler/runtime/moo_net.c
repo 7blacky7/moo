@@ -295,6 +295,21 @@ void moo_socket_close(MooValue sock) {
     }
 }
 
+#include <sys/time.h>
+// Setzt Receive- und Accept-Timeout in Millisekunden. 0 = blocking.
+// Nach Timeout liefert lesen/lesen_bytes/annehmen einen leeren String/Liste
+// und der MooSocket bleibt nutzbar.
+void moo_socket_set_timeout(MooValue sock, MooValue ms) {
+    MooSocket* s = get_socket(sock);
+    if (!s || s->fd < 0) return;
+    int millis = (ms.tag == MOO_NUMBER) ? (int)MV_NUM(ms) : 0;
+    struct timeval tv;
+    tv.tv_sec  = millis / 1000;
+    tv.tv_usec = (millis % 1000) * 1000;
+    setsockopt(s->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(s->fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+}
+
 // Tag-dispatchender close — wird vom Codegen fuer den Method-Namen
 // 'schliessen'/'close' aufgerufen. Vermeidet dass channel_close auf
 // einem Socket landet (oder umgekehrt) was im pthread-mutex Code
