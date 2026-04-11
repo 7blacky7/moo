@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>moo — Die universelle Programmiersprache</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root { --bg: #0d1117; --surface: #161b22; --border: #30363d; --text: #e6edf3; --muted: #8b949e; --accent: #e94560; --blue: #58a6ff; --green: #3fb950; --purple: #d2a8ff; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+code, pre { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Nav */
+nav { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 0; position: sticky; top: 0; z-index: 10; }
+nav .container { display: flex; align-items: center; gap: 32px; }
+nav .logo { font-size: 24px; font-weight: bold; color: var(--accent); }
+nav .links { display: flex; gap: 20px; font-size: 14px; }
+nav .links a { color: var(--muted); }
+nav .links a:hover { color: var(--text); text-decoration: none; }
+.container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+
+/* Hero */
+.hero { padding: 100px 0 80px; text-align: center; }
+.hero h1 { font-size: 56px; font-weight: 800; margin-bottom: 16px; }
+.hero h1 .moo { color: var(--accent); }
+.hero .subtitle { font-size: 22px; color: var(--muted); margin-bottom: 40px; max-width: 700px; margin-left: auto; margin-right: auto; }
+.hero .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 24px; border-radius: 8px; font-size: 16px; font-weight: 500; transition: all 0.15s; }
+.btn-primary { background: var(--accent); color: white; }
+.btn-primary:hover { background: #c73650; text-decoration: none; }
+.btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+.btn-secondary:hover { border-color: var(--blue); text-decoration: none; }
+
+/* Code Example */
+.hero-code { margin-top: 48px; max-width: 600px; margin-left: auto; margin-right: auto; text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.hero-code .code-header { padding: 8px 16px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+.hero-code .dots { display: flex; gap: 6px; }
+.hero-code .dot { width: 10px; height: 10px; border-radius: 50%; }
+.hero-code .dot.r { background: #f85149; }
+.hero-code .dot.y { background: #d29922; }
+.hero-code .dot.g { background: #3fb950; }
+.hero-code pre { padding: 20px; font-size: 14px; line-height: 1.7; overflow-x: auto; }
+.kw { color: #ff7b72; }
+.st { color: #a5d6ff; }
+.cm { color: #484f58; font-style: italic; }
+.fn { color: #d2a8ff; }
+.nu { color: #79c0ff; }
+
+/* Features */
+.features { padding: 80px 0; }
+.features h2 { text-align: center; font-size: 36px; margin-bottom: 48px; }
+.feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
+.feature { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 28px; }
+.feature .icon { font-size: 32px; margin-bottom: 12px; }
+.feature h3 { font-size: 18px; margin-bottom: 8px; }
+.feature p { color: var(--muted); font-size: 14px; }
+
+/* Languages */
+.languages { padding: 60px 0; text-align: center; }
+.languages h2 { font-size: 36px; margin-bottom: 16px; }
+.languages .sub { color: var(--muted); margin-bottom: 32px; font-size: 16px; }
+.lang-grid { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
+.lang-tag { background: var(--surface); border: 1px solid var(--border); padding: 8px 20px; border-radius: 20px; font-size: 14px; }
+.lang-tag.active { border-color: var(--accent); color: var(--accent); }
+
+/* Code Examples Section */
+.examples { padding: 60px 0; }
+.examples h2 { text-align: center; font-size: 36px; margin-bottom: 40px; }
+.example-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.example { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.example .ex-header { padding: 10px 16px; font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 500; }
+.example pre { padding: 16px; font-size: 13px; line-height: 1.6; }
+
+/* Stats */
+.stats { padding: 60px 0; border-top: 1px solid var(--border); }
+.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; text-align: center; }
+.stat .num { font-size: 42px; font-weight: 800; color: var(--accent); }
+.stat .label { color: var(--muted); font-size: 14px; margin-top: 4px; }
+
+/* Install */
+.install { padding: 80px 0; text-align: center; }
+.install h2 { font-size: 36px; margin-bottom: 24px; }
+.install-code { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px 24px; display: inline-block; font-size: 16px; margin-bottom: 24px; }
+.install-code .prompt { color: var(--green); }
+
+/* Footer */
+footer { background: var(--surface); border-top: 1px solid var(--border); padding: 32px 0; text-align: center; color: var(--muted); font-size: 13px; }
+
+@media (max-width: 768px) {
+  .hero h1 { font-size: 36px; }
+  .example-grid { grid-template-columns: 1fr; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="container">
+    <div class="logo">moo</div>
+    <div class="links">
+      <a href="#features">Features</a>
+      <a href="#languages">Sprachen</a>
+      <a href="#examples">Beispiele</a>
+      <a href="#install">Installation</a>
+      <a href="/playground/">Playground</a>
+      <a href="https://github.com/moo-lang/moo">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="container">
+    <h1>Programmiere in <span class="moo">deiner</span> Sprache</h1>
+    <p class="subtitle">moo ist die universelle Programmiersprache — schreibe Code auf Deutsch, Englisch, Spanisch, Franzoesisch oder Tuerkisch. Ein Compiler, alle Sprachen.</p>
+    <div class="cta">
+      <a href="/playground/" class="btn btn-primary">Playground oeffnen</a>
+      <a href="#install" class="btn btn-secondary">Installation</a>
+    </div>
+    <div class="hero-code">
+      <div class="code-header"><div class="dots"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span></div> hallo.moo</div>
+<pre><span class="cm"># Deutsch</span>
+<span class="kw">setze</span> name <span class="kw">auf</span> <span class="st">"Welt"</span>
+<span class="kw">zeige</span> <span class="st">f"Hallo {name}!"</span>
+
+<span class="cm"># English</span>
+<span class="kw">set</span> name <span class="kw">to</span> <span class="st">"World"</span>
+<span class="kw">show</span> <span class="st">f"Hello {name}!"</span>
+
+<span class="cm"># Espanol</span>
+<span class="kw">establecer</span> nombre <span class="kw">to</span> <span class="st">"Mundo"</span>
+<span class="kw">mostrar</span> <span class="st">f"Hola {nombre}!"</span></pre>
+    </div>
+  </div>
+</section>
+
+<section class="features" id="features">
+  <div class="container">
+    <h2>Warum moo?</h2>
+    <div class="feature-grid">
+      <div class="feature">
+        <div class="icon">🌍</div>
+        <h3>5 Sprachen, 1 Compiler</h3>
+        <p>Schreibe Code auf Deutsch, Englisch, Spanisch, Franzoesisch oder Tuerkisch. Mische Sprachen in einer Datei. Perfekt fuer internationale Teams und den Programmierunterricht.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">⚡</div>
+        <h3>Nativ kompiliert</h3>
+        <p>LLVM-basierter Compiler erzeugt nativen Maschinencode. Fibonacci(35) in 0.4 Sekunden. Cross-Compilation fuer ARM, RISC-V, WASM und 8 weitere Targets.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🎮</div>
+        <h3>2D + 3D Grafik</h3>
+        <p>Eingebaute SDL2 + OpenGL Runtime. Zeichne Rechtecke, Kreise, 3D-Wuerfel — direkt aus moo. Pong in 60 Zeilen.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🧩</div>
+        <h3>Beste Features aller Sprachen</h3>
+        <p>Pattern Matching (Kotlin), Lambdas (JS), Klassen + Vererbung (Python), Pipe-Operator (Elixir), Data-Klassen, f-Strings, List Comprehensions, Spread-Operator.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🔧</div>
+        <h3>Systemprogrammierung</h3>
+        <p>Unsafe-Bloecke, Syscalls, Raw Memory I/O, Linker-Scripts, Bare-Metal Support. Schreibe einen OS-Kernel in moo.</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🛠️</div>
+        <h3>Komplettes Oekosystem</h3>
+        <p>LSP-Server, VS Code Extension, Formatter, Profiler, Debugger, Testsuite, Paketmanager, Web-Playground. Alles dabei.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="languages" id="languages">
+  <div class="container">
+    <h2>Programmiere in deiner Muttersprache</h2>
+    <p class="sub">Alle Keywords existieren in jeder Sprache. Mische sie frei.</p>
+    <div class="lang-grid">
+      <span class="lang-tag active">Deutsch</span>
+      <span class="lang-tag active">English</span>
+      <span class="lang-tag active">Espanol</span>
+      <span class="lang-tag active">Francais</span>
+      <span class="lang-tag active">Turkce</span>
+    </div>
+  </div>
+</section>
+
+<section class="examples" id="examples">
+  <div class="container">
+    <h2>Code-Beispiele</h2>
+    <div class="example-grid">
+      <div class="example">
+        <div class="ex-header">Pattern Matching</div>
+<pre><span class="kw">funktion</span> <span class="fn">bewerten</span>(note):
+    <span class="kw">gib_zurück prüfe</span> note:
+        <span class="kw">fall</span> n <span class="kw">wenn</span> n >= <span class="nu">90</span>: <span class="st">"Sehr gut"</span>
+        <span class="kw">fall</span> n <span class="kw">wenn</span> n >= <span class="nu">80</span>: <span class="st">"Gut"</span>
+        <span class="kw">standard</span>: <span class="st">"Mangelhaft"</span></pre>
+      </div>
+      <div class="example">
+        <div class="ex-header">Lambdas + Pipe</div>
+<pre><span class="kw">setze</span> zahlen <span class="kw">auf</span> [<span class="nu">1</span>, <span class="nu">2</span>, <span class="nu">3</span>, <span class="nu">4</span>, <span class="nu">5</span>]
+
+<span class="kw">setze</span> ergebnis <span class="kw">auf</span> zahlen
+    .filter((x) => x > <span class="nu">2</span>)
+    .map((x) => x * x)
+
+<span class="kw">zeige</span> ergebnis  <span class="cm"># [9, 16, 25]</span></pre>
+      </div>
+      <div class="example">
+        <div class="ex-header">Webserver (in moo!)</div>
+<pre><span class="kw">setze</span> server <span class="kw">auf</span> <span class="fn">web_server</span>(<span class="nu">8080</span>)
+
+<span class="kw">solange</span> wahr:
+    <span class="kw">setze</span> req <span class="kw">auf</span> server.<span class="fn">web_annehmen</span>()
+    <span class="fn">web_antworten</span>(req, <span class="st">"Hallo!"</span>, <span class="nu">200</span>)</pre>
+      </div>
+      <div class="example">
+        <div class="ex-header">3D Grafik</div>
+<pre><span class="kw">setze</span> win <span class="kw">auf</span> <span class="fn">raum_erstelle</span>(<span class="st">"3D"</span>, <span class="nu">800</span>, <span class="nu">600</span>)
+<span class="fn">raum_perspektive</span>(win, <span class="nu">45.0</span>, <span class="nu">0.1</span>, <span class="nu">100.0</span>)
+
+<span class="kw">solange</span> <span class="fn">raum_offen</span>(win):
+    <span class="fn">raum_löschen</span>(win, <span class="nu">0</span>, <span class="nu">0</span>, <span class="nu">0.2</span>)
+    <span class="fn">raum_würfel</span>(win, <span class="nu">0</span>, <span class="nu">0</span>, <span class="nu">0</span>, <span class="nu">1.0</span>, <span class="st">"rot"</span>)
+    <span class="fn">raum_aktualisieren</span>(win)</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="stats">
+  <div class="container">
+    <div class="stat-grid">
+      <div class="stat"><div class="num">50+</div><div class="label">Commits</div></div>
+      <div class="stat"><div class="num">20k+</div><div class="label">Zeilen Code</div></div>
+      <div class="stat"><div class="num">5</div><div class="label">Sprachen</div></div>
+      <div class="stat"><div class="num">80+</div><div class="label">Tests</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="install" id="install">
+  <div class="container">
+    <h2>Jetzt starten</h2>
+    <div class="install-code"><span class="prompt">$</span> git clone https://github.com/moo-lang/moo && cd moo && cargo build --release</div>
+    <div style="margin-top: 16px">
+      <a href="/playground/" class="btn btn-primary">Oder direkt im Browser ausprobieren</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    moo — Die universelle Programmiersprache. Open Source.
+  </div>
+</footer>
+
+</body>
+</html>

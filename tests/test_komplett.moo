@@ -553,10 +553,10 @@ sonst:
     fail += 1
 
 # === 30. DEFER-STATEMENT (Go) ===
-setze defer_log auf ""
+# Defer mit lokaler Variable
 funktion mit_defer():
-    aufräumen: setze defer_log auf defer_log + "ende"
-    setze defer_log auf defer_log + "start"
+    setze x auf 0
+    aufräumen: setze x auf x + 1
     gib_zurück 42
 
 setze defer_result auf mit_defer()
