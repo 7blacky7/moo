@@ -339,9 +339,7 @@ fn resolve_modules(
                     visited.insert(canonical);
 
                     // Modul parsen
-                    eprintln!("[DEBUG] parsing {}...", mod_path.display());
                     let mut mod_program = parse_file(&mod_path)?;
-                    eprintln!("[DEBUG] parsed {} statements", mod_program.statements.len());
 
                     // Rekursiv Imports im Modul aufloesen
                     let mod_dir = mod_path.parent().unwrap_or(std::path::Path::new("."));

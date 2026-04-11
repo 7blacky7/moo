@@ -510,6 +510,166 @@ wenn t == "klein":
 sonst:
     fail += 1
 
+# === 28. VEKTOR-OPERATIONEN (Julia) ===
+setze v1 auf [1, 2, 3] * 2
+wenn v1[0] == 2:
+    ok += 1
+sonst:
+    fail += 1
+
+wenn v1[2] == 6:
+    ok += 1
+sonst:
+    fail += 1
+
+setze v2 auf [10, 20, 30] + 5
+wenn v2[1] == 25:
+    ok += 1
+sonst:
+    fail += 1
+
+setze v3 auf [1, 2, 3] + [4, 5, 6]
+wenn v3[0] == 5:
+    ok += 1
+sonst:
+    fail += 1
+
+# === 29. GUARD-STATEMENT (Swift) ===
+funktion pruefe_alter(alter):
+    garantiere alter >= 0, sonst:
+        gib_zurück "ungueltig"
+    wenn alter >= 18:
+        gib_zurück "erwachsen"
+    gib_zurück "jung"
+
+wenn pruefe_alter(25) == "erwachsen":
+    ok += 1
+sonst:
+    fail += 1
+
+wenn pruefe_alter(-1) == "ungueltig":
+    ok += 1
+sonst:
+    fail += 1
+
+# === 30. DEFER-STATEMENT (Go) ===
+setze defer_log auf ""
+funktion mit_defer():
+    aufräumen: setze defer_log auf defer_log + "ende"
+    setze defer_log auf defer_log + "start"
+    gib_zurück 42
+
+setze defer_result auf mit_defer()
+wenn defer_result == 42:
+    ok += 1
+sonst:
+    fail += 1
+
+# === 31. CONST-FOLDING (Zig) ===
+# Compile-Zeit Berechnung
+setze cf auf 2 * 3 + 4
+wenn cf == 10:
+    ok += 1
+sonst:
+    fail += 1
+
+setze cf2 auf "Hallo" + " " + "Welt"
+wenn cf2 == "Hallo Welt":
+    ok += 1
+sonst:
+    fail += 1
+
+# === 32. REGEX (Perl) ===
+setze rx auf regex("[0-9]+")
+wenn passt("abc123", rx):
+    ok += 1
+sonst:
+    fail += 1
+
+setze treffer auf finde("test42end", rx)
+wenn treffer == "42":
+    ok += 1
+sonst:
+    fail += 1
+
+setze alle auf finde_alle("a1b22c333", rx)
+wenn länge(alle) == 3:
+    ok += 1
+sonst:
+    fail += 1
+
+# === 33. INTERFACE (Java) ===
+schnittstelle Zaehlbar:
+    funktion anzahl()
+
+klasse Sammlung implementiert Zaehlbar:
+    funktion erstelle(n):
+        selbst.n = n
+    funktion anzahl():
+        gib_zurück selbst.n
+
+setze s auf neu Sammlung(5)
+wenn s.anzahl() == 5:
+    ok += 1
+sonst:
+    fail += 1
+
+# === 34. UNSAFE-BLOCK (Rust) ===
+setze unsafe_ok auf falsch
+unsicher:
+    setze unsafe_ok auf wahr
+
+wenn unsafe_ok:
+    ok += 1
+sonst:
+    fail += 1
+
+# === 35. KERN-BUILTINS ===
+# zahl() — String zu Zahl
+setze num_test auf zahl("123")
+wenn num_test == 123:
+    ok += 1
+sonst:
+    fail += 1
+
+# umgebung()
+setze home auf umgebung("HOME")
+wenn länge(home) > 0:
+    ok += 1
+sonst:
+    fail += 1
+
+# === 36. TYP-ANNOTATIONEN (TypeScript) ===
+setze typed_name: Text auf "Anna"
+wenn typed_name == "Anna":
+    ok += 1
+sonst:
+    fail += 1
+
+funktion typed_add(a: Zahl, b: Zahl) -> Zahl:
+    gib_zurück a + b
+
+wenn typed_add(10, 20) == 30:
+    ok += 1
+sonst:
+    fail += 1
+
+# === 37. LERN-MODUS ===
+setze_variable lern auf "test"
+wenn lern == "test":
+    ok += 1
+sonst:
+    fail += 1
+
+# === 38. TEST-FRAMEWORK ===
+setze test_ok_count auf 0
+teste "Mathe intern":
+    erwarte 1 + 1 == 2
+    erwarte 10 * 10 == 100
+
+# Wenn wir hier ankommen, hat das Test-Framework nicht gecrasht
+ok += 1
+
 # === ERGEBNIS ===
 zeige ""
 zeige "=" * 50

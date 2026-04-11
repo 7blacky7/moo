@@ -1778,6 +1778,17 @@ impl<'ctx> CodeGen<'ctx> {
                         let data = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_web_json, &[req.into(), data.into()], "json");
                     }
+                    "web_datei" | "web_file" => {
+                        let req = self.compile_expr(&args[0])?;
+                        let path = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_web_file, &[req.into(), path.into()], "web_file");
+                    }
+                    "web_template" | "web_vorlage" => {
+                        let req = self.compile_expr(&args[0])?;
+                        let html = self.compile_expr(&args[1])?;
+                        let vars = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_web_template, &[req.into(), html.into(), vars.into()], "web_template");
+                    }
                     "web_server" | "web_erstelle" => {
                         let port = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_web_server, &[port.into()], "web_server");

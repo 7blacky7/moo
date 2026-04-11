@@ -436,5 +436,7 @@ MooValue moo_web_accept(MooValue server);
 MooValue moo_web_respond(MooValue request, MooValue body, MooValue status);
 MooValue moo_web_json(MooValue request, MooValue data);
 void moo_web_close(MooValue server);
+MooValue moo_web_file(MooValue request, MooValue filepath);
+MooValue moo_web_template(MooValue request, MooValue html, MooValue vars);
 
 #endif // MOO_RUNTIME_H

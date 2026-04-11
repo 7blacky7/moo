@@ -222,6 +222,8 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_web_respond: FunctionValue<'ctx>,
     pub moo_web_json: FunctionValue<'ctx>,
     pub moo_web_close: FunctionValue<'ctx>,
+    pub moo_web_file: FunctionValue<'ctx>,
+    pub moo_web_template: FunctionValue<'ctx>,
 }
 
 impl<'ctx> RuntimeBindings<'ctx> {
@@ -486,6 +488,8 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_web_respond: decl_mv_mv!("moo_web_respond", mv3),
             moo_web_json: decl_mv_mv!("moo_web_json", mv2),
             moo_web_close: module.add_function("moo_web_close", void_type.fn_type(mv1, false), None),
+            moo_web_file: decl_mv_mv!("moo_web_file", mv2),
+            moo_web_template: decl_mv_mv!("moo_web_template", mv3),
         }
     }
 }

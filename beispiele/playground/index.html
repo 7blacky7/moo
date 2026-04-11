@@ -2,90 +2,140 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>moo Playground</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: 'JetBrains Mono', 'Fira Code', monospace; background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
-header { background: #16213e; padding: 12px 20px; display: flex; align-items: center; gap: 16px; border-bottom: 2px solid #0f3460; }
-header h1 { font-size: 20px; color: #e94560; }
-header h1 span { color: #0f3460; }
-.toolbar { display: flex; gap: 8px; align-items: center; }
-button { background: #e94560; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 14px; }
-button:hover { background: #c73650; }
-button.secondary { background: #0f3460; }
-button.secondary:hover { background: #1a4a8a; }
-select { background: #16213e; color: #e0e0e0; border: 1px solid #0f3460; padding: 6px 10px; border-radius: 4px; font-family: inherit; }
+body { font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace; background: #0d1117; color: #e6edf3; height: 100vh; display: flex; flex-direction: column; }
+
+/* Header */
+header { background: #161b22; padding: 10px 20px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid #30363d; }
+.logo { font-size: 22px; font-weight: bold; }
+.logo .moo { color: #e94560; }
+.logo .arrow { color: #30363d; }
+.logo .play { color: #58a6ff; font-size: 14px; font-weight: normal; }
+.toolbar { display: flex; gap: 8px; align-items: center; flex: 1; }
+.toolbar-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+button { background: #238636; color: white; border: none; padding: 7px 14px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 500; transition: background 0.15s; }
+button:hover { background: #2ea043; }
+button:active { transform: scale(0.97); }
+button.secondary { background: #21262d; border: 1px solid #30363d; }
+button.secondary:hover { background: #30363d; }
+.run-btn { display: flex; align-items: center; gap: 6px; }
+.run-btn svg { width: 14px; height: 14px; fill: currentColor; }
+
+select { background: #21262d; color: #e6edf3; border: 1px solid #30363d; padding: 6px 10px; border-radius: 6px; font-family: inherit; font-size: 13px; cursor: pointer; }
+select:hover { border-color: #58a6ff; }
+
+/* Main */
 main { flex: 1; display: flex; overflow: hidden; }
-.panel { flex: 1; display: flex; flex-direction: column; }
-.panel-header { background: #16213e; padding: 8px 16px; font-size: 13px; color: #888; border-bottom: 1px solid #0f3460; display: flex; justify-content: space-between; }
-.panel + .panel { border-left: 2px solid #0f3460; }
-textarea { flex: 1; background: #0a0a1a; color: #e0e0e0; border: none; padding: 16px; font-family: inherit; font-size: 14px; line-height: 1.6; resize: none; tab-size: 4; }
+.panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.panel-header { background: #161b22; padding: 6px 16px; font-size: 12px; color: #8b949e; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
+.panel-header .tab { color: #e6edf3; background: #0d1117; padding: 4px 12px; border-radius: 4px 4px 0 0; font-size: 12px; }
+.panel + .panel { border-left: 1px solid #30363d; }
+
+/* Editor */
+.editor-wrap { flex: 1; position: relative; display: flex; overflow: hidden; }
+.line-numbers { background: #0d1117; color: #484f58; padding: 16px 0; text-align: right; font-size: 13px; line-height: 1.6; min-width: 40px; user-select: none; overflow: hidden; border-right: 1px solid #21262d; }
+.line-numbers div { padding: 0 8px; }
+textarea { flex: 1; background: #0d1117; color: #e6edf3; border: none; padding: 16px; font-family: inherit; font-size: 13px; line-height: 1.6; resize: none; tab-size: 4; }
 textarea:focus { outline: none; }
-#output { flex: 1; background: #0a0a1a; padding: 16px; font-size: 14px; line-height: 1.6; overflow-y: auto; white-space: pre-wrap; }
-.error { color: #e94560; }
-.python-code { color: #666; font-size: 12px; border-top: 1px solid #0f3460; padding-top: 8px; margin-top: 8px; }
-.status { font-size: 12px; color: #4a4; }
-.status.error { color: #e94560; }
-kbd { background: #0f3460; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+textarea::selection { background: #264f78; }
+
+/* Syntax Overlay */
+.highlight-overlay { position: absolute; top: 0; left: 40px; right: 0; padding: 16px; font-size: 13px; line-height: 1.6; pointer-events: none; white-space: pre-wrap; word-wrap: break-word; overflow: hidden; color: transparent; }
+.hl-keyword { color: #ff7b72; }
+.hl-string { color: #a5d6ff; }
+.hl-number { color: #79c0ff; }
+.hl-comment { color: #484f58; font-style: italic; }
+.hl-builtin { color: #d2a8ff; }
+.hl-bool { color: #79c0ff; }
+.hl-operator { color: #ff7b72; }
+
+/* Output */
+#output { flex: 1; background: #0d1117; padding: 16px; font-size: 13px; line-height: 1.6; overflow-y: auto; white-space: pre-wrap; color: #e6edf3; }
+.error { color: #f85149; }
+.timing { color: #484f58; font-size: 11px; border-top: 1px solid #21262d; padding-top: 8px; margin-top: 8px; }
+
+/* Status Bar */
+.statusbar { background: #161b22; padding: 4px 16px; font-size: 11px; color: #8b949e; border-top: 1px solid #30363d; display: flex; gap: 16px; }
+.statusbar .ok { color: #3fb950; }
+.statusbar .err { color: #f85149; }
+.statusbar .info { color: #58a6ff; }
+
+kbd { background: #21262d; padding: 1px 5px; border-radius: 3px; font-size: 11px; border: 1px solid #30363d; }
 </style>
 </head>
 <body>
 <header>
-  <h1>moo<span>></span> Playground</h1>
+  <div class="logo"><span class="moo">moo</span><span class="arrow">></span> <span class="play">Playground</span></div>
   <div class="toolbar">
-    <button onclick="runCode()">Ausfuehren <kbd>Ctrl+Enter</kbd></button>
+    <button class="run-btn" onclick="runCode()"><svg viewBox="0 0 16 16"><path d="M4 2l10 6-10 6z"/></svg> Ausfuehren <kbd>Ctrl+Enter</kbd></button>
     <select id="examples" onchange="loadExample()">
       <option value="">Beispiel laden...</option>
       <option value="hallo">Hallo Welt</option>
       <option value="fibonacci">Fibonacci</option>
-      <option value="klassen">Klassen</option>
-      <option value="listen">Listen</option>
+      <option value="klassen">Klassen + Vererbung</option>
+      <option value="listen">Listen + Lambdas</option>
       <option value="match">Pattern Matching</option>
-      <option value="lambda">Lambdas</option>
       <option value="dataclass">Data-Klassen</option>
-      <option value="spanisch">Spanisch</option>
+      <option value="stdlib">Stdlib (importiere)</option>
+      <option value="spanisch">En Espanol</option>
+      <option value="tuerkisch">Turkce</option>
     </select>
-    <button class="secondary" onclick="clearOutput()">Ausgabe loeschen</button>
+    <div class="toolbar-right">
+      <button class="secondary" onclick="clearOutput()">Loeschen</button>
+    </div>
   </div>
 </header>
 <main>
   <div class="panel">
     <div class="panel-header">
-      <span>moo Code</span>
-      <span id="line-count">Zeile 1</span>
+      <span class="tab">code.moo</span>
+      <span id="line-count">1 Zeile</span>
     </div>
-    <textarea id="editor" spellcheck="false" placeholder="# Schreibe moo-Code hier...
-zeige &quot;Hallo Welt!&quot;"></textarea>
+    <div class="editor-wrap">
+      <div class="line-numbers" id="line-nums"></div>
+      <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+    </div>
   </div>
   <div class="panel">
     <div class="panel-header">
-      <span>Ausgabe</span>
+      <span class="tab">Ausgabe</span>
       <span id="status"></span>
     </div>
-    <div id="output"></div>
+    <div id="output"><span style="color:#484f58">Druecke Ctrl+Enter oder den gruenen Button um Code auszufuehren.</span></div>
   </div>
 </main>
+<div class="statusbar">
+  <span id="sb-status">Bereit</span>
+  <span id="sb-lang">moo v0.2</span>
+  <span id="sb-features">DE + EN + ES + FR + TR</span>
+</div>
 <script>
 const EXAMPLES = {
   hallo: `# Hallo Welt in moo
 zeige "Hallo Welt!"
-zeige "moo ist die universelle Programmiersprache"
-zeige 2 + 2`,
+zeige "moo — die universelle Programmiersprache"
+zeige ""
+zeige "Rechnen: 6 * 7 = " + text(6 * 7)
+zeige "Liste: " + text([1, 2, 3, 4, 5])`,
 
-  fibonacci: `# Fibonacci-Folge
+  fibonacci: `# Fibonacci — rekursiv + iterativ
 funktion fib(n):
     wenn n <= 1:
-        gib_zurueck n
+        gib_zurück n
     setze a auf 0
     setze b auf 1
-    fuer i in 2..n:
+    für i in 2..n + 1:
         setze temp auf b
         setze b auf a + b
         setze a auf temp
-    gib_zurueck b
+    gib_zurück b
 
-fuer i in 0..10:
-    zeige fib(i)`,
+für i in 0..15:
+    zeige f"fib({i}) = {fib(i)}"`,
 
   klassen: `# Klassen und Vererbung
 klasse Tier:
@@ -93,89 +143,122 @@ klasse Tier:
         selbst.name = name
         selbst.art = art
     funktion vorstellen():
-        zeige "Ich bin " + selbst.name + ", ein " + selbst.art
+        zeige f"Ich bin {selbst.name}, ein {selbst.art}"
 
 klasse Hund(Tier):
     funktion erstelle(name):
         selbst.name = name
         selbst.art = "Hund"
     funktion bellen():
-        zeige selbst.name + " sagt: Wuff!"
+        zeige f"{selbst.name} sagt: Wuff!"
 
 setze rex auf neu Hund("Rex")
 rex.vorstellen()
-rex.bellen()`,
+rex.bellen()
 
-  listen: `# Listen-Operationen
+setze katze auf neu Tier("Mimi", "Katze")
+katze.vorstellen()`,
+
+  listen: `# Listen — Map, Filter, Spread, Comprehension
 setze zahlen auf [1, 2, 3, 4, 5]
-zeige zahlen
+zeige f"Original: {zahlen}"
 
-# Map und Filter mit Lambdas
 setze doppelt auf zahlen.map((x) => x * 2)
-zeige doppelt
+zeige f"Doppelt:  {doppelt}"
 
 setze gross auf zahlen.filter((x) => x > 3)
-zeige gross
+zeige f"Gross:    {gross}"
 
 # List Comprehension
-setze quadrate auf [x * x fuer x in zahlen]
-zeige quadrate`,
+setze quadrate auf [x * x für x in zahlen]
+zeige f"Quadrate: {quadrate}"
 
-  match: `# Pattern Matching (Kotlin-Style When)
-setze note auf 85
+# Spread
+setze alle auf [0, ...zahlen, 6, 7]
+zeige f"Spread:   {alle}"`,
 
-setze bewertung auf pruefe note:
-    fall n wenn n >= 90: "Sehr gut"
-    fall n wenn n >= 80: "Gut"
-    fall n wenn n >= 70: "Befriedigend"
-    fall n wenn n >= 60: "Ausreichend"
-    standard: "Mangelhaft"
+  match: `# Pattern Matching — Kotlin When-Expression
+funktion bewerten(note):
+    gib_zurück prüfe note:
+        fall n wenn n >= 90: "Sehr gut (1)"
+        fall n wenn n >= 80: "Gut (2)"
+        fall n wenn n >= 70: "Befriedigend (3)"
+        fall n wenn n >= 60: "Ausreichend (4)"
+        standard: "Mangelhaft (5)"
 
-zeige bewertung`,
+für note in [95, 82, 73, 61, 45]:
+    zeige f"{note} Punkte = {bewerten(note)}"`,
 
-  lambda: `# Lambdas und Higher-Order Functions
-setze addiere auf (a, b) => a + b
-zeige addiere(3, 4)
-
-# Pipe-Operator
-setze ergebnis auf [1, 2, 3, 4, 5] |> length()
-zeige ergebnis
-
-# Optional Chaining
-setze wert auf nichts
-zeige wert ?? "Standardwert"`,
-
-  dataclass: `# Data-Klassen (Kotlin-Style)
+  dataclass: `# Data-Klassen — automatisch erstelle + to_string
 daten klasse Punkt(x, y)
+daten klasse Person(name, alter, stadt)
 
 setze p auf neu Punkt(3, 4)
-zeige p.x
-zeige p.y
+zeige f"Punkt: ({p.x}, {p.y})"
 
-daten klasse Person(name, alter, stadt)
 setze anna auf neu Person("Anna", 25, "Berlin")
-zeige anna.name
-zeige anna.alter`,
+zeige f"{anna.name}, {anna.alter} Jahre, aus {anna.stadt}"
+
+setze bob auf neu Person("Bob", 30, "Hamburg")
+zeige f"{bob.name}, {bob.alter} Jahre, aus {bob.stadt}"`,
+
+  stdlib: `# Standard-Bibliothek
+importiere mathe
+
+zeige f"Fakultaet(10) = {fakultaet(10)}"
+zeige f"Fibonacci(20) = {fibonacci(20)}"
+zeige f"Ist 42 gerade? {ist_gerade(42)}"
+zeige f"GGT(48, 18) = {ggt(48, 18)}"
+zeige f"Ist 97 Primzahl? {ist_primzahl(97)}"`,
 
   spanisch: `# moo en espanol!
 establecer nombre to "Carlos"
 establecer edad to 25
 
 si edad >= 18:
-    mostrar "Adulto"
+    mostrar "Adulto: " + nombre
 sino:
     mostrar "Nino"
 
 funcion saludar(nombre):
-    mostrar "Hola " + nombre
+    mostrar "Hola " + nombre + "!"
 
-saludar("Maria")`
+saludar("Maria")
+saludar("Pedro")`,
+
+  tuerkisch: `# moo Turkce!
+ayarla isim to "Ahmet"
+ayarla yas to 20
+
+eğer yas >= 18:
+    göster "Yetiskin: " + isim
+değilse:
+    göster "Cocuk"
+
+fonksiyon selamla(isim):
+    göster "Merhaba " + isim + "!"
+
+selamla("Elif")
+selamla("Mehmet")`
 };
+
+// Keywords fuer Syntax-Highlighting
+const KW = /\b(setze|auf|wenn|sonst|solange|für|in|funktion|gib_zurück|zeige|und|oder|nicht|klasse|neu|selbst|versuche|fange|wirf|stopp|weiter|konstante|prüfe|fall|standard|importiere|aus|exportiere|als|daten|unsicher|set|to|if|else|while|for|func|return|show|and|or|not|class|new|this|try|catch|throw|break|continue|const|match|case|default|import|from|export|data|establecer|si|sino|mientras|para|mostrar|funcion|retornar|ayarla|eğer|değilse|iken|için|göster|fonksiyon|döndür)\b/g;
+const BI = /\b(text|typ_von|länge|eingabe|zufall|abs|wurzel|runden|min|max|bereich|datei_lesen|datei_schreiben|json_parse|json_string|http_get|http_post|sha256|base64_encode|base64_decode|einfrieren|ist_eingefroren|zeit|haltepunkt|ausfuehren|web_server|web_antworten|web_json|schlafe|umgebung|zahl|beende)\b/g;
+const BOOL = /\b(wahr|falsch|true|false|nichts|none|verdadero|falso|doğru|yanlış)\b/g;
 
 const editor = document.getElementById('editor');
 const output = document.getElementById('output');
 const status = document.getElementById('status');
 const lineCount = document.getElementById('line-count');
+const lineNums = document.getElementById('line-nums');
+const sbStatus = document.getElementById('sb-status');
+
+function updateLineNumbers() {
+  const lines = editor.value.split('\n');
+  lineCount.textContent = `${lines.length} Zeile${lines.length !== 1 ? 'n' : ''}`;
+  lineNums.innerHTML = lines.map((_, i) => `<div>${i + 1}</div>`).join('');
+}
 
 editor.addEventListener('keydown', e => {
   if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); runCode(); }
@@ -186,17 +269,20 @@ editor.addEventListener('keydown', e => {
     editor.selectionStart = editor.selectionEnd = start + 4;
   }
 });
+editor.addEventListener('input', updateLineNumbers);
+editor.addEventListener('scroll', () => { lineNums.scrollTop = editor.scrollTop; });
 
-editor.addEventListener('input', () => {
-  const lines = editor.value.split('\n').length;
-  lineCount.textContent = `${lines} Zeile${lines !== 1 ? 'n' : ''}`;
-});
-
+let runCount = 0;
 async function runCode() {
   const code = editor.value;
   if (!code.trim()) return;
+  runCount++;
+  const run = runCount;
   status.textContent = 'Ausfuehren...';
-  status.className = 'status';
+  status.className = 'status info';
+  sbStatus.textContent = 'Kompiliere...';
+  sbStatus.className = 'info';
+  const t0 = performance.now();
   try {
     const res = await fetch('/run', {
       method: 'POST',
@@ -204,40 +290,41 @@ async function runCode() {
       body: JSON.stringify({code})
     });
     const data = await res.json();
+    const ms = (performance.now() - t0).toFixed(0);
+    if (run !== runCount) return;
     if (data.ok) {
-      output.innerHTML = esc(data.output || '(keine Ausgabe)');
-      if (data.python) {
-        output.innerHTML += '<div class="python-code">Python:\n' + esc(data.python) + '</div>';
-      }
-      status.textContent = 'OK';
-      status.className = 'status';
+      const out = data.output || '(keine Ausgabe)';
+      output.innerHTML = esc(out) + `<div class="timing">${ms}ms</div>`;
+      status.textContent = `OK (${ms}ms)`;
+      status.className = 'status ok';
+      sbStatus.textContent = `Ausfuehrung #${run} — ${ms}ms`;
+      sbStatus.className = 'ok';
     } else {
-      output.innerHTML = '<span class="error">' + esc(data.error) + '</span>';
-      if (data.output) output.innerHTML += '\n' + esc(data.output);
-      if (data.python) output.innerHTML += '<div class="python-code">Python:\n' + esc(data.python) + '</div>';
+      output.innerHTML = '<span class="error">' + esc(data.error || data.output || 'Unbekannter Fehler') + '</span>';
       status.textContent = 'Fehler';
-      status.className = 'status error';
+      status.className = 'status err';
+      sbStatus.textContent = 'Fehler';
+      sbStatus.className = 'err';
     }
   } catch(e) {
-    output.innerHTML = '<span class="error">Server nicht erreichbar. Starte: python server.py</span>';
+    output.innerHTML = '<span class="error">Server nicht erreichbar.\nStarte: ./beispiele/playground/playground</span>';
     status.textContent = 'Offline';
-    status.className = 'status error';
+    status.className = 'status err';
+    sbStatus.textContent = 'Offline'; sbStatus.className = 'err';
   }
 }
 
 function loadExample() {
   const sel = document.getElementById('examples');
   const code = EXAMPLES[sel.value];
-  if (code) { editor.value = code; editor.dispatchEvent(new Event('input')); }
+  if (code) { editor.value = code; updateLineNumbers(); }
   sel.value = '';
 }
-
-function clearOutput() { output.innerHTML = ''; status.textContent = ''; }
+function clearOutput() { output.innerHTML = ''; status.textContent = ''; sbStatus.textContent = 'Bereit'; sbStatus.className = ''; }
 function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-// Starte mit Hallo-Welt
 editor.value = EXAMPLES.hallo;
-editor.dispatchEvent(new Event('input'));
+updateLineNumbers();
 </script>
 </body>
 </html>
