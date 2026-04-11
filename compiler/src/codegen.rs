@@ -1629,9 +1629,8 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_to_string, &[arg.into()], "str");
                     }
                     "zahl" | "num" => {
-                        // Konvertiert zu Zahl — einfach moo_as_number über Wrapper
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_rt(self.rt.moo_abs, &[arg.into()], "num_placeholder");
+                        return self.call_rt(self.rt.moo_to_number, &[arg.into()], "to_num");
                         // TODO: echte moo_to_number Funktion
                     }
                     "eingabe" | "input" => {
@@ -1760,6 +1759,25 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     // Netzwerk
+                    "ausfuehren" | "eval" => {
+                        let code = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_eval, &[code.into()], "eval");
+                    }
+                    "web_antworten" | "web_respond" => {
+                        let req = self.compile_expr(&args[0])?;
+                        let body = self.compile_expr(&args[1])?;
+                        let status = if args.len() > 2 {
+                            self.compile_expr(&args[2])?
+                        } else {
+                            self.call_rt(self.rt.moo_number, &[self.context.f64_type().const_float(200.0).into()], "s200")?
+                        };
+                        return self.call_rt(self.rt.moo_web_respond, &[req.into(), body.into(), status.into()], "respond");
+                    }
+                    "web_json" => {
+                        let req = self.compile_expr(&args[0])?;
+                        let data = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_web_json, &[req.into(), data.into()], "json");
+                    }
                     "web_server" | "web_erstelle" => {
                         let port = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_web_server, &[port.into()], "web_server");
@@ -1995,6 +2013,28 @@ impl<'ctx> CodeGen<'ctx> {
                     // Test-Framework
                     "teste_alle" | "run_tests" => {
                         return self.compile_run_tests();
+                    }
+                    // Kern-Builtins
+                    "schlafe" | "sleep" => {
+                        let dur = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_sleep, &[dur.into()], "sleep")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "umgebung" | "env" => {
+                        let name = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_env, &[name.into()], "env");
+                    }
+                    "beende" | "exit" => {
+                        let code = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_exit, &[code.into()], "exit")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "zahl" | "num" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_to_number, &[arg.into()], "to_num");
+                    }
+                    "argumente" | "args" => {
+                        return self.call_rt(self.rt.moo_args, &[], "args");
                     }
                     _ => {}
                 }

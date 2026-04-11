@@ -320,6 +320,13 @@ MooValue moo_length(MooValue v);
 MooValue moo_range(MooValue start, MooValue end);
 MooValue moo_time(void);
 MooValue moo_syscall(MooValue nr, MooValue arg1, MooValue arg2, MooValue arg3);
+// Kern-Builtins (moo_core.c)
+void moo_sleep(MooValue duration);
+MooValue moo_env(MooValue name);
+void moo_exit(MooValue code);
+MooValue moo_to_number(MooValue v);
+void moo_args_init(int argc, char** argv);
+MooValue moo_args(void);
 
 // === Datei-I/O ===
 MooValue moo_file_read(MooValue path);
@@ -419,6 +426,9 @@ MooValue moo_socket_accept(MooValue server);
 MooValue moo_socket_read(MooValue sock, MooValue max_bytes);
 void moo_socket_write(MooValue sock, MooValue data);
 void moo_socket_close(MooValue sock);
+
+// === Eval ===
+MooValue moo_eval(MooValue code);
 
 // === Webserver ===
 MooValue moo_web_server(MooValue port);

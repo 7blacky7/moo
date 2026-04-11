@@ -196,6 +196,12 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_regex_find: FunctionValue<'ctx>,
     pub moo_regex_find_all: FunctionValue<'ctx>,
     pub moo_regex_replace: FunctionValue<'ctx>,
+    // Kern-Builtins
+    pub moo_sleep: FunctionValue<'ctx>,
+    pub moo_env: FunctionValue<'ctx>,
+    pub moo_exit: FunctionValue<'ctx>,
+    pub moo_to_number: FunctionValue<'ctx>,
+    pub moo_args: FunctionValue<'ctx>,
     // Netzwerk (TCP/UDP)
     pub moo_tcp_server: FunctionValue<'ctx>,
     pub moo_tcp_connect: FunctionValue<'ctx>,
@@ -208,6 +214,8 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_profile_enter: FunctionValue<'ctx>,
     pub moo_profile_exit: FunctionValue<'ctx>,
     pub moo_profile_report: FunctionValue<'ctx>,
+    // Eval
+    pub moo_eval: FunctionValue<'ctx>,
     // Webserver
     pub moo_web_server: FunctionValue<'ctx>,
     pub moo_web_accept: FunctionValue<'ctx>,
@@ -451,6 +459,12 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_regex_find: decl_mv_mv!("moo_regex_find", mv2),
             moo_regex_find_all: decl_mv_mv!("moo_regex_find_all", mv2),
             moo_regex_replace: decl_mv_mv!("moo_regex_replace", mv3),
+            // Kern-Builtins
+            moo_sleep: module.add_function("moo_sleep", void_type.fn_type(mv1, false), None),
+            moo_env: decl_mv_mv!("moo_env", mv1),
+            moo_exit: module.add_function("moo_exit", void_type.fn_type(mv1, false), None),
+            moo_to_number: decl_mv_mv!("moo_to_number", mv1),
+            moo_args: decl_mv_mv!("moo_args", &[]),
             // Netzwerk
             moo_tcp_server: decl_mv_mv!("moo_tcp_server", mv1),
             moo_tcp_connect: decl_mv_mv!("moo_tcp_connect", mv2),
@@ -463,6 +477,9 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_profile_enter: module.add_function("moo_profile_enter", void_type.fn_type(mv1, false), None),
             moo_profile_exit: module.add_function("moo_profile_exit", void_type.fn_type(mv1, false), None),
             moo_profile_report: module.add_function("moo_profile_report", void_type.fn_type(&[], false), None),
+            // Webserver
+            // Eval
+            moo_eval: decl_mv_mv!("moo_eval", mv1),
             // Webserver
             moo_web_server: decl_mv_mv!("moo_web_server", mv1),
             moo_web_accept: decl_mv_mv!("moo_web_accept", mv1),
