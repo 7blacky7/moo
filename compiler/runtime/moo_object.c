@@ -61,6 +61,15 @@ void moo_object_set_parent(MooValue obj, MooValue parent) {
         MV_OBJ(obj)->parent = MV_OBJ(parent);
 }
 
+// Gibt den statischen Klassennamen eines Objekts zurueck ("" wenn kein Objekt).
+// Vom Codegen fuer dynamic method dispatch genutzt.
+const char* moo_object_class_name(MooValue obj) {
+    if (obj.tag != MOO_OBJECT) return "";
+    MooObject* o = MV_OBJ(obj);
+    if (!o || !o->class_name) return "";
+    return o->class_name;
+}
+
 // === Event-System ===
 // Events werden als "__event_<name>" Property gespeichert (MooList von Callbacks)
 

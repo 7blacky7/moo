@@ -2637,14 +2637,90 @@ impl<'ctx> CodeGen<'ctx> {
                             }
                         }
 
-                        // Fallback: irgendeine gleichnamige Methode (wenn Klasse
-                        // zur Compile-Zeit nicht bekannt ist). Deterministisch
-                        // sortiert damit die Auswahl reproduzierbar bleibt.
-                        let mut candidates: Vec<(&(String, String), &FunctionValue)> =
-                            self.class_methods.iter().filter(|((_, m), _)| m == method).collect();
-                        candidates.sort_by(|a, b| a.0.0.cmp(&b.0.0));
-                        if let Some(((_, _), func)) = candidates.first() {
-                            return self.call_rt(**func, &call_args, "method_call");
+                        // Dynamic Dispatch: statische Klasse unbekannt (z.B. bei
+                        // Property-Access oder Funktions-Parametern). Runtime-
+                        // Kaskade: moo_object_class_name() holen, gegen alle
+                        // bekannten Klassen vergleichen, in den passenden Call
+                        // branchen. Nutzt Alloca + Load statt PHI fuer Lesbarkeit.
+                        let mut candidates: Vec<(String, FunctionValue<'ctx>)> =
+                            self.class_methods.iter()
+                                .filter(|((_, m), _)| m == method)
+                                .map(|((c, _), f)| (c.clone(), *f))
+                                .collect();
+                        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+
+                        if !candidates.is_empty() {
+                            let func_ctx = self.current_function.unwrap();
+                            // Alloca fuer das Ergebnis
+                            let result_ptr = self.builder.build_alloca(self.mv_type(), "dispatch_result")
+                                .map_err(|e| format!("{e}"))?;
+                            // Runtime: const char* class_name_ptr = moo_object_class_name(obj)
+                            let class_ptr_call = self.builder.build_call(
+                                self.rt.moo_object_class_name, &[obj.into()], "obj_class")
+                                .map_err(|e| format!("{e}"))?;
+                            let class_ptr = match class_ptr_call.try_as_basic_value() {
+                                inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                                _ => return Err("moo_object_class_name hat keinen Wert".to_string()),
+                            };
+
+                            let after_bb = self.context.append_basic_block(func_ctx, "dispatch_after");
+                            let strcmp_fn = self.module.get_function("strcmp")
+                                .unwrap_or_else(|| {
+                                    let i32_t = self.context.i32_type();
+                                    let ptr_t = self.context.ptr_type(inkwell::AddressSpace::default());
+                                    let fn_t = i32_t.fn_type(&[ptr_t.into(), ptr_t.into()], false);
+                                    self.module.add_function("strcmp", fn_t, None)
+                                });
+
+                            for (idx, (class_name, func)) in candidates.iter().enumerate() {
+                                let is_last = idx + 1 == candidates.len();
+                                let name_gv = self.make_global_str(class_name, &format!("cls_name_{idx}"))?;
+                                let cmp_call = self.builder.build_call(
+                                    strcmp_fn,
+                                    &[class_ptr.into(), name_gv.into()],
+                                    "strcmp_res",
+                                ).map_err(|e| format!("{e}"))?;
+                                let cmp_val = match cmp_call.try_as_basic_value() {
+                                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                    _ => return Err("strcmp hat keinen Wert".to_string()),
+                                };
+                                let is_match = self.builder.build_int_compare(
+                                    inkwell::IntPredicate::EQ, cmp_val,
+                                    self.context.i32_type().const_int(0, false), "cls_eq",
+                                ).map_err(|e| format!("{e}"))?;
+
+                                let call_bb = self.context.append_basic_block(func_ctx, "dispatch_call");
+                                let next_bb = if is_last {
+                                    // Fallback: letzter Call wenn keine Klasse matcht.
+                                    call_bb
+                                } else {
+                                    self.context.append_basic_block(func_ctx, "dispatch_next")
+                                };
+
+                                if is_last {
+                                    self.builder.build_unconditional_branch(call_bb)
+                                        .map_err(|e| format!("{e}"))?;
+                                } else {
+                                    self.builder.build_conditional_branch(is_match, call_bb, next_bb)
+                                        .map_err(|e| format!("{e}"))?;
+                                }
+
+                                self.builder.position_at_end(call_bb);
+                                let result = self.call_rt(*func, &call_args, "disp_call")?;
+                                self.builder.build_store(result_ptr, result)
+                                    .map_err(|e| format!("{e}"))?;
+                                self.builder.build_unconditional_branch(after_bb)
+                                    .map_err(|e| format!("{e}"))?;
+
+                                if !is_last {
+                                    self.builder.position_at_end(next_bb);
+                                }
+                            }
+
+                            self.builder.position_at_end(after_bb);
+                            let result_val = self.builder.build_load(self.mv_type(), result_ptr, "disp_load")
+                                .map_err(|e| format!("{e}"))?;
+                            return Ok(result_val.into_struct_value());
                         }
                         // UFCS (Nim-inspiriert): 5.quadrat() → quadrat(5)
                         // Versuche als globale Funktion mit obj als erstem Argument
