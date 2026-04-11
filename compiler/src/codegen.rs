@@ -1086,6 +1086,23 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
 
+        // Pre-Allocation lokaler Variablen: Sammelt alle Namen die im Body
+        // assigned werden und legt LOKALE Allocas an. Verhindert dass
+        // store_var/load_var auf das gleichnamige globale fallback (was
+        // Methoden-lokale 'i' ins Modul-globale 'i' schreiben wuerde).
+        let none_init = self.context.i64_type().const_int(3, false);
+        let zero_data = self.context.i64_type().const_int(0, false);
+        let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
+        let local_names = Self::collect_all_var_names(body);
+        for n in &local_names {
+            if !self.variables.contains_key(n.as_str()) {
+                let alloca = self.builder.build_alloca(self.mv_type(), n)
+                    .map_err(|e| format!("{e}"))?;
+                self.builder.build_store(alloca, none_val).map_err(|e| format!("{e}"))?;
+                self.variables.insert(n.clone(), alloca);
+            }
+        }
+
         // Profiling: Funktionsname am Anfang registrieren
         if self.profiling {
             let name_ptr = self.make_global_str(name, "prof_name")?;
@@ -1202,6 +1219,23 @@ impl<'ctx> CodeGen<'ctx> {
                     let param_val = func.get_nth_param((i + 1) as u32).unwrap();
                     self.builder.build_store(alloca, param_val).map_err(|e| format!("{e}"))?;
                     self.variables.insert(param_name.clone(), alloca);
+                }
+
+                // Pre-Allocation lokaler Variablen in der Methode (analog
+                // compile_function_def). Sonst wuerde store_var auf gleichnamige
+                // globale fallback und Methoden-lokale Vars ins Modul-globale
+                // schreiben (Regression aus 6b18fe8, gefunden von K3).
+                let none_init = self.context.i64_type().const_int(3, false);
+                let zero_data = self.context.i64_type().const_int(0, false);
+                let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
+                let local_names = Self::collect_all_var_names(method_body);
+                for n in &local_names {
+                    if !self.variables.contains_key(n.as_str()) {
+                        let alloca = self.builder.build_alloca(self.mv_type(), n)
+                            .map_err(|e| format!("{e}"))?;
+                        self.builder.build_store(alloca, none_val).map_err(|e| format!("{e}"))?;
+                        self.variables.insert(n.clone(), alloca);
+                    }
                 }
 
                 for s in method_body {
