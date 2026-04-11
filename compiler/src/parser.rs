@@ -168,6 +168,12 @@ impl Parser {
         } else if matches!(self.current_type(), TokenType::Expect) {
             self.pos += 1;
             Ok("erwarte".to_string())
+        } else if matches!(self.current_type(), TokenType::Where) {
+            self.pos += 1;
+            Ok("wo".to_string())
+        } else if matches!(self.current_type(), TokenType::Order) {
+            self.pos += 1;
+            Ok("sortiere".to_string())
         } else {
             let got_desc = got_description(self.current_type());
             Err(ParseError {
@@ -387,7 +393,76 @@ impl Parser {
 
     fn parse_assignment(&mut self) -> Result<Stmt, ParseError> {
         self.pos += 1; // set/setze
+
+        // Spezialfall: 'setze selbst.prop auf wert' und 'setze a[i] auf wert'
+        // sind Property- bzw. Index-Zuweisungen auf Receiver-Expressions.
+        // Parse die LHS als Expression und pruefe ob sie zuweisbar ist.
+        if matches!(self.current_type(), TokenType::This)
+            || matches!(self.current_type(), TokenType::LParen)
+        {
+            let lhs = self.parse_unary()?;
+            self.eat(&TokenType::To)?;
+            let value = self.parse_expression()?;
+            return match lhs {
+                Expr::PropertyAccess { object, property } => Ok(Stmt::PropertyAssignment {
+                    object: *object,
+                    property,
+                    value,
+                }),
+                Expr::IndexAccess { object, index } => Ok(Stmt::IndexAssignment {
+                    object: *object,
+                    index: *index,
+                    value,
+                }),
+                _ => Err(ParseError {
+                    message: "Nach 'setze' wird ein Name, 'selbst.X', 'selbst[i]' oder 'obj[i]' erwartet.".to_string(),
+                    line: self.current().line,
+                }),
+            };
+        }
+
         let name = self.eat_identifier()?;
+
+        // Zweiter Spezialfall: 'setze name.prop auf wert' oder 'setze name[i] auf wert'
+        // Wenn nach dem Identifier Dot oder LBracket folgt, wird die LHS zu einem
+        // Property-/Index-Target.
+        if matches!(self.current_type(), TokenType::Dot | TokenType::LBracket) {
+            // Baue die LHS aus Identifier + trailing Dots/Indices
+            let mut lhs = Expr::Identifier(name);
+            loop {
+                match self.current_type() {
+                    TokenType::Dot => {
+                        self.pos += 1;
+                        let prop = self.eat_identifier()?;
+                        lhs = Expr::PropertyAccess {
+                            object: Box::new(lhs),
+                            property: prop,
+                        };
+                    }
+                    TokenType::LBracket => {
+                        self.pos += 1;
+                        let idx = self.parse_expression()?;
+                        self.eat(&TokenType::RBracket)?;
+                        lhs = Expr::IndexAccess {
+                            object: Box::new(lhs),
+                            index: Box::new(idx),
+                        };
+                    }
+                    _ => break,
+                }
+            }
+            self.eat(&TokenType::To)?;
+            let value = self.parse_expression()?;
+            return match lhs {
+                Expr::PropertyAccess { object, property } => Ok(Stmt::PropertyAssignment {
+                    object: *object, property, value,
+                }),
+                Expr::IndexAccess { object, index } => Ok(Stmt::IndexAssignment {
+                    object: *object, index: *index, value,
+                }),
+                _ => unreachable!(),
+            };
+        }
         // Optionale Typ-Annotation: setze name: Typ auf wert
         self.skip_type_annotation();
         self.eat(&TokenType::To)?;
@@ -1155,7 +1230,6 @@ impl Parser {
             }
             TokenType::Expect => {
                 // Soft-Keyword: im Expression-Kontext immer als Identifier.
-                // Stmt-Level behaelt 'erwarte <expr>' als Expect-Statement.
                 self.pos += 1;
                 let name = "erwarte".to_string();
                 if matches!(self.current_type(), TokenType::LParen) {
@@ -1166,6 +1240,14 @@ impl Parser {
                 } else {
                     Ok(Expr::Identifier(name))
                 }
+            }
+            TokenType::Where => {
+                self.pos += 1;
+                Ok(Expr::Identifier("wo".to_string()))
+            }
+            TokenType::Order => {
+                self.pos += 1;
+                Ok(Expr::Identifier("sortiere".to_string()))
             }
             TokenType::QueryFrom | TokenType::From => self.parse_query_expr(),
             _ => {
