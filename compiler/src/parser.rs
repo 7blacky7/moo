@@ -165,6 +165,9 @@ impl Parser {
         } else if matches!(self.current_type(), TokenType::Match) {
             self.pos += 1;
             Ok("pruefe".to_string())
+        } else if matches!(self.current_type(), TokenType::Expect) {
+            self.pos += 1;
+            Ok("erwarte".to_string())
         } else {
             let got_desc = got_description(self.current_type());
             Err(ParseError {
@@ -1135,8 +1138,6 @@ impl Parser {
             TokenType::LBracket => self.parse_list(),
             TokenType::LBrace => self.parse_dict(),
             TokenType::Match => {
-                // Soft-Keyword: als match-Expression nur wenn direkt ein
-                // Expression-Start folgt. Sonst Identifier/FunctionCall.
                 if self.is_expression_start_at(self.pos + 1) {
                     self.parse_match_expr()
                 } else {
@@ -1150,6 +1151,20 @@ impl Parser {
                     } else {
                         Ok(Expr::Identifier(name))
                     }
+                }
+            }
+            TokenType::Expect => {
+                // Soft-Keyword: im Expression-Kontext immer als Identifier.
+                // Stmt-Level behaelt 'erwarte <expr>' als Expect-Statement.
+                self.pos += 1;
+                let name = "erwarte".to_string();
+                if matches!(self.current_type(), TokenType::LParen) {
+                    self.pos += 1;
+                    let args = self.parse_args_list()?;
+                    self.eat(&TokenType::RParen)?;
+                    Ok(Expr::FunctionCall { name, args })
+                } else {
+                    Ok(Expr::Identifier(name))
                 }
             }
             TokenType::QueryFrom | TokenType::From => self.parse_query_expr(),
