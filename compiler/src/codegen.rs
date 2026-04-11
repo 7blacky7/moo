@@ -1363,28 +1363,37 @@ impl<'ctx> CodeGen<'ctx> {
         // moo_try_enter() — markiert dass wir in einem try-Block sind
         self.call_rt_void(self.rt.moo_try_enter, &[], "try_enter")?;
 
-        // Try-Body ausfuehren
+        // Try-Body ausfuehren — nach einem Terminator (z.B. gib_zurueck) abbrechen,
+        // damit wir keine Instruktionen hinter einem Terminator emittieren.
         for s in try_body {
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                break;
+            }
             self.compile_stmt(s)?;
         }
-
-        // Nach dem try-body: pruefen ob ein Fehler aufgetreten ist
-        let check_result = self.builder.build_call(self.rt.moo_try_check, &[], "check")
-            .map_err(|e| format!("{e}"))?;
-        let has_error = match check_result.try_as_basic_value() {
-            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
-            _ => return Err("moo_try_check fehlgeschlagen".to_string()),
-        };
-        let is_error = self.builder.build_int_compare(
-            inkwell::IntPredicate::NE, has_error,
-            self.context.i32_type().const_int(0, false), "is_error",
-        ).map_err(|e| format!("{e}"))?;
+        let try_terminated = self.builder.get_insert_block().unwrap().get_terminator().is_some();
 
         let catch_bb = self.context.append_basic_block(func, "catch_body");
         let after_bb = self.context.append_basic_block(func, "after_try");
 
-        self.builder.build_conditional_branch(is_error, catch_bb, after_bb)
-            .map_err(|e| format!("{e}"))?;
+        if !try_terminated {
+            // Nach dem try-body: pruefen ob ein Fehler aufgetreten ist
+            let check_result = self.builder.build_call(self.rt.moo_try_check, &[], "check")
+                .map_err(|e| format!("{e}"))?;
+            let has_error = match check_result.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                _ => return Err("moo_try_check fehlgeschlagen".to_string()),
+            };
+            let is_error = self.builder.build_int_compare(
+                inkwell::IntPredicate::NE, has_error,
+                self.context.i32_type().const_int(0, false), "is_error",
+            ).map_err(|e| format!("{e}"))?;
+            self.builder.build_conditional_branch(is_error, catch_bb, after_bb)
+                .map_err(|e| format!("{e}"))?;
+        }
+        // Wenn try_terminated: kein Branch — catch_bb/after_bb bleiben formal
+        // erreichbar fuer LLVM (beide haben eigene Terminatoren), werden aber
+        // auf diesem Pfad nie besucht.
 
         // Catch-Block
         self.builder.position_at_end(catch_bb);
@@ -1396,6 +1405,9 @@ impl<'ctx> CodeGen<'ctx> {
         // try_leave raeumt auf
         self.call_rt_void(self.rt.moo_try_leave, &[], "try_leave")?;
         for s in catch_body {
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                break;
+            }
             self.compile_stmt(s)?;
         }
         if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
