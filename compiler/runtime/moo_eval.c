@@ -30,9 +30,18 @@ MooValue moo_eval(MooValue code) {
 
     // moo-compiler ausfuehren mit Timeout
     char cmd[512];
+    // Compiler-Pfad: MOO_COMPILER env MUSS gesetzt sein fuer Self-Hosting
+    // Weil /proc/self/exe = das laufende Programm (z.B. playground), NICHT der Compiler!
+    const char* compiler = getenv("MOO_COMPILER");
+    if (!compiler) compiler = "moo-compiler";
+
+    // Compile + Execute separat (nicht "run" — das wuerde den ganzen Server nochmal starten)
+    char bin_path[128];
+    snprintf(bin_path, sizeof(bin_path), "/tmp/moo_eval_bin_%d", pid_val);
+
     snprintf(cmd, sizeof(cmd),
-        "timeout 5 moo-compiler run %s > %s 2>&1",
-        src_path, out_path);
+        "MOO_QUIET=1 timeout 5 %s compile %s -o %s 2>/dev/null && timeout 5 %s > %s 2>&1",
+        compiler, src_path, bin_path, bin_path, out_path);
 
     int ret = system(cmd);
 
@@ -71,8 +80,11 @@ MooValue moo_eval(MooValue code) {
     free(buf);
 
     // Aufraeumen
+    char bin_cleanup[128];
+    snprintf(bin_cleanup, sizeof(bin_cleanup), "/tmp/moo_eval_bin_%d", pid_val);
     unlink(src_path);
     unlink(out_path);
+    unlink(bin_cleanup);
 
     return result;
 }
