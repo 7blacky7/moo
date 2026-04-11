@@ -1386,13 +1386,36 @@ impl<'ctx> CodeGen<'ctx> {
         self.call_rt_void(self.rt.moo_try_enter, &[], "try_enter")?;
 
         // Try-Body ausfuehren — nach einem Terminator (z.B. gib_zurueck, wirf)
-        // abbrechen, damit wir keine Instruktionen hinter einem Terminator emittieren.
+        // abbrechen. Zusaetzlich wird nach JEDEM Statement moo_try_check
+        // aufgerufen und bei gesetztem Error-Flag direkt zu catch_bb gebrancht —
+        // sonst wuerden Fehler, die von Funktions-/Methoden-Aufrufen gesetzt
+        // werden (nur Flag-basiert, kein direkter Branch), erst am Ende des
+        // try-Bodys bemerkt, und ein 'gib_zurueck' dazwischen wuerde sie
+        // verschlucken.
         self.try_stack.push(catch_bb);
         for s in try_body {
             if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
                 break;
             }
             self.compile_stmt(s)?;
+
+            // Check nach dem Statement — nur wenn noch nicht terminiert
+            if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                let check_result = self.builder.build_call(self.rt.moo_try_check, &[], "try_check_stmt")
+                    .map_err(|e| format!("{e}"))?;
+                let has_error = match check_result.try_as_basic_value() {
+                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("moo_try_check fehlgeschlagen".to_string()),
+                };
+                let is_error = self.builder.build_int_compare(
+                    inkwell::IntPredicate::NE, has_error,
+                    self.context.i32_type().const_int(0, false), "is_err_stmt",
+                ).map_err(|e| format!("{e}"))?;
+                let cont_bb = self.context.append_basic_block(func, "try_cont");
+                self.builder.build_conditional_branch(is_error, catch_bb, cont_bb)
+                    .map_err(|e| format!("{e}"))?;
+                self.builder.position_at_end(cont_bb);
+            }
         }
         self.try_stack.pop();
         let try_terminated = self.builder.get_insert_block().unwrap().get_terminator().is_some();
