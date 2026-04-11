@@ -150,6 +150,11 @@ impl Parser {
         if let TokenType::Identifier(name) = self.current_type().clone() {
             self.pos += 1;
             Ok(name)
+        } else if matches!(self.current_type(), TokenType::Data) {
+            // Soft-Keyword: "daten" nur in "daten klasse ..." Kontext reserviert.
+            // Sonst als normaler Identifier "daten" behandeln.
+            self.pos += 1;
+            Ok("daten".to_string())
         } else {
             let got_desc = got_description(self.current_type());
             Err(ParseError {
@@ -219,7 +224,38 @@ impl Parser {
             TokenType::Postcondition => self.parse_postcondition(),
             TokenType::At => self.parse_decorated_function(),
             TokenType::Func => self.parse_function_def_with_decorators(vec![]),
-            TokenType::Data => self.parse_data_class(),
+            TokenType::Data => {
+                // Soft-Keyword: nur "daten klasse ..." → parse_data_class.
+                // Sonst Fallthrough zur Expression/Identifier-Behandlung.
+                if matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
+                            Some(TokenType::Class)) {
+                    self.parse_data_class()
+                } else {
+                    // Als Identifier-Expression behandeln (wird u.a. fuer compound
+                    // assignments und expression-statements gebraucht)
+                    let expr = self.parse_expression()?;
+                    if let Expr::Identifier(name) = &expr {
+                        match self.current_type() {
+                            TokenType::PlusAssign => {
+                                self.pos += 1;
+                                let value = self.parse_expression()?;
+                                return Ok(Stmt::CompoundAssignment {
+                                    name: name.clone(), op: "+=".to_string(), value,
+                                });
+                            }
+                            TokenType::MinusAssign => {
+                                self.pos += 1;
+                                let value = self.parse_expression()?;
+                                return Ok(Stmt::CompoundAssignment {
+                                    name: name.clone(), op: "-=".to_string(), value,
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                    Ok(Stmt::Expression(expr))
+                }
+            }
             TokenType::Return => self.parse_return(),
             TokenType::Break => { self.pos += 1; Ok(Stmt::Break) }
             TokenType::Continue => { self.pos += 1; Ok(Stmt::Continue) }
@@ -978,6 +1014,28 @@ impl Parser {
             }
             TokenType::Identifier(name) => {
                 self.pos += 1;
+                if matches!(self.current_type(), TokenType::LParen) {
+                    self.pos += 1;
+                    let args = self.parse_args_list()?;
+                    self.eat(&TokenType::RParen)?;
+                    Ok(Expr::FunctionCall { name, args })
+                } else {
+                    Ok(Expr::Identifier(name))
+                }
+            }
+            TokenType::Data => {
+                // Soft-Keyword: "daten" als Variable/Funktion erlaubt, ausser
+                // direkt gefolgt von "klasse" (Data-Class-Syntax).
+                if matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
+                            Some(TokenType::Class)) {
+                    let got = got_description(self.current_type());
+                    return Err(ParseError {
+                        message: format!("Hier wird ein Wert erwartet (Zahl, Text, Variable, ...), aber {got} gefunden."),
+                        line: self.current().line,
+                    });
+                }
+                self.pos += 1;
+                let name = "daten".to_string();
                 if matches!(self.current_type(), TokenType::LParen) {
                     self.pos += 1;
                     let args = self.parse_args_list()?;
