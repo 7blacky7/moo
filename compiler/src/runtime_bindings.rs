@@ -71,6 +71,10 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_object_set: FunctionValue<'ctx>,
     pub moo_object_set_parent: FunctionValue<'ctx>,
     pub moo_object_class_name: FunctionValue<'ctx>,
+    pub moo_socket_read_bytes: FunctionValue<'ctx>,
+    pub moo_socket_write_bytes: FunctionValue<'ctx>,
+    pub moo_bytes_to_string: FunctionValue<'ctx>,
+    pub moo_string_to_bytes: FunctionValue<'ctx>,
     // Events
     pub moo_event_on: FunctionValue<'ctx>,
     pub moo_event_emit: FunctionValue<'ctx>,
@@ -337,6 +341,10 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_object_set: module.add_function("moo_object_set", void_type.fn_type(&[mv, ptr_type.into(), mv], false), None),
             moo_object_set_parent: module.add_function("moo_object_set_parent", void_type.fn_type(mv2, false), None),
             moo_object_class_name: module.add_function("moo_object_class_name", ptr_type.fn_type(mv1, false), None),
+            moo_socket_read_bytes: decl_mv_mv!("moo_socket_read_bytes", mv2),
+            moo_socket_write_bytes: module.add_function("moo_socket_write_bytes", void_type.fn_type(mv2, false), None),
+            moo_bytes_to_string: decl_mv_mv!("moo_bytes_to_string", mv1),
+            moo_string_to_bytes: decl_mv_mv!("moo_string_to_bytes", mv1),
             // Events
             moo_event_on: module.add_function("moo_event_on", void_type.fn_type(mv3, false), None),
             moo_event_emit: module.add_function("moo_event_emit", void_type.fn_type(mv2, false), None),

@@ -2094,6 +2094,15 @@ impl<'ctx> CodeGen<'ctx> {
                     "zeit_ms" | "time_ms" => {
                         return self.call_rt(self.rt.moo_time_ms, &[], "time_ms");
                     }
+                    "bytes_neu" | "bytes_new" => {
+                        // bytes_neu(liste) → binary-safe String
+                        let list = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_bytes_to_string, &[list.into()], "bytes_new");
+                    }
+                    "bytes_zu_liste" | "bytes_to_list" | "string_zu_bytes" | "string_to_bytes" => {
+                        let s = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_string_to_bytes, &[s.into()], "str_to_bytes");
+                    }
                     "zeit" | "time" => {
                         return self.call_rt(self.rt.moo_time, &[], "time");
                     }
@@ -2464,6 +2473,19 @@ impl<'ctx> CodeGen<'ctx> {
                     "schreiben" | "write" => {
                         let data = self.compile_expr(&args[0])?;
                         self.call_rt_void(self.rt.moo_socket_write, &[obj.into(), data.into()], "write")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "lesen_bytes" | "read_bytes" => {
+                        let max = if args.is_empty() {
+                            self.call_rt(self.rt.moo_number, &[self.context.f64_type().const_float(4096.0).into()], "max")?
+                        } else {
+                            self.compile_expr(&args[0])?
+                        };
+                        return self.call_rt(self.rt.moo_socket_read_bytes, &[obj.into(), max.into()], "read_bytes");
+                    }
+                    "schreiben_bytes" | "schreibe_bytes" | "write_bytes" => {
+                        let data = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_socket_write_bytes, &[obj.into(), data.into()], "write_bytes")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     "map" | "abbilden" => {

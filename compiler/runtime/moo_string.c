@@ -1,28 +1,40 @@
 #include "moo_runtime.h"
 
-MooValue moo_string_new(const char* chars) {
+// Binary-safe Konstruktor: Laenge ist explizit, NUL-Bytes erlaubt.
+// chars darf Bytes mit Wert 0 enthalten — kein strlen-Cutoff.
+MooValue moo_string_new_len(const char* chars, int32_t len) {
     MooValue v;
     v.tag = MOO_STRING;
     MooString* s = moo_alloc(sizeof(MooString));
     s->refcount = 1;
-    int32_t len = strlen(chars);
+    if (len < 0) len = 0;
     s->length = len;
     s->capacity = len + 1;
     s->chars = moo_alloc(s->capacity);
-    memcpy(s->chars, chars, len + 1);
+    if (len > 0 && chars) memcpy(s->chars, chars, len);
+    s->chars[len] = '\0';
     moo_val_set_ptr(&v, s);
     return v;
+}
+
+MooValue moo_string_new(const char* chars) {
+    if (!chars) return moo_string_new_len("", 0);
+    return moo_string_new_len(chars, (int32_t)strlen(chars));
 }
 
 MooValue moo_string_concat(MooValue a, MooValue b) {
     MooValue sa = moo_to_string(a);
     MooValue sb = moo_to_string(b);
-    int32_t len = MV_STR(sa)->length + MV_STR(sb)->length;
+    int32_t la = MV_STR(sa)->length;
+    int32_t lb = MV_STR(sb)->length;
+    int32_t len = la + lb;
     char* buf = moo_alloc(len + 1);
-    memcpy(buf, MV_STR(sa)->chars, MV_STR(sa)->length);
-    memcpy(buf + MV_STR(sa)->length, MV_STR(sb)->chars, MV_STR(sb)->length);
+    memcpy(buf, MV_STR(sa)->chars, la);
+    memcpy(buf + la, MV_STR(sb)->chars, lb);
     buf[len] = '\0';
-    MooValue result = moo_string_new(buf);
+    // WICHTIG: moo_string_new_len statt moo_string_new — sonst wuerde
+    // strlen() bei einem NUL-Byte im Inhalt die Laenge falsch berechnen.
+    MooValue result = moo_string_new_len(buf, len);
     moo_free(buf);
     return result;
 }
@@ -94,8 +106,8 @@ MooValue moo_string_trim(MooValue s) {
     if (s.tag != MOO_STRING) return s;
     char* start = MV_STR(s)->chars;
     char* end = start + MV_STR(s)->length - 1;
-    while (start <= end && (*start == ' ' || *start == '\t' || *start == '\n')) start++;
-    while (end >= start && (*end == ' ' || *end == '\t' || *end == '\n')) end--;
+    while (start <= end && (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r')) start++;
+    while (end >= start && (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')) end--;
     int len = end - start + 1;
     if (len < 0) len = 0;
     char* buf = moo_alloc(len + 1);

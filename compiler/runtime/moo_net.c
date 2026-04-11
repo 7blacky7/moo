@@ -23,10 +23,15 @@ typedef struct {
 
 // Vorwaertsdeklarationen
 extern MooValue moo_string_new(const char* s);
+extern MooValue moo_string_new_len(const char* chars, int32_t len);
 extern MooValue moo_number(double n);
 extern MooValue moo_bool(bool b);
 extern MooValue moo_none(void);
 extern void moo_throw(MooValue v);
+extern MooValue moo_list_new(int32_t capacity);
+extern void moo_list_append(MooValue list, MooValue value);
+extern MooValue moo_list_get(MooValue list, MooValue index);
+extern MooValue moo_list_length(MooValue list);
 
 static MooSocket* get_socket(MooValue v) {
     if (v.tag != MOO_SOCKET) return NULL;
@@ -189,10 +194,11 @@ MooValue moo_socket_read(MooValue sock, MooValue max_bytes) {
     ssize_t n = read(s->fd, buf, max);
     if (n <= 0) {
         free(buf);
-        return moo_string_new("");
+        return moo_string_new_len("", 0);
     }
-    buf[n] = '\0';
-    MooValue result = moo_string_new(buf);
+    // Binary-safe: nutzt explizite Laenge statt strlen, damit NUL-Bytes
+    // im Stream (z.B. Postgres-Wire-Protocol) erhalten bleiben.
+    MooValue result = moo_string_new_len(buf, (int32_t)n);
     free(buf);
     return result;
 }
@@ -204,6 +210,80 @@ void moo_socket_write(MooValue sock, MooValue data) {
     const char* str = MV_STR(data)->chars;
     int32_t len = MV_STR(data)->length;
     write(s->fd, str, len);
+}
+
+// === Byte-Array API (binary-safe, fuer wire protocols) ===
+
+extern MooValue moo_string_new_len(const char* chars, int32_t len);
+extern MooValue moo_list_new(int32_t capacity);
+extern void moo_list_append(MooValue list, MooValue value);
+extern MooValue moo_list_get(MooValue list, MooValue index);
+extern MooValue moo_list_length(MooValue list);
+
+// Liest n Bytes (blockierend) und gibt sie als Liste<Zahl> zurueck.
+MooValue moo_socket_read_bytes(MooValue sock, MooValue max_bytes) {
+    MooSocket* s = get_socket(sock);
+    if (!s) return moo_list_new(0);
+    int max = (max_bytes.tag == MOO_NUMBER) ? (int)MV_NUM(max_bytes) : 4096;
+    if (max <= 0) max = 4096;
+
+    unsigned char* buf = (unsigned char*)malloc(max);
+    ssize_t n = read(s->fd, buf, max);
+    if (n <= 0) {
+        free(buf);
+        return moo_list_new(0);
+    }
+    MooValue list = moo_list_new((int32_t)n);
+    for (ssize_t i = 0; i < n; i++) {
+        moo_list_append(list, moo_number((double)buf[i]));
+    }
+    free(buf);
+    return list;
+}
+
+// Schreibt eine Liste von Zahlen (0..255) als Bytes.
+void moo_socket_write_bytes(MooValue sock, MooValue list) {
+    MooSocket* s = get_socket(sock);
+    if (!s || list.tag != MOO_LIST) return;
+    int32_t len = (int32_t)MV_NUM(moo_list_length(list));
+    if (len <= 0) return;
+    unsigned char* buf = (unsigned char*)malloc(len);
+    for (int32_t i = 0; i < len; i++) {
+        MooValue v = moo_list_get(list, moo_number((double)i));
+        int b = (v.tag == MOO_NUMBER) ? (int)MV_NUM(v) : 0;
+        buf[i] = (unsigned char)(b & 0xFF);
+    }
+    write(s->fd, buf, len);
+    free(buf);
+}
+
+// Konvertiert eine Liste von Zahlen in einen binary-safe String (length-tagged).
+MooValue moo_bytes_to_string(MooValue list) {
+    if (list.tag != MOO_LIST) return moo_string_new_len("", 0);
+    int32_t len = (int32_t)MV_NUM(moo_list_length(list));
+    if (len <= 0) return moo_string_new_len("", 0);
+    char* buf = (char*)malloc(len + 1);
+    for (int32_t i = 0; i < len; i++) {
+        MooValue v = moo_list_get(list, moo_number((double)i));
+        int b = (v.tag == MOO_NUMBER) ? (int)MV_NUM(v) : 0;
+        buf[i] = (char)(b & 0xFF);
+    }
+    buf[len] = '\0';
+    MooValue result = moo_string_new_len(buf, len);
+    free(buf);
+    return result;
+}
+
+// Konvertiert einen String in eine Liste seiner Bytes (binary-safe).
+MooValue moo_string_to_bytes(MooValue s) {
+    if (s.tag != MOO_STRING) return moo_list_new(0);
+    int32_t len = MV_STR(s)->length;
+    MooValue list = moo_list_new(len);
+    const unsigned char* chars = (const unsigned char*)MV_STR(s)->chars;
+    for (int32_t i = 0; i < len; i++) {
+        moo_list_append(list, moo_number((double)chars[i]));
+    }
+    return list;
 }
 
 void moo_socket_close(MooValue sock) {
