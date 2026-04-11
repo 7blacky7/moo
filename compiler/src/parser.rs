@@ -1144,11 +1144,13 @@ impl Parser {
 
     fn parse_list(&mut self) -> Result<Expr, ParseError> {
         self.eat(&TokenType::LBracket)?;
+        // Newlines/Indent/Dedent nach '[' ignorieren — erlaubt mehrzeilige Listen
+        self.skip_layout_tokens();
         let mut elements = Vec::new();
         if !matches!(self.current_type(), TokenType::RBracket) {
             let first = self.parse_list_element()?;
+            self.skip_layout_tokens();
             // List comprehension: [expr für/for x in iterable wenn/if cond]
-            // (nur wenn erstes Element kein Spread ist)
             if !matches!(&first, Expr::Spread(_)) && matches!(self.current_type(), TokenType::For) {
                 self.pos += 1; // skip für/for
                 let var_name = self.eat_identifier()?;
@@ -1160,6 +1162,7 @@ impl Parser {
                 } else {
                     None
                 };
+                self.skip_layout_tokens();
                 self.eat(&TokenType::RBracket)?;
                 return Ok(Expr::ListComprehension {
                     expr: Box::new(first),
@@ -1171,12 +1174,23 @@ impl Parser {
             elements.push(first);
             while matches!(self.current_type(), TokenType::Comma) {
                 self.pos += 1;
+                self.skip_layout_tokens();
                 if matches!(self.current_type(), TokenType::RBracket) { break; }
                 elements.push(self.parse_list_element()?);
+                self.skip_layout_tokens();
             }
         }
         self.eat(&TokenType::RBracket)?;
         Ok(Expr::List(elements))
+    }
+
+    /// Ueberspringt Newline/Indent/Dedent — fuer mehrzeilige Literale innerhalb
+    /// offener Klammern ([...], {...}, (...)). Layout-Tokens sind dort bedeutungslos.
+    fn skip_layout_tokens(&mut self) {
+        while matches!(self.current_type(),
+            TokenType::Newline | TokenType::Indent | TokenType::Dedent) {
+            self.pos += 1;
+        }
     }
 
     fn parse_list_element(&mut self) -> Result<Expr, ParseError> {
@@ -1191,13 +1205,17 @@ impl Parser {
 
     fn parse_dict(&mut self) -> Result<Expr, ParseError> {
         self.eat(&TokenType::LBrace)?;
+        self.skip_layout_tokens();
         let mut pairs = Vec::new();
         if !matches!(self.current_type(), TokenType::RBrace) {
             self.parse_dict_entry(&mut pairs)?;
+            self.skip_layout_tokens();
             while matches!(self.current_type(), TokenType::Comma) {
                 self.pos += 1;
+                self.skip_layout_tokens();
                 if matches!(self.current_type(), TokenType::RBrace) { break; }
                 self.parse_dict_entry(&mut pairs)?;
+                self.skip_layout_tokens();
             }
         }
         self.eat(&TokenType::RBrace)?;
