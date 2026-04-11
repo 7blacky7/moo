@@ -354,9 +354,19 @@ impl Parser {
                 Ok(Stmt::TestDef { name, body })
             }
             TokenType::Expect => {
-                self.pos += 1;
-                let expr = self.parse_expression()?;
-                Ok(Stmt::Expect(expr))
+                // Soft-Keyword: 'erwarte' als Test-Assertion nur wenn das
+                // direkt folgende Token KEIN '(' ist. Mit '(' ist es ein
+                // Funktionsaufruf 'erwarte(...)' (User-Funktion mit Namen
+                // 'erwarte') und faellt durch zum default arm.
+                if matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
+                            Some(TokenType::LParen)) {
+                    let expr = self.parse_expression()?;
+                    Ok(Stmt::Expression(expr))
+                } else {
+                    self.pos += 1;
+                    let expr = self.parse_expression()?;
+                    Ok(Stmt::Expect(expr))
+                }
             }
             _ => {
                 let expr = self.parse_expression()?;

@@ -1784,6 +1784,31 @@ impl<'ctx> CodeGen<'ctx> {
                 self.call_rt(func, &[val.into()], "unary")
             }
             Expr::FunctionCall { name, args } => {
+                // User-Funktionen haben Vorrang vor Builtins. Wenn eine Funktion
+                // mit diesem Namen vom User definiert wurde (forward-declared in
+                // self.module), call sie direkt. Sonst Builtin-Match. Verhindert
+                // dass z.B. eine User-Funktion 'eval' / 'apply' / 'finde' /
+                // 'ersetze' silent von einem gleichnamigen Builtin geshadowed
+                // wird (gemeldet von K4 Mini-Interpreter und Mini-Lisp).
+                if self.module.get_function(name).is_some()
+                    && !self.lambda_names.contains_key(name)
+                {
+                    // Call user function directly via the existing path below
+                    // — fall through to the post-builtin call site by skipping
+                    // the builtin match. Wir markieren das per early-jump.
+                    let func = self.module.get_function(name).unwrap();
+                    let mut call_args: Vec<BasicMetadataValueEnum> = Vec::new();
+                    for a in args {
+                        call_args.push(self.compile_expr(a)?.into());
+                    }
+                    let expected = func.count_params() as usize;
+                    while call_args.len() < expected {
+                        let none_val = self.call_rt(self.rt.moo_none, &[], "none_default")?;
+                        call_args.push(none_val.into());
+                    }
+                    return self.call_rt(func, &call_args, "user_call");
+                }
+
                 // Builtin-Funktionen pruefen
                 match name.as_str() {
                     // Result-Typ (Rust-inspiriert): ok(wert) / fehler(msg)
