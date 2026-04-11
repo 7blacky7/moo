@@ -81,8 +81,8 @@ funktion handle(client, verb_nr):
     setze resp_bytes auf stream_bis_eof(up, client)
     zeige "[" + text(verb_nr) + "] Response: " + text(resp_bytes) + " bytes"
 
-    # schliessen() loest aktuell glibc pthread-priority-Assert aus —
-    # Socket wird beim naechsten Ziel-Close implizit freigegeben.
+    up.schliessen()
+    client.schliessen()
     gib_zurück [req_len, resp_bytes]
 
 # --- Hauptschleife ---
