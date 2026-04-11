@@ -87,6 +87,78 @@ MooValue moo_sha256(MooValue input) {
 }
 
 // ============================================================
+// SHA1 (RFC 3174) — fuer WebSocket-Handshake (Sec-WebSocket-Accept) und MySQL native_password
+// ============================================================
+
+#define SHA1_ROL(x, n) (((x) << (n)) | ((x) >> (32 - (n))))
+
+static void sha1_transform(uint32_t state[5], const uint8_t buffer[64]) {
+    uint32_t a, b, c, d, e, t, w[80];
+    for (int i = 0; i < 16; i++) {
+        w[i] = ((uint32_t)buffer[i*4] << 24) | ((uint32_t)buffer[i*4+1] << 16)
+             | ((uint32_t)buffer[i*4+2] << 8) | (uint32_t)buffer[i*4+3];
+    }
+    for (int i = 16; i < 80; i++) {
+        w[i] = SHA1_ROL(w[i-3] ^ w[i-8] ^ w[i-14] ^ w[i-16], 1);
+    }
+    a = state[0]; b = state[1]; c = state[2]; d = state[3]; e = state[4];
+    for (int i = 0; i < 80; i++) {
+        if (i < 20)      t = SHA1_ROL(a, 5) + ((b & c) | ((~b) & d)) + e + w[i] + 0x5A827999;
+        else if (i < 40) t = SHA1_ROL(a, 5) + (b ^ c ^ d) + e + w[i] + 0x6ED9EBA1;
+        else if (i < 60) t = SHA1_ROL(a, 5) + ((b & c) | (b & d) | (c & d)) + e + w[i] + 0x8F1BBCDC;
+        else             t = SHA1_ROL(a, 5) + (b ^ c ^ d) + e + w[i] + 0xCA62C1D6;
+        e = d; d = c; c = SHA1_ROL(b, 30); b = a; a = t;
+    }
+    state[0] += a; state[1] += b; state[2] += c; state[3] += d; state[4] += e;
+}
+
+static void sha1_hash(const uint8_t *data, size_t len, uint8_t out[20]) {
+    uint32_t state[5] = { 0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0 };
+    uint64_t bit_len = (uint64_t)len * 8;
+    size_t i = 0;
+    for (; i + 64 <= len; i += 64) sha1_transform(state, data + i);
+    uint8_t block[64] = {0};
+    size_t rem = len - i;
+    if (rem) memcpy(block, data + i, rem);
+    block[rem] = 0x80;
+    if (rem >= 56) {
+        sha1_transform(state, block);
+        memset(block, 0, 64);
+    }
+    for (int j = 0; j < 8; j++) block[63 - j] = (uint8_t)(bit_len >> (j * 8));
+    sha1_transform(state, block);
+    for (int j = 0; j < 5; j++) {
+        out[j*4]   = (uint8_t)(state[j] >> 24);
+        out[j*4+1] = (uint8_t)(state[j] >> 16);
+        out[j*4+2] = (uint8_t)(state[j] >> 8);
+        out[j*4+3] = (uint8_t)(state[j]);
+    }
+}
+
+extern MooValue moo_string_new_len(const char* chars, int32_t len);
+
+MooValue moo_sha1(MooValue input) {
+    if (input.tag != MOO_STRING) return moo_error("sha1: String erwartet");
+    MooString *s = MV_STR(input);
+    uint8_t hash[20];
+    sha1_hash((const uint8_t*)s->chars, (size_t)s->length, hash);
+    char hex[41];
+    for (int i = 0; i < 20; i++) sprintf(hex + i*2, "%02x", hash[i]);
+    hex[40] = '\0';
+    return moo_string_new(hex);
+}
+
+// Raw 20-byte SHA1-Output als binary-safe String. Fuer Sec-WebSocket-Accept:
+// base64_encode(sha1_bytes(key + GUID))
+MooValue moo_sha1_bytes(MooValue input) {
+    if (input.tag != MOO_STRING) return moo_error("sha1_bytes: String erwartet");
+    MooString *s = MV_STR(input);
+    uint8_t hash[20];
+    sha1_hash((const uint8_t*)s->chars, (size_t)s->length, hash);
+    return moo_string_new_len((const char*)hash, 20);
+}
+
+// ============================================================
 // Secure Random
 // ============================================================
 

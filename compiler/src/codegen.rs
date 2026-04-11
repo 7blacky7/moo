@@ -1915,6 +1915,14 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_sha256, &[arg.into()], "sha256");
                     }
+                    "sha1" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_sha1, &[arg.into()], "sha1");
+                    }
+                    "sha1_bytes" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_sha1_bytes, &[arg.into()], "sha1_bytes");
+                    }
                     "sichere_zufall" | "secure_random" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_secure_random, &[arg.into()], "secure_random");
