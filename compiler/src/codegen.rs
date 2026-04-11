@@ -2431,9 +2431,13 @@ impl<'ctx> CodeGen<'ctx> {
                             &[obj.into(), delim.into()], "join");
                     }
                     "contains" | "enthält" => {
+                        // Tag-dispatch: dict.enthält(key) → moo_dict_has,
+                        // list.enthält(item) → moo_list_contains,
+                        // string.enthält(sub) → moo_string_contains.
+                        // (vorher hart auf moo_list_contains gemappt → false auf dicts)
                         let item = self.compile_expr(&args[0])?;
-                        return self.call_rt(self.rt.moo_list_contains,
-                            &[obj.into(), item.into()], "contains");
+                        return self.call_rt(self.rt.moo_smart_contains,
+                            &[obj.into(), item.into()], "smart_contains");
                     }
                     "keys" | "schlüssel" => {
                         return self.call_rt(self.rt.moo_dict_keys, &[obj.into()], "keys");

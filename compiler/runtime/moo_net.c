@@ -353,3 +353,19 @@ void moo_smart_close(MooValue v) {
             break;
     }
 }
+
+// Tag-dispatchender contains/enthaelt — Dicts → moo_dict_has, Listen →
+// moo_list_contains, Strings → moo_string_contains.
+extern MooValue moo_dict_has(MooValue dict, MooValue key);
+extern MooValue moo_list_contains(MooValue list, MooValue item);
+extern MooValue moo_string_contains(MooValue s, MooValue sub);
+extern MooValue moo_bool(bool b);
+
+MooValue moo_smart_contains(MooValue container, MooValue item) {
+    switch (container.tag) {
+        case MOO_DICT:   return moo_dict_has(container, item);
+        case MOO_LIST:   return moo_list_contains(container, item);
+        case MOO_STRING: return moo_string_contains(container, item);
+        default:         return moo_bool(false);
+    }
+}
