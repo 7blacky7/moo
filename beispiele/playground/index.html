@@ -81,8 +81,6 @@ kbd { background: #21262d; padding: 1px 5px; border-radius: 3px; font-size: 11px
       <option value="match">Pattern Matching</option>
       <option value="dataclass">Data-Klassen</option>
       <option value="stdlib">Stdlib (importiere)</option>
-      <option value="spanisch">En Espanol</option>
-      <option value="tuerkisch">Turkce</option>
     </select>
     <div class="toolbar-right">
       <button class="secondary" onclick="clearOutput()">Loeschen</button>
@@ -111,7 +109,7 @@ kbd { background: #21262d; padding: 1px 5px; border-radius: 3px; font-size: 11px
 <div class="statusbar">
   <span id="sb-status">Bereit</span>
   <span id="sb-lang">moo v0.2</span>
-  <span id="sb-features">DE + EN + ES + FR + TR</span>
+  <span id="sb-features">DE + EN</span>
 </div>
 <script>
 const EXAMPLES = {
@@ -209,43 +207,13 @@ zeige f"Fakultaet(10) = {fakultaet(10)}"
 zeige f"Fibonacci(20) = {fibonacci(20)}"
 zeige f"Ist 42 gerade? {ist_gerade(42)}"
 zeige f"GGT(48, 18) = {ggt(48, 18)}"
-zeige f"Ist 97 Primzahl? {ist_primzahl(97)}"`,
-
-  spanisch: `# moo en espanol!
-establecer nombre to "Carlos"
-establecer edad to 25
-
-si edad >= 18:
-    mostrar "Adulto: " + nombre
-sino:
-    mostrar "Nino"
-
-funcion saludar(nombre):
-    mostrar "Hola " + nombre + "!"
-
-saludar("Maria")
-saludar("Pedro")`,
-
-  tuerkisch: `# moo Turkce!
-ayarla isim to "Ahmet"
-ayarla yas to 20
-
-eğer yas >= 18:
-    göster "Yetiskin: " + isim
-değilse:
-    göster "Cocuk"
-
-fonksiyon selamla(isim):
-    göster "Merhaba " + isim + "!"
-
-selamla("Elif")
-selamla("Mehmet")`
+zeige f"Ist 97 Primzahl? {ist_primzahl(97)}"`
 };
 
 // Keywords fuer Syntax-Highlighting
-const KW = /\b(setze|auf|wenn|sonst|solange|für|in|funktion|gib_zurück|zeige|und|oder|nicht|klasse|neu|selbst|versuche|fange|wirf|stopp|weiter|konstante|prüfe|fall|standard|importiere|aus|exportiere|als|daten|unsicher|set|to|if|else|while|for|func|return|show|and|or|not|class|new|this|try|catch|throw|break|continue|const|match|case|default|import|from|export|data|establecer|si|sino|mientras|para|mostrar|funcion|retornar|ayarla|eğer|değilse|iken|için|göster|fonksiyon|döndür)\b/g;
+const KW = /\b(setze|auf|wenn|sonst|solange|für|in|funktion|gib_zurück|zeige|und|oder|nicht|klasse|neu|selbst|versuche|fange|wirf|stopp|weiter|konstante|prüfe|fall|standard|importiere|aus|exportiere|als|daten|unsicher|set|to|if|else|while|for|func|return|show|and|or|not|class|new|this|try|catch|throw|break|continue|const|match|case|default|import|from|export|data)\b/g;
 const BI = /\b(text|typ_von|länge|eingabe|zufall|abs|wurzel|runden|min|max|bereich|datei_lesen|datei_schreiben|json_parse|json_string|http_get|http_post|sha256|base64_encode|base64_decode|einfrieren|ist_eingefroren|zeit|haltepunkt|ausfuehren|web_server|web_antworten|web_json|schlafe|umgebung|zahl|beende)\b/g;
-const BOOL = /\b(wahr|falsch|true|false|nichts|none|verdadero|falso|doğru|yanlış)\b/g;
+const BOOL = /\b(wahr|falsch|true|false|nichts|none)\b/g;
 
 const editor = document.getElementById('editor');
 const output = document.getElementById('output');
