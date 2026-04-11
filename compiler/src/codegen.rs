@@ -2045,6 +2045,9 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     // Freeze/Immutable
+                    "zeit_ms" | "time_ms" => {
+                        return self.call_rt(self.rt.moo_time_ms, &[], "time_ms");
+                    }
                     "zeit" | "time" => {
                         return self.call_rt(self.rt.moo_time, &[], "time");
                     }

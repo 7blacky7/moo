@@ -144,6 +144,14 @@ MooValue moo_time(void) {
     return moo_number(secs);
 }
 
+// Zeit in Millisekunden (monotonic) — fuer Game-Loops und Performance-Messung
+MooValue moo_time_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    double ms = (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+    return moo_number(ms);
+}
+
 // === Syscall (Linux only) ===
 #ifdef __linux__
 #include <sys/syscall.h>
