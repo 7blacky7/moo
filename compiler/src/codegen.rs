@@ -47,6 +47,12 @@ pub struct CodeGen<'ctx> {
     current_function: Option<FunctionValue<'ctx>>,
     // Fuer break/continue
     loop_stack: Vec<(inkwell::basic_block::BasicBlock<'ctx>, inkwell::basic_block::BasicBlock<'ctx>)>,
+    /// Aktive try-Blocks (innermost zuletzt). Wenn wirf/Stmt::Throw im Codegen
+    /// auf einen nicht-leeren Stack trifft, emittiert er nach dem moo_throw
+    /// einen unconditional branch zum entsprechenden catch_bb — das terminiert
+    /// den try-body an der Throw-Stelle und verhindert dass weiterer Code
+    /// (inkl. gib_zurueck) den Throw "verschluckt".
+    try_stack: Vec<inkwell::basic_block::BasicBlock<'ctx>>,
     // Klassen-Konstruktoren: class_name -> FunctionValue
     class_constructors: HashMap<String, FunctionValue<'ctx>>,
     // Klassen-Methoden: (class_name, method_name) -> FunctionValue
@@ -85,6 +91,7 @@ impl<'ctx> CodeGen<'ctx> {
             globals: HashMap::new(),
             current_function: None,
             loop_stack: Vec::new(),
+            try_stack: Vec::new(),
             class_constructors: HashMap::new(),
             class_methods: HashMap::new(),
             lambda_names: HashMap::new(),
@@ -535,7 +542,17 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Stmt::Throw(expr) => {
                 let val = self.compile_expr(expr)?;
-                self.call_rt_void(self.rt.moo_throw, &[val.into()], "throw")
+                self.call_rt_void(self.rt.moo_throw, &[val.into()], "throw")?;
+                // Wenn wir in einem try-Block sind: sofort zum innersten catch_bb
+                // branchen. Das terminiert den aktuellen Block und stellt sicher,
+                // dass Code nach 'wirf' (inkl. return) nicht ausgefuehrt wird.
+                if let Some(catch_bb) = self.try_stack.last().copied() {
+                    if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                        self.builder.build_unconditional_branch(catch_bb)
+                            .map_err(|e| format!("{e}"))?;
+                    }
+                }
+                Ok(())
             }
             Stmt::Match { value, cases } => {
                 self.compile_match(value, cases)
@@ -1360,21 +1377,25 @@ impl<'ctx> CodeGen<'ctx> {
     fn compile_try_catch(&mut self, try_body: &[Stmt], catch_var: &Option<String>, catch_body: &[Stmt]) -> Result<(), String> {
         let func = self.current_function.unwrap();
 
+        // Catch/After schon hier anlegen, damit wir sie in den try_stack pushen
+        // koennen — Stmt::Throw im try-Body soll direkt zu catch_bb springen.
+        let catch_bb = self.context.append_basic_block(func, "catch_body");
+        let after_bb = self.context.append_basic_block(func, "after_try");
+
         // moo_try_enter() — markiert dass wir in einem try-Block sind
         self.call_rt_void(self.rt.moo_try_enter, &[], "try_enter")?;
 
-        // Try-Body ausfuehren — nach einem Terminator (z.B. gib_zurueck) abbrechen,
-        // damit wir keine Instruktionen hinter einem Terminator emittieren.
+        // Try-Body ausfuehren — nach einem Terminator (z.B. gib_zurueck, wirf)
+        // abbrechen, damit wir keine Instruktionen hinter einem Terminator emittieren.
+        self.try_stack.push(catch_bb);
         for s in try_body {
             if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
                 break;
             }
             self.compile_stmt(s)?;
         }
+        self.try_stack.pop();
         let try_terminated = self.builder.get_insert_block().unwrap().get_terminator().is_some();
-
-        let catch_bb = self.context.append_basic_block(func, "catch_body");
-        let after_bb = self.context.append_basic_block(func, "after_try");
 
         if !try_terminated {
             // Nach dem try-body: pruefen ob ein Fehler aufgetreten ist
