@@ -295,6 +295,29 @@ void moo_socket_close(MooValue sock) {
     }
 }
 
+// Verbindet einen UDP-Socket zu einem Default-Peer (host, port). Danach
+// koennen schreibe_bytes/lesen_bytes wie bei TCP genutzt werden — der
+// Kernel routet die packets an den connected peer.
+void moo_udp_connect(MooValue sock, MooValue host, MooValue port) {
+    MooSocket* s = get_socket(sock);
+    if (!s || s->fd < 0) return;
+    if (host.tag != MOO_STRING || port.tag != MOO_NUMBER) return;
+    const char* h = MV_STR(host)->chars;
+    int p = (int)MV_NUM(port);
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(p);
+    if (inet_pton(AF_INET, h, &addr.sin_addr) <= 0) {
+        moo_throw(moo_string_new("udp_verbinden: ungueltige IP"));
+        return;
+    }
+    if (connect(s->fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        moo_throw(moo_string_new("udp_verbinden: connect fehlgeschlagen"));
+    }
+}
+
 #include <sys/time.h>
 // Setzt Receive- und Accept-Timeout in Millisekunden. 0 = blocking.
 // Nach Timeout liefert lesen/lesen_bytes/annehmen einen leeren String/Liste

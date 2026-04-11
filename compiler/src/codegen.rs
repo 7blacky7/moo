@@ -2528,6 +2528,12 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_socket_set_timeout, &[obj.into(), ms.into()], "set_timeout")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    "udp_verbinden" | "udp_connect" => {
+                        let host = self.compile_expr(&args[0])?;
+                        let port = self.compile_expr(&args[1])?;
+                        self.call_rt_void(self.rt.moo_udp_connect, &[obj.into(), host.into(), port.into()], "udp_connect")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     "map" | "abbilden" => {
                         // list.map((x) => expr) — create new list, iterate, apply lambda, append
                         let lambda = &args[0];
