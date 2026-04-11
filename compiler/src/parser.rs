@@ -152,9 +152,16 @@ impl Parser {
             Ok(name)
         } else if matches!(self.current_type(), TokenType::Data) {
             // Soft-Keyword: "daten" nur in "daten klasse ..." Kontext reserviert.
-            // Sonst als normaler Identifier "daten" behandeln.
             self.pos += 1;
             Ok("daten".to_string())
+        } else if matches!(self.current_type(), TokenType::Try) {
+            // Soft-Keyword: "versuche" ist nur als Statement-Start (gefolgt von ':')
+            // reserviert. Sonst als normaler Identifier erlaubt.
+            self.pos += 1;
+            Ok("versuche".to_string())
+        } else if matches!(self.current_type(), TokenType::Test) {
+            self.pos += 1;
+            Ok("teste".to_string())
         } else {
             let got_desc = got_description(self.current_type());
             Err(ParseError {
@@ -261,7 +268,17 @@ impl Parser {
             TokenType::Continue => { self.pos += 1; Ok(Stmt::Continue) }
             TokenType::Class => self.parse_class_def(),
             TokenType::Interface => self.parse_interface_def(),
-            TokenType::Try => self.parse_try_catch(),
+            TokenType::Try => {
+                // Soft-Keyword: 'versuche' als Block nur wenn direkt ':' folgt.
+                // Sonst als Identifier-Expression (z.B. setze versuche auf 5).
+                if matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
+                            Some(TokenType::Colon)) {
+                    self.parse_try_catch()
+                } else {
+                    let expr = self.parse_expression()?;
+                    Ok(Stmt::Expression(expr))
+                }
+            }
             TokenType::Throw => self.parse_throw(),
             TokenType::Import => self.parse_import(),
             TokenType::From => self.parse_from_import(),
@@ -274,7 +291,10 @@ impl Parser {
                 let body = self.parse_block_body(false)?;
                 Ok(Stmt::UnsafeBlock { body })
             }
-            TokenType::Test => {
+            TokenType::Test if matches!(
+                self.tokens.get(self.pos + 1).map(|t| &t.token_type),
+                Some(TokenType::String(_))
+            ) => {
                 self.pos += 1;
                 // teste "name":
                 let name = if let TokenType::String(s) = self.current_type().clone() {
@@ -1036,6 +1056,50 @@ impl Parser {
                 }
                 self.pos += 1;
                 let name = "daten".to_string();
+                if matches!(self.current_type(), TokenType::LParen) {
+                    self.pos += 1;
+                    let args = self.parse_args_list()?;
+                    self.eat(&TokenType::RParen)?;
+                    Ok(Expr::FunctionCall { name, args })
+                } else {
+                    Ok(Expr::Identifier(name))
+                }
+            }
+            TokenType::Try => {
+                // Soft-Keyword: 'versuche' als Identifier erlaubt, ausser als
+                // Block-Start (gefolgt von ':')
+                if matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
+                            Some(TokenType::Colon)) {
+                    let got = got_description(self.current_type());
+                    return Err(ParseError {
+                        message: format!("Hier wird ein Wert erwartet (Zahl, Text, Variable, ...), aber {got} gefunden."),
+                        line: self.current().line,
+                    });
+                }
+                self.pos += 1;
+                let name = "versuche".to_string();
+                if matches!(self.current_type(), TokenType::LParen) {
+                    self.pos += 1;
+                    let args = self.parse_args_list()?;
+                    self.eat(&TokenType::RParen)?;
+                    Ok(Expr::FunctionCall { name, args })
+                } else {
+                    Ok(Expr::Identifier(name))
+                }
+            }
+            TokenType::Test => {
+                // Soft-Keyword: 'teste' als Identifier erlaubt (Test-Framework
+                // nutzt teste "name": Block, also ist nach teste ein String).
+                if matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
+                            Some(TokenType::String(_))) {
+                    let got = got_description(self.current_type());
+                    return Err(ParseError {
+                        message: format!("Hier wird ein Wert erwartet (Zahl, Text, Variable, ...), aber {got} gefunden."),
+                        line: self.current().line,
+                    });
+                }
+                self.pos += 1;
+                let name = "teste".to_string();
                 if matches!(self.current_type(), TokenType::LParen) {
                     self.pos += 1;
                     let args = self.parse_args_list()?;
