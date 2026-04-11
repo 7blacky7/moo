@@ -128,6 +128,8 @@ pub struct RuntimeBindings<'ctx> {
     // File I/O
     pub moo_file_read: FunctionValue<'ctx>,
     pub moo_file_write: FunctionValue<'ctx>,
+    pub moo_file_read_bytes: FunctionValue<'ctx>,
+    pub moo_file_write_bytes: FunctionValue<'ctx>,
     pub moo_file_append: FunctionValue<'ctx>,
     pub moo_file_lines: FunctionValue<'ctx>,
     pub moo_file_exists: FunctionValue<'ctx>,
@@ -404,6 +406,8 @@ impl<'ctx> RuntimeBindings<'ctx> {
             // File I/O
             moo_file_read: decl_mv_mv!("moo_file_read", mv1),
             moo_file_write: decl_mv_mv!("moo_file_write", mv2),
+            moo_file_read_bytes: decl_mv_mv!("moo_file_read_bytes", mv1),
+            moo_file_write_bytes: decl_mv_mv!("moo_file_write_bytes", mv2),
             moo_file_append: decl_mv_mv!("moo_file_append", mv2),
             moo_file_lines: decl_mv_mv!("moo_file_lines", mv1),
             moo_file_exists: decl_mv_mv!("moo_file_exists", mv1),

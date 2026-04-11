@@ -1871,6 +1871,15 @@ impl<'ctx> CodeGen<'ctx> {
                         let b = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_file_write, &[a.into(), b.into()], "file_write");
                     }
+                    "datei_lesen_bytes" | "file_read_bytes" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_file_read_bytes, &[arg.into()], "file_read_bytes");
+                    }
+                    "datei_schreiben_bytes" | "file_write_bytes" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_file_write_bytes, &[a.into(), b.into()], "file_write_bytes");
+                    }
                     "datei_anhängen" | "file_append" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
