@@ -1086,21 +1086,30 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
 
-        // Pre-Allocation lokaler Variablen: Sammelt alle Namen die im Body
-        // assigned werden und legt LOKALE Allocas an. Verhindert dass
-        // store_var/load_var auf das gleichnamige globale fallback (was
-        // Methoden-lokale 'i' ins Modul-globale 'i' schreiben wuerde).
+        // Pre-Allocation lokaler Variablen — mit Counter-Pattern-Erkennung:
+        // Wenn der Name eine globale Variable ist UND im Body als
+        // 'X = X + ...' / 'X += ...' verwendet wird, ist das ein bewusster
+        // Global-Update — KEINE lokale Alloca anlegen, store_var faellt auf
+        // das Global zurueck. Alle anderen Faelle (lokale Loop-Counter,
+        // bare write ohne Selbst-Referenz) bekommen eine lokale Alloca um
+        // Global-Pollution zu verhindern.
         let none_init = self.context.i64_type().const_int(3, false);
         let zero_data = self.context.i64_type().const_int(0, false);
         let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
         let local_names = Self::collect_all_var_names(body);
         for n in &local_names {
-            if !self.variables.contains_key(n.as_str()) {
-                let alloca = self.builder.build_alloca(self.mv_type(), n)
-                    .map_err(|e| format!("{e}"))?;
-                self.builder.build_store(alloca, none_val).map_err(|e| format!("{e}"))?;
-                self.variables.insert(n.clone(), alloca);
+            if self.variables.contains_key(n.as_str()) { continue; }
+            // Counter-Pattern auf Global → kein local-shadow
+            if self.globals.contains_key(n) {
+                match Self::first_use_is_local_write(body, n) {
+                    Some(true) => {}
+                    _ => continue,
+                }
             }
+            let alloca = self.builder.build_alloca(self.mv_type(), n)
+                .map_err(|e| format!("{e}"))?;
+            self.builder.build_store(alloca, none_val).map_err(|e| format!("{e}"))?;
+            self.variables.insert(n.clone(), alloca);
         }
 
         // Profiling: Funktionsname am Anfang registrieren
@@ -1221,21 +1230,24 @@ impl<'ctx> CodeGen<'ctx> {
                     self.variables.insert(param_name.clone(), alloca);
                 }
 
-                // Pre-Allocation lokaler Variablen in der Methode (analog
-                // compile_function_def). Sonst wuerde store_var auf gleichnamige
-                // globale fallback und Methoden-lokale Vars ins Modul-globale
-                // schreiben (Regression aus 6b18fe8, gefunden von K3).
+                // Pre-Allocation lokaler Variablen mit Counter-Pattern-Erkennung
+                // (analog compile_function_def, siehe Kommentar dort).
                 let none_init = self.context.i64_type().const_int(3, false);
                 let zero_data = self.context.i64_type().const_int(0, false);
                 let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
                 let local_names = Self::collect_all_var_names(method_body);
                 for n in &local_names {
-                    if !self.variables.contains_key(n.as_str()) {
-                        let alloca = self.builder.build_alloca(self.mv_type(), n)
-                            .map_err(|e| format!("{e}"))?;
-                        self.builder.build_store(alloca, none_val).map_err(|e| format!("{e}"))?;
-                        self.variables.insert(n.clone(), alloca);
+                    if self.variables.contains_key(n.as_str()) { continue; }
+                    if self.globals.contains_key(n) {
+                        match Self::first_use_is_local_write(method_body, n) {
+                            Some(true) => {}
+                            _ => continue,
+                        }
                     }
+                    let alloca = self.builder.build_alloca(self.mv_type(), n)
+                        .map_err(|e| format!("{e}"))?;
+                    self.builder.build_store(alloca, none_val).map_err(|e| format!("{e}"))?;
+                    self.variables.insert(n.clone(), alloca);
                 }
 
                 for s in method_body {
@@ -3724,6 +3736,110 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     /// Pre-Scan: Sammelt alle Variablennamen aus dem AST (fuer vorab-Allokation)
+    /// Prueft ob ein Expression einen Identifier mit dem gegebenen Namen liest.
+    /// Wird genutzt um Counter-Pattern zu erkennen ('setze X auf X + 1') —
+    /// solche Stellen sollen auf das Modul-globale schreiben statt eine
+    /// neue lokale Alloca anzulegen.
+    fn expr_uses_var(expr: &Expr, name: &str) -> bool {
+        match expr {
+            Expr::Identifier(n) => n == name,
+            Expr::BinaryOp { left, right, .. } =>
+                Self::expr_uses_var(left, name) || Self::expr_uses_var(right, name),
+            Expr::UnaryOp { operand, .. } => Self::expr_uses_var(operand, name),
+            Expr::FunctionCall { args, .. } => args.iter().any(|a| Self::expr_uses_var(a, name)),
+            Expr::MethodCall { object, args, .. } =>
+                Self::expr_uses_var(object, name) || args.iter().any(|a| Self::expr_uses_var(a, name)),
+            Expr::PropertyAccess { object, .. } => Self::expr_uses_var(object, name),
+            Expr::IndexAccess { object, index } =>
+                Self::expr_uses_var(object, name) || Self::expr_uses_var(index, name),
+            Expr::Ternary { condition, then_val, else_val } =>
+                Self::expr_uses_var(condition, name)
+                    || Self::expr_uses_var(then_val, name)
+                    || Self::expr_uses_var(else_val, name),
+            Expr::List(items) => items.iter().any(|i| Self::expr_uses_var(i, name)),
+            Expr::Dict(pairs) => pairs.iter().any(|(k, v)|
+                Self::expr_uses_var(k, name) || Self::expr_uses_var(v, name)),
+            _ => false,
+        }
+    }
+
+    /// Findet den ersten Zugriff auf 'name' im Body und sagt ob er als
+    /// LOKAL behandelt werden soll. Heuristik (Python-aehnlich, "first
+    /// occurrence determines scope"):
+    /// - Erster Zugriff ist 'setze name auf RHS' wo RHS den Namen NICHT liest
+    ///   → Some(true): bare write, lokale Variable
+    /// - Erster Zugriff ist Compound oder self-referential Assignment
+    ///   → Some(false): global update (Counter-Pattern)
+    /// - Erster Zugriff ist ein Read im RHS einer anderen Anweisung
+    ///   → Some(false): liest globalen Wert vor Schreiben
+    /// - Name kommt nicht vor → None
+    fn first_use_is_local_write(stmts: &[Stmt], name: &str) -> Option<bool> {
+        for stmt in stmts {
+            // Pruefe direkt-zuweisende Statements zuerst
+            match stmt {
+                Stmt::Assignment { name: n, value } if n == name => {
+                    return Some(!Self::expr_uses_var(value, name));
+                }
+                Stmt::ConstAssignment { name: n, value } if n == name => {
+                    return Some(!Self::expr_uses_var(value, name));
+                }
+                Stmt::CompoundAssignment { name: n, .. } if n == name => {
+                    return Some(false);
+                }
+                _ => {}
+            }
+            // Sonst pruefe ob das Statement den Namen liest oder rekursiv enthaelt
+            if let Some(r) = Self::stmt_first_use(stmt, name) {
+                return Some(r);
+            }
+        }
+        None
+    }
+
+    fn stmt_first_use(stmt: &Stmt, name: &str) -> Option<bool> {
+        match stmt {
+            Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
+            | Stmt::Show(value) | Stmt::Throw(value) | Stmt::Return(Some(value))
+            | Stmt::Expression(value) | Stmt::CompoundAssignment { value, .. } => {
+                if Self::expr_uses_var(value, name) { Some(false) } else { None }
+            }
+            Stmt::If { condition, body, else_body } => {
+                if Self::expr_uses_var(condition, name) { return Some(false); }
+                if let Some(r) = Self::first_use_is_local_write(body, name) { return Some(r); }
+                Self::first_use_is_local_write(else_body, name)
+            }
+            Stmt::While { condition, body } => {
+                if Self::expr_uses_var(condition, name) { return Some(false); }
+                Self::first_use_is_local_write(body, name)
+            }
+            Stmt::For { iterable, body, .. } => {
+                if Self::expr_uses_var(iterable, name) { return Some(false); }
+                Self::first_use_is_local_write(body, name)
+            }
+            Stmt::TryCatch { try_body, catch_body, .. } => {
+                if let Some(r) = Self::first_use_is_local_write(try_body, name) { return Some(r); }
+                Self::first_use_is_local_write(catch_body, name)
+            }
+            Stmt::Match { value, cases } => {
+                if Self::expr_uses_var(value, name) { return Some(false); }
+                for (_, _, body) in cases {
+                    if let Some(r) = Self::first_use_is_local_write(body, name) { return Some(r); }
+                }
+                None
+            }
+            Stmt::PropertyAssignment { object, value, .. } => {
+                if Self::expr_uses_var(object, name) || Self::expr_uses_var(value, name) {
+                    Some(false)
+                } else { None }
+            }
+            Stmt::IndexAssignment { object, index, value } => {
+                if Self::expr_uses_var(object, name) || Self::expr_uses_var(index, name)
+                    || Self::expr_uses_var(value, name) { Some(false) } else { None }
+            }
+            _ => None,
+        }
+    }
+
     fn collect_all_var_names(stmts: &[Stmt]) -> Vec<String> {
         let mut names = Vec::new();
         for stmt in stmts {

@@ -245,14 +245,37 @@ impl Parser {
             TokenType::Func => self.parse_function_def_with_decorators(vec![]),
             TokenType::Data => {
                 // Soft-Keyword: nur "daten klasse ..." → parse_data_class.
-                // Sonst Fallthrough zur Expression/Identifier-Behandlung.
+                // Sonst wie ein normaler Identifier behandeln (auch fuer
+                // Index-/Property-Assignment, nicht nur compound).
                 if matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
                             Some(TokenType::Class)) {
                     self.parse_data_class()
                 } else {
-                    // Als Identifier-Expression behandeln (wird u.a. fuer compound
-                    // assignments und expression-statements gebraucht)
                     let expr = self.parse_expression()?;
+                    // Property-Zuweisung: daten.prop = wert
+                    if let Expr::PropertyAccess { object, property } = &expr {
+                        if matches!(self.current_type(), TokenType::Assign) {
+                            self.pos += 1;
+                            let value = self.parse_expression()?;
+                            return Ok(Stmt::PropertyAssignment {
+                                object: *object.clone(),
+                                property: property.clone(),
+                                value,
+                            });
+                        }
+                    }
+                    // Index-Zuweisung: daten[i] = wert
+                    if let Expr::IndexAccess { object, index } = &expr {
+                        if matches!(self.current_type(), TokenType::Assign) {
+                            self.pos += 1;
+                            let value = self.parse_expression()?;
+                            return Ok(Stmt::IndexAssignment {
+                                object: *object.clone(),
+                                index: *index.clone(),
+                                value,
+                            });
+                        }
+                    }
                     if let Expr::Identifier(name) = &expr {
                         match self.current_type() {
                             TokenType::PlusAssign => {
