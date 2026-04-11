@@ -289,6 +289,29 @@ MooValue moo_string_to_bytes(MooValue s) {
 void moo_socket_close(MooValue sock) {
     MooSocket* s = get_socket(sock);
     if (!s) return;
-    close(s->fd);
-    s->fd = -1;
+    if (s->fd >= 0) {
+        close(s->fd);
+        s->fd = -1;
+    }
+}
+
+// Tag-dispatchender close — wird vom Codegen fuer den Method-Namen
+// 'schliessen'/'close' aufgerufen. Vermeidet dass channel_close auf
+// einem Socket landet (oder umgekehrt) was im pthread-mutex Code
+// von moo_thread.c heap-corruption ausloest (tpp.c:83).
+extern void moo_channel_close(MooValue ch);
+extern void moo_window_close(MooValue window);
+extern void moo_db_close(MooValue db);
+
+void moo_smart_close(MooValue v) {
+    switch (v.tag) {
+        case MOO_SOCKET:   moo_socket_close(v); break;
+        case MOO_DATABASE: moo_db_close(v); break;
+        case MOO_WINDOW:   moo_window_close(v); break;
+        default:
+            // Channels (MooObject) und alles andere → channel_close
+            // (das ignoriert non-channel objects safe).
+            moo_channel_close(v);
+            break;
+    }
 }

@@ -39,7 +39,12 @@ void moo_object_set(MooValue obj_val, const char* prop, MooValue value) {
     if (obj->frozen) { moo_throw(moo_string_new("Objekt ist eingefroren!")); return; }
     int32_t idx = find_property(obj, prop);
     if (idx >= 0) {
+        // Refcount-Sicherheit: erst NEUEN Wert retainen, DANN alten releasen.
+        // Reihenfolge wichtig wenn neuer == alter (sonst use-after-free).
+        moo_retain(value);
+        MooValue old = obj->properties[idx].value;
         obj->properties[idx].value = value;
+        moo_release(old);
         return;
     }
     if (obj->prop_count >= obj->prop_capacity) {
@@ -51,6 +56,8 @@ void moo_object_set(MooValue obj_val, const char* prop, MooValue value) {
     name_str->chars = strdup(prop);
     name_str->length = len;
     name_str->capacity = len + 1;
+    // Neue Property: Object haelt jetzt eine Referenz auf den Wert.
+    moo_retain(value);
     obj->properties[obj->prop_count].name = name_str;
     obj->properties[obj->prop_count].value = value;
     obj->prop_count++;

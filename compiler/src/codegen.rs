@@ -2433,8 +2433,11 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_channel_recv, &[obj.into()], "chan_recv");
                     }
                     "schliessen" | "close" => {
-                        self.call_rt_void(self.rt.moo_channel_close,
-                            &[obj.into()], "chan_close")?;
+                        // Tag-dispatchender close — sonst wuerde channel_close
+                        // (mit pthread_mutex Code) auf Sockets/DBs/Windows
+                        // landen und Memory korrumpieren (tpp.c:83 crash).
+                        self.call_rt_void(self.rt.moo_smart_close,
+                            &[obj.into()], "smart_close")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     // Webserver-Methoden
