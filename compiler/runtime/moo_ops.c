@@ -183,10 +183,26 @@ MooValue moo_neq(MooValue a, MooValue b) {
     return moo_bool(!MV_BOOL(moo_eq(a, b)));
 }
 
-MooValue moo_lt(MooValue a, MooValue b) { return moo_bool(moo_as_number(a) < moo_as_number(b)); }
-MooValue moo_gt(MooValue a, MooValue b) { return moo_bool(moo_as_number(a) > moo_as_number(b)); }
-MooValue moo_lte(MooValue a, MooValue b) { return moo_bool(moo_as_number(a) <= moo_as_number(b)); }
-MooValue moo_gte(MooValue a, MooValue b) { return moo_bool(moo_as_number(a) >= moo_as_number(b)); }
+MooValue moo_lt(MooValue a, MooValue b) {
+    if (a.tag == MOO_STRING && b.tag == MOO_STRING)
+        return moo_bool(strcmp(MV_STR(a)->chars, MV_STR(b)->chars) < 0);
+    return moo_bool(moo_as_number(a) < moo_as_number(b));
+}
+MooValue moo_gt(MooValue a, MooValue b) {
+    if (a.tag == MOO_STRING && b.tag == MOO_STRING)
+        return moo_bool(strcmp(MV_STR(a)->chars, MV_STR(b)->chars) > 0);
+    return moo_bool(moo_as_number(a) > moo_as_number(b));
+}
+MooValue moo_lte(MooValue a, MooValue b) {
+    if (a.tag == MOO_STRING && b.tag == MOO_STRING)
+        return moo_bool(strcmp(MV_STR(a)->chars, MV_STR(b)->chars) <= 0);
+    return moo_bool(moo_as_number(a) <= moo_as_number(b));
+}
+MooValue moo_gte(MooValue a, MooValue b) {
+    if (a.tag == MOO_STRING && b.tag == MOO_STRING)
+        return moo_bool(strcmp(MV_STR(a)->chars, MV_STR(b)->chars) >= 0);
+    return moo_bool(moo_as_number(a) >= moo_as_number(b));
+}
 MooValue moo_and(MooValue a, MooValue b) { return moo_bool(moo_is_truthy(a) && moo_is_truthy(b)); }
 MooValue moo_or(MooValue a, MooValue b) { return moo_bool(moo_is_truthy(a) || moo_is_truthy(b)); }
 MooValue moo_not(MooValue v) { return moo_bool(!moo_is_truthy(v)); }
