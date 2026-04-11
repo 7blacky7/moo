@@ -98,13 +98,16 @@ impl Parser {
 
     /// Springt zum nächsten Statement (nach Newline/Dedent) bei einem Parse-Fehler
     fn sync_to_next_statement(&mut self) {
+        // Garantiert Progression: konsumiert bis Newline (inkl.) oder stoppt bei EOF.
+        // Dedent wird mit verschluckt, sonst Endlosschleife im top-level Recovery nach
+        // Fehlern in nested Blocks (Dedent bleibt als naechstes Token stehen).
         loop {
             match self.current_type() {
+                TokenType::Eof => return,
                 TokenType::Newline => {
                     self.pos += 1;
                     return;
                 }
-                TokenType::Eof | TokenType::Dedent => return,
                 _ => self.pos += 1,
             }
         }
@@ -178,6 +181,11 @@ impl Parser {
                 TokenType::Dedent if !top_level => {
                     self.pos += 1;
                     break;
+                }
+                TokenType::Dedent if top_level => {
+                    // Defensiv: Unerwarteter Dedent im top-level (z.B. nach Parse-Error
+                    // in nested Block). Skippen damit der Loop weiter Fortschritt macht.
+                    self.pos += 1;
                 }
                 _ => {
                     match self.parse_statement() {
