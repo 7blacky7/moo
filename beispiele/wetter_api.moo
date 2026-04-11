@@ -1,9 +1,8 @@
-# moo Wetter — HTTP API abfragen + JSON parsen
-# Nutzt wttr.in (keine API-Key noetig)
+# moo Wetter — HTTP API abfragen
+# Nutzt wttr.in (einfaches Text-Format)
 # Starten: moo-compiler run beispiele/wetter_api.moo
 
 zeige "=== moo Wetter ==="
-zeige ""
 
 setze stadt auf eingabe("Stadt (z.B. Berlin): ")
 wenn stadt == "":
@@ -11,24 +10,12 @@ wenn stadt == "":
 
 zeige "Lade Wetter fuer " + stadt + "..."
 
-setze url auf "https://wttr.in/" + stadt + "?format=j1"
+# wttr.in im Kurzformat (kein JSON, direkt lesbarer Text)
+setze url auf "https://wttr.in/" + stadt + "?format=3"
 setze antwort auf http_get(url)
+zeige antwort
 
-versuche:
-    setze daten auf json_parse(antwort)
-    setze aktuell auf daten["current_condition"]
-    setze wetter auf aktuell[0]
-    setze temp auf wetter["temp_C"]
-    setze gefuehlt auf wetter["FeelsLikeC"]
-    setze feucht auf wetter["humidity"]
-    setze wind auf wetter["windspeedKmph"]
-
-    zeige ""
-    zeige "Wetter in " + stadt + ":"
-    zeige "  Temperatur:   " + temp + " C"
-    zeige "  Gefuehlt wie: " + gefuehlt + " C"
-    zeige "  Feuchtigkeit: " + feucht + "%"
-    zeige "  Wind:         " + wind + " km/h"
-fange fehler:
-    zeige "Fehler beim Laden der Wetterdaten."
-
+# Detaillierter
+setze url2 auf "https://wttr.in/" + stadt + "?format=%C+%t+%h+%w"
+setze detail auf http_get(url2)
+zeige "Detail: " + detail

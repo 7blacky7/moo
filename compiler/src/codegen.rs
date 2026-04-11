@@ -130,6 +130,21 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.position_at_end(entry);
         self.current_function = Some(main_fn);
 
+        // Pre-Scan: Alle Variablennamen vorab im Entry-Block allokieren
+        // Verhindert dass alloca in bedingten Bloecken/Schleifen erzeugt wird
+        let var_names = Self::collect_all_var_names(&program.statements);
+        for name in &var_names {
+            if !self.variables.contains_key(name.as_str()) {
+                let alloca = self.builder.build_alloca(self.mv_type(), name)
+                    .map_err(|e| format!("{e}"))?;
+                let none_init = self.context.i64_type().const_int(3, false);
+                let zero_data = self.context.i64_type().const_int(0, false);
+                let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
+                self.builder.build_store(alloca, none_val).map_err(|e| format!("{e}"))?;
+                self.variables.insert(name.clone(), alloca);
+            }
+        }
+
         for stmt in &program.statements {
             self.compile_stmt(stmt)?;
         }
@@ -3414,6 +3429,48 @@ impl<'ctx> CodeGen<'ctx> {
 
         self.builder.position_at_end(after_bb);
         Ok(())
+    }
+
+    /// Pre-Scan: Sammelt alle Variablennamen aus dem AST (fuer vorab-Allokation)
+    fn collect_all_var_names(stmts: &[Stmt]) -> Vec<String> {
+        let mut names = Vec::new();
+        for stmt in stmts {
+            match stmt {
+                Stmt::Assignment { name, .. } | Stmt::ConstAssignment { name, .. } => {
+                    if !names.contains(name) { names.push(name.clone()); }
+                }
+                Stmt::CompoundAssignment { name, .. } => {
+                    if !names.contains(name) { names.push(name.clone()); }
+                }
+                Stmt::If { body, else_body, .. } => {
+                    names.extend(Self::collect_all_var_names(body));
+                    names.extend(Self::collect_all_var_names(else_body));
+                }
+                Stmt::While { body, .. } => {
+                    names.extend(Self::collect_all_var_names(body));
+                }
+                Stmt::For { var_name, body, .. } => {
+                    if !names.contains(var_name) { names.push(var_name.clone()); }
+                    names.extend(Self::collect_all_var_names(body));
+                }
+                Stmt::TryCatch { try_body, catch_var, catch_body, .. } => {
+                    if let Some(v) = catch_var {
+                        if !names.contains(v) { names.push(v.clone()); }
+                    }
+                    names.extend(Self::collect_all_var_names(try_body));
+                    names.extend(Self::collect_all_var_names(catch_body));
+                }
+                Stmt::Match { cases, .. } => {
+                    for (_, _, body) in cases {
+                        names.extend(Self::collect_all_var_names(&body));
+                    }
+                }
+                _ => {}
+            }
+        }
+        names.sort();
+        names.dedup();
+        names
     }
 
     /// Sammelt alle freien Variablen in einem Ausdruck (Identifier die nicht in params sind)
