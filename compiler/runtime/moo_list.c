@@ -30,6 +30,10 @@ void moo_list_append(MooValue list, MooValue item) {
     MooList* l = MV_LIST(list);
     if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return; }
     if (l->length >= l->capacity) list_grow(l);
+    // Refcount: Liste haelt jetzt eine Referenz auf das item.
+    // Sonst Aliasing-Bug: item wird in mehreren Listen gehalten ohne
+    // retain, free der ersten released item, zweite haelt freed value.
+    moo_retain(item);
     l->items[l->length++] = item;
 }
 
@@ -46,7 +50,11 @@ void moo_list_set(MooValue list, MooValue index, MooValue value) {
     if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return; }
     int32_t i = (int32_t)moo_as_number(index);
     if (i < 0) i += l->length;
-    if (i >= 0 && i < l->length) l->items[i] = value;
+    if (i >= 0 && i < l->length) {
+        moo_retain(value);
+        moo_release(l->items[i]);
+        l->items[i] = value;
+    }
 }
 
 MooValue moo_list_length(MooValue list) {

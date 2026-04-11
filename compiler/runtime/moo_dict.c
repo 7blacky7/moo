@@ -56,7 +56,13 @@ void moo_dict_set(MooValue dict, MooValue key, MooValue value) {
     MooValue key_str = moo_to_string(key);
     if ((double)d->count / d->capacity > DICT_LOAD_FACTOR) dict_grow(d);
     int32_t slot = dict_find_slot(d, MV_STR(key_str)->chars);
-    if (!d->entries[slot].occupied) {
+    // Refcount-Sicherheit: erst NEUEN Wert retainen, dann ALTEN releasen
+    // (sicher fuer neuer == alter). Sonst Aliasing-Bug wenn der gleiche
+    // Wert in mehreren Containern lebt.
+    moo_retain(value);
+    if (d->entries[slot].occupied) {
+        moo_release(d->entries[slot].value);
+    } else {
         d->entries[slot].key = MV_STR(key_str);
         d->entries[slot].occupied = true;
         d->count++;
