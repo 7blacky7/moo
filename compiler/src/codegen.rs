@@ -57,6 +57,15 @@ pub struct CodeGen<'ctx> {
     class_constructors: HashMap<String, FunctionValue<'ctx>>,
     // Klassen-Methoden: (class_name, method_name) -> FunctionValue
     class_methods: HashMap<(String, String), FunctionValue<'ctx>>,
+    // Vererbung: child_class -> parent_class (fuer Method-Dispatch-Walk)
+    class_parents: HashMap<String, String>,
+    // Statisches Typ-Tracking fuer Variablen die per `neu X()` erzeugt wurden.
+    // name -> class_name. Wird fuer korrektes Method-Dispatch bei Vererbung
+    // genutzt (sonst wuerde immer die erste gleichnamige Methode gewinnen).
+    object_var_types: HashMap<String, String>,
+    // Aktuelle Klasse waehrend compile_class_def laeuft — damit selbst.method()
+    // in Methoden auf die richtige Klasse dispatcht.
+    current_class: Option<String>,
     // Lambda-Mapping: variable_name -> LLVM function name
     lambda_names: HashMap<String, String>,
     // Lambda-Captures: lambda_fn_name -> [captured var names]
@@ -94,6 +103,9 @@ impl<'ctx> CodeGen<'ctx> {
             try_stack: Vec::new(),
             class_constructors: HashMap::new(),
             class_methods: HashMap::new(),
+            class_parents: HashMap::new(),
+            object_var_types: HashMap::new(),
+            current_class: None,
             lambda_names: HashMap::new(),
             lambda_captures: HashMap::new(),
             lambda_counter: 0,
@@ -212,7 +224,10 @@ impl<'ctx> CodeGen<'ctx> {
                     let fn_type = mv.fn_type(&param_types, false);
                     self.module.add_function(name, fn_type, None);
                 }
-                Stmt::ClassDef { name, body, .. } => {
+                Stmt::ClassDef { name, parent, body, .. } => {
+                    if let Some(parent_name) = parent {
+                        self.class_parents.insert(name.clone(), parent_name.clone());
+                    }
                     for method in body {
                         if let Stmt::FunctionDef { name: method_name, params, .. } = method {
                             let mv = self.mv_type();
@@ -446,6 +461,22 @@ impl<'ctx> CodeGen<'ctx> {
                 // Crystal-inspiriert: Typ der Zuweisung tracken
                 if let Some(typ) = self.infer_type(value) {
                     self.variable_types.insert(name.clone(), typ);
+                }
+                // Objekt-Typ tracken fuer korrektes Method-Dispatch bei Vererbung:
+                // setze k auf neu K() → object_var_types[k] = "K"
+                // setze a auf b → uebertrage den Typ von b, falls bekannt
+                match value {
+                    Expr::New { class_name, .. } => {
+                        self.object_var_types.insert(name.clone(), class_name.clone());
+                    }
+                    Expr::Identifier(other) => {
+                        if let Some(t) = self.object_var_types.get(other).cloned() {
+                            self.object_var_types.insert(name.clone(), t);
+                        } else {
+                            self.object_var_types.remove(name);
+                        }
+                    }
+                    _ => { self.object_var_types.remove(name); }
                 }
                 // Lambda-Zuweisung: merke den Lambda-Namen fuer spaetere Aufrufe
                 if let Expr::Lambda { .. } = value {
@@ -1104,13 +1135,37 @@ impl<'ctx> CodeGen<'ctx> {
         } else {
             self.call_rt(self.rt.moo_none, &[], "none")?
         };
+
+        // Wenn wir in einem try-Block sind: pruefen ob der Expression einen Fehler
+        // gesetzt hat (z.B. via Methoden-Aufruf 'gib_zurueck k.methode()'). Falls ja,
+        // direkt zum catch_bb branchen statt zu returnen.
+        if let Some(catch_bb) = self.try_stack.last().copied() {
+            let func = self.current_function.unwrap();
+            let check_result = self.builder.build_call(self.rt.moo_try_check, &[], "ret_check")
+                .map_err(|e| format!("{e}"))?;
+            let has_error = match check_result.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                _ => return Err("moo_try_check fehlgeschlagen".to_string()),
+            };
+            let is_error = self.builder.build_int_compare(
+                inkwell::IntPredicate::NE, has_error,
+                self.context.i32_type().const_int(0, false), "ret_is_err",
+            ).map_err(|e| format!("{e}"))?;
+            let ret_bb = self.context.append_basic_block(func, "return_ok");
+            self.builder.build_conditional_branch(is_error, catch_bb, ret_bb)
+                .map_err(|e| format!("{e}"))?;
+            self.builder.position_at_end(ret_bb);
+        }
+
         // Defer-Stack vor Return ausführen (Go-Semantik)
         self.emit_defers()?;
         self.builder.build_return(Some(&val)).map_err(|e| format!("{e}"))?;
         Ok(())
     }
 
-    fn compile_class_def(&mut self, name: &str, parent: &Option<String>, body: &[Stmt]) -> Result<(), String> {
+    fn compile_class_def(&mut self, name: &str, _parent: &Option<String>, body: &[Stmt]) -> Result<(), String> {
+        let prev_class = self.current_class.take();
+        self.current_class = Some(name.to_string());
         // Methoden kompilieren
         for stmt in body {
             if let Stmt::FunctionDef { name: method_name, params, body: method_body, .. } = stmt {
@@ -1134,6 +1189,11 @@ impl<'ctx> CodeGen<'ctx> {
                     .map_err(|e| format!("{e}"))?;
                 self.variables.insert("selbst".to_string(), self_alloca);
                 self.variables.insert("this".to_string(), self_alloca);
+                // selbst und this haben den Typ der aktuellen Klasse — wichtig
+                // fuer korrektes Method-Dispatch bei Vererbung.
+                let prev_selbst_type = self.object_var_types.insert("selbst".to_string(), name.to_string());
+                let prev_this_type = self.object_var_types.insert("this".to_string(), name.to_string());
+                let _ = (prev_selbst_type, prev_this_type);
 
                 // Regulaere Parameter
                 for (i, param_name) in params.iter().enumerate() {
@@ -1156,12 +1216,15 @@ impl<'ctx> CodeGen<'ctx> {
 
                 self.current_function = prev_fn;
                 self.variables = prev_vars;
+                self.object_var_types.remove("selbst");
+                self.object_var_types.remove("this");
                 if let Some(bb) = prev_block {
                     self.builder.position_at_end(bb);
                 }
             }
         }
 
+        self.current_class = prev_class;
         Ok(())
     }
 
@@ -2274,6 +2337,12 @@ impl<'ctx> CodeGen<'ctx> {
                     "trim" | "trimmen" => {
                         return self.call_rt(self.rt.moo_string_trim, &[obj.into()], "trim");
                     }
+                    "slice" | "teilstring" => {
+                        let start = self.compile_expr(&args[0])?;
+                        let end = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_string_slice,
+                            &[obj.into(), start.into(), end.into()], "slice");
+                    }
                     "split" | "teilen" => {
                         let delim = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_string_split,
@@ -2541,17 +2610,41 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     _ => {
                         // Klassen-Methode aufrufen: suche nach class__method
-                        // Wir muessen den Klassennamen herausfinden — schwierig zur Compile-Zeit
-                        // Fuer jetzt: obj als erstes Argument + user-defined function suchen
                         let mut call_args: Vec<BasicMetadataValueEnum> = vec![obj.into()];
                         for a in args {
                             call_args.push(self.compile_expr(a)?.into());
                         }
-                        // Versuche alle bekannten Klassen-Methoden
-                        for ((_, mname), func) in &self.class_methods {
-                            if mname == method {
-                                return self.call_rt(*func, &call_args, "method_call");
+
+                        // Statische Klasse des Receivers bestimmen:
+                        //   - Expr::Identifier: in object_var_types nachschauen
+                        //   - Expr::This: current_class
+                        let static_class: Option<String> = match object.as_ref() {
+                            Expr::Identifier(name) => self.object_var_types.get(name).cloned(),
+                            Expr::This => self.current_class.clone(),
+                            _ => None,
+                        };
+
+                        if let Some(mut cls) = static_class {
+                            // Parent-Chain walken bis Methode gefunden
+                            loop {
+                                if let Some(func) = self.class_methods.get(&(cls.clone(), method.clone())).copied() {
+                                    return self.call_rt(func, &call_args, "method_call");
+                                }
+                                match self.class_parents.get(&cls).cloned() {
+                                    Some(p) => cls = p,
+                                    None => break,
+                                }
                             }
+                        }
+
+                        // Fallback: irgendeine gleichnamige Methode (wenn Klasse
+                        // zur Compile-Zeit nicht bekannt ist). Deterministisch
+                        // sortiert damit die Auswahl reproduzierbar bleibt.
+                        let mut candidates: Vec<(&(String, String), &FunctionValue)> =
+                            self.class_methods.iter().filter(|((_, m), _)| m == method).collect();
+                        candidates.sort_by(|a, b| a.0.0.cmp(&b.0.0));
+                        if let Some(((_, _), func)) = candidates.first() {
+                            return self.call_rt(**func, &call_args, "method_call");
                         }
                         // UFCS (Nim-inspiriert): 5.quadrat() → quadrat(5)
                         // Versuche als globale Funktion mit obj als erstem Argument
