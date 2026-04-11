@@ -174,6 +174,9 @@ impl Parser {
         } else if matches!(self.current_type(), TokenType::Order) {
             self.pos += 1;
             Ok("sortiere".to_string())
+        } else if matches!(self.current_type(), TokenType::Show) {
+            self.pos += 1;
+            Ok("zeige".to_string())
         } else {
             let got_desc = got_description(self.current_type());
             Err(ParseError {

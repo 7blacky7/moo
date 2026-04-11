@@ -1156,6 +1156,21 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_return(&mut self, value: &Option<Expr>) -> Result<(), String> {
+        // Sonderfall: 'gib_zurueck' im top-level (main-Funktion). main hat
+        // i32 als return-type, kann keinen MooValue zurueckgeben. Werte
+        // werden ignoriert, return als i32(0) emittiert.
+        let func = self.current_function.unwrap();
+        if func.get_name().to_str() == Ok("main") {
+            // Expression noch evaluieren falls Side-Effects (z.B. Funktionsaufruf)
+            if let Some(expr) = value {
+                let _ = self.compile_expr(expr)?;
+            }
+            self.emit_defers()?;
+            let zero = self.context.i32_type().const_int(0, false);
+            self.builder.build_return(Some(&zero)).map_err(|e| format!("{e}"))?;
+            return Ok(());
+        }
+
         let val = if let Some(expr) = value {
             self.compile_expr(expr)?
         } else {
