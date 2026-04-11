@@ -36,7 +36,8 @@ solange wahr:
 
     # Code ausfuehren — das Herzstueck!
     wenn pfad == "/run" und methode == "POST":
-        setze code auf req["body"]
+        setze body auf json_parse(req["body"])
+        setze code auf body["code"]
         setze output auf ausfuehren(code)
         web_json(req, {"ok": wahr, "output": output})
         weiter
