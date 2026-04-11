@@ -15,6 +15,7 @@
 // MOO_SOCKET = 14 (in moo_runtime.h definiert)
 
 typedef struct {
+    int32_t refcount;  // MUSS ERSTES FELD SEIN — get_refcount_ptr nimmt *(int32_t*)ptr
     int fd;
     int type; // SOCK_STREAM oder SOCK_DGRAM
     bool is_server;
@@ -34,6 +35,7 @@ static MooSocket* get_socket(MooValue v) {
 
 static MooValue make_socket(int fd, int type, bool is_server) {
     MooSocket* s = (MooSocket*)malloc(sizeof(MooSocket));
+    s->refcount = 1;  // owner hat 1 ref, Release bei refcount==0 schliesst+free
     s->fd = fd;
     s->type = type;
     s->is_server = is_server;
@@ -41,6 +43,18 @@ static MooValue make_socket(int fd, int type, bool is_server) {
     v.tag = MOO_SOCKET;
     moo_val_set_ptr(&v, s);
     return v;
+}
+
+// Wird von moo_release aufgerufen wenn Socket-refcount auf 0 faellt.
+// Exportiert damit moo_memory.c es bei refcount==0 aufrufen kann.
+void moo_socket_free(void* ptr) {
+    if (!ptr) return;
+    MooSocket* s = (MooSocket*)ptr;
+    if (s->fd >= 0) {
+        close(s->fd);
+        s->fd = -1;
+    }
+    free(s);
 }
 
 // === TCP Server ===

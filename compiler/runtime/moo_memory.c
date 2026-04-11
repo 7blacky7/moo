@@ -5,8 +5,10 @@
 // Prueft ob ein MooValue ein Heap-Objekt ist (hat refcount)
 static inline bool is_heap_type(uint64_t tag) {
     return tag == MOO_STRING || tag == MOO_LIST || tag == MOO_DICT ||
-           tag == MOO_OBJECT || tag == MOO_FUNC;
+           tag == MOO_OBJECT || tag == MOO_FUNC || tag == MOO_SOCKET;
 }
+
+extern void moo_socket_free(void* ptr);
 
 // Gibt den Pointer auf den refcount eines Heap-Objekts zurueck
 static inline int32_t* get_refcount_ptr(MooValue v) {
@@ -58,6 +60,9 @@ void moo_release(MooValue v) {
             free(f);
             break;
         }
+        case MOO_SOCKET:
+            moo_socket_free(moo_val_as_ptr(v));
+            break;
         default:
             break;
     }
