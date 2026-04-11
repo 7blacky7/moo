@@ -301,8 +301,7 @@ klasse PgClient:
         wenn selbst.sock != nichts:
             setze tm auf neu TerminateMessage()
             selbst.sock.schreibe_bytes(tm.zu_bytes())
-            # NOTE: .schliessen() auf class-held socket crasht glibc pthread (Bug #K4-1)
-            # Socket wird beim Prozess-Ende eh geschlossen
+            selbst.sock.schliessen()
             setze selbst.sock auf nichts
 
 # ------------------------------------------------------------
