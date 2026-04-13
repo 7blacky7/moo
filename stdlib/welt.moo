@@ -48,3 +48,6 @@ funktion welt_meeresspiegel(w, hoehe):
 
 funktion welt_render_distanz(w, distanz):
     __welt_render_distanz(w, distanz)
+
+funktion welt_tageszeit(w, zeit):
+    __welt_tageszeit(w, zeit)

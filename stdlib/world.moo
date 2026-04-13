@@ -48,3 +48,6 @@ function world_sea_level(w, level):
 
 function world_render_dist(w, distance):
     __world_render_dist(w, distance)
+
+function world_time_of_day(w, time):
+    __world_time_of_day(w, time)

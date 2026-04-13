@@ -387,6 +387,15 @@ MooValue moo_mouse_pressed(MooValue window);
 void moo_delay(MooValue ms);
 void moo_pump_events(void);
 
+// === Sprites (SDL2_Image) ===
+MooValue moo_sprite_load(MooValue win, MooValue path);
+void moo_sprite_draw(MooValue win, MooValue id, MooValue x, MooValue y);
+void moo_sprite_draw_scaled(MooValue win, MooValue id, MooValue x, MooValue y, MooValue w, MooValue h);
+void moo_sprite_draw_region(MooValue win, MooValue id, MooValue sx, MooValue sy, MooValue sw, MooValue sh, MooValue dx, MooValue dy, MooValue dw, MooValue dh);
+MooValue moo_sprite_width(MooValue id);
+MooValue moo_sprite_height(MooValue id);
+void moo_sprite_free(MooValue id);
+
 // === 3D Grafik (OpenGL + GLFW) ===
 MooValue moo_3d_create(MooValue title, MooValue w, MooValue h);
 MooValue moo_3d_is_open(MooValue win);
@@ -412,6 +421,20 @@ MooValue moo_3d_key_pressed(MooValue win, MooValue key);
 void moo_3d_capture_mouse(MooValue win);
 MooValue moo_3d_mouse_dx(MooValue win);
 MooValue moo_3d_mouse_dy(MooValue win);
+
+// === Welt (Game-Dev Runtime) ===
+MooValue moo_world_create(MooValue title, MooValue w, MooValue h);
+MooValue moo_world_is_open(MooValue world);
+void moo_world_update(MooValue world);
+void moo_world_close(MooValue world);
+void moo_world_seed(MooValue world, MooValue seed);
+void moo_world_biome(MooValue world, MooValue name, MooValue h_min, MooValue h_max, MooValue color, MooValue trees);
+void moo_world_trees(MooValue world, MooValue biom, MooValue chance);
+void moo_world_sun(MooValue world, MooValue x, MooValue y, MooValue z);
+void moo_world_fog(MooValue world, MooValue dist);
+void moo_world_sea_level(MooValue world, MooValue level);
+void moo_world_render_dist(MooValue world, MooValue dist);
+void moo_world_time_of_day(MooValue world, MooValue t);
 
 // === Result-Typ ===
 MooValue moo_result_ok(MooValue value);

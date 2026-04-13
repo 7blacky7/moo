@@ -2151,6 +2151,39 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_draw_pixel, &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "pixel")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    // Sprites (SDL2_image)
+                    "sprite_laden" | "sprite_load" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_sprite_load, &[a[0].into(), a[1].into()], "spr_load");
+                    }
+                    "sprite_zeichnen" | "sprite_draw" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_sprite_draw, &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "spr_draw")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "sprite_zeichnen_skaliert" | "sprite_draw_scaled" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_sprite_draw_scaled, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "spr_scaled")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "sprite_ausschnitt" | "sprite_region" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_sprite_draw_region, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into(), a[7].into(), a[8].into(), a[9].into()], "spr_region")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "sprite_breite" | "sprite_width" => {
+                        let id = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_sprite_width, &[id.into()], "spr_w");
+                    }
+                    "sprite_hoehe" | "sprite_height" => {
+                        let id = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_sprite_height, &[id.into()], "spr_h");
+                    }
+                    "sprite_freigeben" | "sprite_free" => {
+                        let id = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_sprite_free, &[id.into()], "spr_free")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     // Grafik — Input (K4)
                     "taste_gedrückt" | "key_pressed" => {
                         let key = self.compile_expr(&args[0])?;

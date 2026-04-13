@@ -28,6 +28,7 @@ fn main() {
         .file("runtime/moo_eval.c")
         .file("runtime/moo_profiler.c")
         .file("runtime/moo_world.c")
+        .file("runtime/moo_sprite.c")
         .include("runtime")
         .include("/usr/include/SDL2")
         .opt_level(2)
@@ -61,8 +62,9 @@ fn main() {
     // Link libsqlite3 for database support
     println!("cargo:rustc-link-lib=sqlite3");
 
-    // Link SDL2 for graphics support
+    // Link SDL2 + SDL2_image for graphics + sprites
     println!("cargo:rustc-link-lib=SDL2");
+    println!("cargo:rustc-link-lib=SDL2_image");
 
     // 3D Backend: bedingt linken
     #[cfg(feature = "gl21")]
