@@ -349,12 +349,22 @@ fn resolve_modules(
                         // "importiere mathe" → ALLE Statements direkt einfuegen (kein Prefix!)
                         imported_stmts.extend(mod_program.statements);
                     } else {
-                        // "aus mathe importiere fakultaet" → nur gewuenschte Funktionen
+                        // "aus mathe importiere fakultaet" → gewuenschte Funktionen
+                        // + ALLE Variablen/Konstanten (werden von Funktionen gebraucht)
                         for mod_stmt in mod_program.statements {
-                            if let ast::Stmt::FunctionDef { ref name, .. } = mod_stmt {
-                                if names.contains(name) {
+                            match &mod_stmt {
+                                ast::Stmt::FunctionDef { name, .. } => {
+                                    if names.contains(name) {
+                                        imported_stmts.push(mod_stmt);
+                                    }
+                                }
+                                // Variablen + Konstanten immer importieren
+                                // (Modul-Funktionen koennten sie referenzieren)
+                                ast::Stmt::Assignment { .. } |
+                                ast::Stmt::ConstAssignment { .. } => {
                                     imported_stmts.push(mod_stmt);
                                 }
+                                _ => {}
                             }
                         }
                     }
