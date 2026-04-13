@@ -192,6 +192,7 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_world_sea_level: FunctionValue<'ctx>,
     pub moo_world_render_dist: FunctionValue<'ctx>,
     pub moo_world_height_at: FunctionValue<'ctx>,
+    pub moo_world_time_of_day: FunctionValue<'ctx>,
     // Result-Typ
     pub moo_result_ok: FunctionValue<'ctx>,
     pub moo_result_err: FunctionValue<'ctx>,
@@ -498,6 +499,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_world_sea_level: module.add_function("moo_world_sea_level", void_type.fn_type(mv2, false), None),
             moo_world_render_dist: module.add_function("moo_world_render_dist", void_type.fn_type(mv2, false), None),
             moo_world_height_at: decl_mv_mv!("moo_world_height_at", mv3),
+            moo_world_time_of_day: module.add_function("moo_world_time_of_day", void_type.fn_type(mv2, false), None),
             moo_result_ok: decl_mv_mv!("moo_result_ok", mv1),
             moo_result_err: decl_mv_mv!("moo_result_err", mv1),
             moo_result_is_ok: decl_mv_mv!("moo_result_is_ok", mv1),

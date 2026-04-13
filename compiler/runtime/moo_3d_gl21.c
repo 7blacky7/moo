@@ -61,6 +61,13 @@ static void* gl21_create_window(const char* title, int w, int h) {
     glEnable(GL_COLOR_MATERIAL);
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
 
+    /* Fixed-Function Fog */
+    glEnable(GL_FOG);
+    glFogi(GL_FOG_MODE, GL_EXP);
+    glFogf(GL_FOG_DENSITY, 0.025f);
+    float fogColor[] = {0.85f, 0.87f, 0.90f, 1.0f};
+    glFogfv(GL_FOG_COLOR, fogColor);
+
     float light_pos[] = {5.0f, 10.0f, 5.0f, 1.0f};
     float light_amb[] = {0.3f, 0.3f, 0.3f, 1.0f};
     float light_dif[] = {0.8f, 0.8f, 0.8f, 1.0f};
@@ -359,6 +366,35 @@ static float gl21_mouse_dy(void* vctx) {
 }
 
 // ============================================================
+// Fog + Licht
+// ============================================================
+
+static void gl21_set_fog_density(void* vctx) {
+    /* GL21 nutzt glFog — density wird als float Parameter übergeben */
+}
+static void gl21_set_fog_density_f(void* vctx, float density) {
+    (void)vctx;
+    glFogf(GL_FOG_DENSITY, density);
+}
+static void gl21_set_light_dir(void* vctx, float x, float y, float z) {
+    (void)vctx;
+    float pos[] = {x, y, z, 0.0f}; /* w=0 → directional light */
+    glLightfv(GL_LIGHT0, GL_POSITION, pos);
+    /* Diffuse-Farbe basierend auf Sonnenhöhe: hoch=weiss, tief=orange/rot */
+    float intensity = y > 0.0f ? y : 0.0f;
+    float dif_r = 0.3f + 0.7f * intensity;
+    float dif_g = 0.2f + 0.6f * intensity;
+    float dif_b = 0.1f + 0.7f * intensity;
+    float dif[] = {dif_r, dif_g, dif_b, 1.0f};
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, dif);
+}
+static void gl21_set_ambient(void* vctx, float level) {
+    (void)vctx;
+    float amb[] = {level, level, level, 1.0f};
+    glLightfv(GL_LIGHT0, GL_AMBIENT, amb);
+}
+
+// ============================================================
 // Backend-Struct Export
 // ============================================================
 
@@ -381,6 +417,9 @@ Moo3DBackend moo_backend_gl21 = {
     .capture_mouse = gl21_capture_mouse,
     .mouse_dx      = gl21_mouse_dx,
     .mouse_dy      = gl21_mouse_dy,
+    .set_fog_density = gl21_set_fog_density_f,
+    .set_light_dir   = gl21_set_light_dir,
+    .set_ambient     = gl21_set_ambient,
     .chunk_create  = gl21_chunk_create,
     .chunk_begin   = gl21_chunk_begin,
     .chunk_end     = gl21_chunk_end,

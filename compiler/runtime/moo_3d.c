@@ -212,6 +212,25 @@ MooValue moo_3d_key_pressed(MooValue win, MooValue key) {
 }
 
 // ============================================================
+// Fog + Licht
+// ============================================================
+
+void moo_3d_set_fog_density(float density) {
+    if (!g_backend || !g_ctx) return;
+    g_backend->set_fog_density(g_ctx, density);
+}
+
+void moo_3d_set_light_dir(float x, float y, float z) {
+    if (!g_backend || !g_ctx) return;
+    g_backend->set_light_dir(g_ctx, x, y, z);
+}
+
+void moo_3d_set_ambient(float level) {
+    if (!g_backend || !g_ctx) return;
+    g_backend->set_ambient(g_ctx, level);
+}
+
+// ============================================================
 // Maus
 // ============================================================
 

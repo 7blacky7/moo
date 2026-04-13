@@ -47,6 +47,9 @@ extern void moo_3d_capture_mouse(MooValue win);
 extern MooValue moo_3d_mouse_dx(MooValue win);
 extern MooValue moo_3d_mouse_dy(MooValue win);
 extern double moo_time_ms(void);
+extern void moo_3d_set_fog_density(float density);
+extern void moo_3d_set_light_dir(float x, float y, float z);
+extern void moo_3d_set_ambient(float level);
 
 /* ========================================================
  * Noise (Perlin + fBm, rein in C)
@@ -137,6 +140,7 @@ typedef struct {
     int berg_okt;
     float berg_threshold;
     float height_max;
+    float fog_density;
     /* Biome */
     Biom biome[MAX_BIOME];
     int biom_count;
@@ -150,6 +154,10 @@ typedef struct {
     float speed, gravity, jump_force;
     bool on_ground;
     float mouse_sens;
+    /* Tag-Nacht-Zyklus */
+    float time_of_day;  /* 0.0=Mitternacht, 0.25=Aufgang, 0.5=Mittag, 0.75=Untergang */
+    float day_speed;    /* Geschwindigkeit (1.0 = ~2min pro Tag) */
+    double last_frame_ms;
     /* State */
     bool initialized;
 } MooWorld;
@@ -317,6 +325,7 @@ MooValue moo_world_create(MooValue title, MooValue w, MooValue h) {
     g_world.berg_threshold = 0.2f;
     g_world.height_max = 120.0f;
     g_world.sea_level = 8.0f;
+    g_world.fog_density = 0.015f;
 
     /* Default Biome */
     #define ADD_BIOM(n, hmin, hmax, cr, cg, cb, tc) do { \
@@ -341,6 +350,9 @@ MooValue moo_world_create(MooValue title, MooValue w, MooValue h) {
     g_world.jump_force = 0.2f;
     g_world.mouse_sens = 0.003f;
     g_world.render_dist = 4;
+    g_world.time_of_day = 0.35f; /* Vormittag */
+    g_world.day_speed = 1.0f;
+    g_world.last_frame_ms = moo_time_ms();
     g_world.initialized = true;
 
     return g_world.win;
@@ -400,10 +412,13 @@ void moo_world_sun(MooValue win, MooValue x, MooValue y, MooValue z) {
     (void)x; (void)y; (void)z;
 }
 
-void moo_world_fog(MooValue win, MooValue dist) {
+void moo_world_fog(MooValue win, MooValue density) {
     (void)win;
-    /* fogDist wird vom Backend-UBO gesteuert — hier nur merken */
-    (void)dist;
+    g_world.fog_density = (float)MV_NUM(density);
+    /* Backend muss Fog-Density setzen — braucht set_fog im Backend-Interface */
+    /* Workaround: Extern-Funktion die direkt im GL21 Backend den Fog setzt */
+    extern void moo_3d_set_fog_density(float d);
+    moo_3d_set_fog_density(g_world.fog_density);
 }
 
 void moo_world_sea_level(MooValue win, MooValue level) {
@@ -415,12 +430,24 @@ void moo_world_render_dist(MooValue win, MooValue dist) {
     (void)win;
     g_world.render_dist = (int)MV_NUM(dist);
     if (g_world.render_dist < 1) g_world.render_dist = 1;
-    if (g_world.render_dist > 8) g_world.render_dist = 8;
+    if (g_world.render_dist > 50) g_world.render_dist = 50;
+}
+
+void moo_world_time_of_day(MooValue win, MooValue t) {
+    (void)win;
+    float v = (float)MV_NUM(t);
+    while (v < 0.0f) v += 1.0f;
+    while (v >= 1.0f) v -= 1.0f;
+    g_world.time_of_day = v;
 }
 
 void moo_world_update(MooValue win) {
     (void)win;
     if (!g_world.initialized) return;
+
+    /* Tag-Nacht automatisch voranschreiten (1 Zyklus = ~60 Sekunden) */
+    g_world.time_of_day += g_world.day_speed * 0.0003f;
+    if (g_world.time_of_day >= 1.0f) g_world.time_of_day -= 1.0f;
     MooValue w = g_world.win;
 
     /* === Input === */
@@ -440,12 +467,12 @@ void moo_world_update(MooValue win) {
         g_world.pz -= cosf(g_world.yaw) * g_world.speed;
     }
     if (MV_NUM(moo_3d_key_pressed(w, key_a))) {
-        g_world.px -= cosf(g_world.yaw) * g_world.speed;
-        g_world.pz += sinf(g_world.yaw) * g_world.speed;
-    }
-    if (MV_NUM(moo_3d_key_pressed(w, key_d))) {
         g_world.px += cosf(g_world.yaw) * g_world.speed;
         g_world.pz -= sinf(g_world.yaw) * g_world.speed;
+    }
+    if (MV_NUM(moo_3d_key_pressed(w, key_d))) {
+        g_world.px -= cosf(g_world.yaw) * g_world.speed;
+        g_world.pz += sinf(g_world.yaw) * g_world.speed;
     }
 
     /* Maus */
@@ -477,10 +504,53 @@ void moo_world_update(MooValue win) {
     float look_y = g_world.py + sinf(g_world.pitch) * 5.0f;
     float look_z = g_world.pz + cosf(g_world.yaw) * cosf(g_world.pitch) * 5.0f;
 
-    moo_3d_clear(w, moo_number(0.53), moo_number(0.81), moo_number(0.92));
+    /* Tag-Nacht: Himmelfarbe + Licht */
+    float sun_angle = g_world.time_of_day * 2.0f * (float)M_PI;
+    float sun_dir_x = -cosf(sun_angle);
+    float sun_dir_y = sinf(sun_angle);
+    float sun_dir_z = 0.3f;
+    float day_factor = sun_dir_y > 0.0f ? sun_dir_y : 0.0f; /* 0=Nacht, 1=Mittag */
+
+    /* Dramatische Himmelfarben je nach Tageszeit */
+    float t = g_world.time_of_day; /* 0=Mitternacht, 0.25=Aufgang, 0.5=Mittag, 0.75=Untergang */
+    float sky_r, sky_g, sky_b;
+    if (t < 0.2f) {
+        /* Nacht: dunkelblau */
+        sky_r = 0.02f; sky_g = 0.02f; sky_b = 0.08f;
+    } else if (t < 0.3f) {
+        /* Morgen: rosa/orange Uebergang */
+        float f = (t - 0.2f) * 10.0f; /* 0→1 */
+        sky_r = 0.02f + 0.90f * f; sky_g = 0.02f + 0.40f * f; sky_b = 0.08f + 0.30f * f;
+    } else if (t < 0.4f) {
+        /* Vormittag: orange→blau */
+        float f = (t - 0.3f) * 10.0f;
+        sky_r = 0.92f - 0.39f * f; sky_g = 0.42f + 0.39f * f; sky_b = 0.38f + 0.54f * f;
+    } else if (t < 0.6f) {
+        /* Mittag: hellblau */
+        sky_r = 0.53f; sky_g = 0.81f; sky_b = 0.92f;
+    } else if (t < 0.7f) {
+        /* Nachmittag→Abend: blau→orange/rot */
+        float f = (t - 0.6f) * 10.0f;
+        sky_r = 0.53f + 0.42f * f; sky_g = 0.81f - 0.51f * f; sky_b = 0.92f - 0.72f * f;
+    } else if (t < 0.8f) {
+        /* Abend: rot/lila */
+        float f = (t - 0.7f) * 10.0f;
+        sky_r = 0.95f - 0.55f * f; sky_g = 0.30f - 0.18f * f; sky_b = 0.20f + 0.15f * f;
+    } else {
+        /* Nacht: dunkelblau */
+        float f = (t - 0.8f) * 5.0f;
+        sky_r = 0.40f - 0.38f * f; sky_g = 0.12f - 0.10f * f; sky_b = 0.35f - 0.27f * f;
+    }
+
+    moo_3d_set_fog_density(g_world.fog_density);
+    moo_3d_clear(w, moo_number(sky_r), moo_number(sky_g), moo_number(sky_b));
     moo_3d_camera(w,
         moo_number(g_world.px), moo_number(g_world.py), moo_number(g_world.pz),
         moo_number(look_x), moo_number(look_y), moo_number(look_z));
+
+    /* Licht NACH Kamera setzen (GL21 transformiert Position mit ModelView) */
+    moo_3d_set_light_dir(sun_dir_x, sun_dir_y > 0.1f ? sun_dir_y : 0.1f, sun_dir_z);
+    moo_3d_set_ambient(0.02f + 0.18f * day_factor);
 
     /* === Chunk-Management === */
     int pcx = (int)floorf(g_world.px / CHUNK_SIZE);
@@ -513,11 +583,25 @@ void moo_world_update(MooValue win) {
         }
     }
 
-    /* Sonne */
-    moo_3d_sphere(w,
-        moo_number(g_world.px + 700), moo_number(g_world.py + 400),
-        moo_number(g_world.pz + 500),
-        moo_number(20), moo_string_new("#FFD700"), moo_number(8));
+    /* Sonne am Himmel (nah genug fuer Far-Plane 250, aber weit genug um gross zu wirken) */
+    if (sun_dir_y > -0.05f) {
+        float sun_px = g_world.px + sun_dir_x * 200.0f;
+        float sun_py = g_world.py + sun_dir_y * 200.0f + 80.0f;
+        float sun_pz = g_world.pz + sun_dir_z * 200.0f;
+        /* Farbe je nach Tageszeit */
+        const char* sun_color;
+        if (t > 0.35f && t < 0.65f)
+            sun_color = "#FFFFCC"; /* Mittag: weiss-gelb */
+        else if (t > 0.2f && t < 0.35f)
+            sun_color = "#FF8C00"; /* Morgen: orange */
+        else if (t > 0.65f && t < 0.8f)
+            sun_color = "#FF4500"; /* Abend: rot-orange */
+        else
+            sun_color = "#FF6B35"; /* Daemmerung */
+        moo_3d_sphere(w,
+            moo_number(sun_px), moo_number(sun_py), moo_number(sun_pz),
+            moo_number(30), moo_string_new(sun_color), moo_number(10));
+    }
 
     moo_3d_update(w);
 }

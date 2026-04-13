@@ -2391,6 +2391,11 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_world_render_dist, &[a[0].into(), a[1].into()], "world_rd")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    "__welt_tageszeit" | "__world_time_of_day" => {
+                        let a = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_world_time_of_day, &[a[0].into(), a[1].into()], "world_tod")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     "__welt_hoehe_bei" | "__world_height_at" => {
                         let a = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_world_height_at, &[a[0].into(), a[1].into(), a[2].into()], "world_h");

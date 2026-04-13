@@ -31,6 +31,10 @@ typedef struct {
     void  (*capture_mouse)(void* ctx);
     float (*mouse_dx)(void* ctx);
     float (*mouse_dy)(void* ctx);
+    // Fog + Licht
+    void  (*set_fog_density)(void* ctx, float density);
+    void  (*set_light_dir)(void* ctx, float x, float y, float z);
+    void  (*set_ambient)(void* ctx, float level);
     // Chunks
     int   (*chunk_create)(void* ctx);
     void  (*chunk_begin)(void* ctx, int id);
