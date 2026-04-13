@@ -193,6 +193,10 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_world_render_dist: FunctionValue<'ctx>,
     pub moo_world_height_at: FunctionValue<'ctx>,
     pub moo_world_time_of_day: FunctionValue<'ctx>,
+    // Test-API
+    pub moo_screenshot: FunctionValue<'ctx>,
+    pub moo_simulate_key: FunctionValue<'ctx>,
+    pub moo_simulate_mouse: FunctionValue<'ctx>,
     // Sprites (SDL2_image)
     pub moo_sprite_load: FunctionValue<'ctx>,
     pub moo_sprite_draw: FunctionValue<'ctx>,
@@ -508,6 +512,10 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_world_render_dist: module.add_function("moo_world_render_dist", void_type.fn_type(mv2, false), None),
             moo_world_height_at: decl_mv_mv!("moo_world_height_at", mv3),
             moo_world_time_of_day: module.add_function("moo_world_time_of_day", void_type.fn_type(mv2, false), None),
+            // Test-API
+            moo_screenshot: decl_mv_mv!("moo_screenshot", mv2),
+            moo_simulate_key: module.add_function("moo_simulate_key", void_type.fn_type(mv2, false), None),
+            moo_simulate_mouse: module.add_function("moo_simulate_mouse", void_type.fn_type(mv3, false), None),
             // Sprites
             moo_sprite_load: decl_mv_mv!("moo_sprite_load", mv2),
             moo_sprite_draw: module.add_function("moo_sprite_draw", void_type.fn_type(&[mv, mv, mv, mv], false), None),

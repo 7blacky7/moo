@@ -1,58 +1,84 @@
 # ============================================================
-# zelda.moo — Top-Down Adventure mit Kenney Sprites
+# zelda.moo — Top-Down Adventure mit Zelda-like Sprites
 #
 # Kompilieren: moo-compiler compile beispiele/zelda.moo -o beispiele/zelda
 # Starten:     ./beispiele/zelda
 #
-# Steuerung:
-#   WASD      - Bewegen (4 Richtungen)
-#   Leertaste - Schwert-Angriff
-#   Escape    - Beenden
+# Steuerung: WASD=Bewegen, Leertaste=Schwert, Escape=Beenden
 #
-# Features:
-#   * Tile-basierte Karte mit Kenney Roguelike Sprites
-#   * 2 Raeume mit Tuer-Wechsel
-#   * Feinde mit Patrouille + Schwert-Kampf
-#   * Items: Muenzen, Herzen, Schluessel
-#   * HUD: Leben + Score + Schluessel
+# Assets: opengameart.org/content/zelda-like-tilesets-and-sprites
 # ============================================================
 
-# === Konstanten ===
 konstante TILE auf 32
 konstante MAP_W auf 20
 konstante MAP_H auf 15
 konstante WIN_W auf 640
 konstante WIN_H auf 480
 konstante SPEED auf 3
-konstante SPIELER_SIZE auf 28
-konstante FEIND_SIZE auf 28
+konstante P_SIZE auf 28
+konstante F_SIZE auf 28
 
-# Sprite-Basis-Pfad
-konstante SPR_DIR auf "beispiele/assets/sprites/kenney_roguelike/Tiles/Colored/"
+# Sprite-Pfade
+konstante GFX auf "beispiele/assets/sprites/zelda_like/gfx/"
+
+# Richtungen: 0=unten, 1=links, 2=rechts, 3=oben
+# Character-Sheet: 34x32 Frames, 8 Spalten x 8 Reihen
+# Row 0=unten walk, Row 1=links walk, Row 2=rechts walk, Row 3=oben walk
 
 # === Sprites laden ===
-funktion sprites_laden(win):
-    setze spr auf {}
-    # Terrain
-    spr["gras"] = sprite_laden(win, SPR_DIR + "tile_0048.png")
-    spr["wand"] = sprite_laden(win, SPR_DIR + "tile_0001.png")
-    spr["wasser"] = sprite_laden(win, SPR_DIR + "tile_0089.png")
-    spr["baum"] = sprite_laden(win, SPR_DIR + "tile_0052.png")
-    spr["tuer"] = sprite_laden(win, SPR_DIR + "tile_0006.png")
-    # Spieler (Ritter)
-    spr["held"] = sprite_laden(win, SPR_DIR + "tile_0025.png")
-    # Feinde
-    spr["feind"] = sprite_laden(win, SPR_DIR + "tile_0032.png")
-    # Items
-    spr["muenze"] = sprite_laden(win, SPR_DIR + "tile_0067.png")
-    spr["herz"] = sprite_laden(win, SPR_DIR + "tile_0060.png")
-    spr["schluessel"] = sprite_laden(win, SPR_DIR + "tile_0068.png")
-    # Schwert
-    spr["schwert"] = sprite_laden(win, SPR_DIR + "tile_0057.png")
-    gib_zurück spr
+funktion lade_sprites(win):
+    setze s auf {}
+    s["char"] = sprite_laden(win, GFX + "character.png")
+    s["world"] = sprite_laden(win, GFX + "Overworld.png")
+    s["obj"] = sprite_laden(win, GFX + "objects.png")
+    s["cave"] = sprite_laden(win, GFX + "cave.png")
+    gib_zurück s
 
-# === Tile-Typen ===
-# 0=Gras, 1=Wand, 2=Wasser, 3=Baum, 4=Tuer
+# === Charakter zeichnen (animiert) ===
+funktion held_zeichnen(win, s, x, y, richtung, frame, angriff):
+    # Walk: Row = richtung, Col = frame % 4 (34x32 Frames)
+    setze row auf richtung
+    setze col auf frame % 4
+    wenn angriff > 0:
+        setze col auf 4
+    setze sx auf col * 34
+    setze sy auf row * 32
+    setze char_spr auf s["char"]
+    sprite_ausschnitt(win, char_spr, sx, sy, 34, 32, x - 8, y - 8, 48, 48)
+
+# === Overworld-Tile zeichnen ===
+# Overworld.png: 16x16 Tiles, 40 Spalten x 36 Reihen
+# Gras: ~(0,0), Wand/Stein: ~(0,16), Wasser: ~(0,128), Baum: ~(16,0)
+funktion tile_zeichnen(win, s, typ, dx, dy):
+    setze world_spr auf s["world"]
+    wenn typ == 0:
+        sprite_ausschnitt(win, world_spr, 0, 0, 16, 16, dx, dy, TILE, TILE)
+    wenn typ == 1:
+        sprite_ausschnitt(win, world_spr, 96, 0, 16, 16, dx, dy, TILE, TILE)
+    wenn typ == 2:
+        sprite_ausschnitt(win, world_spr, 128, 0, 16, 16, dx, dy, TILE, TILE)
+    wenn typ == 3:
+        sprite_ausschnitt(win, world_spr, 0, 0, 16, 16, dx, dy, TILE, TILE)
+        sprite_ausschnitt(win, world_spr, 16, 0, 16, 16, dx, dy, TILE, TILE)
+    wenn typ == 4:
+        sprite_ausschnitt(win, world_spr, 48, 16, 16, 16, dx, dy, TILE, TILE)
+
+# === Items zeichnen ===
+# Objects.png: Herz ~(0,0), Muenze ~(32,16), Schluessel ~(64,0)
+funktion item_zeichnen(win, s, typ, dx, dy):
+    setze obj_spr auf s["obj"]
+    wenn typ == 0:
+        sprite_ausschnitt(win, obj_spr, 32, 32, 16, 16, dx, dy, 24, 24)
+    wenn typ == 1:
+        sprite_ausschnitt(win, obj_spr, 0, 0, 16, 16, dx, dy, 24, 24)
+    wenn typ == 2:
+        sprite_ausschnitt(win, obj_spr, 0, 16, 16, 16, dx, dy, 24, 24)
+
+# === Feind zeichnen ===
+funktion feind_zeichnen(win, s, x, y):
+    setze char_spr auf s["char"]
+    sprite_ausschnitt(win, char_spr, 0, 128, 34, 32, x - 8, y - 8, 48, 48)
+
 funktion tile_fest(t):
     gib_zurück t == 1 oder t == 2 oder t == 3
 
@@ -105,141 +131,125 @@ funktion erstelle_raum_1():
     k[7 * MAP_W + 0] = 4
     gib_zurück k
 
-# === Karte zeichnen (mit Sprites) ===
-funktion karte_zeichnen(win, karte, spr):
+funktion karte_zeichnen(win, s, karte):
     setze y auf 0
     solange y < MAP_H:
         setze x auf 0
         solange x < MAP_W:
             setze t auf karte[y * MAP_W + x]
-            # Immer Gras als Hintergrund
-            sprite_zeichnen_skaliert(win, spr["gras"], x * TILE, y * TILE, TILE, TILE)
-            # Dann Overlay
-            wenn t == 1:
-                sprite_zeichnen_skaliert(win, spr["wand"], x * TILE, y * TILE, TILE, TILE)
-            wenn t == 2:
-                sprite_zeichnen_skaliert(win, spr["wasser"], x * TILE, y * TILE, TILE, TILE)
-            wenn t == 3:
-                sprite_zeichnen_skaliert(win, spr["baum"], x * TILE, y * TILE, TILE, TILE)
-            wenn t == 4:
-                sprite_zeichnen_skaliert(win, spr["tuer"], x * TILE, y * TILE, TILE, TILE)
+            tile_zeichnen(win, s, t, x * TILE, y * TILE)
             setze x auf x + 1
         setze y auf y + 1
 
 # === Feinde ===
-setze feinde_x auf []
-setze feinde_y auf []
-setze feinde_dir auf []
-setze feinde_aktiv auf []
+setze fx auf []
+setze fy auf []
+setze fd auf []
+setze feind_a auf []
 
 funktion feinde_init(raum):
-    setze feinde_x auf []
-    setze feinde_y auf []
-    setze feinde_dir auf []
-    setze feinde_aktiv auf []
+    setze fx auf []
+    setze fy auf []
+    setze fd auf []
+    setze feind_a auf []
     wenn raum == 0:
-        feinde_x.hinzufügen(224.0)
-        feinde_y.hinzufügen(128.0)
-        feinde_dir.hinzufügen(1)
-        feinde_aktiv.hinzufügen(wahr)
-        feinde_x.hinzufügen(384.0)
-        feinde_y.hinzufügen(320.0)
-        feinde_dir.hinzufügen(-1)
-        feinde_aktiv.hinzufügen(wahr)
-        feinde_x.hinzufügen(480.0)
-        feinde_y.hinzufügen(192.0)
-        feinde_dir.hinzufügen(1)
-        feinde_aktiv.hinzufügen(wahr)
+        fx.hinzufügen(224.0)
+        fy.hinzufügen(128.0)
+        fd.hinzufügen(1)
+        feind_a.hinzufügen(wahr)
+        fx.hinzufügen(384.0)
+        fy.hinzufügen(320.0)
+        fd.hinzufügen(-1)
+        feind_a.hinzufügen(wahr)
+        fx.hinzufügen(480.0)
+        fy.hinzufügen(192.0)
+        fd.hinzufügen(1)
+        feind_a.hinzufügen(wahr)
     wenn raum == 1:
-        feinde_x.hinzufügen(224.0)
-        feinde_y.hinzufügen(96.0)
-        feinde_dir.hinzufügen(1)
-        feinde_aktiv.hinzufügen(wahr)
-        feinde_x.hinzufügen(384.0)
-        feinde_y.hinzufügen(288.0)
-        feinde_dir.hinzufügen(-1)
-        feinde_aktiv.hinzufügen(wahr)
+        fx.hinzufügen(224.0)
+        fy.hinzufügen(96.0)
+        fd.hinzufügen(1)
+        feind_a.hinzufügen(wahr)
+        fx.hinzufügen(384.0)
+        fy.hinzufügen(288.0)
+        fd.hinzufügen(-1)
+        feind_a.hinzufügen(wahr)
 
 funktion feinde_update(karte):
     setze i auf 0
-    solange i < länge(feinde_x):
-        wenn feinde_aktiv[i]:
-            setze nx auf feinde_x[i] + feinde_dir[i] * 2
+    solange i < länge(fx):
+        wenn feind_a[i]:
+            setze nx auf fx[i] + fd[i] * 2
             setze tx auf boden(nx / TILE)
-            setze ty auf boden(feinde_y[i] / TILE)
+            setze ty auf boden(fy[i] / TILE)
             wenn tx < 1 oder tx >= MAP_W - 1 oder tile_fest(karte[ty * MAP_W + tx]):
-                feinde_dir[i] = feinde_dir[i] * -1
+                fd[i] = fd[i] * -1
             sonst:
-                feinde_x[i] = nx
+                fx[i] = nx
         setze i auf i + 1
 
-funktion feinde_zeichnen(win, spr):
+funktion feinde_malen(win, s):
     setze i auf 0
-    solange i < länge(feinde_x):
-        wenn feinde_aktiv[i]:
-            sprite_zeichnen_skaliert(win, spr["feind"], feinde_x[i], feinde_y[i], TILE, TILE)
+    solange i < länge(fx):
+        wenn feind_a[i]:
+            feind_zeichnen(win, s, fx[i], fy[i])
         setze i auf i + 1
 
 # === Items ===
-setze item_x auf []
-setze item_y auf []
-setze item_typ auf []
-setze item_aktiv auf []
+setze ix auf []
+setze iy auf []
+setze it auf []
+setze ia auf []
 
 funktion items_init(raum):
-    setze item_x auf []
-    setze item_y auf []
-    setze item_typ auf []
-    setze item_aktiv auf []
+    setze ix auf []
+    setze iy auf []
+    setze it auf []
+    setze ia auf []
     wenn raum == 0:
-        item_x.hinzufügen(128.0)
-        item_y.hinzufügen(96.0)
-        item_typ.hinzufügen(0)
-        item_aktiv.hinzufügen(wahr)
-        item_x.hinzufügen(320.0)
-        item_y.hinzufügen(288.0)
-        item_typ.hinzufügen(0)
-        item_aktiv.hinzufügen(wahr)
-        item_x.hinzufügen(448.0)
-        item_y.hinzufügen(96.0)
-        item_typ.hinzufügen(0)
-        item_aktiv.hinzufügen(wahr)
-        item_x.hinzufügen(192.0)
-        item_y.hinzufügen(384.0)
-        item_typ.hinzufügen(0)
-        item_aktiv.hinzufügen(wahr)
-        item_x.hinzufügen(64.0)
-        item_y.hinzufügen(384.0)
-        item_typ.hinzufügen(1)
-        item_aktiv.hinzufügen(wahr)
-        item_x.hinzufügen(544.0)
-        item_y.hinzufügen(384.0)
-        item_typ.hinzufügen(2)
-        item_aktiv.hinzufügen(wahr)
+        ix.hinzufügen(128.0)
+        iy.hinzufügen(96.0)
+        it.hinzufügen(0)
+        ia.hinzufügen(wahr)
+        ix.hinzufügen(320.0)
+        iy.hinzufügen(288.0)
+        it.hinzufügen(0)
+        ia.hinzufügen(wahr)
+        ix.hinzufügen(448.0)
+        iy.hinzufügen(96.0)
+        it.hinzufügen(0)
+        ia.hinzufügen(wahr)
+        ix.hinzufügen(192.0)
+        iy.hinzufügen(384.0)
+        it.hinzufügen(0)
+        ia.hinzufügen(wahr)
+        ix.hinzufügen(64.0)
+        iy.hinzufügen(384.0)
+        it.hinzufügen(1)
+        ia.hinzufügen(wahr)
+        ix.hinzufügen(544.0)
+        iy.hinzufügen(384.0)
+        it.hinzufügen(2)
+        ia.hinzufügen(wahr)
     wenn raum == 1:
-        item_x.hinzufügen(288.0)
-        item_y.hinzufügen(128.0)
-        item_typ.hinzufügen(0)
-        item_aktiv.hinzufügen(wahr)
-        item_x.hinzufügen(416.0)
-        item_y.hinzufügen(352.0)
-        item_typ.hinzufügen(0)
-        item_aktiv.hinzufügen(wahr)
-        item_x.hinzufügen(160.0)
-        item_y.hinzufügen(256.0)
-        item_typ.hinzufügen(1)
-        item_aktiv.hinzufügen(wahr)
+        ix.hinzufügen(288.0)
+        iy.hinzufügen(128.0)
+        it.hinzufügen(0)
+        ia.hinzufügen(wahr)
+        ix.hinzufügen(416.0)
+        iy.hinzufügen(352.0)
+        it.hinzufügen(0)
+        ia.hinzufügen(wahr)
+        ix.hinzufügen(160.0)
+        iy.hinzufügen(256.0)
+        it.hinzufügen(1)
+        ia.hinzufügen(wahr)
 
-funktion items_zeichnen(win, spr):
+funktion items_malen(win, s):
     setze i auf 0
-    solange i < länge(item_x):
-        wenn item_aktiv[i]:
-            wenn item_typ[i] == 0:
-                sprite_zeichnen_skaliert(win, spr["muenze"], item_x[i], item_y[i], 24, 24)
-            wenn item_typ[i] == 1:
-                sprite_zeichnen_skaliert(win, spr["herz"], item_x[i], item_y[i], 24, 24)
-            wenn item_typ[i] == 2:
-                sprite_zeichnen_skaliert(win, spr["schluessel"], item_x[i], item_y[i], 24, 24)
+    solange i < länge(ix):
+        wenn ia[i]:
+            item_zeichnen(win, s, it[i], ix[i], iy[i])
         setze i auf i + 1
 
 # === Kollision ===
@@ -263,7 +273,7 @@ funktion tile_check(karte, px, py, pw, ph):
         gib_zurück wahr
     gib_zurück falsch
 
-# === Spieler-State ===
+# === State ===
 setze px auf 64.0
 setze py auf 224.0
 setze leben auf 3
@@ -271,17 +281,16 @@ setze score auf 0
 setze hat_key auf falsch
 setze raum_nr auf 0
 setze schwert auf 0
-setze sdx auf 0
-setze sdy auf 1
+setze richtung auf 0
+setze walk_frame auf 0
+setze walk_timer auf 0
 setze unverw auf 0
 
-# === Karten + Init ===
 setze karten auf [erstelle_raum_0(), erstelle_raum_1()]
 setze karte auf karten[0]
 feinde_init(0)
 items_init(0)
 
-# === Raum wechseln ===
 funktion wechsel(nr, sx, sy):
     setze raum_nr auf nr
     setze karte auf karten[nr]
@@ -290,74 +299,94 @@ funktion wechsel(nr, sx, sy):
     feinde_init(nr)
     items_init(nr)
 
-# === HUD ===
-funktion hud(win, spr):
+funktion hud(win, s):
+    setze obj_spr auf s["obj"]
     zeichne_rechteck(win, 0, 0, WIN_W, 28, "#1A1A2E")
     setze i auf 0
     solange i < leben:
-        sprite_zeichnen_skaliert(win, spr["herz"], 8 + i * 26, 2, 24, 24)
+        sprite_ausschnitt(win, obj_spr, 0, 0, 16, 16, 8 + i * 26, 2, 24, 24)
         setze i auf i + 1
-    setze s auf 0
-    solange s < score und s < 20:
-        sprite_zeichnen_skaliert(win, spr["muenze"], WIN_W - 28 - s * 14, 4, 20, 20)
-        setze s auf s + 1
+    setze sc auf 0
+    solange sc < score und sc < 20:
+        sprite_ausschnitt(win, obj_spr, 32, 32, 16, 16, WIN_W - 28 - sc * 14, 4, 20, 20)
+        setze sc auf sc + 1
     wenn hat_key:
-        sprite_zeichnen_skaliert(win, spr["schluessel"], WIN_W / 2 - 12, 2, 24, 24)
+        sprite_ausschnitt(win, obj_spr, 0, 16, 16, 16, WIN_W / 2 - 12, 2, 24, 24)
 
 # === Hauptprogramm ===
 zeige "=== moo Zelda-Adventure ==="
 zeige "WASD=Bewegen, Leertaste=Schwert, Escape=Beenden"
 
 setze win auf fenster_erstelle("moo Zelda", WIN_W, WIN_H)
-setze spr auf sprites_laden(win)
+setze spr auf lade_sprites(win)
 
 solange fenster_offen(win):
     wenn taste_gedrückt("escape"):
         stopp
 
-    # === Bewegung ===
+    setze bewegt auf falsch
     setze nx auf px
     setze ny auf py
+
     wenn taste_gedrückt("w"):
         setze ny auf ny - SPEED
-        setze sdx auf 0
-        setze sdy auf -1
+        setze richtung auf 3
+        setze bewegt auf wahr
     wenn taste_gedrückt("s"):
         setze ny auf ny + SPEED
-        setze sdx auf 0
-        setze sdy auf 1
+        setze richtung auf 0
+        setze bewegt auf wahr
     wenn taste_gedrückt("a"):
         setze nx auf nx - SPEED
-        setze sdx auf -1
-        setze sdy auf 0
+        setze richtung auf 1
+        setze bewegt auf wahr
     wenn taste_gedrückt("d"):
         setze nx auf nx + SPEED
-        setze sdx auf 1
-        setze sdy auf 0
+        setze richtung auf 2
+        setze bewegt auf wahr
 
-    wenn tile_check(karte, nx, py, SPIELER_SIZE, SPIELER_SIZE) == falsch:
+    wenn tile_check(karte, nx, py, P_SIZE, P_SIZE) == falsch:
         setze px auf nx
-    wenn tile_check(karte, px, ny, SPIELER_SIZE, SPIELER_SIZE) == falsch:
+    wenn tile_check(karte, px, ny, P_SIZE, P_SIZE) == falsch:
         setze py auf ny
 
-    # === Schwert ===
+    # Walk-Animation
+    wenn bewegt:
+        setze walk_timer auf walk_timer + 1
+        wenn walk_timer >= 6:
+            setze walk_frame auf walk_frame + 1
+            setze walk_timer auf 0
+
+    # Schwert
     wenn taste_gedrückt("leertaste") und schwert == 0:
         setze schwert auf 8
     wenn schwert > 0:
         setze schwert auf schwert - 1
 
+    # Schwert-Richtungsvektoren
+    setze sdx auf 0
+    setze sdy auf 0
+    wenn richtung == 0:
+        setze sdy auf 1
+    wenn richtung == 1:
+        setze sdx auf -1
+    wenn richtung == 2:
+        setze sdx auf 1
+    wenn richtung == 3:
+        setze sdy auf -1
+
     setze swx auf px + sdx * 24
     setze swy auf py + sdy * 24
 
-    # === Feinde ===
+    # Feinde
     feinde_update(karte)
 
     wenn schwert > 0:
         setze i auf 0
-        solange i < länge(feinde_x):
-            wenn feinde_aktiv[i]:
-                wenn aabb(swx, swy, 20, 20, feinde_x[i], feinde_y[i], FEIND_SIZE, FEIND_SIZE):
-                    feinde_aktiv[i] = falsch
+        solange i < länge(fx):
+            wenn feind_a[i]:
+                wenn aabb(swx, swy, 20, 20, fx[i], fy[i], F_SIZE, F_SIZE):
+                    feind_a[i] = falsch
                     setze score auf score + 10
             setze i auf i + 1
 
@@ -365,9 +394,9 @@ solange fenster_offen(win):
         setze unverw auf unverw - 1
     sonst:
         setze i auf 0
-        solange i < länge(feinde_x):
-            wenn feinde_aktiv[i]:
-                wenn aabb(px, py, SPIELER_SIZE, SPIELER_SIZE, feinde_x[i], feinde_y[i], FEIND_SIZE, FEIND_SIZE):
+        solange i < länge(fx):
+            wenn feind_a[i]:
+                wenn aabb(px, py, P_SIZE, P_SIZE, fx[i], fy[i], F_SIZE, F_SIZE):
                     setze leben auf leben - 1
                     setze unverw auf 45
                     wenn leben <= 0:
@@ -375,21 +404,21 @@ solange fenster_offen(win):
                         stopp
             setze i auf i + 1
 
-    # === Items ===
+    # Items
     setze i auf 0
-    solange i < länge(item_x):
-        wenn item_aktiv[i]:
-            wenn aabb(px, py, SPIELER_SIZE, SPIELER_SIZE, item_x[i], item_y[i], 24, 24):
-                wenn item_typ[i] == 0:
+    solange i < länge(ix):
+        wenn ia[i]:
+            wenn aabb(px, py, P_SIZE, P_SIZE, ix[i], iy[i], 24, 24):
+                wenn it[i] == 0:
                     setze score auf score + 5
-                wenn item_typ[i] == 1:
+                wenn it[i] == 1:
                     setze leben auf min(leben + 1, 5)
-                wenn item_typ[i] == 2:
+                wenn it[i] == 2:
                     setze hat_key auf wahr
-                item_aktiv[i] = falsch
+                ia[i] = falsch
         setze i auf i + 1
 
-    # === Tuer ===
+    # Tuer
     setze tcx auf boden((px + 14) / TILE)
     setze tcy auf boden((py + 14) / TILE)
     wenn tcx >= 0 und tcx < MAP_W und tcy >= 0 und tcy < MAP_H:
@@ -401,17 +430,24 @@ solange fenster_offen(win):
 
     # === Zeichnen ===
     fenster_löschen(win, "#1A1A2E")
-    karte_zeichnen(win, karte, spr)
-    items_zeichnen(win, spr)
-    feinde_zeichnen(win, spr)
+    karte_zeichnen(win, spr, karte)
+    items_malen(win, spr)
+    feinde_malen(win, spr)
 
-    # Spieler
+    # Spieler (blinkt bei Unverwundbarkeit)
     wenn unverw == 0 oder unverw % 4 < 2:
-        sprite_zeichnen_skaliert(win, spr["held"], px, py, TILE, TILE)
+        held_zeichnen(win, spr, px, py, richtung, walk_frame, schwert)
 
-    # Schwert
+    # Schwert-Effekt (Richtungsabhaengig)
     wenn schwert > 0:
-        sprite_zeichnen_skaliert(win, spr["schwert"], swx, swy, 24, 24)
+        wenn richtung == 0:
+            zeichne_rechteck(win, px + 4, py + P_SIZE, 20, 6, "#E0E0E0")
+        wenn richtung == 3:
+            zeichne_rechteck(win, px + 4, py - 8, 20, 6, "#E0E0E0")
+        wenn richtung == 1:
+            zeichne_rechteck(win, px - 10, py + 4, 6, 20, "#E0E0E0")
+        wenn richtung == 2:
+            zeichne_rechteck(win, px + P_SIZE + 2, py + 4, 6, 20, "#E0E0E0")
 
     hud(win, spr)
     fenster_aktualisieren(win)

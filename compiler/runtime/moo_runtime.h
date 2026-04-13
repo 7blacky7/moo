@@ -387,6 +387,11 @@ MooValue moo_mouse_pressed(MooValue window);
 void moo_delay(MooValue ms);
 void moo_pump_events(void);
 
+// === Test-API (Screenshot, Input-Simulation) ===
+MooValue moo_screenshot(MooValue window, MooValue path);
+void moo_simulate_key(MooValue key, MooValue pressed);
+void moo_simulate_mouse(MooValue x, MooValue y, MooValue click);
+
 // === Sprites (SDL2_Image) ===
 MooValue moo_sprite_load(MooValue win, MooValue path);
 void moo_sprite_draw(MooValue win, MooValue id, MooValue x, MooValue y);

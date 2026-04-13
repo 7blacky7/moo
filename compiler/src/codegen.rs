@@ -2433,6 +2433,21 @@ impl<'ctx> CodeGen<'ctx> {
                         let a = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_world_height_at, &[a[0].into(), a[1].into(), a[2].into()], "world_h");
                     }
+                    // Test-API
+                    "screenshot" | "bildschirmfoto" => {
+                        let a = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_screenshot, &[a[0].into(), a[1].into()], "screenshot");
+                    }
+                    "taste_simulieren" | "simulate_key" => {
+                        let a = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_simulate_key, &[a[0].into(), a[1].into()], "sim_key")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "maus_simulieren" | "simulate_mouse" => {
+                        let a = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_simulate_mouse, &[a[0].into(), a[1].into(), a[2].into()], "sim_mouse")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     // Regex (POSIX)
                     "regex" | "muster" => {
                         let pat = self.compile_expr(&args[0])?;
