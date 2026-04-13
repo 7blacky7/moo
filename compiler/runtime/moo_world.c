@@ -167,7 +167,8 @@ static float world_terrain_height(float wx, float wz) {
     float berg_faktor = 0.0f;
     if (berg > g_world.berg_threshold)
         berg_faktor = (berg - g_world.berg_threshold) * g_world.berg_amp;
-    float h = kontinent + detail + berg_faktor + g_world.sea_level;
+    /* Offset hebt Terrain-Durchschnitt auf ~30 (weit ueber sea_level) */
+    float h = kontinent + detail + berg_faktor + 30.0f;
     if (h < 0) h = 0;
     if (h > g_world.height_max) h = g_world.height_max;
     return floorf(h);
