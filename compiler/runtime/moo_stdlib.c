@@ -6,6 +6,10 @@ static bool random_seeded = false;
 
 MooValue moo_abs(MooValue v) { return moo_number(fabs(moo_as_number(v))); }
 MooValue moo_sqrt(MooValue v) { return moo_number(sqrt(moo_as_number(v))); }
+MooValue moo_sin(MooValue v)  { return moo_number(sin(moo_as_number(v))); }
+MooValue moo_cos(MooValue v)  { return moo_number(cos(moo_as_number(v))); }
+MooValue moo_tan(MooValue v)  { return moo_number(tan(moo_as_number(v))); }
+MooValue moo_atan2(MooValue y, MooValue x) { return moo_number(atan2(moo_as_number(y), moo_as_number(x))); }
 MooValue moo_round(MooValue v) { return moo_number(round(moo_as_number(v))); }
 MooValue moo_floor(MooValue v) { return moo_number(floor(moo_as_number(v))); }
 MooValue moo_ceil(MooValue v) { return moo_number(ceil(moo_as_number(v))); }

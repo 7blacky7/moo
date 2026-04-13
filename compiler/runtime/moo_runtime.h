@@ -308,6 +308,10 @@ void moo_breakpoint(MooValue line_num);
 // === Stdlib ===
 MooValue moo_abs(MooValue v);
 MooValue moo_sqrt(MooValue v);
+MooValue moo_sin(MooValue v);
+MooValue moo_cos(MooValue v);
+MooValue moo_tan(MooValue v);
+MooValue moo_atan2(MooValue y, MooValue x);
 MooValue moo_round(MooValue v);
 MooValue moo_floor(MooValue v);
 MooValue moo_ceil(MooValue v);
@@ -405,6 +409,9 @@ void moo_3d_pop(MooValue win);
 
 // === 3D Input ===
 MooValue moo_3d_key_pressed(MooValue win, MooValue key);
+void moo_3d_capture_mouse(MooValue win);
+MooValue moo_3d_mouse_dx(MooValue win);
+MooValue moo_3d_mouse_dy(MooValue win);
 
 // === Result-Typ ===
 MooValue moo_result_ok(MooValue value);
