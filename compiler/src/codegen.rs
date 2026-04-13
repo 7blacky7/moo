@@ -217,6 +217,10 @@ impl<'ctx> CodeGen<'ctx> {
         for stmt in &program.statements {
             match stmt {
                 Stmt::FunctionDef { name, params, .. } => {
+                    // Duplikat-Guard: ueberspringe wenn Funktion schon deklariert
+                    if self.module.get_function(name).is_some() {
+                        continue;
+                    }
                     let mv = self.mv_type();
                     let param_types: Vec<BasicMetadataTypeEnum> = params.iter()
                         .map(|_| BasicMetadataTypeEnum::from(mv))
@@ -1039,6 +1043,11 @@ impl<'ctx> CodeGen<'ctx> {
     fn compile_function_def(&mut self, name: &str, params: &[String], defaults: &[Option<Expr>], body: &[Stmt]) -> Result<(), String> {
         let function = self.module.get_function(name)
             .ok_or(format!("Funktion '{name}' nicht forward-declared"))?;
+
+        // Duplikat-Guard: wenn Funktion schon kompiliert wurde (hat Basic Blocks), ueberspringen
+        if function.count_basic_blocks() > 0 {
+            return Ok(());
+        }
 
         let entry = self.context.append_basic_block(function, "entry");
 
@@ -2327,6 +2336,64 @@ impl<'ctx> CodeGen<'ctx> {
                         let id = self.compile_expr(&args[0])?;
                         self.call_rt_void(self.rt.moo_3d_chunk_delete, &[id.into()], "chunk_delete")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // Welt (Game-Dev Runtime) — DE + EN
+                    "__welt_erstelle" | "__world_create" => {
+                        let a = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_world_create, &[a[0].into(), a[1].into(), a[2].into()], "world");
+                    }
+                    "__welt_offen" | "__world_is_open" => {
+                        let w = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_world_is_open, &[w.into()], "world_open");
+                    }
+                    "__welt_aktualisieren" | "__world_update" => {
+                        let w = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_world_update, &[w.into()], "world_upd")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "__welt_beenden" | "__world_close" => {
+                        let w = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_world_close, &[w.into()], "world_cls")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "__welt_seed" | "__world_seed" => {
+                        let a = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_world_seed, &[a[0].into(), a[1].into()], "world_seed")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "__welt_biom" | "__world_biome" => {
+                        let a = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_world_biome, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "world_biome")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "__welt_baeume" | "__world_trees" => {
+                        let a = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_world_trees, &[a[0].into(), a[1].into(), a[2].into()], "world_trees")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "__welt_sonne" | "__world_sun" => {
+                        let a = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_world_sun, &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "world_sun")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "__welt_nebel" | "__world_fog" => {
+                        let a = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_world_fog, &[a[0].into(), a[1].into()], "world_fog")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "__welt_meeresspiegel" | "__world_sea_level" => {
+                        let a = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_world_sea_level, &[a[0].into(), a[1].into()], "world_sea")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "__welt_render_distanz" | "__world_render_dist" => {
+                        let a = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_world_render_dist, &[a[0].into(), a[1].into()], "world_rd")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "__welt_hoehe_bei" | "__world_height_at" => {
+                        let a = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_world_height_at, &[a[0].into(), a[1].into(), a[2].into()], "world_h");
                     }
                     // Regex (POSIX)
                     "regex" | "muster" => {

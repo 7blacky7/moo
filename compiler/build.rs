@@ -27,6 +27,7 @@ fn main() {
         .file("runtime/moo_web.c")
         .file("runtime/moo_eval.c")
         .file("runtime/moo_profiler.c")
+        .file("runtime/moo_world.c")
         .include("runtime")
         .include("/usr/include/SDL2")
         .opt_level(2)
