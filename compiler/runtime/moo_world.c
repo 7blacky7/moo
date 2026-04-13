@@ -325,12 +325,12 @@ MooValue moo_world_create(MooValue title, MooValue w, MooValue h) {
         _b->h_min = hmin; _b->h_max = hmax; \
         _b->r = cr; _b->g = cg; _b->b = cb; _b->tree_chance = tc; \
     } while(0)
-    ADD_BIOM("ozean",  0, 12, 0.13f, 0.59f, 0.95f, 0);
-    ADD_BIOM("strand", 12, 14, 1.0f, 0.88f, 0.51f, 0);
-    ADD_BIOM("wiese",  14, 30, 0.30f, 0.69f, 0.31f, 4);
-    ADD_BIOM("wald",   14, 30, 0.18f, 0.49f, 0.20f, 15);
-    ADD_BIOM("berg",   50, 70, 0.62f, 0.62f, 0.62f, 0);
-    ADD_BIOM("schnee", 70, 999, 0.93f, 0.94f, 0.95f, 0);
+    ADD_BIOM("ozean",  0,  8, 0.13f, 0.59f, 0.95f, 0);
+    ADD_BIOM("strand", 8, 10, 1.0f, 0.88f, 0.51f, 0);
+    ADD_BIOM("wiese", 10, 25, 0.30f, 0.69f, 0.31f, 4);
+    ADD_BIOM("wald",  25, 40, 0.18f, 0.49f, 0.20f, 15);
+    ADD_BIOM("berg",  40, 55, 0.62f, 0.62f, 0.62f, 0);
+    ADD_BIOM("schnee",55, 999, 0.93f, 0.94f, 0.95f, 0);
     #undef ADD_BIOM
 
     /* Spieler */
