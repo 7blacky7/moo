@@ -464,6 +464,7 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         "-lsqlite3".to_string(),
         "-lSDL2".to_string(),
         "-lGL".to_string(),
+        "-lvulkan".to_string(),
         "-lglfw".to_string(),
     ];
 

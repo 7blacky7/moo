@@ -107,6 +107,10 @@ pub struct RuntimeBindings<'ctx> {
     // Stdlib
     pub moo_abs: FunctionValue<'ctx>,
     pub moo_sqrt: FunctionValue<'ctx>,
+    pub moo_sin: FunctionValue<'ctx>,
+    pub moo_cos: FunctionValue<'ctx>,
+    pub moo_tan: FunctionValue<'ctx>,
+    pub moo_atan2: FunctionValue<'ctx>,
     pub moo_round: FunctionValue<'ctx>,
     pub moo_floor: FunctionValue<'ctx>,
     pub moo_ceil: FunctionValue<'ctx>,
@@ -166,6 +170,15 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_db_close: FunctionValue<'ctx>,
     // 3D Input
     pub moo_3d_key_pressed: FunctionValue<'ctx>,
+    pub moo_3d_capture_mouse: FunctionValue<'ctx>,
+    pub moo_3d_mouse_dx: FunctionValue<'ctx>,
+    pub moo_3d_mouse_dy: FunctionValue<'ctx>,
+    // Chunk Display Lists
+    pub moo_3d_chunk_create: FunctionValue<'ctx>,
+    pub moo_3d_chunk_begin: FunctionValue<'ctx>,
+    pub moo_3d_chunk_end: FunctionValue<'ctx>,
+    pub moo_3d_chunk_draw: FunctionValue<'ctx>,
+    pub moo_3d_chunk_delete: FunctionValue<'ctx>,
     // Result-Typ
     pub moo_result_ok: FunctionValue<'ctx>,
     pub moo_result_err: FunctionValue<'ctx>,
@@ -387,6 +400,10 @@ impl<'ctx> RuntimeBindings<'ctx> {
             // Stdlib
             moo_abs: decl_mv_mv!("moo_abs", mv1),
             moo_sqrt: decl_mv_mv!("moo_sqrt", mv1),
+            moo_sin: decl_mv_mv!("moo_sin", mv1),
+            moo_cos: decl_mv_mv!("moo_cos", mv1),
+            moo_tan: decl_mv_mv!("moo_tan", mv1),
+            moo_atan2: decl_mv_mv!("moo_atan2", mv2),
             moo_round: decl_mv_mv!("moo_round", mv1),
             moo_floor: decl_mv_mv!("moo_floor", mv1),
             moo_ceil: decl_mv_mv!("moo_ceil", mv1),
@@ -446,6 +463,15 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_db_close: module.add_function("moo_db_close", void_type.fn_type(mv1, false), None),
             // Result-Typ
             moo_3d_key_pressed: decl_mv_mv!("moo_3d_key_pressed", mv2),
+            moo_3d_capture_mouse: module.add_function("moo_3d_capture_mouse", void_type.fn_type(mv1, false), None),
+            moo_3d_mouse_dx: decl_mv_mv!("moo_3d_mouse_dx", mv1),
+            moo_3d_mouse_dy: decl_mv_mv!("moo_3d_mouse_dy", mv1),
+            // Chunk Display Lists
+            moo_3d_chunk_create: decl_mv_mv!("moo_3d_chunk_create", &[]),
+            moo_3d_chunk_begin: module.add_function("moo_3d_chunk_begin", void_type.fn_type(mv1, false), None),
+            moo_3d_chunk_end: module.add_function("moo_3d_chunk_end", void_type.fn_type(&[], false), None),
+            moo_3d_chunk_draw: module.add_function("moo_3d_chunk_draw", void_type.fn_type(mv1, false), None),
+            moo_3d_chunk_delete: module.add_function("moo_3d_chunk_delete", void_type.fn_type(mv1, false), None),
             moo_result_ok: decl_mv_mv!("moo_result_ok", mv1),
             moo_result_err: decl_mv_mv!("moo_result_err", mv1),
             moo_result_is_ok: decl_mv_mv!("moo_result_is_ok", mv1),

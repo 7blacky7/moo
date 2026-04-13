@@ -1841,6 +1841,23 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(func, &[arg.into()], "builtin");
                     }
+                    "sinus" | "sin" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_sin, &[arg.into()], "sin");
+                    }
+                    "cosinus" | "cos" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_cos, &[arg.into()], "cos");
+                    }
+                    "tangens" | "tan" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tan, &[arg.into()], "tan");
+                    }
+                    "atan2" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_atan2, &[a.into(), b.into()], "atan2");
+                    }
                     "runde" | "round" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_round, &[arg.into()], "round");
@@ -2273,6 +2290,43 @@ impl<'ctx> CodeGen<'ctx> {
                         let win_arg = self.compile_expr(&args[0])?;
                         let key_arg = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_3d_key_pressed, &[win_arg.into(), key_arg.into()], "3d_key");
+                    }
+                    // Maus
+                    "raum_maus_fangen" | "space_capture_mouse" | "3d_maus_fangen" => {
+                        let win = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_3d_capture_mouse, &[win.into()], "cap_mouse")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_maus_dx" | "space_mouse_dx" | "3d_maus_dx" => {
+                        let win = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_3d_mouse_dx, &[win.into()], "mouse_dx");
+                    }
+                    "raum_maus_dy" | "space_mouse_dy" | "3d_maus_dy" => {
+                        let win = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_3d_mouse_dy, &[win.into()], "mouse_dy");
+                    }
+                    // Chunk Display Lists
+                    "chunk_erstelle" | "chunk_create" => {
+                        return self.call_rt(self.rt.moo_3d_chunk_create, &[], "chunk_create");
+                    }
+                    "chunk_beginne" | "chunk_begin" => {
+                        let id = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_3d_chunk_begin, &[id.into()], "chunk_begin")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "chunk_ende" | "chunk_end" => {
+                        self.call_rt_void(self.rt.moo_3d_chunk_end, &[], "chunk_end")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "chunk_zeichne" | "chunk_draw" => {
+                        let id = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_3d_chunk_draw, &[id.into()], "chunk_draw")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "chunk_lösche" | "chunk_delete" => {
+                        let id = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_3d_chunk_delete, &[id.into()], "chunk_delete")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     // Regex (POSIX)
                     "regex" | "muster" => {

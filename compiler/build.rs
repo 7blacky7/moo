@@ -1,5 +1,6 @@
 fn main() {
-    cc::Build::new()
+    let mut build = cc::Build::new();
+    build
         .file("runtime/moo_value.c")
         .file("runtime/moo_memory.c")
         .file("runtime/moo_string.c")
@@ -19,6 +20,7 @@ fn main() {
         .file("runtime/moo_result.c")
         .file("runtime/moo_graphics.c")
         .file("runtime/moo_3d.c")
+        .file("runtime/moo_3d_math.c")
         .file("runtime/moo_regex.c")
         .file("runtime/moo_core.c")
         .file("runtime/moo_net.c")
@@ -28,8 +30,29 @@ fn main() {
         .include("runtime")
         .include("/usr/include/SDL2")
         .opt_level(2)
-        .flag("-fPIC")
-        .compile("moo_runtime");
+        .flag("-fPIC");
+
+    // 3D Backends: bedingt in denselben Build einfuegen
+    #[cfg(feature = "gl21")]
+    build.file("runtime/moo_3d_gl21.c");
+
+    #[cfg(feature = "gl33")]
+    {
+        build.file("runtime/moo_3d_gl33.c");
+        build.file("runtime/moo_3d_gl33_mesh.c");
+        build.file("runtime/glad/src/glad.c");
+        build.include("runtime/glad/include");
+        build.define("MOO_HAS_GL33", None);
+    }
+
+    #[cfg(feature = "vulkan")]
+    {
+        build.file("runtime/moo_3d_vulkan.c");
+        build.file("runtime/moo_3d_vulkan_mem.c");
+        build.define("MOO_HAS_VULKAN", None);
+    }
+
+    build.compile("moo_runtime");
 
     // Link libcurl for HTTP support
     println!("cargo:rustc-link-lib=curl");
@@ -40,9 +63,26 @@ fn main() {
     // Link SDL2 for graphics support
     println!("cargo:rustc-link-lib=SDL2");
 
-    // Link OpenGL + GLFW for 3D support (kein GLEW noetig fuer Immediate Mode)
-    println!("cargo:rustc-link-lib=GL");
-    println!("cargo:rustc-link-lib=glfw");
+    // 3D Backend: bedingt linken
+    #[cfg(feature = "gl21")]
+    {
+        println!("cargo:rustc-link-lib=GL");
+        println!("cargo:rustc-link-lib=glfw");
+    }
+
+    #[cfg(feature = "gl33")]
+    {
+        println!("cargo:rustc-link-lib=GL");
+        println!("cargo:rustc-link-lib=glfw");
+    }
+
+    #[cfg(feature = "vulkan")]
+    {
+        println!("cargo:rustc-link-lib=vulkan");
+        println!("cargo:rustc-link-lib=glfw");
+    }
 
     println!("cargo:rerun-if-changed=runtime/");
+    println!("cargo:rerun-if-changed=runtime/moo_3d_vulkan_vert_spv.h");
+    println!("cargo:rerun-if-changed=runtime/moo_3d_vulkan_frag_spv.h");
 }

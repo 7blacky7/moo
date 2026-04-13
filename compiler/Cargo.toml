@@ -8,5 +8,11 @@ description = "moo Compiler — erzeugt native Binaries über LLVM"
 inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm18-1"] }
 clap = { version = "4", features = ["derive"] }
 
+[features]
+default = ["gl21"]
+gl21 = []
+gl33 = []
+vulkan = []
+
 [build-dependencies]
 cc = "1"
