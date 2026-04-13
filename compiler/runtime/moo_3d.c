@@ -55,7 +55,7 @@ static Color3 parse_color3(MooValue c) {
 
 MooValue moo_3d_create(MooValue title, MooValue w, MooValue h) {
     const char* backend_name = getenv("MOO_3D_BACKEND");
-    if (!backend_name) backend_name = "gl21";
+    if (!backend_name) backend_name = "gl33";
 
     if (strcmp(backend_name, "gl21") == 0) {
         g_backend = &moo_backend_gl21;
@@ -263,8 +263,7 @@ MooValue moo_3d_chunk_create(void) {
     }
     int id = g_backend->chunk_create(g_ctx);
     if (id < 0) {
-        moo_throw(moo_string_new("Chunk-Erstellung fehlgeschlagen"));
-        return moo_none();
+        return moo_number(-1.0); /* Graceful: Chunk nicht gecached, kein Crash */
     }
     return moo_number((double)id);
 }

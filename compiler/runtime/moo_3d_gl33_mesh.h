@@ -52,7 +52,7 @@ void mesh_builder_add_cube(MeshBuilder* mb,
                            float r, float g, float b);
 
 /* === VBO/VAO Chunk System === */
-#define MAX_GL33_CHUNKS 256
+#define MAX_GL33_CHUNKS 4096
 
 typedef struct {
     unsigned int vao;

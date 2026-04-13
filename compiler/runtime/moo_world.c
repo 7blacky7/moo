@@ -118,7 +118,7 @@ typedef struct {
  * ======================================================== */
 
 #define CHUNK_SIZE 16
-#define MAX_CHUNKS 256
+#define MAX_CHUNKS 4096
 
 typedef struct {
     int cx, cz;
@@ -313,7 +313,7 @@ MooValue moo_world_create(MooValue title, MooValue w, MooValue h) {
     memset(&g_world, 0, sizeof(g_world));
 
     g_world.win = moo_3d_create(title, w, h);
-    moo_3d_perspective(g_world.win, moo_number(70.0), moo_number(0.1), moo_number(250.0));
+    moo_3d_perspective(g_world.win, moo_number(70.0), moo_number(0.1), moo_number(500.0));
     moo_3d_capture_mouse(g_world.win);
 
     /* Noise Defaults */
@@ -349,7 +349,7 @@ MooValue moo_world_create(MooValue title, MooValue w, MooValue h) {
     g_world.gravity = 0.01f;
     g_world.jump_force = 0.2f;
     g_world.mouse_sens = 0.003f;
-    g_world.render_dist = 4;
+    g_world.render_dist = 20;
     g_world.time_of_day = 0.35f; /* Vormittag */
     g_world.day_speed = 1.0f;
     g_world.last_frame_ms = moo_time_ms();
@@ -552,38 +552,75 @@ void moo_world_update(MooValue win) {
     moo_3d_set_light_dir(sun_dir_x, sun_dir_y > 0.1f ? sun_dir_y : 0.1f, sun_dir_z);
     moo_3d_set_ambient(0.02f + 0.18f * day_factor);
 
-    /* === Chunk-Management === */
+    /* === Chunk-Recycling: entferne Chunks zu weit weg === */
     int pcx = (int)floorf(g_world.px / CHUNK_SIZE);
     int pcz = (int)floorf(g_world.pz / CHUNK_SIZE);
-    int built = 0;
     int rd = g_world.render_dist;
+    int recycle_dist = rd + 8;
 
-    for (int dx = -rd; dx <= rd; dx++) {
-        for (int dz = -rd; dz <= rd; dz++) {
-            int cx = pcx + dx;
-            int cz = pcz + dz;
-            int idx = find_chunk(cx, cz);
-            if (idx < 0 && built < 1) {
-                /* Chunk bauen */
-                int slot = alloc_chunk_slot();
-                if (slot >= 0) {
-                    MooValue cid = moo_3d_chunk_create();
-                    world_build_chunk(cx, cz, cid);
-                    g_world.chunks[slot].cx = cx;
-                    g_world.chunks[slot].cz = cz;
-                    g_world.chunks[slot].chunk_id = cid;
-                    g_world.chunks[slot].used = true;
-                    idx = slot;
-                    built++;
-                }
-            }
-            if (idx >= 0) {
-                moo_3d_chunk_draw(g_world.chunks[idx].chunk_id);
+    for (int i = 0; i < MAX_CHUNKS; i++) {
+        if (!g_world.chunks[i].used) continue;
+        int dx = g_world.chunks[i].cx - pcx;
+        int dz = g_world.chunks[i].cz - pcz;
+        if (dx < -recycle_dist || dx > recycle_dist ||
+            dz < -recycle_dist || dz > recycle_dist) {
+            moo_3d_chunk_delete(g_world.chunks[i].chunk_id);
+            g_world.chunks[i].used = false;
+        }
+    }
+
+    /* === Chunk-Management: Spirale von innen nach aussen === */
+    static int first_load = 1;
+    int max_build = first_load ? 9999 : 10; /* Erster Frame: ALLE, danach 10/Frame */
+    int built = 0;
+
+    /* Spieler-Chunk IMMER zuerst */
+    {
+        int idx = find_chunk(pcx, pcz);
+        if (idx < 0) {
+            int slot = alloc_chunk_slot();
+            if (slot >= 0) {
+                MooValue cid = moo_3d_chunk_create();
+                world_build_chunk(pcx, pcz, cid);
+                g_world.chunks[slot].cx = pcx;
+                g_world.chunks[slot].cz = pcz;
+                g_world.chunks[slot].chunk_id = cid;
+                g_world.chunks[slot].used = true;
             }
         }
     }
 
-    /* Sonne am Himmel (nah genug fuer Far-Plane 250, aber weit genug um gross zu wirken) */
+    /* Spirale: Ring fuer Ring von innen nach aussen */
+    for (int ring = 0; ring <= rd; ring++) {
+        for (int dx = -ring; dx <= ring; dx++) {
+            for (int dz = -ring; dz <= ring; dz++) {
+                /* Nur den aeusseren Rand dieses Rings */
+                if (abs(dx) != ring && abs(dz) != ring) continue;
+                int cx = pcx + dx;
+                int cz = pcz + dz;
+                int idx = find_chunk(cx, cz);
+                if (idx < 0 && built < max_build) {
+                    int slot = alloc_chunk_slot();
+                    if (slot >= 0) {
+                        MooValue cid = moo_3d_chunk_create();
+                        world_build_chunk(cx, cz, cid);
+                        g_world.chunks[slot].cx = cx;
+                        g_world.chunks[slot].cz = cz;
+                        g_world.chunks[slot].chunk_id = cid;
+                        g_world.chunks[slot].used = true;
+                        idx = slot;
+                        built++;
+                    }
+                }
+                if (idx >= 0) {
+                    moo_3d_chunk_draw(g_world.chunks[idx].chunk_id);
+                }
+            }
+        }
+    }
+    if (first_load) first_load = 0;
+
+    /* Sonne am Himmel */
     if (sun_dir_y > -0.05f) {
         float sun_px = g_world.px + sun_dir_x * 200.0f;
         float sun_py = g_world.py + sun_dir_y * 200.0f + 80.0f;
