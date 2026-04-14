@@ -30,14 +30,23 @@ Feature-Entwicklung, keine Konsolidierung — widerspricht der User-Auflage
 **Priorität**: niedrig — nur beginnen, nachdem P2b/P3b/P3c gelandet sind und
 die Runtime sich stabilisiert hat.
 
-## P3c-followup: DB Statement-Objekt (Variante A)
+## ~~P3c-followup: DB Statement-Objekt (Variante A)~~ **ERLEDIGT**
+
+Variante A wurde im Nachgang zur Konsolidierungs-Welle umgesetzt:
+`db_vorbereite` + `.binde/.ausfuehren/.abfrage/.schritt/.zuruecksetzen/.schliessen`,
+positional + `:name`-Params, neuer Tag `MOO_DB_STMT`, `moo_smart_close`-Eintrag.
+Verifiziert: Named-Params, Bulk-Insert 1000 Rows + Transaktion, Rollback.
+
+---
+
+### Historie
 
 **Herkunft**: Prio3c (DB-Prepared-Statements), Inventar `/tmp/moo-verify/db_prepared_inventar.md`.
 
 **In P3c implementiert (Variante B)**: `db_ausführen_mit_params` / `db_abfrage_mit_params`
 binden Parameter inline pro Aufruf. Prepared Statement lebt nur für einen Call.
 
-**Vertagt (Variante A)**: Echtes Statement-Objekt mit eigenem MooValue-Tag
+**Nachgetragen (Variante A)**: Echtes Statement-Objekt mit eigenem MooValue-Tag
 `MOO_DB_STMT`:
 
 - `db_vorbereite(db, sql) → stmt`

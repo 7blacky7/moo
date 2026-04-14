@@ -2034,6 +2034,11 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_db_connect, &[arg.into()], "db_connect");
                     }
+                    "db_vorbereite" | "db_prepare" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_db_prepare, &[a.into(), b.into()], "db_prep");
+                    }
                     "db_abfrage_mit_params" | "db_query_with_params" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
@@ -2677,6 +2682,23 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     "warten" | "wait" => {
                         return self.call_rt(self.rt.moo_thread_wait, &[obj.into()], "thread_wait");
+                    }
+                    "binde" | "bind" => {
+                        let key = self.compile_expr(&args[0])?;
+                        let val = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_db_stmt_bind, &[obj.into(), key.into(), val.into()], "stmt_bind");
+                    }
+                    "schritt" | "step" => {
+                        return self.call_rt(self.rt.moo_db_stmt_step, &[obj.into()], "stmt_step");
+                    }
+                    "ausfuehren" | "ausführen" | "execute" => {
+                        return self.call_rt(self.rt.moo_db_stmt_execute, &[obj.into()], "stmt_exec");
+                    }
+                    "abfrage" | "query" => {
+                        return self.call_rt(self.rt.moo_db_stmt_query, &[obj.into()], "stmt_query");
+                    }
+                    "zuruecksetzen" | "zurücksetzen" | "reset" => {
+                        return self.call_rt(self.rt.moo_db_stmt_reset, &[obj.into()], "stmt_reset");
                     }
                     "fertig" | "done" => {
                         return self.call_rt(self.rt.moo_thread_done, &[obj.into()], "thread_done");

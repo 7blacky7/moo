@@ -334,3 +334,242 @@ MooValue moo_db_query_with_params(MooValue db, MooValue sql, MooValue params) {
     sqlite3_finalize(stmt);
     return result_list;
 }
+
+// === Prepared Statement-Objekt (Variante A) ===
+//
+// Im Gegensatz zu db_abfrage_mit_params (Prepared pro Call) haelt ein Statement
+// die geparste sqlite3_stmt* ueber mehrere Binde+Step-Zyklen. Wird benoetigt fuer
+// Bulk-Insert (1000x gleiche INSERT mit wechselnden Params), lazy Iteration
+// grosser Resultsets und Named-Params (:name).
+typedef struct {
+    sqlite3_stmt* stmt;
+    sqlite3* db_ref;   // nicht-owning, fuer Errormsg und sqlite3_changes
+    char* sql_copy;    // fuer Errormsg-Text nach Finalisierung
+    int refcount;      // konservativ: eigener RC, falls kein MOO_HEAPHDR-Modell
+} MooDbStmt;
+
+MooValue moo_db_prepare(MooValue db, MooValue sql) {
+    MooDatabase* mdb = check_db(db, "db_vorbereite");
+    if (!mdb) return moo_none();
+    if (sql.tag != MOO_STRING) {
+        moo_throw(moo_error("DB-Fehler in db_vorbereite: SQL muss ein String sein"));
+        return moo_none();
+    }
+    const char* sql_str = MV_STR(sql)->chars;
+    sqlite3_stmt* stmt = NULL;
+    int rc = sqlite3_prepare_v2(mdb->db, sql_str, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        char msg[1024];
+        format_sql_error(msg, sizeof(msg), sql_str, sqlite3_errmsg(mdb->db));
+        moo_throw(moo_error(msg));
+        return moo_none();
+    }
+    MooDbStmt* s = (MooDbStmt*)moo_alloc(sizeof(MooDbStmt));
+    s->stmt = stmt;
+    s->db_ref = mdb->db;
+    s->sql_copy = strdup(sql_str);
+    s->refcount = 1;
+    MooValue v;
+    v.tag = MOO_DB_STMT;
+    moo_val_set_ptr(&v, s);
+    return v;
+}
+
+static MooDbStmt* check_stmt(MooValue v, const char* fn_name) {
+    if (v.tag != MOO_DB_STMT) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "DB-Fehler in %s: Kein Statement-Objekt", fn_name);
+        moo_throw(moo_error(msg));
+        return NULL;
+    }
+    MooDbStmt* s = (MooDbStmt*)moo_val_as_ptr(v);
+    if (!s || !s->stmt) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "DB-Fehler in %s: Statement ist bereits geschlossen", fn_name);
+        moo_throw(moo_error(msg));
+        return NULL;
+    }
+    return s;
+}
+
+// Bindet einen einzelnen Parameter an das Statement. Key darf sein:
+//   - Zahl (1-based Index)
+//   - String ":name" oder "@name" (sqlite3_bind_parameter_index)
+// Wert-Mapping wie in Variante B.
+MooValue moo_db_stmt_bind(MooValue stmt, MooValue key, MooValue value) {
+    MooDbStmt* s = check_stmt(stmt, "stmt.binde");
+    if (!s) return moo_none();
+    int idx = 0;
+    if (key.tag == MOO_NUMBER) {
+        idx = (int)MV_NUM(key);
+    } else if (key.tag == MOO_STRING) {
+        const char* name = MV_STR(key)->chars;
+        // Erlaube ":name" direkt oder "name" (wir stellen ":" voran).
+        if (name[0] == ':' || name[0] == '@' || name[0] == '$') {
+            idx = sqlite3_bind_parameter_index(s->stmt, name);
+        } else {
+            char buf[128];
+            snprintf(buf, sizeof(buf), ":%s", name);
+            idx = sqlite3_bind_parameter_index(s->stmt, buf);
+        }
+    } else {
+        moo_throw(moo_error("stmt.binde: Key muss Zahl (1-based) oder String ':name' sein"));
+        return moo_none();
+    }
+    if (idx <= 0) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "stmt.binde: Parameter nicht gefunden (Key vom Typ %d)", key.tag);
+        moo_throw(moo_error(msg));
+        return moo_none();
+    }
+    int rc = SQLITE_OK;
+    switch (value.tag) {
+        case MOO_NONE:
+            rc = sqlite3_bind_null(s->stmt, idx);
+            break;
+        case MOO_BOOL:
+            rc = sqlite3_bind_int64(s->stmt, idx, MV_BOOL(value) ? 1 : 0);
+            break;
+        case MOO_NUMBER: {
+            double d = MV_NUM(value);
+            double ipart;
+            if (modf(d, &ipart) == 0.0 && ipart >= -9.2233720368547758e18 && ipart <= 9.2233720368547758e18) {
+                rc = sqlite3_bind_int64(s->stmt, idx, (sqlite3_int64)ipart);
+            } else {
+                rc = sqlite3_bind_double(s->stmt, idx, d);
+            }
+            break;
+        }
+        case MOO_STRING: {
+            MooString* ss = MV_STR(value);
+            rc = sqlite3_bind_text(s->stmt, idx, ss->chars, ss->length, SQLITE_TRANSIENT);
+            break;
+        }
+        default: {
+            MooValue js = moo_json_string(value);
+            MooString* ss = MV_STR(js);
+            rc = sqlite3_bind_text(s->stmt, idx, ss->chars, ss->length, SQLITE_TRANSIENT);
+            break;
+        }
+    }
+    if (rc != SQLITE_OK) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "stmt.binde(%d): rc=%d (%s)", idx, rc, sqlite3_errmsg(s->db_ref));
+        moo_throw(moo_error(msg));
+        return moo_none();
+    }
+    return stmt;
+}
+
+// Step: liefert eine row als Dict (bei SQLITE_ROW) oder moo_none() bei DONE.
+// Setzt die Spaltenliste nicht zurueck — der Aufrufer kann .zuruecksetze() verwenden.
+MooValue moo_db_stmt_step(MooValue stmt) {
+    MooDbStmt* s = check_stmt(stmt, "stmt.schritt");
+    if (!s) return moo_none();
+    int rc = sqlite3_step(s->stmt);
+    if (rc == SQLITE_ROW) {
+        MooValue row = moo_dict_new();
+        int col_count = sqlite3_column_count(s->stmt);
+        for (int i = 0; i < col_count; i++) {
+            const char* col_name = sqlite3_column_name(s->stmt, i);
+            MooValue key = moo_string_new(col_name);
+            MooValue val;
+            int col_type = sqlite3_column_type(s->stmt, i);
+            switch (col_type) {
+                case SQLITE_INTEGER: val = moo_number((double)sqlite3_column_int64(s->stmt, i)); break;
+                case SQLITE_FLOAT:   val = moo_number(sqlite3_column_double(s->stmt, i)); break;
+                case SQLITE_TEXT:    val = moo_string_new((const char*)sqlite3_column_text(s->stmt, i)); break;
+                case SQLITE_NULL:    val = moo_none(); break;
+                case SQLITE_BLOB:    val = moo_string_new("<BLOB>"); break;
+                default:             val = moo_none(); break;
+            }
+            moo_dict_set(row, key, val);
+        }
+        return row;
+    }
+    if (rc == SQLITE_DONE) return moo_none();
+    char msg[1024];
+    format_sql_error(msg, sizeof(msg), s->sql_copy ? s->sql_copy : "?", sqlite3_errmsg(s->db_ref));
+    moo_throw(moo_error(msg));
+    return moo_none();
+}
+
+// Execute: steppt einmal (fuer DML), gibt sqlite3_changes zurueck.
+// Nach der Ausfuehrung wird automatisch reset, damit das Statement erneut
+// gebunden und ausgefuehrt werden kann (Bulk-Insert-Pattern).
+MooValue moo_db_stmt_execute(MooValue stmt) {
+    MooDbStmt* s = check_stmt(stmt, "stmt.ausfuehren");
+    if (!s) return moo_none();
+    int rc = sqlite3_step(s->stmt);
+    if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
+        char msg[1024];
+        format_sql_error(msg, sizeof(msg), s->sql_copy ? s->sql_copy : "?", sqlite3_errmsg(s->db_ref));
+        moo_throw(moo_error(msg));
+        return moo_none();
+    }
+    int changes = sqlite3_changes(s->db_ref);
+    sqlite3_reset(s->stmt);
+    sqlite3_clear_bindings(s->stmt);
+    return moo_number((double)changes);
+}
+
+// Query: sammelt alle rows in eine Liste und reset.
+MooValue moo_db_stmt_query(MooValue stmt) {
+    MooDbStmt* s = check_stmt(stmt, "stmt.abfrage");
+    if (!s) return moo_none();
+    MooValue result_list = moo_list_new(8);
+    int col_count = sqlite3_column_count(s->stmt);
+    int rc;
+    while ((rc = sqlite3_step(s->stmt)) == SQLITE_ROW) {
+        MooValue row = moo_dict_new();
+        for (int i = 0; i < col_count; i++) {
+            const char* col_name = sqlite3_column_name(s->stmt, i);
+            MooValue key = moo_string_new(col_name);
+            MooValue val;
+            int col_type = sqlite3_column_type(s->stmt, i);
+            switch (col_type) {
+                case SQLITE_INTEGER: val = moo_number((double)sqlite3_column_int64(s->stmt, i)); break;
+                case SQLITE_FLOAT:   val = moo_number(sqlite3_column_double(s->stmt, i)); break;
+                case SQLITE_TEXT:    val = moo_string_new((const char*)sqlite3_column_text(s->stmt, i)); break;
+                case SQLITE_NULL:    val = moo_none(); break;
+                case SQLITE_BLOB:    val = moo_string_new("<BLOB>"); break;
+                default:             val = moo_none(); break;
+            }
+            moo_dict_set(row, key, val);
+        }
+        moo_list_append(result_list, row);
+    }
+    if (rc != SQLITE_DONE) {
+        char msg[1024];
+        format_sql_error(msg, sizeof(msg), s->sql_copy ? s->sql_copy : "?", sqlite3_errmsg(s->db_ref));
+        sqlite3_reset(s->stmt);
+        moo_throw(moo_error(msg));
+        return moo_none();
+    }
+    sqlite3_reset(s->stmt);
+    sqlite3_clear_bindings(s->stmt);
+    return result_list;
+}
+
+// Reset: gleiches Statement erneut binden+step-bar machen.
+MooValue moo_db_stmt_reset(MooValue stmt) {
+    MooDbStmt* s = check_stmt(stmt, "stmt.zuruecksetzen");
+    if (!s) return moo_none();
+    sqlite3_reset(s->stmt);
+    sqlite3_clear_bindings(s->stmt);
+    return stmt;
+}
+
+void moo_db_stmt_close(MooValue stmt) {
+    if (stmt.tag != MOO_DB_STMT) return;
+    MooDbStmt* s = (MooDbStmt*)moo_val_as_ptr(stmt);
+    if (!s) return;
+    if (s->stmt) {
+        sqlite3_finalize(s->stmt);
+        s->stmt = NULL;
+    }
+    if (s->sql_copy) {
+        free(s->sql_copy);
+        s->sql_copy = NULL;
+    }
+}

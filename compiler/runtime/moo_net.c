@@ -340,11 +340,13 @@ void moo_socket_set_timeout(MooValue sock, MooValue ms) {
 extern void moo_channel_close(MooValue ch);
 extern void moo_window_close(MooValue window);
 extern void moo_db_close(MooValue db);
+extern void moo_db_stmt_close(MooValue stmt);
 
 void moo_smart_close(MooValue v) {
     switch (v.tag) {
         case MOO_SOCKET:   moo_socket_close(v); break;
         case MOO_DATABASE: moo_db_close(v); break;
+        case MOO_DB_STMT:  moo_db_stmt_close(v); break;
         case MOO_WINDOW:   moo_window_close(v); break;
         default:
             // Channels (MooObject) und alles andere → channel_close

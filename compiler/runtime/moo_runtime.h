@@ -28,6 +28,7 @@ typedef enum {
     MOO_REGEX    = 14,
     MOO_SOCKET   = 15,
     MOO_WEBSERVER = 16,
+    MOO_DB_STMT   = 17,
 } MooTag;
 
 // === Forward Declarations ===
