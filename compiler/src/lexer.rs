@@ -221,7 +221,9 @@ impl Lexer {
             if chars[i] == '\\' && i + 1 < chars.len() {
                 let escaped = match chars[i + 1] {
                     'n' => '\n',
+                    'r' => '\r',
                     't' => '\t',
+                    '0' => '\0',
                     '\\' => '\\',
                     '"' => '"',
                     '\'' => '\'',
@@ -349,7 +351,9 @@ impl Lexer {
             } else if chars[i] == '\\' && i + 1 < chars.len() {
                 let escaped = match chars[i + 1] {
                     'n' => '\n',
+                    'r' => '\r',
                     't' => '\t',
+                    '0' => '\0',
                     '\\' => '\\',
                     '"' => '"',
                     '\'' => '\'',

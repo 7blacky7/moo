@@ -129,7 +129,7 @@ pub fn keyword_lookup(word: &str) -> Option<TokenType> {
         "wenn" => Some(TokenType::If),
         "sonst" => Some(TokenType::Else),
         "solange" => Some(TokenType::While),
-        "für" => Some(TokenType::For),
+        "für" | "fuer" => Some(TokenType::For),
         "in" => Some(TokenType::In),
         "funktion" => Some(TokenType::Func),
         "gib_zurück" => Some(TokenType::Return),
