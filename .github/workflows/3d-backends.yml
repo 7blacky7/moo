@@ -8,7 +8,7 @@ on:
       - "compiler/Cargo.toml"
       - "compiler/build.rs"
       - "stdlib/welt.moo"
-      - "beispiele/welt_test.moo"
+      - "beispiele/domain/game/world/welt_test.moo"
       - ".github/workflows/3d-backends.yml"
   push:
     branches: [master, main]
@@ -48,7 +48,7 @@ jobs:
       - name: Moo-Compile welt_test.moo (--emit-ir)
         run: |
           ./compiler/target/release/moo-compiler compile \
-            beispiele/welt_test.moo --emit-ir -o /tmp/welt_test.ll
+            beispiele/domain/game/world/welt_test.moo --emit-ir -o /tmp/welt_test.ll
           test -s /tmp/welt_test.ll
 
       - name: Moo-Compile welt_test.moo → Binary (Linker-Smoke)
@@ -56,7 +56,7 @@ jobs:
           MOO_3D_BACKEND: ${{ matrix.backend }}
         run: |
           ./compiler/target/release/moo-compiler compile \
-            beispiele/welt_test.moo -o /tmp/welt_test
+            beispiele/domain/game/world/welt_test.moo -o /tmp/welt_test
           test -x /tmp/welt_test
 
       # Headful-Run + Screenshot-Hash-Vergleich kommt in Phase 2
