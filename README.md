@@ -18,7 +18,7 @@ zeige fibonacci(20)
   `./compiler/target/release/moo-compiler run <datei>.moo`.
 - **Sprache lernen:** `docs/tutorial.md` und `docs/lernen.md`.
 - **Referenz aller Builtins:** [moolang-docs](https://7blacky7.github.io/moolang-docs/).
-- **Beispiele:** `beispiele/` (Taxonomie in `spec/examples_taxonomy.md`).
+- **Beispiele:** `beispiele/` mit Zonen `domain/{web,db,game,system}/` plus lose Showcases (Taxonomie in `spec/examples_taxonomy.md`).
 - **Architektur in 5 Minuten:** [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Wie ist das Projekt strukturiert?
@@ -27,7 +27,8 @@ zeige fibonacci(20)
 compiler/   Rust-Compiler (compiler/src) + C-Runtime (compiler/runtime) + Tests
 src/moo/    Python-Toolchain: LSP, Formatter, Transpiler
 stdlib/     moo-Stdlib-Module (mathe, liste, text, ...)
-beispiele/  Lauffähige .moo-Programme (130+ Samples)
+beispiele/  Lauffähige .moo-Programme (130+ Samples; Zonen: domain/{web,db,game,system})
+scratch/    Ad-hoc-Skripte, nicht CI-relevant (siehe scratch/README.md)
 docs/       Benutzer-Doku (mkdocs-Material)
 editors/    VSCode-Extension + LSP-Client
 spec/       Spezifikation (Single Source of Truth)
@@ -50,10 +51,11 @@ Dauerhaft im Root:
 `pyproject.toml`, `.gitignore`, `.github/`.
 
 Alles andere ist entweder Code-Verzeichnis (`compiler/`, `src/`,
-`stdlib/`, `beispiele/`, `docs/`, `editors/`, `scripts/`, `spec/`)
-oder **Altlast**, die in Phase B nach `compiler/tests/` oder `scratch/`
-wandert. Siehe `spec/repo_cleanup_phase_b.md` — bitte keine neuen
-losen `test_*.moo` im Root anlegen.
+`stdlib/`, `beispiele/`, `docs/`, `editors/`, `scripts/`, `spec/`,
+`scratch/`). Die Phase-B-Aufräumung (W1–W3) ist **abgeschlossen** —
+Root ist frei von losen `test_*.moo`-Dateien. Bitte weiterhin keine
+neuen losen `test_*.moo` im Root anlegen (siehe
+`scratch/README.md`). Details zum Verlauf: `spec/phase_b_progress.md`.
 
 ## Lizenz
 

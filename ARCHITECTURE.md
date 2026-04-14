@@ -113,7 +113,7 @@ Siehe `spec/public_vs_internal_api.md`. Grob:
 
 ## Phase-B-Umbau
 
-`spec/repo_cleanup_phase_b.md` beschreibt die kontrollierte Move-Sequenz für Root-Aufräumung (lose `test_*.moo`-Dateien in `compiler/tests/` oder `scratch/`, `.ll`-Artefakte in `.gitignore`, etc.). Wird **nicht** ohne User-Abnahme umgesetzt.
+`spec/repo_cleanup_phase_b.md` beschreibt die kontrollierte Move-Sequenz. Stand 2026-04-14: **W1 + W2 + W3 durchgeführt** (40 Root-`test_*.moo` in `compiler/tests/` oder `scratch/`, 30 Beispiele in `beispiele/domain/{web,db,game,system}/` einsortiert, `.ll`-Artefakte gitignored). W4 = Abschluss. Laufender Stand in `spec/phase_b_progress.md`.
 
 ## Weitere Spec-Dokumente
 

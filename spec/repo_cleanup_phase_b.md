@@ -1,7 +1,10 @@
 # Repo-Cleanup Phase B — Kontrollierter Umbauplan
 
-**Status:** Vorschlag. Keine Umsetzung in dieser Phase. Umsetzung erst nach
-Review + Abnahme durch den User.
+**Status (Stand 2026-04-14):** **W1+W2+W3 umgesetzt.** Root-`test_*.moo` = 0,
+`scratch/` lebt, `beispiele/domain/{web,db,game,system}/` haben echte Inhalte.
+Siehe `spec/phase_b_progress.md` für den exakten Stand. Dieses Dokument
+beschreibt den ursprünglichen **Plan**; Abweichungen sind in
+`phase_b_progress.md` festgehalten.
 
 Dieses Dokument benennt die lauten Stellen im Repo-Root und schlägt eine
 Reihenfolge vor, in der sich die Architektur-Schichtung (L0–L4, siehe
