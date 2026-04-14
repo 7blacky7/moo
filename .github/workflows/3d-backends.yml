@@ -1,0 +1,63 @@
+name: 3D Backend Smoke
+
+on:
+  pull_request:
+    paths:
+      - "compiler/src/**"
+      - "compiler/runtime/**"
+      - "compiler/Cargo.toml"
+      - "compiler/build.rs"
+      - "stdlib/welt.moo"
+      - "beispiele/welt_test.moo"
+      - ".github/workflows/3d-backends.yml"
+  push:
+    branches: [master, main]
+
+jobs:
+  build-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [gl21, gl33, vulkan]
+        include:
+          - backend: vulkan
+            allow_fail: true
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.allow_fail == true }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM + GLFW
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-dev libpolly-14-dev libclang-14-dev \
+            libglfw3-dev libgl1-mesa-dev pkg-config
+
+      - name: Install Vulkan toolchain
+        if: matrix.backend == 'vulkan'
+        run: |
+          sudo apt-get install -y libvulkan-dev glslang-tools
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo build (--features ${{ matrix.backend }})
+        working-directory: compiler
+        run: cargo build --release --no-default-features --features ${{ matrix.backend }}
+
+      - name: Moo-Compile welt_test.moo (--emit-ir)
+        run: |
+          ./compiler/target/release/moo-compiler compile \
+            beispiele/welt_test.moo --emit-ir -o /tmp/welt_test.ll
+          test -s /tmp/welt_test.ll
+
+      - name: Moo-Compile welt_test.moo → Binary (Linker-Smoke)
+        env:
+          MOO_3D_BACKEND: ${{ matrix.backend }}
+        run: |
+          ./compiler/target/release/moo-compiler compile \
+            beispiele/welt_test.moo -o /tmp/welt_test
+          test -x /tmp/welt_test
+
+      # Headful-Run + Screenshot-Hash-Vergleich kommt in Phase 2
+      # (braucht Xvfb + Baseline pro Backend).

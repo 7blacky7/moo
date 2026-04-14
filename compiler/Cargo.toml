@@ -9,7 +9,7 @@ inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", feat
 clap = { version = "4", features = ["derive"] }
 
 [features]
-default = ["gl21"]
+default = ["gl33"]
 gl21 = []
 gl33 = []
 vulkan = []
