@@ -13,7 +13,10 @@ Laufend aktualisiert von k2 (Lead/Moderator). Einzige verbindliche Quelle für d
 | W3.3 | Beispiele SYSTEM | k3 | **done** | 2 Commits | `kernel_hello`, `x86dis`, `elf_reader`, `tar_reader` → `beispiele/domain/system/`. |
 | W3.4 | Beispiele GAME | k4 | **done** | `c22bdda`, `91f8c9c`, `7eeaed8`, `79b6b77` | 17 Dateien → `beispiele/domain/game/{world,testscreens}/`. C2 enthielt Workflow-Pfad-Update für `3d-backends.yml` (Move + CI in einem Commit). |
 | W3.5 | MOVED-Hinweise | k4 | **done** | — | Nicht nötig: keine inneren `beispiele/`-Cross-Refs. Optional: `beispiele/README.md` mit Sektions-Übersicht (separat, nicht blockierend). |
-| W4 | Sichtbarkeit / Feinschliff / Abschluss | k2 + Team | **open** | — | README/ARCHITECTURE-Links nachziehen, eventuelle Soft-Deprecations in `MOVED.md`-Platzhaltern, Abschluss-Aggregat. |
+| W4.1 | phase_b_progress.md finalisieren | k2 | **done** | `80188db`, dieser Commit | Tabelle pflegt Status pro Welle. |
+| W4.2 | Wahrheitsabgleich README/ARCHITECTURE/repo_cleanup | k2 | **done** | `3f8b252` | Doku spiegelt jetzt die Realität nach W2/W3-Moves wider. |
+| W4.3 | Aggregat-Post (verschoben/vertagt/riskant) | k2 | **done** | (Channel) | Abschluss-Sichtbarkeit. |
+| W4.4 | ANNOUNCEMENT-Event high | k2 | **done** | (Event) | User-Cron-Sichtbarkeit. |
 
 ## Schlüsselfakten
 
