@@ -2137,6 +2137,78 @@ impl<'ctx> CodeGen<'ctx> {
                         let h = self.compile_expr(&args[2])?;
                         return self.call_rt(self.rt.moo_window_create, &[title.into(), w.into(), h.into()], "win");
                     }
+                    // Hybrid 2D+3D Pipeline (M5)
+                    "fenster_unified" | "unified_window" | "fenster_hybrid" => {
+                        let title = self.compile_expr(&args[0])?;
+                        let w = self.compile_expr(&args[1])?;
+                        let h = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_hybrid_create, &[title.into(), w.into(), h.into()], "hybrid_win");
+                    }
+                    "hybrid_offen" | "hybrid_is_open" => {
+                        let win = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_hybrid_is_open, &[win.into()], "hybrid_open");
+                    }
+                    "hybrid_löschen" | "hybrid_clear" => {
+                        let win = self.compile_expr(&args[0])?;
+                        let r = self.compile_expr(&args[1])?;
+                        let g = self.compile_expr(&args[2])?;
+                        let b = self.compile_expr(&args[3])?;
+                        self.call_rt_void(self.rt.moo_hybrid_clear, &[win.into(), r.into(), g.into(), b.into()], "hybrid_clr")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "hybrid_aktualisieren" | "hybrid_update" => {
+                        let win = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_hybrid_update, &[win.into()], "hybrid_upd")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "hybrid_schliessen" | "hybrid_close" => {
+                        let win = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_hybrid_close, &[win.into()], "hybrid_close")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "zeichne_rechteck_z" | "draw_rect_z" => {
+                        let win = self.compile_expr(&args[0])?;
+                        let x = self.compile_expr(&args[1])?;
+                        let y = self.compile_expr(&args[2])?;
+                        let z = self.compile_expr(&args[3])?;
+                        let w = self.compile_expr(&args[4])?;
+                        let h = self.compile_expr(&args[5])?;
+                        let c = self.compile_expr(&args[6])?;
+                        self.call_rt_void(self.rt.moo_hybrid_rect_z, &[win.into(), x.into(), y.into(), z.into(), w.into(), h.into(), c.into()], "rect_z")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "zeichne_linie_z" | "draw_line_z" => {
+                        let win = self.compile_expr(&args[0])?;
+                        let x1 = self.compile_expr(&args[1])?;
+                        let y1 = self.compile_expr(&args[2])?;
+                        let x2 = self.compile_expr(&args[3])?;
+                        let y2 = self.compile_expr(&args[4])?;
+                        let z = self.compile_expr(&args[5])?;
+                        let c = self.compile_expr(&args[6])?;
+                        self.call_rt_void(self.rt.moo_hybrid_line_z, &[win.into(), x1.into(), y1.into(), x2.into(), y2.into(), z.into(), c.into()], "line_z")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "zeichne_kreis_z" | "draw_circle_z" => {
+                        let win = self.compile_expr(&args[0])?;
+                        let cx = self.compile_expr(&args[1])?;
+                        let cy = self.compile_expr(&args[2])?;
+                        let z = self.compile_expr(&args[3])?;
+                        let r = self.compile_expr(&args[4])?;
+                        let c = self.compile_expr(&args[5])?;
+                        self.call_rt_void(self.rt.moo_hybrid_circle_z, &[win.into(), cx.into(), cy.into(), z.into(), r.into(), c.into()], "circ_z")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "sprite_zeichnen_z" | "sprite_draw_z" => {
+                        let win = self.compile_expr(&args[0])?;
+                        let id = self.compile_expr(&args[1])?;
+                        let x = self.compile_expr(&args[2])?;
+                        let y = self.compile_expr(&args[3])?;
+                        let z = self.compile_expr(&args[4])?;
+                        let w = self.compile_expr(&args[5])?;
+                        let h = self.compile_expr(&args[6])?;
+                        self.call_rt_void(self.rt.moo_hybrid_sprite_z, &[win.into(), id.into(), x.into(), y.into(), z.into(), w.into(), h.into()], "spr_z")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     "fenster_löschen" | "window_clear" | "fl" => {
                         let win = self.compile_expr(&args[0])?;
                         let color = self.compile_expr(&args[1])?;
