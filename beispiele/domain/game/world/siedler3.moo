@@ -434,8 +434,9 @@ funktion gras_zeichnen(win):
 # -----------------------------------------------------------------
 # Haupt-Szene
 # -----------------------------------------------------------------
-setze win auf raum_erstelle("Siedler 3 — Iso-Voxel (moo)", WIN_W, WIN_H)
-# Niedriger FOV simuliert orthografische Iso-Projektion (Voxel-Charme)
+setze win auf fenster_unified("Siedler 3 — Hybrid (moo)", WIN_W, WIN_H)
+# Niedriger FOV simuliert orthografische Iso-Projektion (Voxel-Charme).
+# raum_* funktioniert via P6-Bridge auf dem Hybrid-Window (shared Z-Buffer).
 raum_perspektive(win, 28.0, 0.1, 200.0)
 
 # Iso-Default: hoch ueber der Karte, ~30° Elevation, 45° Azimuth
@@ -480,7 +481,7 @@ funktion sky_b():
 
 raum_maus_fangen(win)
 
-solange raum_offen(win):
+solange hybrid_offen(win):
     wenn raum_taste(win, "escape"):
         stopp
     # Test-Modus: 60 Frames + Screenshot alle 10, dann beenden
@@ -533,7 +534,7 @@ solange raum_offen(win):
     siedler_walk_step()
 
     # Frame rendern (Himmelfarbe = Tag/Nacht-Zyklus)
-    raum_löschen(win, sky_r(), sky_g(), sky_b())
+    hybrid_löschen(win, sky_r(), sky_g(), sky_b())
     setze zentrum_x auf WORLD / 2
     setze zentrum_z auf WORLD / 2
     setze cam_eye_x auf zentrum_x + cosinus(kamera_winkel) * kamera_radius
@@ -569,8 +570,18 @@ solange raum_offen(win):
     siedler_zeichnen(win)
     partikel_render(win)
 
-    raum_aktualisieren(win)
+    # 2D-HUD via Hybrid-API (zeichne_rechteck_z, Welt-Z=0.5 → vor allem 3D).
+    # Sechs Resource-Balken oben links; Balkenlaenge = Counter * 3 Pixel.
+    zeichne_rechteck_z(win, 10, 10, 0.5, 180, 80, "#10182088")
+    zeichne_rechteck_z(win, 15, 15, 0.4, r_holz[0] * 3 + 2, 8, "#8D6E63")
+    zeichne_rechteck_z(win, 15, 27, 0.4, r_bretter[0] * 3 + 2, 8, "#D7CCC8")
+    zeichne_rechteck_z(win, 15, 39, 0.4, r_stein[0] * 3 + 2, 8, "#607D8B")
+    zeichne_rechteck_z(win, 100, 15, 0.4, r_korn[0] * 3 + 2, 8, "#FFEB3B")
+    zeichne_rechteck_z(win, 100, 27, 0.4, r_mehl[0] * 3 + 2, 8, "#FFFFFF")
+    zeichne_rechteck_z(win, 100, 39, 0.4, r_brot[0] * 3 + 2, 8, "#FF9800")
+
+    hybrid_aktualisieren(win)
     setze tick auf tick + 1
     warte(16)
 
-raum_schliessen(win)
+hybrid_schliessen(win)
