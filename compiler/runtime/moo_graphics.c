@@ -279,3 +279,89 @@ void moo_delay(MooValue ms) {
         if (delay_ms > 0) SDL_Delay((Uint32)delay_ms);
     }
 }
+
+// ============================================================
+// Test-API: Screenshot, Tastatur-Simulation, Maus-Simulation
+// ============================================================
+
+MooValue moo_screenshot(MooValue window, MooValue path) {
+    if (window.tag != MOO_WINDOW || path.tag != MOO_STRING) return moo_bool(false);
+    MooWindow* mw = (MooWindow*)moo_val_as_ptr(window);
+    if (!mw || !mw->renderer) return moo_bool(false);
+
+    int w, h;
+    SDL_GetRendererOutputSize(mw->renderer, &w, &h);
+    SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!surface) return moo_bool(false);
+
+    if (SDL_RenderReadPixels(mw->renderer, NULL, SDL_PIXELFORMAT_RGBA32,
+                             surface->pixels, surface->pitch) != 0) {
+        SDL_FreeSurface(surface);
+        return moo_bool(false);
+    }
+
+    const char* filepath = MV_STR(path)->chars;
+    int result = SDL_SaveBMP(surface, filepath);
+    SDL_FreeSurface(surface);
+    return moo_bool(result == 0);
+}
+
+void moo_simulate_key(MooValue key, MooValue pressed) {
+    if (key.tag != MOO_STRING) return;
+    const char* name = MV_STR(key)->chars;
+    int is_down = (pressed.tag == MOO_BOOL) ? MV_BOOL(pressed) : 1;
+
+    SDL_Scancode sc = SDL_SCANCODE_UNKNOWN;
+    if (strcmp(name, "links") == 0 || strcmp(name, "left") == 0) sc = SDL_SCANCODE_LEFT;
+    else if (strcmp(name, "rechts") == 0 || strcmp(name, "right") == 0) sc = SDL_SCANCODE_RIGHT;
+    else if (strcmp(name, "oben") == 0 || strcmp(name, "up") == 0) sc = SDL_SCANCODE_UP;
+    else if (strcmp(name, "unten") == 0 || strcmp(name, "down") == 0) sc = SDL_SCANCODE_DOWN;
+    else if (strcmp(name, "leertaste") == 0 || strcmp(name, "space") == 0) sc = SDL_SCANCODE_SPACE;
+    else if (strcmp(name, "escape") == 0) sc = SDL_SCANCODE_ESCAPE;
+    else if (strcmp(name, "eingabe") == 0 || strcmp(name, "enter") == 0) sc = SDL_SCANCODE_RETURN;
+    else if (strlen(name) == 1 && name[0] >= 'a' && name[0] <= 'z')
+        sc = (SDL_Scancode)(SDL_SCANCODE_A + (name[0] - 'a'));
+    if (sc == SDL_SCANCODE_UNKNOWN) return;
+
+    SDL_Event event;
+    memset(&event, 0, sizeof(event));
+    event.type = is_down ? SDL_KEYDOWN : SDL_KEYUP;
+    event.key.keysym.scancode = sc;
+    event.key.keysym.sym = SDL_GetKeyFromScancode(sc);
+    event.key.state = is_down ? SDL_PRESSED : SDL_RELEASED;
+    SDL_PushEvent(&event);
+}
+
+void moo_simulate_mouse(MooValue x, MooValue y, MooValue click) {
+    int mx = (x.tag == MOO_NUMBER) ? (int)MV_NUM(x) : 0;
+    int my = (y.tag == MOO_NUMBER) ? (int)MV_NUM(y) : 0;
+    int do_click = (click.tag == MOO_BOOL) ? MV_BOOL(click) : 0;
+
+    /* Mausposition setzen */
+    SDL_Event motion;
+    memset(&motion, 0, sizeof(motion));
+    motion.type = SDL_MOUSEMOTION;
+    motion.motion.x = mx;
+    motion.motion.y = my;
+    SDL_PushEvent(&motion);
+
+    if (do_click) {
+        SDL_Event down;
+        memset(&down, 0, sizeof(down));
+        down.type = SDL_MOUSEBUTTONDOWN;
+        down.button.button = SDL_BUTTON_LEFT;
+        down.button.x = mx;
+        down.button.y = my;
+        down.button.state = SDL_PRESSED;
+        SDL_PushEvent(&down);
+
+        SDL_Event up;
+        memset(&up, 0, sizeof(up));
+        up.type = SDL_MOUSEBUTTONUP;
+        up.button.button = SDL_BUTTON_LEFT;
+        up.button.x = mx;
+        up.button.y = my;
+        up.button.state = SDL_RELEASED;
+        SDL_PushEvent(&up);
+    }
+}

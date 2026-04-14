@@ -462,9 +462,9 @@ static int create_ubo(VulkanContext* ctx) {
     ctx->ubo_data.fogDist = 20.0f;
     // Horizont-Farbe: Passt zu welten.moo Clear-Color (0.53, 0.81, 0.92)
     // Etwas heller fuer nahtlosen Nebel→Himmel Uebergang
-    ctx->ubo_data.fogColor[0] = 0.70f;
-    ctx->ubo_data.fogColor[1] = 0.85f;
-    ctx->ubo_data.fogColor[2] = 0.95f;
+    ctx->ubo_data.fogColor[0] = 0.85f;
+    ctx->ubo_data.fogColor[1] = 0.87f;
+    ctx->ubo_data.fogColor[2] = 0.90f;
     ctx->ubo_data.fogColor[3] = 0.0f;
 
     /* WICHTIG: UBO sofort in ALLE Frame-Buffers hochladen (nicht auf ersten Swap warten) */
@@ -930,6 +930,23 @@ static float vk_mouse_dy(void* vctx) {
     return dy;
 }
 
+static void vk_set_fog_density(void* raw, float density) {
+    VulkanContext* ctx = (VulkanContext*)raw;
+    ctx->ubo_data.fogDist = 1.0f / (density > 0.001f ? density : 0.001f);
+}
+
+static void vk_set_light_dir(void* raw, float x, float y, float z) {
+    VulkanContext* ctx = (VulkanContext*)raw;
+    ctx->ubo_data.lightDir[0] = x;
+    ctx->ubo_data.lightDir[1] = y;
+    ctx->ubo_data.lightDir[2] = z;
+}
+
+static void vk_set_ambient(void* raw, float level) {
+    (void)raw; (void)level;
+    /* Vulkan ambient ist im Shader hardcoded — TODO: Uniform */
+}
+
 Moo3DBackend moo_backend_vulkan = {
     .create_window = vk_create_window,
     .close = vk_close,
@@ -949,6 +966,9 @@ Moo3DBackend moo_backend_vulkan = {
     .capture_mouse = vk_capture_mouse,
     .mouse_dx = vk_mouse_dx,
     .mouse_dy = vk_mouse_dy,
+    .set_fog_density = vk_set_fog_density,
+    .set_light_dir = vk_set_light_dir,
+    .set_ambient = vk_set_ambient,
     .chunk_create = vk_chunk_create_fn,
     .chunk_begin = vk_chunk_begin_fn,
     .chunk_end = vk_chunk_end_fn,

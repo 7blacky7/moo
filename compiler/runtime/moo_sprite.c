@@ -89,6 +89,7 @@ MooValue moo_sprite_load(MooValue win, MooValue path) {
 
     /* Texture erstellen */
     SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surface);
+    if (tex) SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
     g_sprites[slot].width = surface->w;
     g_sprites[slot].height = surface->h;
     SDL_FreeSurface(surface);

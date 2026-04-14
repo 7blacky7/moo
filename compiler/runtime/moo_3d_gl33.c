@@ -154,9 +154,9 @@ static void* gl33_create_window(const char* title, int w, int h) {
     ctx->light_dir[1] = 0.4f;
     ctx->light_dir[2] = 0.5f;
     // Horizont-Farbe: Passt zu welten.moo Clear-Color (0.53, 0.81, 0.92)
-    ctx->fog_color[0] = 0.70f;
-    ctx->fog_color[1] = 0.85f;
-    ctx->fog_color[2] = 0.95f;
+    ctx->fog_color[0] = 0.85f;
+    ctx->fog_color[1] = 0.87f;
+    ctx->fog_color[2] = 0.90f;
     ctx->fog_dist = 20.0f;
 
     /* GL State */
@@ -481,6 +481,31 @@ static float gl33_mouse_dy(void* vctx) {
 }
 
 /* ========================================================
+ * Fog + Licht
+ * ======================================================== */
+
+static void gl33_set_fog_density(void* vctx, float density) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return;
+    ctx->fog_dist = 1.0f / (density > 0.001f ? density : 0.001f);
+    glUseProgram(ctx->program);
+    gl33_upload_float(ctx->uniforms.fog_dist, ctx->fog_dist);
+}
+
+static void gl33_set_light_dir(void* vctx, float x, float y, float z) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return;
+    ctx->light_dir[0] = x; ctx->light_dir[1] = y; ctx->light_dir[2] = z;
+    glUseProgram(ctx->program);
+    gl33_upload_vec3(ctx->uniforms.light_dir, x, y, z);
+}
+
+static void gl33_set_ambient(void* vctx, float level) {
+    (void)vctx; (void)level;
+    /* GL33 ambient ist im Shader hardcoded (0.15) — TODO: Uniform */
+}
+
+/* ========================================================
  * Backend Export
  * ======================================================== */
 
@@ -503,6 +528,9 @@ Moo3DBackend moo_backend_gl33 = {
     .capture_mouse = gl33_capture_mouse,
     .mouse_dx      = gl33_mouse_dx,
     .mouse_dy      = gl33_mouse_dy,
+    .set_fog_density = gl33_set_fog_density,
+    .set_light_dir   = gl33_set_light_dir,
+    .set_ambient     = gl33_set_ambient,
     .chunk_create  = gl33_chunk_create,
     .chunk_begin   = gl33_chunk_begin,
     .chunk_end     = gl33_chunk_end,
