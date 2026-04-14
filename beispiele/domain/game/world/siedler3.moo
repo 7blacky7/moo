@@ -266,6 +266,21 @@ funktion emit_rauch():
             setze pvz auf (hash01(g[1] + 1, g[0]) - 0.5) * 0.01
             partikel_neu(px, h + 2.0, g[1] * 1.0, pvx, 0.04, pvz, 60, "grau")
 
+# Fliegende Blaetter/Bluetenstaub aus Baumkronen — wind-driven
+funktion emit_blatt():
+    für p in baum_positionen:
+        setze bh auf terrain_h(p[0], p[1])
+        wenn bh >= 1 und bh <= 2:
+            setze ph auf wind_phase[0]
+            setze bvx auf wind_x() * 0.04
+            setze bvz auf wind_z() * 0.04
+            setze farbe auf "gruen"
+            wenn (hash01(p[0] + ph, p[1]) > 0.7):
+                setze farbe auf "gelb"
+            wenn (hash01(p[1] + ph, p[0]) > 0.85):
+                setze farbe auf "weiss"
+            partikel_neu(p[0] + 0.3 + (hash01(ph, p[0]) - 0.5) * 0.2, bh + 0.85, p[1] + 0.3 + (hash01(p[1], ph) - 0.5) * 0.2, bvx, -0.005, bvz, 100, farbe)
+
 # Funken am Steinmetz (typ 3)
 funktion emit_funken():
     für g in gebaeude:
@@ -373,6 +388,38 @@ setze kamera_hoehe auf 10.0
 setze kamera_radius auf 16.0
 setze tick auf 0
 
+setze sun_phase auf [0.15]
+
+funktion sky_r():
+    setze t auf sun_phase[0]
+    wenn t < 0.2:
+        gib_zurück 0.9 - t * 2
+    wenn t < 0.5:
+        gib_zurück 0.5 - (t - 0.2) * 0.6
+    wenn t < 0.7:
+        gib_zurück 0.32 + (t - 0.5) * 1.5
+    gib_zurück 0.62 - (t - 0.7) * 2
+
+funktion sky_g():
+    setze t auf sun_phase[0]
+    wenn t < 0.2:
+        gib_zurück 0.5 - t * 1
+    wenn t < 0.5:
+        gib_zurück 0.3 + (t - 0.2) * 0.8
+    wenn t < 0.7:
+        gib_zurück 0.54 + (t - 0.5) * 1.0
+    gib_zurück 0.74 - (t - 0.7) * 2.4
+
+funktion sky_b():
+    setze t auf sun_phase[0]
+    wenn t < 0.5:
+        gib_zurück 0.6 + t * 0.4
+    wenn t < 0.7:
+        gib_zurück 0.8 + (t - 0.5) * 0.5
+    gib_zurück 0.9 - (t - 0.7) * 2.5
+
+raum_maus_fangen(win)
+
 solange raum_offen(win):
     wenn raum_taste(win, "escape"):
         stopp
@@ -388,28 +435,35 @@ solange raum_offen(win):
         setze kamera_radius auf kamera_radius - 0.2
     wenn raum_taste(win, "e"):
         setze kamera_radius auf kamera_radius + 0.2
+    setze mdx auf raum_maus_dx(win)
+    setze mdy auf raum_maus_dy(win)
+    setze kamera_winkel auf kamera_winkel + mdx * 0.005
+    setze kamera_hoehe auf kamera_hoehe + mdy * 0.04
     wenn kamera_hoehe < 3:
         setze kamera_hoehe auf 3.0
     wenn kamera_radius < 5:
         setze kamera_radius auf 5.0
 
-    # Wind-Phase animiert
     wind_phase[0] = wind_phase[0] + 1.0
+    sun_phase[0] = sun_phase[0] + 0.00056
+    wenn sun_phase[0] > 1.0:
+        sun_phase[0] = 0.0
 
-    # Atmosphaere
     partikel_tick()
     wenn tick % 8 == 0:
         emit_rauch()
     wenn tick % 12 == 0:
         emit_funken()
+    wenn tick % 20 == 0:
+        emit_blatt()
 
     # Wirtschaft + Siedler-Bewegung (Hooks → k3 in M2/M3)
     wenn tick % 60 == 0:
         tick_wirtschaft()
     siedler_walk_step()
 
-    # Frame rendern
-    raum_löschen(win, 0.35, 0.55, 0.8)
+    # Frame rendern (Himmelfarbe = Tag/Nacht-Zyklus)
+    raum_löschen(win, sky_r(), sky_g(), sky_b())
     setze zentrum_x auf WORLD / 2
     setze zentrum_z auf WORLD / 2
     setze cam_eye_x auf zentrum_x + cosinus(kamera_winkel) * kamera_radius
