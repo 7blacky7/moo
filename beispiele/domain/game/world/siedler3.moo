@@ -210,12 +210,7 @@ funktion pfade():
         setze i auf i + 1
     gib_zurück result
 
-# HOOK 4: siedler_walk_step()
-# Wird jeden Frame aufgerufen, soll die Siedler-Liste basierend auf Wirtschafts-
-# State entlang der berechneten Pfade fortbewegen. M3-Erweiterung von k3.
-# Default-Skelett: nutzt einfache Linear-Interpolation aus siedler_tick().
-funktion siedler_walk_step():
-    siedler_tick()
+# HOOK 4: siedler_walk_step() — IMPLEMENTIERT in M3 unten (siehe Siedler-Block).
 
 # -----------------------------------------------------------------
 # Wind-System (globaler Vektor + Staerke)
@@ -294,37 +289,96 @@ funktion emit_funken():
 # -----------------------------------------------------------------
 # Figuren: 6 Siedler die zwischen zwei Gebaeuden pendeln
 # -----------------------------------------------------------------
-setze siedler auf [[0, 1, 0.0, 0.008, "gelb"], [1, 2, 0.3, 0.006, "gelb"], [2, 0, 0.7, 0.005, "rot"], [3, 5, 0.1, 0.007, "blau"], [5, 7, 0.4, 0.006, "weiss"], [7, 6, 0.8, 0.009, "magenta"]]
+# M3 (k3): Siedler folgen BFS-Routen + tragen sichtbar Ressource.
+# Schema: [von_idx, nach_idx, schritt, t_seg, speed, farbe, res_typ, route]
+# Beim ersten Tick: ensure_route() berechnet via finde_route().
+setze siedler auf [[0, 1, 0, 0.0, 0.04, "gruen", "holz", []], [1, 3, 0, 0.0, 0.04, "weiss", "bretter", []], [2, 3, 0, 0.0, 0.04, "grau", "stein", []], [5, 6, 0, 0.0, 0.04, "gelb", "korn", []], [6, 7, 0, 0.0, 0.04, "weiss", "mehl", []], [7, 3, 0, 0.0, 0.04, "orange", "brot", []], [4, 1, 0, 0.0, 0.04, "gruen", "holz", []]]
 
-funktion siedler_tick():
+funktion res_farbe(typ):
+    wenn typ == "holz":
+        gib_zurück "orange"
+    wenn typ == "bretter":
+        gib_zurück "weiss"
+    wenn typ == "stein":
+        gib_zurück "grau"
+    wenn typ == "korn":
+        gib_zurück "gelb"
+    wenn typ == "mehl":
+        gib_zurück "weiss"
+    wenn typ == "brot":
+        gib_zurück "orange"
+    gib_zurück "magenta"
+
+funktion ensure_route(idx):
+    setze s auf siedler[idx]
+    wenn länge(s[7]) == 0:
+        setze a auf gebaeude[s[0]]
+        setze b auf gebaeude[s[1]]
+        setze r auf finde_route(a[0], a[1], b[0], b[1])
+        wenn länge(r) > 0:
+            s[7] = r
+            s[2] = 0
+            s[3] = 0.0
+            siedler[idx] = s
+
+# Liefert [fx, fy] der aktuellen Weltposition.
+funktion siedler_pos(s):
+    wenn länge(s[7]) == 0:
+        setze g auf gebaeude[s[0]]
+        gib_zurück [g[0] * 1.0, g[1] * 1.0]
+    setze schritt auf s[2]
+    setze t auf s[3]
+    setze ax auf 0.0
+    setze ay auf 0.0
+    wenn schritt == 0:
+        setze g auf gebaeude[s[0]]
+        setze ax auf g[0] * 1.0
+        setze ay auf g[1] * 1.0
+    sonst:
+        setze a_tile auf s[7][schritt - 1]
+        setze ax auf a_tile[0] * 1.0
+        setze ay auf a_tile[1] * 1.0
+    setze b_tile auf s[7][schritt]
+    setze fx auf ax * (1.0 - t) + b_tile[0] * t
+    setze fy auf ay * (1.0 - t) + b_tile[1] * t
+    gib_zurück [fx, fy]
+
+funktion siedler_walk_step():
     setze i auf 0
     solange i < länge(siedler):
+        ensure_route(i)
         setze s auf siedler[i]
-        setze t auf s[2] + s[3]
-        wenn t > 1.0:
-            s[0] = siedler[i][1]
-            s[1] = siedler[i][0]
-            s[2] = 0.0
-        sonst:
-            s[2] = t
-        siedler[i] = s
+        wenn länge(s[7]) > 0:
+            setze t_neu auf s[3] + s[4]
+            wenn t_neu >= 1.0:
+                s[2] = s[2] + 1
+                s[3] = 0.0
+                wenn s[2] >= länge(s[7]):
+                    # Ziel erreicht: Swap von/nach + Rueckweg
+                    setze tmp auf s[0]
+                    s[0] = s[1]
+                    s[1] = tmp
+                    s[7] = []
+                    s[2] = 0
+            sonst:
+                s[3] = t_neu
+            siedler[i] = s
         setze i auf i + 1
 
 funktion siedler_zeichnen(win):
     für s in siedler:
-        setze g_a auf gebaeude[s[0]]
-        setze g_b auf gebaeude[s[1]]
-        setze t auf s[2]
-        setze fx auf g_a[0] * (1.0 - t) + g_b[0] * t
-        setze fy auf g_a[1] * (1.0 - t) + g_b[1] * t
+        setze pos auf siedler_pos(s)
+        setze fx auf pos[0]
+        setze fy auf pos[1]
         setze fh auf terrain_h(boden(fx), boden(fy))
-        # Volumetrische 3D-Figur: Beine + Koerper + Kugel-Kopf + schwingender Arm
-        setze bob auf sinus(wind_phase[0] * 0.25 + t * 20) * 0.05
-        raum_würfel(win, fx, fh + 0.25, fy, 0.18, s[4])
-        raum_würfel(win, fx, fh + 0.55 + bob, fy, 0.22, s[4])
-        raum_kugel(win, fx, fh + 0.85 + bob, fy, 0.14, s[4], 5)
-        setze arm_dx auf wind_x() * 0.05 + sinus(t * 15) * 0.06
-        raum_würfel(win, fx + arm_dx, fh + 0.55 + bob, fy, 0.09, s[4])
+        setze bob auf sinus(wind_phase[0] * 0.25 + s[3] * 20) * 0.05
+        raum_würfel(win, fx, fh + 0.25, fy, 0.18, s[5])
+        raum_würfel(win, fx, fh + 0.55 + bob, fy, 0.22, s[5])
+        raum_kugel(win, fx, fh + 0.85 + bob, fy, 0.14, s[5], 5)
+        setze arm_dx auf wind_x() * 0.05 + sinus(s[3] * 15) * 0.06
+        raum_würfel(win, fx + arm_dx, fh + 0.55 + bob, fy, 0.09, s[5])
+        # Resource-Tragen: kleiner Wuerfel ueber Kopf in Res-Farbe
+        raum_würfel(win, fx, fh + 1.05 + bob, fy, 0.1, res_farbe(s[6]))
 
 # -----------------------------------------------------------------
 # Flaggen auf Haeusern
