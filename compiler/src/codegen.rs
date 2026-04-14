@@ -1742,7 +1742,6 @@ impl<'ctx> CodeGen<'ctx> {
                         BinOp::GreaterEq => self.rt.moo_gte,
                         BinOp::And => self.rt.moo_and,
                         BinOp::Or => self.rt.moo_or,
-                        // Bit-Operatoren: TODO — nutzen vorerst die logischen Ops als Fallback
                         BinOp::BitAnd => self.rt.moo_bitand,
                         BinOp::BitOr => self.rt.moo_bitor,
                         BinOp::BitXor => self.rt.moo_bitxor,
@@ -1778,7 +1777,7 @@ impl<'ctx> CodeGen<'ctx> {
                         BinOp::BitOr => self.rt.moo_bitor,
                         BinOp::BitXor => self.rt.moo_bitxor,
                         BinOp::LShift => self.rt.moo_lshift,
-                        BinOp::RShift => self.rt.moo_rshift, // TODO: echte Bit-Ops
+                        BinOp::RShift => self.rt.moo_rshift,
                     };
                     self.call_rt(func, &[lhs.into(), rhs.into()], "op")
                 }

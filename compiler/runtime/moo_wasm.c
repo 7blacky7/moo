@@ -230,7 +230,28 @@ MooValue moo_to_string(MooValue v) {
 }
 
 /* ====== Stubs fuer nicht-unterstuetzte Features ====== */
-MooValue moo_pow(MooValue a, MooValue b) { return moo_number(0); } /* TODO */
+/* moo_pow: echte Potenz fuer WASM-Target.
+ * Schnellpfad: ganzzahliger nicht-negativer Exponent → Repeated Squaring (O(log n)).
+ * Fallback: nicht-integer / negativer Exponent → __builtin_pow (wird von clang
+ *           direkt in eine WASM-Math-Intrinsic umgesetzt, kein libm).
+ */
+MooValue moo_pow(MooValue a, MooValue b) {
+    double base = moo_as_number(a);
+    double exp_d = moo_as_number(b);
+    long exp_l = (long)exp_d;
+    if ((double)exp_l == exp_d && exp_l >= 0) {
+        double r = 1.0;
+        double p = base;
+        long n = exp_l;
+        while (n > 0) {
+            if (n & 1) r *= p;
+            p *= p;
+            n >>= 1;
+        }
+        return moo_number(r);
+    }
+    return moo_number(__builtin_pow(base, exp_d));
+}
 MooValue moo_error(const char* msg) { return moo_string_new(msg); }
 void moo_throw(MooValue v) { /* kann in WASM nicht throwsn */ }
 void moo_retain(MooValue v) { /* Bump-Allocator: kein refcount */ }
