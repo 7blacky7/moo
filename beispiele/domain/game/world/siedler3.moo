@@ -270,7 +270,8 @@ funktion partikel_render(win):
         setze sx auf iso_x(p[0], p[2])
         setze sy auf iso_y(p[0], p[2], p[1])
         setze sz auf iso_z(p[0], p[2], p[1]) - 2.0
-        setze groesse auf 1 + p[6] / 20
+        # Groesser als v0.5 → sichtbar (4-10 Pixel Radius)
+        setze groesse auf 4 + p[6] / 10
         zeichne_kreis_z(win, sx, sy, sz, groesse, p[7])
 
 # Schornstein-Rauch
@@ -393,16 +394,17 @@ funktion siedler_zeichnen(win):
         setze fx auf pos[0]
         setze fy auf pos[1]
         setze fh auf terrain_h(boden(fx), boden(fy))
-        setze bob auf sinus(wind_phase[0] * 0.25 + s[3] * 20) * 2.0
+        setze bob auf sinus(wind_phase[0] * 0.25 + s[3] * 20) * 4.0
         setze sx auf iso_x(fx, fy)
         setze sy auf iso_y(fx, fy, fh)
         setze sz auf iso_z(fx, fy, fh) - 4.0
-        # Beine (kleiner Block), Koerper (groesser), Kopf (Kreis)
-        zeichne_rechteck_z(win, sx - 3, sy - 16, sz, 6, 6, s[5])
-        zeichne_rechteck_z(win, sx - 5, sy - 24 + bob, sz, 10, 8, s[5])
-        zeichne_kreis_z(win, sx, sy - 30 + bob, sz, 4, s[5])
-        # Resource-Tragen: kleines Rechteck ueber Kopf
-        zeichne_rechteck_z(win, sx - 3, sy - 38 + bob, sz - 0.1, 6, 5, res_farbe(s[6]))
+        # Siedler 4-5x groesser als v0.5 Version → sichtbar auf Karte
+        # Beine (Block), Koerper (groesser), Kopf (Kreis)
+        zeichne_rechteck_z(win, sx - 10, sy - 50, sz, 20, 22, s[5])
+        zeichne_rechteck_z(win, sx - 16, sy - 76 + bob, sz, 32, 28, s[5])
+        zeichne_kreis_z(win, sx, sy - 94 + bob, sz, 14, s[5])
+        # Resource-Tragen: groesses Rechteck ueber Kopf in Res-Farbe
+        zeichne_rechteck_z(win, sx - 10, sy - 116 + bob, sz - 0.1, 20, 16, res_farbe(s[6]))
 
 # -----------------------------------------------------------------
 # Flaggen auf Haeusern
@@ -483,37 +485,43 @@ setze tick auf 0
 # dann sauberer Exit 0. Sonst normaler interaktiver Modus.
 setze test_modus auf umgebung("MOO_SIEDLER_TEST") != ""
 
-setze sun_phase auf [0.15]
+setze sun_phase auf [0.5]
+
+# 3-Keyframe Sky-Farben: Tag(0.5,0.7,1.0) ↔ Daemmerung(0.9,0.5,0.3) ↔ Nacht(0.05,0.05,0.15)
+# sun_phase: 0.0=Nacht → 0.25=Daemmerung → 0.5=Tag → 0.75=Daemmerung → 1.0=Nacht
+funktion lerp(a, b, t):
+    gib_zurück a + (b - a) * t
+
+funktion sky_interp(night, dawn, day, idx):
+    setze t auf sun_phase[0]
+    # Komponenten-Index 0/1/2 → Night/Dawn/Day je RGB
+    wenn t < 0.25:
+        setze f auf t / 0.25
+        gib_zurück lerp(night, dawn, f)
+    wenn t < 0.5:
+        setze f auf (t - 0.25) / 0.25
+        gib_zurück lerp(dawn, day, f)
+    wenn t < 0.75:
+        setze f auf (t - 0.5) / 0.25
+        gib_zurück lerp(day, dawn, f)
+    setze f auf (t - 0.75) / 0.25
+    gib_zurück lerp(dawn, night, f)
 
 funktion sky_r():
-    setze t auf sun_phase[0]
-    wenn t < 0.2:
-        gib_zurück 0.9 - t * 2
-    wenn t < 0.5:
-        gib_zurück 0.5 - (t - 0.2) * 0.6
-    wenn t < 0.7:
-        gib_zurück 0.32 + (t - 0.5) * 1.5
-    gib_zurück 0.62 - (t - 0.7) * 2
+    gib_zurück sky_interp(0.05, 0.9, 0.5, 0)
 
 funktion sky_g():
-    setze t auf sun_phase[0]
-    wenn t < 0.2:
-        gib_zurück 0.5 - t * 1
-    wenn t < 0.5:
-        gib_zurück 0.3 + (t - 0.2) * 0.8
-    wenn t < 0.7:
-        gib_zurück 0.54 + (t - 0.5) * 1.0
-    gib_zurück 0.74 - (t - 0.7) * 2.4
+    gib_zurück sky_interp(0.05, 0.5, 0.7, 1)
 
 funktion sky_b():
-    setze t auf sun_phase[0]
-    wenn t < 0.5:
-        gib_zurück 0.6 + t * 0.4
-    wenn t < 0.7:
-        gib_zurück 0.8 + (t - 0.5) * 0.5
-    gib_zurück 0.9 - (t - 0.7) * 2.5
+    gib_zurück sky_interp(0.15, 0.3, 1.0, 2)
 
 raum_maus_fangen(win)
+
+# Initialer Frame-Clear VOR dem ersten Render-Pass, damit das Fenster
+# nicht einen Frame lang weiss/unintialisiert erscheint.
+hybrid_löschen(win, sky_r(), sky_g(), sky_b())
+hybrid_aktualisieren(win)
 
 solange hybrid_offen(win):
     wenn raum_taste(win, "escape"):
