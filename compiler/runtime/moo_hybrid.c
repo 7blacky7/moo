@@ -79,10 +79,14 @@ typedef struct {
     int width;
     int height;
     bool open;
-    /* P3: Quad-Renderer (VAO/VBO/Shader) — wird in Phase 3 ausgefuellt */
+    /* P3: Unit-Quad fuer Rectangles */
     unsigned int quad_vao;
     unsigned int quad_vbo;
     unsigned int quad_shader;
+    /* P4: Raw-2D-Pixel-Vertices fuer Lines/Circles (dynamisch) */
+    unsigned int raw_vao;
+    unsigned int raw_vbo;
+    unsigned int raw_shader;
 } MooHybridWindow;
 
 static int hybrid_glfw_initialized = 0;
@@ -159,6 +163,47 @@ static unsigned int build_quad_program(void) {
     return prog;
 }
 
+/* Raw-2D-Shader: nimmt vec2 a_pos in PIXEL-Koordinaten + u_z + u_color.
+ * Gemeinsam fuer Lines (GL_LINES) und Circle-Triangle-Fan (GL_TRIANGLE_FAN). */
+static const char* HYBRID_RAW_VS =
+    "#version 330 core\n"
+    "layout (location = 0) in vec2 a_pos;\n"
+    "uniform vec2 u_screen;\n"
+    "uniform float u_z;\n"
+    "uniform float u_z_range;\n"
+    "void main() {\n"
+    "    vec2 ndc = vec2((a_pos.x / u_screen.x) * 2.0 - 1.0,\n"
+    "                    1.0 - (a_pos.y / u_screen.y) * 2.0);\n"
+    "    float zclip = (u_z / u_z_range) * 2.0 - 1.0;\n"
+    "    gl_Position = vec4(ndc, zclip, 1.0);\n"
+    "}\n";
+
+static unsigned int build_raw_program(void) {
+    unsigned int vs = compile_shader(GL_VERTEX_SHADER, HYBRID_RAW_VS, "raw_vs");
+    unsigned int fs = compile_shader(GL_FRAGMENT_SHADER, HYBRID_QUAD_FS, "raw_fs");
+    if (!vs || !fs) return 0;
+    unsigned int prog = glCreateProgram();
+    glAttachShader(prog, vs);
+    glAttachShader(prog, fs);
+    glLinkProgram(prog);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    return prog;
+}
+
+static void init_raw_buffers(MooHybridWindow* mh) {
+    glGenVertexArrays(1, &mh->raw_vao);
+    glGenBuffers(1, &mh->raw_vbo);
+    glBindVertexArray(mh->raw_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, mh->raw_vbo);
+    /* Initial leer; pro Aufruf via glBufferData neu hochladen */
+    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 2 * 256, NULL, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+    mh->raw_shader = build_raw_program();
+}
+
 static void init_quad_buffers(MooHybridWindow* mh) {
     /* Unit-Quad in 0..1 (vertex-shader skaliert auf u_rect) */
     float verts[] = {
@@ -233,6 +278,7 @@ MooValue moo_hybrid_create(MooValue title, MooValue w, MooValue h) {
     mh->height = height;
     mh->open = true;
     init_quad_buffers(mh);
+    init_raw_buffers(mh);
 
     MooValue result;
     result.tag = MOO_WINDOW_HYBRID;
@@ -321,13 +367,64 @@ void moo_hybrid_rect_z(MooValue win, MooValue x, MooValue y, MooValue z, MooValu
 }
 
 void moo_hybrid_line_z(MooValue win, MooValue x1, MooValue y1, MooValue x2, MooValue y2, MooValue z, MooValue color) {
-    /* TODO P4: GL_LINES */
+#if !MOO_HYBRID_HAS_GL
     (void)win; (void)x1; (void)y1; (void)x2; (void)y2; (void)z; (void)color;
+#else
+    if (win.tag != MOO_WINDOW_HYBRID) return;
+    MooHybridWindow* mh = (MooHybridWindow*)moo_val_as_ptr(win);
+    if (!mh || !mh->open || !mh->raw_shader) return;
+    glfwMakeContextCurrent(mh->window);
+    HybridColor col = parse_hybrid_color(color);
+    float verts[4] = {
+        (float)MV_NUM(x1), (float)MV_NUM(y1),
+        (float)MV_NUM(x2), (float)MV_NUM(y2),
+    };
+    glUseProgram(mh->raw_shader);
+    glUniform2f(glGetUniformLocation(mh->raw_shader, "u_screen"), (float)mh->width, (float)mh->height);
+    glUniform1f(glGetUniformLocation(mh->raw_shader, "u_z"), (float)MV_NUM(z));
+    glUniform1f(glGetUniformLocation(mh->raw_shader, "u_z_range"), MOO_HYBRID_Z_RANGE);
+    glUniform4f(glGetUniformLocation(mh->raw_shader, "u_color"), col.r, col.g, col.b, col.a);
+    glBindVertexArray(mh->raw_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, mh->raw_vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
+    glDrawArrays(GL_LINES, 0, 2);
+    glBindVertexArray(0);
+#endif
 }
 
 void moo_hybrid_circle_z(MooValue win, MooValue cx, MooValue cy, MooValue z, MooValue r, MooValue color) {
-    /* TODO P4: tessellated triangle fan */
+#if !MOO_HYBRID_HAS_GL
     (void)win; (void)cx; (void)cy; (void)z; (void)r; (void)color;
+#else
+    if (win.tag != MOO_WINDOW_HYBRID) return;
+    MooHybridWindow* mh = (MooHybridWindow*)moo_val_as_ptr(win);
+    if (!mh || !mh->open || !mh->raw_shader) return;
+    glfwMakeContextCurrent(mh->window);
+    HybridColor col = parse_hybrid_color(color);
+    /* Triangle-Fan: Mittelpunkt + 32 Randpunkte */
+    int seg = 32;
+    float verts[2 * (32 + 2)];
+    float fcx = (float)MV_NUM(cx);
+    float fcy = (float)MV_NUM(cy);
+    float fr = (float)MV_NUM(r);
+    verts[0] = fcx;
+    verts[1] = fcy;
+    for (int i = 0; i <= seg; i++) {
+        float a = (float)i * 6.2831853f / (float)seg;
+        verts[2 + i * 2 + 0] = fcx + cosf(a) * fr;
+        verts[2 + i * 2 + 1] = fcy + sinf(a) * fr;
+    }
+    glUseProgram(mh->raw_shader);
+    glUniform2f(glGetUniformLocation(mh->raw_shader, "u_screen"), (float)mh->width, (float)mh->height);
+    glUniform1f(glGetUniformLocation(mh->raw_shader, "u_z"), (float)MV_NUM(z));
+    glUniform1f(glGetUniformLocation(mh->raw_shader, "u_z_range"), MOO_HYBRID_Z_RANGE);
+    glUniform4f(glGetUniformLocation(mh->raw_shader, "u_color"), col.r, col.g, col.b, col.a);
+    glBindVertexArray(mh->raw_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, mh->raw_vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, seg + 2);
+    glBindVertexArray(0);
+#endif
 }
 
 void moo_hybrid_sprite_z(MooValue win, MooValue id, MooValue x, MooValue y, MooValue z, MooValue w, MooValue h) {
