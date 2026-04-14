@@ -34,6 +34,9 @@ funktion welt_seed(w, seed):
 funktion welt_biom(w, name, h_min, h_max, farbe, baeume):
     __welt_biom(w, name, h_min, h_max, farbe, baeume)
 
+funktion welt_baeume(w, biom_name, chance):
+    __welt_baeume(w, biom_name, chance)
+
 funktion welt_hoehe_bei(w, x, z):
     gib_zurück __welt_hoehe_bei(w, x, z)
 
