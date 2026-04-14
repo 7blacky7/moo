@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>moo Chat</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, sans-serif; background: #0d1117; color: #c9d1d9; height: 100vh; display: flex; flex-direction: column; }
+  header { background: #161b22; padding: 1rem; border-bottom: 1px solid #30363d; display: flex; align-items: center; gap: 1rem; }
+  header h1 { font-size: 1.2rem; color: #58a6ff; }
+  header select, header input { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 0.4rem 0.6rem; border-radius: 4px; }
+  header input { width: 150px; }
+  #status { margin-left: auto; font-size: 0.85rem; color: #7d8590; }
+  #messages { flex: 1; overflow-y: auto; padding: 1rem; }
+  .msg { margin-bottom: 0.6rem; padding: 0.5rem 0.8rem; background: #161b22; border-left: 3px solid #58a6ff; border-radius: 4px; }
+  .msg .nick { color: #58a6ff; font-weight: bold; }
+  .msg .time { color: #7d8590; font-size: 0.75rem; margin-left: 0.5rem; }
+  .msg.system { border-left-color: #f0883e; font-style: italic; color: #f0883e; }
+  .msg.self { border-left-color: #3fb950; }
+  .msg.self .nick { color: #3fb950; }
+  form { display: flex; padding: 1rem; border-top: 1px solid #30363d; background: #161b22; gap: 0.5rem; }
+  form input { flex: 1; background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 0.6rem; border-radius: 4px; font-size: 1rem; }
+  form button { background: #238636; color: white; border: none; padding: 0.6rem 1.4rem; border-radius: 4px; cursor: pointer; font-weight: bold; }
+  form button:hover { background: #2ea043; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐄 moo Chat</h1>
+  <input id="nick" placeholder="Nickname" value="Gast">
+  <select id="raum">
+    <option value="allgemein">#allgemein</option>
+    <option value="moo-dev">#moo-dev</option>
+    <option value="offtopic">#offtopic</option>
+  </select>
+  <button id="join">Beitreten</button>
+  <span id="status">Nicht verbunden</span>
+</header>
+<div id="messages"></div>
+<form id="form">
+  <input id="input" placeholder="Nachricht eingeben..." autocomplete="off" disabled>
+  <button type="submit" disabled>Senden</button>
+</form>
+<script>
+  const nickEl = document.getElementById('nick');
+  const raumEl = document.getElementById('raum');
+  const joinBtn = document.getElementById('join');
+  const statusEl = document.getElementById('status');
+  const msgsEl = document.getElementById('messages');
+  const form = document.getElementById('form');
+  const input = document.getElementById('input');
+  const submit = form.querySelector('button');
+
+  let currentNick = null;
+  let currentRaum = null;
+  let lastId = 0;
+  let polling = false;
+
+  function addMsg(m) {
+    const div = document.createElement('div');
+    div.className = 'msg' + (m.typ === 'system' ? ' system' : '') + (m.nick === currentNick ? ' self' : '');
+    const time = new Date((m.zeit || Date.now()/1000) * 1000).toLocaleTimeString();
+    div.innerHTML = `<span class="nick">${escapeHtml(m.nick)}</span><span class="time">${time}</span><br>${escapeHtml(m.text)}`;
+    msgsEl.appendChild(div);
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+    if (m.id) lastId = Math.max(lastId, m.id);
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  async function loadHistory(raum) {
+    const r = await fetch('/api/history/' + raum);
+    const data = await r.json();
+    msgsEl.innerHTML = '';
+    (data.messages || []).forEach(addMsg);
+  }
+
+  async function poll() {
+    if (polling) return;
+    polling = true;
+    while (currentRaum) {
+      try {
+        const r = await fetch(`/api/poll?raum=${currentRaum}&seit=${lastId}`);
+        const data = await r.json();
+        (data.messages || []).forEach(addMsg);
+      } catch (e) {
+        statusEl.textContent = 'Verbindung verloren';
+      }
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    polling = false;
+  }
+
+  joinBtn.onclick = async () => {
+    currentNick = nickEl.value.trim() || 'Gast';
+    currentRaum = raumEl.value;
+    await fetch('/api/join', {method: 'POST', body: JSON.stringify({nick: currentNick, raum: currentRaum})});
+    statusEl.textContent = `Verbunden als ${currentNick} in #${currentRaum}`;
+    input.disabled = false;
+    submit.disabled = false;
+    input.focus();
+    await loadHistory(currentRaum);
+    poll();
+  };
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text || !currentRaum) return;
+    input.value = '';
+    await fetch('/api/send', {method: 'POST', body: JSON.stringify({nick: currentNick, raum: currentRaum, text: text})});
+  };
+</script>
+</body>
+</html>

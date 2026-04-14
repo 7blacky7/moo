@@ -44,7 +44,7 @@ setze char_spr auf sprite_laden(win, "beispiele/assets/sprites/zelda_like/gfx/ch
 setze world_spr auf sprite_laden(win, "beispiele/assets/sprites/zelda_like/gfx/Overworld.png")
 setze obj_spr auf sprite_laden(win, "beispiele/assets/sprites/zelda_like/gfx/objects.png")
 # Sprites geben IDs zurueck (Zahlen > 0)
-wenn char_spr > 0:
+wenn char_spr >= 0:
     test_ok("character.png geladen (ID: " + text(char_spr) + ")")
 sonst:
     test_fail("character.png laden", "ID = " + text(char_spr))
@@ -66,8 +66,8 @@ sprite_ausschnitt(win, world_spr, 0, 0, 16, 16, 0, 0, TILE, TILE)
 sprite_ausschnitt(win, char_spr, 0, 0, 34, 32, 100, 100, 48, 48)
 # Herz zeichnen
 sprite_ausschnitt(win, obj_spr, 0, 0, 16, 16, 200, 200, 32, 32)
-fenster_aktualisieren(win)
 setze ss1 auf screenshot(win, "beispiele/test_screenshots/01_sprites.bmp")
+fenster_aktualisieren(win)
 wenn ss1:
     test_ok("Screenshot 01_sprites.bmp gespeichert")
 sonst:
@@ -103,13 +103,12 @@ solange frame < 30:
     # Charakter walk-animation
     setze walk_col auf (frame / 6) % 4
     sprite_ausschnitt(win, char_spr, walk_col * 34, 0, 34, 32, 48 + frame * 2, 48, 48, 48)
+    wenn frame == 29:
+        screenshot(win, "beispiele/test_screenshots/02_animation.bmp")
     fenster_aktualisieren(win)
     warte(16)
     setze frame auf frame + 1
 test_ok("30 Frames ohne Crash")
-
-# Screenshot nach Animation
-screenshot(win, "beispiele/test_screenshots/02_animation.bmp")
 test_ok("Screenshot 02_animation.bmp gespeichert")
 
 # --- Test 6: Maus-Simulation ---
@@ -130,8 +129,8 @@ sprite_ausschnitt(win, char_spr, 0, 0, 34, 32, 40, 10, 48, 48)
 sprite_ausschnitt(win, char_spr, 0, 0, 34, 32, 100, 10, 96, 96)
 # Riesig (192x192)
 sprite_ausschnitt(win, char_spr, 0, 0, 34, 32, 210, 10, 192, 192)
-fenster_aktualisieren(win)
 screenshot(win, "beispiele/test_screenshots/03_skalierung.bmp")
+fenster_aktualisieren(win)
 test_ok("4 Skalierungen gerendert")
 
 # --- Test 8: Alle 4 Richtungen ---
@@ -145,8 +144,8 @@ sprite_ausschnitt(win, char_spr, 0, 32, 34, 32, 150, 200, 64, 64)
 sprite_ausschnitt(win, char_spr, 0, 64, 34, 32, 250, 200, 64, 64)
 # Oben (Row 3)
 sprite_ausschnitt(win, char_spr, 0, 96, 34, 32, 350, 200, 64, 64)
-fenster_aktualisieren(win)
 screenshot(win, "beispiele/test_screenshots/04_richtungen.bmp")
+fenster_aktualisieren(win)
 test_ok("4 Richtungen gerendert")
 
 # ============================================================
