@@ -1,7 +1,7 @@
 # ============================================================
 # moo Welt-Renderer Test — 3D-Terrain mit WASD-Steuerung
 #
-# Kompilieren: moo-compiler run beispiele/welten_render_test.moo
+# Kompilieren: moo-compiler run beispiele/domain/game/world/welten_render_test.moo
 #
 # Bedienung:
 #   W/S     → Vorwaerts/Rueckwaerts
