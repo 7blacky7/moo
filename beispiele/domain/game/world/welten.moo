@@ -1,8 +1,8 @@
 # ============================================================
 # moo Welten-Ersteller — Prozedurale 3D-Welt mit Biomen
 #
-# Kompilieren: moo-compiler run beispiele/welten.moo
-# Binary:      moo-compiler compile beispiele/welten.moo -o beispiele/welten
+# Kompilieren: moo-compiler run beispiele/domain/game/world/welten.moo
+# Binary:      moo-compiler compile beispiele/domain/game/world/welten.moo -o beispiele/domain/game/world/welten
 #
 # Bedienung:
 #   W/S     - Vorwaerts/Rueckwaerts
