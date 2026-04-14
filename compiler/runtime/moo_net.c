@@ -341,6 +341,8 @@ extern void moo_channel_close(MooValue ch);
 extern void moo_window_close(MooValue window);
 extern void moo_db_close(MooValue db);
 extern void moo_db_stmt_close(MooValue stmt);
+extern void moo_3d_close(MooValue win);
+extern void moo_world_close(MooValue win);
 
 void moo_smart_close(MooValue v) {
     switch (v.tag) {
@@ -348,6 +350,14 @@ void moo_smart_close(MooValue v) {
         case MOO_DATABASE: moo_db_close(v); break;
         case MOO_DB_STMT:  moo_db_stmt_close(v); break;
         case MOO_WINDOW:   moo_window_close(v); break;
+        case MOO_WINDOW3D:
+            // MOO_WINDOW3D deckt sowohl plain-3D als auch Welt-Engine
+            // (moo_world_create gibt dieselbe tag zurueck). moo_world_close
+            // ist no-op bei !world.initialized, moo_3d_close ist idempotent
+            // (prueft g_ctx==NULL) — Reihenfolge sicher.
+            moo_world_close(v);
+            moo_3d_close(v);
+            break;
         default:
             // Channels (MooObject) und alles andere → channel_close
             // (das ignoriert non-channel objects safe).

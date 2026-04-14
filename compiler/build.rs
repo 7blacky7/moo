@@ -36,7 +36,10 @@ fn main() {
 
     // 3D Backends: bedingt in denselben Build einfuegen
     #[cfg(feature = "gl21")]
-    build.file("runtime/moo_3d_gl21.c");
+    {
+        build.file("runtime/moo_3d_gl21.c");
+        build.define("MOO_HAS_GL21", None);
+    }
 
     #[cfg(feature = "gl33")]
     {

@@ -57,20 +57,20 @@ MooValue moo_3d_create(MooValue title, MooValue w, MooValue h) {
     const char* backend_name = getenv("MOO_3D_BACKEND");
     if (!backend_name) backend_name = "gl33";
 
-    if (strcmp(backend_name, "gl21") == 0) {
+    g_backend = NULL;
+#ifdef MOO_HAS_GL21
+    if (g_backend == NULL && strcmp(backend_name, "gl21") == 0)
         g_backend = &moo_backend_gl21;
-    }
+#endif
 #ifdef MOO_HAS_GL33
-    else if (strcmp(backend_name, "gl33") == 0) {
+    if (g_backend == NULL && strcmp(backend_name, "gl33") == 0)
         g_backend = &moo_backend_gl33;
-    }
 #endif
 #ifdef MOO_HAS_VULKAN
-    else if (strcmp(backend_name, "vulkan") == 0) {
+    if (g_backend == NULL && strcmp(backend_name, "vulkan") == 0)
         g_backend = &moo_backend_vulkan;
-    }
 #endif
-    else {
+    if (g_backend == NULL) {
         moo_throw(moo_string_new("Unbekanntes 3D-Backend"));
         return moo_none();
     }
