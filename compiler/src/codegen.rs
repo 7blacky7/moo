@@ -2034,6 +2034,18 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_db_connect, &[arg.into()], "db_connect");
                     }
+                    "db_abfrage_mit_params" | "db_query_with_params" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        let c = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_db_query_with_params, &[a.into(), b.into(), c.into()], "db_query_p");
+                    }
+                    "db_ausführen_mit_params" | "db_execute_with_params" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        let c = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_db_execute_with_params, &[a.into(), b.into(), c.into()], "db_exec_p");
+                    }
                     "db_abfrage" | "db_query" | "dba" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;

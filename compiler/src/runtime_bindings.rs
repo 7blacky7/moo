@@ -170,6 +170,8 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_db_execute: FunctionValue<'ctx>,
     pub moo_db_query: FunctionValue<'ctx>,
     pub moo_db_close: FunctionValue<'ctx>,
+    pub moo_db_execute_with_params: FunctionValue<'ctx>,
+    pub moo_db_query_with_params: FunctionValue<'ctx>,
     // 3D Input
     pub moo_3d_key_pressed: FunctionValue<'ctx>,
     pub moo_3d_capture_mouse: FunctionValue<'ctx>,
@@ -493,6 +495,8 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_db_execute: decl_mv_mv!("moo_db_execute", mv2),
             moo_db_query: decl_mv_mv!("moo_db_query", mv2),
             moo_db_close: module.add_function("moo_db_close", void_type.fn_type(mv1, false), None),
+            moo_db_execute_with_params: decl_mv_mv!("moo_db_execute_with_params", mv3),
+            moo_db_query_with_params: decl_mv_mv!("moo_db_query_with_params", mv3),
             // Result-Typ
             moo_3d_key_pressed: decl_mv_mv!("moo_3d_key_pressed", mv2),
             moo_3d_capture_mouse: module.add_function("moo_3d_capture_mouse", void_type.fn_type(mv1, false), None),
