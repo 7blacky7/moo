@@ -21,6 +21,8 @@
 #ifdef MOO_HAS_GL33
 #include "glad/include/glad/glad.h"
 #include <GLFW/glfw3.h>
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
 #define MOO_HYBRID_HAS_GL 1
 #else
 #define MOO_HYBRID_HAS_GL 0
@@ -95,9 +97,24 @@ typedef struct {
     unsigned int raw_vao;
     unsigned int raw_vbo;
     unsigned int raw_shader;
+    /* P5: Textured-Quad fuer Sprites */
+    unsigned int tex_vao;
+    unsigned int tex_vbo;
+    unsigned int tex_shader;
 } MooHybridWindow;
 
 static int hybrid_glfw_initialized = 0;
+static int hybrid_img_initialized = 0;
+
+/* P5: Sprite-Slot-Pool (eigener Pfad, nicht moo_sprite.c-SDL_Texture) */
+#define MAX_HYBRID_SPRITES 256
+typedef struct {
+    unsigned int gl_tex;
+    int w;
+    int h;
+    bool used;
+} HybridSprite;
+static HybridSprite g_hybrid_sprites[MAX_HYBRID_SPRITES] = {0};
 
 #if MOO_HYBRID_HAS_GL
 /* ============================================================
@@ -212,6 +229,67 @@ static void init_raw_buffers(MooHybridWindow* mh) {
     mh->raw_shader = build_raw_program();
 }
 
+/* P5: Textured-Quad-Shader (Pos+UV in 0..1, Texture, Welt-Z) */
+static const char* HYBRID_TEX_VS =
+    "#version 330 core\n"
+    "layout (location = 0) in vec2 a_pos;\n"
+    "layout (location = 1) in vec2 a_uv;\n"
+    "uniform vec2 u_screen;\n"
+    "uniform vec4 u_rect;\n"
+    "uniform float u_z;\n"
+    "uniform float u_z_range;\n"
+    "out vec2 v_uv;\n"
+    "void main() {\n"
+    "    vec2 px = u_rect.xy + a_pos * u_rect.zw;\n"
+    "    vec2 ndc = vec2((px.x / u_screen.x) * 2.0 - 1.0,\n"
+    "                    1.0 - (px.y / u_screen.y) * 2.0);\n"
+    "    float zclip = (u_z / u_z_range) * 2.0 - 1.0;\n"
+    "    gl_Position = vec4(ndc, zclip, 1.0);\n"
+    "    v_uv = a_uv;\n"
+    "}\n";
+
+static const char* HYBRID_TEX_FS =
+    "#version 330 core\n"
+    "in vec2 v_uv;\n"
+    "uniform sampler2D u_tex;\n"
+    "out vec4 frag;\n"
+    "void main() {\n"
+    "    frag = texture(u_tex, v_uv);\n"
+    "}\n";
+
+static void init_tex_buffers(MooHybridWindow* mh) {
+    /* Quad mit UV (Pos in 0..1 + UV in 0..1; UV.y invertiert fuer SDL-Surface-Origin) */
+    float verts[] = {
+        /*  pos       uv   */
+        0.0f, 0.0f,  0.0f, 0.0f,
+        1.0f, 0.0f,  1.0f, 0.0f,
+        1.0f, 1.0f,  1.0f, 1.0f,
+        0.0f, 0.0f,  0.0f, 0.0f,
+        1.0f, 1.0f,  1.0f, 1.0f,
+        0.0f, 1.0f,  0.0f, 1.0f,
+    };
+    glGenVertexArrays(1, &mh->tex_vao);
+    glGenBuffers(1, &mh->tex_vbo);
+    glBindVertexArray(mh->tex_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, mh->tex_vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    glBindVertexArray(0);
+
+    unsigned int vs = compile_shader(GL_VERTEX_SHADER, HYBRID_TEX_VS, "tex_vs");
+    unsigned int fs = compile_shader(GL_FRAGMENT_SHADER, HYBRID_TEX_FS, "tex_fs");
+    if (!vs || !fs) return;
+    mh->tex_shader = glCreateProgram();
+    glAttachShader(mh->tex_shader, vs);
+    glAttachShader(mh->tex_shader, fs);
+    glLinkProgram(mh->tex_shader);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+}
+
 static void init_quad_buffers(MooHybridWindow* mh) {
     /* Unit-Quad in 0..1 (vertex-shader skaliert auf u_rect) */
     float verts[] = {
@@ -287,6 +365,7 @@ MooValue moo_hybrid_create(MooValue title, MooValue w, MooValue h) {
     mh->open = true;
     init_quad_buffers(mh);
     init_raw_buffers(mh);
+    init_tex_buffers(mh);
 
     /* P6: gl33-Backend an Hybrid-Window binden → raum_*-Calls werken auf
      * dem gleichen GL-Context und benutzen den gleichen Z-Buffer. */

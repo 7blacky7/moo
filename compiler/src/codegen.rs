@@ -2209,6 +2209,11 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_hybrid_sprite_z, &[win.into(), id.into(), x.into(), y.into(), z.into(), w.into(), h.into()], "spr_z")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    "sprite_laden_unified" | "unified_sprite_load" | "hybrid_sprite_load" => {
+                        let win = self.compile_expr(&args[0])?;
+                        let path = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_hybrid_sprite_load, &[win.into(), path.into()], "spr_load_z");
+                    }
                     "fenster_löschen" | "window_clear" | "fl" => {
                         let win = self.compile_expr(&args[0])?;
                         let color = self.compile_expr(&args[1])?;

@@ -480,20 +480,7 @@ void moo_hybrid_rect_z(MooValue win, MooValue x, MooValue y, MooValue z, MooValu
 void moo_hybrid_line_z(MooValue win, MooValue x1, MooValue y1, MooValue x2, MooValue y2, MooValue z, MooValue color);
 void moo_hybrid_circle_z(MooValue win, MooValue cx, MooValue cy, MooValue z, MooValue r, MooValue color);
 void moo_hybrid_sprite_z(MooValue win, MooValue id, MooValue x, MooValue y, MooValue z, MooValue w, MooValue h);
-
-// === Hybrid 2D+3D Window (M5: ein Fenster, ein Z-Buffer) ===
-// Welt-Einheiten fuer Z (z=0.0 = ground, z=1.0 = ein Tile hoch).
-// Runtime mappt intern auf GL-Clip-Range via Ortho/Perspective-Shader.
-MooValue moo_hybrid_create(MooValue title, MooValue w, MooValue h);
-MooValue moo_hybrid_is_open(MooValue win);
-void moo_hybrid_clear(MooValue win, MooValue r, MooValue g, MooValue b);
-void moo_hybrid_update(MooValue win);
-void moo_hybrid_close(MooValue win);
-// 2D-Pass: Pixel-Koordinaten + Welt-Z (Origin links-oben).
-void moo_hybrid_rect_z(MooValue win, MooValue x, MooValue y, MooValue z, MooValue w, MooValue h, MooValue color);
-void moo_hybrid_line_z(MooValue win, MooValue x1, MooValue y1, MooValue x2, MooValue y2, MooValue z, MooValue color);
-void moo_hybrid_circle_z(MooValue win, MooValue cx, MooValue cy, MooValue z, MooValue r, MooValue color);
-void moo_hybrid_sprite_z(MooValue win, MooValue id, MooValue x, MooValue y, MooValue z, MooValue w, MooValue h);
+MooValue moo_hybrid_sprite_load(MooValue win, MooValue path);
 
 // === Webserver ===
 MooValue moo_web_server(MooValue port);
