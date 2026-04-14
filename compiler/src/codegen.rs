@@ -1976,6 +1976,17 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_json_string, &[arg.into()], "json_string");
                     }
                     // HTTP
+                    "http_hole_mit_headers" | "http_get_with_headers" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_http_get_with_headers, &[a.into(), b.into()], "http_get_h");
+                    }
+                    "http_sende_mit_headers" | "http_post_with_headers" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        let c = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_http_post_with_headers, &[a.into(), b.into(), c.into()], "http_post_h");
+                    }
                     "http_get" | "http_hole" | "hg" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_http_get, &[arg.into()], "http_get");
@@ -2678,6 +2689,20 @@ impl<'ctx> CodeGen<'ctx> {
                     // Webserver-Methoden
                     "web_annehmen" | "web_accept" => {
                         return self.call_rt(self.rt.moo_web_accept, &[obj.into()], "web_accept");
+                    }
+                    "antworten_mit_headers" | "respond_with_headers" => {
+                        let body = self.compile_expr(&args[0])?;
+                        let status = self.compile_expr(&args[1])?;
+                        let headers = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_web_respond_with_headers,
+                            &[obj.into(), body.into(), status.into(), headers.into()], "respond_h");
+                    }
+                    "json_antworten_mit_headers" | "json_respond_with_headers" => {
+                        let data = self.compile_expr(&args[0])?;
+                        let status = self.compile_expr(&args[1])?;
+                        let headers = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_web_json_with_headers,
+                            &[obj.into(), data.into(), status.into(), headers.into()], "json_h");
                     }
                     "antworten" | "respond" => {
                         let body = self.compile_expr(&args[0])?;

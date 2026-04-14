@@ -70,6 +70,43 @@ static MooValue parse_http_request(const char* raw, int len) {
         moo_dict_set(req, moo_string_new("body"), moo_string_new(""));
     }
 
+    // Headers: parse lines between first CRLF and body boundary.
+    // Keys are lowercased for stable lookup (headers["cookie"], headers["user-agent"]).
+    MooValue headers = moo_dict_new();
+    const char* hdr_start = strstr(raw, "\r\n");
+    if (hdr_start) {
+        hdr_start += 2;
+        const char* hdr_end = body_start ? (body_start - 4) : (raw + len);
+        const char* p = hdr_start;
+        while (p < hdr_end) {
+            const char* line_end = p;
+            while (line_end < hdr_end && !(line_end[0] == '\r' && line_end + 1 < hdr_end && line_end[1] == '\n')) line_end++;
+            if (line_end == p) break;
+            const char* colon = p;
+            while (colon < line_end && *colon != ':') colon++;
+            if (colon < line_end) {
+                char name[128] = {0};
+                int name_len = (int)(colon - p);
+                if (name_len > 127) name_len = 127;
+                for (int k = 0; k < name_len; k++) {
+                    char c = p[k];
+                    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+                    name[k] = c;
+                }
+                const char* vstart = colon + 1;
+                while (vstart < line_end && (*vstart == ' ' || *vstart == '\t')) vstart++;
+                int val_len = (int)(line_end - vstart);
+                if (val_len < 0) val_len = 0;
+                char value[2048] = {0};
+                if (val_len > 2047) val_len = 2047;
+                memcpy(value, vstart, val_len);
+                moo_dict_set(headers, moo_string_new(name), moo_string_new(value));
+            }
+            if (line_end + 1 < hdr_end) p = line_end + 2; else break;
+        }
+    }
+    moo_dict_set(req, moo_string_new("headers"), headers);
+
     return req;
 }
 
@@ -355,6 +392,109 @@ MooValue moo_web_template(MooValue request, MooValue html, MooValue vars) {
     close(client_fd);
 
     return moo_bool(true);
+}
+
+// === HTTP Response mit zusaetzlichen Headers ===
+//
+// Wie moo_web_respond, akzeptiert zusaetzlich ein headers-Dict. Bestehende
+// Default-Header (Content-Type, Content-Length, Connection) werden nur dann
+// gesetzt, wenn das headers-Dict sie nicht ueberschreibt. Damit koennen
+// Cookies (Set-Cookie), CORS-Header oder Cache-Control gesetzt werden, ohne
+// die alte moo_web_respond-Variante zu brechen.
+static void write_extra_headers(int client_fd, MooValue headers, bool* seen_content_type) {
+    if (headers.tag != MOO_DICT) return;
+    MooDict* d = MV_DICT(headers);
+    for (int i = 0; i < d->capacity; i++) {
+        if (!d->entries[i].occupied) continue;
+        MooString* ks = d->entries[i].key;
+        MooValue v = d->entries[i].value;
+        if (!ks) continue;
+        const char* kn = ks->chars;
+        // Content-Length/Connection werden von uns gesetzt — ignorieren um
+        // widerspruechliche Antworten zu vermeiden. User-Content-Type wird
+        // durchgereicht; wir merken das, um das Default-Content-Type zu
+        // unterdruecken.
+        if (strcasecmp(kn, "content-length") == 0) continue;
+        if (strcasecmp(kn, "connection") == 0) continue;
+        if (strcasecmp(kn, "content-type") == 0 && seen_content_type) *seen_content_type = true;
+        const char* vs = (v.tag == MOO_STRING) ? MV_STR(v)->chars : "";
+        char line[1024];
+        int n = snprintf(line, sizeof(line), "%s: %s\r\n", kn, vs);
+        if (n > 0 && n < (int)sizeof(line)) write(client_fd, line, n);
+    }
+}
+
+MooValue moo_web_respond_with_headers(MooValue request, MooValue body, MooValue status_code, MooValue headers) {
+    MooValue fd_val = moo_dict_get(request, moo_string_new("_fd"));
+    if (fd_val.tag != MOO_NUMBER) return moo_none();
+    int client_fd = (int)MV_NUM(fd_val);
+
+    int status = (status_code.tag == MOO_NUMBER) ? (int)MV_NUM(status_code) : 200;
+    const char* body_str = (body.tag == MOO_STRING) ? MV_STR(body)->chars : "";
+    int body_len = (body.tag == MOO_STRING) ? MV_STR(body)->length : 0;
+
+    const char* status_text = "OK";
+    if (status == 404) status_text = "Not Found";
+    else if (status == 500) status_text = "Internal Server Error";
+    else if (status == 301) status_text = "Moved Permanently";
+    else if (status == 302) status_text = "Found";
+    else if (status == 400) status_text = "Bad Request";
+    else if (status == 401) status_text = "Unauthorized";
+    else if (status == 403) status_text = "Forbidden";
+
+    char start_line[128];
+    int sn = snprintf(start_line, sizeof(start_line), "HTTP/1.1 %d %s\r\n", status, status_text);
+    write(client_fd, start_line, sn);
+
+    bool seen_ct = false;
+    write_extra_headers(client_fd, headers, &seen_ct);
+
+    char fixed[256];
+    int fn = snprintf(fixed, sizeof(fixed),
+        "%sContent-Length: %d\r\nConnection: close\r\n\r\n",
+        seen_ct ? "" : "Content-Type: text/html; charset=utf-8\r\n",
+        body_len);
+    write(client_fd, fixed, fn);
+
+    if (body_len > 0) write(client_fd, body_str, body_len);
+    close(client_fd);
+    return moo_none();
+}
+
+MooValue moo_web_json_with_headers(MooValue request, MooValue data, MooValue status_code, MooValue headers) {
+    MooValue fd_val = moo_dict_get(request, moo_string_new("_fd"));
+    if (fd_val.tag != MOO_NUMBER) return moo_none();
+    int client_fd = (int)MV_NUM(fd_val);
+
+    int status = (status_code.tag == MOO_NUMBER) ? (int)MV_NUM(status_code) : 200;
+    MooValue json = moo_json_string(data);
+    const char* json_str = MV_STR(json)->chars;
+    int json_len = MV_STR(json)->length;
+
+    const char* status_text = "OK";
+    if (status == 404) status_text = "Not Found";
+    else if (status == 500) status_text = "Internal Server Error";
+    else if (status == 400) status_text = "Bad Request";
+    else if (status == 401) status_text = "Unauthorized";
+    else if (status == 403) status_text = "Forbidden";
+
+    char start_line[128];
+    int sn = snprintf(start_line, sizeof(start_line), "HTTP/1.1 %d %s\r\n", status, status_text);
+    write(client_fd, start_line, sn);
+
+    bool seen_ct = false;
+    write_extra_headers(client_fd, headers, &seen_ct);
+
+    char fixed[256];
+    int fn = snprintf(fixed, sizeof(fixed),
+        "%sContent-Length: %d\r\nConnection: close\r\n\r\n",
+        seen_ct ? "" : "Content-Type: application/json; charset=utf-8\r\n",
+        json_len);
+    write(client_fd, fixed, fn);
+
+    write(client_fd, json_str, json_len);
+    close(client_fd);
+    return moo_none();
 }
 
 // === Server schliessen ===
