@@ -17,7 +17,6 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_list_new: FunctionValue<'ctx>,
     pub moo_dict_new: FunctionValue<'ctx>,
     pub moo_object_new: FunctionValue<'ctx>,
-    pub moo_error: FunctionValue<'ctx>,
     // Ops
     pub moo_add: FunctionValue<'ctx>,
     pub moo_sub: FunctionValue<'ctx>,
@@ -47,18 +46,13 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_mem_write: FunctionValue<'ctx>,
     // String
     pub moo_string_concat: FunctionValue<'ctx>,
-    pub moo_string_length: FunctionValue<'ctx>,
-    pub moo_string_index: FunctionValue<'ctx>,
     // List
     pub moo_list_append: FunctionValue<'ctx>,
-    pub moo_list_get: FunctionValue<'ctx>,
-    pub moo_list_set: FunctionValue<'ctx>,
     pub moo_list_length: FunctionValue<'ctx>,
     pub moo_list_pop: FunctionValue<'ctx>,
     pub moo_list_sort: FunctionValue<'ctx>,
     pub moo_list_reverse: FunctionValue<'ctx>,
     pub moo_list_join: FunctionValue<'ctx>,
-    pub moo_list_contains: FunctionValue<'ctx>,
     pub moo_list_iter_len: FunctionValue<'ctx>,
     pub moo_list_iter_get: FunctionValue<'ctx>,
     // Dict
@@ -69,7 +63,6 @@ pub struct RuntimeBindings<'ctx> {
     // Object
     pub moo_object_get: FunctionValue<'ctx>,
     pub moo_object_set: FunctionValue<'ctx>,
-    pub moo_object_set_parent: FunctionValue<'ctx>,
     pub moo_object_class_name: FunctionValue<'ctx>,
     pub moo_smart_close: FunctionValue<'ctx>,
     pub moo_smart_contains: FunctionValue<'ctx>,
@@ -147,7 +140,6 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_channel_new: FunctionValue<'ctx>,
     pub moo_channel_send: FunctionValue<'ctx>,
     pub moo_channel_recv: FunctionValue<'ctx>,
-    pub moo_channel_close: FunctionValue<'ctx>,
     // JSON
     pub moo_json_parse: FunctionValue<'ctx>,
     pub moo_json_string: FunctionValue<'ctx>,
@@ -272,7 +264,6 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_socket_accept: FunctionValue<'ctx>,
     pub moo_socket_read: FunctionValue<'ctx>,
     pub moo_socket_write: FunctionValue<'ctx>,
-    pub moo_socket_close: FunctionValue<'ctx>,
     // Profiler
     pub moo_profile_enter: FunctionValue<'ctx>,
     pub moo_profile_exit: FunctionValue<'ctx>,
@@ -286,7 +277,6 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_web_json: FunctionValue<'ctx>,
     pub moo_web_respond_with_headers: FunctionValue<'ctx>,
     pub moo_web_json_with_headers: FunctionValue<'ctx>,
-    pub moo_web_close: FunctionValue<'ctx>,
     pub moo_web_file: FunctionValue<'ctx>,
     pub moo_web_template: FunctionValue<'ctx>,
 }
@@ -340,7 +330,6 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_list_new: decl_mv_mv!("moo_list_new", &[i32_type.into()]),
             moo_dict_new: decl_mv_mv!("moo_dict_new", &[]),
             moo_object_new: decl_mv_mv!("moo_object_new", &[ptr_type.into()]),
-            moo_error: decl_mv_mv!("moo_error", &[ptr_type.into()]),
 
             // Ops (MooValue, MooValue) -> MooValue
             moo_add: decl_mv_mv!("moo_add", mv2),
@@ -373,19 +362,13 @@ impl<'ctx> RuntimeBindings<'ctx> {
 
             // String
             moo_string_concat: decl_mv_mv!("moo_string_concat", mv2),
-            moo_string_length: decl_mv_mv!("moo_string_length", mv1),
-            moo_string_index: decl_mv_mv!("moo_string_index", mv2),
-
             // List
             moo_list_append: module.add_function("moo_list_append", void_type.fn_type(mv2, false), None),
-            moo_list_get: decl_mv_mv!("moo_list_get", mv2),
-            moo_list_set: module.add_function("moo_list_set", void_type.fn_type(mv3, false), None),
             moo_list_length: decl_mv_mv!("moo_list_length", mv1),
             moo_list_pop: decl_mv_mv!("moo_list_pop", mv1),
             moo_list_sort: decl_mv_mv!("moo_list_sort", mv1),
             moo_list_reverse: decl_mv_mv!("moo_list_reverse", mv1),
             moo_list_join: decl_mv_mv!("moo_list_join", mv2),
-            moo_list_contains: decl_mv_mv!("moo_list_contains", mv2),
             moo_list_iter_len: module.add_function("moo_list_iter_len", i32_type.fn_type(mv1, false), None),
             moo_list_iter_get: decl_mv_mv!("moo_list_iter_get", &[mv, i32_type.into()]),
 
@@ -398,7 +381,6 @@ impl<'ctx> RuntimeBindings<'ctx> {
             // Object
             moo_object_get: decl_mv_mv!("moo_object_get", &[mv, ptr_type.into()]),
             moo_object_set: module.add_function("moo_object_set", void_type.fn_type(&[mv, ptr_type.into(), mv], false), None),
-            moo_object_set_parent: module.add_function("moo_object_set_parent", void_type.fn_type(mv2, false), None),
             moo_object_class_name: module.add_function("moo_object_class_name", ptr_type.fn_type(mv1, false), None),
             moo_smart_close: module.add_function("moo_smart_close", void_type.fn_type(mv1, false), None),
             moo_smart_contains: decl_mv_mv!("moo_smart_contains", mv2),
@@ -478,7 +460,6 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_channel_new: decl_mv_mv!("moo_channel_new", mv1),
             moo_channel_send: module.add_function("moo_channel_send", void_type.fn_type(mv2, false), None),
             moo_channel_recv: decl_mv_mv!("moo_channel_recv", mv1),
-            moo_channel_close: module.add_function("moo_channel_close", void_type.fn_type(mv1, false), None),
             // JSON
             moo_json_parse: decl_mv_mv!("moo_json_parse", mv1),
             moo_json_string: decl_mv_mv!("moo_json_string", mv1),
@@ -602,7 +583,6 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_socket_accept: decl_mv_mv!("moo_socket_accept", mv1),
             moo_socket_read: decl_mv_mv!("moo_socket_read", mv2),
             moo_socket_write: module.add_function("moo_socket_write", void_type.fn_type(mv2, false), None),
-            moo_socket_close: module.add_function("moo_socket_close", void_type.fn_type(mv1, false), None),
             // Profiler
             moo_profile_enter: module.add_function("moo_profile_enter", void_type.fn_type(mv1, false), None),
             moo_profile_exit: module.add_function("moo_profile_exit", void_type.fn_type(mv1, false), None),
@@ -617,7 +597,6 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_web_json: decl_mv_mv!("moo_web_json", mv2),
             moo_web_respond_with_headers: decl_mv_mv!("moo_web_respond_with_headers", &[mv, mv, mv, mv]),
             moo_web_json_with_headers: decl_mv_mv!("moo_web_json_with_headers", &[mv, mv, mv, mv]),
-            moo_web_close: module.add_function("moo_web_close", void_type.fn_type(mv1, false), None),
             moo_web_file: decl_mv_mv!("moo_web_file", mv2),
             moo_web_template: decl_mv_mv!("moo_web_template", mv3),
         }
