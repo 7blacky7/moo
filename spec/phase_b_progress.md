@@ -8,7 +8,11 @@ Laufend aktualisiert von k2 (Lead/Moderator). Einzige verbindliche Quelle für d
 | W2.1 | Root-Test-Triage | k2 | **done** | `317ce48` | `spec/tests_phase_b_selection.md` (40 Root-`.moo`) |
 | W2.2 | Root-Test-Moves | k3 | **done** | `b9aadad`, `83d6fcc`, `6255b03`, `c66106f`, Einzel-A + B-Batch + `c3ae38f` (3D + native) + test_oop_demo + test_vollständig = 11 Commits | Tests: 19 bestanden / 0 fehlgeschlagen nach den Moves. `.expected`-Nachzüge als separate Commits. |
 | W2.3 | CI-/Pfad-Schutz | k2 | **done** | (Grep-One-Liner) | `grep -rn "test_.*\.moo" .github/ compiler/tests/run_all.sh docs/` — 0 Root-Pfade in CI. |
-| W3 | Beispiele-Reorganisation | k4 | **open** | — | Auf Basis `spec/examples_taxonomy.md`; Kandidaten-Top-25 mit Phase-B-Zielpfaden; kleine Batches. |
+| W3.1 | Beispiele WEB | k3 | **done** | 3 Commits bis `1e8cec0` | 5 Dateien → `beispiele/domain/web/`. CI 0 Brüche. |
+| W3.2 | Beispiele DB | k3 | **done** | 3 Commits bis `bccdbd5` | 8 Dateien → `beispiele/domain/db/`. Alte `chat_server.moo` bleibt als Legacy-Referenz. |
+| W3.3 | Beispiele SYSTEM | k3 | **done** | 2 Commits | `kernel_hello`, `x86dis`, `elf_reader`, `tar_reader` → `beispiele/domain/system/`. |
+| W3.4 | Beispiele GAME | k4 | **done** | `c22bdda`, `91f8c9c`, `7eeaed8`, `79b6b77` | 17 Dateien → `beispiele/domain/game/{world,testscreens}/`. C2 enthielt Workflow-Pfad-Update für `3d-backends.yml` (Move + CI in einem Commit). |
+| W3.5 | MOVED-Hinweise | k4 | **done** | — | Nicht nötig: keine inneren `beispiele/`-Cross-Refs. Optional: `beispiele/README.md` mit Sektions-Übersicht (separat, nicht blockierend). |
 | W4 | Sichtbarkeit / Feinschliff / Abschluss | k2 + Team | **open** | — | README/ARCHITECTURE-Links nachziehen, eventuelle Soft-Deprecations in `MOVED.md`-Platzhaltern, Abschluss-Aggregat. |
 
 ## Schlüsselfakten
