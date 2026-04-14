@@ -19,6 +19,13 @@ extern void moo_throw(MooValue v);
 static Moo3DBackend* g_backend = NULL;
 static void* g_ctx = NULL;
 
+/* P6: extern hook — Hybrid-Renderer kann sich als aktives 3D-Backend
+ * registrieren, sodass raum_*-Calls auf das Hybrid-Fenster zeichnen. */
+void moo_3d_attach_external(void* backend, void* ctx) {
+    g_backend = (Moo3DBackend*)backend;
+    g_ctx = ctx;
+}
+
 // === Farb-Helfer (Backend-agnostisch) ===
 typedef struct { float r, g, b; } Color3;
 

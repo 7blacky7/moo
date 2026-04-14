@@ -32,6 +32,14 @@ extern MooValue moo_number(double n);
 extern MooValue moo_none(void);
 extern void moo_throw(MooValue v);
 
+/* P6: 3D-Bridge — bei Hybrid-Window-Init binden wir den gl33-Backend an
+ * unsere GLFW-Window, sodass raum_*-Calls in dieselbe Szene zeichnen. */
+#ifdef MOO_HAS_GL33
+extern void* gl33_init_ctx_from_window(void* win, int w, int h);
+extern void moo_3d_attach_external(void* backend, void* ctx);
+extern struct Moo3DBackend moo_backend_gl33;  /* deklariert in moo_3d_backend.h */
+#endif
+
 /* ============================================================
  * Farb-Helfer (Hex-String "#RRGGBB" → 0..1 RGB)
  * ============================================================ */
@@ -279,6 +287,13 @@ MooValue moo_hybrid_create(MooValue title, MooValue w, MooValue h) {
     mh->open = true;
     init_quad_buffers(mh);
     init_raw_buffers(mh);
+
+    /* P6: gl33-Backend an Hybrid-Window binden → raum_*-Calls werken auf
+     * dem gleichen GL-Context und benutzen den gleichen Z-Buffer. */
+    void* gl33_ctx = gl33_init_ctx_from_window(glfw_win, width, height);
+    if (gl33_ctx) {
+        moo_3d_attach_external(&moo_backend_gl33, gl33_ctx);
+    }
 
     MooValue result;
     result.tag = MOO_WINDOW_HYBRID;

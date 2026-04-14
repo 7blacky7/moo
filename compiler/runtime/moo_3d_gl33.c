@@ -97,6 +97,8 @@ static void gl33_draw_immediate(GL33Context* ctx, MeshBuilder* mb) {
  * Backend Functions — Lifecycle
  * ======================================================== */
 
+void* gl33_init_ctx_from_window(void* win_void, int w, int h);  /* P6 forward */
+
 static void* gl33_create_window(const char* title, int w, int h) {
     if (!glfwInit()) {
         fprintf(stderr, "moo GL33: glfwInit fehlgeschlagen\n");
@@ -120,6 +122,15 @@ static void* gl33_create_window(const char* title, int w, int h) {
         glfwDestroyWindow(win);
         return NULL;
     }
+
+    return gl33_init_ctx_from_window(win, w, h);
+}
+
+/* P6: extern callable — Initialisiert GL33Context auf einem bereits
+ * existierenden GLFWwindow (z.B. dem Hybrid-Renderer-Fenster). Erlaubt
+ * dass raum_*-Calls in dieselbe Szene zeichnen wie hybrid_*. */
+void* gl33_init_ctx_from_window(void* win_void, int w, int h) {
+    GLFWwindow* win = (GLFWwindow*)win_void;
 
     GL33Context* ctx = (GL33Context*)calloc(1, sizeof(GL33Context));
     ctx->window = win;
