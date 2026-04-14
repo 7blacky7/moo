@@ -92,7 +92,13 @@ funktion gebaeude_farbe(typ):
         gib_zurück "#8D6E63"
     wenn typ == 2:
         gib_zurück "#607D8B"
-    gib_zurück "#C62828"
+    wenn typ == 3:
+        gib_zurück "#C62828"
+    wenn typ == 4:
+        gib_zurück "#F9A825"
+    wenn typ == 5:
+        gib_zurück "#D7CCC8"
+    gib_zurück "#FF8F00"
 
 funktion gebaeude_name(typ):
     wenn typ == 0:
@@ -115,17 +121,21 @@ funktion zeichne_gebaeude(win, sx, sy, typ):
     zeichne_rechteck(win, sx - 3, sy - 14, 6, 8, "#3E2723")
 
 # ------------------------------------------------------------
-# Spieler-Position + Gebaeude-Liste
+# Spieler-Position + Gebaeude-Liste (k3 Follow-up: 3 neue Typen 4-6)
 # Jedes Gebaeude: [wx, wy, typ]
+# typ: 0=Holzfaeller, 1=Saegewerk, 2=Steinmetz, 3=Haus, 4=Bauer, 5=Muehle, 6=Baecker
 # ------------------------------------------------------------
-setze gebaeude auf [[3, 4, 0], [4, 5, 1], [8, 3, 2], [6, 8, 3], [10, 10, 0], [11, 11, 1], [2, 10, 2], [9, 6, 3]]
+setze gebaeude auf [[3, 4, 0], [4, 5, 1], [8, 3, 2], [6, 8, 3], [10, 10, 0], [11, 11, 1], [2, 10, 2], [9, 6, 3], [5, 11, 4], [7, 12, 5], [9, 13, 6], [12, 8, 3]]
 
 # Resource-Counter (als 1-Element-Listen, damit Funktions-Zuweisung persistiert)
 setze r_holz auf [0]
 setze r_bretter auf [0]
 setze r_stein auf [0]
+setze r_korn auf [0]
+setze r_mehl auf [0]
+setze r_brot auf [0]
 
-# Produktions-Tick: produziere + wandle um
+# Produktions-Tick: produziere + wandle um (k3 Follow-up: erweiterte Ketten)
 funktion tick_wirtschaft():
     setze i auf 0
     solange i < länge(gebaeude):
@@ -134,14 +144,93 @@ funktion tick_wirtschaft():
             r_holz[0] = r_holz[0] + 1
         wenn typ == 2:
             r_stein[0] = r_stein[0] + 1
+        wenn typ == 4:
+            r_korn[0] = r_korn[0] + 1
         setze i auf i + 1
-    # Saegewerke wandeln Holz in Bretter (je 2 Holz = 1 Brett)
+    # Saegewerk: 2 Holz -> 1 Brett. Muehle: 2 Korn -> 1 Mehl. Baecker: 1 Mehl -> 1 Brot.
     setze j auf 0
     solange j < länge(gebaeude):
-        wenn gebaeude[j][2] == 1 und r_holz[0] >= 2:
+        setze t auf gebaeude[j][2]
+        wenn t == 1 und r_holz[0] >= 2:
             r_holz[0] = r_holz[0] - 2
             r_bretter[0] = r_bretter[0] + 1
+        wenn t == 5 und r_korn[0] >= 2:
+            r_korn[0] = r_korn[0] - 2
+            r_mehl[0] = r_mehl[0] + 1
+        wenn t == 6 und r_mehl[0] >= 1:
+            r_mehl[0] = r_mehl[0] - 1
+            r_brot[0] = r_brot[0] + 1
         setze j auf j + 1
+
+# ------------------------------------------------------------
+# k3 Follow-up: Strassen-Routing (BFS auf passierbaren Tiles z<=2)
+# ------------------------------------------------------------
+funktion ist_passierbar(x, y):
+    wenn x < 0 oder y < 0 oder x >= WORLD oder y >= WORLD:
+        gib_zurück falsch
+    gib_zurück terrain_z(x, y) <= 2
+
+# BFS-Routing: gibt eine Liste [tx, ty]-Tiles zurueck, leer wenn unerreichbar.
+# Begrenzt auf 200 Schritte um Endlosschleife auszuschliessen.
+funktion finde_route(sx, sy, zx, zy):
+    wenn nicht ist_passierbar(sx, sy) oder nicht ist_passierbar(zx, zy):
+        gib_zurück []
+    setze besucht auf {}
+    setze queue auf [[sx, sy, []]]
+    setze schritte auf 0
+    solange länge(queue) > 0 und schritte < 200:
+        setze kopf auf queue[0]
+        setze queue auf queue.teilstring(1, länge(queue))
+        setze cx auf kopf[0]
+        setze cy auf kopf[1]
+        setze pfad auf kopf[2]
+        wenn cx == zx und cy == zy:
+            gib_zurück pfad
+        setze key auf text(cx) + "," + text(cy)
+        wenn besucht.hat(key):
+            setze schritte auf schritte + 1
+            weiter
+        besucht[key] = wahr
+        setze nachbarn auf [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]
+        für n in nachbarn:
+            wenn ist_passierbar(n[0], n[1]):
+                setze np auf pfad + [[n[0], n[1]]]
+                setze queue auf queue + [[n[0], n[1], np]]
+        setze schritte auf schritte + 1
+    gib_zurück []
+
+# ------------------------------------------------------------
+# k3 Follow-up: Partikel-System (Rauch, Staub, Funken)
+# Jedes Partikel: [sx, sy, vx, vy, leben, farbe]
+# ------------------------------------------------------------
+setze partikel auf [[]]
+partikel[0] = []
+
+funktion partikel_neu(sx, sy, vx, vy, leben, farbe):
+    partikel[0] = partikel[0] + [[sx, sy, vx, vy, leben, farbe]]
+
+funktion partikel_tick():
+    setze frisch auf []
+    für p in partikel[0]:
+        setze leben auf p[4] - 1
+        wenn leben > 0:
+            setze frisch auf frisch + [[p[0] + p[2], p[1] + p[3], p[2], p[3] * 0.95, leben, p[5]]]
+    partikel[0] = frisch
+
+funktion partikel_render(win):
+    für p in partikel[0]:
+        setze groesse auf 1 + p[4] / 20
+        zeichne_kreis(win, p[0], p[1], groesse, p[5])
+
+# Schornstein-Rauch fuer aktive Produzenten (Saegewerk, Muehle, Baecker)
+funktion emit_rauch(cam_x, cam_y):
+    für g in gebaeude:
+        setze t auf g[2]
+        wenn t == 1 oder t == 5 oder t == 6:
+            setze gz auf terrain_z(g[0], g[1])
+            setze sx auf iso_x(g[0], g[1], cam_x)
+            setze sy auf iso_y(g[0], g[1], gz, cam_y) - 46
+            partikel_neu(sx + (hash01(g[0], g[1]) - 0.5) * 4, sy, (hash01(g[0] + 1, g[1]) - 0.5) * 1.0, -0.8, 40, "#9E9E9E")
 
 # HUD: Resource-Counter oben links
 funktion zeichne_hud(win):
@@ -185,6 +274,10 @@ solange fenster_offen(win):
     wenn tick_counter >= 60:
         tick_wirtschaft()
         setze tick_counter auf 0
+    # k3 Follow-up: Partikel jedes Frame, Schornstein-Rauch alle 8 Frames
+    partikel_tick()
+    wenn tick_counter % 8 == 0:
+        emit_rauch(cam_x, cam_y)
 
     fenster_löschen(win, "#1A1A2E")
 
@@ -222,6 +315,9 @@ solange fenster_offen(win):
     setze dx auf cosinus(t * 0.05) * 30
     setze dy auf sinus(t * 0.05) * 15
     zeichne_kreis(win, zentrum_x + dx, zentrum_y + dy - 10, 4, "#FFD54F")
+
+    # k3 Follow-up: Partikel ueber alles (nach Gebaeude, vor HUD)
+    partikel_render(win)
 
     zeichne_hud(win)
     fenster_aktualisieren(win)
