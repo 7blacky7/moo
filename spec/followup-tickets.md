@@ -65,6 +65,41 @@ bzw. `grafik-3d.md` Abschnitt "Lebenszyklus" mit Hinweis auf `*_freigeben` /
 **Priorität**: niedrig — User-Pfade mit expliziter Freigabe funktionieren;
 Slot-Array-Grenze ist erst bei > 256 Sprites eine harte Wand.
 
+## M5-followup: Hybrid sprite_z + raum_*-Bridge (P5+P6)
+
+**Herkunft**: M5.1 Phase-Plan #5188. Phasen P1-P4+P8 sind in dieser Welle gelandet
+(Tag MOO_WINDOW_HYBRID, GLFW+GL3.3-Window, Quad-Shader fuer rect_z, Raw-Shader
+fuer line_z+circle_z, Codegen-Aliase, Test). Phasen P5 (sprite_z) und P6
+(raum_*-Bridge) sind als Stubs vorhanden, brauchen aber separate Arbeit:
+
+### P5 — moo_hybrid_sprite_z (textured Quads)
+Aktueller Stub macht nichts. Echte Implementierung braucht:
+- Eigene Sprite-Slot-Verwaltung im Hybrid-Pfad (kann nicht moo_sprite.c-
+  SDL_Texture wiederverwenden, da hybrid GL nutzt, sprite SDL_Renderer)
+- Neue Funktion `moo_hybrid_sprite_load(win, path) -> id`
+- PNG/BMP via SDL_Image (bereits gelinkt) → SDL_Surface → glTexImage2D
+- Texture-Slot-Array `g_hybrid_sprites[256]` analog moo_sprite.c
+- Quad-Shader-Variante mit `sampler2D` + UV-Koords
+- moo-API: `sprite_zeichnen_z(win, id, x, y, z, w, h)`, `sprite_laden_unified`
+
+**Aufwand**: 2-3h.
+
+### P6 — raum_*-Calls auf Hybrid-Window
+moo_3d.c hat einen g_backend/g_ctx-Singleton. Damit raum_würfel etc. auf
+einem Hybrid-Fenster zeichnen, braucht:
+- Refactor moo_3d_gl33.c: `gl33_attach_to_existing_context(GLFWwindow*, w, h)`
+  Funktion, die GL33Context anlegt OHNE eigenen glfwCreateWindow-Call
+- Hybrid-create ruft attach_to_existing nach eigenem Window-Init, setzt
+  `g_backend = &moo_backend_gl33`, `g_ctx = ...`
+- raum_*-Calls funktionieren transparent; Z-Buffer wird shared (beide
+  schreiben in denselben GL_DEPTH_BUFFER, Test einheitlich)
+
+**Aufwand**: 4-5h (Refactor + Tests + sicherstellen, dass klassisches
+raum_erstelle weiterhin funktioniert).
+
+**Priorität**: hoch — ohne P6 ist der Hybrid-Pfad nur 2D-only mit Z, kein
+echter 2D+3D-Mix. P5 ist niedriger (Sprites oft nicht z-kritisch).
+
 ## ~~P3c-followup: DB Statement-Objekt (Variante A)~~ **ERLEDIGT**
 
 Variante A wurde im Nachgang zur Konsolidierungs-Welle umgesetzt:

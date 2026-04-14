@@ -45,6 +45,7 @@ fn main() {
     {
         build.file("runtime/moo_3d_gl33.c");
         build.file("runtime/moo_3d_gl33_mesh.c");
+        build.file("runtime/moo_hybrid.c");
         build.file("runtime/glad/src/glad.c");
         build.include("runtime/glad/include");
         build.define("MOO_HAS_GL33", None);
