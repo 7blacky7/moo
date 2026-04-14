@@ -434,13 +434,19 @@ funktion gras_zeichnen(win):
 # -----------------------------------------------------------------
 # Haupt-Szene
 # -----------------------------------------------------------------
-setze win auf raum_erstelle("Siedler 3 — Echt 3D (moo)", WIN_W, WIN_H)
-raum_perspektive(win, 50.0, 0.1, 100.0)
+setze win auf raum_erstelle("Siedler 3 — Iso-Voxel (moo)", WIN_W, WIN_H)
+# Niedriger FOV simuliert orthografische Iso-Projektion (Voxel-Charme)
+raum_perspektive(win, 28.0, 0.1, 200.0)
 
-setze kamera_winkel auf 0.0
-setze kamera_hoehe auf 10.0
-setze kamera_radius auf 16.0
+# Iso-Default: hoch ueber der Karte, ~30° Elevation, 45° Azimuth
+setze kamera_winkel auf 0.785
+setze kamera_hoehe auf 14.0
+setze kamera_radius auf 22.0
 setze tick auf 0
+
+# Test-Modus: env MOO_SIEDLER_TEST=1 → 60 Frames Loop mit Screenshots,
+# dann sauberer Exit 0. Sonst normaler interaktiver Modus.
+setze test_modus auf umgebung("MOO_SIEDLER_TEST") != ""
 
 setze sun_phase auf [0.15]
 
@@ -477,6 +483,12 @@ raum_maus_fangen(win)
 solange raum_offen(win):
     wenn raum_taste(win, "escape"):
         stopp
+    # Test-Modus: 60 Frames + Screenshot alle 10, dann beenden
+    wenn test_modus und tick >= 60:
+        stopp
+    wenn test_modus und tick % 10 == 0:
+        setze fname auf "/tmp/siedler3_frame_" + text(tick) + ".bmp"
+        screenshot(win, fname)
     wenn raum_taste(win, "a"):
         setze kamera_winkel auf kamera_winkel - 0.02
     wenn raum_taste(win, "d"):
@@ -528,13 +540,19 @@ solange raum_offen(win):
     setze cam_eye_z auf zentrum_z + sinus(kamera_winkel) * kamera_radius
     raum_kamera(win, cam_eye_x, kamera_hoehe, cam_eye_z, zentrum_x, 1.5, zentrum_z)
 
-    # Terrain
+    # Terrain — Voxel-Stack pro Tile (Siedler-3-Charme):
+    # Jede Saeule ist (h+1) flache Wuerfel uebereinander, sichtbar als
+    # gestapelte Voxel-Schichten statt einer glatten 3D-Surface.
     setze tx auf 0
     solange tx < WORLD:
         setze ty auf 0
         solange ty < WORLD:
             setze h auf terrain_h(tx, ty)
-            raum_würfel(win, tx + 0.5, h * 0.5, ty + 0.5, 1.0, biom_farbe(h))
+            setze layer auf 0
+            solange layer <= h:
+                # leichte vertikale Lücken zwischen Voxeln durch size < 1.0
+                raum_würfel(win, tx + 0.5, layer * 0.5 + 0.25, ty + 0.5, 0.45, biom_farbe(layer))
+                setze layer auf layer + 1
             setze ty auf ty + 1
         setze tx auf tx + 1
 
