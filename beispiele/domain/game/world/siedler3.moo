@@ -99,20 +99,116 @@ setze r_brot auf [0]
 #  - Baecker (typ 6) → 1 Mehl → 1 Brot
 # k3 portiert hier die v1-Logik (commit e96e0b5).
 funktion tick_wirtschaft():
-    # k3-M2: hier die v1-Wirtschaftslogik einsetzen
-    gib_zurück nichts
+    # k3-M2: 3 Resource-Ketten (Holz/Bretter/Stein, Korn/Mehl/Brot).
+    setze i auf 0
+    solange i < länge(gebaeude):
+        setze typ auf gebaeude[i][2]
+        wenn typ == 1:
+            r_holz[0] = r_holz[0] + 1
+        wenn typ == 3:
+            r_stein[0] = r_stein[0] + 1
+        wenn typ == 4:
+            r_korn[0] = r_korn[0] + 1
+        setze i auf i + 1
+    setze j auf 0
+    solange j < länge(gebaeude):
+        setze t auf gebaeude[j][2]
+        wenn t == 2 und r_holz[0] >= 2:
+            r_holz[0] = r_holz[0] - 2
+            r_bretter[0] = r_bretter[0] + 1
+        wenn t == 5 und r_korn[0] >= 2:
+            r_korn[0] = r_korn[0] - 2
+            r_mehl[0] = r_mehl[0] + 1
+        wenn t == 6 und r_mehl[0] >= 1:
+            r_mehl[0] = r_mehl[0] - 1
+            r_brot[0] = r_brot[0] + 1
+        setze j auf j + 1
 
 # HOOK 2: gebaeude_state(idx)
 # Liefert ein State-Dict pro Gebaeude (z.B. {"aktiv": wahr, "produziert": "holz"}).
 # Wird von M3 (k3) gebraucht fuer Pfad-Walking + Render-Visualisierung.
 funktion gebaeude_state(idx):
-    gib_zurück {}
+    setze g auf gebaeude[idx]
+    setze typ auf g[2]
+    setze produziert auf "nichts"
+    wenn typ == 1:
+        setze produziert auf "holz"
+    wenn typ == 2:
+        setze produziert auf "bretter"
+    wenn typ == 3:
+        setze produziert auf "stein"
+    wenn typ == 4:
+        setze produziert auf "korn"
+    wenn typ == 5:
+        setze produziert auf "mehl"
+    wenn typ == 6:
+        setze produziert auf "brot"
+    gib_zurück {"x": g[0], "y": g[1], "typ": typ, "produziert": produziert, "aktiv": wahr}
 
 # HOOK 3: pfade()
 # BFS-Routing zwischen passierbaren Tiles (z<=2). Liefert Liste von Routen-Listen
 # zwischen Produktions-Paaren. k3 portiert hier die v1-BFS-Implementierung.
-funktion pfade():
+funktion ist_passierbar(x, y):
+    wenn x < 0 oder y < 0 oder x >= WORLD oder y >= WORLD:
+        gib_zurück falsch
+    gib_zurück terrain_h(x, y) <= 2
+
+# BFS auf passierbaren Tiles. 200-Schritte-Limit.
+funktion finde_route(sx, sy, zx, zy):
+    wenn nicht ist_passierbar(sx, sy) oder nicht ist_passierbar(zx, zy):
+        gib_zurück []
+    setze besucht auf {}
+    setze queue auf [[sx, sy, []]]
+    setze schritte auf 0
+    solange länge(queue) > 0 und schritte < 200:
+        setze kopf auf queue[0]
+        setze queue auf queue.teilstring(1, länge(queue))
+        setze cx auf kopf[0]
+        setze cy auf kopf[1]
+        setze pfad auf kopf[2]
+        wenn cx == zx und cy == zy:
+            gib_zurück pfad
+        setze key auf text(cx) + "," + text(cy)
+        wenn besucht.hat(key):
+            setze schritte auf schritte + 1
+            weiter
+        besucht[key] = wahr
+        setze nachbarn auf [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]
+        für n in nachbarn:
+            wenn ist_passierbar(n[0], n[1]):
+                setze np auf pfad + [[n[0], n[1]]]
+                setze queue auf queue + [[n[0], n[1], np]]
+        setze schritte auf schritte + 1
     gib_zurück []
+
+# pfade(): berechnet Routen zwischen Produzenten- und Verbraucher-Paaren.
+# Liefert Liste von Routen-Listen (jede Route ist eine Liste von [x,y]-Tiles).
+funktion pfade():
+    setze result auf []
+    setze i auf 0
+    solange i < länge(gebaeude):
+        setze ti auf gebaeude[i][2]
+        # Holzfaeller -> Saegewerk, Korn -> Muehle, Mehl -> Baecker, Brot -> Haus.
+        wenn ti == 1 oder ti == 4 oder ti == 5 oder ti == 6:
+            setze ziel_typ auf 0
+            wenn ti == 1:
+                setze ziel_typ auf 2
+            wenn ti == 4:
+                setze ziel_typ auf 5
+            wenn ti == 5:
+                setze ziel_typ auf 6
+            wenn ti == 6:
+                setze ziel_typ auf 0
+            setze j auf 0
+            solange j < länge(gebaeude):
+                wenn gebaeude[j][2] == ziel_typ:
+                    setze r auf finde_route(gebaeude[i][0], gebaeude[i][1], gebaeude[j][0], gebaeude[j][1])
+                    wenn länge(r) > 0:
+                        setze result auf result + [r]
+                    stopp
+                setze j auf j + 1
+        setze i auf i + 1
+    gib_zurück result
 
 # HOOK 4: siedler_walk_step()
 # Wird jeden Frame aufgerufen, soll die Siedler-Liste basierend auf Wirtschafts-
