@@ -97,11 +97,67 @@ auf Basis von `spec/game_module_boundary.md §2`.
 | `moo_index_get/set` | — | `[i]`-Operator | DISPATCHER | Strings/Listen/Dicts gemeinsam |
 | `moo_list_iter_len` | entsprechend | — | INTERNAL | Iterator-Helper fuer `.map/.filter` |
 
-## Offen — k4 ergaenzt
+### 2D-Grafik (k4)
 
-- Game-Strang: `sprite_lade`/`sprite_*`, `fenster`, `zeichne_*`, `raum_*`,
-  `chunk_*`, `welt_*` voll, `taste_*`/`maus_*`, `screenshot`.
-- Grafik-Backend-Interna (`moo_3d_gl21`/`gl33`/`vulkan`) als INTERNAL markieren.
+| A | B | C | Kategorie | notes |
+|---|---|---|-----------|-------|
+| `moo_window_create` | `window_create` | `fenster_erstelle` / `window_create` / `fe` | PUBLIC | SDL2-Window + Renderer |
+| `moo_window_clear` | `window_clear` | `fenster_löschen` / `window_clear` / `fl` | PUBLIC | Hex-Farbe |
+| `moo_window_update` | `window_update` | `fenster_aktualisieren` / `window_update` / `fa` | PUBLIC | Frame-Swap |
+| `moo_window_is_open` | `window_is_open` | `fenster_offen` / `window_is_open` | PUBLIC | Event-Poll |
+| `moo_window_close` | `window_close` | `fenster_schliessen` / `window_close` | PUBLIC | auch via `moo_smart_close` erreichbar |
+| `moo_draw_rect` | `draw_rect` | `zeichne_rechteck` / `draw_rect` / `zr` | PUBLIC | — |
+| `moo_draw_circle` | `draw_circle` | `zeichne_kreis` / `draw_circle` / `zk` | PUBLIC | — |
+| `moo_draw_line` | `draw_line` | `zeichne_linie` / `draw_line` | PUBLIC | — |
+| `moo_draw_pixel` | `draw_pixel` | `zeichne_pixel` / `draw_pixel` | PUBLIC | — |
+| `moo_key_pressed` | `key_pressed` | `taste_gedrückt` / `key_pressed` | PUBLIC | SDL-Scancodes |
+| `moo_mouse_x` / `moo_mouse_y` / `moo_mouse_pressed` | gleichnamig | `maus_x`/`maus_y`/`maus_gedrückt` + `mouse_*` | PUBLIC | Argument `win` Pflicht |
+| `moo_delay` | `delay` | `warte` / `delay` | PUBLIC | ms |
+
+### Sprites (k4)
+
+| A | B | C | Kategorie | notes |
+|---|---|---|-----------|-------|
+| `moo_sprite_load` | `sprite_load` | `sprite_laden` / `sprite_load` | PUBLIC | BMP/PNG via SDL_image |
+| `moo_sprite_draw` | `sprite_draw` | `sprite_zeichnen` / `sprite_draw` | PUBLIC | — |
+| `moo_sprite_draw_scaled` | `sprite_draw_scaled` | `sprite_zeichnen_skaliert` / `sprite_draw_scaled` | PUBLIC | — |
+| `moo_sprite_draw_region` | `sprite_draw_region` | `sprite_ausschnitt` / `sprite_region` | PUBLIC | Tile-Atlas |
+| `moo_sprite_width` / `moo_sprite_height` | gleichnamig | `sprite_breite` / `sprite_hoehe` + EN | PUBLIC | — |
+| `moo_sprite_free` | `sprite_free` | `sprite_freigeben` / `sprite_free` | PUBLIC | **Pflicht**: Slot-Array, kein Auto-Close (siehe E1-followup) |
+
+### 3D-Grafik + Chunks (k4)
+
+| A | B | C | Kategorie | notes |
+|---|---|---|-----------|-------|
+| `moo_3d_create` | `3d_create` | `raum_erstelle` / `3d_create` / `space_create` / `re` | PUBLIC | Backend via `MOO_3D_BACKEND` env (gl21/gl33/vulkan) |
+| `moo_3d_is_open` / `update` / `close` | gleichnamig | `raum_{offen,aktualisieren,schliessen}` + `space_*` + `3d_*` | PUBLIC | `close` auch via `moo_smart_close` (MOO_WINDOW3D seit commit 77167ae) |
+| `moo_3d_clear` / `perspective` / `camera` | gleichnamig | `raum_{löschen,perspektive,kamera}` + `rk` | PUBLIC | — |
+| `moo_3d_rotate` / `translate` / `push` / `pop` | gleichnamig | `raum_{rotiere,verschiebe,push,pop}` + `space_*` | PUBLIC | Matrix-Stack |
+| `moo_3d_cube` / `sphere` / `triangle` | gleichnamig | `raum_{würfel,kugel,dreieck}` + EN | PUBLIC | — |
+| `moo_3d_key_pressed` / `capture_mouse` / `mouse_dx` / `mouse_dy` | gleichnamig | `raum_taste`, `raum_maus_fangen`, `raum_maus_{dx,dy}` + `space_*`/`3d_*` | PUBLIC | FPS-Kamera |
+| `moo_3d_set_fog_density` / `set_light_dir` / `set_ambient` | — | — | INTERNAL | wird nur von Welt-Engine intern genutzt (siehe `moo_world_update` Hook) |
+| `moo_3d_chunk_create` / `begin` / `end` / `draw` / `delete` | gleichnamig | `chunk_erstelle` / `chunk_beginne` / `chunk_ende` / `chunk_zeichne` / `chunk_lösche` + EN | PUBLIC | Display-List; **Pflicht**: explicit `chunk_delete`, Slot-basiert (siehe E1-followup) |
+| Backend-Tables `moo_backend_gl21` / `moo_backend_gl33` / `moo_backend_vulkan` | — | — | INTERNAL | Backend-Function-Pointer-Struct (`moo_3d_backend.h`), reine Implementierung |
+
+### Welt-Engine Game-Erweiterung (k4)
+
+Basis-Matrix steht bereits oben (Abschnitt "Welt-Engine (Kompat-Grenze aus
+P2c + k4 Scope)"). Ergänzung für Nicht-offensichtliche Einträge:
+
+| A | B | C | Kategorie | notes |
+|---|---|---|-----------|-------|
+| `moo_world_trees` | `__world_trees` / `__welt_baeume` | `welt_baeume` | WRAPPED | commit 4a39983 schloss die einzige Lücke gegenüber Runtime |
+| `moo_world_close` | `__world_close` / `__welt_beenden` | `welt_beenden` + `.schliessen` | WRAPPED + DISPATCHER | `.schliessen` auf MOO_WINDOW3D dispatcht seit 77167ae über `moo_smart_close` auf `moo_world_close` + `moo_3d_close` (beide idempotent) |
+| `world_terrain_height` / `world_get_biom` / `world_build_chunk` / `alloc_chunk_slot` | — | — | INTERNAL | Perlin-/Mesh-Generator + Chunk-Slot-Verwaltung |
+| `moo_world_daynight.h`-Helfer | — | — | INTERNAL | Sonnenrichtung aus Tageszeit, Farb-Ableitung |
+
+### Test-API (k4)
+
+| A | B | C | Kategorie | notes |
+|---|---|---|-----------|-------|
+| `moo_screenshot` | `screenshot` | `screenshot` / `bildschirmfoto` | PUBLIC | BMP via SDL_SaveBMP |
+| `moo_simulate_key` | `simulate_key` | `taste_simulieren` / `simulate_key` | PUBLIC | injiziert SDL-KeyEvent |
+| `moo_simulate_mouse` | `simulate_mouse` | `maus_simulieren` / `simulate_mouse` | PUBLIC | setzt Maus-Pos + Button-State |
 
 ## Benutzung
 
