@@ -67,22 +67,23 @@
 
 **3D/Grafik-headful** (CI-problematisch):
 
-| Datei | Empfehlung |
-|---|---|
-| `test_3d_minimal.moo` | → `scratch/` (headful, keine CI). Alternativ: `compiler/tests/` mit `--emit-ir`-Only-Variante (kompiliert, führt nicht aus). |
-| `test_3d_nolight.moo` | Analog. |
-| `test_native.moo` | `test_native.ll` ist zugehöriges Artefakt (`.ll` bereits gitignored) — Quelle → A, wenn der IR-Check stabil ist. |
-| `test_vollständig.moo` | Unicode-Name + Umfang → prüfen ob reproduzierbar; wenn ja A, sonst B. |
+| Datei | Empfehlung | Finale Entscheidung + Commit |
+|---|---|---|
+| `test_3d_minimal.moo` | → `scratch/` (headful) | ✓ `scratch/` — k4 bestätigt (warte(5000), kein Guard-Pattern). Move: k3 c3ae38f. |
+| `test_3d_nolight.moo` | Analog | ✓ `scratch/` — k4 bestätigt (warte(3000)). Move: k3 c3ae38f. |
+| `test_native.moo` | Quelle → A, wenn IR-Check stabil | ✓ `compiler/tests/` + `.expected` — deterministisch (10 Zeilen Output), k4 verifiziert. Move: k3 c3ae38f. `test_native.ll` entfernt (gitignored). |
+| `test_vollständig.moo` | Unicode-Name prüfen | ✓ `compiler/tests/` + `.expected` — deterministisch, k2 verifiziert. Move + expected: k3 (W2-Abschluss). |
+| `test_oop.moo` | Konflikt mit existierendem `compiler/tests/test_oop.moo` | ✓ Rename nach `scratch/test_oop_demo.moo`. Root ist 17-Zeilen-Demo, compiler/tests ist 31-Zeilen-Assert-Variante — nicht dieselbe Intention, kein Merge. Move: k3 (W2-Abschluss). |
 
-**4 Einträge.**
+**5 Einträge — alle entschieden und umgesetzt.**
 
 ---
 
 ## Zusammenfassung
 
-- **A → `compiler/tests/`**: 18 + 13 (nach Tupel-Entscheidung) ≈ 31
-- **B → `scratch/`**: 6
-- **C → offen**: 3 (3D headful) + 1 (test_vollständig) = 4
+- **A → `compiler/tests/`**: 18 Einzel + 13 Tupel + 2 aus Reste-Liste (`test_native`, `test_vollständig`) = 33
+- **B → `scratch/`**: 6 B-Batch + 3 Reste (`test_3d_minimal`, `test_3d_nolight`, `test_oop_demo`) = 9
+- **C → offen**: 0 — alle 40 Root-Dateien haben einen Zielort und sind **umgezogen** (Stand: W2-Abschluss, k3 11 Commits).
 
 ## Arbeitsauftrag für k3 (W2-Moves)
 
