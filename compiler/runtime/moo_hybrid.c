@@ -525,3 +525,49 @@ void moo_hybrid_sprite_z(MooValue win, MooValue id, MooValue x, MooValue y, MooV
     /* TODO P5: textured quad + sprite-Texture-Lookup aus moo_sprite.c */
     (void)win; (void)id; (void)x; (void)y; (void)z; (void)w; (void)h;
 }
+
+/* ========================================================
+ * Screenshot fuer MOO_WINDOW_HYBRID (k3 Bug-Fix).
+ * glReadPixels aus dem Hybrid-GL-Context + SDL_SaveBMP.
+ * ======================================================== */
+#if MOO_HYBRID_HAS_GL
+#include <SDL2/SDL.h>
+#include <stdlib.h>
+
+MooValue moo_hybrid_screenshot_bmp(MooValue window, MooValue path) {
+    if (window.tag != MOO_WINDOW_HYBRID || path.tag != MOO_STRING) return moo_bool(false);
+    MooHybridWindow* h = (MooHybridWindow*)moo_val_as_ptr(window);
+    if (!h || !h->window) return moo_bool(false);
+    glfwMakeContextCurrent(h->window);
+    int w = h->width;
+    int ht = h->height;
+    if (w <= 0 || ht <= 0) return moo_bool(false);
+    unsigned char* buf = (unsigned char*)malloc((size_t)w * ht * 4);
+    if (!buf) return moo_bool(false);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, w, ht, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+    unsigned char* row = (unsigned char*)malloc((size_t)w * 4);
+    if (row) {
+        for (int y = 0; y < ht / 2; y++) {
+            unsigned char* a = buf + (size_t)y * w * 4;
+            unsigned char* b = buf + (size_t)(ht - 1 - y) * w * 4;
+            memcpy(row, a, (size_t)w * 4);
+            memcpy(a, b, (size_t)w * 4);
+            memcpy(b, row, (size_t)w * 4);
+        }
+        free(row);
+    }
+    SDL_Surface* surf = SDL_CreateRGBSurfaceFrom(buf, w, ht, 32, w * 4,
+        0x000000FFu, 0x0000FF00u, 0x00FF0000u, 0xFF000000u);
+    if (!surf) { free(buf); return moo_bool(false); }
+    int rc = SDL_SaveBMP(surf, MV_STR(path)->chars);
+    SDL_FreeSurface(surf);
+    free(buf);
+    return moo_bool(rc == 0);
+}
+#else
+MooValue moo_hybrid_screenshot_bmp(MooValue window, MooValue path) {
+    (void)window; (void)path;
+    return moo_bool(false);
+}
+#endif

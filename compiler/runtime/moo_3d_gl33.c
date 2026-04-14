@@ -548,3 +548,44 @@ Moo3DBackend moo_backend_gl33 = {
     .chunk_draw    = gl33_chunk_draw_fn,
     .chunk_delete  = gl33_chunk_delete_fn,
 };
+
+/* ========================================================
+ * Screenshot — glReadPixels + SDL_SaveBMP (k3 Bug-Fix)
+ * Backend-spezifisch: castet ctx zu GL33Context (gl33-Layout).
+ * Andere Backends muessen eigene screenshot-Helper bringen.
+ * ======================================================== */
+#include <SDL2/SDL.h>
+#include <stdlib.h>
+
+int gl33_screenshot_bmp(void* ctx_void, const char* path) {
+    if (!ctx_void || !path) return 0;
+    GL33Context* ctx = (GL33Context*)ctx_void;
+    if (!ctx->window) return 0;
+    glfwMakeContextCurrent(ctx->window);
+    int w = ctx->width;
+    int h = ctx->height;
+    if (w <= 0 || h <= 0) return 0;
+    unsigned char* buf = (unsigned char*)malloc((size_t)w * h * 4);
+    if (!buf) return 0;
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+    /* Y-flip (glReadPixels liefert bottom-up, BMP via SDL nimmt top-down). */
+    unsigned char* row = (unsigned char*)malloc((size_t)w * 4);
+    if (row) {
+        for (int y = 0; y < h / 2; y++) {
+            unsigned char* a = buf + (size_t)y * w * 4;
+            unsigned char* b = buf + (size_t)(h - 1 - y) * w * 4;
+            memcpy(row, a, (size_t)w * 4);
+            memcpy(a, b, (size_t)w * 4);
+            memcpy(b, row, (size_t)w * 4);
+        }
+        free(row);
+    }
+    SDL_Surface* surf = SDL_CreateRGBSurfaceFrom(buf, w, h, 32, w * 4,
+        0x000000FFu, 0x0000FF00u, 0x00FF0000u, 0xFF000000u);
+    if (!surf) { free(buf); return 0; }
+    int rc = SDL_SaveBMP(surf, path);
+    SDL_FreeSurface(surf);
+    free(buf);
+    return rc == 0 ? 1 : 0;
+}

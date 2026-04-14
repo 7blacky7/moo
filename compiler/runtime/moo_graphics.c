@@ -284,8 +284,17 @@ void moo_delay(MooValue ms) {
 // Test-API: Screenshot, Tastatur-Simulation, Maus-Simulation
 // ============================================================
 
+/* Forward-Decls fuer Tag-Dispatch (k3 Bug-Fix 2026-04-14):
+ * screenshot() unterstuetzt jetzt MOO_WINDOW (SDL_Renderer),
+ * MOO_WINDOW3D (gl33-Backend) und MOO_WINDOW_HYBRID (eigener GL-Context). */
+extern MooValue moo_3d_screenshot_bmp(MooValue window, MooValue path);
+extern MooValue moo_hybrid_screenshot_bmp(MooValue window, MooValue path);
+
 MooValue moo_screenshot(MooValue window, MooValue path) {
-    if (window.tag != MOO_WINDOW || path.tag != MOO_STRING) return moo_bool(false);
+    if (path.tag != MOO_STRING) return moo_bool(false);
+    if (window.tag == MOO_WINDOW3D) return moo_3d_screenshot_bmp(window, path);
+    if (window.tag == MOO_WINDOW_HYBRID) return moo_hybrid_screenshot_bmp(window, path);
+    if (window.tag != MOO_WINDOW) return moo_bool(false);
     MooWindow* mw = (MooWindow*)moo_val_as_ptr(window);
     if (!mw || !mw->renderer) return moo_bool(false);
 
