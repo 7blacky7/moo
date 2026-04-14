@@ -1,8 +1,8 @@
 # ============================================================
 # test_zelda.moo — Automatisierter Test fuer Zelda-Adventure
 #
-# Kompilieren: moo-compiler compile beispiele/test_zelda.moo -o beispiele/test_zelda
-# Starten:     ./beispiele/test_zelda
+# Kompilieren: moo-compiler compile beispiele/domain/game/testscreens/test_zelda.moo -o beispiele/test_zelda
+# Starten:     ./beispiele/domain/game/testscreens/test_zelda
 #
 # Testet: Fenster, Sprites, Bewegung, Schwert, Items, Raum-Wechsel
 # Erzeugt: Screenshots in beispiele/test_screenshots/

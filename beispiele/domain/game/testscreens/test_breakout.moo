@@ -1,8 +1,8 @@
 # ============================================================
 # test_breakout.moo — Automatisierter Test fuer Breakout
 #
-# Kompilieren: moo-compiler compile beispiele/test_breakout.moo -o beispiele/test_breakout
-# Starten:     ./beispiele/test_breakout
+# Kompilieren: moo-compiler compile beispiele/domain/game/testscreens/test_breakout.moo -o beispiele/test_breakout
+# Starten:     ./beispiele/domain/game/testscreens/test_breakout
 #
 # Testet: Fenster, Paddle-Bewegung, Ball-Start, Brick-Kollision,
 #         Wand-Reflexion, Punkte-System, Screenshot nach jeder Aktion
