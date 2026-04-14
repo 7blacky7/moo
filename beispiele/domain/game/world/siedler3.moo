@@ -258,9 +258,11 @@ funktion partikel_tick():
     für p in partikel[0]:
         setze leben auf p[6] - 1
         wenn leben > 0:
-            setze nx auf p[0] + p[3] + wind_x() * 0.05 * wind_staerke()
+            # M5.7: Wind-Amplitude 10x hoch (0.05→0.5) → sichtbares Driften
+            # der Partikel. Plus minimaler konstanter Upward-Bias fuer Rauch.
+            setze nx auf p[0] + p[3] + wind_x() * 0.5 * wind_staerke()
             setze ny auf p[1] + p[4]
-            setze nz auf p[2] + p[5] + wind_z() * 0.05 * wind_staerke()
+            setze nz auf p[2] + p[5] + wind_z() * 0.5 * wind_staerke()
             setze liste auf liste + [[nx, ny, nz, p[3] * 0.96, p[4] * 0.97, p[5] * 0.96, leben, p[7]]]
     partikel[0] = liste
 
@@ -397,14 +399,16 @@ funktion siedler_zeichnen(win):
         setze bob auf sinus(wind_phase[0] * 0.25 + s[3] * 20) * 4.0
         setze sx auf iso_x(fx, fy)
         setze sy auf iso_y(fx, fy, fh)
-        setze sz auf iso_z(fx, fy, fh) - 4.0
-        # Siedler 4-5x groesser als v0.5 Version → sichtbar auf Karte
-        # Beine (Block), Koerper (groesser), Kopf (Kreis)
+        # M5.7: z klein+konstant = weit vorne → garantiert sichtbar ueber Tiles/Gebaeuden.
+        setze sz auf 5.0
+        # Siedler 4-5x groesser als v0.5 Version → sichtbar auf Karte.
+        # ALLE 7 Siedler laufen durch denselben Render-Block (keine
+        # separaten Pfade, einheitliche Skalierung).
         zeichne_rechteck_z(win, sx - 10, sy - 50, sz, 20, 22, s[5])
-        zeichne_rechteck_z(win, sx - 16, sy - 76 + bob, sz, 32, 28, s[5])
-        zeichne_kreis_z(win, sx, sy - 94 + bob, sz, 14, s[5])
+        zeichne_rechteck_z(win, sx - 16, sy - 76 + bob, sz - 0.05, 32, 28, s[5])
+        zeichne_kreis_z(win, sx, sy - 94 + bob, sz - 0.1, 14, s[5])
         # Resource-Tragen: groesses Rechteck ueber Kopf in Res-Farbe
-        zeichne_rechteck_z(win, sx - 10, sy - 116 + bob, sz - 0.1, 20, 16, res_farbe(s[6]))
+        zeichne_rechteck_z(win, sx - 10, sy - 116 + bob, sz - 0.2, 20, 16, res_farbe(s[6]))
 
 # -----------------------------------------------------------------
 # Flaggen auf Haeusern
@@ -526,10 +530,12 @@ hybrid_aktualisieren(win)
 solange hybrid_offen(win):
     wenn raum_taste(win, "escape"):
         stopp
-    # Test-Modus: 60 Frames + Screenshot alle 10, dann beenden
+    # Test-Modus: 60 Frames + Screenshot alle 10, dann beenden.
+    # M5.7: tick > 0 — sonst schiesst Frame 0 BEVOR der erste Render-Pass
+    # seinen Backbuffer gefuellt hat (= weisses/uninitialisiertes Bild).
     wenn test_modus und tick >= 60:
         stopp
-    wenn test_modus und tick % 10 == 0:
+    wenn test_modus und tick > 0 und tick % 10 == 0:
         setze fname auf "/tmp/siedler3_frame_" + text(tick) + ".bmp"
         screenshot(win, fname)
     wenn raum_taste(win, "a"):
