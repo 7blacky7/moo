@@ -1,133 +1,87 @@
 # ============================================================
-# Siedler 3 — Isometrische 2.5D-Variante (moo)
+# Siedler 3 — Echte 3D-Szene (raum_*-API) mit Wind + Atmosphaere
 #
 # Kompilieren: moo-compiler compile beispiele/domain/game/world/siedler3.moo \
 #              -o beispiele/domain/game/world/siedler3
 # Starten:     ./beispiele/domain/game/world/siedler3
 #
-# Steuerung: WASD = Kamera pan, Escape = Beenden
-# Renderer:  Diamond-Iso (2:1), Perlin-ish Terrain mit Hoehenstufen,
-#            4 Gebaeude, 2 Resource-Ketten (Holz→Bretter, Stein).
+# Steuerung: WASD = Kamera-Umlauf, Q/E = Zoom, Escape = Beenden
+#
+# Architektur (M1-Skelett, k4):
+#  - raum_*-API (3D-Fenster, iso-aehnliche Schraeg-Kamera mit Umlauf)
+#  - Wind-System (globaler 2D-Vektor + Staerke, sinus-animiert)
+#  - Atmosphaere: Schornstein-Rauch, Funken, Gras-Sway, Baum-Schaukeln, Flaggen
+#  - Volumetrische 3D-Siedler-Figuren (Wuerfel-Stack mit Animation)
+#  - HOOKS fuer Wirtschaftslogik (M2 von k3): siehe Abschnitt "WIRTSCHAFTS-HOOKS"
 # ============================================================
 
-konstante TILE_W auf 64
-konstante TILE_H auf 32
-konstante HEIGHT_STEP auf 16
-konstante WORLD auf 15
+konstante WORLD auf 14
 konstante WIN_W auf 1024
 konstante WIN_H auf 640
 
-# ------------------------------------------------------------
-# Seed-basierte Terrain-Hoehe (fbm-Approximation via Sinus-Mix)
-# ------------------------------------------------------------
+# -----------------------------------------------------------------
+# Noise-Approx fuer Terrain-Hoehe
+# -----------------------------------------------------------------
 funktion hash01(x, y):
     setze n auf (x * 73856093) ^ (y * 19349663)
     setze n auf n & 2147483647
     gib_zurück (n % 1000) / 1000.0
 
-funktion terrain_z(x, y):
+funktion terrain_h(x, y):
     setze v auf sinus(x * 0.35) * 1.2 + cosinus(y * 0.45) * 1.1
-    setze v auf v + sinus((x + y) * 0.25) * 0.8
-    setze v auf v + hash01(x, y) * 0.6
-    setze z auf boden(v + 2.5)
-    wenn z < 0:
-        setze z auf 0
-    wenn z > 4:
-        setze z auf 4
-    gib_zurück z
+    setze v auf v + sinus((x + y) * 0.25) * 0.8 + hash01(x, y) * 0.6
+    setze h auf boden(v + 2.5)
+    wenn h < 0:
+        setze h auf 0
+    wenn h > 4:
+        setze h auf 4
+    gib_zurück h
 
-funktion biom_farbe(z):
-    wenn z <= 0:
-        gib_zurück "#2060A0"
-    wenn z == 1:
-        gib_zurück "#D0C078"
-    wenn z == 2:
-        gib_zurück "#4CAF50"
-    wenn z == 3:
-        gib_zurück "#6E5B3E"
-    gib_zurück "#9E9E9E"
+funktion biom_farbe(h):
+    wenn h <= 0:
+        gib_zurück "blau"
+    wenn h == 1:
+        gib_zurück "gelb"
+    wenn h == 2:
+        gib_zurück "gruen"
+    wenn h == 3:
+        gib_zurück "orange"
+    gib_zurück "grau"
 
-# ------------------------------------------------------------
-# Isometrische Projektion
-# ------------------------------------------------------------
-funktion iso_x(wx, wy, cam_x):
-    gib_zurück (wx - wy) * (TILE_W / 2) + cam_x
+# -----------------------------------------------------------------
+# Gebaeude-Daten (Position + Typ)
+# typ: 0=Haus (Senke), 1=Holzfaeller, 2=Saegewerk, 3=Steinmetz,
+#      4=Bauer, 5=Muehle, 6=Baecker
+# Datenmodell wird von k3 in M2 fuer Wirtschaftslogik konsumiert.
+# -----------------------------------------------------------------
+setze gebaeude auf [[3, 4, 1], [4, 5, 2], [8, 3, 3], [6, 8, 0], [10, 10, 1], [5, 11, 4], [7, 12, 5], [9, 13, 6], [12, 8, 0]]
 
-funktion iso_y(wx, wy, wz, cam_y):
-    gib_zurück (wx + wy) * (TILE_H / 2) - wz * HEIGHT_STEP + cam_y
-
-# Zeichnet einen Diamond-Tile als gefuelltes Viereck via 2 Dreiecke-Approx
-# (moo hat kein "fill_polygon" — simulieren mit vielen horizontalen Linien).
-funktion zeichne_diamond(win, sx, sy, farbe, rand):
-    setze i auf 0
-    setze hh auf TILE_H / 2
-    solange i < TILE_H:
-        setze v auf i - hh
-        setze breite auf TILE_W - abs(v) * 2
-        wenn breite > 0:
-            zeichne_linie(win, sx - breite / 2, sy + v, sx + breite / 2, sy + v, farbe)
-        setze i auf i + 1
-    # Rand oben links / oben rechts / unten links / unten rechts
-    zeichne_linie(win, sx, sy - hh, sx + TILE_W / 2, sy, rand)
-    zeichne_linie(win, sx + TILE_W / 2, sy, sx, sy + hh, rand)
-    zeichne_linie(win, sx, sy + hh, sx - TILE_W / 2, sy, rand)
-    zeichne_linie(win, sx - TILE_W / 2, sy, sx, sy - hh, rand)
-
-# Hoehen-Waende (Seitenflaechen unter dem Tile) als Rechtecke
-funktion zeichne_waende(win, sx, sy, z, farbe_seitl):
-    wenn z <= 0:
-        gib_zurück nichts
-    setze hoehe auf z * HEIGHT_STEP
-    # links: Parallelogramm approximiert durch Rechteck + zwei Kanten
-    zeichne_rechteck(win, sx - TILE_W / 2, sy, TILE_W / 2, hoehe, farbe_seitl)
-
-# ------------------------------------------------------------
-# Gebaeude (statisch platziert)
-# ------------------------------------------------------------
-# typ: 0=Holzfaeller, 1=Saegewerk, 2=Steinmetz, 3=Haus
 funktion gebaeude_farbe(typ):
     wenn typ == 0:
-        gib_zurück "#2E7D32"
+        gib_zurück "rot"
     wenn typ == 1:
-        gib_zurück "#8D6E63"
+        gib_zurück "gruen"
     wenn typ == 2:
-        gib_zurück "#607D8B"
+        gib_zurück "orange"
     wenn typ == 3:
-        gib_zurück "#C62828"
+        gib_zurück "grau"
     wenn typ == 4:
-        gib_zurück "#F9A825"
+        gib_zurück "gelb"
     wenn typ == 5:
-        gib_zurück "#D7CCC8"
-    gib_zurück "#FF8F00"
+        gib_zurück "weiss"
+    gib_zurück "magenta"
 
-funktion gebaeude_name(typ):
-    wenn typ == 0:
-        gib_zurück "Holzfaeller"
-    wenn typ == 1:
-        gib_zurück "Saegewerk"
-    wenn typ == 2:
-        gib_zurück "Steinmetz"
-    gib_zurück "Haus"
+funktion hat_schornstein(typ):
+    # Saegewerk, Muehle, Baecker qualmen
+    wenn typ == 2 oder typ == 5 oder typ == 6:
+        gib_zurück wahr
+    gib_zurück falsch
 
-funktion zeichne_gebaeude(win, sx, sy, typ):
-    setze f auf gebaeude_farbe(typ)
-    # Basis-Rechteck (als Wuerfel approximiert)
-    zeichne_rechteck(win, sx - 14, sy - 30, 28, 24, f)
-    # Dach-Dreieck-Approx: Linien
-    zeichne_linie(win, sx - 16, sy - 30, sx, sy - 46, "#222222")
-    zeichne_linie(win, sx, sy - 46, sx + 16, sy - 30, "#222222")
-    zeichne_linie(win, sx - 16, sy - 30, sx + 16, sy - 30, "#222222")
-    # Tuer
-    zeichne_rechteck(win, sx - 3, sy - 14, 6, 8, "#3E2723")
-
-# ------------------------------------------------------------
-# Spieler-Position + Gebaeude-Liste (k3 Follow-up: 3 neue Typen 4-6)
-# Jedes Gebaeude: [wx, wy, typ]
-# typ: 0=Holzfaeller, 1=Saegewerk, 2=Steinmetz, 3=Haus, 4=Bauer, 5=Muehle, 6=Baecker
-# ------------------------------------------------------------
-setze gebaeude auf [[3, 4, 0], [4, 5, 1], [8, 3, 2], [6, 8, 3], [10, 10, 0], [11, 11, 1], [2, 10, 2], [9, 6, 3], [5, 11, 4], [7, 12, 5], [9, 13, 6], [12, 8, 3]]
-
-# Resource-Counter (als 1-Element-Listen, damit Funktions-Zuweisung persistiert)
+# -----------------------------------------------------------------
+# WIRTSCHAFTS-HOOKS (k3 fuellt in M2)
+# -----------------------------------------------------------------
+# Resource-Counter als 1-Element-Listen, damit Funktions-Zuweisung persistiert.
+# Schon im Skelett angelegt, damit M2 sie nicht initialisieren muss.
 setze r_holz auf [0]
 setze r_bretter auf [0]
 setze r_stein auf [0]
@@ -135,192 +89,262 @@ setze r_korn auf [0]
 setze r_mehl auf [0]
 setze r_brot auf [0]
 
-# Produktions-Tick: produziere + wandle um (k3 Follow-up: erweiterte Ketten)
+# HOOK 1: tick_wirtschaft()
+# Wird alle 60 Frames aufgerufen. Soll:
+#  - Holzfaeller (typ 1) → r_holz[0] += 1
+#  - Steinmetz (typ 3) → r_stein[0] += 1
+#  - Bauer (typ 4) → r_korn[0] += 1
+#  - Saegewerk (typ 2) → 2 Holz → 1 Brett
+#  - Muehle (typ 5) → 2 Korn → 1 Mehl
+#  - Baecker (typ 6) → 1 Mehl → 1 Brot
+# k3 portiert hier die v1-Logik (commit e96e0b5).
 funktion tick_wirtschaft():
-    setze i auf 0
-    solange i < länge(gebaeude):
-        setze typ auf gebaeude[i][2]
-        wenn typ == 0:
-            r_holz[0] = r_holz[0] + 1
-        wenn typ == 2:
-            r_stein[0] = r_stein[0] + 1
-        wenn typ == 4:
-            r_korn[0] = r_korn[0] + 1
-        setze i auf i + 1
-    # Saegewerk: 2 Holz -> 1 Brett. Muehle: 2 Korn -> 1 Mehl. Baecker: 1 Mehl -> 1 Brot.
-    setze j auf 0
-    solange j < länge(gebaeude):
-        setze t auf gebaeude[j][2]
-        wenn t == 1 und r_holz[0] >= 2:
-            r_holz[0] = r_holz[0] - 2
-            r_bretter[0] = r_bretter[0] + 1
-        wenn t == 5 und r_korn[0] >= 2:
-            r_korn[0] = r_korn[0] - 2
-            r_mehl[0] = r_mehl[0] + 1
-        wenn t == 6 und r_mehl[0] >= 1:
-            r_mehl[0] = r_mehl[0] - 1
-            r_brot[0] = r_brot[0] + 1
-        setze j auf j + 1
+    # k3-M2: hier die v1-Wirtschaftslogik einsetzen
+    gib_zurück nichts
 
-# ------------------------------------------------------------
-# k3 Follow-up: Strassen-Routing (BFS auf passierbaren Tiles z<=2)
-# ------------------------------------------------------------
-funktion ist_passierbar(x, y):
-    wenn x < 0 oder y < 0 oder x >= WORLD oder y >= WORLD:
-        gib_zurück falsch
-    gib_zurück terrain_z(x, y) <= 2
+# HOOK 2: gebaeude_state(idx)
+# Liefert ein State-Dict pro Gebaeude (z.B. {"aktiv": wahr, "produziert": "holz"}).
+# Wird von M3 (k3) gebraucht fuer Pfad-Walking + Render-Visualisierung.
+funktion gebaeude_state(idx):
+    gib_zurück {}
 
-# BFS-Routing: gibt eine Liste [tx, ty]-Tiles zurueck, leer wenn unerreichbar.
-# Begrenzt auf 200 Schritte um Endlosschleife auszuschliessen.
-funktion finde_route(sx, sy, zx, zy):
-    wenn nicht ist_passierbar(sx, sy) oder nicht ist_passierbar(zx, zy):
-        gib_zurück []
-    setze besucht auf {}
-    setze queue auf [[sx, sy, []]]
-    setze schritte auf 0
-    solange länge(queue) > 0 und schritte < 200:
-        setze kopf auf queue[0]
-        setze queue auf queue.teilstring(1, länge(queue))
-        setze cx auf kopf[0]
-        setze cy auf kopf[1]
-        setze pfad auf kopf[2]
-        wenn cx == zx und cy == zy:
-            gib_zurück pfad
-        setze key auf text(cx) + "," + text(cy)
-        wenn besucht.hat(key):
-            setze schritte auf schritte + 1
-            weiter
-        besucht[key] = wahr
-        setze nachbarn auf [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]
-        für n in nachbarn:
-            wenn ist_passierbar(n[0], n[1]):
-                setze np auf pfad + [[n[0], n[1]]]
-                setze queue auf queue + [[n[0], n[1], np]]
-        setze schritte auf schritte + 1
+# HOOK 3: pfade()
+# BFS-Routing zwischen passierbaren Tiles (z<=2). Liefert Liste von Routen-Listen
+# zwischen Produktions-Paaren. k3 portiert hier die v1-BFS-Implementierung.
+funktion pfade():
     gib_zurück []
 
-# ------------------------------------------------------------
-# k3 Follow-up: Partikel-System (Rauch, Staub, Funken)
-# Jedes Partikel: [sx, sy, vx, vy, leben, farbe]
-# ------------------------------------------------------------
+# HOOK 4: siedler_walk_step()
+# Wird jeden Frame aufgerufen, soll die Siedler-Liste basierend auf Wirtschafts-
+# State entlang der berechneten Pfade fortbewegen. M3-Erweiterung von k3.
+# Default-Skelett: nutzt einfache Linear-Interpolation aus siedler_tick().
+funktion siedler_walk_step():
+    siedler_tick()
+
+# -----------------------------------------------------------------
+# Wind-System (globaler Vektor + Staerke)
+# -----------------------------------------------------------------
+setze wind_phase auf [0.0]
+funktion wind_x():
+    gib_zurück sinus(wind_phase[0] * 0.018) * 1.5
+
+funktion wind_z():
+    gib_zurück cosinus(wind_phase[0] * 0.012) * 1.2
+
+funktion wind_staerke():
+    gib_zurück 0.5 + (sinus(wind_phase[0] * 0.03) + 1.0) * 0.4
+
+# -----------------------------------------------------------------
+# Partikel-Pool (Rauch, Funken, Staub, fliegende Blaetter)
+# Jedes Partikel: [x, y, z, vx, vy, vz, leben, farbe]
+# -----------------------------------------------------------------
 setze partikel auf [[]]
 partikel[0] = []
 
-funktion partikel_neu(sx, sy, vx, vy, leben, farbe):
-    partikel[0] = partikel[0] + [[sx, sy, vx, vy, leben, farbe]]
+funktion partikel_neu(x, y, z, vx, vy, vz, leben, farbe):
+    partikel[0] = partikel[0] + [[x, y, z, vx, vy, vz, leben, farbe]]
 
 funktion partikel_tick():
-    setze frisch auf []
+    setze liste auf []
     für p in partikel[0]:
-        setze leben auf p[4] - 1
+        setze leben auf p[6] - 1
         wenn leben > 0:
-            setze frisch auf frisch + [[p[0] + p[2], p[1] + p[3], p[2], p[3] * 0.95, leben, p[5]]]
-    partikel[0] = frisch
+            setze nx auf p[0] + p[3] + wind_x() * 0.05 * wind_staerke()
+            setze ny auf p[1] + p[4]
+            setze nz auf p[2] + p[5] + wind_z() * 0.05 * wind_staerke()
+            setze liste auf liste + [[nx, ny, nz, p[3] * 0.96, p[4] * 0.97, p[5] * 0.96, leben, p[7]]]
+    partikel[0] = liste
 
 funktion partikel_render(win):
     für p in partikel[0]:
-        setze groesse auf 1 + p[4] / 20
-        zeichne_kreis(win, p[0], p[1], groesse, p[5])
+        setze groesse auf 0.08 + p[6] * 0.003
+        raum_würfel(win, p[0], p[1], p[2], groesse, p[7])
 
-# Schornstein-Rauch fuer aktive Produzenten (Saegewerk, Muehle, Baecker)
-funktion emit_rauch(cam_x, cam_y):
+# Schornstein-Rauch
+funktion emit_rauch():
     für g in gebaeude:
-        setze t auf g[2]
-        wenn t == 1 oder t == 5 oder t == 6:
-            setze gz auf terrain_z(g[0], g[1])
-            setze sx auf iso_x(g[0], g[1], cam_x)
-            setze sy auf iso_y(g[0], g[1], gz, cam_y) - 46
-            partikel_neu(sx + (hash01(g[0], g[1]) - 0.5) * 4, sy, (hash01(g[0] + 1, g[1]) - 0.5) * 1.0, -0.8, 40, "#9E9E9E")
+        wenn hat_schornstein(g[2]):
+            setze h auf terrain_h(g[0], g[1])
+            setze px auf g[0] * 1.0 + (hash01(g[0], wind_phase[0]) - 0.5) * 0.3
+            setze pvx auf (hash01(g[0] + 1, g[1]) - 0.5) * 0.01
+            setze pvz auf (hash01(g[1] + 1, g[0]) - 0.5) * 0.01
+            partikel_neu(px, h + 2.0, g[1] * 1.0, pvx, 0.04, pvz, 60, "grau")
 
-# HUD: Resource-Counter oben links
-funktion zeichne_hud(win):
-    zeichne_rechteck(win, 10, 10, 260, 60, "#101820")
-    zeichne_rechteck(win, 15, 15, 20, 20, "#4CAF50")
-    zeichne_rechteck(win, 95, 15, 20, 20, "#8D6E63")
-    zeichne_rechteck(win, 175, 15, 20, 20, "#607D8B")
-    # Ziffern-Balken-Approx (da kein zeichne_text): Laenge = Anzahl
-    zeichne_rechteck(win, 40, 20, r_holz[0] * 2 + 1, 10, "#FFFFFF")
-    zeichne_rechteck(win, 120, 20, r_bretter[0] * 2 + 1, 10, "#FFFFFF")
-    zeichne_rechteck(win, 200, 20, r_stein[0] * 2 + 1, 10, "#FFFFFF")
-    # Label-Streifen: 3 kleine farbige Pillen als Legende
-    zeichne_rechteck(win, 15, 45, 60, 8, "#2E7D32")
-    zeichne_rechteck(win, 95, 45, 60, 8, "#A1887F")
-    zeichne_rechteck(win, 175, 45, 60, 8, "#455A64")
+# Funken am Steinmetz (typ 3)
+funktion emit_funken():
+    für g in gebaeude:
+        wenn g[2] == 3:
+            setze h auf terrain_h(g[0], g[1])
+            setze ph auf wind_phase[0]
+            setze fvx auf (hash01(g[0] + ph, g[1]) - 0.5) * 0.06
+            setze fvz auf (hash01(g[1] + ph, g[0]) - 0.5) * 0.06
+            partikel_neu(g[0] * 1.0, h + 0.8, g[1] * 1.0, fvx, 0.02, fvz, 20, "orange")
 
-# ------------------------------------------------------------
-# Haupt-Schleife
-# ------------------------------------------------------------
-setze win auf fenster_erstelle("Siedler 3 — Isometrisch (moo)", WIN_W, WIN_H)
+# -----------------------------------------------------------------
+# Figuren: 6 Siedler die zwischen zwei Gebaeuden pendeln
+# -----------------------------------------------------------------
+setze siedler auf [[0, 1, 0.0, 0.008, "gelb"], [1, 2, 0.3, 0.006, "gelb"], [2, 0, 0.7, 0.005, "rot"], [3, 5, 0.1, 0.007, "blau"], [5, 7, 0.4, 0.006, "weiss"], [7, 6, 0.8, 0.009, "magenta"]]
 
-setze cam_x auf WIN_W / 2
-setze cam_y auf 80
-setze cam_speed auf 8
-setze tick_counter auf 0
+funktion siedler_tick():
+    setze i auf 0
+    solange i < länge(siedler):
+        setze s auf siedler[i]
+        setze t auf s[2] + s[3]
+        wenn t > 1.0:
+            s[0] = siedler[i][1]
+            s[1] = siedler[i][0]
+            s[2] = 0.0
+        sonst:
+            s[2] = t
+        siedler[i] = s
+        setze i auf i + 1
 
-solange fenster_offen(win):
-    wenn taste_gedrückt("escape"):
+funktion siedler_zeichnen(win):
+    für s in siedler:
+        setze g_a auf gebaeude[s[0]]
+        setze g_b auf gebaeude[s[1]]
+        setze t auf s[2]
+        setze fx auf g_a[0] * (1.0 - t) + g_b[0] * t
+        setze fy auf g_a[1] * (1.0 - t) + g_b[1] * t
+        setze fh auf terrain_h(boden(fx), boden(fy))
+        # Volumetrische 3D-Figur: Beine + Koerper + Kugel-Kopf + schwingender Arm
+        setze bob auf sinus(wind_phase[0] * 0.25 + t * 20) * 0.05
+        raum_würfel(win, fx, fh + 0.25, fy, 0.18, s[4])
+        raum_würfel(win, fx, fh + 0.55 + bob, fy, 0.22, s[4])
+        raum_kugel(win, fx, fh + 0.85 + bob, fy, 0.14, s[4], 5)
+        setze arm_dx auf wind_x() * 0.05 + sinus(t * 15) * 0.06
+        raum_würfel(win, fx + arm_dx, fh + 0.55 + bob, fy, 0.09, s[4])
+
+# -----------------------------------------------------------------
+# Flaggen auf Haeusern
+# -----------------------------------------------------------------
+funktion flaggen_zeichnen(win):
+    für g in gebaeude:
+        wenn g[2] == 0:
+            setze h auf terrain_h(g[0], g[1])
+            setze i auf 0
+            solange i < 4:
+                raum_würfel(win, g[0] + 0.4, h + 0.5 + i * 0.2, g[1] + 0.4, 0.04, "grau")
+                setze i auf i + 1
+            setze j auf 0
+            solange j < 3:
+                setze off auf wind_x() * 0.08 * (j + 1) * wind_staerke()
+                raum_würfel(win, g[0] + 0.4 + off, h + 1.1, g[1] + 0.4 + (j + 1) * 0.12, 0.06, "rot")
+                setze j auf j + 1
+
+# -----------------------------------------------------------------
+# Baeume mit Wind-Schaukel
+# -----------------------------------------------------------------
+setze baum_positionen auf []
+setze bi auf 0
+solange bi < 14:
+    setze bx auf boden(hash01(bi, 7) * WORLD)
+    setze by auf boden(hash01(bi + 50, 13) * WORLD)
+    baum_positionen.hinzufügen([bx, by])
+    setze bi auf bi + 1
+
+funktion baeume_zeichnen(win):
+    für p in baum_positionen:
+        setze bh auf terrain_h(p[0], p[1])
+        wenn bh >= 1 und bh <= 2:
+            raum_würfel(win, p[0] + 0.3, bh + 0.3, p[1] + 0.3, 0.1, "orange")
+            setze sway auf wind_x() * 0.2 * wind_staerke()
+            raum_kugel(win, p[0] + 0.3 + sway, bh + 0.85, p[1] + 0.3, 0.35, "gruen", 6)
+
+# -----------------------------------------------------------------
+# Gras-Wiegen
+# -----------------------------------------------------------------
+funktion gras_zeichnen(win):
+    setze gx auf 0
+    solange gx < WORLD:
+        setze gy auf 0
+        solange gy < WORLD:
+            wenn terrain_h(gx, gy) == 2 und (hash01(gx, gy) > 0.55):
+                setze gh auf terrain_h(gx, gy)
+                setze sway auf wind_x() * 0.08 * wind_staerke()
+                raum_würfel(win, gx + 0.5 + sway, gh + 0.15, gy + 0.5, 0.04, "gruen")
+            setze gy auf gy + 1
+        setze gx auf gx + 1
+
+# -----------------------------------------------------------------
+# Haupt-Szene
+# -----------------------------------------------------------------
+setze win auf raum_erstelle("Siedler 3 — Echt 3D (moo)", WIN_W, WIN_H)
+raum_perspektive(win, 50.0, 0.1, 100.0)
+
+setze kamera_winkel auf 0.0
+setze kamera_hoehe auf 10.0
+setze kamera_radius auf 16.0
+setze tick auf 0
+
+solange raum_offen(win):
+    wenn raum_taste(win, "escape"):
         stopp
-    wenn taste_gedrückt("w"):
-        setze cam_y auf cam_y + cam_speed
-    wenn taste_gedrückt("s"):
-        setze cam_y auf cam_y - cam_speed
-    wenn taste_gedrückt("a"):
-        setze cam_x auf cam_x + cam_speed
-    wenn taste_gedrückt("d"):
-        setze cam_x auf cam_x - cam_speed
+    wenn raum_taste(win, "a"):
+        setze kamera_winkel auf kamera_winkel - 0.02
+    wenn raum_taste(win, "d"):
+        setze kamera_winkel auf kamera_winkel + 0.02
+    wenn raum_taste(win, "w"):
+        setze kamera_hoehe auf kamera_hoehe + 0.1
+    wenn raum_taste(win, "s"):
+        setze kamera_hoehe auf kamera_hoehe - 0.1
+    wenn raum_taste(win, "q"):
+        setze kamera_radius auf kamera_radius - 0.2
+    wenn raum_taste(win, "e"):
+        setze kamera_radius auf kamera_radius + 0.2
+    wenn kamera_hoehe < 3:
+        setze kamera_hoehe auf 3.0
+    wenn kamera_radius < 5:
+        setze kamera_radius auf 5.0
 
-    # Wirtschafts-Tick alle 60 Frames (~1 Sekunde bei 60 FPS)
-    setze tick_counter auf tick_counter + 1
-    wenn tick_counter >= 60:
-        tick_wirtschaft()
-        setze tick_counter auf 0
-    # k3 Follow-up: Partikel jedes Frame, Schornstein-Rauch alle 8 Frames
+    # Wind-Phase animiert
+    wind_phase[0] = wind_phase[0] + 1.0
+
+    # Atmosphaere
     partikel_tick()
-    wenn tick_counter % 8 == 0:
-        emit_rauch(cam_x, cam_y)
+    wenn tick % 8 == 0:
+        emit_rauch()
+    wenn tick % 12 == 0:
+        emit_funken()
 
-    fenster_löschen(win, "#1A1A2E")
+    # Wirtschaft + Siedler-Bewegung (Hooks → k3 in M2/M3)
+    wenn tick % 60 == 0:
+        tick_wirtschaft()
+    siedler_walk_step()
 
-    # Terrain in Render-Order (hinten nach vorne): kleines x+y zuerst
-    # Dadurch kommen hoehere Tiles vorne drueber.
-    setze s auf 0
-    solange s <= 2 * WORLD - 2:
-        setze x auf 0
-        solange x < WORLD:
-            setze y auf s - x
-            wenn y >= 0 und y < WORLD:
-                setze z auf terrain_z(x, y)
-                setze sx auf iso_x(x, y, cam_x)
-                setze sy auf iso_y(x, y, z, cam_y)
-                zeichne_waende(win, sx, sy, z, "#3A2A1A")
-                zeichne_diamond(win, sx, sy, biom_farbe(z), "#101010")
-            setze x auf x + 1
-        setze s auf s + 1
+    # Frame rendern
+    raum_löschen(win, 0.35, 0.55, 0.8)
+    setze zentrum_x auf WORLD / 2
+    setze zentrum_z auf WORLD / 2
+    setze cam_eye_x auf zentrum_x + cosinus(kamera_winkel) * kamera_radius
+    setze cam_eye_z auf zentrum_z + sinus(kamera_winkel) * kamera_radius
+    raum_kamera(win, cam_eye_x, kamera_hoehe, cam_eye_z, zentrum_x, 1.5, zentrum_z)
 
-    # Gebaeude-Pass (nach Terrain, damit sie oben liegen)
-    setze b auf 0
-    solange b < länge(gebaeude):
-        setze gx auf gebaeude[b][0]
-        setze gy auf gebaeude[b][1]
-        setze gz auf terrain_z(gx, gy)
-        setze sxg auf iso_x(gx, gy, cam_x)
-        setze syg auf iso_y(gx, gy, gz, cam_y)
-        zeichne_gebaeude(win, sxg, syg, gebaeude[b][2])
-        setze b auf b + 1
+    # Terrain
+    setze tx auf 0
+    solange tx < WORLD:
+        setze ty auf 0
+        solange ty < WORLD:
+            setze h auf terrain_h(tx, ty)
+            raum_würfel(win, tx + 0.5, h * 0.5, ty + 0.5, 1.0, biom_farbe(h))
+            setze ty auf ty + 1
+        setze tx auf tx + 1
 
-    # Siedler-Dots (bewegen sich im Kreis um Gebaeude 3 = Haus)
-    setze zentrum_x auf iso_x(6, 8, cam_x)
-    setze zentrum_y auf iso_y(6, 8, terrain_z(6, 8), cam_y)
-    setze t auf tick_counter * 6.0
-    setze dx auf cosinus(t * 0.05) * 30
-    setze dy auf sinus(t * 0.05) * 15
-    zeichne_kreis(win, zentrum_x + dx, zentrum_y + dy - 10, 4, "#FFD54F")
+    gras_zeichnen(win)
+    baeume_zeichnen(win)
 
-    # k3 Follow-up: Partikel ueber alles (nach Gebaeude, vor HUD)
+    # Gebaeude
+    für g in gebaeude:
+        setze gh auf terrain_h(g[0], g[1])
+        raum_würfel(win, g[0] + 0.5, gh + 0.6, g[1] + 0.5, 0.6, gebaeude_farbe(g[2]))
+        raum_würfel(win, g[0] + 0.5, gh + 1.2, g[1] + 0.5, 0.35, "rot")
+
+    flaggen_zeichnen(win)
+    siedler_zeichnen(win)
     partikel_render(win)
 
-    zeichne_hud(win)
-    fenster_aktualisieren(win)
+    raum_aktualisieren(win)
+    setze tick auf tick + 1
     warte(16)
 
-fenster_schliessen(win)
+raum_schliessen(win)
