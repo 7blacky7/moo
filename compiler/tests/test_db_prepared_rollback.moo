@@ -1,0 +1,15 @@
+# Transaktion mit Rollback — INSERT darf NICHT persistieren
+setze db auf db_verbinde("sqlite://memory")
+db_ausführen(db, "CREATE TABLE k (name TEXT)")
+db_ausführen_mit_params(db, "INSERT INTO k (name) VALUES (?)", ["persistent"])
+db_ausführen(db, "BEGIN")
+setze s auf db_vorbereite(db, "INSERT INTO k (name) VALUES (:name)")
+s.binde(":name", "wird_verworfen")
+s.ausfuehren()
+s.binde(":name", "auch_verworfen")
+s.ausfuehren()
+s.schliessen()
+db_ausführen(db, "ROLLBACK")
+setze rows auf db_abfrage(db, "SELECT name FROM k ORDER BY rowid")
+zeige rows
+db_schliessen(db)
