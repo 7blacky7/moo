@@ -19,6 +19,13 @@ konstante WORLD auf 14
 konstante WIN_W auf 1024
 konstante WIN_H auf 640
 
+# Iso-Projektion-Konstanten (Pixel-Space fuer zeichne_rechteck_z)
+konstante TILE_W auf 48
+konstante TILE_H auf 24
+konstante ISO_HEIGHT auf 8
+konstante ISO_OX auf 512
+konstante ISO_OY auf 160
+
 # -----------------------------------------------------------------
 # Noise-Approx fuer Terrain-Hoehe
 # -----------------------------------------------------------------
@@ -541,19 +548,21 @@ solange hybrid_offen(win):
     setze cam_eye_z auf zentrum_z + sinus(kamera_winkel) * kamera_radius
     raum_kamera(win, cam_eye_x, kamera_hoehe, cam_eye_z, zentrum_x, 1.5, zentrum_z)
 
-    # Terrain — Voxel-Stack pro Tile (Siedler-3-Charme):
-    # Jede Saeule ist (h+1) flache Wuerfel uebereinander, sichtbar als
-    # gestapelte Voxel-Schichten statt einer glatten 3D-Surface.
+    # Terrain — 2.5D Iso-Tiles via zeichne_rechteck_z (M5.4 Option A):
+    # Axis-aligned Pixel-Rects in iso-Pixel-Coords, Y-Offset fuer Hoehe.
+    # Painter-Reihenfolge via Welt-Z (groesser = weiter hinten).
     setze tx auf 0
     solange tx < WORLD:
         setze ty auf 0
         solange ty < WORLD:
             setze h auf terrain_h(tx, ty)
-            setze layer auf 0
-            solange layer <= h:
-                # leichte vertikale Lücken zwischen Voxeln durch size < 1.0
-                raum_würfel(win, tx + 0.5, layer * 0.5 + 0.25, ty + 0.5, 0.45, biom_farbe(layer))
-                setze layer auf layer + 1
+            setze px auf ISO_OX + (tx - ty) * (TILE_W / 2)
+            setze py auf ISO_OY + (tx + ty) * (TILE_H / 2) - h * ISO_HEIGHT
+            # Welt-Z: weiter weg = groesserer z, Hoehe "nach vorne" = kleiner z
+            setze tz auf 60.0 + (tx + ty) * 0.5 - h * 2.0
+            zeichne_rechteck_z(win, px - TILE_W / 2, py, tz, TILE_W, TILE_H, biom_farbe(h))
+            # Schatten-Linie an Oberkante fuer Iso-Andeutung
+            zeichne_linie_z(win, px - TILE_W / 2, py, px + TILE_W / 2, py, tz - 0.1, "#00000040")
             setze ty auf ty + 1
         setze tx auf tx + 1
 
