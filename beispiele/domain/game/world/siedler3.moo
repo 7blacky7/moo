@@ -258,11 +258,14 @@ funktion partikel_tick():
     für p in partikel[0]:
         setze leben auf p[6] - 1
         wenn leben > 0:
-            # M5.7: Wind-Amplitude 10x hoch (0.05→0.5) → sichtbares Driften
-            # der Partikel. Plus minimaler konstanter Upward-Bias fuer Rauch.
-            setze nx auf p[0] + p[3] + wind_x() * 0.5 * wind_staerke()
+            # M5.8: Position += volle velocity + wind*3.0. vx/vy/vz aus
+            # emit sind Welt-Einheiten (~0.04 upward), wind_x/z sind
+            # [-1.5..1.5] → 3.0-Faktor ergibt ~5 Welt-Einheiten Drift/Frame
+            # = sichtbares Bewegen ueber 20 Frames = 100 Welt-Einheiten =
+            # knapp halbe Bildbreite.
+            setze nx auf p[0] + p[3] + wind_x() * 3.0 * wind_staerke()
             setze ny auf p[1] + p[4]
-            setze nz auf p[2] + p[5] + wind_z() * 0.5 * wind_staerke()
+            setze nz auf p[2] + p[5] + wind_z() * 3.0 * wind_staerke()
             setze liste auf liste + [[nx, ny, nz, p[3] * 0.96, p[4] * 0.97, p[5] * 0.96, leben, p[7]]]
     partikel[0] = liste
 
@@ -399,16 +402,23 @@ funktion siedler_zeichnen(win):
         setze bob auf sinus(wind_phase[0] * 0.25 + s[3] * 20) * 4.0
         setze sx auf iso_x(fx, fy)
         setze sy auf iso_y(fx, fy, fh)
-        # M5.7: z klein+konstant = weit vorne → garantiert sichtbar ueber Tiles/Gebaeuden.
-        setze sz auf 5.0
-        # Siedler 4-5x groesser als v0.5 Version → sichtbar auf Karte.
-        # ALLE 7 Siedler laufen durch denselben Render-Block (keine
-        # separaten Pfade, einheitliche Skalierung).
-        zeichne_rechteck_z(win, sx - 10, sy - 50, sz, 20, 22, s[5])
-        zeichne_rechteck_z(win, sx - 16, sy - 76 + bob, sz - 0.05, 32, 28, s[5])
-        zeichne_kreis_z(win, sx, sy - 94 + bob, sz - 0.1, 14, s[5])
-        # Resource-Tragen: groesses Rechteck ueber Kopf in Res-Farbe
-        zeichne_rechteck_z(win, sx - 10, sy - 116 + bob, sz - 0.2, 20, 16, res_farbe(s[6]))
+        # M5.8: z=3 (garantiert vorne), einheitlich fuer alle 7. Konstanten
+        # statt Inline-Zahlen damit alle Siedler gleich skaliert werden.
+        setze sz auf 3.0
+        setze SD_BEIN_W auf 24
+        setze SD_BEIN_H auf 26
+        setze SD_KORP_W auf 40
+        setze SD_KORP_H auf 34
+        setze SD_KOPF_R auf 18
+        setze SD_RES_W auf 26
+        setze SD_RES_H auf 20
+        # Debug-Marker (schwarz 4x4) am exakten Standpunkt jedes Siedlers,
+        # um zu verifizieren dass alle 7 gerendert werden.
+        zeichne_rechteck_z(win, sx - 2, sy - 2, sz - 0.3, 4, 4, "#000000")
+        zeichne_rechteck_z(win, sx - SD_BEIN_W / 2, sy - 52, sz, SD_BEIN_W, SD_BEIN_H, s[5])
+        zeichne_rechteck_z(win, sx - SD_KORP_W / 2, sy - 88 + bob, sz - 0.05, SD_KORP_W, SD_KORP_H, s[5])
+        zeichne_kreis_z(win, sx, sy - 108 + bob, sz - 0.1, SD_KOPF_R, s[5])
+        zeichne_rechteck_z(win, sx - SD_RES_W / 2, sy - 138 + bob, sz - 0.2, SD_RES_W, SD_RES_H, res_farbe(s[6]))
 
 # -----------------------------------------------------------------
 # Flaggen auf Haeusern

@@ -71,6 +71,10 @@ static HybridColor parse_hybrid_color(MooValue c) {
     else if (strcmp(s, "weiss") == 0 || strcmp(s, "white") == 0) { col.r=1; col.g=1; col.b=1; }
     else if (strcmp(s, "schwarz") == 0 || strcmp(s, "black") == 0) { col.r=0; col.g=0; col.b=0; }
     else if (strcmp(s, "gelb") == 0 || strcmp(s, "yellow") == 0) { col.r=1; col.g=1; col.b=0; }
+    else if (strcmp(s, "grau") == 0 || strcmp(s, "gray") == 0) { col.r=0.5f; col.g=0.5f; col.b=0.5f; }
+    else if (strcmp(s, "orange") == 0) { col.r=1.0f; col.g=0.65f; col.b=0.0f; }
+    else if (strcmp(s, "magenta") == 0) { col.r=1; col.g=0; col.b=1; }
+    else if (strcmp(s, "cyan") == 0) { col.r=0; col.g=1; col.b=1; }
     return col;
 }
 
