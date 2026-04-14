@@ -1,4 +1,3 @@
-*.moo
 compiler/target/
 .venv/
 __pycache__/

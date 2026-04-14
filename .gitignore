@@ -1,14 +1,104 @@
+# Python
 __pycache__/
 *.pyc
 .venv/
 dist/
 *.egg-info/
 .mypy_cache/
-test_native
-test_native.ll
-*.o
+
+# Rust / C Build-Artefakte
 compiler/target/
+*.o
+*.bin
+*.a
+*.so
+*.dylib
+
+# LLVM IR
+*.ll
+
+# Compiler-Test-Artefakte
 compiler/runtime/check_size*
 compiler/runtime/test_runtime*
-compiler/runtime/*.o
-*.bin
+compiler/runtime/test_3d
+
+# Kompilierte moo-Beispiele — Whitelist-Ansatz:
+# beispiele/<name> neben beispiele/<name>.moo ist eine Binary
+# Alle Dateien im beispiele-Baum ignorieren, nur bekannte Source-Typen tracken
+beispiele/**
+!beispiele/
+!beispiele/**/
+!beispiele/**/*.moo
+!beispiele/**/*.md
+!beispiele/**/*.html
+!beispiele/**/*.py
+!beispiele/**/*.ld
+!beispiele/**/*.json
+!beispiele/**/*.txt
+!beispiele/**/*.css
+!beispiele/**/*.js
+!beispiele/**/*.ts
+!beispiele/**/*.sh
+!beispiele/**/*.png
+!beispiele/**/*.jpg
+!beispiele/**/*.bmp
+!beispiele/**/*.gif
+!beispiele/**/*.svg
+!beispiele/**/*.ogg
+!beispiele/**/*.wav
+!beispiele/**/*.ttf
+!beispiele/**/*.gitkeep
+!beispiele/**/README*
+
+# Grosse Asset-Archive explizit ausschliessen
+beispiele/assets/sprites/*.zip
+beispiele/assets/sprites/kenney_td/
+beispiele/assets/sprites/kenney_td_kit/
+
+# Test-Screenshots (regenerierbar, 1.9MB pro BMP)
+beispiele/test_screenshots/
+
+# Compiler-Beispiele (nur Source)
+compiler/beispiele/**
+!compiler/beispiele/
+!compiler/beispiele/**/*.moo
+!compiler/beispiele/**/*.expected
+
+# Compiler-Test-Binaries im compiler/ Root
+compiler/grafik_demo
+compiler/pong
+compiler/runtime/test_3d.c
+
+# Root-Test-Artefakte (nur Source behalten)
+/test_neu
+/test_oop
+/test_mix
+/test_en
+/test_alle
+/test_native
+/test_vollst*
+/example
+/beispiel
+/adventure_save.json
+/beispiele/test_sprite.bmp
+
+# Save-Files
+*.save
+
+# Editor-Artefakte
+editors/vscode/moo/node_modules/
+editors/vscode/moo/pnpm-lock.yaml
+editors/vscode/moo/*.vsix
+
+# Claude / Synapse
+.claude/
+.synapse/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
