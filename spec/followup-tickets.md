@@ -30,6 +30,41 @@ Feature-Entwicklung, keine Konsolidierung — widerspricht der User-Auflage
 **Priorität**: niedrig — nur beginnen, nachdem P2b/P3b/P3c gelandet sind und
 die Runtime sich stabilisiert hat.
 
+## E1-followup: Sprite-/Chunk-Slot-Auto-Free
+
+**Herkunft**: Prio-E1 Handle-Leak-Audit (`/tmp/moo-audit/k4_E1_handle_leak.md`,
+commit 77167ae deckt nur den `smart_close`-Quick-Win ab).
+
+**Problem**: `moo_sprite.c` und `moo_3d.c` (Chunks) verwalten Ressourcen in
+statischen Slot-Arrays (`g_sprites[256]`, chunk-Slots im jeweiligen Backend).
+Die "IDs" sind **numerische Werte** (Tag `MOO_NUMBER`) — daher gibt es keinen
+Dispatch-Pfad für `smart_close` und keinen Refcount-Fallback. Wenn ein User
+`sprite_freigeben` oder `chunk_lösche` vergisst, bleibt der Slot bis
+Prozessende belegt; beim 257. Sprite wirft die Runtime "Maximale Sprite-Anzahl
+erreicht".
+
+**Optionen (beide aufwändiger als Quick-Win)**:
+
+1. **atexit-Hook für clean Shutdown**: `atexit(moo_sprite_cleanup_all)` +
+   analog für Chunks. **Risiko**: SDL_Quit läuft selbst als atexit-Handler;
+   Reihenfolge zwischen atexits ist implementation-defined. Eine
+   `SDL_DestroyTexture`-Runde nach bereits freigegebenem `SDL_Renderer`
+   crasht. Braucht expliziten Guard (Window-Ptr NULL? Renderer-State
+   prüfen?) und Tests mit Valgrind.
+
+2. **Eigener `MOO_SPRITE` / `MOO_CHUNK`-Tag** mit Heap-Objekt + Refcount, wie
+   bei Sockets/DB: Release bei RC=0 ruft Free. **Risiko**: breaking change
+   für User-Code, der Sprite-IDs arithmetisch nutzt oder serialisiert.
+   Braucht Deprecation-Pfad oder Version-Bump.
+
+**Empfehlung**: Zunächst Dokumentation ausreichend (`docs/referenz/sprites.md`
+bzw. `grafik-3d.md` Abschnitt "Lebenszyklus" mit Hinweis auf `*_freigeben` /
+`*_lösche` als Pflicht). Runtime-Umbau erst wenn echter Bedarf entsteht
+(z.B. Game mit dynamischem Asset-Streaming, das die 256 Sprite-Slots reizt).
+
+**Priorität**: niedrig — User-Pfade mit expliziter Freigabe funktionieren;
+Slot-Array-Grenze ist erst bei > 256 Sprites eine harte Wand.
+
 ## ~~P3c-followup: DB Statement-Objekt (Variante A)~~ **ERLEDIGT**
 
 Variante A wurde im Nachgang zur Konsolidierungs-Welle umgesetzt:
