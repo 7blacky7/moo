@@ -492,7 +492,11 @@ solange raum_offen(win):
     setze mdx auf raum_maus_dx(win)
     setze mdy auf raum_maus_dy(win)
     setze kamera_winkel auf kamera_winkel + mdx * 0.005
-    setze kamera_hoehe auf kamera_hoehe + mdy * 0.04
+    # Shift halten + Mausbewegung vertikal: Zoom statt Hoehe (Maus-Zoom)
+    wenn raum_taste(win, "shift"):
+        setze kamera_radius auf kamera_radius + mdy * 0.06
+    sonst:
+        setze kamera_hoehe auf kamera_hoehe + mdy * 0.04
     wenn kamera_hoehe < 3:
         setze kamera_hoehe auf 3.0
     wenn kamera_radius < 5:
