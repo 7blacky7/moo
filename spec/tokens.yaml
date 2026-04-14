@@ -1,0 +1,600 @@
+# moo — Single Source of Truth für Tokens, Keywords und Alias.
+#
+# Vereinigungsmenge aller aktuell akzeptierten Tokens aus:
+#   - compiler/src/tokens.rs        (Rust native Compiler)
+#   - src/moo/tokens.py             (Python Toolchain / LSP / Formatter)
+#
+# Änderungen:
+#   - NEUES Token:          Einfach hier hinzufügen + in beiden Implementierungen registrieren.
+#   - ALIAS entfernen:      NICHT ohne Breaking-Change-Review. `tools/check_tokens.py` blockiert CI
+#                           wenn ein in YAML gelisteter Alias in einer Implementierung fehlt.
+#   - Alte Aliase (Python-only ASYNC/AWAIT, `fg`, `wa`) bleiben als `status: legacy` erhalten —
+#     werden weiterhin geparst, dokumentiert als "noch nicht implementiert".
+#
+# Felder pro Eintrag:
+#   kind:      hartes Keyword | soft-keyword | literal | operator | delimiter | special
+#   variants:  Liste aller akzeptierten Schreibweisen (DE, EN, Lernmodus-Phrasen, Kurzformen)
+#   status:    active | legacy | planned
+#   soft:      true → kontextabhängig (Soft-Keyword), sonst false
+#   implementations: welche Tools das Token aktuell kennen (rust, python, beide)
+#   note:      optionaler Freitext-Hinweis
+
+version: 1
+generated_from:
+  - compiler/src/tokens.rs
+  - src/moo/tokens.py
+
+tokens:
+
+  # ─── Literale ──────────────────────────────────────────────────────────
+  - id: Number
+    kind: literal
+    status: active
+    implementations: [rust, python]
+
+  - id: String
+    kind: literal
+    status: active
+    implementations: [rust, python]
+
+  - id: Identifier
+    kind: literal
+    status: active
+    implementations: [rust, python]
+
+  - id: Boolean
+    kind: literal
+    status: active
+    variants: [wahr, falsch, true, false]
+    implementations: [rust, python]
+
+  - id: None
+    kind: literal
+    status: active
+    variants: [nichts, none]
+    implementations: [rust, python]
+
+  # ─── Kontrolle & Deklaration ───────────────────────────────────────────
+  - id: Set
+    kind: keyword
+    status: active
+    variants: [setze, set, setze_variable, se]
+    implementations: [rust, python]
+
+  - id: To
+    kind: keyword
+    status: active
+    variants: [auf, to]
+    implementations: [rust, python]
+
+  - id: If
+    kind: keyword
+    status: active
+    variants: [wenn, if, wenn_bedingung, we]
+    implementations: [rust, python]
+
+  - id: Else
+    kind: keyword
+    status: active
+    variants: [sonst, else, sonst_alternative, so]
+    implementations: [rust, python]
+
+  - id: While
+    kind: keyword
+    status: active
+    variants: [solange, while, solange_wiederhole, sl]
+    implementations: [rust, python]
+
+  - id: For
+    kind: keyword
+    status: active
+    variants: [für, for, fu, fuer_jedes]
+    implementations: [rust, python]
+    note: "Rust akzeptiert zusätzlich den ASCII-Alias `fuer` (kein `ü` nötig). Python-Toolchain bisher nur `für`."
+
+  - id: For_ascii_alias
+    kind: keyword
+    status: active
+    variants: [fuer]
+    implementations: [rust]
+    note: "Reiner Rust-Alias für `für`. Python kennt ihn nicht — Edit tokens.py um ihn hinzuzufügen, falls gewünscht."
+
+  - id: In
+    kind: keyword
+    status: active
+    variants: [in]
+    implementations: [rust, python]
+
+  - id: Func
+    kind: keyword
+    status: active
+    variants: [funktion, func, funktion_definiere, fn]
+    implementations: [rust, python]
+
+  - id: Return
+    kind: keyword
+    status: active
+    variants: [gib_zurück, return, gib_wert_zurück, gr]
+    implementations: [rust, python]
+
+  - id: Show
+    kind: soft-keyword
+    soft: true
+    status: active
+    variants: [zeige, show, zeige_auf_bildschirm, ze]
+    implementations: [rust, python]
+    note: "Soft-Keyword: kann als Identifier verwendet werden."
+
+  - id: And
+    kind: keyword
+    status: active
+    variants: [und, and]
+    implementations: [rust, python]
+
+  - id: Or
+    kind: keyword
+    status: active
+    variants: [oder, or]
+    implementations: [rust, python]
+
+  - id: Not
+    kind: keyword
+    status: active
+    variants: [nicht, not]
+    implementations: [rust, python]
+
+  # ─── OOP ───────────────────────────────────────────────────────────────
+  - id: Class
+    kind: keyword
+    status: active
+    variants: [klasse, class, neue_klasse, kl]
+    implementations: [rust, python]
+
+  - id: New
+    kind: keyword
+    status: active
+    variants: [neu, new]
+    implementations: [rust, python]
+
+  - id: This
+    kind: keyword
+    status: active
+    variants: [selbst, this]
+    implementations: [rust, python]
+
+  - id: Interface
+    kind: keyword
+    status: active
+    variants: [schnittstelle, interface]
+    implementations: [rust]
+
+  - id: Implements
+    kind: keyword
+    status: active
+    variants: [implementiert, implements]
+    implementations: [rust]
+
+  # ─── Fehler & Try ──────────────────────────────────────────────────────
+  - id: Try
+    kind: soft-keyword
+    soft: true
+    status: active
+    variants: [versuche, try, versuche_ausfuehrung, ve]
+    implementations: [rust, python]
+    note: "Soft-Keyword: Block nur wenn direkt ':' folgt, sonst Identifier."
+
+  - id: Catch
+    kind: keyword
+    status: active
+    variants: [fange, catch, fange_fehler]
+    implementations: [rust, python]
+
+  - id: Catch_legacy_fg
+    kind: keyword
+    status: legacy
+    variants: [fg]
+    implementations: [python]
+    note: "Kurzform `fg` nur in Python-Toolchain akzeptiert. Rust hat sie bewusst entfernt (kollidiert mit Variablennamen foreground/file-grep/frame-grab). Bleibt legacy bis Python-Lexer sie ebenfalls entfernt."
+
+  - id: Throw
+    kind: keyword
+    status: active
+    variants: [wirf, throw, wi]
+    implementations: [rust, python]
+
+  # ─── Schleifen ─────────────────────────────────────────────────────────
+  - id: Break
+    kind: keyword
+    status: active
+    variants: [stopp, break, st]
+    implementations: [rust, python]
+
+  - id: Continue
+    kind: keyword
+    status: active
+    variants: [weiter, continue, wt]
+    implementations: [rust, python]
+
+  # ─── Konstanten ────────────────────────────────────────────────────────
+  - id: Const
+    kind: keyword
+    status: active
+    variants: [konstante, const, ko]
+    implementations: [rust, python]
+
+  # ─── Pattern Matching ──────────────────────────────────────────────────
+  - id: Match
+    kind: soft-keyword
+    soft: true
+    status: active
+    variants: [prüfe, match, pr]
+    implementations: [rust, python]
+
+  - id: Case
+    kind: keyword
+    status: active
+    variants: [fall, case, fa]
+    implementations: [rust, python]
+
+  - id: Default
+    kind: keyword
+    status: active
+    variants: [standard, default]
+    implementations: [rust, python]
+
+  # ─── Module ────────────────────────────────────────────────────────────
+  - id: Import
+    kind: keyword
+    status: active
+    variants: [importiere, import, importiere_modul, im]
+    implementations: [rust, python]
+
+  - id: From
+    kind: keyword
+    status: active
+    variants: [aus, from]
+    implementations: [rust, python]
+    note: "Rust hat zusätzlich `von` als QueryFrom (siehe unten)."
+
+  - id: Export
+    kind: keyword
+    status: active
+    variants: [exportiere, export]
+    implementations: [rust, python]
+
+  - id: As
+    kind: keyword
+    status: active
+    variants: [als, as]
+    implementations: [rust, python]
+
+  # ─── Erweiterte Sprach-Features ────────────────────────────────────────
+  - id: Defer
+    kind: keyword
+    status: active
+    variants: [aufräumen, defer]
+    implementations: [rust]
+
+  - id: Data
+    kind: soft-keyword
+    soft: true
+    status: active
+    variants: [daten, data]
+    implementations: [rust, python]
+
+  - id: Guard
+    kind: keyword
+    status: active
+    variants: [garantiere, guard]
+    implementations: [rust]
+
+  - id: Where
+    kind: soft-keyword
+    soft: true
+    status: active
+    variants: [wo, where]
+    implementations: [rust]
+
+  - id: Select
+    kind: keyword
+    status: active
+    variants: [wähle, select]
+    implementations: [rust]
+
+  - id: Order
+    kind: soft-keyword
+    soft: true
+    status: active
+    variants: [sortiere, order]
+    implementations: [rust]
+
+  - id: QueryFrom
+    kind: keyword
+    status: active
+    variants: [von]
+    implementations: [rust]
+    note: "Query-Kontext, nicht Import. Unterscheidet sich semantisch von `From`."
+
+  - id: Parallel
+    kind: keyword
+    status: active
+    variants: [parallel]
+    implementations: [rust]
+
+  - id: Precondition
+    kind: keyword
+    status: active
+    variants: [vorbedingung, precondition]
+    implementations: [rust]
+
+  - id: Postcondition
+    kind: keyword
+    status: active
+    variants: [nachbedingung, postcondition]
+    implementations: [rust]
+
+  - id: Unsafe
+    kind: keyword
+    status: active
+    variants: [unsicher, unsafe, un]
+    implementations: [rust]
+
+  - id: Test
+    kind: soft-keyword
+    soft: true
+    status: active
+    variants: [teste, test]
+    implementations: [rust]
+
+  - id: Expect
+    kind: soft-keyword
+    soft: true
+    status: active
+    variants: [erwarte, expect]
+    implementations: [rust]
+
+  # ─── Async (legacy — noch nicht implementiert, parst aber) ─────────────
+  - id: Async
+    kind: keyword
+    status: legacy
+    variants: [asynchron, async]
+    implementations: [python]
+    note: "Akzeptiert durch Python-Lexer für zukünftige Kompatibilität. Rust-Compiler lehnt ab bis Codegen steht."
+
+  - id: Await
+    kind: keyword
+    status: legacy
+    variants: [warte, await, wa]
+    implementations: [python]
+    note: "Siehe Async. `warte` ist in Praxis auch als Runtime-Funktion `warte(ms)` belegt — Lexer muss Kontext beachten."
+
+  # ─── Bitwise Operatoren ────────────────────────────────────────────────
+  - id: BitAnd
+    kind: operator
+    status: active
+    variants: ["&"]
+    implementations: [rust]
+
+  - id: BitOr
+    kind: operator
+    status: active
+    variants: ["|"]
+    implementations: [rust]
+
+  - id: BitXor
+    kind: operator
+    status: active
+    variants: ["^"]
+    implementations: [rust]
+
+  - id: BitNot
+    kind: operator
+    status: active
+    variants: ["~"]
+    implementations: [rust]
+
+  - id: LShift
+    kind: operator
+    status: active
+    variants: ["<<"]
+    implementations: [rust]
+
+  - id: RShift
+    kind: operator
+    status: active
+    variants: [">>"]
+    implementations: [rust]
+
+  # ─── Arithmetik ────────────────────────────────────────────────────────
+  - id: Plus
+    kind: operator
+    status: active
+    variants: ["+"]
+    implementations: [rust, python]
+  - id: Minus
+    kind: operator
+    status: active
+    variants: ["-"]
+    implementations: [rust, python]
+  - id: Multiply
+    kind: operator
+    status: active
+    variants: ["*"]
+    implementations: [rust, python]
+  - id: Divide
+    kind: operator
+    status: active
+    variants: ["/"]
+    implementations: [rust, python]
+  - id: Modulo
+    kind: operator
+    status: active
+    variants: ["%"]
+    implementations: [rust, python]
+  - id: Power
+    kind: operator
+    status: active
+    variants: ["**"]
+    implementations: [rust, python]
+  - id: Range
+    kind: operator
+    status: active
+    variants: [".."]
+    implementations: [rust, python]
+
+  # ─── Zuweisungen ───────────────────────────────────────────────────────
+  - id: Assign
+    kind: operator
+    status: active
+    variants: ["="]
+    implementations: [rust, python]
+  - id: PlusAssign
+    kind: operator
+    status: active
+    variants: ["+="]
+    implementations: [rust, python]
+  - id: MinusAssign
+    kind: operator
+    status: active
+    variants: ["-="]
+    implementations: [rust, python]
+
+  # ─── Vergleiche ────────────────────────────────────────────────────────
+  - id: Equals
+    kind: operator
+    status: active
+    variants: ["=="]
+    implementations: [rust, python]
+  - id: NotEquals
+    kind: operator
+    status: active
+    variants: ["!="]
+    implementations: [rust, python]
+  - id: Less
+    kind: operator
+    status: active
+    variants: ["<"]
+    implementations: [rust, python]
+  - id: Greater
+    kind: operator
+    status: active
+    variants: [">"]
+    implementations: [rust, python]
+  - id: LessEq
+    kind: operator
+    status: active
+    variants: ["<="]
+    implementations: [rust, python]
+  - id: GreaterEq
+    kind: operator
+    status: active
+    variants: [">="]
+    implementations: [rust, python]
+
+  # ─── Member / Chaining ─────────────────────────────────────────────────
+  - id: Dot
+    kind: operator
+    status: active
+    variants: ["."]
+    implementations: [rust, python]
+  - id: OptionalChain
+    kind: operator
+    status: active
+    variants: ["?."]
+    implementations: [rust, python]
+  - id: NullishCoalesce
+    kind: operator
+    status: active
+    variants: ["??"]
+    implementations: [rust, python]
+  - id: Pipe
+    kind: operator
+    status: active
+    variants: ["|>"]
+    implementations: [rust, python]
+  - id: Spread
+    kind: operator
+    status: active
+    variants: ["..."]
+    implementations: [rust, python]
+  - id: Question
+    kind: operator
+    status: active
+    variants: ["?"]
+    implementations: [rust]
+  - id: At
+    kind: operator
+    status: active
+    variants: ["@"]
+    implementations: [rust, python]
+
+  # ─── Delimiters ────────────────────────────────────────────────────────
+  - id: Colon
+    kind: delimiter
+    status: active
+    variants: [":"]
+    implementations: [rust, python]
+  - id: Comma
+    kind: delimiter
+    status: active
+    variants: [","]
+    implementations: [rust, python]
+  - id: LParen
+    kind: delimiter
+    status: active
+    variants: ["("]
+    implementations: [rust, python]
+  - id: RParen
+    kind: delimiter
+    status: active
+    variants: [")"]
+    implementations: [rust, python]
+  - id: LBracket
+    kind: delimiter
+    status: active
+    variants: ["["]
+    implementations: [rust, python]
+  - id: RBracket
+    kind: delimiter
+    status: active
+    variants: ["]"]
+    implementations: [rust, python]
+  - id: LBrace
+    kind: delimiter
+    status: active
+    variants: ["{"]
+    implementations: [rust, python]
+  - id: RBrace
+    kind: delimiter
+    status: active
+    variants: ["}"]
+    implementations: [rust, python]
+  - id: Arrow
+    kind: delimiter
+    status: active
+    variants: ["=>"]
+    implementations: [rust, python]
+  - id: ThinArrow
+    kind: delimiter
+    status: active
+    variants: ["->"]
+    implementations: [rust]
+    note: "Rückgabetyp-Annotation."
+
+  # ─── Special ───────────────────────────────────────────────────────────
+  - id: Newline
+    kind: special
+    status: active
+    implementations: [rust, python]
+  - id: Indent
+    kind: special
+    status: active
+    implementations: [rust, python]
+  - id: Dedent
+    kind: special
+    status: active
+    implementations: [rust, python]
+  - id: Eof
+    kind: special
+    status: active
+    implementations: [rust, python]
