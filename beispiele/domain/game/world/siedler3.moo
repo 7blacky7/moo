@@ -26,6 +26,17 @@ konstante ISO_HEIGHT auf 8
 konstante ISO_OX auf 512
 konstante ISO_OY auf 160
 
+# Iso-Projektion-Helper (Pixel-Koord, Y um Hoehe versetzt)
+funktion iso_x(wx, wy):
+    gib_zurück ISO_OX + (wx - wy) * (TILE_W / 2)
+
+funktion iso_y(wx, wy, h):
+    gib_zurück ISO_OY + (wx + wy) * (TILE_H / 2) - h * ISO_HEIGHT
+
+# Iso-Painter-Z (weiter weg + niedriger = hinten)
+funktion iso_z(wx, wy, h):
+    gib_zurück 60.0 + (wx + wy) * 0.5 - h * 2.0
+
 # -----------------------------------------------------------------
 # Noise-Approx fuer Terrain-Hoehe
 # -----------------------------------------------------------------
@@ -255,8 +266,12 @@ funktion partikel_tick():
 
 funktion partikel_render(win):
     für p in partikel[0]:
-        setze groesse auf 0.08 + p[6] * 0.003
-        raum_würfel(win, p[0], p[1], p[2], groesse, p[7])
+        # p[0]=wx, p[1]=y_off_world, p[2]=wy; Iso-Projektion fuer Render
+        setze sx auf iso_x(p[0], p[2])
+        setze sy auf iso_y(p[0], p[2], p[1])
+        setze sz auf iso_z(p[0], p[2], p[1]) - 2.0
+        setze groesse auf 1 + p[6] / 20
+        zeichne_kreis_z(win, sx, sy, sz, groesse, p[7])
 
 # Schornstein-Rauch
 funktion emit_rauch():
@@ -378,14 +393,16 @@ funktion siedler_zeichnen(win):
         setze fx auf pos[0]
         setze fy auf pos[1]
         setze fh auf terrain_h(boden(fx), boden(fy))
-        setze bob auf sinus(wind_phase[0] * 0.25 + s[3] * 20) * 0.05
-        raum_würfel(win, fx, fh + 0.25, fy, 0.18, s[5])
-        raum_würfel(win, fx, fh + 0.55 + bob, fy, 0.22, s[5])
-        raum_kugel(win, fx, fh + 0.85 + bob, fy, 0.14, s[5], 5)
-        setze arm_dx auf wind_x() * 0.05 + sinus(s[3] * 15) * 0.06
-        raum_würfel(win, fx + arm_dx, fh + 0.55 + bob, fy, 0.09, s[5])
-        # Resource-Tragen: kleiner Wuerfel ueber Kopf in Res-Farbe
-        raum_würfel(win, fx, fh + 1.05 + bob, fy, 0.1, res_farbe(s[6]))
+        setze bob auf sinus(wind_phase[0] * 0.25 + s[3] * 20) * 2.0
+        setze sx auf iso_x(fx, fy)
+        setze sy auf iso_y(fx, fy, fh)
+        setze sz auf iso_z(fx, fy, fh) - 4.0
+        # Beine (kleiner Block), Koerper (groesser), Kopf (Kreis)
+        zeichne_rechteck_z(win, sx - 3, sy - 16, sz, 6, 6, s[5])
+        zeichne_rechteck_z(win, sx - 5, sy - 24 + bob, sz, 10, 8, s[5])
+        zeichne_kreis_z(win, sx, sy - 30 + bob, sz, 4, s[5])
+        # Resource-Tragen: kleines Rechteck ueber Kopf
+        zeichne_rechteck_z(win, sx - 3, sy - 38 + bob, sz - 0.1, 6, 5, res_farbe(s[6]))
 
 # -----------------------------------------------------------------
 # Flaggen auf Haeusern
@@ -394,14 +411,16 @@ funktion flaggen_zeichnen(win):
     für g in gebaeude:
         wenn g[2] == 0:
             setze h auf terrain_h(g[0], g[1])
-            setze i auf 0
-            solange i < 4:
-                raum_würfel(win, g[0] + 0.4, h + 0.5 + i * 0.2, g[1] + 0.4, 0.04, "grau")
-                setze i auf i + 1
+            setze sx auf iso_x(g[0], g[1])
+            setze sy auf iso_y(g[0], g[1], h)
+            setze sz auf iso_z(g[0], g[1], h) - 5.0
+            # Pfosten: vertikale duenne Linie
+            zeichne_rechteck_z(win, sx + 8, sy - 48, sz, 2, 28, "#555555")
+            # Flagge wehend — 3 Segmente mit Wind-Offset
             setze j auf 0
             solange j < 3:
-                setze off auf wind_x() * 0.08 * (j + 1) * wind_staerke()
-                raum_würfel(win, g[0] + 0.4 + off, h + 1.1, g[1] + 0.4 + (j + 1) * 0.12, 0.06, "rot")
+                setze off auf wind_x() * 3 * (j + 1) * wind_staerke()
+                zeichne_rechteck_z(win, sx + 10 + j * 4 + off, sy - 48, sz - 0.1, 4, 8, "rot")
                 setze j auf j + 1
 
 # -----------------------------------------------------------------
@@ -419,9 +438,14 @@ funktion baeume_zeichnen(win):
     für p in baum_positionen:
         setze bh auf terrain_h(p[0], p[1])
         wenn bh >= 1 und bh <= 2:
-            raum_würfel(win, p[0] + 0.3, bh + 0.3, p[1] + 0.3, 0.1, "orange")
-            setze sway auf wind_x() * 0.2 * wind_staerke()
-            raum_kugel(win, p[0] + 0.3 + sway, bh + 0.85, p[1] + 0.3, 0.35, "gruen", 6)
+            setze sx auf iso_x(p[0], p[1])
+            setze sy auf iso_y(p[0], p[1], bh)
+            setze sz auf iso_z(p[0], p[1], bh) - 3.0
+            # Stamm
+            zeichne_rechteck_z(win, sx - 2, sy - 18, sz, 4, 10, "#5D4037")
+            # Krone — Kreis, schwingt mit Wind
+            setze sway auf wind_x() * 4 * wind_staerke()
+            zeichne_kreis_z(win, sx + sway, sy - 26, sz, 9, "#2E7D32")
 
 # -----------------------------------------------------------------
 # Gras-Wiegen
@@ -433,8 +457,11 @@ funktion gras_zeichnen(win):
         solange gy < WORLD:
             wenn terrain_h(gx, gy) == 2 und (hash01(gx, gy) > 0.55):
                 setze gh auf terrain_h(gx, gy)
-                setze sway auf wind_x() * 0.08 * wind_staerke()
-                raum_würfel(win, gx + 0.5 + sway, gh + 0.15, gy + 0.5, 0.04, "gruen")
+                setze sx auf iso_x(gx, gy)
+                setze sy auf iso_y(gx, gy, gh)
+                setze sz auf iso_z(gx, gy, gh) - 1.5
+                setze sway auf wind_x() * 2 * wind_staerke()
+                zeichne_rechteck_z(win, sx - 1 + sway, sy - 4, sz, 2, 3, "#4CAF50")
             setze gy auf gy + 1
         setze gx auf gx + 1
 
@@ -523,7 +550,7 @@ solange hybrid_offen(win):
         setze kamera_radius auf 5.0
 
     wind_phase[0] = wind_phase[0] + 1.0
-    sun_phase[0] = sun_phase[0] + 0.00056
+    sun_phase[0] = sun_phase[0] + 0.004
     wenn sun_phase[0] > 1.0:
         sun_phase[0] = 0.0
 
@@ -569,11 +596,19 @@ solange hybrid_offen(win):
     gras_zeichnen(win)
     baeume_zeichnen(win)
 
-    # Gebaeude
+    # Gebaeude — Iso-Pixel-Rect-Stack (Basis + Dach)
     für g in gebaeude:
         setze gh auf terrain_h(g[0], g[1])
-        raum_würfel(win, g[0] + 0.5, gh + 0.6, g[1] + 0.5, 0.6, gebaeude_farbe(g[2]))
-        raum_würfel(win, g[0] + 0.5, gh + 1.2, g[1] + 0.5, 0.35, "rot")
+        setze bx auf iso_x(g[0], g[1])
+        setze by auf iso_y(g[0], g[1], gh)
+        setze bz auf iso_z(g[0], g[1], gh) - 2.0
+        # Basis (Quader)
+        zeichne_rechteck_z(win, bx - 16, by - 28, bz, 32, 24, gebaeude_farbe(g[2]))
+        # Dachschraege als zwei Rechtecke
+        zeichne_rechteck_z(win, bx - 16, by - 38, bz - 0.1, 32, 10, "#B71C1C")
+        zeichne_linie_z(win, bx - 16, by - 38, bx + 16, by - 38, bz - 0.2, "#000000")
+        # Tuer
+        zeichne_rechteck_z(win, bx - 3, by - 12, bz - 0.3, 6, 10, "#3E2723")
 
     flaggen_zeichnen(win)
     siedler_zeichnen(win)
