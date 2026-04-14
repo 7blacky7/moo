@@ -69,7 +69,10 @@ compiler/grafik_demo
 compiler/pong
 compiler/runtime/test_3d.c
 
-# Root-Test-Artefakte (nur Source behalten)
+# Root-Test-Artefakte (nur Source behalten).
+# Siehe spec/repo_cleanup_phase_b.md — in Phase B wandern die .moo-Quellen
+# nach compiler/tests/ bzw. scratch/; die kompilierten Binaries hier bleiben
+# dauerhaft gitignored.
 /test_neu
 /test_oop
 /test_mix
@@ -81,6 +84,12 @@ compiler/runtime/test_3d.c
 /beispiel
 /adventure_save.json
 /beispiele/test_sprite.bmp
+
+# Scratch-/Ad-hoc-Verzeichnis: Source-Dateien werden getrackt,
+# kompilierte Artefakte nicht (siehe scratch/README.md).
+/scratch/**/*.ll
+/scratch/**/*.o
+/scratch/**/*.bin
 
 # Save-Files
 *.save
