@@ -139,6 +139,13 @@ def main() -> int:
         print(f"  active tokens:  {sum(1 for t in tokens if t.get('status') == 'active')}")
         print(f"  legacy tokens:  {sum(1 for t in tokens if t.get('status') == 'legacy')}")
         print(f"  soft keywords:  {sum(1 for t in tokens if t.get('kind') == 'soft-keyword')}")
+        if args.list:
+            print()
+            print("Soft-Keywords (kontext-sensitiv, auch als Identifier erlaubt):")
+            for t in tokens:
+                if t.get("kind") == "soft-keyword":
+                    vs = ", ".join(t.get("variants") or [])
+                    print(f"  - {t['id']:14s}  [{vs}]")
 
     if errors:
         print()
