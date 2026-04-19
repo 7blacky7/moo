@@ -38,6 +38,9 @@ sichtbaren Flaechen ab. Vervollstaendigung in Phase B.
 | f-Strings `f"{x}"` | SYNTAX | ja | beide | ja | ja | — |
 | List-Comprehension `[x für x in ...]` | SYNTAX | ja | beide | ja | ja | — |
 | `ASYNC`/`AWAIT` | SYNTAX | intern (geparst, nicht ausgefuehrt) | python-only | fehlt | fehlt | Drift → spec/soft_keywords.md |
+| Funktionsname als Wert (`setze f auf fn`) | SYNTAX | ja | rust+c | stub | ja | Erzeugt MOO_FUNC-MooValue via moo_func_new |
+| Lambda `(x) => expr` mit Captures | SYNTAX | ja | rust+c | stub | ja | Closure via Trampoline + moo_func_with_captures |
+| Einzeiler mit Method-Chaining `[..].filter(..).map(..)` | SYNTAX | ja | beide | stub | ja | Pass-through vom Parser — kein Grammar-Sonderfall noetig |
 
 ## Kern-Builtins (KERN + STDLIB)
 

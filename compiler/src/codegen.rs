@@ -2642,8 +2642,35 @@ impl<'ctx> CodeGen<'ctx> {
                 let actual_name = self.lambda_names.get(name)
                     .cloned()
                     .unwrap_or(name.clone());
-                let function = self.module.get_function(&actual_name)
-                    .ok_or_else(|| {
+                let function = match self.module.get_function(&actual_name) {
+                    Some(f) => f,
+                    None => {
+                        // Fallback: Name ist eine Variable die einen MOO_FUNC haelt
+                        // (z.B. setze f auf benannte_fn; f(21)). Indirect-Call
+                        // ueber moo_func_call_N mit dem passenden Helper.
+                        if self.variables.contains_key(name) || self.globals.contains_key(name) {
+                            let fn_val = self.load_var(name)?;
+                            let mut compiled_args: Vec<BasicMetadataValueEnum> = Vec::new();
+                            compiled_args.push(fn_val.into());
+                            for a in args {
+                                let v = self.compile_expr(a)?;
+                                compiled_args.push(v.into());
+                            }
+                            let helper = match args.len() {
+                                0 => self.rt.moo_func_call_0,
+                                1 => self.rt.moo_func_call_1,
+                                2 => self.rt.moo_func_call_2,
+                                3 => self.rt.moo_func_call_3,
+                                n => return Err(format!(
+                                    "Indirekter Aufruf von '{name}' mit {n} Argumenten \
+                                     nicht unterstuetzt (max 3). Umschreiben auf \
+                                     benannte Funktion oder weniger Argumente."
+                                )),
+                            };
+                            return self.call_rt(helper, &compiled_args,
+                                &format!("indirect_{name}"));
+                        }
+                        // Weder LLVM-Function noch Variable → Fehler mit Suggestion
                         let mut suggestion = String::new();
                         let mut best_dist = usize::MAX;
                         let mut func_iter = self.module.get_first_function();
@@ -2658,12 +2685,13 @@ impl<'ctx> CodeGen<'ctx> {
                             }
                             func_iter = f.get_next_function();
                         }
-                        if suggestion.is_empty() {
+                        return Err(if suggestion.is_empty() {
                             format!("Funktion '{name}' nicht gefunden.")
                         } else {
                             format!("Funktion '{name}' nicht gefunden. Meintest du '{suggestion}'?")
-                        }
-                    })?;
+                        });
+                    }
+                };
                 let mut compiled_args: Vec<BasicMetadataValueEnum> = Vec::new();
                 for a in args {
                     let v = self.compile_expr(a)?;
