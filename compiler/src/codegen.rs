@@ -649,6 +649,8 @@ impl<'ctx> CodeGen<'ctx> {
                     inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
                     _ => return Err("truthy fehlgeschlagen".to_string()),
                 };
+                // Cond-Temp freigeben — wurde nur fuer truthy-Check genutzt.
+                self.call_rt_void(self.rt.moo_release, &[cond_val.into()], "rel_contract_cond")?;
                 let func = self.current_function.unwrap();
                 let fail_bb = self.context.append_basic_block(func, "contract_fail");
                 let ok_bb = self.context.append_basic_block(func, "contract_ok");
@@ -913,6 +915,9 @@ impl<'ctx> CodeGen<'ctx> {
             _ => return Err("moo_is_truthy hat keinen Wert zurueckgegeben".to_string()),
         };
 
+        // Cond-Temp freigeben — wurde nur fuer truthy-Check genutzt.
+        self.call_rt_void(self.rt.moo_release, &[cond_val.into()], "rel_cond")?;
+
         let then_bb = self.context.append_basic_block(func, "then");
         let else_bb = self.context.append_basic_block(func, "else");
         let merge_bb = self.context.append_basic_block(func, "merge");
@@ -961,6 +966,8 @@ impl<'ctx> CodeGen<'ctx> {
             inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
             _ => return Err("truthy fehlgeschlagen".to_string()),
         };
+        // Cond-Temp freigeben — jede Iteration, im cond_bb-Block.
+        self.call_rt_void(self.rt.moo_release, &[cond_val.into()], "rel_while_cond")?;
         self.builder.build_conditional_branch(cond_bool, body_bb, after_bb)
             .map_err(|e| format!("{e}"))?;
 
