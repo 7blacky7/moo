@@ -1858,6 +1858,12 @@ impl<'ctx> CodeGen<'ctx> {
                         // die __add__ hat, brauchen wir keinen class_name Vergleich
                         let result = self.call_rt(*method_fn, &[lhs.into(), rhs.into()], "op_overload")?;
                         self.builder.build_store(result_ptr, result).map_err(|e| format!("{e}"))?;
+                        // KEIN post-call release auf lhs/rhs: method_fn ist eine
+                        // user-definierte Methode → Transfer-Semantik per
+                        // owning-ref-konvention v2 §3.3. Die +1 der Operanden
+                        // wandert in die Param-Slots der Methode und wird dort
+                        // von release_function_locals() konsumiert. Ein zusaetz-
+                        // liches Release hier waere ein Double-Free (SIGSEGV).
                         self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
                         break; // Fuer jetzt: nur erste Ueberladung (Multi-Klassen spaeter)
                     }
@@ -1887,6 +1893,12 @@ impl<'ctx> CodeGen<'ctx> {
                     };
                     let normal_result = self.call_rt(rt_func, &[lhs.into(), rhs.into()], "op_normal")?;
                     self.builder.build_store(result_ptr, normal_result).map_err(|e| format!("{e}"))?;
+                    // Analog zu Z.1923-1924 im else-Branch: Operand-Temps freigeben.
+                    // Bisher fehlte hier das Release wenn Overloads existierten, aber
+                    // das tatsaechliche Objekt keinen Object-Tag hatte (z.B. Vec-Klasse
+                    // mit __add__ definiert, aber Zahl + Zahl ueber diesen Pfad).
+                    self.call_rt_void(self.rt.moo_release, &[lhs.into()], "rel_lhs_op_normal")?;
+                    self.call_rt_void(self.rt.moo_release, &[rhs.into()], "rel_rhs_op_normal")?;
                     self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
 
                     self.builder.position_at_end(merge_bb);
@@ -3907,6 +3919,14 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 let result = self.compile_expr(body)?;
+                // Vor dem Return: Defers abarbeiten + alle lambda-lokalen Slots
+                // freigeben (Params + Captures + Locals). Analog compile_return
+                // Z.1292 / Z.1271 — ohne dies leaken pro Lambda-Call alle
+                // Capture-Slots (Transfer-Semantik §3.3: Caller haendigt +1
+                // an callee → callee muss beim Exit freigeben). `result`
+                // haelt seine +1 als SSA-Wert unabhaengig vom Slot-Cleanup.
+                self.emit_defers()?;
+                self.release_function_locals()?;
                 self.builder.build_return(Some(&result)).map_err(|e| format!("{e}"))?;
 
                 // Fuer Closure-Lambdas (free_vars non-empty): Trampoline-Function
