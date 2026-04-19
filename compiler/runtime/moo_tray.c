@@ -75,10 +75,9 @@ MooValue moo_tray_timer_add(MooValue interval_ms, MooValue callback) {
 MooValue moo_tray_menu_clear(MooValue tray) {
     AppIndicator* ind = (AppIndicator*)moo_val_as_ptr(tray);
     if (!ind) return moo_bool(0);
-    GtkMenu* menu = app_indicator_get_menu(ind);
-    if (!menu) return moo_bool(1);
-    gtk_container_foreach(GTK_CONTAINER(menu), (GtkCallback)gtk_widget_destroy, NULL);
-    gtk_widget_show_all(GTK_WIDGET(menu));
+    GtkWidget* neu = gtk_menu_new();
+    gtk_widget_show_all(neu);
+    app_indicator_set_menu(ind, GTK_MENU(neu));
     return moo_bool(1);
 }
 
