@@ -87,6 +87,8 @@ sichtbaren Flaechen ab. Vervollstaendigung in Phase B.
 | `http_hole_mit_headers`/`http_get_with_headers` | DOMAENE:http | ja | rust+c | ja | smoke | neu P2b |
 | `http_sende_mit_headers`/`http_post_with_headers` | DOMAENE:http | ja | rust+c | ja | smoke | neu P2b |
 | `datei_lesen`/`file_read` + 8 weitere Datei-Builtins | DOMAENE:file | ja | rust+c | ja | ja | siehe referenz/dateien.md |
+| `datei_mtime`/`file_mtime` | DOMAENE:file | ja | rust+c | stub | ja | Unix-Timestamp; -1 bei Fehler; cross-platform (POSIX stat / Win `_stat64`) |
+| `datei_ist_verzeichnis`/`file_is_dir` (`ist_verzeichnis`/`is_dir`) | DOMAENE:file | ja | rust+c | stub | ja | Bool; cross-platform `S_ISDIR` / `_S_IFDIR` |
 | `db_verbinde`/`db_connect`, `db_abfrage`/`db_query`, `db_ausführen`/`db_execute`, `db_schliessen`/`db_close` | DOMAENE:db | ja | rust+c | ja | ja | SQLite |
 | `db_abfrage_mit_params`/`db_query_with_params`, `db_ausführen_mit_params`/`db_execute_with_params` | DOMAENE:db | ja | rust+c | ja | ja | neu P3c-B |
 | `db_vorbereite`/`db_prepare` + stmt.binde/ausfuehren/abfrage/schritt/zuruecksetzen/schliessen | DOMAENE:db | ja | rust+c | ja | ja | neu P3c-A, Tag MOO_DB_STMT |

@@ -132,6 +132,9 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_file_lines: FunctionValue<'ctx>,
     pub moo_file_exists: FunctionValue<'ctx>,
     pub moo_file_delete: FunctionValue<'ctx>,
+    pub moo_file_mtime: FunctionValue<'ctx>,
+    pub moo_file_is_dir: FunctionValue<'ctx>,
+    pub moo_file_mkdir: FunctionValue<'ctx>,
     pub moo_dir_list: FunctionValue<'ctx>,
     // Thread & Channel
     pub moo_thread_spawn: FunctionValue<'ctx>,
@@ -463,6 +466,9 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_file_lines: decl_mv_mv!("moo_file_lines", mv1),
             moo_file_exists: decl_mv_mv!("moo_file_exists", mv1),
             moo_file_delete: decl_mv_mv!("moo_file_delete", mv1),
+            moo_file_mtime: decl_mv_mv!("moo_file_mtime", mv1),
+            moo_file_is_dir: decl_mv_mv!("moo_file_is_dir", mv1),
+            moo_file_mkdir: decl_mv_mv!("moo_file_mkdir", mv1),
             moo_dir_list: decl_mv_mv!("moo_dir_list", mv1),
             // Thread & Channel
             moo_thread_spawn: decl_mv_mv!("moo_thread_spawn", mv2),

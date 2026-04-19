@@ -341,6 +341,9 @@ MooValue moo_file_append(MooValue path, MooValue content);
 MooValue moo_file_lines(MooValue path);
 MooValue moo_file_exists(MooValue path);
 MooValue moo_file_delete(MooValue path);
+MooValue moo_file_mtime(MooValue path);
+MooValue moo_file_is_dir(MooValue path);
+MooValue moo_file_mkdir(MooValue path);
 MooValue moo_dir_list(MooValue path);
 
 // === Kryptografie & Sicherheit ===

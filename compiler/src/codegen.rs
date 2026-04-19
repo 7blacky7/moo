@@ -1947,6 +1947,18 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_file_delete, &[arg.into()], "file_delete");
                     }
+                    "datei_mtime" | "file_mtime" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_file_mtime, &[arg.into()], "file_mtime");
+                    }
+                    "datei_ist_verzeichnis" | "file_is_dir" | "ist_verzeichnis" | "is_dir" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_file_is_dir, &[arg.into()], "file_is_dir");
+                    }
+                    "datei_mkdir" | "file_mkdir" | "mkdir" | "verzeichnis_erstelle" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_file_mkdir, &[arg.into()], "file_mkdir");
+                    }
                     "verzeichnis_liste" | "dir_list" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_dir_list, &[arg.into()], "dir_list");

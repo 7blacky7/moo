@@ -1,7 +1,20 @@
 #include "moo_runtime.h"
-#include <dirent.h>
 #include <sys/stat.h>
 #include <errno.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <direct.h>
+// Windows nutzt _stat64 fuer 64-Bit mtime; struct stat existiert nicht sauber.
+typedef struct _stat64 moo_stat_t;
+#define moo_stat_call(p, buf) _stat64((p), (buf))
+#define MOO_S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
+#else
+#include <dirent.h>
+typedef struct stat moo_stat_t;
+#define moo_stat_call(p, buf) stat((p), (buf))
+#define MOO_S_ISDIR(m) S_ISDIR(m)
+#endif
 
 extern MooValue moo_string_new_len(const char* chars, int32_t len);
 extern MooValue moo_list_new(int32_t capacity);
@@ -119,8 +132,8 @@ MooValue moo_file_lines(MooValue path) {
 
 MooValue moo_file_exists(MooValue path) {
     const char* p = MV_STR(path)->chars;
-    struct stat st;
-    return moo_bool(stat(p, &st) == 0);
+    moo_stat_t st;
+    return moo_bool(moo_stat_call(p, &st) == 0);
 }
 
 MooValue moo_file_delete(MooValue path) {
@@ -128,6 +141,99 @@ MooValue moo_file_delete(MooValue path) {
     return moo_bool(remove(p) == 0);
 }
 
+// === Metadaten ===
+
+// Liefert Modification-Time als Unix-Timestamp (Sekunden seit 1970).
+// -1 wenn Datei nicht existiert oder stat fehlschlaegt.
+// Cross-platform: POSIX nutzt stat(), Windows nutzt _stat64().
+MooValue moo_file_mtime(MooValue path) {
+    const char* p = MV_STR(path)->chars;
+    moo_stat_t st;
+    if (moo_stat_call(p, &st) != 0) {
+        return moo_number(-1.0);
+    }
+    return moo_number((double)st.st_mtime);
+}
+
+// Erstellt ein Verzeichnis inklusive aller fehlenden Parent-Dirs (rekursiv).
+// Liefert wahr bei Erfolg, falsch wenn z.B. ein existierendes Nicht-Dir im Weg steht.
+// Cross-platform: nutzt mkdir bzw. _mkdir.
+MooValue moo_file_mkdir(MooValue path) {
+    if (path.tag != MOO_STRING) return moo_bool(false);
+    const char* p = MV_STR(path)->chars;
+    size_t len = strlen(p);
+    if (len == 0) return moo_bool(false);
+
+    char* buf = (char*)moo_alloc(len + 1);
+    memcpy(buf, p, len);
+    buf[len] = '\0';
+
+    // Segmentweise mkdir. Separator POSIX '/' — auf Windows akzeptiert _mkdir beide.
+    for (size_t i = 1; i <= len; i++) {
+        char c = buf[i];
+        if (c == '/' || c == '\\' || c == '\0') {
+            buf[i] = '\0';
+            // Leere Komponente (z.B. "//") ueberspringen
+            if (buf[i - 1] != '\0') {
+#ifdef _WIN32
+                _mkdir(buf);
+#else
+                mkdir(buf, 0755);
+#endif
+                // errno == EEXIST ist OK (schon da)
+            }
+            if (i < len) buf[i] = c;
+        }
+    }
+    moo_free(buf);
+
+    // Final-Check: ist der Ziel-Pfad jetzt ein Verzeichnis?
+    moo_stat_t st;
+    if (moo_stat_call(p, &st) != 0) return moo_bool(false);
+    return moo_bool(MOO_S_ISDIR(st.st_mode));
+}
+
+// Prueft ob der Pfad ein Verzeichnis ist.
+// Gibt falsch zurueck wenn Pfad nicht existiert oder keine Directory ist.
+MooValue moo_file_is_dir(MooValue path) {
+    const char* p = MV_STR(path)->chars;
+    moo_stat_t st;
+    if (moo_stat_call(p, &st) != 0) {
+        return moo_bool(false);
+    }
+    return moo_bool(MOO_S_ISDIR(st.st_mode));
+}
+
+// === Verzeichnis-Listing ===
+
+#ifdef _WIN32
+MooValue moo_dir_list(MooValue path) {
+    const char* p = MV_STR(path)->chars;
+    // Windows: FindFirstFile mit Wildcard "\*".
+    size_t plen = strlen(p);
+    char* pattern = (char*)moo_alloc(plen + 3);
+    memcpy(pattern, p, plen);
+    // Trailing separator falls noch nicht vorhanden
+    if (plen > 0 && pattern[plen - 1] != '\\' && pattern[plen - 1] != '/') {
+        pattern[plen++] = '\\';
+    }
+    pattern[plen++] = '*';
+    pattern[plen] = '\0';
+
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    moo_free(pattern);
+    if (h == INVALID_HANDLE_VALUE) return moo_list_new(0);
+
+    MooValue list = moo_list_new(16);
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
+        moo_list_append(list, moo_string_new(fd.cFileName));
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    return list;
+}
+#else
 MooValue moo_dir_list(MooValue path) {
     const char* p = MV_STR(path)->chars;
     DIR* d = opendir(p);
@@ -143,3 +249,4 @@ MooValue moo_dir_list(MooValue path) {
     closedir(d);
     return list;
 }
+#endif
