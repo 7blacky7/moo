@@ -1165,6 +1165,8 @@ impl<'ctx> CodeGen<'ctx> {
                 self.call_rt_void(self.rt.moo_profile_exit, &[name_val.into()], "prof_exit")?;
             }
             self.emit_defers()?;
+            // Function-Exit-Cleanup: Locals freigeben bevor implicit return.
+            self.release_function_locals()?;
             let none_val = self.call_rt(self.rt.moo_none, &[], "none")?;
             self.builder.build_return(Some(&none_val)).map_err(|e| format!("{e}"))?;
         }
@@ -1184,6 +1186,23 @@ impl<'ctx> CodeGen<'ctx> {
         let defers: Vec<Expr> = self.defer_stack.iter().rev().cloned().collect();
         for expr in &defers {
             self.compile_expr(expr)?;
+        }
+        Ok(())
+    }
+
+    /// Gibt alle function-lokalen Variablen vor einem Return frei.
+    /// Der Return-Wert haelt seine +1 ueber load_var-retain bzw. Producer
+    /// unabhaengig vom Alloca-Slot — das Aufraeumen der Slots kann den
+    /// Return nicht ueberschreiben. Ohne diesen Cleanup leaken Locals die
+    /// im Hot-Loop genutzt werden (gemessen: detect_changes mit 1600 Keys
+    /// leakt ~480KB pro Call).
+    fn release_function_locals(&self) -> Result<(), String> {
+        let vars: Vec<(String, PointerValue<'ctx>)> =
+            self.variables.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        for (_name, ptr) in vars {
+            let v = self.builder.build_load(self.mv_type(), ptr, "local_exit")
+                .map_err(|e| format!("{e}"))?.into_struct_value();
+            self.call_rt_void(self.rt.moo_release, &[v.into()], "rel_local")?;
         }
         Ok(())
     }
@@ -1233,6 +1252,9 @@ impl<'ctx> CodeGen<'ctx> {
 
         // Defer-Stack vor Return ausführen (Go-Semantik)
         self.emit_defers()?;
+        // Locals vor dem return freigeben. val haelt seine eigene +1 ueber
+        // load_var-retain / Producer und ueberlebt den Slot-Cleanup.
+        self.release_function_locals()?;
         self.builder.build_return(Some(&val)).map_err(|e| format!("{e}"))?;
         Ok(())
     }
