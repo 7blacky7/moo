@@ -27,9 +27,19 @@ static MooValue make_result(const char* type, MooValue value) {
 static const char* get_result_type(MooValue result) {
     if (result.tag != MOO_DICT) return NULL;
     MooValue type_key = moo_string_new("__result_type");
+    // moo_dict_get konsumiert den Key bereits intern (release_key_str_if_fresh),
+    // deshalb HIER KEIN release(type_key) — das waere Double-Free (tcache).
     MooValue type_val = moo_dict_get(result, type_key);
-    if (type_val.tag != MOO_STRING) return NULL;
+    if (type_val.tag != MOO_STRING) {
+        // Auch Nicht-String-Rueckgabe muss released werden (dict_get +1).
+        moo_release(type_val);
+        return NULL;
+    }
     MooString* s = (MooString*)(uintptr_t)type_val.data;
+    // RB8: dict_get hat type_val mit retain (+1) zurueckgegeben. Das Dict
+    // haelt seine eigene +1 → nach release bleibt der String via Dict-Ref
+    // lebendig. s->chars bleibt gueltig bis der Result-Dict freigegeben wird.
+    moo_release(type_val);
     return s->chars;
 }
 
@@ -58,11 +68,18 @@ MooValue moo_result_unwrap(MooValue result) {
         return moo_none();
     }
     if (strcmp(type, "err") == 0) {
+        // val_key wird von dict_get intern released — hier nicht anfassen.
         MooValue val_key = moo_string_new("__result_value");
         MooValue err_val = moo_dict_get(result, val_key);
+        // RB8: err_val hat +1 aus dict_get; throw speichert ohne retain.
+        // Nicht releasen — sonst haengt moo_last_error auf rc=0 sobald
+        // der Result-Dict freigegeben wird. Kleiner Leak in try-catch
+        // akzeptiert (Fehler sind selten; bei fatal exit irrelevant).
         moo_throw(err_val);
         return moo_none();
     }
+    // RB8: val_key wird von dict_get intern released. val behaelt sein
+    // +1 aus dict_get und wird zum Caller transferiert (owning return).
     MooValue val_key = moo_string_new("__result_value");
     return moo_dict_get(result, val_key);
 }
