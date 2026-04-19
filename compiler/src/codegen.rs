@@ -1616,7 +1616,26 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::None => {
                 self.call_rt(self.rt.moo_none, &[], "none")
             }
-            Expr::Identifier(name) => self.load_var(name),
+            Expr::Identifier(name) => {
+                // Variable (lokal, global) ODER Funktionsname als First-Class-Value.
+                // Erstverwendung-Fallback auf module.get_function erlaubt:
+                //   starte(worker, arg)
+                //   setze f auf meine_fn
+                //   liste.map(transformiere)
+                if let Ok(v) = self.load_var(name) {
+                    return Ok(v);
+                }
+                if let Some(llvm_fn) = self.module.get_function(name) {
+                    let fn_ptr = llvm_fn.as_global_value().as_pointer_value();
+                    let arity = self.context.i32_type()
+                        .const_int(llvm_fn.count_params() as u64, false);
+                    let name_ptr = self.make_global_str(name, &format!("__fname_{name}"))?;
+                    return self.call_rt(self.rt.moo_func_new,
+                        &[fn_ptr.into(), arity.into(), name_ptr.into()],
+                        &format!("__func_val_{name}"));
+                }
+                Err(format!("Variable '{name}' nicht gefunden"))
+            }
             Expr::This => {
                 // selbst/this laden
                 self.load_var("selbst")

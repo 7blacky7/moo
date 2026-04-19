@@ -132,11 +132,64 @@ MooValue moo_curry(MooValue func, MooValue arg) {
     moo_object_set(curried_obj, "__bound", arg);
     moo_object_set(curried_obj, "__arity", moo_number((double)(fn->arity - 1)));
 
-    // EHRLICH: Echtes Currying braeuchte einen Trampoline der zur Laufzeit
-    // die gebundenen Args voranstellt und die echte Funktion aufruft.
-    // Das ist mit reinem C ohne JIT/Closure-Runtime nicht sauber loesbar.
-    // Wir speichern die Daten, aber der Aufruf muss im Codegen passieren.
+    // HINWEIS: Universeller moo_curry auf beliebigen Funktionen setzt voraus,
+    // dass jede Funktion einen Curry-Trampoline besitzt. Fuer Lambdas mit
+    // Captures (die bereits einen Trampoline haben) kann der Codegen direkt
+    // moo_func_with_captures nutzen. Dieser Weg hier wird fuer selten genutzte
+    // Dynamic-Curry-Faelle vorgehalten.
     return curried_obj;
+}
+
+// === First-Class Funktionen (MOO_FUNC-Values) ===
+//
+// moo_func_new: Erstellt ein MOO_FUNC-Value fuer eine einfache Funktion
+// (benannte Funktion oder Lambda ohne Captures). Der fn_ptr wird beim Aufruf
+// direkt als MooValue(*)(MooValue...)-Funktion gecastet.
+MooValue moo_func_new(void* fn_ptr, int32_t arity, const char* name) {
+    MooFunc* f = (MooFunc*)moo_alloc(sizeof(MooFunc));
+    f->refcount = 1;
+    f->fn_ptr = fn_ptr;
+    f->arity = arity;
+    f->name = name ? strdup(name) : NULL;
+    f->captured = NULL;
+    f->n_captured = 0;
+    MooValue v;
+    v.tag = MOO_FUNC;
+    moo_val_set_ptr(&v, f);
+    return v;
+}
+
+// moo_func_with_captures: Erstellt ein MOO_FUNC-Value fuer ein Closure-Lambda.
+// Der tramp_ptr zeigt auf einen vom Codegen erzeugten Trampoline mit der
+// Signatur (MooFunc* env, MooValue... user_args). Der Trampoline liest
+// env->captured[i] und ruft die eigentliche Inner-Function mit
+// (user_args..., captures...).
+//
+// Captures werden retain-t — sie gehoeren dem MooFunc.
+// caps darf ein temporaeres Array sein (wir kopieren es intern).
+MooValue moo_func_with_captures(void* tramp_ptr, int32_t arity,
+                                const char* name,
+                                MooValue* caps, int32_t n) {
+    MooFunc* f = (MooFunc*)moo_alloc(sizeof(MooFunc));
+    f->refcount = 1;
+    f->fn_ptr = tramp_ptr;
+    f->arity = arity;
+    f->name = name ? strdup(name) : NULL;
+    if (n > 0 && caps != NULL) {
+        f->captured = (MooValue*)moo_alloc(sizeof(MooValue) * n);
+        for (int32_t i = 0; i < n; i++) {
+            f->captured[i] = caps[i];
+            moo_retain(caps[i]);
+        }
+        f->n_captured = n;
+    } else {
+        f->captured = NULL;
+        f->n_captured = 0;
+    }
+    MooValue v;
+    v.tag = MOO_FUNC;
+    moo_val_set_ptr(&v, f);
+    return v;
 }
 
 // === Timing ===

@@ -118,11 +118,22 @@ struct MooDict {
 };
 
 // === Function ===
+// Backward-compatible layout: bestehende Konsumenten (moo_thread, moo_object,
+// moo_curry) nutzen weiter refcount/fn_ptr/arity/name. Neue Felder sind
+// optional und steuern den Closure-Trampoline:
+//   n_captured == 0 → fn_ptr ist eine direkte Function (klassisches Lambda /
+//                     benannte Funktion). Call-Convention: fn_ptr(MooValue...).
+//   n_captured >  0 → fn_ptr ist ein Trampoline. Call-Convention:
+//                     fn_ptr(MooFunc* env, MooValue...).
+//                     Der Trampoline liest env->captured[i] und ruft die
+//                     eigentliche inner-Function mit (params..., captures...).
 struct MooFunc {
     int32_t refcount;
     void* fn_ptr;
-    int32_t arity;
+    int32_t arity;      // User-sichtbare Arity (ohne Captures)
     char* name;
+    MooValue* captured; // Capture-Array (retain-t) oder NULL
+    int32_t n_captured; // Anzahl gebundener Captures oder 0
 };
 
 // === Object ===
@@ -256,6 +267,10 @@ MooValue moo_is_frozen(MooValue v);
 
 // === Currying ===
 MooValue moo_curry(MooValue func, MooValue arg);
+MooValue moo_func_new(void* fn_ptr, int32_t arity, const char* name);
+MooValue moo_func_with_captures(void* tramp_ptr, int32_t arity,
+                                const char* name,
+                                MooValue* caps, int32_t n);
 
 // === Arithmetik & Vergleiche ===
 MooValue moo_add(MooValue a, MooValue b);
