@@ -72,7 +72,12 @@ MooValue moo_list_pop(MooValue list) {
     if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return moo_none(); }
     if (l->length == 0) return moo_none();
     // Transfer: der Slot-Refcount geht direkt an den Caller, kein retain.
-    return l->items[--l->length];
+    // RB5: Slot auf MOO_NONE ruecksetzen, damit spaeteres free_list nicht
+    // versehentlich diesen (bereits transferierten) Eintrag doppelt released
+    // falls jemand durch capacity statt length iteriert.
+    MooValue v = l->items[--l->length];
+    l->items[l->length] = moo_none();
+    return v;
 }
 
 MooValue moo_list_contains(MooValue list, MooValue item) {
@@ -165,6 +170,15 @@ MooValue moo_list_join(MooValue list, MooValue delim) {
     s->chars[total] = '\0';
     moo_val_set_ptr(&v, s);
 
+    // RB4: parts[i] wurden via moo_to_string erzeugt. Bei non-string items
+    // ist parts[i] ein fresh +1 MooString (Leak ohne release). Bei string
+    // items gibt moo_to_string den Original-Pointer zurueck ohne retain —
+    // dort DARF nicht released werden (waere Under-Release der Liste).
+    for (int32_t i = 0; i < l->length; i++) {
+        if (l->items[i].tag != MOO_STRING) moo_release(parts[i]);
+    }
+    // dstr analog: nur releasen wenn delim kein String war.
+    if (delim.tag != MOO_STRING) moo_release(dstr);
     moo_free(parts);
     return v;
 }
