@@ -36,6 +36,14 @@ MooValue moo_string_concat(MooValue a, MooValue b) {
     // strlen() bei einem NUL-Byte im Inhalt die Laenge falsch berechnen.
     MooValue result = moo_string_new_len(buf, len);
     moo_free(buf);
+    // Fuer non-string Operanden hat moo_to_string frischen MooString +1
+    // erzeugt — dieses Zwischenprodukt muss freigegeben werden.
+    // Die Operanden a/b selbst werden NICHT freigegeben: moo_print.c ruft
+    // concat teilweise mit geliehenen Items (list/dict iteration) auf,
+    // die kein Owning-+1 halten. Der Codegen fuer `+` auf Strings gibt
+    // seine Operand-Temps statt dessen explizit nach dem Call frei.
+    if (sa.tag == MOO_STRING && a.tag != MOO_STRING) moo_release(sa);
+    if (sb.tag == MOO_STRING && b.tag != MOO_STRING) moo_release(sb);
     return result;
 }
 

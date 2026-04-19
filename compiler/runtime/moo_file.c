@@ -147,11 +147,15 @@ MooValue moo_file_delete(MooValue path) {
 // -1 wenn Datei nicht existiert oder stat fehlschlaegt.
 // Cross-platform: POSIX nutzt stat(), Windows nutzt _stat64().
 MooValue moo_file_mtime(MooValue path) {
+    if (path.tag != MOO_STRING) return moo_number(-1.0);
     const char* p = MV_STR(path)->chars;
     moo_stat_t st;
-    if (moo_stat_call(p, &st) != 0) {
-        return moo_number(-1.0);
-    }
+    int rc = moo_stat_call(p, &st);
+    // Transfer-Semantik: Caller gibt path mit +1, diese Funktion gibt sie
+    // frei — sonst leakt die im Hot-Loop pro Aufruf konstruierte
+    // Pfad-Konkatenation (daemon-relevanter Hauptleak).
+    moo_release(path);
+    if (rc != 0) return moo_number(-1.0);
     return moo_number((double)st.st_mtime);
 }
 
