@@ -24,7 +24,11 @@ static int32_t find_property(MooObject* obj, const char* name) {
 MooValue moo_object_get(MooValue obj_val, const char* prop) {
     MooObject* obj = MV_OBJ(obj_val);
     int32_t idx = find_property(obj, prop);
-    if (idx >= 0) return obj->properties[idx].value;
+    if (idx >= 0) {
+        MooValue v = obj->properties[idx].value;
+        moo_retain(v);  // Owning-Rueckgabe
+        return v;
+    }
     if (obj->parent) {
         MooValue parent_val;
         parent_val.tag = MOO_OBJECT;
@@ -39,9 +43,7 @@ void moo_object_set(MooValue obj_val, const char* prop, MooValue value) {
     if (obj->frozen) { moo_throw(moo_string_new("Objekt ist eingefroren!")); return; }
     int32_t idx = find_property(obj, prop);
     if (idx >= 0) {
-        // Refcount-Sicherheit: erst NEUEN Wert retainen, DANN alten releasen.
-        // Reihenfolge wichtig wenn neuer == alter (sonst use-after-free).
-        moo_retain(value);
+        // Transfer: neuen Caller-Ref uebernehmen, alten freigeben.
         MooValue old = obj->properties[idx].value;
         obj->properties[idx].value = value;
         moo_release(old);
@@ -52,12 +54,12 @@ void moo_object_set(MooValue obj_val, const char* prop, MooValue value) {
         obj->properties = moo_realloc(obj->properties, sizeof(MooProperty) * obj->prop_capacity);
     }
     MooString* name_str = moo_alloc(sizeof(MooString));
+    name_str->refcount = 1;
     int32_t len = strlen(prop);
     name_str->chars = strdup(prop);
     name_str->length = len;
     name_str->capacity = len + 1;
-    // Neue Property: Object haelt jetzt eine Referenz auf den Wert.
-    moo_retain(value);
+    // Transfer: Object uebernimmt Caller-Ref.
     obj->properties[obj->prop_count].name = name_str;
     obj->properties[obj->prop_count].value = value;
     obj->prop_count++;
@@ -92,9 +94,14 @@ void moo_event_on(MooValue obj, MooValue event_name, MooValue callback) {
     if (list.tag != MOO_LIST) {
         // Neue Event-Liste erstellen
         list = moo_list_new(4);
+        // object_set transferiert Caller-Ref → extra retain damit wir
+        // gleich noch list_append aufrufen koennen.
+        moo_retain(list);
         moo_object_set(obj, key, list);
     }
+    // list_append transferiert callback-Ref.
     moo_list_append(list, callback);
+    moo_release(list);  // unsere Owning-Ref aus moo_object_get/new freigeben
 }
 
 void moo_event_emit(MooValue obj, MooValue event_name) {

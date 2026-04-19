@@ -50,14 +50,23 @@ static void dict_grow(MooDict* d) {
     moo_free(old);
 }
 
-// Gibt key_str frei, wenn er von moo_to_string frisch alloziert wurde
-// (non-string key). Fuer MOO_STRING-Keys liefert moo_to_string das Original
-// unretained zurueck — dann nicht freigeben.
-static inline void release_key_str_if_fresh(MooValue key_str, MooValue orig_key) {
-    if (orig_key.tag != MOO_STRING && key_str.tag == MOO_STRING) {
+// Transfer-Semantik fuer Keys: Caller uebergibt Key mit +1 (Producer/
+// load_var). Die Lookup-Funktionen (get/has/remove) benutzen den Key nur,
+// speichern ihn nicht — also am Ende freigeben. Fuer non-string Keys ist
+// key_str ein frischer MooString aus moo_to_string (refcount=1); fuer
+// MOO_STRING ist key_str == orig Caller-Ref. In beiden Faellen liegt die
+// zu releasende Owning-Ref beim Caller-Key (der Wert vor der Konvertierung).
+static inline void release_key_after_lookup(MooValue key_str, MooValue orig_key) {
+    if (orig_key.tag == MOO_STRING) {
+        moo_release(orig_key);
+    } else if (key_str.tag == MOO_STRING) {
         moo_release(key_str);
     }
 }
+
+// Kompatibilitaets-Alias fuer set (occupied): hier duerfen wir genauso
+// den Caller-Key freigeben.
+#define release_key_str_if_fresh release_key_after_lookup
 
 void moo_dict_set(MooValue dict, MooValue key, MooValue value) {
     MooDict* d = MV_DICT(dict);
@@ -115,6 +124,9 @@ MooValue moo_dict_keys(MooValue dict) {
             MooValue key;
             key.tag = MOO_STRING;
             moo_val_set_ptr(&key, d->entries[i].key);
+            // list_append transferiert — eigene Ref retainen damit das
+            // Dict seine Original-Ref behaelt.
+            moo_retain(key);
             moo_list_append(list, key);
         }
     }
@@ -125,8 +137,11 @@ MooValue moo_dict_values(MooValue dict) {
     MooDict* d = MV_DICT(dict);
     MooValue list = moo_list_new(d->count);
     for (int32_t i = 0; i < d->capacity; i++) {
-        if (d->entries[i].occupied)
-            moo_list_append(list, d->entries[i].value);
+        if (d->entries[i].occupied) {
+            MooValue v = d->entries[i].value;
+            moo_retain(v);
+            moo_list_append(list, v);
+        }
     }
     return list;
 }

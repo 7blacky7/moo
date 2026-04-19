@@ -30,10 +30,8 @@ void moo_list_append(MooValue list, MooValue item) {
     MooList* l = MV_LIST(list);
     if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return; }
     if (l->length >= l->capacity) list_grow(l);
-    // Refcount: Liste haelt jetzt eine Referenz auf das item.
-    // Sonst Aliasing-Bug: item wird in mehreren Listen gehalten ohne
-    // retain, free der ersten released item, zweite haelt freed value.
-    moo_retain(item);
+    // Transfer-Semantik: Caller uebergibt item mit refcount=1, Liste
+    // uebernimmt die Referenz. Kein retain hier.
     l->items[l->length++] = item;
 }
 
@@ -42,7 +40,10 @@ MooValue moo_list_get(MooValue list, MooValue index) {
     MooList* l = MV_LIST(list);
     if (i < 0) i += l->length;
     if (i < 0 || i >= l->length) return moo_none();
-    return l->items[i];
+    MooValue v = l->items[i];
+    // Owning-Konvention: Caller bekommt eigene Referenz.
+    moo_retain(v);
+    return v;
 }
 
 void moo_list_set(MooValue list, MooValue index, MooValue value) {
@@ -51,9 +52,13 @@ void moo_list_set(MooValue list, MooValue index, MooValue value) {
     int32_t i = (int32_t)moo_as_number(index);
     if (i < 0) i += l->length;
     if (i >= 0 && i < l->length) {
-        moo_retain(value);
+        // Transfer: Caller-Ref uebernehmen, alten Slot-Wert freigeben.
         moo_release(l->items[i]);
         l->items[i] = value;
+    } else {
+        // Out-of-bounds: value wird nicht aufgenommen, also die vom
+        // Caller uebergebene Referenz wieder freigeben.
+        moo_release(value);
     }
 }
 
@@ -66,6 +71,7 @@ MooValue moo_list_pop(MooValue list) {
     MooList* l = MV_LIST(list);
     if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return moo_none(); }
     if (l->length == 0) return moo_none();
+    // Transfer: der Slot-Refcount geht direkt an den Caller, kein retain.
     return l->items[--l->length];
 }
 
@@ -113,7 +119,13 @@ int32_t moo_list_iter_len(MooValue list) {
 }
 
 MooValue moo_list_iter_get(MooValue list, int32_t index) {
-    return MV_LIST(list)->items[index];
+    MooValue v = MV_LIST(list)->items[index];
+    // Owning-Konvention: jeder iter-Step liefert eigene Referenz. Codegen
+    // ruft store_var mit transfer-Semantik auf; ohne retain wuerde das
+    // ein Alias anlegen, das beim naechsten store_var-release die Liste
+    // beschaedigt.
+    moo_retain(v);
+    return v;
 }
 
 MooValue moo_list_join(MooValue list, MooValue delim) {
