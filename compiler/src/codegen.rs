@@ -405,39 +405,6 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    /// Builtin-Call mit Post-Call-Release aller Arg-Temps (Konvention v2).
-    /// Jeder compile_expr-Temp ist +1 owning; nach dem Call released der
-    /// Codegen. moo_release ist no-op auf non-heap (Number/Bool/None),
-    /// daher safe auf gemischte Arg-Listen.
-    /// NICHT verwenden fuer:
-    ///  - Transfer-Builtins (File-I/O, thread_spawn, input, syscall, freeze,
-    ///    Container-Mutatoren, user-func-calls, ok/fehler — Arg wird in
-    ///    Struktur eingebettet ohne retain).
-    ///  - Alias-Returning-Builtins (moo_to_string pass-through auf
-    ///    MOO_STRING — Return IST der Arg, Release waere UAF).
-    fn call_builtin(&self, func: FunctionValue<'ctx>, args: &[StructValue<'ctx>], name: &str)
-        -> Result<StructValue<'ctx>, String>
-    {
-        let md: Vec<BasicMetadataValueEnum<'ctx>> = args.iter().map(|v| (*v).into()).collect();
-        let result = self.call_rt(func, &md, name)?;
-        for a in args {
-            self.call_rt_void(self.rt.moo_release, &[(*a).into()], "rel_barg")?;
-        }
-        Ok(result)
-    }
-
-    /// Void-Variante von call_builtin (gleiche Transfer-Regeln).
-    fn call_builtin_void(&self, func: FunctionValue<'ctx>, args: &[StructValue<'ctx>], name: &str)
-        -> Result<(), String>
-    {
-        let md: Vec<BasicMetadataValueEnum<'ctx>> = args.iter().map(|v| (*v).into()).collect();
-        self.call_rt_void(func, &md, name)?;
-        for a in args {
-            self.call_rt_void(self.rt.moo_release, &[(*a).into()], "rel_barg")?;
-        }
-        Ok(())
-    }
-
     fn store_var(&mut self, name: &str, val: StructValue<'ctx>) -> Result<(), String> {
         let ptr = if let Some(existing) = self.variables.get(name) {
             // Release alten Wert bevor wir ueberschreiben
@@ -1987,15 +1954,15 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     "ist_ok" | "is_ok" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_result_is_ok, &[arg], "is_ok");
+                        return self.call_rt(self.rt.moo_result_is_ok, &[arg.into()], "is_ok");
                     }
                     "ist_fehler" | "is_err" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_result_is_err, &[arg], "is_err");
+                        return self.call_rt(self.rt.moo_result_is_err, &[arg.into()], "is_err");
                     }
                     "entpacke" | "unwrap" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_result_unwrap, &[arg], "unwrap");
+                        return self.call_rt(self.rt.moo_result_unwrap, &[arg.into()], "unwrap");
                     }
                     "abs" | "wurzel" | "sqrt" => {
                         let func = match name.as_str() {
@@ -2050,11 +2017,11 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     "typ_von" | "type_of" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_type_of, &[arg], "typeof");
+                        return self.call_rt(self.rt.moo_type_of, &[arg.into()], "typeof");
                     }
                     "länge" | "len" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_length, &[arg], "len");
+                        return self.call_rt(self.rt.moo_length, &[arg.into()], "len");
                     }
                     "text" | "str" => {
                         let arg = self.compile_expr(&args[0])?;
@@ -2137,101 +2104,101 @@ impl<'ctx> CodeGen<'ctx> {
                     // JSON
                     "json_parse" | "json_lesen" | "jp" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_json_parse, &[arg], "json_parse");
+                        return self.call_rt(self.rt.moo_json_parse, &[arg.into()], "json_parse");
                     }
                     "json_string" | "json_text" | "js" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_json_string, &[arg], "json_string");
+                        return self.call_rt(self.rt.moo_json_string, &[arg.into()], "json_string");
                     }
                     // HTTP
                     "http_hole_mit_headers" | "http_get_with_headers" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
-                        return self.call_builtin(self.rt.moo_http_get_with_headers, &[a, b], "http_get_h");
+                        return self.call_rt(self.rt.moo_http_get_with_headers, &[a.into(), b.into()], "http_get_h");
                     }
                     "http_sende_mit_headers" | "http_post_with_headers" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
                         let c = self.compile_expr(&args[2])?;
-                        return self.call_builtin(self.rt.moo_http_post_with_headers, &[a, b, c], "http_post_h");
+                        return self.call_rt(self.rt.moo_http_post_with_headers, &[a.into(), b.into(), c.into()], "http_post_h");
                     }
                     "http_get" | "http_hole" | "hg" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_http_get, &[arg], "http_get");
+                        return self.call_rt(self.rt.moo_http_get, &[arg.into()], "http_get");
                     }
                     "http_post" | "http_sende" | "hp" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
-                        return self.call_builtin(self.rt.moo_http_post, &[a, b], "http_post");
+                        return self.call_rt(self.rt.moo_http_post, &[a.into(), b.into()], "http_post");
                     }
                     // Crypto & Security
                     "sha256" | "sh" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_sha256, &[arg], "sha256");
+                        return self.call_rt(self.rt.moo_sha256, &[arg.into()], "sha256");
                     }
                     "sha1" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_sha1, &[arg], "sha1");
+                        return self.call_rt(self.rt.moo_sha1, &[arg.into()], "sha1");
                     }
                     "sha1_bytes" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_sha1_bytes, &[arg], "sha1_bytes");
+                        return self.call_rt(self.rt.moo_sha1_bytes, &[arg.into()], "sha1_bytes");
                     }
                     "sichere_zufall" | "secure_random" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_secure_random, &[arg], "secure_random");
+                        return self.call_rt(self.rt.moo_secure_random, &[arg.into()], "secure_random");
                     }
                     "base64_encode" | "base64_kodieren" | "b64e" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_base64_encode, &[arg], "base64_encode");
+                        return self.call_rt(self.rt.moo_base64_encode, &[arg.into()], "base64_encode");
                     }
                     "base64_decode" | "base64_dekodieren" | "b64d" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_base64_decode, &[arg], "base64_decode");
+                        return self.call_rt(self.rt.moo_base64_decode, &[arg.into()], "base64_decode");
                     }
                     "html_bereinigen" | "sanitize_html" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_sanitize_html, &[arg], "sanitize_html");
+                        return self.call_rt(self.rt.moo_sanitize_html, &[arg.into()], "sanitize_html");
                     }
                     "sql_bereinigen" | "sanitize_sql" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_sanitize_sql, &[arg], "sanitize_sql");
+                        return self.call_rt(self.rt.moo_sanitize_sql, &[arg.into()], "sanitize_sql");
                     }
                     // Datenbank
                     "db_verbinde" | "db_connect" | "dbv" => {
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_db_connect, &[arg], "db_connect");
+                        return self.call_rt(self.rt.moo_db_connect, &[arg.into()], "db_connect");
                     }
                     "db_vorbereite" | "db_prepare" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
-                        return self.call_builtin(self.rt.moo_db_prepare, &[a, b], "db_prep");
+                        return self.call_rt(self.rt.moo_db_prepare, &[a.into(), b.into()], "db_prep");
                     }
                     "db_abfrage_mit_params" | "db_query_with_params" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
                         let c = self.compile_expr(&args[2])?;
-                        return self.call_builtin(self.rt.moo_db_query_with_params, &[a, b, c], "db_query_p");
+                        return self.call_rt(self.rt.moo_db_query_with_params, &[a.into(), b.into(), c.into()], "db_query_p");
                     }
                     "db_ausführen_mit_params" | "db_execute_with_params" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
                         let c = self.compile_expr(&args[2])?;
-                        return self.call_builtin(self.rt.moo_db_execute_with_params, &[a, b, c], "db_exec_p");
+                        return self.call_rt(self.rt.moo_db_execute_with_params, &[a.into(), b.into(), c.into()], "db_exec_p");
                     }
                     "db_abfrage" | "db_query" | "dba" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
-                        return self.call_builtin(self.rt.moo_db_query, &[a, b], "db_query");
+                        return self.call_rt(self.rt.moo_db_query, &[a.into(), b.into()], "db_query");
                     }
                     "db_ausführen" | "db_execute" | "dbe" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
-                        return self.call_builtin(self.rt.moo_db_execute, &[a, b], "db_execute");
+                        return self.call_rt(self.rt.moo_db_execute, &[a.into(), b.into()], "db_execute");
                     }
                     "db_schliessen" | "db_close" | "dbs" => {
                         let arg = self.compile_expr(&args[0])?;
-                        self.call_builtin_void(self.rt.moo_db_close, &[arg], "db_close")?;
+                        self.call_rt_void(self.rt.moo_db_close, &[arg.into()], "db_close")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     // Raw Memory (GEFAEHRLICH)
@@ -2250,7 +2217,7 @@ impl<'ctx> CodeGen<'ctx> {
                     // Netzwerk
                     "ausfuehren" | "eval" => {
                         let code = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_eval, &[code], "eval");
+                        return self.call_rt(self.rt.moo_eval, &[code.into()], "eval");
                     }
                     "web_antworten" | "web_respond" => {
                         let req = self.compile_expr(&args[0])?;
@@ -2486,11 +2453,11 @@ impl<'ctx> CodeGen<'ctx> {
                     "bytes_neu" | "bytes_new" => {
                         // bytes_neu(liste) → binary-safe String
                         let list = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_bytes_to_string, &[list], "bytes_new");
+                        return self.call_rt(self.rt.moo_bytes_to_string, &[list.into()], "bytes_new");
                     }
                     "bytes_zu_liste" | "bytes_to_list" | "string_zu_bytes" | "string_to_bytes" => {
                         let s = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_string_to_bytes, &[s], "str_to_bytes");
+                        return self.call_rt(self.rt.moo_string_to_bytes, &[s.into()], "str_to_bytes");
                     }
                     "zeit" | "time" => {
                         return self.call_rt(self.rt.moo_time, &[], "time");
@@ -2724,28 +2691,28 @@ impl<'ctx> CodeGen<'ctx> {
                     // Regex (POSIX)
                     "regex" | "muster" => {
                         let pat = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_regex_new, &[pat], "regex");
+                        return self.call_rt(self.rt.moo_regex_new, &[pat.into()], "regex");
                     }
                     "passt" | "matches" => {
                         let text = self.compile_expr(&args[0])?;
                         let rx = self.compile_expr(&args[1])?;
-                        return self.call_builtin(self.rt.moo_regex_match, &[text, rx], "match");
+                        return self.call_rt(self.rt.moo_regex_match, &[text.into(), rx.into()], "match");
                     }
                     "finde" | "find" => {
                         let text = self.compile_expr(&args[0])?;
                         let rx = self.compile_expr(&args[1])?;
-                        return self.call_builtin(self.rt.moo_regex_find, &[text, rx], "find");
+                        return self.call_rt(self.rt.moo_regex_find, &[text.into(), rx.into()], "find");
                     }
                     "finde_alle" | "find_all" => {
                         let text = self.compile_expr(&args[0])?;
                         let rx = self.compile_expr(&args[1])?;
-                        return self.call_builtin(self.rt.moo_regex_find_all, &[text, rx], "findall");
+                        return self.call_rt(self.rt.moo_regex_find_all, &[text.into(), rx.into()], "findall");
                     }
                     "ersetze" | "replace" => {
                         let text = self.compile_expr(&args[0])?;
                         let rx = self.compile_expr(&args[1])?;
                         let rep = self.compile_expr(&args[2])?;
-                        return self.call_builtin(self.rt.moo_regex_replace, &[text, rx, rep], "replace");
+                        return self.call_rt(self.rt.moo_regex_replace, &[text.into(), rx.into(), rep.into()], "replace");
                     }
                     // Test-Framework
                     "teste_alle" | "run_tests" => {
@@ -2759,7 +2726,7 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     "umgebung" | "env" => {
                         let name = self.compile_expr(&args[0])?;
-                        return self.call_builtin(self.rt.moo_env, &[name], "env");
+                        return self.call_rt(self.rt.moo_env, &[name.into()], "env");
                     }
                     "beende" | "exit" => {
                         let code = self.compile_expr(&args[0])?;
