@@ -3594,8 +3594,11 @@ impl<'ctx> CodeGen<'ctx> {
                 let result = if let Expr::Range { start, end } = index.as_ref() {
                     let s = self.compile_expr(start)?;
                     let e = self.compile_expr(end)?;
-                    self.call_rt(self.rt.moo_string_slice,
-                        &[obj.into(), s.into(), e.into()], "str_slice")?
+                    let slice_res = self.call_rt(self.rt.moo_string_slice,
+                        &[obj.into(), s.into(), e.into()], "str_slice")?;
+                    self.call_rt_void(self.rt.moo_release, &[s.into()], "rel_s")?;
+                    self.call_rt_void(self.rt.moo_release, &[e.into()], "rel_e")?;
+                    slice_res
                 } else {
                     let idx = self.compile_expr(index)?;
                     // idx ist Caller-Ref: moo_index_get (→ dict_get/list_get)
@@ -3613,7 +3616,10 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::Range { start, end } => {
                 let s = self.compile_expr(start)?;
                 let e = self.compile_expr(end)?;
-                self.call_rt(self.rt.moo_range, &[s.into(), e.into()], "range")
+                let range_res = self.call_rt(self.rt.moo_range, &[s.into(), e.into()], "range")?;
+                self.call_rt_void(self.rt.moo_release, &[s.into()], "rel_s")?;
+                self.call_rt_void(self.rt.moo_release, &[e.into()], "rel_e")?;
+                Ok(range_res)
             }
             Expr::List(elements) => {
                 let list = self.call_rt(self.rt.moo_list_new,
