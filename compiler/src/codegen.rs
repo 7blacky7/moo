@@ -73,6 +73,7 @@ pub struct CodeGen<'ctx> {
     // Lambda-Counter
     lambda_counter: usize,
     for_iter_counter: usize,
+    method_obj_counter: usize,
     // Defer-Stack (Go-inspiriert): Vec von AST-Exprs die am Funktionsende ausgeführt werden
     defer_stack: Vec<Expr>,
     // Crystal-inspiriert: Typ-Tracking fuer Warnungen (kein Enforcement!)
@@ -111,6 +112,7 @@ impl<'ctx> CodeGen<'ctx> {
             lambda_captures: HashMap::new(),
             lambda_counter: 0,
             for_iter_counter: 0,
+            method_obj_counter: 0,
             defer_stack: Vec::new(),
             variable_types: HashMap::new(),
             warnings: Vec::new(),
@@ -2882,15 +2884,52 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
 
-                let obj = self.compile_expr(object)?;
+                let obj_val = self.compile_expr(object)?;
+
+                // Per-Expression-Slot im Entry-Block fuer den obj-Temp:
+                // - Releaset VOR dem Store die letzte Iteration (oder NONE),
+                //   sodass bei einer `for`/`while`-Schleife pro Iteration nur
+                //   EIN obj gleichzeitig lebt.
+                // - Am Function-Exit released release_function_locals() den
+                //   letzten Slot-Inhalt — deckt alle Match-Arm-Early-Returns
+                //   der unten folgenden Kaskade ab, ohne jede Arm einzeln
+                //   editieren zu muessen.
+                // - Die Match-Kaskade nutzt weiterhin die lokale Variable
+                //   `obj` (nicht den Slot), damit LLVM dominance trivial bleibt.
+                let slot_name = format!("__mcall_obj_{}", self.method_obj_counter);
+                self.method_obj_counter += 1;
+                let func_cur = self.current_function.unwrap();
+                let entry_bb = func_cur.get_first_basic_block().unwrap();
+                let current_block = self.builder.get_insert_block().unwrap();
+                if let Some(first_instr) = entry_bb.get_first_instruction() {
+                    self.builder.position_before(&first_instr);
+                } else {
+                    self.builder.position_at_end(entry_bb);
+                }
+                let obj_slot = self.builder.build_alloca(self.mv_type(), &slot_name)
+                    .map_err(|e| format!("{e}"))?;
+                let none_tag = self.context.i64_type().const_int(3, false);
+                let zero_data = self.context.i64_type().const_int(0, false);
+                let none_struct = self.mv_type().const_named_struct(&[none_tag.into(), zero_data.into()]);
+                self.builder.build_store(obj_slot, none_struct).map_err(|e| format!("{e}"))?;
+                self.variables.insert(slot_name.clone(), obj_slot);
+                self.builder.position_at_end(current_block);
+
+                // Pre-Release der letzten Schleifeniteration im Slot (sonst
+                // leakt der vorherige obj-Wert bei Loop-Wiederholung).
+                let prev = self.builder.build_load(self.mv_type(), obj_slot, "prev_mcall_obj")
+                    .map_err(|e| format!("{e}"))?.into_struct_value();
+                self.call_rt_void(self.rt.moo_release, &[prev.into()], "rel_prev_mcall_obj")?;
+                self.builder.build_store(obj_slot, obj_val).map_err(|e| format!("{e}"))?;
+
+                let obj = obj_val;
                 // Eingebaute Methoden
                 match method.as_str() {
                     "append" | "hinzufügen" => {
                         let arg = self.compile_expr(&args[0])?;
                         self.call_rt_void(self.rt.moo_list_append,
                             &[obj.into(), arg.into()], "append")?;
-                        // Liste wird nur mutiert, obj-Temp freigeben.
-                        self.call_rt_void(self.rt.moo_release, &[obj.into()], "rel_obj_app")?;
+                        // (alter Inline-Release entfallen — Slot-Cleanup uebernimmt es)
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     "length" | "länge" => {
