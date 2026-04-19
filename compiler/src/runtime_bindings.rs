@@ -140,6 +140,10 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_func_new: FunctionValue<'ctx>,
     pub moo_func_with_captures: FunctionValue<'ctx>,
     pub moo_func_captured_at: FunctionValue<'ctx>,
+    pub moo_func_call_0: FunctionValue<'ctx>,
+    pub moo_func_call_1: FunctionValue<'ctx>,
+    pub moo_func_call_2: FunctionValue<'ctx>,
+    pub moo_func_call_3: FunctionValue<'ctx>,
     // Thread & Channel
     pub moo_thread_spawn: FunctionValue<'ctx>,
     pub moo_thread_wait: FunctionValue<'ctx>,
@@ -491,6 +495,10 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_func_captured_at: module.add_function("moo_func_captured_at",
                 moo_value_type.fn_type(&[ptr_type.into(), i32_type.into()], false),
                 None),
+            moo_func_call_0: decl_mv_mv!("moo_func_call_0", mv1),
+            moo_func_call_1: decl_mv_mv!("moo_func_call_1", mv2),
+            moo_func_call_2: decl_mv_mv!("moo_func_call_2", mv3),
+            moo_func_call_3: decl_mv_mv!("moo_func_call_3", &[mv, mv, mv, mv]),
             // Thread & Channel
             moo_thread_spawn: decl_mv_mv!("moo_thread_spawn", mv2),
             moo_thread_wait: decl_mv_mv!("moo_thread_wait", mv1),

@@ -2954,12 +2954,24 @@ impl<'ctx> CodeGen<'ctx> {
                         let element = self.call_rt(self.rt.moo_list_iter_get,
                             &[list_loaded.into(), idx_loaded.into()], "elem")?;
 
-                        // Apply lambda: store element in param var, compile body
+                        // Apply callback auf element. Zwei Pfade:
+                        //   * Direktes Inline-Lambda — Body wird inline kompiliert
+                        //     (schneller, kein Call-Overhead, vermeidet MooFunc-Alloc).
+                        //   * Beliebige MOO_FUNC-Expression (benannte Funktion,
+                        //     Variable, Closure) — indirect call via moo_func_call_1.
                         if let Expr::Lambda { params, body } = lambda {
                             if let Some(param) = params.first() {
                                 self.store_var(param, element)?;
                             }
                             let mapped_val = self.compile_expr(body)?;
+                            let current_result = self.builder.build_load(self.mv_type(), result_ptr, "res")
+                                .map_err(|e| format!("{e}"))?.into_struct_value();
+                            self.call_rt_void(self.rt.moo_list_append,
+                                &[current_result.into(), mapped_val.into()], "append")?;
+                        } else {
+                            let fn_val = self.compile_expr(lambda)?;
+                            let mapped_val = self.call_rt(self.rt.moo_func_call_1,
+                                &[fn_val.into(), element.into()], "map_call")?;
                             let current_result = self.builder.build_load(self.mv_type(), result_ptr, "res")
                                 .map_err(|e| format!("{e}"))?.into_struct_value();
                             self.call_rt_void(self.rt.moo_list_append,
@@ -3029,12 +3041,20 @@ impl<'ctx> CodeGen<'ctx> {
                         let element = self.call_rt(self.rt.moo_list_iter_get,
                             &[list_loaded.into(), idx_loaded.into()], "elem")?;
 
-                        // Apply lambda: store element in param var, compile body, check truthy
-                        if let Expr::Lambda { params, body } = lambda {
+                        // Apply callback. Analog zu list.map: Inline-Lambda
+                        // direkt, beliebige MOO_FUNC-Expression via
+                        // moo_func_call_1.
+                        let test_val = if let Expr::Lambda { params, body } = lambda {
                             if let Some(param) = params.first() {
                                 self.store_var(param, element)?;
                             }
-                            let test_val = self.compile_expr(body)?;
+                            self.compile_expr(body)?
+                        } else {
+                            let fn_val = self.compile_expr(lambda)?;
+                            self.call_rt(self.rt.moo_func_call_1,
+                                &[fn_val.into(), element.into()], "filter_call")?
+                        };
+                        {
                             let is_true = self.builder.build_call(self.rt.moo_is_truthy,
                                 &[test_val.into()], "truthy")
                                 .map_err(|e| format!("{e}"))?

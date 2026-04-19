@@ -272,6 +272,10 @@ MooValue moo_func_with_captures(void* tramp_ptr, int32_t arity,
                                 const char* name,
                                 MooValue* caps, int32_t n);
 MooValue moo_func_captured_at(MooFunc* fn, int32_t i);
+MooValue moo_func_call_0(MooValue func);
+MooValue moo_func_call_1(MooValue func, MooValue a0);
+MooValue moo_func_call_2(MooValue func, MooValue a0, MooValue a1);
+MooValue moo_func_call_3(MooValue func, MooValue a0, MooValue a1, MooValue a2);
 
 // === Arithmetik & Vergleiche ===
 MooValue moo_add(MooValue a, MooValue b);
