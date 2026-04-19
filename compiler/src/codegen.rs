@@ -3611,13 +3611,103 @@ impl<'ctx> CodeGen<'ctx> {
                 let result = self.compile_expr(body)?;
                 self.builder.build_return(Some(&result)).map_err(|e| format!("{e}"))?;
 
+                // Fuer Closure-Lambdas (free_vars non-empty): Trampoline-Function
+                // nach der Inner-Function generieren. Signatur des Trampoline:
+                //   (MooFunc* env, MooValue p0, ..., MooValue pk) -> MooValue
+                // Body: fuer jedes Capture i moo_func_captured_at(env, i) laden,
+                // dann inner(p0, ..., pk, cap_0, ..., cap_m) aufrufen.
+                let tramp_opt: Option<FunctionValue<'ctx>> = if !free_vars.is_empty() {
+                    let ptr_type = self.context.ptr_type(AddressSpace::default());
+                    let mut tramp_param_types: Vec<BasicMetadataTypeEnum> = Vec::new();
+                    tramp_param_types.push(ptr_type.into());
+                    for _ in 0..params.len() {
+                        tramp_param_types.push(mv.into());
+                    }
+                    let tramp_fn_type = mv.fn_type(&tramp_param_types, false);
+                    let tramp_name = format!("{lambda_name}_tramp");
+                    let tramp = self.module.add_function(&tramp_name, tramp_fn_type, None);
+                    let tramp_entry = self.context.append_basic_block(tramp, "entry");
+                    self.current_function = Some(tramp);
+                    self.builder.position_at_end(tramp_entry);
+
+                    // Argumente fuer inner-Aufruf: erst user-Params, dann Captures
+                    let mut inner_args: Vec<BasicMetadataValueEnum> = Vec::new();
+                    for i in 0..params.len() {
+                        let p = tramp.get_nth_param((i + 1) as u32).unwrap();
+                        inner_args.push(p.into());
+                    }
+                    let env_arg = tramp.get_nth_param(0).unwrap();
+                    for i in 0..free_vars.len() {
+                        let i_val = self.context.i32_type().const_int(i as u64, false);
+                        let cap = self.call_rt(self.rt.moo_func_captured_at,
+                            &[env_arg.into(), i_val.into()],
+                            &format!("cap_{i}"))?;
+                        inner_args.push(cap.into());
+                    }
+                    let call_site = self.builder.build_call(function, &inner_args, "inner_call")
+                        .map_err(|e| format!("{e}"))?;
+                    let ret = match call_site.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Lambda-Trampoline: inner call ohne Return".into()),
+                    };
+                    self.builder.build_return(Some(&ret))
+                        .map_err(|e| format!("{e}"))?;
+                    Some(tramp)
+                } else {
+                    None
+                };
+
                 self.current_function = prev_fn;
                 self.variables = prev_vars;
                 if let Some(bb) = prev_block {
                     self.builder.position_at_end(bb);
                 }
 
-                self.call_rt(self.rt.moo_none, &[], "lambda_placeholder")
+                // Lambda als First-Class-Value verpacken.
+                if free_vars.is_empty() {
+                    // Kein Capture-Environment — direkter MOO_FUNC-Wrapper.
+                    let fn_ptr = function.as_global_value().as_pointer_value();
+                    let arity = self.context.i32_type()
+                        .const_int(params.len() as u64, false);
+                    let name_ptr = self.make_global_str(&lambda_name,
+                        &format!("__lname_{lambda_name}"))?;
+                    self.call_rt(self.rt.moo_func_new,
+                        &[fn_ptr.into(), arity.into(), name_ptr.into()],
+                        "lambda_val")
+                } else {
+                    // Closure: Captures in Stack-Array packen, moo_func_with_captures.
+                    let tramp = tramp_opt.expect("Trampoline oben erzeugt");
+                    let n = free_vars.len();
+                    let caps_array_type = mv.array_type(n as u32);
+                    let caps_alloca = self.builder.build_alloca(caps_array_type, "caps_arr")
+                        .map_err(|e| format!("{e}"))?;
+                    for (i, var_name) in free_vars.iter().enumerate() {
+                        let cap_val = self.load_var(var_name)?;
+                        let elem_ptr = unsafe {
+                            self.builder.build_in_bounds_gep(
+                                caps_array_type,
+                                caps_alloca,
+                                &[
+                                    self.context.i32_type().const_zero(),
+                                    self.context.i32_type().const_int(i as u64, false),
+                                ],
+                                &format!("cap_slot_{i}"),
+                            ).map_err(|e| format!("{e}"))?
+                        };
+                        self.builder.build_store(elem_ptr, cap_val)
+                            .map_err(|e| format!("{e}"))?;
+                    }
+                    let tramp_ptr = tramp.as_global_value().as_pointer_value();
+                    let arity = self.context.i32_type()
+                        .const_int(params.len() as u64, false);
+                    let name_ptr = self.make_global_str(&lambda_name,
+                        &format!("__lname_{lambda_name}"))?;
+                    let n_val = self.context.i32_type().const_int(n as u64, false);
+                    self.call_rt(self.rt.moo_func_with_captures,
+                        &[tramp_ptr.into(), arity.into(), name_ptr.into(),
+                          caps_alloca.into(), n_val.into()],
+                        "lambda_closure_val")
+                }
             }
             Expr::Ternary { condition, then_val, else_val } => {
                 let func = self.current_function.unwrap();

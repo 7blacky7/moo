@@ -112,10 +112,16 @@ void moo_event_emit(MooValue obj, MooValue event_name) {
         MooValue cb = callbacks->items[i];
         if (cb.tag == MOO_FUNC) {
             MooFunc* fn = MV_FUNC(cb);
-            // Callback mit Event-Name als Argument aufrufen
-            typedef MooValue (*MooFn1)(MooValue);
-            MooFn1 func = (MooFn1)fn->fn_ptr;
-            func(event_name);
+            // Closure- vs. Plain-Call-Konvention (vgl. moo_thread.c)
+            if (fn->n_captured > 0) {
+                typedef MooValue (*MooTramp1)(MooFunc*, MooValue);
+                MooTramp1 tramp = (MooTramp1)fn->fn_ptr;
+                tramp(fn, event_name);
+            } else {
+                typedef MooValue (*MooFn1)(MooValue);
+                MooFn1 func = (MooFn1)fn->fn_ptr;
+                func(event_name);
+            }
         }
     }
 }

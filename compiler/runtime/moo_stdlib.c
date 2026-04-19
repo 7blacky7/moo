@@ -159,6 +159,17 @@ MooValue moo_func_new(void* fn_ptr, int32_t arity, const char* name) {
     return v;
 }
 
+// Helper fuer den Trampoline-Codegen: liefert die gebundene Capture an
+// Position i. Wird vom vom Codegen generierten Trampoline einmal pro
+// Capture aufgerufen um das Environment auszupacken.
+// Rueckgabe bei Index out of bounds: moo_none() (defensiv).
+MooValue moo_func_captured_at(MooFunc* fn, int32_t i) {
+    if (!fn || !fn->captured || i < 0 || i >= fn->n_captured) {
+        return moo_none();
+    }
+    return fn->captured[i];
+}
+
 // moo_func_with_captures: Erstellt ein MOO_FUNC-Value fuer ein Closure-Lambda.
 // Der tramp_ptr zeigt auf einen vom Codegen erzeugten Trampoline mit der
 // Signatur (MooFunc* env, MooValue... user_args). Der Trampoline liest

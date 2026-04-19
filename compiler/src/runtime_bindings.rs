@@ -136,9 +136,10 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_file_is_dir: FunctionValue<'ctx>,
     pub moo_file_mkdir: FunctionValue<'ctx>,
     pub moo_dir_list: FunctionValue<'ctx>,
-    // First-Class Funktionen (MOO_FUNC-Constructors)
+    // First-Class Funktionen (MOO_FUNC-Constructors + Helpers)
     pub moo_func_new: FunctionValue<'ctx>,
     pub moo_func_with_captures: FunctionValue<'ctx>,
+    pub moo_func_captured_at: FunctionValue<'ctx>,
     // Thread & Channel
     pub moo_thread_spawn: FunctionValue<'ctx>,
     pub moo_thread_wait: FunctionValue<'ctx>,
@@ -485,6 +486,10 @@ impl<'ctx> RuntimeBindings<'ctx> {
                     ptr_type.into(), i32_type.into(), ptr_type.into(),
                     ptr_type.into(), i32_type.into(),
                 ], false),
+                None),
+            // moo_func_captured_at(MooFunc* fn, int32 i) -> MooValue
+            moo_func_captured_at: module.add_function("moo_func_captured_at",
+                moo_value_type.fn_type(&[ptr_type.into(), i32_type.into()], false),
                 None),
             // Thread & Channel
             moo_thread_spawn: decl_mv_mv!("moo_thread_spawn", mv2),
