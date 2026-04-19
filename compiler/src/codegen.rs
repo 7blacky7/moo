@@ -2635,6 +2635,9 @@ impl<'ctx> CodeGen<'ctx> {
                     "argumente" | "args" => {
                         return self.call_rt(self.rt.moo_args, &[], "args");
                     }
+                    "prozess_id" | "pid" | "getpid" => {
+                        return self.call_rt(self.rt.moo_pid, &[], "pid");
+                    }
                     _ => {}
                 }
 

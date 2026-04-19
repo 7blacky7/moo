@@ -8,6 +8,18 @@
 #include <stdlib.h>
 #include <time.h>
 
+/* === prozess_id/pid — getpid() Cross-Platform === */
+#ifdef _WIN32
+#include <process.h>
+#define moo_getpid() ((int)_getpid())
+#else
+#define moo_getpid() ((int)getpid())
+#endif
+
+MooValue moo_pid(void) {
+    return moo_number((double)moo_getpid());
+}
+
 /* === sleep/schlafe === */
 /* schlafe(sekunden) — pausiert die Ausfuehrung */
 void moo_sleep(MooValue duration) {

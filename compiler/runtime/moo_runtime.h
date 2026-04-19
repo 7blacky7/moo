@@ -353,6 +353,7 @@ void moo_exit(MooValue code);
 MooValue moo_to_number(MooValue v);
 void moo_args_init(int argc, char** argv);
 MooValue moo_args(void);
+MooValue moo_pid(void);
 
 // === Datei-I/O ===
 MooValue moo_file_read(MooValue path);

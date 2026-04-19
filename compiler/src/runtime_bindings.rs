@@ -278,6 +278,7 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_exit: FunctionValue<'ctx>,
     pub moo_to_number: FunctionValue<'ctx>,
     pub moo_args: FunctionValue<'ctx>,
+    pub moo_pid: FunctionValue<'ctx>,
     // Netzwerk (TCP/UDP)
     pub moo_tcp_server: FunctionValue<'ctx>,
     pub moo_tcp_connect: FunctionValue<'ctx>,
@@ -632,6 +633,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_exit: module.add_function("moo_exit", void_type.fn_type(mv1, false), None),
             moo_to_number: decl_mv_mv!("moo_to_number", mv1),
             moo_args: decl_mv_mv!("moo_args", &[]),
+            moo_pid: decl_mv_mv!("moo_pid", &[]),
             // Netzwerk
             moo_tcp_server: decl_mv_mv!("moo_tcp_server", mv1),
             moo_tcp_connect: decl_mv_mv!("moo_tcp_connect", mv2),
