@@ -2638,6 +2638,60 @@ impl<'ctx> CodeGen<'ctx> {
                     "prozess_id" | "pid" | "getpid" => {
                         return self.call_rt(self.rt.moo_pid, &[], "pid");
                     }
+                    "tray_erstelle" | "tray_create" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let i = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_create, &[t.into(), i.into()], "tray_create");
+                    }
+                    "tray_menu_add" | "tray_menu_hinzufuegen" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let l = self.compile_expr(&args[1])?;
+                        let c = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_tray_menu_add, &[t.into(), l.into(), c.into()], "tray_menu_add");
+                    }
+                    "tray_menu_clear" | "tray_menu_leeren" => {
+                        let t = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tray_menu_clear, &[t.into()], "tray_menu_clear");
+                    }
+                    "tray_timer_add" | "tray_timer_hinzufuegen" => {
+                        let ms = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_timer_add, &[ms.into(), c.into()], "tray_timer_add");
+                    }
+                    "gui_fenster" | "gui_window" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        let h = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_gui_fenster, &[t.into(), b.into(), h.into()], "gui_fenster");
+                    }
+                    "gui_label" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_gui_label, &[f.into(), t.into()], "gui_label");
+                    }
+                    "gui_button" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let l = self.compile_expr(&args[1])?;
+                        let c = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_gui_button, &[f.into(), l.into(), c.into()], "gui_button");
+                    }
+                    "gui_label_setze" | "gui_label_set" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_gui_label_setze, &[l.into(), t.into()], "gui_label_setze");
+                    }
+                    "gui_icon_setze" | "gui_icon_set" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let n = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_gui_icon_setze, &[f.into(), n.into()], "gui_icon_setze");
+                    }
+                    "gui_zeige" | "gui_show" => {
+                        let f = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_gui_zeige, &[f.into()], "gui_zeige");
+                    }
+                    "tray_run" | "tray_loop" => {
+                        return self.call_rt(self.rt.moo_tray_run, &[], "tray_run");
+                    }
                     _ => {}
                 }
 

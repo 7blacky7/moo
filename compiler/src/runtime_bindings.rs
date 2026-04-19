@@ -279,6 +279,19 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_to_number: FunctionValue<'ctx>,
     pub moo_args: FunctionValue<'ctx>,
     pub moo_pid: FunctionValue<'ctx>,
+    // Tray (System-Tray)
+    pub moo_tray_create: FunctionValue<'ctx>,
+    pub moo_tray_menu_add: FunctionValue<'ctx>,
+    pub moo_tray_menu_clear: FunctionValue<'ctx>,
+    pub moo_tray_timer_add: FunctionValue<'ctx>,
+    // GUI (GTK-Fenster)
+    pub moo_gui_fenster: FunctionValue<'ctx>,
+    pub moo_gui_label: FunctionValue<'ctx>,
+    pub moo_gui_button: FunctionValue<'ctx>,
+    pub moo_gui_label_setze: FunctionValue<'ctx>,
+    pub moo_gui_icon_setze: FunctionValue<'ctx>,
+    pub moo_gui_zeige: FunctionValue<'ctx>,
+    pub moo_tray_run: FunctionValue<'ctx>,
     // Netzwerk (TCP/UDP)
     pub moo_tcp_server: FunctionValue<'ctx>,
     pub moo_tcp_connect: FunctionValue<'ctx>,
@@ -634,6 +647,18 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_to_number: decl_mv_mv!("moo_to_number", mv1),
             moo_args: decl_mv_mv!("moo_args", &[]),
             moo_pid: decl_mv_mv!("moo_pid", &[]),
+            // Tray
+            moo_tray_create: decl_mv_mv!("moo_tray_create", mv2),
+            moo_tray_menu_add: decl_mv_mv!("moo_tray_menu_add", mv3),
+            moo_tray_menu_clear: decl_mv_mv!("moo_tray_menu_clear", mv1),
+            moo_tray_timer_add: decl_mv_mv!("moo_tray_timer_add", mv2),
+            moo_gui_fenster: decl_mv_mv!("moo_gui_fenster", mv3),
+            moo_gui_label: decl_mv_mv!("moo_gui_label", mv2),
+            moo_gui_button: decl_mv_mv!("moo_gui_button", mv3),
+            moo_gui_label_setze: decl_mv_mv!("moo_gui_label_setze", mv2),
+            moo_gui_icon_setze: decl_mv_mv!("moo_gui_icon_setze", mv2),
+            moo_gui_zeige: decl_mv_mv!("moo_gui_zeige", mv1),
+            moo_tray_run: decl_mv_mv!("moo_tray_run", &[]),
             // Netzwerk
             moo_tcp_server: decl_mv_mv!("moo_tcp_server", mv1),
             moo_tcp_connect: decl_mv_mv!("moo_tcp_connect", mv2),

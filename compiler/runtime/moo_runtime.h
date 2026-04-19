@@ -355,6 +355,20 @@ void moo_args_init(int argc, char** argv);
 MooValue moo_args(void);
 MooValue moo_pid(void);
 
+// === System-Tray ===
+MooValue moo_tray_create(MooValue titel, MooValue icon_name);
+MooValue moo_tray_menu_add(MooValue tray, MooValue label, MooValue callback);
+MooValue moo_tray_menu_clear(MooValue tray);
+MooValue moo_tray_timer_add(MooValue interval_ms, MooValue callback);
+
+MooValue moo_gui_fenster(MooValue titel, MooValue breite, MooValue hoehe);
+MooValue moo_gui_label(MooValue fenster, MooValue text);
+MooValue moo_gui_button(MooValue fenster, MooValue label, MooValue callback);
+MooValue moo_gui_label_setze(MooValue label, MooValue text);
+MooValue moo_gui_icon_setze(MooValue fenster, MooValue icon_name);
+MooValue moo_gui_zeige(MooValue fenster);
+MooValue moo_tray_run(void);
+
 // === Datei-I/O ===
 MooValue moo_file_read(MooValue path);
 MooValue moo_file_write(MooValue path, MooValue content);

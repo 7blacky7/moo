@@ -29,8 +29,30 @@ fn main() {
         .file("runtime/moo_profiler.c")
         .file("runtime/moo_world.c")
         .file("runtime/moo_sprite.c")
+        .file("runtime/moo_tray.c")
+        .file("runtime/moo_gui.c")
         .include("runtime")
         .include("/usr/include/SDL2")
+        .include("/usr/include/libappindicator3-0.1")
+        .include("/usr/include/libdbusmenu-glib-0.4")
+        .include("/usr/include/gtk-3.0")
+        .include("/usr/include/pango-1.0")
+        .include("/usr/include/cairo")
+        .include("/usr/include/gdk-pixbuf-2.0")
+        .include("/usr/include/atk-1.0")
+        .include("/usr/include/harfbuzz")
+        .include("/usr/include/glib-2.0")
+        .include("/usr/lib/glib-2.0/include")
+        .include("/usr/include/gio-unix-2.0")
+        .include("/usr/include/fribidi")
+        .include("/usr/include/pixman-1")
+        .include("/usr/include/freetype2")
+        .include("/usr/include/libpng16")
+        .include("/usr/include/at-spi2-atk/2.0")
+        .include("/usr/include/at-spi-2.0")
+        .include("/usr/include/dbus-1.0")
+        .include("/usr/lib/dbus-1.0/include")
+        .include("/usr/include/cloudproviders")
         .opt_level(2)
         .flag("-fPIC");
 
@@ -69,6 +91,15 @@ fn main() {
     // Link SDL2 + SDL2_image for graphics + sprites
     println!("cargo:rustc-link-lib=SDL2");
     println!("cargo:rustc-link-lib=SDL2_image");
+
+    // Tray (libappindicator3 + GTK3)
+    println!("cargo:rustc-link-lib=appindicator3");
+    println!("cargo:rustc-link-lib=dbusmenu-glib");
+    println!("cargo:rustc-link-lib=gtk-3");
+    println!("cargo:rustc-link-lib=gdk-3");
+    println!("cargo:rustc-link-lib=gio-2.0");
+    println!("cargo:rustc-link-lib=gobject-2.0");
+    println!("cargo:rustc-link-lib=glib-2.0");
 
     // 3D Backend: bedingt linken
     #[cfg(feature = "gl21")]
