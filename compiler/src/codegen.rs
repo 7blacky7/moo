@@ -512,7 +512,9 @@ impl<'ctx> CodeGen<'ctx> {
                 let val = self.compile_expr(value)?;
                 let prop_str = self.make_global_str(property, "prop")?;
                 self.call_rt_void(self.rt.moo_object_set,
-                    &[obj.into(), prop_str.into(), val.into()], "obj_set")
+                    &[obj.into(), prop_str.into(), val.into()], "obj_set")?;
+                self.call_rt_void(self.rt.moo_release, &[obj.into()], "rel_obj_propset")?;
+                Ok(())
             }
             Stmt::IndexAssignment { object, index, value } => {
                 let obj = self.compile_expr(object)?;
@@ -624,7 +626,10 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(())
             }
             Stmt::Expression(expr) => {
-                self.compile_expr(expr)?;
+                // Ergebnis wird nicht konsumiert → Expression-Temp freigeben,
+                // sonst leakt z.B. eine nackte `d[k]`-Zeile den Return-Ref.
+                let val = self.compile_expr(expr)?;
+                self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_expr_stmt")?;
                 Ok(())
             }
             Stmt::ParallelFor { var_name, iterable, body } => {
@@ -1050,6 +1055,12 @@ impl<'ctx> CodeGen<'ctx> {
         self.loop_stack.pop();
 
         self.builder.position_at_end(after_bb);
+        // Iterable-Temp (Liste) nach der Schleife freigeben. list_val
+        // wurde mit compile_expr (+1 owning) produziert und in list_ptr
+        // gespeichert; ohne release bliebe pro for-Schleife ein Leak.
+        let list_end = self.builder.build_load(self.mv_type(), list_ptr, "list_end")
+            .map_err(|e| format!("{e}"))?.into_struct_value();
+        self.call_rt_void(self.rt.moo_release, &[list_end.into()], "rel_for_list")?;
         Ok(())
     }
 
@@ -1811,7 +1822,13 @@ impl<'ctx> CodeGen<'ctx> {
                         BinOp::LShift => self.rt.moo_lshift,
                         BinOp::RShift => self.rt.moo_rshift,
                     };
-                    self.call_rt(func, &[lhs.into(), rhs.into()], "op")
+                    let op_result = self.call_rt(func, &[lhs.into(), rhs.into()], "op")?;
+                    // Operand-Temps freigeben: die Op hat ihre eigenen Refs
+                    // auf das Ergebnis gesetzt, die +1-owning der Operanden
+                    // gehoeren zu diesem Stmt-scope und leakten sonst.
+                    self.call_rt_void(self.rt.moo_release, &[lhs.into()], "rel_lhs")?;
+                    self.call_rt_void(self.rt.moo_release, &[rhs.into()], "rel_rhs")?;
+                    Ok(op_result)
                 }
             }
             Expr::UnaryOp { op, operand } => {
@@ -1821,7 +1838,9 @@ impl<'ctx> CodeGen<'ctx> {
                     UnaryOpKind::Not => self.rt.moo_not,
                     UnaryOpKind::BitNot => self.rt.moo_bitnot,
                 };
-                self.call_rt(func, &[val.into()], "unary")
+                let res = self.call_rt(func, &[val.into()], "unary")?;
+                self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_un")?;
+                Ok(res)
             }
             Expr::FunctionCall { name, args } => {
                 // User-Funktionen haben Vorrang vor Builtins. Wenn eine Funktion
@@ -2818,6 +2837,8 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         self.call_rt_void(self.rt.moo_list_append,
                             &[obj.into(), arg.into()], "append")?;
+                        // Liste wird nur mutiert, obj-Temp freigeben.
+                        self.call_rt_void(self.rt.moo_release, &[obj.into()], "rel_obj_app")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     "length" | "länge" => {
@@ -3472,16 +3493,24 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::IndexAccess { object, index } => {
                 let obj = self.compile_expr(object)?;
                 // String-Slicing: obj[start..end] -> moo_string_slice(obj, start, end)
-                if let Expr::Range { start, end } = index.as_ref() {
+                let result = if let Expr::Range { start, end } = index.as_ref() {
                     let s = self.compile_expr(start)?;
                     let e = self.compile_expr(end)?;
                     self.call_rt(self.rt.moo_string_slice,
-                        &[obj.into(), s.into(), e.into()], "str_slice")
+                        &[obj.into(), s.into(), e.into()], "str_slice")?
                 } else {
                     let idx = self.compile_expr(index)?;
+                    // idx ist Caller-Ref: moo_index_get (→ dict_get/list_get)
+                    // nutzt idx intern, ownership wird NICHT transferiert.
+                    // String/List release-idx nach Verwendung waere hier noch offen;
+                    // dict_get released selbst. Fuer Minimalimpact nur obj freigeben.
                     self.call_rt(self.rt.moo_index_get,
-                        &[obj.into(), idx.into()], "idx_get")
-                }
+                        &[obj.into(), idx.into()], "idx_get")?
+                };
+                // Container nur gelesen → load-Temp releasen damit Container
+                // nicht pro Lookup einen Refcount verliert/gewinnt.
+                self.call_rt_void(self.rt.moo_release, &[obj.into()], "rel_idx_obj")?;
+                Ok(result)
             }
             Expr::Range { start, end } => {
                 let s = self.compile_expr(start)?;
