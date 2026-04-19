@@ -72,6 +72,7 @@ pub struct CodeGen<'ctx> {
     lambda_captures: HashMap<String, Vec<String>>,
     // Lambda-Counter
     lambda_counter: usize,
+    for_iter_counter: usize,
     // Defer-Stack (Go-inspiriert): Vec von AST-Exprs die am Funktionsende ausgeführt werden
     defer_stack: Vec<Expr>,
     // Crystal-inspiriert: Typ-Tracking fuer Warnungen (kein Enforcement!)
@@ -109,6 +110,7 @@ impl<'ctx> CodeGen<'ctx> {
             lambda_names: HashMap::new(),
             lambda_captures: HashMap::new(),
             lambda_counter: 0,
+            for_iter_counter: 0,
             defer_stack: Vec::new(),
             variable_types: HashMap::new(),
             warnings: Vec::new(),
@@ -998,10 +1000,32 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.build_store(idx_ptr, i32_type.const_int(0, false))
             .map_err(|e| format!("{e}"))?;
 
-        // Wir brauchen die Liste gespeichert, damit wir sie im Loop-Body laden koennen
-        let list_ptr = self.builder.build_alloca(self.mv_type(), "for_list")
+        // Wir brauchen die Liste gespeichert, damit wir sie im Loop-Body laden koennen.
+        // Iterable-Ptr in self.variables mit synthetischem Namen ablegen, damit
+        // release_function_locals() ihn auch bei early-return aus dem Loop-Body
+        // erreicht (sonst leak pro Early-Return-Call).
+        // Alloca MUSS im Entry-Block liegen, damit sie alle Uses dominiert.
+        let iter_slot_name = format!("__for_iter_{}", self.for_iter_counter);
+        self.for_iter_counter += 1;
+        let entry_bb = func.get_first_basic_block().unwrap();
+        let current_block = self.builder.get_insert_block().unwrap();
+        if let Some(first_instr) = entry_bb.get_first_instruction() {
+            self.builder.position_before(&first_instr);
+        } else {
+            self.builder.position_at_end(entry_bb);
+        }
+        let list_ptr = self.builder.build_alloca(self.mv_type(), &iter_slot_name)
             .map_err(|e| format!("{e}"))?;
+        // Mit MOO_NONE initialisieren damit release_function_locals() vor
+        // dem Store in diesem Slot (falls Code vor dem for-Loop early-returnt)
+        // harmlos wirkt.
+        let none_init = self.context.i64_type().const_int(3, false);
+        let zero_data = self.context.i64_type().const_int(0, false);
+        let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
+        self.builder.build_store(list_ptr, none_val).map_err(|e| format!("{e}"))?;
+        self.builder.position_at_end(current_block);
         self.builder.build_store(list_ptr, list_val).map_err(|e| format!("{e}"))?;
+        self.variables.insert(iter_slot_name.clone(), list_ptr);
 
         let cond_bb = self.context.append_basic_block(func, "for_cond");
         let body_bb = self.context.append_basic_block(func, "for_body");
@@ -1061,6 +1085,12 @@ impl<'ctx> CodeGen<'ctx> {
         let list_end = self.builder.build_load(self.mv_type(), list_ptr, "list_end")
             .map_err(|e| format!("{e}"))?.into_struct_value();
         self.call_rt_void(self.rt.moo_release, &[list_end.into()], "rel_for_list")?;
+        // Slot-Wert auf MOO_NONE setzen, damit ein spaeteres
+        // release_function_locals() nicht doppelt released.
+        let none_init = self.context.i64_type().const_int(3, false);
+        let zero_data = self.context.i64_type().const_int(0, false);
+        let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
+        self.builder.build_store(list_ptr, none_val).map_err(|e| format!("{e}"))?;
         Ok(())
     }
 

@@ -17,18 +17,24 @@ typedef struct {
 
 static void* thread_runner(void* raw) {
     MooThreadArgs* targs = (MooThreadArgs*)raw;
+    MooValue arg = targs->arg;
     MooValue result;
     if (targs->env) {
         // Closure-Call-Konvention
         MooValue (*tramp)(MooFunc*, MooValue) =
             (MooValue (*)(MooFunc*, MooValue))targs->fn_ptr;
-        result = tramp(targs->env, targs->arg);
+        result = tramp(targs->env, arg);
     } else {
         MooValue (*plain)(MooValue) =
             (MooValue (*)(MooValue))targs->fn_ptr;
-        result = plain(targs->arg);
+        result = plain(arg);
     }
     free(targs);
+    // Arg-Retain aus moo_thread_spawn freigeben. Die Funktion hat mit
+    // arg als Parameter gearbeitet (Function-Exit-Cleanup released den
+    // Parameter-Slot) — der zusaetzliche retain hier haelt die Struktur
+    // fuer den gesamten Thread-Lauf lebendig.
+    moo_release(arg);
 
     MooValue* heap_result = (MooValue*)malloc(sizeof(MooValue));
     *heap_result = result;
@@ -50,6 +56,10 @@ MooValue moo_thread_spawn(MooValue func, MooValue arg) {
 
     // Closure-Environment am Leben halten bis Thread fertig ist.
     if (targs->env) moo_retain(func);
+    // Arg muss ebenfalls bis Thread-Ende leben. Ohne diesen retain
+    // wuerde der Caller den arg-Temp beim Return freigeben (Function-
+    // Exit-Cleanup), der Thread griffe auf freed memory zu.
+    moo_retain(arg);
 
     pthread_create(&t->thread, NULL, thread_runner, targs);
 

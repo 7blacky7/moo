@@ -131,14 +131,20 @@ MooValue moo_file_lines(MooValue path) {
 }
 
 MooValue moo_file_exists(MooValue path) {
+    if (path.tag != MOO_STRING) return moo_bool(false);
     const char* p = MV_STR(path)->chars;
     moo_stat_t st;
-    return moo_bool(moo_stat_call(p, &st) == 0);
+    int rc = moo_stat_call(p, &st);
+    moo_release(path);  // Transfer-Semantik (siehe mtime)
+    return moo_bool(rc == 0);
 }
 
 MooValue moo_file_delete(MooValue path) {
+    if (path.tag != MOO_STRING) return moo_bool(false);
     const char* p = MV_STR(path)->chars;
-    return moo_bool(remove(p) == 0);
+    int rc = remove(p);
+    moo_release(path);
+    return moo_bool(rc == 0);
 }
 
 // === Metadaten ===
@@ -200,12 +206,13 @@ MooValue moo_file_mkdir(MooValue path) {
 // Prueft ob der Pfad ein Verzeichnis ist.
 // Gibt falsch zurueck wenn Pfad nicht existiert oder keine Directory ist.
 MooValue moo_file_is_dir(MooValue path) {
+    if (path.tag != MOO_STRING) return moo_bool(false);
     const char* p = MV_STR(path)->chars;
     moo_stat_t st;
-    if (moo_stat_call(p, &st) != 0) {
-        return moo_bool(false);
-    }
-    return moo_bool(MOO_S_ISDIR(st.st_mode));
+    int rc = moo_stat_call(p, &st);
+    bool is_dir = (rc == 0) && MOO_S_ISDIR(st.st_mode);
+    moo_release(path);  // Transfer-Semantik (siehe mtime)
+    return moo_bool(is_dir);
 }
 
 // === Verzeichnis-Listing ===
@@ -239,9 +246,10 @@ MooValue moo_dir_list(MooValue path) {
 }
 #else
 MooValue moo_dir_list(MooValue path) {
+    if (path.tag != MOO_STRING) return moo_list_new(0);
     const char* p = MV_STR(path)->chars;
     DIR* d = opendir(p);
-    if (!d) return moo_list_new(0);
+    if (!d) { moo_release(path); return moo_list_new(0); }
 
     MooValue list = moo_list_new(16);
     struct dirent* entry;
@@ -251,6 +259,7 @@ MooValue moo_dir_list(MooValue path) {
         moo_list_append(list, moo_string_new(entry->d_name));
     }
     closedir(d);
+    moo_release(path);  // Transfer-Semantik
     return list;
 }
 #endif
