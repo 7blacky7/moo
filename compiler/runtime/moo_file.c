@@ -23,14 +23,15 @@ extern MooValue moo_list_get(MooValue list, MooValue index);
 extern MooValue moo_list_length(MooValue list);
 
 MooValue moo_file_read(MooValue path) {
+    if (path.tag != MOO_STRING) return moo_string_new_len("", 0);
     const char* p = MV_STR(path)->chars;
     FILE* f = fopen(p, "rb");
-    if (!f) return moo_string_new_len("", 0);
+    if (!f) { moo_release(path); return moo_string_new_len("", 0); }
 
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
     fseek(f, 0, SEEK_SET);
-    if (len < 0) { fclose(f); return moo_string_new_len("", 0); }
+    if (len < 0) { fclose(f); moo_release(path); return moo_string_new_len("", 0); }
 
     char* buf = (char*)moo_alloc(len + 1);
     size_t got = fread(buf, 1, (size_t)len, f);
@@ -39,19 +40,21 @@ MooValue moo_file_read(MooValue path) {
     // Binary-safe: explizite Laenge, NUL-bytes erhalten.
     MooValue result = moo_string_new_len(buf, (int32_t)got);
     moo_free(buf);
+    moo_release(path);  // Transfer-Semantik
     return result;
 }
 
 // Liest Datei in eine Liste<Zahl> (binary-safe, fuer TAR/Git/PNG/...).
 MooValue moo_file_read_bytes(MooValue path) {
+    if (path.tag != MOO_STRING) return moo_list_new(0);
     const char* p = MV_STR(path)->chars;
     FILE* f = fopen(p, "rb");
-    if (!f) return moo_list_new(0);
+    if (!f) { moo_release(path); return moo_list_new(0); }
 
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
     fseek(f, 0, SEEK_SET);
-    if (len <= 0) { fclose(f); return moo_list_new(0); }
+    if (len <= 0) { fclose(f); moo_release(path); return moo_list_new(0); }
 
     unsigned char* buf = (unsigned char*)moo_alloc((size_t)len);
     size_t got = fread(buf, 1, (size_t)len, f);
@@ -62,28 +65,45 @@ MooValue moo_file_read_bytes(MooValue path) {
         moo_list_append(list, moo_number((double)buf[i]));
     }
     moo_free(buf);
+    moo_release(path);  // Transfer-Semantik
     return list;
 }
 
 MooValue moo_file_write(MooValue path, MooValue content) {
+    if (path.tag != MOO_STRING) {
+        if (content.tag == MOO_STRING) moo_release(content);
+        return moo_bool(false);
+    }
+    if (content.tag != MOO_STRING) {
+        moo_release(path);
+        return moo_bool(false);
+    }
     const char* p = MV_STR(path)->chars;
-    if (content.tag != MOO_STRING) return moo_bool(false);
     MooString* s = MV_STR(content);
     FILE* f = fopen(p, "wb");
-    if (!f) return moo_bool(false);
+    if (!f) { moo_release(path); moo_release(content); return moo_bool(false); }
     // Binary-safe: nutzt explizite length statt strlen
     fwrite(s->chars, 1, (size_t)s->length, f);
     fclose(f);
+    moo_release(path);      // Transfer-Semantik
+    moo_release(content);   // Transfer-Semantik
     return moo_bool(true);
 }
 
 // Schreibt eine Liste<Zahl> als rohe Bytes in eine Datei.
 MooValue moo_file_write_bytes(MooValue path, MooValue list) {
-    if (list.tag != MOO_LIST) return moo_bool(false);
+    if (path.tag != MOO_STRING) {
+        if (list.tag == MOO_LIST) moo_release(list);
+        return moo_bool(false);
+    }
+    if (list.tag != MOO_LIST) {
+        moo_release(path);
+        return moo_bool(false);
+    }
     const char* p = MV_STR(path)->chars;
     int32_t len = (int32_t)MV_NUM(moo_list_length(list));
     FILE* f = fopen(p, "wb");
-    if (!f) return moo_bool(false);
+    if (!f) { moo_release(path); moo_release(list); return moo_bool(false); }
     if (len > 0) {
         unsigned char* buf = (unsigned char*)moo_alloc((size_t)len);
         for (int32_t i = 0; i < len; i++) {
@@ -95,23 +115,37 @@ MooValue moo_file_write_bytes(MooValue path, MooValue list) {
         moo_free(buf);
     }
     fclose(f);
+    moo_release(path);   // Transfer-Semantik
+    moo_release(list);   // Transfer-Semantik
     return moo_bool(true);
 }
 
 MooValue moo_file_append(MooValue path, MooValue content) {
+    if (path.tag != MOO_STRING) {
+        if (content.tag == MOO_STRING) moo_release(content);
+        return moo_bool(false);
+    }
+    if (content.tag != MOO_STRING) {
+        moo_release(path);
+        return moo_bool(false);
+    }
     const char* p = MV_STR(path)->chars;
-    const char* c = MV_STR(content)->chars;
+    MooString* s = MV_STR(content);
     FILE* f = fopen(p, "ab");
-    if (!f) return moo_bool(false);
-    fwrite(c, 1, strlen(c), f);
+    if (!f) { moo_release(path); moo_release(content); return moo_bool(false); }
+    // Binary-safe: nutze explizite Laenge statt strlen
+    fwrite(s->chars, 1, (size_t)s->length, f);
     fclose(f);
+    moo_release(path);      // Transfer-Semantik
+    moo_release(content);   // Transfer-Semantik
     return moo_bool(true);
 }
 
 MooValue moo_file_lines(MooValue path) {
+    if (path.tag != MOO_STRING) return moo_list_new(0);
     const char* p = MV_STR(path)->chars;
     FILE* f = fopen(p, "r");
-    if (!f) return moo_list_new(0);
+    if (!f) { moo_release(path); return moo_list_new(0); }
 
     MooValue list = moo_list_new(8);
     char buf[4096];
@@ -127,6 +161,7 @@ MooValue moo_file_lines(MooValue path) {
         moo_list_append(list, moo_string_new(buf));
     }
     fclose(f);
+    moo_release(path);  // Transfer-Semantik
     return list;
 }
 
@@ -172,7 +207,7 @@ MooValue moo_file_mkdir(MooValue path) {
     if (path.tag != MOO_STRING) return moo_bool(false);
     const char* p = MV_STR(path)->chars;
     size_t len = strlen(p);
-    if (len == 0) return moo_bool(false);
+    if (len == 0) { moo_release(path); return moo_bool(false); }
 
     char* buf = (char*)moo_alloc(len + 1);
     memcpy(buf, p, len);
@@ -199,8 +234,10 @@ MooValue moo_file_mkdir(MooValue path) {
 
     // Final-Check: ist der Ziel-Pfad jetzt ein Verzeichnis?
     moo_stat_t st;
-    if (moo_stat_call(p, &st) != 0) return moo_bool(false);
-    return moo_bool(MOO_S_ISDIR(st.st_mode));
+    int rc = moo_stat_call(p, &st);
+    bool ok = (rc == 0) && MOO_S_ISDIR(st.st_mode);
+    moo_release(path);  // Transfer-Semantik
+    return moo_bool(ok);
 }
 
 // Prueft ob der Pfad ein Verzeichnis ist.
