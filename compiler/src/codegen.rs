@@ -2986,8 +2986,12 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     "join" | "verbinden" => {
                         let delim = self.compile_expr(&args[0])?;
-                        return self.call_rt(self.rt.moo_list_join,
-                            &[obj.into(), delim.into()], "join");
+                        let r = self.call_rt(self.rt.moo_list_join,
+                            &[obj.into(), delim.into()], "join")?;
+                        // CG2: delim wird von list_join nur gelesen (nicht gespeichert) → release.
+                        // obj bleibt — T1-Slot kuemmert sich darum.
+                        self.call_rt_void(self.rt.moo_release, &[delim.into()], "rel_join_delim")?;
+                        return Ok(r);
                     }
                     "contains" | "enthält" => {
                         // Tag-dispatch: dict.enthält(key) → moo_dict_has,
@@ -3023,19 +3027,29 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     "split" | "teilen" => {
                         let delim = self.compile_expr(&args[0])?;
-                        return self.call_rt(self.rt.moo_string_split,
-                            &[obj.into(), delim.into()], "split");
+                        let r = self.call_rt(self.rt.moo_string_split,
+                            &[obj.into(), delim.into()], "split")?;
+                        // CG2: delim read-only → release. obj via T1-Slot.
+                        self.call_rt_void(self.rt.moo_release, &[delim.into()], "rel_split_delim")?;
+                        return Ok(r);
                     }
                     "replace" | "ersetzen" => {
                         let old_s = self.compile_expr(&args[0])?;
                         let new_s = self.compile_expr(&args[1])?;
-                        return self.call_rt(self.rt.moo_string_replace,
-                            &[obj.into(), old_s.into(), new_s.into()], "replace");
+                        let r = self.call_rt(self.rt.moo_string_replace,
+                            &[obj.into(), old_s.into(), new_s.into()], "replace")?;
+                        // CG2: old_s/new_s read-only → release. obj via T1-Slot.
+                        self.call_rt_void(self.rt.moo_release, &[old_s.into()], "rel_replace_old")?;
+                        self.call_rt_void(self.rt.moo_release, &[new_s.into()], "rel_replace_new")?;
+                        return Ok(r);
                     }
                     "str_contains" | "text_enthält" => {
                         let needle = self.compile_expr(&args[0])?;
-                        return self.call_rt(self.rt.moo_string_contains,
-                            &[obj.into(), needle.into()], "str_contains");
+                        let r = self.call_rt(self.rt.moo_string_contains,
+                            &[obj.into(), needle.into()], "str_contains")?;
+                        // CG2: needle read-only → release. obj via T1-Slot.
+                        self.call_rt_void(self.rt.moo_release, &[needle.into()], "rel_contains_needle")?;
+                        return Ok(r);
                     }
                     "warten" | "wait" => {
                         return self.call_rt(self.rt.moo_thread_wait, &[obj.into()], "thread_wait");
