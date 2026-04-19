@@ -88,7 +88,11 @@ MooValue moo_freeze(MooValue v) {
         case MOO_OBJECT: MV_OBJ(v)->frozen = true; break;
         default: break; // Zahlen, Strings, Booleans sind ohnehin immutable
     }
-    return v; // Gibt den eingefrorenen Wert zurück
+    // RB9 (v2): Return-Wert muss +1 owning sein, weil Codegen v2 den
+    // Arg nach builtin-Call released. Ohne retain waere der Return ein
+    // toter Handle (Arg-refcount faellt auf 0).
+    moo_retain(v);
+    return v;
 }
 
 MooValue moo_is_frozen(MooValue v) {
