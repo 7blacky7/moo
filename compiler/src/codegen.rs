@@ -436,8 +436,9 @@ impl<'ctx> CodeGen<'ctx> {
             self.variables.insert(name.to_string(), alloca);
             alloca
         };
-        // Retain neuen Wert
-        self.call_rt_void(self.rt.moo_retain, &[val.into()], "retain_new")?;
+        // Transfer-Semantik: Producer hat val mit refcount=1 erzeugt,
+        // store uebernimmt die Referenz. Kein retain hier, sonst Leak.
+        // Bei load_var-Quelle wird dort geretained (clone-Semantik).
         self.builder.build_store(ptr, val).map_err(|e| format!("{e}"))?;
         Ok(())
     }
@@ -447,8 +448,11 @@ impl<'ctx> CodeGen<'ctx> {
             .or_else(|| self.globals.get(name))
             .ok_or(format!("Variable '{name}' nicht gefunden"))?;
         let val = self.builder.build_load(self.mv_type(), *ptr, name)
-            .map_err(|e| format!("{e}"))?;
-        Ok(val.into_struct_value())
+            .map_err(|e| format!("{e}"))?.into_struct_value();
+        // Clone-Semantik: load liefert einen eigenen owning-ref, damit
+        // store_var transferieren kann und Aliasing sicher ist.
+        self.call_rt_void(self.rt.moo_retain, &[val.into()], "retain_load")?;
+        Ok(val)
     }
 
     fn make_global_str(&self, s: &str, name: &str) -> Result<PointerValue<'ctx>, String> {
@@ -515,11 +519,20 @@ impl<'ctx> CodeGen<'ctx> {
                 let idx = self.compile_expr(index)?;
                 let val = self.compile_expr(value)?;
                 self.call_rt_void(self.rt.moo_index_set,
-                    &[obj.into(), idx.into(), val.into()], "idx_set")
+                    &[obj.into(), idx.into(), val.into()], "idx_set")?;
+                // moo_index_set / moo_dict_set uebernehmen Ownership von
+                // idx und val (transfer). obj (Container) wird nur genutzt,
+                // der Load-Temp haelt noch +1 und muss hier freigegeben
+                // werden, sonst leak pro Mutation.
+                self.call_rt_void(self.rt.moo_release, &[obj.into()], "rel_obj")?;
+                Ok(())
             }
             Stmt::Show(expr) => {
                 let val = self.compile_expr(expr)?;
-                self.call_rt_void(self.rt.moo_print, &[val.into()], "print")
+                self.call_rt_void(self.rt.moo_print, &[val.into()], "print")?;
+                // moo_print liest nur; den Expression-Temp freigeben.
+                self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_show")?;
+                Ok(())
             }
             Stmt::If { condition, body, else_body } => {
                 self.compile_if(condition, body, else_body)
