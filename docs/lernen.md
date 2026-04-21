@@ -983,6 +983,67 @@ String-Methoden, Eingabe, Stdlib-Funktionen, Fehlerbehandlung und Match/Switch.
 
 ---
 
+## Funktionen als Werte (First-Class)
+
+Funktionsnamen sind in moo gewöhnliche Werte. Du kannst sie einer Variable
+zuweisen, in Listen legen oder an andere Funktionen übergeben:
+
+```moo
+funktion verdopple(x):
+    gib_zurück x * 2
+
+setze f auf verdopple
+zeige f(21)               # 42
+
+# An Thread übergeben:
+setze t auf starte(verdopple, 21)
+zeige t.warten()          # 42
+```
+
+## Lambdas und Closures
+
+Lambdas sind anonyme Funktionen in Kurzform. Sie können Variablen aus dem
+umgebenden Scope **einfangen** (Closure):
+
+```moo
+# Einfaches Lambda
+setze quadrat auf (x) => x * x
+zeige quadrat(5)          # 25
+
+# Closure — das Lambda faengt `base` ein
+setze base auf 100
+setze addiere auf (x) => x + base
+zeige addiere(5)          # 105
+```
+
+Closures funktionieren auch in Threads — das Environment bleibt erhalten:
+
+```moo
+setze offset auf 50
+setze t auf starte((x) => x + offset, 100)
+zeige t.warten()          # 150
+```
+
+## Einzeiler: Method-Chaining mit Lambdas
+
+`list.map` und `list.filter` akzeptieren jeden First-Class-Funktionswert —
+Inline-Lambdas, benannte Funktionen oder Variablen:
+
+```moo
+# Inline
+zeige [1,2,3].map((x) => x * 2)                       # [2, 4, 6]
+
+# Benannte Funktion als Callback
+funktion ist_gerade(x):
+    gib_zurück x % 2 == 0
+zeige [1,2,3,4,5].filter(ist_gerade)                  # [2, 4]
+
+# Chaining in einer Zeile
+zeige [1,2,3,4,5].filter((x) => x > 2).map((x) => x * 10)   # [30, 40, 50]
+```
+
+---
+
 ## Tipps für Anfänger
 
 1. **Einrückung ist wichtig!** Verwende 4 Leerzeichen für jeden Block.

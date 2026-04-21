@@ -118,11 +118,22 @@ struct MooDict {
 };
 
 // === Function ===
+// Backward-compatible layout: bestehende Konsumenten (moo_thread, moo_object,
+// moo_curry) nutzen weiter refcount/fn_ptr/arity/name. Neue Felder sind
+// optional und steuern den Closure-Trampoline:
+//   n_captured == 0 → fn_ptr ist eine direkte Function (klassisches Lambda /
+//                     benannte Funktion). Call-Convention: fn_ptr(MooValue...).
+//   n_captured >  0 → fn_ptr ist ein Trampoline. Call-Convention:
+//                     fn_ptr(MooFunc* env, MooValue...).
+//                     Der Trampoline liest env->captured[i] und ruft die
+//                     eigentliche inner-Function mit (params..., captures...).
 struct MooFunc {
     int32_t refcount;
     void* fn_ptr;
-    int32_t arity;
+    int32_t arity;      // User-sichtbare Arity (ohne Captures)
     char* name;
+    MooValue* captured; // Capture-Array (retain-t) oder NULL
+    int32_t n_captured; // Anzahl gebundener Captures oder 0
 };
 
 // === Object ===
@@ -256,6 +267,20 @@ MooValue moo_is_frozen(MooValue v);
 
 // === Currying ===
 MooValue moo_curry(MooValue func, MooValue arg);
+MooValue moo_func_new(void* fn_ptr, int32_t arity, const char* name);
+MooValue moo_func_with_captures(void* tramp_ptr, int32_t arity,
+                                const char* name,
+                                MooValue* caps, int32_t n);
+MooValue moo_func_captured_at(MooFunc* fn, int32_t i);
+MooValue moo_func_call_0(MooValue func);
+MooValue moo_func_call_1(MooValue func, MooValue a0);
+MooValue moo_func_call_2(MooValue func, MooValue a0, MooValue a1);
+MooValue moo_func_call_3(MooValue func, MooValue a0, MooValue a1, MooValue a2);
+MooValue moo_func_call_4(MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3);
+MooValue moo_func_call_5(MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4);
+MooValue moo_func_call_6(MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4, MooValue a5);
+MooValue moo_func_call_7(MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4, MooValue a5, MooValue a6);
+MooValue moo_func_call_8(MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4, MooValue a5, MooValue a6, MooValue a7);
 
 // === Arithmetik & Vergleiche ===
 MooValue moo_add(MooValue a, MooValue b);
@@ -333,6 +358,21 @@ void moo_exit(MooValue code);
 MooValue moo_to_number(MooValue v);
 void moo_args_init(int argc, char** argv);
 MooValue moo_args(void);
+MooValue moo_pid(void);
+
+// === System-Tray ===
+MooValue moo_tray_create(MooValue titel, MooValue icon_name);
+MooValue moo_tray_menu_add(MooValue tray, MooValue label, MooValue callback);
+MooValue moo_tray_menu_clear(MooValue tray);
+MooValue moo_tray_timer_add(MooValue interval_ms, MooValue callback);
+
+MooValue moo_gui_fenster(MooValue titel, MooValue breite, MooValue hoehe);
+MooValue moo_gui_label(MooValue fenster, MooValue text);
+MooValue moo_gui_button(MooValue fenster, MooValue label, MooValue callback);
+MooValue moo_gui_label_setze(MooValue label, MooValue text);
+MooValue moo_gui_icon_setze(MooValue fenster, MooValue icon_name);
+MooValue moo_gui_zeige(MooValue fenster);
+MooValue moo_tray_run(void);
 
 // === Datei-I/O ===
 MooValue moo_file_read(MooValue path);
@@ -341,6 +381,9 @@ MooValue moo_file_append(MooValue path, MooValue content);
 MooValue moo_file_lines(MooValue path);
 MooValue moo_file_exists(MooValue path);
 MooValue moo_file_delete(MooValue path);
+MooValue moo_file_mtime(MooValue path);
+MooValue moo_file_is_dir(MooValue path);
+MooValue moo_file_mkdir(MooValue path);
 MooValue moo_dir_list(MooValue path);
 
 // === Kryptografie & Sicherheit ===

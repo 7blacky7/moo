@@ -56,6 +56,13 @@ void moo_release(MooValue v) {
             break;
         case MOO_FUNC: {
             MooFunc* f = MV_FUNC(v);
+            // Captures releasen (Closure-Environment)
+            if (f->captured && f->n_captured > 0) {
+                for (int32_t i = 0; i < f->n_captured; i++) {
+                    moo_release(f->captured[i]);
+                }
+                free(f->captured);
+            }
             if (f->name) free(f->name);
             free(f);
             break;

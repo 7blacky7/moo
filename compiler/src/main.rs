@@ -477,6 +477,14 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         "-lGL".to_string(),
         "-lvulkan".to_string(),
         "-lglfw".to_string(),
+        "-lappindicator3".to_string(),
+        "-ldbusmenu-glib".to_string(),
+        "-lgtk-3".to_string(),
+        "-lgdk-3".to_string(),
+        "-lgio-2.0".to_string(),
+        "-lgobject-2.0".to_string(),
+        "-lglib-2.0".to_string(),
+        "-lcairo".to_string(),
     ];
 
     // Linker-Script: -T kernel.ld

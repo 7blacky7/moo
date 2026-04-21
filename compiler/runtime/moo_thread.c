@@ -2,20 +2,40 @@
 #include <pthread.h>
 
 // === Thread ===
+//
+// Unterscheidet zwei Call-Konventionen:
+//   * Plain-Function (n_captured == 0): fn_ptr(arg)
+//   * Closure       (n_captured >  0): fn_ptr(env=MooFunc*, arg)
+// Der MooFunc selbst wird als Env-Pointer uebergeben; der vom Codegen
+// erzeugte Trampoline liest die Captures ueber moo_func_captured_at.
 
 typedef struct {
-    MooValue (*fn_ptr)(MooValue);
+    void* fn_ptr;       // plain oder trampoline
+    MooFunc* env;       // NULL fuer Plain, sonst MooFunc*
     MooValue arg;
 } MooThreadArgs;
 
 static void* thread_runner(void* raw) {
     MooThreadArgs* targs = (MooThreadArgs*)raw;
-    // Call the function
-    MooValue result = targs->fn_ptr(targs->arg);
+    MooValue arg = targs->arg;
+    MooValue result;
+    if (targs->env) {
+        // Closure-Call-Konvention
+        MooValue (*tramp)(MooFunc*, MooValue) =
+            (MooValue (*)(MooFunc*, MooValue))targs->fn_ptr;
+        result = tramp(targs->env, arg);
+    } else {
+        MooValue (*plain)(MooValue) =
+            (MooValue (*)(MooValue))targs->fn_ptr;
+        result = plain(arg);
+    }
     free(targs);
+    // Arg-Retain aus moo_thread_spawn freigeben. Die Funktion hat mit
+    // arg als Parameter gearbeitet (Function-Exit-Cleanup released den
+    // Parameter-Slot) — der zusaetzliche retain hier haelt die Struktur
+    // fuer den gesamten Thread-Lauf lebendig.
+    moo_release(arg);
 
-    // We need to store the result — but we don't have the MooThread* here.
-    // Use pthread TLS to pass it back via moo_thread_wait.
     MooValue* heap_result = (MooValue*)malloc(sizeof(MooValue));
     *heap_result = result;
     return (void*)heap_result;
@@ -28,13 +48,18 @@ MooValue moo_thread_spawn(MooValue func, MooValue arg) {
     t->result.data = 0;
     pthread_mutex_init(&t->mutex, NULL);
 
-    // Extract function pointer from MooFunc
     MooFunc* mf = MV_FUNC(func);
-    MooValue (*fn_ptr)(MooValue) = (MooValue (*)(MooValue))mf->fn_ptr;
-
     MooThreadArgs* targs = (MooThreadArgs*)malloc(sizeof(MooThreadArgs));
-    targs->fn_ptr = fn_ptr;
+    targs->fn_ptr = mf->fn_ptr;
+    targs->env = (mf->n_captured > 0) ? mf : NULL;
     targs->arg = arg;
+
+    // Closure-Environment am Leben halten bis Thread fertig ist.
+    if (targs->env) moo_retain(func);
+    // Arg muss ebenfalls bis Thread-Ende leben. Ohne diesen retain
+    // wuerde der Caller den arg-Temp beim Return freigeben (Function-
+    // Exit-Cleanup), der Thread griffe auf freed memory zu.
+    moo_retain(arg);
 
     pthread_create(&t->thread, NULL, thread_runner, targs);
 

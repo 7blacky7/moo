@@ -72,6 +72,8 @@ pub struct CodeGen<'ctx> {
     lambda_captures: HashMap<String, Vec<String>>,
     // Lambda-Counter
     lambda_counter: usize,
+    for_iter_counter: usize,
+    method_obj_counter: usize,
     // Defer-Stack (Go-inspiriert): Vec von AST-Exprs die am Funktionsende ausgeführt werden
     defer_stack: Vec<Expr>,
     // Crystal-inspiriert: Typ-Tracking fuer Warnungen (kein Enforcement!)
@@ -109,6 +111,8 @@ impl<'ctx> CodeGen<'ctx> {
             lambda_names: HashMap::new(),
             lambda_captures: HashMap::new(),
             lambda_counter: 0,
+            for_iter_counter: 0,
+            method_obj_counter: 0,
             defer_stack: Vec::new(),
             variable_types: HashMap::new(),
             warnings: Vec::new(),
@@ -436,8 +440,9 @@ impl<'ctx> CodeGen<'ctx> {
             self.variables.insert(name.to_string(), alloca);
             alloca
         };
-        // Retain neuen Wert
-        self.call_rt_void(self.rt.moo_retain, &[val.into()], "retain_new")?;
+        // Transfer-Semantik: Producer hat val mit refcount=1 erzeugt,
+        // store uebernimmt die Referenz. Kein retain hier, sonst Leak.
+        // Bei load_var-Quelle wird dort geretained (clone-Semantik).
         self.builder.build_store(ptr, val).map_err(|e| format!("{e}"))?;
         Ok(())
     }
@@ -447,8 +452,11 @@ impl<'ctx> CodeGen<'ctx> {
             .or_else(|| self.globals.get(name))
             .ok_or(format!("Variable '{name}' nicht gefunden"))?;
         let val = self.builder.build_load(self.mv_type(), *ptr, name)
-            .map_err(|e| format!("{e}"))?;
-        Ok(val.into_struct_value())
+            .map_err(|e| format!("{e}"))?.into_struct_value();
+        // Clone-Semantik: load liefert einen eigenen owning-ref, damit
+        // store_var transferieren kann und Aliasing sicher ist.
+        self.call_rt_void(self.rt.moo_retain, &[val.into()], "retain_load")?;
+        Ok(val)
     }
 
     fn make_global_str(&self, s: &str, name: &str) -> Result<PointerValue<'ctx>, String> {
@@ -508,18 +516,29 @@ impl<'ctx> CodeGen<'ctx> {
                 let val = self.compile_expr(value)?;
                 let prop_str = self.make_global_str(property, "prop")?;
                 self.call_rt_void(self.rt.moo_object_set,
-                    &[obj.into(), prop_str.into(), val.into()], "obj_set")
+                    &[obj.into(), prop_str.into(), val.into()], "obj_set")?;
+                self.call_rt_void(self.rt.moo_release, &[obj.into()], "rel_obj_propset")?;
+                Ok(())
             }
             Stmt::IndexAssignment { object, index, value } => {
                 let obj = self.compile_expr(object)?;
                 let idx = self.compile_expr(index)?;
                 let val = self.compile_expr(value)?;
                 self.call_rt_void(self.rt.moo_index_set,
-                    &[obj.into(), idx.into(), val.into()], "idx_set")
+                    &[obj.into(), idx.into(), val.into()], "idx_set")?;
+                // moo_index_set / moo_dict_set uebernehmen Ownership von
+                // idx und val (transfer). obj (Container) wird nur genutzt,
+                // der Load-Temp haelt noch +1 und muss hier freigegeben
+                // werden, sonst leak pro Mutation.
+                self.call_rt_void(self.rt.moo_release, &[obj.into()], "rel_obj")?;
+                Ok(())
             }
             Stmt::Show(expr) => {
                 let val = self.compile_expr(expr)?;
-                self.call_rt_void(self.rt.moo_print, &[val.into()], "print")
+                self.call_rt_void(self.rt.moo_print, &[val.into()], "print")?;
+                // moo_print liest nur; den Expression-Temp freigeben.
+                self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_show")?;
+                Ok(())
             }
             Stmt::If { condition, body, else_body } => {
                 self.compile_if(condition, body, else_body)
@@ -611,7 +630,10 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(())
             }
             Stmt::Expression(expr) => {
-                self.compile_expr(expr)?;
+                // Ergebnis wird nicht konsumiert → Expression-Temp freigeben,
+                // sonst leakt z.B. eine nackte `d[k]`-Zeile den Return-Ref.
+                let val = self.compile_expr(expr)?;
+                self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_expr_stmt")?;
                 Ok(())
             }
             Stmt::ParallelFor { var_name, iterable, body } => {
@@ -627,6 +649,8 @@ impl<'ctx> CodeGen<'ctx> {
                     inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
                     _ => return Err("truthy fehlgeschlagen".to_string()),
                 };
+                // Cond-Temp freigeben — wurde nur fuer truthy-Check genutzt.
+                self.call_rt_void(self.rt.moo_release, &[cond_val.into()], "rel_contract_cond")?;
                 let func = self.current_function.unwrap();
                 let fail_bb = self.context.append_basic_block(func, "contract_fail");
                 let ok_bb = self.context.append_basic_block(func, "contract_ok");
@@ -891,6 +915,9 @@ impl<'ctx> CodeGen<'ctx> {
             _ => return Err("moo_is_truthy hat keinen Wert zurueckgegeben".to_string()),
         };
 
+        // Cond-Temp freigeben — wurde nur fuer truthy-Check genutzt.
+        self.call_rt_void(self.rt.moo_release, &[cond_val.into()], "rel_cond")?;
+
         let then_bb = self.context.append_basic_block(func, "then");
         let else_bb = self.context.append_basic_block(func, "else");
         let merge_bb = self.context.append_basic_block(func, "merge");
@@ -939,6 +966,8 @@ impl<'ctx> CodeGen<'ctx> {
             inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
             _ => return Err("truthy fehlgeschlagen".to_string()),
         };
+        // Cond-Temp freigeben — jede Iteration, im cond_bb-Block.
+        self.call_rt_void(self.rt.moo_release, &[cond_val.into()], "rel_while_cond")?;
         self.builder.build_conditional_branch(cond_bool, body_bb, after_bb)
             .map_err(|e| format!("{e}"))?;
 
@@ -980,10 +1009,32 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.build_store(idx_ptr, i32_type.const_int(0, false))
             .map_err(|e| format!("{e}"))?;
 
-        // Wir brauchen die Liste gespeichert, damit wir sie im Loop-Body laden koennen
-        let list_ptr = self.builder.build_alloca(self.mv_type(), "for_list")
+        // Wir brauchen die Liste gespeichert, damit wir sie im Loop-Body laden koennen.
+        // Iterable-Ptr in self.variables mit synthetischem Namen ablegen, damit
+        // release_function_locals() ihn auch bei early-return aus dem Loop-Body
+        // erreicht (sonst leak pro Early-Return-Call).
+        // Alloca MUSS im Entry-Block liegen, damit sie alle Uses dominiert.
+        let iter_slot_name = format!("__for_iter_{}", self.for_iter_counter);
+        self.for_iter_counter += 1;
+        let entry_bb = func.get_first_basic_block().unwrap();
+        let current_block = self.builder.get_insert_block().unwrap();
+        if let Some(first_instr) = entry_bb.get_first_instruction() {
+            self.builder.position_before(&first_instr);
+        } else {
+            self.builder.position_at_end(entry_bb);
+        }
+        let list_ptr = self.builder.build_alloca(self.mv_type(), &iter_slot_name)
             .map_err(|e| format!("{e}"))?;
+        // Mit MOO_NONE initialisieren damit release_function_locals() vor
+        // dem Store in diesem Slot (falls Code vor dem for-Loop early-returnt)
+        // harmlos wirkt.
+        let none_init = self.context.i64_type().const_int(3, false);
+        let zero_data = self.context.i64_type().const_int(0, false);
+        let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
+        self.builder.build_store(list_ptr, none_val).map_err(|e| format!("{e}"))?;
+        self.builder.position_at_end(current_block);
         self.builder.build_store(list_ptr, list_val).map_err(|e| format!("{e}"))?;
+        self.variables.insert(iter_slot_name.clone(), list_ptr);
 
         let cond_bb = self.context.append_basic_block(func, "for_cond");
         let body_bb = self.context.append_basic_block(func, "for_body");
@@ -1037,6 +1088,18 @@ impl<'ctx> CodeGen<'ctx> {
         self.loop_stack.pop();
 
         self.builder.position_at_end(after_bb);
+        // Iterable-Temp (Liste) nach der Schleife freigeben. list_val
+        // wurde mit compile_expr (+1 owning) produziert und in list_ptr
+        // gespeichert; ohne release bliebe pro for-Schleife ein Leak.
+        let list_end = self.builder.build_load(self.mv_type(), list_ptr, "list_end")
+            .map_err(|e| format!("{e}"))?.into_struct_value();
+        self.call_rt_void(self.rt.moo_release, &[list_end.into()], "rel_for_list")?;
+        // Slot-Wert auf MOO_NONE setzen, damit ein spaeteres
+        // release_function_locals() nicht doppelt released.
+        let none_init = self.context.i64_type().const_int(3, false);
+        let zero_data = self.context.i64_type().const_int(0, false);
+        let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
+        self.builder.build_store(list_ptr, none_val).map_err(|e| format!("{e}"))?;
         Ok(())
     }
 
@@ -1141,6 +1204,8 @@ impl<'ctx> CodeGen<'ctx> {
                 self.call_rt_void(self.rt.moo_profile_exit, &[name_val.into()], "prof_exit")?;
             }
             self.emit_defers()?;
+            // Function-Exit-Cleanup: Locals freigeben bevor implicit return.
+            self.release_function_locals()?;
             let none_val = self.call_rt(self.rt.moo_none, &[], "none")?;
             self.builder.build_return(Some(&none_val)).map_err(|e| format!("{e}"))?;
         }
@@ -1160,6 +1225,23 @@ impl<'ctx> CodeGen<'ctx> {
         let defers: Vec<Expr> = self.defer_stack.iter().rev().cloned().collect();
         for expr in &defers {
             self.compile_expr(expr)?;
+        }
+        Ok(())
+    }
+
+    /// Gibt alle function-lokalen Variablen vor einem Return frei.
+    /// Der Return-Wert haelt seine +1 ueber load_var-retain bzw. Producer
+    /// unabhaengig vom Alloca-Slot — das Aufraeumen der Slots kann den
+    /// Return nicht ueberschreiben. Ohne diesen Cleanup leaken Locals die
+    /// im Hot-Loop genutzt werden (gemessen: detect_changes mit 1600 Keys
+    /// leakt ~480KB pro Call).
+    fn release_function_locals(&self) -> Result<(), String> {
+        let vars: Vec<(String, PointerValue<'ctx>)> =
+            self.variables.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        for (_name, ptr) in vars {
+            let v = self.builder.build_load(self.mv_type(), ptr, "local_exit")
+                .map_err(|e| format!("{e}"))?.into_struct_value();
+            self.call_rt_void(self.rt.moo_release, &[v.into()], "rel_local")?;
         }
         Ok(())
     }
@@ -1209,6 +1291,9 @@ impl<'ctx> CodeGen<'ctx> {
 
         // Defer-Stack vor Return ausführen (Go-Semantik)
         self.emit_defers()?;
+        // Locals vor dem return freigeben. val haelt seine eigene +1 ueber
+        // load_var-retain / Producer und ueberlebt den Slot-Cleanup.
+        self.release_function_locals()?;
         self.builder.build_return(Some(&val)).map_err(|e| format!("{e}"))?;
         Ok(())
     }
@@ -1616,7 +1701,26 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::None => {
                 self.call_rt(self.rt.moo_none, &[], "none")
             }
-            Expr::Identifier(name) => self.load_var(name),
+            Expr::Identifier(name) => {
+                // Variable (lokal, global) ODER Funktionsname als First-Class-Value.
+                // Erstverwendung-Fallback auf module.get_function erlaubt:
+                //   starte(worker, arg)
+                //   setze f auf meine_fn
+                //   liste.map(transformiere)
+                if let Ok(v) = self.load_var(name) {
+                    return Ok(v);
+                }
+                if let Some(llvm_fn) = self.module.get_function(name) {
+                    let fn_ptr = llvm_fn.as_global_value().as_pointer_value();
+                    let arity = self.context.i32_type()
+                        .const_int(llvm_fn.count_params() as u64, false);
+                    let name_ptr = self.make_global_str(name, &format!("__fname_{name}"))?;
+                    return self.call_rt(self.rt.moo_func_new,
+                        &[fn_ptr.into(), arity.into(), name_ptr.into()],
+                        &format!("__func_val_{name}"));
+                }
+                Err(format!("Variable '{name}' nicht gefunden"))
+            }
             Expr::This => {
                 // selbst/this laden
                 self.load_var("selbst")
@@ -1721,6 +1825,12 @@ impl<'ctx> CodeGen<'ctx> {
                         // die __add__ hat, brauchen wir keinen class_name Vergleich
                         let result = self.call_rt(*method_fn, &[lhs.into(), rhs.into()], "op_overload")?;
                         self.builder.build_store(result_ptr, result).map_err(|e| format!("{e}"))?;
+                        // KEIN post-call release auf lhs/rhs: method_fn ist eine
+                        // user-definierte Methode → Transfer-Semantik per
+                        // owning-ref-konvention v2 §3.3. Die +1 der Operanden
+                        // wandert in die Param-Slots der Methode und wird dort
+                        // von release_function_locals() konsumiert. Ein zusaetz-
+                        // liches Release hier waere ein Double-Free (SIGSEGV).
                         self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
                         break; // Fuer jetzt: nur erste Ueberladung (Multi-Klassen spaeter)
                     }
@@ -1750,6 +1860,12 @@ impl<'ctx> CodeGen<'ctx> {
                     };
                     let normal_result = self.call_rt(rt_func, &[lhs.into(), rhs.into()], "op_normal")?;
                     self.builder.build_store(result_ptr, normal_result).map_err(|e| format!("{e}"))?;
+                    // Analog zu Z.1923-1924 im else-Branch: Operand-Temps freigeben.
+                    // Bisher fehlte hier das Release wenn Overloads existierten, aber
+                    // das tatsaechliche Objekt keinen Object-Tag hatte (z.B. Vec-Klasse
+                    // mit __add__ definiert, aber Zahl + Zahl ueber diesen Pfad).
+                    self.call_rt_void(self.rt.moo_release, &[lhs.into()], "rel_lhs_op_normal")?;
+                    self.call_rt_void(self.rt.moo_release, &[rhs.into()], "rel_rhs_op_normal")?;
                     self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
 
                     self.builder.position_at_end(merge_bb);
@@ -1779,7 +1895,13 @@ impl<'ctx> CodeGen<'ctx> {
                         BinOp::LShift => self.rt.moo_lshift,
                         BinOp::RShift => self.rt.moo_rshift,
                     };
-                    self.call_rt(func, &[lhs.into(), rhs.into()], "op")
+                    let op_result = self.call_rt(func, &[lhs.into(), rhs.into()], "op")?;
+                    // Operand-Temps freigeben: die Op hat ihre eigenen Refs
+                    // auf das Ergebnis gesetzt, die +1-owning der Operanden
+                    // gehoeren zu diesem Stmt-scope und leakten sonst.
+                    self.call_rt_void(self.rt.moo_release, &[lhs.into()], "rel_lhs")?;
+                    self.call_rt_void(self.rt.moo_release, &[rhs.into()], "rel_rhs")?;
+                    Ok(op_result)
                 }
             }
             Expr::UnaryOp { op, operand } => {
@@ -1789,7 +1911,9 @@ impl<'ctx> CodeGen<'ctx> {
                     UnaryOpKind::Not => self.rt.moo_not,
                     UnaryOpKind::BitNot => self.rt.moo_bitnot,
                 };
-                self.call_rt(func, &[val.into()], "unary")
+                let res = self.call_rt(func, &[val.into()], "unary")?;
+                self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_un")?;
+                Ok(res)
             }
             Expr::FunctionCall { name, args } => {
                 // User-Funktionen haben Vorrang vor Builtins. Wenn eine Funktion
@@ -1946,6 +2070,18 @@ impl<'ctx> CodeGen<'ctx> {
                     "datei_löschen" | "file_delete" | "dd" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_file_delete, &[arg.into()], "file_delete");
+                    }
+                    "datei_mtime" | "file_mtime" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_file_mtime, &[arg.into()], "file_mtime");
+                    }
+                    "datei_ist_verzeichnis" | "file_is_dir" | "ist_verzeichnis" | "is_dir" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_file_is_dir, &[arg.into()], "file_is_dir");
+                    }
+                    "datei_mkdir" | "file_mkdir" | "mkdir" | "verzeichnis_erstelle" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_file_mkdir, &[arg.into()], "file_mkdir");
                     }
                     "verzeichnis_liste" | "dir_list" => {
                         let arg = self.compile_expr(&args[0])?;
@@ -2604,6 +2740,484 @@ impl<'ctx> CodeGen<'ctx> {
                     "argumente" | "args" => {
                         return self.call_rt(self.rt.moo_args, &[], "args");
                     }
+                    "prozess_id" | "pid" | "getpid" => {
+                        return self.call_rt(self.rt.moo_pid, &[], "pid");
+                    }
+                    "tray_erstelle" | "tray_create" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let i = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_create, &[t.into(), i.into()], "tray_create");
+                    }
+                    "tray_menu_add" | "tray_menu_hinzufuegen" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let l = self.compile_expr(&args[1])?;
+                        let c = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_tray_menu_add, &[t.into(), l.into(), c.into()], "tray_menu_add");
+                    }
+                    "tray_menu_clear" | "tray_menu_leeren" => {
+                        let t = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tray_menu_clear, &[t.into()], "tray_menu_clear");
+                    }
+                    "tray_timer_add" | "tray_timer_hinzufuegen" => {
+                        let ms = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_timer_add, &[ms.into(), c.into()], "tray_timer_add");
+                    }
+                    "tray_timer_remove" | "tray_timer_entfernen" => {
+                        let id = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tray_timer_remove, &[id.into()], "tray_timer_remove");
+                    }
+                    "tray_titel_setze" | "tray_title_set" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_titel_setze, &[t.into(), v.into()], "tray_titel_setze");
+                    }
+                    "tray_icon_setze" | "tray_icon_set" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_icon_setze, &[t.into(), v.into()], "tray_icon_setze");
+                    }
+                    "tray_aktiv" | "tray_active" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let a = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_aktiv, &[t.into(), a.into()], "tray_aktiv");
+                    }
+                    "tray_separator_add" | "tray_trenner_add" => {
+                        let t = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tray_separator_add, &[t.into()], "tray_separator_add");
+                    }
+                    "tray_submenu_add" | "tray_untermenue_add" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let l = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_submenu_add, &[t.into(), l.into()], "tray_submenu_add");
+                    }
+                    "tray_menu_add_to" | "tray_menu_hinzufuegen_zu" => {
+                        let sm = self.compile_expr(&args[0])?;
+                        let l = self.compile_expr(&args[1])?;
+                        let c = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_tray_menu_add_to, &[sm.into(), l.into(), c.into()], "tray_menu_add_to");
+                    }
+                    "tray_separator_add_to" | "tray_trenner_add_to" => {
+                        let sm = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tray_separator_add_to, &[sm.into()], "tray_separator_add_to");
+                    }
+                    "tray_check_add" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let l = self.compile_expr(&args[1])?;
+                        let i = self.compile_expr(&args[2])?;
+                        let c = self.compile_expr(&args[3])?;
+                        return self.call_rt(self.rt.moo_tray_check_add, &[t.into(), l.into(), i.into(), c.into()], "tray_check_add");
+                    }
+                    "tray_check_add_to" => {
+                        let sm = self.compile_expr(&args[0])?;
+                        let l = self.compile_expr(&args[1])?;
+                        let i = self.compile_expr(&args[2])?;
+                        let c = self.compile_expr(&args[3])?;
+                        return self.call_rt(self.rt.moo_tray_check_add_to, &[sm.into(), l.into(), i.into(), c.into()], "tray_check_add_to");
+                    }
+                    "tray_check_wert" | "tray_check_value" => {
+                        let i = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tray_check_wert, &[i.into()], "tray_check_wert");
+                    }
+                    "tray_check_set" | "tray_check_setze" => {
+                        let i = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_check_set, &[i.into(), v.into()], "tray_check_set");
+                    }
+                    "tray_item_aktiv" | "tray_item_active" => {
+                        let i = self.compile_expr(&args[0])?;
+                        let a = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_item_aktiv, &[i.into(), a.into()], "tray_item_aktiv");
+                    }
+                    "tray_item_label_setze" | "tray_item_label_set" => {
+                        let i = self.compile_expr(&args[0])?;
+                        let l = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_item_label_setze, &[i.into(), l.into()], "tray_item_label_setze");
+                    }
+                    // ============================================================
+                    // UI (Cross-Platform Widgets — moo_ui.h)
+                    // ============================================================
+                    "ui_init" => {
+                        return self.call_rt(self.rt.moo_ui_init, &[], "ui_init");
+                    }
+                    "ui_laufen" | "ui_run" => {
+                        return self.call_rt(self.rt.moo_ui_laufen, &[], "ui_laufen");
+                    }
+                    "ui_beenden" | "ui_quit" => {
+                        return self.call_rt(self.rt.moo_ui_beenden, &[], "ui_beenden");
+                    }
+                    "ui_pump" => {
+                        return self.call_rt(self.rt.moo_ui_pump, &[], "ui_pump");
+                    }
+                    "ui_debug" => {
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_debug, &[a.into()], "ui_debug");
+                    }
+                    "ui_fenster" | "ui_window" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_fenster, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_fenster");
+                    }
+                    "ui_fenster_titel_setze" | "ui_window_title_set" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_fenster_titel_setze, &[f.into(), t.into()], "ui_fenster_titel_setze");
+                    }
+                    "ui_fenster_icon_setze" | "ui_window_icon_set" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let p = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_fenster_icon_setze, &[f.into(), p.into()], "ui_fenster_icon_setze");
+                    }
+                    "ui_fenster_groesse_setze" | "ui_window_size_set" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_fenster_groesse_setze, &[a[0].into(), a[1].into(), a[2].into()], "ui_fenster_groesse_setze");
+                    }
+                    "ui_fenster_position_setze" | "ui_window_position_set" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_fenster_position_setze, &[a[0].into(), a[1].into(), a[2].into()], "ui_fenster_position_setze");
+                    }
+                    "ui_fenster_schliessen" | "ui_window_close" => {
+                        let f = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_fenster_schliessen, &[f.into()], "ui_fenster_schliessen");
+                    }
+                    "ui_zeige" | "ui_show" => {
+                        let f = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_zeige, &[f.into()], "ui_zeige");
+                    }
+                    "ui_zeige_nebenbei" | "ui_show_detached" => {
+                        let f = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_zeige_nebenbei, &[f.into()], "ui_zeige_nebenbei");
+                    }
+                    "ui_fenster_on_close" | "ui_window_on_close" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_fenster_on_close, &[f.into(), c.into()], "ui_fenster_on_close");
+                    }
+                    "ui_label" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_label, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_label");
+                    }
+                    "ui_label_setze" | "ui_label_set" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_label_setze, &[l.into(), t.into()], "ui_label_setze");
+                    }
+                    "ui_label_text" => {
+                        let l = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_label_text, &[l.into()], "ui_label_text");
+                    }
+                    "ui_knopf" | "ui_button" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_knopf, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into()], "ui_knopf");
+                    }
+                    "ui_checkbox" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_checkbox, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into(), a[7].into()], "ui_checkbox");
+                    }
+                    "ui_checkbox_wert" | "ui_checkbox_value" => {
+                        let c = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_checkbox_wert, &[c.into()], "ui_checkbox_wert");
+                    }
+                    "ui_checkbox_setze" | "ui_checkbox_set" => {
+                        let c = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_checkbox_setze, &[c.into(), v.into()], "ui_checkbox_setze");
+                    }
+                    "ui_radio" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_radio, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into(), a[7].into()], "ui_radio");
+                    }
+                    "ui_radio_wert" | "ui_radio_value" => {
+                        let r = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_radio_wert, &[r.into()], "ui_radio_wert");
+                    }
+                    "ui_eingabe" | "ui_input" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_eingabe, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into()], "ui_eingabe");
+                    }
+                    "ui_eingabe_text" | "ui_input_text" => {
+                        let e = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_eingabe_text, &[e.into()], "ui_eingabe_text");
+                    }
+                    "ui_eingabe_setze" | "ui_input_set" => {
+                        let e = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_eingabe_setze, &[e.into(), t.into()], "ui_eingabe_setze");
+                    }
+                    "ui_eingabe_on_change" | "ui_input_on_change" => {
+                        let e = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_eingabe_on_change, &[e.into(), c.into()], "ui_eingabe_on_change");
+                    }
+                    "ui_textbereich" | "ui_textarea" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_textbereich, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_textbereich");
+                    }
+                    "ui_textbereich_text" | "ui_textarea_text" => {
+                        let tb = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_textbereich_text, &[tb.into()], "ui_textbereich_text");
+                    }
+                    "ui_textbereich_setze" | "ui_textarea_set" => {
+                        let tb = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_textbereich_setze, &[tb.into(), t.into()], "ui_textbereich_setze");
+                    }
+                    "ui_textbereich_anhaengen" | "ui_textarea_append" => {
+                        let tb = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_textbereich_anhaengen, &[tb.into(), t.into()], "ui_textbereich_anhaengen");
+                    }
+                    "ui_dropdown" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_dropdown, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into()], "ui_dropdown");
+                    }
+                    "ui_dropdown_auswahl" | "ui_dropdown_selection" => {
+                        let d = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_dropdown_auswahl, &[d.into()], "ui_dropdown_auswahl");
+                    }
+                    "ui_dropdown_auswahl_setze" | "ui_dropdown_selection_set" => {
+                        let d = self.compile_expr(&args[0])?;
+                        let i = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_dropdown_auswahl_setze, &[d.into(), i.into()], "ui_dropdown_auswahl_setze");
+                    }
+                    "ui_dropdown_text" => {
+                        let d = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_dropdown_text, &[d.into()], "ui_dropdown_text");
+                    }
+                    "ui_liste" | "ui_list" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_liste, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_liste");
+                    }
+                    "ui_liste_zeile_hinzu" | "ui_list_row_add" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let z = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_liste_zeile_hinzu, &[l.into(), z.into()], "ui_liste_zeile_hinzu");
+                    }
+                    "ui_liste_auswahl" | "ui_list_selection" => {
+                        let l = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_liste_auswahl, &[l.into()], "ui_liste_auswahl");
+                    }
+                    "ui_liste_zeile" | "ui_list_row" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let i = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_liste_zeile, &[l.into(), i.into()], "ui_liste_zeile");
+                    }
+                    "ui_liste_leeren" | "ui_list_clear" => {
+                        let l = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_liste_leeren, &[l.into()], "ui_liste_leeren");
+                    }
+                    "ui_liste_on_auswahl" | "ui_list_on_selection" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_liste_on_auswahl, &[l.into(), c.into()], "ui_liste_on_auswahl");
+                    }
+                    "ui_slider" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_slider, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into(), a[7].into(), a[8].into()], "ui_slider");
+                    }
+                    "ui_slider_wert" | "ui_slider_value" => {
+                        let s = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_slider_wert, &[s.into()], "ui_slider_wert");
+                    }
+                    "ui_slider_setze" | "ui_slider_set" => {
+                        let s = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_slider_setze, &[s.into(), v.into()], "ui_slider_setze");
+                    }
+                    "ui_fortschritt" | "ui_progress" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_fortschritt, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_fortschritt");
+                    }
+                    "ui_fortschritt_setze" | "ui_progress_set" => {
+                        let b = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_fortschritt_setze, &[b.into(), v.into()], "ui_fortschritt_setze");
+                    }
+                    "ui_bild" | "ui_image" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_bild, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_bild");
+                    }
+                    "ui_bild_setze" | "ui_image_set" => {
+                        let b = self.compile_expr(&args[0])?;
+                        let p = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_bild_setze, &[b.into(), p.into()], "ui_bild_setze");
+                    }
+                    "ui_leinwand" | "ui_canvas" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_leinwand, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_leinwand");
+                    }
+                    "ui_leinwand_anfordern" | "ui_leinwand_erneuern" | "ui_canvas_request" | "ui_canvas_refresh" => {
+                        let l = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_leinwand_anfordern, &[l.into()], "ui_leinwand_anfordern");
+                    }
+                    "ui_zeichne_farbe" | "ui_draw_color" | "ui_draw_colour" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_farbe, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_zeichne_farbe");
+                    }
+                    "ui_zeichne_linie" | "ui_draw_line" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_linie, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_zeichne_linie");
+                    }
+                    "ui_zeichne_rechteck" | "ui_draw_rect" | "ui_draw_rectangle" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_rechteck, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_zeichne_rechteck");
+                    }
+                    "ui_zeichne_kreis" | "ui_draw_circle" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_kreis, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_zeichne_kreis");
+                    }
+                    "ui_zeichne_text" | "ui_draw_text" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_text, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_zeichne_text");
+                    }
+                    "ui_zeichne_bild" | "ui_draw_image" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_bild, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_zeichne_bild");
+                    }
+                    "ui_rahmen" | "ui_frame" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_rahmen, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_rahmen");
+                    }
+                    "ui_trenner" | "ui_separator" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_trenner, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_trenner");
+                    }
+                    "ui_tabs" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_tabs, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_tabs");
+                    }
+                    "ui_tab_hinzu" | "ui_tab_add" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let ti = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_tab_hinzu, &[t.into(), ti.into()], "ui_tab_hinzu");
+                    }
+                    "ui_tabs_auswahl" | "ui_tabs_selection" => {
+                        let t = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_tabs_auswahl, &[t.into()], "ui_tabs_auswahl");
+                    }
+                    "ui_tabs_auswahl_setze" | "ui_tabs_selection_set" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let i = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_tabs_auswahl_setze, &[t.into(), i.into()], "ui_tabs_auswahl_setze");
+                    }
+                    "ui_scroll" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_scroll, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_scroll");
+                    }
+                    "ui_sichtbar" | "ui_visible" => {
+                        let w = self.compile_expr(&args[0])?;
+                        let s = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_sichtbar, &[w.into(), s.into()], "ui_sichtbar");
+                    }
+                    "ui_aktiv" | "ui_active" => {
+                        let w = self.compile_expr(&args[0])?;
+                        let a = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_aktiv, &[w.into(), a.into()], "ui_aktiv");
+                    }
+                    "ui_position_setze" | "ui_position_set" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_position_setze, &[a[0].into(), a[1].into(), a[2].into()], "ui_position_setze");
+                    }
+                    "ui_groesse_setze" | "ui_size_set" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_groesse_setze, &[a[0].into(), a[1].into(), a[2].into()], "ui_groesse_setze");
+                    }
+                    "ui_farbe_setze" | "ui_color_set" => {
+                        let w = self.compile_expr(&args[0])?;
+                        let h = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_farbe_setze, &[w.into(), h.into()], "ui_farbe_setze");
+                    }
+                    "ui_schrift_setze" | "ui_font_set" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_schrift_setze, &[a[0].into(), a[1].into(), a[2].into()], "ui_schrift_setze");
+                    }
+                    "ui_tooltip_setze" | "ui_tooltip_set" => {
+                        let w = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_tooltip_setze, &[w.into(), t.into()], "ui_tooltip_setze");
+                    }
+                    "ui_zerstoere" | "ui_destroy" => {
+                        let w = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_zerstoere, &[w.into()], "ui_zerstoere");
+                    }
+                    "ui_timer_hinzu" | "ui_timer_add" => {
+                        let ms = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_timer_hinzu, &[ms.into(), c.into()], "ui_timer_hinzu");
+                    }
+                    "ui_timer_entfernen" | "ui_timer_remove" => {
+                        let id = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_timer_entfernen, &[id.into()], "ui_timer_entfernen");
+                    }
+                    "ui_info" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_info, &[a[0].into(), a[1].into(), a[2].into()], "ui_info");
+                    }
+                    "ui_warnung" | "ui_warning" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_warnung, &[a[0].into(), a[1].into(), a[2].into()], "ui_warnung");
+                    }
+                    "ui_fehler" | "ui_error" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_fehler, &[a[0].into(), a[1].into(), a[2].into()], "ui_fehler");
+                    }
+                    "ui_frage" | "ui_question" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_frage, &[a[0].into(), a[1].into(), a[2].into()], "ui_frage");
+                    }
+                    "ui_eingabe_dialog" | "ui_input_dialog" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_eingabe_dialog, &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "ui_eingabe_dialog");
+                    }
+                    "ui_datei_oeffnen" | "ui_file_open" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_datei_oeffnen, &[a[0].into(), a[1].into(), a[2].into()], "ui_datei_oeffnen");
+                    }
+                    "ui_datei_speichern" | "ui_file_save" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_datei_speichern, &[a[0].into(), a[1].into(), a[2].into()], "ui_datei_speichern");
+                    }
+                    "ui_ordner_waehlen" | "ui_folder_choose" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_ordner_waehlen, &[p.into(), t.into()], "ui_ordner_waehlen");
+                    }
+                    "ui_menueleiste" | "ui_menubar" => {
+                        let f = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_menueleiste, &[f.into()], "ui_menueleiste");
+                    }
+                    "ui_menue" | "ui_menu" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_menue, &[l.into(), t.into()], "ui_menue");
+                    }
+                    "ui_menue_eintrag" | "ui_menu_item" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_menue_eintrag, &[a[0].into(), a[1].into(), a[2].into()], "ui_menue_eintrag");
+                    }
+                    "ui_menue_trenner" | "ui_menu_separator" => {
+                        let m = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_menue_trenner, &[m.into()], "ui_menue_trenner");
+                    }
+                    "ui_menue_untermenue" | "ui_menu_submenu" => {
+                        let m = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_menue_untermenue, &[m.into(), t.into()], "ui_menue_untermenue");
+                    }
+                    "ui_shortcut_bind" | "ui_shortcut_binde" | "ui_kuerzel_binde" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let s = self.compile_expr(&args[1])?;
+                        let c = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_ui_shortcut_bind, &[f.into(), s.into(), c.into()], "ui_shortcut_bind");
+                    }
+                    "ui_shortcut_loese" | "ui_shortcut_unbind" | "ui_kuerzel_loese" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let s = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_shortcut_loese, &[f.into(), s.into()], "ui_shortcut_loese");
+                    }
+                    "tray_run" | "tray_loop" => {
+                        // DEPRECATED: Alias auf ui_laufen (siehe moo_tray.h).
+                        return self.call_rt(self.rt.moo_tray_run, &[], "tray_run");
+                    }
                     _ => {}
                 }
 
@@ -2611,8 +3225,40 @@ impl<'ctx> CodeGen<'ctx> {
                 let actual_name = self.lambda_names.get(name)
                     .cloned()
                     .unwrap_or(name.clone());
-                let function = self.module.get_function(&actual_name)
-                    .ok_or_else(|| {
+                let function = match self.module.get_function(&actual_name) {
+                    Some(f) => f,
+                    None => {
+                        // Fallback: Name ist eine Variable die einen MOO_FUNC haelt
+                        // (z.B. setze f auf benannte_fn; f(21)). Indirect-Call
+                        // ueber moo_func_call_N mit dem passenden Helper.
+                        if self.variables.contains_key(name) || self.globals.contains_key(name) {
+                            let fn_val = self.load_var(name)?;
+                            let mut compiled_args: Vec<BasicMetadataValueEnum> = Vec::new();
+                            compiled_args.push(fn_val.into());
+                            for a in args {
+                                let v = self.compile_expr(a)?;
+                                compiled_args.push(v.into());
+                            }
+                            let helper = match args.len() {
+                                0 => self.rt.moo_func_call_0,
+                                1 => self.rt.moo_func_call_1,
+                                2 => self.rt.moo_func_call_2,
+                                3 => self.rt.moo_func_call_3,
+                                4 => self.rt.moo_func_call_4,
+                                5 => self.rt.moo_func_call_5,
+                                6 => self.rt.moo_func_call_6,
+                                7 => self.rt.moo_func_call_7,
+                                8 => self.rt.moo_func_call_8,
+                                n => return Err(format!(
+                                    "Indirekter Aufruf von '{name}' mit {n} Argumenten \
+                                     nicht unterstuetzt (max 8). Umschreiben auf \
+                                     benannte Funktion oder weniger Argumente."
+                                )),
+                            };
+                            return self.call_rt(helper, &compiled_args,
+                                &format!("indirect_{name}"));
+                        }
+                        // Weder LLVM-Function noch Variable → Fehler mit Suggestion
                         let mut suggestion = String::new();
                         let mut best_dist = usize::MAX;
                         let mut func_iter = self.module.get_first_function();
@@ -2627,12 +3273,13 @@ impl<'ctx> CodeGen<'ctx> {
                             }
                             func_iter = f.get_next_function();
                         }
-                        if suggestion.is_empty() {
+                        return Err(if suggestion.is_empty() {
                             format!("Funktion '{name}' nicht gefunden.")
                         } else {
                             format!("Funktion '{name}' nicht gefunden. Meintest du '{suggestion}'?")
-                        }
-                    })?;
+                        });
+                    }
+                };
                 let mut compiled_args: Vec<BasicMetadataValueEnum> = Vec::new();
                 for a in args {
                     let v = self.compile_expr(a)?;
@@ -2682,13 +3329,52 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
 
-                let obj = self.compile_expr(object)?;
+                let obj_val = self.compile_expr(object)?;
+
+                // Per-Expression-Slot im Entry-Block fuer den obj-Temp:
+                // - Releaset VOR dem Store die letzte Iteration (oder NONE),
+                //   sodass bei einer `for`/`while`-Schleife pro Iteration nur
+                //   EIN obj gleichzeitig lebt.
+                // - Am Function-Exit released release_function_locals() den
+                //   letzten Slot-Inhalt — deckt alle Match-Arm-Early-Returns
+                //   der unten folgenden Kaskade ab, ohne jede Arm einzeln
+                //   editieren zu muessen.
+                // - Die Match-Kaskade nutzt weiterhin die lokale Variable
+                //   `obj` (nicht den Slot), damit LLVM dominance trivial bleibt.
+                let slot_name = format!("__mcall_obj_{}", self.method_obj_counter);
+                self.method_obj_counter += 1;
+                let func_cur = self.current_function.unwrap();
+                let entry_bb = func_cur.get_first_basic_block().unwrap();
+                let current_block = self.builder.get_insert_block().unwrap();
+                if let Some(first_instr) = entry_bb.get_first_instruction() {
+                    self.builder.position_before(&first_instr);
+                } else {
+                    self.builder.position_at_end(entry_bb);
+                }
+                let obj_slot = self.builder.build_alloca(self.mv_type(), &slot_name)
+                    .map_err(|e| format!("{e}"))?;
+                let none_tag = self.context.i64_type().const_int(3, false);
+                let zero_data = self.context.i64_type().const_int(0, false);
+                let none_struct = self.mv_type().const_named_struct(&[none_tag.into(), zero_data.into()]);
+                self.builder.build_store(obj_slot, none_struct).map_err(|e| format!("{e}"))?;
+                self.variables.insert(slot_name.clone(), obj_slot);
+                self.builder.position_at_end(current_block);
+
+                // Pre-Release der letzten Schleifeniteration im Slot (sonst
+                // leakt der vorherige obj-Wert bei Loop-Wiederholung).
+                let prev = self.builder.build_load(self.mv_type(), obj_slot, "prev_mcall_obj")
+                    .map_err(|e| format!("{e}"))?.into_struct_value();
+                self.call_rt_void(self.rt.moo_release, &[prev.into()], "rel_prev_mcall_obj")?;
+                self.builder.build_store(obj_slot, obj_val).map_err(|e| format!("{e}"))?;
+
+                let obj = obj_val;
                 // Eingebaute Methoden
                 match method.as_str() {
                     "append" | "hinzufügen" => {
                         let arg = self.compile_expr(&args[0])?;
                         self.call_rt_void(self.rt.moo_list_append,
                             &[obj.into(), arg.into()], "append")?;
+                        // (alter Inline-Release entfallen — Slot-Cleanup uebernimmt es)
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     "length" | "länge" => {
@@ -2705,8 +3391,12 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     "join" | "verbinden" => {
                         let delim = self.compile_expr(&args[0])?;
-                        return self.call_rt(self.rt.moo_list_join,
-                            &[obj.into(), delim.into()], "join");
+                        let r = self.call_rt(self.rt.moo_list_join,
+                            &[obj.into(), delim.into()], "join")?;
+                        // CG2: delim wird von list_join nur gelesen (nicht gespeichert) → release.
+                        // obj bleibt — T1-Slot kuemmert sich darum.
+                        self.call_rt_void(self.rt.moo_release, &[delim.into()], "rel_join_delim")?;
+                        return Ok(r);
                     }
                     "contains" | "enthält" => {
                         // Tag-dispatch: dict.enthält(key) → moo_dict_has,
@@ -2742,19 +3432,29 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     "split" | "teilen" => {
                         let delim = self.compile_expr(&args[0])?;
-                        return self.call_rt(self.rt.moo_string_split,
-                            &[obj.into(), delim.into()], "split");
+                        let r = self.call_rt(self.rt.moo_string_split,
+                            &[obj.into(), delim.into()], "split")?;
+                        // CG2: delim read-only → release. obj via T1-Slot.
+                        self.call_rt_void(self.rt.moo_release, &[delim.into()], "rel_split_delim")?;
+                        return Ok(r);
                     }
                     "replace" | "ersetzen" => {
                         let old_s = self.compile_expr(&args[0])?;
                         let new_s = self.compile_expr(&args[1])?;
-                        return self.call_rt(self.rt.moo_string_replace,
-                            &[obj.into(), old_s.into(), new_s.into()], "replace");
+                        let r = self.call_rt(self.rt.moo_string_replace,
+                            &[obj.into(), old_s.into(), new_s.into()], "replace")?;
+                        // CG2: old_s/new_s read-only → release. obj via T1-Slot.
+                        self.call_rt_void(self.rt.moo_release, &[old_s.into()], "rel_replace_old")?;
+                        self.call_rt_void(self.rt.moo_release, &[new_s.into()], "rel_replace_new")?;
+                        return Ok(r);
                     }
                     "str_contains" | "text_enthält" => {
                         let needle = self.compile_expr(&args[0])?;
-                        return self.call_rt(self.rt.moo_string_contains,
-                            &[obj.into(), needle.into()], "str_contains");
+                        let r = self.call_rt(self.rt.moo_string_contains,
+                            &[obj.into(), needle.into()], "str_contains")?;
+                        // CG2: needle read-only → release. obj via T1-Slot.
+                        self.call_rt_void(self.rt.moo_release, &[needle.into()], "rel_contains_needle")?;
+                        return Ok(r);
                     }
                     "warten" | "wait" => {
                         return self.call_rt(self.rt.moo_thread_wait, &[obj.into()], "thread_wait");
@@ -2923,12 +3623,24 @@ impl<'ctx> CodeGen<'ctx> {
                         let element = self.call_rt(self.rt.moo_list_iter_get,
                             &[list_loaded.into(), idx_loaded.into()], "elem")?;
 
-                        // Apply lambda: store element in param var, compile body
+                        // Apply callback auf element. Zwei Pfade:
+                        //   * Direktes Inline-Lambda — Body wird inline kompiliert
+                        //     (schneller, kein Call-Overhead, vermeidet MooFunc-Alloc).
+                        //   * Beliebige MOO_FUNC-Expression (benannte Funktion,
+                        //     Variable, Closure) — indirect call via moo_func_call_1.
                         if let Expr::Lambda { params, body } = lambda {
                             if let Some(param) = params.first() {
                                 self.store_var(param, element)?;
                             }
                             let mapped_val = self.compile_expr(body)?;
+                            let current_result = self.builder.build_load(self.mv_type(), result_ptr, "res")
+                                .map_err(|e| format!("{e}"))?.into_struct_value();
+                            self.call_rt_void(self.rt.moo_list_append,
+                                &[current_result.into(), mapped_val.into()], "append")?;
+                        } else {
+                            let fn_val = self.compile_expr(lambda)?;
+                            let mapped_val = self.call_rt(self.rt.moo_func_call_1,
+                                &[fn_val.into(), element.into()], "map_call")?;
                             let current_result = self.builder.build_load(self.mv_type(), result_ptr, "res")
                                 .map_err(|e| format!("{e}"))?.into_struct_value();
                             self.call_rt_void(self.rt.moo_list_append,
@@ -2998,12 +3710,20 @@ impl<'ctx> CodeGen<'ctx> {
                         let element = self.call_rt(self.rt.moo_list_iter_get,
                             &[list_loaded.into(), idx_loaded.into()], "elem")?;
 
-                        // Apply lambda: store element in param var, compile body, check truthy
-                        if let Expr::Lambda { params, body } = lambda {
+                        // Apply callback. Analog zu list.map: Inline-Lambda
+                        // direkt, beliebige MOO_FUNC-Expression via
+                        // moo_func_call_1.
+                        let test_val = if let Expr::Lambda { params, body } = lambda {
                             if let Some(param) = params.first() {
                                 self.store_var(param, element)?;
                             }
-                            let test_val = self.compile_expr(body)?;
+                            self.compile_expr(body)?
+                        } else {
+                            let fn_val = self.compile_expr(lambda)?;
+                            self.call_rt(self.rt.moo_func_call_1,
+                                &[fn_val.into(), element.into()], "filter_call")?
+                        };
+                        {
                             let is_true = self.builder.build_call(self.rt.moo_is_truthy,
                                 &[test_val.into()], "truthy")
                                 .map_err(|e| format!("{e}"))?
@@ -3323,21 +4043,35 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::IndexAccess { object, index } => {
                 let obj = self.compile_expr(object)?;
                 // String-Slicing: obj[start..end] -> moo_string_slice(obj, start, end)
-                if let Expr::Range { start, end } = index.as_ref() {
+                let result = if let Expr::Range { start, end } = index.as_ref() {
                     let s = self.compile_expr(start)?;
                     let e = self.compile_expr(end)?;
-                    self.call_rt(self.rt.moo_string_slice,
-                        &[obj.into(), s.into(), e.into()], "str_slice")
+                    let slice_res = self.call_rt(self.rt.moo_string_slice,
+                        &[obj.into(), s.into(), e.into()], "str_slice")?;
+                    self.call_rt_void(self.rt.moo_release, &[s.into()], "rel_s")?;
+                    self.call_rt_void(self.rt.moo_release, &[e.into()], "rel_e")?;
+                    slice_res
                 } else {
                     let idx = self.compile_expr(index)?;
+                    // idx ist Caller-Ref: moo_index_get (→ dict_get/list_get)
+                    // nutzt idx intern, ownership wird NICHT transferiert.
+                    // String/List release-idx nach Verwendung waere hier noch offen;
+                    // dict_get released selbst. Fuer Minimalimpact nur obj freigeben.
                     self.call_rt(self.rt.moo_index_get,
-                        &[obj.into(), idx.into()], "idx_get")
-                }
+                        &[obj.into(), idx.into()], "idx_get")?
+                };
+                // Container nur gelesen → load-Temp releasen damit Container
+                // nicht pro Lookup einen Refcount verliert/gewinnt.
+                self.call_rt_void(self.rt.moo_release, &[obj.into()], "rel_idx_obj")?;
+                Ok(result)
             }
             Expr::Range { start, end } => {
                 let s = self.compile_expr(start)?;
                 let e = self.compile_expr(end)?;
-                self.call_rt(self.rt.moo_range, &[s.into(), e.into()], "range")
+                let range_res = self.call_rt(self.rt.moo_range, &[s.into(), e.into()], "range")?;
+                self.call_rt_void(self.rt.moo_release, &[s.into()], "rel_s")?;
+                self.call_rt_void(self.rt.moo_release, &[e.into()], "rel_e")?;
+                Ok(range_res)
             }
             Expr::List(elements) => {
                 let list = self.call_rt(self.rt.moo_list_new,
@@ -3578,7 +4312,61 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 let result = self.compile_expr(body)?;
+                // Vor dem Return: Defers abarbeiten + alle lambda-lokalen Slots
+                // freigeben (Params + Captures + Locals). Analog compile_return
+                // Z.1292 / Z.1271 — ohne dies leaken pro Lambda-Call alle
+                // Capture-Slots (Transfer-Semantik §3.3: Caller haendigt +1
+                // an callee → callee muss beim Exit freigeben). `result`
+                // haelt seine +1 als SSA-Wert unabhaengig vom Slot-Cleanup.
+                self.emit_defers()?;
+                self.release_function_locals()?;
                 self.builder.build_return(Some(&result)).map_err(|e| format!("{e}"))?;
+
+                // Fuer Closure-Lambdas (free_vars non-empty): Trampoline-Function
+                // nach der Inner-Function generieren. Signatur des Trampoline:
+                //   (MooFunc* env, MooValue p0, ..., MooValue pk) -> MooValue
+                // Body: fuer jedes Capture i moo_func_captured_at(env, i) laden,
+                // dann inner(p0, ..., pk, cap_0, ..., cap_m) aufrufen.
+                let tramp_opt: Option<FunctionValue<'ctx>> = if !free_vars.is_empty() {
+                    let ptr_type = self.context.ptr_type(AddressSpace::default());
+                    let mut tramp_param_types: Vec<BasicMetadataTypeEnum> = Vec::new();
+                    tramp_param_types.push(ptr_type.into());
+                    for _ in 0..params.len() {
+                        tramp_param_types.push(mv.into());
+                    }
+                    let tramp_fn_type = mv.fn_type(&tramp_param_types, false);
+                    let tramp_name = format!("{lambda_name}_tramp");
+                    let tramp = self.module.add_function(&tramp_name, tramp_fn_type, None);
+                    let tramp_entry = self.context.append_basic_block(tramp, "entry");
+                    self.current_function = Some(tramp);
+                    self.builder.position_at_end(tramp_entry);
+
+                    // Argumente fuer inner-Aufruf: erst user-Params, dann Captures
+                    let mut inner_args: Vec<BasicMetadataValueEnum> = Vec::new();
+                    for i in 0..params.len() {
+                        let p = tramp.get_nth_param((i + 1) as u32).unwrap();
+                        inner_args.push(p.into());
+                    }
+                    let env_arg = tramp.get_nth_param(0).unwrap();
+                    for i in 0..free_vars.len() {
+                        let i_val = self.context.i32_type().const_int(i as u64, false);
+                        let cap = self.call_rt(self.rt.moo_func_captured_at,
+                            &[env_arg.into(), i_val.into()],
+                            &format!("cap_{i}"))?;
+                        inner_args.push(cap.into());
+                    }
+                    let call_site = self.builder.build_call(function, &inner_args, "inner_call")
+                        .map_err(|e| format!("{e}"))?;
+                    let ret = match call_site.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v,
+                        _ => return Err("Lambda-Trampoline: inner call ohne Return".into()),
+                    };
+                    self.builder.build_return(Some(&ret))
+                        .map_err(|e| format!("{e}"))?;
+                    Some(tramp)
+                } else {
+                    None
+                };
 
                 self.current_function = prev_fn;
                 self.variables = prev_vars;
@@ -3586,7 +4374,51 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder.position_at_end(bb);
                 }
 
-                self.call_rt(self.rt.moo_none, &[], "lambda_placeholder")
+                // Lambda als First-Class-Value verpacken.
+                if free_vars.is_empty() {
+                    // Kein Capture-Environment — direkter MOO_FUNC-Wrapper.
+                    let fn_ptr = function.as_global_value().as_pointer_value();
+                    let arity = self.context.i32_type()
+                        .const_int(params.len() as u64, false);
+                    let name_ptr = self.make_global_str(&lambda_name,
+                        &format!("__lname_{lambda_name}"))?;
+                    self.call_rt(self.rt.moo_func_new,
+                        &[fn_ptr.into(), arity.into(), name_ptr.into()],
+                        "lambda_val")
+                } else {
+                    // Closure: Captures in Stack-Array packen, moo_func_with_captures.
+                    let tramp = tramp_opt.expect("Trampoline oben erzeugt");
+                    let n = free_vars.len();
+                    let caps_array_type = mv.array_type(n as u32);
+                    let caps_alloca = self.builder.build_alloca(caps_array_type, "caps_arr")
+                        .map_err(|e| format!("{e}"))?;
+                    for (i, var_name) in free_vars.iter().enumerate() {
+                        let cap_val = self.load_var(var_name)?;
+                        let elem_ptr = unsafe {
+                            self.builder.build_in_bounds_gep(
+                                caps_array_type,
+                                caps_alloca,
+                                &[
+                                    self.context.i32_type().const_zero(),
+                                    self.context.i32_type().const_int(i as u64, false),
+                                ],
+                                &format!("cap_slot_{i}"),
+                            ).map_err(|e| format!("{e}"))?
+                        };
+                        self.builder.build_store(elem_ptr, cap_val)
+                            .map_err(|e| format!("{e}"))?;
+                    }
+                    let tramp_ptr = tramp.as_global_value().as_pointer_value();
+                    let arity = self.context.i32_type()
+                        .const_int(params.len() as u64, false);
+                    let name_ptr = self.make_global_str(&lambda_name,
+                        &format!("__lname_{lambda_name}"))?;
+                    let n_val = self.context.i32_type().const_int(n as u64, false);
+                    self.call_rt(self.rt.moo_func_with_captures,
+                        &[tramp_ptr.into(), arity.into(), name_ptr.into(),
+                          caps_alloca.into(), n_val.into()],
+                        "lambda_closure_val")
+                }
             }
             Expr::Ternary { condition, then_val, else_val } => {
                 let func = self.current_function.unwrap();
