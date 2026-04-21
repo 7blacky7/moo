@@ -147,15 +147,9 @@ fn main() {
 // ============================================================================
 #[cfg(target_os = "linux")]
 fn build_ui_linux(build: &mut cc::Build) {
-    // Neue Cross-Platform-Backends:
+    // Cross-Platform-Backends (Linux):
     build.file("runtime/moo_ui_gtk.c");
     build.file("runtime/moo_tray_linux.c");
-
-    // Legacy-Wrapper (moo_gui.c) bleiben bis Phase 2 als Shim bestehen.
-    // Auskommentiert: werden von ui-bridge/ui-stdlib entfernt sobald alle
-    // Call-Sites auf moo_ui_* umgestellt sind.
-    // build.file("runtime/moo_gui.c");
-    // build.file("runtime/moo_tray.c");
 
     // Include-Pfade via pkg-config ermitteln (portabler als hardcoded
     // /usr/include/gtk-3.0 etc.).
