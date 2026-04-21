@@ -1,0 +1,231 @@
+name: UI Module Cross-Platform CI
+
+# ============================================================================
+# ui-ci.yml — Cross-Platform-Build fuer das moo UI-Modul.
+#
+# Strategie (Plan plan-002-moo-ui-cross-platform, Phase 3b):
+#   - Linux   (ubuntu-latest)  → GTK3 + libappindicator3, voller Smoke-Test
+#                                mit `timeout` gegen moo_ui_gtk.c
+#   - Windows (windows-latest) → Win32-SDK bereits im Image, testet
+#                                moo_ui_win32.c (Phase 3, blind geschrieben)
+#   - macOS   (macos-latest)   → Cocoa-Frameworks im Image, testet
+#                                moo_ui_cocoa.m   (Phase 4, blind geschrieben)
+#
+# Wir bauen mit `--no-default-features --features moo_ui`, d.h. OHNE gl33/glfw,
+# um die UI-Fehler zu isolieren. Das 3D-Backend hat seinen eigenen
+# Workflow (3d-backends.yml).
+#
+# Failures unter windows/macos sind ERWARTET beim ersten Run; Agents
+# ui-win32 / ui-cocoa iterieren auf Basis der GitHub-Actions-Logs.
+# ============================================================================
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "compiler/src/**"
+      - "compiler/runtime/moo_ui*"
+      - "compiler/runtime/moo_tray*"
+      - "compiler/Cargo.toml"
+      - "compiler/build.rs"
+      - "beispiele/ui_login_demo.moo"
+      - "stdlib/ui.moo"
+      - ".github/workflows/ui-ci.yml"
+  pull_request:
+    paths:
+      - "compiler/src/**"
+      - "compiler/runtime/moo_ui*"
+      - "compiler/runtime/moo_tray*"
+      - "compiler/Cargo.toml"
+      - "compiler/build.rs"
+      - "beispiele/ui_login_demo.moo"
+      - "stdlib/ui.moo"
+      - ".github/workflows/ui-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  ui-build:
+    name: ${{ matrix.os }} / ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    # Windows/macOS duerfen fehlschlagen ohne den ganzen Workflow zu killen:
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            exe_suffix: ""
+            experimental: false
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            exe_suffix: ".exe"
+            experimental: true
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            exe_suffix: ""
+            experimental: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------------------
+      # Plattform-spezifische System-Dependencies
+      # ---------------------------------------------------------------------
+      - name: Install Linux deps (GTK3, LLVM, SDL2, curl, sqlite)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            llvm-dev libpolly-14-dev libclang-14-dev \
+            libgtk-3-dev libappindicator3-dev \
+            libsdl2-dev libsdl2-image-dev \
+            libcurl4-openssl-dev libsqlite3-dev \
+            pkg-config
+
+      - name: Install Windows deps (LLVM, SDL2, sqlite, curl)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          # LLVM via Chocolatey (inkwell braucht libclang). Version muss zu
+          # `features = ["llvm18-1"]` in compiler/Cargo.toml passen.
+          choco install -y llvm --version=18.1.8 --allow-downgrade
+          # SDL2 + SDL2_image + curl + sqlite via vcpkg.
+          # vcpkg ist auf windows-latest vorinstalliert unter $env:VCPKG_INSTALLATION_ROOT.
+          vcpkg install --triplet x64-windows `
+            sdl2 sdl2-image curl sqlite3
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+          echo "LLVM_SYS_181_PREFIX=C:\Program Files\LLVM" >> $env:GITHUB_ENV
+          echo "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
+          # vcpkg-Includes und Libs fuer den C-Build bereitstellen
+          echo "INCLUDE=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\include;$env:INCLUDE" >> $env:GITHUB_ENV
+          echo "LIB=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\lib;$env:LIB" >> $env:GITHUB_ENV
+          echo "PATH=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin;$env:PATH" >> $env:GITHUB_ENV
+
+      - name: Install macOS deps (LLVM, SDL2, sqlite, curl)
+        if: matrix.os == 'macos-latest'
+        run: |
+          # Cocoa/AppKit/Foundation sind im System. Wir brauchen nur
+          # LLVM (fuer inkwell) und die C-Libraries der Core-Runtime.
+          brew update
+          brew install llvm@18 sdl2 sdl2_image
+          # libcurl und sqlite3 sind im System vorhanden (macOS SDK).
+          echo "LIBCLANG_PATH=$(brew --prefix llvm@18)/lib" >> $GITHUB_ENV
+          echo "LLVM_SYS_181_PREFIX=$(brew --prefix llvm@18)" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig:$(brew --prefix llvm@18)/lib/pkgconfig" >> $GITHUB_ENV
+
+      # ---------------------------------------------------------------------
+      # Rust Toolchain
+      # ---------------------------------------------------------------------
+      - name: Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            compiler/target
+          key: ${{ runner.os }}-ui-cargo-${{ hashFiles('compiler/Cargo.toml', 'compiler/build.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-ui-cargo-
+
+      # ---------------------------------------------------------------------
+      # Build — UI-Modul ohne 3D-Backend (--no-default-features + moo_ui)
+      # ---------------------------------------------------------------------
+      - name: Cargo build (release, moo_ui only)
+        working-directory: compiler
+        run: cargo build --release --no-default-features --features moo_ui
+
+      # ---------------------------------------------------------------------
+      # Compile ui_login_demo.moo → IR
+      # ---------------------------------------------------------------------
+      - name: moo-compiler — emit IR (ui_login_demo)
+        shell: bash
+        run: |
+          ./compiler/target/release/moo-compiler${{ matrix.exe_suffix }} \
+            compile beispiele/ui_login_demo.moo --emit-ir -o ui_login_demo.ll
+          test -s ui_login_demo.ll
+          echo "IR-Groesse: $(wc -c < ui_login_demo.ll) Bytes"
+
+      # ---------------------------------------------------------------------
+      # Compile ui_login_demo.moo → Binary (Linker-Smoke)
+      # ---------------------------------------------------------------------
+      - name: moo-compiler — build binary (ui_login_demo)
+        shell: bash
+        run: |
+          ./compiler/target/release/moo-compiler${{ matrix.exe_suffix }} \
+            compile beispiele/ui_login_demo.moo -o ui_login_demo${{ matrix.exe_suffix }}
+          ls -la ui_login_demo${{ matrix.exe_suffix }}
+
+      # ---------------------------------------------------------------------
+      # Smoke-Test — Binary starten und nach kurzer Zeit killen.
+      # Exit-Code ist irrelevant, wichtig ist dass der Prozess "lebt".
+      # ---------------------------------------------------------------------
+      - name: Smoke-Test (Linux, Xvfb, timeout 3s)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get install -y xvfb
+          # rc=124 = timeout ausgeloest → Prozess lebte bis zum Timeout = OK.
+          # rc=0   = Prozess beendete sich selbst sauber       = auch OK.
+          # alles andere                                       = Fehler.
+          set +e
+          xvfb-run -a timeout 3 ./ui_login_demo
+          rc=$?
+          set -e
+          echo "Exit-Code: $rc"
+          if [ $rc -ne 124 ] && [ $rc -ne 0 ]; then
+            echo "::error::Smoke-Test Linux fehlgeschlagen (rc=$rc)"
+            exit $rc
+          fi
+
+      - name: Smoke-Test (Windows, Process lebt 2s)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $proc = Start-Process -FilePath ".\ui_login_demo.exe" -PassThru
+          Start-Sleep -Seconds 2
+          if ($proc.HasExited) {
+            Write-Host "::error::Prozess endete nach <2s — ExitCode=$($proc.ExitCode)"
+            exit 1
+          }
+          Write-Host "Prozess lebt nach 2s — OK. Beende ihn nun."
+          Stop-Process -Id $proc.Id -Force
+          exit 0
+
+      - name: Smoke-Test (macOS, Process lebt 2s)
+        if: matrix.os == 'macos-latest'
+        run: |
+          ./ui_login_demo &
+          PID=$!
+          sleep 2
+          if kill -0 $PID 2>/dev/null; then
+            echo "Prozess $PID lebt nach 2s — OK."
+            kill $PID 2>/dev/null || true
+            wait $PID 2>/dev/null || true
+            exit 0
+          else
+            echo "::error::Prozess endete nach <2s"
+            exit 1
+          fi
+
+      # ---------------------------------------------------------------------
+      # Bei Fehler: Logs und Zwischenprodukte hochladen
+      # ---------------------------------------------------------------------
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-ci-${{ matrix.os }}-artifacts
+          path: |
+            ui_login_demo.ll
+            ui_login_demo
+            ui_login_demo.exe
+            compiler/target/release/build/**/output
+            compiler/target/release/build/**/stderr
+          if-no-files-found: ignore
+          retention-days: 14
