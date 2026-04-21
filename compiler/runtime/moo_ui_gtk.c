@@ -1407,3 +1407,216 @@ MooValue moo_ui_menue_untermenue(MooValue menue, MooValue titel) {
     return wrap_widget(sub);
 }
 
+
+/* ================================================================== *
+ * Keyboard-Shortcuts (Accelerator-Bindings)
+ *
+ * Pro Fenster eine GtkAccelGroup (lazy via g_object_set_data
+ * "moo-accel-group"). Unser Sequenz-Format wird DE→EN normalisiert und
+ * an gtk_accelerator_parse uebergeben, das (keyval, mods) liefert.
+ * Callback-Ownership via GClosure + cb_box_destroy.
+ * ================================================================== */
+
+/* Normalisiert ein einzelnes Token (Modifier oder Key). Schreibt in `out`
+ * das GTK-Accel-Name-Format. `out_cap` muss >= 32 sein. Liefert gboolean
+ * ob Token erkannt wurde. */
+static gboolean normalize_token(const char* tok, char* out, size_t out_cap,
+                                gboolean is_modifier) {
+    /* lowercase copy fuer Vergleiche */
+    char low[64];
+    size_t n = 0;
+    while (tok[n] && n < sizeof(low) - 1) {
+        low[n] = (char)g_ascii_tolower((unsigned char)tok[n]);
+        n++;
+    }
+    low[n] = 0;
+
+    if (is_modifier) {
+        if (!strcmp(low, "ctrl") || !strcmp(low, "control") || !strcmp(low, "strg")) {
+            g_strlcpy(out, "<Control>", out_cap); return TRUE;
+        }
+        if (!strcmp(low, "shift") || !strcmp(low, "umschalt")) {
+            g_strlcpy(out, "<Shift>", out_cap); return TRUE;
+        }
+        if (!strcmp(low, "alt")) {
+            g_strlcpy(out, "<Alt>", out_cap); return TRUE;
+        }
+        if (!strcmp(low, "super") || !strcmp(low, "meta") ||
+            !strcmp(low, "win")   || !strcmp(low, "cmd")) {
+            g_strlcpy(out, "<Super>", out_cap); return TRUE;
+        }
+        return FALSE;
+    }
+
+    /* Key-Tokens — DE→EN Synonyme */
+    struct { const char* alias; const char* gtk; } keymap[] = {
+        {"pos1",       "Home"},
+        {"ende",       "End"},
+        {"bildhoch",   "Page_Up"},
+        {"bildrunter", "Page_Down"},
+        {"pageup",     "Page_Up"},
+        {"pagedown",   "Page_Down"},
+        {"entf",       "Delete"},
+        {"delete",     "Delete"},
+        {"rueckschritt","BackSpace"},
+        {"backspace",  "BackSpace"},
+        {"einfg",      "Insert"},
+        {"insert",     "Insert"},
+        {"hoch",       "Up"},
+        {"runter",     "Down"},
+        {"links",      "Left"},
+        {"rechts",     "Right"},
+        {"up",         "Up"},
+        {"down",       "Down"},
+        {"left",       "Left"},
+        {"right",      "Right"},
+        {"esc",        "Escape"},
+        {"escape",     "Escape"},
+        {"tab",        "Tab"},
+        {"enter",      "Return"},
+        {"return",     "Return"},
+        {"space",      "space"},
+        {"leertaste",  "space"},
+        {"komma",      "comma"},
+        {"comma",      "comma"},
+        {"punkt",      "period"},
+        {"period",     "period"},
+        {"slash",      "slash"},
+        {"plus",       "plus"},
+        {"minus",      "minus"},
+        {NULL, NULL}
+    };
+    for (int i = 0; keymap[i].alias; i++) {
+        if (!strcmp(low, keymap[i].alias)) {
+            g_strlcpy(out, keymap[i].gtk, out_cap);
+            return TRUE;
+        }
+    }
+    /* F1..F24 case-insensitive */
+    if ((low[0] == 'f') && low[1]) {
+        int n_digits = 0;
+        for (size_t i = 1; low[i]; i++) {
+            if (low[i] < '0' || low[i] > '9') { n_digits = 0; break; }
+            n_digits++;
+        }
+        if (n_digits >= 1 && n_digits <= 2) {
+            int fn = atoi(&low[1]);
+            if (fn >= 1 && fn <= 24) {
+                g_snprintf(out, out_cap, "F%d", fn);
+                return TRUE;
+            }
+        }
+    }
+    /* Einzelnes ASCII-Zeichen: buchstabe → lower-case Name; ziffer → direkt. */
+    if (low[0] && !low[1]) {
+        out[0] = low[0]; out[1] = 0;
+        return TRUE;
+    }
+    /* Fallback: Originalname (ggf. capitalisiert) an GTK geben */
+    g_strlcpy(out, tok, out_cap);
+    return TRUE;
+}
+
+/* Parst unser Sequenz-Format (z.B. "Ctrl+Shift+S") in (keyval, mods).
+ * Liefert TRUE bei Erfolg. */
+static gboolean parse_sequence(const char* seq, guint* out_keyval,
+                               GdkModifierType* out_mods) {
+    if (!seq || !*seq) return FALSE;
+    /* Tokenize auf '+'. strtok ist unsauber mit const — kopieren. */
+    char* copy = g_strdup(seq);
+    char** toks = g_strsplit(copy, "+", -1);
+    g_free(copy);
+    if (!toks || !toks[0]) { g_strfreev(toks); return FALSE; }
+
+    int n_toks = 0;
+    while (toks[n_toks]) n_toks++;
+    if (n_toks < 1) { g_strfreev(toks); return FALSE; }
+
+    /* Accumulate accel-name string: "<Mod1><Mod2>Key" */
+    char acc[256];
+    acc[0] = 0;
+    for (int i = 0; i < n_toks - 1; i++) {
+        char buf[32];
+        if (!normalize_token(toks[i], buf, sizeof(buf), TRUE)) {
+            g_strfreev(toks);
+            return FALSE;
+        }
+        g_strlcat(acc, buf, sizeof(acc));
+    }
+    char keybuf[32];
+    if (!normalize_token(toks[n_toks - 1], keybuf, sizeof(keybuf), FALSE)) {
+        g_strfreev(toks);
+        return FALSE;
+    }
+    g_strlcat(acc, keybuf, sizeof(acc));
+    g_strfreev(toks);
+
+    guint kv = 0;
+    GdkModifierType mm = 0;
+    gtk_accelerator_parse(acc, &kv, &mm);
+    if (kv == 0) return FALSE;
+    *out_keyval = kv;
+    *out_mods   = mm;
+    return TRUE;
+}
+
+static GtkAccelGroup* window_accel_group(GtkWidget* win) {
+    GtkAccelGroup* ag = (GtkAccelGroup*)g_object_get_data(G_OBJECT(win),
+                                                          "moo-accel-group");
+    if (!ag) {
+        ag = gtk_accel_group_new();
+        gtk_window_add_accel_group(GTK_WINDOW(win), ag);
+        /* Full-Destroy-Notify: beim Fenster-Destroy unref der AccelGroup. */
+        g_object_set_data_full(G_OBJECT(win), "moo-accel-group",
+                               ag, g_object_unref);
+    }
+    return ag;
+}
+
+/* Trampoline fuer accel-group connect. Return TRUE = Shortcut verarbeitet. */
+static gboolean on_accel_trampoline(GtkAccelGroup* ag, GObject* acceleratable,
+                                    guint keyval, GdkModifierType mods,
+                                    gpointer user_data) {
+    (void)ag; (void)acceleratable; (void)keyval; (void)mods;
+    MooValue* cb = (MooValue*)user_data;
+    if (cb && cb->tag == MOO_FUNC) moo_func_call_0(*cb);
+    return TRUE;
+}
+
+MooValue moo_ui_shortcut_bind(MooValue fenster, MooValue sequenz,
+                              MooValue callback) {
+    GtkWidget* win = unwrap_widget(fenster);
+    if (!win || !GTK_IS_WINDOW(win)) return moo_bool(0);
+    if (sequenz.tag != MOO_STRING) return moo_bool(0);
+
+    guint kv = 0;
+    GdkModifierType mods = 0;
+    if (!parse_sequence(MV_STR(sequenz)->chars, &kv, &mods)) return moo_bool(0);
+
+    GtkAccelGroup* ag = window_accel_group(win);
+
+    /* Still ersetzen: existiert schon ein Binding fuer (kv, mods)? Disconnect. */
+    gtk_accel_group_disconnect_key(ag, kv, mods);
+
+    MooValue* box = cb_box_new(callback);
+    GClosure* cl = g_cclosure_new(G_CALLBACK(on_accel_trampoline), box,
+                                  (GClosureNotify)cb_box_destroy);
+    gtk_accel_group_connect(ag, kv, mods, GTK_ACCEL_VISIBLE, cl);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_shortcut_loese(MooValue fenster, MooValue sequenz) {
+    GtkWidget* win = unwrap_widget(fenster);
+    if (!win || !GTK_IS_WINDOW(win)) return moo_bool(0);
+    if (sequenz.tag != MOO_STRING) return moo_bool(0);
+    GtkAccelGroup* ag = (GtkAccelGroup*)g_object_get_data(G_OBJECT(win),
+                                                          "moo-accel-group");
+    if (!ag) return moo_bool(0);
+
+    guint kv = 0;
+    GdkModifierType mods = 0;
+    if (!parse_sequence(MV_STR(sequenz)->chars, &kv, &mods)) return moo_bool(0);
+
+    return moo_bool(gtk_accel_group_disconnect_key(ag, kv, mods));
+}
+
