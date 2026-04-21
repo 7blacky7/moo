@@ -302,10 +302,20 @@ MooValue moo_tray_check_set(MooValue check_item, MooValue wert) {
     GtkWidget* w = (GtkWidget*)moo_val_as_ptr(check_item);
     if (!w || !GTK_IS_CHECK_MENU_ITEM(w)) return moo_bool(0);
     gboolean an = (wert.tag == MOO_BOOL) ? (gboolean)MV_BOOL(wert) : FALSE;
-    /* set_active feuert "toggled" nur, wenn sich der Zustand aendert. Das
-     * ist das gewuenschte Verhalten — programmatische Setzer triggern den
-     * User-Callback mit. */
+    /* WICHTIG: programmatisches set_active darf on_check_item_toggled NICHT
+     * feuern — sonst wird der User-Callback bei jedem Code-gesteuerten Update
+     * aufgerufen. Das verursacht bei Timer-getriebenen Updates ein Plasma-
+     * DBusmenu-Flackern und fuehrt ueber Callback-State-Inkonsistenzen
+     * mittelfristig zu SIGSEGV (Stack/Runtime-Korruption im moo-func-call).
+     * Daher Handler waehrend des Setzens blocken. User-Klicks gehen
+     * weiterhin durch, weil die ausserhalb dieses Aufrufs passieren. */
+    /* block_by_func matcht auch auf data — unser Handler hat cb_copy als
+     * data, also wuerde NULL nie matchen. Stattdessen nur MATCH_FUNC. */
+    g_signal_handlers_block_matched(w, G_SIGNAL_MATCH_FUNC, 0, 0, NULL,
+        (gpointer)G_CALLBACK(on_check_item_toggled), NULL);
     gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(w), an);
+    g_signal_handlers_unblock_matched(w, G_SIGNAL_MATCH_FUNC, 0, 0, NULL,
+        (gpointer)G_CALLBACK(on_check_item_toggled), NULL);
     return moo_bool(1);
 }
 
