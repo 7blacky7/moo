@@ -489,8 +489,17 @@ MooValue moo_ui_laufen(void) {
     ui_log("ui_laufen: enter message loop", NULL);
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
-        /* IsDialogMessage waere fuer Tab-Navigation schoener, aber
-         * erfordert ein Dialog-Template. Phase-3 ok ohne. */
+        /* Shortcut-Bindings vor Translate/Dispatch auswerten. Wenn das
+         * Top-Level-Fenster des Empfaengers eine HACCEL-Tabelle hat und
+         * TranslateAcceleratorW das Event konsumiert, ueberspringen wir
+         * Translate/Dispatch (TranslateAcceleratorW hat bereits WM_COMMAND
+         * mit der Accel-ID an das Top-Fenster gesendet → moo_window_proc
+         * feuert den Callback ueber g_cb_by_id). */
+        HWND top = msg.hwnd ? GetAncestor(msg.hwnd, GA_ROOT) : NULL;
+        if (top) {
+            HACCEL ha = (HACCEL)GetPropW(top, L"moo-haccel");
+            if (ha && TranslateAcceleratorW(top, ha, &msg)) continue;
+        }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
