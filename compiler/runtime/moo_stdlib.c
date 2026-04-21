@@ -239,6 +239,86 @@ MooValue moo_func_call_3(MooValue func, MooValue a0, MooValue a1, MooValue a2) {
     return plain(a0, a1, a2);
 }
 
+MooValue moo_func_call_4(MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3) {
+    if (func.tag != MOO_FUNC) {
+        moo_throw(moo_string_new("Aufruf auf Nicht-Funktion"));
+        return moo_none();
+    }
+    MooFunc* fn = MV_FUNC(func);
+    if (fn->n_captured > 0) {
+        MooValue (*tramp)(MooFunc*, MooValue, MooValue, MooValue, MooValue) =
+            (MooValue(*)(MooFunc*, MooValue, MooValue, MooValue, MooValue))fn->fn_ptr;
+        return tramp(fn, a0, a1, a2, a3);
+    }
+    MooValue (*plain)(MooValue, MooValue, MooValue, MooValue) =
+        (MooValue(*)(MooValue, MooValue, MooValue, MooValue))fn->fn_ptr;
+    return plain(a0, a1, a2, a3);
+}
+
+MooValue moo_func_call_5(MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4) {
+    if (func.tag != MOO_FUNC) {
+        moo_throw(moo_string_new("Aufruf auf Nicht-Funktion"));
+        return moo_none();
+    }
+    MooFunc* fn = MV_FUNC(func);
+    if (fn->n_captured > 0) {
+        MooValue (*tramp)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue) =
+            (MooValue(*)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue))fn->fn_ptr;
+        return tramp(fn, a0, a1, a2, a3, a4);
+    }
+    MooValue (*plain)(MooValue, MooValue, MooValue, MooValue, MooValue) =
+        (MooValue(*)(MooValue, MooValue, MooValue, MooValue, MooValue))fn->fn_ptr;
+    return plain(a0, a1, a2, a3, a4);
+}
+
+MooValue moo_func_call_6(MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4, MooValue a5) {
+    if (func.tag != MOO_FUNC) {
+        moo_throw(moo_string_new("Aufruf auf Nicht-Funktion"));
+        return moo_none();
+    }
+    MooFunc* fn = MV_FUNC(func);
+    if (fn->n_captured > 0) {
+        MooValue (*tramp)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue) =
+            (MooValue(*)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue))fn->fn_ptr;
+        return tramp(fn, a0, a1, a2, a3, a4, a5);
+    }
+    MooValue (*plain)(MooValue, MooValue, MooValue, MooValue, MooValue, MooValue) =
+        (MooValue(*)(MooValue, MooValue, MooValue, MooValue, MooValue, MooValue))fn->fn_ptr;
+    return plain(a0, a1, a2, a3, a4, a5);
+}
+
+MooValue moo_func_call_7(MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4, MooValue a5, MooValue a6) {
+    if (func.tag != MOO_FUNC) {
+        moo_throw(moo_string_new("Aufruf auf Nicht-Funktion"));
+        return moo_none();
+    }
+    MooFunc* fn = MV_FUNC(func);
+    if (fn->n_captured > 0) {
+        MooValue (*tramp)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue) =
+            (MooValue(*)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue))fn->fn_ptr;
+        return tramp(fn, a0, a1, a2, a3, a4, a5, a6);
+    }
+    MooValue (*plain)(MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue) =
+        (MooValue(*)(MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue))fn->fn_ptr;
+    return plain(a0, a1, a2, a3, a4, a5, a6);
+}
+
+MooValue moo_func_call_8(MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4, MooValue a5, MooValue a6, MooValue a7) {
+    if (func.tag != MOO_FUNC) {
+        moo_throw(moo_string_new("Aufruf auf Nicht-Funktion"));
+        return moo_none();
+    }
+    MooFunc* fn = MV_FUNC(func);
+    if (fn->n_captured > 0) {
+        MooValue (*tramp)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue) =
+            (MooValue(*)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue))fn->fn_ptr;
+        return tramp(fn, a0, a1, a2, a3, a4, a5, a6, a7);
+    }
+    MooValue (*plain)(MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue) =
+        (MooValue(*)(MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue))fn->fn_ptr;
+    return plain(a0, a1, a2, a3, a4, a5, a6, a7);
+}
+
 // moo_func_with_captures: Erstellt ein MOO_FUNC-Value fuer ein Closure-Lambda.
 // Der tramp_ptr zeigt auf einen vom Codegen erzeugten Trampoline mit der
 // Signatur (MooFunc* env, MooValue... user_args). Der Trampoline liest

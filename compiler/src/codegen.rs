@@ -3209,9 +3209,14 @@ impl<'ctx> CodeGen<'ctx> {
                                 1 => self.rt.moo_func_call_1,
                                 2 => self.rt.moo_func_call_2,
                                 3 => self.rt.moo_func_call_3,
+                                4 => self.rt.moo_func_call_4,
+                                5 => self.rt.moo_func_call_5,
+                                6 => self.rt.moo_func_call_6,
+                                7 => self.rt.moo_func_call_7,
+                                8 => self.rt.moo_func_call_8,
                                 n => return Err(format!(
                                     "Indirekter Aufruf von '{name}' mit {n} Argumenten \
-                                     nicht unterstuetzt (max 3). Umschreiben auf \
+                                     nicht unterstuetzt (max 8). Umschreiben auf \
                                      benannte Funktion oder weniger Argumente."
                                 )),
                             };

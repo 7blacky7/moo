@@ -276,6 +276,11 @@ MooValue moo_func_call_0(MooValue func);
 MooValue moo_func_call_1(MooValue func, MooValue a0);
 MooValue moo_func_call_2(MooValue func, MooValue a0, MooValue a1);
 MooValue moo_func_call_3(MooValue func, MooValue a0, MooValue a1, MooValue a2);
+MooValue moo_func_call_4(MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3);
+MooValue moo_func_call_5(MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4);
+MooValue moo_func_call_6(MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4, MooValue a5);
+MooValue moo_func_call_7(MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4, MooValue a5, MooValue a6);
+MooValue moo_func_call_8(MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4, MooValue a5, MooValue a6, MooValue a7);
 
 // === Arithmetik & Vergleiche ===
 MooValue moo_add(MooValue a, MooValue b);

@@ -144,6 +144,11 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_func_call_1: FunctionValue<'ctx>,
     pub moo_func_call_2: FunctionValue<'ctx>,
     pub moo_func_call_3: FunctionValue<'ctx>,
+    pub moo_func_call_4: FunctionValue<'ctx>,
+    pub moo_func_call_5: FunctionValue<'ctx>,
+    pub moo_func_call_6: FunctionValue<'ctx>,
+    pub moo_func_call_7: FunctionValue<'ctx>,
+    pub moo_func_call_8: FunctionValue<'ctx>,
     // Thread & Channel
     pub moo_thread_spawn: FunctionValue<'ctx>,
     pub moo_thread_wait: FunctionValue<'ctx>,
@@ -601,6 +606,11 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_func_call_1: decl_mv_mv!("moo_func_call_1", mv2),
             moo_func_call_2: decl_mv_mv!("moo_func_call_2", mv3),
             moo_func_call_3: decl_mv_mv!("moo_func_call_3", &[mv, mv, mv, mv]),
+            moo_func_call_4: decl_mv_mv!("moo_func_call_4", &[mv, mv, mv, mv, mv]),
+            moo_func_call_5: decl_mv_mv!("moo_func_call_5", &[mv, mv, mv, mv, mv, mv]),
+            moo_func_call_6: decl_mv_mv!("moo_func_call_6", &[mv, mv, mv, mv, mv, mv, mv]),
+            moo_func_call_7: decl_mv_mv!("moo_func_call_7", &[mv, mv, mv, mv, mv, mv, mv, mv]),
+            moo_func_call_8: decl_mv_mv!("moo_func_call_8", &[mv, mv, mv, mv, mv, mv, mv, mv, mv]),
             // Thread & Channel
             moo_thread_spawn: decl_mv_mv!("moo_thread_spawn", mv2),
             moo_thread_wait: decl_mv_mv!("moo_thread_wait", mv1),
