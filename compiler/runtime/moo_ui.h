@@ -331,12 +331,51 @@ MooValue moo_ui_menue_trenner(MooValue menue);
 MooValue moo_ui_menue_untermenue(MooValue menue, MooValue titel);
 
 /* =========================================================================
- * Kompatibilitaets-Shims (Deprecation-Stufe 1)
+ * Keyboard-Shortcuts (Accelerator-Bindings)
  *
- * Die alten moo_gui_* / tray-run-Funktionen in moo_gui.c bleiben temporaer
- * als Wrappers um moo_ui_* bestehen, werden in Phase 2 entfernt.
- * Details: Thought ef83dc4a, Abschnitt "Alte moo_gui.c / moo_tray.c".
+ * Bindet eine Tasten-Sequenz an einen Callback im Kontext eines Fensters.
+ * Solange das Fenster Fokus hat (oder ein Kind-Widget darin), feuert
+ * die Sequenz den Callback — voellig unabhaengig davon ob ein Menue-
+ * Eintrag existiert. Ideal fuer globale App-Hotkeys.
+ *
+ * sequenz-Format (MooString, case-insensitive, "+"-getrennt):
+ *   "Ctrl+S", "Shift+F1", "Ctrl+Alt+Del", "F11", "Strg+Z"
+ *
+ * Modifier-Tokens (synonym):
+ *   Ctrl  | Control | Strg
+ *   Shift | Umschalt
+ *   Alt
+ *   Super | Meta | Win | Cmd
+ *
+ * Key-Tokens: Buchstaben A..Z, Ziffern 0..9, F1..F24, Esc/Escape,
+ *   Tab, Enter/Return, Space/Leertaste, Up/Down/Left/Right/Hoch/
+ *   Runter/Links/Rechts, Home/Pos1, End/Ende, PageUp/BildHoch,
+ *   PageDown/BildRunter, Delete/Entf, Backspace/Rueckschritt,
+ *   Insert/Einfg, Plus, Minus, Comma/Komma, Period/Punkt, Slash, ";".
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_accel_group_connect + gtk_accelerator_parse
+ *   Windows      : RegisterHotKey pro Fenster ODER TranslateAcceleratorW
+ *                  mit ACCEL-Table (Backend entscheidet; moo-Aufrufer
+ *                  sieht keinen Unterschied).
+ *   macOS        : NSEvent addLocalMonitorForEventsMatchingMask:
+ *                  (NSEventMaskKeyDown) gefiltert auf sequenz.
+ *
+ * Return moo_ui_shortcut_bind:
+ *   wahr  → Binding aktiv (ersetzt ein evtl. vorheriges mit derselben
+ *           Sequenz im selben Fenster still).
+ *   falsch → sequenz nicht parsebar.
+ *
+ * Ownership: callback wird retain-t und beim Fenster-Destroy (oder
+ * beim Re-Bind derselben Sequenz) released.
  * ========================================================================= */
+
+MooValue moo_ui_shortcut_bind(MooValue fenster, MooValue sequenz,
+                              MooValue callback);
+
+/* Entfernt das Binding fuer `sequenz`. Liefert wahr wenn ein aktives
+ * Binding entfernt wurde, falsch wenn keines existierte. */
+MooValue moo_ui_shortcut_loese(MooValue fenster, MooValue sequenz);
 
 #ifdef __cplusplus
 }
