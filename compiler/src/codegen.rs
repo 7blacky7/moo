@@ -3203,6 +3203,17 @@ impl<'ctx> CodeGen<'ctx> {
                         let t = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_ui_menue_untermenue, &[m.into(), t.into()], "ui_menue_untermenue");
                     }
+                    "ui_shortcut_bind" | "ui_shortcut_binde" | "ui_kuerzel_binde" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let s = self.compile_expr(&args[1])?;
+                        let c = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_ui_shortcut_bind, &[f.into(), s.into(), c.into()], "ui_shortcut_bind");
+                    }
+                    "ui_shortcut_loese" | "ui_shortcut_unbind" | "ui_kuerzel_loese" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let s = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_shortcut_loese, &[f.into(), s.into()], "ui_shortcut_loese");
+                    }
                     "tray_run" | "tray_loop" => {
                         // DEPRECATED: Alias auf ui_laufen (siehe moo_tray.h).
                         return self.call_rt(self.rt.moo_tray_run, &[], "tray_run");

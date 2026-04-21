@@ -391,6 +391,8 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_ui_menue_eintrag: FunctionValue<'ctx>,
     pub moo_ui_menue_trenner: FunctionValue<'ctx>,
     pub moo_ui_menue_untermenue: FunctionValue<'ctx>,
+    pub moo_ui_shortcut_bind: FunctionValue<'ctx>,
+    pub moo_ui_shortcut_loese: FunctionValue<'ctx>,
     // Netzwerk (TCP/UDP)
     pub moo_tcp_server: FunctionValue<'ctx>,
     pub moo_tcp_connect: FunctionValue<'ctx>,
@@ -858,6 +860,8 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_ui_menue_eintrag: decl_mv_mv!("moo_ui_menue_eintrag", mv3),
             moo_ui_menue_trenner: decl_mv_mv!("moo_ui_menue_trenner", mv1),
             moo_ui_menue_untermenue: decl_mv_mv!("moo_ui_menue_untermenue", mv2),
+            moo_ui_shortcut_bind: decl_mv_mv!("moo_ui_shortcut_bind", mv3),
+            moo_ui_shortcut_loese: decl_mv_mv!("moo_ui_shortcut_loese", mv2),
             // Netzwerk
             moo_tcp_server: decl_mv_mv!("moo_tcp_server", mv1),
             moo_tcp_connect: decl_mv_mv!("moo_tcp_connect", mv2),
