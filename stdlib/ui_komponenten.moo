@@ -10,6 +10,8 @@
 #   - Widgets werden als `g.<name>` abgelegt.
 #   - `g.hFenster` muss bereits existieren (ui_baue() erledigt das).
 #   - Rueckgabe: wahr bei Erfolg.
+#   - Callbacks werden zur Bau-Zeit gebunden (ui_knopf akzeptiert
+#     nur Create-Time-Callbacks — kein nachtraegliches Setter-API).
 #
 # Alle Komponenten arbeiten auf absolutem x/y/w/h-Layout gegen
 # das Fenster (GtkFixed auf Linux, entsprechend auf Win/macOS).
@@ -28,18 +30,26 @@
 #
 # Handles: g.lblUser, g.inpUser, g.lblPass, g.inpPass,
 #          g.btnLogin, g.btnCancel
+#
+# on_login / on_cancel: optionale Callbacks; nichts = Defaults
+# (Anmelden meldet Status, Abbrechen beendet die Event-Loop).
 # ------------------------------------------------------------
 
-funktion setup_login_form(g, user_label, pass_label, btn_breite):
+funktion setup_login_form(g, user_label, pass_label, btn_breite, on_login = nichts, on_cancel = nichts):
     setze f auf g.hFenster
     g.lblUser  = ui_label(f, user_label, 20, 20, 120, 20)
     g.inpUser  = ui_eingabe(f, 20, 44, 260, 26, "", falsch)
     g.lblPass  = ui_label(f, pass_label, 20, 80, 120, 20)
     g.inpPass  = ui_eingabe(f, 20, 104, 260, 26, "", wahr)
 
+    wenn on_login == nichts:
+        setze on_login auf () => { zeige "[login] Anmelden geklickt" }
+    wenn on_cancel == nichts:
+        setze on_cancel auf () => { ui_beenden() }
+
     setze y auf 150
-    g.btnLogin  = ui_knopf(f, "Anmelden",  20,                        y, btn_breite, 30, () => { zeige "[login] btnLogin" })
-    g.btnCancel = ui_knopf(f, "Abbrechen", 20 + btn_breite + 10,      y, btn_breite, 30, () => { ui_beenden() })
+    g.btnLogin  = ui_knopf(f, "Anmelden",  20,                   y, btn_breite, 30, on_login)
+    g.btnCancel = ui_knopf(f, "Abbrechen", 20 + btn_breite + 10, y, btn_breite, 30, on_cancel)
     gib_zurück wahr
 
 
@@ -72,7 +82,10 @@ funktion setup_user_form(g, name_label, email_label, cat_label, breite):
 # ------------------------------------------------------------
 # setup_toolbar — horizontale Werkzeug-Leiste
 #
-# buttons_liste: Liste aus Strings (Button-Texte).
+# buttons_liste: Liste — Elemente duerfen sein:
+#   "Text"                        → Default-Callback (print)
+#   ["Text", () => { ... }]       → eigener Callback
+#
 # Handles: g.toolbar  — Liste der Button-Handles
 # ------------------------------------------------------------
 
@@ -83,8 +96,16 @@ funktion setup_toolbar(g, buttons_liste):
     setze bb auf 90
     setze h auf 28
     g.toolbar = []
-    für text in buttons_liste:
-        setze btn auf ui_knopf(f, text, x, y, bb, h, () => { zeige "[toolbar] " + text })
+    für eintrag in buttons_liste:
+        setze text auf eintrag
+        setze cb auf nichts
+        wenn typ_von(eintrag) == "Liste":
+            setze text auf eintrag[0]
+            wenn länge(eintrag) > 1:
+                setze cb auf eintrag[1]
+        wenn cb == nichts:
+            setze cb auf () => { zeige "[toolbar] " + text }
+        setze btn auf ui_knopf(f, text, x, y, bb, h, cb)
         g.toolbar.hinzufügen(btn)
         setze x auf x + bb + 6
     gib_zurück wahr
@@ -126,8 +147,8 @@ funktion setup_app_header(g, titel, version):
     setze b auf g.breite
     wenn b == nichts:
         setze b auf 600
-    g.lblHeader    = ui_label(f, titel,   15, 10, b - 140, 28)
-    g.lblVersion   = ui_label(f, version, b - 120, 16,  110, 18)
+    g.lblHeader     = ui_label(f, titel,   15, 10, b - 140, 28)
+    g.lblVersion    = ui_label(f, version, b - 120, 16, 110, 18)
     g.trennerHeader = ui_trenner(f, 0, 48, b, 2)
     gib_zurück wahr
 
@@ -135,11 +156,11 @@ funktion setup_app_header(g, titel, version):
 # ------------------------------------------------------------
 # setup_action_buttons — Reihe Aktions-Buttons
 #
-# Beliebig viele Buttons, horizontal verteilt.
-# Klickt einer, wird sein Text ausgegeben (Demo-Callback;
-# der Aufrufer kann nachtraeglich g.actions[i] rebinden).
+# buttons_liste: Liste — Elemente wie bei setup_toolbar:
+#   "Text"                        → Default-Callback
+#   ["Text", () => { ... }]       → eigener Callback
 #
-# Handles: g.actions — Liste der Button-Handles
+# Handles: g.actions — Liste der Button-Handles (in Eingangsreihenfolge)
 # ------------------------------------------------------------
 
 funktion setup_action_buttons(g, buttons_liste):
@@ -152,8 +173,16 @@ funktion setup_action_buttons(g, buttons_liste):
     setze bb auf 110
     setze x auf 15
     g.actions = []
-    für text in buttons_liste:
-        setze btn auf ui_knopf(f, text, x, y, bb, 30, () => { zeige "[action] " + text })
+    für eintrag in buttons_liste:
+        setze text auf eintrag
+        setze cb auf nichts
+        wenn typ_von(eintrag) == "Liste":
+            setze text auf eintrag[0]
+            wenn länge(eintrag) > 1:
+                setze cb auf eintrag[1]
+        wenn cb == nichts:
+            setze cb auf () => { zeige "[action] " + text }
+        setze btn auf ui_knopf(f, text, x, y, bb, 30, cb)
         g.actions.hinzufügen(btn)
         setze x auf x + bb + 8
     gib_zurück wahr
@@ -179,13 +208,14 @@ funktion setup_notes_area(g, label, breite, hoehe):
 # Legt Titel, Version und Beschreibung in das Fenster.
 # Ideal fuer ein separates About-Fenster.
 #
-# Handles: g.lblAboutTitel, g.lblAboutVersion, g.lblAboutBeschreibung
+# Handles: g.lblAboutTitel, g.lblAboutVersion,
+#          g.trennerAbout, g.lblAboutBeschreibung
 # ------------------------------------------------------------
 
 funktion setup_about_info(g, titel, version, beschreibung):
     setze f auf g.hFenster
-    g.lblAboutTitel        = ui_label(f, titel,                   20, 20, 360, 28)
-    g.lblAboutVersion      = ui_label(f, "Version: " + version,   20, 54, 360, 20)
+    g.lblAboutTitel        = ui_label(f, titel,                 20, 20, 360, 28)
+    g.lblAboutVersion      = ui_label(f, "Version: " + version, 20, 54, 360, 20)
     g.trennerAbout         = ui_trenner(f, 0, 84, 400, 1)
-    g.lblAboutBeschreibung = ui_label(f, beschreibung,            20, 94, 360, 180)
+    g.lblAboutBeschreibung = ui_label(f, beschreibung,          20, 94, 360, 180)
     gib_zurück wahr

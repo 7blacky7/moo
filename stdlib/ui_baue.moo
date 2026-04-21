@@ -1,8 +1,8 @@
 # ============================================================
 # stdlib/ui_baue.moo — Master-Constructor fuer UI-Komposition
 #
-# Schicht 2 der moo-UI-Architektur. Inspiriert von
-# AutoIt GUIBuilder's _GUI_Create_ (Moritz Kolar).
+# Schicht 2 der moo-UI-Architektur. Inspiriert vom AutoIt
+# GUIBuilder `_GUI_Create_` (Moritz Kolar).
 #
 # Idee:
 #   - Ein Dict als GUI-Container (hFenster, inpUser, btnLogin, ...)
@@ -22,11 +22,21 @@
 # ============================================================
 
 
+# Fenster-Flag-Konstanten (1:1 Spiegel von moo_ui.h MOO_UI_FLAG_*)
+konstante UI_FLAG_NONE       auf 0
+konstante UI_FLAG_RESIZABLE  auf 1
+konstante UI_FLAG_MAXIMIZED  auf 2
+konstante UI_FLAG_FULLSCREEN auf 4
+konstante UI_FLAG_MODAL      auf 8
+konstante UI_FLAG_NO_DECOR   auf 16
+konstante UI_FLAG_ALWAYS_TOP auf 32
+
+
 # ------------------------------------------------------------
 # rufe_mit(funk, args) — Apply-Helper
 #
-# moo hat Spread (..liste) als Listen-Literal-Feature, aber nicht
-# garantiert als Call-Site-Spread. Wir dispatchen manuell ueber die
+# moo unterstuetzt `...liste` in Listen-Literalen, garantiert aber
+# nicht Spread am Call-Site. Wir dispatchen manuell ueber die
 # Listenlaenge. Deckt bis 10 Parameter ab — ausreichend fuer alle
 # Setup-Funktionen im Standard-Komponenten-Satz.
 # ------------------------------------------------------------
@@ -57,6 +67,23 @@ funktion rufe_mit(funk, args):
 
 
 # ------------------------------------------------------------
+# ui_flags(resizable, maximiert, fullscreen, modal) → Bitfeld
+# ------------------------------------------------------------
+
+funktion ui_flags(resizable = falsch, maximiert = falsch, fullscreen = falsch, modal = falsch):
+    setze f auf 0
+    wenn resizable:
+        setze f auf f + UI_FLAG_RESIZABLE
+    wenn maximiert:
+        setze f auf f + UI_FLAG_MAXIMIZED
+    wenn fullscreen:
+        setze f auf f + UI_FLAG_FULLSCREEN
+    wenn modal:
+        setze f auf f + UI_FLAG_MODAL
+    gib_zurück f
+
+
+# ------------------------------------------------------------
 # ui_baue — Master-Constructor
 #
 # container   — Dict, in dem Widget-Handles abgelegt werden
@@ -64,18 +91,21 @@ funktion rufe_mit(funk, args):
 # titel       — Fenstertitel
 # breite/hoehe — Groesse in Pixeln
 # setups      — Liste [[funk, [params...]], ...]
-# resizable   — darf der User das Fenster groesse-aendern (Standard: falsch)
+# resizable   — darf der User das Fenster resize-en (Standard: falsch)
 # maximiert   — beim Start maximieren (Standard: falsch)
 # parent      — Parent-Fenster (Standard: nichts = Top-Level)
+#
+# Die Signatur des Runtime-Primitivs ist
+#   ui_fenster(titel, breite, hoehe, flags, parent)
+# — wir bauen `flags` intern aus den beiden Bools.
 # ------------------------------------------------------------
 
 funktion ui_baue(container, titel, breite, hoehe, setups, resizable = falsch, maximiert = falsch, parent = nichts):
-    # 1) Fenster erzeugen und ablegen
-    container.hFenster = ui_fenster(titel, breite, hoehe, resizable, maximiert, parent)
+    setze flags auf ui_flags(resizable, maximiert)
+    container.hFenster = ui_fenster(titel, breite, hoehe, flags, parent)
     container.breite = breite
     container.hoehe = hoehe
 
-    # 2) Alle Setup-Funktionen in Reihenfolge aufrufen
     für eintrag in setups:
         setze funk auf eintrag[0]
         setze params auf []
@@ -93,7 +123,8 @@ funktion ui_baue(container, titel, breite, hoehe, setups, resizable = falsch, ma
 
 funktion ui_debug_baue(container, titel, breite, hoehe, setups, resizable = falsch, maximiert = falsch, parent = nichts):
     zeige "[ui_baue] Fenster '" + titel + "' " + breite + "x" + hoehe
-    container.hFenster = ui_fenster(titel, breite, hoehe, resizable, maximiert, parent)
+    setze flags auf ui_flags(resizable, maximiert)
+    container.hFenster = ui_fenster(titel, breite, hoehe, flags, parent)
     container.breite = breite
     container.hoehe = hoehe
 

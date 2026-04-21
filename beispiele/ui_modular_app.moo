@@ -18,6 +18,7 @@
 
 importiere ui
 
+
 # --- Zweites Fenster (Ueber-Dialog) ---
 
 funktion zeige_ueber():
@@ -38,39 +39,46 @@ funktion zeige_ueber():
 
 setze g auf {}
 
-ui_baue(g, "moo — Modulare App", 620, 520, [
-    [setup_app_header,      ["Moo Admin", "v1.0.0"]],
-    [setup_user_form,       ["Name:", "E-Mail:", "Kategorie:", 280]],
-    [setup_notes_area,      ["Notizen:", 280, 160]],
-    [setup_action_buttons,  [["Speichern", "Laden", "Neu", "Hilfe", "Ueber"]]],
-    [setup_status_bar,      ["Bereit", "0 Eintraege"]],
-], resizable = wahr)
 
+# --- Callbacks (binden via Closure auf `g`) ---
 
-# --- Callbacks nachtraeglich binden ---
-
-ui_knopf_callback_setze(g.actions[0], () => {
+setze cb_speichern auf () => {
     setze name auf ui_eingabe_text(g.inpName)
     ui_label_setze(g.lblStatus, "Gespeichert: " + name)
-})
+}
 
-ui_knopf_callback_setze(g.actions[1], () => {
+setze cb_laden auf () => {
     ui_label_setze(g.lblStatus, "Laden — noch nicht implementiert")
-})
+}
 
-ui_knopf_callback_setze(g.actions[2], () => {
+setze cb_neu auf () => {
     ui_eingabe_setze(g.inpName, "")
     ui_eingabe_setze(g.inpEmail, "")
     ui_label_setze(g.lblStatus, "Neu — Felder geleert")
-})
+}
 
-ui_knopf_callback_setze(g.actions[3], () => {
-    ui_info("Hilfe", "Trage Name und E-Mail ein, dann auf Speichern.")
-})
+setze cb_hilfe auf () => {
+    ui_info(g.hFenster, "Hilfe", "Trage Name und E-Mail ein, dann auf Speichern.")
+}
 
-ui_knopf_callback_setze(g.actions[4], () => {
-    zeige_ueber()
-})
+setze cb_ueber auf () => { zeige_ueber() }
+
+
+# --- Fenster bauen ---
+
+ui_baue(g, "moo — Modulare App", 620, 520, [
+    [setup_app_header,     ["Moo Admin", "v1.0.0"]],
+    [setup_user_form,      ["Name:", "E-Mail:", "Kategorie:", 280]],
+    [setup_notes_area,     ["Notizen:", 280, 160]],
+    [setup_action_buttons, [[
+        ["Speichern", cb_speichern],
+        ["Laden",     cb_laden],
+        ["Neu",       cb_neu],
+        ["Hilfe",     cb_hilfe],
+        ["Ueber",     cb_ueber],
+    ]]],
+    [setup_status_bar,     ["Bereit", "0 Eintraege"]],
+], resizable = wahr)
 
 
 # --- Event-Loop ---

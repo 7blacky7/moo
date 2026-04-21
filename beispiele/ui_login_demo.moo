@@ -16,16 +16,21 @@ importiere ui
 
 setze g auf {}
 
-ui_baue(g, "Login", 340, 260, [
-    [setup_login_form, ["Benutzername:", "Passwort:", 100]],
-    [setup_status_bar, ["Bereit", "v1.0"]],
-])
+# Callbacks werden zur Bau-Zeit an die Buttons gebunden.
+# Closures fangen `g` ein — wir koennen also die spaeter gebauten
+# Labels/Eingaben referenzieren.
 
-# Nachtraeglich Login-Button umbinden
-ui_knopf_callback_setze(g.btnLogin, () => {
+setze on_login auf () => {
     setze name auf ui_eingabe_text(g.inpUser)
     ui_label_setze(g.lblStatus, "Willkommen, " + name + "!")
-})
+}
+
+setze on_cancel auf () => { ui_beenden() }
+
+ui_baue(g, "Login", 340, 260, [
+    [setup_login_form, ["Benutzername:", "Passwort:", 100, on_login, on_cancel]],
+    [setup_status_bar, ["Bereit", "v1.0"]],
+])
 
 ui_zeige(g.hFenster)
 ui_laufen()
