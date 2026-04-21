@@ -484,6 +484,7 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         "-lgio-2.0".to_string(),
         "-lgobject-2.0".to_string(),
         "-lglib-2.0".to_string(),
+        "-lcairo".to_string(),
     ];
 
     // Linker-Script: -T kernel.ld

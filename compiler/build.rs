@@ -220,6 +220,9 @@ fn link_ui_linux() {
         .atleast_version("3.0")
         .probe("gtk+-3.0");
     let ind = pkg_config::Config::new().probe("appindicator3-0.1");
+    // cairo wird direkt von moo_ui_gtk.c (Leinwand/Zeichner-API) benoetigt —
+    // gtk+-3.0 zieht es zwar transitiv, der Linker will es aber explizit.
+    let _cairo = pkg_config::Config::new().probe("cairo");
 
     if gtk.is_err() || ind.is_err() {
         // Fallback-Liste (alte Hard-Codings).
@@ -231,6 +234,7 @@ fn link_ui_linux() {
             "gio-2.0",
             "gobject-2.0",
             "glib-2.0",
+            "cairo",
         ] {
             println!("cargo:rustc-link-lib={l}");
         }

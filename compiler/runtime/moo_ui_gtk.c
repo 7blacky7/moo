@@ -786,17 +786,177 @@ MooValue moo_ui_bild_setze(MooValue bild, MooValue pfad) {
     return moo_bool(1);
 }
 
-/* Leinwand: GtkDrawingArea. callback bekommt den Leinwand-Handle als Arg,
- * Aufrufer zeichnet via kuenftige moo_ui_leinwand_* Primitive (Phase 5). */
+/* ------------------------------------------------------------------ *
+ * Leinwand / Zeichner (Phase 5)
+ *
+ * Der zeichner wrapped einen cairo_t* + aktuelle Farbe + valid-Flag.
+ * Er wird auf dem Stack im draw-Handler angelegt, an den moo-Callback
+ * als MooValue uebergeben (tag=MOO_NUMBER, data=&zeichner), und nach
+ * Callback-Return durch `valid=0` entwertet. Spaetere Primitiv-Aufrufe
+ * greifen dann ins Leere (no-op, liefern falsch).
+ * ------------------------------------------------------------------ */
+
+typedef struct {
+    cairo_t* cr;            /* Cairo-Kontext (nur waehrend draw gueltig) */
+    double   r, g, b, a;    /* aktuelle Farbe 0..1 */
+    int      valid;         /* 1 = cr nutzbar, 0 = entwertet */
+    int      widget_w, widget_h;
+} MooZeichnerGtk;
+
+static inline MooValue wrap_zeichner(MooZeichnerGtk* z) {
+    MooValue v;
+    v.tag = MOO_NUMBER;
+    moo_val_set_ptr(&v, z);
+    return v;
+}
+
+static inline MooZeichnerGtk* unwrap_zeichner(MooValue v) {
+    if (v.tag != MOO_NUMBER) return NULL;
+    MooZeichnerGtk* z = (MooZeichnerGtk*)moo_val_as_ptr(v);
+    if (!z || !z->valid || !z->cr) return NULL;
+    return z;
+}
+
 static gboolean on_draw_trampoline(GtkWidget* w, cairo_t* cr, gpointer ud) {
-    (void)cr;  /* cairo_t wird spaeter in Phase 5 ueber Leinwand-State gereicht */
     MooValue* cb = (MooValue*)ud;
     if (cb && cb->tag == MOO_FUNC) {
-        MooValue handle = wrap_widget(w);
-        MooValue rv = moo_func_call_1(*cb, handle);
+        MooZeichnerGtk z;
+        z.cr = cr;
+        z.r = 0.0; z.g = 0.0; z.b = 0.0; z.a = 1.0;
+        z.valid = 1;
+        z.widget_w = gtk_widget_get_allocated_width(w);
+        z.widget_h = gtk_widget_get_allocated_height(w);
+        MooValue handle   = wrap_widget(w);
+        MooValue zeichner = wrap_zeichner(&z);
+        MooValue rv = moo_func_call_2(*cb, handle, zeichner);
         moo_release(rv);
+        z.valid = 0;
+        z.cr = NULL;
     }
     return FALSE;
+}
+
+MooValue moo_ui_zeichne_farbe(MooValue zeichner,
+                              MooValue r, MooValue g, MooValue b, MooValue a) {
+    MooZeichnerGtk* z = unwrap_zeichner(zeichner);
+    if (!z) return moo_bool(0);
+    int ri = num_or(r, 0), gi = num_or(g, 0), bi = num_or(b, 0), ai = num_or(a, 255);
+    if (ri < 0) ri = 0; if (ri > 255) ri = 255;
+    if (gi < 0) gi = 0; if (gi > 255) gi = 255;
+    if (bi < 0) bi = 0; if (bi > 255) bi = 255;
+    if (ai < 0) ai = 0; if (ai > 255) ai = 255;
+    z->r = ri / 255.0; z->g = gi / 255.0; z->b = bi / 255.0; z->a = ai / 255.0;
+    return moo_bool(1);
+}
+
+static inline void apply_color(MooZeichnerGtk* z) {
+    cairo_set_source_rgba(z->cr, z->r, z->g, z->b, z->a);
+}
+
+MooValue moo_ui_zeichne_linie(MooValue zeichner,
+                              MooValue x1, MooValue y1,
+                              MooValue x2, MooValue y2,
+                              MooValue breite) {
+    MooZeichnerGtk* z = unwrap_zeichner(zeichner);
+    if (!z) return moo_bool(0);
+    double bw = (breite.tag == MOO_NUMBER) ? MV_NUM(breite) : 1.0;
+    if (bw < 0.1) bw = 0.1;
+    apply_color(z);
+    cairo_set_line_width(z->cr, bw);
+    cairo_move_to(z->cr, num_or(x1, 0) + 0.5, num_or(y1, 0) + 0.5);
+    cairo_line_to(z->cr, num_or(x2, 0) + 0.5, num_or(y2, 0) + 0.5);
+    cairo_stroke(z->cr);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_rechteck(MooValue zeichner,
+                                 MooValue x, MooValue y,
+                                 MooValue b, MooValue h,
+                                 MooValue gefuellt) {
+    MooZeichnerGtk* z = unwrap_zeichner(zeichner);
+    if (!z) return moo_bool(0);
+    apply_color(z);
+    cairo_rectangle(z->cr, num_or(x, 0), num_or(y, 0),
+                    num_or(b, 0), num_or(h, 0));
+    if (bool_or(gefuellt, 1)) {
+        cairo_fill(z->cr);
+    } else {
+        cairo_set_line_width(z->cr, 1.0);
+        cairo_stroke(z->cr);
+    }
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_kreis(MooValue zeichner,
+                              MooValue cx, MooValue cy,
+                              MooValue radius, MooValue gefuellt) {
+    MooZeichnerGtk* z = unwrap_zeichner(zeichner);
+    if (!z) return moo_bool(0);
+    double rad = (radius.tag == MOO_NUMBER) ? MV_NUM(radius) : 1.0;
+    if (rad < 0) rad = 0;
+    apply_color(z);
+    cairo_new_sub_path(z->cr);
+    cairo_arc(z->cr, num_or(cx, 0), num_or(cy, 0), rad,
+              0.0, 2.0 * 3.14159265358979323846);
+    if (bool_or(gefuellt, 1)) {
+        cairo_fill(z->cr);
+    } else {
+        cairo_set_line_width(z->cr, 1.0);
+        cairo_stroke(z->cr);
+    }
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_text(MooValue zeichner,
+                             MooValue x, MooValue y,
+                             MooValue text, MooValue schriftgroesse) {
+    MooZeichnerGtk* z = unwrap_zeichner(zeichner);
+    if (!z) return moo_bool(0);
+    const char* s = str_or(text, "");
+    double sz = (schriftgroesse.tag == MOO_NUMBER) ? MV_NUM(schriftgroesse) : 12.0;
+    if (sz < 1.0) sz = 1.0;
+    apply_color(z);
+    cairo_select_font_face(z->cr, "Sans",
+                           CAIRO_FONT_SLANT_NORMAL,
+                           CAIRO_FONT_WEIGHT_NORMAL);
+    cairo_set_font_size(z->cr, sz);
+    cairo_font_extents_t fe;
+    cairo_font_extents(z->cr, &fe);
+    /* (x,y) ist Top-Left → baseline = y + Ascent. */
+    cairo_move_to(z->cr, num_or(x, 0), num_or(y, 0) + fe.ascent);
+    cairo_show_text(z->cr, s);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_bild(MooValue zeichner,
+                             MooValue x, MooValue y,
+                             MooValue b, MooValue h,
+                             MooValue pfad) {
+    MooZeichnerGtk* z = unwrap_zeichner(zeichner);
+    if (!z) return moo_bool(0);
+    const char* p = str_or(pfad, "");
+    if (!*p) return moo_bool(0);
+    cairo_surface_t* surf = cairo_image_surface_create_from_png(p);
+    if (!surf || cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
+        if (surf) cairo_surface_destroy(surf);
+        return moo_bool(0);
+    }
+    int iw = cairo_image_surface_get_width(surf);
+    int ih = cairo_image_surface_get_height(surf);
+    int tw = num_or(b, iw);
+    int th = num_or(h, ih);
+    cairo_save(z->cr);
+    if (iw > 0 && ih > 0 && (tw != iw || th != ih)) {
+        cairo_translate(z->cr, num_or(x, 0), num_or(y, 0));
+        cairo_scale(z->cr, (double)tw / (double)iw, (double)th / (double)ih);
+        cairo_set_source_surface(z->cr, surf, 0, 0);
+    } else {
+        cairo_set_source_surface(z->cr, surf, num_or(x, 0), num_or(y, 0));
+    }
+    cairo_paint(z->cr);
+    cairo_restore(z->cr);
+    cairo_surface_destroy(surf);
+    return moo_bool(1);
 }
 
 MooValue moo_ui_leinwand(MooValue parent,

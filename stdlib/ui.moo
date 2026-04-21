@@ -31,6 +31,16 @@
 #     ui_fortschritt(parent, x, y, b, h)
 #     ui_fortschritt_setze(handle, anteil)
 #     ui_bild(parent, pfad, x, y, b, h)
+#     ui_leinwand(parent, x, y, b, h, on_zeichne)     -> handle (Custom-Draw)
+#     ui_leinwand_anfordern(leinwand)                  -> Repaint-Request
+#     ui_leinwand_erneuern(leinwand)                   -> Alias zu anfordern
+#     # Zeichner-API (nur innerhalb on_zeichne(leinwand, zeichner) gueltig):
+#     ui_zeichne_farbe(z, r, g, b, a)                  -> 0..255
+#     ui_zeichne_linie(z, x1, y1, x2, y2, breite)
+#     ui_zeichne_rechteck(z, x, y, b, h, gefuellt)
+#     ui_zeichne_kreis(z, cx, cy, radius, gefuellt)
+#     ui_zeichne_text(z, x, y, text, schriftgroesse)
+#     ui_zeichne_bild(z, x, y, b, h, pfad)             -> PNG-Datei
 #     ui_rahmen(parent, titel, x, y, b, h)
 #     ui_trenner(parent, x, y, b, h)
 #     ui_tabs(parent, x, y, b, h)

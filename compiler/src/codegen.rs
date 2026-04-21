@@ -3045,9 +3045,33 @@ impl<'ctx> CodeGen<'ctx> {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_ui_leinwand, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_leinwand");
                     }
-                    "ui_leinwand_anfordern" | "ui_canvas_request" => {
+                    "ui_leinwand_anfordern" | "ui_leinwand_erneuern" | "ui_canvas_request" | "ui_canvas_refresh" => {
                         let l = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_ui_leinwand_anfordern, &[l.into()], "ui_leinwand_anfordern");
+                    }
+                    "ui_zeichne_farbe" | "ui_draw_color" | "ui_draw_colour" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_farbe, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_zeichne_farbe");
+                    }
+                    "ui_zeichne_linie" | "ui_draw_line" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_linie, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_zeichne_linie");
+                    }
+                    "ui_zeichne_rechteck" | "ui_draw_rect" | "ui_draw_rectangle" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_rechteck, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_zeichne_rechteck");
+                    }
+                    "ui_zeichne_kreis" | "ui_draw_circle" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_kreis, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_zeichne_kreis");
+                    }
+                    "ui_zeichne_text" | "ui_draw_text" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_text, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_zeichne_text");
+                    }
+                    "ui_zeichne_bild" | "ui_draw_image" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_bild, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_zeichne_bild");
                     }
                     "ui_rahmen" | "ui_frame" => {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;

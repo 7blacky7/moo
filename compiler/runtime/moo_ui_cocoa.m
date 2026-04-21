@@ -89,6 +89,7 @@ static const void *kMooWindowDelegateKey = &kMooWindowDelegateKey;
 - (void)fire:(id)sender;                /* 0-args moo-Call */
 - (BOOL)fireCloseAllow;                 /* callback-Return als BOOL */
 - (void)fireWithHandle:(id)sender;      /* 1-arg moo-Call mit Widget-Handle */
+- (void)fireWithHandle:(id)sender zeichner:(void *)zptr; /* 2-arg: leinwand, zeichner */
 @end
 
 @implementation MooCallbackTarget
@@ -119,6 +120,17 @@ static const void *kMooWindowDelegateKey = &kMooWindowDelegateKey;
     v.tag = MOO_NUMBER;
     moo_val_set_ptr(&v, (__bridge void *)sender);
     MooValue rv = moo_func_call_1(cb, v);
+    moo_release(rv);
+}
+- (void)fireWithHandle:(id)sender zeichner:(void *)zptr {
+    if (cb.tag != MOO_FUNC) return;
+    MooValue v;
+    v.tag = MOO_NUMBER;
+    moo_val_set_ptr(&v, (__bridge void *)sender);
+    MooValue z;
+    z.tag = MOO_NUMBER;
+    moo_val_set_ptr(&z, zptr);
+    MooValue rv = moo_func_call_2(cb, v, z);
     moo_release(rv);
 }
 - (void)dealloc {
@@ -1241,16 +1253,171 @@ MooValue moo_ui_bild_setze(MooValue bild, MooValue pfad) {
     }
 }
 
-/* Leinwand: NSView-Subklasse mit drawRect → moo-callback. */
+/* ------------------------------------------------------------------ *
+ * Leinwand / Zeichner (Phase 5)
+ *
+ * Der zeichner wrapped CGContextRef + aktuelle Farbe + valid-Flag.
+ * Wird stack-allokiert in drawRect:, an den moo-Callback als 2. Arg
+ * uebergeben (tag=MOO_NUMBER, data=&zeichner), danach `valid=0`.
+ * ------------------------------------------------------------------ */
+
+typedef struct {
+    CGContextRef ctx;
+    CGFloat r, g, b, a;    /* 0..1 */
+    int    valid;
+    CGFloat view_w, view_h;
+} MooZeichnerCG;
+
+static inline MooZeichnerCG *unwrap_zeichner_cg(MooValue v) {
+    if (v.tag != MOO_NUMBER) return NULL;
+    MooZeichnerCG *z = (MooZeichnerCG *)moo_val_as_ptr(v);
+    if (!z || !z->valid || !z->ctx) return NULL;
+    return z;
+}
+
+/* Leinwand: NSView-Subklasse mit drawRect → moo-callback (lw, z). */
 @interface MooCanvasView : MooFlippedView
 @property (nonatomic, strong) MooCallbackTarget *drawTarget;
 @end
 @implementation MooCanvasView
 - (void)drawRect:(NSRect)dirtyRect {
     [super drawRect:dirtyRect];
-    if (self.drawTarget) [self.drawTarget fireWithHandle:self];
+    if (self.drawTarget) {
+        CGContextRef cg = [[NSGraphicsContext currentContext] CGContext];
+        MooZeichnerCG z;
+        z.ctx = cg;
+        z.r = 0; z.g = 0; z.b = 0; z.a = 1.0;
+        z.valid = 1;
+        z.view_w = self.bounds.size.width;
+        z.view_h = self.bounds.size.height;
+        [self.drawTarget fireWithHandle:self zeichner:&z];
+        z.valid = 0;
+        z.ctx = NULL;
+    }
 }
 @end
+
+/* ------------------------------------------------------------------ *
+ * Zeichner-Primitive (CoreGraphics) — nur im drawRect-Kontext gueltig.
+ * ------------------------------------------------------------------ */
+
+static inline void cg_apply_color(MooZeichnerCG *z) {
+    CGContextSetRGBFillColor(z->ctx, z->r, z->g, z->b, z->a);
+    CGContextSetRGBStrokeColor(z->ctx, z->r, z->g, z->b, z->a);
+}
+
+MooValue moo_ui_zeichne_farbe(MooValue zeichner,
+                              MooValue r, MooValue g, MooValue b, MooValue a) {
+    MooZeichnerCG *z = unwrap_zeichner_cg(zeichner);
+    if (!z) return moo_bool(0);
+    int ri = num_or(r, 0), gi = num_or(g, 0), bi = num_or(b, 0), ai = num_or(a, 255);
+    if (ri < 0) ri = 0; if (ri > 255) ri = 255;
+    if (gi < 0) gi = 0; if (gi > 255) gi = 255;
+    if (bi < 0) bi = 0; if (bi > 255) bi = 255;
+    if (ai < 0) ai = 0; if (ai > 255) ai = 255;
+    z->r = ri / 255.0; z->g = gi / 255.0; z->b = bi / 255.0; z->a = ai / 255.0;
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_linie(MooValue zeichner,
+                              MooValue x1, MooValue y1,
+                              MooValue x2, MooValue y2,
+                              MooValue breite) {
+    MooZeichnerCG *z = unwrap_zeichner_cg(zeichner);
+    if (!z) return moo_bool(0);
+    CGFloat bw = (breite.tag == MOO_NUMBER) ? MV_NUM(breite) : 1.0;
+    if (bw < 0.1) bw = 0.1;
+    cg_apply_color(z);
+    CGContextSetLineWidth(z->ctx, bw);
+    CGContextBeginPath(z->ctx);
+    CGContextMoveToPoint(z->ctx, num_or(x1, 0) + 0.5, num_or(y1, 0) + 0.5);
+    CGContextAddLineToPoint(z->ctx, num_or(x2, 0) + 0.5, num_or(y2, 0) + 0.5);
+    CGContextStrokePath(z->ctx);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_rechteck(MooValue zeichner,
+                                 MooValue x, MooValue y,
+                                 MooValue b, MooValue h,
+                                 MooValue gefuellt) {
+    MooZeichnerCG *z = unwrap_zeichner_cg(zeichner);
+    if (!z) return moo_bool(0);
+    CGRect r = CGRectMake(num_or(x, 0), num_or(y, 0),
+                          num_or(b, 0), num_or(h, 0));
+    cg_apply_color(z);
+    if (bool_or(gefuellt, YES)) {
+        CGContextFillRect(z->ctx, r);
+    } else {
+        CGContextSetLineWidth(z->ctx, 1.0);
+        CGContextStrokeRect(z->ctx, r);
+    }
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_kreis(MooValue zeichner,
+                              MooValue cx, MooValue cy,
+                              MooValue radius, MooValue gefuellt) {
+    MooZeichnerCG *z = unwrap_zeichner_cg(zeichner);
+    if (!z) return moo_bool(0);
+    CGFloat rad = (radius.tag == MOO_NUMBER) ? MV_NUM(radius) : 1.0;
+    if (rad < 0) rad = 0;
+    CGRect r = CGRectMake(num_or(cx, 0) - rad, num_or(cy, 0) - rad,
+                          rad * 2.0, rad * 2.0);
+    cg_apply_color(z);
+    if (bool_or(gefuellt, YES)) {
+        CGContextFillEllipseInRect(z->ctx, r);
+    } else {
+        CGContextSetLineWidth(z->ctx, 1.0);
+        CGContextStrokeEllipseInRect(z->ctx, r);
+    }
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_text(MooValue zeichner,
+                             MooValue x, MooValue y,
+                             MooValue text, MooValue schriftgroesse) {
+    @autoreleasepool {
+        MooZeichnerCG *z = unwrap_zeichner_cg(zeichner);
+        if (!z) return moo_bool(0);
+        NSString *s = nsstr_or(text, @"");
+        CGFloat sz = (schriftgroesse.tag == MOO_NUMBER) ? MV_NUM(schriftgroesse) : 12.0;
+        if (sz < 1.0) sz = 1.0;
+        NSColor *col = [NSColor colorWithCalibratedRed:z->r green:z->g blue:z->b alpha:z->a];
+        NSDictionary *attrs = @{
+            NSFontAttributeName: [NSFont systemFontOfSize:sz],
+            NSForegroundColorAttributeName: col,
+        };
+        /* Da der umgebende View flipped ist (isFlipped=YES), funktioniert
+         * top-left-Origin fuer NSString drawAtPoint direkt. */
+        [s drawAtPoint:NSMakePoint(num_or(x, 0), num_or(y, 0)) withAttributes:attrs];
+        return moo_bool(1);
+    }
+}
+
+MooValue moo_ui_zeichne_bild(MooValue zeichner,
+                             MooValue x, MooValue y,
+                             MooValue b, MooValue h,
+                             MooValue pfad) {
+    @autoreleasepool {
+        MooZeichnerCG *z = unwrap_zeichner_cg(zeichner);
+        if (!z) return moo_bool(0);
+        NSString *p = nsstr_or(pfad, @"");
+        if (p.length == 0) return moo_bool(0);
+        NSImage *img = [[NSImage alloc] initWithContentsOfFile:p];
+        if (!img) return moo_bool(0);
+        NSSize is = img.size;
+        int tw = num_or(b, (int)is.width);
+        int th = num_or(h, (int)is.height);
+        NSRect dst = NSMakeRect(num_or(x, 0), num_or(y, 0), tw, th);
+        [img drawInRect:dst
+               fromRect:NSZeroRect
+              operation:NSCompositingOperationSourceOver
+               fraction:1.0
+         respectFlipped:YES
+                  hints:nil];
+        return moo_bool(1);
+    }
+}
 
 /* Entspricht moo_ui_gtk.c:802–817 */
 MooValue moo_ui_leinwand(MooValue parent,

@@ -136,6 +136,31 @@ static void cb_box_free(MooCbBox* box) {
 }
 
 /* =========================================================================
+ * Zeichner (Custom-Draw Phase 5) — wrapped HDC + Farbstate
+ * ========================================================================= */
+
+typedef struct {
+    HDC  hdc;
+    int  r, g, b, a;   /* 0..255 */
+    int  valid;
+    RECT rect;
+} MooZeichnerW32;
+
+static inline MooValue wrap_zeichner_w32(MooZeichnerW32* z) {
+    MooValue v;
+    v.tag = MOO_NUMBER;
+    moo_val_set_ptr(&v, z);
+    return v;
+}
+
+static inline MooZeichnerW32* unwrap_zeichner_w32(MooValue v) {
+    if (v.tag != MOO_NUMBER) return NULL;
+    MooZeichnerW32* z = (MooZeichnerW32*)moo_val_as_ptr(v);
+    if (!z || !z->valid || !z->hdc) return NULL;
+    return z;
+}
+
+/* =========================================================================
  * MooValue ↔ HWND Wrap
  * ========================================================================= */
 
@@ -392,14 +417,25 @@ static LRESULT CALLBACK moo_window_proc(HWND hwnd, UINT msg,
         }
 
         case WM_DRAWITEM: {
-            /* Fuer Leinwand (Owner-Draw STATIC): feuert on_draw. */
+            /* Fuer Leinwand (Owner-Draw STATIC): feuert on_draw mit
+             * (leinwand, zeichner). Zeichner wrapped HDC, wird nach
+             * Callback-Return entwertet. */
             LPDRAWITEMSTRUCT di = (LPDRAWITEMSTRUCT)lp;
             if (di) {
                 MooCbBox* cb = (MooCbBox*)GetPropW(di->hwndItem, L"moo-draw");
                 if (cb && cb->v.tag == MOO_FUNC) {
-                    MooValue handle = wrap_hwnd(di->hwndItem);
-                    MooValue rv = moo_func_call_1(cb->v, handle);
+                    /* Hintergrund neutralisieren. */
+                    SetBkMode(di->hDC, TRANSPARENT);
+                    MooZeichnerW32 z;
+                    z.hdc = di->hDC;
+                    z.r = 0; z.g = 0; z.b = 0; z.a = 255;
+                    z.valid = 1;
+                    z.rect = di->rcItem;
+                    MooValue handle   = wrap_hwnd(di->hwndItem);
+                    MooValue zeichner = wrap_zeichner_w32(&z);
+                    MooValue rv = moo_func_call_2(cb->v, handle, zeichner);
                     moo_release(rv);
+                    z.valid = 0; z.hdc = NULL;
                 }
             }
             return TRUE;
@@ -1158,6 +1194,163 @@ MooValue moo_ui_leinwand_anfordern(MooValue leinwand) {
     HWND h = unwrap_hwnd(leinwand);
     if (!h) return moo_bool(0);
     InvalidateRect(h, NULL, TRUE);
+    return moo_bool(1);
+}
+
+/* =========================================================================
+ * Zeichner-Primitive — GDI (Phase 5)
+ *
+ * Hinweis: GDI hat keinen nativen Alpha-Support; das `a`-Kanal wird
+ * gespeichert, aber ignoriert (Full-Opaque). Fuer Alpha-Blending koennte
+ * in Phase 6 GDI+ eingebunden werden.
+ * ========================================================================= */
+
+static inline COLORREF zeichner_color(MooZeichnerW32* z) {
+    return RGB((BYTE)z->r, (BYTE)z->g, (BYTE)z->b);
+}
+
+MooValue moo_ui_zeichne_farbe(MooValue zeichner,
+                              MooValue r, MooValue g, MooValue b, MooValue a) {
+    MooZeichnerW32* z = unwrap_zeichner_w32(zeichner);
+    if (!z) return moo_bool(0);
+    int ri = num_or(r, 0), gi = num_or(g, 0), bi = num_or(b, 0), ai = num_or(a, 255);
+    if (ri < 0) ri = 0; if (ri > 255) ri = 255;
+    if (gi < 0) gi = 0; if (gi > 255) gi = 255;
+    if (bi < 0) bi = 0; if (bi > 255) bi = 255;
+    if (ai < 0) ai = 0; if (ai > 255) ai = 255;
+    z->r = ri; z->g = gi; z->b = bi; z->a = ai;
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_linie(MooValue zeichner,
+                              MooValue x1, MooValue y1,
+                              MooValue x2, MooValue y2,
+                              MooValue breite) {
+    MooZeichnerW32* z = unwrap_zeichner_w32(zeichner);
+    if (!z) return moo_bool(0);
+    int bw = num_or(breite, 1);
+    if (bw < 1) bw = 1;
+    HPEN pen = CreatePen(PS_SOLID, bw, zeichner_color(z));
+    HPEN old = (HPEN)SelectObject(z->hdc, pen);
+    MoveToEx(z->hdc, num_or(x1, 0), num_or(y1, 0), NULL);
+    LineTo(z->hdc, num_or(x2, 0), num_or(y2, 0));
+    SelectObject(z->hdc, old);
+    DeleteObject(pen);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_rechteck(MooValue zeichner,
+                                 MooValue x, MooValue y,
+                                 MooValue b, MooValue h,
+                                 MooValue gefuellt) {
+    MooZeichnerW32* z = unwrap_zeichner_w32(zeichner);
+    if (!z) return moo_bool(0);
+    int xi = num_or(x, 0), yi = num_or(y, 0);
+    int bi = num_or(b, 0), hi = num_or(h, 0);
+    COLORREF c = zeichner_color(z);
+    if (bool_or(gefuellt, 1)) {
+        RECT rc = { xi, yi, xi + bi, yi + hi };
+        HBRUSH br = CreateSolidBrush(c);
+        FillRect(z->hdc, &rc, br);
+        DeleteObject(br);
+    } else {
+        HPEN pen = CreatePen(PS_SOLID, 1, c);
+        HPEN oldp = (HPEN)SelectObject(z->hdc, pen);
+        HBRUSH oldb = (HBRUSH)SelectObject(z->hdc, GetStockObject(NULL_BRUSH));
+        Rectangle(z->hdc, xi, yi, xi + bi, yi + hi);
+        SelectObject(z->hdc, oldp);
+        SelectObject(z->hdc, oldb);
+        DeleteObject(pen);
+    }
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_kreis(MooValue zeichner,
+                              MooValue cx, MooValue cy,
+                              MooValue radius, MooValue gefuellt) {
+    MooZeichnerW32* z = unwrap_zeichner_w32(zeichner);
+    if (!z) return moo_bool(0);
+    int cxi = num_or(cx, 0), cyi = num_or(cy, 0);
+    int rad = num_or(radius, 0);
+    if (rad < 0) rad = 0;
+    COLORREF c = zeichner_color(z);
+    HPEN pen = CreatePen(PS_SOLID, 1, c);
+    HPEN oldp = (HPEN)SelectObject(z->hdc, pen);
+    HBRUSH br = NULL, oldb = NULL;
+    if (bool_or(gefuellt, 1)) {
+        br = CreateSolidBrush(c);
+        oldb = (HBRUSH)SelectObject(z->hdc, br);
+    } else {
+        oldb = (HBRUSH)SelectObject(z->hdc, GetStockObject(NULL_BRUSH));
+    }
+    Ellipse(z->hdc, cxi - rad, cyi - rad, cxi + rad, cyi + rad);
+    SelectObject(z->hdc, oldp);
+    SelectObject(z->hdc, oldb);
+    DeleteObject(pen);
+    if (br) DeleteObject(br);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_text(MooValue zeichner,
+                             MooValue x, MooValue y,
+                             MooValue text, MooValue schriftgroesse) {
+    MooZeichnerW32* z = unwrap_zeichner_w32(zeichner);
+    if (!z) return moo_bool(0);
+    const char* s = str_or(text, "");
+    int sz = num_or(schriftgroesse, 12);
+    if (sz < 1) sz = 1;
+    wchar_t* ws = utf8_to_wide(s);
+    if (!ws) return moo_bool(0);
+    /* Win32: negative Font-Height = Character-Height in Pixeln. */
+    HFONT font = CreateFontW(-sz, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                             DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
+    HFONT oldf = (HFONT)SelectObject(z->hdc, font);
+    COLORREF oldc = SetTextColor(z->hdc, zeichner_color(z));
+    int oldbk = SetBkMode(z->hdc, TRANSPARENT);
+    TextOutW(z->hdc, num_or(x, 0), num_or(y, 0), ws, (int)wcslen(ws));
+    SetTextColor(z->hdc, oldc);
+    SetBkMode(z->hdc, oldbk);
+    SelectObject(z->hdc, oldf);
+    DeleteObject(font);
+    free(ws);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_bild(MooValue zeichner,
+                             MooValue x, MooValue y,
+                             MooValue b, MooValue h,
+                             MooValue pfad) {
+    MooZeichnerW32* z = unwrap_zeichner_w32(zeichner);
+    if (!z) return moo_bool(0);
+    const char* p = str_or(pfad, "");
+    if (!*p) return moo_bool(0);
+    wchar_t* wp = utf8_to_wide(p);
+    if (!wp) return moo_bool(0);
+    HBITMAP bmp = (HBITMAP)LoadImageW(NULL, wp, IMAGE_BITMAP, 0, 0,
+                                      LR_LOADFROMFILE);
+    free(wp);
+    if (!bmp) return moo_bool(0);
+    BITMAP bi;
+    if (!GetObject(bmp, sizeof(bi), &bi)) {
+        DeleteObject(bmp);
+        return moo_bool(0);
+    }
+    int tw = num_or(b, bi.bmWidth);
+    int th = num_or(h, bi.bmHeight);
+    HDC memdc = CreateCompatibleDC(z->hdc);
+    HBITMAP oldbm = (HBITMAP)SelectObject(memdc, bmp);
+    if (tw == bi.bmWidth && th == bi.bmHeight) {
+        BitBlt(z->hdc, num_or(x, 0), num_or(y, 0), tw, th, memdc, 0, 0, SRCCOPY);
+    } else {
+        SetStretchBltMode(z->hdc, HALFTONE);
+        StretchBlt(z->hdc, num_or(x, 0), num_or(y, 0), tw, th,
+                   memdc, 0, 0, bi.bmWidth, bi.bmHeight, SRCCOPY);
+    }
+    SelectObject(memdc, oldbm);
+    DeleteDC(memdc);
+    DeleteObject(bmp);
     return moo_bool(1);
 }
 

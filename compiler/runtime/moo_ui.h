@@ -200,12 +200,58 @@ MooValue moo_ui_bild(MooValue parent, MooValue pfad,
                      MooValue x, MooValue y, MooValue b, MooValue h);
 MooValue moo_ui_bild_setze(MooValue bild, MooValue pfad);
 
-/* Custom-Draw-Surface. callback: Funktion(leinwand) → zeichnet via
- * moo_ui_leinwand_* Primitive. (Phase 5) */
+/* Custom-Draw-Surface.
+ *
+ * callback: Funktion(leinwand, zeichner) — wird pro Repaint einmal
+ * gerufen. `leinwand` ist das Widget-Handle, `zeichner` ein opaker
+ * Handle, der NUR innerhalb dieses Callbacks gueltig ist (danach invalid).
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : GtkDrawingArea + cairo_t*       (draw-Signal)
+ *   Windows      : STATIC+SS_OWNERDRAW + HDC       (WM_DRAWITEM)
+ *   macOS        : NSView-Subklasse + CGContextRef (drawRect:)
+ *
+ * Phase 6 Vision: moo_ui_leinwand_gpu(...) mit identischer Callback-
+ * Signatur, aber Vulkan/GL/Metal-Backend. User-Code bleibt gleich. */
 MooValue moo_ui_leinwand(MooValue parent,
                          MooValue x, MooValue y, MooValue b, MooValue h,
                          MooValue on_zeichne);
 MooValue moo_ui_leinwand_anfordern(MooValue leinwand); /* Repaint-Request */
+
+/* =========================================================================
+ * Zeichner-Primitive (nur im on_zeichne-Callback gueltig)
+ *
+ * `zeichner` ist der 2. Parameter des on_zeichne-Callbacks. Ausserhalb
+ * des Callbacks sind die Funktionen no-op und liefern falsch. Alle
+ * Koordinaten in Pixeln, Farbkanaele r/g/b/a in 0..255.
+ * ========================================================================= */
+
+MooValue moo_ui_zeichne_farbe(MooValue zeichner,
+                              MooValue r, MooValue g, MooValue b, MooValue a);
+
+MooValue moo_ui_zeichne_linie(MooValue zeichner,
+                              MooValue x1, MooValue y1,
+                              MooValue x2, MooValue y2,
+                              MooValue breite);
+
+/* gefuellt: MooBool. wahr → Fill, falsch → Outline. */
+MooValue moo_ui_zeichne_rechteck(MooValue zeichner,
+                                 MooValue x, MooValue y,
+                                 MooValue b, MooValue h,
+                                 MooValue gefuellt);
+
+MooValue moo_ui_zeichne_kreis(MooValue zeichner,
+                              MooValue cx, MooValue cy,
+                              MooValue radius, MooValue gefuellt);
+
+MooValue moo_ui_zeichne_text(MooValue zeichner,
+                             MooValue x, MooValue y,
+                             MooValue text, MooValue schriftgroesse);
+
+MooValue moo_ui_zeichne_bild(MooValue zeichner,
+                             MooValue x, MooValue y,
+                             MooValue b, MooValue h,
+                             MooValue pfad);
 
 /* =========================================================================
  * Layout-Hilfen
