@@ -4,22 +4,14 @@
 # Uebersetzung von AutoIt-GUIBuilder examples/Advanced/
 # Demo_Modular_Main.au3 nach moo.
 #
-# Enthaelt in einem Fenster:
-#   - App-Header (Titel + Version + Trenner)
-#   - User-Form (Name, Email, Kategorie)
-#   - Notes-Area (mehrzeiliger Text)
-#   - Action-Buttons (Speichern/Laden/Neu/Hilfe/Ueber)
-#   - Status-Bar
-#
-# Der "Ueber"-Button oeffnet ein zweites Fenster mit setup_about_info.
-#
-# Kompilieren & Starten wie ui_login_demo.moo.
+# ⚠ Bracket-Syntax bei Dict-Zugriffen (siehe ui_login_demo).
 # ============================================================
 
 importiere ui
 
 
-# --- Zweites Fenster (Ueber-Dialog) ---
+setze g auf {}
+
 
 funktion zeige_ueber():
     setze a auf {}
@@ -27,44 +19,30 @@ funktion zeige_ueber():
         [setup_about_info, [
             "moo UI-Showcase",
             "1.0.0",
-            "Ein Demo fuer die modulare UI-Komposition.\n" +
-            "Inspiriert vom AutoIt GUIBuilder.\n\n" +
-            "(c) 2026 Moritz Kolar",
+            "Ein Demo fuer die modulare UI-Komposition. Inspiriert vom AutoIt GUIBuilder. (c) 2026 Moritz Kolar",
         ]],
     ])
-    ui_zeige_nebenbei(a.hFenster)
+    ui_zeige_nebenbei(a["hFenster"])
 
 
-# --- Haupt-Fenster ---
+funktion cb_speichern():
+    setze name auf ui_eingabe_text(g["inpName"])
+    ui_label_setze(g["lblStatus"], "Gespeichert: " + name)
 
-setze g auf {}
+funktion cb_laden():
+    ui_label_setze(g["lblStatus"], "Laden — noch nicht implementiert")
 
+funktion cb_neu():
+    ui_eingabe_setze(g["inpName"], "")
+    ui_eingabe_setze(g["inpEmail"], "")
+    ui_label_setze(g["lblStatus"], "Neu — Felder geleert")
 
-# --- Callbacks (binden via Closure auf `g`) ---
+funktion cb_hilfe():
+    ui_info(g["hFenster"], "Hilfe", "Trage Name und E-Mail ein, dann auf Speichern.")
 
-setze cb_speichern auf () => {
-    setze name auf ui_eingabe_text(g.inpName)
-    ui_label_setze(g.lblStatus, "Gespeichert: " + name)
-}
+funktion cb_ueber():
+    zeige_ueber()
 
-setze cb_laden auf () => {
-    ui_label_setze(g.lblStatus, "Laden — noch nicht implementiert")
-}
-
-setze cb_neu auf () => {
-    ui_eingabe_setze(g.inpName, "")
-    ui_eingabe_setze(g.inpEmail, "")
-    ui_label_setze(g.lblStatus, "Neu — Felder geleert")
-}
-
-setze cb_hilfe auf () => {
-    ui_info(g.hFenster, "Hilfe", "Trage Name und E-Mail ein, dann auf Speichern.")
-}
-
-setze cb_ueber auf () => { zeige_ueber() }
-
-
-# --- Fenster bauen ---
 
 ui_baue(g, "moo — Modulare App", 620, 520, [
     [setup_app_header,     ["Moo Admin", "v1.0.0"]],
@@ -78,10 +56,8 @@ ui_baue(g, "moo — Modulare App", 620, 520, [
         ["Ueber",     cb_ueber],
     ]]],
     [setup_status_bar,     ["Bereit", "0 Eintraege"]],
-], resizable = wahr)
+], wahr)
 
 
-# --- Event-Loop ---
-
-ui_zeige(g.hFenster)
+ui_zeige(g["hFenster"])
 ui_laufen()
