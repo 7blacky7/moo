@@ -9,10 +9,16 @@ inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", feat
 clap = { version = "4", features = ["derive"] }
 
 [features]
-default = ["gl33"]
+default = ["gl33", "moo_ui"]
 gl21 = []
 gl33 = []
 vulkan = []
+# Cross-platform UI-Modul (Fenster, Widgets, Tray).
+# Linux   → GTK3 + libappindicator3 (runtime/moo_ui_gtk.c + moo_tray_linux.c)
+# Windows → Win32 (Phase 3)
+# macOS   → Cocoa (Phase 4)
+moo_ui = []
 
 [build-dependencies]
 cc = "1"
+pkg-config = "0.3"
