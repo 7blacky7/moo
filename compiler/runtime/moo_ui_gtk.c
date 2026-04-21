@@ -33,6 +33,19 @@
 
 static int g_gtk_init = 0;
 static int g_open_windows = 0;      /* Top-Level-Fenster, die noch existieren */
+static int g_active_trays = 0;      /* aktive Tray-Icons (libappindicator) */
+
+/* Tray-Backend ruft diese beim Anlegen/Entfernen eines Tray-Icons.
+ * Bug #2 (2026-04-22): ui_laufen darf NICHT beenden solange Tray lebt,
+ * auch wenn letztes Fenster geschlossen wurde. Tray + Detail-Fenster
+ * muessen koexistieren koennen. */
+void moo_ui_tray_register(void)   { g_active_trays++; }
+void moo_ui_tray_unregister(void) {
+    if (g_active_trays > 0) g_active_trays--;
+    if (g_open_windows == 0 && g_active_trays == 0 && gtk_main_level() > 0) {
+        gtk_main_quit();
+    }
+}
 static int g_ui_debug_on = 0;
 
 static inline void ensure_gtk(void) {
@@ -160,9 +173,10 @@ MooValue moo_ui_debug(MooValue an) {
 static void on_window_destroy(GtkWidget* w, gpointer user_data) {
     (void)w; (void)user_data;
     if (g_open_windows > 0) g_open_windows--;
-    /* Wenn letztes Top-Level-Fenster weg UND kein Tray aktiv → Loop beenden.
-     * Tray-Koppelung folgt ueber ui-tray; aktuell: bei 0 Fenstern quitten. */
-    if (g_open_windows == 0 && gtk_main_level() > 0) {
+    /* Loop nur beenden wenn BEIDE Counter 0: kein Fenster und kein Tray.
+     * Tray haelt den Prozess am Leben, damit Detail-Fenster + Tray
+     * koexistieren koennen (Bug #2 Synapse-Koord 2026-04-22). */
+    if (g_open_windows == 0 && g_active_trays == 0 && gtk_main_level() > 0) {
         gtk_main_quit();
     }
 }

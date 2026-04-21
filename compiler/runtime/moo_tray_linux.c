@@ -135,6 +135,11 @@ static GtkWidget* menu_append_check_item(GtkMenu* menu, const char* label,
  * Tray-Icon
  * ========================================================================= */
 
+/* Aus moo_ui_gtk.c — haelt den gemeinsamen Event-Loop am Leben solange
+ * mindestens ein Tray aktiv ist (Bug #2 Synapse-Koord 2026-04-22). */
+extern void moo_ui_tray_register(void);
+extern void moo_ui_tray_unregister(void);
+
 MooValue moo_tray_create(MooValue titel, MooValue icon_name) {
     ensure_gtk();
     const char* t = (titel.tag == MOO_STRING) ? MV_STR(titel)->chars : "Tray";
@@ -151,6 +156,7 @@ MooValue moo_tray_create(MooValue titel, MooValue icon_name) {
     g_object_ref_sink(menu);
     app_indicator_set_menu(ind, GTK_MENU(menu));
 
+    moo_ui_tray_register();
     return ptr_to_moo(ind);
 }
 
