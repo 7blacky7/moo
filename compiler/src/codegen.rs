@@ -2763,38 +2763,424 @@ impl<'ctx> CodeGen<'ctx> {
                         let c = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_tray_timer_add, &[ms.into(), c.into()], "tray_timer_add");
                     }
-                    "gui_fenster" | "gui_window" => {
+                    "tray_timer_remove" | "tray_timer_entfernen" => {
+                        let id = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tray_timer_remove, &[id.into()], "tray_timer_remove");
+                    }
+                    "tray_titel_setze" | "tray_title_set" => {
                         let t = self.compile_expr(&args[0])?;
-                        let b = self.compile_expr(&args[1])?;
-                        let h = self.compile_expr(&args[2])?;
-                        return self.call_rt(self.rt.moo_gui_fenster, &[t.into(), b.into(), h.into()], "gui_fenster");
+                        let v = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_titel_setze, &[t.into(), v.into()], "tray_titel_setze");
                     }
-                    "gui_label" => {
-                        let f = self.compile_expr(&args[0])?;
-                        let t = self.compile_expr(&args[1])?;
-                        return self.call_rt(self.rt.moo_gui_label, &[f.into(), t.into()], "gui_label");
+                    "tray_icon_setze" | "tray_icon_set" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_icon_setze, &[t.into(), v.into()], "tray_icon_setze");
                     }
-                    "gui_button" => {
-                        let f = self.compile_expr(&args[0])?;
+                    "tray_aktiv" | "tray_active" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let a = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_aktiv, &[t.into(), a.into()], "tray_aktiv");
+                    }
+                    "tray_separator_add" | "tray_trenner_add" => {
+                        let t = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tray_separator_add, &[t.into()], "tray_separator_add");
+                    }
+                    "tray_submenu_add" | "tray_untermenue_add" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let l = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_submenu_add, &[t.into(), l.into()], "tray_submenu_add");
+                    }
+                    "tray_menu_add_to" | "tray_menu_hinzufuegen_zu" => {
+                        let sm = self.compile_expr(&args[0])?;
                         let l = self.compile_expr(&args[1])?;
                         let c = self.compile_expr(&args[2])?;
-                        return self.call_rt(self.rt.moo_gui_button, &[f.into(), l.into(), c.into()], "gui_button");
+                        return self.call_rt(self.rt.moo_tray_menu_add_to, &[sm.into(), l.into(), c.into()], "tray_menu_add_to");
                     }
-                    "gui_label_setze" | "gui_label_set" => {
+                    "tray_separator_add_to" | "tray_trenner_add_to" => {
+                        let sm = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tray_separator_add_to, &[sm.into()], "tray_separator_add_to");
+                    }
+                    "tray_check_add" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let l = self.compile_expr(&args[1])?;
+                        let i = self.compile_expr(&args[2])?;
+                        let c = self.compile_expr(&args[3])?;
+                        return self.call_rt(self.rt.moo_tray_check_add, &[t.into(), l.into(), i.into(), c.into()], "tray_check_add");
+                    }
+                    "tray_check_add_to" => {
+                        let sm = self.compile_expr(&args[0])?;
+                        let l = self.compile_expr(&args[1])?;
+                        let i = self.compile_expr(&args[2])?;
+                        let c = self.compile_expr(&args[3])?;
+                        return self.call_rt(self.rt.moo_tray_check_add_to, &[sm.into(), l.into(), i.into(), c.into()], "tray_check_add_to");
+                    }
+                    "tray_check_wert" | "tray_check_value" => {
+                        let i = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tray_check_wert, &[i.into()], "tray_check_wert");
+                    }
+                    "tray_check_set" | "tray_check_setze" => {
+                        let i = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_check_set, &[i.into(), v.into()], "tray_check_set");
+                    }
+                    "tray_item_aktiv" | "tray_item_active" => {
+                        let i = self.compile_expr(&args[0])?;
+                        let a = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_item_aktiv, &[i.into(), a.into()], "tray_item_aktiv");
+                    }
+                    "tray_item_label_setze" | "tray_item_label_set" => {
+                        let i = self.compile_expr(&args[0])?;
+                        let l = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tray_item_label_setze, &[i.into(), l.into()], "tray_item_label_setze");
+                    }
+                    // ============================================================
+                    // UI (Cross-Platform Widgets — moo_ui.h)
+                    // ============================================================
+                    "ui_init" => {
+                        return self.call_rt(self.rt.moo_ui_init, &[], "ui_init");
+                    }
+                    "ui_laufen" | "ui_run" => {
+                        return self.call_rt(self.rt.moo_ui_laufen, &[], "ui_laufen");
+                    }
+                    "ui_beenden" | "ui_quit" => {
+                        return self.call_rt(self.rt.moo_ui_beenden, &[], "ui_beenden");
+                    }
+                    "ui_pump" => {
+                        return self.call_rt(self.rt.moo_ui_pump, &[], "ui_pump");
+                    }
+                    "ui_debug" => {
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_debug, &[a.into()], "ui_debug");
+                    }
+                    "ui_fenster" | "ui_window" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_fenster, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_fenster");
+                    }
+                    "ui_fenster_titel_setze" | "ui_window_title_set" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_fenster_titel_setze, &[f.into(), t.into()], "ui_fenster_titel_setze");
+                    }
+                    "ui_fenster_icon_setze" | "ui_window_icon_set" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let p = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_fenster_icon_setze, &[f.into(), p.into()], "ui_fenster_icon_setze");
+                    }
+                    "ui_fenster_groesse_setze" | "ui_window_size_set" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_fenster_groesse_setze, &[a[0].into(), a[1].into(), a[2].into()], "ui_fenster_groesse_setze");
+                    }
+                    "ui_fenster_position_setze" | "ui_window_position_set" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_fenster_position_setze, &[a[0].into(), a[1].into(), a[2].into()], "ui_fenster_position_setze");
+                    }
+                    "ui_fenster_schliessen" | "ui_window_close" => {
+                        let f = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_fenster_schliessen, &[f.into()], "ui_fenster_schliessen");
+                    }
+                    "ui_zeige" | "ui_show" => {
+                        let f = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_zeige, &[f.into()], "ui_zeige");
+                    }
+                    "ui_zeige_nebenbei" | "ui_show_detached" => {
+                        let f = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_zeige_nebenbei, &[f.into()], "ui_zeige_nebenbei");
+                    }
+                    "ui_fenster_on_close" | "ui_window_on_close" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_fenster_on_close, &[f.into(), c.into()], "ui_fenster_on_close");
+                    }
+                    "ui_label" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_label, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_label");
+                    }
+                    "ui_label_setze" | "ui_label_set" => {
                         let l = self.compile_expr(&args[0])?;
                         let t = self.compile_expr(&args[1])?;
-                        return self.call_rt(self.rt.moo_gui_label_setze, &[l.into(), t.into()], "gui_label_setze");
+                        return self.call_rt(self.rt.moo_ui_label_setze, &[l.into(), t.into()], "ui_label_setze");
                     }
-                    "gui_icon_setze" | "gui_icon_set" => {
-                        let f = self.compile_expr(&args[0])?;
-                        let n = self.compile_expr(&args[1])?;
-                        return self.call_rt(self.rt.moo_gui_icon_setze, &[f.into(), n.into()], "gui_icon_setze");
+                    "ui_label_text" => {
+                        let l = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_label_text, &[l.into()], "ui_label_text");
                     }
-                    "gui_zeige" | "gui_show" => {
+                    "ui_knopf" | "ui_button" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_knopf, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into()], "ui_knopf");
+                    }
+                    "ui_checkbox" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_checkbox, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into(), a[7].into()], "ui_checkbox");
+                    }
+                    "ui_checkbox_wert" | "ui_checkbox_value" => {
+                        let c = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_checkbox_wert, &[c.into()], "ui_checkbox_wert");
+                    }
+                    "ui_checkbox_setze" | "ui_checkbox_set" => {
+                        let c = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_checkbox_setze, &[c.into(), v.into()], "ui_checkbox_setze");
+                    }
+                    "ui_radio" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_radio, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into(), a[7].into()], "ui_radio");
+                    }
+                    "ui_radio_wert" | "ui_radio_value" => {
+                        let r = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_radio_wert, &[r.into()], "ui_radio_wert");
+                    }
+                    "ui_eingabe" | "ui_input" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_eingabe, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into()], "ui_eingabe");
+                    }
+                    "ui_eingabe_text" | "ui_input_text" => {
+                        let e = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_eingabe_text, &[e.into()], "ui_eingabe_text");
+                    }
+                    "ui_eingabe_setze" | "ui_input_set" => {
+                        let e = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_eingabe_setze, &[e.into(), t.into()], "ui_eingabe_setze");
+                    }
+                    "ui_eingabe_on_change" | "ui_input_on_change" => {
+                        let e = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_eingabe_on_change, &[e.into(), c.into()], "ui_eingabe_on_change");
+                    }
+                    "ui_textbereich" | "ui_textarea" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_textbereich, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_textbereich");
+                    }
+                    "ui_textbereich_text" | "ui_textarea_text" => {
+                        let tb = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_textbereich_text, &[tb.into()], "ui_textbereich_text");
+                    }
+                    "ui_textbereich_setze" | "ui_textarea_set" => {
+                        let tb = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_textbereich_setze, &[tb.into(), t.into()], "ui_textbereich_setze");
+                    }
+                    "ui_textbereich_anhaengen" | "ui_textarea_append" => {
+                        let tb = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_textbereich_anhaengen, &[tb.into(), t.into()], "ui_textbereich_anhaengen");
+                    }
+                    "ui_dropdown" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_dropdown, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into()], "ui_dropdown");
+                    }
+                    "ui_dropdown_auswahl" | "ui_dropdown_selection" => {
+                        let d = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_dropdown_auswahl, &[d.into()], "ui_dropdown_auswahl");
+                    }
+                    "ui_dropdown_auswahl_setze" | "ui_dropdown_selection_set" => {
+                        let d = self.compile_expr(&args[0])?;
+                        let i = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_dropdown_auswahl_setze, &[d.into(), i.into()], "ui_dropdown_auswahl_setze");
+                    }
+                    "ui_dropdown_text" => {
+                        let d = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_dropdown_text, &[d.into()], "ui_dropdown_text");
+                    }
+                    "ui_liste" | "ui_list" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_liste, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_liste");
+                    }
+                    "ui_liste_zeile_hinzu" | "ui_list_row_add" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let z = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_liste_zeile_hinzu, &[l.into(), z.into()], "ui_liste_zeile_hinzu");
+                    }
+                    "ui_liste_auswahl" | "ui_list_selection" => {
+                        let l = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_liste_auswahl, &[l.into()], "ui_liste_auswahl");
+                    }
+                    "ui_liste_zeile" | "ui_list_row" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let i = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_liste_zeile, &[l.into(), i.into()], "ui_liste_zeile");
+                    }
+                    "ui_liste_leeren" | "ui_list_clear" => {
+                        let l = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_liste_leeren, &[l.into()], "ui_liste_leeren");
+                    }
+                    "ui_liste_on_auswahl" | "ui_list_on_selection" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_liste_on_auswahl, &[l.into(), c.into()], "ui_liste_on_auswahl");
+                    }
+                    "ui_slider" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_slider, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into(), a[7].into(), a[8].into()], "ui_slider");
+                    }
+                    "ui_slider_wert" | "ui_slider_value" => {
+                        let s = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_slider_wert, &[s.into()], "ui_slider_wert");
+                    }
+                    "ui_slider_setze" | "ui_slider_set" => {
+                        let s = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_slider_setze, &[s.into(), v.into()], "ui_slider_setze");
+                    }
+                    "ui_fortschritt" | "ui_progress" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_fortschritt, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_fortschritt");
+                    }
+                    "ui_fortschritt_setze" | "ui_progress_set" => {
+                        let b = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_fortschritt_setze, &[b.into(), v.into()], "ui_fortschritt_setze");
+                    }
+                    "ui_bild" | "ui_image" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_bild, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_bild");
+                    }
+                    "ui_bild_setze" | "ui_image_set" => {
+                        let b = self.compile_expr(&args[0])?;
+                        let p = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_bild_setze, &[b.into(), p.into()], "ui_bild_setze");
+                    }
+                    "ui_leinwand" | "ui_canvas" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_leinwand, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_leinwand");
+                    }
+                    "ui_leinwand_anfordern" | "ui_canvas_request" => {
+                        let l = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_leinwand_anfordern, &[l.into()], "ui_leinwand_anfordern");
+                    }
+                    "ui_rahmen" | "ui_frame" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_rahmen, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_rahmen");
+                    }
+                    "ui_trenner" | "ui_separator" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_trenner, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_trenner");
+                    }
+                    "ui_tabs" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_tabs, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_tabs");
+                    }
+                    "ui_tab_hinzu" | "ui_tab_add" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let ti = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_tab_hinzu, &[t.into(), ti.into()], "ui_tab_hinzu");
+                    }
+                    "ui_tabs_auswahl" | "ui_tabs_selection" => {
+                        let t = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_tabs_auswahl, &[t.into()], "ui_tabs_auswahl");
+                    }
+                    "ui_tabs_auswahl_setze" | "ui_tabs_selection_set" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let i = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_tabs_auswahl_setze, &[t.into(), i.into()], "ui_tabs_auswahl_setze");
+                    }
+                    "ui_scroll" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_scroll, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_scroll");
+                    }
+                    "ui_sichtbar" | "ui_visible" => {
+                        let w = self.compile_expr(&args[0])?;
+                        let s = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_sichtbar, &[w.into(), s.into()], "ui_sichtbar");
+                    }
+                    "ui_aktiv" | "ui_active" => {
+                        let w = self.compile_expr(&args[0])?;
+                        let a = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_aktiv, &[w.into(), a.into()], "ui_aktiv");
+                    }
+                    "ui_position_setze" | "ui_position_set" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_position_setze, &[a[0].into(), a[1].into(), a[2].into()], "ui_position_setze");
+                    }
+                    "ui_groesse_setze" | "ui_size_set" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_groesse_setze, &[a[0].into(), a[1].into(), a[2].into()], "ui_groesse_setze");
+                    }
+                    "ui_farbe_setze" | "ui_color_set" => {
+                        let w = self.compile_expr(&args[0])?;
+                        let h = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_farbe_setze, &[w.into(), h.into()], "ui_farbe_setze");
+                    }
+                    "ui_schrift_setze" | "ui_font_set" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_schrift_setze, &[a[0].into(), a[1].into(), a[2].into()], "ui_schrift_setze");
+                    }
+                    "ui_tooltip_setze" | "ui_tooltip_set" => {
+                        let w = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_tooltip_setze, &[w.into(), t.into()], "ui_tooltip_setze");
+                    }
+                    "ui_zerstoere" | "ui_destroy" => {
+                        let w = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_zerstoere, &[w.into()], "ui_zerstoere");
+                    }
+                    "ui_timer_hinzu" | "ui_timer_add" => {
+                        let ms = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_timer_hinzu, &[ms.into(), c.into()], "ui_timer_hinzu");
+                    }
+                    "ui_timer_entfernen" | "ui_timer_remove" => {
+                        let id = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_timer_entfernen, &[id.into()], "ui_timer_entfernen");
+                    }
+                    "ui_info" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_info, &[a[0].into(), a[1].into(), a[2].into()], "ui_info");
+                    }
+                    "ui_warnung" | "ui_warning" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_warnung, &[a[0].into(), a[1].into(), a[2].into()], "ui_warnung");
+                    }
+                    "ui_fehler" | "ui_error" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_fehler, &[a[0].into(), a[1].into(), a[2].into()], "ui_fehler");
+                    }
+                    "ui_frage" | "ui_question" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_frage, &[a[0].into(), a[1].into(), a[2].into()], "ui_frage");
+                    }
+                    "ui_eingabe_dialog" | "ui_input_dialog" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_eingabe_dialog, &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "ui_eingabe_dialog");
+                    }
+                    "ui_datei_oeffnen" | "ui_file_open" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_datei_oeffnen, &[a[0].into(), a[1].into(), a[2].into()], "ui_datei_oeffnen");
+                    }
+                    "ui_datei_speichern" | "ui_file_save" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_datei_speichern, &[a[0].into(), a[1].into(), a[2].into()], "ui_datei_speichern");
+                    }
+                    "ui_ordner_waehlen" | "ui_folder_choose" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_ordner_waehlen, &[p.into(), t.into()], "ui_ordner_waehlen");
+                    }
+                    "ui_menueleiste" | "ui_menubar" => {
                         let f = self.compile_expr(&args[0])?;
-                        return self.call_rt(self.rt.moo_gui_zeige, &[f.into()], "gui_zeige");
+                        return self.call_rt(self.rt.moo_ui_menueleiste, &[f.into()], "ui_menueleiste");
+                    }
+                    "ui_menue" | "ui_menu" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_menue, &[l.into(), t.into()], "ui_menue");
+                    }
+                    "ui_menue_eintrag" | "ui_menu_item" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_menue_eintrag, &[a[0].into(), a[1].into(), a[2].into()], "ui_menue_eintrag");
+                    }
+                    "ui_menue_trenner" | "ui_menu_separator" => {
+                        let m = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_menue_trenner, &[m.into()], "ui_menue_trenner");
+                    }
+                    "ui_menue_untermenue" | "ui_menu_submenu" => {
+                        let m = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_menue_untermenue, &[m.into(), t.into()], "ui_menue_untermenue");
                     }
                     "tray_run" | "tray_loop" => {
+                        // DEPRECATED: Alias auf ui_laufen (siehe moo_tray.h).
                         return self.call_rt(self.rt.moo_tray_run, &[], "tray_run");
                     }
                     _ => {}
