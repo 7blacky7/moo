@@ -47,6 +47,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <wchar.h>
+#include <limits.h>
 
 /* COM / WIC fuer moo_ui_test_snapshot (PNG-Encoder).
  * COBJMACROS aktiviert die C-Vtable-Aufruf-Makros (IWICImagingFactory_*).
@@ -3122,6 +3123,223 @@ MooValue moo_ui_test_snapshot_widget(MooValue widget, MooValue pfad) {
     int ok = w32_capture_hwnd_png(h, wpath, 1);
     free(wpath);
     return moo_bool(ok ? 1 : 0);
+}
+
+/* =========================================================================
+ * Plan-004 P3 — Test-/Automation-API
+ *
+ * Implementiert die ui_test_*-Funktionen aus moo_ui.h. Callbacks werden
+ * SYNCHRON ausgeloest:
+ *   - test_klick      : BM_CLICK fuer Buttons/Checkboxes/Radios, sonst
+ *                       WM_LBUTTONDOWN+WM_LBUTTONUP an Center (deckt
+ *                       Leinwand-Subclass + Custom-Controls ab).
+ *   - test_klick_xy   : RealChildWindowFromPoint auf Fenster-Koordinaten,
+ *                       danach test_klick auf gefundenes HWND.
+ *   - test_text_setze : WM_SETTEXT + manuell WM_COMMAND EN_CHANGE an Parent
+ *                       (SetWindowText feuert es nicht zuverlaessig).
+ *                       ComboBox: CB_FINDSTRINGEXACT + CB_SETCURSEL +
+ *                       WM_COMMAND CBN_SELCHANGE.
+ *   - test_shortcut   : Reuse parse_shortcut_sequence; Lookup in der
+ *                       per-Fenster MooAccelList; Callback direkt feuern,
+ *                       KEINE OS-Key-Synthese.
+ *   - test_warte      : PeekMessage-Pump-Loop bis GetTickCount-Delta erreicht;
+ *                       Sleep(1) wenn Queue leer; Abbruch bei WM_QUIT.
+ *   - test_pump       : Aequivalent zu moo_ui_pump.
+ * ========================================================================= */
+
+static int w32_is_button_class(const wchar_t* cls) {
+    /* Standard-Button-Klasse (Push/Check/Radio/Group). Case-insensitiv. */
+    return cls && _wcsicmp(cls, L"Button") == 0;
+}
+
+static int w32_is_edit_class(const wchar_t* cls) {
+    return cls && _wcsicmp(cls, L"Edit") == 0;
+}
+
+static int w32_is_combo_class(const wchar_t* cls) {
+    return cls && _wcsicmp(cls, L"ComboBox") == 0;
+}
+
+/* Synchroner Klick auf ein einzelnes Control. */
+static int w32_test_klick_hwnd(HWND h) {
+    if (!h || !IsWindow(h)) return 0;
+    if (!IsWindowVisible(h)) return 0;
+    if (!IsWindowEnabled(h)) return 0;
+
+    wchar_t cls[64];
+    int n = GetClassNameW(h, cls, 64);
+    if (n <= 0) cls[0] = 0;
+
+    if (w32_is_button_class(cls)) {
+        /* BM_CLICK feuert WM_LBUTTONDOWN/UP intern und sendet anschliessend
+         * BN_CLICKED via WM_COMMAND an den Parent — synchroner Dispatch. */
+        SendMessageW(h, BM_CLICK, 0, 0);
+        return 1;
+    }
+
+    /* Generisch: synthetischer Maus-Klick auf Center der Client-Area.
+     * Deckt Leinwand-Subclass (WM_LBUTTONDOWN → on_maus) und Custom-Controls
+     * ab. SendMessage = synchron. */
+    RECT rc;
+    if (!GetClientRect(h, &rc)) return 0;
+    int cx = (rc.right  - rc.left) / 2;
+    int cy = (rc.bottom - rc.top)  / 2;
+    LPARAM pos = MAKELPARAM(cx, cy);
+    SendMessageW(h, WM_LBUTTONDOWN, MK_LBUTTON, pos);
+    SendMessageW(h, WM_LBUTTONUP,   0,          pos);
+    return 1;
+}
+
+MooValue moo_ui_test_klick(MooValue widget) {
+    HWND h = unwrap_hwnd(widget);
+    return moo_bool(w32_test_klick_hwnd(h) ? 1 : 0);
+}
+
+MooValue moo_ui_test_klick_xy(MooValue fenster, MooValue x, MooValue y) {
+    HWND top = unwrap_hwnd(fenster);
+    if (!top || !IsWindow(top)) return moo_bool(0);
+    if (!IsWindowVisible(top))  return moo_bool(0);
+
+    int xi = num_or(x, INT_MIN);
+    int yi = num_or(y, INT_MIN);
+    if (xi == INT_MIN || yi == INT_MIN) return moo_bool(0);
+
+    POINT pt = { xi, yi };
+    /* RealChildWindowFromPoint nimmt Punkt in Client-Koords des Parents.
+     * Im Gegensatz zu ChildWindowFromPointEx ueberspringt es Group-Boxes
+     * und beruecksichtigt das tatsaechliche Hit-Testing. */
+    HWND hit = RealChildWindowFromPoint(top, pt);
+    if (!hit) hit = top;
+
+    /* Wenn das gefundene Widget einen weiteren Container ist (MooContainer
+     * oder Tab-Inhalt), eine Ebene tiefer hit-testen. */
+    POINT child_pt = pt;
+    HWND cur = hit;
+    for (int depth = 0; depth < 8; depth++) {
+        if (cur == top) break;
+        /* in cur-lokale Koords umrechnen */
+        POINT scr = pt;
+        ClientToScreen(top, &scr);
+        POINT loc = scr;
+        ScreenToClient(cur, &loc);
+        HWND deeper = RealChildWindowFromPoint(cur, loc);
+        if (!deeper || deeper == cur) { child_pt = loc; break; }
+        cur = deeper;
+    }
+    (void)child_pt;
+
+    return moo_bool(w32_test_klick_hwnd(cur) ? 1 : 0);
+}
+
+MooValue moo_ui_test_text_setze(MooValue widget, MooValue text) {
+    HWND h = unwrap_hwnd(widget);
+    if (!h || !IsWindow(h)) return moo_bool(0);
+    if (text.tag != MOO_STRING) return moo_bool(0);
+
+    const char* s = MV_STR(text) ? MV_STR(text)->chars : "";
+    wchar_t* ws = utf8_to_wide(s ? s : "");
+    if (!ws) return moo_bool(0);
+
+    wchar_t cls[64];
+    int n = GetClassNameW(h, cls, 64);
+    if (n <= 0) cls[0] = 0;
+
+    int ok = 0;
+    if (w32_is_combo_class(cls)) {
+        /* Dropdown: Eintrag mit exakt passendem Text suchen + auswaehlen.
+         * Anschliessend CBN_SELCHANGE explizit posten, damit der gebundene
+         * Callback (am Control via "moo-cb") feuert. */
+        LRESULT idx = SendMessageW(h, CB_FINDSTRINGEXACT, (WPARAM)-1, (LPARAM)ws);
+        if (idx != CB_ERR) {
+            SendMessageW(h, CB_SETCURSEL, (WPARAM)idx, 0);
+            HWND parent = GetParent(h);
+            UINT id = (UINT)GetDlgCtrlID(h);
+            if (parent) {
+                SendMessageW(parent, WM_COMMAND,
+                             MAKEWPARAM(id, CBN_SELCHANGE), (LPARAM)h);
+            }
+            ok = 1;
+        }
+    } else {
+        /* Edit/Textbereich/Sonstige: WM_SETTEXT setzt den Inhalt; danach
+         * EN_CHANGE explizit an Parent posten. SetWindowText feuert
+         * EN_CHANGE bei programmatischen Aenderungen nicht zuverlaessig. */
+        SendMessageW(h, WM_SETTEXT, 0, (LPARAM)ws);
+        if (w32_is_edit_class(cls)) {
+            HWND parent = GetParent(h);
+            UINT id = (UINT)GetDlgCtrlID(h);
+            if (parent) {
+                SendMessageW(parent, WM_COMMAND,
+                             MAKEWPARAM(id, EN_CHANGE), (LPARAM)h);
+            }
+        }
+        ok = 1;
+    }
+    free(ws);
+    return moo_bool(ok ? 1 : 0);
+}
+
+MooValue moo_ui_test_shortcut(MooValue fenster, MooValue sequenz) {
+    HWND top = unwrap_hwnd(fenster);
+    if (!top || !IsWindow(top)) return moo_bool(0);
+    if (!IsWindowVisible(top))  return moo_bool(0);
+    if (sequenz.tag != MOO_STRING || !MV_STR(sequenz)) return moo_bool(0);
+
+    BYTE virt = 0;
+    WORD key  = 0;
+    if (!parse_shortcut_sequence(MV_STR(sequenz)->chars, &virt, &key)) {
+        return moo_bool(0);
+    }
+
+    MooAccelList* L = accel_list_for(top, 0);
+    if (!L) return moo_bool(0);
+
+    for (int i = 0; i < L->count; i++) {
+        if (L->items[i].fVirt == virt && L->items[i].key == key) {
+            UINT id = L->ids[i];
+            MooCbBox* cb = lookup_cb(id);
+            if (!cb || cb->v.tag != MOO_FUNC) return moo_bool(0);
+            MooValue rv = moo_func_call_0(cb->v);
+            moo_release(rv);
+            return moo_bool(1);
+        }
+    }
+    return moo_bool(0);
+}
+
+MooValue moo_ui_test_warte(MooValue millisekunden) {
+    ensure_init();
+    int ms = num_or(millisekunden, -1);
+    if (ms < 0) return moo_bool(0);
+
+    /* Mindestens einmal pumpen, auch bei ms == 0. */
+    DWORD start = GetTickCount();
+    int quit = 0;
+    do {
+        MSG msg;
+        int drained = 0;
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+            drained = 1;
+            if (msg.message == WM_QUIT) { quit = 1; break; }
+            /* Accelerator-Auswertung wie in moo_ui_laufen. */
+            HWND top = msg.hwnd ? GetAncestor(msg.hwnd, GA_ROOT) : NULL;
+            if (top) {
+                HACCEL ha = (HACCEL)GetPropW(top, L"moo-haccel");
+                if (ha && TranslateAcceleratorW(top, ha, &msg)) continue;
+            }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        if (quit) break;
+        if (ms == 0) break;
+        if (!drained) Sleep(1);
+    } while ((GetTickCount() - start) < (DWORD)ms);
+
+    return moo_bool(1);
+}
+
+MooValue moo_ui_test_pump(void) {
+    return moo_ui_pump();
 }
 
 /* =========================================================================
