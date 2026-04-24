@@ -495,6 +495,24 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         ]);
     }
 
+    // macOS UI-Libs/Frameworks — der Compiler-Build linkt diese bereits via
+    // build.rs fuer das moo-compiler Binary. Beim spaeteren finalen Link eines
+    // kompilierten .moo-Programms muessen sie aber erneut an cc/clang uebergeben
+    // werden, sonst fehlen AppKit/Foundation/CoreGraphics/Objective-C-Symbole
+    // aus moo_ui_cocoa.o.
+    #[cfg(target_os = "macos")]
+    {
+        link_args.extend([
+            "-framework".to_string(),
+            "AppKit".to_string(),
+            "-framework".to_string(),
+            "Foundation".to_string(),
+            "-framework".to_string(),
+            "CoreGraphics".to_string(),
+            "-lobjc".to_string(),
+        ]);
+    }
+
     // 3D-Backend-Libs — nur wenn ein 3D-Feature aktiv ist (analog build.rs).
     // moo_ui-only Build (ohne gl33/gl21/vulkan) linkt kein GL/Vulkan/GLFW.
     #[cfg(any(feature = "gl21", feature = "gl33"))]
