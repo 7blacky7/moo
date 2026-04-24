@@ -714,6 +714,237 @@ MooValue moo_ui_test_snapshot(MooValue fenster, MooValue pfad);
 MooValue moo_ui_test_snapshot_widget(MooValue widget, MooValue pfad);
 
 /* =========================================================================
+ * Test-/Debug-API: Automation (Plan-004 P3)
+ *
+ * Programmatische Bedienung von UI-Elementen fuer Agenten-Tests und visuelle
+ * Regressionstests. Zweck: nach einem Snapshot (P2) einen Zustand gezielt
+ * aendern, naechsten Snapshot machen, Differenz bewerten. Diese API gehoert
+ * bewusst zur Test-/Debug-Schicht (Namensraum `ui_test_*`), nicht zur
+ * normalen App-API — Endnutzer-Anwendungen sollen sich nicht selbst
+ * bedienen.
+ *
+ * Callback-Semantik (WICHTIG, gilt fuer alle Automation-Funktionen, die
+ * einen Callback ausloesen):
+ *   SYNCHRON. Der registrierte Callback wird im selben Stack noch vor
+ *   Rueckkehr der test_*-Funktion aufgerufen. Damit ist nach Rueckkehr
+ *   garantiert, dass alle unmittelbaren Zustaendsaenderungen geschehen
+ *   sind (Variable gesetzt, Fenster-Titel aktualisiert, ...).
+ *   Folge-Effekte, die das Backend ueber die Event-Queue verteilt
+ *   (Relayout nach Groessenaenderung, deferred Redraw, Timer-Fires),
+ *   sind NACH Rueckkehr noch nicht abgearbeitet — dafuer
+ *   `moo_ui_test_pump` oder `moo_ui_test_warte` nutzen, bevor ein
+ *   Snapshot aufgenommen wird.
+ *
+ * Sichtbarkeit/Aktivitaet: Alle Automation-Funktionen verlangen, dass
+ * Fenster und Widget sichtbar und aktiv sind. Auf unsichtbaren oder
+ * deaktivierten Widgets liefern sie `falsch` ohne Seiteneffekt.
+ *
+ * Fehlerpfad (Rueckgabe MOO_BOOLEAN falsch): ungueltiges Handle, nicht
+ * sichtbar, nicht aktiv, Widget-Typ unterstuetzt die Operation nicht,
+ * Koordinaten ausserhalb, Shortcut-Sequenz nicht parsebar.
+ * ========================================================================= */
+
+/* Programmatischer Klick auf ein klickbares Widget (Knopf, Checkbox,
+ * Radio, Menue-Eintrag). Feuert den beim Widget registrierten Callback
+ * SYNCHRON (on_click bei Knopf, toggle-Callback bei Checkbox/Radio,
+ * activate bei Menue-Eintrag).
+ *
+ * widget: Widget-Handle eines klickbaren Widgets. Muss sichtbar und
+ *         aktiv sein; Widget-Typ muss Klick unterstuetzen. Nicht-klickbare
+ *         Widgets (Label, Rahmen, Leinwand ohne on_maus, ...) liefern falsch.
+ *
+ * Bei Checkbox/Radio wechselt zusaetzlich der sichtbare Zustand
+ * (analog zum Benutzerklick), und der Callback erhaelt den neuen Wert.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_widget_activate(w). Aktiviert Button/Checkbox/
+ *                  MenuItem genauso wie ein echter Klick und loest das
+ *                  clicked/toggled/activate-Signal synchron aus.
+ *   Windows      : SendMessageW(hwnd, BM_CLICK, 0, 0) fuer Buttons/
+ *                  Checkboxes/Radios (synchroner Dispatch, feuert
+ *                  BN_CLICKED an den Parent). Menue-Eintraege: via
+ *                  WM_COMMAND mit der Control-ID. SendMessage (nicht
+ *                  PostMessage), damit der Callback synchron feuert.
+ *   macOS        : [control performClick:nil] auf NSButton/NSMenuItem;
+ *                  triggert target/action synchron im Main-Thread.
+ *
+ * Liefert MOO_BOOLEAN: wahr bei Erfolg, falsch bei Fehler. */
+MooValue moo_ui_test_klick(MooValue widget);
+
+/* Simulierter Klick an Fenster-Content-lokalen Koordinaten. Sucht via
+ * Hit-Test das Widget an (x,y) und delegiert an moo_ui_test_klick.
+ * Nuetzlich fuer Leinwand-Klicks (loest on_maus-Callback aus, wenn
+ * registriert) oder wenn auf dem Ziel-Widget keine ID gesetzt ist.
+ *
+ * fenster: Fenster-Handle (Top-Level).
+ * x, y:    MOO_INTEGER, Pixel, relativ zur Fenster-Content-Area
+ *          (origin links-oben), konsistent mit Widget-Koordinaten
+ *          aus `moo_ui_widget_info`.
+ *
+ * Koordinaten ausserhalb der Content-Area oder auf einem nicht-klickbaren
+ * Widget → falsch. Bei Leinwand mit on_maus wird stattdessen der
+ * on_maus-Callback SYNCHRON mit (leinwand, lokal_x, lokal_y, taste=1)
+ * aufgerufen; Koordinaten werden Leinwand-lokal umgerechnet.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_widget_get_window(fenster) + gdk_window_get_device_position
+ *                  Heuristik via rekursivem gtk_widget_get_allocation-Walk;
+ *                  gefundenes Ziel → gtk_widget_activate (Buttons) oder
+ *                  synthetisches "button-press-event" (Leinwand).
+ *   Windows      : ChildWindowFromPointEx(hwnd, {x,y}, CWP_SKIPINVISIBLE|
+ *                  CWP_SKIPDISABLED); danach BM_CLICK oder
+ *                  WM_LBUTTONDOWN/WM_LBUTTONUP an Ziel-HWND mit
+ *                  client-lokalen Koordinaten.
+ *   macOS        : [contentView hitTest:NSPoint] → NSView; bei NSControl
+ *                  [view performClick:nil], bei Custom-View mouseDown:
+ *                  mit synthetischem NSEvent.
+ *
+ * Klick-Taste: immer links (1). Fuer mittlere/rechte Taste spaeter
+ * eine eigene Variante, falls benoetigt.
+ *
+ * Liefert MOO_BOOLEAN: wahr bei Erfolg, falsch bei Fehler. */
+MooValue moo_ui_test_klick_xy(MooValue fenster, MooValue x, MooValue y);
+
+/* Setzt den Text-Inhalt eines Text-Eingabe-Widgets programmatisch und
+ * feuert den on_change-Callback SYNCHRON (falls gebunden).
+ *
+ * widget: Eingabe, Textbereich, oder Dropdown (bei Dropdown: sucht den
+ *         Eintrag mit exakt passendem Text und setzt die Auswahl; nicht
+ *         gefundener Text → falsch, keine Aenderung).
+ * text:   MOO_STRING. Leerer String leert das Feld. MOO_NONE → falsch.
+ *
+ * Ersetzt den gesamten bisherigen Inhalt (kein Append). Der on_change-
+ * Callback erhaelt den neuen Text. Beim Textbereich wird genau ein
+ * on_change-Event gefeuert, nicht pro Zeichen.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : Eingabe: gtk_entry_set_text(entry, utf8);
+ *                  g_signal_emit_by_name(entry, "changed") ist implizit,
+ *                  weil set_text das "changed"-Signal nativ feuert.
+ *                  Textbereich: gtk_text_buffer_set_text(buf, utf8, -1);
+ *                  Buffer emittiert "changed" synchron.
+ *                  Dropdown: gtk_combo_box_set_active(cb, index) nach
+ *                  Text-Suche in der Model-Liste.
+ *   Windows      : Eingabe/Textbereich: SetWindowTextW(hwnd, wtext);
+ *                  danach SendMessageW(parent, WM_COMMAND,
+ *                  MAKEWPARAM(id, EN_CHANGE), (LPARAM)hwnd) explizit
+ *                  posten, weil SetWindowText EN_CHANGE auf Controls
+ *                  ohne Parent-Notify-Flag schluckt.
+ *                  Dropdown: CB_FINDSTRINGEXACT + CB_SETCURSEL;
+ *                  CBN_SELCHANGE via WM_COMMAND.
+ *   macOS        : Eingabe: [field setStringValue:ns]; NSTextField sendet
+ *                  nicht automatisch controlTextDidChange: bei setValue —
+ *                  daher explizit: [[NSNotificationCenter defaultCenter]
+ *                  postNotificationName:NSControlTextDidChangeNotification
+ *                  object:field].
+ *                  Textbereich: [[textView textStorage]
+ *                  replaceCharactersInRange:all withString:ns] +
+ *                  textDidChange:.
+ *                  Dropdown: [popup selectItemWithTitle:ns] + action senden.
+ *
+ * Liefert MOO_BOOLEAN: wahr bei Erfolg, falsch bei Fehler. */
+MooValue moo_ui_test_text_setze(MooValue widget, MooValue text);
+
+/* Simuliert einen Keyboard-Shortcut und feuert den via
+ * `moo_ui_shortcut_bind` registrierten Callback SYNCHRON.
+ *
+ * fenster:  Fenster-Handle, in dessen Shortcut-Tabelle gesucht wird.
+ * sequenz:  MOO_STRING im gleichen Format wie `moo_ui_shortcut_bind`
+ *           (z.B. "Ctrl+S", "Strg+Z", "F11"). Case-insensitive,
+ *           "+"-getrennt, gleiche Modifier-/Key-Token-Tabelle.
+ *
+ * Liefert falsch wenn:
+ *   - sequenz nicht parsebar,
+ *   - keine aktive Bindung fuer diese Sequenz im Fenster existiert,
+ *   - Fenster nicht sichtbar.
+ *
+ * Die Implementierung nutzt den bestehenden Shortcut-Parser aus
+ * `moo_ui_shortcut_bind` (gleiche Token-Tabelle, gleiche Normalisierung),
+ * sucht den registrierten Callback im Fenster-Accel-Table und ruft
+ * ihn direkt auf — es werden KEINE synthetischen OS-Keyboard-Events
+ * an den Event-Queue geschickt. Damit ist die Ausloesung deterministisch
+ * und unabhaengig vom aktuellen Fokus-Widget.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : interne Shortcut-Map (sequenz → callback) lookup +
+ *                  moo_call(callback). Kein gtk_main_do_event, weil das
+ *                  Key-Events ueber Fokus-Pfad dispatcht und Child-
+ *                  Widgets die Keys abfangen koennten.
+ *   Windows      : interne ACCEL-Map-Lookup + synchroner Callback-Call.
+ *                  Kein PostMessage(WM_HOTKEY/WM_KEYDOWN).
+ *   macOS        : interne Map-Lookup + synchroner Callback-Call.
+ *                  Kein NSEvent-Injection in die Event-Queue.
+ *
+ * Liefert MOO_BOOLEAN: wahr bei Erfolg, falsch bei Fehler. */
+MooValue moo_ui_test_shortcut(MooValue fenster, MooValue sequenz);
+
+/* Blockiert fuer `millisekunden` und pumpt waehrenddessen den UI-Event-
+ * Loop weiter, damit Redraws, Timer und deferred Signale abgearbeitet
+ * werden. KEIN `sleep` und KEIN busy-wait ohne Pump — Tests, die nach
+ * einem Zustandswechsel einen Snapshot machen wollen, sollen hier auf
+ * das Relayout warten koennen.
+ *
+ * millisekunden: MOO_INTEGER >= 0. Werte <= 0 liefern wahr und pumpen
+ *                einmal (entspricht `moo_ui_test_pump`).
+ *
+ * Die Funktion kehrt frueher zurueck, falls `moo_ui_beenden` waehrend
+ * der Wartezeit ausgeloest wird.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : Schleife bis (now - start) >= ms:
+ *                    while (gtk_events_pending()) gtk_main_iteration();
+ *                    g_usleep(1000); /\* 1 ms, keine CPU-Starre *\/
+ *   Windows      : Schleife bis GetTickCount64-Delta >= ms:
+ *                    while (PeekMessageW(&msg, NULL, 0,0, PM_REMOVE)) {
+ *                      TranslateMessage(&msg); DispatchMessageW(&msg);
+ *                    }
+ *                    Sleep(1);
+ *   macOS        : [[NSRunLoop currentRunLoop]
+ *                     runUntilDate:[NSDate dateWithTimeIntervalSinceNow:
+ *                                   ms/1000.0]];
+ *                  (bzw. Schleife mit kurzen Intervallen, damit
+ *                  moo_ui_beenden-Abbruch greift.)
+ *
+ * Liefert MOO_BOOLEAN: wahr bei planmaessigem Ende, falsch bei Fehler
+ * (negativer Nichtsinn-Wert als MOO_STRING etc.). */
+MooValue moo_ui_test_warte(MooValue millisekunden);
+
+/* Verarbeitet alle aktuell in der UI-Event-Queue wartenden Events
+ * genau einmal und kehrt sofort zurueck. Anders als `moo_ui_test_warte`
+ * wird NICHT zusaetzlich gewartet — nur der aktuelle Queue-Inhalt wird
+ * abgearbeitet.
+ *
+ * Typischer Einsatz: direkt nach `moo_ui_zeige` einmal pumpen, damit
+ * das Fenster realisiert ist und anschliessend ein Snapshot aufgenommen
+ * werden kann. Fuer Relayout nach Groessenaenderung reicht ein Pump
+ * i.d.R. nicht — dann `moo_ui_test_warte(16)` oder mehr nutzen, damit
+ * der Backend-eigene Frame-Tick durchlaeuft.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : while (gtk_events_pending()) gtk_main_iteration_do(FALSE);
+ *                  FALSE = nicht blockieren, wenn Queue leer wird.
+ *   Windows      : while (PeekMessageW(&msg, NULL, 0,0, PM_REMOVE)) {
+ *                    TranslateMessage(&msg); DispatchMessageW(&msg);
+ *                  }
+ *   macOS        : NSEvent* e;
+ *                  while ((e = [NSApp nextEventMatchingMask:NSEventMaskAny
+ *                               untilDate:[NSDate distantPast]
+ *                               inMode:NSDefaultRunLoopMode dequeue:YES]))
+ *                  {
+ *                    [NSApp sendEvent:e];
+ *                  }
+ *
+ * Hinweis: `moo_ui_test_pump` ist semantisch aequivalent zum bestehenden
+ * `moo_ui_pump`, wird aber unter dem `ui_test_*`-Namensraum zweitexponiert,
+ * damit Test-Skripte konsistent bleiben und `ui_test`-Modul eigenstaendig
+ * nutzbar ist, ohne die normale UI-API zu importieren.
+ *
+ * Liefert MOO_BOOLEAN: wahr wenn mindestens ein Event verarbeitet wurde
+ * oder die Queue leer war (also normaler Verlauf), falsch nur bei
+ * Backend-internen Fehlern (z.B. UI-Subsystem nicht initialisiert). */
+MooValue moo_ui_test_pump(void);
+
+/* =========================================================================
  * Timer (an den globalen Event-Loop gebunden)
  * ========================================================================= */
 
