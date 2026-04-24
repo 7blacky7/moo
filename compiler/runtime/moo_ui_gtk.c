@@ -1406,6 +1406,247 @@ MooValue moo_ui_zerstoere(MooValue widget) {
     return moo_bool(1);
 }
 
+/* ================================================================== *
+ * Widget-Introspection (Plan-004 P1)
+ * ------------------------------------------------------------------ *
+ * - moo-id wird via g_object_set_data_full(..., g_free) gehalten;
+ *   Lifetime ist an das Widget gekoppelt (auto-cleanup im Destroy).
+ * - Baum-Walk: wenn ein Widget "moo-fixed" hat, steigen wir DORT ab
+ *   (ueberspringt den internen vbox/menubar-Wrapper eines Fensters).
+ *   Nur echte Layout-Container (Fixed/Box/Notebook) werden sonst
+ *   als Unter-Knoten behandelt — Entry/Label/Button/Leinwand/Liste
+ *   sind Blaetter, damit GTK-Interna nicht durchsickern.
+ * ------------------------------------------------------------------ */
+
+static const char* widget_typ_name(GtkWidget* w) {
+    if (!w) return "unbekannt";
+    /* Reihenfolge: spezifisch vor generell — Radio/Check erben von Button. */
+    if (GTK_IS_WINDOW(w))              return "fenster";
+    if (GTK_IS_RADIO_BUTTON(w))        return "radio";
+    if (GTK_IS_CHECK_BUTTON(w))        return "checkbox";
+    if (GTK_IS_BUTTON(w))              return "knopf";
+    if (GTK_IS_LABEL(w))               return "label";
+    if (GTK_IS_ENTRY(w))               return "eingabe";
+    if (GTK_IS_TEXT_VIEW(w))           return "textbereich";
+    if (GTK_IS_COMBO_BOX(w))           return "dropdown";
+    if (GTK_IS_TREE_VIEW(w))           return "liste";
+    if (GTK_IS_SCALE(w))               return "slider";
+    if (GTK_IS_PROGRESS_BAR(w))        return "fortschritt";
+    if (GTK_IS_IMAGE(w))               return "bild";
+    if (GTK_IS_DRAWING_AREA(w))        return "leinwand";
+    if (GTK_IS_FRAME(w))               return "rahmen";
+    if (GTK_IS_SEPARATOR(w))           return "trenner";
+    if (GTK_IS_NOTEBOOK(w))            return "tabs";
+    if (GTK_IS_MENU_BAR(w))            return "menueleiste";
+    if (GTK_IS_MENU(w))                return "menue";
+    if (GTK_IS_MENU_ITEM(w))           return "menueintrag";
+    if (GTK_IS_SCROLLED_WINDOW(w)) {
+        if (g_object_get_data(G_OBJECT(w), "moo-tv")) return "liste";
+        return "scroll";
+    }
+    return "widget";
+}
+
+static MooValue widget_text_value(GtkWidget* w) {
+    if (!w) return moo_none();
+    if (GTK_IS_LABEL(w)) {
+        const char* t = gtk_label_get_text(GTK_LABEL(w));
+        return (t && *t) ? moo_string_new(t) : moo_none();
+    }
+    if (GTK_IS_ENTRY(w)) {
+        const char* t = gtk_entry_get_text(GTK_ENTRY(w));
+        return (t && *t) ? moo_string_new(t) : moo_none();
+    }
+    if (GTK_IS_BUTTON(w)) {
+        const char* t = gtk_button_get_label(GTK_BUTTON(w));
+        return (t && *t) ? moo_string_new(t) : moo_none();
+    }
+    if (GTK_IS_WINDOW(w)) {
+        const char* t = gtk_window_get_title(GTK_WINDOW(w));
+        return (t && *t) ? moo_string_new(t) : moo_none();
+    }
+    if (GTK_IS_TEXT_VIEW(w)) {
+        GtkTextBuffer* buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(w));
+        if (!buf) return moo_none();
+        GtkTextIter s, e;
+        gtk_text_buffer_get_start_iter(buf, &s);
+        gtk_text_buffer_get_end_iter(buf, &e);
+        char* t = gtk_text_buffer_get_text(buf, &s, &e, FALSE);
+        MooValue v = (t && *t) ? moo_string_new(t) : moo_none();
+        g_free(t);
+        return v;
+    }
+    if (GTK_IS_MENU_ITEM(w)) {
+        const char* t = gtk_menu_item_get_label(GTK_MENU_ITEM(w));
+        return (t && *t) ? moo_string_new(t) : moo_none();
+    }
+    return moo_none();
+}
+
+static MooValue widget_id_value(GtkWidget* w) {
+    if (!w) return moo_none();
+    const char* s = (const char*)g_object_get_data(G_OBJECT(w), "moo-id");
+    if (!s || !*s) return moo_none();
+    return moo_string_new(s);
+}
+
+static MooValue widget_name_value(GtkWidget* w) {
+    if (!w) return moo_none();
+    const char* n = gtk_widget_get_name(w);
+    if (!n || !*n) return moo_none();
+    /* GTK setzt den Name standardmaessig auf den Klassennamen (z.B.
+     * "GtkButton"). Das ist fuer Agent-Heuristiken ok als Fallback,
+     * wenn keine ID gesetzt ist. */
+    return moo_string_new(n);
+}
+
+static MooValue build_info_dict(GtkWidget* w) {
+    MooValue d = moo_dict_new();
+    moo_dict_set(d, moo_string_new("typ"),
+                    moo_string_new(widget_typ_name(w)));
+    GtkAllocation alloc;
+    gtk_widget_get_allocation(w, &alloc);
+    moo_dict_set(d, moo_string_new("x"), moo_number((double)alloc.x));
+    moo_dict_set(d, moo_string_new("y"), moo_number((double)alloc.y));
+    moo_dict_set(d, moo_string_new("b"), moo_number((double)alloc.width));
+    moo_dict_set(d, moo_string_new("h"), moo_number((double)alloc.height));
+    moo_dict_set(d, moo_string_new("sichtbar"),
+                    moo_bool(gtk_widget_get_visible(w) ? 1 : 0));
+    moo_dict_set(d, moo_string_new("aktiv"),
+                    moo_bool(gtk_widget_is_sensitive(w) ? 1 : 0));
+    moo_dict_set(d, moo_string_new("id"),   widget_id_value(w));
+    moo_dict_set(d, moo_string_new("text"), widget_text_value(w));
+    moo_dict_set(d, moo_string_new("name"), widget_name_value(w));
+    return d;
+}
+
+MooValue moo_ui_widget_id_setze(MooValue widget, MooValue id_string) {
+    GtkWidget* w = unwrap_widget(widget);
+    if (!w) return moo_bool(0);
+    if (id_string.tag != MOO_STRING || MV_STR(id_string)->chars[0] == '\0') {
+        /* Leere ID oder NONE → loeschen (g_free wird vom Destroy-Notify
+         * automatisch auf dem alten Wert gerufen). */
+        g_object_set_data(G_OBJECT(w), "moo-id", NULL);
+        return moo_bool(1);
+    }
+    g_object_set_data_full(G_OBJECT(w), "moo-id",
+                           g_strdup(MV_STR(id_string)->chars),
+                           g_free);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_widget_id_hole(MooValue widget) {
+    GtkWidget* w = unwrap_widget(widget);
+    if (!w) return moo_none();
+    return widget_id_value(w);
+}
+
+MooValue moo_ui_widget_info(MooValue widget) {
+    GtkWidget* w = unwrap_widget(widget);
+    if (!w) return moo_none();
+    return build_info_dict(w);
+}
+
+/* Liefert den Container, in den fuer Introspection-Zwecke abgestiegen
+ * werden soll — oder NULL wenn dieses Widget als Blatt behandelt wird.
+ * - "moo-fixed" gewinnt (Fenster→fixed, Rahmen→inner, Tab-Page→page,
+ *   Scroll→inner) und ueberspringt damit vbox/menubar-Wrapper.
+ * - Listen (ScrolledWindow mit moo-tv) sind Blaetter.
+ * - Sonst nur echte Layout-Container (Notebook/Fixed/Box). */
+static GtkWidget* introspection_container(GtkWidget* w) {
+    if (!w) return NULL;
+    if (GTK_IS_SCROLLED_WINDOW(w) &&
+        g_object_get_data(G_OBJECT(w), "moo-tv")) {
+        return NULL; /* liste ist Blatt */
+    }
+    GtkWidget* fx = (GtkWidget*)g_object_get_data(G_OBJECT(w), "moo-fixed");
+    if (fx) return fx;
+    if (GTK_IS_NOTEBOOK(w) || GTK_IS_FIXED(w) || GTK_IS_BOX(w)) return w;
+    return NULL;
+}
+
+typedef struct {
+    MooValue list;
+    int tiefe;
+    const char* eltern_id; /* may be NULL */
+} BaumCtx;
+
+static void baum_walk(GtkWidget* w, int tiefe,
+                      const char* eltern_id, MooValue list);
+
+static void baum_foreach_cb(GtkWidget* child, gpointer ud) {
+    BaumCtx* ctx = (BaumCtx*)ud;
+    baum_walk(child, ctx->tiefe, ctx->eltern_id, ctx->list);
+}
+
+static void baum_walk(GtkWidget* w, int tiefe,
+                      const char* eltern_id, MooValue list) {
+    if (!w) return;
+    MooValue d = build_info_dict(w);
+    moo_dict_set(d, moo_string_new("tiefe"), moo_number((double)tiefe));
+    moo_dict_set(d, moo_string_new("eltern"),
+                 eltern_id ? moo_string_new(eltern_id) : moo_none());
+    moo_list_append(list, d);
+
+    GtkWidget* cont = introspection_container(w);
+    if (!cont) return;
+
+    /* Fuer die Kinder: eigene ID als "eltern" weiterreichen — oder,
+     * wenn wir keine haben, die vererbte (so bleiben Diffs stabil
+     * ueber internes vbox-Skipping hinweg). */
+    const char* own_id = (const char*)g_object_get_data(G_OBJECT(w), "moo-id");
+    const char* next_parent_id = (own_id && *own_id) ? own_id : eltern_id;
+
+    BaumCtx ctx;
+    ctx.list = list;
+    ctx.tiefe = tiefe + 1;
+    ctx.eltern_id = next_parent_id;
+    gtk_container_foreach(GTK_CONTAINER(cont), baum_foreach_cb, &ctx);
+}
+
+MooValue moo_ui_widget_baum(MooValue fenster) {
+    GtkWidget* w = unwrap_widget(fenster);
+    if (!w) return moo_none();
+    MooValue list = moo_list_new(0);
+    baum_walk(w, 0, NULL, list);
+    return list;
+}
+
+typedef struct {
+    const char* gesucht;
+    GtkWidget*  treffer;
+} SuchCtx;
+
+static void such_walk(GtkWidget* w, SuchCtx* ctx);
+
+static void such_foreach_cb(GtkWidget* c, gpointer ud) {
+    SuchCtx* ctx = (SuchCtx*)ud;
+    if (ctx->treffer) return;
+    such_walk(c, ctx);
+}
+
+static void such_walk(GtkWidget* w, SuchCtx* ctx) {
+    if (!w || ctx->treffer) return;
+    const char* id = (const char*)g_object_get_data(G_OBJECT(w), "moo-id");
+    if (id && strcmp(id, ctx->gesucht) == 0) {
+        ctx->treffer = w;
+        return;
+    }
+    GtkWidget* cont = introspection_container(w);
+    if (!cont) return;
+    gtk_container_foreach(GTK_CONTAINER(cont), such_foreach_cb, ctx);
+}
+
+MooValue moo_ui_widget_suche(MooValue fenster, MooValue id_string) {
+    GtkWidget* w = unwrap_widget(fenster);
+    if (!w) return moo_none();
+    if (id_string.tag != MOO_STRING || MV_STR(id_string)->chars[0] == '\0')
+        return moo_none();
+    SuchCtx ctx = { MV_STR(id_string)->chars, NULL };
+    such_walk(w, &ctx);
+    return ctx.treffer ? wrap_widget(ctx.treffer) : moo_none();
+}
+
 /* Timer analog moo_tray.c: g_timeout_add_full mit Destroy-Notify. */
 static gboolean ui_timer_tick(gpointer ud) {
     MooValue* cb = (MooValue*)ud;
