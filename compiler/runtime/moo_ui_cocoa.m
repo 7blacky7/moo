@@ -1811,7 +1811,10 @@ MooValue moo_ui_tooltip_setze(MooValue widget, MooValue text) {
         if (!w) return moo_bool(0);
         NSString *s = nsstr_or(text, nil);
         if ([w isKindOfClass:[NSView class]])      [(NSView *)w      setToolTip:s];
-        else if ([w isKindOfClass:[NSCell class]]) [(NSCell *)w setToolTip:s];
+        else if ([w isKindOfClass:[NSCell class]]) {
+            NSView *cv = [(NSCell *)w controlView];
+            if (cv) [cv setToolTip:s];
+        }
         return moo_bool(1);
     }
 }
