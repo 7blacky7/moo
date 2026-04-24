@@ -140,12 +140,14 @@ jobs:
           # SDL2-Header liegen unter $(brew --prefix sdl2)/include, aber der
           # cc-Build fuer runtime/moo_graphics.c setzt kein -I dort. Via CPATH
           # und LIBRARY_PATH exposen, damit #include <SDL2/SDL.h> aufloest und
-          # der Linker libSDL2 findet.
+          # der Linker libSDL2 findet. ZUSAETZLICH muss .../include/SDL2 im
+          # Include-Path sein, weil SDL_image.h intern `#include "SDL.h"`
+          # (ohne SDL2/-Prefix) macht.
           SDL2_PREFIX="$(brew --prefix sdl2)"
           SDL2_IMAGE_PREFIX="$(brew --prefix sdl2_image)"
-          echo "CPATH=${SDL2_PREFIX}/include:${SDL2_IMAGE_PREFIX}/include:${CPATH}" >> $GITHUB_ENV
+          echo "CPATH=${SDL2_PREFIX}/include:${SDL2_PREFIX}/include/SDL2:${SDL2_IMAGE_PREFIX}/include:${SDL2_IMAGE_PREFIX}/include/SDL2:${CPATH}" >> $GITHUB_ENV
           echo "LIBRARY_PATH=${SDL2_PREFIX}/lib:${SDL2_IMAGE_PREFIX}/lib:${LIBRARY_PATH}" >> $GITHUB_ENV
-          echo "BINDGEN_EXTRA_CLANG_ARGS=-I${SDL2_PREFIX}/include -I${SDL2_IMAGE_PREFIX}/include" >> $GITHUB_ENV
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I${SDL2_PREFIX}/include -I${SDL2_PREFIX}/include/SDL2 -I${SDL2_IMAGE_PREFIX}/include -I${SDL2_IMAGE_PREFIX}/include/SDL2" >> $GITHUB_ENV
 
       # ---------------------------------------------------------------------
       # Rust Toolchain
