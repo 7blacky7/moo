@@ -35,6 +35,8 @@
 #include "moo_ui.h"
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
+#include <math.h>
 
 /* ------------------------------------------------------------------ *
  * Forward Declarations: ObjC-Hilfsklassen
@@ -70,12 +72,16 @@ static const void *kMooCBTargetKey       = &kMooCBTargetKey;
 static const void *kMooCBTargetCloseKey  = &kMooCBTargetCloseKey;
 static const void *kMooCBTargetChangeKey = &kMooCBTargetChangeKey;
 static const void *kMooCBTargetDrawKey   = &kMooCBTargetDrawKey;
+static const void *kMooCBTargetMouseKey  = &kMooCBTargetMouseKey;
+static const void *kMooCBTargetMotionKey = &kMooCBTargetMotionKey;
 static const void *kMooTableDSKey        = &kMooTableDSKey;
 static const void *kMooTVKey             = &kMooTVKey;
 static const void *kMooScrollViewKey     = &kMooScrollViewKey;
 static const void *kMooNColsKey          = &kMooNColsKey;
 static const void *kMooRadioGroupKey     = &kMooRadioGroupKey;
 static const void *kMooWindowDelegateKey = &kMooWindowDelegateKey;
+static const void *kMooShortcutsKey      = &kMooShortcutsKey;
+static const void *kMooCanvasTrackingKey = &kMooCanvasTrackingKey;
 
 /* ------------------------------------------------------------------ *
  * MooCallbackTarget — Target-Action-Bruecke fuer MooValue-Callbacks
@@ -1275,11 +1281,33 @@ static inline MooZeichnerCG *unwrap_zeichner_cg(MooValue v) {
     return z;
 }
 
-/* Leinwand: NSView-Subklasse mit drawRect → moo-callback (lw, z). */
+/* Leinwand: NSView-Subklasse mit drawRect → moo-callback (lw, z).
+ *
+ * Welle 2 (Plan 003 P5, Phase 1): Maus-Klicks + Bewegung via
+ * mouseDown/rightMouseDown/otherMouseDown und mouseMoved. Ein
+ * NSTrackingArea wird lazy angelegt wenn on_bewegung registriert wird
+ * und bei jedem updateTrackingAreas neu geformt (Groessen-Changes).
+ * acceptsFirstResponder liefert YES, damit NSView mouseMoved-Events
+ * ueberhaupt bekommt (Standard ist NO fuer non-focused views).
+ *
+ * Taste-Mapping Cocoa → moo:
+ *   mouseDown:       → taste=1 (links)
+ *   rightMouseDown:  → taste=3 (rechts)
+ *   otherMouseDown:  → taste=2 (mitte — NSEvent.buttonNumber==2)
+ *
+ * Koordinaten: flipped=YES (von MooFlippedView geerbt) → top-left-origin
+ * stimmt mit GTK/Windows ueberein. [event locationInWindow] →
+ * [self convertPoint:fromView:nil] liefert view-lokal in flipped-Koord.
+ */
 @interface MooCanvasView : MooFlippedView
 @property (nonatomic, strong) MooCallbackTarget *drawTarget;
+@property (nonatomic, strong, nullable) MooCallbackTarget *mouseTarget;
+@property (nonatomic, strong, nullable) MooCallbackTarget *motionTarget;
+@property (nonatomic, strong, nullable) NSTrackingArea *trackingArea;
 @end
 @implementation MooCanvasView
+- (BOOL)acceptsFirstResponder { return YES; }
+
 - (void)drawRect:(NSRect)dirtyRect {
     [super drawRect:dirtyRect];
     if (self.drawTarget) {
@@ -1294,6 +1322,65 @@ static inline MooZeichnerCG *unwrap_zeichner_cg(MooValue v) {
         z.valid = 0;
         z.ctx = NULL;
     }
+}
+
+/* Ruft callback(view, x, y, taste) via moo_func_call — 4 Argumente, daher
+ * direkt ueber moo_func_call_n statt ueber MooCallbackTarget.
+ * (MooCallbackTarget hat nur 0/1/2-Arg-Fire-Methoden.) */
+- (void)fireMouse:(NSEvent *)event taste:(int)taste {
+    if (!self.mouseTarget) return;
+    MooValue cb = self.mouseTarget->cb;
+    if (cb.tag != MOO_FUNC) return;
+    NSPoint lp = [self convertPoint:[event locationInWindow] fromView:nil];
+    MooValue vSelf;   vSelf.tag = MOO_NUMBER; moo_val_set_ptr(&vSelf, (__bridge void *)self);
+    MooValue vx = moo_number((double)(int)lp.x);
+    MooValue vy = moo_number((double)(int)lp.y);
+    MooValue vt = moo_number((double)taste);
+    MooValue rv = moo_func_call_4(cb, vSelf, vx, vy, vt);
+    moo_release(rv);
+}
+
+- (void)mouseDown:(NSEvent *)event      { [self fireMouse:event taste:1]; [super mouseDown:event]; }
+- (void)rightMouseDown:(NSEvent *)event { [self fireMouse:event taste:3]; [super rightMouseDown:event]; }
+- (void)otherMouseDown:(NSEvent *)event {
+    int taste = 2;  /* Mitte ist typischerweise buttonNumber==2 */
+    if (event.buttonNumber != 2) taste = (int)event.buttonNumber + 1;
+    [self fireMouse:event taste:taste];
+    [super otherMouseDown:event];
+}
+
+- (void)mouseMoved:(NSEvent *)event {
+    if (!self.motionTarget) { [super mouseMoved:event]; return; }
+    MooValue cb = self.motionTarget->cb;
+    if (cb.tag != MOO_FUNC) { [super mouseMoved:event]; return; }
+    NSPoint lp = [self convertPoint:[event locationInWindow] fromView:nil];
+    MooValue vSelf; vSelf.tag = MOO_NUMBER; moo_val_set_ptr(&vSelf, (__bridge void *)self);
+    MooValue vx = moo_number((double)(int)lp.x);
+    MooValue vy = moo_number((double)(int)lp.y);
+    MooValue rv = moo_func_call_3(cb, vSelf, vx, vy);
+    moo_release(rv);
+}
+
+/* Dragged-Events ebenfalls als Bewegung zaehlen (Konsistenz mit GTK). */
+- (void)mouseDragged:(NSEvent *)event      { [self mouseMoved:event]; }
+- (void)rightMouseDragged:(NSEvent *)event { [self mouseMoved:event]; }
+- (void)otherMouseDragged:(NSEvent *)event { [self mouseMoved:event]; }
+
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (self.trackingArea) {
+        [self removeTrackingArea:self.trackingArea];
+        self.trackingArea = nil;
+    }
+    if (!self.motionTarget) return;
+    NSTrackingAreaOptions opts = NSTrackingMouseMoved
+                               | NSTrackingActiveInKeyWindow
+                               | NSTrackingInVisibleRect;
+    self.trackingArea = [[NSTrackingArea alloc] initWithRect:self.bounds
+                                                     options:opts
+                                                       owner:self
+                                                    userInfo:nil];
+    [self addTrackingArea:self.trackingArea];
 }
 @end
 
@@ -2068,5 +2155,577 @@ MooValue moo_ui_menue_untermenue(MooValue menue, MooValue titel) {
         [item setSubmenu:sub];
         [(NSMenu *)m addItem:item];
         return wrap_objc(sub);
+    }
+}
+
+/* ================================================================== *
+ * Welle 2 / Plan 003 P2 — ListView-Erweiterungen
+ *
+ * Alle Funktionen arbeiten auf dem von moo_ui_liste gelieferten
+ * Scroll-View-Handle. liste_ds/liste_tv liefern datenquelle bzw.
+ * NSTableView. Konsistent zur GTK-Impl (moo_ui_gtk.c:1260+).
+ * ================================================================== */
+
+/* 0-basierter Spalten-Zugriff mit Bound-Check. */
+static NSTableColumn *liste_col(NSTableView *tv, int index) {
+    if (!tv) return nil;
+    NSArray<NSTableColumn *> *cols = [tv tableColumns];
+    if (index < 0 || index >= (int)cols.count) return nil;
+    return cols[index];
+}
+
+/* P2: Spaltenbreite setzen (Pixel). */
+MooValue moo_ui_liste_spalte_breite(MooValue liste, MooValue spalte_index,
+                                    MooValue breite) {
+    @autoreleasepool {
+        NSTableView *tv = liste_tv(liste);
+        NSTableColumn *col = liste_col(tv, num_or(spalte_index, -1));
+        if (!col) return moo_bool(0);
+        CGFloat bw = (breite.tag == MOO_NUMBER) ? MV_NUM(breite) : 0.0;
+        if (bw < 1.0) bw = 1.0;
+        [col setWidth:bw];
+        return moo_bool(1);
+    }
+}
+
+/* P2: Spalte sortierbar (Klick auf Header loest Sort aus).
+ * Wir installieren einen NSSortDescriptor mit String-Comparator. */
+MooValue moo_ui_liste_sortierbar(MooValue liste, MooValue spalte_index,
+                                 MooValue aktiv) {
+    @autoreleasepool {
+        NSTableView *tv = liste_tv(liste);
+        NSTableColumn *col = liste_col(tv, num_or(spalte_index, -1));
+        if (!col) return moo_bool(0);
+        BOOL an = bool_or(aktiv, YES);
+        if (an) {
+            NSString *key = [NSString stringWithFormat:@"c%ld",
+                             (long)[[tv tableColumns] indexOfObject:col]];
+            NSSortDescriptor *sd = [NSSortDescriptor
+                sortDescriptorWithKey:key
+                            ascending:YES
+                             selector:@selector(localizedCaseInsensitiveCompare:)];
+            [col setSortDescriptorPrototype:sd];
+        } else {
+            [col setSortDescriptorPrototype:nil];
+        }
+        return moo_bool(1);
+    }
+}
+
+/* P2: Programmatische Sortierung (lexikografisch, keine Auswahl-Events).
+ * Sortiert direkt die Backing-Rows und ruft reloadData. */
+MooValue moo_ui_liste_sortiere(MooValue liste, MooValue spalte_index,
+                               MooValue aufsteigend) {
+    @autoreleasepool {
+        MooTableDataSource *ds = liste_ds(liste);
+        NSTableView *tv = liste_tv(liste);
+        if (!ds || !tv) return moo_bool(0);
+        int col = num_or(spalte_index, -1);
+        if (col < 0 || col >= (int)ds.ncols) return moo_bool(0);
+        BOOL asc = bool_or(aufsteigend, YES);
+        [ds.rows sortUsingComparator:^NSComparisonResult(NSArray<NSString *> *a,
+                                                         NSArray<NSString *> *b) {
+            NSString *av = (col < (int)a.count) ? a[col] : @"";
+            NSString *bv = (col < (int)b.count) ? b[col] : @"";
+            NSComparisonResult r = [av localizedCaseInsensitiveCompare:bv];
+            return asc ? r : (NSComparisonResult)-r;
+        }];
+        [tv reloadData];
+        return moo_bool(1);
+    }
+}
+
+/* P2: Ganze Zeile ersetzen — werte_liste muss so viele Eintraege wie
+ * Spalten haben, sonst Abbruch ohne Teil-Aenderung (wie GTK-Semantik). */
+MooValue moo_ui_liste_zeile_setze(MooValue liste, MooValue zeile_index,
+                                  MooValue werte_liste) {
+    @autoreleasepool {
+        MooTableDataSource *ds = liste_ds(liste);
+        NSTableView *tv = liste_tv(liste);
+        if (!ds || !tv) return moo_bool(0);
+        int idx = num_or(zeile_index, -1);
+        if (idx < 0 || idx >= (int)ds.rows.count) return moo_bool(0);
+        if (werte_liste.tag != MOO_LIST) return moo_bool(0);
+        int32_t n = moo_list_iter_len(werte_liste);
+        if (n != ds.ncols) return moo_bool(0);
+        NSMutableArray<NSString *> *row =
+            [NSMutableArray arrayWithCapacity:ds.ncols];
+        for (int32_t i = 0; i < n; i++) {
+            MooValue c = moo_list_iter_get(werte_liste, i);
+            NSString *s = @"";
+            if (c.tag == MOO_STRING) {
+                s = [NSString stringWithUTF8String:MV_STR(c)->chars];
+            } else if (c.tag == MOO_NUMBER) {
+                s = [NSString stringWithFormat:@"%g", MV_NUM(c)];
+            }
+            [row addObject:s];
+        }
+        ds.rows[idx] = row;
+        [tv reloadDataForRowIndexes:[NSIndexSet indexSetWithIndex:idx]
+                      columnIndexes:[NSIndexSet indexSetWithIndexesInRange:
+                                     NSMakeRange(0, ds.ncols)]];
+        return moo_bool(1);
+    }
+}
+
+/* P2: Einzelne Zelle setzen — wert wird per moo_to_string koerziert. */
+MooValue moo_ui_liste_zelle_setze(MooValue liste, MooValue zeile_index,
+                                  MooValue spalte_index, MooValue wert) {
+    @autoreleasepool {
+        MooTableDataSource *ds = liste_ds(liste);
+        NSTableView *tv = liste_tv(liste);
+        if (!ds || !tv) return moo_bool(0);
+        int r = num_or(zeile_index, -1);
+        int c = num_or(spalte_index, -1);
+        if (r < 0 || r >= (int)ds.rows.count) return moo_bool(0);
+        if (c < 0 || c >= (int)ds.ncols)      return moo_bool(0);
+        NSMutableArray<NSString *> *row = [ds.rows[r] mutableCopy];
+        /* Falls die bestehende Zeile weniger Zellen hat, auffuellen. */
+        while ((int)row.count <= c) [row addObject:@""];
+        NSString *s = @"";
+        if (wert.tag == MOO_STRING) {
+            s = [NSString stringWithUTF8String:MV_STR(wert)->chars];
+        } else if (wert.tag == MOO_NUMBER) {
+            s = [NSString stringWithFormat:@"%g", MV_NUM(wert)];
+        } else if (wert.tag == MOO_BOOL) {
+            s = MV_BOOL(wert) ? @"wahr" : @"falsch";
+        }
+        row[c] = s;
+        ds.rows[r] = row;
+        [tv reloadDataForRowIndexes:[NSIndexSet indexSetWithIndex:r]
+                      columnIndexes:[NSIndexSet indexSetWithIndex:c]];
+        return moo_bool(1);
+    }
+}
+
+/* P2: Zeile entfernen. Auswahl wird auf -1 zurueckgesetzt, kein
+ * on_auswahl-Callback wird gefeuert (entspricht Header-Doku). */
+MooValue moo_ui_liste_entferne(MooValue liste, MooValue zeile_index) {
+    @autoreleasepool {
+        MooTableDataSource *ds = liste_ds(liste);
+        NSTableView *tv = liste_tv(liste);
+        if (!ds || !tv) return moo_bool(0);
+        int idx = num_or(zeile_index, -1);
+        if (idx < 0 || idx >= (int)ds.rows.count) return moo_bool(0);
+        [ds.rows removeObjectAtIndex:idx];
+        /* Delegate-Callback beim Deselect unterdruecken: Target kurz ausblenden. */
+        MooCallbackTarget *saved = ds.selectTarget;
+        ds.selectTarget = nil;
+        [tv deselectAll:nil];
+        [tv removeRowsAtIndexes:[NSIndexSet indexSetWithIndex:idx]
+                 withAnimation:NSTableViewAnimationEffectNone];
+        [tv reloadData];
+        ds.selectTarget = saved;
+        return moo_bool(1);
+    }
+}
+
+/* ================================================================== *
+ * Welle 2 / Plan 003 P5 — Leinwand-Maus-Events + Text-Metrik
+ * ================================================================== */
+
+/* Hilfs-Getter: wrappt die MooCanvasView aus dem leinwand-Handle. */
+static MooCanvasView *canvas_view(MooValue leinwand) {
+    id v = unwrap_objc(leinwand);
+    if (!v || ![v isKindOfClass:[MooCanvasView class]]) return nil;
+    return (MooCanvasView *)v;
+}
+
+MooValue moo_ui_leinwand_on_maus(MooValue leinwand, MooValue callback) {
+    @autoreleasepool {
+        MooCanvasView *cv = canvas_view(leinwand);
+        if (!cv) return moo_bool(0);
+        if (callback.tag != MOO_FUNC) {
+            /* Release-Pfad: Binding entfernen. */
+            cv.mouseTarget = nil;
+            objc_setAssociatedObject(cv, kMooCBTargetMouseKey, nil,
+                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            return moo_bool(1);
+        }
+        MooCallbackTarget *tgt = [[MooCallbackTarget alloc]
+                                   initWithCallback:callback];
+        /* Altes Target implizit released — property-assign + associated
+         * object-Retain-Notify. */
+        cv.mouseTarget = tgt;
+        objc_setAssociatedObject(cv, kMooCBTargetMouseKey, tgt,
+                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return moo_bool(1);
+    }
+}
+
+MooValue moo_ui_leinwand_on_bewegung(MooValue leinwand, MooValue callback) {
+    @autoreleasepool {
+        MooCanvasView *cv = canvas_view(leinwand);
+        if (!cv) return moo_bool(0);
+        if (callback.tag != MOO_FUNC) {
+            cv.motionTarget = nil;
+            objc_setAssociatedObject(cv, kMooCBTargetMotionKey, nil,
+                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            /* Tracking-Area abbauen ueber updateTrackingAreas. */
+            [cv updateTrackingAreas];
+            return moo_bool(1);
+        }
+        MooCallbackTarget *tgt = [[MooCallbackTarget alloc]
+                                   initWithCallback:callback];
+        cv.motionTarget = tgt;
+        objc_setAssociatedObject(cv, kMooCBTargetMotionKey, tgt,
+                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        /* Tracking-Area (neu) aufsetzen — liefert fortan mouseMoved-Events
+         * sobald das Fenster Key-Window ist. */
+        [cv updateTrackingAreas];
+        return moo_bool(1);
+    }
+}
+
+/* Text-Metrik: [NSString sizeWithAttributes:].width — nur innerhalb des
+ * drawRect-Kontextes gueltig. Ausserhalb liefert 0. */
+MooValue moo_ui_zeichne_text_breite(MooValue zeichner, MooValue text,
+                                    MooValue groesse) {
+    @autoreleasepool {
+        MooZeichnerCG *z = unwrap_zeichner_cg(zeichner);
+        if (!z) return moo_number(0.0);
+        NSString *s = nsstr_or(text, @"");
+        if (s.length == 0) return moo_number(0.0);
+        CGFloat sz = (groesse.tag == MOO_NUMBER) ? MV_NUM(groesse) : 12.0;
+        if (sz < 1.0) sz = 1.0;
+        NSDictionary *attrs = @{
+            NSFontAttributeName: [NSFont systemFontOfSize:sz],
+        };
+        NSSize sizePx = [s sizeWithAttributes:attrs];
+        return moo_number((double)ceil(sizePx.width));
+    }
+}
+
+/* ================================================================== *
+ * Welle 2 — Keyboard-Shortcuts (NACHZIEHEN: Cocoa-Impl hat gefehlt)
+ *
+ * Pro Fenster ein einziger NSEvent-local-Monitor, der alle registrierten
+ * Sequenzen dispatcht. Der Monitor wird lazy beim ersten Bind angelegt
+ * und beim letzten Loese (oder Fenster-Close) entfernt.
+ *
+ * Eine Shortcuts-Registry pro Fenster (NSMutableArray von
+ * MooShortcutEntry) wird via associated object "moo-shortcuts"
+ * verwaltet. Die Registry enthaelt:
+ *   - keyCode (virtual key, NSEvent keyCode)
+ *   - characters (case-insensitive Lower-Case, z.B. "s")
+ *   - modifier-Mask (NSEventModifierFlagCommand etc.)
+ *   - callback-Target
+ *   - monitor-Handle (nur im ersten Entry relevant — siehe unten)
+ *
+ * Modifier-Mapping:
+ *   Ctrl/Strg/Control → NSEventModifierFlagControl
+ *   Shift/Umschalt    → NSEventModifierFlagShift
+ *   Alt / Option      → NSEventModifierFlagOption
+ *   Cmd/Super/Meta/Win → NSEventModifierFlagCommand
+ *
+ * Das ist bewusst "Cocoa-literal": auf macOS ist Cmd der uebliche
+ * App-Hotkey-Modifier, waehrend auf Linux/Windows Ctrl ueblich ist.
+ * Moo-Apps sollten "Ctrl+S" schreiben — wir mappen das auf
+ * NSEventModifierFlagControl. Wer explizit Cmd will, schreibt "Cmd+S".
+ * ================================================================== */
+
+/* Shortcut-Registry: pro Entry ein NSDictionary mit Keys
+ *   "mods"    → NSNumber(NSEventModifierFlags)
+ *   "keyChar" → NSString (Lower-Case 1-char, leer falls keyCode benutzt)
+ *   "keyCode" → NSNumber(int, virtual-key — -1 falls keyChar benutzt)
+ *   "target"  → MooCallbackTarget (hat strong-Ref ueber NSDictionary). */
+@interface MooShortcutList : NSObject
+@property (nonatomic, strong) NSMutableArray<NSDictionary *> *entries;
+@property (nonatomic, strong, nullable) id monitor;
+@end
+@implementation MooShortcutList
+- (instancetype)init {
+    if ((self = [super init])) { _entries = [NSMutableArray array]; }
+    return self;
+}
+- (void)dealloc {
+    if (self.monitor) {
+        [NSEvent removeMonitor:self.monitor];
+        self.monitor = nil;
+    }
+}
+@end
+
+/* Key-Normalisierung analog GTK — DE/EN-Synonyme fuer Nicht-ASCII-Tasten.
+ * Fuer ASCII-Buchstaben/Ziffern geben wir den Lower-Case-Char zurueck.
+ * Fuer Spezial-Tasten (F1..F24, Pfeile, Home/End, ...) setzen wir *outKeyCode
+ * auf den virtuellen KeyCode. Einer von beiden wird gesetzt, der andere
+ * behaelt den Default-Wert (empty string / -1). */
+static BOOL cocoa_normalize_key(const char *tok, NSString **outChar,
+                                int *outKeyCode) {
+    *outChar = @"";
+    *outKeyCode = -1;
+    if (!tok || !*tok) return NO;
+
+    char low[64];
+    size_t n = 0;
+    while (tok[n] && n < sizeof(low) - 1) {
+        low[n] = (char)tolower((unsigned char)tok[n]);
+        n++;
+    }
+    low[n] = 0;
+
+    /* Einzelnes ASCII-Zeichen (Buchstabe/Ziffer/Sonderzeichen). */
+    if (low[0] && !low[1]) {
+        *outChar = [NSString stringWithFormat:@"%c", low[0]];
+        return YES;
+    }
+
+    /* F1..F24 */
+    if (low[0] == 'f' && low[1]) {
+        int all_digits = 1;
+        for (size_t i = 1; low[i]; i++) {
+            if (low[i] < '0' || low[i] > '9') { all_digits = 0; break; }
+        }
+        if (all_digits) {
+            int fn = atoi(&low[1]);
+            /* macOS virtual key-codes fuer F1..F20.
+             * F1=0x7A, F2=0x78, F3=0x63, F4=0x76, F5=0x60, F6=0x61,
+             * F7=0x62, F8=0x64, F9=0x65, F10=0x6D, F11=0x67, F12=0x6F,
+             * F13=0x69, F14=0x6B, F15=0x71, F16=0x6A, F17=0x40,
+             * F18=0x4F, F19=0x50, F20=0x5A. */
+            static const int fkeys[] = {
+                0, 0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64, 0x65,
+                0x6D, 0x67, 0x6F, 0x69, 0x6B, 0x71, 0x6A, 0x40, 0x4F,
+                0x50, 0x5A
+            };
+            if (fn >= 1 && fn <= 20) {
+                *outKeyCode = fkeys[fn];
+                return YES;
+            }
+        }
+    }
+
+    /* DE/EN Spezial-Tasten → KeyCode. */
+    struct { const char *alias; int code; } keymap[] = {
+        {"pos1",        0x73}, {"home",        0x73},
+        {"ende",        0x77}, {"end",         0x77},
+        {"bildhoch",    0x74}, {"pageup",      0x74},
+        {"bildrunter",  0x79}, {"pagedown",    0x79},
+        {"entf",        0x75}, {"delete",      0x75},
+        {"rueckschritt",0x33}, {"backspace",   0x33},
+        {"einfg",       0x72}, {"insert",      0x72},
+        {"hoch",        0x7E}, {"up",          0x7E},
+        {"runter",      0x7D}, {"down",        0x7D},
+        {"links",       0x7B}, {"left",        0x7B},
+        {"rechts",      0x7C}, {"right",       0x7C},
+        {"esc",         0x35}, {"escape",      0x35},
+        {"tab",         0x30},
+        {"enter",       0x24}, {"return",      0x24},
+        {"space",       0x31}, {"leertaste",   0x31},
+        {NULL, 0}
+    };
+    for (int i = 0; keymap[i].alias; i++) {
+        if (!strcmp(low, keymap[i].alias)) {
+            *outKeyCode = keymap[i].code;
+            return YES;
+        }
+    }
+
+    /* Mehr-Zeichen-Text-Tokens (komma, punkt, slash, plus, minus) →
+     * passende 1-Zeichen-Variante. */
+    if (!strcmp(low, "komma") || !strcmp(low, "comma"))   { *outChar = @","; return YES; }
+    if (!strcmp(low, "punkt") || !strcmp(low, "period"))  { *outChar = @"."; return YES; }
+    if (!strcmp(low, "slash"))                            { *outChar = @"/"; return YES; }
+    if (!strcmp(low, "plus"))                             { *outChar = @"+"; return YES; }
+    if (!strcmp(low, "minus"))                            { *outChar = @"-"; return YES; }
+
+    return NO;
+}
+
+/* Parst "Ctrl+Shift+S" → mods + keyChar/keyCode. */
+static BOOL cocoa_parse_sequence(const char *seq, NSEventModifierFlags *outMods,
+                                 NSString **outChar, int *outKeyCode) {
+    *outMods = 0;
+    *outChar = @"";
+    *outKeyCode = -1;
+    if (!seq || !*seq) return NO;
+
+    NSString *s = [NSString stringWithUTF8String:seq];
+    NSArray<NSString *> *toks = [s componentsSeparatedByString:@"+"];
+    if (toks.count < 1) return NO;
+
+    /* Alle bis auf das letzte Token sind Modifier. */
+    for (NSUInteger i = 0; i + 1 < toks.count; i++) {
+        NSString *mt = [[toks[i] stringByTrimmingCharactersInSet:
+                         [NSCharacterSet whitespaceCharacterSet]]
+                        lowercaseString];
+        if ([mt isEqualToString:@"ctrl"] || [mt isEqualToString:@"control"] ||
+            [mt isEqualToString:@"strg"]) {
+            *outMods |= NSEventModifierFlagControl;
+        } else if ([mt isEqualToString:@"shift"] ||
+                   [mt isEqualToString:@"umschalt"]) {
+            *outMods |= NSEventModifierFlagShift;
+        } else if ([mt isEqualToString:@"alt"] ||
+                   [mt isEqualToString:@"option"]) {
+            *outMods |= NSEventModifierFlagOption;
+        } else if ([mt isEqualToString:@"cmd"] || [mt isEqualToString:@"super"] ||
+                   [mt isEqualToString:@"meta"] || [mt isEqualToString:@"win"]) {
+            *outMods |= NSEventModifierFlagCommand;
+        } else {
+            return NO;  /* Unbekannter Modifier */
+        }
+    }
+
+    NSString *last = [[toks lastObject] stringByTrimmingCharactersInSet:
+                      [NSCharacterSet whitespaceCharacterSet]];
+    return cocoa_normalize_key([last UTF8String], outChar, outKeyCode);
+}
+
+/* Relevante Modifier-Bits (Caps-Lock etc. ignorieren). */
+static NSEventModifierFlags relevant_mods(NSEventModifierFlags f) {
+    return f & (NSEventModifierFlagControl | NSEventModifierFlagShift
+              | NSEventModifierFlagOption  | NSEventModifierFlagCommand);
+}
+
+/* Lazy-Getter fuer die Shortcut-Liste pro Fenster. */
+static MooShortcutList *window_shortcuts(NSWindow *win, BOOL create) {
+    id sl = objc_getAssociatedObject(win, kMooShortcutsKey);
+    if (sl && [sl isKindOfClass:[MooShortcutList class]]) {
+        return (MooShortcutList *)sl;
+    }
+    if (!create) return nil;
+    MooShortcutList *list = [[MooShortcutList alloc] init];
+    objc_setAssociatedObject(win, kMooShortcutsKey, list,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return list;
+}
+
+/* Event-Monitor fuer ein Fenster aufbauen (einmal pro Fenster). */
+static void ensure_shortcut_monitor(NSWindow *win, MooShortcutList *list) {
+    if (list.monitor) return;
+    __weak NSWindow *weakWin = win;
+    __weak MooShortcutList *weakList = list;
+    list.monitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
+        handler:^NSEvent *(NSEvent *event) {
+            NSWindow *strongWin = weakWin;
+            MooShortcutList *strongList = weakList;
+            if (!strongWin || !strongList) return event;
+            /* Nur Events fuer DIESES Fenster dispatchen — NSEvent.window ist
+             * das Key-Window bei Eingang, nicht unbedingt unseres. */
+            if ([event window] != strongWin) return event;
+
+            NSEventModifierFlags em = relevant_mods([event modifierFlags]);
+            NSString *chars = [[event charactersIgnoringModifiers] lowercaseString];
+            int kc = (int)[event keyCode];
+
+            for (NSDictionary *ent in [strongList.entries copy]) {
+                NSEventModifierFlags em2 = (NSEventModifierFlags)
+                    [[ent objectForKey:@"mods"] unsignedIntegerValue];
+                NSString *kChar = [ent objectForKey:@"keyChar"];
+                int      kCode = [[ent objectForKey:@"keyCode"] intValue];
+                if (em != em2) continue;
+                BOOL match = NO;
+                if (kChar.length > 0 && chars.length > 0) {
+                    match = [chars isEqualToString:kChar];
+                } else if (kCode >= 0) {
+                    match = (kc == kCode);
+                }
+                if (match) {
+                    MooCallbackTarget *tgt = [ent objectForKey:@"target"];
+                    if (tgt) [tgt fire:nil];
+                    return nil;  /* Event konsumieren */
+                }
+            }
+            return event;
+        }];
+}
+
+MooValue moo_ui_shortcut_bind(MooValue fenster, MooValue sequenz,
+                              MooValue callback) {
+    @autoreleasepool {
+        id w = unwrap_objc(fenster);
+        if (!w || ![w isKindOfClass:[NSWindow class]]) return moo_bool(0);
+        if (sequenz.tag != MOO_STRING) return moo_bool(0);
+        NSWindow *win = (NSWindow *)w;
+
+        NSEventModifierFlags mods = 0;
+        NSString *keyChar = @"";
+        int keyCode = -1;
+        if (!cocoa_parse_sequence(MV_STR(sequenz)->chars,
+                                  &mods, &keyChar, &keyCode)) {
+            return moo_bool(0);
+        }
+
+        MooShortcutList *list = window_shortcuts(win, YES);
+
+        /* Still-replace: existiert bereits ein Binding fuer (mods, key)? */
+        NSMutableArray *keep = [NSMutableArray array];
+        for (NSDictionary *ent in list.entries) {
+            NSEventModifierFlags em2 = (NSEventModifierFlags)
+                [[ent objectForKey:@"mods"] unsignedIntegerValue];
+            NSString *kChar = [ent objectForKey:@"keyChar"];
+            int      kCode = [[ent objectForKey:@"keyCode"] intValue];
+            BOOL sameKey = NO;
+            if (keyChar.length > 0 && kChar.length > 0) {
+                sameKey = [kChar isEqualToString:keyChar];
+            } else if (keyCode >= 0 && kCode >= 0) {
+                sameKey = (kCode == keyCode);
+            }
+            if (em2 == mods && sameKey) continue;  /* alten Eintrag rauswerfen */
+            [keep addObject:ent];
+        }
+        list.entries = keep;
+
+        MooCallbackTarget *tgt = [[MooCallbackTarget alloc]
+                                   initWithCallback:callback];
+        NSDictionary *entry = @{
+            @"mods":    @((NSUInteger)mods),
+            @"keyChar": keyChar,
+            @"keyCode": @(keyCode),
+            @"target":  tgt,
+        };
+        [list.entries addObject:entry];
+        ensure_shortcut_monitor(win, list);
+
+        return moo_bool(1);
+    }
+}
+
+MooValue moo_ui_shortcut_loese(MooValue fenster, MooValue sequenz) {
+    @autoreleasepool {
+        id w = unwrap_objc(fenster);
+        if (!w || ![w isKindOfClass:[NSWindow class]]) return moo_bool(0);
+        if (sequenz.tag != MOO_STRING) return moo_bool(0);
+        NSWindow *win = (NSWindow *)w;
+
+        MooShortcutList *list = window_shortcuts(win, NO);
+        if (!list || list.entries.count == 0) return moo_bool(0);
+
+        NSEventModifierFlags mods = 0;
+        NSString *keyChar = @"";
+        int keyCode = -1;
+        if (!cocoa_parse_sequence(MV_STR(sequenz)->chars,
+                                  &mods, &keyChar, &keyCode)) {
+            return moo_bool(0);
+        }
+
+        BOOL removed = NO;
+        NSMutableArray *keep = [NSMutableArray array];
+        for (NSDictionary *ent in list.entries) {
+            NSEventModifierFlags em2 = (NSEventModifierFlags)
+                [[ent objectForKey:@"mods"] unsignedIntegerValue];
+            NSString *kChar = [ent objectForKey:@"keyChar"];
+            int      kCode = [[ent objectForKey:@"keyCode"] intValue];
+            BOOL sameKey = NO;
+            if (keyChar.length > 0 && kChar.length > 0) {
+                sameKey = [kChar isEqualToString:keyChar];
+            } else if (keyCode >= 0 && kCode >= 0) {
+                sameKey = (kCode == keyCode);
+            }
+            if (em2 == mods && sameKey) {
+                removed = YES;  /* MooCallbackTarget wird via NSArray-Release freigegeben */
+                continue;
+            }
+            [keep addObject:ent];
+        }
+        list.entries = keep;
+
+        /* Wenn keine Entries mehr → Monitor abbauen. */
+        if (list.entries.count == 0 && list.monitor) {
+            [NSEvent removeMonitor:list.monitor];
+            list.monitor = nil;
+        }
+        return moo_bool(removed);
     }
 }
