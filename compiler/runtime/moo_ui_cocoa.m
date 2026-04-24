@@ -3188,3 +3188,395 @@ MooValue moo_ui_test_snapshot_widget(MooValue widget, MooValue pfad) {
         return moo_bool(ok);
     }
 }
+
+/* ==========================================================================
+ * Plan-004 P3 — Test-/Debug-API: Automation
+ * --------------------------------------------------------------------------
+ * Siehe moo_ui.h Block "Test-/Debug-API: Automation" (Zeilen 716–945).
+ *
+ * Callback-Semantik: SYNCHRON. Backend-seitige Event-Queue wird NICHT
+ * genutzt — wir rufen die registrierten Target/Action- bzw. MooCallbackTarget-
+ * Handler direkt auf, damit Tests fokus- und timing-unabhaengig sind.
+ * Sichtbarkeit/Aktivitaet wird vor jeder Aktion geprueft.
+ * ========================================================================== */
+
+/* Hilfs: pre-order-Suche nach dem tiefsten sichtbaren NSView, das einen
+ * flipped-lokalen Punkt (Origin oben-links) enthaelt. Liefert nil wenn
+ * der Punkt in keiner sichtbaren Subview liegt.
+ *
+ * Warum nicht -[NSView hitTest:]? hitTest erwartet den Punkt im *superview*-
+ * Koord-System und interagiert mit dem Responder-/Drag-System (deaktivierte
+ * Views, userInteractionEnabled). Fuer deterministische Tests wollen wir
+ * die reine Geometrie inkl. disabled-Widgets (abgelehnt wird erst in
+ * moo_ui_test_klick via isEnabled). */
+static NSView *cocoa_hit_view(NSView *root, NSPoint p) {
+    if (!root) return nil;
+    if ([root isHidden]) return nil;
+    NSRect b = [root bounds];
+    if (!NSPointInRect(p, b)) return nil;
+    /* Kinder in Reverse-Order (zuletzt gezeichnet = oben). */
+    NSArray<NSView *> *subs = [root subviews];
+    for (NSInteger i = (NSInteger)subs.count - 1; i >= 0; i--) {
+        NSView *child = subs[i];
+        NSPoint cp = [root convertPoint:p toView:child];
+        NSView *hit = cocoa_hit_view(child, cp);
+        if (hit) return hit;
+    }
+    return root;
+}
+
+/* Sichtbarkeits-Check fuer eine NSView: View hat ein Fenster, ist nicht
+ * hidden (auch kein hidden ancestor), Fenster selbst ist visible. */
+static BOOL cocoa_view_is_visible(NSView *view) {
+    if (!view) return NO;
+    if ([view isHiddenOrHasHiddenAncestor]) return NO;
+    NSWindow *w = [view window];
+    if (!w || ![w isVisible]) return NO;
+    return YES;
+}
+
+/* Aktivitaets-Check: NSControl hat isEnabled, NSMenuItem hat isEnabled,
+ * andere Views gelten als aktiv. */
+static BOOL cocoa_widget_is_enabled(id obj) {
+    if (!obj) return NO;
+    if ([obj isKindOfClass:[NSControl class]]) {
+        return [(NSControl *)obj isEnabled];
+    }
+    if ([obj isKindOfClass:[NSMenuItem class]]) {
+        return [(NSMenuItem *)obj isEnabled];
+    }
+    return YES;
+}
+
+/* moo_ui_test_klick (Header zeilen 747–772)
+ *
+ * widget kann sein:
+ *   - NSControl (NSButton/NSPopUpButton/NSSlider/...) → [performClick:nil]
+ *     triggert target/action SYNCHRON im Main-Thread.
+ *   - NSMenuItem → [performActionForItemAtIndex:] via enclosingMenu, sonst
+ *     direkt target/action invoken.
+ *   - MooCanvasView → synthetisches NSEvent mouseDown + [NSWindow sendEvent:]
+ *     feuert unseren on_maus-Callback ueber -[MooCanvasView mouseDown:].
+ */
+MooValue moo_ui_test_klick(MooValue widget) {
+    @autoreleasepool {
+        if (![NSThread isMainThread]) return moo_bool(0);
+        id obj = unwrap_objc(widget);
+        if (!obj) return moo_bool(0);
+
+        /* MooCanvasView vor NSControl pruefen: Canvas ist NSView-Subklasse. */
+        if ([obj isKindOfClass:[MooCanvasView class]]) {
+            MooCanvasView *cv = (MooCanvasView *)obj;
+            if (!cocoa_view_is_visible(cv)) return moo_bool(0);
+            NSWindow *win = [cv window];
+            if (!win) return moo_bool(0);
+
+            /* Klick in die Mitte der Leinwand. */
+            NSRect b = [cv bounds];
+            NSPoint center_local = NSMakePoint(b.origin.x + b.size.width  / 2.0,
+                                               b.origin.y + b.size.height / 2.0);
+            /* locationInWindow = nicht-flipped (bottom-left). Konvertieren. */
+            NSPoint in_win = [cv convertPoint:center_local toView:nil];
+
+            NSTimeInterval ts = [[NSProcessInfo processInfo] systemUptime];
+            NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+                                               location:in_win
+                                          modifierFlags:0
+                                              timestamp:ts
+                                           windowNumber:[win windowNumber]
+                                                context:nil
+                                            eventNumber:0
+                                             clickCount:1
+                                               pressure:1.0];
+            if (!down) return moo_bool(0);
+            [win sendEvent:down];
+
+            NSEvent *up = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp
+                                             location:in_win
+                                        modifierFlags:0
+                                            timestamp:ts
+                                         windowNumber:[win windowNumber]
+                                              context:nil
+                                          eventNumber:0
+                                           clickCount:1
+                                             pressure:0.0];
+            if (up) [win sendEvent:up];
+            return moo_bool(1);
+        }
+
+        if ([obj isKindOfClass:[NSControl class]]) {
+            NSControl *ctl = (NSControl *)obj;
+            if (!cocoa_view_is_visible(ctl)) return moo_bool(0);
+            if (![ctl isEnabled]) return moo_bool(0);
+            [ctl performClick:nil];
+            return moo_bool(1);
+        }
+
+        if ([obj isKindOfClass:[NSMenuItem class]]) {
+            NSMenuItem *mi = (NSMenuItem *)obj;
+            if (![mi isEnabled]) return moo_bool(0);
+            NSMenu *menu = [mi menu];
+            if (menu) {
+                NSInteger idx = [menu indexOfItem:mi];
+                if (idx >= 0) {
+                    [menu performActionForItemAtIndex:idx];
+                    return moo_bool(1);
+                }
+            }
+            /* Fallback: target/action manuell invoken. */
+            SEL act = [mi action];
+            id tgt = [mi target];
+            if (act && tgt && [tgt respondsToSelector:act]) {
+                #pragma clang diagnostic push
+                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                [tgt performSelector:act withObject:mi];
+                #pragma clang diagnostic pop
+                return moo_bool(1);
+            }
+            return moo_bool(0);
+        }
+
+        return moo_bool(0);
+    }
+}
+
+/* moo_ui_test_klick_xy (Header zeilen 774–806)
+ *
+ * Koordinaten sind Fenster-Content-lokal (flipped top-left, konsistent mit
+ * moo_ui_widget_info). Wir laufen rekursiv durch den subview-Baum des
+ * contentView und suchen das tiefste sichtbare Widget unter (x,y). Bei
+ * MooCanvasView wird fireMouse:taste: direkt mit einem synthetischen
+ * NSEvent gerufen, damit der on_maus-Callback lokale Koordinaten erhaelt.
+ * Andere Treffer werden an moo_ui_test_klick delegiert. */
+MooValue moo_ui_test_klick_xy(MooValue fenster, MooValue x, MooValue y) {
+    @autoreleasepool {
+        if (![NSThread isMainThread]) return moo_bool(0);
+        id obj = unwrap_objc(fenster);
+        if (!obj || ![obj isKindOfClass:[NSWindow class]]) return moo_bool(0);
+        NSWindow *win = (NSWindow *)obj;
+        if (![win isVisible]) return moo_bool(0);
+        NSView *content = [win contentView];
+        if (!content) return moo_bool(0);
+
+        NSPoint p = NSMakePoint((CGFloat)num_or(x, -1), (CGFloat)num_or(y, -1));
+        if (!NSPointInRect(p, [content bounds])) return moo_bool(0);
+
+        NSView *hit = cocoa_hit_view(content, p);
+        if (!hit) return moo_bool(0);
+
+        if ([hit isKindOfClass:[MooCanvasView class]]) {
+            MooCanvasView *cv = (MooCanvasView *)hit;
+            if (!cocoa_view_is_visible(cv)) return moo_bool(0);
+            /* Lokale Koords zu window-Koordinaten (nicht-flipped) umrechnen
+             * und synthetisches mouseDown/mouseUp ueber sendEvent: zum
+             * Fenster schicken — AppKit dispatcht an cv.mouseDown: und
+             * damit an unseren on_maus-Callback. */
+            NSPoint lp = [content convertPoint:p toView:cv];
+            NSPoint in_win = [cv convertPoint:lp toView:nil];
+            NSTimeInterval ts = [[NSProcessInfo processInfo] systemUptime];
+            NSEvent *down = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown
+                                               location:in_win
+                                          modifierFlags:0
+                                              timestamp:ts
+                                           windowNumber:[win windowNumber]
+                                                context:nil
+                                            eventNumber:0
+                                             clickCount:1
+                                               pressure:1.0];
+            if (!down) return moo_bool(0);
+            [win sendEvent:down];
+            NSEvent *up = [NSEvent mouseEventWithType:NSEventTypeLeftMouseUp
+                                             location:in_win
+                                        modifierFlags:0
+                                            timestamp:ts
+                                         windowNumber:[win windowNumber]
+                                              context:nil
+                                          eventNumber:0
+                                           clickCount:1
+                                             pressure:0.0];
+            if (up) [win sendEvent:up];
+            return moo_bool(1);
+        }
+
+        /* Nicht-Canvas → wie test_klick. */
+        return moo_ui_test_klick(wrap_objc(hit));
+    }
+}
+
+/* moo_ui_test_text_setze (Header zeilen 808–846)
+ *
+ * Zielwidgets:
+ *   - NSTextField (inkl. NSSecureTextField): setStringValue +
+ *     NSControlTextDidChangeNotification (AppKit feuert die Notification
+ *     bei setStringValue: NICHT automatisch).
+ *   - NSTextView: textStorage-Replacement + didChangeText, sowie
+ *     textDidChange: am Delegate.
+ *   - NSPopUpButton: Eintrag mit exakt passendem Titel suchen,
+ *     selectItemWithTitle:, dann sendAction:to:.
+ */
+MooValue moo_ui_test_text_setze(MooValue widget, MooValue text) {
+    @autoreleasepool {
+        if (![NSThread isMainThread]) return moo_bool(0);
+        if (text.tag != MOO_STRING) return moo_bool(0);
+        const char *cs = MV_STR(text)->chars;
+        if (!cs) cs = "";
+        NSString *ns = [NSString stringWithUTF8String:cs];
+        if (!ns) return moo_bool(0);
+
+        id obj = unwrap_objc(widget);
+        if (!obj) return moo_bool(0);
+
+        /* NSPopUpButton ist eine NSButton-Subklasse, Reihenfolge wichtig. */
+        if ([obj isKindOfClass:[NSPopUpButton class]]) {
+            NSPopUpButton *pop = (NSPopUpButton *)obj;
+            if (!cocoa_view_is_visible(pop)) return moo_bool(0);
+            if (![pop isEnabled]) return moo_bool(0);
+            if ([pop indexOfItemWithTitle:ns] < 0) return moo_bool(0);
+            [pop selectItemWithTitle:ns];
+            /* selectItemWithTitle feuert action NICHT automatisch. */
+            SEL act = [pop action];
+            id tgt = [pop target];
+            if (act) [pop sendAction:act to:tgt];
+            return moo_bool(1);
+        }
+
+        if ([obj isKindOfClass:[NSTextField class]]) {
+            NSTextField *tf = (NSTextField *)obj;
+            if (!cocoa_view_is_visible(tf)) return moo_bool(0);
+            if (![tf isEnabled]) return moo_bool(0);
+            [tf setStringValue:ns];
+            /* on_change-Bridge (siehe moo_ui_eingabe_on_change) lauscht auf
+             * NSControlTextDidChangeNotification — explizit posten, weil
+             * setStringValue: sie nicht feuert. */
+            [[NSNotificationCenter defaultCenter]
+                postNotificationName:NSControlTextDidChangeNotification
+                              object:tf];
+            return moo_bool(1);
+        }
+
+        if ([obj isKindOfClass:[NSTextView class]]) {
+            NSTextView *tv = (NSTextView *)obj;
+            if (!cocoa_view_is_visible(tv)) return moo_bool(0);
+            if (![tv isEditable]) return moo_bool(0);
+            NSTextStorage *ts = [tv textStorage];
+            NSRange all = NSMakeRange(0, [ts length]);
+            [ts beginEditing];
+            [ts replaceCharactersInRange:all withString:ns];
+            [ts endEditing];
+            /* didChangeText feuert textDidChange:-Delegate synchron. */
+            [tv didChangeText];
+            return moo_bool(1);
+        }
+
+        return moo_bool(0);
+    }
+}
+
+/* moo_ui_test_shortcut (Header zeilen 848–879)
+ *
+ * Nutzt dieselbe Parser- und Lookup-Tabelle wie moo_ui_shortcut_bind
+ * (cocoa_parse_sequence + window_shortcuts). Ruft den MooCallbackTarget
+ * DIREKT auf, ohne synthetisches NSEvent — damit ist die Ausloesung
+ * deterministisch und fokus-unabhaengig.
+ */
+MooValue moo_ui_test_shortcut(MooValue fenster, MooValue sequenz) {
+    @autoreleasepool {
+        if (![NSThread isMainThread]) return moo_bool(0);
+        id obj = unwrap_objc(fenster);
+        if (!obj || ![obj isKindOfClass:[NSWindow class]]) return moo_bool(0);
+        NSWindow *win = (NSWindow *)obj;
+        if (![win isVisible]) return moo_bool(0);
+        if (sequenz.tag != MOO_STRING) return moo_bool(0);
+
+        NSEventModifierFlags mods = 0;
+        NSString *keyChar = @"";
+        int keyCode = -1;
+        if (!cocoa_parse_sequence(MV_STR(sequenz)->chars,
+                                  &mods, &keyChar, &keyCode)) {
+            return moo_bool(0);
+        }
+
+        MooShortcutList *list = window_shortcuts(win, NO);
+        if (!list || list.entries.count == 0) return moo_bool(0);
+
+        for (NSDictionary *ent in [list.entries copy]) {
+            NSEventModifierFlags em2 = (NSEventModifierFlags)
+                [[ent objectForKey:@"mods"] unsignedIntegerValue];
+            NSString *kChar = [ent objectForKey:@"keyChar"];
+            int      kCode = [[ent objectForKey:@"keyCode"] intValue];
+            if (em2 != mods) continue;
+            BOOL match = NO;
+            if (keyChar.length > 0 && kChar.length > 0) {
+                match = [kChar isEqualToString:keyChar];
+            } else if (keyCode >= 0 && kCode >= 0) {
+                match = (kCode == keyCode);
+            }
+            if (match) {
+                MooCallbackTarget *tgt = [ent objectForKey:@"target"];
+                if (tgt) {
+                    [tgt fire:nil];
+                    return moo_bool(1);
+                }
+            }
+        }
+        return moo_bool(0);
+    }
+}
+
+/* moo_ui_test_warte (Header zeilen 881–910)
+ *
+ * Pumpt den NSRunLoop bis die Wartezeit abgelaufen ist. Wir laufen in
+ * kurzen Slices (30 ms), damit moo_ui_beenden greifen kann — NSApp.isRunning
+ * wird NACH [NSApp stop:] false, also brechen wir die Schleife in diesem
+ * Fall ab. Werte <= 0 pumpen einmal und kehren zurueck. */
+MooValue moo_ui_test_warte(MooValue millisekunden) {
+    @autoreleasepool {
+        if (![NSThread isMainThread]) return moo_bool(0);
+        long ms = (long)num_or(millisekunden, 0);
+        if (ms <= 0) {
+            /* Einmaliges Pump-and-Return. */
+            moo_ui_pump();
+            return moo_bool(1);
+        }
+
+        NSDate *ende = [NSDate dateWithTimeIntervalSinceNow:(ms / 1000.0)];
+        NSRunLoop *rl = [NSRunLoop currentRunLoop];
+        while ([ende timeIntervalSinceNow] > 0.0) {
+            /* Abbruch-Signal beachten: moo_ui_beenden stoppt NSApp. */
+            if (![NSApp isRunning] && g_open_windows == 0) break;
+            NSDate *slice = [NSDate dateWithTimeIntervalSinceNow:0.030];
+            if ([slice compare:ende] == NSOrderedDescending) slice = ende;
+            [rl runUntilDate:slice];
+            /* Zusaetzlich die AppKit-Queue drainen, damit non-timer-Events
+             * (mouse/key/notifications) direkt dispatcht werden. */
+            NSEvent *ev;
+            while ((ev = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                            untilDate:[NSDate distantPast]
+                                               inMode:NSDefaultRunLoopMode
+                                              dequeue:YES]) != nil) {
+                [NSApp sendEvent:ev];
+            }
+        }
+        return moo_bool(1);
+    }
+}
+
+/* moo_ui_test_pump (Header zeilen 912–945)
+ *
+ * Zweit-Exponierung von moo_ui_pump unter dem ui_test_*-Namensraum.
+ * Siehe moo_ui_pump (Zeilen 389–401): dequeue alle wartenden Events in
+ * NSDefaultRunLoopMode und dispatchen, danach sofort zurueck. */
+MooValue moo_ui_test_pump(void) {
+    @autoreleasepool {
+        if (![NSThread isMainThread]) return moo_bool(0);
+        ensure_cocoa();
+        NSEvent *ev;
+        while ((ev = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                        untilDate:[NSDate distantPast]
+                                           inMode:NSDefaultRunLoopMode
+                                          dequeue:YES]) != nil) {
+            [NSApp sendEvent:ev];
+        }
+        return moo_bool(1);
+    }
+}
