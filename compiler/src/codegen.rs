@@ -3191,6 +3191,28 @@ impl<'ctx> CodeGen<'ctx> {
                         let w = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_ui_zerstoere, &[w.into()], "ui_zerstoere");
                     }
+                    "moo_ui_widget_id_setze" | "ui_widget_id_setze" | "widget_id_setze" => {
+                        let w = self.compile_expr(&args[0])?;
+                        let i = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_widget_id_setze, &[w.into(), i.into()], "ui_widget_id_setze");
+                    }
+                    "moo_ui_widget_id_hole" | "ui_widget_id_hole" | "widget_id" => {
+                        let w = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_widget_id_hole, &[w.into()], "ui_widget_id_hole");
+                    }
+                    "moo_ui_widget_info" | "ui_widget_info" | "widget_info" => {
+                        let w = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_widget_info, &[w.into()], "ui_widget_info");
+                    }
+                    "moo_ui_widget_baum" | "ui_widget_baum" | "widget_baum" => {
+                        let f = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_widget_baum, &[f.into()], "ui_widget_baum");
+                    }
+                    "moo_ui_widget_suche" | "ui_widget_suche" | "widget_suche" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let i = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_widget_suche, &[f.into(), i.into()], "ui_widget_suche");
+                    }
                     "ui_timer_hinzu" | "ui_timer_add" => {
                         let ms = self.compile_expr(&args[0])?;
                         let c = self.compile_expr(&args[1])?;
