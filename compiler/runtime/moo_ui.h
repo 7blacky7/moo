@@ -493,6 +493,126 @@ MooValue moo_ui_tooltip_setze(MooValue widget, MooValue text);
 MooValue moo_ui_zerstoere(MooValue widget);
 
 /* =========================================================================
+ * Widget-Introspection (Plan-004 P1)
+ *
+ * Erlaubt Agenten und User-Code, UI-Baeume programmatisch auszulesen und
+ * einzelne Widgets per String-ID aufzufinden. Gehoert zur normalen UI-API
+ * (nicht test-only): IDs sind auch fuer Styling, State-Binding by-id und
+ * Debug-Logs nuetzlich. Die Screenshot-/Automations-APIs (Klick/Text)
+ * folgen als separates ui_test-Modul in spaeteren Phasen.
+ *
+ * ID-Semantik: Pro Fenster sollen IDs eindeutig sein; die Backends
+ * erzwingen das NICHT, aber moo_ui_widget_suche liefert dann den zuerst
+ * gesetzten Treffer. IDs ueberleben Property-Aenderungen, aber nicht
+ * moo_ui_zerstoere.
+ * ========================================================================= */
+
+/* Setzt eine String-ID auf ein beliebiges Widget. Die ID ist ein freies
+ * String-Label, das spaeter fuer moo_ui_widget_suche und die Felder
+ * `id` in moo_ui_widget_info/moo_ui_widget_baum genutzt wird.
+ *
+ * id_string: MOO_STRING (leerer String loescht die ID). MOO_NONE loescht
+ *            die ID ebenfalls.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : g_object_set_data_full(G_OBJECT(w), "moo-id",
+ *                  g_strdup(id), g_free) — lebt bis Widget-Destroy.
+ *   Windows      : SetPropW(hwnd, L"moo-id", wcsdup(id)); Cleanup via
+ *                  RemovePropW in der Destroy-Subclass.
+ *   macOS        : objc_setAssociatedObject(view, &kMooIdKey,
+ *                  [NSString stringWithUTF8String:id],
+ *                  OBJC_ASSOCIATION_COPY_NONATOMIC).
+ *
+ * Liefert MOO_BOOL wahr bei Erfolg, falsch wenn widget kein gueltiges
+ * Widget-Handle ist. */
+MooValue moo_ui_widget_id_setze(MooValue widget, MooValue id_string);
+
+/* Liest die zuvor gesetzte String-ID eines Widgets aus.
+ *
+ * Rueckgabe: MOO_STRING mit der ID, oder MOO_NONE wenn keine ID gesetzt
+ * ist. Eine leere ID wird als MOO_NONE gemeldet.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : g_object_get_data(G_OBJECT(w), "moo-id") → String.
+ *   Windows      : GetPropW(hwnd, L"moo-id") → wchar_t*, UTF-16→UTF-8.
+ *   macOS        : objc_getAssociatedObject(view, &kMooIdKey).
+ */
+MooValue moo_ui_widget_id_hole(MooValue widget);
+
+/* Liefert einen strukturierten Snapshot der wichtigsten Widget-Eigenschaften.
+ *
+ * Rueckgabe: MOO_DICT mit den Schluesseln:
+ *   "typ"      → MOO_STRING (z.B. "knopf","label","eingabe","liste",
+ *                "leinwand","fenster","checkbox","radio","slider",
+ *                "fortschritt","dropdown","rahmen","trenner","tabs",
+ *                "scroll","bild","textbereich","menueleiste","menue","timer").
+ *   "x","y"    → MOO_INTEGER, Pixel, parent-content-area-lokal.
+ *                Fuer Fenster: Bildschirm-Koordinaten.
+ *   "b","h"    → MOO_INTEGER, Pixel-Breite/Hoehe.
+ *   "sichtbar" → MOO_BOOL.
+ *   "aktiv"    → MOO_BOOL (entspricht nicht-disabled).
+ *   "id"       → MOO_STRING oder MOO_NONE (siehe moo_ui_widget_id_hole).
+ *   "text"     → MOO_STRING oder MOO_NONE. Fuer Label/Knopf/Checkbox/
+ *                Eingabe/Textbereich/Fenster-Titel: der aktuelle Text.
+ *                Sonst MOO_NONE.
+ *   "name"     → MOO_STRING oder MOO_NONE. Backend-spezifischer Widget-
+ *                Name (GTK gtk_widget_get_name, Win32 Class+Ctrl-ID,
+ *                Cocoa NSAccessibilityIdentifier). Fuer Agent-Heuristiken
+ *                wenn keine id gesetzt ist.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : GtkAllocation + gtk_widget_get_visible +
+ *                  gtk_widget_is_sensitive + Typ-Cast-Kette fuer text.
+ *   Windows      : GetWindowRect+ScreenToClient, IsWindowVisible,
+ *                  IsWindowEnabled, GetClassNameW + GetWindowTextW.
+ *   macOS        : NSView frame (mit Flip), isHidden, isEnabled,
+ *                  class description + accessibilityLabel.
+ *
+ * Liefert MOO_NONE wenn widget ungueltig ist. */
+MooValue moo_ui_widget_info(MooValue widget);
+
+/* Liefert rekursiv den Widget-Baum eines Fensters als flache MooList.
+ *
+ * Jeder Eintrag ist ein Dict wie in moo_ui_widget_info, zusaetzlich:
+ *   "tiefe"  → MOO_INTEGER, 0 = Fenster selbst, 1 = direkte Kinder, usw.
+ *   "eltern" → MOO_STRING oder MOO_NONE, die ID des unmittelbaren
+ *              Container-Widgets (falls gesetzt) — erleichtert Diffs
+ *              ohne separaten Tree-Walk.
+ *
+ * Reihenfolge: pre-order (Eltern vor Kindern), Geschwister in
+ * Einfuegereihenfolge (GTK: g_list_children; Win32: EnumChildWindows
+ * Z-Order; Cocoa: subviews-Array).
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : rekursiv gtk_container_foreach(GTK_CONTAINER(w), ...).
+ *   Windows      : EnumChildWindows(hwnd, cb, &list) rekursiv je HWND.
+ *   macOS        : rekursiv ueber [view subviews].
+ *
+ * Liefert MOO_NONE wenn `fenster` kein gueltiges Fenster-Handle ist.
+ * Leere Container liefern eine MooList mit nur dem Fenster-Eintrag. */
+MooValue moo_ui_widget_baum(MooValue fenster);
+
+/* Sucht im Widget-Baum eines Fensters das erste Widget mit passender
+ * String-ID.
+ *
+ * id_string: MOO_STRING. Leere oder MOO_NONE-IDs liefern MOO_NONE.
+ *
+ * Suche ist pre-order, string-exakt (case-sensitive). Mehrfach-Treffer
+ * (sollten durch Aufrufer vermieden werden) liefern den ersten in
+ * Baum-Reihenfolge.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : Tree-Walk wie moo_ui_widget_baum, Vergleich via
+ *                  g_object_get_data(w,"moo-id") + g_strcmp0.
+ *   Windows      : EnumChildWindows + GetPropW(hwnd,L"moo-id"); UTF-16
+ *                  Vergleich.
+ *   macOS        : recursiveSubviews + objc_getAssociatedObject + isEqual:.
+ *
+ * Liefert das Widget-Handle (MOO_NUMBER) oder MOO_NONE wenn nichts
+ * gefunden wurde oder `fenster` ungueltig ist. */
+MooValue moo_ui_widget_suche(MooValue fenster, MooValue id_string);
+
+/* =========================================================================
  * Timer (an den globalen Event-Loop gebunden)
  * ========================================================================= */
 
