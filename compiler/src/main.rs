@@ -474,16 +474,26 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         "-lsqlite3".to_string(),
         "-lSDL2".to_string(),
         "-lSDL2_image".to_string(),
-        "-lappindicator3".to_string(),
-        "-ldbusmenu-glib".to_string(),
-        "-lgtk-3".to_string(),
-        "-lgdk-3".to_string(),
-        "-lgio-2.0".to_string(),
-        "-lgobject-2.0".to_string(),
-        "-lglib-2.0".to_string(),
-        "-lcairo".to_string(),
-        "-lgdk_pixbuf-2.0".to_string(),
     ];
+
+    // Linux-only UI-Libs (GTK3 + libappindicator3 + Co.) — analog build.rs
+    // gegated, damit macOS/Windows den Linker nicht nach diesen Symbolen
+    // fragen. macOS nutzt stattdessen Cocoa (moo_ui_cocoa.m, Framework-Links
+    // via build.rs), Windows nutzt Win32 (moo_ui_win32.c).
+    #[cfg(target_os = "linux")]
+    {
+        link_args.extend([
+            "-lappindicator3".to_string(),
+            "-ldbusmenu-glib".to_string(),
+            "-lgtk-3".to_string(),
+            "-lgdk-3".to_string(),
+            "-lgio-2.0".to_string(),
+            "-lgobject-2.0".to_string(),
+            "-lglib-2.0".to_string(),
+            "-lcairo".to_string(),
+            "-lgdk_pixbuf-2.0".to_string(),
+        ]);
+    }
 
     // 3D-Backend-Libs — nur wenn ein 3D-Feature aktiv ist (analog build.rs).
     // moo_ui-only Build (ohne gl33/gl21/vulkan) linkt kein GL/Vulkan/GLFW.
