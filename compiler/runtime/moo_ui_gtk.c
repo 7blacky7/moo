@@ -721,6 +721,134 @@ MooValue moo_ui_liste_on_auswahl(MooValue liste, MooValue callback) {
     return moo_bool(1);
 }
 
+/* ------------------------------------------------------------------ *
+ * ListView-Erweiterungen (Welle 2 / Plan 003 P2, Phase 1)
+ * ------------------------------------------------------------------ */
+
+/* Helper: liefert die n-te GtkTreeViewColumn einer liste (MooValue-Handle),
+ * oder NULL bei ungueltigem Handle/Index. */
+static GtkTreeViewColumn* liste_column(MooValue liste, int spalte_index) {
+    GtkWidget* sw = unwrap_widget(liste);
+    if (!sw) return NULL;
+    GtkWidget* tv = (GtkWidget*)g_object_get_data(G_OBJECT(sw), "moo-tv");
+    if (!tv || !GTK_IS_TREE_VIEW(tv)) return NULL;
+    if (spalte_index < 0) return NULL;
+    return gtk_tree_view_get_column(GTK_TREE_VIEW(tv), spalte_index);
+}
+
+MooValue moo_ui_liste_spalte_breite(MooValue liste, MooValue spalte_index,
+                                    MooValue breite) {
+    int idx = num_or(spalte_index, -1);
+    int bw  = num_or(breite, -1);
+    if (bw < 1) return moo_bool(0);
+    GtkTreeViewColumn* col = liste_column(liste, idx);
+    if (!col) return moo_bool(0);
+    gtk_tree_view_column_set_sizing(col, GTK_TREE_VIEW_COLUMN_FIXED);
+    gtk_tree_view_column_set_fixed_width(col, bw);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_liste_sortierbar(MooValue liste, MooValue spalte_index,
+                                 MooValue aktiv) {
+    int idx = num_or(spalte_index, -1);
+    GtkTreeViewColumn* col = liste_column(liste, idx);
+    if (!col) return moo_bool(0);
+    gboolean an = bool_or(aktiv, TRUE);
+    if (an) {
+        gtk_tree_view_column_set_sort_column_id(col, idx);
+        gtk_tree_view_column_set_clickable(col, TRUE);
+    } else {
+        gtk_tree_view_column_set_sort_column_id(col, -1);
+        gtk_tree_view_column_set_clickable(col, FALSE);
+    }
+    return moo_bool(1);
+}
+
+MooValue moo_ui_liste_sortiere(MooValue liste, MooValue spalte_index,
+                               MooValue aufsteigend) {
+    int idx = num_or(spalte_index, -1);
+    if (idx < 0) return moo_bool(0);
+    int ncols = 0;
+    GtkListStore* st = liste_store(liste, &ncols);
+    if (!st || idx >= ncols) return moo_bool(0);
+    GtkSortType dir = bool_or(aufsteigend, TRUE) ? GTK_SORT_ASCENDING
+                                                 : GTK_SORT_DESCENDING;
+    gtk_tree_sortable_set_sort_column_id(GTK_TREE_SORTABLE(st), idx, dir);
+    return moo_bool(1);
+}
+
+/* Helper: Iter auf eine Zeile per numerischem Index (in Model-Ordnung).
+ * Liefert 1 bei Erfolg, 0 wenn Index out-of-range. */
+static int liste_iter_at(GtkListStore* st, int zeile_index, GtkTreeIter* out) {
+    if (!st || zeile_index < 0) return 0;
+    GtkTreePath* p = gtk_tree_path_new_from_indices(zeile_index, -1);
+    gboolean ok = gtk_tree_model_get_iter(GTK_TREE_MODEL(st), out, p);
+    gtk_tree_path_free(p);
+    return ok ? 1 : 0;
+}
+
+/* Koerziert einen MooValue auf C-String fuer die Zelle. Ruft moo_to_string
+ * wenn noetig; der Aufrufer muss das Rueckgabe-MooValue per moo_release
+ * freigeben nachdem der String kopiert wurde. Liefert "" bei Fehlern. */
+static char* cell_string_dup(MooValue v, MooValue* owned_out) {
+    *owned_out = moo_none();
+    if (v.tag == MOO_STRING) {
+        return g_strdup(MV_STR(v)->chars);
+    }
+    MooValue s = moo_to_string(v);
+    *owned_out = s;
+    if (s.tag == MOO_STRING) return g_strdup(MV_STR(s)->chars);
+    return g_strdup("");
+}
+
+MooValue moo_ui_liste_zeile_setze(MooValue liste, MooValue zeile_index,
+                                  MooValue werte_liste) {
+    int ncols = 0;
+    GtkListStore* st = liste_store(liste, &ncols);
+    if (!st) return moo_bool(0);
+    if (werte_liste.tag != MOO_LIST) return moo_bool(0);
+    int32_t n = moo_list_iter_len(werte_liste);
+    if (n != ncols) return moo_bool(0);  /* keine Teil-Aenderung */
+    GtkTreeIter it;
+    if (!liste_iter_at(st, num_or(zeile_index, -1), &it)) return moo_bool(0);
+    for (int i = 0; i < ncols; i++) {
+        MooValue c = moo_list_iter_get(werte_liste, i);
+        MooValue owned;
+        char* s = cell_string_dup(c, &owned);
+        gtk_list_store_set(st, &it, i, s ? s : "", -1);
+        g_free(s);
+        moo_release(owned);
+    }
+    return moo_bool(1);
+}
+
+MooValue moo_ui_liste_zelle_setze(MooValue liste, MooValue zeile_index,
+                                  MooValue spalte_index, MooValue wert) {
+    int ncols = 0;
+    GtkListStore* st = liste_store(liste, &ncols);
+    if (!st) return moo_bool(0);
+    int col = num_or(spalte_index, -1);
+    if (col < 0 || col >= ncols) return moo_bool(0);
+    GtkTreeIter it;
+    if (!liste_iter_at(st, num_or(zeile_index, -1), &it)) return moo_bool(0);
+    MooValue owned;
+    char* s = cell_string_dup(wert, &owned);
+    gtk_list_store_set(st, &it, col, s ? s : "", -1);
+    g_free(s);
+    moo_release(owned);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_liste_entferne(MooValue liste, MooValue zeile_index) {
+    int ncols = 0;
+    GtkListStore* st = liste_store(liste, &ncols);
+    if (!st) return moo_bool(0);
+    GtkTreeIter it;
+    if (!liste_iter_at(st, num_or(zeile_index, -1), &it)) return moo_bool(0);
+    gtk_list_store_remove(st, &it);
+    return moo_bool(1);
+}
+
 static void on_slider_changed_trampoline(GtkRange* r, gpointer ud) {
     (void)r;
     MooValue* cb = (MooValue*)ud;
@@ -942,6 +1070,30 @@ MooValue moo_ui_zeichne_text(MooValue zeichner,
     return moo_bool(1);
 }
 
+/* Text-Metrik: Pixelbreite. NUR im on_zeichne-Callback gueltig (braucht
+ * aktiven cairo_t*); ausserhalb → 0. Gerundet auf ganze Pixel. */
+MooValue moo_ui_zeichne_text_breite(MooValue zeichner, MooValue text,
+                                    MooValue groesse) {
+    MooZeichnerGtk* z = unwrap_zeichner(zeichner);
+    if (!z) return moo_number(0);
+    const char* s = str_or(text, "");
+    double sz = (groesse.tag == MOO_NUMBER) ? MV_NUM(groesse) : 12.0;
+    if (sz < 1.0) sz = 1.0;
+    cairo_select_font_face(z->cr, "Sans",
+                           CAIRO_FONT_SLANT_NORMAL,
+                           CAIRO_FONT_WEIGHT_NORMAL);
+    cairo_set_font_size(z->cr, sz);
+    cairo_text_extents_t ext;
+    cairo_text_extents(z->cr, s, &ext);
+    /* x_advance ist die Breite inkl. Spacing — konsistent mit Cursor-Fortschritt. */
+    double w = ext.x_advance;
+    if (w < 0) w = 0;
+    /* Aufrunden auf ganze Pixel (ceil). */
+    long iw = (long)w;
+    if ((double)iw < w) iw += 1;
+    return moo_number((double)iw);
+}
+
 MooValue moo_ui_zeichne_bild(MooValue zeichner,
                              MooValue x, MooValue y,
                              MooValue b, MooValue h,
@@ -994,6 +1146,87 @@ MooValue moo_ui_leinwand_anfordern(MooValue leinwand) {
     GtkWidget* w = unwrap_widget(leinwand);
     if (!w) return moo_bool(0);
     gtk_widget_queue_draw(w);
+    return moo_bool(1);
+}
+
+/* ------------------------------------------------------------------ *
+ * Leinwand-Maus-Events (Welle 2 / Plan 003 P5, Phase 1)
+ *
+ * Pattern: "moo-maus-cb" / "moo-bewegung-cb" auf der GtkDrawingArea
+ * speichert die Handler-ID des letzten Bindings, damit Re-Bind das
+ * alte Binding still disconnectet (Callback wird via cb_box_destroy
+ * released). Eine einzelne Box wird pro Event-Typ gehalten.
+ * ------------------------------------------------------------------ */
+
+static gboolean on_canvas_button_trampoline(GtkWidget* w, GdkEventButton* ev,
+                                            gpointer ud) {
+    MooValue* cb = (MooValue*)ud;
+    if (!cb || cb->tag != MOO_FUNC) return FALSE;
+    /* GDK-Buttons 1/2/3 = links/mitte/rechts → direkt uebernehmen. */
+    int taste = (int)ev->button;
+    if (taste < 1 || taste > 3) return FALSE;
+    MooValue handle = wrap_widget(w);
+    MooValue rv = moo_func_call_4(*cb, handle,
+                                  moo_number((double)(int)ev->x),
+                                  moo_number((double)(int)ev->y),
+                                  moo_number((double)taste));
+    moo_release(rv);
+    return FALSE;
+}
+
+static gboolean on_canvas_motion_trampoline(GtkWidget* w, GdkEventMotion* ev,
+                                            gpointer ud) {
+    MooValue* cb = (MooValue*)ud;
+    if (!cb || cb->tag != MOO_FUNC) return FALSE;
+    MooValue handle = wrap_widget(w);
+    MooValue rv = moo_func_call_3(*cb, handle,
+                                  moo_number((double)(int)ev->x),
+                                  moo_number((double)(int)ev->y));
+    moo_release(rv);
+    return FALSE;
+}
+
+MooValue moo_ui_leinwand_on_maus(MooValue leinwand, MooValue callback) {
+    GtkWidget* da = unwrap_widget(leinwand);
+    if (!da) return moo_bool(0);
+
+    /* Re-Bind: alten Handler (und damit Callback-Box via cb_box_destroy)
+     * disconnecten, bevor neuer verbunden wird. */
+    gulong old_id = (gulong)GPOINTER_TO_SIZE(
+        g_object_get_data(G_OBJECT(da), "moo-maus-id"));
+    if (old_id != 0) {
+        g_signal_handler_disconnect(da, old_id);
+        g_object_set_data(G_OBJECT(da), "moo-maus-id", GSIZE_TO_POINTER(0));
+    }
+    if (callback.tag != MOO_FUNC) return moo_bool(1);  /* nur unbind */
+
+    gtk_widget_add_events(da, GDK_BUTTON_PRESS_MASK);
+    MooValue* box = cb_box_new(callback);
+    gulong id = g_signal_connect_data(da, "button-press-event",
+                                      G_CALLBACK(on_canvas_button_trampoline),
+                                      box, cb_box_destroy, 0);
+    g_object_set_data(G_OBJECT(da), "moo-maus-id", GSIZE_TO_POINTER(id));
+    return moo_bool(1);
+}
+
+MooValue moo_ui_leinwand_on_bewegung(MooValue leinwand, MooValue callback) {
+    GtkWidget* da = unwrap_widget(leinwand);
+    if (!da) return moo_bool(0);
+
+    gulong old_id = (gulong)GPOINTER_TO_SIZE(
+        g_object_get_data(G_OBJECT(da), "moo-bewegung-id"));
+    if (old_id != 0) {
+        g_signal_handler_disconnect(da, old_id);
+        g_object_set_data(G_OBJECT(da), "moo-bewegung-id", GSIZE_TO_POINTER(0));
+    }
+    if (callback.tag != MOO_FUNC) return moo_bool(1);
+
+    gtk_widget_add_events(da, GDK_POINTER_MOTION_MASK);
+    MooValue* box = cb_box_new(callback);
+    gulong id = g_signal_connect_data(da, "motion-notify-event",
+                                      G_CALLBACK(on_canvas_motion_trampoline),
+                                      box, cb_box_destroy, 0);
+    g_object_set_data(G_OBJECT(da), "moo-bewegung-id", GSIZE_TO_POINTER(id));
     return moo_bool(1);
 }
 
