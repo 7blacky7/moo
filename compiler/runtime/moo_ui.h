@@ -177,6 +177,115 @@ MooValue moo_ui_liste_zeile(MooValue liste, MooValue index); /* liefert MooList 
 MooValue moo_ui_liste_leeren(MooValue liste);
 MooValue moo_ui_liste_on_auswahl(MooValue liste, MooValue callback);
 
+/* Setzt die Pixel-Breite einer Spalte.
+ *
+ * spalte_index: 0-basierter Spalten-Index (MOO_INTEGER).
+ * breite:       Pixel-Breite (MOO_INTEGER, > 0). Wird als feste Breite
+ *               gesetzt; automatische Spalten-Anpassung ist danach inaktiv
+ *               fuer diese Spalte.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_tree_view_column_set_fixed_width(col, breite) +
+ *                  gtk_tree_view_column_set_sizing(GTK_TREE_VIEW_COLUMN_FIXED)
+ *   Windows      : ListView_SetColumnWidth(hwnd, spalte_index, breite)
+ *   macOS        : [[tv tableColumnWithIdentifier:idx] setWidth:breite]
+ *
+ * Liefert MOO_BOOL wahr bei Erfolg, falsch wenn Index ausser Bereich. */
+MooValue moo_ui_liste_spalte_breite(MooValue liste, MooValue spalte_index,
+                                    MooValue breite);
+
+/* Aktiviert oder deaktiviert das Klick-Sortieren fuer eine Spalte.
+ *
+ * spalte_index: 0-basierter Spalten-Index (MOO_INTEGER).
+ * aktiv:        MOO_BOOL; wahr = Spalten-Header klickbar, loest Sort aus.
+ *               falsch = kein Klick-Sort fuer diese Spalte.
+ *
+ * Hinweis: Das Sortieren selbst bleibt modell-seitig (Backend sortiert
+ * alphabetisch nach dem Spalten-String); fuer eigene Sortierfunktionen
+ * moo_ui_liste_sortiere nutzen.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_tree_view_column_set_clickable(col, aktiv) +
+ *                  gtk_tree_view_column_set_sort_column_id(col, spalte_index)
+ *   Windows      : ListView_SetExtendedListViewStyle += LVS_EX_HEADERDRAGDROP;
+ *                  WM_NOTIFY / LVN_COLUMNCLICK aktivieren/deaktivieren.
+ *   macOS        : [tableColumn setSortDescriptorPrototype:...] setzen/loeschen.
+ *
+ * Liefert MOO_BOOL wahr bei Erfolg, falsch wenn Index ausser Bereich. */
+MooValue moo_ui_liste_sortierbar(MooValue liste, MooValue spalte_index,
+                                 MooValue aktiv);
+
+/* Sortiert alle Zeilen der Liste nach einer Spalte.
+ *
+ * spalte_index:  0-basierter Spalten-Index (MOO_INTEGER).
+ * aufsteigend:   MOO_BOOL; wahr = A→Z / 0→9, falsch = Z→A / 9→0.
+ *
+ * Die Sortierung ist string-lexikographisch. Numerische Werte muessen
+ * vom Aufrufer als zero-padded String vorformatiert werden falls echte
+ * numerische Sortierung gewuenscht wird.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_tree_sortable_set_sort_column_id(model, spalte_index,
+ *                  aufsteigend ? GTK_SORT_ASCENDING : GTK_SORT_DESCENDING)
+ *   Windows      : ListView_SortItems(hwnd, CompareFunc, spalte_index);
+ *                  Richtung per LPARAM in CompareFunc.
+ *   macOS        : [tv setSortDescriptors:@[desc]]; tableView:sortDescriptorsDidChange:
+ *                  loest reloadData aus.
+ *
+ * Liefert MOO_BOOL wahr bei Erfolg, falsch wenn Index ausser Bereich. */
+MooValue moo_ui_liste_sortiere(MooValue liste, MooValue spalte_index,
+                               MooValue aufsteigend);
+
+/* Ersetzt alle Zellen einer vorhandenen Zeile.
+ *
+ * zeile_index:  0-basierter Zeilen-Index (MOO_INTEGER).
+ * werte_liste:  MooList mit neuen Zellen-Werten (Strings). Laenge muss
+ *               genau der Spalten-Anzahl entsprechen; kuerzere Listen
+ *               lassen uebrige Spalten leer, laengere werden abgeschnitten.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_list_store_set(store, &iter, col0, str0, col1, str1, ..., -1)
+ *                  nach gtk_tree_model_iter_nth_child(model, &iter, NULL, zeile_index).
+ *   Windows      : Schleife ueber ListView_SetItemText(hwnd, zeile_index, col, str).
+ *   macOS        : [ds replaceRow:zeile_index withValues:werte_liste]; [tv reloadData].
+ *
+ * Liefert MOO_BOOL wahr bei Erfolg, falsch wenn Index ausser Bereich. */
+MooValue moo_ui_liste_zeile_setze(MooValue liste, MooValue zeile_index,
+                                  MooValue werte_liste);
+
+/* Setzt den Inhalt einer einzelnen Zelle.
+ *
+ * zeile_index:   0-basierter Zeilen-Index (MOO_INTEGER).
+ * spalte_index:  0-basierter Spalten-Index (MOO_INTEGER).
+ * wert:          Neuer Zellen-Inhalt (MOO_STRING).
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_list_store_set(store, &iter, spalte_index, str, -1)
+ *                  nach gtk_tree_model_iter_nth_child fuer zeile_index.
+ *   Windows      : ListView_SetItemText(hwnd, zeile_index, spalte_index, str).
+ *   macOS        : [ds setValue:wert row:zeile_index column:spalte_index];
+ *                  [tv reloadDataForRowIndexes:... columnIndexes:...].
+ *
+ * Liefert MOO_BOOL wahr bei Erfolg, falsch wenn Indizes ausser Bereich. */
+MooValue moo_ui_liste_zelle_setze(MooValue liste, MooValue zeile_index,
+                                  MooValue spalte_index, MooValue wert);
+
+/* Entfernt eine Zeile aus der Liste.
+ *
+ * zeile_index:  0-basierter Index der zu loeschenden Zeile (MOO_INTEGER).
+ *               Alle nachfolgenden Zeilen ruecken um eins hoch; gespeicherte
+ *               Indizes werden damit ungueltig.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_list_store_remove(store, &iter) nach iter via
+ *                  gtk_tree_model_iter_nth_child.
+ *   Windows      : ListView_DeleteItem(hwnd, zeile_index).
+ *   macOS        : [ds removeRowAtIndex:zeile_index];
+ *                  [tv removeRowsAtIndexes:... withAnimation:NSTableViewAnimationEffectNone].
+ *
+ * Liefert MOO_BOOL wahr bei Erfolg, falsch wenn Index ausser Bereich. */
+MooValue moo_ui_liste_entferne(MooValue liste, MooValue zeile_index);
+
 /* =========================================================================
  * Werte-Controls
  * ========================================================================= */
