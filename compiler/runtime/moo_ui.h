@@ -218,6 +218,75 @@ MooValue moo_ui_leinwand(MooValue parent,
                          MooValue on_zeichne);
 MooValue moo_ui_leinwand_anfordern(MooValue leinwand); /* Repaint-Request */
 
+/* -------------------------------------------------------------------------
+ * Leinwand-Maus-Events (Welle 2 / Plan 003 P5, Phase 1)
+ *
+ * Registriert Callbacks fuer Maus-Interaktion auf einer Leinwand. Nur
+ * EIN Callback pro Event-Typ pro Leinwand — erneuter Aufruf ersetzt
+ * das vorherige Binding (alter Callback wird released).
+ *
+ * Koordinaten sind Leinwand-lokal (links-oben = 0,0), Pixel-Einheit,
+ * konsistent mit den Zeichner-Primitiven.
+ *
+ * Tasten-Events (on_taste) sind bewusst NICHT Teil dieser Welle —
+ * Keyboard-Fokus/Tab-Order ist backend-spezifisch und kommt separat.
+ * ------------------------------------------------------------------------- */
+
+/* Registriert einen Maus-Klick-Callback.
+ *
+ * Callback-Signatur:
+ *   on_maus(leinwand, x, y, taste)
+ *     leinwand: Widget-Handle (MOO_NUMBER)
+ *     x, y:     MOO_INTEGER, Leinwand-lokale Pixel-Koordinaten
+ *     taste:    MOO_INTEGER, 1=links, 2=mitte, 3=rechts
+ *
+ * Feuert auf MouseDown (Press), NICHT auf Release — konsistent mit
+ * dem Knopf-Aktivierungs-Pattern. Doppelklick wird (fuer diese Welle)
+ * als zwei einzelne Klicks gesendet; dediziertes on_dblklick folgt
+ * spaeter falls gewuenscht.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_widget_add_events(GDK_BUTTON_PRESS_MASK) +
+ *                  "button-press-event"-Signal; event->button 1/2/3
+ *                  direkt uebernehmen, event->x/y sind cairo-lokal.
+ *   Windows      : Subclass der STATIC-Leinwand; WM_LBUTTONDOWN (1),
+ *                  WM_MBUTTONDOWN (2), WM_RBUTTONDOWN (3).
+ *                  x/y aus LOWORD/HIWORD(lParam), bereits client-lokal.
+ *   macOS        : NSView-Subklasse ueberschreibt mouseDown: / rightMouseDown:
+ *                  / otherMouseDown:; [event locationInWindow] ->
+ *                  [view convertPoint:fromView:nil]; Y an flipped-view
+ *                  anpassen (bereits flipped=YES → top-left-origin).
+ *
+ * Ownership: callback wird retain-t, beim Leinwand-Destroy oder
+ * erneutem on_maus-Aufruf released.
+ */
+MooValue moo_ui_leinwand_on_maus(MooValue leinwand, MooValue callback);
+
+/* Registriert einen Maus-Bewegungs-Callback.
+ *
+ * Callback-Signatur:
+ *   on_bewegung(leinwand, x, y)
+ *     leinwand: Widget-Handle
+ *     x, y:     MOO_INTEGER, Leinwand-lokale Pixel
+ *
+ * Feuert bei JEDER Mausbewegung ueber der Leinwand, unabhaengig davon
+ * ob eine Taste gedrueckt ist. Backends koennen Events koaleszieren
+ * (es wird kein 1:1-Event pro Pixel garantiert). Ausserhalb der
+ * Leinwand (nach Leave) feuert der Callback nicht mehr.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_widget_add_events(GDK_POINTER_MOTION_MASK) +
+ *                  "motion-notify-event"; event->x/y.
+ *   Windows      : WM_MOUSEMOVE auf der subclassed STATIC; optional
+ *                  TrackMouseEvent fuer konsistentes Leave-Verhalten.
+ *   macOS        : NSView mouseMoved: — benoetigt
+ *                  addTrackingArea:NSTrackingMouseMoved|NSTrackingActiveInKeyWindow;
+ *                  Koord-Konversion wie on_maus.
+ *
+ * Ownership: wie on_maus.
+ */
+MooValue moo_ui_leinwand_on_bewegung(MooValue leinwand, MooValue callback);
+
 /* =========================================================================
  * Zeichner-Primitive (nur im on_zeichne-Callback gueltig)
  *
@@ -247,6 +316,31 @@ MooValue moo_ui_zeichne_kreis(MooValue zeichner,
 MooValue moo_ui_zeichne_text(MooValue zeichner,
                              MooValue x, MooValue y,
                              MooValue text, MooValue schriftgroesse);
+
+/* Text-Metrik: Liefert die Pixelbreite, die `text` in der angegebenen
+ * Schriftgroesse beim Zeichnen belegen wuerde. Hauptzweck: zentrierte
+ * und rechtsbuendige Layouts, Spalten-Ausrichtung auf der Leinwand.
+ *
+ * Gueltigkeit: NUR innerhalb des on_zeichne-Callbacks (benoetigt den
+ * aktiven Backend-Graphics-Context). Ausserhalb → liefert MOO_INTEGER 0.
+ *
+ * Rueckgabe: MOO_INTEGER (Pixelbreite, gerundet auf ganze Pixel;
+ * Backend-interne Subpixel-Metrik wird gekappt). Hoehe wird nicht
+ * zurueckgegeben — Leinwand-Text hat in dieser Welle nur eine
+ * horizontale Metrik (Hoehe kommt mit Phase-6-Font-API).
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : cairo_text_extents(cr, text, &ext); ext.x_advance.
+ *                  Font-Size via cairo_set_font_size(cr, groesse)
+ *                  VOR der Messung (konsistent mit ui_zeichne_text).
+ *   Windows      : SelectObject(hdc, CreateFontW(-groesse, ...));
+ *                  GetTextExtentPoint32W(hdc, wtext, len, &sz); sz.cx.
+ *   macOS        : [NSString sizeWithAttributes:@{NSFontAttributeName:
+ *                  [NSFont systemFontOfSize:groesse]}].width;
+ *                  ceil() auf Integer runden.
+ */
+MooValue moo_ui_zeichne_text_breite(MooValue zeichner, MooValue text,
+                                    MooValue groesse);
 
 MooValue moo_ui_zeichne_bild(MooValue zeichner,
                              MooValue x, MooValue y,
