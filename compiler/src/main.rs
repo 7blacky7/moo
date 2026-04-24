@@ -476,11 +476,11 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         "-lSDL2_image".to_string(),
     ];
 
-    // Linux-only UI-Libs (GTK3 + libappindicator3 + Co.) — analog build.rs
-    // gegated, damit macOS/Windows den Linker nicht nach diesen Symbolen
-    // fragen. macOS nutzt stattdessen Cocoa (moo_ui_cocoa.m, Framework-Links
-    // via build.rs), Windows nutzt Win32 (moo_ui_win32.c).
-    #[cfg(target_os = "linux")]
+    // Linux-only UI-Libs (GTK3 + libappindicator3 + Co.) — nur wenn das
+    // UI-Modul wirklich mitgebaut wurde. 3D-only Builds auf Linux duerfen
+    // beim finalen Linken eines .moo-Programms keine GTK/AppIndicator-Libs
+    // verlangen.
+    #[cfg(all(target_os = "linux", feature = "moo_ui"))]
     {
         link_args.extend([
             "-lappindicator3".to_string(),

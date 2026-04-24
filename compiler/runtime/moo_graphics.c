@@ -285,15 +285,22 @@ void moo_delay(MooValue ms) {
 // ============================================================
 
 /* Forward-Decls fuer Tag-Dispatch (k3 Bug-Fix 2026-04-14):
- * screenshot() unterstuetzt jetzt MOO_WINDOW (SDL_Renderer),
- * MOO_WINDOW3D (gl33-Backend) und MOO_WINDOW_HYBRID (eigener GL-Context). */
+ * screenshot() unterstuetzt MOO_WINDOW (SDL_Renderer), optional MOO_WINDOW3D
+ * und optional MOO_WINDOW_HYBRID. GL33/Hybrid-Screenshot-Symbole existieren
+ * nur im gl33-Build; gl21/vulkan duerfen sie nicht hart referenzieren. */
 extern MooValue moo_3d_screenshot_bmp(MooValue window, MooValue path);
+#ifdef MOO_HAS_GL33
 extern MooValue moo_hybrid_screenshot_bmp(MooValue window, MooValue path);
+#endif
 
 MooValue moo_screenshot(MooValue window, MooValue path) {
     if (path.tag != MOO_STRING) return moo_bool(false);
     if (window.tag == MOO_WINDOW3D) return moo_3d_screenshot_bmp(window, path);
+#ifdef MOO_HAS_GL33
     if (window.tag == MOO_WINDOW_HYBRID) return moo_hybrid_screenshot_bmp(window, path);
+#else
+    if (window.tag == MOO_WINDOW_HYBRID) return moo_bool(false);
+#endif
     if (window.tag != MOO_WINDOW) return moo_bool(false);
     MooWindow* mw = (MooWindow*)moo_val_as_ptr(window);
     if (!mw || !mw->renderer) return moo_bool(false);

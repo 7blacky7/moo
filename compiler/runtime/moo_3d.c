@@ -298,15 +298,23 @@ void moo_3d_chunk_delete(MooValue chunk_id) {
 /* ========================================================
  * Screenshot-Bridge fuer MOO_WINDOW3D (k3 Bug-Fix).
  * Dispatcht an Backend-spezifischen Helper (aktuell nur gl33).
+ * gl21/vulkan duerfen GL33-Symbole nicht hart referenzieren.
  * ======================================================== */
+#ifdef MOO_HAS_GL33
 extern int gl33_screenshot_bmp(void* ctx, const char* path);
+#endif
 
 MooValue moo_3d_screenshot_bmp(MooValue window, MooValue path) {
     if (window.tag != MOO_WINDOW3D || path.tag != MOO_STRING) return moo_bool(false);
     if (!g_ctx) return moo_bool(false);
-    /* Vereinfachung: nur gl33-Backend hat eigenen Helper. gl21/vulkan
-     * geben false zurueck. Backend-Auswahl per env MOO_3D_BACKEND. */
+#ifdef MOO_HAS_GL33
+    /* Nur gl33-Backend hat aktuell einen Screenshot-Helper. */
     if (g_backend != &moo_backend_gl33) return moo_bool(false);
     int rc = gl33_screenshot_bmp(g_ctx, MV_STR(path)->chars);
     return moo_bool(rc != 0);
+#else
+    (void)window;
+    (void)path;
+    return moo_bool(false);
+#endif
 }
