@@ -240,8 +240,9 @@ MooValue moo_ui_liste_sortiere(MooValue liste, MooValue spalte_index,
  *
  * zeile_index:  0-basierter Zeilen-Index (MOO_INTEGER).
  * werte_liste:  MooList mit neuen Zellen-Werten (Strings). Laenge muss
- *               genau der Spalten-Anzahl entsprechen; kuerzere Listen
- *               lassen uebrige Spalten leer, laengere werden abgeschnitten.
+ *               genau der Spalten-Anzahl entsprechen. Bei kuerzerer oder
+ *               laengerer Liste liefert die Funktion falsch und nimmt keine
+ *               Teil-Aenderung vor.
  *
  * Backend-Mapping:
  *   Linux (GTK3) : gtk_list_store_set(store, &iter, col0, str0, col1, str1, ..., -1)

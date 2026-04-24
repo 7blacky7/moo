@@ -47,11 +47,23 @@ funktion ui_liste_spalten_breiten(liste, breiten_liste):
 
 # Macht die ersten `anzahl` Spalten klick-sortierbar.
 # Entspricht anzahl Aufrufen von ui_liste_sortierbar(liste, i, wahr).
+# Sortierung ist string-lexikografisch; Werte wie "50 MB" werden
+# nicht numerisch nach Dateigroesse sortiert.
 # Beispiel: ui_liste_alle_sortierbar(lst, 3)
 funktion ui_liste_alle_sortierbar(liste, anzahl):
     setze idx auf 0
     solange idx < anzahl:
         ui_liste_sortierbar(liste, idx, wahr)
+        setze idx auf idx + 1
+    gib_zurück wahr
+
+
+# Setzt Sortierbarkeit pro Spalte aus einer Wahrheitswert-Liste.
+# Beispiel: ui_liste_sortierbar_flags(lst, [wahr, wahr, falsch])
+funktion ui_liste_sortierbar_flags(liste, flags):
+    setze idx auf 0
+    für flag in flags:
+        ui_liste_sortierbar(liste, idx, flag)
         setze idx auf idx + 1
     gib_zurück wahr
 
@@ -78,9 +90,5 @@ funktion ui_liste_konfiguriere(liste, config):
     wenn config.enthält("breiten"):
         ui_liste_spalten_breiten(liste, config["breiten"])
     wenn config.enthält("sortierbar"):
-        setze flags auf config["sortierbar"]
-        setze idx auf 0
-        für flag in flags:
-            ui_liste_sortierbar(liste, idx, flag)
-            setze idx auf idx + 1
+        ui_liste_sortierbar_flags(liste, config["sortierbar"])
     gib_zurück wahr

@@ -3,8 +3,9 @@
 #
 # File-Browser-aehnliche Liste mit 3 Spalten:
 #   - Name, Groesse, Typ
-#   - Einstellbare Spaltenbreiten (ui_liste_spalten_breiten)
-#   - Alle Spalten per Klick sortierbar (ui_liste_alle_sortierbar)
+#   - Einstellbare Spaltenbreiten (ui_liste_konfiguriere)
+#   - Alle Spalten per Klick sortierbar (ui_liste_konfiguriere)
+#   - Hinweis: Sortierung ist string-lexikografisch, nicht numerisch
 #   - Programmatische Sortierung per Button
 #   - Zeile aktualisieren per Button (ui_liste_zeile_setze)
 #   - Zelle aktualisieren per Button (ui_liste_zelle_setze)
@@ -74,11 +75,12 @@ g["hFenster"] = ui_fenster("ListView-Demo — File Browser", 620, 470, 0, nichts
 setze spalten auf ["Name", "Groesse", "Typ"]
 g["liste"] = ui_liste(g["hFenster"], spalten, 10, 10, 598, 260)
 
-# Spaltenbreiten via stdlib-Wrapper (ruft ui_liste_spalte_breite 3x)
-ui_liste_spalten_breiten(g["liste"], [290, 155, 133])
-
-# Alle 3 Spalten sortierbar via stdlib-Wrapper (ruft ui_liste_sortierbar 3x)
-ui_liste_alle_sortierbar(g["liste"], 3)
+# Spaltenbreiten + Sortierbarkeit via Config-Wrapper.
+# Damit ist ui_liste_konfiguriere nicht nur dokumentiert, sondern in der Demo sichtbar.
+setze cfg auf {}
+cfg["breiten"] = [290, 155, 133]
+cfg["sortierbar"] = [wahr, wahr, wahr]
+ui_liste_konfiguriere(g["liste"], cfg)
 
 # Daten einfuellen via stdlib-Wrapper (ruft ui_liste_zeile_hinzu 7x)
 ui_liste_fuellen(g["liste"], datei_daten)
@@ -106,9 +108,7 @@ g["lbl_status"] = ui_label(g["hFenster"], "Bereit — Spalten-Klick sortiert ebe
 ui_trenner(g["hFenster"], 10, 378, 598, 4)
 ui_knopf(g["hFenster"], "Beenden", 498, 390, 110, 30, app_beenden)
 
-ui_label(g["hFenster"],
-    "Tipp: Spalten-Header anklicken um zu sortieren.",
-    10, 392, 480, 20)
+ui_label(g["hFenster"], "Tipp: Spalten-Header anklicken um zu sortieren.", 10, 392, 480, 20)
 
 
 ui_zeige(g["hFenster"])
