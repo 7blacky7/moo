@@ -223,6 +223,9 @@ fn link_ui_linux() {
     // cairo wird direkt von moo_ui_gtk.c (Leinwand/Zeichner-API) benoetigt —
     // gtk+-3.0 zieht es zwar transitiv, der Linker will es aber explizit.
     let _cairo = pkg_config::Config::new().probe("cairo");
+    // gdk-pixbuf wird direkt von moo_ui_gtk.c (Snapshot-API, Plan-004 P2)
+    // benoetigt; gtk+-3.0 zieht es transitiv, der Linker will es explizit.
+    let _pixbuf = pkg_config::Config::new().probe("gdk-pixbuf-2.0");
 
     if gtk.is_err() || ind.is_err() {
         // Fallback-Liste (alte Hard-Codings).

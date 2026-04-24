@@ -1647,6 +1647,102 @@ MooValue moo_ui_widget_suche(MooValue fenster, MooValue id_string) {
     return ctx.treffer ? wrap_widget(ctx.treffer) : moo_none();
 }
 
+/* ================================================================== *
+ * Plan-004 P2: Test-/Debug-API Snapshot (PNG)
+ *
+ * Nur PNG, nur bei sichtbarem + realisiertem Widget. Hintergrund-/Alpha-
+ * Verhalten wie im Header beschrieben (GTK: Client-Area ohne WM-Decor,
+ * opak). Fehlerfall → g_warning + MOO_FALSE.
+ * ================================================================== */
+
+/* Speichert einen Ausschnitt einer GdkWindow als PNG. Liefert gboolean. */
+static gboolean snapshot_region_to_png(GdkWindow* win,
+                                       gint src_x, gint src_y,
+                                       gint width, gint height,
+                                       const char* pfad) {
+    if (!win || !pfad || width <= 0 || height <= 0) {
+        g_warning("moo_ui_test_snapshot: ungueltige Parameter (win=%p, pfad=%p, %dx%d)",
+                  (void*)win, (void*)pfad, width, height);
+        return FALSE;
+    }
+    GdkPixbuf* pb = gdk_pixbuf_get_from_window(win, src_x, src_y, width, height);
+    if (!pb) {
+        g_warning("moo_ui_test_snapshot: gdk_pixbuf_get_from_window liefert NULL "
+                  "(Fenster nicht gemappt oder nicht erfassbar).");
+        return FALSE;
+    }
+    GError* err = NULL;
+    gboolean ok = gdk_pixbuf_save(pb, pfad, "png", &err, NULL);
+    g_object_unref(pb);
+    if (!ok) {
+        g_warning("moo_ui_test_snapshot: gdk_pixbuf_save(%s) fehlgeschlagen: %s",
+                  pfad, err ? err->message : "unbekannt");
+        if (err) g_error_free(err);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+MooValue moo_ui_test_snapshot(MooValue fenster, MooValue pfad) {
+    GtkWidget* w = unwrap_widget(fenster);
+    if (!w) {
+        g_warning("moo_ui_test_snapshot: ungueltiges Fenster-Handle.");
+        return moo_bool(0);
+    }
+    if (pfad.tag != MOO_STRING || MV_STR(pfad)->chars[0] == '\0') {
+        g_warning("moo_ui_test_snapshot: pfad muss ein nicht-leerer String sein.");
+        return moo_bool(0);
+    }
+    GtkWidget* top = gtk_widget_get_toplevel(w);
+    if (!top || !gtk_widget_is_toplevel(top)) {
+        g_warning("moo_ui_test_snapshot: kein Toplevel-Fenster gefunden.");
+        return moo_bool(0);
+    }
+    if (!gtk_widget_get_realized(top) || !gtk_widget_get_mapped(top)) {
+        g_warning("moo_ui_test_snapshot: Fenster nicht realisiert/gemappt — "
+                  "ui_zeige + ui_pump vor snapshot aufrufen.");
+        return moo_bool(0);
+    }
+    GdkWindow* gwin = gtk_widget_get_window(top);
+    int ww = gtk_widget_get_allocated_width(top);
+    int hh = gtk_widget_get_allocated_height(top);
+    return moo_bool(snapshot_region_to_png(gwin, 0, 0, ww, hh,
+                                           MV_STR(pfad)->chars));
+}
+
+MooValue moo_ui_test_snapshot_widget(MooValue widget, MooValue pfad) {
+    GtkWidget* w = unwrap_widget(widget);
+    if (!w) {
+        g_warning("moo_ui_test_snapshot_widget: ungueltiges Widget-Handle.");
+        return moo_bool(0);
+    }
+    if (pfad.tag != MOO_STRING || MV_STR(pfad)->chars[0] == '\0') {
+        g_warning("moo_ui_test_snapshot_widget: pfad muss ein nicht-leerer String sein.");
+        return moo_bool(0);
+    }
+    if (!gtk_widget_get_realized(w) || !gtk_widget_get_mapped(w)) {
+        g_warning("moo_ui_test_snapshot_widget: Widget nicht realisiert/gemappt.");
+        return moo_bool(0);
+    }
+    GdkWindow* gwin = gtk_widget_get_window(w);
+    if (!gwin) {
+        g_warning("moo_ui_test_snapshot_widget: kein GdkWindow verfuegbar.");
+        return moo_bool(0);
+    }
+    GtkAllocation a;
+    gtk_widget_get_allocation(w, &a);
+    /* Fuer Top-Level (eigener GdkWindow) ist die Client-Area bei (0,0);
+     * fuer Kind-Widgets teilt sich das GdkWindow mit dem Parent und
+     * die Allokation gibt die Position im Parent-Window an. */
+    int src_x = 0, src_y = 0, ww = a.width, hh = a.height;
+    if (!gtk_widget_is_toplevel(w)) {
+        src_x = a.x;
+        src_y = a.y;
+    }
+    return moo_bool(snapshot_region_to_png(gwin, src_x, src_y, ww, hh,
+                                           MV_STR(pfad)->chars));
+}
+
 /* Timer analog moo_tray.c: g_timeout_add_full mit Destroy-Notify. */
 static gboolean ui_timer_tick(gpointer ud) {
     MooValue* cb = (MooValue*)ud;
