@@ -3223,6 +3223,33 @@ impl<'ctx> CodeGen<'ctx> {
                         let p = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_ui_test_snapshot_widget, &[w.into(), p.into()], "ui_test_snapshot_widget");
                     }
+                    "moo_ui_test_klick" | "ui_test_klick" | "test_klick" => {
+                        let w = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_test_klick, &[w.into()], "ui_test_klick");
+                    }
+                    "moo_ui_test_klick_xy" | "ui_test_klick_xy" | "test_klick_xy" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let x = self.compile_expr(&args[1])?;
+                        let y = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_ui_test_klick_xy, &[f.into(), x.into(), y.into()], "ui_test_klick_xy");
+                    }
+                    "moo_ui_test_text_setze" | "ui_test_text_setze" | "test_text_setze" => {
+                        let w = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_test_text_setze, &[w.into(), t.into()], "ui_test_text_setze");
+                    }
+                    "moo_ui_test_shortcut" | "ui_test_shortcut" | "test_shortcut" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let s = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_test_shortcut, &[f.into(), s.into()], "ui_test_shortcut");
+                    }
+                    "moo_ui_test_warte" | "ui_test_warte" | "test_warte" => {
+                        let ms = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_test_warte, &[ms.into()], "ui_test_warte");
+                    }
+                    "moo_ui_test_pump" | "ui_test_pump" | "test_pump" => {
+                        return self.call_rt(self.rt.moo_ui_test_pump, &[], "ui_test_pump");
+                    }
                     "ui_timer_hinzu" | "ui_timer_add" => {
                         let ms = self.compile_expr(&args[0])?;
                         let c = self.compile_expr(&args[1])?;
