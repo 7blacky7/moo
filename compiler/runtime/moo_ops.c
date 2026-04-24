@@ -1,5 +1,11 @@
 #include "moo_runtime.h"
 
+#if defined(_MSC_VER)
+#define MOO_OPTIMIZE_O3
+#else
+#define MOO_OPTIMIZE_O3 __attribute__((optimize("O3")))
+#endif
+
 // Julia-inspirierte Vektor-Operationen: Liste op Zahl, Liste op Liste
 // op_func: Zeiger auf die skalare Operation (rekursionsfrei)
 typedef MooValue (*ScalarOp)(double, double);
@@ -31,7 +37,7 @@ static inline double fast_mul(double a, double b) { return a * b; }
 static inline double fast_div(double a, double b) { return a / b; }
 
 // Schneller Pfad: Liste op Zahl (alle Numbers)
-__attribute__((optimize("O3")))
+MOO_OPTIMIZE_O3
 static MooValue vec_op_fast_scalar(MooList* la, double bv, FastOp fop) {
     int32_t len = la->length;
     MooValue result = moo_list_new(len);
@@ -46,7 +52,7 @@ static MooValue vec_op_fast_scalar(MooList* la, double bv, FastOp fop) {
 }
 
 // Schneller Pfad: Liste op Liste (beide nur Numbers)
-__attribute__((optimize("O3")))
+MOO_OPTIMIZE_O3
 static MooValue vec_op_fast_pair(MooList* la, MooList* lb, FastOp fop) {
     int32_t len = la->length < lb->length ? la->length : lb->length;
     MooValue result = moo_list_new(len);
