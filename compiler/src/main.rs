@@ -474,9 +474,6 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         "-lsqlite3".to_string(),
         "-lSDL2".to_string(),
         "-lSDL2_image".to_string(),
-        "-lGL".to_string(),
-        "-lvulkan".to_string(),
-        "-lglfw".to_string(),
         "-lappindicator3".to_string(),
         "-ldbusmenu-glib".to_string(),
         "-lgtk-3".to_string(),
@@ -487,6 +484,20 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         "-lcairo".to_string(),
         "-lgdk_pixbuf-2.0".to_string(),
     ];
+
+    // 3D-Backend-Libs — nur wenn ein 3D-Feature aktiv ist (analog build.rs).
+    // moo_ui-only Build (ohne gl33/gl21/vulkan) linkt kein GL/Vulkan/GLFW.
+    #[cfg(any(feature = "gl21", feature = "gl33"))]
+    {
+        link_args.push("-lGL".to_string());
+        link_args.push("-lglfw".to_string());
+    }
+    #[cfg(feature = "vulkan")]
+    {
+        link_args.push("-lvulkan".to_string());
+        #[cfg(not(any(feature = "gl21", feature = "gl33")))]
+        link_args.push("-lglfw".to_string());
+    }
 
     // Linker-Script: -T kernel.ld
     if let Some(script) = linker_script {
