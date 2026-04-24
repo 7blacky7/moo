@@ -73,30 +73,53 @@ jobs:
       # ---------------------------------------------------------------------
       # Plattform-spezifische System-Dependencies
       # ---------------------------------------------------------------------
-      - name: Install Linux deps (GTK3, LLVM, SDL2, curl, sqlite)
+      - name: Install Linux deps (GTK3, LLVM 18, SDL2, curl, sqlite)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
+          # WICHTIG: LLVM-Version muss zu `features = ["llvm18-1"]` in
+          # compiler/Cargo.toml passen (llvm-sys 181). Die Default-LLVM auf
+          # ubuntu-latest ist v14 — wir brauchen explizit v18.
           sudo apt-get install -y \
-            llvm-dev libpolly-14-dev libclang-14-dev \
+            llvm-18-dev libpolly-18-dev libclang-18-dev \
             libgtk-3-dev libappindicator3-dev \
             libsdl2-dev libsdl2-image-dev \
             libcurl4-openssl-dev libsqlite3-dev \
             pkg-config
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+          echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> $GITHUB_ENV
 
-      - name: Install Windows deps (LLVM, SDL2, sqlite, curl)
+      # Windows: Choco-LLVM liefert KEINE statischen Dev-Libs, die llvm-sys
+      # zum Linken braucht. KyleMayes/install-llvm-action@v2 installiert eine
+      # Pre-Built-Distribution mit vollstaendigen LLVM-Dev-Libs.
+      - name: Install LLVM 18 (Windows, via install-llvm-action)
+        if: matrix.os == 'windows-latest'
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "18.1.8"
+          directory: ${{ runner.temp }}/llvm
+          env: true  # setzt LLVM_PATH und LIBCLANG_PATH automatisch
+
+      - name: Install Windows deps (SDL2, sqlite, curl + LLVM-Env)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          # LLVM via Chocolatey (inkwell braucht libclang). Version muss zu
-          # `features = ["llvm18-1"]` in compiler/Cargo.toml passen.
-          choco install -y llvm --version=18.1.8 --allow-downgrade
+          # LLVM wurde im vorherigen Step via install-llvm-action installiert.
+          # LLVM_SYS_181_PREFIX muss auf dessen Install-Root zeigen. Layout
+          # kurz loggen, damit bei Fehlern sofort sichtbar ist wo die libs liegen.
+          $llvmRoot = "${{ runner.temp }}/llvm"
+          Write-Host "=== LLVM Install-Layout (${llvmRoot}) ==="
+          Get-ChildItem -Path $llvmRoot | Format-Table
+          if (Test-Path "$llvmRoot/lib") {
+            Write-Host "=== LLVM lib/ (erste 20 Eintraege) ==="
+            Get-ChildItem -Path "$llvmRoot/lib" | Select-Object -First 20 | Format-Table
+          }
+          echo "LLVM_SYS_181_PREFIX=$llvmRoot" >> $env:GITHUB_ENV
+
           # SDL2 + SDL2_image + curl + sqlite via vcpkg.
           # vcpkg ist auf windows-latest vorinstalliert unter $env:VCPKG_INSTALLATION_ROOT.
           vcpkg install --triplet x64-windows `
             sdl2 sdl2-image curl sqlite3
-          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
-          echo "LLVM_SYS_181_PREFIX=C:\Program Files\LLVM" >> $env:GITHUB_ENV
           echo "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
           # vcpkg-Includes und Libs fuer den C-Build bereitstellen
           echo "INCLUDE=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\include;$env:INCLUDE" >> $env:GITHUB_ENV
@@ -114,6 +137,15 @@ jobs:
           echo "LIBCLANG_PATH=$(brew --prefix llvm@18)/lib" >> $GITHUB_ENV
           echo "LLVM_SYS_181_PREFIX=$(brew --prefix llvm@18)" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig:$(brew --prefix llvm@18)/lib/pkgconfig" >> $GITHUB_ENV
+          # SDL2-Header liegen unter $(brew --prefix sdl2)/include, aber der
+          # cc-Build fuer runtime/moo_graphics.c setzt kein -I dort. Via CPATH
+          # und LIBRARY_PATH exposen, damit #include <SDL2/SDL.h> aufloest und
+          # der Linker libSDL2 findet.
+          SDL2_PREFIX="$(brew --prefix sdl2)"
+          SDL2_IMAGE_PREFIX="$(brew --prefix sdl2_image)"
+          echo "CPATH=${SDL2_PREFIX}/include:${SDL2_IMAGE_PREFIX}/include:${CPATH}" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=${SDL2_PREFIX}/lib:${SDL2_IMAGE_PREFIX}/lib:${LIBRARY_PATH}" >> $GITHUB_ENV
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I${SDL2_PREFIX}/include -I${SDL2_IMAGE_PREFIX}/include" >> $GITHUB_ENV
 
       # ---------------------------------------------------------------------
       # Rust Toolchain
