@@ -1,5 +1,6 @@
 # ============================================================
 # stdlib/ui_test.moo — Snapshot-Wrapper + JSON-Sidecar (Plan-004 P2)
+#                      + Automation-Wrapper + Frame-Metadaten (Plan-004 P3)
 #
 # Ergaenzt die nativen Snapshot-Builtins (Runtime-Seite):
 #     ui_test_snapshot(fenster, pfad)            -> bool
@@ -18,6 +19,13 @@
 # Oeffentliche API:
 #   ui_test_snapshot_mit_sidecar(fenster, pfad_basis) -> bool
 #   ui_test_snapshot_serie(fenster, ordner, prefix, frames, abstand_ms)
+#
+# Automation-Wrapper (Plan-004 P3):
+#   ui_test_klick_id(fenster, id)                    -> bool
+#   ui_test_text_setze_id(fenster, id, text)         -> bool
+#   ui_test_aktion(fenster, aktion_dict)             -> MooDict (Report)
+#   ui_test_frame(fenster, pfad_basis, aktion_dict)  -> bool (PNG+JSON)
+#   ui_test_sequenz(fenster, ordner, aktionen_liste) -> Liste (Reports)
 #
 # Runtime-Limit-Beachtung:
 #   - Bracket-Syntax d["k"] statt Dot (pointer-tagged MooValues).
@@ -237,3 +245,188 @@ funktion ui_test_snapshot_serie(fenster, ordner, prefix, frames, abstand_ms):
             setze nichts_tun auf 0
         setze i auf i + 1
     gib_zurück ok_count
+
+
+# ============================================================
+# Plan-004 P3: Automation-Wrapper + Frame-Metadaten
+# ============================================================
+
+# Sucht Widget via id im Fenster-Baum und klickt es.
+# Rueckgabe: wahr/falsch.
+funktion ui_test_klick_id(fenster, id):
+    setze w auf ui_widget_suche(fenster, id)
+    wenn w == nichts:
+        gib_zurück falsch
+    gib_zurück ui_test_klick(w)
+
+
+# Sucht Widget via id im Fenster-Baum und setzt Text-Inhalt.
+# Rueckgabe: wahr/falsch.
+funktion ui_test_text_setze_id(fenster, id, text):
+    setze w auf ui_widget_suche(fenster, id)
+    wenn w == nichts:
+        gib_zurück falsch
+    gib_zurück ui_test_text_setze(w, text)
+
+
+# Fuehrt EINE Aktion aus und liefert MooDict mit:
+#   action           — ausgefuehrter Typ
+#   target           — id, [x,y] oder Sequenz-String (je Typ)
+#   erfolg           — wahr/falsch
+#   zeitstempel      — zeit_ms() direkt nach Ausfuehrung
+#   widget_tree_nach — ui_widget_baum(fenster) nach Aktion
+#
+# aktion_dict-Schemas je Typ:
+#   { "action":"klick",    "target":<id> }
+#   { "action":"klick_xy", "x":<num>, "y":<num> }
+#   { "action":"text",     "target":<id>, "wert":<str> }
+#   { "action":"shortcut", "sequenz":<str> }
+#   { "action":"warte",    "ms":<num> }
+#   { "action":"pump" }
+funktion ui_test_aktion(fenster, aktion_dict):
+    setze aktion auf aktion_dict["action"]
+    setze erfolg auf falsch
+    setze target auf nichts
+
+    wenn aktion == "klick":
+        setze target auf aktion_dict["target"]
+        setze erfolg auf ui_test_klick_id(fenster, target)
+    sonst wenn aktion == "klick_xy":
+        setze px auf aktion_dict["x"]
+        setze py auf aktion_dict["y"]
+        setze target auf [px, py]
+        setze erfolg auf ui_test_klick_xy(fenster, px, py)
+    sonst wenn aktion == "text":
+        setze target auf aktion_dict["target"]
+        setze wert auf aktion_dict["wert"]
+        setze erfolg auf ui_test_text_setze_id(fenster, target, wert)
+    sonst wenn aktion == "shortcut":
+        setze target auf aktion_dict["sequenz"]
+        setze erfolg auf ui_test_shortcut(fenster, target)
+    sonst wenn aktion == "warte":
+        setze target auf aktion_dict["ms"]
+        ui_test_warte(target)
+        setze erfolg auf wahr
+    sonst wenn aktion == "pump":
+        ui_test_pump()
+        setze erfolg auf wahr
+    sonst wenn aktion == "frame":
+        # "frame"-Aktion wird durch ui_test_frame bereits ausserhalb
+        # dieser Funktion behandelt. Hier als No-Op (Rueckgabe wahr),
+        # damit der Aktion-Block im Sidecar trotzdem typ=frame liefert.
+        setze target auf __uit_feld(aktion_dict, "target", nichts)
+        setze erfolg auf wahr
+
+    # Nach jeder Aktion einmal pumpen, damit deferred Relayout/Redraw
+    # den Widget-Baum in einen konsistenten Zustand bringt.
+    ui_test_pump()
+
+    setze ergebnis auf {}
+    setze ergebnis["action"] auf aktion
+    setze ergebnis["target"] auf target
+    setze ergebnis["erfolg"] auf erfolg
+    setze ergebnis["zeitstempel"] auf boden(zeit_ms())
+    setze baum auf ui_widget_baum(fenster)
+    wenn baum == nichts:
+        setze baum auf []
+    setze ergebnis["widget_tree_nach"] auf baum
+    gib_zurück ergebnis
+
+
+# Fuehrt eine Aktion aus UND schreibt PNG + Sidecar-JSON. Die Sidecar-
+# JSON enthaelt zusaetzlich zu den Feldern von ui_test_snapshot_mit_sidecar
+# einen "action"-Block mit { typ, target, erfolg, zeitstempel_ms } der
+# ausgefuehrten Aktion. widget_tree enthaelt den Zustand NACH der Aktion.
+# Rueckgabe: wahr wenn PNG+JSON geschrieben.
+funktion ui_test_frame(fenster, pfad_basis, aktion_dict):
+    setze erg auf ui_test_aktion(fenster, aktion_dict)
+
+    setze png_pfad auf pfad_basis + ".png"
+    setze json_pfad auf pfad_basis + ".json"
+
+    setze ok auf ui_test_snapshot(fenster, png_pfad)
+    wenn ok != wahr:
+        gib_zurück falsch
+
+    setze info auf ui_widget_info(fenster)
+    setze fenster_titel auf __uit_feld(info, "text", "")
+    setze wb auf __uit_feld(info, "b", 0)
+    setze wh auf __uit_feld(info, "h", 0)
+
+    setze baum auf erg["widget_tree_nach"]
+
+    setze ts_unix auf datei_mtime(png_pfad)
+    wenn ts_unix < 0:
+        setze ts_unix auf 0
+    setze ts_iso auf __uit_iso_puffer_unix(ts_unix)
+
+    setze backend auf __uit_backend()
+    setze png_name auf __uit_basename(png_pfad)
+
+    setze window_size auf {}
+    setze window_size["b"] auf wb
+    setze window_size["h"] auf wh
+
+    # action-Block (widget_tree_nach wird NICHT dupliziert — liegt
+    # bereits top-level als "widget_tree").
+    setze ablock auf {}
+    setze ablock["typ"] auf erg["action"]
+    setze ablock["target"] auf erg["target"]
+    setze ablock["erfolg"] auf erg["erfolg"]
+    setze ablock["zeitstempel_ms"] auf erg["zeitstempel"]
+
+    setze j auf "{"
+    setze j auf j + "\"fenster_titel\":\"" + __uit_json_esc(fenster_titel) + "\","
+    setze j auf j + "\"timestamp\":\"" + __uit_json_esc(ts_iso) + "\","
+    setze j auf j + "\"timestamp_unix\":" + text(ts_unix) + ","
+    setze j auf j + "\"backend\":\"" + __uit_json_esc(backend) + "\","
+    setze j auf j + "\"scale\":1,"
+    setze j auf j + "\"window_size\":" + __uit_json_any(window_size) + ","
+    setze j auf j + "\"action\":" + __uit_json_any(ablock) + ","
+    setze j auf j + "\"widget_tree\":" + __uit_json_any(baum) + ","
+    setze j auf j + "\"screenshot_path\":\"" + __uit_json_esc(png_name) + "\""
+    setze j auf j + "}"
+
+    gib_zurück datei_schreiben(json_pfad, j)
+
+
+# Fuehrt eine Liste von Aktionen nacheinander aus. Je aktion:
+#   - "frame": ui_test_frame mit a["pfad"] (oder ordner/frame_NNN falls fehlend)
+#   - sonst:   ui_test_aktion
+# Rueckgabe: Liste der Ergebnis-Dicts (ein Eintrag je aktion).
+funktion ui_test_sequenz(fenster, ordner, aktionen_liste):
+    wenn datei_existiert(ordner) != wahr:
+        datei_mkdir(ordner)
+
+    setze ergebnisse auf []
+    setze frame_nr auf 0
+    setze i auf 0
+    setze n auf länge(aktionen_liste)
+    solange i < n:
+        setze a auf aktionen_liste[i]
+        setze aktion auf a["action"]
+        wenn aktion == "frame":
+            setze pfad_basis auf ""
+            wenn a.enthält("pfad"):
+                setze pfad_basis auf a["pfad"]
+            sonst:
+                setze nr auf text(frame_nr + 1000)
+                setze nr auf nr.teilstring(1, länge(nr))
+                setze pfad_basis auf ordner + "/frame_" + nr
+            # Fuer den Sidecar reicht ein Aktion-Dict vom Typ "frame".
+            setze noop auf {}
+            setze noop["action"] auf "frame"
+            setze noop["target"] auf pfad_basis
+            setze ok auf ui_test_frame(fenster, pfad_basis, noop)
+            setze erg auf {}
+            setze erg["action"] auf "frame"
+            setze erg["target"] auf pfad_basis
+            setze erg["erfolg"] auf ok
+            setze erg["zeitstempel"] auf boden(zeit_ms())
+            ergebnisse.hinzufügen(erg)
+            setze frame_nr auf frame_nr + 1
+        sonst:
+            setze erg auf ui_test_aktion(fenster, a)
+            ergebnisse.hinzufügen(erg)
+        setze i auf i + 1
+    gib_zurück ergebnisse
