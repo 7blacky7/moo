@@ -27,11 +27,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install LLVM + GLFW
+      - name: Install LLVM 18 + 3D runtime deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y llvm-dev libpolly-14-dev libclang-14-dev \
-            libglfw3-dev libgl1-mesa-dev pkg-config
+          # Keep LLVM in sync with compiler/Cargo.toml (inkwell llvm18-1 / llvm-sys 181).
+          # Core runtime files built by the compiler also require curl/sqlite/SDL2 headers.
+          sudo apt-get install -y \
+            llvm-18-dev libpolly-18-dev libclang-18-dev \
+            libglfw3-dev libgl1-mesa-dev \
+            libsdl2-dev libsdl2-image-dev \
+            libcurl4-openssl-dev libsqlite3-dev \
+            pkg-config
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+          echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> $GITHUB_ENV
 
       - name: Install Vulkan toolchain
         if: matrix.backend == 'vulkan'
