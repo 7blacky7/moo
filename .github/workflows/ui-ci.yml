@@ -110,7 +110,12 @@ jobs:
         run: |
           $condaPrefix = $env:CONDA_PREFIX
           if (!$condaPrefix) {
-            throw "CONDA_PREFIX is not set after setup-micromamba"
+            $condaPrefix = Join-Path $env:MAMBA_ROOT_PREFIX "envs\moo-llvm"
+          }
+          if (!(Test-Path $condaPrefix)) {
+            Write-Host "CONDA_PREFIX=$env:CONDA_PREFIX"
+            Write-Host "MAMBA_ROOT_PREFIX=$env:MAMBA_ROOT_PREFIX"
+            throw "Could not locate moo-llvm conda environment"
           }
           $llvmConfig = Join-Path $condaPrefix "Library\bin\llvm-config.exe"
           if (!(Test-Path $llvmConfig)) {
