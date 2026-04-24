@@ -89,42 +89,53 @@ jobs:
           echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
           echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> $GITHUB_ENV
 
-      # Windows: Choco-LLVM liefert KEINE statischen Dev-Libs, die llvm-sys
-      # zum Linken braucht. KyleMayes/install-llvm-action@v2 installiert eine
-      # Pre-Built-Distribution mit vollstaendigen LLVM-Dev-Libs.
-      - name: Install LLVM 18 (Windows, via install-llvm-action)
-        if: matrix.os == 'windows-latest'
-        uses: KyleMayes/install-llvm-action@v2
-        with:
-          version: "18.1.8"
-          directory: ${{ runner.temp }}/llvm
-          env: true  # setzt LLVM_PATH und LIBCLANG_PATH automatisch
-
-      - name: Install Windows deps (SDL2, sqlite, curl + LLVM-Env)
+      # Windows: Der offizielle LLVM-Windows-Installer enthaelt zwar Libraries,
+      # aber kein `llvm-config.exe`. `llvm-sys` braucht zwingend ein echtes
+      # llvm-config. Deshalb nutzen wir vcpkg fuer LLVM + SDL/curl/sqlite.
+      - name: Install Windows deps (LLVM, SDL2, sqlite, curl via vcpkg)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          # LLVM wurde im vorherigen Step via install-llvm-action installiert.
-          # LLVM_SYS_181_PREFIX muss auf dessen Install-Root zeigen. Layout
-          # kurz loggen, damit bei Fehlern sofort sichtbar ist wo die libs liegen.
-          $llvmRoot = "${{ runner.temp }}/llvm"
-          Write-Host "=== LLVM Install-Layout (${llvmRoot}) ==="
-          Get-ChildItem -Path $llvmRoot | Format-Table
-          if (Test-Path "$llvmRoot/lib") {
-            Write-Host "=== LLVM lib/ (erste 20 Eintraege) ==="
-            Get-ChildItem -Path "$llvmRoot/lib" | Select-Object -First 20 | Format-Table
-          }
-          echo "LLVM_SYS_181_PREFIX=$llvmRoot" >> $env:GITHUB_ENV
-
-          # SDL2 + SDL2_image + curl + sqlite via vcpkg.
-          # vcpkg ist auf windows-latest vorinstalliert unter $env:VCPKG_INSTALLATION_ROOT.
+          # vcpkg ist auf windows-latest vorinstalliert unter
+          # $env:VCPKG_INSTALLATION_ROOT. LLVM aus vcpkg liefert ein echtes
+          # llvm-config.exe plus MSVC-kompatible Libraries.
           vcpkg install --triplet x64-windows `
-            sdl2 sdl2-image curl sqlite3
+            llvm sdl2 sdl2-image curl sqlite3
+
+          $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows"
+          $llvmConfigInTools = Join-Path $vcpkgRoot "tools\llvm\llvm-config.exe"
+          $llvmConfigInBin = Join-Path $vcpkgRoot "bin\llvm-config.exe"
+
+          if (!(Test-Path $llvmConfigInTools) -and !(Test-Path $llvmConfigInBin)) {
+            Write-Host "=== vcpkg LLVM tools layout ==="
+            if (Test-Path (Join-Path $vcpkgRoot "tools\llvm")) {
+              Get-ChildItem -Path (Join-Path $vcpkgRoot "tools\llvm") | Format-Table
+            }
+            throw "vcpkg LLVM did not provide llvm-config.exe"
+          }
+
+          # llvm-sys sucht bei LLVM_SYS_181_PREFIX nur unter <prefix>/bin nach
+          # llvm-config(.exe). vcpkg legt Tools oft unter tools/llvm ab. Wenn das
+          # so ist, kopieren wir das echte llvm-config.exe nach bin/; kein Shim.
+          if (!(Test-Path $llvmConfigInBin)) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $vcpkgRoot "bin") | Out-Null
+            Copy-Item $llvmConfigInTools $llvmConfigInBin
+          }
+
+          Write-Host "=== vcpkg LLVM prefix (${vcpkgRoot}) ==="
+          & $llvmConfigInBin --version
+          Write-Host "prefix: $(& $llvmConfigInBin --prefix)"
+          Write-Host "libdir: $(& $llvmConfigInBin --libdir)"
+          Write-Host "includedir: $(& $llvmConfigInBin --includedir)"
+          Write-Host "=== LLVM lib/ (erste 30 Eintraege) ==="
+          Get-ChildItem -Path (Join-Path $vcpkgRoot "lib") | Select-Object -First 30 | Format-Table
+
+          echo "LLVM_SYS_181_PREFIX=$vcpkgRoot" >> $env:GITHUB_ENV
+          echo "LIBCLANG_PATH=$vcpkgRoot\bin" >> $env:GITHUB_ENV
           echo "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
-          # vcpkg-Includes und Libs fuer den C-Build bereitstellen
-          echo "INCLUDE=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\include;$env:INCLUDE" >> $env:GITHUB_ENV
-          echo "LIB=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\lib;$env:LIB" >> $env:GITHUB_ENV
-          echo "PATH=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin;$env:PATH" >> $env:GITHUB_ENV
+          echo "INCLUDE=$vcpkgRoot\include;$env:INCLUDE" >> $env:GITHUB_ENV
+          echo "LIB=$vcpkgRoot\lib;$env:LIB" >> $env:GITHUB_ENV
+          echo "PATH=$vcpkgRoot\bin;$vcpkgRoot\tools\llvm;$env:PATH" >> $env:GITHUB_ENV
 
       - name: Install macOS deps (LLVM, SDL2, sqlite, curl)
         if: matrix.os == 'macos-latest'
