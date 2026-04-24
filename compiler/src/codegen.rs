@@ -3213,6 +3213,16 @@ impl<'ctx> CodeGen<'ctx> {
                         let i = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_ui_widget_suche, &[f.into(), i.into()], "ui_widget_suche");
                     }
+                    "moo_ui_test_snapshot" | "ui_test_snapshot" | "test_snapshot" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let p = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_test_snapshot, &[f.into(), p.into()], "ui_test_snapshot");
+                    }
+                    "moo_ui_test_snapshot_widget" | "ui_test_snapshot_widget" | "test_snapshot_widget" => {
+                        let w = self.compile_expr(&args[0])?;
+                        let p = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_test_snapshot_widget, &[w.into(), p.into()], "ui_test_snapshot_widget");
+                    }
                     "ui_timer_hinzu" | "ui_timer_add" => {
                         let ms = self.compile_expr(&args[0])?;
                         let c = self.compile_expr(&args[1])?;
