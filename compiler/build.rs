@@ -32,21 +32,30 @@ fn main() {
         .file("runtime/moo_crypto.c")
         .file("runtime/moo_db.c")
         .file("runtime/moo_result.c")
-        .file("runtime/moo_graphics.c")
-        .file("runtime/moo_3d.c")
-        .file("runtime/moo_3d_math.c")
         .file("runtime/moo_regex.c")
         .file("runtime/moo_core.c")
         .file("runtime/moo_net.c")
         .file("runtime/moo_web.c")
         .file("runtime/moo_eval.c")
         .file("runtime/moo_profiler.c")
-        .file("runtime/moo_world.c")
-        .file("runtime/moo_sprite.c")
         .include("runtime")
-        .include("/usr/include/SDL2")
         .opt_level(2)
         .flag_if_supported("-fPIC");
+
+    // 3D/Game Runtime-Core nur bauen, wenn ein 3D-Feature aktiv ist.
+    // Sonst ziehen UI-only Builds unnötig SDL/GL/Vulkan/GLFW-Symbole in
+    // libmoo_runtime.a und gelinkte .moo-Programme scheitern trotz
+    // `--no-default-features --features moo_ui`.
+    #[cfg(any(feature = "gl21", feature = "gl33", feature = "vulkan"))]
+    {
+        build
+            .file("runtime/moo_graphics.c")
+            .file("runtime/moo_3d.c")
+            .file("runtime/moo_3d_math.c")
+            .file("runtime/moo_world.c")
+            .file("runtime/moo_sprite.c")
+            .include("/usr/include/SDL2");
+    }
 
     // ========================================================================
     // UI-Modul: Plattform-spezifisches Backend

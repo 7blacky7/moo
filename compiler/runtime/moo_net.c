@@ -338,17 +338,21 @@ void moo_socket_set_timeout(MooValue sock, MooValue ms) {
 // einem Socket landet (oder umgekehrt) was im pthread-mutex Code
 // von moo_thread.c heap-corruption ausloest (tpp.c:83).
 extern void moo_channel_close(MooValue ch);
-extern void moo_window_close(MooValue window);
 extern void moo_db_close(MooValue db);
 extern void moo_db_stmt_close(MooValue stmt);
+
+#if defined(MOO_HAS_GL21) || defined(MOO_HAS_GL33) || defined(MOO_HAS_VULKAN)
+extern void moo_window_close(MooValue window);
 extern void moo_3d_close(MooValue win);
 extern void moo_world_close(MooValue win);
+#endif
 
 void moo_smart_close(MooValue v) {
     switch (v.tag) {
         case MOO_SOCKET:   moo_socket_close(v); break;
         case MOO_DATABASE: moo_db_close(v); break;
         case MOO_DB_STMT:  moo_db_stmt_close(v); break;
+#if defined(MOO_HAS_GL21) || defined(MOO_HAS_GL33) || defined(MOO_HAS_VULKAN)
         case MOO_WINDOW:   moo_window_close(v); break;
         case MOO_WINDOW3D:
             // MOO_WINDOW3D deckt sowohl plain-3D als auch Welt-Engine
@@ -358,6 +362,15 @@ void moo_smart_close(MooValue v) {
             moo_world_close(v);
             moo_3d_close(v);
             break;
+#else
+        case MOO_WINDOW:
+        case MOO_WINDOW3D:
+            // UI-only/stdlib-only Builds enthalten die 2D/3D Runtime nicht.
+            // Dann duerfen diese Tags keine harten Link-Abhaengigkeiten auf
+            // moo_graphics/moo_3d/moo_world erzeugen. No-op ist sicherer als
+            // ein Linker-Fehler; echte 3D-Programme brauchen ein 3D-Feature.
+            break;
+#endif
         default:
             // Channels (MooObject) und alles andere → channel_close
             // (das ignoriert non-channel objects safe).
