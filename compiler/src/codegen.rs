@@ -3010,6 +3010,42 @@ impl<'ctx> CodeGen<'ctx> {
                         let c = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_ui_liste_on_auswahl, &[l.into(), c.into()], "ui_liste_on_auswahl");
                     }
+                    "moo_ui_liste_spalte_breite" | "ui_liste_spalte_breite" | "liste_spalte_breite" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let s = self.compile_expr(&args[1])?;
+                        let b = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_ui_liste_spalte_breite, &[l.into(), s.into(), b.into()], "ui_liste_spalte_breite");
+                    }
+                    "moo_ui_liste_sortierbar" | "ui_liste_sortierbar" | "liste_sortierbar" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let s = self.compile_expr(&args[1])?;
+                        let a = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_ui_liste_sortierbar, &[l.into(), s.into(), a.into()], "ui_liste_sortierbar");
+                    }
+                    "moo_ui_liste_sortiere" | "ui_liste_sortiere" | "liste_sortiere" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let s = self.compile_expr(&args[1])?;
+                        let a = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_ui_liste_sortiere, &[l.into(), s.into(), a.into()], "ui_liste_sortiere");
+                    }
+                    "moo_ui_liste_zeile_setze" | "ui_liste_zeile_setze" | "liste_zeile_setze" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let i = self.compile_expr(&args[1])?;
+                        let z = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_ui_liste_zeile_setze, &[l.into(), i.into(), z.into()], "ui_liste_zeile_setze");
+                    }
+                    "moo_ui_liste_zelle_setze" | "ui_liste_zelle_setze" | "liste_zelle_setze" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let zi = self.compile_expr(&args[1])?;
+                        let si = self.compile_expr(&args[2])?;
+                        let w = self.compile_expr(&args[3])?;
+                        return self.call_rt(self.rt.moo_ui_liste_zelle_setze, &[l.into(), zi.into(), si.into(), w.into()], "ui_liste_zelle_setze");
+                    }
+                    "moo_ui_liste_entferne" | "ui_liste_entferne" | "liste_entferne" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let i = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_liste_entferne, &[l.into(), i.into()], "ui_liste_entferne");
+                    }
                     "ui_slider" => {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_ui_slider, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into(), a[7].into(), a[8].into()], "ui_slider");
@@ -3049,6 +3085,16 @@ impl<'ctx> CodeGen<'ctx> {
                         let l = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_ui_leinwand_anfordern, &[l.into()], "ui_leinwand_anfordern");
                     }
+                    "moo_ui_leinwand_on_maus" | "ui_leinwand_on_maus" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_leinwand_on_maus, &[l.into(), c.into()], "ui_leinwand_on_maus");
+                    }
+                    "moo_ui_leinwand_on_bewegung" | "ui_leinwand_on_bewegung" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_leinwand_on_bewegung, &[l.into(), c.into()], "ui_leinwand_on_bewegung");
+                    }
                     "ui_zeichne_farbe" | "ui_draw_color" | "ui_draw_colour" => {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_ui_zeichne_farbe, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_zeichne_farbe");
@@ -3068,6 +3114,12 @@ impl<'ctx> CodeGen<'ctx> {
                     "ui_zeichne_text" | "ui_draw_text" => {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_ui_zeichne_text, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_zeichne_text");
+                    }
+                    "moo_ui_zeichne_text_breite" | "ui_zeichne_text_breite" | "zeichne_text_breite" => {
+                        let z = self.compile_expr(&args[0])?;
+                        let t = self.compile_expr(&args[1])?;
+                        let g = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_text_breite, &[z.into(), t.into(), g.into()], "ui_zeichne_text_breite");
                     }
                     "ui_zeichne_bild" | "ui_draw_image" => {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
