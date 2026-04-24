@@ -48,6 +48,19 @@
 #include <stdio.h>
 #include <wchar.h>
 
+/* COM / WIC fuer moo_ui_test_snapshot (PNG-Encoder).
+ * COBJMACROS aktiviert die C-Vtable-Aufruf-Makros (IWICImagingFactory_*).
+ * Die GUIDs werden weiter unten als statische Konstanten dupliziert, damit
+ * wir keine zusaetzliche windowscodecs.lib linken muessen (CLSID wird nur
+ * via CoCreateInstance nachgeladen). */
+#define COBJMACROS
+#include <objbase.h>
+#include <wincodec.h>
+
+#ifndef PW_RENDERFULLCONTENT
+#define PW_RENDERFULLCONTENT 0x00000002
+#endif
+
 /* =========================================================================
  * Forward-Decls fuer interne Helfer
  * ========================================================================= */
@@ -2875,6 +2888,240 @@ MooValue moo_ui_widget_suche(MooValue fenster, MooValue id_string) {
 
     if (ctx.hit) return wrap_hwnd(ctx.hit);
     return moo_none();
+}
+
+/* =========================================================================
+ * moo_ui_test_snapshot / moo_ui_test_snapshot_widget
+ *
+ * PNG-Snapshot per PrintWindow → CompatibleBitmap → WIC-PNG-Encoder.
+ *   1. CreateCompatibleDC + CreateCompatibleBitmap auf Client-Size des HWND.
+ *   2. FillRect (COLOR_BTNFACE) — PrintWindow kann Teile leer lassen.
+ *   3. PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT | PW_CLIENTONLY).
+ *   4. Fallback BitBlt(GetDC(hwnd)) falls PrintWindow fehlschlaegt.
+ *   5. WIC: CoCreateInstance(CLSID_WICImagingFactory) →
+ *      CreateBitmapFromHBITMAP → CreateStream(InitializeFromFilename) →
+ *      CreateEncoder(GUID_ContainerFormatPng) → Frame Initialize + SetSize +
+ *      SetPixelFormat(32bppBGRA) + WriteSource + Commit.
+ *
+ * COM wird lazy per CoInitializeEx(APARTMENTTHREADED) initialisiert.
+ * RPC_E_CHANGED_MODE ist kein Fehler (Thread hat bereits eine andere
+ * Initialisierung). CLSIDs/IIDs sind als statische GUIDs dupliziert, damit
+ * wir keine zusaetzliche windowscodecs.lib/uuid.lib linken muessen.
+ * ========================================================================= */
+
+/* GUIDs fuer WIC (identisch zu Windows-SDK-Definitionen). */
+static const GUID MOO_CLSID_WICImagingFactory =
+    { 0xcacaf262, 0x9370, 0x4615,
+      { 0xa1, 0x3b, 0x9f, 0x55, 0x39, 0xda, 0x4c, 0x0a } };
+static const GUID MOO_IID_IWICImagingFactory =
+    { 0xec5ec8a9, 0xc395, 0x4314,
+      { 0x9c, 0x77, 0x54, 0xd7, 0xa9, 0x35, 0xff, 0x70 } };
+static const GUID MOO_GUID_ContainerFormatPng =
+    { 0x1b7cfaf4, 0x713f, 0x473c,
+      { 0xbb, 0xcd, 0x61, 0x37, 0x42, 0x5f, 0xae, 0xaf } };
+static const GUID MOO_GUID_WICPixelFormat32bppBGRA =
+    { 0x6fddc324, 0x4e03, 0x4bfe,
+      { 0xb1, 0x85, 0x3d, 0x77, 0x76, 0x8d, 0xc9, 0x0f } };
+
+static int g_com_inited_for_snapshot = 0;
+
+static void w32_ensure_com(void) {
+    if (g_com_inited_for_snapshot) return;
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    if (SUCCEEDED(hr) || hr == RPC_E_CHANGED_MODE) {
+        g_com_inited_for_snapshot = 1;
+    } else {
+        ui_log("snapshot: CoInitializeEx fehlgeschlagen", NULL);
+    }
+}
+
+/* Speichert ein HBITMAP als PNG nach `wpath` (UTF-16). Rueckgabe: 1 Erfolg,
+ * 0 Fehler. Kein Einfluss auf das HBITMAP — Caller bleibt Eigentuemer. */
+static int w32_save_hbitmap_png(HBITMAP hbmp, const wchar_t* wpath) {
+    if (!hbmp || !wpath) return 0;
+    w32_ensure_com();
+
+    IWICImagingFactory*     factory = NULL;
+    IWICBitmap*             bmp     = NULL;
+    IWICStream*             stream  = NULL;
+    IWICBitmapEncoder*      encoder = NULL;
+    IWICBitmapFrameEncode*  frame   = NULL;
+    int ok = 0;
+    HRESULT hr;
+
+    hr = CoCreateInstance(&MOO_CLSID_WICImagingFactory, NULL,
+                          CLSCTX_INPROC_SERVER,
+                          &MOO_IID_IWICImagingFactory,
+                          (void**)&factory);
+    if (FAILED(hr) || !factory) goto cleanup;
+
+    hr = IWICImagingFactory_CreateBitmapFromHBITMAP(factory, hbmp, NULL,
+                                                    WICBitmapIgnoreAlpha, &bmp);
+    if (FAILED(hr) || !bmp) goto cleanup;
+
+    hr = IWICImagingFactory_CreateStream(factory, &stream);
+    if (FAILED(hr) || !stream) goto cleanup;
+
+    hr = IWICStream_InitializeFromFilename(stream, wpath, GENERIC_WRITE);
+    if (FAILED(hr)) goto cleanup;
+
+    hr = IWICImagingFactory_CreateEncoder(factory, &MOO_GUID_ContainerFormatPng,
+                                          NULL, &encoder);
+    if (FAILED(hr) || !encoder) goto cleanup;
+
+    hr = IWICBitmapEncoder_Initialize(encoder, (IStream*)stream,
+                                      WICBitmapEncoderNoCache);
+    if (FAILED(hr)) goto cleanup;
+
+    hr = IWICBitmapEncoder_CreateNewFrame(encoder, &frame, NULL);
+    if (FAILED(hr) || !frame) goto cleanup;
+
+    hr = IWICBitmapFrameEncode_Initialize(frame, NULL);
+    if (FAILED(hr)) goto cleanup;
+
+    {
+        UINT iw = 0, ih = 0;
+        /* GetSize lebt auf IWICBitmapSource (Basis von IWICBitmap). */
+        hr = IWICBitmapSource_GetSize((IWICBitmapSource*)bmp, &iw, &ih);
+        if (FAILED(hr) || iw == 0 || ih == 0) goto cleanup;
+        hr = IWICBitmapFrameEncode_SetSize(frame, iw, ih);
+        if (FAILED(hr)) goto cleanup;
+    }
+
+    {
+        WICPixelFormatGUID pf = MOO_GUID_WICPixelFormat32bppBGRA;
+        hr = IWICBitmapFrameEncode_SetPixelFormat(frame, &pf);
+        if (FAILED(hr)) goto cleanup;
+    }
+
+    hr = IWICBitmapFrameEncode_WriteSource(frame, (IWICBitmapSource*)bmp, NULL);
+    if (FAILED(hr)) goto cleanup;
+
+    hr = IWICBitmapFrameEncode_Commit(frame);
+    if (FAILED(hr)) goto cleanup;
+
+    hr = IWICBitmapEncoder_Commit(encoder);
+    if (FAILED(hr)) goto cleanup;
+
+    ok = 1;
+
+cleanup:
+    if (frame)   IWICBitmapFrameEncode_Release(frame);
+    if (encoder) IWICBitmapEncoder_Release(encoder);
+    if (stream)  IWICStream_Release(stream);
+    if (bmp)     IWICBitmap_Release(bmp);
+    if (factory) IWICImagingFactory_Release(factory);
+    return ok;
+}
+
+/* Kern: PrintWindow → HBITMAP → PNG. `client_only`=1 schneidet Fenster-
+ * Chrome ab (PW_CLIENTONLY). */
+static int w32_capture_hwnd_png(HWND hwnd, const wchar_t* wpath,
+                                int client_only) {
+    if (!hwnd || !IsWindow(hwnd)) return 0;
+    if (!IsWindowVisible(hwnd))  return 0;
+
+    RECT rc;
+    if (client_only) {
+        if (!GetClientRect(hwnd, &rc)) return 0;
+    } else {
+        if (!GetWindowRect(hwnd, &rc)) return 0;
+        rc.right  -= rc.left;
+        rc.bottom -= rc.top;
+        rc.left = 0;
+        rc.top  = 0;
+    }
+    int w = rc.right;
+    int h = rc.bottom;
+    if (w <= 0 || h <= 0) return 0;
+
+    HDC hdc_ref = GetDC(NULL);
+    if (!hdc_ref) return 0;
+
+    HDC hdc_mem = CreateCompatibleDC(hdc_ref);
+    if (!hdc_mem) {
+        ReleaseDC(NULL, hdc_ref);
+        return 0;
+    }
+
+    HBITMAP bmp = CreateCompatibleBitmap(hdc_ref, w, h);
+    if (!bmp) {
+        DeleteDC(hdc_mem);
+        ReleaseDC(NULL, hdc_ref);
+        return 0;
+    }
+
+    HGDIOBJ old_bmp = SelectObject(hdc_mem, bmp);
+
+    /* Hintergrund fuellen (sonst erscheint nicht gemalter Bereich schwarz
+     * oder zufaellig). COLOR_BTNFACE entspricht dem Default-Fenster-Bg. */
+    {
+        RECT fr = { 0, 0, w, h };
+        FillRect(hdc_mem, &fr, (HBRUSH)(COLOR_BTNFACE + 1));
+    }
+
+    UINT flags = PW_RENDERFULLCONTENT;
+    if (client_only) flags |= PW_CLIENTONLY;
+
+    BOOL rendered = PrintWindow(hwnd, hdc_mem, flags);
+    if (!rendered) {
+        /* Fallback: direkter BitBlt vom Fenster-DC. Funktioniert bei
+         * normalen GDI-Fenstern; bei HW-beschleunigten Composited-Windows
+         * liefert PrintWindow das bessere Ergebnis. */
+        HDC src = client_only ? GetDC(hwnd) : GetWindowDC(hwnd);
+        if (src) {
+            BitBlt(hdc_mem, 0, 0, w, h, src, 0, 0, SRCCOPY);
+            ReleaseDC(hwnd, src);
+            rendered = TRUE;
+        }
+    }
+
+    SelectObject(hdc_mem, old_bmp);
+
+    int saved = 0;
+    if (rendered) {
+        saved = w32_save_hbitmap_png(bmp, wpath);
+    }
+
+    DeleteObject(bmp);
+    DeleteDC(hdc_mem);
+    ReleaseDC(NULL, hdc_ref);
+    return saved;
+}
+
+MooValue moo_ui_test_snapshot(MooValue fenster, MooValue pfad) {
+    HWND h = unwrap_hwnd(fenster);
+    if (!h || !IsWindow(h)) return moo_bool(0);
+
+    const char* p = w32_as_string_or_null(pfad);
+    if (!p || !*p) return moo_bool(0);
+
+    wchar_t* wpath = utf8_to_wide(p);
+    if (!wpath) return moo_bool(0);
+
+    /* Top-Level: Client-Area (ohne Chrome) — Koordinaten kompatibel zu
+     * moo_ui_widget_info fuer Kinder im Fenster. */
+    int ok = w32_capture_hwnd_png(h, wpath, 1);
+    free(wpath);
+    return moo_bool(ok ? 1 : 0);
+}
+
+MooValue moo_ui_test_snapshot_widget(MooValue widget, MooValue pfad) {
+    HWND h = unwrap_hwnd(widget);
+    if (!h || !IsWindow(h)) return moo_bool(0);
+
+    const char* p = w32_as_string_or_null(pfad);
+    if (!p || !*p) return moo_bool(0);
+
+    wchar_t* wpath = utf8_to_wide(p);
+    if (!wpath) return moo_bool(0);
+
+    /* Widget-Rechteck = GetClientRect(h). Bei Child-HWNDs ist
+     * PW_CLIENTONLY quasi No-op (keine Chrome), bei einem uebergebenen
+     * Top-Level-Fenster entspricht das Ergebnis moo_ui_test_snapshot. */
+    int ok = w32_capture_hwnd_png(h, wpath, 1);
+    free(wpath);
+    return moo_bool(ok ? 1 : 0);
 }
 
 /* =========================================================================
