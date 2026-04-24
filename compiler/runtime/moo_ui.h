@@ -613,6 +613,107 @@ MooValue moo_ui_widget_baum(MooValue fenster);
 MooValue moo_ui_widget_suche(MooValue fenster, MooValue id_string);
 
 /* =========================================================================
+ * Test-/Debug-API: Snapshot (Plan-004 P2)
+ *
+ * Nimmt einen PNG-Screenshot von einem Fenster oder einem einzelnen Widget
+ * auf und schreibt ihn als Datei. Diese API gehoert bewusst zur Test-/
+ * Debug-Schicht (Namensraum `ui_test_*`), nicht zur normalen App-API —
+ * Endnutzer-Anwendungen sollen sich nicht selbst fotografieren muessen.
+ * Hauptzweck: Agenten-/KI-Review und visuelle Regressionstests zusammen
+ * mit dem Sidecar-JSON aus der P1-Introspection.
+ *
+ * Format: ausschliesslich PNG. Die Runtime liefert nur das PNG; die
+ * zugehoerige JSON-Sidecar-Erzeugung (aus `ui_widget_baum_json`) laeuft
+ * ueber die stdlib (siehe P1-Review und ui-test-stdlib-p2).
+ *
+ * Sichtbarkeit: Fenster bzw. Widget MUSS sichtbar und realisiert sein
+ * (nach `moo_ui_zeige` plus mindestens ein `moo_ui_pump`-Tick, damit
+ * das Backend das Fenster tatsaechlich gerendert hat). Nicht sichtbare
+ * oder zerstoerte Widgets → falsch.
+ *
+ * Hintergrund/Alpha: Das Backend entscheidet, ob der Fenster-Hintergrund
+ * (Decorations, Desktop) mit-aufgenommen wird oder ein transparenter
+ * Kanal entsteht. Garantiert ist nur: das sichtbare Widget-Rechteck
+ * erscheint pixelgenau im PNG.
+ *   Linux (GTK3) : Client-Area ohne WM-Decorations, opak;
+ *                  transparenter Hintergrund wenn die Oberflaeche alpha hat.
+ *   Windows      : PW_RENDERFULLCONTENT liefert Client-Area opak;
+ *                  GDI+/WIC schreibt 32-bit RGBA-PNG (Alpha = opak).
+ *   macOS        : cacheDisplay in Rect liefert die View inkl. eigener
+ *                  Transparenz; Fenster-Chrome wird nicht mit aufgenommen.
+ *
+ * Fehlerpfad (Rueckgabe MOO_BOOLEAN falsch): ungueltiges Handle, nicht
+ * sichtbar, nicht realisiert, pfad nicht schreibbar, PNG-Encode-Fehler.
+ * ========================================================================= */
+
+/* Schreibt einen PNG-Screenshot eines kompletten Fensters nach `pfad`.
+ *
+ * fenster: Widget-Handle eines Top-Level-Fensters (wie von `moo_ui_fenster`).
+ * pfad:    MOO_STRING mit absolutem oder relativem Dateipfad. Endung
+ *          sollte `.png` sein; der Encoder schreibt unabhaengig davon
+ *          immer PNG. Existiert die Datei, wird sie ueberschrieben.
+ *
+ * Aufnahmebereich: Fenster-Client-Area (siehe Hintergrund/Alpha oben).
+ * Die Koordinaten im PNG entsprechen den Widget-Koordinaten aus
+ * `moo_ui_widget_info` — damit ist die Sidecar-Bounding-Box-Auswertung
+ * direkt auf das PNG anwendbar.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gdk_pixbuf_get_from_window(gdk_window, 0,0, b,h) +
+ *                  gdk_pixbuf_save(pixbuf, pfad, "png", &err, NULL).
+ *   Windows      : CreateCompatibleDC + CreateCompatibleBitmap auf HWND-
+ *                  Client-Size; PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT);
+ *                  WIC (IWICImagingFactory → PNG-Encoder) oder GDI+
+ *                  (Gdiplus::Bitmap::Save mit image/png CLSID); alternativ
+ *                  libpng falls kein WIC verfuegbar.
+ *   macOS        : NSBitmapImageRep* rep =
+ *                    [contentView bitmapImageRepForCachingDisplayInRect:bounds];
+ *                  [contentView cacheDisplayInRect:bounds toBitmapImageRep:rep];
+ *                  NSData* png =
+ *                    [rep representationUsingType:NSBitmapImageFileTypePNG
+ *                                      properties:@{}];
+ *                  [png writeToFile:pfad atomically:YES].
+ *
+ * Liefert MOO_BOOLEAN: wahr bei Erfolg, falsch bei Fehler. */
+MooValue moo_ui_test_snapshot(MooValue fenster, MooValue pfad);
+
+/* Schreibt einen PNG-Screenshot eines einzelnen Widgets (inkl. seiner
+ * Kinder, falls Container) nach `pfad`.
+ *
+ * widget: beliebiges Widget-Handle. Darf ein Fenster sein (dann Verhalten
+ *         wie moo_ui_test_snapshot), ein Container (Rahmen, Tab, Scroll,
+ *         Leinwand-Parent) oder ein Leaf-Widget.
+ * pfad:   MOO_STRING wie bei moo_ui_test_snapshot.
+ *
+ * Aufnahmebereich: das Widget-Rechteck (b x h aus `moo_ui_widget_info`),
+ * gerendert mit dem in diesem Moment sichtbaren Zustand. Ueberlappende
+ * fremde Fenster sind Backend-abhaengig — das Ziel ist die logische
+ * Widget-Darstellung, nicht der Screen-Compositor-Output.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_widget_get_window(w) + gtk_widget_get_allocation(w,&a)
+ *                  → gdk_pixbuf_get_from_window(win, a.x,a.y, a.width,a.height)
+ *                  + gdk_pixbuf_save(... "png" ...). Fuer off-screen-
+ *                  bezogene Widgets (z.B. Leinwand) alternativ ueber
+ *                  gtk_widget_draw(w, cairo_create(surface)) + PNG-Export.
+ *   Windows      : HWND ermitteln, GetClientRect; CreateCompatibleDC +
+ *                  CreateCompatibleBitmap auf diese Groesse;
+ *                  PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT | PW_CLIENTONLY);
+ *                  WIC/GDI+ PNG-Encode wie oben. Fuer Custom-Draw
+ *                  (MooCanvas/STATIC) genuegt PrintWindow, weil der
+ *                  Subclass-Proc WM_PRINTCLIENT weiterreicht.
+ *   macOS        : NSView* v = widget_view; NSRect r = [v bounds];
+ *                  NSBitmapImageRep* rep =
+ *                    [v bitmapImageRepForCachingDisplayInRect:r];
+ *                  [v cacheDisplayInRect:r toBitmapImageRep:rep];
+ *                  [[rep representationUsingType:NSBitmapImageFileTypePNG
+ *                                     properties:@{}]
+ *                     writeToFile:pfad atomically:YES].
+ *
+ * Liefert MOO_BOOLEAN: wahr bei Erfolg, falsch bei Fehler. */
+MooValue moo_ui_test_snapshot_widget(MooValue widget, MooValue pfad);
+
+/* =========================================================================
  * Timer (an den globalen Event-Loop gebunden)
  * ========================================================================= */
 
