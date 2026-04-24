@@ -329,6 +329,15 @@ static LRESULT CALLBACK moo_container_proc(HWND hwnd, UINT msg,
             cb_box_free_prop(hwnd, L"moo-draw");
             cb_box_free_prop(hwnd, L"moo-onclose");
             cb_box_free_prop(hwnd, L"moo-onsel");
+            /* Introspection-Props (Plan-004 P1): wchar_t / char Puffer free(). */
+            {
+                wchar_t* id = (wchar_t*)GetPropW(hwnd, L"moo-id");
+                if (id) { RemovePropW(hwnd, L"moo-id"); free(id); }
+                wchar_t* nm = (wchar_t*)GetPropW(hwnd, L"moo-name");
+                if (nm) { RemovePropW(hwnd, L"moo-name"); free(nm); }
+                char* tp = (char*)GetPropW(hwnd, L"moo-widget-typ");
+                if (tp) { RemovePropW(hwnd, L"moo-widget-typ"); free(tp); }
+            }
             break;
         }
     }
@@ -508,6 +517,15 @@ static LRESULT CALLBACK moo_window_proc(HWND hwnd, UINT msg,
             if (ha) {
                 RemovePropW(hwnd, L"moo-haccel");
                 DestroyAcceleratorTable(ha);
+            }
+            /* Introspection-Props (Plan-004 P1). */
+            {
+                wchar_t* id = (wchar_t*)GetPropW(hwnd, L"moo-id");
+                if (id) { RemovePropW(hwnd, L"moo-id"); free(id); }
+                wchar_t* nm = (wchar_t*)GetPropW(hwnd, L"moo-name");
+                if (nm) { RemovePropW(hwnd, L"moo-name"); free(nm); }
+                char* tp = (char*)GetPropW(hwnd, L"moo-widget-typ");
+                if (tp) { RemovePropW(hwnd, L"moo-widget-typ"); free(tp); }
             }
             break;
         }
@@ -2483,6 +2501,380 @@ MooValue moo_ui_shortcut_loese(MooValue fenster, MooValue sequenz) {
         }
     }
     return moo_bool(0);
+}
+
+/* =========================================================================
+ * Widget-Introspection (Plan-004 P1)
+ *
+ * Implementiert moo_ui_widget_id_setze/_hole, _info, _baum, _suche gemaess
+ * moo_ui.h. Typ-Namen konsistent zu GTK/Cocoa:
+ *   "fenster","knopf","label","eingabe","textbereich","checkbox","radio",
+ *   "dropdown","liste","slider","fortschritt","bild","leinwand",
+ *   "rahmen","trenner","tabs","scroll".
+ * ========================================================================= */
+
+/* Liefert den Widget-Typ als statische UTF-8-Zeichenkette.
+ * Priorisiert einen gesetzten "moo-widget-typ"-Prop (z.B. vom Backend
+ * explizit vergeben); faellt sonst auf Klassenname + Stil-Analyse zurueck. */
+static const char* w32_widget_typ(HWND hwnd) {
+    if (!hwnd || !IsWindow(hwnd)) return "unbekannt";
+
+    /* 1) Explizit gesetzter Prop (UTF-8) hat Vorrang. */
+    char* stored = (char*)GetPropW(hwnd, L"moo-widget-typ");
+    if (stored && *stored) return stored;
+
+    wchar_t cls[64];
+    int n = GetClassNameW(hwnd, cls, (int)(sizeof(cls)/sizeof(cls[0])));
+    if (n <= 0) return "unbekannt";
+
+    LONG style = GetWindowLongW(hwnd, GWL_STYLE);
+
+    if (wcscmp(cls, MOO_WINDOW_CLASS) == 0) return "fenster";
+    if (wcscmp(cls, MOO_CONTAINER_CLASS) == 0) {
+        if (style & (WS_HSCROLL | WS_VSCROLL)) return "scroll";
+        return "rahmen";
+    }
+    if (_wcsicmp(cls, L"BUTTON") == 0) {
+        DWORD t = (DWORD)style & 0x0000000FL;
+        if (t == BS_GROUPBOX)        return "rahmen";
+        if (t == BS_AUTOCHECKBOX ||
+            t == BS_CHECKBOX ||
+            t == BS_3STATE ||
+            t == BS_AUTO3STATE)      return "checkbox";
+        if (t == BS_AUTORADIOBUTTON ||
+            t == BS_RADIOBUTTON)     return "radio";
+        return "knopf";
+    }
+    if (_wcsicmp(cls, L"STATIC") == 0) {
+        DWORD t = (DWORD)style & 0x0000001FL;
+        if (t == SS_OWNERDRAW)                 return "leinwand";
+        if (t == SS_BITMAP || t == SS_ICON)    return "bild";
+        if (t == SS_ETCHEDHORZ ||
+            t == SS_ETCHEDVERT ||
+            t == SS_ETCHEDFRAME)               return "trenner";
+        return "label";
+    }
+    if (_wcsicmp(cls, L"EDIT") == 0) {
+        if (style & ES_MULTILINE) return "textbereich";
+        return "eingabe";
+    }
+    if (_wcsicmp(cls, L"COMBOBOX") == 0)           return "dropdown";
+    if (_wcsicmp(cls, L"SysListView32") == 0)      return "liste";
+    if (_wcsicmp(cls, L"SysTabControl32") == 0)    return "tabs";
+    if (_wcsicmp(cls, L"msctls_trackbar32") == 0)  return "slider";
+    if (_wcsicmp(cls, L"msctls_progress32") == 0)  return "fortschritt";
+    return "unbekannt";
+}
+
+/* Utility: GetWindowTextW → neuer UTF-8-char* (free()), oder NULL wenn leer. */
+static char* w32_window_text_utf8(HWND hwnd) {
+    int n = GetWindowTextLengthW(hwnd);
+    if (n <= 0) return NULL;
+    wchar_t* buf = (wchar_t*)malloc(sizeof(wchar_t) * (size_t)(n + 1));
+    if (!buf) return NULL;
+    GetWindowTextW(hwnd, buf, n + 1);
+    char* u = wide_to_utf8(buf);
+    free(buf);
+    if (!u) return NULL;
+    if (!*u) { free(u); return NULL; }
+    return u;
+}
+
+/* Text-Extraktion je Widget-Typ. Liefert MOO_STRING oder MOO_NONE. */
+static MooValue w32_widget_text(HWND hwnd, const char* typ) {
+    /* Typen OHNE relevanten Text → MOO_NONE. */
+    if (!typ ||
+        strcmp(typ, "liste") == 0 ||
+        strcmp(typ, "slider") == 0 ||
+        strcmp(typ, "fortschritt") == 0 ||
+        strcmp(typ, "dropdown") == 0 ||
+        strcmp(typ, "leinwand") == 0 ||
+        strcmp(typ, "bild") == 0 ||
+        strcmp(typ, "trenner") == 0 ||
+        strcmp(typ, "tabs") == 0 ||
+        strcmp(typ, "scroll") == 0 ||
+        strcmp(typ, "unbekannt") == 0) {
+        return moo_none();
+    }
+    char* u = w32_window_text_utf8(hwnd);
+    if (!u) return moo_none();
+    MooValue rv = moo_string_new(u);
+    free(u);
+    return rv;
+}
+
+/* MOO_STRING-only-Helper. */
+static const char* w32_as_string_or_null(MooValue v) {
+    if (v.tag != MOO_STRING) return NULL;
+    MooString* s = MV_STR(v);
+    if (!s || !s->chars) return NULL;
+    return s->chars;
+}
+
+/* =========================================================================
+ * moo_ui_widget_id_setze / _hole
+ * ========================================================================= */
+
+MooValue moo_ui_widget_id_setze(MooValue widget, MooValue id_string) {
+    HWND h = unwrap_hwnd(widget);
+    if (!h || !IsWindow(h)) return moo_bool(0);
+
+    /* Alte ID freigeben. */
+    wchar_t* old = (wchar_t*)GetPropW(h, L"moo-id");
+    if (old) {
+        RemovePropW(h, L"moo-id");
+        free(old);
+    }
+
+    /* MOO_NONE oder leerer String → nur loeschen. */
+    if (id_string.tag == MOO_NONE) return moo_bool(1);
+    const char* s = w32_as_string_or_null(id_string);
+    if (!s || !*s) return moo_bool(1);
+
+    wchar_t* w = utf8_to_wide(s);
+    if (!w) return moo_bool(0);
+    /* utf8_to_wide liefert bereits eigenen Puffer (malloc) → kein wcsdup. */
+    if (!SetPropW(h, L"moo-id", (HANDLE)w)) {
+        free(w);
+        return moo_bool(0);
+    }
+    return moo_bool(1);
+}
+
+MooValue moo_ui_widget_id_hole(MooValue widget) {
+    HWND h = unwrap_hwnd(widget);
+    if (!h || !IsWindow(h)) return moo_none();
+    wchar_t* w = (wchar_t*)GetPropW(h, L"moo-id");
+    if (!w || !*w) return moo_none();
+    char* u = wide_to_utf8(w);
+    if (!u) return moo_none();
+    MooValue rv = (*u) ? moo_string_new(u) : moo_none();
+    free(u);
+    return rv;
+}
+
+/* =========================================================================
+ * moo_ui_widget_info
+ * ========================================================================= */
+
+/* Berechnet Geometrie in parent-lokalen Koordinaten (fuer Kinder); fuer
+ * Top-Level-Fenster Bildschirmkoordinaten (wie in der Header-Doku). */
+static void w32_widget_geometry(HWND h, int* x, int* y, int* w, int* ht) {
+    RECT r;
+    if (!GetWindowRect(h, &r)) { *x = 0; *y = 0; *w = 0; *ht = 0; return; }
+    *w  = r.right  - r.left;
+    *ht = r.bottom - r.top;
+    HWND parent = GetParent(h);
+    if (parent && (GetWindowLongW(h, GWL_STYLE) & WS_CHILD)) {
+        POINT p = { r.left, r.top };
+        MapWindowPoints(NULL, parent, &p, 1);
+        *x = p.x;
+        *y = p.y;
+    } else {
+        *x = r.left;
+        *y = r.top;
+    }
+}
+
+/* Fuellt ein Info-Dict fuer das Widget. `include_tree_extras` ergaenzt die
+ * Felder "tiefe" und "eltern" fuer moo_ui_widget_baum. */
+static MooValue w32_build_widget_info(HWND h, int include_tree_extras,
+                                      int tiefe, HWND eltern_hwnd) {
+    if (!h || !IsWindow(h)) return moo_none();
+
+    MooValue d = moo_dict_new();
+
+    const char* typ = w32_widget_typ(h);
+    moo_dict_set(d, moo_string_new("typ"), moo_string_new(typ));
+
+    int gx, gy, gw, gh;
+    w32_widget_geometry(h, &gx, &gy, &gw, &gh);
+    moo_dict_set(d, moo_string_new("x"), moo_number((double)gx));
+    moo_dict_set(d, moo_string_new("y"), moo_number((double)gy));
+    moo_dict_set(d, moo_string_new("b"), moo_number((double)gw));
+    moo_dict_set(d, moo_string_new("h"), moo_number((double)gh));
+
+    moo_dict_set(d, moo_string_new("sichtbar"),
+                 moo_bool(IsWindowVisible(h) ? 1 : 0));
+    moo_dict_set(d, moo_string_new("aktiv"),
+                 moo_bool(IsWindowEnabled(h) ? 1 : 0));
+
+    /* ID */
+    wchar_t* wid = (wchar_t*)GetPropW(h, L"moo-id");
+    if (wid && *wid) {
+        char* u = wide_to_utf8(wid);
+        if (u && *u) {
+            moo_dict_set(d, moo_string_new("id"), moo_string_new(u));
+        } else {
+            moo_dict_set(d, moo_string_new("id"), moo_none());
+        }
+        free(u);
+    } else {
+        moo_dict_set(d, moo_string_new("id"), moo_none());
+    }
+
+    /* text */
+    moo_dict_set(d, moo_string_new("text"), w32_widget_text(h, typ));
+
+    /* name: backend-spezifischer Fallback-Name (moo-name-Prop ODER
+     * Klassenname+Control-ID). */
+    {
+        MooValue name_v;
+        wchar_t* wnm = (wchar_t*)GetPropW(h, L"moo-name");
+        if (wnm && *wnm) {
+            char* u = wide_to_utf8(wnm);
+            name_v = (u && *u) ? moo_string_new(u) : moo_none();
+            free(u);
+        } else {
+            /* Klassenname + Ctrl-ID (HMENU) als heuristischer Name. */
+            wchar_t cls[64];
+            int cn = GetClassNameW(h, cls, 64);
+            if (cn > 0) {
+                LONG_PTR cid = GetWindowLongPtrW(h, GWLP_ID);
+                wchar_t wbuf[96];
+                _snwprintf(wbuf, 96, L"%ls#%ld", cls, (long)cid);
+                wbuf[95] = 0;
+                char* u = wide_to_utf8(wbuf);
+                name_v = (u && *u) ? moo_string_new(u) : moo_none();
+                free(u);
+            } else {
+                name_v = moo_none();
+            }
+        }
+        moo_dict_set(d, moo_string_new("name"), name_v);
+    }
+
+    if (include_tree_extras) {
+        moo_dict_set(d, moo_string_new("tiefe"), moo_number((double)tiefe));
+        MooValue eltern_v = moo_none();
+        if (eltern_hwnd && IsWindow(eltern_hwnd)) {
+            wchar_t* eid = (wchar_t*)GetPropW(eltern_hwnd, L"moo-id");
+            if (eid && *eid) {
+                char* u = wide_to_utf8(eid);
+                if (u && *u) eltern_v = moo_string_new(u);
+                free(u);
+            }
+        }
+        moo_dict_set(d, moo_string_new("eltern"), eltern_v);
+    }
+
+    return d;
+}
+
+MooValue moo_ui_widget_info(MooValue widget) {
+    HWND h = unwrap_hwnd(widget);
+    if (!h || !IsWindow(h)) return moo_none();
+    return w32_build_widget_info(h, 0, 0, NULL);
+}
+
+/* =========================================================================
+ * moo_ui_widget_baum — pre-order Traversal via EnumChildWindows
+ * ========================================================================= */
+
+typedef struct {
+    MooValue list;   /* MOO_LIST mit Widget-Infos */
+    HWND     root;   /* fuer Tiefen-Berechnung */
+} W32TreeCtx;
+
+/* Liefert Baum-Tiefe eines HWND relativ zu `root` (0 = root selbst). */
+static int w32_depth_from(HWND node, HWND root) {
+    int d = 0;
+    HWND cur = node;
+    while (cur && cur != root) {
+        HWND p = GetParent(cur);
+        if (!p) return -1;
+        cur = p;
+        d++;
+        if (d > 1024) return -1;  /* Cycle-Guard */
+    }
+    return (cur == root) ? d : -1;
+}
+
+/* EnumChildWindows-Callback: listet ALLE Nachkommen (nicht nur Direct
+ * Children). Reihenfolge von EnumChildWindows ist Z-Order → pre-order-
+ * aehnlich; fuer unsere Zwecke gut genug. */
+static BOOL CALLBACK w32_tree_enum(HWND child, LPARAM lp) {
+    W32TreeCtx* ctx = (W32TreeCtx*)lp;
+    int tiefe = w32_depth_from(child, ctx->root);
+    if (tiefe < 1) return TRUE;  /* sollte nicht passieren */
+    HWND eltern = GetParent(child);
+    MooValue info = w32_build_widget_info(child, 1, tiefe, eltern);
+    if (info.tag == MOO_DICT) {
+        moo_list_append(ctx->list, info);
+    } else {
+        moo_release(info);
+    }
+    return TRUE;
+}
+
+MooValue moo_ui_widget_baum(MooValue fenster) {
+    HWND h = unwrap_hwnd(fenster);
+    if (!h || !IsWindow(h)) return moo_none();
+
+    MooValue list = moo_list_new(16);
+
+    /* Wurzel-Eintrag (tiefe=0, eltern=MOO_NONE). */
+    MooValue root_info = w32_build_widget_info(h, 1, 0, NULL);
+    if (root_info.tag == MOO_DICT) {
+        moo_list_append(list, root_info);
+    } else {
+        moo_release(root_info);
+    }
+
+    W32TreeCtx ctx;
+    ctx.list = list;
+    ctx.root = h;
+    EnumChildWindows(h, w32_tree_enum, (LPARAM)&ctx);
+
+    return list;
+}
+
+/* =========================================================================
+ * moo_ui_widget_suche — erster pre-order Treffer mit passender ID
+ * ========================================================================= */
+
+typedef struct {
+    const wchar_t* target;  /* UTF-16 */
+    HWND           hit;
+} W32SearchCtx;
+
+static BOOL CALLBACK w32_search_enum(HWND child, LPARAM lp) {
+    W32SearchCtx* ctx = (W32SearchCtx*)lp;
+    wchar_t* wid = (wchar_t*)GetPropW(child, L"moo-id");
+    if (wid && wcscmp(wid, ctx->target) == 0) {
+        ctx->hit = child;
+        return FALSE;  /* stop */
+    }
+    return TRUE;
+}
+
+MooValue moo_ui_widget_suche(MooValue fenster, MooValue id_string) {
+    HWND h = unwrap_hwnd(fenster);
+    if (!h || !IsWindow(h)) return moo_none();
+
+    const char* s = w32_as_string_or_null(id_string);
+    if (!s || !*s) return moo_none();
+
+    wchar_t* target = utf8_to_wide(s);
+    if (!target) return moo_none();
+
+    /* Wurzel selbst pruefen (Fenster kann eigene ID haben). */
+    {
+        wchar_t* wid = (wchar_t*)GetPropW(h, L"moo-id");
+        if (wid && wcscmp(wid, target) == 0) {
+            free(target);
+            return wrap_hwnd(h);
+        }
+    }
+
+    W32SearchCtx ctx;
+    ctx.target = target;
+    ctx.hit = NULL;
+    EnumChildWindows(h, w32_search_enum, (LPARAM)&ctx);
+    free(target);
+
+    if (ctx.hit) return wrap_hwnd(ctx.hit);
+    return moo_none();
 }
 
 /* =========================================================================
