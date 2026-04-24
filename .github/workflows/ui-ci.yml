@@ -89,53 +89,60 @@ jobs:
           echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
           echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> $GITHUB_ENV
 
-      # Windows: Der offizielle LLVM-Windows-Installer enthaelt zwar Libraries,
-      # aber kein `llvm-config.exe`. `llvm-sys` braucht zwingend ein echtes
-      # llvm-config. Deshalb nutzen wir vcpkg fuer LLVM + SDL/curl/sqlite.
-      - name: Install Windows deps (LLVM, SDL2, sqlite, curl via vcpkg)
+      # Windows: Der offizielle LLVM-Windows-Installer enthaelt kein
+      # llvm-config.exe, und vcpkg baut LLVM aus Source (zu langsam/instabil).
+      # Deshalb nutzen wir conda-forge fuer eine vorgebaute LLVM-Dev-Distribution
+      # mit echtem llvm-config.exe. vcpkg bleibt nur fuer SDL/curl/sqlite.
+      - name: Install Windows LLVM (conda-forge, real llvm-config)
+        if: matrix.os == 'windows-latest'
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: moo-llvm
+          create-args: >-
+            -c conda-forge
+            llvmdev=18.1.*
+            clangdev=18.1.*
+          cache-environment: true
+
+      - name: Install Windows deps (SDL2, sqlite, curl via vcpkg + LLVM env)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          # vcpkg ist auf windows-latest vorinstalliert unter
-          # $env:VCPKG_INSTALLATION_ROOT. LLVM aus vcpkg liefert ein echtes
-          # llvm-config.exe plus MSVC-kompatible Libraries.
+          $condaPrefix = $env:CONDA_PREFIX
+          if (!$condaPrefix) {
+            throw "CONDA_PREFIX is not set after setup-micromamba"
+          }
+          $llvmConfig = Join-Path $condaPrefix "Libraryin\llvm-config.exe"
+          if (!(Test-Path $llvmConfig)) {
+            $llvmConfig = Join-Path $condaPrefix "bin\llvm-config.exe"
+          }
+          if (!(Test-Path $llvmConfig)) {
+            Write-Host "=== conda prefix layout ==="
+            Get-ChildItem -Path $condaPrefix | Format-Table
+            if (Test-Path (Join-Path $condaPrefix "Libraryin")) {
+              Write-Host "=== Library/bin ==="
+              Get-ChildItem -Path (Join-Path $condaPrefix "Libraryin") | Select-Object -First 80 | Format-Table
+            }
+            throw "conda-forge LLVM did not provide llvm-config.exe"
+          }
+
+          Write-Host "=== conda LLVM prefix (${condaPrefix}) ==="
+          & $llvmConfig --version
+          Write-Host "prefix: $(& $llvmConfig --prefix)"
+          Write-Host "libdir: $(& $llvmConfig --libdir)"
+          Write-Host "includedir: $(& $llvmConfig --includedir)"
+
+          # SDL2 + SDL2_image + curl + sqlite via vcpkg.
           vcpkg install --triplet x64-windows `
-            llvm sdl2 sdl2-image curl sqlite3
+            sdl2 sdl2-image curl sqlite3
 
           $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows"
-          $llvmConfigInTools = Join-Path $vcpkgRoot "tools\llvm\llvm-config.exe"
-          $llvmConfigInBin = Join-Path $vcpkgRoot "bin\llvm-config.exe"
-
-          if (!(Test-Path $llvmConfigInTools) -and !(Test-Path $llvmConfigInBin)) {
-            Write-Host "=== vcpkg LLVM tools layout ==="
-            if (Test-Path (Join-Path $vcpkgRoot "tools\llvm")) {
-              Get-ChildItem -Path (Join-Path $vcpkgRoot "tools\llvm") | Format-Table
-            }
-            throw "vcpkg LLVM did not provide llvm-config.exe"
-          }
-
-          # llvm-sys sucht bei LLVM_SYS_181_PREFIX nur unter <prefix>/bin nach
-          # llvm-config(.exe). vcpkg legt Tools oft unter tools/llvm ab. Wenn das
-          # so ist, kopieren wir das echte llvm-config.exe nach bin/; kein Shim.
-          if (!(Test-Path $llvmConfigInBin)) {
-            New-Item -ItemType Directory -Force -Path (Join-Path $vcpkgRoot "bin") | Out-Null
-            Copy-Item $llvmConfigInTools $llvmConfigInBin
-          }
-
-          Write-Host "=== vcpkg LLVM prefix (${vcpkgRoot}) ==="
-          & $llvmConfigInBin --version
-          Write-Host "prefix: $(& $llvmConfigInBin --prefix)"
-          Write-Host "libdir: $(& $llvmConfigInBin --libdir)"
-          Write-Host "includedir: $(& $llvmConfigInBin --includedir)"
-          Write-Host "=== LLVM lib/ (erste 30 Eintraege) ==="
-          Get-ChildItem -Path (Join-Path $vcpkgRoot "lib") | Select-Object -First 30 | Format-Table
-
-          echo "LLVM_SYS_181_PREFIX=$vcpkgRoot" >> $env:GITHUB_ENV
-          echo "LIBCLANG_PATH=$vcpkgRoot\bin" >> $env:GITHUB_ENV
+          echo "LLVM_SYS_181_PREFIX=$condaPrefix\Library" >> $env:GITHUB_ENV
+          echo "LIBCLANG_PATH=$condaPrefix\Libraryin" >> $env:GITHUB_ENV
           echo "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
-          echo "INCLUDE=$vcpkgRoot\include;$env:INCLUDE" >> $env:GITHUB_ENV
-          echo "LIB=$vcpkgRoot\lib;$env:LIB" >> $env:GITHUB_ENV
-          echo "PATH=$vcpkgRoot\bin;$vcpkgRoot\tools\llvm;$env:PATH" >> $env:GITHUB_ENV
+          echo "INCLUDE=$condaPrefix\Library\include;$vcpkgRoot\include;$env:INCLUDE" >> $env:GITHUB_ENV
+          echo "LIB=$condaPrefix\Library\lib;$vcpkgRoot\lib;$env:LIB" >> $env:GITHUB_ENV
+          echo "PATH=$condaPrefix\Library\bin;$condaPrefix\Scripts;$vcpkgRoot\bin;$env:PATH" >> $env:GITHUB_ENV
 
       - name: Install macOS deps (LLVM, SDL2, sqlite, curl)
         if: matrix.os == 'macos-latest'
