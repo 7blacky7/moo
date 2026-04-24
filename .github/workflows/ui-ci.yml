@@ -112,16 +112,16 @@ jobs:
           if (!$condaPrefix) {
             throw "CONDA_PREFIX is not set after setup-micromamba"
           }
-          $llvmConfig = Join-Path $condaPrefix "Libraryin\llvm-config.exe"
+          $llvmConfig = Join-Path $condaPrefix "Library\bin\llvm-config.exe"
           if (!(Test-Path $llvmConfig)) {
             $llvmConfig = Join-Path $condaPrefix "bin\llvm-config.exe"
           }
           if (!(Test-Path $llvmConfig)) {
             Write-Host "=== conda prefix layout ==="
             Get-ChildItem -Path $condaPrefix | Format-Table
-            if (Test-Path (Join-Path $condaPrefix "Libraryin")) {
+            if (Test-Path (Join-Path $condaPrefix "Library\bin")) {
               Write-Host "=== Library/bin ==="
-              Get-ChildItem -Path (Join-Path $condaPrefix "Libraryin") | Select-Object -First 80 | Format-Table
+              Get-ChildItem -Path (Join-Path $condaPrefix "Library\bin") | Select-Object -First 80 | Format-Table
             }
             throw "conda-forge LLVM did not provide llvm-config.exe"
           }
@@ -138,7 +138,7 @@ jobs:
 
           $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows"
           echo "LLVM_SYS_181_PREFIX=$condaPrefix\Library" >> $env:GITHUB_ENV
-          echo "LIBCLANG_PATH=$condaPrefix\Libraryin" >> $env:GITHUB_ENV
+          echo "LIBCLANG_PATH=$condaPrefix\Library\bin" >> $env:GITHUB_ENV
           echo "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
           echo "INCLUDE=$condaPrefix\Library\include;$vcpkgRoot\include;$env:INCLUDE" >> $env:GITHUB_ENV
           echo "LIB=$condaPrefix\Library\lib;$vcpkgRoot\lib;$env:LIB" >> $env:GITHUB_ENV
