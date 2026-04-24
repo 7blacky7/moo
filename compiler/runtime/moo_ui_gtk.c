@@ -1743,6 +1743,295 @@ MooValue moo_ui_test_snapshot_widget(MooValue widget, MooValue pfad) {
                                            MV_STR(pfad)->chars));
 }
 
+/* ================================================================== *
+ * Test-/Debug-API: Automation (Plan-004 P3)
+ *
+ * Synchrone Bedienung von Widgets fuer Agenten/Tests:
+ *   - Klick (gtk_widget_activate)
+ *   - Klick XY (Allocation-Hit-Test + test_klick bzw. synth. button-press
+ *     auf Leinwand)
+ *   - Text setzen (Entry/TextView/ComboBox)
+ *   - Shortcut-Trigger (gtk_accel_groups_activate)
+ *   - warte (Pump + g_usleep)
+ *   - pump (Queue drain)
+ *
+ * Sichtbarkeits-/Aktiv-Checks nutzen gtk_widget_is_visible /
+ * gtk_widget_is_sensitive (beruecksichtigen Parent-Kette).
+ * ================================================================== */
+
+/* Forward-Declaration: parse_sequence ist weiter unten bei den Shortcuts
+ * implementiert, wird aber bereits hier von moo_ui_test_shortcut benoetigt. */
+static gboolean parse_sequence(const char* seq, guint* out_keyval,
+                               GdkModifierType* out_mods);
+
+static gboolean widget_is_usable(GtkWidget* w) {
+    if (!w) return FALSE;
+    if (!gtk_widget_is_visible(w)) return FALSE;
+    if (!gtk_widget_is_sensitive(w)) return FALSE;
+    return TRUE;
+}
+
+MooValue moo_ui_test_klick(MooValue widget) {
+    GtkWidget* w = unwrap_widget(widget);
+    if (!w) {
+        g_warning("moo_ui_test_klick: ungueltiges Widget-Handle.");
+        return moo_bool(0);
+    }
+    if (!widget_is_usable(w)) {
+        g_warning("moo_ui_test_klick: Widget nicht sichtbar oder nicht aktiv.");
+        return moo_bool(0);
+    }
+    /* Klickbare GTK-Widgets: Button (inkl. Check/Radio) und MenuItem.
+     * gtk_widget_activate feuert clicked/activate SYNCHRON. */
+    if (!GTK_IS_BUTTON(w) && !GTK_IS_MENU_ITEM(w)) {
+        g_warning("moo_ui_test_klick: Widget-Typ unterstuetzt keinen Klick.");
+        return moo_bool(0);
+    }
+    gboolean ok = gtk_widget_activate(w);
+    return moo_bool(ok ? 1 : 0);
+}
+
+/* Rekursiver Allocation-Hit-Test.
+ * Sucht das DEEPEST-Widget an Koordinaten (x,y) relativ zum Toplevel-
+ * Fenster-Content. Rueckgabe: gefundenes Widget (darf Container sein)
+ * oder NULL. Nur sichtbare+sensitive Widgets werden betrachtet. */
+typedef struct {
+    int x, y;           /* Toplevel-Koords (Content-Area) */
+    GtkWidget* hit;     /* Aktuell bestes Match */
+} HitSearch;
+
+static void hit_test_forall_cb(GtkWidget* child, gpointer ud);
+
+static void hit_test_walk(GtkWidget* w, HitSearch* s) {
+    if (!w) return;
+    if (!gtk_widget_get_visible(w)) return;
+    GtkAllocation a;
+    gtk_widget_get_allocation(w, &a);
+    /* Allocation ist in Toplevel-Koords (solange wir vom Toplevel-Content
+     * aus absteigen ohne GdkWindow-Grenzen zu ueberschreiten — bei uns
+     * benutzen alle Kinder das selbe GdkWindow via GtkFixed). */
+    if (s->x < a.x || s->x >= a.x + a.width ||
+        s->y < a.y || s->y >= a.y + a.height) {
+        return;
+    }
+    /* Kandidat: sensitive? */
+    if (gtk_widget_is_sensitive(w)) {
+        s->hit = w;
+    }
+    /* Tiefer gehen, falls Container. */
+    if (GTK_IS_CONTAINER(w)) {
+        gtk_container_forall(GTK_CONTAINER(w), hit_test_forall_cb, s);
+    }
+}
+
+static void hit_test_forall_cb(GtkWidget* child, gpointer ud) {
+    hit_test_walk(child, (HitSearch*)ud);
+}
+
+MooValue moo_ui_test_klick_xy(MooValue fenster, MooValue x, MooValue y) {
+    GtkWidget* win = unwrap_widget(fenster);
+    if (!win || !GTK_IS_WINDOW(win)) {
+        g_warning("moo_ui_test_klick_xy: ungueltiges Fenster-Handle.");
+        return moo_bool(0);
+    }
+    if (!gtk_widget_is_visible(win)) {
+        g_warning("moo_ui_test_klick_xy: Fenster nicht sichtbar.");
+        return moo_bool(0);
+    }
+    int px = num_or(x, -1);
+    int py = num_or(y, -1);
+    if (px < 0 || py < 0) return moo_bool(0);
+
+    /* Startknoten: Content-Fixed (moo-fixed), sonst das Fenster selbst. */
+    GtkWidget* start = (GtkWidget*)g_object_get_data(G_OBJECT(win), "moo-fixed");
+    if (!start) start = win;
+
+    /* Koordinaten sind Content-Area-relativ. Wenn vom Fenster aus gestartet
+     * wird, muessen wir das Menubar-Offset beruecksichtigen — die Fixed-
+     * Allocation sitzt in Fenster-Koords. Wir starten direkt im Fixed und
+     * rechnen Koords in Fixed-Koords um: die Fixed-Kinder haben Allocations
+     * in Fenster-Koords, also addieren wir Fixed.x/y dazu. */
+    GtkAllocation fa;
+    gtk_widget_get_allocation(start, &fa);
+
+    HitSearch s;
+    s.x = px + fa.x;
+    s.y = py + fa.y;
+    s.hit = NULL;
+    hit_test_walk(start, &s);
+    if (!s.hit || s.hit == start) {
+        g_warning("moo_ui_test_klick_xy: kein Widget an (%d,%d) getroffen.",
+                  px, py);
+        return moo_bool(0);
+    }
+
+    /* Leinwand mit on_maus-Bindung: synthetisches button-press-event
+     * dispatchen, damit der registrierte Callback mit lokalen Koords
+     * und taste=1 feuert. */
+    if (GTK_IS_DRAWING_AREA(s.hit) &&
+        g_object_get_data(G_OBJECT(s.hit), "moo-maus-id") != NULL) {
+        GdkWindow* gwin = gtk_widget_get_window(s.hit);
+        if (!gwin) return moo_bool(0);
+        GdkDisplay* disp = gtk_widget_get_display(s.hit);
+        GdkSeat* seat = gdk_display_get_default_seat(disp);
+        GdkDevice* ptr = seat ? gdk_seat_get_pointer(seat) : NULL;
+        GtkAllocation ca;
+        gtk_widget_get_allocation(s.hit, &ca);
+        int lx = s.x - ca.x;
+        int ly = s.y - ca.y;
+
+        GdkEvent* ev = gdk_event_new(GDK_BUTTON_PRESS);
+        ev->button.window = g_object_ref(gwin);
+        ev->button.send_event = TRUE;
+        ev->button.time = GDK_CURRENT_TIME;
+        ev->button.x = (gdouble)lx;
+        ev->button.y = (gdouble)ly;
+        ev->button.axes = NULL;
+        ev->button.state = 0;
+        ev->button.button = 1;
+        ev->button.x_root = (gdouble)lx;
+        ev->button.y_root = (gdouble)ly;
+        if (ptr) gdk_event_set_device(ev, ptr);
+        gtk_main_do_event(ev);
+        gdk_event_free(ev);
+        return moo_bool(1);
+    }
+
+    /* Normal: aktivierbares Widget in der Kette suchen (Button/MenuItem). */
+    GtkWidget* cur = s.hit;
+    while (cur && cur != start) {
+        if (GTK_IS_BUTTON(cur) || GTK_IS_MENU_ITEM(cur)) {
+            if (!widget_is_usable(cur)) return moo_bool(0);
+            return moo_bool(gtk_widget_activate(cur) ? 1 : 0);
+        }
+        cur = gtk_widget_get_parent(cur);
+    }
+    g_warning("moo_ui_test_klick_xy: Widget an (%d,%d) ist nicht klickbar.",
+              px, py);
+    return moo_bool(0);
+}
+
+MooValue moo_ui_test_text_setze(MooValue widget, MooValue text) {
+    GtkWidget* w = unwrap_widget(widget);
+    if (!w) {
+        g_warning("moo_ui_test_text_setze: ungueltiges Widget-Handle.");
+        return moo_bool(0);
+    }
+    if (text.tag != MOO_STRING) {
+        g_warning("moo_ui_test_text_setze: text muss ein String sein.");
+        return moo_bool(0);
+    }
+    if (!widget_is_usable(w)) {
+        g_warning("moo_ui_test_text_setze: Widget nicht sichtbar oder nicht aktiv.");
+        return moo_bool(0);
+    }
+    const char* s = MV_STR(text)->chars;
+
+    if (GTK_IS_ENTRY(w)) {
+        /* "changed" feuert implizit synchron. */
+        gtk_entry_set_text(GTK_ENTRY(w), s);
+        return moo_bool(1);
+    }
+    if (GTK_IS_TEXT_VIEW(w)) {
+        GtkTextBuffer* buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(w));
+        if (!buf) return moo_bool(0);
+        /* "changed" des Buffers feuert synchron im set_text. */
+        gtk_text_buffer_set_text(buf, s, -1);
+        return moo_bool(1);
+    }
+    if (GTK_IS_COMBO_BOX(w)) {
+        /* Text-Suche in der Model-Liste; bei Treffer set_active, was
+         * "changed" synchron feuert. */
+        GtkComboBox* cb = GTK_COMBO_BOX(w);
+        GtkTreeModel* model = gtk_combo_box_get_model(cb);
+        if (!model) return moo_bool(0);
+        GtkTreeIter it;
+        gboolean have = gtk_tree_model_get_iter_first(model, &it);
+        int idx = 0;
+        while (have) {
+            gchar* cell = NULL;
+            gtk_tree_model_get(model, &it, 0, &cell, -1);
+            gboolean match = (cell && !strcmp(cell, s));
+            g_free(cell);
+            if (match) {
+                gtk_combo_box_set_active(cb, idx);
+                return moo_bool(1);
+            }
+            idx++;
+            have = gtk_tree_model_iter_next(model, &it);
+        }
+        g_warning("moo_ui_test_text_setze: Dropdown-Eintrag nicht gefunden: %s", s);
+        return moo_bool(0);
+    }
+    g_warning("moo_ui_test_text_setze: Widget-Typ unterstuetzt kein Text-Setzen.");
+    return moo_bool(0);
+}
+
+MooValue moo_ui_test_shortcut(MooValue fenster, MooValue sequenz) {
+    GtkWidget* win = unwrap_widget(fenster);
+    if (!win || !GTK_IS_WINDOW(win)) {
+        g_warning("moo_ui_test_shortcut: ungueltiges Fenster-Handle.");
+        return moo_bool(0);
+    }
+    if (sequenz.tag != MOO_STRING) {
+        g_warning("moo_ui_test_shortcut: sequenz muss ein String sein.");
+        return moo_bool(0);
+    }
+    if (!gtk_widget_is_visible(win)) {
+        g_warning("moo_ui_test_shortcut: Fenster nicht sichtbar.");
+        return moo_bool(0);
+    }
+
+    guint kv = 0;
+    GdkModifierType mods = 0;
+    if (!parse_sequence(MV_STR(sequenz)->chars, &kv, &mods)) {
+        g_warning("moo_ui_test_shortcut: sequenz nicht parsebar: %s",
+                  MV_STR(sequenz)->chars);
+        return moo_bool(0);
+    }
+    /* Dispatch durch die AccelGroup(s) des Fensters — ruft unseren
+     * on_accel_trampoline synchron auf, ohne synthetische Key-Events. */
+    gboolean ok = gtk_accel_groups_activate(G_OBJECT(win), kv, mods);
+    if (!ok) {
+        g_warning("moo_ui_test_shortcut: keine aktive Bindung fuer %s.",
+                  MV_STR(sequenz)->chars);
+    }
+    return moo_bool(ok ? 1 : 0);
+}
+
+MooValue moo_ui_test_warte(MooValue millisekunden) {
+    ensure_gtk();
+    int ms = num_or(millisekunden, 0);
+    /* <=0 → nur einmal pumpen, analog test_pump. */
+    if (ms <= 0) {
+        while (gtk_events_pending()) gtk_main_iteration_do(FALSE);
+        return moo_bool(1);
+    }
+    gint64 start = g_get_monotonic_time();   /* mikros */
+    gint64 end   = start + (gint64)ms * 1000;
+    while (g_get_monotonic_time() < end) {
+        /* Abbruch wenn moo_ui_beenden gerufen wurde (Loop bereits ended). */
+        if (gtk_main_level() == 0 && g_open_windows == 0 && g_active_trays == 0) {
+            /* Kein aktiver Loop, kein Grund weiterzuwarten. */
+            break;
+        }
+        int did = 0;
+        while (gtk_events_pending()) {
+            gtk_main_iteration_do(FALSE);
+            did = 1;
+            if (g_get_monotonic_time() >= end) break;
+        }
+        if (!did) g_usleep(1000);   /* 1 ms */
+    }
+    return moo_bool(1);
+}
+
+MooValue moo_ui_test_pump(void) {
+    ensure_gtk();
+    while (gtk_events_pending()) gtk_main_iteration_do(FALSE);
+    return moo_bool(1);
+}
+
 /* Timer analog moo_tray.c: g_timeout_add_full mit Destroy-Notify. */
 static gboolean ui_timer_tick(gpointer ud) {
     MooValue* cb = (MooValue*)ud;
