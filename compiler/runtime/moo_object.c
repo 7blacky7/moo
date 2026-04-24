@@ -22,6 +22,22 @@ static int32_t find_property(MooObject* obj, const char* name) {
 }
 
 MooValue moo_object_get(MooValue obj_val, const char* prop) {
+    // Dot-Access-Aequivalenz: g.key soll auch auf Dicts funktionieren.
+    // Ohne Tag-Dispatch wuerde MV_OBJ(dict) den MooDict*-Pointer als
+    // MooObject* fehlinterpretieren und beim Lesen der prop_count/
+    // properties-Felder in Garbage laufen (Segfault), besonders wenn der
+    // Dict pointer-tagged MooValues (HWND/GtkWidget/fn-Handle) enthaelt.
+    // Siehe moo_index_get fuer das analoge Dispatch-Muster.
+    if (obj_val.tag == MOO_DICT) {
+        MooValue key = moo_string_new(prop);
+        MooValue result = moo_dict_get(obj_val, key);
+        // moo_dict_get uebernimmt die key-Ref (transfer), wir muessen
+        // nichts mehr freigeben.
+        return result;
+    }
+    if (obj_val.tag != MOO_OBJECT) {
+        return moo_none();
+    }
     MooObject* obj = MV_OBJ(obj_val);
     int32_t idx = find_property(obj, prop);
     if (idx >= 0) {
@@ -39,6 +55,20 @@ MooValue moo_object_get(MooValue obj_val, const char* prop) {
 }
 
 void moo_object_set(MooValue obj_val, const char* prop, MooValue value) {
+    // Dot-Access-Aequivalenz: g.key = v soll auch auf Dicts funktionieren.
+    // Sonst wuerde MV_OBJ(dict) in frozen/prop_count/properties-Feldern
+    // am falschen Offset lesen und in moo_dict_set/-writes crashen.
+    if (obj_val.tag == MOO_DICT) {
+        MooValue key = moo_string_new(prop);
+        // moo_dict_set uebernimmt Ownership von key und value (transfer).
+        moo_dict_set(obj_val, key, value);
+        return;
+    }
+    if (obj_val.tag != MOO_OBJECT) {
+        // Unbekannter Typ — value-Ref freigeben (Caller hatte transferiert)
+        moo_release(value);
+        return;
+    }
     MooObject* obj = MV_OBJ(obj_val);
     if (obj->frozen) { moo_throw(moo_string_new("Objekt ist eingefroren!")); return; }
     int32_t idx = find_property(obj, prop);
