@@ -153,13 +153,30 @@ struct MooObject {
 };
 
 // === Thread ===
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
 #include <pthread.h>
+#endif
 
 struct MooThread {
+#ifdef _WIN32
+    HANDLE thread;
+    DWORD thread_id;
+    MooValue* retval;
+#else
     pthread_t thread;
+#endif
     MooValue result;
     bool done;
+#ifdef _WIN32
+    CRITICAL_SECTION mutex;
+#else
     pthread_mutex_t mutex;
+#endif
 };
 
 // === Channel (Go-Style, buffered) ===
@@ -169,9 +186,15 @@ struct MooChannel {
     int32_t count;
     int32_t read_pos;
     int32_t write_pos;
+#ifdef _WIN32
+    CRITICAL_SECTION mutex;
+    CONDITION_VARIABLE not_empty;
+    CONDITION_VARIABLE not_full;
+#else
     pthread_mutex_t mutex;
     pthread_cond_t not_empty;
     pthread_cond_t not_full;
+#endif
     bool closed;
 };
 
