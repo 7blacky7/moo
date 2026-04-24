@@ -3072,3 +3072,119 @@ MooValue moo_ui_widget_suche(MooValue fenster, MooValue id_string) {
         return wrap_objc(hit);
     }
 }
+
+/* =========================================================================
+ * Snapshot-API (Plan-004 P2) — PNG-Screenshots von Fenstern/Widgets
+ *
+ * Backend-Mapping laut Header (moo_ui.h):
+ *   NSBitmapImageRep* rep =
+ *     [v bitmapImageRepForCachingDisplayInRect:r];
+ *   [v cacheDisplayInRect:r toBitmapImageRep:rep];
+ *   [[rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}]
+ *      writeToFile:pfad atomically:YES].
+ *
+ * `bitmapImageRepForCachingDisplayInRect:` ist ab macOS 14 deprecated,
+ * funktioniert aber weiterhin und ist fuer CI-Artefakte vollkommen
+ * ausreichend — der Aufrufer bekommt eine logische Widget-Darstellung,
+ * keinen Compositor-Output (das deckt sich mit der Header-Semantik).
+ *
+ * Main-Thread-Pflicht: Alle UI-APIs duerfen nur vom Haupt-Thread
+ * aufgerufen werden (siehe Datei-Header-Kommentar). Wir pruefen das
+ * defensiv und liefern falsch zurueck statt zu crashen.
+ * ========================================================================= */
+
+/* Rendert `view` im Rechteck `bounds` in ein NSBitmapImageRep und schreibt
+ * das Ergebnis als PNG nach `path_ns`. Liefert 1 bei Erfolg, 0 sonst. */
+static int cocoa_snapshot_view_to_png(NSView *view, NSRect bounds,
+                                      NSString *path_ns) {
+    if (!view || !path_ns || [path_ns length] == 0) return 0;
+    if (bounds.size.width <= 0 || bounds.size.height <= 0) return 0;
+
+    NSBitmapImageRep *rep =
+        [view bitmapImageRepForCachingDisplayInRect:bounds];
+    if (!rep) return 0;
+    [view cacheDisplayInRect:bounds toBitmapImageRep:rep];
+
+    NSData *png = [rep representationUsingType:NSBitmapImageFileTypePNG
+                                    properties:@{}];
+    if (!png) return 0;
+
+    NSError *err = nil;
+    BOOL ok = [png writeToFile:path_ns
+                       options:NSDataWritingAtomic
+                         error:&err];
+    if (!ok) {
+        if (g_ui_debug_on) {
+            NSLog(@"[moo-ui] snapshot writeToFile failed: %@", err);
+        }
+        return 0;
+    }
+    return 1;
+}
+
+/* moo_ui_test_snapshot (Header zeilen 640–678)
+ *
+ * Erwartet ein Fenster-Handle. Snapshot umfasst den kompletten
+ * contentView (das ist der flipped Root-Container, den wir bei
+ * moo_ui_fenster_erstelle installieren). */
+MooValue moo_ui_test_snapshot(MooValue fenster, MooValue pfad) {
+    @autoreleasepool {
+        if (![NSThread isMainThread]) return moo_bool(0);
+        if (pfad.tag != MOO_STRING) return moo_bool(0);
+        const char *s = MV_STR(pfad)->chars;
+        if (!s || s[0] == '\0') return moo_bool(0);
+
+        id obj = unwrap_objc(fenster);
+        if (!obj || ![obj isKindOfClass:[NSWindow class]]) return moo_bool(0);
+        NSWindow *win = (NSWindow *)obj;
+        if (![win isVisible]) return moo_bool(0);
+
+        NSView *content = [win contentView];
+        if (!content) return moo_bool(0);
+
+        NSString *path_ns = [NSString stringWithUTF8String:s];
+        int ok = cocoa_snapshot_view_to_png(content, [content bounds], path_ns);
+        return moo_bool(ok);
+    }
+}
+
+/* moo_ui_test_snapshot_widget (Header zeilen 680–714)
+ *
+ * Akzeptiert ein beliebiges Widget-Handle:
+ *   - NSWindow    → identisch zu moo_ui_test_snapshot (contentView).
+ *   - NSView      → das View-Rechteck.
+ * Andere ObjC-Objekte (NSMenu, NSStatusItem, ...) werden abgelehnt. */
+MooValue moo_ui_test_snapshot_widget(MooValue widget, MooValue pfad) {
+    @autoreleasepool {
+        if (![NSThread isMainThread]) return moo_bool(0);
+        if (pfad.tag != MOO_STRING) return moo_bool(0);
+        const char *s = MV_STR(pfad)->chars;
+        if (!s || s[0] == '\0') return moo_bool(0);
+
+        id obj = unwrap_objc(widget);
+        if (!obj) return moo_bool(0);
+
+        NSView *view = nil;
+        if ([obj isKindOfClass:[NSWindow class]]) {
+            NSWindow *win = (NSWindow *)obj;
+            if (![win isVisible]) return moo_bool(0);
+            view = [win contentView];
+        } else if ([obj isKindOfClass:[NSView class]]) {
+            view = (NSView *)obj;
+            /* Sichtbarkeit: ein NSView gilt als "sichtbar", wenn es ein
+             * Fenster hat, nicht hidden ist und das Fenster selbst visible
+             * ist. Das entspricht der Header-Anforderung "realisiert und
+             * sichtbar". */
+            if ([view isHiddenOrHasHiddenAncestor]) return moo_bool(0);
+            NSWindow *w = [view window];
+            if (!w || ![w isVisible]) return moo_bool(0);
+        } else {
+            return moo_bool(0);
+        }
+        if (!view) return moo_bool(0);
+
+        NSString *path_ns = [NSString stringWithUTF8String:s];
+        int ok = cocoa_snapshot_view_to_png(view, [view bounds], path_ns);
+        return moo_bool(ok);
+    }
+}
