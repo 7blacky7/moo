@@ -82,6 +82,7 @@ static const void *kMooRadioGroupKey     = &kMooRadioGroupKey;
 static const void *kMooWindowDelegateKey = &kMooWindowDelegateKey;
 static const void *kMooShortcutsKey      = &kMooShortcutsKey;
 static const void *kMooCanvasTrackingKey = &kMooCanvasTrackingKey;
+static const void *kMooUIIdKey           = &kMooUIIdKey;  /* Plan-004 P1: widget-ID */
 
 /* ------------------------------------------------------------------ *
  * MooCallbackTarget — Target-Action-Bruecke fuer MooValue-Callbacks
@@ -2727,5 +2728,347 @@ MooValue moo_ui_shortcut_loese(MooValue fenster, MooValue sequenz) {
             list.monitor = nil;
         }
         return moo_bool(removed);
+    }
+}
+
+/* ==========================================================================
+ * Plan-004 P1 — Widget-Introspection
+ * --------------------------------------------------------------------------
+ * Siehe moo_ui.h (Block "Widget-Introspection").
+ * Speichert die String-ID per objc_setAssociatedObject(kMooUIIdKey) am
+ * Widget-Objekt (NSWindow / NSView). ARC halt die NSString-Kopie am Leben,
+ * Cleanup passiert automatisch wenn das Widget deallokiert wird.
+ * ========================================================================== */
+
+/* Typ-Mapping Cocoa-Klasse → moo-Typstring.
+ * Reihenfolge wichtig: konkretere Subklassen zuerst pruefen (NSSecureTextField
+ * vor NSTextField, NSPopUpButton vor NSButton etc.). */
+static const char *cocoa_widget_typ(id obj) {
+    if (!obj) return "unbekannt";
+    if ([obj isKindOfClass:[NSWindow class]])            return "fenster";
+    if ([obj isKindOfClass:[MooCanvasView class]])       return "leinwand";
+    if ([obj isKindOfClass:[NSPopUpButton class]])       return "dropdown";
+    if ([obj isKindOfClass:[NSButton class]]) {
+        /* NSButton hat keinen oeffentlichen buttonType-Getter — wir lesen
+         * showsStateBy/highlightsBy der Cell:
+         *   Push:     showsStateBy = 0
+         *   Switch:   showsStateBy & NSContentsCellMask, highlightsBy enthaelt
+         *             NSChangeBackgroundCellMask
+         *   Radio:    showsStateBy & NSContentsCellMask, highlightsBy enthaelt
+         *             NSChangeGrayCellMask (aber NICHT Background). */
+        NSButtonCell *cell = [(NSButton *)obj cell];
+        NSInteger shows      = [cell showsStateBy];
+        NSInteger highlights = [cell highlightsBy];
+        if (shows & NSContentsCellMask) {
+            if (highlights & NSChangeBackgroundCellMask) return "checkbox";
+            return "radio";
+        }
+        return "knopf";
+    }
+    if ([obj isKindOfClass:[NSSecureTextField class]])   return "eingabe";
+    if ([obj isKindOfClass:[NSTextField class]]) {
+        NSTextField *tf = (NSTextField *)obj;
+        if ([tf isEditable]) return "eingabe";
+        return "label";
+    }
+    if ([obj isKindOfClass:[NSTextView class]])          return "textbereich";
+    if ([obj isKindOfClass:[NSSlider class]])            return "slider";
+    if ([obj isKindOfClass:[NSProgressIndicator class]]) return "fortschritt";
+    if ([obj isKindOfClass:[NSTabView class]])           return "tabs";
+    if ([obj isKindOfClass:[NSTableView class]])         return "liste";
+    if ([obj isKindOfClass:[NSScrollView class]])        return "scroll";
+    if ([obj isKindOfClass:[NSImageView class]])         return "bild";
+    if ([obj isKindOfClass:[NSBox class]]) {
+        NSBox *bx = (NSBox *)obj;
+        if ([bx boxType] == NSBoxSeparator) return "trenner";
+        return "rahmen";
+    }
+    if ([obj isKindOfClass:[NSMenu class]])              return "menue";
+    if ([obj isKindOfClass:[NSView class]])              return "container";
+    return "unbekannt";
+}
+
+/* Liefert den sichtbaren Text eines Widgets, falls sinnvoll.
+ * Rueckgabe: MOO_STRING oder MOO_NONE. */
+static MooValue cocoa_widget_text(id obj) {
+    if (!obj) return moo_none();
+    if ([obj isKindOfClass:[NSWindow class]]) {
+        NSString *t = [(NSWindow *)obj title];
+        if (!t) return moo_none();
+        return moo_string_new([t UTF8String]);
+    }
+    if ([obj isKindOfClass:[NSButton class]]) {
+        NSString *t = [(NSButton *)obj title];
+        if (!t) return moo_none();
+        return moo_string_new([t UTF8String]);
+    }
+    if ([obj isKindOfClass:[NSTextField class]]) {
+        NSString *s = [(NSTextField *)obj stringValue];
+        if (!s) return moo_none();
+        return moo_string_new([s UTF8String]);
+    }
+    if ([obj isKindOfClass:[NSTextView class]]) {
+        NSString *s = [[(NSTextView *)obj textStorage] string];
+        if (!s) return moo_none();
+        return moo_string_new([s UTF8String]);
+    }
+    if ([obj isKindOfClass:[NSPopUpButton class]]) {
+        NSString *t = [(NSPopUpButton *)obj titleOfSelectedItem];
+        if (!t) return moo_none();
+        return moo_string_new([t UTF8String]);
+    }
+    if ([obj isKindOfClass:[NSBox class]]) {
+        NSString *t = [(NSBox *)obj title];
+        if (!t || [t length] == 0) return moo_none();
+        return moo_string_new([t UTF8String]);
+    }
+    return moo_none();
+}
+
+/* Backend-spezifischer Widget-Name (Accessibility-Identifier oder
+ * Klassenname als Fallback). */
+static MooValue cocoa_widget_name(id obj) {
+    if (!obj) return moo_none();
+    if ([obj respondsToSelector:@selector(accessibilityIdentifier)]) {
+        NSString *aid = [(NSView *)obj accessibilityIdentifier];
+        if (aid && [aid length] > 0) {
+            return moo_string_new([aid UTF8String]);
+        }
+    }
+    NSString *cls = NSStringFromClass([obj class]);
+    if (!cls) return moo_none();
+    return moo_string_new([cls UTF8String]);
+}
+
+/* Liefert das Frame eines Widgets im Eltern-Koordinatensystem.
+ * Fuer NSWindow wird frame() in Screen-Coords zurueckgegeben (top-left
+ * umgerechnet ueber die main-Screen-Hoehe, analog zu moo_ui_fenster_position).
+ * Fuer NSView wird [view frame] benutzt — da alle Container MooFlippedViews
+ * sind, stimmt das mit der GTK/Win32-Semantik (top-left) ueberein. */
+static void cocoa_widget_bounds(id obj, int *x, int *y, int *b, int *h) {
+    *x = 0; *y = 0; *b = 0; *h = 0;
+    if (!obj) return;
+    if ([obj isKindOfClass:[NSWindow class]]) {
+        NSRect f = [(NSWindow *)obj frame];
+        CGFloat sh = [[NSScreen mainScreen] frame].size.height;
+        *x = (int)f.origin.x;
+        *y = (int)(sh - f.origin.y - f.size.height);  /* top-left flip */
+        *b = (int)f.size.width;
+        *h = (int)f.size.height;
+        return;
+    }
+    if ([obj isKindOfClass:[NSView class]]) {
+        NSRect f = [(NSView *)obj frame];
+        *x = (int)f.origin.x;
+        *y = (int)f.origin.y;
+        *b = (int)f.size.width;
+        *h = (int)f.size.height;
+        return;
+    }
+}
+
+/* Sichtbarkeit / Aktiv-Status. */
+static BOOL cocoa_widget_sichtbar(id obj) {
+    if (!obj) return NO;
+    if ([obj isKindOfClass:[NSWindow class]]) return [(NSWindow *)obj isVisible];
+    if ([obj isKindOfClass:[NSView class]])   return ![(NSView *)obj isHidden];
+    return YES;
+}
+static BOOL cocoa_widget_aktiv(id obj) {
+    if (!obj) return NO;
+    if ([obj isKindOfClass:[NSControl class]]) return [(NSControl *)obj isEnabled];
+    /* Non-Control-Views (NSBox/NSTabView/Canvas/Window) sind immer "aktiv". */
+    return YES;
+}
+
+/* Liest die ID aus objc_getAssociatedObject oder liefert MOO_NONE. */
+static MooValue cocoa_widget_id_value(id obj) {
+    if (!obj) return moo_none();
+    NSString *id_ns = objc_getAssociatedObject(obj, kMooUIIdKey);
+    if (!id_ns || ![id_ns isKindOfClass:[NSString class]] || [id_ns length] == 0) {
+        return moo_none();
+    }
+    return moo_string_new([id_ns UTF8String]);
+}
+
+/* Baut ein Info-Dict fuer ein Widget (ohne tiefe/eltern). */
+static MooValue cocoa_build_info_dict(id obj) {
+    MooValue d = moo_dict_new();
+    if (!obj) return d;
+
+    int x=0, y=0, b=0, h=0;
+    cocoa_widget_bounds(obj, &x, &y, &b, &h);
+
+    moo_dict_set(d, moo_string_new("typ"),      moo_string_new(cocoa_widget_typ(obj)));
+    moo_dict_set(d, moo_string_new("x"),        moo_number((double)x));
+    moo_dict_set(d, moo_string_new("y"),        moo_number((double)y));
+    moo_dict_set(d, moo_string_new("b"),        moo_number((double)b));
+    moo_dict_set(d, moo_string_new("h"),        moo_number((double)h));
+    moo_dict_set(d, moo_string_new("sichtbar"), moo_bool(cocoa_widget_sichtbar(obj)));
+    moo_dict_set(d, moo_string_new("aktiv"),    moo_bool(cocoa_widget_aktiv(obj)));
+    moo_dict_set(d, moo_string_new("id"),       cocoa_widget_id_value(obj));
+    moo_dict_set(d, moo_string_new("text"),     cocoa_widget_text(obj));
+    moo_dict_set(d, moo_string_new("name"),     cocoa_widget_name(obj));
+    return d;
+}
+
+/* moo_ui_widget_id_setze (Header zeilen 510–528) */
+MooValue moo_ui_widget_id_setze(MooValue widget, MooValue id_string) {
+    @autoreleasepool {
+        id obj = unwrap_objc(widget);
+        if (!obj) return moo_bool(0);
+        /* NONE oder leer → ID loeschen. */
+        if (id_string.tag != MOO_STRING) {
+            objc_setAssociatedObject(obj, kMooUIIdKey, nil,
+                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            return moo_bool(1);
+        }
+        const char *s = MV_STR(id_string)->chars;
+        if (!s || s[0] == '\0') {
+            objc_setAssociatedObject(obj, kMooUIIdKey, nil,
+                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            return moo_bool(1);
+        }
+        NSString *ns = [NSString stringWithUTF8String:s];
+        objc_setAssociatedObject(obj, kMooUIIdKey, ns,
+                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return moo_bool(1);
+    }
+}
+
+/* moo_ui_widget_id_hole (Header zeilen 530–540) */
+MooValue moo_ui_widget_id_hole(MooValue widget) {
+    @autoreleasepool {
+        id obj = unwrap_objc(widget);
+        if (!obj) return moo_none();
+        return cocoa_widget_id_value(obj);
+    }
+}
+
+/* moo_ui_widget_info (Header zeilen 542–572) */
+MooValue moo_ui_widget_info(MooValue widget) {
+    @autoreleasepool {
+        id obj = unwrap_objc(widget);
+        if (!obj) return moo_none();
+        return cocoa_build_info_dict(obj);
+    }
+}
+
+/* Rekursiver Baum-Walk: befuellt `list` pre-order.
+ * - depth: aktuelle Tiefe (0 = Fenster-Wurzel).
+ * - parent_id_ns: ID des unmittelbaren Eltern-Widgets (oder nil → MOO_NONE).
+ * - obj: NSWindow oder NSView. */
+static void cocoa_baum_walk(id obj, int depth, NSString *parent_id_ns,
+                            MooValue list) {
+    if (!obj) return;
+
+    MooValue d = cocoa_build_info_dict(obj);
+    moo_dict_set(d, moo_string_new("tiefe"), moo_number((double)depth));
+    if (parent_id_ns && [parent_id_ns length] > 0) {
+        moo_dict_set(d, moo_string_new("eltern"),
+                     moo_string_new([parent_id_ns UTF8String]));
+    } else {
+        moo_dict_set(d, moo_string_new("eltern"), moo_none());
+    }
+    moo_list_append(list, d);
+
+    /* Eigene ID als parent_id fuer Kinder (oder nil, wenn keine gesetzt). */
+    NSString *own_id = objc_getAssociatedObject(obj, kMooUIIdKey);
+    if (!own_id || ![own_id isKindOfClass:[NSString class]] || [own_id length] == 0) {
+        own_id = nil;
+    }
+
+    /* Kinder ermitteln: NSWindow → contentView-Subviews; NSView → subviews;
+     * NSBox → contentView-Subviews; NSTabView → alle Page-Views;
+     * NSScrollView → documentView-Subviews. */
+    NSArray<NSView *> *children = nil;
+    if ([obj isKindOfClass:[NSWindow class]]) {
+        NSView *cv = [(NSWindow *)obj contentView];
+        if (cv) children = [cv subviews];
+    } else if ([obj isKindOfClass:[NSBox class]]) {
+        id cv = [(NSBox *)obj contentView];
+        if ([cv isKindOfClass:[NSView class]]) children = [(NSView *)cv subviews];
+    } else if ([obj isKindOfClass:[NSTabView class]]) {
+        NSMutableArray *pages = [NSMutableArray array];
+        for (NSTabViewItem *ti in [(NSTabView *)obj tabViewItems]) {
+            NSView *pv = [ti view];
+            if (pv) [pages addObject:pv];
+        }
+        children = pages;
+    } else if ([obj isKindOfClass:[NSScrollView class]]) {
+        NSView *dv = [(NSScrollView *)obj documentView];
+        if (dv) children = [dv subviews];
+    } else if ([obj isKindOfClass:[NSView class]]) {
+        children = [(NSView *)obj subviews];
+    }
+
+    for (NSView *child in children) {
+        cocoa_baum_walk(child, depth + 1, own_id, list);
+    }
+}
+
+/* moo_ui_widget_baum (Header zeilen 574–593) */
+MooValue moo_ui_widget_baum(MooValue fenster) {
+    @autoreleasepool {
+        id obj = unwrap_objc(fenster);
+        if (!obj) return moo_none();
+        /* Auch Views als Wurzel zulassen — Header sagt "Fenster", aber fuer
+         * Test-Tooling ist Sub-Tree-Baum nuetzlich. */
+        if (![obj isKindOfClass:[NSWindow class]] && ![obj isKindOfClass:[NSView class]]) {
+            return moo_none();
+        }
+        MooValue list = moo_list_new(0);
+        cocoa_baum_walk(obj, 0, nil, list);
+        return list;
+    }
+}
+
+/* Rekursive Pre-Order-Suche nach ID. Gibt das Handle als MOO_NUMBER oder
+ * MOO_NONE zurueck. `target` ist bereits validiert (nicht-leerer NSString). */
+static id cocoa_suche_walk(id obj, NSString *target) {
+    if (!obj) return nil;
+    NSString *own = objc_getAssociatedObject(obj, kMooUIIdKey);
+    if (own && [own isKindOfClass:[NSString class]] && [own isEqualToString:target]) {
+        return obj;
+    }
+    NSArray<NSView *> *children = nil;
+    if ([obj isKindOfClass:[NSWindow class]]) {
+        NSView *cv = [(NSWindow *)obj contentView];
+        if (cv) children = [cv subviews];
+    } else if ([obj isKindOfClass:[NSBox class]]) {
+        id cv = [(NSBox *)obj contentView];
+        if ([cv isKindOfClass:[NSView class]]) children = [(NSView *)cv subviews];
+    } else if ([obj isKindOfClass:[NSTabView class]]) {
+        NSMutableArray *pages = [NSMutableArray array];
+        for (NSTabViewItem *ti in [(NSTabView *)obj tabViewItems]) {
+            NSView *pv = [ti view];
+            if (pv) [pages addObject:pv];
+        }
+        children = pages;
+    } else if ([obj isKindOfClass:[NSScrollView class]]) {
+        NSView *dv = [(NSScrollView *)obj documentView];
+        if (dv) children = [dv subviews];
+    } else if ([obj isKindOfClass:[NSView class]]) {
+        children = [(NSView *)obj subviews];
+    }
+    for (NSView *child in children) {
+        id hit = cocoa_suche_walk(child, target);
+        if (hit) return hit;
+    }
+    return nil;
+}
+
+/* moo_ui_widget_suche (Header zeilen 595–613) */
+MooValue moo_ui_widget_suche(MooValue fenster, MooValue id_string) {
+    @autoreleasepool {
+        id obj = unwrap_objc(fenster);
+        if (!obj) return moo_none();
+        if (id_string.tag != MOO_STRING) return moo_none();
+        const char *s = MV_STR(id_string)->chars;
+        if (!s || s[0] == '\0') return moo_none();
+        NSString *target = [NSString stringWithUTF8String:s];
+        id hit = cocoa_suche_walk(obj, target);
+        if (!hit) return moo_none();
+        return wrap_objc(hit);
     }
 }
