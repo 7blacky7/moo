@@ -46,6 +46,8 @@ typedef struct {
     void  (*chunk_end)(void* ctx);
     void  (*chunk_draw)(void* ctx, int id);
     void  (*chunk_delete)(void* ctx, int id);
+    // Screenshot — schreibt aktuelles Frame-Buffer als BMP. Returns 1 bei Erfolg, 0 sonst.
+    int   (*screenshot_bmp)(void* ctx, const char* path);
 } Moo3DBackend;
 
 // Backend-Deklarationen (je nach Feature-Flag verfuegbar)

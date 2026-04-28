@@ -416,6 +416,12 @@ static float gl21_mouse_wheel(void* vctx) {
     return v;
 }
 
+/* gl21 hat noch keinen Screenshot-Helper — Stub. */
+static int gl21_screenshot_bmp(void* vctx, const char* path) {
+    (void)vctx; (void)path;
+    return 0;
+}
+
 static void gl21_scroll_callback(GLFWwindow* w, double xoff, double yoff) {
     GL21Context* ctx = (GL21Context*)glfwGetWindowUserPointer(w);
     if (!ctx) return;
@@ -488,4 +494,5 @@ Moo3DBackend moo_backend_gl21 = {
     .chunk_end     = gl21_chunk_end,
     .chunk_draw    = gl21_chunk_draw,
     .chunk_delete  = gl21_chunk_delete,
+    .screenshot_bmp = gl21_screenshot_bmp,
 };

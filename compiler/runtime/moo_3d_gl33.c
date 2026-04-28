@@ -52,6 +52,9 @@ typedef struct {
 
 static void gl33_scroll_callback(GLFWwindow* w, double xoff, double yoff);
 
+/* Forward decl — Definition steht weiter unten in der Screenshot-Section. */
+int gl33_screenshot_bmp(void* ctx_void, const char* path);
+
 /* ========================================================
  * Helpers
  * ======================================================== */
@@ -609,6 +612,7 @@ Moo3DBackend moo_backend_gl33 = {
     .chunk_end     = gl33_chunk_end,
     .chunk_draw    = gl33_chunk_draw_fn,
     .chunk_delete  = gl33_chunk_delete_fn,
+    .screenshot_bmp = gl33_screenshot_bmp,
 };
 
 /* ========================================================

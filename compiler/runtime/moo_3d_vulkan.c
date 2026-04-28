@@ -102,6 +102,9 @@ typedef struct {
     int mouse_captured;
     double scroll_acc_x;
     double scroll_acc_y;
+
+    /* Screenshot — Index des zuletzt acquirierten Swapchain-Images */
+    uint32_t last_image_index;
 } VulkanContext;
 
 /* Forward decl */
@@ -179,7 +182,7 @@ static int create_swapchain(VulkanContext* ctx) {
         .imageColorSpace = color_space,
         .imageExtent = ctx->swapchain_extent,
         .imageArrayLayers = 1,
-        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .preTransform = caps.currentTransform,
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
@@ -623,6 +626,7 @@ static void vk_swap(void* raw) {
     uint32_t img_idx;
     vkAcquireNextImageKHR(ctx->device, ctx->swapchain, UINT64_MAX,
         ctx->sync.image_available[ctx->sync.current_frame], VK_NULL_HANDLE, &img_idx);
+    ctx->last_image_index = img_idx;
 
     /* Update UBO */
     memcpy(ctx->ubo_data.model, ctx->matrix_stack.current, 64);
@@ -1005,6 +1009,181 @@ static void vk_set_ambient(void* raw, float level) {
     /* Vulkan ambient ist im Shader hardcoded — TODO: Uniform */
 }
 
+/* === Vulkan Screenshot ============================================
+ * Kopiert das zuletzt praesentierte Swapchain-Image via
+ * vkCmdCopyImageToBuffer in einen Host-Visible Staging-Buffer und
+ * schreibt es als 24-bit BMP. Verlangt VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+ * auf der Swapchain (in create_swapchain bereits gesetzt).
+ * ================================================================= */
+static int vk_screenshot_bmp(void* raw, const char* path) {
+    VulkanContext* ctx = (VulkanContext*)raw;
+    if (!ctx || !path) return 0;
+
+    /* Auf alle GPU-Operationen warten, damit das Image stabil ist. */
+    vkDeviceWaitIdle(ctx->device);
+
+    int w = (int)ctx->swapchain_extent.width;
+    int h = (int)ctx->swapchain_extent.height;
+    if (w <= 0 || h <= 0) return 0;
+
+    VkDeviceSize buf_size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
+
+    /* Staging-Buffer (host-visible). */
+    VkMooBuffer staging = {0};
+    if (vk_moo_buffer_create(ctx->device, ctx->phys_device, buf_size,
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            &staging) != 0) {
+        return 0;
+    }
+
+    /* One-shot Command-Buffer aus dem Pool. */
+    VkCommandBuffer cmd;
+    VkCommandBufferAllocateInfo cb_alloc = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = ctx->cmd_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+    if (vkAllocateCommandBuffers(ctx->device, &cb_alloc, &cmd) != VK_SUCCESS) {
+        vk_moo_buffer_destroy(ctx->device, &staging);
+        return 0;
+    }
+
+    VkCommandBufferBeginInfo begin = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    vkBeginCommandBuffer(cmd, &begin);
+
+    VkImage src = ctx->swapchain_images[ctx->last_image_index];
+
+    /* Layout: PRESENT_SRC -> TRANSFER_SRC_OPTIMAL */
+    VkImageMemoryBarrier to_xfer = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = 0,
+        .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = src,
+        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+    };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, NULL, 0, NULL, 1, &to_xfer);
+
+    VkBufferImageCopy region = {
+        .bufferOffset = 0,
+        .bufferRowLength = 0,
+        .bufferImageHeight = 0,
+        .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+        .imageOffset = { 0, 0, 0 },
+        .imageExtent = { (uint32_t)w, (uint32_t)h, 1 },
+    };
+    vkCmdCopyImageToBuffer(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        staging.buffer, 1, &region);
+
+    /* Layout zurueck: TRANSFER_SRC_OPTIMAL -> PRESENT_SRC */
+    VkImageMemoryBarrier to_present = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+        .dstAccessMask = 0,
+        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = src,
+        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+    };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0, 0, NULL, 0, NULL, 1, &to_present);
+
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo submit = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1, .pCommandBuffers = &cmd,
+    };
+    vkQueueSubmit(ctx->gfx_queue, 1, &submit, VK_NULL_HANDLE);
+    vkQueueWaitIdle(ctx->gfx_queue);
+    vkFreeCommandBuffers(ctx->device, ctx->cmd_pool, 1, &cmd);
+
+    void* mapped = NULL;
+    if (vkMapMemory(ctx->device, staging.memory, 0, buf_size, 0, &mapped) != VK_SUCCESS) {
+        vk_moo_buffer_destroy(ctx->device, &staging);
+        return 0;
+    }
+
+    int is_bgra = (ctx->swapchain_format == VK_FORMAT_B8G8R8A8_UNORM ||
+                   ctx->swapchain_format == VK_FORMAT_B8G8R8A8_SRGB);
+
+    FILE* fp = fopen(path, "wb");
+    if (!fp) {
+        vkUnmapMemory(ctx->device, staging.memory);
+        vk_moo_buffer_destroy(ctx->device, &staging);
+        return 0;
+    }
+
+    int row_bytes = w * 3;
+    int row_pad = (4 - (row_bytes % 4)) % 4;
+    int row_padded = row_bytes + row_pad;
+    int data_size = row_padded * h;
+    int file_size = 54 + data_size;
+
+    unsigned char hdr[54] = {0};
+    hdr[0] = 'B'; hdr[1] = 'M';
+    hdr[2] = file_size & 0xFF; hdr[3] = (file_size >> 8) & 0xFF;
+    hdr[4] = (file_size >> 16) & 0xFF; hdr[5] = (file_size >> 24) & 0xFF;
+    hdr[10] = 54;
+    hdr[14] = 40;
+    hdr[18] = w & 0xFF; hdr[19] = (w >> 8) & 0xFF;
+    hdr[20] = (w >> 16) & 0xFF; hdr[21] = (w >> 24) & 0xFF;
+    hdr[22] = h & 0xFF; hdr[23] = (h >> 8) & 0xFF;
+    hdr[24] = (h >> 16) & 0xFF; hdr[25] = (h >> 24) & 0xFF;
+    hdr[26] = 1;
+    hdr[28] = 24;
+    hdr[34] = data_size & 0xFF; hdr[35] = (data_size >> 8) & 0xFF;
+    hdr[36] = (data_size >> 16) & 0xFF; hdr[37] = (data_size >> 24) & 0xFF;
+    fwrite(hdr, 1, 54, fp);
+
+    unsigned char* src_pixels = (unsigned char*)mapped;
+    unsigned char* row = (unsigned char*)malloc(row_padded);
+    if (!row) {
+        fclose(fp);
+        vkUnmapMemory(ctx->device, staging.memory);
+        vk_moo_buffer_destroy(ctx->device, &staging);
+        return 0;
+    }
+    memset(row, 0, row_padded);
+
+    /* BMP ist bottom-up, Vulkan-Image ist top-down → Reihen umgekehrt schreiben. */
+    for (int y = h - 1; y >= 0; y--) {
+        unsigned char* sp = src_pixels + (size_t)y * w * 4;
+        for (int x = 0; x < w; x++) {
+            unsigned char r, g, b;
+            if (is_bgra) {
+                b = sp[0]; g = sp[1]; r = sp[2];
+            } else {
+                r = sp[0]; g = sp[1]; b = sp[2];
+            }
+            row[x*3 + 0] = b;
+            row[x*3 + 1] = g;
+            row[x*3 + 2] = r;
+            sp += 4;
+        }
+        fwrite(row, 1, row_padded, fp);
+    }
+
+    free(row);
+    fclose(fp);
+    vkUnmapMemory(ctx->device, staging.memory);
+    vk_moo_buffer_destroy(ctx->device, &staging);
+    return 1;
+}
+
 Moo3DBackend moo_backend_vulkan = {
     .create_window = vk_create_window,
     .close = vk_close,
@@ -1037,4 +1216,5 @@ Moo3DBackend moo_backend_vulkan = {
     .chunk_end = vk_chunk_end_fn,
     .chunk_draw = vk_chunk_draw_fn,
     .chunk_delete = vk_chunk_delete_fn,
+    .screenshot_bmp = vk_screenshot_bmp,
 };
