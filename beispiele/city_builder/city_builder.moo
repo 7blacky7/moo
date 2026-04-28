@@ -223,10 +223,10 @@ raum_perspektive(win, 50.0, 0.1, 800.0)
 # Kein raum_maus_fangen — wir nutzen absolute Maus-Positionen + Buttons
 # (raum_maus_x/y, raum_maus_taste, raum_maus_rad).
 
-# Maus-State fuer Click-Drag-Tracking
+# Maus-State fuer Click-Drag-Tracking. Initialisiere auf aktuelle Position
+# damit der erste Frame keinen Riesen-Delta hat.
 setze last_maus_x auf raum_maus_x(win)
 setze last_maus_y auf raum_maus_y(win)
-setze last_maus_rad auf raum_maus_rad(win)
 
 # Boden-Mesh einmalig in Chunk packen — spart pro Frame ~80000 Draw-Calls
 zeige "Baue Boden-Chunk (" + text((WELT_B - 1) * (WELT_T - 1) * 2) + " Dreiecke)..."
@@ -299,10 +299,9 @@ solange raum_offen(win):
         wenn cam_elevation > 1.4:
             setze cam_elevation auf 1.4
 
-    # Mausrad -> Zoom. raum_maus_rad ist kumulativ -> Delta pro Frame.
-    setze rad_now auf raum_maus_rad(win)
-    setze rad_dy auf rad_now - last_maus_rad
-    setze last_maus_rad auf rad_now
+    # Mausrad -> Zoom. raum_maus_rad ist consume-on-read: liefert Delta
+    # seit letztem Aufruf und resetet auf 0.
+    setze rad_dy auf raum_maus_rad(win)
     wenn rad_dy != 0:
         setze cam_zoom auf cam_zoom - rad_dy * 4.0
         wenn cam_zoom < 20.0:
