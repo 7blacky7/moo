@@ -134,35 +134,14 @@ funktion oberflaechen_typ(h):
 # Wasser bei Hoehe < 6 wird als flaches Quad-Paar darueber gelegt.
 # Statisches Boden-Mesh in einem Chunk: Heightmesh aus 2 Dreiecken pro
 # Tile + Wasser-Quad in Senken. Wird einmalig nach terrain_init() gebaut
-# und pro Frame mit chunk_zeichne() in EINEM Draw-Call gerendert. Bei
-# 200x200 Welt = 80000 Boden-Dreiecke + Wasser, kein Performance-Problem
-# fuer Vulkan/GL3.3 (statisches VBO).
-setze boden_chunk auf -1
-
-funktion boden_chunk_baue(win):
-    setze boden_chunk auf chunk_erstelle()
-    chunk_beginne(boden_chunk)
-    setze x auf 0
-    solange x < WELT_B - 1:
-        setze z auf 0
-        solange z < WELT_T - 1:
-            setze h_nw auf terrain_hoehe(x, z)
-            setze h_ne auf terrain_hoehe(x + 1, z)
-            setze h_sw auf terrain_hoehe(x, z + 1)
-            setze h_se auf terrain_hoehe(x + 1, z + 1)
-            setze h_mid auf (h_nw + h_ne + h_sw + h_se) / 4.0
-            setze farbe auf block_farbe(oberflaechen_typ(h_mid))
-            # Konstante Triangulierung wie in welten.moo:
-            #   Tri 1: nw -> sw -> ne (CCW von oben)
-            #   Tri 2: ne -> sw -> se (CCW von oben)
-            raum_dreieck(win, x, h_nw, z, x, h_sw, z + 1, x + 1, h_ne, z, farbe)
-            raum_dreieck(win, x + 1, h_ne, z, x, h_sw, z + 1, x + 1, h_se, z + 1, farbe)
-            wenn h_mid < 5.5:
-                raum_dreieck(win, x, 6.0, z, x, 6.0, z + 1, x + 1, 6.0, z, "#2196F3")
-                raum_dreieck(win, x + 1, 6.0, z, x, 6.0, z + 1, x + 1, 6.0, z + 1, "#2196F3")
-            setze z auf z + 1
-        setze x auf x + 1
-    chunk_ende()
+# und pro Frame mit chunk_zeichne() in EINEM Draw-Call gerendert.
+#
+# WICHTIG (moo-Scoping-Falle): chunk_id NICHT in eine `funktion` packen
+# und dort `setze boden_chunk auf chunk_erstelle()` machen — das wuerde
+# eine LOKALE Variable erzeugen, die globale boden_chunk-Variable bliebe
+# bei -1 und chunk_zeichne wuerde nichts rendern. Wir nutzen daher eine
+# Liste-mit-einem-Element als veraenderbares Box-Object.
+setze boden_chunk_ref auf [-1]
 
 
 # ============================================================
@@ -228,10 +207,31 @@ raum_perspektive(win, 50.0, 0.1, 800.0)
 setze last_maus_x auf raum_maus_x(win)
 setze last_maus_y auf raum_maus_y(win)
 
-# Boden-Mesh einmalig in Chunk packen — spart pro Frame ~80000 Draw-Calls
+# Boden-Mesh einmalig in Chunk packen — spart pro Frame ~80000 Draw-Calls.
+# Inline auf Modul-Ebene damit boden_chunk_ref[0] in globalen Scope schreibt.
 zeige "Baue Boden-Chunk (" + text((WELT_B - 1) * (WELT_T - 1) * 2) + " Dreiecke)..."
-boden_chunk_baue(win)
-zeige "Boden-Chunk fertig."
+boden_chunk_ref[0] = chunk_erstelle()
+chunk_beginne(boden_chunk_ref[0])
+setze cb_x auf 0
+solange cb_x < WELT_B - 1:
+    setze cb_z auf 0
+    solange cb_z < WELT_T - 1:
+        setze h_nw auf terrain_hoehe(cb_x, cb_z)
+        setze h_ne auf terrain_hoehe(cb_x + 1, cb_z)
+        setze h_sw auf terrain_hoehe(cb_x, cb_z + 1)
+        setze h_se auf terrain_hoehe(cb_x + 1, cb_z + 1)
+        setze h_mid auf (h_nw + h_ne + h_sw + h_se) / 4.0
+        setze farbe auf block_farbe(oberflaechen_typ(h_mid))
+        # Tri 1: nw -> sw -> ne (CCW von oben), Tri 2: ne -> sw -> se
+        raum_dreieck(win, cb_x, h_nw, cb_z, cb_x, h_sw, cb_z + 1, cb_x + 1, h_ne, cb_z, farbe)
+        raum_dreieck(win, cb_x + 1, h_ne, cb_z, cb_x, h_sw, cb_z + 1, cb_x + 1, h_se, cb_z + 1, farbe)
+        wenn h_mid < 5.5:
+            raum_dreieck(win, cb_x, 6.0, cb_z, cb_x, 6.0, cb_z + 1, cb_x + 1, 6.0, cb_z, "#2196F3")
+            raum_dreieck(win, cb_x + 1, 6.0, cb_z, cb_x, 6.0, cb_z + 1, cb_x + 1, 6.0, cb_z + 1, "#2196F3")
+        setze cb_z auf cb_z + 1
+    setze cb_x auf cb_x + 1
+chunk_ende()
+zeige "Boden-Chunk fertig (id=" + text(boden_chunk_ref[0]) + ")."
 
 setze taste_cooldown auf 0
 setze pulsphase auf 0.0
@@ -360,7 +360,7 @@ solange raum_offen(win):
     camera_iso(win, cam_x, cam_z, cam_zoom, cam_azimuth, cam_elevation)
 
     # Statisches Boden-Mesh in einem Draw-Call.
-    chunk_zeichne(boden_chunk)
+    chunk_zeichne(boden_chunk_ref[0])
 
     setze pulsphase auf pulsphase + 0.08
     setze puls auf (sinus(pulsphase) + 1.0) / 2.0
