@@ -2624,6 +2624,11 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_3d_simulate_scroll, &[a[0].into(), a[1].into()], "sim_scroll")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    "raum_screenshot_bmp" | "raum_screenshot" | "3d_screenshot_bmp" | "space_screenshot" => {
+                        let win = self.compile_expr(&args[0])?;
+                        let path = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_3d_screenshot_bmp, &[win.into(), path.into()], "shot3d");
+                    }
                     // Chunk Display Lists
                     "chunk_erstelle" | "chunk_create" => {
                         return self.call_rt(self.rt.moo_3d_chunk_create, &[], "chunk_create");

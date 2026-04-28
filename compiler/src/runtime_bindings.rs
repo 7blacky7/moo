@@ -210,6 +210,7 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_3d_simulate_mouse_pos: FunctionValue<'ctx>,
     pub moo_3d_simulate_mouse_button: FunctionValue<'ctx>,
     pub moo_3d_simulate_scroll: FunctionValue<'ctx>,
+    pub moo_3d_screenshot_bmp: FunctionValue<'ctx>,
     // Chunk Display Lists
     pub moo_3d_chunk_create: FunctionValue<'ctx>,
     pub moo_3d_chunk_begin: FunctionValue<'ctx>,
@@ -710,6 +711,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_3d_simulate_mouse_pos: module.add_function("moo_3d_simulate_mouse_pos", void_type.fn_type(mv3, false), None),
             moo_3d_simulate_mouse_button: module.add_function("moo_3d_simulate_mouse_button", void_type.fn_type(mv3, false), None),
             moo_3d_simulate_scroll: module.add_function("moo_3d_simulate_scroll", void_type.fn_type(mv2, false), None),
+            moo_3d_screenshot_bmp: decl_mv_mv!("moo_3d_screenshot_bmp", mv2),
             // Chunk Display Lists
             moo_3d_chunk_create: decl_mv_mv!("moo_3d_chunk_create", &[]),
             moo_3d_chunk_begin: module.add_function("moo_3d_chunk_begin", void_type.fn_type(mv1, false), None),
