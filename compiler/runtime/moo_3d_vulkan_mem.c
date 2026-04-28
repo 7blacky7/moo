@@ -302,46 +302,13 @@ int vk_chunk_upload(VkChunkSystem* cs, int id, VkMeshCollector* mc,
 
     slot->vertex_count = mc->count;
 
-    /* Record secondary command buffer */
-    VkCommandBufferInheritanceInfo inherit = {
-        .sType       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO,
-        .renderPass  = cs->render_pass,
-        .framebuffer = fb,
-    };
-    VkCommandBufferBeginInfo begin = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .flags = VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT,
-        .pInheritanceInfo = &inherit,
-    };
-
-    vkResetCommandBuffer(slot->cmd_buf, 0);
-    vkBeginCommandBuffer(slot->cmd_buf, &begin);
-
-    vkCmdBindPipeline(slot->cmd_buf, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                      cs->pipeline);
-
-    VkViewport viewport = {
-        .x = 0, .y = 0,
-        .width = (float)extent.width, .height = (float)extent.height,
-        .minDepth = 0.0f, .maxDepth = 1.0f,
-    };
-    vkCmdSetViewport(slot->cmd_buf, 0, 1, &viewport);
-
-    VkRect2D scissor = { .offset = {0, 0}, .extent = extent };
-    vkCmdSetScissor(slot->cmd_buf, 0, 1, &scissor);
-
-    if (push_constants && push_size > 0) {
-        vkCmdPushConstants(slot->cmd_buf, cs->pipeline_layout,
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, push_size, push_constants);
-    }
-
-    VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(slot->cmd_buf, 0, 1,
-                           &slot->vertex_buf.buffer, &offset);
-    vkCmdDraw(slot->cmd_buf, (uint32_t)slot->vertex_count, 1, 0, 0);
-
-    vkEndCommandBuffer(slot->cmd_buf);
+    /* Note: Secondary command buffer recording removed (TASK I, sprachen-analyst).
+     * The recorded buffer was never executed — chunk draws happen inline in vk_swap()
+     * via vkCmdBindVertexBuffers + vkCmdDraw on the primary command buffer.
+     * Recording here only produced Vulkan validation errors (VUID-01795 push-constant
+     * stage mismatch, VUID-08608 dynamic state vs static pipeline, VUID-08600
+     * descriptor set 0 not bound). The unused parameters are kept for ABI stability. */
+    (void)fb; (void)extent; (void)push_constants; (void)push_size;
 
     slot->is_compiled = true;
     return 0;

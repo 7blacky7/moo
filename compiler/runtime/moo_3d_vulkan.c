@@ -711,7 +711,7 @@ static void vk_swap(void* raw) {
 
     /* Submit */
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    VkSubmitInfo submit = vulkan_sync_submit_info(&ctx->sync, &cmd, &wait_stage);
+    VkSubmitInfo submit = vulkan_sync_submit_info(&ctx->sync, &cmd, &wait_stage, img_idx);
     vkQueueSubmit(ctx->gfx_queue, 1, &submit, ctx->sync.in_flight[ctx->sync.current_frame]);
 
     /* Present */
