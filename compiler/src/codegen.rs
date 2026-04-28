@@ -2587,6 +2587,28 @@ impl<'ctx> CodeGen<'ctx> {
                         let win = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_3d_mouse_dy, &[win.into()], "mouse_dy");
                     }
+                    "raum_maus_freigeben" | "space_release_mouse" | "3d_maus_freigeben" => {
+                        let win = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_3d_release_mouse, &[win.into()], "rel_mouse")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_maus_x" | "space_mouse_x" | "3d_maus_x" => {
+                        let win = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_3d_mouse_x, &[win.into()], "mouse_x");
+                    }
+                    "raum_maus_y" | "space_mouse_y" | "3d_maus_y" => {
+                        let win = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_3d_mouse_y, &[win.into()], "mouse_y");
+                    }
+                    "raum_maus_taste" | "space_mouse_button" | "3d_maus_taste" => {
+                        let win = self.compile_expr(&args[0])?;
+                        let btn = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_3d_mouse_button, &[win.into(), btn.into()], "mouse_btn");
+                    }
+                    "raum_maus_rad" | "space_mouse_wheel" | "3d_maus_rad" => {
+                        let win = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_3d_mouse_wheel, &[win.into()], "mouse_wheel");
+                    }
                     // Chunk Display Lists
                     "chunk_erstelle" | "chunk_create" => {
                         return self.call_rt(self.rt.moo_3d_chunk_create, &[], "chunk_create");

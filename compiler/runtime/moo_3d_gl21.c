@@ -22,7 +22,11 @@ typedef struct {
     double last_mouse_x;
     double last_mouse_y;
     int mouse_captured;
+    double scroll_acc_x;
+    double scroll_acc_y;
 } GL21Context;
+
+static void gl21_scroll_callback(GLFWwindow* w, double xoff, double yoff);
 
 // === Chunk Display List System ===
 #define MAX_CHUNKS 256
@@ -87,6 +91,13 @@ static void* gl21_create_window(const char* title, int w, int h) {
     ctx->window = win;
     ctx->width = w;
     ctx->height = h;
+    ctx->last_mouse_x = 0;
+    ctx->last_mouse_y = 0;
+    ctx->mouse_captured = 0;
+    ctx->scroll_acc_x = 0;
+    ctx->scroll_acc_y = 0;
+    glfwSetWindowUserPointer(win, ctx);
+    glfwSetScrollCallback(win, gl21_scroll_callback);
     return ctx;
 }
 
@@ -365,6 +376,53 @@ static float gl21_mouse_dy(void* vctx) {
     return dy;
 }
 
+static void gl21_release_mouse(void* vctx) {
+    GL21Context* ctx = (GL21Context*)vctx;
+    if (!ctx || !ctx->window) return;
+    glfwSetInputMode(ctx->window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    ctx->mouse_captured = 0;
+}
+
+static float gl21_mouse_x(void* vctx) {
+    GL21Context* ctx = (GL21Context*)vctx;
+    if (!ctx || !ctx->window) return 0.0f;
+    double cx, cy;
+    glfwGetCursorPos(ctx->window, &cx, &cy);
+    return (float)cx;
+}
+
+static float gl21_mouse_y(void* vctx) {
+    GL21Context* ctx = (GL21Context*)vctx;
+    if (!ctx || !ctx->window) return 0.0f;
+    double cx, cy;
+    glfwGetCursorPos(ctx->window, &cx, &cy);
+    return (float)cy;
+}
+
+static int gl21_mouse_button(void* vctx, int btn) {
+    GL21Context* ctx = (GL21Context*)vctx;
+    if (!ctx || !ctx->window) return 0;
+    int glfw_btn = (btn == 0) ? GLFW_MOUSE_BUTTON_LEFT
+                  : (btn == 1) ? GLFW_MOUSE_BUTTON_RIGHT
+                  : GLFW_MOUSE_BUTTON_MIDDLE;
+    return glfwGetMouseButton(ctx->window, glfw_btn) == GLFW_PRESS ? 1 : 0;
+}
+
+static float gl21_mouse_wheel(void* vctx) {
+    GL21Context* ctx = (GL21Context*)vctx;
+    if (!ctx) return 0.0f;
+    float v = (float)ctx->scroll_acc_y;
+    ctx->scroll_acc_y = 0;
+    return v;
+}
+
+static void gl21_scroll_callback(GLFWwindow* w, double xoff, double yoff) {
+    GL21Context* ctx = (GL21Context*)glfwGetWindowUserPointer(w);
+    if (!ctx) return;
+    ctx->scroll_acc_x += xoff;
+    ctx->scroll_acc_y += yoff;
+}
+
 // ============================================================
 // Fog + Licht
 // ============================================================
@@ -415,8 +473,13 @@ Moo3DBackend moo_backend_gl21 = {
     .triangle      = gl21_triangle,
     .key_pressed   = gl21_key_pressed,
     .capture_mouse = gl21_capture_mouse,
+    .release_mouse = gl21_release_mouse,
     .mouse_dx      = gl21_mouse_dx,
     .mouse_dy      = gl21_mouse_dy,
+    .mouse_x       = gl21_mouse_x,
+    .mouse_y       = gl21_mouse_y,
+    .mouse_button  = gl21_mouse_button,
+    .mouse_wheel   = gl21_mouse_wheel,
     .set_fog_density = gl21_set_fog_density_f,
     .set_light_dir   = gl21_set_light_dir,
     .set_ambient     = gl21_set_ambient,

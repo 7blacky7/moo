@@ -46,7 +46,11 @@ typedef struct {
     double last_mouse_x;
     double last_mouse_y;
     int mouse_captured;
+    double scroll_acc_x;
+    double scroll_acc_y;
 } GL33Context;
+
+static void gl33_scroll_callback(GLFWwindow* w, double xoff, double yoff);
 
 /* ========================================================
  * Helpers
@@ -154,6 +158,12 @@ void* gl33_init_ctx_from_window(void* win_void, int w, int h) {
     /* Chunks */
     gl33_chunk_system_init(ctx->chunks);
     ctx->active_chunk = -1;
+
+    /* Mouse + Scroll */
+    ctx->scroll_acc_x = 0;
+    ctx->scroll_acc_y = 0;
+    glfwSetWindowUserPointer(ctx->window, ctx);
+    glfwSetScrollCallback(ctx->window, gl33_scroll_callback);
     mesh_builder_init(&ctx->builder);
 
     /* Immediate-mode fallback VAO/VBO */
@@ -491,6 +501,53 @@ static float gl33_mouse_dy(void* vctx) {
     return dy;
 }
 
+static void gl33_release_mouse(void* vctx) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx || !ctx->window) return;
+    glfwSetInputMode(ctx->window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    ctx->mouse_captured = 0;
+}
+
+static float gl33_mouse_x(void* vctx) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx || !ctx->window) return 0.0f;
+    double cx, cy;
+    glfwGetCursorPos(ctx->window, &cx, &cy);
+    return (float)cx;
+}
+
+static float gl33_mouse_y(void* vctx) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx || !ctx->window) return 0.0f;
+    double cx, cy;
+    glfwGetCursorPos(ctx->window, &cx, &cy);
+    return (float)cy;
+}
+
+static int gl33_mouse_button(void* vctx, int btn) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx || !ctx->window) return 0;
+    int glfw_btn = (btn == 0) ? GLFW_MOUSE_BUTTON_LEFT
+                  : (btn == 1) ? GLFW_MOUSE_BUTTON_RIGHT
+                  : GLFW_MOUSE_BUTTON_MIDDLE;
+    return glfwGetMouseButton(ctx->window, glfw_btn) == GLFW_PRESS ? 1 : 0;
+}
+
+static float gl33_mouse_wheel(void* vctx) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return 0.0f;
+    float v = (float)ctx->scroll_acc_y;
+    ctx->scroll_acc_y = 0;
+    return v;
+}
+
+static void gl33_scroll_callback(GLFWwindow* w, double xoff, double yoff) {
+    GL33Context* ctx = (GL33Context*)glfwGetWindowUserPointer(w);
+    if (!ctx) return;
+    ctx->scroll_acc_x += xoff;
+    ctx->scroll_acc_y += yoff;
+}
+
 /* ========================================================
  * Fog + Licht
  * ======================================================== */
@@ -537,8 +594,13 @@ Moo3DBackend moo_backend_gl33 = {
     .triangle      = gl33_triangle,
     .key_pressed   = gl33_key_pressed,
     .capture_mouse = gl33_capture_mouse,
+    .release_mouse = gl33_release_mouse,
     .mouse_dx      = gl33_mouse_dx,
     .mouse_dy      = gl33_mouse_dy,
+    .mouse_x       = gl33_mouse_x,
+    .mouse_y       = gl33_mouse_y,
+    .mouse_button  = gl33_mouse_button,
+    .mouse_wheel   = gl33_mouse_wheel,
     .set_fog_density = gl33_set_fog_density,
     .set_light_dir   = gl33_set_light_dir,
     .set_ambient     = gl33_set_ambient,

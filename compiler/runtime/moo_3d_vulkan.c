@@ -100,7 +100,12 @@ typedef struct {
     double last_mouse_x;
     double last_mouse_y;
     int mouse_captured;
+    double scroll_acc_x;
+    double scroll_acc_y;
 } VulkanContext;
+
+/* Forward decl */
+static void vk_scroll_callback(GLFWwindow* w, double xoff, double yoff);
 
 /* === Helper: Find queue family === */
 static int find_gfx_queue_family(VkPhysicalDevice phys, VkSurfaceKHR surface) {
@@ -492,6 +497,12 @@ static void* vk_create_window(const char* title, int w, int h) {
     ctx->width = w;
     ctx->height = h;
     ctx->active_chunk = -1;
+    ctx->scroll_acc_x = 0;
+    ctx->scroll_acc_y = 0;
+
+    /* Scroll-Callback registrieren (UserPointer auf VulkanContext) */
+    glfwSetWindowUserPointer(win, ctx);
+    glfwSetScrollCallback(win, vk_scroll_callback);
 
     /* Instance */
     uint32_t glfw_ext_count;
@@ -910,6 +921,53 @@ static void vk_capture_mouse(void* vctx) {
     ctx->mouse_captured = 1;
 }
 
+static void vk_release_mouse(void* vctx) {
+    VulkanContext* ctx = (VulkanContext*)vctx;
+    if (!ctx || !ctx->window) return;
+    glfwSetInputMode(ctx->window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    ctx->mouse_captured = 0;
+}
+
+static float vk_mouse_x(void* vctx) {
+    VulkanContext* ctx = (VulkanContext*)vctx;
+    if (!ctx || !ctx->window) return 0.0f;
+    double cx, cy;
+    glfwGetCursorPos(ctx->window, &cx, &cy);
+    return (float)cx;
+}
+
+static float vk_mouse_y(void* vctx) {
+    VulkanContext* ctx = (VulkanContext*)vctx;
+    if (!ctx || !ctx->window) return 0.0f;
+    double cx, cy;
+    glfwGetCursorPos(ctx->window, &cx, &cy);
+    return (float)cy;
+}
+
+static int vk_mouse_button(void* vctx, int btn) {
+    VulkanContext* ctx = (VulkanContext*)vctx;
+    if (!ctx || !ctx->window) return 0;
+    int glfw_btn = (btn == 0) ? GLFW_MOUSE_BUTTON_LEFT
+                  : (btn == 1) ? GLFW_MOUSE_BUTTON_RIGHT
+                  : GLFW_MOUSE_BUTTON_MIDDLE;
+    return glfwGetMouseButton(ctx->window, glfw_btn) == GLFW_PRESS ? 1 : 0;
+}
+
+static float vk_mouse_wheel(void* vctx) {
+    VulkanContext* ctx = (VulkanContext*)vctx;
+    if (!ctx) return 0.0f;
+    float v = (float)ctx->scroll_acc_y;
+    ctx->scroll_acc_y = 0;
+    return v;
+}
+
+static void vk_scroll_callback(GLFWwindow* w, double xoff, double yoff) {
+    VulkanContext* ctx = (VulkanContext*)glfwGetWindowUserPointer(w);
+    if (!ctx) return;
+    ctx->scroll_acc_x += xoff;
+    ctx->scroll_acc_y += yoff;
+}
+
 static float vk_mouse_dx(void* vctx) {
     VulkanContext* ctx = (VulkanContext*)vctx;
     if (!ctx || !ctx->window || !ctx->mouse_captured) return 0.0f;
@@ -964,8 +1022,13 @@ Moo3DBackend moo_backend_vulkan = {
     .triangle = vk_triangle,
     .key_pressed = vk_key_pressed,
     .capture_mouse = vk_capture_mouse,
+    .release_mouse = vk_release_mouse,
     .mouse_dx = vk_mouse_dx,
     .mouse_dy = vk_mouse_dy,
+    .mouse_x = vk_mouse_x,
+    .mouse_y = vk_mouse_y,
+    .mouse_button = vk_mouse_button,
+    .mouse_wheel = vk_mouse_wheel,
     .set_fog_density = vk_set_fog_density,
     .set_light_dir = vk_set_light_dir,
     .set_ambient = vk_set_ambient,

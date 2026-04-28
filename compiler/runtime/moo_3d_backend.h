@@ -29,8 +29,13 @@ typedef struct {
     int   (*key_pressed)(void* ctx, const char* key);
     // Maus
     void  (*capture_mouse)(void* ctx);
+    void  (*release_mouse)(void* ctx);
     float (*mouse_dx)(void* ctx);
     float (*mouse_dy)(void* ctx);
+    float (*mouse_x)(void* ctx);
+    float (*mouse_y)(void* ctx);
+    int   (*mouse_button)(void* ctx, int btn); // 0=LMB, 1=RMB, 2=MMB
+    float (*mouse_wheel)(void* ctx);           // accumulated scroll-y, consume-on-read
     // Fog + Licht
     void  (*set_fog_density)(void* ctx, float density);
     void  (*set_light_dir)(void* ctx, float x, float y, float z);

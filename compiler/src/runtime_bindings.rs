@@ -200,8 +200,13 @@ pub struct RuntimeBindings<'ctx> {
     // 3D Input
     pub moo_3d_key_pressed: FunctionValue<'ctx>,
     pub moo_3d_capture_mouse: FunctionValue<'ctx>,
+    pub moo_3d_release_mouse: FunctionValue<'ctx>,
     pub moo_3d_mouse_dx: FunctionValue<'ctx>,
     pub moo_3d_mouse_dy: FunctionValue<'ctx>,
+    pub moo_3d_mouse_x: FunctionValue<'ctx>,
+    pub moo_3d_mouse_y: FunctionValue<'ctx>,
+    pub moo_3d_mouse_button: FunctionValue<'ctx>,
+    pub moo_3d_mouse_wheel: FunctionValue<'ctx>,
     // Chunk Display Lists
     pub moo_3d_chunk_create: FunctionValue<'ctx>,
     pub moo_3d_chunk_begin: FunctionValue<'ctx>,
@@ -692,8 +697,13 @@ impl<'ctx> RuntimeBindings<'ctx> {
             // Result-Typ
             moo_3d_key_pressed: decl_mv_mv!("moo_3d_key_pressed", mv2),
             moo_3d_capture_mouse: module.add_function("moo_3d_capture_mouse", void_type.fn_type(mv1, false), None),
+            moo_3d_release_mouse: module.add_function("moo_3d_release_mouse", void_type.fn_type(mv1, false), None),
             moo_3d_mouse_dx: decl_mv_mv!("moo_3d_mouse_dx", mv1),
             moo_3d_mouse_dy: decl_mv_mv!("moo_3d_mouse_dy", mv1),
+            moo_3d_mouse_x: decl_mv_mv!("moo_3d_mouse_x", mv1),
+            moo_3d_mouse_y: decl_mv_mv!("moo_3d_mouse_y", mv1),
+            moo_3d_mouse_button: decl_mv_mv!("moo_3d_mouse_button", mv2),
+            moo_3d_mouse_wheel: decl_mv_mv!("moo_3d_mouse_wheel", mv1),
             // Chunk Display Lists
             moo_3d_chunk_create: decl_mv_mv!("moo_3d_chunk_create", &[]),
             moo_3d_chunk_begin: module.add_function("moo_3d_chunk_begin", void_type.fn_type(mv1, false), None),

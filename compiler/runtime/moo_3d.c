@@ -259,6 +259,45 @@ MooValue moo_3d_mouse_dy(MooValue win) {
     return moo_number((double)g_backend->mouse_dy(g_ctx));
 }
 
+void moo_3d_release_mouse(MooValue win) {
+    (void)win;
+    if (!g_backend || !g_ctx) return;
+    if (g_backend->release_mouse) g_backend->release_mouse(g_ctx);
+}
+
+MooValue moo_3d_mouse_x(MooValue win) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->mouse_x) return moo_number(0);
+    return moo_number((double)g_backend->mouse_x(g_ctx));
+}
+
+MooValue moo_3d_mouse_y(MooValue win) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->mouse_y) return moo_number(0);
+    return moo_number((double)g_backend->mouse_y(g_ctx));
+}
+
+MooValue moo_3d_mouse_button(MooValue win, MooValue button) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->mouse_button) return moo_bool(false);
+    int btn = 0; /* default LMB */
+    if (button.tag == MOO_STRING) {
+        const char* s = MV_STR(button)->chars;
+        if (strcmp(s, "links") == 0 || strcmp(s, "left") == 0 || strcmp(s, "l") == 0) btn = 0;
+        else if (strcmp(s, "rechts") == 0 || strcmp(s, "right") == 0 || strcmp(s, "r") == 0) btn = 1;
+        else if (strcmp(s, "mitte") == 0 || strcmp(s, "middle") == 0 || strcmp(s, "m") == 0) btn = 2;
+    } else if (button.tag == MOO_NUMBER) {
+        btn = (int)MV_NUM(button);
+    }
+    return moo_bool(g_backend->mouse_button(g_ctx, btn) != 0);
+}
+
+MooValue moo_3d_mouse_wheel(MooValue win) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->mouse_wheel) return moo_number(0);
+    return moo_number((double)g_backend->mouse_wheel(g_ctx));
+}
+
 // ============================================================
 // Chunk Display List System
 // ============================================================
