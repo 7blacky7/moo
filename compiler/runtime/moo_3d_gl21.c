@@ -24,6 +24,10 @@ typedef struct {
     int mouse_captured;
     double scroll_acc_x;
     double scroll_acc_y;
+    /* Test-Sim */
+    int sim_pos_active;
+    float sim_x, sim_y;
+    int sim_button[3];
 } GL21Context;
 
 static void gl21_scroll_callback(GLFWwindow* w, double xoff, double yoff);
@@ -386,6 +390,7 @@ static void gl21_release_mouse(void* vctx) {
 static float gl21_mouse_x(void* vctx) {
     GL21Context* ctx = (GL21Context*)vctx;
     if (!ctx || !ctx->window) return 0.0f;
+    if (ctx->sim_pos_active) return ctx->sim_x;
     double cx, cy;
     glfwGetCursorPos(ctx->window, &cx, &cy);
     return (float)cx;
@@ -394,6 +399,7 @@ static float gl21_mouse_x(void* vctx) {
 static float gl21_mouse_y(void* vctx) {
     GL21Context* ctx = (GL21Context*)vctx;
     if (!ctx || !ctx->window) return 0.0f;
+    if (ctx->sim_pos_active) return ctx->sim_y;
     double cx, cy;
     glfwGetCursorPos(ctx->window, &cx, &cy);
     return (float)cy;
@@ -402,10 +408,31 @@ static float gl21_mouse_y(void* vctx) {
 static int gl21_mouse_button(void* vctx, int btn) {
     GL21Context* ctx = (GL21Context*)vctx;
     if (!ctx || !ctx->window) return 0;
+    if (btn >= 0 && btn < 3 && ctx->sim_button[btn]) return 1;
     int glfw_btn = (btn == 0) ? GLFW_MOUSE_BUTTON_LEFT
                   : (btn == 1) ? GLFW_MOUSE_BUTTON_RIGHT
                   : GLFW_MOUSE_BUTTON_MIDDLE;
     return glfwGetMouseButton(ctx->window, glfw_btn) == GLFW_PRESS ? 1 : 0;
+}
+
+static void gl21_simulate_mouse_pos(void* vctx, float x, float y) {
+    GL21Context* ctx = (GL21Context*)vctx;
+    if (!ctx) return;
+    ctx->sim_pos_active = 1;
+    ctx->sim_x = x;
+    ctx->sim_y = y;
+}
+
+static void gl21_simulate_mouse_button(void* vctx, int btn, int pressed) {
+    GL21Context* ctx = (GL21Context*)vctx;
+    if (!ctx || btn < 0 || btn >= 3) return;
+    ctx->sim_button[btn] = pressed ? 1 : 0;
+}
+
+static void gl21_simulate_scroll(void* vctx, float dy) {
+    GL21Context* ctx = (GL21Context*)vctx;
+    if (!ctx) return;
+    ctx->scroll_acc_y += dy;
 }
 
 static float gl21_mouse_wheel(void* vctx) {
@@ -495,4 +522,7 @@ Moo3DBackend moo_backend_gl21 = {
     .chunk_draw    = gl21_chunk_draw,
     .chunk_delete  = gl21_chunk_delete,
     .screenshot_bmp = gl21_screenshot_bmp,
+    .simulate_mouse_pos = gl21_simulate_mouse_pos,
+    .simulate_mouse_button = gl21_simulate_mouse_button,
+    .simulate_scroll = gl21_simulate_scroll,
 };

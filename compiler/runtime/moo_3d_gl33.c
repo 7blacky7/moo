@@ -48,6 +48,10 @@ typedef struct {
     int mouse_captured;
     double scroll_acc_x;
     double scroll_acc_y;
+    /* Test-Sim */
+    int sim_pos_active;
+    float sim_x, sim_y;
+    int sim_button[3];
 } GL33Context;
 
 static void gl33_scroll_callback(GLFWwindow* w, double xoff, double yoff);
@@ -514,6 +518,7 @@ static void gl33_release_mouse(void* vctx) {
 static float gl33_mouse_x(void* vctx) {
     GL33Context* ctx = (GL33Context*)vctx;
     if (!ctx || !ctx->window) return 0.0f;
+    if (ctx->sim_pos_active) return ctx->sim_x;
     double cx, cy;
     glfwGetCursorPos(ctx->window, &cx, &cy);
     return (float)cx;
@@ -522,6 +527,7 @@ static float gl33_mouse_x(void* vctx) {
 static float gl33_mouse_y(void* vctx) {
     GL33Context* ctx = (GL33Context*)vctx;
     if (!ctx || !ctx->window) return 0.0f;
+    if (ctx->sim_pos_active) return ctx->sim_y;
     double cx, cy;
     glfwGetCursorPos(ctx->window, &cx, &cy);
     return (float)cy;
@@ -530,10 +536,31 @@ static float gl33_mouse_y(void* vctx) {
 static int gl33_mouse_button(void* vctx, int btn) {
     GL33Context* ctx = (GL33Context*)vctx;
     if (!ctx || !ctx->window) return 0;
+    if (btn >= 0 && btn < 3 && ctx->sim_button[btn]) return 1;
     int glfw_btn = (btn == 0) ? GLFW_MOUSE_BUTTON_LEFT
                   : (btn == 1) ? GLFW_MOUSE_BUTTON_RIGHT
                   : GLFW_MOUSE_BUTTON_MIDDLE;
     return glfwGetMouseButton(ctx->window, glfw_btn) == GLFW_PRESS ? 1 : 0;
+}
+
+static void gl33_simulate_mouse_pos(void* vctx, float x, float y) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return;
+    ctx->sim_pos_active = 1;
+    ctx->sim_x = x;
+    ctx->sim_y = y;
+}
+
+static void gl33_simulate_mouse_button(void* vctx, int btn, int pressed) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx || btn < 0 || btn >= 3) return;
+    ctx->sim_button[btn] = pressed ? 1 : 0;
+}
+
+static void gl33_simulate_scroll(void* vctx, float dy) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return;
+    ctx->scroll_acc_y += dy;
 }
 
 static float gl33_mouse_wheel(void* vctx) {
@@ -613,6 +640,9 @@ Moo3DBackend moo_backend_gl33 = {
     .chunk_draw    = gl33_chunk_draw_fn,
     .chunk_delete  = gl33_chunk_delete_fn,
     .screenshot_bmp = gl33_screenshot_bmp,
+    .simulate_mouse_pos = gl33_simulate_mouse_pos,
+    .simulate_mouse_button = gl33_simulate_mouse_button,
+    .simulate_scroll = gl33_simulate_scroll,
 };
 
 /* ========================================================

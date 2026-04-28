@@ -105,6 +105,11 @@ typedef struct {
 
     /* Screenshot — Index des zuletzt acquirierten Swapchain-Images */
     uint32_t last_image_index;
+
+    /* Test-Sim: programmatische Maus-Eingaben */
+    int sim_pos_active;
+    float sim_x, sim_y;
+    int sim_button[3];        /* 0=LMB, 1=RMB, 2=MMB; 1 = pressed */
 } VulkanContext;
 
 /* Forward decl */
@@ -935,6 +940,7 @@ static void vk_release_mouse(void* vctx) {
 static float vk_mouse_x(void* vctx) {
     VulkanContext* ctx = (VulkanContext*)vctx;
     if (!ctx || !ctx->window) return 0.0f;
+    if (ctx->sim_pos_active) return ctx->sim_x;
     double cx, cy;
     glfwGetCursorPos(ctx->window, &cx, &cy);
     return (float)cx;
@@ -943,6 +949,7 @@ static float vk_mouse_x(void* vctx) {
 static float vk_mouse_y(void* vctx) {
     VulkanContext* ctx = (VulkanContext*)vctx;
     if (!ctx || !ctx->window) return 0.0f;
+    if (ctx->sim_pos_active) return ctx->sim_y;
     double cx, cy;
     glfwGetCursorPos(ctx->window, &cx, &cy);
     return (float)cy;
@@ -951,10 +958,31 @@ static float vk_mouse_y(void* vctx) {
 static int vk_mouse_button(void* vctx, int btn) {
     VulkanContext* ctx = (VulkanContext*)vctx;
     if (!ctx || !ctx->window) return 0;
+    if (btn >= 0 && btn < 3 && ctx->sim_button[btn]) return 1;
     int glfw_btn = (btn == 0) ? GLFW_MOUSE_BUTTON_LEFT
                   : (btn == 1) ? GLFW_MOUSE_BUTTON_RIGHT
                   : GLFW_MOUSE_BUTTON_MIDDLE;
     return glfwGetMouseButton(ctx->window, glfw_btn) == GLFW_PRESS ? 1 : 0;
+}
+
+static void vk_simulate_mouse_pos(void* vctx, float x, float y) {
+    VulkanContext* ctx = (VulkanContext*)vctx;
+    if (!ctx) return;
+    ctx->sim_pos_active = 1;
+    ctx->sim_x = x;
+    ctx->sim_y = y;
+}
+
+static void vk_simulate_mouse_button(void* vctx, int btn, int pressed) {
+    VulkanContext* ctx = (VulkanContext*)vctx;
+    if (!ctx || btn < 0 || btn >= 3) return;
+    ctx->sim_button[btn] = pressed ? 1 : 0;
+}
+
+static void vk_simulate_scroll(void* vctx, float dy) {
+    VulkanContext* ctx = (VulkanContext*)vctx;
+    if (!ctx) return;
+    ctx->scroll_acc_y += dy;
 }
 
 static float vk_mouse_wheel(void* vctx) {
@@ -1217,4 +1245,7 @@ Moo3DBackend moo_backend_vulkan = {
     .chunk_draw = vk_chunk_draw_fn,
     .chunk_delete = vk_chunk_delete_fn,
     .screenshot_bmp = vk_screenshot_bmp,
+    .simulate_mouse_pos = vk_simulate_mouse_pos,
+    .simulate_mouse_button = vk_simulate_mouse_button,
+    .simulate_scroll = vk_simulate_scroll,
 };

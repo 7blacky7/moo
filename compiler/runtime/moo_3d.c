@@ -346,3 +346,36 @@ MooValue moo_3d_screenshot_bmp(MooValue window, MooValue path) {
     int rc = g_backend->screenshot_bmp(g_ctx, MV_STR(path)->chars);
     return moo_bool(rc != 0);
 }
+
+/* ========================================================
+ * Test-Sim — programmatische Maus-Eingaben fuer Selbsttests.
+ * ======================================================== */
+void moo_3d_simulate_mouse_pos(MooValue win, MooValue x, MooValue y) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->simulate_mouse_pos) return;
+    g_backend->simulate_mouse_pos(g_ctx, (float)MV_NUM(x), (float)MV_NUM(y));
+}
+
+void moo_3d_simulate_mouse_button(MooValue win, MooValue button, MooValue pressed) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->simulate_mouse_button) return;
+    int btn = 0;
+    if (button.tag == MOO_STRING) {
+        const char* s = MV_STR(button)->chars;
+        if (strcmp(s, "links") == 0 || strcmp(s, "left") == 0 || strcmp(s, "l") == 0) btn = 0;
+        else if (strcmp(s, "rechts") == 0 || strcmp(s, "right") == 0 || strcmp(s, "r") == 0) btn = 1;
+        else if (strcmp(s, "mitte") == 0 || strcmp(s, "middle") == 0 || strcmp(s, "m") == 0) btn = 2;
+    } else if (button.tag == MOO_NUMBER) {
+        btn = (int)MV_NUM(button);
+    }
+    int p = 0;
+    if (pressed.tag == MOO_BOOL) p = MV_BOOL(pressed) ? 1 : 0;
+    else if (pressed.tag == MOO_NUMBER) p = MV_NUM(pressed) != 0 ? 1 : 0;
+    g_backend->simulate_mouse_button(g_ctx, btn, p);
+}
+
+void moo_3d_simulate_scroll(MooValue win, MooValue dy) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->simulate_scroll) return;
+    g_backend->simulate_scroll(g_ctx, (float)MV_NUM(dy));
+}

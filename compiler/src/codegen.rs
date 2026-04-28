@@ -2609,6 +2609,21 @@ impl<'ctx> CodeGen<'ctx> {
                         let win = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_3d_mouse_wheel, &[win.into()], "mouse_wheel");
                     }
+                    "raum_sim_maus_pos" | "space_sim_mouse_pos" | "3d_sim_maus_pos" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_simulate_mouse_pos, &[a[0].into(), a[1].into(), a[2].into()], "sim_mpos")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_sim_maus_taste" | "space_sim_mouse_button" | "3d_sim_maus_taste" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_simulate_mouse_button, &[a[0].into(), a[1].into(), a[2].into()], "sim_mbtn")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_sim_rad" | "space_sim_scroll" | "3d_sim_rad" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_simulate_scroll, &[a[0].into(), a[1].into()], "sim_scroll")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     // Chunk Display Lists
                     "chunk_erstelle" | "chunk_create" => {
                         return self.call_rt(self.rt.moo_3d_chunk_create, &[], "chunk_create");

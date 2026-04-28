@@ -48,6 +48,10 @@ typedef struct {
     void  (*chunk_delete)(void* ctx, int id);
     // Screenshot — schreibt aktuelles Frame-Buffer als BMP. Returns 1 bei Erfolg, 0 sonst.
     int   (*screenshot_bmp)(void* ctx, const char* path);
+    // Test-Sim: programmatische Eingaben fuer Selbsttests
+    void  (*simulate_mouse_pos)(void* ctx, float x, float y);
+    void  (*simulate_mouse_button)(void* ctx, int btn, int pressed); // btn 0/1/2, pressed 0/1
+    void  (*simulate_scroll)(void* ctx, float dy);
 } Moo3DBackend;
 
 // Backend-Deklarationen (je nach Feature-Flag verfuegbar)
