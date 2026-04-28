@@ -16,12 +16,17 @@
 #   MOO_3D_BACKEND=vulkan moo-compiler run beispiele/city_builder/city_builder.moo
 #
 # Steuerung:
-#   W / A / S / D    → Kamera pannen (Norden/West/Sued/Ost) — alternativ: Linke Maustaste ziehen
+#   W / A / S / D    → Kamera pannen — alternativ: Linke Maustaste ziehen
 #   Q / E            → Heran-/Wegzoomen — alternativ: Mausrad scrollen
-#   Z / X            → Yaw rotieren — alternativ: Mittlere Maustaste horizontal ziehen
-#   R / F            → Tilt (Elevation) — alternativ: Mittlere Maustaste vertikal ziehen
+#   Z / X            → Yaw rotieren — alternativ: Mittlere ODER Rechte Maustaste ziehen
+#                                       ODER Shift + Linke Maustaste ziehen
+#   R / F            → Tilt (Elevation) — alternativ: Mittlere/Rechte Maustaste vertikal
 #   Pfeiltasten      → Welt-Cursor verschieben
 #   Escape           → Beenden
+#
+# Hinweis Maus-Rotation: Auf manchen Wayland-Compositoren (KDE) wird die
+# mittlere Maustaste fuer Paste-Primary konsumiert und nicht an die App
+# durchgereicht. Deshalb sind RMB und Shift+LMB als Fallbacks vorhanden.
 # ============================================================
 
 
@@ -274,24 +279,31 @@ solange raum_offen(win):
     setze last_maus_x auf mx
     setze last_maus_y auf my
 
-    # Linke Maustaste gedrueckt + Bewegung -> Karte panen.
-    # Unit-Vektoren forward/right (cam_azimuth-rotated), Pan-Faktor
-    # skaliert mit Zoom (entferntere Kamera = mehr Pan pro Pixel).
-    wenn raum_maus_taste(win, "links"):
+    # Linke Maustaste gedrueckt OHNE Shift + Bewegung -> Karte panen.
+    # Mit Shift wird LMB stattdessen zur Rotation umgenutzt (siehe unten).
+    wenn raum_maus_taste(win, "links") und nicht raum_taste(win, "shift"):
         setze ufwd_x auf 0 - sinus(cam_azimuth)
         setze ufwd_z auf 0 - cosinus(cam_azimuth)
         setze urt_x auf cosinus(cam_azimuth)
         setze urt_z auf 0 - sinus(cam_azimuth)
         setze pan_factor auf cam_zoom * 0.0015
-        # Maus rechts -> Kamera links (Welt scheint mit Cursor zu gehen)
         setze cam_x auf cam_x - urt_x * mdx * pan_factor
         setze cam_z auf cam_z - urt_z * mdx * pan_factor
-        # Maus runter -> Kamera zurueck (Welt schiebt sich nach unten)
         setze cam_x auf cam_x - ufwd_x * mdy * pan_factor
         setze cam_z auf cam_z - ufwd_z * mdy * pan_factor
 
-    # Mittlere Maustaste + Bewegung -> Yaw (mdx) + Tilt (mdy).
+    # Rotation per Maus: mittlere ODER rechte Taste, ODER Shift+linke
+    # Rechte Maustaste als Fallback weil manche Wayland-Compositoren
+    # mittlere-Klick-Events fuer Paste-Primary konsumieren und nicht an
+    # GLFW durchreichen. So oder so dreht es: mdx=Yaw, mdy=Tilt.
+    setze rotate_aktiv auf falsch
     wenn raum_maus_taste(win, "mitte"):
+        setze rotate_aktiv auf wahr
+    wenn raum_maus_taste(win, "rechts"):
+        setze rotate_aktiv auf wahr
+    wenn raum_taste(win, "shift") und raum_maus_taste(win, "links"):
+        setze rotate_aktiv auf wahr
+    wenn rotate_aktiv:
         setze cam_azimuth auf cam_azimuth + mdx * 0.008
         setze cam_elevation auf cam_elevation - mdy * 0.005
         wenn cam_elevation < 0.25:
