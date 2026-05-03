@@ -28,10 +28,12 @@ fail=0
 skip=0
 errors=""
 
-# Alle .moo Dateien mit .expected durchgehen
-for moo_file in "$SCRIPT_DIR"/*.moo; do
+# Alle .moo Dateien mit .expected durchgehen (top-level + regression/)
+for moo_file in "$SCRIPT_DIR"/*.moo "$SCRIPT_DIR"/regression/*.moo; do
+    [[ -f "$moo_file" ]] || continue
     test_name="$(basename "$moo_file" .moo)"
-    expected_file="$SCRIPT_DIR/${test_name}.expected"
+    test_dir="$(dirname "$moo_file")"
+    expected_file="${test_dir}/${test_name}.expected"
 
     # Ohne .expected ueberspringen
     if [[ ! -f "$expected_file" ]]; then
