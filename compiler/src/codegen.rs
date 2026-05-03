@@ -3609,6 +3609,13 @@ impl<'ctx> CodeGen<'ctx> {
                     .map_err(|e| format!("{e}"))?.into_struct_value();
                 self.call_rt_void(self.rt.moo_release, &[prev.into()], "rel_prev_mcall_obj")?;
                 self.builder.build_store(obj_slot, obj_val).map_err(|e| format!("{e}"))?;
+                // obj_val haelt +1 von compile_expr (load_var-retain). Slot bekommt
+                // hier eine EIGENE +1, damit obj_val parallel als call-arg passiert
+                // werden kann ohne dass Callee-release den Slot-Cleanup zerlegt.
+                // Ohne dieses retain: Method-Multi-Call (3+x f.bla() in einem Scope)
+                // crashed mit malloc tcache-Korruption (siehe regression/
+                // test_method_multi_call_abort.moo).
+                self.call_rt_void(self.rt.moo_retain, &[obj_val.into()], "retain_for_slot")?;
 
                 let obj = obj_val;
                 // Eingebaute Methoden
@@ -4635,6 +4642,14 @@ impl<'ctx> CodeGen<'ctx> {
                         let cap = self.call_rt(self.rt.moo_func_captured_at,
                             &[env_arg.into(), i_val.into()],
                             &format!("cap_{i}"))?;
+                        // moo_func_captured_at liefert BORROWED ref. Inner-Funktion
+                        // released ihren Param am Frame-Ende (release_function_locals).
+                        // Ohne extra retain hier: jeder Closure-Aufruf sinkt den
+                        // captured-Refcount um 1 -> nach 2-3 Aufrufen freed -> SIGSEGV
+                        // (siehe regression/test_closure_multi_call.moo).
+                        self.call_rt_void(self.rt.moo_retain,
+                            &[cap.into()],
+                            &format!("retain_cap_{i}"))?;
                         inner_args.push(cap.into());
                     }
                     let call_site = self.builder.build_call(function, &inner_args, "inner_call")
