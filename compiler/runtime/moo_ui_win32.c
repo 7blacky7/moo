@@ -3411,3 +3411,30 @@ MooValue moo_ui_menue_untermenue(MooValue menue, MooValue titel) {
     moo_val_set_ptr(&v, (void*)sub);
     return v;
 }
+
+/* ------------------------------------------------------------------ *
+ * Tray-Bedarf: Resize / Enter / Key / Scroll-Hooks (Stubs Phase 1)
+ *
+ * Win32-Implementierung folgt mit dem Win32-UI-Backend-Sweep. Bis dahin
+ * geben die Hooks moo_nichts zurueck — moo-Code muss damit defensiv sein.
+ * ------------------------------------------------------------------ */
+
+MooValue moo_ui_fenster_on_resize(MooValue fenster, MooValue callback) {
+    (void)fenster; (void)callback;
+    return moo_none();
+}
+
+MooValue moo_ui_eingabe_on_enter(MooValue eingabe, MooValue callback) {
+    (void)eingabe; (void)callback;
+    return moo_none();
+}
+
+MooValue moo_ui_textbereich_on_key(MooValue tb, MooValue callback) {
+    (void)tb; (void)callback;
+    return moo_none();
+}
+
+MooValue moo_ui_liste_on_scroll(MooValue liste, MooValue callback) {
+    (void)liste; (void)callback;
+    return moo_none();
+}

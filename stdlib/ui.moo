@@ -12,6 +12,7 @@
 #
 #   === Schicht 1 — Primitive (als C-Builtins vom Runtime bereitgestellt) ===
 #     ui_fenster(titel, b, h, resizable, maximiert, parent)   -> handle
+#     ui_fenster_on_resize(fenster, callback)      # callback(b, h) bei Groessenaenderung
 #     ui_zeige(fenster)                                        -> blocking
 #     ui_zeige_nebenbei(fenster)                               -> non-blocking
 #     ui_laufen()                                              -> Event-Loop
@@ -24,9 +25,13 @@
 #     ui_eingabe(parent, x, y, b, h, platzhalter, passwort)    -> handle
 #     ui_eingabe_text(handle)                                  -> string
 #     ui_eingabe_setze(handle, text)
+#     ui_eingabe_on_change(handle, callback)
+#     ui_eingabe_on_enter(handle, callback)        # Return-Taste -> callback()
 #     ui_textbereich(parent, x, y, b, h)
+#     ui_textbereich_on_key(handle, callback)      # callback(key, ctrl, shift, alt) -> wahr=konsumiert
 #     ui_dropdown(parent, optionen, x, y, b, h, callback)
 #     ui_liste(parent, spalten, x, y, b, h)
+#     ui_liste_on_scroll(handle, callback)         # Mausrad -> callback(delta_y)
 #     ui_slider(parent, min, max, start, x, y, b, h, callback)
 #     ui_fortschritt(parent, x, y, b, h)
 #     ui_fortschritt_setze(handle, anteil)

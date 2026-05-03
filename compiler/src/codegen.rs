@@ -2934,6 +2934,11 @@ impl<'ctx> CodeGen<'ctx> {
                         let c = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_ui_fenster_on_close, &[f.into(), c.into()], "ui_fenster_on_close");
                     }
+                    "ui_fenster_on_resize" | "ui_window_on_resize" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_fenster_on_resize, &[f.into(), c.into()], "ui_fenster_on_resize");
+                    }
                     "ui_label" => {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_ui_label, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_label");
@@ -2990,6 +2995,11 @@ impl<'ctx> CodeGen<'ctx> {
                         let c = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_ui_eingabe_on_change, &[e.into(), c.into()], "ui_eingabe_on_change");
                     }
+                    "ui_eingabe_on_enter" | "ui_input_on_enter" => {
+                        let e = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_eingabe_on_enter, &[e.into(), c.into()], "ui_eingabe_on_enter");
+                    }
                     "ui_textbereich" | "ui_textarea" => {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_ui_textbereich, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_textbereich");
@@ -3007,6 +3017,11 @@ impl<'ctx> CodeGen<'ctx> {
                         let tb = self.compile_expr(&args[0])?;
                         let t = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_ui_textbereich_anhaengen, &[tb.into(), t.into()], "ui_textbereich_anhaengen");
+                    }
+                    "ui_textbereich_on_key" | "ui_textarea_on_key" => {
+                        let tb = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_textbereich_on_key, &[tb.into(), c.into()], "ui_textbereich_on_key");
                     }
                     "ui_dropdown" => {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
@@ -3051,6 +3066,11 @@ impl<'ctx> CodeGen<'ctx> {
                         let l = self.compile_expr(&args[0])?;
                         let c = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_ui_liste_on_auswahl, &[l.into(), c.into()], "ui_liste_on_auswahl");
+                    }
+                    "ui_liste_on_scroll" | "ui_list_on_scroll" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_liste_on_scroll, &[l.into(), c.into()], "ui_liste_on_scroll");
                     }
                     "moo_ui_liste_spalte_breite" | "ui_liste_spalte_breite" | "liste_spalte_breite" => {
                         let l = self.compile_expr(&args[0])?;

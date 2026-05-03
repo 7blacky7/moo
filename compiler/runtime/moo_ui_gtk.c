@@ -2478,6 +2478,157 @@ MooValue moo_ui_shortcut_bind(MooValue fenster, MooValue sequenz,
     return moo_bool(1);
 }
 
+/* ================================================================== *
+ * Tray-Bedarf: Resize / Enter / Key / Scroll-Hooks (additive)
+ *
+ * Vier zusaetzliche Event-Bindings fuer Synapse-Tray + ui-Stdlib. Pattern
+ * wie ueberall: cb_box_new + g_signal_connect_data(..., cb_box_destroy).
+ * Re-Bind disconnectet das alte Binding still (analog Leinwand-Maus).
+ * ================================================================== */
+
+static void on_window_size_allocate_trampoline(GtkWidget* w, GtkAllocation* a,
+                                               gpointer ud) {
+    (void)w;
+    MooValue* cb = (MooValue*)ud;
+    if (!cb || cb->tag != MOO_FUNC || !a) return;
+    MooValue rv = moo_func_call_2(*cb,
+                                  moo_number((double)a->width),
+                                  moo_number((double)a->height));
+    moo_release(rv);
+}
+
+MooValue moo_ui_fenster_on_resize(MooValue fenster, MooValue callback) {
+    GtkWidget* w = unwrap_widget(fenster);
+    if (!w || !GTK_IS_WINDOW(w)) return moo_bool(0);
+
+    gulong old_id = (gulong)GPOINTER_TO_SIZE(
+        g_object_get_data(G_OBJECT(w), "moo-resize-id"));
+    if (old_id != 0) {
+        g_signal_handler_disconnect(w, old_id);
+        g_object_set_data(G_OBJECT(w), "moo-resize-id", GSIZE_TO_POINTER(0));
+    }
+    if (callback.tag != MOO_FUNC) return moo_bool(1);
+
+    MooValue* box = cb_box_new(callback);
+    gulong id = g_signal_connect_data(w, "size-allocate",
+                                      G_CALLBACK(on_window_size_allocate_trampoline),
+                                      box, cb_box_destroy, 0);
+    g_object_set_data(G_OBJECT(w), "moo-resize-id", GSIZE_TO_POINTER(id));
+    return moo_bool(1);
+}
+
+static void on_entry_activate_trampoline(GtkEntry* e, gpointer ud) {
+    (void)e;
+    MooValue* cb = (MooValue*)ud;
+    if (cb && cb->tag == MOO_FUNC) {
+        MooValue rv = moo_func_call_0(*cb);
+        moo_release(rv);
+    }
+}
+
+MooValue moo_ui_eingabe_on_enter(MooValue eingabe, MooValue callback) {
+    GtkWidget* e = unwrap_widget(eingabe);
+    if (!e || !GTK_IS_ENTRY(e)) return moo_bool(0);
+
+    gulong old_id = (gulong)GPOINTER_TO_SIZE(
+        g_object_get_data(G_OBJECT(e), "moo-enter-id"));
+    if (old_id != 0) {
+        g_signal_handler_disconnect(e, old_id);
+        g_object_set_data(G_OBJECT(e), "moo-enter-id", GSIZE_TO_POINTER(0));
+    }
+    if (callback.tag != MOO_FUNC) return moo_bool(1);
+
+    MooValue* box = cb_box_new(callback);
+    gulong id = g_signal_connect_data(e, "activate",
+                                      G_CALLBACK(on_entry_activate_trampoline),
+                                      box, cb_box_destroy, 0);
+    g_object_set_data(G_OBJECT(e), "moo-enter-id", GSIZE_TO_POINTER(id));
+    return moo_bool(1);
+}
+
+static gboolean on_textview_key_trampoline(GtkWidget* w, GdkEventKey* ev,
+                                           gpointer ud) {
+    (void)w;
+    MooValue* cb = (MooValue*)ud;
+    if (!cb || cb->tag != MOO_FUNC || !ev) return FALSE;
+    const char* name = gdk_keyval_name(ev->keyval);
+    MooValue keyname = moo_string_new(name ? name : "");
+    gboolean ctrl  = (ev->state & GDK_CONTROL_MASK) != 0;
+    gboolean shift = (ev->state & GDK_SHIFT_MASK)   != 0;
+    gboolean alt   = (ev->state & GDK_MOD1_MASK)    != 0;
+    MooValue rv = moo_func_call_4(*cb, keyname,
+                                  moo_bool(ctrl), moo_bool(shift), moo_bool(alt));
+    /* Rueckgabe wahr → Default-Handling unterdruecken (z.B. Tab konsumieren). */
+    gboolean handled = moo_is_truthy(rv);
+    moo_release(rv);
+    moo_release(keyname);
+    return handled ? TRUE : FALSE;
+}
+
+MooValue moo_ui_textbereich_on_key(MooValue tb, MooValue callback) {
+    GtkTextView* v = tb_get_view(tb);
+    if (!v) return moo_bool(0);
+    GtkWidget* tv = GTK_WIDGET(v);
+
+    gulong old_id = (gulong)GPOINTER_TO_SIZE(
+        g_object_get_data(G_OBJECT(tv), "moo-tvkey-id"));
+    if (old_id != 0) {
+        g_signal_handler_disconnect(tv, old_id);
+        g_object_set_data(G_OBJECT(tv), "moo-tvkey-id", GSIZE_TO_POINTER(0));
+    }
+    if (callback.tag != MOO_FUNC) return moo_bool(1);
+
+    MooValue* box = cb_box_new(callback);
+    gulong id = g_signal_connect_data(tv, "key-press-event",
+                                      G_CALLBACK(on_textview_key_trampoline),
+                                      box, cb_box_destroy, 0);
+    g_object_set_data(G_OBJECT(tv), "moo-tvkey-id", GSIZE_TO_POINTER(id));
+    return moo_bool(1);
+}
+
+static gboolean on_treeview_scroll_trampoline(GtkWidget* w, GdkEventScroll* ev,
+                                              gpointer ud) {
+    (void)w;
+    MooValue* cb = (MooValue*)ud;
+    if (!cb || cb->tag != MOO_FUNC || !ev) return FALSE;
+    double delta = 0.0;
+    if (ev->direction == GDK_SCROLL_SMOOTH) {
+        delta = ev->delta_y;
+    } else if (ev->direction == GDK_SCROLL_UP) {
+        delta = -1.0;
+    } else if (ev->direction == GDK_SCROLL_DOWN) {
+        delta = 1.0;
+    } else {
+        return FALSE;
+    }
+    MooValue rv = moo_func_call_1(*cb, moo_number(delta));
+    moo_release(rv);
+    return FALSE;
+}
+
+MooValue moo_ui_liste_on_scroll(MooValue liste, MooValue callback) {
+    GtkWidget* sw = unwrap_widget(liste);
+    if (!sw) return moo_bool(0);
+    GtkWidget* tv = (GtkWidget*)g_object_get_data(G_OBJECT(sw), "moo-tv");
+    if (!tv || !GTK_IS_TREE_VIEW(tv)) return moo_bool(0);
+
+    gulong old_id = (gulong)GPOINTER_TO_SIZE(
+        g_object_get_data(G_OBJECT(tv), "moo-scroll-id"));
+    if (old_id != 0) {
+        g_signal_handler_disconnect(tv, old_id);
+        g_object_set_data(G_OBJECT(tv), "moo-scroll-id", GSIZE_TO_POINTER(0));
+    }
+    if (callback.tag != MOO_FUNC) return moo_bool(1);
+
+    gtk_widget_add_events(tv, GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK);
+    MooValue* box = cb_box_new(callback);
+    gulong id = g_signal_connect_data(tv, "scroll-event",
+                                      G_CALLBACK(on_treeview_scroll_trampoline),
+                                      box, cb_box_destroy, 0);
+    g_object_set_data(G_OBJECT(tv), "moo-scroll-id", GSIZE_TO_POINTER(id));
+    return moo_bool(1);
+}
+
 MooValue moo_ui_shortcut_loese(MooValue fenster, MooValue sequenz) {
     GtkWidget* win = unwrap_widget(fenster);
     if (!win || !GTK_IS_WINDOW(win)) return moo_bool(0);

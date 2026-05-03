@@ -114,6 +114,17 @@ MooValue moo_ui_zeige_nebenbei(MooValue fenster);
  * liefert callback wahr zurueck → schliessen; falsch → abbrechen). */
 MooValue moo_ui_fenster_on_close(MooValue fenster, MooValue callback);
 
+/* Registriert Resize-Handler. Callback-Signatur: on_resize(b, h) — neue
+ * Client-Pixelbreite/-hoehe. Feuert auch beim erstmaligen Layout (initial
+ * size-allocate). Re-Bind disconnectet das vorherige Binding still.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : "size-allocate" auf dem Top-Level-Fenster.
+ *   Windows      : WM_SIZE (Subclass-Proc); LOWORD/HIWORD(lParam).
+ *   macOS        : NSWindowDidResizeNotification.
+ */
+MooValue moo_ui_fenster_on_resize(MooValue fenster, MooValue callback);
+
 /* =========================================================================
  * Basis-Widgets
  *
@@ -149,11 +160,40 @@ MooValue moo_ui_eingabe_text(MooValue eingabe);
 MooValue moo_ui_eingabe_setze(MooValue eingabe, MooValue text);
 MooValue moo_ui_eingabe_on_change(MooValue eingabe, MooValue callback);
 
+/* Feuert wenn der User in einer Eingabe Enter/Return drueckt. Callback
+ * ohne Argumente — der aktuelle Text liest sich via moo_ui_eingabe_text.
+ * Re-Bind disconnectet das vorherige Binding still.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : "activate"-Signal auf GtkEntry (feuert bei Return).
+ *   Windows      : WM_KEYDOWN/VK_RETURN auf der EDIT-Subclass.
+ *   macOS        : NSTextField doCommandBySelector:@selector(insertNewline:).
+ */
+MooValue moo_ui_eingabe_on_enter(MooValue eingabe, MooValue callback);
+
 MooValue moo_ui_textbereich(MooValue parent,
                             MooValue x, MooValue y, MooValue b, MooValue h);
 MooValue moo_ui_textbereich_text(MooValue tb);
 MooValue moo_ui_textbereich_setze(MooValue tb, MooValue text);
 MooValue moo_ui_textbereich_anhaengen(MooValue tb, MooValue text);
+
+/* Tasten-Hook fuer Textbereich. Callback-Signatur:
+ *   on_key(key, ctrl, shift, alt)
+ *     key:   MOO_STRING — Symbol-Name (z.B. "Tab", "Return", "a", "Escape").
+ *     ctrl/shift/alt: MOO_BOOL — Modifier-Status zum Zeitpunkt der Taste.
+ *
+ * Rueckgabewert wahr → Default-Handling unterdruecken (Taste konsumiert),
+ * falsch → an Backend weiterreichen. Damit kann ui-Code z.B. Tab abfangen
+ * und stattdessen einen Tabstop einfuegen. Re-Bind disconnectet still.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : "key-press-event" auf der inneren GtkTextView;
+ *                  gdk_keyval_name fuer den Symbol-Namen.
+ *   Windows      : WM_KEYDOWN auf der EDIT-Multiline-Subclass; VK_*
+ *                  -> Symbolname via Lookup-Tabelle.
+ *   macOS        : NSTextView keyDown:; [event characters]/keyCode.
+ */
+MooValue moo_ui_textbereich_on_key(MooValue tb, MooValue callback);
 
 /* =========================================================================
  * Listen & Auswahl
@@ -176,6 +216,22 @@ MooValue moo_ui_liste_auswahl(MooValue liste);        /* liefert index oder -1 *
 MooValue moo_ui_liste_zeile(MooValue liste, MooValue index); /* liefert MooList */
 MooValue moo_ui_liste_leeren(MooValue liste);
 MooValue moo_ui_liste_on_auswahl(MooValue liste, MooValue callback);
+
+/* Mausrad-Hook fuer Liste. Callback-Signatur:
+ *   on_scroll(delta_y)
+ *     delta_y: MOO_NUMBER — positiv = nach unten, negativ = nach oben.
+ *              Bei Smooth-Scroll der tatsaechliche Delta-Wert; sonst +/- 1.0.
+ * Rueckgabe ignoriert (das native Scroll-Verhalten der Liste bleibt aktiv).
+ * Re-Bind disconnectet still.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : "scroll-event" auf der GtkTreeView mit GDK_SCROLL_MASK
+ *                  + GDK_SMOOTH_SCROLL_MASK; ev->direction / ev->delta_y.
+ *   Windows      : WM_MOUSEWHEEL auf der ListView-Subclass; delta via
+ *                  GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA.
+ *   macOS        : NSScrollView scrollWheel:; [event scrollingDeltaY].
+ */
+MooValue moo_ui_liste_on_scroll(MooValue liste, MooValue callback);
 
 /* Setzt die Pixel-Breite einer Spalte.
  *
