@@ -614,6 +614,8 @@ MooValue moo_ui_liste(MooValue parent, MooValue spalten,
         /* min_width sichert, dass jede Spalte eine fassbare Drag-Grip hat,
          * auch wenn Default-Sizing (GROW_ONLY) noch keinen Inhalt kennt. */
         gtk_tree_view_column_set_min_width(col, 50);
+        /* Spalten per Default per Drag-and-Drop umsortierbar machen. */
+        gtk_tree_view_column_set_reorderable(col, TRUE);
         gtk_tree_view_append_column(GTK_TREE_VIEW(tv), col);
     }
 
