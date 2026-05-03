@@ -2596,6 +2596,10 @@ static gboolean on_textview_key_trampoline(GtkWidget* w, GdkEventKey* ev,
     MooValue* cb = (MooValue*)ud;
     if (!cb || cb->tag != MOO_FUNC || !ev) return FALSE;
     const char* name = gdk_keyval_name(ev->keyval);
+    /* keyname wird per Owning-+1 an moo_func_call_4 transferiert; der Callee
+     * released am Frame-Ende. KEIN zusaetzliches moo_release hier (sonst
+     * Double-Free → tcache-Korruption beim naechsten Tastendruck).
+     * Die anderen Argumente (moo_bool) sind inline und brauchen kein release. */
     MooValue keyname = moo_string_new(name ? name : "");
     gboolean ctrl  = (ev->state & GDK_CONTROL_MASK) != 0;
     gboolean shift = (ev->state & GDK_SHIFT_MASK)   != 0;
@@ -2605,7 +2609,6 @@ static gboolean on_textview_key_trampoline(GtkWidget* w, GdkEventKey* ev,
     /* Rueckgabe wahr → Default-Handling unterdruecken (z.B. Tab konsumieren). */
     gboolean handled = moo_is_truthy(rv);
     moo_release(rv);
-    moo_release(keyname);
     return handled ? TRUE : FALSE;
 }
 
