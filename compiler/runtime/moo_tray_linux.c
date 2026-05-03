@@ -52,22 +52,30 @@ static void cb_box_destroy(gpointer data, GClosure* closure) {
     free(cb);
 }
 
+/* Globaler "currently activating menu item"-Pointer fuer
+ * moo_ui_menue_eintrag_aktiv(). Geteilt mit moo_ui_gtk.c. */
+extern GtkWidget* moo_ui_g_current_menu_item;
+
 static void on_menu_item_activated(GtkMenuItem* item, gpointer user_data) {
-    (void)item;
     MooValue* cb = (MooValue*)user_data;
     if (cb && cb->tag == MOO_FUNC) {
+        GtkWidget* prev = moo_ui_g_current_menu_item;
+        moo_ui_g_current_menu_item = GTK_WIDGET(item);
         moo_func_call_0(*cb);
+        moo_ui_g_current_menu_item = prev;
     }
 }
 
 static void on_check_item_toggled(GtkCheckMenuItem* item, gpointer user_data) {
-    (void)item;
     MooValue* cb = (MooValue*)user_data;
     if (cb && cb->tag == MOO_FUNC) {
+        GtkWidget* prev = moo_ui_g_current_menu_item;
+        moo_ui_g_current_menu_item = GTK_WIDGET(item);
         /* Der User ruft selbst moo_tray_check_wert(item) im Callback ab,
          * falls er den aktuellen Zustand braucht. call_0 ist konsistent
          * mit moo_tray_menu_add. */
         moo_func_call_0(*cb);
+        moo_ui_g_current_menu_item = prev;
     }
 }
 

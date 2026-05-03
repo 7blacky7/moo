@@ -3653,3 +3653,31 @@ MooValue moo_ui_liste_on_rechtsklick(MooValue liste, MooValue callback) {
     (void)liste; (void)callback;
     return moo_none();
 }
+
+MooValue moo_ui_menue_eintrag_data(MooValue eintrag, MooValue schluessel) {
+    (void)eintrag; (void)schluessel;
+    return moo_none();
+}
+
+MooValue moo_ui_menue_eintrag_lookup(MooValue eintrag) {
+    (void)eintrag;
+    return moo_none();
+}
+
+MooValue moo_ui_menue_eintrag_aktiv(void) {
+    return moo_none();
+}
+
+MooValue moo_ui_zeit_jetzt(void) {
+    return moo_string_new("");
+}
+
+MooValue moo_ui_zeit_lokal(MooValue iso) {
+    (void)iso;
+    return moo_string_new("");
+}
+
+MooValue moo_ui_zeit_format(MooValue iso, MooValue fmt) {
+    (void)iso; (void)fmt;
+    return moo_string_new("");
+}

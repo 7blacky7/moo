@@ -21,11 +21,13 @@
  * Plan-Referenz: Memory `plan-002-moo-ui-cross-platform`.
  */
 
+#define _GNU_SOURCE  /* timegm */
 #include "moo_runtime.h"
 #include "moo_ui.h"
 #include <gtk/gtk.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* ------------------------------------------------------------------ *
  * GTK-Init (idempotent) + globale Event-Loop-Bookkeeping
@@ -2270,10 +2272,19 @@ MooValue moo_ui_menue(MooValue leiste, MooValue titel) {
     return wrap_widget(sub);
 }
 
+/* Globaler "currently activating menu item"-Pointer fuer
+ * moo_ui_menue_eintrag_aktiv(). Wird vor jedem activate-Callback gesetzt
+ * und danach geleert. Single-thread (GTK-Mainloop), daher kein Lock. */
+GtkWidget* moo_ui_g_current_menu_item = NULL;
+
 static void on_menu_item_trampoline(GtkMenuItem* it, gpointer ud) {
-    (void)it;
     MooValue* cb = (MooValue*)ud;
-    if (cb && cb->tag == MOO_FUNC) moo_func_call_0(*cb);
+    if (cb && cb->tag == MOO_FUNC) {
+        GtkWidget* prev = moo_ui_g_current_menu_item;
+        moo_ui_g_current_menu_item = GTK_WIDGET(it);
+        moo_func_call_0(*cb);
+        moo_ui_g_current_menu_item = prev;
+    }
 }
 
 MooValue moo_ui_menue_eintrag(MooValue menue, MooValue titel, MooValue callback) {
@@ -2703,6 +2714,118 @@ MooValue moo_ui_liste_on_scroll(MooValue liste, MooValue callback) {
                                       box, cb_box_destroy, 0);
     g_object_set_data(G_OBJECT(tv), "moo-scroll-id", GSIZE_TO_POINTER(id));
     return moo_bool(1);
+}
+
+/* ================================================================== *
+ * Menue-Eintrag User-Daten + aktiver Eintrag
+ *
+ * Erlaubt Tray/Window-Menue-Eintraege mit projekt-namen / channel-keys
+ * zu assoziieren ohne Closure-String-Capture (Workaround Closure-
+ * Refcount-Sink-Bug). Pattern:
+ *   funktion oeffne_global():
+ *       setze item auf ui_menue_eintrag_aktiv()
+ *       setze name auf ui_menue_eintrag_lookup(item)
+ *       oeffne(name)
+ *
+ *   tray_menu_add(tray, "Oeffnen", oeffne_global)
+ *   ui_menue_eintrag_data(item, name)
+ * ================================================================== */
+
+MooValue moo_ui_menue_eintrag_data(MooValue eintrag, MooValue schluessel) {
+    GtkWidget* w = unwrap_widget(eintrag);
+    if (!w || !GTK_IS_MENU_ITEM(w)) return moo_bool(0);
+    if (schluessel.tag != MOO_STRING) {
+        /* nichts/None -> data loeschen */
+        g_object_set_data_full(G_OBJECT(w), "moo-userdata", NULL, NULL);
+        return moo_bool(1);
+    }
+    g_object_set_data_full(G_OBJECT(w), "moo-userdata",
+                           g_strdup(MV_STR(schluessel)->chars), g_free);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_menue_eintrag_lookup(MooValue eintrag) {
+    GtkWidget* w = unwrap_widget(eintrag);
+    if (!w || !GTK_IS_MENU_ITEM(w)) return moo_none();
+    const char* s = (const char*)g_object_get_data(G_OBJECT(w), "moo-userdata");
+    if (!s) return moo_none();
+    return moo_string_new(s);
+}
+
+MooValue moo_ui_menue_eintrag_aktiv(void) {
+    if (!moo_ui_g_current_menu_item) return moo_none();
+    return wrap_widget(moo_ui_g_current_menu_item);
+}
+
+/* ================================================================== *
+ * Datetime - native ISO-Zeit + Lokalzeit-Formatierung
+ *
+ * Verlagert die Heap-intensive Zeit-Formatierung aus moo-Code (viele
+ * teilstring/concat-Allokationen pro Aufruf) in eine einzelne C-Funktion.
+ * ================================================================== */
+
+/* Parst "YYYY-MM-DDTHH:MM:SS..." ohne Timezone-Offset (impliziter UTC,
+ * passend zu Synapse-DAEMON-Output ".(...)Z"). Liefert 0 bei Erfolg. */
+static int parse_iso_utc(const char* s, struct tm* out) {
+    if (!s) return -1;
+    size_t L = strlen(s);
+    if (L < 19) return -1;
+    memset(out, 0, sizeof(*out));
+    /* sscanf akzeptiert die ersten 19 Zeichen "YYYY-MM-DDTHH:MM:SS" */
+    int Y, M, D, h, m, sec;
+    if (sscanf(s, "%4d-%2d-%2dT%2d:%2d:%2d", &Y, &M, &D, &h, &m, &sec) != 6)
+        return -1;
+    out->tm_year = Y - 1900;
+    out->tm_mon  = M - 1;
+    out->tm_mday = D;
+    out->tm_hour = h;
+    out->tm_min  = m;
+    out->tm_sec  = sec;
+    out->tm_isdst = 0;
+    return 0;
+}
+
+MooValue moo_ui_zeit_jetzt(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    struct tm utc;
+    gmtime_r(&ts.tv_sec, &utc);
+    char buf[40];
+    /* RFC3339 mit Millisekunden, Z-Suffix. */
+    int n = strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &utc);
+    if (n <= 0) return moo_string_new("");
+    snprintf(buf + n, sizeof(buf) - n, ".%03ldZ", (long)(ts.tv_nsec / 1000000));
+    return moo_string_new(buf);
+}
+
+MooValue moo_ui_zeit_lokal(MooValue iso) {
+    if (iso.tag != MOO_STRING) return moo_string_new("");
+    struct tm utc;
+    if (parse_iso_utc(MV_STR(iso)->chars, &utc) != 0) {
+        /* Pass-through bei nicht-ISO-Eingaben - matcht alte moo-Variante. */
+        return moo_string_new(MV_STR(iso)->chars);
+    }
+    time_t t = timegm(&utc);
+    if (t == (time_t)-1) return moo_string_new(MV_STR(iso)->chars);
+    struct tm loc;
+    localtime_r(&t, &loc);
+    char out[16];
+    strftime(out, sizeof(out), "%H:%M:%S", &loc);
+    return moo_string_new(out);
+}
+
+MooValue moo_ui_zeit_format(MooValue iso, MooValue fmt) {
+    if (iso.tag != MOO_STRING || fmt.tag != MOO_STRING) return moo_string_new("");
+    struct tm utc;
+    if (parse_iso_utc(MV_STR(iso)->chars, &utc) != 0) return moo_string_new("");
+    time_t t = timegm(&utc);
+    if (t == (time_t)-1) return moo_string_new("");
+    struct tm loc;
+    localtime_r(&t, &loc);
+    char out[256];
+    size_t n = strftime(out, sizeof(out), MV_STR(fmt)->chars, &loc);
+    if (n == 0) out[0] = '\0';
+    return moo_string_new(out);
 }
 
 /* ================================================================== *

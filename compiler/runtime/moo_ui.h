@@ -336,6 +336,56 @@ MooValue moo_ui_liste_ist_unten(MooValue liste);
 MooValue moo_ui_liste_on_rechtsklick(MooValue liste, MooValue callback);
 
 /* =========================================================================
+ * Menue-Eintrag User-Daten + aktiver Eintrag
+ *
+ * Damit Tray-/Window-Menue-Eintraege mit Daten (z.B. projekt-name)
+ * verknuepft werden koennen ohne Closure-Capture (workaround Closure-
+ * Refcount-Sink-Bug, siehe Memory bug-closure-segfault-multi-call).
+ *
+ * Pattern:
+ *   funktion oeffne_global():
+ *       setze item auf ui_menue_eintrag_aktiv()
+ *       setze name auf ui_menue_eintrag_lookup(item)
+ *       oeffne_detail(name)
+ *
+ *   setze item auf tray_menu_add(tray, "Oeffnen", oeffne_global)
+ *   ui_menue_eintrag_data(item, name)
+ * ========================================================================= */
+
+/* Setzt einen String-Schluessel auf einem Menue-Eintrag (Tray oder Fenster-
+ * Menue). Wird vom Eintrag bis zum Destroy gehalten. nichts loescht. */
+MooValue moo_ui_menue_eintrag_data(MooValue eintrag, MooValue schluessel);
+
+/* Liest den per moo_ui_menue_eintrag_data gesetzten Schluessel zurueck.
+ * Liefert MOO_STRING oder nichts wenn nichts gesetzt. */
+MooValue moo_ui_menue_eintrag_lookup(MooValue eintrag);
+
+/* Liefert das Menue-Eintrag-Handle das gerade seinen activate-Callback
+ * feuert. Nur innerhalb eines Menue-Callbacks valide; sonst nichts.
+ * Backend: thread-local Pointer der vor jedem activate-Callback gesetzt wird. */
+MooValue moo_ui_menue_eintrag_aktiv(void);
+
+/* =========================================================================
+ * Datetime
+ *
+ * Native Zeit-API um Heap-intensive Zeit-Formatierung im moo-Code zu
+ * vermeiden (teilstring/concat-Kette war crash-Trigger fuer
+ * Closure-Refcount-Bugs anderer Stellen).
+ * ========================================================================= */
+
+/* Aktuelle Zeit als ISO-8601-UTC-String mit Millisekunden:
+ * "2026-05-03T19:35:27.944Z". */
+MooValue moo_ui_zeit_jetzt(void);
+
+/* Konvertiert ISO-UTC-String ("YYYY-MM-DDTHH:MM:SS...") in lokale
+ * "HH:MM:SS"-Repraesentation (Timezone der Maschine, DST-aware via
+ * localtime_r). Pass-through wenn Eingabe nicht parsebar. */
+MooValue moo_ui_zeit_lokal(MooValue iso);
+
+/* Formatiert ISO-UTC-Zeit nach lokal mit strftime-Format-String. */
+MooValue moo_ui_zeit_format(MooValue iso, MooValue fmt);
+
+/* =========================================================================
  * Clipboard
  * ========================================================================= */
 

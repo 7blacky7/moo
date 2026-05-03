@@ -40,6 +40,12 @@
 #     ui_liste_ist_unten(handle)                   # bool: Scrollbar am unteren Ende?
 #     ui_liste_on_rechtsklick(handle, callback)    # callback(zeile_index)
 #     ui_clipboard_setze(text)                     # Text ins System-Clipboard
+#     ui_menue_eintrag_data(eintrag, key)          # User-Daten anhaengen
+#     ui_menue_eintrag_lookup(eintrag)             # User-Daten lesen
+#     ui_menue_eintrag_aktiv()                     # aktiver Menue-Eintrag im Callback
+#     ui_zeit_jetzt()                              # ISO-UTC mit Millisek
+#     ui_zeit_lokal(iso)                           # "HH:MM:SS" lokale Zeit
+#     ui_zeit_format(iso, fmt)                     # strftime-Format lokal
 #     ui_slider(parent, min, max, start, x, y, b, h, callback)
 #     ui_fortschritt(parent, x, y, b, h)
 #     ui_fortschritt_setze(handle, anteil)

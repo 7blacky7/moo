@@ -3119,6 +3119,30 @@ impl<'ctx> CodeGen<'ctx> {
                         let t = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_ui_clipboard_setze, &[t.into()], "ui_clipboard_setze");
                     }
+                    "ui_menue_eintrag_data" | "ui_menu_eintrag_data" | "ui_menu_item_data" => {
+                        let e = self.compile_expr(&args[0])?;
+                        let k = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_menue_eintrag_data, &[e.into(), k.into()], "ui_menue_eintrag_data");
+                    }
+                    "ui_menue_eintrag_lookup" | "ui_menu_eintrag_lookup" | "ui_menu_item_lookup" => {
+                        let e = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_menue_eintrag_lookup, &[e.into()], "ui_menue_eintrag_lookup");
+                    }
+                    "ui_menue_eintrag_aktiv" | "ui_menu_eintrag_aktiv" | "ui_menu_item_active" => {
+                        return self.call_rt(self.rt.moo_ui_menue_eintrag_aktiv, &[], "ui_menue_eintrag_aktiv");
+                    }
+                    "ui_zeit_jetzt" | "ui_time_now" => {
+                        return self.call_rt(self.rt.moo_ui_zeit_jetzt, &[], "ui_zeit_jetzt");
+                    }
+                    "ui_zeit_lokal" | "ui_time_local" => {
+                        let i = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_zeit_lokal, &[i.into()], "ui_zeit_lokal");
+                    }
+                    "ui_zeit_format" | "ui_time_format" => {
+                        let i = self.compile_expr(&args[0])?;
+                        let f = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_zeit_format, &[i.into(), f.into()], "ui_zeit_format");
+                    }
                     "moo_ui_liste_sortierbar" | "ui_liste_sortierbar" | "liste_sortierbar" => {
                         let l = self.compile_expr(&args[0])?;
                         let s = self.compile_expr(&args[1])?;
