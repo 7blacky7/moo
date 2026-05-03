@@ -3607,3 +3607,18 @@ MooValue moo_ui_liste_on_scroll(MooValue liste, MooValue callback) {
     (void)liste; (void)callback;
     return moo_none();
 }
+
+MooValue moo_ui_liste_scroll_zu(MooValue liste, MooValue index) {
+    (void)liste; (void)index;
+    return moo_none();
+}
+
+MooValue moo_ui_liste_scroll_unten(MooValue liste) {
+    (void)liste;
+    return moo_none();
+}
+
+MooValue moo_ui_textbereich_zeile_anzahl(MooValue tb) {
+    (void)tb;
+    return moo_number(0.0);
+}

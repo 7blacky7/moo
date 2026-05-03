@@ -3023,6 +3023,10 @@ impl<'ctx> CodeGen<'ctx> {
                         let c = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_ui_textbereich_on_key, &[tb.into(), c.into()], "ui_textbereich_on_key");
                     }
+                    "ui_textbereich_zeile_anzahl" | "ui_textarea_line_count" => {
+                        let tb = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_textbereich_zeile_anzahl, &[tb.into()], "ui_textbereich_zeile_anzahl");
+                    }
                     "ui_dropdown" => {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_ui_dropdown, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into()], "ui_dropdown");
@@ -3071,6 +3075,15 @@ impl<'ctx> CodeGen<'ctx> {
                         let l = self.compile_expr(&args[0])?;
                         let c = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_ui_liste_on_scroll, &[l.into(), c.into()], "ui_liste_on_scroll");
+                    }
+                    "ui_liste_scroll_zu" | "ui_list_scroll_to" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let i = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_liste_scroll_zu, &[l.into(), i.into()], "ui_liste_scroll_zu");
+                    }
+                    "ui_liste_scroll_unten" | "ui_list_scroll_bottom" => {
+                        let l = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_liste_scroll_unten, &[l.into()], "ui_liste_scroll_unten");
                     }
                     "moo_ui_liste_spalte_breite" | "ui_liste_spalte_breite" | "liste_spalte_breite" => {
                         let l = self.compile_expr(&args[0])?;

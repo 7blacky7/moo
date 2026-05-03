@@ -2606,6 +2606,49 @@ static gboolean on_treeview_scroll_trampoline(GtkWidget* w, GdkEventScroll* ev,
     return FALSE;
 }
 
+MooValue moo_ui_liste_scroll_zu(MooValue liste, MooValue index) {
+    GtkWidget* sw = unwrap_widget(liste);
+    if (!sw) return moo_bool(0);
+    GtkWidget* tv = (GtkWidget*)g_object_get_data(G_OBJECT(sw), "moo-tv");
+    if (!tv || !GTK_IS_TREE_VIEW(tv)) return moo_bool(0);
+    int idx = num_or(index, -1);
+    if (idx < 0) return moo_bool(0);
+    GtkTreeModel* model = gtk_tree_view_get_model(GTK_TREE_VIEW(tv));
+    if (!model) return moo_bool(0);
+    int n = gtk_tree_model_iter_n_children(model, NULL);
+    if (idx >= n) return moo_bool(0);
+    GtkTreePath* p = gtk_tree_path_new_from_indices(idx, -1);
+    /* align: 0.5 = Mitte, damit Ziel sicher sichtbar wird. */
+    gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(tv), p, NULL, TRUE, 0.5f, 0.0f);
+    gtk_tree_path_free(p);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_liste_scroll_unten(MooValue liste) {
+    GtkWidget* sw = unwrap_widget(liste);
+    if (!sw) return moo_bool(0);
+    GtkWidget* tv = (GtkWidget*)g_object_get_data(G_OBJECT(sw), "moo-tv");
+    if (!tv || !GTK_IS_TREE_VIEW(tv)) return moo_bool(0);
+    GtkTreeModel* model = gtk_tree_view_get_model(GTK_TREE_VIEW(tv));
+    if (!model) return moo_bool(0);
+    int n = gtk_tree_model_iter_n_children(model, NULL);
+    if (n <= 0) return moo_bool(1);  /* leer ist okay */
+    GtkTreePath* p = gtk_tree_path_new_from_indices(n - 1, -1);
+    /* align 1.0 = unten — letzte Zeile bleibt ganz unten sichtbar. */
+    gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(tv), p, NULL, TRUE, 1.0f, 0.0f);
+    gtk_tree_path_free(p);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_textbereich_zeile_anzahl(MooValue tb) {
+    GtkTextView* v = tb_get_view(tb);
+    if (!v) return moo_number(0.0);
+    GtkTextBuffer* buf = gtk_text_view_get_buffer(v);
+    if (!buf) return moo_number(0.0);
+    int n = gtk_text_buffer_get_line_count(buf);
+    return moo_number((double)n);
+}
+
 MooValue moo_ui_liste_on_scroll(MooValue liste, MooValue callback) {
     GtkWidget* sw = unwrap_widget(liste);
     if (!sw) return moo_bool(0);

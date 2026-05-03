@@ -233,6 +233,31 @@ MooValue moo_ui_liste_on_auswahl(MooValue liste, MooValue callback);
  */
 MooValue moo_ui_liste_on_scroll(MooValue liste, MooValue callback);
 
+/* Scrollt die Liste so, dass die Zeile mit `index` sichtbar wird (zentriert).
+ * Index ausser Bereich → falsch.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_tree_view_scroll_to_cell(tv, path, NULL, TRUE, 0.5, 0).
+ *   Windows      : ListView_EnsureVisible(hwnd, index, FALSE).
+ *   macOS        : [tv scrollRowToVisible:index].
+ */
+MooValue moo_ui_liste_scroll_zu(MooValue liste, MooValue index);
+
+/* Scrollt zur letzten Zeile der Liste (Auto-Scroll-To-Bottom-Pattern fuer
+ * Chat-/Log-Ansichten). Leere Liste → wahr (no-op).
+ */
+MooValue moo_ui_liste_scroll_unten(MooValue liste);
+
+/* Liefert die Zeilenzahl im Textbereich-Buffer (MOO_NUMBER, ganzzahlig).
+ * Ungueltiges Handle → 0.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_text_buffer_get_line_count(buffer).
+ *   Windows      : SendMessageW(edit, EM_GETLINECOUNT, 0, 0).
+ *   macOS        : [[textView string] componentsSeparatedByString:@"\n"].count.
+ */
+MooValue moo_ui_textbereich_zeile_anzahl(MooValue tb);
+
 /* Setzt die Pixel-Breite einer Spalte.
  *
  * spalte_index: 0-basierter Spalten-Index (MOO_INTEGER).
