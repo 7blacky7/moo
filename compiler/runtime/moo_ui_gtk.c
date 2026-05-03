@@ -611,6 +611,9 @@ MooValue moo_ui_liste(MooValue parent, MooValue spalten,
         GtkTreeViewColumn* col = gtk_tree_view_column_new_with_attributes(
             title, r, "text", i, NULL);
         gtk_tree_view_column_set_resizable(col, TRUE);
+        /* min_width sichert, dass jede Spalte eine fassbare Drag-Grip hat,
+         * auch wenn Default-Sizing (GROW_ONLY) noch keinen Inhalt kennt. */
+        gtk_tree_view_column_set_min_width(col, 50);
         gtk_tree_view_append_column(GTK_TREE_VIEW(tv), col);
     }
 
@@ -745,6 +748,26 @@ MooValue moo_ui_liste_spalte_breite(MooValue liste, MooValue spalte_index,
     if (!col) return moo_bool(0);
     gtk_tree_view_column_set_sizing(col, GTK_TREE_VIEW_COLUMN_FIXED);
     gtk_tree_view_column_set_fixed_width(col, bw);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_liste_spalte_min_breite(MooValue liste, MooValue spalte_index,
+                                        MooValue breite) {
+    int idx = num_or(spalte_index, -1);
+    int bw  = num_or(breite, -1);
+    if (bw < 0) return moo_bool(0);
+    GtkTreeViewColumn* col = liste_column(liste, idx);
+    if (!col) return moo_bool(0);
+    gtk_tree_view_column_set_min_width(col, bw);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_liste_spalten_autosize(MooValue liste) {
+    GtkWidget* sw = unwrap_widget(liste);
+    if (!sw) return moo_bool(0);
+    GtkWidget* tv = (GtkWidget*)g_object_get_data(G_OBJECT(sw), "moo-tv");
+    if (!tv || !GTK_IS_TREE_VIEW(tv)) return moo_bool(0);
+    gtk_tree_view_columns_autosize(GTK_TREE_VIEW(tv));
     return moo_bool(1);
 }
 

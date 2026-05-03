@@ -3091,6 +3091,16 @@ impl<'ctx> CodeGen<'ctx> {
                         let b = self.compile_expr(&args[2])?;
                         return self.call_rt(self.rt.moo_ui_liste_spalte_breite, &[l.into(), s.into(), b.into()], "ui_liste_spalte_breite");
                     }
+                    "moo_ui_liste_spalte_min_breite" | "ui_liste_spalte_min_breite" | "liste_spalte_min_breite" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let s = self.compile_expr(&args[1])?;
+                        let b = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_ui_liste_spalte_min_breite, &[l.into(), s.into(), b.into()], "ui_liste_spalte_min_breite");
+                    }
+                    "moo_ui_liste_spalten_autosize" | "ui_liste_spalten_autosize" | "liste_spalten_autosize" => {
+                        let l = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_liste_spalten_autosize, &[l.into()], "ui_liste_spalten_autosize");
+                    }
                     "moo_ui_liste_sortierbar" | "ui_liste_sortierbar" | "liste_sortierbar" => {
                         let l = self.compile_expr(&args[0])?;
                         let s = self.compile_expr(&args[1])?;

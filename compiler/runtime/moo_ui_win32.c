@@ -3453,3 +3453,14 @@ MooValue moo_ui_textbereich_zeile_anzahl(MooValue tb) {
     (void)tb;
     return moo_number(0.0);
 }
+
+MooValue moo_ui_liste_spalte_min_breite(MooValue liste, MooValue spalte_index,
+                                        MooValue breite) {
+    (void)liste; (void)spalte_index; (void)breite;
+    return moo_none();
+}
+
+MooValue moo_ui_liste_spalten_autosize(MooValue liste) {
+    (void)liste;
+    return moo_none();
+}

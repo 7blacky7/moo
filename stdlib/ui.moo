@@ -35,6 +35,8 @@
 #     ui_liste_on_scroll(handle, callback)         # Mausrad -> callback(delta_y)
 #     ui_liste_scroll_zu(handle, index)            # Zeile in Sicht bringen
 #     ui_liste_scroll_unten(handle)                # Auto-Scroll-To-Bottom (Chat/Log)
+#     ui_liste_spalte_min_breite(handle, idx, px)  # min_width fuer Drag-Grip
+#     ui_liste_spalten_autosize(handle)            # Re-Auto-Sizing aller Spalten
 #     ui_slider(parent, min, max, start, x, y, b, h, callback)
 #     ui_fortschritt(parent, x, y, b, h)
 #     ui_fortschritt_setze(handle, anteil)

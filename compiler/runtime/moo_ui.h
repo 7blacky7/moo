@@ -275,6 +275,33 @@ MooValue moo_ui_textbereich_zeile_anzahl(MooValue tb);
 MooValue moo_ui_liste_spalte_breite(MooValue liste, MooValue spalte_index,
                                     MooValue breite);
 
+/* Setzt die Mindest-Pixel-Breite einer Spalte. Garantiert eine fassbare
+ * Drag-Grip am Spaltenrand auch dann, wenn die Spalte sonst per
+ * Auto-Sizing (GROW_ONLY) auf Inhalt geschrumpft wuerde. ui_liste setzt
+ * standardmaessig 50px Min-Breite pro Spalte; mit dieser API kann der
+ * Wert pro Spalte angepasst werden.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_tree_view_column_set_min_width(col, breite).
+ *   Windows      : ListView_GetColumn + LVCOLUMN.cxMin (impl-spezifisch).
+ *   macOS        : [tableColumn setMinWidth:breite].
+ *
+ * Liefert wahr bei Erfolg, falsch wenn Index ausser Bereich oder breite < 0. */
+MooValue moo_ui_liste_spalte_min_breite(MooValue liste, MooValue spalte_index,
+                                        MooValue breite);
+
+/* Triggert Re-Auto-Sizing aller Spalten basierend auf aktuellem Inhalt.
+ * Praktisch nach ui_liste_zeile_hinzu-Bursts wenn Spalten content-fit
+ * werden sollen. Funktioniert nur fuer Spalten in GROW_ONLY/AUTOSIZE-
+ * Sizing-Mode (FIXED-Spalten bleiben unveraendert).
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_tree_view_columns_autosize(tv).
+ *   Windows      : ListView_SetColumnWidth(hwnd, i, LVSCW_AUTOSIZE) je Spalte.
+ *   macOS        : [tv sizeToFit] bzw. NSTableColumn sizeToFit pro Spalte.
+ */
+MooValue moo_ui_liste_spalten_autosize(MooValue liste);
+
 /* Aktiviert oder deaktiviert das Klick-Sortieren fuer eine Spalte.
  *
  * spalte_index: 0-basierter Spalten-Index (MOO_INTEGER).
