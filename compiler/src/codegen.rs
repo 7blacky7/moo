@@ -3714,6 +3714,45 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_db_stmt_execute, &[obj.into()], "stmt_exec");
                     }
                     "abfrage" | "query" => {
+                        // User-Klassen koennen ihre eigene query/abfrage-Methode haben
+                        // (z.B. PgClient.frage/query). Nur an moo_db_stmt_query
+                        // dispatchen wenn KEINE User-Methode mit diesem Namen
+                        // irgendwo im Programm existiert. Sonst inline user-dispatch.
+                        let any_user_method = self.class_methods.keys()
+                            .any(|(_, m)| m == method);
+                        if !any_user_method {
+                            return self.call_rt(self.rt.moo_db_stmt_query, &[obj.into()], "stmt_query");
+                        }
+                        // User-Method-Dispatch (inline, identisch zu _-Arm-Logik):
+                        let mut call_args: Vec<BasicMetadataValueEnum> = vec![obj.into()];
+                        for a in args {
+                            call_args.push(self.compile_expr(a)?.into());
+                        }
+                        let static_class: Option<String> = match object.as_ref() {
+                            Expr::Identifier(name) => self.object_var_types.get(name).cloned(),
+                            Expr::This => self.current_class.clone(),
+                            _ => None,
+                        };
+                        if let Some(mut cls) = static_class {
+                            loop {
+                                if let Some(func) = self.class_methods.get(&(cls.clone(), method.clone())).copied() {
+                                    return self.call_rt(func, &call_args, "method_call");
+                                }
+                                match self.class_parents.get(&cls).cloned() {
+                                    Some(p) => cls = p,
+                                    None => break,
+                                }
+                            }
+                        }
+                        // Dynamic Dispatch via class-name-cascade (wie _-Arm).
+                        // Wenn nicht eindeutig: erste passende Methode nehmen.
+                        if let Some((_, func)) = self.class_methods.iter()
+                            .find(|((_, m), _)| m == method)
+                            .map(|((c, _), f)| (c.clone(), *f))
+                        {
+                            return self.call_rt(func, &call_args, "method_call_dyn");
+                        }
+                        // Sollte nie passieren weil any_user_method == true.
                         return self.call_rt(self.rt.moo_db_stmt_query, &[obj.into()], "stmt_query");
                     }
                     "zuruecksetzen" | "zurücksetzen" | "reset" => {
