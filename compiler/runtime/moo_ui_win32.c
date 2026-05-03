@@ -3512,3 +3512,8 @@ MooValue moo_ui_zeit_format(MooValue iso, MooValue fmt) {
     (void)iso; (void)fmt;
     return moo_string_new("");
 }
+
+MooValue moo_ui_liste_zeilen_hinzu_bulk(MooValue liste, MooValue zeilen) {
+    (void)liste; (void)zeilen;
+    return moo_none();
+}

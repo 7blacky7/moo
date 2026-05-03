@@ -32,6 +32,7 @@
 #     ui_textbereich_zeile_anzahl(handle)          # int: Anzahl Buffer-Zeilen
 #     ui_dropdown(parent, optionen, x, y, b, h, callback)
 #     ui_liste(parent, spalten, x, y, b, h)
+#     ui_liste_zeilen_hinzu_bulk(handle, [[zeile1...], [zeile2...]])  # Bulk-Insert (Modell-Detach)
 #     ui_liste_on_scroll(handle, callback)         # Mausrad -> callback(delta_y)
 #     ui_liste_scroll_zu(handle, index)            # Zeile in Sicht bringen
 #     ui_liste_scroll_unten(handle)                # Auto-Scroll-To-Bottom (Chat/Log)

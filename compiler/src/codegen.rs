@@ -3053,6 +3053,11 @@ impl<'ctx> CodeGen<'ctx> {
                         let z = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_ui_liste_zeile_hinzu, &[l.into(), z.into()], "ui_liste_zeile_hinzu");
                     }
+                    "ui_liste_zeilen_hinzu_bulk" | "ui_list_rows_add_bulk" | "ui_liste_bulk" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let z = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_liste_zeilen_hinzu_bulk, &[l.into(), z.into()], "ui_liste_zeilen_hinzu_bulk");
+                    }
                     "ui_liste_auswahl" | "ui_list_selection" => {
                         let l = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_ui_liste_auswahl, &[l.into()], "ui_liste_auswahl");
