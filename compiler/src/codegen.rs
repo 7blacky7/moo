@@ -3106,6 +3106,19 @@ impl<'ctx> CodeGen<'ctx> {
                         let i = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_ui_liste_spalte_breite_lese, &[l.into(), i.into()], "ui_liste_spalte_breite_lese");
                     }
+                    "ui_liste_ist_unten" | "ui_list_is_at_bottom" => {
+                        let l = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_liste_ist_unten, &[l.into()], "ui_liste_ist_unten");
+                    }
+                    "ui_liste_on_rechtsklick" | "ui_list_on_right_click" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_liste_on_rechtsklick, &[l.into(), c.into()], "ui_liste_on_rechtsklick");
+                    }
+                    "ui_clipboard_setze" | "ui_clipboard_set" => {
+                        let t = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_clipboard_setze, &[t.into()], "ui_clipboard_setze");
+                    }
                     "moo_ui_liste_sortierbar" | "ui_liste_sortierbar" | "liste_sortierbar" => {
                         let l = self.compile_expr(&args[0])?;
                         let s = self.compile_expr(&args[1])?;

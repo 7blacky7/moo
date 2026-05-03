@@ -2705,6 +2705,75 @@ MooValue moo_ui_liste_on_scroll(MooValue liste, MooValue callback) {
     return moo_bool(1);
 }
 
+/* ================================================================== *
+ * Tray-UX: Clipboard + Liste-Unten + Rechtsklick (additive)
+ * ================================================================== */
+
+MooValue moo_ui_clipboard_setze(MooValue text) {
+    ensure_gtk();
+    GtkClipboard* cb = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+    if (!cb) return moo_bool(0);
+    const char* s = str_or(text, "");
+    gtk_clipboard_set_text(cb, s, -1);
+    gtk_clipboard_store(cb);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_liste_ist_unten(MooValue liste) {
+    GtkWidget* sw = unwrap_widget(liste);
+    if (!sw || !GTK_IS_SCROLLED_WINDOW(sw)) return moo_bool(0);
+    GtkAdjustment* va = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(sw));
+    if (!va) return moo_bool(0);
+    double value = gtk_adjustment_get_value(va);
+    double page  = gtk_adjustment_get_page_size(va);
+    double upper = gtk_adjustment_get_upper(va);
+    /* Toleranz 5px - User-Anforderung. */
+    return moo_bool((value + page) >= (upper - 5.0));
+}
+
+static gboolean on_treeview_rechtsklick_trampoline(GtkWidget* w, GdkEventButton* ev,
+                                                   gpointer ud) {
+    MooValue* cb = (MooValue*)ud;
+    if (!cb || cb->tag != MOO_FUNC || !ev) return FALSE;
+    if (ev->button != 3) return FALSE;
+    if (ev->type != GDK_BUTTON_PRESS) return FALSE;
+
+    GtkTreeView* tv = GTK_TREE_VIEW(w);
+    GtkTreePath* path = NULL;
+    int idx = -1;
+    if (gtk_tree_view_get_path_at_pos(tv, (int)ev->x, (int)ev->y,
+                                      &path, NULL, NULL, NULL) && path) {
+        gint* indices = gtk_tree_path_get_indices(path);
+        if (indices) idx = indices[0];
+        gtk_tree_path_free(path);
+    }
+    MooValue rv = moo_func_call_1(*cb, moo_number((double)idx));
+    moo_release(rv);
+    return FALSE;  /* Default-Selektion-Verhalten beibehalten */
+}
+
+MooValue moo_ui_liste_on_rechtsklick(MooValue liste, MooValue callback) {
+    GtkWidget* sw = unwrap_widget(liste);
+    if (!sw) return moo_bool(0);
+    GtkWidget* tv = (GtkWidget*)g_object_get_data(G_OBJECT(sw), "moo-tv");
+    if (!tv || !GTK_IS_TREE_VIEW(tv)) return moo_bool(0);
+
+    gulong old_id = (gulong)GPOINTER_TO_SIZE(
+        g_object_get_data(G_OBJECT(tv), "moo-rclick-id"));
+    if (old_id != 0) {
+        g_signal_handler_disconnect(tv, old_id);
+        g_object_set_data(G_OBJECT(tv), "moo-rclick-id", GSIZE_TO_POINTER(0));
+    }
+    if (callback.tag != MOO_FUNC) return moo_bool(1);
+
+    MooValue* box = cb_box_new(callback);
+    gulong id = g_signal_connect_data(tv, "button-press-event",
+                                      G_CALLBACK(on_treeview_rechtsklick_trampoline),
+                                      box, cb_box_destroy, 0);
+    g_object_set_data(G_OBJECT(tv), "moo-rclick-id", GSIZE_TO_POINTER(id));
+    return moo_bool(1);
+}
+
 MooValue moo_ui_shortcut_loese(MooValue fenster, MooValue sequenz) {
     GtkWidget* win = unwrap_widget(fenster);
     if (!win || !GTK_IS_WINDOW(win)) return moo_bool(0);

@@ -307,6 +307,48 @@ MooValue moo_ui_liste_spalten_autosize(MooValue liste);
  * Liefert -1 bei Index ausser Bereich oder ungueltigem Handle. */
 MooValue moo_ui_liste_spalte_breite_lese(MooValue liste, MooValue spalte_index);
 
+/* Liefert wahr wenn der vertikale Scrollbar der Liste innerhalb von ~5px
+ * Toleranz am unteren Ende ist. Vor Auto-Scroll-To-Bottom ruft man das
+ * auf um sticky-bottom-Verhalten konditional zu machen (wenn user
+ * woanders gescrollt hat, NICHT zum Ende springen).
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : value+page_size >= upper - 5 auf vadjustment.
+ *   Windows      : SCROLLINFO.nPos+nPage >= nMax - 5.
+ *   macOS        : NSScrollView documentVisibleRect maxY >= contentSize.height - 5.
+ */
+MooValue moo_ui_liste_ist_unten(MooValue liste);
+
+/* Rechts-Klick-Handler fuer Liste. Callback-Signatur:
+ *   on_rechtsklick(zeile_index)
+ *     zeile_index: MOO_NUMBER (int). Negativ (-1) wenn Klick neben einer
+ *                  Zeile (z.B. unter der letzten Zeile in leerem Bereich).
+ *
+ * Re-Bind disconnectet das vorherige Binding still. callback=nichts
+ * loest die Bindung.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : "button-press-event" auf TreeView, ev->button==3,
+ *                  gtk_tree_view_get_path_at_pos fuer Zeilen-Index.
+ *   Windows      : WM_RBUTTONDOWN auf ListView; LVHITTESTINFO.iItem.
+ *   macOS        : NSTableView rightMouseDown:; rowAtPoint:.
+ */
+MooValue moo_ui_liste_on_rechtsklick(MooValue liste, MooValue callback);
+
+/* =========================================================================
+ * Clipboard
+ * ========================================================================= */
+
+/* Schreibt `text` in das System-Clipboard. Liefert wahr bei Erfolg.
+ *
+ * Backend-Mapping:
+ *   Linux (GTK3) : gtk_clipboard_get(GDK_SELECTION_CLIPBOARD) +
+ *                  gtk_clipboard_set_text + gtk_clipboard_store.
+ *   Windows      : OpenClipboard + EmptyClipboard + SetClipboardData(CF_UNICODETEXT).
+ *   macOS        : [[NSPasteboard generalPasteboard] setString:ns forType:NSPasteboardTypeString].
+ */
+MooValue moo_ui_clipboard_setze(MooValue text);
+
 /* Aktiviert oder deaktiviert das Klick-Sortieren fuer eine Spalte.
  *
  * spalte_index: 0-basierter Spalten-Index (MOO_INTEGER).

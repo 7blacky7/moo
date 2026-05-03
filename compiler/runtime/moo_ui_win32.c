@@ -3469,3 +3469,18 @@ MooValue moo_ui_liste_spalte_breite_lese(MooValue liste, MooValue spalte_index) 
     (void)liste; (void)spalte_index;
     return moo_number(-1.0);
 }
+
+MooValue moo_ui_clipboard_setze(MooValue text) {
+    (void)text;
+    return moo_none();
+}
+
+MooValue moo_ui_liste_ist_unten(MooValue liste) {
+    (void)liste;
+    return moo_bool(0);
+}
+
+MooValue moo_ui_liste_on_rechtsklick(MooValue liste, MooValue callback) {
+    (void)liste; (void)callback;
+    return moo_none();
+}
