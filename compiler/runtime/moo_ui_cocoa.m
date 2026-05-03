@@ -3633,3 +3633,8 @@ MooValue moo_ui_liste_spalten_autosize(MooValue liste) {
     (void)liste;
     return moo_none();
 }
+
+MooValue moo_ui_liste_spalte_breite_lese(MooValue liste, MooValue spalte_index) {
+    (void)liste; (void)spalte_index;
+    return moo_number(-1.0);
+}

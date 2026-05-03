@@ -302,6 +302,11 @@ MooValue moo_ui_liste_spalte_min_breite(MooValue liste, MooValue spalte_index,
  */
 MooValue moo_ui_liste_spalten_autosize(MooValue liste);
 
+/* Liest die aktuelle Pixel-Breite einer Spalte (gtk_tree_view_column_get_width).
+ * Nuetzlich fuer Tests: vorher/nachher-Vergleich nach set_breite oder Drag.
+ * Liefert -1 bei Index ausser Bereich oder ungueltigem Handle. */
+MooValue moo_ui_liste_spalte_breite_lese(MooValue liste, MooValue spalte_index);
+
 /* Aktiviert oder deaktiviert das Klick-Sortieren fuer eine Spalte.
  *
  * spalte_index: 0-basierter Spalten-Index (MOO_INTEGER).

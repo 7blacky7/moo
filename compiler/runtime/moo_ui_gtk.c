@@ -764,6 +764,14 @@ MooValue moo_ui_liste_spalte_min_breite(MooValue liste, MooValue spalte_index,
     return moo_bool(1);
 }
 
+MooValue moo_ui_liste_spalte_breite_lese(MooValue liste, MooValue spalte_index) {
+    int idx = num_or(spalte_index, -1);
+    GtkTreeViewColumn* col = liste_column(liste, idx);
+    if (!col) return moo_number(-1.0);
+    int w = gtk_tree_view_column_get_width(col);
+    return moo_number((double)w);
+}
+
 MooValue moo_ui_liste_spalten_autosize(MooValue liste) {
     GtkWidget* sw = unwrap_widget(liste);
     if (!sw) return moo_bool(0);

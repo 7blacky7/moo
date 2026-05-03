@@ -3101,6 +3101,11 @@ impl<'ctx> CodeGen<'ctx> {
                         let l = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_ui_liste_spalten_autosize, &[l.into()], "ui_liste_spalten_autosize");
                     }
+                    "moo_ui_liste_spalte_breite_lese" | "ui_liste_spalte_breite_lese" | "liste_spalte_breite_lese" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let i = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_liste_spalte_breite_lese, &[l.into(), i.into()], "ui_liste_spalte_breite_lese");
+                    }
                     "moo_ui_liste_sortierbar" | "ui_liste_sortierbar" | "liste_sortierbar" => {
                         let l = self.compile_expr(&args[0])?;
                         let s = self.compile_expr(&args[1])?;
