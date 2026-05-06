@@ -416,6 +416,9 @@ MooValue moo_base64_encode(MooValue input);
 MooValue moo_base64_decode(MooValue input);
 MooValue moo_sanitize_html(MooValue input);
 MooValue moo_sanitize_sql(MooValue input);
+MooValue moo_sha256_bytes(MooValue input);
+MooValue moo_hmac_sha256(MooValue key, MooValue msg);
+MooValue moo_pbkdf2_sha256(MooValue password, MooValue salt, MooValue iterations, MooValue dk_len);
 
 // Universelle Index-Ops (dispatcht nach Container-Typ)
 MooValue moo_string_repeat(MooValue s, MooValue count);

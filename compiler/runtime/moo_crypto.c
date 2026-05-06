@@ -7,7 +7,7 @@
 // ============================================================
 
 static const uint32_t sha256_k[64] = {
-    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f11f1,0x923f82a4,0xab1c5ed5,
+    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
     0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
     0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
     0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
@@ -293,6 +293,108 @@ MooValue moo_sanitize_sql(MooValue input) {
     }
     out[j] = '\0';
     MooValue result = moo_string_new(out);
+    free(out);
+    return result;
+}
+
+
+// ============================================================
+// SHA-256 Raw Bytes (32-Byte Output, fuer HMAC/PBKDF2-Chaining)
+// ============================================================
+MooValue moo_sha256_bytes(MooValue input) {
+    if (input.tag != MOO_STRING) return moo_error("sha256_bytes: String erwartet");
+    MooString *s = MV_STR(input);
+    uint8_t hash[32];
+    sha256_hash((const uint8_t*)s->chars, (size_t)s->length, hash);
+    return moo_string_new_len((const char*)hash, 32);
+}
+
+// ============================================================
+// HMAC-SHA-256 (RFC 2104)
+// ============================================================
+static void hmac_sha256_raw(const uint8_t *key, size_t key_len,
+                            const uint8_t *msg, size_t msg_len,
+                            uint8_t out[32]) {
+    uint8_t k_pad[64];
+    uint8_t key_hash[32];
+    if (key_len > 64) {
+        sha256_hash(key, key_len, key_hash);
+        memcpy(k_pad, key_hash, 32);
+        memset(k_pad + 32, 0, 32);
+    } else {
+        memcpy(k_pad, key, key_len);
+        if (key_len < 64) memset(k_pad + key_len, 0, 64 - key_len);
+    }
+    uint8_t ipad[64], opad[64];
+    for (int i = 0; i < 64; i++) {
+        ipad[i] = k_pad[i] ^ 0x36;
+        opad[i] = k_pad[i] ^ 0x5c;
+    }
+    uint8_t *inner_buf = (uint8_t*)malloc(64 + msg_len);
+    memcpy(inner_buf, ipad, 64);
+    if (msg_len > 0) memcpy(inner_buf + 64, msg, msg_len);
+    uint8_t inner_hash[32];
+    sha256_hash(inner_buf, 64 + msg_len, inner_hash);
+    free(inner_buf);
+    uint8_t outer_buf[96];
+    memcpy(outer_buf, opad, 64);
+    memcpy(outer_buf + 64, inner_hash, 32);
+    sha256_hash(outer_buf, 96, out);
+}
+
+MooValue moo_hmac_sha256(MooValue key, MooValue msg) {
+    if (key.tag != MOO_STRING) return moo_error("hmac_sha256: key (String) erwartet");
+    if (msg.tag != MOO_STRING) return moo_error("hmac_sha256: msg (String) erwartet");
+    MooString *k = MV_STR(key);
+    MooString *m = MV_STR(msg);
+    uint8_t out[32];
+    hmac_sha256_raw((const uint8_t*)k->chars, (size_t)k->length,
+                    (const uint8_t*)m->chars, (size_t)m->length, out);
+    return moo_string_new_len((const char*)out, 32);
+}
+
+// ============================================================
+// PBKDF2-HMAC-SHA-256 (RFC 8018, Section 5.2)
+// ============================================================
+MooValue moo_pbkdf2_sha256(MooValue password, MooValue salt,
+                           MooValue iterations, MooValue dk_len) {
+    if (password.tag != MOO_STRING) return moo_error("pbkdf2_sha256: password (String) erwartet");
+    if (salt.tag != MOO_STRING) return moo_error("pbkdf2_sha256: salt (String) erwartet");
+    if (iterations.tag != MOO_NUMBER) return moo_error("pbkdf2_sha256: iterations (Zahl) erwartet");
+    if (dk_len.tag != MOO_NUMBER) return moo_error("pbkdf2_sha256: dk_len (Zahl) erwartet");
+    int iter = (int)MV_NUM(iterations);
+    int dk = (int)MV_NUM(dk_len);
+    if (iter < 1 || iter > 10000000) return moo_error("pbkdf2_sha256: iterations 1..1e7");
+    if (dk < 1 || dk > 1024) return moo_error("pbkdf2_sha256: dk_len 1..1024");
+    MooString *pw = MV_STR(password);
+    MooString *s = MV_STR(salt);
+    const int hLen = 32;
+    int blocks = (dk + hLen - 1) / hLen;
+    uint8_t *out = (uint8_t*)malloc((size_t)(blocks * hLen));
+    uint8_t *salt_buf = (uint8_t*)malloc((size_t)(s->length + 4));
+    if (!out || !salt_buf) {
+        free(out); free(salt_buf);
+        return moo_error("pbkdf2_sha256: malloc fehlgeschlagen");
+    }
+    memcpy(salt_buf, s->chars, (size_t)s->length);
+    uint8_t U[32], T[32];
+    for (int i = 1; i <= blocks; i++) {
+        salt_buf[s->length + 0] = (uint8_t)((i >> 24) & 0xff);
+        salt_buf[s->length + 1] = (uint8_t)((i >> 16) & 0xff);
+        salt_buf[s->length + 2] = (uint8_t)((i >> 8) & 0xff);
+        salt_buf[s->length + 3] = (uint8_t)(i & 0xff);
+        hmac_sha256_raw((const uint8_t*)pw->chars, (size_t)pw->length,
+                        salt_buf, (size_t)(s->length + 4), U);
+        memcpy(T, U, 32);
+        for (int j = 1; j < iter; j++) {
+            hmac_sha256_raw((const uint8_t*)pw->chars, (size_t)pw->length,
+                            U, 32, U);
+            for (int k = 0; k < 32; k++) T[k] ^= U[k];
+        }
+        memcpy(out + (i - 1) * hLen, T, 32);
+    }
+    free(salt_buf);
+    MooValue result = moo_string_new_len((const char*)out, dk);
     free(out);
     return result;
 }
