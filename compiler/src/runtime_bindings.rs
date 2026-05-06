@@ -166,8 +166,11 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_http_post_with_headers: FunctionValue<'ctx>,
     // Crypto & Security
     pub moo_sha256: FunctionValue<'ctx>,
+    pub moo_sha256_bytes: FunctionValue<'ctx>,
     pub moo_sha1: FunctionValue<'ctx>,
     pub moo_sha1_bytes: FunctionValue<'ctx>,
+    pub moo_hmac_sha256: FunctionValue<'ctx>,
+    pub moo_pbkdf2_sha256: FunctionValue<'ctx>,
     pub moo_secure_random: FunctionValue<'ctx>,
     pub moo_base64_encode: FunctionValue<'ctx>,
     pub moo_base64_decode: FunctionValue<'ctx>,
@@ -658,8 +661,11 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_http_post_with_headers: decl_mv_mv!("moo_http_post_with_headers", mv3),
             // Crypto & Security
             moo_sha256: decl_mv_mv!("moo_sha256", mv1),
+            moo_sha256_bytes: decl_mv_mv!("moo_sha256_bytes", mv1),
             moo_sha1: decl_mv_mv!("moo_sha1", mv1),
             moo_sha1_bytes: decl_mv_mv!("moo_sha1_bytes", mv1),
+            moo_hmac_sha256: decl_mv_mv!("moo_hmac_sha256", mv2),
+            moo_pbkdf2_sha256: decl_mv_mv!("moo_pbkdf2_sha256", &[mv, mv, mv, mv]),
             moo_secure_random: decl_mv_mv!("moo_secure_random", mv1),
             moo_base64_encode: decl_mv_mv!("moo_base64_encode", mv1),
             moo_base64_decode: decl_mv_mv!("moo_base64_decode", mv1),
