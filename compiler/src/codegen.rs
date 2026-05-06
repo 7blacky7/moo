@@ -2144,6 +2144,22 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_sha1_bytes, &[arg.into()], "sha1_bytes");
                     }
+                    "sha256_bytes" | "sha256_rohbytes" => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_sha256_bytes, &[arg.into()], "sha256_bytes");
+                    }
+                    "hmac_sha256" | "hmac" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_hmac_sha256, &[a.into(), b.into()], "hmac_sha256");
+                    }
+                    "pbkdf2_sha256" | "pbkdf2" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        let c = self.compile_expr(&args[2])?;
+                        let d = self.compile_expr(&args[3])?;
+                        return self.call_rt(self.rt.moo_pbkdf2_sha256, &[a.into(), b.into(), c.into(), d.into()], "pbkdf2_sha256");
+                    }
                     "sichere_zufall" | "secure_random" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_secure_random, &[arg.into()], "secure_random");
@@ -3579,6 +3595,41 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_db_stmt_step, &[obj.into()], "stmt_step");
                     }
                     "ausfuehren" | "ausführen" | "execute" => {
+                        // Analog zu query/abfrage: User-Klassen koennen ihre eigene
+                        // execute/ausfuehren-Methode haben (z.B. PgClient.execute fuer
+                        // prepared statements). Nur an moo_db_stmt_execute dispatchen
+                        // wenn KEINE User-Methode mit diesem Namen existiert.
+                        let any_user_method = self.class_methods.keys()
+                            .any(|(_, m)| m == method);
+                        if !any_user_method {
+                            return self.call_rt(self.rt.moo_db_stmt_execute, &[obj.into()], "stmt_exec");
+                        }
+                        let mut call_args: Vec<BasicMetadataValueEnum> = vec![obj.into()];
+                        for a in args {
+                            call_args.push(self.compile_expr(a)?.into());
+                        }
+                        let static_class: Option<String> = match object.as_ref() {
+                            Expr::Identifier(name) => self.object_var_types.get(name).cloned(),
+                            Expr::This => self.current_class.clone(),
+                            _ => None,
+                        };
+                        if let Some(mut cls) = static_class {
+                            loop {
+                                if let Some(func) = self.class_methods.get(&(cls.clone(), method.clone())).copied() {
+                                    return self.call_rt(func, &call_args, "method_call");
+                                }
+                                match self.class_parents.get(&cls).cloned() {
+                                    Some(p) => cls = p,
+                                    None => break,
+                                }
+                            }
+                        }
+                        if let Some((_, func)) = self.class_methods.iter()
+                            .find(|((_, m), _)| m == method)
+                            .map(|((c, _), f)| (c.clone(), *f))
+                        {
+                            return self.call_rt(func, &call_args, "method_call_dyn");
+                        }
                         return self.call_rt(self.rt.moo_db_stmt_execute, &[obj.into()], "stmt_exec");
                     }
                     "abfrage" | "query" => {
