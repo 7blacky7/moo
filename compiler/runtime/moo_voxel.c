@@ -1,9 +1,14 @@
 /**
- * moo_voxel.c - Voxel-Welt-Runtime fuer moo (Plan 005, Phase 1a).
+ * moo_voxel.c - Voxel-Welt-Runtime fuer moo (Plan 005, Phasen 1a-1d).
  *
- * Phase 1a = "NAIV": Korrektheit vor Speichereffizienz.
- *   - Jeder belegte Chunk haelt ein volles uint16_t blocks[CHUNK_DIM^3] (64 KB bei 32^3).
- *   - Palette-Kompression kommt erst in Phase 1c (RT3), Mesher in 1b (RT2).
+ * Datenlayout (Phase 1c, RT3): Palette + bitgepacktes Index-Array.
+ *   - Jeder belegte Chunk haelt eine Palette der distinkten Block-IDs + ein
+ *     bitgepacktes Palette-Index-Array (1/2/4/8/16 Bit/Voxel, lazy upgrade).
+ *     Loest das naive uint16_t blocks[CHUNK_DIM^3] (64 KB) ab; typische
+ *     Terrain-Chunks sparen >85% RAM (siehe test_voxel_palette_asan.c).
+ *   - Leere Chunks = NULL (keine Voxel-Datenbytes). Mesher in 1b (RT2),
+ *     Raycast/AABB in 1d (RT4). ALLE Block-Zugriffe laufen ueber die
+ *     chunk_block_get/set-Schicht; hoehere Pfade kennen das Bitpacking nicht.
  *
  * Design-Invarianten (Plan 005):
  *   - Voxel-Daten leben NIE als moo-Listen. VoxelWorld ist ein opaker C-Heap-Typ
@@ -87,9 +92,30 @@ extern void     moo_3d_chunk_delete(MooValue id);
  * kein GPU-Cache angelegt (z.B. nie gemesht oder kein Backend aktiv). Die
  * Render-ID wird GENAU EINMAL freigegeben: in moo_voxel_chunk_entladen bzw.
  * moo_voxel_free, jeweils nur bei aktivem Backend (sonst safe no-op). */
+/* Phase-1c-Layout: Palette (distinkte Block-IDs) + bitpacktes Index-Array.
+ *
+ * Statt eines vollen uint16_t blocks[VOL] (64 KB) speichert jeder Chunk nur:
+ *   - palette[]: die im Chunk tatsaechlich vorkommenden Block-IDs. palette[0]
+ *     ist IMMER reserviert fuer Luft (0). palette_count >= 1 sobald allokiert.
+ *   - indices[]: pro Voxel ein Palette-INDEX (nicht die Block-ID), bitgepackt
+ *     mit bits Bit pro Eintrag in 32-Bit-Woerter. bits in {1,2,4,8,16}.
+ * Hybrid-Strategie (Plan-005 1c): die Bitbreite richtet sich nach der Anzahl
+ * distinkter IDs; voxel_setzen upgraded lazy (1->2->4->8->16), sobald eine neue
+ * ID die aktuelle Breite sprengt. Worldgen kann eine Breite direkt vorwaehlen
+ * (chunk_set_bits), spart das schrittweise Hochpacken.
+ *
+ * LEER-Semantik (NULL-Chunk, Plan-005 1c "leere Chunks=NULL"): ein nie mit
+ * Festblock beschriebener Chunk haelt indices==NULL && palette==NULL && bits==0
+ * und belegt KEINE Voxel-Datenbytes. Alle Lese-Pfade behandeln das als Luft.
+ *
+ * Render-ID-Mapping (1b) unveraendert: render_id, dirty wie zuvor. */
 typedef struct {
     int32_t   cx, cy, cz;   /* Chunk-Koordinaten (signed, negative first-class) */
-    uint16_t* blocks;       /* MOO_VOXEL_CHUNK_VOL Eintraege, oder NULL = leer */
+    uint16_t* palette;      /* distinkte Block-IDs; [0]=Luft. NULL = leerer Chunk */
+    uint32_t* indices;      /* bitgepackte Palette-Indizes, NULL = leerer Chunk */
+    uint16_t  palette_count;/* genutzte Palette-Eintraege (>=1 wenn allokiert) */
+    uint16_t  palette_cap;  /* allokierte Palette-Eintraege */
+    uint8_t   bits;         /* Bit pro Index: 0=leer, sonst 1/2/4/8/16 */
     bool      occupied;     /* Hashmap-Slot belegt? */
     int32_t   render_id;    /* GPU-Render-Chunk-ID, -1 = kein Cache (CPU/GPU getrennt) */
     bool      dirty;        /* true = Geometrie veraltet, remesh noetig */
@@ -230,6 +256,142 @@ static inline int32_t moo_voxel_local_index(int32_t lx, int32_t ly, int32_t lz) 
     return (lz * MOO_VOXEL_CHUNK_DIM + ly) * MOO_VOXEL_CHUNK_DIM + lx;
 }
 
+/* ========================================================================
+ * Phase 1c: Palette + bitgepacktes Index-Array — Daten-Layout-Schicht
+ *
+ * ZENTRAL: alle Block-Lese-/Schreibzugriffe auf einen Chunk laufen ueber
+ * chunk_block_get / chunk_block_set. Hoehere Pfade (holen, setzen, Mesher,
+ * world_block) kennen das Bitpacking NICHT — sie sehen nur Block-IDs. Damit
+ * bleibt die Palette ein reines Implementierungsdetail dieser Schicht.
+ *
+ * Bitbreiten-Tiers: 1 Bit (2 IDs), 2 (4), 4 (16), 8 (256), 16 (65536). Die
+ * Index-Bits passen IMMER glatt in 32-Bit-Woerter (32 % bits == 0 fuer alle
+ * Tiers), daher kreuzt kein Index eine Wortgrenze -> einfaches Pack/Unpack.
+ * ======================================================================== */
+
+/* Anzahl 32-Bit-Woerter fuer VOL Eintraege a bits Bit. */
+static inline size_t moo_voxel_index_words(uint8_t bits) {
+    size_t per_word = 32u / bits;                 /* Eintraege pro Wort */
+    return ((size_t)MOO_VOXEL_CHUNK_VOL + per_word - 1) / per_word;
+}
+
+/* Kleinste Bitbreite, die >= n distinkte Palette-Eintraege fasst. */
+static inline uint8_t moo_voxel_bits_for(int32_t n) {
+    if (n <= 2)   return 1;
+    if (n <= 4)   return 2;
+    if (n <= 16)  return 4;
+    if (n <= 256) return 8;
+    return 16;
+}
+
+/* Liest den Palette-Index an Voxel lidx aus dem bitgepackten Array. */
+static inline uint32_t moo_voxel_idx_get(const uint32_t* indices, uint8_t bits, int32_t lidx) {
+    uint32_t per_word = 32u / bits;
+    uint32_t mask = (bits == 32) ? 0xFFFFFFFFu : ((1u << bits) - 1u);
+    uint32_t word = indices[(uint32_t)lidx / per_word];
+    uint32_t shift = ((uint32_t)lidx % per_word) * bits;
+    return (word >> shift) & mask;
+}
+
+/* Schreibt den Palette-Index pidx an Voxel lidx ins bitgepackte Array. */
+static inline void moo_voxel_idx_set(uint32_t* indices, uint8_t bits, int32_t lidx, uint32_t pidx) {
+    uint32_t per_word = 32u / bits;
+    uint32_t mask = (bits == 32) ? 0xFFFFFFFFu : ((1u << bits) - 1u);
+    uint32_t w = (uint32_t)lidx / per_word;
+    uint32_t shift = ((uint32_t)lidx % per_word) * bits;
+    indices[w] = (indices[w] & ~(mask << shift)) | ((pidx & mask) << shift);
+}
+
+/* Liefert die Block-ID an Voxel lidx (lidx in [0,VOL)). Leerer Chunk = Luft. */
+static inline uint16_t moo_voxel_chunk_block_get(const MooVoxelChunk* ch, int32_t lidx) {
+    if (!ch->indices || ch->bits == 0) return 0;  /* leerer Chunk = Luft */
+    uint32_t pidx = moo_voxel_idx_get(ch->indices, ch->bits, lidx);
+    if (pidx >= ch->palette_count) return 0;       /* defensiv */
+    return ch->palette[pidx];
+}
+
+/* Allokiert Palette + Index-Array fuer einen bislang leeren Chunk. palette[0]
+ * ist Luft. bits ist die Start-Bitbreite. Gibt false bei OOM. */
+static bool moo_voxel_chunk_alloc(MooVoxelChunk* ch, uint8_t bits) {
+    uint16_t pcap = (uint16_t)((1u << bits) < 4u ? 4u : (1u << bits));
+    if (pcap > 256 && bits < 16) pcap = 256;       /* 8-Bit-Tier deckelt bei 256 */
+    if (bits == 16) pcap = 256;                    /* 16-Bit-Palette waechst dynamisch ab 256 */
+    uint16_t* pal = (uint16_t*)moo_alloc((size_t)pcap * sizeof(uint16_t));
+    if (!pal) return false;
+    memset(pal, 0, (size_t)pcap * sizeof(uint16_t)); /* moo_alloc nullt nicht */
+    size_t iwords = moo_voxel_index_words(bits);
+    uint32_t* idx = (uint32_t*)moo_alloc(iwords * sizeof(uint32_t));
+    if (!idx) { moo_free(pal); return false; }
+    memset(idx, 0, iwords * sizeof(uint32_t));     /* alle Voxel -> Palette[0] = Luft */
+    ch->palette = pal;
+    ch->palette_cap = pcap;
+    ch->palette_count = 1;                          /* nur Luft */
+    ch->indices = idx;
+    ch->bits = bits;
+    return true;
+}
+
+/* Packt das Index-Array auf eine groessere Bitbreite um. Gibt false bei OOM. */
+static bool moo_voxel_chunk_widen(MooVoxelChunk* ch, uint8_t new_bits) {
+    size_t new_words = moo_voxel_index_words(new_bits);
+    uint32_t* fresh = (uint32_t*)moo_alloc(new_words * sizeof(uint32_t));
+    if (!fresh) return false;
+    memset(fresh, 0, new_words * sizeof(uint32_t));
+    for (int32_t i = 0; i < MOO_VOXEL_CHUNK_VOL; i++) {
+        uint32_t pidx = moo_voxel_idx_get(ch->indices, ch->bits, i);
+        moo_voxel_idx_set(fresh, new_bits, i, pidx);
+    }
+    moo_free(ch->indices);
+    ch->indices = fresh;
+    ch->bits = new_bits;
+    return true;
+}
+
+/* Findet die Palette-Position von id oder fuegt sie hinzu (lazy bit-upgrade
+ * + Palette-Wachstum bei Bedarf). Gibt den Palette-Index zurueck, oder -1 bei
+ * OOM (Aufrufer wirft). Voraussetzung: Chunk ist bereits allokiert. */
+static int32_t moo_voxel_palette_intern(MooVoxelChunk* ch, uint16_t id) {
+    for (uint16_t i = 0; i < ch->palette_count; i++) {
+        if (ch->palette[i] == id) return (int32_t)i;
+    }
+    /* Neue ID: ggf. Index-Bitbreite hochziehen (lazy upgrade). */
+    int32_t need = (int32_t)ch->palette_count + 1;
+    uint8_t need_bits = moo_voxel_bits_for(need);
+    if (need_bits > ch->bits) {
+        if (!moo_voxel_chunk_widen(ch, need_bits)) return -1;
+    }
+    /* Palette-Tabelle ggf. vergroessern. */
+    if (ch->palette_count >= ch->palette_cap) {
+        uint32_t new_cap = (uint32_t)ch->palette_cap * 2u;
+        if (new_cap > 65536u) new_cap = 65536u;
+        uint16_t* fresh = (uint16_t*)moo_alloc((size_t)new_cap * sizeof(uint16_t));
+        if (!fresh) return -1;
+        memset(fresh, 0, (size_t)new_cap * sizeof(uint16_t));
+        memcpy(fresh, ch->palette, (size_t)ch->palette_count * sizeof(uint16_t));
+        moo_free(ch->palette);
+        ch->palette = fresh;
+        ch->palette_cap = (uint16_t)new_cap;
+    }
+    int32_t pos = (int32_t)ch->palette_count;
+    ch->palette[pos] = id;
+    ch->palette_count++;
+    return pos;
+}
+
+/* Setzt Block-ID id an Voxel lidx. Allokiert den Chunk lazy beim ersten
+ * Festblock; Luft in einen leeren Chunk ist ein No-op. Gibt false bei OOM. */
+static bool moo_voxel_chunk_block_set(MooVoxelChunk* ch, int32_t lidx, uint16_t id) {
+    if (!ch->indices) {
+        if (id == 0) return true;                  /* Luft in leeren Chunk: nichts tun */
+        if (!moo_voxel_chunk_alloc(ch, 1)) return false;
+    }
+    int32_t pidx = moo_voxel_palette_intern(ch, id);
+    if (pidx < 0) return false;
+    moo_voxel_idx_set(ch->indices, ch->bits, lidx, (uint32_t)pidx);
+    return true;
+}
+
+
 /* Sucht den Chunk (cx,cy,cz) und gibt ihn zurueck, falls belegt; sonst NULL.
  * Reiner Lookup ohne Allokation (anders als find_slot, das den Einfuege-Slot
  * liefert). Wird vom Mesher fuers Nachbar-Culling und von mark_dirty genutzt. */
@@ -337,29 +499,23 @@ MooValue moo_voxel_setzen(MooValue welt, MooValue x, MooValue y, MooValue z, Moo
         ch->cx = cx;
         ch->cy = cy;
         ch->cz = cz;
-        ch->blocks = NULL;
+        ch->palette = NULL;   /* leerer Chunk = NULL (Phase 1c) */
+        ch->indices = NULL;
+        ch->palette_count = 0;
+        ch->palette_cap = 0;
+        ch->bits = 0;
         ch->render_id = -1;   /* noch kein GPU-Cache */
         ch->dirty = true;     /* neu -> braucht Mesh */
         vw->chunk_count++;
     }
 
-    if (!ch->blocks) {
-        /* Setzen von Luft (0) in einen nie-allokierten Chunk: keine Allokation
-         * noetig, der Chunk bleibt logisch leer. */
-        if (id == 0) {
-            return moo_bool(true);
-        }
-        size_t blocks_bytes = (size_t)MOO_VOXEL_CHUNK_VOL * sizeof(uint16_t);
-        ch->blocks = (uint16_t*)moo_alloc(blocks_bytes);
-        if (!ch->blocks) {
-            moo_throw(moo_error("Voxel-Fehler in voxel_setzen: Speicher fuer Chunk-Blocks erschoepft"));
-            return moo_none();
-        }
-        /* moo_alloc nutzt malloc und nullt NICHT -> Chunk explizit auf Luft (0). */
-        memset(ch->blocks, 0, blocks_bytes);
+    /* Schreiben ueber die Palette-Schicht. Luft in einen leeren Chunk bleibt
+     * No-op (Chunk bleibt NULL/leer). Bei OOM (Palette/Index/Widen) wird sauber
+     * geworfen, kein stiller Korrupt-Zustand (Plan-Regel KEINE HACKS). */
+    if (!moo_voxel_chunk_block_set(ch, moo_voxel_local_index(lx, ly, lz), (uint16_t)id)) {
+        moo_throw(moo_error("Voxel-Fehler in voxel_setzen: Speicher fuer Chunk-Daten erschoepft"));
+        return moo_none();
     }
-
-    ch->blocks[moo_voxel_local_index(lx, ly, lz)] = (uint16_t)id;
 
     /* Dirty-Propagation (Plan-005 1b, Risiko 6): der geaenderte Chunk braucht
      * ein Remesh. Face-Meshing kuckt ueber die Chunk-Grenze auf die GENAU 6
@@ -395,7 +551,7 @@ MooValue moo_voxel_holen(MooValue welt, MooValue x, MooValue y, MooValue z) {
 
     int32_t slot = moo_voxel_find_slot(vw, cx, cy, cz);
     MooVoxelChunk* ch = &vw->chunks[slot];
-    if (!ch->occupied || !ch->blocks) {
+    if (!ch->occupied || !ch->indices) {
         /* Nie allokierter / leerer Chunk = Luft. */
         return moo_number(0.0);
     }
@@ -403,7 +559,7 @@ MooValue moo_voxel_holen(MooValue welt, MooValue x, MooValue y, MooValue z) {
     int32_t lx = moo_voxel_floormod(wx, MOO_VOXEL_CHUNK_DIM);
     int32_t ly = moo_voxel_floormod(wy, MOO_VOXEL_CHUNK_DIM);
     int32_t lz = moo_voxel_floormod(wz, MOO_VOXEL_CHUNK_DIM);
-    return moo_number((double)ch->blocks[moo_voxel_local_index(lx, ly, lz)]);
+    return moo_number((double)moo_voxel_chunk_block_get(ch, moo_voxel_local_index(lx, ly, lz)));
 }
 
 MooValue moo_voxel_chunk_entladen(MooValue welt, MooValue x, MooValue y, MooValue z) {
@@ -433,10 +589,17 @@ MooValue moo_voxel_chunk_entladen(MooValue welt, MooValue x, MooValue y, MooValu
                 moo_3d_chunk_delete(moo_number((double)vw->chunks[idx].render_id));
                 vw->chunks[idx].render_id = -1;
             }
-            if (vw->chunks[idx].blocks) {
-                moo_free(vw->chunks[idx].blocks);
-                vw->chunks[idx].blocks = NULL;
+            if (vw->chunks[idx].palette) {
+                moo_free(vw->chunks[idx].palette);
+                vw->chunks[idx].palette = NULL;
             }
+            if (vw->chunks[idx].indices) {
+                moo_free(vw->chunks[idx].indices);
+                vw->chunks[idx].indices = NULL;
+            }
+            vw->chunks[idx].palette_count = 0;
+            vw->chunks[idx].palette_cap = 0;
+            vw->chunks[idx].bits = 0;
             vw->chunks[idx].occupied = false;
             vw->chunk_count--;
 
@@ -483,19 +646,24 @@ MooValue moo_voxel_ram_statistik(MooValue welt) {
     int64_t chunks = 0;
     int64_t empty_chunks = 0;
     int64_t bytes_blocks = 0;
+    int64_t bytes_palette = 0;
 
     for (int32_t i = 0; i < vw->chunk_cap; i++) {
         if (!vw->chunks[i].occupied) continue;
         chunks++;
-        if (vw->chunks[i].blocks) {
-            bytes_blocks += (int64_t)MOO_VOXEL_CHUNK_VOL * (int64_t)sizeof(uint16_t);
+        if (vw->chunks[i].indices) {
+            /* bytes_blocks = bitgepacktes Index-Array (die eigentlichen Voxel-
+             * Daten). bytes_palette = die distinkte-ID-Tabelle. */
+            bytes_blocks  += (int64_t)moo_voxel_index_words(vw->chunks[i].bits)
+                             * (int64_t)sizeof(uint32_t);
+            bytes_palette += (int64_t)vw->chunks[i].palette_cap
+                             * (int64_t)sizeof(uint16_t);
         } else {
             empty_chunks++;
         }
     }
 
-    /* Phase 1a hat weder Palette noch Mesh -> stabile Keys, Werte 0. */
-    int64_t bytes_palette = 0;
+    /* Mesh-Geometrie liegt im GPU-Render-Cache (separates Modul) -> 0. */
     int64_t bytes_mesh = 0;
     /* Verwaltungs-Overhead (World-Struct + Hashmap-Tabelle) in bytes_total. */
     int64_t bytes_overhead =
@@ -553,13 +721,13 @@ static uint16_t moo_voxel_block_at(MooVoxelWorld* w, const MooVoxelChunk* self,
         int32_t ncy = self_cy + moo_voxel_floordiv(ly, MOO_VOXEL_CHUNK_DIM);
         int32_t ncz = self_cz + moo_voxel_floordiv(lz, MOO_VOXEL_CHUNK_DIM);
         ch = moo_voxel_lookup(w, ncx, ncy, ncz);
-        if (!ch || !ch->blocks) return 0; /* leerer/fehlender Nachbar = Luft */
+        if (!ch || !ch->indices) return 0; /* leerer/fehlender Nachbar = Luft */
         ix = moo_voxel_floormod(lx, MOO_VOXEL_CHUNK_DIM);
         iy = moo_voxel_floormod(ly, MOO_VOXEL_CHUNK_DIM);
         iz = moo_voxel_floormod(lz, MOO_VOXEL_CHUNK_DIM);
     }
-    if (!ch->blocks) return 0;
-    return ch->blocks[moo_voxel_local_index(ix, iy, iz)];
+    if (!ch->indices) return 0;
+    return moo_voxel_chunk_block_get(ch, moo_voxel_local_index(ix, iy, iz));
 }
 
 /* Emittiert ein achsenparalleles Voxel-Face (Einheitsquadrat) als 2 Dreiecke.
@@ -669,7 +837,7 @@ static void moo_voxel_remesh_chunk(MooVoxelWorld* w, MooVoxelChunk* ch) {
     for (int32_t lz = 0; lz < MOO_VOXEL_CHUNK_DIM; lz++) {
         for (int32_t ly = 0; ly < MOO_VOXEL_CHUNK_DIM; ly++) {
             for (int32_t lx = 0; lx < MOO_VOXEL_CHUNK_DIM; lx++) {
-                uint16_t id = ch->blocks[moo_voxel_local_index(lx, ly, lz)];
+                uint16_t id = moo_voxel_chunk_block_get(ch, moo_voxel_local_index(lx, ly, lz));
                 if (id == 0) continue; /* Luft */
                 int cid = (id <= MOO_VOXEL_MAX_BLOCK_ID) ? (int)id : 0;
                 if (cid == 0) continue; /* unbekannte ID defensiv ueberspringen */
@@ -714,7 +882,7 @@ MooValue moo_voxel_mesh_bauen(MooValue welt, MooValue x, MooValue y, MooValue z)
 
     /* Chunk ohne Bloecke (komplett Luft): falls eine alte Render-ID existiert,
      * GENAU EINMAL freigeben (Chunk wurde geleert) und -1 zurueckgeben. */
-    if (!ch->blocks) {
+    if (!ch->indices) {
         if (ch->render_id >= 0) {
             moo_3d_chunk_delete(moo_number((double)ch->render_id));
             ch->render_id = -1;
@@ -740,7 +908,7 @@ MooValue moo_voxel_aktualisieren(MooValue welt) {
     for (int32_t i = 0; i < vw->chunk_cap; i++) {
         MooVoxelChunk* ch = &vw->chunks[i];
         if (!ch->occupied || !ch->dirty) continue;
-        if (!ch->blocks) {
+        if (!ch->indices) {
             /* Geleerter Chunk: alte Render-ID einmal freigeben. */
             if (ch->render_id >= 0) {
                 moo_3d_chunk_delete(moo_number((double)ch->render_id));
@@ -773,11 +941,11 @@ static inline uint16_t moo_voxel_world_block(MooVoxelWorld* w,
     int32_t cy = moo_voxel_floordiv(wy, MOO_VOXEL_CHUNK_DIM);
     int32_t cz = moo_voxel_floordiv(wz, MOO_VOXEL_CHUNK_DIM);
     MooVoxelChunk* ch = moo_voxel_lookup(w, cx, cy, cz);
-    if (!ch || !ch->blocks) return 0; /* leerer/fehlender Chunk = Luft */
+    if (!ch || !ch->indices) return 0; /* leerer/fehlender Chunk = Luft */
     int32_t lx = moo_voxel_floormod(wx, MOO_VOXEL_CHUNK_DIM);
     int32_t ly = moo_voxel_floormod(wy, MOO_VOXEL_CHUNK_DIM);
     int32_t lz = moo_voxel_floormod(wz, MOO_VOXEL_CHUNK_DIM);
-    return ch->blocks[moo_voxel_local_index(lx, ly, lz)];
+    return moo_voxel_chunk_block_get(ch, moo_voxel_local_index(lx, ly, lz));
 }
 
 /* ========================================================================
@@ -1066,9 +1234,13 @@ void moo_voxel_free(void* ptr) {
                 moo_3d_chunk_delete(moo_number((double)vw->chunks[i].render_id));
                 vw->chunks[i].render_id = -1;
             }
-            if (vw->chunks[i].blocks) {
-                moo_free(vw->chunks[i].blocks);
-                vw->chunks[i].blocks = NULL;
+            if (vw->chunks[i].palette) {
+                moo_free(vw->chunks[i].palette);
+                vw->chunks[i].palette = NULL;
+            }
+            if (vw->chunks[i].indices) {
+                moo_free(vw->chunks[i].indices);
+                vw->chunks[i].indices = NULL;
             }
         }
         moo_free(vw->chunks);
