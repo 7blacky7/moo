@@ -58,7 +58,16 @@ MooValue moo_length(MooValue v) {
 MooValue moo_range(MooValue start, MooValue end) {
     int32_t s = (int32_t)moo_as_number(start);
     int32_t e = (int32_t)moo_as_number(end);
-    int32_t len = e > s ? e - s : 0;
+    // P007-U3: e-s kann signed int32 ueberlaufen (z.B. e=INT32_MAX, s=INT32_MIN)
+    // -> UB + absurde Listengroesse. In int64 rechnen + gegen Limit pruefen.
+    int64_t span = e > s ? (int64_t)e - (int64_t)s : 0;
+    if (span > MOO_MAX_ALLOC_SIZE) {
+        // moo_throw kehrt im try-Kontext zurueck -> hier abbrechen statt eine
+        // truncated/absurde Liste zu erzeugen.
+        moo_throw(moo_error("range/bereich: Ergebnis-Liste ueberschreitet das erlaubte Groessen-Limit"));
+        return moo_list_new(0);
+    }
+    int32_t len = (int32_t)span;
     MooValue list = moo_list_new(len);
     for (int32_t i = s; i < e; i++)
         moo_list_append(list, moo_number((double)i));

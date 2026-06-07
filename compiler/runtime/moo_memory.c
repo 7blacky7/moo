@@ -164,3 +164,43 @@ void* moo_realloc(void* ptr, size_t size) {
 void moo_free(void* ptr) {
     free(ptr);
 }
+
+// === Checked-Arithmetik fuer Allokationsgroessen (Plan-007 P007-U3) ===
+// Beide Helfer nehmen ihre Operanden bereits als int64_t entgegen (der
+// Aufrufer promotet seine int32_t-Laengen verlustfrei), rechnen im int64_t-
+// Bereich (kein Overflow moeglich, da int32*int32 bzw. int32+int32 sicher in
+// int64 passt) und pruefen das Ergebnis gegen [0, MOO_MAX_ALLOC_SIZE].
+//
+// Bei Verletzung: moo_throw mit klarer deutscher Meldung. ACHTUNG: moo_throw
+// kehrt INNERHALB eines try/fange-Blocks ZURUECK (es setzt dann nur das
+// Error-Flag, siehe moo_error.c) — es ist also KEIN longjmp/noreturn. Damit ein
+// Aufrufer, der nach dem Wurf weiterlaeuft (try-Kontext), NICHT mit einer
+// riesigen Groesse allokiert, geben wir im Fehlerfall 0 zurueck (harmlose,
+// kleine Allokation). Aufrufer MUESSEN zusaetzlich nach dem Aufruf das
+// Error-Flag pruefen (moo_error_flag) und vor dem Schreiben in den Puffer
+// abbrechen — siehe moo_string.c/moo_crypto.c/moo_web.c.
+int64_t moo_checked_add_i32(int64_t a, int64_t b, const char* ctx) {
+    int64_t r = a + b;  // a,b stammen aus int32-Laengen -> Summe sicher in int64
+    if (r < 0 || r > MOO_MAX_ALLOC_SIZE) {
+        char msg[160];
+        snprintf(msg, sizeof(msg),
+                 "%s: Groessen-Ueberlauf (%lld + %lld ueberschreitet das erlaubte Limit von %d Bytes)",
+                 ctx ? ctx : "Allokation", (long long)a, (long long)b, (int)MOO_MAX_ALLOC_SIZE);
+        moo_throw(moo_error(msg));
+        return 0;
+    }
+    return r;
+}
+
+int64_t moo_checked_mul_i32(int64_t a, int64_t b, const char* ctx) {
+    int64_t r = a * b;  // a,b stammen aus int32-Werten -> Produkt sicher in int64
+    if (r < 0 || r > MOO_MAX_ALLOC_SIZE) {
+        char msg[160];
+        snprintf(msg, sizeof(msg),
+                 "%s: Groessen-Ueberlauf (%lld * %lld ueberschreitet das erlaubte Limit von %d Bytes)",
+                 ctx ? ctx : "Allokation", (long long)a, (long long)b, (int)MOO_MAX_ALLOC_SIZE);
+        moo_throw(moo_error(msg));
+        return 0;
+    }
+    return r;
+}

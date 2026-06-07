@@ -369,6 +369,20 @@ void* moo_alloc(size_t size);
 void* moo_realloc(void* ptr, size_t size);
 void moo_free(void* ptr);
 
+// === Checked-Arithmetik fuer Allokationsgroessen (Plan-007 P007-U3) ===
+// Container-Laengen/Kapazitaeten sind int32_t (moo_runtime.h). Additive bzw.
+// multiplikative Groessenrechnungen koennen bei User-/Datengetriebenen Werten
+// signed int32 ueberlaufen (UB) und zu viel zu kleinen Allokationen + Heap-
+// Overflow fuehren. Diese Helfer rechnen im breiteren int64_t-Zwischentyp,
+// pruefen gegen ein hartes Limit und werfen bei Ueberlauf einen sauberen
+// moo-Fehler (moo_throw, kehrt nie zurueck). Rueckgabe ist garantiert ein
+// nicht-negatives Ergebnis, das in size_t/int32_t passt.
+// Hard-Limit: Ergebnisse muessen <= INT32_MAX bleiben, damit sie weiterhin in
+// die int32_t-Laengen/Kapazitaeten der Container passen (kein stiller Trunc).
+#define MOO_MAX_ALLOC_SIZE 0x7FFFFFFF  /* INT32_MAX */
+int64_t moo_checked_add_i32(int64_t a, int64_t b, const char* ctx);
+int64_t moo_checked_mul_i32(int64_t a, int64_t b, const char* ctx);
+
 // === Debugger ===
 void moo_breakpoint(MooValue line_num);
 

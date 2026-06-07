@@ -27,8 +27,17 @@ MooValue moo_string_concat(MooValue a, MooValue b) {
     MooValue sb = moo_to_string(b);
     int32_t la = MV_STR(sa)->length;
     int32_t lb = MV_STR(sb)->length;
-    int32_t len = la + lb;
-    char* buf = moo_alloc(len + 1);
+    // P007-U3: la+lb kann in int32 ueberlaufen (zwei ~2GB-Strings) -> zu kleiner
+    // moo_alloc + Heap-Overflow im memcpy. In int64 summieren und pruefen.
+    int32_t len = (int32_t)moo_checked_add_i32(la, lb, "Text-Verkettung (+)");
+    // moo_throw kehrt im try-Kontext zurueck -> nach dem Wurf abbrechen, nicht
+    // mit der 0er-Groesse weiter (Zwischenprodukte sauber freigeben).
+    if (moo_error_flag) {
+        if (sa.tag == MOO_STRING && a.tag != MOO_STRING) moo_release(sa);
+        if (sb.tag == MOO_STRING && b.tag != MOO_STRING) moo_release(sb);
+        return moo_string_new("");
+    }
+    char* buf = moo_alloc((size_t)len + 1);
     memcpy(buf, MV_STR(sa)->chars, la);
     memcpy(buf + la, MV_STR(sb)->chars, lb);
     buf[len] = '\0';
@@ -90,10 +99,39 @@ MooValue moo_string_replace(MooValue s, MooValue old_s, MooValue new_s) {
     char* src = MV_STR(s)->chars;
     char* find = MV_STR(old_s)->chars;
     char* repl = MV_STR(new_s)->chars;
-    int find_len = MV_STR(old_s)->length;
-    int repl_len = MV_STR(new_s)->length;
-    int buf_size = MV_STR(s)->length * 2 + repl_len + 1;
-    char* buf = moo_alloc(buf_size);
+    int32_t find_len = MV_STR(old_s)->length;
+    int32_t repl_len = MV_STR(new_s)->length;
+    int32_t src_len  = MV_STR(s)->length;
+
+    // P007-U3: Der alte Puffer `length*2 + repl_len + 1` war doppelt fehlerhaft:
+    //  (1) Korrektheits-/Sicherheitsbug: bei repl_len > find_len und vielen
+    //      Treffern unterschaetzt `length*2` die noetige Groesse -> Heap-Overflow.
+    //  (2) UB: length*2 kann signed int32 ueberlaufen.
+    // Fix: leerer find ist ein No-Op-Sonderfall (sonst Endlosschleife). Sonst die
+    // Treffer zaehlen und die EXAKTE Zielgroesse in int64 berechnen + pruefen.
+    if (find_len <= 0) {
+        // Nichts zu ersetzen: unveraenderte Kopie zurueckgeben.
+        return moo_string_new_len(src, src_len);
+    }
+
+    int32_t count = 0;
+    for (const char* p = src; (p = strstr(p, find)) != NULL; p += find_len) {
+        count++;
+    }
+
+    // Zielgroesse = src_len + count * (repl_len - find_len). Alles in int64
+    // rechnen und gegen MOO_MAX_ALLOC_SIZE pruefen (delta kann negativ sein).
+    int64_t delta = (int64_t)count * ((int64_t)repl_len - (int64_t)find_len);
+    int64_t out_len = (int64_t)src_len + delta;
+    if (out_len < 0) out_len = 0;  // sollte bei korrektem count nie eintreten
+    if (out_len > MOO_MAX_ALLOC_SIZE) {
+        // moo_throw kehrt im try-Kontext zurueck -> hier explizit abbrechen,
+        // sonst Schreiben in einen viel zu kleinen Puffer.
+        moo_throw(moo_error("Text-Ersetzen (ersetzen): Ergebnis ueberschreitet das erlaubte Groessen-Limit"));
+        return moo_string_new("");
+    }
+
+    char* buf = moo_alloc((size_t)out_len + 1);
     char* dst = buf;
     while (*src) {
         if (strncmp(src, find, find_len) == 0) {
@@ -105,7 +143,8 @@ MooValue moo_string_replace(MooValue s, MooValue old_s, MooValue new_s) {
         }
     }
     *dst = '\0';
-    MooValue result = moo_string_new(buf);
+    // Binary-safe: exakte Laenge nutzen statt strlen (Inhalt darf NUL enthalten).
+    MooValue result = moo_string_new_len(buf, (int32_t)out_len);
     moo_free(buf);
     return result;
 }
@@ -141,11 +180,19 @@ MooValue moo_string_repeat(MooValue s, MooValue count) {
     int32_t n = (int32_t)moo_as_number(count);
     if (n <= 0) return moo_string_new("");
     int32_t len = MV_STR(s)->length;
-    char* buf = moo_alloc(len * n + 1);
+    // P007-U3: n ist direkter User-Input ("abc" * grosseZahl). len*n kann signed
+    // int32 ueberlaufen -> zu kleiner moo_alloc + Heap-Overflow. Produkt in int64
+    // pruefen; bei Ueberlauf sauberer moo-Fehler statt Crash.
+    int64_t total = moo_checked_mul_i32(len, n, "Text-Wiederholung (text_wiederhole / *)");
+    // moo_throw kehrt im try-Kontext zurueck -> nach dem Wurf NICHT mit der
+    // (dann 0er) Groesse weiterschreiben, sonst Heap-Overflow im memcpy-Loop.
+    if (moo_error_flag) return moo_string_new("");
+    char* buf = moo_alloc((size_t)total + 1);
     for (int32_t i = 0; i < n; i++)
-        memcpy(buf + i * len, MV_STR(s)->chars, len);
-    buf[len * n] = '\0';
-    MooValue result = moo_string_new(buf);
+        memcpy(buf + (size_t)i * (size_t)len, MV_STR(s)->chars, (size_t)len);
+    buf[total] = '\0';
+    // Binary-safe: exakte Laenge nutzen (Inhalt darf NUL-Bytes enthalten).
+    MooValue result = moo_string_new_len(buf, (int32_t)total);
     moo_free(buf);
     return result;
 }

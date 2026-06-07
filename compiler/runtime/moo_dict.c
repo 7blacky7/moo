@@ -36,9 +36,17 @@ static int32_t dict_find_slot(MooDict* d, const char* key) {
 static void dict_grow(MooDict* d) {
     int32_t old_cap = d->capacity;
     MooDictEntry* old = d->entries;
+    // P007-U3: capacity ist int32_t. Ab capacity > INT32_MAX/2 wuerde `*2`
+    // signed int32 ueberlaufen (UB). Vor der Verdopplung pruefen und werfen.
+    if (d->capacity > MOO_MAX_ALLOC_SIZE / 2) {
+        // moo_throw kehrt im try-Kontext zurueck -> hier abbrechen, sonst
+        // ueberlaeuft cap*=2 doch noch (UB).
+        moo_throw(moo_error("Dict: maximale Kapazitaet ueberschritten"));
+        return;
+    }
     d->capacity *= 2;
-    d->entries = moo_alloc(sizeof(MooDictEntry) * d->capacity);
-    memset(d->entries, 0, sizeof(MooDictEntry) * d->capacity);
+    d->entries = moo_alloc(sizeof(MooDictEntry) * (size_t)d->capacity);
+    memset(d->entries, 0, sizeof(MooDictEntry) * (size_t)d->capacity);
     d->count = 0;
     for (int32_t i = 0; i < old_cap; i++) {
         if (old[i].occupied) {

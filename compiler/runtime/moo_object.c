@@ -80,8 +80,17 @@ void moo_object_set(MooValue obj_val, const char* prop, MooValue value) {
         return;
     }
     if (obj->prop_count >= obj->prop_capacity) {
+        // P007-U3: prop_capacity ist int32_t. Ab > INT32_MAX/2 ueberlaeuft `*2`
+        // signed int32 (UB). Vor der Verdopplung pruefen und sauber werfen.
+        if (obj->prop_capacity > MOO_MAX_ALLOC_SIZE / 2) {
+            // moo_throw kehrt im try-Kontext zurueck -> hier abbrechen, sonst
+            // ueberlaeuft cap*=2 doch noch (UB). Value-Ref freigeben (Transfer).
+            moo_throw(moo_error("Objekt: maximale Property-Anzahl ueberschritten"));
+            moo_release(value);
+            return;
+        }
         obj->prop_capacity *= 2;
-        obj->properties = moo_realloc(obj->properties, sizeof(MooProperty) * obj->prop_capacity);
+        obj->properties = moo_realloc(obj->properties, sizeof(MooProperty) * (size_t)obj->prop_capacity);
     }
     MooString* name_str = moo_alloc(sizeof(MooString));
     name_str->refcount = 1;

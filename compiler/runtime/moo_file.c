@@ -32,8 +32,16 @@ MooValue moo_file_read(MooValue path) {
     long len = ftell(f);
     fseek(f, 0, SEEK_SET);
     if (len < 0) { fclose(f); moo_release(path); return moo_string_new_len("", 0); }
+    // P007-U3: String-Laenge ist int32_t. Dateien > INT32_MAX wuerden bei
+    // (int32_t)got truncated -> Datenverlust/Folgefehler. Sauber abbrechen.
+    if (len > MOO_MAX_ALLOC_SIZE) {
+        fclose(f); moo_release(path);
+        // moo_throw kehrt im try-Kontext zurueck -> hier explizit abbrechen.
+        moo_throw(moo_error("datei_lesen: Datei zu gross (> 2 GiB werden nicht unterstuetzt)"));
+        return moo_string_new_len("", 0);
+    }
 
-    char* buf = (char*)moo_alloc(len + 1);
+    char* buf = (char*)moo_alloc((size_t)len + 1);
     size_t got = fread(buf, 1, (size_t)len, f);
     fclose(f);
 
@@ -55,6 +63,14 @@ MooValue moo_file_read_bytes(MooValue path) {
     long len = ftell(f);
     fseek(f, 0, SEEK_SET);
     if (len <= 0) { fclose(f); moo_release(path); return moo_list_new(0); }
+    // P007-U3: Listen-Kapazitaet ist int32_t. Dateien > INT32_MAX wuerden bei
+    // (int32_t)got/moo_list_new truncated -> Datenverlust. Sauber abbrechen.
+    if (len > MOO_MAX_ALLOC_SIZE) {
+        fclose(f); moo_release(path);
+        // moo_throw kehrt im try-Kontext zurueck -> hier explizit abbrechen.
+        moo_throw(moo_error("datei_lesen_bytes: Datei zu gross (> 2 GiB werden nicht unterstuetzt)"));
+        return moo_list_new(0);
+    }
 
     unsigned char* buf = (unsigned char*)moo_alloc((size_t)len);
     size_t got = fread(buf, 1, (size_t)len, f);

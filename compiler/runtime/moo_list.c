@@ -22,14 +22,29 @@ MooValue moo_list_from(MooValue* items, int32_t count) {
 }
 
 static void list_grow(MooList* l) {
+    // P007-U3: capacity ist int32_t. Ab capacity > INT32_MAX/2 wuerde `*2`
+    // signed int32 ueberlaufen (UB -> negativ -> riesiger size_t-Multiply ->
+    // Korruption/Abbruch). Vor der Verdopplung pruefen und sauber werfen.
+    if (l->capacity > MOO_MAX_ALLOC_SIZE / 2) {
+        // moo_throw kehrt im try-Kontext zurueck -> hier abbrechen, sonst
+        // ueberlaeuft cap*=2 doch noch (UB).
+        moo_throw(moo_error("Liste: maximale Kapazitaet ueberschritten"));
+        return;
+    }
     l->capacity *= 2;
-    l->items = moo_realloc(l->items, sizeof(MooValue) * l->capacity);
+    l->items = moo_realloc(l->items, sizeof(MooValue) * (size_t)l->capacity);
 }
 
 void moo_list_append(MooValue list, MooValue item) {
     MooList* l = MV_LIST(list);
     if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return; }
-    if (l->length >= l->capacity) list_grow(l);
+    if (l->length >= l->capacity) {
+        list_grow(l);
+        // list_grow kann werfen (Kapazitaetslimit). moo_throw kehrt im try-
+        // Kontext zurueck -> dann ist die Kapazitaet NICHT gewachsen; ein Write
+        // an l->items[length] waere ein Out-of-Bounds. Sauber abbrechen.
+        if (moo_error_flag || l->length >= l->capacity) return;
+    }
     // Transfer-Semantik: Caller uebergibt item mit refcount=1, Liste
     // uebernimmt die Referenz. Kein retain hier.
     l->items[l->length++] = item;

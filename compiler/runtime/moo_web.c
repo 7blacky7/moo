@@ -342,8 +342,14 @@ MooValue moo_web_template(MooValue request, MooValue html, MooValue vars) {
     int src_len = MV_STR(html)->length;
 
     // Output Buffer (max 4x Quellgroesse)
-    int out_cap = src_len * 4 + 1024;
-    char* out = (char*)malloc(out_cap);
+    // P007-U3: src_len ist User-/Programm-HTML. src_len*4+1024 kann signed int32
+    // ueberlaufen (src_len>~536M) -> negativer/zu kleiner malloc. In int64
+    // rechnen + pruefen; das gepruefte Ergebnis passt garantiert in int.
+    int out_cap = (int)moo_checked_add_i32(
+        moo_checked_mul_i32(src_len, 4, "web_template"), 1024, "web_template");
+    // moo_throw kehrt im try-Kontext zurueck -> nach dem Wurf nicht weiterlaufen.
+    if (moo_error_flag) return moo_none();
+    char* out = (char*)malloc((size_t)out_cap);
     int out_len = 0;
 
     int i = 0;

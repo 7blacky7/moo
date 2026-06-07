@@ -255,8 +255,14 @@ MooValue moo_base64_decode(MooValue input) {
 MooValue moo_sanitize_html(MooValue input) {
     if (input.tag != MOO_STRING) return moo_error("sanitize_html: String erwartet");
     MooString *s = MV_STR(input);
-    // Worst case: every char becomes &amp; (5 chars)
-    char *out = (char*)malloc((size_t)(s->length * 6 + 1));
+    // Worst case: every char becomes &#x27;/&quot; (6 chars).
+    // P007-U3: s->length*6 wurde frueher als int gerechnet (signed-Overflow-UB
+    // bei length>~357M, dann negativer/zu kleiner malloc). Produkt in int64
+    // pruefen; bei Ueberlauf sauberer moo-Fehler statt Crash.
+    size_t cap = (size_t)moo_checked_mul_i32(s->length, 6, "sanitize_html") + 1;
+    // moo_throw kehrt im try-Kontext zurueck -> nach dem Wurf nicht weiterlaufen.
+    if (moo_error_flag) return moo_string_new("");
+    char *out = (char*)malloc(cap);
     int j = 0;
     for (int i = 0; i < s->length; i++) {
         switch (s->chars[i]) {
@@ -277,8 +283,13 @@ MooValue moo_sanitize_html(MooValue input) {
 MooValue moo_sanitize_sql(MooValue input) {
     if (input.tag != MOO_STRING) return moo_error("sanitize_sql: String erwartet");
     MooString *s = MV_STR(input);
-    // Worst case: every ' becomes '' (double), -- becomes removed
-    char *out = (char*)malloc((size_t)(s->length * 2 + 1));
+    // Worst case: every ' becomes '' (double), -- becomes removed.
+    // P007-U3: s->length*2 wurde frueher als int gerechnet (signed-Overflow-UB
+    // bei length>~1.07G). Produkt in int64 pruefen; bei Ueberlauf moo-Fehler.
+    size_t cap = (size_t)moo_checked_mul_i32(s->length, 2, "sanitize_sql") + 1;
+    // moo_throw kehrt im try-Kontext zurueck -> nach dem Wurf nicht weiterlaufen.
+    if (moo_error_flag) return moo_string_new("");
+    char *out = (char*)malloc(cap);
     int j = 0;
     for (int i = 0; i < s->length; i++) {
         if (s->chars[i] == '\'') {
