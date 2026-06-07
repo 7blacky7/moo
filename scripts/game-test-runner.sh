@@ -112,6 +112,7 @@ run_one() {
     local video_status="none"
     local video_reason=""
     local video_path=""
+    local video_frames=""
 
     echo ""
     echo "==========================================================="
@@ -120,7 +121,7 @@ run_one() {
 
     if [ ! -f "$moo_file" ]; then
         echo "[runner] FEHLER: $moo_file fehlt"
-        RESULT_JSON+=("$(test_json "$name" "$moo_file" "fail" "datei-fehlt" "" "" "$log" "none" "" "")")
+        RESULT_JSON+=("$(test_json "$name" "$moo_file" "fail" "datei-fehlt" "" "" "$log" "none" "" "" "")")
         return 1
     fi
 
@@ -130,7 +131,7 @@ run_one() {
     # Video-Selftest sauber, BEVOR wir ihn starten. Der Runner bleibt gruen.
     if [ "$wants_video" -eq 1 ] && [ "$HAVE_FFMPEG" -ne 1 ]; then
         echo "[runner] $name: SKIP (ffmpeg fehlt -> video_status=skipped)"
-        RESULT_JSON+=("$(test_json "$name" "$moo_file" "skip" "ffmpeg-missing" "" "" "$log" "skipped" "ffmpeg-missing" "")")
+        RESULT_JSON+=("$(test_json "$name" "$moo_file" "skip" "ffmpeg-missing" "" "" "$log" "skipped" "ffmpeg-missing" "" "")")
         return 0
     fi
 
@@ -188,6 +189,17 @@ run_one() {
                     -show_entries stream=codec_name,pix_fmt \
                     -of default=noprint_wrappers=1:nokey=1 "$video" 2>/dev/null | tr '\n' ' ')"
                 echo "[runner] $name: ffprobe -> $probe"
+                # Optionaler Zusatzcheck (Plan-009 REST): exakte Framezahl via
+                # ffprobe -count_frames. Dekodiert das ganze File; nur Best-effort,
+                # Fehler/leeres Ergebnis sind KEIN harter Fehler (video_frames bleibt leer).
+                local frames
+                frames="$(ffprobe -v error -count_frames -select_streams v:0 \
+                    -show_entries stream=nb_read_frames \
+                    -of default=noprint_wrappers=1:nokey=1 "$video" 2>/dev/null | tr -dc '0-9')"
+                if [ -n "$frames" ]; then
+                    video_frames="$frames"
+                    echo "[runner] $name: ffprobe -count_frames -> $frames Frames"
+                fi
                 if printf '%s' "$probe" | grep -q 'h264' && printf '%s' "$probe" | grep -q 'yuv420p'; then
                     video_status="ok"
                 else
@@ -231,7 +243,7 @@ run_one() {
         echo "[runner] $name: video_status=$video_status  (${video_path:-<kein-mp4>})"
     fi
 
-    RESULT_JSON+=("$(test_json "$name" "$moo_file" "$status" "$reason" "$produced" "$gif_path" "$log" "$video_status" "$video_reason" "$video_path")")
+    RESULT_JSON+=("$(test_json "$name" "$moo_file" "$status" "$reason" "$produced" "$gif_path" "$log" "$video_status" "$video_reason" "$video_path" "$video_frames")")
     [ "$status" = "pass" ]
 }
 
@@ -243,6 +255,7 @@ name, moo_file, status, reason, shot, gif, log = sys.argv[1:8]
 video_status = sys.argv[8] if len(sys.argv) > 8 else "none"
 video_reason = sys.argv[9] if len(sys.argv) > 9 else ""
 video       = sys.argv[10] if len(sys.argv) > 10 else ""
+video_frames = sys.argv[11] if len(sys.argv) > 11 else ""
 def rel(p):
     return os.path.relpath(p) if p else None
 def asserts(logpath):
@@ -264,6 +277,7 @@ obj = {
     "video": rel(video) if video else None,
     "video_status": video_status,
     "video_reason": video_reason or None,
+    "video_frames": int(video_frames) if video_frames.strip().isdigit() else None,
     "log": rel(log) if log else None,
     "asserts_ok": ok,
     "asserts_fail": bad,
@@ -281,6 +295,7 @@ done
 # -------------------- Report schreiben ----------------------
 python3 - "$REPORT" "$BACKEND" "$HEADLESS" "$PASS" "$FAIL" "${RESULT_JSON[@]}" <<'PY'
 import json, sys, datetime
+from datetime import timezone
 report_path = sys.argv[1]
 backend     = sys.argv[2]
 headless    = sys.argv[3] == "1"
@@ -290,7 +305,7 @@ results     = [json.loads(r) for r in sys.argv[6:] if r.strip()]
 report = {
     "suite": "game-test-runner",
     "plan": "Plan-008 A4",
-    "timestamp": datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+    "timestamp": datetime.datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None).isoformat() + "Z",
     "backend": backend,
     "headless": headless,
     "passed_count": n_pass,
