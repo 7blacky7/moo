@@ -17,10 +17,19 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
-# Compiler bauen falls noetig
-if [[ ! -x "$COMPILER" ]]; then
-    echo "Baue Compiler..."
-    (cd "$COMPILER_DIR" && cargo build --release 2>/dev/null)
+# Compiler bauen.
+# WICHTIG: immer mit Default-Features (gl33+vulkan+moo_ui) bauen, denn nur
+# dann wird runtime/moo_voxel.c in das Runtime-Archiv aufgenommen (build.rs
+# gated moo_voxel.c hinter den 3D-Features). Ein zuvor mit
+# --no-default-features gebautes Binary fuehrt sonst beim Linken der
+# Voxel-Tests zu "undefined reference moo_voxel_free/moo_voxel_holen".
+# cargo ist idempotent: ist das Binary bereits mit Default-Features aktuell,
+# passiert nichts; wurde es ohne 3D gebaut, erzwingt der abweichende
+# Feature-Satz einen Rebuild.
+echo "Baue Compiler (Default-Features inkl. 3D/Voxel)..."
+if ! (cd "$COMPILER_DIR" && cargo build --release); then
+    echo -e "${RED}FEHLER:${NC} Compiler-Build fehlgeschlagen — Abbruch."
+    exit 1
 fi
 
 pass=0
