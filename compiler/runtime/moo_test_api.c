@@ -52,6 +52,10 @@ extern void     moo_3d_simulate_scroll(MooValue win, MooValue dy);
 extern void     moo_3d_simulate_key(MooValue win, MooValue key, MooValue pressed);
 extern void     moo_3d_simulate_mouse_delta(MooValue win, MooValue dx, MooValue dy);
 extern void     moo_3d_simulate_reset(MooValue win);
+/* Frame-Grab-Dispatcher (Plan-008 A3A). moo_3d_grab_rgba -> moo_3d.c (Vtable);
+ * moo_hybrid_grab_rgba -> moo_hybrid.c. Beide liefern malloc'ten RGBA8-top-left-
+ * Buffer (Aufrufer free) + Dims, oder NULL. */
+extern uint8_t* moo_3d_grab_rgba(MooValue win, int* out_w, int* out_h);
 
 /* SDL fuer 2D-Fensterabmessungen + open-Flag. Nur in 3D-Builds verfuegbar,
  * wo moo_graphics.c (SDL2) mitkompiliert wird. */
@@ -69,6 +73,7 @@ typedef struct {
 #ifdef MOO_HAS_GL33
 extern MooValue moo_hybrid_screenshot_bmp(MooValue window, MooValue path);
 extern MooValue moo_hybrid_is_open(MooValue win);
+extern uint8_t* moo_hybrid_grab_rgba(MooValue window, int* out_w, int* out_h);
 #endif
 
 /* Liefert den Namen des aktiven 3D-Backends. Auswahl erfolgt in moo_3d_create()
@@ -200,6 +205,107 @@ MooValue moo_test_screenshot(MooValue win, MooValue pfad) {
 }
 
 /* ============================================================
+ * Frame-Grab / Pixel (Plan-008 A3A) — opaker MOO_FRAME-Heap-Typ.
+ * STANDARD: RGBA8, top-left origin (Y-Flip backend-uebergreifend einheitlich).
+ * Pixeldaten NIE als moo-Liste (siehe moo_frame.c).
+ * ============================================================ */
+
+/* 2D-SDL-Grab via SDL_RenderReadPixels (liefert bereits top-left). Konvertiert
+ * nach RGBA8. NULL bei Fehler. Buffer via malloc (Aufrufer free). */
+static uint8_t* test_grab_sdl(MooValue win, int* out_w, int* out_h) {
+    if (win.tag != MOO_WINDOW) return NULL;
+    MooTestSdlWindow* mw = (MooTestSdlWindow*)moo_val_as_ptr(win);
+    if (!mw || !mw->renderer) return NULL;
+    int w = 0, h = 0;
+    if (SDL_GetRendererOutputSize(mw->renderer, &w, &h) != 0) return NULL;
+    if (w <= 0 || h <= 0) return NULL;
+    uint8_t* buf = (uint8_t*)malloc((size_t)w * (size_t)h * 4);
+    if (!buf) return NULL;
+    /* ABGR8888 in SDL-Byte-Reihenfolge entspricht R,G,B,A im Speicher (LE). */
+    if (SDL_RenderReadPixels(mw->renderer, NULL, SDL_PIXELFORMAT_ABGR8888,
+                             buf, w * 4) != 0) {
+        free(buf);
+        return NULL;
+    }
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    return buf;
+}
+
+/* test_frame_grab(win) -> MOO_FRAME. Wirft bei fehlendem Readback (S5: nie
+ * still). Der Backend-Grab liefert garantiert RGBA8 top-left. */
+MooValue moo_test_frame_grab(MooValue win) {
+    int w = 0, h = 0;
+    uint8_t* px = NULL;
+
+    if (win.tag == MOO_WINDOW3D) {
+        px = moo_3d_grab_rgba(win, &w, &h);
+        if (!px) {
+            moo_throw(moo_string_new(
+                "test_frame_grab: 3D-Backend unterstuetzt keinen Frame-Grab "
+                "(MOO_3D_BACKEND=gl33/gl21/vulkan verwenden)"));
+            return moo_none();
+        }
+    } else if (win.tag == MOO_WINDOW_HYBRID) {
+#ifdef MOO_HAS_GL33
+        px = moo_hybrid_grab_rgba(win, &w, &h);
+        if (!px) {
+            moo_throw(moo_string_new("test_frame_grab: Hybrid-Frame-Grab fehlgeschlagen"));
+            return moo_none();
+        }
+#else
+        moo_throw(moo_string_new("test_frame_grab: Hybrid-Fenster nur im gl33-Build"));
+        return moo_none();
+#endif
+    } else if (win.tag == MOO_WINDOW) {
+        px = test_grab_sdl(win, &w, &h);
+        if (!px) {
+            moo_throw(moo_string_new("test_frame_grab: 2D-Frame-Grab fehlgeschlagen"));
+            return moo_none();
+        }
+    } else {
+        moo_throw(moo_string_new("test_frame_grab: kein gueltiges Fenster"));
+        return moo_none();
+    }
+
+    /* moo_frame_new_take uebernimmt px (free bei moo_release/Fehler). */
+    MooValue frame = moo_frame_new_take(w, h, px);
+    if (frame.tag != MOO_FRAME) {
+        moo_throw(moo_string_new("test_frame_grab: Frame-Erzeugung fehlgeschlagen"));
+        return moo_none();
+    }
+    return frame;
+}
+
+/* test_pixel(frame_oder_win, x, y) -> Dict {rot,gruen,blau,alpha}.
+ * Direktes MOO_FRAME: aus dem Frame lesen. Fenster: kurz grabben, lesen, frei. */
+MooValue moo_test_pixel(MooValue frame_oder_win, MooValue x, MooValue y) {
+    if (frame_oder_win.tag == MOO_FRAME) {
+        return moo_frame_read_pixel(frame_oder_win, x, y);
+    }
+    if (x.tag != MOO_NUMBER || y.tag != MOO_NUMBER) {
+        moo_throw(moo_string_new("test_pixel: x und y muessen Zahlen sein"));
+        return moo_none();
+    }
+    MooValue frame = moo_test_frame_grab(frame_oder_win);
+    if (frame.tag != MOO_FRAME) {
+        /* moo_test_frame_grab hat bereits geworfen. */
+        return moo_none();
+    }
+    MooFrame* f = MV_FRAME(frame);
+    int ix = (int)MV_NUM(x);
+    int iy = (int)MV_NUM(y);
+    if (ix < 0 || iy < 0 || ix >= f->width || iy >= f->height) {
+        moo_release(frame);
+        moo_throw(moo_string_new("test_pixel: Koordinate ausserhalb des Frames"));
+        return moo_none();
+    }
+    MooValue result = moo_frame_pixel_dict(f, ix, iy);
+    moo_release(frame);
+    return result;
+}
+
+/* ============================================================
  * Fenster-Info → Dict { breite, hoehe, backend, offen }
  * ============================================================
  * breite/hoehe:
@@ -231,11 +337,20 @@ MooValue moo_test_fenster_info(MooValue win) {
         backend = test_active_3d_backend();
         MooValue o = moo_3d_is_open(win);
         offen = (o.tag == MOO_BOOL) ? MV_BOOL(o) : false;
+        /* Echte Framebuffer-Dims (Plan-008 A3A): ueber die Grab-Infrastruktur
+         * ermitteln. Ein kurzer Grab liefert die Backend-Dims; der Buffer wird
+         * sofort wieder freigegeben. */
+        int gw = 0, gh = 0;
+        uint8_t* px = moo_3d_grab_rgba(win, &gw, &gh);
+        if (px) { breite = (double)gw; hoehe = (double)gh; free(px); }
     } else if (win.tag == MOO_WINDOW_HYBRID) {
         backend = "hybrid-gl33";
 #ifdef MOO_HAS_GL33
         MooValue o = moo_hybrid_is_open(win);
         offen = (o.tag == MOO_BOOL) ? MV_BOOL(o) : false;
+        int gw = 0, gh = 0;
+        uint8_t* px = moo_hybrid_grab_rgba(win, &gw, &gh);
+        if (px) { breite = (double)gw; hoehe = (double)gh; free(px); }
 #endif
     }
 

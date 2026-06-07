@@ -6,6 +6,8 @@
  * Jedes Backend implementiert diesen Funktionszeiger-Struct.
  */
 
+#include <stdint.h>  /* uint8_t fuer grab_rgba (Plan-008 A3A) */
+
 typedef struct {
     // Lifecycle
     void* (*create_window)(const char* title, int w, int h);
@@ -48,6 +50,12 @@ typedef struct {
     void  (*chunk_delete)(void* ctx, int id);
     // Screenshot — schreibt aktuelles Frame-Buffer als BMP. Returns 1 bei Erfolg, 0 sonst.
     int   (*screenshot_bmp)(void* ctx, const char* path);
+    // Frame-Grab (Plan-008 A3A) — liefert aktuellen Framebuffer als RGBA8,
+    // top-left origin (Y-Flip backend-uebergreifend EINHEITLICH hier erledigt).
+    // Allokiert width*height*4 Bytes via malloc (Aufrufer free). Schreibt Dims
+    // nach *out_w/*out_h. Returns Buffer oder NULL bei Fehler / nicht unterstuetzt.
+    // NULL signalisiert dem test_*-Layer ein klares moo_throw (nie still false).
+    uint8_t* (*grab_rgba)(void* ctx, int* out_w, int* out_h);
     // Test-Sim: programmatische Eingaben fuer Selbsttests
     void  (*simulate_mouse_pos)(void* ctx, float x, float y);
     void  (*simulate_mouse_button)(void* ctx, int btn, int pressed); // btn 0/1/2, pressed 0/1

@@ -2782,6 +2782,23 @@ impl<'ctx> CodeGen<'ctx> {
                         let win = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_test_fenster_info, &[win.into()], "t_win_info");
                     }
+                    // Frame-Grab / Pixel (Plan-008 A3A, opaker MOO_FRAME-Heap-Typ).
+                    // test_frame_grab(win) -> MOO_FRAME (RGBA8, top-left origin).
+                    "test_frame_grab" | "test_frame_packen" => {
+                        let win = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_test_frame_grab, &[win.into()], "t_frame_grab");
+                    }
+                    // test_pixel(frame_oder_win, x, y) -> Dict {rot,gruen,blau,alpha}.
+                    "test_pixel" | "test_farbe_an" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_test_pixel, &[a[0].into(), a[1].into(), a[2].into()], "t_pixel");
+                    }
+                    // test_frame_save_bmp(frame, pfad) -> Bool.
+                    "test_frame_save_bmp" | "test_frame_speichern_bmp" => {
+                        let frame = self.compile_expr(&args[0])?;
+                        let path = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_test_frame_save_bmp, &[frame.into(), path.into()], "t_frame_bmp");
+                    }
                     // Voxel-Welt (Plan-005 Phase 1a Kern-Builtins).
                     // Nur die nach RT1 stabilen 4 Builtins; mesh_bauen/strahl folgen
                     // erst nach RT2/RT4 (keine Aliases fuer unfertige Semantik).

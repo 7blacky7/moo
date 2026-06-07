@@ -569,9 +569,44 @@ MooValue moo_hybrid_screenshot_bmp(MooValue window, MooValue path) {
     free(buf);
     return moo_bool(rc == 0);
 }
+
+/* Frame-Grab (Plan-008 A3A): Hybrid-Framebuffer als RGBA8, top-left origin.
+ * glReadPixels liefert bottom-left -> einheitlicher Y-Flip (gleiche Konvention
+ * wie gl33). Buffer via malloc, Aufrufer free; NULL bei Fehler. */
+uint8_t* moo_hybrid_grab_rgba(MooValue window, int* out_w, int* out_h) {
+    if (window.tag != MOO_WINDOW_HYBRID) return NULL;
+    MooHybridWindow* h = (MooHybridWindow*)moo_val_as_ptr(window);
+    if (!h || !h->window) return NULL;
+    glfwMakeContextCurrent(h->window);
+    int w = h->width;
+    int ht = h->height;
+    if (w <= 0 || ht <= 0) return NULL;
+    uint8_t* buf = (uint8_t*)malloc((size_t)w * (size_t)ht * 4);
+    if (!buf) return NULL;
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, w, ht, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+    uint8_t* row = (uint8_t*)malloc((size_t)w * 4);
+    if (row) {
+        for (int y = 0; y < ht / 2; y++) {
+            uint8_t* a = buf + (size_t)y * (size_t)w * 4;
+            uint8_t* b = buf + (size_t)(ht - 1 - y) * (size_t)w * 4;
+            memcpy(row, a, (size_t)w * 4);
+            memcpy(a, b, (size_t)w * 4);
+            memcpy(b, row, (size_t)w * 4);
+        }
+        free(row);
+    }
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = ht;
+    return buf;
+}
 #else
 MooValue moo_hybrid_screenshot_bmp(MooValue window, MooValue path) {
     (void)window; (void)path;
     return moo_bool(false);
+}
+uint8_t* moo_hybrid_grab_rgba(MooValue window, int* out_w, int* out_h) {
+    (void)window; (void)out_w; (void)out_h;
+    return NULL;
 }
 #endif

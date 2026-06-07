@@ -1283,6 +1283,144 @@ static int vk_screenshot_bmp(void* raw, const char* path) {
     return 1;
 }
 
+/* Frame-Grab (Plan-008 A3A): aktuelles Swapchain-Image als RGBA8, top-left
+ * origin. Generalisiert den TASK-L-Readback (vkCmdCopyImageToBuffer ueber One-
+ * Shot-Command-Buffer + vkQueueWaitIdle -> KEIN Swapchain-Lifetime-Race; das
+ * Image-Layout wird sauber PRESENT_SRC->TRANSFER_SRC->PRESENT_SRC gewendet).
+ * Vulkan-Image ist bereits top-down -> KEIN Y-Flip (im Gegensatz zu glReadPixels
+ * in gl33/hybrid). BGRA-Swapchains werden nach RGBA geswizzelt, sodass das
+ * MOO_FRAME-Format backend-uebergreifend IDENTISCH ist. Buffer via malloc,
+ * Aufrufer free; NULL bei Fehler. */
+static uint8_t* vk_grab_rgba(void* raw, int* out_w, int* out_h) {
+    VulkanContext* ctx = (VulkanContext*)raw;
+    if (!ctx) return NULL;
+
+    vkDeviceWaitIdle(ctx->device);
+
+    int w = (int)ctx->swapchain_extent.width;
+    int h = (int)ctx->swapchain_extent.height;
+    if (w <= 0 || h <= 0) return NULL;
+
+    VkDeviceSize buf_size = (VkDeviceSize)w * (VkDeviceSize)h * 4;
+
+    VkMooBuffer staging = {0};
+    if (vk_moo_buffer_create(ctx->device, ctx->phys_device, buf_size,
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            &staging) != 0) {
+        return NULL;
+    }
+
+    VkCommandBuffer cmd;
+    VkCommandBufferAllocateInfo cb_alloc = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = ctx->cmd_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+    if (vkAllocateCommandBuffers(ctx->device, &cb_alloc, &cmd) != VK_SUCCESS) {
+        vk_moo_buffer_destroy(ctx->device, &staging);
+        return NULL;
+    }
+
+    VkCommandBufferBeginInfo begin = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    vkBeginCommandBuffer(cmd, &begin);
+
+    VkImage src = ctx->swapchain_images[ctx->last_image_index];
+
+    VkImageMemoryBarrier to_xfer = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = 0,
+        .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = src,
+        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+    };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, NULL, 0, NULL, 1, &to_xfer);
+
+    VkBufferImageCopy region = {
+        .bufferOffset = 0,
+        .bufferRowLength = 0,
+        .bufferImageHeight = 0,
+        .imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+        .imageOffset = { 0, 0, 0 },
+        .imageExtent = { (uint32_t)w, (uint32_t)h, 1 },
+    };
+    vkCmdCopyImageToBuffer(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        staging.buffer, 1, &region);
+
+    VkImageMemoryBarrier to_present = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+        .dstAccessMask = 0,
+        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = src,
+        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+    };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0, 0, NULL, 0, NULL, 1, &to_present);
+
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo submit = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1, .pCommandBuffers = &cmd,
+    };
+    vkQueueSubmit(ctx->gfx_queue, 1, &submit, VK_NULL_HANDLE);
+    vkQueueWaitIdle(ctx->gfx_queue);
+    vkFreeCommandBuffers(ctx->device, ctx->cmd_pool, 1, &cmd);
+
+    void* mapped = NULL;
+    if (vkMapMemory(ctx->device, staging.memory, 0, buf_size, 0, &mapped) != VK_SUCCESS) {
+        vk_moo_buffer_destroy(ctx->device, &staging);
+        return NULL;
+    }
+
+    int is_bgra = (ctx->swapchain_format == VK_FORMAT_B8G8R8A8_UNORM ||
+                   ctx->swapchain_format == VK_FORMAT_B8G8R8A8_SRGB);
+
+    uint8_t* out = (uint8_t*)malloc((size_t)w * (size_t)h * 4);
+    if (!out) {
+        vkUnmapMemory(ctx->device, staging.memory);
+        vk_moo_buffer_destroy(ctx->device, &staging);
+        return NULL;
+    }
+
+    const uint8_t* sp = (const uint8_t*)mapped;
+    /* Vulkan-Image top-down -> 1:1 Zeilen, kein Y-Flip. BGRA -> RGBA swizzeln. */
+    for (size_t i = 0; i < (size_t)w * (size_t)h; i++) {
+        if (is_bgra) {
+            out[i*4 + 0] = sp[i*4 + 2]; /* R */
+            out[i*4 + 1] = sp[i*4 + 1]; /* G */
+            out[i*4 + 2] = sp[i*4 + 0]; /* B */
+        } else {
+            out[i*4 + 0] = sp[i*4 + 0];
+            out[i*4 + 1] = sp[i*4 + 1];
+            out[i*4 + 2] = sp[i*4 + 2];
+        }
+        out[i*4 + 3] = 255; /* Alpha deterministisch opak (Swapchain-Alpha undefiniert) */
+    }
+
+    vkUnmapMemory(ctx->device, staging.memory);
+    vk_moo_buffer_destroy(ctx->device, &staging);
+
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    return out;
+}
+
 Moo3DBackend moo_backend_vulkan = {
     .create_window = vk_create_window,
     .close = vk_close,
@@ -1316,6 +1454,7 @@ Moo3DBackend moo_backend_vulkan = {
     .chunk_draw = vk_chunk_draw_fn,
     .chunk_delete = vk_chunk_delete_fn,
     .screenshot_bmp = vk_screenshot_bmp,
+    .grab_rgba = vk_grab_rgba,
     .simulate_mouse_pos = vk_simulate_mouse_pos,
     .simulate_mouse_button = vk_simulate_mouse_button,
     .simulate_scroll = vk_simulate_scroll,

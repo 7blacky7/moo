@@ -31,6 +31,7 @@ typedef enum {
     MOO_DB_STMT   = 17,
     MOO_WINDOW_HYBRID = 18,
     MOO_VOXELWORLD = 19,
+    MOO_FRAME = 20,
 } MooTag;
 
 // === Forward Declarations ===
@@ -92,6 +93,39 @@ void moo_db_stmt_free(void* ptr);
 void moo_window_free(void* ptr);
 void moo_web_free(void* ptr);
 void moo_voxel_free(void* ptr);
+void moo_frame_free(void* ptr);
+
+// === Frame (opaker Pixel-Frame-Heap-Typ, Plan-008 A3A) ===
+// Pixeldaten NIE als moo-Liste (MooValue=16B; ultrawide ~20MB/Frame). Opaker
+// refcounteter Heap-Typ. STANDARDISIERT: format 0 = RGBA8, top-left origin
+// (Y-Flip backend-uebergreifend einheitlich beim Grab erledigt). stride in Bytes.
+#define MOO_FRAME_FMT_RGBA8 0
+typedef struct {
+    int32_t  refcount;   // MUSS erstes Feld sein (Refcount-Konvention)
+    int32_t  width;
+    int32_t  height;
+    int      format;     // MOO_FRAME_FMT_*
+    int      stride;     // Bytes pro Zeile
+    uint8_t* pixels;     // width*height*4 Bytes (RGBA8), top-left origin
+} MooFrame;
+#define MV_FRAME(v)  ((MooFrame*)moo_val_as_ptr(v))
+
+// Frame-API (moo_frame.c). new uebernimmt den uebergebenen Pixelbuffer (take
+// ownership). save_bmp/pixel sind backend-agnostisch und immer verfuegbar.
+MooValue moo_frame_new_take(int width, int height, uint8_t* rgba_pixels_top_left);
+// Liest einen Pixel aus einem MOO_FRAME (NUR Frame, kein Fenster). Out-of-bounds
+// / Nicht-Frame -> moo_throw. Liefert Dict {rot,gruen,blau,alpha} 0..255.
+MooValue moo_frame_read_pixel(MooValue frame, MooValue x, MooValue y);
+// Pixel-Dict { rot,gruen,blau,alpha } direkt aus Frame-Koordinaten (keine
+// Bounds-/Typpruefung — Aufrufer garantiert gueltige x/y). Fuer den Fenster-
+// Pfad in moo_test_api.c (moo_test_pixel).
+MooValue moo_frame_pixel_dict(const MooFrame* f, int x, int y);
+MooValue moo_test_frame_save_bmp(MooValue frame, MooValue pfad);
+// Folgende sind im test_*-Layer (moo_test_api.c, nur 3D-Build) implementiert:
+//   moo_test_frame_grab(win) -> MOO_FRAME (Backend-Grab, RGBA top-left)
+//   moo_test_pixel(frame_oder_win, x, y) -> Farbe (Frame direkt ODER Fenster grabben)
+MooValue moo_test_frame_grab(MooValue win);
+MooValue moo_test_pixel(MooValue frame_oder_win, MooValue x, MooValue y);
 
 // === String ===
 struct MooString {

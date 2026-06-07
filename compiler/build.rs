@@ -17,6 +17,7 @@ fn main() {
     build
         .file("runtime/moo_value.c")
         .file("runtime/moo_memory.c")
+        .file("runtime/moo_frame.c")
         .file("runtime/moo_string.c")
         .file("runtime/moo_list.c")
         .file("runtime/moo_dict.c")

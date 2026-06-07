@@ -677,6 +677,10 @@ static void gl33_set_ambient(void* vctx, float level) {
  * Backend Export
  * ======================================================== */
 
+/* Forward-Decls fuer Helfer die nach der Vtable definiert sind. */
+int gl33_screenshot_bmp(void* ctx_void, const char* path);
+static uint8_t* gl33_grab_rgba(void* ctx_void, int* out_w, int* out_h);
+
 Moo3DBackend moo_backend_gl33 = {
     .create_window = gl33_create_window,
     .close         = gl33_close,
@@ -710,6 +714,7 @@ Moo3DBackend moo_backend_gl33 = {
     .chunk_draw    = gl33_chunk_draw_fn,
     .chunk_delete  = gl33_chunk_delete_fn,
     .screenshot_bmp = gl33_screenshot_bmp,
+    .grab_rgba      = gl33_grab_rgba,
     .simulate_mouse_pos = gl33_simulate_mouse_pos,
     .simulate_mouse_button = gl33_simulate_mouse_button,
     .simulate_scroll = gl33_simulate_scroll,
@@ -757,4 +762,37 @@ int gl33_screenshot_bmp(void* ctx_void, const char* path) {
     SDL_FreeSurface(surf);
     free(buf);
     return rc == 0 ? 1 : 0;
+}
+
+/* Frame-Grab (Plan-008 A3A): aktueller Framebuffer als RGBA8, top-left origin.
+ * glReadPixels liefert bottom-left -> hier einheitlich Y-flippen (gleiche
+ * Konvention wie vulkan, das bereits top-down liefert). Buffer via malloc,
+ * Aufrufer free. */
+static uint8_t* gl33_grab_rgba(void* ctx_void, int* out_w, int* out_h) {
+    if (!ctx_void) return NULL;
+    GL33Context* ctx = (GL33Context*)ctx_void;
+    if (!ctx->window) return NULL;
+    glfwMakeContextCurrent(ctx->window);
+    int w = ctx->width;
+    int h = ctx->height;
+    if (w <= 0 || h <= 0) return NULL;
+    uint8_t* buf = (uint8_t*)malloc((size_t)w * (size_t)h * 4);
+    if (!buf) return NULL;
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+    /* Y-Flip: glReadPixels-Origin ist bottom-left, MOO_FRAME ist top-left. */
+    uint8_t* row = (uint8_t*)malloc((size_t)w * 4);
+    if (row) {
+        for (int y = 0; y < h / 2; y++) {
+            uint8_t* a = buf + (size_t)y * (size_t)w * 4;
+            uint8_t* b = buf + (size_t)(h - 1 - y) * (size_t)w * 4;
+            memcpy(row, a, (size_t)w * 4);
+            memcpy(a, b, (size_t)w * 4);
+            memcpy(b, row, (size_t)w * 4);
+        }
+        free(row);
+    }
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    return buf;
 }

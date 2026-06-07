@@ -248,6 +248,10 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_test_sim_reset: FunctionValue<'ctx>,
     pub moo_test_screenshot: FunctionValue<'ctx>,
     pub moo_test_fenster_info: FunctionValue<'ctx>,
+    // Frame-Grab / Pixel (Plan-008 A3A, opaker MOO_FRAME-Heap-Typ)
+    pub moo_test_frame_grab: FunctionValue<'ctx>,
+    pub moo_test_pixel: FunctionValue<'ctx>,
+    pub moo_test_frame_save_bmp: FunctionValue<'ctx>,
     // Chunk Display Lists
     pub moo_3d_chunk_create: FunctionValue<'ctx>,
     pub moo_3d_chunk_begin: FunctionValue<'ctx>,
@@ -817,6 +821,13 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_test_sim_reset: module.add_function("moo_test_sim_reset", void_type.fn_type(mv1, false), None),
             moo_test_screenshot: decl_mv_mv!("moo_test_screenshot", mv2),
             moo_test_fenster_info: decl_mv_mv!("moo_test_fenster_info", mv1),
+            // Frame-Grab / Pixel (Plan-008 A3A, opaker MOO_FRAME-Heap-Typ).
+            //   moo_test_frame_grab(win)            -> MOO_FRAME (1 Arg = mv1)
+            //   moo_test_pixel(frame_oder_win,x,y)  -> Dict      (3 Args = mv3)
+            //   moo_test_frame_save_bmp(frame,pfad) -> Bool      (2 Args = mv2)
+            moo_test_frame_grab: decl_mv_mv!("moo_test_frame_grab", mv1),
+            moo_test_pixel: decl_mv_mv!("moo_test_pixel", mv3),
+            moo_test_frame_save_bmp: decl_mv_mv!("moo_test_frame_save_bmp", mv2),
             // Chunk Display Lists
             moo_3d_chunk_create: decl_mv_mv!("moo_3d_chunk_create", &[]),
             moo_3d_chunk_begin: module.add_function("moo_3d_chunk_begin", void_type.fn_type(mv1, false), None),

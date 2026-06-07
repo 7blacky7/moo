@@ -8,7 +8,7 @@ static inline bool is_heap_type(uint64_t tag) {
            tag == MOO_OBJECT || tag == MOO_FUNC || tag == MOO_SOCKET ||
            tag == MOO_THREAD || tag == MOO_CHANNEL || tag == MOO_DATABASE ||
            tag == MOO_DB_STMT || tag == MOO_WINDOW || tag == MOO_WEBSERVER ||
-           tag == MOO_VOXELWORLD;
+           tag == MOO_VOXELWORLD || tag == MOO_FRAME;
 }
 
 extern void moo_socket_free(void* ptr);
@@ -93,6 +93,9 @@ void moo_release(MooValue v) {
             break;
         case MOO_VOXELWORLD:
             moo_voxel_free(moo_val_as_ptr(v));
+            break;
+        case MOO_FRAME:
+            moo_frame_free(moo_val_as_ptr(v));
             break;
         default:
             break;

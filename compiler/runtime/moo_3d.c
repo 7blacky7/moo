@@ -358,6 +358,17 @@ MooValue moo_3d_screenshot_bmp(MooValue window, MooValue path) {
 }
 
 /* ========================================================
+ * Frame-Grab (Plan-008 A3A) — dispatcht ueber Backend-Vtable grab_rgba.
+ * Liefert malloc'ten RGBA8-top-left-Buffer (Aufrufer free) + Dims, oder NULL.
+ * NULL bedeutet: Backend bietet keinen Readback (test-Layer wirft dann klar).
+ * ======================================================== */
+uint8_t* moo_3d_grab_rgba(MooValue window, int* out_w, int* out_h) {
+    (void)window;
+    if (!g_backend || !g_ctx || !g_backend->grab_rgba) return NULL;
+    return g_backend->grab_rgba(g_ctx, out_w, out_h);
+}
+
+/* ========================================================
  * Test-Sim — programmatische Maus-Eingaben fuer Selbsttests.
  * ======================================================== */
 void moo_3d_simulate_mouse_pos(MooValue win, MooValue x, MooValue y) {

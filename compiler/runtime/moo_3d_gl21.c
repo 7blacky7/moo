@@ -511,10 +511,42 @@ static float gl21_mouse_wheel(void* vctx) {
     return v;
 }
 
-/* gl21 hat noch keinen Screenshot-Helper — Stub. */
+/* gl21 hat noch keinen Screenshot-Helper — Stub (test_screenshot wirft fuer
+ * gl21 bewusst, siehe moo_test_api.c S5). Frame-Grab geht aber via glReadPixels
+ * problemlos, daher unten gl21_grab_rgba (keine Throw-Notwendigkeit). */
 static int gl21_screenshot_bmp(void* vctx, const char* path) {
     (void)vctx; (void)path;
     return 0;
+}
+
+/* Frame-Grab (Plan-008 A3A): aktueller Framebuffer als RGBA8, top-left origin.
+ * gl21 nutzt eine GLFW-GL-Window wie gl33 -> glReadPixels (bottom-left) +
+ * einheitlicher Y-Flip. Buffer via malloc, Aufrufer free; NULL bei Fehler. */
+static uint8_t* gl21_grab_rgba(void* vctx, int* out_w, int* out_h) {
+    GL21Context* ctx = (GL21Context*)vctx;
+    if (!ctx || !ctx->window) return NULL;
+    glfwMakeContextCurrent(ctx->window);
+    int w = ctx->width;
+    int h = ctx->height;
+    if (w <= 0 || h <= 0) return NULL;
+    uint8_t* buf = (uint8_t*)malloc((size_t)w * (size_t)h * 4);
+    if (!buf) return NULL;
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+    uint8_t* row = (uint8_t*)malloc((size_t)w * 4);
+    if (row) {
+        for (int y = 0; y < h / 2; y++) {
+            uint8_t* a = buf + (size_t)y * (size_t)w * 4;
+            uint8_t* b = buf + (size_t)(h - 1 - y) * (size_t)w * 4;
+            memcpy(row, a, (size_t)w * 4);
+            memcpy(a, b, (size_t)w * 4);
+            memcpy(b, row, (size_t)w * 4);
+        }
+        free(row);
+    }
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    return buf;
 }
 
 static void gl21_scroll_callback(GLFWwindow* w, double xoff, double yoff) {
@@ -590,6 +622,7 @@ Moo3DBackend moo_backend_gl21 = {
     .chunk_draw    = gl21_chunk_draw,
     .chunk_delete  = gl21_chunk_delete,
     .screenshot_bmp = gl21_screenshot_bmp,
+    .grab_rgba      = gl21_grab_rgba,
     .simulate_mouse_pos = gl21_simulate_mouse_pos,
     .simulate_mouse_button = gl21_simulate_mouse_button,
     .simulate_scroll = gl21_simulate_scroll,
