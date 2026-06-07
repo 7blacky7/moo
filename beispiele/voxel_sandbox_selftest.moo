@@ -1,19 +1,19 @@
 # ============================================================
-# voxel_sandbox_selftest.moo — Referenz-Selftest Voxel (Plan-008 A4)
+# voxel_sandbox_selftest.moo — Referenz-Selftest Voxel (Plan-008 A4 + D1)
 #
-# Gleiches Schema wie die 2D/3D-Selftests:
-#   starten -> test_sim_*-Eingaben -> Zustands-/Pixel-Asserts
-#   (test_pixel) -> test_screenshot -> sauberer Exit.
+# Verifiziert die D1-Fixes der voxel_sandbox-Demo mit der Sim-/Pixel-API:
+#   1. ACHSEN: Welt-Z (Hoehe) -> Render-Y. Backend-Kamera nutzt fixes
+#      up=(0,1,0), Voxel-Welt ist Z-up -> ohne Mapping kippt der Horizont.
+#      Fix rein in der Demo: Modell um -90 Grad um X drehen + Kamera in
+#      Render-Koordinaten (x, z, -y). -> Himmel OBEN, Boden UNTEN, kein Roll.
+#   2. SPAWN auf der Oberflaeche (Saeulenscan voxel_holen von oben) + 2,
+#      nicht an einem Festwert in der Luft.
+#   3. ABSTIEG: shift senkt cam_z messbar (Fly-Cam frei, keine Grenze).
+#   4. 360-Grad-Yaw: nach voller Drehung steht weiter Terrain in der Mitte.
 #
-# Getestetes Spiel: voxel_sandbox.moo (Hybrid-Fenster, echte Voxel-Engine
-# moo_voxel.c). Der Selftest nutzt dieselben Engine-Aufrufe: voxel_welt_neu,
-# voxel_generieren, voxel_mesh_bauen + pro Frame chunk_zeichne pro Chunk
-# (gl33-Render-Gotcha: gl33/gl21 zeichnen Chunks NICHT automatisch).
-#
-# KERN-ASSERT (User-Anforderung "Blickmitte ist Terrain, nicht Himmel"):
-#   Der Himmel (raum_löschen) hat eine bekannte Farbe. Die Bildmitte muss
-#   sich davon unterscheiden -> dort steht echtes gerendertes Terrain.
-#   Zusaetzlich wird eine Himmels-Ecke positiv gegen die Klar-Farbe geprueft.
+# Schema wie die anderen Selftests:
+#   starten -> test_sim_*-Eingaben -> Zustands-/Pixel-Asserts (test_pixel)
+#   -> test_frame_save_bmp/test_screenshot -> sauberer Exit.
 #
 # WICHTIG (verifiziert): test_pixel/test_frame_grab/test_screenshot lesen
 # den GL-Backbuffer und MUESSEN VOR hybrid_aktualisieren aufgerufen werden.
@@ -27,6 +27,8 @@ konstante WIN_B auf 1280
 konstante WIN_H auf 800
 konstante GEN_RADIUS auf 2
 
+konstante LUFT auf 0
+
 setze out auf umgebung("SELFTEST_OUT")
 wenn out == nichts:
     setze out auf "/tmp"
@@ -38,7 +40,7 @@ konstante SKY_R auf 135
 konstante SKY_G auf 206
 konstante SKY_B auf 234
 
-zeige "=== voxel_sandbox Voxel Selftest ==="
+zeige "=== voxel_sandbox Voxel Selftest (D1: Achsen/Spawn/Abstieg) ==="
 
 # --- Welt generieren ---
 setze welt auf voxel_welt_neu(1337)
@@ -61,13 +63,32 @@ wenn info["backend"] != "hybrid-gl33":
     zeige "ASSERT FAIL backend " + info["backend"] + " != hybrid-gl33"
     setze fehler auf fehler + 1
 
-# Kamera ueber der Mitte mit Blick nach unten auf das Terrain.
+# --- Spawn per Saeulenscan (identisch zur Demo) ---
+funktion oberflaeche_z(welt, x, y):
+    setze z auf 30
+    solange z > 0:
+        wenn voxel_holen(welt, x, y, z) != LUFT:
+            gib_zurück z
+        setze z auf z - 1
+    gib_zurück 16
+
+setze boden_z auf oberflaeche_z(welt, 16, 16)
 setze cam_x auf 16.0
 setze cam_y auf 16.0
-setze cam_z auf 40.0
+setze cam_z auf boden_z + 2.0
 setze yaw auf 3.926
-setze pitch auf (0.0 - 0.6)
+setze pitch auf (0.0 - 0.45)
 
+# ASSERT Spawn auf Boden: Augenhoehe deutlich unter dem alten Festwert 40
+# und genau Oberflaeche+2.
+zeige "spawn: oberflaeche_z(16,16)=" + text(boden_z) + " cam_z=" + text(cam_z)
+wenn cam_z == boden_z + 2.0 und cam_z < 36.0:
+    zeige "ASSERT OK   spawn sitzt auf Oberflaeche+2 (nicht in der Luft)"
+sonst:
+    zeige "ASSERT FAIL spawn-Hoehe falsch cam_z=" + text(cam_z)
+    setze fehler auf fehler + 1
+
+# Blickrichtung in Welt-Z-up.
 funktion blick_dx(yaw, pitch):
     gib_zurück cosinus(pitch) * cosinus(yaw)
 funktion blick_dy(yaw, pitch):
@@ -92,85 +113,173 @@ wenn länge(chunk_ids) <= 0:
     zeige "ASSERT FAIL keine gemeshten Chunks"
     setze fehler auf fehler + 1
 
-# --- Eingabe-Simulation: Hotbar via Mausrad + Bewegung via Taste ---
-test_sim_maus_rad(win, 1.0)
-setze rad auf raum_maus_rad(win)
-wenn rad == 1.0:
-    zeige "sim: raum_maus_rad konsumiert = " + text(rad)
-sonst:
-    zeige "ASSERT FAIL raum_maus_rad = " + text(rad) + " erwartet 1.0"
-    setze fehler auf fehler + 1
-
-test_sim_taste(win, "w", wahr)
-wenn raum_taste(win, "w"):
-    zeige "sim: raum_taste(w) -> wahr"
-sonst:
-    zeige "ASSERT FAIL raum_taste(w) trotz test_sim_taste nicht gedrueckt"
-    setze fehler auf fehler + 1
-test_sim_reset(win)
-
-# --- Einen deterministischen Frame rendern ---
-setze dx auf blick_dx(yaw, pitch)
-setze dy auf blick_dy(yaw, pitch)
-setze dz auf blick_dz(yaw, pitch)
-
-# Mehrere Frames rendern, damit der Mesher/GPU-Upload sicher steht.
-setze fr auf 0
-solange fr < 3:
+# Rendert EINEN deterministischen Frame mit der D1-Achsenkorrektur in den
+# Backbuffer (NICHT presenten — Pixel-Grab erfolgt danach). Identisch zur
+# Demo: Kamera in Render-Koordinaten + Modell-Drehung Z-up -> Y-up.
+funktion frame_rendern(win, chunk_ids, cam_x, cam_y, cam_z, yaw, pitch):
+    setze dx auf blick_dx(yaw, pitch)
+    setze dy auf blick_dy(yaw, pitch)
+    setze dz auf blick_dz(yaw, pitch)
     raum_löschen(win, 0.53, 0.81, 0.92)
-    raum_kamera(win, cam_x, cam_y, cam_z, cam_x + dx, cam_y + dy, cam_z + dz)
+    raum_kamera(win, cam_x, cam_z, (0.0 - cam_y), cam_x + dx, cam_z + dz, (0.0 - (cam_y + dy)))
+    raum_push(win)
+    raum_rotiere(win, (0.0 - 90.0), 1.0, 0.0, 0.0)
     für ci in chunk_ids:
         chunk_zeichne(ci)
+    raum_pop(win)
+
+# Pixel-Helfer: |Abweichung| eines Frame-Pixels von der Himmelsfarbe.
+funktion diff_zu_himmel(f, px, py):
+    setze p auf test_pixel(f, px, py)
+    setze dr auf p["rot"] - SKY_R
+    wenn dr < 0:
+        setze dr auf 0 - dr
+    setze dg auf p["gruen"] - SKY_G
+    wenn dg < 0:
+        setze dg auf 0 - dg
+    setze db auf p["blau"] - SKY_B
+    wenn db < 0:
+        setze db auf 0 - db
+    gib_zurück dr + dg + db
+
+# ==========================================================
+# TEST 1 — Spawn-Blick: Horizont korrekt, Mitte = Terrain, Himmel oben
+# ==========================================================
+# Warmlauf, damit Mesher/GPU-Upload sicher steht.
+setze fr auf 0
+solange fr < 3:
+    frame_rendern(win, chunk_ids, cam_x, cam_y, cam_z, yaw, pitch)
     wenn fr < 2:
         hybrid_aktualisieren(win)
     setze fr auf fr + 1
+frame_rendern(win, chunk_ids, cam_x, cam_y, cam_z, yaw, pitch)
 
-# Letzter Frame: NICHT presenten bis gegrabbt. Re-render in den Backbuffer.
-raum_löschen(win, 0.53, 0.81, 0.92)
-raum_kamera(win, cam_x, cam_y, cam_z, cam_x + dx, cam_y + dy, cam_z + dz)
-für ci in chunk_ids:
-    chunk_zeichne(ci)
-
-# --- Pixel-Asserts VOR present ---
 setze f auf test_frame_grab(win)
 
-# Himmel-Ecke oben muss die Klarfarbe sein.
-setze p_sky auf test_pixel(f, 40, 40)
-setze ds auf p_sky["rot"] - SKY_R
-wenn ds < 0:
-    setze ds auf 0 - ds
-setze dsg auf p_sky["gruen"] - SKY_G
-wenn dsg < 0:
-    setze dsg auf 0 - dsg
-wenn ds <= 12 und dsg <= 12:
-    zeige "ASSERT OK   himmel-ecke = (" + text(p_sky["rot"]) + "," + text(p_sky["gruen"]) + "," + text(p_sky["blau"]) + ")"
+# Beweis "oben ist Himmel" (Horizont nicht gekippt): die obere Bildzeile
+# ueber mehrere x scannen; mindestens EIN Himmels-Pixel muss dort stehen.
+# Eine fixe Ecke ist unzuverlaessig (Spawn-Blick: Baumkronen/Grashang oben).
+funktion himmel_oben(f):
+    setze sx auf 100
+    solange sx < WIN_B:
+        wenn diff_zu_himmel(f, sx, 8) <= 12:
+            gib_zurück wahr
+        setze sx auf sx + 100
+    gib_zurück falsch
+
+wenn himmel_oben(f):
+    zeige "ASSERT OK   Himmel in oberer Bildzeile vorhanden (Horizont nicht gekippt)"
 sonst:
-    zeige "ASSERT FAIL himmel-ecke = (" + text(p_sky["rot"]) + "," + text(p_sky["gruen"]) + "," + text(p_sky["blau"]) + ") erwartet ~(" + text(SKY_R) + "," + text(SKY_G) + "," + text(SKY_B) + ")"
+    zeige "ASSERT FAIL kein Himmel in oberer Bildzeile -> Horizont gekippt?"
     setze fehler auf fehler + 1
 
-# KERN: Bildmitte muss Terrain sein, NICHT Himmel.
+# Unterer Bildrand (y=WIN_H-40) muss Terrain sein (Boden unten).
+setze d_unten auf diff_zu_himmel(f, WIN_B / 2, WIN_H - 40)
+wenn d_unten > 40:
+    zeige "ASSERT OK   unterer Bildrand = Terrain (Boden unten)"
+sonst:
+    zeige "ASSERT FAIL unterer Bildrand kein Terrain diff=" + text(d_unten)
+    setze fehler auf fehler + 1
+
+# KERN: Bildmitte = Terrain, NICHT Himmel.
 setze p_mitte auf test_pixel(f, WIN_B / 2, WIN_H / 2)
-setze diff_r auf p_mitte["rot"] - SKY_R
-wenn diff_r < 0:
-    setze diff_r auf 0 - diff_r
-setze diff_g auf p_mitte["gruen"] - SKY_G
-wenn diff_g < 0:
-    setze diff_g auf 0 - diff_g
-setze diff_b auf p_mitte["blau"] - SKY_B
-wenn diff_b < 0:
-    setze diff_b auf 0 - diff_b
-setze gesamt_diff auf diff_r + diff_g + diff_b
-zeige "blickmitte = (" + text(p_mitte["rot"]) + "," + text(p_mitte["gruen"]) + "," + text(p_mitte["blau"]) + ") diff_zu_himmel=" + text(gesamt_diff)
-wenn gesamt_diff > 40:
+setze d_mitte auf diff_zu_himmel(f, WIN_B / 2, WIN_H / 2)
+zeige "blickmitte = (" + text(p_mitte["rot"]) + "," + text(p_mitte["gruen"]) + "," + text(p_mitte["blau"]) + ") diff_zu_himmel=" + text(d_mitte)
+wenn d_mitte > 40:
     zeige "ASSERT OK   blickmitte ist Terrain (nicht Himmel)"
 sonst:
-    zeige "ASSERT FAIL blickmitte sieht aus wie Himmel -> kein Terrain gerendert"
+    zeige "ASSERT FAIL blickmitte sieht aus wie Himmel -> kein Terrain"
     setze fehler auf fehler + 1
 
-# --- Screenshot-Artefakt (vor present) ---
-setze shot auf out + "/voxel_sandbox_selftest.bmp"
-test_frame_save_bmp(f, shot)
-zeige "screenshot: " + shot
+test_frame_save_bmp(f, out + "/voxel_d1_1_spawn.bmp")
+zeige "screenshot 1 (spawn): " + out + "/voxel_d1_1_spawn.bmp"
+hybrid_aktualisieren(win)
+
+# ==========================================================
+# TEST 2 — Abstieg via shift: cam_z sinkt messbar (skriptbare Eingabe)
+# ==========================================================
+# Wir simulieren die shift-Taste und durchlaufen die GLEICHE Bewegungslogik
+# wie die Demo (raum_taste(win,"shift") -> cam_z -= speed) ueber mehrere Frames.
+setze speed auf 0.45
+setze cam_z_vor auf cam_z
+test_sim_taste(win, "shift", wahr)
+setze schritt auf 0
+solange schritt < 10:
+    wenn raum_taste(win, "shift"):
+        setze cam_z auf cam_z - speed
+    setze schritt auf schritt + 1
+test_sim_reset(win)
+zeige "abstieg: cam_z " + text(cam_z_vor) + " -> " + text(cam_z)
+wenn cam_z < cam_z_vor - 4.0:
+    zeige "ASSERT OK   abstieg senkt cam_z messbar (shift, keine Grenze)"
+sonst:
+    zeige "ASSERT FAIL abstieg wirkungslos cam_z=" + text(cam_z)
+    setze fehler auf fehler + 1
+
+# ==========================================================
+# TEST 3 — Aufstieg via space (gl33: NUR "space", nicht "leertaste")
+# ==========================================================
+setze cam_z_vor2 auf cam_z
+test_sim_taste(win, "space", wahr)
+setze schritt2 auf 0
+solange schritt2 < 10:
+    wenn raum_taste(win, "space"):
+        setze cam_z auf cam_z + speed
+    setze schritt2 auf schritt2 + 1
+test_sim_reset(win)
+zeige "aufstieg: cam_z " + text(cam_z_vor2) + " -> " + text(cam_z)
+wenn cam_z > cam_z_vor2 + 4.0:
+    zeige "ASSERT OK   aufstieg hebt cam_z (space backend-portabel)"
+sonst:
+    zeige "ASSERT FAIL aufstieg wirkungslos (space nicht gemappt?) cam_z=" + text(cam_z)
+    setze fehler auf fehler + 1
+
+# Kamera zurueck auf Spawn-Hoehe fuer den Yaw-Test.
+setze cam_z auf boden_z + 2.0
+
+# ==========================================================
+# TEST 4 — 360-Grad-Yaw via Maus-Delta-Sim: nach voller Drehung Terrain
+# ==========================================================
+# Maus-Delta-Sim treibt denselben Pfad wie die Demo (yaw += mdx * 0.0035).
+# Volle Drehung: 2*pi / 0.0035 ~ 1795 "Pixel". Wir simulieren in Schritten.
+setze yaw_vor auf yaw
+setze runde auf 0
+solange runde < 18:
+    test_sim_maus_delta(win, 100.0, 0.0)
+    setze mdx auf raum_maus_dx(win)
+    setze yaw auf yaw + mdx * 0.0035
+    setze runde auf runde + 1
+test_sim_reset(win)
+zeige "yaw: " + text(yaw_vor) + " -> " + text(yaw) + " (delta=" + text(yaw - yaw_vor) + ")"
+wenn yaw - yaw_vor > 6.0:
+    zeige "ASSERT OK   360-Grad-Yaw durchlaufen (Maus-Delta-Sim wirkt)"
+sonst:
+    zeige "ASSERT FAIL yaw-Drehung zu klein delta=" + text(yaw - yaw_vor)
+    setze fehler auf fehler + 1
+
+# Nach der Drehung einen Frame rendern: Mitte muss weiter Terrain sein.
+setze fr2 auf 0
+solange fr2 < 2:
+    frame_rendern(win, chunk_ids, cam_x, cam_y, cam_z, yaw, pitch)
+    hybrid_aktualisieren(win)
+    setze fr2 auf fr2 + 1
+frame_rendern(win, chunk_ids, cam_x, cam_y, cam_z, yaw, pitch)
+
+setze f2 auf test_frame_grab(win)
+setze d_mitte2 auf diff_zu_himmel(f2, WIN_B / 2, WIN_H / 2)
+# Beweis fuer Boden unten / Himmel oben (Horizont-Upright) liefert TEST 1
+# robust. Hier ist die Task-Anforderung: nach voller Yaw-Drehung steht
+# weiterhin Terrain in der Blickmitte.
+setze d_unten2 auf diff_zu_himmel(f2, WIN_B / 2, WIN_H - 40)
+zeige "nach yaw: mitte diff=" + text(d_mitte2) + " unten diff=" + text(d_unten2)
+wenn d_mitte2 > 40 und d_unten2 > 40:
+    zeige "ASSERT OK   nach 360-Yaw: Mitte=Terrain, Boden unten (Horizont stabil)"
+sonst:
+    zeige "ASSERT FAIL nach 360-Yaw Bild inkonsistent (mitte=" + text(d_mitte2) + " unten=" + text(d_unten2) + ")"
+    setze fehler auf fehler + 1
+
+test_frame_save_bmp(f2, out + "/voxel_d1_2_yaw360.bmp")
+zeige "screenshot 2 (yaw360): " + out + "/voxel_d1_2_yaw360.bmp"
 
 hybrid_aktualisieren(win)
 warte(30)

@@ -19,7 +19,7 @@
 #
 # Steuerung:
 #   W/A/S/D     Bewegen (vorne/links/zurueck/rechts), bezogen auf Blickrichtung
-#   Leertaste   aufsteigen   |   Shift   absteigen
+#   Leertaste/Space  aufsteigen   |   Shift   absteigen
 #   Maus        umschauen (Fly-Cam, Maus gefangen)
 #   LMB         Block am Fadenkreuz abbauen
 #   RMB         Block an der getroffenen Flaeche setzen (aktiver Hotbar-Block)
@@ -106,13 +106,24 @@ zeige "Terrain generiert: " + text(chunks_neu) + " Chunks"
 setze win auf fenster_unified("moo Voxel Sandbox", WIN_B, WIN_H)
 raum_perspektive(win, 70.0, 0.1, 300.0)
 
-# Fly-Cam-Zustand. Spawn ueber der Mitte des generierten Gebiets, mit
-# Blick leicht nach unten auf das Terrain. Welt-Z = Hoehe.
+# Saeulenscan: hoechster nicht-Luft-Block in der Spalte (x,y). Engine-Z ist
+# die Hoehe. Wir scannen von oben (knapp unter max_z) nach unten, damit der
+# Spawn auf der echten Oberflaeche sitzt statt an einem Festwert in der Luft.
+funktion oberflaeche_z(welt, x, y):
+    setze z auf 30
+    solange z > 0:
+        wenn voxel_holen(welt, x, y, z) != LUFT:
+            gib_zurück z
+        setze z auf z - 1
+    gib_zurück 16            # Fallback: Meeresspiegel
+
+# Fly-Cam-Zustand. Spawn AUF der Oberflaeche der Spaltenmitte + 2 (Augenhoehe),
+# mit Blick leicht nach unten auf das Terrain. Welt-Z = Hoehe.
 setze cam_x auf 16.0
 setze cam_y auf 16.0
-setze cam_z auf 40.0        # Hoehe (ueber Meeresspiegel 16, ueber Terrain ~32)
+setze cam_z auf oberflaeche_z(welt, 16, 16) + 2.0
 setze yaw auf 3.926         # ~225 Grad: Blick Richtung -x/-y (auf das Gebiet)
-setze pitch auf (0.0 - 0.6) # leicht nach unten
+setze pitch auf (0.0 - 0.45) # leicht nach unten
 
 # Maus fangen fuer Fly-Cam-Look (im Test-Modus weglassen, headless robust).
 wenn nicht test_modus:
@@ -274,7 +285,9 @@ solange laeuft und hybrid_offen(win):
     wenn raum_taste(win, "a"):
         setze cam_x auf cam_x - rt_x * speed
         setze cam_y auf cam_y - rt_y * speed
-    wenn raum_taste(win, "leertaste"):
+    # Hoch/Runter: "space" ist auf allen Backends gemappt (gl33 kennt
+    # "leertaste" NICHT, nur "space"/"leer"). Fly-Cam ohne kuenstliche Grenze.
+    wenn raum_taste(win, "space"):
         setze cam_z auf cam_z + speed
     wenn raum_taste(win, "shift"):
         setze cam_z auf cam_z - speed
@@ -322,8 +335,17 @@ solange laeuft und hybrid_offen(win):
     # ============== RENDER ==============
     # Himmel
     raum_löschen(win, 0.53, 0.81, 0.92)
-    # Kamera: Auge -> Auge + Blickrichtung
-    raum_kamera(win, cam_x, cam_y, cam_z, cam_x + dx, cam_y + dy, cam_z + dz)
+    # ACHSEN-MAPPING (Welt-Z=Hoehe -> Render-Y=oben): Die Backend-Kamera
+    # rechnet mit fixem Up-Vektor (0,1,0). Die Voxel-Welt ist aber Z-up.
+    # Ohne Korrektur kippt der Horizont. Loesung rein in der Demo: die ganze
+    # 3D-Szene um -90 Grad um die X-Achse drehen (Welt (x,y,z) -> Render
+    # (x, z, -y)) UND die Kamera in genau diesen Render-Koordinaten setzen.
+    # Raycast/voxel_setzen bleiben unveraendert in Welt-Z-up-Koordinaten.
+    raum_kamera(win, cam_x, cam_z, (0.0 - cam_y), cam_x + dx, cam_z + dz, (0.0 - (cam_y + dy)))
+
+    # Modell-Drehung Z-up -> Y-up fuer alle Welt-Geometrie (Chunks + Highlight).
+    raum_push(win)
+    raum_rotiere(win, (0.0 - 90.0), 1.0, 0.0, 0.0)
 
     # Voxel-Terrain: alle gemeshten Chunks explizit zeichnen. Auf gl33
     # ist chunk_zeichne ein echter VBO-Replay; auf Vulkan ein no-op
@@ -332,9 +354,12 @@ solange laeuft und hybrid_offen(win):
     für ci in chunk_ids:
         chunk_zeichne(ci)
 
-    # Block-Highlight an der getroffenen Flaeche.
+    # Block-Highlight an der getroffenen Flaeche (in Welt-Z-up; durch die
+    # aktive Modell-Drehung landet es korrekt im Render-Frame).
     wenn hat_treffer:
         highlight_flaeche(win, treffer["x"], treffer["y"], treffer["z"], treffer["nx"], treffer["ny"], treffer["nz"])
+
+    raum_pop(win)
 
     # 2D-Overlay: Fadenkreuz + Hotbar.
     zeichne_fadenkreuz(win)
