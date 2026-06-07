@@ -1,0 +1,126 @@
+# ============================================================
+# voxel_kamera_video_selftest.moo — Referenz-Selftest MP4-Aufnahme
+# (Plan-009 V2)
+#
+# Erzeugt mit test_video_* (Plan-009 V0/V1) ein kurzes, stummes MP4 einer
+# deterministischen 3D-Kamerafahrt um eine Terrain-/Wuerfel-Szene. Dient als
+# multimodal-lesbares Bewegungs-Artefakt fuer den game-test-runner.
+#
+# Schema wie die uebrigen Selftests (siedler3/voxel):
+#   Fenster (Hybrid gl33) -> Szene rendern -> test_frame_grab/test_pixel
+#   Asserts VOR present -> MP4 ueber mehrere Frames aufnehmen -> sauberer Exit
+#   -> "SELFTEST_RESULT: PASS|FAIL <name>".
+#
+# WICHTIG (verifiziert, Plan-008): test_pixel/test_frame_grab/test_video_frame
+# lesen den GL-Backbuffer und MUESSEN VOR hybrid_aktualisieren laufen.
+#
+# MP4-Pfad: $SELFTEST_OUT/voxel_kamera_video.mp4 (Default /tmp). Der Runner
+# raeumt das Artefakt ein und verifiziert es optional via ffprobe.
+# test_video_start wirft moo_throw, wenn ffmpeg fehlt -> der Runner prueft
+# darum vorab `command -v ffmpeg` und ueberspringt diesen Test sauber.
+#
+# Headless: xvfb-run -a -s "-screen 0 1280x800x24" env MOO_3D_BACKEND=gl33 \
+#   moo-compiler run beispiele/voxel_kamera_video_selftest.moo
+# ============================================================
+
+# yuv420p braucht gerade Breite/Hoehe (Plan-009 S3) -> 640x400 (beide gerade).
+konstante WIN_W auf 640
+konstante WIN_H auf 400
+konstante FPS auf 12
+konstante N_FRAMES auf 24
+
+setze out auf umgebung("SELFTEST_OUT")
+wenn out == nichts:
+    setze out auf "/tmp"
+
+setze mp4 auf out + "/voxel_kamera_video.mp4"
+
+setze fehler auf 0
+
+funktion pruefe_farbe(name, p, r_soll, g_soll, b_soll, tol):
+    setze dr auf p["rot"] - r_soll
+    wenn dr < 0:
+        setze dr auf 0 - dr
+    setze dg auf p["gruen"] - g_soll
+    wenn dg < 0:
+        setze dg auf 0 - dg
+    setze db auf p["blau"] - b_soll
+    wenn db < 0:
+        setze db auf 0 - db
+    wenn dr <= tol und dg <= tol und db <= tol:
+        zeige "ASSERT OK   " + name + " = (" + text(p["rot"]) + "," + text(p["gruen"]) + "," + text(p["blau"]) + ")"
+        gib_zurück 0
+    zeige "ASSERT FAIL " + name + " = (" + text(p["rot"]) + "," + text(p["gruen"]) + "," + text(p["blau"]) + ") erwartet (" + text(r_soll) + "," + text(g_soll) + "," + text(b_soll) + ")"
+    gib_zurück 1
+
+zeige "=== voxel-kamera MP4-Video Selftest ==="
+
+setze win auf fenster_unified("voxel-kamera video selftest", WIN_W, WIN_H)
+raum_perspektive(win, 45.0, 0.1, 200.0)
+
+# --- Deterministische Szene + erster Frame (Pixel-Asserts) ---
+# Himmel-Klar (Tag), Kamera schraeg von oben, ein grosses Wiese-Quad als
+# Bodenreferenz mit bekannter Farbe.
+hybrid_löschen(win, 0.5, 0.7, 1.0)
+raum_kamera(win, 8.0, 12.0, 8.0, 4.0, 0.0, 4.0)
+zeichne_rechteck_z(win, 170, 120, 40.0, 300, 220, "#3CA03C")
+
+setze f auf test_frame_grab(win)
+# Wiese-Mitte: #3CA03C = (60,160,60)
+setze p_wiese auf test_pixel(f, 320, 230)
+setze fehler auf fehler + pruefe_farbe("wiese-mitte", p_wiese, 60, 160, 60, 10)
+# Himmel oben: clear (0.5,0.7,1.0) = (127,178,255)
+setze p_sky auf test_pixel(f, 600, 20)
+setze fehler auf fehler + pruefe_farbe("himmel", p_sky, 127, 178, 255, 10)
+
+# --- MP4-Aufnahme: Kamerafahrt im Kreis um die Szene ---
+# test_video_start wirft moo_throw, wenn ffmpeg fehlt; der Runner skippt
+# diesen Test environment-conditional, bevor er ihn startet.
+setze vid auf test_video_start(win, mp4, FPS)
+zeige "VIDEO_START ok -> " + mp4
+
+setze frame_fehler auf 0
+setze i auf 0
+solange i < N_FRAMES:
+    # Kamera-Winkel laeuft einmal um die Szene (0..2*pi).
+    setze t auf (i * 1.0) / N_FRAMES
+    setze winkel auf t * 6.2831853
+    setze cam_x auf 4.0 + 9.0 * cosinus(winkel)
+    setze cam_z auf 4.0 + 9.0 * sinus(winkel)
+
+    hybrid_löschen(win, 0.5, 0.7, 1.0)
+    raum_kamera(win, cam_x, 12.0, cam_z, 4.0, 0.0, 4.0)
+    zeichne_rechteck_z(win, 170, 120, 40.0, 300, 220, "#3CA03C")
+    # Bewegtes Marker-Quad, damit Bewegung im MP4 deutlich sichtbar ist.
+    setze mx auf 290.0 + 120.0 * cosinus(winkel)
+    zeichne_rechteck_z(win, mx, 90, 20.0, 60, 60, "#E0402A")
+
+    # Frame VOR present in die ffmpeg-Pipe schreiben.
+    setze ok auf test_video_frame(vid, win)
+    wenn ok != wahr:
+        setze frame_fehler auf frame_fehler + 1
+
+    hybrid_aktualisieren(win)
+    setze i auf i + 1
+
+wenn frame_fehler != 0:
+    zeige "ASSERT FAIL test_video_frame schlug " + text(frame_fehler) + "x fehl"
+    setze fehler auf fehler + 1
+sonst:
+    zeige "ASSERT OK   " + text(N_FRAMES) + " Frames in MP4-Pipe geschrieben"
+
+setze vende auf test_video_ende(vid)
+wenn vende == wahr:
+    zeige "ASSERT OK   test_video_ende -> wahr (ffmpeg sauber beendet)"
+sonst:
+    zeige "ASSERT FAIL test_video_ende -> " + text(vende)
+    setze fehler auf fehler + 1
+
+zeige "VIDEO_MP4: " + mp4
+
+hybrid_schliessen(win)
+
+wenn fehler == 0:
+    zeige "SELFTEST_RESULT: PASS voxel_kamera_video"
+sonst:
+    zeige "SELFTEST_RESULT: FAIL voxel_kamera_video (" + text(fehler) + " Fehler)"

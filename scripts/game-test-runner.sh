@@ -70,12 +70,31 @@ else
 fi
 echo "[runner] Backend=$BACKEND  Artefakte=$ART_ROOT"
 
+# -------------------- ffmpeg-Erkennung (MP4-Artefakte) ------
+# MP4-Aufnahme ist environment-conditional (Plan-009 V2). Fehlt ffmpeg, wird
+# der Video-Selftest als "skipped" markiert — der Runner laeuft normal weiter.
+# WICHTIG: run_all.sh bleibt ffmpeg-/GPU-frei; MP4 lebt NUR in diesem Pfad.
+HAVE_FFMPEG=0
+HAVE_FFPROBE=0
+if command -v ffmpeg >/dev/null 2>&1; then
+    HAVE_FFMPEG=1
+    echo "[runner] ffmpeg gefunden -> MP4-Artefakte aktiv."
+else
+    echo "[runner] ffmpeg fehlt -> MP4-Selftests werden uebersprungen (skipped)."
+fi
+if command -v ffprobe >/dev/null 2>&1; then
+    HAVE_FFPROBE=1
+fi
+
 # -------------------- Test-Definitionen ---------------------
-# name | moo-datei | braucht_3d_backend (1=ja)
+# name | moo-datei | braucht_3d_backend (1=ja) | will_mp4 (1=ja, Plan-009 V2)
+# will_mp4=1 markiert Selftests, die per test_video_* ein MP4 erzeugen. Fehlt
+# ffmpeg, wird der Test als video_status=skipped uebersprungen (kein Fehler).
 TESTS=(
-    "snake_plus_2d|beispiele/snake_plus_selftest.moo|0"
-    "siedler3_3d|beispiele/domain/game/world/siedler3_selftest.moo|1"
-    "voxel_sandbox|beispiele/voxel_sandbox_selftest.moo|1"
+    "snake_plus_2d|beispiele/snake_plus_selftest.moo|0|0"
+    "siedler3_3d|beispiele/domain/game/world/siedler3_selftest.moo|1|0"
+    "voxel_sandbox|beispiele/voxel_sandbox_selftest.moo|1|0"
+    "voxel_kamera_video|beispiele/voxel_kamera_video_selftest.moo|1|1"
 )
 
 declare -a RESULT_JSON=()
@@ -83,10 +102,16 @@ PASS=0
 FAIL=0
 
 run_one() {
-    local name="$1" moo_file="$2" needs3d="$3"
+    local name="$1" moo_file="$2" needs3d="$3" wants_video="${4:-0}"
     local log="$ART_ROOT/${name}.log"
     local shot="$ART_ROOT/${name}.bmp"
     local gif="$ART_ROOT/${name}.gif"
+    local video="$ART_ROOT/${name}.mp4"
+
+    # MP4-Default: kein Video angefordert -> video_status "none".
+    local video_status="none"
+    local video_reason=""
+    local video_path=""
 
     echo ""
     echo "==========================================================="
@@ -95,8 +120,18 @@ run_one() {
 
     if [ ! -f "$moo_file" ]; then
         echo "[runner] FEHLER: $moo_file fehlt"
-        RESULT_JSON+=("$(test_json "$name" "$moo_file" "fail" "datei-fehlt" "" "" "$log")")
+        RESULT_JSON+=("$(test_json "$name" "$moo_file" "fail" "datei-fehlt" "" "" "$log" "none" "" "")")
         return 1
+    fi
+
+    # Environment-conditional MP4: Wenn der Selftest ein Video aufnimmt
+    # (test_video_*), aber ffmpeg fehlt, wuerde test_video_start moo_throw
+    # ausloesen und den Prozess rot machen. Deshalb ueberspringen wir den
+    # Video-Selftest sauber, BEVOR wir ihn starten. Der Runner bleibt gruen.
+    if [ "$wants_video" -eq 1 ] && [ "$HAVE_FFMPEG" -ne 1 ]; then
+        echo "[runner] $name: SKIP (ffmpeg fehlt -> video_status=skipped)"
+        RESULT_JSON+=("$(test_json "$name" "$moo_file" "skip" "ffmpeg-missing" "" "" "$log" "skipped" "ffmpeg-missing" "")")
+        return 0
     fi
 
     rm -f "$shot" "$log" 2>/dev/null || true
@@ -139,6 +174,37 @@ run_one() {
     local gif_path=""
     [ -f "$gif" ] && gif_path="$gif"
 
+    # MP4-Artefakt (Plan-009 V2). Der Video-Selftest schreibt sein MP4 nach
+    # $SELFTEST_OUT/<name>.mp4 (= $ART_ROOT/<name>.mp4). Wir sammeln es ein,
+    # setzen video_status und verifizieren optional via ffprobe, dass es
+    # H.264/yuv420p ist. ffprobe ist NICHT zwingend; fehlt es, gilt das
+    # vorhandene MP4 als "ok" ohne Codec-Pruefung.
+    if [ "$wants_video" -eq 1 ]; then
+        if [ -f "$video" ]; then
+            video_path="$video"
+            if [ "$HAVE_FFPROBE" -eq 1 ]; then
+                local probe
+                probe="$(ffprobe -v error -select_streams v:0 \
+                    -show_entries stream=codec_name,pix_fmt \
+                    -of default=noprint_wrappers=1:nokey=1 "$video" 2>/dev/null | tr '\n' ' ')"
+                echo "[runner] $name: ffprobe -> $probe"
+                if printf '%s' "$probe" | grep -q 'h264' && printf '%s' "$probe" | grep -q 'yuv420p'; then
+                    video_status="ok"
+                else
+                    video_status="failed"
+                    video_reason="codec-unerwartet: $probe"
+                fi
+            else
+                video_status="ok"
+                video_reason="ffprobe-fehlt-keine-codec-pruefung"
+            fi
+        else
+            # ffmpeg war da, aber es kam kein MP4 raus -> echter Fehler.
+            video_status="failed"
+            video_reason="kein-mp4-erzeugt"
+        fi
+    fi
+
     local status="fail"
     local reason=""
     if [ "$rc" -ne 0 ]; then
@@ -161,7 +227,11 @@ run_one() {
         FAIL=$((FAIL + 1))
     fi
 
-    RESULT_JSON+=("$(test_json "$name" "$moo_file" "$status" "$reason" "$produced" "$gif_path" "$log")")
+    if [ "$wants_video" -eq 1 ]; then
+        echo "[runner] $name: video_status=$video_status  (${video_path:-<kein-mp4>})"
+    fi
+
+    RESULT_JSON+=("$(test_json "$name" "$moo_file" "$status" "$reason" "$produced" "$gif_path" "$log" "$video_status" "$video_reason" "$video_path")")
     [ "$status" = "pass" ]
 }
 
@@ -170,6 +240,9 @@ test_json() {
     python3 - "$@" <<'PY'
 import json, sys, os
 name, moo_file, status, reason, shot, gif, log = sys.argv[1:8]
+video_status = sys.argv[8] if len(sys.argv) > 8 else "none"
+video_reason = sys.argv[9] if len(sys.argv) > 9 else ""
+video       = sys.argv[10] if len(sys.argv) > 10 else ""
 def rel(p):
     return os.path.relpath(p) if p else None
 def asserts(logpath):
@@ -188,6 +261,9 @@ obj = {
     "reason": reason or None,
     "screenshot": rel(shot) if shot else None,
     "gif": rel(gif) if gif else None,
+    "video": rel(video) if video else None,
+    "video_status": video_status,
+    "video_reason": video_reason or None,
     "log": rel(log) if log else None,
     "asserts_ok": ok,
     "asserts_fail": bad,
@@ -198,8 +274,8 @@ PY
 
 # -------------------- Tests laufen lassen -------------------
 for entry in "${TESTS[@]}"; do
-    IFS='|' read -r t_name t_file t_3d <<<"$entry"
-    run_one "$t_name" "$t_file" "$t_3d" || true
+    IFS='|' read -r t_name t_file t_3d t_video <<<"$entry"
+    run_one "$t_name" "$t_file" "$t_3d" "${t_video:-0}" || true
 done
 
 # -------------------- Report schreiben ----------------------
