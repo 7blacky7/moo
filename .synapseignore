@@ -5,3 +5,7 @@ __pycache__/
 *.o
 uv.lock
 Cargo.lock
+scratch/
+tmp/
+nohup.out
+*.ll
