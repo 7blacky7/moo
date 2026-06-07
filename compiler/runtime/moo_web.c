@@ -21,6 +21,7 @@ extern void moo_throw(MooValue v);
 
 // MOO_WEBSERVER = 16
 typedef struct {
+    int32_t refcount;
     int server_fd;
     int port;
 } MooWebServer;
@@ -143,6 +144,7 @@ MooValue moo_web_server(MooValue port) {
     }
 
     MooWebServer* ws = (MooWebServer*)malloc(sizeof(MooWebServer));
+    ws->refcount = 1;
     ws->server_fd = fd;
     ws->port = p;
 
@@ -502,6 +504,17 @@ MooValue moo_web_json_with_headers(MooValue request, MooValue data, MooValue sta
 void moo_web_close(MooValue server) {
     if (server.tag != MOO_WEBSERVER) return;
     MooWebServer* ws = (MooWebServer*)moo_val_as_ptr(server);
-    close(ws->server_fd);
-    ws->server_fd = -1;
+    if (ws->server_fd >= 0) {
+        close(ws->server_fd);
+        ws->server_fd = -1;
+    }
+}
+
+void moo_web_free(void* ptr) {
+    if (!ptr) return;
+    MooWebServer* ws = (MooWebServer*)ptr;
+    if (ws->server_fd >= 0) {
+        close(ws->server_fd);
+    }
+    free(ws);
 }
