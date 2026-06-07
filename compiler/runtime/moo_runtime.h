@@ -530,6 +530,18 @@ void moo_3d_simulate_key(MooValue win, MooValue key, MooValue pressed);   // Tri
 void moo_3d_simulate_mouse_delta(MooValue win, MooValue dx, MooValue dy); // consume-on-read
 void moo_3d_simulate_reset(MooValue win);                                 // alle Sim-States reset
 
+// === Einheitlicher Test-API-Layer (Plan-008 A2, tag-dispatch 2D/3D/Hybrid) ===
+// Dispatcht ueber window.tag auf 2D-SDL bzw. 3D-Vtable bzw. Hybrid.
+// raum_sim_*/moo_simulate_* bleiben als Aliases erhalten (keine Breaking Changes).
+void     moo_test_sim_taste(MooValue win, MooValue taste, MooValue gedrueckt);
+void     moo_test_sim_maus_pos(MooValue win, MooValue x, MooValue y);
+void     moo_test_sim_maus_taste(MooValue win, MooValue taste, MooValue gedrueckt);
+void     moo_test_sim_maus_rad(MooValue win, MooValue dy);
+void     moo_test_sim_maus_delta(MooValue win, MooValue dx, MooValue dy);
+void     moo_test_sim_reset(MooValue win);
+MooValue moo_test_screenshot(MooValue win, MooValue pfad);   // S5: wirft statt still false
+MooValue moo_test_fenster_info(MooValue win);                // Dict{breite,hoehe,backend,offen}
+
 // === Welt (Game-Dev Runtime) ===
 MooValue moo_world_create(MooValue title, MooValue w, MooValue h);
 MooValue moo_world_is_open(MooValue world);

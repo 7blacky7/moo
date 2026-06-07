@@ -50,6 +50,7 @@ fn main() {
     {
         build
             .file("runtime/moo_graphics.c")
+            .file("runtime/moo_test_api.c")
             .file("runtime/moo_3d.c")
             .file("runtime/moo_3d_math.c")
             .file("runtime/moo_noise.c")

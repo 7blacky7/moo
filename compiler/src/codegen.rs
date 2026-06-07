@@ -2713,20 +2713,22 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_3d_simulate_scroll, &[a[0].into(), a[1].into()], "sim_scroll")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    // raum_sim_* = direkte 3D-Route (Aliases erhalten, keine Breaking Changes).
+                    // Die backend-agnostischen test_sim_* sind weiter unten (tag-dispatch, A2).
                     // Tastatur-Sim (Tri-State, Plan-008 A1a). Args: (fenster, taste, gedrueckt)
-                    "raum_sim_taste" | "test_sim_taste" | "space_sim_key" | "3d_sim_taste" => {
+                    "raum_sim_taste" | "space_sim_key" | "3d_sim_taste" => {
                         let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
                         self.call_rt_void(self.rt.moo_3d_simulate_key, &[a[0].into(), a[1].into(), a[2].into()], "sim_key")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     // Maus-Delta-Sim (consume-on-read, Plan-008 A1b). Args: (fenster, dx, dy)
-                    "raum_sim_maus_delta" | "test_sim_maus_delta" | "space_sim_mouse_delta" | "3d_sim_maus_delta" => {
+                    "raum_sim_maus_delta" | "space_sim_mouse_delta" | "3d_sim_maus_delta" => {
                         let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
                         self.call_rt_void(self.rt.moo_3d_simulate_mouse_delta, &[a[0].into(), a[1].into(), a[2].into()], "sim_mdelta")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
-                    // Sim-Reset (Plan-008 A1; volle 2D/3D-Tag-Dispatch folgt in A2). Args: (fenster)
-                    "raum_sim_reset" | "test_sim_reset" | "space_sim_reset" | "3d_sim_reset" => {
+                    // Sim-Reset (direkte 3D-Route). Args: (fenster)
+                    "raum_sim_reset" | "space_sim_reset" | "3d_sim_reset" => {
                         let win = self.compile_expr(&args[0])?;
                         self.call_rt_void(self.rt.moo_3d_simulate_reset, &[win.into()], "sim_reset")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
@@ -2735,6 +2737,50 @@ impl<'ctx> CodeGen<'ctx> {
                         let win = self.compile_expr(&args[0])?;
                         let path = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_3d_screenshot_bmp, &[win.into(), path.into()], "shot3d");
+                    }
+
+                    // ============================================================
+                    // Einheitlicher Test-API-Layer (Plan-008 A2, tag-dispatch
+                    // 2D/3D/Hybrid). Erstes Argument ist immer das Fenster.
+                    // ============================================================
+                    "test_sim_taste" | "test_simulate_key" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_test_sim_taste, &[a[0].into(), a[1].into(), a[2].into()], "t_sim_key")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "test_sim_maus_pos" | "test_sim_mouse_pos" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_test_sim_maus_pos, &[a[0].into(), a[1].into(), a[2].into()], "t_sim_mpos")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "test_sim_maus_taste" | "test_sim_mouse_button" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_test_sim_maus_taste, &[a[0].into(), a[1].into(), a[2].into()], "t_sim_mbtn")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "test_sim_maus_rad" | "test_sim_mouse_wheel" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_test_sim_maus_rad, &[a[0].into(), a[1].into()], "t_sim_rad")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "test_sim_maus_delta" | "test_sim_mouse_delta" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_test_sim_maus_delta, &[a[0].into(), a[1].into(), a[2].into()], "t_sim_mdelta")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "test_sim_reset" | "test_simulate_reset" => {
+                        let win = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_test_sim_reset, &[win.into()], "t_sim_reset")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "test_screenshot" | "test_bildschirmfoto" => {
+                        let win = self.compile_expr(&args[0])?;
+                        let path = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_test_screenshot, &[win.into(), path.into()], "t_shot");
+                    }
+                    "test_fenster_info" | "test_window_info" => {
+                        let win = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_test_fenster_info, &[win.into()], "t_win_info");
                     }
                     // Voxel-Welt (Plan-005 Phase 1a Kern-Builtins).
                     // Nur die nach RT1 stabilen 4 Builtins; mesh_bauen/strahl folgen

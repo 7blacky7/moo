@@ -239,6 +239,15 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_3d_simulate_mouse_delta: FunctionValue<'ctx>,
     pub moo_3d_simulate_reset: FunctionValue<'ctx>,
     pub moo_3d_screenshot_bmp: FunctionValue<'ctx>,
+    // Einheitlicher Test-API-Layer (Plan-008 A2, tag-dispatch 2D/3D/Hybrid)
+    pub moo_test_sim_taste: FunctionValue<'ctx>,
+    pub moo_test_sim_maus_pos: FunctionValue<'ctx>,
+    pub moo_test_sim_maus_taste: FunctionValue<'ctx>,
+    pub moo_test_sim_maus_rad: FunctionValue<'ctx>,
+    pub moo_test_sim_maus_delta: FunctionValue<'ctx>,
+    pub moo_test_sim_reset: FunctionValue<'ctx>,
+    pub moo_test_screenshot: FunctionValue<'ctx>,
+    pub moo_test_fenster_info: FunctionValue<'ctx>,
     // Chunk Display Lists
     pub moo_3d_chunk_create: FunctionValue<'ctx>,
     pub moo_3d_chunk_begin: FunctionValue<'ctx>,
@@ -798,6 +807,16 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_3d_simulate_mouse_delta: module.add_function("moo_3d_simulate_mouse_delta", void_type.fn_type(mv3, false), None),
             moo_3d_simulate_reset: module.add_function("moo_3d_simulate_reset", void_type.fn_type(mv1, false), None),
             moo_3d_screenshot_bmp: decl_mv_mv!("moo_3d_screenshot_bmp", mv2),
+            // Einheitlicher Test-API-Layer (Plan-008 A2). Symbole immer deklariert;
+            // C-seitig nur in 3D-Builds gelinkt (moo_test_api.c, build.rs).
+            moo_test_sim_taste: module.add_function("moo_test_sim_taste", void_type.fn_type(mv3, false), None),
+            moo_test_sim_maus_pos: module.add_function("moo_test_sim_maus_pos", void_type.fn_type(mv3, false), None),
+            moo_test_sim_maus_taste: module.add_function("moo_test_sim_maus_taste", void_type.fn_type(mv3, false), None),
+            moo_test_sim_maus_rad: module.add_function("moo_test_sim_maus_rad", void_type.fn_type(mv2, false), None),
+            moo_test_sim_maus_delta: module.add_function("moo_test_sim_maus_delta", void_type.fn_type(mv3, false), None),
+            moo_test_sim_reset: module.add_function("moo_test_sim_reset", void_type.fn_type(mv1, false), None),
+            moo_test_screenshot: decl_mv_mv!("moo_test_screenshot", mv2),
+            moo_test_fenster_info: decl_mv_mv!("moo_test_fenster_info", mv1),
             // Chunk Display Lists
             moo_3d_chunk_create: decl_mv_mv!("moo_3d_chunk_create", &[]),
             moo_3d_chunk_begin: module.add_function("moo_3d_chunk_begin", void_type.fn_type(mv1, false), None),
