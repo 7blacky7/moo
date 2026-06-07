@@ -36,10 +36,44 @@
  * Block-Registry (C-intern, Phase 1):
  *   0=luft, 1=gras, 2=erde, 3=stein, 4=sand, 5=wasser.
  *   Wasser wird in Phase 1 OPAK behandelt (keine Transparenz, Plan-Entscheidung).
+ *
+ * Phase 3 (Plan-005 V3.1/V3.2, Agent p005-perf1) — Async-Meshing + Greedy/AO:
+ *   - C-interne pthread Job-Queue (KEINE moo-Channels, Risiko 7). Worker bauen
+ *     pro dirty Chunk ein CPU-Vertex-Array (MooVoxelMeshBuf) GANZ ohne GPU- und
+ *     ohne moo-Heap-Aufrufe (der moo-Heap ist nicht thread-safe). Der GPU-Upload
+ *     (moo_3d_chunk_begin/triangle/end) passiert AUSSCHLIESSLICH im Main-Thread
+ *     in moo_voxel_aktualisieren, der die fertigen Buffer abholt (Risiko 8).
+ *   - THREADING-MODELL-ENTSCHEIDUNG: posix-only (pthread). Der gesamte Pool ist
+ *     in #ifndef _WIN32 gekapselt; auf _WIN32 faellt moo_voxel_aktualisieren auf
+ *     SYNCHRONES Remeshing zurueck (identisches Ergebnis, nur seriell) — kein
+ *     doppelter CONDITION_VARIABLE-Pfad fuer einen PoC. moo_voxel.c wird ohnehin
+ *     nur im 3D-Featureblock gebaut (build.rs), die Zielplattform der GL/Vulkan-
+ *     Backends ist Linux. pthread ist bereits gelinkt (moo_thread.c stets gebaut).
+ *   - RACE-MODELL: Gameplay laeuft single-threaded (moo ruft setzen + aktualisieren
+ *     seriell). aktualisieren blockiert bis ALLE Worker fertig sind, bevor es
+ *     zurueckkehrt — zwischen Enqueue und Join wird die Welt nie veraendert, also
+ *     lesen Worker eine stabile Chunk-Hashmap. Der Mutex schuetzt nur die
+ *     Job-/Result-Queues. Verifiziert mit ThreadSanitizer + ASan-Stress
+ *     (test_voxel_jobqueue_asan.c, TSan praeziser als helgrind fuer pthread).
+ *   - GREEDY MESHING + VERTEX-AO: greedy_mesh_axis() merged koplanare Faces
+ *     gleicher Block-ID UND gleichem AO-Wert pro 2D-Slice; Vertex-AO (0..3) aus
+ *     den 3 diagonalen Nachbarn je Ecke. AO an Chunk-Grenzen liest diagonale
+ *     Nachbarn ueber moo_voxel_world_block (Daten sind da -> AO ist KORREKT).
+ *     OFFENE GRENZE (dokumentiert, sauberer Folge-Task statt Hack): die
+ *     Dirty-Propagation in moo_voxel_setzen markiert weiterhin nur die 6 FACE-
+ *     Nachbarn (Plan-1b-Contract, von den QA-Harnesses fest geprueft). Aendert
+ *     sich ein DIAGONALER Nachbar, wird die Boundary-AO des Nachbarchunks nicht
+ *     automatisch neu getriggert (Staleness, kein Crash/Leak). Die Erweiterung
+ *     auf 18/26-Nachbarn-Dirty wuerde den geprueften 6-Nachbarn-Contract aendern
+ *     und ist als Folge-Task empfohlen.
  */
 
 #include "moo_runtime.h"
 #include "moo_noise.h"   /* seed-parametrisierte fBm/Perlin (Plan-005 P0.3, RT0) */
+#ifndef _WIN32
+#include <pthread.h>
+#include <unistd.h>      /* sysconf(_SC_NPROCESSORS_ONLN) fuer Worker-Anzahl */
+#endif
 
 /* ========================================================================
  * Forward-Decls der 3D-Chunk-API (Plan-005 1b).
@@ -147,6 +181,7 @@ typedef struct {
     MooVoxelChunk* chunks;        /* Open-Addressing-Hashmap (linear probing) */
     int32_t        chunk_cap;     /* Kapazitaet (Power-of-two) */
     int32_t        chunk_count;   /* Anzahl belegter Slots */
+    void*          jobs;          /* MooVoxelJobPool* (lazy, Phase 3), NULL = nie genutzt */
 } MooVoxelWorld;
 
 /* ========================================================================
@@ -548,6 +583,7 @@ MooValue moo_voxel_welt_neu(MooValue seed) {
     vw->seed = (uint32_t)s;
     vw->chunk_cap = MOO_VOXEL_INITIAL_CAP;
     vw->chunk_count = 0;
+    vw->jobs = NULL;          /* Job-Pool erst bei erstem async aktualisieren (Phase 3) */
     size_t chunks_bytes = (size_t)vw->chunk_cap * sizeof(MooVoxelChunk);
     vw->chunks = (MooVoxelChunk*)moo_alloc(chunks_bytes);
     if (!vw->chunks) {
@@ -828,6 +864,452 @@ MooValue moo_voxel_ram_statistik(MooValue welt) {
     return d;
 }
 
+
+/* ========================================================================
+ * Phase 3 (Plan-005 V3.2): Greedy-Mesher mit Vertex-AO -> CPU-Vertex-Buffer
+ *
+ * Diese Schicht ist VOLLSTAENDIG GPU-frei und moo-Heap-frei: sie schreibt nur
+ * in einen MooVoxelMeshBuf (rohe float/uint32-Arrays auf moo_alloc-Heap). Damit
+ * darf sie aus einem Worker-Thread laufen (der moo-Heap ist nicht thread-safe).
+ * Der Main-Thread spielt den Buffer spaeter via moo_3d_chunk_begin/triangle/end
+ * auf die GPU.
+ *
+ * Greedy: pro Achsenrichtung (6 Faces) werden koplanare, gleich-eingefaerbte
+ * Faces (gleiche Block-ID UND gleiches AO-Muster) zu Rechtecken zusammengefasst
+ * (Mikulik/0fps-Verfahren). AO: pro Quad-Ecke ein 0..3-Level aus den drei
+ * diagonalen Nachbarn der Face; die vier Eck-Level werden zur Quad-Faerbung
+ * gemittelt (eine Farbe pro Dreieck, da moo_3d_triangle nur eine Farbe je
+ * Dreieck nimmt).
+ * ======================================================================== */
+
+/* Block-Basisfarben als RGB (0..255), Index = Block-ID. Entspricht
+ * MOO_VOXEL_BLOCK_HEX, nur als Zahlen damit der Worker keinen String braucht. */
+static const uint8_t MOO_VOXEL_BLOCK_RGB[MOO_VOXEL_MAX_BLOCK_ID + 1][3] = {
+    {   0,   0,   0 }, /* 0 luft  (ungenutzt) */
+    {  76, 175,  80 }, /* 1 gras  #4CAF50 */
+    { 121,  85,  72 }, /* 2 erde  #795548 */
+    { 158, 158, 158 }, /* 3 stein #9E9E9E */
+    { 251, 192,  45 }, /* 4 sand  #FBC02D */
+    {  33, 150, 243 }, /* 5 wasser #2196F3 (opak) */
+};
+
+/* CPU-Vertex-Buffer: pro Dreieck 9 Positions-Floats + 1 gepackte RGB-Farbe.
+ * Wachstum via moo_alloc + memcpy + moo_free (kein moo_realloc, damit die
+ * bestehenden ASan-Harnesses ohne realloc-Stub gruen bleiben). */
+typedef struct {
+    float*    verts;   /* 9 floats pro Dreieck (x1,y1,z1, x2,y2,z2, x3,y3,z3) */
+    uint32_t* cols;    /* 1 gepackte 0x00RRGGBB-Farbe pro Dreieck */
+    size_t    tri_count;
+    size_t    tri_cap;
+} MooVoxelMeshBuf;
+
+static void mesh_buf_init(MooVoxelMeshBuf* b) {
+    b->verts = NULL; b->cols = NULL; b->tri_count = 0; b->tri_cap = 0;
+}
+
+static void mesh_buf_free(MooVoxelMeshBuf* b) {
+    if (b->verts) { moo_free(b->verts); b->verts = NULL; }
+    if (b->cols)  { moo_free(b->cols);  b->cols  = NULL; }
+    b->tri_count = 0; b->tri_cap = 0;
+}
+
+/* Stellt Platz fuer mindestens want zusaetzliche Dreiecke sicher. Liefert false
+ * bei OOM (Aufrufer bricht das Meshing dann sauber ab). */
+static bool mesh_buf_reserve(MooVoxelMeshBuf* b, size_t want) {
+    if (b->tri_count + want <= b->tri_cap) return true;
+    size_t ncap = b->tri_cap ? b->tri_cap * 2 : 256;
+    while (ncap < b->tri_count + want) ncap *= 2;
+    float* nv = (float*)moo_alloc(ncap * 9 * sizeof(float));
+    if (!nv) return false;
+    uint32_t* nc = (uint32_t*)moo_alloc(ncap * sizeof(uint32_t));
+    if (!nc) { moo_free(nv); return false; }
+    if (b->tri_count) {
+        memcpy(nv, b->verts, b->tri_count * 9 * sizeof(float));
+        memcpy(nc, b->cols,  b->tri_count * sizeof(uint32_t));
+    }
+    if (b->verts) moo_free(b->verts);
+    if (b->cols)  moo_free(b->cols);
+    b->verts = nv; b->cols = nc; b->tri_cap = ncap;
+    return true;
+}
+
+static void mesh_buf_push_tri(MooVoxelMeshBuf* b,
+                              float ax, float ay, float az,
+                              float bx, float by, float bz,
+                              float cx, float cy, float cz,
+                              uint32_t col) {
+    float* v = b->verts + b->tri_count * 9;
+    v[0]=ax; v[1]=ay; v[2]=az; v[3]=bx; v[4]=by; v[5]=bz; v[6]=cx; v[7]=cy; v[8]=cz;
+    b->cols[b->tri_count] = col;
+    b->tri_count++;
+}
+
+/* Skaliert eine Block-Basisfarbe mit einem AO-Faktor (0.55..1.0) und packt sie
+ * nach 0x00RRGGBB. ao01 in [0,1] (1 = unverschattet). */
+static uint32_t mesh_color_ao(uint16_t id, float ao01) {
+    int cid = (id <= MOO_VOXEL_MAX_BLOCK_ID) ? (int)id : 0;
+    float f = 0.55f + 0.45f * ao01; /* nie ganz schwarz */
+    int r = (int)(MOO_VOXEL_BLOCK_RGB[cid][0] * f + 0.5f);
+    int g = (int)(MOO_VOXEL_BLOCK_RGB[cid][1] * f + 0.5f);
+    int bl = (int)(MOO_VOXEL_BLOCK_RGB[cid][2] * f + 0.5f);
+    if (r > 255)  r = 255;
+    if (g > 255)  g = 255;
+    if (bl > 255) bl = 255;
+    return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)bl;
+}
+
+/* Liest die Block-ID an Welt-Voxel (wx,wy,wz). Self-contained (nutzt nur frueh
+ * definierte Helfer) damit dieser Block keine Vorwaerts-Decl auf den spaeteren
+ * moo_voxel_world_block braucht. Nicht-allokierter/leerer Chunk = Luft. */
+static uint16_t mesh_world_block(MooVoxelWorld* w, int32_t wx, int32_t wy, int32_t wz) {
+    int32_t cx = moo_voxel_floordiv(wx, MOO_VOXEL_CHUNK_DIM);
+    int32_t cy = moo_voxel_floordiv(wy, MOO_VOXEL_CHUNK_DIM);
+    int32_t cz = moo_voxel_floordiv(wz, MOO_VOXEL_CHUNK_DIM);
+    MooVoxelChunk* ch = moo_voxel_lookup(w, cx, cy, cz);
+    if (!ch || !ch->indices) return 0;
+    int32_t lx = moo_voxel_floormod(wx, MOO_VOXEL_CHUNK_DIM);
+    int32_t ly = moo_voxel_floormod(wy, MOO_VOXEL_CHUNK_DIM);
+    int32_t lz = moo_voxel_floormod(wz, MOO_VOXEL_CHUNK_DIM);
+    return moo_voxel_chunk_block_get(ch, moo_voxel_local_index(lx, ly, lz));
+}
+
+/* AO-Level (0..3) fuer eine Vertex-Ecke nach dem 0fps/Mikola-Schema:
+ *   side1, side2 = die zwei kantenseitigen Nachbarn, corner = der diagonale.
+ *   side1 && side2  -> 0 (voll verschattet)
+ *   sonst           -> 3 - (side1 + side2 + corner)
+ * Eingaben sind \"belegt?\"-Flags (1 = fester Block, 0 = Luft). */
+static inline int mesh_ao_level(int side1, int side2, int corner) {
+    if (side1 && side2) return 0;
+    return 3 - (side1 + side2 + corner);
+}
+
+/* Gepadderter lokaler Block-Cache: (DIM+2)^3 uint16, lokale Koordinate +1
+ * versetzt (Index 0 = Welt-Koordinate base-1, Index DIM+1 = base+DIM). Wird
+ * EINMAL pro Chunk-Mesh aus der Welt befuellt; danach liest der Greedy/AO-
+ * Hot-Path mit reinem O(1)-Array-Zugriff statt floordiv+Hashmap-Lookup je
+ * Sample (vorher ~2M Hashmap-Lookups/Chunk -> ms-Kosten). Die +1-Randschicht
+ * traegt die direkten Nachbarn fuer Face-Cull UND die diagonalen Nachbarn fuer
+ * korrektes Boundary-AO. */
+#define MOO_VOXEL_PAD (MOO_VOXEL_CHUNK_DIM + 2)
+typedef struct { uint16_t* cells; } MooVoxelPad;
+
+static inline uint16_t pad_at(const MooVoxelPad* p, int x, int y, int z) {
+    /* x,y,z in [-1, DIM] (lokal). */
+    return p->cells[((size_t)(z + 1) * MOO_VOXEL_PAD + (y + 1)) * MOO_VOXEL_PAD + (x + 1)];
+}
+
+static bool pad_fill(MooVoxelWorld* w, const MooVoxelChunk* ch, MooVoxelPad* p) {
+    const int DIM = MOO_VOXEL_CHUNK_DIM;
+    p->cells = (uint16_t*)moo_alloc((size_t)MOO_VOXEL_PAD * MOO_VOXEL_PAD * MOO_VOXEL_PAD
+                                    * sizeof(uint16_t));
+    if (!p->cells) return false;
+    int32_t bx = ch->cx * DIM, by = ch->cy * DIM, bz = ch->cz * DIM;
+    for (int z = -1; z <= DIM; z++)
+        for (int y = -1; y <= DIM; y++)
+            for (int x = -1; x <= DIM; x++)
+                p->cells[((size_t)(z + 1) * MOO_VOXEL_PAD + (y + 1)) * MOO_VOXEL_PAD + (x + 1)]
+                    = mesh_world_block(w, bx + x, by + y, bz + z);
+    return true;
+}
+
+static void pad_free(MooVoxelPad* p) {
+    if (p->cells) { moo_free(p->cells); p->cells = NULL; }
+}
+
+/* Greedy-Vermaschung EINER der 6 Face-Richtungen fuer einen Chunk.
+ *   d   = Hauptachse 0=X,1=Y,2=Z; back = false -> +Achse-Face, true -> -Achse.
+ * Arbeitet schichtweise entlang der Hauptachse; pro Schicht wird eine 2D-Maske
+ * aus (block_id, vier AO-Level) aufgebaut und greedy zu Rechtecken gemerged.
+ * pad = gepadderter Block-Cache des Chunks (lokale Koordinaten); out: Ziel. */
+static bool greedy_mesh_axis(const MooVoxelChunk* ch, const MooVoxelPad* pad,
+                             int d, bool back, MooVoxelMeshBuf* out) {
+    const int DIM = MOO_VOXEL_CHUNK_DIM;
+    int u = (d + 1) % 3; /* erste Quer-Achse */
+    int v = (d + 2) % 3; /* zweite Quer-Achse */
+    int32_t base[3] = { ch->cx * DIM, ch->cy * DIM, ch->cz * DIM };
+    int dn = back ? -1 : 1;             /* Richtung des Sicht-Nachbarn */
+
+    /* Maske einer Schicht: id (0 = keine Face), + 4 AO-Level. */
+    typedef struct { uint16_t id; uint8_t ao[4]; } MaskCell;
+    MaskCell* mask = (MaskCell*)moo_alloc((size_t)DIM * DIM * sizeof(MaskCell));
+    if (!mask) return false;
+
+    for (int s = 0; s < DIM; s++) {
+        /* Maske der Schicht s aufbauen. */
+        for (int j = 0; j < DIM; j++) {
+            for (int i = 0; i < DIM; i++) {
+                int c[3]; c[d] = s; c[u] = i; c[v] = j; /* lokale Koordinaten */
+                uint16_t here = pad_at(pad, c[0], c[1], c[2]);
+                MaskCell* m = &mask[j * DIM + i];
+                m->id = 0;
+                if (here == 0) continue;            /* Luft: keine Face */
+                /* Sicht-Nachbar auf der Face-Seite (lokal, +1-Pad deckt Rand ab). */
+                int nb[3] = { c[0], c[1], c[2] }; nb[d] += dn;
+                if (pad_at(pad, nb[0], nb[1], nb[2]) != 0) continue; /* verdeckt */
+                m->id = here;
+                /* AO: vier Ecken der Face. Die Face liegt auf der dn-Seite des
+                 * Voxels. Wir betrachten die 8 Voxel auf der dn-Seitenebene. */
+                int8_t du[3] = {0,0,0}, dv[3] = {0,0,0};
+                du[u] = 1; dv[v] = 1;
+                /* Belegt-Flags der 8 Nachbarn in der Face-Ebene (nb-Ebene). */
+                #define OCC(au, av) (pad_at(pad, \
+                    nb[0] + (au)*du[0] + (av)*dv[0], \
+                    nb[1] + (au)*du[1] + (av)*dv[1], \
+                    nb[2] + (au)*du[2] + (av)*dv[2]) != 0 ? 1 : 0)
+                int n00=OCC(-1,-1), n01=OCC(0,-1), n02=OCC(1,-1);
+                int n10=OCC(-1, 0),                n12=OCC(1, 0);
+                int n20=OCC(-1, 1), n21=OCC(0, 1), n22=OCC(1, 1);
+                #undef OCC
+                /* Ecken (u,v)-lokal: (0,0),(1,0),(1,1),(0,1). */
+                m->ao[0] = (uint8_t)mesh_ao_level(n10, n01, n00); /* -u,-v */
+                m->ao[1] = (uint8_t)mesh_ao_level(n12, n01, n02); /* +u,-v */
+                m->ao[2] = (uint8_t)mesh_ao_level(n12, n21, n22); /* +u,+v */
+                m->ao[3] = (uint8_t)mesh_ao_level(n10, n21, n20); /* -u,+v */
+            }
+        }
+
+        /* Greedy-Merge der Maske. */
+        for (int j = 0; j < DIM; j++) {
+            for (int i = 0; i < DIM;) {
+                MaskCell c0 = mask[j * DIM + i];
+                if (c0.id == 0) { i++; continue; }
+                /* Breite (entlang u) ausdehnen solange id+AO gleich. */
+                int wdt = 1;
+                while (i + wdt < DIM) {
+                    MaskCell* c = &mask[j * DIM + i + wdt];
+                    if (c->id != c0.id ||
+                        c->ao[0]!=c0.ao[0] || c->ao[1]!=c0.ao[1] ||
+                        c->ao[2]!=c0.ao[2] || c->ao[3]!=c0.ao[3]) break;
+                    wdt++;
+                }
+                /* Hoehe (entlang v) ausdehnen solange ganze Zeile passt. */
+                int hgt = 1;
+                bool grow = true;
+                while (j + hgt < DIM && grow) {
+                    for (int k = 0; k < wdt; k++) {
+                        MaskCell* c = &mask[(j + hgt) * DIM + i + k];
+                        if (c->id != c0.id ||
+                            c->ao[0]!=c0.ao[0] || c->ao[1]!=c0.ao[1] ||
+                            c->ao[2]!=c0.ao[2] || c->ao[3]!=c0.ao[3]) { grow = false; break; }
+                    }
+                    if (grow) hgt++;
+                }
+
+                /* Quad in Weltkoordinaten erzeugen. Die Face liegt bei der
+                 * Hauptachsen-Koordinate s (+1 fuer +Achse-Face). */
+                float face = (float)(base[d] + s + (back ? 0 : 1));
+                float u0 = (float)(base[u] + i);
+                float u1 = (float)(base[u] + i + wdt);
+                float v0 = (float)(base[v] + j);
+                float v1 = (float)(base[v] + j + hgt);
+
+                /* Vier Eckpunkte (u,v) -> 3D, Hauptachse = face. */
+                float p[4][3];
+                #define SETP(idx, uu, vv) do { \
+                    p[idx][d] = face; p[idx][u] = (uu); p[idx][v] = (vv); } while(0)
+                SETP(0, u0, v0); SETP(1, u1, v0); SETP(2, u1, v1); SETP(3, u0, v1);
+                #undef SETP
+
+                /* AO-Farben pro Ecke -> Quad-Mittelfarbe (eine Farbe je Dreieck).
+                 * ao-Level 0..3 -> Helligkeit 0.33..1.0. */
+                float aol[4];
+                for (int e = 0; e < 4; e++) aol[e] = (float)c0.ao[e] / 3.0f;
+                /* Dreieck 1 = Ecken 0,1,2 ; Dreieck 2 = Ecken 0,2,3.
+                 * Pro Dreieck den AO-Durchschnitt der 3 Ecken als Farbe. */
+                float ao_t1 = (aol[0] + aol[1] + aol[2]) / 3.0f;
+                float ao_t2 = (aol[0] + aol[2] + aol[3]) / 3.0f;
+                uint32_t col1 = mesh_color_ao(c0.id, ao_t1);
+                uint32_t col2 = mesh_color_ao(c0.id, ao_t2);
+
+                if (!mesh_buf_reserve(out, 2)) { moo_free(mask); return false; }
+                /* Wicklung: fuer +Achse-Faces CCW von aussen, fuer -Achse
+                 * umgekehrt, damit Backface-Culling stimmt. */
+                if (back) {
+                    mesh_buf_push_tri(out, p[0][0],p[0][1],p[0][2],
+                                            p[2][0],p[2][1],p[2][2],
+                                            p[1][0],p[1][1],p[1][2], col1);
+                    mesh_buf_push_tri(out, p[0][0],p[0][1],p[0][2],
+                                            p[3][0],p[3][1],p[3][2],
+                                            p[2][0],p[2][1],p[2][2], col2);
+                } else {
+                    mesh_buf_push_tri(out, p[0][0],p[0][1],p[0][2],
+                                            p[1][0],p[1][1],p[1][2],
+                                            p[2][0],p[2][1],p[2][2], col1);
+                    mesh_buf_push_tri(out, p[0][0],p[0][1],p[0][2],
+                                            p[2][0],p[2][1],p[2][2],
+                                            p[3][0],p[3][1],p[3][2], col2);
+                }
+
+                /* Gemergte Zellen aus der Maske loeschen. */
+                for (int dj = 0; dj < hgt; dj++)
+                    for (int di = 0; di < wdt; di++)
+                        mask[(j + dj) * DIM + i + di].id = 0;
+                i += wdt;
+            }
+        }
+    }
+    moo_free(mask);
+    return true;
+}
+
+/* Baut den kompletten Greedy+AO-Mesh eines Chunks in out (CPU-only, thread-safe
+ * solange w waehrenddessen nicht mutiert wird). Liefert false bei OOM. */
+static bool moo_voxel_build_mesh_cpu(MooVoxelWorld* w, const MooVoxelChunk* ch,
+                                     MooVoxelMeshBuf* out) {
+    MooVoxelPad pad; pad.cells = NULL;
+    if (!pad_fill(w, ch, &pad)) return false;
+    bool ok = true;
+    for (int d = 0; d < 3 && ok; d++) {
+        if (!greedy_mesh_axis(ch, &pad, d, false, out)) ok = false;
+        if (ok && !greedy_mesh_axis(ch, &pad, d, true,  out)) ok = false;
+    }
+    pad_free(&pad);
+    return ok;
+}
+
+/* Spielt einen fertigen CPU-Buffer auf die GPU (Main-Thread!). Erwartet
+ * aktives Backend (Aufrufer prueft). Legt bei Bedarf die Render-ID an. */
+static void moo_voxel_upload_mesh(MooVoxelChunk* ch, const MooVoxelMeshBuf* buf) {
+    if (ch->render_id < 0) {
+        MooValue rid = moo_3d_chunk_create();
+        int32_t id = (int32_t)moo_as_number(rid);
+        if (id < 0) { ch->render_id = -1; return; }
+        ch->render_id = id;
+    }
+    moo_3d_chunk_begin(moo_number((double)ch->render_id));
+    MooValue win = moo_none();
+    char hex[8];
+    for (size_t t = 0; t < buf->tri_count; t++) {
+        const float* v = buf->verts + t * 9;
+        uint32_t c = buf->cols[t];
+        snprintf(hex, sizeof(hex), "#%06x", (unsigned)(c & 0xFFFFFFu));
+        MooValue color = moo_string_new(hex);
+        moo_3d_triangle(win,
+            moo_number(v[0]), moo_number(v[1]), moo_number(v[2]),
+            moo_number(v[3]), moo_number(v[4]), moo_number(v[5]),
+            moo_number(v[6]), moo_number(v[7]), moo_number(v[8]), color);
+    }
+    moo_3d_chunk_end();
+    ch->dirty = false;
+}
+
+/* ========================================================================
+ * Phase 3 (Plan-005 V3.1): C-interne pthread Job-Queue
+ *
+ * EIN Pool pro VoxelWorld (lazy in vw->jobs). Worker holen Chunk-Slots aus der
+ * Job-Queue, bauen via moo_voxel_build_mesh_cpu einen CPU-Buffer und legen ihn
+ * im job->result ab. moo_voxel_aktualisieren (Main-Thread) enqueued alle dirty
+ * Chunks, wartet bis alle Jobs fertig sind (Welt bleibt waehrenddessen stabil)
+ * und lädt die Buffer dann seriell auf die GPU.
+ *
+ * KEINE moo-Channels (Risiko 7). GPU-Upload NUR im Main-Thread (Risiko 8).
+ * Auf _WIN32 ist der Pool nicht kompiliert -> aktualisieren mesht synchron.
+ * ======================================================================== */
+
+typedef struct {
+    int32_t         slot;     /* Hashmap-Slot des zu meshenden Chunks */
+    MooVoxelMeshBuf result;   /* vom Worker befuellt */
+    bool            ok;       /* false = OOM im Worker */
+} MooVoxelJob;
+
+#ifndef _WIN32
+#define MOO_VOXEL_MAX_WORKERS 8
+
+typedef struct {
+    MooVoxelWorld*  world;
+    pthread_t       threads[MOO_VOXEL_MAX_WORKERS];
+    int             n_threads;
+    pthread_mutex_t lock;
+    pthread_cond_t  has_work;  /* Worker warten hier auf neue Jobs */
+    pthread_cond_t  done;      /* Main wartet hier bis alle Jobs fertig */
+    MooVoxelJob*    jobs;      /* aktueller Batch */
+    int             n_jobs;    /* Anzahl Jobs im Batch */
+    int             next_job;  /* naechster noch nicht gepoppter Job-Index */
+    int             active;    /* gerade in Bearbeitung befindliche Jobs */
+    bool            shutdown;  /* true -> Worker beenden sich */
+} MooVoxelJobPool;
+
+static void* moo_voxel_worker(void* arg) {
+    MooVoxelJobPool* pool = (MooVoxelJobPool*)arg;
+    for (;;) {
+        pthread_mutex_lock(&pool->lock);
+        while (!pool->shutdown && pool->next_job >= pool->n_jobs)
+            pthread_cond_wait(&pool->has_work, &pool->lock);
+        if (pool->shutdown) { pthread_mutex_unlock(&pool->lock); break; }
+        int ji = pool->next_job++;
+        pool->active++;
+        MooVoxelWorld* w = pool->world;
+        MooVoxelJob* job = &pool->jobs[ji];
+        pthread_mutex_unlock(&pool->lock);
+
+        /* Lockfreies Meshing: zwischen Enqueue und Join wird w nicht mutiert. */
+        const MooVoxelChunk* ch = &w->chunks[job->slot];
+        mesh_buf_init(&job->result);
+        job->ok = moo_voxel_build_mesh_cpu(w, ch, &job->result);
+
+        pthread_mutex_lock(&pool->lock);
+        pool->active--;
+        if (pool->active == 0 && pool->next_job >= pool->n_jobs)
+            pthread_cond_signal(&pool->done);
+        pthread_mutex_unlock(&pool->lock);
+    }
+    return NULL;
+}
+
+/* Lazy-Erzeugung des Pools. Liefert NULL bei Fehler (Aufrufer faellt dann auf
+ * synchrones Meshing zurueck). */
+static MooVoxelJobPool* moo_voxel_pool_get(MooVoxelWorld* w) {
+    if (w->jobs) return (MooVoxelJobPool*)w->jobs;
+    MooVoxelJobPool* pool = (MooVoxelJobPool*)moo_alloc(sizeof(MooVoxelJobPool));
+    if (!pool) return NULL;
+    memset(pool, 0, sizeof(*pool));
+    pool->world = w;
+    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+    int n = (ncpu > 1) ? (int)(ncpu - 1) : 1;
+    if (n > MOO_VOXEL_MAX_WORKERS) n = MOO_VOXEL_MAX_WORKERS;
+    if (n < 1) n = 1;
+    if (pthread_mutex_init(&pool->lock, NULL) != 0) { moo_free(pool); return NULL; }
+    if (pthread_cond_init(&pool->has_work, NULL) != 0) {
+        pthread_mutex_destroy(&pool->lock); moo_free(pool); return NULL;
+    }
+    if (pthread_cond_init(&pool->done, NULL) != 0) {
+        pthread_cond_destroy(&pool->has_work);
+        pthread_mutex_destroy(&pool->lock); moo_free(pool); return NULL;
+    }
+    pool->shutdown = false;
+    pool->n_threads = 0;
+    for (int i = 0; i < n; i++) {
+        if (pthread_create(&pool->threads[i], NULL, moo_voxel_worker, pool) != 0) break;
+        pool->n_threads++;
+    }
+    if (pool->n_threads == 0) {
+        pthread_cond_destroy(&pool->done);
+        pthread_cond_destroy(&pool->has_work);
+        pthread_mutex_destroy(&pool->lock);
+        moo_free(pool);
+        return NULL;
+    }
+    w->jobs = pool;
+    return pool;
+}
+
+/* Faehrt den Pool herunter und gibt ihn frei (im Main-Thread, aus moo_voxel_free). */
+static void moo_voxel_pool_destroy(MooVoxelWorld* w) {
+    if (!w->jobs) return;
+    MooVoxelJobPool* pool = (MooVoxelJobPool*)w->jobs;
+    pthread_mutex_lock(&pool->lock);
+    pool->shutdown = true;
+    pthread_cond_broadcast(&pool->has_work);
+    pthread_mutex_unlock(&pool->lock);
+    for (int i = 0; i < pool->n_threads; i++) pthread_join(pool->threads[i], NULL);
+    pthread_cond_destroy(&pool->done);
+    pthread_cond_destroy(&pool->has_work);
+    pthread_mutex_destroy(&pool->lock);
+    moo_free(pool);
+    w->jobs = NULL;
+}
+#endif /* !_WIN32 */
+
 /* ========================================================================
  * Mesher (Plan-005 Phase 1b)
  *
@@ -1042,6 +1524,35 @@ MooValue moo_voxel_mesh_bauen(MooValue welt, MooValue x, MooValue y, MooValue z)
     return moo_number((double)ch->render_id);
 }
 
+/* Synchroner Fallback: greedy+AO im Main-Thread (kein Pool). Genutzt auf
+ * _WIN32 und wenn der Pool nicht erzeugt werden konnte. Liefert remesht-Count. */
+static int64_t moo_voxel_aktualisieren_sync(MooVoxelWorld* vw) {
+    int64_t remeshed = 0;
+    for (int32_t i = 0; i < vw->chunk_cap; i++) {
+        MooVoxelChunk* ch = &vw->chunks[i];
+        if (!ch->occupied || !ch->dirty) continue;
+        if (!ch->indices) {
+            if (ch->render_id >= 0) {
+                moo_3d_chunk_delete(moo_number((double)ch->render_id));
+                ch->render_id = -1;
+            }
+            ch->dirty = false;
+            continue;
+        }
+        MooVoxelMeshBuf buf; mesh_buf_init(&buf);
+        if (moo_voxel_build_mesh_cpu(vw, ch, &buf)) {
+            moo_voxel_upload_mesh(ch, &buf);
+        } else {
+            ch->dirty = false; /* OOM: nicht endlos retryen */
+        }
+        mesh_buf_free(&buf);
+        remeshed++;
+    }
+    return remeshed;
+}
+
+/* Sammelt fertige CPU-Buffer ein und lädt sie hoch (Main-Thread). slots[] sind
+ * die Chunk-Slots in derselben Reihenfolge wie die Jobs. */
 MooValue moo_voxel_aktualisieren(MooValue welt) {
     MooVoxelWorld* vw = moo_voxel_check(welt, "voxel_aktualisieren");
     if (!vw) return moo_none();
@@ -1051,23 +1562,84 @@ MooValue moo_voxel_aktualisieren(MooValue welt) {
         return moo_number(0.0);
     }
 
-    int64_t remeshed = 0;
+    /* Geleerte Chunks (indices==NULL) zuerst seriell aufraeumen: alte Render-ID
+     * freigeben, dirty loeschen. Diese gehen NICHT in die Worker-Queue (kein
+     * Mesh zu bauen). */
     for (int32_t i = 0; i < vw->chunk_cap; i++) {
         MooVoxelChunk* ch = &vw->chunks[i];
-        if (!ch->occupied || !ch->dirty) continue;
-        if (!ch->indices) {
-            /* Geleerter Chunk: alte Render-ID einmal freigeben. */
-            if (ch->render_id >= 0) {
-                moo_3d_chunk_delete(moo_number((double)ch->render_id));
-                ch->render_id = -1;
-            }
-            ch->dirty = false;
-            continue;
+        if (!ch->occupied || !ch->dirty || ch->indices) continue;
+        if (ch->render_id >= 0) {
+            moo_3d_chunk_delete(moo_number((double)ch->render_id));
+            ch->render_id = -1;
         }
-        moo_voxel_remesh_chunk(vw, ch);
+        ch->dirty = false;
+    }
+
+#ifdef _WIN32
+    /* POSIX-only Threadpool nicht verfuegbar -> synchron meshen (s. Datei-Header). */
+    return moo_number((double)moo_voxel_aktualisieren_sync(vw));
+#else
+    /* Dirty, nicht-leere Chunks zaehlen. */
+    int n_dirty = 0;
+    for (int32_t i = 0; i < vw->chunk_cap; i++) {
+        MooVoxelChunk* ch = &vw->chunks[i];
+        if (ch->occupied && ch->dirty && ch->indices) n_dirty++;
+    }
+    if (n_dirty == 0) return moo_number(0.0);
+
+    /* Async lohnt sich erst ab mehreren Chunks: das Aufwecken+Joinen der Worker
+     * kostet pro Batch ~einige ms Scheduler-Latenz. Bei genau einem dirty Chunk
+     * (haeufigster Fall: ein einzelner Block-Edit) ist synchrones Greedy+AO-
+     * Meshing messbar schneller (kein Thread-Roundtrip). Schwelle = 2. */
+    if (n_dirty < 2) {
+        return moo_number((double)moo_voxel_aktualisieren_sync(vw));
+    }
+
+    MooVoxelJobPool* pool = moo_voxel_pool_get(vw);
+    if (!pool) {
+        /* Pool-Erzeugung fehlgeschlagen -> sauberer synchroner Fallback. */
+        return moo_number((double)moo_voxel_aktualisieren_sync(vw));
+    }
+
+    MooVoxelJob* jobs = (MooVoxelJob*)moo_alloc((size_t)n_dirty * sizeof(MooVoxelJob));
+    if (!jobs) {
+        return moo_number((double)moo_voxel_aktualisieren_sync(vw));
+    }
+    int k = 0;
+    for (int32_t i = 0; i < vw->chunk_cap; i++) {
+        MooVoxelChunk* ch = &vw->chunks[i];
+        if (ch->occupied && ch->dirty && ch->indices) jobs[k++].slot = i;
+    }
+
+    /* Batch an die Worker uebergeben. Welt wird zwischen hier und dem Join NICHT
+     * mutiert -> Worker lesen eine stabile Hashmap (Race-Modell, s. Header). */
+    pthread_mutex_lock(&pool->lock);
+    pool->jobs = jobs;
+    pool->n_jobs = n_dirty;
+    pool->next_job = 0;
+    pool->active = 0;
+    pthread_cond_broadcast(&pool->has_work);
+    while (pool->next_job < pool->n_jobs || pool->active > 0)
+        pthread_cond_wait(&pool->done, &pool->lock);
+    pool->jobs = NULL;
+    pool->n_jobs = 0;
+    pthread_mutex_unlock(&pool->lock);
+
+    /* Fertige Buffer im Main-Thread hochladen (GPU nur Main-Thread, Risiko 8). */
+    int64_t remeshed = 0;
+    for (int j = 0; j < n_dirty; j++) {
+        MooVoxelChunk* ch = &vw->chunks[jobs[j].slot];
+        if (jobs[j].ok) {
+            moo_voxel_upload_mesh(ch, &jobs[j].result);
+        } else {
+            ch->dirty = false; /* OOM im Worker: nicht endlos retryen */
+        }
+        mesh_buf_free(&jobs[j].result);
         remeshed++;
     }
+    moo_free(jobs);
     return moo_number((double)remeshed);
+#endif
 }
 
 /* ========================================================================
@@ -1369,6 +1941,11 @@ MooValue moo_voxel_aabb(MooValue welt,
 void moo_voxel_free(void* ptr) {
     if (!ptr) return;
     MooVoxelWorld* vw = (MooVoxelWorld*)ptr;
+    /* Threadpool zuerst herunterfahren (Worker joinen) — danach kann kein Worker
+     * mehr auf vw->chunks zugreifen. Auf _WIN32 existiert kein Pool. */
+#ifndef _WIN32
+    moo_voxel_pool_destroy(vw);
+#endif
     if (vw->chunks) {
         for (int32_t i = 0; i < vw->chunk_cap; i++) {
             if (!vw->chunks[i].occupied) continue;
