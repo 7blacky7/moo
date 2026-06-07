@@ -85,7 +85,9 @@ setze hotbar_idx auf 0
 # ============================================================
 zeige "=== moo Voxel Sandbox (Plan-005 Phase 4) ==="
 
-setze test_modus auf umgebung("MOO_VOXEL_TEST") != ""
+# umgebung() liefert bei ungesetzter Variable `nichts` (nicht "") — daher
+# expliziter Vergleich, sonst waere der Test-Modus IMMER aktiv (40-Frame-Exit).
+setze test_modus auf umgebung("MOO_VOXEL_TEST") == "1"
 
 setze welt auf voxel_welt_neu(1337)
 

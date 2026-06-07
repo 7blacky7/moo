@@ -497,7 +497,8 @@ setze tick auf 0
 
 # Test-Modus: env MOO_SIEDLER_TEST=1 → 60 Frames Loop mit Screenshots,
 # dann sauberer Exit 0. Sonst normaler interaktiver Modus.
-setze test_modus auf umgebung("MOO_SIEDLER_TEST") != ""
+# umgebung() liefert bei ungesetzter Variable `nichts` (nicht "") — expliziter Vergleich.
+setze test_modus auf umgebung("MOO_SIEDLER_TEST") == "1"
 
 setze sun_phase auf [0.5]
 
