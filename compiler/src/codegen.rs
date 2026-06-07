@@ -2747,6 +2747,13 @@ impl<'ctx> CodeGen<'ctx> {
                         let w = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_voxel_ram_statistik, &[w.into()], "voxel_ram");
                     }
+                    // Voxel-Optimize (Plan-006 R3): expliziter Section-Downgrade-Lauf
+                    // (PALETTE->SOLID/EMPTY + Palette-Kompaktierung). Main-thread-only.
+                    // welt_optimieren(welt) -> Number (Anzahl geaenderter Chunks).
+                    "voxel_welt_optimieren" | "voxel_optimieren" | "voxel_optimize" => {
+                        let w = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_voxel_welt_optimieren, &[w.into()], "voxel_welt_optimieren");
+                    }
                     // Voxel-Mesher (Plan-005 Phase 1b, CG2 nach RT2).
                     // mesh_bauen(welt, cx, cy, cz) -> Render-Chunk-ID (-1 = kein Cache);
                     // aktualisieren(welt) -> Anzahl neu gemeshter dirty Chunks.

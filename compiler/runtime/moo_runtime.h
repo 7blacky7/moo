@@ -579,6 +579,12 @@ MooValue moo_voxel_holen(MooValue welt, MooValue x, MooValue y, MooValue z);
 MooValue moo_voxel_generieren(MooValue welt, MooValue cx, MooValue cz);
 MooValue moo_voxel_chunk_entladen(MooValue welt, MooValue x, MooValue y, MooValue z);
 MooValue moo_voxel_ram_statistik(MooValue welt);
+/* Plan-006 R3 (Mutation/Downgrade): expliziter Optimierungslauf. Stuft alle
+ * PALETTE-Sections herab (PALETTE->SOLID/EMPTY wo wieder uniform) und kompaktiert
+ * uebrige Paletten; komplett leere Chunks kollabieren auf NULL. Main-Thread-only
+ * (K5: nie waehrend aktiver Mesh-Worker). -> Number geaenderter Chunks. Im
+ * normalen Spielbetrieb laeuft der Downgrade ohnehin lazy in voxel_aktualisieren. */
+MooValue moo_voxel_welt_optimieren(MooValue welt);
 // Phase 1b (Mesher): baut/aktualisiert die GPU-Render-Geometrie eines Chunks
 // bzw. aller als dirty markierten Chunks. Nur sichtbare Faces + Nachbar-Culling
 // ueber Chunk-Grenzen (kein Greedy, kein AO). Render-Chunk-IDs werden NUR bei

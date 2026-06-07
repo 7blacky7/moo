@@ -66,6 +66,34 @@
  *     automatisch neu getriggert (Staleness, kein Crash/Leak). Die Erweiterung
  *     auf 18/26-Nachbarn-Dirty wuerde den geprueften 6-Nachbarn-Contract aendern
  *     und ist als Folge-Task empfohlen.
+ *
+ * Phase R3 (Plan-006 P006-R3, Agent p006-r3) — Mutation/Downgrade-Optimierung:
+ *   - Der Einzel-Write-Pfad (voxel_setzen) wertet Sections nur AUF (EMPTY->
+ *     PALETTE, SOLID->PALETTE); er scannt bewusst NICHT die 512 Voxel pro
+ *     Setzung (zu teuer, Plan-006-Risiko 4). Nach Abbau/Mining bleiben deshalb
+ *     PALETTE-Sections zurueck, die wieder uniform/leer sind oder ungenutzte
+ *     Palette-IDs tragen. moo_voxel_section_downgrade / _chunk_optimize holen
+ *     diesen RAM LAZY zurueck: PALETTE->SOLID/EMPTY wo wieder uniform, sonst
+ *     Palette-Kompaktierung (ungenutzte IDs raus, Bitbreite runter). Wird ein
+ *     Chunk komplett leer, kollabiert sein Section-Array auf NULL (0 Datenbytes).
+ *   - WORLD-LOCK-CONTRACT / KERN-INVARIANTE K5 (Review-Auflage, NICHT
+ *     VERHANDELBAR): Eine Layout-MUTATION (Downgrade/Optimize, also free/realloc
+ *     von Section-palette/indices oder NULL-Kollaps) darf NIEMALS laufen, waehrend
+ *     ein Mesh-Worker denselben Chunk ueber moo_voxel_chunk_block_get LIEST. Die
+ *     Worker des Threadpools lesen die Chunk-Hashmap zwischen pool-broadcast und
+ *     pool-join (s. RACE-MODELL oben). Downgrade ist deshalb strikt
+ *     MAIN-THREAD-ONLY und nur an zwei definierten Punkten erlaubt, die beide
+ *     beweisbar AUSSERHALB eines aktiven Worker-Fensters liegen:
+ *       (1) zu Beginn von moo_voxel_aktualisieren, VOR der Job-Submission
+ *           (der Pool des vorherigen Frames ist dort bereits vollstaendig
+ *           gejoint; der Pool dieses Frames wird erst NACH dem Downgrade
+ *           geweckt) — strukturell abgesichert durch die Code-Reihenfolge.
+ *       (2) im expliziten Builtin moo_voxel_welt_optimieren, das im
+ *           single-threaded Gameplay-Modell (setzen/aktualisieren/optimieren
+ *           seriell) garantiert ohne laufende Worker aufgerufen wird.
+ *     Downgrade NIE aus moo_voxel_worker, NIE zwischen broadcast und join.
+ *     Verifiziert mit ThreadSanitizer (test_voxel_jobqueue_asan.c) + dediziertem
+ *     Downgrade-ASan-Harness (test_voxel_downgrade_asan.c).
  */
 
 #include "moo_runtime.h"
@@ -665,6 +693,178 @@ static bool moo_voxel_section_build_from_array(MooVoxelSection* sec,
 }
 
 
+/* Forward-Decl: chunk_optimize (unten) ruft chunk_free_data fuer den NULL-
+ * Kollaps eines leer gewordenen Chunks; die Definition folgt weiter unten. */
+static void moo_voxel_chunk_free_data(MooVoxelChunk* ch);
+
+
+/* ------------------------------------------------------------------------
+ * Section-Downgrade + Palette-Kompaktierung (P006-R3, Mutation/Optimize)
+ *
+ * MOTIVATION: Der Einzel-Write-Pfad (moo_voxel_setzen) kann eine Section nur
+ * AUFWERTEN (EMPTY->PALETTE, SOLID->PALETTE) — er weiss beim Setzen eines
+ * einzelnen Voxels nicht, ob die Section dadurch wieder uniform wird, und ein
+ * Scan der 512 Voxel bei JEDEM voxel_setzen waere zu teuer (Plan-006-Risiko 4).
+ * Folge: nach Abbau/Mining bleiben PALETTE-Sections zurueck, deren Palette
+ * ungenutzte IDs enthaelt oder die faktisch wieder komplett Luft / komplett
+ * uniform sind. Der Downgrade holt diese RAM zurueck.
+ *
+ * Das ist die GENAUE UMKEHRUNG der Upgrade-Regeln in moo_voxel_section_set:
+ *   PALETTE, alle 512 == Luft        -> EMPTY  (Palette+Index-Array frei)
+ *   PALETTE, alle 512 == eine ID !=0 -> SOLID  (Palette+Index-Array frei)
+ *   PALETTE, sonst                   -> bleibt PALETTE, aber kompaktiert:
+ *                                       ungenutzte Palette-IDs entfernt, Indizes
+ *                                       neu gepackt, minimale Bitbreite gewaehlt.
+ * EMPTY/SOLID-Sections sind bereits optimal und werden uebersprungen.
+ *
+ * NEBENWIRKUNGSFREI fuer Lese-Resultate: liefert nach dem Downgrade fuer jedes
+ * der 512 Voxel exakt dieselbe Block-ID wie davor (reine Repraesentations-
+ * Umstellung). KEINE Geometrie-Aenderung -> der Aufrufer muss NICHT zwingend
+ * remeshen; das Layout ist semantisch identisch.
+ *
+ * THREADING (Review-Auflage K5): Diese Funktion MUTIERT das Section-Layout
+ * (free/realloc von palette/indices). Sie darf NIEMALS laufen, waehrend ein
+ * Mesh-Worker denselben Chunk ueber moo_voxel_chunk_block_get liest. Sie wird
+ * deshalb AUSSCHLIESSLICH im Main-Thread an definierten Punkten aufgerufen:
+ *   (a) zu Beginn von moo_voxel_aktualisieren, VOR der Job-Submission (die
+ *       Worker des VORHERIGEN Frames sind dort bereits gejoint), oder
+ *   (b) ueber das explizite moo_voxel_welt_optimieren, das ebenfalls nur im
+ *       single-threaded Gameplay-Kontext aufgerufen wird (kein aktiver Pool).
+ * NIE aus moo_voxel_worker oder zwischen pool-broadcast und pool-join heraus.
+ * ------------------------------------------------------------------------ */
+
+/* Kompaktiert die Palette einer PALETTE-Section: entfernt Eintraege, die von
+ * KEINEM der 512 Voxel referenziert werden, packt die Indizes auf die neue
+ * (kleinere) Palette um und waehlt die minimale Bitbreite. palette[0] bleibt
+ * IMMER fuer Luft reserviert (Konvention), auch wenn keine Luft vorkommt — das
+ * haelt die Repraesentation konsistent mit dem Build-/Set-Pfad. Reine
+ * Repraesentations-Umstellung, Lese-Resultate unveraendert. false bei OOM
+ * (Section bleibt dann unveraendert gueltig). */
+static bool moo_voxel_section_compact_palette(MooVoxelSection* sec) {
+    if (sec->mode != MOO_VOXEL_SECTION_PALETTE) return true;
+    if (!sec->indices || !sec->palette) return true;
+
+    /* OBERGRENZE: eine 8^3-Section hat 512 Voxel, also koennen hoechstens 512
+     * distinkte feste IDs plus die reservierte Luft-Position vorkommen ->
+     * palette_count <= 513. Die Hilfsarrays sind danach dimensioniert (klein
+     * genug fuer den Stack, ~1.5 KiB statt 320 KiB bei 65536). */
+    uint16_t pc = sec->palette_count;
+    if (pc > MOO_VOXEL_SECTION_VOL + 1) return true;   /* darf nicht auftreten; defensiv */
+
+    /* 1) Welche Palette-Positionen werden tatsaechlich referenziert? */
+    bool used[MOO_VOXEL_SECTION_VOL + 1]; /* Palette-Position -> referenziert? */
+    for (uint16_t i = 0; i < pc; i++) used[i] = false;
+    used[0] = true;                       /* Luft-Position bleibt reserviert */
+    for (int32_t i = 0; i < MOO_VOXEL_SECTION_VOL; i++) {
+        uint32_t pidx = moo_voxel_idx_get(sec->indices, sec->bits, i);
+        if (pidx < pc) used[pidx] = true;
+    }
+
+    /* 2) Neue, kompakte Palette aufbauen (Reihenfolge = alte Reihenfolge der
+     *    genutzten Eintraege; deterministisch). old_pos -> new_pos Mapping. */
+    uint16_t remap[MOO_VOXEL_SECTION_VOL + 1];
+    uint16_t new_pal[MOO_VOXEL_SECTION_VOL + 1];
+    uint16_t new_count = 0;
+    for (uint16_t i = 0; i < pc; i++) {
+        if (!used[i]) continue;
+        remap[i] = new_count;
+        new_pal[new_count] = sec->palette[i];
+        new_count++;
+    }
+
+    if (new_count == pc) {
+        /* Keine ungenutzten Eintraege -> nichts zu kompaktieren. */
+        return true;
+    }
+
+    /* 3) Minimale Bitbreite fuer die kompakte Palette. */
+    uint8_t new_bits = moo_voxel_bits_for((int32_t)new_count);
+
+    /* 4) Frisches Index-Array in der (ggf. kleineren) Bitbreite befuellen. */
+    size_t new_words = moo_voxel_index_words(new_bits);
+    uint32_t* fresh = (uint32_t*)moo_alloc(new_words * sizeof(uint32_t));
+    if (!fresh) return false;             /* OOM: Section bleibt unveraendert */
+    memset(fresh, 0, new_words * sizeof(uint32_t));
+    for (int32_t i = 0; i < MOO_VOXEL_SECTION_VOL; i++) {
+        uint32_t old_pidx = moo_voxel_idx_get(sec->indices, sec->bits, i);
+        uint32_t np = (old_pidx < pc) ? remap[old_pidx] : 0u;
+        moo_voxel_idx_set(fresh, new_bits, i, np);
+    }
+
+    /* 5) Palette in-place auf die kompakte Variante zuruecksetzen (palette_cap
+     *    bleibt — wir geben den Puffer nicht frei, nur die genutzte Anzahl
+     *    schrumpft; das spart eine Re-Allokation und ram_statistik zaehlt
+     *    palette_cap, also wird der Cap unten ggf. verkleinert). */
+    for (uint16_t i = 0; i < new_count; i++) sec->palette[i] = new_pal[i];
+    sec->palette_count = new_count;
+
+    moo_free(sec->indices);
+    sec->indices = fresh;
+    sec->bits = new_bits;
+    return true;
+}
+
+/* Versucht, eine PALETTE-Section zu EMPTY oder SOLID herabzustufen, falls alle
+ * 512 Voxel wieder Luft bzw. eine einheitliche ID tragen; sonst kompaktiert sie
+ * nur die Palette. EMPTY/SOLID-Sections sind bereits optimal -> No-op. Reine
+ * Repraesentations-Umstellung (Lese-Resultate unveraendert). */
+static void moo_voxel_section_downgrade(MooVoxelSection* sec) {
+    if (sec->mode != MOO_VOXEL_SECTION_PALETTE) return;   /* EMPTY/SOLID optimal */
+    if (!sec->indices || !sec->palette) return;           /* defensiv */
+
+    /* Erste echte Block-ID finden und pruefen, ob ALLE 512 Voxel gleich sind. */
+    uint16_t first = moo_voxel_section_get(sec, 0);
+    bool uniform = true;
+    for (int32_t i = 1; i < MOO_VOXEL_SECTION_VOL; i++) {
+        if (moo_voxel_section_get(sec, i) != first) { uniform = false; break; }
+    }
+
+    if (uniform) {
+        if (first == 0) {
+            /* Alle Luft -> EMPTY (gibt Palette + Index-Array frei). */
+            moo_voxel_section_free(sec);                   /* setzt mode=EMPTY */
+        } else {
+            /* Alle == first (!=0) -> SOLID (0 Index-Bytes). */
+            moo_voxel_section_free(sec);                   /* free zuerst (EMPTY) */
+            sec->mode = MOO_VOXEL_SECTION_SOLID;
+            sec->solid_id = first;
+        }
+        return;
+    }
+
+    /* Nicht uniform: nur die Palette kompaktieren (ungenutzte IDs raus,
+     * Bitbreite ggf. runter). OOM ist hier unkritisch — die Section bleibt
+     * dann einfach in ihrer bisherigen, gueltigen Form. */
+    (void)moo_voxel_section_compact_palette(sec);
+}
+
+/* Optimiert einen ganzen Chunk: Downgrade aller PALETTE-Sections. Wird der
+ * Chunk dadurch komplett leer (alle 64 Sections EMPTY), kollabiert das
+ * Section-Array auf NULL (0 Datenbytes, Plan-005/006-Invariante K1 — ein leerer
+ * Chunk darf keine Header-Bytes kosten). Der Hashmap-Slot bleibt belegt
+ * (occupied), damit render_id/dirty erhalten bleiben und der naechste
+ * aktualisieren-Lauf den ggf. vorhandenen GPU-Cache regulaer abraeumt.
+ *
+ * Rueckgabe: true, wenn sich am Layout etwas geaendert hat (nur fuer Diagnostik;
+ * der Aufrufer braucht es nicht). Main-Thread-only (K5). */
+static bool moo_voxel_chunk_optimize(MooVoxelChunk* ch) {
+    if (!ch->sections) return false;                       /* schon leer */
+    for (int32_t s = 0; s < MOO_VOXEL_SECTIONS_PER_CHUNK; s++) {
+        moo_voxel_section_downgrade(&ch->sections[s]);
+    }
+    /* NULL-Kollaps, falls der Chunk jetzt komplett leer ist. */
+    bool all_empty = true;
+    for (int32_t s = 0; s < MOO_VOXEL_SECTIONS_PER_CHUNK; s++) {
+        if (ch->sections[s].mode != MOO_VOXEL_SECTION_EMPTY) { all_empty = false; break; }
+    }
+    if (all_empty) {
+        moo_voxel_chunk_free_data(ch);                     /* sections -> NULL */
+        return true;
+    }
+    return true;
+}
+
+
 /* Lazy-Allokation des 64-Eintrag-Section-Arrays beim ersten Festblock eines
  * bislang komplett leeren Chunks. memset(0) -> 64x EMPTY-Section. false bei OOM. */
 static bool moo_voxel_chunk_ensure_sections(MooVoxelChunk* ch) {
@@ -1245,6 +1445,39 @@ MooValue moo_voxel_ram_statistik(MooValue welt) {
     moo_dict_set(d, moo_string_new("bytes_sections"), moo_number((double)bytes_sections));
     return d;
 }
+
+/* Expliziter Welt-Optimierungslauf (P006-R3): stuft alle PALETTE-Sections aller
+ * belegten Chunks herab (PALETTE->SOLID/EMPTY wo wieder uniform) und kompaktiert
+ * die uebrigen Paletten (ungenutzte IDs raus, Bitbreite runter). Komplett leer
+ * gewordene Chunks kollabieren auf NULL (0 Datenbytes, K1).
+ *
+ * WANN nutzen: nach groesseren Bau-/Abbau-Sessions, vor dem Speichern, oder als
+ * periodischer Wartungslauf. Im normalen Spielbetrieb passiert der Downgrade
+ * ohnehin lazy in moo_voxel_aktualisieren (nur fuer dirty Chunks) — dieser
+ * Builtin erzwingt ihn fuer ALLE Chunks unabhaengig vom dirty-Flag und ohne
+ * 3D-Backend (rein CPU-seitig, daher auch headless / im Benchmark nutzbar).
+ *
+ * THREADING (K5): MUTIERT das Section-Layout -> ausschliesslich Main-Thread,
+ * NIE waehrend aktiver Mesh-Worker. Im single-threaded Gameplay-Modell von moo
+ * (setzen/aktualisieren/optimieren laufen seriell) ist das garantiert: zwischen
+ * zwei aktualisieren-Aufrufen ist der Threadpool gejoint, es laufen keine Worker.
+ *
+ * Rueckgabe: Anzahl der Chunks, deren Layout sich geaendert hat. Markiert
+ * geaenderte Chunks NICHT dirty — der Downgrade ist lese-resultat- und damit
+ * geometrie-neutral, ein Remesh ist nicht noetig. */
+MooValue moo_voxel_welt_optimieren(MooValue welt) {
+    MooVoxelWorld* vw = moo_voxel_check(welt, "voxel_welt_optimieren");
+    if (!vw) return moo_none();
+
+    int64_t changed = 0;
+    for (int32_t i = 0; i < vw->chunk_cap; i++) {
+        MooVoxelChunk* ch = &vw->chunks[i];
+        if (!ch->occupied || !ch->sections) continue;
+        if (moo_voxel_chunk_optimize(ch)) changed++;
+    }
+    return moo_number((double)changed);
+}
+
 
 
 /* ========================================================================
@@ -1943,6 +2176,31 @@ MooValue moo_voxel_aktualisieren(MooValue welt) {
     if (!moo_3d_backend_active()) {
         return moo_number(0.0);
     }
+
+    /* --------------------------------------------------------------------
+     * P006-R3 — Lazy Section-Downgrade (main-thread-only, K5-Invariante).
+     *
+     * GENAU HIER ist der einzige strukturell sichere Punkt fuer die Layout-
+     * Mutation: wir sind im Main-Thread, der Threadpool des VORHERIGEN Frames
+     * wurde am Ende des vorherigen aktualisieren-Aufrufs vollstaendig gejoint
+     * (pool->active==0), und der Pool dieses Frames wird erst WEITER UNTEN nach
+     * dieser Schleife per pthread_cond_broadcast geweckt. Zwischen Downgrade und
+     * Job-Submission mutiert die Welt nicht. Damit liest NIE ein Worker eine
+     * Section, die gerade von moo_voxel_section_downgrade umgebaut wird (Review-
+     * Auflage K5). Downgrade laeuft nur fuer DIRTY Chunks — saubere Chunks haben
+     * sich seit dem letzten Mesh nicht geaendert, ihr Layout ist bereits stabil.
+     *
+     * Der Downgrade ist lese-resultat-neutral (reine Repraesentations-Umstellung)
+     * und nicht teuer pro voxel_setzen (er scannt nur einmal pro Remesh-Zyklus
+     * die ohnehin neu zu meshenden Chunks, Plan-006-Risiko 4 vermieden). Wird ein
+     * Chunk dabei komplett leer, kollabiert sein Section-Array auf NULL — die
+     * nachfolgende Leerraum-Aufraeumschleife gibt dann seinen GPU-Cache frei. */
+    for (int32_t i = 0; i < vw->chunk_cap; i++) {
+        MooVoxelChunk* ch = &vw->chunks[i];
+        if (!ch->occupied || !ch->dirty || !ch->sections) continue;
+        moo_voxel_chunk_optimize(ch);
+    }
+
 
     /* Geleerte Chunks (indices==NULL) zuerst seriell aufraeumen: alte Render-ID
      * freigeben, dirty loeschen. Diese gehen NICHT in die Worker-Queue (kein
