@@ -52,6 +52,15 @@ typedef struct {
     void  (*simulate_mouse_pos)(void* ctx, float x, float y);
     void  (*simulate_mouse_button)(void* ctx, int btn, int pressed); // btn 0/1/2, pressed 0/1
     void  (*simulate_scroll)(void* ctx, float dy);
+    // Tastatur-Sim (Tri-State): key als Name-String (gleiche Konvention wie key_pressed).
+    // pressed 1 = simuliert gedrueckt, 0 = simuliert losgelassen. key_pressed liest
+    // den Sim-State ZUERST; nicht-simulierte Tasten fallen auf echten Input zurueck.
+    void  (*simulate_key)(void* ctx, const char* key, int pressed);
+    // Maus-Delta-Sim (consume-on-read, SEPARAT von simulate_mouse_pos): akkumuliert
+    // dx/dy; mouse_dx/mouse_dy konsumieren den Sim-Delta bevorzugt und nullen ihn.
+    void  (*simulate_mouse_delta)(void* ctx, float dx, float dy);
+    // Setzt alle Sim-States (Tastatur Tri-State + Maus-Delta) zurueck.
+    void  (*simulate_reset)(void* ctx);
 } Moo3DBackend;
 
 // Backend-Deklarationen (je nach Feature-Flag verfuegbar)

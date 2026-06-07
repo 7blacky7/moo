@@ -53,6 +53,10 @@ typedef struct {
     int sim_pos_active;
     float sim_x, sim_y;
     int sim_button[3];
+    /* Tastatur-Sim Tri-State: -1=nicht simuliert, 0=up, 1=down (pro GLFW-Keycode). */
+    int8_t sim_keys[GLFW_KEY_LAST + 1];
+    /* Maus-Delta-Sim (consume-on-read), SEPARAT von sim_x/sim_y (Pos). */
+    float sim_delta_x, sim_delta_y;
 } GL33Context;
 
 static void gl33_scroll_callback(GLFWwindow* w, double xoff, double yoff);
@@ -172,6 +176,8 @@ void* gl33_init_ctx_from_window(void* win_void, int w, int h) {
     /* Mouse + Scroll */
     ctx->scroll_acc_x = 0;
     ctx->scroll_acc_y = 0;
+    /* Tastatur-Sim auf "nicht simuliert" (-1); sim_delta_* sind via calloc bereits 0. */
+    memset(ctx->sim_keys, -1, sizeof(ctx->sim_keys));
     glfwSetWindowUserPointer(ctx->window, ctx);
     glfwSetScrollCallback(ctx->window, gl33_scroll_callback);
     mesh_builder_init(&ctx->builder);
@@ -411,10 +417,10 @@ static void gl33_triangle(void* vctx,
  * Backend Functions — Input
  * ======================================================== */
 
-static int gl33_key_pressed(void* vctx, const char* key) {
-    GL33Context* ctx = (GL33Context*)vctx;
-    if (!ctx || !ctx->window || !key) return 0;
-
+/* Tasten-String -> GLFW-Keycode. Gemeinsame Konvention fuer key_pressed UND
+ * simulate_key, damit der Tri-State konsistent indexiert wird. 0 = unbekannt. */
+static int gl33_keycode(const char* key) {
+    if (!key) return 0;
     int glfw_key = 0;
     if (key[1] == '\0') {
         char c = key[0];
@@ -432,8 +438,20 @@ static int gl33_key_pressed(void* vctx, const char* key) {
         else if (strcmp(key, "esc") == 0 || strcmp(key, "escape") == 0) glfw_key = GLFW_KEY_ESCAPE;
         else if (strcmp(key, "shift") == 0) glfw_key = GLFW_KEY_LEFT_SHIFT;
     }
+    return glfw_key;
+}
 
-    if (glfw_key == 0) return 0;
+static int gl33_key_pressed(void* vctx, const char* key) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx || !key) return 0;
+
+    int glfw_key = gl33_keycode(key);
+    if (glfw_key <= 0 || glfw_key > GLFW_KEY_LAST) return 0;
+
+    /* Tri-State: Sim-State ZUERST. -1 = nicht simuliert -> echter Input. */
+    if (ctx->sim_keys[glfw_key] >= 0) return ctx->sim_keys[glfw_key];
+
+    if (!ctx->window) return 0;
     return glfwGetKey(ctx->window, glfw_key) == GLFW_PRESS;
 }
 
@@ -500,7 +518,14 @@ static void gl33_capture_mouse(void* vctx) {
 
 static float gl33_mouse_dx(void* vctx) {
     GL33Context* ctx = (GL33Context*)vctx;
-    if (!ctx || !ctx->window || !ctx->mouse_captured) return 0.0f;
+    if (!ctx) return 0.0f;
+    /* Sim-Delta zuerst (consume-on-read), wie der Wheel-Akkumulator. */
+    if (ctx->sim_delta_x != 0.0f) {
+        float v = ctx->sim_delta_x;
+        ctx->sim_delta_x = 0.0f;
+        return v;
+    }
+    if (!ctx->window || !ctx->mouse_captured) return 0.0f;
     double cx, cy;
     glfwGetCursorPos(ctx->window, &cx, &cy);
     float dx = (float)(cx - ctx->last_mouse_x);
@@ -510,7 +535,13 @@ static float gl33_mouse_dx(void* vctx) {
 
 static float gl33_mouse_dy(void* vctx) {
     GL33Context* ctx = (GL33Context*)vctx;
-    if (!ctx || !ctx->window || !ctx->mouse_captured) return 0.0f;
+    if (!ctx) return 0.0f;
+    if (ctx->sim_delta_y != 0.0f) {
+        float v = ctx->sim_delta_y;
+        ctx->sim_delta_y = 0.0f;
+        return v;
+    }
+    if (!ctx->window || !ctx->mouse_captured) return 0.0f;
     double cx, cy;
     glfwGetCursorPos(ctx->window, &cx, &cy);
     float dy = (float)(cy - ctx->last_mouse_y);
@@ -571,6 +602,32 @@ static void gl33_simulate_scroll(void* vctx, float dy) {
     GL33Context* ctx = (GL33Context*)vctx;
     if (!ctx) return;
     ctx->scroll_acc_y += dy;
+}
+
+static void gl33_simulate_key(void* vctx, const char* key, int pressed) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return;
+    int glfw_key = gl33_keycode(key);
+    if (glfw_key <= 0 || glfw_key > GLFW_KEY_LAST) return;
+    ctx->sim_keys[glfw_key] = pressed ? 1 : 0;
+}
+
+static void gl33_simulate_mouse_delta(void* vctx, float dx, float dy) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return;
+    ctx->sim_delta_x += dx;
+    ctx->sim_delta_y += dy;
+}
+
+static void gl33_simulate_reset(void* vctx) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return;
+    memset(ctx->sim_keys, -1, sizeof(ctx->sim_keys));
+    ctx->sim_delta_x = 0.0f;
+    ctx->sim_delta_y = 0.0f;
+    ctx->sim_pos_active = 0;
+    ctx->sim_button[0] = ctx->sim_button[1] = ctx->sim_button[2] = 0;
+    ctx->scroll_acc_y = 0;
 }
 
 static float gl33_mouse_wheel(void* vctx) {
@@ -656,6 +713,9 @@ Moo3DBackend moo_backend_gl33 = {
     .simulate_mouse_pos = gl33_simulate_mouse_pos,
     .simulate_mouse_button = gl33_simulate_mouse_button,
     .simulate_scroll = gl33_simulate_scroll,
+    .simulate_key = gl33_simulate_key,
+    .simulate_mouse_delta = gl33_simulate_mouse_delta,
+    .simulate_reset = gl33_simulate_reset,
 };
 
 /* ========================================================

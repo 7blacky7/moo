@@ -110,6 +110,10 @@ typedef struct {
     int sim_pos_active;
     float sim_x, sim_y;
     int sim_button[3];        /* 0=LMB, 1=RMB, 2=MMB; 1 = pressed */
+    /* Tastatur-Sim Tri-State: -1=nicht simuliert, 0=up, 1=down (pro GLFW-Keycode). */
+    int8_t sim_keys[GLFW_KEY_LAST + 1];
+    /* Maus-Delta-Sim (consume-on-read), SEPARAT von sim_x/sim_y (Pos). */
+    float sim_delta_x, sim_delta_y;
 } VulkanContext;
 
 /* Forward decl */
@@ -507,6 +511,8 @@ static void* vk_create_window(const char* title, int w, int h) {
     ctx->active_chunk = -1;
     ctx->scroll_acc_x = 0;
     ctx->scroll_acc_y = 0;
+    /* Tastatur-Sim auf "nicht simuliert" (-1); sim_delta_* sind via calloc bereits 0. */
+    memset(ctx->sim_keys, -1, sizeof(ctx->sim_keys));
 
     /* Scroll-Callback registrieren (UserPointer auf VulkanContext) */
     glfwSetWindowUserPointer(win, ctx);
@@ -876,8 +882,10 @@ static void vk_triangle(void* raw,
     vk_mesh_collector_add_vertex(&ctx->mesh_collector, x3,y3,z3, r,g,b, nx,ny,nz);
 }
 
-static int vk_key_pressed(void* raw, const char* name) {
-    VulkanContext* ctx = (VulkanContext*)raw;
+/* Tasten-String -> GLFW-Keycode. Gemeinsame Konvention fuer key_pressed UND
+ * simulate_key, damit der Tri-State konsistent indexiert wird. 0 = unbekannt. */
+static int vk_keycode(const char* name) {
+    if (!name) return 0;
     int key = 0;
     if (strcmp(name, "oben") == 0 || strcmp(name, "up") == 0) key = GLFW_KEY_UP;
     else if (strcmp(name, "unten") == 0 || strcmp(name, "down") == 0) key = GLFW_KEY_DOWN;
@@ -888,7 +896,20 @@ static int vk_key_pressed(void* raw, const char* name) {
     else if (strcmp(name, "shift") == 0) key = GLFW_KEY_LEFT_SHIFT;
     else if (strlen(name) == 1 && name[0] >= 'a' && name[0] <= 'z')
         key = GLFW_KEY_A + (name[0] - 'a');
-    else return 0;
+    return key;
+}
+
+static int vk_key_pressed(void* raw, const char* name) {
+    VulkanContext* ctx = (VulkanContext*)raw;
+    if (!ctx || !name) return 0;
+
+    int key = vk_keycode(name);
+    if (key <= 0 || key > GLFW_KEY_LAST) return 0;
+
+    /* Tri-State: Sim-State ZUERST. -1 = nicht simuliert -> echter Input. */
+    if (ctx->sim_keys[key] >= 0) return ctx->sim_keys[key];
+
+    if (!ctx->window) return 0;
     return glfwGetKey(ctx->window, key) == GLFW_PRESS;
 }
 
@@ -1005,6 +1026,32 @@ static void vk_simulate_scroll(void* vctx, float dy) {
     VulkanContext* ctx = (VulkanContext*)vctx;
     if (!ctx) return;
     ctx->scroll_acc_y += dy;
+}
+
+static void vk_simulate_key(void* vctx, const char* key, int pressed) {
+    VulkanContext* ctx = (VulkanContext*)vctx;
+    if (!ctx) return;
+    int glfw_key = vk_keycode(key);
+    if (glfw_key <= 0 || glfw_key > GLFW_KEY_LAST) return;
+    ctx->sim_keys[glfw_key] = pressed ? 1 : 0;
+}
+
+static void vk_simulate_mouse_delta(void* vctx, float dx, float dy) {
+    VulkanContext* ctx = (VulkanContext*)vctx;
+    if (!ctx) return;
+    ctx->sim_delta_x += dx;
+    ctx->sim_delta_y += dy;
+}
+
+static void vk_simulate_reset(void* vctx) {
+    VulkanContext* ctx = (VulkanContext*)vctx;
+    if (!ctx) return;
+    memset(ctx->sim_keys, -1, sizeof(ctx->sim_keys));
+    ctx->sim_delta_x = 0.0f;
+    ctx->sim_delta_y = 0.0f;
+    ctx->sim_pos_active = 0;
+    ctx->sim_button[0] = ctx->sim_button[1] = ctx->sim_button[2] = 0;
+    ctx->scroll_acc_y = 0;
 }
 
 static float vk_mouse_wheel(void* vctx) {
@@ -1272,4 +1319,7 @@ Moo3DBackend moo_backend_vulkan = {
     .simulate_mouse_pos = vk_simulate_mouse_pos,
     .simulate_mouse_button = vk_simulate_mouse_button,
     .simulate_scroll = vk_simulate_scroll,
+    .simulate_key = vk_simulate_key,
+    .simulate_mouse_delta = vk_simulate_mouse_delta,
+    .simulate_reset = vk_simulate_reset,
 };

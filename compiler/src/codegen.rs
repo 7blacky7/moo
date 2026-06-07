@@ -2713,6 +2713,24 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_3d_simulate_scroll, &[a[0].into(), a[1].into()], "sim_scroll")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    // Tastatur-Sim (Tri-State, Plan-008 A1a). Args: (fenster, taste, gedrueckt)
+                    "raum_sim_taste" | "test_sim_taste" | "space_sim_key" | "3d_sim_taste" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_simulate_key, &[a[0].into(), a[1].into(), a[2].into()], "sim_key")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // Maus-Delta-Sim (consume-on-read, Plan-008 A1b). Args: (fenster, dx, dy)
+                    "raum_sim_maus_delta" | "test_sim_maus_delta" | "space_sim_mouse_delta" | "3d_sim_maus_delta" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_simulate_mouse_delta, &[a[0].into(), a[1].into(), a[2].into()], "sim_mdelta")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // Sim-Reset (Plan-008 A1; volle 2D/3D-Tag-Dispatch folgt in A2). Args: (fenster)
+                    "raum_sim_reset" | "test_sim_reset" | "space_sim_reset" | "3d_sim_reset" => {
+                        let win = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_3d_simulate_reset, &[win.into()], "sim_reset")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     "raum_screenshot_bmp" | "raum_screenshot" | "3d_screenshot_bmp" | "space_screenshot" => {
                         let win = self.compile_expr(&args[0])?;
                         let path = self.compile_expr(&args[1])?;

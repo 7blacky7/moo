@@ -389,3 +389,30 @@ void moo_3d_simulate_scroll(MooValue win, MooValue dy) {
     if (!g_backend || !g_ctx || !g_backend->simulate_scroll) return;
     g_backend->simulate_scroll(g_ctx, (float)MV_NUM(dy));
 }
+
+/* Tastatur-Sim (Tri-State, S3). key als Name-String (gleiche Konvention wie
+ * raum_taste/key_pressed). pressed: bool oder Zahl (!=0 => gedrueckt). */
+void moo_3d_simulate_key(MooValue win, MooValue key, MooValue pressed) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->simulate_key) return;
+    if (key.tag != MOO_STRING) return;
+    int p = 0;
+    if (pressed.tag == MOO_BOOL) p = MV_BOOL(pressed) ? 1 : 0;
+    else if (pressed.tag == MOO_NUMBER) p = MV_NUM(pressed) != 0 ? 1 : 0;
+    g_backend->simulate_key(g_ctx, MV_STR(key)->chars, p);
+}
+
+/* Maus-Delta-Sim (consume-on-read, S4), SEPARAT von simulate_mouse_pos. */
+void moo_3d_simulate_mouse_delta(MooValue win, MooValue dx, MooValue dy) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->simulate_mouse_delta) return;
+    g_backend->simulate_mouse_delta(g_ctx, (float)MV_NUM(dx), (float)MV_NUM(dy));
+}
+
+/* Setzt alle Sim-States zurueck (Tastatur Tri-State + Maus-Delta + Pos + Button
+ * + Wheel), damit Sim das Normalspiel nicht dauerhaft blockiert. */
+void moo_3d_simulate_reset(MooValue win) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->simulate_reset) return;
+    g_backend->simulate_reset(g_ctx);
+}
