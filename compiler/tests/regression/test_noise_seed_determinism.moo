@@ -5,12 +5,13 @@
 # liefern; benachbarte Seeds muessen sich unterscheiden. Beobachtbar auf
 # moo-Ebene ueber voxel_welt_neu(seed) + voxel_holen entlang einer Saeule.
 #
-# HINWEIS (Stand Phase 1a): voxel_welt_neu speichert den Seed, aber die
-# prozedurale Worldgen folgt erst spaeter (RT1: "Worldgen folgt spaeter").
-# Solange Worldgen fehlt liefern alle Saeulen Luft (0) -> dieser Test bleibt
-# bis dahin ROT (Block "verschieden" schlaegt fehl, weil alle Welten leer sind).
-# Das ist beabsichtigt und Teil der Akzeptanz: gruen sobald Worldgen + Seed
-# wirken. Der C-Level-Determinismus ist bereits separat gruen (moo_noise.c, RT0).
+# HINWEIS (Stand RT5): Worldgen ist da. voxel_holen bleibt ein REINER
+# Lesezugriff (P0.5-Contract: nie beschriebener Chunk = Luft, kein Lazy-Gen —
+# das schuetzen test_voxel_empty_chunk_air / _refcount_release). Terrain wird
+# deshalb EXPLIZIT erzeugt: welt_signatur ruft voxel_generieren(w, cx, cz) fuer
+# die horizontalen Chunk-Spalten der Probepunkte, BEVOR die Saeulen gelesen
+# werden. Generieren ist seed-deterministisch (moo_noise_fbm) -> gleicher Seed
+# liefert identische Saeulen, benachbarter Seed verschiedene.
 
 # Fuellstand einer Saeule bei (x,z): Anzahl nicht-Luft-Bloecke von y=0..63.
 # Determinismus heisst: gleiche Eingaben -> gleicher Fuellstand.
@@ -26,6 +27,12 @@ funktion saeule_summe(w, x, z):
 # Signatur einer Welt: Fuellstaende an mehreren Probepunkten kombiniert.
 funktion welt_signatur(seed):
     setze w auf voxel_welt_neu(seed)
+    # Terrain explizit erzeugen: horizontale Chunk-Spalten der Probepunkte
+    # (Chunk-Dim 32). Probepunkte (0,0)/(5,7) -> Chunk (0,0);
+    # (-3,12) -> Chunk (-1,0); (20,-8) -> Chunk (0,-1).
+    voxel_generieren(w, 0, 0)
+    voxel_generieren(w, -1, 0)
+    voxel_generieren(w, 0, -1)
     setze sig auf 0
     setze sig auf sig + saeule_summe(w, 0, 0)
     setze sig auf sig + saeule_summe(w, 5, 7) * 31

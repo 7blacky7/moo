@@ -100,6 +100,14 @@ static long g_last_chunk_triangles = 0;/* Dreiecke des zuletzt geschlossenen Chu
 
 int moo_3d_backend_active(void) { return g_backend_active; }
 
+/* Noise-Stub: moo_voxel.c referenziert seit RT5 moo_noise_fbm (Lazy-Worldgen
+ * in voxel_holen). Dieser Harness ruft voxel_holen nicht auf -> Stub dient nur
+ * dem Linken (moo_noise.c wird hier nicht mitkompiliert). */
+float moo_noise_fbm(int seed, float x, float y, int octaves, float freq, float amp) {
+    (void)seed; (void)x; (void)y; (void)octaves; (void)freq; (void)amp;
+    return 0.0f;
+}
+
 MooValue moo_3d_chunk_create(void) {
     if (!g_backend_active) { /* echtes moo_3d_chunk_create wuerde werfen */
         moo_throw(moo_error("Kein 3D-Backend aktiv"));

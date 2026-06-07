@@ -572,6 +572,11 @@ MooValue moo_hybrid_sprite_load(MooValue win, MooValue path);
 MooValue moo_voxel_welt_neu(MooValue seed);
 MooValue moo_voxel_setzen(MooValue welt, MooValue x, MooValue y, MooValue z, MooValue block_id);
 MooValue moo_voxel_holen(MooValue welt, MooValue x, MooValue y, MooValue z);
+/* Worldgen (Plan-005 RT5): generiert die vertikale Chunk-Saeule fuer die
+ * horizontale Chunk-Position (cx,cz) seed-deterministisch (Heightmap via
+ * moo_noise_fbm). voxel_holen generiert noch nie beruehrte Chunks ausserdem
+ * lazy beim ersten Lesezugriff. */
+MooValue moo_voxel_generieren(MooValue welt, MooValue cx, MooValue cz);
 MooValue moo_voxel_chunk_entladen(MooValue welt, MooValue x, MooValue y, MooValue z);
 MooValue moo_voxel_ram_statistik(MooValue welt);
 // Phase 1b (Mesher): baut/aktualisiert die GPU-Render-Geometrie eines Chunks

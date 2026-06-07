@@ -39,6 +39,7 @@
  */
 
 #include "moo_runtime.h"
+#include "moo_noise.h"   /* seed-parametrisierte fBm/Perlin (Plan-005 P0.3, RT0) */
 
 /* ========================================================================
  * Forward-Decls der 3D-Chunk-API (Plan-005 1b).
@@ -78,6 +79,24 @@ extern void     moo_3d_chunk_delete(MooValue id);
 
 /* Anfangskapazitaet der Chunk-Hashmap (Power-of-two fuer &-Maskierung). */
 #define MOO_VOXEL_INITIAL_CAP  16
+
+/* ------------------------------------------------------------------------
+ * Worldgen-Parameter (Plan-005 RT5, minimaler Heightmap-Terrain).
+ *
+ * Vertikale Achse ist die Z-Achse (3. Voxel-Koordinate). Die Heightmap ist
+ * eine Funktion der beiden horizontalen Welt-Koordinaten (wx,wy) und damit
+ * seed-deterministisch (moo_noise_fbm, KEIN globaler State). Schichten von
+ * oben nach unten: gras (Oberflaeche ueber Wasserlinie) bzw. sand (Oberflaeche
+ * auf/unter Wasserlinie), darunter wenige Lagen erde, darunter stein. Unter
+ * dem Meeresspiegel und oberhalb der Terrain-Oberflaeche wird wasser (opak)
+ * aufgefuellt.
+ * ------------------------------------------------------------------------ */
+#define MOO_VOXEL_GEN_SEA_LEVEL   16   /* Meeresspiegel (Welt-Z) */
+#define MOO_VOXEL_GEN_BASE_HEIGHT 18   /* mittlere Terrainhoehe (Welt-Z) */
+#define MOO_VOXEL_GEN_AMPLITUDE   14   /* +/- Auslenkung der Heightmap */
+#define MOO_VOXEL_GEN_DIRT_DEPTH  4    /* Lagen Erde unter der Oberflaeche */
+#define MOO_VOXEL_GEN_OCTAVES     4    /* fBm-Oktaven */
+#define MOO_VOXEL_GEN_FREQ        0.035f /* horizontale Grundfrequenz */
 
 /* ========================================================================
  * Datenstrukturen
@@ -418,6 +437,98 @@ static void moo_voxel_mark_dirty(MooVoxelWorld* w, int32_t cx, int32_t cy, int32
 }
 
 /* ========================================================================
+ * Phase 1a/RT5: Minimaler prozeduraler Worldgen (Heightmap)
+ *
+ * Vollstaendig SEED-DETERMINISTISCH und ZUSTANDSLOS: jede Block-ID ist eine
+ * reine Funktion von (seed, wx, wy, wz) ueber moo_noise_fbm (kein globaler
+ * Noise-State, Plan-005 P0.3). Daraus folgt: gleicher Seed -> identische
+ * Saeulen; benachbarte Seeds -> verschiedene Saeulen (Akzeptanz von
+ * test_noise_seed_determinism).
+ *
+ * Achsen-Konvention: Z ist die VERTIKALE Achse (3. Voxel-Koordinate). Die
+ * Heightmap haengt nur von den horizontalen Welt-Koordinaten (wx,wy) ab.
+ * ======================================================================== */
+
+/* Terrain-Oberflaechenhoehe (Welt-Z) an horizontaler Position (wx,wy).
+ * Hoechster solider Block der Saeule liegt bei z == height-1. */
+static int32_t moo_voxel_gen_height(uint32_t seed, int32_t wx, int32_t wy) {
+    float n = moo_noise_fbm((int)seed,
+                            (float)wx * MOO_VOXEL_GEN_FREQ,
+                            (float)wy * MOO_VOXEL_GEN_FREQ,
+                            MOO_VOXEL_GEN_OCTAVES,
+                            /*freq*/ 1.0f,
+                            /*amp*/  1.0f);
+    /* n liegt ca. in [-1,1] -> auf Basis +/- Amplitude abbilden. */
+    int32_t h = MOO_VOXEL_GEN_BASE_HEIGHT + (int32_t)floorf(n * (float)MOO_VOXEL_GEN_AMPLITUDE);
+    if (h < 1) h = 1;   /* mind. ein solider Block, damit es nie reine Luft ist */
+    return h;
+}
+
+/* Block-ID am Welt-Voxel (wx,wy,wz). Reine Funktion (deterministisch). */
+static uint16_t moo_voxel_gen_block(uint32_t seed, int32_t wx, int32_t wy, int32_t wz) {
+    int32_t h = moo_voxel_gen_height(seed, wx, wy);
+    if (wz >= h) {
+        /* Ueber dem Terrain: Wasser bis Meeresspiegel (opak), sonst Luft. */
+        if (wz < MOO_VOXEL_GEN_SEA_LEVEL) return 5; /* wasser */
+        return 0;                                   /* luft */
+    }
+    /* Innerhalb des Terrains. */
+    if (wz == h - 1) {
+        /* Oberflaeche: unter/auf Wasserlinie -> sand, sonst gras. */
+        if (h - 1 < MOO_VOXEL_GEN_SEA_LEVEL) return 4; /* sand */
+        return 1;                                       /* gras */
+    }
+    if (wz >= h - 1 - MOO_VOXEL_GEN_DIRT_DEPTH) return 2; /* erde */
+    return 3;                                             /* stein */
+}
+
+/* Generiert genau EINEN Chunk (cx,cy,cz) aus der Heightmap und claimt seinen
+ * Hashmap-Slot. occupied wird IMMER gesetzt (auch fuer reine Luft-Chunks),
+ * damit der Lese-Pfad (moo_voxel_holen) einen bereits generierten Chunk nicht
+ * erneut generiert. Schreibzugriffe laufen ueber die Palette-Schicht
+ * (chunk_block_set) — kein direkter Array-Zugriff. Gibt false bei OOM. */
+static bool moo_voxel_gen_chunk(MooVoxelWorld* w, int32_t cx, int32_t cy, int32_t cz) {
+    /* Last-Factor 0.75: ggf. wachsen, damit immer ein freier Slot existiert. */
+    if ((w->chunk_count + 1) * 4 >= w->chunk_cap * 3) {
+        if (!moo_voxel_grow(w)) return false;
+    }
+    int32_t slot = moo_voxel_find_slot(w, cx, cy, cz);
+    MooVoxelChunk* ch = &w->chunks[slot];
+    if (!ch->occupied) {
+        ch->occupied = true;
+        ch->cx = cx; ch->cy = cy; ch->cz = cz;
+        ch->palette = NULL;
+        ch->indices = NULL;
+        ch->palette_count = 0;
+        ch->palette_cap = 0;
+        ch->bits = 0;
+        ch->render_id = -1;
+        ch->dirty = true;
+        w->chunk_count++;
+    }
+
+    int32_t base_x = cx * MOO_VOXEL_CHUNK_DIM;
+    int32_t base_y = cy * MOO_VOXEL_CHUNK_DIM;
+    int32_t base_z = cz * MOO_VOXEL_CHUNK_DIM;
+
+    for (int32_t lx = 0; lx < MOO_VOXEL_CHUNK_DIM; lx++) {
+        for (int32_t ly = 0; ly < MOO_VOXEL_CHUNK_DIM; ly++) {
+            int32_t wx = base_x + lx;
+            int32_t wy = base_y + ly;
+            for (int32_t lz = 0; lz < MOO_VOXEL_CHUNK_DIM; lz++) {
+                uint16_t id = moo_voxel_gen_block(w->seed, wx, wy, base_z + lz);
+                if (id == 0) continue; /* Luft: nichts schreiben (Chunk bleibt sparsam) */
+                if (!moo_voxel_chunk_block_set(ch, moo_voxel_local_index(lx, ly, lz), id)) {
+                    return false;
+                }
+            }
+        }
+    }
+    ch->dirty = true; /* Geometrie neu -> Remesh noetig (siehe aktualisieren) */
+    return true;
+}
+
+/* ========================================================================
  * Oeffentliche API
  * ======================================================================== */
 
@@ -451,6 +562,38 @@ MooValue moo_voxel_welt_neu(MooValue seed) {
     result.tag = MOO_VOXELWORLD;
     moo_val_set_ptr(&result, vw);
     return result;
+}
+
+/* Generiert die vollstaendige vertikale (Z-)Chunk-Saeule fuer die horizontale
+ * Chunk-Position (cx, cz). cx/cz sind hier die beiden HORIZONTALEN Chunk-
+ * Koordinaten (X- und Y-Chunkindex); die vertikale Z-Achse wird ueber den
+ * gesamten Terrain-Hoehenbereich automatisch aufgespannt. Seed-deterministisch
+ * (siehe moo_voxel_gen_block). Idempotent: bereits generierte Chunks bleiben
+ * erhalten (occupied). Rueckgabe: Anzahl generierter (neuer) Chunks. */
+MooValue moo_voxel_generieren(MooValue welt, MooValue cx_v, MooValue cz_v) {
+    MooVoxelWorld* vw = moo_voxel_check(welt, "voxel_generieren");
+    if (!vw) return moo_none();
+
+    int32_t cx = moo_voxel_coord(cx_v);  /* horizontaler X-Chunkindex */
+    int32_t cy = moo_voxel_coord(cz_v);  /* horizontaler Y-Chunkindex */
+
+    /* Vertikaler Z-Bereich: vom Boden (Welt-Z 0) bis ueber die hoechstmoegliche
+     * Oberflaeche bzw. Wasserlinie. */
+    int32_t max_z = MOO_VOXEL_GEN_BASE_HEIGHT + MOO_VOXEL_GEN_AMPLITUDE;
+    if (MOO_VOXEL_GEN_SEA_LEVEL > max_z) max_z = MOO_VOXEL_GEN_SEA_LEVEL;
+    int32_t cz_lo = moo_voxel_floordiv(0, MOO_VOXEL_CHUNK_DIM);
+    int32_t cz_hi = moo_voxel_floordiv(max_z, MOO_VOXEL_CHUNK_DIM);
+
+    int64_t neu = 0;
+    for (int32_t cz = cz_lo; cz <= cz_hi; cz++) {
+        if (moo_voxel_lookup(vw, cx, cy, cz)) continue; /* schon da */
+        if (!moo_voxel_gen_chunk(vw, cx, cy, cz)) {
+            moo_throw(moo_error("Voxel-Fehler in voxel_generieren: Worldgen-Speicher erschoepft"));
+            return moo_none();
+        }
+        neu++;
+    }
+    return moo_number((double)neu);
 }
 
 MooValue moo_voxel_setzen(MooValue welt, MooValue x, MooValue y, MooValue z, MooValue block_id) {
@@ -552,7 +695,11 @@ MooValue moo_voxel_holen(MooValue welt, MooValue x, MooValue y, MooValue z) {
     int32_t slot = moo_voxel_find_slot(vw, cx, cy, cz);
     MooVoxelChunk* ch = &vw->chunks[slot];
     if (!ch->occupied || !ch->indices) {
-        /* Nie allokierter / leerer Chunk = Luft. */
+        /* Nie allokierter / leerer Chunk = Luft. voxel_holen ist ein REINER
+         * Lesezugriff (P0.5-Contract): es generiert NICHT lazy, damit nie
+         * beschriebene Chunks deterministisch Luft liefern (Pflichttests
+         * test_voxel_empty_chunk_air / _refcount_release). Worldgen laeuft
+         * explizit ueber moo_voxel_generieren. */
         return moo_number(0.0);
     }
 

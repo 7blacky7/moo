@@ -132,6 +132,12 @@ static void free_tracked_dicts(void) {
 /* Raycast/AABB beruehren die 3D-API nicht; die Stubs existieren nur fuers
  * Linken von moo_voxel.c. */
 int      moo_3d_backend_active(void) { return 0; }
+/* Noise-Stub: moo_voxel.c referenziert seit RT5 moo_noise_fbm. Raycast/AABB
+ * triggern keinen Worldgen (nur lookup-basierte Accessors) -> Stub fuers Linken. */
+float moo_noise_fbm(int seed, float x, float y, int octaves, float freq, float amp) {
+    (void)seed; (void)x; (void)y; (void)octaves; (void)freq; (void)amp;
+    return 0.0f;
+}
 MooValue moo_3d_chunk_create(void)   { return moo_number(-1.0); }
 void     moo_3d_chunk_begin(MooValue id) { (void)id; }
 void     moo_3d_chunk_end(void)      { }

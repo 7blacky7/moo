@@ -2725,6 +2725,14 @@ impl<'ctx> CodeGen<'ctx> {
                         let seed = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_voxel_welt_neu, &[seed.into()], "voxel_welt_neu");
                     }
+                    // Worldgen (Plan-005 RT5): generieren(welt, cx, cz) -> Anzahl neuer Chunks.
+                    // Heightmap seed-deterministisch via moo_noise_fbm; voxel_holen generiert
+                    // unberuehrte Chunks zusaetzlich lazy beim ersten Lesen.
+                    "voxel_generieren" | "voxel_generate" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_voxel_generieren,
+                            &[a[0].into(), a[1].into(), a[2].into()], "voxel_generieren");
+                    }
                     "voxel_setzen" | "block_setzen" | "set_block" => {
                         let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_voxel_setzen,

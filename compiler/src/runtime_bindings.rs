@@ -212,6 +212,7 @@ pub struct RuntimeBindings<'ctx> {
     // Voxel-Welt (Plan-005 Phase 1a Kern). Wie alle 3D-Builtins UNBEDINGT
     // deklariert (kein #[cfg]); Gating erfolgt rein auf C-Link-Ebene via build.rs.
     pub moo_voxel_welt_neu: FunctionValue<'ctx>,
+    pub moo_voxel_generieren: FunctionValue<'ctx>,
     pub moo_voxel_setzen: FunctionValue<'ctx>,
     pub moo_voxel_holen: FunctionValue<'ctx>,
     pub moo_voxel_ram_statistik: FunctionValue<'ctx>,
@@ -762,6 +763,8 @@ impl<'ctx> RuntimeBindings<'ctx> {
             // Voxel-Welt (Plan-005 Phase 1a). Signaturen exakt nach RT1-C-API
             // (moo_runtime.h): alle MooValue-in/MooValue-out.
             moo_voxel_welt_neu: decl_mv_mv!("moo_voxel_welt_neu", mv1),
+            //   moo_voxel_generieren(welt, cx, cz) -> Number (neue Chunks)  (3 Args = mv3)
+            moo_voxel_generieren: decl_mv_mv!("moo_voxel_generieren", mv3),
             moo_voxel_setzen: decl_mv_mv!("moo_voxel_setzen", mv5),
             moo_voxel_holen: decl_mv_mv!("moo_voxel_holen", mv4),
             moo_voxel_ram_statistik: decl_mv_mv!("moo_voxel_ram_statistik", mv1),

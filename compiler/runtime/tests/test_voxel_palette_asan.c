@@ -93,6 +93,14 @@ static void dict_free(MooValue dict) {
     free(d->e); free(d);
 }
 
+/* Noise-Stub: moo_voxel.c referenziert seit RT5 moo_noise_fbm (Lazy-Worldgen in
+ * voxel_holen). Die Palette-Tests lesen nur Chunks, die zuvor per setzen belegt
+ * wurden (occupied) -> kein Lazy-Worldgen -> Stub dient nur dem Linken. */
+float moo_noise_fbm(int seed, float x, float y, int octaves, float freq, float amp) {
+    (void)seed; (void)x; (void)y; (void)octaves; (void)freq; (void)amp;
+    return 0.0f;
+}
+
 /* 3D-API-Stubs (Palette/CPU-Pfad fasst sie nie an, aber moo_voxel.c linkt sie). */
 MooValue moo_3d_chunk_create(void) { return moo_number(-1.0); }
 void     moo_3d_chunk_begin(MooValue id) { (void)id; }
