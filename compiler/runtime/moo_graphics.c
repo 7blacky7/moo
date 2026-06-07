@@ -8,6 +8,7 @@
 
 // === MooWindow Struktur ===
 typedef struct {
+    int32_t refcount;
     SDL_Window* window;
     SDL_Renderer* renderer;
     bool open;
@@ -71,6 +72,53 @@ static void set_color(SDL_Renderer* r, Color c) {
 // Fenster-Funktionen (K2)
 // ============================================================
 
+#define MAX_OPEN_WINDOWS 16
+static MooWindow* g_open_windows[MAX_OPEN_WINDOWS] = {0};
+
+static void register_window(MooWindow* mw) {
+    for (int i = 0; i < MAX_OPEN_WINDOWS; i++) {
+        if (!g_open_windows[i]) {
+            g_open_windows[i] = mw;
+            break;
+        }
+    }
+}
+
+static void unregister_window(MooWindow* mw) {
+    for (int i = 0; i < MAX_OPEN_WINDOWS; i++) {
+        if (g_open_windows[i] == mw) {
+            g_open_windows[i] = NULL;
+            break;
+        }
+    }
+}
+
+void moo_pump_events(void) {
+    if (!SDL_WasInit(SDL_INIT_VIDEO)) return;
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+        if (e.type == SDL_QUIT) {
+            for (int i = 0; i < MAX_OPEN_WINDOWS; i++) {
+                if (g_open_windows[i]) {
+                    g_open_windows[i]->open = false;
+                }
+            }
+        } else if (e.type == SDL_WINDOWEVENT) {
+            if (e.window.event == SDL_WINDOWEVENT_CLOSE) {
+                Uint32 win_id = e.window.windowID;
+                for (int i = 0; i < MAX_OPEN_WINDOWS; i++) {
+                    if (g_open_windows[i] && g_open_windows[i]->window) {
+                        Uint32 id = SDL_GetWindowID(g_open_windows[i]->window);
+                        if (id == win_id) {
+                            g_open_windows[i]->open = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 MooValue moo_window_create(MooValue title, MooValue width, MooValue height) {
     if (SDL_WasInit(SDL_INIT_VIDEO) == 0) {
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
@@ -100,9 +148,11 @@ MooValue moo_window_create(MooValue title, MooValue width, MooValue height) {
     }
 
     MooWindow* mw = (MooWindow*)malloc(sizeof(MooWindow));
+    mw->refcount = 1;
     mw->window = win;
     mw->renderer = ren;
     mw->open = true;
+    register_window(mw);
 
     MooValue result;
     result.tag = MOO_WINDOW;
@@ -115,14 +165,8 @@ MooValue moo_window_is_open(MooValue window) {
     MooWindow* mw = (MooWindow*)moo_val_as_ptr(window);
     if (!mw->open) return moo_bool(false);
 
-    SDL_Event e;
-    while (SDL_PollEvent(&e)) {
-        if (e.type == SDL_QUIT) {
-            mw->open = false;
-            return moo_bool(false);
-        }
-    }
-    return moo_bool(true);
+    moo_pump_events();
+    return moo_bool(mw->open);
 }
 
 void moo_window_clear(MooValue window, MooValue color) {
@@ -142,11 +186,29 @@ void moo_window_update(MooValue window) {
 void moo_window_close(MooValue window) {
     if (window.tag != MOO_WINDOW) return;
     MooWindow* mw = (MooWindow*)moo_val_as_ptr(window);
-    if (mw->renderer) SDL_DestroyRenderer(mw->renderer);
-    if (mw->window) SDL_DestroyWindow(mw->window);
-    mw->renderer = NULL;
-    mw->window = NULL;
+    unregister_window(mw);
+    if (mw->renderer) {
+        SDL_DestroyRenderer(mw->renderer);
+        mw->renderer = NULL;
+    }
+    if (mw->window) {
+        SDL_DestroyWindow(mw->window);
+        mw->window = NULL;
+    }
     mw->open = false;
+}
+
+void moo_window_free(void* ptr) {
+    if (!ptr) return;
+    MooWindow* mw = (MooWindow*)ptr;
+    unregister_window(mw);
+    if (mw->renderer) {
+        SDL_DestroyRenderer(mw->renderer);
+    }
+    if (mw->window) {
+        SDL_DestroyWindow(mw->window);
+    }
+    free(mw);
 }
 
 // ============================================================

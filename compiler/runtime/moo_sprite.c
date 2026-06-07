@@ -33,6 +33,7 @@ static int img_initialized = 0;
 
 /* Holt den SDL_Renderer aus einem MooWindow (MOO_WINDOW Tag) */
 typedef struct {
+    int32_t refcount;
     SDL_Window* window;
     SDL_Renderer* renderer;
     bool open;
