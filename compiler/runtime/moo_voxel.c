@@ -59,13 +59,21 @@
  *     gleicher Block-ID UND gleichem AO-Wert pro 2D-Slice; Vertex-AO (0..3) aus
  *     den 3 diagonalen Nachbarn je Ecke. AO an Chunk-Grenzen liest diagonale
  *     Nachbarn ueber moo_voxel_world_block (Daten sind da -> AO ist KORREKT).
- *     OFFENE GRENZE (dokumentiert, sauberer Folge-Task statt Hack): die
- *     Dirty-Propagation in moo_voxel_setzen markiert weiterhin nur die 6 FACE-
- *     Nachbarn (Plan-1b-Contract, von den QA-Harnesses fest geprueft). Aendert
- *     sich ein DIAGONALER Nachbar, wird die Boundary-AO des Nachbarchunks nicht
- *     automatisch neu getriggert (Staleness, kein Crash/Leak). Die Erweiterung
- *     auf 18/26-Nachbarn-Dirty wuerde den geprueften 6-Nachbarn-Contract aendern
- *     und ist als Folge-Task empfohlen.
+ *     BOUNDARY-AO-DIRTY (P006-R4, GELOEST via Dirty-Flag-Splitting): der Chunk
+ *     traegt ZWEI Flags. `dirty` = Face/Inhalt veraltet (Plan-1b-Contract: die 6
+ *     FACE-Nachbarn werden in moo_voxel_setzen markiert, von den QA-Harnesses
+ *     fest geprueft — UNVERAENDERT). `dirty_ao` = nur die an der Grenze gelesene
+ *     Vertex-AO ist stale, weil ein DIAGONALER (Kanten-/Eck-)Nachbar geaendert
+ *     wurde. moo_voxel_setzen markiert ADDITIV genau die diagonalen Nachbarn
+ *     (>=2 Nicht-Null-Offset-Komponenten), die das Randvoxel via ihrer
+ *     (DIM+2)^3-Pad-Schale ueberhaupt samplen: Kanten-Voxel -> +1 Diagonale
+ *     (bis 18 gesamt), Eck-Voxel -> +3 Kanten +1 Eck-Nachbar (bis 26 gesamt).
+ *     Innen-/Flaechen-Edits markieren KEINE Diagonalen (kein Overhead). In
+ *     moo_voxel_aktualisieren loesen `dirty` UND `dirty_ao` denselben vollen
+ *     Greedy+AO-Remesh aus (der Mesher liest die Diagonalen ohnehin via
+ *     pad_fill); beim Upload werden beide Flags geloescht. Damit ist die AO an
+ *     Chunk-Grenzen korrekt, OHNE pauschal 26 Nachbarn zu remeshen (Plan-006-
+ *     Risiko 5: Remesh-Kaskaden vermieden, Overhead gemessen in P006-R4-Thought).
  *
  * Phase R3 (Plan-006 P006-R3, Agent p006-r3) — Mutation/Downgrade-Optimierung:
  *   - Der Einzel-Write-Pfad (voxel_setzen) wertet Sections nur AUF (EMPTY->
@@ -255,7 +263,14 @@ typedef struct {
     MooVoxelSection* sections;     /* 64 Sections (4x4x4), NULL = komplett leerer Chunk */
     bool      occupied;     /* Hashmap-Slot belegt? */
     int32_t   render_id;    /* GPU-Render-Chunk-ID, -1 = kein Cache (CPU/GPU getrennt) */
-    bool      dirty;        /* true = Geometrie veraltet, remesh noetig */
+    bool      dirty;        /* true = Geometrie/Faces veraltet, remesh noetig (Face-Dirty) */
+    bool      dirty_ao;     /* P006-R4: true = NUR Boundary-AO dieses Chunks ist stale,
+                             * weil ein DIAGONALER (Kanten-/Eck-)Nachbar geaendert wurde.
+                             * Inhalt/Faces unveraendert; ein voller Greedy+AO-Remesh
+                             * (liest die Diagonalen via pad_fill) stellt die AO wieder
+                             * her. Wird wie dirty behandelt: aktualisieren remesht den
+                             * Chunk und loescht BEIDE Flags. Additiv zum 6-Face-Dirty-
+                             * Contract (Plan-005 1b) — Face-Dirty-Semantik bleibt. */
 } MooVoxelChunk;
 
 /* VoxelWorld: opaker Heap-Typ. refcount MUSS erstes Feld sein. */
@@ -946,6 +961,19 @@ static void moo_voxel_mark_dirty(MooVoxelWorld* w, int32_t cx, int32_t cy, int32
     if (ch) ch->dirty = true;
 }
 
+/* P006-R4: Markiert einen BEREITS EXISTIERENDEN Nachbar-Chunk fuer einen
+ * AO-only-Remesh (Boundary-AO stale durch Aenderung in einem DIAGONALEN
+ * Nachbarn). Setzt nur dirty_ao, NICHT dirty: der Chunk-Inhalt hat sich nicht
+ * geaendert, nur seine an der Grenze gelesene Vertex-AO. Setzt dirty_ao auch
+ * dann nicht, wenn der Chunk ohnehin schon (Face-)dirty ist? -> doch, harmlos:
+ * aktualisieren remesht ihn so oder so genau einmal und loescht beide Flags.
+ * Nicht-allokierte Nachbarn (reine Luft) werden NICHT angelegt — sie haben
+ * keine Geometrie, also auch keine Boundary-AO zu reparieren. */
+static void moo_voxel_mark_dirty_ao(MooVoxelWorld* w, int32_t cx, int32_t cy, int32_t cz) {
+    MooVoxelChunk* ch = moo_voxel_lookup(w, cx, cy, cz);
+    if (ch) ch->dirty_ao = true;
+}
+
 /* ========================================================================
  * Phase 1a/RT5: Minimaler prozeduraler Worldgen (Heightmap)
  *
@@ -1259,6 +1287,7 @@ MooValue moo_voxel_setzen(MooValue welt, MooValue x, MooValue y, MooValue z, Moo
         ch->sections = NULL;  /* komplett leerer Chunk = NULL (Plan-006) */
         ch->render_id = -1;   /* noch kein GPU-Cache */
         ch->dirty = true;     /* neu -> braucht Mesh */
+        ch->dirty_ao = false; /* P006-R4: frischer Chunk wird ohnehin voll gemesht */
         vw->chunk_count++;
     }
 
@@ -1286,6 +1315,55 @@ MooValue moo_voxel_setzen(MooValue welt, MooValue x, MooValue y, MooValue z, Moo
     if (ly == MOO_VOXEL_CHUNK_DIM - 1)    moo_voxel_mark_dirty(vw, cx, cy + 1, cz);
     if (lz == 0)                          moo_voxel_mark_dirty(vw, cx, cy, cz - 1);
     if (lz == MOO_VOXEL_CHUNK_DIM - 1)    moo_voxel_mark_dirty(vw, cx, cy, cz + 1);
+
+    /* --------------------------------------------------------------------
+     * P006-R4 — AO-Dirty fuer DIAGONALE (Kanten-/Eck-)Nachbarn.
+     *
+     * Der Greedy+AO-Mesher liest pro Chunk ueber pad_fill einen
+     * (DIM+2)^3-Rand: jeder Chunk samplet 1 Voxel TIEF in jeden seiner 26
+     * Nachbarn hinein (fuer Face-Cull UND fuer Boundary-Vertex-AO). Aendert
+     * sich ein RANDvoxel von Chunk C, ist nicht nur die zugewandte Flaeche der
+     * 6 Face-Nachbarn betroffen (oben markiert), sondern auch die an der
+     * Kante/Ecke ANLIEGENDE Boundary-AO der diagonalen Nachbarn.
+     *
+     * Welche Nachbarn ein Voxel ueberhaupt erreicht: ein Nachbar mit
+     * Chunk-Offset (ox,oy,oz) in {-1,0,+1}^3 samplet dieses Voxel GENAU DANN,
+     * wenn es in seiner +1-Pad-Schale liegt — pro Achse heisst das:
+     *   ox=-1 nur wenn lx==0        (Voxel bildet die +DIM-Pad-Zelle von cx-1)
+     *   ox=+1 nur wenn lx==DIM-1    (Voxel bildet die -1-Pad-Zelle  von cx+1)
+     *   ox= 0 immer.
+     * (analog y,z). Das ergibt die exakte, MINIMALE betroffene Nachbarmenge:
+     * Innen-Voxel -> nur (0,0,0) = eigener Chunk (0 Nachbarn);
+     * Flaechen-Voxel -> +1 Face-Nachbar (oben via dirty erledigt);
+     * Kanten-Voxel -> +2 Face + 1 diagonaler Kanten-Nachbar (bis 18 gesamt);
+     * Eck-Voxel    -> +3 Face + 3 Kanten + 1 Eck-Nachbar (bis 26 gesamt).
+     *
+     * Die 6 Face-Offsets (genau ein Nicht-Null-Anteil) sind oben bereits via
+     * moo_voxel_mark_dirty abgedeckt; HIER nur die DIAGONALEN (>=2 Nicht-Null-
+     * Anteile) zusaetzlich AO-dirty markieren. Damit bleibt der gepruefte
+     * 6-Face-Dirty-Contract unveraendert und die AO-Dirty kommt ADDITIV obendrauf
+     * — nur fuer die wirklich AO-betroffenen Diagonalen, kein pauschales 26er-
+     * Remesh (Plan-006-Risiko 5: Remesh-Kaskaden vermeiden). */
+    {
+        const int ox_lo = (lx == 0)                       ? -1 : 0;
+        const int ox_hi = (lx == MOO_VOXEL_CHUNK_DIM - 1) ?  1 : 0;
+        const int oy_lo = (ly == 0)                       ? -1 : 0;
+        const int oy_hi = (ly == MOO_VOXEL_CHUNK_DIM - 1) ?  1 : 0;
+        const int oz_lo = (lz == 0)                       ? -1 : 0;
+        const int oz_hi = (lz == MOO_VOXEL_CHUNK_DIM - 1) ?  1 : 0;
+        for (int ox = ox_lo; ox <= ox_hi; ox++) {
+            for (int oy = oy_lo; oy <= oy_hi; oy++) {
+                for (int oz = oz_lo; oz <= oz_hi; oz++) {
+                    /* nur DIAGONALE Offsets (>=2 Nicht-Null-Komponenten);
+                     * (0,0,0)=eigener Chunk und die 6 Face-Offsets sind schon
+                     * abgedeckt. */
+                    int nonzero = (ox != 0) + (oy != 0) + (oz != 0);
+                    if (nonzero < 2) continue;
+                    moo_voxel_mark_dirty_ao(vw, cx + ox, cy + oy, cz + oz);
+                }
+            }
+        }
+    }
 
     return moo_bool(true);
 }
@@ -2101,6 +2179,7 @@ static void moo_voxel_remesh_chunk(MooVoxelWorld* w, MooVoxelChunk* ch) {
     }
     moo_3d_chunk_end();
     ch->dirty = false;
+    ch->dirty_ao = false; /* P006-R4: voller Remesh -> auch AO-Flag konsumiert */
 }
 
 MooValue moo_voxel_mesh_bauen(MooValue welt, MooValue x, MooValue y, MooValue z) {
@@ -2132,6 +2211,7 @@ MooValue moo_voxel_mesh_bauen(MooValue welt, MooValue x, MooValue y, MooValue z)
             ch->render_id = -1;
         }
         ch->dirty = false;
+        ch->dirty_ao = false; /* P006-R4 */
         return moo_number(-1.0);
     }
 
@@ -2145,20 +2225,26 @@ static int64_t moo_voxel_aktualisieren_sync(MooVoxelWorld* vw) {
     int64_t remeshed = 0;
     for (int32_t i = 0; i < vw->chunk_cap; i++) {
         MooVoxelChunk* ch = &vw->chunks[i];
-        if (!ch->occupied || !ch->dirty) continue;
+        /* P006-R4: dirty (Face/Inhalt) ODER dirty_ao (nur Boundary-AO stale)
+         * loesen beide einen vollen Greedy+AO-Remesh aus. Der Mesher liest die
+         * Diagonalen via pad_fill -> der AO-only-Pfad stellt korrekte AO her. */
+        if (!ch->occupied || (!ch->dirty && !ch->dirty_ao)) continue;
         if (moo_voxel_chunk_is_empty(ch)) {
             if (ch->render_id >= 0) {
                 moo_3d_chunk_delete(moo_number((double)ch->render_id));
                 ch->render_id = -1;
             }
             ch->dirty = false;
+            ch->dirty_ao = false;
             continue;
         }
         MooVoxelMeshBuf buf; mesh_buf_init(&buf);
         if (moo_voxel_build_mesh_cpu(vw, ch, &buf)) {
-            moo_voxel_upload_mesh(ch, &buf);
+            moo_voxel_upload_mesh(ch, &buf);  /* loescht ch->dirty */
+            ch->dirty_ao = false;
         } else {
-            ch->dirty = false; /* OOM: nicht endlos retryen */
+            ch->dirty = false;     /* OOM: nicht endlos retryen */
+            ch->dirty_ao = false;
         }
         mesh_buf_free(&buf);
         remeshed++;
@@ -2204,26 +2290,32 @@ MooValue moo_voxel_aktualisieren(MooValue welt) {
 
     /* Geleerte Chunks (indices==NULL) zuerst seriell aufraeumen: alte Render-ID
      * freigeben, dirty loeschen. Diese gehen NICHT in die Worker-Queue (kein
-     * Mesh zu bauen). */
+     * Mesh zu bauen). P006-R4: auch dirty_ao-only-Eintraege hier abraeumen — ein
+     * leerer Chunk hat keine Boundary-AO-Geometrie, das Flag waere sonst ein
+     * Karteileiche (nie gezaehlt, nie geloescht). */
     for (int32_t i = 0; i < vw->chunk_cap; i++) {
         MooVoxelChunk* ch = &vw->chunks[i];
-        if (!ch->occupied || !ch->dirty || !moo_voxel_chunk_is_empty(ch)) continue;
+        if (!ch->occupied || (!ch->dirty && !ch->dirty_ao) || !moo_voxel_chunk_is_empty(ch)) continue;
         if (ch->render_id >= 0) {
             moo_3d_chunk_delete(moo_number((double)ch->render_id));
             ch->render_id = -1;
         }
         ch->dirty = false;
+        ch->dirty_ao = false;
     }
 
 #ifdef _WIN32
     /* POSIX-only Threadpool nicht verfuegbar -> synchron meshen (s. Datei-Header). */
     return moo_number((double)moo_voxel_aktualisieren_sync(vw));
 #else
-    /* Dirty, nicht-leere Chunks zaehlen. */
+    /* Remesh-beduerftige (dirty ODER dirty_ao), nicht-leere Chunks zaehlen.
+     * P006-R4: ein dirty_ao-only Chunk wurde inhaltlich nicht geaendert, braucht
+     * aber wegen stale Boundary-AO einen vollen Greedy+AO-Remesh — dieselbe
+     * Worker-Pipeline, dieselbe Behandlung wie dirty. */
     int n_dirty = 0;
     for (int32_t i = 0; i < vw->chunk_cap; i++) {
         MooVoxelChunk* ch = &vw->chunks[i];
-        if (ch->occupied && ch->dirty && !moo_voxel_chunk_is_empty(ch)) n_dirty++;
+        if (ch->occupied && (ch->dirty || ch->dirty_ao) && !moo_voxel_chunk_is_empty(ch)) n_dirty++;
     }
     if (n_dirty == 0) return moo_number(0.0);
 
@@ -2248,7 +2340,7 @@ MooValue moo_voxel_aktualisieren(MooValue welt) {
     int k = 0;
     for (int32_t i = 0; i < vw->chunk_cap; i++) {
         MooVoxelChunk* ch = &vw->chunks[i];
-        if (ch->occupied && ch->dirty && !moo_voxel_chunk_is_empty(ch)) jobs[k++].slot = i;
+        if (ch->occupied && (ch->dirty || ch->dirty_ao) && !moo_voxel_chunk_is_empty(ch)) jobs[k++].slot = i;
     }
 
     /* Batch an die Worker uebergeben. Welt wird zwischen hier und dem Join NICHT
@@ -2270,9 +2362,11 @@ MooValue moo_voxel_aktualisieren(MooValue welt) {
     for (int j = 0; j < n_dirty; j++) {
         MooVoxelChunk* ch = &vw->chunks[jobs[j].slot];
         if (jobs[j].ok) {
-            moo_voxel_upload_mesh(ch, &jobs[j].result);
+            moo_voxel_upload_mesh(ch, &jobs[j].result);  /* loescht ch->dirty */
+            ch->dirty_ao = false;                        /* P006-R4: AO-Flag mit-loeschen */
         } else {
-            ch->dirty = false; /* OOM im Worker: nicht endlos retryen */
+            ch->dirty = false;     /* OOM im Worker: nicht endlos retryen */
+            ch->dirty_ao = false;
         }
         mesh_buf_free(&jobs[j].result);
         remeshed++;

@@ -14,6 +14,13 @@
  *      crasht nicht, kein chunk_delete ohne Backend, kein Double-Delete.
  *        - Mesh mit Backend -> Backend zu -> aktualisieren() -> free: kein Crash.
  *        - Render-ID-Recycling: entladen + free loescht jede ID GENAU 1x.
+ *   3. P006-R4 AO-Dirty (Dirty-Flag-Splitting, ADDITIV zu 1.): eine Aenderung an
+ *      einer Chunk-KANTE/-ECKE markiert die DIAGONALEN Nachbarn (dirty_ao) fuer
+ *      einen AO-Remesh, weil deren Boundary-Vertex-AO sonst stale waere. Geprueft:
+ *      Kante mit/ohne diagonalen Nachbar (4 bzw. 3 remesht), Ecke mit allen 7
+ *      Diagonalen+Faces (8 remesht), negative Kante, FLAECHE markiert KEINE
+ *      Diagonale (Overhead-Schutz), Innen-Edit mit vorhandener Diagonale = 1.
+ *      Der 6-Face-Dirty-Contract aus 1. bleibt unveraendert (Face-Tests gruen).
  *
  * Die RT2-Harness (test_voxel_mesher_asan.c) deckt Face-Culling-Counts und den
  * +x-Sonderfall ab; diese Harness deckt die uebrigen 5 Boundary-Richtungen,
@@ -252,8 +259,11 @@ int main(void) {
     }
 
     /* ---------- alle 3 Achsen-Raender gleichzeitig (Ecke) ----------
-     * Block bei (31,31,31) im Chunk 0 mit existierenden Nachbarn in +x,+y,+z
-     * -> eigener + 3 Nachbarn = 4 dirty. */
+     * Block bei (31,31,31) im Chunk 0 mit existierenden Nachbarn NUR in +x,+y,+z
+     * (KEINE diagonalen). Face-Dirty markiert die 3 Face-Nachbarn; die AO-Dirty
+     * (P006-R4) wuerde die diagonalen Kanten-/Eck-Nachbarn markieren, die hier
+     * aber NICHT existieren -> mark_dirty_ao ist reiner Lookup, allokiert nichts.
+     * -> eigener + 3 Face-Nachbarn = 4 dirty (Face-Contract UNVERAENDERT). */
     {
         g_backend_active = 1;
         MooValue w = moo_voxel_welt_neu(N(0));
@@ -264,7 +274,127 @@ int main(void) {
         aktualisieren(w);
         set_block(w, 31, 31, 31, 3);  /* Ecke: +x,+y,+z Raender gleichzeitig */
         long n = aktualisieren(w);
-        CHECK(n == 4, "Ecke (31,31,31): eigener + 3 vorhandene Nachbarn (4 remesht)");
+        CHECK(n == 4, "Ecke (31,31,31) ohne Diagonale: eigener + 3 Face-Nachbarn (4 remesht)");
+        free_world(w);
+    }
+
+    /* =====================================================================
+     * P006-R4 — AO-Dirty fuer DIAGONALE Boundary-Nachbarn (ADDITIV zum
+     * 6-Face-Dirty-Contract). Diese Tests pruefen, dass eine Aenderung an
+     * einer Chunk-KANTE/-ECKE die diagonalen Nachbarn fuer einen AO-Remesh
+     * dirty markiert — und dass Innen-/Flaechen-Edits das NICHT tun.
+     * ===================================================================== */
+
+    /* ---------- KANTE: Voxel an einer Chunk-Kante (2 Raender) ----------
+     * Voxel (31,31,5) liegt an der +x/+y-Kante von Chunk 0. Betroffen sind:
+     *   - eigener Chunk 0
+     *   - Face-Nachbar +x (Chunk 1,0,0)   [via dirty]
+     *   - Face-Nachbar +y (Chunk 0,1,0)   [via dirty]
+     *   - DIAGONALER Kanten-Nachbar +x+y (Chunk 1,1,0) [via dirty_ao, P006-R4]
+     * Alle 4 existieren -> 4 remesht. OHNE P006-R4 waeren es nur 3 (Diagonale
+     * bliebe stale). */
+    {
+        g_backend_active = 1;
+        MooValue w = moo_voxel_welt_neu(N(0));
+        set_block(w, 5, 5, 5, 1);      /* Chunk (0,0,0) */
+        set_block(w, 40, 5, 5, 1);     /* Chunk (1,0,0)  +x  Face */
+        set_block(w, 5, 40, 5, 1);     /* Chunk (0,1,0)  +y  Face */
+        set_block(w, 40, 40, 5, 1);    /* Chunk (1,1,0)  +x+y DIAGONAL */
+        aktualisieren(w);
+        set_block(w, 31, 31, 5, 3);    /* +x/+y-Kante */
+        long n = aktualisieren(w);
+        CHECK(n == 4, "Kante (31,31,5): eigener + 2 Face + 1 diagonaler AO-Nachbar (4 remesht)");
+        free_world(w);
+    }
+
+    /* ---------- KANTE ohne diagonalen Nachbar ----------
+     * Wie oben, aber der diagonale +x+y-Chunk existiert NICHT. mark_dirty_ao ist
+     * reiner Lookup -> kein Luft-Nachbar wird allokiert. -> nur eigener + 2 Face
+     * = 3 remesht. Beweist: AO-Dirty erfindet keine Chunks. */
+    {
+        g_backend_active = 1;
+        MooValue w = moo_voxel_welt_neu(N(0));
+        set_block(w, 5, 5, 5, 1);      /* Chunk (0,0,0) */
+        set_block(w, 40, 5, 5, 1);     /* Chunk (1,0,0)  +x  Face */
+        set_block(w, 5, 40, 5, 1);     /* Chunk (0,1,0)  +y  Face */
+        /* KEIN (1,1,0) */
+        aktualisieren(w);
+        set_block(w, 31, 31, 5, 3);    /* +x/+y-Kante, Diagonale fehlt */
+        long n = aktualisieren(w);
+        CHECK(n == 3, "Kante ohne Diagonale: eigener + 2 Face, kein Diagonal-Allok (3 remesht)");
+        free_world(w);
+    }
+
+    /* ---------- ECKE: Voxel (31,31,31), ALLE 7 Diagonalen+Faces da ----------
+     * Eck-Voxel erreicht ( box {0,+1}^3 minus self): 3 Face (+x,+y,+z),
+     * 3 Kanten (+x+y, +x+z, +y+z), 1 Eck (+x+y+z) = 7 Nachbarn. Mit eigenem
+     * Chunk = 8 remesht (das volle 26er-Maximum, hier minimal als 7 betroffene).
+     * Face via dirty, die 4 diagonalen (Kanten+Ecke) via dirty_ao (P006-R4). */
+    {
+        g_backend_active = 1;
+        MooValue w = moo_voxel_welt_neu(N(0));
+        set_block(w, 5, 5, 5, 1);       /* (0,0,0) */
+        set_block(w, 40, 5, 5, 1);      /* (1,0,0)  +x   Face */
+        set_block(w, 5, 40, 5, 1);      /* (0,1,0)  +y   Face */
+        set_block(w, 5, 5, 40, 1);      /* (0,0,1)  +z   Face */
+        set_block(w, 40, 40, 5, 1);     /* (1,1,0)  +x+y Kante */
+        set_block(w, 40, 5, 40, 1);     /* (1,0,1)  +x+z Kante */
+        set_block(w, 5, 40, 40, 1);     /* (0,1,1)  +y+z Kante */
+        set_block(w, 40, 40, 40, 1);    /* (1,1,1)  +x+y+z Ecke */
+        aktualisieren(w);
+        set_block(w, 31, 31, 31, 3);    /* Ecke: alle 3 Achsen-Raender */
+        long n = aktualisieren(w);
+        CHECK(n == 8, "Ecke (31,31,31) mit allen Diagonalen: eigener + 3 Face + 3 Kanten + 1 Ecke (8 remesht)");
+        free_world(w);
+    }
+
+    /* ---------- KANTE am unteren Rand (lx=0, ly=0) negative Diagonale ----------
+     * Spiegelbild zum +-Fall: Voxel (0,0,5) erreicht -x, -y, -x-y. Prueft, dass
+     * die Offset-Logik auch fuer die negative Richtung korrekt diagonal markiert. */
+    {
+        g_backend_active = 1;
+        MooValue w = moo_voxel_welt_neu(N(0));
+        set_block(w, 5, 5, 5, 1);       /* (0,0,0) */
+        set_block(w, -5, 5, 5, 1);      /* (-1,0,0)  -x  Face */
+        set_block(w, 5, -5, 5, 1);      /* (0,-1,0)  -y  Face */
+        set_block(w, -5, -5, 5, 1);     /* (-1,-1,0) -x-y DIAGONAL */
+        aktualisieren(w);
+        set_block(w, 0, 0, 5, 3);       /* -x/-y-Kante */
+        long n = aktualisieren(w);
+        CHECK(n == 4, "Kante (0,0,5) negativ: eigener + 2 Face + 1 diagonaler AO-Nachbar (4 remesht)");
+        free_world(w);
+    }
+
+    /* ---------- FLAECHE markiert KEINE Diagonale (Overhead-Schutz) ----------
+     * Voxel (31,5,5) liegt nur auf der +x-FLAECHE (1 Rand). Selbst wenn die
+     * diagonalen +x+y / +x+z-Chunks existieren, duerfen sie NICHT dirty werden
+     * (das Voxel ist nicht in deren Pad-Schale). -> nur eigener + 1 Face = 2. */
+    {
+        g_backend_active = 1;
+        MooValue w = moo_voxel_welt_neu(N(0));
+        set_block(w, 5, 5, 5, 1);       /* (0,0,0) */
+        set_block(w, 40, 5, 5, 1);      /* (1,0,0)  +x   Face */
+        set_block(w, 40, 40, 5, 1);     /* (1,1,0)  +x+y diagonal — darf NICHT remeshen */
+        set_block(w, 40, 5, 40, 1);     /* (1,0,1)  +x+z diagonal — darf NICHT remeshen */
+        aktualisieren(w);
+        set_block(w, 31, 5, 5, 3);      /* reine +x-Flaeche (ly,lz innen) */
+        long n = aktualisieren(w);
+        CHECK(n == 2, "Flaeche (31,5,5): nur eigener + 1 Face, keine diagonale AO-Dirty (2 remesht)");
+        free_world(w);
+    }
+
+    /* ---------- Innen-Edit markiert weiterhin nichts (1 remesht) ----------
+     * Doppelpruefung mit existierenden Diagonalen: ein voll innen liegendes
+     * Voxel darf weder Face- noch AO-Nachbarn anfassen. */
+    {
+        g_backend_active = 1;
+        MooValue w = moo_voxel_welt_neu(N(0));
+        set_block(w, 5, 5, 5, 1);       /* (0,0,0) */
+        set_block(w, 40, 40, 40, 1);    /* (1,1,1) Eck-Diagonale existiert */
+        aktualisieren(w);
+        set_block(w, 15, 15, 15, 3);    /* mittig */
+        long n = aktualisieren(w);
+        CHECK(n == 1, "Innen-Edit mit vorhandener Diagonale: nur eigener Chunk (1 remesht)");
         free_world(w);
     }
 
