@@ -85,6 +85,52 @@ for moo_file in "$SCRIPT_DIR"/*.moo "$SCRIPT_DIR"/regression/*.moo; do
     rm -f "$tmp_binary"
 done
 
+# ============================================================
+# Game-Test-Smoke (Plan-008 A4) — GPU-UNABHAENGIG.
+# Die VISUELLEN Selftests (Fenster/Pixel/Screenshot) laufen ueber
+# scripts/game-test-runner.sh (braucht xvfb/GPU) und sind hier BEWUSST
+# NICHT enthalten, damit run_all.sh in CI ohne GPU/Vulkan/GIF gruen bleibt.
+# Hier nur: (1) Runner-Skript bash-syntax-pruefen, (2) die drei Selftest-
+# .moo NUR KOMPILIEREN (kein run -> kein Fenster -> kein Display noetig).
+# So verrottet die Test-API-Verdrahtung nicht unbemerkt.
+# ============================================================
+echo ""
+echo "--------------------------------"
+echo "Game-Test-Smoke (GPU-unabhaengig: nur Syntax + Compile)"
+RUNNER="$COMPILER_DIR/../scripts/game-test-runner.sh"
+SELFTESTS=(
+    "$COMPILER_DIR/../beispiele/snake_plus_selftest.moo"
+    "$COMPILER_DIR/../beispiele/domain/game/world/siedler3_selftest.moo"
+    "$COMPILER_DIR/../beispiele/voxel_sandbox_selftest.moo"
+)
+
+if [[ -f "$RUNNER" ]]; then
+    if bash -n "$RUNNER" 2>/dev/null; then
+        pass=$((pass + 1)); echo -e "${GREEN}PASS${NC} game-test-runner.sh (bash -n)"
+    else
+        fail=$((fail + 1)); echo -e "${RED}FAIL${NC} game-test-runner.sh (Syntax)"
+        errors="${errors}\n  game-test-runner.sh: bash-Syntaxfehler"
+    fi
+else
+    skip=$((skip + 1)); echo -e "${YELLOW}SKIP${NC} game-test-runner.sh (fehlt)"
+fi
+
+for st in "${SELFTESTS[@]}"; do
+    st_name="$(basename "$st" .moo)"
+    if [[ ! -f "$st" ]]; then
+        skip=$((skip + 1)); echo -e "${YELLOW}SKIP${NC} $st_name (fehlt)"
+        continue
+    fi
+    st_bin="/tmp/moo_smoke_${st_name}"
+    if "$COMPILER" compile "$st" -o "$st_bin" >/dev/null 2>&1; then
+        pass=$((pass + 1)); echo -e "${GREEN}PASS${NC} $st_name (compile)"
+    else
+        fail=$((fail + 1)); echo -e "${RED}FAIL${NC} $st_name (Kompilierung)"
+        errors="${errors}\n  ${st_name}: Selftest-Kompilierung fehlgeschlagen"
+    fi
+    rm -f "$st_bin"
+done
+
 # Zusammenfassung
 echo ""
 echo "================================"

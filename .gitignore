@@ -48,6 +48,10 @@ beispiele/**
 !beispiele/**/*.wav
 !beispiele/**/*.ttf
 !beispiele/**/*.gitkeep
+
+# Plan-008 A4: generierte Game-Test-Artefakte (Screenshots/GIFs/Logs/JSON-Report).
+# Der Runner (scripts/game-test-runner.sh) erzeugt sie zur Laufzeit; nicht versionieren.
+/beispiele/snapshots/game-test/
 !beispiele/**/README*
 
 # Grosse Asset-Archive explizit ausschliessen

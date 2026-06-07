@@ -1,0 +1,131 @@
+# ============================================================
+# siedler3_selftest.moo — Referenz-Selftest 3D-Welt (Plan-008 A4)
+#
+# Gleiches Schema wie die 2D/Voxel-Selftests:
+#   starten -> test_sim_*-Eingaben -> Zustands-/Pixel-Asserts
+#   (test_pixel) -> test_screenshot -> sauberer Exit.
+#
+# Getestetes Spiel: siedler3.moo (Hybrid-Fenster fenster_unified, iso-
+# Terrain via zeichne_rechteck_z + raum_*-Kamera-Bridge auf gl33). Der
+# Selftest baut eine deterministische Mini-Szene mit denselben Render-
+# Bausteinen (Himmel via hybrid_löschen, iso-Tiles via zeichne_rechteck_z,
+# 3D-Kamera via raum_kamera) und prueft per test_pixel die gezeichneten
+# Farben. test_sim_taste (3D Tri-State) + test_sim_maus_delta treiben die
+# Kamera; der konsumierte Maus-Delta-Wert wird verifiziert.
+#
+# WICHTIG (verifiziert): test_pixel/test_frame_grab/test_screenshot lesen
+# den GL-Backbuffer und MUESSEN VOR hybrid_aktualisieren aufgerufen werden.
+# Bei Hybrid liefert test_fenster_info breite/hoehe = -1 (kein portabler
+# Size-Getter); echte Dims kommen aus test_frame_grab/MOO_FRAME.
+#
+# Headless: xvfb-run -a -s "-screen 0 1280x800x24" env MOO_3D_BACKEND=gl33 \
+#   moo-compiler run <datei>
+# Artefakt-Ausgabeordner via env SELFTEST_OUT (Default /tmp).
+# ============================================================
+
+konstante WIN_W auf 1024
+konstante WIN_H auf 640
+
+setze out auf umgebung("SELFTEST_OUT")
+wenn out == nichts:
+    setze out auf "/tmp"
+
+setze fehler auf 0
+
+funktion pruefe_farbe(name, p, r_soll, g_soll, b_soll, tol):
+    setze dr auf p["rot"] - r_soll
+    wenn dr < 0:
+        setze dr auf 0 - dr
+    setze dg auf p["gruen"] - g_soll
+    wenn dg < 0:
+        setze dg auf 0 - dg
+    setze db auf p["blau"] - b_soll
+    wenn db < 0:
+        setze db auf 0 - db
+    wenn dr <= tol und dg <= tol und db <= tol:
+        zeige "ASSERT OK   " + name + " = (" + text(p["rot"]) + "," + text(p["gruen"]) + "," + text(p["blau"]) + ")"
+        gib_zurück 0
+    zeige "ASSERT FAIL " + name + " = (" + text(p["rot"]) + "," + text(p["gruen"]) + "," + text(p["blau"]) + ") erwartet (" + text(r_soll) + "," + text(g_soll) + "," + text(b_soll) + ")"
+    gib_zurück 1
+
+zeige "=== siedler3 3D-Welt Selftest ==="
+
+setze win auf fenster_unified("siedler3 selftest", WIN_W, WIN_H)
+raum_perspektive(win, 28.0, 0.1, 200.0)
+
+# --- Fenster-Info (Hybrid: backend hybrid-gl33, Dims -1) ---
+setze info auf test_fenster_info(win)
+zeige "fenster: backend=" + info["backend"] + " offen=" + text(info["offen"]) + " breite=" + text(info["breite"]) + " hoehe=" + text(info["hoehe"])
+wenn info["backend"] != "hybrid-gl33":
+    zeige "ASSERT FAIL backend " + info["backend"] + " != hybrid-gl33"
+    setze fehler auf fehler + 1
+
+# --- Eingabe-Simulation: 3D-Kamera per Tastatur (Tri-State) + Maus-Delta ---
+# siedler3 nutzt raum_taste("a"/"d") fuer Kamera-Umlauf und raum_maus_dx/dy
+# fuer Maus-Look. test_sim_taste setzt den Tri-State-Override, test_sim_maus_
+# delta liefert ein consume-on-read-Delta. Wir verifizieren, dass die Demo-
+# Logik dieselben Werte sieht.
+setze kamera_winkel auf 0.785
+test_sim_taste(win, "d", wahr)
+wenn raum_taste(win, "d"):
+    setze kamera_winkel auf kamera_winkel + 0.02
+    zeige "sim: raum_taste(d) -> wahr (Kamera gedreht)"
+sonst:
+    zeige "ASSERT FAIL raum_taste(d) trotz test_sim_taste nicht gedrueckt"
+    setze fehler auf fehler + 1
+test_sim_taste(win, "d", falsch)
+
+# Maus-Delta: 12 px in x. raum_maus_dx muss diesen Wert konsumieren.
+test_sim_maus_delta(win, 12.0, 0.0)
+setze mdx auf raum_maus_dx(win)
+wenn mdx == 12.0:
+    zeige "sim: raum_maus_dx konsumiert Delta = " + text(mdx)
+sonst:
+    zeige "ASSERT FAIL raum_maus_dx = " + text(mdx) + " erwartet 12.0"
+    setze fehler auf fehler + 1
+# Zweiter Read muss 0 sein (consume-on-read).
+setze mdx2 auf raum_maus_dx(win)
+wenn mdx2 != 0.0:
+    zeige "ASSERT FAIL maus_dx nicht konsumiert (2. Read = " + text(mdx2) + ")"
+    setze fehler auf fehler + 1
+test_sim_reset(win)
+
+# --- Deterministische Render-Szene (1 Frame) ---
+# Himmel-Klar (Tag), 3D-Kamera, dann iso-Terrain-Tile + HUD-Panel als
+# 2D-Overlay (zeichne_rechteck_z) mit bekannten Hex-Farben.
+hybrid_löschen(win, 0.5, 0.7, 1.0)
+raum_kamera(win, 7.0, 14.0, 7.0, 7.0, 1.5, 7.0)
+
+# Grosses Terrain-Quad (#3CA03C "Wiese") mittig.
+zeichne_rechteck_z(win, 312, 170, 60.0, 400, 300, "#3CA03C")
+# HUD-Panel oben links (#102030).
+zeichne_rechteck_z(win, 10, 10, 0.5, 180, 80, "#102030")
+
+# --- Pixel-Asserts VOR present (Backbuffer) ---
+setze f auf test_frame_grab(win)
+
+# Terrain-Mitte: #3CA03C = (60,160,60)
+setze p_terrain auf test_pixel(f, 512, 320)
+setze fehler auf fehler + pruefe_farbe("terrain-mitte", p_terrain, 60, 160, 60, 8)
+
+# Himmel oben rechts: clear (0.5,0.7,1.0) = (127,178,255)
+setze p_sky auf test_pixel(f, 980, 30)
+setze fehler auf fehler + pruefe_farbe("himmel", p_sky, 127, 178, 255, 8)
+
+# HUD-Panel: #102030 = (16,32,48)
+setze p_hud auf test_pixel(f, 100, 50)
+setze fehler auf fehler + pruefe_farbe("hud-panel", p_hud, 16, 32, 48, 8)
+
+# --- Screenshot-Artefakt (vor present) ---
+setze shot auf out + "/siedler3_selftest.bmp"
+test_frame_save_bmp(f, shot)
+zeige "screenshot: " + shot
+
+hybrid_aktualisieren(win)
+warte(30)
+hybrid_schliessen(win)
+
+wenn fehler == 0:
+    zeige "SELFTEST_RESULT: PASS siedler3_3d"
+sonst:
+    zeige "SELFTEST_RESULT: FAIL siedler3_3d (" + text(fehler) + " Fehler)"

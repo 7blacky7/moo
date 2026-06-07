@@ -1,0 +1,118 @@
+# ============================================================
+# snake_plus_selftest.moo — Referenz-Selftest 2D (Plan-008 A4)
+#
+# Gleiches Schema wie die 3D/Voxel-Selftests:
+#   starten -> test_sim_*-Eingaben -> Zustands-/Pixel-Asserts
+#   (test_pixel) -> test_screenshot -> sauberer Exit.
+#
+# Getestetes Spiel: snake_plus.moo (2D, SDL-Fenster, zeichne_rechteck/
+# zeichne_kreis, taste_gedrückt). Der Selftest baut eine DETERMINISTISCHE
+# Mini-Szene mit denselben Render-Bausteinen und prueft per test_pixel,
+# dass die gezeichneten Farben am erwarteten Ort liegen. Zusaetzlich wird
+# test_sim_taste benutzt (2D-SDL: SDL_PushEvent) und der Pfad sauber
+# durchlaufen.
+#
+# WICHTIG (verifiziert): test_pixel/test_screenshot lesen den Render-
+# Backbuffer und MUESSEN VOR fenster_aktualisieren aufgerufen werden —
+# nach dem Present ist der Backbuffer geloescht.
+#
+# Headless: xvfb-run -a -s "-screen 0 800x600x24" moo-compiler run <datei>
+# Artefakt-Ausgabeordner via env SELFTEST_OUT (Default /tmp).
+# ============================================================
+
+konstante WIN_W auf 600
+konstante WIN_H auf 480
+konstante HUD_H auf 40
+konstante CELL auf 20
+
+setze out auf umgebung("SELFTEST_OUT")
+wenn out == nichts:
+    setze out auf "/tmp"
+
+setze fehler auf 0
+
+funktion pruefe_farbe(name, p, r_soll, g_soll, b_soll, tol):
+    setze dr auf p["rot"] - r_soll
+    wenn dr < 0:
+        setze dr auf 0 - dr
+    setze dg auf p["gruen"] - g_soll
+    wenn dg < 0:
+        setze dg auf 0 - dg
+    setze db auf p["blau"] - b_soll
+    wenn db < 0:
+        setze db auf 0 - db
+    wenn dr <= tol und dg <= tol und db <= tol:
+        zeige "ASSERT OK   " + name + " = (" + text(p["rot"]) + "," + text(p["gruen"]) + "," + text(p["blau"]) + ")"
+        gib_zurück 0
+    zeige "ASSERT FAIL " + name + " = (" + text(p["rot"]) + "," + text(p["gruen"]) + "," + text(p["blau"]) + ") erwartet (" + text(r_soll) + "," + text(g_soll) + "," + text(b_soll) + ")"
+    gib_zurück 1
+
+zeige "=== snake_plus 2D Selftest ==="
+
+setze win auf fenster_erstelle("snake_plus selftest", WIN_W, WIN_H)
+
+# --- Fenster-Info pruefen (2D liefert echte Dims + backend sdl2) ---
+setze info auf test_fenster_info(win)
+zeige "fenster: breite=" + text(info["breite"]) + " hoehe=" + text(info["hoehe"]) + " backend=" + info["backend"] + " offen=" + text(info["offen"])
+wenn info["breite"] != WIN_W:
+    zeige "ASSERT FAIL fenster-breite " + text(info["breite"]) + " != " + text(WIN_W)
+    setze fehler auf fehler + 1
+wenn info["backend"] != "sdl2":
+    zeige "ASSERT FAIL backend " + info["backend"] + " != sdl2"
+    setze fehler auf fehler + 1
+
+# --- Eingabe-Simulation: Richtungswechsel-Taste (2D-SDL PushEvent) ---
+# Auf 2D dispatcht test_sim_taste auf moo_simulate_key (zustandslos). Der
+# Aufruf wird hier hauptsaechlich auf sauberen Durchlauf geprueft.
+test_sim_taste(win, "w", wahr)
+test_sim_taste(win, "w", falsch)
+test_sim_reset(win)
+zeige "sim: test_sim_taste/test_sim_reset durchlaufen"
+
+# --- Deterministische Render-Szene mit Snake-Bausteinen ---
+# HUD-Balken (#0D1117), Spielfeld (#212121), ein Schlangenkopf (#66BB6A)
+# bei Zelle (5,5), ein rotes Futter (#F44336) bei Zelle (10,8).
+fenster_löschen(win, "#1A1A2E")
+zeichne_rechteck(win, 0, 0, WIN_W, HUD_H, "#0D1117")
+zeichne_rechteck(win, 0, HUD_H, WIN_W, WIN_H - HUD_H, "#212121")
+
+# Schlangenkopf bei Zelle (5,5)
+setze kopf_dx auf 5 * CELL
+setze kopf_dy auf HUD_H + 5 * CELL
+zeichne_rechteck(win, kopf_dx, kopf_dy, CELL, CELL, "#66BB6A")
+
+# Futter (Kreis) bei Zelle (10,8)
+setze food_dx auf 10 * CELL + CELL / 2
+setze food_dy auf HUD_H + 8 * CELL + CELL / 2
+zeichne_kreis(win, food_dx, food_dy, CELL / 2 - 2, "#F44336")
+
+# --- Pixel-Asserts VOR present (Backbuffer) ---
+# HUD oben: #0D1117 = (13,17,23)
+setze p_hud auf test_pixel(win, 300, 10)
+setze fehler auf fehler + pruefe_farbe("hud", p_hud, 13, 17, 23, 6)
+
+# Spielfeld-Hintergrund: #212121 = (33,33,33)
+setze p_feld auf test_pixel(win, 300, 300)
+setze fehler auf fehler + pruefe_farbe("spielfeld", p_feld, 33, 33, 33, 6)
+
+# Schlangenkopf-Mitte: #66BB6A = (102,187,106)
+setze p_kopf auf test_pixel(win, kopf_dx + CELL / 2, kopf_dy + CELL / 2)
+setze fehler auf fehler + pruefe_farbe("snake-kopf", p_kopf, 102, 187, 106, 6)
+
+# Futter-Mitte: #F44336 = (244,67,54)
+setze p_food auf test_pixel(win, food_dx, food_dy)
+setze fehler auf fehler + pruefe_farbe("futter", p_food, 244, 67, 54, 8)
+
+# --- Screenshot-Artefakt (vor present) ---
+setze shot auf out + "/snake_plus_selftest.bmp"
+test_screenshot(win, shot)
+zeige "screenshot: " + shot
+
+fenster_aktualisieren(win)
+warte(30)
+fenster_schliessen(win)
+
+wenn fehler == 0:
+    zeige "SELFTEST_RESULT: PASS snake_plus_2d"
+sonst:
+    zeige "SELFTEST_RESULT: FAIL snake_plus_2d (" + text(fehler) + " Fehler)"
