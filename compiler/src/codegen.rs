@@ -2752,6 +2752,22 @@ impl<'ctx> CodeGen<'ctx> {
                         let w = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_voxel_aktualisieren, &[w.into()], "voxel_aktualisieren");
                     }
+                    // Voxel-Raycast/AABB (Plan-005 Phase 1d, CG3 nach RT4).
+                    // strahl(welt, ox,oy,oz, dx,dy,dz, max_dist) -> Dict {hit,x,y,z,nx,ny,nz,id,dist};
+                    // aabb(welt, minx,miny,minz, maxx,maxy,maxz) -> Dict {hit,count,x,y,z}.
+                    // Rueckgabe-Dicts gemaess P0.5-Contract (nicht aendern).
+                    "voxel_strahl" | "voxel_raycast" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_voxel_strahl,
+                            &[a[0].into(), a[1].into(), a[2].into(), a[3].into(),
+                              a[4].into(), a[5].into(), a[6].into(), a[7].into()], "voxel_strahl");
+                    }
+                    "voxel_aabb" | "voxel_overlap" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_voxel_aabb,
+                            &[a[0].into(), a[1].into(), a[2].into(),
+                              a[3].into(), a[4].into(), a[5].into(), a[6].into()], "voxel_aabb");
+                    }
                     // Chunk Display Lists
                     "chunk_erstelle" | "chunk_create" => {
                         return self.call_rt(self.rt.moo_3d_chunk_create, &[], "chunk_create");

@@ -220,6 +220,11 @@ pub struct RuntimeBindings<'ctx> {
     // im Non-3D-Build, solange der Builtin im moo-Programm ungenutzt bleibt).
     pub moo_voxel_mesh_bauen: FunctionValue<'ctx>,
     pub moo_voxel_aktualisieren: FunctionValue<'ctx>,
+    // Voxel-Raycast/AABB (Plan-005 Phase 1d, CG3 nach RT4). Ebenfalls UNBEDINGT
+    // deklariert; Gating rein auf C-Link-Ebene via build.rs (kein Link-Bruch
+    // im Non-3D-Build, solange der Builtin im moo-Programm ungenutzt bleibt).
+    pub moo_voxel_strahl: FunctionValue<'ctx>,
+    pub moo_voxel_aabb: FunctionValue<'ctx>,
     pub moo_3d_mouse_x: FunctionValue<'ctx>,
     pub moo_3d_mouse_y: FunctionValue<'ctx>,
     pub moo_3d_mouse_button: FunctionValue<'ctx>,
@@ -512,6 +517,9 @@ impl<'ctx> RuntimeBindings<'ctx> {
         let mv3 = &[mv, mv, mv];
         let mv4 = &[mv, mv, mv, mv];
         let mv5 = &[mv, mv, mv, mv, mv];
+        // mv7 = welt + 6 Zahlen (voxel_aabb); mv8 = welt + 7 Zahlen (voxel_strahl).
+        let mv7 = &[mv, mv, mv, mv, mv, mv, mv];
+        let mv8 = &[mv, mv, mv, mv, mv, mv, mv, mv];
 
         // Makro fuer Deklaration
         macro_rules! decl {
@@ -763,6 +771,12 @@ impl<'ctx> RuntimeBindings<'ctx> {
             //   moo_voxel_aktualisieren(welt)          -> Number  (1 Arg  = mv1)
             moo_voxel_mesh_bauen: decl_mv_mv!("moo_voxel_mesh_bauen", mv4),
             moo_voxel_aktualisieren: decl_mv_mv!("moo_voxel_aktualisieren", mv1),
+            // Voxel-Raycast/AABB (Plan-005 Phase 1d, CG3 nach RT4). Signaturen exakt
+            // nach RT4-C-API (moo_runtime.h, P0.5-Contract): alle MooValue-in/MooValue-out.
+            //   moo_voxel_strahl(welt, ox,oy,oz, dx,dy,dz, max_dist) -> Dict  (8 Args = mv8)
+            //   moo_voxel_aabb(welt, minx,miny,minz, maxx,maxy,maxz)  -> Dict  (7 Args = mv7)
+            moo_voxel_strahl: decl_mv_mv!("moo_voxel_strahl", mv8),
+            moo_voxel_aabb: decl_mv_mv!("moo_voxel_aabb", mv7),
             moo_3d_mouse_x: decl_mv_mv!("moo_3d_mouse_x", mv1),
             moo_3d_mouse_y: decl_mv_mv!("moo_3d_mouse_y", mv1),
             moo_3d_mouse_button: decl_mv_mv!("moo_3d_mouse_button", mv2),
