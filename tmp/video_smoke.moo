@@ -1,0 +1,44 @@
+# ============================================================
+# video_smoke.moo — Smoke fuer test_video_* (Plan-009 V1) + GIF-Regression.
+# Headless: xvfb-run -a -s "-screen 0 1280x800x24" \
+#   env MOO_3D_BACKEND=gl33 moo-compiler run tmp/video_smoke.moo
+# Oeffnet ein 3D-Fenster, rendert ein paar Frames, nimmt sie als MP4 auf
+# (test_video_*) UND als GIF (test_gif_*, Regression nach Helper-Umbau).
+# ============================================================
+
+konstante WIN_B auf 320
+konstante WIN_H auf 240
+
+setze raum auf raum_erstelle("video-smoke 3D", WIN_B, WIN_H)
+raum_perspektive(raum, 70.0, 0.1, 300.0)
+
+# --- MP4-Aufnahme ---
+raum_löschen(raum, 0.1, 0.2, 0.3)
+raum_aktualisieren(raum)
+setze vid auf test_video_start(raum, "/tmp/video_smoke.mp4", 10)
+zeige "[smoke] test_video_start ok"
+
+setze i auf 0
+solange i < 8:
+    raum_löschen(raum, 0.1 + i * 0.05, 0.3, 0.5)
+    raum_aktualisieren(raum)
+    setze ok auf test_video_frame(vid, raum)
+    wenn ok != wahr:
+        zeige "[smoke] FEHLER: test_video_frame"
+    setze i auf i + 1
+
+setze vende auf test_video_ende(vid)
+zeige "[smoke] test_video_ende -> " + text(vende)
+
+# --- GIF-Regression (gleicher Frame-Helper) ---
+raum_löschen(raum, 0.2, 0.3, 0.4)
+raum_aktualisieren(raum)
+setze gif auf test_gif_start(raum, "/tmp/video_smoke.gif", 10)
+raum_löschen(raum, 0.4, 0.2, 0.4)
+raum_aktualisieren(raum)
+test_gif_frame(gif, raum)
+setze gende auf test_gif_ende(gif)
+zeige "[smoke] test_gif_ende -> " + text(gende)
+
+raum_schliessen(raum)
+zeige "[smoke] FERTIG"

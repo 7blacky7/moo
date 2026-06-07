@@ -257,6 +257,12 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_test_gif_start: FunctionValue<'ctx>,
     pub moo_test_gif_frame: FunctionValue<'ctx>,
     pub moo_test_gif_ende: FunctionValue<'ctx>,
+    // MP4-Video-Recorder (Plan-009 V1). Symbole immer deklariert; C-seitig
+    // in moo_test_api.c (3D-Build) gelinkt. Pipe-Kern (moo_video.c) + Heap-
+    // Wrapper (moo_video_handle.c) sind Core-Build, daher immer verfuegbar.
+    pub moo_test_video_start: FunctionValue<'ctx>,
+    pub moo_test_video_frame: FunctionValue<'ctx>,
+    pub moo_test_video_ende: FunctionValue<'ctx>,
     // Chunk Display Lists
     pub moo_3d_chunk_create: FunctionValue<'ctx>,
     pub moo_3d_chunk_begin: FunctionValue<'ctx>,
@@ -842,6 +848,14 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_test_gif_start: decl_mv_mv!("moo_test_gif_start", mv3),
             moo_test_gif_frame: decl_mv_mv!("moo_test_gif_frame", mv2),
             moo_test_gif_ende: decl_mv_mv!("moo_test_gif_ende", mv1),
+            // MP4-Video-Recorder (Plan-009 V1). Encoder-Kern (moo_video.c) +
+            // Heap-Wrapper (moo_video_handle.c) sind Core-Build, immer verfuegbar.
+            //   moo_test_video_start(win_oder_frame, pfad, fps) -> MOO_VIDEO (3 Args = mv3)
+            //   moo_test_video_frame(video, frame_oder_win)      -> Bool      (2 Args = mv2)
+            //   moo_test_video_ende(video)                       -> Bool      (1 Arg  = mv1)
+            moo_test_video_start: decl_mv_mv!("moo_test_video_start", mv3),
+            moo_test_video_frame: decl_mv_mv!("moo_test_video_frame", mv2),
+            moo_test_video_ende: decl_mv_mv!("moo_test_video_ende", mv1),
             // Chunk Display Lists
             moo_3d_chunk_create: decl_mv_mv!("moo_3d_chunk_create", &[]),
             moo_3d_chunk_begin: module.add_function("moo_3d_chunk_begin", void_type.fn_type(mv1, false), None),

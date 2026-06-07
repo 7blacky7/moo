@@ -29,6 +29,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "moo_gif.h"  /* isolierter GIF89a+LZW-Encoder-Kern (Plan-008 A3B Teil 1) */
+#include "moo_video.h"  /* isolierter ffmpeg-Pipe MP4-Kern (Plan-009 V0 Teil 1) */
 
 /* ---- Forward-Decls (in moo_graphics.c / moo_3d.c / moo_hybrid.c definiert) ---- */
 extern MooValue moo_string_new(const char* s);
@@ -377,9 +378,13 @@ extern MooValue moo_gif_handle_new(MooGifWriter* writer);
 /* Ermittelt RGBA8-top-left-Pixel + Dims aus einem MOO_FRAME ODER (bei einem
  * Fenster) ueber einen frischen Grab. *out_owned sagt, ob der Aufrufer den
  * Puffer freigeben muss (true = Grab, false = MOO_FRAME-eigener Puffer).
- * NULL bei Fehler (es wurde dann bereits geworfen bzw. ist zu werfen). */
-static const uint8_t* test_gif_pixels(MooValue src, int* out_w, int* out_h,
-                                      bool* out_owned) {
+ * NULL bei Fehler (es wurde dann bereits geworfen bzw. ist zu werfen).
+ *
+ * NEUTRALER, GETEILTER Helper (P009-V1): wird sowohl vom GIF-Recorder als auch
+ * vom MP4-Video-Recorder genutzt, damit beide denselben Frame-oder-Fenster-
+ * Pixelpfad teilen. Recorder-Handles (MOO_GIF != MOO_VIDEO) bleiben getrennt. */
+static const uint8_t* test_frame_pixels(MooValue src, int* out_w, int* out_h,
+                                        bool* out_owned) {
     *out_owned = false;
     if (src.tag == MOO_FRAME) {
         MooFrame* f = MV_FRAME(src);
@@ -431,7 +436,7 @@ MooValue moo_test_gif_start(MooValue win_oder_frame, MooValue pfad, MooValue fps
 
     int w = 0, h = 0;
     bool owned = false;
-    const uint8_t* px = test_gif_pixels(win_oder_frame, &w, &h, &owned);
+    const uint8_t* px = test_frame_pixels(win_oder_frame, &w, &h, &owned);
     if (!px) {
         /* Bei Fenster-Pfad hat moo_test_frame_grab geworfen; bei ungueltigem
          * Frame werfen wir hier. */
@@ -487,7 +492,7 @@ MooValue moo_test_gif_frame(MooValue gif, MooValue frame_oder_win) {
 
     int w = 0, hgt = 0;
     bool owned = false;
-    const uint8_t* px = test_gif_pixels(frame_oder_win, &w, &hgt, &owned);
+    const uint8_t* px = test_frame_pixels(frame_oder_win, &w, &hgt, &owned);
     if (!px) {
         if (frame_oder_win.tag == MOO_FRAME) {
             moo_throw(moo_string_new("test_gif_frame: ungueltiger Frame"));
@@ -525,6 +530,159 @@ MooValue moo_test_gif_ende(MooValue gif) {
     h->writer = NULL; /* gegen Doppel-close in moo_gif_handle_free */
     if (rc != MOO_GIF_OK) {
         moo_throw(moo_string_new("test_gif_ende: GIF konnte nicht sauber abgeschlossen werden"));
+        return moo_bool(false);
+    }
+    return moo_bool(true);
+}
+
+
+/* ============================================================
+ * MP4-Video-Recorder (Plan-009 V1) — koppelt den isolierten ffmpeg-Pipe-Kern
+ * (moo_video.c) an MOO_FRAME + Fenster-Grab. STREAMEND/frame-bounded (S4):
+ * pro Frame existiert nur EIN Pixelpuffer (der MOO_FRAME-eigene oder ein
+ * einzelner Grab, der sofort wieder freigegeben wird). Es wird NIE eine Frame-
+ * Sequenz im RAM gesammelt — moo_video_add_frame piped direkt nach ffmpeg-
+ * stdin. Der Writer lebt als opaker MOO_VIDEO-Heap-Handle (moo_video_handle.c).
+ * Nutzt denselben neutralen Frame-Helper test_frame_pixels wie der GIF-Pfad;
+ * die Recorder-Handles (MOO_GIF != MOO_VIDEO) und Encoder bleiben getrennt.
+ * ffmpeg-missing / Pipe-Fehler / broken pipe / nonzero-exit -> moo_throw mit
+ * Diagnose (NIE still skippen/false).
+ * ============================================================ */
+
+/* Wrapper-Konstruktor (moo_video_handle.c, immer gebaut). */
+extern MooValue moo_video_handle_new(MooVideoWriter* writer);
+
+/* test_video_start(win_oder_frame, pfad, fps) -> MOO_VIDEO.
+ * Startet ffmpeg (fork/execvp+pipe) und schreibt gleich den ersten Frame;
+ * Dimensionen kommen aus dem ersten Frame/Fenster und werden fixiert. */
+MooValue moo_test_video_start(MooValue win_oder_frame, MooValue pfad, MooValue fps) {
+    if (pfad.tag != MOO_STRING) {
+        moo_throw(moo_string_new("test_video_start: Pfad muss ein String sein"));
+        return moo_none();
+    }
+    if (fps.tag != MOO_NUMBER) {
+        moo_throw(moo_string_new("test_video_start: fps muss eine Zahl sein"));
+        return moo_none();
+    }
+    int ifps = (int)MV_NUM(fps);
+    if (ifps <= 0) {
+        moo_throw(moo_string_new("test_video_start: fps muss > 0 sein"));
+        return moo_none();
+    }
+
+    int w = 0, h = 0;
+    bool owned = false;
+    const uint8_t* px = test_frame_pixels(win_oder_frame, &w, &h, &owned);
+    if (!px) {
+        /* Beim Fenster-Pfad hat moo_test_frame_grab bereits geworfen; bei
+         * ungueltigem Frame werfen wir hier. */
+        if (win_oder_frame.tag == MOO_FRAME) {
+            moo_throw(moo_string_new("test_video_start: ungueltiger Frame"));
+        }
+        return moo_none();
+    }
+    /* yuv420p verlangt gerade Breite/Hoehe (S3, kein scale/pad im PoC). */
+    if (w <= 0 || h <= 0) {
+        if (owned) free((void*)px);
+        moo_throw(moo_string_new("test_video_start: Frame-Dimension muss > 0 sein"));
+        return moo_none();
+    }
+    if ((w & 1) || (h & 1)) {
+        if (owned) free((void*)px);
+        moo_throw(moo_string_new("test_video_start: Breite und Hoehe muessen gerade sein (yuv420p)"));
+        return moo_none();
+    }
+
+    MooVideoWriter* writer = moo_video_open(MV_STR(pfad)->chars, w, h, ifps);
+    if (!writer) {
+        if (owned) free((void*)px);
+        /* moo_video_open liefert NULL bei ungueltigen Args, ungeraden Dims oder
+         * fehlgeschlagenem fork/pipe/exec-Setup (z.B. ffmpeg nicht installiert). */
+        moo_throw(moo_string_new("test_video_start: ffmpeg-Pipe nicht startbar (ffmpeg fehlt oder Pfad/Setup ungueltig)"));
+        return moo_none();
+    }
+
+    /* Den ersten bereits gegrabbten/uebergebenen Frame gleich mitschreiben —
+     * sonst ginge der Grab fuer die Dim-Ermittlung verloren. */
+    int rc = moo_video_add_frame(writer, px, w, h);
+    if (owned) free((void*)px);
+    if (rc != MOO_VIDEO_OK) {
+        moo_video_close(writer); /* schliesst stdin + waitpid, kein Leak/Zombie */
+        moo_throw(moo_string_new("test_video_start: erster Frame konnte nicht geschrieben werden"));
+        return moo_none();
+    }
+
+    MooValue handle = moo_video_handle_new(writer); /* take ownership des Writers */
+    if (handle.tag != MOO_VIDEO) {
+        /* moo_video_handle_new hat den Writer bei Fehler bereits geschlossen. */
+        moo_throw(moo_string_new("test_video_start: MOO_VIDEO-Handle konnte nicht erzeugt werden"));
+        return moo_none();
+    }
+    return handle;
+}
+
+/* test_video_frame(video, frame_oder_win) -> Bool. Grabbt bzw. nutzt das
+ * MOO_FRAME und streamt genau einen Frame in die ffmpeg-Pipe. */
+MooValue moo_test_video_frame(MooValue video, MooValue frame_oder_win) {
+    if (video.tag != MOO_VIDEO) {
+        moo_throw(moo_string_new("test_video_frame: erstes Argument ist kein Video-Recorder"));
+        return moo_bool(false);
+    }
+    MooVideoHandle* h = MV_VIDEO(video);
+    if (!h || !h->writer) {
+        moo_throw(moo_string_new("test_video_frame: Video-Recorder bereits beendet"));
+        return moo_bool(false);
+    }
+
+    int w = 0, hgt = 0;
+    bool owned = false;
+    const uint8_t* px = test_frame_pixels(frame_oder_win, &w, &hgt, &owned);
+    if (!px) {
+        if (frame_oder_win.tag == MOO_FRAME) {
+            moo_throw(moo_string_new("test_video_frame: ungueltiger Frame"));
+        }
+        return moo_bool(false);
+    }
+
+    int rc = moo_video_add_frame(h->writer, px, w, hgt);
+    if (owned) free((void*)px);
+    if (rc == MOO_VIDEO_ERR_DIM) {
+        moo_throw(moo_string_new("test_video_frame: Frame-Groesse weicht vom Video ab (alle Frames muessen gleich gross sein)"));
+        return moo_bool(false);
+    }
+    if (rc == MOO_VIDEO_ERR_IO) {
+        moo_throw(moo_string_new("test_video_frame: Pipe-Schreibfehler (ffmpeg vorzeitig beendet / broken pipe)"));
+        return moo_bool(false);
+    }
+    if (rc != MOO_VIDEO_OK) {
+        moo_throw(moo_string_new("test_video_frame: Frame konnte nicht geschrieben werden"));
+        return moo_bool(false);
+    }
+    return moo_bool(true);
+}
+
+/* test_video_ende(video) -> Bool. Schliesst stdin (ffmpeg finalisiert die
+ * .mp4), waitpid auf den Kindprozess und prueft den Exit-Status. Der Handle
+ * bleibt gueltig (writer=NULL), das spaetere moo_release gibt nur die Huelse
+ * frei (kein Doppel-close). Idempotent: erneuter Aufruf liefert true. */
+MooValue moo_test_video_ende(MooValue video) {
+    if (video.tag != MOO_VIDEO) {
+        moo_throw(moo_string_new("test_video_ende: Argument ist kein Video-Recorder"));
+        return moo_bool(false);
+    }
+    MooVideoHandle* h = MV_VIDEO(video);
+    if (!h || !h->writer) {
+        /* Schon beendet — idempotent, kein Fehler. */
+        return moo_bool(true);
+    }
+    int rc = moo_video_close(h->writer);
+    h->writer = NULL; /* gegen Doppel-close in moo_video_handle_free */
+    if (rc == MOO_VIDEO_ERR_FFMPEG) {
+        moo_throw(moo_string_new("test_video_ende: ffmpeg mit Fehlerstatus beendet (Video ggf. unvollstaendig)"));
+        return moo_bool(false);
+    }
+    if (rc != MOO_VIDEO_OK) {
+        moo_throw(moo_string_new("test_video_ende: Video konnte nicht sauber abgeschlossen werden"));
         return moo_bool(false);
     }
     return moo_bool(true);

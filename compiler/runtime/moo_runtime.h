@@ -33,6 +33,7 @@ typedef enum {
     MOO_VOXELWORLD = 19,
     MOO_FRAME = 20,
     MOO_GIF = 21,
+    MOO_VIDEO = 22,
 } MooTag;
 
 // === Forward Declarations ===
@@ -151,6 +152,36 @@ typedef struct {
 MooValue moo_test_gif_start(MooValue win_oder_frame, MooValue pfad, MooValue fps);
 MooValue moo_test_gif_frame(MooValue gif, MooValue frame_oder_win);
 MooValue moo_test_gif_ende(MooValue gif);
+
+// === MP4-Video-Recorder (opaker Heap-Typ MOO_VIDEO, Plan-009 V0) ===
+// Wrappt den isolierten ffmpeg-Pipe-Kern (moo_video.c / MooVideoWriter*,
+// frame-bounded: piped jedes Frame direkt nach ffmpeg-stdin, NIE eine Frame-
+// Sequenz im RAM). Der Handle ist ein refcounteter moo-Heap-Wert; refcount MUSS
+// erstes Feld sein. Wird ueber moo_release()/MOO_VIDEO -> moo_video_handle_free()
+// freigegeben (schliesst dort einen ggf. noch offenen Writer = stdin close +
+// waitpid, kein Leak/Zombie). ffmpeg laeuft als fork/execvp-Kindprozess (kein
+// popen, keine Shell). Definition des Writers: moo_video.c (P009-V0).
+typedef struct MooVideoWriter MooVideoWriter; // Vorwaerts-Decl (Def: moo_video.c)
+typedef struct {
+    int32_t         refcount;  // MUSS erstes Feld sein (Refcount-Konvention)
+    MooVideoWriter* writer;    // offener Encoder oder NULL nach test_video_ende
+} MooVideoHandle;
+#define MV_VIDEO(v)  ((MooVideoHandle*)moo_val_as_ptr(v))
+
+// MOO_VIDEO-Handle-Wrapper (moo_video_handle.c, immer gebaut). Nimmt einen
+// offenen MooVideoWriter* (take ownership) und liefert einen MOO_VIDEO-Wert
+// bzw. NONE bei NULL/Speichermangel (schliesst den Writer dann sicher).
+MooValue moo_video_handle_new(MooVideoWriter* writer);
+// Refcount-0-Destruktor, aus moo_release()/MOO_VIDEO aufgerufen.
+void moo_video_handle_free(void* ptr);
+
+// test_video_*-Builtins (moo_test_api.c, nur 3D-Build - brauchen Fenster-Grab,
+// Plan-009 V1): test_video_start(win_oder_frame, pfad, fps) -> MOO_VIDEO;
+// test_video_frame(video, frame_oder_win) -> Bool; test_video_ende(video) -> Bool.
+// Symbole immer deklariert (wie test_gif_*); C-seitig nur im 3D-Build gelinkt.
+MooValue moo_test_video_start(MooValue win_oder_frame, MooValue pfad, MooValue fps);
+MooValue moo_test_video_frame(MooValue video, MooValue frame_oder_win);
+MooValue moo_test_video_ende(MooValue video);
 
 // === String ===
 struct MooString {

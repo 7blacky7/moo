@@ -2819,6 +2819,27 @@ impl<'ctx> CodeGen<'ctx> {
                         let gif = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_test_gif_ende, &[gif.into()], "t_gif_ende");
                     }
+                    // MP4-Video-Recorder (Plan-009 V1). Frame-bounded: piped
+                    // jeden Frame direkt nach ffmpeg-stdin, sammelt KEINE
+                    // Frame-Sequenz im RAM.
+                    // test_video_start(win_oder_frame, pfad, fps) -> MOO_VIDEO.
+                    "test_video_start" | "test_video_aufnahme_start" => {
+                        let win = self.compile_expr(&args[0])?;
+                        let path = self.compile_expr(&args[1])?;
+                        let fps = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_test_video_start, &[win.into(), path.into(), fps.into()], "t_video_start");
+                    }
+                    // test_video_frame(video, frame_oder_win) -> Bool.
+                    "test_video_frame" | "test_video_bild" => {
+                        let video = self.compile_expr(&args[0])?;
+                        let frame = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_test_video_frame, &[video.into(), frame.into()], "t_video_frame");
+                    }
+                    // test_video_ende(video) -> Bool.
+                    "test_video_ende" | "test_video_end" => {
+                        let video = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_test_video_ende, &[video.into()], "t_video_ende");
+                    }
                     // Voxel-Welt (Plan-005 Phase 1a Kern-Builtins).
                     // Nur die nach RT1 stabilen 4 Builtins; mesh_bauen/strahl folgen
                     // erst nach RT2/RT4 (keine Aliases fuer unfertige Semantik).
