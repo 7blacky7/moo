@@ -584,6 +584,87 @@ static bool moo_voxel_section_set(MooVoxelSection* sec, int32_t sidx, uint16_t i
     }
 }
 
+/* ------------------------------------------------------------------------
+ * Section-Direkt-Build (P006-R2): baut eine Section in EINEM Schritt aus einem
+ * voll-evaluierten 512-Eintrag-Block-Array auf, statt 512 Einzel-Setzungen mit
+ * schrittweisem EMPTY->PALETTE->widen-Upgrade. Waehlt direkt den optimalen
+ * Modus + die minimale Bitbreite:
+ *   - alle 0            -> EMPTY (0 Datenbytes)
+ *   - alle gleich != 0  -> SOLID (0 Index-Bytes)
+ *   - sonst             -> PALETTE mit minimaler Bitbreite (genau die distinkten
+ *                          IDs, palette[0]=Luft falls Luft vorkommt).
+ *
+ * KAPSELUNG: kennt KEINE Worldgen-Semantik — nimmt nur ein fertiges Block-Array
+ * entgegen. Voraussetzung: sec ist frisch EMPTY (memset(0) aus
+ * chunk_ensure_sections). Liefert exakt dieselben Lese-Resultate wie 512
+ * Aufrufe von moo_voxel_section_set in Reihenfolge (Determinismus-invariant).
+ * false bei OOM (Section bleibt dann definiert EMPTY). */
+static bool moo_voxel_section_build_from_array(MooVoxelSection* sec,
+                                              const uint16_t ids[MOO_VOXEL_SECTION_VOL]) {
+    /* 1) Distinkte IDs sammeln + Uniformitaet pruefen. palette[0] wird fuer Luft
+     *    reserviert (Konvention der PALETTE-Sections), sonst beginnt die Palette
+     *    bei der ersten festen ID. */
+    uint16_t distinct[MOO_VOXEL_SECTION_VOL];
+    int32_t  ndist = 0;
+    bool     has_air = false;
+    /* kleine lineare Suche reicht: Section-Paletten bleiben winzig (typisch <=6).
+     * Bei vielen distinkten IDs (worst-case-random) bricht die Schleife nie ab,
+     * bleibt aber O(VOL * ndist) — akzeptabel fuer einen einmaligen Build. */
+    for (int32_t i = 0; i < MOO_VOXEL_SECTION_VOL; i++) {
+        uint16_t id = ids[i];
+        if (id == 0) { has_air = true; continue; }
+        bool found = false;
+        for (int32_t k = 0; k < ndist; k++) {
+            if (distinct[k] == id) { found = true; break; }
+        }
+        if (!found) distinct[ndist++] = id;
+    }
+
+    /* 2) Trivialfaelle ohne Allokation. */
+    if (ndist == 0) {
+        /* Alles Luft -> EMPTY (sec ist bereits EMPTY). */
+        return true;
+    }
+    if (ndist == 1 && !has_air) {
+        /* Alle Voxel == eine feste ID -> SOLID, 0 Index-Bytes. */
+        sec->mode = MOO_VOXEL_SECTION_SOLID;
+        sec->solid_id = distinct[0];
+        return true;
+    }
+
+    /* 3) PALETTE: minimale Bitbreite fuer (Luft? + distinkte IDs). palette[0]
+     *    bleibt Luft (auch wenn keine Luft vorkommt — kostet nur 1 Eintrag und
+     *    haelt die Konvention konsistent mit dem Einzel-Write-Pfad). */
+    int32_t pal_entries = ndist + 1;   /* +1 fuer reservierte Luft an Position 0 */
+    uint8_t bits = moo_voxel_bits_for(pal_entries);
+    if (!moo_voxel_section_alloc_palette(sec, bits)) return false;
+    /* alloc_palette: mode=PALETTE, palette={0}, palette_count=1, indices alle 0. */
+
+    /* distinkte IDs internen (deterministische Reihenfolge = Reihenfolge des
+     * ersten Vorkommens, identisch zum schrittweisen palette_intern im
+     * Einzel-Write-Pfad). intern weitet die Bitbreite nie ueber bits hinaus,
+     * weil wir sie oben passend gewaehlt haben. */
+    int32_t pidx_of[MOO_VOXEL_SECTION_VOL]; /* distinct[k] -> Palette-Position */
+    for (int32_t k = 0; k < ndist; k++) {
+        int32_t p = moo_voxel_section_palette_intern(sec, distinct[k]);
+        if (p < 0) { moo_voxel_section_free(sec); return false; }
+        pidx_of[k] = p;
+    }
+
+    /* 4) Indices schreiben: Luft -> 0 (bereits genullt), sonst Palette-Position. */
+    for (int32_t i = 0; i < MOO_VOXEL_SECTION_VOL; i++) {
+        uint16_t id = ids[i];
+        if (id == 0) continue;            /* Index 0 = Luft, schon gesetzt */
+        int32_t pidx = 0;
+        for (int32_t k = 0; k < ndist; k++) {
+            if (distinct[k] == id) { pidx = pidx_of[k]; break; }
+        }
+        moo_voxel_idx_set(sec->indices, sec->bits, i, (uint32_t)pidx);
+    }
+    return true;
+}
+
+
 /* Lazy-Allokation des 64-Eintrag-Section-Arrays beim ersten Festblock eines
  * bislang komplett leeren Chunks. memset(0) -> 64x EMPTY-Section. false bei OOM. */
 static bool moo_voxel_chunk_ensure_sections(MooVoxelChunk* ch) {
@@ -711,11 +792,99 @@ static uint16_t moo_voxel_gen_block(uint32_t seed, int32_t wx, int32_t wy, int32
     return 3;                                             /* stein */
 }
 
+/* Baut eine einzelne 8^3-Section eines Worldgen-Chunks direkt auf (P006-R2,
+ * Auflage K4). Statt 512 Einzel-Setzungen mit schrittweisem Palette-Upgrade
+ * wird der Section-Modus aus dem Hoehenbereich der 64 Saeulen klassifiziert:
+ *
+ *   - Komplett SOLID stein:  Section-Oberkante liegt unter dem flachsten
+ *                            Stein-Beginn aller 64 Saeulen
+ *                            (z_top <= min(h)-2-DIRT_DEPTH). 0 Datenbytes.
+ *   - Komplett SOLID wasser: Section komplett ueber Terrain
+ *                            (z_bot >= max(h)) UND komplett unter Meeresspiegel
+ *                            (z_top < SEA_LEVEL). 0 Datenbytes.
+ *   - Komplett EMPTY (Luft): Section komplett ueber Terrain (z_bot >= max(h))
+ *                            UND komplett ueber/auf Meeresspiegel
+ *                            (z_bot >= SEA_LEVEL). 0 Datenbytes.
+ *   - Sonst (Surface-/Wasser-/Erd-Schnittbereich): 512 Voxel via gen_block
+ *     evaluieren und per section_build_from_array zur optimalen Section bauen.
+ *
+ * DETERMINISMUS-INVARIANT: jeder produzierte Voxel-Wert ist exakt
+ * moo_voxel_gen_block(seed,wx,wy,wz). Die Fast-Paths sind beweisbar aequivalent
+ * zur Voxel-fuer-Voxel-Auswertung (siehe gen_block-Schicht-Logik), liefern also
+ * BYTE-IDENTISCHE Bloecke wie der fruehere Einzel-Write-Pfad. false bei OOM. */
+static bool moo_voxel_gen_section(MooVoxelWorld* w, MooVoxelChunk* ch,
+                                  int32_t slot, int32_t base_x, int32_t base_y,
+                                  int32_t base_z, int32_t sx, int32_t sy, int32_t sz) {
+    int32_t sec_x0 = base_x + sx * MOO_VOXEL_SECTION_DIM;
+    int32_t sec_y0 = base_y + sy * MOO_VOXEL_SECTION_DIM;
+    int32_t sec_z0 = base_z + sz * MOO_VOXEL_SECTION_DIM;       /* unterste Welt-Z */
+    int32_t sec_z1 = sec_z0 + MOO_VOXEL_SECTION_DIM - 1;        /* oberste Welt-Z */
+
+    /* Hoehenbereich der 64 Saeulen dieser Section (O(64) statt O(512)). */
+    int32_t hmin = INT32_MAX, hmax = INT32_MIN;
+    for (int32_t iy = 0; iy < MOO_VOXEL_SECTION_DIM; iy++) {
+        for (int32_t ix = 0; ix < MOO_VOXEL_SECTION_DIM; ix++) {
+            int32_t h = moo_voxel_gen_height(w->seed, sec_x0 + ix, sec_y0 + iy);
+            if (h < hmin) hmin = h;
+            if (h > hmax) hmax = h;
+        }
+    }
+
+    MooVoxelSection* sec = &ch->sections[slot];
+
+    /* Fast-Path 1: komplett Stein. Voxel ist stein iff wz <= h-2-DIRT_DEPTH.
+     * Gilt fuer alle Voxel, wenn die Oberkante schon unter dem flachsten Stein-
+     * Beginn liegt: sec_z1 <= hmin-2-DIRT_DEPTH. */
+    if (sec_z1 <= hmin - 2 - MOO_VOXEL_GEN_DIRT_DEPTH) {
+        sec->mode = MOO_VOXEL_SECTION_SOLID;
+        sec->solid_id = 3; /* stein */
+        return true;
+    }
+
+    /* Komplett ueber dem Terrain (kein einziger fester Block): z_bot >= hmax.
+     * Dann ist jeder Voxel wasser (wz<SEA_LEVEL) oder luft (wz>=SEA_LEVEL). */
+    if (sec_z0 >= hmax) {
+        if (sec_z1 < MOO_VOXEL_GEN_SEA_LEVEL) {
+            /* Fast-Path 2: komplett unter Meeresspiegel -> SOLID wasser. */
+            sec->mode = MOO_VOXEL_SECTION_SOLID;
+            sec->solid_id = 5; /* wasser */
+            return true;
+        }
+        if (sec_z0 >= MOO_VOXEL_GEN_SEA_LEVEL) {
+            /* Fast-Path 3: komplett ueber/auf Meeresspiegel -> EMPTY (Luft).
+             * sec ist bereits EMPTY (memset(0)) — nichts zu tun. */
+            return true;
+        }
+        /* sonst: Wasser/Luft-Schnitt am Meeresspiegel -> Block-fuer-Block unten. */
+    }
+
+    /* Schnittbereich (Surface/Erde/Wasserlinie): 512 Voxel exakt via gen_block
+     * evaluieren und in einem Schritt zur optimalen Section bauen. */
+    uint16_t ids[MOO_VOXEL_SECTION_VOL];
+    for (int32_t iz = 0; iz < MOO_VOXEL_SECTION_DIM; iz++) {
+        int32_t wz = sec_z0 + iz;
+        for (int32_t iy = 0; iy < MOO_VOXEL_SECTION_DIM; iy++) {
+            int32_t wy = sec_y0 + iy;
+            for (int32_t ix = 0; ix < MOO_VOXEL_SECTION_DIM; ix++) {
+                int32_t sidx = (iz * MOO_VOXEL_SECTION_DIM + iy) * MOO_VOXEL_SECTION_DIM + ix;
+                ids[sidx] = moo_voxel_gen_block(w->seed, sec_x0 + ix, wy, wz);
+            }
+        }
+    }
+    return moo_voxel_section_build_from_array(sec, ids);
+}
+
 /* Generiert genau EINEN Chunk (cx,cy,cz) aus der Heightmap und claimt seinen
  * Hashmap-Slot. occupied wird IMMER gesetzt (auch fuer reine Luft-Chunks),
  * damit der Lese-Pfad (moo_voxel_holen) einen bereits generierten Chunk nicht
- * erneut generiert. Schreibzugriffe laufen ueber die Palette-Schicht
- * (chunk_block_set) — kein direkter Array-Zugriff. Gibt false bei OOM. */
+ * erneut generiert.
+ *
+ * P006-R2 (K4): Statt 32768 Einzel-chunk_block_set baut der Worldgen jede der
+ * 64 Sections direkt auf (moo_voxel_gen_section). Klassifikation ueber den
+ * Hoehenbereich macht die Mehrzahl der Sections O(Saeulen) statt O(Voxel) und
+ * waehlt SOLID/EMPTY/PALETTE mit minimaler Bitbreite direkt. Die Block-Werte
+ * sind byte-identisch zum frueheren Einzel-Write-Pfad (jeder Wert = gen_block).
+ * Gibt false bei OOM. */
 static bool moo_voxel_gen_chunk(MooVoxelWorld* w, int32_t cx, int32_t cy, int32_t cz) {
     /* Last-Factor 0.75: ggf. wachsen, damit immer ein freier Slot existiert. */
     if ((w->chunk_count + 1) * 4 >= w->chunk_cap * 3) {
@@ -736,14 +905,33 @@ static bool moo_voxel_gen_chunk(MooVoxelWorld* w, int32_t cx, int32_t cy, int32_
     int32_t base_y = cy * MOO_VOXEL_CHUNK_DIM;
     int32_t base_z = cz * MOO_VOXEL_CHUNK_DIM;
 
-    for (int32_t lx = 0; lx < MOO_VOXEL_CHUNK_DIM; lx++) {
-        for (int32_t ly = 0; ly < MOO_VOXEL_CHUNK_DIM; ly++) {
-            int32_t wx = base_x + lx;
-            int32_t wy = base_y + ly;
-            for (int32_t lz = 0; lz < MOO_VOXEL_CHUNK_DIM; lz++) {
-                uint16_t id = moo_voxel_gen_block(w->seed, wx, wy, base_z + lz);
-                if (id == 0) continue; /* Luft: nichts schreiben (Chunk bleibt sparsam) */
-                if (!moo_voxel_chunk_block_set(ch, moo_voxel_local_index(lx, ly, lz), id)) {
+    /* Erst pruefen, ob der gesamte Chunk reine Luft ist (komplett ueber Terrain
+     * und ueber Meeresspiegel) — dann bleibt sections==NULL (0 Datenbytes,
+     * Plan-006-Invariante). gen_height ist eine reine Funktion der horizontalen
+     * Koordinate; min ueber die 32x32 Saeulen reicht. */
+    int32_t chunk_hmax = INT32_MIN;
+    for (int32_t ly = 0; ly < MOO_VOXEL_CHUNK_DIM; ly++) {
+        for (int32_t lx = 0; lx < MOO_VOXEL_CHUNK_DIM; lx++) {
+            int32_t h = moo_voxel_gen_height(w->seed, base_x + lx, base_y + ly);
+            if (h > chunk_hmax) chunk_hmax = h;
+        }
+    }
+    if (base_z >= chunk_hmax && base_z >= MOO_VOXEL_GEN_SEA_LEVEL) {
+        /* Gesamter Chunk ueber Terrain + ueber Meeresspiegel -> reine Luft. */
+        ch->dirty = true;
+        return true;
+    }
+
+    /* Section-Array lazy allokieren (memset(0) -> 64x EMPTY), dann jede Section
+     * direkt klassifizieren/bauen. */
+    if (!moo_voxel_chunk_ensure_sections(ch)) return false;
+    for (int32_t sz = 0; sz < MOO_VOXEL_SECTIONS_PER_AXIS; sz++) {
+        for (int32_t sy = 0; sy < MOO_VOXEL_SECTIONS_PER_AXIS; sy++) {
+            for (int32_t sx = 0; sx < MOO_VOXEL_SECTIONS_PER_AXIS; sx++) {
+                int32_t slot_s = (sz * MOO_VOXEL_SECTIONS_PER_AXIS + sy)
+                                 * MOO_VOXEL_SECTIONS_PER_AXIS + sx;
+                if (!moo_voxel_gen_section(w, ch, slot_s, base_x, base_y, base_z,
+                                           sx, sy, sz)) {
                     return false;
                 }
             }
