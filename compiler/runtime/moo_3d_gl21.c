@@ -56,6 +56,7 @@ static void* gl21_create_window(const char* title, int w, int h) {
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
     GLFWwindow* win = glfwCreateWindow(w, h, title, NULL, NULL);
     if (!win) return NULL;

@@ -478,7 +478,7 @@ static int create_ubo(VulkanContext* ctx) {
     ctx->ubo_data.fogColor[0] = 0.85f;
     ctx->ubo_data.fogColor[1] = 0.87f;
     ctx->ubo_data.fogColor[2] = 0.90f;
-    ctx->ubo_data.fogColor[3] = 0.0f;
+    ctx->ubo_data.fogColor[3] = 0.15f;
 
     /* WICHTIG: UBO sofort in ALLE Frame-Buffers hochladen (nicht auf ersten Swap warten) */
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -521,9 +521,25 @@ static void* vk_create_window(const char* title, int w, int h) {
         .ppEnabledExtensionNames = glfw_exts,
     };
     #ifndef NDEBUG
+    uint32_t layer_count = 0;
+    vkEnumerateInstanceLayerProperties(&layer_count, NULL);
+    VkLayerProperties* available_layers = (VkLayerProperties*)malloc(layer_count * sizeof(VkLayerProperties));
+    vkEnumerateInstanceLayerProperties(&layer_count, available_layers);
+    
+    bool has_validation = false;
+    for (uint32_t i = 0; i < layer_count; i++) {
+        if (strcmp(available_layers[i].layerName, "VK_LAYER_KHRONOS_validation") == 0) {
+            has_validation = true;
+            break;
+        }
+    }
+    free(available_layers);
+
     const char* validation[] = { "VK_LAYER_KHRONOS_validation" };
-    inst_info.enabledLayerCount = 1;
-    inst_info.ppEnabledLayerNames = validation;
+    if (has_validation) {
+        inst_info.enabledLayerCount = 1;
+        inst_info.ppEnabledLayerNames = validation;
+    }
     #endif
     if (vkCreateInstance(&inst_info, NULL, &ctx->instance) != VK_SUCCESS) goto fail;
 
@@ -1033,8 +1049,10 @@ static void vk_set_light_dir(void* raw, float x, float y, float z) {
 }
 
 static void vk_set_ambient(void* raw, float level) {
-    (void)raw; (void)level;
-    /* Vulkan ambient ist im Shader hardcoded — TODO: Uniform */
+    VulkanContext* ctx = (VulkanContext*)raw;
+    if (ctx) {
+        ctx->ubo_data.fogColor[3] = level;
+    }
 }
 
 /* === Vulkan Screenshot ============================================

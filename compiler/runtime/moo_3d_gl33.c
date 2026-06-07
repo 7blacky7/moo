@@ -43,6 +43,7 @@ typedef struct {
     float light_dir[3];
     float fog_color[3];
     float fog_dist;
+    float ambient;
     double last_mouse_x;
     double last_mouse_y;
     int mouse_captured;
@@ -78,6 +79,7 @@ static void gl33_upload_lighting(GL33Context* ctx) {
     gl33_upload_vec3(ctx->uniforms.fog_color,
                      ctx->fog_color[0], ctx->fog_color[1], ctx->fog_color[2]);
     gl33_upload_float(ctx->uniforms.fog_dist, ctx->fog_dist);
+    gl33_upload_float(ctx->uniforms.ambient, ctx->ambient);
 }
 
 /* Draw vertices immediately (non-chunked) */
@@ -120,6 +122,7 @@ static void* gl33_create_window(const char* title, int w, int h) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
     GLFWwindow* win = glfwCreateWindow(w, h, title, NULL, NULL);
     if (!win) {
@@ -186,6 +189,7 @@ void* gl33_init_ctx_from_window(void* win_void, int w, int h) {
     ctx->fog_color[1] = 0.87f;
     ctx->fog_color[2] = 0.90f;
     ctx->fog_dist = 20.0f;
+    ctx->ambient = 0.15f;
 
     /* GL State */
     glEnable(GL_DEPTH_TEST);
@@ -599,8 +603,11 @@ static void gl33_set_light_dir(void* vctx, float x, float y, float z) {
 }
 
 static void gl33_set_ambient(void* vctx, float level) {
-    (void)vctx; (void)level;
-    /* GL33 ambient ist im Shader hardcoded (0.15) — TODO: Uniform */
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return;
+    ctx->ambient = level;
+    glUseProgram(ctx->program);
+    gl33_upload_float(ctx->uniforms.ambient, level);
 }
 
 /* ========================================================
