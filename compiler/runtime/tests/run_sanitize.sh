@@ -89,10 +89,18 @@ HARNESSES=(
 #   * gif_wiring: Encoder + Wrapper + MOO_FRAME + Core-Runtime-Bausteine.
 #   * sim_input: NUR moo_3d.c (Dispatcher, kein GL/GLFW; Backend wird gestubbt).
 EXTRA_HARNESSES=(
-  "test_frame_asan.c|moo_frame.c moo_memory.c moo_gif_handle.c moo_gif.c|-lm"
+  "test_frame_asan.c|moo_frame.c moo_memory.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"
   "test_gif_core_asan.c|moo_gif.c|-lm"
-  "test_gif_wiring_asan.c|moo_gif.c moo_gif_handle.c moo_frame.c moo_value.c moo_memory.c moo_string.c moo_dict.c moo_error.c moo_print.c moo_list.c moo_ops.c|-lm"
+  "test_gif_wiring_asan.c|moo_gif.c moo_gif_handle.c moo_frame.c moo_value.c moo_memory.c moo_string.c moo_dict.c moo_error.c moo_print.c moo_list.c moo_ops.c moo_video_handle.c moo_video.c|-lm"
   "test_sim_input_asan.c|moo_3d.c|-lm"
+  #   video_wiring: MOO_VIDEO-Core (moo_video.c) + immer-gebauter Heap-Wrapper
+  #               (moo_video_handle.c) + Core-Runtime. moo_memory.c->moo_release()
+  #               dispatcht MOO_VIDEO->moo_video_handle_free (P009-V0); die uebrigen
+  #               *_free-Dispatch-Ziele stubbt der Harness. moo_value.c braucht
+  #               moo_string_new -> moo_string.c (+ dict/list/ops als deren Deps).
+  #               Mock-ffmpeg: der Harness schreibt zur Laufzeit ein "ffmpeg"-sh-
+  #               Skript in ein mkdtemp-Dir + setzt PATH -> KEIN echtes ffmpeg/GPU.
+  "test_video_wiring_asan.c|moo_video.c moo_video_handle.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
 )
 
 # --- Sanitizer-Verfuegbarkeit pruefen (Probe-Kompilat) ----------------------
@@ -207,6 +215,8 @@ build_ub_ops_string() {
     # moo_frame.c baut intern ein Pixel-Dict (moo_dict_new/_set) -> moo_dict.c.
     "$RUNTIME_DIR/moo_frame.c" "$RUNTIME_DIR/moo_gif_handle.c"
     "$RUNTIME_DIR/moo_gif.c" "$RUNTIME_DIR/moo_dict.c"
+    # P009-V0: moo_memory.c->moo_release() dispatcht MOO_VIDEO->moo_video_handle_free.
+    "$RUNTIME_DIR/moo_video_handle.c" "$RUNTIME_DIR/moo_video.c"
   )
   echo "  [build] $tag  (ops/string-Pfade, P007-U3)"
   # shellcheck disable=SC2086
