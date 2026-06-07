@@ -127,6 +127,53 @@ build_and_run() {
   fi
 }
 
+# --- P007-U3 ops/string-Harness bauen + laufen ------------------------------
+# Args: <mode> <build-flags> <run-env>
+# Rueckgabe: 0 ok, 1 build-fail, 2 run-fail/sanitizer-fund
+build_ub_ops_string() {
+  local mode="$1" bflags="$2" renv="$3"
+  local tag="test_ub_ops_string"
+  local bin="$OUT_DIR/${tag}.${mode}"
+  local log="$OUT_DIR/${tag}.${mode}.log"
+  local srcs=(
+    "${tag}.c"
+    "$RUNTIME_DIR/moo_ops.c" "$RUNTIME_DIR/moo_string.c"
+    "$RUNTIME_DIR/moo_memory.c" "$RUNTIME_DIR/moo_value.c"
+    "$RUNTIME_DIR/moo_error.c" "$RUNTIME_DIR/moo_print.c"
+    "$RUNTIME_DIR/moo_list.c"
+  )
+  echo "  [build] $tag  (ops/string-Pfade, P007-U3)"
+  # shellcheck disable=SC2086
+  if ! "$CC" $bflags -g -std=gnu11 -D_GNU_SOURCE -I"$RUNTIME_DIR" \
+        "${srcs[@]}" -lm -o "$bin" > "$log" 2>&1; then
+    echo "  [BUILD-FAIL] $tag"
+    sed 's/^/      | /' "$log"
+    return 1
+  fi
+  # Dieser Harness uebt absichtlich Fehler-/Wurf-Pfade aus. Jeder moo_throw legt
+  # seine Meldung in der globalen moo_last_error ab; im echten Programm raeumt
+  # der catch-Handler das auf, im Harness-Kontext bleiben diese Mess-Strings
+  # liegen. Das sind KEINE Bugs in den getesteten Pfaden, sondern Test-Artefakte
+  # der Wurf-Simulation. ASan-Leak-Detection wuerde sie faelschlich anschlagen
+  # lassen — daher hier detect_leaks=0. Die ADRESS-Checks (heap-overflow etc.,
+  # der eigentliche Zweck) UND der komplette UBSan-Lauf bleiben voll aktiv.
+  local run_env="$renv"
+  case "$mode" in
+    asan) run_env="ASAN_OPTIONS=detect_leaks=0:abort_on_error=1" ;;
+  esac
+  echo "  [run]   $tag"
+  # shellcheck disable=SC2086
+  if env $run_env "$bin" > "$log" 2>&1; then
+    echo "  [PASS]  $tag"
+    return 0
+  else
+    local rc=$?
+    echo "  [FAIL]  $tag  (rc=$rc) -- moeglicher Sanitizer-Fund:"
+    sed 's/^/      | /' "$log"
+    return 2
+  fi
+}
+
 # --- Einen kompletten Modus durchfahren -------------------------------------
 # Args: <mode>
 # Rueckgabe: 0 alle ok, 1 mind. ein fail, 2 modus geskippt (sanitizer fehlt)
@@ -175,8 +222,19 @@ run_mode() {
     esac
   done
 
+  # --- P007-U3 ops/string-Harness (eigener Link-Satz, KEIN moo_voxel.c) -------
+  # Uebt die gehaerteten Shift-/Groessen-Pfade (moo_ops.c, moo_string.c,
+  # moo_memory.c Checked-Helper) aus. Braucht moo_value/_error/_print/_list,
+  # daher nicht in der HARNESSES-Matrix (die linkt moo_voxel.c). Strdup &Co
+  # brauchen -D_GNU_SOURCE; std bewusst gnu11 (wie der cc-crate-Default).
+  build_ub_ops_string "$mode" "$bflags" "$renv"
+  case $? in
+    0) passes=$((passes+1)) ;;
+    *) fails=$((fails+1)) ;;
+  esac
+
   echo "------------------------------------------------------------"
-  echo " MODUS $mode ABGESCHLOSSEN: $passes ok, $fails fehlgeschlagen (von ${#HARNESSES[@]})"
+  echo " MODUS $mode ABGESCHLOSSEN: $passes ok, $fails fehlgeschlagen (von $((${#HARNESSES[@]} + 1)))"
   echo "------------------------------------------------------------"
   [ "$fails" -eq 0 ] && return 0 || return 1
 }
