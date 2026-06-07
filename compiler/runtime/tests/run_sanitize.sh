@@ -75,6 +75,26 @@ HARNESSES=(
   "test_voxel_worldgen_asan.c|moo_noise.c|"   # EINZIGER mit echtem moo_noise.c
 )
 
+# --- P008-Harness-Matrix (non-voxel) ----------------------------------------
+# Die Plan-008-Harnesses (Frame/GIF/Sim-Input) linken KEIN moo_voxel.c, sondern
+# ihren je EIGENEN, vollstaendigen Quell-Satz. Format je Zeile:
+#   "<basename>|<komplette-quell-liste relativ zu RUNTIME_DIR>|<extra-libs>"
+# Die Quell-Liste ist VOLLSTAENDIG (kein impliziter gemeinsamer Nenner ausser
+# -lm). Begruendung der Saetze (verifiziert P008-FINAL-Gate):
+#   * frame:    moo_frame.c + moo_memory.c. moo_memory.c->moo_release() dispatcht
+#               MOO_FRAME->moo_frame_free UND MOO_GIF->moo_gif_handle_free
+#               (P008 A3A/A3B) -> ohne moo_gif_handle.c + moo_gif.c = undefined
+#               reference. Restliche *_free-Dispatch-Ziele stubbt der Harness.
+#   * gif_core: NUR moo_gif.c (Encoder-Kern, KEINE MOO-Abhaengigkeit, keine Stubs).
+#   * gif_wiring: Encoder + Wrapper + MOO_FRAME + Core-Runtime-Bausteine.
+#   * sim_input: NUR moo_3d.c (Dispatcher, kein GL/GLFW; Backend wird gestubbt).
+EXTRA_HARNESSES=(
+  "test_frame_asan.c|moo_frame.c moo_memory.c moo_gif_handle.c moo_gif.c|-lm"
+  "test_gif_core_asan.c|moo_gif.c|-lm"
+  "test_gif_wiring_asan.c|moo_gif.c moo_gif_handle.c moo_frame.c moo_value.c moo_memory.c moo_string.c moo_dict.c moo_error.c moo_print.c moo_list.c moo_ops.c|-lm"
+  "test_sim_input_asan.c|moo_3d.c|-lm"
+)
+
 # --- Sanitizer-Verfuegbarkeit pruefen (Probe-Kompilat) ----------------------
 # Gibt 0 zurueck wenn der Sanitizer baut+laeuft, sonst != 0. Stille Probe.
 sanitizer_available() {
@@ -127,6 +147,47 @@ build_and_run() {
   fi
 }
 
+# --- Ein Harness mit EXPLIZITER Quell-Liste bauen + laufen ------------------
+# Wie build_and_run, aber OHNE impliziten moo_voxel.c-Nenner: die uebergebene
+# Quell-Liste ist vollstaendig. Fuer die P008-Harnesses (Frame/GIF/Sim-Input).
+# Args: <mode> <build-flags> <run-env> <basename> <source-list> <extra-libs>
+#   <source-list>: leerzeichengetrennte .c relativ zu RUNTIME_DIR
+# Rueckgabe: 0 ok, 1 build-fail, 2 run-fail/sanitizer-fund
+build_and_run_explicit() {
+  local mode="$1" bflags="$2" renv="$3" base="$4" src_list="$5" extra_libs="$6"
+  local tag="${base%.c}"
+  local bin="$OUT_DIR/${tag}.${mode}"
+  local log="$OUT_DIR/${tag}.${mode}.log"
+
+  local srcs=( "$base" )
+  local s
+  for s in $src_list; do
+    srcs+=( "$RUNTIME_DIR/$s" )
+  done
+
+  echo "  [build] $tag  (src: $base $src_list  libs: $extra_libs)"
+  # gnu11 + _GNU_SOURCE wie der cc-crate-Default (strdup &Co in der Runtime).
+  # shellcheck disable=SC2086
+  if ! "$CC" $bflags -g -std=gnu11 -D_GNU_SOURCE -I"$RUNTIME_DIR" \
+        "${srcs[@]}" $extra_libs -o "$bin" > "$log" 2>&1; then
+    echo "  [BUILD-FAIL] $tag"
+    sed 's/^/      | /' "$log"
+    return 1
+  fi
+
+  echo "  [run]   $tag"
+  # shellcheck disable=SC2086
+  if env $renv "$bin" > "$log" 2>&1; then
+    echo "  [PASS]  $tag"
+    return 0
+  else
+    local rc=$?
+    echo "  [FAIL]  $tag  (rc=$rc) -- moeglicher Sanitizer-Fund:"
+    sed 's/^/      | /' "$log"
+    return 2
+  fi
+}
+
 # --- P007-U3 ops/string-Harness bauen + laufen ------------------------------
 # Args: <mode> <build-flags> <run-env>
 # Rueckgabe: 0 ok, 1 build-fail, 2 run-fail/sanitizer-fund
@@ -141,6 +202,11 @@ build_ub_ops_string() {
     "$RUNTIME_DIR/moo_memory.c" "$RUNTIME_DIR/moo_value.c"
     "$RUNTIME_DIR/moo_error.c" "$RUNTIME_DIR/moo_print.c"
     "$RUNTIME_DIR/moo_list.c"
+    # P008: moo_memory.c->moo_release() dispatcht MOO_FRAME->moo_frame_free und
+    # MOO_GIF->moo_gif_handle_free. Ohne diese drei .c = undefined reference.
+    # moo_frame.c baut intern ein Pixel-Dict (moo_dict_new/_set) -> moo_dict.c.
+    "$RUNTIME_DIR/moo_frame.c" "$RUNTIME_DIR/moo_gif_handle.c"
+    "$RUNTIME_DIR/moo_gif.c" "$RUNTIME_DIR/moo_dict.c"
   )
   echo "  [build] $tag  (ops/string-Pfade, P007-U3)"
   # shellcheck disable=SC2086
@@ -222,6 +288,17 @@ run_mode() {
     esac
   done
 
+  # --- P008-Harnesses (Frame/GIF/Sim-Input, je eigener Link-Satz) -------------
+  local esrc elibs
+  for entry in "${EXTRA_HARNESSES[@]}"; do
+    IFS='|' read -r base esrc elibs <<< "$entry"
+    build_and_run_explicit "$mode" "$bflags" "$renv" "$base" "$esrc" "$elibs"
+    case $? in
+      0) passes=$((passes+1)) ;;
+      *) fails=$((fails+1)) ;;
+    esac
+  done
+
   # --- P007-U3 ops/string-Harness (eigener Link-Satz, KEIN moo_voxel.c) -------
   # Uebt die gehaerteten Shift-/Groessen-Pfade (moo_ops.c, moo_string.c,
   # moo_memory.c Checked-Helper) aus. Braucht moo_value/_error/_print/_list,
@@ -234,7 +311,7 @@ run_mode() {
   esac
 
   echo "------------------------------------------------------------"
-  echo " MODUS $mode ABGESCHLOSSEN: $passes ok, $fails fehlgeschlagen (von $((${#HARNESSES[@]} + 1)))"
+  echo " MODUS $mode ABGESCHLOSSEN: $passes ok, $fails fehlgeschlagen (von $((${#HARNESSES[@]} + ${#EXTRA_HARNESSES[@]} + 1)))"
   echo "------------------------------------------------------------"
   [ "$fails" -eq 0 ] && return 0 || return 1
 }

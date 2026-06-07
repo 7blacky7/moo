@@ -20,8 +20,12 @@
  *
  * Kompilieren/Ausfuehren (Beispiel gl33-Variante; -DMOO_HAS_GL33 etc. nur fuer
  * die Build-Matrix-Doku — die Harness selbst ist backend-unabhaengig):
- *   gcc -fsanitize=address -g -std=c11 -Wall -Wextra -I.. \
- *       test_frame_asan.c ../moo_frame.c ../moo_memory.c -lm -o /tmp/t_frame
+ *   gcc -fsanitize=address -g -std=c11 -Wall -Wextra -I.. test_frame_asan.c \
+ *       ../moo_frame.c ../moo_memory.c ../moo_gif_handle.c ../moo_gif.c \
+ *       ../moo_dict.c -lm -o /tmp/t_frame
+ *   (moo_memory.c->moo_release() dispatcht MOO_GIF->moo_gif_handle_free, und
+ *    moo_frame.c baut ein Pixel-Dict -> moo_gif_handle.c/moo_gif.c/moo_dict.c
+ *    sind zum Linken noetig. Verdrahtet in run_sanitize.sh EXTRA_HARNESSES.)
  *   ASAN_OPTIONS=detect_leaks=1 /tmp/t_frame
  */
 

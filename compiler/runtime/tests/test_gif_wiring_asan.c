@@ -27,14 +27,15 @@
  *   gcc -fsanitize=address -g -std=gnu11 -D_GNU_SOURCE -Wall -Wextra -I.. \
  *       test_gif_wiring_asan.c ../moo_gif.c ../moo_gif_handle.c ../moo_frame.c \
  *       ../moo_value.c ../moo_memory.c ../moo_string.c ../moo_dict.c \
- *       ../moo_error.c ../moo_print.c ../moo_list.c -lm -o /tmp/t_gif_wire
+ *       ../moo_error.c ../moo_print.c ../moo_list.c ../moo_ops.c \
+ *       -lm -o /tmp/t_gif_wire
  *   ASAN_OPTIONS=detect_leaks=1 /tmp/t_gif_wire
  *
  *   gcc -fsanitize=undefined -fno-sanitize-recover=undefined -g -std=gnu11 \
  *       -D_GNU_SOURCE -Wall -Wextra -I.. test_gif_wiring_asan.c ../moo_gif.c \
  *       ../moo_gif_handle.c ../moo_frame.c ../moo_value.c ../moo_memory.c \
  *       ../moo_string.c ../moo_dict.c ../moo_error.c ../moo_print.c \
- *       ../moo_list.c -lm -o /tmp/t_gif_wire_ub
+ *       ../moo_list.c ../moo_ops.c -lm -o /tmp/t_gif_wire_ub
  *   UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 /tmp/t_gif_wire_ub
  */
 
