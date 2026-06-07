@@ -1,0 +1,350 @@
+# ============================================================
+# voxel_sandbox.moo — Minecraft-artige Voxel-Sandbox (Plan-005 Phase 4)
+#
+# Nutzt die moo Voxel-Engine-Runtime (moo_voxel.c) ueber die Builtins:
+#   voxel_welt_neu(seed)              -> VoxelWorld-Handle
+#   voxel_generieren(w, cx, cy)       -> generiert vertikale Chunk-Saeule
+#   voxel_aktualisieren(w)            -> remesht alle dirty Chunks (GPU)
+#   voxel_strahl(w, ox,oy,oz, dx,dy,dz, max) -> Raycast-Dict
+#   voxel_setzen(w, x,y,z, id)        -> Block setzen/loeschen (id 0 = Luft)
+#   voxel_holen(w, x,y,z)             -> Block-ID lesen
+#
+# ACHSEN-KONVENTION der Engine: Z ist die VERTIKALE (Hoehen-)Achse.
+# Ein Voxel an (x,y,z) belegt den Wuerfel [x,x+1] x [y,y+1] x [z,z+1].
+# Terrain: Oberflaeche ~Z=18 (+/-14), Meeresspiegel Z=16. Wasser ist OPAK.
+#
+# Fenster: fenster_unified (Hybrid 2D+3D) — das 3D-Voxel-Mesh wird ueber
+# die raum_*-Bridge (gl33) gezeichnet, die 2D-Hotbar liegt als
+# zeichne_rechteck_z-Overlay darueber (Hybrid-Pattern wie siedler3.moo).
+#
+# Steuerung:
+#   W/A/S/D     Bewegen (vorne/links/zurueck/rechts), bezogen auf Blickrichtung
+#   Leertaste   aufsteigen   |   Shift   absteigen
+#   Maus        umschauen (Fly-Cam, Maus gefangen)
+#   LMB         Block am Fadenkreuz abbauen
+#   RMB         Block an der getroffenen Flaeche setzen (aktiver Hotbar-Block)
+#   1..5        Hotbar-Slot waehlen (gras/erde/stein/sand/wasser)
+#   Mausrad     Hotbar-Slot wechseln
+#   Escape      Beenden
+#
+# Kompilieren/Starten (mit gl33-Backend):
+#   MOO_3D_BACKEND=gl33 moo-compiler run beispiele/voxel_sandbox.moo
+#   (headless: xvfb-run -a -s "-screen 0 1280x800x24" ... )
+#
+# Test-Modus (env MOO_VOXEL_TEST=1): laeuft eine feste Frame-Zahl ohne
+# echte Eingabe und beendet sich sauber. Der Screenshot-Selftest
+# (beispiele/voxel_sandbox_selftest.moo) nutzt dieselben Engine-Aufrufe.
+# ============================================================
+
+konstante WIN_B auf 1280
+konstante WIN_H auf 800
+
+# --- Block-Registry (identisch zur C-Runtime moo_voxel.c) ---
+konstante LUFT auf 0
+konstante GRAS auf 1
+konstante ERDE auf 2
+konstante STEIN auf 3
+konstante SAND auf 4
+konstante WASSER auf 5
+
+konstante CHUNK_DIM auf 32
+
+# Farben fuer Hotbar-Icons (passen zur Mesher-Palette MOO_VOXEL_BLOCK_HEX)
+funktion block_farbe(typ):
+    wenn typ == GRAS:
+        gib_zurück "#4CAF50"
+    wenn typ == ERDE:
+        gib_zurück "#795548"
+    wenn typ == STEIN:
+        gib_zurück "#9E9E9E"
+    wenn typ == SAND:
+        gib_zurück "#FFE082"
+    wenn typ == WASSER:
+        gib_zurück "#2196F3"
+    gib_zurück "#FF00FF"
+
+funktion block_name(typ):
+    wenn typ == GRAS:
+        gib_zurück "Gras"
+    wenn typ == ERDE:
+        gib_zurück "Erde"
+    wenn typ == STEIN:
+        gib_zurück "Stein"
+    wenn typ == SAND:
+        gib_zurück "Sand"
+    wenn typ == WASSER:
+        gib_zurück "Wasser"
+    gib_zurück "?"
+
+# Reihenfolge der 5 Hotbar-Slots
+setze hotbar auf [GRAS, ERDE, STEIN, SAND, WASSER]
+setze hotbar_idx auf 0
+
+# ============================================================
+# === WELT GENERIEREN ========================================
+# ============================================================
+zeige "=== moo Voxel Sandbox (Plan-005 Phase 4) ==="
+
+setze test_modus auf umgebung("MOO_VOXEL_TEST") != ""
+
+setze welt auf voxel_welt_neu(1337)
+
+# Terrain um den Spawn herum: GEN_RADIUS Chunks in jede horizontale
+# Richtung. Jede voxel_generieren-Saeule deckt die volle Hoehe ab.
+konstante GEN_RADIUS auf 2
+setze chunks_neu auf 0
+für gcx in (0 - GEN_RADIUS)..(GEN_RADIUS + 1):
+    für gcy in (0 - GEN_RADIUS)..(GEN_RADIUS + 1):
+        setze chunks_neu auf chunks_neu + voxel_generieren(welt, gcx, gcy)
+zeige "Terrain generiert: " + text(chunks_neu) + " Chunks"
+
+# ============================================================
+# === FENSTER + KAMERA =======================================
+# ============================================================
+setze win auf fenster_unified("moo Voxel Sandbox", WIN_B, WIN_H)
+raum_perspektive(win, 70.0, 0.1, 300.0)
+
+# Fly-Cam-Zustand. Spawn ueber der Mitte des generierten Gebiets, mit
+# Blick leicht nach unten auf das Terrain. Welt-Z = Hoehe.
+setze cam_x auf 16.0
+setze cam_y auf 16.0
+setze cam_z auf 40.0        # Hoehe (ueber Meeresspiegel 16, ueber Terrain ~32)
+setze yaw auf 3.926         # ~225 Grad: Blick Richtung -x/-y (auf das Gebiet)
+setze pitch auf (0.0 - 0.6) # leicht nach unten
+
+# Maus fangen fuer Fly-Cam-Look (im Test-Modus weglassen, headless robust).
+wenn nicht test_modus:
+    raum_maus_fangen(win)
+
+# Liefert die normierte Blickrichtung (dx,dy,dz) aus yaw/pitch.
+# Z ist Hoehe -> dz = sin(pitch). Horizontalkomponente = cos(pitch).
+funktion blick_dx(yaw, pitch):
+    gib_zurück cosinus(pitch) * cosinus(yaw)
+
+funktion blick_dy(yaw, pitch):
+    gib_zurück cosinus(pitch) * sinus(yaw)
+
+funktion blick_dz(yaw, pitch):
+    gib_zurück sinus(pitch)
+
+# Zeichnet die vier Kanten EINER getroffenen Wuerfelflaeche als duenne
+# Highlight-Quads, leicht entlang der Flaechen-Normale herausgeschoben,
+# damit es ueber dem Block schwebt (kein Z-Fighting). bx/by/bz = Voxel-
+# Koordinate (Wuerfel-Minecke), n* = Flaechen-Normale aus dem Raycast.
+funktion highlight_flaeche(win, bx, by, bz, nx, ny, nz):
+    setze c auf "#FFFFFF"
+    setze e auf 0.03            # leichte Verschiebung gegen Z-Fighting
+    setze x0 auf bx
+    setze x1 auf bx + 1.0
+    setze y0 auf by
+    setze y1 auf by + 1.0
+    setze z0 auf bz
+    setze z1 auf bz + 1.0
+    # Die getroffene Flaeche liegt auf der Seite, in deren Richtung die
+    # Normale zeigt. Wir zeichnen sie als helles Quad (2 Dreiecke).
+    wenn nx > 0:
+        raum_dreieck(win, x1 + e, y0, z0, x1 + e, y1, z0, x1 + e, y1, z1, c)
+        raum_dreieck(win, x1 + e, y0, z0, x1 + e, y1, z1, x1 + e, y0, z1, c)
+    wenn nx < 0:
+        raum_dreieck(win, x0 - e, y0, z0, x0 - e, y1, z1, x0 - e, y1, z0, c)
+        raum_dreieck(win, x0 - e, y0, z0, x0 - e, y0, z1, x0 - e, y1, z1, c)
+    wenn ny > 0:
+        raum_dreieck(win, x0, y1 + e, z0, x0, y1 + e, z1, x1, y1 + e, z1, c)
+        raum_dreieck(win, x0, y1 + e, z0, x1, y1 + e, z1, x1, y1 + e, z0, c)
+    wenn ny < 0:
+        raum_dreieck(win, x0, y0 - e, z0, x1, y0 - e, z1, x0, y0 - e, z1, c)
+        raum_dreieck(win, x0, y0 - e, z0, x1, y0 - e, z0, x1, y0 - e, z1, c)
+    wenn nz > 0:
+        raum_dreieck(win, x0, y0, z1 + e, x1, y1, z1 + e, x0, y1, z1 + e, c)
+        raum_dreieck(win, x0, y0, z1 + e, x1, y0, z1 + e, x1, y1, z1 + e, c)
+    wenn nz < 0:
+        raum_dreieck(win, x0, y0, z0 - e, x0, y1, z0 - e, x1, y1, z0 - e, c)
+        raum_dreieck(win, x0, y0, z0 - e, x1, y1, z0 - e, x1, y0, z0 - e, c)
+
+# Zeichnet die 2D-Hotbar als Overlay (zeichne_rechteck_z, kleines Welt-Z
+# -> liegt vor der ganzen 3D-Szene). Aktiver Slot mit hellem Rahmen.
+funktion zeichne_hotbar(win, hotbar, aktiv):
+    setze slot auf 56
+    setze pad auf 6
+    setze anzahl auf länge(hotbar)
+    setze gesamt auf anzahl * slot + (anzahl + 1) * pad
+    setze ox auf (WIN_B - gesamt) / 2
+    setze oy auf WIN_H - slot - 2 * pad
+    # Hintergrund-Panel
+    zeichne_rechteck_z(win, ox, oy, 0.50, gesamt, slot + 2 * pad, "#101820C0")
+    setze i auf 0
+    solange i < anzahl:
+        setze sx auf ox + pad + i * (slot + pad)
+        setze sy auf oy + pad
+        # Aktiver Slot: heller Rahmen hinter dem Icon
+        wenn i == aktiv:
+            zeichne_rechteck_z(win, sx - 4, sy - 4, 0.45, slot + 8, slot + 8, "#FFFFFF")
+        # Slot-Hintergrund
+        zeichne_rechteck_z(win, sx, sy, 0.42, slot, slot, "#2A2A2A")
+        # Block-Icon
+        zeichne_rechteck_z(win, sx + 6, sy + 6, 0.40, slot - 12, slot - 12, block_farbe(hotbar[i]))
+        setze i auf i + 1
+
+# Zeichnet ein einfaches Fadenkreuz in Bildschirm-Mitte (2D-Overlay).
+funktion zeichne_fadenkreuz(win):
+    setze cx auf WIN_B / 2
+    setze cy auf WIN_H / 2
+    zeichne_rechteck_z(win, cx - 10, cy - 1, 0.40, 20, 2, "#FFFFFF")
+    zeichne_rechteck_z(win, cx - 1, cy - 10, 0.40, 2, 20, "#FFFFFF")
+
+# ============================================================
+# === HAUPT-SCHLEIFE =========================================
+# ============================================================
+# Mesh bauen + Render-IDs sammeln. WICHTIG (Backend-Semantik aus
+# moo_voxel.c): nur Vulkan zeichnet alle Chunks automatisch (vk_swap).
+# gl21/gl33 brauchen pro Frame ein explizites chunk_zeichne pro Chunk
+# (Display-List- bzw. VBO-Replay). voxel_mesh_bauen(welt, cx,cy,cz)
+# remesht den Chunk und liefert seine Render-Chunk-ID (-1 = kein Cache).
+# Vertikal deckt cz=0..1 den Terrain-Hoehenbereich ab.
+setze chunk_ids auf []
+funktion mesh_alle(welt, radius):
+    setze ids auf []
+    für mcx in (0 - radius)..(radius + 1):
+        für mcy in (0 - radius)..(radius + 1):
+            für mcz in 0..2:
+                setze rid auf voxel_mesh_bauen(welt, mcx, mcy, mcz)
+                wenn rid >= 0:
+                    ids.hinzufügen(rid)
+    gib_zurück ids
+
+setze chunk_ids auf mesh_alle(welt, GEN_RADIUS)
+zeige "Render-Chunks gemesht: " + text(länge(chunk_ids))
+
+# Edge-Trigger-Status der Maustasten (nur 1x pro Klick reagieren).
+setze lmb_alt auf falsch
+setze rmb_alt auf falsch
+setze taste_cd auf 0
+
+setze tick auf 0
+setze laeuft auf wahr
+
+solange laeuft und hybrid_offen(win):
+    wenn raum_taste(win, "escape"):
+        setze laeuft auf falsch
+
+    # Test-Modus: feste Frame-Zahl, leichter Kamera-Schwenk, ein
+    # Screenshot der vollen Demo (Terrain + Hotbar + Fadenkreuz), Ende.
+    wenn test_modus:
+        setze yaw auf yaw + 0.004
+        wenn tick == 20:
+            raum_screenshot_bmp(win, "/tmp/voxel_sandbox_demo.bmp")
+        wenn tick >= 40:
+            setze laeuft auf falsch
+
+    # --- Maus-Look (nur interaktiv; im Test-Modus uebersprungen) ---
+    wenn nicht test_modus:
+        setze mdx auf raum_maus_dx(win)
+        setze mdy auf raum_maus_dy(win)
+        setze yaw auf yaw + mdx * 0.0035
+        setze pitch auf pitch - mdy * 0.0035
+        # Pitch begrenzen damit die Kamera nicht ueberkippt.
+        wenn pitch > 1.5:
+            setze pitch auf 1.5
+        wenn pitch < (0.0 - 1.5):
+            setze pitch auf (0.0 - 1.5)
+
+    # --- Blickrichtung + Bewegungs-Basisvektoren ---
+    setze dx auf blick_dx(yaw, pitch)
+    setze dy auf blick_dy(yaw, pitch)
+    setze dz auf blick_dz(yaw, pitch)
+    # Horizontale "vorne" (ohne Hoehenanteil) fuer WASD-Laufen.
+    setze fwd_x auf cosinus(yaw)
+    setze fwd_y auf sinus(yaw)
+    # "rechts" = vorne um -90 Grad gedreht in der XY-Ebene.
+    setze rt_x auf sinus(yaw)
+    setze rt_y auf (0.0 - cosinus(yaw))
+
+    setze speed auf 0.45
+    wenn raum_taste(win, "w"):
+        setze cam_x auf cam_x + fwd_x * speed
+        setze cam_y auf cam_y + fwd_y * speed
+    wenn raum_taste(win, "s"):
+        setze cam_x auf cam_x - fwd_x * speed
+        setze cam_y auf cam_y - fwd_y * speed
+    wenn raum_taste(win, "d"):
+        setze cam_x auf cam_x + rt_x * speed
+        setze cam_y auf cam_y + rt_y * speed
+    wenn raum_taste(win, "a"):
+        setze cam_x auf cam_x - rt_x * speed
+        setze cam_y auf cam_y - rt_y * speed
+    wenn raum_taste(win, "leertaste"):
+        setze cam_z auf cam_z + speed
+    wenn raum_taste(win, "shift"):
+        setze cam_z auf cam_z - speed
+
+    # --- Hotbar-Auswahl (Zahltasten + Mausrad) ---
+    wenn raum_taste(win, "1"):
+        setze hotbar_idx auf 0
+    wenn raum_taste(win, "2"):
+        setze hotbar_idx auf 1
+    wenn raum_taste(win, "3"):
+        setze hotbar_idx auf 2
+    wenn raum_taste(win, "4"):
+        setze hotbar_idx auf 3
+    wenn raum_taste(win, "5"):
+        setze hotbar_idx auf 4
+    setze rad auf raum_maus_rad(win)
+    wenn rad > 0:
+        setze hotbar_idx auf (hotbar_idx + 1) % länge(hotbar)
+    wenn rad < 0:
+        setze hotbar_idx auf (hotbar_idx + länge(hotbar) - 1) % länge(hotbar)
+
+    # --- Raycast vom Auge entlang der Blickrichtung ---
+    setze treffer auf voxel_strahl(welt, cam_x, cam_y, cam_z, dx, dy, dz, 8.0)
+    setze hat_treffer auf treffer["hit"]
+
+    # --- Abbauen (LMB, Edge-Trigger): getroffenen Block -> Luft ---
+    setze lmb auf raum_maus_taste(win, "links")
+    wenn lmb und nicht lmb_alt und hat_treffer:
+        voxel_setzen(welt, treffer["x"], treffer["y"], treffer["z"], LUFT)
+        setze chunk_ids auf mesh_alle(welt, GEN_RADIUS)
+    setze lmb_alt auf lmb
+
+    # --- Setzen (RMB, Edge-Trigger): Block an die getroffene Flaeche ---
+    setze rmb auf raum_maus_taste(win, "rechts")
+    wenn rmb und nicht rmb_alt und hat_treffer:
+        setze px auf treffer["x"] + treffer["nx"]
+        setze py auf treffer["y"] + treffer["ny"]
+        setze pz auf treffer["z"] + treffer["nz"]
+        # Nur setzen wenn die Zielzelle leer ist (kein Ueberschreiben).
+        wenn voxel_holen(welt, px, py, pz) == LUFT:
+            voxel_setzen(welt, px, py, pz, hotbar[hotbar_idx])
+            setze chunk_ids auf mesh_alle(welt, GEN_RADIUS)
+    setze rmb_alt auf rmb
+
+    # ============== RENDER ==============
+    # Himmel
+    raum_löschen(win, 0.53, 0.81, 0.92)
+    # Kamera: Auge -> Auge + Blickrichtung
+    raum_kamera(win, cam_x, cam_y, cam_z, cam_x + dx, cam_y + dy, cam_z + dz)
+
+    # Voxel-Terrain: alle gemeshten Chunks explizit zeichnen. Auf gl33
+    # ist chunk_zeichne ein echter VBO-Replay; auf Vulkan ein no-op
+    # (dort uebernimmt vk_swap den Auto-Draw) — der Aufruf ist auf
+    # beiden Backends korrekt und schadet nicht.
+    für ci in chunk_ids:
+        chunk_zeichne(ci)
+
+    # Block-Highlight an der getroffenen Flaeche.
+    wenn hat_treffer:
+        highlight_flaeche(win, treffer["x"], treffer["y"], treffer["z"], treffer["nx"], treffer["ny"], treffer["nz"])
+
+    # 2D-Overlay: Fadenkreuz + Hotbar.
+    zeichne_fadenkreuz(win)
+    zeichne_hotbar(win, hotbar, hotbar_idx)
+
+    hybrid_aktualisieren(win)
+
+    setze tick auf tick + 1
+    warte(16)
+
+# Maus wieder freigeben (falls gefangen) und Fenster schliessen.
+wenn nicht test_modus:
+    raum_maus_freigeben(win)
+hybrid_schliessen(win)
+zeige "=== Voxel Sandbox beendet (Frames: " + text(tick) + ", aktiver Block: " + block_name(hotbar[hotbar_idx]) + ") ==="
