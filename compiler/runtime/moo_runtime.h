@@ -574,6 +574,16 @@ MooValue moo_voxel_setzen(MooValue welt, MooValue x, MooValue y, MooValue z, Moo
 MooValue moo_voxel_holen(MooValue welt, MooValue x, MooValue y, MooValue z);
 MooValue moo_voxel_chunk_entladen(MooValue welt, MooValue x, MooValue y, MooValue z);
 MooValue moo_voxel_ram_statistik(MooValue welt);
+// Phase 1b (Mesher): baut/aktualisiert die GPU-Render-Geometrie eines Chunks
+// bzw. aller als dirty markierten Chunks. Nur sichtbare Faces + Nachbar-Culling
+// ueber Chunk-Grenzen (kein Greedy, kein AO). Render-Chunk-IDs werden NUR bei
+// aktivem 3D-Backend angelegt; ohne Backend bleibt es CPU-konsistent (no-op auf GPU).
+//   moo_voxel_mesh_bauen(w, cx, cy, cz) -> Number Render-Chunk-ID (-1 = kein Cache)
+//   moo_voxel_aktualisieren(w)          -> Number Anzahl neu gemeshter Chunks
+MooValue moo_voxel_mesh_bauen(MooValue welt, MooValue cx, MooValue cy, MooValue cz);
+MooValue moo_voxel_aktualisieren(MooValue welt);
+// Plan-005 1b: 1 = ein 3D-Backend ist aktiv (g_backend && g_ctx), sonst 0.
+int moo_3d_backend_active(void);
 
 // === Webserver ===
 MooValue moo_web_server(MooValue port);

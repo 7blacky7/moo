@@ -26,6 +26,16 @@ void moo_3d_attach_external(void* backend, void* ctx) {
     g_ctx = ctx;
 }
 
+/* Plan-005 1b: Sagt dem Voxel-Mesher, ob ein 3D-Backend aktiv ist.
+ * GPU-Render-Cache-Lifetime (Risiko 10): der Mesher legt Render-Chunk-IDs NUR
+ * an, wenn ein Backend lebt. Ohne Backend liefe moo_3d_chunk_create() in ein
+ * moo_throw; chunk_begin/end/draw/delete sind dagegen safe no-ops. Damit darf
+ * eine VoxelWorld ein geschlossenes Fenster/Backend ueberleben: CPU-Daten
+ * werden immer gepflegt, GPU-Calls nur bei aktivem Kontext. */
+int moo_3d_backend_active(void) {
+    return (g_backend != NULL && g_ctx != NULL) ? 1 : 0;
+}
+
 // === Farb-Helfer (Backend-agnostisch) ===
 typedef struct { float r, g, b; } Color3;
 

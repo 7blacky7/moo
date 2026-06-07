@@ -36,6 +36,30 @@
 #include "moo_runtime.h"
 
 /* ========================================================================
+ * Forward-Decls der 3D-Chunk-API (Plan-005 1b).
+ *
+ * Diese vier Funktionen sind NICHT in moo_runtime.h deklariert (sie leben als
+ * lokale extern-Decls in moo_3d.c/moo_world.c). Wir folgen demselben Muster.
+ * moo_3d_triangle / moo_3d_backend_active stehen bereits in moo_runtime.h.
+ *
+ * Backend-Semantik (G0-Befund, KRITISCH fuers Mesher-Design):
+ *   - GL21: chunk = Display-List, chunk_draw ECHT (glCallList).
+ *   - GL33: chunk = VBO/VAO, chunk_draw ECHT (VBO-Replay).
+ *   - Vulkan: chunk_draw ist NO-OP; vk_swap zeichnet JEDEN Slot mit
+ *     is_used && is_compiled bedingungslos. Selektives Rendern via "nur
+ *     sichtbare Chunks draw'en" funktioniert auf Vulkan NICHT — Culling/
+ *     Entladen muss physisch ueber chunk_delete (Slot-Entfernung) laufen.
+ *   Konsequenz fuer diesen Mesher: er baut pro Voxel-Chunk GENAU EINEN
+ *   Render-Chunk (begin/end). Wer einen Chunk nicht mehr sehen will, ruft
+ *   moo_voxel_chunk_entladen -> EIN chunk_delete. Es gibt hier bewusst KEINE
+ *   "draw nur wenn sichtbar"-Logik, weil die auf Vulkan wirkungslos waere.
+ * ======================================================================== */
+extern MooValue moo_3d_chunk_create(void);
+extern void     moo_3d_chunk_begin(MooValue id);
+extern void     moo_3d_chunk_end(void);
+extern void     moo_3d_chunk_delete(MooValue id);
+
+/* ========================================================================
  * Konstanten
  * ======================================================================== */
 
@@ -55,11 +79,20 @@
  * ======================================================================== */
 
 /* Ein Chunk: naiver, voller uint16-Block-Array. NULL-blocks = noch nie
- * beschrieben (komplett Luft). */
+ * beschrieben (komplett Luft).
+ *
+ * Render-ID-Mapping (Plan-005 1b, Risiko 5): die GPU-Render-Chunk-ID ist NICHT
+ * identisch mit der Voxel-Chunk-Koordinate. Sie wird pro Chunk-Slot in
+ * render_id gefuehrt (eigene Mapping-Tabelle, hier co-lokal im Slot). -1 =
+ * kein GPU-Cache angelegt (z.B. nie gemesht oder kein Backend aktiv). Die
+ * Render-ID wird GENAU EINMAL freigegeben: in moo_voxel_chunk_entladen bzw.
+ * moo_voxel_free, jeweils nur bei aktivem Backend (sonst safe no-op). */
 typedef struct {
     int32_t   cx, cy, cz;   /* Chunk-Koordinaten (signed, negative first-class) */
     uint16_t* blocks;       /* MOO_VOXEL_CHUNK_VOL Eintraege, oder NULL = leer */
     bool      occupied;     /* Hashmap-Slot belegt? */
+    int32_t   render_id;    /* GPU-Render-Chunk-ID, -1 = kein Cache (CPU/GPU getrennt) */
+    bool      dirty;        /* true = Geometrie veraltet, remesh noetig */
 } MooVoxelChunk;
 
 /* VoxelWorld: opaker Heap-Typ. refcount MUSS erstes Feld sein. */
@@ -197,6 +230,31 @@ static inline int32_t moo_voxel_local_index(int32_t lx, int32_t ly, int32_t lz) 
     return (lz * MOO_VOXEL_CHUNK_DIM + ly) * MOO_VOXEL_CHUNK_DIM + lx;
 }
 
+/* Sucht den Chunk (cx,cy,cz) und gibt ihn zurueck, falls belegt; sonst NULL.
+ * Reiner Lookup ohne Allokation (anders als find_slot, das den Einfuege-Slot
+ * liefert). Wird vom Mesher fuers Nachbar-Culling und von mark_dirty genutzt. */
+static MooVoxelChunk* moo_voxel_lookup(MooVoxelWorld* w, int32_t cx, int32_t cy, int32_t cz) {
+    uint32_t mask = (uint32_t)w->chunk_cap - 1u;
+    uint32_t idx = moo_voxel_hash3(cx, cy, cz) & mask;
+    while (w->chunks[idx].occupied) {
+        if (w->chunks[idx].cx == cx &&
+            w->chunks[idx].cy == cy &&
+            w->chunks[idx].cz == cz) {
+            return &w->chunks[idx];
+        }
+        idx = (idx + 1u) & mask;
+    }
+    return NULL;
+}
+
+/* Markiert einen BEREITS EXISTIERENDEN Nachbar-Chunk als dirty. Nicht-allokierte
+ * Nachbarn (komplett Luft) werden bewusst NICHT angelegt — sie haben keine
+ * Geometrie zu remeshen. */
+static void moo_voxel_mark_dirty(MooVoxelWorld* w, int32_t cx, int32_t cy, int32_t cz) {
+    MooVoxelChunk* ch = moo_voxel_lookup(w, cx, cy, cz);
+    if (ch) ch->dirty = true;
+}
+
 /* ========================================================================
  * Oeffentliche API
  * ======================================================================== */
@@ -280,6 +338,8 @@ MooValue moo_voxel_setzen(MooValue welt, MooValue x, MooValue y, MooValue z, Moo
         ch->cy = cy;
         ch->cz = cz;
         ch->blocks = NULL;
+        ch->render_id = -1;   /* noch kein GPU-Cache */
+        ch->dirty = true;     /* neu -> braucht Mesh */
         vw->chunk_count++;
     }
 
@@ -300,6 +360,24 @@ MooValue moo_voxel_setzen(MooValue welt, MooValue x, MooValue y, MooValue z, Moo
     }
 
     ch->blocks[moo_voxel_local_index(lx, ly, lz)] = (uint16_t)id;
+
+    /* Dirty-Propagation (Plan-005 1b, Risiko 6): der geaenderte Chunk braucht
+     * ein Remesh. Face-Meshing kuckt ueber die Chunk-Grenze auf die GENAU 6
+     * direkten Nachbarn (nicht 26 — das braeuchte erst Vertex-AO in Phase 3).
+     * Liegt das geaenderte Voxel auf einer Chunk-Randflaeche (lokale Koordinate
+     * 0 oder DIM-1), aendert sich auch die Sichtbarkeit der zugewandten Faces
+     * des angrenzenden Nachbar-Chunks -> diesen ebenfalls dirty markieren.
+     * Nur BEREITS EXISTIERENDE Nachbarn werden markiert: ein nicht-allokierter
+     * Nachbar ist komplett Luft, hat keine Geometrie und damit nichts zu remeshen
+     * (er wird beim eigenen ersten Setzen ohnehin dirty angelegt). */
+    ch->dirty = true;
+    if (lx == 0)                          moo_voxel_mark_dirty(vw, cx - 1, cy, cz);
+    if (lx == MOO_VOXEL_CHUNK_DIM - 1)    moo_voxel_mark_dirty(vw, cx + 1, cy, cz);
+    if (ly == 0)                          moo_voxel_mark_dirty(vw, cx, cy - 1, cz);
+    if (ly == MOO_VOXEL_CHUNK_DIM - 1)    moo_voxel_mark_dirty(vw, cx, cy + 1, cz);
+    if (lz == 0)                          moo_voxel_mark_dirty(vw, cx, cy, cz - 1);
+    if (lz == MOO_VOXEL_CHUNK_DIM - 1)    moo_voxel_mark_dirty(vw, cx, cy, cz + 1);
+
     return moo_bool(true);
 }
 
@@ -346,7 +424,15 @@ MooValue moo_voxel_chunk_entladen(MooValue welt, MooValue x, MooValue y, MooValu
         if (vw->chunks[idx].cx == cx &&
             vw->chunks[idx].cy == cy &&
             vw->chunks[idx].cz == cz) {
-            /* Gefunden -> CPU-Blocks freigeben + Slot loeschen. */
+            /* Gefunden -> GPU-Render-Cache + CPU-Blocks freigeben, Slot loeschen.
+             * Render-ID-Lifetime (Plan-005 1b): GENAU EIN chunk_delete pro
+             * entladenem Chunk. moo_3d_chunk_delete ist ohne aktives Backend ein
+             * safe no-op; trotzdem nur aufrufen wenn render_id gesetzt war, und
+             * danach auf -1 setzen, damit kein zweites Mal geloescht wird. */
+            if (vw->chunks[idx].render_id >= 0) {
+                moo_3d_chunk_delete(moo_number((double)vw->chunks[idx].render_id));
+                vw->chunks[idx].render_id = -1;
+            }
             if (vw->chunks[idx].blocks) {
                 moo_free(vw->chunks[idx].blocks);
                 vw->chunks[idx].blocks = NULL;
@@ -428,6 +514,248 @@ MooValue moo_voxel_ram_statistik(MooValue welt) {
 }
 
 /* ========================================================================
+ * Mesher (Plan-005 Phase 1b)
+ *
+ * Strategie: NAIV pro Voxel, nur sichtbare Faces. Fuer jeden festen Block
+ * werden die 6 Achsen-Nachbarn geprueft; eine Face wird nur dann emittiert,
+ * wenn der Nachbar Luft (0) ist. Nachbar-Culling laeuft ueber die Chunk-Grenze:
+ * liegt der Nachbar ausserhalb [0,DIM), wird im ANGRENZENDEN Chunk derselben
+ * Welt nachgeschaut (existiert er nicht oder ist leer -> Luft -> Face sichtbar).
+ * KEIN Greedy-Meshing, KEIN Vertex-AO (Phase 3). Output ueber die 3D-Chunk-API
+ * (begin -> triangle... -> end) als GENAU EIN Render-Chunk pro Voxel-Chunk.
+ * ======================================================================== */
+
+/* Block-Farben (Phase-1-Registry, Wasser opak). Index = Block-ID. Index 0
+ * (Luft) wird nie gerendert. */
+static const char* const MOO_VOXEL_BLOCK_HEX[MOO_VOXEL_MAX_BLOCK_ID + 1] = {
+    "#000000", /* 0 luft  (ungenutzt) */
+    "#4CAF50", /* 1 gras  */
+    "#795548", /* 2 erde  */
+    "#9E9E9E", /* 3 stein */
+    "#FBC02D", /* 4 sand  */
+    "#2196F3", /* 5 wasser (opak in Phase 1) */
+};
+
+/* Holt die Block-ID an Welt-Voxel (wx,wy,wz). Eigener Chunk wird direkt
+ * uebergeben (Fast-Path fuer Nachbarn innerhalb des Chunks); fuer Nachbarn
+ * jenseits der Chunk-Grenze wird der angrenzende Chunk in w nachgeschlagen.
+ * Nicht-allokierter / leerer Chunk = Luft (0). */
+static uint16_t moo_voxel_block_at(MooVoxelWorld* w, const MooVoxelChunk* self,
+                                   int32_t self_cx, int32_t self_cy, int32_t self_cz,
+                                   int32_t lx, int32_t ly, int32_t lz) {
+    const MooVoxelChunk* ch = self;
+    int32_t ix = lx, iy = ly, iz = lz;
+    if (lx < 0 || lx >= MOO_VOXEL_CHUNK_DIM ||
+        ly < 0 || ly >= MOO_VOXEL_CHUNK_DIM ||
+        lz < 0 || lz >= MOO_VOXEL_CHUNK_DIM) {
+        /* Ueber die Chunk-Grenze: in den Nachbar-Chunk umrechnen. */
+        int32_t ncx = self_cx + moo_voxel_floordiv(lx, MOO_VOXEL_CHUNK_DIM);
+        int32_t ncy = self_cy + moo_voxel_floordiv(ly, MOO_VOXEL_CHUNK_DIM);
+        int32_t ncz = self_cz + moo_voxel_floordiv(lz, MOO_VOXEL_CHUNK_DIM);
+        ch = moo_voxel_lookup(w, ncx, ncy, ncz);
+        if (!ch || !ch->blocks) return 0; /* leerer/fehlender Nachbar = Luft */
+        ix = moo_voxel_floormod(lx, MOO_VOXEL_CHUNK_DIM);
+        iy = moo_voxel_floormod(ly, MOO_VOXEL_CHUNK_DIM);
+        iz = moo_voxel_floormod(lz, MOO_VOXEL_CHUNK_DIM);
+    }
+    if (!ch->blocks) return 0;
+    return ch->blocks[moo_voxel_local_index(ix, iy, iz)];
+}
+
+/* Emittiert ein achsenparalleles Voxel-Face (Einheitsquadrat) als 2 Dreiecke.
+ * (x,y,z) ist die Min-Ecke des Voxels in Weltkoordinaten; die Faces sitzen an
+ * der jeweiligen Voxel-Seite. Wicklung CCW von aussen gesehen (Front-Face).
+ * win wird vom Backend ignoriert (zeichnet in den aktiven chunk_begin-Kontext);
+ * wir uebergeben moo_none(). */
+static void moo_voxel_emit_face(int dir, float x, float y, float z, MooValue color) {
+    MooValue w = moo_none();
+    float x0 = x, x1 = x + 1.0f;
+    float y0 = y, y1 = y + 1.0f;
+    float z0 = z, z1 = z + 1.0f;
+    switch (dir) {
+        case 0: /* +X (rechts) */
+            moo_3d_triangle(w,
+                moo_number(x1), moo_number(y0), moo_number(z0),
+                moo_number(x1), moo_number(y1), moo_number(z0),
+                moo_number(x1), moo_number(y1), moo_number(z1), color);
+            moo_3d_triangle(w,
+                moo_number(x1), moo_number(y0), moo_number(z0),
+                moo_number(x1), moo_number(y1), moo_number(z1),
+                moo_number(x1), moo_number(y0), moo_number(z1), color);
+            break;
+        case 1: /* -X (links) */
+            moo_3d_triangle(w,
+                moo_number(x0), moo_number(y0), moo_number(z0),
+                moo_number(x0), moo_number(y1), moo_number(z1),
+                moo_number(x0), moo_number(y1), moo_number(z0), color);
+            moo_3d_triangle(w,
+                moo_number(x0), moo_number(y0), moo_number(z0),
+                moo_number(x0), moo_number(y0), moo_number(z1),
+                moo_number(x0), moo_number(y1), moo_number(z1), color);
+            break;
+        case 2: /* +Y (oben) */
+            moo_3d_triangle(w,
+                moo_number(x0), moo_number(y1), moo_number(z0),
+                moo_number(x0), moo_number(y1), moo_number(z1),
+                moo_number(x1), moo_number(y1), moo_number(z1), color);
+            moo_3d_triangle(w,
+                moo_number(x0), moo_number(y1), moo_number(z0),
+                moo_number(x1), moo_number(y1), moo_number(z1),
+                moo_number(x1), moo_number(y1), moo_number(z0), color);
+            break;
+        case 3: /* -Y (unten) */
+            moo_3d_triangle(w,
+                moo_number(x0), moo_number(y0), moo_number(z0),
+                moo_number(x1), moo_number(y0), moo_number(z1),
+                moo_number(x0), moo_number(y0), moo_number(z1), color);
+            moo_3d_triangle(w,
+                moo_number(x0), moo_number(y0), moo_number(z0),
+                moo_number(x1), moo_number(y0), moo_number(z0),
+                moo_number(x1), moo_number(y0), moo_number(z1), color);
+            break;
+        case 4: /* +Z (vorne) */
+            moo_3d_triangle(w,
+                moo_number(x0), moo_number(y0), moo_number(z1),
+                moo_number(x1), moo_number(y1), moo_number(z1),
+                moo_number(x0), moo_number(y1), moo_number(z1), color);
+            moo_3d_triangle(w,
+                moo_number(x0), moo_number(y0), moo_number(z1),
+                moo_number(x1), moo_number(y0), moo_number(z1),
+                moo_number(x1), moo_number(y1), moo_number(z1), color);
+            break;
+        case 5: /* -Z (hinten) */
+            moo_3d_triangle(w,
+                moo_number(x0), moo_number(y0), moo_number(z0),
+                moo_number(x0), moo_number(y1), moo_number(z0),
+                moo_number(x1), moo_number(y1), moo_number(z0), color);
+            moo_3d_triangle(w,
+                moo_number(x0), moo_number(y0), moo_number(z0),
+                moo_number(x1), moo_number(y1), moo_number(z0),
+                moo_number(x1), moo_number(y0), moo_number(z0), color);
+            break;
+        default: break;
+    }
+}
+
+/* Baut die Render-Geometrie EINES Chunks neu. Erwartet einen belegten Slot mit
+ * blocks != NULL. Setzt voraus, dass ein Backend aktiv ist (Aufrufer prueft).
+ * Verwendet/erzeugt die Render-ID des Chunks und befuellt sie via begin/end. */
+static void moo_voxel_remesh_chunk(MooVoxelWorld* w, MooVoxelChunk* ch) {
+    /* Render-ID anlegen falls noch keine vorhanden. moo_3d_chunk_create wirft
+     * nur OHNE Backend; der Aufrufer hat backend_active bereits geprueft. */
+    if (ch->render_id < 0) {
+        MooValue rid = moo_3d_chunk_create();
+        int32_t id = (int32_t)moo_as_number(rid);
+        if (id < 0) {
+            /* Backend konnte keinen Slot vergeben (z.B. Cache voll) -> kein
+             * Crash, Chunk bleibt ungemesht aber dirty bleibt geloescht, damit
+             * wir nicht in einer Endlosschleife remeshen. */
+            ch->render_id = -1;
+            return;
+        }
+        ch->render_id = id;
+    }
+
+    int32_t base_x = ch->cx * MOO_VOXEL_CHUNK_DIM;
+    int32_t base_y = ch->cy * MOO_VOXEL_CHUNK_DIM;
+    int32_t base_z = ch->cz * MOO_VOXEL_CHUNK_DIM;
+
+    /* Nachbar-Offsets passend zu dir 0..5 (+X,-X,+Y,-Y,+Z,-Z). */
+    static const int32_t NX[6] = { 1, -1, 0, 0, 0, 0 };
+    static const int32_t NY[6] = { 0, 0, 1, -1, 0, 0 };
+    static const int32_t NZ[6] = { 0, 0, 0, 0, 1, -1 };
+
+    moo_3d_chunk_begin(moo_number((double)ch->render_id));
+    for (int32_t lz = 0; lz < MOO_VOXEL_CHUNK_DIM; lz++) {
+        for (int32_t ly = 0; ly < MOO_VOXEL_CHUNK_DIM; ly++) {
+            for (int32_t lx = 0; lx < MOO_VOXEL_CHUNK_DIM; lx++) {
+                uint16_t id = ch->blocks[moo_voxel_local_index(lx, ly, lz)];
+                if (id == 0) continue; /* Luft */
+                int cid = (id <= MOO_VOXEL_MAX_BLOCK_ID) ? (int)id : 0;
+                if (cid == 0) continue; /* unbekannte ID defensiv ueberspringen */
+                MooValue color = moo_string_new(MOO_VOXEL_BLOCK_HEX[cid]);
+                float wx = (float)(base_x + lx);
+                float wy = (float)(base_y + ly);
+                float wz = (float)(base_z + lz);
+                for (int dir = 0; dir < 6; dir++) {
+                    uint16_t nb = moo_voxel_block_at(w, ch, ch->cx, ch->cy, ch->cz,
+                                                     lx + NX[dir], ly + NY[dir], lz + NZ[dir]);
+                    if (nb == 0) {
+                        moo_voxel_emit_face(dir, wx, wy, wz, color);
+                    }
+                }
+            }
+        }
+    }
+    moo_3d_chunk_end();
+    ch->dirty = false;
+}
+
+MooValue moo_voxel_mesh_bauen(MooValue welt, MooValue x, MooValue y, MooValue z) {
+    MooVoxelWorld* vw = moo_voxel_check(welt, "voxel_mesh_bauen");
+    if (!vw) return moo_none();
+
+    int32_t cx = moo_voxel_coord(x);
+    int32_t cy = moo_voxel_coord(y);
+    int32_t cz = moo_voxel_coord(z);
+
+    MooVoxelChunk* ch = moo_voxel_lookup(vw, cx, cy, cz);
+    if (!ch) {
+        /* Nicht geladener Chunk -> keine Geometrie, keine Render-ID. */
+        return moo_number(-1.0);
+    }
+
+    /* Ohne aktives Backend kann/soll kein GPU-Cache angelegt werden
+     * (GPU-Cache-Lifetime, Risiko 10). CPU bleibt konsistent; dirty bleibt
+     * stehen, damit ein spaeterer Aufruf mit Backend nachmesht. */
+    if (!moo_3d_backend_active()) {
+        return moo_number(-1.0);
+    }
+
+    /* Chunk ohne Bloecke (komplett Luft): falls eine alte Render-ID existiert,
+     * GENAU EINMAL freigeben (Chunk wurde geleert) und -1 zurueckgeben. */
+    if (!ch->blocks) {
+        if (ch->render_id >= 0) {
+            moo_3d_chunk_delete(moo_number((double)ch->render_id));
+            ch->render_id = -1;
+        }
+        ch->dirty = false;
+        return moo_number(-1.0);
+    }
+
+    moo_voxel_remesh_chunk(vw, ch);
+    return moo_number((double)ch->render_id);
+}
+
+MooValue moo_voxel_aktualisieren(MooValue welt) {
+    MooVoxelWorld* vw = moo_voxel_check(welt, "voxel_aktualisieren");
+    if (!vw) return moo_none();
+
+    /* Ohne Backend nichts tun (dirty bleibt fuer spaeter erhalten). */
+    if (!moo_3d_backend_active()) {
+        return moo_number(0.0);
+    }
+
+    int64_t remeshed = 0;
+    for (int32_t i = 0; i < vw->chunk_cap; i++) {
+        MooVoxelChunk* ch = &vw->chunks[i];
+        if (!ch->occupied || !ch->dirty) continue;
+        if (!ch->blocks) {
+            /* Geleerter Chunk: alte Render-ID einmal freigeben. */
+            if (ch->render_id >= 0) {
+                moo_3d_chunk_delete(moo_number((double)ch->render_id));
+                ch->render_id = -1;
+            }
+            ch->dirty = false;
+            continue;
+        }
+        moo_voxel_remesh_chunk(vw, ch);
+        remeshed++;
+    }
+    return moo_number((double)remeshed);
+}
+
+/* ========================================================================
  * Freigabe (von moo_release ueber MOO_VOXELWORLD aufgerufen, refcount==0)
  *
  * Gibt ALLE CPU-Allokationen frei (Chunk-Blocks, Hashmap-Tabelle, World).
@@ -441,7 +769,17 @@ void moo_voxel_free(void* ptr) {
     MooVoxelWorld* vw = (MooVoxelWorld*)ptr;
     if (vw->chunks) {
         for (int32_t i = 0; i < vw->chunk_cap; i++) {
-            if (vw->chunks[i].occupied && vw->chunks[i].blocks) {
+            if (!vw->chunks[i].occupied) continue;
+            /* GPU-Render-Cache-Lifetime (Plan-005 1b, Risiko 10): jede gesetzte
+             * Render-ID GENAU EINMAL freigeben. moo_3d_chunk_delete ist ohne
+             * aktives Backend ein safe no-op (if !g_backend||!g_ctx return) ->
+             * die VoxelWorld darf das Fenster/Backend ueberleben. CPU-Daten
+             * werden IMMER freigegeben, unabhaengig vom Backend-Zustand. */
+            if (vw->chunks[i].render_id >= 0) {
+                moo_3d_chunk_delete(moo_number((double)vw->chunks[i].render_id));
+                vw->chunks[i].render_id = -1;
+            }
+            if (vw->chunks[i].blocks) {
                 moo_free(vw->chunks[i].blocks);
                 vw->chunks[i].blocks = NULL;
             }
