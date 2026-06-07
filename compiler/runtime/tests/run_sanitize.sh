@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# run_sanitize.sh - Opt-in Sanitizer-Runner fuer die C-Runtime-Harnesses (Plan-007 P007-U1)
+# ============================================================================
+# ZWECK
+#   Baut und laeuft ALLE Voxel-Runtime-Harnesses unter compiler/runtime/tests/
+#   in zwei waehlbaren Sanitizer-Modi:
+#     - asan   : AddressSanitizer wie bisher, mit detect_leaks=1
+#     - ubsan  : UndefinedBehaviorSanitizer, -fsanitize=undefined
+#                -fno-sanitize-recover=undefined  (UB => sofortiger Abbruch)
+#     - all    : erst asan, dann ubsan (Standard, wenn kein Modus angegeben)
+#
+# GRUNDSATZ (Plan-007, Memory ub-arithmetik-policy + plan-007-c-runtime-ub-hardening-ohne-fwrapv)
+#   * KEIN -fwrapv. Nirgends. UB wird sichtbar gemacht, nicht maskiert.
+#   * Default-Build (cargo/build.rs) bleibt von diesem Script UNANGETASTET.
+#     Dies ist eine reine opt-in Schiene zum Aufspueren von UB.
+#   * Jeder Sanitizer-Fund => Exit-Code != 0. Klares Logging welcher Modus/
+#     welche Flags aktiv sind.
+#   * Plattform-/Toolchain-Skip ist transparent (Diagnose-Ausgabe), nie still.
+#
+# NUTZUNG
+#   ./run_sanitize.sh            # = all  (asan + ubsan)
+#   ./run_sanitize.sh asan       # nur AddressSanitizer
+#   ./run_sanitize.sh ubsan      # nur UndefinedBehaviorSanitizer
+#   ./run_sanitize.sh all        # beide Modi nacheinander
+#   CC=clang ./run_sanitize.sh   # Compiler ueberschreibbar (Default: gcc, sonst cc)
+#
+# EXIT-CODES
+#   0  alle gebauten/gelaufenen Harnesses sauber (rc=0, keine Sanitizer-Funde)
+#   1  mindestens ein Build- oder Laufzeitfehler / Sanitizer-Fund
+#   2  Sanitizer auf dieser Toolchain nicht verfuegbar -> transparenter Skip
+#      (kein "grueneuger" Erfolg, aber auch kein hartes Versagen im CI-Gate)
+#
+# WICHTIG: LINK-MATRIX (QA1-Lehre, dokumentiert in den Harness-Headern)
+#   Alle Harnesses ausser worldgen bringen ihren EIGENEN moo_noise_fbm-Stub mit
+#   und linken NUR ../moo_voxel.c. Wer zusaetzlich ../moo_noise.c linkt, bekommt
+#   eine multiple-definition (moo_noise_fbm doppelt). EINZIG test_voxel_worldgen
+#   linkt das ECHTE ../moo_noise.c (kein Stub) - das ist die Determinismus-Probe.
+#   test_voxel_jobqueue braucht zusaetzlich -lpthread.
+# ============================================================================
+
+set -u
+
+# --- Pfade ------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR" || { echo "FATAL: kann nicht nach $SCRIPT_DIR wechseln"; exit 1; }
+RUNTIME_DIR=".."          # compiler/runtime/
+OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/moo_sanitize.XXXXXX")"
+trap 'rm -rf "$OUT_DIR"' EXIT
+
+# --- Compiler ---------------------------------------------------------------
+CC="${CC:-}"
+if [ -z "$CC" ]; then
+  if command -v gcc >/dev/null 2>&1; then CC=gcc
+  elif command -v clang >/dev/null 2>&1; then CC=clang
+  elif command -v cc >/dev/null 2>&1; then CC=cc
+  else
+    echo "SKIP: Kein C-Compiler (gcc/clang/cc) gefunden -> Sanitizer-Lauf nicht moeglich."
+    exit 2
+  fi
+fi
+
+# --- Harness-Matrix ---------------------------------------------------------
+# Format je Zeile: "<basename>|<zusaetzliche-quellen>|<zusaetzliche-libs>"
+#   <zusaetzliche-quellen>: weitere .c relativ zu RUNTIME_DIR (leer = nur moo_voxel.c)
+#   <zusaetzliche-libs>   : zusaetzliche Linker-Flags ueber -lm hinaus
+# ../moo_voxel.c und -lm sind IMMER dabei (gemeinsamer Nenner aller Harnesses).
+HARNESSES=(
+  "test_voxel_section_asan.c||"
+  "test_voxel_palette_asan.c||"
+  "test_voxel_mesher_asan.c||"
+  "test_voxel_dirty_rendercache_asan.c||"
+  "test_voxel_raycast_asan.c||"
+  "test_voxel_jobqueue_asan.c||-lpthread"
+  "test_voxel_downgrade_asan.c||"
+  "test_voxel_worldgen_asan.c|moo_noise.c|"   # EINZIGER mit echtem moo_noise.c
+)
+
+# --- Sanitizer-Verfuegbarkeit pruefen (Probe-Kompilat) ----------------------
+# Gibt 0 zurueck wenn der Sanitizer baut+laeuft, sonst != 0. Stille Probe.
+sanitizer_available() {
+  local flags="$1"
+  local probe="$OUT_DIR/_probe.c"
+  local probe_bin="$OUT_DIR/_probe.bin"
+  cat > "$probe" <<'EOF'
+int main(void) { return 0; }
+EOF
+  # shellcheck disable=SC2086
+  "$CC" $flags -o "$probe_bin" "$probe" >/dev/null 2>&1 || return 1
+  "$probe_bin" >/dev/null 2>&1 || return 1
+  return 0
+}
+
+# --- Ein Harness in einem Modus bauen + laufen ------------------------------
+# Args: <mode> <build-flags> <run-env> <basename> <extra-sources> <extra-libs>
+# Rueckgabe: 0 ok, 1 build-fail, 2 run-fail/sanitizer-fund
+build_and_run() {
+  local mode="$1" bflags="$2" renv="$3" base="$4" extra_src="$5" extra_libs="$6"
+  local tag="${base%.c}"
+  local bin="$OUT_DIR/${tag}.${mode}"
+  local log="$OUT_DIR/${tag}.${mode}.log"
+
+  local srcs=( "$base" "$RUNTIME_DIR/moo_voxel.c" )
+  if [ -n "$extra_src" ]; then
+    srcs+=( "$RUNTIME_DIR/$extra_src" )
+  fi
+
+  echo "  [build] $tag  (src: ${srcs[*]#$RUNTIME_DIR/}  libs: -lm $extra_libs)"
+  # shellcheck disable=SC2086
+  if ! "$CC" $bflags -g -std=c11 -I"$RUNTIME_DIR" \
+        "${srcs[@]}" -lm $extra_libs -o "$bin" > "$log" 2>&1; then
+    echo "  [BUILD-FAIL] $tag"
+    sed 's/^/      | /' "$log"
+    return 1
+  fi
+
+  echo "  [run]   $tag"
+  # env-String wie "ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=..."
+  # shellcheck disable=SC2086
+  if env $renv "$bin" > "$log" 2>&1; then
+    echo "  [PASS]  $tag"
+    return 0
+  else
+    local rc=$?
+    echo "  [FAIL]  $tag  (rc=$rc) -- moeglicher Sanitizer-Fund:"
+    sed 's/^/      | /' "$log"
+    return 2
+  fi
+}
+
+# --- Einen kompletten Modus durchfahren -------------------------------------
+# Args: <mode>
+# Rueckgabe: 0 alle ok, 1 mind. ein fail, 2 modus geskippt (sanitizer fehlt)
+run_mode() {
+  local mode="$1"
+  local bflags renv label
+  case "$mode" in
+    asan)
+      bflags="-fsanitize=address -fno-omit-frame-pointer -O1"
+      renv="ASAN_OPTIONS=detect_leaks=1:abort_on_error=1"
+      label="AddressSanitizer (detect_leaks=1)"
+      ;;
+    ubsan)
+      # KEIN -fwrapv. UB soll trappen, nicht definiert/maskiert werden.
+      bflags="-fsanitize=undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -O1"
+      renv="UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1"
+      label="UndefinedBehaviorSanitizer (-fsanitize=undefined, -fno-sanitize-recover, KEIN -fwrapv)"
+      ;;
+    *)
+      echo "FATAL: unbekannter Modus '$mode' (erlaubt: asan|ubsan|all)"; exit 1 ;;
+  esac
+
+  echo ""
+  echo "============================================================"
+  echo " MODUS: $mode"
+  echo " FLAGS: $bflags"
+  echo " ENV  : $renv"
+  echo " INFO : $label"
+  echo " CC   : $CC ($($CC --version 2>/dev/null | head -1))"
+  echo "============================================================"
+
+  if ! sanitizer_available "$bflags"; then
+    echo "SKIP[$mode]: Toolchain '$CC' kann '$bflags' nicht bauen/ausfuehren."
+    echo "SKIP[$mode]: -> auf dieser Plattform uebersprungen (transparent, kein stiller Skip)."
+    return 2
+  fi
+
+  local fails=0 passes=0
+  local entry base extra_src extra_libs
+  for entry in "${HARNESSES[@]}"; do
+    IFS='|' read -r base extra_src extra_libs <<< "$entry"
+    build_and_run "$mode" "$bflags" "$renv" "$base" "$extra_src" "$extra_libs"
+    case $? in
+      0) passes=$((passes+1)) ;;
+      *) fails=$((fails+1)) ;;
+    esac
+  done
+
+  echo "------------------------------------------------------------"
+  echo " MODUS $mode ABGESCHLOSSEN: $passes ok, $fails fehlgeschlagen (von ${#HARNESSES[@]})"
+  echo "------------------------------------------------------------"
+  [ "$fails" -eq 0 ] && return 0 || return 1
+}
+
+# --- Hauptlauf --------------------------------------------------------------
+MODE="${1:-all}"
+
+echo "############################################################"
+echo "# moo Sanitizer-Harness-Runner (Plan-007 P007-U1)"
+echo "# Revier: compiler/runtime/tests/  |  KEIN -fwrapv"
+echo "# Modus-Auswahl: $MODE"
+echo "############################################################"
+
+overall=0
+skipped_all=1
+case "$MODE" in
+  asan|ubsan)
+    run_mode "$MODE"; rc=$?
+    [ "$rc" -ne 2 ] && skipped_all=0
+    [ "$rc" -eq 1 ] && overall=1
+    ;;
+  all)
+    for m in asan ubsan; do
+      run_mode "$m"; rc=$?
+      [ "$rc" -ne 2 ] && skipped_all=0
+      [ "$rc" -eq 1 ] && overall=1
+    done
+    ;;
+  *)
+    echo "FATAL: ungueltiger Modus '$MODE'. Nutze: asan | ubsan | all"
+    exit 1
+    ;;
+esac
+
+echo ""
+echo "############################################################"
+if [ "$skipped_all" -eq 1 ]; then
+  echo "# GESAMT: alle angeforderten Modi wurden GESKIPPT (Toolchain)."
+  echo "############################################################"
+  exit 2
+fi
+if [ "$overall" -eq 0 ]; then
+  echo "# GESAMT: ALLE Harnesses sauber. Exit 0."
+else
+  echo "# GESAMT: Es gab Fehler/Sanitizer-Funde. Exit 1."
+fi
+echo "############################################################"
+exit "$overall"
