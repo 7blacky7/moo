@@ -252,6 +252,11 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_test_frame_grab: FunctionValue<'ctx>,
     pub moo_test_pixel: FunctionValue<'ctx>,
     pub moo_test_frame_save_bmp: FunctionValue<'ctx>,
+    // GIF-Recorder (Plan-008 A3B): start(win/frame,pfad,fps)->MOO_GIF,
+    // frame(gif,win/frame)->Bool, ende(gif)->Bool.
+    pub moo_test_gif_start: FunctionValue<'ctx>,
+    pub moo_test_gif_frame: FunctionValue<'ctx>,
+    pub moo_test_gif_ende: FunctionValue<'ctx>,
     // Chunk Display Lists
     pub moo_3d_chunk_create: FunctionValue<'ctx>,
     pub moo_3d_chunk_begin: FunctionValue<'ctx>,
@@ -828,6 +833,15 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_test_frame_grab: decl_mv_mv!("moo_test_frame_grab", mv1),
             moo_test_pixel: decl_mv_mv!("moo_test_pixel", mv3),
             moo_test_frame_save_bmp: decl_mv_mv!("moo_test_frame_save_bmp", mv2),
+            // GIF-Recorder (Plan-008 A3B). Symbole immer deklariert; C-seitig
+            // in moo_test_api.c (3D-Build) gelinkt. Encoder-Kern (moo_gif.c)
+            // ist Core-Build, daher immer verfuegbar.
+            //   moo_test_gif_start(win_oder_frame, pfad, fps) -> MOO_GIF (3 Args = mv3)
+            //   moo_test_gif_frame(gif, frame_oder_win)        -> Bool    (2 Args = mv2)
+            //   moo_test_gif_ende(gif)                         -> Bool    (1 Arg  = mv1)
+            moo_test_gif_start: decl_mv_mv!("moo_test_gif_start", mv3),
+            moo_test_gif_frame: decl_mv_mv!("moo_test_gif_frame", mv2),
+            moo_test_gif_ende: decl_mv_mv!("moo_test_gif_ende", mv1),
             // Chunk Display Lists
             moo_3d_chunk_create: decl_mv_mv!("moo_3d_chunk_create", &[]),
             moo_3d_chunk_begin: module.add_function("moo_3d_chunk_begin", void_type.fn_type(mv1, false), None),

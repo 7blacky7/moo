@@ -2799,6 +2799,26 @@ impl<'ctx> CodeGen<'ctx> {
                         let path = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_test_frame_save_bmp, &[frame.into(), path.into()], "t_frame_bmp");
                     }
+                    // GIF-Recorder (Plan-008 A3B). Frame-bounded: streamt direkt
+                    // in die Datei, sammelt KEINE Frame-Sequenz im RAM.
+                    // test_gif_start(win_oder_frame, pfad, fps) -> MOO_GIF.
+                    "test_gif_start" | "test_gif_aufnahme_start" => {
+                        let win = self.compile_expr(&args[0])?;
+                        let path = self.compile_expr(&args[1])?;
+                        let fps = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.moo_test_gif_start, &[win.into(), path.into(), fps.into()], "t_gif_start");
+                    }
+                    // test_gif_frame(gif, frame_oder_win) -> Bool.
+                    "test_gif_frame" | "test_gif_bild" => {
+                        let gif = self.compile_expr(&args[0])?;
+                        let frame = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_test_gif_frame, &[gif.into(), frame.into()], "t_gif_frame");
+                    }
+                    // test_gif_ende(gif) -> Bool.
+                    "test_gif_ende" | "test_gif_end" => {
+                        let gif = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_test_gif_ende, &[gif.into()], "t_gif_ende");
+                    }
                     // Voxel-Welt (Plan-005 Phase 1a Kern-Builtins).
                     // Nur die nach RT1 stabilen 4 Builtins; mesh_bauen/strahl folgen
                     // erst nach RT2/RT4 (keine Aliases fuer unfertige Semantik).

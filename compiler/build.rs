@@ -18,6 +18,8 @@ fn main() {
         .file("runtime/moo_value.c")
         .file("runtime/moo_memory.c")
         .file("runtime/moo_frame.c")
+        .file("runtime/moo_gif.c")        // GIF89a+LZW-Encoder-Kern (Plan-008 A3B, pure C)
+        .file("runtime/moo_gif_handle.c") // moo-Heap-Wrapper MOO_GIF (immer gebaut)
         .file("runtime/moo_string.c")
         .file("runtime/moo_list.c")
         .file("runtime/moo_dict.c")

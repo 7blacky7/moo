@@ -32,6 +32,7 @@ typedef enum {
     MOO_WINDOW_HYBRID = 18,
     MOO_VOXELWORLD = 19,
     MOO_FRAME = 20,
+    MOO_GIF = 21,
 } MooTag;
 
 // === Forward Declarations ===
@@ -94,6 +95,7 @@ void moo_window_free(void* ptr);
 void moo_web_free(void* ptr);
 void moo_voxel_free(void* ptr);
 void moo_frame_free(void* ptr);
+void moo_gif_handle_free(void* ptr);
 
 // === Frame (opaker Pixel-Frame-Heap-Typ, Plan-008 A3A) ===
 // Pixeldaten NIE als moo-Liste (MooValue=16B; ultrawide ~20MB/Frame). Opaker
@@ -126,6 +128,29 @@ MooValue moo_test_frame_save_bmp(MooValue frame, MooValue pfad);
 //   moo_test_pixel(frame_oder_win, x, y) -> Farbe (Frame direkt ODER Fenster grabben)
 MooValue moo_test_frame_grab(MooValue win);
 MooValue moo_test_pixel(MooValue frame_oder_win, MooValue x, MooValue y);
+
+// === GIF-Recorder (opaker Heap-Typ MOO_GIF, Plan-008 A3B) ===
+// Wrappt den isolierten Encoder-Kern (moo_gif.c / MooGifWriter*, frame-bounded:
+// streamt direkt in die Datei, NIE eine Frame-Sequenz im RAM). Der Handle ist
+// ein refcounteter moo-Heap-Wert; refcount MUSS erstes Feld sein. Wird ueber
+// moo_release()/MOO_GIF -> moo_gif_handle_free() freigegeben (schliesst dort
+// einen ggf. noch offenen Writer = sicherer Trailer + fclose, kein Leak).
+typedef struct MooGifWriter MooGifWriter; // Vorwaerts-Decl (Definition: moo_gif.c)
+typedef struct {
+    int32_t       refcount;  // MUSS erstes Feld sein (Refcount-Konvention)
+    MooGifWriter* writer;    // offener Encoder oder NULL nach test_gif_ende
+} MooGifHandle;
+#define MV_GIF(v)  ((MooGifHandle*)moo_val_as_ptr(v))
+
+// test_gif_*-Builtins (moo_test_api.c, nur 3D-Build — brauchen Fenster-Grab):
+//   test_gif_start(win_oder_frame, pfad, fps) -> MOO_GIF (Dimensionen aus erstem
+//                                                Grab/Frame; oeffnet die Datei)
+//   test_gif_frame(gif, frame_oder_win)        -> Bool (grabbt bzw. nutzt MOO_FRAME,
+//                                                streamt 1 Frame in die Datei)
+//   test_gif_ende(gif)                         -> Bool (Trailer + close, Writer frei)
+MooValue moo_test_gif_start(MooValue win_oder_frame, MooValue pfad, MooValue fps);
+MooValue moo_test_gif_frame(MooValue gif, MooValue frame_oder_win);
+MooValue moo_test_gif_ende(MooValue gif);
 
 // === String ===
 struct MooString {

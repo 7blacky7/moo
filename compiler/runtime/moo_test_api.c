@@ -28,6 +28,7 @@
 #include "moo_runtime.h"
 #include <string.h>
 #include <stdlib.h>
+#include "moo_gif.h"  /* isolierter GIF89a+LZW-Encoder-Kern (Plan-008 A3B Teil 1) */
 
 /* ---- Forward-Decls (in moo_graphics.c / moo_3d.c / moo_hybrid.c definiert) ---- */
 extern MooValue moo_string_new(const char* s);
@@ -359,4 +360,172 @@ MooValue moo_test_fenster_info(MooValue win) {
     moo_dict_set(dict, moo_string_new("backend"), moo_string_new(backend));
     moo_dict_set(dict, moo_string_new("offen"),   moo_bool(offen));
     return dict;
+}
+
+/* ============================================================
+ * GIF-Recorder (Plan-008 A3B) — koppelt den isolierten Encoder-Kern
+ * (moo_gif.c) an MOO_FRAME + Fenster-Grab. STREAMEND/frame-bounded (S6):
+ * pro Frame existiert nur EIN Pixelpuffer (entweder der MOO_FRAME-eigene oder
+ * ein einzelner Grab, der sofort wieder freigegeben wird). Es wird NIE eine
+ * Frame-Sequenz im RAM gesammelt — moo_gif_add_frame schreibt direkt in die
+ * Datei. Der Writer lebt als opaker MOO_GIF-Heap-Handle (moo_gif_handle.c).
+ * ============================================================ */
+
+/* Wrapper-Konstruktor (moo_gif_handle.c, immer gebaut). */
+extern MooValue moo_gif_handle_new(MooGifWriter* writer);
+
+/* Ermittelt RGBA8-top-left-Pixel + Dims aus einem MOO_FRAME ODER (bei einem
+ * Fenster) ueber einen frischen Grab. *out_owned sagt, ob der Aufrufer den
+ * Puffer freigeben muss (true = Grab, false = MOO_FRAME-eigener Puffer).
+ * NULL bei Fehler (es wurde dann bereits geworfen bzw. ist zu werfen). */
+static const uint8_t* test_gif_pixels(MooValue src, int* out_w, int* out_h,
+                                      bool* out_owned) {
+    *out_owned = false;
+    if (src.tag == MOO_FRAME) {
+        MooFrame* f = MV_FRAME(src);
+        if (!f || !f->pixels || f->width <= 0 || f->height <= 0) return NULL;
+        *out_w = f->width;
+        *out_h = f->height;
+        return f->pixels; /* dicht gepackt RGBA8 top-left (stride==w*4) */
+    }
+    /* Fenster: ueber moo_test_frame_grab grabben (wirft bei Fehler selbst).
+     * Wir extrahieren die Pixel und uebernehmen den Puffer aus dem Frame,
+     * damit kein zweiter Grab noetig ist. */
+    MooValue frame = moo_test_frame_grab(src);
+    if (frame.tag != MOO_FRAME) {
+        return NULL; /* moo_test_frame_grab hat bereits geworfen */
+    }
+    MooFrame* f = MV_FRAME(frame);
+    if (!f || !f->pixels || f->width <= 0 || f->height <= 0) {
+        moo_release(frame);
+        return NULL;
+    }
+    /* Puffer aus dem Frame loesen (take ownership) und den Frame-Huelsen-
+     * Container freigeben, ohne die Pixel mitzunehmen. So bleibt nur EIN
+     * Pixelpuffer am Leben (frame-bounded). */
+    uint8_t* px = f->pixels;
+    *out_w = f->width;
+    *out_h = f->height;
+    f->pixels = NULL;       /* verhindert free der Pixel beim release */
+    moo_release(frame);     /* gibt nur die MooFrame-Huelse frei */
+    *out_owned = true;
+    return px;
+}
+
+/* test_gif_start(win_oder_frame, pfad, fps) -> MOO_GIF.
+ * Oeffnet die GIF-Datei; Dimensionen kommen aus dem ersten Frame/Fenster. */
+MooValue moo_test_gif_start(MooValue win_oder_frame, MooValue pfad, MooValue fps) {
+    if (pfad.tag != MOO_STRING) {
+        moo_throw(moo_string_new("test_gif_start: Pfad muss ein String sein"));
+        return moo_none();
+    }
+    if (fps.tag != MOO_NUMBER) {
+        moo_throw(moo_string_new("test_gif_start: fps muss eine Zahl sein"));
+        return moo_none();
+    }
+    int ifps = (int)MV_NUM(fps);
+    if (ifps <= 0) {
+        moo_throw(moo_string_new("test_gif_start: fps muss > 0 sein"));
+        return moo_none();
+    }
+
+    int w = 0, h = 0;
+    bool owned = false;
+    const uint8_t* px = test_gif_pixels(win_oder_frame, &w, &h, &owned);
+    if (!px) {
+        /* Bei Fenster-Pfad hat moo_test_frame_grab geworfen; bei ungueltigem
+         * Frame werfen wir hier. */
+        if (win_oder_frame.tag == MOO_FRAME) {
+            moo_throw(moo_string_new("test_gif_start: ungueltiger Frame"));
+        }
+        return moo_none();
+    }
+    if (w <= 0 || h > 65535 || w > 65535 || h <= 0) {
+        if (owned) free((void*)px);
+        moo_throw(moo_string_new("test_gif_start: Frame-Dimension ausserhalb 1..65535"));
+        return moo_none();
+    }
+
+    MooGifWriter* writer = moo_gif_open(MV_STR(pfad)->chars, w, h, ifps);
+    if (!writer) {
+        if (owned) free((void*)px);
+        moo_throw(moo_string_new("test_gif_start: GIF-Datei nicht oeffenbar"));
+        return moo_none();
+    }
+
+    /* Den ersten bereits gegrabbten/uebergebenen Frame gleich mitschreiben —
+     * sonst ginge der Grab fuer die Dim-Ermittlung verloren. */
+    int rc = moo_gif_add_frame(writer, px, w, h);
+    if (owned) free((void*)px);
+    if (rc != MOO_GIF_OK) {
+        moo_gif_close(writer);
+        moo_throw(moo_string_new("test_gif_start: erster Frame konnte nicht geschrieben werden"));
+        return moo_none();
+    }
+
+    MooValue handle = moo_gif_handle_new(writer); /* take ownership des Writers */
+    if (handle.tag != MOO_GIF) {
+        /* moo_gif_handle_new hat den Writer bei Fehler bereits geschlossen. */
+        moo_throw(moo_string_new("test_gif_start: GIF-Handle konnte nicht erzeugt werden"));
+        return moo_none();
+    }
+    return handle;
+}
+
+/* test_gif_frame(gif, frame_oder_win) -> Bool. Grabbt bzw. nutzt das MOO_FRAME
+ * und streamt genau einen Frame in die Datei. */
+MooValue moo_test_gif_frame(MooValue gif, MooValue frame_oder_win) {
+    if (gif.tag != MOO_GIF) {
+        moo_throw(moo_string_new("test_gif_frame: erstes Argument ist kein GIF-Recorder"));
+        return moo_bool(false);
+    }
+    MooGifHandle* h = MV_GIF(gif);
+    if (!h || !h->writer) {
+        moo_throw(moo_string_new("test_gif_frame: GIF-Recorder bereits beendet"));
+        return moo_bool(false);
+    }
+
+    int w = 0, hgt = 0;
+    bool owned = false;
+    const uint8_t* px = test_gif_pixels(frame_oder_win, &w, &hgt, &owned);
+    if (!px) {
+        if (frame_oder_win.tag == MOO_FRAME) {
+            moo_throw(moo_string_new("test_gif_frame: ungueltiger Frame"));
+        }
+        return moo_bool(false);
+    }
+
+    int rc = moo_gif_add_frame(h->writer, px, w, hgt);
+    if (owned) free((void*)px);
+    if (rc == MOO_GIF_ERR_DIM) {
+        moo_throw(moo_string_new("test_gif_frame: Frame-Groesse weicht vom GIF ab (alle Frames muessen gleich gross sein)"));
+        return moo_bool(false);
+    }
+    if (rc != MOO_GIF_OK) {
+        moo_throw(moo_string_new("test_gif_frame: Frame konnte nicht geschrieben werden"));
+        return moo_bool(false);
+    }
+    return moo_bool(true);
+}
+
+/* test_gif_ende(gif) -> Bool. Schreibt Trailer, schliesst Datei + Writer. Der
+ * Handle bleibt gueltig (writer=NULL), das spaetere moo_release gibt nur die
+ * Huelse frei (kein Doppel-close). */
+MooValue moo_test_gif_ende(MooValue gif) {
+    if (gif.tag != MOO_GIF) {
+        moo_throw(moo_string_new("test_gif_ende: Argument ist kein GIF-Recorder"));
+        return moo_bool(false);
+    }
+    MooGifHandle* h = MV_GIF(gif);
+    if (!h || !h->writer) {
+        /* Schon beendet — idempotent, kein Fehler. */
+        return moo_bool(true);
+    }
+    int rc = moo_gif_close(h->writer);
+    h->writer = NULL; /* gegen Doppel-close in moo_gif_handle_free */
+    if (rc != MOO_GIF_OK) {
+        moo_throw(moo_string_new("test_gif_ende: GIF konnte nicht sauber abgeschlossen werden"));
+        return moo_bool(false);
+    }
+    return moo_bool(true);
 }
