@@ -942,6 +942,12 @@ static void vk_capture_mouse(void* vctx) {
     VulkanContext* ctx = (VulkanContext*)vctx;
     if (!ctx || !ctx->window) return;
     glfwSetInputMode(ctx->window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    /* Raw-Mouse-Motion: umgeht Desktop-Maus-Beschleunigung/Pointer-Ballistik
+       (sprunghaftes Look unter XWayland/KWin + NVIDIA). Fallback: wenn die
+       Plattform es nicht unterstuetzt (glfwRawMouseMotionSupported() == false),
+       bleibt es beim normalen CURSOR_DISABLED-Verhalten — kein Fehler. */
+    if (glfwRawMouseMotionSupported())
+        glfwSetInputMode(ctx->window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
     glfwGetCursorPos(ctx->window, &ctx->last_mouse_x, &ctx->last_mouse_y);
     ctx->mouse_captured = 1;
 }
