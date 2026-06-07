@@ -220,7 +220,7 @@ impl<'ctx> CodeGen<'ctx> {
     fn forward_declare(&mut self, program: &Program) -> Result<(), String> {
         for stmt in &program.statements {
             match stmt {
-                Stmt::FunctionDef { name, params, .. } => {
+                Stmt::FunctionDef { name, params, decorators, .. } => {
                     // Duplikat-Guard: ueberspringe wenn Funktion schon deklariert
                     if self.module.get_function(name).is_some() {
                         continue;
@@ -229,7 +229,12 @@ impl<'ctx> CodeGen<'ctx> {
                     let param_types: Vec<BasicMetadataTypeEnum> = params.iter()
                         .map(|_| BasicMetadataTypeEnum::from(mv))
                         .collect();
-                    let fn_type = mv.fn_type(&param_types, false);
+                    let has_interrupt = decorators.iter().any(|d| d == "interrupt" || d == "unterbrechung");
+                    let fn_type = if has_interrupt {
+                        self.context.void_type().fn_type(&param_types, false)
+                    } else {
+                        mv.fn_type(&param_types, false)
+                    };
                     self.module.add_function(name, fn_type, None);
                 }
                 Stmt::ClassDef { name, parent, body, .. } => {
@@ -280,10 +285,14 @@ impl<'ctx> CodeGen<'ctx> {
         match target {
             "native" | "" => TargetMachine::get_default_triple().to_string(),
             "x86_64" | "x64" => "x86_64-unknown-linux-gnu".to_string(),
+            "x86_64-bare" | "x64-bare" => "x86_64-unknown-none".to_string(),
             "x86" | "i686" | "i386" => "i686-unknown-linux-gnu".to_string(),
             "arm" | "armv7" => "arm-unknown-linux-gnueabihf".to_string(),
+            "arm-bare" => "arm-none-eabi".to_string(),
             "aarch64" | "arm64" => "aarch64-unknown-linux-gnu".to_string(),
+            "aarch64-bare" | "arm64-bare" => "aarch64-unknown-none".to_string(),
             "riscv64" => "riscv64-unknown-linux-gnu".to_string(),
+            "riscv64-bare" => "riscv64-unknown-none".to_string(),
             "riscv32" => "riscv32-unknown-linux-gnu".to_string(),
             "mips" => "mips-unknown-linux-gnu".to_string(),
             "mips64" => "mips64-unknown-linux-gnuabi64".to_string(),
@@ -303,10 +312,14 @@ impl<'ctx> CodeGen<'ctx> {
         vec![
             ("native", "Host-System (Standard)"),
             ("x86_64", "64-bit x86 (Linux)"),
+            ("x86_64-bare", "Freestanding x86_64 (Bare-Metal OS)"),
             ("x86", "32-bit x86 (Linux)"),
             ("arm", "ARMv7 (Linux, z.B. Raspberry Pi)"),
+            ("arm-bare", "Freestanding ARM (Bare-Metal OS)"),
             ("aarch64", "ARM 64-bit (Linux, z.B. Apple M-Serie)"),
+            ("aarch64-bare", "Freestanding AArch64 (Bare-Metal OS)"),
             ("riscv64", "RISC-V 64-bit (Linux)"),
+            ("riscv64-bare", "Freestanding RISC-V 64-bit (Bare-Metal OS)"),
             ("riscv32", "RISC-V 32-bit"),
             ("mips", "MIPS 32-bit (Linux)"),
             ("mips64", "MIPS 64-bit (Linux)"),
@@ -550,7 +563,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.compile_for(var_name, iterable, body)
             }
             Stmt::FunctionDef { name, params, defaults, body, decorators } => {
-                self.compile_function_def(name, params, defaults, body)?;
+                self.compile_function_def(name, params, defaults, body, decorators)?;
                 // Decorators: func = decorator(func)
                 for dec_name in decorators.iter().rev() {
                     if let Some(dec_fn) = self.module.get_function(dec_name) {
@@ -1103,13 +1116,26 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    fn compile_function_def(&mut self, name: &str, params: &[String], defaults: &[Option<Expr>], body: &[Stmt]) -> Result<(), String> {
+    fn compile_function_def(&mut self, name: &str, params: &[String], defaults: &[Option<Expr>], body: &[Stmt], decorators: &[String]) -> Result<(), String> {
         let function = self.module.get_function(name)
             .ok_or(format!("Funktion '{name}' nicht forward-declared"))?;
 
         // Duplikat-Guard: wenn Funktion schon kompiliert wurde (hat Basic Blocks), ueberspringen
         if function.count_basic_blocks() > 0 {
             return Ok(());
+        }
+
+        // Interrupt Calling Convention support
+        let has_interrupt = decorators.iter().any(|d| d == "interrupt" || d == "unterbrechung");
+        if has_interrupt {
+            let triple = self.module.get_triple();
+            let triple_str = triple.as_str().to_str().unwrap_or("");
+            let cc = if triple_str.contains("aarch64") || triple_str.contains("arm") {
+                66 // ARM Interrupt
+            } else {
+                83 // x86 Interrupt
+            };
+            function.set_call_conventions(cc);
         }
 
         let entry = self.context.append_basic_block(function, "entry");
@@ -1206,8 +1232,13 @@ impl<'ctx> CodeGen<'ctx> {
             self.emit_defers()?;
             // Function-Exit-Cleanup: Locals freigeben bevor implicit return.
             self.release_function_locals()?;
-            let none_val = self.call_rt(self.rt.moo_none, &[], "none")?;
-            self.builder.build_return(Some(&none_val)).map_err(|e| format!("{e}"))?;
+            let returns_void = function.get_type().get_return_type().is_none();
+            if returns_void {
+                self.builder.build_return(None).map_err(|e| format!("{e}"))?;
+            } else {
+                let none_val = self.call_rt(self.rt.moo_none, &[], "none")?;
+                self.builder.build_return(Some(&none_val)).map_err(|e| format!("{e}"))?;
+            }
         }
 
         self.current_function = prev_fn;
@@ -1294,7 +1325,12 @@ impl<'ctx> CodeGen<'ctx> {
         // Locals vor dem return freigeben. val haelt seine eigene +1 ueber
         // load_var-retain / Producer und ueberlebt den Slot-Cleanup.
         self.release_function_locals()?;
-        self.builder.build_return(Some(&val)).map_err(|e| format!("{e}"))?;
+        let returns_void = func.get_type().get_return_type().is_none();
+        if returns_void {
+            self.builder.build_return(None).map_err(|e| format!("{e}"))?;
+        } else {
+            self.builder.build_return(Some(&val)).map_err(|e| format!("{e}"))?;
+        }
         Ok(())
     }
 
@@ -1303,7 +1339,7 @@ impl<'ctx> CodeGen<'ctx> {
         self.current_class = Some(name.to_string());
         // Methoden kompilieren
         for stmt in body {
-            if let Stmt::FunctionDef { name: method_name, params, body: method_body, .. } = stmt {
+            if let Stmt::FunctionDef { name: method_name, params, defaults, body: method_body, .. } = stmt {
                 let func = self.class_methods.get(&(name.to_string(), method_name.clone()))
                     .ok_or(format!("Methode {name}.{method_name} nicht gefunden"))?
                     .clone();
@@ -1337,6 +1373,32 @@ impl<'ctx> CodeGen<'ctx> {
                     let param_val = func.get_nth_param((i + 1) as u32).unwrap();
                     self.builder.build_store(alloca, param_val).map_err(|e| format!("{e}"))?;
                     self.variables.insert(param_name.clone(), alloca);
+
+                    // Default-Parameter: wenn der Wert none ist, den Default einsetzen
+                    if let Some(Some(default_expr)) = defaults.get(i) {
+                        let current_val = self.load_var(param_name)?;
+                        let tag = self.builder.build_extract_value(current_val, 0, "tag")
+                            .map_err(|e| format!("{e}"))?;
+                        let is_none = self.builder.build_int_compare(
+                            inkwell::IntPredicate::EQ,
+                            tag.into_int_value(),
+                            self.context.i64_type().const_int(3, false), // MOO_NONE = 3
+                            "is_none",
+                        ).map_err(|e| format!("{e}"))?;
+
+                        let default_bb = self.context.append_basic_block(func, "default");
+                        let continue_bb = self.context.append_basic_block(func, "no_default");
+                        self.builder.build_conditional_branch(is_none, default_bb, continue_bb)
+                            .map_err(|e| format!("{e}"))?;
+
+                        self.builder.position_at_end(default_bb);
+                        let default_val = self.compile_expr(default_expr)?;
+                        self.store_var(param_name, default_val)?;
+                        self.builder.build_unconditional_branch(continue_bb)
+                            .map_err(|e| format!("{e}"))?;
+
+                        self.builder.position_at_end(continue_bb);
+                    }
                 }
 
                 // Pre-Allocation lokaler Variablen mit Counter-Pattern-Erkennung
@@ -2214,6 +2276,29 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_mem_write, &[addr.into(), val.into(), size.into()], "mem_write")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    // CPU / Hardware
+                    "halt" | "anhalten" => {
+                        self.call_rt_void(self.rt.moo_cpu_halt, &[], "cpu_halt")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "cli" | "interrupts_aus" => {
+                        self.call_rt_void(self.rt.moo_cpu_cli, &[], "cpu_cli")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "sti" | "interrupts_an" => {
+                        self.call_rt_void(self.rt.moo_cpu_sti, &[], "cpu_sti")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "port_lese" | "port_in" => {
+                        let port = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_io_inb, &[port.into()], "io_inb");
+                    }
+                    "port_schreibe" | "port_out" => {
+                        let port = self.compile_expr(&args[0])?;
+                        let val = self.compile_expr(&args[1])?;
+                        self.call_rt_void(self.rt.moo_io_outb, &[port.into(), val.into()], "io_outb")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     // Netzwerk
                     "ausfuehren" | "eval" => {
                         let code = self.compile_expr(&args[0])?;
@@ -2446,6 +2531,10 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_delay, &[ms.into()], "delay")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    "ereignisse_pumpen" | "pump_events" => {
+                        self.call_rt_void(self.rt.moo_pump_events, &[], "pump_events")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     // Freeze/Immutable
                     "zeit_ms" | "time_ms" => {
                         return self.call_rt(self.rt.moo_time_ms, &[], "time_ms");
@@ -2628,6 +2717,27 @@ impl<'ctx> CodeGen<'ctx> {
                         let win = self.compile_expr(&args[0])?;
                         let path = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_3d_screenshot_bmp, &[win.into(), path.into()], "shot3d");
+                    }
+                    // Voxel-Welt (Plan-005 Phase 1a Kern-Builtins).
+                    // Nur die nach RT1 stabilen 4 Builtins; mesh_bauen/strahl folgen
+                    // erst nach RT2/RT4 (keine Aliases fuer unfertige Semantik).
+                    "voxel_welt_neu" | "voxel_world_new" => {
+                        let seed = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_voxel_welt_neu, &[seed.into()], "voxel_welt_neu");
+                    }
+                    "voxel_setzen" | "block_setzen" | "set_block" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_voxel_setzen,
+                            &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "voxel_setzen");
+                    }
+                    "voxel_holen" | "block_holen" | "get_block" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_voxel_holen,
+                            &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "voxel_holen");
+                    }
+                    "voxel_ram_statistik" | "voxel_ram" | "voxel_stats" => {
+                        let w = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_voxel_ram_statistik, &[w.into()], "voxel_ram");
                     }
                     // Chunk Display Lists
                     "chunk_erstelle" | "chunk_create" => {
@@ -3542,9 +3652,13 @@ impl<'ctx> CodeGen<'ctx> {
 
                 // Fehlende Argumente mit moo_none() auffuellen (fuer Default-Parameter)
                 let expected_params = function.count_params() as usize;
-                while compiled_args.len() < expected_params {
-                    let none_val = self.call_rt(self.rt.moo_none, &[], "none_arg")?;
-                    compiled_args.push(none_val.into());
+                if compiled_args.len() > expected_params {
+                    compiled_args.truncate(expected_params);
+                } else {
+                    while compiled_args.len() < expected_params {
+                        let none_val = self.call_rt(self.rt.moo_none, &[], "none_arg")?;
+                        compiled_args.push(none_val.into());
+                    }
                 }
                 self.call_rt(function, &compiled_args, "call")
             }
@@ -4092,7 +4206,17 @@ impl<'ctx> CodeGen<'ctx> {
                             // Parent-Chain walken bis Methode gefunden
                             loop {
                                 if let Some(func) = self.class_methods.get(&(cls.clone(), method.clone())).copied() {
-                                    return self.call_rt(func, &call_args, "method_call");
+                                    let mut local_args = call_args.clone();
+                                    let expected_params = func.count_params() as usize;
+                                    if local_args.len() > expected_params {
+                                        local_args.truncate(expected_params);
+                                    } else {
+                                        while local_args.len() < expected_params {
+                                            let none_val = self.call_rt(self.rt.moo_none, &[], "none_arg")?;
+                                            local_args.push(none_val.into());
+                                        }
+                                    }
+                                    return self.call_rt(func, &local_args, "method_call");
                                 }
                                 match self.class_parents.get(&cls).cloned() {
                                     Some(p) => cls = p,
@@ -4170,7 +4294,17 @@ impl<'ctx> CodeGen<'ctx> {
                                 }
 
                                 self.builder.position_at_end(call_bb);
-                                let result = self.call_rt(*func, &call_args, "disp_call")?;
+                                let mut local_args = call_args.clone();
+                                let expected_params = func.count_params() as usize;
+                                if local_args.len() > expected_params {
+                                    local_args.truncate(expected_params);
+                                } else {
+                                    while local_args.len() < expected_params {
+                                        let none_val = self.call_rt(self.rt.moo_none, &[], "none_arg")?;
+                                        local_args.push(none_val.into());
+                                    }
+                                }
+                                let result = self.call_rt(*func, &local_args, "disp_call")?;
                                 self.builder.build_store(result_ptr, result)
                                     .map_err(|e| format!("{e}"))?;
                                 self.builder.build_unconditional_branch(after_bb)
@@ -4535,6 +4669,15 @@ impl<'ctx> CodeGen<'ctx> {
                     let mut call_args: Vec<BasicMetadataValueEnum> = vec![obj.into()];
                     for a in args {
                         call_args.push(self.compile_expr(a)?.into());
+                    }
+                    let expected_params = func.count_params() as usize;
+                    if call_args.len() > expected_params {
+                        call_args.truncate(expected_params);
+                    } else {
+                        while call_args.len() < expected_params {
+                            let none_val = self.call_rt(self.rt.moo_none, &[], "none_arg")?;
+                            call_args.push(none_val.into());
+                        }
                     }
                     self.call_rt(func, &call_args, "ctor")?;
                 }

@@ -44,6 +44,12 @@ pub struct RuntimeBindings<'ctx> {
     // Memory
     pub moo_mem_read: FunctionValue<'ctx>,
     pub moo_mem_write: FunctionValue<'ctx>,
+    // CPU / Hardware
+    pub moo_cpu_halt: FunctionValue<'ctx>,
+    pub moo_cpu_cli: FunctionValue<'ctx>,
+    pub moo_cpu_sti: FunctionValue<'ctx>,
+    pub moo_io_inb: FunctionValue<'ctx>,
+    pub moo_io_outb: FunctionValue<'ctx>,
     // String
     pub moo_string_concat: FunctionValue<'ctx>,
     // List
@@ -203,6 +209,12 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_3d_release_mouse: FunctionValue<'ctx>,
     pub moo_3d_mouse_dx: FunctionValue<'ctx>,
     pub moo_3d_mouse_dy: FunctionValue<'ctx>,
+    // Voxel-Welt (Plan-005 Phase 1a Kern). Wie alle 3D-Builtins UNBEDINGT
+    // deklariert (kein #[cfg]); Gating erfolgt rein auf C-Link-Ebene via build.rs.
+    pub moo_voxel_welt_neu: FunctionValue<'ctx>,
+    pub moo_voxel_setzen: FunctionValue<'ctx>,
+    pub moo_voxel_holen: FunctionValue<'ctx>,
+    pub moo_voxel_ram_statistik: FunctionValue<'ctx>,
     pub moo_3d_mouse_x: FunctionValue<'ctx>,
     pub moo_3d_mouse_y: FunctionValue<'ctx>,
     pub moo_3d_mouse_button: FunctionValue<'ctx>,
@@ -265,6 +277,7 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_mouse_y: FunctionValue<'ctx>,
     pub moo_mouse_pressed: FunctionValue<'ctx>,
     pub moo_delay: FunctionValue<'ctx>,
+    pub moo_pump_events: FunctionValue<'ctx>,
     // 3D Grafik (OpenGL/Software)
     pub moo_3d_create: FunctionValue<'ctx>,
     pub moo_3d_is_open: FunctionValue<'ctx>,
@@ -492,6 +505,8 @@ impl<'ctx> RuntimeBindings<'ctx> {
         let mv1 = &[mv];
         let mv2 = &[mv, mv];
         let mv3 = &[mv, mv, mv];
+        let mv4 = &[mv, mv, mv, mv];
+        let mv5 = &[mv, mv, mv, mv, mv];
 
         // Makro fuer Deklaration
         macro_rules! decl {
@@ -547,6 +562,12 @@ impl<'ctx> RuntimeBindings<'ctx> {
             // Memory
             moo_mem_read: decl_mv_mv!("moo_mem_read", mv2),
             moo_mem_write: module.add_function("moo_mem_write", void_type.fn_type(mv3, false), None),
+            // CPU / Hardware
+            moo_cpu_halt: module.add_function("moo_cpu_halt", void_type.fn_type(&[], false), None),
+            moo_cpu_cli: module.add_function("moo_cpu_cli", void_type.fn_type(&[], false), None),
+            moo_cpu_sti: module.add_function("moo_cpu_sti", void_type.fn_type(&[], false), None),
+            moo_io_inb: decl_mv_mv!("moo_io_inb", mv1),
+            moo_io_outb: module.add_function("moo_io_outb", void_type.fn_type(mv2, false), None),
 
             // String
             moo_string_concat: decl_mv_mv!("moo_string_concat", mv2),
@@ -724,6 +745,13 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_3d_release_mouse: module.add_function("moo_3d_release_mouse", void_type.fn_type(mv1, false), None),
             moo_3d_mouse_dx: decl_mv_mv!("moo_3d_mouse_dx", mv1),
             moo_3d_mouse_dy: decl_mv_mv!("moo_3d_mouse_dy", mv1),
+
+            // Voxel-Welt (Plan-005 Phase 1a). Signaturen exakt nach RT1-C-API
+            // (moo_runtime.h): alle MooValue-in/MooValue-out.
+            moo_voxel_welt_neu: decl_mv_mv!("moo_voxel_welt_neu", mv1),
+            moo_voxel_setzen: decl_mv_mv!("moo_voxel_setzen", mv5),
+            moo_voxel_holen: decl_mv_mv!("moo_voxel_holen", mv4),
+            moo_voxel_ram_statistik: decl_mv_mv!("moo_voxel_ram_statistik", mv1),
             moo_3d_mouse_x: decl_mv_mv!("moo_3d_mouse_x", mv1),
             moo_3d_mouse_y: decl_mv_mv!("moo_3d_mouse_y", mv1),
             moo_3d_mouse_button: decl_mv_mv!("moo_3d_mouse_button", mv2),
@@ -785,6 +813,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_mouse_y: decl_mv_mv!("moo_mouse_y", mv1),
             moo_mouse_pressed: decl_mv_mv!("moo_mouse_pressed", mv1),
             moo_delay: module.add_function("moo_delay", void_type.fn_type(mv1, false), None),
+            moo_pump_events: module.add_function("moo_pump_events", void_type.fn_type(&[], false), None),
             // 3D Grafik
             moo_3d_create: decl_mv_mv!("moo_3d_create", mv3),
             moo_3d_is_open: decl_mv_mv!("moo_3d_is_open", mv1),
