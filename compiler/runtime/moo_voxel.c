@@ -756,6 +756,293 @@ MooValue moo_voxel_aktualisieren(MooValue welt) {
 }
 
 /* ========================================================================
+ * Phase 1d: Zentraler World-Koordinaten-Block-Accessor
+ *
+ * EINZIGER Lese-Zugriffspunkt auf Blockdaten ueber Welt-Voxel-Koordinaten.
+ * Raycast (DDA) und AABB-Overlap gehen ausschliesslich hierueber, statt
+ * blocks[] verstreut selbst zu indexieren. Phase 1c (RT3) stellt das
+ * Chunk-Datenlayout auf Palette/Bitpacking um und muss dann NUR diese eine
+ * Funktion (plus moo_voxel_holen / moo_voxel_block_at) anpassen.
+ *
+ * Liefert die Block-ID am Welt-Voxel (wx,wy,wz); nicht-allokierter / leerer
+ * Chunk = 0 (Luft). Reiner Lookup ohne Allokation.
+ * ======================================================================== */
+static inline uint16_t moo_voxel_world_block(MooVoxelWorld* w,
+                                             int32_t wx, int32_t wy, int32_t wz) {
+    int32_t cx = moo_voxel_floordiv(wx, MOO_VOXEL_CHUNK_DIM);
+    int32_t cy = moo_voxel_floordiv(wy, MOO_VOXEL_CHUNK_DIM);
+    int32_t cz = moo_voxel_floordiv(wz, MOO_VOXEL_CHUNK_DIM);
+    MooVoxelChunk* ch = moo_voxel_lookup(w, cx, cy, cz);
+    if (!ch || !ch->blocks) return 0; /* leerer/fehlender Chunk = Luft */
+    int32_t lx = moo_voxel_floormod(wx, MOO_VOXEL_CHUNK_DIM);
+    int32_t ly = moo_voxel_floormod(wy, MOO_VOXEL_CHUNK_DIM);
+    int32_t lz = moo_voxel_floormod(wz, MOO_VOXEL_CHUNK_DIM);
+    return ch->blocks[moo_voxel_local_index(lx, ly, lz)];
+}
+
+/* ========================================================================
+ * Phase 1d: DDA-Raycast (Amanatides & Woo, 1987)
+ *
+ * "A Fast Voxel Traversal Algorithm for Ray Tracing". Der Strahl startet bei
+ * (ox,oy,oz) in Welt-Koordinaten (Float, NICHT Voxel-Index) mit Richtung
+ * (dx,dy,dz). Wir traversieren das Voxel-Gitter Zelle fuer Zelle ohne
+ * Ueberspringen, bis ein solider Block (id != 0) getroffen wird oder die
+ * zurueckgelegte Distanz max_dist ueberschreitet.
+ *
+ * Rueckgabe-Dict (P0.5-Contract): { hit, x, y, z, nx, ny, nz, id, dist }.
+ *   - hit  : Bool. true = solider Block getroffen.
+ *   - x,y,z: Number. Voxel-Koordinate des getroffenen Blocks (signed int, auch
+ *            negativ). Bei Miss 0/0/0.
+ *   - nx,ny,nz: Number. Face-Normale der EINSTIEGSSEITE (Einheitsvektor entlang
+ *            einer Achse, z.B. (0,1,0) wenn der Strahl von oben einschlaegt).
+ *            Bei Miss 0/0/0. Bei Start-im-Block (dist=0) ebenfalls 0/0/0
+ *            (keine Einstiegsseite definierbar).
+ *   - id   : Number. Block-ID des Treffers (1..MAX). Bei Miss 0.
+ *   - dist : Number. Euklidische Distanz vom Ursprung bis zur getroffenen
+ *            Face-Ebene (NICHT bis Zellmitte). Bei Start-im-Block 0.
+ *
+ * Fehlerpolitik (KEINE HACKS):
+ *   - Invalider Handle -> moo_throw (ueber moo_voxel_check).
+ *   - Richtungsvektor (0,0,0) oder nicht-endlich -> moo_throw (kein stilles
+ *     Endlos-/Null-Verhalten).
+ *   - max_dist <= 0 -> sofort hit=false (leerer Strahl).
+ * ======================================================================== */
+
+MooValue moo_voxel_strahl(MooValue welt,
+                          MooValue ox, MooValue oy, MooValue oz,
+                          MooValue dx, MooValue dy, MooValue dz,
+                          MooValue max_dist) {
+    MooVoxelWorld* vw = moo_voxel_check(welt, "voxel_strahl");
+    if (!vw) return moo_none();
+
+    double rox = moo_as_number(ox);
+    double roy = moo_as_number(oy);
+    double roz = moo_as_number(oz);
+    double rdx = moo_as_number(dx);
+    double rdy = moo_as_number(dy);
+    double rdz = moo_as_number(dz);
+    double maxd = moo_as_number(max_dist);
+
+    /* Richtung normalisieren; Null-/nicht-endlicher Vektor ist ein Fehler. */
+    double len = sqrt(rdx * rdx + rdy * rdy + rdz * rdz);
+    if (!(len > 0.0) || !isfinite(len)) {
+        moo_throw(moo_error("Voxel-Fehler in voxel_strahl: Richtungsvektor ist (0,0,0) oder ungueltig"));
+        return moo_none();
+    }
+    rdx /= len; rdy /= len; rdz /= len;
+
+    MooValue d = moo_dict_new();
+
+    /* Hilfsmakro-frei: Miss-Dict zentral bauen. */
+    if (!(maxd > 0.0)) {
+        moo_dict_set(d, moo_string_new("hit"),  moo_bool(false));
+        moo_dict_set(d, moo_string_new("x"),    moo_number(0.0));
+        moo_dict_set(d, moo_string_new("y"),    moo_number(0.0));
+        moo_dict_set(d, moo_string_new("z"),    moo_number(0.0));
+        moo_dict_set(d, moo_string_new("nx"),   moo_number(0.0));
+        moo_dict_set(d, moo_string_new("ny"),   moo_number(0.0));
+        moo_dict_set(d, moo_string_new("nz"),   moo_number(0.0));
+        moo_dict_set(d, moo_string_new("id"),   moo_number(0.0));
+        moo_dict_set(d, moo_string_new("dist"), moo_number(0.0));
+        return d;
+    }
+
+    /* Startzelle (Voxel, in dem der Ursprung liegt) per floor-Cast. */
+    int32_t vx = (int32_t)floor(rox);
+    int32_t vy = (int32_t)floor(roy);
+    int32_t vz = (int32_t)floor(roz);
+
+    /* Schrittrichtung pro Achse (-1 / 0 / +1). 0 = Strahl laeuft parallel zur
+     * Achse, diese Achse loest nie eine Grenzueberschreitung aus. */
+    int32_t step_x = (rdx > 0.0) ? 1 : (rdx < 0.0 ? -1 : 0);
+    int32_t step_y = (rdy > 0.0) ? 1 : (rdy < 0.0 ? -1 : 0);
+    int32_t step_z = (rdz > 0.0) ? 1 : (rdz < 0.0 ? -1 : 0);
+
+    /* tDelta: Parameter-Distanz zwischen zwei Gitterebenen je Achse.
+     * tMax:   Parameter-Distanz bis zur naechsten Gitterebene je Achse.
+     * Achsen mit step==0 bekommen INFINITY, damit sie nie als Minimum gewinnen. */
+    const double INF = (double)INFINITY;
+    double t_delta_x = (step_x != 0) ? fabs(1.0 / rdx) : INF;
+    double t_delta_y = (step_y != 0) ? fabs(1.0 / rdy) : INF;
+    double t_delta_z = (step_z != 0) ? fabs(1.0 / rdz) : INF;
+
+    double t_max_x, t_max_y, t_max_z;
+    if (step_x > 0)      t_max_x = ((double)(vx + 1) - rox) / rdx;
+    else if (step_x < 0) t_max_x = (rox - (double)vx) / -rdx;
+    else                 t_max_x = INF;
+    if (step_y > 0)      t_max_y = ((double)(vy + 1) - roy) / rdy;
+    else if (step_y < 0) t_max_y = (roy - (double)vy) / -rdy;
+    else                 t_max_y = INF;
+    if (step_z > 0)      t_max_z = ((double)(vz + 1) - roz) / rdz;
+    else if (step_z < 0) t_max_z = (roz - (double)vz) / -rdz;
+    else                 t_max_z = INF;
+
+    /* Face-Normale der Einstiegsseite (wird bei jedem Schritt aktualisiert). */
+    int32_t nx = 0, ny = 0, nz = 0;
+    double t_hit = 0.0;          /* Parameter-Distanz an der Einstiegs-Face */
+    bool hit = false;
+    uint16_t hit_id = 0;
+
+    /* Sonderfall: Ursprung liegt bereits in einem soliden Block. Treffer mit
+     * dist=0 und undefinierter Einstiegsseite (Normale 0,0,0). */
+    uint16_t start_block = moo_voxel_world_block(vw, vx, vy, vz);
+    if (start_block != 0) {
+        hit = true;
+        hit_id = start_block;
+        t_hit = 0.0;
+        /* nx/ny/nz bleiben 0 (keine Einstiegsseite). */
+    } else {
+        /* DDA-Hauptschleife: immer die Achse mit kleinstem tMax voranschreiten.
+         * Abbruch sobald die Einstiegsdistanz max_dist ueberschreitet. */
+        for (;;) {
+            if (t_max_x < t_max_y) {
+                if (t_max_x < t_max_z) {
+                    vx += step_x;
+                    t_hit = t_max_x;
+                    t_max_x += t_delta_x;
+                    nx = -step_x; ny = 0; nz = 0;
+                } else {
+                    vz += step_z;
+                    t_hit = t_max_z;
+                    t_max_z += t_delta_z;
+                    nx = 0; ny = 0; nz = -step_z;
+                }
+            } else {
+                if (t_max_y < t_max_z) {
+                    vy += step_y;
+                    t_hit = t_max_y;
+                    t_max_y += t_delta_y;
+                    nx = 0; ny = -step_y; nz = 0;
+                } else {
+                    vz += step_z;
+                    t_hit = t_max_z;
+                    t_max_z += t_delta_z;
+                    nx = 0; ny = 0; nz = -step_z;
+                }
+            }
+
+            if (t_hit > maxd) break; /* ueber Reichweite -> Miss */
+
+            uint16_t b = moo_voxel_world_block(vw, vx, vy, vz);
+            if (b != 0) {
+                hit = true;
+                hit_id = b;
+                break;
+            }
+        }
+    }
+
+    if (hit) {
+        moo_dict_set(d, moo_string_new("hit"),  moo_bool(true));
+        moo_dict_set(d, moo_string_new("x"),    moo_number((double)vx));
+        moo_dict_set(d, moo_string_new("y"),    moo_number((double)vy));
+        moo_dict_set(d, moo_string_new("z"),    moo_number((double)vz));
+        moo_dict_set(d, moo_string_new("nx"),   moo_number((double)nx));
+        moo_dict_set(d, moo_string_new("ny"),   moo_number((double)ny));
+        moo_dict_set(d, moo_string_new("nz"),   moo_number((double)nz));
+        moo_dict_set(d, moo_string_new("id"),   moo_number((double)hit_id));
+        moo_dict_set(d, moo_string_new("dist"), moo_number(t_hit));
+    } else {
+        moo_dict_set(d, moo_string_new("hit"),  moo_bool(false));
+        moo_dict_set(d, moo_string_new("x"),    moo_number(0.0));
+        moo_dict_set(d, moo_string_new("y"),    moo_number(0.0));
+        moo_dict_set(d, moo_string_new("z"),    moo_number(0.0));
+        moo_dict_set(d, moo_string_new("nx"),   moo_number(0.0));
+        moo_dict_set(d, moo_string_new("ny"),   moo_number(0.0));
+        moo_dict_set(d, moo_string_new("nz"),   moo_number(0.0));
+        moo_dict_set(d, moo_string_new("id"),   moo_number(0.0));
+        moo_dict_set(d, moo_string_new("dist"), moo_number(0.0));
+    }
+    return d;
+}
+
+/* ========================================================================
+ * Phase 1d: AABB-Overlap (Box gegen solide Bloecke)
+ *
+ * Entscheidung (am P0.5-Dict-Stil orientiert, dokumentiert): Statt nur eines
+ * Bool liefern wir ein Dict { hit, count, x, y, z } — symmetrisch zu
+ * voxel_strahl und nuetzlicher fuer Gameplay (Kollisions-Aufloesung braucht oft
+ * mehr als ja/nein):
+ *   - hit  : Bool. true = mindestens ein solider Block ueberlappt die Box.
+ *   - count: Number. Anzahl solider Voxel-Zellen, die die Box ueberlappen.
+ *   - x,y,z: Number. Voxel-Koordinate des ERSTEN soliden Treffers (kleinster
+ *            (z,y,x)-Index in Scan-Reihenfolge); bei Miss 0/0/0.
+ *
+ * Die Box ist achsenparallel und in Welt-Koordinaten (Float) gegeben:
+ * [minx,maxx] x [miny,maxy] x [minz,maxz]. Wir testen jede Voxel-Zelle, deren
+ * Einheitswuerfel [v, v+1) die Box schneidet. Eine Box mit max == min (Punkt)
+ * deckt genau die Zelle floor(min) ab. min/max werden bei Bedarf vertauscht,
+ * damit die Reihenfolge der Argumente egal ist (kein Wurf).
+ *
+ * Voxel-Bereich pro Achse:
+ *   lo = floor(min)
+ *   hi = ceil(max) - 1, mindestens lo (eine degenerierte/duenne Box deckt >=1 Zelle).
+ * Damit ueberlappt Zelle v die Box, wenn v+1 > min und v < max.
+ *
+ * Fehlerpolitik: invalider Handle -> moo_throw. Nicht-endliche Grenzen ->
+ * moo_throw (keine stille NaN-Schleife).
+ * ======================================================================== */
+
+MooValue moo_voxel_aabb(MooValue welt,
+                        MooValue minx, MooValue miny, MooValue minz,
+                        MooValue maxx, MooValue maxy, MooValue maxz) {
+    MooVoxelWorld* vw = moo_voxel_check(welt, "voxel_aabb");
+    if (!vw) return moo_none();
+
+    double ax0 = moo_as_number(minx), ax1 = moo_as_number(maxx);
+    double ay0 = moo_as_number(miny), ay1 = moo_as_number(maxy);
+    double az0 = moo_as_number(minz), az1 = moo_as_number(maxz);
+
+    if (!isfinite(ax0) || !isfinite(ax1) ||
+        !isfinite(ay0) || !isfinite(ay1) ||
+        !isfinite(az0) || !isfinite(az1)) {
+        moo_throw(moo_error("Voxel-Fehler in voxel_aabb: Box-Grenze ist nicht endlich"));
+        return moo_none();
+    }
+
+    /* min/max je Achse normalisieren (Argument-Reihenfolge egal). */
+    if (ax1 < ax0) { double t = ax0; ax0 = ax1; ax1 = t; }
+    if (ay1 < ay0) { double t = ay0; ay0 = ay1; ay1 = t; }
+    if (az1 < az0) { double t = az0; az0 = az1; az1 = t; }
+
+    int32_t lox = (int32_t)floor(ax0);
+    int32_t loy = (int32_t)floor(ay0);
+    int32_t loz = (int32_t)floor(az0);
+    int32_t hix = (int32_t)ceil(ax1) - 1;
+    int32_t hiy = (int32_t)ceil(ay1) - 1;
+    int32_t hiz = (int32_t)ceil(az1) - 1;
+    if (hix < lox) hix = lox;
+    if (hiy < loy) hiy = loy;
+    if (hiz < loz) hiz = loz;
+
+    int64_t count = 0;
+    bool hit = false;
+    int32_t fx = 0, fy = 0, fz = 0; /* erste Treffer-Zelle */
+
+    for (int32_t z = loz; z <= hiz; z++) {
+        for (int32_t y = loy; y <= hiy; y++) {
+            for (int32_t x = lox; x <= hix; x++) {
+                if (moo_voxel_world_block(vw, x, y, z) != 0) {
+                    if (!hit) {
+                        hit = true;
+                        fx = x; fy = y; fz = z;
+                    }
+                    count++;
+                }
+            }
+        }
+    }
+
+    MooValue d = moo_dict_new();
+    moo_dict_set(d, moo_string_new("hit"),   moo_bool(hit));
+    moo_dict_set(d, moo_string_new("count"), moo_number((double)count));
+    moo_dict_set(d, moo_string_new("x"),     moo_number((double)fx));
+    moo_dict_set(d, moo_string_new("y"),     moo_number((double)fy));
+    moo_dict_set(d, moo_string_new("z"),     moo_number((double)fz));
+    return d;
+}
+
+/* ========================================================================
  * Freigabe (von moo_release ueber MOO_VOXELWORLD aufgerufen, refcount==0)
  *
  * Gibt ALLE CPU-Allokationen frei (Chunk-Blocks, Hashmap-Tabelle, World).

@@ -582,6 +582,26 @@ MooValue moo_voxel_ram_statistik(MooValue welt);
 //   moo_voxel_aktualisieren(w)          -> Number Anzahl neu gemeshter Chunks
 MooValue moo_voxel_mesh_bauen(MooValue welt, MooValue cx, MooValue cy, MooValue cz);
 MooValue moo_voxel_aktualisieren(MooValue welt);
+// Phase 1d (DDA-Raycast + AABB-Overlap, Amanatides-Woo).
+//   moo_voxel_strahl(w, ox,oy,oz, dx,dy,dz, max_dist)
+//     -> Dict {hit, x, y, z, nx, ny, nz, id, dist} (P0.5-Contract).
+//        Ursprung+Richtung in Welt-Float-Koordinaten; Richtung wird intern
+//        normalisiert. x/y/z = getroffene Voxel-Koordinate (signed), nx/ny/nz =
+//        Face-Normale der Einstiegsseite, dist = Distanz bis Einstiegs-Face.
+//        Invalider Handle ODER Null-/nicht-endliche Richtung = moo_throw.
+//        Leerer Raum/ueber Reichweite = hit:false. Start-im-Block = hit, dist 0.
+//   moo_voxel_aabb(w, minx,miny,minz, maxx,maxy,maxz)
+//     -> Dict {hit, count, x, y, z}. Achsenparallele Box (Welt-Float) gegen
+//        solide Bloecke. count = Anzahl ueberlappter solider Zellen, x/y/z =
+//        erste Treffer-Zelle. min/max-Reihenfolge egal. Invalider Handle ODER
+//        nicht-endliche Grenze = moo_throw.
+MooValue moo_voxel_strahl(MooValue welt,
+                          MooValue ox, MooValue oy, MooValue oz,
+                          MooValue dx, MooValue dy, MooValue dz,
+                          MooValue max_dist);
+MooValue moo_voxel_aabb(MooValue welt,
+                        MooValue minx, MooValue miny, MooValue minz,
+                        MooValue maxx, MooValue maxy, MooValue maxz);
 // Plan-005 1b: 1 = ein 3D-Backend ist aktiv (g_backend && g_ctx), sonst 0.
 int moo_3d_backend_active(void);
 
