@@ -5,6 +5,7 @@
  */
 
 #include "moo_runtime.h"
+#include "moo_noise.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,54 +53,10 @@ extern void moo_3d_set_light_dir(float x, float y, float z);
 extern void moo_3d_set_ambient(float level);
 
 /* ========================================================
- * Noise (Perlin + fBm, rein in C)
+ * Noise: ausgelagert nach moo_noise.h/.c (Plan-005 P0.3),
+ * seed-parametrisiert. Der frueher globale world_noise_seed lebt
+ * jetzt als g_world.noise_seed (kein Seed-Leak zwischen Welten).
  * ======================================================== */
-
-static int world_noise_seed = 0;
-
-static int hash_2d(int ix, int iy) {
-    int n = ((ix + 1) * 374761 + (iy + 1) * 668265 + world_noise_seed) & 0x7FFFFFFF;
-    n = (n ^ (n >> 11)) & 0x7FFFFFFF;
-    n = (n * 45673) & 0x7FFFFFFF;
-    n = (n ^ (n >> 15)) & 0x7FFFFFFF;
-    n = (n * 31337) & 0x7FFFFFFF;
-    n = (n ^ (n >> 13)) & 0x7FFFFFFF;
-    return n;
-}
-
-static float fade(float t) {
-    return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
-}
-
-static float lerp_f(float a, float b, float t) {
-    return a + (b - a) * t;
-}
-
-static float perlin_2d(float x, float y) {
-    int ix = (int)floorf(x);
-    int iy = (int)floorf(y);
-    float fx = x - ix;
-    float fy = y - iy;
-    float u = fade(fx);
-    float v = fade(fy);
-    float a = (hash_2d(ix,     iy    ) % 1000) / 500.0f - 1.0f;
-    float b = (hash_2d(ix + 1, iy    ) % 1000) / 500.0f - 1.0f;
-    float c = (hash_2d(ix,     iy + 1) % 1000) / 500.0f - 1.0f;
-    float d = (hash_2d(ix + 1, iy + 1) % 1000) / 500.0f - 1.0f;
-    return lerp_f(lerp_f(a, b, u), lerp_f(c, d, u), v);
-}
-
-static float fbm(float x, float y, int oktaven, float freq, float amp) {
-    float value = 0.0f, max_val = 0.0f;
-    float a = 1.0f, f = freq;
-    for (int i = 0; i < oktaven; i++) {
-        value += perlin_2d(x * f, y * f) * a;
-        max_val += a;
-        a *= 0.5f;
-        f *= 2.0f;
-    }
-    return (value / max_val) * amp;
-}
 
 /* ========================================================
  * Biom-System
@@ -129,7 +86,8 @@ typedef struct {
 typedef struct {
     MooValue win;
     /* Noise */
-    int seed;
+    int seed;        /* vom Nutzer gesetzter Roh-Seed */
+    int noise_seed;  /* gestreuter Seed fuer moo_noise_* (ersetzt globalen world_noise_seed) */
     /* Terrain */
     float sea_level;
     float base_freq, base_amp;
@@ -169,9 +127,9 @@ static MooWorld g_world = {0};
  * ======================================================== */
 
 static float world_terrain_height(float wx, float wz) {
-    float kontinent = fbm(wx, wz, g_world.base_okt, g_world.base_freq, g_world.base_amp);
-    float detail = fbm(wx, wz, g_world.detail_okt, g_world.detail_freq, g_world.detail_amp);
-    float berg = fbm(wx, wz, g_world.berg_okt, g_world.berg_freq, 1.0f);
+    float kontinent = moo_noise_fbm(g_world.noise_seed, wx, wz, g_world.base_okt, g_world.base_freq, g_world.base_amp);
+    float detail = moo_noise_fbm(g_world.noise_seed, wx, wz, g_world.detail_okt, g_world.detail_freq, g_world.detail_amp);
+    float berg = moo_noise_fbm(g_world.noise_seed, wx, wz, g_world.berg_okt, g_world.berg_freq, 1.0f);
     float berg_faktor = 0.0f;
     if (berg > g_world.berg_threshold)
         berg_faktor = (berg - g_world.berg_threshold) * g_world.berg_amp;
@@ -271,14 +229,14 @@ static void world_build_chunk(int cx, int cz, MooValue chunk_id) {
             if (h <= sl) continue;
             int biom = world_get_biom(wx, wz, h);
             if (g_world.biome[biom].tree_chance <= 0) continue;
-            int rng = hash_2d((int)wx * 7 + 1000, (int)wz * 13 + 2000);
+            int rng = moo_noise_hash2(g_world.noise_seed, (int)wx * 7 + 1000, (int)wz * 13 + 2000);
             if ((rng % 100) >= g_world.biome[biom].tree_chance) continue;
-            int stamm = 3 + (hash_2d((int)wx * 3 + 500, (int)wz * 5 + 700) % 3);
+            int stamm = 3 + (moo_noise_hash2(g_world.noise_seed, (int)wx * 3 + 500, (int)wz * 5 + 700) % 3);
             for (int sy = 1; sy <= stamm; sy++)
                 moo_3d_cube(g_world.win,
                     moo_number(wx), moo_number(h + sy), moo_number(wz),
                     moo_number(0.4), holz);
-            float kr = 1.2f + (hash_2d((int)wx * 11, (int)wz * 17) % 5) * 0.15f;
+            float kr = 1.2f + (moo_noise_hash2(g_world.noise_seed, (int)wx * 11, (int)wz * 17) % 5) * 0.15f;
             moo_3d_sphere(g_world.win,
                 moo_number(wx), moo_number(h + stamm + 1.5), moo_number(wz),
                 moo_number(kr), blaetter, moo_number(6));
@@ -318,7 +276,7 @@ MooValue moo_world_create(MooValue title, MooValue w, MooValue h) {
 
     /* Noise Defaults */
     g_world.seed = 42;
-    world_noise_seed = 42;
+    g_world.noise_seed = 42;
     g_world.base_freq = 0.005f; g_world.base_okt = 5; g_world.base_amp = 60.0f;
     g_world.detail_freq = 0.03f; g_world.detail_okt = 3; g_world.detail_amp = 18.0f;
     g_world.berg_freq = 0.015f; g_world.berg_okt = 4; g_world.berg_amp = 60.0f;
@@ -368,10 +326,7 @@ void moo_world_seed(MooValue win, MooValue seed) {
     (void)win;
     int s = (int)MV_NUM(seed);
     g_world.seed = s;
-    int x = s ^ (s << 13);
-    x = x ^ (x >> 7);
-    x = x ^ (x << 17);
-    world_noise_seed = abs(x) & 0x7FFFFFFF;
+    g_world.noise_seed = moo_noise_scramble_seed(s);
 }
 
 void moo_world_biome(MooValue win, MooValue name, MooValue h_min, MooValue h_max,
