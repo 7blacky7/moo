@@ -100,6 +100,7 @@ MooValue moo_mem_read(MooValue addr, MooValue size) {
     if (s == 1) return moo_number((double)(*(volatile uint8_t*)a));
     if (s == 2) return moo_number((double)(*(volatile uint16_t*)a));
     if (s == 4) return moo_number((double)(*(volatile uint32_t*)a));
+    if (s == 8) return moo_number((double)(*(volatile uint64_t*)a));
     return moo_none();
 }
 
@@ -110,6 +111,47 @@ void moo_mem_write(MooValue addr, MooValue value, MooValue size) {
     if (s == 1) *(volatile uint8_t*)a = (uint8_t)v;
     else if (s == 2) *(volatile uint16_t*)a = (uint16_t)v;
     else if (s == 4) *(volatile uint32_t*)a = (uint32_t)v;
+    else if (s == 8) *(volatile uint64_t*)a = (uint64_t)v;
+}
+
+// === CPU / Hardware Builtins ===
+void moo_cpu_halt(void) {
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("hlt" : : : "memory");
+#elif defined(__arm__) || defined(__aarch64__) || defined(__riscv)
+    __asm__ volatile("wfi" : : : "memory");
+#else
+    while(1);
+#endif
+}
+
+void moo_cpu_cli(void) {
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("cli" : : : "memory");
+#endif
+}
+
+void moo_cpu_sti(void) {
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("sti" : : : "memory");
+#endif
+}
+
+MooValue moo_io_inb(MooValue port) {
+    uint16_t p = (uint16_t)as_num(port);
+    uint8_t value = 0;
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("inb %1, %0" : "=a"(value) : "Nd"(p));
+#endif
+    return moo_number((double)value);
+}
+
+void moo_io_outb(MooValue port, MooValue data) {
+    uint16_t p = (uint16_t)as_num(port);
+    uint8_t d = (uint8_t)as_num(data);
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("outb %0, %1" : : "a"(d), "Nd"(p));
+#endif
 }
 
 // === Retain/Release (no-ops im Bare-Metal Modus) ===
