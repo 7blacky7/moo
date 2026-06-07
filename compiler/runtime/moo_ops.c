@@ -218,8 +218,57 @@ MooValue moo_bitand(MooValue a, MooValue b) { return moo_number((double)((int64_
 MooValue moo_bitor(MooValue a, MooValue b) { return moo_number((double)((int64_t)moo_as_number(a) | (int64_t)moo_as_number(b))); }
 MooValue moo_bitxor(MooValue a, MooValue b) { return moo_number((double)((int64_t)moo_as_number(a) ^ (int64_t)moo_as_number(b))); }
 MooValue moo_bitnot(MooValue v) { return moo_number((double)(~(int64_t)moo_as_number(v))); }
-MooValue moo_lshift(MooValue a, MooValue b) { return moo_number((double)((int64_t)moo_as_number(a) << (int64_t)moo_as_number(b))); }
-MooValue moo_rshift(MooValue a, MooValue b) { return moo_number((double)((int64_t)moo_as_number(a) >> (int64_t)moo_as_number(b))); }
+// P007-U3: Shift-Count validieren. C-Standard: ein Shift um einen negativen
+// Betrag ODER um >= Bitbreite des (promovierten) Operanden ist UNDEFINED
+// BEHAVIOR — und b ist hier direkt ueber die moo-Operatoren `<<`/`>>`
+// user-kontrolliert. Wir arbeiten auf 64-Bit-Werten, also ist 0..63 der
+// einzig definierte Bereich. Ausserhalb: sauberer moo-Fehler statt UB/Crash.
+//
+// WICHTIG: moo_throw kehrt NICHT immer ab! Ausserhalb eines try-Blocks beendet
+// es den Prozess (exit), INNERHALB eines try/fange-Blocks setzt es nur das
+// Error-Flag und KEHRT ZURUECK (siehe moo_error.c). Daher darf der Aufrufer
+// nach einem ungueltigen Count NICHT in den eigentlichen Shift fallen — sonst
+// liefe `<<`/`>>` mit cnt>=64 doch noch ins UB. Der Helper meldet die
+// Gueltigkeit per Rueckgabewert; der Aufrufer kehrt im Fehlerfall sofort zurueck.
+// Rueckgabe: true = Count gueltig (*out gesetzt), false = geworfen, abbrechen.
+static bool moo_shift_count(MooValue b, const char* op, int* out) {
+    int64_t cnt = (int64_t)moo_as_number(b);
+    if (cnt < 0 || cnt >= 64) {
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "%s: Shift-Betrag %lld ausserhalb des gueltigen Bereichs 0..63",
+                 op, (long long)cnt);
+        moo_throw(moo_error(msg));
+        return false;
+    }
+    *out = (int)cnt;
+    return true;
+}
+
+// Linksshift: Die Bit-Operation laeuft auf uint64_t (definierter Wrap modulo
+// 2^64, kein signed-overflow-/Sign-Bit-UB). Rueckcast nach int64_t am Rand,
+// damit grosse Ergebnisse als (negative) Ganzzahl konsistent zur bisherigen
+// Zweierkomplement-Darstellung bleiben.
+MooValue moo_lshift(MooValue a, MooValue b) {
+    uint64_t ua = (uint64_t)(int64_t)moo_as_number(a);
+    int cnt;
+    if (!moo_shift_count(b, "lshift (<<)", &cnt)) return moo_number(0);
+    return moo_number((double)(int64_t)(ua << cnt));
+}
+
+// Rechtsshift: SEMANTIK-ENTSCHEIDUNG (P007-U3) — wir behalten das bisherige
+// ARITHMETISCHE (vorzeichenerhaltende) Rechtsschieben bei: auf signed int64_t,
+// damit negative Werte ihr Vorzeichen behalten (z.B. -8 >> 1 == -4), wie es
+// die alte Fassung auf den Zielplattformen (gcc/clang, arithmetischer >>) tat.
+// Der Standard nennt das fuer negative Werte implementation-defined (NICHT UB);
+// gcc/clang garantieren arithmetisches Schieben — Verhalten fuer legale
+// Eingaben bleibt damit unveraendert. Nur der Count wird zusaetzlich validiert.
+MooValue moo_rshift(MooValue a, MooValue b) {
+    int64_t sa = (int64_t)moo_as_number(a);
+    int cnt;
+    if (!moo_shift_count(b, "rshift (>>)", &cnt)) return moo_number(0);
+    return moo_number((double)(sa >> cnt));
+}
 
 // Raw Memory Access (GEFAEHRLICH — nur fuer Systemprogrammierung)
 MooValue moo_mem_read(MooValue addr, MooValue size) {

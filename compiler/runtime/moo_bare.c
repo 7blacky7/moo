@@ -90,8 +90,23 @@ MooValue moo_bitand(MooValue a, MooValue b) { return moo_number((double)((int64_
 MooValue moo_bitor(MooValue a, MooValue b) { return moo_number((double)((int64_t)as_num(a) | (int64_t)as_num(b))); }
 MooValue moo_bitxor(MooValue a, MooValue b) { return moo_number((double)((int64_t)as_num(a) ^ (int64_t)as_num(b))); }
 MooValue moo_bitnot(MooValue v) { return moo_number((double)(~(int64_t)as_num(v))); }
-MooValue moo_lshift(MooValue a, MooValue b) { return moo_number((double)((int64_t)as_num(a) << (int64_t)as_num(b))); }
-MooValue moo_rshift(MooValue a, MooValue b) { return moo_number((double)((int64_t)as_num(a) >> (int64_t)as_num(b))); }
+// P007-U3: Shift-UB analog zu moo_ops.c #7 vermeiden. Bare-Metal hat KEIN
+// Error-Handling (moo_throw ist hier ein No-Op, kein moo_error/snprintf),
+// daher kann der ungueltige Count nicht geworfen werden — wir maskieren ihn
+// stattdessen auf 0..63 (`& 63`, definiert, kein UB) und schieben den Wert als
+// uint64_t (lshift, definierter Wrap) bzw. signed int64_t (rshift, bewusst
+// arithmetisch, wie auf den Zielplattformen). Damit ist der Embedded-Pfad
+// UB-frei; eine Voll-Validierung mit Fehlerwurf bleibt dem Hosted-Pfad (ops.c).
+MooValue moo_lshift(MooValue a, MooValue b) {
+    uint64_t ua = (uint64_t)(int64_t)as_num(a);
+    unsigned cnt = (unsigned)((int64_t)as_num(b) & 63);
+    return moo_number((double)(int64_t)(ua << cnt));
+}
+MooValue moo_rshift(MooValue a, MooValue b) {
+    int64_t sa = (int64_t)as_num(a);
+    unsigned cnt = (unsigned)((int64_t)as_num(b) & 63);
+    return moo_number((double)(sa >> cnt));
+}
 
 // === Volatile Memory-Mapped I/O ===
 MooValue moo_mem_read(MooValue addr, MooValue size) {
