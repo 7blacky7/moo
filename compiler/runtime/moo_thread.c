@@ -96,6 +96,7 @@ static void moo_mutex_unlock_thread(MooThread* t) {
 
 MooValue moo_thread_spawn(MooValue func, MooValue arg) {
     MooThread* t = (MooThread*)malloc(sizeof(MooThread));
+    t->refcount = 1;
     t->done = false;
     t->result.tag = MOO_NONE;
     t->result.data = 0;
@@ -160,6 +161,12 @@ MooValue moo_thread_wait(MooValue thread) {
         free(res);
     }
     t->done = true;
+    // Owning-Ref-Konvention (INV-1): der Aufrufer erhaelt eine eigene +1.
+    // t->result behaelt seine eigene Referenz, die moo_thread_free spaeter
+    // released. Ohne diesen Retain wuerde derselbe Wert doppelt freigegeben
+    // (Aufrufer-Scope-Exit + moo_thread_free) → heap-use-after-free.
+    // Retain unter dem Mutex, damit der Refcount-Zugriff race-frei ist.
+    moo_retain(t->result);
     moo_mutex_unlock_thread(t);
 
     return t->result;
@@ -247,6 +254,7 @@ MooValue moo_channel_new(MooValue capacity) {
     }
 
     MooChannel* ch = (MooChannel*)malloc(sizeof(MooChannel));
+    ch->refcount = 1;
     ch->buffer = (MooValue*)malloc(sizeof(MooValue) * cap);
     ch->capacity = cap;
     ch->count = 0;
@@ -321,4 +329,58 @@ void moo_channel_close(MooValue channel) {
     moo_channel_broadcast_not_empty(ch);
     moo_channel_broadcast_not_full(ch);
     moo_channel_unlock(ch);
+}
+
+void moo_thread_free(void* ptr) {
+    if (!ptr) return;
+    MooThread* t = (MooThread*)ptr;
+#ifdef _WIN32
+    if (t->thread) {
+        if (!t->done) {
+            WaitForSingleObject(t->thread, INFINITE);
+        }
+        CloseHandle(t->thread);
+    }
+    if (t->retval) {
+        MooValue* res = (MooValue*)t->retval;
+        moo_release(*res);
+        free(res);
+    }
+    DeleteCriticalSection(&t->mutex);
+#else
+    if (!t->done) {
+        void* retval = NULL;
+        pthread_join(t->thread, &retval);
+        if (retval) {
+            MooValue* res = (MooValue*)retval;
+            moo_release(*res);
+            free(res);
+        }
+    }
+    pthread_mutex_destroy(&t->mutex);
+#endif
+    moo_release(t->result);
+    free(t);
+}
+
+void moo_channel_free(void* ptr) {
+    if (!ptr) return;
+    MooChannel* ch = (MooChannel*)ptr;
+    if (ch->buffer) {
+        while (ch->count > 0) {
+            MooValue val = ch->buffer[ch->read_pos];
+            moo_release(val);
+            ch->read_pos = (ch->read_pos + 1) % ch->capacity;
+            ch->count--;
+        }
+        free(ch->buffer);
+    }
+#ifdef _WIN32
+    DeleteCriticalSection(&ch->mutex);
+#else
+    pthread_mutex_destroy(&ch->mutex);
+    pthread_cond_destroy(&ch->not_empty);
+    pthread_cond_destroy(&ch->not_full);
+#endif
+    free(ch);
 }
