@@ -30,6 +30,7 @@ typedef enum {
     MOO_WEBSERVER = 16,
     MOO_DB_STMT   = 17,
     MOO_WINDOW_HYBRID = 18,
+    MOO_VOXELWORLD = 19,
 } MooTag;
 
 // === Forward Declarations ===
@@ -84,6 +85,13 @@ static inline void moo_val_set_bool(MooValue* v, bool b) { v->data = (uint64_t)b
 // moo_retain() erhoeht, moo_release() verringert und gibt bei 0 frei.
 void moo_retain(MooValue v);
 void moo_release(MooValue v);
+void moo_thread_free(void* ptr);
+void moo_channel_free(void* ptr);
+void moo_db_free(void* ptr);
+void moo_db_stmt_free(void* ptr);
+void moo_window_free(void* ptr);
+void moo_web_free(void* ptr);
+void moo_voxel_free(void* ptr);
 
 // === String ===
 struct MooString {
@@ -163,6 +171,7 @@ struct MooObject {
 #endif
 
 struct MooThread {
+    int32_t refcount;
 #ifdef _WIN32
     HANDLE thread;
     DWORD thread_id;
@@ -181,6 +190,7 @@ struct MooThread {
 
 // === Channel (Go-Style, buffered) ===
 struct MooChannel {
+    int32_t refcount;
     MooValue* buffer;
     int32_t capacity;
     int32_t count;
@@ -334,6 +344,13 @@ MooValue moo_rshift(MooValue a, MooValue b);
 // === Raw Memory (GEFAEHRLICH) ===
 MooValue moo_mem_read(MooValue addr, MooValue size);
 void moo_mem_write(MooValue addr, MooValue value, MooValue size);
+
+// === CPU / Hardware Builtins ===
+void moo_cpu_halt(void);
+void moo_cpu_cli(void);
+void moo_cpu_sti(void);
+MooValue moo_io_inb(MooValue port);
+void moo_io_outb(MooValue port, MooValue data);
 
 // === Ausgabe ===
 void moo_print(MooValue v);
@@ -547,6 +564,16 @@ void moo_hybrid_line_z(MooValue win, MooValue x1, MooValue y1, MooValue x2, MooV
 void moo_hybrid_circle_z(MooValue win, MooValue cx, MooValue cy, MooValue z, MooValue r, MooValue color);
 void moo_hybrid_sprite_z(MooValue win, MooValue id, MooValue x, MooValue y, MooValue z, MooValue w, MooValue h);
 MooValue moo_hybrid_sprite_load(MooValue win, MooValue path);
+
+// === Voxel-Welt (Phase 1a: naiver uint16-Kern, opaker C-Heap-Typ) ===
+// VoxelWorld lebt als opaker C-Heap-Typ (MOO_VOXELWORLD), niemals als moo-Liste.
+// Koordinaten sind moo Numbers -> floor()-Cast auf int32_t (auch negative).
+// Chunk-Lookup per floor-div/floor-mod, NICHT C-/ und % (die runden zur Null).
+MooValue moo_voxel_welt_neu(MooValue seed);
+MooValue moo_voxel_setzen(MooValue welt, MooValue x, MooValue y, MooValue z, MooValue block_id);
+MooValue moo_voxel_holen(MooValue welt, MooValue x, MooValue y, MooValue z);
+MooValue moo_voxel_chunk_entladen(MooValue welt, MooValue x, MooValue y, MooValue z);
+MooValue moo_voxel_ram_statistik(MooValue welt);
 
 // === Webserver ===
 MooValue moo_web_server(MooValue port);

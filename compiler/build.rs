@@ -54,6 +54,7 @@ fn main() {
             .file("runtime/moo_3d_math.c")
             .file("runtime/moo_noise.c")
             .file("runtime/moo_world.c")
+            .file("runtime/moo_voxel.c")
             .file("runtime/moo_sprite.c")
             .include("/usr/include/SDL2");
     }

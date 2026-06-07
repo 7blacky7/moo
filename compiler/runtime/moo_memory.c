@@ -5,7 +5,10 @@
 // Prueft ob ein MooValue ein Heap-Objekt ist (hat refcount)
 static inline bool is_heap_type(uint64_t tag) {
     return tag == MOO_STRING || tag == MOO_LIST || tag == MOO_DICT ||
-           tag == MOO_OBJECT || tag == MOO_FUNC || tag == MOO_SOCKET;
+           tag == MOO_OBJECT || tag == MOO_FUNC || tag == MOO_SOCKET ||
+           tag == MOO_THREAD || tag == MOO_CHANNEL || tag == MOO_DATABASE ||
+           tag == MOO_DB_STMT || tag == MOO_WINDOW || tag == MOO_WEBSERVER ||
+           tag == MOO_VOXELWORLD;
 }
 
 extern void moo_socket_free(void* ptr);
@@ -69,6 +72,27 @@ void moo_release(MooValue v) {
         }
         case MOO_SOCKET:
             moo_socket_free(moo_val_as_ptr(v));
+            break;
+        case MOO_THREAD:
+            moo_thread_free(moo_val_as_ptr(v));
+            break;
+        case MOO_CHANNEL:
+            moo_channel_free(moo_val_as_ptr(v));
+            break;
+        case MOO_DATABASE:
+            moo_db_free(moo_val_as_ptr(v));
+            break;
+        case MOO_DB_STMT:
+            moo_db_stmt_free(moo_val_as_ptr(v));
+            break;
+        case MOO_WINDOW:
+            moo_window_free(moo_val_as_ptr(v));
+            break;
+        case MOO_WEBSERVER:
+            moo_web_free(moo_val_as_ptr(v));
+            break;
+        case MOO_VOXELWORLD:
+            moo_voxel_free(moo_val_as_ptr(v));
             break;
         default:
             break;
