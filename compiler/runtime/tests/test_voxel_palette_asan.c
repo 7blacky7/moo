@@ -233,8 +233,15 @@ int main(void) {
         CHECK(dict_has(st, "empty_chunks"),  "key empty_chunks");
         CHECK(dict_get(st, "bytes_blocks")  > 0, "ein Festblock -> bytes_blocks>0");
         CHECK(dict_get(st, "bytes_palette") > 0, "ein Festblock -> bytes_palette>0");
-        /* bytes_blocks eines 1-Bit-Chunks: VOL=32768 bits / 8 = 4096 Bytes. */
-        CHECK(dict_get(st, "bytes_blocks") == 4096.0, "1-Bit Index-Array = 4096 Bytes");
+        /* Plan-006 (P006-R1): Block-Daten liegen jetzt pro 8^3-SECTION, nicht
+         * mehr chunk-weit. Ein einzelner Festblock belegt genau EINE 1-Bit-
+         * PALETTE-Section: SECTION_VOL=512 bits / 8 = 64 Bytes Index-Array
+         * (frueher chunk-weit 32768 bits/8 = 4096 Bytes). Das ist exakt der
+         * Hebel der Section-Kompression. */
+        CHECK(dict_get(st, "bytes_blocks") == 64.0, "1-Bit Section-Index-Array = 64 Bytes (Plan-006)");
+        /* Plan-006 additiver Key bytes_sections: 64 Section-Header pro belegtem Chunk. */
+        CHECK(dict_has(st, "bytes_sections") && dict_get(st, "bytes_sections") > 0,
+              "key bytes_sections > 0 (Plan-006 additiv)");
         dict_free(st);
         moo_voxel_free((void*)moo_val_as_ptr(w));
     }
