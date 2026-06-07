@@ -5,27 +5,60 @@
  * lediglich der vormals globale `world_noise_seed` ist jetzt ein expliziter
  * Funktionsparameter. Bei identischem Seed sind die Ergebnisse bit-identisch
  * zur frueheren moo_world-Implementierung.
+ *
+ * UBSan-Hinweis (Plan-006 P006-REST): Das Hash-Mixing rechnet intern bewusst
+ * mit `uint32_t`. Die urspruengliche Fassung nutzte signed `int` fuer
+ * Links-Shifts (seed << 13 / x << 17) und Multiplikationen (n * 45673 etc.),
+ * was bei grossen Zwischenwerten signed-integer-overflow ausloest — auf
+ * Zweierkomplement-Maschinen wohldefiniertes Wrap-around, aber laut C-Standard
+ * undefiniertes Verhalten und damit von -fsanitize=undefined gemeldet. Durch
+ * Rechnen in `uint32_t` (definiertes modulo-2^32-Wrap) und Casts nur an den
+ * Raendern bleibt das exakte Bitmuster erhalten: alle Ergebnisse sind
+ * byte-identisch zur vorherigen signed-Implementierung (verifiziert per
+ * Vorher/Nachher-Sample und Worldgen-Aequivalenz-Harness).
+ *
+ * Signed Rechts-Shifts (>> 7, >> 11, ...) sind implementation-defined, NICHT
+ * undefiniert; sie wirken hier ausschliesslich auf nicht-negative Werte
+ * (Top-Bit per & 0x7FFFFFFF geloescht) und werden daher beibehalten.
  */
 #include "moo_noise.h"
 #include <math.h>
-#include <stdlib.h>
+#include <stdint.h>
 
 int moo_noise_scramble_seed(int seed) {
-    /* xorshift — entspricht der vormaligen Streuung in moo_world_seed() */
-    int x = seed ^ (seed << 13);
-    x = x ^ (x >> 7);
-    x = x ^ (x << 17);
-    return abs(x) & 0x7FFFFFFF;
+    /* xorshift — entspricht der vormaligen Streuung in moo_world_seed().
+     * Links-Shifts in uint32_t (definiertes Wrap statt signed-overflow-UB);
+     * Bitmuster identisch zur vorherigen (int)-Fassung auf Zweierkomplement. */
+    /* x bleibt signed: der Rechts-Shift (x >> 7) ist ein arithmetischer
+     * (vorzeichenerhaltender) Shift — implementation-defined, NICHT UB, und
+     * muss erhalten bleiben, damit das Bitmuster der frueheren Fassung exakt
+     * reproduziert wird. NUR die Links-Shifts loesten signed-overflow-UB aus;
+     * sie werden in uint32_t gerechnet (definiertes Wrap) und zurueckgecastet. */
+    int32_t x = seed;
+    x ^= (int32_t)((uint32_t)x << 13);
+    x ^= x >> 7;
+    x ^= (int32_t)((uint32_t)x << 17);
+    /* Vormals `abs(x) & 0x7FFFFFFF`: abs(INT_MIN) waere UB. Hier explizit
+     * der definierte Zweierkomplement-Betrag (|INT_MIN| wrappt auf 0x80000000,
+     * dessen Maskierung 0 ergibt) — fuer alle anderen Werte bit-identisch zu
+     * abs(x) & 0x7FFFFFFF. */
+    uint32_t mag = (x < 0) ? (uint32_t)(-(int64_t)x) : (uint32_t)x;
+    return (int)(mag & 0x7FFFFFFFu);
 }
 
 int moo_noise_hash2(int seed, int ix, int iy) {
-    int n = ((ix + 1) * 374761 + (iy + 1) * 668265 + seed) & 0x7FFFFFFF;
-    n = (n ^ (n >> 11)) & 0x7FFFFFFF;
-    n = (n * 45673) & 0x7FFFFFFF;
-    n = (n ^ (n >> 15)) & 0x7FFFFFFF;
-    n = (n * 31337) & 0x7FFFFFFF;
-    n = (n ^ (n >> 13)) & 0x7FFFFFFF;
-    return n;
+    /* Komposition + Multiplikationen in uint32_t (definiertes Wrap). Nach jedem
+     * & 0x7FFFFFFF ist das Top-Bit geloescht, sodass die folgenden >>-Shifts auf
+     * nicht-negativen Werten arbeiten — identisch zur signed-Fassung. */
+    uint32_t n = ((uint32_t)(ix + 1) * 374761u
+                + (uint32_t)(iy + 1) * 668265u
+                + (uint32_t)seed) & 0x7FFFFFFFu;
+    n = (n ^ (n >> 11)) & 0x7FFFFFFFu;
+    n = (n * 45673u) & 0x7FFFFFFFu;
+    n = (n ^ (n >> 15)) & 0x7FFFFFFFu;
+    n = (n * 31337u) & 0x7FFFFFFFu;
+    n = (n ^ (n >> 13)) & 0x7FFFFFFFu;
+    return (int)n;
 }
 
 static float moo_noise_fade(float t) {
