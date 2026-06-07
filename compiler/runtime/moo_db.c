@@ -6,6 +6,7 @@ extern MooValue moo_json_string(MooValue value);
 // === Datenbank-Anbindung (SQLite) ===
 
 typedef struct {
+    int32_t refcount;
     sqlite3* db;
     char* url;
 } MooDatabase;
@@ -36,6 +37,7 @@ MooValue moo_db_connect(MooValue url) {
     }
 
     MooDatabase* mdb = (MooDatabase*)moo_alloc(sizeof(MooDatabase));
+    mdb->refcount = 1;
     mdb->url = strdup(url_str);
 
     int rc = sqlite3_open(path, &mdb->db);
@@ -342,10 +344,10 @@ MooValue moo_db_query_with_params(MooValue db, MooValue sql, MooValue params) {
 // Bulk-Insert (1000x gleiche INSERT mit wechselnden Params), lazy Iteration
 // grosser Resultsets und Named-Params (:name).
 typedef struct {
+    int32_t refcount;
     sqlite3_stmt* stmt;
     sqlite3* db_ref;   // nicht-owning, fuer Errormsg und sqlite3_changes
     char* sql_copy;    // fuer Errormsg-Text nach Finalisierung
-    int refcount;      // konservativ: eigener RC, falls kein MOO_HEAPHDR-Modell
 } MooDbStmt;
 
 MooValue moo_db_prepare(MooValue db, MooValue sql) {
@@ -365,10 +367,10 @@ MooValue moo_db_prepare(MooValue db, MooValue sql) {
         return moo_none();
     }
     MooDbStmt* s = (MooDbStmt*)moo_alloc(sizeof(MooDbStmt));
+    s->refcount = 1;
     s->stmt = stmt;
     s->db_ref = mdb->db;
     s->sql_copy = strdup(sql_str);
-    s->refcount = 1;
     MooValue v;
     v.tag = MOO_DB_STMT;
     moo_val_set_ptr(&v, s);
@@ -572,4 +574,28 @@ void moo_db_stmt_close(MooValue stmt) {
         free(s->sql_copy);
         s->sql_copy = NULL;
     }
+}
+
+void moo_db_free(void* ptr) {
+    if (!ptr) return;
+    MooDatabase* mdb = (MooDatabase*)ptr;
+    if (mdb->db) {
+        sqlite3_close(mdb->db);
+    }
+    if (mdb->url) {
+        free(mdb->url);
+    }
+    moo_free(mdb);
+}
+
+void moo_db_stmt_free(void* ptr) {
+    if (!ptr) return;
+    MooDbStmt* s = (MooDbStmt*)ptr;
+    if (s->stmt) {
+        sqlite3_finalize(s->stmt);
+    }
+    if (s->sql_copy) {
+        free(s->sql_copy);
+    }
+    moo_free(s);
 }
