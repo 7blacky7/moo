@@ -215,6 +215,11 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_voxel_setzen: FunctionValue<'ctx>,
     pub moo_voxel_holen: FunctionValue<'ctx>,
     pub moo_voxel_ram_statistik: FunctionValue<'ctx>,
+    // Voxel-Mesher (Plan-005 Phase 1b, CG2 nach RT2). Ebenfalls UNBEDINGT
+    // deklariert; Gating rein auf C-Link-Ebene via build.rs (kein Link-Bruch
+    // im Non-3D-Build, solange der Builtin im moo-Programm ungenutzt bleibt).
+    pub moo_voxel_mesh_bauen: FunctionValue<'ctx>,
+    pub moo_voxel_aktualisieren: FunctionValue<'ctx>,
     pub moo_3d_mouse_x: FunctionValue<'ctx>,
     pub moo_3d_mouse_y: FunctionValue<'ctx>,
     pub moo_3d_mouse_button: FunctionValue<'ctx>,
@@ -752,6 +757,12 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_voxel_setzen: decl_mv_mv!("moo_voxel_setzen", mv5),
             moo_voxel_holen: decl_mv_mv!("moo_voxel_holen", mv4),
             moo_voxel_ram_statistik: decl_mv_mv!("moo_voxel_ram_statistik", mv1),
+            // Voxel-Mesher (Plan-005 Phase 1b, CG2 nach RT2). Signaturen exakt
+            // nach RT2-C-API (moo_runtime.h): alle MooValue-in/MooValue-out.
+            //   moo_voxel_mesh_bauen(welt, cx, cy, cz) -> Number  (4 Args = mv4)
+            //   moo_voxel_aktualisieren(welt)          -> Number  (1 Arg  = mv1)
+            moo_voxel_mesh_bauen: decl_mv_mv!("moo_voxel_mesh_bauen", mv4),
+            moo_voxel_aktualisieren: decl_mv_mv!("moo_voxel_aktualisieren", mv1),
             moo_3d_mouse_x: decl_mv_mv!("moo_3d_mouse_x", mv1),
             moo_3d_mouse_y: decl_mv_mv!("moo_3d_mouse_y", mv1),
             moo_3d_mouse_button: decl_mv_mv!("moo_3d_mouse_button", mv2),

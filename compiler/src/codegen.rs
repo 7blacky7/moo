@@ -2739,6 +2739,19 @@ impl<'ctx> CodeGen<'ctx> {
                         let w = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_voxel_ram_statistik, &[w.into()], "voxel_ram");
                     }
+                    // Voxel-Mesher (Plan-005 Phase 1b, CG2 nach RT2).
+                    // mesh_bauen(welt, cx, cy, cz) -> Render-Chunk-ID (-1 = kein Cache);
+                    // aktualisieren(welt) -> Anzahl neu gemeshter dirty Chunks.
+                    // KEINE Raycast-Aliases hier (CG3-Scope nach RT4).
+                    "voxel_mesh_bauen" | "build_chunk_mesh" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_voxel_mesh_bauen,
+                            &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "voxel_mesh_bauen");
+                    }
+                    "voxel_aktualisieren" | "voxel_update" => {
+                        let w = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_voxel_aktualisieren, &[w.into()], "voxel_aktualisieren");
+                    }
                     // Chunk Display Lists
                     "chunk_erstelle" | "chunk_create" => {
                         return self.call_rt(self.rt.moo_3d_chunk_create, &[], "chunk_create");
