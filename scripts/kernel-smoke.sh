@@ -16,6 +16,15 @@
 #         TRANSPARENTER SKIP mit Diagnose, Exit 0 (Projekt-Konvention wie
 #         run_sanitize.sh — kein stiller Skip, kein hartes CI-Versagen).
 #
+# EINORDNUNG (User-Feedback 2026-06-11):
+#   * GRUB/Multiboot2 ist hier bewusst nur die pragmatische TESTBRUECKE —
+#     KEINE langfristige Architekturentscheidung, kein Lock-in. Eigene
+#     moo-Bootloader (Stage1/Stage2/UEFI) sind Roadmap: Plan-Task P011-EPIC.
+#   * Fehlendes Tooling ist KEIN fachlicher Blocker — qemu/grub/xorriso sind
+#     per Synapse-shell installierbare Test-Infrastruktur (pacman).
+#   * Der transparente SKIP ist reine Entwicklerfreundlichkeit, KEIN finaler
+#     Beweis: das Final-Gate verlangt den ECHTEN QEMU-Boot mit beiden Markern.
+#
 # NUTZUNG
 #   scripts/kernel-smoke.sh [pfad/zur/kernel.moo]
 #   (Default: beispiele/kernel/hallo_kern.moo)
@@ -95,6 +104,7 @@ done
 if [ "${#MISSING[@]}" -gt 0 ]; then
   echo "      SKIP: fehlendes Tooling: ${MISSING[*]}"
   echo "      SKIP: Boot-Test uebersprungen (transparent, Exit 0)."
+  echo "      SKIP: Dies ist KEIN finaler Beweis — das Final-Gate verlangt den echten Boot."
   echo "      Hinweis (Arch/CachyOS): sudo pacman -S qemu-system-x86 grub xorriso"
   echo "############################################################"
   echo "# ERGEBNIS: Build/nm/MB2 gruen — QEMU-Boot GESKIPPT (Tooling)."

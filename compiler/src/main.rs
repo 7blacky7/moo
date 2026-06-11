@@ -518,7 +518,7 @@ fn build_kernel(
     }
 
     println!("✓ Kernel gebaut ({}): {}", resolved, elf_path.display());
-    println!("  Boot-Test: scripts/kernel-smoke.sh (GRUB-ISO + QEMU). Hinweis: qemu -kernel kann nur Multiboot1 — Multiboot2 braucht GRUB.");
+    println!("  Boot-Test: scripts/kernel-smoke.sh (GRUB-ISO + QEMU). Hinweis: qemu -kernel kann nur Multiboot1 — Multiboot2 braucht GRUB (Testbruecke, kein Lock-in — eigener moo-Bootloader: Backlog P011).");
     Ok(())
 }
 
