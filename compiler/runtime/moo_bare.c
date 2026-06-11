@@ -169,6 +169,22 @@ void moo_io_outb(MooValue port, MooValue data) {
 #endif
 }
 
+// === C-seitige Port-Helfer (ohne MooValue-Boxing) ===
+// Genutzt von moo_bare_console.c / _idt.c / _boot.c (Plan-010, kern_*).
+uint8_t kern_inb(uint16_t port) {
+    uint8_t value = 0;
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
+#endif
+    return value;
+}
+
+void kern_outb(uint16_t port, uint8_t value) {
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
+#endif
+}
+
 // === Retain/Release (no-ops im Bare-Metal Modus) ===
 void moo_retain(MooValue v) { (void)v; }
 void moo_release(MooValue v) { (void)v; }
@@ -186,5 +202,9 @@ MooValue moo_pow(MooValue a, MooValue b) {
 }
 
 bool moo_is_none(MooValue v) { return v.tag == MOO_NONE; }
-void moo_throw(MooValue v) { (void)v; /* Kein Error-Handling im Bare-Metal */ }
-void moo_print(MooValue v) { (void)v; /* Kein printf im Bare-Metal */ }
+
+// moo_throw/moo_print sind WEAK: ein Kernel-Build mit moo_bare_console.c
+// liefert eine STARKE moo_print (seriell + VGA). Ohne Console bleiben diese
+// No-Op-Defaults aktiv (reiner Embedded-Pfad ohne Ausgabe).
+__attribute__((weak)) void moo_throw(MooValue v) { (void)v; /* Kein Error-Handling im Bare-Metal */ }
+__attribute__((weak)) void moo_print(MooValue v) { (void)v; /* Kein printf im Bare-Metal */ }
