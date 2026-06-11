@@ -185,6 +185,83 @@ impl<'ctx> CodeGen<'ctx> {
         )
     }
 
+    /// P011-A2: Fixed-width-Cast-Builtins als_u8..als_u64 (EN as_u8..as_u64).
+    fn fixed_cast_bits(name: &str) -> Option<u32> {
+        match name {
+            "als_u8" | "as_u8" => Some(8),
+            "als_u16" | "as_u16" => Some(16),
+            "als_u32" | "as_u32" => Some(32),
+            "als_u64" | "as_u64" => Some(64),
+            _ => None,
+        }
+    }
+
+    /// P011-A2: double -> unsigned wrap der Zielbreite -> double.
+    /// Semantik: saturierende Konversion nach i64 (llvm.fptosi.sat: NaN -> 0,
+    /// out-of-range -> i64::MIN/MAX, KEIN poison), dann trunc auf Zielbreite
+    /// (Zweierkomplement-Wrap: -1 -> max), dann unsigned zurueck nach double.
+    /// Grenze: double traegt 53 Mantissen-Bits — als_u64 > 2^53 rundet (dokumentiert).
+    /// Reine IR-Emission, hosted UND bare (kein require_bare — pure Arithmetik).
+    fn compile_fixed_width_cast(
+        &mut self,
+        bits: u32,
+        name: &str,
+        args: &[Expr],
+    ) -> Result<StructValue<'ctx>, String> {
+        if args.len() != 1 {
+            return Err(format!("{name} erwartet genau 1 Argument"));
+        }
+        let v = self.compile_expr(&args[0])?;
+        let data = self
+            .builder
+            .build_extract_value(v, 1, "cast_data")
+            .map_err(|e| format!("{e}"))?
+            .into_int_value();
+        let f = self
+            .builder
+            .build_bit_cast(data, self.context.f64_type(), "cast_f")
+            .map_err(|e| format!("{e}"))?
+            .into_float_value();
+        // Owning-Konvention: compile_expr liefert +1 — Temp freigeben.
+        self.call_rt_void(self.rt.moo_release, &[v.into()], "cast_rel")?;
+        let i64_ty = self.context.i64_type();
+        let sat = inkwell::intrinsics::Intrinsic::find("llvm.fptosi.sat")
+            .ok_or("llvm.fptosi.sat-Intrinsic nicht gefunden")?;
+        let sat_fn = sat
+            .get_declaration(&self.module, &[i64_ty.into(), self.context.f64_type().into()])
+            .ok_or("llvm.fptosi.sat-Declaration fehlgeschlagen")?;
+        let as_i64 = match self
+            .builder
+            .build_call(sat_fn, &[f.into()], "cast_sat")
+            .map_err(|e| format!("{e}"))?
+            .try_as_basic_value()
+        {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("fptosi.sat ohne Rueckgabewert".to_string()),
+        };
+        let wrapped = if bits < 64 {
+            let small_ty = match bits {
+                8 => self.context.i8_type(),
+                16 => self.context.i16_type(),
+                _ => self.context.i32_type(),
+            };
+            let t = self
+                .builder
+                .build_int_truncate(as_i64, small_ty, "cast_trunc")
+                .map_err(|e| format!("{e}"))?;
+            self.builder
+                .build_int_z_extend(t, i64_ty, "cast_zext")
+                .map_err(|e| format!("{e}"))?
+        } else {
+            as_i64
+        };
+        let back = self
+            .builder
+            .build_unsigned_int_to_float(wrapped, self.context.f64_type(), "cast_back")
+            .map_err(|e| format!("{e}"))?;
+        self.call_rt(self.rt.moo_number, &[back.into()], "cast_num")
+    }
+
     /// Crystal-inspiriert: Bestimmt den statischen Typ einer Expression (wenn bekannt)
     fn infer_type(&self, expr: &Expr) -> Option<&'static str> {
         match expr {
@@ -2105,6 +2182,12 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(res)
             }
             Expr::FunctionCall { name, args } => {
+                // P011-A2: Fixed-width-Casts (als_u8..als_u64) — reservierte
+                // Namen, dispatchen VOR dem User-Funktions-Vorrang (wie kern_*).
+                // Hosted UND bare verfuegbar (pure Arithmetik).
+                if let Some(bits) = Self::fixed_cast_bits(name) {
+                    return self.compile_fixed_width_cast(bits, name, args);
+                }
                 // User-Funktionen haben Vorrang vor Builtins. Wenn eine Funktion
                 // mit diesem Namen vom User definiert wurde (forward-declared in
                 // self.module), call sie direkt. Sonst Builtin-Match. Verhindert
