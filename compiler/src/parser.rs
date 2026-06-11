@@ -639,6 +639,17 @@ impl Parser {
             decorators.push(crate::ast::Decorator { name, args });
             self.skip_newlines();
         }
+        // P011-A3: @rohdaten_u32/@rawdata_u32 + konstante -> reines Daten-Global
+        if matches!(self.current_type(), TokenType::Const)
+            && decorators.iter().any(|d| d.name == "rohdaten_u32" || d.name == "rawdata_u32")
+        {
+            self.pos += 1; // konstante/const
+            let name = self.eat_identifier()?;
+            self.skip_type_annotation();
+            self.eat(&TokenType::To)?;
+            let value = self.parse_expression()?;
+            return Ok(Stmt::RawDataU32 { name, value, decorators });
+        }
         if !matches!(self.current_type(), TokenType::Func) {
             return Err(ParseError {
                 message: "funktion/func nach Decorator erwartet".to_string(),

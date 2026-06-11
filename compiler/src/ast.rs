@@ -180,6 +180,14 @@ pub enum Stmt {
         body: Vec<Stmt>,
         decorators: Vec<Decorator>,
     },
+    /// P011-A3 PoC: reines u32-Daten-Global (kein MooValue) — fuer
+    /// Layout-kritische Daten wie den Multiboot2-Header. Werte muessen
+    /// compile-time-konstante Ausdruecke sein (eval_const_f64 im Codegen).
+    RawDataU32 {
+        name: std::string::String,
+        value: Expr,
+        decorators: Vec<Decorator>,
+    },
     Return(Option<Expr>),
     Break,
     Continue,

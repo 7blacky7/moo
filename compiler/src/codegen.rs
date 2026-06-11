@@ -88,9 +88,10 @@ pub struct CodeGen<'ctx> {
     // Bare-Metal-Kernel-Modus (Plan-010): erlaubt die kern_*-Builtins.
     // Gesetzt von der CLI bei --no-stdlib / *-bare-Target oder --erlaube-kern.
     bare_mode: bool,
-    // P011-A1: Funktionen mit @benutzt/@einstieg — werden am Ende von
-    // compile_program in das llvm.used-Global geschrieben (DCE-Schutz).
-    used_functions: Vec<FunctionValue<'ctx>>,
+    // P011-A1/A3: Funktionen UND Daten-Globals mit @benutzt/@einstieg bzw.
+    // @rohdaten_u32 — werden am Ende von compile_program in das
+    // llvm.used-Global geschrieben (DCE-Schutz).
+    used_globals: Vec<PointerValue<'ctx>>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -126,7 +127,7 @@ impl<'ctx> CodeGen<'ctx> {
             test_names: Vec::new(),
             profiling: false,
             bare_mode: false,
-            used_functions: Vec::new(),
+            used_globals: Vec::new(),
         }
     }
 
@@ -262,6 +263,108 @@ impl<'ctx> CodeGen<'ctx> {
         self.call_rt(self.rt.moo_number, &[back.into()], "cast_num")
     }
 
+    /// P011-A3: Compile-Zeit-Konstantenfaltung fuer RawData-Werte.
+    /// Unterstuetzt: Number-Literale, unaeres Minus, +,-,*,/,%,** auf
+    /// konstanten Operanden sowie als_uN/as_uN mit konstantem Argument
+    /// (Wrap-Semantik identisch zur Laufzeit: Rust `as` ist saturierend +
+    /// NaN->0, exakt wie llvm.fptosi.sat; danach trunc-Wrap).
+    fn eval_const_f64(expr: &Expr) -> Result<f64, String> {
+        match expr {
+            Expr::Number(n) => Ok(*n),
+            Expr::UnaryOp { op: crate::ast::UnaryOpKind::Neg, operand } => {
+                Ok(-Self::eval_const_f64(operand)?)
+            }
+            Expr::BinaryOp { left, op, right } => {
+                let a = Self::eval_const_f64(left)?;
+                let b = Self::eval_const_f64(right)?;
+                match op {
+                    BinOp::Add => Ok(a + b),
+                    BinOp::Sub => Ok(a - b),
+                    BinOp::Mul => Ok(a * b),
+                    BinOp::Div => Ok(a / b),
+                    BinOp::Mod => Ok(a % b),
+                    BinOp::Pow => Ok(a.powf(b)),
+                    _ => Err("Nur arithmetische Operatoren in konstanten Ausdruecken".to_string()),
+                }
+            }
+            Expr::FunctionCall { name, args } => {
+                if let Some(bits) = Self::fixed_cast_bits(name) {
+                    if args.len() != 1 {
+                        return Err(format!("{name} erwartet genau 1 Argument"));
+                    }
+                    let v = Self::eval_const_f64(&args[0])?;
+                    let i = v as i64;
+                    let wrapped: u64 = match bits {
+                        8 => (i as u8) as u64,
+                        16 => (i as u16) as u64,
+                        32 => (i as u32) as u64,
+                        _ => i as u64,
+                    };
+                    return Ok(wrapped as f64);
+                }
+                Err(format!("Funktion '{name}' ist nicht compile-time-konstant"))
+            }
+            _ => Err("Ausdruck ist nicht compile-time-konstant".to_string()),
+        }
+    }
+
+    /// P011-A3 PoC: lowert @rohdaten_u32-Konstanten zu reinen i32-Array-Globals
+    /// (Layout-Daten, KEIN MooValue — nicht als moo-Wert lesbar; dokumentierte
+    /// PoC-Grenze). Implizit 'used' (llvm.used), @sektion/@ausrichten anwendbar.
+    fn compile_raw_data_u32(
+        &mut self,
+        name: &str,
+        value: &Expr,
+        decorators: &[crate::ast::Decorator],
+    ) -> Result<(), String> {
+        let items = match value {
+            Expr::List(items) => items,
+            _ => return Err(format!("@rohdaten_u32 '{name}': Wert muss ein Listen-Literal sein")),
+        };
+        if items.is_empty() {
+            return Err(format!("@rohdaten_u32 '{name}': Liste darf nicht leer sein"));
+        }
+        let i32_ty = self.context.i32_type();
+        let mut consts = Vec::with_capacity(items.len());
+        for (idx, it) in items.iter().enumerate() {
+            let f = Self::eval_const_f64(it)
+                .map_err(|e| format!("@rohdaten_u32 '{name}' Element {idx}: {e}"))?;
+            let i = f as i64; // saturierend (wie fptosi.sat)
+            let w = i as u32; // Zweierkomplement-Wrap (als_u32-Semantik)
+            consts.push(i32_ty.const_int(w as u64, false));
+        }
+        let arr_ty = i32_ty.array_type(consts.len() as u32);
+        let g = self.module.add_global(arr_ty, None, name);
+        g.set_initializer(&i32_ty.const_array(&consts));
+        for d in decorators {
+            match d.name.as_str() {
+                "rohdaten_u32" | "rawdata_u32" => {}
+                "sektion" | "section" => match d.args.as_slice() {
+                    [crate::ast::DecoratorArg::Text(s)] => g.set_section(Some(s)),
+                    _ => return Err(format!("@{} erwartet genau ein Text-Argument", d.name)),
+                },
+                "ausrichten" | "align" => match d.args.as_slice() {
+                    [crate::ast::DecoratorArg::Zahl(n)] => {
+                        let a = *n as u64;
+                        if *n <= 0.0 || (*n != a as f64) || (a & a.wrapping_sub(1)) != 0 {
+                            return Err(format!("@{} erwartet eine positive Zweierpotenz", d.name));
+                        }
+                        g.set_alignment(a as u32);
+                    }
+                    _ => return Err(format!("@{} erwartet genau ein Zahl-Argument", d.name)),
+                },
+                other => {
+                    return Err(format!(
+                        "Decorator @{other} ist auf @rohdaten_u32-Konstanten nicht erlaubt"
+                    ));
+                }
+            }
+        }
+        // Layout-Daten sind per Definition 'used' — sonst kann DCE sie kippen.
+        self.used_globals.push(g.as_pointer_value());
+        Ok(())
+    }
+
     /// Crystal-inspiriert: Bestimmt den statischen Typ einer Expression (wenn bekannt)
     fn infer_type(&self, expr: &Expr) -> Option<&'static str> {
         match expr {
@@ -347,12 +450,8 @@ impl<'ctx> CodeGen<'ctx> {
 
         // P011-A1: llvm.used emittieren — @benutzt/@einstieg-Funktionen vor DCE schuetzen.
         // Appending-Linkage + Section llvm.metadata = LLVM-Konvention fuer used-Symbole.
-        if !self.used_functions.is_empty() {
-            let ptr_vals: Vec<inkwell::values::PointerValue> = self
-                .used_functions
-                .iter()
-                .map(|f| f.as_global_value().as_pointer_value())
-                .collect();
+        if !self.used_globals.is_empty() {
+            let ptr_vals: Vec<inkwell::values::PointerValue> = self.used_globals.clone();
             let ptr_ty = ptr_vals[0].get_type();
             let arr = ptr_ty.const_array(&ptr_vals);
             let g = self.module.add_global(
@@ -745,6 +844,9 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
                 Ok(())
+            }
+            Stmt::RawDataU32 { name, value, decorators } => {
+                self.compile_raw_data_u32(name, value, decorators)
             }
             Stmt::DataClassDef { name, fields } => {
                 self.compile_data_class(name, fields)
@@ -1312,7 +1414,7 @@ impl<'ctx> CodeGen<'ctx> {
                     if !d.args.is_empty() {
                         return Err(format!("@{} erwartet keine Argumente", d.name));
                     }
-                    self.used_functions.push(function);
+                    self.used_globals.push(function.as_global_value().as_pointer_value());
                 }
                 "sektion" | "section" => match d.args.as_slice() {
                     [crate::ast::DecoratorArg::Text(s)] => {
