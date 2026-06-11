@@ -104,6 +104,20 @@ pub enum UnaryOpKind {
     BitNot,
 }
 
+/// Decorator mit optionalen Literal-Argumenten: @name oder @name(arg, ...)
+/// P011-A1: getrennter Typ statt blossem String — "weniger Magie an den tiefsten Stellen".
+#[derive(Debug, Clone)]
+pub struct Decorator {
+    pub name: std::string::String,
+    pub args: Vec<DecoratorArg>,
+}
+
+#[derive(Debug, Clone)]
+pub enum DecoratorArg {
+    Zahl(f64),
+    Text(std::string::String),
+}
+
 #[derive(Debug, Clone)]
 pub enum Stmt {
     Assignment {
@@ -164,7 +178,7 @@ pub enum Stmt {
         params: Vec<std::string::String>,
         defaults: Vec<Option<Expr>>,
         body: Vec<Stmt>,
-        decorators: Vec<std::string::String>,
+        decorators: Vec<Decorator>,
     },
     Return(Option<Expr>),
     Break,

@@ -88,6 +88,9 @@ pub struct CodeGen<'ctx> {
     // Bare-Metal-Kernel-Modus (Plan-010): erlaubt die kern_*-Builtins.
     // Gesetzt von der CLI bei --no-stdlib / *-bare-Target oder --erlaube-kern.
     bare_mode: bool,
+    // P011-A1: Funktionen mit @benutzt/@einstieg — werden am Ende von
+    // compile_program in das llvm.used-Global geschrieben (DCE-Schutz).
+    used_functions: Vec<FunctionValue<'ctx>>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -123,6 +126,7 @@ impl<'ctx> CodeGen<'ctx> {
             test_names: Vec::new(),
             profiling: false,
             bare_mode: false,
+            used_functions: Vec::new(),
         }
     }
 
@@ -264,6 +268,26 @@ impl<'ctx> CodeGen<'ctx> {
                 .map_err(|e| format!("Return-Fehler: {e}"))?;
         }
 
+        // P011-A1: llvm.used emittieren — @benutzt/@einstieg-Funktionen vor DCE schuetzen.
+        // Appending-Linkage + Section llvm.metadata = LLVM-Konvention fuer used-Symbole.
+        if !self.used_functions.is_empty() {
+            let ptr_vals: Vec<inkwell::values::PointerValue> = self
+                .used_functions
+                .iter()
+                .map(|f| f.as_global_value().as_pointer_value())
+                .collect();
+            let ptr_ty = ptr_vals[0].get_type();
+            let arr = ptr_ty.const_array(&ptr_vals);
+            let g = self.module.add_global(
+                ptr_ty.array_type(ptr_vals.len() as u32),
+                None,
+                "llvm.used",
+            );
+            g.set_linkage(inkwell::module::Linkage::Appending);
+            g.set_section(Some("llvm.metadata"));
+            g.set_initializer(&arr);
+        }
+
         // Typ-Warnungen ausgeben (Crystal-inspiriert)
         for w in &self.warnings {
             eprintln!("Warnung: {w}");
@@ -284,7 +308,7 @@ impl<'ctx> CodeGen<'ctx> {
                     let param_types: Vec<BasicMetadataTypeEnum> = params.iter()
                         .map(|_| BasicMetadataTypeEnum::from(mv))
                         .collect();
-                    let has_interrupt = decorators.iter().any(|d| d == "interrupt" || d == "unterbrechung");
+                    let has_interrupt = decorators.iter().any(|d| d.name == "interrupt" || d.name == "unterbrechung");
                     let fn_type = if has_interrupt {
                         self.context.void_type().fn_type(&param_types, false)
                     } else {
@@ -620,8 +644,17 @@ impl<'ctx> CodeGen<'ctx> {
             Stmt::FunctionDef { name, params, defaults, body, decorators } => {
                 self.compile_function_def(name, params, defaults, body, decorators)?;
                 // Decorators: func = decorator(func)
-                for dec_name in decorators.iter().rev() {
-                    if let Some(dec_fn) = self.module.get_function(dec_name) {
+                for dec in decorators.iter().rev() {
+                    // P011-A1: Builtin-Decorators (Interrupt/Layout) sind keine User-Wrapper.
+                    if matches!(
+                        dec.name.as_str(),
+                        "interrupt" | "unterbrechung" | "benutzt" | "used"
+                            | "einstieg" | "entry" | "sektion" | "section"
+                            | "ausrichten" | "align"
+                    ) {
+                        continue;
+                    }
+                    if let Some(dec_fn) = self.module.get_function(&dec.name) {
                         let func_val = self.load_var(name)?;
                         let result = self.builder.build_call(dec_fn, &[func_val.into()], "decorated")
                             .map_err(|e| format!("{e}"))?
@@ -1171,7 +1204,7 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    fn compile_function_def(&mut self, name: &str, params: &[String], defaults: &[Option<Expr>], body: &[Stmt], decorators: &[String]) -> Result<(), String> {
+    fn compile_function_def(&mut self, name: &str, params: &[String], defaults: &[Option<Expr>], body: &[Stmt], decorators: &[crate::ast::Decorator]) -> Result<(), String> {
         let function = self.module.get_function(name)
             .ok_or(format!("Funktion '{name}' nicht forward-declared"))?;
 
@@ -1181,7 +1214,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         // Interrupt Calling Convention support
-        let has_interrupt = decorators.iter().any(|d| d == "interrupt" || d == "unterbrechung");
+        let has_interrupt = decorators.iter().any(|d| d.name == "interrupt" || d.name == "unterbrechung");
         if has_interrupt {
             let triple = self.module.get_triple();
             let triple_str = triple.as_str().to_str().unwrap_or("");
@@ -1191,6 +1224,45 @@ impl<'ctx> CodeGen<'ctx> {
                 83 // x86 Interrupt
             };
             function.set_call_conventions(cc);
+        }
+
+        // P011-A1: Layout-Decorators — @benutzt/@used (+ @einstieg/@entry: implizit benutzt),
+        // @sektion/@section("name"), @ausrichten/@align(n). Unbekannte Decorators bleiben
+        // wie bisher ignoriert (Vorwaertskompatibilitaet).
+        for d in decorators {
+            match d.name.as_str() {
+                "benutzt" | "used" | "einstieg" | "entry" => {
+                    if !d.args.is_empty() {
+                        return Err(format!("@{} erwartet keine Argumente", d.name));
+                    }
+                    self.used_functions.push(function);
+                }
+                "sektion" | "section" => match d.args.as_slice() {
+                    [crate::ast::DecoratorArg::Text(s)] => {
+                        function.as_global_value().set_section(Some(s));
+                    }
+                    _ => {
+                        return Err(format!(
+                            "@{} erwartet genau ein Text-Argument, z.B. @sektion(\".boot\")",
+                            d.name
+                        ));
+                    }
+                },
+                "ausrichten" | "align" => match d.args.as_slice() {
+                    [crate::ast::DecoratorArg::Zahl(n)] => {
+                        let a = *n as u64;
+                        if *n <= 0.0 || (*n != a as f64) || (a & a.wrapping_sub(1)) != 0 {
+                            return Err(format!(
+                                "@{} erwartet eine positive Zweierpotenz (z.B. 8, 16, 4096), bekommen: {}",
+                                d.name, n
+                            ));
+                        }
+                        function.as_global_value().set_alignment(a as u32);
+                    }
+                    _ => return Err(format!("@{} erwartet genau ein Zahl-Argument", d.name)),
+                },
+                _ => {}
+            }
         }
 
         let entry = self.context.append_basic_block(function, "entry");

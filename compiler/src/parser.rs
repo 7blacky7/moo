@@ -606,7 +606,37 @@ impl Parser {
         while matches!(self.current_type(), TokenType::At) {
             self.pos += 1; // @
             let name = self.eat_identifier()?;
-            decorators.push(name);
+            // P011-A1: optionale Literal-Argumente — z.B. @ausrichten(16), @sektion(".boot")
+            let mut args = Vec::new();
+            if matches!(self.current_type(), TokenType::LParen) {
+                self.pos += 1; // (
+                while !matches!(self.current_type(), TokenType::RParen) {
+                    let tt = self.current_type().clone();
+                    match tt {
+                        TokenType::Number(n) => {
+                            args.push(crate::ast::DecoratorArg::Zahl(n));
+                            self.pos += 1;
+                        }
+                        TokenType::String(s) => {
+                            args.push(crate::ast::DecoratorArg::Text(s));
+                            self.pos += 1;
+                        }
+                        _ => {
+                            return Err(ParseError {
+                                message: "Decorator-Argument muss Zahl- oder Text-Literal sein".to_string(),
+                                line: self.current().line,
+                            });
+                        }
+                    }
+                    if matches!(self.current_type(), TokenType::Comma) {
+                        self.pos += 1;
+                    } else {
+                        break;
+                    }
+                }
+                self.eat(&TokenType::RParen)?;
+            }
+            decorators.push(crate::ast::Decorator { name, args });
             self.skip_newlines();
         }
         if !matches!(self.current_type(), TokenType::Func) {
@@ -618,7 +648,7 @@ impl Parser {
         self.parse_function_def_with_decorators(decorators)
     }
 
-    fn parse_function_def_with_decorators(&mut self, decorators: Vec<String>) -> Result<Stmt, ParseError> {
+    fn parse_function_def_with_decorators(&mut self, decorators: Vec<crate::ast::Decorator>) -> Result<Stmt, ParseError> {
         self.pos += 1;
         let name = self.eat_identifier()?;
         self.eat(&TokenType::LParen)?;
