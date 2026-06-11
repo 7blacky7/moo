@@ -101,6 +101,14 @@ EXTRA_HARNESSES=(
   #               Mock-ffmpeg: der Harness schreibt zur Laufzeit ein "ffmpeg"-sh-
   #               Skript in ein mkdtemp-Dir + setzt PATH -> KEIN echtes ffmpeg/GPU.
   "test_video_wiring_asan.c|moo_video.c moo_video_handle.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   bare_alloc: Plan-010 T1 — Bare-Allocator (K3) + serielle Formatter (K2)
+  #               auf dem Host. Linkt NUR moo_bare_alloc.c + moo_bare_console.c;
+  #               moo_bare.c/moo_bare_boot.c bewusst NICHT (echte in/out-Asm
+  #               wuerde im Userspace GP-faulten; _start-Trampolin gehoert nicht
+  #               auf den Host). Stubs im Harness: kern_inb/kern_outb (16550-Emu
+  #               mit DLAB+Loopback), kern_panic (longjmp), moo_number/bool/none.
+  #               VGA-Pfade werden nie aufgerufen (0xB8000), nur gelinkt.
+  "test_bare_alloc_asan.c|moo_bare_alloc.c moo_bare_console.c|-lm"
 )
 
 # --- Sanitizer-Verfuegbarkeit pruefen (Probe-Kompilat) ----------------------
