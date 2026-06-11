@@ -485,6 +485,41 @@ fn build_kernel(
         objects.push(obj);
     }
 
+    // P011-C2: Boot-asm-Templates (Stage1 bleibt toolchain-verwaltetes asm).
+    // Deklaratives Routing ueber Linker-Scripts: kernel/linker.ld DISCARDed
+    // .boot_s1, beispiele/bootloader/stage1.ld KEEPt ausschliesslich .boot_s1.
+    let boot_dir = runtime_dir.join("boot");
+    if boot_dir.is_dir() {
+        let mut entries: Vec<PathBuf> = std::fs::read_dir(&boot_dir)
+            .map_err(|e| format!("boot/-Verzeichnis lesen: {e}"))?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("S"))
+            .collect();
+        entries.sort();
+        for p in entries {
+            let obj = tmp.join(format!(
+                "{}.o",
+                p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+            ));
+            let mut cmd = Command::new("cc");
+            cmd.arg("-c").arg(&p).arg("-o").arg(&obj);
+            if verbose {
+                eprintln!("[moo-kernel] {cmd:?}");
+            }
+            let out = cmd.output().map_err(|e| {
+                format!("cc (asm) nicht ausfuehrbar ({e}) — C-Compiler installieren")
+            })?;
+            if !out.status.success() {
+                return Err(format!(
+                    "cc fehlgeschlagen fuer {}:\n{}",
+                    p.display(),
+                    String::from_utf8_lossy(&out.stderr)
+                ));
+            }
+            objects.push(obj);
+        }
+    }
+
     // (3) Linker-Script: explizit (--linker_script) oder Template
     // beispiele/kernel/linker.ld aus dem Quellbaum.
     let script = match linker_script {

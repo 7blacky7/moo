@@ -50,6 +50,7 @@ SECTIONS
 
     /DISCARD/ :
     {
+        *(.boot_s1*)   /* P011-C2: Stage1-asm gehoert nicht in den Kernel */
         *(.eh_frame)
         *(.eh_frame_hdr)
         *(.note .note.*)

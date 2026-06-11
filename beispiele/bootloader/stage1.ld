@@ -15,7 +15,7 @@
  *              --linker_script beispiele/bootloader/stage1.ld \
  *              --emit sector -o stage1.img
  */
-ENTRY(_start)
+ENTRY(_start_s1)
 SECTIONS
 {
     . = 0x7C00;
