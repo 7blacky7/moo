@@ -49,6 +49,9 @@ enum Commands {
         /// One-Shot-Kernel-Pipeline: moo + Bare-Runtime + Linker-Script -> bootbares kernel.elf (nur mit --no-stdlib + x86_64-bare)
         #[arg(long)]
         kernel: bool,
+        /// Ausgabeformat der Kernel-/Loader-Pipeline: elf (Standard) | flat (objcopy -O binary) | sector (flat + 512-Byte-Boot-Sektor-Gate mit 0x55AA)
+        #[arg(long, default_value = "elf")]
+        emit: String,
     },
     /// Eine .moo-Datei kompilieren und sofort ausführen
     Run {
@@ -90,8 +93,8 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Compile { file, output, emit_ir, target, no_stdlib, linker_script, entry, profile, erlaube_kern, kernel } => {
-            if let Err(e) = compile(&file, output.as_deref(), emit_ir, target.as_deref(), no_stdlib, linker_script.as_deref(), entry.as_deref(), profile, erlaube_kern, kernel) {
+        Commands::Compile { file, output, emit_ir, target, no_stdlib, linker_script, entry, profile, erlaube_kern, kernel, emit } => {
+            if let Err(e) = compile(&file, output.as_deref(), emit_ir, target.as_deref(), no_stdlib, linker_script.as_deref(), entry.as_deref(), profile, erlaube_kern, kernel, &emit) {
                 eprintln!("Fehler: {e}");
                 std::process::exit(1);
             }
@@ -414,6 +417,7 @@ fn build_kernel(
     output: Option<&std::path::Path>,
     target_str: &str,
     linker_script: Option<&std::path::Path>,
+    emit: &str,
 ) -> Result<(), String> {
     let resolved = codegen::CodeGen::resolve_triple(target_str);
     if !resolved.starts_with("x86_64") {
@@ -494,9 +498,20 @@ fn build_kernel(
         ));
     }
 
-    let elf_path = output
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| file.with_extension("elf"));
+    // P011-C1: Endartefakt vs Zwischen-ELF. Bei flat/sector ist das ELF nur
+    // Zwischenprodukt (tmp), -o bezeichnet das finale Binary/Image.
+    let final_path = output.map(|p| p.to_path_buf()).unwrap_or_else(|| {
+        file.with_extension(match emit {
+            "flat" => "bin",
+            "sector" => "img",
+            _ => "elf",
+        })
+    });
+    let elf_path = if emit == "elf" {
+        final_path.clone()
+    } else {
+        tmp.join("kernel.elf")
+    };
     let mut ld = Command::new("ld");
     ld.arg("-n").arg("-T").arg(&script).arg("-o").arg(&elf_path);
     for o in &objects {
@@ -517,12 +532,67 @@ fn build_kernel(
         eprintln!("{ld_warn}");
     }
 
-    println!("✓ Kernel gebaut ({}): {}", resolved, elf_path.display());
-    println!("  Boot-Test: scripts/kernel-smoke.sh (GRUB-ISO + QEMU). Hinweis: qemu -kernel kann nur Multiboot1 — Multiboot2 braucht GRUB (Testbruecke, kein Lock-in — eigener moo-Bootloader: Backlog P011).");
+    // P011-C1: Ausgabeformat.
+    if emit == "elf" {
+        println!("✓ Kernel gebaut ({}): {}", resolved, elf_path.display());
+        println!("  Boot-Test: scripts/kernel-smoke.sh (GRUB-ISO + QEMU). Hinweis: qemu -kernel kann nur Multiboot1 — Multiboot2 braucht GRUB (Testbruecke, kein Lock-in — eigener moo-Bootloader: Backlog P011).");
+        return Ok(());
+    }
+
+    // flat|sector: objcopy-Wahl fest (P011-C1): binutils objcopy bevorzugt
+    // (Toolset hier ist binutils: ld/nm/readelf), llvm-objcopy als Fallback.
+    let objcopy = if Command::new("objcopy").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+        "objcopy"
+    } else if Command::new("llvm-objcopy").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+        "llvm-objcopy"
+    } else {
+        return Err("weder objcopy noch llvm-objcopy gefunden — binutils (oder llvm) installieren; --emit flat|sector braucht objcopy".to_string());
+    };
+    let mut oc = Command::new(objcopy);
+    oc.arg("-O").arg("binary").arg(&elf_path).arg(&final_path);
+    if verbose {
+        eprintln!("[moo-kernel] {oc:?}");
+    }
+    let out = oc.output().map_err(|e| format!("{objcopy} nicht ausfuehrbar: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("{objcopy} fehlgeschlagen:\n{}", String::from_utf8_lossy(&out.stderr)));
+    }
+
+    if emit == "sector" {
+        // HARTES Gate: Boot-Sektor = exakt 512 Bytes, Nutzcode <= 510,
+        // Signatur 0x55AA an Offset 510/511.
+        let mut data = std::fs::read(&final_path)
+            .map_err(|e| format!("Sector-Gate: {} lesen: {e}", final_path.display()))?;
+        if data.len() > 510 {
+            return Err(format!(
+                "Sector-Gate VERLETZT: Nutzcode ist {} Bytes, erlaubt sind max. 510 \
+                 (Boot-Sektor = 512 Bytes inkl. Signatur 0x55AA an 510/511). Abbruch.",
+                data.len()
+            ));
+        }
+        let code_len = data.len();
+        data.resize(512, 0);
+        data[510] = 0x55;
+        data[511] = 0xAA;
+        std::fs::write(&final_path, &data)
+            .map_err(|e| format!("Sector-Image schreiben: {e}"))?;
+        println!(
+            "✓ Sector-Image ({code_len}/510 Bytes Code, 512 Bytes total, Signatur 0x55AA): {}",
+            final_path.display()
+        );
+        println!("  Boot-Test ohne GRUB: qemu-system-x86_64 -drive format=raw,file={}", final_path.display());
+    } else {
+        let n = std::fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
+        println!("✓ Flat-Binary ({n} Bytes, {resolved}): {}", final_path.display());
+    }
     Ok(())
 }
 
-fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, target: Option<&str>, no_stdlib: bool, linker_script: Option<&std::path::Path>, entry_point: Option<&str>, profile: bool, erlaube_kern: bool, kernel: bool) -> Result<(), String> {
+fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, target: Option<&str>, no_stdlib: bool, linker_script: Option<&std::path::Path>, entry_point: Option<&str>, profile: bool, erlaube_kern: bool, kernel: bool, emit: &str) -> Result<(), String> {
+    // P011-C1: --emit frueh validieren (vor jeder Kompilierung).
+    if !matches!(emit, "elf" | "flat" | "sector") {
+        return Err(format!("--emit '{emit}' unbekannt — erlaubt: elf | flat | sector"));
+    }
     // Haupt-Datei parsen
     let mut program = parse_file(file)?;
 
@@ -558,13 +628,19 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
 
     let target_str = target.unwrap_or("native");
 
+    // P011-C1: flat/sector existieren nur in der Kernel-/Loader-Pipeline
+    // (objcopy-Pfad haengt an build_kernel).
+    if emit != "elf" && !(no_stdlib && target_str.contains("-bare") && (kernel || linker_script.is_some())) {
+        return Err("--emit flat|sector wirkt nur in der Kernel-/Loader-Pipeline: --no-stdlib + *-bare-Target + --kernel (oder --linker-script)".to_string());
+    }
+
     // Bare-Metal: One-Shot-Kernel-Pipeline oder nur Object-File
     if no_stdlib {
         // Plan-010 C2: --kernel (oder explizites --linker_script) bei einem
         // *-bare-Target baut moo->.o + moo_bare*.c -> ld -T script -> kernel.elf.
         let is_bare_target = target_str.contains("-bare");
         if is_bare_target && (kernel || linker_script.is_some()) {
-            return build_kernel(file, &compiler, output, target_str, linker_script);
+            return build_kernel(file, &compiler, output, target_str, linker_script, emit);
         }
         let obj_path = output
             .map(|p| p.to_path_buf())
@@ -714,7 +790,7 @@ fn run(file: &PathBuf) -> Result<(), String> {
     let tmp_dir = std::env::temp_dir();
     let tmp_output = tmp_dir.join("moo_tmp_binary");
 
-    compile(file, Some(&tmp_output), false, None, false, None, None, false, false, false)?;
+    compile(file, Some(&tmp_output), false, None, false, None, None, false, false, false, "elf")?;
 
     let status = Command::new(&tmp_output)
         .status()
@@ -789,7 +865,7 @@ fn repl() {
         }
 
         unsafe { std::env::set_var("MOO_QUIET", "1"); }
-        match compile(&tmp_src, Some(&tmp_bin), false, None, false, None, None, false, false, false) {
+        match compile(&tmp_src, Some(&tmp_bin), false, None, false, None, None, false, false, false, "elf") {
             Ok(()) => {
                 // Erfolgreich kompiliert — ausfuehren (ohne den "Kompiliert" Output)
                 let _ = Command::new(&tmp_bin).status();
