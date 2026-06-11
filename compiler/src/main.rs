@@ -43,6 +43,12 @@ enum Commands {
         /// Profiling aktivieren (misst Zeit pro Funktion)
         #[arg(long)]
         profile: bool,
+        /// Kernel-Builtins (kern_*) im hosted-Build erlauben (Opt-in, z.B. Test-Harness)
+        #[arg(long = "erlaube-kern")]
+        erlaube_kern: bool,
+        /// One-Shot-Kernel-Pipeline: moo + Bare-Runtime + Linker-Script -> bootbares kernel.elf (nur mit --no-stdlib + x86_64-bare)
+        #[arg(long)]
+        kernel: bool,
     },
     /// Eine .moo-Datei kompilieren und sofort ausführen
     Run {
@@ -84,8 +90,8 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Compile { file, output, emit_ir, target, no_stdlib, linker_script, entry, profile } => {
-            if let Err(e) = compile(&file, output.as_deref(), emit_ir, target.as_deref(), no_stdlib, linker_script.as_deref(), entry.as_deref(), profile) {
+        Commands::Compile { file, output, emit_ir, target, no_stdlib, linker_script, entry, profile, erlaube_kern, kernel } => {
+            if let Err(e) = compile(&file, output.as_deref(), emit_ir, target.as_deref(), no_stdlib, linker_script.as_deref(), entry.as_deref(), profile, erlaube_kern, kernel) {
                 eprintln!("Fehler: {e}");
                 std::process::exit(1);
             }
@@ -381,7 +387,142 @@ fn resolve_modules(
     Ok(())
 }
 
-fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, target: Option<&str>, no_stdlib: bool, linker_script: Option<&std::path::Path>, entry_point: Option<&str>, profile: bool) -> Result<(), String> {
+/// Findet die Wurzel der Compiler-Quellen (enthaelt runtime/moo_bare.c).
+/// (1) CARGO_MANIFEST_DIR (compile-zeit, Dev-Maschine = Normalfall),
+/// (2) exe-relativ: target/release/moo-compiler -> ../../ = compiler/.
+fn kernel_source_root() -> Option<PathBuf> {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if manifest.join("runtime").join("moo_bare.c").exists() {
+        return Some(manifest);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+            if dir.join("runtime").join("moo_bare.c").exists() {
+                return Some(dir.to_path_buf());
+            }
+        }
+    }
+    None
+}
+
+/// One-Shot-Kernel-Pipeline (Plan-010 C2): erzeugt aus einer .moo-Datei ein
+/// bootbares Multiboot2-ELF. Reproduzierbar: FESTE Quell-Liste + FESTE
+/// Flag-Liste, keine Umgebungs-Magie. MOO_VERBOSE=1 zeigt alle Kommandos.
+fn build_kernel(
+    file: &PathBuf,
+    compiler: &codegen::CodeGen,
+    output: Option<&std::path::Path>,
+    target_str: &str,
+    linker_script: Option<&std::path::Path>,
+) -> Result<(), String> {
+    let resolved = codegen::CodeGen::resolve_triple(target_str);
+    if !resolved.starts_with("x86_64") {
+        return Err(format!(
+            "--kernel unterstuetzt aktuell nur x86_64-bare (Multiboot2-Boot-Trampolin \
+             ist x86_64). Target war: {resolved}"
+        ));
+    }
+
+    let src_root = kernel_source_root().ok_or_else(|| {
+        "Kernel-Runtime nicht gefunden: weder CARGO_MANIFEST_DIR noch exe-relativ \
+         existiert runtime/moo_bare.c. Der moo-Quellbaum wird gebraucht.".to_string()
+    })?;
+    let runtime_dir = src_root.join("runtime");
+
+    let verbose = std::env::var("MOO_VERBOSE").is_ok();
+    let tmp = std::env::temp_dir().join(format!("moo-kernel-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("tmp-Verzeichnis {}: {e}", tmp.display()))?;
+
+    // (1) moo -> .o
+    let moo_obj = tmp.join("moo_program.o");
+    compiler.write_object(&moo_obj, target_str)?;
+    let mut objects: Vec<PathBuf> = vec![moo_obj];
+
+    // (2) Bare-Runtime uebersetzen. WICHTIG: KEIN -mgeneral-regs-only global —
+    // die kern_*-MooValue-Wrapper nutzen double (SSE); die ISRs in
+    // moo_bare_idt.c tragen __attribute__((interrupt, target("general-regs-only")))
+    // bereits per Funktion (Plan-010 K4).
+    const KERNEL_SOURCES: [&str; 5] = [
+        "moo_bare.c",
+        "moo_bare_console.c",
+        "moo_bare_alloc.c",
+        "moo_bare_idt.c",
+        "moo_bare_boot.c",
+    ];
+    const KERNEL_CFLAGS: [&str; 13] = [
+        "-c", "-ffreestanding", "-fno-stack-protector", "-fno-pic", "-fno-pie",
+        "-mno-red-zone", "-mcmodel=kernel", "-O2", "-nostdlib",
+        "-Wall", "-Wextra", "-std=c11", "-DMOO_BARE",
+    ];
+
+    for src in KERNEL_SOURCES {
+        let src_path = runtime_dir.join(src);
+        if !src_path.exists() {
+            return Err(format!("Kernel-Runtime-Quelle fehlt: {}", src_path.display()));
+        }
+        let obj = tmp.join(format!("{src}.o"));
+        let mut cmd = Command::new("cc");
+        cmd.args(KERNEL_CFLAGS)
+            .arg("-I").arg(&runtime_dir)
+            .arg(&src_path)
+            .arg("-o").arg(&obj);
+        if verbose {
+            eprintln!("[moo-kernel] {cmd:?}");
+        }
+        let out = cmd.output().map_err(|e| {
+            format!("cc nicht ausfuehrbar ({e}) — C-Compiler (gcc/clang) installieren")
+        })?;
+        if !out.status.success() {
+            return Err(format!(
+                "cc fehlgeschlagen fuer {src}:\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+        objects.push(obj);
+    }
+
+    // (3) Linker-Script: explizit (--linker_script) oder Template
+    // beispiele/kernel/linker.ld aus dem Quellbaum.
+    let script = match linker_script {
+        Some(s) => s.to_path_buf(),
+        None => src_root.join("..").join("beispiele").join("kernel").join("linker.ld"),
+    };
+    if !script.exists() {
+        return Err(format!(
+            "Linker-Script nicht gefunden: {} (explizit via --linker_script angeben)",
+            script.display()
+        ));
+    }
+
+    let elf_path = output
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| file.with_extension("elf"));
+    let mut ld = Command::new("ld");
+    ld.arg("-n").arg("-T").arg(&script).arg("-o").arg(&elf_path);
+    for o in &objects {
+        ld.arg(o);
+    }
+    if verbose {
+        eprintln!("[moo-kernel] {ld:?}");
+    }
+    let out = ld.output().map_err(|e| {
+        format!("ld nicht ausfuehrbar ({e}) — binutils installieren")
+    })?;
+    if !out.status.success() {
+        return Err(format!("ld fehlgeschlagen:\n{}", String::from_utf8_lossy(&out.stderr)));
+    }
+    let ld_warn = String::from_utf8_lossy(&out.stderr);
+    if !ld_warn.trim().is_empty() {
+        // Linker-Warnungen sichtbar machen statt verschlucken
+        eprintln!("{ld_warn}");
+    }
+
+    println!("✓ Kernel gebaut ({}): {}", resolved, elf_path.display());
+    println!("  Boot-Test: scripts/kernel-smoke.sh (GRUB-ISO + QEMU). Hinweis: qemu -kernel kann nur Multiboot1 — Multiboot2 braucht GRUB.");
+    Ok(())
+}
+
+fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, target: Option<&str>, no_stdlib: bool, linker_script: Option<&std::path::Path>, entry_point: Option<&str>, profile: bool, erlaube_kern: bool, kernel: bool) -> Result<(), String> {
     // Haupt-Datei parsen
     let mut program = parse_file(file)?;
 
@@ -399,6 +540,11 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     if profile {
         compiler.set_profiling(true);
     }
+    // Bare-Metal-Kernel-Modus (Plan-010): kern_*-Builtins nur im
+    // --no-stdlib/*-bare-Build, oder mit explizitem --erlaube-kern.
+    // MUSS vor compile_program() gesetzt sein (Guard greift im Codegen).
+    let is_bare_target = target.map(|t| t.contains("-bare")).unwrap_or(false);
+    compiler.set_bare_mode(no_stdlib || is_bare_target || erlaube_kern);
     compiler.compile_program(&program)?;
 
     if emit_ir {
@@ -412,8 +558,14 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
 
     let target_str = target.unwrap_or("native");
 
-    // Bare-Metal: nur Object-File ohne Runtime-Linking
+    // Bare-Metal: One-Shot-Kernel-Pipeline oder nur Object-File
     if no_stdlib {
+        // Plan-010 C2: --kernel (oder explizites --linker_script) bei einem
+        // *-bare-Target baut moo->.o + moo_bare*.c -> ld -T script -> kernel.elf.
+        let is_bare_target = target_str.contains("-bare");
+        if is_bare_target && (kernel || linker_script.is_some()) {
+            return build_kernel(file, &compiler, output, target_str, linker_script);
+        }
         let obj_path = output
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| file.with_extension("o"));
@@ -562,7 +714,7 @@ fn run(file: &PathBuf) -> Result<(), String> {
     let tmp_dir = std::env::temp_dir();
     let tmp_output = tmp_dir.join("moo_tmp_binary");
 
-    compile(file, Some(&tmp_output), false, None, false, None, None, false)?;
+    compile(file, Some(&tmp_output), false, None, false, None, None, false, false, false)?;
 
     let status = Command::new(&tmp_output)
         .status()
@@ -637,7 +789,7 @@ fn repl() {
         }
 
         unsafe { std::env::set_var("MOO_QUIET", "1"); }
-        match compile(&tmp_src, Some(&tmp_bin), false, None, false, None, None, false) {
+        match compile(&tmp_src, Some(&tmp_bin), false, None, false, None, None, false, false, false) {
             Ok(()) => {
                 // Erfolgreich kompiliert — ausfuehren (ohne den "Kompiliert" Output)
                 let _ = Command::new(&tmp_bin).status();

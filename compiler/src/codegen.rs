@@ -85,6 +85,9 @@ pub struct CodeGen<'ctx> {
     test_names: Vec<(String, String)>,
     // Profiling-Modus
     profiling: bool,
+    // Bare-Metal-Kernel-Modus (Plan-010): erlaubt die kern_*-Builtins.
+    // Gesetzt von der CLI bei --no-stdlib / *-bare-Target oder --erlaube-kern.
+    bare_mode: bool,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -119,11 +122,63 @@ impl<'ctx> CodeGen<'ctx> {
             unsafe_context: false,
             test_names: Vec::new(),
             profiling: false,
+            bare_mode: false,
         }
     }
 
     pub fn set_profiling(&mut self, enabled: bool) {
         self.profiling = enabled;
+    }
+
+    /// Bare-Metal-Kernel-Modus (Plan-010). Wird von der CLI gesetzt, wenn
+    /// --no-stdlib / ein *-bare-Target aktiv ist oder --erlaube-kern als
+    /// explizites hosted-Opt-in uebergeben wurde. Steuert die kern_*-Builtins.
+    pub fn set_bare_mode(&mut self, enabled: bool) {
+        self.bare_mode = enabled;
+    }
+
+    /// Wache fuer kern_*-Builtins: harte hosted/bare-Trennung (GPT-Luecke 1+2,
+    /// Thoughts 501192c2 + b740a19f). Ohne bare_mode ist ein kern_*-Aufruf ein
+    /// Compile-Fehler mit klarem Hinweis statt eines kaputten hosted-Links.
+    fn require_bare(&self, builtin: &str) -> Result<(), String> {
+        if !self.bare_mode {
+            return Err(format!(
+                "Kernel-Builtin '{builtin}' ist nur im Bare-Metal-Build erlaubt. \
+                 Kompiliere mit --no-stdlib und einem *-bare-Target (z.B. \
+                 --target x86_64-bare) oder gib --erlaube-kern fuer ein \
+                 explizites Opt-in (z.B. Host-Test-Harness) an."
+            ));
+        }
+        Ok(())
+    }
+
+    /// Reservierte kern_*-Builtin-Namen (Plan-010, DE/EN-Aliases). Diese Namen
+    /// sind IMMER als LLVM-Declarations im Modul (RuntimeBindings, C-Symbole
+    /// heissen unpraefixt kern_*). Der User-Funktions-Vorrang in
+    /// Expr::FunctionCall (module.get_function) wuerde sie sonst faelschlich
+    /// als user_call dispatchen und require_bare() umgehen — genau die
+    /// hosted/bare-Luecke, die C1 schliessen soll. Nur die EXAKTEN Namen sind
+    /// reserviert; andere kern_*-User-Funktionen bleiben unberuehrt.
+    fn is_kern_builtin(name: &str) -> bool {
+        matches!(name,
+            "kern_seriell_init" | "kern_serial_init"
+            | "kern_seriell_zeichen" | "kern_serial_char"
+            | "kern_seriell_dez" | "kern_serial_dec"
+            | "kern_seriell_hex" | "kern_serial_hex"
+            | "kern_vga_init"
+            | "kern_vga_farbe" | "kern_vga_color"
+            | "kern_vga_zeichen" | "kern_vga_char"
+            | "kern_speicher_init" | "kern_mem_init"
+            | "kern_alloc" | "kern_reserviere"
+            | "kern_frei" | "kern_free"
+            | "kern_speicher_frei" | "kern_mem_free_bytes"
+            | "kern_speicher_belegt" | "kern_mem_used"
+            | "kern_speicher_peak" | "kern_mem_peak"
+            | "kern_idt_init" | "kern_pic_remap"
+            | "kern_pic_maskiere" | "kern_pic_mask"
+            | "kern_pic_demaskiere" | "kern_pic_unmask"
+            | "kern_pic_eoi" | "kern_timer_init" | "kern_ticks"
+        )
     }
 
     /// Crystal-inspiriert: Bestimmt den statischen Typ einer Expression (wenn bekannt)
@@ -1986,6 +2041,10 @@ impl<'ctx> CodeGen<'ctx> {
                 // wird (gemeldet von K4 Mini-Interpreter und Mini-Lisp).
                 if self.module.get_function(name).is_some()
                     && !self.lambda_names.contains_key(name)
+                    // kern_*-Builtins sind als Declarations immer im Modul —
+                    // sie MUESSEN durch den Builtin-Match (require_bare-Guard),
+                    // sonst hosted/bare-Leck via user_call (Plan-010 C1).
+                    && !Self::is_kern_builtin(name)
                 {
                     // Call user function directly via the existing path below
                     // — fall through to the post-builtin call site by skipping
@@ -2298,6 +2357,110 @@ impl<'ctx> CodeGen<'ctx> {
                         let val = self.compile_expr(&args[1])?;
                         self.call_rt_void(self.rt.moo_io_outb, &[port.into(), val.into()], "io_outb")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // ======================================================
+                    // Kernel (bare-metal, kern_* — Plan-010)
+                    // Harte hosted/bare-Trennung: require_bare() laesst diese
+                    // Builtins nur im --no-stdlib/*-bare-Build (oder mit
+                    // --erlaube-kern) zu. Alle MooValue-returning.
+                    // ======================================================
+                    // K2 — Early-Console (seriell + VGA)
+                    "kern_seriell_init" | "kern_serial_init" => {
+                        self.require_bare("kern_seriell_init")?;
+                        return self.call_rt(self.rt.kern_seriell_init, &[], "kern_seriell_init");
+                    }
+                    "kern_seriell_zeichen" | "kern_serial_char" => {
+                        self.require_bare("kern_seriell_zeichen")?;
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_seriell_zeichen, &[a.into()], "kern_seriell_zeichen");
+                    }
+                    "kern_seriell_dez" | "kern_serial_dec" => {
+                        self.require_bare("kern_seriell_dez")?;
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_seriell_dez, &[a.into()], "kern_seriell_dez");
+                    }
+                    "kern_seriell_hex" | "kern_serial_hex" => {
+                        self.require_bare("kern_seriell_hex")?;
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_seriell_hex, &[a.into()], "kern_seriell_hex");
+                    }
+                    "kern_vga_init" => {
+                        self.require_bare("kern_vga_init")?;
+                        return self.call_rt(self.rt.kern_vga_init, &[], "kern_vga_init");
+                    }
+                    "kern_vga_farbe" | "kern_vga_color" => {
+                        self.require_bare("kern_vga_farbe")?;
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_vga_farbe, &[a.into()], "kern_vga_farbe");
+                    }
+                    "kern_vga_zeichen" | "kern_vga_char" => {
+                        self.require_bare("kern_vga_zeichen")?;
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_vga_zeichen, &[a.into()], "kern_vga_zeichen");
+                    }
+                    // K3 — Bare-Allocator
+                    "kern_speicher_init" | "kern_mem_init" => {
+                        self.require_bare("kern_speicher_init")?;
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.kern_speicher_init, &[a.into(), b.into()], "kern_speicher_init");
+                    }
+                    "kern_alloc" | "kern_reserviere" => {
+                        self.require_bare("kern_alloc")?;
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_alloc, &[a.into()], "kern_alloc");
+                    }
+                    "kern_frei" | "kern_free" => {
+                        self.require_bare("kern_frei")?;
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_frei, &[a.into()], "kern_frei");
+                    }
+                    "kern_speicher_frei" | "kern_mem_free_bytes" => {
+                        self.require_bare("kern_speicher_frei")?;
+                        return self.call_rt(self.rt.kern_speicher_frei, &[], "kern_speicher_frei");
+                    }
+                    "kern_speicher_belegt" | "kern_mem_used" => {
+                        self.require_bare("kern_speicher_belegt")?;
+                        return self.call_rt(self.rt.kern_speicher_belegt, &[], "kern_speicher_belegt");
+                    }
+                    "kern_speicher_peak" | "kern_mem_peak" => {
+                        self.require_bare("kern_speicher_peak")?;
+                        return self.call_rt(self.rt.kern_speicher_peak, &[], "kern_speicher_peak");
+                    }
+                    // K4 — Interrupt-Infrastruktur (IDT/PIC/PIT)
+                    "kern_idt_init" => {
+                        self.require_bare("kern_idt_init")?;
+                        return self.call_rt(self.rt.kern_idt_init, &[], "kern_idt_init");
+                    }
+                    "kern_pic_remap" => {
+                        self.require_bare("kern_pic_remap")?;
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.kern_pic_remap, &[a.into(), b.into()], "kern_pic_remap");
+                    }
+                    "kern_pic_maskiere" | "kern_pic_mask" => {
+                        self.require_bare("kern_pic_maskiere")?;
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_pic_maskiere, &[a.into()], "kern_pic_maskiere");
+                    }
+                    "kern_pic_demaskiere" | "kern_pic_unmask" => {
+                        self.require_bare("kern_pic_demaskiere")?;
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_pic_demaskiere, &[a.into()], "kern_pic_demaskiere");
+                    }
+                    "kern_pic_eoi" => {
+                        self.require_bare("kern_pic_eoi")?;
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_pic_eoi, &[a.into()], "kern_pic_eoi");
+                    }
+                    "kern_timer_init" => {
+                        self.require_bare("kern_timer_init")?;
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_timer_init, &[a.into()], "kern_timer_init");
+                    }
+                    "kern_ticks" => {
+                        self.require_bare("kern_ticks")?;
+                        return self.call_rt(self.rt.kern_ticks, &[], "kern_ticks");
                     }
                     // Netzwerk
                     "ausfuehren" | "eval" => {
