@@ -250,6 +250,110 @@ void moo_io_outl(MooValue port, MooValue data) {
     kern_outl((uint16_t)as_num(port), (uint32_t)as_num(data));
 }
 
+// === P011-B2: CPU-Steuer-Builtins (rdmsr/wrmsr, CRx, lgdt/lidt) ===
+// Alle privilegiert — nur im Kernel-Kontext ausfuehrbar; der Host-Harness
+// kompiliert diese Datei lediglich mit (Ausfuehrung im Userspace -> #GP).
+#if defined(__x86_64__)
+static void kern_rdmsr_c(uint32_t msr, uint32_t* lo, uint32_t* hi) {
+    uint32_t a = 0, d = 0;
+    __asm__ volatile("rdmsr" : "=a"(a), "=d"(d) : "c"(msr));
+    *lo = a; *hi = d;
+}
+static void kern_wrmsr_c(uint32_t msr, uint32_t lo, uint32_t hi) {
+    __asm__ volatile("wrmsr" : : "c"(msr), "a"(lo), "d"(hi));
+}
+static uint64_t kern_cr_lese_c(int n) {
+    uint64_t v = 0;
+    switch (n) {
+        case 0: __asm__ volatile("mov %%cr0, %0" : "=r"(v)); break;
+        case 2: __asm__ volatile("mov %%cr2, %0" : "=r"(v)); break;
+        case 3: __asm__ volatile("mov %%cr3, %0" : "=r"(v)); break;
+        case 4: __asm__ volatile("mov %%cr4, %0" : "=r"(v)); break;
+        default: break;
+    }
+    return v;
+}
+static void kern_cr_setze_c(int n, uint64_t v) {
+    switch (n) {
+        case 0: __asm__ volatile("mov %0, %%cr0" : : "r"(v) : "memory"); break;
+        case 2: __asm__ volatile("mov %0, %%cr2" : : "r"(v) : "memory"); break;
+        case 3: __asm__ volatile("mov %0, %%cr3" : : "r"(v) : "memory"); break;
+        case 4: __asm__ volatile("mov %0, %%cr4" : : "r"(v) : "memory"); break;
+        default: break;
+    }
+}
+#endif
+
+// MSR-Lesen als lo/hi-Split: EDX:EAX bewusst getrennt (double traegt nur
+// 53 Mantissen-Bits — keine 64-bit-Komposition in moo-Zahlen).
+MooValue kern_rdmsr_lo(MooValue msr) {
+#if defined(__x86_64__)
+    uint32_t lo = 0, hi = 0;
+    kern_rdmsr_c((uint32_t)as_num(msr), &lo, &hi);
+    return moo_number((double)lo);
+#else
+    (void)msr; return moo_number(0.0);
+#endif
+}
+
+MooValue kern_rdmsr_hi(MooValue msr) {
+#if defined(__x86_64__)
+    uint32_t lo = 0, hi = 0;
+    kern_rdmsr_c((uint32_t)as_num(msr), &lo, &hi);
+    return moo_number((double)hi);
+#else
+    (void)msr; return moo_number(0.0);
+#endif
+}
+
+void kern_wrmsr(MooValue msr, MooValue lo, MooValue hi) {
+#if defined(__x86_64__)
+    kern_wrmsr_c((uint32_t)as_num(msr), (uint32_t)as_num(lo), (uint32_t)as_num(hi));
+#else
+    (void)msr; (void)lo; (void)hi;
+#endif
+}
+
+// CR-Werte > 2^53 sind theoretisch moeglich (PoC-dokumentiert akzeptiert;
+// praktisch: CR0/CR4-Flagbits + CR3 < 2^48).
+MooValue kern_cr_lese(MooValue n) {
+#if defined(__x86_64__)
+    return moo_number((double)kern_cr_lese_c((int)as_num(n)));
+#else
+    (void)n; return moo_number(0.0);
+#endif
+}
+
+void kern_cr_setze(MooValue n, MooValue wert) {
+#if defined(__x86_64__)
+    kern_cr_setze_c((int)as_num(n), (uint64_t)as_num(wert));
+#else
+    (void)n; (void)wert;
+#endif
+}
+
+void kern_lgdt(MooValue basis, MooValue limit) {
+#if defined(__x86_64__)
+    struct __attribute__((packed)) { uint16_t limit; uint64_t base; } d;
+    d.limit = (uint16_t)as_num(limit);
+    d.base  = (uint64_t)as_num(basis);
+    __asm__ volatile("lgdt %0" : : "m"(d));
+#else
+    (void)basis; (void)limit;
+#endif
+}
+
+void kern_lidt(MooValue basis, MooValue limit) {
+#if defined(__x86_64__)
+    struct __attribute__((packed)) { uint16_t limit; uint64_t base; } d;
+    d.limit = (uint16_t)as_num(limit);
+    d.base  = (uint64_t)as_num(basis);
+    __asm__ volatile("lidt %0" : : "m"(d));
+#else
+    (void)basis; (void)limit;
+#endif
+}
+
 // === Retain/Release (no-ops im Bare-Metal Modus) ===
 void moo_retain(MooValue v) { (void)v; }
 void moo_release(MooValue v) { (void)v; }

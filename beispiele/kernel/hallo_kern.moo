@@ -104,7 +104,14 @@ funktion main():
                 setze marke auf marke + 100
                 setze sekunden auf sekunden + 1
 
-        # 6. Smoke-Marker 2 + sauber anhalten (cli + hlt-Schleife).
+        # 6. P011-B2-Beweis: CR0 + EFER (MSR 0xC0000080) als Hex seriell.
+        #    Erwartet im QEMU-Long-Mode: CR0 mit PG(31)+PE(0), EFER mit LME(8)+LMA(10).
+        kern_seriell_hex(kern_cr_lese(0))
+        kern_seriell_zeichen(10)
+        kern_seriell_hex(kern_rdmsr_lo(0xC0000080))
+        kern_seriell_zeichen(10)
+
+        # 7. Smoke-Marker 2 + sauber anhalten (cli + hlt-Schleife).
         marker_ticks_ok()
         interrupts_aus()
         solange wahr:

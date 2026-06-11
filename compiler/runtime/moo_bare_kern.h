@@ -72,6 +72,14 @@ MooValue moo_io_inw(MooValue port);
 void     moo_io_outw(MooValue port, MooValue data);
 MooValue moo_io_inl(MooValue port);
 void     moo_io_outl(MooValue port, MooValue data);
+// P011-B2: CPU-Steuer-Builtins (privilegiert; Host nur compile-only)
+MooValue kern_rdmsr_lo(MooValue msr);
+MooValue kern_rdmsr_hi(MooValue msr);
+void     kern_wrmsr(MooValue msr, MooValue lo, MooValue hi);
+MooValue kern_cr_lese(MooValue n);
+void     kern_cr_setze(MooValue n, MooValue wert);
+void     kern_lgdt(MooValue basis, MooValue limit);
+void     kern_lidt(MooValue basis, MooValue limit);
 
 /* ======================================================================
  * K2 — Early-Console (moo_bare_console.c)

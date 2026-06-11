@@ -55,6 +55,14 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_io_outw: FunctionValue<'ctx>,
     pub moo_io_inl: FunctionValue<'ctx>,
     pub moo_io_outl: FunctionValue<'ctx>,
+    // P011-B2: CPU-Steuer-Builtins
+    pub kern_rdmsr_lo: FunctionValue<'ctx>,
+    pub kern_rdmsr_hi: FunctionValue<'ctx>,
+    pub kern_wrmsr: FunctionValue<'ctx>,
+    pub kern_cr_lese: FunctionValue<'ctx>,
+    pub kern_cr_setze: FunctionValue<'ctx>,
+    pub kern_lgdt: FunctionValue<'ctx>,
+    pub kern_lidt: FunctionValue<'ctx>,
     // Kernel (bare-metal, kern_* — Plan-010)
     pub kern_seriell_init: FunctionValue<'ctx>,
     pub kern_seriell_zeichen: FunctionValue<'ctx>,
@@ -642,6 +650,14 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_io_outw: module.add_function("moo_io_outw", void_type.fn_type(mv2, false), None),
             moo_io_inl: decl_mv_mv!("moo_io_inl", mv1),
             moo_io_outl: module.add_function("moo_io_outl", void_type.fn_type(mv2, false), None),
+            // P011-B2: CPU-Steuer-Builtins
+            kern_rdmsr_lo: decl_mv_mv!("kern_rdmsr_lo", mv1),
+            kern_rdmsr_hi: decl_mv_mv!("kern_rdmsr_hi", mv1),
+            kern_wrmsr: module.add_function("kern_wrmsr", void_type.fn_type(mv3, false), None),
+            kern_cr_lese: decl_mv_mv!("kern_cr_lese", mv1),
+            kern_cr_setze: module.add_function("kern_cr_setze", void_type.fn_type(mv2, false), None),
+            kern_lgdt: module.add_function("kern_lgdt", void_type.fn_type(mv2, false), None),
+            kern_lidt: module.add_function("kern_lidt", void_type.fn_type(mv2, false), None),
 
             // Kernel (bare-metal, kern_* — Plan-010). Alle MooValue-returning,
             // damit der Codegen dieselben { i64, i64 }-Calls erzeugt.

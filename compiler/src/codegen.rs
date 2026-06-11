@@ -184,6 +184,10 @@ impl<'ctx> CodeGen<'ctx> {
             | "kern_pic_demaskiere" | "kern_pic_unmask"
             | "kern_pic_eoi" | "kern_timer_init" | "kern_ticks"
             | "kern_inw" | "kern_outw" | "kern_inl" | "kern_outl"
+            | "kern_rdmsr_lo" | "kern_rdmsr_hi" | "kern_wrmsr"
+            | "kern_msr_lese_lo" | "kern_msr_lese_hi" | "kern_msr_schreibe"
+            | "kern_cr_lese" | "kern_cr_read" | "kern_cr_setze" | "kern_cr_write"
+            | "kern_lgdt" | "kern_lidt"
         )
     }
 
@@ -2645,6 +2649,51 @@ impl<'ctx> CodeGen<'ctx> {
                         let port = self.compile_expr(&args[0])?;
                         let val = self.compile_expr(&args[1])?;
                         self.call_rt_void(self.rt.moo_io_outl, &[port.into(), val.into()], "io_outl")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // P011-B2: CPU-Steuer-Builtins (rdmsr/wrmsr, CRx, lgdt/lidt)
+                    "kern_rdmsr_lo" | "kern_msr_lese_lo" => {
+                        self.require_bare(name)?;
+                        let msr = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_rdmsr_lo, &[msr.into()], "rdmsr_lo");
+                    }
+                    "kern_rdmsr_hi" | "kern_msr_lese_hi" => {
+                        self.require_bare(name)?;
+                        let msr = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_rdmsr_hi, &[msr.into()], "rdmsr_hi");
+                    }
+                    "kern_wrmsr" | "kern_msr_schreibe" => {
+                        self.require_bare(name)?;
+                        let msr = self.compile_expr(&args[0])?;
+                        let lo = self.compile_expr(&args[1])?;
+                        let hi = self.compile_expr(&args[2])?;
+                        self.call_rt_void(self.rt.kern_wrmsr, &[msr.into(), lo.into(), hi.into()], "wrmsr")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "kern_cr_lese" | "kern_cr_read" => {
+                        self.require_bare(name)?;
+                        let n = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_cr_lese, &[n.into()], "cr_lese");
+                    }
+                    "kern_cr_setze" | "kern_cr_write" => {
+                        self.require_bare(name)?;
+                        let n = self.compile_expr(&args[0])?;
+                        let wert = self.compile_expr(&args[1])?;
+                        self.call_rt_void(self.rt.kern_cr_setze, &[n.into(), wert.into()], "cr_setze")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "kern_lgdt" => {
+                        self.require_bare(name)?;
+                        let basis = self.compile_expr(&args[0])?;
+                        let limit = self.compile_expr(&args[1])?;
+                        self.call_rt_void(self.rt.kern_lgdt, &[basis.into(), limit.into()], "lgdt")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "kern_lidt" => {
+                        self.require_bare(name)?;
+                        let basis = self.compile_expr(&args[0])?;
+                        let limit = self.compile_expr(&args[1])?;
+                        self.call_rt_void(self.rt.kern_lidt, &[basis.into(), limit.into()], "lidt")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     // ======================================================
