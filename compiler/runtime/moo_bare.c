@@ -185,6 +185,71 @@ void kern_outb(uint16_t port, uint8_t value) {
 #endif
 }
 
+// === P011-B1: 16/32-bit Port-I/O (Muster wie inb/outb) ===
+// MOO_BARE_PORT_STUB: Host-Test-Harness ersetzt echte Port-asm durch
+// Loopback-Register (echte in/out ist im Userspace privilegiert -> #GP).
+#ifdef MOO_BARE_PORT_STUB
+static uint32_t kern_port_stub[65536];
+#endif
+
+uint16_t kern_inw(uint16_t port) {
+#ifdef MOO_BARE_PORT_STUB
+    return (uint16_t)kern_port_stub[port];
+#else
+    uint16_t value = 0;
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
+#endif
+    return value;
+#endif
+}
+
+void kern_outw(uint16_t port, uint16_t value) {
+#ifdef MOO_BARE_PORT_STUB
+    kern_port_stub[port] = value;
+#else
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("outw %0, %1" : : "a"(value), "Nd"(port));
+#endif
+#endif
+}
+
+uint32_t kern_inl(uint16_t port) {
+#ifdef MOO_BARE_PORT_STUB
+    return kern_port_stub[port];
+#else
+    uint32_t value = 0;
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("inl %1, %0" : "=a"(value) : "Nd"(port));
+#endif
+    return value;
+#endif
+}
+
+void kern_outl(uint16_t port, uint32_t value) {
+#ifdef MOO_BARE_PORT_STUB
+    kern_port_stub[port] = value;
+#else
+#if defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("outl %0, %1" : : "a"(value), "Nd"(port));
+#endif
+#endif
+}
+
+// MooValue-Wrapper (P011-B1) — Truncation via Cast (unsigned, kein UB)
+MooValue moo_io_inw(MooValue port) {
+    return moo_number((double)kern_inw((uint16_t)as_num(port)));
+}
+void moo_io_outw(MooValue port, MooValue data) {
+    kern_outw((uint16_t)as_num(port), (uint16_t)as_num(data));
+}
+MooValue moo_io_inl(MooValue port) {
+    return moo_number((double)kern_inl((uint16_t)as_num(port)));
+}
+void moo_io_outl(MooValue port, MooValue data) {
+    kern_outl((uint16_t)as_num(port), (uint32_t)as_num(data));
+}
+
 // === Retain/Release (no-ops im Bare-Metal Modus) ===
 void moo_retain(MooValue v) { (void)v; }
 void moo_release(MooValue v) { (void)v; }

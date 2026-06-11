@@ -109,6 +109,7 @@ EXTRA_HARNESSES=(
   #               mit DLAB+Loopback), kern_panic (longjmp), moo_number/bool/none.
   #               VGA-Pfade werden nie aufgerufen (0xB8000), nur gelinkt.
   "test_bare_alloc_asan.c|moo_bare_alloc.c moo_bare_console.c|-lm"
+  "test_bare_portio_asan.c|moo_bare.c moo_bare_console.c|-DMOO_BARE_PORT_STUB -lm"
 )
 
 # --- Sanitizer-Verfuegbarkeit pruefen (Probe-Kompilat) ----------------------

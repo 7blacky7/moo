@@ -50,6 +50,11 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_cpu_sti: FunctionValue<'ctx>,
     pub moo_io_inb: FunctionValue<'ctx>,
     pub moo_io_outb: FunctionValue<'ctx>,
+    // P011-B1: 16/32-bit Port-I/O
+    pub moo_io_inw: FunctionValue<'ctx>,
+    pub moo_io_outw: FunctionValue<'ctx>,
+    pub moo_io_inl: FunctionValue<'ctx>,
+    pub moo_io_outl: FunctionValue<'ctx>,
     // Kernel (bare-metal, kern_* — Plan-010)
     pub kern_seriell_init: FunctionValue<'ctx>,
     pub kern_seriell_zeichen: FunctionValue<'ctx>,
@@ -632,6 +637,11 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_cpu_sti: module.add_function("moo_cpu_sti", void_type.fn_type(&[], false), None),
             moo_io_inb: decl_mv_mv!("moo_io_inb", mv1),
             moo_io_outb: module.add_function("moo_io_outb", void_type.fn_type(mv2, false), None),
+            // P011-B1: 16/32-bit Port-I/O
+            moo_io_inw: decl_mv_mv!("moo_io_inw", mv1),
+            moo_io_outw: module.add_function("moo_io_outw", void_type.fn_type(mv2, false), None),
+            moo_io_inl: decl_mv_mv!("moo_io_inl", mv1),
+            moo_io_outl: module.add_function("moo_io_outl", void_type.fn_type(mv2, false), None),
 
             // Kernel (bare-metal, kern_* — Plan-010). Alle MooValue-returning,
             // damit der Codegen dieselben { i64, i64 }-Calls erzeugt.

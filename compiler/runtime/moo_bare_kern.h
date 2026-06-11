@@ -63,6 +63,15 @@ void     moo_cpu_sti(void);
  * allen kern_*-Modulen genutzt. */
 uint8_t kern_inb(uint16_t port);
 void    kern_outb(uint16_t port, uint8_t value);
+// P011-B1: 16/32-bit Port-I/O
+uint16_t kern_inw(uint16_t port);
+void     kern_outw(uint16_t port, uint16_t value);
+uint32_t kern_inl(uint16_t port);
+void     kern_outl(uint16_t port, uint32_t value);
+MooValue moo_io_inw(MooValue port);
+void     moo_io_outw(MooValue port, MooValue data);
+MooValue moo_io_inl(MooValue port);
+void     moo_io_outl(MooValue port, MooValue data);
 
 /* ======================================================================
  * K2 — Early-Console (moo_bare_console.c)

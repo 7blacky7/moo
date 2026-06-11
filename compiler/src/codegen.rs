@@ -183,6 +183,7 @@ impl<'ctx> CodeGen<'ctx> {
             | "kern_pic_maskiere" | "kern_pic_mask"
             | "kern_pic_demaskiere" | "kern_pic_unmask"
             | "kern_pic_eoi" | "kern_timer_init" | "kern_ticks"
+            | "kern_inw" | "kern_outw" | "kern_inl" | "kern_outl"
         )
     }
 
@@ -2620,6 +2621,32 @@ impl<'ctx> CodeGen<'ctx> {
                     // Harte hosted/bare-Trennung: require_bare() laesst diese
                     // Builtins nur im --no-stdlib/*-bare-Build (oder mit
                     // --erlaube-kern) zu. Alle MooValue-returning.
+                    // P011-B1: 16/32-bit Port-I/O (require_bare — im Gegensatz
+                    // zu den 8-bit-Altarmen port_lese/port_in oben; Folgepunkt).
+                    "kern_inw" | "port_in16" | "port_lese16" => {
+                        self.require_bare(name)?;
+                        let port = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_io_inw, &[port.into()], "io_inw");
+                    }
+                    "kern_outw" | "port_out16" | "port_schreibe16" => {
+                        self.require_bare(name)?;
+                        let port = self.compile_expr(&args[0])?;
+                        let val = self.compile_expr(&args[1])?;
+                        self.call_rt_void(self.rt.moo_io_outw, &[port.into(), val.into()], "io_outw")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "kern_inl" | "port_in32" | "port_lese32" => {
+                        self.require_bare(name)?;
+                        let port = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_io_inl, &[port.into()], "io_inl");
+                    }
+                    "kern_outl" | "port_out32" | "port_schreibe32" => {
+                        self.require_bare(name)?;
+                        let port = self.compile_expr(&args[0])?;
+                        let val = self.compile_expr(&args[1])?;
+                        self.call_rt_void(self.rt.moo_io_outl, &[port.into(), val.into()], "io_outl")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     // ======================================================
                     // K2 — Early-Console (seriell + VGA)
                     "kern_seriell_init" | "kern_serial_init" => {
