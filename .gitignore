@@ -62,6 +62,13 @@ beispiele/assets/sprites/kenney_td_kit/
 # Test-Screenshots (regenerierbar, 1.9MB pro BMP)
 beispiele/test_screenshots/
 
+# Lokale Beispiel-/Smoke-Arbeitsflächen: funktionieren, aber nicht automatisch versionieren.
+# Bei Bedarf bewusst auskommentieren und gezielt committen.
+/beispiele/domain/system/kernel_test_builtins.moo
+/beispiele/ui_snapshot_smoke.moo
+/beispiele/city_builder/reconnect-session.sh
+/beispiele/snapshots/
+
 # Compiler-Beispiele (nur Source)
 compiler/beispiele/**
 !compiler/beispiele/
@@ -89,19 +96,19 @@ compiler/runtime/test_3d.c
 /adventure_save.json
 /beispiele/test_sprite.bmp
 
+# Lokale Root-Testflächen / manuelle Leak-Smokes.
+# Bei Bedarf bewusst auskommentieren und als Regression integrieren.
+/tests/test_memory_leaks.moo
+/tests/verify_leaks.py
+
+# Lokale Beispiel-Binaries
+/voxel_sandbox
+
 # Scratch-/Ad-hoc-Verzeichnis: Source-Dateien werden getrackt,
 # kompilierte Artefakte nicht (siehe scratch/README.md).
 /scratch/**/*.ll
 /scratch/**/*.o
 /scratch/**/*.bin
-
-
-# Projekt-Scratch / Locks
-/tmp/
-/scratch/
-nohup.out
-uv.lock
-Cargo.lock
 
 # Save-Files
 *.save
