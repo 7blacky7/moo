@@ -11,6 +11,12 @@
 fn main() {
     let mut build = cc::Build::new();
 
+    // P013: Target-OS korrekt ermitteln. In build.rs ist cfg!(target_os) das
+    // HOST-OS des Build-Rechners; fuer Cross-Builds zaehlt CARGO_CFG_TARGET_OS.
+    let target_windows = std::env::var("CARGO_CFG_TARGET_OS")
+        .map(|s| s == "windows")
+        .unwrap_or(cfg!(target_os = "windows"));
+
     // ========================================================================
     // Kern-Runtime (OS-neutral)
     // ========================================================================
@@ -46,6 +52,21 @@ fn main() {
         .include("runtime")
         .opt_level(2)
         .flag_if_supported("-fPIC");
+
+    // ========================================================================
+    // P013: POSIX-Regex-Vendoring fuer Windows (musl v1.2.5 / TRE) — siehe
+    // runtime/win_regex/README.md. moo_regex.c schaltet per #ifdef _WIN32 auf
+    // diesen Header um. Unter Linux NICHT bauen: dort liefert die System-libc
+    // regcomp/regexec (Doppel-Definition vermeiden).
+    // ========================================================================
+    if target_windows {
+        build
+            .file("runtime/win_regex/regcomp.c")
+            .file("runtime/win_regex/regexec.c")
+            .file("runtime/win_regex/regerror.c")
+            .file("runtime/win_regex/tre-mem.c")
+            .include("runtime/win_regex");
+    }
 
     // 3D/Game Runtime-Core nur bauen, wenn ein 3D-Feature aktiv ist.
     // Sonst ziehen UI-only Builds unnötig SDL/GL/Vulkan/GLFW-Symbole in
@@ -121,8 +142,21 @@ fn main() {
     // ========================================================================
     println!("cargo:rustc-link-lib=curl");
     println!("cargo:rustc-link-lib=sqlite3");
-    println!("cargo:rustc-link-lib=SDL2");
-    println!("cargo:rustc-link-lib=SDL2_image");
+
+    // P013: Winsock2 fuer moo_net.c/moo_web.c — nur Windows.
+    if target_windows {
+        println!("cargo:rustc-link-lib=ws2_32");
+    }
+
+    // SDL2 wird nur von den feature-gated 3D/Grafik-Quellen referenziert.
+    // Windows (P013): nur bei aktivem 3D-Feature linken, sonst braeuchte
+    // JEDER Build (auch UI-/stdlib-only) installierte SDL2-Libs.
+    // Nicht-Windows: unveraendertes Bestandsverhalten (immer linken).
+    let any_3d = cfg!(any(feature = "gl21", feature = "gl33", feature = "vulkan"));
+    if !target_windows || any_3d {
+        println!("cargo:rustc-link-lib=SDL2");
+        println!("cargo:rustc-link-lib=SDL2_image");
+    }
 
     // UI-Links (plattform-spezifisch)
     if ui_enabled {

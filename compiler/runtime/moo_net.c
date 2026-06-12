@@ -4,20 +4,14 @@
  */
 
 #include "moo_runtime.h"
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
+#include "moo_net_compat.h"
 
 // Neuer Tag fuer Sockets
 // MOO_SOCKET = 14 (in moo_runtime.h definiert)
 
 typedef struct {
     int32_t refcount;  // MUSS ERSTES FELD SEIN — get_refcount_ptr nimmt *(int32_t*)ptr
-    int fd;
+    moo_sockfd_t fd;
     int type; // SOCK_STREAM oder SOCK_DGRAM
     bool is_server;
 } MooSocket;
@@ -39,7 +33,7 @@ static MooSocket* get_socket(MooValue v) {
     return (MooSocket*)moo_val_as_ptr(v);
 }
 
-static MooValue make_socket(int fd, int type, bool is_server) {
+static MooValue make_socket(moo_sockfd_t fd, int type, bool is_server) {
     MooSocket* s = (MooSocket*)malloc(sizeof(MooSocket));
     s->refcount = 1;  // owner hat 1 ref, Release bei refcount==0 schliesst+free
     s->fd = fd;
@@ -56,9 +50,9 @@ static MooValue make_socket(int fd, int type, bool is_server) {
 void moo_socket_free(void* ptr) {
     if (!ptr) return;
     MooSocket* s = (MooSocket*)ptr;
-    if (s->fd >= 0) {
-        close(s->fd);
-        s->fd = -1;
+    if (!MOO_SOCK_BAD(s->fd)) {
+        moo_closesock(s->fd);
+        s->fd = MOO_INVALID_SOCK;
     }
     free(s);
 }
@@ -68,15 +62,15 @@ void moo_socket_free(void* ptr) {
 MooValue moo_tcp_server(MooValue port) {
     int p = (int)MV_NUM(port);
 
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
+    moo_sockfd_t fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (MOO_SOCK_BAD(fd)) {
         moo_throw(moo_string_new("Socket erstellen fehlgeschlagen"));
         return moo_none();
     }
 
     // SO_REUSEADDR damit Port sofort wiederverwendbar
     int opt = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, MOO_SOPT(&opt), sizeof(opt));
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -85,13 +79,13 @@ MooValue moo_tcp_server(MooValue port) {
     addr.sin_port = htons(p);
 
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(fd);
+        moo_closesock(fd);
         moo_throw(moo_string_new("Bind fehlgeschlagen"));
         return moo_none();
     }
 
     if (listen(fd, 128) < 0) {
-        close(fd);
+        moo_closesock(fd);
         moo_throw(moo_string_new("Listen fehlgeschlagen"));
         return moo_none();
     }
@@ -110,8 +104,8 @@ MooValue moo_tcp_connect(MooValue host, MooValue port) {
     const char* h = MV_STR(host)->chars;
     int p = (int)MV_NUM(port);
 
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
+    moo_sockfd_t fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (MOO_SOCK_BAD(fd)) {
         moo_throw(moo_string_new("Socket erstellen fehlgeschlagen"));
         return moo_none();
     }
@@ -122,7 +116,7 @@ MooValue moo_tcp_connect(MooValue host, MooValue port) {
     addr.sin_port = htons(p);
 
     if (inet_pton(AF_INET, h, &addr.sin_addr) <= 0) {
-        close(fd);
+        moo_closesock(fd);
         char err[128];
         snprintf(err, sizeof(err), "Ungueltige Adresse: %s", h);
         moo_throw(moo_string_new(err));
@@ -130,13 +124,13 @@ MooValue moo_tcp_connect(MooValue host, MooValue port) {
     }
 
     if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(fd);
+        moo_closesock(fd);
         moo_throw(moo_string_new("Verbindung fehlgeschlagen"));
         return moo_none();
     }
 
     int one = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, MOO_SOPT(&one), sizeof(one));
 
     return make_socket(fd, SOCK_STREAM, false);
 }
@@ -144,8 +138,8 @@ MooValue moo_tcp_connect(MooValue host, MooValue port) {
 // === UDP Socket ===
 
 MooValue moo_udp_socket(MooValue port) {
-    int fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) {
+    moo_sockfd_t fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (MOO_SOCK_BAD(fd)) {
         moo_throw(moo_string_new("UDP Socket erstellen fehlgeschlagen"));
         return moo_none();
     }
@@ -158,7 +152,7 @@ MooValue moo_udp_socket(MooValue port) {
         addr.sin_addr.s_addr = INADDR_ANY;
         addr.sin_port = htons(p);
         if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-            close(fd);
+        moo_closesock(fd);
             moo_throw(moo_string_new("UDP Bind fehlgeschlagen"));
             return moo_none();
         }
@@ -178,8 +172,8 @@ MooValue moo_socket_accept(MooValue server) {
 
     struct sockaddr_in client_addr;
     socklen_t len = sizeof(client_addr);
-    int client_fd = accept(s->fd, (struct sockaddr*)&client_addr, &len);
-    if (client_fd < 0) {
+    moo_sockfd_t client_fd = accept(s->fd, (struct sockaddr*)&client_addr, &len);
+    if (MOO_SOCK_BAD(client_fd)) {
         moo_throw(moo_string_new("Accept fehlgeschlagen"));
         return moo_none();
     }
@@ -195,7 +189,7 @@ MooValue moo_socket_read(MooValue sock, MooValue max_bytes) {
     if (max <= 0) max = 4096;
 
     char* buf = (char*)malloc(max + 1);
-    ssize_t n = read(s->fd, buf, max);
+    moo_ssize_t n = recv(s->fd, buf, max, 0);
     if (n <= 0) {
         free(buf);
         return moo_string_new_len("", 0);
@@ -213,7 +207,7 @@ void moo_socket_write(MooValue sock, MooValue data) {
 
     const char* str = MV_STR(data)->chars;
     int32_t len = MV_STR(data)->length;
-    write(s->fd, str, len);
+    send(s->fd, str, len, 0);
 }
 
 // === Byte-Array API (binary-safe, fuer wire protocols) ===
@@ -232,13 +226,13 @@ MooValue moo_socket_read_bytes(MooValue sock, MooValue max_bytes) {
     if (max <= 0) max = 4096;
 
     unsigned char* buf = (unsigned char*)malloc(max);
-    ssize_t n = read(s->fd, buf, max);
+    moo_ssize_t n = recv(s->fd, (char*)buf, max, 0);
     if (n <= 0) {
         free(buf);
         return moo_list_new(0);
     }
     MooValue list = moo_list_new((int32_t)n);
-    for (ssize_t i = 0; i < n; i++) {
+    for (moo_ssize_t i = 0; i < n; i++) {
         moo_list_append(list, moo_number((double)buf[i]));
     }
     free(buf);
@@ -257,7 +251,7 @@ void moo_socket_write_bytes(MooValue sock, MooValue list) {
         int b = (v.tag == MOO_NUMBER) ? (int)MV_NUM(v) : 0;
         buf[i] = (unsigned char)(b & 0xFF);
     }
-    write(s->fd, buf, len);
+    send(s->fd, (const char*)buf, len, 0);
     free(buf);
 }
 
@@ -293,9 +287,9 @@ MooValue moo_string_to_bytes(MooValue s) {
 void moo_socket_close(MooValue sock) {
     MooSocket* s = get_socket(sock);
     if (!s) return;
-    if (s->fd >= 0) {
-        close(s->fd);
-        s->fd = -1;
+    if (!MOO_SOCK_BAD(s->fd)) {
+        moo_closesock(s->fd);
+        s->fd = MOO_INVALID_SOCK;
     }
 }
 
@@ -304,7 +298,7 @@ void moo_socket_close(MooValue sock) {
 // Kernel routet die packets an den connected peer.
 void moo_udp_connect(MooValue sock, MooValue host, MooValue port) {
     MooSocket* s = get_socket(sock);
-    if (!s || s->fd < 0) return;
+    if (!s || MOO_SOCK_BAD(s->fd)) return;
     if (host.tag != MOO_STRING || port.tag != MOO_NUMBER) return;
     const char* h = MV_STR(host)->chars;
     int p = (int)MV_NUM(port);
@@ -322,19 +316,26 @@ void moo_udp_connect(MooValue sock, MooValue host, MooValue port) {
     }
 }
 
-#include <sys/time.h>
 // Setzt Receive- und Accept-Timeout in Millisekunden. 0 = blocking.
 // Nach Timeout liefert lesen/lesen_bytes/annehmen einen leeren String/Liste
 // und der MooSocket bleibt nutzbar.
 void moo_socket_set_timeout(MooValue sock, MooValue ms) {
     MooSocket* s = get_socket(sock);
-    if (!s || s->fd < 0) return;
+    if (!s || MOO_SOCK_BAD(s->fd)) return;
     int millis = (ms.tag == MOO_NUMBER) ? (int)MV_NUM(ms) : 0;
+    if (millis < 0) millis = 0;
+#ifdef _WIN32
+    // Windows: SO_RCVTIMEO/SO_SNDTIMEO erwarten DWORD-Millisekunden.
+    DWORD tv = (DWORD)millis;
+    setsockopt(s->fd, SOL_SOCKET, SO_RCVTIMEO, MOO_SOPT(&tv), sizeof(tv));
+    setsockopt(s->fd, SOL_SOCKET, SO_SNDTIMEO, MOO_SOPT(&tv), sizeof(tv));
+#else
     struct timeval tv;
     tv.tv_sec  = millis / 1000;
     tv.tv_usec = (millis % 1000) * 1000;
-    setsockopt(s->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(s->fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(s->fd, SOL_SOCKET, SO_RCVTIMEO, MOO_SOPT(&tv), sizeof(tv));
+    setsockopt(s->fd, SOL_SOCKET, SO_SNDTIMEO, MOO_SOPT(&tv), sizeof(tv));
+#endif
 }
 
 // Tag-dispatchender close — wird vom Codegen fuer den Method-Namen

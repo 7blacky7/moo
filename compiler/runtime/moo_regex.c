@@ -4,7 +4,14 @@
  */
 
 #include "moo_runtime.h"
+#ifdef _WIN32
+/* P013: MinGW/Windows hat kein POSIX regex.h — vendored musl-Regex
+ * (compiler/runtime/win_regex/, identische POSIX-ERE-Semantik).
+ * Unter Linux bleibt die System-libc zustaendig. */
+#include "win_regex/regex.h"
+#else
 #include <regex.h>
+#endif
 
 // Kompilierte Regex als Heap-Objekt
 typedef struct {

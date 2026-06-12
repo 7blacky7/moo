@@ -5,9 +5,7 @@
  */
 
 #include "moo_runtime.h"
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <unistd.h>
+#include "moo_net_compat.h"
 
 // Vorwaertsdeklarationen
 extern MooValue moo_string_new(const char* s);
@@ -22,7 +20,7 @@ extern void moo_throw(MooValue v);
 // MOO_WEBSERVER = 16
 typedef struct {
     int32_t refcount;
-    int server_fd;
+    moo_sockfd_t server_fd;
     int port;
 } MooWebServer;
 
@@ -116,14 +114,14 @@ static MooValue parse_http_request(const char* raw, int len) {
 MooValue moo_web_server(MooValue port) {
     int p = (int)MV_NUM(port);
 
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
+    moo_sockfd_t fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (MOO_SOCK_BAD(fd)) {
         moo_throw(moo_string_new("WebServer: Socket erstellen fehlgeschlagen"));
         return moo_none();
     }
 
     int opt = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, MOO_SOPT(&opt), sizeof(opt));
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -132,13 +130,13 @@ MooValue moo_web_server(MooValue port) {
     addr.sin_port = htons(p);
 
     if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(fd);
+        moo_closesock(fd);
         moo_throw(moo_string_new("WebServer: Bind fehlgeschlagen"));
         return moo_none();
     }
 
     if (listen(fd, 128) < 0) {
-        close(fd);
+        moo_closesock(fd);
         moo_throw(moo_string_new("WebServer: Listen fehlgeschlagen"));
         return moo_none();
     }
@@ -165,16 +163,16 @@ MooValue moo_web_accept(MooValue server) {
 
     struct sockaddr_in client_addr;
     socklen_t addr_len = sizeof(client_addr);
-    int client_fd = accept(ws->server_fd, (struct sockaddr*)&client_addr, &addr_len);
-    if (client_fd < 0) {
+    moo_sockfd_t client_fd = accept(ws->server_fd, (struct sockaddr*)&client_addr, &addr_len);
+    if (MOO_SOCK_BAD(client_fd)) {
         return moo_none();
     }
 
     // Request lesen
     char buf[8192] = {0};
-    ssize_t n = read(client_fd, buf, sizeof(buf) - 1);
+    moo_ssize_t n = recv(client_fd, buf, sizeof(buf) - 1, 0);
     if (n <= 0) {
-        close(client_fd);
+    moo_closesock(client_fd);
         return moo_none();
     }
 
@@ -193,7 +191,7 @@ MooValue moo_web_respond(MooValue request, MooValue body, MooValue status_code) 
     // Client-FD aus Request holen
     MooValue fd_val = moo_dict_get(request, moo_string_new("_fd"));
     if (fd_val.tag != MOO_NUMBER) return moo_none();
-    int client_fd = (int)MV_NUM(fd_val);
+    moo_sockfd_t client_fd = (moo_sockfd_t)MV_NUM(fd_val);
 
     int status = (status_code.tag == MOO_NUMBER) ? (int)MV_NUM(status_code) : 200;
     const char* body_str = (body.tag == MOO_STRING) ? MV_STR(body)->chars : "";
@@ -214,9 +212,9 @@ MooValue moo_web_respond(MooValue request, MooValue body, MooValue status_code) 
         "\r\n",
         status, status_text, body_len);
 
-    write(client_fd, header, strlen(header));
-    if (body_len > 0) write(client_fd, body_str, body_len);
-    close(client_fd);
+    send(client_fd, header, (int)strlen(header), 0);
+    if (body_len > 0) send(client_fd, body_str, body_len, 0);
+    moo_closesock(client_fd);
 
     return moo_none();
 }
@@ -226,7 +224,7 @@ MooValue moo_web_respond(MooValue request, MooValue body, MooValue status_code) 
 MooValue moo_web_json(MooValue request, MooValue data) {
     MooValue fd_val = moo_dict_get(request, moo_string_new("_fd"));
     if (fd_val.tag != MOO_NUMBER) return moo_none();
-    int client_fd = (int)MV_NUM(fd_val);
+    moo_sockfd_t client_fd = (moo_sockfd_t)MV_NUM(fd_val);
 
     // Dict zu JSON String
     MooValue json = moo_json_string(data);
@@ -242,9 +240,9 @@ MooValue moo_web_json(MooValue request, MooValue data) {
         "\r\n",
         json_len);
 
-    write(client_fd, header, strlen(header));
-    write(client_fd, json_str, json_len);
-    close(client_fd);
+    send(client_fd, header, (int)strlen(header), 0);
+    send(client_fd, json_str, json_len, 0);
+    moo_closesock(client_fd);
 
     return moo_none();
 }
@@ -273,13 +271,13 @@ static const char* guess_content_type(const char* path) {
 MooValue moo_web_file(MooValue request, MooValue filepath) {
     MooValue fd_val = moo_dict_get(request, moo_string_new("_fd"));
     if (fd_val.tag != MOO_NUMBER) return moo_none();
-    int client_fd = (int)MV_NUM(fd_val);
+    moo_sockfd_t client_fd = (moo_sockfd_t)MV_NUM(fd_val);
 
     if (filepath.tag != MOO_STRING) {
         // 400 Bad Request
         const char* err = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
-        write(client_fd, err, strlen(err));
-        close(client_fd);
+        send(client_fd, err, (int)strlen(err), 0);
+    moo_closesock(client_fd);
         return moo_none();
     }
 
@@ -288,16 +286,16 @@ MooValue moo_web_file(MooValue request, MooValue filepath) {
     // Sicherheit: keine .. im Pfad (Path-Traversal verhindern)
     if (strstr(path, "..")) {
         const char* err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n";
-        write(client_fd, err, strlen(err));
-        close(client_fd);
+        send(client_fd, err, (int)strlen(err), 0);
+    moo_closesock(client_fd);
         return moo_none();
     }
 
     FILE* f = fopen(path, "rb");
     if (!f) {
         const char* err = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\nDatei nicht gefunden";
-        write(client_fd, err, strlen(err));
-        close(client_fd);
+        send(client_fd, err, (int)strlen(err), 0);
+    moo_closesock(client_fd);
         return moo_none();
     }
 
@@ -315,16 +313,16 @@ MooValue moo_web_file(MooValue request, MooValue filepath) {
         "Connection: close\r\n"
         "\r\n",
         ctype, size);
-    write(client_fd, header, strlen(header));
+    send(client_fd, header, (int)strlen(header), 0);
 
     // Datei in Chunks senden
     char buf[8192];
     size_t n;
     while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
-        write(client_fd, buf, n);
+        send(client_fd, buf, (int)n, 0);
     }
     fclose(f);
-    close(client_fd);
+    moo_closesock(client_fd);
 
     return moo_bool(true);
 }
@@ -336,7 +334,7 @@ MooValue moo_web_template(MooValue request, MooValue html, MooValue vars) {
     if (fd_val.tag != MOO_NUMBER || html.tag != MOO_STRING || vars.tag != MOO_DICT) {
         return moo_none();
     }
-    int client_fd = (int)MV_NUM(fd_val);
+    moo_sockfd_t client_fd = (moo_sockfd_t)MV_NUM(fd_val);
 
     const char* src = MV_STR(html)->chars;
     int src_len = MV_STR(html)->length;
@@ -394,10 +392,10 @@ MooValue moo_web_template(MooValue request, MooValue html, MooValue vars) {
         "Connection: close\r\n"
         "\r\n",
         out_len);
-    write(client_fd, header, strlen(header));
-    write(client_fd, out, out_len);
+    send(client_fd, header, (int)strlen(header), 0);
+    send(client_fd, out, out_len, 0);
     free(out);
-    close(client_fd);
+    moo_closesock(client_fd);
 
     return moo_bool(true);
 }
@@ -409,7 +407,7 @@ MooValue moo_web_template(MooValue request, MooValue html, MooValue vars) {
 // gesetzt, wenn das headers-Dict sie nicht ueberschreibt. Damit koennen
 // Cookies (Set-Cookie), CORS-Header oder Cache-Control gesetzt werden, ohne
 // die alte moo_web_respond-Variante zu brechen.
-static void write_extra_headers(int client_fd, MooValue headers, bool* seen_content_type) {
+static void write_extra_headers(moo_sockfd_t client_fd, MooValue headers, bool* seen_content_type) {
     if (headers.tag != MOO_DICT) return;
     MooDict* d = MV_DICT(headers);
     for (int i = 0; i < d->capacity; i++) {
@@ -428,14 +426,14 @@ static void write_extra_headers(int client_fd, MooValue headers, bool* seen_cont
         const char* vs = (v.tag == MOO_STRING) ? MV_STR(v)->chars : "";
         char line[1024];
         int n = snprintf(line, sizeof(line), "%s: %s\r\n", kn, vs);
-        if (n > 0 && n < (int)sizeof(line)) write(client_fd, line, n);
+        if (n > 0 && n < (int)sizeof(line)) send(client_fd, line, n, 0);
     }
 }
 
 MooValue moo_web_respond_with_headers(MooValue request, MooValue body, MooValue status_code, MooValue headers) {
     MooValue fd_val = moo_dict_get(request, moo_string_new("_fd"));
     if (fd_val.tag != MOO_NUMBER) return moo_none();
-    int client_fd = (int)MV_NUM(fd_val);
+    moo_sockfd_t client_fd = (moo_sockfd_t)MV_NUM(fd_val);
 
     int status = (status_code.tag == MOO_NUMBER) ? (int)MV_NUM(status_code) : 200;
     const char* body_str = (body.tag == MOO_STRING) ? MV_STR(body)->chars : "";
@@ -452,7 +450,7 @@ MooValue moo_web_respond_with_headers(MooValue request, MooValue body, MooValue 
 
     char start_line[128];
     int sn = snprintf(start_line, sizeof(start_line), "HTTP/1.1 %d %s\r\n", status, status_text);
-    write(client_fd, start_line, sn);
+    send(client_fd, start_line, sn, 0);
 
     bool seen_ct = false;
     write_extra_headers(client_fd, headers, &seen_ct);
@@ -462,17 +460,17 @@ MooValue moo_web_respond_with_headers(MooValue request, MooValue body, MooValue 
         "%sContent-Length: %d\r\nConnection: close\r\n\r\n",
         seen_ct ? "" : "Content-Type: text/html; charset=utf-8\r\n",
         body_len);
-    write(client_fd, fixed, fn);
+    send(client_fd, fixed, fn, 0);
 
-    if (body_len > 0) write(client_fd, body_str, body_len);
-    close(client_fd);
+    if (body_len > 0) send(client_fd, body_str, body_len, 0);
+    moo_closesock(client_fd);
     return moo_none();
 }
 
 MooValue moo_web_json_with_headers(MooValue request, MooValue data, MooValue status_code, MooValue headers) {
     MooValue fd_val = moo_dict_get(request, moo_string_new("_fd"));
     if (fd_val.tag != MOO_NUMBER) return moo_none();
-    int client_fd = (int)MV_NUM(fd_val);
+    moo_sockfd_t client_fd = (moo_sockfd_t)MV_NUM(fd_val);
 
     int status = (status_code.tag == MOO_NUMBER) ? (int)MV_NUM(status_code) : 200;
     MooValue json = moo_json_string(data);
@@ -488,7 +486,7 @@ MooValue moo_web_json_with_headers(MooValue request, MooValue data, MooValue sta
 
     char start_line[128];
     int sn = snprintf(start_line, sizeof(start_line), "HTTP/1.1 %d %s\r\n", status, status_text);
-    write(client_fd, start_line, sn);
+    send(client_fd, start_line, sn, 0);
 
     bool seen_ct = false;
     write_extra_headers(client_fd, headers, &seen_ct);
@@ -498,10 +496,10 @@ MooValue moo_web_json_with_headers(MooValue request, MooValue data, MooValue sta
         "%sContent-Length: %d\r\nConnection: close\r\n\r\n",
         seen_ct ? "" : "Content-Type: application/json; charset=utf-8\r\n",
         json_len);
-    write(client_fd, fixed, fn);
+    send(client_fd, fixed, fn, 0);
 
-    write(client_fd, json_str, json_len);
-    close(client_fd);
+    send(client_fd, json_str, json_len, 0);
+    moo_closesock(client_fd);
     return moo_none();
 }
 
@@ -510,17 +508,17 @@ MooValue moo_web_json_with_headers(MooValue request, MooValue data, MooValue sta
 void moo_web_close(MooValue server) {
     if (server.tag != MOO_WEBSERVER) return;
     MooWebServer* ws = (MooWebServer*)moo_val_as_ptr(server);
-    if (ws->server_fd >= 0) {
-        close(ws->server_fd);
-        ws->server_fd = -1;
+    if (!MOO_SOCK_BAD(ws->server_fd)) {
+        moo_closesock(ws->server_fd);
+        ws->server_fd = MOO_INVALID_SOCK;
     }
 }
 
 void moo_web_free(void* ptr) {
     if (!ptr) return;
     MooWebServer* ws = (MooWebServer*)ptr;
-    if (ws->server_fd >= 0) {
-        close(ws->server_fd);
+    if (!MOO_SOCK_BAD(ws->server_fd)) {
+        moo_closesock(ws->server_fd);
     }
     free(ws);
 }
