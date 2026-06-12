@@ -95,6 +95,14 @@ compiler/runtime/test_3d.c
 /scratch/**/*.o
 /scratch/**/*.bin
 
+
+# Projekt-Scratch / Locks
+/tmp/
+/scratch/
+nohup.out
+uv.lock
+Cargo.lock
+
 # Save-Files
 *.save
 
