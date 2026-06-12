@@ -109,6 +109,17 @@ MooValue moo_rshift(MooValue a, MooValue b) {
 }
 
 // === Volatile Memory-Mapped I/O ===
+// PORTABLER Geraete-Zugriff fuer ALLE Targets: x86-MMIO ebenso wie
+// ARM/RISC-V-Geraeteregister (PL011-UART, GIC, CLINT, ...). Auf ARM und
+// RISC-V ist MMIO der EINZIGE Geraete-Pfad — Port-I/O (unten) bleibt
+// strikt x86-only. Semantik/UB-Policy:
+//   - Zugriff strikt volatile in nativer Breite 1/2/4/8 Byte.
+//   - Casts via uintptr_t/uint64_t (unsigned, definiert, kein UB).
+//   - Adress-/Wert-Transport laeuft ueber MooValue-double: exakt bis
+//     2^53 — reale MMIO-Fenster liegen weit darunter; fuer volle
+//     64-bit-WERTE (z.B. 64-bit-Counter-Register) gilt dieselbe
+//     2^53-Grenze. Wo das nicht reicht: zwei 32-bit-Zugriffe.
+//   - Ungueltige Breite: read -> moo_none, write -> no-op (kein Trap).
 MooValue moo_mem_read(MooValue addr, MooValue size) {
     uintptr_t a = (uintptr_t)as_num(addr);
     int s = (int)as_num(size);
@@ -128,6 +139,18 @@ void moo_mem_write(MooValue addr, MooValue value, MooValue size) {
     else if (s == 4) *(volatile uint32_t*)a = (uint32_t)v;
     else if (s == 8) *(volatile uint64_t*)a = (uint64_t)v;
 }
+
+// C-seitige MMIO-Helfer (ohne MooValue-Boxing) — P012-B3. Fuer die
+// kern_*-Module der portablen Targets (z.B. PL011-Konsole auf
+// qemu-virt-aarch64, P012-D1). Muster analog kern_inb/kern_outb.
+uint8_t  kern_mmio_read8(uintptr_t addr)                  { return *(volatile uint8_t*)addr; }
+uint16_t kern_mmio_read16(uintptr_t addr)                 { return *(volatile uint16_t*)addr; }
+uint32_t kern_mmio_read32(uintptr_t addr)                 { return *(volatile uint32_t*)addr; }
+uint64_t kern_mmio_read64(uintptr_t addr)                 { return *(volatile uint64_t*)addr; }
+void     kern_mmio_write8(uintptr_t addr, uint8_t v)      { *(volatile uint8_t*)addr = v; }
+void     kern_mmio_write16(uintptr_t addr, uint16_t v)    { *(volatile uint16_t*)addr = v; }
+void     kern_mmio_write32(uintptr_t addr, uint32_t v)    { *(volatile uint32_t*)addr = v; }
+void     kern_mmio_write64(uintptr_t addr, uint64_t v)    { *(volatile uint64_t*)addr = v; }
 
 // === CPU / Hardware Builtins ===
 void moo_cpu_halt(void) {
@@ -152,6 +175,14 @@ void moo_cpu_sti(void) {
 #endif
 }
 
+// === Port-I/O — STRIKT x86/i386-ONLY (P012-B3) ===
+// in/out-Instruktionen existieren NUR auf x86. Auf allen anderen Targets
+// (ARM/AArch64/RISC-V) sind diese Funktionen EXPLIZITE no-op-Stubs:
+// in* liefert 0, out* tut nichts. Das ist BEWUSST nur fuer object-compile
+// gedacht (Programm baut, Port-Aufrufe sind dort wirkungslos) — KEINE
+// ARM-Register-Constraint-Nachbauten, KEIN Port->MMIO-Mapping. Portable
+// Geraete-Pfade nutzen das MMIO-API oben (speicher_lesen/schreiben bzw.
+// kern_mmio_*).
 MooValue moo_io_inb(MooValue port) {
     uint16_t p = (uint16_t)as_num(port);
     uint8_t value = 0;

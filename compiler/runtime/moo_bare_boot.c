@@ -32,6 +32,10 @@ struct __attribute__((packed)) Mb2Header {
     uint32_t end_size;
 };
 
+/* P012-E1: Multiboot2 ist ein x86-BOOT-PROTOKOLL — der Header darf NICHT
+ * in ARM64-Images landen (kein Multiboot2-Raspi/virt-Mix). qemu-virt
+ * bootet das aarch64-ELF direkt via -kernel, ganz ohne Multiboot. */
+#if defined(__x86_64__)
 __attribute__((section(".multiboot2"), used, aligned(8)))
 const struct Mb2Header g_mb2_header = {
     .magic         = MB2_MAGIC,
@@ -43,6 +47,7 @@ const struct Mb2Header g_mb2_header = {
     .end_flags     = 0,
     .end_size      = 8,
 };
+#endif /* __x86_64__ (Multiboot2-Header) */
 
 #if defined(__x86_64__)
 

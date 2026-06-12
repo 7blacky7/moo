@@ -72,6 +72,16 @@ MooValue moo_io_inw(MooValue port);
 void     moo_io_outw(MooValue port, MooValue data);
 MooValue moo_io_inl(MooValue port);
 void     moo_io_outl(MooValue port, MooValue data);
+// P012-B3: Portable MMIO-Helfer (moo_bare.c, ohne Boxing) — einziger
+// Geraete-Pfad auf ARM/RISC-V; Port-I/O oben bleibt x86-only (Stubs).
+uint8_t  kern_mmio_read8(uintptr_t addr);
+uint16_t kern_mmio_read16(uintptr_t addr);
+uint32_t kern_mmio_read32(uintptr_t addr);
+uint64_t kern_mmio_read64(uintptr_t addr);
+void     kern_mmio_write8(uintptr_t addr, uint8_t v);
+void     kern_mmio_write16(uintptr_t addr, uint16_t v);
+void     kern_mmio_write32(uintptr_t addr, uint32_t v);
+void     kern_mmio_write64(uintptr_t addr, uint64_t v);
 // P011-B2: CPU-Steuer-Builtins (privilegiert; Host nur compile-only)
 MooValue kern_rdmsr_lo(MooValue msr);
 MooValue kern_rdmsr_hi(MooValue msr);
@@ -87,6 +97,10 @@ void     kern_lidt(MooValue basis, MooValue limit);
 
 /* Serielle Konsole (16550-UART, COM1 = 0x3F8), 115200 8N1. */
 MooValue kern_seriell_init(void);                 /* returns moo_bool(loopback ok) */
+/* P012-D1: PL011-Variante mit expliziter MMIO-Basis — NUR im
+ * MOO_BOARD_UART_PL011-Build definiert (16550 adressiert Ports, andere
+ * Semantik). Default-Basis kommt aus MOO_BOARD_UART_BASE (--board, C1). */
+MooValue kern_seriell_init_addr(uintptr_t base);
 void     kern_seriell_zeichen_c(char c);          /* C-Seite */
 void     kern_seriell_text(const char* s);        /* C-String, NUL-terminiert */
 void     kern_seriell_dez_u64(uint64_t n);        /* dezimal, ohne libc */
@@ -134,6 +148,29 @@ MooValue kern_pic_demaskiere(MooValue irq);
 MooValue kern_pic_eoi(MooValue irq);
 MooValue kern_timer_init(MooValue hz);            /* PIT Kanal 0, Mode 3 */
 MooValue kern_ticks(void);                        /* aktueller Tick-Zaehler */
+
+/* P012-A4 — Freestanding Stack-Protector (moo_bare_stackprot.c).
+ * Guard ist ein GLOBALES Symbol (-mstack-protector-guard=global): im
+ * Kernel gibt es kein TLS/%fs — der glibc-TLS-Default waere Garbage. */
+extern uintptr_t __stack_chk_guard;
+void __stack_chk_fail(void) __attribute__((noreturn));
+MooValue kern_stackprot_selbsttest(void);         /* provoziert Canary-Fail (Smoke) */
+
+/* P012-D2 — ARM Generic Timer Stufe 1 (moo_bare_timer_arm64.c, NUR auf
+ * aarch64 definiert): Counter-Polling, kein IRQ (der kommt nach D4/GIC). */
+uint64_t kern_arm64_timer_freq(void);             /* CNTFRQ_EL0 */
+uint64_t kern_arm64_timer_counter(void);          /* isb + CNTPCT_EL0 */
+
+/* P012-D3 — ARM64-MMU Identity-Map PoC (moo_bare_mmu_arm64.c, NUR auf
+ * aarch64 definiert). Design: Thought ef73972e. true = RAM-Roundtrip
+ * nach Enable ok; Device-Map beweist der Aufrufer per UART-Marker. */
+bool kern_arm64_mmu_identity_an(void);
+
+/* P012-D4 — GICv2 + EL1-Timer-IRQ (moo_bare_gic_arm64.c, NUR auf aarch64
+ * MIT GIC-Board-Defines definiert). Design: Thought 36a7b8e8. */
+void     kern_arm64_gic_timer_start(void);        /* Vektoren+GICv2+CNTP 10ms */
+void     kern_arm64_gic_timer_stop(void);         /* Timer aus + IRQs maskieren */
+uint64_t kern_arm64_gic_ticks(void);              /* IRQ-Tick-Zaehler */
 
 /* ======================================================================
  * K5 — Boot (moo_bare_boot.c)

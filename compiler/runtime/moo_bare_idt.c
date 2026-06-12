@@ -61,7 +61,15 @@ static void idt_setze_gate(int vec, void* handler, uint8_t type_attr) {
 }
 
 /* ---- Default-ISRs ---- */
-struct interrupt_frame;
+/* x86_64 Interrupt-Frame, von der CPU gepusht (Intel SDM Vol.3 6.14.1).
+ * Volle Definition (statt Forward-Decl), damit ISRs RIP lesen koennen. */
+struct interrupt_frame {
+    uint64_t rip;
+    uint64_t cs;
+    uint64_t rflags;
+    uint64_t rsp;
+    uint64_t ss;
+};
 
 /* Generischer Exception-Handler: Vektor + RIP seriell dumpen, dann halt.
  * general-regs-only: ISRs duerfen kein SSE clobbern (kein FXSAVE-State). */
@@ -69,6 +77,35 @@ __attribute__((interrupt, target("general-regs-only")))
 static void isr_exception(struct interrupt_frame* frame) {
     (void)frame;
     kern_seriell_text("\n[KERN] EXCEPTION — System angehalten\n");
+    moo_cpu_cli();
+    for (;;) moo_cpu_halt();
+}
+
+/* #PF (Vektor 14, P012-A3): Page-Fault spezialisiert. Die CPU pusht bei
+ * #PF zusaetzlich einen Error-Code — die interrupt-CC mit zweitem
+ * uint64_t-Parameter laesst GCC/Clang den Code korrekt vor iretq
+ * wegraeumen. CR2 traegt die Fault-Adresse. Ausgabe NUR ueber SSE-freie
+ * C-Helfer (general-regs-only: kein FXSAVE-State in der ISR), danach
+ * cli + halt wie isr_exception. Error-Code-Bits (SDM Vol.3 6.15):
+ * P(0)=Schutzverletzung/nicht-praesent, W(1)=Schreiben/Lesen,
+ * U(2)=User/Supervisor, RSVD(3), I(4)=Instruktions-Fetch. */
+__attribute__((interrupt, target("general-regs-only")))
+static void isr_page_fault(struct interrupt_frame* frame, uint64_t error_code) {
+    uint64_t cr2;
+    __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+    kern_seriell_text("\n[KERN] #PF PAGE-FAULT\n  CR2 : ");
+    kern_seriell_hex_u64(cr2);
+    kern_seriell_text("\n  RIP : ");
+    kern_seriell_hex_u64(frame->rip);
+    kern_seriell_text("\n  Code: ");
+    kern_seriell_hex_u64(error_code);
+    kern_seriell_text("\n  Bits: ");
+    kern_seriell_text((error_code & 1u)  ? "P=1(Schutzverletzung) " : "P=0(nicht praesent) ");
+    kern_seriell_text((error_code & 2u)  ? "W=1(Schreiben) "        : "W=0(Lesen) ");
+    kern_seriell_text((error_code & 4u)  ? "U=1(User) "             : "U=0(Supervisor) ");
+    if (error_code & 8u)  kern_seriell_text("RSVD=1 ");
+    if (error_code & 16u) kern_seriell_text("I=1(Instruktions-Fetch) ");
+    kern_seriell_text("\n[KERN] #PF — System angehalten\n");
     moo_cpu_cli();
     for (;;) moo_cpu_halt();
 }
@@ -104,6 +141,8 @@ static void idt_lade(void) {
 MooValue kern_idt_init(void) {
     /* Exceptions 0-31. */
     for (int v = 0; v < 32; ++v) idt_setze_gate(v, (void*)isr_exception, 0x8E);
+    /* #PF (Vektor 14) spezialisiert: CR2/Error-Code-Dump (P012-A3). */
+    idt_setze_gate(14, (void*)isr_page_fault, 0x8E);
     /* IRQs 32-47 (nach PIC-Remap). */
     idt_setze_gate(32, (void*)isr_timer, 0x8E);            /* IRQ0 */
     for (int v = 33; v < 40; ++v) idt_setze_gate(v, (void*)isr_irq_master, 0x8E);

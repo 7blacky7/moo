@@ -1,4 +1,5 @@
 mod ast;
+mod boards;
 mod codegen;
 mod lexer;
 mod parser;
@@ -52,6 +53,9 @@ enum Commands {
         /// Ausgabeformat der Kernel-/Loader-Pipeline: elf (Standard) | flat (objcopy -O binary) | sector (flat + 512-Byte-Boot-Sektor-Gate mit 0x55AA)
         #[arg(long, default_value = "elf")]
         emit: String,
+        /// Board-Profil fuer die Kernel-Pipeline (P012-C1): setzt Target + Geraete-Defines. Liste: `moo targets`
+        #[arg(long)]
+        board: Option<String>,
     },
     /// Eine .moo-Datei kompilieren und sofort ausführen
     Run {
@@ -93,8 +97,8 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Compile { file, output, emit_ir, target, no_stdlib, linker_script, entry, profile, erlaube_kern, kernel, emit } => {
-            if let Err(e) = compile(&file, output.as_deref(), emit_ir, target.as_deref(), no_stdlib, linker_script.as_deref(), entry.as_deref(), profile, erlaube_kern, kernel, &emit) {
+        Commands::Compile { file, output, emit_ir, target, no_stdlib, linker_script, entry, profile, erlaube_kern, kernel, emit, board } => {
+            if let Err(e) = compile(&file, output.as_deref(), emit_ir, target.as_deref(), no_stdlib, linker_script.as_deref(), entry.as_deref(), profile, erlaube_kern, kernel, &emit, board.as_deref()) {
                 eprintln!("Fehler: {e}");
                 std::process::exit(1);
             }
@@ -112,6 +116,10 @@ fn main() {
             println!("Verfuegbare Targets fuer moo Cross-Compilation:\n");
             for (name, desc) in codegen::CodeGen::list_targets() {
                 println!("  {:<12} {}", name, desc);
+            }
+            println!("\nBoard-Profile (Kernel-Pipeline, --kernel --board <name>):\n");
+            for b in boards::BOARDS {
+                println!("  {:<18} {} [target {}]", b.name, b.beschreibung, b.target);
             }
             println!("\nVerwendung: moo-compiler compile datei.moo --target <name>");
         }
@@ -418,14 +426,89 @@ fn build_kernel(
     target_str: &str,
     linker_script: Option<&std::path::Path>,
     emit: &str,
+    board: Option<&'static boards::BoardProfile>,
 ) -> Result<(), String> {
     let resolved = codegen::CodeGen::resolve_triple(target_str);
-    if !resolved.starts_with("x86_64") {
+
+    // P012-B4: Toolchain-Abstraktion pro resolved Triple statt hartem
+    // x86_64-only-Guard. x86_64 = voller Boot-Pfad (Bestand, kein Regress);
+    // aarch64-unknown-none = PoC bis moo-Objekt + C-Runtime-Objekte
+    // (Entry/Linker-Script folgen mit P012-D5/E1); alles andere = klare
+    // Diagnose mit Target-Nennung, KEIN stiller Success.
+    enum KernelArch { X86_64, Aarch64 }
+    let arch = if resolved.starts_with("x86_64") {
+        KernelArch::X86_64
+    } else if resolved == "aarch64-unknown-none" {
+        KernelArch::Aarch64
+    } else {
         return Err(format!(
-            "--kernel unterstuetzt aktuell nur x86_64-bare (Multiboot2-Boot-Trampolin \
-             ist x86_64). Target war: {resolved}"
+            "--kernel: Target '{resolved}' hat noch keine Kernel-Toolchain. \
+             Unterstuetzt: x86_64-bare (voller Multiboot2-Boot-Pfad) und \
+             aarch64-bare (P012-B4-PoC bis C-Runtime-Objekte). Weitere \
+             Targets: Plan P012-D/E."
         ));
+    };
+
+    // C-Compiler pro Arch: x86_64 nativ 'cc' (Host-Toolchain, Bestand);
+    // aarch64 bevorzugt clang --target=aarch64-unknown-none (ein Binary,
+    // alle Targets), dokumentierte GNU-Cross-Fallbacks. Fehlt alles:
+    // Diagnose nennt Target UND fehlende Tools.
+    fn tool_ok(cmd: &str) -> bool {
+        Command::new(cmd).arg("--version").output()
+            .map(|o| o.status.success()).unwrap_or(false)
     }
+    let (cc_prog, cc_target_args, arch_cflags): (&str, Vec<String>, Vec<&str>) = match arch {
+        KernelArch::X86_64 => (
+            "cc",
+            vec![],
+            // x86-spezifisch: kein Red-Zone-Verlass in ISRs, Kernel-Code-Model.
+            vec!["-mno-red-zone", "-mcmodel=kernel"],
+        ),
+        KernelArch::Aarch64 => {
+            if tool_ok("clang") {
+                ("clang", vec![format!("--target={resolved}")], vec![])
+            } else if tool_ok("aarch64-linux-gnu-gcc") {
+                ("aarch64-linux-gnu-gcc", vec![], vec![])
+            } else if tool_ok("aarch64-elf-gcc") {
+                ("aarch64-elf-gcc", vec![], vec![])
+            } else {
+                return Err(format!(
+                    "--kernel ({resolved}): kein C-Compiler fuer aarch64 gefunden. \
+                     Benoetigt: clang (bevorzugt, --target={resolved}) ODER \
+                     aarch64-linux-gnu-gcc ODER aarch64-elf-gcc. \
+                     Arch/CachyOS: sudo pacman -S clang"
+                ));
+            }
+        }
+    };
+
+    // P012-C1: Board-Parameter -> generierte Defines fuer die C-Runtime
+    // (P012-D1: PL011-Konsole liest MOO_BOARD_UART_BASE). Ohne --board:
+    // leerer Vec, Bestandsverhalten byte-identisch.
+    let board_defines: Vec<String> = match board {
+        Some(b) => {
+            // P012-H1: DRAFT-Boards (C2-Konvention) bauen, aber warnen laut.
+            if b.beschreibung.starts_with("DRAFT") {
+                eprintln!("[moo-kernel] WARNUNG: Board '{}' ist ein DRAFT — unverifizierte Werte, KEIN Gate, kein finaler Beweis.", b.name);
+            }
+            println!(
+                "[moo-kernel] Board '{}': target={} load_addr={:#x} uart={}@{:#x} timer={} intc={}",
+                b.name, b.target, b.load_addr, b.uart_kind, b.uart_base, b.timer_kind, b.intc_kind
+            );
+            let mut v = vec![format!("-DMOO_BOARD_UART_BASE={:#x}", b.uart_base)];
+            v.push(match b.uart_kind {
+                "pl011" => "-DMOO_BOARD_UART_PL011=1".to_string(),
+                _ => "-DMOO_BOARD_UART_16550=1".to_string(),
+            });
+            // P012-D4: GIC-Basen als Defines (qemu-virt: GICv2).
+            if let (Some(d), Some(c)) = (b.gic_dist_base, b.gic_cpu_base) {
+                v.push(format!("-DMOO_BOARD_GIC_DIST_BASE={d:#x}"));
+                v.push(format!("-DMOO_BOARD_GIC_CPU_BASE={c:#x}"));
+            }
+            v
+        }
+        None => Vec::new(),
+    };
 
     let src_root = kernel_source_root().ok_or_else(|| {
         "Kernel-Runtime nicht gefunden: weder CARGO_MANIFEST_DIR noch exe-relativ \
@@ -446,18 +529,51 @@ fn build_kernel(
     // die kern_*-MooValue-Wrapper nutzen double (SSE); die ISRs in
     // moo_bare_idt.c tragen __attribute__((interrupt, target("general-regs-only")))
     // bereits per Funktion (Plan-010 K4).
-    const KERNEL_SOURCES: [&str; 5] = [
+    const KERNEL_SOURCES: [&str; 10] = [
         "moo_bare.c",
         "moo_bare_console.c",
         "moo_bare_alloc.c",
         "moo_bare_idt.c",
         "moo_bare_boot.c",
+        "moo_bare_stackprot.c",
+        "moo_bare_entry_arm64.c",
+        "moo_bare_timer_arm64.c",
+        "moo_bare_mmu_arm64.c",
+        "moo_bare_gic_arm64.c",
     ];
-    const KERNEL_CFLAGS: [&str; 13] = [
-        "-c", "-ffreestanding", "-fno-stack-protector", "-fno-pic", "-fno-pie",
-        "-mno-red-zone", "-mcmodel=kernel", "-O2", "-nostdlib",
+    const KERNEL_CFLAGS: [&str; 10] = [
+        "-c", "-ffreestanding", "-fno-pic", "-fno-pie",
+        "-O2", "-nostdlib",
         "-Wall", "-Wextra", "-std=c11", "-DMOO_BARE",
     ];
+
+    // P012-A4: Freestanding Stack-Protector. Der Canary MUSS aus dem
+    // globalen Symbol __stack_chk_guard kommen (moo_bare_stackprot.c) —
+    // der x86_64-TLS-Default (%fs:0x28) waere im Kernel Garbage (kein FS).
+    // Probe, ob die GEWAEHLTE Toolchain -mstack-protector-guard=global
+    // traegt (gcc>=8 / clang, arch-abhaengig); sonst ehrlicher Fallback.
+    let ssp_flags: &[&str] = {
+        let mut probe_cmd = Command::new(cc_prog);
+        probe_cmd.args(&cc_target_args);
+        let probe = probe_cmd
+            .args([
+                "-fstack-protector-strong", "-mstack-protector-guard=global",
+                "-x", "c", "-c", "-o", "/dev/null", "/dev/null",
+            ])
+            .output();
+        match probe {
+            Ok(o) if o.status.success() => {
+                if verbose {
+                    eprintln!("[moo-kernel] SSP aktiv: -fstack-protector-strong -mstack-protector-guard=global");
+                }
+                &["-fstack-protector-strong", "-mstack-protector-guard=global"]
+            }
+            _ => {
+                eprintln!("[moo-kernel] SSP: {cc_prog} ({resolved}) traegt -mstack-protector-guard=global nicht — Kernel ohne Stack-Protector");
+                &["-fno-stack-protector"]
+            }
+        }
+    };
 
     for src in KERNEL_SOURCES {
         let src_path = runtime_dir.join(src);
@@ -465,8 +581,12 @@ fn build_kernel(
             return Err(format!("Kernel-Runtime-Quelle fehlt: {}", src_path.display()));
         }
         let obj = tmp.join(format!("{src}.o"));
-        let mut cmd = Command::new("cc");
-        cmd.args(KERNEL_CFLAGS)
+        let mut cmd = Command::new(cc_prog);
+        cmd.args(&cc_target_args)
+            .args(KERNEL_CFLAGS)
+            .args(&arch_cflags)
+            .args(ssp_flags)
+            .args(&board_defines)
             .arg("-I").arg(&runtime_dir)
             .arg(&src_path)
             .arg("-o").arg(&obj);
@@ -474,22 +594,44 @@ fn build_kernel(
             eprintln!("[moo-kernel] {cmd:?}");
         }
         let out = cmd.output().map_err(|e| {
-            format!("cc nicht ausfuehrbar ({e}) — C-Compiler (gcc/clang) installieren")
+            format!("{cc_prog} nicht ausfuehrbar ({e}) — C-Compiler fuer {resolved} installieren")
         })?;
         if !out.status.success() {
             return Err(format!(
-                "cc fehlgeschlagen fuer {src}:\n{}",
+                "{cc_prog} ({resolved}) fehlgeschlagen fuer {src}:\n{}",
                 String::from_utf8_lossy(&out.stderr)
             ));
         }
         objects.push(obj);
     }
 
+    // P012-D5: Linker pro Arch. x86_64: GNU ld (Host-binutils, Bestand).
+    // aarch64: ld.lld bevorzugt (multi-target), dokumentierte GNU-Cross-
+    // Fallbacks; fehlt alles -> Diagnose nennt Target + Kandidaten.
+    let ld_prog: &str = match arch {
+        KernelArch::X86_64 => "ld",
+        KernelArch::Aarch64 => {
+            if tool_ok("ld.lld") {
+                "ld.lld"
+            } else if tool_ok("aarch64-linux-gnu-ld") {
+                "aarch64-linux-gnu-ld"
+            } else if tool_ok("aarch64-elf-ld") {
+                "aarch64-elf-ld"
+            } else {
+                return Err(format!(
+                    "--kernel ({resolved}): kein Linker fuer aarch64 gefunden. \
+                     Benoetigt: ld.lld (bevorzugt) ODER aarch64-linux-gnu-ld \
+                     ODER aarch64-elf-ld. Arch/CachyOS: sudo pacman -S lld"
+                ));
+            }
+        }
+    };
+
     // P011-C2: Boot-asm-Templates (Stage1 bleibt toolchain-verwaltetes asm).
     // Deklaratives Routing ueber Linker-Scripts: kernel/linker.ld DISCARDed
     // .boot_s1, beispiele/bootloader/stage1.ld KEEPt ausschliesslich .boot_s1.
     let boot_dir = runtime_dir.join("boot");
-    if boot_dir.is_dir() {
+    if matches!(arch, KernelArch::X86_64) && boot_dir.is_dir() {
         let mut entries: Vec<PathBuf> = std::fs::read_dir(&boot_dir)
             .map_err(|e| format!("boot/-Verzeichnis lesen: {e}"))?
             .filter_map(|e| e.ok().map(|e| e.path()))
@@ -524,7 +666,11 @@ fn build_kernel(
     // beispiele/kernel/linker.ld aus dem Quellbaum.
     let script = match linker_script {
         Some(s) => s.to_path_buf(),
-        None => src_root.join("..").join("beispiele").join("kernel").join("linker.ld"),
+        // P012-C1: Board-Profil darf ein eigenes Linker-Script vorgeben.
+        None => match board.and_then(|b| b.linker_script) {
+            Some(rel) => src_root.join("..").join(rel),
+            None => src_root.join("..").join("beispiele").join("kernel").join("linker.ld"),
+        },
     };
     if !script.exists() {
         return Err(format!(
@@ -547,7 +693,7 @@ fn build_kernel(
     } else {
         tmp.join("kernel.elf")
     };
-    let mut ld = Command::new("ld");
+    let mut ld = Command::new(ld_prog);
     ld.arg("-n").arg("-T").arg(&script).arg("-o").arg(&elf_path);
     for o in &objects {
         ld.arg(o);
@@ -556,10 +702,10 @@ fn build_kernel(
         eprintln!("[moo-kernel] {ld:?}");
     }
     let out = ld.output().map_err(|e| {
-        format!("ld nicht ausfuehrbar ({e}) — binutils installieren")
+        format!("{ld_prog} nicht ausfuehrbar ({e}) — binutils/lld installieren")
     })?;
     if !out.status.success() {
-        return Err(format!("ld fehlgeschlagen:\n{}", String::from_utf8_lossy(&out.stderr)));
+        return Err(format!("{ld_prog} ({resolved}) fehlgeschlagen:\n{}", String::from_utf8_lossy(&out.stderr)));
     }
     let ld_warn = String::from_utf8_lossy(&out.stderr);
     if !ld_warn.trim().is_empty() {
@@ -570,7 +716,10 @@ fn build_kernel(
     // P011-C1: Ausgabeformat.
     if emit == "elf" {
         println!("✓ Kernel gebaut ({}): {}", resolved, elf_path.display());
-        println!("  Boot-Test: scripts/kernel-smoke.sh (GRUB-ISO + QEMU). Hinweis: qemu -kernel kann nur Multiboot1 — Multiboot2 braucht GRUB (Testbruecke, kein Lock-in — eigener moo-Bootloader: Backlog P011).");
+        match arch {
+            KernelArch::X86_64 => println!("  Boot-Test: scripts/kernel-smoke.sh (GRUB-ISO + QEMU). Hinweis: qemu -kernel kann nur Multiboot1 — Multiboot2 braucht GRUB (Testbruecke, kein Lock-in — eigener moo-Bootloader: Backlog P011)."),
+            KernelArch::Aarch64 => println!("  Boot-Test: scripts/kernel-smoke-arm64.sh (qemu-system-aarch64 -M virt -kernel — KEIN GRUB/Multiboot noetig)."),
+        }
         return Ok(());
     }
 
@@ -623,11 +772,38 @@ fn build_kernel(
     Ok(())
 }
 
-fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, target: Option<&str>, no_stdlib: bool, linker_script: Option<&std::path::Path>, entry_point: Option<&str>, profile: bool, erlaube_kern: bool, kernel: bool, emit: &str) -> Result<(), String> {
+fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, target: Option<&str>, no_stdlib: bool, linker_script: Option<&std::path::Path>, entry_point: Option<&str>, profile: bool, erlaube_kern: bool, kernel: bool, emit: &str, board: Option<&str>) -> Result<(), String> {
     // P011-C1: --emit frueh validieren (vor jeder Kompilierung).
     if !matches!(emit, "elf" | "flat" | "sector") {
         return Err(format!("--emit '{emit}' unbekannt — erlaubt: elf | flat | sector"));
     }
+
+    // P012-C1: Board-Profil aufloesen (nur Kernel-Pipeline). Das Board
+    // setzt das Target; ein explizit ABWEICHENDES --target ist ein Fehler.
+    // Unbekanntes Board: Fehlermeldung LISTET alle bekannten Boards.
+    let board_profile: Option<&'static boards::BoardProfile> = match board {
+        Some(name) => {
+            if !kernel {
+                return Err("--board ist nur mit --kernel gueltig (Board-Profile steuern die Bare-Kernel-Pipeline).".to_string());
+            }
+            match boards::find_board(name) {
+                Some(b) => Some(b),
+                None => return Err(format!(
+                    "Unbekanntes Board '{name}'. Bekannte Boards: {}",
+                    boards::board_names().join(", ")
+                )),
+            }
+        }
+        None => None,
+    };
+    let target: Option<&str> = match (board_profile, target) {
+        (Some(b), Some(t)) if t != b.target => return Err(format!(
+            "--target '{t}' widerspricht --board '{}' (Board erwartet '{}'). --target weglassen oder passend setzen.",
+            b.name, b.target
+        )),
+        (Some(b), _) => Some(b.target),
+        (None, t) => t,
+    };
     // Haupt-Datei parsen
     let mut program = parse_file(file)?;
 
@@ -675,7 +851,7 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         // *-bare-Target baut moo->.o + moo_bare*.c -> ld -T script -> kernel.elf.
         let is_bare_target = target_str.contains("-bare");
         if is_bare_target && (kernel || linker_script.is_some()) {
-            return build_kernel(file, &compiler, output, target_str, linker_script, emit);
+            return build_kernel(file, &compiler, output, target_str, linker_script, emit, board_profile);
         }
         let obj_path = output
             .map(|p| p.to_path_buf())
@@ -825,7 +1001,7 @@ fn run(file: &PathBuf) -> Result<(), String> {
     let tmp_dir = std::env::temp_dir();
     let tmp_output = tmp_dir.join("moo_tmp_binary");
 
-    compile(file, Some(&tmp_output), false, None, false, None, None, false, false, false, "elf")?;
+    compile(file, Some(&tmp_output), false, None, false, None, None, false, false, false, "elf", None)?;
 
     let status = Command::new(&tmp_output)
         .status()
@@ -900,7 +1076,7 @@ fn repl() {
         }
 
         unsafe { std::env::set_var("MOO_QUIET", "1"); }
-        match compile(&tmp_src, Some(&tmp_bin), false, None, false, None, None, false, false, false, "elf") {
+        match compile(&tmp_src, Some(&tmp_bin), false, None, false, None, None, false, false, false, "elf", None) {
             Ok(()) => {
                 // Erfolgreich kompiliert — ausfuehren (ohne den "Kompiliert" Output)
                 let _ = Command::new(&tmp_bin).status();

@@ -75,7 +75,70 @@ void kern_seriell_zeichen_c(char c) {
     kern_outb(UART_COM1 + UART_DATA, (uint8_t)c);
 }
 
-#else  /* compile-only Stubs fuer aarch64/riscv64 */
+#elif defined(MOO_BOARD_UART_PL011)
+
+/* ======================================================================
+ * PL011-UART (P012-D1) — qemu-virt-aarch64, Basis aus Board-Define.
+ * Quellen: ARM PL011 TRM (DDI 0183) + Board-Profil qemu-virt-aarch64
+ * (boards.rs: 0x09000000, QEMU hw/arm/virt.c-Memmap). Zugriff strikt
+ * volatile MMIO via kern_mmio_* (P012-B3) — KEIN x86-Port-I/O, das ist
+ * auf ARM ein no-op-Stub (moo_bare.c).
+ * ====================================================================== */
+
+#ifndef MOO_BOARD_UART_BASE
+#error "MOO_BOARD_UART_PL011 gesetzt, aber MOO_BOARD_UART_BASE fehlt — Build via --board (P012-C1)"
+#endif
+
+/* PL011-Registeroffsets (DDI 0183). */
+#define PL011_DR     0x00u  /* Data */
+#define PL011_FR     0x18u  /* Flags: Bit3 BUSY, Bit5 TXFF (TX-FIFO voll) */
+#define PL011_LCR_H  0x2Cu  /* Bit4 FEN (FIFO), Bits 6:5 WLEN=11 (8 Bit) -> 0x70 = 8N1+FIFO */
+#define PL011_CR     0x30u  /* Bit0 UARTEN, Bit8 TXE, Bit9 RXE */
+#define PL011_IMSC   0x38u  /* Interrupt-Maske */
+#define PL011_ICR    0x44u  /* Interrupt-Clear (write 0x7FF = alle) */
+
+static uintptr_t g_pl011_base = (uintptr_t)MOO_BOARD_UART_BASE;
+static bool g_uart_bereit = false;
+
+/* Init auf expliziter Basis (Task-API P012-D1). QEMUs virt-PL011 ist
+ * nach Reset bereits sendefaehig; das Init ist trotzdem vollstaendig:
+ * disable -> IRQs maskieren/loeschen -> 8N1+FIFO -> UARTEN|TXE|RXE.
+ * Baudrate (IBRD/FBRD) bleibt bewusst auf dem QEMU-Default — echte
+ * Hardware (H1/Raspi4) braucht clock-abhaengige Divisoren (dann hier
+ * ergaenzen, Quelle: DDI 0183 Kap. 3.3.6). */
+MooValue kern_seriell_init_addr(uintptr_t base) {
+    g_pl011_base = base;
+    kern_mmio_write32(base + PL011_CR, 0u);            /* UART aus */
+    kern_mmio_write32(base + PL011_IMSC, 0u);          /* IRQs maskieren */
+    kern_mmio_write32(base + PL011_ICR, 0x7FFu);       /* pending loeschen */
+    kern_mmio_write32(base + PL011_LCR_H, 0x70u);      /* 8N1 + FIFO */
+    kern_mmio_write32(base + PL011_CR, (1u << 0) | (1u << 8) | (1u << 9));
+    g_uart_bereit = true;
+    return moo_bool(true);
+}
+
+MooValue kern_seriell_init(void) {
+    return kern_seriell_init_addr((uintptr_t)MOO_BOARD_UART_BASE);
+}
+
+void kern_seriell_zeichen_c(char c) {
+    if (!g_uart_bereit) return;
+    /* CR vor LF fuer saubere Terminal-Darstellung (wie 16550-Pfad). */
+    if (c == '\n') {
+        unsigned s0 = 0;
+        while (kern_mmio_read32(g_pl011_base + PL011_FR) & (1u << 5)) {
+            if (++s0 > 1000000u) return;   /* Watchdog: nie ewig blockieren */
+        }
+        kern_mmio_write32(g_pl011_base + PL011_DR, (uint32_t)'\r');
+    }
+    unsigned spin = 0;
+    while (kern_mmio_read32(g_pl011_base + PL011_FR) & (1u << 5)) {  /* TXFF */
+        if (++spin > 1000000u) return;
+    }
+    kern_mmio_write32(g_pl011_base + PL011_DR, (uint32_t)(uint8_t)c);
+}
+
+#else  /* aarch64/riscv64 ohne Board-UART: compile-only Stubs */
 
 MooValue kern_seriell_init(void) { return moo_bool(false); }
 void kern_seriell_zeichen_c(char c) { (void)c; }

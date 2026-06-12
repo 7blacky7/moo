@@ -1,0 +1,47 @@
+# test_abi_matrix.moo — P012-B2: MooValue-Struct-Passing-ABI-Matrix.
+#
+# Aritaeten 0/1/2/4/5/8, Return-Werte, verschachtelte Calls (Returns als
+# Args), benannte Funktionen + 4-arg-Lambda (plain-fn_ptr-Arity-Cast in
+# moo_stdlib.c) + 4-arg-Closure mit 2 Captures (Trampoline-Pfad:
+# MooFunc* + 4 MooValues). MooValue ist { u64 tag, u64 data } = 16 Byte
+# by-value — beide Seiten (LLVM-Codegen-Definition, C-Runtime-Caller)
+# sind identisch prototypisiert, das ABI-Lowering macht LLVM/cc pro
+# Target. Der Hosted-Lauf beweist die Konsistenz end-to-end auf dem
+# Host-Triple; Cross-Objekt-Emission: P012-B2-Ergebnis-Thought.
+
+funktion null_args():
+    gib_zurück 42
+
+funktion ein_arg(a):
+    gib_zurück a * 2
+
+funktion zwei_args(a, b):
+    gib_zurück a * 10 + b
+
+funktion vier_args(a, b, c, d):
+    gib_zurück a * 1000 + b * 100 + c * 10 + d
+
+funktion fuenf_args(a, b, c, d, e):
+    gib_zurück a * 10000 + b * 1000 + c * 100 + d * 10 + e
+
+funktion acht_args(a, b, c, d, e, f, g, h):
+    gib_zurück a * 10000000 + b * 1000000 + c * 100000 + d * 10000 + e * 1000 + f * 100 + g * 10 + h
+
+zeige null_args()
+zeige ein_arg(21)
+zeige zwei_args(4, 2)
+zeige vier_args(1, 2, 3, 4)
+zeige fuenf_args(1, 2, 3, 4, 5)
+zeige acht_args(1, 2, 3, 4, 5, 6, 7, 8)
+# Verschachtelt: Returns direkt als Argumente.
+zeige zwei_args(ein_arg(2), null_args())
+
+# 4-arg-Lambda ohne Captures: plain-Funktionspointer-Pfad.
+setze l4 auf (a, b, c, d) => a * 1000 + b * 100 + c * 10 + d
+zeige l4(9, 8, 7, 6)
+
+# 4-arg-Closure mit 2 Captures: Trampoline-Pfad (MooFunc* + 4 Args).
+setze basis auf 5
+setze faktor auf 3
+setze c4 auf (a, b, c, d) => (a + b + c + d) * faktor + basis
+zeige c4(1, 2, 3, 4)

@@ -84,6 +84,7 @@ pub struct RuntimeBindings<'ctx> {
     pub kern_pic_eoi: FunctionValue<'ctx>,
     pub kern_timer_init: FunctionValue<'ctx>,
     pub kern_ticks: FunctionValue<'ctx>,
+    pub kern_stackprot_selbsttest: FunctionValue<'ctx>,
     // String
     pub moo_string_concat: FunctionValue<'ctx>,
     // List
@@ -681,6 +682,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             kern_pic_eoi: decl_mv_mv!("kern_pic_eoi", mv1),
             kern_timer_init: decl_mv_mv!("kern_timer_init", mv1),
             kern_ticks: decl_mv_mv!("kern_ticks", &[]),
+            kern_stackprot_selbsttest: decl_mv_mv!("kern_stackprot_selbsttest", &[]),
 
             // String
             moo_string_concat: decl_mv_mv!("moo_string_concat", mv2),

@@ -183,6 +183,7 @@ impl<'ctx> CodeGen<'ctx> {
             | "kern_pic_maskiere" | "kern_pic_mask"
             | "kern_pic_demaskiere" | "kern_pic_unmask"
             | "kern_pic_eoi" | "kern_timer_init" | "kern_ticks"
+            | "kern_stackprot_selbsttest"
             | "kern_inw" | "kern_outw" | "kern_inl" | "kern_outl"
             | "kern_rdmsr_lo" | "kern_rdmsr_hi" | "kern_wrmsr"
             | "kern_msr_lese_lo" | "kern_msr_lese_hi" | "kern_msr_schreibe"
@@ -546,9 +547,13 @@ impl<'ctx> CodeGen<'ctx> {
             "native" | "" => TargetMachine::get_default_triple().to_string(),
             "x86_64" | "x64" => "x86_64-unknown-linux-gnu".to_string(),
             "x86_64-bare" | "x64-bare" => "x86_64-unknown-none".to_string(),
+            // P012-B1: 32-bit-x86-Bare explizit (Legacy-Stage2-Pfad, P011-F1).
+            "i386-bare" | "i686-bare" | "x86-bare" => "i686-unknown-none".to_string(),
             "x86" | "i686" | "i386" => "i686-unknown-linux-gnu".to_string(),
             "arm" | "armv7" => "arm-unknown-linux-gnueabihf".to_string(),
             "arm-bare" => "arm-none-eabi".to_string(),
+            // P012-B1: ARMv7-Bare explizit (LLVM akzeptiert armv7-none-eabi).
+            "armv7-bare" => "armv7-none-eabi".to_string(),
             "aarch64" | "arm64" => "aarch64-unknown-linux-gnu".to_string(),
             "aarch64-bare" | "arm64-bare" => "aarch64-unknown-none".to_string(),
             "riscv64" => "riscv64-unknown-linux-gnu".to_string(),
@@ -573,9 +578,11 @@ impl<'ctx> CodeGen<'ctx> {
             ("native", "Host-System (Standard)"),
             ("x86_64", "64-bit x86 (Linux)"),
             ("x86_64-bare", "Freestanding x86_64 (Bare-Metal OS)"),
+            ("i686-bare", "Freestanding 32-bit x86 (Bare-Metal, Legacy-Stage2)"),
             ("x86", "32-bit x86 (Linux)"),
             ("arm", "ARMv7 (Linux, z.B. Raspberry Pi)"),
             ("arm-bare", "Freestanding ARM (Bare-Metal OS)"),
+            ("armv7-bare", "Freestanding ARMv7 (Bare-Metal OS)"),
             ("aarch64", "ARM 64-bit (Linux, z.B. Apple M-Serie)"),
             ("aarch64-bare", "Freestanding AArch64 (Bare-Metal OS)"),
             ("riscv64", "RISC-V 64-bit (Linux)"),
@@ -616,13 +623,25 @@ impl<'ctx> CodeGen<'ctx> {
             ("generic".to_string(), String::new())
         };
 
+        // P011-F1: Bare-Metal-Targets (freestanding, *-none-Triple) brauchen
+        // RelocMode::Static. PIC erzeugt auf i686 GOT-relative Zugriffe
+        // (_GLOBAL_OFFSET_TABLE_) — im Bootloader/Kernel gibt es aber keine
+        // GOT, der Loader laedt ein flaches Image an eine feste Adresse.
+        // Auf x86_64-bare ist es ein No-op (RIP-relativ, keine GOT noetig);
+        // auf i686-none (Legacy-Stage2) behebt es den fehlenden-GOT-Crash.
+        let reloc_mode = if triple_str.contains("-none") {
+            RelocMode::Static
+        } else {
+            RelocMode::PIC
+        };
+
         let machine = target_obj
             .create_target_machine(
                 &triple,
                 &cpu_str,
                 &feat_str,
                 OptimizationLevel::Default,
-                RelocMode::PIC,
+                reloc_mode,
                 CodeModel::Default,
             )
             .ok_or(format!("Konnte TargetMachine fuer '{}' nicht erstellen", triple_str))?;
@@ -2794,6 +2813,10 @@ impl<'ctx> CodeGen<'ctx> {
                     "kern_ticks" => {
                         self.require_bare("kern_ticks")?;
                         return self.call_rt(self.rt.kern_ticks, &[], "kern_ticks");
+                    }
+                    "kern_stackprot_selbsttest" => {
+                        self.require_bare("kern_stackprot_selbsttest")?;
+                        return self.call_rt(self.rt.kern_stackprot_selbsttest, &[], "kern_stackprot_selbsttest");
                     }
                     // Netzwerk
                     "ausfuehren" | "eval" => {

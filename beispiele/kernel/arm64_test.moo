@@ -1,0 +1,31 @@
+# arm64_test.moo — P012-D5: minimaler moo-Kernel fuer qemu-virt-aarch64.
+#
+# Build: moo-compiler compile beispiele/kernel/arm64_test.moo \
+#            --no-stdlib --kernel --board qemu-virt-aarch64 -o arm64_test.elf
+# Boot-Test: scripts/kernel-smoke-arm64.sh (qemu-system-aarch64 -M virt, KEIN GRUB).
+#
+# Entry/PL011-Init/DTB-Log macht moo_bare_entry_arm64.c VOR main().
+# Dieses Programm beweist, dass LLVM-aarch64-codegenerierter moo-Code
+# auf der virt-Maschine laeuft: Marker 'MOO-ARM64-MOO-OK' Zeichen fuer
+# Zeichen (bare-Pfad: keine String-Literale), dann wfi-Schleife.
+
+unsicher:
+    kern_seriell_zeichen(77)   # M
+    kern_seriell_zeichen(79)   # O
+    kern_seriell_zeichen(79)   # O
+    kern_seriell_zeichen(45)   # -
+    kern_seriell_zeichen(65)   # A
+    kern_seriell_zeichen(82)   # R
+    kern_seriell_zeichen(77)   # M
+    kern_seriell_zeichen(54)   # 6
+    kern_seriell_zeichen(52)   # 4
+    kern_seriell_zeichen(45)   # -
+    kern_seriell_zeichen(77)   # M
+    kern_seriell_zeichen(79)   # O
+    kern_seriell_zeichen(79)   # O
+    kern_seriell_zeichen(45)   # -
+    kern_seriell_zeichen(79)   # O
+    kern_seriell_zeichen(75)   # K
+    kern_seriell_zeichen(10)   # \n
+    solange wahr:
+        halt()

@@ -110,6 +110,15 @@ EXTRA_HARNESSES=(
   #               VGA-Pfade werden nie aufgerufen (0xB8000), nur gelinkt.
   "test_bare_alloc_asan.c|moo_bare_alloc.c moo_bare_console.c|-lm"
   "test_bare_portio_asan.c|moo_bare.c moo_bare_console.c|-DMOO_BARE_PORT_STUB -lm"
+  #   stackprot: P012-A4 — Fail-Bruecke __stack_chk_fail -> kern_panic auf dem
+  #              Host. Linkt NUR moo_bare_stackprot.c; Stubs im Harness:
+  #              kern_panic (longjmp), kern_seriell_text (no-op), moo_none.
+  #              Der echte Canary-Kipp-Beweis ist scripts/sp-smoke.sh (QEMU).
+  "test_stackprot_asan.c|moo_bare_stackprot.c|"
+  #   bare_mmio: P012-B3 — portables MMIO-API (moo_mem_read/write +
+  #              kern_mmio_*) gegen malloc-Arena, volatile 1/2/4/8,
+  #              invalid-size-Semantik. Port-Funktionen nur gelinkt.
+  "test_bare_mmio_asan.c|moo_bare.c|"
 )
 
 # --- Sanitizer-Verfuegbarkeit pruefen (Probe-Kompilat) ----------------------
