@@ -17,7 +17,7 @@ SMOKE_LINE=$(grep -n "^# Smoketest" beispiele/domain/db/postgres_client.moo | he
 LIB_END=$((SMOKE_LINE - 1))
 for name in bench_copy bench_prepared bench_pipelining bench_binary bench_pool; do
     echo "=== $name ==="
-    { head -n "$LIB_END" beispiele/domain/db/postgres_client.moo; cat scratch/db_bench/$name.moo; } > /tmp/run.moo
+    { head -n "$LIB_END" beispiele/domain/db/postgres_client.moo; cat beispiele/domain/db/bench/$name.moo; } > /tmp/run.moo
     ./compiler/target/release/moo-compiler run /tmp/run.moo
 done
 

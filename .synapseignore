@@ -11,10 +11,10 @@ tmp/
 nohup.out
 *.ll
 
-# Beispiele/Demos standardmäßig aus dem Synapse-Codeindex ausblenden.
-# Regel: Beispiele sind Projektwert, nicht Müll. Bei Arbeit an Beispielen
-# diesen Block temporär gezielt lockern/entfernen, statt Dateien zu löschen.
-beispiele/
+# Beispiele/Demos: Eintrag "beispiele/" bei Bedarf wieder aktivieren, um
+# den Index schlank zu halten (Koordinatorregel). Aktuell AUSGETRAGEN
+# (PerfPhase-Integration 2026-06-12, Arbeit an beispiele/domain/db/).
+# beispiele/
 
 # Manuelle/lebhafte Testflächen, nur bei Bedarf indexieren.
 tests/
