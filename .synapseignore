@@ -1,3 +1,4 @@
+# Build-/Tool-Artefakte
 compiler/target/
 .venv/
 __pycache__/
@@ -9,3 +10,11 @@ scratch/
 tmp/
 nohup.out
 *.ll
+
+# Beispiele/Demos standardmäßig aus dem Synapse-Codeindex ausblenden.
+# Regel: Beispiele sind Projektwert, nicht Müll. Bei Arbeit an Beispielen
+# diesen Block temporär gezielt lockern/entfernen, statt Dateien zu löschen.
+beispiele/
+
+# Manuelle/lebhafte Testflächen, nur bei Bedarf indexieren.
+tests/
