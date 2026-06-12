@@ -56,7 +56,25 @@ impl Lexer {
 
         let line = tokens.last().map(|t| t.line).unwrap_or(1);
         tokens.push(Token::new(TokenType::Eof, line, 0));
-        Ok(tokens)
+
+        // Implizite Line-Continuation innerhalb von (), [], {}: Layout-Tokens
+        // (Newline/Indent/Dedent) werden gedroppt solange Bracket-Depth > 0.
+        // Erlaubt multi-line Argumentlisten, List-/Dict-Literale, Funktions-Parameter.
+        let mut depth: i32 = 0;
+        let filtered: Vec<Token> = tokens.into_iter().filter(|t| {
+            match t.token_type {
+                TokenType::LParen | TokenType::LBracket | TokenType::LBrace => {
+                    depth += 1; true
+                }
+                TokenType::RParen | TokenType::RBracket | TokenType::RBrace => {
+                    depth -= 1; true
+                }
+                TokenType::Newline | TokenType::Indent | TokenType::Dedent if depth > 0 => false,
+                _ => true,
+            }
+        }).collect();
+
+        Ok(filtered)
     }
 
     fn handle_indent(&mut self, indent: usize, line: usize, tokens: &mut Vec<Token>) {

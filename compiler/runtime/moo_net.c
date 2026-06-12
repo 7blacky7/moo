@@ -6,6 +6,7 @@
 #include "moo_runtime.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -133,6 +134,9 @@ MooValue moo_tcp_connect(MooValue host, MooValue port) {
         moo_throw(moo_string_new("Verbindung fehlgeschlagen"));
         return moo_none();
     }
+
+    int one = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
     return make_socket(fd, SOCK_STREAM, false);
 }
