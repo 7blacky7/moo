@@ -36,14 +36,26 @@ typedef int    moo_ssize_t;
 #define MOO_SOPT(p)        ((const char*)(p))
 
 /* WSAStartup einmal pro Translation-Unit beim Programmstart (vor main).
- * MinGW unterstuetzt __attribute__((constructor)) ueber die CRT-.ctors.
+ * GCC/MinGW: __attribute__((constructor)) ueber die CRT-.ctors.
+ * MSVC: Funktionspointer in der CRT-Initializer-Section .CRT$XCU.
  * Mehrfaches WSAStartup (net + web) ist erlaubt — Windows refcountet;
  * auf WSACleanup wird bewusst verzichtet (Prozessende raeumt auf). */
+#if defined(_MSC_VER)
+static int moo_net_wsa_init_impl_(void) {
+    WSADATA wsa;
+    (void)WSAStartup(MAKEWORD(2, 2), &wsa);
+    return 0;
+}
+__pragma(section(".CRT$XCU", read))
+__declspec(allocate(".CRT$XCU"))
+static int (*moo_net_wsa_init_ptr_)(void) = moo_net_wsa_init_impl_;
+#else
 static void moo_net_wsa_init_(void) __attribute__((constructor));
 static void moo_net_wsa_init_(void) {
     WSADATA wsa;
     (void)WSAStartup(MAKEWORD(2, 2), &wsa);
 }
+#endif
 
 #else /* POSIX */
 

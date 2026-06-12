@@ -7,7 +7,8 @@ name: UI Module Cross-Platform CI
 #   - Linux   (ubuntu-latest)  → GTK3 + libappindicator3, voller Smoke-Test
 #                                mit `timeout` gegen moo_ui_gtk.c
 #   - Windows (windows-latest) → Win32-SDK bereits im Image, testet
-#                                moo_ui_win32.c (Phase 3, blind geschrieben)
+#                                moo_ui_win32.c + den P013-Kern-Port
+#                                (Winsock2, CreateProcess-Pfade, win_regex)
 #   - macOS   (macos-latest)   → Cocoa-Frameworks im Image, testet
 #                                moo_ui_cocoa.m   (Phase 4, blind geschrieben)
 #
@@ -15,8 +16,14 @@ name: UI Module Cross-Platform CI
 # um die UI-Fehler zu isolieren. Das 3D-Backend hat seinen eigenen
 # Workflow (3d-backends.yml).
 #
-# Failures unter windows/macos sind ERWARTET beim ersten Run; Agents
-# ui-win32 / ui-cocoa iterieren auf Basis der GitHub-Actions-Logs.
+# P013-Stand (2026-06-12): Die komplette Kern-Runtime kompiliert fuer
+# Windows — alle POSIX-Pfade (moo_net/web/eval/video/regex) sind portiert
+# und MinGW-verifiziert (x86_64-w64-mingw32-gcc, 0 Fehler; Details:
+# Synapse-Plan P013 + runtime/win_regex/README.md). DIESER Job baut mit
+# der MSVC-Toolchain (windows-msvc + vcpkg) und bleibt experimental, bis
+# der erste Lauf gruen ist — moegliche Reste sind MSVC-spezifische
+# Diagnosen im vendorten musl/TRE-Regex. macOS ist weiterhin blind
+# geschrieben; ui-cocoa iteriert auf Basis der GitHub-Actions-Logs.
 # ============================================================================
 
 on:
