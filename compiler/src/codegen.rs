@@ -546,6 +546,11 @@ impl<'ctx> CodeGen<'ctx> {
         match target {
             "native" | "" => TargetMachine::get_default_triple().to_string(),
             "x86_64" | "x64" => "x86_64-unknown-linux-gnu".to_string(),
+            // P013: Windows-Cross-Target (COFF, MinGW-ABI). Objekt-only wie
+            // alle Cross-Targets — gelinkt wird auf dem Zielsystem
+            // (x86_64-w64-mingw32-gcc bzw. nativ unter Windows, siehe
+            // runtime/win_regex/README.md + P013-Doku).
+            "x86_64-windows" | "windows" | "win64" => "x86_64-pc-windows-gnu".to_string(),
             "x86_64-bare" | "x64-bare" => "x86_64-unknown-none".to_string(),
             // P012-B1: 32-bit-x86-Bare explizit (Legacy-Stage2-Pfad, P011-F1).
             "i386-bare" | "i686-bare" | "x86-bare" => "i686-unknown-none".to_string(),
@@ -577,6 +582,7 @@ impl<'ctx> CodeGen<'ctx> {
         vec![
             ("native", "Host-System (Standard)"),
             ("x86_64", "64-bit x86 (Linux)"),
+            ("x86_64-windows", "64-bit x86 (Windows, COFF — Linken via MinGW/Windows)"),
             ("x86_64-bare", "Freestanding x86_64 (Bare-Metal OS)"),
             ("i686-bare", "Freestanding 32-bit x86 (Bare-Metal, Legacy-Stage2)"),
             ("x86", "32-bit x86 (Linux)"),
