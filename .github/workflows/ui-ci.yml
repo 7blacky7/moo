@@ -31,8 +31,10 @@ on:
     branches: [master, main]
     paths:
       - "compiler/src/**"
-      - "compiler/runtime/moo_ui*"
-      - "compiler/runtime/moo_tray*"
+      # Der Job baut+linkt die KOMPLETTE Kern-Runtime (libmoo_runtime.a) —
+      # jede runtime-Datei kann den Link brechen (Lehre: cf12afc/moo_stdlib.c
+      # triggerte keinen Run, CLOCK_MONOTONIC-Fix blieb unbewiesen).
+      - "compiler/runtime/**"
       - "compiler/Cargo.toml"
       - "compiler/build.rs"
       - "beispiele/ui_login_demo.moo"
@@ -41,8 +43,7 @@ on:
   pull_request:
     paths:
       - "compiler/src/**"
-      - "compiler/runtime/moo_ui*"
-      - "compiler/runtime/moo_tray*"
+      - "compiler/runtime/**"
       - "compiler/Cargo.toml"
       - "compiler/build.rs"
       - "beispiele/ui_login_demo.moo"
