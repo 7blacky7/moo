@@ -363,20 +363,36 @@ MooValue moo_func_with_captures(void* tramp_ptr, int32_t arity,
 }
 
 // === Timing ===
-
-MooValue moo_time(void) {
+// P013: MSVC/UCRT kennt clock_gettime/CLOCK_MONOTONIC nicht (C2065 im CI).
+// Windows nutzt QueryPerformanceCounter — monoton + hochaufloesend. Die
+// idempotente freq-Initialisierung ist race-harmlos (gleicher Wert).
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+static double moo_monotonic_secs(void) {
+    static LARGE_INTEGER freq;
+    LARGE_INTEGER now;
+    if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&now);
+    return (double)now.QuadPart / (double)freq.QuadPart;
+}
+#else
+static double moo_monotonic_secs(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    double secs = (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
-    return moo_number(secs);
+    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
+#endif
+
+MooValue moo_time(void) {
+    return moo_number(moo_monotonic_secs());
 }
 
 // Zeit in Millisekunden (monotonic) — fuer Game-Loops und Performance-Messung
 MooValue moo_time_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    double ms = (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
-    return moo_number(ms);
+    return moo_number(moo_monotonic_secs() * 1000.0);
 }
 
 // === Syscall (Linux only) ===
