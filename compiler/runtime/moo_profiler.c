@@ -5,6 +5,14 @@
 
 #include "moo_runtime.h"
 #include <time.h>
+/* P013: CLOCK_MONOTONIC ist POSIX — Windows nutzt QueryPerformanceCounter
+ * (gleiche Schablone wie moo_time/_ms in moo_core.c, Commit cf12afc). */
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 #define MAX_PROFILE_ENTRIES 256
 
@@ -19,9 +27,17 @@ static ProfileEntry profile_table[MAX_PROFILE_ENTRIES];
 static int profile_count = 0;
 
 static double get_time_sec(void) {
+#ifdef _WIN32
+    static LARGE_INTEGER freq = { .QuadPart = 0 };
+    LARGE_INTEGER now;
+    if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&now);
+    return (double)now.QuadPart / (double)freq.QuadPart;
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+#endif
 }
 
 static ProfileEntry* find_or_create(const char* name) {

@@ -29,6 +29,7 @@ fn main() {
         .file("runtime/moo_video.c")        // ffmpeg-Pipe MP4-Kern (Plan-009 V0, pure C/POSIX)
         .file("runtime/moo_video_handle.c") // moo-Heap-Wrapper MOO_VIDEO (immer gebaut)
         .file("runtime/moo_tensor.c")       // KI-Tensor-Kern MOO_TENSOR (Plan-014 A1, immer gebaut)
+        .file("runtime/moo_tensor_ops.c")   // Tensor-Ops + Op-Registry (Plan-014 A2, immer gebaut)
         .file("runtime/moo_string.c")
         .file("runtime/moo_list.c")
         .file("runtime/moo_dict.c")

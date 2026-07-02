@@ -141,6 +141,63 @@ MooValue moo_tensor_groesse(MooValue t);
 MooValue moo_tensor_zu_liste(MooValue t);
 MooValue moo_tensor_to_string(MooValue t);
 
+// Intern (P014-A2): Roh-Konstruktor fuer die Ops-Schicht (moo_tensor_ops.c).
+// Liefert refcount=1, data calloc'd (0.0f). NICHT fuer Codegen/Bindings.
+MooTensor* moo_tensor_raw(int32_t ndim, const int32_t* shape);
+
+// === Tensor-Ops + Registry (Plan-014 A2) ===
+// Alle Ops: Tensor-Konvention (Args borrowed, Rueckgabe +1 owning).
+// Elementwise-Ops broadcasten nach NumPy-Regeln. Div folgt IEEE-754
+// (x/0 = inf/nan, KEIN throw) — ML-ueblich und ehrlich dokumentiert.
+// Reduktionen mit Achse behalten die Dimension (keepdims), damit das
+// Ergebnis direkt zurueck-broadcastet (Softmax/Norm-Muster).
+MooValue moo_tensor_add(MooValue a, MooValue b);
+MooValue moo_tensor_sub(MooValue a, MooValue b);
+MooValue moo_tensor_mul(MooValue a, MooValue b);
+MooValue moo_tensor_div(MooValue a, MooValue b);
+MooValue moo_tensor_adds(MooValue a, MooValue zahl);
+MooValue moo_tensor_subs(MooValue a, MooValue zahl);
+MooValue moo_tensor_muls(MooValue a, MooValue zahl);
+MooValue moo_tensor_divs(MooValue a, MooValue zahl);
+MooValue moo_tensor_matmul(MooValue a, MooValue b);
+MooValue moo_tensor_transponieren(MooValue a);
+MooValue moo_tensor_umformen(MooValue a, MooValue shape_list);
+MooValue moo_tensor_zeilen(MooValue a, MooValue start, MooValue ende);
+MooValue moo_tensor_verbinden(MooValue a, MooValue b);
+MooValue moo_tensor_summe(MooValue a, MooValue achse);
+MooValue moo_tensor_mittel(MooValue a, MooValue achse);
+MooValue moo_tensor_maximum(MooValue a, MooValue achse);
+MooValue moo_tensor_exp(MooValue a);
+MooValue moo_tensor_log(MooValue a);
+MooValue moo_tensor_sqrt(MooValue a);
+MooValue moo_tensor_neg(MooValue a);
+MooValue moo_tensor_pow(MooValue a, MooValue zahl);
+MooValue moo_tensor_relu(MooValue a);
+MooValue moo_tensor_sigmoid(MooValue a);
+MooValue moo_tensor_tanh(MooValue a);
+MooValue moo_tensor_gelu(MooValue a);
+MooValue moo_tensor_softmax(MooValue a);
+MooValue moo_tensor_logsoftmax(MooValue a);
+
+// Op-Registry: neuer Op = 1 Funktion + 1 Tabelleneintrag (Erweiterbarkeits-
+// Vertrag). backward wird von Autograd (B1) nachgetragen; B2 lehnt Ops ohne
+// Gradient-Check ab. Iteration via count/at ist fuer B2 gedacht.
+typedef enum {
+    MOO_OP_UNARY = 1,          // fw1(a)
+    MOO_OP_BINARY = 2,         // fw2(a, b)  — broadcastet
+    MOO_OP_BINARY_SCALAR = 3,  // fw2(a, zahl)
+} MooTensorOpArt;
+typedef struct {
+    const char* name;          // z.B. "add", "matmul", "relu"
+    MooTensorOpArt art;
+    MooValue (*fw1)(MooValue a);
+    MooValue (*fw2)(MooValue a, MooValue b);
+    void* bw;                  // Autograd-backward (B1), NULL = noch keins
+} MooTensorOp;
+const MooTensorOp* moo_tensor_op_lookup(const char* name);
+int moo_tensor_op_count(void);
+const MooTensorOp* moo_tensor_op_at(int i);
+
 typedef struct {
     int32_t  refcount;   // MUSS erstes Feld sein (Refcount-Konvention)
     int32_t  width;

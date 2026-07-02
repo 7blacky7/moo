@@ -29,7 +29,9 @@
 // Baut einen leeren Tensor mit gegebenem Shape. data wird via calloc
 // angelegt (moo_alloc nullt NICHT — Airbag-Gotcha) und ist damit bereits
 // mit 0.0f gefuellt. Gibt NULL zurueck wenn Shape ungueltig (nach moo_throw).
-static MooTensor* tensor_alloc(int32_t ndim, const int32_t* shape) {
+// NON-STATIC (P014-A2): interner Roh-Konstruktor fuer moo_tensor_ops.c —
+// NICHT fuer Bindings gedacht (dort immer die moo_tensor_*-MooValue-API).
+MooTensor* moo_tensor_raw(int32_t ndim, const int32_t* shape) {
     if (ndim < 1 || ndim > MOO_TENSOR_MAX_DIMS) {
         char msg[128];
         snprintf(msg, sizeof(msg),
@@ -209,7 +211,7 @@ void moo_tensor_free(void* ptr) {
 MooValue moo_tensor_neu(MooValue shape_list, MooValue fill) {
     int32_t shape[MOO_TENSOR_MAX_DIMS]; int32_t ndim;
     if (!shape_from_list(shape_list, shape, &ndim)) return moo_none();
-    MooTensor* t = tensor_alloc(ndim, shape);
+    MooTensor* t = moo_tensor_raw(ndim, shape);
     if (!t) return moo_none();
     double f = (fill.tag == MOO_NUMBER) ? MV_NUM(fill) : 0.0;
     if (f != 0.0) {                      // calloc hat bereits 0.0f geliefert
@@ -230,7 +232,7 @@ MooValue moo_tensor_einsen(MooValue shape_list) {
 MooValue moo_tensor_zufall(MooValue shape_list, MooValue seed) {
     int32_t shape[MOO_TENSOR_MAX_DIMS]; int32_t ndim;
     if (!shape_from_list(shape_list, shape, &ndim)) return moo_none();
-    MooTensor* t = tensor_alloc(ndim, shape);
+    MooTensor* t = moo_tensor_raw(ndim, shape);
     if (!t) return moo_none();
     uint64_t s = (seed.tag == MOO_NUMBER) ? (uint64_t)(int64_t)MV_NUM(seed) : 42ULL;
     // Leerer Seed-Zustand waere degeneriert -> festes Salt dazu (Wrap ok).
@@ -271,7 +273,7 @@ MooValue moo_tensor_aus_liste(MooValue list) {
             }
         }
         int32_t shape[2] = { rows, cols };
-        MooTensor* t = tensor_alloc(2, shape);
+        MooTensor* t = moo_tensor_raw(2, shape);
         if (!t) return moo_none();
         for (int32_t r = 0; r < rows; r++) {
             MooList* row = MV_LIST(l->items[r]);
@@ -288,7 +290,7 @@ MooValue moo_tensor_aus_liste(MooValue list) {
     }
     // 1D-Fall
     int32_t shape[1] = { l->length };
-    MooTensor* t = tensor_alloc(1, shape);
+    MooTensor* t = moo_tensor_raw(1, shape);
     if (!t) return moo_none();
     for (int32_t i = 0; i < l->length; i++) {
         if (l->items[i].tag != MOO_NUMBER) {

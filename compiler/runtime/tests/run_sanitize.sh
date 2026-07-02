@@ -106,6 +106,10 @@ EXTRA_HARNESSES=(
   #               bringt das Test-throw-Modell mit (Flag + free des strdup-Texts,
   #               Muster Voxel-Harnesses) — sonst leaken Fehlerpfade by design.
   "test_tensor_asan.c|moo_tensor.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   tensor_ops: Plan-014 A2 — Op-Registry + Kern-Ops (Broadcasting/matmul/
+  #               Reduktionen/Aktivierungen/Softmax-Stabilitaet). Gleicher
+  #               Quell-Satz + Test-throw-Modell wie tensor.
+  "test_tensor_ops_asan.c|moo_tensor.c moo_tensor_ops.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   bare_alloc: Plan-010 T1 — Bare-Allocator (K3) + serielle Formatter (K2)
   #               auf dem Host. Linkt NUR moo_bare_alloc.c + moo_bare_console.c;
   #               moo_bare.c/moo_bare_boot.c bewusst NICHT (echte in/out-Asm
