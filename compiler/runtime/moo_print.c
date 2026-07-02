@@ -126,6 +126,9 @@ MooValue moo_to_string(MooValue v) {
             return moo_string_new("<Socket>");
         case MOO_WEBSERVER:
             return moo_string_new("<WebServer>");
+        case MOO_TENSOR:
+            // Delegiert an moo_tensor.c (liefert +1 owning String).
+            return moo_tensor_to_string(v);
         default:
             return moo_string_new("<unbekannt>");
     }

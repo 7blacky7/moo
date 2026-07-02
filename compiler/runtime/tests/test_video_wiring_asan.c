@@ -83,6 +83,8 @@ void moo_channel_free(void* p)      { (void)p; }
 void moo_db_free(void* p)           { (void)p; }
 void moo_db_stmt_free(void* p)      { (void)p; }
 void moo_window_free(void* p)       { (void)p; }
+void moo_tensor_free(void* p)       { (void)p; }  /* P014-A1: MOO_TENSOR-Dispatch */
+MooValue moo_tensor_to_string(MooValue v) { (void)v; return moo_string_new("<Tensor>"); }
 void moo_web_free(void* p)          { (void)p; }
 void moo_voxel_free(void* p)        { (void)p; }
 void moo_frame_free(void* p)        { (void)p; }

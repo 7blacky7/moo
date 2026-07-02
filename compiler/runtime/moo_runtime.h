@@ -34,6 +34,7 @@ typedef enum {
     MOO_FRAME = 20,
     MOO_GIF = 21,
     MOO_VIDEO = 22,
+    MOO_TENSOR = 23,
 } MooTag;
 
 // === Forward Declarations ===
@@ -97,12 +98,49 @@ void moo_web_free(void* ptr);
 void moo_voxel_free(void* ptr);
 void moo_frame_free(void* ptr);
 void moo_gif_handle_free(void* ptr);
+void moo_tensor_free(void* ptr);
 
 // === Frame (opaker Pixel-Frame-Heap-Typ, Plan-008 A3A) ===
 // Pixeldaten NIE als moo-Liste (MooValue=16B; ultrawide ~20MB/Frame). Opaker
 // refcounteter Heap-Typ. STANDARDISIERT: format 0 = RGBA8, top-left origin
 // (Y-Flip backend-uebergreifend einheitlich beim Grab erledigt). stride in Bytes.
 #define MOO_FRAME_FMT_RGBA8 0
+
+// === Tensor (Plan-014 A1) ===
+// KI-Kern-Datentyp: n-dimensionales f32-Array, row-major, contiguous.
+// IMMER gebaut (keine externen Deps, kein Feature-Gate — Lehre MOO_HAS_3D).
+//
+// TENSOR-KONVENTION (Refcount, bewusst EINE Regel fuer die ganze Domaene):
+//   * ALLE moo_tensor_*-Funktionen behandeln ALLE Argumente als GELIEHEN
+//     (borrowed): kein moo_release, kein moo_retain auf Args.
+//   * Rueckgabewerte sind +1 owning (frische Objekte).
+//   * Die Codegen-Arms machen Post-Call-Release aller Heap-Args
+//     (pure-Reader-Muster, Commit 072834f) — leak-messbar, kein Mix.
+#define MOO_TENSOR_MAX_DIMS 8
+typedef struct MooTensor {
+    int32_t  refcount;                       // MUSS erstes Feld sein
+    int32_t  ndim;                           // 1..MOO_TENSOR_MAX_DIMS
+    int64_t  size;                           // Produkt aller shape-Eintraege
+    int32_t  shape[MOO_TENSOR_MAX_DIMS];
+    int64_t  strides[MOO_TENSOR_MAX_DIMS];   // in Elementen, row-major
+    float*   data;                           // size Elemente, owned
+    float*   grad;                           // NULL oder size Elemente, owned (Autograd B1)
+    bool     requires_grad;
+} MooTensor;
+#define MV_TENSOR(v) ((MooTensor*)moo_val_as_ptr(v))
+
+MooValue moo_tensor_neu(MooValue shape_list, MooValue fill);
+MooValue moo_tensor_nullen(MooValue shape_list);
+MooValue moo_tensor_einsen(MooValue shape_list);
+MooValue moo_tensor_zufall(MooValue shape_list, MooValue seed);
+MooValue moo_tensor_aus_liste(MooValue list);
+MooValue moo_tensor_holen(MooValue t, MooValue idx_list);
+MooValue moo_tensor_setzen(MooValue t, MooValue idx_list, MooValue val);
+MooValue moo_tensor_form(MooValue t);
+MooValue moo_tensor_groesse(MooValue t);
+MooValue moo_tensor_zu_liste(MooValue t);
+MooValue moo_tensor_to_string(MooValue t);
+
 typedef struct {
     int32_t  refcount;   // MUSS erstes Feld sein (Refcount-Konvention)
     int32_t  width;
