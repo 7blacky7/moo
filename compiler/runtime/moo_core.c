@@ -4,7 +4,9 @@
  */
 
 #include "moo_runtime.h"
-#include <unistd.h>
+#ifndef _WIN32
+#include <unistd.h>   /* getpid() — Windows nutzt process.h/_getpid (unten) */
+#endif
 #include <stdlib.h>
 #include <time.h>
 

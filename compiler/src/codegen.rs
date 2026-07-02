@@ -2428,17 +2428,26 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_type_of, &[arg.into()], "typeof");
                     }
                     "länge" | "len" => {
+                        // Pure-Reader-Builtin: moo_length released sein Arg NICHT
+                        // (verifiziert moo_stdlib.c) — compile_expr liefert +1 owning
+                        // (INV-1), also hier Post-Call-Release. [VERIFY]-Altlast CG1,
+                        // Leak-Beweis: 81MB vs 21MB Baseline bei 1M Iterationen.
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_rt(self.rt.moo_length, &[arg.into()], "len");
+                        let res = self.call_rt(self.rt.moo_length, &[arg.into()], "len")?;
+                        self.call_rt_void(self.rt.moo_release, &[arg.into()], "rel_len_arg")?;
+                        return Ok(res);
                     }
                     "text" | "str" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_to_string, &[arg.into()], "str");
                     }
                     "zahl" | "num" => {
+                        // Pure-Reader-Builtin wie länge: moo_to_number (moo_core.c)
+                        // released nicht — Post-Call-Release des +1-Args.
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_rt(self.rt.moo_to_number, &[arg.into()], "to_num");
-                        // TODO: echte moo_to_number Funktion
+                        let res = self.call_rt(self.rt.moo_to_number, &[arg.into()], "to_num")?;
+                        self.call_rt_void(self.rt.moo_release, &[arg.into()], "rel_num_arg")?;
+                        return Ok(res);
                     }
                     "eingabe" | "input" => {
                         let arg = self.compile_expr(&args[0])?;

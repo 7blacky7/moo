@@ -12,13 +12,19 @@
  */
 
 #include "moo_runtime.h"
-#include <unistd.h>
+#ifndef _WIN32
+#include <unistd.h>   /* getpid() fuer Temp-Pfade — Windows-Pfad nutzt windows.h */
+#endif
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <process.h>   /* _getpid — Common-Code nutzt getpid() */
+#include <io.h>        /* _unlink — Common-Code nutzt unlink() */
+#define getpid _getpid
+#define unlink _unlink
 #endif
 
 extern MooValue moo_string_new(const char* s);
