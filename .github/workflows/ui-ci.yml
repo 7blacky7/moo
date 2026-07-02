@@ -69,7 +69,9 @@ jobs:
             exe_suffix: ".exe"
             experimental: true
           - os: macos-latest
-            target: x86_64-apple-darwin
+            # macos-latest laeuft auf Apple Silicon — der Job baut nativ arm64.
+            # Vorher stand hier faelschlich x86_64-apple-darwin (Label-Luege).
+            target: aarch64-apple-darwin
             exe_suffix: ""
             experimental: true
 
@@ -178,6 +180,10 @@ jobs:
           echo "CPATH=${SDL2_PREFIX}/include:${SDL2_PREFIX}/include/SDL2:${SDL2_IMAGE_PREFIX}/include:${SDL2_IMAGE_PREFIX}/include/SDL2:${CPATH}" >> $GITHUB_ENV
           echo "LIBRARY_PATH=${SDL2_PREFIX}/lib:${SDL2_IMAGE_PREFIX}/lib:${LIBRARY_PATH}" >> $GITHUB_ENV
           echo "BINDGEN_EXTRA_CLANG_ARGS=-I${SDL2_PREFIX}/include -I${SDL2_PREFIX}/include/SDL2 -I${SDL2_IMAGE_PREFIX}/include -I${SDL2_IMAGE_PREFIX}/include/SDL2" >> $GITHUB_ENV
+          # MACOSX_DEPLOYMENT_TARGET fuer cc-Build UND rustc-Link angleichen —
+          # sonst warnt ld: 'object file built for newer macOS version (15.5)
+          # than being linked (15.0)'. Dynamisch = ueberlebt Runner-Image-Bumps.
+          echo "MACOSX_DEPLOYMENT_TARGET=$(sw_vers -productVersion | cut -d. -f1).0" >> $GITHUB_ENV
 
       # ---------------------------------------------------------------------
       # Rust Toolchain

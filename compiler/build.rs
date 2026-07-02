@@ -84,6 +84,11 @@ fn main() {
             .file("runtime/moo_voxel.c")
             .file("runtime/moo_sprite.c")
             .include("/usr/include/SDL2");
+        // MOO_HAS_3D: signalisiert der OS-neutralen Kern-Runtime (moo_memory.c),
+        // dass moo_graphics.c/moo_voxel.c mitgelinkt werden. Ohne 3D-Feature
+        // duerfen moo_window_free/moo_voxel_free NICHT referenziert werden
+        // (CI-Run 27437564015: undefined reference im UI-only-Build).
+        build.define("MOO_HAS_3D", None);
     }
 
     // ========================================================================

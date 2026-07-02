@@ -86,14 +86,23 @@ void moo_release(MooValue v) {
         case MOO_DB_STMT:
             moo_db_stmt_free(moo_val_as_ptr(v));
             break;
+        // MOO_WINDOW/MOO_VOXELWORLD existieren nur in 3D-Builds (build.rs
+        // definiert dort MOO_HAS_3D). In UI-/Core-only-Builds gibt es keinen
+        // Erzeugungspfad fuer diese Tags — die Symbole moo_window_free/
+        // moo_voxel_free sind dann nicht gelinkt und duerfen hier nicht
+        // referenziert werden (Linkerfehler, CI-Run 27437564015).
         case MOO_WINDOW:
+#ifdef MOO_HAS_3D
             moo_window_free(moo_val_as_ptr(v));
+#endif
             break;
         case MOO_WEBSERVER:
             moo_web_free(moo_val_as_ptr(v));
             break;
         case MOO_VOXELWORLD:
+#ifdef MOO_HAS_3D
             moo_voxel_free(moo_val_as_ptr(v));
+#endif
             break;
         case MOO_FRAME:
             moo_frame_free(moo_val_as_ptr(v));

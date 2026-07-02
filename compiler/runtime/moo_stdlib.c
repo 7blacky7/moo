@@ -1,6 +1,7 @@
 #include "moo_runtime.h"
 #include <time.h>
-#include <unistd.h>
+// unistd.h wurde hier nie genutzt (verifiziert: keine POSIX-only-Aufrufe in
+// dieser Datei) und brach den MSVC-Build (C1083) — P013, CI-Run 27437564015.
 
 static bool random_seeded = false;
 
@@ -381,6 +382,7 @@ MooValue moo_time_ms(void) {
 // === Syscall (Linux only) ===
 #ifdef __linux__
 #include <sys/syscall.h>
+#include <unistd.h>   // syscall() — einziger unistd-Consumer dieser Datei
 
 MooValue moo_syscall(MooValue nr, MooValue arg1, MooValue arg2, MooValue arg3) {
     long sys_nr = (long)moo_as_number(nr);
