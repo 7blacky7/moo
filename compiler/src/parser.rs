@@ -707,10 +707,6 @@ impl Parser {
         Ok(Stmt::DataClassDef { name, fields })
     }
 
-    fn parse_function_def(&mut self) -> Result<Stmt, ParseError> {
-        self.parse_function_def_with_decorators(vec![])
-    }
-
     /// Überspringt eine optionale Typ-Annotation (": Typ").
     /// Nur Syntax — kein Type-Checking! (TypeScript-Ansatz: Typen als Dokumentation)
     fn skip_type_annotation(&mut self) {

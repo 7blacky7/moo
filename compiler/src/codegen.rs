@@ -5763,7 +5763,7 @@ impl<'ctx> CodeGen<'ctx> {
                         }
                         self.call_rt(function, &compiled_args, "pipe_call")
                     }
-                    Expr::MethodCall { object: _, method, args } => {
+                    Expr::MethodCall { .. } => {
                         // a |> obj.method(b) — left wird erstes Arg nach self
                         // Aber typischerweise: a |> method() — left als erstes Arg
                         Err(format!("Pipe in MethodCall noch nicht unterstuetzt"))
