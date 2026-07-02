@@ -148,9 +148,11 @@ fn main() {
     println!("cargo:rustc-link-lib=curl");
     println!("cargo:rustc-link-lib=sqlite3");
 
-    // P013: Winsock2 fuer moo_net.c/moo_web.c — nur Windows.
+    // P013: Winsock2 fuer moo_net.c/moo_web.c + bcrypt fuer moo_crypto.c
+    // (BCryptGenRandom) — nur Windows.
     if target_windows {
         println!("cargo:rustc-link-lib=ws2_32");
+        println!("cargo:rustc-link-lib=bcrypt");
     }
 
     // SDL2 wird nur von den feature-gated 3D/Grafik-Quellen referenziert.

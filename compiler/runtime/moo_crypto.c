@@ -1,6 +1,16 @@
 #include "moo_runtime.h"
+/* P013: /dev/urandom ist POSIX — Windows nutzt BCryptGenRandom (CSPRNG).
+ * fcntl.h/unistd.h existieren unter MSVC nicht (CI C1083). */
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <bcrypt.h>
+#else
 #include <fcntl.h>
 #include <unistd.h>
+#endif
 
 // ============================================================
 // SHA-256 Implementation
@@ -168,11 +178,20 @@ MooValue moo_secure_random(MooValue length) {
     if (n <= 0 || n > 1024) return moo_error("secure_random: Laenge 1-1024");
     uint8_t *buf = (uint8_t*)malloc((size_t)n);
     if (!buf) return moo_error("secure_random: malloc fehlgeschlagen");
+#ifdef _WIN32
+    /* System-CSPRNG — kryptographisch aequivalent zu /dev/urandom.
+     * Kein rand()-Fallback: das waere fuer secure_random ein Sicherheits-Hack. */
+    if (BCryptGenRandom(NULL, buf, (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) {
+        free(buf);
+        return moo_error("secure_random: BCryptGenRandom fehlgeschlagen");
+    }
+#else
     int fd = open("/dev/urandom", O_RDONLY);
     if (fd < 0) { free(buf); return moo_error("secure_random: /dev/urandom nicht verfuegbar"); }
     ssize_t rd = read(fd, buf, (size_t)n);
     close(fd);
     if (rd != n) { free(buf); return moo_error("secure_random: Lesefehler"); }
+#endif
     char *hex = (char*)malloc((size_t)(n * 2 + 1));
     for (int i = 0; i < n; i++)
         sprintf(hex + i*2, "%02x", buf[i]);
