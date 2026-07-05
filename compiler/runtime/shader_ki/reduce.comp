@@ -1,0 +1,20 @@
+#version 450
+// reduce.comp — GPU2: Shared-Memory-Reduktion, EIN Partial-Wert pro
+// Workgroup (256 Elemente). Die Partials (n/256 Werte) summiert der HOST —
+// bewusst simpel + korrekt; Mehrpass auf GPU = Backlog.
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly buffer BufA { float a[]; };
+layout(std430, binding = 1) writeonly buffer BufO { float o[]; };
+layout(push_constant) uniform PC { uint M; uint K; uint N; uint op; } pc;
+shared float teil[256];
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint lid = gl_LocalInvocationID.x;
+    teil[lid] = (gid < pc.M) ? a[gid] : 0.0;
+    barrier();
+    for (uint s = 128u; s > 0u; s >>= 1u) {
+        if (lid < s) teil[lid] += teil[lid + s];
+        barrier();
+    }
+    if (lid == 0u) o[gl_WorkGroupID.x] = teil[0];
+}

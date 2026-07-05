@@ -258,6 +258,13 @@ MooValue moo_nn_genauigkeit(MooValue netz, MooValue x, MooValue y);
 MooValue moo_nn_speichern(MooValue netz, MooValue pfad);
 MooValue moo_nn_laden(MooValue pfad);
 MooValue moo_nn_safetensors(MooValue pfad);   // F1: Fremd-Import -> Dict {name: Tensor}
+// GPU2 (Plan-014, moo_ki_gpu.c): Vulkan-Compute fuer matmul/elementwise/
+// Voll-Reduktion. false = nicht ausgefuehrt (kein Vulkan-Build, unter
+// Schwelle, Init-/Laufzeitfehler) -> Aufrufer nimmt den CPU-Pfad.
+// ENV: MOO_KI_GPU=0 (aus), MOO_KI_GPU_ERZWINGEN=1 (Schwellen ignorieren).
+bool moo_ki_gpu_matmul(const float* a, const float* b, float* o, int32_t m, int32_t k, int32_t n);
+bool moo_ki_gpu_ew(int32_t op, const float* a, const float* b, float* o, int64_t n);
+bool moo_ki_gpu_reduce_sum(const float* a, int64_t n, double* out_summe);
 // Daten-Pipeline (Plan-014 E1, moo_dataset.c): MNIST-IDX (entpackt, siehe
 // skripte/mnist_download.sh), Zahlen-CSV, PGM/PPM-Bilder (eigener Reader —
 // Entscheid E1 statt stb/SDL_image), seed-deterministisches Mischen,

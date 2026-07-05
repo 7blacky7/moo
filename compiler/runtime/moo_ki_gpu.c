@@ -1,0 +1,412 @@
+/**
+ * moo_ki_gpu.c — GPU2 (Plan-014): Vulkan-Compute fuer GENAU 7 Ops:
+ * matmul, add/sub/mul/div (elementweise, gleiche Shapes), sum/mean
+ * (Voll-Reduktion). User-Go 2026-07-05, Scope-Grenze: KEIN Autograd/NN-
+ * Umbau — die Hooks sitzen nur im Forward-Compute von moo_tensor_ops.c
+ * und fallen bei JEDEM Fehler transparent auf den CPU-Pfad zurueck
+ * (Rueckgabe false = "hab ich nicht gemacht").
+ *
+ * PoC-SCHNITT (bewusst, Backlog nach Review): host-visible|coherent
+ * Buffers ohne Staging/Device-Local, Buffers pro Aufruf statt Pool,
+ * ein Queue-Submit mit Fence pro Op. Korrektheit vor Durchsatz — der
+ * Speedup kommt trotzdem, weil bei grossen Tensoren das Compute
+ * dominiert. Reduktion: GPU liefert ein Partial pro 256er-Workgroup,
+ * der Host summiert die Partials (double) — simpel + genau.
+ *
+ * DISPATCH-HEURISTIK (kleine Tensoren bleiben CPU):
+ *   matmul: M*K*N >= 2^24 (ab ~256^3);  elementwise/reduce: n >= 2^20.
+ * ENV: MOO_KI_GPU=0 schaltet alles ab; MOO_KI_GPU_ERZWINGEN=1 ignoriert
+ * die Schwellen (fuer Korrektheits-Smoke mit kleinen Tensoren).
+ *
+ * Ohne MOO_HAS_VULKAN (Default-Build) ist alles hier ein Stub der false
+ * liefert — moo_tensor_ops.c braucht dadurch KEIN #ifdef.
+ */
+#include "moo_runtime.h"
+
+bool moo_ki_gpu_matmul(const float* a, const float* b, float* o,
+                       int32_t m, int32_t k, int32_t n);
+bool moo_ki_gpu_ew(int32_t op, const float* a, const float* b, float* o,
+                   int64_t n);
+bool moo_ki_gpu_reduce_sum(const float* a, int64_t n, double* out_summe);
+
+#ifndef MOO_HAS_VULKAN
+
+bool moo_ki_gpu_matmul(const float* a, const float* b, float* o,
+                       int32_t m, int32_t k, int32_t n) {
+    (void)a; (void)b; (void)o; (void)m; (void)k; (void)n;
+    return false;
+}
+bool moo_ki_gpu_ew(int32_t op, const float* a, const float* b, float* o,
+                   int64_t n) {
+    (void)op; (void)a; (void)b; (void)o; (void)n;
+    return false;
+}
+bool moo_ki_gpu_reduce_sum(const float* a, int64_t n, double* out_summe) {
+    (void)a; (void)n; (void)out_summe;
+    return false;
+}
+
+#else /* MOO_HAS_VULKAN ------------------------------------------------- */
+
+#include <vulkan/vulkan.h>
+#include "moo_ki_gpu_shaders.h"
+
+typedef struct {
+    bool init_versucht;
+    bool bereit;
+    VkInstance instanz;
+    VkPhysicalDevice phys;
+    VkDevice geraet;
+    VkQueue queue;
+    uint32_t queue_familie;
+    uint32_t mem_typ_hostvis;
+    VkDescriptorSetLayout dsl;        /* 3 Storage-Buffers */
+    VkPipelineLayout playout;         /* + 16B Push-Constants */
+    VkPipeline pipe_matmul, pipe_ew, pipe_reduce;
+    VkCommandPool cmdpool;
+    VkDescriptorPool descpool;
+} KiGpu;
+
+static KiGpu G = {0};
+
+typedef struct { uint32_t M, K, N, op; } KiPush;
+
+static bool env_aus(void) {
+    const char* e = getenv("MOO_KI_GPU");
+    return e && e[0] == '0' && e[1] == '\0';
+}
+static bool env_erzwingen(void) {
+    const char* e = getenv("MOO_KI_GPU_ERZWINGEN");
+    return e && e[0] == '1' && e[1] == '\0';
+}
+
+static VkPipeline pipeline_bauen(const unsigned char* spv, unsigned int len) {
+    VkShaderModuleCreateInfo smi = {
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = len,
+        .pCode = (const uint32_t*)(const void*)spv,
+    };
+    VkShaderModule mod;
+    if (vkCreateShaderModule(G.geraet, &smi, NULL, &mod) != VK_SUCCESS)
+        return VK_NULL_HANDLE;
+    VkComputePipelineCreateInfo cpi = {
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .stage = {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+            .module = mod,
+            .pName = "main",
+        },
+        .layout = G.playout,
+    };
+    VkPipeline p = VK_NULL_HANDLE;
+    vkCreateComputePipelines(G.geraet, VK_NULL_HANDLE, 1, &cpi, NULL, &p);
+    vkDestroyShaderModule(G.geraet, mod, NULL);
+    return p;
+}
+
+/* Einmalige Initialisierung; bei jedem Fehler bleibt bereit=false und
+ * ALLE Ops liefern fuer immer false (CPU uebernimmt). */
+static bool ki_gpu_init(void) {
+    if (G.init_versucht) return G.bereit;
+    G.init_versucht = true;
+    if (env_aus()) return false;
+
+    VkApplicationInfo app = {
+        .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+        .pApplicationName = "moo-ki",
+        .apiVersion = VK_API_VERSION_1_1,
+    };
+    VkInstanceCreateInfo ici = {
+        .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+        .pApplicationInfo = &app,
+    };
+    if (vkCreateInstance(&ici, NULL, &G.instanz) != VK_SUCCESS) return false;
+
+    uint32_t anz = 0;
+    vkEnumeratePhysicalDevices(G.instanz, &anz, NULL);
+    if (anz == 0) return false;
+    if (anz > 8) anz = 8;
+    VkPhysicalDevice devs[8];
+    vkEnumeratePhysicalDevices(G.instanz, &anz, devs);
+    for (uint32_t d = 0; d < anz && !G.phys; d++) {
+        uint32_t qanz = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(devs[d], &qanz, NULL);
+        if (qanz > 16) qanz = 16;
+        VkQueueFamilyProperties qf[16];
+        vkGetPhysicalDeviceQueueFamilyProperties(devs[d], &qanz, qf);
+        for (uint32_t q = 0; q < qanz; q++) {
+            if (qf[q].queueFlags & VK_QUEUE_COMPUTE_BIT) {
+                G.phys = devs[d];
+                G.queue_familie = q;
+                break;
+            }
+        }
+    }
+    if (!G.phys) return false;
+
+    float prio = 1.0f;
+    VkDeviceQueueCreateInfo qci = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .queueFamilyIndex = G.queue_familie,
+        .queueCount = 1,
+        .pQueuePriorities = &prio,
+    };
+    VkDeviceCreateInfo dci = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .queueCreateInfoCount = 1,
+        .pQueueCreateInfos = &qci,
+    };
+    if (vkCreateDevice(G.phys, &dci, NULL, &G.geraet) != VK_SUCCESS)
+        return false;
+    vkGetDeviceQueue(G.geraet, G.queue_familie, 0, &G.queue);
+
+    /* Host-visible+coherent Memory-Typ suchen */
+    VkPhysicalDeviceMemoryProperties mp;
+    vkGetPhysicalDeviceMemoryProperties(G.phys, &mp);
+    G.mem_typ_hostvis = UINT32_MAX;
+    for (uint32_t i = 0; i < mp.memoryTypeCount; i++) {
+        VkMemoryPropertyFlags will = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                     VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        if ((mp.memoryTypes[i].propertyFlags & will) == will) {
+            G.mem_typ_hostvis = i;
+            break;
+        }
+    }
+    if (G.mem_typ_hostvis == UINT32_MAX) return false;
+
+    VkDescriptorSetLayoutBinding binds[3];
+    for (int i = 0; i < 3; i++) {
+        binds[i] = (VkDescriptorSetLayoutBinding){
+            .binding = (uint32_t)i,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        };
+    }
+    VkDescriptorSetLayoutCreateInfo dsli = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 3,
+        .pBindings = binds,
+    };
+    if (vkCreateDescriptorSetLayout(G.geraet, &dsli, NULL, &G.dsl) != VK_SUCCESS)
+        return false;
+    VkPushConstantRange pcr = {
+        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        .size = sizeof(KiPush),
+    };
+    VkPipelineLayoutCreateInfo pli = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1,
+        .pSetLayouts = &G.dsl,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &pcr,
+    };
+    if (vkCreatePipelineLayout(G.geraet, &pli, NULL, &G.playout) != VK_SUCCESS)
+        return false;
+
+    G.pipe_matmul = pipeline_bauen(ki_matmul_spv, ki_matmul_spv_len);
+    G.pipe_ew = pipeline_bauen(ki_elementwise_spv, ki_elementwise_spv_len);
+    G.pipe_reduce = pipeline_bauen(ki_reduce_spv, ki_reduce_spv_len);
+    if (!G.pipe_matmul || !G.pipe_ew || !G.pipe_reduce) return false;
+
+    VkCommandPoolCreateInfo cpi = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+        .queueFamilyIndex = G.queue_familie,
+    };
+    if (vkCreateCommandPool(G.geraet, &cpi, NULL, &G.cmdpool) != VK_SUCCESS)
+        return false;
+    VkDescriptorPoolSize dps = {
+        .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorCount = 3,
+    };
+    VkDescriptorPoolCreateInfo dpi = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+        .maxSets = 1,
+        .poolSizeCount = 1,
+        .pPoolSizes = &dps,
+    };
+    if (vkCreateDescriptorPool(G.geraet, &dpi, NULL, &G.descpool) != VK_SUCCESS)
+        return false;
+
+    G.bereit = true;
+    return true;
+}
+
+typedef struct { VkBuffer buf; VkDeviceMemory mem; void* map; } KiBuf;
+
+static bool buf_anlegen(KiBuf* b, VkDeviceSize groesse) {
+    memset(b, 0, sizeof(*b));
+    VkBufferCreateInfo bci = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = groesse,
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+    if (vkCreateBuffer(G.geraet, &bci, NULL, &b->buf) != VK_SUCCESS)
+        return false;
+    VkMemoryRequirements mr;
+    vkGetBufferMemoryRequirements(G.geraet, b->buf, &mr);
+    VkMemoryAllocateInfo mai = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = mr.size,
+        .memoryTypeIndex = G.mem_typ_hostvis,
+    };
+    if (vkAllocateMemory(G.geraet, &mai, NULL, &b->mem) != VK_SUCCESS)
+        return false;
+    if (vkBindBufferMemory(G.geraet, b->buf, b->mem, 0) != VK_SUCCESS)
+        return false;
+    if (vkMapMemory(G.geraet, b->mem, 0, VK_WHOLE_SIZE, 0, &b->map) != VK_SUCCESS)
+        return false;
+    return true;
+}
+static void buf_weg(KiBuf* b) {
+    if (b->map) vkUnmapMemory(G.geraet, b->mem);
+    if (b->buf) vkDestroyBuffer(G.geraet, b->buf, NULL);
+    if (b->mem) vkFreeMemory(G.geraet, b->mem, NULL);
+    memset(b, 0, sizeof(*b));
+}
+
+/* Gemeinsamer Ablauf: 3 Buffers sind angelegt+gefuellt, Pipeline+Push+
+ * Dispatch-Masse rein, submit, auf Fence warten. */
+static bool dispatch_sync(VkPipeline pipe, KiBuf b[3], KiPush push,
+                          uint32_t gx, uint32_t gy) {
+    VkDescriptorSetAllocateInfo dsa = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = G.descpool,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &G.dsl,
+    };
+    VkDescriptorSet ds;
+    if (vkAllocateDescriptorSets(G.geraet, &dsa, &ds) != VK_SUCCESS)
+        return false;
+    VkDescriptorBufferInfo bi[3];
+    VkWriteDescriptorSet ws[3];
+    for (int i = 0; i < 3; i++) {
+        bi[i] = (VkDescriptorBufferInfo){ .buffer = b[i].buf, .range = VK_WHOLE_SIZE };
+        ws[i] = (VkWriteDescriptorSet){
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = ds,
+            .dstBinding = (uint32_t)i,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .pBufferInfo = &bi[i],
+        };
+    }
+    vkUpdateDescriptorSets(G.geraet, 3, ws, 0, NULL);
+
+    VkCommandBufferAllocateInfo cba = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = G.cmdpool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+    VkCommandBuffer cb;
+    if (vkAllocateCommandBuffers(G.geraet, &cba, &cb) != VK_SUCCESS) {
+        vkFreeDescriptorSets(G.geraet, G.descpool, 1, &ds);
+        return false;
+    }
+    VkCommandBufferBeginInfo cbb = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    vkBeginCommandBuffer(cb, &cbb);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, G.playout,
+                            0, 1, &ds, 0, NULL);
+    vkCmdPushConstants(cb, G.playout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                       sizeof(push), &push);
+    vkCmdDispatch(cb, gx, gy, 1);
+    vkEndCommandBuffer(cb);
+
+    VkFenceCreateInfo fci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+    VkFence fence;
+    bool ok = vkCreateFence(G.geraet, &fci, NULL, &fence) == VK_SUCCESS;
+    if (ok) {
+        VkSubmitInfo si = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &cb,
+        };
+        ok = vkQueueSubmit(G.queue, 1, &si, fence) == VK_SUCCESS &&
+             vkWaitForFences(G.geraet, 1, &fence, VK_TRUE,
+                             30ull * 1000000000ull) == VK_SUCCESS;
+        vkDestroyFence(G.geraet, fence, NULL);
+    }
+    vkFreeCommandBuffers(G.geraet, G.cmdpool, 1, &cb);
+    vkFreeDescriptorSets(G.geraet, G.descpool, 1, &ds);
+    return ok;
+}
+
+bool moo_ki_gpu_matmul(const float* a, const float* b, float* o,
+                       int32_t m, int32_t k, int32_t n) {
+    if (!env_erzwingen() &&
+        (int64_t)m * k * n < (int64_t)1 << 24) return false;
+    if (!ki_gpu_init()) return false;
+    KiBuf bufs[3];
+    bool ok = buf_anlegen(&bufs[0], (VkDeviceSize)m * k * 4) &&
+              buf_anlegen(&bufs[1], (VkDeviceSize)k * n * 4) &&
+              buf_anlegen(&bufs[2], (VkDeviceSize)m * n * 4);
+    if (ok) {
+        memcpy(bufs[0].map, a, (size_t)m * k * 4);
+        memcpy(bufs[1].map, b, (size_t)k * n * 4);
+        KiPush push = { (uint32_t)m, (uint32_t)k, (uint32_t)n, 0 };
+        ok = dispatch_sync(G.pipe_matmul, bufs, push,
+                           ((uint32_t)n + 15u) / 16u, ((uint32_t)m + 15u) / 16u);
+        if (ok) memcpy(o, bufs[2].map, (size_t)m * n * 4);
+    }
+    for (int i = 0; i < 3; i++) buf_weg(&bufs[i]);
+    return ok;
+}
+
+bool moo_ki_gpu_ew(int32_t op, const float* a, const float* b, float* o,
+                   int64_t n) {
+    if (op < 0 || op > 3) return false;
+    if (!env_erzwingen() && n < (int64_t)1 << 20) return false;
+    if (n > (int64_t)1 << 30) return false;   /* Push-Constant ist u32 */
+    if (!ki_gpu_init()) return false;
+    KiBuf bufs[3];
+    bool ok = buf_anlegen(&bufs[0], (VkDeviceSize)n * 4) &&
+              buf_anlegen(&bufs[1], (VkDeviceSize)n * 4) &&
+              buf_anlegen(&bufs[2], (VkDeviceSize)n * 4);
+    if (ok) {
+        memcpy(bufs[0].map, a, (size_t)n * 4);
+        memcpy(bufs[1].map, b, (size_t)n * 4);
+        KiPush push = { (uint32_t)n, 0, 0, (uint32_t)op };
+        ok = dispatch_sync(G.pipe_ew, bufs, push,
+                           (uint32_t)((n + 255) / 256), 1);
+        if (ok) memcpy(o, bufs[2].map, (size_t)n * 4);
+    }
+    for (int i = 0; i < 3; i++) buf_weg(&bufs[i]);
+    return ok;
+}
+
+bool moo_ki_gpu_reduce_sum(const float* a, int64_t n, double* out_summe) {
+    if (!env_erzwingen() && n < (int64_t)1 << 20) return false;
+    if (n > (int64_t)1 << 30) return false;
+    if (!ki_gpu_init()) return false;
+    int64_t gruppen = (n + 255) / 256;
+    KiBuf bufs[3];
+    /* Binding 2 wird vom Reduce-Shader nicht benutzt — Mini-Dummy, damit
+     * das gemeinsame 3-Buffer-Layout gilt. */
+    bool ok = buf_anlegen(&bufs[0], (VkDeviceSize)n * 4) &&
+              buf_anlegen(&bufs[1], (VkDeviceSize)gruppen * 4) &&
+              buf_anlegen(&bufs[2], 4);
+    if (ok) {
+        memcpy(bufs[0].map, a, (size_t)n * 4);
+        KiPush push = { (uint32_t)n, 0, 0, 0 };
+        ok = dispatch_sync(G.pipe_reduce, bufs, push, (uint32_t)gruppen, 1);
+        if (ok) {
+            const float* teile = (const float*)bufs[1].map;
+            double s = 0.0;
+            for (int64_t i = 0; i < gruppen; i++) s += (double)teile[i];
+            *out_summe = s;
+        }
+    }
+    for (int i = 0; i < 3; i++) buf_weg(&bufs[i]);
+    return ok;
+}
+
+#endif /* MOO_HAS_VULKAN */

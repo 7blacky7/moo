@@ -141,7 +141,12 @@ static MooValue ew_op(MooValue av, MooValue bv, FOp f, const char* wo, const cha
     if (!out) return moo_none();
 
     if (a->ndim == b->ndim && memcmp(a->shape, b->shape, sizeof(int32_t) * (size_t)a->ndim) == 0) {
-        ew_same(a->data, b->data, out->data, out->size, f);
+        /* GPU2: elementweise gleiche Shapes — Vulkan versucht, CPU faengt
+         * auf (Schwellen + Verfuegbarkeit entscheidet moo_ki_gpu.c). */
+        int32_t gop = (f == f_add) ? 0 : (f == f_sub) ? 1
+                    : (f == f_mul) ? 2 : (f == f_div) ? 3 : -1;
+        if (gop < 0 || !moo_ki_gpu_ew(gop, a->data, b->data, out->data, out->size))
+            ew_same(a->data, b->data, out->data, out->size, f);
     } else if (out->ndim == 2 && b->size == out->shape[1] &&
                a->ndim == 2 && a->shape[0] == out->shape[0] && a->shape[1] == out->shape[1]) {
         ew_row(a->data, b->data, out->data, out->shape[0], out->shape[1], f);  // Bias
@@ -221,7 +226,10 @@ MooValue moo_tensor_matmul(MooValue av, MooValue bv) {
     int32_t oshape[2] = { a->shape[0], b->shape[1] };
     MooTensor* out = moo_tensor_raw(2, oshape);
     if (!out) return moo_none();
-    matmul_ikj(a->data, b->data, out->data, a->shape[0], a->shape[1], b->shape[1]);
+    /* GPU2: grosse MatMuls auf Vulkan, CPU-ikj als Fallback. */
+    if (!moo_ki_gpu_matmul(a->data, b->data, out->data,
+                           a->shape[0], a->shape[1], b->shape[1]))
+        matmul_ikj(a->data, b->data, out->data, a->shape[0], a->shape[1], b->shape[1]);
     MooValue ret = wrap_t(out);
     moo_ag_record("matmul", av, bv, moo_none(), ret);
     return ret;
@@ -364,7 +372,11 @@ static MooValue reduce_op(MooValue av, MooValue achsev, RedArt art, const char* 
             out->data[0] = m;
         } else {
             double acc = 0.0;
-            for (int64_t i = 0; i < a->size; i++) acc += (double)a->data[i];
+            /* GPU2: Voll-Summe/-Mittel gross -> Vulkan-Partials + Host-Finish */
+            if (!moo_ki_gpu_reduce_sum(a->data, a->size, &acc)) {
+                acc = 0.0;
+                for (int64_t i = 0; i < a->size; i++) acc += (double)a->data[i];
+            }
             out->data[0] = (float)(art == RED_MEAN ? acc / (double)a->size : acc);
         }
         MooValue ret0 = wrap_t(out);
