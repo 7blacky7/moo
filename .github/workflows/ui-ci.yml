@@ -189,6 +189,10 @@ jobs:
               $quelle = Join-Path $condaLib $k
               if (Test-Path $quelle) { Copy-Item $quelle $ziel; Write-Host "Alias: $name <- $k"; break }
             }
+            if (!(Test-Path $ziel)) {
+              $treffer = Get-ChildItem $condaLib -Filter "*$basis*.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($treffer) { Copy-Item $treffer.FullName $ziel; Write-Host "Alias (Wildcard): $name <- $($treffer.Name)" }
+            }
             if (!(Test-Path $ziel)) { Write-Host "WARNUNG: $name nicht aufloesbar" }
           }
 
