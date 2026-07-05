@@ -367,8 +367,14 @@ static MooValue schicht_vorwaerts(MooValue schicht, MooValue x) {
     return moo_none();
 }
 
-/* vorwaerts(netz, x): netz = Schicht ODER Liste von Schichten. */
+/* vorwaerts(netz, x): netz = Schicht, Liste von Schichten ODER ki_netz-Dict. */
 MooValue moo_nn_vorwaerts(MooValue netz, MooValue x) {
+    if (nn_ist(netz, "netz")) {   /* D1: Kinderleicht-Netz delegiert */
+        MooValue schichten = dget(netz, "schichten");
+        MooValue r = moo_nn_vorwaerts(schichten, x);
+        moo_release(schichten);
+        return r;
+    }
     if (netz.tag == MOO_DICT) return schicht_vorwaerts(netz, x);
     if (netz.tag != MOO_LIST) {
         moo_throw(moo_error("vorwaerts: erwarte eine Schicht oder eine Liste "
@@ -411,6 +417,12 @@ static void params_von_schicht(MooValue schicht, MooValue liste) {
 
 /* parameter(netz): alle trainierbaren Tensoren als Liste (+1). */
 MooValue moo_nn_parameter(MooValue netz) {
+    if (nn_ist(netz, "netz")) {   /* D1: Kinderleicht-Netz delegiert */
+        MooValue schichten = dget(netz, "schichten");
+        MooValue r = moo_nn_parameter(schichten);
+        moo_release(schichten);
+        return r;
+    }
     MooValue liste = moo_list_new(8);
     if (netz.tag == MOO_DICT && nn_ist_schicht(netz)) {
         params_von_schicht(netz, liste);

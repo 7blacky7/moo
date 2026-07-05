@@ -2577,6 +2577,21 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[params.into()], "rel_adamw_p")?;
                         return Ok(r);
                     }
+                    // Kinderleicht-API (Plan-014 D1)
+                    "ki_netz" | "ai_net" => {
+                        let schichten = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_nn_ki_netz,
+                            &[schichten.into()], "nn_kinetz")?;
+                        self.call_rt_void(self.rt.moo_release, &[schichten.into()], "rel_kinetz_s")?;
+                        return Ok(r);
+                    }
+                    "ki_laden" | "ai_load" | "netz_laden" => {
+                        let pfad = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_nn_laden,
+                            &[pfad.into()], "nn_laden")?;
+                        self.call_rt_void(self.rt.moo_release, &[pfad.into()], "rel_kiladen_p")?;
+                        return Ok(r);
+                    }
                     "länge" | "len" => {
                         // Pure-Reader-Builtin: moo_length released sein Arg NICHT
                         // (verifiziert moo_stdlib.c) — compile_expr liefert +1 owning
@@ -4725,6 +4740,43 @@ impl<'ctx> CodeGen<'ctx> {
                     "schritt" | "step" if !user_hat_methode => {
                         return self.call_rt(self.rt.moo_nn_opt_schritt,
                             &[obj.into()], "nn_schritt");
+                    }
+                    // Kinderleicht-Methoden auf dem ki_netz-Dict (Plan-014 D1).
+                    // Laufzeit prueft den "__nn"-Marker; Heap-Args post-released.
+                    "trainiere" | "train" if !user_hat_methode => {
+                        let x = self.compile_expr(&args[0])?;
+                        let y = self.compile_expr(&args[1])?;
+                        let o = if args.len() > 2 { self.compile_expr(&args[2])? }
+                                else { self.call_rt(self.rt.moo_none, &[], "nn_tr_none")? };
+                        let r = self.call_rt(self.rt.moo_nn_trainiere,
+                            &[obj.into(), x.into(), y.into(), o.into()], "nn_trainiere")?;
+                        self.call_rt_void(self.rt.moo_release, &[x.into()], "rel_tr_x")?;
+                        self.call_rt_void(self.rt.moo_release, &[y.into()], "rel_tr_y")?;
+                        self.call_rt_void(self.rt.moo_release, &[o.into()], "rel_tr_o")?;
+                        return Ok(r);
+                    }
+                    "vorhersage" | "predict" if !user_hat_methode => {
+                        let x = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_nn_vorhersage,
+                            &[obj.into(), x.into()], "nn_vorhersage")?;
+                        self.call_rt_void(self.rt.moo_release, &[x.into()], "rel_vh_x")?;
+                        return Ok(r);
+                    }
+                    "genauigkeit" | "accuracy" if !user_hat_methode => {
+                        let x = self.compile_expr(&args[0])?;
+                        let y = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_nn_genauigkeit,
+                            &[obj.into(), x.into(), y.into()], "nn_genauigkeit")?;
+                        self.call_rt_void(self.rt.moo_release, &[x.into()], "rel_gk_x")?;
+                        self.call_rt_void(self.rt.moo_release, &[y.into()], "rel_gk_y")?;
+                        return Ok(r);
+                    }
+                    "speichern" | "save" if !user_hat_methode => {
+                        let pfad = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_nn_speichern,
+                            &[obj.into(), pfad.into()], "nn_speichern")?;
+                        self.call_rt_void(self.rt.moo_release, &[pfad.into()], "rel_sp_pfad")?;
+                        return Ok(r);
                     }
                     "append" | "hinzufügen" => {
                         let arg = self.compile_expr(&args[0])?;

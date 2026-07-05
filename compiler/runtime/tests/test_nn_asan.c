@@ -429,6 +429,106 @@ int main(void) {
         moo_ag_reset();
     }
 
+    /* ===== 11. Kinderleicht-API (Plan-014 D1) ===== */
+    /* ki_netz + trainiere: XOR mit mse (kein softmax -> auto=mse) */
+    {
+        MooValue schichten = moo_list_new(2);
+        moo_list_append(schichten, mk_dicht(2, 8, "tanh", 7));
+        moo_list_append(schichten, mk_dicht(8, 1, "sigmoid", 8));
+        MooValue netz = moo_nn_ki_netz(schichten);
+        CHECK(netz.tag == MOO_DICT, "ki_netz ist Dict");
+
+        float xv[8] = { 0,0, 0,1, 1,0, 1,1 };
+        float zv[4] = { 0, 1, 1, 0 };
+        MooValue x = t2(4, 2, xv);
+        MooValue z = t2(4, 1, zv);
+        MooValue opts = moo_dict_new();
+        moo_dict_set(opts, moo_string_new("epochen"), moo_number(400.0));
+        moo_dict_set(opts, moo_string_new("rate"), moo_number(0.05));
+        moo_dict_set(opts, moo_string_new("batch"), moo_number(4.0));
+        moo_dict_set(opts, moo_string_new("ausgabe"), moo_number(0.0));
+        MooValue hist = moo_nn_trainiere(netz, x, z, opts);
+        CHECK(hist.tag == MOO_LIST && MV_LIST(hist)->length == 400,
+              "trainiere: Historie hat eine Zahl pro Epoche");
+        double h0 = MV_NUM(MV_LIST(hist)->items[0]);
+        double hE = MV_NUM(MV_LIST(hist)->items[399]);
+        fprintf(stderr, "kinderleicht XOR: Fehler %f -> %f\n", h0, hE);
+        CHECK(hE < 0.01 && hE < h0, "trainiere: XOR konvergiert");
+
+        /* genauigkeit: 1-Spalten-Runden -> 4/4 korrekt */
+        MooValue acc = moo_nn_genauigkeit(netz, x, z);
+        CHECK(acc.tag == MOO_NUMBER && NAHE(MV_NUM(acc), 1.0), "genauigkeit == 1.0");
+
+        /* vorhersage laesst den ag-Zustand in Ruhe + zeichnet nichts auf */
+        CHECK(moo_ag_ist_an(), "ag ist vor vorhersage an");
+        MooValue vh = moo_nn_vorhersage(netz, x);
+        CHECK(vh.tag == MOO_TENSOR && moo_ag_ist_an(), "vorhersage: ag-Zustand erhalten");
+
+        /* speichern/laden-Roundtrip: bit-identische Vorhersage */
+        MooValue pfad = moo_string_new("/tmp/test_d1_netz.mook");
+        moo_release(moo_nn_speichern(netz, pfad));
+        MooValue netz2 = moo_nn_laden(pfad);
+        CHECK(netz2.tag == MOO_DICT, "ki_laden liefert Netz");
+        MooValue vh2 = moo_nn_vorhersage(netz2, x);
+        CHECK(vh2.tag == MOO_TENSOR, "geladenes Netz sagt vorher");
+        bool bitgleich = true;
+        for (int i = 0; i < 4; i++)
+            if (T(vh)->data[i] != T(vh2)->data[i]) bitgleich = false;
+        CHECK(bitgleich, "Roundtrip: Vorhersage bit-identisch");
+        remove("/tmp/test_d1_netz.mook");
+        moo_release(vh); moo_release(vh2); moo_release(netz2); moo_release(pfad);
+        moo_release(hist); moo_release(opts);
+        moo_release(x); moo_release(z);
+        moo_release(netz); moo_release(schichten);
+        moo_ag_reset();
+    }
+    /* softmax-Ende -> auto-Kreuzentropie: 3-Klassen-Spielzeug lernt Mapping */
+    {
+        MooValue schichten = moo_list_new(2);
+        moo_list_append(schichten, mk_dicht(2, 8, "tanh", 11));
+        moo_list_append(schichten, mk_dicht(8, 3, "softmax", 12));
+        MooValue netz = moo_nn_ki_netz(schichten);
+        float xv[6] = { 0,0, 1,0, 0,1 };
+        float yv[3] = { 0, 1, 2 };   /* Klassen-Indizes */
+        MooValue x = t2(3, 2, xv);
+        MooValue y = t1(3, yv);
+        MooValue opts = moo_dict_new();
+        moo_dict_set(opts, moo_string_new("epochen"), moo_number(300.0));
+        moo_dict_set(opts, moo_string_new("rate"), moo_number(0.05));
+        moo_dict_set(opts, moo_string_new("ausgabe"), moo_number(0.0));
+        MooValue hist = moo_nn_trainiere(netz, x, y, opts);
+        CHECK(hist.tag == MOO_LIST, "trainiere (CE): laeuft");
+        double hE = MV_NUM(MV_LIST(hist)->items[299]);
+        double h0 = MV_NUM(MV_LIST(hist)->items[0]);
+        fprintf(stderr, "kinderleicht 3-Klassen-CE: Fehler %f -> %f\n", h0, hE);
+        CHECK(hE < 0.1 && hE < h0, "trainiere (CE): Loss gesunken");
+        MooValue acc = moo_nn_genauigkeit(netz, x, y);
+        CHECK(NAHE(MV_NUM(acc), 1.0), "genauigkeit (argmax vs Index) == 1.0");
+        moo_release(hist); moo_release(opts); moo_release(x); moo_release(y);
+        moo_release(netz); moo_release(schichten);
+        moo_ag_reset();
+    }
+    /* Fehlerfaelle erklaeren statt crashen */
+    fehler_reset();
+    {
+        MooValue schichten = moo_list_new(1);
+        moo_list_append(schichten, mk_dicht(4, 1, NULL, -1.0));
+        MooValue netz = moo_nn_ki_netz(schichten);
+        float xv[6] = { 1,2,3, 4,5,6 };   /* 3 Spalten, Netz will 4 */
+        float zv[2] = { 0, 1 };
+        MooValue x = t2(2, 3, xv);
+        MooValue z = t2(2, 1, zv);
+        MooValue r = moo_nn_trainiere(netz, x, z, moo_none());
+        CHECK(moo_error_flag == 1 && r.tag == MOO_NONE,
+              "trainiere: Shape-Mismatch wirft erklaerend");
+        fehler_reset();
+        MooValue r2 = moo_nn_laden(moo_number(5.0));
+        CHECK(moo_error_flag == 1 && r2.tag == MOO_NONE, "ki_laden: Zahl wirft");
+        fehler_reset();
+        moo_release(x); moo_release(z); moo_release(netz); moo_release(schichten);
+        moo_ag_reset();
+    }
+
     printf("test_nn_asan: alle %d Checks bestanden\n", checks);
     return 0;
 }

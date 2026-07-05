@@ -1044,6 +1044,88 @@ zeige [1,2,3,4,5].filter((x) => x > 2).map((x) => x * 10)   # [30, 40, 50]
 
 ---
 
+## Dein erstes neuronales Netz (KI)
+
+moo hat einen eingebauten KI-Baukasten. Du kannst ein echtes neuronales Netz
+bauen, trainieren und benutzen — in 5 Zeilen, ohne irgendetwas zu installieren.
+
+### Stufe 1: Ein Netz lernt XOR
+
+XOR ist die "Hallo Welt"-Aufgabe der KI: das Netz soll lernen, dass
+`[0,1]` und `[1,0]` eine `1` ergeben, aber `[0,0]` und `[1,1]` eine `0`.
+
+```moo
+setze daten auf tensor_aus_liste([[0,0],[0,1],[1,0],[1,1]])
+setze ziele auf tensor_aus_liste([[0],[1],[1],[0]])
+setze netz auf ki_netz([schicht_dicht(2, 8, "tanh"), schicht_dicht(8, 1, "sigmoid")])
+netz.trainiere(daten, ziele, {"epochen": 400, "rate": 0.05})
+zeige netz.vorhersage(daten).zu_liste()
+```
+
+Das war's! `trainiere` druckt dir bei jeder Epoche den Fehler — du siehst
+live zu, wie das Netz besser wird. Am Ende liegen die Vorhersagen ganz
+nah an `0, 1, 1, 0`.
+
+**Was passiert da?** `schicht_dicht(2, 8, "tanh")` ist eine Schicht aus
+8 künstlichen Neuronen, die 2 Eingaben bekommen. `ki_netz` stapelt die
+Schichten. `trainiere` zeigt dem Netz die Beispiele immer wieder und
+korrigiert nach jedem Durchgang die Verbindungen ein kleines Stück.
+
+### Stufe 2: Optionen, Genauigkeit, Speichern
+
+Die Optionen übergibst du als Dict — alles hat sinnvolle Standardwerte:
+
+```moo
+setze verlauf auf netz.trainiere(daten, ziele, {
+    "epochen": 400,        # wie oft alle Beispiele gezeigt werden
+    "rate": 0.05,          # wie große Lernschritte das Netz macht
+    "batch": 4,            # wie viele Beispiele pro Schritt
+    "optimierer": "adam",  # oder "sgd", "adamw"
+    "ausgabe": 0           # 0 = still trainieren
+})
+zeige "Fehler am Ende: " + text(verlauf[länge(verlauf) - 1])
+zeige "Genauigkeit: " + text(netz.genauigkeit(daten, ziele))
+
+netz.speichern("mein_netz.mook")
+setze kopie auf ki_laden("mein_netz.mook")
+zeige kopie.vorhersage(daten).zu_liste()
+```
+
+`trainiere` gibt dir den Fehler-Verlauf als Liste zurück — perfekt, um
+mit der 2D-API eine eigene Lernkurve zu malen. `.mook`-Dateien sind
+übrigens das safetensors-Format, das auch die großen KI-Werkzeuge lesen.
+
+Endet dein Netz auf `"softmax"` (Klassen-Raten, z.B. Ziffern 0–9), nimmt
+`trainiere` automatisch den richtigen Fehler (Kreuzentropie) und du darfst
+als Ziele einfach die Klassen-Nummern übergeben: `tensor_aus_liste([0, 1, 2])`.
+
+Auf Englisch heißt alles genauso, nur übersetzt: `ai_net`, `train`,
+`predict`, `accuracy`, `save`, `ai_load`.
+
+### Stufe 3: Unter die Haube schauen
+
+Die Kinderleicht-Schicht ist nur Zucker. Darunter liegen Tensoren mit
+Autograd — dieselben Bausteine, aus denen auch die großen Frameworks
+bestehen. Du kannst jederzeit selbst schalten und walten:
+
+```moo
+setze schichten auf [schicht_dicht(2, 8, "tanh"), schicht_dicht(8, 1, "sigmoid")]
+setze opt auf optimierer_adam(parameter(schichten), 0.05)
+setze i auf 0
+solange i < 400:
+    setze fehler auf mse(vorwaerts(schichten, daten), ziele)
+    fehler.rueckwaerts()     # Ableitungen ausrechnen (Autograd)
+    opt.schritt()            # Gewichte anpassen
+    setze i auf i + 1
+```
+
+Genau das macht `trainiere` intern — plus Mischen und Batches. Es gibt
+auch `schicht_dropout`, `schicht_layernorm`, `schicht_embedding`,
+`kreuzentropie` und `optimierer_adamw`, wenn du tiefer einsteigen willst.
+Schau dir `beispiele/ki_xor.moo` (14 Zeilen) und `beispiele/neuralnet.moo`
+(dasselbe komplett von Hand, 321 Zeilen) an — der Unterschied ist der
+ganze Punkt.
+
 ## Tipps für Anfänger
 
 1. **Einrückung ist wichtig!** Verwende 4 Leerzeichen für jeden Block.

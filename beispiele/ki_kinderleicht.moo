@@ -1,0 +1,21 @@
+# ============================================================
+# Die Kinderleicht-API (Plan-014 D1): ein neuronales Netz in
+# 5 Zeilen — bauen, trainieren, pruefen, speichern, laden.
+# Kompilieren: moo-compiler compile ki_kinderleicht.moo -o ki_kl
+# Hinweis: Optionen kommen als Dict ({"epochen": 100, ...}) —
+# das ist der dokumentierte D1-Weg (keine Named-Args im Parser).
+# ============================================================
+setze daten auf tensor_aus_liste([[0,0],[0,1],[1,0],[1,1]])
+setze ziele auf tensor_aus_liste([[0],[1],[1],[0]])
+
+# --- Die 5 Zeilen ---
+setze netz auf ki_netz([schicht_dicht(2, 8, "tanh", 7), schicht_dicht(8, 1, "sigmoid", 8)])
+setze verlauf auf netz.trainiere(daten, ziele, {"epochen": 400, "rate": 0.05, "batch": 4, "ausgabe": 0})
+zeige "Genauigkeit: " + text(netz.genauigkeit(daten, ziele))
+netz.speichern("/tmp/xor_netz.mook")
+zeige "Vorhersage (Ziel 0,1,1,0): " + text(netz.vorhersage(daten).zu_liste())
+
+# --- Beweis: das geladene Netz sagt exakt dasselbe ---
+setze kopie auf ki_laden("/tmp/xor_netz.mook")
+zeige "Geladen:                   " + text(kopie.vorhersage(daten).zu_liste())
+zeige "Fehler Anfang -> Ende: " + text(verlauf[0]) + " -> " + text(verlauf[länge(verlauf) - 1])

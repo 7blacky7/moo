@@ -224,6 +224,7 @@ MooValue moo_tensor_gradient_loeschen(MooValue t);   // grad-Buffer nullen
 MooValue moo_ag_reset(void);                         // Tape leeren (Nodes releasen)
 MooValue moo_ag_an(void);                            // Aufzeichnung an
 MooValue moo_ag_aus(void);                            // Aufzeichnung aus (Inferenz)
+bool moo_ag_ist_an(void);                             // Zustand (D1: vorhersage)
 
 // === NN-Schichten + Loss + Optimizer (Plan-014 C1, moo_nn.c) ===
 // Schichten/Optimizer sind DICTS (Marker-Key "__nn"), Parameter sind
@@ -243,6 +244,18 @@ MooValue moo_nn_opt_sgd(MooValue params, MooValue rate, MooValue momentum);
 MooValue moo_nn_opt_adam(MooValue params, MooValue rate);
 MooValue moo_nn_opt_adamw(MooValue params, MooValue rate, MooValue decay);
 MooValue moo_nn_opt_schritt(MooValue opt);
+// Kinderleicht-API (Plan-014 D1, moo_nn_easy.c) — Zucker ueber moo_nn.c.
+// trainiere: Optionen-DICT ({"epochen","rate","batch","optimierer",
+// "ausgabe","seed","verlust","momentum"}), Rueckgabe = Fehler-Historie
+// (Liste, eine Zahl pro Epoche). speichern/laden: .mook = safetensors-
+// Layout (u64-LE-Headerlaenge + JSON + f32-LE), Arch unter
+// __metadata__.moo_arch. Fremd-safetensors-Import folgt in F1.
+MooValue moo_nn_ki_netz(MooValue schichten);
+MooValue moo_nn_trainiere(MooValue netz, MooValue x, MooValue y, MooValue optionen);
+MooValue moo_nn_vorhersage(MooValue netz, MooValue x);
+MooValue moo_nn_genauigkeit(MooValue netz, MooValue x, MooValue y);
+MooValue moo_nn_speichern(MooValue netz, MooValue pfad);
+MooValue moo_nn_laden(MooValue pfad);
 
 typedef struct {
     int32_t  refcount;   // MUSS erstes Feld sein (Refcount-Konvention)

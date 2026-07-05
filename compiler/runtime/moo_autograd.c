@@ -97,6 +97,9 @@ MooValue moo_ag_reset(void) {
 
 MooValue moo_ag_an(void)  { ag_enabled = true;  return moo_none(); }
 MooValue moo_ag_aus(void) { ag_enabled = false; return moo_none(); }
+/* D1: Zustand abfragbar — vorhersage() schaltet temporaer aus und stellt
+ * den vorherigen Zustand wieder her (statt blind an zu schalten). */
+bool moo_ag_ist_an(void) { return ag_enabled; }
 
 // ============================================================
 // Broadcast-Reduktion: akkumuliere g (Form von out) in ziel->grad
