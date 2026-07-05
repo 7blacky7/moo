@@ -2427,6 +2427,52 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_type_of, &[arg.into()], "typeof");
                     }
+                    "tensor" => {
+                        // Plan-014 A3. Tensor-Konvention: Runtime borrowed —
+                        // Codegen released ALLE Heap-Args post-call (Muster 072834f).
+                        let form = self.compile_expr(&args[0])?;
+                        let res = if args.len() > 1 {
+                            let fill = self.compile_expr(&args[1])?;
+                            let r = self.call_rt(self.rt.moo_tensor_neu,
+                                &[form.into(), fill.into()], "tensor_neu")?;
+                            self.call_rt_void(self.rt.moo_release, &[fill.into()], "rel_t_fill")?;
+                            r
+                        } else {
+                            self.call_rt(self.rt.moo_tensor_nullen, &[form.into()], "tensor_neu0")?
+                        };
+                        self.call_rt_void(self.rt.moo_release, &[form.into()], "rel_t_form")?;
+                        return Ok(res);
+                    }
+                    "tensor_nullen" | "tensor_zeros" => {
+                        let form = self.compile_expr(&args[0])?;
+                        let res = self.call_rt(self.rt.moo_tensor_nullen, &[form.into()], "t_nullen")?;
+                        self.call_rt_void(self.rt.moo_release, &[form.into()], "rel_tn_form")?;
+                        return Ok(res);
+                    }
+                    "tensor_einsen" | "tensor_ones" => {
+                        let form = self.compile_expr(&args[0])?;
+                        let res = self.call_rt(self.rt.moo_tensor_einsen, &[form.into()], "t_einsen")?;
+                        self.call_rt_void(self.rt.moo_release, &[form.into()], "rel_te_form")?;
+                        return Ok(res);
+                    }
+                    "tensor_zufall" | "tensor_random" => {
+                        let form = self.compile_expr(&args[0])?;
+                        let seed = if args.len() > 1 {
+                            self.compile_expr(&args[1])?
+                        } else {
+                            self.call_rt(self.rt.moo_none, &[], "t_seed_none")?
+                        };
+                        let res = self.call_rt(self.rt.moo_tensor_zufall,
+                            &[form.into(), seed.into()], "t_zufall")?;
+                        self.call_rt_void(self.rt.moo_release, &[form.into()], "rel_tz_form")?;
+                        return Ok(res);
+                    }
+                    "tensor_aus_liste" | "tensor_from_list" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let res = self.call_rt(self.rt.moo_tensor_aus_liste, &[l.into()], "t_ausl")?;
+                        self.call_rt_void(self.rt.moo_release, &[l.into()], "rel_tal_liste")?;
+                        return Ok(res);
+                    }
                     "länge" | "len" => {
                         // Pure-Reader-Builtin: moo_length released sein Arg NICHT
                         // (verifiziert moo_stdlib.c) — compile_expr liefert +1 owning
@@ -4448,8 +4494,116 @@ impl<'ctx> CodeGen<'ctx> {
                 self.call_rt_void(self.rt.moo_retain, &[obj_val.into()], "retain_for_slot")?;
 
                 let obj = obj_val;
+                // P014-A3: Tensor-Methoden nur, wenn KEINE User-Klasse den Namen
+                // definiert (Muster "abfrage"|"query"-Arm) — Klassen-Methoden
+                // gewinnen immer (raytracer Vec3.plus/mal, Kinder-Klassen).
+                let user_hat_methode = self.class_methods.keys().any(|(_, m)| m == method);
                 // Eingebaute Methoden
                 match method.as_str() {
+                    // === Tensor-Methoden (Plan-014 A3) ===
+                    // Tensor-Konvention: Runtime borrowed — obj laeuft ueber den
+                    // Slot (retain_for_slot + Slot-Cleanup), Zusatz-Args werden
+                    // hier post-call released.
+                    // ARITHMETIK LAEUFT UEBER OPERATOREN (a+b, t*2, -t, t**p):
+                    // moo_add/sub/mul/div/pow/neg dispatchen auf den Tensor-Tag
+                    // (moo_ops.c) — bewusst KEINE plus/mal-Methoden-Arms, damit
+                    // User-Klassen (z.B. raytracer Vec3.plus/mal) nicht
+                    // geshadowt werden.
+                    "matmul" if !user_hat_methode => {
+                        let b = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_tensor_matmul,
+                            &[obj.into(), b.into()], "t_matmul")?;
+                        self.call_rt_void(self.rt.moo_release, &[b.into()], "rel_tmm_b")?;
+                        return Ok(r);
+                    }
+                    "transponieren" | "transpose" if !user_hat_methode => {
+                        return self.call_rt(self.rt.moo_tensor_transponieren,
+                            &[obj.into()], "t_transp");
+                    }
+                    "umformen" | "reshape" if !user_hat_methode => {
+                        let f = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_tensor_umformen,
+                            &[obj.into(), f.into()], "t_umform")?;
+                        self.call_rt_void(self.rt.moo_release, &[f.into()], "rel_tuf_form")?;
+                        return Ok(r);
+                    }
+                    "zeilen" | "rows" if !user_hat_methode => {
+                        let s = self.compile_expr(&args[0])?;
+                        let e = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tensor_zeilen,
+                            &[obj.into(), s.into(), e.into()], "t_zeilen");
+                    }
+                    "verketten" | "concat" if !user_hat_methode => {
+                        let b = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_tensor_verbinden,
+                            &[obj.into(), b.into()], "t_verkett")?;
+                        self.call_rt_void(self.rt.moo_release, &[b.into()], "rel_tvk_b")?;
+                        return Ok(r);
+                    }
+                    "summe" | "sum" if !user_hat_methode => {
+                        let a = if args.is_empty() {
+                            self.call_rt(self.rt.moo_none, &[], "t_axis_none")?
+                        } else { self.compile_expr(&args[0])? };
+                        return self.call_rt(self.rt.moo_tensor_summe,
+                            &[obj.into(), a.into()], "t_summe");
+                    }
+                    "mittel" | "mean" if !user_hat_methode => {
+                        let a = if args.is_empty() {
+                            self.call_rt(self.rt.moo_none, &[], "t_axis_none2")?
+                        } else { self.compile_expr(&args[0])? };
+                        return self.call_rt(self.rt.moo_tensor_mittel,
+                            &[obj.into(), a.into()], "t_mittel");
+                    }
+                    "max_wert" | "max_val" if !user_hat_methode => {
+                        let a = if args.is_empty() {
+                            self.call_rt(self.rt.moo_none, &[], "t_axis_none3")?
+                        } else { self.compile_expr(&args[0])? };
+                        return self.call_rt(self.rt.moo_tensor_maximum,
+                            &[obj.into(), a.into()], "t_max");
+                    }
+                    "exp" if !user_hat_methode => { return self.call_rt(self.rt.moo_tensor_exp, &[obj.into()], "t_exp"); }
+                    "log" if !user_hat_methode => { return self.call_rt(self.rt.moo_tensor_log, &[obj.into()], "t_log"); }
+                    "wurzel" | "sqrt" if !user_hat_methode => {
+                        return self.call_rt(self.rt.moo_tensor_sqrt, &[obj.into()], "t_sqrt");
+                    }
+                    "negieren" | "neg" if !user_hat_methode => {
+                        return self.call_rt(self.rt.moo_tensor_neg, &[obj.into()], "t_neg");
+                    }
+                    "hoch" | "pow" if !user_hat_methode => {
+                        let z = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tensor_pow,
+                            &[obj.into(), z.into()], "t_pow");
+                    }
+                    "relu" if !user_hat_methode => { return self.call_rt(self.rt.moo_tensor_relu, &[obj.into()], "t_relu"); }
+                    "sigmoid" if !user_hat_methode => { return self.call_rt(self.rt.moo_tensor_sigmoid, &[obj.into()], "t_sigmoid"); }
+                    "tanh" if !user_hat_methode => { return self.call_rt(self.rt.moo_tensor_tanh, &[obj.into()], "t_tanh"); }
+                    "gelu" if !user_hat_methode => { return self.call_rt(self.rt.moo_tensor_gelu, &[obj.into()], "t_gelu"); }
+                    "softmax" if !user_hat_methode => { return self.call_rt(self.rt.moo_tensor_softmax, &[obj.into()], "t_softmax"); }
+                    "logsoftmax" if !user_hat_methode => { return self.call_rt(self.rt.moo_tensor_logsoftmax, &[obj.into()], "t_logsoftmax"); }
+                    "form" | "shape" if !user_hat_methode => {
+                        return self.call_rt(self.rt.moo_tensor_form, &[obj.into()], "t_form");
+                    }
+                    "größe" | "groesse" | "size" if !user_hat_methode => {
+                        return self.call_rt(self.rt.moo_tensor_groesse, &[obj.into()], "t_groesse");
+                    }
+                    "zu_liste" | "to_list" if !user_hat_methode => {
+                        return self.call_rt(self.rt.moo_tensor_zu_liste, &[obj.into()], "t_zuliste");
+                    }
+                    "wert" | "value_at" if !user_hat_methode => {
+                        let idx = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_tensor_holen,
+                            &[obj.into(), idx.into()], "t_holen")?;
+                        self.call_rt_void(self.rt.moo_release, &[idx.into()], "rel_th_idx")?;
+                        return Ok(r);
+                    }
+                    "wert_setzen" | "set_value" if !user_hat_methode => {
+                        let idx = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_tensor_setzen,
+                            &[obj.into(), idx.into(), v.into()], "t_setzen")?;
+                        self.call_rt_void(self.rt.moo_release, &[idx.into()], "rel_ts_idx")?;
+                        return Ok(r);
+                    }
                     "append" | "hinzufügen" => {
                         let arg = self.compile_expr(&args[0])?;
                         self.call_rt_void(self.rt.moo_list_append,

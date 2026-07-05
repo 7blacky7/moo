@@ -123,6 +123,12 @@ static MooValue vec_op(MooValue a, MooValue b, ScalarOp op) {
 }
 
 MooValue moo_add(MooValue a, MooValue b) {
+    // Tensor-Arithmetik (Plan-014 A3): t+t broadcastet, t+zahl elementweise.
+    // Tensor-Konvention: Args borrowed, Rueckgabe +1 — passt zur BinaryOp-
+    // Codegen-Disziplin (lhs/rhs Post-Call-Release, CG3).
+    if (a.tag == MOO_TENSOR && b.tag == MOO_TENSOR) return moo_tensor_add(a, b);
+    if (a.tag == MOO_TENSOR && b.tag == MOO_NUMBER) return moo_tensor_adds(a, b);
+    if (a.tag == MOO_NUMBER && b.tag == MOO_TENSOR) return moo_tensor_adds(b, a);
     if (a.tag == MOO_STRING || b.tag == MOO_STRING)
         return moo_string_concat(a, b);
     if (a.tag == MOO_LIST || b.tag == MOO_LIST)
@@ -131,12 +137,25 @@ MooValue moo_add(MooValue a, MooValue b) {
 }
 
 MooValue moo_sub(MooValue a, MooValue b) {
+    if (a.tag == MOO_TENSOR && b.tag == MOO_TENSOR) return moo_tensor_sub(a, b);
+    if (a.tag == MOO_TENSOR && b.tag == MOO_NUMBER) return moo_tensor_subs(a, b);
+    if (a.tag == MOO_NUMBER && b.tag == MOO_TENSOR) {
+        // zahl - t  =  neg(t) + zahl (Zwischentensor wird hier released —
+        // Runtime-interne Eigentuemerschaft, kein Codegen-Vertrag beruehrt).
+        MooValue n = moo_tensor_neg(b);
+        MooValue r = moo_tensor_adds(n, a);
+        moo_release(n);
+        return r;
+    }
     if (a.tag == MOO_LIST || b.tag == MOO_LIST)
         return vec_op(a, b, scalar_sub);
     return moo_number(moo_as_number(a) - moo_as_number(b));
 }
 
 MooValue moo_mul(MooValue a, MooValue b) {
+    if (a.tag == MOO_TENSOR && b.tag == MOO_TENSOR) return moo_tensor_mul(a, b);
+    if (a.tag == MOO_TENSOR && b.tag == MOO_NUMBER) return moo_tensor_muls(a, b);
+    if (a.tag == MOO_NUMBER && b.tag == MOO_TENSOR) return moo_tensor_muls(b, a);
     // String * Zahl = Wiederholung
     if (a.tag == MOO_STRING && b.tag == MOO_NUMBER)
         return moo_string_repeat(a, b);
@@ -148,6 +167,17 @@ MooValue moo_mul(MooValue a, MooValue b) {
 }
 
 MooValue moo_div(MooValue a, MooValue b) {
+    // Tensor-Division VOR dem Null-Check: sie folgt IEEE-754 (x/0 = inf,
+    // 0/0 = nan) — dokumentierter Vertrag aus moo_tensor_ops.c.
+    if (a.tag == MOO_TENSOR && b.tag == MOO_TENSOR) return moo_tensor_div(a, b);
+    if (a.tag == MOO_TENSOR && b.tag == MOO_NUMBER) return moo_tensor_divs(a, b);
+    if (a.tag == MOO_NUMBER && b.tag == MOO_TENSOR) {
+        // zahl / t  =  t^(-1) * zahl (elementweiser Kehrwert via pow).
+        MooValue inv = moo_tensor_pow(b, moo_number(-1.0));
+        MooValue r = moo_tensor_muls(inv, a);
+        moo_release(inv);
+        return r;
+    }
     if (a.tag == MOO_LIST || b.tag == MOO_LIST)
         return vec_op(a, b, scalar_div);
     double divisor = moo_as_number(b);
@@ -165,12 +195,14 @@ MooValue moo_mod(MooValue a, MooValue b) {
 }
 
 MooValue moo_pow(MooValue a, MooValue b) {
+    if (a.tag == MOO_TENSOR && b.tag == MOO_NUMBER) return moo_tensor_pow(a, b);
     if (a.tag == MOO_LIST || b.tag == MOO_LIST)
         return vec_op(a, b, scalar_pow);
     return moo_number(pow(moo_as_number(a), moo_as_number(b)));
 }
 
 MooValue moo_neg(MooValue v) {
+    if (v.tag == MOO_TENSOR) return moo_tensor_neg(v);
     return moo_number(-moo_as_number(v));
 }
 
