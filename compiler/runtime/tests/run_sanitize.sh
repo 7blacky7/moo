@@ -114,6 +114,10 @@ EXTRA_HARNESSES=(
   #               Fan-out-Akkumulation, Broadcast-Reduktion Bias-Grad,
   #               no_grad). ASan haelt das Tape-Retain/Release-Gate.
   "test_autograd_asan.c|moo_tensor.c moo_tensor_ops.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   gradcheck:  Plan-014 B2 — DAS Ehrlichkeits-Gate: numerischer Gradient
+  #               vs. Autograd fuer JEDEN Registry-Op (automatische Iteration
+  #               via op_count/at — neuer Op ohne Gradcheck faellt hier auf).
+  "test_gradcheck.c|moo_tensor.c moo_tensor_ops.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   bare_alloc: Plan-010 T1 — Bare-Allocator (K3) + serielle Formatter (K2)
   #               auf dem Host. Linkt NUR moo_bare_alloc.c + moo_bare_console.c;
   #               moo_bare.c/moo_bare_boot.c bewusst NICHT (echte in/out-Asm
