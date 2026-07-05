@@ -114,6 +114,7 @@ jobs:
             clangdev=18.1.*
             zstd
             zlib
+            libxml2
           cache-environment: true
 
       - name: Install Windows deps (SDL2, sqlite, curl via vcpkg + LLVM env)
@@ -171,6 +172,25 @@ jobs:
           Get-ChildItem $condaLib -Filter "*zstd*" -ErrorAction SilentlyContinue | Format-Table Name
           Get-ChildItem $condaLib -Filter "*zlib*" -ErrorAction SilentlyContinue | Format-Table Name
           Get-ChildItem $condaLib -Filter "z*.lib" -ErrorAction SilentlyContinue | Format-Table Name
+
+          # P013 generisch: jede von llvm-config --system-libs referenzierte
+          # Lib muss unter genau diesem Namen im LIB-Pfad liegen. conda-forge
+          # benennt Import-Libs teils anders (libxml2.lib vs. xml2.lib) --
+          # fehlende Namen als Alias-Kopie der ersten passenden Variante.
+          $sysLibs = ((& $llvmConfig --system-libs) -split '\s+') | Where-Object { $_ }
+          Write-Host "llvm-config --system-libs: $($sysLibs -join ' ')"
+          foreach ($lib in $sysLibs) {
+            $name = [IO.Path]::GetFileName($lib)
+            if ($name -notlike '*.lib') { continue }
+            $ziel = Join-Path $condaLib $name
+            if (Test-Path $ziel) { continue }
+            $basis = $name -replace '\.lib$','' -replace '\.dll$',''
+            foreach ($k in @("lib$basis.lib", "$basis.lib", "$basis.dll.lib", "lib$basis.dll.lib")) {
+              $quelle = Join-Path $condaLib $k
+              if (Test-Path $quelle) { Copy-Item $quelle $ziel; Write-Host "Alias: $name <- $k"; break }
+            }
+            if (!(Test-Path $ziel)) { Write-Host "WARNUNG: $name nicht aufloesbar" }
+          }
 
           echo "LLVM_SYS_181_PREFIX=$condaPrefix\Library" >> $env:GITHUB_ENV
           echo "LIBCLANG_PATH=$condaPrefix\Library\bin" >> $env:GITHUB_ENV
