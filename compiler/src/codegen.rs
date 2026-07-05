@@ -2082,6 +2082,30 @@ impl<'ctx> CodeGen<'ctx> {
 
     // === Expression-Kompilierung ===
 
+    // Alloca IMMER im Entry-Block der aktuellen Funktion platzieren.
+    // Ein alloca am aktuellen Insert-Point landet sonst im Schleifenkoerper
+    // und waechst den Stack pro Iteration (G1-LEAK-Befund: list_tmp/dict_tmp/
+    // comp_*-Slots = 16B/Iteration => SEGV nach ~700k Iterationen bei 12MB
+    // Stack). Gleiches Muster wie der __mcall_obj-Slot.
+    fn entry_alloca<T: inkwell::types::BasicType<'ctx>>(
+        &self, ty: T, name: &str,
+    ) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        let func = self.current_function
+            .ok_or_else(|| "entry_alloca: keine aktuelle Funktion".to_string())?;
+        let entry_bb = func.get_first_basic_block()
+            .ok_or_else(|| "entry_alloca: kein Entry-Block".to_string())?;
+        let cur = self.builder.get_insert_block()
+            .ok_or_else(|| "entry_alloca: kein Insert-Block".to_string())?;
+        if let Some(first) = entry_bb.get_first_instruction() {
+            self.builder.position_before(&first);
+        } else {
+            self.builder.position_at_end(entry_bb);
+        }
+        let p = self.builder.build_alloca(ty, name).map_err(|e| format!("{e}"))?;
+        self.builder.position_at_end(cur);
+        Ok(p)
+    }
+
     fn compile_expr(&mut self, expr: &Expr) -> Result<StructValue<'ctx>, String> {
         match expr {
             Expr::Number(n) => {
@@ -4684,13 +4708,14 @@ impl<'ctx> CodeGen<'ctx> {
                     .map_err(|e| format!("{e}"))?.into_struct_value();
                 self.call_rt_void(self.rt.moo_release, &[prev.into()], "rel_prev_mcall_obj")?;
                 self.builder.build_store(obj_slot, obj_val).map_err(|e| format!("{e}"))?;
-                // obj_val haelt +1 von compile_expr (load_var-retain). Slot bekommt
-                // hier eine EIGENE +1, damit obj_val parallel als call-arg passiert
-                // werden kann ohne dass Callee-release den Slot-Cleanup zerlegt.
-                // Ohne dieses retain: Method-Multi-Call (3+x f.bla() in einem Scope)
-                // crashed mit malloc tcache-Korruption (siehe regression/
-                // test_method_multi_call_abort.moo).
-                self.call_rt_void(self.rt.moo_retain, &[obj_val.into()], "retain_for_slot")?;
+                // Der Slot UEBERNIMMT die +1 von compile_expr (load_var-retain):
+                // Runtime-Konvention "Receiver borrowed, Slot released" (siehe
+                // moo_smart_contains-Kommentar). Ein zusaetzliches retain hier
+                // (historisch "retain_for_slot") liess pro Methoden-Call netto
+                // +1 auf dem Receiver zurueck — bei frischen Receivern ein
+                // messbarer Heap-Leak (G1-LEAK: 430B/Iteration), bei loop-
+                // invarianten nur RSS-unsichtbare Refcount-Inflation.
+                // Gate: regression/test_method_multi_call_abort.moo.
 
                 let obj = obj_val;
                 // P014-A3: Tensor-Methoden nur, wenn KEINE User-Klasse den Namen
@@ -5346,7 +5371,15 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     _ => {
-                        // Klassen-Methode aufrufen: suche nach class__method
+                        // Klassen-Methode aufrufen: suche nach class__method.
+                        // User-Funktionen RELEASEN ihre Params im Epilog
+                        // (release_function_locals) — der selbst-Arg wird also
+                        // KONSUMIERT. Der Slot haelt den load-Ref fuer sein
+                        // eigenes Cleanup, deshalb braucht GENAU dieser Pfad
+                        // ein zusaetzliches retain auf den Receiver (Builtin-
+                        // Arme borrowen und brauchen keins — das alte globale
+                        // retain_for_slot leakte dort +1 pro Call).
+                        self.call_rt_void(self.rt.moo_retain, &[obj.into()], "retain_selbst_arg")?;
                         let mut call_args: Vec<BasicMetadataValueEnum> = vec![obj.into()];
                         for a in args {
                             call_args.push(self.compile_expr(a)?.into());
@@ -5659,8 +5692,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let list = self.call_rt(self.rt.moo_list_new,
                     &[self.context.i32_type().const_int(0, false).into()],
                     "list")?;
-                let list_ptr = self.builder.build_alloca(self.mv_type(), "list_tmp")
-                    .map_err(|e| format!("{e}"))?;
+                let list_ptr = self.entry_alloca(self.mv_type(), "list_tmp")?;
                 self.builder.build_store(list_ptr, list).map_err(|e| format!("{e}"))?;
 
                 for elem in elements {
@@ -5685,14 +5717,12 @@ impl<'ctx> CodeGen<'ctx> {
                 // Create empty result list
                 let result_list = self.call_rt(self.rt.moo_list_new,
                     &[self.context.i32_type().const_int(0, false).into()], "comp_list")?;
-                let result_ptr = self.builder.build_alloca(self.mv_type(), "comp_list_ptr")
-                    .map_err(|e| format!("{e}"))?;
+                let result_ptr = self.entry_alloca(self.mv_type(), "comp_list_ptr")?;
                 self.builder.build_store(result_ptr, result_list).map_err(|e| format!("{e}"))?;
 
                 // Compile iterable and get length
                 let list_val = self.compile_expr(iterable)?;
-                let list_ptr = self.builder.build_alloca(self.mv_type(), "comp_iter_ptr")
-                    .map_err(|e| format!("{e}"))?;
+                let list_ptr = self.entry_alloca(self.mv_type(), "comp_iter_ptr")?;
                 self.builder.build_store(list_ptr, list_val).map_err(|e| format!("{e}"))?;
 
                 let len_result = self.builder.build_call(self.rt.moo_list_iter_len,
@@ -5704,8 +5734,7 @@ impl<'ctx> CodeGen<'ctx> {
                 };
 
                 let i32_type = self.context.i32_type();
-                let idx_ptr = self.builder.build_alloca(i32_type, "comp_idx")
-                    .map_err(|e| format!("{e}"))?;
+                let idx_ptr = self.entry_alloca(i32_type, "comp_idx")?;
                 self.builder.build_store(idx_ptr, i32_type.const_int(0, false))
                     .map_err(|e| format!("{e}"))?;
 
@@ -5789,8 +5818,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Expr::Dict(pairs) => {
                 let dict = self.call_rt(self.rt.moo_dict_new, &[], "dict")?;
-                let dict_ptr = self.builder.build_alloca(self.mv_type(), "dict_tmp")
-                    .map_err(|e| format!("{e}"))?;
+                let dict_ptr = self.entry_alloca(self.mv_type(), "dict_tmp")?;
                 self.builder.build_store(dict_ptr, dict).map_err(|e| format!("{e}"))?;
 
                 for (key, val) in pairs {

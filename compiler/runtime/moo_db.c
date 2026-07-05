@@ -467,6 +467,11 @@ MooValue moo_db_stmt_bind(MooValue stmt, MooValue key, MooValue value) {
         moo_throw(moo_error(msg));
         goto fertig;
     }
+    // Builder-Pattern: stmt wird als Rueckgabe DURCHGEREICHT. Konvention
+    // "Rueckgaben +1 owning" verlangt hier ein retain — vorher fehlte es
+    // und wurde zufaellig durch den (jetzt gefixten) Methoden-Receiver-
+    // Leak des Codegens ausgeglichen (G1-LEAK).
+    moo_retain(stmt);
     ret = stmt;
 fertig:
     moo_release(key);
