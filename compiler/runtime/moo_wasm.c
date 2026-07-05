@@ -36,6 +36,10 @@ typedef int int32_t;
 
 typedef struct { uint64_t tag; uint64_t data; } MooValue;
 
+/* Tag-Zahlen: ZWEITPFLEGE zu moo_runtime.h (typedef enum MooTag) — dieser
+ * File ist freestanding (eigene Minimal-Structs) und kann den Header nicht
+ * einbinden. Synchronitaet erzwingt tests/ir_gates/run_tag_sync_gate.sh:
+ * Drift wuerde den WASM-Pfad still ABI-brechen. */
 #define MOO_NUMBER 0
 #define MOO_STRING 1
 #define MOO_BOOL   2

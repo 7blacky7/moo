@@ -18,6 +18,20 @@ use std::path::Path;
 use crate::ast::*;
 use crate::runtime_bindings::RuntimeBindings;
 
+/// MooTag-Werte — EINZIGE Stelle im Rust-Code mit Tag-Zahlen.
+/// MUSS mit runtime/moo_runtime.h (typedef enum MooTag) synchron sein:
+/// Drift heisst der Codegen erzeugt Werte mit falschem Tag -> die Runtime
+/// interpretiert Pointer/Doubles falsch = die bekannte SEGV-Klasse.
+/// Synchronitaet wird von tests/ir_gates/run_tag_sync_gate.sh erzwungen
+/// (parst das C-enum und vergleicht; drittes Pruefziel: moo_wasm.c-#defines).
+/// Neue Tags hier NUR ergaenzen wenn der Codegen sie wirklich braucht —
+/// alles andere laeuft ueber Runtime-Konstruktoren (moo_none() etc.).
+pub mod moo_tag {
+    pub const NONE: u64 = 3;    // MOO_NONE
+    pub const OBJECT: u64 = 7;  // MOO_OBJECT
+}
+use moo_tag as tag;
+
 /// Levenshtein-Distanz fuer "Meintest du...?" Vorschlaege
 fn levenshtein(a: &str, b: &str) -> usize {
     let (la, lb) = (a.len(), b.len());
@@ -406,7 +420,7 @@ impl<'ctx> CodeGen<'ctx> {
         // Top-Level-Assignments als LLVM-Globals anlegen — damit sie aus
         // Funktionen heraus sichtbar sind (load_var/store_var fallen auf
         // self.globals zurueck wenn eine Variable nicht lokal gefunden wird).
-        let none_init = self.context.i64_type().const_int(3, false);
+        let none_init = self.context.i64_type().const_int(tag::NONE, false);
         let zero_data = self.context.i64_type().const_int(0, false);
         let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
         for stmt in &program.statements {
@@ -729,7 +743,7 @@ impl<'ctx> CodeGen<'ctx> {
             let alloca = self.builder.build_alloca(self.mv_type(), name)
                 .map_err(|e| format!("{e}"))?;
             // Sofort mit None initialisieren damit release auf definierten Wert trifft
-            let none_init = self.context.i64_type().const_int(3, false); // MOO_NONE tag
+            let none_init = self.context.i64_type().const_int(tag::NONE, false);
             let zero_data = self.context.i64_type().const_int(0, false);
             let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
             self.builder.build_store(alloca, none_val).map_err(|e| format!("{e}"))?;
@@ -1340,7 +1354,7 @@ impl<'ctx> CodeGen<'ctx> {
         // Mit MOO_NONE initialisieren damit release_function_locals() vor
         // dem Store in diesem Slot (falls Code vor dem for-Loop early-returnt)
         // harmlos wirkt.
-        let none_init = self.context.i64_type().const_int(3, false);
+        let none_init = self.context.i64_type().const_int(tag::NONE, false);
         let zero_data = self.context.i64_type().const_int(0, false);
         let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
         self.builder.build_store(list_ptr, none_val).map_err(|e| format!("{e}"))?;
@@ -1408,7 +1422,7 @@ impl<'ctx> CodeGen<'ctx> {
         self.call_rt_void(self.rt.moo_release, &[list_end.into()], "rel_for_list")?;
         // Slot-Wert auf MOO_NONE setzen, damit ein spaeteres
         // release_function_locals() nicht doppelt released.
-        let none_init = self.context.i64_type().const_int(3, false);
+        let none_init = self.context.i64_type().const_int(tag::NONE, false);
         let zero_data = self.context.i64_type().const_int(0, false);
         let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
         self.builder.build_store(list_ptr, none_val).map_err(|e| format!("{e}"))?;
@@ -1503,7 +1517,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let is_none = self.builder.build_int_compare(
                     inkwell::IntPredicate::EQ,
                     tag.into_int_value(),
-                    self.context.i64_type().const_int(3, false), // MOO_NONE = 3
+                    self.context.i64_type().const_int(tag::NONE, false), // MOO_NONE
                     "is_none",
                 ).map_err(|e| format!("{e}"))?;
 
@@ -1529,7 +1543,7 @@ impl<'ctx> CodeGen<'ctx> {
         // das Global zurueck. Alle anderen Faelle (lokale Loop-Counter,
         // bare write ohne Selbst-Referenz) bekommen eine lokale Alloca um
         // Global-Pollution zu verhindern.
-        let none_init = self.context.i64_type().const_int(3, false);
+        let none_init = self.context.i64_type().const_int(tag::NONE, false);
         let zero_data = self.context.i64_type().const_int(0, false);
         let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
         let local_names = Self::collect_all_var_names(body);
@@ -1730,7 +1744,7 @@ impl<'ctx> CodeGen<'ctx> {
                         let is_none = self.builder.build_int_compare(
                             inkwell::IntPredicate::EQ,
                             tag.into_int_value(),
-                            self.context.i64_type().const_int(3, false), // MOO_NONE = 3
+                            self.context.i64_type().const_int(tag::NONE, false), // MOO_NONE
                             "is_none",
                         ).map_err(|e| format!("{e}"))?;
 
@@ -1751,7 +1765,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 // Pre-Allocation lokaler Variablen mit Counter-Pattern-Erkennung
                 // (analog compile_function_def, siehe Kommentar dort).
-                let none_init = self.context.i64_type().const_int(3, false);
+                let none_init = self.context.i64_type().const_int(tag::NONE, false);
                 let zero_data = self.context.i64_type().const_int(0, false);
                 let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
                 let local_names = Self::collect_all_var_names(method_body);
@@ -2231,7 +2245,7 @@ impl<'ctx> CodeGen<'ctx> {
                         .map_err(|e| format!("{e}"))?;
                     let is_obj = self.builder.build_int_compare(
                         inkwell::IntPredicate::EQ, tag.into_int_value(),
-                        self.context.i64_type().const_int(7, false), // MOO_OBJECT = 7
+                        self.context.i64_type().const_int(tag::OBJECT, false), // MOO_OBJECT
                         "is_obj").map_err(|e| format!("{e}"))?;
 
                     let obj_bb = self.context.append_basic_block(func_cur, "op_obj");
@@ -4707,7 +4721,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 let obj_slot = self.builder.build_alloca(self.mv_type(), &slot_name)
                     .map_err(|e| format!("{e}"))?;
-                let none_tag = self.context.i64_type().const_int(3, false);
+                let none_tag = self.context.i64_type().const_int(tag::NONE, false);
                 let zero_data = self.context.i64_type().const_int(0, false);
                 let none_struct = self.mv_type().const_named_struct(&[none_tag.into(), zero_data.into()]);
                 self.builder.build_store(obj_slot, none_struct).map_err(|e| format!("{e}"))?;

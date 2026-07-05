@@ -45,6 +45,14 @@ if ! "$SCRIPT_DIR/ir_gates/run_ir_gates.sh"; then
     exit 1
 fi
 
+# TYP-ZENTRAL Phase 3: MooTag-Drift-Gate — vergleicht die Tag-Zweitpflege-
+# Stellen (codegen.rs moo_tag, moo_wasm.c #defines) wertgenau mit dem
+# MooTag-enum in moo_runtime.h. Drift = SEGV-Klasse.
+if ! "$SCRIPT_DIR/ir_gates/run_tag_sync_gate.sh"; then
+    echo -e "${RED}FEHLER:${NC} Tag-Sync-Gate fehlgeschlagen — Abbruch."
+    exit 1
+fi
+
 # Alle .moo Dateien mit .expected durchgehen (top-level + regression/)
 for moo_file in "$SCRIPT_DIR"/*.moo "$SCRIPT_DIR"/regression/*.moo; do
     [[ -f "$moo_file" ]] || continue
