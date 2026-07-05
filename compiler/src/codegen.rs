@@ -2473,6 +2473,15 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[l.into()], "rel_tal_liste")?;
                         return Ok(res);
                     }
+                    "autograd_reset" => {
+                        return self.call_rt(self.rt.moo_ag_reset, &[], "ag_reset");
+                    }
+                    "autograd_an" | "autograd_on" => {
+                        return self.call_rt(self.rt.moo_ag_an, &[], "ag_an");
+                    }
+                    "autograd_aus" | "autograd_off" => {
+                        return self.call_rt(self.rt.moo_ag_aus, &[], "ag_aus");
+                    }
                     "länge" | "len" => {
                         // Pure-Reader-Builtin: moo_length released sein Arg NICHT
                         // (verifiziert moo_stdlib.c) — compile_expr liefert +1 owning
@@ -4509,6 +4518,18 @@ impl<'ctx> CodeGen<'ctx> {
                     // (moo_ops.c) — bewusst KEINE plus/mal-Methoden-Arms, damit
                     // User-Klassen (z.B. raytracer Vec3.plus/mal) nicht
                     // geshadowt werden.
+                    "mit_gradient" | "with_gradient" if !user_hat_methode => {
+                        return self.call_rt(self.rt.moo_tensor_mit_gradient, &[obj.into()], "t_mitgrad");
+                    }
+                    "rueckwaerts" | "rückwärts" | "backward" if !user_hat_methode => {
+                        return self.call_rt(self.rt.moo_tensor_rueckwaerts, &[obj.into()], "t_rueckw");
+                    }
+                    "gradient" if !user_hat_methode => {
+                        return self.call_rt(self.rt.moo_tensor_gradient, &[obj.into()], "t_grad");
+                    }
+                    "gradient_löschen" | "gradient_loeschen" | "zero_grad" if !user_hat_methode => {
+                        return self.call_rt(self.rt.moo_tensor_gradient_loeschen, &[obj.into()], "t_zerograd");
+                    }
                     "matmul" if !user_hat_methode => {
                         let b = self.compile_expr(&args[0])?;
                         let r = self.call_rt(self.rt.moo_tensor_matmul,

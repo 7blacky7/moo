@@ -132,7 +132,7 @@ static void ew_generic(const MooTensor* a, const MooTensor* b, MooTensor* out, F
     }
 }
 
-static MooValue ew_op(MooValue av, MooValue bv, FOp f, const char* wo) {
+static MooValue ew_op(MooValue av, MooValue bv, FOp f, const char* wo, const char* ag) {
     MooTensor* a = expect_t(av, wo); if (!a) return moo_none();
     MooTensor* b = expect_t(bv, wo); if (!b) return moo_none();
     int32_t oshape[MOO_TENSOR_MAX_DIMS]; int32_t ond;
@@ -148,17 +148,19 @@ static MooValue ew_op(MooValue av, MooValue bv, FOp f, const char* wo) {
     } else {
         ew_generic(a, b, out, f);
     }
-    return wrap_t(out);
+    MooValue ret = wrap_t(out);
+    moo_ag_record(ag, av, bv, moo_none(), ret);   // B1: Tape
+    return ret;
 }
 
-MooValue moo_tensor_add(MooValue a, MooValue b) { return ew_op(a, b, f_add, "tensor_plus"); }
-MooValue moo_tensor_sub(MooValue a, MooValue b) { return ew_op(a, b, f_sub, "tensor_minus"); }
-MooValue moo_tensor_mul(MooValue a, MooValue b) { return ew_op(a, b, f_mul, "tensor_mal"); }
-MooValue moo_tensor_div(MooValue a, MooValue b) { return ew_op(a, b, f_div, "tensor_geteilt"); }
+MooValue moo_tensor_add(MooValue a, MooValue b) { return ew_op(a, b, f_add, "tensor_plus", "add"); }
+MooValue moo_tensor_sub(MooValue a, MooValue b) { return ew_op(a, b, f_sub, "tensor_minus", "sub"); }
+MooValue moo_tensor_mul(MooValue a, MooValue b) { return ew_op(a, b, f_mul, "tensor_mal", "mul"); }
+MooValue moo_tensor_div(MooValue a, MooValue b) { return ew_op(a, b, f_div, "tensor_geteilt", "div"); }
 
 // Skalar-Varianten: kein Alloc fuer die Zahl, flacher Loop.
 MOO_OPTIMIZE_O3
-static MooValue ews_op(MooValue av, MooValue zahl, FOp f, const char* wo) {
+static MooValue ews_op(MooValue av, MooValue zahl, FOp f, const char* wo, const char* ag) {
     MooTensor* a = expect_t(av, wo); if (!a) return moo_none();
     if (zahl.tag != MOO_NUMBER) {
         char msg[128];
@@ -170,13 +172,15 @@ static MooValue ews_op(MooValue av, MooValue zahl, FOp f, const char* wo) {
     if (!out) return moo_none();
     float s = (float)MV_NUM(zahl);
     for (int64_t i = 0; i < a->size; i++) out->data[i] = f(a->data[i], s);
-    return wrap_t(out);
+    MooValue ret = wrap_t(out);
+    moo_ag_record(ag, av, moo_none(), zahl, ret);   // B1: Tape (skalar im Node)
+    return ret;
 }
 
-MooValue moo_tensor_adds(MooValue a, MooValue z) { return ews_op(a, z, f_add, "tensor_plus"); }
-MooValue moo_tensor_subs(MooValue a, MooValue z) { return ews_op(a, z, f_sub, "tensor_minus"); }
-MooValue moo_tensor_muls(MooValue a, MooValue z) { return ews_op(a, z, f_mul, "tensor_mal"); }
-MooValue moo_tensor_divs(MooValue a, MooValue z) { return ews_op(a, z, f_div, "tensor_geteilt"); }
+MooValue moo_tensor_adds(MooValue a, MooValue z) { return ews_op(a, z, f_add, "tensor_plus", "adds"); }
+MooValue moo_tensor_subs(MooValue a, MooValue z) { return ews_op(a, z, f_sub, "tensor_minus", "subs"); }
+MooValue moo_tensor_muls(MooValue a, MooValue z) { return ews_op(a, z, f_mul, "tensor_mal", "muls"); }
+MooValue moo_tensor_divs(MooValue a, MooValue z) { return ews_op(a, z, f_div, "tensor_geteilt", "divs"); }
 
 // ============================================================
 // MatMul — 2D @ 2D, i-k-j-Reihenfolge (cache-freundlich: innerste Schleife
@@ -218,7 +222,9 @@ MooValue moo_tensor_matmul(MooValue av, MooValue bv) {
     MooTensor* out = moo_tensor_raw(2, oshape);
     if (!out) return moo_none();
     matmul_ikj(a->data, b->data, out->data, a->shape[0], a->shape[1], b->shape[1]);
-    return wrap_t(out);
+    MooValue ret = wrap_t(out);
+    moo_ag_record("matmul", av, bv, moo_none(), ret);
+    return ret;
 }
 
 // ============================================================
@@ -238,7 +244,9 @@ MooValue moo_tensor_transponieren(MooValue av) {
     for (int64_t i = 0; i < r; i++)
         for (int64_t j = 0; j < c; j++)
             out->data[j * r + i] = a->data[i * c + j];
-    return wrap_t(out);
+    MooValue ret = wrap_t(out);
+    moo_ag_record("transpose", av, moo_none(), moo_none(), ret);
+    return ret;
 }
 
 // Umformen: gleiche Elementzahl, Daten-Kopie (contiguous). View-Sharing ist
@@ -276,7 +284,9 @@ MooValue moo_tensor_umformen(MooValue av, MooValue shape_list) {
     MooTensor* out = moo_tensor_raw(l->length, shape);
     if (!out) return moo_none();
     memcpy(out->data, a->data, (size_t)a->size * sizeof(float));
-    return wrap_t(out);
+    MooValue ret = wrap_t(out);
+    moo_ag_record("reshape", av, moo_none(), moo_none(), ret);
+    return ret;
 }
 
 // Zeilenbereich [start, ende) entlang der ersten Dimension — Batching-Baustein.
@@ -326,7 +336,9 @@ MooValue moo_tensor_verbinden(MooValue av, MooValue bv) {
     if (!out) return moo_none();
     memcpy(out->data, a->data, (size_t)a->size * sizeof(float));
     memcpy(out->data + a->size, b->data, (size_t)b->size * sizeof(float));
-    return wrap_t(out);
+    MooValue ret = wrap_t(out);
+    moo_ag_record("concat", av, bv, moo_none(), ret);
+    return ret;
 }
 
 // ============================================================
@@ -337,6 +349,8 @@ MooValue moo_tensor_verbinden(MooValue av, MooValue bv) {
 typedef enum { RED_SUM, RED_MEAN, RED_MAX } RedArt;
 
 static MooValue reduce_op(MooValue av, MooValue achsev, RedArt art, const char* wo) {
+    static const char* ag_namen[] = { "sum", "mean", "max" };
+    const char* ag = ag_namen[art];
     MooTensor* a = expect_t(av, wo); if (!a) return moo_none();
     int32_t achse = (achsev.tag == MOO_NUMBER) ? (int32_t)MV_NUM(achsev) : -1;
 
@@ -353,7 +367,9 @@ static MooValue reduce_op(MooValue av, MooValue achsev, RedArt art, const char* 
             for (int64_t i = 0; i < a->size; i++) acc += (double)a->data[i];
             out->data[0] = (float)(art == RED_MEAN ? acc / (double)a->size : acc);
         }
-        return wrap_t(out);
+        MooValue ret0 = wrap_t(out);
+        moo_ag_record(ag, av, moo_none(), achsev, ret0);
+        return ret0;
     }
     if (a->ndim != 2 || (achse != 0 && achse != 1)) {
         char msg[192];
@@ -394,7 +410,9 @@ static MooValue reduce_op(MooValue av, MooValue achsev, RedArt art, const char* 
             }
         }
     }
-    return wrap_t(out);
+    MooValue ret = wrap_t(out);
+    moo_ag_record(ag, av, moo_none(), achsev, ret);
+    return ret;
 }
 
 MooValue moo_tensor_summe(MooValue a, MooValue achse)   { return reduce_op(a, achse, RED_SUM,  "tensor_summe"); }
@@ -421,22 +439,24 @@ static inline float u_gelu(float x) {
 }
 
 MOO_OPTIMIZE_O3
-static MooValue u_op(MooValue av, UOp f, const char* wo) {
+static MooValue u_op(MooValue av, UOp f, const char* wo, const char* ag) {
     MooTensor* a = expect_t(av, wo); if (!a) return moo_none();
     MooTensor* out = moo_tensor_raw(a->ndim, a->shape);
     if (!out) return moo_none();
     for (int64_t i = 0; i < a->size; i++) out->data[i] = f(a->data[i]);
-    return wrap_t(out);
+    MooValue ret = wrap_t(out);
+    moo_ag_record(ag, av, moo_none(), moo_none(), ret);
+    return ret;
 }
 
-MooValue moo_tensor_exp(MooValue a)     { return u_op(a, u_exp,     "tensor_exp"); }
-MooValue moo_tensor_log(MooValue a)     { return u_op(a, u_log,     "tensor_log"); }
-MooValue moo_tensor_sqrt(MooValue a)    { return u_op(a, u_sqrt,    "tensor_wurzel"); }
-MooValue moo_tensor_neg(MooValue a)     { return u_op(a, u_neg,     "tensor_neg"); }
-MooValue moo_tensor_relu(MooValue a)    { return u_op(a, u_relu,    "tensor_relu"); }
-MooValue moo_tensor_sigmoid(MooValue a) { return u_op(a, u_sigmoid, "tensor_sigmoid"); }
-MooValue moo_tensor_tanh(MooValue a)    { return u_op(a, u_tanh,    "tensor_tanh"); }
-MooValue moo_tensor_gelu(MooValue a)    { return u_op(a, u_gelu,    "tensor_gelu"); }
+MooValue moo_tensor_exp(MooValue a)     { return u_op(a, u_exp,     "tensor_exp", "exp"); }
+MooValue moo_tensor_log(MooValue a)     { return u_op(a, u_log,     "tensor_log", "log"); }
+MooValue moo_tensor_sqrt(MooValue a)    { return u_op(a, u_sqrt,    "tensor_wurzel", "sqrt"); }
+MooValue moo_tensor_neg(MooValue a)     { return u_op(a, u_neg,     "tensor_neg", "neg"); }
+MooValue moo_tensor_relu(MooValue a)    { return u_op(a, u_relu,    "tensor_relu", "relu"); }
+MooValue moo_tensor_sigmoid(MooValue a) { return u_op(a, u_sigmoid, "tensor_sigmoid", "sigmoid"); }
+MooValue moo_tensor_tanh(MooValue a)    { return u_op(a, u_tanh,    "tensor_tanh", "tanh"); }
+MooValue moo_tensor_gelu(MooValue a)    { return u_op(a, u_gelu,    "tensor_gelu", "gelu"); }
 
 MooValue moo_tensor_pow(MooValue av, MooValue zahl) {
     MooTensor* a = expect_t(av, "tensor_hoch"); if (!a) return moo_none();
@@ -448,7 +468,9 @@ MooValue moo_tensor_pow(MooValue av, MooValue zahl) {
     if (!out) return moo_none();
     float p = (float)MV_NUM(zahl);
     for (int64_t i = 0; i < a->size; i++) out->data[i] = powf(a->data[i], p);
-    return wrap_t(out);
+    MooValue ret = wrap_t(out);
+    moo_ag_record("pow", av, moo_none(), zahl, ret);
+    return ret;
 }
 
 // ============================================================
@@ -482,7 +504,9 @@ static MooValue softmax_impl(MooValue av, bool log_variante, const char* wo) {
                 o[j] = (float)(exp((double)(x[j] - m)) / sum);
         }
     }
-    return wrap_t(out);
+    MooValue ret = wrap_t(out);
+    moo_ag_record(log_variante ? "logsoftmax" : "softmax", av, moo_none(), moo_none(), ret);
+    return ret;
 }
 
 MooValue moo_tensor_softmax(MooValue a)    { return softmax_impl(a, false, "tensor_softmax"); }
@@ -494,7 +518,7 @@ MooValue moo_tensor_logsoftmax(MooValue a) { return softmax_impl(a, true,  "tens
 // bw (Autograd-backward) traegt B1 nach; B2 verlangt pro bw eine
 // Gradient-Check-Zeile im Harness.
 // ============================================================
-static const MooTensorOp op_tabelle[] = {
+static MooTensorOp op_tabelle[] = {
     { "add",        MOO_OP_BINARY,        NULL, moo_tensor_add,        NULL },
     { "sub",        MOO_OP_BINARY,        NULL, moo_tensor_sub,        NULL },
     { "mul",        MOO_OP_BINARY,        NULL, moo_tensor_mul,        NULL },
@@ -532,4 +556,16 @@ const MooTensorOp* moo_tensor_op_lookup(const char* name) {
 int moo_tensor_op_count(void) { return OP_COUNT; }
 const MooTensorOp* moo_tensor_op_at(int i) {
     return (i >= 0 && i < OP_COUNT) ? &op_tabelle[i] : NULL;
+}
+
+// B1: moo_autograd.c registriert hier seine backward-Funktionen.
+// Doppel-Registrierung ueberschreibt (idempotenter Init).
+bool moo_tensor_op_set_bw(const char* name, MooAgBw bw) {
+    for (int i = 0; i < OP_COUNT; i++) {
+        if (strcmp(op_tabelle[i].name, name) == 0) {
+            op_tabelle[i].bw = bw;
+            return true;
+        }
+    }
+    return false;
 }

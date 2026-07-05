@@ -180,23 +180,50 @@ MooValue moo_tensor_softmax(MooValue a);
 MooValue moo_tensor_logsoftmax(MooValue a);
 
 // Op-Registry: neuer Op = 1 Funktion + 1 Tabelleneintrag (Erweiterbarkeits-
-// Vertrag). backward wird von Autograd (B1) nachgetragen; B2 lehnt Ops ohne
-// Gradient-Check ab. Iteration via count/at ist fuer B2 gedacht.
+// Vertrag). backward registriert moo_autograd.c beim Init via
+// moo_tensor_op_set_bw; B2 lehnt Ops ohne Gradient-Check ab.
+// Iteration via count/at ist fuer B2 gedacht.
 typedef enum {
     MOO_OP_UNARY = 1,          // fw1(a)
     MOO_OP_BINARY = 2,         // fw2(a, b)  — broadcastet
     MOO_OP_BINARY_SCALAR = 3,  // fw2(a, zahl)
 } MooTensorOpArt;
-typedef struct {
+
+// === Autograd (Plan-014 B1): dynamischer Tape, reverse-mode ===
+// Node haelt RETAINED Referenzen auf Tensor-Inputs + Output; tape_reset
+// released alles (die Refcount-Minenzone — ASan-Gate in test_autograd).
+typedef struct MooAgNode {
+    const struct MooTensorOp* op;  // Registry-Eintrag (op->bw)
+    MooValue inputs[2];            // retained Tensor-Inputs
+    int32_t n_in;
+    MooValue output;               // retained
+    double skalar;                 // Zahl-Arg (adds/muls/pow/summe-achse ...)
+    bool hat_skalar;
+} MooAgNode;
+typedef void (*MooAgBw)(const MooAgNode* n);
+
+typedef struct MooTensorOp {
     const char* name;          // z.B. "add", "matmul", "relu"
     MooTensorOpArt art;
     MooValue (*fw1)(MooValue a);
     MooValue (*fw2)(MooValue a, MooValue b);
-    void* bw;                  // Autograd-backward (B1), NULL = noch keins
+    MooAgBw bw;                // backward — traegt moo_autograd.c ein
 } MooTensorOp;
 const MooTensorOp* moo_tensor_op_lookup(const char* name);
 int moo_tensor_op_count(void);
 const MooTensorOp* moo_tensor_op_at(int i);
+bool moo_tensor_op_set_bw(const char* name, MooAgBw bw);
+
+// Autograd-API. Tensor-Konvention gilt: Args borrowed, Rueckgaben +1.
+void moo_ag_record(const char* op_name, MooValue a, MooValue b,
+                   MooValue skalar, MooValue out);   // intern (Ops-Schicht)
+MooValue moo_tensor_mit_gradient(MooValue t);        // requires_grad=true, t retained zurueck
+MooValue moo_tensor_rueckwaerts(MooValue loss);      // backward ab Skalar-Loss
+MooValue moo_tensor_gradient(MooValue t);            // grad als Kopie (+1)
+MooValue moo_tensor_gradient_loeschen(MooValue t);   // grad-Buffer nullen
+MooValue moo_ag_reset(void);                         // Tape leeren (Nodes releasen)
+MooValue moo_ag_an(void);                            // Aufzeichnung an
+MooValue moo_ag_aus(void);                           // Aufzeichnung aus (Inferenz)
 
 typedef struct {
     int32_t  refcount;   // MUSS erstes Feld sein (Refcount-Konvention)

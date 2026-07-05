@@ -91,7 +91,7 @@ HARNESSES=(
 EXTRA_HARNESSES=(
   "test_frame_asan.c|moo_frame.c moo_memory.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"
   "test_gif_core_asan.c|moo_gif.c|-lm"
-  "test_gif_wiring_asan.c|moo_gif.c moo_gif_handle.c moo_frame.c moo_value.c moo_memory.c moo_string.c moo_dict.c moo_error.c moo_print.c moo_list.c moo_ops.c moo_tensor.c moo_tensor_ops.c moo_video_handle.c moo_video.c|-lm"
+  "test_gif_wiring_asan.c|moo_gif.c moo_gif_handle.c moo_frame.c moo_value.c moo_memory.c moo_string.c moo_dict.c moo_error.c moo_print.c moo_list.c moo_ops.c moo_tensor.c moo_tensor_ops.c moo_autograd.c moo_video_handle.c moo_video.c|-lm"
   "test_sim_input_asan.c|moo_3d.c|-lm"
   #   video_wiring: MOO_VIDEO-Core (moo_video.c) + immer-gebauter Heap-Wrapper
   #               (moo_video_handle.c) + Core-Runtime. moo_memory.c->moo_release()
@@ -100,16 +100,20 @@ EXTRA_HARNESSES=(
   #               moo_string_new -> moo_string.c (+ dict/list/ops als deren Deps).
   #               Mock-ffmpeg: der Harness schreibt zur Laufzeit ein "ffmpeg"-sh-
   #               Skript in ein mkdtemp-Dir + setzt PATH -> KEIN echtes ffmpeg/GPU.
-  "test_video_wiring_asan.c|moo_video.c moo_video_handle.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_tensor.c moo_tensor_ops.c|-lm"
+  "test_video_wiring_asan.c|moo_video.c moo_video_handle.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_tensor.c moo_tensor_ops.c moo_autograd.c|-lm"
   #   tensor:     Plan-014 A1 — MOO_TENSOR-Kern (Konstruktoren/Zugriff/Refcount/
   #               Determinismus). Core-Runtime-Satz OHNE moo_error.c: der Harness
   #               bringt das Test-throw-Modell mit (Flag + free des strdup-Texts,
   #               Muster Voxel-Harnesses) — sonst leaken Fehlerpfade by design.
-  "test_tensor_asan.c|moo_tensor.c moo_tensor_ops.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_tensor_asan.c|moo_tensor.c moo_tensor_ops.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   tensor_ops: Plan-014 A2 — Op-Registry + Kern-Ops (Broadcasting/matmul/
   #               Reduktionen/Aktivierungen/Softmax-Stabilitaet). Gleicher
   #               Quell-Satz + Test-throw-Modell wie tensor.
-  "test_tensor_ops_asan.c|moo_tensor.c moo_tensor_ops.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_tensor_ops_asan.c|moo_tensor.c moo_tensor_ops.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   autograd:   Plan-014 B1 — Tape-Lifecycle (record/rueckwaerts/reset,
+  #               Fan-out-Akkumulation, Broadcast-Reduktion Bias-Grad,
+  #               no_grad). ASan haelt das Tape-Retain/Release-Gate.
+  "test_autograd_asan.c|moo_tensor.c moo_tensor_ops.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   bare_alloc: Plan-010 T1 — Bare-Allocator (K3) + serielle Formatter (K2)
   #               auf dem Host. Linkt NUR moo_bare_alloc.c + moo_bare_console.c;
   #               moo_bare.c/moo_bare_boot.c bewusst NICHT (echte in/out-Asm
@@ -246,7 +250,9 @@ build_ub_ops_string() {
     "$RUNTIME_DIR/moo_video_handle.c" "$RUNTIME_DIR/moo_video.c"
     # P014-A3: moo_ops.c (add/sub/mul/div/pow/neg) dispatcht auf den
     # MOO_TENSOR-Tag -> moo_tensor_ops.c, dieser auf moo_tensor.c.
+    # P014-B1: moo_tensor_ops.c zeichnet auf den Autograd-Tape auf.
     "$RUNTIME_DIR/moo_tensor.c" "$RUNTIME_DIR/moo_tensor_ops.c"
+    "$RUNTIME_DIR/moo_autograd.c"
   )
   echo "  [build] $tag  (ops/string-Pfade, P007-U3)"
   # shellcheck disable=SC2086
