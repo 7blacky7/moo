@@ -254,6 +254,11 @@ MooValue moo_nn_grad_clip(MooValue params, MooValue max_norm);   // E2: Rueckgab
 // Layout (u64-LE-Headerlaenge + JSON + f32-LE), Arch unter
 // __metadata__.moo_arch. Fremd-safetensors-Import folgt in F1.
 MooValue moo_nn_ki_netz(MooValue schichten);
+// Schicht-Typ-Registry (Typ-Zentralisierung Phase 1a, moo_nn.c) — INTERNAL:
+// zentrale Wahrheit ueber bekannte Schicht-Typen. easy/Fehlermeldungen
+// fragen hier statt eigene Typ-Listen zu pflegen.
+bool moo_nn_layer_bekannt(const char* name);
+void moo_nn_layer_namen(char* out, size_t out_len);
 MooValue moo_nn_trainiere(MooValue netz, MooValue x, MooValue y, MooValue optionen);
 MooValue moo_nn_vorhersage(MooValue netz, MooValue x);
 MooValue moo_nn_genauigkeit(MooValue netz, MooValue x, MooValue y);

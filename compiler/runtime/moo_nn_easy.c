@@ -88,13 +88,18 @@ MooValue moo_nn_ki_netz(MooValue schichten) {
     MooList* l = MV_LIST(schichten);
     for (int32_t i = 0; i < l->length; i++) {
         MooValue s = l->items[i];
-        if (!(ist_schicht_typ(s, "dicht") || ist_schicht_typ(s, "dropout") ||
-              ist_schicht_typ(s, "layernorm") || ist_schicht_typ(s, "embedding") ||
-              ist_schicht_typ(s, "attention") || ist_schicht_typ(s, "position"))) {
-            char msg[160];
+        /* Registry-Validierung (Phase 1a): moo_nn.c ist die einzige
+         * Wahrheit ueber bekannte Schicht-Typen. */
+        MooValue t = (s.tag == MOO_DICT) ? eget(s, "__nn") : moo_none();
+        bool ok = (t.tag == MOO_STRING) &&
+                  moo_nn_layer_bekannt(MV_STR(t)->chars);
+        moo_release(t);
+        if (!ok) {
+            char namen[160];
+            moo_nn_layer_namen(namen, sizeof(namen));
+            char msg[256];
             snprintf(msg, sizeof(msg), "ki_netz: Eintrag %d ist keine Schicht "
-                     "(erwarte schicht_dicht/dropout/layernorm/embedding/"
-                     "attention/position)", i);
+                     "(erwarte schicht_%s)", i, namen);
             moo_throw(moo_error(msg));
             return moo_none();
         }

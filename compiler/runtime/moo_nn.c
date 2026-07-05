@@ -59,10 +59,30 @@ static bool nn_ist(MooValue d, const char* typ) {
     return ok;
 }
 
+/* ============================================================
+ * Schicht-Typ-Registry (Typ-Zentralisierung Phase 1a)
+ * ============================================================
+ * EINE Zeile pro Schicht-Typ: Name + Forward + Parameter-Sammler.
+ * Vorbild Op-Registry (B2): neuer Layer = 1 Registry-Zeile + fw_/params_-
+ * Funktionen an EINEM Ort. Dispatch (schicht_vorwaerts), Typ-Pruefung
+ * (nn_ist_schicht), Parameter-Sammlung (params_von_schicht) und die
+ * Fehlermeldungs-Aufzaehlungen iterieren die Tabelle — KEINE per-Typ-
+ * strcmp-Ketten mehr. moo_nn_easy.c (Validierung) nutzt moo_nn_layer_lookup.
+ * speichern/laden-Hooks folgen in Phase 1b. */
+typedef struct {
+    const char* name;                                  /* "__nn"-Marker    */
+    MooValue (*fw)(MooValue schicht, MooValue x);      /* Pflicht          */
+    void (*params)(MooValue schicht, MooValue liste);  /* NULL = parameterlos */
+} MooNNLayerDesc;
+
+static const MooNNLayerDesc* nn_layer_lookup(const char* name);
 static bool nn_ist_schicht(MooValue d) {
-    return nn_ist(d, "dicht") || nn_ist(d, "dropout") ||
-           nn_ist(d, "layernorm") || nn_ist(d, "embedding") ||
-           nn_ist(d, "attention") || nn_ist(d, "position");
+    if (d.tag != MOO_DICT) return false;
+    MooValue t = dget(d, "__nn");
+    bool ok = (t.tag == MOO_STRING) &&
+              nn_layer_lookup(MV_STR(t)->chars) != NULL;
+    moo_release(t);
+    return ok;
 }
 
 /* ============================================================
@@ -571,21 +591,26 @@ static MooValue fw_position(MooValue schicht, MooValue x) {
     return out;
 }
 
-/* Eine Schicht vorwaerts. x borrowed, Rueckgabe +1. */
+/* Eine Schicht vorwaerts. x borrowed, Rueckgabe +1. Registry-Dispatch:
+ * 1 dget + Lookup statt 6 nn_ist-Aufrufe (je dget+strcmp). */
 static MooValue schicht_vorwaerts(MooValue schicht, MooValue x) {
     if (x.tag != MOO_TENSOR) {
         moo_throw(moo_error("vorwaerts: die Eingabe ist kein Tensor"));
         return moo_none();
     }
-    if (nn_ist(schicht, "dicht"))     return fw_dicht(schicht, x);
-    if (nn_ist(schicht, "dropout"))   return fw_dropout(schicht, x);
-    if (nn_ist(schicht, "layernorm")) return fw_layernorm(schicht, x);
-    if (nn_ist(schicht, "embedding")) return fw_embedding(schicht, x);
-    if (nn_ist(schicht, "attention")) return fw_attention(schicht, x);
-    if (nn_ist(schicht, "position"))  return fw_position(schicht, x);
-    moo_throw(moo_error("vorwaerts: das ist keine Schicht (erwarte "
-                        "schicht_dicht/dropout/layernorm/embedding/attention/"
-                        "position oder eine Liste davon)"));
+    if (schicht.tag == MOO_DICT) {
+        MooValue t = dget(schicht, "__nn");
+        const MooNNLayerDesc* d = (t.tag == MOO_STRING)
+            ? nn_layer_lookup(MV_STR(t)->chars) : NULL;
+        moo_release(t);
+        if (d) return d->fw(schicht, x);
+    }
+    char msg[256];
+    char namen[160];
+    moo_nn_layer_namen(namen, sizeof(namen));
+    snprintf(msg, sizeof(msg), "vorwaerts: das ist keine Schicht (erwarte "
+             "schicht_%s oder eine Liste davon)", namen);
+    moo_throw(moo_error(msg));
     return moo_none();
 }
 
@@ -623,40 +648,84 @@ MooValue moo_nn_vorwaerts(MooValue netz, MooValue x) {
  * Parameter-Sammlung
  * ============================================================ */
 
-static void params_von_schicht(MooValue schicht, MooValue liste) {
-    /* dget liefert +1; list_append transferiert -> genau richtig. */
-    if (nn_ist(schicht, "dicht")) {
-        moo_list_append(liste, dget(schicht, "w"));
-        moo_list_append(liste, dget(schicht, "b"));
-    } else if (nn_ist(schicht, "layernorm")) {
-        moo_list_append(liste, dget(schicht, "gamma"));
-        moo_list_append(liste, dget(schicht, "beta"));
-    } else if (nn_ist(schicht, "embedding")) {
-        moo_list_append(liste, dget(schicht, "w"));
-    } else if (nn_ist(schicht, "attention")) {
-        /* DETERMINISTISCHE Reihenfolge (Vertrag fuer .mook): pro Kopf
-         * wq,wk,wv — dann wo. */
-        int32_t nk = (int32_t)dnum(schicht, "koepfe", 1.0);
-        char name[24];
-        for (int32_t h = 0; h < nk; h++) {
-            snprintf(name, sizeof(name), "wq%d", h);
-            moo_list_append(liste, dget(schicht, name));
-            snprintf(name, sizeof(name), "wk%d", h);
-            moo_list_append(liste, dget(schicht, name));
-            snprintf(name, sizeof(name), "wv%d", h);
-            moo_list_append(liste, dget(schicht, name));
-        }
-        moo_list_append(liste, dget(schicht, "wo"));
-    } else if (nn_ist(schicht, "position")) {
-        /* nur "gelernt" ist ein Parameter — sinus ist konstant und wird
-         * beim Laden rekonstruiert. */
-        MooValue art = dget(schicht, "art");
-        bool gelernt = (art.tag == MOO_STRING &&
-                        strcmp(MV_STR(art)->chars, "gelernt") == 0);
-        moo_release(art);
-        if (gelernt) moo_list_append(liste, dget(schicht, "pos"));
+/* Parameter-Sammler pro Typ (Registry). dget liefert +1; list_append
+ * transferiert -> genau richtig. dropout hat KEINE (Registry: NULL). */
+static void params_dicht(MooValue schicht, MooValue liste) {
+    moo_list_append(liste, dget(schicht, "w"));
+    moo_list_append(liste, dget(schicht, "b"));
+}
+static void params_layernorm(MooValue schicht, MooValue liste) {
+    moo_list_append(liste, dget(schicht, "gamma"));
+    moo_list_append(liste, dget(schicht, "beta"));
+}
+static void params_embedding(MooValue schicht, MooValue liste) {
+    moo_list_append(liste, dget(schicht, "w"));
+}
+static void params_attention(MooValue schicht, MooValue liste) {
+    /* DETERMINISTISCHE Reihenfolge (Vertrag fuer .mook): pro Kopf
+     * wq,wk,wv — dann wo. */
+    int32_t nk = (int32_t)dnum(schicht, "koepfe", 1.0);
+    char name[24];
+    for (int32_t h = 0; h < nk; h++) {
+        snprintf(name, sizeof(name), "wq%d", h);
+        moo_list_append(liste, dget(schicht, name));
+        snprintf(name, sizeof(name), "wk%d", h);
+        moo_list_append(liste, dget(schicht, name));
+        snprintf(name, sizeof(name), "wv%d", h);
+        moo_list_append(liste, dget(schicht, name));
     }
-    /* dropout: keine Parameter */
+    moo_list_append(liste, dget(schicht, "wo"));
+}
+static void params_position(MooValue schicht, MooValue liste) {
+    /* nur "gelernt" ist ein Parameter — sinus ist konstant und wird
+     * beim Laden rekonstruiert. */
+    MooValue art = dget(schicht, "art");
+    bool gelernt = (art.tag == MOO_STRING &&
+                    strcmp(MV_STR(art)->chars, "gelernt") == 0);
+    moo_release(art);
+    if (gelernt) moo_list_append(liste, dget(schicht, "pos"));
+}
+
+/* === Die Registry-Tabelle. EINE Zeile pro Schicht-Typ. === */
+static const MooNNLayerDesc nn_layer_registry[] = {
+    { "dicht",     fw_dicht,     params_dicht     },
+    { "dropout",   fw_dropout,   NULL             },
+    { "layernorm", fw_layernorm, params_layernorm },
+    { "embedding", fw_embedding, params_embedding },
+    { "attention", fw_attention, params_attention },
+    { "position",  fw_position,  params_position  },
+};
+
+static const MooNNLayerDesc* nn_layer_lookup(const char* name) {
+    for (size_t i = 0; i < sizeof(nn_layer_registry) / sizeof(nn_layer_registry[0]); i++)
+        if (strcmp(nn_layer_registry[i].name, name) == 0)
+            return &nn_layer_registry[i];
+    return NULL;
+}
+
+/* Exportierte Lookups fuer moo_nn_easy.c (Validierung/Fehlermeldungen). */
+bool moo_nn_layer_bekannt(const char* name) {
+    return nn_layer_lookup(name) != NULL;
+}
+/* Schreibt "dicht/dropout/..." (Registry-Reihenfolge) nach out. */
+void moo_nn_layer_namen(char* out, size_t out_len) {
+    size_t used = 0;
+    out[0] = '\0';
+    for (size_t i = 0; i < sizeof(nn_layer_registry) / sizeof(nn_layer_registry[0]); i++) {
+        int w = snprintf(out + used, out_len - used, "%s%s",
+                         i ? "/" : "", nn_layer_registry[i].name);
+        if (w < 0 || (size_t)w >= out_len - used) break;
+        used += (size_t)w;
+    }
+}
+
+static void params_von_schicht(MooValue schicht, MooValue liste) {
+    if (schicht.tag != MOO_DICT) return;
+    MooValue t = dget(schicht, "__nn");
+    const MooNNLayerDesc* d = (t.tag == MOO_STRING)
+        ? nn_layer_lookup(MV_STR(t)->chars) : NULL;
+    moo_release(t);
+    if (d && d->params) d->params(schicht, liste);
 }
 
 /* gradienten_kappen(params, max_norm): globales L2-Norm-Clipping (E2).
