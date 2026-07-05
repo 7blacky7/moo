@@ -130,3 +130,4 @@ editors/vscode/moo/*.vsix
 # OS
 .DS_Store
 Thumbs.db
+daten/

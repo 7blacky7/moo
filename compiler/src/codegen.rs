@@ -2592,6 +2592,46 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[pfad.into()], "rel_kiladen_p")?;
                         return Ok(r);
                     }
+                    // Daten-Pipeline (Plan-014 E1)
+                    "mnist_laden" | "mnist_load" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_ds_mnist, &[p.into()], "ds_mnist")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_dsmnist_p")?;
+                        return Ok(r);
+                    }
+                    "datensatz_csv" | "dataset_csv" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_ds_csv, &[p.into()], "ds_csv")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_dscsv_p")?;
+                        return Ok(r);
+                    }
+                    "bild_laden" | "image_load" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_ds_bild, &[p.into()], "ds_bild")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_dsbild_p")?;
+                        return Ok(r);
+                    }
+                    "mischen" | "shuffle_data" => {
+                        let x = self.compile_expr(&args[0])?;
+                        let y = self.compile_expr(&args[1])?;
+                        let s = if args.len() > 2 { self.compile_expr(&args[2])? }
+                                else { self.call_rt(self.rt.moo_none, &[], "ds_mi_none")? };
+                        let r = self.call_rt(self.rt.moo_ds_mischen,
+                            &[x.into(), y.into(), s.into()], "ds_mischen")?;
+                        self.call_rt_void(self.rt.moo_release, &[x.into()], "rel_dsmi_x")?;
+                        self.call_rt_void(self.rt.moo_release, &[y.into()], "rel_dsmi_y")?;
+                        return Ok(r);
+                    }
+                    "normalisieren" | "normalize" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let a = if args.len() > 1 { self.compile_expr(&args[1])? }
+                                else { self.call_rt(self.rt.moo_none, &[], "ds_no_none")? };
+                        let r = self.call_rt(self.rt.moo_ds_normalisieren,
+                            &[t.into(), a.into()], "ds_normalisieren")?;
+                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_dsno_t")?;
+                        self.call_rt_void(self.rt.moo_release, &[a.into()], "rel_dsno_a")?;
+                        return Ok(r);
+                    }
                     "länge" | "len" => {
                         // Pure-Reader-Builtin: moo_length released sein Arg NICHT
                         // (verifiziert moo_stdlib.c) — compile_expr liefert +1 owning

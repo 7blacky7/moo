@@ -1,0 +1,32 @@
+# ============================================================
+# MNIST: Handgeschriebene Ziffern erkennen (Plan-014 E1-Gate).
+# Vorher einmal ausfuehren:  ./skripte/mnist_download.sh
+# Dann:  moo-compiler compile ki_mnist.moo -o ki_mnist && ./ki_mnist
+# Gate: >95% Test-Genauigkeit, <5min CPU, seed-reproduzierbar.
+# ============================================================
+zeige "Lade MNIST ..."
+setze training auf mnist_laden("daten/mnist/train")
+setze test auf mnist_laden("daten/mnist/t10k")
+zeige "Trainingsbilder: " + text(training["bilder"].form())
+zeige "Testbilder:      " + text(test["bilder"].form())
+
+# Netz: 784 Pixel -> 128 Neuronen (relu) -> 10 Ziffern (softmax)
+setze netz auf ki_netz([
+    schicht_dicht(784, 128, "relu", 1),
+    schicht_dicht(128, 10, "softmax", 2)
+])
+
+zeige "Trainiere ..."
+setze verlauf auf netz.trainiere(training["bilder"], training["labels"], {
+    "epochen": 5,
+    "rate": 0.001,
+    "batch": 64,
+    "seed": 42
+})
+
+setze genauigkeit auf netz.genauigkeit(test["bilder"], test["labels"])
+zeige "Test-Genauigkeit: " + text(genauigkeit)
+wenn genauigkeit > 0.95:
+    zeige "GATE BESTANDEN (>95%)"
+sonst:
+    zeige "GATE VERFEHLT"

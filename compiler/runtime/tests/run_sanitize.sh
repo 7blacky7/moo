@@ -123,6 +123,7 @@ EXTRA_HARNESSES=(
   #               Konvergenz-Gate im Harness; Quell-Satz + Test-throw-Modell
   #               wie autograd, plus moo_nn.c.
   "test_nn_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_tensor.c moo_tensor_ops.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_dataset_asan.c|moo_dataset.c moo_tensor.c moo_tensor_ops.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   bare_alloc: Plan-010 T1 — Bare-Allocator (K3) + serielle Formatter (K2)
   #               auf dem Host. Linkt NUR moo_bare_alloc.c + moo_bare_console.c;
   #               moo_bare.c/moo_bare_boot.c bewusst NICHT (echte in/out-Asm
@@ -262,7 +263,7 @@ build_ub_ops_string() {
     # P014-B1: moo_tensor_ops.c zeichnet auf den Autograd-Tape auf.
     "$RUNTIME_DIR/moo_tensor.c" "$RUNTIME_DIR/moo_tensor_ops.c"
     "$RUNTIME_DIR/moo_autograd.c" "$RUNTIME_DIR/moo_nn.c" "$RUNTIME_DIR/moo_nn_easy.c"
-    "$RUNTIME_DIR/moo_json.c"
+    "$RUNTIME_DIR/moo_json.c" "$RUNTIME_DIR/moo_dataset.c"
   )
   echo "  [build] $tag  (ops/string-Pfade, P007-U3)"
   # shellcheck disable=SC2086

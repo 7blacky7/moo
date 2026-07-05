@@ -256,6 +256,15 @@ MooValue moo_nn_vorhersage(MooValue netz, MooValue x);
 MooValue moo_nn_genauigkeit(MooValue netz, MooValue x, MooValue y);
 MooValue moo_nn_speichern(MooValue netz, MooValue pfad);
 MooValue moo_nn_laden(MooValue pfad);
+// Daten-Pipeline (Plan-014 E1, moo_dataset.c): MNIST-IDX (entpackt, siehe
+// skripte/mnist_download.sh), Zahlen-CSV, PGM/PPM-Bilder (eigener Reader —
+// Entscheid E1 statt stb/SDL_image), seed-deterministisches Mischen,
+// Normalisieren (minmax/standard, ohne Tape).
+MooValue moo_ds_mnist(MooValue prefix);
+MooValue moo_ds_csv(MooValue pfad);
+MooValue moo_ds_bild(MooValue pfad);
+MooValue moo_ds_mischen(MooValue x, MooValue y, MooValue seed);
+MooValue moo_ds_normalisieren(MooValue t, MooValue art);
 
 typedef struct {
     int32_t  refcount;   // MUSS erstes Feld sein (Refcount-Konvention)
