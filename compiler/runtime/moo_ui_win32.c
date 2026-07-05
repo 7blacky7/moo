@@ -38,6 +38,15 @@
 #include "moo_runtime.h"
 #include "moo_ui.h"
 
+/* P013: __thread ist ein GCC/Clang-Keyword — MSVC (C2054, Run 28744810xxx)
+ * braucht __declspec(thread). Datei ist Windows-exklusiv, muss aber unter
+ * MinGW UND MSVC bauen. */
+#if defined(_MSC_VER)
+#define MOO_TLS __declspec(thread)
+#else
+#define MOO_TLS __thread
+#endif
+
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -184,7 +193,7 @@ static inline MooZeichnerW32* unwrap_zeichner_w32(MooValue v) {
 
 /* Aktiver Zeichner fuer ui_zeichne_text_breite — nur gesetzt waehrend
  * WM_DRAWITEM-Callback. Ausserhalb NULL → text_breite liefert 0. */
-static __thread MooZeichnerW32* g_active_zeichner = NULL;
+static MOO_TLS MooZeichnerW32* g_active_zeichner = NULL;
 
 /* =========================================================================
  * MooValue ↔ HWND Wrap
@@ -1996,9 +2005,9 @@ MooValue moo_ui_liste_sortierbar(MooValue liste, MooValue spalte_index,
 
 /* Sort-Kontext (Thread-local damit multiple Fenster nicht kollidieren).
  * Wird vor LVM_SORTITEMS gesetzt und danach zurueckgenommen. */
-static __thread HWND g_moo_sort_hwnd = NULL;
-static __thread int  g_moo_sort_col  = 0;
-static __thread int  g_moo_sort_asc  = 1;
+static MOO_TLS HWND g_moo_sort_hwnd = NULL;
+static MOO_TLS int  g_moo_sort_col  = 0;
+static MOO_TLS int  g_moo_sort_asc  = 1;
 
 /* Comparator fuer ListView_SortItems. l1/l2 sind die lParam-Werte der
  * zwei zu vergleichenden Items (wir setzen diese als eindeutige
