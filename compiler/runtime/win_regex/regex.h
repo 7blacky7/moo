@@ -7,6 +7,14 @@ extern "C" {
 
 /* P013: <features.h> entfernt — musl-intern, Standalone-Vendoring */
 
+/* P013: MSVC kennt das C99-Keyword `restrict` nicht (C2143/C2059, CI-Run
+ * 28744387845) — und die Array-Form `pmatch[restrict]` (regexec.c) ist
+ * auch mit __restrict nicht ausdrueckbar. restrict ist ein reiner
+ * Optimierungshinweis: fuer MSVC leer definieren ist konform. */
+#if defined(_MSC_VER) && !defined(__cplusplus) && !defined(restrict)
+#define restrict
+#endif
+
 #include <stddef.h>
 typedef ptrdiff_t regoff_t;
 
