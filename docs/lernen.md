@@ -1095,6 +1095,16 @@ zeige kopie.vorhersage(daten).zu_liste()
 mit der 2D-API eine eigene Lernkurve zu malen. `.mook`-Dateien sind
 übrigens das safetensors-Format, das auch die großen KI-Werkzeuge lesen.
 
+Für längere Trainings gibt es Profi-Techniken als weitere Optionen:
+`"clip": 1.0` kappt zu große Lernschritte (verhindert Explosionen),
+`"lr_plan": "cosine"` (oder `"step"`, `"warmup"`) verändert die Lernrate
+über die Zeit, `"geduld": 5` stoppt automatisch, wenn sich 5 Epochen
+lang nichts verbessert (`"min_besserung"` stellt ein, was als
+Verbesserung zählt), und `"checkpoint": "bestes.mook"` speichert
+laufend das beste Modell. Low-Level gibt es dafür
+`gradienten_kappen(parameter(schichten), 1.0)` — und `opt["rate"]`
+darfst du zwischen Schritten einfach selbst ändern.
+
 Endet dein Netz auf `"softmax"` (Klassen-Raten, z.B. Ziffern 0–9), nimmt
 `trainiere` automatisch den richtigen Fehler (Kreuzentropie) und du darfst
 als Ziele einfach die Klassen-Nummern übergeben: `tensor_aus_liste([0, 1, 2])`.

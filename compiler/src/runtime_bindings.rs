@@ -272,6 +272,7 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_nn_opt_adam: FunctionValue<'ctx>,
     pub moo_nn_opt_adamw: FunctionValue<'ctx>,
     pub moo_nn_opt_schritt: FunctionValue<'ctx>,
+    pub moo_nn_grad_clip: FunctionValue<'ctx>,
     // Kinderleicht-API (Plan-014 D1)
     pub moo_nn_ki_netz: FunctionValue<'ctx>,
     pub moo_nn_trainiere: FunctionValue<'ctx>,
@@ -966,6 +967,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_nn_opt_adam: decl_mv_mv!("moo_nn_opt_adam", mv2),
             moo_nn_opt_adamw: decl_mv_mv!("moo_nn_opt_adamw", mv3),
             moo_nn_opt_schritt: decl_mv_mv!("moo_nn_opt_schritt", mv1),
+            moo_nn_grad_clip: decl_mv_mv!("moo_nn_grad_clip", mv2),
             // Kinderleicht-API (Plan-014 D1)
             moo_nn_ki_netz: decl_mv_mv!("moo_nn_ki_netz", mv1),
             moo_nn_trainiere: decl_mv_mv!("moo_nn_trainiere", &[mv, mv, mv, mv]),

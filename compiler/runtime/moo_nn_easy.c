@@ -258,6 +258,38 @@ MooValue moo_nn_trainiere(MooValue netz, MooValue x, MooValue y, MooValue option
     char opt_name[24], verlust[24];
     estr(optionen, "optimierer", "adam", opt_name, sizeof(opt_name));
     estr(optionen, "verlust", "auto", verlust, sizeof(verlust));
+    /* E2: Trainings-Techniken (EN-Alias-Keys jeweils moeglich) */
+    double clip = enum_(optionen, "clip", enum_(optionen, "clip_norm", 0.0));
+    int64_t geduld = (int64_t)enum_(optionen, "geduld",
+                                    enum_(optionen, "patience", 0.0));
+    /* min_besserung (Keras min_delta): so viel muss der Loss sinken um als
+     * Verbesserung zu zaehlen — faengt Float-Rundungsrauschen der Shuffle-
+     * Permutation ab (mean-Reduktion ist permutationsabhaengig gerundet). */
+    double min_besserung = enum_(optionen, "min_besserung",
+                                 enum_(optionen, "min_delta", 0.0));
+    if (min_besserung < 1e-12) min_besserung = 1e-12;
+    double plan_faktor = enum_(optionen, "plan_faktor",
+                               enum_(optionen, "schedule_factor", 0.1));
+    int64_t plan_schritt = (int64_t)enum_(optionen, "plan_schritt",
+                                          enum_(optionen, "schedule_step", 0.0));
+    char lr_plan[24];
+    estr(optionen, "lr_plan", "", lr_plan, sizeof(lr_plan));
+    if (!lr_plan[0]) estr(optionen, "lr_schedule", "keiner", lr_plan, sizeof(lr_plan));
+    char ckpt[512];
+    estr(optionen, "checkpoint", "", ckpt, sizeof(ckpt));
+    bool plan_step = strcmp(lr_plan, "step") == 0;
+    bool plan_cos = strcmp(lr_plan, "cosine") == 0 || strcmp(lr_plan, "kosinus") == 0;
+    bool plan_warm = strcmp(lr_plan, "warmup") == 0;
+    if (!plan_step && !plan_cos && !plan_warm &&
+        strcmp(lr_plan, "keiner") != 0 && strcmp(lr_plan, "none") != 0) {
+        moo_release(schichten);
+        moo_throw(moo_error("trainiere: \"lr_plan\" kann \"keiner\", \"step\", "
+                            "\"cosine\" oder \"warmup\" sein"));
+        return moo_none();
+    }
+    if (plan_schritt <= 0)
+        plan_schritt = plan_step ? (epochen / 3 > 0 ? epochen / 3 : 1)
+                                 : (epochen / 10 > 0 ? epochen / 10 : 1);
     if (epochen < 1 || epochen > 1000000) {
         moo_release(schichten);
         moo_throw(moo_error("trainiere: \"epochen\" muss zwischen 1 und "
@@ -340,8 +372,24 @@ MooValue moo_nn_trainiere(MooValue netz, MooValue x, MooValue y, MooValue option
     for (int64_t i = 0; i < n; i++) perm[i] = (int32_t)i;
     uint64_t rng = seed * 0x2545F4914F6CDD1DULL + 0x9E3779B97F4A7C15ULL;
     bool fehler = false;
+    double best = 1e300;
+    int64_t ohne_verbesserung = 0;
 
     for (int64_t ep = 0; ep < epochen && !fehler; ep++) {
+        /* E2: Lernraten-Plan — opt_schritt liest \"rate\" pro Aufruf aus dem
+         * Dict, also wirkt das Setzen hier sofort. */
+        double rate_e = rate;
+        if (plan_step) {
+            for (int64_t k = plan_schritt; k <= ep; k += plan_schritt)
+                rate_e *= plan_faktor;
+        } else if (plan_cos) {
+            rate_e = rate * 0.5 * (1.0 + cos(3.14159265358979323846 *
+                                             (double)ep / (double)epochen));
+        } else if (plan_warm) {
+            if (ep < plan_schritt)
+                rate_e = rate * (double)(ep + 1) / (double)plan_schritt;
+        }
+        eset(opt, "rate", moo_number(rate_e));
         /* Fisher-Yates, seed-deterministisch */
         for (int64_t i = n - 1; i > 0; i--) {
             int64_t j = (int64_t)(esm64(&rng) % (uint64_t)(i + 1));
@@ -367,6 +415,8 @@ MooValue moo_nn_trainiere(MooValue netz, MooValue x, MooValue y, MooValue option
             if (loss.tag == MOO_TENSOR) {
                 summe += (double)T(loss)->data[0] * (double)b;
                 moo_release(moo_tensor_rueckwaerts(loss));
+                if (clip > 0.0)
+                    moo_release(moo_nn_grad_clip(params, moo_number(clip)));
                 moo_release(moo_nn_opt_schritt(opt));
             } else {
                 fehler = true;
@@ -381,6 +431,25 @@ MooValue moo_nn_trainiere(MooValue netz, MooValue x, MooValue y, MooValue option
         if (ausgabe)
             printf("Epoche %lld/%lld — Fehler: %.6f\n",
                    (long long)(ep + 1), (long long)epochen, avg);
+        /* E2: Bestwert-Tracking -> Checkpoint + Early-Stopping */
+        if (avg < best - min_besserung) {
+            best = avg;
+            ohne_verbesserung = 0;
+            if (ckpt[0]) {
+                MooValue cp = moo_string_new(ckpt);
+                moo_release(moo_nn_speichern(schichten, cp));
+                moo_release(cp);
+            }
+        } else {
+            ohne_verbesserung++;
+            if (geduld > 0 && ohne_verbesserung >= geduld) {
+                if (ausgabe)
+                    printf("Frueher Stopp nach Epoche %lld — keine "
+                           "Verbesserung seit %lld Epochen.\n",
+                           (long long)(ep + 1), (long long)geduld);
+                break;
+            }
+        }
     }
 
     free(perm);

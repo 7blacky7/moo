@@ -599,6 +599,120 @@ int main(void) {
         moo_ag_reset();
     }
 
+    /* ===== 13. Trainings-Techniken (Plan-014 E2) ===== */
+    {
+        float xv[8] = { 0,0, 0,1, 1,0, 1,1 };
+        float zv[4] = { 0, 1, 1, 0 };
+        /* a) grad_clip handgerechnet: 2 Params, grads (3,4) -> Norm 5,
+         *    max 1 -> beide /5 */
+        {
+            MooValue p1 = t1(1, (float[]){ 0.0f });
+            MooValue p2 = t1(1, (float[]){ 0.0f });
+            T(p1)->grad = (float*)calloc(1, sizeof(float));
+            T(p2)->grad = (float*)calloc(1, sizeof(float));
+            T(p1)->grad[0] = 3.0f; T(p2)->grad[0] = 4.0f;
+            MooValue liste = moo_list_new(2);
+            moo_retain(p1); moo_list_append(liste, p1);
+            moo_retain(p2); moo_list_append(liste, p2);
+            MooValue norm = moo_nn_grad_clip(liste, moo_number(1.0));
+            CHECK(norm.tag == MOO_NUMBER && NAHE(MV_NUM(norm), 5.0),
+                  "grad_clip: Rueckgabe = Norm vor Kappen (5)");
+            CHECK(NAHE(T(p1)->grad[0], 0.6) && NAHE(T(p2)->grad[0], 0.8),
+                  "grad_clip: Grads auf Norm 1 skaliert (0.6, 0.8)");
+            moo_release(liste); moo_release(p1); moo_release(p2);
+        }
+        /* b) Clipping verhindert Explosion: relu+linear (KEINE saettigende
+         *    Aktivierung — sigmoid wuerde nur saturieren statt explodieren),
+         *    sgd rate=10 divergiert, mit clip bleibt es endlich+klein */
+        {
+            double ende[2];
+            for (int mit_clip = 0; mit_clip < 2; mit_clip++) {
+                MooValue schichten = moo_list_new(2);
+                moo_list_append(schichten, mk_dicht(2, 8, "relu", 21));
+                moo_list_append(schichten, mk_dicht(8, 1, "keine", 22));
+                MooValue netz = moo_nn_ki_netz(schichten);
+                MooValue x = t2(4, 2, xv);
+                MooValue z = t2(4, 1, zv);
+                MooValue o = moo_dict_new();
+                moo_dict_set(o, moo_string_new("epochen"), moo_number(60.0));
+                moo_dict_set(o, moo_string_new("rate"), moo_number(10.0));
+                moo_dict_set(o, moo_string_new("optimierer"), moo_string_new("sgd"));
+                moo_dict_set(o, moo_string_new("ausgabe"), moo_number(0.0));
+                if (mit_clip)
+                    moo_dict_set(o, moo_string_new("clip"), moo_number(1.0));
+                MooValue h = moo_nn_trainiere(netz, x, z, o);
+                MooList* hl = MV_LIST(h);
+                ende[mit_clip] = MV_NUM(hl->items[hl->length - 1]);
+                moo_release(h); moo_release(o); moo_release(x); moo_release(z);
+                moo_release(netz); moo_release(schichten);
+                moo_ag_reset();
+            }
+            fprintf(stderr, "clip-Effekt bei sgd rate=10: ohne=%f mit=%f\n",
+                    ende[0], ende[1]);
+            CHECK(!isfinite(ende[0]) || ende[0] > 1000.0,
+                  "ohne clip: sgd rate=10 explodiert (Beweis der Gefahr)");
+            CHECK(isfinite(ende[1]) && ende[1] < 100.0,
+                  "clip: Training bleibt endlich+stabil trotz rate=10");
+        }
+        /* c) geduld: rate=1e-12 -> Updates weit unter min_besserung
+         *    (rate=0 lehnt der Optimizer korrekt ab) + checkpoint */
+        {
+            MooValue schichten = moo_list_new(2);
+            moo_list_append(schichten, mk_dicht(2, 8, "tanh", 31));
+            moo_list_append(schichten, mk_dicht(8, 1, "sigmoid", 32));
+            MooValue netz = moo_nn_ki_netz(schichten);
+            MooValue x = t2(4, 2, xv);
+            MooValue z = t2(4, 1, zv);
+            MooValue o = moo_dict_new();
+            moo_dict_set(o, moo_string_new("epochen"), moo_number(50.0));
+            moo_dict_set(o, moo_string_new("rate"), moo_number(1e-12));
+            moo_dict_set(o, moo_string_new("geduld"), moo_number(3.0));
+            moo_dict_set(o, moo_string_new("min_besserung"), moo_number(0.001));
+            moo_dict_set(o, moo_string_new("ausgabe"), moo_number(0.0));
+            moo_dict_set(o, moo_string_new("checkpoint"),
+                         moo_string_new("/tmp/test_e2_ckpt.mook"));
+            MooValue h = moo_nn_trainiere(netz, x, z, o);
+            CHECK(h.tag == MOO_LIST && MV_LIST(h)->length == 4,
+                  "geduld: Stillstand stoppt nach 1+3 Epochen (Historie == 4)");
+            FILE* cf = fopen("/tmp/test_e2_ckpt.mook", "rb");
+            CHECK(cf != NULL, "checkpoint: Datei existiert");
+            if (cf) fclose(cf);
+            MooValue cp = moo_string_new("/tmp/test_e2_ckpt.mook");
+            MooValue geladen = moo_nn_laden(cp);
+            CHECK(geladen.tag == MOO_DICT, "checkpoint: laedt als Netz");
+            moo_release(geladen); moo_release(cp);
+            remove("/tmp/test_e2_ckpt.mook");
+            moo_release(h); moo_release(o);
+
+            /* cosine vs. keiner: gleicher Seed, verschiedene End-Losses */
+            double ende[2];
+            for (int mit_plan = 0; mit_plan < 2; mit_plan++) {
+                MooValue s2 = moo_list_new(2);
+                moo_list_append(s2, mk_dicht(2, 8, "tanh", 41));
+                moo_list_append(s2, mk_dicht(8, 1, "sigmoid", 42));
+                MooValue n2 = moo_nn_ki_netz(s2);
+                MooValue o2 = moo_dict_new();
+                moo_dict_set(o2, moo_string_new("epochen"), moo_number(40.0));
+                moo_dict_set(o2, moo_string_new("rate"), moo_number(0.05));
+                moo_dict_set(o2, moo_string_new("ausgabe"), moo_number(0.0));
+                if (mit_plan)
+                    moo_dict_set(o2, moo_string_new("lr_plan"),
+                                 moo_string_new("cosine"));
+                MooValue h2 = moo_nn_trainiere(n2, x, z, o2);
+                MooList* hl = MV_LIST(h2);
+                ende[mit_plan] = MV_NUM(hl->items[hl->length - 1]);
+                CHECK(isfinite(ende[mit_plan]), "lr_plan: Loss endlich");
+                moo_release(h2); moo_release(o2);
+                moo_release(n2); moo_release(s2);
+                moo_ag_reset();
+            }
+            CHECK(ende[0] != ende[1], "lr_plan cosine veraendert den Verlauf");
+            moo_release(x); moo_release(z);
+            moo_release(netz); moo_release(schichten);
+            moo_ag_reset();
+        }
+    }
+
     printf("test_nn_asan: alle %d Checks bestanden\n", checks);
     return 0;
 }

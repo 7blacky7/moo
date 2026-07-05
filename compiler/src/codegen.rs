@@ -2578,6 +2578,14 @@ impl<'ctx> CodeGen<'ctx> {
                         return Ok(r);
                     }
                     // Kinderleicht-API (Plan-014 D1)
+                    "gradienten_kappen" | "clip_gradients" => {
+                        let params = self.compile_expr(&args[0])?;
+                        let m = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_nn_grad_clip,
+                            &[params.into(), m.into()], "nn_gradclip")?;
+                        self.call_rt_void(self.rt.moo_release, &[params.into()], "rel_gc_p")?;
+                        return Ok(r);
+                    }
                     "ki_netz" | "ai_net" => {
                         let schichten = self.compile_expr(&args[0])?;
                         let r = self.call_rt(self.rt.moo_nn_ki_netz,

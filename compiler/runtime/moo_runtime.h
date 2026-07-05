@@ -244,6 +244,7 @@ MooValue moo_nn_opt_sgd(MooValue params, MooValue rate, MooValue momentum);
 MooValue moo_nn_opt_adam(MooValue params, MooValue rate);
 MooValue moo_nn_opt_adamw(MooValue params, MooValue rate, MooValue decay);
 MooValue moo_nn_opt_schritt(MooValue opt);
+MooValue moo_nn_grad_clip(MooValue params, MooValue max_norm);   // E2: Rueckgabe = Norm vor Kappen
 // Kinderleicht-API (Plan-014 D1, moo_nn_easy.c) — Zucker ueber moo_nn.c.
 // trainiere: Optionen-DICT ({"epochen","rate","batch","optimierer",
 // "ausgabe","seed","verlust","momentum"}), Rueckgabe = Fehler-Historie

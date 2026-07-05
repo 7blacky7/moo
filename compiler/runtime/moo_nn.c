@@ -415,6 +415,39 @@ static void params_von_schicht(MooValue schicht, MooValue liste) {
     /* dropout: keine Parameter */
 }
 
+/* gradienten_kappen(params, max_norm): globales L2-Norm-Clipping (E2).
+ * Skaliert ALLE Gradienten mit max/norm wenn die Gesamt-Norm drueber
+ * liegt. Rueckgabe: die Norm VOR dem Kappen (Monitoring). */
+MooValue moo_nn_grad_clip(MooValue params, MooValue max_norm) {
+    if (params.tag != MOO_LIST || max_norm.tag != MOO_NUMBER ||
+        MV_NUM(max_norm) <= 0.0) {
+        moo_throw(moo_error("gradienten_kappen: erwarte (Parameter-Liste, "
+                            "maximale Norm > 0)"));
+        return moo_none();
+    }
+    MooList* pl = MV_LIST(params);
+    double q = 0.0;
+    for (int32_t i = 0; i < pl->length; i++) {
+        if (pl->items[i].tag != MOO_TENSOR) continue;
+        MooTensor* p = MV_TENSOR(pl->items[i]);
+        if (!p->grad) continue;
+        for (int64_t j = 0; j < p->size; j++)
+            q += (double)p->grad[j] * (double)p->grad[j];
+    }
+    double norm = sqrt(q);
+    double max = MV_NUM(max_norm);
+    if (norm > max && norm > 0.0) {
+        float faktor = (float)(max / norm);
+        for (int32_t i = 0; i < pl->length; i++) {
+            if (pl->items[i].tag != MOO_TENSOR) continue;
+            MooTensor* p = MV_TENSOR(pl->items[i]);
+            if (!p->grad) continue;
+            for (int64_t j = 0; j < p->size; j++) p->grad[j] *= faktor;
+        }
+    }
+    return moo_number(norm);
+}
+
 /* parameter(netz): alle trainierbaren Tensoren als Liste (+1). */
 MooValue moo_nn_parameter(MooValue netz) {
     if (nn_ist(netz, "netz")) {   /* D1: Kinderleicht-Netz delegiert */
