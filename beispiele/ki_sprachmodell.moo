@@ -145,10 +145,16 @@ autograd_an()
 #    Ziel jedes Blocks = derselbe Block, um 1 Zeichen verschoben.
 # ------------------------------------------------------------
 setze params auf parameter(alle)
-# SGD mit Momentum statt Adam — BEWUSST: Adam zeigt bei diesem Aufbau
-# (batch=1-Bloecke, winziges Modell) einen reproduzierbaren Verlust-Buckel
-# mitten im Training, SGD nicht. Fuer XOR/MNIST (trainiere-API mit echten
-# Batches) bleibt Adam die richtige Wahl.
+# SGD mit Momentum statt Adam — BEWUSST. DIAGNOSTIZIERT (ADAM-B1):
+# Bei batch=1 sind die Gradienten pro Koordinate am Unigramm-Plateau
+# winzig (sqrt(v) ~ 1e-3); Adams eps=1e-8 ist dagegen bedeutungslos,
+# also bekommt jede Rausch-Richtung die volle Schrittgroesse ~rate
+# (Adam degeneriert Richtung sign-SGD) -> reproduzierbarer Verlust-
+# Buckel ab dem Plateau, schlimmer je NIEDRIGER die Rate. Abhilfe,
+# falls Adam gewuenscht: opt["eps"] auf 0.01 setzen (Dosis-Wirkung
+# bewiesen: 1e-5 wirkungslos, 1e-3 gedaempft, 1e-2 Buckel weg).
+# Fuer XOR/MNIST (trainiere-API mit echten Batches) bleibt Adam mit
+# Standard-eps die richtige Wahl.
 setze opt auf optimierer_sgd(params, rate, 0.9)
 
 # Lernraten-Plan wie in der Kinderleicht-API: linearer Warmup,
