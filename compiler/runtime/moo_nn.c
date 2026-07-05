@@ -152,13 +152,57 @@ static int32_t ganze_zahl(MooValue v, const char* wo, int32_t min) {
 }
 
 /* ============================================================
+ * Aktivierungs-Registry (Typ-Zentralisierung Phase 2)
+ * ============================================================
+ * EINE Zeile pro Aktivierung: Name + Tensor-Op + Init-Verhalten.
+ * fn == NULL bedeutet Identitaet (h wird retained durchgereicht).
+ * he_init steuert die Gewichts-Initialisierung in schicht_dicht
+ * (He fuer relu/gelu, sonst Xavier/Glorot) — vorher eine versteckte
+ * zweite strcmp-Stelle. Dispatch (akt_anwenden), Init-Entscheid und
+ * die Fehlermeldungs-Aufzaehlung iterieren die Tabelle. */
+typedef struct {
+    const char* name;
+    MooValue (*fn)(MooValue h);   /* NULL = Identitaet */
+    bool he_init;                 /* He- statt Xavier-Init in schicht_dicht */
+} MooNNAktDesc;
+
+static const MooNNAktDesc nn_akt_registry[] = {
+    { "relu",    moo_tensor_relu,    true  },
+    { "sigmoid", moo_tensor_sigmoid, false },
+    { "tanh",    moo_tensor_tanh,    false },
+    { "gelu",    moo_tensor_gelu,    true  },
+    { "softmax", moo_tensor_softmax, false },
+    { "keine",   NULL,               false },
+    { "none",    NULL,               false },   /* EN-Alias fuer "keine" */
+};
+
+static const MooNNAktDesc* nn_akt_lookup(const char* name) {
+    for (size_t i = 0; i < sizeof(nn_akt_registry) / sizeof(nn_akt_registry[0]); i++)
+        if (strcmp(nn_akt_registry[i].name, name) == 0)
+            return &nn_akt_registry[i];
+    return NULL;
+}
+
+/* Schreibt "relu, sigmoid, ..." (Registry-Reihenfolge) nach out. */
+static void nn_akt_namen(char* out, size_t out_len) {
+    size_t used = 0;
+    out[0] = '\0';
+    for (size_t i = 0; i < sizeof(nn_akt_registry) / sizeof(nn_akt_registry[0]); i++) {
+        int w = snprintf(out + used, out_len - used, "%s%s",
+                         i ? ", " : "", nn_akt_registry[i].name);
+        if (w < 0 || (size_t)w >= out_len - used) break;
+        used += (size_t)w;
+    }
+}
+
+/* ============================================================
  * Schicht-Konstruktoren
  * ============================================================ */
 
-/* schicht_dicht(ein, aus, aktivierung?, seed?) — W: He-Init fuer relu/gelu
- * (limit = sqrt(6/ein)), sonst Xavier/Glorot (limit = sqrt(6/(ein+aus))).
- * b startet bei 0. aktivierung: "relu"|"sigmoid"|"tanh"|"gelu"|"softmax"|
- * "keine"/none. */
+/* schicht_dicht(ein, aus, aktivierung?, seed?) — W: He-Init wenn die
+ * Aktivierung he_init traegt (Registry: relu/gelu; limit = sqrt(6/ein)),
+ * sonst Xavier/Glorot (limit = sqrt(6/(ein+aus))). b startet bei 0.
+ * aktivierung: siehe nn_akt_registry (+ "" = keine). */
 MooValue moo_nn_schicht_dicht(MooValue ein, MooValue aus,
                               MooValue aktivierung, MooValue seed) {
     int32_t ne = ganze_zahl(ein, "schicht_dicht (Eingaben)", 1);
@@ -173,7 +217,8 @@ MooValue moo_nn_schicht_dicht(MooValue ein, MooValue aus,
                             "z.B. \"relu\" oder \"sigmoid\""));
         return moo_none();
     }
-    bool he = (strcmp(akt, "relu") == 0 || strcmp(akt, "gelu") == 0);
+    const MooNNAktDesc* akt_d = nn_akt_lookup(akt);
+    bool he = (akt_d != NULL) && akt_d->he_init;
     double limit = he ? sqrt(6.0 / (double)ne)
                       : sqrt(6.0 / ((double)ne + (double)na));
     uint64_t s = (seed.tag == MOO_NUMBER) ? (uint64_t)(int64_t)MV_NUM(seed) : 42ULL;
@@ -321,19 +366,22 @@ MooValue moo_nn_schicht_position(MooValue max_laenge, MooValue dim,
  * ============================================================ */
 
 static MooValue akt_anwenden(const char* akt, MooValue h) {
-    if (strcmp(akt, "relu") == 0)    return moo_tensor_relu(h);
-    if (strcmp(akt, "sigmoid") == 0) return moo_tensor_sigmoid(h);
-    if (strcmp(akt, "tanh") == 0)    return moo_tensor_tanh(h);
-    if (strcmp(akt, "gelu") == 0)    return moo_tensor_gelu(h);
-    if (strcmp(akt, "softmax") == 0) return moo_tensor_softmax(h);
-    if (strcmp(akt, "keine") == 0 || strcmp(akt, "none") == 0 || akt[0] == '\0') {
+    /* Registry-Dispatch (Phase 2). ""-Sonderfall = Identitaet wie "keine". */
+    if (akt[0] == '\0') {
         moo_retain(h);
         return h;
     }
-    char msg[160];
+    const MooNNAktDesc* d = nn_akt_lookup(akt);
+    if (d) {
+        if (d->fn) return d->fn(h);
+        moo_retain(h);
+        return h;
+    }
+    char namen[128];
+    nn_akt_namen(namen, sizeof(namen));
+    char msg[256];
     snprintf(msg, sizeof(msg),
-             "vorwaerts: unbekannte Aktivierung '%s' (moeglich: relu, sigmoid, "
-             "tanh, gelu, softmax, keine)", akt);
+             "vorwaerts: unbekannte Aktivierung '%s' (moeglich: %s)", akt, namen);
     moo_throw(moo_error(msg));
     return moo_none();
 }
