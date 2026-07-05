@@ -398,9 +398,14 @@ static MooDbStmt* check_stmt(MooValue v, const char* fn_name) {
 //   - Zahl (1-based Index)
 //   - String ":name" oder "@name" (sqlite3_bind_parameter_index)
 // Wert-Mapping wie in Variante B.
+// ARG-KONVENTION (CG1-v3): verbraucht key und value (Transfer-Semantik,
+// wie moo_smart_contains) — SQLite kopiert via SQLITE_TRANSIENT, moo-Refs
+// werden hier auf ALLEN Pfaden (auch Fehler) freigegeben. Der Codegen-
+// binde-Arm darf danach nichts releasen.
 MooValue moo_db_stmt_bind(MooValue stmt, MooValue key, MooValue value) {
+    MooValue ret = moo_none();
     MooDbStmt* s = check_stmt(stmt, "stmt.binde");
-    if (!s) return moo_none();
+    if (!s) goto fertig;
     int idx = 0;
     if (key.tag == MOO_NUMBER) {
         idx = (int)MV_NUM(key);
@@ -416,13 +421,13 @@ MooValue moo_db_stmt_bind(MooValue stmt, MooValue key, MooValue value) {
         }
     } else {
         moo_throw(moo_error("stmt.binde: Key muss Zahl (1-based) oder String ':name' sein"));
-        return moo_none();
+        goto fertig;
     }
     if (idx <= 0) {
         char msg[256];
         snprintf(msg, sizeof(msg), "stmt.binde: Parameter nicht gefunden (Key vom Typ %d)", key.tag);
         moo_throw(moo_error(msg));
-        return moo_none();
+        goto fertig;
     }
     int rc = SQLITE_OK;
     switch (value.tag) {
@@ -451,6 +456,8 @@ MooValue moo_db_stmt_bind(MooValue stmt, MooValue key, MooValue value) {
             MooValue js = moo_json_string(value);
             MooString* ss = MV_STR(js);
             rc = sqlite3_bind_text(s->stmt, idx, ss->chars, ss->length, SQLITE_TRANSIENT);
+            // CG1-v3: json_string-Zwischenprodukt freigeben (leakte vorher).
+            moo_release(js);
             break;
         }
     }
@@ -458,9 +465,13 @@ MooValue moo_db_stmt_bind(MooValue stmt, MooValue key, MooValue value) {
         char msg[256];
         snprintf(msg, sizeof(msg), "stmt.binde(%d): rc=%d (%s)", idx, rc, sqlite3_errmsg(s->db_ref));
         moo_throw(moo_error(msg));
-        return moo_none();
+        goto fertig;
     }
-    return stmt;
+    ret = stmt;
+fertig:
+    moo_release(key);
+    moo_release(value);
+    return ret;
 }
 
 // Step: liefert eine row als Dict (bei SQLITE_ROW) oder moo_none() bei DONE.

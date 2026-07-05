@@ -75,11 +75,13 @@ MooValue moo_range(MooValue start, MooValue end) {
     return list;
 }
 
+// ARG-KONVENTION (CG1-v3): verbraucht prompt (Transfer-Semantik).
 MooValue moo_input(MooValue prompt) {
     if (prompt.tag == MOO_STRING) {
         printf("%s", MV_STR(prompt)->chars);
         fflush(stdout);
     }
+    moo_release(prompt);
     char buf[1024];
     if (fgets(buf, sizeof(buf), stdin)) {
         int len = strlen(buf);
