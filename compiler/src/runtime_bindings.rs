@@ -279,6 +279,7 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_nn_genauigkeit: FunctionValue<'ctx>,
     pub moo_nn_speichern: FunctionValue<'ctx>,
     pub moo_nn_laden: FunctionValue<'ctx>,
+    pub moo_nn_safetensors: FunctionValue<'ctx>,
     // Daten-Pipeline (Plan-014 E1)
     pub moo_ds_mnist: FunctionValue<'ctx>,
     pub moo_ds_csv: FunctionValue<'ctx>,
@@ -972,6 +973,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_nn_genauigkeit: decl_mv_mv!("moo_nn_genauigkeit", mv3),
             moo_nn_speichern: decl_mv_mv!("moo_nn_speichern", mv2),
             moo_nn_laden: decl_mv_mv!("moo_nn_laden", mv1),
+            moo_nn_safetensors: decl_mv_mv!("moo_nn_safetensors", mv1),
             // Daten-Pipeline (Plan-014 E1)
             moo_ds_mnist: decl_mv_mv!("moo_ds_mnist", mv1),
             moo_ds_csv: decl_mv_mv!("moo_ds_csv", mv1),

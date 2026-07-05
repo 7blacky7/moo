@@ -2593,6 +2593,12 @@ impl<'ctx> CodeGen<'ctx> {
                         return Ok(r);
                     }
                     // Daten-Pipeline (Plan-014 E1)
+                    "safetensors_laden" | "safetensors_load" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_nn_safetensors, &[p.into()], "nn_sft")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_sft_p")?;
+                        return Ok(r);
+                    }
                     "mnist_laden" | "mnist_load" => {
                         let p = self.compile_expr(&args[0])?;
                         let r = self.call_rt(self.rt.moo_ds_mnist, &[p.into()], "ds_mnist")?;

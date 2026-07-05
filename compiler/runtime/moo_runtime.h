@@ -256,6 +256,7 @@ MooValue moo_nn_vorhersage(MooValue netz, MooValue x);
 MooValue moo_nn_genauigkeit(MooValue netz, MooValue x, MooValue y);
 MooValue moo_nn_speichern(MooValue netz, MooValue pfad);
 MooValue moo_nn_laden(MooValue pfad);
+MooValue moo_nn_safetensors(MooValue pfad);   // F1: Fremd-Import -> Dict {name: Tensor}
 // Daten-Pipeline (Plan-014 E1, moo_dataset.c): MNIST-IDX (entpackt, siehe
 // skripte/mnist_download.sh), Zahlen-CSV, PGM/PPM-Bilder (eigener Reader —
 // Entscheid E1 statt stb/SDL_image), seed-deterministisches Mischen,

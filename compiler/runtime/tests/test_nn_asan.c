@@ -529,6 +529,76 @@ int main(void) {
         moo_ag_reset();
     }
 
+    /* ===== 12. Fremd-safetensors-Import (Plan-014 F1) ===== */
+    {
+        /* Fixture wie von einem fremden Tool: KEIN moo_arch, 2 Tensoren */
+        const char* hj = "{\"w\":{\"dtype\":\"F32\",\"shape\":[2,2],"
+            "\"data_offsets\":[0,16]},\"b\":{\"dtype\":\"F32\",\"shape\":[2],"
+            "\"data_offsets\":[16,24]}}";
+        uint64_t hl = (uint64_t)strlen(hj);
+        FILE* f = fopen("/tmp/test_f1_fremd.safetensors", "wb");
+        fwrite(&hl, 8, 1, f);
+        fwrite(hj, 1, (size_t)hl, f);
+        float w[4] = { 1.5f, -2.0f, 0.25f, 4.0f };
+        float b[2] = { 0.5f, -1.0f };
+        fwrite(w, sizeof(float), 4, f);
+        fwrite(b, sizeof(float), 2, f);
+        fclose(f);
+
+        MooValue p = moo_string_new("/tmp/test_f1_fremd.safetensors");
+        MooValue d = moo_nn_safetensors(p);
+        moo_release(p);
+        CHECK(d.tag == MOO_DICT, "safetensors_laden liefert Dict");
+        MooValue wv = dget_(d, "w");
+        MooValue bv = dget_(d, "b");
+        CHECK(wv.tag == MOO_TENSOR && T(wv)->ndim == 2 &&
+              T(wv)->shape[0] == 2 && T(wv)->shape[1] == 2, "Fremd-w [2,2]");
+        CHECK(bv.tag == MOO_TENSOR && T(bv)->ndim == 1 && T(bv)->shape[0] == 2,
+              "Fremd-b [2]");
+        CHECK(T(wv)->data[0] == 1.5f && T(wv)->data[3] == 4.0f &&
+              T(bv)->data[1] == -1.0f, "Fremd-Werte bit-exakt");
+        moo_release(wv); moo_release(bv); moo_release(d);
+        remove("/tmp/test_f1_fremd.safetensors");
+
+        /* .mook-Datei ist GLEICHZEITIG per safetensors_laden lesbar
+         * (Format-Kompatibilitaets-Beweis in Gegenrichtung) */
+        MooValue schichten = moo_list_new(1);
+        moo_list_append(schichten, mk_dicht(2, 2, "keine", 5));
+        MooValue netz = moo_nn_ki_netz(schichten);
+        MooValue mp = moo_string_new("/tmp/test_f1_eigen.mook");
+        moo_release(moo_nn_speichern(netz, mp));
+        MooValue roh = moo_nn_safetensors(mp);
+        CHECK(roh.tag == MOO_DICT, ".mook via safetensors_laden lesbar");
+        MooValue p0 = dget_(roh, "p0");
+        MooValue params = moo_nn_parameter(netz);
+        CHECK(p0.tag == MOO_TENSOR &&
+              p0.tag == MOO_TENSOR &&
+              T(p0)->data[0] == T(MV_LIST(params)->items[0])->data[0],
+              ".mook-p0 == Netz-Gewicht (bit)");
+        moo_release(p0); moo_release(params); moo_release(roh);
+        remove("/tmp/test_f1_eigen.mook");
+        moo_release(mp); moo_release(netz); moo_release(schichten);
+
+        /* dtype != F32 wirft erklaerend */
+        fehler_reset();
+        const char* hj16 = "{\"x\":{\"dtype\":\"F16\",\"shape\":[1],"
+            "\"data_offsets\":[0,2]}}";
+        uint64_t hl16 = (uint64_t)strlen(hj16);
+        f = fopen("/tmp/test_f1_f16.safetensors", "wb");
+        fwrite(&hl16, 8, 1, f);
+        fwrite(hj16, 1, (size_t)hl16, f);
+        unsigned char halb[2] = { 0, 60 };
+        fwrite(halb, 1, 2, f);
+        fclose(f);
+        MooValue p16 = moo_string_new("/tmp/test_f1_f16.safetensors");
+        MooValue d16 = moo_nn_safetensors(p16);
+        moo_release(p16);
+        CHECK(moo_error_flag == 1 && d16.tag == MOO_NONE, "F16 wirft erklaerend");
+        fehler_reset();
+        remove("/tmp/test_f1_f16.safetensors");
+        moo_ag_reset();
+    }
+
     printf("test_nn_asan: alle %d Checks bestanden\n", checks);
     return 0;
 }

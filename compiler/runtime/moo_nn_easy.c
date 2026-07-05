@@ -610,6 +610,129 @@ MooValue moo_nn_speichern(MooValue netz, MooValue pfad) {
     return moo_none();
 }
 
+/* ============================================================
+ * safetensors_laden(pfad) — Fremd-Import (Plan-014 F1)
+ * ============================================================
+ * Liest ein BELIEBIGES safetensors-File (auch ohne moo_arch) und gibt
+ * ein Dict {tensorname: Tensor} zurueck — der Weg fuer HuggingFace-
+ * Mini-Modelle. Nur dtype F32 (moo-Tensoren sind f32); andere dtypes
+ * werfen erklaerend. __metadata__ wird uebersprungen. */
+MooValue moo_nn_safetensors(MooValue pfad) {
+    if (pfad.tag != MOO_STRING) {
+        moo_throw(moo_error("safetensors_laden: erwarte einen Dateinamen als Text"));
+        return moo_none();
+    }
+    FILE* f = fopen(MV_STR(pfad)->chars, "rb");
+    if (!f) {
+        char msg[300];
+        snprintf(msg, sizeof(msg), "safetensors_laden: kann \"%s\" nicht "
+                 "oeffnen", MV_STR(pfad)->chars);
+        moo_throw(moo_error(msg));
+        return moo_none();
+    }
+    uint64_t hlen = 0;
+    if (fread(&hlen, 8, 1, f) != 1 || hlen == 0 || hlen > 256u * 1024u * 1024u) {
+        fclose(f);
+        moo_throw(moo_error("safetensors_laden: das ist keine safetensors-"
+                            "Datei (Kopf kaputt)"));
+        return moo_none();
+    }
+    char* hjson = (char*)malloc((size_t)hlen + 1);
+    if (!hjson || fread(hjson, 1, (size_t)hlen, f) != (size_t)hlen) {
+        free(hjson); fclose(f);
+        moo_throw(moo_error("safetensors_laden: Datei-Kopf unvollstaendig"));
+        return moo_none();
+    }
+    hjson[hlen] = '\0';
+    MooValue hs = moo_string_new(hjson);
+    free(hjson);
+    MooValue header = moo_json_parse(hs);
+    moo_release(hs);
+    if (header.tag != MOO_DICT) {
+        moo_release(header); fclose(f);
+        moo_throw(moo_error("safetensors_laden: Kopf ist kein gueltiges JSON"));
+        return moo_none();
+    }
+    long daten_start = (long)(8 + hlen);
+    MooValue keys = moo_dict_keys(header);
+    MooValue ergebnis = moo_dict_new();
+    bool ok = (keys.tag == MOO_LIST);
+    char fmsg[240] = {0};
+    for (int32_t i = 0; ok && i < MV_LIST(keys)->length; i++) {
+        MooValue k = MV_LIST(keys)->items[i];
+        if (k.tag != MOO_STRING) continue;
+        if (strcmp(MV_STR(k)->chars, "__metadata__") == 0) continue;
+        /* moo_dict_get VERBRAUCHT die Key-Referenz (Transfer-Semantik,
+         * siehe moo_dict.c) — k ist aus der keys-Liste geliehen, also
+         * fuer den Lookup eine eigene +1 mitgeben. */
+        moo_retain(k);
+        MooValue ent = moo_dict_get(header, k);
+        if (ent.tag != MOO_DICT) { moo_release(ent); continue; }
+        MooValue dt = eget(ent, "dtype");
+        if (!(dt.tag == MOO_STRING && strcmp(MV_STR(dt)->chars, "F32") == 0)) {
+            snprintf(fmsg, sizeof(fmsg), "safetensors_laden: Tensor \"%s\" "
+                     "hat dtype %s — moo kann bisher nur F32 (fp16/bf16-"
+                     "Konvertierung = Backlog)", MV_STR(k)->chars,
+                     (dt.tag == MOO_STRING) ? MV_STR(dt)->chars : "?");
+            ok = false;
+            moo_release(dt); moo_release(ent);
+            break;
+        }
+        moo_release(dt);
+        MooValue shp = eget(ent, "shape");
+        MooValue offs = eget(ent, "data_offsets");
+        int32_t shape[8];
+        int32_t nd = 0;
+        int64_t elems = 1;
+        bool e_ok = (shp.tag == MOO_LIST) && MV_LIST(shp)->length >= 1 &&
+                    MV_LIST(shp)->length <= 8 &&
+                    (offs.tag == MOO_LIST) && MV_LIST(offs)->length == 2;
+        if (e_ok) {
+            nd = MV_LIST(shp)->length;
+            for (int32_t d = 0; d < nd && e_ok; d++) {
+                MooValue sv = MV_LIST(shp)->items[d];
+                e_ok = (sv.tag == MOO_NUMBER) && MV_NUM(sv) >= 1;
+                if (e_ok) {
+                    shape[d] = (int32_t)MV_NUM(sv);
+                    elems *= shape[d];
+                }
+            }
+        }
+        MooTensor* t = NULL;
+        if (e_ok) {
+            double a = MV_NUM(MV_LIST(offs)->items[0]);
+            double b = MV_NUM(MV_LIST(offs)->items[1]);
+            e_ok = (b - a) == (double)elems * 4.0;
+            if (e_ok) {
+                t = moo_tensor_raw(nd, shape);
+                e_ok = t && fseek(f, daten_start + (long)a, SEEK_SET) == 0 &&
+                       fread(t->data, sizeof(float), (size_t)elems, f)
+                       == (size_t)elems;
+            }
+        }
+        moo_release(shp); moo_release(offs); moo_release(ent);
+        if (!e_ok) {
+            if (t) { MooValue tv; tv.tag = MOO_TENSOR; moo_val_set_ptr(&tv, t); moo_release(tv); }
+            snprintf(fmsg, sizeof(fmsg), "safetensors_laden: Eintrag \"%s\" "
+                     "ist kaputt (Shape/Offsets passen nicht)", MV_STR(k)->chars);
+            ok = false;
+            break;
+        }
+        MooValue tv; tv.tag = MOO_TENSOR; moo_val_set_ptr(&tv, t);
+        /* Frischer Key: k ist aus der keys-Liste geliehen und stirbt mit
+         * header/keys-Release — nie in ein langlebiges Dict uebernehmen. */
+        moo_dict_set(ergebnis, moo_string_new(MV_STR(k)->chars), tv);
+    }
+    fclose(f);
+    moo_release(keys); moo_release(header);
+    if (!ok) {
+        moo_release(ergebnis);
+        moo_throw(moo_error(fmsg[0] ? fmsg : "safetensors_laden: Datei kaputt"));
+        return moo_none();
+    }
+    return ergebnis;
+}
+
 /* laden(pfad): Netz aus .mook rekonstruieren (+1). */
 MooValue moo_nn_laden(MooValue pfad) {
     if (pfad.tag != MOO_STRING) {
