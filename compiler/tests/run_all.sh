@@ -37,6 +37,14 @@ fail=0
 skip=0
 errors=""
 
+# REG-G1: Entry-Alloca-Guard (IR-Gate) — statisches Audit gegen
+# Loop-Body-allocas (Stack-Wachstum pro Iteration; ASan-blind, siehe
+# ir_gates/run_ir_gates.sh). Laeuft VOR der Suite, failt hart.
+if ! "$SCRIPT_DIR/ir_gates/run_ir_gates.sh"; then
+    echo -e "${RED}FEHLER:${NC} IR-Gate (Entry-Alloca-Guard) fehlgeschlagen — Abbruch."
+    exit 1
+fi
+
 # Alle .moo Dateien mit .expected durchgehen (top-level + regression/)
 for moo_file in "$SCRIPT_DIR"/*.moo "$SCRIPT_DIR"/regression/*.moo; do
     [[ -f "$moo_file" ]] || continue
@@ -130,6 +138,16 @@ for st in "${SELFTESTS[@]}"; do
     fi
     rm -f "$st_bin"
 done
+
+# REG-G1: Frische-Receiver-Leak-Gate — 1M-vs-4M-Heap-Skalierung fuer
+# Methodenketten mit frischen Receivern (loop-invariante Receiver verstecken
+# Dispatch-Leaks). Transparenter Skip (Exit 2) wenn python3 fehlt.
+"$SCRIPT_DIR/leak_gates/run_leak_gates.sh"
+leak_rc=$?
+if [ "$leak_rc" -eq 1 ]; then
+    echo -e "${RED}FEHLER:${NC} Leak-Gate (frische Receiver) fehlgeschlagen."
+    exit 1
+fi
 
 # Zusammenfassung
 echo ""
