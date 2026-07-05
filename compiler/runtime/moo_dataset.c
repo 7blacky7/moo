@@ -158,6 +158,30 @@ MooValue moo_ds_mnist(MooValue prefix) {
 /* datensatz_csv(pfad): Zahlen-CSV -> Tensor [zeilen, spalten].
  * Trennzeichen , oder ; — eine nicht-numerische ERSTE Zeile wird als
  * Kopfzeile uebersprungen. */
+/* Portabler Zeilen-Leser — getline() ist POSIX und bricht den MSVC-Build
+ * (C2065, P013). Liest eine Zeile beliebiger Laenge via fgets in einen
+ * wachsenden Puffer; Verhalten wie getline (inkl. letzter Zeile ohne \n).
+ * false = EOF ohne Zeichen oder Speicherfehler (*oom wird gesetzt). */
+static bool ds_zeile_lesen(FILE* f, char** buf, size_t* cap, bool* oom) {
+    if (!*buf) {
+        *cap = 256;
+        *buf = (char*)malloc(*cap);
+        if (!*buf) { *oom = true; return false; }
+    }
+    size_t gelesen = 0;
+    (*buf)[0] = '\0';
+    while (fgets(*buf + gelesen, (int)(*cap - gelesen), f)) {
+        gelesen += strlen(*buf + gelesen);
+        if (gelesen > 0 && (*buf)[gelesen - 1] == '\n') return true;
+        if (feof(f)) return gelesen > 0;
+        size_t nc = *cap * 2;
+        char* nb = (char*)realloc(*buf, nc);
+        if (!nb) { *oom = true; return false; }
+        *buf = nb; *cap = nc;
+    }
+    return gelesen > 0;
+}
+
 MooValue moo_ds_csv(MooValue pfad) {
     if (pfad.tag != MOO_STRING) {
         moo_throw(moo_error("datensatz_csv: erwarte einen Dateinamen als Text"));
@@ -176,12 +200,12 @@ MooValue moo_ds_csv(MooValue pfad) {
     int64_t spalten = -1, zeilen = 0;
     char* line = NULL;
     size_t lcap = 0;
-    ssize_t ll;
+    bool oom = false;
     int64_t zeilen_nr = 0;
     bool fehler = false;
     char fmsg[240] = {0};
 
-    while ((ll = getline(&line, &lcap, f)) != -1 && !fehler) {
+    while (ds_zeile_lesen(f, &line, &lcap, &oom) && !fehler) {
         zeilen_nr++;
         /* Zeile in Zahlen zerlegen */
         int64_t sp = 0;
@@ -233,6 +257,10 @@ MooValue moo_ds_csv(MooValue pfad) {
     }
     free(line);
     fclose(f);
+    if (oom && !fehler) {
+        snprintf(fmsg, sizeof(fmsg), "datensatz_csv: nicht genug Speicher");
+        fehler = true;
+    }
     if (!fehler && (zeilen == 0 || spalten <= 0)) {
         snprintf(fmsg, sizeof(fmsg), "datensatz_csv: keine Datenzeilen "
                  "gefunden");
