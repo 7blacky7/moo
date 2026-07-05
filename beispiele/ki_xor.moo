@@ -1,0 +1,20 @@
+# ============================================================
+# XOR mit dem eingebauten KI-Stack (Plan-014 C1)
+# Vergleich: beispiele/neuralnet.moo loest dasselbe Problem
+# from scratch in 321 Zeilen — hier sind es 14 Code-Zeilen.
+# Kompilieren: moo-compiler compile ki_xor.moo -o ki_xor
+# ============================================================
+setze x auf tensor_aus_liste([[0,0],[0,1],[1,0],[1,1]])
+setze ziel auf tensor_aus_liste([[0],[1],[1],[0]])
+setze netz auf [schicht_dicht(2, 8, "tanh", 7), schicht_dicht(8, 1, "sigmoid", 8)]
+setze opt auf optimierer_adam(parameter(netz), 0.05)
+setze i auf 0
+solange i < 400:
+    setze fehler auf mse(vorwaerts(netz, x), ziel)
+    fehler.rueckwaerts()
+    opt.schritt()
+    setze i auf i + 1
+autograd_aus()
+setze endfehler auf mse(vorwaerts(netz, x), ziel)
+zeige "Verlust nach 400 Iterationen: " + text(endfehler.zu_liste())
+zeige "Vorhersage (Ziel 0,1,1,0): " + text(vorwaerts(netz, x).zu_liste())

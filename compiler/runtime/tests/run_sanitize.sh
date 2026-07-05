@@ -118,6 +118,11 @@ EXTRA_HARNESSES=(
   #               vs. Autograd fuer JEDEN Registry-Op (automatische Iteration
   #               via op_count/at — neuer Op ohne Gradcheck faellt hier auf).
   "test_gradcheck.c|moo_tensor.c moo_tensor_ops.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   nn:         Plan-014 C1 — Schichten/Loss/Optimizer (Dict-basiert, reine
+  #               Op-Komposition, kein neuer Registry-Op). Inkl. XOR-
+  #               Konvergenz-Gate im Harness; Quell-Satz + Test-throw-Modell
+  #               wie autograd, plus moo_nn.c.
+  "test_nn_asan.c|moo_nn.c moo_tensor.c moo_tensor_ops.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   bare_alloc: Plan-010 T1 — Bare-Allocator (K3) + serielle Formatter (K2)
   #               auf dem Host. Linkt NUR moo_bare_alloc.c + moo_bare_console.c;
   #               moo_bare.c/moo_bare_boot.c bewusst NICHT (echte in/out-Asm
@@ -256,7 +261,7 @@ build_ub_ops_string() {
     # MOO_TENSOR-Tag -> moo_tensor_ops.c, dieser auf moo_tensor.c.
     # P014-B1: moo_tensor_ops.c zeichnet auf den Autograd-Tape auf.
     "$RUNTIME_DIR/moo_tensor.c" "$RUNTIME_DIR/moo_tensor_ops.c"
-    "$RUNTIME_DIR/moo_autograd.c"
+    "$RUNTIME_DIR/moo_autograd.c" "$RUNTIME_DIR/moo_nn.c"
   )
   echo "  [build] $tag  (ops/string-Pfade, P007-U3)"
   # shellcheck disable=SC2086

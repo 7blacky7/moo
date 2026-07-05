@@ -223,7 +223,26 @@ MooValue moo_tensor_gradient(MooValue t);            // grad als Kopie (+1)
 MooValue moo_tensor_gradient_loeschen(MooValue t);   // grad-Buffer nullen
 MooValue moo_ag_reset(void);                         // Tape leeren (Nodes releasen)
 MooValue moo_ag_an(void);                            // Aufzeichnung an
-MooValue moo_ag_aus(void);                           // Aufzeichnung aus (Inferenz)
+MooValue moo_ag_aus(void);                            // Aufzeichnung aus (Inferenz)
+
+// === NN-Schichten + Loss + Optimizer (Plan-014 C1, moo_nn.c) ===
+// Schichten/Optimizer sind DICTS (Marker-Key "__nn"), Parameter sind
+// Tensoren mit requires_grad. Vorwaerts/Loss sind reine KOMPOSITIONEN der
+// Registry-Ops (das B2-Gradcheck-Gate deckt damit jeden Gradienten).
+// opt_schritt: in-place Update (kein Tape-Record) + Grads nullen + Tape
+// leeren = eine komplette Trainings-Iteration. Tensor-Konvention gilt.
+MooValue moo_nn_schicht_dicht(MooValue ein, MooValue aus, MooValue aktivierung, MooValue seed);
+MooValue moo_nn_schicht_dropout(MooValue rate);
+MooValue moo_nn_schicht_layernorm(MooValue dim);
+MooValue moo_nn_schicht_embedding(MooValue vokabular, MooValue dim, MooValue seed);
+MooValue moo_nn_vorwaerts(MooValue netz, MooValue x);
+MooValue moo_nn_parameter(MooValue netz);
+MooValue moo_nn_mse(MooValue a, MooValue b);
+MooValue moo_nn_kreuzentropie(MooValue logits, MooValue ziele);
+MooValue moo_nn_opt_sgd(MooValue params, MooValue rate, MooValue momentum);
+MooValue moo_nn_opt_adam(MooValue params, MooValue rate);
+MooValue moo_nn_opt_adamw(MooValue params, MooValue rate, MooValue decay);
+MooValue moo_nn_opt_schritt(MooValue opt);
 
 typedef struct {
     int32_t  refcount;   // MUSS erstes Feld sein (Refcount-Konvention)

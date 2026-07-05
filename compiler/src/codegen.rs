@@ -2482,6 +2482,101 @@ impl<'ctx> CodeGen<'ctx> {
                     "autograd_aus" | "autograd_off" => {
                         return self.call_rt(self.rt.moo_ag_aus, &[], "ag_aus");
                     }
+                    // === NN-Builtins (Plan-014 C1). Tensor-Konvention: Runtime
+                    // borrowed — Codegen released Heap-Args post-call. Zahlen-
+                    // Args ohne Release (kein Heap). ===
+                    "schicht_dicht" | "layer_dense" => {
+                        let ein = self.compile_expr(&args[0])?;
+                        let aus = self.compile_expr(&args[1])?;
+                        let akt = if args.len() > 2 { self.compile_expr(&args[2])? }
+                                  else { self.call_rt(self.rt.moo_none, &[], "nn_akt_none")? };
+                        let seed = if args.len() > 3 { self.compile_expr(&args[3])? }
+                                   else { self.call_rt(self.rt.moo_none, &[], "nn_seed_none")? };
+                        let r = self.call_rt(self.rt.moo_nn_schicht_dicht,
+                            &[ein.into(), aus.into(), akt.into(), seed.into()], "nn_dicht")?;
+                        self.call_rt_void(self.rt.moo_release, &[akt.into()], "rel_nnd_akt")?;
+                        return Ok(r);
+                    }
+                    "schicht_dropout" | "layer_dropout" => {
+                        let rate = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_nn_schicht_dropout,
+                            &[rate.into()], "nn_dropout");
+                    }
+                    "schicht_layernorm" | "layer_layernorm" => {
+                        let dim = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_nn_schicht_layernorm,
+                            &[dim.into()], "nn_layernorm");
+                    }
+                    "schicht_embedding" | "layer_embedding" => {
+                        let vokab = self.compile_expr(&args[0])?;
+                        let dim = self.compile_expr(&args[1])?;
+                        let seed = if args.len() > 2 { self.compile_expr(&args[2])? }
+                                   else { self.call_rt(self.rt.moo_none, &[], "nn_emb_seed_none")? };
+                        return self.call_rt(self.rt.moo_nn_schicht_embedding,
+                            &[vokab.into(), dim.into(), seed.into()], "nn_embedding");
+                    }
+                    "vorwaerts" | "vorwärts" | "forward" => {
+                        let netz = self.compile_expr(&args[0])?;
+                        let x = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_nn_vorwaerts,
+                            &[netz.into(), x.into()], "nn_vorwaerts")?;
+                        self.call_rt_void(self.rt.moo_release, &[netz.into()], "rel_nnf_netz")?;
+                        self.call_rt_void(self.rt.moo_release, &[x.into()], "rel_nnf_x")?;
+                        return Ok(r);
+                    }
+                    "parameter" | "parameters" => {
+                        let netz = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_nn_parameter,
+                            &[netz.into()], "nn_parameter")?;
+                        self.call_rt_void(self.rt.moo_release, &[netz.into()], "rel_nnp_netz")?;
+                        return Ok(r);
+                    }
+                    "mse" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_nn_mse,
+                            &[a.into(), b.into()], "nn_mse")?;
+                        self.call_rt_void(self.rt.moo_release, &[a.into()], "rel_mse_a")?;
+                        self.call_rt_void(self.rt.moo_release, &[b.into()], "rel_mse_b")?;
+                        return Ok(r);
+                    }
+                    "kreuzentropie" | "cross_entropy" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_nn_kreuzentropie,
+                            &[a.into(), b.into()], "nn_ce")?;
+                        self.call_rt_void(self.rt.moo_release, &[a.into()], "rel_ce_a")?;
+                        self.call_rt_void(self.rt.moo_release, &[b.into()], "rel_ce_b")?;
+                        return Ok(r);
+                    }
+                    "optimierer_sgd" | "optimizer_sgd" => {
+                        let params = self.compile_expr(&args[0])?;
+                        let rate = self.compile_expr(&args[1])?;
+                        let mom = if args.len() > 2 { self.compile_expr(&args[2])? }
+                                  else { self.call_rt(self.rt.moo_none, &[], "nn_mom_none")? };
+                        let r = self.call_rt(self.rt.moo_nn_opt_sgd,
+                            &[params.into(), rate.into(), mom.into()], "nn_sgd")?;
+                        self.call_rt_void(self.rt.moo_release, &[params.into()], "rel_sgd_p")?;
+                        return Ok(r);
+                    }
+                    "optimierer_adam" | "optimizer_adam" => {
+                        let params = self.compile_expr(&args[0])?;
+                        let rate = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_nn_opt_adam,
+                            &[params.into(), rate.into()], "nn_adam")?;
+                        self.call_rt_void(self.rt.moo_release, &[params.into()], "rel_adam_p")?;
+                        return Ok(r);
+                    }
+                    "optimierer_adamw" | "optimizer_adamw" => {
+                        let params = self.compile_expr(&args[0])?;
+                        let rate = self.compile_expr(&args[1])?;
+                        let dec = if args.len() > 2 { self.compile_expr(&args[2])? }
+                                  else { self.call_rt(self.rt.moo_none, &[], "nn_wd_none")? };
+                        let r = self.call_rt(self.rt.moo_nn_opt_adamw,
+                            &[params.into(), rate.into(), dec.into()], "nn_adamw")?;
+                        self.call_rt_void(self.rt.moo_release, &[params.into()], "rel_adamw_p")?;
+                        return Ok(r);
+                    }
                     "länge" | "len" => {
                         // Pure-Reader-Builtin: moo_length released sein Arg NICHT
                         // (verifiziert moo_stdlib.c) — compile_expr liefert +1 owning
@@ -4624,6 +4719,12 @@ impl<'ctx> CodeGen<'ctx> {
                             &[obj.into(), idx.into(), v.into()], "t_setzen")?;
                         self.call_rt_void(self.rt.moo_release, &[idx.into()], "rel_ts_idx")?;
                         return Ok(r);
+                    }
+                    // NN (Plan-014 C1): Optimizer-Schritt als Methode auf dem
+                    // Optimizer-Dict — Laufzeit prueft den "__nn"-Marker.
+                    "schritt" | "step" if !user_hat_methode => {
+                        return self.call_rt(self.rt.moo_nn_opt_schritt,
+                            &[obj.into()], "nn_schritt");
                     }
                     "append" | "hinzufügen" => {
                         let arg = self.compile_expr(&args[0])?;

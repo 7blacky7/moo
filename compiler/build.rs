@@ -31,6 +31,7 @@ fn main() {
         .file("runtime/moo_tensor.c")       // KI-Tensor-Kern MOO_TENSOR (Plan-014 A1, immer gebaut)
         .file("runtime/moo_tensor_ops.c")   // Tensor-Ops + Op-Registry (Plan-014 A2, immer gebaut)
         .file("runtime/moo_autograd.c")     // Autograd-Tape + backward (Plan-014 B1, immer gebaut)
+        .file("runtime/moo_nn.c")           // NN-Schichten/Loss/Optimizer (Plan-014 C1, immer gebaut)
         .file("runtime/moo_string.c")
         .file("runtime/moo_list.c")
         .file("runtime/moo_dict.c")

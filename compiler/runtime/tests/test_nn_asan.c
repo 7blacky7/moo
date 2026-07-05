@@ -1,0 +1,434 @@
+/**
+ * test_nn_asan.c — Plan-014 C1: Schichten/Loss/Optimizer (ASan + UBSan).
+ * ============================================================================
+ * BAUEN/LAUFEN: run_sanitize.sh (EXTRA_HARNESSES), Quell-Satz wie
+ * test_autograd_asan.c plus moo_nn.c; Test-throw-Modell.
+ *
+ * PRUEFT (handgerechnete Referenzen):
+ *   1. schicht_dicht: Formen, b=0, Init im Xavier-Limit, seed-deterministisch,
+ *      requires_grad; Fehlerfaelle werfen
+ *   2. Vorwaerts dicht: matmul+bias handgerechnet, Aktivierungen (sigmoid(0)=0.5)
+ *   3. Netz-Liste: 2 Schichten sequenziell, Formen korrekt
+ *   4. parameter(): 5 Tensoren aus [dicht, dropout, layernorm, embedding]
+ *   5. mse handgerechnet; kreuzentropie one-hot == Index-Variante, Wert
+ *      -log(0.5) bei Gleichverteilung; Index out-of-range wirft
+ *   6. layernorm: Zeilen-Mittel ~0, Varianz ~1 (gamma=1, beta=0)
+ *   7. dropout: Werte in {0, x/(1-rate)}, aktiv=0 -> Identitaet,
+ *      seed-deterministisch
+ *   8. embedding: Zeilen-Lookup via one-hot@W korrekt
+ *   9. sgd/adam/adamw: EIN Schritt handgerechnet; Grads nach schritt genullt,
+ *      Tape geleert
+ *  10. XOR-KONVERGENZ-GATE: dicht(2,8,tanh)+dicht(8,1,sigmoid), adam(0.05),
+ *      400 Iterationen -> Loss < 0.01 UND monoton unter Start-Loss.
+ *      ASan detect_leaks=1 beweist: der Trainings-Loop leakt nicht.
+ * ============================================================================
+ */
+#include "../moo_runtime.h"
+#include <stdarg.h>
+
+/* --- Test-throw-Modell (ersetzt moo_error.c) ------------------------------ */
+int moo_error_flag = 0;
+MooValue moo_last_error;
+int moo_try_depth = 0;
+jmp_buf moo_try_stack[MOO_TRY_STACK_SIZE];
+void moo_throw(MooValue error) {
+    if (error.tag == MOO_ERROR) free(moo_val_as_ptr(error));
+    moo_error_flag = 1;
+}
+static void fehler_reset(void) { moo_error_flag = 0; }
+
+/* --- Stubs fuer moo_release()-Dispatch-Ziele ------------------------------ */
+void moo_socket_free(void* p)       { (void)p; }
+void moo_thread_free(void* p)       { (void)p; }
+void moo_channel_free(void* p)      { (void)p; }
+void moo_db_free(void* p)           { (void)p; }
+void moo_db_stmt_free(void* p)      { (void)p; }
+void moo_window_free(void* p)       { (void)p; }
+void moo_web_free(void* p)          { (void)p; }
+void moo_voxel_free(void* p)        { (void)p; }
+void moo_frame_free(void* p)        { (void)p; }
+void moo_gif_handle_free(void* p)   { (void)p; }
+void moo_video_handle_free(void* p) { (void)p; }
+
+static int checks = 0;
+#define CHECK(cond, name) do { \
+    if (!(cond)) { fprintf(stderr, "FAIL: %s (Zeile %d)\n", name, __LINE__); return 1; } \
+    checks++; \
+} while (0)
+#define NAHE(x, y) (fabs((double)(x) - (double)(y)) < 1e-5)
+
+static MooTensor* T(MooValue v) { return MV_TENSOR(v); }
+
+/* 2D-Tensor aus flachen Werten. */
+static MooValue t2(int r, int c, const float* vals) {
+    int32_t shape[2] = { r, c };
+    MooTensor* t = moo_tensor_raw(2, shape);
+    for (int i = 0; i < r * c; i++) t->data[i] = vals[i];
+    MooValue v; v.tag = MOO_TENSOR; moo_val_set_ptr(&v, t);
+    return v;
+}
+/* 1D-Tensor. */
+static MooValue t1(int n, const float* vals) {
+    int32_t shape[1] = { n };
+    MooTensor* t = moo_tensor_raw(1, shape);
+    for (int i = 0; i < n; i++) t->data[i] = vals[i];
+    MooValue v; v.tag = MOO_TENSOR; moo_val_set_ptr(&v, t);
+    return v;
+}
+
+static MooValue dget_(MooValue d, const char* k) {
+    return moo_dict_get(d, moo_string_new(k));
+}
+
+/* schicht_dicht-Wrapper: Aktivierungs-String ist BORROWED (Tensor-
+ * Konvention) -> hier bauen UND wieder freigeben, sonst leakt der Harness. */
+static MooValue mk_dicht(int ein, int aus, const char* akt, double seed) {
+    MooValue a = akt ? moo_string_new(akt) : moo_none();
+    MooValue s = (seed >= 0.0) ? moo_number(seed) : moo_none();
+    MooValue d = moo_nn_schicht_dicht(moo_number(ein), moo_number(aus), a, s);
+    moo_release(a);
+    return d;
+}
+
+int main(void) {
+    /* ===== 1. schicht_dicht: Konstruktion ===== */
+    MooValue d1 = mk_dicht(2, 3, "keine", 7);
+    CHECK(d1.tag == MOO_DICT, "dicht ist Dict");
+    {
+        MooValue w = dget_(d1, "w");
+        MooValue b = dget_(d1, "b");
+        CHECK(w.tag == MOO_TENSOR && T(w)->ndim == 2 &&
+              T(w)->shape[0] == 2 && T(w)->shape[1] == 3, "w-Form [2,3]");
+        CHECK(b.tag == MOO_TENSOR && T(b)->ndim == 2 &&
+              T(b)->shape[0] == 1 && T(b)->shape[1] == 3, "b-Form [1,3]");
+        CHECK(T(w)->requires_grad && T(b)->requires_grad, "w/b requires_grad");
+        bool b_null = true;
+        for (int i = 0; i < 3; i++) if (T(b)->data[i] != 0.0f) b_null = false;
+        CHECK(b_null, "b startet bei 0");
+        double limit = sqrt(6.0 / 5.0);  /* Xavier bei ein=2, aus=3 */
+        bool im_limit = true;
+        for (int i = 0; i < 6; i++)
+            if (fabs((double)T(w)->data[i]) > limit) im_limit = false;
+        CHECK(im_limit, "w im Xavier-Limit");
+        /* deterministisch */
+        MooValue d1b = mk_dicht(2, 3, "keine", 7);
+        MooValue w2 = dget_(d1b, "w");
+        bool gleich = true;
+        for (int i = 0; i < 6; i++)
+            if (T(w)->data[i] != T(w2)->data[i]) gleich = false;
+        CHECK(gleich, "Init seed-deterministisch");
+        moo_release(w); moo_release(b); moo_release(w2); moo_release(d1b);
+    }
+    /* Fehlerfaelle */
+    fehler_reset();
+    {
+        MooValue xs = moo_string_new("x");
+        MooValue bad = moo_nn_schicht_dicht(xs, moo_number(3), moo_none(), moo_none());
+        CHECK(moo_error_flag == 1 && bad.tag == MOO_NONE, "dicht wirft bei Text-Eingabe");
+        moo_release(xs);
+    }
+    fehler_reset();
+
+    /* ===== 2. Vorwaerts dicht handgerechnet ===== */
+    {
+        MooValue w = dget_(d1, "w");
+        MooValue b = dget_(d1, "b");
+        float wv[6] = { 1, 0, 1,   0, 1, 1 };   /* [2,3] row-major */
+        for (int i = 0; i < 6; i++) T(w)->data[i] = wv[i];
+        for (int i = 0; i < 3; i++) T(b)->data[i] = 0.5f;
+        float xv[2] = { 1, 2 };
+        MooValue x = t2(1, 2, xv);
+        MooValue y = moo_nn_vorwaerts(d1, x);
+        CHECK(y.tag == MOO_TENSOR && T(y)->shape[0] == 1 && T(y)->shape[1] == 3,
+              "vorwaerts Form [1,3]");
+        CHECK(NAHE(T(y)->data[0], 1.5f) && NAHE(T(y)->data[1], 2.5f) &&
+              NAHE(T(y)->data[2], 3.5f), "vorwaerts = x@w + b");
+        moo_release(y); moo_release(x); moo_release(w); moo_release(b);
+        moo_release(d1);
+        moo_ag_reset();
+    }
+
+    /* Aktivierung: sigmoid(0) = 0.5 */
+    {
+        MooValue ds = mk_dicht(2, 2, "sigmoid", 1);
+        MooValue w = dget_(ds, "w");
+        for (int i = 0; i < 4; i++) T(w)->data[i] = 0.0f;
+        moo_release(w);
+        float xv[2] = { 3, -3 };
+        MooValue x = t2(1, 2, xv);
+        MooValue y = moo_nn_vorwaerts(ds, x);
+        CHECK(NAHE(T(y)->data[0], 0.5f) && NAHE(T(y)->data[1], 0.5f),
+              "sigmoid-Aktivierung");
+        moo_release(y); moo_release(x); moo_release(ds);
+        moo_ag_reset();
+    }
+    /* unbekannte Aktivierung wirft */
+    fehler_reset();
+    {
+        MooValue dbad = mk_dicht(2, 2, "quark", -1.0);
+        float xv[2] = { 1, 1 };
+        MooValue x = t2(1, 2, xv);
+        MooValue y = moo_nn_vorwaerts(dbad, x);
+        CHECK(moo_error_flag == 1 && y.tag == MOO_NONE, "unbekannte Aktivierung wirft");
+        moo_release(x); moo_release(dbad);
+        fehler_reset(); moo_ag_reset();
+    }
+
+    /* ===== 3. Netz-Liste: 2 Schichten ===== */
+    {
+        MooValue l1 = mk_dicht(2, 4, "tanh", 3);
+        MooValue l2 = mk_dicht(4, 1, "sigmoid", 4);
+        MooValue netz = moo_list_new(2);
+        moo_list_append(netz, l1);   /* transfer */
+        moo_list_append(netz, l2);
+        float xv[8] = { 0,0, 0,1, 1,0, 1,1 };
+        MooValue x = t2(4, 2, xv);
+        MooValue y = moo_nn_vorwaerts(netz, x);
+        CHECK(y.tag == MOO_TENSOR && T(y)->shape[0] == 4 && T(y)->shape[1] == 1,
+              "Netz-Liste Form [4,1]");
+        moo_release(y); moo_release(x); moo_release(netz);
+        moo_ag_reset();
+    }
+
+    /* ===== 4. parameter() ===== */
+    {
+        MooValue netz = moo_list_new(4);
+        moo_list_append(netz, mk_dicht(2, 3, NULL, -1.0));
+        moo_list_append(netz, moo_nn_schicht_dropout(moo_number(0.5)));
+        moo_list_append(netz, moo_nn_schicht_layernorm(moo_number(3)));
+        moo_list_append(netz, moo_nn_schicht_embedding(moo_number(5), moo_number(3),
+                                                       moo_none()));
+        MooValue ps = moo_nn_parameter(netz);
+        CHECK(ps.tag == MOO_LIST && MV_LIST(ps)->length == 5,
+              "parameter: 5 Tensoren (w,b,gamma,beta,emb-w)");
+        for (int i = 0; i < 5; i++)
+            CHECK(MV_LIST(ps)->items[i].tag == MOO_TENSOR &&
+                  T(MV_LIST(ps)->items[i])->requires_grad, "Parameter requires_grad");
+        moo_release(ps); moo_release(netz);
+    }
+
+    /* ===== 5. mse + kreuzentropie ===== */
+    {
+        float av[2] = { 1, 2 }, bv[2] = { 0, 0 };
+        MooValue a = t2(1, 2, av);
+        MooValue b = t2(1, 2, bv);
+        MooValue m = moo_nn_mse(a, b);
+        CHECK(m.tag == MOO_TENSOR && T(m)->size == 1 && NAHE(T(m)->data[0], 2.5f),
+              "mse([1,2],[0,0]) = 2.5");
+        moo_release(m); moo_release(a); moo_release(b);
+        moo_ag_reset();
+    }
+    {
+        float lv[2] = { 0, 0 };
+        MooValue logits = t2(1, 2, lv);
+        float ohv[2] = { 1, 0 };
+        MooValue oh = t2(1, 2, ohv);
+        MooValue c1 = moo_nn_kreuzentropie(logits, oh);
+        CHECK(c1.tag == MOO_TENSOR && NAHE(T(c1)->data[0], 0.6931472f),
+              "kreuzentropie one-hot = -log(0.5)");
+        float iv[1] = { 0 };
+        MooValue idx = t1(1, iv);
+        MooValue c2 = moo_nn_kreuzentropie(logits, idx);
+        CHECK(NAHE(T(c1)->data[0], T(c2)->data[0]), "Index-Variante == one-hot");
+        moo_release(c1); moo_release(c2); moo_release(oh); moo_release(idx);
+        /* Index ausserhalb wirft */
+        fehler_reset();
+        float bi[1] = { 5 };
+        MooValue badix = t1(1, bi);
+        MooValue c3 = moo_nn_kreuzentropie(logits, badix);
+        CHECK(moo_error_flag == 1 && c3.tag == MOO_NONE, "CE-Index out-of-range wirft");
+        fehler_reset();
+        moo_release(badix); moo_release(logits);
+        moo_ag_reset();
+    }
+
+    /* ===== 6. layernorm ===== */
+    {
+        MooValue ln = moo_nn_schicht_layernorm(moo_number(4));
+        float xv[8] = { 1, 2, 3, 4,   10, 20, 30, 40 };
+        MooValue x = t2(2, 4, xv);
+        MooValue y = moo_nn_vorwaerts(ln, x);
+        CHECK(y.tag == MOO_TENSOR, "layernorm liefert Tensor");
+        for (int r = 0; r < 2; r++) {
+            double s = 0, q = 0;
+            for (int c = 0; c < 4; c++) s += (double)T(y)->data[r * 4 + c];
+            double mean = s / 4.0;
+            for (int c = 0; c < 4; c++) {
+                double d = (double)T(y)->data[r * 4 + c] - mean;
+                q += d * d;
+            }
+            CHECK(fabs(mean) < 1e-4, "layernorm Zeilen-Mittel ~0");
+            CHECK(fabs(q / 4.0 - 1.0) < 1e-2, "layernorm Zeilen-Varianz ~1");
+        }
+        moo_release(y); moo_release(x); moo_release(ln);
+        moo_ag_reset();
+    }
+
+    /* ===== 7. dropout ===== */
+    {
+        MooValue dr = moo_nn_schicht_dropout(moo_number(0.5));
+        float xv[8] = { 1, 1, 1, 1, 1, 1, 1, 1 };
+        MooValue x = t2(2, 4, xv);
+        MooValue y = moo_nn_vorwaerts(dr, x);
+        bool werte_ok = true; int nullen = 0;
+        for (int i = 0; i < 8; i++) {
+            float v = T(y)->data[i];
+            if (v == 0.0f) nullen++;
+            else if (!NAHE(v, 2.0f)) werte_ok = false;
+        }
+        CHECK(werte_ok, "dropout: Werte in {0, x/(1-rate)}");
+        CHECK(nullen > 0 && nullen < 8, "dropout: teils 0, teils skaliert");
+        moo_release(y);
+        /* aktiv=0 -> Identitaet */
+        moo_dict_set(dr, moo_string_new("aktiv"), moo_number(0.0));
+        MooValue y2 = moo_nn_vorwaerts(dr, x);
+        bool ident = true;
+        for (int i = 0; i < 8; i++) if (T(y2)->data[i] != 1.0f) ident = false;
+        CHECK(ident, "dropout aktiv=0 = Identitaet");
+        moo_release(y2);
+        /* deterministisch: frischer Layer, gleicher Seed -> gleiche 1. Maske */
+        MooValue dr2 = moo_nn_schicht_dropout(moo_number(0.5));
+        MooValue dr3 = moo_nn_schicht_dropout(moo_number(0.5));
+        MooValue m1 = moo_nn_vorwaerts(dr2, x);
+        MooValue m2 = moo_nn_vorwaerts(dr3, x);
+        bool det = true;
+        for (int i = 0; i < 8; i++) if (T(m1)->data[i] != T(m2)->data[i]) det = false;
+        CHECK(det, "dropout seed-deterministisch");
+        moo_release(m1); moo_release(m2); moo_release(dr2); moo_release(dr3);
+        moo_release(x); moo_release(dr);
+        moo_ag_reset();
+    }
+
+    /* ===== 8. embedding ===== */
+    {
+        MooValue em = moo_nn_schicht_embedding(moo_number(3), moo_number(2),
+                                               moo_number(9));
+        MooValue w = dget_(em, "w");
+        float wv[6] = { 10, 11,   20, 21,   30, 31 };  /* [3,2] */
+        for (int i = 0; i < 6; i++) T(w)->data[i] = wv[i];
+        moo_release(w);
+        float iv[3] = { 0, 2, 1 };
+        MooValue idx = t1(3, iv);
+        MooValue y = moo_nn_vorwaerts(em, idx);
+        CHECK(y.tag == MOO_TENSOR && T(y)->shape[0] == 3 && T(y)->shape[1] == 2,
+              "embedding Form [3,2]");
+        CHECK(NAHE(T(y)->data[0], 10) && NAHE(T(y)->data[2], 30) &&
+              NAHE(T(y)->data[5], 21), "embedding Zeilen-Lookup");
+        moo_release(y);
+        /* Index ausserhalb wirft */
+        fehler_reset();
+        float bi[1] = { 7 };
+        MooValue bidx = t1(1, bi);
+        MooValue yb = moo_nn_vorwaerts(em, bidx);
+        CHECK(moo_error_flag == 1 && yb.tag == MOO_NONE, "embedding-Index wirft");
+        fehler_reset();
+        moo_release(bidx); moo_release(idx); moo_release(em);
+        moo_ag_reset();
+    }
+
+    /* ===== 9. Optimizer handgerechnet ===== */
+    /* sgd: p=[1,2], loss=sum(p) -> g=[1,1]; rate 0.5 -> p=[0.5,1.5] */
+    {
+        float pv[2] = { 1, 2 };
+        MooValue p = t1(2, pv);
+        T(p)->requires_grad = true;
+        MooValue params = moo_list_new(1);
+        moo_retain(p); moo_list_append(params, p);
+        MooValue opt = moo_nn_opt_sgd(params, moo_number(0.5), moo_none());
+        CHECK(opt.tag == MOO_DICT, "sgd-Optimizer ist Dict");
+        MooValue loss = moo_tensor_summe(p, moo_number(-1.0));
+        MooValue rw = moo_tensor_rueckwaerts(loss);
+        (void)rw;
+        MooValue st = moo_nn_opt_schritt(opt);
+        (void)st;
+        CHECK(NAHE(T(p)->data[0], 0.5f) && NAHE(T(p)->data[1], 1.5f),
+              "sgd-Schritt: p -= rate*g");
+        bool gnull = (T(p)->grad[0] == 0.0f && T(p)->grad[1] == 0.0f);
+        CHECK(gnull, "sgd: Grads nach schritt genullt");
+        /* schritt ohne neuen backward: g=0 -> p unveraendert */
+        MooValue st2 = moo_nn_opt_schritt(opt);
+        (void)st2;
+        CHECK(NAHE(T(p)->data[0], 0.5f), "schritt mit g=0 aendert nichts");
+        moo_release(loss); moo_release(opt); moo_release(params); moo_release(p);
+    }
+    /* adam t=1: g=1 -> Update ~ -lr (Bias-Korrektur kompensiert) */
+    {
+        float pv[1] = { 1.0f };
+        MooValue p = t1(1, pv);
+        T(p)->requires_grad = true;
+        MooValue params = moo_list_new(1);
+        moo_retain(p); moo_list_append(params, p);
+        MooValue opt = moo_nn_opt_adam(params, moo_number(0.1));
+        MooValue loss = moo_tensor_summe(p, moo_number(-1.0));
+        moo_release(moo_tensor_rueckwaerts(loss));
+        moo_release(moo_nn_opt_schritt(opt));
+        /* mhat=1, vhat=1 -> p = 1 - 0.1*1/(1+1e-8) ~ 0.9 */
+        CHECK(NAHE(T(p)->data[0], 0.9f), "adam t=1: p ~ 1 - lr");
+        moo_release(loss); moo_release(opt); moo_release(params); moo_release(p);
+    }
+    /* adamw: decoupled decay zuerst: p=1,lr=0.1,wd=0.01 -> 0.999 - 0.1 ~ 0.899 */
+    {
+        float pv[1] = { 1.0f };
+        MooValue p = t1(1, pv);
+        T(p)->requires_grad = true;
+        MooValue params = moo_list_new(1);
+        moo_retain(p); moo_list_append(params, p);
+        MooValue opt = moo_nn_opt_adamw(params, moo_number(0.1), moo_number(0.01));
+        MooValue loss = moo_tensor_summe(p, moo_number(-1.0));
+        moo_release(moo_tensor_rueckwaerts(loss));
+        moo_release(moo_nn_opt_schritt(opt));
+        CHECK(fabs((double)T(p)->data[0] - 0.899) < 1e-3, "adamw: decay + adam");
+        moo_release(loss); moo_release(opt); moo_release(params); moo_release(p);
+    }
+    /* schritt auf Nicht-Optimizer wirft */
+    fehler_reset();
+    {
+        MooValue nix = moo_dict_new();
+        MooValue r = moo_nn_opt_schritt(nix);
+        CHECK(moo_error_flag == 1 && r.tag == MOO_NONE, "schritt auf Nicht-Opt wirft");
+        fehler_reset();
+        moo_release(nix);
+    }
+
+    /* ===== 10. XOR-KONVERGENZ-GATE (das C1-Gate auf C-Ebene) ===== */
+    {
+        MooValue netz = moo_list_new(2);
+        moo_list_append(netz, mk_dicht(2, 8, "tanh", 7));
+        moo_list_append(netz, mk_dicht(8, 1, "sigmoid", 8));
+        MooValue params = moo_nn_parameter(netz);
+        MooValue opt = moo_nn_opt_adam(params, moo_number(0.05));
+        float xv[8] = { 0,0, 0,1, 1,0, 1,1 };
+        float zv[4] = { 0, 1, 1, 0 };
+        MooValue x = t2(4, 2, xv);
+        MooValue z = t2(4, 1, zv);
+
+        double loss_start = -1.0, loss_ende = -1.0;
+        for (int it = 0; it < 400; it++) {
+            MooValue y = moo_nn_vorwaerts(netz, x);
+            MooValue loss = moo_nn_mse(y, z);
+            if (it == 0) loss_start = (double)T(loss)->data[0];
+            loss_ende = (double)T(loss)->data[0];
+            moo_release(moo_tensor_rueckwaerts(loss));
+            moo_release(moo_nn_opt_schritt(opt));
+            moo_release(loss); moo_release(y);
+        }
+        fprintf(stderr, "XOR: Loss %f -> %f (400 Iterationen, adam 0.05)\n",
+                loss_start, loss_ende);
+        CHECK(loss_ende < 0.01, "XOR konvergiert: Loss < 0.01");
+        CHECK(loss_ende < loss_start, "XOR: Loss gesunken");
+        /* Vorhersagen: Runden ergibt exakt XOR */
+        moo_ag_aus();
+        MooValue y = moo_nn_vorwaerts(netz, x);
+        CHECK(T(y)->data[0] < 0.5f && T(y)->data[1] > 0.5f &&
+              T(y)->data[2] > 0.5f && T(y)->data[3] < 0.5f,
+              "XOR-Vorhersagen korrekt gerundet");
+        moo_release(y);
+        moo_ag_an();
+        moo_release(x); moo_release(z); moo_release(opt);
+        moo_release(params); moo_release(netz);
+        moo_ag_reset();
+    }
+
+    printf("test_nn_asan: alle %d Checks bestanden\n", checks);
+    return 0;
+}
