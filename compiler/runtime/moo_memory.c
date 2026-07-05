@@ -158,6 +158,11 @@ static void free_dict(MooDict* d) {
 static void free_object(MooObject* o) {
     for (int32_t i = 0; i < o->prop_count; i++) {
         moo_release(o->properties[i].value);
+        // Property-NAME gehoert dem Objekt (moo_object_set legt name_str mit
+        // rc=1 an, Transfer). Ohne dieses free leakten name_str + chars pro
+        // Objekt (CG1-v4: 2 Allokationen/Objekt bei frischen Receivern,
+        // ASan 2M Leaks bei 1M Iterationen).
+        if (o->properties[i].name) free_string(o->properties[i].name);
     }
     if (o->properties) free(o->properties);
     if (o->class_name) free(o->class_name);

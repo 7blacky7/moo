@@ -1314,8 +1314,10 @@ impl<'ctx> CodeGen<'ctx> {
 
         // Index-Variable
         let i32_type = self.context.i32_type();
-        let idx_ptr = self.builder.build_alloca(i32_type, "for_idx")
-            .map_err(|e| format!("{e}"))?;
+        // G1-LEAK-Nachzuegler (REG-G1-Gate-Fund): alloca MUSS in den Entry-Block,
+        // sonst waechst der Stack pro Iteration wenn dieser for-Loop selbst in
+        // einer Schleife liegt (für-in-solange: SEGV bei ~1M Iterationen).
+        let idx_ptr = self.entry_alloca(i32_type, "for_idx")?;
         self.builder.build_store(idx_ptr, i32_type.const_int(0, false))
             .map_err(|e| format!("{e}"))?;
 
@@ -1603,8 +1605,18 @@ impl<'ctx> CodeGen<'ctx> {
     /// im Hot-Loop genutzt werden (gemessen: detect_changes mit 1600 Keys
     /// leakt ~480KB pro Call).
     fn release_function_locals(&self) -> Result<(), String> {
-        let vars: Vec<(String, PointerValue<'ctx>)> =
+        // DEDUPE nach Alloca-Pointer (CG1-v4): "selbst" und "this" zeigen als
+        // Aliase auf DENSELBEN Slot. Ohne Dedupe wird der Receiver-Slot pro
+        // Methoden-Epilog ZWEIMAL released => netto -1 pro Call, akkumuliert
+        // ueber lange Schleifen bis rc=0 zu frueh => UAF/SIGABRT (~350k Iter,
+        // ASan: heap-use-after-free in moo_release/main). Ein Slot haelt genau
+        // EINE Ref, egal unter wie vielen Namen er registriert ist.
+        let mut vars: Vec<(String, PointerValue<'ctx>)> =
             self.variables.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let mut seen: Vec<PointerValue<'ctx>> = Vec::with_capacity(vars.len());
+        vars.retain(|(_, p)| {
+            if seen.contains(p) { false } else { seen.push(*p); true }
+        });
         for (_name, ptr) in vars {
             let v = self.builder.build_load(self.mv_type(), ptr, "local_exit")
                 .map_err(|e| format!("{e}"))?.into_struct_value();
