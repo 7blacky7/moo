@@ -1136,6 +1136,46 @@ Schau dir `beispiele/ki_xor.moo` (14 Zeilen) und `beispiele/neuralnet.moo`
 (dasselbe komplett von Hand, 321 Zeilen) an — der Unterschied ist der
 ganze Punkt.
 
+### Stufe 4: Ein kleines Sprachmodell — der Transformer-Baukasten
+
+Dieselben Bausteine reichen für die Architektur hinter ChatGPT & Co. —
+nur viel, viel kleiner. Drei neue Teile kommen dazu:
+
+**1. Der Zeichen-Tokenizer** macht aus Text Zahlen (und zurück). Er
+arbeitet auf echten Zeichen, nicht auf Bytes — `"ä"` ist EIN Zeichen:
+
+```moo
+setze tok auf text_tokenizer("Es war einmal …")
+zeige tok["vokab"]              # wie viele verschiedene Zeichen
+zeige tok["ids"]                # der Text als Tensor von Zeichen-Nummern
+zeige tok["id_zu_zeichen"][0]   # und zurück: Nummer -> Zeichen
+```
+
+**2. Zwei neue Schichten:** `schicht_attention(dim, koepfe)` lässt jedes
+Zeichen auf alle Zeichen davor „schauen“ (kausal — in die Zukunft schauen
+ist verboten), und `schicht_position(max, dim, "gelernt")` sagt dem Modell,
+WO in der Folge ein Zeichen steht.
+
+**3. Residual-Verbindungen** schreibst du in moo einfach als Rechnung —
+der `+`-Operator auf Tensoren läuft über den Autograd-Tape, die
+Ableitungen fließen also durch beide Wege:
+
+```moo
+setze x auf x + vorwaerts([norm, attention], x)   # Residual!
+```
+
+Das komplette Beispiel ist `beispiele/ki_sprachmodell.moo`: ein
+Mini-Transformer (2 Blöcke, ~120.000 Parameter) lernt auf echten
+Grimm-Märchen (`./skripte/maerchen_download.sh` holt den Text), das
+nächste Zeichen vorherzusagen. Nach ~90 Sekunden CPU-Training wird aus
+Zeichensalat erkennbar deutscher Text mit Wörtern und Satzzeichen.
+
+Und damit du die richtigen Erwartungen hast: Das ist ein
+**Lern-Demonstrator, kein Chatbot**. Es zeigt ehrlich und beweisbar,
+DASS ein Transformer lernt (der Verlust sinkt messbar, der Text bekommt
+Struktur) — für mehr braucht es Millionen Mal mehr Daten und Rechenzeit.
+Genau deshalb ist es so lehrreich: Es ist dieselbe Mathematik.
+
 ## Tipps für Anfänger
 
 1. **Einrückung ist wichtig!** Verwende 4 Leerzeichen für jeden Block.

@@ -1,6 +1,6 @@
 /**
  * moo_dataset.c — Daten-Pipeline (Plan-014 E1): MNIST-IDX, CSV, PGM/PPM,
- * Mischen, Normalisieren.
+ * Mischen, Normalisieren. Plan-014 G1: Zeichen-Tokenizer (UTF-8-Codepoints).
  * ============================================================================
  * ENTSCHEIDE (E1):
  *   * Bild-Eingabe: EIGENER minimaler PGM/PPM-Reader (P2/P5 grau, P3/P6 RGB).
@@ -480,3 +480,156 @@ MooValue moo_ds_normalisieren(MooValue t, MooValue art) {
     MooValue v; v.tag = MOO_TENSOR; moo_val_set_ptr(&v, out);
     return v;
 }
+
+/* ============================================================
+ * Zeichen-Tokenizer (Plan-014 G1)
+ * ============================================================ */
+
+/* Laenge + Wert eines UTF-8-Codepoints ab s[i] (blen Gesamtbytes).
+ * Rueckgabe Byte-Laenge, 0 = ungueltig. Validiert Continuation-Bytes,
+ * Overlong-Formen, Surrogate und das Unicode-Maximum — OHNE diese Checks
+ * waere der Roundtrip encode(decode(x)) == x fuer kaputte Eingaben still
+ * falsch (Overlong dekodiert zu einem Codepoint, der kuerzer re-encodet). */
+static int utf8_decode_cp(const unsigned char* s, int32_t i, int32_t blen,
+                          uint32_t* out) {
+    unsigned char b = s[i];
+    if (b < 0x80) { *out = b; return 1; }
+    int len; uint32_t cp, min;
+    if ((b & 0xE0) == 0xC0)      { len = 2; cp = b & 0x1Fu; min = 0x80u;    }
+    else if ((b & 0xF0) == 0xE0) { len = 3; cp = b & 0x0Fu; min = 0x800u;   }
+    else if ((b & 0xF8) == 0xF0) { len = 4; cp = b & 0x07u; min = 0x10000u; }
+    else return 0;   /* Continuation-Byte oder 0xF8+ als Leadbyte */
+    if (i > blen - len) return 0;   /* abgeschnittene Sequenz */
+    for (int k = 1; k < len; k++) {
+        if ((s[i + k] & 0xC0) != 0x80) return 0;
+        cp = (cp << 6) | (uint32_t)(s[i + k] & 0x3Fu);
+    }
+    if (cp < min) return 0;                        /* Overlong */
+    if (cp >= 0xD800u && cp <= 0xDFFFu) return 0;  /* Surrogat */
+    if (cp > 0x10FFFFu) return 0;
+    *out = cp;
+    return len;
+}
+
+/* Codepoint -> UTF-8-Bytes (out mind. 4 Bytes). Rueckgabe Byte-Laenge.
+ * Nur mit von utf8_decode_cp validierten Codepoints aufrufen. */
+static int utf8_encode_cp(uint32_t cp, char out[4]) {
+    if (cp < 0x80u) { out[0] = (char)cp; return 1; }
+    if (cp < 0x800u) {
+        out[0] = (char)(0xC0u | (cp >> 6));
+        out[1] = (char)(0x80u | (cp & 0x3Fu));
+        return 2;
+    }
+    if (cp < 0x10000u) {
+        out[0] = (char)(0xE0u | (cp >> 12));
+        out[1] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+        out[2] = (char)(0x80u | (cp & 0x3Fu));
+        return 3;
+    }
+    out[0] = (char)(0xF0u | (cp >> 18));
+    out[1] = (char)(0x80u | ((cp >> 12) & 0x3Fu));
+    out[2] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+    out[3] = (char)(0x80u | (cp & 0x3Fu));
+    return 4;
+}
+
+static int tok_cmp_u32(const void* a, const void* b) {
+    uint32_t x = *(const uint32_t*)a, y = *(const uint32_t*)b;
+    return (x > y) - (x < y);
+}
+
+/* text_tokenizer(text): Zeichen-Level-Tokenizer auf UTF-8-CODEPOINTS
+ * (nicht Bytes — "ä" ist EIN Zeichen, nicht zwei). Rueckgabe Dict:
+ *   zeichen_zu_id: Dict   Zeichen -> Id
+ *   id_zu_zeichen: Liste  Id -> Zeichen
+ *   ids:           Tensor [n] der Zeichen-Ids des Texts
+ *   vokab:         Anzahl verschiedener Zeichen
+ * Ids sind nach Codepoint sortiert vergeben — deterministisch, unabhaengig
+ * von der Reihenfolge im Text. Ungueltiges UTF-8 und Null-Zeichen werfen
+ * erklaerend (kein stilles Ueberspringen). */
+MooValue moo_ds_tokenizer(MooValue text) {
+    if (text.tag != MOO_STRING) {
+        moo_throw(moo_error("text_tokenizer: erwarte einen Text"));
+        return moo_none();
+    }
+    const unsigned char* s = (const unsigned char*)MV_STR(text)->chars;
+    int32_t blen = MV_STR(text)->length;
+    if (blen <= 0) {
+        moo_throw(moo_error("text_tokenizer: der Text ist leer"));
+        return moo_none();
+    }
+    /* Pass 1: Codepoints dekodieren (worst case 1 Codepoint pro Byte) */
+    uint32_t* cps = (uint32_t*)malloc((size_t)blen * sizeof(uint32_t));
+    if (!cps) {
+        moo_throw(moo_error("text_tokenizer: nicht genug Speicher"));
+        return moo_none();
+    }
+    int32_t n = 0, i = 0;
+    while (i < blen) {
+        uint32_t cp;
+        int l = utf8_decode_cp(s, i, blen, &cp);
+        if (l == 0) {
+            free(cps);
+            char msg[160];
+            snprintf(msg, sizeof(msg), "text_tokenizer: ungueltiges UTF-8 bei "
+                     "Byte %d — ist die Datei wirklich UTF-8-Text?", (int)i);
+            moo_throw(moo_error(msg));
+            return moo_none();
+        }
+        if (cp == 0) {
+            free(cps);
+            moo_throw(moo_error("text_tokenizer: der Text enthaelt ein "
+                                "Null-Zeichen — das ist keine Textdatei"));
+            return moo_none();
+        }
+        cps[n++] = cp;
+        i += l;
+    }
+    /* Vokabular: sortierte, eindeutige Codepoints => deterministische Ids */
+    uint32_t* uniq = (uint32_t*)malloc((size_t)n * sizeof(uint32_t));
+    if (!uniq) {
+        free(cps);
+        moo_throw(moo_error("text_tokenizer: nicht genug Speicher"));
+        return moo_none();
+    }
+    memcpy(uniq, cps, (size_t)n * sizeof(uint32_t));
+    qsort(uniq, (size_t)n, sizeof(uint32_t), tok_cmp_u32);
+    int32_t vokab = 0;
+    for (int32_t k = 0; k < n; k++)
+        if (k == 0 || uniq[k] != uniq[k - 1]) uniq[vokab++] = uniq[k];
+    /* ids-Tensor: lower_bound-Binaersuche im sortierten Vokabular */
+    int32_t shape[1] = { n };
+    MooTensor* t = moo_tensor_raw(1, shape);
+    if (!t) {
+        free(cps); free(uniq);
+        moo_throw(moo_error("text_tokenizer: nicht genug Speicher"));
+        return moo_none();
+    }
+    for (int32_t k = 0; k < n; k++) {
+        int32_t lo = 0, hi = vokab;
+        while (lo < hi) {
+            int32_t mid = lo + (hi - lo) / 2;
+            if (uniq[mid] < cps[k]) lo = mid + 1; else hi = mid;
+        }
+        t->data[k] = (float)lo;   /* cps[k] ist garantiert im Vokabular */
+    }
+    /* Nachschlage-Strukturen. Transfer-Semantik: dict_set/list_append
+     * uebernehmen die +1-Refs der frisch gebauten Werte. */
+    MooValue z2i = moo_dict_new();
+    MooValue i2z = moo_list_new(vokab);
+    for (int32_t k = 0; k < vokab; k++) {
+        char buf[4];
+        int l = utf8_encode_cp(uniq[k], buf);
+        moo_list_append(i2z, moo_string_new_len(buf, l));
+        moo_dict_set(z2i, moo_string_new_len(buf, l), moo_number((double)k));
+    }
+    free(cps); free(uniq);
+    MooValue tv; tv.tag = MOO_TENSOR; moo_val_set_ptr(&tv, t);
+    MooValue d = moo_dict_new();
+    moo_dict_set(d, moo_string_new("zeichen_zu_id"), z2i);
+    moo_dict_set(d, moo_string_new("id_zu_zeichen"), i2z);
+    moo_dict_set(d, moo_string_new("ids"), tv);
+    moo_dict_set(d, moo_string_new("vokab"), moo_number((double)vokab));
+    return d;
+}
+

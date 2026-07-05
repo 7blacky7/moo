@@ -276,6 +276,7 @@ MooValue moo_ds_csv(MooValue pfad);
 MooValue moo_ds_bild(MooValue pfad);
 MooValue moo_ds_mischen(MooValue x, MooValue y, MooValue seed);
 MooValue moo_ds_normalisieren(MooValue t, MooValue art);
+MooValue moo_ds_tokenizer(MooValue text);
 
 typedef struct {
     int32_t  refcount;   // MUSS erstes Feld sein (Refcount-Konvention)
@@ -511,6 +512,8 @@ bool moo_as_bool(MooValue v);
 
 // === String-Funktionen ===
 MooValue moo_string_new(const char* chars);
+/* Binary-safe: Laenge explizit, NUL-Bytes im Inhalt erlaubt (kein strlen). */
+MooValue moo_string_new_len(const char* chars, int32_t len);
 MooValue moo_string_concat(MooValue a, MooValue b);
 MooValue moo_string_length(MooValue s);
 MooValue moo_string_index(MooValue s, MooValue idx);

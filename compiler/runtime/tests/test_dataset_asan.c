@@ -16,6 +16,10 @@
  *      (x-Zeile, y-Wert) bleiben zusammen, echte Permutation
  *   5. normalisieren: minmax auf 0..1 handgerechnet, standard hat
  *      Mittel ~0 / Streuung ~1; konstante Daten crashen nicht
+ *   6. text_tokenizer (P014-G1): Codepoints statt Bytes (Umlaut-Beweis),
+ *      Ids nach Codepoint sortiert (handgeprueft), bit-genauer Roundtrip,
+ *      zeichen_zu_id<->id_zu_zeichen konsistent; kaputtes UTF-8 (Truncated/
+ *      Overlong), leerer Text und Nicht-Text werfen erklaerend
  * ============================================================================
  */
 #include "../moo_runtime.h"
@@ -286,6 +290,78 @@ int main(void) {
         CHECK(mm.tag == MOO_TENSOR && NAHE(T(mm)->data[0], 0.0),
               "minmax: konstante Daten -> 0, kein Crash");
         moo_release(mm); moo_release(v);
+    }
+
+    /* ===== 6. text_tokenizer (UTF-8-Codepoints, P014-G1) ===== */
+    {
+        /* "Bär,ä€": 1-Byte (B, r, Komma), 2-Byte (ä zweimal), 3-Byte (€)
+         * = 6 Codepoints in 10 Bytes. Vokab sortiert nach Codepoint:
+         * ','(0x2C) 'B'(0x42) 'r'(0x72) 'ä'(0xE4) '€'(0x20AC) => 5. */
+        MooValue txt = moo_string_new_len("B\xC3\xA4r,\xC3\xA4\xE2\x82\xAC", 10);
+        MooValue tok = moo_ds_tokenizer(txt);
+        CHECK(!moo_error_flag && tok.tag == MOO_DICT,
+              "tokenizer: gibt Dict zurueck");
+        MooValue ids = dget_(tok, "ids");
+        MooValue vok = dget_(tok, "vokab");
+        MooValue i2z = dget_(tok, "id_zu_zeichen");
+        MooValue z2i = dget_(tok, "zeichen_zu_id");
+        CHECK(ids.tag == MOO_TENSOR && T(ids)->ndim == 1 && T(ids)->size == 6,
+              "tokenizer: 6 CODEPOINTS, nicht 9 Bytes");
+        CHECK(vok.tag == MOO_NUMBER && MV_NUM(vok) == 5.0,
+              "tokenizer: Vokab 5 (ae nur einmal gezaehlt)");
+        float erwartet[6] = { 1, 3, 2, 0, 3, 4 };   /* B ä r , ä € */
+        bool idord = true;
+        for (int k = 0; k < 6; k++)
+            if (T(ids)->data[k] != erwartet[k]) idord = false;
+        CHECK(idord, "tokenizer: Ids nach Codepoint sortiert, handgeprueft");
+        /* Roundtrip: ids -> id_zu_zeichen -> Bytes == Original, bit-genau */
+        const char* orig = MV_STR(txt)->chars;
+        int32_t off = 0;
+        bool rt = true;
+        for (int64_t k = 0; k < T(ids)->size && rt; k++) {
+            MooValue z = moo_list_get(i2z, moo_number((double)T(ids)->data[k]));
+            if (z.tag != MOO_STRING) { rt = false; break; }
+            int32_t zl = MV_STR(z)->length;
+            if (off + zl > MV_STR(txt)->length ||
+                memcmp(orig + off, MV_STR(z)->chars, (size_t)zl) != 0) rt = false;
+            off += zl;
+            moo_release(z);
+        }
+        CHECK(rt && off == MV_STR(txt)->length,
+              "tokenizer: Umlaut-Roundtrip bit-genau");
+        /* zeichen_zu_id <-> id_zu_zeichen konsistent (fuer 'ä') */
+        MooValue ae = moo_string_new_len("\xC3\xA4", 2);
+        MooValue idv = moo_dict_get(z2i, ae);   /* dict_get konsumiert den Key */
+        CHECK(idv.tag == MOO_NUMBER, "tokenizer: zeichen_zu_id kennt ae");
+        MooValue back = moo_list_get(i2z, idv);
+        CHECK(back.tag == MOO_STRING && MV_STR(back)->length == 2 &&
+              memcmp(MV_STR(back)->chars, "\xC3\xA4", 2) == 0,
+              "tokenizer: id_zu_zeichen[zeichen_zu_id[ae]] == ae");
+        moo_release(back);
+        moo_release(ids); moo_release(vok); moo_release(i2z); moo_release(z2i);
+        moo_release(tok); moo_release(txt);
+    }
+    {
+        /* Fehlerpfade: alle werfen erklaerend, keiner crasht */
+        MooValue kaputt = moo_string_new_len("a\xC3", 2);   /* abgeschnitten */
+        MooValue r1 = moo_ds_tokenizer(kaputt);
+        CHECK(moo_error_flag && r1.tag == MOO_NONE,
+              "tokenizer: abgeschnittene UTF-8-Sequenz wirft");
+        fehler_reset(); moo_release(kaputt);
+        MooValue ovl = moo_string_new_len("\xC0\x80", 2);   /* Overlong U+0000 */
+        MooValue r2 = moo_ds_tokenizer(ovl);
+        CHECK(moo_error_flag && r2.tag == MOO_NONE,
+              "tokenizer: Overlong-Form wirft");
+        fehler_reset(); moo_release(ovl);
+        MooValue leer = str_("");
+        MooValue r3 = moo_ds_tokenizer(leer);
+        CHECK(moo_error_flag && r3.tag == MOO_NONE,
+              "tokenizer: leerer Text wirft");
+        fehler_reset(); moo_release(leer);
+        MooValue r4 = moo_ds_tokenizer(moo_number(5));
+        CHECK(moo_error_flag && r4.tag == MOO_NONE,
+              "tokenizer: Zahl statt Text wirft");
+        fehler_reset();
     }
 
     remove("/tmp/moo_ds_test-images-idx3-ubyte");

@@ -2645,6 +2645,12 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_dsbild_p")?;
                         return Ok(r);
                     }
+                    "text_tokenizer" | "char_tokenizer" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_ds_tokenizer, &[p.into()], "ds_tok")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_dstok_p")?;
+                        return Ok(r);
+                    }
                     "mischen" | "shuffle_data" => {
                         let x = self.compile_expr(&args[0])?;
                         let y = self.compile_expr(&args[1])?;
