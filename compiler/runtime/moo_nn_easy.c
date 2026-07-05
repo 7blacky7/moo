@@ -89,10 +89,12 @@ MooValue moo_nn_ki_netz(MooValue schichten) {
     for (int32_t i = 0; i < l->length; i++) {
         MooValue s = l->items[i];
         if (!(ist_schicht_typ(s, "dicht") || ist_schicht_typ(s, "dropout") ||
-              ist_schicht_typ(s, "layernorm") || ist_schicht_typ(s, "embedding"))) {
+              ist_schicht_typ(s, "layernorm") || ist_schicht_typ(s, "embedding") ||
+              ist_schicht_typ(s, "attention") || ist_schicht_typ(s, "position"))) {
             char msg[160];
             snprintf(msg, sizeof(msg), "ki_netz: Eintrag %d ist keine Schicht "
-                     "(erwarte schicht_dicht/dropout/layernorm/embedding)", i);
+                     "(erwarte schicht_dicht/dropout/layernorm/embedding/"
+                     "attention/position)", i);
             moo_throw(moo_error(msg));
             return moo_none();
         }
@@ -587,6 +589,21 @@ static bool arch_schicht(Buf* b, MooValue s) {
         moo_release(w);
         return true;
     }
+    if (ist_schicht_typ(s, "attention")) {
+        buf_add(b, "{\"typ\":\"attention\",\"dim\":%d,\"koepfe\":%d}",
+                (int32_t)enum_(s, "dim", 0), (int32_t)enum_(s, "koepfe", 1));
+        return true;
+    }
+    if (ist_schicht_typ(s, "position")) {
+        MooValue p = eget(s, "pos");
+        MooValue a = eget(s, "art");
+        if (p.tag != MOO_TENSOR) { moo_release(p); moo_release(a); return false; }
+        buf_add(b, "{\"typ\":\"position\",\"max\":%d,\"dim\":%d,\"art\":\"%s\"}",
+                T(p)->shape[0], T(p)->shape[1],
+                (a.tag == MOO_STRING) ? MV_STR(a)->chars : "gelernt");
+        moo_release(p); moo_release(a);
+        return true;
+    }
     return false;
 }
 
@@ -876,6 +893,18 @@ MooValue moo_nn_laden(MooValue pfad) {
             s = moo_nn_schicht_embedding(moo_number(enum_(e, "vokab", 0)),
                                          moo_number(enum_(e, "dim", 0)),
                                          moo_none());
+        } else if (strcmp(typ, "attention") == 0) {
+            s = moo_nn_schicht_attention(moo_number(enum_(e, "dim", 0)),
+                                         moo_number(enum_(e, "koepfe", 1)),
+                                         moo_none());
+        } else if (strcmp(typ, "position") == 0) {
+            /* sinus-pos rekonstruiert der Konstruktor; gelernt-pos wird
+             * gleich durch den Param-Fill ueberschrieben. */
+            MooValue art = eget(e, "art");
+            s = moo_nn_schicht_position(moo_number(enum_(e, "max", 0)),
+                                        moo_number(enum_(e, "dim", 0)),
+                                        art, moo_none());
+            moo_release(art);
         }
         moo_release(tv);
         if (s.tag != MOO_DICT) { ok = false; moo_release(s); break; }

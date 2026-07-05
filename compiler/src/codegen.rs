@@ -2578,6 +2578,26 @@ impl<'ctx> CodeGen<'ctx> {
                         return Ok(r);
                     }
                     // Kinderleicht-API (Plan-014 D1)
+                    "schicht_attention" | "layer_attention" => {
+                        let dim = self.compile_expr(&args[0])?;
+                        let koepfe = self.compile_expr(&args[1])?;
+                        let seed = if args.len() > 2 { self.compile_expr(&args[2])? }
+                                   else { self.call_rt(self.rt.moo_none, &[], "nn_att_seed")? };
+                        return self.call_rt(self.rt.moo_nn_schicht_attention,
+                            &[dim.into(), koepfe.into(), seed.into()], "nn_attention");
+                    }
+                    "schicht_position" | "layer_position" => {
+                        let max = self.compile_expr(&args[0])?;
+                        let dim = self.compile_expr(&args[1])?;
+                        let art = if args.len() > 2 { self.compile_expr(&args[2])? }
+                                  else { self.call_rt(self.rt.moo_none, &[], "nn_pos_art")? };
+                        let seed = if args.len() > 3 { self.compile_expr(&args[3])? }
+                                   else { self.call_rt(self.rt.moo_none, &[], "nn_pos_seed")? };
+                        let r = self.call_rt(self.rt.moo_nn_schicht_position,
+                            &[max.into(), dim.into(), art.into(), seed.into()], "nn_position")?;
+                        self.call_rt_void(self.rt.moo_release, &[art.into()], "rel_nnp_art")?;
+                        return Ok(r);
+                    }
                     "gradienten_kappen" | "clip_gradients" => {
                         let params = self.compile_expr(&args[0])?;
                         let m = self.compile_expr(&args[1])?;

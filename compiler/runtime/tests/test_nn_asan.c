@@ -803,6 +803,36 @@ int main(void) {
         moo_ag_reset();
     }
 
+    /* ===== 15. Transformer-Serialisierung (G1 Teil 2) ===== */
+    {
+        MooValue schichten = moo_list_new(3);
+        moo_list_append(schichten, moo_nn_schicht_position(moo_number(4.0),
+                        moo_number(8.0), moo_none(), moo_number(11.0)));
+        moo_list_append(schichten, moo_nn_schicht_attention(moo_number(8.0),
+                        moo_number(2.0), moo_number(12.0)));
+        moo_list_append(schichten, mk_dicht(8, 3, "keine", 13));
+        MooValue netz = moo_nn_ki_netz(schichten);
+        float xv[32];
+        for (int i = 0; i < 32; i++) xv[i] = (float)(i % 7) * 0.2f - 0.5f;
+        MooValue x = t2(4, 8, xv);
+        MooValue y1 = moo_nn_vorwaerts(netz, x);
+        MooValue pf = moo_string_new("/tmp/test_g1_tf.mook");
+        moo_release(moo_nn_speichern(netz, pf));
+        MooValue netz2 = moo_nn_laden(pf);
+        CHECK(netz2.tag == MOO_DICT, "Transformer-.mook laedt");
+        MooValue y2 = moo_nn_vorwaerts(netz2, x);
+        bool gleich = (y1.tag == MOO_TENSOR && y2.tag == MOO_TENSOR &&
+                       T(y1)->size == T(y2)->size);
+        for (int64_t i = 0; gleich && i < T(y1)->size; i++)
+            gleich = (T(y1)->data[i] == T(y2)->data[i]);
+        CHECK(gleich, "Transformer-Roundtrip: Vorhersage BIT-gleich");
+        remove("/tmp/test_g1_tf.mook");
+        moo_release(y1); moo_release(y2); moo_release(netz2);
+        moo_release(pf); moo_release(x); moo_release(netz);
+        moo_release(schichten);
+        moo_ag_reset();
+    }
+
     printf("test_nn_asan: alle %d Checks bestanden\n", checks);
     return 0;
 }
