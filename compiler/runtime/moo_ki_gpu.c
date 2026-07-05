@@ -60,6 +60,8 @@ typedef struct {
     VkQueue queue;
     uint32_t queue_familie;
     uint32_t mem_typ_hostvis;
+    uint32_t mem_typ_devlocal;        /* GPU3-A: VRAM-Arbeitsbuffers */
+    bool devlocal_vereint;            /* true: devlocal==hostvis (UMA/iGPU/Fallback) -> keine Copies */
     VkDescriptorSetLayout dsl;        /* 3 Storage-Buffers */
     VkPipelineLayout playout;         /* + 16B Push-Constants */
     VkPipeline pipe_matmul, pipe_ew, pipe_reduce;
@@ -175,6 +177,27 @@ static bool ki_gpu_init(void) {
     }
     if (G.mem_typ_hostvis == UINT32_MAX) return false;
 
+    /* GPU3-A: DEVICE_LOCAL-Typ fuer VRAM-Arbeitsbuffers. Wenn der Typ auch
+     * host-visible|coherent ist (UMA/iGPU) oder keiner existiert, arbeiten
+     * wir "vereint" wie bisher (ein Buffer, keine Staging-Copies). */
+    G.mem_typ_devlocal = UINT32_MAX;
+    for (uint32_t i = 0; i < mp.memoryTypeCount; i++) {
+        if (mp.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
+            G.mem_typ_devlocal = i;
+            break;
+        }
+    }
+    if (G.mem_typ_devlocal == UINT32_MAX) {
+        G.mem_typ_devlocal = G.mem_typ_hostvis;
+        G.devlocal_vereint = true;
+    } else {
+        VkMemoryPropertyFlags hv = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        G.devlocal_vereint =
+            (mp.memoryTypes[G.mem_typ_devlocal].propertyFlags & hv) == hv;
+        if (G.devlocal_vereint) G.mem_typ_devlocal = G.mem_typ_hostvis;
+    }
+
     VkDescriptorSetLayoutBinding binds[3];
     for (int i = 0; i < 3; i++) {
         binds[i] = (VkDescriptorSetLayoutBinding){
@@ -235,44 +258,91 @@ static bool ki_gpu_init(void) {
     return true;
 }
 
-typedef struct { VkBuffer buf; VkDeviceMemory mem; void* map; } KiBuf;
+/* GPU3-A: Buffer-Paar. dev = DEVICE_LOCAL-Arbeitsbuffer (Shader-Zugriff,
+ * VRAM), stg = host-visible Staging (permanent gemappt; map zeigt IMMER
+ * hierauf — die Op-Funktionen memcpy-en unveraendert in/aus map).
+ * Vereint-Modus (UMA/iGPU/Fallback): dev==stg, keine Copies noetig.
+ * buf_anlegen/buf_weg sind bewusst die EINZIGE Alloc-Stelle — der
+ * Buffer-Pool (Backlog #2) ersetzt spaeter genau diese zwei Funktionen. */
+typedef struct {
+    VkBuffer dev;  VkDeviceMemory dev_mem;
+    VkBuffer stg;  VkDeviceMemory stg_mem;
+    void* map;
+    VkDeviceSize groesse;
+} KiBuf;
 
-static bool buf_anlegen(KiBuf* b, VkDeviceSize groesse) {
-    memset(b, 0, sizeof(*b));
+static bool buf_einzeln(VkBuffer* buf, VkDeviceMemory* mem,
+                        VkDeviceSize groesse, VkBufferUsageFlags usage,
+                        uint32_t mem_typ, void** map_oder_null) {
     VkBufferCreateInfo bci = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = groesse,
-        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        .usage = usage,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
     };
-    if (vkCreateBuffer(G.geraet, &bci, NULL, &b->buf) != VK_SUCCESS)
+    if (vkCreateBuffer(G.geraet, &bci, NULL, buf) != VK_SUCCESS)
         return false;
     VkMemoryRequirements mr;
-    vkGetBufferMemoryRequirements(G.geraet, b->buf, &mr);
+    vkGetBufferMemoryRequirements(G.geraet, *buf, &mr);
     VkMemoryAllocateInfo mai = {
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .allocationSize = mr.size,
-        .memoryTypeIndex = G.mem_typ_hostvis,
+        .memoryTypeIndex = mem_typ,
     };
-    if (vkAllocateMemory(G.geraet, &mai, NULL, &b->mem) != VK_SUCCESS)
+    if (vkAllocateMemory(G.geraet, &mai, NULL, mem) != VK_SUCCESS)
         return false;
-    if (vkBindBufferMemory(G.geraet, b->buf, b->mem, 0) != VK_SUCCESS)
+    if (vkBindBufferMemory(G.geraet, *buf, *mem, 0) != VK_SUCCESS)
         return false;
-    if (vkMapMemory(G.geraet, b->mem, 0, VK_WHOLE_SIZE, 0, &b->map) != VK_SUCCESS)
+    if (map_oder_null &&
+        vkMapMemory(G.geraet, *mem, 0, VK_WHOLE_SIZE, 0, map_oder_null) != VK_SUCCESS)
+        return false;
+    return true;
+}
+
+static bool buf_anlegen(KiBuf* b, VkDeviceSize groesse) {
+    memset(b, 0, sizeof(*b));
+    b->groesse = groesse;
+    if (G.devlocal_vereint) {
+        /* Wie vor GPU3-A: ein host-visible Buffer, Shader liest direkt. */
+        if (!buf_einzeln(&b->dev, &b->dev_mem, groesse,
+                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                         G.mem_typ_hostvis, &b->map))
+            return false;
+        b->stg = b->dev;
+        b->stg_mem = b->dev_mem;
+        return true;
+    }
+    /* Getrennt: dev in VRAM (ungemappt), stg als Transferfenster. */
+    if (!buf_einzeln(&b->dev, &b->dev_mem, groesse,
+                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                     VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                     VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                     G.mem_typ_devlocal, NULL))
+        return false;
+    if (!buf_einzeln(&b->stg, &b->stg_mem, groesse,
+                     VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                     VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                     G.mem_typ_hostvis, &b->map))
         return false;
     return true;
 }
 static void buf_weg(KiBuf* b) {
-    if (b->map) vkUnmapMemory(G.geraet, b->mem);
-    if (b->buf) vkDestroyBuffer(G.geraet, b->buf, NULL);
-    if (b->mem) vkFreeMemory(G.geraet, b->mem, NULL);
+    if (b->map) vkUnmapMemory(G.geraet, b->stg_mem);
+    if (b->stg && b->stg != b->dev) vkDestroyBuffer(G.geraet, b->stg, NULL);
+    if (b->stg_mem && b->stg_mem != b->dev_mem) vkFreeMemory(G.geraet, b->stg_mem, NULL);
+    if (b->dev) vkDestroyBuffer(G.geraet, b->dev, NULL);
+    if (b->dev_mem) vkFreeMemory(G.geraet, b->dev_mem, NULL);
     memset(b, 0, sizeof(*b));
 }
 
-/* Gemeinsamer Ablauf: 3 Buffers sind angelegt+gefuellt, Pipeline+Push+
- * Dispatch-Masse rein, submit, auf Fence warten. */
+/* Gemeinsamer Ablauf: 3 Buffers sind angelegt, Staging der upload-Buffers
+ * ist gefuellt. Im SELBEN Command-Buffer: Staging->VRAM-Copies (upload_mask),
+ * Barrier, Compute-Dispatch, Barrier, VRAM->Staging-Copies (readback_mask).
+ * Weiterhin genau EIN Submit + Fence pro Op (Submit-Reduktion = Backlog #3).
+ * Im Vereint-Modus entfallen Copies+Barriers (dev==stg). */
 static bool dispatch_sync(VkPipeline pipe, KiBuf b[3], KiPush push,
-                          uint32_t gx, uint32_t gy) {
+                          uint32_t gx, uint32_t gy,
+                          uint32_t upload_mask, uint32_t readback_mask) {
     VkDescriptorSetAllocateInfo dsa = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = G.descpool,
@@ -285,7 +355,7 @@ static bool dispatch_sync(VkPipeline pipe, KiBuf b[3], KiPush push,
     VkDescriptorBufferInfo bi[3];
     VkWriteDescriptorSet ws[3];
     for (int i = 0; i < 3; i++) {
-        bi[i] = (VkDescriptorBufferInfo){ .buffer = b[i].buf, .range = VK_WHOLE_SIZE };
+        bi[i] = (VkDescriptorBufferInfo){ .buffer = b[i].dev, .range = VK_WHOLE_SIZE };
         ws[i] = (VkWriteDescriptorSet){
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .dstSet = ds,
@@ -313,12 +383,43 @@ static bool dispatch_sync(VkPipeline pipe, KiBuf b[3], KiPush push,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
     vkBeginCommandBuffer(cb, &cbb);
+    bool kopieren = !G.devlocal_vereint;
+    if (kopieren && upload_mask) {
+        for (int i = 0; i < 3; i++) {
+            if (!(upload_mask & (1u << i))) continue;
+            VkBufferCopy reg = { .srcOffset = 0, .dstOffset = 0, .size = b[i].groesse };
+            vkCmdCopyBuffer(cb, b[i].stg, b[i].dev, 1, &reg);
+        }
+        VkMemoryBarrier mb = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+        };
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             0, 1, &mb, 0, NULL, 0, NULL);
+    }
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, G.playout,
                             0, 1, &ds, 0, NULL);
     vkCmdPushConstants(cb, G.playout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                        sizeof(push), &push);
     vkCmdDispatch(cb, gx, gy, 1);
+    if (kopieren && readback_mask) {
+        VkMemoryBarrier mb = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+        };
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             0, 1, &mb, 0, NULL, 0, NULL);
+        for (int i = 0; i < 3; i++) {
+            if (!(readback_mask & (1u << i))) continue;
+            VkBufferCopy reg = { .srcOffset = 0, .dstOffset = 0, .size = b[i].groesse };
+            vkCmdCopyBuffer(cb, b[i].dev, b[i].stg, 1, &reg);
+        }
+    }
     vkEndCommandBuffer(cb);
 
     VkFenceCreateInfo fci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
@@ -354,7 +455,8 @@ bool moo_ki_gpu_matmul(const float* a, const float* b, float* o,
         memcpy(bufs[1].map, b, (size_t)k * n * 4);
         KiPush push = { (uint32_t)m, (uint32_t)k, (uint32_t)n, 0 };
         ok = dispatch_sync(G.pipe_matmul, bufs, push,
-                           ((uint32_t)n + 15u) / 16u, ((uint32_t)m + 15u) / 16u);
+                           ((uint32_t)n + 15u) / 16u, ((uint32_t)m + 15u) / 16u,
+                           /*upload*/ 0x3u, /*readback*/ 0x4u);
         if (ok) memcpy(o, bufs[2].map, (size_t)m * n * 4);
     }
     for (int i = 0; i < 3; i++) buf_weg(&bufs[i]);
@@ -363,9 +465,8 @@ bool moo_ki_gpu_matmul(const float* a, const float* b, float* o,
 
 bool moo_ki_gpu_ew(int32_t op, const float* a, const float* b, float* o,
                    int64_t n) {
-    if (op < 0 || op > 3) return false;
     if (!env_erzwingen() && n < (int64_t)1 << 20) return false;
-    if (n > (int64_t)1 << 30) return false;   /* Push-Constant ist u32 */
+    if (n > (int64_t)1 << 30) return false;
     if (!ki_gpu_init()) return false;
     KiBuf bufs[3];
     bool ok = buf_anlegen(&bufs[0], (VkDeviceSize)n * 4) &&
@@ -376,7 +477,8 @@ bool moo_ki_gpu_ew(int32_t op, const float* a, const float* b, float* o,
         memcpy(bufs[1].map, b, (size_t)n * 4);
         KiPush push = { (uint32_t)n, 0, 0, (uint32_t)op };
         ok = dispatch_sync(G.pipe_ew, bufs, push,
-                           (uint32_t)((n + 255) / 256), 1);
+                           ((uint32_t)((n + 255) / 256)), 1,
+                           /*upload*/ 0x3u, /*readback*/ 0x4u);
         if (ok) memcpy(o, bufs[2].map, (size_t)n * 4);
     }
     for (int i = 0; i < 3; i++) buf_weg(&bufs[i]);
@@ -397,7 +499,8 @@ bool moo_ki_gpu_reduce_sum(const float* a, int64_t n, double* out_summe) {
     if (ok) {
         memcpy(bufs[0].map, a, (size_t)n * 4);
         KiPush push = { (uint32_t)n, 0, 0, 0 };
-        ok = dispatch_sync(G.pipe_reduce, bufs, push, (uint32_t)gruppen, 1);
+        ok = dispatch_sync(G.pipe_reduce, bufs, push, (uint32_t)gruppen, 1,
+                           /*upload*/ 0x1u, /*readback*/ 0x2u);
         if (ok) {
             const float* teile = (const float*)bufs[1].map;
             double s = 0.0;
