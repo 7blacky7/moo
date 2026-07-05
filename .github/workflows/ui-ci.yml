@@ -112,6 +112,8 @@ jobs:
             -c conda-forge
             llvmdev=18.1.*
             clangdev=18.1.*
+            zstd
+            zlib
           cache-environment: true
 
       - name: Install Windows deps (SDL2, sqlite, curl via vcpkg + LLVM env)
@@ -152,6 +154,24 @@ jobs:
             sdl2 sdl2-image curl sqlite3
 
           $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows"
+
+          # P013: llvm-config --system-libs des conda-forge-LLVM referenziert
+          # zstd.dll.lib (LNK1181). Sicherstellen, dass die Import-Libs unter
+          # genau diesen Namen im LIB-Pfad liegen — sonst Alias-Kopie.
+          $condaLib = Join-Path $condaPrefix "Library\lib"
+          foreach ($paar in @(@("zstd.lib","zstd.dll.lib"), @("zlib.lib","z.dll.lib"))) {
+            $quelle = Join-Path $condaLib $paar[0]
+            $ziel   = Join-Path $condaLib $paar[1]
+            if ((Test-Path $quelle) -and !(Test-Path $ziel)) {
+              Copy-Item $quelle $ziel
+              Write-Host "Alias angelegt: $($paar[1]) <- $($paar[0])"
+            }
+          }
+          Write-Host "=== zstd/zlib-Libs im conda-Env ==="
+          Get-ChildItem $condaLib -Filter "*zstd*" -ErrorAction SilentlyContinue | Format-Table Name
+          Get-ChildItem $condaLib -Filter "*zlib*" -ErrorAction SilentlyContinue | Format-Table Name
+          Get-ChildItem $condaLib -Filter "z*.lib" -ErrorAction SilentlyContinue | Format-Table Name
+
           echo "LLVM_SYS_181_PREFIX=$condaPrefix\Library" >> $env:GITHUB_ENV
           echo "LIBCLANG_PATH=$condaPrefix\Library\bin" >> $env:GITHUB_ENV
           echo "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
