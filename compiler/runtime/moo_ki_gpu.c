@@ -269,6 +269,7 @@ typedef struct {
     VkBuffer stg;  VkDeviceMemory stg_mem;
     void* map;
     VkDeviceSize groesse;
+    int pool_slot;   /* GPU3-B: >=0 = aus dem Pool geliehen, -1 = frisch */
 } KiBuf;
 
 static bool buf_einzeln(VkBuffer* buf, VkDeviceMemory* mem,
@@ -301,6 +302,7 @@ static bool buf_einzeln(VkBuffer* buf, VkDeviceMemory* mem,
 
 static bool buf_anlegen(KiBuf* b, VkDeviceSize groesse) {
     memset(b, 0, sizeof(*b));
+    b->pool_slot = -1;
     b->groesse = groesse;
     if (G.devlocal_vereint) {
         /* Wie vor GPU3-A: ein host-visible Buffer, Shader liest direkt. */
@@ -330,9 +332,61 @@ static void buf_weg(KiBuf* b) {
     if (b->map) vkUnmapMemory(G.geraet, b->stg_mem);
     if (b->stg && b->stg != b->dev) vkDestroyBuffer(G.geraet, b->stg, NULL);
     if (b->stg_mem && b->stg_mem != b->dev_mem) vkFreeMemory(G.geraet, b->stg_mem, NULL);
-    if (b->dev) vkDestroyBuffer(G.geraet, b->dev, NULL);
-    if (b->dev_mem) vkFreeMemory(G.geraet, b->dev_mem, NULL);
     memset(b, 0, sizeof(*b));
+    b->pool_slot = -1;
+}
+
+/* GPU3-B: Buffer-Pool. Kleiner statischer Cache fertiger KiBuf-Paare —
+ * spart vkCreateBuffer/vkAllocateMemory/vkMapMemory pro Op (Trainingsloops
+ * rufen viele gleichgrosse Ops). Best-Fit mit max 2x Verschnitt; Copies und
+ * Shader nutzen b->groesse (angeforderte Groesse), nicht die Slot-Kapazitaet.
+ * Kein Locking: der gesamte G-Singleton-Pfad ist single-threaded (bestehende
+ * Konvention). Pool lebt bis Prozessende (wie G selbst — kein Teardown).
+ * Nur VOLLSTAENDIG angelegte Buffers (map gesetzt) werden adoptiert. */
+#define KI_POOL_MAX 12
+typedef struct { KiBuf buf; VkDeviceSize kapazitaet; bool belegt; } KiPoolSlot;
+static KiPoolSlot g_pool[KI_POOL_MAX];
+
+static bool buf_holen(KiBuf* b, VkDeviceSize groesse) {
+    int best = -1;
+    for (int i = 0; i < KI_POOL_MAX; i++) {
+        if (g_pool[i].belegt || g_pool[i].kapazitaet < groesse) continue;
+        if (g_pool[i].kapazitaet > groesse * 2) continue;
+        if (best < 0 || g_pool[i].kapazitaet < g_pool[best].kapazitaet) best = i;
+    }
+    if (best >= 0) {
+        g_pool[best].belegt = true;
+        *b = g_pool[best].buf;
+        b->groesse = groesse;
+        b->pool_slot = best;
+        return true;
+    }
+    return buf_anlegen(b, groesse);
+}
+
+static void buf_zurueck(KiBuf* b) {
+    if (!b->dev) return;
+    if (b->pool_slot >= 0 && b->pool_slot < KI_POOL_MAX &&
+        g_pool[b->pool_slot].belegt &&
+        g_pool[b->pool_slot].buf.dev == b->dev) {
+        g_pool[b->pool_slot].belegt = false;   /* Slot behaelt seinen KiBuf */
+        memset(b, 0, sizeof(*b));
+        b->pool_slot = -1;
+        return;
+    }
+    if (b->map) {   /* vollstaendig angelegt -> adoptieren falls Platz */
+        for (int i = 0; i < KI_POOL_MAX; i++) {
+            if (g_pool[i].belegt || g_pool[i].kapazitaet != 0) continue;
+            g_pool[i].buf = *b;
+            g_pool[i].buf.pool_slot = i;
+            g_pool[i].kapazitaet = b->groesse;
+            g_pool[i].belegt = false;
+            memset(b, 0, sizeof(*b));
+            b->pool_slot = -1;
+            return;
+        }
+    }
+    buf_weg(b);   /* Pool voll oder Buffer unvollstaendig */
 }
 
 /* Gemeinsamer Ablauf: 3 Buffers sind angelegt, Staging der upload-Buffers
@@ -447,9 +501,9 @@ bool moo_ki_gpu_matmul(const float* a, const float* b, float* o,
         (int64_t)m * k * n < (int64_t)1 << 24) return false;
     if (!ki_gpu_init()) return false;
     KiBuf bufs[3];
-    bool ok = buf_anlegen(&bufs[0], (VkDeviceSize)m * k * 4) &&
-              buf_anlegen(&bufs[1], (VkDeviceSize)k * n * 4) &&
-              buf_anlegen(&bufs[2], (VkDeviceSize)m * n * 4);
+    bool ok = buf_holen(&bufs[0], (VkDeviceSize)m * k * 4) &&
+              buf_holen(&bufs[1], (VkDeviceSize)k * n * 4) &&
+              buf_holen(&bufs[2], (VkDeviceSize)m * n * 4);
     if (ok) {
         memcpy(bufs[0].map, a, (size_t)m * k * 4);
         memcpy(bufs[1].map, b, (size_t)k * n * 4);
@@ -459,7 +513,7 @@ bool moo_ki_gpu_matmul(const float* a, const float* b, float* o,
                            /*upload*/ 0x3u, /*readback*/ 0x4u);
         if (ok) memcpy(o, bufs[2].map, (size_t)m * n * 4);
     }
-    for (int i = 0; i < 3; i++) buf_weg(&bufs[i]);
+    for (int i = 0; i < 3; i++) buf_zurueck(&bufs[i]);
     return ok;
 }
 
@@ -469,9 +523,9 @@ bool moo_ki_gpu_ew(int32_t op, const float* a, const float* b, float* o,
     if (n > (int64_t)1 << 30) return false;
     if (!ki_gpu_init()) return false;
     KiBuf bufs[3];
-    bool ok = buf_anlegen(&bufs[0], (VkDeviceSize)n * 4) &&
-              buf_anlegen(&bufs[1], (VkDeviceSize)n * 4) &&
-              buf_anlegen(&bufs[2], (VkDeviceSize)n * 4);
+    bool ok = buf_holen(&bufs[0], (VkDeviceSize)n * 4) &&
+              buf_holen(&bufs[1], (VkDeviceSize)n * 4) &&
+              buf_holen(&bufs[2], (VkDeviceSize)n * 4);
     if (ok) {
         memcpy(bufs[0].map, a, (size_t)n * 4);
         memcpy(bufs[1].map, b, (size_t)n * 4);
@@ -481,7 +535,7 @@ bool moo_ki_gpu_ew(int32_t op, const float* a, const float* b, float* o,
                            /*upload*/ 0x3u, /*readback*/ 0x4u);
         if (ok) memcpy(o, bufs[2].map, (size_t)n * 4);
     }
-    for (int i = 0; i < 3; i++) buf_weg(&bufs[i]);
+    for (int i = 0; i < 3; i++) buf_zurueck(&bufs[i]);
     return ok;
 }
 
@@ -493,9 +547,9 @@ bool moo_ki_gpu_reduce_sum(const float* a, int64_t n, double* out_summe) {
     KiBuf bufs[3];
     /* Binding 2 wird vom Reduce-Shader nicht benutzt — Mini-Dummy, damit
      * das gemeinsame 3-Buffer-Layout gilt. */
-    bool ok = buf_anlegen(&bufs[0], (VkDeviceSize)n * 4) &&
-              buf_anlegen(&bufs[1], (VkDeviceSize)gruppen * 4) &&
-              buf_anlegen(&bufs[2], 4);
+    bool ok = buf_holen(&bufs[0], (VkDeviceSize)n * 4) &&
+              buf_holen(&bufs[1], (VkDeviceSize)gruppen * 4) &&
+              buf_holen(&bufs[2], 4);
     if (ok) {
         memcpy(bufs[0].map, a, (size_t)n * 4);
         KiPush push = { (uint32_t)n, 0, 0, 0 };
@@ -508,7 +562,7 @@ bool moo_ki_gpu_reduce_sum(const float* a, int64_t n, double* out_summe) {
             *out_summe = s;
         }
     }
-    for (int i = 0; i < 3; i++) buf_weg(&bufs[i]);
+    for (int i = 0; i < 3; i++) buf_zurueck(&bufs[i]);
     return ok;
 }
 
