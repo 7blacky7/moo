@@ -61,7 +61,8 @@ static bool nn_ist(MooValue d, const char* typ) {
 
 static bool nn_ist_schicht(MooValue d) {
     return nn_ist(d, "dicht") || nn_ist(d, "dropout") ||
-           nn_ist(d, "layernorm") || nn_ist(d, "embedding");
+           nn_ist(d, "layernorm") || nn_ist(d, "embedding") ||
+           nn_ist(d, "attention") || nn_ist(d, "position");
 }
 
 /* ============================================================
@@ -209,6 +210,92 @@ MooValue moo_nn_schicht_embedding(MooValue vokabular, MooValue dim, MooValue see
     return d;
 }
 
+/* schicht_attention(dim, koepfe, seed?) — Multi-Head Self-Attention mit
+ * Causal-Maske (G1). DESIGN: pro Kopf EIGENE Projektionen wq_h/wk_h/wv_h
+ * [dim, dh] statt einer grossen Matrix + Spalten-Slice — mathematisch
+ * aequivalent, aber komplett aus B2-geprueften Ops komponierbar ("zeilen"
+ * hat kein backward). wo [dim, dim] mischt die Koepfe. Bias-frei. */
+MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed) {
+    int32_t nd = ganze_zahl(dim, "schicht_attention (Dimension)", 1);
+    if (nd < 0) return moo_none();
+    int32_t nk = ganze_zahl(koepfe, "schicht_attention (Koepfe)", 1);
+    if (nk < 0) return moo_none();
+    if (nk > 16 || nd % nk != 0) {
+        moo_throw(moo_error("schicht_attention: die Dimension muss durch die "
+                            "Koepfe teilbar sein (und hoechstens 16 Koepfe)"));
+        return moo_none();
+    }
+    int32_t dh = nd / nk;
+    uint64_t s = (seed.tag == MOO_NUMBER) ? (uint64_t)(int64_t)MV_NUM(seed) : 42ULL;
+    double limit = sqrt(6.0 / ((double)nd + (double)dh));
+
+    MooValue d = moo_dict_new();
+    dset(d, "__nn", moo_string_new("attention"));
+    dset(d, "dim", moo_number((double)nd));
+    dset(d, "koepfe", moo_number((double)nk));
+    char name[24];
+    for (int32_t h = 0; h < nk; h++) {
+        snprintf(name, sizeof(name), "wq%d", h);
+        dset(d, name, gewicht_init(nd, dh, limit, s + (uint64_t)(3 * h)));
+        snprintf(name, sizeof(name), "wk%d", h);
+        dset(d, name, gewicht_init(nd, dh, limit, s + (uint64_t)(3 * h) + 1));
+        snprintf(name, sizeof(name), "wv%d", h);
+        dset(d, name, gewicht_init(nd, dh, limit, s + (uint64_t)(3 * h) + 2));
+    }
+    dset(d, "wo", gewicht_init(nd, nd, sqrt(6.0 / (2.0 * (double)nd)),
+                               s + (uint64_t)(3 * nk)));
+    return d;
+}
+
+/* schicht_position(max_laenge, dim, art?, seed?) — Positions-Encoding.
+ * art "gelernt" (Standard): Parameter [max, dim] MIT Gradient.
+ * art "sinus": klassisch sin/cos, konstant (kein Parameter).
+ * Training laeuft mit VOLLEN Bloecken (seq == max_laenge) — siehe fw. */
+MooValue moo_nn_schicht_position(MooValue max_laenge, MooValue dim,
+                                 MooValue art, MooValue seed) {
+    int32_t nm = ganze_zahl(max_laenge, "schicht_position (max. Laenge)", 1);
+    if (nm < 0) return moo_none();
+    int32_t nd = ganze_zahl(dim, "schicht_position (Dimension)", 1);
+    if (nd < 0) return moo_none();
+    const char* a = "gelernt";
+    if (art.tag == MOO_STRING) a = MV_STR(art)->chars;
+    else if (art.tag != MOO_NONE) {
+        moo_throw(moo_error("schicht_position: Art muss ein Text sein — "
+                            "\"gelernt\" oder \"sinus\""));
+        return moo_none();
+    }
+    bool sinus = (strcmp(a, "sinus") == 0 || strcmp(a, "sinusoidal") == 0);
+    if (!sinus && strcmp(a, "gelernt") != 0 && strcmp(a, "learned") != 0) {
+        moo_throw(moo_error("schicht_position: Art kann \"gelernt\" oder "
+                            "\"sinus\" sein"));
+        return moo_none();
+    }
+    MooValue d = moo_dict_new();
+    dset(d, "__nn", moo_string_new("position"));
+    dset(d, "max", moo_number((double)nm));
+    dset(d, "art", moo_string_new(sinus ? "sinus" : "gelernt"));
+    if (sinus) {
+        int32_t shape[2] = { nm, nd };
+        MooTensor* p = moo_tensor_raw(2, shape);
+        if (!p) { moo_release(d); return moo_none(); }
+        for (int32_t pos = 0; pos < nm; pos++)
+            for (int32_t i = 0; i < nd; i++) {
+                double w = (double)pos /
+                           pow(10000.0, (double)(2 * (i / 2)) / (double)nd);
+                p->data[(int64_t)pos * nd + i] =
+                    (float)((i % 2 == 0) ? sin(w) : cos(w));
+            }
+        MooValue pv; pv.tag = MOO_TENSOR; moo_val_set_ptr(&pv, p);
+        dset(d, "pos", pv);   /* KONSTANTE — kein Gradient, kein Parameter */
+    } else {
+        uint64_t s = (seed.tag == MOO_NUMBER) ? (uint64_t)(int64_t)MV_NUM(seed)
+                                              : 42ULL;
+        /* kleine Uniform-Init (GPT-Praxis: kleine Werte) */
+        dset(d, "pos", gewicht_init(nm, nd, 0.05, s));
+    }
+    return d;
+}
+
 /* ============================================================
  * Vorwaerts
  * ============================================================ */
@@ -351,6 +438,139 @@ static MooValue fw_embedding(MooValue schicht, MooValue x) {
     return out;
 }
 
+/* Causal-Maske [seq, seq]: 0 auf/unter der Diagonale, -1e9 darueber —
+ * als KONSTANTE (kein Gradient) auf die Scores addiert. */
+static MooValue causal_maske(int32_t seq) {
+    int32_t shape[2] = { seq, seq };
+    MooTensor* m = moo_tensor_raw(2, shape);
+    if (!m) return moo_none();
+    for (int32_t i = 0; i < seq; i++)
+        for (int32_t j = 0; j < seq; j++)
+            m->data[(int64_t)i * seq + j] = (j > i) ? -1e9f : 0.0f;
+    MooValue v; v.tag = MOO_TENSOR; moo_val_set_ptr(&v, m);
+    return v;
+}
+
+/* Multi-Head Self-Attention, komplett aus Registry-Ops komponiert (jeder
+ * Schritt landet auf dem Tape, backward laeuft ueber bw_matmul/transpose/
+ * muls/add/softmax/concat). x [seq, dim] -> [seq, dim]. */
+static MooValue fw_attention(MooValue schicht, MooValue x) {
+    MooTensor* xt = T(x);
+    if (xt->ndim != 2) {
+        moo_throw(moo_error("attention: erwarte einen 2D-Tensor [Sequenz, "
+                            "Dimension]"));
+        return moo_none();
+    }
+    int32_t nd = (int32_t)dnum(schicht, "dim", 0.0);
+    int32_t nk = (int32_t)dnum(schicht, "koepfe", 1.0);
+    if (xt->shape[1] != nd) {
+        char msg[160];
+        snprintf(msg, sizeof(msg), "attention: Eingabe hat Dimension %d, die "
+                 "Schicht erwartet %d", xt->shape[1], nd);
+        moo_throw(moo_error(msg));
+        return moo_none();
+    }
+    int32_t seq = xt->shape[0];
+    int32_t dh = nd / nk;
+    MooValue maske = causal_maske(seq);
+    if (maske.tag != MOO_TENSOR) return moo_none();
+    MooValue skal = moo_number(1.0 / sqrt((double)dh));
+
+    /* Koepfe rechnen und entlang Achse 1 sammeln: verbinden ist Achse 0,
+     * also transpose -> concat -> am Ende zurueck-transponieren. */
+    MooValue acc = moo_none();   /* [dh*h, seq] waechst pro Kopf */
+    char name[24];
+    bool fehler = false;
+    for (int32_t h = 0; h < nk && !fehler; h++) {
+        snprintf(name, sizeof(name), "wq%d", h);
+        MooValue wq = dget(schicht, name);
+        snprintf(name, sizeof(name), "wk%d", h);
+        MooValue wk = dget(schicht, name);
+        snprintf(name, sizeof(name), "wv%d", h);
+        MooValue wv = dget(schicht, name);
+        MooValue q = moo_tensor_matmul(x, wq);
+        MooValue k = moo_tensor_matmul(x, wk);
+        MooValue v = moo_tensor_matmul(x, wv);
+        moo_release(wq); moo_release(wk); moo_release(wv);
+        MooValue kt = moo_tensor_transponieren(k);
+        MooValue s = moo_tensor_matmul(q, kt);
+        MooValue ss = moo_tensor_muls(s, skal);
+        MooValue sm = moo_tensor_add(ss, maske);
+        MooValue a = moo_tensor_softmax(sm);
+        MooValue oh = moo_tensor_matmul(a, v);
+        MooValue oht = moo_tensor_transponieren(oh);   /* [dh, seq] */
+        moo_release(q); moo_release(k); moo_release(v);
+        moo_release(kt); moo_release(s); moo_release(ss);
+        moo_release(sm); moo_release(a); moo_release(oh);
+        if (oht.tag != MOO_TENSOR) { fehler = true; moo_release(oht); break; }
+        if (acc.tag == MOO_NONE) {
+            acc = oht;
+        } else {
+            MooValue neu = moo_tensor_verbinden(acc, oht);
+            moo_release(acc); moo_release(oht);
+            if (neu.tag != MOO_TENSOR) { fehler = true; moo_release(neu); break; }
+            acc = neu;
+        }
+    }
+    moo_release(maske);
+    if (fehler || acc.tag != MOO_TENSOR) {
+        moo_release(acc);
+        return moo_none();
+    }
+    MooValue zusammen = moo_tensor_transponieren(acc);   /* [seq, dim] */
+    moo_release(acc);
+    MooValue wo = dget(schicht, "wo");
+    MooValue out = moo_tensor_matmul(zusammen, wo);
+    moo_release(zusammen); moo_release(wo);
+    return out;
+}
+
+/* Positions-Encoding: voller Block (seq == max) -> Parameter-add, der
+ * Gradient fliesst in "pos". Kuerzere Sequenzen nur bei Autograd-AUS
+ * (Generierung): "zeilen" hat kein backward — lieber ein ehrlicher Fehler
+ * als still abgeschnittene Gradienten. */
+static MooValue fw_position(MooValue schicht, MooValue x) {
+    MooTensor* xt = T(x);
+    MooValue pos = dget(schicht, "pos");
+    if (pos.tag != MOO_TENSOR || xt->ndim != 2 ||
+        xt->shape[1] != T(pos)->shape[1]) {
+        moo_release(pos);
+        moo_throw(moo_error("position: Eingabe passt nicht zur Schicht "
+                            "(erwarte [Sequenz, Dimension])"));
+        return moo_none();
+    }
+    int32_t max = T(pos)->shape[0];
+    if (xt->shape[0] == max) {
+        MooValue out = moo_tensor_add(x, pos);
+        moo_release(pos);
+        return out;
+    }
+    if (xt->shape[0] > max) {
+        moo_release(pos);
+        moo_throw(moo_error("position: die Sequenz ist laenger als die "
+                            "max. Laenge der Schicht"));
+        return moo_none();
+    }
+    if (moo_ag_ist_an()) {
+        moo_release(pos);
+        moo_throw(moo_error("position: beim Training muss die Sequenz genau "
+                            "max. Laenge haben (volle Bloecke) — kuerzere "
+                            "Eingaben gehen nur beim Generieren (ohne_gradient)"));
+        return moo_none();
+    }
+    /* Inferenz: konstante Teilkopie der ersten seq Zeilen */
+    int32_t shape[2] = { xt->shape[0], xt->shape[1] };
+    MooTensor* teil = moo_tensor_raw(2, shape);
+    if (!teil) { moo_release(pos); return moo_none(); }
+    memcpy(teil->data, T(pos)->data,
+           (size_t)xt->shape[0] * (size_t)xt->shape[1] * sizeof(float));
+    moo_release(pos);
+    MooValue tv; tv.tag = MOO_TENSOR; moo_val_set_ptr(&tv, teil);
+    MooValue out = moo_tensor_add(x, tv);
+    moo_release(tv);
+    return out;
+}
+
 /* Eine Schicht vorwaerts. x borrowed, Rueckgabe +1. */
 static MooValue schicht_vorwaerts(MooValue schicht, MooValue x) {
     if (x.tag != MOO_TENSOR) {
@@ -361,9 +581,11 @@ static MooValue schicht_vorwaerts(MooValue schicht, MooValue x) {
     if (nn_ist(schicht, "dropout"))   return fw_dropout(schicht, x);
     if (nn_ist(schicht, "layernorm")) return fw_layernorm(schicht, x);
     if (nn_ist(schicht, "embedding")) return fw_embedding(schicht, x);
+    if (nn_ist(schicht, "attention")) return fw_attention(schicht, x);
+    if (nn_ist(schicht, "position"))  return fw_position(schicht, x);
     moo_throw(moo_error("vorwaerts: das ist keine Schicht (erwarte "
-                        "schicht_dicht/dropout/layernorm/embedding oder eine "
-                        "Liste davon)"));
+                        "schicht_dicht/dropout/layernorm/embedding/attention/"
+                        "position oder eine Liste davon)"));
     return moo_none();
 }
 
@@ -411,6 +633,28 @@ static void params_von_schicht(MooValue schicht, MooValue liste) {
         moo_list_append(liste, dget(schicht, "beta"));
     } else if (nn_ist(schicht, "embedding")) {
         moo_list_append(liste, dget(schicht, "w"));
+    } else if (nn_ist(schicht, "attention")) {
+        /* DETERMINISTISCHE Reihenfolge (Vertrag fuer .mook): pro Kopf
+         * wq,wk,wv — dann wo. */
+        int32_t nk = (int32_t)dnum(schicht, "koepfe", 1.0);
+        char name[24];
+        for (int32_t h = 0; h < nk; h++) {
+            snprintf(name, sizeof(name), "wq%d", h);
+            moo_list_append(liste, dget(schicht, name));
+            snprintf(name, sizeof(name), "wk%d", h);
+            moo_list_append(liste, dget(schicht, name));
+            snprintf(name, sizeof(name), "wv%d", h);
+            moo_list_append(liste, dget(schicht, name));
+        }
+        moo_list_append(liste, dget(schicht, "wo"));
+    } else if (nn_ist(schicht, "position")) {
+        /* nur "gelernt" ist ein Parameter — sinus ist konstant und wird
+         * beim Laden rekonstruiert. */
+        MooValue art = dget(schicht, "art");
+        bool gelernt = (art.tag == MOO_STRING &&
+                        strcmp(MV_STR(art)->chars, "gelernt") == 0);
+        moo_release(art);
+        if (gelernt) moo_list_append(liste, dget(schicht, "pos"));
     }
     /* dropout: keine Parameter */
 }

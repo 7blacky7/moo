@@ -236,6 +236,8 @@ MooValue moo_nn_schicht_dicht(MooValue ein, MooValue aus, MooValue aktivierung, 
 MooValue moo_nn_schicht_dropout(MooValue rate);
 MooValue moo_nn_schicht_layernorm(MooValue dim);
 MooValue moo_nn_schicht_embedding(MooValue vokabular, MooValue dim, MooValue seed);
+MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed);      // G1
+MooValue moo_nn_schicht_position(MooValue max_laenge, MooValue dim, MooValue art, MooValue seed);  // G1
 MooValue moo_nn_vorwaerts(MooValue netz, MooValue x);
 MooValue moo_nn_parameter(MooValue netz);
 MooValue moo_nn_mse(MooValue a, MooValue b);

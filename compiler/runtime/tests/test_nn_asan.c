@@ -713,6 +713,96 @@ int main(void) {
         }
     }
 
+    /* ===== 14. Transformer-Bausteine (Plan-014 G1) ===== */
+    {
+        /* a) Attention: Shape + CAUSAL-Beweis + Grad-Fluss */
+        MooValue at = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                                               moo_number(7.0));
+        CHECK(at.tag == MOO_DICT, "schicht_attention baut Dict");
+        float xv[32];
+        for (int i = 0; i < 32; i++) xv[i] = (float)(i % 5) * 0.1f;
+        MooValue x = t2(4, 8, xv);
+        MooValue y = moo_nn_vorwaerts(at, x);
+        CHECK(y.tag == MOO_TENSOR && T(y)->ndim == 2 &&
+              T(y)->shape[0] == 4 && T(y)->shape[1] == 8,
+              "attention: [4,8] -> [4,8]");
+
+        /* CAUSAL: Zeile 3 der Eingabe aendern darf Zeilen 0-2 der Ausgabe
+         * NICHT aendern (Maske blockt Zukunft). */
+        float xv2[32];
+        memcpy(xv2, xv, sizeof(xv));
+        for (int j = 0; j < 8; j++) xv2[24 + j] += 3.0f;
+        MooValue x2 = t2(4, 8, xv2);
+        MooValue y2 = moo_nn_vorwaerts(at, x2);
+        bool causal_ok = (y2.tag == MOO_TENSOR);
+        for (int i = 0; causal_ok && i < 24; i++)
+            causal_ok = (T(y)->data[i] == T(y2)->data[i]);
+        bool zukunft_wirkt = false;
+        for (int j = 0; y2.tag == MOO_TENSOR && j < 8; j++)
+            if (T(y)->data[24 + j] != T(y2)->data[24 + j]) zukunft_wirkt = true;
+        CHECK(causal_ok, "attention: causal — Zukunft aendert Vergangenheit nicht");
+        CHECK(zukunft_wirkt, "attention: eigene Zeile reagiert (kein Konstant-Bug)");
+        moo_release(y2); moo_release(x2);
+        moo_release(y);
+
+        /* Grad-Fluss: mean(attention(x)) rueckwaerts -> Grads auf ALLEN
+         * 7 Parametern (2 Koepfe * 3 + wo) */
+        moo_ag_reset();
+        MooValue xg = moo_tensor_mit_gradient(x);
+        MooValue yg = moo_nn_vorwaerts(at, xg);
+        MooValue m = moo_tensor_mittel(yg, moo_none());
+        moo_release(moo_tensor_rueckwaerts(m));
+        MooValue ps = moo_nn_parameter(at);
+        CHECK(ps.tag == MOO_LIST && MV_LIST(ps)->length == 7,
+              "attention: 7 Parameter (2*3 Koepfe + wo)");
+        bool grads_da = true;
+        for (int32_t i = 0; i < MV_LIST(ps)->length; i++) {
+            MooTensor* p = MV_TENSOR(MV_LIST(ps)->items[i]);
+            bool einer = false;
+            if (p->grad)
+                for (int64_t j = 0; j < p->size && !einer; j++)
+                    if (p->grad[j] != 0.0f) einer = true;
+            grads_da = grads_da && einer;
+        }
+        CHECK(grads_da, "attention: Gradient fliesst in alle Parameter");
+        moo_release(ps); moo_release(m); moo_release(yg); moo_release(xg);
+        moo_release(x); moo_release(at);
+        moo_ag_reset();
+
+        /* b) Position: sinus konstant + gelernt bekommt Gradient */
+        MooValue art_sin = moo_string_new("sinus");
+        MooValue ps_sin = moo_nn_schicht_position(moo_number(4.0), moo_number(8.0),
+                                                  art_sin, moo_none());
+        moo_release(art_sin);
+        MooValue px = t2(4, 8, xv);
+        MooValue py = moo_nn_vorwaerts(ps_sin, px);
+        CHECK(py.tag == MOO_TENSOR && T(py)->shape[0] == 4, "position sinus laeuft");
+        /* sin(0)=0, cos(0)=1: Zeile 0 -> x + [0,1,0,1,...] */
+        CHECK(NAHE(T(py)->data[0], xv[0] + 0.0) && NAHE(T(py)->data[1], xv[1] + 1.0),
+              "position sinus: Zeile 0 == x + [sin0, cos0, ...]");
+        MooValue prm_sin = moo_nn_parameter(ps_sin);
+        CHECK(prm_sin.tag == MOO_LIST && MV_LIST(prm_sin)->length == 0,
+              "position sinus: KEIN Parameter (konstant)");
+        moo_release(prm_sin); moo_release(py); moo_release(ps_sin);
+
+        MooValue ps_l = moo_nn_schicht_position(moo_number(4.0), moo_number(8.0),
+                                                moo_none(), moo_number(9.0));
+        moo_ag_reset();
+        MooValue pxg = moo_tensor_mit_gradient(px);
+        MooValue pyl = moo_nn_vorwaerts(ps_l, pxg);
+        MooValue pm = moo_tensor_mittel(pyl, moo_none());
+        moo_release(moo_tensor_rueckwaerts(pm));
+        MooValue prm = moo_nn_parameter(ps_l);
+        CHECK(prm.tag == MOO_LIST && MV_LIST(prm)->length == 1,
+              "position gelernt: 1 Parameter");
+        MooTensor* pt = MV_TENSOR(MV_LIST(prm)->items[0]);
+        CHECK(pt->grad && pt->grad[0] != 0.0f,
+              "position gelernt: Gradient fliesst in pos");
+        moo_release(prm); moo_release(pm); moo_release(pyl); moo_release(pxg);
+        moo_release(px); moo_release(ps_l);
+        moo_ag_reset();
+    }
+
     printf("test_nn_asan: alle %d Checks bestanden\n", checks);
     return 0;
 }
