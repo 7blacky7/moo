@@ -561,59 +561,153 @@ static void buf_add(Buf* b, const char* fmt, ...) {
     b->len += (size_t)need;
 }
 
+/* ============================================================
+ * Save/Load-Hook-Tabelle (Typ-Zentralisierung Phase 1b)
+ * ============================================================
+ * Buf ist bewusst LOKAL (Serialisierungsdetail dieser Datei) — die
+ * Kopplung zur Schicht-Registry in moo_nn.c laeuft ueber die Iterator-
+ * API (moo_nn_layer_anzahl/name): sl_hooks_vollstaendig() prueft beim
+ * ersten speichern/laden, dass JEDER Registry-Layer hier einen Hook hat,
+ * und wirft sonst ERKLAEREND. Ein neuer Layer ohne Hook ist damit ein
+ * sofortiger benannter Fehler statt stillem Datenverlust (Layer wuerde
+ * gespeichert-aber-nicht-geladen bzw. gar nicht serialisiert). */
+typedef struct {
+    const char* name;                          /* == Registry-Name          */
+    bool (*arch_write)(Buf* b, MooValue s);    /* Arch-JSON-Objekt anhaengen */
+    MooValue (*rebuild)(MooValue e);           /* Schicht aus Arch-Eintrag +1 */
+} NNSaveLoadHook;
+
+static bool aw_dicht(Buf* b, MooValue s) {
+    MooValue w = eget(s, "w");
+    MooValue a = eget(s, "aktivierung");
+    if (w.tag != MOO_TENSOR) { moo_release(w); moo_release(a); return false; }
+    buf_add(b, "{\"typ\":\"dicht\",\"ein\":%d,\"aus\":%d,\"aktivierung\":\"%s\"}",
+            T(w)->shape[0], T(w)->shape[1],
+            (a.tag == MOO_STRING) ? MV_STR(a)->chars : "keine");
+    moo_release(w); moo_release(a);
+    return true;
+}
+static bool aw_dropout(Buf* b, MooValue s) {
+    buf_add(b, "{\"typ\":\"dropout\",\"rate\":%g}", enum_(s, "rate", 0.0));
+    return true;
+}
+static bool aw_layernorm(Buf* b, MooValue s) {
+    MooValue g = eget(s, "gamma");
+    if (g.tag != MOO_TENSOR) { moo_release(g); return false; }
+    buf_add(b, "{\"typ\":\"layernorm\",\"dim\":%d}", T(g)->shape[1]);
+    moo_release(g);
+    return true;
+}
+static bool aw_embedding(Buf* b, MooValue s) {
+    MooValue w = eget(s, "w");
+    if (w.tag != MOO_TENSOR) { moo_release(w); return false; }
+    buf_add(b, "{\"typ\":\"embedding\",\"vokab\":%d,\"dim\":%d}",
+            T(w)->shape[0], T(w)->shape[1]);
+    moo_release(w);
+    return true;
+}
+static bool aw_attention(Buf* b, MooValue s) {
+    buf_add(b, "{\"typ\":\"attention\",\"dim\":%d,\"koepfe\":%d}",
+            (int32_t)enum_(s, "dim", 0), (int32_t)enum_(s, "koepfe", 1));
+    return true;
+}
+static bool aw_position(Buf* b, MooValue s) {
+    MooValue p = eget(s, "pos");
+    MooValue a = eget(s, "art");
+    if (p.tag != MOO_TENSOR) { moo_release(p); moo_release(a); return false; }
+    buf_add(b, "{\"typ\":\"position\",\"max\":%d,\"dim\":%d,\"art\":\"%s\"}",
+            T(p)->shape[0], T(p)->shape[1],
+            (a.tag == MOO_STRING) ? MV_STR(a)->chars : "gelernt");
+    moo_release(p); moo_release(a);
+    return true;
+}
+
+static MooValue rb_dicht(MooValue e) {
+    MooValue akt = eget(e, "aktivierung");
+    MooValue s = moo_nn_schicht_dicht(moo_number(enum_(e, "ein", 0)),
+                                      moo_number(enum_(e, "aus", 0)),
+                                      akt, moo_none());
+    moo_release(akt);
+    return s;
+}
+static MooValue rb_dropout(MooValue e) {
+    return moo_nn_schicht_dropout(moo_number(enum_(e, "rate", 0.0)));
+}
+static MooValue rb_layernorm(MooValue e) {
+    return moo_nn_schicht_layernorm(moo_number(enum_(e, "dim", 0)));
+}
+static MooValue rb_embedding(MooValue e) {
+    return moo_nn_schicht_embedding(moo_number(enum_(e, "vokab", 0)),
+                                    moo_number(enum_(e, "dim", 0)),
+                                    moo_none());
+}
+static MooValue rb_attention(MooValue e) {
+    return moo_nn_schicht_attention(moo_number(enum_(e, "dim", 0)),
+                                    moo_number(enum_(e, "koepfe", 1)),
+                                    moo_none());
+}
+static MooValue rb_position(MooValue e) {
+    /* sinus-pos rekonstruiert der Konstruktor; gelernt-pos wird
+     * gleich durch den Param-Fill ueberschrieben. */
+    MooValue art = eget(e, "art");
+    MooValue s = moo_nn_schicht_position(moo_number(enum_(e, "max", 0)),
+                                         moo_number(enum_(e, "dim", 0)),
+                                         art, moo_none());
+    moo_release(art);
+    return s;
+}
+
+static const NNSaveLoadHook nn_sl_hooks[] = {
+    { "dicht",     aw_dicht,     rb_dicht     },
+    { "dropout",   aw_dropout,   rb_dropout   },
+    { "layernorm", aw_layernorm, rb_layernorm },
+    { "embedding", aw_embedding, rb_embedding },
+    { "attention", aw_attention, rb_attention },
+    { "position",  aw_position,  rb_position  },
+};
+
+static const NNSaveLoadHook* sl_hook_lookup(const char* name) {
+    for (size_t i = 0; i < sizeof(nn_sl_hooks) / sizeof(nn_sl_hooks[0]); i++)
+        if (strcmp(nn_sl_hooks[i].name, name) == 0)
+            return &nn_sl_hooks[i];
+    return NULL;
+}
+
+/* Vollstaendigkeits-Check gegen die zentrale Registry (einmalig gecacht).
+ * false = geworfen; Caller bricht ab. */
+static bool sl_hooks_vollstaendig(void) {
+    static bool geprueft = false;
+    if (geprueft) return true;
+    for (int32_t i = 0; i < moo_nn_layer_anzahl(); i++) {
+        const char* n = moo_nn_layer_name(i);
+        if (!n || !sl_hook_lookup(n)) {
+            char msg[220];
+            snprintf(msg, sizeof(msg), "speichern/laden: Schicht-Typ \"%s\" "
+                     "steht in der Registry (moo_nn.c), hat aber keinen "
+                     "Save/Load-Hook in moo_nn_easy.c — Hook-Tabelle nachziehen",
+                     n ? n : "?");
+            moo_throw(moo_error(msg));
+            return false;
+        }
+    }
+    geprueft = true;
+    return true;
+}
+
 /* Architektur-JSON einer Schicht anhaengen (kontrollierte Werte, die
  * Aktivierungs-Strings kommen aus akt_anwenden-Whitelist -> kein Escaping). */
 static bool arch_schicht(Buf* b, MooValue s) {
-    if (ist_schicht_typ(s, "dicht")) {
-        MooValue w = eget(s, "w");
-        MooValue a = eget(s, "aktivierung");
-        if (w.tag != MOO_TENSOR) { moo_release(w); moo_release(a); return false; }
-        buf_add(b, "{\"typ\":\"dicht\",\"ein\":%d,\"aus\":%d,\"aktivierung\":\"%s\"}",
-                T(w)->shape[0], T(w)->shape[1],
-                (a.tag == MOO_STRING) ? MV_STR(a)->chars : "keine");
-        moo_release(w); moo_release(a);
-        return true;
-    }
-    if (ist_schicht_typ(s, "dropout")) {
-        buf_add(b, "{\"typ\":\"dropout\",\"rate\":%g}",
-                enum_(s, "rate", 0.0));
-        return true;
-    }
-    if (ist_schicht_typ(s, "layernorm")) {
-        MooValue g = eget(s, "gamma");
-        if (g.tag != MOO_TENSOR) { moo_release(g); return false; }
-        buf_add(b, "{\"typ\":\"layernorm\",\"dim\":%d}", T(g)->shape[1]);
-        moo_release(g);
-        return true;
-    }
-    if (ist_schicht_typ(s, "embedding")) {
-        MooValue w = eget(s, "w");
-        if (w.tag != MOO_TENSOR) { moo_release(w); return false; }
-        buf_add(b, "{\"typ\":\"embedding\",\"vokab\":%d,\"dim\":%d}",
-                T(w)->shape[0], T(w)->shape[1]);
-        moo_release(w);
-        return true;
-    }
-    if (ist_schicht_typ(s, "attention")) {
-        buf_add(b, "{\"typ\":\"attention\",\"dim\":%d,\"koepfe\":%d}",
-                (int32_t)enum_(s, "dim", 0), (int32_t)enum_(s, "koepfe", 1));
-        return true;
-    }
-    if (ist_schicht_typ(s, "position")) {
-        MooValue p = eget(s, "pos");
-        MooValue a = eget(s, "art");
-        if (p.tag != MOO_TENSOR) { moo_release(p); moo_release(a); return false; }
-        buf_add(b, "{\"typ\":\"position\",\"max\":%d,\"dim\":%d,\"art\":\"%s\"}",
-                T(p)->shape[0], T(p)->shape[1],
-                (a.tag == MOO_STRING) ? MV_STR(a)->chars : "gelernt");
-        moo_release(p); moo_release(a);
-        return true;
-    }
-    return false;
+    if (s.tag != MOO_DICT) return false;
+    MooValue t = eget(s, "__nn");
+    const NNSaveLoadHook* h = (t.tag == MOO_STRING)
+        ? sl_hook_lookup(MV_STR(t)->chars) : NULL;
+    moo_release(t);
+    return h ? h->arch_write(b, s) : false;
 }
 
 /* speichern(netz, pfad): safetensors-Datei schreiben. Rueckgabe none. */
 MooValue moo_nn_speichern(MooValue netz, MooValue pfad) {
+    if (!sl_hooks_vollstaendig()) return moo_none();
     if (pfad.tag != MOO_STRING) {
         moo_throw(moo_error("speichern: erwarte einen Dateinamen als Text, "
                             "z.B. netz.speichern(\"mein_netz.mook\")"));
@@ -826,6 +920,7 @@ MooValue moo_nn_safetensors(MooValue pfad) {
 
 /* laden(pfad): Netz aus .mook rekonstruieren (+1). */
 MooValue moo_nn_laden(MooValue pfad) {
+    if (!sl_hooks_vollstaendig()) return moo_none();
     if (pfad.tag != MOO_STRING) {
         moo_throw(moo_error("ki_laden: erwarte einen Dateinamen als Text"));
         return moo_none();
@@ -883,34 +978,9 @@ MooValue moo_nn_laden(MooValue pfad) {
         if (e.tag != MOO_DICT) { ok = false; break; }
         MooValue tv = eget(e, "typ");
         const char* typ = (tv.tag == MOO_STRING) ? MV_STR(tv)->chars : "";
-        MooValue s = moo_none();
-        if (strcmp(typ, "dicht") == 0) {
-            MooValue akt = eget(e, "aktivierung");
-            s = moo_nn_schicht_dicht(moo_number(enum_(e, "ein", 0)),
-                                     moo_number(enum_(e, "aus", 0)),
-                                     akt, moo_none());
-            moo_release(akt);
-        } else if (strcmp(typ, "dropout") == 0) {
-            s = moo_nn_schicht_dropout(moo_number(enum_(e, "rate", 0.0)));
-        } else if (strcmp(typ, "layernorm") == 0) {
-            s = moo_nn_schicht_layernorm(moo_number(enum_(e, "dim", 0)));
-        } else if (strcmp(typ, "embedding") == 0) {
-            s = moo_nn_schicht_embedding(moo_number(enum_(e, "vokab", 0)),
-                                         moo_number(enum_(e, "dim", 0)),
-                                         moo_none());
-        } else if (strcmp(typ, "attention") == 0) {
-            s = moo_nn_schicht_attention(moo_number(enum_(e, "dim", 0)),
-                                         moo_number(enum_(e, "koepfe", 1)),
-                                         moo_none());
-        } else if (strcmp(typ, "position") == 0) {
-            /* sinus-pos rekonstruiert der Konstruktor; gelernt-pos wird
-             * gleich durch den Param-Fill ueberschrieben. */
-            MooValue art = eget(e, "art");
-            s = moo_nn_schicht_position(moo_number(enum_(e, "max", 0)),
-                                        moo_number(enum_(e, "dim", 0)),
-                                        art, moo_none());
-            moo_release(art);
-        }
+        /* Registry-gekoppelte Rekonstruktion (Phase 1b). */
+        const NNSaveLoadHook* h = sl_hook_lookup(typ);
+        MooValue s = h ? h->rebuild(e) : moo_none();
         moo_release(tv);
         if (s.tag != MOO_DICT) { ok = false; moo_release(s); break; }
         moo_list_append(schichten, s);

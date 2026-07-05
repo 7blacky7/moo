@@ -259,6 +259,8 @@ MooValue moo_nn_ki_netz(MooValue schichten);
 // fragen hier statt eigene Typ-Listen zu pflegen.
 bool moo_nn_layer_bekannt(const char* name);
 void moo_nn_layer_namen(char* out, size_t out_len);
+int32_t moo_nn_layer_anzahl(void);            // Registry-Iterator (Phase 1b)
+const char* moo_nn_layer_name(int32_t i);     // borrowed static, NULL ausserhalb
 MooValue moo_nn_trainiere(MooValue netz, MooValue x, MooValue y, MooValue optionen);
 MooValue moo_nn_vorhersage(MooValue netz, MooValue x);
 MooValue moo_nn_genauigkeit(MooValue netz, MooValue x, MooValue y);

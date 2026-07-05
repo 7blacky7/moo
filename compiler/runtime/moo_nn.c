@@ -755,6 +755,16 @@ static const MooNNLayerDesc* nn_layer_lookup(const char* name) {
 bool moo_nn_layer_bekannt(const char* name) {
     return nn_layer_lookup(name) != NULL;
 }
+/* Iterator-API (Phase 1b): erlaubt easy, die Save/Load-Hook-Tabelle
+ * VOLLSTAENDIG gegen die Registry zu pruefen, ohne dass Buf oder die
+ * Hook-Signaturen diesen Header verlassen. Namen sind borrowed statics. */
+int32_t moo_nn_layer_anzahl(void) {
+    return (int32_t)(sizeof(nn_layer_registry) / sizeof(nn_layer_registry[0]));
+}
+const char* moo_nn_layer_name(int32_t i) {
+    if (i < 0 || i >= moo_nn_layer_anzahl()) return NULL;
+    return nn_layer_registry[i].name;
+}
 /* Schreibt "dicht/dropout/..." (Registry-Reihenfolge) nach out. */
 void moo_nn_layer_namen(char* out, size_t out_len) {
     size_t used = 0;
