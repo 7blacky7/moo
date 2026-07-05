@@ -2648,6 +2648,24 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[art.into()], "rel_nnp_art")?;
                         return Ok(r);
                     }
+                    "schicht_moe" | "layer_moe" => {
+                        let dim = self.compile_expr(&args[0])?;
+                        let versteckt = self.compile_expr(&args[1])?;
+                        let n = self.compile_expr(&args[2])?;
+                        let k = self.compile_expr(&args[3])?;
+                        let seed = if args.len() > 4 { self.compile_expr(&args[4])? }
+                                   else { self.call_rt(self.rt.moo_none, &[], "nn_moe_seed")? };
+                        return self.call_rt(self.rt.moo_nn_schicht_moe,
+                            &[dim.into(), versteckt.into(), n.into(), k.into(),
+                              seed.into()], "nn_moe");
+                    }
+                    "moe_balance" | "moe_balance_loss" => {
+                        let netz = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_nn_moe_balance,
+                            &[netz.into()], "nn_moe_bal")?;
+                        self.call_rt_void(self.rt.moo_release, &[netz.into()], "rel_moeb_netz")?;
+                        return Ok(r);
+                    }
                     "gradienten_kappen" | "clip_gradients" => {
                         let params = self.compile_expr(&args[0])?;
                         let m = self.compile_expr(&args[1])?;

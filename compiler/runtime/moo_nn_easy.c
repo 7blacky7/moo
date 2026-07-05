@@ -611,6 +611,12 @@ static bool aw_attention(Buf* b, MooValue s) {
             (int32_t)enum_(s, "dim", 0), (int32_t)enum_(s, "koepfe", 1));
     return true;
 }
+static bool aw_moe(Buf* b, MooValue s) {
+    buf_add(b, "{\"typ\":\"moe\",\"dim\":%d,\"versteckt\":%d,\"n\":%d,\"k\":%d}",
+            (int32_t)enum_(s, "dim", 0), (int32_t)enum_(s, "versteckt", 0),
+            (int32_t)enum_(s, "n", 0), (int32_t)enum_(s, "k", 1));
+    return true;
+}
 static bool aw_position(Buf* b, MooValue s) {
     MooValue p = eget(s, "pos");
     MooValue a = eget(s, "art");
@@ -646,6 +652,13 @@ static MooValue rb_attention(MooValue e) {
                                     moo_number(enum_(e, "koepfe", 1)),
                                     moo_none());
 }
+static MooValue rb_moe(MooValue e) {
+    return moo_nn_schicht_moe(moo_number(enum_(e, "dim", 0)),
+                              moo_number(enum_(e, "versteckt", 0)),
+                              moo_number(enum_(e, "n", 0)),
+                              moo_number(enum_(e, "k", 1)),
+                              moo_none());
+}
 static MooValue rb_position(MooValue e) {
     /* sinus-pos rekonstruiert der Konstruktor; gelernt-pos wird
      * gleich durch den Param-Fill ueberschrieben. */
@@ -664,6 +677,7 @@ static const NNSaveLoadHook nn_sl_hooks[] = {
     { "embedding", aw_embedding, rb_embedding },
     { "attention", aw_attention, rb_attention },
     { "position",  aw_position,  rb_position  },
+    { "moe",       aw_moe,       rb_moe       },
 };
 
 static const NNSaveLoadHook* sl_hook_lookup(const char* name) {

@@ -361,6 +361,59 @@ MooValue moo_nn_schicht_position(MooValue max_laenge, MooValue dim,
     return d;
 }
 
+/* schicht_moe(dim, versteckt, n_experten, k, seed?) — Mini-Mixture-of-Experts
+ * (KI-M1, VERIFY-01). n_experten Zwei-Schicht-ReLU-Experten [dim->versteckt->
+ * dim] + BIAS-FREIER Router [dim, n] (Gl. 5: h = x @ router, KEINE Bias-
+ * Spalte, VERIFY-Korrektur 2). Auslastungs-Zaehler "auslastung_e{i}"
+ * (dropout-zaehler-Muster, double im Dict) zaehlen geroutete Tokens im
+ * Forward. Der Balance-Verlust (Gl. 12) landet im Forward unter "bal". */
+MooValue moo_nn_schicht_moe(MooValue dim, MooValue versteckt,
+                            MooValue n_experten, MooValue k, MooValue seed) {
+    int32_t nd = ganze_zahl(dim, "schicht_moe (Dimension)", 1);
+    if (nd < 0) return moo_none();
+    int32_t nv = ganze_zahl(versteckt, "schicht_moe (versteckt)", 1);
+    if (nv < 0) return moo_none();
+    int32_t n = ganze_zahl(n_experten, "schicht_moe (Experten)", 2);
+    if (n < 0) return moo_none();
+    int32_t nk = ganze_zahl(k, "schicht_moe (k)", 1);
+    if (nk < 0) return moo_none();
+    if (n > 64) {
+        moo_throw(moo_error("schicht_moe: hoechstens 64 Experten"));
+        return moo_none();
+    }
+    if (nk > n) {
+        moo_throw(moo_error("schicht_moe: k darf die Experten-Anzahl nicht "
+                            "uebersteigen (top-k von n Experten)"));
+        return moo_none();
+    }
+    uint64_t s = (seed.tag == MOO_NUMBER) ? (uint64_t)(int64_t)MV_NUM(seed) : 42ULL;
+    double lim1 = sqrt(6.0 / (double)nd);                  /* He (relu)   */
+    double lim2 = sqrt(6.0 / ((double)nv + (double)nd));   /* Xavier      */
+
+    MooValue d = moo_dict_new();
+    dset(d, "__nn", moo_string_new("moe"));
+    dset(d, "dim", moo_number((double)nd));
+    dset(d, "versteckt", moo_number((double)nv));
+    dset(d, "n", moo_number((double)n));
+    dset(d, "k", moo_number((double)nk));
+    char name[32];
+    for (int32_t i = 0; i < n; i++) {
+        snprintf(name, sizeof(name), "e%d_w1", i);
+        dset(d, name, gewicht_init(nd, nv, lim1, s + (uint64_t)(4 * i)));
+        snprintf(name, sizeof(name), "e%d_b1", i);
+        dset(d, name, param_konst(nv, 0.0f));
+        snprintf(name, sizeof(name), "e%d_w2", i);
+        dset(d, name, gewicht_init(nv, nd, lim2, s + (uint64_t)(4 * i) + 1));
+        snprintf(name, sizeof(name), "e%d_b2", i);
+        dset(d, name, param_konst(nd, 0.0f));
+        snprintf(name, sizeof(name), "auslastung_e%d", i);
+        dset(d, name, moo_number(0.0));
+    }
+    dset(d, "router", gewicht_init(nd, n, sqrt(6.0 / ((double)nd + (double)n)),
+                                   s + (uint64_t)(4 * n)));
+    return d;
+}
+
 /* ============================================================
  * Vorwaerts
  * ============================================================ */
@@ -639,6 +692,180 @@ static MooValue fw_position(MooValue schicht, MooValue x) {
     return out;
 }
 
+/* Top-k-Maske [T,n] zur Router-Verteilung: 1 fuer die k groessten Eintraege
+ * je Zeile, sonst 0 — GRAD-LOSE Konstante (causal_maske-Muster). Ties
+ * deterministisch: kleinster Index gewinnt. Aktualisiert nebenbei die
+ * Auslastungs-Zaehler im Schicht-Dict (dropout-zaehler-Muster). */
+static MooValue moe_topk_maske(MooValue schicht, MooTensor* p, int32_t k) {
+    int32_t zeilen = p->shape[0];
+    int32_t n = p->shape[1];
+    int32_t shape[2] = { zeilen, n };
+    MooTensor* m = moo_tensor_raw(2, shape);
+    if (!m) return moo_none();
+    char name[32];
+    for (int32_t t = 0; t < zeilen; t++) {
+        const float* pz = p->data + (int64_t)t * n;
+        float* mz = m->data + (int64_t)t * n;
+        for (int32_t j = 0; j < n; j++) mz[j] = 0.0f;
+        for (int32_t w = 0; w < k; w++) {
+            int32_t best = -1;
+            float bv = 0.0f;
+            for (int32_t j = 0; j < n; j++) {
+                if (mz[j] != 0.0f) continue;            /* schon gewaehlt */
+                if (best < 0 || pz[j] > bv) { best = j; bv = pz[j]; }
+            }
+            if (best < 0) break;
+            mz[best] = 1.0f;
+            snprintf(name, sizeof(name), "auslastung_e%d", best);
+            dset(schicht, name, moo_number(dnum(schicht, name, 0.0) + 1.0));
+        }
+    }
+    MooValue v; v.tag = MOO_TENSOR; moo_val_set_ptr(&v, m);
+    return v;
+}
+
+/* Mini-MoE Forward (KI-M1, VERIFY-01) — reine Op-Komposition, jeder Schritt
+ * auf dem Tape (B2 haelt, KEIN neuer Registry-Op). x [T,dim] -> [T,dim]:
+ *   probs = softmax(x @ router)               (Gl. 5, Router bias-frei)
+ *   maske = topk(probs, k)                    (grad-lose Konstante)
+ *   g     = probs * maske                     (Gl. 4 — Grad fliesst ueber
+ *                                              probs in den Router)
+ *   out   = sum_i g[:,i]*Experte_i(x) + x     (Gl. 3 — RESIDUAL +x,
+ *                                              VERIFY-Korrektur 1)
+ *   bal   = n * sum_i f_i * P_i               (Gl. 12, VERIFY-Korrektur 3;
+ *                                              im Dict unter "bal")
+ * Die g-Spalte je Experte kommt per Broadcast-Trick aus zwei grad-losen
+ * Konstanten: gcol = g @ onehot_i [n,1]; G = gcol @ einsen [1,dim].
+ * HINWEIS (M1-Scope, dokumentiert): es rechnen ALLE Experten dense — die
+ * Sparsity wirkt nur mathematisch ueber die Maske. */
+static MooValue fw_moe(MooValue schicht, MooValue x) {
+    MooTensor* xt = T(x);
+    if (xt->ndim != 2) {
+        moo_throw(moo_error("moe: erwarte einen 2D-Tensor [Sequenz, Dimension]"));
+        return moo_none();
+    }
+    int32_t nd = (int32_t)dnum(schicht, "dim", 0.0);
+    int32_t n = (int32_t)dnum(schicht, "n", 0.0);
+    int32_t k = (int32_t)dnum(schicht, "k", 1.0);
+    if (xt->shape[1] != nd || n < 1 || k < 1 || k > n) {
+        char msg[160];
+        snprintf(msg, sizeof(msg), "moe: Eingabe hat Dimension %d, die Schicht "
+                 "erwartet %d (kaputte Schicht?)", xt->shape[1], nd);
+        moo_throw(moo_error(msg));
+        return moo_none();
+    }
+    int32_t zeilen = xt->shape[0];
+
+    /* 1) Router bias-frei: probs = softmax(x @ router)  [T,n] */
+    MooValue router = dget(schicht, "router");
+    MooValue h = moo_tensor_matmul(x, router);
+    moo_release(router);
+    if (h.tag != MOO_TENSOR) { moo_release(h); return moo_none(); }
+    MooValue probs = moo_tensor_softmax(h);
+    moo_release(h);
+    if (probs.tag != MOO_TENSOR) { moo_release(probs); return moo_none(); }
+
+    /* 2) Top-k-Maske (grad-los) + 3) g = probs * maske  [T,n] */
+    MooValue maske = moe_topk_maske(schicht, T(probs), k);
+    if (maske.tag != MOO_TENSOR) { moo_release(maske); moo_release(probs); return moo_none(); }
+    MooValue g = moo_tensor_mul(probs, maske);
+    if (g.tag != MOO_TENSOR) {
+        moo_release(g); moo_release(maske); moo_release(probs);
+        return moo_none();
+    }
+
+    /* 4) Experten (dense) mit g-Spalte gewichten und akkumulieren. */
+    MooValue acc = moo_none();
+    char name[32];
+    bool fehler = false;
+    for (int32_t i = 0; i < n && !fehler; i++) {
+        int32_t sh1[2] = { n, 1 };
+        MooTensor* oh = moo_tensor_raw(2, sh1);
+        if (!oh) { fehler = true; break; }
+        oh->data[i] = 1.0f;
+        MooValue ohv; ohv.tag = MOO_TENSOR; moo_val_set_ptr(&ohv, oh);
+        int32_t sh2[2] = { 1, nd };
+        MooTensor* ei = moo_tensor_raw(2, sh2);
+        if (!ei) { moo_release(ohv); fehler = true; break; }
+        for (int32_t j = 0; j < nd; j++) ei->data[j] = 1.0f;
+        MooValue eiv; eiv.tag = MOO_TENSOR; moo_val_set_ptr(&eiv, ei);
+        MooValue gcol = moo_tensor_matmul(g, ohv);              /* [T,1]   */
+        MooValue G = (gcol.tag == MOO_TENSOR)
+                     ? moo_tensor_matmul(gcol, eiv) : moo_none(); /* [T,dim] */
+        moo_release(ohv); moo_release(eiv); moo_release(gcol);
+
+        snprintf(name, sizeof(name), "e%d_w1", i);
+        MooValue w1 = dget(schicht, name);
+        snprintf(name, sizeof(name), "e%d_b1", i);
+        MooValue b1 = dget(schicht, name);
+        snprintf(name, sizeof(name), "e%d_w2", i);
+        MooValue w2 = dget(schicht, name);
+        snprintf(name, sizeof(name), "e%d_b2", i);
+        MooValue b2 = dget(schicht, name);
+        MooValue h1  = moo_tensor_matmul(x, w1);
+        MooValue h1b = (h1.tag == MOO_TENSOR) ? moo_tensor_add(h1, b1) : moo_none();
+        MooValue re  = (h1b.tag == MOO_TENSOR) ? moo_tensor_relu(h1b) : moo_none();
+        MooValue h2  = (re.tag == MOO_TENSOR) ? moo_tensor_matmul(re, w2) : moo_none();
+        MooValue ex  = (h2.tag == MOO_TENSOR) ? moo_tensor_add(h2, b2) : moo_none();
+        moo_release(w1); moo_release(b1); moo_release(w2); moo_release(b2);
+        moo_release(h1); moo_release(h1b); moo_release(re); moo_release(h2);
+
+        MooValue wtd = (ex.tag == MOO_TENSOR && G.tag == MOO_TENSOR)
+                       ? moo_tensor_mul(ex, G) : moo_none();
+        moo_release(ex); moo_release(G);
+        if (wtd.tag != MOO_TENSOR) { moo_release(wtd); fehler = true; break; }
+        if (acc.tag == MOO_NONE) {
+            acc = wtd;
+        } else {
+            MooValue neu = moo_tensor_add(acc, wtd);
+            moo_release(acc); moo_release(wtd);
+            if (neu.tag != MOO_TENSOR) { moo_release(neu); fehler = true; break; }
+            acc = neu;
+        }
+    }
+    if (fehler || acc.tag != MOO_TENSOR) {
+        moo_release(acc); moo_release(g); moo_release(maske); moo_release(probs);
+        return moo_none();
+    }
+
+    /* 5) RESIDUAL (Gl. 3): out = acc + x */
+    MooValue out = moo_tensor_add(acc, x);
+    moo_release(acc);
+
+    /* 6) Balance-Verlust (Gl. 12): f_vec [1,n] grad-lose Token-Anteile
+     *    (count_i / (T*k), Summe 1), P = mittel(probs, achse 0) MIT Grad,
+     *    bal = n * summe(P * f_vec) — [1]-Tensor mit Tape-Anbindung.
+     *    Landet im Dict unter "bal" (dset ersetzt den alten Wert). */
+    if (out.tag == MOO_TENSOR) {
+        int32_t shf[2] = { 1, n };
+        MooTensor* fv = moo_tensor_raw(2, shf);
+        if (fv) {
+            MooTensor* mt = T(maske);
+            double norm = (double)zeilen * (double)k;
+            for (int32_t j = 0; j < n; j++) {
+                double c = 0.0;
+                for (int32_t t = 0; t < zeilen; t++)
+                    c += (double)mt->data[(int64_t)t * n + j];
+                fv->data[j] = (float)(c / norm);
+            }
+            MooValue fvv; fvv.tag = MOO_TENSOR; moo_val_set_ptr(&fvv, fv);
+            MooValue P  = moo_tensor_mittel(probs, moo_number(0.0));
+            MooValue pf = (P.tag == MOO_TENSOR) ? moo_tensor_mul(P, fvv)
+                                                : moo_none();
+            MooValue sm = (pf.tag == MOO_TENSOR)
+                          ? moo_tensor_summe(pf, moo_number(-1.0)) : moo_none();
+            MooValue bal = (sm.tag == MOO_TENSOR)
+                           ? moo_tensor_muls(sm, moo_number((double)n))
+                           : moo_none();
+            moo_release(fvv); moo_release(P); moo_release(pf); moo_release(sm);
+            if (bal.tag == MOO_TENSOR) dset(schicht, "bal", bal);
+            else moo_release(bal);
+        }
+    }
+    moo_release(g); moo_release(maske); moo_release(probs);
+    return out;
+}
+
 /* Eine Schicht vorwaerts. x borrowed, Rueckgabe +1. Registry-Dispatch:
  * 1 dget + Lookup statt 6 nn_ist-Aufrufe (je dget+strcmp). */
 static MooValue schicht_vorwaerts(MooValue schicht, MooValue x) {
@@ -733,6 +960,23 @@ static void params_position(MooValue schicht, MooValue liste) {
     moo_release(art);
     if (gelernt) moo_list_append(liste, dget(schicht, "pos"));
 }
+static void params_moe(MooValue schicht, MooValue liste) {
+    /* DETERMINISTISCHE Reihenfolge (Vertrag fuer .mook): pro Experte
+     * w1,b1,w2,b2 — dann router. */
+    int32_t n = (int32_t)dnum(schicht, "n", 0.0);
+    char name[32];
+    for (int32_t i = 0; i < n; i++) {
+        snprintf(name, sizeof(name), "e%d_w1", i);
+        moo_list_append(liste, dget(schicht, name));
+        snprintf(name, sizeof(name), "e%d_b1", i);
+        moo_list_append(liste, dget(schicht, name));
+        snprintf(name, sizeof(name), "e%d_w2", i);
+        moo_list_append(liste, dget(schicht, name));
+        snprintf(name, sizeof(name), "e%d_b2", i);
+        moo_list_append(liste, dget(schicht, name));
+    }
+    moo_list_append(liste, dget(schicht, "router"));
+}
 
 /* === Die Registry-Tabelle. EINE Zeile pro Schicht-Typ. === */
 static const MooNNLayerDesc nn_layer_registry[] = {
@@ -742,6 +986,7 @@ static const MooNNLayerDesc nn_layer_registry[] = {
     { "embedding", fw_embedding, params_embedding },
     { "attention", fw_attention, params_attention },
     { "position",  fw_position,  params_position  },
+    { "moe",       fw_moe,       params_moe       },
 };
 
 static const MooNNLayerDesc* nn_layer_lookup(const char* name) {
@@ -843,6 +1088,56 @@ MooValue moo_nn_parameter(MooValue netz) {
     moo_release(liste);
     moo_throw(moo_error("parameter: erwarte eine Schicht oder eine Liste von "
                         "Schichten (mit mindestens einem trainierbaren Parameter)"));
+    return moo_none();
+}
+
+/* moe_balance(netz): summiert die "bal"-Skalare ALLER moe-Schichten (+1).
+ * User: loss = kreuzentropie(...) + moe_balance(netz) * alpha.
+ * Wirft erklaerend ohne moe-Schicht oder ohne vorherigen vorwaerts(). */
+static bool moe_bal_sammeln(MooValue schicht, MooValue* acc, bool* gefunden,
+                            bool* ohne_fw) {
+    if (!nn_ist(schicht, "moe")) return true;
+    *gefunden = true;
+    MooValue b = dget(schicht, "bal");
+    if (b.tag != MOO_TENSOR) { moo_release(b); *ohne_fw = true; return false; }
+    if (acc->tag == MOO_NONE) { *acc = b; return true; }
+    MooValue neu = moo_tensor_add(*acc, b);
+    moo_release(*acc); moo_release(b);
+    *acc = moo_none();
+    if (neu.tag != MOO_TENSOR) { moo_release(neu); return false; }
+    *acc = neu;
+    return true;
+}
+MooValue moo_nn_moe_balance(MooValue netz) {
+    if (nn_ist(netz, "netz")) {   /* D1: Kinderleicht-Netz delegiert */
+        MooValue schichten = dget(netz, "schichten");
+        MooValue r = moo_nn_moe_balance(schichten);
+        moo_release(schichten);
+        return r;
+    }
+    MooValue acc = moo_none();
+    bool gefunden = false, ohne_fw = false, ok = true;
+    if (netz.tag == MOO_DICT) {
+        ok = moe_bal_sammeln(netz, &acc, &gefunden, &ohne_fw);
+    } else if (netz.tag == MOO_LIST) {
+        MooList* l = MV_LIST(netz);
+        for (int32_t i = 0; i < l->length && ok; i++)
+            ok = moe_bal_sammeln(l->items[i], &acc, &gefunden, &ohne_fw);
+    } else {
+        moo_throw(moo_error("moe_balance: erwarte eine Schicht, eine Liste "
+                            "von Schichten oder ein ki_netz"));
+        return moo_none();
+    }
+    if (ok && gefunden && acc.tag == MOO_TENSOR) return acc;
+    moo_release(acc);
+    if (!gefunden)
+        moo_throw(moo_error("moe_balance: das Netz enthaelt keine schicht_moe"));
+    else if (ohne_fw)
+        moo_throw(moo_error("moe_balance: erst vorwaerts() aufrufen — der "
+                            "Balance-Verlust entsteht im Forward"));
+    else
+        moo_throw(moo_error("moe_balance: konnte den Balance-Verlust nicht "
+                            "summieren"));
     return moo_none();
 }
 
