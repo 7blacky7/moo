@@ -386,6 +386,13 @@ void moo_smart_close(MooValue v) {
 
 // Tag-dispatchender contains/enthaelt — Dicts → moo_dict_has, Listen →
 // moo_list_contains, Strings → moo_string_contains.
+// ARG-KONVENTION (CG1-v3): verbraucht item IMMER (Transfer-Semantik).
+// moo_dict_has verbraucht den Key selbst (release_key_after_lookup);
+// list/string_contains sind pure Reader → hier explizit releasen. Der
+// Codegen-Arm (einziger Aufrufer) darf item danach NICHT anfassen —
+// tag-abhaengiges Release im Codegen waere unmoeglich (Dict: Double-Free,
+// String/Liste: Leak, empirisch ~60B/iter, ASan-bewiesen 2026-07-05).
+// container bleibt borrowed (Methoden-Objekt, T1-Slot released).
 extern MooValue moo_dict_has(MooValue dict, MooValue key);
 extern MooValue moo_list_contains(MooValue list, MooValue item);
 extern MooValue moo_string_contains(MooValue s, MooValue sub);
@@ -394,8 +401,18 @@ extern MooValue moo_bool(bool b);
 MooValue moo_smart_contains(MooValue container, MooValue item) {
     switch (container.tag) {
         case MOO_DICT:   return moo_dict_has(container, item);
-        case MOO_LIST:   return moo_list_contains(container, item);
-        case MOO_STRING: return moo_string_contains(container, item);
-        default:         return moo_bool(false);
+        case MOO_LIST: {
+            MooValue r = moo_list_contains(container, item);
+            moo_release(item);
+            return r;
+        }
+        case MOO_STRING: {
+            MooValue r = moo_string_contains(container, item);
+            moo_release(item);
+            return r;
+        }
+        default:
+            moo_release(item);
+            return moo_bool(false);
     }
 }
