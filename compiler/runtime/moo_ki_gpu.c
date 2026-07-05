@@ -67,6 +67,12 @@ typedef struct {
     VkPipeline pipe_matmul, pipe_ew, pipe_reduce;
     VkCommandPool cmdpool;
     VkDescriptorPool descpool;
+    /* GPU3-C: Per-Op-Allokationen gecacht — lazy beim ersten Dispatch
+     * angelegt, leben bis Prozessende (wie Pipelines/Pools). Safe, weil
+     * dispatch_sync synchron ist: Fence-Wait vor Return => GPU idle. */
+    VkDescriptorSet ds_cache;
+    VkCommandBuffer cb_cache;
+    VkFence fence_cache;
 } KiGpu;
 
 static KiGpu G = {0};
@@ -235,7 +241,8 @@ static bool ki_gpu_init(void) {
 
     VkCommandPoolCreateInfo cpi = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+        .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT |
+                 VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, /* GPU3-C: cb_cache-Reset */
         .queueFamilyIndex = G.queue_familie,
     };
     if (vkCreateCommandPool(G.geraet, &cpi, NULL, &G.cmdpool) != VK_SUCCESS)
@@ -392,20 +399,47 @@ static void buf_zurueck(KiBuf* b) {
 /* Gemeinsamer Ablauf: 3 Buffers sind angelegt, Staging der upload-Buffers
  * ist gefuellt. Im SELBEN Command-Buffer: Staging->VRAM-Copies (upload_mask),
  * Barrier, Compute-Dispatch, Barrier, VRAM->Staging-Copies (readback_mask).
- * Weiterhin genau EIN Submit + Fence pro Op (Submit-Reduktion = Backlog #3).
+ * Weiterhin genau EIN Submit pro Op; GPU3-C: DescSet/CmdBuf/Fence gecacht
+ * statt pro Op allokiert (siehe Cache-Trio in KiGpu).
  * Im Vereint-Modus entfallen Copies+Barriers (dev==stg). */
 static bool dispatch_sync(VkPipeline pipe, KiBuf b[3], KiPush push,
                           uint32_t gx, uint32_t gy,
                           uint32_t upload_mask, uint32_t readback_mask) {
-    VkDescriptorSetAllocateInfo dsa = {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool = G.descpool,
-        .descriptorSetCount = 1,
-        .pSetLayouts = &G.dsl,
-    };
-    VkDescriptorSet ds;
-    if (vkAllocateDescriptorSets(G.geraet, &dsa, &ds) != VK_SUCCESS)
-        return false;
+    /* GPU3-C: DescSet/CmdBuf/Fence einmalig anlegen und wiederverwenden.
+     * Fail => false (CPU-Fallback); Retry beim naechsten Aufruf ist
+     * idempotent, weil die Handles VK_NULL_HANDLE bleiben. */
+    if (G.ds_cache == VK_NULL_HANDLE) {
+        VkDescriptorSetAllocateInfo dsa = {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = G.descpool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &G.dsl,
+        };
+        if (vkAllocateDescriptorSets(G.geraet, &dsa, &G.ds_cache) != VK_SUCCESS) {
+            G.ds_cache = VK_NULL_HANDLE;
+            return false;
+        }
+    }
+    if (G.cb_cache == VK_NULL_HANDLE) {
+        VkCommandBufferAllocateInfo cba = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = G.cmdpool,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+        if (vkAllocateCommandBuffers(G.geraet, &cba, &G.cb_cache) != VK_SUCCESS) {
+            G.cb_cache = VK_NULL_HANDLE;
+            return false;
+        }
+    }
+    if (G.fence_cache == VK_NULL_HANDLE) {
+        VkFenceCreateInfo fci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+        if (vkCreateFence(G.geraet, &fci, NULL, &G.fence_cache) != VK_SUCCESS) {
+            G.fence_cache = VK_NULL_HANDLE;
+            return false;
+        }
+    }
+    VkDescriptorSet ds = G.ds_cache;
     VkDescriptorBufferInfo bi[3];
     VkWriteDescriptorSet ws[3];
     for (int i = 0; i < 3; i++) {
@@ -421,17 +455,8 @@ static bool dispatch_sync(VkPipeline pipe, KiBuf b[3], KiPush push,
     }
     vkUpdateDescriptorSets(G.geraet, 3, ws, 0, NULL);
 
-    VkCommandBufferAllocateInfo cba = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = G.cmdpool,
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
-    };
-    VkCommandBuffer cb;
-    if (vkAllocateCommandBuffers(G.geraet, &cba, &cb) != VK_SUCCESS) {
-        vkFreeDescriptorSets(G.geraet, G.descpool, 1, &ds);
-        return false;
-    }
+    VkCommandBuffer cb = G.cb_cache;
+    vkResetCommandBuffer(cb, 0);
     VkCommandBufferBeginInfo cbb = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
@@ -476,22 +501,18 @@ static bool dispatch_sync(VkPipeline pipe, KiBuf b[3], KiPush push,
     }
     vkEndCommandBuffer(cb);
 
-    VkFenceCreateInfo fci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-    VkFence fence;
-    bool ok = vkCreateFence(G.geraet, &fci, NULL, &fence) == VK_SUCCESS;
-    if (ok) {
-        VkSubmitInfo si = {
-            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .commandBufferCount = 1,
-            .pCommandBuffers = &cb,
-        };
-        ok = vkQueueSubmit(G.queue, 1, &si, fence) == VK_SUCCESS &&
-             vkWaitForFences(G.geraet, 1, &fence, VK_TRUE,
-                             30ull * 1000000000ull) == VK_SUCCESS;
-        vkDestroyFence(G.geraet, fence, NULL);
-    }
-    vkFreeCommandBuffers(G.geraet, G.cmdpool, 1, &cb);
-    vkFreeDescriptorSets(G.geraet, G.descpool, 1, &ds);
+    vkResetFences(G.geraet, 1, &G.fence_cache);
+    VkSubmitInfo si = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &cb,
+    };
+    bool ok = vkQueueSubmit(G.queue, 1, &si, G.fence_cache) == VK_SUCCESS &&
+              vkWaitForFences(G.geraet, 1, &G.fence_cache, VK_TRUE,
+                              30ull * 1000000000ull) == VK_SUCCESS;
+    /* Fehlpfad (Timeout/Device-Lost): Queue leeren, damit der gecachte
+     * Fence/CmdBuf beim naechsten Aufruf nicht in-flight resettet wird. */
+    if (!ok) vkQueueWaitIdle(G.queue);
     return ok;
 }
 

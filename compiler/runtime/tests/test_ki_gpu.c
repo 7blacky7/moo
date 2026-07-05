@@ -138,6 +138,66 @@ int main(void) {
         free(a); free(b); free(g); free(c);
     }
 
+    /* 4. GPU3-C Wiederhol-Op-Mikrobenchmark: Per-Op-Overhead sichtbar
+     * machen (DescSet/CmdBuf/Fence-Cache + Buffer-Pool greifen erst bei
+     * wiederholten Ops). Kein Speedup-CHECK (maschinenabhaengig) — nur
+     * Korrektheit des letzten Laufs + Zeitausgabe fuer die Doku. */
+    {
+        int64_t n = (int64_t)1 << 20;
+        int iter = 200;
+        float* a = malloc((size_t)n * 4);
+        float* b = malloc((size_t)n * 4);
+        float* g = malloc((size_t)n * 4);
+        for (int64_t i = 0; i < n; i++) { a[i] = zufall(&seed); b[i] = zufall(&seed); }
+        double t0 = jetzt();
+        for (int it = 0; it < iter; it++) {
+            if (!moo_ki_gpu_ew(0, a, b, g, n)) {
+                fprintf(stderr, "FAIL: wiederhol-ew Iteration %d\n", it);
+                return 1;
+            }
+        }
+        double t = jetzt() - t0;
+        int64_t schlecht = 0;
+        for (int64_t i = 0; i < n; i++) {
+            double c = (double)a[i] + (double)b[i];
+            if (fabs((double)g[i] - c) / (fabs(c) + 1e-9) > 1e-6) schlecht++;
+        }
+        CHECK(schlecht == 0, "wiederhol-ew: letzter Lauf korrekt");
+        printf("wiederhol-ew add n=2^20 x%d: gesamt %.3fs -> %.2f ms/Op\n",
+               iter, t, t * 1000.0 / iter);
+        free(a); free(b); free(g);
+    }
+    {
+        int64_t m = 512, k = 512, n = 512;
+        int iter = 30;
+        float* a = malloc((size_t)(m * k) * 4);
+        float* b = malloc((size_t)(k * n) * 4);
+        float* g = malloc((size_t)(m * n) * 4);
+        float* c = malloc((size_t)(m * n) * 4);
+        for (int64_t i = 0; i < m * k; i++) a[i] = zufall(&seed);
+        for (int64_t i = 0; i < k * n; i++) b[i] = zufall(&seed);
+        double t0 = jetzt();
+        for (int it = 0; it < iter; it++) {
+            if (!moo_ki_gpu_matmul(a, b, g, (int32_t)m, (int32_t)k, (int32_t)n)) {
+                fprintf(stderr, "FAIL: wiederhol-matmul Iteration %d\n", it);
+                return 1;
+            }
+        }
+        double t = jetzt() - t0;
+        cpu_matmul(a, b, c, m, k, n);
+        int64_t schlecht = 0;
+        for (int64_t i = 0; i < m * n; i++) {
+            double d = fabs((double)g[i] - (double)c[i]);
+            double rel = d / (fabs((double)c[i]) + 1e-9);
+            if (d > 1e-3 && rel > 1e-4) schlecht++;
+        }
+        CHECK(schlecht == 0, "wiederhol-matmul: letzter Lauf korrekt");
+        printf("wiederhol-matmul 512^3 x%d: gesamt %.3fs -> %.2f ms/Op\n",
+               iter, t, t * 1000.0 / iter);
+        free(a); free(b); free(g); free(c);
+    }
+
+
     printf("test_ki_gpu: alle %d Checks bestanden\n", checks);
     return 0;
 }
