@@ -637,6 +637,138 @@ static MooValue sliding_maske(int32_t seq, int32_t fenster) {
     return v;
 }
 
+/* Kausale (+optional Sliding-) Maske fuer den Cache-Pfad [t_neu, t_ges]
+ * (KI-M2c): Zeile r steht fuer Gesamt-Position t_alt + r und darf
+ * j <= t_alt + r sehen (Sliding: zusaetzlich hoechstens W zurueck).
+ * Grad-lose Konstante; bei t_alt == 0 identisch zur normalen Maske. */
+static MooValue cache_maske(int32_t t_neu, int32_t t_ges, bool sliding,
+                            int32_t fenster) {
+    int32_t t_alt = t_ges - t_neu;
+    int32_t shape[2] = { t_neu, t_ges };
+    MooTensor* m = moo_tensor_raw(2, shape);
+    if (!m) return moo_none();
+    for (int32_t r = 0; r < t_neu; r++) {
+        int32_t pos = t_alt + r;
+        for (int32_t j = 0; j < t_ges; j++)
+            m->data[(int64_t)r * t_ges + j] =
+                (j > pos || (sliding && pos - j >= fenster)) ? -1e9f : 0.0f;
+    }
+    MooValue v; v.tag = MOO_TENSOR; moo_val_set_ptr(&v, m);
+    return v;
+}
+
+/* KI-M2c: Attention-Forward MIT KV-Cache — NUR Inferenz (der Dispatcher in
+ * fw_attention prueft autograd). x = NEUER Token-Block [t_neu, dim]; K/V
+ * des Blocks werden pro KV-Gruppe an cache_k{g}/cache_v{g} angehaengt
+ * (verbinden, Achse 0), Q laeuft nur ueber die neuen Zeilen gegen den
+ * Gesamt-Cache. Der Voll-Pfad (fw_attention) bleibt unveraendert.
+ * BIT-IDENTITAETS-ARGUMENT: matmul/softmax arbeiten zeilenweise unabhaengig,
+ * die K/V-Zeilen entstehen aus denselben Eingabezeilen mit denselben Ops wie
+ * im Voll-Forward — das Gate beweist tokenweise == Voll-Forward bit-identisch
+ * (Stopp-Regel: wenn nicht erreichbar, M2c stoppen + dokumentieren). */
+static MooValue fw_attention_cache(MooValue schicht, MooValue x, int32_t nd,
+                                   int32_t nk, int32_t kv, int32_t rep,
+                                   bool sliding, int32_t fenster) {
+    MooTensor* xt = T(x);
+    int32_t t_neu = xt->shape[0];
+    int32_t dh = nd / nk;
+    char name[24];
+    MooValue kg[16], vg[16];   /* kv <= koepfe <= 16 (Konstruktor-Invariante) */
+    for (int32_t g = 0; g < kv; g++) { kg[g] = moo_none(); vg[g] = moo_none(); }
+    bool fehler = false;
+    for (int32_t g = 0; g < kv && !fehler; g++) {
+        snprintf(name, sizeof(name), "wk%d", g);
+        MooValue wk = dget(schicht, name);
+        snprintf(name, sizeof(name), "wv%d", g);
+        MooValue wv = dget(schicht, name);
+        MooValue kn = moo_tensor_matmul(x, wk);
+        MooValue vn = moo_tensor_matmul(x, wv);
+        moo_release(wk); moo_release(wv);
+        if (kn.tag != MOO_TENSOR || vn.tag != MOO_TENSOR) {
+            moo_release(kn); moo_release(vn);
+            fehler = true;
+            break;
+        }
+        snprintf(name, sizeof(name), "cache_k%d", g);
+        MooValue ka = dget(schicht, name);
+        if (ka.tag == MOO_TENSOR) {
+            kg[g] = moo_tensor_verbinden(ka, kn);
+            moo_release(ka); moo_release(kn);
+        } else {
+            moo_release(ka);
+            kg[g] = kn;
+        }
+        snprintf(name, sizeof(name), "cache_v%d", g);
+        MooValue va = dget(schicht, name);
+        if (va.tag == MOO_TENSOR) {
+            vg[g] = moo_tensor_verbinden(va, vn);
+            moo_release(va); moo_release(vn);
+        } else {
+            moo_release(va);
+            vg[g] = vn;
+        }
+        if (kg[g].tag != MOO_TENSOR || vg[g].tag != MOO_TENSOR) fehler = true;
+    }
+    if (fehler) {
+        for (int32_t g = 0; g < kv; g++) { moo_release(kg[g]); moo_release(vg[g]); }
+        return moo_none();
+    }
+    int32_t t_ges = T(kg[0])->shape[0];
+    MooValue maske = cache_maske(t_neu, t_ges, sliding, fenster);
+    if (maske.tag != MOO_TENSOR) {
+        for (int32_t g = 0; g < kv; g++) { moo_release(kg[g]); moo_release(vg[g]); }
+        return moo_none();
+    }
+    MooValue skal = moo_number(1.0 / sqrt((double)dh));
+    MooValue acc = moo_none();
+    for (int32_t h = 0; h < nk && !fehler; h++) {
+        int32_t g = h / rep;
+        snprintf(name, sizeof(name), "wq%d", h);
+        MooValue wq = dget(schicht, name);
+        MooValue q = moo_tensor_matmul(x, wq);
+        moo_release(wq);
+        MooValue kt = moo_tensor_transponieren(kg[g]);
+        MooValue s = (q.tag == MOO_TENSOR && kt.tag == MOO_TENSOR)
+                     ? moo_tensor_matmul(q, kt) : moo_none();
+        MooValue ss = (s.tag == MOO_TENSOR) ? moo_tensor_muls(s, skal) : moo_none();
+        MooValue sm = (ss.tag == MOO_TENSOR) ? moo_tensor_add(ss, maske) : moo_none();
+        MooValue a = (sm.tag == MOO_TENSOR) ? moo_tensor_softmax(sm) : moo_none();
+        MooValue oh = (a.tag == MOO_TENSOR) ? moo_tensor_matmul(a, vg[g]) : moo_none();
+        MooValue oht = (oh.tag == MOO_TENSOR) ? moo_tensor_transponieren(oh)
+                                              : moo_none();
+        moo_release(q); moo_release(kt); moo_release(s); moo_release(ss);
+        moo_release(sm); moo_release(a); moo_release(oh);
+        if (oht.tag != MOO_TENSOR) { moo_release(oht); fehler = true; break; }
+        if (acc.tag == MOO_NONE) {
+            acc = oht;
+        } else {
+            MooValue neu = moo_tensor_verbinden(acc, oht);
+            moo_release(acc); moo_release(oht);
+            if (neu.tag != MOO_TENSOR) { moo_release(neu); fehler = true; break; }
+            acc = neu;
+        }
+    }
+    moo_release(maske);
+    /* Cache aktualisieren: Gesamt-K/V per Transfer ins Dict (dset ersetzt
+     * den alten Wert) — auch im Fehlerfall konsistent, kein Doppel-Release. */
+    for (int32_t g = 0; g < kv; g++) {
+        snprintf(name, sizeof(name), "cache_k%d", g);
+        dset(schicht, name, kg[g]);
+        snprintf(name, sizeof(name), "cache_v%d", g);
+        dset(schicht, name, vg[g]);
+    }
+    if (fehler || acc.tag != MOO_TENSOR) {
+        moo_release(acc);
+        return moo_none();
+    }
+    MooValue zusammen = moo_tensor_transponieren(acc);
+    moo_release(acc);
+    MooValue wo = dget(schicht, "wo");
+    MooValue out = moo_tensor_matmul(zusammen, wo);
+    moo_release(zusammen); moo_release(wo);
+    return out;
+}
+
 /* Multi-Head Self-Attention, komplett aus Registry-Ops komponiert (jeder
  * Schritt landet auf dem Tape, backward laeuft ueber bw_matmul/transpose/
  * muls/add/softmax/concat). x [seq, dim] -> [seq, dim]. */
@@ -671,6 +803,18 @@ static MooValue fw_attention(MooValue schicht, MooValue x) {
     bool sliding = (mart.tag == MOO_STRING &&
                     strcmp(MV_STR(mart)->chars, "sliding") == 0);
     moo_release(mart);
+    /* KI-M2c: KV-Cache — expliziter Inferenzzustand (att["cache"] = 1).
+     * NUR bei autograd_aus; das Flag wird von cache_leeren NICHT angefasst. */
+    if (dnum(schicht, "cache", 0.0) == 1.0) {
+        if (moo_ag_ist_an()) {
+            moo_throw(moo_error("attention: der KV-Cache geht nur beim "
+                                "Generieren (autograd_aus) — beim Training "
+                                "att[\"cache\"] = 0 setzen"));
+            return moo_none();
+        }
+        return fw_attention_cache(schicht, x, nd, nk, kv, rep, sliding,
+                                  (int32_t)dnum(schicht, "fenster", 1.0));
+    }
     MooValue maske = sliding
         ? sliding_maske(seq, (int32_t)dnum(schicht, "fenster", 1.0))
         : causal_maske(seq);
@@ -1224,6 +1368,46 @@ MooValue moo_nn_moe_balance(MooValue netz) {
     else
         moo_throw(moo_error("moe_balance: konnte den Balance-Verlust nicht "
                             "summieren"));
+    return moo_none();
+}
+
+/* cache_leeren(netz): entfernt die KV-Cache-Tensoren ALLER attention-
+ * Schichten (KI-M2c). Reiner Zustands-Reset — das "cache"-Flag am Layer
+ * bleibt UNVERAENDERT (Aktivierung/Deaktivierung nur via att["cache"]).
+ * Idempotent; wirft nur bei Nicht-Netz. Rueckgabe none. */
+static void cache_leeren_schicht(MooValue schicht) {
+    if (!nn_ist(schicht, "attention")) return;
+    int32_t nk = (int32_t)dnum(schicht, "koepfe", 1.0);
+    int32_t kvn = (int32_t)dnum(schicht, "kv_koepfe", (double)nk);
+    char name[24];
+    for (int32_t g = 0; g < kvn; g++) {
+        /* moo_dict_remove KONSUMIERT den frischen Key (Transfer-Konvention
+         * wie dget/dset) — KEIN eigenes Release, sonst Doppel-Release. */
+        snprintf(name, sizeof(name), "cache_k%d", g);
+        moo_dict_remove(schicht, moo_string_new(name));
+        snprintf(name, sizeof(name), "cache_v%d", g);
+        moo_dict_remove(schicht, moo_string_new(name));
+    }
+}
+MooValue moo_nn_cache_leeren(MooValue netz) {
+    if (nn_ist(netz, "netz")) {   /* D1: Kinderleicht-Netz delegiert */
+        MooValue schichten = dget(netz, "schichten");
+        MooValue r = moo_nn_cache_leeren(schichten);
+        moo_release(schichten);
+        return r;
+    }
+    if (netz.tag == MOO_DICT && nn_ist_schicht(netz)) {
+        cache_leeren_schicht(netz);
+        return moo_none();
+    }
+    if (netz.tag == MOO_LIST) {
+        MooList* l = MV_LIST(netz);
+        for (int32_t i = 0; i < l->length; i++)
+            cache_leeren_schicht(l->items[i]);
+        return moo_none();
+    }
+    moo_throw(moo_error("cache_leeren: erwarte eine Schicht, eine Liste von "
+                        "Schichten oder ein ki_netz"));
     return moo_none();
 }
 

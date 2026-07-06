@@ -2675,6 +2675,13 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[netz.into()], "rel_moeb_netz")?;
                         return Ok(r);
                     }
+                    "cache_leeren" | "clear_cache" => {
+                        let netz = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_nn_cache_leeren,
+                            &[netz.into()], "nn_cache_leeren")?;
+                        self.call_rt_void(self.rt.moo_release, &[netz.into()], "rel_cl_netz")?;
+                        return Ok(r);
+                    }
                     "gradienten_kappen" | "clip_gradients" => {
                         let params = self.compile_expr(&args[0])?;
                         let m = self.compile_expr(&args[1])?;
