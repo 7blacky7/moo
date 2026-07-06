@@ -1,0 +1,228 @@
+# ============================================================
+# Reward-API + GRPO-Toy in verifizierbarer Umgebung (KI-M5)
+# ------------------------------------------------------------
+# GRPO-KERN (DeepSeekMath): Gruppen-Sampling + Baseline aus den
+# Gruppen-Scores (KEIN Value-Model) + advantage-gewichtete CE.
+# BEWUSSTE TOY-VEREINFACHUNG: vanilla policy gradient mit Gruppen-
+# Baseline, OHNE PPO-Clipping/KL. Verifizierbare Umgebung =
+# Ziffern-Addition, Reward = exakt richtig (RLVR-Muster, Tulu 3).
+#
+# OP-KOMPOSITIONS-BEWEIS (Task-Auflage, kein neuer Registry-Op):
+# loss = Sum_i A_i * CE_i mit grad-loser Advantage-ZAHL A_i.
+# Sum A_i = 0 (mean-normiert) + FESTE Sequenzlaenge => die Prompt-
+# CE-Beitraege heben sich ueber die Gruppe EXAKT auf — effektiv
+# Antwort-only-Gradient OHNE zeilen()-Slicing (hat kein backward).
+#
+# Determinismus: eigener LCG statt zufall() => Doppellauf byte-
+# identisch. KEINE Runtime-Aenderung, KEIN Agentensystem.
+# Kompilieren: moo-compiler compile ki_grpo.moo -o ki_grpo
+# ============================================================
+setze dim auf 32
+setze block auf 5
+setze koepfe auf 2
+setze sft_schritte auf 500
+setze grpo_iter auf 900
+setze gruppe auf 4
+setze temperatur auf 1.3
+
+# --- 1. Korpus (nur direkt-Modus: "!a+b}c;", feste 7 Zeichen) ---
+setze korpus auf ""
+setze a auf 0
+solange a < 5:
+    setze b auf 0
+    solange b < 5:
+        setze korpus auf korpus + "!" + text(a) + "+" + text(b) + "}" + text(a + b) + ";"
+        setze b auf b + 1
+    setze a auf a + 1
+setze tok auf text_tokenizer(korpus)
+setze ids auf tok["ids"]
+setze vokab auf tok["vokab"]
+setze id_zu_zeichen auf tok["id_zu_zeichen"]
+setze n auf ids.groesse()
+zeige "Korpus: " + text(n) + " Zeichen, Vokabular: " + text(vokab)
+
+funktion id_von(z):
+    setze i auf 0
+    solange i < länge(id_zu_zeichen):
+        wenn id_zu_zeichen[i] == z:
+            gib_zurück i
+        setze i auf i + 1
+    gib_zurück 0
+
+# --- 2. Reward-API: moo-Funktion (Sequenz -> Zahl), verifizierbar ---
+funktion reward(a, b, antwort_id):
+    wenn id_zu_zeichen[antwort_id] == text(a + b):
+        gib_zurück 1.0
+    gib_zurück 0.0
+
+# --- 3. Deterministischer RNG (LCG; '^' waere XOR — keine Potenzen) ---
+setze rng_state auf 12345
+funktion rng():
+    setze rng_state auf rng_state * 1103515245 + 12345
+    setze rng_state auf rng_state - boden(rng_state / 2147483648) * 2147483648
+    gib_zurück rng_state / 2147483648
+
+# --- 4. Policy: Mini-Transformer (M3-Muster) ---
+setze emb  auf schicht_embedding(vokab, dim, 1)
+setze pos  auf schicht_position(block, dim, "gelernt", 2)
+setze ln1a auf schicht_layernorm(dim)
+setze att1 auf schicht_attention(dim, koepfe, 3)
+setze ln1b auf schicht_layernorm(dim)
+setze ff1a auf schicht_dicht(dim, 64, "gelu", 4)
+setze ff1b auf schicht_dicht(64, dim, "keine", 5)
+setze lnf  auf schicht_layernorm(dim)
+setze kopf auf schicht_dicht(dim, vokab, "keine", 6)
+setze alle auf [emb, pos, ln1a, att1, ln1b, ff1a, ff1b, lnf, kopf]
+
+funktion modell(ids_block):
+    setze x auf vorwaerts([emb], ids_block)
+    setze x auf vorwaerts([pos], x)
+    setze x auf x + vorwaerts([ln1a, att1], x)
+    setze x auf x + vorwaerts([ln1b, ff1a, ff1b], x)
+    gib_zurück vorwaerts([lnf, kopf], x)
+
+funktion argmax(liste):
+    setze best auf 0
+    setze i auf 1
+    solange i < länge(liste):
+        wenn liste[i] > liste[best]:
+            setze best auf i
+        setze i auf i + 1
+    gib_zurück best
+
+# --- 5. SFT-Warmstart (kurz, bewusst UNTERtrainiert -> GRPO-Headroom) ---
+# SAMPLE-ALIGNIERT (jedes Sample = 7 Zeichen "!a+b}c;"): Eingabe =
+# Zeichen 0..4, Ziel = 1..5 — Position 4 lernt exakt "nach '}' kommt die
+# Antwort", identisches Layout wie der GRPO-/Accuracy-Prompt (block=5).
+setze params auf parameter(alle)
+setze opt auf optimierer_sgd(params, 0.05, 0.9)
+setze s auf 0
+solange s < sft_schritte:
+    setze aufgabe auf s - boden(s / 25) * 25
+    setze p auf aufgabe * 7
+    setze verlust auf kreuzentropie(modell(ids.zeilen(p, p + block)), ids.zeilen(p + 1, p + block + 1))
+    verlust.rueckwaerts()
+    opt.schritt()
+    setze s auf s + 1
+zeige "SFT-Warmstart fertig (" + text(sft_schritte) + " Schritte)"
+
+# Accuracy-Messung (greedy) ueber alle 25 Aufgaben
+funktion accuracy():
+    autograd_aus()
+    setze richtig auf 0
+    setze a auf 0
+    solange a < 5:
+        setze b auf 0
+        solange b < 5:
+            setze pids auf [id_von("!"), id_von(text(a)), id_von("+"), id_von(text(b)), id_von("}")]
+            setze logits auf modell(tensor_aus_liste(pids))
+            setze aid auf argmax(logits.zeilen(4, 5).zu_liste())
+            setze richtig auf richtig + reward(a, b, aid)
+            setze b auf b + 1
+        setze a auf a + 1
+    autograd_an()
+    gib_zurück richtig
+
+setze acc_vor auf accuracy()
+zeige "Accuracy nach SFT (vor GRPO): " + text(acc_vor) + "/25"
+
+# --- 6. GRPO-Loop ---
+# Pro Iteration: deterministischer Prompt, G Samples (Temperatur, LCG),
+# Rewards, Gruppen-Baseline; alle gleich -> Gruppe uebersprungen;
+# loss = Sum A_i * CE_i (A_i grad-lose Zahl).
+# FRISCHER Optimizer (SFT-Momentum nicht verschleppen); Temperatur 1.3
+# = Exploration, damit auch schwere Aufgaben gemischte Gruppen liefern
+# (ohne Reward-Varianz gibt es GRPO-standardgemaess kein Signal).
+setze opt auf optimierer_sgd(params, 0.05, 0.9)
+setze block_summe auf 0
+setze block_zaehler auf 0
+setze erster_block auf 0 - 1
+setze letzter_block auf 0
+setze it auf 0
+solange it < grpo_iter:
+    setze aufgabe auf it - boden(it / 25) * 25
+    setze a auf boden(aufgabe / 5)
+    setze b auf aufgabe - a * 5
+    setze pids auf [id_von("!"), id_von(text(a)), id_von("+"), id_von(text(b)), id_von("}")]
+    # G Samples: je 1 Antwortzeichen per Temperatur-Sampling
+    setze sample_ids auf []
+    setze rewards auf []
+    setze r_summe auf 0
+    autograd_aus()
+    setze logits auf modell(tensor_aus_liste(pids))
+    setze wahrsch auf (logits.zeilen(4, 5) * (1.0 / temperatur)).softmax().zu_liste()
+    autograd_an()
+    setze g auf 0
+    solange g < gruppe:
+        setze r auf rng()
+        setze summe auf 0
+        setze wahl auf länge(wahrsch) - 1
+        setze k auf 0
+        solange k < länge(wahrsch):
+            setze summe auf summe + wahrsch[k]
+            wenn r < summe:
+                setze wahl auf k
+                setze k auf länge(wahrsch)
+            sonst:
+                setze k auf k + 1
+        sample_ids.hinzufügen(wahl)
+        setze rw auf reward(a, b, wahl)
+        rewards.hinzufügen(rw)
+        setze r_summe auf r_summe + rw
+        setze g auf g + 1
+    setze block_summe auf block_summe + r_summe / gruppe
+    setze block_zaehler auf block_zaehler + 1
+    wenn block_zaehler == 50:
+        setze mittel auf block_summe / 50
+        wenn erster_block < 0:
+            setze erster_block auf mittel
+        setze letzter_block auf mittel
+        zeige "Reward-Block (50 Iter): " + text(mittel)
+        setze block_summe auf 0
+        setze block_zaehler auf 0
+    # Gruppen-Baseline: alle gleich -> ueberspringen (std = 0)
+    setze mean auf r_summe / gruppe
+    wenn mean > 0 und mean < 1:
+        setze var auf 0
+        setze g auf 0
+        solange g < gruppe:
+            setze d auf rewards[g] - mean
+            setze var auf var + d * d
+            setze g auf g + 1
+        setze std auf wurzel(var / gruppe)
+        # loss = Sum A_i * CE_i — Sequenz = Prompt + Sample (feste Laenge 6)
+        setze loss auf nichts
+        setze g auf 0
+        solange g < gruppe:
+            setze adv auf (rewards[g] - mean) / std
+            setze seq auf [pids[0], pids[1], pids[2], pids[3], pids[4], sample_ids[g]]
+            setze eingabe auf []
+            setze ziele auf []
+            setze k auf 0
+            solange k < 5:
+                eingabe.hinzufügen(seq[k])
+                ziele.hinzufügen(seq[k + 1])
+                setze k auf k + 1
+            setze ce auf kreuzentropie(modell(tensor_aus_liste(eingabe)), tensor_aus_liste(ziele))
+            wenn loss == nichts:
+                setze loss auf ce * adv
+            sonst:
+                setze loss auf loss + ce * adv
+            setze g auf g + 1
+        loss.rueckwaerts()
+        opt.schritt()
+    setze it auf it + 1
+
+setze acc_nach auf accuracy()
+zeige "Accuracy nach GRPO: " + text(acc_nach) + "/25"
+
+# --- 7. Gates ---
+wenn letzter_block > erster_block:
+    zeige "REWARD-GATE PASS (Block-Mittel steigt: " + text(erster_block) + " -> " + text(letzter_block) + ")"
+sonst:
+    zeige "REWARD-GATE FAIL (" + text(erster_block) + " -> " + text(letzter_block) + ")"
+wenn acc_nach > acc_vor:
+    zeige "ACCURACY-INFO: gestiegen (protokolliert, kein Gate)"
+sonst:
+    zeige "ACCURACY-INFO: nicht gestiegen (protokolliert, kein Gate)"
+zeige "GRPO-GATE ENDE"
