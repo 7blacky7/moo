@@ -236,7 +236,7 @@ MooValue moo_nn_schicht_dicht(MooValue ein, MooValue aus, MooValue aktivierung, 
 MooValue moo_nn_schicht_dropout(MooValue rate);
 MooValue moo_nn_schicht_layernorm(MooValue dim);
 MooValue moo_nn_schicht_embedding(MooValue vokabular, MooValue dim, MooValue seed);
-MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed);      // G1
+MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed, MooValue kv_koepfe);      // G1 + KI-M2a (GQA)
 MooValue moo_nn_schicht_position(MooValue max_laenge, MooValue dim, MooValue art, MooValue seed);  // G1
 MooValue moo_nn_schicht_moe(MooValue dim, MooValue versteckt, MooValue n_experten, MooValue k, MooValue seed);  // KI-M1
 MooValue moo_nn_moe_balance(MooValue netz);   // KI-M1: Balance-Verlust Gl. 12 (nach vorwaerts)

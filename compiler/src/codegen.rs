@@ -2633,8 +2633,11 @@ impl<'ctx> CodeGen<'ctx> {
                         let koepfe = self.compile_expr(&args[1])?;
                         let seed = if args.len() > 2 { self.compile_expr(&args[2])? }
                                    else { self.call_rt(self.rt.moo_none, &[], "nn_att_seed")? };
+                        let kv = if args.len() > 3 { self.compile_expr(&args[3])? }
+                                 else { self.call_rt(self.rt.moo_none, &[], "nn_att_kv")? };
                         return self.call_rt(self.rt.moo_nn_schicht_attention,
-                            &[dim.into(), koepfe.into(), seed.into()], "nn_attention");
+                            &[dim.into(), koepfe.into(), seed.into(), kv.into()],
+                            "nn_attention");
                     }
                     "schicht_position" | "layer_position" => {
                         let max = self.compile_expr(&args[0])?;

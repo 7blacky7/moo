@@ -717,7 +717,7 @@ int main(void) {
     {
         /* a) Attention: Shape + CAUSAL-Beweis + Grad-Fluss */
         MooValue at = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
-                                               moo_number(7.0));
+                                               moo_number(7.0), moo_none());
         CHECK(at.tag == MOO_DICT, "schicht_attention baut Dict");
         float xv[32];
         for (int i = 0; i < 32; i++) xv[i] = (float)(i % 5) * 0.1f;
@@ -809,7 +809,7 @@ int main(void) {
         moo_list_append(schichten, moo_nn_schicht_position(moo_number(4.0),
                         moo_number(8.0), moo_none(), moo_number(11.0)));
         moo_list_append(schichten, moo_nn_schicht_attention(moo_number(8.0),
-                        moo_number(2.0), moo_number(12.0)));
+                        moo_number(2.0), moo_number(12.0), moo_none()));
         moo_list_append(schichten, mk_dicht(8, 3, "keine", 13));
         MooValue netz = moo_nn_ki_netz(schichten);
         float xv[32];

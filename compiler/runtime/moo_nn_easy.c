@@ -607,8 +607,10 @@ static bool aw_embedding(Buf* b, MooValue s) {
     return true;
 }
 static bool aw_attention(Buf* b, MooValue s) {
-    buf_add(b, "{\"typ\":\"attention\",\"dim\":%d,\"koepfe\":%d}",
-            (int32_t)enum_(s, "dim", 0), (int32_t)enum_(s, "koepfe", 1));
+    /* KI-M2a: kv_koepfe mitschreiben; Fallback = koepfe (alte Dicts). */
+    int32_t nk = (int32_t)enum_(s, "koepfe", 1);
+    buf_add(b, "{\"typ\":\"attention\",\"dim\":%d,\"koepfe\":%d,\"kv_koepfe\":%d}",
+            (int32_t)enum_(s, "dim", 0), nk, (int32_t)enum_(s, "kv_koepfe", nk));
     return true;
 }
 static bool aw_moe(Buf* b, MooValue s) {
@@ -648,9 +650,12 @@ static MooValue rb_embedding(MooValue e) {
                                     moo_none());
 }
 static MooValue rb_attention(MooValue e) {
+    /* KI-M2a Abwaertskompat: arch-JSON ohne kv_koepfe => Default koepfe. */
+    double nk = enum_(e, "koepfe", 1);
     return moo_nn_schicht_attention(moo_number(enum_(e, "dim", 0)),
-                                    moo_number(enum_(e, "koepfe", 1)),
-                                    moo_none());
+                                    moo_number(nk),
+                                    moo_none(),
+                                    moo_number(enum_(e, "kv_koepfe", nk)));
 }
 static MooValue rb_moe(MooValue e) {
     return moo_nn_schicht_moe(moo_number(enum_(e, "dim", 0)),

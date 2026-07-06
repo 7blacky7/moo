@@ -275,12 +275,18 @@ MooValue moo_nn_schicht_embedding(MooValue vokabular, MooValue dim, MooValue see
     return d;
 }
 
-/* schicht_attention(dim, koepfe, seed?) — Multi-Head Self-Attention mit
- * Causal-Maske (G1). DESIGN: pro Kopf EIGENE Projektionen wq_h/wk_h/wv_h
- * [dim, dh] statt einer grossen Matrix + Spalten-Slice — mathematisch
- * aequivalent, aber komplett aus B2-geprueften Ops komponierbar ("zeilen"
- * hat kein backward). wo [dim, dim] mischt die Koepfe. Bias-frei. */
-MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed) {
+/* schicht_attention(dim, koepfe, seed?, kv_koepfe?) — Multi-Head Self-
+ * Attention mit Causal-Maske (G1). DESIGN: pro Kopf EIGENE Projektionen
+ * wq_h/wk_h/wv_h [dim, dh] statt einer grossen Matrix + Spalten-Slice —
+ * mathematisch aequivalent, aber komplett aus B2-geprueften Ops
+ * komponierbar ("zeilen" hat kein backward). wo [dim, dim] mischt die
+ * Koepfe. Bias-frei.
+ * KI-M2a (GQA/MQA): kv_koepfe (Default = koepfe) teilt K/V-Projektionen —
+ * es existieren nur wk{g}/wv{g} fuer g < kv_koepfe, Kopf h nutzt Gruppe
+ * g = h / (koepfe/kv_koepfe). Init-Seeds bleiben s+3h/(+1)/(+2) wie MHA
+ * (Luecken bei h >= kv sind ok) => kv==koepfe ist BIT-IDENTISCH zu MHA. */
+MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed,
+                                  MooValue kv_koepfe) {
     int32_t nd = ganze_zahl(dim, "schicht_attention (Dimension)", 1);
     if (nd < 0) return moo_none();
     int32_t nk = ganze_zahl(koepfe, "schicht_attention (Koepfe)", 1);
@@ -290,6 +296,17 @@ MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed) 
                             "Koepfe teilbar sein (und hoechstens 16 Koepfe)"));
         return moo_none();
     }
+    int32_t kv = nk;
+    if (kv_koepfe.tag != MOO_NONE) {
+        kv = ganze_zahl(kv_koepfe, "schicht_attention (KV-Koepfe)", 1);
+        if (kv < 0) return moo_none();
+        if (kv > nk || nk % kv != 0) {
+            moo_throw(moo_error("schicht_attention: die Koepfe muessen durch "
+                                "die KV-Koepfe teilbar sein (GQA: kv_koepfe "
+                                "<= koepfe)"));
+            return moo_none();
+        }
+    }
     int32_t dh = nd / nk;
     uint64_t s = (seed.tag == MOO_NUMBER) ? (uint64_t)(int64_t)MV_NUM(seed) : 42ULL;
     double limit = sqrt(6.0 / ((double)nd + (double)dh));
@@ -298,14 +315,17 @@ MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed) 
     dset(d, "__nn", moo_string_new("attention"));
     dset(d, "dim", moo_number((double)nd));
     dset(d, "koepfe", moo_number((double)nk));
+    dset(d, "kv_koepfe", moo_number((double)kv));
     char name[24];
     for (int32_t h = 0; h < nk; h++) {
         snprintf(name, sizeof(name), "wq%d", h);
         dset(d, name, gewicht_init(nd, dh, limit, s + (uint64_t)(3 * h)));
-        snprintf(name, sizeof(name), "wk%d", h);
-        dset(d, name, gewicht_init(nd, dh, limit, s + (uint64_t)(3 * h) + 1));
-        snprintf(name, sizeof(name), "wv%d", h);
-        dset(d, name, gewicht_init(nd, dh, limit, s + (uint64_t)(3 * h) + 2));
+        if (h < kv) {
+            snprintf(name, sizeof(name), "wk%d", h);
+            dset(d, name, gewicht_init(nd, dh, limit, s + (uint64_t)(3 * h) + 1));
+            snprintf(name, sizeof(name), "wv%d", h);
+            dset(d, name, gewicht_init(nd, dh, limit, s + (uint64_t)(3 * h) + 2));
+        }
     }
     dset(d, "wo", gewicht_init(nd, nd, sqrt(6.0 / (2.0 * (double)nd)),
                                s + (uint64_t)(3 * nk)));
@@ -584,6 +604,14 @@ static MooValue fw_attention(MooValue schicht, MooValue x) {
     }
     int32_t nd = (int32_t)dnum(schicht, "dim", 0.0);
     int32_t nk = (int32_t)dnum(schicht, "koepfe", 1.0);
+    /* KI-M2a: alte Dicts ohne kv_koepfe => kv = koepfe (MHA). */
+    int32_t kv = (int32_t)dnum(schicht, "kv_koepfe", (double)nk);
+    if (kv < 1 || kv > nk || nk % kv != 0) {
+        moo_throw(moo_error("attention: kaputte Schicht (kv_koepfe passt "
+                            "nicht zu koepfe)"));
+        return moo_none();
+    }
+    int32_t rep = nk / kv;
     if (xt->shape[1] != nd) {
         char msg[160];
         snprintf(msg, sizeof(msg), "attention: Eingabe hat Dimension %d, die "
@@ -603,11 +631,12 @@ static MooValue fw_attention(MooValue schicht, MooValue x) {
     char name[24];
     bool fehler = false;
     for (int32_t h = 0; h < nk && !fehler; h++) {
+        int32_t g = h / rep;   /* KV-Gruppe (GQA); rep==1 => g==h (MHA) */
         snprintf(name, sizeof(name), "wq%d", h);
         MooValue wq = dget(schicht, name);
-        snprintf(name, sizeof(name), "wk%d", h);
+        snprintf(name, sizeof(name), "wk%d", g);
         MooValue wk = dget(schicht, name);
-        snprintf(name, sizeof(name), "wv%d", h);
+        snprintf(name, sizeof(name), "wv%d", g);
         MooValue wv = dget(schicht, name);
         MooValue q = moo_tensor_matmul(x, wq);
         MooValue k = moo_tensor_matmul(x, wk);
@@ -937,17 +966,22 @@ static void params_embedding(MooValue schicht, MooValue liste) {
     moo_list_append(liste, dget(schicht, "w"));
 }
 static void params_attention(MooValue schicht, MooValue liste) {
-    /* DETERMINISTISCHE Reihenfolge (Vertrag fuer .mook): pro Kopf
-     * wq,wk,wv — dann wo. */
+    /* DETERMINISTISCHE Reihenfolge (Vertrag fuer .mook, KI-M2a): fuer
+     * h in 0..koepfe immer wq{h}; wenn h < kv_koepfe zusaetzlich wk{h},
+     * wv{h}; danach wo. Degeneriert bei kv==koepfe EXAKT zur alten
+     * MHA-Reihenfolge wq0,wk0,wv0,...,wo. */
     int32_t nk = (int32_t)dnum(schicht, "koepfe", 1.0);
+    int32_t kv = (int32_t)dnum(schicht, "kv_koepfe", (double)nk);
     char name[24];
     for (int32_t h = 0; h < nk; h++) {
         snprintf(name, sizeof(name), "wq%d", h);
         moo_list_append(liste, dget(schicht, name));
-        snprintf(name, sizeof(name), "wk%d", h);
-        moo_list_append(liste, dget(schicht, name));
-        snprintf(name, sizeof(name), "wv%d", h);
-        moo_list_append(liste, dget(schicht, name));
+        if (h < kv) {
+            snprintf(name, sizeof(name), "wk%d", h);
+            moo_list_append(liste, dget(schicht, name));
+            snprintf(name, sizeof(name), "wv%d", h);
+            moo_list_append(liste, dget(schicht, name));
+        }
     }
     moo_list_append(liste, dget(schicht, "wo"));
 }
