@@ -1,0 +1,250 @@
+# ============================================================
+# Reasoning-Modus direkt/denken + thinking_budget (KI-M3)
+# ------------------------------------------------------------
+# KEIN Agentensystem, KEIN neuer Layer: Mode-TOKENS im Char-LM-
+# Vokabular + Trainingsdaten-Schema; thinking_budget ist ein
+# reiner SAMPLING-Parameter (max. Denk-Zeichen, dann wird das
+# Antwort-Token '}' ERZWUNGEN). Paper-Basis: Qwen3 (budget),
+# Phi-4-reasoning (<think>-Token-Bloecke), GLM-4.5 (hybrid).
+#
+# Toy-Schema (Addition a+b, a,b in 0..4):
+#   denken: "?a+b{" + "."*b + "}" + (a+b) + ";"
+#   direkt: "!a+b}" + (a+b) + ";"
+# '?'/'!' = Modus-Praefixe, '{' = Denk-Start, '}' = Antwort-Token,
+# '.' = Denk-Schritt, ';' = Ende. Alles deterministisch (Seeds fix,
+# Generierung greedy ohne zufall()).
+# Kompilieren: moo-compiler compile ki_denken.moo -o ki_denken
+# ============================================================
+setze dim auf 32
+setze block auf 16
+setze koepfe auf 2
+setze schritte auf 6000
+setze fenster auf 1500
+
+# --- 1. Deterministischer Toy-Korpus (25 Aufgaben x 2 Modi) ---
+setze korpus auf ""
+setze a auf 0
+solange a < 5:
+    setze b auf 0
+    solange b < 5:
+        setze denk auf ""
+        setze k auf 0
+        solange k < b:
+            setze denk auf denk + "."
+            setze k auf k + 1
+        setze korpus auf korpus + "?" + text(a) + "+" + text(b) + "{" + denk + "}" + text(a + b) + ";"
+        setze korpus auf korpus + "!" + text(a) + "+" + text(b) + "}" + text(a + b) + ";"
+        setze b auf b + 1
+    setze a auf a + 1
+setze tok auf text_tokenizer(korpus)
+setze ids auf tok["ids"]
+setze vokab auf tok["vokab"]
+setze id_zu_zeichen auf tok["id_zu_zeichen"]
+setze n auf ids.groesse()
+zeige "Korpus: " + text(n) + " Zeichen, Vokabular: " + text(vokab)
+
+funktion id_von(z):
+    setze i auf 0
+    solange i < länge(id_zu_zeichen):
+        wenn id_zu_zeichen[i] == z:
+            gib_zurück i
+        setze i auf i + 1
+    gib_zurück 0
+
+# --- 2. Modell (1 Transformer-Block, Seeds fix) ---
+setze emb  auf schicht_embedding(vokab, dim, 1)
+setze pos  auf schicht_position(block, dim, "gelernt", 2)
+setze ln1a auf schicht_layernorm(dim)
+setze att1 auf schicht_attention(dim, koepfe, 3)
+setze ln1b auf schicht_layernorm(dim)
+setze ff1a auf schicht_dicht(dim, 64, "gelu", 4)
+setze ff1b auf schicht_dicht(64, dim, "keine", 5)
+setze lnf  auf schicht_layernorm(dim)
+setze kopf auf schicht_dicht(dim, vokab, "keine", 6)
+setze alle auf [emb, pos, ln1a, att1, ln1b, ff1a, ff1b, lnf, kopf]
+
+funktion modell(ids_block):
+    setze x auf vorwaerts([emb], ids_block)
+    setze x auf vorwaerts([pos], x)
+    setze x auf x + vorwaerts([ln1a, att1], x)
+    setze x auf x + vorwaerts([ln1b, ff1a, ff1b], x)
+    gib_zurück vorwaerts([lnf, kopf], x)
+
+funktion argmax(liste):
+    setze best auf 0
+    setze i auf 1
+    solange i < länge(liste):
+        wenn liste[i] > liste[best]:
+            setze best auf i
+        setze i auf i + 1
+    gib_zurück best
+
+# --- 3. Generierung mit thinking_budget (greedy, deterministisch) ---
+# budget = max. Zeichen INNERHALB des Denk-Blocks; ist es erreicht,
+# wird das Antwort-Token '}' ERZWUNGEN (Token-Forcierung).
+funktion generiere_mit_budget(prompt_ids, budget, max_zeichen):
+    setze kontext auf []
+    für id in prompt_ids:
+        kontext.hinzufügen(id)
+    setze erzeugt auf ""
+    setze in_denk auf 0
+    setze denk_zaehler auf 0
+    setze s auf 0
+    solange s < max_zeichen:
+        setze start auf 0
+        wenn länge(kontext) > block:
+            setze start auf länge(kontext) - block
+        setze fenster_ids auf []
+        setze i auf start
+        solange i < länge(kontext):
+            fenster_ids.hinzufügen(kontext[i])
+            setze i auf i + 1
+        setze eingabe auf tensor_aus_liste(fenster_ids)
+        setze logits auf modell(eingabe)
+        setze seq auf länge(fenster_ids)
+        setze id auf argmax(logits.zeilen(seq - 1, seq).zu_liste())
+        setze z auf id_zu_zeichen[id]
+        # Budget-Durchsetzung: im Denk-Block und Budget erschoepft
+        # -> Antwort-Token erzwingen.
+        wenn in_denk == 1 und denk_zaehler >= budget und z != "}":
+            setze id auf id_von("}")
+            setze z auf "}"
+        wenn in_denk == 1 und z != "}":
+            setze denk_zaehler auf denk_zaehler + 1
+        wenn z == "{":
+            setze in_denk auf 1
+            setze denk_zaehler auf 0
+        wenn z == "}":
+            setze in_denk auf 0
+        kontext.hinzufügen(id)
+        setze erzeugt auf erzeugt + z
+        wenn z == ";":
+            gib_zurück erzeugt
+        setze s auf s + 1
+    gib_zurück erzeugt
+
+funktion prompt_ids(t):
+    setze l auf []
+    setze i auf 0
+    solange i < länge(t):
+        l.hinzufügen(id_von(t[i]))
+        setze i auf i + 1
+    gib_zurück l
+
+# --- 4. Training (LM-Muster: next-char, SGD+Momentum, ADAM-B1-Lehre) ---
+setze params auf parameter(alle)
+setze opt auf optimierer_sgd(params, 0.05, 0.9)
+# Treppen-Lernrate (vereinfachtes LM-Muster): alle 1500 Schritte halbieren
+# — stabilisiert die Kurve deterministisch (konstante 0.05 oszillierte).
+# ACHTUNG: '^' ist in moo XOR, keine Potenz — deshalb explizite Stufen.
+setze checkpoints auf []
+setze summe auf 0
+setze s auf 0
+solange s < schritte:
+    wenn s == 1500:
+        setze opt["rate"] auf 0.025
+    wenn s == 3000:
+        setze opt["rate"] auf 0.0125
+    wenn s == 4500:
+        setze opt["rate"] auf 0.00625
+    setze p auf s * 7
+    setze p auf p - boden(p / (n - block - 1)) * (n - block - 1)
+    setze verlust auf kreuzentropie(modell(ids.zeilen(p, p + block)), ids.zeilen(p + 1, p + block + 1))
+    setze summe auf summe + verlust.zu_liste()[0]
+    verlust.rueckwaerts()
+    opt.schritt()
+    setze s auf s + 1
+    wenn s - boden(s / fenster) * fenster == 0:
+        setze mittel auf summe / fenster
+        checkpoints.hinzufügen(mittel)
+        zeige "Checkpoint " + text(länge(checkpoints)) + " (Schritt " + text(s) + "): mittlerer Verlust " + text(mittel)
+        setze summe auf 0
+
+# --- 5. Gates ---
+setze kurve_ok auf wahr
+setze c auf 1
+solange c < länge(checkpoints):
+    wenn checkpoints[c] >= checkpoints[c - 1]:
+        setze kurve_ok auf falsch
+    setze c auf c + 1
+wenn kurve_ok:
+    zeige "KURVEN-GATE PASS (Verlust sinkt monoton ueber alle Checkpoints)"
+sonst:
+    zeige "KURVEN-GATE FAIL"
+
+autograd_aus()
+
+# Modus-Struktur: '?' erzeugt Denk-Block, '!' antwortet direkt
+setze gd auf generiere_mit_budget(prompt_ids("?3+2"), 99, 20)
+setze gs auf generiere_mit_budget(prompt_ids("!3+2"), 99, 20)
+zeige "denken '?3+2' -> " + gd
+zeige "direkt '!3+2' -> " + gs
+setze hat_denk auf falsch
+setze i auf 0
+solange i < länge(gd):
+    wenn gd[i] == "{":
+        setze hat_denk auf wahr
+    setze i auf i + 1
+setze direkt_ohne auf wahr
+setze i auf 0
+solange i < länge(gs):
+    wenn gs[i] == "{":
+        setze direkt_ohne auf falsch
+    setze i auf i + 1
+wenn hat_denk und direkt_ohne:
+    zeige "MODUS-GATE PASS ('?' denkt, '!' antwortet direkt)"
+sonst:
+    zeige "MODUS-GATE FAIL"
+
+# Budget-Mechanik: budget=2 => hoechstens 2 Denk-Zeichen, dann
+# erzwungenes '}' + Antwort + ';'
+setze gb auf generiere_mit_budget(prompt_ids("?4+4"), 2, 20)
+zeige "budget=2 '?4+4' -> " + gb
+setze denk_n auf 0
+setze in_d auf 0
+setze endet_ok auf falsch
+setze i auf 0
+solange i < länge(gb):
+    wenn gb[i] == "}":
+        setze in_d auf 0
+    wenn in_d == 1:
+        setze denk_n auf denk_n + 1
+    wenn gb[i] == "{":
+        setze in_d auf 1
+    wenn gb[i] == ";":
+        setze endet_ok auf wahr
+    setze i auf i + 1
+wenn denk_n <= 2 und endet_ok:
+    zeige "BUDGET-GATE PASS (max. 2 Denk-Zeichen, Antwort erzwungen, Ende erreicht)"
+sonst:
+    zeige "BUDGET-GATE FAIL (" + text(denk_n) + " Denk-Zeichen)"
+
+# Accuracy nur PROTOKOLLIERT (Mechanik-Ziel, kein hartes Gate)
+setze richtig auf 0
+setze gesamt auf 0
+setze a auf 0
+solange a < 5:
+    setze b auf 0
+    solange b < 5:
+        setze gm auf generiere_mit_budget(prompt_ids("?" + text(a) + "+" + text(b)), 99, 20)
+        setze gx auf generiere_mit_budget(prompt_ids("!" + text(a) + "+" + text(b)), 99, 20)
+        setze ziel auf text(a + b)
+        setze i auf 0
+        solange i < länge(gm) - 1:
+            wenn gm[i] == "}" und gm[i + 1] == ziel:
+                setze richtig auf richtig + 1
+                setze i auf länge(gm)
+            sonst:
+                setze i auf i + 1
+        setze i auf 0
+        solange i < länge(gx) - 1:
+            wenn gx[i] == "}" und gx[i + 1] == ziel:
+                setze richtig auf richtig + 1
+                setze i auf länge(gx)
+            sonst:
+                setze i auf i + 1
+        setze gesamt auf gesamt + 2
+        setze b auf b + 1
+    setze a auf a + 1
+zeige "Accuracy (protokolliert): " + text(richtig) + "/" + text(gesamt)
+zeige "DENKEN-GATE ENDE"
