@@ -607,10 +607,16 @@ static bool aw_embedding(Buf* b, MooValue s) {
     return true;
 }
 static bool aw_attention(Buf* b, MooValue s) {
-    /* KI-M2a: kv_koepfe mitschreiben; Fallback = koepfe (alte Dicts). */
+    /* KI-M2a: kv_koepfe mitschreiben; Fallback = koepfe (alte Dicts).
+     * KI-M2b: maske/fenster mitschreiben; Fallback causal/0 (alte Dicts). */
     int32_t nk = (int32_t)enum_(s, "koepfe", 1);
-    buf_add(b, "{\"typ\":\"attention\",\"dim\":%d,\"koepfe\":%d,\"kv_koepfe\":%d}",
-            (int32_t)enum_(s, "dim", 0), nk, (int32_t)enum_(s, "kv_koepfe", nk));
+    MooValue m = eget(s, "maske");
+    const char* mart = (m.tag == MOO_STRING) ? MV_STR(m)->chars : "causal";
+    buf_add(b, "{\"typ\":\"attention\",\"dim\":%d,\"koepfe\":%d,"
+            "\"kv_koepfe\":%d,\"maske\":\"%s\",\"fenster\":%d}",
+            (int32_t)enum_(s, "dim", 0), nk, (int32_t)enum_(s, "kv_koepfe", nk),
+            mart, (int32_t)enum_(s, "fenster", 0));
+    moo_release(m);
     return true;
 }
 static bool aw_moe(Buf* b, MooValue s) {
@@ -650,12 +656,21 @@ static MooValue rb_embedding(MooValue e) {
                                     moo_none());
 }
 static MooValue rb_attention(MooValue e) {
-    /* KI-M2a Abwaertskompat: arch-JSON ohne kv_koepfe => Default koepfe. */
+    /* KI-M2a Abwaertskompat: arch-JSON ohne kv_koepfe => Default koepfe.
+     * KI-M2b: ohne maske => causal (fenster nur bei sliding uebergeben). */
     double nk = enum_(e, "koepfe", 1);
-    return moo_nn_schicht_attention(moo_number(enum_(e, "dim", 0)),
-                                    moo_number(nk),
-                                    moo_none(),
-                                    moo_number(enum_(e, "kv_koepfe", nk)));
+    MooValue mart = eget(e, "maske");
+    bool sliding = (mart.tag == MOO_STRING &&
+                    strcmp(MV_STR(mart)->chars, "sliding") == 0);
+    MooValue fw = sliding ? moo_number(enum_(e, "fenster", 1)) : moo_none();
+    MooValue s = moo_nn_schicht_attention(moo_number(enum_(e, "dim", 0)),
+                                          moo_number(nk),
+                                          moo_none(),
+                                          moo_number(enum_(e, "kv_koepfe", nk)),
+                                          mart,
+                                          fw);
+    moo_release(mart);
+    return s;
 }
 static MooValue rb_moe(MooValue e) {
     return moo_nn_schicht_moe(moo_number(enum_(e, "dim", 0)),

@@ -2635,9 +2635,15 @@ impl<'ctx> CodeGen<'ctx> {
                                    else { self.call_rt(self.rt.moo_none, &[], "nn_att_seed")? };
                         let kv = if args.len() > 3 { self.compile_expr(&args[3])? }
                                  else { self.call_rt(self.rt.moo_none, &[], "nn_att_kv")? };
-                        return self.call_rt(self.rt.moo_nn_schicht_attention,
-                            &[dim.into(), koepfe.into(), seed.into(), kv.into()],
-                            "nn_attention");
+                        let maske = if args.len() > 4 { self.compile_expr(&args[4])? }
+                                    else { self.call_rt(self.rt.moo_none, &[], "nn_att_maske")? };
+                        let fenster = if args.len() > 5 { self.compile_expr(&args[5])? }
+                                      else { self.call_rt(self.rt.moo_none, &[], "nn_att_fenster")? };
+                        let r = self.call_rt(self.rt.moo_nn_schicht_attention,
+                            &[dim.into(), koepfe.into(), seed.into(), kv.into(),
+                              maske.into(), fenster.into()], "nn_attention")?;
+                        self.call_rt_void(self.rt.moo_release, &[maske.into()], "rel_att_maske")?;
+                        return Ok(r);
                     }
                     "schicht_position" | "layer_position" => {
                         let max = self.compile_expr(&args[0])?;

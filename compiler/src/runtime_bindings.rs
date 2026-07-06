@@ -964,7 +964,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_nn_schicht_dropout: decl_mv_mv!("moo_nn_schicht_dropout", mv1),
             moo_nn_schicht_layernorm: decl_mv_mv!("moo_nn_schicht_layernorm", mv1),
             moo_nn_schicht_embedding: decl_mv_mv!("moo_nn_schicht_embedding", mv3),
-            moo_nn_schicht_attention: decl_mv_mv!("moo_nn_schicht_attention", mv4),
+            moo_nn_schicht_attention: decl_mv_mv!("moo_nn_schicht_attention", &[mv, mv, mv, mv, mv, mv]),
             moo_nn_schicht_position: decl_mv_mv!("moo_nn_schicht_position", &[mv, mv, mv, mv]),
             moo_nn_schicht_moe: decl_mv_mv!("moo_nn_schicht_moe", mv5),
             moo_nn_moe_balance: decl_mv_mv!("moo_nn_moe_balance", mv1),

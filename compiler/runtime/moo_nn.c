@@ -284,9 +284,14 @@ MooValue moo_nn_schicht_embedding(MooValue vokabular, MooValue dim, MooValue see
  * KI-M2a (GQA/MQA): kv_koepfe (Default = koepfe) teilt K/V-Projektionen —
  * es existieren nur wk{g}/wv{g} fuer g < kv_koepfe, Kopf h nutzt Gruppe
  * g = h / (koepfe/kv_koepfe). Init-Seeds bleiben s+3h/(+1)/(+2) wie MHA
- * (Luecken bei h >= kv sind ok) => kv==koepfe ist BIT-IDENTISCH zu MHA. */
+ * (Luecken bei h >= kv sind ok) => kv==koepfe ist BIT-IDENTISCH zu MHA.
+ * KI-M2b (Sliding): maske "causal" (Default) | "sliding" mit fenster W —
+ * Sliding ist eine ZWEITE grad-lose Masken-Variante im Layer; das 5:1-
+ * Interleaving (MiMo/Gemma 3) ist NETZBAU (Layer-Liste mischt causal- und
+ * sliding-Layer), kein Layer-Feature. Sink-Bias bewusst nicht im Scope. */
 MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed,
-                                  MooValue kv_koepfe) {
+                                  MooValue kv_koepfe, MooValue maske,
+                                  MooValue fenster) {
     int32_t nd = ganze_zahl(dim, "schicht_attention (Dimension)", 1);
     if (nd < 0) return moo_none();
     int32_t nk = ganze_zahl(koepfe, "schicht_attention (Koepfe)", 1);
@@ -308,6 +313,29 @@ MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed,
         }
     }
     int32_t dh = nd / nk;
+    /* KI-M2b: Masken-Art + Fenster validieren. */
+    const char* mart = "causal";
+    if (maske.tag == MOO_STRING) mart = MV_STR(maske)->chars;
+    else if (maske.tag != MOO_NONE) {
+        moo_throw(moo_error("schicht_attention: Maske muss ein Text sein — "
+                            "\"causal\" oder \"sliding\""));
+        return moo_none();
+    }
+    bool sliding = (strcmp(mart, "sliding") == 0);
+    if (!sliding && strcmp(mart, "causal") != 0) {
+        moo_throw(moo_error("schicht_attention: Maske kann \"causal\" oder "
+                            "\"sliding\" sein"));
+        return moo_none();
+    }
+    int32_t fw = 0;
+    if (sliding) {
+        fw = ganze_zahl(fenster, "schicht_attention (Fenster)", 1);
+        if (fw < 0) return moo_none();
+    } else if (fenster.tag != MOO_NONE) {
+        moo_throw(moo_error("schicht_attention: Fenster gilt nur fuer die "
+                            "\"sliding\"-Maske"));
+        return moo_none();
+    }
     uint64_t s = (seed.tag == MOO_NUMBER) ? (uint64_t)(int64_t)MV_NUM(seed) : 42ULL;
     double limit = sqrt(6.0 / ((double)nd + (double)dh));
 
@@ -316,6 +344,8 @@ MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed,
     dset(d, "dim", moo_number((double)nd));
     dset(d, "koepfe", moo_number((double)nk));
     dset(d, "kv_koepfe", moo_number((double)kv));
+    dset(d, "maske", moo_string_new(sliding ? "sliding" : "causal"));
+    if (sliding) dset(d, "fenster", moo_number((double)fw));
     char name[24];
     for (int32_t h = 0; h < nk; h++) {
         snprintf(name, sizeof(name), "wq%d", h);
@@ -592,6 +622,21 @@ static MooValue causal_maske(int32_t seq) {
     return v;
 }
 
+/* Sliding-Window-Maske [seq, seq] (KI-M2b, MiMo-/Mistral-Muster): kausal
+ * UND hoechstens W Tokens zurueck — 0 wenn i-W < j <= i, sonst -1e9.
+ * Grad-lose Konstante wie causal_maske. Bei W >= seq identisch zu causal. */
+static MooValue sliding_maske(int32_t seq, int32_t fenster) {
+    int32_t shape[2] = { seq, seq };
+    MooTensor* m = moo_tensor_raw(2, shape);
+    if (!m) return moo_none();
+    for (int32_t i = 0; i < seq; i++)
+        for (int32_t j = 0; j < seq; j++)
+            m->data[(int64_t)i * seq + j] =
+                (j > i || i - j >= fenster) ? -1e9f : 0.0f;
+    MooValue v; v.tag = MOO_TENSOR; moo_val_set_ptr(&v, m);
+    return v;
+}
+
 /* Multi-Head Self-Attention, komplett aus Registry-Ops komponiert (jeder
  * Schritt landet auf dem Tape, backward laeuft ueber bw_matmul/transpose/
  * muls/add/softmax/concat). x [seq, dim] -> [seq, dim]. */
@@ -621,7 +666,14 @@ static MooValue fw_attention(MooValue schicht, MooValue x) {
     }
     int32_t seq = xt->shape[0];
     int32_t dh = nd / nk;
-    MooValue maske = causal_maske(seq);
+    /* KI-M2b: Masken-Auswahl — Dicts ohne "maske"-Key (vor M2b) sind causal. */
+    MooValue mart = dget(schicht, "maske");
+    bool sliding = (mart.tag == MOO_STRING &&
+                    strcmp(MV_STR(mart)->chars, "sliding") == 0);
+    moo_release(mart);
+    MooValue maske = sliding
+        ? sliding_maske(seq, (int32_t)dnum(schicht, "fenster", 1.0))
+        : causal_maske(seq);
     if (maske.tag != MOO_TENSOR) return moo_none();
     MooValue skal = moo_number(1.0 / sqrt((double)dh));
 
