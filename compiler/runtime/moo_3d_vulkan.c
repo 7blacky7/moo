@@ -1094,6 +1094,15 @@ static void vk_set_fog_density(void* raw, float density) {
     ctx->ubo_data.fogDist = 1.0f / (density > 0.001f ? density : 0.001f);
 }
 
+static void vk_set_fog_color(void* raw, float r, float g, float b) {
+    VulkanContext* ctx = (VulkanContext*)raw;
+    if (!ctx) return;
+    ctx->ubo_data.fogColor[0] = r;
+    ctx->ubo_data.fogColor[1] = g;
+    ctx->ubo_data.fogColor[2] = b;
+    /* fogColor[3] transportiert ambient (vk_set_ambient) — nicht anfassen. */
+}
+
 static void vk_set_light_dir(void* raw, float x, float y, float z) {
     VulkanContext* ctx = (VulkanContext*)raw;
     ctx->ubo_data.lightDir[0] = x;
@@ -1446,6 +1455,7 @@ Moo3DBackend moo_backend_vulkan = {
     .mouse_button = vk_mouse_button,
     .mouse_wheel = vk_mouse_wheel,
     .set_fog_density = vk_set_fog_density,
+    .set_fog_color = vk_set_fog_color,
     .set_light_dir = vk_set_light_dir,
     .set_ambient = vk_set_ambient,
     .chunk_create = vk_chunk_create_fn,

@@ -40,6 +40,7 @@ typedef struct {
     float (*mouse_wheel)(void* ctx);           // accumulated scroll-y, consume-on-read
     // Fog + Licht
     void  (*set_fog_density)(void* ctx, float density);
+    void  (*set_fog_color)(void* ctx, float r, float g, float b);
     void  (*set_light_dir)(void* ctx, float x, float y, float z);
     void  (*set_ambient)(void* ctx, float level);
     // Chunks

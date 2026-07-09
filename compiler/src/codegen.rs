@@ -3617,6 +3617,27 @@ impl<'ctx> CodeGen<'ctx> {
                         let path = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_3d_screenshot_bmp, &[win.into(), path.into()], "shot3d");
                     }
+                    // Fog + Licht (DE + EN). Args: (fenster, ...)
+                    "raum_licht" | "space_light" | "3d_licht" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_light, &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "3d_licht")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_umgebungslicht" | "space_ambient" | "3d_umgebungslicht" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_ambient, &[a[0].into(), a[1].into()], "3d_ambient")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_nebel" | "space_fog" | "3d_nebel" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_fog, &[a[0].into(), a[1].into()], "3d_nebel")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_nebel_farbe" | "space_fog_color" | "3d_nebel_farbe" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_fog_color, &[a[0].into(), a[1].into()], "3d_nebelfarbe")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
 
                     // ============================================================
                     // Einheitlicher Test-API-Layer (Plan-008 A2, tag-dispatch

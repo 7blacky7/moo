@@ -657,6 +657,14 @@ static void gl33_set_fog_density(void* vctx, float density) {
     gl33_upload_float(ctx->uniforms.fog_dist, ctx->fog_dist);
 }
 
+static void gl33_set_fog_color(void* vctx, float r, float g, float b) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return;
+    ctx->fog_color[0] = r; ctx->fog_color[1] = g; ctx->fog_color[2] = b;
+    glUseProgram(ctx->program);
+    gl33_upload_vec3(ctx->uniforms.fog_color, r, g, b);
+}
+
 static void gl33_set_light_dir(void* vctx, float x, float y, float z) {
     GL33Context* ctx = (GL33Context*)vctx;
     if (!ctx) return;
@@ -706,6 +714,7 @@ Moo3DBackend moo_backend_gl33 = {
     .mouse_button  = gl33_mouse_button,
     .mouse_wheel   = gl33_mouse_wheel,
     .set_fog_density = gl33_set_fog_density,
+    .set_fog_color   = gl33_set_fog_color,
     .set_light_dir   = gl33_set_light_dir,
     .set_ambient     = gl33_set_ambient,
     .chunk_create  = gl33_chunk_create,

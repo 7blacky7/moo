@@ -324,6 +324,10 @@ pub struct RuntimeBindings<'ctx> {
     // 3D Input
     pub moo_3d_key_pressed: FunctionValue<'ctx>,
     pub moo_3d_capture_mouse: FunctionValue<'ctx>,
+    pub moo_3d_light: FunctionValue<'ctx>,
+    pub moo_3d_ambient: FunctionValue<'ctx>,
+    pub moo_3d_fog: FunctionValue<'ctx>,
+    pub moo_3d_fog_color: FunctionValue<'ctx>,
     pub moo_3d_release_mouse: FunctionValue<'ctx>,
     pub moo_3d_mouse_dx: FunctionValue<'ctx>,
     pub moo_3d_mouse_dy: FunctionValue<'ctx>,
@@ -1025,6 +1029,11 @@ impl<'ctx> RuntimeBindings<'ctx> {
             // Result-Typ
             moo_3d_key_pressed: decl_mv_mv!("moo_3d_key_pressed", mv2),
             moo_3d_capture_mouse: module.add_function("moo_3d_capture_mouse", void_type.fn_type(mv1, false), None),
+            // Fog + Licht Builtins (raum_licht / raum_umgebungslicht / raum_nebel / raum_nebel_farbe)
+            moo_3d_light: module.add_function("moo_3d_light", void_type.fn_type(mv4, false), None),
+            moo_3d_ambient: module.add_function("moo_3d_ambient", void_type.fn_type(mv2, false), None),
+            moo_3d_fog: module.add_function("moo_3d_fog", void_type.fn_type(mv2, false), None),
+            moo_3d_fog_color: module.add_function("moo_3d_fog_color", void_type.fn_type(mv2, false), None),
             moo_3d_release_mouse: module.add_function("moo_3d_release_mouse", void_type.fn_type(mv1, false), None),
             moo_3d_mouse_dx: decl_mv_mv!("moo_3d_mouse_dx", mv1),
             moo_3d_mouse_dy: decl_mv_mv!("moo_3d_mouse_dy", mv1),

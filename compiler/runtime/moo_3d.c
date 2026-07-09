@@ -247,6 +247,35 @@ void moo_3d_set_ambient(float level) {
     g_backend->set_ambient(g_ctx, level);
 }
 
+void moo_3d_set_fog_color(float r, float g, float b) {
+    if (!g_backend || !g_ctx || !g_backend->set_fog_color) return;
+    g_backend->set_fog_color(g_ctx, r, g, b);
+}
+
+/* MooValue-Wrapper: machen Fog + Licht als Sprach-Builtins nutzbar
+ * (raum_licht / raum_umgebungslicht / raum_nebel / raum_nebel_farbe).
+ * Farbe via parse_color3 — gleiche #RRGGBB-Konvention wie raum_dreieck. */
+void moo_3d_light(MooValue win, MooValue x, MooValue y, MooValue z) {
+    (void)win;
+    moo_3d_set_light_dir((float)MV_NUM(x), (float)MV_NUM(y), (float)MV_NUM(z));
+}
+
+void moo_3d_ambient(MooValue win, MooValue level) {
+    (void)win;
+    moo_3d_set_ambient((float)MV_NUM(level));
+}
+
+void moo_3d_fog(MooValue win, MooValue density) {
+    (void)win;
+    moo_3d_set_fog_density((float)MV_NUM(density));
+}
+
+void moo_3d_fog_color(MooValue win, MooValue color) {
+    (void)win;
+    Color3 c = parse_color3(color);
+    moo_3d_set_fog_color(c.r, c.g, c.b);
+}
+
 // ============================================================
 // Maus
 // ============================================================

@@ -567,6 +567,11 @@ static void gl21_set_fog_density_f(void* vctx, float density) {
     (void)vctx;
     glFogf(GL_FOG_DENSITY, density);
 }
+static void gl21_set_fog_color(void* vctx, float r, float g, float b) {
+    (void)vctx;
+    float c[4] = { r, g, b, 1.0f };
+    glFogfv(GL_FOG_COLOR, c);
+}
 static void gl21_set_light_dir(void* vctx, float x, float y, float z) {
     (void)vctx;
     float pos[] = {x, y, z, 0.0f}; /* w=0 → directional light */
@@ -614,6 +619,7 @@ Moo3DBackend moo_backend_gl21 = {
     .mouse_button  = gl21_mouse_button,
     .mouse_wheel   = gl21_mouse_wheel,
     .set_fog_density = gl21_set_fog_density_f,
+    .set_fog_color   = gl21_set_fog_color,
     .set_light_dir   = gl21_set_light_dir,
     .set_ambient     = gl21_set_ambient,
     .chunk_create  = gl21_chunk_create,
