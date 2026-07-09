@@ -199,8 +199,15 @@ tokens:
   - id: Throw
     kind: keyword
     status: active
-    variants: [wirf, throw, wi]
+    variants: [wirf, throw]
     implementations: [rust, python]
+
+  - id: Throw_legacy_wi
+    kind: keyword
+    status: legacy
+    variants: [wi]
+    implementations: [python]
+    note: "Kurzform `wi` nur in Python-Toolchain akzeptiert. Rust hat sie bewusst entfernt (Commit 7c1461c — kollidiert mit Variablennamen wellen-index/width/wi als Laufvariable). Bleibt legacy bis Python-Lexer sie ebenfalls entfernt."
 
   # ─── Schleifen ─────────────────────────────────────────────────────────
   - id: Break
