@@ -8,7 +8,11 @@ layout(location=2) in vec3 aNormal;
 
 layout(push_constant) uniform PushConstants {
     mat4 mvp;
-    float alpha;   /* per-Draw Transparenz — gelesen im Fragment-Shader */
+    float alpha;      /* per-Draw Transparenz — gelesen im Fragment-Shader */
+    float waveAmp;    /* Wellen (raum_wellen): Amplitude, 0 = aus */
+    float waveFreq;
+    float waveSpeed;
+    float time;
 } pc;
 
 layout(binding=0) uniform UBO {
@@ -24,10 +28,20 @@ layout(location=2) out float vDist;
 layout(location=3) out float vWorldY;
 
 void main() {
-    vec4 clipPos = pc.mvp * vec4(aPos, 1.0);
+    vec3 pos = aPos;
+    vec3 nrm = aNormal;
+    if (pc.waveAmp > 0.0) {
+        float p1 = pc.waveFreq * (pos.x * 0.9 + pos.z * 0.7) + pc.time * pc.waveSpeed;
+        float p2 = pc.waveFreq * (pos.z * 1.3 - pos.x * 0.4) + pc.time * pc.waveSpeed * 0.77;
+        pos.y += pc.waveAmp * (sin(p1) + 0.6 * sin(p2));
+        float dx = pc.waveAmp * pc.waveFreq * (cos(p1) * 0.9 - 0.24 * cos(p2));
+        float dz = pc.waveAmp * pc.waveFreq * (cos(p1) * 0.7 + 0.78 * cos(p2));
+        nrm = normalize(vec3(-dx, 1.0, -dz));
+    }
+    vec4 clipPos = pc.mvp * vec4(pos, 1.0);
     gl_Position = clipPos;
     vColor = aColor;
-    vNormal = mat3(ubo.model) * aNormal;
-    vWorldY = (ubo.model * vec4(aPos, 1.0)).y;
+    vNormal = mat3(ubo.model) * nrm;
+    vWorldY = (ubo.model * vec4(pos, 1.0)).y;
     vDist = length(clipPos.xyz / clipPos.w);
 }

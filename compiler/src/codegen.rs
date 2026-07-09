@@ -3644,6 +3644,12 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_3d_alpha, &[a[0].into(), a[1].into()], "3d_alpha")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    // Wasserwellen: (fenster, amplitude, frequenz, tempo) — amp 0 = aus
+                    "raum_wellen" | "space_waves" | "3d_wellen" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_wave, &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "3d_wellen")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     // Gouraud-Dreieck: (fenster, x1,y1,z1, x2,y2,z2, x3,y3,z3, farbe1, farbe2, farbe3)
                     "raum_dreieck_farben" | "space_triangle_colors" | "3d_dreieck_farben" => {
                         let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;

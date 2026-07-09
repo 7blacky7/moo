@@ -18,16 +18,30 @@ static const char* GL33_VERTEX_SHADER =
     "layout(location=2) in vec3 aNormal;\n"
     "uniform mat4 uMVP;\n"
     "uniform mat4 uModel;\n"
+    "uniform float uWaveAmp;\n"
+    "uniform float uWaveFreq;\n"
+    "uniform float uWaveSpeed;\n"
+    "uniform float uTime;\n"
     "out vec3 vColor;\n"
     "out vec3 vNormal;\n"
     "out float vDist;\n"
     "out float vWorldY;\n"
     "void main() {\n"
-    "    vec4 clipPos = uMVP * vec4(aPos, 1.0);\n"
+    "    vec3 pos = aPos;\n"
+    "    vec3 nrm = aNormal;\n"
+    "    if (uWaveAmp > 0.0) {\n"
+    "        float p1 = uWaveFreq * (pos.x * 0.9 + pos.z * 0.7) + uTime * uWaveSpeed;\n"
+    "        float p2 = uWaveFreq * (pos.z * 1.3 - pos.x * 0.4) + uTime * uWaveSpeed * 0.77;\n"
+    "        pos.y += uWaveAmp * (sin(p1) + 0.6 * sin(p2));\n"
+    "        float dx = uWaveAmp * uWaveFreq * (cos(p1) * 0.9 - 0.24 * cos(p2));\n"
+    "        float dz = uWaveAmp * uWaveFreq * (cos(p1) * 0.7 + 0.78 * cos(p2));\n"
+    "        nrm = normalize(vec3(-dx, 1.0, -dz));\n"
+    "    }\n"
+    "    vec4 clipPos = uMVP * vec4(pos, 1.0);\n"
     "    gl_Position = clipPos;\n"
     "    vColor = aColor;\n"
-    "    vNormal = mat3(uModel) * aNormal;\n"
-    "    vec4 worldPos = uModel * vec4(aPos, 1.0);\n"
+    "    vNormal = mat3(uModel) * nrm;\n"
+    "    vec4 worldPos = uModel * vec4(pos, 1.0);\n"
     "    vWorldY = worldPos.y;\n"
     "    vDist = length(clipPos.xyz / clipPos.w);\n"
     "}\n";
@@ -116,6 +130,10 @@ typedef struct {
     GLint fog_dist;
     GLint ambient;
     GLint alpha;
+    GLint wave_amp;
+    GLint wave_freq;
+    GLint wave_speed;
+    GLint time;
 } GL33Uniforms;
 
 static GL33Uniforms gl33_get_uniforms(GLuint program) {
@@ -127,6 +145,10 @@ static GL33Uniforms gl33_get_uniforms(GLuint program) {
     u.fog_dist  = glGetUniformLocation(program, "uFogDist");
     u.ambient   = glGetUniformLocation(program, "uAmbient");
     u.alpha     = glGetUniformLocation(program, "uAlpha");
+    u.wave_amp  = glGetUniformLocation(program, "uWaveAmp");
+    u.wave_freq = glGetUniformLocation(program, "uWaveFreq");
+    u.wave_speed = glGetUniformLocation(program, "uWaveSpeed");
+    u.time      = glGetUniformLocation(program, "uTime");
     return u;
 }
 

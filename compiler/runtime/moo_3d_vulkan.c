@@ -24,7 +24,11 @@
 /* === Push Constants (MVP Matrix, 64 bytes) === */
 typedef struct {
     float mvp[16];
-    float alpha;    /* per-Draw Transparenz (raum_transparenz) */
+    float alpha;      /* per-Draw Transparenz (raum_transparenz) */
+    float waveAmp;    /* Wellen (raum_wellen): Amplitude, 0 = aus */
+    float waveFreq;
+    float waveSpeed;
+    float time;       /* Sekunden (glfwGetTime), fuer Wellen-Animation */
     float _pad[3];
 } VulkanPushConstants;
 
@@ -75,6 +79,7 @@ typedef struct {
     VkMooBuffer ubo_buffers[MAX_FRAMES_IN_FLIGHT];
     VulkanUBO ubo_data;
     float draw_alpha;   /* aktueller raum_transparenz-Wert — geht per Push-Constant an die Draws */
+    float draw_wave[3]; /* aktuelle raum_wellen-Parameter (amp, freq, speed) */
 
     /* Framebuffers */
     VkFramebuffer* framebuffers;
@@ -494,6 +499,7 @@ static int create_ubo(VulkanContext* ctx) {
     ctx->ubo_data.fogColor[1] = 0.87f;
     ctx->ubo_data.fogColor[2] = 0.90f;
     ctx->draw_alpha = 1.0f;
+    ctx->draw_wave[0] = 0.0f; ctx->draw_wave[1] = 0.0f; ctx->draw_wave[2] = 0.0f;
     ctx->ubo_data.fogColor[3] = 0.15f;
 
     /* WICHTIG: UBO sofort in ALLE Frame-Buffers hochladen (nicht auf ersten Swap warten) */
@@ -705,6 +711,10 @@ static void vk_swap(void* raw) {
     VulkanPushConstants pc;
     memcpy(pc.mvp, mvp, 64);
     pc.alpha = ctx->draw_alpha;
+    pc.waveAmp = ctx->draw_wave[0];
+    pc.waveFreq = ctx->draw_wave[1];
+    pc.waveSpeed = ctx->draw_wave[2];
+    pc.time = (float)glfwGetTime();
     pc._pad[0] = pc._pad[1] = pc._pad[2] = 0.0f;
     vkCmdPushConstants(cmd, ctx->pipeline_layout,
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
@@ -738,6 +748,9 @@ static void vk_swap(void* raw) {
         VkChunkSlot* slot = &ctx->chunk_sys.slots[i];
         if (slot->is_used && slot->is_compiled && slot->draw_requested) {
             pc.alpha = slot->draw_alpha;
+            pc.waveAmp = slot->draw_wave[0];
+            pc.waveFreq = slot->draw_wave[1];
+            pc.waveSpeed = slot->draw_wave[2];
             vkCmdPushConstants(cmd, ctx->pipeline_layout,
                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
             VkDeviceSize offset = 0;
@@ -972,6 +985,8 @@ static void vk_chunk_end_fn(void* raw) {
     VulkanPushConstants pc;
     memcpy(pc.mvp, mvp, 64);
     pc.alpha = 1.0f;
+    pc.waveAmp = 0.0f; pc.waveFreq = 0.0f; pc.waveSpeed = 0.0f;
+    pc.time = 0.0f;
     pc._pad[0] = pc._pad[1] = pc._pad[2] = 0.0f;
 
     vk_chunk_upload(&ctx->chunk_sys, ctx->active_chunk, &ctx->mesh_collector,
@@ -988,6 +1003,9 @@ static void vk_chunk_draw_fn(void* raw, int id) {
     /* Draw-Request fuer diesen Frame; Alpha zum Aufruf-Zeitpunkt einfrieren. */
     slot->draw_requested = true;
     slot->draw_alpha = ctx->draw_alpha;
+    slot->draw_wave[0] = ctx->draw_wave[0];
+    slot->draw_wave[1] = ctx->draw_wave[1];
+    slot->draw_wave[2] = ctx->draw_wave[2];
 }
 
 static void vk_chunk_delete_fn(void* raw, int id) {
@@ -1150,6 +1168,14 @@ static void vk_set_alpha(void* raw, float level) {
     if (level < 0.0f) level = 0.0f;
     if (level > 1.0f) level = 1.0f;
     ctx->draw_alpha = level;
+}
+
+static void vk_set_wave(void* raw, float amp, float freq, float speed) {
+    VulkanContext* ctx = (VulkanContext*)raw;
+    if (!ctx) return;
+    ctx->draw_wave[0] = amp;
+    ctx->draw_wave[1] = freq;
+    ctx->draw_wave[2] = speed;
 }
 
 static void vk_set_light_dir(void* raw, float x, float y, float z) {
@@ -1507,6 +1533,7 @@ Moo3DBackend moo_backend_vulkan = {
     .set_fog_density = vk_set_fog_density,
     .set_fog_color = vk_set_fog_color,
     .set_alpha = vk_set_alpha,
+    .set_wave = vk_set_wave,
     .set_light_dir = vk_set_light_dir,
     .set_ambient = vk_set_ambient,
     .chunk_create = vk_chunk_create_fn,

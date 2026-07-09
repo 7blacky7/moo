@@ -45,6 +45,7 @@ typedef struct {
     float fog_dist;
     float ambient;
     float alpha;
+    float wave[3];   /* amp, freq, speed (raum_wellen) */
     double last_mouse_x;
     double last_mouse_y;
     int mouse_captured;
@@ -254,6 +255,9 @@ static void gl33_clear(void* vctx, float r, float g, float b) {
 static void gl33_swap(void* vctx) {
     GL33Context* ctx = (GL33Context*)vctx;
     if (!ctx) return;
+    /* Zeit-Uniform fuer Wellen-Animation (wirkt ab dem naechsten Frame). */
+    glUseProgram(ctx->program);
+    gl33_upload_float(ctx->uniforms.time, (float)glfwGetTime());
     glfwSwapBuffers(ctx->window);
     glfwPollEvents();
 }
@@ -726,6 +730,16 @@ static void gl33_set_alpha(void* vctx, float level) {
     glDepthMask(level >= 0.999f ? GL_TRUE : GL_FALSE);
 }
 
+static void gl33_set_wave(void* vctx, float amp, float freq, float speed) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return;
+    ctx->wave[0] = amp; ctx->wave[1] = freq; ctx->wave[2] = speed;
+    glUseProgram(ctx->program);
+    gl33_upload_float(ctx->uniforms.wave_amp, amp);
+    gl33_upload_float(ctx->uniforms.wave_freq, freq);
+    gl33_upload_float(ctx->uniforms.wave_speed, speed);
+}
+
 static void gl33_set_ambient(void* vctx, float level) {
     GL33Context* ctx = (GL33Context*)vctx;
     if (!ctx) return;
@@ -770,6 +784,7 @@ Moo3DBackend moo_backend_gl33 = {
     .set_fog_density = gl33_set_fog_density,
     .set_fog_color   = gl33_set_fog_color,
     .set_alpha       = gl33_set_alpha,
+    .set_wave        = gl33_set_wave,
     .set_light_dir   = gl33_set_light_dir,
     .set_ambient     = gl33_set_ambient,
     .chunk_create  = gl33_chunk_create,

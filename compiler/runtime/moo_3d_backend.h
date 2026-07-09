@@ -47,6 +47,8 @@ typedef struct {
     void  (*set_ambient)(void* ctx, float level);
     // Globale Transparenz fuer folgende Draws (1 = opak). Transparentes zuletzt zeichnen.
     void  (*set_alpha)(void* ctx, float level);
+    // Wasserwellen: zeitanimiertes Vertex-Displacement fuer folgende Draws (amp 0 = aus).
+    void  (*set_wave)(void* ctx, float amp, float freq, float speed);
     // Chunks
     int   (*chunk_create)(void* ctx);
     void  (*chunk_begin)(void* ctx, int id);

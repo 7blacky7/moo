@@ -307,6 +307,19 @@ void moo_3d_alpha(MooValue win, MooValue level) {
     moo_3d_set_alpha((float)MV_NUM(level));
 }
 
+void moo_3d_set_wave(float amp, float freq, float speed) {
+    if (!g_backend || !g_ctx || !g_backend->set_wave) return;
+    g_backend->set_wave(g_ctx, amp, freq, speed);
+}
+
+/* Builtin-Wrapper: raum_wellen(fenster, amp, freq, tempo) — zeitanimiertes
+ * Vertex-Displacement fuer folgende Draws (amp 0 = aus). GL21 hat keinen
+ * Vertex-Shader und ignoriert Wellen (NULL-Slot). */
+void moo_3d_wave(MooValue win, MooValue amp, MooValue freq, MooValue speed) {
+    (void)win;
+    moo_3d_set_wave((float)MV_NUM(amp), (float)MV_NUM(freq), (float)MV_NUM(speed));
+}
+
 // ============================================================
 // Maus
 // ============================================================

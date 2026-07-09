@@ -18,7 +18,11 @@ layout(binding=0) uniform UBO {
 
 layout(push_constant) uniform PushConstants {
     mat4 mvp;
-    float alpha;   /* per-Draw Transparenz (raum_transparenz) */
+    float alpha;      /* per-Draw Transparenz (raum_transparenz) */
+    float waveAmp;
+    float waveFreq;
+    float waveSpeed;
+    float time;
 } pc;
 
 layout(location=0) out vec4 fragColor;
