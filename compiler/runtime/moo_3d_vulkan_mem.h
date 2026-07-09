@@ -83,6 +83,7 @@ typedef struct {
     bool draw_requested;
     float draw_alpha;
     float draw_wave[3];   /* amp, freq, speed (raum_wellen) */
+    float draw_spec[2];   /* strength, power (raum_glanz) */
 } VkChunkSlot;
 
 typedef struct {

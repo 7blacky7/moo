@@ -320,6 +320,93 @@ void moo_3d_wave(MooValue win, MooValue amp, MooValue freq, MooValue speed) {
     moo_3d_set_wave((float)MV_NUM(amp), (float)MV_NUM(freq), (float)MV_NUM(speed));
 }
 
+void moo_3d_set_light_color(float r, float g, float b) {
+    if (!g_backend || !g_ctx || !g_backend->set_light_color) return;
+    g_backend->set_light_color(g_ctx, r, g, b);
+}
+
+void moo_3d_set_spec(float strength, float power) {
+    if (!g_backend || !g_ctx || !g_backend->set_spec) return;
+    g_backend->set_spec(g_ctx, strength, power);
+}
+
+/* raum_lichtfarbe(fenster, "#RRGGBB") — faerbt das Sonnenlicht. */
+void moo_3d_light_color(MooValue win, MooValue color) {
+    (void)win;
+    Color3 c = parse_color3(color);
+    moo_3d_set_light_color(c.r, c.g, c.b);
+}
+
+/* raum_glanz(fenster, staerke, haerte) — Blinn-Phong-Specular als
+ * Draw-State (staerke 0 = aus). Fuer Sonnenglitzer auf Wasser. */
+void moo_3d_spec(MooValue win, MooValue strength, MooValue power) {
+    (void)win;
+    moo_3d_set_spec((float)MV_NUM(strength), (float)MV_NUM(power));
+}
+
+/* raum_löschen_farbe(fenster, "#RRGGBB") — clear mit Hex-Farbe
+ * (Gegenstueck zum Hex-Rueckgabewert von raum_tageszeit). */
+void moo_3d_clear_hex(MooValue win, MooValue color) {
+    (void)win;
+    if (!g_backend || !g_ctx) return;
+    Color3 c = parse_color3(color);
+    g_backend->clear(g_ctx, c.r, c.g, c.b);
+}
+
+static float moo_dn_lerp(float a, float b, float x) {
+    if (x < 0.0f) x = 0.0f;
+    if (x > 1.0f) x = 1.0f;
+    return a + (b - a) * x;
+}
+
+/* raum_tageszeit(fenster, t 0..1) — Ein-Aufruf-Atmosphaere:
+ * 0.0 = Mitternacht, 0.25 = Sonnenaufgang, 0.5 = Mittag, 0.75 = Untergang.
+ * Setzt Sonnenrichtung, Lichtfarbe, Ambient und Nebelfarbe konsistent und
+ * gibt die passende Himmelsfarbe als "#RRGGBB" zurueck (fuer raum_löschen_farbe). */
+MooValue moo_3d_time_of_day(MooValue win, MooValue t_val) {
+    (void)win;
+    float t = (float)MV_NUM(t_val);
+    t = t - floorf(t);
+    float elev = sinf((t - 0.25f) * 2.0f * (float)M_PI);
+
+    /* Sonnenrichtung: wandert Ost -> West, Elevation aus Sinus. */
+    float az = (t - 0.25f) * 2.0f * (float)M_PI;
+    float sy = elev > 0.08f ? elev : 0.08f;
+    moo_3d_set_light_dir(cosf(az), sy, 0.35f);
+
+    float lr, lg, lb, hr, hg, hb;
+    if (elev >= 0.0f) {
+        /* Tag: Daemmerungsfarben nur nahe Horizont (voller Tag ab elev 0.35) */
+        float k = elev / 0.35f;
+        if (k > 1.0f) k = 1.0f;
+        lr = 1.0f;
+        lg = moo_dn_lerp(0.62f, 0.97f, k);
+        lb = moo_dn_lerp(0.42f, 0.90f, k);
+        hr = moo_dn_lerp(0.93f, 0.62f, k);
+        hg = moo_dn_lerp(0.63f, 0.79f, k);
+        hb = moo_dn_lerp(0.48f, 0.93f, k);
+        moo_3d_set_ambient(moo_dn_lerp(0.42f, 0.47f, k));
+    } else {
+        /* Nacht: Restglut -> kuehles Mondlicht (schneller Uebergang) */
+        float k = -elev / 0.45f;
+        if (k > 1.0f) k = 1.0f;
+        lr = moo_dn_lerp(0.90f, 0.30f, k);
+        lg = moo_dn_lerp(0.50f, 0.36f, k);
+        lb = moo_dn_lerp(0.35f, 0.55f, k);
+        hr = moo_dn_lerp(0.93f, 0.05f, k);
+        hg = moo_dn_lerp(0.55f, 0.07f, k);
+        hb = moo_dn_lerp(0.45f, 0.13f, k);
+        moo_3d_set_ambient(moo_dn_lerp(0.42f, 0.24f, k));
+    }
+    moo_3d_set_light_color(lr, lg, lb);
+    moo_3d_set_fog_color(hr, hg, hb);
+
+    char hex[8];
+    snprintf(hex, sizeof(hex), "#%02X%02X%02X",
+        (int)(hr * 255.0f), (int)(hg * 255.0f), (int)(hb * 255.0f));
+    return moo_string_new(hex);
+}
+
 // ============================================================
 // Maus
 // ============================================================

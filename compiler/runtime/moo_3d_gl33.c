@@ -46,6 +46,9 @@ typedef struct {
     float ambient;
     float alpha;
     float wave[3];   /* amp, freq, speed (raum_wellen) */
+    float eye[3];        /* Kamera-Position (Specular) */
+    float light_color[3];
+    float spec[2];       /* strength, power (raum_glanz) */
     double last_mouse_x;
     double last_mouse_y;
     int mouse_captured;
@@ -87,6 +90,10 @@ static void gl33_upload_lighting(GL33Context* ctx) {
     gl33_upload_float(ctx->uniforms.fog_dist, ctx->fog_dist);
     gl33_upload_float(ctx->uniforms.ambient, ctx->ambient);
     gl33_upload_float(ctx->uniforms.alpha, ctx->alpha);
+    gl33_upload_vec3(ctx->uniforms.eye_pos, ctx->eye[0], ctx->eye[1], ctx->eye[2]);
+    gl33_upload_vec3(ctx->uniforms.light_color, ctx->light_color[0], ctx->light_color[1], ctx->light_color[2]);
+    gl33_upload_float(ctx->uniforms.spec_strength, ctx->spec[0]);
+    gl33_upload_float(ctx->uniforms.spec_power, ctx->spec[1]);
 }
 
 /* Draw vertices immediately (non-chunked) */
@@ -200,6 +207,9 @@ void* gl33_init_ctx_from_window(void* win_void, int w, int h) {
     ctx->fog_dist = 20.0f;
     ctx->ambient = 0.15f;
     ctx->alpha = 1.0f;
+    ctx->light_color[0] = 1.0f; ctx->light_color[1] = 1.0f; ctx->light_color[2] = 1.0f;
+    ctx->spec[0] = 0.0f; ctx->spec[1] = 32.0f;
+    ctx->eye[0] = 0.0f; ctx->eye[1] = 0.0f; ctx->eye[2] = 0.0f;
     /* Alpha-Blending fuer raum_transparenz — alpha=1 verhaelt sich opak. */
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -279,6 +289,10 @@ static void gl33_camera(void* vctx,
     GL33Context* ctx = (GL33Context*)vctx;
     if (!ctx) return;
     mat4_lookat(ctx->modelview.current, ex, ey, ez, lx, ly, lz, 0, 1, 0);
+    /* Kamera-Position fuer Specular (raum_glanz) */
+    ctx->eye[0] = ex; ctx->eye[1] = ey; ctx->eye[2] = ez;
+    glUseProgram(ctx->program);
+    gl33_upload_vec3(ctx->uniforms.eye_pos, ex, ey, ez);
 }
 
 /* ========================================================
@@ -730,6 +744,23 @@ static void gl33_set_alpha(void* vctx, float level) {
     glDepthMask(level >= 0.999f ? GL_TRUE : GL_FALSE);
 }
 
+static void gl33_set_light_color(void* vctx, float r, float g, float b) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return;
+    ctx->light_color[0] = r; ctx->light_color[1] = g; ctx->light_color[2] = b;
+    glUseProgram(ctx->program);
+    gl33_upload_vec3(ctx->uniforms.light_color, r, g, b);
+}
+
+static void gl33_set_spec(void* vctx, float strength, float power) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return;
+    ctx->spec[0] = strength; ctx->spec[1] = power;
+    glUseProgram(ctx->program);
+    gl33_upload_float(ctx->uniforms.spec_strength, strength);
+    gl33_upload_float(ctx->uniforms.spec_power, power);
+}
+
 static void gl33_set_wave(void* vctx, float amp, float freq, float speed) {
     GL33Context* ctx = (GL33Context*)vctx;
     if (!ctx) return;
@@ -785,6 +816,8 @@ Moo3DBackend moo_backend_gl33 = {
     .set_fog_color   = gl33_set_fog_color,
     .set_alpha       = gl33_set_alpha,
     .set_wave        = gl33_set_wave,
+    .set_light_color = gl33_set_light_color,
+    .set_spec        = gl33_set_spec,
     .set_light_dir   = gl33_set_light_dir,
     .set_ambient     = gl33_set_ambient,
     .chunk_create  = gl33_chunk_create,

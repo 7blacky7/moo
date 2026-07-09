@@ -49,6 +49,10 @@ typedef struct {
     void  (*set_alpha)(void* ctx, float level);
     // Wasserwellen: zeitanimiertes Vertex-Displacement fuer folgende Draws (amp 0 = aus).
     void  (*set_wave)(void* ctx, float amp, float freq, float speed);
+    // Lichtfarbe (Tageszeit/Stimmung). Default weiss.
+    void  (*set_light_color)(void* ctx, float r, float g, float b);
+    // Specular-Glanz fuer folgende Draws (strength 0 = aus), power = Haerte.
+    void  (*set_spec)(void* ctx, float strength, float power);
     // Chunks
     int   (*chunk_create)(void* ctx);
     void  (*chunk_begin)(void* ctx, int id);

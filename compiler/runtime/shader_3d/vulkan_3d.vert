@@ -13,6 +13,8 @@ layout(push_constant) uniform PushConstants {
     float waveFreq;
     float waveSpeed;
     float time;
+    float specStrength;
+    float specPower;
 } pc;
 
 layout(binding=0) uniform UBO {
@@ -20,12 +22,15 @@ layout(binding=0) uniform UBO {
     vec3 lightDir;
     float fogDist;
     vec4 fogColor;   /* rgb = Nebelfarbe, a = Ambient-Level */
+    vec4 eyePos;     /* Kamera-Position (Specular) */
+    vec4 lightColor; /* Lichtfarbe (raum_lichtfarbe/raum_tageszeit) */
 } ubo;
 
 layout(location=0) out vec3 vColor;
 layout(location=1) out vec3 vNormal;
 layout(location=2) out float vDist;
 layout(location=3) out float vWorldY;
+layout(location=4) out vec3 vWorldPos;
 
 void main() {
     vec3 pos = aPos;
@@ -42,6 +47,8 @@ void main() {
     gl_Position = clipPos;
     vColor = aColor;
     vNormal = mat3(ubo.model) * nrm;
-    vWorldY = (ubo.model * vec4(pos, 1.0)).y;
+    vec4 wp = ubo.model * vec4(pos, 1.0);
+    vWorldY = wp.y;
+    vWorldPos = wp.xyz;
     vDist = length(clipPos.xyz / clipPos.w);
 }

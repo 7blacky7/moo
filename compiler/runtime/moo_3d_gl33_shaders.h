@@ -26,6 +26,7 @@ static const char* GL33_VERTEX_SHADER =
     "out vec3 vNormal;\n"
     "out float vDist;\n"
     "out float vWorldY;\n"
+    "out vec3 vWorldPos;\n"
     "void main() {\n"
     "    vec3 pos = aPos;\n"
     "    vec3 nrm = aNormal;\n"
@@ -43,6 +44,7 @@ static const char* GL33_VERTEX_SHADER =
     "    vNormal = mat3(uModel) * nrm;\n"
     "    vec4 worldPos = uModel * vec4(pos, 1.0);\n"
     "    vWorldY = worldPos.y;\n"
+    "    vWorldPos = worldPos.xyz;\n"
     "    vDist = length(clipPos.xyz / clipPos.w);\n"
     "}\n";
 
@@ -52,15 +54,27 @@ static const char* GL33_FRAGMENT_SHADER =
     "in vec3 vNormal;\n"
     "in float vDist;\n"
     "in float vWorldY;\n"
+    "in vec3 vWorldPos;\n"
     "uniform vec3 uLightDir;\n"
+    "uniform vec3 uEyePos;\n"
+    "uniform vec3 uLightColor;\n"
+    "uniform float uSpecStrength;\n"
+    "uniform float uSpecPower;\n"
     "uniform vec3 uFogColor;\n"
     "uniform float uFogDist;\n"
     "uniform float uAmbient;\n"
     "uniform float uAlpha;\n"
     "out vec4 fragColor;\n"
     "void main() {\n"
-    "    float diff = max(dot(normalize(vNormal), normalize(uLightDir)), 0.0);\n"
-    "    vec3 lit = vColor * (uAmbient + (1.0 - uAmbient) * diff);\n"
+    "    vec3 N = normalize(vNormal);\n"
+    "    vec3 L = normalize(uLightDir);\n"
+    "    float diff = max(dot(N, L), 0.0);\n"
+    "    vec3 lit = vColor * uLightColor * (uAmbient + (1.0 - uAmbient) * diff);\n"
+    "    if (uSpecStrength > 0.0) {\n"
+    "        vec3 V = normalize(uEyePos - vWorldPos);\n"
+    "        vec3 H = normalize(L + V);\n"
+    "        lit += uLightColor * uSpecStrength * pow(max(dot(N, H), 0.0), uSpecPower);\n"
+    "    }\n"
     "    float density = 1.0 / max(uFogDist, 1.0);\n"
     "    float distFog = 1.0 - exp(-vDist * density);\n"
     "    float heightFog = exp(-max(vWorldY, 0.0) * 0.08);\n"
@@ -134,6 +148,10 @@ typedef struct {
     GLint wave_freq;
     GLint wave_speed;
     GLint time;
+    GLint eye_pos;
+    GLint light_color;
+    GLint spec_strength;
+    GLint spec_power;
 } GL33Uniforms;
 
 static GL33Uniforms gl33_get_uniforms(GLuint program) {
@@ -149,6 +167,10 @@ static GL33Uniforms gl33_get_uniforms(GLuint program) {
     u.wave_freq = glGetUniformLocation(program, "uWaveFreq");
     u.wave_speed = glGetUniformLocation(program, "uWaveSpeed");
     u.time      = glGetUniformLocation(program, "uTime");
+    u.eye_pos   = glGetUniformLocation(program, "uEyePos");
+    u.light_color = glGetUniformLocation(program, "uLightColor");
+    u.spec_strength = glGetUniformLocation(program, "uSpecStrength");
+    u.spec_power    = glGetUniformLocation(program, "uSpecPower");
     return u;
 }
 

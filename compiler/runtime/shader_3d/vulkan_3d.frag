@@ -8,12 +8,15 @@ layout(location=0) in vec3 vColor;
 layout(location=1) in vec3 vNormal;
 layout(location=2) in float vDist;
 layout(location=3) in float vWorldY;
+layout(location=4) in vec3 vWorldPos;
 
 layout(binding=0) uniform UBO {
     mat4 model;
     vec3 lightDir;
     float fogDist;
     vec4 fogColor;
+    vec4 eyePos;
+    vec4 lightColor;
 } ubo;
 
 layout(push_constant) uniform PushConstants {
@@ -23,14 +26,23 @@ layout(push_constant) uniform PushConstants {
     float waveFreq;
     float waveSpeed;
     float time;
+    float specStrength;
+    float specPower;
 } pc;
 
 layout(location=0) out vec4 fragColor;
 
 void main() {
-    float diff = max(dot(normalize(vNormal), normalize(ubo.lightDir)), 0.0);
+    vec3 N = normalize(vNormal);
+    vec3 L = normalize(ubo.lightDir);
+    float diff = max(dot(N, L), 0.0);
     float ambient = clamp(ubo.fogColor.a, 0.0, 1.0);
-    vec3 lit = vColor * (ambient + (1.0 - ambient) * diff);
+    vec3 lit = vColor * ubo.lightColor.rgb * (ambient + (1.0 - ambient) * diff);
+    if (pc.specStrength > 0.0) {
+        vec3 V = normalize(ubo.eyePos.xyz - vWorldPos);
+        vec3 H = normalize(L + V);
+        lit += ubo.lightColor.rgb * pc.specStrength * pow(max(dot(N, H), 0.0), pc.specPower);
+    }
     float density = 1.0 / max(ubo.fogDist, 1.0);
     float distFog = 1.0 - exp(-vDist * density);
     float heightFog = exp(-max(vWorldY, 0.0) * 0.08);

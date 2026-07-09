@@ -29,7 +29,9 @@ typedef struct {
     float waveFreq;
     float waveSpeed;
     float time;       /* Sekunden (glfwGetTime), fuer Wellen-Animation */
-    float _pad[3];
+    float specStrength; /* Specular (raum_glanz), 0 = aus */
+    float specPower;
+    float _pad[1];
 } VulkanPushConstants;
 
 /* === UBO Layout (model, lightDir, fogDist, fogColor) === */
@@ -39,7 +41,9 @@ typedef struct {
     float lightDir[3];     /* offset 64, 12 bytes */
     float fogDist;         /* offset 76,  4 bytes — packed nach lightDir */
     float fogColor[4];     /* offset 80, 16 bytes */
-} VulkanUBO;               /* Total: 96 bytes */
+    float eyePos[4];       /* offset 96 — Kamera-Position (Specular), w ungenutzt */
+    float lightColor[4];   /* offset 112 — Lichtfarbe (raum_lichtfarbe), w ungenutzt */
+} VulkanUBO;               /* Total: 128 bytes */
 
 /* === Vulkan Context === */
 typedef struct {
@@ -80,6 +84,7 @@ typedef struct {
     VulkanUBO ubo_data;
     float draw_alpha;   /* aktueller raum_transparenz-Wert — geht per Push-Constant an die Draws */
     float draw_wave[3]; /* aktuelle raum_wellen-Parameter (amp, freq, speed) */
+    float draw_spec[2]; /* aktuelle raum_glanz-Parameter (strength, power) */
 
     /* Framebuffers */
     VkFramebuffer* framebuffers;
@@ -498,8 +503,13 @@ static int create_ubo(VulkanContext* ctx) {
     ctx->ubo_data.fogColor[0] = 0.85f;
     ctx->ubo_data.fogColor[1] = 0.87f;
     ctx->ubo_data.fogColor[2] = 0.90f;
+    ctx->ubo_data.lightColor[0] = 1.0f;
+    ctx->ubo_data.lightColor[1] = 1.0f;
+    ctx->ubo_data.lightColor[2] = 1.0f;
+    ctx->ubo_data.lightColor[3] = 0.0f;
     ctx->draw_alpha = 1.0f;
     ctx->draw_wave[0] = 0.0f; ctx->draw_wave[1] = 0.0f; ctx->draw_wave[2] = 0.0f;
+    ctx->draw_spec[0] = 0.0f; ctx->draw_spec[1] = 32.0f;
     ctx->ubo_data.fogColor[3] = 0.15f;
 
     /* WICHTIG: UBO sofort in ALLE Frame-Buffers hochladen (nicht auf ersten Swap warten) */
@@ -715,7 +725,9 @@ static void vk_swap(void* raw) {
     pc.waveFreq = ctx->draw_wave[1];
     pc.waveSpeed = ctx->draw_wave[2];
     pc.time = (float)glfwGetTime();
-    pc._pad[0] = pc._pad[1] = pc._pad[2] = 0.0f;
+    pc.specStrength = ctx->draw_spec[0];
+    pc.specPower = ctx->draw_spec[1];
+    pc._pad[0] = 0.0f;
     vkCmdPushConstants(cmd, ctx->pipeline_layout,
         VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
 
@@ -751,6 +763,8 @@ static void vk_swap(void* raw) {
             pc.waveAmp = slot->draw_wave[0];
             pc.waveFreq = slot->draw_wave[1];
             pc.waveSpeed = slot->draw_wave[2];
+            pc.specStrength = slot->draw_spec[0];
+            pc.specPower = slot->draw_spec[1];
             vkCmdPushConstants(cmd, ctx->pipeline_layout,
                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
             VkDeviceSize offset = 0;
@@ -830,6 +844,10 @@ static void vk_perspective(void* raw, float fov, float near_val, float far_val) 
 static void vk_camera(void* raw, float ex, float ey, float ez, float lx, float ly, float lz) {
     VulkanContext* ctx = (VulkanContext*)raw;
     mat4_lookat(ctx->view, ex, ey, ez, lx, ly, lz, 0, 1, 0);
+    /* Kamera-Position fuer Specular (raum_glanz) */
+    ctx->ubo_data.eyePos[0] = ex;
+    ctx->ubo_data.eyePos[1] = ey;
+    ctx->ubo_data.eyePos[2] = ez;
 }
 
 static void vk_push_matrix(void* raw) {
@@ -987,7 +1005,8 @@ static void vk_chunk_end_fn(void* raw) {
     pc.alpha = 1.0f;
     pc.waveAmp = 0.0f; pc.waveFreq = 0.0f; pc.waveSpeed = 0.0f;
     pc.time = 0.0f;
-    pc._pad[0] = pc._pad[1] = pc._pad[2] = 0.0f;
+    pc.specStrength = 0.0f; pc.specPower = 32.0f;
+    pc._pad[0] = 0.0f;
 
     vk_chunk_upload(&ctx->chunk_sys, ctx->active_chunk, &ctx->mesh_collector,
         ctx->framebuffers[0], ctx->swapchain_extent,
@@ -1006,6 +1025,8 @@ static void vk_chunk_draw_fn(void* raw, int id) {
     slot->draw_wave[0] = ctx->draw_wave[0];
     slot->draw_wave[1] = ctx->draw_wave[1];
     slot->draw_wave[2] = ctx->draw_wave[2];
+    slot->draw_spec[0] = ctx->draw_spec[0];
+    slot->draw_spec[1] = ctx->draw_spec[1];
 }
 
 static void vk_chunk_delete_fn(void* raw, int id) {
@@ -1168,6 +1189,21 @@ static void vk_set_alpha(void* raw, float level) {
     if (level < 0.0f) level = 0.0f;
     if (level > 1.0f) level = 1.0f;
     ctx->draw_alpha = level;
+}
+
+static void vk_set_light_color(void* raw, float r, float g, float b) {
+    VulkanContext* ctx = (VulkanContext*)raw;
+    if (!ctx) return;
+    ctx->ubo_data.lightColor[0] = r;
+    ctx->ubo_data.lightColor[1] = g;
+    ctx->ubo_data.lightColor[2] = b;
+}
+
+static void vk_set_spec(void* raw, float strength, float power) {
+    VulkanContext* ctx = (VulkanContext*)raw;
+    if (!ctx) return;
+    ctx->draw_spec[0] = strength;
+    ctx->draw_spec[1] = power;
 }
 
 static void vk_set_wave(void* raw, float amp, float freq, float speed) {
@@ -1534,6 +1570,8 @@ Moo3DBackend moo_backend_vulkan = {
     .set_fog_color = vk_set_fog_color,
     .set_alpha = vk_set_alpha,
     .set_wave = vk_set_wave,
+    .set_light_color = vk_set_light_color,
+    .set_spec = vk_set_spec,
     .set_light_dir = vk_set_light_dir,
     .set_ambient = vk_set_ambient,
     .chunk_create = vk_chunk_create_fn,
