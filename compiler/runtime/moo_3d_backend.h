@@ -28,6 +28,8 @@ typedef struct {
     void  (*cube)(void* ctx, float x, float y, float z, float size, float r, float g, float b);
     void  (*sphere)(void* ctx, float x, float y, float z, float radius, float r, float g, float b, int detail);
     void  (*triangle)(void* ctx, float x1, float y1, float z1, float x2, float y2, float z2, float x3, float y3, float z3, float r, float g, float b);
+    // Gouraud-Variante: eigene Farbe pro Vertex, Shader/Fixed-Function interpoliert.
+    void  (*triangle_colors)(void* ctx, float x1, float y1, float z1, float r1, float g1, float b1, float x2, float y2, float z2, float r2, float g2, float b2, float x3, float y3, float z3, float r3, float g3, float b3);
     int   (*key_pressed)(void* ctx, const char* key);
     // Maus
     void  (*capture_mouse)(void* ctx);

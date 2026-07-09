@@ -377,6 +377,41 @@ static void gl33_sphere(void* vctx,
     }
 }
 
+static void gl33_triangle_colors(void* vctx,
+                                 float x1, float y1, float z1, float r1, float g1, float b1,
+                                 float x2, float y2, float z2, float r2, float g2, float b2,
+                                 float x3, float y3, float z3, float r3, float g3, float b3) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return;
+
+    /* Face-Normale wie gl33_triangle */
+    float e1x = x2-x1, e1y = y2-y1, e1z = z2-z1;
+    float e2x = x3-x1, e2y = y3-y1, e2z = z3-z1;
+    float nx = e1y*e2z - e1z*e2y;
+    float ny = e1z*e2x - e1x*e2z;
+    float nz = e1x*e2y - e1y*e2x;
+    float len = sqrtf(nx*nx + ny*ny + nz*nz);
+    if (len > 0) { nx /= len; ny /= len; nz /= len; }
+
+    MeshBuilder* mb;
+    MeshBuilder tmp;
+    if (ctx->active_chunk >= 0) {
+        mb = &ctx->builder;
+    } else {
+        mesh_builder_init(&tmp);
+        mb = &tmp;
+    }
+
+    mesh_builder_add_vertex(mb, x1, y1, z1, r1, g1, b1, nx, ny, nz);
+    mesh_builder_add_vertex(mb, x2, y2, z2, r2, g2, b2, nx, ny, nz);
+    mesh_builder_add_vertex(mb, x3, y3, z3, r3, g3, b3, nx, ny, nz);
+
+    if (ctx->active_chunk < 0) {
+        gl33_draw_immediate(ctx, mb);
+        mesh_builder_free(&tmp);
+    }
+}
+
 static void gl33_triangle(void* vctx,
                           float x1, float y1, float z1,
                           float x2, float y2, float z2,
@@ -704,6 +739,7 @@ Moo3DBackend moo_backend_gl33 = {
     .cube          = gl33_cube,
     .sphere        = gl33_sphere,
     .triangle      = gl33_triangle,
+    .triangle_colors = gl33_triangle_colors,
     .key_pressed   = gl33_key_pressed,
     .capture_mouse = gl33_capture_mouse,
     .release_mouse = gl33_release_mouse,

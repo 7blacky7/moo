@@ -866,6 +866,22 @@ static void vk_sphere(void* raw, float x, float y, float z, float radius, float 
     }
 }
 
+static void vk_triangle_colors(void* raw,
+    float x1, float y1, float z1, float r1, float g1, float b1,
+    float x2, float y2, float z2, float r2, float g2, float b2,
+    float x3, float y3, float z3, float r3, float g3, float b3)
+{
+    VulkanContext* ctx = (VulkanContext*)raw;
+    float ax = x2-x1, ay = y2-y1, az = z2-z1;
+    float bx = x3-x1, by = y3-y1, bz = z3-z1;
+    float nx = ay*bz - az*by, ny = az*bx - ax*bz, nz = ax*by - ay*bx;
+    float len = sqrtf(nx*nx + ny*ny + nz*nz);
+    if (len > 0) { nx/=len; ny/=len; nz/=len; }
+    vk_mesh_collector_add_vertex(&ctx->mesh_collector, x1,y1,z1, r1,g1,b1, nx,ny,nz);
+    vk_mesh_collector_add_vertex(&ctx->mesh_collector, x2,y2,z2, r2,g2,b2, nx,ny,nz);
+    vk_mesh_collector_add_vertex(&ctx->mesh_collector, x3,y3,z3, r3,g3,b3, nx,ny,nz);
+}
+
 static void vk_triangle(void* raw,
     float x1, float y1, float z1, float x2, float y2, float z2,
     float x3, float y3, float z3, float r, float g, float b)
@@ -1445,6 +1461,7 @@ Moo3DBackend moo_backend_vulkan = {
     .cube = vk_cube,
     .sphere = vk_sphere,
     .triangle = vk_triangle,
+    .triangle_colors = vk_triangle_colors,
     .key_pressed = vk_key_pressed,
     .capture_mouse = vk_capture_mouse,
     .release_mouse = vk_release_mouse,

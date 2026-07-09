@@ -3638,6 +3638,12 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_3d_fog_color, &[a[0].into(), a[1].into()], "3d_nebelfarbe")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    // Gouraud-Dreieck: (fenster, x1,y1,z1, x2,y2,z2, x3,y3,z3, farbe1, farbe2, farbe3)
+                    "raum_dreieck_farben" | "space_triangle_colors" | "3d_dreieck_farben" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_triangle_colors, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into(), a[7].into(), a[8].into(), a[9].into(), a[10].into(), a[11].into(), a[12].into()], "3d_tri_farben")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
 
                     // ============================================================
                     // Einheitlicher Test-API-Layer (Plan-008 A2, tag-dispatch

@@ -276,6 +276,24 @@ void moo_3d_fog_color(MooValue win, MooValue color) {
     moo_3d_set_fog_color(c.r, c.g, c.b);
 }
 
+/* Gouraud-Dreieck: 3 Punkte + 3 Farben, Backend interpoliert.
+ * Moo-Signatur: erst 9 Koordinaten, dann 3 Farben (konsistent zu raum_dreieck). */
+void moo_3d_triangle_colors(MooValue win,
+    MooValue x1, MooValue y1, MooValue z1,
+    MooValue x2, MooValue y2, MooValue z2,
+    MooValue x3, MooValue y3, MooValue z3,
+    MooValue f1, MooValue f2, MooValue f3) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->triangle_colors) return;
+    Color3 c1 = parse_color3(f1);
+    Color3 c2 = parse_color3(f2);
+    Color3 c3 = parse_color3(f3);
+    g_backend->triangle_colors(g_ctx,
+        (float)MV_NUM(x1), (float)MV_NUM(y1), (float)MV_NUM(z1), c1.r, c1.g, c1.b,
+        (float)MV_NUM(x2), (float)MV_NUM(y2), (float)MV_NUM(z2), c2.r, c2.g, c2.b,
+        (float)MV_NUM(x3), (float)MV_NUM(y3), (float)MV_NUM(z3), c3.r, c3.g, c3.b);
+}
+
 // ============================================================
 // Maus
 // ============================================================

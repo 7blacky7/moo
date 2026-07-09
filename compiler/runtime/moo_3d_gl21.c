@@ -266,6 +266,31 @@ static void gl21_sphere(void* vctx, float x, float y, float z, float radius, flo
     }
 }
 
+static void gl21_triangle_colors(void* vctx,
+                                 float x1, float y1, float z1, float r1, float g1, float b1,
+                                 float x2, float y2, float z2, float r2, float g2, float b2,
+                                 float x3, float y3, float z3, float r3, float g3, float b3) {
+    (void)vctx;
+
+    float ax = x2 - x1, ay = y2 - y1, az = z2 - z1;
+    float bx = x3 - x1, by = y3 - y1, bz = z3 - z1;
+    float nx = ay*bz - az*by;
+    float ny = az*bx - ax*bz;
+    float nz = ax*by - ay*bx;
+    float len = sqrtf(nx*nx + ny*ny + nz*nz);
+    if (len > 0) { nx /= len; ny /= len; nz /= len; }
+
+    glBegin(GL_TRIANGLES);
+    glNormal3f(nx, ny, nz);
+    glColor3f(r1, g1, b1);
+    glVertex3f(x1, y1, z1);
+    glColor3f(r2, g2, b2);
+    glVertex3f(x2, y2, z2);
+    glColor3f(r3, g3, b3);
+    glVertex3f(x3, y3, z3);
+    glEnd();
+}
+
 static void gl21_triangle(void* vctx, float x1, float y1, float z1,
                            float x2, float y2, float z2,
                            float x3, float y3, float z3,
@@ -609,6 +634,7 @@ Moo3DBackend moo_backend_gl21 = {
     .cube          = gl21_cube,
     .sphere        = gl21_sphere,
     .triangle      = gl21_triangle,
+    .triangle_colors = gl21_triangle_colors,
     .key_pressed   = gl21_key_pressed,
     .capture_mouse = gl21_capture_mouse,
     .release_mouse = gl21_release_mouse,
