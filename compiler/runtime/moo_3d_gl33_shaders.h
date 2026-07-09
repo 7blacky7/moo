@@ -42,6 +42,7 @@ static const char* GL33_FRAGMENT_SHADER =
     "uniform vec3 uFogColor;\n"
     "uniform float uFogDist;\n"
     "uniform float uAmbient;\n"
+    "uniform float uAlpha;\n"
     "out vec4 fragColor;\n"
     "void main() {\n"
     "    float diff = max(dot(normalize(vNormal), normalize(uLightDir)), 0.0);\n"
@@ -50,7 +51,7 @@ static const char* GL33_FRAGMENT_SHADER =
     "    float distFog = 1.0 - exp(-vDist * density);\n"
     "    float heightFog = exp(-max(vWorldY, 0.0) * 0.08);\n"
     "    float totalFog = clamp(distFog * heightFog, 0.0, 1.0);\n"
-    "    fragColor = vec4(mix(lit, uFogColor, totalFog), 1.0);\n"
+    "    fragColor = vec4(mix(lit, uFogColor, totalFog), uAlpha);\n"
     "}\n";
 
 // === Shader-Kompilierung ===
@@ -114,6 +115,7 @@ typedef struct {
     GLint fog_color;
     GLint fog_dist;
     GLint ambient;
+    GLint alpha;
 } GL33Uniforms;
 
 static GL33Uniforms gl33_get_uniforms(GLuint program) {
@@ -124,6 +126,7 @@ static GL33Uniforms gl33_get_uniforms(GLuint program) {
     u.fog_color = glGetUniformLocation(program, "uFogColor");
     u.fog_dist  = glGetUniformLocation(program, "uFogDist");
     u.ambient   = glGetUniformLocation(program, "uAmbient");
+    u.alpha     = glGetUniformLocation(program, "uAlpha");
     return u;
 }
 

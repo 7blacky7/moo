@@ -77,6 +77,8 @@ static void* gl21_create_window(const char* title, int w, int h) {
     /* Fixed-Function Fog */
     glEnable(GL_FOG);
     glFogi(GL_FOG_MODE, GL_EXP);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glFogf(GL_FOG_DENSITY, 0.025f);
     float fogColor[] = {0.85f, 0.87f, 0.90f, 1.0f};
     glFogfv(GL_FOG_COLOR, fogColor);
@@ -206,7 +208,7 @@ static void gl21_rotate(void* vctx, float angle, float ax, float ay, float az) {
 
 static void gl21_cube(void* vctx, float x, float y, float z, float size, float r, float g, float b) {
     (void)vctx;
-    glColor3f(r, g, b);
+    glColor4f(r, g, b, gl21_alpha);
     float s = size / 2.0f;
 
     glBegin(GL_QUADS);
@@ -239,7 +241,7 @@ static void gl21_cube(void* vctx, float x, float y, float z, float size, float r
 
 static void gl21_sphere(void* vctx, float x, float y, float z, float radius, float r, float g, float b, int detail) {
     (void)vctx;
-    glColor3f(r, g, b);
+    glColor4f(r, g, b, gl21_alpha);
 
     int slices = detail;
     if (slices < 4) slices = 4;
@@ -282,11 +284,11 @@ static void gl21_triangle_colors(void* vctx,
 
     glBegin(GL_TRIANGLES);
     glNormal3f(nx, ny, nz);
-    glColor3f(r1, g1, b1);
+    glColor4f(r1, g1, b1, gl21_alpha);
     glVertex3f(x1, y1, z1);
-    glColor3f(r2, g2, b2);
+    glColor4f(r2, g2, b2, gl21_alpha);
     glVertex3f(x2, y2, z2);
-    glColor3f(r3, g3, b3);
+    glColor4f(r3, g3, b3, gl21_alpha);
     glVertex3f(x3, y3, z3);
     glEnd();
 }
@@ -296,7 +298,7 @@ static void gl21_triangle(void* vctx, float x1, float y1, float z1,
                            float x3, float y3, float z3,
                            float r, float g, float b) {
     (void)vctx;
-    glColor3f(r, g, b);
+    glColor4f(r, g, b, gl21_alpha);
 
     // Normale berechnen
     float ax = x2 - x1, ay = y2 - y1, az = z2 - z1;
@@ -592,6 +594,16 @@ static void gl21_set_fog_density_f(void* vctx, float density) {
     (void)vctx;
     glFogf(GL_FOG_DENSITY, density);
 }
+/* Globale Transparenz — Single-Context-Annahme wie g_ctx in moo_3d.c. */
+static float gl21_alpha = 1.0f;
+static void gl21_set_alpha(void* vctx, float level) {
+    (void)vctx;
+    if (level < 0.0f) level = 0.0f;
+    if (level > 1.0f) level = 1.0f;
+    gl21_alpha = level;
+    glDepthMask(level >= 0.999f ? GL_TRUE : GL_FALSE);
+}
+
 static void gl21_set_fog_color(void* vctx, float r, float g, float b) {
     (void)vctx;
     float c[4] = { r, g, b, 1.0f };
@@ -646,6 +658,7 @@ Moo3DBackend moo_backend_gl21 = {
     .mouse_wheel   = gl21_mouse_wheel,
     .set_fog_density = gl21_set_fog_density_f,
     .set_fog_color   = gl21_set_fog_color,
+    .set_alpha       = gl21_set_alpha,
     .set_light_dir   = gl21_set_light_dir,
     .set_ambient     = gl21_set_ambient,
     .chunk_create  = gl21_chunk_create,

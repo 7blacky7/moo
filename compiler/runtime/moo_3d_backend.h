@@ -45,6 +45,8 @@ typedef struct {
     void  (*set_fog_color)(void* ctx, float r, float g, float b);
     void  (*set_light_dir)(void* ctx, float x, float y, float z);
     void  (*set_ambient)(void* ctx, float level);
+    // Globale Transparenz fuer folgende Draws (1 = opak). Transparentes zuletzt zeichnen.
+    void  (*set_alpha)(void* ctx, float level);
     // Chunks
     int   (*chunk_create)(void* ctx);
     void  (*chunk_begin)(void* ctx, int id);

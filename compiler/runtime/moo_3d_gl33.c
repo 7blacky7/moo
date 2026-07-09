@@ -44,6 +44,7 @@ typedef struct {
     float fog_color[3];
     float fog_dist;
     float ambient;
+    float alpha;
     double last_mouse_x;
     double last_mouse_y;
     int mouse_captured;
@@ -84,6 +85,7 @@ static void gl33_upload_lighting(GL33Context* ctx) {
                      ctx->fog_color[0], ctx->fog_color[1], ctx->fog_color[2]);
     gl33_upload_float(ctx->uniforms.fog_dist, ctx->fog_dist);
     gl33_upload_float(ctx->uniforms.ambient, ctx->ambient);
+    gl33_upload_float(ctx->uniforms.alpha, ctx->alpha);
 }
 
 /* Draw vertices immediately (non-chunked) */
@@ -196,6 +198,10 @@ void* gl33_init_ctx_from_window(void* win_void, int w, int h) {
     ctx->fog_color[2] = 0.90f;
     ctx->fog_dist = 20.0f;
     ctx->ambient = 0.15f;
+    ctx->alpha = 1.0f;
+    /* Alpha-Blending fuer raum_transparenz — alpha=1 verhaelt sich opak. */
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     /* GL State */
     glEnable(GL_DEPTH_TEST);
@@ -708,6 +714,18 @@ static void gl33_set_light_dir(void* vctx, float x, float y, float z) {
     gl33_upload_vec3(ctx->uniforms.light_dir, x, y, z);
 }
 
+static void gl33_set_alpha(void* vctx, float level) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return;
+    if (level < 0.0f) level = 0.0f;
+    if (level > 1.0f) level = 1.0f;
+    ctx->alpha = level;
+    glUseProgram(ctx->program);
+    gl33_upload_float(ctx->uniforms.alpha, level);
+    /* Transparente Draws duerfen den Depth-Buffer nicht fuellen. */
+    glDepthMask(level >= 0.999f ? GL_TRUE : GL_FALSE);
+}
+
 static void gl33_set_ambient(void* vctx, float level) {
     GL33Context* ctx = (GL33Context*)vctx;
     if (!ctx) return;
@@ -751,6 +769,7 @@ Moo3DBackend moo_backend_gl33 = {
     .mouse_wheel   = gl33_mouse_wheel,
     .set_fog_density = gl33_set_fog_density,
     .set_fog_color   = gl33_set_fog_color,
+    .set_alpha       = gl33_set_alpha,
     .set_light_dir   = gl33_set_light_dir,
     .set_ambient     = gl33_set_ambient,
     .chunk_create  = gl33_chunk_create,

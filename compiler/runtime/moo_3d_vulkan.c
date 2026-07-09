@@ -24,6 +24,8 @@
 /* === Push Constants (MVP Matrix, 64 bytes) === */
 typedef struct {
     float mvp[16];
+    float alpha;    /* per-Draw Transparenz (raum_transparenz) */
+    float _pad[3];
 } VulkanPushConstants;
 
 /* === UBO Layout (model, lightDir, fogDist, fogColor) === */
@@ -72,6 +74,7 @@ typedef struct {
     /* UBO */
     VkMooBuffer ubo_buffers[MAX_FRAMES_IN_FLIGHT];
     VulkanUBO ubo_data;
+    float draw_alpha;   /* aktueller raum_transparenz-Wert — geht per Push-Constant an die Draws */
 
     /* Framebuffers */
     VkFramebuffer* framebuffers;
@@ -355,6 +358,14 @@ static int create_pipeline(VulkanContext* ctx) {
     VkPipelineColorBlendAttachmentState blend_att = {
         .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                           VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+        /* Alpha-Blending fuer raum_transparenz — alpha=1 verhaelt sich opak. */
+        .blendEnable = VK_TRUE,
+        .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .colorBlendOp = VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+        .alphaBlendOp = VK_BLEND_OP_ADD,
     };
     VkPipelineColorBlendStateCreateInfo blend = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
@@ -363,7 +374,7 @@ static int create_pipeline(VulkanContext* ctx) {
 
     /* Push Constants: MVP matrix (64 bytes) */
     VkPushConstantRange push_range = {
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
         .offset = 0, .size = sizeof(VulkanPushConstants),
     };
 
@@ -482,6 +493,7 @@ static int create_ubo(VulkanContext* ctx) {
     ctx->ubo_data.fogColor[0] = 0.85f;
     ctx->ubo_data.fogColor[1] = 0.87f;
     ctx->ubo_data.fogColor[2] = 0.90f;
+    ctx->draw_alpha = 1.0f;
     ctx->ubo_data.fogColor[3] = 0.15f;
 
     /* WICHTIG: UBO sofort in ALLE Frame-Buffers hochladen (nicht auf ersten Swap warten) */
@@ -692,8 +704,10 @@ static void vk_swap(void* raw) {
     mat4_multiply(mvp, ctx->projection, mv);
     VulkanPushConstants pc;
     memcpy(pc.mvp, mvp, 64);
+    pc.alpha = ctx->draw_alpha;
+    pc._pad[0] = pc._pad[1] = pc._pad[2] = 0.0f;
     vkCmdPushConstants(cmd, ctx->pipeline_layout,
-        VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pc), &pc);
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
 
     /* Flush immediate-mode geometry (non-chunk cube/sphere/triangle calls) */
     if (ctx->mesh_collector.count > 0) {
@@ -718,13 +732,18 @@ static void vk_swap(void* raw) {
         vk_mesh_collector_reset(&ctx->mesh_collector);
     }
 
-    /* Draw cached chunks (inline — rebind pipeline already done) */
+    /* Nur per chunk_draw angeforderte Chunks zeichnen (gleiche Semantik wie GL33).
+     * Alpha wurde beim chunk_draw-Aufruf eingefroren und geht als Push-Constant mit. */
     for (int i = 0; i < MAX_VK_CHUNKS; i++) {
-        if (ctx->chunk_sys.slots[i].is_used && ctx->chunk_sys.slots[i].is_compiled) {
+        VkChunkSlot* slot = &ctx->chunk_sys.slots[i];
+        if (slot->is_used && slot->is_compiled && slot->draw_requested) {
+            pc.alpha = slot->draw_alpha;
+            vkCmdPushConstants(cmd, ctx->pipeline_layout,
+                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
             VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(cmd, 0, 1,
-                &ctx->chunk_sys.slots[i].vertex_buf.buffer, &offset);
-            vkCmdDraw(cmd, (uint32_t)ctx->chunk_sys.slots[i].vertex_count, 1, 0, 0);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &slot->vertex_buf.buffer, &offset);
+            vkCmdDraw(cmd, (uint32_t)slot->vertex_count, 1, 0, 0);
+            slot->draw_requested = false;
         }
     }
 
@@ -952,6 +971,8 @@ static void vk_chunk_end_fn(void* raw) {
 
     VulkanPushConstants pc;
     memcpy(pc.mvp, mvp, 64);
+    pc.alpha = 1.0f;
+    pc._pad[0] = pc._pad[1] = pc._pad[2] = 0.0f;
 
     vk_chunk_upload(&ctx->chunk_sys, ctx->active_chunk, &ctx->mesh_collector,
         ctx->framebuffers[0], ctx->swapchain_extent,
@@ -960,9 +981,13 @@ static void vk_chunk_end_fn(void* raw) {
 }
 
 static void vk_chunk_draw_fn(void* raw, int id) {
-    (void)raw;
-    (void)id;
-    /* Chunks are drawn automatically in vk_swap() */
+    VulkanContext* ctx = (VulkanContext*)raw;
+    if (!ctx || id < 0 || id >= MAX_VK_CHUNKS) return;
+    VkChunkSlot* slot = &ctx->chunk_sys.slots[id];
+    if (!slot->is_used || !slot->is_compiled) return;
+    /* Draw-Request fuer diesen Frame; Alpha zum Aufruf-Zeitpunkt einfrieren. */
+    slot->draw_requested = true;
+    slot->draw_alpha = ctx->draw_alpha;
 }
 
 static void vk_chunk_delete_fn(void* raw, int id) {
@@ -1117,6 +1142,14 @@ static void vk_set_fog_color(void* raw, float r, float g, float b) {
     ctx->ubo_data.fogColor[1] = g;
     ctx->ubo_data.fogColor[2] = b;
     /* fogColor[3] transportiert ambient (vk_set_ambient) — nicht anfassen. */
+}
+
+static void vk_set_alpha(void* raw, float level) {
+    VulkanContext* ctx = (VulkanContext*)raw;
+    if (!ctx) return;
+    if (level < 0.0f) level = 0.0f;
+    if (level > 1.0f) level = 1.0f;
+    ctx->draw_alpha = level;
 }
 
 static void vk_set_light_dir(void* raw, float x, float y, float z) {
@@ -1473,6 +1506,7 @@ Moo3DBackend moo_backend_vulkan = {
     .mouse_wheel = vk_mouse_wheel,
     .set_fog_density = vk_set_fog_density,
     .set_fog_color = vk_set_fog_color,
+    .set_alpha = vk_set_alpha,
     .set_light_dir = vk_set_light_dir,
     .set_ambient = vk_set_ambient,
     .chunk_create = vk_chunk_create_fn,

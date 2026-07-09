@@ -329,6 +329,7 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_3d_fog: FunctionValue<'ctx>,
     pub moo_3d_fog_color: FunctionValue<'ctx>,
     pub moo_3d_triangle_colors: FunctionValue<'ctx>,
+    pub moo_3d_alpha: FunctionValue<'ctx>,
     pub moo_3d_release_mouse: FunctionValue<'ctx>,
     pub moo_3d_mouse_dx: FunctionValue<'ctx>,
     pub moo_3d_mouse_dy: FunctionValue<'ctx>,
@@ -1037,6 +1038,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_3d_fog_color: module.add_function("moo_3d_fog_color", void_type.fn_type(mv2, false), None),
             // Gouraud-Dreieck: win + 9 Koordinaten + 3 Farben = 13 MooValues
             moo_3d_triangle_colors: module.add_function("moo_3d_triangle_colors", void_type.fn_type(&[mv, mv, mv, mv, mv, mv, mv, mv, mv, mv, mv, mv, mv], false), None),
+            moo_3d_alpha: module.add_function("moo_3d_alpha", void_type.fn_type(mv2, false), None),
             moo_3d_release_mouse: module.add_function("moo_3d_release_mouse", void_type.fn_type(mv1, false), None),
             moo_3d_mouse_dx: decl_mv_mv!("moo_3d_mouse_dx", mv1),
             moo_3d_mouse_dy: decl_mv_mv!("moo_3d_mouse_dy", mv1),

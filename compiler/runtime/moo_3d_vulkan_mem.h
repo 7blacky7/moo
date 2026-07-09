@@ -79,6 +79,9 @@ typedef struct {
     int vertex_count;
     bool is_compiled;
     bool is_used;
+    /* chunk_draw-Request fuer den aktuellen Frame + Alpha zum Request-Zeitpunkt */
+    bool draw_requested;
+    float draw_alpha;
 } VkChunkSlot;
 
 typedef struct {

@@ -294,6 +294,19 @@ void moo_3d_triangle_colors(MooValue win,
         (float)MV_NUM(x3), (float)MV_NUM(y3), (float)MV_NUM(z3), c3.r, c3.g, c3.b);
 }
 
+void moo_3d_set_alpha(float level) {
+    if (!g_backend || !g_ctx || !g_backend->set_alpha) return;
+    g_backend->set_alpha(g_ctx, level);
+}
+
+/* Builtin-Wrapper: raum_transparenz(fenster, alpha 0..1) — gilt fuer alle
+ * folgenden Draws (auch chunk_zeichne). 1.0 = opak.
+ * Konvention: Transparentes zuletzt zeichnen (Depth-Write-Verhalten). */
+void moo_3d_alpha(MooValue win, MooValue level) {
+    (void)win;
+    moo_3d_set_alpha((float)MV_NUM(level));
+}
+
 // ============================================================
 // Maus
 // ============================================================
