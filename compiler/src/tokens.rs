@@ -205,7 +205,8 @@ pub fn keyword_lookup(word: &str) -> Option<TokenType> {
         "ve" => Some(TokenType::Try),
         // "fg" entfernt — kollidiert mit haeufigem Variablenname (foreground,
         // file-grep, frame-grab). 'fange' bzw. 'catch' ausgeschrieben verwenden.
-        "wi" => Some(TokenType::Throw),
+        // "wi" entfernt (2026-07-09) — kollidiert mit haeufigem Variablenname
+        // (wellen-index, width, wi als Laufvariable). 'wirf' bzw. 'throw' verwenden.
         "un" => Some(TokenType::Unsafe),
         // "wa" => Await existiert nicht im Rust-Compiler Token-Enum
 
