@@ -138,7 +138,9 @@ static MooTensor* expect_tensor(MooValue v, const char* wo) {
         moo_throw(moo_error(msg));
         return NULL;
     }
-    return MV_TENSOR(v);
+    MooTensor* t = MV_TENSOR(v);
+    moo_tensor_f32_sichern(t);   // KIP-D1 Eintrittspunkt (D0 §4.1): f32-data garantieren (bf16-store -> f32)
+    return t;
 }
 
 // Flachen Index aus einer Index-Liste berechnen (Bounds-Check pro Dimension).
@@ -210,18 +212,102 @@ void moo_tensor_free(void* ptr) {
     MooTensor* t = (MooTensor*)ptr;
     if (t->data) free(t->data);
     if (t->grad) free(t->grad);
-    // Hinweis (KIP-STRUCT f2cbebc7): store/gpu_buf/gpu_grad sind im F32/CPU-Skelett
-    // stets NULL -> hier bewusst NICHT freigegeben. store-Free kommt mit D1,
-    // gpu_buf/gpu_grad-Pool-Rueckgabe (kein free!) mit G1 — Owner-Grenzen bleiben klar.
+    if (t->store) free(t->store);   // KIP-D1: bf16-Storage freigeben (nur != NULL nach als_dtype)
+    // gpu_buf/gpu_grad-Pool-Rueckgabe (kein free!) bleibt G1 — Owner-Grenzen klar.
     free(t);
 }
 
-// === Repraesentations-Sicherung (KIP-STRUCT f2cbebc7) — F32-Skelett-Stubs ===
-// Im reinen F32/CPU-Skelett ist `data` immer die autoritative Repraesentation;
-// alle drei Funktionen sind no-op. Volle Semantik: D1 (store) / G1-PoC (gpu_buf).
-void moo_tensor_f32_sichern(MooTensor* t)   { (void)t; /* data im F32-Skelett stets gueltig */ }
-void moo_tensor_store_sichern(MooTensor* t) { (void)t; /* kein bf16-store im F32-Skelett */ }
-void moo_tensor_host_sichern(MooTensor* t)  { (void)t; /* keine GPU-Residenz im F32/CPU-Skelett */ }
+// === bf16 <-> f32 Konvertierung (KIP-D1) ===
+// bf16 = obere 16 Bit eines f32 (gleicher 8-Bit-Exponent, 7 Mantissen-Bit).
+// f32->bf16: round-to-nearest-even; NaN bleibt NaN (entartet nicht zu Inf),
+// Inf bleibt Inf; sehr kleine Werte koennen zu 0 flushen (bf16-Semantik).
+static inline uint16_t moo_f32_zu_bf16(float f) {
+    uint32_t x;
+    memcpy(&x, &f, sizeof(x));
+    if (((x >> 23) & 0xFFu) == 0xFFu && (x & 0x7FFFFFu)) {
+        return (uint16_t)((x >> 16) | 0x0040u);   // NaN -> quiet bf16-NaN
+    }
+    uint32_t bias = 0x7FFFu + ((x >> 16) & 1u);   // round-to-nearest-even
+    x += bias;                                    // uint32: definiertes Wrap (UB-Policy)
+    return (uint16_t)(x >> 16);
+}
+static inline float moo_bf16_zu_f32(uint16_t h) {
+    uint32_t x = (uint32_t)h << 16;
+    float f;
+    memcpy(&f, &x, sizeof(f));
+    return f;
+}
+
+// === Repraesentations-Sicherung (KIP-D1, Valid-Masken-Vertrag D0 §2) ===
+// f32_sichern: garantiert gueltiges f32-`data` (materialisiert ggf. aus bf16-store).
+//   Schneller Pfad: MOO_V_DATA schon gesetzt -> no-op (der F32-Normalfall).
+void moo_tensor_f32_sichern(MooTensor* t) {
+    if (!t) return;
+    if (t->valid & MOO_V_DATA) return;                 // bereits gueltig (F32-Fastpath)
+    if (t->valid & MOO_V_STORE) {                      // aus bf16-store rematerialisieren
+        if (!t->data) {
+            t->data = (float*)calloc((size_t)t->size, sizeof(float));
+            if (!t->data) { moo_throw(moo_error("tensor: Speicher voll bei f32-Sicherung")); return; }
+        }
+        const uint16_t* s = (const uint16_t*)t->store;
+        for (int64_t i = 0; i < t->size; i++) t->data[i] = moo_bf16_zu_f32(s[i]);
+        t->valid |= MOO_V_DATA;
+        return;
+    }
+    moo_throw(moo_error("tensor: keine gueltige CPU-Repraesentation zum Sichern"));  // MOO_V_DEV erst mit G1
+}
+// store_sichern: garantiert gueltigen dtype-`store` (bf16) aus f32-`data`.
+void moo_tensor_store_sichern(MooTensor* t) {
+    if (!t) return;
+    if (t->dtype == MOO_DT_F32) return;                // kein store bei reinem f32
+    if (t->valid & MOO_V_STORE) return;                // bereits aktuell
+    if (!(t->valid & MOO_V_DATA)) { moo_throw(moo_error("tensor: kein f32-data fuer store-Sicherung")); return; }
+    if (!t->store) {
+        t->store = malloc((size_t)t->size * sizeof(uint16_t));
+        if (!t->store) { moo_throw(moo_error("tensor: Speicher voll bei store-Sicherung")); return; }
+    }
+    uint16_t* s = (uint16_t*)t->store;
+    for (int64_t i = 0; i < t->size; i++) s[i] = moo_f32_zu_bf16(t->data[i]);
+    t->valid |= MOO_V_STORE;
+}
+// host_sichern: Host-Sicht (f32-data). In D1 == f32_sichern (kein GPU).
+void moo_tensor_host_sichern(MooTensor* t) { moo_tensor_f32_sichern(t); }
+
+// === als_dtype: Storage-DType wechseln (KIP-D1) ===
+// tensor.als_dtype("bf16"/"f32"): konvertiert IN-PLACE, gibt denselben (mutierten)
+// Tensor +1 owning zurueck. "bf16" baut store aus data + gibt data frei; "f32"
+// materialisiert data + gibt store frei.
+MooValue moo_tensor_als_dtype(MooValue tv, MooValue dtype_str) {
+    MooTensor* t = expect_tensor(tv, "als_dtype");     // sichert data (f32) vor
+    if (!t) return moo_none();
+    if (dtype_str.tag != MOO_STRING) {
+        moo_throw(moo_error("als_dtype: erwarte einen Typ-Namen als Text (\"f32\" oder \"bf16\")"));
+        return moo_none();
+    }
+    const char* name = MV_STR(dtype_str)->chars;
+    uint8_t ziel;
+    if (strcmp(name, "f32") == 0 || strcmp(name, "float32") == 0) ziel = MOO_DT_F32;
+    else if (strcmp(name, "bf16") == 0 || strcmp(name, "bfloat16") == 0) ziel = MOO_DT_BF16;
+    else {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "als_dtype: unbekannter Typ \"%s\" (moeglich: \"f32\", \"bf16\")", name);
+        moo_throw(moo_error(msg));
+        return moo_none();
+    }
+    if (ziel == MOO_DT_BF16) {
+        t->dtype = MOO_DT_BF16;
+        moo_tensor_store_sichern(t);                   // store aus (gueltigem) data
+        if (moo_error_flag) return moo_none();
+        if (t->data) { free(t->data); t->data = NULL; }
+        t->valid = MOO_V_STORE;                        // nur noch bf16-Storage autoritativ
+    } else {
+        t->dtype = MOO_DT_F32;                          // data ist via expect_tensor bereits gesichert
+        if (t->store) { free(t->store); t->store = NULL; }
+        t->valid = MOO_V_DATA;
+    }
+    moo_retain(tv);                                    // Rueckgabe +1 owning (derselbe Tensor)
+    return tv;
+}
 
 // ============================================================
 // Konstruktoren — alle: Args geliehen, Rueckgabe +1 owning.
@@ -344,6 +430,7 @@ MooValue moo_tensor_setzen(MooValue tv, MooValue idx_list, MooValue val) {
     int64_t flat = flat_index(t, idx_list, "tensor_setzen");
     if (flat < 0) return moo_none();
     t->data[flat] = (float)MV_NUM(val);
+    t->valid = MOO_V_DATA;   // KIP-D1 Mutations-Invalidierung (D0 §4.2): data autoritativ, store/dev verworfen
     return moo_none();
 }
 
@@ -380,6 +467,7 @@ MooValue moo_tensor_zu_liste(MooValue tv) {
 MooValue moo_tensor_to_string(MooValue tv) {
     if (tv.tag != MOO_TENSOR) return moo_string_new("<kein Tensor>");
     MooTensor* t = MV_TENSOR(tv);
+    moo_tensor_f32_sichern(t);   // KIP-D1 Eintrittspunkt: Werte-Anzeige braucht gueltiges f32-data
     char head[96];
     int off = snprintf(head, sizeof(head), "Tensor[");
     for (int32_t d = 0; d < t->ndim; d++)
