@@ -966,6 +966,15 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         link_args.push("-lglfw".to_string());
     }
 
+    // Capture-Backend-Libs fuer die separate finale Link-Stufe.
+    #[cfg(moo_has_v4l2)]
+    {
+        link_args.push("-lv4l2".to_string());
+        link_args.push("-lv4lconvert".to_string());
+    }
+    #[cfg(moo_has_alsa)]
+    link_args.push("-lasound".to_string());
+
     // Linker-Script: -T kernel.ld
     if let Some(script) = linker_script {
         link_args.push("-T".to_string());

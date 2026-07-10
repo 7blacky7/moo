@@ -9,7 +9,8 @@ static inline bool is_heap_type(uint64_t tag) {
            tag == MOO_THREAD || tag == MOO_CHANNEL || tag == MOO_DATABASE ||
            tag == MOO_DB_STMT || tag == MOO_WINDOW || tag == MOO_WEBSERVER ||
            tag == MOO_VOXELWORLD || tag == MOO_FRAME || tag == MOO_GIF ||
-           tag == MOO_VIDEO || tag == MOO_TENSOR;
+           tag == MOO_VIDEO || tag == MOO_TENSOR || tag == MOO_KAMERA ||
+           tag == MOO_MIKRO;
 }
 
 extern void moo_socket_free(void* ptr);
@@ -122,6 +123,12 @@ void moo_release(MooValue v) {
         case MOO_TENSOR:
             // Immer gebaut (moo_tensor.c in der Kernliste) — kein Gating noetig.
             moo_tensor_free(moo_val_as_ptr(v));
+            break;
+        case MOO_KAMERA:
+            moo_kamera_free(moo_val_as_ptr(v));
+            break;
+        case MOO_MIKRO:
+            moo_mikro_free(moo_val_as_ptr(v));
             break;
         default:
             break;

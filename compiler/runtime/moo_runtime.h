@@ -35,6 +35,8 @@ typedef enum {
     MOO_GIF = 21,
     MOO_VIDEO = 22,
     MOO_TENSOR = 23,
+    MOO_KAMERA = 24,
+    MOO_MIKRO = 25,
 } MooTag;
 
 // === Forward Declarations ===
@@ -47,6 +49,8 @@ typedef struct MooThread MooThread;
 typedef struct MooChannel MooChannel;
 typedef struct MooValue MooValue;
 typedef struct MooError MooError;
+typedef struct MooKamera MooKamera;
+typedef struct MooMikro MooMikro;
 
 // === MooValue: Der universelle Wert ===
 // Layout: { uint64_t tag, uint64_t data } = 16 Bytes
@@ -91,6 +95,8 @@ static inline void moo_val_set_bool(MooValue* v, bool b) { v->data = (uint64_t)b
 #define MV_BOOL(v)   moo_val_as_bool(v)
 #define MV_ERROR(v)  ((MooError*)moo_val_as_ptr(v))
 #define MV_ERR(v)    (MV_ERROR(v)->chars)
+#define MV_KAMERA(v) ((MooKamera*)moo_val_as_ptr(v))
+#define MV_MIKRO(v)  ((MooMikro*)moo_val_as_ptr(v))
 
 // === Reference Counting ===
 // Erstes Feld in jedem Heap-Objekt. Startet bei 1 bei Erstellung.
@@ -107,6 +113,17 @@ void moo_voxel_free(void* ptr);
 void moo_frame_free(void* ptr);
 void moo_gif_handle_free(void* ptr);
 void moo_tensor_free(void* ptr);
+void moo_kamera_free(void* ptr);
+void moo_mikro_free(void* ptr);
+
+// === Realtime-Capture (KI-MULTI-C1) ===
+MooValue moo_kamera_liste(void);
+MooValue moo_kamera_oeffnen(MooValue path, MooValue width, MooValue height, MooValue fps);
+MooValue moo_kamera_frame(MooValue camera, MooValue timeout_ms);
+MooValue moo_kamera_schliessen(MooValue camera);
+MooValue moo_mikro_oeffnen(MooValue rate, MooValue channels, MooValue device);
+MooValue moo_mikro_lesen(MooValue microphone, MooValue samples, MooValue timeout_ms);
+MooValue moo_mikro_schliessen(MooValue microphone);
 
 // === Frame (opaker Pixel-Frame-Heap-Typ, Plan-008 A3A) ===
 // Pixeldaten NIE als moo-Liste (MooValue=16B; ultrawide ~20MB/Frame). Opaker

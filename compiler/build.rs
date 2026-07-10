@@ -25,6 +25,7 @@ fn main() {
         .file("runtime/moo_memory.c")
         .file("runtime/moo_frame.c")
         .file("runtime/moo_frame_tensor.c") // Frame<->Tensor-Bruecke (KI-MULTI-V1, SDL-frei)
+        .file("runtime/moo_capture.c")      // KI-MULTI-C1: gemeinsame Handle-/Lifecycle-Schicht
         .file("runtime/moo_audio.c")        // FFT/STFT/WAV-Reader (KI-MULTI-A1, SDL-frei)
         .file("runtime/moo_gif.c")        // GIF89a+LZW-Encoder-Kern (Plan-008 A3B, pure C)
         .file("runtime/moo_gif_handle.c") // moo-Heap-Wrapper MOO_GIF (immer gebaut)
@@ -151,6 +152,33 @@ fn main() {
         build.file("runtime/moo_3d_vulkan.c");
         build.file("runtime/moo_3d_vulkan_mem.c");
         build.define("MOO_HAS_VULKAN", None);
+    }
+
+    // KI-MULTI-C1: native Capture-Backends nur wenn Header UND Linklibs
+    // via pkg-config verfuegbar sind; sonst ABI-identische Stubs bauen.
+    println!("cargo:rustc-check-cfg=cfg(moo_has_v4l2)");
+    println!("cargo:rustc-check-cfg=cfg(moo_has_alsa)");
+    let target_linux = std::env::var("CARGO_CFG_TARGET_OS")
+        .map(|s| s == "linux").unwrap_or(cfg!(target_os = "linux"));
+    let v4l2 = target_linux &&
+        pkg_config::Config::new().probe("libv4l2").is_ok() &&
+        pkg_config::Config::new().probe("libv4lconvert").is_ok();
+    if v4l2 {
+        build.file("runtime/moo_capture_v4l2.c");
+        build.define("MOO_HAS_V4L2", None);
+        println!("cargo:rustc-cfg=moo_has_v4l2");
+    } else {
+        build.file("runtime/moo_capture_camera_stub.c");
+        println!("cargo:warning=moo capture: libv4l2/libv4lconvert fehlen; Kamera-Stub wird gebaut");
+    }
+    let alsa = target_linux && pkg_config::Config::new().probe("alsa").is_ok();
+    if alsa {
+        build.file("runtime/moo_capture_alsa.c");
+        build.define("MOO_HAS_ALSA", None);
+        println!("cargo:rustc-cfg=moo_has_alsa");
+    } else {
+        build.file("runtime/moo_capture_audio_stub.c");
+        println!("cargo:warning=moo capture: libasound fehlt; Mikrofon-Stub wird gebaut");
     }
 
     build.compile("moo_runtime");
