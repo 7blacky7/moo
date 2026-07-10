@@ -518,7 +518,8 @@ static void bw_matmul(const MooAgNode* n) {
     // im symmetrischen Fall).
     bool strikt = moo_ki_gpu_strikt_aktiv();
     bool done = false;
-    if (a->requires_grad && b->requires_grad &&
+    bool symmetrisch = a->requires_grad && b->requires_grad;   /* einzige Form mit residentem Pfad */
+    if (symmetrisch &&
         (strikt || m * k * p >= (1LL << 24))) {
         if (strikt) { moo_tensor_nach_gpu(a); moo_tensor_nach_gpu(b); }
         if ((a->valid & MOO_V_DEV) && (b->valid & MOO_V_DEV)) {
@@ -553,7 +554,7 @@ static void bw_matmul(const MooAgNode* n) {
         }
     }
 
-    if (!done && strikt) {
+    if (!done && strikt && symmetrisch) {
         moo_throw(moo_error("STRIKT: matmul-Backward nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
         return;
     }
