@@ -30,6 +30,27 @@ bool moo_ki_gpu_ew(int32_t op, const float* a, const float* b, float* o,
                    int64_t n);
 bool moo_ki_gpu_reduce_sum(const float* a, int64_t n, double* out_summe);
 
+/* === KIP-G4c: STRIKT-Vertrag (docs/kip/G4c-production-wiring-plan.md §3.1) ===
+ * Reiner Host-Zustand, unabhaengig von MOO_HAS_VULKAN (ohne Vulkan-Build wird
+ * jeder GPU-Op-Aufruf trotzdem false liefern -> die Aufrufer werfen dann via
+ * ihres eigenen "!done && strikt -> moo_throw"-Musters, fail-loud statt still
+ * CPU. Env einmalig gelesen (lazy, wie ag_bf16 in moo_autograd.c), per
+ * moo_ki_gpu_strikt_setzen ueberschreibbar (Tests/Gate-Skripte). */
+static bool g_ki_strikt = false;
+static bool g_ki_strikt_env_gelesen = false;
+bool moo_ki_gpu_strikt_aktiv(void) {
+    if (!g_ki_strikt_env_gelesen) {
+        const char* e = getenv("MOO_KI_GPU_STRIKT");
+        g_ki_strikt = (e && e[0] == '1' && e[1] == '\0');
+        g_ki_strikt_env_gelesen = true;
+    }
+    return g_ki_strikt;
+}
+void moo_ki_gpu_strikt_setzen(bool an) {
+    g_ki_strikt = an;
+    g_ki_strikt_env_gelesen = true;
+}
+
 #ifndef MOO_HAS_VULKAN
 
 bool moo_ki_gpu_matmul(const float* a, const float* b, float* o,
@@ -217,7 +238,8 @@ static bool env_aus(void) {
 }
 static bool env_erzwingen(void) {
     const char* e = getenv("MOO_KI_GPU_ERZWINGEN");
-    return e && e[0] == '1' && e[1] == '\0';
+    if (e && e[0] == '1' && e[1] == '\0') return true;
+    return moo_ki_gpu_strikt_aktiv();   /* KIP-G4c: STRIKT impliziert ERZWINGEN */
 }
 
 static VkPipeline pipeline_bauen(const unsigned char* spv, unsigned int len,

@@ -508,10 +508,20 @@ static void bw_matmul(const MooAgNode* n) {
     // Semantik (I3-Vertrag aus PREFLIGHT be01ac8: der Akkumulator zg bleibt in
     // diesem Schritt immer CPU-seitig, GPU dient nur als Rechenbeschleuniger
     // fuer das Delta — kein gemischter CPU/GPU-Akkumulator auf demselben Ziel).
+    // KIP-G4c Stufe 4 (STRIKT-Vertrag): unter STRIKT Groessen-Schwelle ignorieren
+    // und beide Inputs zwangsweise resident machen. STRIKT-Durchsetzung ist hier
+    // bewusst nur fuer den symmetrischen Fall (BEIDE Inputs requires_grad) aktiv
+    // -- das ist die einzige Form, fuer die ein residenter Pfad ueberhaupt
+    // existiert (matmul_bw_res verlangt da UND db, G3d-e). Der einseitige Fall
+    // (nur a ODER b requires_grad) hat noch KEINEN residenten Pfad und bleibt
+    // daher auch unter STRIKT CPU (dokumentierte Luecke, kein stiller Fallback
+    // im symmetrischen Fall).
+    bool strikt = moo_ki_gpu_strikt_aktiv();
     bool done = false;
     if (a->requires_grad && b->requires_grad &&
-        m * k * p >= (1LL << 24) &&
-        (a->valid & MOO_V_DEV) && (b->valid & MOO_V_DEV)) {
+        (strikt || m * k * p >= (1LL << 24))) {
+        if (strikt) { moo_tensor_nach_gpu(a); moo_tensor_nach_gpu(b); }
+        if ((a->valid & MOO_V_DEV) && (b->valid & MOO_V_DEV)) {
         int64_t obytes = (int64_t)o->size * (int64_t)sizeof(float);
         int64_t abytes = (int64_t)a->size * (int64_t)sizeof(float);
         int64_t bbytes = (int64_t)b->size * (int64_t)sizeof(float);
@@ -540,8 +550,13 @@ static void bw_matmul(const MooAgNode* n) {
         moo_ki_gpu_buf_freigeben(gbuf);
         moo_ki_gpu_buf_freigeben(dabuf);
         moo_ki_gpu_buf_freigeben(dbbuf);
+        }
     }
 
+    if (!done && strikt) {
+        moo_throw(moo_error("STRIKT: matmul-Backward nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
+        return;
+    }
     if (!done) {
         if (a->requires_grad) {
             float* zg = grad_sicherstellen(a);

@@ -237,7 +237,12 @@ MooValue moo_tensor_matmul(MooValue av, MooValue bv) {
      * idempotent + opportunistisch (silent no-op ohne Vulkan/GPU-Fehler,
      * Preflight-konform) — reiner Fallback-Pfad VOR dem bestehenden Hook,
      * kein bestehendes Verhalten geaendert. */
-    if (mm * kk * nn >= (1LL << 24)) {
+    /* KIP-G4c Stufe 4 (STRIKT-Vertrag, §3.1): unter STRIKT wird die Groessen-
+     * Schwelle ignoriert (immer resident versuchen); jeder Nicht-Erfolg (weder
+     * resident noch der alte non-resident Hook) ist dann ein harter Fehler
+     * statt eines stillen CPU-Falls. */
+    bool strikt = moo_ki_gpu_strikt_aktiv();
+    if (strikt || mm * kk * nn >= (1LL << 24)) {
         moo_tensor_nach_gpu(a);
         moo_tensor_nach_gpu(b);
         if ((a->valid & MOO_V_DEV) && (b->valid & MOO_V_DEV)) {
@@ -254,8 +259,14 @@ MooValue moo_tensor_matmul(MooValue av, MooValue bv) {
     }
     /* GPU2: grosse MatMuls (non-resident) auf Vulkan, CPU-ikj als Fallback. */
     if (!done && !moo_ki_gpu_matmul(a->data, b->data, out->data,
-                           a->shape[0], a->shape[1], b->shape[1]))
+                           a->shape[0], a->shape[1], b->shape[1])) {
+        if (strikt) {
+            moo_release(wrap_t(out));
+            moo_throw(moo_error("STRIKT: matmul nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
+            return moo_none();
+        }
         matmul_ikj(a->data, b->data, out->data, a->shape[0], a->shape[1], b->shape[1]);
+    }
     MooValue ret = wrap_t(out);
     moo_ag_record("matmul", av, bv, moo_none(), ret);
     return ret;

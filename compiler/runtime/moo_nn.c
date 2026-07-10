@@ -2331,6 +2331,11 @@ MooValue moo_nn_opt_schritt(MooValue opt) {
                  * sichergestellt) einmalig hochgeladen. Bei jedem Fehlschlag
                  * sauberer Komplett-Fallback auf den bestehenden CPU-Pfad, KEIN
                  * Teil-Update (analog Stufe 1/2). */
+                /* KIP-G4c Stufe 4 (STRIKT-Vertrag): unter STRIKT den Parameter
+                 * zwangsweise resident machen (statt nur bereits-resident zu
+                 * nutzen) und bei jedem Fehlschlag hart werfen statt CPU. */
+                bool strikt = moo_ki_gpu_strikt_aktiv();
+                if (strikt) moo_tensor_nach_gpu(p);
                 bool done = false;
                 if ((p->valid & MOO_V_DEV) && p->gpu_buf) {
                     moo_tensor_nach_gpu(mt);
@@ -2346,6 +2351,10 @@ MooValue moo_nn_opt_schritt(MooValue opt) {
                         }
                         moo_ki_gpu_buf_freigeben(gbuf);
                     }
+                }
+                if (!done && strikt) {
+                    moo_throw(moo_error("STRIKT: SGD-Optimizer-Schritt nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
+                    return moo_none();
                 }
                 if (!done) {
                     moo_tensor_f32_sichern(p);    /* KIP-G4c I1: p->data koennte nur MOO_V_DEV sein (Stufe-3-Versuch fehlgeschlagen) */

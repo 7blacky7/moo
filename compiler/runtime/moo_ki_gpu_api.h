@@ -222,4 +222,20 @@ void moo_ki_gpu_telemetrie(MooKiGpuTelemetrie* out);
 /* Zaehler auf 0 setzen (Test-Isolation / Steady-State-Messung). */
 void moo_ki_gpu_telemetrie_reset(void);
 
+/* === KIP-G4c: STRIKT-Vertrag (docs/kip/G4c-production-wiring-plan.md §3.1) ===
+ * Orthogonal zum bestehenden `MOO_KI_GPU_ERZWINGEN` (das bypassed nur interne
+ * Groessen-Schwellen der ALTEN nicht-residenten GPU2-Hooks). STRIKT ist neu:
+ * die Aufrufer der residenten Routing-Stellen (moo_tensor_ops.c/moo_autograd.c/
+ * moo_nn.c) versuchen unter STRIKT IMMER den GPU-Pfad (keine Groessen-
+ * Schwelle) und werfen `moo_throw`, statt still auf CPU zu fallen, wenn weder
+ * der residente noch (wo vorhanden) der alte nicht-residente Pfad greifen.
+ * Aktivierung: Env `MOO_KI_GPU_STRIKT=1` (einmalig gelesen, gecacht) ODER
+ * programmatisch via moo_ki_gpu_strikt_setzen (Tests/Gate-Skripte). STRIKT
+ * impliziert automatisch das Verhalten von MOO_KI_GPU_ERZWINGEN (interne
+ * Alt-Hook-Schwellen werden mit-bypassed). Ohne MOO_HAS_VULKAN-Build sind
+ * beide Funktionen hier Stubs (aktiv=false, setzen=no-op) -- ein STRIKT-Init
+ * ohne Vulkan schlaegt beim ERSTEN GPU-Op fehl (fail-loud), nicht still. */
+bool moo_ki_gpu_strikt_aktiv(void);
+void moo_ki_gpu_strikt_setzen(bool an);
+
 #endif /* MOO_KI_GPU_API_H */
