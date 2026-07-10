@@ -1,0 +1,20 @@
+#version 450
+// gather.comp — KIP-G3d-d: Embedding-Lookup out[i,d] = W[idx[i], d].
+// idx sind integer-wertige floats (uint(idx[i])). CPU-Ref: kip-ops T1 gather.
+// binding 0 = W [vocab,dim], binding 1 = idx [rows], binding 2 = out [rows,dim].
+// pc.M = rows, pc.K = dim, pc.N = vocab. Ein Thread pro Ausgabe-Element.
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly  buffer BufW { float w[]; };
+layout(std430, binding = 1) readonly  buffer BufI { float idx[]; };
+layout(std430, binding = 2) writeonly buffer BufO { float o[]; };
+layout(push_constant) uniform PC { uint M; uint K; uint N; uint op; } pc;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint total = pc.M * pc.K;
+    if (gid >= total) return;
+    uint i = gid / pc.K;
+    uint d = gid - i * pc.K;
+    uint v = uint(idx[i]);
+    o[gid] = w[v * pc.K + d];
+}

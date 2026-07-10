@@ -1,0 +1,26 @@
+#version 450
+// scatter_add.comp — KIP-G3d-d: DETERMINISTISCHE scatter-add (gather-Backward),
+// als Segment-Reduktion (G0 §2). gW[v,d] = sum ueber i mit uint(idx[i])==v von
+// g[i,d], sequentiell in AUFSTEIGENDER i-Reihenfolge -> 2 Laeufe bit-identisch
+// (KEIN atomicAdd). Die Summationsordnung je Segment (aufsteigend i) ist
+// identisch zu moo_autograd.c bw_gather -> bit-exakt vs CPU. binding 0 = g
+// [rows,dim], binding 1 = idx [rows], binding 2 = gW [vocab,dim].
+// pc.M = rows, pc.K = dim, pc.N = vocab. Ein Thread pro (v,d).
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly  buffer BufG  { float g[]; };
+layout(std430, binding = 1) readonly  buffer BufI  { float idx[]; };
+layout(std430, binding = 2) writeonly buffer BufGw { float gw[]; };
+layout(push_constant) uniform PC { uint M; uint K; uint N; uint op; } pc;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint total = pc.N * pc.K;          // vocab * dim
+    if (gid >= total) return;
+    uint v = gid / pc.K;
+    uint d = gid - v * pc.K;
+    float acc = 0.0;
+    for (uint i = 0u; i < pc.M; i++) {
+        if (uint(idx[i]) == v) acc += g[i * pc.K + d];
+    }
+    gw[gid] = acc;
+}

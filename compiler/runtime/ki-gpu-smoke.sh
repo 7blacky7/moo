@@ -67,6 +67,12 @@ gcc -std=gnu11 -O2 -DMOO_HAS_VULKAN -I. \
 
 /tmp/test_ki_gpu_reduce
 
+# KIP-G3d-d: gather + deterministische scatter-add (Differential vs CPU + Determinismus)
+gcc -std=gnu11 -O2 -DMOO_HAS_VULKAN -I. \
+    -o /tmp/test_ki_gpu_gather tests/test_ki_gpu_gather.c moo_ki_gpu.c -lvulkan -lm
+
+/tmp/test_ki_gpu_gather
+
 # KIP-G1 Phase B: Tensor-Dirty-State (valid-Masken-Transitionen + GPU-Download).
 # gc-sections droppt ungenutzte Tensor-Funktionen; moo_throw/moo_error gestubbt.
 gcc -std=gnu11 -O2 -ffunction-sections -fdata-sections -Wl,--gc-sections \

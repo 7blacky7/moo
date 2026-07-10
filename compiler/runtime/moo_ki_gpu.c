@@ -119,6 +119,14 @@ bool moo_ki_gpu_reduce_max_bw_res(int32_t axis, void* a, void* g, void* gin,
                                   int32_t rows, int32_t cols) {
     (void)axis; (void)a; (void)g; (void)gin; (void)rows; (void)cols; return false;
 }
+bool moo_ki_gpu_gather_res(void* w, void* idx, void* o,
+                           int32_t rows, int32_t dim, int32_t vocab) {
+    (void)w; (void)idx; (void)o; (void)rows; (void)dim; (void)vocab; return false;
+}
+bool moo_ki_gpu_scatter_add_res(void* g, void* idx, void* gw,
+                                int32_t rows, int32_t dim, int32_t vocab) {
+    (void)g; (void)idx; (void)gw; (void)rows; (void)dim; (void)vocab; return false;
+}
 bool moo_ki_gpu_opt_sgd_res(void* p, void* m, void* grad, int64_t n,
                             float lr, float momentum) {
     (void)p; (void)m; (void)grad; (void)n; (void)lr; (void)momentum; return false;
@@ -164,6 +172,7 @@ typedef struct {
     VkPipeline pipe_ce_fwd, pipe_ce_bw;       /* KIP-G3a: fused Cross-Entropy F+B (zeilenweise) */
     VkPipeline pipe_norm, pipe_norm_bw;       /* KIP-G3b: LayerNorm/RMSNorm-Kern F+B (zeilenweise) */
     VkPipeline pipe_reduce_axis, pipe_broadcast, pipe_reduce_max_bw; /* KIP-G3d-b: Achsen-Red + Broadcast + Max-Subgradient */
+    VkPipeline pipe_gather, pipe_scatter_add;  /* KIP-G3d-d: gather / deterministische scatter-add */
     VkCommandPool cmdpool;
     VkDescriptorPool descpool;
     /* GPU3-C: Per-Op-Allokationen gecacht — lazy beim ersten Dispatch
@@ -385,12 +394,16 @@ static bool ki_gpu_init(void) {
     G.pipe_reduce_axis = pipeline_bauen(ki_reduce_axis_spv, ki_reduce_axis_spv_len, G.playout);
     G.pipe_broadcast = pipeline_bauen(ki_broadcast_spv, ki_broadcast_spv_len, G.playout);
     G.pipe_reduce_max_bw = pipeline_bauen(ki_reduce_max_bw_spv, ki_reduce_max_bw_spv_len, G.playout);
+    /* KIP-G3d-d: gather + deterministische scatter-add (16B-playout). */
+    G.pipe_gather = pipeline_bauen(ki_gather_spv, ki_gather_spv_len, G.playout);
+    G.pipe_scatter_add = pipeline_bauen(ki_scatter_add_spv, ki_scatter_add_spv_len, G.playout);
     if (!G.pipe_matmul || !G.pipe_ew || !G.pipe_reduce || !G.pipe_matmul_naiv ||
         !G.pipe_unary || !G.pipe_unary_bw || !G.pipe_transpose || !G.pipe_copy ||
         !G.pipe_grad_accum || !G.pipe_opt_sgd || !G.pipe_opt_adam ||
         !G.pipe_softmax || !G.pipe_softmax_bw || !G.pipe_ce_fwd || !G.pipe_ce_bw ||
         !G.pipe_norm || !G.pipe_norm_bw ||
-        !G.pipe_reduce_axis || !G.pipe_broadcast || !G.pipe_reduce_max_bw)
+        !G.pipe_reduce_axis || !G.pipe_broadcast || !G.pipe_reduce_max_bw ||
+        !G.pipe_gather || !G.pipe_scatter_add)
         return false;
 
     VkCommandPoolCreateInfo cpi = {
@@ -1288,6 +1301,39 @@ bool moo_ki_gpu_reduce_max_bw_res(int32_t axis, void* a, void* g, void* gin,
     KiPush push = { (uint32_t)rows, (uint32_t)cols, (uint32_t)axis, 0 };
     bool ok = dispatch_sync(G.pipe_reduce_max_bw, bufs, push,
                             (grpn + 255u) / 256u, 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3d-d: Embedding-Lookup out[i,d] = W[idx[i], d]. idx = integer-wertige
+ * floats. binding 0 = W, binding 1 = idx, binding 2 = out. Ein Thread pro
+ * Ausgabe-Element. */
+bool moo_ki_gpu_gather_res(void* w, void* idx, void* o,
+                           int32_t rows, int32_t dim, int32_t vocab) {
+    if (!w || !idx || !o) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf bufs[3] = { *(KiBuf*)w, *(KiBuf*)idx, *(KiBuf*)o };
+    KiPush push = { (uint32_t)rows, (uint32_t)dim, (uint32_t)vocab, 0 };
+    bool ok = dispatch_sync(G.pipe_gather, bufs, push,
+                            (uint32_t)(((int64_t)rows * dim + 255) / 256), 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3d-d: DETERMINISTISCHE scatter-add (gather-Backward) als Segment-
+ * Reduktion. gW[v,d] = sum_{i: uint(idx[i])==v} g[i,d], sequentiell in i -> 2
+ * Laeufe bit-identisch (KEIN atomicAdd, G0 §2). binding 0 = g, binding 1 = idx,
+ * binding 2 = gW. Ein Thread pro (v,d). REINER Beitrag ohne += (das += ist G3c). */
+bool moo_ki_gpu_scatter_add_res(void* g, void* idx, void* gw,
+                                int32_t rows, int32_t dim, int32_t vocab) {
+    if (!g || !idx || !gw) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf bufs[3] = { *(KiBuf*)g, *(KiBuf*)idx, *(KiBuf*)gw };
+    KiPush push = { (uint32_t)rows, (uint32_t)dim, (uint32_t)vocab, 0 };
+    bool ok = dispatch_sync(G.pipe_scatter_add, bufs, push,
+                            (uint32_t)(((int64_t)vocab * dim + 255) / 256), 1,
                             /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
     if (!ok) g_tel.cpu_fallbacks++;
     return ok;

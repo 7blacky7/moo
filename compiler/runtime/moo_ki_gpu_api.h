@@ -164,6 +164,19 @@ bool moo_ki_gpu_broadcast_res(int32_t axis, void* src, void* o,
  * REINER Beitrag OHNE +=. */
 bool moo_ki_gpu_reduce_max_bw_res(int32_t axis, void* a, void* g, void* gin,
                                   int32_t rows, int32_t cols);
+/* === KIP-G3d-d: gather (Embedding-Lookup) + deterministische scatter-add ===
+ * idx = integer-wertige floats [rows]. CPU-Ref kip-ops T1 gather + moo_autograd
+ * bw_gather. */
+/* Forward: out[i,d] = W[idx[i], d]. W [vocab,dim], out [rows,dim]. */
+bool moo_ki_gpu_gather_res(void* w, void* idx, void* o,
+                           int32_t rows, int32_t dim, int32_t vocab);
+/* Backward (scatter-add), DETERMINISTISCH als Segment-Reduktion (G0 §2):
+ * gW[v,d] = sum_{i: uint(idx[i])==v} g[i,d], sequentiell in i -> 2 Laeufe
+ * bit-identisch (KEIN atomicAdd). g [rows,dim], gW [vocab,dim]. Ordnung je
+ * Segment identisch zu moo_autograd bw_gather -> bit-exakt vs CPU. REINER
+ * Beitrag OHNE += (das += ist G3c). */
+bool moo_ki_gpu_scatter_add_res(void* g, void* idx, void* gw,
+                                int32_t rows, int32_t dim, int32_t vocab);
 
 /* === Telemetrie (G1 §5 — G4-Beweismittel) ===
  * submits       = Compute-Dispatches (residente + nicht-residente Ops; genau
