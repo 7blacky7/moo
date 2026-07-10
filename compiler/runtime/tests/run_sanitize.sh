@@ -118,12 +118,21 @@ EXTRA_HARNESSES=(
   #               vs. Autograd fuer JEDEN Registry-Op (automatische Iteration
   #               via op_count/at — neuer Op ohne Gradcheck faellt hier auf).
   "test_gradcheck.c|moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   gather_leak: KIP-T1 — Refcount-/Tape-Leak-Gate fuer gather fwd+bwd. Unter
+  #               ASan zaehlt LeakSanitizer (RSS-Check dort uebersprungen); der
+  #               echte 1M-RSS-Stabilitaetslauf laeuft standalone ohne Sanitizer.
+  "test_gather_leak.c|moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   nn:         Plan-014 C1 — Schichten/Loss/Optimizer (Dict-basiert, reine
   #               Op-Komposition, kein neuer Registry-Op). Inkl. XOR-
   #               Konvergenz-Gate im Harness; Quell-Satz + Test-throw-Modell
   #               wie autograd, plus moo_nn.c.
   "test_nn_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   "test_dataset_asan.c|moo_dataset.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   tokenizer:  KIP-T2 — Byte-level BPE (train/encode/decode/save/load/hash).
+  #               Test-throw-Modell wie dataset; Tensor-Kern + Core-Runtime.
+  #               Gates: Determinismus ohne Seed, byte-exakter Roundtrip inkl.
+  #               invalid-UTF8/NUL/Emoji, Artefakt-Roundtrip, UNK-Negativ-Gate.
+  "test_tokenizer_asan.c|moo_tokenizer.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   bare_alloc: Plan-010 T1 — Bare-Allocator (K3) + serielle Formatter (K2)
   #               auf dem Host. Linkt NUR moo_bare_alloc.c + moo_bare_console.c;
   #               moo_bare.c/moo_bare_boot.c bewusst NICHT (echte in/out-Asm

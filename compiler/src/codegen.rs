@@ -2735,6 +2735,66 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_dstok_p")?;
                         return Ok(r);
                     }
+                    // Byte-level BPE-Tokenizer (KIP-T2). Alle Args geliehen ->
+                    // Post-Call-Release (pure-Reader-Muster wie ds_*).
+                    "tokenizer_trainiere" | "tokenizer_train" => {
+                        let k = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_tok_trainiere, &[k.into(), v.into()], "tok_train")?;
+                        self.call_rt_void(self.rt.moo_release, &[k.into()], "rel_toktr_k")?;
+                        self.call_rt_void(self.rt.moo_release, &[v.into()], "rel_toktr_v")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_kodiere" | "tokenizer_encode" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let x = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_tok_kodiere, &[t.into(), x.into()], "tok_enc")?;
+                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokenc_t")?;
+                        self.call_rt_void(self.rt.moo_release, &[x.into()], "rel_tokenc_x")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_dekodiere" | "tokenizer_decode" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let x = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_tok_dekodiere, &[t.into(), x.into()], "tok_dec")?;
+                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokdec_t")?;
+                        self.call_rt_void(self.rt.moo_release, &[x.into()], "rel_tokdec_x")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_kodiere_stapel" | "tokenizer_encode_batch" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let x = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_tok_kodiere_stapel, &[t.into(), x.into()], "tok_encb")?;
+                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokencb_t")?;
+                        self.call_rt_void(self.rt.moo_release, &[x.into()], "rel_tokencb_x")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_speichern" | "tokenizer_save" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let p = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_tok_speichern, &[t.into(), p.into()], "tok_save")?;
+                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_toksav_t")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_toksav_p")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_laden" | "tokenizer_load" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_tok_laden, &[p.into()], "tok_load")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_tokld_p")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_info" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_tok_info, &[t.into()], "tok_info")?;
+                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokinf_t")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_hash" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_tok_hash, &[t.into()], "tok_hash")?;
+                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokhsh_t")?;
+                        return Ok(r);
+                    }
                     "mischen" | "shuffle_data" => {
                         let x = self.compile_expr(&args[0])?;
                         let y = self.compile_expr(&args[1])?;
@@ -4938,6 +4998,16 @@ impl<'ctx> CodeGen<'ctx> {
                     "gelu" if !user_hat_methode => { return self.call_rt(self.rt.moo_tensor_gelu, &[obj.into()], "t_gelu"); }
                     "softmax" if !user_hat_methode => { return self.call_rt(self.rt.moo_tensor_softmax, &[obj.into()], "t_softmax"); }
                     "logsoftmax" if !user_hat_methode => { return self.call_rt(self.rt.moo_tensor_logsoftmax, &[obj.into()], "t_logsoftmax"); }
+                    // D1: Storage-DType wechseln. Runtime borrowed obj + dtype-Text,
+                    // gibt denselben (in-place mutierten) Tensor +1 owning zurueck.
+                    // Der dtype-Text-Arg wird hier post-released (Tensor-Konvention).
+                    "als_dtype" | "as_dtype" if !user_hat_methode => {
+                        let dt = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_tensor_als_dtype,
+                            &[obj.into(), dt.into()], "t_als_dtype")?;
+                        self.call_rt_void(self.rt.moo_release, &[dt.into()], "rel_tdt")?;
+                        return Ok(r);
+                    }
                     "form" | "shape" if !user_hat_methode => {
                         return self.call_rt(self.rt.moo_tensor_form, &[obj.into()], "t_form");
                     }

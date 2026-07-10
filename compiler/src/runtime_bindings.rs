@@ -251,6 +251,7 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_tensor_gelu: FunctionValue<'ctx>,
     pub moo_tensor_softmax: FunctionValue<'ctx>,
     pub moo_tensor_logsoftmax: FunctionValue<'ctx>,
+    pub moo_tensor_als_dtype: FunctionValue<'ctx>,   // D1: f32<->bf16 Storage-Konvertierung
     // === Autograd (Plan-014 B1) ===
     pub moo_tensor_mit_gradient: FunctionValue<'ctx>,
     pub moo_tensor_rueckwaerts: FunctionValue<'ctx>,
@@ -293,6 +294,15 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_ds_mischen: FunctionValue<'ctx>,
     pub moo_ds_normalisieren: FunctionValue<'ctx>,
     pub moo_ds_tokenizer: FunctionValue<'ctx>,
+    // Byte-level BPE-Tokenizer (KIP-T2)
+    pub moo_tok_trainiere: FunctionValue<'ctx>,
+    pub moo_tok_kodiere: FunctionValue<'ctx>,
+    pub moo_tok_dekodiere: FunctionValue<'ctx>,
+    pub moo_tok_kodiere_stapel: FunctionValue<'ctx>,
+    pub moo_tok_speichern: FunctionValue<'ctx>,
+    pub moo_tok_laden: FunctionValue<'ctx>,
+    pub moo_tok_info: FunctionValue<'ctx>,
+    pub moo_tok_hash: FunctionValue<'ctx>,
     pub moo_base64_encode: FunctionValue<'ctx>,
     pub moo_base64_decode: FunctionValue<'ctx>,
     pub moo_sanitize_html: FunctionValue<'ctx>,
@@ -962,6 +972,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_tensor_gelu: decl_mv_mv!("moo_tensor_gelu", mv1),
             moo_tensor_softmax: decl_mv_mv!("moo_tensor_softmax", mv1),
             moo_tensor_logsoftmax: decl_mv_mv!("moo_tensor_logsoftmax", mv1),
+            moo_tensor_als_dtype: decl_mv_mv!("moo_tensor_als_dtype", mv2),   // D1: (tensor, dtype-string) -> tensor
             // === Autograd (Plan-014 B1) ===
             moo_tensor_mit_gradient: decl_mv_mv!("moo_tensor_mit_gradient", mv1),
             moo_tensor_rueckwaerts: decl_mv_mv!("moo_tensor_rueckwaerts", mv1),
@@ -1005,6 +1016,16 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_ds_mischen: decl_mv_mv!("moo_ds_mischen", mv3),
             moo_ds_normalisieren: decl_mv_mv!("moo_ds_normalisieren", mv2),
             moo_ds_tokenizer: decl_mv_mv!("moo_ds_tokenizer", mv1),
+            // Byte-level BPE-Tokenizer (KIP-T2). Konvention: Args geliehen,
+            // Rueckgabe +1; Codegen-Arms machen Post-Call-Release der Heap-Args.
+            moo_tok_trainiere: decl_mv_mv!("moo_tok_trainiere", mv2),
+            moo_tok_kodiere: decl_mv_mv!("moo_tok_kodiere", mv2),
+            moo_tok_dekodiere: decl_mv_mv!("moo_tok_dekodiere", mv2),
+            moo_tok_kodiere_stapel: decl_mv_mv!("moo_tok_kodiere_stapel", mv2),
+            moo_tok_speichern: decl_mv_mv!("moo_tok_speichern", mv2),
+            moo_tok_laden: decl_mv_mv!("moo_tok_laden", mv1),
+            moo_tok_info: decl_mv_mv!("moo_tok_info", mv1),
+            moo_tok_hash: decl_mv_mv!("moo_tok_hash", mv1),
             moo_base64_encode: decl_mv_mv!("moo_base64_encode", mv1),
             moo_base64_decode: decl_mv_mv!("moo_base64_decode", mv1),
             moo_sanitize_html: decl_mv_mv!("moo_sanitize_html", mv1),
