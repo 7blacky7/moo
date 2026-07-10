@@ -232,6 +232,60 @@ MooValue moo_nn_schicht_dicht(MooValue ein, MooValue aus,
     return d;
 }
 
+/* Conv2D NHWC via im2col + matmul. */
+MooValue moo_nn_schicht_faltung(MooValue cinv, MooValue coutv, MooValue kernelv,
+                                MooValue schrittv, MooValue polsterv,
+                                MooValue aktivierung, MooValue seed) {
+    int32_t cin = ganze_zahl(cinv, "schicht_faltung (kanaele_ein)", 1);
+    int32_t cout = ganze_zahl(coutv, "schicht_faltung (kanaele_aus)", 1);
+    int32_t k = ganze_zahl(kernelv, "schicht_faltung (kernel)", 1);
+    int32_t stride = schrittv.tag == MOO_NONE ? 1 : ganze_zahl(schrittv, "schicht_faltung (schritt)", 1);
+    int32_t pad = polsterv.tag == MOO_NONE ? 0 : ganze_zahl(polsterv, "schicht_faltung (polster)", 0);
+    if (cin < 0 || cout < 0 || k < 0 || stride < 0 || pad < 0) return moo_none();
+    if (cin > 255 || cout > 255 || k > 255 || stride > 255 || pad > 255) {
+        moo_throw(moo_error("schicht_faltung: Kanaele, Kernel, Schritt und Polster muessen <= 255 sein"));
+        return moo_none();
+    }
+    const char* akt = "keine";
+    if (aktivierung.tag == MOO_STRING) akt = MV_STR(aktivierung)->chars;
+    else if (aktivierung.tag != MOO_NONE) {
+        moo_throw(moo_error("schicht_faltung: Aktivierung muss Text sein"));
+        return moo_none();
+    }
+    const MooNNAktDesc* ad = nn_akt_lookup(akt);
+    if (!ad) { moo_throw(moo_error("schicht_faltung: unbekannte Aktivierung")); return moo_none(); }
+    int64_t fanin64 = (int64_t)k * k * cin;
+    if (fanin64 > INT32_MAX) { moo_throw(moo_error("schicht_faltung: Kernel zu gross")); return moo_none(); }
+    int32_t fanin = (int32_t)fanin64;
+    double limit = ad->he_init ? sqrt(6.0 / fanin) : sqrt(6.0 / (fanin + cout));
+    uint64_t s = seed.tag == MOO_NUMBER ? (uint64_t)(int64_t)MV_NUM(seed) : 42ULL;
+    MooValue d = moo_dict_new();
+    dset(d, "__nn", moo_string_new("faltung"));
+    dset(d, "cin", moo_number(cin)); dset(d, "cout", moo_number(cout));
+    dset(d, "kernel", moo_number(k)); dset(d, "schritt", moo_number(stride));
+    dset(d, "polster", moo_number(pad)); dset(d, "aktivierung", moo_string_new(akt));
+    dset(d, "w", gewicht_init(fanin, cout, limit, s));
+    dset(d, "b", param_konst(cout, 0.0f));
+    return d;
+}
+
+MooValue moo_nn_schicht_pooling(MooValue artv, MooValue groessev, MooValue schrittv) {
+    if (artv.tag != MOO_STRING) { moo_throw(moo_error("schicht_pooling: art muss max oder mittel sein")); return moo_none(); }
+    const char* art = MV_STR(artv)->chars;
+    int32_t a = strcmp(art, "max") == 0 ? 0 : (strcmp(art, "mittel") == 0 || strcmp(art, "mean") == 0 ? 1 : -1);
+    int32_t g = ganze_zahl(groessev, "schicht_pooling (groesse)", 1);
+    int32_t s = schrittv.tag == MOO_NONE ? g : ganze_zahl(schrittv, "schicht_pooling (schritt)", 1);
+    if (a < 0 || g < 0 || s < 0) { if (a < 0) moo_throw(moo_error("schicht_pooling: art muss max oder mittel sein")); return moo_none(); }
+    if (g > 255 || s > 255) { moo_throw(moo_error("schicht_pooling: groesse und schritt muessen <= 255 sein")); return moo_none(); }
+    MooValue d = moo_dict_new(); dset(d, "__nn", moo_string_new("pooling"));
+    dset(d, "art", moo_number(a)); dset(d, "groesse", moo_number(g)); dset(d, "schritt", moo_number(s));
+    return d;
+}
+
+MooValue moo_nn_schicht_flach(void) {
+    MooValue d = moo_dict_new(); dset(d, "__nn", moo_string_new("flach")); return d;
+}
+
 /* schicht_dropout(rate) — "aktiv" (1/0) schaltet Training/Inferenz,
  * fuer den User direkt am Dict aenderbar. Deterministisch via Basis-Seed +
  * Aufruf-Zaehler. */
@@ -665,6 +719,37 @@ static MooValue fw_dicht(MooValue schicht, MooValue x) {
     }
     moo_release(w); moo_release(b); moo_release(aktv);
     return out;
+}
+
+static MooValue form4(MooValue x, int32_t a, int32_t b, int32_t c, int32_t d) {
+    MooValue l=moo_list_new(4); moo_list_append(l,moo_number(a)); moo_list_append(l,moo_number(b));
+    moo_list_append(l,moo_number(c)); moo_list_append(l,moo_number(d));
+    MooValue r=moo_tensor_umformen(x,l); moo_release(l); return r;
+}
+static MooValue fw_faltung(MooValue s, MooValue x) {
+    if (x.tag!=MOO_TENSOR || T(x)->ndim!=4) { moo_throw(moo_error("faltung: erwarte [batch,h,w,c]")); return moo_none(); }
+    int32_t k=(int32_t)dnum(s,"kernel",1), st=(int32_t)dnum(s,"schritt",1), p=(int32_t)dnum(s,"polster",0);
+    int32_t cin=(int32_t)dnum(s,"cin",0), cout=(int32_t)dnum(s,"cout",0);
+    MooTensor* xt=T(x); if (xt->shape[3]!=cin) { moo_throw(moo_error("faltung: falsche Eingangskanaele")); return moo_none(); }
+    int32_t oh=(xt->shape[1]+2*p-k)/st+1, ow=(xt->shape[2]+2*p-k)/st+1;
+    uint32_t pack=(uint32_t)k|((uint32_t)k<<8)|((uint32_t)st<<16)|((uint32_t)p<<24);
+    MooValue w=dget(s,"w"), b=dget(s,"b"), av=dget(s,"aktivierung");
+    MooValue cols=moo_tensor_im2col(x,moo_number(pack));
+    MooValue mm=cols.tag==MOO_TENSOR?moo_tensor_matmul(cols,w):moo_none();
+    MooValue bias=mm.tag==MOO_TENSOR?moo_tensor_add(mm,b):moo_none();
+    MooValue act=bias.tag==MOO_TENSOR?akt_anwenden(av.tag==MOO_STRING?MV_STR(av)->chars:"keine",bias):moo_none();
+    MooValue out=act.tag==MOO_TENSOR?form4(act,xt->shape[0],oh,ow,cout):moo_none();
+    moo_release(w);moo_release(b);moo_release(av);moo_release(cols);moo_release(mm);moo_release(bias);moo_release(act); return out;
+}
+static MooValue fw_pooling(MooValue s, MooValue x) {
+    uint32_t pack=(uint32_t)dnum(s,"art",0)|((uint32_t)dnum(s,"groesse",2)<<8)|((uint32_t)dnum(s,"schritt",2)<<16);
+    return moo_tensor_pool(x,moo_number(pack));
+}
+static MooValue fw_flach(MooValue s, MooValue x) {
+    (void)s; if(x.tag!=MOO_TENSOR||T(x)->ndim!=4){moo_throw(moo_error("flach: erwarte [batch,h,w,c]"));return moo_none();}
+    MooTensor*t=T(x); MooValue l=moo_list_new(2); moo_list_append(l,moo_number(t->shape[0]));
+    moo_list_append(l,moo_number((double)t->shape[1]*t->shape[2]*t->shape[3]));
+    MooValue r=moo_tensor_umformen(x,l); moo_release(l); return r;
 }
 
 static MooValue fw_dropout(MooValue schicht, MooValue x) {
@@ -1618,6 +1703,10 @@ static void params_dicht(MooValue schicht, MooValue liste) {
     moo_list_append(liste, dget(schicht, "w"));
     moo_list_append(liste, dget(schicht, "b"));
 }
+static void params_faltung(MooValue schicht, MooValue liste) {
+    moo_list_append(liste, dget(schicht, "w"));
+    moo_list_append(liste, dget(schicht, "b"));
+}
 static void params_layernorm(MooValue schicht, MooValue liste) {
     moo_list_append(liste, dget(schicht, "gamma"));
     moo_list_append(liste, dget(schicht, "beta"));
@@ -1683,6 +1772,9 @@ static void params_moe(MooValue schicht, MooValue liste) {
 /* === Die Registry-Tabelle. EINE Zeile pro Schicht-Typ. === */
 static const MooNNLayerDesc nn_layer_registry[] = {
     { "dicht",     fw_dicht,     params_dicht     },
+    { "faltung",   fw_faltung,   params_faltung   },
+    { "pooling",   fw_pooling,   NULL             },
+    { "flach",     fw_flach,     NULL             },
     { "dropout",   fw_dropout,   NULL             },
     { "layernorm", fw_layernorm, params_layernorm },
     { "rmsnorm",   fw_rmsnorm,   params_rmsnorm   },

@@ -1349,7 +1349,7 @@ int main(void) {
         }
         CHECK(zeile1_null, "masked-CE: maskierte Zeile bekommt KEINEN Gradient");
         CHECK(zeile0_da,  "masked-CE: aktive Zeile bekommt Gradient");
-        moo_release(lg); moo_release(maske); moo_release(ziele); moo_release(logits);
+        moo_release(lmg); moo_release(lg); moo_release(maske); moo_release(ziele); moo_release(logits);
         moo_ag_reset();
     }
 
@@ -1413,6 +1413,46 @@ int main(void) {
         moo_release(pids); moo_release(pmask); moo_release(plm);
         moo_release(ppos); moo_release(poff);
         moo_release(pack); moo_release(docs);   /* docs-Liste released docA/docB */
+        moo_ag_reset();
+    }
+
+    /* KI-MULTI-V2: Conv2D -> Pooling -> Flatten + Save/Load-Bitgate. */
+    {
+        int32_t xs[4]={1,4,4,1}; MooTensor* xt=moo_tensor_raw(4,xs);
+        for(int i=0;i<16;i++) xt->data[i]=(float)(i+1)/16.0f;
+        MooValue x; x.tag=MOO_TENSOR; moo_val_set_ptr(&x,xt);
+        MooValue akt=moo_string_new("relu");
+        MooValue conv=moo_nn_schicht_faltung(moo_number(1),moo_number(2),moo_number(3),
+            moo_number(1),moo_number(1),akt,moo_number(77)); moo_release(akt);
+        MooValue art=moo_string_new("max");
+        MooValue pool=moo_nn_schicht_pooling(art,moo_number(2),moo_number(2)); moo_release(art);
+        MooValue flat=moo_nn_schicht_flach();
+        MooValue y=moo_nn_vorwaerts(conv,x);
+        CHECK(y.tag==MOO_TENSOR && T(y)->ndim==4 && T(y)->shape[0]==1 &&
+              T(y)->shape[1]==4 && T(y)->shape[2]==4 && T(y)->shape[3]==2,
+              "faltung: NHWC-Ausgabegeometrie");
+        MooValue z=moo_nn_vorwaerts(pool,y);
+        CHECK(z.tag==MOO_TENSOR && T(z)->ndim==4 && T(z)->shape[1]==2 &&
+              T(z)->shape[2]==2 && T(z)->shape[3]==2, "pooling: Ausgabegeometrie");
+        MooValue q=moo_nn_vorwaerts(flat,z);
+        CHECK(q.tag==MOO_TENSOR && T(q)->ndim==2 && T(q)->shape[0]==1 &&
+              T(q)->shape[1]==8, "flach: 4D nach [batch,features]");
+
+        MooValue net=moo_list_new(3); moo_list_append(net,conv); moo_list_append(net,pool); moo_list_append(net,flat);
+        MooValue knet=moo_nn_ki_netz(net);
+        CHECK(knet.tag==MOO_DICT,"conv ki_netz erstellen");
+        MooValue pf=moo_string_new("/tmp/moo_v2_conv_roundtrip.mook");
+        moo_nn_speichern(knet,pf);
+        MooValue copy=moo_nn_laden(pf); CHECK(copy.tag==MOO_DICT,"conv laden");
+        MooValue p1=moo_nn_parameter(knet), p2=moo_nn_parameter(copy);
+        CHECK(MV_LIST(p1)->length==2 && MV_LIST(p2)->length==2,"conv w/b Parameter roundtrip");
+        bool bits=T(MV_LIST(p1)->items[0])->size==T(MV_LIST(p2)->items[0])->size &&
+          memcmp(T(MV_LIST(p1)->items[0])->data,T(MV_LIST(p2)->items[0])->data,
+          (size_t)T(MV_LIST(p1)->items[0])->size*sizeof(float))==0;
+        CHECK(bits,"conv Gewichte nach Checkpoint bitidentisch");
+        remove("/tmp/moo_v2_conv_roundtrip.mook");
+        moo_release(pf);moo_release(copy);moo_release(p1);moo_release(p2);
+        moo_release(x);moo_release(y);moo_release(z);moo_release(q);moo_release(knet);moo_release(net);
         moo_ag_reset();
     }
 

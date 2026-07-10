@@ -2547,6 +2547,29 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[akt.into()], "rel_nnd_akt")?;
                         return Ok(r);
                     }
+                    "schicht_faltung" | "layer_conv2d" => {
+                        let cin=self.compile_expr(&args[0])?;
+                        let cout=self.compile_expr(&args[1])?;
+                        let kernel=self.compile_expr(&args[2])?;
+                        let schritt=if args.len()>3 {self.compile_expr(&args[3])?} else {self.call_rt(self.rt.moo_none,&[],"conv_s_none")?};
+                        let polster=if args.len()>4 {self.compile_expr(&args[4])?} else {self.call_rt(self.rt.moo_none,&[],"conv_p_none")?};
+                        let akt=if args.len()>5 {self.compile_expr(&args[5])?} else {self.call_rt(self.rt.moo_none,&[],"conv_a_none")?};
+                        let seed=if args.len()>6 {self.compile_expr(&args[6])?} else {self.call_rt(self.rt.moo_none,&[],"conv_seed_none")?};
+                        let r=self.call_rt(self.rt.moo_nn_schicht_faltung,&[cin.into(),cout.into(),kernel.into(),schritt.into(),polster.into(),akt.into(),seed.into()],"nn_faltung")?;
+                        self.call_rt_void(self.rt.moo_release,&[akt.into()],"rel_conv_akt")?;
+                        return Ok(r);
+                    }
+                    "schicht_pooling" | "layer_pooling" => {
+                        let art=self.compile_expr(&args[0])?;
+                        let groesse=self.compile_expr(&args[1])?;
+                        let schritt=if args.len()>2 {self.compile_expr(&args[2])?} else {self.call_rt(self.rt.moo_none,&[],"pool_s_none")?};
+                        let r=self.call_rt(self.rt.moo_nn_schicht_pooling,&[art.into(),groesse.into(),schritt.into()],"nn_pooling")?;
+                        self.call_rt_void(self.rt.moo_release,&[art.into()],"rel_pool_art")?;
+                        return Ok(r);
+                    }
+                    "schicht_flach" | "layer_flatten" => {
+                        return self.call_rt(self.rt.moo_nn_schicht_flach,&[],"nn_flach");
+                    }
                     "schicht_dropout" | "layer_dropout" => {
                         let rate = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_nn_schicht_dropout,

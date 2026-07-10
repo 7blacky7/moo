@@ -145,11 +145,14 @@ static int32_t erste_dicht_ein(MooValue schichten) {
     return -1;
 }
 
-/* Batch-Tensor [b, sp] aus Zeilen von src (via Permutation) — ohne grad. */
+/* Batch-Tensor mit erhaltener Beispiel-Geometrie aus src — ohne grad. */
 static MooValue batch_zeilen(MooTensor* src, const int32_t* perm,
                              int64_t start, int32_t b, int32_t sp) {
-    int32_t shape[2] = { b, sp };
-    MooTensor* t = moo_tensor_raw(2, shape);
+    int32_t shape[8];
+    if (src->ndim < 1 || src->ndim > 8) return moo_none();
+    shape[0] = b;
+    for (int32_t d = 1; d < src->ndim; d++) shape[d] = src->shape[d];
+    MooTensor* t = moo_tensor_raw(src->ndim, shape);
     if (!t) return moo_none();
     for (int32_t r = 0; r < b; r++) {
         int64_t q = (int64_t)perm[start + r] * sp;
@@ -224,16 +227,23 @@ MooValue moo_nn_trainiere(MooValue netz, MooValue x, MooValue y, MooValue option
     }
     MooTensor* xt = T(x);
     MooTensor* yt = T(y);
-    if (xt->ndim != 2) {
+    if (xt->ndim < 2) {
         moo_release(schichten);
-        moo_throw(moo_error("trainiere: die Eingaben muessen 2D sein "
-                            "[Beispiele, Werte] — eine Zeile pro Beispiel"));
+        moo_throw(moo_error("trainiere: Eingaben brauchen eine Beispiel-Achse "
+                            "[Beispiele, ...]"));
         return moo_none();
     }
     int64_t n = xt->shape[0];
-    int32_t din = xt->shape[1];
+    int64_t din64 = 1;
+    for (int32_t d = 1; d < xt->ndim; d++) din64 *= xt->shape[d];
+    if (din64 < 1 || din64 > INT32_MAX) {
+        moo_release(schichten);
+        moo_throw(moo_error("trainiere: ein Beispiel ist zu gross"));
+        return moo_none();
+    }
+    int32_t din = (int32_t)din64;
     int32_t erwartet = erste_dicht_ein(schichten);
-    if (erwartet > 0 && din != erwartet) {
+    if (xt->ndim == 2 && erwartet > 0 && din != erwartet) {
         moo_release(schichten);
         char msg[200];
         snprintf(msg, sizeof(msg), "trainiere: deine Eingabe hat %d Werte pro "
@@ -587,6 +597,21 @@ static bool aw_dicht(Buf* b, MooValue s) {
     moo_release(w); moo_release(a);
     return true;
 }
+static bool aw_faltung(Buf* b, MooValue s) {
+    MooValue a = eget(s, "aktivierung");
+    buf_add(b, "{\"typ\":\"faltung\",\"cin\":%d,\"cout\":%d,\"kernel\":%d,\"schritt\":%d,\"polster\":%d,\"aktivierung\":\"%s\"}",
+            (int32_t)enum_(s,"cin",0), (int32_t)enum_(s,"cout",0),
+            (int32_t)enum_(s,"kernel",0), (int32_t)enum_(s,"schritt",1),
+            (int32_t)enum_(s,"polster",0),
+            a.tag==MOO_STRING ? MV_STR(a)->chars : "keine");
+    moo_release(a); return true;
+}
+static bool aw_pooling(Buf* b, MooValue s) {
+    buf_add(b, "{\"typ\":\"pooling\",\"art\":%d,\"groesse\":%d,\"schritt\":%d}",
+            (int32_t)enum_(s,"art",0), (int32_t)enum_(s,"groesse",2),
+            (int32_t)enum_(s,"schritt",2)); return true;
+}
+static bool aw_flach(Buf* b, MooValue s) { (void)s; buf_add(b, "{\"typ\":\"flach\"}"); return true; }
 static bool aw_dropout(Buf* b, MooValue s) {
     buf_add(b, "{\"typ\":\"dropout\",\"rate\":%g}", enum_(s, "rate", 0.0));
     return true;
@@ -667,6 +692,19 @@ static MooValue rb_dicht(MooValue e) {
     moo_release(akt);
     return s;
 }
+static MooValue rb_faltung(MooValue e) {
+    MooValue a=eget(e,"aktivierung");
+    MooValue r=moo_nn_schicht_faltung(moo_number(enum_(e,"cin",0)),moo_number(enum_(e,"cout",0)),
+        moo_number(enum_(e,"kernel",0)),moo_number(enum_(e,"schritt",1)),
+        moo_number(enum_(e,"polster",0)),a,moo_none());
+    moo_release(a); return r;
+}
+static MooValue rb_pooling(MooValue e) {
+    MooValue art=moo_string_new(enum_(e,"art",0)==0 ? "max" : "mittel");
+    MooValue r=moo_nn_schicht_pooling(art,moo_number(enum_(e,"groesse",2)),moo_number(enum_(e,"schritt",2)));
+    moo_release(art); return r;
+}
+static MooValue rb_flach(MooValue e) { (void)e; return moo_nn_schicht_flach(); }
 static MooValue rb_dropout(MooValue e) {
     return moo_nn_schicht_dropout(moo_number(enum_(e, "rate", 0.0)));
 }
@@ -749,6 +787,9 @@ static MooValue rb_position(MooValue e) {
 
 static const NNSaveLoadHook nn_sl_hooks[] = {
     { "dicht",     aw_dicht,     rb_dicht     },
+    { "faltung",   aw_faltung,   rb_faltung   },
+    { "pooling",   aw_pooling,   rb_pooling   },
+    { "flach",     aw_flach,     rb_flach     },
     { "dropout",   aw_dropout,   rb_dropout   },
     { "layernorm", aw_layernorm, rb_layernorm },
     { "rmsnorm",   aw_rmsnorm,   rb_rmsnorm   },

@@ -202,6 +202,8 @@ MooValue moo_tensor_subs(MooValue a, MooValue zahl);
 MooValue moo_tensor_muls(MooValue a, MooValue zahl);
 MooValue moo_tensor_divs(MooValue a, MooValue zahl);
 MooValue moo_tensor_matmul(MooValue a, MooValue b);
+MooValue moo_tensor_im2col(MooValue x, MooValue packung);
+MooValue moo_tensor_pool(MooValue x, MooValue packung);
 MooValue moo_tensor_transponieren(MooValue a);
 MooValue moo_tensor_umformen(MooValue a, MooValue shape_list);
 MooValue moo_tensor_zeilen(MooValue a, MooValue start, MooValue ende);
@@ -293,6 +295,9 @@ MooValue moo_ag_checkpoint(MooValue (*vorwaerts)(MooValue, MooValue), MooValue s
 // opt_schritt: in-place Update (kein Tape-Record) + Grads nullen + Tape
 // leeren = eine komplette Trainings-Iteration. Tensor-Konvention gilt.
 MooValue moo_nn_schicht_dicht(MooValue ein, MooValue aus, MooValue aktivierung, MooValue seed);
+MooValue moo_nn_schicht_faltung(MooValue cin, MooValue cout, MooValue kernel, MooValue schritt, MooValue polster, MooValue aktivierung, MooValue seed);
+MooValue moo_nn_schicht_pooling(MooValue art, MooValue groesse, MooValue schritt);
+MooValue moo_nn_schicht_flach(void);
 MooValue moo_nn_schicht_dropout(MooValue rate);
 MooValue moo_nn_schicht_layernorm(MooValue dim);
 MooValue moo_nn_schicht_rmsnorm(MooValue dim);                                   // KIP-B1: y = x*rsqrt(mean(x^2)+eps)*g

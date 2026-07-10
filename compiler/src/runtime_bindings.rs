@@ -264,6 +264,9 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_ag_aus: FunctionValue<'ctx>,
     // === NN-Schichten + Loss + Optimizer (Plan-014 C1) ===
     pub moo_nn_schicht_dicht: FunctionValue<'ctx>,
+    pub moo_nn_schicht_faltung: FunctionValue<'ctx>,
+    pub moo_nn_schicht_pooling: FunctionValue<'ctx>,
+    pub moo_nn_schicht_flach: FunctionValue<'ctx>,
     pub moo_nn_schicht_dropout: FunctionValue<'ctx>,
     pub moo_nn_schicht_layernorm: FunctionValue<'ctx>,
     pub moo_nn_schicht_rmsnorm: FunctionValue<'ctx>,
@@ -1022,6 +1025,9 @@ impl<'ctx> RuntimeBindings<'ctx> {
             // === NN (Plan-014 C1) — Tensor-Konvention: Args borrowed,
             // Rueckgabe +1; Codegen-Arms machen Post-Call-Release. ===
             moo_nn_schicht_dicht: decl_mv_mv!("moo_nn_schicht_dicht", &[mv, mv, mv, mv]),
+            moo_nn_schicht_faltung: decl_mv_mv!("moo_nn_schicht_faltung", &[mv, mv, mv, mv, mv, mv, mv]),
+            moo_nn_schicht_pooling: decl_mv_mv!("moo_nn_schicht_pooling", &[mv, mv, mv]),
+            moo_nn_schicht_flach: decl_mv_mv!("moo_nn_schicht_flach", &[]),
             moo_nn_schicht_dropout: decl_mv_mv!("moo_nn_schicht_dropout", mv1),
             moo_nn_schicht_layernorm: decl_mv_mv!("moo_nn_schicht_layernorm", mv1),
             moo_nn_schicht_rmsnorm: decl_mv_mv!("moo_nn_schicht_rmsnorm", mv1),
