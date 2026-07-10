@@ -835,6 +835,64 @@ int main(void) {
         moo_ag_reset();
     }
 
+    /* ===== 16. RMSNorm (KIP-B1) ===== */
+    {
+        /* Forward vs Handrechnung: x=[1,2,3,4], dim=4, g=1, eps=1e-5.
+         * mean(x^2)=7.5 ; rms=sqrt(7.5+1e-5) ; y_i = x_i / rms. */
+        MooValue rn = moo_nn_schicht_rmsnorm(moo_number(4));
+        MooValue x = t2(1, 4, (float[]){ 1, 2, 3, 4 });
+        moo_ag_reset();
+        MooValue xg = moo_tensor_mit_gradient(x);
+        MooValue y = moo_nn_vorwaerts(rn, xg);
+        CHECK(y.tag == MOO_TENSOR && T(y)->ndim == 2 &&
+              T(y)->shape[0] == 1 && T(y)->shape[1] == 4, "rmsnorm: Form [1,4]");
+        double rms = sqrt(7.5 + 1e-5);
+        CHECK(NAHE(T(y)->data[0], 1.0 / rms) && NAHE(T(y)->data[3], 4.0 / rms),
+              "rmsnorm: Werte == x/rms (Handrechnung)");
+        /* Skalierungs-Invariante: Verhaeltnisse exakt erhalten */
+        CHECK(NAHE(T(y)->data[1] / T(y)->data[0], 2.0) &&
+              NAHE(T(y)->data[2] / T(y)->data[0], 3.0), "rmsnorm: Verhaeltnisse erhalten");
+        /* RMS(y) ~ 1 */
+        double my2 = 0.0;
+        for (int i = 0; i < 4; i++) my2 += (double)T(y)->data[i] * (double)T(y)->data[i];
+        CHECK(NAHE(sqrt(my2 / 4.0), 1.0), "rmsnorm: RMS(y) ~ 1");
+        /* Gradient fliesst in g */
+        MooValue loss = moo_tensor_mittel(y, moo_none());
+        moo_release(moo_tensor_rueckwaerts(loss));
+        MooValue prm = moo_nn_parameter(rn);
+        CHECK(prm.tag == MOO_LIST && MV_LIST(prm)->length == 1,
+              "rmsnorm: 1 Parameter (g)");
+        MooTensor* gt = MV_TENSOR(MV_LIST(prm)->items[0]);
+        CHECK(gt->grad && (gt->grad[0] != 0.0f || gt->grad[3] != 0.0f),
+              "rmsnorm: Gradient fliesst in g");
+        moo_release(prm); moo_release(loss); moo_release(y);
+        moo_release(xg); moo_release(x); moo_release(rn);
+        moo_ag_reset();
+
+        /* .mook-Roundtrip bit-identisch */
+        MooValue schichten = moo_list_new(1);
+        moo_list_append(schichten, moo_nn_schicht_rmsnorm(moo_number(4)));
+        MooValue netz = moo_nn_ki_netz(schichten);
+        float xv2[8] = { 0.5f, -1.0f, 2.0f, 0.25f, -0.75f, 1.5f, -2.0f, 3.0f };
+        MooValue x2 = t2(2, 4, xv2);
+        MooValue y1 = moo_nn_vorwaerts(netz, x2);
+        MooValue pf = moo_string_new("/tmp/test_b1_rmsnorm.mook");
+        moo_release(moo_nn_speichern(netz, pf));
+        MooValue netz2 = moo_nn_laden(pf);
+        CHECK(netz2.tag == MOO_DICT, "rmsnorm-.mook laedt");
+        MooValue y2 = moo_nn_vorwaerts(netz2, x2);
+        bool gleich = (y1.tag == MOO_TENSOR && y2.tag == MOO_TENSOR &&
+                       T(y1)->size == T(y2)->size);
+        for (int64_t i = 0; gleich && i < T(y1)->size; i++)
+            gleich = (T(y1)->data[i] == T(y2)->data[i]);
+        CHECK(gleich, "rmsnorm-Roundtrip: Vorhersage BIT-gleich");
+        remove("/tmp/test_b1_rmsnorm.mook");
+        moo_release(y1); moo_release(y2); moo_release(netz2);
+        moo_release(pf); moo_release(x2); moo_release(netz);
+        moo_release(schichten);
+        moo_ag_reset();
+    }
+
     printf("test_nn_asan: alle %d Checks bestanden\n", checks);
     return 0;
 }

@@ -260,6 +260,19 @@ MooValue moo_nn_schicht_layernorm(MooValue dim) {
     return d;
 }
 
+/* schicht_rmsnorm(dim) — g=1, eps=1e-5. RMS-Normalisierung der LETZTEN Achse:
+ * y = x * rsqrt(mean(x^2)+eps) * g. Kein Mittelwert-Abzug, kein Bias (Gegensatz
+ * zu LayerNorm) — Standard moderner LLMs. Reine Op-Komposition, kein neuer
+ * Registry-Op (rsqrt via div/sqrt komponiert). */
+MooValue moo_nn_schicht_rmsnorm(MooValue dim) {
+    int32_t nd = ganze_zahl(dim, "schicht_rmsnorm (Dimension)", 1);
+    if (nd < 0) return moo_none();
+    MooValue d = moo_dict_new();
+    dset(d, "__nn", moo_string_new("rmsnorm"));
+    dset(d, "g", param_konst(nd, 1.0f));
+    return d;
+}
+
 /* schicht_embedding(vokabular, dim, seed?) — W [vokabular, dim], Xavier.
  * Vorwaerts erwartet Indizes [batch] oder [batch,1]. */
 MooValue moo_nn_schicht_embedding(MooValue vokabular, MooValue dim, MooValue seed) {
@@ -561,6 +574,27 @@ static MooValue fw_layernorm(MooValue schicht, MooValue x) {
         moo_throw(moo_error("vorwaerts: kaputte LayerNorm-Schicht (gamma/beta fehlen)"));
     }
     moo_release(gamma); moo_release(beta);
+    return out;
+}
+
+static MooValue fw_rmsnorm(MooValue schicht, MooValue x) {
+    MooValue g = dget(schicht, "g");
+    MooValue out = moo_none();
+    if (g.tag == MOO_TENSOR) {
+        /* letzte Achse (keepdims), analog LayerNorm-Muster */
+        MooValue achse = moo_number((double)(T(x)->ndim - 1));
+        MooValue x2  = moo_tensor_mul(x, x);              /* x^2 */
+        MooValue ms  = moo_tensor_mittel(x2, achse);      /* mean(x^2) [.,1] */
+        MooValue mse = moo_tensor_adds(ms, moo_number(1e-5));
+        MooValue s   = moo_tensor_sqrt(mse);              /* sqrt(mean(x^2)+eps) */
+        MooValue n   = moo_tensor_div(x, s);              /* x * rsqrt(...) (broadcast) */
+        out = moo_tensor_mul(n, g);                       /* * g (broadcast [1,dim]) */
+        moo_release(x2); moo_release(ms); moo_release(mse);
+        moo_release(s);  moo_release(n);
+    } else {
+        moo_throw(moo_error("vorwaerts: kaputte RMSNorm-Schicht (g fehlt)"));
+    }
+    moo_release(g);
     return out;
 }
 
@@ -1171,6 +1205,9 @@ static void params_layernorm(MooValue schicht, MooValue liste) {
     moo_list_append(liste, dget(schicht, "gamma"));
     moo_list_append(liste, dget(schicht, "beta"));
 }
+static void params_rmsnorm(MooValue schicht, MooValue liste) {
+    moo_list_append(liste, dget(schicht, "g"));
+}
 static void params_embedding(MooValue schicht, MooValue liste) {
     moo_list_append(liste, dget(schicht, "w"));
 }
@@ -1226,6 +1263,7 @@ static const MooNNLayerDesc nn_layer_registry[] = {
     { "dicht",     fw_dicht,     params_dicht     },
     { "dropout",   fw_dropout,   NULL             },
     { "layernorm", fw_layernorm, params_layernorm },
+    { "rmsnorm",   fw_rmsnorm,   params_rmsnorm   },
     { "embedding", fw_embedding, params_embedding },
     { "attention", fw_attention, params_attention },
     { "position",  fw_position,  params_position  },

@@ -598,6 +598,13 @@ static bool aw_layernorm(Buf* b, MooValue s) {
     moo_release(g);
     return true;
 }
+static bool aw_rmsnorm(Buf* b, MooValue s) {
+    MooValue g = eget(s, "g");
+    if (g.tag != MOO_TENSOR) { moo_release(g); return false; }
+    buf_add(b, "{\"typ\":\"rmsnorm\",\"dim\":%d}", T(g)->shape[1]);
+    moo_release(g);
+    return true;
+}
 static bool aw_embedding(Buf* b, MooValue s) {
     MooValue w = eget(s, "w");
     if (w.tag != MOO_TENSOR) { moo_release(w); return false; }
@@ -650,6 +657,9 @@ static MooValue rb_dropout(MooValue e) {
 static MooValue rb_layernorm(MooValue e) {
     return moo_nn_schicht_layernorm(moo_number(enum_(e, "dim", 0)));
 }
+static MooValue rb_rmsnorm(MooValue e) {
+    return moo_nn_schicht_rmsnorm(moo_number(enum_(e, "dim", 0)));
+}
 static MooValue rb_embedding(MooValue e) {
     return moo_nn_schicht_embedding(moo_number(enum_(e, "vokab", 0)),
                                     moo_number(enum_(e, "dim", 0)),
@@ -694,6 +704,7 @@ static const NNSaveLoadHook nn_sl_hooks[] = {
     { "dicht",     aw_dicht,     rb_dicht     },
     { "dropout",   aw_dropout,   rb_dropout   },
     { "layernorm", aw_layernorm, rb_layernorm },
+    { "rmsnorm",   aw_rmsnorm,   rb_rmsnorm   },
     { "embedding", aw_embedding, rb_embedding },
     { "attention", aw_attention, rb_attention },
     { "position",  aw_position,  rb_position  },
