@@ -183,6 +183,26 @@ bool moo_ki_gpu_scatter_add_res(void* g, void* idx, void* gw,
  * a/b/g/da/db sind residente Handles; 4 interne Compute-Submits. */
 bool moo_ki_gpu_matmul_bw_res(void* a, void* b, void* g, void* da, void* db,
                               int32_t m, int32_t k, int32_t n);
+/* === KIP-G4b: strided RoPE-Paarrotation (loest die G4-additive-Pos-Vereinfachung auf) ===
+ * a = [rows, dim] (Q oder K; bei GQA hat K dim = kv_koepfe*head_dim). RoPE wird
+ * ueber den vollen Tensor angewandt, der In-Head-Paarindex ergibt sich aus
+ * col % head_dim -> Multi-Head/GQA korrekt (Winkel haengt nur von Position +
+ * In-Head-Paar ab). Konvention interleaved, bit-genau zu moo_nn.c (kip-ops B2):
+ *   angle(p,i)=p*10000^(-2i/head_dim), Position p = pos_offset + Zeile.
+ *   fwd!=0 -> +angle (Forward-Rotation); fwd==0 -> -angle (Backward, R^T).
+ * head_dim MUSS gerade sein. basis 10000 fix (B2b-Skalierung nicht im PoC).
+ * REINE Rotation (kein +=). Residente Handles, ein Compute-Dispatch. */
+bool moo_ki_gpu_rope_res(void* a, void* o, int32_t rows, int32_t dim,
+                         int32_t head_dim, int32_t pos_offset, int fwd);
+/* === KIP-G4b: strided Kopf-Slice fuer Multi-Head/GQA (loest Single-Head auf) ===
+ * extract!=0: o[rows,head_dim] = Spalten [col_offset, col_offset+head_dim) aus
+ *   a[rows,dim]  (Kopf-Extraktion; col_offset = kopf*head_dim bzw. GQA-Gruppe).
+ * extract==0: o[rows,dim] erhaelt a[rows,head_dim] in dieselben Spalten (Merge/
+ *   Backward-Scatter). Koepfe belegen disjunkte Spalten -> reiner Write; GQA-
+ *   Backward-Akkumulation macht der Aufrufer im Kopf-Raum (grad_accum) und
+ *   fuegt pro KV-Gruppe genau einmal ein. Residente Handles, ein Dispatch. */
+bool moo_ki_gpu_head_slice_res(void* a, void* o, int32_t rows, int32_t dim,
+                               int32_t head_dim, int32_t col_offset, int extract);
 
 /* === Telemetrie (G1 §5 — G4-Beweismittel) ===
  * submits       = Compute-Dispatches (residente + nicht-residente Ops; genau

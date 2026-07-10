@@ -1,0 +1,47 @@
+#version 450
+// rope.comp — KIP-G4b: interleaved RoPE-Paarrotation ueber [rows, D] mit
+// In-Head-Paarindex (col % dh), sodass Multi-Head/GQA korrekt sind — der
+// Rotationswinkel haengt nur von Position + In-Head-Paar ab, nicht vom Kopf.
+// Ein Thread pro Paar (2i, 2i+1) im vollen Tensor. Konvention interleaved,
+// bit-genau zur CPU-Referenz moo_nn.c (kip-ops B2):
+//   angle(p,i) = p * 10000^(-2i/dh),  i in [0, dh/2).
+//   Forward  (+angle):  o[2i]=x[2i]*c - x[2i+1]*s ; o[2i+1]=x[2i+1]*c + x[2i]*s
+//   Backward (-angle):  o[2i]=g[2i]*c + g[2i+1]*s ; o[2i+1]=g[2i+1]*c - g[2i]*s
+// Push (16B KiPush): M = Paarzahl (rows*D/2). K = dh (gerade). N = D (volle
+//   Zeilenbreite). op: bit0 = Richtung (0 Fwd / 1 Bwd), op >> 1 = Positions-
+//   offset p0 (Decode/chunked-Prefill). basis = 10000 fix (moo_nn.c-Default;
+//   B2b-Skalierung ist nicht Teil des G4b-PoC).
+// binding 1 ungenutzt (Aufrufer bindet a doppelt) — 3-Buffer-Layout unveraendert.
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly  buffer BufA { float a[]; };
+layout(std430, binding = 1) readonly  buffer BufB { float b_unused[]; };
+layout(std430, binding = 2) writeonly buffer BufO { float o[]; };
+layout(push_constant) uniform PC { uint M; uint K; uint N; uint op; } pc;
+
+void main() {
+    uint g = gl_GlobalInvocationID.x;
+    if (g >= pc.M) return;
+    uint dh  = pc.K;
+    uint D   = pc.N;
+    uint dir = pc.op & 1u;
+    uint p0  = pc.op >> 1u;
+    uint pairs_pro_zeile = D / 2u;
+    uint t   = g / pairs_pro_zeile;         // Zeile = Positionsindex
+    uint pr  = g % pairs_pro_zeile;         // Paarindex in der Zeile
+    uint col0 = 2u * pr;                    // erste Komponente in [0, D)
+    uint in_head_pair = (col0 % dh) / 2u;   // i in [0, dh/2)
+    float pos  = float(p0 + t);
+    float freq = pow(10000.0, -2.0 * float(in_head_pair) / float(dh));
+    float ang  = pos * freq;
+    float c = cos(ang);
+    float s = sin(ang);
+    uint base = t * D + col0;
+    float x0 = a[base];
+    float x1 = a[base + 1u];
+    float r0;
+    float r1;
+    if (dir == 0u) { r0 = x0 * c - x1 * s; r1 = x1 * c + x0 * s; }
+    else           { r0 = x0 * c + x1 * s; r1 = x1 * c - x0 * s; }
+    o[base]      = r0;
+    o[base + 1u] = r1;
+}

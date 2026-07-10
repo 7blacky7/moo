@@ -127,6 +127,14 @@ bool moo_ki_gpu_scatter_add_res(void* g, void* idx, void* gw,
                                 int32_t rows, int32_t dim, int32_t vocab) {
     (void)g; (void)idx; (void)gw; (void)rows; (void)dim; (void)vocab; return false;
 }
+bool moo_ki_gpu_rope_res(void* a, void* o, int32_t rows, int32_t dim,
+                         int32_t head_dim, int32_t pos_offset, int fwd) {
+    (void)a; (void)o; (void)rows; (void)dim; (void)head_dim; (void)pos_offset; (void)fwd; return false;
+}
+bool moo_ki_gpu_head_slice_res(void* a, void* o, int32_t rows, int32_t dim,
+                               int32_t head_dim, int32_t col_offset, int extract) {
+    (void)a; (void)o; (void)rows; (void)dim; (void)head_dim; (void)col_offset; (void)extract; return false;
+}
 bool moo_ki_gpu_matmul_bw_res(void* a, void* b, void* g, void* da, void* db,
                               int32_t m, int32_t k, int32_t n) {
     (void)a; (void)b; (void)g; (void)da; (void)db; (void)m; (void)k; (void)n; return false;
@@ -177,6 +185,7 @@ typedef struct {
     VkPipeline pipe_norm, pipe_norm_bw;       /* KIP-G3b: LayerNorm/RMSNorm-Kern F+B (zeilenweise) */
     VkPipeline pipe_reduce_axis, pipe_broadcast, pipe_reduce_max_bw; /* KIP-G3d-b: Achsen-Red + Broadcast + Max-Subgradient */
     VkPipeline pipe_gather, pipe_scatter_add;  /* KIP-G3d-d: gather / deterministische scatter-add */
+    VkPipeline pipe_rope, pipe_head_slice;     /* KIP-G4b: strided RoPE-Paarrotation / Kopf-Slice (MHA/GQA) */
     VkCommandPool cmdpool;
     VkDescriptorPool descpool;
     /* GPU3-C: Per-Op-Allokationen gecacht — lazy beim ersten Dispatch
@@ -401,13 +410,17 @@ static bool ki_gpu_init(void) {
     /* KIP-G3d-d: gather + deterministische scatter-add (16B-playout). */
     G.pipe_gather = pipeline_bauen(ki_gather_spv, ki_gather_spv_len, G.playout);
     G.pipe_scatter_add = pipeline_bauen(ki_scatter_add_spv, ki_scatter_add_spv_len, G.playout);
+    /* KIP-G4b: strided RoPE + Kopf-Slice (16B-playout, dispatch_sync). */
+    G.pipe_rope = pipeline_bauen(ki_rope_spv, ki_rope_spv_len, G.playout);
+    G.pipe_head_slice = pipeline_bauen(ki_head_slice_spv, ki_head_slice_spv_len, G.playout);
     if (!G.pipe_matmul || !G.pipe_ew || !G.pipe_reduce || !G.pipe_matmul_naiv ||
         !G.pipe_unary || !G.pipe_unary_bw || !G.pipe_transpose || !G.pipe_copy ||
         !G.pipe_grad_accum || !G.pipe_opt_sgd || !G.pipe_opt_adam ||
         !G.pipe_softmax || !G.pipe_softmax_bw || !G.pipe_ce_fwd || !G.pipe_ce_bw ||
         !G.pipe_norm || !G.pipe_norm_bw ||
         !G.pipe_reduce_axis || !G.pipe_broadcast || !G.pipe_reduce_max_bw ||
-        !G.pipe_gather || !G.pipe_scatter_add)
+        !G.pipe_gather || !G.pipe_scatter_add ||
+        !G.pipe_rope || !G.pipe_head_slice)
         return false;
 
     VkCommandPoolCreateInfo cpi = {
@@ -1098,6 +1111,52 @@ bool moo_ki_gpu_copy_res(void* a, void* o, int64_t n, int64_t src_off, int64_t d
     KiPush push = { (uint32_t)n, (uint32_t)src_off, (uint32_t)dst_off, 0 };
     bool ok = dispatch_sync(G.pipe_copy, bufs, push,
                             (uint32_t)((n + 255) / 256), 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G4b: strided interleaved RoPE-Paarrotation auf residentem Buffer. a=[rows,
+ * dim]; ein Thread pro Paar (rows*dim/2). In-Head-Paarindex = (col%head_dim)/2 ->
+ * Multi-Head/GQA korrekt. Push: M=Paarzahl, K=head_dim, N=dim, op=(pos_offset<<1)
+ * |dir mit dir 0=Fwd(+angle)/1=Bwd(-angle). REINE Rotation (kein +=). */
+bool moo_ki_gpu_rope_res(void* a, void* o, int32_t rows, int32_t dim,
+                         int32_t head_dim, int32_t pos_offset, int fwd) {
+    if (!a || !o) { g_tel.cpu_fallbacks++; return false; }
+    if (rows <= 0 || dim <= 0 || head_dim <= 0 || (dim & 1) || (head_dim & 1) ||
+        (dim % head_dim) != 0 || pos_offset < 0) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    int64_t paare = (int64_t)rows * dim / 2;
+    uint32_t dir = fwd ? 0u : 1u;
+    KiBuf bufs[3] = { *(KiBuf*)a, *(KiBuf*)a, *(KiBuf*)o };
+    KiPush push = { (uint32_t)paare, (uint32_t)head_dim, (uint32_t)dim,
+                    ((uint32_t)pos_offset << 1) | dir };
+    bool ok = dispatch_sync(G.pipe_rope, bufs, push,
+                            (uint32_t)((paare + 255) / 256), 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G4b: strided Kopf-Slice fuer Multi-Head/GQA. extract!=0: o[rows,head_dim]
+ * aus a[rows,dim]-Spalten [col_offset, col_offset+head_dim). extract==0: Merge
+ * a[rows,head_dim] in o[rows,dim] an dieselben Spalten (reiner Write; disjunkte
+ * Koepfe). Push: M=rows*head_dim, K=dim, N=(head_dim<<16)|col_offset. */
+bool moo_ki_gpu_head_slice_res(void* a, void* o, int32_t rows, int32_t dim,
+                               int32_t head_dim, int32_t col_offset, int extract) {
+    if (!a || !o) { g_tel.cpu_fallbacks++; return false; }
+    if (rows <= 0 || dim <= 0 || head_dim <= 0 || col_offset < 0 ||
+        col_offset + head_dim > dim || head_dim > 0xFFFF || col_offset > 0xFFFF) {
+        g_tel.cpu_fallbacks++; return false;
+    }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    int64_t m = (int64_t)rows * head_dim;
+    KiBuf bufs[3] = { *(KiBuf*)a, *(KiBuf*)a, *(KiBuf*)o };
+    KiPush push = { (uint32_t)m, (uint32_t)dim,
+                    ((uint32_t)head_dim << 16) | (uint32_t)col_offset,
+                    extract ? 0u : 1u };
+    bool ok = dispatch_sync(G.pipe_head_slice, bufs, push,
+                            (uint32_t)((m + 255) / 256), 1,
                             /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
     if (!ok) g_tel.cpu_fallbacks++;
     return ok;
