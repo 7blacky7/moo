@@ -2897,6 +2897,34 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[l.into()], "rel_shord_l")?;
                         return Ok(r);
                     }
+                    // KIP-E2: CPU-Voll-Checkpoint v2. Args geliehen -> Release.
+                    "checkpoint_speichern" | "checkpoint_save" => {
+                        let z = self.compile_expr(&args[0])?;
+                        let p = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_nn_ckpt_speichern, &[z.into(), p.into()], "ckpt_save")?;
+                        self.call_rt_void(self.rt.moo_release, &[z.into()], "rel_cksav_z")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_cksav_p")?;
+                        return Ok(r);
+                    }
+                    "checkpoint_laden" | "checkpoint_load" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let e = if args.len() > 1 { self.compile_expr(&args[1])? }
+                                else { self.call_rt(self.rt.moo_none, &[], "ckpt_ld_none")? };
+                        let r = self.call_rt(self.rt.moo_nn_ckpt_laden, &[p.into(), e.into()], "ckpt_load")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_ckld_p")?;
+                        self.call_rt_void(self.rt.moo_release, &[e.into()], "rel_ckld_e")?;
+                        return Ok(r);
+                    }
+                    "checkpoint_rotieren" | "checkpoint_rotate" => {
+                        let d = self.compile_expr(&args[0])?;
+                        let p = self.compile_expr(&args[1])?;
+                        let n = self.compile_expr(&args[2])?;
+                        let r = self.call_rt(self.rt.moo_nn_ckpt_rotieren, &[d.into(), p.into(), n.into()], "ckpt_rot")?;
+                        self.call_rt_void(self.rt.moo_release, &[d.into()], "rel_ckrot_d")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_ckrot_p")?;
+                        self.call_rt_void(self.rt.moo_release, &[n.into()], "rel_ckrot_n")?;
+                        return Ok(r);
+                    }
                     "shard_split" => {
                         let p = self.compile_expr(&args[0])?;
                         let v = self.compile_expr(&args[1])?;
