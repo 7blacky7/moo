@@ -3922,6 +3922,11 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_3d_fog_color, &[a[0].into(), a[1].into()], "3d_nebelfarbe")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    "raum_himmel" | "space_sky" | "3d_himmel" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_sky, &[a[0].into(), a[1].into(), a[2].into()], "3d_himmel")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     // Globale Transparenz: (fenster, alpha 0..1) — gilt fuer folgende Draws
                     "raum_transparenz" | "space_alpha" | "3d_transparenz" => {
                         let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;

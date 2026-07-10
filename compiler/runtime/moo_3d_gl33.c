@@ -272,6 +272,24 @@ static void gl33_swap(void* vctx) {
     glfwPollEvents();
 }
 
+static void gl33_triangle_colors(void*, float,float,float,float,float,float, float,float,float,float,float,float, float,float,float,float,float,float);
+
+/* Fullscreen-Himmel; Depth- und Matrixzustand werden restauriert. */
+static void gl33_sky(void* vctx, float zr, float zg, float zb, float hr, float hg, float hb) {
+    GL33Context* ctx = (GL33Context*)vctx; if (!ctx) return;
+    GLboolean depth = glIsEnabled(GL_DEPTH_TEST), mask = GL_TRUE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &mask);
+    float p[16], m[16], light[3];
+    memcpy(p, ctx->projection, sizeof(p)); memcpy(m, ctx->modelview.current, sizeof(m)); memcpy(light, ctx->light_dir, sizeof(light));
+    mat4_identity(ctx->projection); mat4_identity(ctx->modelview.current);
+    ctx->light_dir[0]=0; ctx->light_dir[1]=0; ctx->light_dir[2]=1; gl33_upload_lighting(ctx);
+    glDisable(GL_DEPTH_TEST); glDepthMask(GL_FALSE);
+    gl33_triangle_colors(ctx,-1,-1,0,hr,hg,hb, 1,-1,0,hr,hg,hb, 1,1,0,zr,zg,zb);
+    gl33_triangle_colors(ctx,-1,-1,0,hr,hg,hb, 1,1,0,zr,zg,zb, -1,1,0,zr,zg,zb);
+    memcpy(ctx->projection,p,sizeof(p)); memcpy(ctx->modelview.current,m,sizeof(m)); memcpy(ctx->light_dir,light,sizeof(light)); gl33_upload_lighting(ctx);
+    glDepthMask(mask); if(depth) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+}
+
 /* ========================================================
  * Backend Functions — Kamera
  * ======================================================== */
@@ -814,6 +832,7 @@ Moo3DBackend moo_backend_gl33 = {
     .mouse_wheel   = gl33_mouse_wheel,
     .set_fog_density = gl33_set_fog_density,
     .set_fog_color   = gl33_set_fog_color,
+    .sky             = gl33_sky,
     .set_alpha       = gl33_set_alpha,
     .set_wave        = gl33_set_wave,
     .set_light_color = gl33_set_light_color,

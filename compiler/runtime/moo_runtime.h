@@ -907,6 +907,7 @@ MooValue moo_3d_key_pressed(MooValue win, MooValue key);
 void moo_3d_capture_mouse(MooValue win);
 MooValue moo_3d_mouse_dx(MooValue win);
 MooValue moo_3d_mouse_dy(MooValue win);
+void moo_3d_sky(MooValue win, MooValue zenith, MooValue horizon);
 // === 3D Test-Sim (Plan-008 A1) ===
 void moo_3d_simulate_key(MooValue win, MooValue key, MooValue pressed);   // Tri-State
 void moo_3d_simulate_mouse_delta(MooValue win, MooValue dx, MooValue dy); // consume-on-read

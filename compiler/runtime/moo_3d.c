@@ -292,6 +292,14 @@ void moo_3d_fog_color(MooValue win, MooValue color) {
     moo_3d_set_fog_color(c.r, c.g, c.b);
 }
 
+
+void moo_3d_sky(MooValue win, MooValue zenith, MooValue horizon) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->sky) return;
+    Color3 z = parse_color3(zenith), h = parse_color3(horizon);
+    g_backend->sky(g_ctx, z.r, z.g, z.b, h.r, h.g, h.b);
+}
+
 /* Gouraud-Dreieck: 3 Punkte + 3 Farben, Backend interpoliert.
  * Moo-Signatur: erst 9 Koordinaten, dann 3 Farben (konsistent zu raum_dreieck). */
 void moo_3d_triangle_colors(MooValue win,

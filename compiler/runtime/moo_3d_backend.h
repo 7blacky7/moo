@@ -43,6 +43,7 @@ typedef struct {
     // Fog + Licht
     void  (*set_fog_density)(void* ctx, float density);
     void  (*set_fog_color)(void* ctx, float r, float g, float b);
+    void  (*sky)(void* ctx, float zr, float zg, float zb, float hr, float hg, float hb);
     void  (*set_light_dir)(void* ctx, float x, float y, float z);
     void  (*set_ambient)(void* ctx, float level);
     // Globale Transparenz fuer folgende Draws (1 = opak). Transparentes zuletzt zeichnen.
