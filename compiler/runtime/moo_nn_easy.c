@@ -1233,20 +1233,39 @@ MooValue moo_nn_laden(MooValue pfad) {
             MooValue ent = eget(header, key);
             if (ent.tag != MOO_DICT) { moo_release(ent); ok = false; break; }
             MooValue offs = eget(ent, "data_offsets");
+            MooValue dtype = eget(ent, "dtype");
             bool e_ok = (offs.tag == MOO_LIST) && MV_LIST(offs)->length == 2 &&
                         MV_LIST(offs)->items[0].tag == MOO_NUMBER &&
-                        MV_LIST(offs)->items[1].tag == MOO_NUMBER;
+                        MV_LIST(offs)->items[1].tag == MOO_NUMBER &&
+                        dtype.tag == MOO_STRING;
             if (e_ok) {
                 double a = MV_NUM(MV_LIST(offs)->items[0]);
                 double b = MV_NUM(MV_LIST(offs)->items[1]);
-                e_ok = (b - a) == (double)p->size * 4.0;
-                if (e_ok) {
-                    e_ok = fseek(f, daten_start + (long)a, SEEK_SET) == 0 &&
+                const char* dt = MV_STR(dtype)->chars;
+                if (strcmp(dt, "F32") == 0) {
+                    e_ok = (b - a) == (double)p->size * 4.0 &&
+                           fseek(f, daten_start + (long)a, SEEK_SET) == 0 &&
                            fread(p->data, sizeof(float), (size_t)p->size, f)
                            == (size_t)p->size;
+                } else if (strcmp(dt, "BF16") == 0) {
+                    e_ok = (b - a) == (double)p->size * 2.0 &&
+                           fseek(f, daten_start + (long)a, SEEK_SET) == 0;
+                    uint16_t* raw = e_ok
+                        ? (uint16_t*)malloc((size_t)p->size * sizeof(uint16_t))
+                        : NULL;
+                    if (e_ok && !raw) e_ok = false;
+                    if (e_ok)
+                        e_ok = fread(raw, sizeof(uint16_t), (size_t)p->size, f)
+                               == (size_t)p->size;
+                    if (e_ok)
+                        for (int64_t j = 0; j < p->size; j++)
+                            p->data[j] = d3_bf16_zu_f32(raw[j]);
+                    free(raw);
+                } else {
+                    e_ok = false;
                 }
             }
-            moo_release(offs); moo_release(ent);
+            moo_release(dtype); moo_release(offs); moo_release(ent);
             ok = e_ok;
         }
     }

@@ -1451,6 +1451,27 @@ int main(void) {
           (size_t)T(MV_LIST(p1)->items[0])->size*sizeof(float))==0;
         CHECK(bits,"conv Gewichte nach Checkpoint bitidentisch");
         remove("/tmp/moo_v2_conv_roundtrip.mook");
+        /* BF16-Datei muss von ki_laden gelesen und deterministisch expandiert werden. */
+        setenv("MOO_KI_SPEICHERN_BF16","1",1);
+        MooValue pfb=moo_string_new("/tmp/moo_v2_conv_roundtrip_bf16.mook");
+        moo_nn_speichern(knet,pfb);
+        unsetenv("MOO_KI_SPEICHERN_BF16");
+        MooValue copyb=moo_nn_laden(pfb);
+        CHECK(copyb.tag==MOO_DICT,"conv BF16 laden");
+        MooValue pb=moo_nn_parameter(copyb);
+        CHECK(pb.tag==MOO_LIST && MV_LIST(pb)->length==2,"conv BF16 w/b Parameter");
+        bool bf16_ok=true;
+        MooTensor* orig=T(MV_LIST(p1)->items[0]);
+        MooTensor* back=T(MV_LIST(pb)->items[0]);
+        for(int64_t i=0;i<orig->size && bf16_ok;i++){
+            uint32_t u; memcpy(&u,&orig->data[i],4);
+            uint16_t h=(uint16_t)((u + 0x7FFFu + ((u>>16)&1u)) >> 16);
+            uint32_t expanded=(uint32_t)h<<16, got; memcpy(&got,&back->data[i],4);
+            if(got!=expanded) bf16_ok=false;
+        }
+        CHECK(bf16_ok,"conv BF16 Checkpoint deterministisch expandiert");
+        remove("/tmp/moo_v2_conv_roundtrip_bf16.mook");
+        moo_release(pfb);moo_release(copyb);moo_release(pb);
         moo_release(pf);moo_release(copy);moo_release(p1);moo_release(p2);
         moo_release(x);moo_release(y);moo_release(z);moo_release(q);moo_release(knet);moo_release(net);
         moo_ag_reset();

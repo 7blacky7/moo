@@ -121,6 +121,16 @@ int main(void) {
           "Temperatur <= 0 wird abgelehnt");
     moo_error_flag = 0;
 
+    MooValue klein_ok = moo_nn_kontrastiv(a, b, moo_number(1e-6));
+    CHECK(klein_ok.tag == MOO_TENSOR && isfinite(skalarwert(klein_ok)),
+          "kleinste erlaubte Temperatur bleibt endlich");
+    moo_release(klein_ok);
+    moo_error_flag = 0;
+    MooValue zu_klein = moo_nn_kontrastiv(a, b, moo_number(1e-7));
+    CHECK(moo_error_flag == 1 && zu_klein.tag == MOO_NONE,
+          "numerisch unsichere Temperatur wird abgelehnt");
+    moo_error_flag = 0;
+
     /* FD gegen Autograd fuer die KOMPOSITION, beide differenzierbaren Inputs. */
     const float ga[] = {
         0.7f, -0.2f, 0.4f,

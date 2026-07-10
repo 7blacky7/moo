@@ -120,9 +120,9 @@ MooValue moo_nn_kontrastiv(MooValue a, MooValue b, MooValue temperatur) {
     double temp = 0.07;
     if (temperatur.tag != MOO_NONE) {
         if (temperatur.tag != MOO_NUMBER || !isfinite(MV_NUM(temperatur)) ||
-            MV_NUM(temperatur) <= 0.0) {
+            MV_NUM(temperatur) < 1e-6) {
             moo_throw(moo_error(
-                "kontrastiv: temperatur muss eine endliche Zahl > 0 sein"));
+                "kontrastiv: temperatur muss endlich und mindestens 0.000001 sein"));
             return moo_none();
         }
         temp = MV_NUM(temperatur);
