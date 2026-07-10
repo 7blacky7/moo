@@ -266,6 +266,25 @@ static void bw_divs(const MooAgNode* n) {
     for (int64_t i = 0; i < o->size; i++) zg[i] += o->grad[i] / s;
 }
 
+// gather-Backward: scatter-add. out[i,:] = W[idx_i,:]  ->  gW[idx_i,:] += g[i,:].
+// Duplikat-Indizes summieren durch sequentielle Akkumulation (deterministisch,
+// bit-reproduzierbar). Der Index-Tensor inputs[1] bekommt NIE Gradient.
+static void bw_gather(const MooAgNode* n) {
+    MooTensor* w = T(n->inputs[0]);
+    const MooTensor* idx = T(n->inputs[1]);
+    const MooTensor* o = T(n->output);
+    if (!w->requires_grad) return;
+    const float* g = o->grad;
+    float* zg = grad_sicherstellen(w);
+    int64_t n_idx = idx->size;
+    int64_t dim = w->shape[1];
+    for (int64_t i = 0; i < n_idx; i++) {
+        int64_t r = (int64_t)idx->data[i];
+        for (int64_t d = 0; d < dim; d++)
+            zg[r * dim + d] += g[i * dim + d];
+    }
+}
+
 static void bw_matmul(const MooAgNode* n) {
     // out[m,p] = a[m,k] @ b[k,p]:  da += g @ b^T ; db += a^T @ g
     const MooTensor* o = T(n->output);
@@ -529,6 +548,7 @@ static void moo_ag_init_bw(void) {
     moo_tensor_op_set_bw("muls", bw_muls);
     moo_tensor_op_set_bw("divs", bw_divs);
     moo_tensor_op_set_bw("matmul", bw_matmul);
+    moo_tensor_op_set_bw("gather", bw_gather);
     moo_tensor_op_set_bw("transpose", bw_transpose);
     moo_tensor_op_set_bw("reshape", bw_reshape);
     moo_tensor_op_set_bw("concat", bw_concat);

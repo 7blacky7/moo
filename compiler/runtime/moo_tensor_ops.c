@@ -37,7 +37,9 @@ static MooTensor* expect_t(MooValue v, const char* wo) {
         moo_throw(moo_error(msg));
         return NULL;
     }
-    return MV_TENSOR(v);
+    MooTensor* t = MV_TENSOR(v);
+    moo_tensor_f32_sichern(t);   // KIP-D1 Eintrittspunkt (D0 §4.1): DER Trichter aller 26 Registry-Ops -> f32-data garantiert
+    return t;
 }
 
 static MooValue wrap_t(MooTensor* t) {
@@ -232,6 +234,61 @@ MooValue moo_tensor_matmul(MooValue av, MooValue bv) {
         matmul_ikj(a->data, b->data, out->data, a->shape[0], a->shape[1], b->shape[1]);
     MooValue ret = wrap_t(out);
     moo_ag_record("matmul", av, bv, moo_none(), ret);
+    return ret;
+}
+
+// ============================================================
+// Gather — Zeilen-Lookup out[i,:] = W[indizes[i],:] (Embedding-Kern, KIP-T1).
+// W: [vokab, dim] (2D). indizes: Tensor [n] oder [n,1], f32 GANZZAHLIG in
+// [0, vokab). Backward = scatter-add nach W (Duplikat-Indizes summieren,
+// siehe bw_gather in moo_autograd.c) — mathematisch identisch zu one-hot@W,
+// aber ohne [n, vokab]-Materialisierung.
+// DESIGN (KIP-T1): Gather ist ein generischer BINARY-Op; die Indizes reiten
+// als inputs[1] im Tape, sind aber NICHT differenzierbar (Registry-Feld
+// nichtdiff_maske Bit1). Der Gradcheck perturbiert sie darum nie.
+// INDEX-VERTRAG: endlich, ganzzahlig, in [0, vokab). f32 ist exakt-integer
+// bis 2^24 -> gilt fuer alle praktischen Vokabulare (dokumentierte Grenze).
+// ============================================================
+MooValue moo_tensor_gather(MooValue wv, MooValue idxv) {
+    MooTensor* w = expect_t(wv, "tensor_gather"); if (!w) return moo_none();
+    MooTensor* idx = expect_t(idxv, "tensor_gather"); if (!idx) return moo_none();
+    if (w->ndim != 2) {
+        moo_throw(moo_error("tensor_gather: W muss 2-dimensional sein "
+                            "[vokab, dim]"));
+        return moo_none();
+    }
+    bool form_ok = (idx->ndim == 1) || (idx->ndim == 2 && idx->shape[1] == 1);
+    if (!form_ok) {
+        moo_throw(moo_error("tensor_gather: Indizes bitte als Tensor [n] "
+                            "oder [n, 1]"));
+        return moo_none();
+    }
+    int64_t n = idx->size;
+    int32_t vokab = w->shape[0];
+    int32_t dim = w->shape[1];
+    // Index-Vertrag pruefen (endlich, ganzzahlig, in Range) — Tensorwerte f32!
+    for (int64_t i = 0; i < n; i++) {
+        double d = (double)idx->data[i];
+        if (!(d == d) || d < 0.0 || d >= (double)vokab ||
+            d != (double)(int64_t)d) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "tensor_gather: Index %g ist nicht "
+                     "ganzzahlig in [0, %d)", d, vokab);
+            moo_throw(moo_error(msg));
+            return moo_none();
+        }
+    }
+    int32_t oshape[2] = { (int32_t)n, dim };
+    MooTensor* out = moo_tensor_raw(2, oshape);
+    if (!out) return moo_none();
+    for (int64_t i = 0; i < n; i++) {
+        int64_t r = (int64_t)idx->data[i];
+        memcpy(out->data + i * (int64_t)dim, w->data + r * (int64_t)dim,
+               (size_t)dim * sizeof(float));
+    }
+    MooValue ret = wrap_t(out);
+    // B1: Tape. idx = inputs[1] (nicht-diff, siehe nichtdiff_maske).
+    moo_ag_record("gather", wv, idxv, moo_none(), ret);
     return ret;
 }
 
@@ -540,6 +597,9 @@ static MooTensorOp op_tabelle[] = {
     { "muls",       MOO_OP_BINARY_SCALAR, NULL, moo_tensor_muls,       NULL },
     { "divs",       MOO_OP_BINARY_SCALAR, NULL, moo_tensor_divs,       NULL },
     { "matmul",     MOO_OP_BINARY,        NULL, moo_tensor_matmul,     NULL },
+    // gather: BINARY, aber Eingang 1 (Indizes) ist NICHT differenzierbar
+    // (nichtdiff_maske Bit1 = 0x2). Backward = scatter-add nach W.
+    { "gather",     MOO_OP_BINARY,        NULL, moo_tensor_gather,     NULL, 0x2 },
     { "transpose",  MOO_OP_UNARY,         moo_tensor_transponieren, NULL, NULL },
     { "reshape",    MOO_OP_BINARY,        NULL, moo_tensor_umformen,   NULL },
     { "concat",     MOO_OP_BINARY,        NULL, moo_tensor_verbinden,  NULL },

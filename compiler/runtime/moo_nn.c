@@ -581,10 +581,22 @@ static MooValue fw_embedding(MooValue schicht, MooValue x) {
                             "[batch] oder [batch, 1]"));
         return moo_none();
     }
+    /* KIP-T1: Produktionspfad = gather(W, indizes). Backward = scatter-add
+     * nach W, mathematisch identisch zu one-hot@W, aber ohne [batch, vokab]-
+     * Materialisierung. one-hot bleibt Referenzpfad unter
+     * MOO_KI_EINBETTUNG_ONEHOT=1 (Differential-/LM-Kurven-Gate). */
+    {
+        const char* onehot_env = getenv("MOO_KI_EINBETTUNG_ONEHOT");
+        if (!(onehot_env && onehot_env[0] == '1')) {
+            MooValue out = moo_tensor_gather(w, x);   /* Range-Check in gather */
+            moo_release(w);
+            return out;
+        }
+    }
     int32_t batch = xt->shape[0];
     int32_t vokab = wt->shape[0];
-    /* one-hot [batch, vokab] OHNE grad; matmul (hat backward) traegt den
-     * Gradienten in W — mathematisch identisch zum Gather-Scatter. */
+    /* --- Referenzpfad: one-hot [batch, vokab] OHNE grad; matmul (hat
+     * backward) traegt den Gradienten in W — identisch zum Gather-Scatter. */
     int32_t oh_shape[2] = { batch, vokab };
     MooTensor* oh = moo_tensor_raw(2, oh_shape);
     if (!oh) { moo_release(w); return moo_none(); }
@@ -1116,6 +1128,7 @@ static MooValue schicht_vorwaerts(MooValue schicht, MooValue x) {
 
 /* vorwaerts(netz, x): netz = Schicht, Liste von Schichten ODER ki_netz-Dict. */
 MooValue moo_nn_vorwaerts(MooValue netz, MooValue x) {
+    if (x.tag == MOO_TENSOR) moo_tensor_f32_sichern(MV_TENSOR(x));   /* KIP-D1 Eintrittspunkt: bf16-Input -> f32 */
     if (nn_ist(netz, "netz")) {   /* D1: Kinderleicht-Netz delegiert */
         MooValue schichten = dget(netz, "schichten");
         MooValue r = moo_nn_vorwaerts(schichten, x);
@@ -1442,6 +1455,7 @@ MooValue moo_nn_kreuzentropie(MooValue logits, MooValue ziele) {
     }
     MooTensor* lt = T(logits);
     MooTensor* zt = T(ziele);
+    moo_tensor_f32_sichern(zt);   // KIP-D1 Eintrittspunkt: zt->data wird direkt gelesen (logits geht ueber logsoftmax/expect_t)
     if (lt->ndim != 2) {
         moo_throw(moo_error("kreuzentropie: Logits muessen 2D sein [batch, klassen]"));
         return moo_none();
@@ -1660,6 +1674,7 @@ MooValue moo_nn_opt_schritt(MooValue opt) {
         /* Gradienten nullen: naechste Iteration startet sauber. */
         for (int32_t i = 0; i < pl->length; i++) {
             MooTensor* p = T(pl->items[i]);
+            p->valid = MOO_V_DATA;   /* KIP-D1 Mutations-Invalidierung (D0 §4.2): Optimizer schrieb p->data */
             if (p->grad) memset(p->grad, 0, (size_t)p->size * sizeof(float));
         }
     }

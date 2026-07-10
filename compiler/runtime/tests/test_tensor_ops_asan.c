@@ -239,7 +239,7 @@ int main(void) {
     moo_release(S); moo_release(DZ); moo_release(DN);
 
     /* ---- 8. Registry ---- */
-    CHECK(moo_tensor_op_count() == 26, "registry: 26 ops");
+    CHECK(moo_tensor_op_count() == 27, "registry: 27 ops");   /* +gather (KIP-T1) */
     const MooTensorOp* op = moo_tensor_op_lookup("matmul");
     CHECK(op && op->art == MOO_OP_BINARY && op->fw2 == moo_tensor_matmul, "lookup matmul");
     op = moo_tensor_op_lookup("softmax");
@@ -252,7 +252,7 @@ int main(void) {
         if ((o->art == MOO_OP_UNARY && o->fw1) || (o->art != MOO_OP_UNARY && o->fw2)) mit_fw++;
         CHECK(o->bw == NULL, "bw noch NULL (Autograd = B1)");
     }
-    CHECK(mit_fw == 26, "alle ops haben forward");
+    CHECK(mit_fw == 27, "alle ops haben forward");
 
     moo_release(A); moo_release(B); moo_release(R); moo_release(C);
     moo_release(M); moo_release(X);

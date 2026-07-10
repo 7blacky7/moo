@@ -168,6 +168,7 @@ MooValue moo_tensor_form(MooValue t);
 MooValue moo_tensor_groesse(MooValue t);
 MooValue moo_tensor_zu_liste(MooValue t);
 MooValue moo_tensor_to_string(MooValue t);
+MooValue moo_tensor_als_dtype(MooValue t, MooValue dtype_str);   // D1: f32<->bf16 Storage-Konvertierung (in-place, gibt denselben Tensor +1 owning zurueck)
 
 // Intern (P014-A2): Roh-Konstruktor fuer die Ops-Schicht (moo_tensor_ops.c).
 // Liefert refcount=1, data calloc'd (0.0f). NICHT fuer Codegen/Bindings.
@@ -215,6 +216,9 @@ MooValue moo_tensor_tanh(MooValue a);
 MooValue moo_tensor_gelu(MooValue a);
 MooValue moo_tensor_softmax(MooValue a);
 MooValue moo_tensor_logsoftmax(MooValue a);
+// gather(W, indizes): Zeilen-Lookup W[indizes]; Backward = scatter-add nach W.
+// Indizes: f32-Tensor, ganzzahlig in [0, vokab). NICHT differenzierbar (KIP-T1).
+MooValue moo_tensor_gather(MooValue w, MooValue indizes);
 
 // Op-Registry: neuer Op = 1 Funktion + 1 Tabelleneintrag (Erweiterbarkeits-
 // Vertrag). backward registriert moo_autograd.c beim Init via
@@ -245,6 +249,9 @@ typedef struct MooTensorOp {
     MooValue (*fw1)(MooValue a);
     MooValue (*fw2)(MooValue a, MooValue b);
     MooAgBw bw;                // backward — traegt moo_autograd.c ein
+    uint8_t nichtdiff_maske;   // KIP-T1: Bit i gesetzt = Eingang i NICHT
+                               // differenzierbar (z.B. gather-Indizes). Default
+                               // 0 = alle Eingaenge diff (bestehende Ops).
 } MooTensorOp;
 const MooTensorOp* moo_tensor_op_lookup(const char* name);
 int moo_tensor_op_count(void);
@@ -272,6 +279,8 @@ bool moo_ag_ist_an(void);                             // Zustand (D1: vorhersage
 MooValue moo_nn_schicht_dicht(MooValue ein, MooValue aus, MooValue aktivierung, MooValue seed);
 MooValue moo_nn_schicht_dropout(MooValue rate);
 MooValue moo_nn_schicht_layernorm(MooValue dim);
+MooValue moo_nn_schicht_rmsnorm(MooValue dim);                                   // KIP-B1: y = x*rsqrt(mean(x^2)+eps)*g
+MooValue moo_nn_schicht_ffn_gated(MooValue dim, MooValue versteckt, MooValue art);  // KIP-B3: SwiGLU/Gated-FFN
 MooValue moo_nn_schicht_embedding(MooValue vokabular, MooValue dim, MooValue seed);
 MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed, MooValue kv_koepfe, MooValue maske, MooValue fenster);      // G1 + KI-M2a (GQA) + KI-M2b (Sliding)
 MooValue moo_nn_schicht_position(MooValue max_laenge, MooValue dim, MooValue art, MooValue seed);  // G1

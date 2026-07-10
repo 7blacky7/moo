@@ -109,6 +109,9 @@ static void check_op(const MooTensorOp* op, MooValue A, MooValue B,
     MooTensor* eingaben[2] = { MV_TENSOR(A), hat_b ? MV_TENSOR(B) : NULL };
     for (int e = 0; e < (hat_b ? 2 : 1); e++) {
         MooTensor* t = eingaben[e];
+        // Nicht-differenzierbarer Eingang (z.B. gather-Indizes): NIE perturbieren
+        // — numerisches Ableiten der Indizes waere Unsinn (Index-Vertrag).
+        if (op->nichtdiff_maske & (1u << e)) continue;
         if (!t->grad) { fails++; fprintf(stderr, "GRADCHECK %s(%s): kein grad an Input %d\n", op->name, variante, e); continue; }
         for (int64_t i = 0; i < t->size; i++) {
             float orig = t->data[i];
@@ -135,10 +138,73 @@ static void check_op(const MooTensorOp* op, MooValue A, MooValue B,
     moo_ag_reset();
 }
 
+// KIP-T1 Differentialtest: gather(W, idx) MUSS Forward UND W-Gradient
+// bit-identisch zu one-hot(idx) @ W liefern — inklusive Duplikat-Indizes
+// (scatter-add summiert, one-hot@W addiert die gleichen Zeilen).
+static void test_gather_vs_onehot(void) {
+    int32_t sw[2] = { 5, 3 };
+    int32_t si[1] = { 6 };
+    float idxvals[6] = { 0.0f, 2.0f, 4.0f, 2.0f, 4.0f, 2.0f };  // Duplikate!
+
+    /* Pfad A: gather */
+    moo_ag_reset();
+    MooValue Wg = mk_rand(2, sw, 7000, 0.0f);
+    MV_TENSOR(Wg)->requires_grad = true;
+    MooTensor* itg = moo_tensor_raw(1, si);
+    for (int i = 0; i < 6; i++) itg->data[i] = idxvals[i];
+    MooValue idxg; idxg.tag = MOO_TENSOR; moo_val_set_ptr(&idxg, itg);
+    MooValue outg = moo_tensor_gather(Wg, idxg);
+    MooValue lossg = moo_tensor_summe(outg, moo_number(-1));
+    moo_tensor_rueckwaerts(lossg);
+    moo_release(lossg);
+
+    /* Pfad B: one-hot @ W (gleicher Seed => identische W-Werte) */
+    moo_ag_reset();
+    MooValue Wo = mk_rand(2, sw, 7000, 0.0f);
+    MV_TENSOR(Wo)->requires_grad = true;
+    int32_t oh_shape[2] = { 6, 5 };
+    MooTensor* oh = moo_tensor_raw(2, oh_shape);
+    for (int i = 0; i < 6; i++) oh->data[i * 5 + (int)idxvals[i]] = 1.0f;
+    MooValue ohv; ohv.tag = MOO_TENSOR; moo_val_set_ptr(&ohv, oh);
+    MooValue outo = moo_tensor_matmul(ohv, Wo);
+    MooValue losso = moo_tensor_summe(outo, moo_number(-1));
+    moo_tensor_rueckwaerts(losso);
+    moo_release(losso); moo_release(ohv);
+
+    /* Vergleich Forward (bit-exakt) */
+    MooTensor* og = MV_TENSOR(outg);
+    MooTensor* oo = MV_TENSOR(outo);
+    int diff_fwd = 0, diff_grad = 0;
+    if (og->size != oo->size) { diff_fwd = 1; }
+    else for (int64_t i = 0; i < og->size; i++)
+        if (og->data[i] != oo->data[i]) { diff_fwd++; }
+    /* Vergleich W-Gradient (bit-exakt, inkl. Duplikat-Akkumulation) */
+    float* gg = MV_TENSOR(Wg)->grad;
+    float* go = MV_TENSOR(Wo)->grad;
+    if (!gg || !go) { diff_grad = -1; }
+    else for (int64_t i = 0; i < MV_TENSOR(Wg)->size; i++)
+        if (gg[i] != go[i]) { diff_grad++; }
+
+    if (diff_fwd || diff_grad) {
+        fails++;
+        fprintf(stderr, "GATHER-DIFFERENTIAL FAIL: fwd_diff=%d grad_diff=%d\n",
+                diff_fwd, diff_grad);
+    } else {
+        checks++;
+        printf("gather vs one-hot@W: Forward + W-Gradient bit-identisch "
+               "(inkl. Duplikat-Indizes) OK\n");
+    }
+    moo_release(outg); moo_release(idxg); moo_release(Wg);
+    moo_release(outo); moo_release(Wo);
+    moo_ag_reset();
+}
+
 int main(void) {
     int32_t s34[2] = { 3, 4 };
     int32_t s14[2] = { 1, 4 };
     int32_t s43[2] = { 4, 3 };
+
+    test_gather_vs_onehot();
 
     for (int oi = 0; oi < moo_tensor_op_count(); oi++) {
         const MooTensorOp* op = moo_tensor_op_at(oi);
@@ -195,6 +261,21 @@ int main(void) {
                 MooValue B = mk_rand(2, s34, 3201, 0.0f);
                 check_op(op, A, B, 0.0, tol, "achse0");
                 moo_release(A); moo_release(B);
+            } else if (strcmp(op->name, "gather") == 0) {
+                /* SONDER-Gradcheck: NUR W wird perturbiert; die Indizes sind
+                 * per nichtdiff_maske geschuetzt (check_op ueberspringt sie).
+                 * Duplikat-Index 2 prueft die scatter-add-Akkumulation.
+                 * tol=1e-4: gather ist stueckweise LINEAR in W -> numerischer
+                 * Gradient ist (bis auf f32-Rundung) exakt. */
+                int32_t sw[2] = { 5, 3 };
+                MooValue W = mk_rand(2, sw, 3300, 0.0f);
+                int32_t si[1] = { 4 };
+                MooTensor* it = moo_tensor_raw(1, si);
+                it->data[0] = 0.0f; it->data[1] = 2.0f;
+                it->data[2] = 2.0f; it->data[3] = 4.0f;   /* Duplikat: 2 */
+                MooValue idx; idx.tag = MOO_TENSOR; moo_val_set_ptr(&idx, it);
+                check_op(op, W, idx, 0.0, 1e-4, "gather+dup");
+                moo_release(W); moo_release(idx);
             } else {   // add/sub/mul/div: same-shape + Broadcast (Bias-Fall)
                 MooValue A = mk_rand(2, s34, 4000 + (uint64_t)oi, 0.0f);
                 MooValue B = mk_rand(2, s34, 5000 + (uint64_t)oi, 0.0f);

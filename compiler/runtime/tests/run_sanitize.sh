@@ -127,6 +127,11 @@ EXTRA_HARNESSES=(
   #               Konvergenz-Gate im Harness; Quell-Satz + Test-throw-Modell
   #               wie autograd, plus moo_nn.c.
   "test_nn_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   tensor_dtype: KIP-D1 — bf16-Storage-DType. Roundtrip/Special-Values,
+  #               Valid-Masken-Vertrag (D0 §2), Stale-Store-Regression,
+  #               bf16-Op-Matrix (26+ Ops bit-exakt vs rundungs-f32) +
+  #               ce/mse/vorwaerts. Quell-Satz wie nn. ASan-Leak-Gate.
+  "test_tensor_dtype_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   "test_dataset_asan.c|moo_dataset.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   tokenizer:  KIP-T2 — Byte-level BPE (train/encode/decode/save/load/hash).
   #               Test-throw-Modell wie dataset; Tensor-Kern + Core-Runtime.
