@@ -91,6 +91,8 @@ typedef struct {
     int    sim_pos_active;
     float  sim_x, sim_y;
     float  real_x, real_y;            /* "echte" absolute Pos */
+    float  last_r, last_g, last_b;     /* zuletzt vom Dispatcher dekodierte Farbe */
+    int    triangle_calls;
 } FakeCtx;
 
 /* Mini-Keycode: nur 'w' und 'a' fuer den Test; gleiche Idee wie gl33_keycode. */
@@ -135,6 +137,20 @@ static float fake_mouse_y(void* vctx) {
     return c->sim_pos_active ? c->sim_y : c->real_y;
 }
 
+static void fake_triangle(void* vctx,
+                          float x1, float y1, float z1,
+                          float x2, float y2, float z2,
+                          float x3, float y3, float z3,
+                          float r, float g, float b) {
+    FakeCtx* c = (FakeCtx*)vctx;
+    (void)x1; (void)y1; (void)z1;
+    (void)x2; (void)y2; (void)z2;
+    (void)x3; (void)y3; (void)z3;
+    if (!c) return;
+    c->last_r = r; c->last_g = g; c->last_b = b;
+    c->triangle_calls++;
+}
+
 static void fake_simulate_key(void* vctx, const char* key, int pressed) {
     FakeCtx* c = (FakeCtx*)vctx;
     if (!c) return;
@@ -161,6 +177,7 @@ static void fake_simulate_reset(void* vctx) {
 }
 
 static Moo3DBackend g_fake_backend = {
+    .triangle             = fake_triangle,
     .key_pressed          = fake_key_pressed,
     .mouse_dx             = fake_mouse_dx,
     .mouse_dy             = fake_mouse_dy,
@@ -201,7 +218,26 @@ int main(void) {
     ctx->real_key_down = 0;
     moo_3d_attach_external(&g_fake_backend, ctx);
 
-    /* --- 2. Tastatur Tri-State --- */
+    /* --- 2. Farben: String- und neuer 0xRRGGBB-Zahlenpfad end-to-end. --- */
+    MooValue z = mv_num(0.0);
+    moo_3d_triangle(mv_win(), z, z, z, z, z, z, z, z, z, mv_num(0x12ABEF));
+    CHECK(ctx->triangle_calls == 1 &&
+          ctx->last_r == 0x12 / 255.0f &&
+          ctx->last_g == 0xAB / 255.0f &&
+          ctx->last_b == 0xEF / 255.0f,
+          "Farbe: Zahl 0x12ABEF wird exakt als RGB dekodiert");
+    moo_3d_triangle(mv_win(), z, z, z, z, z, z, z, z, z, mv_str("#12ABEF"));
+    CHECK(ctx->triangle_calls == 2 &&
+          ctx->last_r == 0x12 / 255.0f &&
+          ctx->last_g == 0xAB / 255.0f &&
+          ctx->last_b == 0xEF / 255.0f,
+          "Farbe: Hex-String bleibt regressionsfrei");
+    moo_3d_triangle(mv_win(), z, z, z, z, z, z, z, z, z, mv_num(1.5));
+    CHECK(ctx->triangle_calls == 3 &&
+          ctx->last_r == 1.0f && ctx->last_g == 1.0f && ctx->last_b == 1.0f,
+          "Farbe: gebrochene Zahl behaelt sicheren Weiss-Default");
+
+    /* --- 3. Tastatur Tri-State --- */
     /* (a) nicht simuliert + echter Input aus -> false */
     CHECK(g_fake_backend.key_pressed(ctx, "w") == 0,
           "Tri-State: nicht simuliert, echter Input aus -> false");

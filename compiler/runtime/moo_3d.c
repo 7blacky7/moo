@@ -41,6 +41,22 @@ typedef struct { float r, g, b; } Color3;
 
 static Color3 parse_color3(MooValue c) {
     Color3 col = {1.0f, 1.0f, 1.0f};
+    /* Performance-Pfad fuer prozedurale Meshes: 0xRRGGBB als exakte
+     * Moo-Zahl vermeidet tausende temporaere Farbstrings. Nur ganzzahlige
+     * Werte im 24-Bit-Bereich sind Farben; alles andere behaelt wie bisher
+     * den sicheren Weiss-Default. Der Cast ist durch den Range-Check definiert. */
+    if (c.tag == MOO_NUMBER) {
+        double numeric = MV_NUM(c);
+        if (numeric >= 0.0 && numeric <= 16777215.0) {
+            uint32_t hex = (uint32_t)numeric;
+            if ((double)hex == numeric) {
+                col.r = (float)((hex >> 16u) & 0xFFu) / 255.0f;
+                col.g = (float)((hex >> 8u) & 0xFFu) / 255.0f;
+                col.b = (float)(hex & 0xFFu) / 255.0f;
+            }
+        }
+        return col;
+    }
     if (c.tag != MOO_STRING) return col;
     const char* s = MV_STR(c)->chars;
 
