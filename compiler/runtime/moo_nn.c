@@ -24,6 +24,7 @@
  * ============================================================================
  */
 #include "moo_runtime.h"
+#include "moo_ki_gpu_api.h"   // KIP-G4c Stufe 3: residenter Optimizer-Pfad (opt_sgd_res)
 #include <math.h>
 
 static MooTensor* T(MooValue v) { return MV_TENSOR(v); }
@@ -2306,10 +2307,12 @@ MooValue moo_nn_opt_schritt(MooValue opt) {
     double t = dnum(opt, "t", 0.0) + 1.0;
     dset(opt, "t", moo_number(t));
 
+    bool* opt_resident_done = NULL;   /* KIP-G4c Stufe 3: welche Params diese Iteration GPU-resident aktualisiert wurden */
     if (params.tag == MOO_LIST && ml.tag == MOO_LIST) {
         MooList* pl = MV_LIST(params);
         MooList* mlist = MV_LIST(ml);
         MooList* vlist = (vl.tag == MOO_LIST) ? MV_LIST(vl) : NULL;
+        opt_resident_done = (bool*)calloc((size_t)pl->length, sizeof(bool));
 
         if (strcmp(art, "sgd") == 0) {
             float lr = (float)rate;
@@ -2317,12 +2320,40 @@ MooValue moo_nn_opt_schritt(MooValue opt) {
             for (int32_t i = 0; i < pl->length; i++) {
                 MooTensor* p = T(pl->items[i]);
                 if (!p->grad && !(p->grad_valid & MOO_V_DEV)) continue;   /* Param traegt nicht zum Loss bei */
-                moo_tensor_f32_sichern(p);    /* KIP-G4c I1: p->data koennte nur MOO_V_DEV sein */
-                moo_tensor_grad_sichern(p);   /* KIP-G4c I2: p->grad koennte nur MOO_V_DEV sein */
-                float* m = T(mlist->items[i])->data;
-                for (int64_t j = 0; j < p->size; j++) {
-                    m[j] = mu * m[j] + p->grad[j];
-                    p->data[j] -= lr * m[j];
+                moo_tensor_grad_sichern(p);   /* KIP-G4c I2: p->grad koennte nur MOO_V_DEV sein; wird so oder so gebraucht */
+                MooTensor* mt = T(mlist->items[i]);
+
+                /* KIP-G4c Stufe 3 (docs/kip/G4c-production-wiring-plan.md §2.4/§2.5
+                 * Punkt 2): wenn der Parameter bereits GPU-resident ist (z.B. weil er
+                 * als Matmul-Input in Stufe 1 hochgeladen wurde), Schritt resident
+                 * ausfuehren (opt_sgd_res) -> p/m bleiben auf der GPU, kein Host-
+                 * Roundtrip fuer die naechste Iteration. Grad wird (schon CPU-
+                 * sichergestellt) einmalig hochgeladen. Bei jedem Fehlschlag
+                 * sauberer Komplett-Fallback auf den bestehenden CPU-Pfad, KEIN
+                 * Teil-Update (analog Stufe 1/2). */
+                bool done = false;
+                if ((p->valid & MOO_V_DEV) && p->gpu_buf) {
+                    moo_tensor_nach_gpu(mt);
+                    if (mt->gpu_buf) {
+                        int64_t bytes = (int64_t)p->size * (int64_t)sizeof(float);
+                        void* gbuf = moo_ki_gpu_buf_belegen(bytes);
+                        if (gbuf && moo_ki_gpu_upload(gbuf, p->grad, bytes) &&
+                            moo_ki_gpu_opt_sgd_res(p->gpu_buf, mt->gpu_buf, gbuf, p->size, lr, mu)) {
+                            p->valid = MOO_V_DEV;    /* GPU jetzt autoritativ (I1); CPU-data stale bis naechster Sichern-Aufruf */
+                            mt->valid = MOO_V_DEV;
+                            opt_resident_done[i] = true;
+                            done = true;
+                        }
+                        moo_ki_gpu_buf_freigeben(gbuf);
+                    }
+                }
+                if (!done) {
+                    moo_tensor_f32_sichern(p);    /* KIP-G4c I1: p->data koennte nur MOO_V_DEV sein (Stufe-3-Versuch fehlgeschlagen) */
+                    float* m = mt->data;
+                    for (int64_t j = 0; j < p->size; j++) {
+                        m[j] = mu * m[j] + p->grad[j];
+                        p->data[j] -= lr * m[j];
+                    }
                 }
             }
         } else {  /* adam / adamw */
@@ -2357,12 +2388,18 @@ MooValue moo_nn_opt_schritt(MooValue opt) {
         /* Gradienten nullen: naechste Iteration startet sauber. */
         for (int32_t i = 0; i < pl->length; i++) {
             MooTensor* p = T(pl->items[i]);
-            p->valid = MOO_V_DATA;   /* KIP-D1 Mutations-Invalidierung (D0 §4.2): Optimizer schrieb p->data */
+            /* KIP-G4c Stufe 3: Params, die diese Iteration RESIDENT aktualisiert
+             * wurden (opt_resident_done[i]), bleiben MOO_V_DEV -- die CPU-`data`
+             * ist dort bewusst stale bis zum naechsten Sichern-Aufruf (I1). Alle
+             * anderen (CPU-Pfad ODER uebersprungen) verhalten sich wie vor G4c. */
+            if (!opt_resident_done[i])
+                p->valid = MOO_V_DATA;   /* KIP-D1 Mutations-Invalidierung (D0 §4.2): Optimizer schrieb p->data */
             if (p->grad) {
                 memset(p->grad, 0, (size_t)p->size * sizeof(float));
                 p->grad_valid = MOO_V_DATA;   /* KIP-G4c I6: CPU-Grad nach Nullung autoritativ */
             }
         }
+        free(opt_resident_done);
     }
     moo_release(artv); moo_release(params); moo_release(ml); moo_release(vl);
     /* Tape leeren — die aufgezeichneten Nodes dieser Iteration freigeben. */
