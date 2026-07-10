@@ -1514,25 +1514,13 @@ void moo_ki_gpu_telemetrie_reset(void) {
 
 #endif /* MOO_HAS_VULKAN */
 
-/* === KIP-G4c Punkt 5 (docs/kip/G4c-production-wiring-plan.md §3.2): MooValue-
- * Wrapper um MooKiGpuTelemetrie, branch-unabhaengig (funktioniert identisch mit
- * und ohne MOO_HAS_VULKAN, da moo_ki_gpu_telemetrie/_reset bereits fuer beide
- * Faelle oben definiert sind). Backend fuer die geplante moo-Builtins
- * gpu_statistik()/gpu_statistik_reset() -- Registrierung als Builtin ist NOCH
- * NICHT verdrahtet (runtime_bindings.rs/codegen.rs, kip-kern/kip-ops-
- * koordiniert), das hier ist nur die Runtime-C-Seite. */
-MooValue moo_ki_gpu_statistik(void) {
-    MooKiGpuTelemetrie tel;
-    moo_ki_gpu_telemetrie(&tel);
-    MooValue d = moo_dict_new();
-    moo_dict_set(d, moo_string_new("submits"), moo_number((double)tel.submits));
-    moo_dict_set(d, moo_string_new("uploads"), moo_number((double)tel.uploads));
-    moo_dict_set(d, moo_string_new("downloads"), moo_number((double)tel.downloads));
-    moo_dict_set(d, moo_string_new("cpu_fallbacks"), moo_number((double)tel.cpu_fallbacks));
-    return d;
-}
-
-MooValue moo_ki_gpu_statistik_reset(void) {
-    moo_ki_gpu_telemetrie_reset();
-    return moo_none();
-}
+/* KIP-FINAL-FIX (e413b176, GPT-Gegenreview KI-PROD-01): die MooValue/Dict/
+ * String-Wrapper moo_ki_gpu_statistik()/_reset() sind NICHT mehr hier --
+ * sie brauchten moo_dict_new/moo_string_new/moo_number/moo_dict_set/moo_none,
+ * was diese bewusst schlanke, standalone-linkbare GPU-Kern-Datei (nur
+ * Testquelle + moo_ki_gpu.c + Vulkan/libm, siehe die Standalone-Gate-Skripte
+ * skripte/kip_gpu_coverage.sh, kip_g4_lm.sh, kip_g4b_lm.sh) zum Linken der
+ * vollen Runtime-Symbole zwang. Jetzt in runtime/moo_ki_gpu_statistik.c
+ * (Vollruntime-only, ueber build.rs immer mitgebaut) -- ruft ausschliesslich
+ * die branch-unabhaengigen moo_ki_gpu_telemetrie/_reset() oben auf, keine
+ * Verhaltensaenderung fuer gpu_statistik()/gpu_statistik_reset(). */

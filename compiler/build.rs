@@ -37,6 +37,7 @@ fn main() {
         .file("runtime/moo_tokenizer.c")    // Byte-level BPE-Tokenizer (KIP-T2, immer gebaut)
         .file("runtime/moo_shard.c")        // Streaming-Token-Shards + Dataloader (KIP-E1, immer gebaut)
         .file("runtime/moo_ki_gpu.c")       // GPU2: Vulkan-Compute-Ops; ohne vulkan-Feature reiner Stub (immer gebaut)
+        .file("runtime/moo_ki_gpu_statistik.c") // KIP-FINAL-FIX e413b176: MooValue-Wrapper gpu_statistik() ausgelagert (Vollruntime-only, haelt moo_ki_gpu.c standalone-linkbar fuer die GPU-Gate-Skripte)
         .file("runtime/moo_string.c")
         .file("runtime/moo_list.c")
         .file("runtime/moo_dict.c")
