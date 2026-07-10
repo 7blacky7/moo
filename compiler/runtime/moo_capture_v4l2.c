@@ -152,8 +152,10 @@ static int candidate_cmp(const void* av, const void* bv) {
     if (a->distance > b->distance) return 1;
     uint64_t ap = (uint64_t)a->width * a->height;
     uint64_t bp = (uint64_t)b->width * b->height;
-    if (ap < bp) return -1; if (ap > bp) return 1;
-    if (a->fps > b->fps) return -1; if (a->fps < b->fps) return 1;
+    if (ap < bp) return -1;
+    if (ap > bp) return 1;
+    if (a->fps > b->fps) return -1;
+    if (a->fps < b->fps) return 1;
     return a->fourcc < b->fourcc ? -1 : (a->fourcc > b->fourcc ? 1 : 0);
 }
 
@@ -281,13 +283,15 @@ bool moo_capture_camera_open_native(MooKamera* camera, const char* path,
         !req.count || req.count > MOO_CAPTURE_MAX_BUFFERS) {
         camera_fail("kamera_oeffnen: ungueltige REQBUFS-Antwort"); return false;
     }
+    native->size_image = format.fmt.pix.sizeimage;
     native->mapped_count = req.count;
     for (uint32_t i = 0; i < req.count; ++i) {
         struct v4l2_buffer buf = {0};
         buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE; buf.memory = V4L2_MEMORY_MMAP;
         buf.index = i;
         if (v4l2_ioctl(native->fd, VIDIOC_QUERYBUF, &buf) < 0 ||
-            !buf.length || buf.length > MOO_CAPTURE_MAX_FRAME_BYTES) {
+            !buf.length || buf.length < native->size_image ||
+            buf.length > MOO_CAPTURE_MAX_FRAME_BYTES) {
             camera_fail("kamera_oeffnen: ungueltige Mapping-Laenge"); return false;
         }
         void* mapped = v4l2_mmap(NULL, buf.length, PROT_READ | PROT_WRITE,
