@@ -92,4 +92,22 @@ MooValue moo_tok_info(MooValue tok);
  * X3-§3-Shard-Header nutzt ihn als tokenizer_version. */
 MooValue moo_tok_hash(MooValue tok);
 
+/* ---- KIP-T3: Chat-/Special-Tokens + Template-Render (X3 §1, X2 §3) ----
+ * Reservierter Chat-Token-Satz (bos/eos/pad/ende + Rollen system/user/
+ * assistant/tool/tool_result + werkzeug/-Ende). Spezial-Ids liegen HINTER
+ * Basis+Merges (>=256+M) -> encode() erzeugt sie NIE (Injection-Schutz:
+ * Steuer-Tokens nur out-of-band ueber die Render-API). */
+
+/* Haengt den Chat-Token-Satz an ein T2-Artefakt (S==0) an -> neues Artefakt. */
+MooValue moo_tok_chat_init(MooValue tok);
+
+/* Id eines Spezial-Tokens per Name (z.B. "assistant", "eos"). -> Number. */
+MooValue moo_tok_spezial_id(MooValue tok, MooValue name);
+
+/* Rendert eine Dialogliste [{rolle, inhalt}, ...] -> Dict
+ * { ids: Tensor[n], loss_maske: Tensor[n], stop_ids: Liste }.
+ * Loss-Maske: 1 auf Assistant-Inhalt + dessen <|ende|>, 0 sonst.
+ * mit_bos (optional Bool, Default an) steuert ein fuehrendes <|bos|>. */
+MooValue moo_tok_rendern(MooValue tok, MooValue dialog, MooValue mit_bos);
+
 #endif /* MOO_TOKENIZER_H */

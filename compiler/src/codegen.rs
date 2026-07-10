@@ -2557,6 +2557,11 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_nn_schicht_layernorm,
                             &[dim.into()], "nn_layernorm");
                     }
+                    "schicht_rmsnorm" | "layer_rmsnorm" => {
+                        let dim = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_nn_schicht_rmsnorm,
+                            &[dim.into()], "nn_rmsnorm");
+                    }
                     "schicht_embedding" | "layer_embedding" => {
                         let vokab = self.compile_expr(&args[0])?;
                         let dim = self.compile_expr(&args[1])?;
@@ -2793,6 +2798,32 @@ impl<'ctx> CodeGen<'ctx> {
                         let t = self.compile_expr(&args[0])?;
                         let r = self.call_rt(self.rt.moo_tok_hash, &[t.into()], "tok_hash")?;
                         self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokhsh_t")?;
+                        return Ok(r);
+                    }
+                    // KIP-T3: Chat-/Special-Tokens + Render
+                    "tokenizer_chat_init" | "chat_tokenizer" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_tok_chat_init, &[t.into()], "tok_chatinit")?;
+                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokci_t")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_spezial_id" | "tokenizer_special_id" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let n = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_tok_spezial_id, &[t.into(), n.into()], "tok_spid")?;
+                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokspid_t")?;
+                        self.call_rt_void(self.rt.moo_release, &[n.into()], "rel_tokspid_n")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_rendern" | "tokenizer_render" | "chat_rendern" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let dlg = self.compile_expr(&args[1])?;
+                        let mb = if args.len() > 2 { self.compile_expr(&args[2])? }
+                                 else { self.call_rt(self.rt.moo_none, &[], "tok_rnd_none")? };
+                        let r = self.call_rt(self.rt.moo_tok_rendern, &[t.into(), dlg.into(), mb.into()], "tok_render")?;
+                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokrnd_t")?;
+                        self.call_rt_void(self.rt.moo_release, &[dlg.into()], "rel_tokrnd_d")?;
+                        self.call_rt_void(self.rt.moo_release, &[mb.into()], "rel_tokrnd_b")?;
                         return Ok(r);
                     }
                     "mischen" | "shuffle_data" => {

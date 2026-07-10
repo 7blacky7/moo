@@ -308,9 +308,26 @@ typedef struct {
     const uint8_t* merges;          /* zeigt auf M*8 Bytes im Blob */
     const uint8_t** tok_ptr;        /* [V] Zeiger in den Blob (malloc) */
     uint32_t* tok_len;              /* [V] (malloc) */
+    /* Spezial-Index (KIP-T3): Name -> Id fuer die Render-API. */
+    uint32_t* spec_id;              /* [S] (malloc) */
+    const uint8_t** spec_name;      /* [S] (malloc) */
+    uint32_t* spec_name_len;        /* [S] (malloc) */
 } ParsedTok;
 
-static void pt_free(ParsedTok* pt) { free(pt->tok_ptr); free(pt->tok_len); }
+static void pt_free(ParsedTok* pt) {
+    free(pt->tok_ptr); free(pt->tok_len);
+    free(pt->spec_id); free(pt->spec_name); free(pt->spec_name_len);
+}
+
+/* Spezial-Id per Name (KIP-T3). Rueckgabe -1 wenn unbekannt. */
+static int64_t spec_lookup(const ParsedTok* pt, const char* name, uint32_t nlen) {
+    for (uint32_t i = 0; i < pt->S; i++) {
+        if (pt->spec_name_len[i] == nlen &&
+            memcmp(pt->spec_name[i], name, nlen) == 0)
+            return (int64_t)pt->spec_id[i];
+    }
+    return -1;
+}
 
 /* Parst + validiert. false + gesetztes err bei kaputtem Artefakt. */
 static bool tok_parse(MooValue tok, ParsedTok* pt, const char** err) {
@@ -362,12 +379,25 @@ static bool tok_parse(MooValue tok, ParsedTok* pt, const char** err) {
             pt_free(pt); *err = "Basis-Byte-Token verletzt (Roundtrip-Garantie gebrochen)"; return false;
         }
     }
-    /* Spezial-Sektion (S): { id, namelen, bytes } — nur ueberspringen/pruefen. */
+    /* Spezial-Sektion (S): { id, namelen, name-bytes } indizieren. */
+    if (pt->S > 0) {
+        pt->spec_id = (uint32_t*)malloc((size_t)pt->S * sizeof(uint32_t));
+        pt->spec_name = (const uint8_t**)malloc((size_t)pt->S * sizeof(uint8_t*));
+        pt->spec_name_len = (uint32_t*)malloc((size_t)pt->S * sizeof(uint32_t));
+        if (!pt->spec_id || !pt->spec_name || !pt->spec_name_len) { pt_free(pt); *err = "nicht genug Speicher"; return false; }
+    }
     for (uint32_t i = 0; i < pt->S; i++) {
         if (off + 8 > blen) { pt_free(pt); *err = "Spezial-Sektion abgeschnitten"; return false; }
         uint32_t sid = get_u32(b + off); off += 4;
         uint32_t nl  = get_u32(b + off); off += 4;
         if (sid >= pt->V || nl > blen || off + nl > blen) { pt_free(pt); *err = "Spezial-Token ungueltig"; return false; }
+        /* Spezial-Ids liegen strukturell HINTER Basis+Merges (>=256+M) —
+         * damit kann kein Merge/kein Byte-Encode je eine Spezial-Id erzeugen
+         * (Injection-Schutz X3 §1). */
+        if (sid < TOK_BASE + pt->M) { pt_free(pt); *err = "Spezial-Id verletzt Injection-Invariante (< 256+M)"; return false; }
+        pt->spec_id[i] = sid;
+        pt->spec_name[i] = b + off;
+        pt->spec_name_len[i] = nl;
         off += nl;
     }
     return true;
@@ -633,4 +663,221 @@ MooValue moo_tok_hash(MooValue tok) {
     char hex[17];
     snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)h);
     return moo_string_new(hex);
+}
+
+/* ================================================================== *
+ * KIP-T3: CHAT-/SPEZIAL-TOKENS + TEMPLATE-RENDER (X3 §1, X2 §3)
+ * ------------------------------------------------------------------
+ * Reservierter Chat-Token-Satz. NAME = Lookup-Schluessel (Render-API),
+ * MARKER = die Bytes, die decode() fuer diese Id ausgibt. Spezial-Ids
+ * liegen strukturell HINTER Basis+Merges (>=256+M) — daher kann weder ein
+ * Byte-Encode noch ein Merge je eine Spezial-Id erzeugen (Injection-Schutz:
+ * Steuer-Tokens gelangen NUR out-of-band ueber diese Render-API in die
+ * Sequenz, nie aus rohem User-/Tool-Text).
+ * ================================================================== */
+#define CHAT_N 11
+static const char* const CHAT_NAMES[CHAT_N] = {
+    "bos", "eos", "pad", "ende",
+    "system", "user", "assistant", "tool", "tool_result",
+    "werkzeug", "/werkzeug"
+};
+static const char* const CHAT_MARKERS[CHAT_N] = {
+    "<|bos|>", "<|eos|>", "<|pad|>", "<|ende|>",
+    "<|system|>", "<|user|>", "<|assistant|>", "<|tool|>", "<|tool_result|>",
+    "<|werkzeug|>", "<|/werkzeug|>"
+};
+/* Erlaubte Rollen-Startnamen (Teilmenge — NICHT bos/eos/pad/ende/werkzeug). */
+static bool chat_is_rolle(const char* name, uint32_t n) {
+    static const char* const R[5] = { "system", "user", "assistant", "tool", "tool_result" };
+    for (int i = 0; i < 5; i++)
+        if (strlen(R[i]) == n && memcmp(R[i], name, n) == 0) return true;
+    return false;
+}
+
+/* chat_init(tok): haengt den reservierten Chat-Token-Satz an ein T2-Artefakt
+ * (S==0) an -> neues Artefakt mit S==CHAT_N. Deterministisch, kein Training. */
+MooValue moo_tok_chat_init(MooValue tok) {
+    ParsedTok pt; const char* err = NULL;
+    if (!tok_parse(tok, &pt, &err)) {
+        char msg[200]; snprintf(msg, sizeof(msg), "tokenizer_chat_init: %s", err);
+        moo_throw(moo_error(msg)); return moo_none();
+    }
+    if (pt.S != 0) {
+        pt_free(&pt);
+        moo_throw(moo_error("tokenizer_chat_init: Artefakt hat bereits Spezial-Tokens"));
+        return moo_none();
+    }
+    uint32_t V0 = pt.V, M = pt.M;
+    uint32_t Vn = V0 + CHAT_N;
+    if (Vn > TOK_VOKAB_MAX) { pt_free(&pt); moo_throw(moo_error("tokenizer_chat_init: Vokabular zu gross")); return moo_none(); }
+
+    /* Groesse: Header + Merges + Vokabtabelle(alt) + Vokab(neu marker) + Spezial. */
+    size_t sz = TOK_HEADER + (size_t)M * 8u;
+    for (uint32_t id = 0; id < V0; id++) sz += 4u + pt.tok_len[id];
+    for (int i = 0; i < CHAT_N; i++) sz += 4u + (uint32_t)strlen(CHAT_MARKERS[i]);   /* Vokab-Bytes = Marker */
+    for (int i = 0; i < CHAT_N; i++) sz += 4u + 4u + (uint32_t)strlen(CHAT_NAMES[i]); /* Spezial: id+namelen+name */
+
+    uint8_t* blob = (uint8_t*)malloc(sz);
+    if (!blob) { pt_free(&pt); moo_throw(moo_error("tokenizer_chat_init: nicht genug Speicher")); return moo_none(); }
+    memcpy(blob, TOK_MAGIC, TOK_MAGIC_N);
+    put_u32(blob + 8, TOK_VERSION);
+    put_u32(blob + 12, pt.flags);
+    put_u32(blob + 16, Vn);
+    put_u32(blob + 20, M);
+    put_u32(blob + 24, (uint32_t)CHAT_N);
+    put_u32(blob + 28, 0u);
+    size_t off = TOK_HEADER;
+    memcpy(blob + off, pt.merges, (size_t)M * 8u); off += (size_t)M * 8u;
+    /* bestehende Vokabtabelle 0..V0-1 unveraendert kopieren */
+    for (uint32_t id = 0; id < V0; id++) {
+        put_u32(blob + off, pt.tok_len[id]); off += 4;
+        memcpy(blob + off, pt.tok_ptr[id], pt.tok_len[id]); off += pt.tok_len[id];
+    }
+    /* neue Vokab-Eintraege: Marker-Bytes fuer Ids V0..V0+CHAT_N-1 */
+    for (int i = 0; i < CHAT_N; i++) {
+        uint32_t ml = (uint32_t)strlen(CHAT_MARKERS[i]);
+        put_u32(blob + off, ml); off += 4;
+        memcpy(blob + off, CHAT_MARKERS[i], ml); off += ml;
+    }
+    /* Spezial-Sektion: { id, namelen, name } */
+    for (int i = 0; i < CHAT_N; i++) {
+        uint32_t nl = (uint32_t)strlen(CHAT_NAMES[i]);
+        put_u32(blob + off, V0 + (uint32_t)i); off += 4;
+        put_u32(blob + off, nl); off += 4;
+        memcpy(blob + off, CHAT_NAMES[i], nl); off += nl;
+    }
+    pt_free(&pt);
+    MooValue out = moo_string_new_len((const char*)blob, (int32_t)sz);
+    free(blob);
+    return out;
+}
+
+/* spezial_id(tok, name) -> Number (Id) oder wirft. */
+MooValue moo_tok_spezial_id(MooValue tok, MooValue name) {
+    if (name.tag != MOO_STRING) { moo_throw(moo_error("tokenizer_spezial_id: erwarte einen Namen")); return moo_none(); }
+    ParsedTok pt; const char* err = NULL;
+    if (!tok_parse(tok, &pt, &err)) {
+        char msg[200]; snprintf(msg, sizeof(msg), "tokenizer_spezial_id: %s", err);
+        moo_throw(moo_error(msg)); return moo_none();
+    }
+    int64_t id = spec_lookup(&pt, MV_STR(name)->chars, (uint32_t)MV_STR(name)->length);
+    pt_free(&pt);
+    if (id < 0) { moo_throw(moo_error("tokenizer_spezial_id: unbekanntes Spezial-Token")); return moo_none(); }
+    return moo_number((double)id);
+}
+
+/* ---- Dynamischer Id/Masken-Puffer fuer den Render ---- */
+typedef struct { int32_t* ids; uint8_t* mask; int64_t len, cap; } IdVec;
+static bool iv_push(IdVec* v, int32_t id, uint8_t m) {
+    if (v->len >= v->cap) {
+        int64_t nc = v->cap ? v->cap * 2 : 64;
+        int32_t* ni = (int32_t*)realloc(v->ids, (size_t)nc * sizeof(int32_t));
+        if (!ni) return false;
+        v->ids = ni;
+        uint8_t* nm = (uint8_t*)realloc(v->mask, (size_t)nc);
+        if (!nm) return false;
+        v->mask = nm; v->cap = nc;
+    }
+    v->ids[v->len] = id; v->mask[v->len] = m; v->len++;
+    return true;
+}
+/* Inhalt byte-encoden und mit Maske m anhaengen. leerer Inhalt = nichts. */
+static bool render_content(const ParsedTok* pt, PMap* rm, const uint8_t* txt,
+                           int64_t tlen, IdVec* out, uint8_t m) {
+    if (tlen <= 0) return true;
+    int32_t* seq = (int32_t*)malloc((size_t)tlen * sizeof(int32_t));
+    if (!seq) return false;
+    for (int64_t i = 0; i < tlen; i++) seq[i] = (int32_t)txt[i];
+    int64_t len = tlen;
+    bpe_apply(pt, rm, seq, &len);
+    for (int64_t i = 0; i < len; i++)
+        if (!iv_push(out, seq[i], m)) { free(seq); return false; }
+    free(seq);
+    return true;
+}
+
+/* rendern(tok, dialog, mit_bos?) -> Dict { ids, loss_maske, stop_ids }.
+ * dialog = Liste von Dicts { rolle, inhalt }. Loss-Maske: 1 auf
+ * Assistant-Inhalt + dessen <|ende|>, 0 sonst. */
+MooValue moo_tok_rendern(MooValue tok, MooValue dialog, MooValue mit_bos) {
+    ParsedTok pt; const char* err = NULL;
+    if (!tok_parse(tok, &pt, &err)) {
+        char msg[200]; snprintf(msg, sizeof(msg), "tokenizer_rendern: %s", err);
+        moo_throw(moo_error(msg)); return moo_none();
+    }
+    if (pt.S == 0) { pt_free(&pt); moo_throw(moo_error("tokenizer_rendern: kein Chat-Tokenizer (erst tokenizer_chat_init)")); return moo_none(); }
+    if (dialog.tag != MOO_LIST) { pt_free(&pt); moo_throw(moo_error("tokenizer_rendern: erwarte eine Dialogliste")); return moo_none(); }
+    int64_t bos_id  = spec_lookup(&pt, "bos", 3);
+    int64_t eos_id  = spec_lookup(&pt, "eos", 3);
+    int64_t ende_id = spec_lookup(&pt, "ende", 4);
+    if (bos_id < 0 || eos_id < 0 || ende_id < 0) { pt_free(&pt); moo_throw(moo_error("tokenizer_rendern: Steuer-Tokens fehlen im Artefakt")); return moo_none(); }
+
+    PMap rm;
+    if (!build_rank_map(&pt, &rm)) { pm_free(&rm); pt_free(&pt); moo_throw(moo_error("tokenizer_rendern: nicht genug Speicher")); return moo_none(); }
+
+    bool bos = true;   /* Default an; explizit falsch abschaltbar */
+    if (mit_bos.tag == MOO_BOOL) bos = MV_BOOL(mit_bos);
+
+    IdVec v; v.ids = NULL; v.mask = NULL; v.len = 0; v.cap = 0;
+    bool oom = false;
+    const char* rerr = NULL;
+    if (bos && !iv_push(&v, (int32_t)bos_id, 0)) oom = true;
+
+    int32_t cnt = moo_list_iter_len(dialog);
+    for (int32_t i = 0; i < cnt && !oom && !rerr; i++) {
+        MooValue msg = moo_list_iter_get(dialog, i);           /* +1 */
+        if (msg.tag != MOO_DICT) { moo_release(msg); rerr = "Dialog-Eintrag ist kein Dict"; break; }
+        MooValue rolleV  = moo_dict_get(msg, moo_string_new("rolle"));   /* +1, Key konsumiert */
+        MooValue inhaltV = moo_dict_get(msg, moo_string_new("inhalt"));  /* +1 */
+        if (rolleV.tag != MOO_STRING) { moo_release(rolleV); moo_release(inhaltV); moo_release(msg); rerr = "Dialog-Eintrag ohne Textfeld 'rolle'"; break; }
+        const char* rname = MV_STR(rolleV)->chars;
+        uint32_t rlen = (uint32_t)MV_STR(rolleV)->length;
+        if (!chat_is_rolle(rname, rlen)) { moo_release(rolleV); moo_release(inhaltV); moo_release(msg); rerr = "unbekannte Rolle (erlaubt: system/user/assistant/tool/tool_result)"; break; }
+        int64_t role_id = spec_lookup(&pt, rname, rlen);
+        uint8_t is_assist = (rlen == 9 && memcmp(rname, "assistant", 9) == 0) ? 1u : 0u;
+
+        /* Rollen-Start (Maske 0), dann Inhalt (Assistant=1), dann <|ende|>. */
+        if (!iv_push(&v, (int32_t)role_id, 0)) { oom = true; }
+        if (!oom && inhaltV.tag == MOO_STRING) {
+            if (!render_content(&pt, &rm, (const uint8_t*)MV_STR(inhaltV)->chars,
+                                (int64_t)MV_STR(inhaltV)->length, &v, is_assist)) oom = true;
+        } else if (!oom && inhaltV.tag != MOO_STRING && inhaltV.tag != MOO_NONE) {
+            rerr = "Feld 'inhalt' muss Text sein";
+        }
+        if (!oom && !rerr && !iv_push(&v, (int32_t)ende_id, is_assist)) oom = true;
+
+        moo_release(rolleV); moo_release(inhaltV); moo_release(msg);
+    }
+    /* globales EOS beendet den Dialog (Maske 0). */
+    if (!oom && !rerr && !iv_push(&v, (int32_t)eos_id, 0)) oom = true;
+
+    if (oom || rerr) {
+        free(v.ids); free(v.mask); pm_free(&rm); pt_free(&pt);
+        moo_throw(moo_error(rerr ? rerr : "tokenizer_rendern: nicht genug Speicher"));
+        return moo_none();
+    }
+
+    /* Ergebnis-Tensoren (v.len >= 1 durch EOS). */
+    int32_t shape[1] = { (int32_t)v.len };
+    MooTensor* ti = moo_tensor_raw(1, shape);
+    MooTensor* tm = moo_tensor_raw(1, shape);
+    if (!ti || !tm) {
+        if (ti) { MooValue x; x.tag = MOO_TENSOR; moo_val_set_ptr(&x, ti); moo_release(x); }
+        if (tm) { MooValue x; x.tag = MOO_TENSOR; moo_val_set_ptr(&x, tm); moo_release(x); }
+        free(v.ids); free(v.mask); pm_free(&rm); pt_free(&pt);
+        return moo_none();   /* moo_tensor_raw hat geworfen */
+    }
+    for (int64_t i = 0; i < v.len; i++) { ti->data[i] = (float)v.ids[i]; tm->data[i] = (float)v.mask[i]; }
+    free(v.ids); free(v.mask); pm_free(&rm); pt_free(&pt);
+
+    MooValue idsv; idsv.tag = MOO_TENSOR; moo_val_set_ptr(&idsv, ti);
+    MooValue mskv; mskv.tag = MOO_TENSOR; moo_val_set_ptr(&mskv, tm);
+    MooValue stop = moo_list_new(2);
+    moo_list_append(stop, moo_number((double)eos_id));
+    moo_list_append(stop, moo_number((double)ende_id));
+    MooValue d = moo_dict_new();
+    moo_dict_set(d, moo_string_new("ids"), idsv);
+    moo_dict_set(d, moo_string_new("loss_maske"), mskv);
+    moo_dict_set(d, moo_string_new("stop_ids"), stop);
+    return d;
 }
