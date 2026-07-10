@@ -74,6 +74,41 @@ static float* grad_sicherstellen(MooTensor* t) {
 // ->grad direkt, braucht denselben Trichter — KIP-G4c I2).
 void moo_tensor_grad_sichern(MooTensor* t) { grad_materialisieren(t); }
 
+// KIP-G4e Schritt 1 (docs/kip/G4e-gpu-grad-residency-vertrag.md §2, I8/I9/I12):
+// GPU-Gegenstueck zu grad_materialisieren -- macht t->gpu_grad autoritativ.
+// Symmetrisch zum CPU-Trichter: laedt hoch wenn GPU noch NICHT autoritativ ist
+// (deckt sowohl den Fall "CPU hatte zuletzt einen echten Beitrag" (grad_valid
+// MOO_V_DATA) als auch "noch nie geschrieben" (grad_valid==0, frischer Tensor)
+// ab -- grad_sicherstellen liefert in beiden Faellen einen KORREKTEN Puffer
+// (echter Wert bzw. calloc-Null)). Kein Transfer wenn GPU bereits autoritativ
+// ist (MOO_V_DEV gesetzt) -- das ist der Performance-Gewinn ggue. Download-
+// pro-Op. Setzt grad_valid UNBEDINGT (I9, kein |=). Rueckgabe false = kein
+// GPU verfuegbar/Fehler -> Aufrufer MUSS auf den bestehenden CPU-Pfad
+// zurueckfallen (I12), t->grad_valid bleibt dabei UNVERAENDERT (kein Teil-
+// Update, kein stiller Datenverlust).
+static bool grad_materialisieren_gpu(MooTensor* t) {
+    if (!t) return false;
+    if (!t->gpu_grad) {
+        t->gpu_grad = moo_ki_gpu_buf_belegen((int64_t)t->size * (int64_t)sizeof(float));
+        if (!t->gpu_grad) return false;
+    }
+    if (!(t->grad_valid & MOO_V_DEV)) {
+        // GPU noch nicht autoritativ -> genau EINMAL hochladen (echter CPU-
+        // Beitrag ODER frische Null, siehe Kommentar oben). WICHTIG: der
+        // Vulkan-Buffer-Pool zeroet frisch belegte/wiederverwendete Buffer
+        // NICHT (buf_holen/buf_anlegen, kein memset bei Slot-Reuse) -- ohne
+        // diesen Upload wuerde grad_accum_res auf undefiniertem VRAM-Inhalt
+        // akkumulieren.
+        grad_sicherstellen(t);
+        if (!moo_ki_gpu_upload(t->gpu_grad, t->grad,
+                               (int64_t)t->size * (int64_t)sizeof(float))) {
+            return false;
+        }
+    }
+    t->grad_valid = MOO_V_DEV;   // GPU jetzt SOLE autoritativ (Spiegel v. grad_materialisieren)
+    return true;
+}
+
 static void moo_ag_init_bw(void);
 
 // intern: zeichnet einen Node auf. a/b/skalar koennen none sein.
@@ -411,6 +446,43 @@ static bool gpu_ew_kontribution(int32_t gop, const float* g, MooTensor* faktor,
     return ok;
 }
 
+// KIP-G4e Schritt 2 (docs/kip/G4e-gpu-grad-residency-vertrag.md §5 Punkt 2,
+// I8/I9/I10/I12): echte gpu_grad-Residenz-Variante von gpu_ew_kontribution.
+// Berechnet dieselbe Kontribution delta=g*faktor (EIN Compute-Dispatch, wie
+// gpu_ew_kontribution) und versucht sie DANACH bevorzugt DIREKT in
+// ziel->gpu_grad zu akkumulieren (grad_materialisieren_gpu-Trichter + echter
+// GPU-Fan-out-Akkumulator moo_ki_gpu_grad_accum_res) -- KEIN Host-Roundtrip,
+// KEIN Beruehren von ziel->grad/grad_sicherstellen in diesem Zweig. Nur wenn
+// die persistente Route scheitert (Grad-Buffer-Belegung/-Upload/-Accum-
+// Fehler auf einem sonst funktionierenden GPU-Pfad), wird auf den bisherigen
+// Host-tmp-Weg ausgewichen (I12: kein Teil-Update -- die ew_res-Kontribution
+// selbst ist bereits fertig berechnet, nur ihr Akkumulationsziel wechselt).
+// Rueckgabe: 2 = resident in ziel->gpu_grad akkumuliert (ziel->grad NICHT
+// veraendert, Aufrufer macht NICHTS weiter), 1 = tmp gefuellt (Aufrufer MUSS
+// noch accum_bcast(ziel,o,tmp) rufen, wie beim alten Pfad), 0 = kein
+// GPU-Pfad ueberhaupt nutzbar (faktor nicht resident) -> Aufrufer faellt auf
+// den vollen CPU-Pfad zurueck.
+static int gpu_ew_kontribution2(int32_t gop, const float* g, MooTensor* faktor,
+                                MooTensor* ziel, int64_t n, float* tmp) {
+    if (!(faktor->valid & MOO_V_DEV) || !faktor->gpu_buf) return 0;
+    int64_t bytes = n * (int64_t)sizeof(float);
+    void* gbuf = moo_ki_gpu_buf_belegen(bytes);
+    void* dbuf = gbuf ? moo_ki_gpu_buf_belegen(bytes) : NULL;
+    int result = 0;
+    if (dbuf && moo_ki_gpu_upload(gbuf, g, bytes) &&
+        moo_ki_gpu_ew_res(gop, gbuf, faktor->gpu_buf, dbuf, n)) {
+        if (grad_materialisieren_gpu(ziel) &&
+            moo_ki_gpu_grad_accum_res(ziel->gpu_grad, dbuf, n)) {
+            result = 2;
+        } else if (moo_ki_gpu_download(dbuf, tmp, bytes)) {
+            result = 1;
+        }
+    }
+    moo_ki_gpu_buf_freigeben(gbuf);
+    moo_ki_gpu_buf_freigeben(dbuf);
+    return result;
+}
+
 // KIP-G4d: Analog gpu_ew_kontribution, aber fuer die Norm-Backward-Kontribution
 // (moo_ki_gpu_norm_bw_res braucht x UND g als Device-Buffer). x (a) muss schon
 // resident sein (a->valid&MOO_V_DEV); g wird transient hochgeladen (KEIN neuer
@@ -482,17 +554,22 @@ static void bw_mul(const MooAgNode* n) {
     bool strikt = moo_ki_gpu_strikt_aktiv();
 
     if (a->requires_grad) {           // da += g * b (b auf out-Form gelesen)
-        bool done = false;
+        int r = 0;
         if (gleiche_form && (strikt || o->size >= (1LL << 20))) {
             if (strikt) moo_tensor_nach_gpu(b);
-            done = gpu_ew_kontribution(2 /* mul, siehe ew_op-Konvention */, g, b, o->size, buf);
+            // KIP-G4e Schritt 2: bevorzugt echte gpu_grad-Residenz (r==2, kein
+            // Host-Roundtrip); r==1 ist der alte Host-tmp-Fallback (identisches
+            // Verhalten zu vorher); r==0 = ew_res selbst nicht resident moeglich.
+            r = gpu_ew_kontribution2(2 /* mul, siehe ew_op-Konvention */, g, b, a, o->size, buf);
         }
-        if (!done && strikt && gleiche_form) {
+        if (r == 0 && strikt && gleiche_form) {
             free(buf);
             moo_throw(moo_error("STRIKT: mul-Backward (da) nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
             return;
         }
-        if (done) {
+        if (r == 2) {
+            // Bereits resident in a->gpu_grad akkumuliert (I8) -- nichts weiter zu tun.
+        } else if (r == 1) {
             accum_bcast(a, o, buf);        // buf ist bereits die volle Kontribution g*b
         } else {
             materialize_bcast(b, o, buf);
@@ -500,17 +577,19 @@ static void bw_mul(const MooAgNode* n) {
         }
     }
     if (b->requires_grad) {           // db += g * a
-        bool done = false;
+        int r = 0;
         if (gleiche_form && (strikt || o->size >= (1LL << 20))) {
             if (strikt) moo_tensor_nach_gpu(a);
-            done = gpu_ew_kontribution(2 /* mul, siehe ew_op-Konvention */, g, a, o->size, buf);
+            r = gpu_ew_kontribution2(2 /* mul, siehe ew_op-Konvention */, g, a, b, o->size, buf);
         }
-        if (!done && strikt && gleiche_form) {
+        if (r == 0 && strikt && gleiche_form) {
             free(buf);
             moo_throw(moo_error("STRIKT: mul-Backward (db) nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
             return;
         }
-        if (done) {
+        if (r == 2) {
+            // Bereits resident in b->gpu_grad akkumuliert (I8) -- nichts weiter zu tun.
+        } else if (r == 1) {
             accum_bcast(b, o, buf);        // buf ist bereits die volle Kontribution g*a
         } else {
             materialize_bcast(a, o, buf);
