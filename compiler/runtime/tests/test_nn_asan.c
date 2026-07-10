@@ -1160,6 +1160,149 @@ int main(void) {
         moo_ag_reset();
     }
 
+    /* ===== 18b. RoPE-Kontext-Skalierung linear/NTK (KIP-B2b) ===== */
+    {
+        float xv[128];
+        for (int i = 0; i < 128; i++) xv[i] = (float)((i * 11) % 19) * 0.05f - 0.4f;
+
+        /* a) Linear/PI (faktor=4): staucht Position -> wirkt ab Zeile>0,
+         *    Zeile 0 (p=0) BIT-identisch zu Standard-RoPE; deterministisch. */
+        MooValue rl = moo_dict_new();
+        moo_dict_set(rl, moo_string_new("basis"), moo_number(10000.0));
+        moo_dict_set(rl, moo_string_new("skalierung"), moo_string_new("linear"));
+        moo_dict_set(rl, moo_string_new("faktor"), moo_number(4.0));
+        MooValue at_lin = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                          moo_number(7.0), moo_none(), moo_none(), moo_none(), rl);
+        moo_release(rl);
+        CHECK(at_lin.tag == MOO_DICT, "b2b linear: baut Schicht (dh=4)");
+        MooValue x8 = t2(8, 8, xv);
+        MooValue at_plain = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                            moo_number(7.0), moo_none(), moo_none(), moo_none(),
+                            moo_number(10000.0));
+        MooValue yl = moo_nn_vorwaerts(at_lin, x8);
+        MooValue yp = moo_nn_vorwaerts(at_plain, x8);
+        bool lin_wirkt = false;
+        bool lin_z0 = (yl.tag==MOO_TENSOR && yp.tag==MOO_TENSOR);
+        for (int i = 0; i < 64 && yl.tag==MOO_TENSOR && yp.tag==MOO_TENSOR; i++)
+            if (T(yl)->data[i] != T(yp)->data[i]) lin_wirkt = true;
+        for (int j = 0; j < 8 && lin_z0; j++)
+            lin_z0 = (T(yl)->data[j] == T(yp)->data[j]);
+        CHECK(lin_wirkt, "b2b linear: veraendert Output ggue Standard-RoPE");
+        CHECK(lin_z0, "b2b linear: Zeile 0 (p=0) BIT-identisch zu Standard-RoPE");
+        MooValue yl2 = moo_nn_vorwaerts(at_lin, x8);
+        bool lin_det = (yl2.tag==MOO_TENSOR && yl.tag==MOO_TENSOR);
+        for (int64_t i = 0; lin_det && i < T(yl)->size; i++)
+            lin_det = (T(yl)->data[i] == T(yl2)->data[i]);
+        CHECK(lin_det, "b2b linear: deterministisch (2 Laeufe BIT-identisch)");
+        moo_release(yl); moo_release(yl2); moo_release(yp); moo_release(at_plain);
+        CHECK(rope_decode_gleich_voll(at_lin, 5, 8, xv),
+              "b2b linear: Decode via Cache == Voll BIT-identisch (cache-sicher)");
+        moo_release(x8); moo_release(at_lin);
+
+        /* b) NTK-aware (faktor=4): skaliert die Basis -> wirkt; Decode==Voll. */
+        MooValue rn = moo_dict_new();
+        moo_dict_set(rn, moo_string_new("skalierung"), moo_string_new("ntk"));
+        moo_dict_set(rn, moo_string_new("faktor"), moo_number(4.0));
+        MooValue at_ntk = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                          moo_number(7.0), moo_none(), moo_none(), moo_none(), rn);
+        moo_release(rn);
+        CHECK(at_ntk.tag == MOO_DICT, "b2b ntk: baut Schicht (dh=4>2)");
+        MooValue x8b = t2(8, 8, xv);
+        MooValue at_plain2 = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                             moo_number(7.0), moo_none(), moo_none(), moo_none(),
+                             moo_number(10000.0));
+        MooValue yn = moo_nn_vorwaerts(at_ntk, x8b);
+        MooValue yp2 = moo_nn_vorwaerts(at_plain2, x8b);
+        bool ntk_wirkt = false;
+        for (int i = 0; i < 64 && yn.tag==MOO_TENSOR && yp2.tag==MOO_TENSOR; i++)
+            if (T(yn)->data[i] != T(yp2)->data[i]) ntk_wirkt = true;
+        CHECK(ntk_wirkt, "b2b ntk: veraendert Output ggue Standard-RoPE");
+        moo_release(yn); moo_release(yp2); moo_release(at_plain2);
+        CHECK(rope_decode_gleich_voll(at_ntk, 5, 8, xv),
+              "b2b ntk: Decode via Cache == Voll BIT-identisch");
+        moo_release(x8b); moo_release(at_ntk);
+
+        /* c) Extrapolations-Gate: lange Sequenz (12) vs Trainingslaenge (4);
+         *    Extrapolationsverhalten protokolliert, langer Lauf deterministisch. */
+        MooValue rlp = moo_dict_new();
+        moo_dict_set(rlp, moo_string_new("skalierung"), moo_string_new("linear"));
+        moo_dict_set(rlp, moo_string_new("faktor"), moo_number(4.0));
+        MooValue at_ex = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                         moo_number(7.0), moo_none(), moo_none(), moo_none(), rlp);
+        moo_release(rlp);
+        MooValue at_exp = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                          moo_number(7.0), moo_none(), moo_none(), moo_none(),
+                          moo_number(10000.0));
+        MooValue xlong = t2(12, 8, xv);
+        MooValue yex1 = moo_nn_vorwaerts(at_ex, xlong);
+        MooValue yex2 = moo_nn_vorwaerts(at_ex, xlong);
+        MooValue yexp = moo_nn_vorwaerts(at_exp, xlong);
+        bool ex_det = (yex1.tag==MOO_TENSOR && yex2.tag==MOO_TENSOR);
+        for (int64_t i = 0; ex_det && i < T(yex1)->size; i++)
+            ex_det = (T(yex1)->data[i] == T(yex2)->data[i]);
+        double far_scaled = 0.0, far_plain = 0.0;
+        int64_t fbase = (int64_t)11 * 8;   /* fernster Token (seq=12) */
+        if (yex1.tag==MOO_TENSOR && T(yex1)->size >= fbase + 8)
+            for (int64_t i = fbase; i < fbase + 8; i++) far_scaled += fabs(T(yex1)->data[i]);
+        if (yexp.tag==MOO_TENSOR && T(yexp)->size >= fbase + 8)
+            for (int64_t i = fbase; i < fbase + 8; i++) far_plain += fabs(T(yexp)->data[i]);
+        printf("[b2b] Extrapolation ferner Token (seq=12, dh=4, faktor=4): "
+               "L1|out| linear=%.6f vs standard=%.6f\n", far_scaled, far_plain);
+        CHECK(ex_det, "b2b extrapolation: lange Sequenz (12) deterministisch");
+        CHECK(far_scaled != far_plain && far_scaled == far_scaled && far_scaled < 1e30,
+              "b2b extrapolation: linear skaliert fernen Token anders als Standard-RoPE (endlich)");
+        moo_release(yex1); moo_release(yex2); moo_release(yexp);
+        moo_release(xlong); moo_release(at_ex); moo_release(at_exp);
+
+        /* d) .mook-Roundtrip: Skalierungs-Felder ueberleben (Vorhersage gleich). */
+        MooValue rrt = moo_dict_new();
+        moo_dict_set(rrt, moo_string_new("basis"), moo_number(10000.0));
+        moo_dict_set(rrt, moo_string_new("skalierung"), moo_string_new("ntk"));
+        moo_dict_set(rrt, moo_string_new("faktor"), moo_number(8.0));
+        MooValue schb = moo_list_new(1);
+        moo_list_append(schb, moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                        moo_number(7.0), moo_none(), moo_none(), moo_none(), rrt));
+        moo_release(rrt);
+        MooValue netzb = moo_nn_ki_netz(schb);
+        MooValue rxb = t2(4, 8, xv);
+        MooValue rby1 = moo_nn_vorwaerts(netzb, rxb);
+        MooValue pfb = moo_string_new("/tmp/test_b2b_scale.mook");
+        moo_release(moo_nn_speichern(netzb, pfb));
+        MooValue netzb2 = moo_nn_laden(pfb);
+        CHECK(netzb2.tag == MOO_DICT, "b2b-.mook laedt (Scaling-Felder)");
+        MooValue rby2 = moo_nn_vorwaerts(netzb2, rxb);
+        bool rbg = (rby1.tag==MOO_TENSOR && rby2.tag==MOO_TENSOR &&
+                    T(rby1)->size == T(rby2)->size);
+        for (int64_t i = 0; rbg && i < T(rby1)->size; i++)
+            rbg = (T(rby1)->data[i] == T(rby2)->data[i]);
+        CHECK(rbg, "b2b-Roundtrip: Vorhersage BIT-gleich (ntk skalierung+faktor erhalten)");
+        remove("/tmp/test_b2b_scale.mook");
+        moo_release(rby1); moo_release(rby2); moo_release(netzb2);
+        moo_release(pfb); moo_release(rxb); moo_release(netzb); moo_release(schb);
+        moo_ag_reset();
+
+        /* e) NEGATIV: ntk mit dh=2 wirft; Skalierungsfaktor < 1 wirft. */
+        fehler_reset();
+        MooValue rbad1 = moo_dict_new();
+        moo_dict_set(rbad1, moo_string_new("skalierung"), moo_string_new("ntk"));
+        moo_dict_set(rbad1, moo_string_new("faktor"), moo_number(4.0));
+        MooValue at_bad1 = moo_nn_schicht_attention(moo_number(8.0), moo_number(4.0),
+                           moo_number(7.0), moo_none(), moo_none(), moo_none(), rbad1);
+        moo_release(rbad1);
+        CHECK(moo_error_flag == 1 && at_bad1.tag != MOO_DICT,
+              "b2b NEGATIV: ntk mit dh=2 wirft");
+        fehler_reset();
+        MooValue rbad2 = moo_dict_new();
+        moo_dict_set(rbad2, moo_string_new("skalierung"), moo_string_new("linear"));
+        moo_dict_set(rbad2, moo_string_new("faktor"), moo_number(0.5));
+        MooValue at_bad2 = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                           moo_number(7.0), moo_none(), moo_none(), moo_none(), rbad2);
+        moo_release(rbad2);
+        CHECK(moo_error_flag == 1 && at_bad2.tag != MOO_DICT,
+              "b2b NEGATIV: Skalierungsfaktor < 1 wirft");
+        fehler_reset();
+    }
+
     /* ===== 19. Maskierte Kreuzentropie (KIP-B4a, X3 §2) ===== */
     {
         moo_ag_reset();

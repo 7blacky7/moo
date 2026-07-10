@@ -392,6 +392,8 @@ MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed,
      * wird beim Laden (rb_attention) rekonstruiert / validiert. */
     bool rope_an = false;
     double rope_basis = 10000.0;
+    int32_t rope_skal = 0;      /* KIP-B2b: 0=keine, 1=linear/PI, 2=ntk-aware */
+    double rope_faktor = 1.0;
     if (rope.tag == MOO_BOOL) {
         rope_an = MV_BOOL(rope);
     } else if (rope.tag == MOO_NUMBER) {
@@ -412,15 +414,71 @@ MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed,
                                 "oder \"aus\" sein"));
             return moo_none();
         }
+    } else if (rope.tag == MOO_DICT) {
+        /* KIP-B2b: {basis, skalierung, faktor}. Dict => rope AN. */
+        rope_an = true;
+        MooValue vb = dget(rope, "basis");
+        if (vb.tag == MOO_NUMBER) {
+            double rb = MV_NUM(vb);
+            if (rb <= 0.0) {
+                moo_release(vb);
+                moo_throw(moo_error("schicht_attention: die RoPE-Basis muss "
+                                    "positiv sein"));
+                return moo_none();
+            }
+            rope_basis = rb;
+        }
+        moo_release(vb);
+        MooValue vf = dget(rope, "faktor");
+        if (vf.tag == MOO_NUMBER) rope_faktor = MV_NUM(vf);
+        moo_release(vf);
+        MooValue vs = dget(rope, "skalierung");
+        if (vs.tag == MOO_STRING) {
+            const char* ss = MV_STR(vs)->chars;
+            if (strcmp(ss, "keine") == 0 || strcmp(ss, "aus") == 0 ||
+                strcmp(ss, "none") == 0) rope_skal = 0;
+            else if (strcmp(ss, "linear") == 0 || strcmp(ss, "pi") == 0) rope_skal = 1;
+            else if (strcmp(ss, "ntk") == 0 || strcmp(ss, "ntk-aware") == 0) rope_skal = 2;
+            else {
+                moo_release(vs);
+                moo_throw(moo_error("schicht_attention: rope.skalierung kann "
+                                    "\"keine\", \"linear\" oder \"ntk\" sein"));
+                return moo_none();
+            }
+        } else if (vs.tag == MOO_NUMBER) {
+            int32_t sc = (int32_t)MV_NUM(vs);
+            if (sc < 0 || sc > 2) {
+                moo_release(vs);
+                moo_throw(moo_error("schicht_attention: rope.skalierung als Zahl "
+                                    "muss 0, 1 oder 2 sein"));
+                return moo_none();
+            }
+            rope_skal = sc;
+        }
+        moo_release(vs);
     } else if (rope.tag != MOO_NONE) {
         moo_throw(moo_error("schicht_attention: rope muss ein Wahrheitswert, "
-                            "eine Zahl (Basis) oder ein Text sein"));
+                            "eine Zahl (Basis), ein Text oder ein Woerterbuch "
+                            "(Skalierung) sein"));
         return moo_none();
     }
     if (rope_an && (dh % 2 != 0)) {
         moo_throw(moo_error("schicht_attention: RoPE braucht eine GERADE "
                             "Kopf-Dimension (dim/koepfe) — Paar-Rotation"));
         return moo_none();
+    }
+    /* KIP-B2b: Skalierung validieren (nur bei aktivem RoPE relevant). */
+    if (rope_an && rope_skal != 0) {
+        if (rope_faktor < 1.0) {
+            moo_throw(moo_error("schicht_attention: der RoPE-Skalierungsfaktor "
+                                "muss >= 1 sein"));
+            return moo_none();
+        }
+        if (rope_skal == 2 && dh <= 2) {
+            moo_throw(moo_error("schicht_attention: die NTK-RoPE-Skalierung "
+                                "braucht eine Kopf-Dimension >= 4"));
+            return moo_none();
+        }
     }
     uint64_t s = (seed.tag == MOO_NUMBER) ? (uint64_t)(int64_t)MV_NUM(seed) : 42ULL;
     double limit = sqrt(6.0 / ((double)nd + (double)dh));
@@ -433,7 +491,15 @@ MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed,
     dset(d, "maske", moo_string_new(sliding ? "sliding" : "causal"));
     if (sliding) dset(d, "fenster", moo_number((double)fw));
     dset(d, "rope", moo_number(rope_an ? 1.0 : 0.0));
-    if (rope_an) dset(d, "rope_basis", moo_number(rope_basis));
+    if (rope_an) {
+        dset(d, "rope_basis", moo_number(rope_basis));
+        /* KIP-B2b: Skalierungs-Felder NUR wenn aktiv => alte/unskalierte Layer
+         * bit-identisch (keine neuen Keys). */
+        if (rope_skal != 0) {
+            dset(d, "rope_skalierung", moo_number((double)rope_skal));
+            dset(d, "rope_faktor", moo_number(rope_faktor));
+        }
+    }
     char name[24];
     for (int32_t h = 0; h < nk; h++) {
         snprintf(name, sizeof(name), "wq%d", h);
@@ -836,7 +902,8 @@ static MooValue rope_matrix(int32_t dh) {
 /* pos != NULL: absolute Position von Zeile r = pos[r] (Per-Doc-Reset beim
  * Packing, KIP-B4a); pos == NULL: kontiguierlich p0+r (Normal/Cache-Pfad). */
 static bool rope_cossin(int32_t rows, int32_t dh, int32_t p0, const float* pos,
-                        double basis, MooValue* cos_out, MooValue* sin_out) {
+                        double basis, int32_t skal, double faktor,
+                        MooValue* cos_out, MooValue* sin_out) {
     int32_t shape[2] = { rows, dh };
     MooTensor* c = moo_tensor_raw(2, shape);
     MooTensor* s = moo_tensor_raw(2, shape);
@@ -845,10 +912,18 @@ static bool rope_cossin(int32_t rows, int32_t dh, int32_t p0, const float* pos,
         if (s) { MooValue sv; sv.tag = MOO_TENSOR; moo_val_set_ptr(&sv, s); moo_release(sv); }
         return false;
     }
+    /* KIP-B2b: Kontext-Skalierung. NTK-aware (skal==2) skaliert die Basis
+     * (theta' = basis * faktor^(dh/(dh-2)), bloc97) — Positionen unveraendert;
+     * Linear/PI (skal==1) staucht die Position (p' = p/faktor, Chen 2023).
+     * skal==0: unveraendert (bit-identisch zu Standard-RoPE, KIP-B2). */
+    double basis_eff = basis;
+    if (skal == 2 && dh > 2 && faktor > 0.0)
+        basis_eff = basis * pow(faktor, (double)dh / ((double)dh - 2.0));
     for (int32_t r = 0; r < rows; r++) {
-        double p = pos ? (double)pos[r] : (double)(p0 + r);
+        double praw = pos ? (double)pos[r] : (double)(p0 + r);
+        double p = (skal == 1 && faktor > 0.0) ? praw / faktor : praw;
         for (int32_t i = 0; i < dh / 2; i++) {
-            double freq = pow(basis, -((double)(2 * i)) / (double)dh);
+            double freq = pow(basis_eff, -((double)(2 * i)) / (double)dh);
             double ang = p * freq;
             float cf = (float)cos(ang);
             float sf = (float)sin(ang);
@@ -927,10 +1002,12 @@ static MooValue fw_attention_cache(MooValue schicht, MooValue x, int32_t nd,
      * t_alt .. t_alt+t_neu-1). */
     bool rope_an = (dnum(schicht, "rope", 0.0) == 1.0);
     double rope_basis = dnum(schicht, "rope_basis", 10000.0);
+    int32_t rope_skal = (int32_t)dnum(schicht, "rope_skalierung", 0.0);
+    double rope_faktor = dnum(schicht, "rope_faktor", 1.0);
     int32_t t_alt = cache_laenge(schicht);
     MooValue rcos = moo_none(), rsin = moo_none(), rmat = moo_none();
     if (rope_an) {
-        if (!rope_cossin(t_neu, dh, t_alt, NULL, rope_basis, &rcos, &rsin))
+        if (!rope_cossin(t_neu, dh, t_alt, NULL, rope_basis, rope_skal, rope_faktor, &rcos, &rsin))
             return moo_none();
         rmat = rope_matrix(dh);
         if (rmat.tag != MOO_TENSOR) {
@@ -1115,6 +1192,8 @@ static MooValue fw_attention(MooValue schicht, MooValue x) {
     MooValue rcos = moo_none(), rsin = moo_none(), rmat = moo_none();
     if (rope_an) {
         double rope_basis = dnum(schicht, "rope_basis", 10000.0);
+        int32_t rope_skal = (int32_t)dnum(schicht, "rope_skalierung", 0.0);
+        double rope_faktor = dnum(schicht, "rope_faktor", 1.0);
         /* KIP-B4a: externe Positionen (Per-Doc-Reset beim Packing) via pack_pos
          * [seq] — noetig fuer BIT-Identitaet gepackt==ungepackt (Rotation bei
          * absoluter vs doc-lokaler Position rundet in float unterschiedlich). */
@@ -1130,7 +1209,7 @@ static MooValue fw_attention(MooValue schicht, MooValue x) {
             moo_tensor_f32_sichern(T(ppos));
             posdat = T(ppos)->data;
         }
-        bool ok = rope_cossin(seq, dh, 0, posdat, rope_basis, &rcos, &rsin);
+        bool ok = rope_cossin(seq, dh, 0, posdat, rope_basis, rope_skal, rope_faktor, &rcos, &rsin);
         moo_release(ppos);   /* posdat wurde in cos/sin kopiert */
         if (!ok) { moo_release(maske); return moo_none(); }
         rmat = rope_matrix(dh);

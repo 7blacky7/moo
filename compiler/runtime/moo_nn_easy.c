@@ -633,10 +633,12 @@ static bool aw_attention(Buf* b, MooValue s) {
     /* KIP-B2: rope/rope_basis mitschreiben; Fallback 0/10000 (alte Dicts). */
     buf_add(b, "{\"typ\":\"attention\",\"dim\":%d,\"koepfe\":%d,"
             "\"kv_koepfe\":%d,\"maske\":\"%s\",\"fenster\":%d,"
-            "\"rope\":%d,\"rope_basis\":%g}",
+            "\"rope\":%d,\"rope_basis\":%g,"
+            "\"rope_skalierung\":%d,\"rope_faktor\":%g}",
             (int32_t)enum_(s, "dim", 0), nk, (int32_t)enum_(s, "kv_koepfe", nk),
             mart, (int32_t)enum_(s, "fenster", 0),
-            (int32_t)enum_(s, "rope", 0), enum_(s, "rope_basis", 10000.0));
+            (int32_t)enum_(s, "rope", 0), enum_(s, "rope_basis", 10000.0),
+            (int32_t)enum_(s, "rope_skalierung", 0), enum_(s, "rope_faktor", 1.0));
     moo_release(m);
     return true;
 }
@@ -697,9 +699,25 @@ static MooValue rb_attention(MooValue e) {
     MooValue fw = sliding ? moo_number(enum_(e, "fenster", 1)) : moo_none();
     /* KIP-B2: RoPE-Konfig aus arch-JSON rekonstruieren (Fallback aus =
      * alte Dicts). rope==1 => Basis wieder anlegen (Cache-Zustand-Feld). */
-    MooValue rope = (enum_(e, "rope", 0) == 1.0)
-                    ? moo_number(enum_(e, "rope_basis", 10000.0))
-                    : moo_none();
+    /* KIP-B2b: Skalierung roundtrippen — bei skalierung!=0 ein rope-Dict
+     * {basis, skalierung, faktor} bauen; sonst Zahl (abwaertskompat). */
+    MooValue rope;
+    if (enum_(e, "rope", 0) != 1.0) {
+        rope = moo_none();
+    } else {
+        int32_t rsk = (int32_t)enum_(e, "rope_skalierung", 0);
+        if (rsk == 0) {
+            rope = moo_number(enum_(e, "rope_basis", 10000.0));
+        } else {
+            rope = moo_dict_new();
+            moo_dict_set(rope, moo_string_new("basis"),
+                         moo_number(enum_(e, "rope_basis", 10000.0)));
+            moo_dict_set(rope, moo_string_new("skalierung"),
+                         moo_number((double)rsk));
+            moo_dict_set(rope, moo_string_new("faktor"),
+                         moo_number(enum_(e, "rope_faktor", 1.0)));
+        }
+    }
     MooValue s = moo_nn_schicht_attention(moo_number(enum_(e, "dim", 0)),
                                           moo_number(nk),
                                           moo_none(),
@@ -708,6 +726,7 @@ static MooValue rb_attention(MooValue e) {
                                           fw,
                                           rope);
     moo_release(mart);
+    moo_release(rope);   /* KIP-B2b: rope-Dict freigeben (Zahl/none = no-op) */
     return s;
 }
 static MooValue rb_moe(MooValue e) {
