@@ -255,4 +255,18 @@ void moo_ki_gpu_telemetrie_reset(void);
 bool moo_ki_gpu_strikt_aktiv(void);
 void moo_ki_gpu_strikt_setzen(bool an);
 
+/* === KIP-G4c Punkt 5: gpu_statistik()-Backend (docs/kip/G4c-production-wiring-plan.md
+ * §3.2) === MooValue-Wrapper um MooKiGpuTelemetrie fuer die geplante moo-Builtin-
+ * Anbindung gpu_statistik()/gpu_statistik_reset() (runtime_bindings.rs/codegen.rs,
+ * kip-kern/kip-ops-koordiniert, noch NICHT verdrahtet -- das hier ist nur die
+ * Runtime-C-Seite als Vorarbeit). moo_ki_gpu_statistik() gibt ein Dict
+ * {submits, uploads, downloads, cpu_fallbacks} zurueck (siehe moo_ki_gpu.c).
+ * Nur deklariert wenn moo_runtime.h (MooValue) bereits eingebunden ist -- diese
+ * Datei bleibt sonst bewusst frei von der MooValue-Abhaengigkeit (Design-Vertrag
+ * oben: stdbool/stdint-only fuer eigenstaendige Test-Harnesses). */
+#ifdef MOO_RUNTIME_H
+MooValue moo_ki_gpu_statistik(void);
+MooValue moo_ki_gpu_statistik_reset(void);
+#endif
+
 #endif /* MOO_KI_GPU_API_H */

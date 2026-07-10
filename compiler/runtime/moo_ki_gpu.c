@@ -1513,3 +1513,26 @@ void moo_ki_gpu_telemetrie_reset(void) {
 }
 
 #endif /* MOO_HAS_VULKAN */
+
+/* === KIP-G4c Punkt 5 (docs/kip/G4c-production-wiring-plan.md §3.2): MooValue-
+ * Wrapper um MooKiGpuTelemetrie, branch-unabhaengig (funktioniert identisch mit
+ * und ohne MOO_HAS_VULKAN, da moo_ki_gpu_telemetrie/_reset bereits fuer beide
+ * Faelle oben definiert sind). Backend fuer die geplante moo-Builtins
+ * gpu_statistik()/gpu_statistik_reset() -- Registrierung als Builtin ist NOCH
+ * NICHT verdrahtet (runtime_bindings.rs/codegen.rs, kip-kern/kip-ops-
+ * koordiniert), das hier ist nur die Runtime-C-Seite. */
+MooValue moo_ki_gpu_statistik(void) {
+    MooKiGpuTelemetrie tel;
+    moo_ki_gpu_telemetrie(&tel);
+    MooValue d = moo_dict_new();
+    moo_dict_set(d, moo_string_new("submits"), moo_number((double)tel.submits));
+    moo_dict_set(d, moo_string_new("uploads"), moo_number((double)tel.uploads));
+    moo_dict_set(d, moo_string_new("downloads"), moo_number((double)tel.downloads));
+    moo_dict_set(d, moo_string_new("cpu_fallbacks"), moo_number((double)tel.cpu_fallbacks));
+    return d;
+}
+
+MooValue moo_ki_gpu_statistik_reset(void) {
+    moo_ki_gpu_telemetrie_reset();
+    return moo_none();
+}
