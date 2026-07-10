@@ -131,3 +131,9 @@ editors/vscode/moo/*.vsix
 .DS_Store
 Thumbs.db
 daten/
+
+# KI-Paper-Recherche (lokales Archiv, Paper-Volltexte/PDFs nicht committen — Copyright)
+docs/research/ki-papers/
+
+# Render-Artefakte
+*.ppm
