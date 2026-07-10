@@ -6,7 +6,9 @@ int moo_try_depth = 0;
 jmp_buf moo_try_stack[MOO_TRY_STACK_SIZE];
 
 static void clear_last_error(void) {
-    if (moo_last_error.tag == MOO_ERROR) moo_release(moo_last_error);
+    /* moo_throw darf jeden MooValue konsumieren. Der zentrale Release-Dispatch
+       ist fuer Nicht-Heap-Tags ein No-op und gibt Heap-Werte passend frei. */
+    moo_release(moo_last_error);
     moo_last_error = moo_none();
     moo_error_flag = 0;
 }
