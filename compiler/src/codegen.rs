@@ -27,6 +27,7 @@ use crate::runtime_bindings::RuntimeBindings;
 /// Neue Tags hier NUR ergaenzen wenn der Codegen sie wirklich braucht —
 /// alles andere laeuft ueber Runtime-Konstruktoren (moo_none() etc.).
 pub mod moo_tag {
+    pub const STRING: u64 = 1;  // MOO_STRING
     pub const NONE: u64 = 3;    // MOO_NONE
     pub const OBJECT: u64 = 7;  // MOO_OBJECT
 }
