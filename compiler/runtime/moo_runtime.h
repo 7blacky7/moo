@@ -388,6 +388,11 @@ MooValue moo_test_frame_diff(MooValue frame_a, MooValue frame_b);
 MooValue moo_test_frame_region(MooValue frame, MooValue x, MooValue y, MooValue b, MooValue h);
 // PNG-Export (6bb03790 B) — in moo_test_api.c (Grafik-Build, SDL2_image).
 MooValue moo_test_frame_save_png(MooValue frame, MooValue pfad);
+// Frame<->Tensor-Bruecke (KI-MULTI-V1) — in moo_frame_tensor.c, SDL-frei,
+// immer gebaut. tensor_aus_frame: [h,b,4] float 0..1 (bzw. [h,b,1] "grau");
+// frame_aus_tensor: Clamp 0..1 -> RGBA8 (auch [h,b,3]/[h,b] akzeptiert).
+MooValue moo_tensor_aus_frame(MooValue frame, MooValue modus);
+MooValue moo_frame_aus_tensor(MooValue t);
 // Folgende sind im test_*-Layer (moo_test_api.c) implementiert. Gebaut nur im
 // Grafik-Build (Feature gl21/gl33/vulkan) — arbeitet dann mit ALLEN Fenster-
 // typen: 2D-SDL (MOO_WINDOW), 3D (MOO_WINDOW3D) und Hybrid:

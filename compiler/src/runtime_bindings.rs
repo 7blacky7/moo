@@ -418,6 +418,8 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_test_frame_diff: FunctionValue<'ctx>,
     pub moo_test_frame_region: FunctionValue<'ctx>,
     pub moo_test_frame_save_png: FunctionValue<'ctx>,
+    pub moo_tensor_aus_frame: FunctionValue<'ctx>,
+    pub moo_frame_aus_tensor: FunctionValue<'ctx>,
     // GIF-Recorder (Plan-008 A3B): start(win/frame,pfad,fps)->MOO_GIF,
     // frame(gif,win/frame)->Bool, ende(gif)->Bool.
     pub moo_test_gif_start: FunctionValue<'ctx>,
@@ -1181,6 +1183,11 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_test_frame_diff: decl_mv_mv!("moo_test_frame_diff", mv2),
             moo_test_frame_region: decl_mv_mv!("moo_test_frame_region", mv5),
             moo_test_frame_save_png: decl_mv_mv!("moo_test_frame_save_png", mv2),
+            // Frame<->Tensor-Bruecke (KI-MULTI-V1, moo_frame_tensor.c, immer gebaut):
+            //   moo_tensor_aus_frame(frame, modus?)  -> Tensor [h,b,4] / [h,b,1] (2 Args = mv2)
+            //   moo_frame_aus_tensor(t)              -> MOO_FRAME             (1 Arg  = mv1)
+            moo_tensor_aus_frame: decl_mv_mv!("moo_tensor_aus_frame", mv2),
+            moo_frame_aus_tensor: decl_mv_mv!("moo_frame_aus_tensor", mv1),
             // GIF-Recorder (Plan-008 A3B). Symbole immer deklariert; C-seitig
             // in moo_test_api.c (3D-Build) gelinkt. Encoder-Kern (moo_gif.c)
             // ist Core-Build, daher immer verfuegbar.

@@ -3997,6 +3997,21 @@ impl<'ctx> CodeGen<'ctx> {
                         let path = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_test_frame_save_png, &[frame.into(), path.into()], "t_frame_png");
                     }
+                    // tensor_aus_frame(frame, modus?) -> Tensor [h,b,4] float 0..1 (KI-MULTI-V1).
+                    "tensor_aus_frame" | "tensor_from_frame" => {
+                        let frame = self.compile_expr(&args[0])?;
+                        let modus = if args.len() > 1 {
+                            self.compile_expr(&args[1])?
+                        } else {
+                            self.call_rt(self.rt.moo_none, &[], "taf_none")?
+                        };
+                        return self.call_rt(self.rt.moo_tensor_aus_frame, &[frame.into(), modus.into()], "t_aus_frame");
+                    }
+                    // frame_aus_tensor(t) -> MOO_FRAME (Clamp 0..1 -> RGBA8).
+                    "frame_aus_tensor" | "frame_from_tensor" => {
+                        let t = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_frame_aus_tensor, &[t.into()], "f_aus_tensor");
+                    }
                     // GIF-Recorder (Plan-008 A3B). Frame-bounded: streamt direkt
                     // in die Datei, sammelt KEINE Frame-Sequenz im RAM.
                     // test_gif_start(win_oder_frame, pfad, fps) -> MOO_GIF.

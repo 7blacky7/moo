@@ -1,0 +1,95 @@
+# ============================================================
+# ki_pong_auge.moo — Das Netz bekommt Augen (KI-MULTI-V1)
+#
+# Beweist die Pipeline Spiel -> Frame -> Tensor -> Training
+# end-to-end: eine Pong-Szene wird gerendert, per test_frame_grab
+# gegriffen, mit tensor_aus_frame(f, "grau") zum Tensor und ein
+# Kinderleicht-Netz lernt aus den PIXELN, ob der Ball links oder
+# rechts ist. Vorstufe für "Netz lernt Pong spielen".
+#
+# Headless: xvfb-run -a moo-compiler run beispiele/ki_pong_auge.moo
+# Endet mit SELFTEST_RESULT: PASS/FAIL (Genauigkeit >= 0.9 auf
+# ungesehenen Test-Szenen). Deterministisch (fester Seed).
+# ============================================================
+
+konstante B auf 32
+konstante H auf 24
+konstante ANZAHL auf 50
+konstante TRAIN auf 40
+
+setze win auf fenster_erstelle("ki pong auge", B, H)
+
+funktion szene_zeichnen(win, ball_x, ball_y):
+    fenster_löschen(win, "#101018")
+    zeichne_rechteck(win, 1, 7, 2, 10, "#FFFFFF")
+    zeichne_rechteck(win, B - 3, 7, 2, 10, "#FFFFFF")
+    zeichne_kreis(win, ball_x, ball_y, 3, "#FFEB3B")
+
+# Frame greifen -> Grau-Tensor [H,B,1] -> flache moo-Liste (Länge B*H).
+# zu_liste() liefert die Tensor-Werte bereits FLACH (row-major).
+funktion frame_als_liste(win):
+    setze f auf test_frame_grab(win)
+    setze t auf tensor_aus_frame(f, "grau")
+    gib_zurück t.zu_liste()
+
+# --- Deterministische Szenen erzeugen (Klein-LCG, top-level) ---
+zeige "Erzeuge " + text(ANZAHL) + " Pong-Szenen als Trainingsdaten..."
+setze zufall auf 7
+setze train_x auf []
+setze train_y auf []
+setze test_x auf []
+setze test_y auf []
+setze letzter_tensor auf nichts
+setze i auf 0
+solange i < ANZAHL:
+    setze zufall auf (zufall * 75 + 74) % 65537
+    setze links auf zufall % 2 == 0
+    setze zufall auf (zufall * 75 + 74) % 65537
+    setze ball_y auf 5 + zufall % 14
+    setze zufall auf (zufall * 75 + 74) % 65537
+    setze ball_x auf 20 + zufall % 8
+    wenn links:
+        setze ball_x auf 5 + zufall % 8
+    szene_zeichnen(win, ball_x, ball_y)
+    setze fl auf frame_als_liste(win)
+    setze ziel auf 0
+    wenn links:
+        setze ziel auf 1
+    wenn i < TRAIN:
+        train_x.hinzufügen(fl)
+        train_y.hinzufügen([ziel])
+    sonst:
+        test_x.hinzufügen(fl)
+        test_y.hinzufügen([ziel])
+    setze i auf i + 1
+
+setze tx auf tensor_aus_liste(train_x)
+setze ty auf tensor_aus_liste(train_y)
+setze px auf tensor_aus_liste(test_x)
+setze py auf tensor_aus_liste(test_y)
+zeige "Trainingsdaten: " + text(tx.form()) + " Ziele: " + text(ty.form())
+
+# --- Kinderleicht-Netz: Pixel rein, links/rechts raus ---
+setze netz auf ki_netz([schicht_dicht(B * H, 16, "tanh", 7), schicht_dicht(16, 1, "sigmoid", 8)])
+setze verlauf auf netz.trainiere(tx, ty, {"epochen": 300, "rate": 0.02, "batch": 10, "ausgabe": 0})
+zeige "Fehler Anfang -> Ende: " + text(verlauf[0]) + " -> " + text(verlauf[länge(verlauf) - 1])
+
+setze gen_train auf netz.genauigkeit(tx, ty)
+setze gen_test auf netz.genauigkeit(px, py)
+zeige "Genauigkeit Training: " + text(gen_train)
+zeige "Genauigkeit Test (ungesehen): " + text(gen_test)
+
+# --- Bonus: "Was das Netz sieht" als PNG (frame_aus_tensor) ---
+szene_zeichnen(win, 8, 12)
+setze blick_frame auf test_frame_grab(win)
+setze blick auf tensor_aus_frame(blick_frame, "grau")
+setze zurueck auf frame_aus_tensor(blick)
+test_frame_save_png(zurueck, "/tmp/ki_pong_auge_blick.png")
+zeige "Netz-Blick gespeichert: /tmp/ki_pong_auge_blick.png"
+
+fenster_schliessen(win)
+
+wenn gen_test >= 0.9:
+    zeige "SELFTEST_RESULT: PASS ki_pong_auge (Test-Genauigkeit " + text(gen_test) + ")"
+sonst:
+    zeige "SELFTEST_RESULT: FAIL ki_pong_auge (Test-Genauigkeit " + text(gen_test) + " < 0.9)"
