@@ -630,10 +630,13 @@ static bool aw_attention(Buf* b, MooValue s) {
     int32_t nk = (int32_t)enum_(s, "koepfe", 1);
     MooValue m = eget(s, "maske");
     const char* mart = (m.tag == MOO_STRING) ? MV_STR(m)->chars : "causal";
+    /* KIP-B2: rope/rope_basis mitschreiben; Fallback 0/10000 (alte Dicts). */
     buf_add(b, "{\"typ\":\"attention\",\"dim\":%d,\"koepfe\":%d,"
-            "\"kv_koepfe\":%d,\"maske\":\"%s\",\"fenster\":%d}",
+            "\"kv_koepfe\":%d,\"maske\":\"%s\",\"fenster\":%d,"
+            "\"rope\":%d,\"rope_basis\":%g}",
             (int32_t)enum_(s, "dim", 0), nk, (int32_t)enum_(s, "kv_koepfe", nk),
-            mart, (int32_t)enum_(s, "fenster", 0));
+            mart, (int32_t)enum_(s, "fenster", 0),
+            (int32_t)enum_(s, "rope", 0), enum_(s, "rope_basis", 10000.0));
     moo_release(m);
     return true;
 }
@@ -692,12 +695,18 @@ static MooValue rb_attention(MooValue e) {
     bool sliding = (mart.tag == MOO_STRING &&
                     strcmp(MV_STR(mart)->chars, "sliding") == 0);
     MooValue fw = sliding ? moo_number(enum_(e, "fenster", 1)) : moo_none();
+    /* KIP-B2: RoPE-Konfig aus arch-JSON rekonstruieren (Fallback aus =
+     * alte Dicts). rope==1 => Basis wieder anlegen (Cache-Zustand-Feld). */
+    MooValue rope = (enum_(e, "rope", 0) == 1.0)
+                    ? moo_number(enum_(e, "rope_basis", 10000.0))
+                    : moo_none();
     MooValue s = moo_nn_schicht_attention(moo_number(enum_(e, "dim", 0)),
                                           moo_number(nk),
                                           moo_none(),
                                           moo_number(enum_(e, "kv_koepfe", nk)),
                                           mart,
-                                          fw);
+                                          fw,
+                                          rope);
     moo_release(mart);
     return s;
 }
@@ -1099,4 +1108,627 @@ MooValue moo_nn_laden(MooValue pfad) {
         return moo_none();
     }
     return netz;
+}
+
+/* ============================================================
+ * KIP-E2: CPU-Voll-Checkpoint v2 (Resume-exakt)
+ * ============================================================
+ * Format v2 = SUPERSET des .mook (safetensors-Layout, bleibt safetensors-
+ * lesbar): [u64-LE Header-Laenge][JSON-Header][f32-LE-Blob].
+ *   __metadata__.moo_arch  : Netz-Architektur (wie v1 -> Rekonstruktion)
+ *   __metadata__.moo_ckpt  : v2-Trainingszustand als JSON-String:
+ *       format_version=2, global_schritt, epoche, tokenizer_version,
+ *       arch_version, metrik, opt{art,t,rate,beta1,beta2,eps,decay,
+ *       momentum}, dropout[{i,z}] (mutierender Layer-Zaehler!), dataloader{}
+ *   Tensor-Eintraege: p0..pN (Gewichte) + om0..omN (Opt 1. Moment m) +
+ *       ov0..ovN (Opt 2. Moment v, nur adam/adamw).
+ * ATOMISCH: Schreiben nach <pfad>.tmp, dann rename (POSIX atomar,
+ * MoveFileEx auf Windows). Abbruch mittendrin laesst den alten <pfad>
+ * unberuehrt (die tmp-Datei wird verworfen).
+ * BIT-IDENTISCHES RESUME: Gewichte + Opt(m/v/t) + Dropout-Zaehler +
+ * Schritt + Dataloader-Position werden exakt (f32-bit) wiederhergestellt;
+ * der Dropout-RNG (seed+zaehler) und die Reihenfolge (seed+pos) ziehen
+ * danach dieselbe Maske / denselben Batch wie ununterbrochen.
+ * f32 ZUERST — bf16-Gewichte folgen mit KIP-D3.
+ * ============================================================ */
+#ifdef _WIN32
+#  include <windows.h>
+#else
+#  include <dirent.h>
+#endif
+
+/* Skalar-MooValue (Zahl/Text/Bool/none) als JSON-Wert an Buf haengen. */
+static void ckpt_json_val(Buf* b, MooValue v) {
+    if (v.tag == MOO_STRING) {
+        buf_add(b, "\"");
+        const char* s = MV_STR(v)->chars;
+        for (size_t i = 0; s[i]; i++) {
+            unsigned char c = (unsigned char)s[i];
+            if (c == '"' || c == '\\') buf_add(b, "\\%c", (char)c);
+            else if (c < 0x20)         buf_add(b, "\\u%04x", (unsigned)c);
+            else                       buf_add(b, "%c", (char)c);
+        }
+        buf_add(b, "\"");
+    } else if (v.tag == MOO_NUMBER) {
+        buf_add(b, "%.17g", MV_NUM(v));        /* roundtrip-feste double */
+    } else if (v.tag == MOO_BOOL) {
+        buf_add(b, MV_BOOL(v) ? "true" : "false");
+    } else {
+        buf_add(b, "null");
+    }
+}
+
+/* Ein ",\"key\":<wert>"-Paar aus dem zustand-Dict (fehlt -> null). */
+static void ckpt_kv(Buf* b, MooValue d, const char* key) {
+    MooValue v = eget(d, key);
+    buf_add(b, ",\"%s\":", key);
+    ckpt_json_val(b, v);
+    moo_release(v);
+}
+
+/* Werte-Gleichheit fuer den Versions-Check (Text/Zahl/none, sonst false). */
+static bool ckpt_val_gleich(MooValue a, MooValue b) {
+    if (a.tag == MOO_STRING && b.tag == MOO_STRING)
+        return strcmp(MV_STR(a)->chars, MV_STR(b)->chars) == 0;
+    if (a.tag == MOO_NUMBER && b.tag == MOO_NUMBER)
+        return MV_NUM(a) == MV_NUM(b);
+    if (a.tag == MOO_NONE && b.tag == MOO_NONE) return true;
+    return false;
+}
+
+/* Einen benannten Tensor-Eintrag (p%d/om%d/ov%d) in dst einlesen. */
+static bool ckpt_lese_tensor(FILE* f, long daten_start, MooValue header,
+                             const char* key, MooTensor* dst) {
+    MooValue ent = eget(header, key);
+    bool ok = false;
+    if (ent.tag == MOO_DICT) {
+        MooValue offs = eget(ent, "data_offsets");
+        if (offs.tag == MOO_LIST && MV_LIST(offs)->length == 2 &&
+            MV_LIST(offs)->items[0].tag == MOO_NUMBER &&
+            MV_LIST(offs)->items[1].tag == MOO_NUMBER) {
+            double a = MV_NUM(MV_LIST(offs)->items[0]);
+            double b = MV_NUM(MV_LIST(offs)->items[1]);
+            if ((b - a) == (double)dst->size * 4.0) {
+                ok = fseek(f, daten_start + (long)a, SEEK_SET) == 0 &&
+                     fread(dst->data, sizeof(float), (size_t)dst->size, f)
+                         == (size_t)dst->size;
+            }
+        }
+        moo_release(offs);
+    }
+    moo_release(ent);
+    return ok;
+}
+
+/* Header-Tensor-Eintrag "\"<key>\":{dtype,shape,data_offsets}" anhaengen. */
+static void ckpt_header_tensor(Buf* h, const char* key, MooTensor* p,
+                               uint64_t* off) {
+    uint64_t bytes = (uint64_t)p->size * 4u;
+    buf_add(h, ",\"%s\":{\"dtype\":\"F32\",\"shape\":[", key);
+    for (int32_t d = 0; d < p->ndim; d++)
+        buf_add(h, "%s%d", d ? "," : "", p->shape[d]);
+    buf_add(h, "],\"data_offsets\":[%llu,%llu]}",
+            (unsigned long long)*off, (unsigned long long)(*off + bytes));
+    *off += bytes;
+}
+
+/* checkpoint_speichern(zustand, pfad): atomischer Voll-Checkpoint.
+ * zustand = Dict { netz (Pflicht), opt?, schritt?, epoche?,
+ *   tokenizer_version?, arch_version?, metrik?, dataloader? }. Rueckgabe none. */
+MooValue moo_nn_ckpt_speichern(MooValue zustand, MooValue pfad) {
+    if (!sl_hooks_vollstaendig()) return moo_none();
+    if (zustand.tag != MOO_DICT) {
+        moo_throw(moo_error("checkpoint_speichern: erwarte einen Zustand "
+                            "(Dict mit \"netz\", optional \"opt\"/\"schritt\"/...)"));
+        return moo_none();
+    }
+    if (pfad.tag != MOO_STRING) {
+        moo_throw(moo_error("checkpoint_speichern: erwarte einen Dateinamen "
+                            "als Text, z.B. checkpoint_speichern(zustand, "
+                            "\"lauf/ckpt_100.mook\")"));
+        return moo_none();
+    }
+    MooValue netz = eget(zustand, "netz");
+    MooValue schichten;
+    if (ist_netz(netz)) schichten = eget(netz, "schichten");
+    else if (netz.tag == MOO_LIST) { moo_retain(netz); schichten = netz; }
+    else {
+        moo_release(netz);
+        moo_throw(moo_error("checkpoint_speichern: \"netz\" fehlt oder ist "
+                            "kein ki_netz"));
+        return moo_none();
+    }
+    MooValue params = moo_nn_parameter(schichten);
+    if (params.tag != MOO_LIST) {
+        moo_release(netz); moo_release(schichten); return moo_none();
+    }
+    MooList* pl = MV_LIST(params);
+    MooList* sl = MV_LIST(schichten);
+
+    /* Optimizer-Momente (geliehen). */
+    MooValue optv = eget(zustand, "opt");
+    bool hat_opt = (optv.tag == MOO_DICT);
+    MooValue ml = hat_opt ? eget(optv, "m") : moo_none();
+    MooValue vl = hat_opt ? eget(optv, "v") : moo_none();
+    MooList* mlist = (ml.tag == MOO_LIST) ? MV_LIST(ml) : NULL;
+    MooList* vlist = (vl.tag == MOO_LIST) ? MV_LIST(vl) : NULL;
+
+    /* --- 1. Architektur-JSON (wie v1) --- */
+    Buf arch = {0};
+    buf_add(&arch, "[");
+    bool arch_ok = true;
+    for (int32_t i = 0; i < sl->length && arch_ok; i++) {
+        if (i) buf_add(&arch, ",");
+        arch_ok = arch_schicht(&arch, sl->items[i]);
+    }
+    buf_add(&arch, "]");
+
+    /* --- 2. Checkpoint-Zustands-JSON (moo_ckpt) --- */
+    Buf ck = {0};
+    buf_add(&ck, "{\"format_version\":2");
+    ckpt_kv(&ck, zustand, "global_schritt");
+    ckpt_kv(&ck, zustand, "schritt");
+    ckpt_kv(&ck, zustand, "epoche");
+    ckpt_kv(&ck, zustand, "tokenizer_version");
+    ckpt_kv(&ck, zustand, "arch_version");
+    ckpt_kv(&ck, zustand, "metrik");
+    /* Dropout-Zaehler je Schicht (mutierender Layer-State!). */
+    buf_add(&ck, ",\"dropout\":[");
+    { bool first = true;
+      for (int32_t i = 0; i < sl->length; i++) {
+          if (ist_schicht_typ(sl->items[i], "dropout")) {
+              double z = enum_(sl->items[i], "zaehler", 0.0);
+              buf_add(&ck, "%s{\"i\":%d,\"z\":%.17g}", first ? "" : ",", i, z);
+              first = false;
+          }
+      }
+    }
+    buf_add(&ck, "]");
+    /* Optimizer-Skalare. */
+    if (hat_opt) {
+        MooValue artv = eget(optv, "art");
+        buf_add(&ck, ",\"opt\":{\"art\":");
+        ckpt_json_val(&ck, artv);
+        moo_release(artv);
+        buf_add(&ck, ",\"t\":%.17g",        enum_(optv, "t", 0.0));
+        buf_add(&ck, ",\"rate\":%.17g",     enum_(optv, "rate", 0.01));
+        buf_add(&ck, ",\"beta1\":%.17g",    enum_(optv, "beta1", 0.9));
+        buf_add(&ck, ",\"beta2\":%.17g",    enum_(optv, "beta2", 0.999));
+        buf_add(&ck, ",\"eps\":%.17g",      enum_(optv, "eps", 1e-8));
+        buf_add(&ck, ",\"decay\":%.17g",    enum_(optv, "decay", 0.0));
+        buf_add(&ck, ",\"momentum\":%.17g", enum_(optv, "momentum", 0.0));
+        buf_add(&ck, "}");
+    }
+    /* Dataloader-Position (generisches Skalar-Dict). */
+    MooValue dl = eget(zustand, "dataloader");
+    if (dl.tag == MOO_DICT) {
+        buf_add(&ck, ",\"dataloader\":{");
+        MooValue keys = moo_dict_keys(dl);
+        if (keys.tag == MOO_LIST) {
+            bool first = true;
+            for (int32_t i = 0; i < MV_LIST(keys)->length; i++) {
+                MooValue k = MV_LIST(keys)->items[i];
+                if (k.tag != MOO_STRING) continue;
+                moo_retain(k);
+                MooValue val = moo_dict_get(dl, k);   /* verbraucht +1 */
+                buf_add(&ck, "%s", first ? "" : ",");
+                ckpt_json_val(&ck, k);                 /* Key als String */
+                buf_add(&ck, ":");
+                ckpt_json_val(&ck, val);
+                moo_release(val);
+                first = false;
+            }
+        }
+        moo_release(keys);
+        buf_add(&ck, "}");
+    }
+    moo_release(dl);
+    buf_add(&ck, "}");
+
+    /* --- 3. safetensors-Header: metadata + Tensor-Eintraege --- */
+    Buf h = {0};
+    buf_add(&h, "{\"__metadata__\":{\"moo_arch\":\"");
+    for (size_t i = 0; i < arch.len && !h.oom; i++) {
+        char c = arch.s[i];
+        if (c == '"' || c == '\\') buf_add(&h, "\\%c", c);
+        else buf_add(&h, "%c", c);
+    }
+    buf_add(&h, "\",\"moo_ckpt\":\"");
+    for (size_t i = 0; i < ck.len && !h.oom; i++) {
+        char c = ck.s[i];
+        if (c == '"' || c == '\\') buf_add(&h, "\\%c", c);
+        else buf_add(&h, "%c", c);
+    }
+    buf_add(&h, "\"}");
+    uint64_t off = 0;
+    for (int32_t i = 0; i < pl->length; i++) {
+        char key[24]; snprintf(key, sizeof(key), "p%d", i);
+        ckpt_header_tensor(&h, key, T(pl->items[i]), &off);
+    }
+    if (mlist) for (int32_t i = 0; i < mlist->length; i++) {
+        char key[24]; snprintf(key, sizeof(key), "om%d", i);
+        ckpt_header_tensor(&h, key, T(mlist->items[i]), &off);
+    }
+    if (vlist) for (int32_t i = 0; i < vlist->length; i++) {
+        char key[24]; snprintf(key, sizeof(key), "ov%d", i);
+        ckpt_header_tensor(&h, key, T(vlist->items[i]), &off);
+    }
+    buf_add(&h, "}");
+
+    if (!arch_ok || h.oom || arch.oom || ck.oom) {
+        free(arch.s); free(ck.s); free(h.s);
+        moo_release(params); moo_release(schichten); moo_release(netz);
+        moo_release(optv); moo_release(ml); moo_release(vl);
+        moo_throw(moo_error("checkpoint_speichern: konnte den Datei-Kopf "
+                            "nicht bauen (Speicher?)"));
+        return moo_none();
+    }
+
+    /* --- 4. Atomisch schreiben: tmp -> rename --- */
+    size_t plen = strlen(MV_STR(pfad)->chars);
+    char* tmp = (char*)malloc(plen + 5);
+    bool ok = (tmp != NULL);
+    if (ok) { memcpy(tmp, MV_STR(pfad)->chars, plen); memcpy(tmp + plen, ".tmp", 5); }
+
+    FILE* f = ok ? fopen(tmp, "wb") : NULL;
+    if (!f) {
+        free(arch.s); free(ck.s); free(h.s); free(tmp);
+        moo_release(params); moo_release(schichten); moo_release(netz);
+        moo_release(optv); moo_release(ml); moo_release(vl);
+        char msg[320];
+        snprintf(msg, sizeof(msg), "checkpoint_speichern: kann \"%s.tmp\" nicht "
+                 "schreiben (Ordner vorhanden? Schreibrechte?)", MV_STR(pfad)->chars);
+        moo_throw(moo_error(msg));
+        return moo_none();
+    }
+    uint64_t hlen = (uint64_t)h.len;
+    ok = fwrite(&hlen, 8, 1, f) == 1 && fwrite(h.s, 1, h.len, f) == h.len;
+    for (int32_t i = 0; i < pl->length && ok; i++) {
+        MooTensor* p = T(pl->items[i]);
+        ok = fwrite(p->data, sizeof(float), (size_t)p->size, f) == (size_t)p->size;
+    }
+    if (mlist) for (int32_t i = 0; i < mlist->length && ok; i++) {
+        MooTensor* p = T(mlist->items[i]);
+        ok = fwrite(p->data, sizeof(float), (size_t)p->size, f) == (size_t)p->size;
+    }
+    if (vlist) for (int32_t i = 0; i < vlist->length && ok; i++) {
+        MooTensor* p = T(vlist->items[i]);
+        ok = fwrite(p->data, sizeof(float), (size_t)p->size, f) == (size_t)p->size;
+    }
+    ok = (fclose(f) == 0) && ok;
+
+    if (ok) {
+        /* Atomarer Austausch. Alter <pfad> bleibt bis hier unberuehrt. */
+#ifdef _WIN32
+        ok = MoveFileExA(tmp, MV_STR(pfad)->chars, MOVEFILE_REPLACE_EXISTING) != 0;
+#else
+        ok = rename(tmp, MV_STR(pfad)->chars) == 0;
+#endif
+    }
+    if (!ok) remove(tmp);   /* tmp verwerfen -> alter Checkpoint intakt */
+
+    free(arch.s); free(ck.s); free(h.s); free(tmp);
+    moo_release(params); moo_release(schichten); moo_release(netz);
+    moo_release(optv); moo_release(ml); moo_release(vl);
+    if (!ok) {
+        moo_throw(moo_error("checkpoint_speichern: Schreiben/Umbenennen "
+                            "fehlgeschlagen — der vorherige Checkpoint (falls "
+                            "vorhanden) ist unveraendert"));
+        return moo_none();
+    }
+    return moo_none();
+}
+
+/* checkpoint_laden(pfad, erwartungen): Voll-Checkpoint -> Zustand-Dict
+ * { netz, opt?, schritt, epoche, tokenizer_version, arch_version, metrik,
+ *   dataloader? }. erwartungen = none | Dict{tokenizer_version?, arch_version?}:
+ * bei Mismatch wirft es ERKLAEREND (Token-IDs zeigen sonst auf andere Symbole). */
+MooValue moo_nn_ckpt_laden(MooValue pfad, MooValue erwartungen) {
+    if (!sl_hooks_vollstaendig()) return moo_none();
+    if (pfad.tag != MOO_STRING) {
+        moo_throw(moo_error("checkpoint_laden: erwarte einen Dateinamen als Text"));
+        return moo_none();
+    }
+    FILE* f = fopen(MV_STR(pfad)->chars, "rb");
+    if (!f) {
+        char msg[320];
+        snprintf(msg, sizeof(msg), "checkpoint_laden: kann \"%s\" nicht "
+                 "oeffnen — gibt es die Datei?", MV_STR(pfad)->chars);
+        moo_throw(moo_error(msg));
+        return moo_none();
+    }
+    uint64_t hlen = 0;
+    if (fread(&hlen, 8, 1, f) != 1 || hlen == 0 || hlen > 64u * 1024u * 1024u) {
+        fclose(f);
+        moo_throw(moo_error("checkpoint_laden: das ist kein .mook/Checkpoint "
+                            "(Kopf kaputt)"));
+        return moo_none();
+    }
+    char* hjson = (char*)malloc((size_t)hlen + 1);
+    if (!hjson || fread(hjson, 1, (size_t)hlen, f) != (size_t)hlen) {
+        free(hjson); fclose(f);
+        moo_throw(moo_error("checkpoint_laden: Datei-Kopf unvollstaendig"));
+        return moo_none();
+    }
+    hjson[hlen] = '\0';
+    MooValue hs = moo_string_new(hjson);
+    free(hjson);
+    MooValue header = moo_json_parse(hs);
+    moo_release(hs);
+    if (header.tag != MOO_DICT) {
+        moo_release(header); fclose(f);
+        moo_throw(moo_error("checkpoint_laden: Datei-Kopf ist kein gueltiges JSON"));
+        return moo_none();
+    }
+    MooValue meta  = eget(header, "__metadata__");
+    MooValue archs = (meta.tag == MOO_DICT) ? eget(meta, "moo_arch")  : moo_none();
+    MooValue ckps  = (meta.tag == MOO_DICT) ? eget(meta, "moo_ckpt")  : moo_none();
+    MooValue arch  = (archs.tag == MOO_STRING) ? moo_json_parse(archs) : moo_none();
+    MooValue ckpt  = (ckps.tag  == MOO_STRING) ? moo_json_parse(ckps)  : moo_none();
+    moo_release(archs); moo_release(ckps); moo_release(meta);
+    if (arch.tag != MOO_LIST || ckpt.tag != MOO_DICT) {
+        moo_release(arch); moo_release(ckpt); moo_release(header); fclose(f);
+        moo_throw(moo_error("checkpoint_laden: der Datei fehlt der moo-"
+                            "Checkpoint-Block (__metadata__.moo_arch/moo_ckpt)"));
+        return moo_none();
+    }
+
+    /* --- Versions-Check (erklaerend werfen bei Mismatch) --- */
+    if (erwartungen.tag == MOO_DICT) {
+        const char* felder[2] = { "tokenizer_version", "arch_version" };
+        for (int fi = 0; fi < 2; fi++) {
+            MooValue soll = eget(erwartungen, felder[fi]);
+            if (soll.tag == MOO_NONE) { moo_release(soll); continue; }
+            MooValue ist = eget(ckpt, felder[fi]);
+            bool gleich = ckpt_val_gleich(soll, ist);
+            if (!gleich) {
+                char sb[64], ib[64];
+                if (soll.tag == MOO_STRING) snprintf(sb, sizeof(sb), "%s", MV_STR(soll)->chars);
+                else if (soll.tag == MOO_NUMBER) snprintf(sb, sizeof(sb), "%.17g", MV_NUM(soll));
+                else snprintf(sb, sizeof(sb), "(unbekannt)");
+                if (ist.tag == MOO_STRING) snprintf(ib, sizeof(ib), "%s", MV_STR(ist)->chars);
+                else if (ist.tag == MOO_NUMBER) snprintf(ib, sizeof(ib), "%.17g", MV_NUM(ist));
+                else snprintf(ib, sizeof(ib), "(fehlt)");
+                char msg[360];
+                snprintf(msg, sizeof(msg), "checkpoint_laden: %s passt nicht — "
+                         "der Checkpoint wurde mit \"%s\" erzeugt, aktuell ist "
+                         "\"%s\". %s muss identisch sein, sonst zeigen die "
+                         "Token-IDs/Gewichte auf andere Symbole.",
+                         felder[fi], ib, sb, felder[fi]);
+                moo_release(soll); moo_release(ist);
+                moo_release(arch); moo_release(ckpt); moo_release(header); fclose(f);
+                moo_throw(moo_error(msg));
+                return moo_none();
+            }
+            moo_release(soll); moo_release(ist);
+        }
+    }
+
+    /* --- Netz aus Architektur rekonstruieren --- */
+    MooValue schichten = moo_list_new(MV_LIST(arch)->length);
+    bool ok = true;
+    for (int32_t i = 0; i < MV_LIST(arch)->length && ok; i++) {
+        MooValue e = MV_LIST(arch)->items[i];
+        if (e.tag != MOO_DICT) { ok = false; break; }
+        MooValue tv = eget(e, "typ");
+        const char* typ = (tv.tag == MOO_STRING) ? MV_STR(tv)->chars : "";
+        const NNSaveLoadHook* hk = sl_hook_lookup(typ);
+        MooValue s = hk ? hk->rebuild(e) : moo_none();
+        moo_release(tv);
+        if (s.tag != MOO_DICT) { ok = false; moo_release(s); break; }
+        moo_list_append(schichten, s);
+    }
+    if (!ok) {
+        moo_release(schichten); moo_release(arch); moo_release(ckpt);
+        moo_release(header); fclose(f);
+        moo_throw(moo_error("checkpoint_laden: Architektur in der Datei ist kaputt"));
+        return moo_none();
+    }
+    MooValue netz = moo_nn_ki_netz(schichten);
+    moo_release(schichten);
+    if (netz.tag != MOO_DICT) {
+        moo_release(arch); moo_release(ckpt); moo_release(header); fclose(f);
+        return moo_none();
+    }
+
+    long daten_start = (long)(8 + hlen);
+
+    /* --- Gewichte p0..pN --- */
+    MooValue params = moo_nn_parameter(netz);
+    ok = (params.tag == MOO_LIST);
+    if (ok) {
+        MooList* pl = MV_LIST(params);
+        for (int32_t i = 0; i < pl->length && ok; i++) {
+            char key[24]; snprintf(key, sizeof(key), "p%d", i);
+            ok = ckpt_lese_tensor(f, daten_start, header, key, T(pl->items[i]));
+        }
+    }
+
+    /* --- Optimizer rekonstruieren (m/v/t + Skalare) --- */
+    MooValue opt = moo_none();
+    MooValue copt = eget(ckpt, "opt");
+    if (ok && copt.tag == MOO_DICT && params.tag == MOO_LIST) {
+        MooValue artv = eget(copt, "art");
+        const char* art = (artv.tag == MOO_STRING) ? MV_STR(artv)->chars : "adam";
+        MooValue rn = moo_number(enum_(copt, "rate", 0.01));
+        if (strcmp(art, "sgd") == 0) {
+            MooValue mo = moo_number(enum_(copt, "momentum", 0.0));
+            opt = moo_nn_opt_sgd(params, rn, mo);
+            moo_release(mo);
+        } else if (strcmp(art, "adamw") == 0) {
+            MooValue de = moo_number(enum_(copt, "decay", 0.01));
+            opt = moo_nn_opt_adamw(params, rn, de);
+            moo_release(de);
+        } else {
+            opt = moo_nn_opt_adam(params, rn);
+        }
+        moo_release(rn); moo_release(artv);
+        if (opt.tag == MOO_DICT) {
+            /* Skalare exakt zuruecksetzen (Bias-Korrektur t ist kritisch!). */
+            eset(opt, "t",        moo_number(enum_(copt, "t", 0.0)));
+            eset(opt, "rate",     moo_number(enum_(copt, "rate", 0.01)));
+            eset(opt, "beta1",    moo_number(enum_(copt, "beta1", 0.9)));
+            eset(opt, "beta2",    moo_number(enum_(copt, "beta2", 0.999)));
+            eset(opt, "eps",      moo_number(enum_(copt, "eps", 1e-8)));
+            eset(opt, "decay",    moo_number(enum_(copt, "decay", 0.0)));
+            eset(opt, "momentum", moo_number(enum_(copt, "momentum", 0.0)));
+            /* Momente om*/ /*/ov* einlesen. */
+            MooValue ml2 = eget(opt, "m");
+            if (ml2.tag == MOO_LIST) {
+                MooList* mm = MV_LIST(ml2);
+                for (int32_t i = 0; i < mm->length && ok; i++) {
+                    char key[24]; snprintf(key, sizeof(key), "om%d", i);
+                    ok = ckpt_lese_tensor(f, daten_start, header, key, T(mm->items[i]));
+                }
+            }
+            MooValue vl2 = eget(opt, "v");
+            if (vl2.tag == MOO_LIST) {
+                MooList* vv = MV_LIST(vl2);
+                for (int32_t i = 0; i < vv->length && ok; i++) {
+                    char key[24]; snprintf(key, sizeof(key), "ov%d", i);
+                    ok = ckpt_lese_tensor(f, daten_start, header, key, T(vv->items[i]));
+                }
+            }
+            moo_release(ml2); moo_release(vl2);
+        }
+    }
+    moo_release(copt);
+    moo_release(params);
+    fclose(f);
+
+    if (!ok) {
+        moo_release(opt); moo_release(netz);
+        moo_release(arch); moo_release(ckpt); moo_release(header);
+        moo_throw(moo_error("checkpoint_laden: Gewichte/Optimizer passen nicht "
+                            "zur Architektur (Datei beschaedigt oder Version)"));
+        return moo_none();
+    }
+
+    /* --- Dropout-Zaehler auf den Schichten setzen (mutierender State) --- */
+    MooValue netz_sch = eget(netz, "schichten");
+    MooValue dropv = eget(ckpt, "dropout");
+    if (netz_sch.tag == MOO_LIST && dropv.tag == MOO_LIST) {
+        MooList* nsl = MV_LIST(netz_sch);
+        MooList* dl2 = MV_LIST(dropv);
+        for (int32_t j = 0; j < dl2->length; j++) {
+            if (dl2->items[j].tag != MOO_DICT) continue;
+            int idx = (int)enum_(dl2->items[j], "i", -1.0);
+            double z = enum_(dl2->items[j], "z", 0.0);
+            if (idx >= 0 && idx < nsl->length &&
+                ist_schicht_typ(nsl->items[idx], "dropout"))
+                eset(nsl->items[idx], "zaehler", moo_number(z));
+        }
+    }
+    moo_release(netz_sch); moo_release(dropv);
+
+    /* --- Zustand-Dict bauen --- */
+    MooValue zustand = moo_dict_new();
+    eset(zustand, "netz", netz);   /* Ownership -> Dict */
+    if (opt.tag == MOO_DICT) eset(zustand, "opt", opt); else moo_release(opt);
+    const char* skalar[6] = { "global_schritt", "schritt", "epoche",
+                              "tokenizer_version", "arch_version", "metrik" };
+    for (int i = 0; i < 6; i++) {
+        MooValue v = eget(ckpt, skalar[i]);
+        if (v.tag != MOO_NONE) eset(zustand, skalar[i], v); else moo_release(v);
+    }
+    MooValue dlv = eget(ckpt, "dataloader");
+    if (dlv.tag == MOO_DICT) eset(zustand, "dataloader", dlv); else moo_release(dlv);
+
+    moo_release(arch); moo_release(ckpt); moo_release(header);
+    return zustand;
+}
+
+/* Trailing-Integer (Schritt) direkt vor ".mook"; -1 = nicht rotierbar. */
+static long ckpt_step_aus_name(const char* name, const char* praefix) {
+    size_t pl = strlen(praefix);
+    if (strncmp(name, praefix, pl) != 0) return -1;
+    size_t n = strlen(name);
+    if (n < 5 || strcmp(name + n - 5, ".mook") != 0) return -1;
+    if (strstr(name, "best") != NULL) return -1;   /* best nie loeschen */
+    size_t end = n - 5, i = end;
+    while (i > 0 && name[i-1] >= '0' && name[i-1] <= '9') i--;
+    if (i == end) return -1;                        /* keine Ziffern */
+    long step = 0;
+    for (size_t j = i; j < end; j++) step = step * 10 + (name[j] - '0');
+    return step;
+}
+
+/* checkpoint_rotieren(verzeichnis, praefix, behalte): loescht die aeltesten
+ * <praefix>*<step>.mook (nach Schritt-Nr sortiert), behaelt die neuesten
+ * `behalte`; "*best*"-Dateien bleiben immer. Rueckgabe = Anzahl geloeschter. */
+MooValue moo_nn_ckpt_rotieren(MooValue verzeichnis, MooValue praefix, MooValue behalte) {
+    if (verzeichnis.tag != MOO_STRING || praefix.tag != MOO_STRING ||
+        behalte.tag != MOO_NUMBER) {
+        moo_throw(moo_error("checkpoint_rotieren: erwarte (verzeichnis:Text, "
+                            "praefix:Text, behalte:Zahl)"));
+        return moo_none();
+    }
+    const char* dir = MV_STR(verzeichnis)->chars;
+    const char* prx = MV_STR(praefix)->chars;
+    int keep = (int)MV_NUM(behalte);
+    if (keep < 0) keep = 0;
+
+    typedef struct { char name[256]; long step; } Eintrag;
+    Eintrag* arr = NULL; int count = 0, cap = 0;
+    bool leseok = true;
+
+#ifdef _WIN32
+    char muster[512];
+    snprintf(muster, sizeof(muster), "%s\\%s*", dir, prx);
+    WIN32_FIND_DATAA fd;
+    HANDLE hf = FindFirstFileA(muster, &fd);
+    if (hf == INVALID_HANDLE_VALUE) { leseok = false; }
+    else {
+        do {
+            long step = ckpt_step_aus_name(fd.cFileName, prx);
+            if (step < 0) continue;
+            if (count == cap) { cap = cap ? cap * 2 : 16;
+                arr = (Eintrag*)realloc(arr, (size_t)cap * sizeof(Eintrag)); }
+            snprintf(arr[count].name, sizeof(arr[count].name), "%s", fd.cFileName);
+            arr[count].step = step; count++;
+        } while (FindNextFileA(hf, &fd));
+        FindClose(hf);
+    }
+#else
+    DIR* d = opendir(dir);
+    if (!d) { leseok = false; }
+    else {
+        struct dirent* de;
+        while ((de = readdir(d)) != NULL) {
+            long step = ckpt_step_aus_name(de->d_name, prx);
+            if (step < 0) continue;
+            if (count == cap) { cap = cap ? cap * 2 : 16;
+                arr = (Eintrag*)realloc(arr, (size_t)cap * sizeof(Eintrag)); }
+            snprintf(arr[count].name, sizeof(arr[count].name), "%s", de->d_name);
+            arr[count].step = step; count++;
+        }
+        closedir(d);
+    }
+#endif
+    if (!leseok) {
+        free(arr);
+        char msg[320];
+        snprintf(msg, sizeof(msg), "checkpoint_rotieren: Verzeichnis \"%s\" "
+                 "nicht lesbar", dir);
+        moo_throw(moo_error(msg));
+        return moo_none();
+    }
+
+    /* Aeltesten (kleinster step) loeschen, bis nur `keep` uebrig sind. */
+    int geloescht = 0;
+    while (count - geloescht > keep) {
+        int mi = -1; long best = 0;
+        for (int i = 0; i < count; i++) {
+            if (arr[i].step < 0) continue;              /* schon geloescht */
+            if (mi < 0 || arr[i].step < best) { mi = i; best = arr[i].step; }
+        }
+        if (mi < 0) break;
+        char full[600];
+        snprintf(full, sizeof(full), "%s/%s", dir, arr[mi].name);
+        remove(full);
+        arr[mi].step = -1;   /* markieren */
+        geloescht++;
+    }
+    free(arr);
+    return moo_number((double)geloescht);
 }

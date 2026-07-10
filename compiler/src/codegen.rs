@@ -2654,10 +2654,13 @@ impl<'ctx> CodeGen<'ctx> {
                                     else { self.call_rt(self.rt.moo_none, &[], "nn_att_maske")? };
                         let fenster = if args.len() > 5 { self.compile_expr(&args[5])? }
                                       else { self.call_rt(self.rt.moo_none, &[], "nn_att_fenster")? };
+                        let rope = if args.len() > 6 { self.compile_expr(&args[6])? }
+                                   else { self.call_rt(self.rt.moo_none, &[], "nn_att_rope")? };
                         let r = self.call_rt(self.rt.moo_nn_schicht_attention,
                             &[dim.into(), koepfe.into(), seed.into(), kv.into(),
-                              maske.into(), fenster.into()], "nn_attention")?;
+                              maske.into(), fenster.into(), rope.into()], "nn_attention")?;
                         self.call_rt_void(self.rt.moo_release, &[maske.into()], "rel_att_maske")?;
+                        self.call_rt_void(self.rt.moo_release, &[rope.into()], "rel_att_rope")?;
                         return Ok(r);
                     }
                     "schicht_position" | "layer_position" => {

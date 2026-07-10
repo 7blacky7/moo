@@ -340,7 +340,7 @@ MooValue moo_nn_schicht_embedding(MooValue vokabular, MooValue dim, MooValue see
  * sliding-Layer), kein Layer-Feature. Sink-Bias bewusst nicht im Scope. */
 MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed,
                                   MooValue kv_koepfe, MooValue maske,
-                                  MooValue fenster) {
+                                  MooValue fenster, MooValue rope) {
     int32_t nd = ganze_zahl(dim, "schicht_attention (Dimension)", 1);
     if (nd < 0) return moo_none();
     int32_t nk = ganze_zahl(koepfe, "schicht_attention (Koepfe)", 1);
@@ -385,6 +385,43 @@ MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed,
                             "\"sliding\"-Maske"));
         return moo_none();
     }
+    /* KIP-B2: RoPE-Konfiguration (7. Param, X2 §2). NONE = aus (Default,
+     * Abwaertskompat: bestehende Layer/Gates bit-identisch). bool true /
+     * Zahl>0 = an (basis = Zahl bzw. 10000 bei true/1.0); String "rope"/"an".
+     * Cache speichert ROTIERTE K -> basis ist Teil des Cache-Zustands und
+     * wird beim Laden (rb_attention) rekonstruiert / validiert. */
+    bool rope_an = false;
+    double rope_basis = 10000.0;
+    if (rope.tag == MOO_BOOL) {
+        rope_an = MV_BOOL(rope);
+    } else if (rope.tag == MOO_NUMBER) {
+        double rb = MV_NUM(rope);
+        if (rb < 0.0) {
+            moo_throw(moo_error("schicht_attention: die RoPE-Basis darf nicht "
+                                "negativ sein"));
+            return moo_none();
+        }
+        rope_an = (rb > 0.0);
+        if (rope_an && rb != 1.0) rope_basis = rb;   /* 1.0 = an, Default-Basis */
+    } else if (rope.tag == MOO_STRING) {
+        const char* rs = MV_STR(rope)->chars;
+        if (strcmp(rs, "rope") == 0 || strcmp(rs, "an") == 0) rope_an = true;
+        else if (strcmp(rs, "aus") == 0 || strcmp(rs, "keine") == 0) rope_an = false;
+        else {
+            moo_throw(moo_error("schicht_attention: rope kann \"rope\"/\"an\" "
+                                "oder \"aus\" sein"));
+            return moo_none();
+        }
+    } else if (rope.tag != MOO_NONE) {
+        moo_throw(moo_error("schicht_attention: rope muss ein Wahrheitswert, "
+                            "eine Zahl (Basis) oder ein Text sein"));
+        return moo_none();
+    }
+    if (rope_an && (dh % 2 != 0)) {
+        moo_throw(moo_error("schicht_attention: RoPE braucht eine GERADE "
+                            "Kopf-Dimension (dim/koepfe) — Paar-Rotation"));
+        return moo_none();
+    }
     uint64_t s = (seed.tag == MOO_NUMBER) ? (uint64_t)(int64_t)MV_NUM(seed) : 42ULL;
     double limit = sqrt(6.0 / ((double)nd + (double)dh));
 
@@ -395,6 +432,8 @@ MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed,
     dset(d, "kv_koepfe", moo_number((double)kv));
     dset(d, "maske", moo_string_new(sliding ? "sliding" : "causal"));
     if (sliding) dset(d, "fenster", moo_number((double)fw));
+    dset(d, "rope", moo_number(rope_an ? 1.0 : 0.0));
+    if (rope_an) dset(d, "rope_basis", moo_number(rope_basis));
     char name[24];
     for (int32_t h = 0; h < nk; h++) {
         snprintf(name, sizeof(name), "wq%d", h);
@@ -767,6 +806,101 @@ static MooValue cache_maske(int32_t t_neu, int32_t t_ges, bool sliding,
     return v;
 }
 
+/* ============================================================
+ * KIP-B2: RoPE (Rotary Position Embedding) — reine Op-Komposition
+ * ============================================================
+ * Standard-RoPE (interleaved): rope(t, p0) = t (*) cos + (t @ R) (*) sin,
+ * mit t [rows, dh], cos/sin [rows, dh] und R [dh, dh] als GRAD-LOSE
+ * Konstanten (wie causal_maske). R[2i,2i+1]=+1, R[2i+1,2i]=-1 =>
+ * (t@R)[.,2i]=-t[.,2i+1], (t@R)[.,2i+1]=t[.,2i]. Damit:
+ *   roped[.,2i]   = t[.,2i]*cos   - t[.,2i+1]*sin
+ *   roped[.,2i+1] = t[.,2i+1]*cos + t[.,2i]*sin
+ * cos/sin haengen NUR von der absoluten Position p0+r und dem Paar-Index
+ * ab (row-unabhaengig) => chunked Prefill == Voll, Cache-Decode == Nicht-
+ * Cache bit-kompatibel. mul/matmul/add tragen backward => Grad fliesst in
+ * wq/wk. KEIN neuer Registry-Op (B2-Vertrag: reine Komposition). */
+static MooValue rope_matrix(int32_t dh) {
+    int32_t shape[2] = { dh, dh };
+    MooTensor* R = moo_tensor_raw(2, shape);
+    if (!R) return moo_none();
+    for (int32_t i = 0; i + 1 < dh; i += 2) {
+        R->data[(int64_t)(i) * dh + (i + 1)] = 1.0f;    /* R[2p,2p+1] = +1 */
+        R->data[(int64_t)(i + 1) * dh + (i)] = -1.0f;   /* R[2p+1,2p] = -1 */
+    }
+    MooValue v; v.tag = MOO_TENSOR; moo_val_set_ptr(&v, R);
+    return v;
+}
+
+/* cos/sin [rows, dh] fuer absolute Positionen p0..p0+rows-1 (grad-los).
+ * angle(p,i) = p * basis^(-(2i)/dh); beide Paar-Komponenten teilen cos/sin. */
+static bool rope_cossin(int32_t rows, int32_t dh, int32_t p0, double basis,
+                        MooValue* cos_out, MooValue* sin_out) {
+    int32_t shape[2] = { rows, dh };
+    MooTensor* c = moo_tensor_raw(2, shape);
+    MooTensor* s = moo_tensor_raw(2, shape);
+    if (!c || !s) {
+        if (c) { MooValue cv; cv.tag = MOO_TENSOR; moo_val_set_ptr(&cv, c); moo_release(cv); }
+        if (s) { MooValue sv; sv.tag = MOO_TENSOR; moo_val_set_ptr(&sv, s); moo_release(sv); }
+        return false;
+    }
+    for (int32_t r = 0; r < rows; r++) {
+        double p = (double)(p0 + r);
+        for (int32_t i = 0; i < dh / 2; i++) {
+            double freq = pow(basis, -((double)(2 * i)) / (double)dh);
+            double ang = p * freq;
+            float cf = (float)cos(ang);
+            float sf = (float)sin(ang);
+            c->data[(int64_t)r * dh + (2 * i)]     = cf;
+            c->data[(int64_t)r * dh + (2 * i + 1)] = cf;
+            s->data[(int64_t)r * dh + (2 * i)]     = sf;
+            s->data[(int64_t)r * dh + (2 * i + 1)] = sf;
+        }
+    }
+    cos_out->tag = MOO_TENSOR; moo_val_set_ptr(cos_out, c);
+    sin_out->tag = MOO_TENSOR; moo_val_set_ptr(sin_out, s);
+    return true;
+}
+
+/* rope(t) = t (*) cos + (t @ R) (*) sin. Gibt +1-Tensor (oder none). */
+static MooValue rope_anwenden(MooValue t, MooValue cosv, MooValue sinv,
+                              MooValue R) {
+    MooValue tc = moo_tensor_mul(t, cosv);
+    MooValue tR = moo_tensor_matmul(t, R);
+    MooValue ts = (tR.tag == MOO_TENSOR) ? moo_tensor_mul(tR, sinv) : moo_none();
+    MooValue out = (tc.tag == MOO_TENSOR && ts.tag == MOO_TENSOR)
+                   ? moo_tensor_add(tc, ts) : moo_none();
+    moo_release(tc); moo_release(tR); moo_release(ts);
+    return out;
+}
+
+/* ============================================================
+ * KIP-B2: KV-Cache-Zugriff ueber EINEN Indirektionspunkt (X2 §2.4)
+ * ============================================================
+ * Alle Lese-/Schreib-/Laengen-Zugriffe auf cache_k{g}/cache_v{g} laufen
+ * hier durch => Paged-KV ist spaeter ein lokaler Umbau. */
+static void cache_kv_lesen(MooValue schicht, int32_t g, MooValue* k, MooValue* v) {
+    char name[24];
+    snprintf(name, sizeof(name), "cache_k%d", g);
+    *k = dget(schicht, name);            /* +1 oder none */
+    snprintf(name, sizeof(name), "cache_v%d", g);
+    *v = dget(schicht, name);
+}
+static void cache_kv_schreiben(MooValue schicht, int32_t g, MooValue k, MooValue v) {
+    char name[24];
+    snprintf(name, sizeof(name), "cache_k%d", g);
+    dset(schicht, name, k);              /* Transfer ins Dict */
+    snprintf(name, sizeof(name), "cache_v%d", g);
+    dset(schicht, name, v);
+}
+/* t_alt = Cache-Laenge VOR dem Append = EINZIGE Positionsquelle (X2 §2.2),
+ * identisch zum t_alt der cache_maske (t_ges - t_neu). 0 = frischer Cache. */
+static int32_t cache_laenge(MooValue schicht) {
+    MooValue k0 = dget(schicht, "cache_k0");
+    int32_t n = (k0.tag == MOO_TENSOR) ? T(k0)->shape[0] : 0;
+    moo_release(k0);
+    return n;
+}
+
 /* KI-M2c: Attention-Forward MIT KV-Cache — NUR Inferenz (der Dispatcher in
  * fw_attention prueft autograd). x = NEUER Token-Block [t_neu, dim]; K/V
  * des Blocks werden pro KV-Gruppe an cache_k{g}/cache_v{g} angehaengt
@@ -786,6 +920,22 @@ static MooValue fw_attention_cache(MooValue schicht, MooValue x, int32_t nd,
     MooValue kg[16], vg[16];   /* kv <= koepfe <= 16 (Konstruktor-Invariante) */
     for (int32_t g = 0; g < kv; g++) { kg[g] = moo_none(); vg[g] = moo_none(); }
     bool fehler = false;
+    /* KIP-B2: RoPE — t_alt = Cache-Laenge VOR dem Append (EINZIGE Positions-
+     * quelle, X2 §2.2). cos/sin/R einmal fuer die neuen Zeilen (Positionen
+     * t_alt .. t_alt+t_neu-1). */
+    bool rope_an = (dnum(schicht, "rope", 0.0) == 1.0);
+    double rope_basis = dnum(schicht, "rope_basis", 10000.0);
+    int32_t t_alt = cache_laenge(schicht);
+    MooValue rcos = moo_none(), rsin = moo_none(), rmat = moo_none();
+    if (rope_an) {
+        if (!rope_cossin(t_neu, dh, t_alt, rope_basis, &rcos, &rsin))
+            return moo_none();
+        rmat = rope_matrix(dh);
+        if (rmat.tag != MOO_TENSOR) {
+            moo_release(rcos); moo_release(rsin);
+            return moo_none();
+        }
+    }
     for (int32_t g = 0; g < kv && !fehler; g++) {
         snprintf(name, sizeof(name), "wk%d", g);
         MooValue wk = dget(schicht, name);
@@ -799,8 +949,16 @@ static MooValue fw_attention_cache(MooValue schicht, MooValue x, int32_t nd,
             fehler = true;
             break;
         }
-        snprintf(name, sizeof(name), "cache_k%d", g);
-        MooValue ka = dget(schicht, name);
+        /* KIP-B2: neues K bei Positionen t_alt.. rotieren -> der Cache speichert
+         * ROTIERTE K (X2 §2.1). V bleibt unrotiert. */
+        if (rope_an) {
+            MooValue kr = rope_anwenden(kn, rcos, rsin, rmat);
+            moo_release(kn);
+            if (kr.tag != MOO_TENSOR) { moo_release(vn); fehler = true; break; }
+            kn = kr;
+        }
+        MooValue ka, va;
+        cache_kv_lesen(schicht, g, &ka, &va);   /* EIN Indirektionspunkt */
         if (ka.tag == MOO_TENSOR) {
             kg[g] = moo_tensor_verbinden(ka, kn);
             moo_release(ka); moo_release(kn);
@@ -808,8 +966,6 @@ static MooValue fw_attention_cache(MooValue schicht, MooValue x, int32_t nd,
             moo_release(ka);
             kg[g] = kn;
         }
-        snprintf(name, sizeof(name), "cache_v%d", g);
-        MooValue va = dget(schicht, name);
         if (va.tag == MOO_TENSOR) {
             vg[g] = moo_tensor_verbinden(va, vn);
             moo_release(va); moo_release(vn);
@@ -821,12 +977,14 @@ static MooValue fw_attention_cache(MooValue schicht, MooValue x, int32_t nd,
     }
     if (fehler) {
         for (int32_t g = 0; g < kv; g++) { moo_release(kg[g]); moo_release(vg[g]); }
+        moo_release(rcos); moo_release(rsin); moo_release(rmat);
         return moo_none();
     }
     int32_t t_ges = T(kg[0])->shape[0];
     MooValue maske = cache_maske(t_neu, t_ges, sliding, fenster);
     if (maske.tag != MOO_TENSOR) {
         for (int32_t g = 0; g < kv; g++) { moo_release(kg[g]); moo_release(vg[g]); }
+        moo_release(rcos); moo_release(rsin); moo_release(rmat);
         return moo_none();
     }
     MooValue skal = moo_number(1.0 / sqrt((double)dh));
@@ -837,6 +995,11 @@ static MooValue fw_attention_cache(MooValue schicht, MooValue x, int32_t nd,
         MooValue wq = dget(schicht, name);
         MooValue q = moo_tensor_matmul(x, wq);
         moo_release(wq);
+        if (rope_an && q.tag == MOO_TENSOR) {   /* KIP-B2: Q bei t_alt.. rotieren */
+            MooValue qr = rope_anwenden(q, rcos, rsin, rmat);
+            moo_release(q);
+            q = qr;
+        }
         MooValue kt = moo_tensor_transponieren(kg[g]);
         MooValue s = (q.tag == MOO_TENSOR && kt.tag == MOO_TENSOR)
                      ? moo_tensor_matmul(q, kt) : moo_none();
@@ -859,14 +1022,12 @@ static MooValue fw_attention_cache(MooValue schicht, MooValue x, int32_t nd,
         }
     }
     moo_release(maske);
-    /* Cache aktualisieren: Gesamt-K/V per Transfer ins Dict (dset ersetzt
-     * den alten Wert) — auch im Fehlerfall konsistent, kein Doppel-Release. */
-    for (int32_t g = 0; g < kv; g++) {
-        snprintf(name, sizeof(name), "cache_k%d", g);
-        dset(schicht, name, kg[g]);
-        snprintf(name, sizeof(name), "cache_v%d", g);
-        dset(schicht, name, vg[g]);
-    }
+    moo_release(rcos); moo_release(rsin); moo_release(rmat);
+    /* Cache aktualisieren: rotierte Gesamt-K + V per Transfer ins Dict ueber
+     * EINEN Indirektionspunkt (X2 §2.4) — auch im Fehlerfall konsistent, kein
+     * Doppel-Release. */
+    for (int32_t g = 0; g < kv; g++)
+        cache_kv_schreiben(schicht, g, kg[g], vg[g]);
     if (fehler || acc.tag != MOO_TENSOR) {
         moo_release(acc);
         return moo_none();
@@ -930,6 +1091,22 @@ static MooValue fw_attention(MooValue schicht, MooValue x) {
         : causal_maske(seq);
     if (maske.tag != MOO_TENSOR) return moo_none();
     MooValue skal = moo_number(1.0 / sqrt((double)dh));
+    /* KIP-B2: RoPE fuer den Voll-Pfad — Positionen 0..seq-1 (p0=0). Selbe
+     * cos/sin/R fuer alle Koepfe/Gruppen (haengen nur von Position+dh ab). */
+    bool rope_an = (dnum(schicht, "rope", 0.0) == 1.0);
+    MooValue rcos = moo_none(), rsin = moo_none(), rmat = moo_none();
+    if (rope_an) {
+        double rope_basis = dnum(schicht, "rope_basis", 10000.0);
+        if (!rope_cossin(seq, dh, 0, rope_basis, &rcos, &rsin)) {
+            moo_release(maske);
+            return moo_none();
+        }
+        rmat = rope_matrix(dh);
+        if (rmat.tag != MOO_TENSOR) {
+            moo_release(maske); moo_release(rcos); moo_release(rsin);
+            return moo_none();
+        }
+    }
 
     /* Koepfe rechnen und entlang Achse 1 sammeln: verbinden ist Achse 0,
      * also transpose -> concat -> am Ende zurueck-transponieren. */
@@ -948,6 +1125,14 @@ static MooValue fw_attention(MooValue schicht, MooValue x) {
         MooValue k = moo_tensor_matmul(x, wk);
         MooValue v = moo_tensor_matmul(x, wv);
         moo_release(wq); moo_release(wk); moo_release(wv);
+        if (rope_an) {   /* KIP-B2: Q + K bei Positionen 0..seq-1 rotieren */
+            MooValue qr = (q.tag == MOO_TENSOR)
+                          ? rope_anwenden(q, rcos, rsin, rmat) : moo_none();
+            MooValue kr = (k.tag == MOO_TENSOR)
+                          ? rope_anwenden(k, rcos, rsin, rmat) : moo_none();
+            moo_release(q); moo_release(k);
+            q = qr; k = kr;
+        }
         MooValue kt = moo_tensor_transponieren(k);
         MooValue s = moo_tensor_matmul(q, kt);
         MooValue ss = moo_tensor_muls(s, skal);
@@ -969,6 +1154,7 @@ static MooValue fw_attention(MooValue schicht, MooValue x) {
         }
     }
     moo_release(maske);
+    moo_release(rcos); moo_release(rsin); moo_release(rmat);
     if (fehler || acc.tag != MOO_TENSOR) {
         moo_release(acc);
         return moo_none();
@@ -1243,6 +1429,24 @@ MooValue moo_nn_vorwaerts(MooValue netz, MooValue x) {
     if (l->length == 0) {
         moo_throw(moo_error("vorwaerts: das Netz ist leer"));
         return moo_none();
+    }
+    /* KIP-B2: Doppel-Positions-Guard (X2 §2) — eine additive position-Schicht
+     * UND eine attention-Schicht mit RoPE im selben Netz waere doppelte
+     * Positionscodierung. Einmaliger Scan vor dem Forward. */
+    {
+        bool hat_pos = false, hat_rope = false;
+        for (int32_t i = 0; i < l->length; i++) {
+            MooValue si = l->items[i];
+            if (nn_ist(si, "position")) hat_pos = true;
+            else if (nn_ist(si, "attention") && dnum(si, "rope", 0.0) == 1.0)
+                hat_rope = true;
+        }
+        if (hat_pos && hat_rope) {
+            moo_throw(moo_error("vorwaerts: additive Positions-Schicht UND "
+                                "Attention mit RoPE zusammen ergeben doppelte "
+                                "Positionscodierung — nutze nur eins von beidem"));
+            return moo_none();
+        }
     }
     moo_retain(x);
     MooValue cur = x;

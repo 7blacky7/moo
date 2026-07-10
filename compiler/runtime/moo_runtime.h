@@ -184,6 +184,7 @@ void moo_tensor_store_sichern(MooTensor* t);  // sichert dtype-`store`  (MOO_V_S
 void moo_tensor_host_sichern(MooTensor* t);   // sichert Host-Sicht (Download GPU->CPU) — G1
 void moo_tensor_nach_gpu(MooTensor* t);       // GPU-resident machen (Upload) — G1, idempotent
 void moo_tensor_nach_cpu(MooTensor* t);       // Host-resident machen (Download) — G1, idempotent
+void moo_tensor_bf16_runden(MooTensor* t);    // KIP-D2: f32-`data` in-place auf bf16-Praezision runden (Aktivierungs-Storage-Numerik)
 
 // === Tensor-Ops + Registry (Plan-014 A2) ===
 // Alle Ops: Tensor-Konvention (Args borrowed, Rueckgabe +1 owning).
@@ -271,6 +272,12 @@ MooValue moo_ag_reset(void);                         // Tape leeren (Nodes relea
 MooValue moo_ag_an(void);                            // Aufzeichnung an
 MooValue moo_ag_aus(void);                            // Aufzeichnung aus (Inferenz)
 bool moo_ag_ist_an(void);                             // Zustand (D1: vorhersage)
+// KIP-D2 Mixed-Precision-Training an/aus. AUS = Default (keine Verhaltens-
+// aenderung -> Basisgates unveraendert). AN = Op-Output-Aktivierungen werden auf
+// bf16-Praezision gerundet; Parameter-Master/Gradienten/Optimizer bleiben f32.
+// Opt-in per Setter ODER Umgebungsvariable MOO_KI_BF16=1 (einmalig lazy gelesen).
+void moo_ag_bf16_setzen(bool an);
+bool moo_ag_bf16_an(void);
 
 // === NN-Schichten + Loss + Optimizer (Plan-014 C1, moo_nn.c) ===
 // Schichten/Optimizer sind DICTS (Marker-Key "__nn"), Parameter sind
@@ -284,7 +291,7 @@ MooValue moo_nn_schicht_layernorm(MooValue dim);
 MooValue moo_nn_schicht_rmsnorm(MooValue dim);                                   // KIP-B1: y = x*rsqrt(mean(x^2)+eps)*g
 MooValue moo_nn_schicht_ffn_gated(MooValue dim, MooValue versteckt, MooValue art);  // KIP-B3: SwiGLU/Gated-FFN
 MooValue moo_nn_schicht_embedding(MooValue vokabular, MooValue dim, MooValue seed);
-MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed, MooValue kv_koepfe, MooValue maske, MooValue fenster);      // G1 + KI-M2a (GQA) + KI-M2b (Sliding)
+MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed, MooValue kv_koepfe, MooValue maske, MooValue fenster, MooValue rope);      // G1 + KI-M2a (GQA) + KI-M2b (Sliding) + KIP-B2 (RoPE)
 MooValue moo_nn_schicht_position(MooValue max_laenge, MooValue dim, MooValue art, MooValue seed);  // G1
 MooValue moo_nn_schicht_moe(MooValue dim, MooValue versteckt, MooValue n_experten, MooValue k, MooValue seed);  // KI-M1
 MooValue moo_nn_moe_balance(MooValue netz);   // KI-M1: Balance-Verlust Gl. 12 (nach vorwaerts)
@@ -318,6 +325,12 @@ MooValue moo_nn_genauigkeit(MooValue netz, MooValue x, MooValue y);
 MooValue moo_nn_speichern(MooValue netz, MooValue pfad);
 MooValue moo_nn_laden(MooValue pfad);
 MooValue moo_nn_safetensors(MooValue pfad);   // F1: Fremd-Import -> Dict {name: Tensor}
+// KIP-E2: CPU-Voll-Checkpoint v2 (moo_nn_easy.c) — atomischer .mook-Superset:
+// Modell-Gewichte + Optimizer (m/v/t) + Dropout-Zaehler + Dataloader-Position
+// + Schritt + Tokenizer-/Arch-Version. Resume bit-identisch (f32; bf16 via D3).
+MooValue moo_nn_ckpt_speichern(MooValue zustand, MooValue pfad);            // atomisch (tmp+rename)
+MooValue moo_nn_ckpt_laden(MooValue pfad, MooValue erwartungen);           // erwartungen=none|Dict -> Versions-Check wirft bei Mismatch
+MooValue moo_nn_ckpt_rotieren(MooValue verzeichnis, MooValue praefix, MooValue behalte);  // letzte N + best behalten
 // GPU2 (Plan-014, moo_ki_gpu.c): Vulkan-Compute fuer matmul/elementwise/
 // Voll-Reduktion. false = nicht ausgefuehrt (kein Vulkan-Build, unter
 // Schwelle, Init-/Laufzeitfehler) -> Aufrufer nimmt den CPU-Pfad.

@@ -90,6 +90,31 @@ static MooValue mk_dicht(int ein, int aus, const char* akt, double seed) {
     return d;
 }
 
+/* KIP-B2 Gate-Helfer: Decode via KV-Cache (token-weise) == Nicht-Cache-Voll-
+ * Forward, BIT-identisch. at wird wiederverwendbar zurueckgelassen (cache-Flag
+ * 0, Cache leer). autograd wird aus/wieder-an geschaltet (Cache = Inferenz). */
+static bool rope_decode_gleich_voll(MooValue at, int seq, int dim, const float* xv) {
+    moo_ag_aus();
+    MooValue xf = t2(seq, dim, xv);
+    MooValue yfull = moo_nn_vorwaerts(at, xf);        /* Voll, kein Cache */
+    bool ok = (yfull.tag == MOO_TENSOR);
+    moo_dict_set(at, moo_string_new("cache"), moo_number(1.0));
+    moo_nn_cache_leeren(at);
+    for (int i = 0; i < seq && ok; i++) {
+        MooValue xi = t2(1, dim, &xv[i * dim]);
+        MooValue yi = moo_nn_vorwaerts(at, xi);       /* 1 Token via Cache */
+        if (yi.tag != MOO_TENSOR) { ok = false; moo_release(xi); break; }
+        for (int j = 0; j < dim && ok; j++)
+            ok = (T(yi)->data[j] == T(yfull)->data[i * dim + j]);
+        moo_release(yi); moo_release(xi);
+    }
+    moo_dict_set(at, moo_string_new("cache"), moo_number(0.0));
+    moo_nn_cache_leeren(at);
+    moo_release(yfull); moo_release(xf);
+    moo_ag_an();
+    return ok;
+}
+
 int main(void) {
     /* ===== 1. schicht_dicht: Konstruktion ===== */
     MooValue d1 = mk_dicht(2, 3, "keine", 7);
@@ -718,7 +743,7 @@ int main(void) {
         /* a) Attention: Shape + CAUSAL-Beweis + Grad-Fluss */
         MooValue at = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
                                                moo_number(7.0), moo_none(),
-                                               moo_none(), moo_none());
+                                               moo_none(), moo_none(), moo_none());
         CHECK(at.tag == MOO_DICT, "schicht_attention baut Dict");
         float xv[32];
         for (int i = 0; i < 32; i++) xv[i] = (float)(i % 5) * 0.1f;
@@ -811,7 +836,7 @@ int main(void) {
                         moo_number(8.0), moo_none(), moo_number(11.0)));
         moo_list_append(schichten, moo_nn_schicht_attention(moo_number(8.0),
                         moo_number(2.0), moo_number(12.0), moo_none(),
-                        moo_none(), moo_none()));
+                        moo_none(), moo_none(), moo_none()));
         moo_list_append(schichten, mk_dicht(8, 3, "keine", 13));
         MooValue netz = moo_nn_ki_netz(schichten);
         float xv[32];
@@ -950,6 +975,168 @@ int main(void) {
         moo_release(y1); moo_release(y2); moo_release(netz2);
         moo_release(pf); moo_release(x2); moo_release(netz);
         moo_release(schichten);
+        moo_ag_reset();
+    }
+
+    /* ===== 18. RoPE in Attention (KIP-B2) ===== */
+    {
+        MooValue r_on = moo_number(10000.0);   /* inline (MOO_NUMBER) -> reusebar */
+        float xv[48];
+        for (int i = 0; i < 48; i++) xv[i] = (float)((i * 13) % 17) * 0.07f - 0.6f;
+
+        /* a) even head_dim: dh=4 baut; odd dh=3 (dim6/koepfe2) wirft (Negativ) */
+        MooValue at_ok = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                          moo_number(7.0), moo_none(), moo_none(), moo_none(), r_on);
+        CHECK(at_ok.tag == MOO_DICT, "rope: even head_dim (dh=4) baut Schicht");
+        fehler_reset();
+        MooValue at_odd = moo_nn_schicht_attention(moo_number(6.0), moo_number(2.0),
+                          moo_number(7.0), moo_none(), moo_none(), moo_none(), r_on);
+        CHECK(moo_error_flag == 1 && at_odd.tag != MOO_DICT,
+              "rope: NEGATIV — odd head_dim (dh=3) wirft");
+        fehler_reset();
+
+        /* b) rope wirkt; Position 0 (cos=1,sin=0) BIT-identisch zu ohne rope */
+        MooValue x4 = t2(4, 8, xv);
+        MooValue y_rope = moo_nn_vorwaerts(at_ok, x4);
+        MooValue at_no = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                          moo_number(7.0), moo_none(), moo_none(), moo_none(), moo_none());
+        MooValue y_no = moo_nn_vorwaerts(at_no, x4);
+        bool wirkt = false;
+        bool zeile0 = (y_rope.tag == MOO_TENSOR && y_no.tag == MOO_TENSOR);
+        for (int i = 0; i < 32 && y_rope.tag==MOO_TENSOR && y_no.tag==MOO_TENSOR; i++)
+            if (T(y_rope)->data[i] != T(y_no)->data[i]) wirkt = true;
+        for (int j = 0; j < 8 && zeile0; j++)
+            zeile0 = (T(y_rope)->data[j] == T(y_no)->data[j]);
+        CHECK(wirkt, "rope: veraendert den Output (Rotation wirkt)");
+        CHECK(zeile0, "rope: Position 0 (cos=1,sin=0) BIT-identisch zu ohne rope");
+        moo_release(y_rope); moo_release(y_no); moo_release(at_no);
+
+        /* Grad-Fluss durch RoPE in alle 7 Parameter */
+        moo_ag_reset();
+        MooValue xg = moo_tensor_mit_gradient(x4);
+        MooValue yg = moo_nn_vorwaerts(at_ok, xg);
+        MooValue mg = moo_tensor_mittel(yg, moo_none());
+        moo_release(moo_tensor_rueckwaerts(mg));
+        MooValue ps = moo_nn_parameter(at_ok);
+        bool grads = (ps.tag == MOO_LIST && MV_LIST(ps)->length == 7);
+        for (int32_t i = 0; ps.tag==MOO_LIST && i < MV_LIST(ps)->length; i++) {
+            MooTensor* p = MV_TENSOR(MV_LIST(ps)->items[i]);
+            bool einer = false;
+            if (p->grad)
+                for (int64_t j = 0; j < p->size && !einer; j++)
+                    if (p->grad[j] != 0.0f) einer = true;
+            grads = grads && einer;
+        }
+        CHECK(grads, "rope: Gradient fliesst durch RoPE in alle 7 Parameter");
+        moo_release(ps); moo_release(mg); moo_release(yg); moo_release(xg);
+        moo_release(x4); moo_release(at_ok);
+        moo_ag_reset();
+
+        /* c) KERN-GATE (MHA): Decode via Cache == Nicht-Cache-Voll bit-ident */
+        MooValue at_mha = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                          moo_number(7.0), moo_none(), moo_none(), moo_none(), r_on);
+        CHECK(rope_decode_gleich_voll(at_mha, 5, 8, xv),
+              "rope MHA: Decode via Cache == Nicht-Cache BIT-identisch");
+
+        /* d) chunked Prefill (2+3) == Nicht-Cache-Voll bit-ident */
+        moo_ag_aus();
+        MooValue xf = t2(5, 8, xv);
+        MooValue yfull = moo_nn_vorwaerts(at_mha, xf);   /* Nicht-Cache */
+        moo_dict_set(at_mha, moo_string_new("cache"), moo_number(1.0));
+        moo_nn_cache_leeren(at_mha);
+        MooValue xa = t2(2, 8, &xv[0]);
+        MooValue ya = moo_nn_vorwaerts(at_mha, xa);      /* Cache: erste 2 */
+        MooValue xb = t2(3, 8, &xv[16]);
+        MooValue yb = moo_nn_vorwaerts(at_mha, xb);      /* Cache: naechste 3 */
+        bool chunk = (yfull.tag==MOO_TENSOR && ya.tag==MOO_TENSOR && yb.tag==MOO_TENSOR);
+        for (int i = 0; i < 2 && chunk; i++)
+            for (int j = 0; j < 8 && chunk; j++)
+                chunk = (T(ya)->data[i*8+j] == T(yfull)->data[i*8+j]);
+        for (int i = 0; i < 3 && chunk; i++)
+            for (int j = 0; j < 8 && chunk; j++)
+                chunk = (T(yb)->data[i*8+j] == T(yfull)->data[(2+i)*8+j]);
+        CHECK(chunk, "rope: chunked Prefill (2+3) == Voll BIT-identisch");
+
+        /* e) Cache-Reset: nach leeren frischer Voll-Prefill (t_alt=0) == Voll */
+        moo_nn_cache_leeren(at_mha);
+        MooValue yreset = moo_nn_vorwaerts(at_mha, xf);
+        bool reset_ok = (yreset.tag==MOO_TENSOR && yfull.tag==MOO_TENSOR);
+        for (int64_t i = 0; i < 40 && reset_ok; i++)
+            reset_ok = (T(yreset)->data[i] == T(yfull)->data[i]);
+        CHECK(reset_ok, "rope: Cache-Reset -> frischer Prefill == Voll (t_alt=0)");
+        moo_dict_set(at_mha, moo_string_new("cache"), moo_number(0.0));
+        moo_nn_cache_leeren(at_mha);
+        moo_ag_an();
+        moo_release(yfull); moo_release(ya); moo_release(yb); moo_release(yreset);
+        moo_release(xa); moo_release(xb); moo_release(xf); moo_release(at_mha);
+
+        /* f) MQA (kv=1) + GQA (koepfe4/kv2, dh=2) + rope: Decode == Voll */
+        MooValue at_mqa = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                          moo_number(7.0), moo_number(1.0), moo_none(), moo_none(), r_on);
+        CHECK(rope_decode_gleich_voll(at_mqa, 5, 8, xv),
+              "rope MQA (kv=1): Decode via Cache == Nicht-Cache BIT-identisch");
+        moo_release(at_mqa);
+        MooValue at_gqa = moo_nn_schicht_attention(moo_number(8.0), moo_number(4.0),
+                          moo_number(7.0), moo_number(2.0), moo_none(), moo_none(), r_on);
+        CHECK(rope_decode_gleich_voll(at_gqa, 5, 8, xv),
+              "rope GQA (koepfe4/kv2, dh=2): Decode via Cache == Nicht-Cache BIT-identisch");
+        moo_release(at_gqa);
+
+        /* g) Sliding-Window (W=2) + rope: Decode == Voll */
+        MooValue msl = moo_string_new("sliding");
+        MooValue at_sl = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                          moo_number(7.0), moo_none(), msl, moo_number(2.0), r_on);
+        moo_release(msl);
+        CHECK(rope_decode_gleich_voll(at_sl, 6, 8, xv),
+              "rope Sliding (W=2): Decode via Cache == Nicht-Cache BIT-identisch");
+        moo_release(at_sl);
+
+        /* h) Doppel-Positions-Guard: position (additiv) + attention(rope) wirft */
+        fehler_reset();
+        MooValue guard = moo_list_new(2);
+        moo_list_append(guard, moo_nn_schicht_position(moo_number(4.0), moo_number(8.0),
+                        moo_none(), moo_number(3.0)));
+        moo_list_append(guard, moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                        moo_number(7.0), moo_none(), moo_none(), moo_none(), r_on));
+        MooValue gx = t2(4, 8, xv);
+        MooValue gy = moo_nn_vorwaerts(guard, gx);
+        CHECK(moo_error_flag == 1 && gy.tag != MOO_TENSOR,
+              "rope: Doppel-Positions-Guard (position + rope) wirft");
+        fehler_reset();
+        moo_release(gy); moo_release(gx); moo_release(guard);
+        /* Gegenprobe: position + attention OHNE rope laeuft (kein Fehlalarm) */
+        MooValue ok2 = moo_list_new(2);
+        moo_list_append(ok2, moo_nn_schicht_position(moo_number(4.0), moo_number(8.0),
+                        moo_none(), moo_number(3.0)));
+        moo_list_append(ok2, moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                        moo_number(7.0), moo_none(), moo_none(), moo_none(), moo_none()));
+        MooValue ox = t2(4, 8, xv);
+        MooValue oy = moo_nn_vorwaerts(ok2, ox);
+        CHECK(oy.tag == MOO_TENSOR,
+              "rope: position + attention OHNE rope laeuft (kein Fehlalarm)");
+        moo_release(oy); moo_release(ox); moo_release(ok2);
+        moo_ag_reset();
+
+        /* i) .mook-Roundtrip: rope-Konfig ueberlebt (Vorhersage BIT-gleich) */
+        MooValue sch = moo_list_new(1);
+        moo_list_append(sch, moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                        moo_number(7.0), moo_none(), moo_none(), moo_none(), r_on));
+        MooValue netz = moo_nn_ki_netz(sch);
+        MooValue rx = t2(4, 8, xv);
+        MooValue ry1 = moo_nn_vorwaerts(netz, rx);
+        MooValue pf = moo_string_new("/tmp/test_b2_rope.mook");
+        moo_release(moo_nn_speichern(netz, pf));
+        MooValue netz2 = moo_nn_laden(pf);
+        CHECK(netz2.tag == MOO_DICT, "rope-.mook laedt");
+        MooValue ry2 = moo_nn_vorwaerts(netz2, rx);
+        bool rgleich = (ry1.tag==MOO_TENSOR && ry2.tag==MOO_TENSOR &&
+                        T(ry1)->size == T(ry2)->size);
+        for (int64_t i = 0; rgleich && i < T(ry1)->size; i++)
+            rgleich = (T(ry1)->data[i] == T(ry2)->data[i]);
+        CHECK(rgleich, "rope-Roundtrip: Vorhersage BIT-gleich (rope-Konfig erhalten)");
+        remove("/tmp/test_b2_rope.mook");
+        moo_release(ry1); moo_release(ry2); moo_release(netz2);
+        moo_release(pf); moo_release(rx); moo_release(netz); moo_release(sch);
         moo_ag_reset();
     }
 
