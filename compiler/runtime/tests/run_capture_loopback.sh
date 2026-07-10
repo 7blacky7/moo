@@ -5,7 +5,7 @@ if [[ "${MOO_CAPTURE_LOOPBACK:-0}" != "1" ]]; then
   echo "SKIP: setze MOO_CAPTURE_LOOPBACK=1 auf einem privilegierten Linux-Runner"
   exit 77
 fi
-for cmd in ffmpeg speaker-test v4l2-ctl; do
+for cmd in ffmpeg speaker-test aplay v4l2-ctl; do
   command -v "$cmd" >/dev/null || { echo "SKIP: $cmd fehlt"; exit 77; }
 done
 

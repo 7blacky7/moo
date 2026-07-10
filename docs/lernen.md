@@ -1209,6 +1209,10 @@ nicht unterstützte Formate, Disconnect/BROKEN, nicht reparierbaren
 XRUN/Suspend und bereits geschlossene Handles. Ein Audio-Timeout liefert
 niemals einen still verkürzten Tensor. Vollständige Beispiele:
 `beispiele/ki_kamera_live.moo` und `beispiele/ki_mikro_spektrum.moo`.
+Das zusätzliche privilegierte Integrationsgate
+`compiler/runtime/tests/run_capture_loopback.sh` verwendet ein echtes
+`v4l2loopback`-Gerät plus `snd-aloop`; ohne diese Runner-Voraussetzungen
+meldet es transparent Skip 77 statt einen Scheinerfolg.
 
 ## Tipps für Anfänger
 
