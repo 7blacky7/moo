@@ -1,0 +1,128 @@
+# ============================================================
+# fighter_selftest.moo — Gameplay-Selftest für fighter.moo
+#
+# Treibt spiel_schritt(i1, i2) deterministisch: P2 läuft zu P1
+# und prügelt ihn nieder (P1 passiv) -> P2 GEWINNT; danach
+# Block-Mechanik (reduzierter Schaden) und R-Neustart.
+#
+# Start:
+#   FIGHTER_SELFTEST=1 xvfb-run -a -s "-screen 0 800x600x24" \
+#     ./compiler/target/release/moo-compiler run beispiele/fighter_selftest.moo
+# ============================================================
+
+importiere fighter
+
+setze out auf umgebung("SELFTEST_OUT")
+wenn out == nichts:
+    setze out auf "/tmp"
+
+setze fehler auf 0
+
+funktion pruefe(name, ok):
+    wenn ok:
+        zeige "ASSERT OK   " + name
+        gib_zurück 0
+    zeige "ASSERT FAIL " + name
+    gib_zurück 1
+
+funktion inp_leer():
+    setze d auf {}
+    d["links"] = falsch
+    d["rechts"] = falsch
+    d["hoch"] = falsch
+    d["schlag"] = falsch
+    d["block"] = falsch
+    d["neustart"] = falsch
+    gib_zurück d
+
+zeige "=== fighter Gameplay-Selftest ==="
+setze win auf fenster_erstelle("fighter selftest", BREITE, HOEHE)
+setze spr_pfad auf "beispiele/assets/sprites/kenney_platformer/PNG/Characters/"
+setze sprs auf {}
+sprs["p1_idle"] = sprite_laden(win, spr_pfad + "platformChar_idle.png")
+sprs["p1_walk"] = sprite_laden(win, spr_pfad + "platformChar_walk1.png")
+sprs["p1_jump"] = sprite_laden(win, spr_pfad + "platformChar_jump.png")
+sprs["p1_duck"] = sprite_laden(win, spr_pfad + "platformChar_duck.png")
+sprs["p2_idle"] = sprite_laden(win, spr_pfad + "platformChar_happy.png")
+sprs["p2_walk"] = sprite_laden(win, spr_pfad + "platformChar_walk2.png")
+sprs["p2_jump"] = sprite_laden(win, spr_pfad + "platformChar_climb1.png")
+sprs["p2_duck"] = sprite_laden(win, spr_pfad + "platformChar_climb2.png")
+
+# ------------------------------------------------------------
+# Phase 0: Startzustand + Render-Stichprobe
+# ------------------------------------------------------------
+neustart()
+setze fehler auf fehler + pruefe("start: beide 100 hp", S["p1_hp"] == 100 und S["p2_hp"] == 100)
+setze fehler auf fehler + pruefe("start: kampf laeuft", S["modus"] == 0)
+welt_zeichnen(win, sprs)
+setze f0 auf test_frame_grab(win)
+setze r_bar auf test_frame_region(f0, 40, 22, 100, 14)
+setze fehler auf fehler + pruefe("p1 hp-balken voll gruen", r_bar["gruen"] > 130 und r_bar["rot"] < 120)
+test_frame_save_png(f0, out + "/fighter_01_start.png")
+zeige "screenshot: " + out + "/fighter_01_start.png"
+fenster_aktualisieren(win)
+
+# ------------------------------------------------------------
+# Phase 1: Block-Mechanik — P1 blockt den ersten Treffer
+# ------------------------------------------------------------
+# P2 läuft in Reichweite
+setze z auf 0
+solange S["p2_x"] - S["p1_x"] > 60 und z < 300:
+    setze i2 auf inp_leer()
+    i2["links"] = wahr
+    spiel_schritt(inp_leer(), i2)
+    setze z auf z + 1
+setze fehler auf fehler + pruefe("p2 in reichweite", S["p2_x"] - S["p1_x"] <= 60)
+
+setze hp_vorher auf S["p1_hp"]
+setze z auf 0
+solange S["p1_hp"] == hp_vorher und z < 100:
+    setze i1 auf inp_leer()
+    i1["block"] = wahr
+    setze i2 auf inp_leer()
+    i2["schlag"] = wahr
+    spiel_schritt(i1, i2)
+    setze z auf z + 1
+setze fehler auf fehler + pruefe("block: nur 4 schaden statt 10", S["p1_hp"] == hp_vorher - 4)
+
+# ------------------------------------------------------------
+# Phase 2: P2 prügelt P1 nieder (P1 passiv) -> P2 GEWINNT
+# ------------------------------------------------------------
+setze z auf 0
+solange S["modus"] == 0 und z < 3000:
+    setze i2 auf inp_leer()
+    i2["schlag"] = wahr
+    # nachlaufen falls Knockback P1 wegschiebt
+    wenn S["p2_x"] - S["p1_x"] > 60:
+        i2["links"] = wahr
+    wenn S["p1_x"] - S["p2_x"] > 60:
+        i2["rechts"] = wahr
+    spiel_schritt(inp_leer(), i2)
+    setze z auf z + 1
+setze fehler auf fehler + pruefe("runde vorbei", S["modus"] == 1)
+setze fehler auf fehler + pruefe("p2 gewinnt", S["gewinner"] == 2)
+setze fehler auf fehler + pruefe("p1 hp exakt 0", S["p1_hp"] == 0)
+
+welt_zeichnen(win, sprs)
+setze f_ende auf test_frame_grab(win)
+setze r_ov auf test_frame_region(f_ende, 160, 210, 40, 40)
+setze fehler auf fehler + pruefe("sieger-overlay rot (P2)", r_ov["rot"] == 78 und r_ov["gruen"] == 13)
+test_frame_save_png(f_ende, out + "/fighter_02_p2_gewinnt.png")
+zeige "screenshot: " + out + "/fighter_02_p2_gewinnt.png"
+fenster_aktualisieren(win)
+
+# ------------------------------------------------------------
+# Phase 3: R startet neue Runde
+# ------------------------------------------------------------
+setze i1 auf inp_leer()
+i1["neustart"] = wahr
+spiel_schritt(i1, inp_leer())
+setze fehler auf fehler + pruefe("neustart: beide 100 hp", S["p1_hp"] == 100 und S["p2_hp"] == 100)
+setze fehler auf fehler + pruefe("neustart: kampf laeuft", S["modus"] == 0 und S["gewinner"] == 0)
+
+fenster_schliessen(win)
+
+wenn fehler == 0:
+    zeige "SELFTEST_RESULT: PASS fighter_gameplay"
+sonst:
+    zeige "SELFTEST_RESULT: FAIL fighter_gameplay (" + text(fehler) + " Fehler)"
