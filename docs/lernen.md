@@ -1176,6 +1176,40 @@ DASS ein Transformer lernt (der Verlust sinkt messbar, der Text bekommt
 Struktur) — für mehr braucht es Millionen Mal mehr Daten und Rechenzeit.
 Genau deshalb ist es so lehrreich: Es ist dieselbe Mathematik.
 
+## Kamera und Mikrofon als KI-Eingabe
+
+Moo kann unter Linux Bilder und Audio synchron per Pull lesen. Die Handles
+sind refcountet und sollten trotzdem explizit geschlossen werden:
+
+```moo
+setze kamera auf kamera_oeffnen()                # camera_open
+setze frame auf kamera_frame(kamera, 1000)       # camera_frame
+setze bild_tensor auf tensor_aus_frame(frame, "rgb")
+kamera_schliessen(kamera)                        # camera_close
+```
+
+`kamera_liste` (`camera_list`) listet Capture-Geräte. Bei
+`kamera_oeffnen(pfad?, breite?, hoehe?, fps?)` müssen vollständig angegebene
+Formatwerte exakt unterstützt werden. Ausgelassene Werte werden
+deterministisch nahe 640×480 bei 30 FPS gewählt. `kamera_frame` liefert immer
+einen eigenen kompakten RGBA8-Frame. Die Kamera arbeitet mit
+Latest-Frame-Semantik: ältere fertige Treiberbuffer dürfen verworfen werden.
+
+```moo
+setze mikro auf mikro_oeffnen(48000, 1, "default")  # microphone_open
+setze block auf mikro_lesen(mikro, 48000, 2000)     # microphone_read
+zeige block["rate"]                                  # tatsächliche Rate
+setze spec auf spektrogramm(block["daten"], 1024, 512)
+mikro_schliessen(mikro)                              # microphone_close
+```
+
+Timeouts gelten für den vollständigen Aufruf. `0` blockiert nicht; erlaubt
+sind 0 bis 60000 ms. Fehler unterscheiden Timeout, Belegt/Berechtigung,
+nicht unterstützte Formate, Disconnect/BROKEN, nicht reparierbaren
+XRUN/Suspend und bereits geschlossene Handles. Ein Audio-Timeout liefert
+niemals einen still verkürzten Tensor. Vollständige Beispiele:
+`beispiele/ki_kamera_live.moo` und `beispiele/ki_mikro_spektrum.moo`.
+
 ## Tipps für Anfänger
 
 1. **Einrückung ist wichtig!** Verwende 4 Leerzeichen für jeden Block.

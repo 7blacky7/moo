@@ -4,6 +4,34 @@
 #include <stdlib.h>
 #include <string.h>
 
+static const MooCaptureBackendOps native_ops = {
+    moo_capture_camera_list_native,
+    moo_capture_camera_open_native,
+    moo_capture_camera_frame_native,
+    moo_capture_camera_close_native,
+    moo_capture_microphone_open_native,
+    moo_capture_microphone_read_native,
+    moo_capture_microphone_close_native,
+};
+static MooCaptureBackendOps active_ops;
+static bool active_ops_initialized = false;
+
+static const MooCaptureBackendOps* capture_ops(void) {
+    if (!active_ops_initialized) {
+        active_ops = native_ops;
+        active_ops_initialized = true;
+    }
+    return &active_ops;
+}
+void moo_capture_set_backend_ops_for_tests(const MooCaptureBackendOps* ops) {
+    active_ops = ops ? *ops : native_ops;
+    active_ops_initialized = true;
+}
+void moo_capture_reset_backend_ops_for_tests(void) {
+    active_ops = native_ops;
+    active_ops_initialized = true;
+}
+
 static MooValue capture_fail(const char* message) {
     MooValue error = moo_error(message);
     moo_throw(error);
@@ -89,7 +117,7 @@ static bool microphone_value(MooValue value, MooMikro** out) {
 }
 
 MooValue moo_kamera_liste(void) {
-    return moo_capture_camera_list_native();
+    return capture_ops()->camera_list();
 }
 
 MooValue moo_kamera_oeffnen(MooValue path, MooValue width, MooValue height,
@@ -114,14 +142,14 @@ MooValue moo_kamera_oeffnen(MooValue path, MooValue width, MooValue height,
     camera->refcount = 1;
     camera->state = MOO_CAPTURE_OPEN;
     bool exact = width_given && height_given && fps_given;
-    if (!moo_capture_camera_open_native(camera, selected_path, selected_width,
+    if (!capture_ops()->camera_open(camera, selected_path, selected_width,
                                         selected_height, selected_fps, exact)) {
-        moo_capture_camera_close_native(camera);
+        capture_ops()->camera_close(camera);
         free(camera);
         return moo_none();
     }
     if (camera->state != MOO_CAPTURE_STREAMING) {
-        moo_capture_camera_close_native(camera);
+        capture_ops()->camera_close(camera);
         free(camera);
         return capture_fail("kamera_oeffnen: Backend startete keinen Stream");
     }
@@ -145,14 +173,14 @@ MooValue moo_kamera_frame(MooValue handle, MooValue timeout) {
         return capture_fail("kamera_frame: Geraet getrennt oder Handle BROKEN");
     if (camera->state != MOO_CAPTURE_STREAMING)
         return capture_fail("kamera_frame: Kamera streamt nicht");
-    return moo_capture_camera_frame_native(camera, timeout_ms);
+    return capture_ops()->camera_frame(camera, timeout_ms);
 }
 
 MooValue moo_kamera_schliessen(MooValue handle) {
     MooKamera* camera = NULL;
     if (!camera_value(handle, &camera)) return moo_none();
     if (camera->state != MOO_CAPTURE_CLOSED) {
-        moo_capture_camera_close_native(camera);
+        capture_ops()->camera_close(camera);
         camera->state = MOO_CAPTURE_CLOSED;
     }
     return moo_none();
@@ -162,7 +190,7 @@ void moo_kamera_free(void* ptr) {
     MooKamera* camera = (MooKamera*)ptr;
     if (!camera) return;
     if (camera->state != MOO_CAPTURE_CLOSED) {
-        moo_capture_camera_close_native(camera);
+        capture_ops()->camera_close(camera);
         camera->state = MOO_CAPTURE_CLOSED;
     }
     free(camera);
@@ -185,15 +213,15 @@ MooValue moo_mikro_oeffnen(MooValue rate, MooValue channels, MooValue device) {
     if (!microphone) return capture_fail("mikro_oeffnen: Speicher voll");
     microphone->refcount = 1;
     microphone->state = MOO_CAPTURE_OPEN;
-    if (!moo_capture_microphone_open_native(microphone, selected_device,
+    if (!capture_ops()->microphone_open(microphone, selected_device,
                                              requested_rate,
                                              requested_channels)) {
-        moo_capture_microphone_close_native(microphone);
+        capture_ops()->microphone_close(microphone);
         free(microphone);
         return moo_none();
     }
     if (microphone->state != MOO_CAPTURE_STREAMING) {
-        moo_capture_microphone_close_native(microphone);
+        capture_ops()->microphone_close(microphone);
         free(microphone);
         return capture_fail("mikro_oeffnen: Backend startete keinen Stream");
     }
@@ -220,7 +248,7 @@ MooValue moo_mikro_lesen(MooValue handle, MooValue samples, MooValue timeout) {
         return capture_fail("mikro_lesen: Geraet getrennt oder Handle BROKEN");
     if (microphone->state != MOO_CAPTURE_STREAMING)
         return capture_fail("mikro_lesen: Mikrofon streamt nicht");
-    return moo_capture_microphone_read_native(microphone, sample_count,
+    return capture_ops()->microphone_read(microphone, sample_count,
                                               timeout_ms);
 }
 
@@ -228,7 +256,7 @@ MooValue moo_mikro_schliessen(MooValue handle) {
     MooMikro* microphone = NULL;
     if (!microphone_value(handle, &microphone)) return moo_none();
     if (microphone->state != MOO_CAPTURE_CLOSED) {
-        moo_capture_microphone_close_native(microphone);
+        capture_ops()->microphone_close(microphone);
         microphone->state = MOO_CAPTURE_CLOSED;
     }
     return moo_none();
@@ -238,7 +266,7 @@ void moo_mikro_free(void* ptr) {
     MooMikro* microphone = (MooMikro*)ptr;
     if (!microphone) return;
     if (microphone->state != MOO_CAPTURE_CLOSED) {
-        moo_capture_microphone_close_native(microphone);
+        capture_ops()->microphone_close(microphone);
         microphone->state = MOO_CAPTURE_CLOSED;
     }
     free(microphone);

@@ -1,0 +1,15 @@
+# ki_mikro_spektrum.moo — Mikrofon -> Tensor -> Spektrogramm
+
+setze mikro auf nichts
+versuche:
+    setze mikro auf mikro_oeffnen(48000, 1, "default")
+    setze block auf mikro_lesen(mikro, 48000, 2000)
+    setze bild auf spektrogramm(block["daten"], 1024, 512)
+    zeige "Tatsaechliche Rate: " + text(block["rate"])
+    zeige "Audio-Tensor: " + text(block["daten"].form())
+    zeige "Spektrogramm: " + text(bild.form())
+    mikro_schliessen(mikro)
+fange fehler:
+    wenn mikro != nichts:
+        mikro_schliessen(mikro)
+    zeige "Mikrofon-Fehler: " + fehler

@@ -89,6 +89,8 @@ HARNESSES=(
 #   * gif_wiring: Encoder + Wrapper + MOO_FRAME + Core-Runtime-Bausteine.
 #   * sim_input: NUR moo_3d.c (Dispatcher, kein GL/GLFW; Backend wird gestubbt).
 EXTRA_HARNESSES=(
+  # capture: KI-MULTI-C1 — injizierte Handle-/Fault-Matrix ohne Hardware.
+  "test_capture_asan.c|moo_capture.c moo_capture_camera_stub.c moo_capture_audio_stub.c moo_frame.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"
   "test_frame_asan.c|moo_frame.c moo_memory.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"
   # frame_tensor: Frame<->Tensor-Bruecke (KI-MULTI-V1). Braucht Frame- UND
   #               Tensor-Familie (f32_sichern -> ki_gpu/autograd-Symbole).

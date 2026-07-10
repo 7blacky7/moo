@@ -51,4 +51,18 @@ MooValue moo_capture_microphone_read_native(MooMikro* microphone,
                                             int32_t samples, int32_t timeout_ms);
 void moo_capture_microphone_close_native(MooMikro* microphone);
 
+typedef struct {
+    MooValue (*camera_list)(void);
+    bool (*camera_open)(MooKamera*, const char*, int32_t, int32_t, double, bool);
+    MooValue (*camera_frame)(MooKamera*, int32_t);
+    void (*camera_close)(MooKamera*);
+    bool (*microphone_open)(MooMikro*, const char*, int32_t, int32_t);
+    MooValue (*microphone_read)(MooMikro*, int32_t, int32_t);
+    void (*microphone_close)(MooMikro*);
+} MooCaptureBackendOps;
+
+/* Nur fuer deterministische C1-Gates; kein oeffentliches Moo-Builtin. */
+void moo_capture_set_backend_ops_for_tests(const MooCaptureBackendOps* ops);
+void moo_capture_reset_backend_ops_for_tests(void);
+
 #endif
