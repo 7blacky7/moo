@@ -108,6 +108,23 @@ bool moo_ki_gpu_opt_sgd_res(void* p, void* m, void* grad, int64_t n,
 bool moo_ki_gpu_opt_adam_res(void* p, void* grad, void* mv, int64_t n,
                              float lr, float beta1, float beta2, float eps,
                              float wd, int adamw, int64_t t);
+/* === KIP-G4c: Adam/AdamW mit ZWEI getrennten residenten Handles (m, v) ===
+ * moo_ki_gpu_opt_adam_res verlangt EINEN gepackten mv-Buffer der Groesse 2n
+ * (G3c-Kernel-Optimierung). moo_nn.c haelt m/v aber als zwei EIGENSTAENDIGE
+ * MooTensor-Objekte (kip-kern, docs/kip/G4c-production-wiring-plan.md
+ * Folgediskussion 2026-07-10) -- kein Packen noetig, wenn man die Adam-
+ * Formel stattdessen aus bestehenden 3-Buffer-Ops komponiert (analog
+ * moo_ki_gpu_matmul_bw_res = Komposition aus transpose_res+matmul_res,
+ * NICHT ein einzelner 4-Buffer-Kernel -- das Descriptor-Set-Layout ist hart
+ * auf 3 Bindings begrenzt, G1 §2). ~16 Compute-Submits statt 1 (kein Hot-Path,
+ * 1x pro Parameter pro Trainings-Iteration -- Dispatch-Overhead vertretbar).
+ * Semantik IDENTISCH zu moo_ki_gpu_opt_adam_res (gleiche Reihenfolge wie CPU-
+ * Referenz moo_nn.c): [adamw] p*=(1-lr*wd); m=b1*m+(1-b1)*g; v=b2*v+(1-b2)*g*g;
+ * p-=lr*(m/bc1)/(sqrt(v/bc2)+eps), bc=1-beta^t (t 1-basiert, >=1).
+ * REIN in-place auf p/m/v; grad wird NICHT veraendert. */
+bool moo_ki_gpu_opt_adam2_res(void* p, void* grad, void* m, void* v, int64_t n,
+                              float lr, float beta1, float beta2, float eps,
+                              float wd, int adamw, int64_t t);
 /* === KIP-G3c -> KIP-E2b: Optimizer-Zustands-Download-Schnittstelle ===
  * Der Optimizer-Zustand lebt in AUFRUFER-eigenen residenten Buffers und wird
  * NICHT implizit heruntergeladen (Residenz-Vertrag). Fuer den Checkpoint

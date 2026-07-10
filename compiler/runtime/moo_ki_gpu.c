@@ -170,6 +170,12 @@ bool moo_ki_gpu_opt_adam_res(void* p, void* grad, void* mv, int64_t n,
     (void)p; (void)grad; (void)mv; (void)n; (void)lr; (void)beta1; (void)beta2;
     (void)eps; (void)wd; (void)adamw; (void)t; return false;
 }
+bool moo_ki_gpu_opt_adam2_res(void* p, void* grad, void* m, void* v, int64_t n,
+                              float lr, float beta1, float beta2, float eps,
+                              float wd, int adamw, int64_t t) {
+    (void)p; (void)grad; (void)m; (void)v; (void)n; (void)lr; (void)beta1; (void)beta2;
+    (void)eps; (void)wd; (void)adamw; (void)t; return false;
+}
 void moo_ki_gpu_telemetrie(MooKiGpuTelemetrie* out) {
     if (out) { out->submits = 0; out->uploads = 0; out->downloads = 0; out->cpu_fallbacks = 0; }
 }
@@ -1228,6 +1234,55 @@ bool moo_ki_gpu_opt_adam_res(void* p, void* grad, void* mv, int64_t n,
                        eps, wd, bc1, bc2 };
     KiBuf bufs[3] = { *(KiBuf*)p, *(KiBuf*)mv, *(KiBuf*)grad };
     bool ok = dispatch_opt(G.pipe_opt_adam, bufs, push, (uint32_t)((n + 255) / 256));
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G4c: Adam/AdamW mit ZWEI getrennten Handles m/v (statt gepacktem mv,
+ * siehe Kommentar in moo_ki_gpu_api.h). Komposition aus bestehenden 3-Buffer-
+ * Ops (unary_res Skalar, ew_res Tensor-Tensor) -- das Descriptor-Set-Layout
+ * ist hart auf 3 Bindings begrenzt, daher kein einzelner 4-Buffer-Kernel.
+ * 2 Temp-Buffer aus dem Pool. Jeder Zwischenschritt-Fehlschlag -> sauberer
+ * Komplett-Abbruch (false), Aufrufer faellt komplett auf CPU zurueck. */
+bool moo_ki_gpu_opt_adam2_res(void* p, void* grad, void* m, void* v, int64_t n,
+                              float lr, float beta1, float beta2, float eps,
+                              float wd, int adamw, int64_t t) {
+    if (!p || !grad || !m || !v) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf t1, t2;
+    if (!buf_holen(&t1, (VkDeviceSize)n * 4)) { g_tel.cpu_fallbacks++; return false; }
+    if (!buf_holen(&t2, (VkDeviceSize)n * 4)) {
+        buf_zurueck(&t1); g_tel.cpu_fallbacks++; return false;
+    }
+    float bc1 = (float)(1.0 - pow((double)beta1, (double)t));
+    float bc2 = (float)(1.0 - pow((double)beta2, (double)t));
+
+    /* ew_res-Op-Codes (moo_tensor_ops.c ew_op): 0=add 1=sub 2=mul 3=div */
+    enum { EW_ADD = 0, EW_SUB = 1, EW_MUL = 2, EW_DIV = 3 };
+
+    bool ok = true;
+    if (adamw) ok = ok && moo_ki_gpu_unary_res(MOO_KI_U_MULS, p, p, n, 1.0f - lr * wd);
+    /* m = beta1*m + (1-beta1)*grad */
+    ok = ok && moo_ki_gpu_unary_res(MOO_KI_U_MULS, m, &t1, n, beta1);
+    ok = ok && moo_ki_gpu_unary_res(MOO_KI_U_MULS, grad, &t2, n, 1.0f - beta1);
+    ok = ok && moo_ki_gpu_ew_res(EW_ADD, &t1, &t2, m, n);
+    /* v = beta2*v + (1-beta2)*grad*grad */
+    ok = ok && moo_ki_gpu_ew_res(EW_MUL, grad, grad, &t1, n);
+    ok = ok && moo_ki_gpu_unary_res(MOO_KI_U_MULS, &t1, &t1, n, 1.0f - beta2);
+    ok = ok && moo_ki_gpu_unary_res(MOO_KI_U_MULS, v, &t2, n, beta2);
+    ok = ok && moo_ki_gpu_ew_res(EW_ADD, &t1, &t2, v, n);
+    /* mhat=m/bc1 -> t1 ; denom=sqrt(v/bc2)+eps -> t2 */
+    ok = ok && moo_ki_gpu_unary_res(MOO_KI_U_MULS, m, &t1, n, 1.0f / bc1);
+    ok = ok && moo_ki_gpu_unary_res(MOO_KI_U_MULS, v, &t2, n, 1.0f / bc2);
+    ok = ok && moo_ki_gpu_unary_res(MOO_KI_U_SQRT, &t2, &t2, n, 0.0f);
+    ok = ok && moo_ki_gpu_unary_res(MOO_KI_U_ADDS, &t2, &t2, n, eps);
+    /* p -= lr * mhat/denom */
+    ok = ok && moo_ki_gpu_ew_res(EW_DIV, &t1, &t2, &t1, n);
+    ok = ok && moo_ki_gpu_unary_res(MOO_KI_U_MULS, &t1, &t1, n, lr);
+    ok = ok && moo_ki_gpu_ew_res(EW_SUB, p, &t1, p, n);
+
+    buf_zurueck(&t1);
+    buf_zurueck(&t2);
     if (!ok) g_tel.cpu_fallbacks++;
     return ok;
 }

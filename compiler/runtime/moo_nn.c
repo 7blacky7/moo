@@ -2378,19 +2378,50 @@ MooValue moo_nn_opt_schritt(MooValue opt) {
             for (int32_t i = 0; i < pl->length; i++) {
                 MooTensor* p = T(pl->items[i]);
                 if (!p->grad && !(p->grad_valid & MOO_V_DEV)) continue;
-                moo_tensor_f32_sichern(p);    /* KIP-G4c I1 */
-                moo_tensor_grad_sichern(p);   /* KIP-G4c I2 */
-                float* m = T(mlist->items[i])->data;
-                float* v = vlist ? T(vlist->items[i])->data : NULL;
-                if (!v) continue;
-                for (int64_t j = 0; j < p->size; j++) {
-                    float g = p->grad[j];
-                    if (w) p->data[j] -= lr * wd * p->data[j];  /* decoupled */
-                    m[j] = fb1 * m[j] + (1.0f - fb1) * g;
-                    v[j] = fb2 * v[j] + (1.0f - fb2) * g * g;
-                    float mhat = m[j] / bc1;
-                    float vhat = v[j] / bc2;
-                    p->data[j] -= lr * mhat / (sqrtf(vhat) + eps);
+                moo_tensor_grad_sichern(p);   /* KIP-G4c I2: wird so oder so gebraucht */
+                MooTensor* mt = T(mlist->items[i]);
+                MooValue vval = vlist ? vlist->items[i] : moo_none();
+                MooTensor* vt = vlist ? T(vval) : NULL;
+                if (!vt) continue;
+
+                /* KIP-G4c Adam-Zwei-Handle-Residenz (docs/kip/G4c-production-wiring-plan.md
+                 * §2.4, kip-kern-Vorschlag): m/v bleiben zwei eigenstaendige Tensoren,
+                 * kein gepackter mv-Buffer noetig (moo_ki_gpu_opt_adam2_res = Komposition
+                 * aus bestehenden 3-Buffer-Ops, kein neuer Shader). Gleiches Muster wie
+                 * SGD (Stufe 3): nur wenn p bereits GPU-resident ist, m/v resident halten,
+                 * Grad hochladen, bei jedem Fehlschlag sauberer Komplett-Fallback auf CPU. */
+                bool done = false;
+                if ((p->valid & MOO_V_DEV) && p->gpu_buf) {
+                    moo_tensor_nach_gpu(mt);
+                    moo_tensor_nach_gpu(vt);
+                    if (mt->gpu_buf && vt->gpu_buf) {
+                        int64_t bytes = (int64_t)p->size * (int64_t)sizeof(float);
+                        void* gbuf = moo_ki_gpu_buf_belegen(bytes);
+                        if (gbuf && moo_ki_gpu_upload(gbuf, p->grad, bytes) &&
+                            moo_ki_gpu_opt_adam2_res(p->gpu_buf, gbuf, mt->gpu_buf, vt->gpu_buf,
+                                                      p->size, lr, fb1, fb2, eps, wd, w ? 1 : 0, t)) {
+                            p->valid = MOO_V_DEV;    /* GPU jetzt autoritativ (I1) */
+                            mt->valid = MOO_V_DEV;
+                            vt->valid = MOO_V_DEV;
+                            opt_resident_done[i] = true;
+                            done = true;
+                        }
+                        moo_ki_gpu_buf_freigeben(gbuf);
+                    }
+                }
+                if (!done) {
+                    moo_tensor_f32_sichern(p);    /* KIP-G4c I1: p->data koennte nur MOO_V_DEV sein (Resident-Versuch fehlgeschlagen) */
+                    float* m = mt->data;
+                    float* v = vt->data;
+                    for (int64_t j = 0; j < p->size; j++) {
+                        float g = p->grad[j];
+                        if (w) p->data[j] -= lr * wd * p->data[j];  /* decoupled */
+                        m[j] = fb1 * m[j] + (1.0f - fb1) * g;
+                        v[j] = fb2 * v[j] + (1.0f - fb2) * g * g;
+                        float mhat = m[j] / bc1;
+                        float vhat = v[j] / bc2;
+                        p->data[j] -= lr * mhat / (sqrtf(vhat) + eps);
+                    }
                 }
             }
         }
