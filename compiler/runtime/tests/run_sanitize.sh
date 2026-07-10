@@ -93,6 +93,9 @@ EXTRA_HARNESSES=(
   # frame_tensor: Frame<->Tensor-Bruecke (KI-MULTI-V1). Braucht Frame- UND
   #               Tensor-Familie (f32_sichern -> ki_gpu/autograd-Symbole).
   "test_frame_tensor_asan.c|moo_frame_tensor.c moo_frame.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"
+  # audio: KI-MULTI-A1 — FFT/Parseval/STFT/WAV, kein Autograd/Hardware.
+  #        Gleicher Tensor/Core-Satz + Test-throw-Modell wie frame_tensor.
+  "test_audio_asan.c|moo_audio.c moo_frame.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"
   "test_gif_core_asan.c|moo_gif.c|-lm"
   "test_gif_wiring_asan.c|moo_gif.c moo_gif_handle.c moo_frame.c moo_value.c moo_memory.c moo_string.c moo_dict.c moo_error.c moo_print.c moo_list.c moo_ops.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_video_handle.c moo_video.c|-lm"
   "test_sim_input_asan.c|moo_3d.c|-lm"

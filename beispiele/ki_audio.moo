@@ -1,0 +1,163 @@
+# ============================================================
+# ki_audio.moo — Audio wird zum KI-Merkmal (KI-MULTI-A1)
+#
+# Pipeline: deterministische Tonleiter -> WAV -> wav_lesen ->
+# Hann-Spektrogramm -> Kinderleicht-Netz klassifiziert vier Noten.
+#
+# Start: compiler/target/release/moo-compiler run beispiele/ki_audio.moo
+# Erwartet: SELFTEST_RESULT: PASS ki_audio
+#
+# Bis KI-MULTI-V2 die Faltungsschicht bereitstellt, nutzt dieses Beispiel
+# das bestehende Dense-Netz auf dem flachen Spektrogramm. Die Audio-API
+# und Datenform [frames,bins] bleiben identisch.
+# ============================================================
+
+konstante SR auf 1024
+konstante N auf 256
+konstante PI auf 3.14159265358979
+konstante TWO_PI auf 6.28318530717958
+
+funktion my_cos(x):
+    setze v auf x
+    solange v > PI:
+        setze v auf v - TWO_PI
+    solange v < (0 - PI):
+        setze v auf v + TWO_PI
+    setze x2 auf v * v
+    gib_zurück 1 - x2 / 2 + x2 * x2 / 24 - x2 * x2 * x2 / 720
+
+funktion my_sin(x):
+    gib_zurück my_cos(x - 1.5707963267948966)
+
+funktion ton_samples(freq, variante):
+    setze samples auf []
+    setze i auf 0
+    setze phase auf variante * 0.37
+    setze amplitude auf 0.55 + (variante % 3) * 0.08
+    solange i < N:
+        setze winkel auf TWO_PI * freq * i / SR + phase
+        samples.hinzufügen(my_sin(winkel) * amplitude)
+        setze i auf i + 1
+    gib_zurück samples
+
+funktion audio_merkmale(freq, variante):
+    setze samples auf ton_samples(freq, variante)
+    setze tensor auf tensor_aus_liste(samples)
+    setze bild auf spektrogramm(tensor, 64, 32)
+    gib_zurück bild.zu_liste()
+
+funktion ziel_für(note_id):
+    setze ziel auf [0, 0, 0, 0]
+    ziel[note_id] = 1
+    gib_zurück ziel
+
+funktion liste_anhaengen(ziel, quelle):
+    setze i auf 0
+    solange i < quelle.länge():
+        ziel.hinzufügen(quelle[i])
+        setze i auf i + 1
+
+# Minimaler WAV-Writer aus dem Muster in synth.moo.
+funktion push_le16(liste, v):
+    setze x auf v
+    wenn x < 0:
+        setze x auf x + 65536
+    liste.hinzufügen(x % 256)
+    liste.hinzufügen(boden(x / 256) % 256)
+
+funktion push_le32(liste, v):
+    liste.hinzufügen(v % 256)
+    liste.hinzufügen(boden(v / 256) % 256)
+    liste.hinzufügen(boden(v / 65536) % 256)
+    liste.hinzufügen(boden(v / 16777216) % 256)
+
+funktion push_ascii(liste, s):
+    setze bs auf bytes_zu_liste(s)
+    setze i auf 0
+    solange i < bs.länge():
+        liste.hinzufügen(bs[i])
+        setze i auf i + 1
+
+funktion wav_schreiben(pfad, samples):
+    setze n auf samples.länge()
+    setze data_size auf n * 2
+    setze out auf []
+    push_ascii(out, "RIFF")
+    push_le32(out, 36 + data_size)
+    push_ascii(out, "WAVE")
+    push_ascii(out, "fmt ")
+    push_le32(out, 16)
+    push_le16(out, 1)
+    push_le16(out, 1)
+    push_le32(out, SR)
+    push_le32(out, SR * 2)
+    push_le16(out, 2)
+    push_le16(out, 16)
+    push_ascii(out, "data")
+    push_le32(out, data_size)
+    setze i auf 0
+    solange i < n:
+        setze v auf samples[i]
+        wenn v > 1:
+            setze v auf 1
+        wenn v < (0 - 1):
+            setze v auf 0 - 1
+        push_le16(out, boden(v * 32767))
+        setze i auf i + 1
+    datei_schreiben_bytes(pfad, out)
+
+setze frequenzen auf [64, 128, 192, 256]
+
+# --- Tonleiter-WAV erzeugen und mit dem neuen Reader zuruecklesen ---
+setze tonleiter auf []
+setze note_id auf 0
+solange note_id < frequenzen.länge():
+    liste_anhaengen(tonleiter, ton_samples(frequenzen[note_id], 0))
+    setze note_id auf note_id + 1
+
+setze wav_pfad auf "/tmp/ki_audio_tonleiter.wav"
+wav_schreiben(wav_pfad, tonleiter)
+setze audio auf wav_lesen(wav_pfad)
+setze audio_bild auf spektrogramm(audio["daten"], 64, 32)
+zeige "WAV: rate=" + text(audio["rate"]) + " samples=" + text(audio["daten"].form())
+zeige "Tonleiter-Spektrogramm: " + text(audio_bild.form())
+
+# --- Deterministischer Datensatz: vier Noten, acht Varianten je Note ---
+setze train_x auf []
+setze train_y auf []
+setze test_x auf []
+setze test_y auf []
+setze note_id auf 0
+solange note_id < frequenzen.länge():
+    setze variante auf 0
+    solange variante < 8:
+        setze merkmal auf audio_merkmale(frequenzen[note_id], variante)
+        setze ziel auf ziel_für(note_id)
+        wenn variante < 6:
+            train_x.hinzufügen(merkmal)
+            train_y.hinzufügen(ziel)
+        sonst:
+            test_x.hinzufügen(merkmal)
+            test_y.hinzufügen(ziel)
+        setze variante auf variante + 1
+    setze note_id auf note_id + 1
+
+setze tx auf tensor_aus_liste(train_x)
+setze ty auf tensor_aus_liste(train_y)
+setze px auf tensor_aus_liste(test_x)
+setze py auf tensor_aus_liste(test_y)
+zeige "Training: " + text(tx.form()) + " Test: " + text(px.form())
+
+# 64er Fenster -> FFT64 -> 33 Bins; 256 Samples/Schritt32 -> 7 Frames.
+setze netz auf ki_netz([schicht_dicht(231, 24, "tanh", 41), schicht_dicht(24, 4, "softmax", 42)])
+setze verlauf auf netz.trainiere(tx, ty, {"epochen": 250, "rate": 0.02, "batch": 8, "ausgabe": 0})
+setze genauigkeit auf netz.genauigkeit(px, py)
+zeige "Fehler Anfang -> Ende: " + text(verlauf[0]) + " -> " + text(verlauf[verlauf.länge() - 1])
+zeige "Test-Genauigkeit: " + text(genauigkeit)
+
+setze wav_ok auf audio["rate"] == SR
+setze form_ok auf audio_bild.form()[1] == 33
+wenn genauigkeit >= 0.9 und wav_ok und form_ok:
+    zeige "SELFTEST_RESULT: PASS ki_audio"
+sonst:
+    zeige "SELFTEST_RESULT: FAIL ki_audio"

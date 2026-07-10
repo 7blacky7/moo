@@ -393,6 +393,13 @@ MooValue moo_test_frame_save_png(MooValue frame, MooValue pfad);
 // frame_aus_tensor: Clamp 0..1 -> RGBA8 (auch [h,b,3]/[h,b] akzeptiert).
 MooValue moo_tensor_aus_frame(MooValue frame, MooValue modus);
 MooValue moo_frame_aus_tensor(MooValue t);
+// Audio-Features (KI-MULTI-A1) — in moo_audio.c, SDL-frei und ohne Autograd.
+// fft/spektrum: [samples] -> [bins,2]; spektrum_betrag: [samples] -> [bins].
+// spektrogramm: Hann-STFT [samples] -> [frames,bins]. wav_lesen: PCM -> Dict.
+MooValue moo_fft(MooValue samples);
+MooValue moo_spektrum_betrag(MooValue samples);
+MooValue moo_spektrogramm(MooValue samples, MooValue fenster, MooValue schritt);
+MooValue moo_wav_lesen(MooValue pfad);
 // Folgende sind im test_*-Layer (moo_test_api.c) implementiert. Gebaut nur im
 // Grafik-Build (Feature gl21/gl33/vulkan) — arbeitet dann mit ALLEN Fenster-
 // typen: 2D-SDL (MOO_WINDOW), 3D (MOO_WINDOW3D) und Hybrid:

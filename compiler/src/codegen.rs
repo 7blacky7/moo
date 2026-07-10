@@ -4012,6 +4012,33 @@ impl<'ctx> CodeGen<'ctx> {
                         let t = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_frame_aus_tensor, &[t.into()], "f_aus_tensor");
                     }
+                    // Audio-Feature-Extraktion (KI-MULTI-A1, kein Autograd).
+                    // fft/spektrum(t) -> [bins,2] mit Real-/Imaginaerteil.
+                    "fft" | "spektrum" | "spectrum" => {
+                        let t = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_fft, &[t.into()], "audio_fft");
+                    }
+                    // spektrum_betrag(t) -> [bins].
+                    "spektrum_betrag" | "magnitude_spectrum" | "spectrum_magnitude" => {
+                        let t = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_spektrum_betrag, &[t.into()], "audio_mag");
+                    }
+                    // spektrogramm(t, fenster, schritt) -> Hann-|STFT| [frames,bins].
+                    "spektrogramm" | "spectrogram" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let fenster = self.compile_expr(&args[1])?;
+                        let schritt = self.compile_expr(&args[2])?;
+                        return self.call_rt(
+                            self.rt.moo_spektrogramm,
+                            &[t.into(), fenster.into(), schritt.into()],
+                            "audio_stft",
+                        );
+                    }
+                    // wav_lesen(pfad) -> {daten: Tensor[n], rate: Zahl}.
+                    "wav_lesen" | "wav_read" => {
+                        let pfad = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_wav_lesen, &[pfad.into()], "audio_wav");
+                    }
                     // GIF-Recorder (Plan-008 A3B). Frame-bounded: streamt direkt
                     // in die Datei, sammelt KEINE Frame-Sequenz im RAM.
                     // test_gif_start(win_oder_frame, pfad, fps) -> MOO_GIF.

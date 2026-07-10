@@ -25,6 +25,7 @@ fn main() {
         .file("runtime/moo_memory.c")
         .file("runtime/moo_frame.c")
         .file("runtime/moo_frame_tensor.c") // Frame<->Tensor-Bruecke (KI-MULTI-V1, SDL-frei)
+        .file("runtime/moo_audio.c")        // FFT/STFT/WAV-Reader (KI-MULTI-A1, SDL-frei)
         .file("runtime/moo_gif.c")        // GIF89a+LZW-Encoder-Kern (Plan-008 A3B, pure C)
         .file("runtime/moo_gif_handle.c") // moo-Heap-Wrapper MOO_GIF (immer gebaut)
         .file("runtime/moo_video.c")        // ffmpeg-Pipe MP4-Kern (Plan-009 V0, pure C/POSIX)

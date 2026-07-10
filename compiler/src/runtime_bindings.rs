@@ -420,6 +420,11 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_test_frame_save_png: FunctionValue<'ctx>,
     pub moo_tensor_aus_frame: FunctionValue<'ctx>,
     pub moo_frame_aus_tensor: FunctionValue<'ctx>,
+    // Audio-Feature-Extraktion (KI-MULTI-A1, SDL-frei, kein Autograd).
+    pub moo_fft: FunctionValue<'ctx>,
+    pub moo_spektrum_betrag: FunctionValue<'ctx>,
+    pub moo_spektrogramm: FunctionValue<'ctx>,
+    pub moo_wav_lesen: FunctionValue<'ctx>,
     // GIF-Recorder (Plan-008 A3B): start(win/frame,pfad,fps)->MOO_GIF,
     // frame(gif,win/frame)->Bool, ende(gif)->Bool.
     pub moo_test_gif_start: FunctionValue<'ctx>,
@@ -1188,6 +1193,11 @@ impl<'ctx> RuntimeBindings<'ctx> {
             //   moo_frame_aus_tensor(t)              -> MOO_FRAME             (1 Arg  = mv1)
             moo_tensor_aus_frame: decl_mv_mv!("moo_tensor_aus_frame", mv2),
             moo_frame_aus_tensor: decl_mv_mv!("moo_frame_aus_tensor", mv1),
+            // Audio-Features (KI-MULTI-A1): FFT/Betrag/WAV = mv1, STFT = mv3.
+            moo_fft: decl_mv_mv!("moo_fft", mv1),
+            moo_spektrum_betrag: decl_mv_mv!("moo_spektrum_betrag", mv1),
+            moo_spektrogramm: decl_mv_mv!("moo_spektrogramm", mv3),
+            moo_wav_lesen: decl_mv_mv!("moo_wav_lesen", mv1),
             // GIF-Recorder (Plan-008 A3B). Symbole immer deklariert; C-seitig
             // in moo_test_api.c (3D-Build) gelinkt. Encoder-Kern (moo_gif.c)
             // ist Core-Build, daher immer verfuegbar.
