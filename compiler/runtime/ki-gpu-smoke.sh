@@ -18,3 +18,9 @@ gcc -std=gnu11 -O2 -DMOO_HAS_VULKAN -I. \
     -o /tmp/test_ki_gpu tests/test_ki_gpu.c moo_ki_gpu.c -lvulkan -lm
 
 /tmp/test_ki_gpu
+
+# KIP-G1: residente Buffers (Differential + Submit-Zaehler-Beweis + Slot-Reuse)
+gcc -std=gnu11 -O2 -DMOO_HAS_VULKAN -I. \
+    -o /tmp/test_ki_gpu_resident tests/test_ki_gpu_resident.c moo_ki_gpu.c -lvulkan -lm
+
+/tmp/test_ki_gpu_resident

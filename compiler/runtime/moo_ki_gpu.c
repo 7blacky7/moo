@@ -22,6 +22,7 @@
  * liefert — moo_tensor_ops.c braucht dadurch KEIN #ifdef.
  */
 #include "moo_runtime.h"
+#include "moo_ki_gpu_api.h"
 
 bool moo_ki_gpu_matmul(const float* a, const float* b, float* o,
                        int32_t m, int32_t k, int32_t n);
@@ -45,6 +46,30 @@ bool moo_ki_gpu_reduce_sum(const float* a, int64_t n, double* out_summe) {
     (void)a; (void)n; (void)out_summe;
     return false;
 }
+
+/* KIP-G1 residente API — Stubs (kein Vulkan): keine GPU-Residenz moeglich,
+ * Aufrufer bleibt CPU-resident. */
+void* moo_ki_gpu_buf_belegen(int64_t bytes) { (void)bytes; return NULL; }
+void  moo_ki_gpu_buf_freigeben(void* handle) { (void)handle; }
+bool  moo_ki_gpu_upload(void* handle, const float* src, int64_t bytes) {
+    (void)handle; (void)src; (void)bytes; return false;
+}
+bool  moo_ki_gpu_download(void* handle, float* dst, int64_t bytes) {
+    (void)handle; (void)dst; (void)bytes; return false;
+}
+bool moo_ki_gpu_matmul_res(void* a, void* b, void* o, int32_t m, int32_t k, int32_t n) {
+    (void)a; (void)b; (void)o; (void)m; (void)k; (void)n; return false;
+}
+bool moo_ki_gpu_ew_res(int32_t op, void* a, void* b, void* o, int64_t n) {
+    (void)op; (void)a; (void)b; (void)o; (void)n; return false;
+}
+bool moo_ki_gpu_reduce_sum_res(void* a, int64_t n, double* out_summe) {
+    (void)a; (void)n; (void)out_summe; return false;
+}
+void moo_ki_gpu_telemetrie(MooKiGpuTelemetrie* out) {
+    if (out) { out->submits = 0; out->uploads = 0; out->downloads = 0; out->cpu_fallbacks = 0; }
+}
+void moo_ki_gpu_telemetrie_reset(void) { }
 
 #else /* MOO_HAS_VULKAN ------------------------------------------------- */
 
@@ -76,6 +101,10 @@ typedef struct {
 } KiGpu;
 
 static KiGpu G = {0};
+
+/* KIP-G1 §5: Telemetrie. submits = Compute-Dispatches (in dispatch_sync
+ * gezaehlt), uploads/downloads = explizite Transfers der residenten API. */
+static MooKiGpuTelemetrie g_tel = {0};
 
 typedef struct { uint32_t M, K, N, op; } KiPush;
 
@@ -404,7 +433,8 @@ static void buf_zurueck(KiBuf* b) {
  * Im Vereint-Modus entfallen Copies+Barriers (dev==stg). */
 static bool dispatch_sync(VkPipeline pipe, KiBuf b[3], KiPush push,
                           uint32_t gx, uint32_t gy,
-                          uint32_t upload_mask, uint32_t readback_mask) {
+                          uint32_t upload_mask, uint32_t readback_mask,
+                          bool resident) {
     /* GPU3-C: DescSet/CmdBuf/Fence einmalig anlegen und wiederverwenden.
      * Fail => false (CPU-Fallback); Retry beim naechsten Aufruf ist
      * idempotent, weil die Handles VK_NULL_HANDLE bleiben. */
@@ -462,6 +492,22 @@ static bool dispatch_sync(VkPipeline pipe, KiBuf b[3], KiPush push,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
     vkBeginCommandBuffer(cb, &cbb);
+    /* KIP-G1: Residente Op liest Buffers, die eine vorherige Op (anderer
+     * Submit, gleiche Queue) oder ein Upload beschrieben hat. Der Fence-Wait
+     * zwischen den Ops garantiert Ausfuehrungs-Reihenfolge, aber NICHT die
+     * Memory-Availability/Visibility — dafuer dieser Barrier am Dispatch-
+     * Anfang. Deckt als 2. Sync-Scope die frueher submittierten Writes ab. */
+    if (resident) {
+        VkMemoryBarrier mb = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+        };
+        vkCmdPipelineBarrier(cb,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 1, &mb, 0, NULL, 0, NULL);
+    }
     bool kopieren = !G.devlocal_vereint;
     if (kopieren && upload_mask) {
         for (int i = 0; i < 3; i++) {
@@ -513,6 +559,7 @@ static bool dispatch_sync(VkPipeline pipe, KiBuf b[3], KiPush push,
     /* Fehlpfad (Timeout/Device-Lost): Queue leeren, damit der gecachte
      * Fence/CmdBuf beim naechsten Aufruf nicht in-flight resettet wird. */
     if (!ok) vkQueueWaitIdle(G.queue);
+    if (ok) g_tel.submits++;   /* KIP-G1 §5: genau 1 Compute-Submit pro Op */
     return ok;
 }
 
@@ -531,7 +578,7 @@ bool moo_ki_gpu_matmul(const float* a, const float* b, float* o,
         KiPush push = { (uint32_t)m, (uint32_t)k, (uint32_t)n, 0 };
         ok = dispatch_sync(G.pipe_matmul, bufs, push,
                            ((uint32_t)n + 15u) / 16u, ((uint32_t)m + 15u) / 16u,
-                           /*upload*/ 0x3u, /*readback*/ 0x4u);
+                           /*upload*/ 0x3u, /*readback*/ 0x4u, /*resident*/ false);
         if (ok) memcpy(o, bufs[2].map, (size_t)m * n * 4);
     }
     for (int i = 0; i < 3; i++) buf_zurueck(&bufs[i]);
@@ -553,7 +600,7 @@ bool moo_ki_gpu_ew(int32_t op, const float* a, const float* b, float* o,
         KiPush push = { (uint32_t)n, 0, 0, (uint32_t)op };
         ok = dispatch_sync(G.pipe_ew, bufs, push,
                            ((uint32_t)((n + 255) / 256)), 1,
-                           /*upload*/ 0x3u, /*readback*/ 0x4u);
+                           /*upload*/ 0x3u, /*readback*/ 0x4u, /*resident*/ false);
         if (ok) memcpy(o, bufs[2].map, (size_t)n * 4);
     }
     for (int i = 0; i < 3; i++) buf_zurueck(&bufs[i]);
@@ -575,7 +622,7 @@ bool moo_ki_gpu_reduce_sum(const float* a, int64_t n, double* out_summe) {
         memcpy(bufs[0].map, a, (size_t)n * 4);
         KiPush push = { (uint32_t)n, 0, 0, 0 };
         ok = dispatch_sync(G.pipe_reduce, bufs, push, (uint32_t)gruppen, 1,
-                           /*upload*/ 0x1u, /*readback*/ 0x2u);
+                           /*upload*/ 0x1u, /*readback*/ 0x2u, /*resident*/ false);
         if (ok) {
             const float* teile = (const float*)bufs[1].map;
             double s = 0.0;
@@ -585,6 +632,198 @@ bool moo_ki_gpu_reduce_sum(const float* a, int64_t n, double* out_summe) {
     }
     for (int i = 0; i < 3; i++) buf_zurueck(&bufs[i]);
     return ok;
+}
+
+/* ==================================================================== *
+ * KIP-G1: Residente Buffer-API + Telemetrie                            *
+ * GPU-residente Tensoren halten ihren Pool-Buffer ueber mehrere Ops;   *
+ * zwischen den Ops findet KEIN Host<->Device-Transfer statt (per        *
+ * Submit-/Transfer-Zaehler beweisbar). Fundament fuer das G4-Gate.     *
+ * ==================================================================== */
+
+/* Lazy-Alloc des gecachten CmdBuf+Fence (geteilt mit dispatch_sync; alle
+ * Pfade synchron + single-threaded => Wiederverwendung sicher). Guard auf
+ * VK_NULL_HANDLE => egal ob dispatch_sync oder transfer_submit zuerst laeuft. */
+static bool ensure_cb_fence(void) {
+    if (G.cb_cache == VK_NULL_HANDLE) {
+        VkCommandBufferAllocateInfo cba = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = G.cmdpool,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+        if (vkAllocateCommandBuffers(G.geraet, &cba, &G.cb_cache) != VK_SUCCESS) {
+            G.cb_cache = VK_NULL_HANDLE;
+            return false;
+        }
+    }
+    if (G.fence_cache == VK_NULL_HANDLE) {
+        VkFenceCreateInfo fci = { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+        if (vkCreateFence(G.geraet, &fci, NULL, &G.fence_cache) != VK_SUCCESS) {
+            G.fence_cache = VK_NULL_HANDLE;
+            return false;
+        }
+    }
+    return true;
+}
+
+/* Copy-only-Submit fuer den Staging<->VRAM-Transfer EINES Buffers (diskrete
+ * GPU). Vereint-Modus (map == VRAM, UMA/Fallback): kein Copy noetig. */
+static bool transfer_submit(KiBuf* kb, bool upload) {
+    if (G.devlocal_vereint) return true;        /* map zeigt direkt auf VRAM */
+    if (!ensure_cb_fence()) return false;
+    VkCommandBuffer cb = G.cb_cache;
+    vkResetCommandBuffer(cb, 0);
+    VkCommandBufferBeginInfo cbb = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    vkBeginCommandBuffer(cb, &cbb);
+    VkBufferCopy reg = { .srcOffset = 0, .dstOffset = 0, .size = kb->groesse };
+    if (upload) {
+        /* Host hat kb->stg (coherent) beschrieben -> Copy stg->dev, dann
+         * Barrier TRANSFER_WRITE->SHADER_READ, damit die naechste residente
+         * Compute-Op (spaeterer Submit, gleiche Queue) die Daten sieht. */
+        vkCmdCopyBuffer(cb, kb->stg, kb->dev, 1, &reg);
+        VkMemoryBarrier mb = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+        };
+        vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             0, 1, &mb, 0, NULL, 0, NULL);
+    } else {
+        /* dev wurde von einer frueheren Compute-Op beschrieben -> Barrier
+         * SHADER_WRITE->TRANSFER_READ, dann Copy dev->stg fuer den Host. */
+        VkMemoryBarrier mb = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+        };
+        vkCmdPipelineBarrier(cb,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 1, &mb, 0, NULL, 0, NULL);
+        vkCmdCopyBuffer(cb, kb->dev, kb->stg, 1, &reg);
+    }
+    vkEndCommandBuffer(cb);
+    vkResetFences(G.geraet, 1, &G.fence_cache);
+    VkSubmitInfo si = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &cb,
+    };
+    bool ok = vkQueueSubmit(G.queue, 1, &si, G.fence_cache) == VK_SUCCESS &&
+              vkWaitForFences(G.geraet, 1, &G.fence_cache, VK_TRUE,
+                              30ull * 1000000000ull) == VK_SUCCESS;
+    if (!ok) vkQueueWaitIdle(G.queue);
+    return ok;
+}
+
+void* moo_ki_gpu_buf_belegen(int64_t bytes) {
+    if (bytes <= 0) return NULL;
+    if (!ki_gpu_init()) return NULL;
+    KiBuf* kb = (KiBuf*)malloc(sizeof(KiBuf));
+    if (!kb) return NULL;
+    if (!buf_holen(kb, (VkDeviceSize)bytes)) { free(kb); return NULL; }
+    return kb;
+}
+
+void moo_ki_gpu_buf_freigeben(void* handle) {
+    if (!handle) return;
+    KiBuf* kb = (KiBuf*)handle;
+    /* Synchroner Dispatch => GPU idle bei Rueckgabe (Fence-Wait vor jedem
+     * Op-Return). Daher kein separater In-flight-Fence-Wait noetig; der Slot
+     * wird von buf_zurueck erst NACH diesem Punkt neu vergeben, d.h. der
+     * Handle kann nicht auf einen fremden in-flight-Buffer zeigen (G1 §2
+     * Slot-Reuse-Sicherheit; Async-Pfad braucht spaeter eine Submit-Map). */
+    buf_zurueck(kb);
+    free(kb);
+}
+
+bool moo_ki_gpu_upload(void* handle, const float* src, int64_t bytes) {
+    if (!handle || !src || bytes <= 0) return false;
+    KiBuf* kb = (KiBuf*)handle;
+    if ((VkDeviceSize)bytes > kb->groesse) return false;
+    memcpy(kb->map, src, (size_t)bytes);
+    if (!transfer_submit(kb, /*upload*/ true)) return false;
+    g_tel.uploads++;
+    return true;
+}
+
+bool moo_ki_gpu_download(void* handle, float* dst, int64_t bytes) {
+    if (!handle || !dst || bytes <= 0) return false;
+    KiBuf* kb = (KiBuf*)handle;
+    if ((VkDeviceSize)bytes > kb->groesse) return false;
+    if (!transfer_submit(kb, /*upload*/ false)) return false;
+    memcpy(dst, kb->map, (size_t)bytes);
+    g_tel.downloads++;
+    return true;
+}
+
+bool moo_ki_gpu_matmul_res(void* a, void* b, void* o,
+                           int32_t m, int32_t k, int32_t n) {
+    if (!a || !b || !o) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf bufs[3] = { *(KiBuf*)a, *(KiBuf*)b, *(KiBuf*)o };
+    KiPush push = { (uint32_t)m, (uint32_t)k, (uint32_t)n, 0 };
+    bool ok = dispatch_sync(G.pipe_matmul, bufs, push,
+                            ((uint32_t)n + 15u) / 16u, ((uint32_t)m + 15u) / 16u,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+bool moo_ki_gpu_ew_res(int32_t op, void* a, void* b, void* o, int64_t n) {
+    if (!a || !b || !o) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf bufs[3] = { *(KiBuf*)a, *(KiBuf*)b, *(KiBuf*)o };
+    KiPush push = { (uint32_t)n, 0, 0, (uint32_t)op };
+    bool ok = dispatch_sync(G.pipe_ew, bufs, push,
+                            (uint32_t)((n + 255) / 256), 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+bool moo_ki_gpu_reduce_sum_res(void* a, int64_t n, double* out_summe) {
+    if (!a || !out_summe) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    int64_t gruppen = (n + 255) / 256;
+    /* Eingabe a ist bereits resident. Partials (b[1]) + Dummy (b[2]) leihweise
+     * aus dem Pool; readback_mask 0x2 faltet den Partial-Download in den
+     * Compute-Submit (Reduktion verlaesst die GPU inhaerent). */
+    KiBuf partials, dummy;
+    if (!buf_holen(&partials, (VkDeviceSize)gruppen * 4)) {
+        g_tel.cpu_fallbacks++; return false;
+    }
+    if (!buf_holen(&dummy, 4)) {
+        buf_zurueck(&partials); g_tel.cpu_fallbacks++; return false;
+    }
+    KiBuf bufs[3] = { *(KiBuf*)a, partials, dummy };
+    KiPush push = { (uint32_t)n, 0, 0, 0 };
+    bool ok = dispatch_sync(G.pipe_reduce, bufs, push, (uint32_t)gruppen, 1,
+                            /*upload*/ 0u, /*readback*/ 0x2u, /*resident*/ true);
+    if (ok) {
+        const float* teile = (const float*)partials.map;
+        double s = 0.0;
+        for (int64_t i = 0; i < gruppen; i++) s += (double)teile[i];
+        *out_summe = s;
+        g_tel.downloads++;              /* Partial-Readback = Device->Host */
+    } else {
+        g_tel.cpu_fallbacks++;
+    }
+    buf_zurueck(&partials);
+    buf_zurueck(&dummy);
+    return ok;
+}
+
+void moo_ki_gpu_telemetrie(MooKiGpuTelemetrie* out) {
+    if (out) *out = g_tel;
+}
+void moo_ki_gpu_telemetrie_reset(void) {
+    g_tel = (MooKiGpuTelemetrie){0};
 }
 
 #endif /* MOO_HAS_VULKAN */
