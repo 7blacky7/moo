@@ -384,6 +384,33 @@ static void materialize_bcast(const MooTensor* t, const MooTensor* out_t, float*
     }
 }
 
+// KIP-G4c Punkt 4 (Backward-Residenz, Channel-Diskussion 2026-07-10 ~11:53-11:56,
+// kip-kern-Muster): berechnet tmp[i] = g[i] * faktor->data[i] auf der GPU, wenn
+// faktor bereits resident ist (faktor->valid & MOO_V_DEV, faktor->gpu_buf). g
+// ist bereits CPU-materialisiert (o->grad, Preflight-Trichter in rueckwaerts())
+// und wird hier NUR transient hochgeladen -- KEIN neuer gpu_grad-Lifecycle,
+// keine Persistenz. Ergebnis landet in tmp (Host, Groesse n) fuer die UNVER-
+// AENDERTE CPU-Akkumulation danach (accum_bcast/accum_bcast_mul bleiben der
+// EINZIGE Akkumulationsort fuer ALLE Op-Typen -- I3-konform, kein Split-
+// Akkumulator zwischen ew- und matmul-Backward). Rueckgabe false = kein GPU-
+// Pfad genutzt, Aufrufer faellt auf den bestehenden CPU-Pfad zurueck.
+static bool gpu_ew_kontribution(int32_t gop, const float* g, MooTensor* faktor,
+                                int64_t n, float* tmp) {
+    if (!(faktor->valid & MOO_V_DEV) || !faktor->gpu_buf) return false;
+    int64_t bytes = n * (int64_t)sizeof(float);
+    void* gbuf = moo_ki_gpu_buf_belegen(bytes);
+    void* tbuf = gbuf ? moo_ki_gpu_buf_belegen(bytes) : NULL;
+    bool ok = false;
+    if (tbuf && moo_ki_gpu_upload(gbuf, g, bytes) &&
+        moo_ki_gpu_ew_res(gop, gbuf, faktor->gpu_buf, tbuf, n) &&
+        moo_ki_gpu_download(tbuf, tmp, bytes)) {
+        ok = true;
+    }
+    moo_ki_gpu_buf_freigeben(gbuf);
+    moo_ki_gpu_buf_freigeben(tbuf);
+    return ok;
+}
+
 // ============================================================
 // backward-Funktionen (Signatur: void bw(const MooAgNode* n))
 // g = n->output->grad (existiert wenn bw gerufen wird).
@@ -416,13 +443,56 @@ static void bw_mul(const MooAgNode* n) {
     MooTensor* b = T(n->inputs[1]);
     float* buf = (float*)malloc((size_t)o->size * sizeof(float));
     if (!buf) { moo_throw(moo_error("autograd: Speicher voll")); return; }
+
+    /* KIP-G4c Punkt 4 (kip-kern-Muster 2026-07-10): GPU berechnet NUR die reine
+     * elementweise Kontribution (g*Faktor) im gleiche-Form-Fastpath (kein
+     * Broadcast zwischen a/b/out -- Schwelle n>=2^20 analog ew_op Stufe 5/6).
+     * Die Akkumulation bleibt UNVERAENDERT accum_bcast/accum_bcast_mul (CPU,
+     * einziger Akkumulationsort fuer ALLE Op-Typen -- verhindert den Split-
+     * Akkumulator zwischen ew- und matmul-Backward, siehe Channel-Diskussion).
+     * STRIKT erzwingt Residenz + wirft hart NUR wenn der Fastpath ueberhaupt
+     * greift (gleiche_form); Broadcast bleibt dokumentierte CPU-Luecke, kein
+     * residenter Pfad dafuer (analog asymmetrischer bw_matmul-Fall). */
+    bool gleiche_form =
+        a->ndim == o->ndim && memcmp(a->shape, o->shape, sizeof(int32_t) * (size_t)a->ndim) == 0 &&
+        b->ndim == o->ndim && memcmp(b->shape, o->shape, sizeof(int32_t) * (size_t)b->ndim) == 0;
+    bool strikt = moo_ki_gpu_strikt_aktiv();
+
     if (a->requires_grad) {           // da += g * b (b auf out-Form gelesen)
-        materialize_bcast(b, o, buf);
-        accum_bcast_mul(a, o, g, buf);
+        bool done = false;
+        if (gleiche_form && (strikt || o->size >= (1LL << 20))) {
+            if (strikt) moo_tensor_nach_gpu(b);
+            done = gpu_ew_kontribution(2 /* mul, siehe ew_op-Konvention */, g, b, o->size, buf);
+        }
+        if (!done && strikt && gleiche_form) {
+            free(buf);
+            moo_throw(moo_error("STRIKT: mul-Backward (da) nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
+            return;
+        }
+        if (done) {
+            accum_bcast(a, o, buf);        // buf ist bereits die volle Kontribution g*b
+        } else {
+            materialize_bcast(b, o, buf);
+            accum_bcast_mul(a, o, g, buf);
+        }
     }
     if (b->requires_grad) {           // db += g * a
-        materialize_bcast(a, o, buf);
-        accum_bcast_mul(b, o, g, buf);
+        bool done = false;
+        if (gleiche_form && (strikt || o->size >= (1LL << 20))) {
+            if (strikt) moo_tensor_nach_gpu(a);
+            done = gpu_ew_kontribution(2 /* mul, siehe ew_op-Konvention */, g, a, o->size, buf);
+        }
+        if (!done && strikt && gleiche_form) {
+            free(buf);
+            moo_throw(moo_error("STRIKT: mul-Backward (db) nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
+            return;
+        }
+        if (done) {
+            accum_bcast(b, o, buf);        // buf ist bereits die volle Kontribution g*a
+        } else {
+            materialize_bcast(a, o, buf);
+            accum_bcast_mul(b, o, g, buf);
+        }
     }
     free(buf);
 }
