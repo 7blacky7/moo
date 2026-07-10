@@ -780,6 +780,60 @@ static bool arch_schicht(Buf* b, MooValue s) {
 }
 
 /* speichern(netz, pfad): safetensors-Datei schreiben. Rueckgabe none. */
+/* ============================================================
+ * KIP-D3: bf16/f16 <-> f32 Konvertierung (lokale static Helfer)
+ * ============================================================
+ * d3_f32_zu_bf16 / d3_bf16_zu_f32 sind BIT-EXAKTE Spiegel der D1-Kanonik
+ * in moo_tensor.c (moo_f32_zu_bf16/moo_bf16_zu_f32, static inline dort).
+ * Lokal kopiert, um moo_runtime.h NICHT anfassen zu muessen (parallele
+ * B4a-Belegung durch kip-ops). Bei Aenderung der Kanonik hier mitziehen.
+ * d3_f16_zu_f32: IEEE half (1s/5e/10m) -> f32; NUR Import (kein F16-Export). */
+static inline uint16_t d3_f32_zu_bf16(float f) {
+    uint32_t x;
+    memcpy(&x, &f, sizeof(x));
+    if (((x >> 23) & 0xFFu) == 0xFFu && (x & 0x7FFFFFu)) {
+        return (uint16_t)((x >> 16) | 0x0040u);   /* NaN -> quiet bf16-NaN */
+    }
+    uint32_t bias = 0x7FFFu + ((x >> 16) & 1u);   /* round-to-nearest-even */
+    x += bias;                                    /* uint32: definiertes Wrap (UB-Policy) */
+    return (uint16_t)(x >> 16);
+}
+static inline float d3_bf16_zu_f32(uint16_t h) {
+    uint32_t x = (uint32_t)h << 16;
+    float f;
+    memcpy(&f, &x, sizeof(f));
+    return f;
+}
+static inline float d3_f16_zu_f32(uint16_t h) {
+    uint32_t sign = (uint32_t)(h & 0x8000u) << 16;
+    uint32_t exp  = (uint32_t)((h >> 10) & 0x1Fu);
+    uint32_t mant = (uint32_t)(h & 0x3FFu);
+    uint32_t out;
+    if (exp == 0u) {
+        if (mant == 0u) {
+            out = sign;                           /* +/- 0 */
+        } else {
+            /* subnormal half -> normalisierter f32 */
+            exp = 127u - 15u + 1u;
+            while ((mant & 0x400u) == 0u) { mant <<= 1; exp--; }
+            mant &= 0x3FFu;
+            out = sign | (exp << 23) | (mant << 13);
+        }
+    } else if (exp == 0x1Fu) {
+        out = sign | 0x7F800000u | (mant << 13);  /* Inf / NaN */
+    } else {
+        out = sign | ((exp - 15u + 127u) << 23) | (mant << 13);
+    }
+    float f;
+    memcpy(&f, &out, sizeof(f));
+    return f;
+}
+/* bf16-Export-Toggle: Default AUS => f32-Pfad byte-identisch (Gate). */
+static bool d3_export_bf16(void) {
+    const char* e = getenv("MOO_KI_SPEICHERN_BF16");
+    return e && e[0] && e[0] != '0';
+}
+
 MooValue moo_nn_speichern(MooValue netz, MooValue pfad) {
     if (!sl_hooks_vollstaendig()) return moo_none();
     if (pfad.tag != MOO_STRING) {
@@ -819,11 +873,14 @@ MooValue moo_nn_speichern(MooValue netz, MooValue pfad) {
         else buf_add(&h, "%c", c);
     }
     buf_add(&h, "\"}");
+    bool exp_bf16 = d3_export_bf16();
+    uint32_t d3_esz = exp_bf16 ? 2u : 4u;
+    const char* exp_dt = exp_bf16 ? "BF16" : "F32";
     uint64_t off = 0;
     for (int32_t i = 0; i < pl->length; i++) {
         MooTensor* p = T(pl->items[i]);
-        uint64_t bytes = (uint64_t)p->size * 4u;
-        buf_add(&h, ",\"p%d\":{\"dtype\":\"F32\",\"shape\":[", i);
+        uint64_t bytes = (uint64_t)p->size * d3_esz;
+        buf_add(&h, ",\"p%d\":{\"dtype\":\"%s\",\"shape\":[", i, exp_dt);
         for (int32_t d = 0; d < p->ndim; d++)
             buf_add(&h, "%s%d", d ? "," : "", p->shape[d]);
         buf_add(&h, "],\"data_offsets\":[%llu,%llu]}",
@@ -856,8 +913,17 @@ MooValue moo_nn_speichern(MooValue netz, MooValue pfad) {
               fwrite(h.s, 1, h.len, f) == h.len;
     for (int32_t i = 0; i < pl->length && ok; i++) {
         MooTensor* p = T(pl->items[i]);
-        ok = fwrite(p->data, sizeof(float), (size_t)p->size, f)
-             == (size_t)p->size;
+        if (!exp_bf16) {
+            ok = fwrite(p->data, sizeof(float), (size_t)p->size, f)
+                 == (size_t)p->size;
+        } else {
+            uint16_t* b16 = (uint16_t*)malloc((size_t)p->size * sizeof(uint16_t));
+            if (!b16) { ok = false; break; }
+            for (int64_t j = 0; j < p->size; j++) b16[j] = d3_f32_zu_bf16(p->data[j]);
+            ok = fwrite(b16, sizeof(uint16_t), (size_t)p->size, f)
+                 == (size_t)p->size;
+            free(b16);
+        }
     }
     ok = (fclose(f) == 0) && ok;
     free(arch.s); free(h.s);
@@ -874,8 +940,9 @@ MooValue moo_nn_speichern(MooValue netz, MooValue pfad) {
  * ============================================================
  * Liest ein BELIEBIGES safetensors-File (auch ohne moo_arch) und gibt
  * ein Dict {tensorname: Tensor} zurueck — der Weg fuer HuggingFace-
- * Mini-Modelle. Nur dtype F32 (moo-Tensoren sind f32); andere dtypes
- * werfen erklaerend. __metadata__ wird uebersprungen. */
+ * Mini-Modelle. dtype F32 direkt; BF16/F16 werden beim Import nach f32
+ * konvertiert (KIP-D3, moo-Tensoren bleiben f32); andere dtypes werfen
+ * erklaerend. __metadata__ wird uebersprungen. */
 MooValue moo_nn_safetensors(MooValue pfad) {
     if (pfad.tag != MOO_STRING) {
         moo_throw(moo_error("safetensors_laden: erwarte einen Dateinamen als Text"));
@@ -928,10 +995,20 @@ MooValue moo_nn_safetensors(MooValue pfad) {
         MooValue ent = moo_dict_get(header, k);
         if (ent.tag != MOO_DICT) { moo_release(ent); continue; }
         MooValue dt = eget(ent, "dtype");
-        if (!(dt.tag == MOO_STRING && strcmp(MV_STR(dt)->chars, "F32") == 0)) {
+        /* dtype -> Elementgroesse + Konvertierungs-Art (KIP-D3).
+         * d3_kind: 0=F32 (direkt), 1=BF16, 2=F16 (beide -> f32). */
+        int d3_esz = 0;
+        int d3_kind = 0;
+        if (dt.tag == MOO_STRING) {
+            const char* dn = MV_STR(dt)->chars;
+            if (strcmp(dn, "F32") == 0)  { d3_kind = 0; d3_esz = 4; }
+            else if (strcmp(dn, "BF16") == 0) { d3_kind = 1; d3_esz = 2; }
+            else if (strcmp(dn, "F16") == 0 || strcmp(dn, "FP16") == 0) { d3_kind = 2; d3_esz = 2; }
+        }
+        if (d3_esz == 0) {
             snprintf(fmsg, sizeof(fmsg), "safetensors_laden: Tensor \"%s\" "
-                     "hat dtype %s — moo kann bisher nur F32 (fp16/bf16-"
-                     "Konvertierung = Backlog)", MV_STR(k)->chars,
+                     "hat dtype %s — moo unterstuetzt F32, BF16, F16 "
+                     "(BF16/F16 werden nach f32 konvertiert)", MV_STR(k)->chars,
                      (dt.tag == MOO_STRING) ? MV_STR(dt)->chars : "?");
             ok = false;
             moo_release(dt); moo_release(ent);
@@ -961,12 +1038,26 @@ MooValue moo_nn_safetensors(MooValue pfad) {
         if (e_ok) {
             double a = MV_NUM(MV_LIST(offs)->items[0]);
             double b = MV_NUM(MV_LIST(offs)->items[1]);
-            e_ok = (b - a) == (double)elems * 4.0;
+            e_ok = (b - a) == (double)elems * (double)d3_esz;
             if (e_ok) {
                 t = moo_tensor_raw(nd, shape);
-                e_ok = t && fseek(f, daten_start + (long)a, SEEK_SET) == 0 &&
-                       fread(t->data, sizeof(float), (size_t)elems, f)
-                       == (size_t)elems;
+                e_ok = t && fseek(f, daten_start + (long)a, SEEK_SET) == 0;
+                if (e_ok && d3_kind == 0) {
+                    e_ok = fread(t->data, sizeof(float), (size_t)elems, f)
+                           == (size_t)elems;
+                } else if (e_ok) {
+                    /* BF16/F16: 2-Byte-LE einlesen, elementweise nach f32. */
+                    uint16_t* buf16 = (uint16_t*)malloc((size_t)elems * sizeof(uint16_t));
+                    e_ok = buf16 && fread(buf16, sizeof(uint16_t), (size_t)elems, f)
+                           == (size_t)elems;
+                    if (e_ok) {
+                        if (d3_kind == 1)
+                            for (int64_t j = 0; j < elems; j++) t->data[j] = d3_bf16_zu_f32(buf16[j]);
+                        else
+                            for (int64_t j = 0; j < elems; j++) t->data[j] = d3_f16_zu_f32(buf16[j]);
+                    }
+                    free(buf16);
+                }
             }
         }
         moo_release(shp); moo_release(offs); moo_release(ent);

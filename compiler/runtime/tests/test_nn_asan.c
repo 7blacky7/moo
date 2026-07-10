@@ -604,23 +604,43 @@ int main(void) {
         remove("/tmp/test_f1_eigen.mook");
         moo_release(mp); moo_release(netz); moo_release(schichten);
 
-        /* dtype != F32 wirft erklaerend */
-        fehler_reset();
+        /* F16 wird jetzt beim Import nach f32 konvertiert (KIP-D3).
+         * 0x3C00 (LE {0,60}) == f16 1.0. */
         const char* hj16 = "{\"x\":{\"dtype\":\"F16\",\"shape\":[1],"
             "\"data_offsets\":[0,2]}}";
         uint64_t hl16 = (uint64_t)strlen(hj16);
         f = fopen("/tmp/test_f1_f16.safetensors", "wb");
         fwrite(&hl16, 8, 1, f);
         fwrite(hj16, 1, (size_t)hl16, f);
-        unsigned char halb[2] = { 0, 60 };
+        unsigned char halb[2] = { 0, 60 };   /* 0x3C00 = f16 1.0 */
         fwrite(halb, 1, 2, f);
         fclose(f);
         MooValue p16 = moo_string_new("/tmp/test_f1_f16.safetensors");
         MooValue d16 = moo_nn_safetensors(p16);
         moo_release(p16);
-        CHECK(moo_error_flag == 1 && d16.tag == MOO_NONE, "F16 wirft erklaerend");
-        fehler_reset();
+        CHECK(d16.tag == MOO_DICT, "F16 importiert (->f32)");
+        MooValue xv16 = dget_(d16, "x");
+        CHECK(xv16.tag == MOO_TENSOR && T(xv16)->data[0] == 1.0f,
+              "F16 0x3C00 -> 1.0f");
+        moo_release(xv16); moo_release(d16);
         remove("/tmp/test_f1_f16.safetensors");
+
+        /* echter unsupported dtype (F64) wirft weiterhin erklaerend */
+        fehler_reset();
+        const char* hj64 = "{\"x\":{\"dtype\":\"F64\",\"shape\":[1],"
+            "\"data_offsets\":[0,8]}}";
+        uint64_t hl64 = (uint64_t)strlen(hj64);
+        f = fopen("/tmp/test_f1_f64.safetensors", "wb");
+        fwrite(&hl64, 8, 1, f);
+        fwrite(hj64, 1, (size_t)hl64, f);
+        double dd64 = 1.0; fwrite(&dd64, 8, 1, f);
+        fclose(f);
+        MooValue p64 = moo_string_new("/tmp/test_f1_f64.safetensors");
+        MooValue d64 = moo_nn_safetensors(p64);
+        moo_release(p64);
+        CHECK(moo_error_flag == 1 && d64.tag == MOO_NONE, "F64 wirft erklaerend");
+        fehler_reset();
+        remove("/tmp/test_f1_f64.safetensors");
         moo_ag_reset();
     }
 

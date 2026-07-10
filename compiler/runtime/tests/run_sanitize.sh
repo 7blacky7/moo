@@ -137,6 +137,10 @@ EXTRA_HARNESSES=(
   #               als_dtype-Storage-Pfad bit-identisch; XOR+CE bf16 vs f32 in
   #               Toleranz + bf16 deterministisch; Default-AUS == reines f32.
   "test_mixed_precision_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   safeten-dt: KIP-D3 — Safetensors DType-Vertrag: F32/BF16/F16-Import (->f32),
+  #               f32-Export byte-identisch, bf16-Export->Import bit-exakt,
+  #               Negativ unbekannter dtype. Quell-Satz wie test_nn_asan.
+  "test_safetensors_dtype_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   "test_dataset_asan.c|moo_dataset.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   tokenizer:  KIP-T2 — Byte-level BPE (train/encode/decode/save/load/hash).
   #               Test-throw-Modell wie dataset; Tensor-Kern + Core-Runtime.
