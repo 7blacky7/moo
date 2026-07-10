@@ -138,6 +138,10 @@ EXTRA_HARNESSES=(
   #               Gates: Determinismus ohne Seed, byte-exakter Roundtrip inkl.
   #               invalid-UTF8/NUL/Emoji, Artefakt-Roundtrip, UNK-Negativ-Gate.
   "test_tokenizer_asan.c|moo_tokenizer.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   shard:      KIP-E1 — Streaming-Token-Shards + Dataloader (Format/CRC,
+  #               gefenstertes Lesen, seed-deterministische Blockreihenfolge,
+  #               SFT-Loss-Maske, Train/Val-Split). Test-throw-Modell.
+  "test_shard_asan.c|moo_shard.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   bare_alloc: Plan-010 T1 — Bare-Allocator (K3) + serielle Formatter (K2)
   #               auf dem Host. Linkt NUR moo_bare_alloc.c + moo_bare_console.c;
   #               moo_bare.c/moo_bare_boot.c bewusst NICHT (echte in/out-Asm

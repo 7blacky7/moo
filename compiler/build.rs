@@ -35,6 +35,7 @@ fn main() {
         .file("runtime/moo_nn_easy.c")      // Kinderleicht-API ki_netz/trainiere (Plan-014 D1, immer gebaut)
         .file("runtime/moo_dataset.c")      // Daten-Pipeline MNIST/CSV/PGM (Plan-014 E1, immer gebaut)
         .file("runtime/moo_tokenizer.c")    // Byte-level BPE-Tokenizer (KIP-T2, immer gebaut)
+        .file("runtime/moo_shard.c")        // Streaming-Token-Shards + Dataloader (KIP-E1, immer gebaut)
         .file("runtime/moo_ki_gpu.c")       // GPU2: Vulkan-Compute-Ops; ohne vulkan-Feature reiner Stub (immer gebaut)
         .file("runtime/moo_string.c")
         .file("runtime/moo_list.c")
