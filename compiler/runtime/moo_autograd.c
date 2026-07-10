@@ -506,11 +506,41 @@ static void bw_div(const MooAgNode* n) {
     float* buf = (float*)malloc((size_t)o->size * sizeof(float));
     if (!bb || !buf) { free(bb); free(buf); moo_throw(moo_error("autograd: Speicher voll")); return; }
     materialize_bcast(b, o, bb);
+
+    /* KIP-G4c Punkt 4 (Folgeschritt zu bw_mul, gleiches Muster, Channel
+     * 2026-07-10): GPU berechnet NUR die da-Kontribution (g/b) im gleiche-
+     * Form-Fastpath ueber den bestehenden div-Op (gop=3) -- direkt als
+     * ew_res(g,b) ausdrueckbar, identisches Muster zu bw_mul (gop=2). Die
+     * db-Kontribution (-g*out/b) braucht eine 3-Operanden-Rechnung (g*out,
+     * dann /b, dann negieren), die KEIN bestehender 2-Operanden-ew_res-Op
+     * abdeckt -- bewusst NICHT beschleunigt in diesem risikoarmen Folge-
+     * schritt (kein neuer Shader-Op). Akkumulation bleibt unveraendert
+     * CPU-seitig (accum_bcast/accum_bcast_mul, einziger Akkumulationsort
+     * fuer ALLE Op-Typen -- gleicher I3-Schutz wie bw_mul). */
+    bool gleiche_form_ab =
+        a->ndim == o->ndim && memcmp(a->shape, o->shape, sizeof(int32_t) * (size_t)a->ndim) == 0 &&
+        b->ndim == o->ndim && memcmp(b->shape, o->shape, sizeof(int32_t) * (size_t)b->ndim) == 0;
+    bool strikt = moo_ki_gpu_strikt_aktiv();
+
     if (a->requires_grad) {           // da += g / b
-        for (int64_t i = 0; i < o->size; i++) buf[i] = 1.0f / bb[i];
-        accum_bcast_mul(a, o, g, buf);
+        bool done = false;
+        if (gleiche_form_ab && (strikt || o->size >= (1LL << 20))) {
+            if (strikt) moo_tensor_nach_gpu(b);
+            done = gpu_ew_kontribution(3 /* div, siehe ew_op-Konvention */, g, b, o->size, buf);
+        }
+        if (!done && strikt && gleiche_form_ab) {
+            free(bb); free(buf);
+            moo_throw(moo_error("STRIKT: div-Backward (da) nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
+            return;
+        }
+        if (done) {
+            accum_bcast(a, o, buf);        // buf ist bereits die volle Kontribution g/b
+        } else {
+            for (int64_t i = 0; i < o->size; i++) buf[i] = 1.0f / bb[i];
+            accum_bcast_mul(a, o, g, buf);
+        }
     }
-    if (b->requires_grad) {           // db += -g * a / b^2  = -g * out / b
+    if (b->requires_grad) {           // db += -g * a / b^2  = -g * out / b (bewusst CPU, s.o.)
         const float* y = o->data;
         for (int64_t i = 0; i < o->size; i++) buf[i] = -y[i] / bb[i];
         accum_bcast_mul(b, o, g, buf);
