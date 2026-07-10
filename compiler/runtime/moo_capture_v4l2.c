@@ -386,8 +386,11 @@ MooValue moo_capture_camera_frame_native(MooKamera* camera, int32_t timeout_ms) 
     int64_t deadline = now + timeout_ms;
     struct pollfd pfd = { native->fd, POLLIN | POLLERR | POLLHUP, 0 };
     int poll_result;
-    do { poll_result = poll(&pfd, 1, remaining_ms(deadline)); }
-    while (poll_result < 0 && errno == EINTR);
+    do {
+        poll_result = poll(&pfd, 1, remaining_ms(deadline));
+        if (poll_result < 0 && errno == EINTR && remaining_ms(deadline) == 0)
+            return camera_fail("kamera_frame: Timeout");
+    } while (poll_result < 0 && errno == EINTR);
     if (poll_result == 0) return camera_fail("kamera_frame: Timeout");
     if (poll_result < 0 || (pfd.revents & (POLLERR | POLLHUP))) {
         return camera_broken(camera, "kamera_frame: Geraet getrennt");

@@ -127,6 +127,7 @@ static bool recover_stream(snd_pcm_t* pcm, int error, int64_t deadline) {
         do {
             result = snd_pcm_resume(pcm);
             if (result == -EAGAIN && !wait_ready(pcm, deadline)) return false;
+            if (result == -EINTR && remaining_ms(deadline) == 0) return false;
         } while (result == -EAGAIN || result == -EINTR);
         if (result < 0) result = snd_pcm_prepare(pcm);
         return result >= 0;
@@ -219,13 +220,23 @@ MooValue moo_capture_microphone_read_native(MooMikro* microphone,
     int64_t deadline = start + timeout_ms;
     int32_t filled = 0;
     int recoveries = 0;
+    bool first_attempt = true;
     while (filled < samples) {
+        if (!first_attempt && remaining_ms(deadline) == 0) {
+            free(input); return microphone_fail("mikro_lesen: Timeout nach Teildaten");
+        }
+        first_attempt = false;
         snd_pcm_sframes_t got = snd_pcm_readi(
             native->pcm,
             input + (size_t)filled * microphone->channels,
             (snd_pcm_uframes_t)(samples - filled));
         if (got > 0) { filled += (int32_t)got; continue; }
-        if (got == -EINTR) continue;
+        if (got == -EINTR) {
+            if (remaining_ms(deadline) == 0) {
+                free(input); return microphone_fail("mikro_lesen: Timeout");
+            }
+            continue;
+        }
         if (got == -EAGAIN || got == 0) {
             if (!wait_ready(native->pcm, deadline)) {
                 free(input); return microphone_fail("mikro_lesen: Timeout");
