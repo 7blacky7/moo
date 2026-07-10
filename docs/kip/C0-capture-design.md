@@ -1,7 +1,8 @@
 # KI-MULTI-C0 — Capture-Vertrag für Kamera und Mikrofon
 
-**Status:** DESIGN V2 — P0-Befunde aus `verification-ki-multi-c0-gpt` eingearbeitet.  
-**Owner-Task:** `d222221a`. C1 darf erst nach unabhängigem GO dieses Vertrags starten.
+**Status:** ABGENOMMEN — unabhängiges C0-GO dokumentiert in `verification-ki-multi-c0-gpt`; C1 implementiert und final verifiziert.
+
+**Owner-Task:** `d222221a` (done). Implementierung: C1-Task `e9e10f6c`.
 
 Ziel sind robuste, plattformneutrale Pipelines:
 
@@ -241,4 +242,4 @@ Die vier ursprünglichen Fragen sind geschlossen:
 3. synchron/pull: GO; latest wird durch drain/requeue implementiert.
 4. Loopbacks allein: NO-GO; Pflichtgate ist deterministische Injection, Loopbacks ergänzen es.
 
-Dieser V2-Vertrag erfüllt die P0-Auflagen aus `verification-ki-multi-c0-gpt` und wartet auf unabhängiges Re-Review.
+Dieser V2-Vertrag erfüllt die P0-Auflagen aus `verification-ki-multi-c0-gpt`. Das unabhängige Re-Review sowie die adversarialen C1-Block- und Final-Gates sind mit GO abgeschlossen.
