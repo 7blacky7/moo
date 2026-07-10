@@ -82,6 +82,19 @@ bool moo_ki_gpu_transpose_res(void* a, void* o, int32_t rows, int32_t cols) {
 bool moo_ki_gpu_copy_res(void* a, void* o, int64_t n, int64_t src_off, int64_t dst_off) {
     (void)a; (void)o; (void)n; (void)src_off; (void)dst_off; return false;
 }
+bool moo_ki_gpu_grad_accum_res(void* acc, void* g, int64_t n) {
+    (void)acc; (void)g; (void)n; return false;
+}
+bool moo_ki_gpu_opt_sgd_res(void* p, void* m, void* grad, int64_t n,
+                            float lr, float momentum) {
+    (void)p; (void)m; (void)grad; (void)n; (void)lr; (void)momentum; return false;
+}
+bool moo_ki_gpu_opt_adam_res(void* p, void* grad, void* mv, int64_t n,
+                             float lr, float beta1, float beta2, float eps,
+                             float wd, int adamw, int64_t t) {
+    (void)p; (void)grad; (void)mv; (void)n; (void)lr; (void)beta1; (void)beta2;
+    (void)eps; (void)wd; (void)adamw; (void)t; return false;
+}
 void moo_ki_gpu_telemetrie(MooKiGpuTelemetrie* out) {
     if (out) { out->submits = 0; out->uploads = 0; out->downloads = 0; out->cpu_fallbacks = 0; }
 }
@@ -90,6 +103,7 @@ void moo_ki_gpu_telemetrie_reset(void) { }
 #else /* MOO_HAS_VULKAN ------------------------------------------------- */
 
 #include <vulkan/vulkan.h>
+#include <math.h>            /* KIP-G3c: powf/pow fuer Adam-Bias-Korrektur */
 #include "moo_ki_gpu_shaders.h"
 
 typedef struct {
@@ -105,10 +119,13 @@ typedef struct {
     bool devlocal_vereint;            /* true: devlocal==hostvis (UMA/iGPU/Fallback) -> keine Copies */
     VkDescriptorSetLayout dsl;        /* 3 Storage-Buffers */
     VkPipelineLayout playout;         /* + 16B Push-Constants */
+    VkPipelineLayout playout_opt;     /* KIP-G3c: + 36B Push-Constants (Optimizer-Ops), gleiches dsl */
     VkPipeline pipe_matmul, pipe_ew, pipe_reduce;
     VkPipeline pipe_matmul_naiv;      /* KIP-G2: nur A/B-Mikrobenchmark */
     VkPipeline pipe_unary, pipe_unary_bw;  /* KIP-G3d-a: unaer/Skalar/Aktivierung F+B */
     VkPipeline pipe_transpose, pipe_copy;  /* KIP-G3d-c: Layout-Ops transpose/reshape/concat */
+    VkPipeline pipe_grad_accum;            /* KIP-G3c: gpu_grad += Beitrag (Fan-out) */
+    VkPipeline pipe_opt_sgd, pipe_opt_adam;/* KIP-G3c: Optimizer-Schritt SGD-Momentum / Adam(W) */
     VkCommandPool cmdpool;
     VkDescriptorPool descpool;
     /* GPU3-C: Per-Op-Allokationen gecacht — lazy beim ersten Dispatch
@@ -127,6 +144,13 @@ static MooKiGpuTelemetrie g_tel = {0};
 
 typedef struct { uint32_t M, K, N, op; } KiPush;
 
+/* KIP-G3c: erweitertes Push-Layout (36B) fuer Optimizer-Ops. Das 3-Buffer-
+ * Descriptor-Layout bleibt (m+v teilen den mv-Buffer, G1 2) — nur die
+ * Push-Range ist groesser, daher ein eigenes playout_opt mit demselben dsl.
+ * Feld-Offsets muessen mit den PC-Bloecken in opt_sgd.comp/opt_adam.comp
+ * uebereinstimmen (std430, tight-packed: n@0 flags@4 lr@8 p1@12 ... p6@32). */
+typedef struct { uint32_t n, flags; float lr, p1, p2, p3, p4, p5, p6; } KiPushOpt;
+
 static bool env_aus(void) {
     const char* e = getenv("MOO_KI_GPU");
     return e && e[0] == '0' && e[1] == '\0';
@@ -136,7 +160,8 @@ static bool env_erzwingen(void) {
     return e && e[0] == '1' && e[1] == '\0';
 }
 
-static VkPipeline pipeline_bauen(const unsigned char* spv, unsigned int len) {
+static VkPipeline pipeline_bauen(const unsigned char* spv, unsigned int len,
+                                 VkPipelineLayout layout) {
     VkShaderModuleCreateInfo smi = {
         .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
         .codeSize = len,
@@ -153,7 +178,7 @@ static VkPipeline pipeline_bauen(const unsigned char* spv, unsigned int len) {
             .module = mod,
             .pName = "main",
         },
-        .layout = G.playout,
+        .layout = layout,
     };
     VkPipeline p = VK_NULL_HANDLE;
     vkCreateComputePipelines(G.geraet, VK_NULL_HANDLE, 1, &cpi, NULL, &p);
@@ -282,16 +307,37 @@ static bool ki_gpu_init(void) {
     if (vkCreatePipelineLayout(G.geraet, &pli, NULL, &G.playout) != VK_SUCCESS)
         return false;
 
-    G.pipe_matmul = pipeline_bauen(ki_matmul_spv, ki_matmul_spv_len);
-    G.pipe_ew = pipeline_bauen(ki_elementwise_spv, ki_elementwise_spv_len);
-    G.pipe_reduce = pipeline_bauen(ki_reduce_spv, ki_reduce_spv_len);
-    G.pipe_matmul_naiv = pipeline_bauen(ki_matmul_naiv_spv, ki_matmul_naiv_spv_len);
-    G.pipe_unary = pipeline_bauen(ki_unary_fwd_spv, ki_unary_fwd_spv_len);
-    G.pipe_unary_bw = pipeline_bauen(ki_unary_bw_spv, ki_unary_bw_spv_len);
-    G.pipe_transpose = pipeline_bauen(ki_transpose_spv, ki_transpose_spv_len);
-    G.pipe_copy = pipeline_bauen(ki_copy_spv, ki_copy_spv_len);
+    /* KIP-G3c: zweites Pipeline-Layout — gleiches 3-Buffer-dsl, aber groessere
+     * Push-Range (KiPushOpt, 36B) fuer die Optimizer-Ops. */
+    VkPushConstantRange pcr_opt = {
+        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        .size = sizeof(KiPushOpt),
+    };
+    VkPipelineLayoutCreateInfo pli_opt = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1,
+        .pSetLayouts = &G.dsl,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &pcr_opt,
+    };
+    if (vkCreatePipelineLayout(G.geraet, &pli_opt, NULL, &G.playout_opt) != VK_SUCCESS)
+        return false;
+
+    G.pipe_matmul = pipeline_bauen(ki_matmul_spv, ki_matmul_spv_len, G.playout);
+    G.pipe_ew = pipeline_bauen(ki_elementwise_spv, ki_elementwise_spv_len, G.playout);
+    G.pipe_reduce = pipeline_bauen(ki_reduce_spv, ki_reduce_spv_len, G.playout);
+    G.pipe_matmul_naiv = pipeline_bauen(ki_matmul_naiv_spv, ki_matmul_naiv_spv_len, G.playout);
+    G.pipe_unary = pipeline_bauen(ki_unary_fwd_spv, ki_unary_fwd_spv_len, G.playout);
+    G.pipe_unary_bw = pipeline_bauen(ki_unary_bw_spv, ki_unary_bw_spv_len, G.playout);
+    G.pipe_transpose = pipeline_bauen(ki_transpose_spv, ki_transpose_spv_len, G.playout);
+    G.pipe_copy = pipeline_bauen(ki_copy_spv, ki_copy_spv_len, G.playout);
+    /* KIP-G3c: grad_accum nutzt das 16B-playout, die Opt-Schritte das 36B-playout_opt. */
+    G.pipe_grad_accum = pipeline_bauen(ki_grad_accum_spv, ki_grad_accum_spv_len, G.playout);
+    G.pipe_opt_sgd = pipeline_bauen(ki_opt_sgd_spv, ki_opt_sgd_spv_len, G.playout_opt);
+    G.pipe_opt_adam = pipeline_bauen(ki_opt_adam_spv, ki_opt_adam_spv_len, G.playout_opt);
     if (!G.pipe_matmul || !G.pipe_ew || !G.pipe_reduce || !G.pipe_matmul_naiv ||
-        !G.pipe_unary || !G.pipe_unary_bw || !G.pipe_transpose || !G.pipe_copy)
+        !G.pipe_unary || !G.pipe_unary_bw || !G.pipe_transpose || !G.pipe_copy ||
+        !G.pipe_grad_accum || !G.pipe_opt_sgd || !G.pipe_opt_adam)
         return false;
 
     VkCommandPoolCreateInfo cpi = {
@@ -451,19 +497,11 @@ static void buf_zurueck(KiBuf* b) {
     buf_weg(b);   /* Pool voll oder Buffer unvollstaendig */
 }
 
-/* Gemeinsamer Ablauf: 3 Buffers sind angelegt, Staging der upload-Buffers
- * ist gefuellt. Im SELBEN Command-Buffer: Staging->VRAM-Copies (upload_mask),
- * Barrier, Compute-Dispatch, Barrier, VRAM->Staging-Copies (readback_mask).
- * Weiterhin genau EIN Submit pro Op; GPU3-C: DescSet/CmdBuf/Fence gecacht
- * statt pro Op allokiert (siehe Cache-Trio in KiGpu).
- * Im Vereint-Modus entfallen Copies+Barriers (dev==stg). */
-static bool dispatch_sync(VkPipeline pipe, KiBuf b[3], KiPush push,
-                          uint32_t gx, uint32_t gy,
-                          uint32_t upload_mask, uint32_t readback_mask,
-                          bool resident) {
-    /* GPU3-C: DescSet/CmdBuf/Fence einmalig anlegen und wiederverwenden.
-     * Fail => false (CPU-Fallback); Retry beim naechsten Aufruf ist
-     * idempotent, weil die Handles VK_NULL_HANDLE bleiben. */
+/* KIP-G3c: DescSet/CmdBuf/Fence-Cache-Trio lazy anlegen (GPU3-C). Geteilt von
+ * dispatch_sync (16B-Push) und dispatch_opt (36B-Push) — beide binden dieselbe
+ * ds_cache (aus G.dsl alloziert), der synchrone Ablauf schliesst Overlap aus.
+ * Fail => false (CPU-Fallback); Retry idempotent (Handles bleiben NULL). */
+static bool ensure_dispatch_cache(void) {
     if (G.ds_cache == VK_NULL_HANDLE) {
         VkDescriptorSetAllocateInfo dsa = {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -495,6 +533,78 @@ static bool dispatch_sync(VkPipeline pipe, KiBuf b[3], KiPush push,
             return false;
         }
     }
+    return true;
+}
+
+/* KIP-G3c: Optimizer-Dispatch — immer resident (kein Upload/Readback im
+ * Command-Buffer), nutzt playout_opt (36B-Push). Ein Start-Barrier macht die
+ * Writes vorheriger Ops/Uploads in p/m/v/g sichtbar (wie resident-Zweig in
+ * dispatch_sync). Genau 1 Submit pro Schritt (submits++). */
+static bool dispatch_opt(VkPipeline pipe, KiBuf b[3], KiPushOpt push, uint32_t gx) {
+    if (!ensure_dispatch_cache()) return false;
+    VkDescriptorSet ds = G.ds_cache;
+    VkDescriptorBufferInfo bi[3];
+    VkWriteDescriptorSet ws[3];
+    for (int i = 0; i < 3; i++) {
+        bi[i] = (VkDescriptorBufferInfo){ .buffer = b[i].dev, .range = VK_WHOLE_SIZE };
+        ws[i] = (VkWriteDescriptorSet){
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = ds,
+            .dstBinding = (uint32_t)i,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .pBufferInfo = &bi[i],
+        };
+    }
+    vkUpdateDescriptorSets(G.geraet, 3, ws, 0, NULL);
+    VkCommandBuffer cb = G.cb_cache;
+    vkResetCommandBuffer(cb, 0);
+    VkCommandBufferBeginInfo cbb = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    vkBeginCommandBuffer(cb, &cbb);
+    VkMemoryBarrier mb = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+    };
+    vkCmdPipelineBarrier(cb,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 1, &mb, 0, NULL, 0, NULL);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipe);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, G.playout_opt,
+                            0, 1, &ds, 0, NULL);
+    vkCmdPushConstants(cb, G.playout_opt, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                       sizeof(push), &push);
+    vkCmdDispatch(cb, gx, 1, 1);
+    vkEndCommandBuffer(cb);
+    vkResetFences(G.geraet, 1, &G.fence_cache);
+    VkSubmitInfo si = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &cb,
+    };
+    bool ok = vkQueueSubmit(G.queue, 1, &si, G.fence_cache) == VK_SUCCESS &&
+              vkWaitForFences(G.geraet, 1, &G.fence_cache, VK_TRUE,
+                              30ull * 1000000000ull) == VK_SUCCESS;
+    if (!ok) vkQueueWaitIdle(G.queue);
+    if (ok) g_tel.submits++;
+    return ok;
+}
+
+/* Gemeinsamer Ablauf: 3 Buffers sind angelegt, Staging der upload-Buffers
+ * ist gefuellt. Im SELBEN Command-Buffer: Staging->VRAM-Copies (upload_mask),
+ * Barrier, Compute-Dispatch, Barrier, VRAM->Staging-Copies (readback_mask).
+ * Weiterhin genau EIN Submit pro Op; GPU3-C: DescSet/CmdBuf/Fence gecacht
+ * statt pro Op allokiert (siehe Cache-Trio in KiGpu).
+ * Im Vereint-Modus entfallen Copies+Barriers (dev==stg). */
+static bool dispatch_sync(VkPipeline pipe, KiBuf b[3], KiPush push,
+                          uint32_t gx, uint32_t gy,
+                          uint32_t upload_mask, uint32_t readback_mask,
+                          bool resident) {
+    if (!ensure_dispatch_cache()) return false;
     VkDescriptorSet ds = G.ds_cache;
     VkDescriptorBufferInfo bi[3];
     VkWriteDescriptorSet ws[3];
@@ -919,6 +1029,54 @@ bool moo_ki_gpu_copy_res(void* a, void* o, int64_t n, int64_t src_off, int64_t d
     bool ok = dispatch_sync(G.pipe_copy, bufs, push,
                             (uint32_t)((n + 255) / 256), 1,
                             /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3c: Gradient-Akkumulation acc[i] += g[i] auf residenten Buffers. Loest
+ * das += ein, das die Bwd-Ops (G3d-a/-c) bewusst weggelassen haben. acc wird
+ * an binding 0 (rw) UND binding 2 (ungenutzt) gebunden; g an binding 1. */
+bool moo_ki_gpu_grad_accum_res(void* acc, void* g, int64_t n) {
+    if (!acc || !g) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf bufs[3] = { *(KiBuf*)acc, *(KiBuf*)g, *(KiBuf*)acc };
+    KiPush push = { (uint32_t)n, 0, 0, 0 };
+    bool ok = dispatch_sync(G.pipe_grad_accum, bufs, push,
+                            (uint32_t)((n + 255) / 256), 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3c: SGD-mit-Momentum-Schritt (in-place). p, m read+write, grad read.
+ * m := mu*m + grad; p := p - lr*m. Momentum-Zustand m bleibt resident (E2b
+ * laedt ihn per moo_ki_gpu_download herunter). */
+bool moo_ki_gpu_opt_sgd_res(void* p, void* m, void* grad, int64_t n,
+                            float lr, float momentum) {
+    if (!p || !m || !grad) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf bufs[3] = { *(KiBuf*)p, *(KiBuf*)m, *(KiBuf*)grad };
+    KiPushOpt push = { (uint32_t)n, 0u, lr, momentum, 0.f, 0.f, 0.f, 0.f, 0.f };
+    bool ok = dispatch_opt(G.pipe_opt_sgd, bufs, push, (uint32_t)((n + 255) / 256));
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3c: Adam/AdamW-Schritt (in-place). p, mv read+write, grad read; mv ist
+ * EIN residenter Buffer der Groesse 2n (m in [0,n), v in [n,2n) — G1 2, keine
+ * getrennte 4. Bindung). adamw!=0 -> decoupled weight decay. Bias-Korrektur
+ * bc1/bc2 host-seitig aus t (1-basiert, wie moo_nn.c). t>=1 erwartet. */
+bool moo_ki_gpu_opt_adam_res(void* p, void* grad, void* mv, int64_t n,
+                             float lr, float beta1, float beta2, float eps,
+                             float wd, int adamw, int64_t t) {
+    if (!p || !grad || !mv) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    float bc1 = (float)(1.0 - pow((double)beta1, (double)t));
+    float bc2 = (float)(1.0 - pow((double)beta2, (double)t));
+    KiPushOpt push = { (uint32_t)n, adamw ? 1u : 0u, lr, beta1, beta2,
+                       eps, wd, bc1, bc2 };
+    KiBuf bufs[3] = { *(KiBuf*)p, *(KiBuf*)mv, *(KiBuf*)grad };
+    bool ok = dispatch_opt(G.pipe_opt_adam, bufs, push, (uint32_t)((n + 255) / 256));
     if (!ok) g_tel.cpu_fallbacks++;
     return ok;
 }

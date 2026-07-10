@@ -1,0 +1,35 @@
+#version 450
+// opt_adam.comp — KIP-G3c: Adam/AdamW-Schritt auf residenten Buffers.
+// Referenz (moo_nn.c opt_schritt, art==adam/adamw), Reihenfolge identisch:
+//   [adamw] p -= lr*wd*p;   // decoupled decay ZUERST, auf aktuellem p
+//   m = b1*m + (1-b1)*g;   v = b2*v + (1-b2)*g*g;
+//   mhat = m/bc1;  vhat = v/bc2;   p -= lr*mhat/(sqrt(vhat)+eps).
+// bc1 = 1-b1^t, bc2 = 1-b2^t (Bias-Korrektur, host-seitig berechnet).
+// m und v teilen EINEN residenten Buffer mv (G1 §2: keine getrennte 4.
+// Bindung): m = mv[i], v = mv[n + i]. binding 0 = p (rw), binding 1 = mv
+// (rw), binding 2 = g (ro). Opt-Push (36B): n, flags(bit0 = adamw), lr,
+// b1, b2, eps, wd, bc1, bc2.
+layout(local_size_x = 256) in;
+layout(std430, binding = 0)          buffer BufP  { float p[]; };
+layout(std430, binding = 1)          buffer BufMV { float mv[]; };
+layout(std430, binding = 2) readonly buffer BufG  { float g[]; };
+layout(push_constant) uniform PC {
+    uint n; uint flags; float lr; float b1; float b2;
+    float eps; float wd; float bc1; float bc2;
+} pc;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.n) return;
+    float gi = g[i];
+    float pi = p[i];
+    if ((pc.flags & 1u) != 0u) pi = pi - pc.lr * pc.wd * pi;   // decoupled decay
+    float mi = pc.b1 * mv[i]         + (1.0 - pc.b1) * gi;
+    float vi = pc.b2 * mv[pc.n + i]  + (1.0 - pc.b2) * gi * gi;
+    mv[i]        = mi;
+    mv[pc.n + i] = vi;
+    float mhat = mi / pc.bc1;
+    float vhat = vi / pc.bc2;
+    pi = pi - pc.lr * mhat / (sqrt(vhat) + pc.eps);
+    p[i] = pi;
+}

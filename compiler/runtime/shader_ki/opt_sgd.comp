@@ -1,0 +1,23 @@
+#version 450
+// opt_sgd.comp — KIP-G3c: SGD-mit-Momentum-Schritt auf residenten Buffers.
+// Referenz (moo_nn.c opt_schritt, art==sgd):
+//   m[i] = mu*m[i] + g[i];  p[i] -= lr*m[i];
+// binding 0 = p (Param, read+write), binding 1 = m (Momentum-Zustand,
+// read+write), binding 2 = g (Gradient, readonly). Erweitertes Opt-Push (36B,
+// playout_opt): n = Elementzahl, lr, mu (p1). Uebrige Felder ungenutzt.
+layout(local_size_x = 256) in;
+layout(std430, binding = 0)          buffer BufP { float p[]; };
+layout(std430, binding = 1)          buffer BufM { float m[]; };
+layout(std430, binding = 2) readonly buffer BufG { float g[]; };
+layout(push_constant) uniform PC {
+    uint n; uint flags; float lr; float mu;
+    float p2; float p3; float p4; float p5; float p6;
+} pc;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.n) return;
+    float mi = pc.mu * m[i] + g[i];
+    m[i] = mi;
+    p[i] = p[i] - pc.lr * mi;
+}

@@ -43,6 +43,12 @@ gcc -std=gnu11 -O2 -DMOO_HAS_VULKAN -I. \
 
 /tmp/test_ki_gpu_layout
 
+# KIP-G3c: grad_accum + Optimizer-Schritt SGD/Adam/AdamW (Differential vs CPU, mehrere Schritte)
+gcc -std=gnu11 -O2 -DMOO_HAS_VULKAN -I. \
+    -o /tmp/test_ki_gpu_optim tests/test_ki_gpu_optim.c moo_ki_gpu.c -lvulkan -lm
+
+/tmp/test_ki_gpu_optim
+
 # KIP-G1 Phase B: Tensor-Dirty-State (valid-Masken-Transitionen + GPU-Download).
 # gc-sections droppt ungenutzte Tensor-Funktionen; moo_throw/moo_error gestubbt.
 gcc -std=gnu11 -O2 -ffunction-sections -fdata-sections -Wl,--gc-sections \

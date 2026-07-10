@@ -83,6 +83,31 @@ bool moo_ki_gpu_transpose_res(void* a, void* o, int32_t rows, int32_t cols);
  * reshape (Offsets 0), concat-Forward (dst_off) und concat-Split/Backward
  * (src_off). Offsets in ELEMENTEN. Residente Handles. */
 bool moo_ki_gpu_copy_res(void* a, void* o, int64_t n, int64_t src_off, int64_t dst_off);
+/* === KIP-G3c: GPU-Gradient-Akkumulation + Optimizer-Schritt ===
+ * grad_accum: acc[i] += g[i] auf residenten Buffers. Loest das +=/Fan-out ein,
+ * das die reinen Bwd-Beitraege (unary_bw_res u.a.) bewusst weglassen. */
+bool moo_ki_gpu_grad_accum_res(void* acc, void* g, int64_t n);
+/* SGD-mit-Momentum-Schritt (in-place): m := mu*m + grad; p := p - lr*m.
+ * p/m read+write, grad read. Zustand = m (Groesse n). */
+bool moo_ki_gpu_opt_sgd_res(void* p, void* m, void* grad, int64_t n,
+                            float lr, float momentum);
+/* Adam/AdamW-Schritt (in-place), Reihenfolge wie CPU-Referenz moo_nn.c:
+ *   [adamw] p -= lr*wd*p;  m := b1*m+(1-b1)*g;  v := b2*v+(1-b2)*g*g;
+ *   p -= lr*(m/bc1)/(sqrt(v/bc2)+eps),  bc = 1-beta^t (t 1-basiert, >=1).
+ * m und v teilen EINEN residenten Buffer mv der Groesse 2n: m in [0,n),
+ * v in [n,2n) (G1 2 — keine getrennte 4. Bindung). adamw!=0 = decoupled decay. */
+bool moo_ki_gpu_opt_adam_res(void* p, void* grad, void* mv, int64_t n,
+                             float lr, float beta1, float beta2, float eps,
+                             float wd, int adamw, int64_t t);
+/* === KIP-G3c -> KIP-E2b: Optimizer-Zustands-Download-Schnittstelle ===
+ * Der Optimizer-Zustand lebt in AUFRUFER-eigenen residenten Buffers und wird
+ * NICHT implizit heruntergeladen (Residenz-Vertrag). Fuer den Checkpoint
+ * (E2b) laedt der Aufrufer die Zustands-Buffer mit dem bestehenden
+ * moo_ki_gpu_download(handle, dst, bytes) herunter. Layout je Optimizer:
+ *   SGD  -> m  : n   floats.
+ *   Adam -> mv : 2n  floats (m = mv[0..n), v = mv[n..2n)).
+ * Schritt-Zaehler t (Bias-Korrektur) haelt der Aufrufer host-seitig. Restore
+ * = moo_ki_gpu_upload derselben Buffer + Weitergabe von t an opt_adam_res. */
 /* Voll-Reduktion einer residenten Eingabe zu einem Host-Skalar. Die
  * Partial-Readback ist inhaerent (Reduktion verlaesst die GPU): submits++
  * (Compute) + downloads++ (Partials). */

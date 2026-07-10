@@ -1,0 +1,19 @@
+#version 450
+// grad_accum.comp — KIP-G3c: acc[i] += g[i], i in [0, M). GPU-Gradient-
+// Akkumulation (+= / Fan-out) fuer gpu_grad. Loest das in G3d-a/-c bewusst
+// weggelassene += ein: eine Bwd-Op schreibt ihren reinen Beitrag, dieser
+// Kernel akkumuliert ihn in den residenten Gradient-Buffer.
+// binding 0 = acc (read+write, Ziel), binding 1 = g (Beitrag, readonly),
+// binding 2 ungenutzt (Aufrufer bindet acc doppelt). Push wie 3-Buffer-DSL:
+// pc.M = Elementzahl (K/N/op ungenutzt).
+layout(local_size_x = 256) in;
+layout(std430, binding = 0)          buffer BufAcc { float acc[]; };
+layout(std430, binding = 1) readonly buffer BufG   { float g[]; };
+layout(std430, binding = 2) writeonly buffer BufU   { float u_unused[]; };
+layout(push_constant) uniform PC { uint M; uint K; uint N; uint op; } pc;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.M) return;
+    acc[i] = acc[i] + g[i];
+}
