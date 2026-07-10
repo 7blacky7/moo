@@ -155,6 +155,11 @@ EXTRA_HARNESSES=(
   #               Dropout-Zaehler+Dataloader-Pos, atomisch tmp+rename, Rotation).
   #               GATE: Kill+Resume bit-identisch MIT Dropout. Quell-Satz wie nn.
   "test_checkpoint_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   ckpt_ag:    KIP-B4b — Activation Checkpointing (Sub-Tape Re-Forward +
+  #               Dropout-Zaehler-Restore). GATE: Grad mit/ohne moo_nn_checkpoint
+  #               BIT-identisch MIT Dropout (Param+Input), Determinismus, tiefes
+  #               Multi-Dropout-Segment. Quell-Satz wie nn/checkpoint.
+  "test_checkpoint_ag_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   bare_alloc: Plan-010 T1 — Bare-Allocator (K3) + serielle Formatter (K2)
   #               auf dem Host. Linkt NUR moo_bare_alloc.c + moo_bare_console.c;
   #               moo_bare.c/moo_bare_boot.c bewusst NICHT (echte in/out-Asm

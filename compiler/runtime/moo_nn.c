@@ -1570,6 +1570,55 @@ MooValue moo_nn_vorwaerts(MooValue netz, MooValue x) {
     return cur;
 }
 
+/* KIP-B4b: Fuehrt eine Schicht-Teilsequenz als Activation-Checkpoint-Segment
+ * aus — spiegelt moo_nn_vorwaerts, haelt aber KEINE Zwischen-Aktivierungen
+ * (im backward auf isoliertem Sub-Tape re-materialisiert, Dropout-zaehler
+ * restauriert -> bit-identische Maske). netz = Schicht, Liste ODER ki_netz.
+ * x borrowed, Rueckgabe +1. */
+MooValue moo_nn_checkpoint(MooValue netz, MooValue x) {
+    if (x.tag != MOO_TENSOR) {
+        moo_throw(moo_error("checkpoint: die Eingabe ist kein Tensor"));
+        return moo_none();
+    }
+    MooValue schichten = netz;
+    bool frisch = false;
+    if (nn_ist(netz, "netz")) { schichten = dget(netz, "schichten"); frisch = true; }
+
+    /* Dropout-Layer im Segment sammeln + zaehler VOR dem Forward erfassen. */
+    MooValue* drop_dicts = NULL;
+    double* drop_zaehler = NULL;
+    int32_t n_drop = 0;
+    if (schichten.tag == MOO_LIST) {
+        MooList* l = MV_LIST(schichten);
+        for (int32_t i = 0; i < l->length; i++)
+            if (nn_ist(l->items[i], "dropout")) n_drop++;
+        if (n_drop > 0) {
+            drop_dicts = (MooValue*)malloc((size_t)n_drop * sizeof(MooValue));
+            drop_zaehler = (double*)malloc((size_t)n_drop * sizeof(double));
+            int32_t k = 0;
+            for (int32_t i = 0; i < l->length; i++)
+                if (nn_ist(l->items[i], "dropout")) {
+                    drop_dicts[k] = l->items[i];   /* borrowed (lebt in schichten) */
+                    drop_zaehler[k] = dnum(l->items[i], "zaehler", 0.0);
+                    k++;
+                }
+        }
+    } else if (nn_ist(schichten, "dropout")) {
+        n_drop = 1;
+        drop_dicts = (MooValue*)malloc(sizeof(MooValue));
+        drop_zaehler = (double*)malloc(sizeof(double));
+        drop_dicts[0] = schichten;
+        drop_zaehler[0] = dnum(schichten, "zaehler", 0.0);
+    }
+
+    MooValue out = moo_ag_checkpoint(moo_nn_vorwaerts, schichten, x, drop_dicts, drop_zaehler, n_drop);
+
+    free(drop_dicts);
+    free(drop_zaehler);
+    if (frisch) moo_release(schichten);
+    return out;
+}
+
 /* ============================================================
  * Parameter-Sammlung
  * ============================================================ */

@@ -97,12 +97,174 @@ void moo_ag_record(const char* op_name, MooValue a, MooValue b,
     if (ag_bf16) moo_tensor_bf16_runden(T(out));
 }
 
+// ============================================================
+// KIP-B4b: Activation Checkpointing
+// ------------------------------------------------------------
+// Ein Checkpoint-Segment fuehrt eine Schicht-Teilsequenz aus, OHNE die
+// Zwischen-Aktivierungen im Tape zu halten (nur Segment-Eingang x und
+// -Ausgang out ueberleben). Im backward wird das Segment auf einem
+// ISOLIERTEN Sub-Tape re-materialisiert und rueckwaerts propagiert; die
+// Gradienten fliessen direkt in die geteilten Parameter- und x-Tensoren.
+// Dropout ist zustandsbehaftet (seed+zaehler) -> der zaehler wird pro
+// Segment gesnapshottet und vor dem Re-Forward restauriert, damit die
+// Maske BIT-identisch ist (harter Gate-Fall). Haupt-Tape bleibt G0-konform
+// (genau 1 Node pro Segment, kein Fork der Refcount-Zone).
+// ============================================================
+// Segment-Re-Forward wird als Funktionszeiger uebergeben (Entkopplung:
+// moo_autograd.c linkt NICHT hart gegen die NN-Schicht moo_nn.c).
+
+typedef struct {
+    MooValue schichten;      // retained: Segment-Schichten
+    MooValue (*vorwaerts)(MooValue, MooValue);  // Segment-Re-Forward (moo_nn.c)
+    MooValue* drop_dicts;    // retained: Dropout-Layer-Dicts im Segment
+    double*   drop_zaehler;  // zaehler-Snapshot beim Segment-Eintritt
+    int32_t   n_drop;
+} AgCkpt;
+static AgCkpt* ckpts = NULL;
+static int64_t ckpt_len = 0, ckpt_cap = 0;
+
+static void bw_checkpoint(const MooAgNode* n);
+static const MooTensorOp ckpt_op = {
+    "__checkpoint", MOO_OP_UNARY, NULL, NULL, bw_checkpoint, 0
+};
+
+static void ckpt_frei(AgCkpt* c) {
+    moo_release(c->schichten);
+    for (int32_t j = 0; j < c->n_drop; j++) moo_release(c->drop_dicts[j]);
+    free(c->drop_dicts);
+    free(c->drop_zaehler);
+    c->schichten = moo_none();
+    c->drop_dicts = NULL;
+    c->drop_zaehler = NULL;
+    c->n_drop = 0;
+}
+
+// Forward: Segment unter autograd-AUS ausfuehren (keine Zwischen-Nodes),
+// EINEN Checkpoint-Node an das Haupt-Tape haengen. schichten/x borrowed,
+// drop_dicts/drop_zaehler borrowed (werden kopiert). Rueckgabe +1.
+MooValue moo_ag_checkpoint(MooValue (*vorwaerts)(MooValue, MooValue),
+                           MooValue schichten, MooValue x,
+                           MooValue* drop_dicts, const double* drop_zaehler,
+                           int32_t n_drop) {
+    if (x.tag != MOO_TENSOR) {
+        moo_throw(moo_error("checkpoint: die Eingabe ist kein Tensor"));
+        return moo_none();
+    }
+    // Inferenz / Aufzeichnung aus: normaler Forward, kein Node.
+    if (!ag_enabled || in_backward) return vorwaerts(schichten, x);
+    if (!bw_registriert) moo_ag_init_bw();
+
+    // Forward OHNE Zwischen-Nodes; Dropout advanced zaehler pre->post.
+    bool save = ag_enabled;
+    ag_enabled = false;
+    MooValue out = vorwaerts(schichten, x);
+    ag_enabled = save;
+    if (out.tag != MOO_TENSOR) return out;   // Fehler geworfen
+
+    // Checkpoint-Kontext (Index via node->skalar).
+    if (ckpt_len == ckpt_cap) {
+        int64_t nc = ckpt_cap ? ckpt_cap * 2 : 8;
+        AgCkpt* na = (AgCkpt*)realloc(ckpts, (size_t)nc * sizeof(AgCkpt));
+        if (!na) { moo_release(out); moo_throw(moo_error("checkpoint: Speicher voll")); return moo_none(); }
+        ckpts = na; ckpt_cap = nc;
+    }
+    int64_t idx = ckpt_len++;
+    AgCkpt* c = &ckpts[idx];
+    moo_retain(schichten);
+    c->schichten = schichten;
+    c->vorwaerts = vorwaerts;
+    c->n_drop = n_drop;
+    c->drop_dicts = NULL;
+    c->drop_zaehler = NULL;
+    if (n_drop > 0) {
+        c->drop_dicts = (MooValue*)malloc((size_t)n_drop * sizeof(MooValue));
+        c->drop_zaehler = (double*)malloc((size_t)n_drop * sizeof(double));
+        if (!c->drop_dicts || !c->drop_zaehler) {
+            free(c->drop_dicts); free(c->drop_zaehler);
+            moo_release(schichten); ckpt_len--; moo_release(out);
+            moo_throw(moo_error("checkpoint: Speicher voll")); return moo_none();
+        }
+        for (int32_t j = 0; j < n_drop; j++) {
+            moo_retain(drop_dicts[j]);
+            c->drop_dicts[j] = drop_dicts[j];
+            c->drop_zaehler[j] = drop_zaehler[j];
+        }
+    }
+
+    // Checkpoint-Node an das Haupt-Tape (Kapazitaet wie moo_ag_record).
+    if (tape_len == tape_cap) {
+        int64_t nc = tape_cap ? tape_cap * 2 : 64;
+        MooAgNode* nt = (MooAgNode*)realloc(tape, (size_t)nc * sizeof(MooAgNode));
+        if (!nt) { moo_release(out); moo_throw(moo_error("checkpoint: Speicher voll (Tape)")); return moo_none(); }
+        tape = nt; tape_cap = nc;
+    }
+    MooAgNode* node = &tape[tape_len++];
+    node->op = &ckpt_op;
+    node->n_in = 1;
+    moo_retain(x);
+    node->inputs[0] = x;
+    moo_retain(out);
+    node->output = out;
+    node->hat_skalar = true;
+    node->skalar = (double)idx;
+    T(out)->requires_grad = true;
+    return out;
+}
+
+// Backward: Sub-Tape Re-Forward + Sub-Tape-Backward. Seedet out_new->grad
+// aus out_stored->grad; akkumuliert in x->grad UND (geteilte) param->grad.
+static void bw_checkpoint(const MooAgNode* n) {
+    int64_t idx = (int64_t)n->skalar;
+    AgCkpt* c = &ckpts[idx];
+    MooValue out_stored = n->output;
+    MooValue x = n->inputs[0];
+    if (!T(out_stored)->grad) return;
+
+    // Dropout-Zaehler auf Segment-Eintritt zuruecksetzen -> Maske bit-identisch.
+    for (int32_t j = 0; j < c->n_drop; j++)
+        moo_dict_set(c->drop_dicts[j], moo_string_new("zaehler"),
+                     moo_number(c->drop_zaehler[j]));
+
+    // Sub-Tape installieren, Haupt-Tape-Zustand sichern.
+    MooAgNode* save_tape = tape;
+    int64_t save_len = tape_len, save_cap = tape_cap;
+    bool save_inbw = in_backward, save_ag = ag_enabled;
+    tape = NULL; tape_len = 0; tape_cap = 0;
+    in_backward = false; ag_enabled = true;
+
+    MooValue out_new = c->vorwaerts(c->schichten, x);   // records auf Sub-Tape
+    if (out_new.tag == MOO_TENSOR) {
+        MooTensor* on = T(out_new);
+        float* ng = grad_sicherstellen(on);
+        memcpy(ng, T(out_stored)->grad, (size_t)on->size * sizeof(float));  // Seed
+        in_backward = true;
+        for (int64_t i = tape_len - 1; i >= 0; i--) {
+            if (!T(tape[i].output)->grad) continue;
+            tape[i].op->bw(&tape[i]);
+        }
+    }
+
+    // Sub-Tape freigeben (re-materialisierte Aktivierungen).
+    for (int64_t i = 0; i < tape_len; i++) {
+        for (int32_t j = 0; j < tape[i].n_in; j++) moo_release(tape[i].inputs[j]);
+        moo_release(tape[i].output);
+    }
+    free(tape);
+    if (out_new.tag == MOO_TENSOR) moo_release(out_new);
+
+    // Haupt-Tape wiederherstellen.
+    tape = save_tape; tape_len = save_len; tape_cap = save_cap;
+    in_backward = save_inbw; ag_enabled = save_ag;
+}
+
 MooValue moo_ag_reset(void) {
     for (int64_t i = 0; i < tape_len; i++) {
         for (int32_t j = 0; j < tape[i].n_in; j++) moo_release(tape[i].inputs[j]);
         moo_release(tape[i].output);
     }
     tape_len = 0;
+    for (int64_t i = 0; i < ckpt_len; i++) ckpt_frei(&ckpts[i]);   // KIP-B4b
+    ckpt_len = 0;
     return moo_none();
 }
 

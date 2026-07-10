@@ -278,6 +278,10 @@ bool moo_ag_ist_an(void);                             // Zustand (D1: vorhersage
 // Opt-in per Setter ODER Umgebungsvariable MOO_KI_BF16=1 (einmalig lazy gelesen).
 void moo_ag_bf16_setzen(bool an);
 bool moo_ag_bf16_an(void);
+// KIP-B4b Activation Checkpointing: Segment (schichten) unter ag-aus vorwaerts,
+// 1 Checkpoint-Node ans Tape; backward re-materialisiert auf isoliertem Sub-Tape
+// (Dropout-zaehler-Snapshot -> bit-identische Maske). schichten/x/drop_* borrowed.
+MooValue moo_ag_checkpoint(MooValue (*vorwaerts)(MooValue, MooValue), MooValue schichten, MooValue x, MooValue* drop_dicts, const double* drop_zaehler, int32_t n_drop);
 
 // === NN-Schichten + Loss + Optimizer (Plan-014 C1, moo_nn.c) ===
 // Schichten/Optimizer sind DICTS (Marker-Key "__nn"), Parameter sind
@@ -298,6 +302,7 @@ MooValue moo_nn_moe_balance(MooValue netz);   // KI-M1: Balance-Verlust Gl. 12 (
 MooValue moo_nn_cache_leeren(MooValue netz);  // KI-M2c: KV-Cache-Zustand leeren (Flag bleibt)
 MooValue moo_nn_sequence_packen(MooValue docs, MooValue block_len);  // KIP-B4a
 MooValue moo_nn_packung_setzen(MooValue netz, MooValue maske, MooValue positionen);  // KIP-B4a
+MooValue moo_nn_checkpoint(MooValue netz, MooValue x);  // KIP-B4b: Activation Checkpointing (Segment-Re-Forward)
 MooValue moo_nn_packung_leeren(MooValue netz);  // KIP-B4a
 MooValue moo_nn_vorwaerts(MooValue netz, MooValue x);
 MooValue moo_nn_parameter(MooValue netz);
