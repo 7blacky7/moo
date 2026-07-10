@@ -4,7 +4,7 @@
 
 // Prueft ob ein MooValue ein Heap-Objekt ist (hat refcount)
 static inline bool is_heap_type(uint64_t tag) {
-    return tag == MOO_STRING || tag == MOO_LIST || tag == MOO_DICT ||
+    return tag == MOO_STRING || tag == MOO_ERROR || tag == MOO_LIST || tag == MOO_DICT ||
            tag == MOO_OBJECT || tag == MOO_FUNC || tag == MOO_SOCKET ||
            tag == MOO_THREAD || tag == MOO_CHANNEL || tag == MOO_DATABASE ||
            tag == MOO_DB_STMT || tag == MOO_WINDOW || tag == MOO_WEBSERVER ||
@@ -49,6 +49,12 @@ void moo_release(MooValue v) {
         case MOO_STRING:
             free_string(MV_STR(v));
             break;
+        case MOO_ERROR: {
+            MooError* e = MV_ERROR(v);
+            free(e->chars);
+            free(e);
+            break;
+        }
         case MOO_LIST:
             free_list(MV_LIST(v));
             break;

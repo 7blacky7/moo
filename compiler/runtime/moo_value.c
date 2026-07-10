@@ -22,9 +22,14 @@ MooValue moo_none(void) {
 }
 
 MooValue moo_error(const char* msg) {
+    MooError* e = (MooError*)malloc(sizeof(MooError));
+    if (!e) return moo_none();
+    e->refcount = 1;
+    e->chars = strdup(msg ? msg : "");
+    if (!e->chars) { free(e); return moo_none(); }
     MooValue v;
     v.tag = MOO_ERROR;
-    moo_val_set_ptr(&v, strdup(msg));
+    moo_val_set_ptr(&v, e);
     return v;
 }
 

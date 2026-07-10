@@ -137,4 +137,5 @@ MooValue moo_to_string(MooValue v) {
 void moo_print(MooValue v) {
     MooValue s = moo_to_string(v);
     printf("%s\n", MV_STR(s)->chars);
+    if (v.tag != MOO_STRING) moo_release(s);
 }

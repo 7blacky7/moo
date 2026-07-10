@@ -46,6 +46,7 @@ typedef struct MooFunc MooFunc;
 typedef struct MooThread MooThread;
 typedef struct MooChannel MooChannel;
 typedef struct MooValue MooValue;
+typedef struct MooError MooError;
 
 // === MooValue: Der universelle Wert ===
 // Layout: { uint64_t tag, uint64_t data } = 16 Bytes
@@ -54,6 +55,12 @@ typedef struct MooValue MooValue;
 struct MooValue {
     uint64_t tag;
     uint64_t data;
+};
+
+// Refcounteter Fehlerwert. chars gehoert dem MooError und ist unveraenderlich.
+struct MooError {
+    int32_t refcount;
+    char* chars;
 };
 
 // Zugriff-Makros
@@ -82,7 +89,8 @@ static inline void moo_val_set_bool(MooValue* v, bool b) { v->data = (uint64_t)b
 #define MV_OBJ(v)    ((MooObject*)moo_val_as_ptr(v))
 #define MV_FUNC(v)   ((MooFunc*)moo_val_as_ptr(v))
 #define MV_BOOL(v)   moo_val_as_bool(v)
-#define MV_ERR(v)    ((char*)moo_val_as_ptr(v))
+#define MV_ERROR(v)  ((MooError*)moo_val_as_ptr(v))
+#define MV_ERR(v)    (MV_ERROR(v)->chars)
 
 // === Reference Counting ===
 // Erstes Feld in jedem Heap-Objekt. Startet bei 1 bei Erstellung.

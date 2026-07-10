@@ -48,7 +48,7 @@ Vor Streaming sind verpflichtend:
 
 1. `VIDIOC_QUERYCAP`: Capture + Streaming; MPLANE wird in v1 klar abgelehnt.
 2. `ENUM_FMT`, `ENUM_FRAMESIZES`, `ENUM_FRAMEINTERVALS`.
-3. Exact Match, wenn möglich; sonst dokumentierte nächste unterstützte Größe/FPS.
+3. Auswahl ausschließlich nach §8.2: bei vollständig angegebenen Parametern Exact Match oder Unsupported; Closest-Auswahl nur für ausgelassene Parameter mit festen Referenzen und Tie-Breakern.
 4. `S_FMT`-Rückgabe ist Wahrheit: pixelformat, width, height, bytesperline, sizeimage validieren.
 5. FPS mit `S_PARM`/ `G_PARM` setzen und tatsächlichen Wert speichern.
 6. MMAP- und Konversionsfähigkeit des gewählten libv4l-Pfads prüfen.
@@ -153,9 +153,10 @@ Vor Release mindestens eine echte MJPEG-UVC-Kamera und ein Mikrofon. Hotplug/Dis
 
 ## 7. Build und Plattformen
 
-- Linux feature-detection für libv4l2/libv4lconvert und libasound.
-- Fehlende Development- oder Runtime-Libraries ergeben klare Build-/Laufzeitdiagnosen.
-- Nicht-Linux stellt dieselben Builtins bereit, antwortet bis zu späteren Backends aber mit einer klaren Plattformmeldung.
+- `MOO_KAMERA` und `MOO_MIKRO` werden als eigene `MooTag`-Werte ergänzt. Beide Payload-Structs haben `int32_t refcount` als erstes Feld, starten bei 1, stehen in `is_heap_type` und besitzen zentrale `moo_release`-Dispatch-Fälle zu idempotenten `moo_kamera_free`/`moo_mikro_free`. Builtin-Argumente sind borrowed, Rückgaben +1 owning; Aliase folgen derselben Regel.
+- `build.rs` setzt getrennt `MOO_HAS_V4L2` und `MOO_HAS_ALSA`, nachdem pkg-config Header **und** Linkbibliotheken erfolgreich gefunden hat. Kamera-C-Datei linkt nur unter `MOO_HAS_V4L2` mit `libv4l2`/`libv4lconvert`; Mikro-C-Datei nur unter `MOO_HAS_ALSA` mit `libasound`.
+- Runtime-Bindings und Builtin-Symbole existieren in jedem Build. Ohne Feature werden immer gebaute Stub-Dateien gelinkt, die dieselben ABI-Signaturen haben und eine klare Plattform-/Abhängigkeitsmeldung werfen; dadurch gibt es keine unresolved symbols.
+- Linux mit fehlenden Development-Libraries baut erfolgreich mit Stubs und gibt eine Build-Warnung plus Laufzeitdiagnose. Nicht-Linux verwendet dieselben Stubs. Packaging deklariert die Runtime-Abhängigkeiten nur für aktivierte native Backends.
 - Native PipeWire, Windows Media Foundation, macOS AVFoundation und Capture-Threads sind Folgephasen ohne Änderung der Grundbegriffe.
 
 ## 8. Normative P0-Details
@@ -201,7 +202,7 @@ Kamera erreicht STREAMING erst nach erfolgreichem STREAMON. Audio erreicht STREA
 
 ### 8.5 Fehlerwert-Ownership und Return-Gate
 
-Fehlermeldungen werden vor Cleanup als eigener `MOO_ERROR`-Wert materialisiert und dürfen keine Zeiger auf Treiber-, mmap-, ALSA- oder Handle-Puffer behalten. Der aufrufende Fehlerpfad besitzt genau eine owning reference. `moo_throw(error)` **konsumiert** diese owning reference; der Fehlerpfad darf sie danach weder releasen noch verwenden. Die globale Fehlerablage beziehungsweise der Try-Rahmen ist für die spätere Freigabe verantwortlich. Ablauf: Error erzeugen → Ressourcen-Cleanup → genau ein `moo_throw(error)` → unmittelbar `return moo_none()` beziehungsweise `return`.
+Fehlermeldungen werden vor Cleanup als eigener refcounteter `MOO_ERROR`-Wert materialisiert und dürfen keine Zeiger auf Treiber-, mmap-, ALSA- oder Handle-Puffer behalten. Der Fehlerpfad besitzt +1 owning. `moo_throw(error)` konsumiert diese Referenz und ersetzt die globale owning Referenz, wobei ein vorheriger Fehler released wird. `moo_get_error()` liefert +1 retained an Catch-Code. `moo_try_leave()` released die globale Referenz beim Verlassen des äußersten Try; der Catch-Wert bleibt durch sein Retain gültig und wird vom normalen Codegen-Lifetime-Ende released. Unbehandelter Fehler wird nach Ausgabe vor `exit` released. Ablauf: Error erzeugen → Ressourcen-Cleanup → genau ein `moo_throw(error)` → unmittelbar Return.
 
 Das Pflichtgate ersetzt/instrumentiert `moo_throw` als zurückkehrende, konsumierende Funktion und beweist je Fault-Punkt: Cleanup vor Throw, genau ein Throw, Ownership genau einmal übertragen/freigegeben, unmittelbarer Return und keine weitere Zustandsmutation.
 
