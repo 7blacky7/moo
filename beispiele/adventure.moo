@@ -2,7 +2,9 @@
 # moo Text-Adventure-Engine: "Die verlorene Krone von Aerandur"
 #
 # Features:
-#   - 10 Raeume, 5+ Items (mit Vererbung), 3 NPCs
+#   - ZIEL: Die Krone aus dem Drachenhort holen (Fackel -> Schwert ->
+#     Amulett -> Waechter -> Tempel -> Schluessel -> Drache -> SIEG)
+#   - 10 Raeume, 5+ Items (mit Vererbung), 3 NPCs, Tod + Sieg + Neustart
 #   - Parser: gehe, nimm, benutze, schau, inventar, rede, greife_an,
 #             speichern, laden, hilfe, beenden
 #   - Kampfsystem (HP / Angriff / Verteidigung)
@@ -181,6 +183,7 @@ funktion baue_welt():
     items["fackel"] = neu Fackel()
     items["amulett"] = neu Amulett()
     items["goldbeutel"] = neu Item("goldbeutel", "Beutel mit Gold.")
+    items["krone"] = neu Item("krone", "Die verlorene Krone von Aerandur — dein Ziel!")
     welt["items"] = items
 
     # NPCs registrieren
@@ -455,6 +458,10 @@ funktion cmd_nimm(welt, spieler, name):
     wenn name == "goldbeutel":
         spieler["gold"] = spieler["gold"] + 10
         zeige "(+10 Gold)"
+    wenn name == "krone":
+        zeige ""
+        zeige "*** SIEG! Du haeltst die verlorene Krone von Aerandur. ***"
+        spieler["ort"] = "sieg"
 
 funktion cmd_benutze(welt, spieler, name):
     wenn hat_item(spieler, name) == falsch:
@@ -545,6 +552,9 @@ funktion cmd_greife_an(welt, spieler, name):
         zeige npc.name + " ist besiegt!"
         raum["npcs"] = entferne_aus_liste(raum["npcs"], name)
         welt["flags"][name + "_besiegt"] = wahr
+        wenn name == "drache":
+            raum["items"].hinzufügen("krone")
+            zeige "Im Gold-Hort glitzert die verlorene Krone von Aerandur! (nimm krone)"
         gib_zurück nichts
     setze dmg_n auf npc.schaden
     spieler["hp"] = spieler["hp"] - dmg_n
@@ -699,20 +709,32 @@ zeige "  Die verlorene Krone von Aerandur"
 zeige "  Ein moo Text-Adventure"
 zeige "============================================"
 zeige ""
+zeige "ZIEL: Finde die verlorene Krone von Aerandur und nimm sie an dich!"
 zeige "Tippe 'hilfe' fuer die Befehlsliste."
 
-setze welt auf baue_welt()
-setze spieler auf neuer_spieler()
-zeige_raum(welt, spieler)
+setze nochmal auf wahr
+solange nochmal:
+    setze welt auf baue_welt()
+    setze spieler auf neuer_spieler()
+    zeige_raum(welt, spieler)
 
-setze aktiv auf wahr
-solange aktiv:
-    wenn spieler["ort"] == "tot":
-        setze aktiv auf falsch
+    setze aktiv auf wahr
+    setze beendet auf falsch
+    solange aktiv:
+        wenn spieler["ort"] == "tot" oder spieler["ort"] == "sieg":
+            setze aktiv auf falsch
+        sonst:
+            setze eingabe_text auf eingabe("> ")
+            wenn eingabe_text != "":
+                setze erg auf parse_cmd(eingabe_text, welt, spieler)
+                wenn erg == falsch:
+                    setze aktiv auf falsch
+                    setze beendet auf wahr
+                    zeige "Auf Wiedersehen, Abenteurer!"
+
+    wenn beendet:
+        setze nochmal auf falsch
     sonst:
-        setze eingabe_text auf eingabe("> ")
-        wenn eingabe_text != "":
-            setze erg auf parse_cmd(eingabe_text, welt, spieler)
-            wenn erg == falsch:
-                setze aktiv auf falsch
-                zeige "Auf Wiedersehen, Abenteurer!"
+        setze antwort auf eingabe("Nochmal spielen? (j/n) > ")
+        wenn antwort != "j":
+            setze nochmal auf falsch

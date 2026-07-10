@@ -1,5 +1,10 @@
 # ============================================================
-# moo RPG World — Open-World Top-Down RPG
+# moo RPG World — TECH-DEMO: Prozedurale Open-World (kein volles Spiel)
+#
+# EINORDNUNG (Beispiel-Triage 2026-07-10, Task 8b6ff34b): Diese Demo
+# zeigt prozedurale Weltgenerierung, Kamera-Scrolling und einfache
+# Monster-KI. Sie hat BEWUSST kein Spielziel, keinen Sieg und keinen
+# Neustart — als Showcase-SPIEL gilt die Messlatte aus zelda.moo.
 #
 # Kompilieren + Starten:
 #   moo-compiler compile beispiele/rpg_world.moo -o beispiele/rpg_world
