@@ -75,6 +75,14 @@ bool moo_ki_gpu_unary_res(int32_t op, void* a, void* o, int64_t n, float skalar)
  * INPUT x fuer log/pow/relu/gelu, OUTPUT y fuer exp/sqrt/sigmoid/tanh; fuer
  * adds/subs/muls/divs/neg ist f' konstant und src wird ignoriert. */
 bool moo_ki_gpu_unary_bw_res(int32_t op, void* src, void* gout, void* gin, int64_t n, float skalar);
+/* KIP-G3d-c: 2D-Transponierung — o[C,R] = a[R,C] transponiert (rows=R, cols=C).
+ * Backward = derselbe Kernel mit vertauschten Dims: transpose(gout[C,R]) liefert
+ * gin[R,C]. Residente Handles, ein Compute-Dispatch. */
+bool moo_ki_gpu_transpose_res(void* a, void* o, int32_t rows, int32_t cols);
+/* KIP-G3d-c: Kopie o[dst_off + i] = a[src_off + i] (i in [0,n)). Basis fuer
+ * reshape (Offsets 0), concat-Forward (dst_off) und concat-Split/Backward
+ * (src_off). Offsets in ELEMENTEN. Residente Handles. */
+bool moo_ki_gpu_copy_res(void* a, void* o, int64_t n, int64_t src_off, int64_t dst_off);
 /* Voll-Reduktion einer residenten Eingabe zu einem Host-Skalar. Die
  * Partial-Readback ist inhaerent (Reduktion verlaesst die GPU): submits++
  * (Compute) + downloads++ (Partials). */

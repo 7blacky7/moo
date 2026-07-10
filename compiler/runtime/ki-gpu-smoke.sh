@@ -37,6 +37,12 @@ gcc -std=gnu11 -O2 -DMOO_HAS_VULKAN -I. \
 
 /tmp/test_ki_gpu_unary
 
+# KIP-G3d-c: Layout-Ops transpose/reshape/concat (Fwd+Bwd Differential, bit-exakt)
+gcc -std=gnu11 -O2 -DMOO_HAS_VULKAN -I. \
+    -o /tmp/test_ki_gpu_layout tests/test_ki_gpu_layout.c moo_ki_gpu.c -lvulkan -lm
+
+/tmp/test_ki_gpu_layout
+
 # KIP-G1 Phase B: Tensor-Dirty-State (valid-Masken-Transitionen + GPU-Download).
 # gc-sections droppt ungenutzte Tensor-Funktionen; moo_throw/moo_error gestubbt.
 gcc -std=gnu11 -O2 -ffunction-sections -fdata-sections -Wl,--gc-sections \

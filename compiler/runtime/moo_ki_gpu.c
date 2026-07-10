@@ -76,6 +76,12 @@ bool moo_ki_gpu_unary_bw_res(int32_t op, void* src, void* gout, void* gin,
                              int64_t n, float skalar) {
     (void)op; (void)src; (void)gout; (void)gin; (void)n; (void)skalar; return false;
 }
+bool moo_ki_gpu_transpose_res(void* a, void* o, int32_t rows, int32_t cols) {
+    (void)a; (void)o; (void)rows; (void)cols; return false;
+}
+bool moo_ki_gpu_copy_res(void* a, void* o, int64_t n, int64_t src_off, int64_t dst_off) {
+    (void)a; (void)o; (void)n; (void)src_off; (void)dst_off; return false;
+}
 void moo_ki_gpu_telemetrie(MooKiGpuTelemetrie* out) {
     if (out) { out->submits = 0; out->uploads = 0; out->downloads = 0; out->cpu_fallbacks = 0; }
 }
@@ -102,6 +108,7 @@ typedef struct {
     VkPipeline pipe_matmul, pipe_ew, pipe_reduce;
     VkPipeline pipe_matmul_naiv;      /* KIP-G2: nur A/B-Mikrobenchmark */
     VkPipeline pipe_unary, pipe_unary_bw;  /* KIP-G3d-a: unaer/Skalar/Aktivierung F+B */
+    VkPipeline pipe_transpose, pipe_copy;  /* KIP-G3d-c: Layout-Ops transpose/reshape/concat */
     VkCommandPool cmdpool;
     VkDescriptorPool descpool;
     /* GPU3-C: Per-Op-Allokationen gecacht — lazy beim ersten Dispatch
@@ -281,8 +288,10 @@ static bool ki_gpu_init(void) {
     G.pipe_matmul_naiv = pipeline_bauen(ki_matmul_naiv_spv, ki_matmul_naiv_spv_len);
     G.pipe_unary = pipeline_bauen(ki_unary_fwd_spv, ki_unary_fwd_spv_len);
     G.pipe_unary_bw = pipeline_bauen(ki_unary_bw_spv, ki_unary_bw_spv_len);
+    G.pipe_transpose = pipeline_bauen(ki_transpose_spv, ki_transpose_spv_len);
+    G.pipe_copy = pipeline_bauen(ki_copy_spv, ki_copy_spv_len);
     if (!G.pipe_matmul || !G.pipe_ew || !G.pipe_reduce || !G.pipe_matmul_naiv ||
-        !G.pipe_unary || !G.pipe_unary_bw)
+        !G.pipe_unary || !G.pipe_unary_bw || !G.pipe_transpose || !G.pipe_copy)
         return false;
 
     VkCommandPoolCreateInfo cpi = {
@@ -879,6 +888,35 @@ bool moo_ki_gpu_unary_bw_res(int32_t op, void* src, void* gout, void* gin,
     KiBuf bufs[3] = { *(KiBuf*)src, *(KiBuf*)gout, *(KiBuf*)gin };
     KiPush push = { (uint32_t)n, sbits, 0, (uint32_t)op };
     bool ok = dispatch_sync(G.pipe_unary_bw, bufs, push,
+                            (uint32_t)((n + 255) / 256), 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3d-c: 2D-Transponierung auf residentem Buffer. Fwd: a[rows,cols] ->
+ * o[cols,rows]. Bwd: Aufrufer ruft mit gout + vertauschten Dims (cols,rows). */
+bool moo_ki_gpu_transpose_res(void* a, void* o, int32_t rows, int32_t cols) {
+    if (!a || !o) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf bufs[3] = { *(KiBuf*)a, *(KiBuf*)a, *(KiBuf*)o };
+    KiPush push = { (uint32_t)rows, (uint32_t)cols, 0, 0 };
+    bool ok = dispatch_sync(G.pipe_transpose, bufs, push,
+                            ((uint32_t)cols + 15u) / 16u, ((uint32_t)rows + 15u) / 16u,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3d-c: Kopie o[dst_off+i]=a[src_off+i]. Deckt reshape (Offsets 0),
+ * concat-Forward (dst_off) und concat-Split/Backward (src_off) ab. Offsets in
+ * Elementen; Push M=n, K=src_off, N=dst_off (uint). */
+bool moo_ki_gpu_copy_res(void* a, void* o, int64_t n, int64_t src_off, int64_t dst_off) {
+    if (!a || !o) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf bufs[3] = { *(KiBuf*)a, *(KiBuf*)a, *(KiBuf*)o };
+    KiPush push = { (uint32_t)n, (uint32_t)src_off, (uint32_t)dst_off, 0 };
+    bool ok = dispatch_sync(G.pipe_copy, bufs, push,
                             (uint32_t)((n + 255) / 256), 1,
                             /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
     if (!ok) g_tel.cpu_fallbacks++;
