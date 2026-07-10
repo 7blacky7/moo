@@ -382,6 +382,12 @@ MooValue moo_frame_read_pixel(MooValue frame, MooValue x, MooValue y);
 // Pfad in moo_test_api.c (moo_test_pixel).
 MooValue moo_frame_pixel_dict(const MooFrame* f, int x, int y);
 MooValue moo_test_frame_save_bmp(MooValue frame, MooValue pfad);
+// Frame-Diff + Region-Durchschnitt (6bb03790 B) — in moo_frame.c, SDL-frei,
+// immer gebaut. Nur direkte MOO_FRAMEs (Fenster vorher via test_frame_grab).
+MooValue moo_test_frame_diff(MooValue frame_a, MooValue frame_b);
+MooValue moo_test_frame_region(MooValue frame, MooValue x, MooValue y, MooValue b, MooValue h);
+// PNG-Export (6bb03790 B) — in moo_test_api.c (Grafik-Build, SDL2_image).
+MooValue moo_test_frame_save_png(MooValue frame, MooValue pfad);
 // Folgende sind im test_*-Layer (moo_test_api.c) implementiert. Gebaut nur im
 // Grafik-Build (Feature gl21/gl33/vulkan) — arbeitet dann mit ALLEN Fenster-
 // typen: 2D-SDL (MOO_WINDOW), 3D (MOO_WINDOW3D) und Hybrid:

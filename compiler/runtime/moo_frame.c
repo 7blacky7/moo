@@ -200,3 +200,97 @@ MooValue moo_test_frame_save_bmp(MooValue frame, MooValue pfad) {
     fclose(fp);
     return moo_bool(true);
 }
+
+/* ============================================================
+ * Frame-Diff + Region-Durchschnitt (Task 6bb03790 Teil B).
+ * Reine RGBA8-Puffer-Mathematik — SDL-frei, damit dieser File im
+ * Non-3D-Build linkbar bleibt. Frames liefert test_frame_grab.
+ * ============================================================ */
+
+/* test_frame_diff(frame_a, frame_b) -> Dict { maxdiff, geaenderte_pixel,
+ * prozent }. maxdiff = groesste Einzelkanal-Differenz (0..255, RGBA);
+ * geaenderte_pixel = Pixel mit mind. 1 abweichendem Kanal; prozent = Anteil
+ * geaenderter Pixel (0..100). Visuelles Regressions-Primitiv fuer Selftests. */
+MooValue moo_test_frame_diff(MooValue a, MooValue b) {
+    if (a.tag != MOO_FRAME || b.tag != MOO_FRAME) {
+        moo_throw(moo_string_new("test_frame_diff: beide Argumente muessen Frames sein (test_frame_grab)"));
+        return moo_none();
+    }
+    const MooFrame* fa = MV_FRAME(a);
+    const MooFrame* fb = MV_FRAME(b);
+    if (!fa || !fa->pixels || !fb || !fb->pixels) {
+        moo_throw(moo_string_new("test_frame_diff: ungueltiger Frame"));
+        return moo_none();
+    }
+    if (fa->width != fb->width || fa->height != fb->height) {
+        moo_throw(moo_string_new("test_frame_diff: Frames sind unterschiedlich gross"));
+        return moo_none();
+    }
+    size_t n = (size_t)fa->width * (size_t)fa->height;
+    uint64_t geaendert = 0;
+    int maxdiff = 0;
+    const uint8_t* pa = fa->pixels;
+    const uint8_t* pb = fb->pixels;
+    for (size_t i = 0; i < n; i++) {
+        int pixel_diff = 0;
+        for (int c = 0; c < 4; c++) {
+            int d = (int)pa[i * 4 + (size_t)c] - (int)pb[i * 4 + (size_t)c];
+            if (d < 0) d = -d;
+            if (d > maxdiff) maxdiff = d;
+            if (d != 0) pixel_diff = 1;
+        }
+        geaendert += (uint64_t)pixel_diff;
+    }
+    MooValue dict = moo_dict_new();
+    moo_dict_set(dict, moo_string_new("maxdiff"), moo_number((double)maxdiff));
+    moo_dict_set(dict, moo_string_new("geaenderte_pixel"), moo_number((double)geaendert));
+    moo_dict_set(dict, moo_string_new("prozent"), moo_number(100.0 * (double)geaendert / (double)n));
+    return dict;
+}
+
+/* test_frame_region(frame, x, y, b, h) -> Dict { rot, gruen, blau, alpha }:
+ * Durchschnittsfarbe der Region (kaufmaennisch gerundet). Robuster als
+ * fragile Einzelpixel-Asserts ("HUD-Bereich ist rot"). Bounds werden in
+ * double geprueft, BEVOR nach int gecastet wird (kein Cast-UB bei riesigen
+ * Werten). */
+MooValue moo_test_frame_region(MooValue frame, MooValue x, MooValue y, MooValue b, MooValue h) {
+    if (frame.tag != MOO_FRAME) {
+        moo_throw(moo_string_new("test_frame_region: erstes Argument muss ein Frame sein (test_frame_grab)"));
+        return moo_none();
+    }
+    const MooFrame* f = MV_FRAME(frame);
+    if (!f || !f->pixels) {
+        moo_throw(moo_string_new("test_frame_region: ungueltiger Frame"));
+        return moo_none();
+    }
+    if (x.tag != MOO_NUMBER || y.tag != MOO_NUMBER || b.tag != MOO_NUMBER || h.tag != MOO_NUMBER) {
+        moo_throw(moo_string_new("test_frame_region: x, y, b, h muessen Zahlen sein"));
+        return moo_none();
+    }
+    double dx = MV_NUM(x), dy = MV_NUM(y), db = MV_NUM(b), dh = MV_NUM(h);
+    if (db < 1.0 || dh < 1.0) {
+        moo_throw(moo_string_new("test_frame_region: b und h muessen >= 1 sein"));
+        return moo_none();
+    }
+    if (dx < 0.0 || dy < 0.0 || dx + db > (double)f->width || dy + dh > (double)f->height) {
+        moo_throw(moo_string_new("test_frame_region: Region ausserhalb des Frames"));
+        return moo_none();
+    }
+    int ix = (int)dx, iy = (int)dy, ib = (int)db, ih = (int)dh;
+    uint64_t sum[4] = {0, 0, 0, 0};
+    for (int yy = iy; yy < iy + ih; yy++) {
+        const uint8_t* row = f->pixels + (size_t)yy * (size_t)f->stride + (size_t)ix * 4;
+        for (int xx = 0; xx < ib; xx++) {
+            for (int c = 0; c < 4; c++) {
+                sum[c] += (uint64_t)row[(size_t)xx * 4 + (size_t)c];
+            }
+        }
+    }
+    uint64_t cnt = (uint64_t)ib * (uint64_t)ih;
+    MooValue dict = moo_dict_new();
+    moo_dict_set(dict, moo_string_new("rot"),   moo_number((double)((sum[0] + cnt / 2) / cnt)));
+    moo_dict_set(dict, moo_string_new("gruen"), moo_number((double)((sum[1] + cnt / 2) / cnt)));
+    moo_dict_set(dict, moo_string_new("blau"),  moo_number((double)((sum[2] + cnt / 2) / cnt)));
+    moo_dict_set(dict, moo_string_new("alpha"), moo_number((double)((sum[3] + cnt / 2) / cnt)));
+    return dict;
+}

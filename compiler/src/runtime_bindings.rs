@@ -415,6 +415,9 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_test_frame_grab: FunctionValue<'ctx>,
     pub moo_test_pixel: FunctionValue<'ctx>,
     pub moo_test_frame_save_bmp: FunctionValue<'ctx>,
+    pub moo_test_frame_diff: FunctionValue<'ctx>,
+    pub moo_test_frame_region: FunctionValue<'ctx>,
+    pub moo_test_frame_save_png: FunctionValue<'ctx>,
     // GIF-Recorder (Plan-008 A3B): start(win/frame,pfad,fps)->MOO_GIF,
     // frame(gif,win/frame)->Bool, ende(gif)->Bool.
     pub moo_test_gif_start: FunctionValue<'ctx>,
@@ -1171,6 +1174,13 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_test_frame_grab: decl_mv_mv!("moo_test_frame_grab", mv1),
             moo_test_pixel: decl_mv_mv!("moo_test_pixel", mv3),
             moo_test_frame_save_bmp: decl_mv_mv!("moo_test_frame_save_bmp", mv2),
+            // 2D-Debug-Erweiterungen (6bb03790 B):
+            //   moo_test_frame_diff(a, b)               -> Dict {maxdiff,geaenderte_pixel,prozent}
+            //   moo_test_frame_region(f, x, y, b, h)    -> Dict {rot,gruen,blau,alpha} (Durchschnitt)
+            //   moo_test_frame_save_png(frame, pfad)    -> Bool (SDL2_image, Grafik-Build)
+            moo_test_frame_diff: decl_mv_mv!("moo_test_frame_diff", mv2),
+            moo_test_frame_region: decl_mv_mv!("moo_test_frame_region", mv5),
+            moo_test_frame_save_png: decl_mv_mv!("moo_test_frame_save_png", mv2),
             // GIF-Recorder (Plan-008 A3B). Symbole immer deklariert; C-seitig
             // in moo_test_api.c (3D-Build) gelinkt. Encoder-Kern (moo_gif.c)
             // ist Core-Build, daher immer verfuegbar.

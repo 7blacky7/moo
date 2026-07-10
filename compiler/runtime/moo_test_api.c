@@ -30,6 +30,7 @@
 #include <stdlib.h>
 #include "moo_gif.h"  /* isolierter GIF89a+LZW-Encoder-Kern (Plan-008 A3B Teil 1) */
 #include "moo_video.h"  /* isolierter ffmpeg-Pipe MP4-Kern (Plan-009 V0 Teil 1) */
+#include <SDL2/SDL_image.h>  /* IMG_SavePNG fuer test_frame_save_png (6bb03790 B) */
 
 /* ---- Forward-Decls (in moo_graphics.c / moo_3d.c / moo_hybrid.c definiert) ---- */
 extern MooValue moo_string_new(const char* s);
@@ -683,6 +684,42 @@ MooValue moo_test_video_ende(MooValue video) {
     }
     if (rc != MOO_VIDEO_OK) {
         moo_throw(moo_string_new("test_video_ende: Video konnte nicht sauber abgeschlossen werden"));
+        return moo_bool(false);
+    }
+    return moo_bool(true);
+}
+
+/* ============================================================
+ * test_frame_save_png(frame, pfad) -> Bool (Task 6bb03790 Teil B).
+ * PNG via SDL2_image (fuer Sprites ohnehin gelinkt) — deutlich kleinere
+ * Dateien als BMP fuers Bild-Ansehen in der visuellen Debug-Schleife.
+ * Nur direktes MOO_FRAME (wie test_frame_save_bmp); Fenster vorher mit
+ * test_frame_grab greifen.
+ * ============================================================ */
+MooValue moo_test_frame_save_png(MooValue frame, MooValue pfad) {
+    if (frame.tag != MOO_FRAME) {
+        moo_throw(moo_string_new("test_frame_save_png: erstes Argument muss ein Frame sein (test_frame_grab)"));
+        return moo_bool(false);
+    }
+    if (pfad.tag != MOO_STRING) {
+        moo_throw(moo_string_new("test_frame_save_png: Pfad muss ein String sein"));
+        return moo_bool(false);
+    }
+    MooFrame* f = MV_FRAME(frame);
+    if (!f || !f->pixels) {
+        moo_throw(moo_string_new("test_frame_save_png: ungueltiger Frame"));
+        return moo_bool(false);
+    }
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormatFrom(
+        f->pixels, f->width, f->height, 32, f->stride, SDL_PIXELFORMAT_RGBA32);
+    if (!surf) {
+        moo_throw(moo_string_new("test_frame_save_png: Surface-Erzeugung fehlgeschlagen"));
+        return moo_bool(false);
+    }
+    int rc = IMG_SavePNG(surf, MV_STR(pfad)->chars);
+    SDL_FreeSurface(surf);
+    if (rc != 0) {
+        moo_throw(moo_string_new("test_frame_save_png: PNG konnte nicht geschrieben werden"));
         return moo_bool(false);
     }
     return moo_bool(true);

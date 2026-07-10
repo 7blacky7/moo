@@ -54,7 +54,7 @@ MooValue moo_error(const char* msg) { (void)msg; return moo_none(); }
  * MV_STR(pfad)->chars liest. Wir allokieren eine echte MooString-Struktur und
  * geben Test-Strings explizit via str_destroy() frei (wir releasen sie nie ueber
  * den moo_release-Pfad, daher kein free_string noetig). */
-static MooString* g_strings[64];
+static MooString* g_strings[256];
 static int g_str_n = 0;
 MooValue moo_string_new(const char* s) {
     MooString* str = (MooString*)calloc(1, sizeof(MooString));
@@ -63,7 +63,7 @@ MooValue moo_string_new(const char* s) {
     str->capacity = str->length + 1;
     str->chars = (char*)malloc((size_t)str->capacity);
     memcpy(str->chars, s, (size_t)str->capacity);
-    if (g_str_n < 64) g_strings[g_str_n++] = str;
+    if (g_str_n < 256) g_strings[g_str_n++] = str;
     MooValue v; v.tag = MOO_STRING; moo_val_set_ptr(&v, str); return v;
 }
 static void strings_destroy(void) {
@@ -211,6 +211,69 @@ int main(void) {
         uint8_t* px = fake_grab_rgba(4, 4);
         MooValue n2 = moo_frame_new_take(0, 4, px);            /* width 0 -> px wird gefreet */
         CHECK(n2.tag == MOO_NONE, "new_take(w=0) gab nicht NONE");
+    }
+
+    /* --- Test 7 (6bb03790 B): frame_diff — identisch, 1 Pixel, Dim-Mismatch --- */
+    {
+        uint8_t* p1 = fake_grab_rgba(W, H);
+        uint8_t* p2 = fake_grab_rgba(W, H);
+        MooValue f1 = moo_frame_new_take(W, H, p1);
+        MooValue f2 = moo_frame_new_take(W, H, p2);
+        MooValue d0 = moo_test_frame_diff(f1, f2);
+        CHECK(dict_get(d0, "maxdiff") == 0, "diff identisch: maxdiff != 0");
+        CHECK(dict_get(d0, "geaenderte_pixel") == 0, "diff identisch: geaenderte_pixel != 0");
+        CHECK(dict_get(d0, "prozent") == 0, "diff identisch: prozent != 0");
+        dict_destroy(d0);
+        /* Pixel (3,2): Gruenkanal um +7 aendern -> genau 1 geaendertes Pixel */
+        MooFrame* f2p = MV_FRAME(f2);
+        size_t off = ((size_t)2 * (size_t)W + 3) * 4 + 1;
+        f2p->pixels[off] = (uint8_t)(f2p->pixels[off] + 7);
+        MooValue d1 = moo_test_frame_diff(f1, f2);
+        CHECK(dict_get(d1, "maxdiff") == 7, "diff 1px: maxdiff != 7");
+        CHECK(dict_get(d1, "geaenderte_pixel") == 1, "diff 1px: geaenderte_pixel != 1");
+        CHECK(dict_get(d1, "prozent") > 0, "diff 1px: prozent nicht > 0");
+        dict_destroy(d1);
+        /* Dim-Mismatch wirft */
+        uint8_t* p3 = fake_grab_rgba(4, 4);
+        MooValue f3 = moo_frame_new_take(4, 4, p3);
+        g_threw = 0;
+        if (setjmp(g_throw_jmp) == 0) {
+            (void)moo_test_frame_diff(f1, f3);
+        }
+        CHECK(g_threw == 1, "diff dim-mismatch hat nicht geworfen");
+        moo_release(f3);
+        moo_release(f2);
+        moo_release(f1);
+    }
+
+    /* --- Test 8 (6bb03790 B): frame_region — exakter Durchschnitt + OOB wirft --- */
+    {
+        /* 4x4 mit bekannten Werten: R=x*10, G=y*10, B=0, A=255 */
+        uint8_t* p = (uint8_t*)malloc(4 * 4 * 4);
+        for (int y = 0; y < 4; y++) {
+            for (int x = 0; x < 4; x++) {
+                size_t o = ((size_t)y * 4 + (size_t)x) * 4;
+                p[o + 0] = (uint8_t)(x * 10);
+                p[o + 1] = (uint8_t)(y * 10);
+                p[o + 2] = 0;
+                p[o + 3] = 255;
+            }
+        }
+        MooValue f = moo_frame_new_take(4, 4, p);
+        /* Region (1,1,2,2): R aus {10,20} -> 15, G aus {10,20} -> 15 */
+        MooValue r = moo_test_frame_region(f, moo_number(1), moo_number(1), moo_number(2), moo_number(2));
+        CHECK(dict_get(r, "rot") == 15, "region: rot != 15");
+        CHECK(dict_get(r, "gruen") == 15, "region: gruen != 15");
+        CHECK(dict_get(r, "blau") == 0, "region: blau != 0");
+        CHECK(dict_get(r, "alpha") == 255, "region: alpha != 255");
+        dict_destroy(r);
+        /* OOB (3,3,2,2) wirft */
+        g_threw = 0;
+        if (setjmp(g_throw_jmp) == 0) {
+            (void)moo_test_frame_region(f, moo_number(3), moo_number(3), moo_number(2), moo_number(2));
+        }
+        CHECK(g_threw == 1, "region OOB hat nicht geworfen");
+        moo_release(f);
     }
 
     strings_destroy();  /* Test-Strings freigeben (kein Leak) */

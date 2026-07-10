@@ -3980,6 +3980,23 @@ impl<'ctx> CodeGen<'ctx> {
                         let path = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_test_frame_save_bmp, &[frame.into(), path.into()], "t_frame_bmp");
                     }
+                    // test_frame_diff(frame_a, frame_b) -> Dict {maxdiff, geaenderte_pixel, prozent}.
+                    "test_frame_diff" | "test_frame_vergleich" => {
+                        let a0 = self.compile_expr(&args[0])?;
+                        let a1 = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_test_frame_diff, &[a0.into(), a1.into()], "t_frame_diff");
+                    }
+                    // test_frame_region(frame, x, y, b, h) -> Dict {rot, gruen, blau, alpha} (Durchschnittsfarbe).
+                    "test_frame_region" | "test_frame_bereich" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_test_frame_region, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "t_frame_region");
+                    }
+                    // test_frame_save_png(frame, pfad) -> Bool (SDL2_image).
+                    "test_frame_save_png" | "test_frame_speichern_png" => {
+                        let frame = self.compile_expr(&args[0])?;
+                        let path = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_test_frame_save_png, &[frame.into(), path.into()], "t_frame_png");
+                    }
                     // GIF-Recorder (Plan-008 A3B). Frame-bounded: streamt direkt
                     // in die Datei, sammelt KEINE Frame-Sequenz im RAM.
                     // test_gif_start(win_oder_frame, pfad, fps) -> MOO_GIF.
