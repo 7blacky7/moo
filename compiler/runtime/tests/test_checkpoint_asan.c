@@ -150,6 +150,23 @@ static void drop_zaehler_setzen(MooValue netz, double z) {
     moo_release(sch);
 }
 
+/* KIP-E2c: Referenz-Spiegel von d3_f32_zu_bf16 + d3_bf16_zu_f32 (moo_nn_easy.c,
+ * dort static). Geladenes bf16-Gewicht == ref_bf16_round(original), bit-exakt. */
+static float ref_bf16_round(float f) {
+    uint32_t x; memcpy(&x, &f, sizeof(x));
+    uint16_t bf;
+    if (((x >> 23) & 0xFFu) == 0xFFu && (x & 0x7FFFFFu)) {
+        bf = (uint16_t)((x >> 16) | 0x0040u);
+    } else {
+        uint32_t bias = 0x7FFFu + ((x >> 16) & 1u);
+        x += bias;
+        bf = (uint16_t)(x >> 16);
+    }
+    uint32_t y = (uint32_t)bf << 16;
+    float out; memcpy(&out, &y, sizeof(out));
+    return out;
+}
+
 #define N 12
 #define M 6
 
@@ -340,6 +357,70 @@ int main(void) {
         for (int s = 3; s <= 5; s++) { snprintf(nm, sizeof(nm), "%s/ckpt_%d.mook", dir, s); remove(nm); }
         snprintf(nm, sizeof(nm), "%s/ckpt_best.mook", dir); remove(nm);
         rmdir(dir);
+    }
+
+    /* ===== KIP-E2c: bf16-Gewichts-Checkpoint (Storage-Option, nur p*) ===== */
+    {
+        char pf[] = "/tmp/moo_ckpt_f32_XXXXXX";
+        int fdf = mkstemp(pf); CHECK(fdf >= 0, "e2c: tmp f32"); close(fdf);
+        char pb[] = "/tmp/moo_ckpt_bf16_XXXXXX";
+        int fdb = mkstemp(pb); CHECK(fdb >= 0, "e2c: tmp bf16"); close(fdb);
+
+        MooValue netz = baue_netz();
+        MooValue prm = moo_nn_parameter(netz);
+        MooTensor* p0 = T(MV_LIST(prm)->items[0]);
+        int64_t n0 = p0->size;
+        float* orig = (float*)malloc((size_t)n0 * sizeof(float));
+        for (int64_t j = 0; j < n0; j++) orig[j] = p0->data[j];
+        moo_release(prm);
+
+        MooValue zustand = moo_dict_new();
+        moo_retain(netz); moo_dict_set(zustand, str_("netz"), netz);
+        moo_dict_set(zustand, str_("schritt"), num_(3));
+
+        /* f32-Default (env AUS). */
+        unsetenv("MOO_KI_CKPT_BF16");
+        moo_release(ckpt_speichern_p(zustand, pf));
+        CHECK(!moo_error_flag, "e2c: f32-Checkpoint schreibt");
+
+        /* bf16 (env AN). */
+        setenv("MOO_KI_CKPT_BF16", "1", 1);
+        moo_release(ckpt_speichern_p(zustand, pb));
+        CHECK(!moo_error_flag, "e2c: bf16-Checkpoint schreibt");
+        unsetenv("MOO_KI_CKPT_BF16");
+
+        /* GATE: bf16-Datei kleiner (p* halbiert). */
+        struct stat sf, sb;
+        CHECK(stat(pf, &sf) == 0 && stat(pb, &sb) == 0, "e2c: stat beider CPs");
+        CHECK(sb.st_size < sf.st_size, "e2c: bf16-CP kleiner (p* halbiert)");
+
+        /* GATE: bf16-Roundtrip == bf16-gerundete Originale (Laden dtype-getrieben). */
+        MooValue zb = ckpt_laden_p(pb, moo_none());
+        CHECK(!moo_error_flag && zb.tag == MOO_DICT, "e2c: bf16-CP laedt");
+        MooValue nb = dget_(zb, "netz");
+        MooValue prmb = moo_nn_parameter(nb);
+        MooTensor* pb0 = T(MV_LIST(prmb)->items[0]);
+        bool bf16_ok = (pb0->size == n0);
+        for (int64_t j = 0; j < n0 && bf16_ok; j++)
+            if (pb0->data[j] != ref_bf16_round(orig[j])) bf16_ok = false;
+        CHECK(bf16_ok, "e2c: bf16-Roundtrip == bf16-gerundete Originale (bit-exakt)");
+        moo_release(prmb); moo_release(nb); moo_release(zb);
+
+        /* GATE: f32-Default-CP laedt, p* BIT-identisch (kein Runden). */
+        MooValue zf = ckpt_laden_p(pf, moo_none());
+        CHECK(!moo_error_flag && zf.tag == MOO_DICT, "e2c: f32-CP laedt");
+        MooValue nf = dget_(zf, "netz");
+        MooValue prmf = moo_nn_parameter(nf);
+        MooTensor* pf0 = T(MV_LIST(prmf)->items[0]);
+        bool f32_ok = (pf0->size == n0);
+        for (int64_t j = 0; j < n0 && f32_ok; j++)
+            if (pf0->data[j] != orig[j]) f32_ok = false;
+        CHECK(f32_ok, "e2c: f32-Default bit-identisch");
+        moo_release(prmf); moo_release(nf); moo_release(zf);
+
+        free(orig);
+        moo_release(zustand); moo_release(netz);
+        remove(pf); remove(pb);
     }
 
     /* ===== Fehlerpfade ===== */

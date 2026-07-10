@@ -1286,35 +1286,63 @@ static bool ckpt_val_gleich(MooValue a, MooValue b) {
     return false;
 }
 
-/* Einen benannten Tensor-Eintrag (p%d/om%d/ov%d) in dst einlesen. */
+/* KIP-E2c: bf16-Gewichts-Checkpoint. bf16 ist eine LOSSY Storage-/Export-Option
+ * NUR fuer Gewichte p* (halbe Groesse), KEIN bit-identisches Trainings-Resume.
+ * Default AUS (env MOO_KI_CKPT_BF16) -> f32-Checkpoint byte-identisch zum
+ * Standardpfad. Empfehlung: Rotation letzte-N f32 lassen, bf16 fuer best/Export. */
+static bool ckpt_export_bf16(void) {
+    const char* e = getenv("MOO_KI_CKPT_BF16");
+    return e && e[0] && e[0] != '0';
+}
+
+/* Einen benannten Tensor-Eintrag (p%d/om%d/ov%d) in dst einlesen. dtype-getrieben:
+ * F32 (4 B direkt) oder BF16 (2 B -> f32 via d3_bf16_zu_f32, nur Gewichte p*).
+ * Rueckwaerts-kompatibel: alte f32-Checkpoints tragen dtype F32. */
 static bool ckpt_lese_tensor(FILE* f, long daten_start, MooValue header,
                              const char* key, MooTensor* dst) {
     MooValue ent = eget(header, key);
     bool ok = false;
     if (ent.tag == MOO_DICT) {
+        MooValue dtv  = eget(ent, "dtype");
         MooValue offs = eget(ent, "data_offsets");
+        const char* dt = (dtv.tag == MOO_STRING) ? MV_STR(dtv)->chars : "F32";
+        bool is_bf16 = (strcmp(dt, "BF16") == 0);
+        uint32_t esz = is_bf16 ? 2u : 4u;
         if (offs.tag == MOO_LIST && MV_LIST(offs)->length == 2 &&
             MV_LIST(offs)->items[0].tag == MOO_NUMBER &&
             MV_LIST(offs)->items[1].tag == MOO_NUMBER) {
             double a = MV_NUM(MV_LIST(offs)->items[0]);
             double b = MV_NUM(MV_LIST(offs)->items[1]);
-            if ((b - a) == (double)dst->size * 4.0) {
-                ok = fseek(f, daten_start + (long)a, SEEK_SET) == 0 &&
-                     fread(dst->data, sizeof(float), (size_t)dst->size, f)
-                         == (size_t)dst->size;
+            if ((b - a) == (double)dst->size * (double)esz &&
+                fseek(f, daten_start + (long)a, SEEK_SET) == 0) {
+                if (!is_bf16) {
+                    ok = fread(dst->data, sizeof(float), (size_t)dst->size, f)
+                             == (size_t)dst->size;
+                } else {
+                    uint16_t* b16 = (uint16_t*)malloc((size_t)dst->size * sizeof(uint16_t));
+                    if (b16) {
+                        ok = fread(b16, sizeof(uint16_t), (size_t)dst->size, f)
+                                 == (size_t)dst->size;
+                        if (ok) for (int64_t j = 0; j < dst->size; j++)
+                            dst->data[j] = d3_bf16_zu_f32(b16[j]);
+                        free(b16);
+                    }
+                }
             }
         }
-        moo_release(offs);
+        moo_release(offs); moo_release(dtv);
     }
     moo_release(ent);
     return ok;
 }
 
-/* Header-Tensor-Eintrag "\"<key>\":{dtype,shape,data_offsets}" anhaengen. */
+/* Header-Tensor-Eintrag <key>:{dtype,shape,data_offsets} anhaengen.
+ * bf16=true NUR fuer Gewichte p* (2 B/Elem, dtype BF16); sonst F32 (4 B). */
 static void ckpt_header_tensor(Buf* h, const char* key, MooTensor* p,
-                               uint64_t* off) {
-    uint64_t bytes = (uint64_t)p->size * 4u;
-    buf_add(h, ",\"%s\":{\"dtype\":\"F32\",\"shape\":[", key);
+                               uint64_t* off, bool bf16) {
+    uint32_t esz = bf16 ? 2u : 4u;
+    uint64_t bytes = (uint64_t)p->size * esz;
+    buf_add(h, ",\"%s\":{\"dtype\":\"%s\",\"shape\":[", key, bf16 ? "BF16" : "F32");
     for (int32_t d = 0; d < p->ndim; d++)
         buf_add(h, "%s%d", d ? "," : "", p->shape[d]);
     buf_add(h, "],\"data_offsets\":[%llu,%llu]}",
@@ -1324,7 +1352,10 @@ static void ckpt_header_tensor(Buf* h, const char* key, MooTensor* p,
 
 /* checkpoint_speichern(zustand, pfad): atomischer Voll-Checkpoint.
  * zustand = Dict { netz (Pflicht), opt?, schritt?, epoche?,
- *   tokenizer_version?, arch_version?, metrik?, dataloader? }. Rueckgabe none. */
+ *   tokenizer_version?, arch_version?, metrik?, dataloader? }. Rueckgabe none.
+ * KIP-E2c: env MOO_KI_CKPT_BF16 speichert NUR Gewichte p* als bf16 (lossy
+ *   Storage/Export, KEIN bit-identisches Resume); Optimizer m/v/t, Dropout-
+ *   Zaehler, Dataloader-Position bleiben immer f32. Default AUS = f32. */
 MooValue moo_nn_ckpt_speichern(MooValue zustand, MooValue pfad) {
     if (!sl_hooks_vollstaendig()) return moo_none();
     if (zustand.tag != MOO_DICT) {
@@ -1450,18 +1481,19 @@ MooValue moo_nn_ckpt_speichern(MooValue zustand, MooValue pfad) {
         else buf_add(&h, "%c", c);
     }
     buf_add(&h, "\"}");
+    bool wbf16 = ckpt_export_bf16();   /* KIP-E2c: nur Gewichte p* optional bf16 */
     uint64_t off = 0;
     for (int32_t i = 0; i < pl->length; i++) {
         char key[24]; snprintf(key, sizeof(key), "p%d", i);
-        ckpt_header_tensor(&h, key, T(pl->items[i]), &off);
+        ckpt_header_tensor(&h, key, T(pl->items[i]), &off, wbf16);
     }
     if (mlist) for (int32_t i = 0; i < mlist->length; i++) {
         char key[24]; snprintf(key, sizeof(key), "om%d", i);
-        ckpt_header_tensor(&h, key, T(mlist->items[i]), &off);
+        ckpt_header_tensor(&h, key, T(mlist->items[i]), &off, false);
     }
     if (vlist) for (int32_t i = 0; i < vlist->length; i++) {
         char key[24]; snprintf(key, sizeof(key), "ov%d", i);
-        ckpt_header_tensor(&h, key, T(vlist->items[i]), &off);
+        ckpt_header_tensor(&h, key, T(vlist->items[i]), &off, false);
     }
     buf_add(&h, "}");
 
@@ -1495,7 +1527,15 @@ MooValue moo_nn_ckpt_speichern(MooValue zustand, MooValue pfad) {
     ok = fwrite(&hlen, 8, 1, f) == 1 && fwrite(h.s, 1, h.len, f) == h.len;
     for (int32_t i = 0; i < pl->length && ok; i++) {
         MooTensor* p = T(pl->items[i]);
-        ok = fwrite(p->data, sizeof(float), (size_t)p->size, f) == (size_t)p->size;
+        if (!wbf16) {
+            ok = fwrite(p->data, sizeof(float), (size_t)p->size, f) == (size_t)p->size;
+        } else {
+            uint16_t* b16 = (uint16_t*)malloc((size_t)p->size * sizeof(uint16_t));
+            if (!b16) { ok = false; break; }
+            for (int64_t j = 0; j < p->size; j++) b16[j] = d3_f32_zu_bf16(p->data[j]);
+            ok = fwrite(b16, sizeof(uint16_t), (size_t)p->size, f) == (size_t)p->size;
+            free(b16);
+        }
     }
     if (mlist) for (int32_t i = 0; i < mlist->length && ok; i++) {
         MooTensor* p = T(mlist->items[i]);
