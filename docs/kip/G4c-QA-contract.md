@@ -45,11 +45,17 @@ Dropout-Zähler + globaler Schritt + Residenztelemetrie).
 | E | Residenztelemetrie: `cpu_fallbacks==0` während GPU-Resume + Weitertraining | `moo_ki_gpu_telemetrie()` | in `gpu_resume_gpu` mitgeprüft (Delta vor/nach) | ✅ **AKTIV, GRÜN** |
 | F | Dropout-Zustand (`zaehler`) überlebt echten Prozessneustart | `dget(schicht,"__nn")`-Layer-Dict, E2-Serialisierung | in `cpu_ref`/`cpu_train`/`cpu_resume` mitgeprüft (`dropz`-Feld) | ✅ **AKTIV, GRÜN** |
 | G | Globaler Schrittzähler (`schritt`-Feld im Checkpoint-Dict) überlebt Neustart | E2-Metadaten-Roundtrip | in allen `cpu_*`/`gpu_*`-Modi (`t`-Feld) | ✅ **AKTIV, GRÜN** |
-| H | Echter CPU↔GPU-Loss-**Kurvenvergleich** (identischer Forward/Backward-Pfad, nur anderes Device) | **FEHLT** — kein GPU-geroutetes `moo_nn_vorwaerts` | `gpu_vs_cpu_curve` (Platzhalter, druckt fehlenden Hook) | 🕓 **PENDING** |
+| H | Echter CPU↔GPU-Loss-**Kurvenvergleich** (identischer Forward/Backward-Pfad, nur anderes Device) | matmul Fwd+Bwd, ew_op (add/sub/mul/div) Fwd, bw_mul (voll)+bw_div (da-Zweig), sqrt (u_op), softmax/gather Fwd, reduce_op, Adam/SGD — Netz OHNE Aktivierung (tanh noch nicht resident) | `gpu_vs_cpu_curve` (aktiv, Toleranz rel<2e-3) | ✅ **AKTIV, GRÜN** (SKIP ohne libvulkan/vollständige Residenz) |
 
-**A–G sind heute vollständig automatisiert grün** (`skripte/kip_g4c_qa.sh`,
-lokal auf 4070 Ti verifiziert: CPU-Teil A/B immer, GPU-Teil C/D/E/F/G mit
-Vulkan). Nur **H** ist blockiert.
+**A–H sind heute vollständig automatisiert grün** (`skripte/kip_g4c_qa.sh`,
+lokal auf 4070 Ti verifiziert: CPU-Teil A/B immer, GPU-Teil C/D/E/F/G/H mit
+Vulkan). Nachtrag 2026-07-10: Kriterium H wurde aktiviert, nachdem kip-gpu
+den Forward/Backward-Pfad für matmul/ew/sqrt/reduce/softmax/gather/Optimizer
+resident + `MOO_KI_GPU_STRIKT` hardware-verifiziert gemeldet hat (Channel
+moo-general, Msg 12897). tanh/relu/sigmoid/gelu/exp/log sind noch NICHT
+resident — das Kriterium-H-Netz nutzt bewusst KEINE Aktivierung, damit die
+in §4 dokumentierte Negativ-Kontrolle nicht verwässert wird (mit tanh würde
+STRIKT den nicht-residenten Op transparent auf CPU rechnen statt zu werfen).
 
 ---
 
@@ -61,6 +67,7 @@ Vulkan). Nur **H** ist blockiert.
 [C] gpu_ref(7)      == gpu_train(4)+gpu_resume_gpu(3): checksum=14053461363620090639 schritt=7             BIT-IDENTISCH
 [E]                 -> cpu_fallbacks==0 (Delta über den gesamten Resume+Weiter-Abschnitt)
 [D] gpu_resume_cpu auf Vulkan-Binary UND auf Nicht-Vulkan-Binary: checksum=14828330410922979978            IDENTISCH
+[H] gpu_vs_cpu_curve(6): maxrel=7.52862e-06 (< 2e-3 Toleranz), cpu_fallbacks=0, cpu_last=0.807542026 gpu_last=0.807548106
 ```
 
 Jede Zahl stammt aus **separaten `exec`-Aufrufen** (`skripte/kip_g4c_qa.sh`
@@ -69,47 +76,48 @@ gemeinsamen globalen Zähler zwischen den verglichenen Läufen.
 
 ---
 
-## 4. Fehlende Hooks für Kriterium H (an KIP-G4c, kip-gpu, Phase 2)
+## 4. Kriterium H — Stand + verbleibende Lücke (Aktivierung 2026-07-10)
 
-Ein echter CPU↔GPU-**Loss-Kurvenvergleich** (nicht nur Adam-Zustand, sondern
-der volle Forward/Backward-Pfad eines `moo_nn`-Netzes) braucht laut
-`docs/kip/G4c-production-wiring-plan.md` §2:
+**AKTIVIERT.** `gpu_vs_cpu_curve` baut ein Netz OHNE Aktivierung
+(`dicht(3,8,"keine")` → `dropout(0.3)` → `dicht(8,2,"keine")`), trainiert es
+identisch über `moo_nn_vorwaerts/_mse/_rueckwaerts/opt_schritt` einmal mit
+`moo_ki_gpu_strikt_setzen(false)` (CPU-Referenz) und einmal mit
+`moo_ki_gpu_strikt_setzen(true)` (GPU-Pfad, hart bei jeder Nicht-Residenz),
+vergleicht die Loss-Kurven (Toleranz `rel<2e-3`, s.u.) und prüft
+`cpu_fallbacks==0` über `moo_ki_gpu_telemetrie()`. Ohne Vulkan/vollständige
+Residenz: `SKIP-strikt-wirft` (Exit 0, kein falsches Grün — das IST die
+Negativ-Kontrolle: ein nicht-residenter Pfad wirft tatsächlich hart).
 
-1. **`moo_tensor_matmul`/`_ew`/`_softmax`/`_norm`/`_gather` GPU-geroutet**
-   (Wiring-Plan §2.5, Schritt 1–3) — ohne das läuft `moo_nn_vorwaerts` auch
-   unter `MOO_KI_GPU_STRIKT=1` rein auf CPU, ein „Vergleich" wäre eine
-   Nullaussage (identischer Code-Pfad auf beiden Seiten).
-2. **`MOO_KI_GPU_STRIKT`-Enforcement** (Wiring-Plan §3.1) — um zu beweisen,
-   dass der GPU-Lauf tatsächlich resident war und nicht still auf CPU
-   zurückgefallen ist (sonst ist "GPU==CPU" trivial wahr, weil es derselbe
-   CPU-Pfad war).
-3. **`gpu_statistik()`/`moo_ki_gpu_telemetrie()`-Sichtbarkeit im Trainingslauf**
-   — um `cpu_fallbacks==0` über den **gesamten** Trainingsschritt (nicht nur
-   den isolierten Adam-Schritt wie heute in C/E) zu behaupten.
-4. **Backward-Residenz** (`bw_matmul`/`grad_accum` → `_res`, Wiring-Plan §2.3)
-   — sonst bricht die Residenz-Kette beim ersten Backward-Schritt.
+Ursprünglich fehlende Hooks laut
+`docs/kip/G4c-production-wiring-plan.md` §2 — Stand jetzt:
 
-**Vertrag für Kriterium H, sobald diese Hooks existieren** (damit kip-gpu das
-Gate direkt gegen dieses Dokument verdrahten kann, ohne Rückfrage):
+1. **`moo_tensor_matmul`/`_ew`/`_softmax`/`_gather` GPU-geroutet** ✅ erledigt
+   (matmul Fwd+Bwd, ew add/sub/mul/div Fwd, softmax/gather Fwd). `_norm` NICHT
+   als dedizierter Op nötig — layernorm/rmsnorm sind reine Op-Komposition aus
+   bereits residenten Primitiven (mul/sub/adds/sqrt/div/mittel, WEG-1-Fund).
+2. **`MOO_KI_GPU_STRIKT`-Enforcement** ✅ erledigt, hardware-verifiziert
+   (Commit e5b53cb + Fixes, inkl. echtem Bug-Fund asymmetrischer bw_matmul).
+3. **`gpu_statistik()`/`moo_ki_gpu_telemetrie()`-Sichtbarkeit** ✅ erledigt
+   (C-Backend 213c7de, Rust-Builtin 16691ff) — mein Harness nutzt direkt
+   `moo_ki_gpu_telemetrie()` (kein moo-Builtin-Umweg nötig im C-Test).
+4. **Backward-Residenz** ⚠️ TEILWEISE: `bw_matmul` (voll), `bw_mul` (voll),
+   `bw_div` (nur da-Zweig) resident; `bw_add`/`bw_sub`/`bw_div`-db-Zweig
+   bewusst CPU (keine Rechengewinn-Begründung, kein Fehler). Reicht für das
+   Kriterium-H-Netz (dicht+dropout+dicht ohne Aktivierung).
+5. **Aktivierungsfunktionen (u_op)** ❌ OFFEN: nur `sqrt` ist an die residente
+   `unary_res`-Familie angebunden, `tanh/relu/sigmoid/gelu/exp/log` NICHT.
+   Deshalb nutzt das Kriterium-H-Netz bewusst `"keine"` statt `"tanh"` (wie
+   im ursprünglichen CPU-Pfad-A-Netz) — mit tanh würde `MOO_KI_GPU_STRIKT=1`
+   den Op transparent auf CPU rechnen (kein Fehler, aber `cpu_fallbacks`
+   bliebe fälschlich `0`, weil der Op nie versucht wird) und damit genau die
+   unten geforderte Negativ-Kontrolle verwässern.
 
-- Neuer Modus `gpu_vs_cpu_curve` in `test_g4c_e2e_qa.c` (Platzhalter-Signatur
-  bereits vorhanden) baut **ein** deterministisches Netz (dicht+dropout+dicht
-  wie CPU-Pfad A, fester Seed), trainiert `N` Schritte einmal mit
-  `MOO_KI_GPU=0` (CPU-Referenz) und einmal mit `MOO_KI_GPU_STRIKT=1`
-  (GPU-Pfad), beide über `moo_nn_vorwaerts/_mse/_rueckwaerts/opt_schritt`
-  (identischer Aufrufcode, nur Env-Variable unterscheidet sich).
-- Toleranzvertrag **nicht bit-identisch** (im Gegensatz zu A/C, die
-  elementweisen Adam ohne Reduktion nutzen): Forward/Backward sind
-  reduktionslastig (Matmul-Summation, Softmax, LayerNorm-Mittelwert) →
-  float-GPU-Reduktionsreihenfolge weicht von der CPU-Referenz ab. Toleranz
-  `rel < 2e-3` pro Loss-Wert, analog zum bereits etablierten G4b-Muster
-  (`ki_gpu_g4b_lm.c`, „GPU(float)==CPU(double) Loss-Kurve rel<2e-3").
-- Negativ-Kontrolle: unter `MOO_KI_GPU_STRIKT=1` MUSS jeder nicht-geroutete
-  Layer-Typ hart fehlschlagen (kein stiller CPU-Fallback) — deckt sich mit
-  Wiring-Plan §4 Kriterium 5.
-- Dieses Gate (`kip_g4c_qa.sh`) wird um einen `[H]`-Block erweitert, der beim
-  ersten Auftreten von `MOO_KI_GPU_STRIKT` in `moo_runtime.h`/`moo_nn.c` aktiv
-  wird — bis dahin bleibt `[H]` `PENDING` (Exit-neutral, siehe §5).
+**Verbleibender Vertrag, falls tanh (oder eine andere Aktivierung) später
+resident wird** (kip-gpu bot das im Channel an, gleiches u_op-Muster wie
+sqrt): `baue_gvsc_netz()` in `test_g4c_e2e_qa.c` von `"keine"` auf `"tanh"`
+umstellen, um näher an den ursprünglichen CPU-Pfad-A heranzukommen — nicht
+blockierend, da die aktuelle Version bereits die volle Negativ-Kontrolle
+und Toleranzprüfung liefert.
 
 ---
 

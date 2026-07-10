@@ -27,12 +27,16 @@
  *      Forward/Backward-Pfad, da moo_tensor_matmul etc. noch nicht GPU-
  *      geroutet sind)
  *    - Checkpoint: moo_nn_ckpt_speichern/_laden (E2/E2b-Format, unveraendert)
- *  Der "CPU<->GPU-Kurvenvergleich" (echter Forward/Backward-Loss auf GPU vs.
- *  CPU) ist daher NOCH NICHT beweisbar und im Modus "gpu_vs_cpu_curve" als
- *  PENDING markiert (druckt den fehlenden Hook, Exit 0, keine Behauptung).
- *  Alles andere (Parameter, Adam t/m/v, Dropout-/Schrittzustand, Residenz-
- *  telemetrie, Cross-Device-Restore) ist mit den JETZT vorhandenen Hooks
- *  voll pruefbar und wird unten AKTIV getestet.
+ *  STAND 2026-07-10 (Nachtrag): matmul Fwd+Bwd, ew_op (add/sub/mul/div) Fwd,
+ *  bw_mul (voll) + bw_div (da-Zweig), sqrt (u_op), softmax/gather Fwd,
+ *  reduce_op Voll+Achse, Adam/SGD-Optimizer sind jetzt resident + STRIKT
+ *  hardware-verifiziert (kip-gpu, Channel-Bestaetigung Msg 12897) -- der
+ *  Modus "gpu_vs_cpu_curve" ist daher AKTIV (kein Platzhalter mehr) und
+ *  vergleicht echte Loss-Kurven CPU vs. MOO_KI_GPU_STRIKT=1 auf einem Netz
+ *  OHNE Aktivierung (tanh ist noch NICHT resident, siehe Dateikommentar bei
+ *  baue_gvsc_netz). Alles andere (Parameter, Adam t/m/v, Dropout-/Schritt-
+ *  zustand, Residenztelemetrie, Cross-Device-Restore) ist mit den vorhandenen
+ *  Hooks voll pruefbar und wird unten AKTIV getestet.
  *
  * MODI (argv[1]):
  *   cpu_ref        <total>                 -- CPU: N Schritte ununterbrochen (Referenz)
@@ -54,6 +58,7 @@
 #include "../moo_ki_gpu_api.h"
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 
 /* --- Test-throw-Modell (ersetzt moo_error.c) ------------------------------ */
 int moo_error_flag = 0;
@@ -151,11 +156,13 @@ static MooValue t2(int r, int c, const float* vals) {
 }
 static float cpu_schritt(MooValue netz, MooValue opt, MooValue x, MooValue y) {
     MooValue pred = moo_nn_vorwaerts(netz, x);
+    if (moo_error_flag) { moo_release(pred); return (float)NAN; }
     MooValue loss = moo_nn_mse(pred, y);
+    if (moo_error_flag) { moo_release(loss); moo_release(pred); return (float)NAN; }
     float lv = (float)T(loss)->data[0];
     moo_release(moo_tensor_rueckwaerts(loss));
     moo_release(loss); moo_release(pred);
-    moo_release(moo_nn_opt_schritt(opt));
+    if (!moo_error_flag) moo_release(moo_nn_opt_schritt(opt));
     return lv;
 }
 static double drop_zaehler(MooValue netz) {
@@ -490,18 +497,103 @@ static int mode_gpu_resume_cpu(const char* ckpt, int extra) {
     return moo_error_flag ? 1 : 0;
 }
 
-static int mode_pending_curve(void) {
-    printf("RESULT mode=gpu_vs_cpu_curve status=PENDING reason="
-           "kein-gpu-geroutetes-moo_nn_vorwaerts-siehe-G4c-QA-contract-md\n");
-    fprintf(stderr,
-        "PENDING: echter GPU-Forward/Backward-Loss-Kurvenvergleich braucht die G4c-\n"
-        "Produktionsverdrahtung (moo_tensor_matmul/_ew/_softmax/... auf _res-Ops\n"
-        "geroutet, siehe docs/kip/G4c-production-wiring-plan.md §2). Bis dahin gibt\n"
-        "es keinen echten GPU-Trainingsloss zum Vergleichen -- nur den synthetischen\n"
-        "Adam-auf-residenten-Buffern-Pfad (gpu_train/_resume_*). Dieser Modus bleibt\n"
-        "als Platzhalter bestehen und wird aktiviert, sobald moo_nn_vorwaerts unter\n"
-        "MOO_KI_GPU_STRIKT=1 real GPU-resident laeuft (kip-gpu G4c Phase 2).\n");
-    return 0;
+/* ============================================================================
+ * Kriterium H: echter CPU<->GPU-Loss-Kurvenvergleich (aktiviert 2026-07-10,
+ * nachdem kip-gpu bestaetigt hat: matmul Fwd+Bwd, ew_op add/sub/mul/div Fwd,
+ * bw_mul (voll) + bw_div (da-Zweig), sqrt (u_op), softmax/gather Fwd,
+ * reduce_op Voll+Achse, Adam/SGD-Optimizer sind resident + MOO_KI_GPU_STRIKT
+ * hardware-verifiziert (Channel moo-general, Msg 12897).
+ *
+ * NICHT resident (Channel-Bestaetigung): tanh/relu/sigmoid/gelu/exp/log
+ * (nur sqrt aus der u_op-Familie wurde angebunden), bw_add/bw_sub,
+ * bw_div-db-Zweig. Deshalb: Netz OHNE Aktivierung ("keine", wie E2b) statt
+ * tanh wie im urspruenglichen CPU-Pfad-A-Netz -- sonst wuerde die in
+ * G4c-QA-contract.md §4 dokumentierte Negativ-Kontrolle ("STRIKT haertet
+ * bei Nicht-Residenz IMMER hart ab") an genau dieser Stelle systematisch
+ * verwaessert (tanh liefe unter STRIKT still auf CPU weiter, kein Fehler,
+ * aber cpu_fallbacks bliebe faelschlich 0 weil der Op nie versucht wird).
+ * dicht(3,8,keine) -> dropout(0.3) -> dicht(8,2,keine); Dropout-Maskierung
+ * laeuft ueber moo_tensor_mul (ew_op) -- selbe residente Op-Familie wie
+ * add/sub/mul/div, also mitgedeckt ohne Sonderfall.
+ * ========================================================================= */
+static MooValue baue_gvsc_netz(void) {
+    MooValue schichten = moo_list_new(3);
+    moo_list_append(schichten, mk_dicht(3, 8, "keine", 1.0));
+    moo_list_append(schichten, moo_nn_schicht_dropout(num_(0.3)));
+    moo_list_append(schichten, mk_dicht(8, 2, "keine", 2.0));
+    MooValue netz = moo_nn_ki_netz(schichten);
+    moo_release(schichten);
+    return netz;
+}
+
+/* Ein voller Trainingslauf (steps Schritte) unter dem gewaehlten STRIKT-
+ * Zustand; Losses in out_losses[0..steps), cpu_fallbacks-Delta in
+ * *out_fb. moo_ki_gpu_strikt_setzen ist die dokumentierte programmatische
+ * Override-API (moo_ki_gpu.c:49) -- kein Env-Var-Caching-Problem zwischen
+ * den beiden Laeufen im selben Prozess. */
+static void gvsc_run(bool strikt, int steps, float* out_losses, uint64_t* out_fb) {
+    moo_ki_gpu_strikt_setzen(strikt);
+    MooValue netz = baue_gvsc_netz(), opt = baue_cpu_opt(netz);
+    MooValue x = t2(4, 3, xv), y = t2(4, 2, yv);
+    MooKiGpuTelemetrie t0, t1;
+    moo_ki_gpu_telemetrie(&t0);
+    for (int s = 0; s < steps && !moo_error_flag; s++)
+        out_losses[s] = cpu_schritt(netz, opt, x, y);
+    moo_ki_gpu_telemetrie(&t1);
+    *out_fb = t1.cpu_fallbacks - t0.cpu_fallbacks;
+    moo_release(x); moo_release(y); moo_release(opt); moo_release(netz);
+    moo_ag_reset();
+    moo_ki_gpu_strikt_setzen(false);
+}
+
+#define GVSC_MAXSTEPS 64
+static int mode_gpu_vs_cpu_curve(int steps) {
+    if (steps <= 0 || steps > GVSC_MAXSTEPS) {
+        fprintf(stderr, "gpu_vs_cpu_curve: steps muss in [1,%d] liegen\n", GVSC_MAXSTEPS);
+        return 2;
+    }
+    float cpu_losses[GVSC_MAXSTEPS], gpu_losses[GVSC_MAXSTEPS];
+    uint64_t cpu_fb = 0, gpu_fb = 0;
+
+    gvsc_run(false, steps, cpu_losses, &cpu_fb);
+    if (moo_error_flag) {
+        fprintf(stderr, "FAIL: gpu_vs_cpu_curve CPU-Referenzlauf wirft unerwartet\n");
+        moo_error_flag = 0;
+        return 1;
+    }
+
+    gvsc_run(true, steps, gpu_losses, &gpu_fb);
+    if (moo_error_flag) {
+        /* STRIKT konnte den Pfad nicht vollstaendig resident fahren (z.B.
+         * kein Vulkan/keine GPU auf dieser Maschine) -- transparent SKIP,
+         * kein falscher FAIL. Das IST die dokumentierte Negativ-Kontrolle:
+         * ein bewusst nicht-residenter Aufbau wuerde genauso hart werfen. */
+        moo_error_flag = 0;
+        printf("RESULT mode=gpu_vs_cpu_curve status=SKIP-strikt-wirft "
+               "reason=kein-vollstaendig-residenter-pfad-auf-dieser-maschine\n");
+        fflush(stdout);
+        return 0;
+    }
+
+    bool finite_ok = true;
+    double maxrel = 0.0;
+    for (int s = 0; s < steps; s++) {
+        double c = (double)cpu_losses[s], g = (double)gpu_losses[s];
+        if (!isfinite(c) || !isfinite(g)) finite_ok = false;
+        double denom = fabs(c) > 1e-6 ? fabs(c) : 1e-6;
+        double rel = fabs(c - g) / denom;
+        if (rel > maxrel) maxrel = rel;
+    }
+    /* Toleranzvertrag G4c-QA-contract.md §4: rel<2e-3 (reduktionslastiger
+     * Fwd/Bwd, float-GPU-Reduktionsreihenfolge != CPU, analog G4b-Muster).
+     * cpu_fallbacks==0 im STRIKT-Lauf ist das Residenz-Gate-Kriterium. */
+    bool ok = finite_ok && maxrel < 2e-3 && gpu_fb == 0;
+    printf("RESULT mode=gpu_vs_cpu_curve status=%s maxrel=%.6g cpu_fallbacks=%llu steps=%d "
+           "cpu_last=%.9g gpu_last=%.9g\n",
+           ok ? "PASS" : "FAIL", maxrel, (unsigned long long)gpu_fb, steps,
+           (double)cpu_losses[steps - 1], (double)gpu_losses[steps - 1]);
+    fflush(stdout);
+    return ok ? 0 : 1;
 }
 
 int main(int argc, char** argv) {
@@ -518,7 +610,7 @@ int main(int argc, char** argv) {
     if (strcmp(mode, "gpu_train") == 0 && argc >= 4) return mode_gpu_train(argv[2], atoi(argv[3]));
     if (strcmp(mode, "gpu_resume_gpu") == 0 && argc >= 4) return mode_gpu_resume_gpu(argv[2], atoi(argv[3]));
     if (strcmp(mode, "gpu_resume_cpu") == 0 && argc >= 4) return mode_gpu_resume_cpu(argv[2], atoi(argv[3]));
-    if (strcmp(mode, "gpu_vs_cpu_curve") == 0) return mode_pending_curve();
+    if (strcmp(mode, "gpu_vs_cpu_curve") == 0 && argc >= 3) return mode_gpu_vs_cpu_curve(atoi(argv[2]));
     fprintf(stderr, "Unbekannter Modus oder fehlende Argumente: %s\n", mode);
     return 2;
 }

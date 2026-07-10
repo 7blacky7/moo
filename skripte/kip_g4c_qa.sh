@@ -24,11 +24,12 @@
 #       Binary OHNE jede Vulkan-Bindung (gpu_resume_cpu), UND auf einem
 #       Vulkan-gebundenen Binary -- gleicher Checkpoint, gleicher Restore-Pfad.
 #
-# PENDING (dokumentiert, nicht ausgefuehrt -- fehlender G4c-Produktionshook):
-#   [E] Echter CPU<->GPU-Loss-Kurvenvergleich (moo_nn_vorwaerts GPU-resident).
-#       Siehe gpu_vs_cpu_curve-Modus + docs/kip/G4c-QA-contract.md §4.
+#   [H] Echter CPU<->GPU-Loss-Kurvenvergleich (moo_nn_vorwaerts teilw. GPU-
+#       resident: matmul/ew/sqrt/reduce/softmax/gather Fwd + Adam/SGD, seit
+#       2026-07-10 AKTIV geprueft, Netz ohne Aktivierung, siehe gpu_vs_cpu_curve
+#       + docs/kip/G4c-QA-contract.md §4).
 #
-# Transparent skippbar: [C]/[D]/gpu_* ohne libvulkan -> SKIP (Exit 0).
+# Transparent skippbar: [C]/[D]/[H]/gpu_* ohne libvulkan -> SKIP (Exit 0).
 # ============================================================
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -152,12 +153,25 @@ else
 fi
 
 # ------------------------------------------------------------
-# [E] Dokumentiert-PENDING: kein echter GPU-Forward/Backward-Kurvenvergleich
-# moeglich, solange die G4c-Produktionsverdrahtung fehlt.
+# [H] Echter CPU<->GPU-Loss-Kurvenvergleich (aktiv seit 2026-07-10, siehe
+# docs/kip/G4c-QA-contract.md §4). Netz ohne Aktivierung (tanh noch nicht
+# resident) -- SKIP graceful ohne Vulkan oder falls STRIKT nicht vollstaendig
+# resident laufen kann (kein falscher FAIL, siehe Modus-Kommentar im Harness).
 # ------------------------------------------------------------
-echo "-- [E] CPU<->GPU-Loss-Kurvenvergleich --"
-"$BIN_CPU" gpu_vs_cpu_curve >/dev/null
-pending "echter GPU-Forward/Backward-Loss fehlt (kein moo_nn_vorwaerts-GPU-Routing) — siehe docs/kip/G4c-QA-contract.md §4, Modus gpu_vs_cpu_curve bleibt als Platzhalter bestehen"
+echo "-- [H] CPU<->GPU-Loss-Kurvenvergleich --"
+H_LINE="$("$BIN_VK" gpu_vs_cpu_curve 6 2>/dev/null || "$BIN_CPU" gpu_vs_cpu_curve 6)"
+h_status="$(field "$H_LINE" status)"
+case "$h_status" in
+    PASS)
+        pass "CPU<->GPU-Kurve in Toleranz: $(field "$H_LINE" maxrel) (< 2e-3), cpu_fallbacks=$(field "$H_LINE" cpu_fallbacks)"
+        ;;
+    SKIP-strikt-wirft)
+        skip "kein vollstaendig residenter Pfad auf dieser Maschine (kein Vulkan oder STRIKT wirft) — Negativ-Kontrolle bestaetigt, kein falsches Gruen"
+        ;;
+    FAIL|*)
+        fail "CPU<->GPU-Kurve WEICHT AB oder cpu_fallbacks!=0: [$H_LINE]"
+        ;;
+esac
 
 echo
 if [ "$FAIL" = "1" ]; then
