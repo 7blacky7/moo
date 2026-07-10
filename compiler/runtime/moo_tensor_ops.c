@@ -19,6 +19,7 @@
  * ============================================================================
  */
 #include "moo_runtime.h"
+#include "moo_ki_gpu_api.h"   // KIP-G4c Stufe 1: residenter matmul_res-Pfad
 
 #if defined(_MSC_VER)
 #define MOO_OPTIMIZE_O3
@@ -228,8 +229,31 @@ MooValue moo_tensor_matmul(MooValue av, MooValue bv) {
     int32_t oshape[2] = { a->shape[0], b->shape[1] };
     MooTensor* out = moo_tensor_raw(2, oshape);
     if (!out) return moo_none();
-    /* GPU2: grosse MatMuls auf Vulkan, CPU-ikj als Fallback. */
-    if (!moo_ki_gpu_matmul(a->data, b->data, out->data,
+    int64_t mm = a->shape[0], kk = a->shape[1], nn = b->shape[1];
+    bool done = false;
+    /* KIP-G4c Stufe 1 (docs/kip/G4c-production-wiring-plan.md): residenter
+     * Pfad zuerst versuchen (gleiche Groessen-Schwelle wie der bestehende
+     * non-resident GPU2-Hook, M*K*N>=2^24). moo_tensor_nach_gpu ist bereits
+     * idempotent + opportunistisch (silent no-op ohne Vulkan/GPU-Fehler,
+     * Preflight-konform) — reiner Fallback-Pfad VOR dem bestehenden Hook,
+     * kein bestehendes Verhalten geaendert. */
+    if (mm * kk * nn >= (1LL << 24)) {
+        moo_tensor_nach_gpu(a);
+        moo_tensor_nach_gpu(b);
+        if ((a->valid & MOO_V_DEV) && (b->valid & MOO_V_DEV)) {
+            if (!out->gpu_buf)
+                out->gpu_buf = moo_ki_gpu_buf_belegen((int64_t)out->size * (int64_t)sizeof(float));
+            if (out->gpu_buf &&
+                moo_ki_gpu_matmul_res(a->gpu_buf, b->gpu_buf, out->gpu_buf,
+                                      (int32_t)mm, (int32_t)kk, (int32_t)nn)) {
+                out->valid = MOO_V_DEV;    /* nur GPU-Seite gueltig; naechster ->data-Lesezugriff sichert via I1-Trichter */
+                out->device = MOO_DEV_GPU;
+                done = true;
+            }
+        }
+    }
+    /* GPU2: grosse MatMuls (non-resident) auf Vulkan, CPU-ikj als Fallback. */
+    if (!done && !moo_ki_gpu_matmul(a->data, b->data, out->data,
                            a->shape[0], a->shape[1], b->shape[1]))
         matmul_ikj(a->data, b->data, out->data, a->shape[0], a->shape[1], b->shape[1]);
     MooValue ret = wrap_t(out);
