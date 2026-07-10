@@ -345,10 +345,41 @@ MooValue moo_tensor_gather(MooValue wv, MooValue idxv) {
     int32_t oshape[2] = { (int32_t)n, dim };
     MooTensor* out = moo_tensor_raw(2, oshape);
     if (!out) return moo_none();
+
+    /* KIP-G4c Stufe 6 (docs/kip/G4c-production-wiring-plan.md §2.5 Punkt 3):
+     * residenter gather_res-Pfad zuerst versuchen, analog softmax oben. Kein
+     * alter non-resident GPU2-Hook fuer gather vorhanden -> gleiche an-ew-
+     * angelehnte Schwelle (n*dim >= 2^20), STRIKT ignoriert sie. Backward
+     * bleibt unveraendert korrekt: gather hat bereits eine eigene analytische
+     * bw_gather (scatter-add, moo_autograd.c), kein Decomposition-Pfad. */
+    bool strikt = moo_ki_gpu_strikt_aktiv();
+    bool done = false;
+    int64_t total = n * (int64_t)dim;
+    if (strikt || total >= (1LL << 20)) {
+        moo_tensor_nach_gpu(w);
+        moo_tensor_nach_gpu(idx);
+        if ((w->valid & MOO_V_DEV) && (idx->valid & MOO_V_DEV)) {
+            if (!out->gpu_buf)
+                out->gpu_buf = moo_ki_gpu_buf_belegen((int64_t)out->size * (int64_t)sizeof(float));
+            if (out->gpu_buf &&
+                moo_ki_gpu_gather_res(w->gpu_buf, idx->gpu_buf, out->gpu_buf, (int32_t)n, dim, vokab)) {
+                out->valid = MOO_V_DEV;
+                out->device = MOO_DEV_GPU;
+                done = true;
+            }
+        }
+    }
+    if (!done && strikt) {
+        moo_release(wrap_t(out));
+        moo_throw(moo_error("STRIKT: gather nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
+        return moo_none();
+    }
+    if (!done) {
     for (int64_t i = 0; i < n; i++) {
         int64_t r = (int64_t)idx->data[i];
         memcpy(out->data + i * (int64_t)dim, w->data + r * (int64_t)dim,
                (size_t)dim * sizeof(float));
+    }
     }
     MooValue ret = wrap_t(out);
     // B1: Tape. idx = inputs[1] (nicht-diff, siehe nichtdiff_maske).
@@ -621,6 +652,39 @@ static MooValue softmax_impl(MooValue av, bool log_variante, const char* wo) {
     if (!out) return moo_none();
     int64_t rows = (a->ndim == 2) ? a->shape[0] : 1;
     int64_t cols = (a->ndim == 2) ? a->shape[1] : a->shape[0];
+
+    /* KIP-G4c Stufe 6 (docs/kip/G4c-production-wiring-plan.md §2.5 Punkt 3):
+     * residenter softmax_res-Pfad zuerst versuchen, analog ew_op Stufe 5. Kein
+     * alter non-resident GPU2-Hook fuer softmax vorhanden (GPU2 deckt nur
+     * matmul/ew/reduce_sum ab) -> Schwelle an den ew-Wert angelehnt (n>=2^20
+     * Gesamtelemente), dokumentiert statt stillschweigend uebernommen. Unter
+     * STRIKT wird die Schwelle ignoriert (immer resident versuchen). Backward
+     * bleibt unveraendert korrekt: softmax ist bereits ein EIGENER Tape-Op mit
+     * dedizierter analytischer bw_softmax (moo_autograd.c), kein Decomposition-
+     * Pfad wie bei layernorm/rmsnorm. */
+    bool strikt = moo_ki_gpu_strikt_aktiv();
+    bool done = false;
+    int64_t total = rows * cols;
+    if (strikt || total >= (1LL << 20)) {
+        moo_tensor_nach_gpu(a);
+        if (a->valid & MOO_V_DEV) {
+            if (!out->gpu_buf)
+                out->gpu_buf = moo_ki_gpu_buf_belegen((int64_t)out->size * (int64_t)sizeof(float));
+            if (out->gpu_buf &&
+                moo_ki_gpu_softmax_res(log_variante ? MOO_KI_SM_LOGSOFTMAX : MOO_KI_SM_SOFTMAX,
+                                       a->gpu_buf, out->gpu_buf, (int32_t)rows, (int32_t)cols)) {
+                out->valid = MOO_V_DEV;   /* nur GPU-Seite gueltig; I1-Trichter sichert bei Lesezugriff */
+                out->device = MOO_DEV_GPU;
+                done = true;
+            }
+        }
+    }
+    if (!done && strikt) {
+        moo_release(wrap_t(out));
+        moo_throw(moo_error("STRIKT: softmax nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
+        return moo_none();
+    }
+    if (!done) {
     for (int64_t i = 0; i < rows; i++) {
         const float* x = a->data + i * cols;
         float* o = out->data + i * cols;
@@ -636,6 +700,7 @@ static MooValue softmax_impl(MooValue av, bool log_variante, const char* wo) {
             for (int64_t j = 0; j < cols; j++)
                 o[j] = (float)(exp((double)(x[j] - m)) / sum);
         }
+    }
     }
     MooValue ret = wrap_t(out);
     moo_ag_record(log_variante ? "logsoftmax" : "softmax", av, moo_none(), moo_none(), ret);
