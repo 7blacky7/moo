@@ -220,6 +220,8 @@ MooValue moo_tensor_tanh(MooValue a);
 MooValue moo_tensor_gelu(MooValue a);
 MooValue moo_tensor_softmax(MooValue a);
 MooValue moo_tensor_logsoftmax(MooValue a);
+MooValue moo_tensor_layernorm_kern(MooValue a);   // KIP-G4d: affine-freier Norm-Kern (LayerNorm)
+MooValue moo_tensor_rmsnorm_kern(MooValue a);     // KIP-G4d: affine-freier Norm-Kern (RMSNorm)
 // gather(W, indizes): Zeilen-Lookup W[indizes]; Backward = scatter-add nach W.
 // Indizes: f32-Tensor, ganzzahlig in [0, vokab). NICHT differenzierbar (KIP-T1).
 MooValue moo_tensor_gather(MooValue w, MooValue indizes);

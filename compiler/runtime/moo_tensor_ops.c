@@ -784,6 +784,77 @@ static MooValue softmax_impl(MooValue av, bool log_variante, const char* wo) {
 MooValue moo_tensor_softmax(MooValue a)    { return softmax_impl(a, false, "tensor_softmax"); }
 MooValue moo_tensor_logsoftmax(MooValue a) { return softmax_impl(a, true,  "tensor_logsoftmax"); }
 
+// KIP-G4d: dedizierte LayerNorm/RMSNorm-KERN-Ops (affine-frei). Ersetzt die
+// vorige 6-9-Node-Dekomposition (mittel/sub/mul/mittel/adds/sqrt/div[/mul]) in
+// moo_nn.c fw_layernorm/fw_rmsnorm durch EINEN Tape-Node -- Muster 1:1 von
+// softmax_impl (residenter Pfad ueber moo_ki_gpu_norm_res, gleiche Schwelle/
+// STRIKT-Logik). *gamma[+beta] bzw. *g bleibt bewusst Op-Komposition in
+// moo_nn.c (billig: 1-2 zusaetzliche Nodes, nutzt bestehende bw_mul/bw_add).
+// op = MOO_KI_NORM_LAYER|RMS (moo_ki_gpu_api.h, KIP-G3b-Kernel, bisher nur in
+// Test-Harnessen genutzt -- G4d verdrahtet ihn erstmals produktiv).
+static MooValue norm_kern_impl(MooValue av, int32_t normop, const char* opname, const char* wo) {
+    MooTensor* a = expect_t(av, wo); if (!a) return moo_none();
+    if (a->ndim != 1 && a->ndim != 2) {
+        moo_throw(moo_error("norm_kern: nur fuer 1- oder 2-dimensionale Tensoren"));
+        return moo_none();
+    }
+    MooTensor* out = moo_tensor_raw(a->ndim, a->shape);
+    if (!out) return moo_none();
+    int64_t rows = (a->ndim == 2) ? a->shape[0] : 1;
+    int64_t cols = (a->ndim == 2) ? a->shape[1] : a->shape[0];
+    const float eps = 1e-5f;
+
+    bool strikt = moo_ki_gpu_strikt_aktiv();
+    bool done = false;
+    int64_t total = rows * cols;
+    if (strikt || total >= (1LL << 20)) {
+        moo_tensor_nach_gpu(a);
+        if (a->valid & MOO_V_DEV) {
+            if (!out->gpu_buf)
+                out->gpu_buf = moo_ki_gpu_buf_belegen((int64_t)out->size * (int64_t)sizeof(float));
+            if (out->gpu_buf &&
+                moo_ki_gpu_norm_res(normop, a->gpu_buf, out->gpu_buf, (int32_t)rows, (int32_t)cols, eps)) {
+                out->valid = MOO_V_DEV;   /* nur GPU-Seite gueltig; I1-Trichter sichert bei Lesezugriff */
+                out->device = MOO_DEV_GPU;
+                done = true;
+            }
+        }
+    }
+    if (!done && strikt) {
+        moo_release(wrap_t(out));
+        moo_throw(moo_error("STRIKT: norm_kern nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
+        return moo_none();
+    }
+    if (!done) {
+        for (int64_t i = 0; i < rows; i++) {
+            const float* x = a->data + i * cols;
+            float* o = out->data + i * cols;
+            if (normop == MOO_KI_NORM_LAYER) {
+                double mu = 0.0;
+                for (int64_t j = 0; j < cols; j++) mu += (double)x[j];
+                mu /= (double)cols;
+                double var = 0.0;
+                for (int64_t j = 0; j < cols; j++) { double d = (double)x[j] - mu; var += d * d; }
+                var /= (double)cols;
+                double s = sqrt(var + (double)eps);
+                for (int64_t j = 0; j < cols; j++) o[j] = (float)(((double)x[j] - mu) / s);
+            } else {
+                double ms = 0.0;
+                for (int64_t j = 0; j < cols; j++) ms += (double)x[j] * (double)x[j];
+                ms /= (double)cols;
+                double s = sqrt(ms + (double)eps);
+                for (int64_t j = 0; j < cols; j++) o[j] = (float)((double)x[j] / s);
+            }
+        }
+    }
+    MooValue ret = wrap_t(out);
+    moo_ag_record(opname, av, moo_none(), moo_none(), ret);
+    return ret;
+}
+
+MooValue moo_tensor_layernorm_kern(MooValue a) { return norm_kern_impl(a, MOO_KI_NORM_LAYER, "layernorm_kern", "tensor_layernorm_kern"); }
+MooValue moo_tensor_rmsnorm_kern(MooValue a)   { return norm_kern_impl(a, MOO_KI_NORM_RMS,   "rmsnorm_kern",   "tensor_rmsnorm_kern"); }
+
 // ============================================================
 // Op-Registry — DER Erweiterbarkeits-Vertrag.
 // Neuer Op: Funktion oben implementieren + HIER eine Zeile. Fertig.
@@ -820,6 +891,8 @@ static MooTensorOp op_tabelle[] = {
     { "gelu",       MOO_OP_UNARY,         moo_tensor_gelu,       NULL, NULL },
     { "softmax",    MOO_OP_UNARY,         moo_tensor_softmax,    NULL, NULL },
     { "logsoftmax", MOO_OP_UNARY,         moo_tensor_logsoftmax, NULL, NULL },
+    { "layernorm_kern", MOO_OP_UNARY, moo_tensor_layernorm_kern, NULL, NULL },
+    { "rmsnorm_kern",   MOO_OP_UNARY, moo_tensor_rmsnorm_kern,   NULL, NULL },
 };
 #define OP_COUNT ((int)(sizeof(op_tabelle) / sizeof(op_tabelle[0])))
 

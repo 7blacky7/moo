@@ -219,8 +219,9 @@ int main(void) {
         double tol = 1e-3;
         if (strcmp(op->name, "matmul") == 0 || strcmp(op->name, "softmax") == 0 ||
             strcmp(op->name, "logsoftmax") == 0 || strcmp(op->name, "gelu") == 0 ||
-            strcmp(op->name, "exp") == 0)
-            tol = 1e-2;   // f32-Akkumulation/steile Kruemmung bei h=1e-3
+            strcmp(op->name, "exp") == 0 || strcmp(op->name, "layernorm_kern") == 0 ||
+            strcmp(op->name, "rmsnorm_kern") == 0)
+            tol = 1e-2;   // f32-Akkumulation/steile Kruemmung bei h=1e-3; KIP-G4d: Division/rsqrt
 
         if (op->art == MOO_OP_UNARY) {
             MooValue A = mk_rand(2, s34, 1000 + (uint64_t)oi, shift);

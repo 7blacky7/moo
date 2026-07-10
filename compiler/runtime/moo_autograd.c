@@ -411,6 +411,29 @@ static bool gpu_ew_kontribution(int32_t gop, const float* g, MooTensor* faktor,
     return ok;
 }
 
+// KIP-G4d: Analog gpu_ew_kontribution, aber fuer die Norm-Backward-Kontribution
+// (moo_ki_gpu_norm_bw_res braucht x UND g als Device-Buffer). x (a) muss schon
+// resident sein (a->valid&MOO_V_DEV); g wird transient hochgeladen (KEIN neuer
+// gpu_grad-Lifecycle, wie bei gpu_ew_kontribution). Ergebnis (reine dx-
+// Kontribution, kein +=) landet in tmp fuer die unveraenderte accum_bcast-
+// Akkumulation danach (I3-konform, einziger Akkumulationsort).
+static bool gpu_norm_bw_kontribution(int32_t normop, MooTensor* a, const float* g,
+                                     int64_t rows, int64_t cols, float eps, float* tmp) {
+    if (!(a->valid & MOO_V_DEV) || !a->gpu_buf) return false;
+    int64_t bytes = a->size * (int64_t)sizeof(float);
+    void* gbuf = moo_ki_gpu_buf_belegen(bytes);
+    void* dxbuf = gbuf ? moo_ki_gpu_buf_belegen(bytes) : NULL;
+    bool ok = false;
+    if (dxbuf && moo_ki_gpu_upload(gbuf, g, bytes) &&
+        moo_ki_gpu_norm_bw_res(normop, a->gpu_buf, gbuf, dxbuf, (int32_t)rows, (int32_t)cols, eps) &&
+        moo_ki_gpu_download(dxbuf, tmp, bytes)) {
+        ok = true;
+    }
+    moo_ki_gpu_buf_freigeben(gbuf);
+    moo_ki_gpu_buf_freigeben(dxbuf);
+    return ok;
+}
+
 // ============================================================
 // backward-Funktionen (Signatur: void bw(const MooAgNode* n))
 // g = n->output->grad (existiert wenn bw gerufen wird).
@@ -906,6 +929,70 @@ static void bw_logsoftmax(const MooAgNode* n) {
     }
 }
 
+// KIP-G4d: analytisches Backward fuer die dedizierten Norm-KERN-Ops (affine-
+// frei; Stats werden aus x rekonstruiert, exakt wie moo_ki_gpu_norm_bw_res --
+// n (=xhat) ist bereits im Forward-Output o->data vorhanden, kein erneutes
+// Normalisieren noetig). GPU-Residenz analog bw_mul/bw_div: gpu_norm_bw_
+// kontribution liefert die REINE dx-Kontribution, Akkumulation bleibt
+// ausschliesslich ueber accum_bcast (einziger Akkumulationsort, I3).
+static void bw_norm_kern(const MooAgNode* n, int32_t normop) {
+    const MooTensor* o = T(n->output);   // xhat
+    const float* g = o->grad;
+    MooTensor* a = T(n->inputs[0]);      // x
+    if (!a->requires_grad) return;
+    int64_t rows = (a->ndim == 2) ? a->shape[0] : 1;
+    int64_t cols = (a->ndim == 2) ? a->shape[1] : a->shape[0];
+    const float eps = 1e-5f;
+    bool strikt = moo_ki_gpu_strikt_aktiv();
+    float* buf = (float*)malloc((size_t)o->size * sizeof(float));
+    if (!buf) { moo_throw(moo_error("autograd: Speicher voll")); return; }
+    bool done = false;
+    if (strikt || o->size >= (1LL << 20)) {
+        done = gpu_norm_bw_kontribution(normop, a, g, rows, cols, eps, buf);
+    }
+    if (!done && strikt) {
+        free(buf);
+        moo_throw(moo_error("STRIKT: norm_kern-Backward nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
+        return;
+    }
+    if (!done) {
+        for (int64_t i = 0; i < rows; i++) {
+            const float* x  = a->data + i * cols;
+            const float* xh = o->data + i * cols;   // bereits normalisiert (Forward-Cache)
+            const float* gr = g + i * cols;
+            float* bo = buf + i * cols;
+            if (normop == MOO_KI_NORM_LAYER) {
+                double meang = 0.0, meangn = 0.0;
+                for (int64_t j = 0; j < cols; j++) { meang += (double)gr[j]; meangn += (double)gr[j] * (double)xh[j]; }
+                meang /= (double)cols; meangn /= (double)cols;
+                double mu = 0.0;
+                for (int64_t j = 0; j < cols; j++) mu += (double)x[j];
+                mu /= (double)cols;
+                double var = 0.0;
+                for (int64_t j = 0; j < cols; j++) { double d = (double)x[j] - mu; var += d * d; }
+                var /= (double)cols;
+                double s = sqrt(var + (double)eps);
+                for (int64_t j = 0; j < cols; j++)
+                    bo[j] = (float)(((double)gr[j] - meang - (double)xh[j] * meangn) / s);
+            } else {
+                double meangn = 0.0;
+                for (int64_t j = 0; j < cols; j++) meangn += (double)gr[j] * (double)xh[j];
+                meangn /= (double)cols;
+                double ms = 0.0;
+                for (int64_t j = 0; j < cols; j++) ms += (double)x[j] * (double)x[j];
+                ms /= (double)cols;
+                double s = sqrt(ms + (double)eps);
+                for (int64_t j = 0; j < cols; j++)
+                    bo[j] = (float)(((double)gr[j] - (double)xh[j] * meangn) / s);
+            }
+        }
+    }
+    accum_bcast(a, o, buf);
+    free(buf);
+}
+static void bw_layernorm_kern(const MooAgNode* n) { bw_norm_kern(n, MOO_KI_NORM_LAYER); }
+static void bw_rmsnorm_kern(const MooAgNode* n)   { bw_norm_kern(n, MOO_KI_NORM_RMS); }
+
 static void moo_ag_init_bw(void) {
     moo_tensor_op_set_bw("add", bw_add);
     moo_tensor_op_set_bw("sub", bw_sub);
@@ -934,6 +1021,8 @@ static void moo_ag_init_bw(void) {
     moo_tensor_op_set_bw("gelu", bw_gelu);
     moo_tensor_op_set_bw("softmax", bw_softmax);
     moo_tensor_op_set_bw("logsoftmax", bw_logsoftmax);
+    moo_tensor_op_set_bw("layernorm_kern", bw_layernorm_kern);
+    moo_tensor_op_set_bw("rmsnorm_kern", bw_rmsnorm_kern);
     bw_registriert = true;
 }
 

@@ -699,19 +699,12 @@ static MooValue fw_layernorm(MooValue schicht, MooValue x) {
     MooValue beta = dget(schicht, "beta");
     MooValue out = moo_none();
     if (gamma.tag == MOO_TENSOR && beta.tag == MOO_TENSOR) {
-        /* letzte Achse: bei [r,c] ist das achse 1 (keepdims [r,1]) */
-        MooValue achse = moo_number((double)(T(x)->ndim - 1));
-        MooValue m  = moo_tensor_mittel(x, achse);
-        MooValue d  = moo_tensor_sub(x, m);
-        MooValue d2 = moo_tensor_mul(d, d);
-        MooValue v  = moo_tensor_mittel(d2, achse);
-        MooValue ve = moo_tensor_adds(v, moo_number(1e-5));
-        MooValue s  = moo_tensor_sqrt(ve);
-        MooValue n  = moo_tensor_div(d, s);
-        MooValue g  = moo_tensor_mul(n, gamma);
+        /* KIP-G4d: dedizierter Tape-Op (affine-frei, residenzfaehig) statt
+         * 6-9-Node-Dekomposition; *gamma+beta bleibt billige Komposition. */
+        MooValue nrm = moo_tensor_layernorm_kern(x);
+        MooValue g   = moo_tensor_mul(nrm, gamma);
         out = moo_tensor_add(g, beta);
-        moo_release(m);  moo_release(d); moo_release(d2); moo_release(v);
-        moo_release(ve); moo_release(s); moo_release(n);  moo_release(g);
+        moo_release(nrm); moo_release(g);
     } else {
         moo_throw(moo_error("vorwaerts: kaputte LayerNorm-Schicht (gamma/beta fehlen)"));
     }
@@ -723,16 +716,11 @@ static MooValue fw_rmsnorm(MooValue schicht, MooValue x) {
     MooValue g = dget(schicht, "g");
     MooValue out = moo_none();
     if (g.tag == MOO_TENSOR) {
-        /* letzte Achse (keepdims), analog LayerNorm-Muster */
-        MooValue achse = moo_number((double)(T(x)->ndim - 1));
-        MooValue x2  = moo_tensor_mul(x, x);              /* x^2 */
-        MooValue ms  = moo_tensor_mittel(x2, achse);      /* mean(x^2) [.,1] */
-        MooValue mse = moo_tensor_adds(ms, moo_number(1e-5));
-        MooValue s   = moo_tensor_sqrt(mse);              /* sqrt(mean(x^2)+eps) */
-        MooValue n   = moo_tensor_div(x, s);              /* x * rsqrt(...) (broadcast) */
-        out = moo_tensor_mul(n, g);                       /* * g (broadcast [1,dim]) */
-        moo_release(x2); moo_release(ms); moo_release(mse);
-        moo_release(s);  moo_release(n);
+        /* KIP-G4d: dedizierter Tape-Op (affine-frei, residenzfaehig) statt
+         * 5-Node-Dekomposition; *g bleibt billige Komposition. */
+        MooValue nrm = moo_tensor_rmsnorm_kern(x);
+        out = moo_tensor_mul(nrm, g);
+        moo_release(nrm);
     } else {
         moo_throw(moo_error("vorwaerts: kaputte RMSNorm-Schicht (g fehlt)"));
     }
