@@ -124,6 +124,9 @@ EXTRA_HARNESSES=(
   #               vs. Autograd fuer JEDEN Registry-Op (automatische Iteration
   #               via op_count/at — neuer Op ohne Gradcheck faellt hier auf).
   "test_gradcheck.c|moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   contrastive: KI-MULTI-L1 — kosinus + symmetrisches InfoNCE als reine
+  #                Registry-Op-Komposition; eigener numerischer FD-Gradcheck.
+  "test_contrastive_asan.c|moo_contrastive.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   gather_leak: KIP-T1 — Refcount-/Tape-Leak-Gate fuer gather fwd+bwd. Unter
   #               ASan zaehlt LeakSanitizer (RSS-Check dort uebersprungen); der
   #               echte 1M-RSS-Stabilitaetslauf laeuft standalone ohne Sanitizer.

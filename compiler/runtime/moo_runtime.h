@@ -310,6 +310,8 @@ MooValue moo_nn_packung_leeren(MooValue netz);  // KIP-B4a
 MooValue moo_nn_vorwaerts(MooValue netz, MooValue x);
 MooValue moo_nn_parameter(MooValue netz);
 MooValue moo_nn_mse(MooValue a, MooValue b);
+MooValue moo_nn_kosinus(MooValue a, MooValue b);  // KI-MULTI-L1: [batch]
+MooValue moo_nn_kontrastiv(MooValue a, MooValue b, MooValue temperatur);  // KI-MULTI-L1: symm. InfoNCE
 MooValue moo_nn_kreuzentropie(MooValue logits, MooValue ziele);
 MooValue moo_nn_kreuzentropie_maskiert(MooValue logits, MooValue ziele, MooValue maske);  // KIP-B4a
 MooValue moo_nn_opt_sgd(MooValue params, MooValue rate, MooValue momentum);

@@ -34,6 +34,7 @@ fn main() {
         .file("runtime/moo_tensor_ops.c")   // Tensor-Ops + Op-Registry (Plan-014 A2, immer gebaut)
         .file("runtime/moo_autograd.c")     // Autograd-Tape + backward (Plan-014 B1, immer gebaut)
         .file("runtime/moo_nn.c")           // NN-Schichten/Loss/Optimizer (Plan-014 C1, immer gebaut)
+        .file("runtime/moo_contrastive.c")  // KI-MULTI-L1: Kosinus + InfoNCE-Komposition
         .file("runtime/moo_nn_easy.c")      // Kinderleicht-API ki_netz/trainiere (Plan-014 D1, immer gebaut)
         .file("runtime/moo_dataset.c")      // Daten-Pipeline MNIST/CSV/PGM (Plan-014 E1, immer gebaut)
         .file("runtime/moo_tokenizer.c")    // Byte-level BPE-Tokenizer (KIP-T2, immer gebaut)

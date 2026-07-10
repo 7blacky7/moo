@@ -2605,6 +2605,27 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[b.into()], "rel_mse_b")?;
                         return Ok(r);
                     }
+                    "kosinus" | "cosine" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_nn_kosinus,
+                            &[a.into(), b.into()], "nn_kosinus")?;
+                        self.call_rt_void(self.rt.moo_release, &[a.into()], "rel_kos_a")?;
+                        self.call_rt_void(self.rt.moo_release, &[b.into()], "rel_kos_b")?;
+                        return Ok(r);
+                    }
+                    "kontrastiv" | "contrastive" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        let temperatur = if args.len() > 2 { self.compile_expr(&args[2])? }
+                            else { self.call_rt(self.rt.moo_none, &[], "nn_kon_temp_none")? };
+                        let r = self.call_rt(self.rt.moo_nn_kontrastiv,
+                            &[a.into(), b.into(), temperatur.into()], "nn_kontrastiv")?;
+                        self.call_rt_void(self.rt.moo_release, &[a.into()], "rel_kon_a")?;
+                        self.call_rt_void(self.rt.moo_release, &[b.into()], "rel_kon_b")?;
+                        self.call_rt_void(self.rt.moo_release, &[temperatur.into()], "rel_kon_temp")?;
+                        return Ok(r);
+                    }
                     "kreuzentropie" | "cross_entropy" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
