@@ -2086,9 +2086,26 @@ impl<'ctx> CodeGen<'ctx> {
         if let Some(var_name) = catch_var {
             let error_val = self.call_rt(self.rt.moo_get_error, &[], "error")?;
             let error_str = self.call_rt(self.rt.moo_to_string, &[error_val.into()], "err_str")?;
-            // moo_get_error liefert +1 retained. moo_to_string leiht den Wert nur;
-            // daher muss der Catch-Temp nach erfolgreicher Konvertierung frei werden.
+            // moo_to_string gibt fuer MOO_STRING denselben borrowed Wert zurueck.
+            // Dann wird der Retain aus moo_get_error direkt in die Catch-Variable
+            // transferiert. Fuer alle anderen Tags ist error_str ein frischer +1-
+            // Wert und nur der retained Quellwert muss freigegeben werden.
+            let error_tag = self.builder.build_extract_value(error_val, 0, "error_tag")
+                .map_err(|e| format!("{e}"))?.into_int_value();
+            let is_string = self.builder.build_int_compare(
+                inkwell::IntPredicate::EQ,
+                error_tag,
+                self.context.i64_type().const_int(tag::STRING, false),
+                "error_is_string",
+            ).map_err(|e| format!("{e}"))?;
+            let release_bb = self.context.append_basic_block(func, "catch_release_error");
+            let store_bb = self.context.append_basic_block(func, "catch_store_error");
+            self.builder.build_conditional_branch(is_string, store_bb, release_bb)
+                .map_err(|e| format!("{e}"))?;
+            self.builder.position_at_end(release_bb);
             self.call_rt_void(self.rt.moo_release, &[error_val.into()], "release_error")?;
+            self.builder.build_unconditional_branch(store_bb).map_err(|e| format!("{e}"))?;
+            self.builder.position_at_end(store_bb);
             self.store_var(var_name, error_str)?;
         }
         // try_leave raeumt auf
