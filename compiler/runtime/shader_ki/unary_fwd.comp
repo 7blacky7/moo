@@ -1,0 +1,44 @@
+#version 450
+// unary_fwd.comp — KIP-G3d-a: o[i] = f(a[i], s). Unaere Ops, Skalar-
+// Varianten und Aktivierungen auf elementwise.comp-Basis (EIN Eingang).
+// pc.M = Elementzahl. pc.K = Skalar (float-Bitmuster via uintBitsToFloat) —
+// nur fuer adds/subs/muls/divs/pow genutzt, sonst ignoriert. pc.op-Codes
+// (identisch fuer Fwd+Bwd, siehe moo_ki_gpu_api.h MOO_KI_U_*):
+//  0 adds 1 subs 2 muls 3 divs 4 exp 5 log 6 sqrt 7 neg 8 pow
+//  9 relu 10 sigmoid 11 tanh 12 gelu
+// Binding 1 (BufB) ist ungenutzt (Aufrufer bindet den Eingang doppelt), damit
+// das bestehende 3-Storage-Buffer-Descriptor-Layout unveraendert bleibt.
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly  buffer BufA { float a[]; };
+layout(std430, binding = 1) readonly  buffer BufB { float b_unused[]; };
+layout(std430, binding = 2) writeonly buffer BufO { float o[]; };
+layout(push_constant) uniform PC { uint M; uint K; uint N; uint op; } pc;
+
+const float GELU_K = 0.7978845608;   // sqrt(2/pi), wie u_gelu in moo_tensor_ops.c
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.M) return;
+    float x = a[i];
+    float s = uintBitsToFloat(pc.K);
+    float r;
+    switch (pc.op) {
+        case 0u:  r = x + s;                    break;  // adds
+        case 1u:  r = x - s;                    break;  // subs
+        case 2u:  r = x * s;                    break;  // muls
+        case 3u:  r = x / s;                    break;  // divs (IEEE: /0 -> inf/nan)
+        case 4u:  r = exp(x);                   break;  // exp
+        case 5u:  r = log(x);                   break;  // log
+        case 6u:  r = sqrt(x);                  break;  // sqrt
+        case 7u:  r = -x;                       break;  // neg
+        case 8u:  r = pow(x, s);                break;  // pow
+        case 9u:  r = (x > 0.0) ? x : 0.0;      break;  // relu (matcht u_relu exakt)
+        case 10u: r = 1.0 / (1.0 + exp(-x));    break;  // sigmoid
+        case 11u: r = tanh(x);                  break;  // tanh
+        default: {                                      // 12 = gelu (tanh-Approx)
+            float inner = GELU_K * (x + 0.044715 * x * x * x);
+            r = 0.5 * x * (1.0 + tanh(inner));
+        }
+    }
+    o[i] = r;
+}

@@ -69,6 +69,13 @@ bool moo_ki_gpu_ew_res(int32_t op, void* a, void* b, void* o, int64_t n) {
 bool moo_ki_gpu_reduce_sum_res(void* a, int64_t n, double* out_summe) {
     (void)a; (void)n; (void)out_summe; return false;
 }
+bool moo_ki_gpu_unary_res(int32_t op, void* a, void* o, int64_t n, float skalar) {
+    (void)op; (void)a; (void)o; (void)n; (void)skalar; return false;
+}
+bool moo_ki_gpu_unary_bw_res(int32_t op, void* src, void* gout, void* gin,
+                             int64_t n, float skalar) {
+    (void)op; (void)src; (void)gout; (void)gin; (void)n; (void)skalar; return false;
+}
 void moo_ki_gpu_telemetrie(MooKiGpuTelemetrie* out) {
     if (out) { out->submits = 0; out->uploads = 0; out->downloads = 0; out->cpu_fallbacks = 0; }
 }
@@ -94,6 +101,7 @@ typedef struct {
     VkPipelineLayout playout;         /* + 16B Push-Constants */
     VkPipeline pipe_matmul, pipe_ew, pipe_reduce;
     VkPipeline pipe_matmul_naiv;      /* KIP-G2: nur A/B-Mikrobenchmark */
+    VkPipeline pipe_unary, pipe_unary_bw;  /* KIP-G3d-a: unaer/Skalar/Aktivierung F+B */
     VkCommandPool cmdpool;
     VkDescriptorPool descpool;
     /* GPU3-C: Per-Op-Allokationen gecacht — lazy beim ersten Dispatch
@@ -271,7 +279,10 @@ static bool ki_gpu_init(void) {
     G.pipe_ew = pipeline_bauen(ki_elementwise_spv, ki_elementwise_spv_len);
     G.pipe_reduce = pipeline_bauen(ki_reduce_spv, ki_reduce_spv_len);
     G.pipe_matmul_naiv = pipeline_bauen(ki_matmul_naiv_spv, ki_matmul_naiv_spv_len);
-    if (!G.pipe_matmul || !G.pipe_ew || !G.pipe_reduce || !G.pipe_matmul_naiv)
+    G.pipe_unary = pipeline_bauen(ki_unary_fwd_spv, ki_unary_fwd_spv_len);
+    G.pipe_unary_bw = pipeline_bauen(ki_unary_bw_spv, ki_unary_bw_spv_len);
+    if (!G.pipe_matmul || !G.pipe_ew || !G.pipe_reduce || !G.pipe_matmul_naiv ||
+        !G.pipe_unary || !G.pipe_unary_bw)
         return false;
 
     VkCommandPoolCreateInfo cpi = {
@@ -837,6 +848,40 @@ bool moo_ki_gpu_reduce_sum_res(void* a, int64_t n, double* out_summe) {
     }
     buf_zurueck(&partials);
     buf_zurueck(&dummy);
+    return ok;
+}
+
+/* KIP-G3d-a: unaere/Skalar/Aktivierungs-Ops auf residenten Buffers.
+ * Skalar wird als float-Bitmuster im KiPush.K-Feld transportiert (der Shader
+ * liest ihn via uintBitsToFloat) — das haelt Push-Constant (16B) und das
+ * 3-Buffer-Descriptor-Layout unveraendert. Forward bindet den Eingang doppelt
+ * (binding 0+1), binding 1 ist im Shader ungenutzt. */
+bool moo_ki_gpu_unary_res(int32_t op, void* a, void* o, int64_t n, float skalar) {
+    if (!a || !o) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    uint32_t sbits; memcpy(&sbits, &skalar, sizeof(sbits));
+    KiBuf bufs[3] = { *(KiBuf*)a, *(KiBuf*)a, *(KiBuf*)o };
+    KiPush push = { (uint32_t)n, sbits, 0, (uint32_t)op };
+    bool ok = dispatch_sync(G.pipe_unary, bufs, push,
+                            (uint32_t)((n + 255) / 256), 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3d-a: Backward — gin = gout * f'(src). src = x oder y (Aufrufer-Vertrag,
+ * moo_ki_gpu_api.h). Reiner Gradient-Beitrag ohne Akkumulation (G3c). */
+bool moo_ki_gpu_unary_bw_res(int32_t op, void* src, void* gout, void* gin,
+                             int64_t n, float skalar) {
+    if (!src || !gout || !gin) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    uint32_t sbits; memcpy(&sbits, &skalar, sizeof(sbits));
+    KiBuf bufs[3] = { *(KiBuf*)src, *(KiBuf*)gout, *(KiBuf*)gin };
+    KiPush push = { (uint32_t)n, sbits, 0, (uint32_t)op };
+    bool ok = dispatch_sync(G.pipe_unary_bw, bufs, push,
+                            (uint32_t)((n + 255) / 256), 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
     return ok;
 }
 

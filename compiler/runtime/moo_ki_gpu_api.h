@@ -21,6 +21,17 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* === KIP-G3d-a: Op-Codes fuer unaere/Skalar/Aktivierungs-Ops ===
+ * Von unary_fwd.comp UND unary_bw.comp geteilt (gleiche Codes). Die CPU-
+ * Referenzsemantik steht in moo_tensor_ops.c (u_x / ews_op / pow) bzw.
+ * moo_autograd.c (bw_x). */
+enum {
+    MOO_KI_U_ADDS = 0, MOO_KI_U_SUBS = 1, MOO_KI_U_MULS = 2, MOO_KI_U_DIVS = 3,
+    MOO_KI_U_EXP = 4,  MOO_KI_U_LOG = 5,  MOO_KI_U_SQRT = 6, MOO_KI_U_NEG = 7,
+    MOO_KI_U_POW = 8,  MOO_KI_U_RELU = 9, MOO_KI_U_SIGMOID = 10,
+    MOO_KI_U_TANH = 11, MOO_KI_U_GELU = 12
+};
+
 /* === Residente Buffer-Handles (opaque) ===
  * Ein Handle kapselt ein pool-verwaltetes VRAM/Staging-Paar (GPU3-A/B).
  * Der Tensor besitzt genau EINEN Handle (MooTensor.gpu_buf, opaque void*),
@@ -54,6 +65,16 @@ bool moo_ki_gpu_matmul_res(void* a, void* b, void* o, int32_t m, int32_t k, int3
  * nicht im Produktivpfad. Gleiche Signatur/Semantik wie matmul_res. */
 bool moo_ki_gpu_matmul_naiv_res(void* a, void* b, void* o, int32_t m, int32_t k, int32_t n);
 bool moo_ki_gpu_ew_res(int32_t op, void* a, void* b, void* o, int64_t n);
+/* KIP-G3d-a: unaere/Skalar/Aktivierungs-Forward — o[i] = f(a[i], skalar).
+ * skalar nur fuer adds/subs/muls/divs/pow genutzt (sonst ignoriert). op =
+ * MOO_KI_U_*. Residente Handles, ein Compute-Dispatch (submits++). */
+bool moo_ki_gpu_unary_res(int32_t op, void* a, void* o, int64_t n, float skalar);
+/* KIP-G3d-a: zugehoeriger Backward — gin[i] = gout[i] * f'(src[i]). REINER
+ * Gradient-Beitrag OHNE Akkumulation (das += ist G3c grad_accumulate). Der
+ * Aufrufer MUSS als src den von der Ableitung benoetigten Buffer binden:
+ * INPUT x fuer log/pow/relu/gelu, OUTPUT y fuer exp/sqrt/sigmoid/tanh; fuer
+ * adds/subs/muls/divs/neg ist f' konstant und src wird ignoriert. */
+bool moo_ki_gpu_unary_bw_res(int32_t op, void* src, void* gout, void* gin, int64_t n, float skalar);
 /* Voll-Reduktion einer residenten Eingabe zu einem Host-Skalar. Die
  * Partial-Readback ist inhaerent (Reduktion verlaesst die GPU): submits++
  * (Compute) + downloads++ (Partials). */
