@@ -605,6 +605,17 @@ static bool aw_rmsnorm(Buf* b, MooValue s) {
     moo_release(g);
     return true;
 }
+static bool aw_ffn_gated(Buf* b, MooValue s) {
+    MooValue w2 = eget(s, "w2");
+    MooValue a  = eget(s, "art");
+    if (w2.tag != MOO_TENSOR) { moo_release(w2); moo_release(a); return false; }
+    /* W2: [versteckt, dim] -> dim=shape[1], versteckt=shape[0] */
+    buf_add(b, "{\"typ\":\"ffn_gated\",\"dim\":%d,\"versteckt\":%d,\"art\":\"%s\"}",
+            T(w2)->shape[1], T(w2)->shape[0],
+            (a.tag == MOO_STRING) ? MV_STR(a)->chars : "swiglu");
+    moo_release(w2); moo_release(a);
+    return true;
+}
 static bool aw_embedding(Buf* b, MooValue s) {
     MooValue w = eget(s, "w");
     if (w.tag != MOO_TENSOR) { moo_release(w); return false; }
@@ -660,6 +671,14 @@ static MooValue rb_layernorm(MooValue e) {
 static MooValue rb_rmsnorm(MooValue e) {
     return moo_nn_schicht_rmsnorm(moo_number(enum_(e, "dim", 0)));
 }
+static MooValue rb_ffn_gated(MooValue e) {
+    MooValue art = eget(e, "art");
+    MooValue s = moo_nn_schicht_ffn_gated(moo_number(enum_(e, "dim", 0)),
+                                          moo_number(enum_(e, "versteckt", 0)),
+                                          art);
+    moo_release(art);
+    return s;
+}
 static MooValue rb_embedding(MooValue e) {
     return moo_nn_schicht_embedding(moo_number(enum_(e, "vokab", 0)),
                                     moo_number(enum_(e, "dim", 0)),
@@ -705,6 +724,7 @@ static const NNSaveLoadHook nn_sl_hooks[] = {
     { "dropout",   aw_dropout,   rb_dropout   },
     { "layernorm", aw_layernorm, rb_layernorm },
     { "rmsnorm",   aw_rmsnorm,   rb_rmsnorm   },
+    { "ffn_gated", aw_ffn_gated, rb_ffn_gated },
     { "embedding", aw_embedding, rb_embedding },
     { "attention", aw_attention, rb_attention },
     { "position",  aw_position,  rb_position  },

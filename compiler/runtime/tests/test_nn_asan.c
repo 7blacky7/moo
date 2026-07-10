@@ -893,6 +893,66 @@ int main(void) {
         moo_ag_reset();
     }
 
+    /* ===== 17. SwiGLU / Gated-FFN (KIP-B3) ===== */
+    {
+        /* Forward [n,dim] + Gradient in W1, W2, W3. */
+        MooValue art = moo_string_new("swiglu");
+        MooValue ff = moo_nn_schicht_ffn_gated(moo_number(4), moo_number(8), art);
+        moo_release(art);
+        CHECK(ff.tag == MOO_DICT, "ffn_gated: Schicht gebaut");
+        float xv[8] = { 0.5f, -1.0f, 2.0f, 0.25f, -0.75f, 1.5f, -2.0f, 3.0f };
+        MooValue x = t2(2, 4, xv);
+        moo_ag_reset();
+        MooValue xg = moo_tensor_mit_gradient(x);
+        MooValue y = moo_nn_vorwaerts(ff, xg);
+        CHECK(y.tag == MOO_TENSOR && T(y)->ndim == 2 &&
+              T(y)->shape[0] == 2 && T(y)->shape[1] == 4, "ffn_gated: Form [2,4]");
+        MooValue loss = moo_tensor_mittel(y, moo_none());
+        moo_release(moo_tensor_rueckwaerts(loss));
+        MooValue prm = moo_nn_parameter(ff);
+        CHECK(prm.tag == MOO_LIST && MV_LIST(prm)->length == 3,
+              "ffn_gated: 3 Parameter (W1,W2,W3)");
+        bool alle_grad = true;
+        for (int i = 0; i < 3; i++) {
+            MooTensor* w = MV_TENSOR(MV_LIST(prm)->items[i]);
+            bool any = false;
+            if (w->grad)
+                for (int64_t k = 0; k < w->size; k++)
+                    if (w->grad[k] != 0.0f) { any = true; break; }
+            alle_grad = alle_grad && any;
+        }
+        CHECK(alle_grad, "ffn_gated: Gradient fliesst in ALLE 3 Gewichte");
+        moo_release(prm); moo_release(loss); moo_release(y);
+        moo_release(xg); moo_release(x); moo_release(ff);
+        moo_ag_reset();
+
+        /* .mook-Roundtrip bit-identisch */
+        MooValue schichten = moo_list_new(1);
+        MooValue art2 = moo_string_new("swiglu");
+        moo_list_append(schichten,
+                        moo_nn_schicht_ffn_gated(moo_number(4), moo_number(8), art2));
+        moo_release(art2);
+        MooValue netz = moo_nn_ki_netz(schichten);
+        float xv2[8] = { 1.0f, 0.5f, -0.5f, 2.0f, -1.0f, 0.25f, 1.5f, -2.0f };
+        MooValue x2 = t2(2, 4, xv2);
+        MooValue y1 = moo_nn_vorwaerts(netz, x2);
+        MooValue pf = moo_string_new("/tmp/test_b3_ffn_gated.mook");
+        moo_release(moo_nn_speichern(netz, pf));
+        MooValue netz2 = moo_nn_laden(pf);
+        CHECK(netz2.tag == MOO_DICT, "ffn_gated-.mook laedt");
+        MooValue y2 = moo_nn_vorwaerts(netz2, x2);
+        bool gleich = (y1.tag == MOO_TENSOR && y2.tag == MOO_TENSOR &&
+                       T(y1)->size == T(y2)->size);
+        for (int64_t i = 0; gleich && i < T(y1)->size; i++)
+            gleich = (T(y1)->data[i] == T(y2)->data[i]);
+        CHECK(gleich, "ffn_gated-Roundtrip: Vorhersage BIT-gleich");
+        remove("/tmp/test_b3_ffn_gated.mook");
+        moo_release(y1); moo_release(y2); moo_release(netz2);
+        moo_release(pf); moo_release(x2); moo_release(netz);
+        moo_release(schichten);
+        moo_ag_reset();
+    }
+
     printf("test_nn_asan: alle %d Checks bestanden\n", checks);
     return 0;
 }

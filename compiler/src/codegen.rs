@@ -2562,6 +2562,16 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_nn_schicht_rmsnorm,
                             &[dim.into()], "nn_rmsnorm");
                     }
+                    "schicht_ffn_gated" | "layer_ffn_gated" => {
+                        let dim = self.compile_expr(&args[0])?;
+                        let versteckt = self.compile_expr(&args[1])?;
+                        let art = if args.len() > 2 { self.compile_expr(&args[2])? }
+                                  else { self.call_rt(self.rt.moo_none, &[], "nn_ffn_art_none")? };
+                        let r = self.call_rt(self.rt.moo_nn_schicht_ffn_gated,
+                            &[dim.into(), versteckt.into(), art.into()], "nn_ffn_gated")?;
+                        self.call_rt_void(self.rt.moo_release, &[art.into()], "rel_ffn_art")?;
+                        return Ok(r);
+                    }
                     "schicht_embedding" | "layer_embedding" => {
                         let vokab = self.compile_expr(&args[0])?;
                         let dim = self.compile_expr(&args[1])?;
@@ -2824,6 +2834,74 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokrnd_t")?;
                         self.call_rt_void(self.rt.moo_release, &[dlg.into()], "rel_tokrnd_d")?;
                         self.call_rt_void(self.rt.moo_release, &[mb.into()], "rel_tokrnd_b")?;
+                        return Ok(r);
+                    }
+                    // KIP-E1: Streaming-Token-Shards. Alle Args geliehen -> Release.
+                    "shard_schreiben" | "shard_write" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let d = self.compile_expr(&args[1])?;
+                        let a = self.compile_expr(&args[2])?;
+                        let tv = self.compile_expr(&args[3])?;
+                        let mk = if args.len() > 4 { self.compile_expr(&args[4])? }
+                                 else { self.call_rt(self.rt.moo_none, &[], "shard_wr_none")? };
+                        let r = self.call_rt(self.rt.moo_shard_schreiben, &[p.into(), d.into(), a.into(), tv.into(), mk.into()], "shard_wr")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_shwr_p")?;
+                        self.call_rt_void(self.rt.moo_release, &[d.into()], "rel_shwr_d")?;
+                        self.call_rt_void(self.rt.moo_release, &[a.into()], "rel_shwr_a")?;
+                        self.call_rt_void(self.rt.moo_release, &[tv.into()], "rel_shwr_tv")?;
+                        self.call_rt_void(self.rt.moo_release, &[mk.into()], "rel_shwr_mk")?;
+                        return Ok(r);
+                    }
+                    "shard_info" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_shard_info, &[p.into()], "shard_info")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_shinf_p")?;
+                        return Ok(r);
+                    }
+                    "shard_pruefen" | "shard_check" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_shard_pruefen, &[p.into()], "shard_check")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_shchk_p")?;
+                        return Ok(r);
+                    }
+                    "shard_fenster" | "shard_window" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let s = self.compile_expr(&args[1])?;
+                        let l = self.compile_expr(&args[2])?;
+                        let r = self.call_rt(self.rt.moo_shard_fenster, &[p.into(), s.into(), l.into()], "shard_win")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_shwin_p")?;
+                        self.call_rt_void(self.rt.moo_release, &[s.into()], "rel_shwin_s")?;
+                        self.call_rt_void(self.rt.moo_release, &[l.into()], "rel_shwin_l")?;
+                        return Ok(r);
+                    }
+                    "shard_fenster_maske" | "shard_mask_window" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let s = self.compile_expr(&args[1])?;
+                        let l = self.compile_expr(&args[2])?;
+                        let r = self.call_rt(self.rt.moo_shard_fenster_maske, &[p.into(), s.into(), l.into()], "shard_mwin")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_shmwin_p")?;
+                        self.call_rt_void(self.rt.moo_release, &[s.into()], "rel_shmwin_s")?;
+                        self.call_rt_void(self.rt.moo_release, &[l.into()], "rel_shmwin_l")?;
+                        return Ok(r);
+                    }
+                    "shard_reihenfolge" | "shard_order" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let s = self.compile_expr(&args[1])?;
+                        let l = self.compile_expr(&args[2])?;
+                        let r = self.call_rt(self.rt.moo_shard_reihenfolge, &[p.into(), s.into(), l.into()], "shard_order")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_shord_p")?;
+                        self.call_rt_void(self.rt.moo_release, &[s.into()], "rel_shord_s")?;
+                        self.call_rt_void(self.rt.moo_release, &[l.into()], "rel_shord_l")?;
+                        return Ok(r);
+                    }
+                    "shard_split" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        let s = self.compile_expr(&args[2])?;
+                        let r = self.call_rt(self.rt.moo_shard_split, &[p.into(), v.into(), s.into()], "shard_split")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_shspl_p")?;
+                        self.call_rt_void(self.rt.moo_release, &[v.into()], "rel_shspl_v")?;
+                        self.call_rt_void(self.rt.moo_release, &[s.into()], "rel_shspl_s")?;
                         return Ok(r);
                     }
                     "mischen" | "shuffle_data" => {

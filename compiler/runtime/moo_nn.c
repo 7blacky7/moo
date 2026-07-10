@@ -273,6 +273,42 @@ MooValue moo_nn_schicht_rmsnorm(MooValue dim) {
     return d;
 }
 
+/* schicht_ffn_gated(dim, versteckt, art?) — Gated-FFN:
+ *   swiglu: (silu(x@W1) * (x@W3)) @ W2   mit silu(z)=z*sigmoid(z)
+ *   geglu:  (gelu(x@W1) * (x@W3)) @ W2
+ * Reine Op-Komposition (kein neuer Registry-Op). W1,W3: [dim,versteckt];
+ * W2: [versteckt,dim]; alle Xavier/Glorot, requires_grad. Deterministische
+ * Seeds aus (dim,versteckt) — die Task-Signatur traegt keinen seed-Parameter. */
+MooValue moo_nn_schicht_ffn_gated(MooValue dim, MooValue versteckt, MooValue art) {
+    int32_t nd = ganze_zahl(dim, "schicht_ffn_gated (Dimension)", 1);
+    if (nd < 0) return moo_none();
+    int32_t nh = ganze_zahl(versteckt, "schicht_ffn_gated (versteckte Dimension)", 1);
+    if (nh < 0) return moo_none();
+    const char* a = "swiglu";
+    if (art.tag == MOO_STRING) a = MV_STR(art)->chars;
+    else if (art.tag != MOO_NONE) {
+        moo_throw(moo_error("schicht_ffn_gated: art muss ein Text sein "
+                            "(\"swiglu\" oder \"geglu\")"));
+        return moo_none();
+    }
+    if (strcmp(a, "swiglu") != 0 && strcmp(a, "geglu") != 0) {
+        moo_throw(moo_error("schicht_ffn_gated: art muss \"swiglu\" oder "
+                            "\"geglu\" sein"));
+        return moo_none();
+    }
+    double lim_in  = sqrt(6.0 / ((double)nd + (double)nh));
+    double lim_out = sqrt(6.0 / ((double)nh + (double)nd));
+    uint64_t base = ((uint64_t)nd * 73856093ULL) ^ ((uint64_t)nh * 19349663ULL)
+                    ^ 0x9E3779B97F4A7C15ULL;
+    MooValue d = moo_dict_new();
+    dset(d, "__nn", moo_string_new("ffn_gated"));
+    dset(d, "art", moo_string_new(a));
+    dset(d, "w1", gewicht_init(nd, nh, lim_in,  base + 1));   /* Gate  x@W1 */
+    dset(d, "w2", gewicht_init(nh, nd, lim_out, base + 2));   /* Down  g@W2 */
+    dset(d, "w3", gewicht_init(nd, nh, lim_in,  base + 3));   /* Up    x@W3 */
+    return d;
+}
+
 /* schicht_embedding(vokabular, dim, seed?) — W [vokabular, dim], Xavier.
  * Vorwaerts erwartet Indizes [batch] oder [batch,1]. */
 MooValue moo_nn_schicht_embedding(MooValue vokabular, MooValue dim, MooValue seed) {
@@ -595,6 +631,34 @@ static MooValue fw_rmsnorm(MooValue schicht, MooValue x) {
         moo_throw(moo_error("vorwaerts: kaputte RMSNorm-Schicht (g fehlt)"));
     }
     moo_release(g);
+    return out;
+}
+
+static MooValue fw_ffn_gated(MooValue schicht, MooValue x) {
+    MooValue w1 = dget(schicht, "w1");
+    MooValue w2 = dget(schicht, "w2");
+    MooValue w3 = dget(schicht, "w3");
+    MooValue av = dget(schicht, "art");
+    MooValue out = moo_none();
+    if (w1.tag == MOO_TENSOR && w2.tag == MOO_TENSOR && w3.tag == MOO_TENSOR) {
+        const char* a = (av.tag == MOO_STRING) ? MV_STR(av)->chars : "swiglu";
+        MooValue h1 = moo_tensor_matmul(x, w1);          /* [n, versteckt] */
+        MooValue gate;
+        if (strcmp(a, "geglu") == 0) {
+            gate = moo_tensor_gelu(h1);
+        } else {                                         /* swiglu: silu=z*sigmoid(z) */
+            MooValue sg = moo_tensor_sigmoid(h1);
+            gate = moo_tensor_mul(h1, sg);
+            moo_release(sg);
+        }
+        MooValue h3 = moo_tensor_matmul(x, w3);          /* [n, versteckt] */
+        MooValue g  = moo_tensor_mul(gate, h3);          /* elementweise */
+        out = moo_tensor_matmul(g, w2);                  /* [n, dim] */
+        moo_release(h1); moo_release(gate); moo_release(h3); moo_release(g);
+    } else {
+        moo_throw(moo_error("vorwaerts: kaputte FFN-Gated-Schicht (w1/w2/w3 fehlen)"));
+    }
+    moo_release(w1); moo_release(w2); moo_release(w3); moo_release(av);
     return out;
 }
 
@@ -1208,6 +1272,11 @@ static void params_layernorm(MooValue schicht, MooValue liste) {
 static void params_rmsnorm(MooValue schicht, MooValue liste) {
     moo_list_append(liste, dget(schicht, "g"));
 }
+static void params_ffn_gated(MooValue schicht, MooValue liste) {
+    moo_list_append(liste, dget(schicht, "w1"));
+    moo_list_append(liste, dget(schicht, "w2"));
+    moo_list_append(liste, dget(schicht, "w3"));
+}
 static void params_embedding(MooValue schicht, MooValue liste) {
     moo_list_append(liste, dget(schicht, "w"));
 }
@@ -1264,6 +1333,7 @@ static const MooNNLayerDesc nn_layer_registry[] = {
     { "dropout",   fw_dropout,   NULL             },
     { "layernorm", fw_layernorm, params_layernorm },
     { "rmsnorm",   fw_rmsnorm,   params_rmsnorm   },
+    { "ffn_gated", fw_ffn_gated, params_ffn_gated },
     { "embedding", fw_embedding, params_embedding },
     { "attention", fw_attention, params_attention },
     { "position",  fw_position,  params_position  },
