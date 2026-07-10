@@ -129,8 +129,11 @@ static bool checked_frame(uint32_t width, uint32_t height, size_t* bytes) {
 static void candidate_add(CameraCandidate* out, size_t* count,
                           uint32_t w, uint32_t h, double fps, uint32_t fourcc,
                           uint32_t rw, uint32_t rh, double rfps) {
-    if (*count >= MAX_CANDIDATES || !w || !h || !isfinite(fps) || fps <= 0.0)
+    if (*count >= MAX_CANDIDATES) {
+        *count = MAX_CANDIDATES + 1; /* Sentinel: Auswahl wird sauber abgelehnt. */
         return;
+    }
+    if (!w || !h || !isfinite(fps) || fps <= 0.0) return;
     if (w > MOO_CAPTURE_MAX_WIDTH || h > MOO_CAPTURE_MAX_HEIGHT) return;
     for (size_t i = 0; i < *count; ++i)
         if (out[i].width == w && out[i].height == h &&
@@ -288,6 +291,8 @@ bool moo_capture_camera_open_native(MooKamera* camera, const char* path,
             enumerate_size(native->fd, desc.pixelformat, width, height, fps,
                            candidates, &count);
     }
+    if (count > MAX_CANDIDATES)
+        return camera_open_error(camera, "kamera_oeffnen: zu viele Formatkandidaten (Limit 1024)");
     if (!count) {
         return camera_open_error(camera, "kamera_oeffnen: kein unterstuetztes RGB24/BGR24-Format");
     }
