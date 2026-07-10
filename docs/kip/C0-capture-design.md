@@ -40,9 +40,7 @@ Englische Aliase: `camera_list`, `camera_open`, `camera_frame`, `camera_close`.
 
 ### 2.2 Latest-frame-Semantik
 
-Der FD ist nonblocking. `kamera_frame` pollt bis zur Deadline und dequeuet danach alle sofort verfügbaren Buffer. Ältere Buffer werden unmittelbar requeued; nur der neueste wird kopiert/konvertiert. Drops sind Teil dieses Vertrags. V4L2-`DQBUF` allein verspricht nicht automatisch den neuesten Frame.
-
-Jeder erfolgreich dequeuete Buffer wird auf **jedem** Pfad requeued, nachdem die Daten in einen eigenen `MOO_FRAME` kopiert wurden. Ein Treiberbuffer darf nie Eigentum des Frames werden.
+Der FD ist nonblocking. `kamera_frame` verwendet ausschließlich den in §8.1 normierten, auf `mapped_count` beschränkten Drain: während des Drains erfolgt kein QBUF. Alle gehaltenen Indizes werden danach genau einmal requeued; nur der letzte Buffer wird kopiert/konvertiert. Drops sind Teil dieses Vertrags. V4L2-`DQBUF` allein verspricht nicht automatisch den neuesten Frame. Ein Treiberbuffer darf nie Eigentum des Frames werden.
 
 ### 2.3 Verhandlung und Ausgabe
 
@@ -170,9 +168,9 @@ Nur der letzte erfolgreich dequeuete Buffer wird konvertiert/kopiert. Danach wer
 
 ### 8.2 Deterministische Negotiation
 
-Kamera-v1 verlangt standardmäßig Exact Match. Wird `breite`, `hoehe` oder `fps` weggelassen, wählt Moo deterministisch:
+Für jeden angegebenen Parameter verlangt Kamera-v1 standardmäßig Exact Match. Ausgelassene Parameter erhalten vor der Kandidatenbewertung feste Referenzen: `rw=640`, `rh=480`, `rfps=30`; diese Werte sind Auswahlpräferenzen, keine behaupteten Ergebnisse. Sind alle drei Parameter angegeben und Exact Match fehlt, wird Unsupported geliefert. Bei mindestens einem ausgelassenen Parameter wählt Moo deterministisch:
 
-1. kleinste euklidische Distanz in normierten Komponenten `abs(w-rw)/rw + abs(h-rh)/rh + abs(fps-rfps)/rfps`;
+1. kleinste normierte **L1-Distanz** `abs(w-rw)/rw + abs(h-rh)/rh + abs(fps-rfps)/rfps`;
 2. Tie-Breaker: kleinere Pixelzahl;
 3. danach höhere FPS;
 4. danach numerisch kleinerer FourCC.
@@ -203,9 +201,9 @@ Kamera erreicht STREAMING erst nach erfolgreichem STREAMON. Audio erreicht STREA
 
 ### 8.5 Fehlerwert-Ownership und Return-Gate
 
-Fehlermeldungen werden vor Cleanup in eigenem Moo-String/Error-Speicher materialisiert und dürfen keine Zeiger auf Treiber-, mmap-, ALSA- oder Handle-Puffer behalten. Danach erfolgt Cleanup, genau ein `moo_throw(error)` und unmittelbar `return moo_none()` beziehungsweise `return`.
+Fehlermeldungen werden vor Cleanup als eigener `MOO_ERROR`-Wert materialisiert und dürfen keine Zeiger auf Treiber-, mmap-, ALSA- oder Handle-Puffer behalten. Der aufrufende Fehlerpfad besitzt genau eine owning reference. `moo_throw(error)` **konsumiert** diese owning reference; der Fehlerpfad darf sie danach weder releasen noch verwenden. Die globale Fehlerablage beziehungsweise der Try-Rahmen ist für die spätere Freigabe verantwortlich. Ablauf: Error erzeugen → Ressourcen-Cleanup → genau ein `moo_throw(error)` → unmittelbar `return moo_none()` beziehungsweise `return`.
 
-Das Pflichtgate ersetzt/instrumentiert `moo_throw` als zurückkehrende Funktion und beweist je Fault-Punkt: Cleanup vor Throw, genau ein Throw, unmittelbarer Return, keine weitere Zustandsmutation und korrektes Error-Ownership/Release.
+Das Pflichtgate ersetzt/instrumentiert `moo_throw` als zurückkehrende, konsumierende Funktion und beweist je Fault-Punkt: Cleanup vor Throw, genau ein Throw, Ownership genau einmal übertragen/freigegeben, unmittelbarer Return und keine weitere Zustandsmutation.
 
 ### 8.6 Konkrete Caps und Checked Arithmetic
 
