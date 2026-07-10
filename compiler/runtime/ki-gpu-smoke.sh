@@ -30,3 +30,11 @@ gcc -std=gnu11 -O2 -DMOO_HAS_VULKAN -I. \
     -o /tmp/test_ki_gpu_matmul tests/test_ki_gpu_matmul.c moo_ki_gpu.c -lvulkan -lm
 
 /tmp/test_ki_gpu_matmul
+
+# KIP-G1 Phase B: Tensor-Dirty-State (valid-Masken-Transitionen + GPU-Download).
+# gc-sections droppt ungenutzte Tensor-Funktionen; moo_throw/moo_error gestubbt.
+gcc -std=gnu11 -O2 -ffunction-sections -fdata-sections -Wl,--gc-sections \
+    -DMOO_HAS_VULKAN -I. \
+    -o /tmp/test_ki_gpu_dirty tests/test_ki_gpu_dirty.c moo_tensor.c moo_ki_gpu.c -lvulkan -lm
+
+/tmp/test_ki_gpu_dirty

@@ -21,6 +21,7 @@
  * ============================================================================
  */
 #include "moo_runtime.h"
+#include "moo_ki_gpu_api.h"   // KIP-G1: residente GPU-Buffer-API (Stub ohne Vulkan)
 
 // ============================================================
 // Interne Helfer
@@ -213,7 +214,10 @@ void moo_tensor_free(void* ptr) {
     if (t->data) free(t->data);
     if (t->grad) free(t->grad);
     if (t->store) free(t->store);   // KIP-D1: bf16-Storage freigeben (nur != NULL nach als_dtype)
-    // gpu_buf/gpu_grad-Pool-Rueckgabe (kein free!) bleibt G1 — Owner-Grenzen klar.
+    // KIP-G1: GPU-Buffer an den Pool zurueckgeben (NICHT vkDestroy/free — Pool-Semantik).
+    // Der synchrone Dispatch garantiert GPU-idle; Stub ohne Vulkan = no-op (stets NULL).
+    if (t->gpu_buf) moo_ki_gpu_buf_freigeben(t->gpu_buf);
+    if (t->gpu_grad) moo_ki_gpu_buf_freigeben(t->gpu_grad);   // G3c-Feld, heute NULL
     free(t);
 }
 
@@ -254,7 +258,19 @@ void moo_tensor_f32_sichern(MooTensor* t) {
         t->valid |= MOO_V_DATA;
         return;
     }
-    moo_throw(moo_error("tensor: keine gueltige CPU-Repraesentation zum Sichern"));  // MOO_V_DEV erst mit G1
+    if (t->valid & MOO_V_DEV) {                        // KIP-G1: aus GPU-Buffer laden
+        if (!t->data) {
+            t->data = (float*)calloc((size_t)t->size, sizeof(float));
+            if (!t->data) { moo_throw(moo_error("tensor: Speicher voll bei GPU-Download")); return; }
+        }
+        if (!moo_ki_gpu_download(t->gpu_buf, t->data,
+                                 (int64_t)t->size * (int64_t)sizeof(float))) {
+            moo_throw(moo_error("tensor: GPU->Host-Download fehlgeschlagen")); return;
+        }
+        t->valid |= MOO_V_DATA;                        // DATA jetzt gueltig (DEV bleibt gueltig)
+        return;
+    }
+    moo_throw(moo_error("tensor: keine gueltige CPU-Repraesentation zum Sichern"));
 }
 // store_sichern: garantiert gueltigen dtype-`store` (bf16) aus f32-`data`.
 void moo_tensor_store_sichern(MooTensor* t) {
@@ -270,8 +286,34 @@ void moo_tensor_store_sichern(MooTensor* t) {
     for (int64_t i = 0; i < t->size; i++) s[i] = moo_f32_zu_bf16(t->data[i]);
     t->valid |= MOO_V_STORE;
 }
-// host_sichern: Host-Sicht (f32-data). In D1 == f32_sichern (kein GPU).
+// host_sichern: Host-Sicht (f32-data) garantieren. Delegiert an f32_sichern,
+// das seit KIP-G1 auch den GPU-Fall (MOO_V_DEV) per Download materialisiert —
+// DER zentrale Grep-bare Download-Punkt (G1 §3: zeige/print/zu_liste/speichern).
 void moo_tensor_host_sichern(MooTensor* t) { moo_tensor_f32_sichern(t); }
+
+// === Geraetetransfer (KIP-G1) — explizit, moo-sichtbar, idempotent ===
+// nach_gpu: GPU-residente Repraesentation sichern (Upload). Transfer, KEIN Write
+// => data UND dev bleiben/werden gueltig. Ohne Vulkan/GPU liefert belegen NULL
+// => Tensor bleibt CPU-resident (device zurueck auf CPU), kein Fehler/Zwang.
+void moo_tensor_nach_gpu(MooTensor* t) {
+    if (!t) return;
+    t->device = MOO_DEV_GPU;                       // bevorzugter Compute-Ort
+    if (t->valid & MOO_V_DEV) return;              // idempotent (schon resident)
+    moo_tensor_f32_sichern(t);                     // gueltiges f32-data garantieren
+    int64_t bytes = (int64_t)t->size * (int64_t)sizeof(float);
+    if (!t->gpu_buf) t->gpu_buf = moo_ki_gpu_buf_belegen(bytes);
+    if (!t->gpu_buf || !moo_ki_gpu_upload(t->gpu_buf, t->data, bytes)) {
+        t->device = MOO_DEV_CPU;                   // keine GPU -> CPU-resident bleiben
+        return;
+    }
+    t->valid |= MOO_V_DEV;                          // data + dev beide gueltig
+}
+// nach_cpu: Host-Sicht garantieren (Download falls noetig) + bevorzugter Ort CPU.
+void moo_tensor_nach_cpu(MooTensor* t) {
+    if (!t) return;
+    moo_tensor_host_sichern(t);                    // DEV -> DATA falls noetig
+    t->device = MOO_DEV_CPU;
+}
 
 // === als_dtype: Storage-DType wechseln (KIP-D1) ===
 // tensor.als_dtype("bf16"/"f32"): konvertiert IN-PLACE, gibt denselben (mutierten)

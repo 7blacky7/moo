@@ -182,6 +182,8 @@ MooTensor* moo_tensor_raw(int32_t ndim, const int32_t* shape);
 void moo_tensor_f32_sichern(MooTensor* t);    // sichert f32-`data`    (MOO_V_DATA)
 void moo_tensor_store_sichern(MooTensor* t);  // sichert dtype-`store`  (MOO_V_STORE) — D1
 void moo_tensor_host_sichern(MooTensor* t);   // sichert Host-Sicht (Download GPU->CPU) — G1
+void moo_tensor_nach_gpu(MooTensor* t);       // GPU-resident machen (Upload) — G1, idempotent
+void moo_tensor_nach_cpu(MooTensor* t);       // Host-resident machen (Download) — G1, idempotent
 
 // === Tensor-Ops + Registry (Plan-014 A2) ===
 // Alle Ops: Tensor-Konvention (Args borrowed, Rueckgabe +1 owning).
