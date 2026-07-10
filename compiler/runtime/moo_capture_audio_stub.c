@@ -9,7 +9,8 @@ static MooValue unavailable(void) {
 bool moo_capture_microphone_open_native(MooMikro* microphone, const char* device,
                                         int32_t rate, int32_t channels) {
     (void)microphone; (void)device; (void)rate; (void)channels;
-    unavailable();
+    snprintf(microphone->last_error, sizeof(microphone->last_error),
+             "Mikrofon-Capture ist in diesem Build nicht verfuegbar (Linux + libasound Development-Paket erforderlich)");
     return false;
 }
 MooValue moo_capture_microphone_read_native(MooMikro* microphone,

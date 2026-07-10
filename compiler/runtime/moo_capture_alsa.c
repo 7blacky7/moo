@@ -16,6 +16,19 @@ static MooValue microphone_fail(const char* message) {
     return moo_none();
 }
 
+static bool microphone_open_error(MooMikro* microphone, const char* message) {
+    snprintf(microphone->last_error, sizeof(microphone->last_error), "%s", message);
+    return false;
+}
+
+static MooValue microphone_broken(MooMikro* microphone, const char* message) {
+    MooValue error = moo_error(message);
+    microphone->state = MOO_CAPTURE_BROKEN;
+    moo_capture_microphone_close_native(microphone);
+    moo_throw(error);
+    return moo_none();
+}
+
 static int64_t monotonic_ms(void) {
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return -1;
@@ -55,15 +68,15 @@ static bool recover_stream(snd_pcm_t* pcm, int error, int64_t deadline) {
 bool moo_capture_microphone_open_native(MooMikro* microphone, const char* device,
                                         int32_t rate, int32_t channels) {
     MicrophoneNative* native = calloc(1, sizeof(*native));
-    if (!native) { microphone_fail("mikro_oeffnen: Speicher voll"); return false; }
+    if (!native) return microphone_open_error(microphone, "mikro_oeffnen: Speicher voll");
     microphone->backend = native;
     int result = snd_pcm_open(&native->pcm, device, SND_PCM_STREAM_CAPTURE,
                               SND_PCM_NONBLOCK);
     if (result < 0) {
-        microphone_fail(result == -EBUSY ? "mikro_oeffnen: Geraet belegt" :
-                         (result == -EACCES ? "mikro_oeffnen: keine Berechtigung" :
-                          "mikro_oeffnen: ALSA-Geraet konnte nicht geoeffnet werden"));
-        return false;
+        return microphone_open_error(microphone,
+            result == -EBUSY ? "mikro_oeffnen: Geraet belegt" :
+            (result == -EACCES ? "mikro_oeffnen: keine Berechtigung" :
+             "mikro_oeffnen: ALSA-Geraet konnte nicht geoeffnet werden"));
     }
 
     snd_pcm_hw_params_t* hw;
@@ -75,16 +88,14 @@ bool moo_capture_microphone_open_native(MooMikro* microphone, const char* device
                   SND_PCM_FORMAT_S16_LE)) < 0 ||
         (result = snd_pcm_hw_params_set_channels(native->pcm, hw,
                   (unsigned int)channels)) < 0) {
-        microphone_fail("mikro_oeffnen: S16_LE/interleaved/Kanaele nicht unterstuetzt");
-        return false;
+        return microphone_open_error(microphone, "mikro_oeffnen: S16_LE/interleaved/Kanaele nicht unterstuetzt");
     }
 
     unsigned int actual_rate = (unsigned int)rate;
     int direction = 0;
     if (snd_pcm_hw_params_set_rate_near(native->pcm, hw, &actual_rate,
                                         &direction) < 0) {
-        microphone_fail("mikro_oeffnen: Sample-Rate konnte nicht verhandelt werden");
-        return false;
+        return microphone_open_error(microphone, "mikro_oeffnen: Sample-Rate konnte nicht verhandelt werden");
     }
     snd_pcm_uframes_t period = 1024;
     snd_pcm_uframes_t buffer = 4096;
@@ -93,8 +104,7 @@ bool moo_capture_microphone_open_native(MooMikro* microphone, const char* device
                                                   &direction);
     (void)snd_pcm_hw_params_set_buffer_size_near(native->pcm, hw, &buffer);
     if (snd_pcm_hw_params(native->pcm, hw) < 0) {
-        microphone_fail("mikro_oeffnen: ALSA-Hardwareparameter abgelehnt");
-        return false;
+        return microphone_open_error(microphone, "mikro_oeffnen: ALSA-Hardwareparameter abgelehnt");
     }
 
     unsigned int actual_channels = 0;
@@ -105,8 +115,7 @@ bool moo_capture_microphone_open_native(MooMikro* microphone, const char* device
     snd_pcm_hw_params_get_buffer_size(hw, &buffer);
     if (microphone->channels < 1 || microphone->channels > 2 ||
         actual_rate == 0 || period > INT32_MAX || buffer > INT32_MAX) {
-        microphone_fail("mikro_oeffnen: ALSA lieferte ungueltige Parameter");
-        return false;
+        return microphone_open_error(microphone, "mikro_oeffnen: ALSA lieferte ungueltige Parameter");
     }
 
     snd_pcm_sw_params_t* sw;
@@ -115,8 +124,7 @@ bool moo_capture_microphone_open_native(MooMikro* microphone, const char* device
         snd_pcm_sw_params_set_avail_min(native->pcm, sw, period) < 0 ||
         snd_pcm_sw_params(native->pcm, sw) < 0 ||
         snd_pcm_prepare(native->pcm) < 0) {
-        microphone_fail("mikro_oeffnen: ALSA-Softwareparameter/prepare fehlgeschlagen");
-        return false;
+        return microphone_open_error(microphone, "mikro_oeffnen: ALSA-Softwareparameter/prepare fehlgeschlagen");
     }
 
     microphone->rate = (int32_t)actual_rate;
@@ -158,14 +166,14 @@ MooValue moo_capture_microphone_read_native(MooMikro* microphone,
         if (got == -EPIPE || got == -ESTRPIPE) {
             if (++recoveries > 3 || !recover_stream(native->pcm, (int)got,
                                                      deadline)) {
-                free(input); microphone->state = MOO_CAPTURE_BROKEN;
-                return microphone_fail("mikro_lesen: XRUN/Suspend nicht wiederherstellbar");
+                free(input);
+                return microphone_broken(microphone, "mikro_lesen: XRUN/Suspend nicht wiederherstellbar");
             }
             filled = 0;
             continue;
         }
-        free(input); microphone->state = MOO_CAPTURE_BROKEN;
-        return microphone_fail("mikro_lesen: Geraet getrennt oder ALSA-Lesefehler");
+        free(input);
+        return microphone_broken(microphone, "mikro_lesen: Geraet getrennt oder ALSA-Lesefehler");
     }
     if (remaining_ms(deadline) == 0 && timeout_ms > 0) {
         free(input); return microphone_fail("mikro_lesen: Timeout nach Teildaten");

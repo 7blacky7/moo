@@ -37,6 +37,19 @@ static MooValue camera_fail(const char* message) {
     return moo_none();
 }
 
+static bool camera_open_error(MooKamera* camera, const char* message) {
+    snprintf(camera->last_error, sizeof(camera->last_error), "%s", message);
+    return false;
+}
+
+static MooValue camera_broken(MooKamera* camera, const char* message) {
+    MooValue error = moo_error(message);
+    camera->state = MOO_CAPTURE_BROKEN;
+    moo_capture_camera_close_native(camera);
+    moo_throw(error);
+    return moo_none();
+}
+
 static int64_t monotonic_ms(void) {
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return -1;
@@ -191,24 +204,23 @@ bool moo_capture_camera_open_native(MooKamera* camera, const char* path,
                                     bool require_exact) {
     const char* device = path ? path : "/dev/video0";
     CameraNative* native = calloc(1, sizeof(*native));
-    if (!native) { camera_fail("kamera_oeffnen: Speicher voll"); return false; }
+    if (!native) return camera_open_error(camera, "kamera_oeffnen: Speicher voll");
     native->fd = -1;
     camera->backend = native;
     native->fd = v4l2_open(device, O_RDWR | O_NONBLOCK, 0);
     if (native->fd < 0) {
-        camera_fail(errno == EACCES ? "kamera_oeffnen: keine Berechtigung" :
-                    (errno == EBUSY ? "kamera_oeffnen: Geraet belegt" :
-                     "kamera_oeffnen: Geraet konnte nicht geoeffnet werden"));
-        return false;
+        return camera_open_error(camera,
+            errno == EACCES ? "kamera_oeffnen: keine Berechtigung" :
+            (errno == EBUSY ? "kamera_oeffnen: Geraet belegt" :
+             "kamera_oeffnen: Geraet konnte nicht geoeffnet werden"));
     }
     struct v4l2_capability cap = {0};
     if (v4l2_ioctl(native->fd, VIDIOC_QUERYCAP, &cap) < 0) {
-        camera_fail("kamera_oeffnen: VIDIOC_QUERYCAP fehlgeschlagen"); return false;
+        return camera_open_error(camera, "kamera_oeffnen: VIDIOC_QUERYCAP fehlgeschlagen");
     }
     uint32_t caps = cap.device_caps ? cap.device_caps : cap.capabilities;
     if (!(caps & V4L2_CAP_VIDEO_CAPTURE) || !(caps & V4L2_CAP_STREAMING)) {
-        camera_fail("kamera_oeffnen: Capture/Streaming nicht unterstuetzt (MPLANE ist v1 nicht erlaubt)");
-        return false;
+        return camera_open_error(camera, "kamera_oeffnen: Capture/Streaming nicht unterstuetzt (nur Single-Plane in v1)");
     }
 
     CameraCandidate candidates[MAX_CANDIDATES];
@@ -223,8 +235,7 @@ bool moo_capture_camera_open_native(MooKamera* camera, const char* path,
                            candidates, &count);
     }
     if (!count) {
-        camera_fail("kamera_oeffnen: kein unterstuetztes RGB24/BGR24-Format");
-        return false;
+        return camera_open_error(camera, "kamera_oeffnen: kein unterstuetztes RGB24/BGR24-Format");
     }
     qsort(candidates, count, sizeof(candidates[0]), candidate_cmp);
     size_t chosen = SIZE_MAX;
@@ -235,8 +246,7 @@ bool moo_capture_camera_open_native(MooKamera* camera, const char* path,
         if (!require_exact || exact) { chosen = i; break; }
     }
     if (chosen == SIZE_MAX) {
-        camera_fail("kamera_oeffnen: exaktes Format/FPS nicht unterstuetzt");
-        return false;
+        return camera_open_error(camera, "kamera_oeffnen: exaktes Format/FPS nicht unterstuetzt");
     }
     CameraCandidate c = candidates[chosen];
     struct v4l2_format format = {0};
@@ -245,7 +255,7 @@ bool moo_capture_camera_open_native(MooKamera* camera, const char* path,
     format.fmt.pix.pixelformat = c.fourcc;
     format.fmt.pix.field = V4L2_FIELD_ANY;
     if (v4l2_ioctl(native->fd, VIDIOC_S_FMT, &format) < 0) {
-        camera_fail("kamera_oeffnen: S_FMT fehlgeschlagen"); return false;
+        return camera_open_error(camera, "kamera_oeffnen: S_FMT fehlgeschlagen");
     }
     size_t frame_bytes = 0;
     if ((format.fmt.pix.pixelformat != V4L2_PIX_FMT_RGB24 &&
@@ -257,8 +267,7 @@ bool moo_capture_camera_open_native(MooKamera* camera, const char* path,
         format.fmt.pix.sizeimage > MOO_CAPTURE_MAX_FRAME_BYTES ||
         (require_exact && (format.fmt.pix.width != (uint32_t)width ||
                            format.fmt.pix.height != (uint32_t)height))) {
-        camera_fail("kamera_oeffnen: Treiber lieferte ungueltige Dimensionen/Strides");
-        return false;
+        return camera_open_error(camera, "kamera_oeffnen: Treiber lieferte ungueltige Dimensionen/Strides");
     }
 
     struct v4l2_streamparm parm = {0};
@@ -268,12 +277,12 @@ bool moo_capture_camera_open_native(MooKamera* camera, const char* path,
     if (v4l2_ioctl(native->fd, VIDIOC_S_PARM, &parm) < 0 ||
         v4l2_ioctl(native->fd, VIDIOC_G_PARM, &parm) < 0 ||
         !parm.parm.capture.timeperframe.numerator) {
-        camera_fail("kamera_oeffnen: FPS-Verhandlung fehlgeschlagen"); return false;
+        return camera_open_error(camera, "kamera_oeffnen: FPS-Verhandlung fehlgeschlagen");
     }
     double actual_fps = (double)parm.parm.capture.timeperframe.denominator /
                         parm.parm.capture.timeperframe.numerator;
     if (require_exact && fabs(actual_fps - fps) > 1e-6) {
-        camera_fail("kamera_oeffnen: exakte FPS nicht verfuegbar"); return false;
+        return camera_open_error(camera, "kamera_oeffnen: exakte FPS nicht verfuegbar");
     }
 
     struct v4l2_requestbuffers req = {0};
@@ -281,7 +290,7 @@ bool moo_capture_camera_open_native(MooKamera* camera, const char* path,
     req.memory = V4L2_MEMORY_MMAP;
     if (v4l2_ioctl(native->fd, VIDIOC_REQBUFS, &req) < 0 ||
         !req.count || req.count > MOO_CAPTURE_MAX_BUFFERS) {
-        camera_fail("kamera_oeffnen: ungueltige REQBUFS-Antwort"); return false;
+        return camera_open_error(camera, "kamera_oeffnen: ungueltige REQBUFS-Antwort");
     }
     native->size_image = format.fmt.pix.sizeimage;
     native->mapped_count = req.count;
@@ -292,21 +301,21 @@ bool moo_capture_camera_open_native(MooKamera* camera, const char* path,
         if (v4l2_ioctl(native->fd, VIDIOC_QUERYBUF, &buf) < 0 ||
             !buf.length || buf.length < native->size_image ||
             buf.length > MOO_CAPTURE_MAX_FRAME_BYTES) {
-            camera_fail("kamera_oeffnen: ungueltige Mapping-Laenge"); return false;
+            return camera_open_error(camera, "kamera_oeffnen: ungueltige Mapping-Laenge");
         }
         void* mapped = v4l2_mmap(NULL, buf.length, PROT_READ | PROT_WRITE,
                                  MAP_SHARED, native->fd, buf.m.offset);
         if (mapped == MAP_FAILED) {
-            camera_fail("kamera_oeffnen: mmap fehlgeschlagen"); return false;
+            return camera_open_error(camera, "kamera_oeffnen: mmap fehlgeschlagen");
         }
         native->buffers[i].start = mapped; native->buffers[i].length = buf.length;
         if (v4l2_ioctl(native->fd, VIDIOC_QBUF, &buf) < 0) {
-            camera_fail("kamera_oeffnen: initiales QBUF fehlgeschlagen"); return false;
+            return camera_open_error(camera, "kamera_oeffnen: initiales QBUF fehlgeschlagen");
         }
     }
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (v4l2_ioctl(native->fd, VIDIOC_STREAMON, &type) < 0) {
-        camera_fail("kamera_oeffnen: STREAMON fehlgeschlagen"); return false;
+        return camera_open_error(camera, "kamera_oeffnen: STREAMON fehlgeschlagen");
     }
     native->streaming = true; native->pixel_format = format.fmt.pix.pixelformat;
     native->bytes_per_line = format.fmt.pix.bytesperline;
@@ -327,8 +336,7 @@ MooValue moo_capture_camera_frame_native(MooKamera* camera, int32_t timeout_ms) 
     while (poll_result < 0 && errno == EINTR);
     if (poll_result == 0) return camera_fail("kamera_frame: Timeout");
     if (poll_result < 0 || (pfd.revents & (POLLERR | POLLHUP))) {
-        camera->state = MOO_CAPTURE_BROKEN;
-        return camera_fail("kamera_frame: Geraet getrennt");
+        return camera_broken(camera, "kamera_frame: Geraet getrennt");
     }
 
     struct v4l2_buffer held[MOO_CAPTURE_MAX_BUFFERS];
@@ -375,8 +383,8 @@ MooValue moo_capture_camera_frame_native(MooKamera* camera, int32_t timeout_ms) 
     for (uint32_t i = 0; i < held_count; ++i)
         if (v4l2_ioctl(native->fd, VIDIOC_QBUF, &held[i]) < 0) requeue_ok = false;
     if (!requeue_ok) {
-        free(rgba); camera->state = MOO_CAPTURE_BROKEN;
-        return camera_fail("kamera_frame: QBUF fehlgeschlagen");
+        free(rgba);
+        return camera_broken(camera, "kamera_frame: QBUF fehlgeschlagen");
     }
     if (timeout_ms > 0 && remaining_ms(deadline) == 0) {
         free(rgba); return camera_fail("kamera_frame: Timeout");
@@ -386,7 +394,7 @@ MooValue moo_capture_camera_frame_native(MooKamera* camera, int32_t timeout_ms) 
 fail_requeue:
     for (uint32_t i = 0; i < held_count; ++i)
         (void)v4l2_ioctl(native->fd, VIDIOC_QBUF, &held[i]);
-    return camera_fail("kamera_frame: DQBUF/QBUF oder Treiberdaten ungueltig");
+    return camera_broken(camera, "kamera_frame: DQBUF/QBUF oder Treiberdaten ungueltig");
 }
 
 void moo_capture_camera_close_native(MooKamera* camera) {

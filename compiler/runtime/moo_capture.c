@@ -144,8 +144,11 @@ MooValue moo_kamera_oeffnen(MooValue path, MooValue width, MooValue height,
     bool exact = width_given && height_given && fps_given;
     if (!capture_ops()->camera_open(camera, selected_path, selected_width,
                                         selected_height, selected_fps, exact)) {
+        MooValue error = moo_error(camera->last_error[0] ? camera->last_error :
+                                   "kamera_oeffnen: unbekannter Backendfehler");
         capture_ops()->camera_close(camera);
         free(camera);
+        moo_throw(error);
         return moo_none();
     }
     if (camera->state != MOO_CAPTURE_STREAMING) {
@@ -216,8 +219,11 @@ MooValue moo_mikro_oeffnen(MooValue rate, MooValue channels, MooValue device) {
     if (!capture_ops()->microphone_open(microphone, selected_device,
                                              requested_rate,
                                              requested_channels)) {
+        MooValue error = moo_error(microphone->last_error[0] ? microphone->last_error :
+                                   "mikro_oeffnen: unbekannter Backendfehler");
         capture_ops()->microphone_close(microphone);
         free(microphone);
+        moo_throw(error);
         return moo_none();
     }
     if (microphone->state != MOO_CAPTURE_STREAMING) {

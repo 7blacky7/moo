@@ -25,7 +25,7 @@ static bool fake_camera_open(MooKamera* c, const char* path, int32_t w,
     (void)path; (void)exact;
     c->backend = malloc(1);
     if (fail_camera_open) {
-        moo_throw(moo_error("fake camera open"));
+        snprintf(c->last_error, sizeof(c->last_error), "fake camera open");
         return false;
     }
     c->width = w; c->height = h; c->fps = fps;
@@ -48,7 +48,7 @@ static bool fake_microphone_open(MooMikro* m, const char* device,
     (void)device;
     m->backend = malloc(1);
     if (fail_microphone_open) {
-        moo_throw(moo_error("fake microphone open"));
+        snprintf(m->last_error, sizeof(m->last_error), "fake microphone open");
         return false;
     }
     m->rate = rate; m->channels = channels; m->state = MOO_CAPTURE_STREAMING;

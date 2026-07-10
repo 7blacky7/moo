@@ -25,6 +25,7 @@ struct MooKamera {
     int32_t width;
     int32_t height;
     double fps;
+    char last_error[256];
 };
 
 struct MooMikro {
@@ -35,6 +36,7 @@ struct MooMikro {
     int32_t channels;
     int32_t period_frames;
     int32_t buffer_frames;
+    char last_error[256];
 };
 
 /* Plattformadapter. Fehler werden als eigener MOO_ERROR vor Cleanup erzeugt. */

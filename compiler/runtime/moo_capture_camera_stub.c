@@ -12,7 +12,8 @@ bool moo_capture_camera_open_native(MooKamera* camera, const char* path,
                                     bool require_exact) {
     (void)camera; (void)path; (void)width; (void)height; (void)fps;
     (void)require_exact;
-    unavailable();
+    snprintf(camera->last_error, sizeof(camera->last_error),
+             "Kamera-Capture ist in diesem Build nicht verfuegbar (Linux + libv4l2/libv4lconvert Development-Pakete erforderlich)");
     return false;
 }
 MooValue moo_capture_camera_frame_native(MooKamera* camera, int32_t timeout_ms) {
