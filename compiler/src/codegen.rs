@@ -4112,9 +4112,11 @@ impl<'ctx> CodeGen<'ctx> {
                     // Realtime-Capture (KI-MULTI-C1). Runtime-Argumente sind borrowed;
                     // alle kompilierten Heap-Temps werden nach dem Call released.
                     "kamera_liste" | "camera_list" => {
+                        if !args.is_empty() { return Err(format!("{name} erwartet keine Argumente")); }
                         return self.call_rt(self.rt.moo_kamera_liste, &[], "camera_list");
                     }
                     "kamera_oeffnen" | "camera_open" => {
+                        if args.len() > 4 { return Err(format!("{name} erwartet hoechstens 4 Argumente")); }
                         let mut values = Vec::with_capacity(4);
                         for i in 0..4 {
                             values.push(if i < args.len() { self.compile_expr(&args[i])? }
@@ -4126,6 +4128,7 @@ impl<'ctx> CodeGen<'ctx> {
                         return Ok(result);
                     }
                     "kamera_frame" | "camera_frame" => {
+                        if args.is_empty() || args.len() > 2 { return Err(format!("{name} erwartet 1 oder 2 Argumente")); }
                         let camera = self.compile_expr(&args[0])?;
                         let timeout = if args.len() > 1 { self.compile_expr(&args[1])? }
                             else { self.call_rt(self.rt.moo_none, &[], "camera_timeout_none")? };
@@ -4136,12 +4139,14 @@ impl<'ctx> CodeGen<'ctx> {
                         return Ok(result);
                     }
                     "kamera_schliessen" | "camera_close" => {
+                        if args.len() != 1 { return Err(format!("{name} erwartet genau 1 Argument")); }
                         let camera = self.compile_expr(&args[0])?;
                         let result = self.call_rt(self.rt.moo_kamera_schliessen, &[camera.into()], "camera_close")?;
                         self.call_rt_void(self.rt.moo_release, &[camera.into()], "camera_close_release")?;
                         return Ok(result);
                     }
                     "mikro_oeffnen" | "microphone_open" => {
+                        if args.len() > 3 { return Err(format!("{name} erwartet hoechstens 3 Argumente")); }
                         let mut values = Vec::with_capacity(3);
                         for i in 0..3 {
                             values.push(if i < args.len() { self.compile_expr(&args[i])? }
@@ -4153,6 +4158,7 @@ impl<'ctx> CodeGen<'ctx> {
                         return Ok(result);
                     }
                     "mikro_lesen" | "microphone_read" => {
+                        if args.len() < 2 || args.len() > 3 { return Err(format!("{name} erwartet 2 oder 3 Argumente")); }
                         let microphone = self.compile_expr(&args[0])?;
                         let samples = self.compile_expr(&args[1])?;
                         let timeout = if args.len() > 2 { self.compile_expr(&args[2])? }
@@ -4165,6 +4171,7 @@ impl<'ctx> CodeGen<'ctx> {
                         return Ok(result);
                     }
                     "mikro_schliessen" | "microphone_close" => {
+                        if args.len() != 1 { return Err(format!("{name} erwartet genau 1 Argument")); }
                         let microphone = self.compile_expr(&args[0])?;
                         let result = self.call_rt(self.rt.moo_mikro_schliessen, &[microphone.into()], "microphone_close")?;
                         self.call_rt_void(self.rt.moo_release, &[microphone.into()], "microphone_close_release")?;
