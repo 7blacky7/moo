@@ -101,12 +101,27 @@ echo "[2] ki_sprachmodell GPU==CPU"
 pending "STRIKT-Kurvenvergleich braucht Production-Wiring (Phase 2)"
 
 # ----------------------------------------------------------------
-# [5] Keine versteckten CPU-Fallbacks (STRIKT)
+# [5] Keine versteckten CPU-Fallbacks (STRIKT) — Stufe 1(Fwd)+2(Bwd,symm.)+3(SGD)
 # ----------------------------------------------------------------
 echo "[5] cpu_fallbacks==0 unter STRIKT + Negativ-Kontrolle"
-# PHASE2: STRIKT-Lauf -> gpu_statistik().cpu_fallbacks==0; ein absichtlich
-#   nicht-geroutetes Op unter STRIKT MUSS hart fehlschlagen (Negativ-Kontrolle).
-pending "STRIKT-Enforcement braucht moo_ki_gpu_strikt_setzen + Wiring (Phase 2)"
+if have_vulkan; then
+    if [ -f "$RT/tests/test_g4c_strikt.c" ]; then
+        gcc -std=gnu11 -O2 -DMOO_HAS_VULKAN -I"$RT" \
+            -o /tmp/test_g4c_strikt "$RT/tests/test_g4c_strikt.c" \
+            "$RT/moo_nn.c" "$RT/moo_nn_easy.c" "$RT/moo_json.c" "$RT/moo_tensor.c" \
+            "$RT/moo_tensor_ops.c" "$RT/moo_ki_gpu.c" "$RT/moo_autograd.c" \
+            "$RT/moo_memory.c" "$RT/moo_value.c" "$RT/moo_print.c" "$RT/moo_string.c" \
+            "$RT/moo_dict.c" "$RT/moo_list.c" "$RT/moo_ops.c" -lvulkan -lm \
+            > /tmp/g4c_strikt_build.log 2>&1 \
+            && /tmp/test_g4c_strikt > /tmp/g4c_strikt_run.log 2>&1 \
+            && pass "test_g4c_strikt gruen (Stufe1/2/3 resident, cpu_fallbacks==0, Negativ-Kontrolle ok)" \
+            || fail "test_g4c_strikt ROT — siehe /tmp/g4c_strikt_build.log / /tmp/g4c_strikt_run.log"
+    else
+        pending "tests/test_g4c_strikt.c fehlt"
+    fi
+else
+    skip "libvulkan nicht installiert — STRIKT-Enforcement nicht bewiesen"
+fi
 
 # ----------------------------------------------------------------
 # [6] Stub ohne MOO_HAS_VULKAN kompiliert
@@ -117,8 +132,11 @@ if gcc -std=gnu11 -O2 -I"$RT" -c "$RT/moo_ki_gpu.c" -o /tmp/g4c_stub.o > /tmp/g4
 else
     fail "Stub-Compile ROT — siehe /tmp/g4c_stub.log"
 fi
-# STRIKT ohne Vulkan = Init-Fehler (fail-loud) — PHASE2 (braucht STRIKT-API)
-pending "STRIKT-ohne-Vulkan Init-Fehler-Check (Phase 2)"
+# STRIKT ohne Vulkan: moo_ki_gpu_strikt_aktiv() liest den Env trotzdem (reiner
+# Host-Zustand) -> Aufrufer werfen beim ersten scheiternden GPU-Op fail-loud,
+# kein stiller CPU-Lauf. Volle Verifikation (echter moo-Programm-Lauf ohne
+# Vulkan + STRIKT) ist ein Follow-up (braucht gpu_statistik()-Builtin).
+pending "STRIKT-ohne-Vulkan End-to-End-Fail-Loud-Beweis via moo-Programm (Follow-up)"
 
 # ----------------------------------------------------------------
 echo "== Ergebnis =="
