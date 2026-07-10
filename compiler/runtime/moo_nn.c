@@ -1760,7 +1760,7 @@ MooValue moo_nn_mse(MooValue a, MooValue b) {
  *   ziele gleiche Form wie logits -> one-hot/Soft-Targets direkt;
  *   ziele [batch] oder [batch,1]  -> Klassen-Indizes, intern one-hot.
  * loss = -sum(ziele * logsoftmax(logits)) / batch  — fused, max-shift-stabil. */
-MooValue moo_nn_kreuzentropie(MooValue logits, MooValue ziele) {
+static MooValue ce_kern(MooValue logits, MooValue ziele, MooValue maske) {
     if (logits.tag != MOO_TENSOR || ziele.tag != MOO_TENSOR) {
         moo_throw(moo_error("kreuzentropie: erwarte zwei Tensoren (Logits, Ziele)"));
         return moo_none();
@@ -1805,11 +1805,60 @@ MooValue moo_nn_kreuzentropie(MooValue logits, MooValue ziele) {
 
     MooValue ls = moo_tensor_logsoftmax(logits);
     MooValue p  = (ls.tag == MOO_TENSOR) ? moo_tensor_mul(onehot, ls) : moo_none();
-    MooValue s  = (p.tag == MOO_TENSOR) ? moo_tensor_summe(p, moo_number(-1.0)) : moo_none();
-    MooValue loss = (s.tag == MOO_TENSOR)
-        ? moo_tensor_muls(s, moo_number(-1.0 / (double)batch)) : moo_none();
-    moo_release(ls); moo_release(p); moo_release(s); moo_release(onehot);
+    MooValue loss = moo_none();
+    if (maske.tag == MOO_TENSOR) {
+        /* KIP-B4a (X3 §2): maskierte CE — Summe nur ueber maske==1, normiert
+         * ueber die ANZAHL maskierter Tokens (nicht batch). maske [batch] oder
+         * [batch,1]; grad-lose Kopie [batch,1] fuer den Broadcast-mul. */
+        MooTensor* mt = T(maske);
+        moo_tensor_f32_sichern(mt);
+        bool form_ok = (mt->ndim == 1 && mt->shape[0] == batch) ||
+                       (mt->ndim == 2 && mt->shape[0] == batch && mt->shape[1] == 1);
+        if (!form_ok) {
+            moo_release(ls); moo_release(p); moo_release(onehot);
+            moo_throw(moo_error("kreuzentropie: die Maske muss die Form [batch] "
+                                "oder [batch, 1] haben"));
+            return moo_none();
+        }
+        int32_t m1_shape[2] = { batch, 1 };
+        MooTensor* m1 = moo_tensor_raw(2, m1_shape);   /* grad-los */
+        if (!m1) { moo_release(ls); moo_release(p); moo_release(onehot); return moo_none(); }
+        double count = 0.0;
+        for (int32_t r = 0; r < batch; r++) {
+            float v = mt->data[r];
+            m1->data[r] = v;
+            count += (double)v;
+        }
+        MooValue mv; mv.tag = MOO_TENSOR; moo_val_set_ptr(&mv, m1);
+        if (count <= 0.0) {
+            moo_release(mv); moo_release(ls); moo_release(p); moo_release(onehot);
+            moo_throw(moo_error("kreuzentropie: die Maske hat keine aktiven "
+                                "Positionen (Summe 0) — kein normierbarer Verlust"));
+            return moo_none();
+        }
+        MooValue pm = (p.tag == MOO_TENSOR) ? moo_tensor_mul(p, mv) : moo_none();
+        MooValue s  = (pm.tag == MOO_TENSOR) ? moo_tensor_summe(pm, moo_number(-1.0)) : moo_none();
+        loss = (s.tag == MOO_TENSOR) ? moo_tensor_muls(s, moo_number(-1.0 / count)) : moo_none();
+        moo_release(mv); moo_release(pm); moo_release(s);
+    } else {
+        MooValue s = (p.tag == MOO_TENSOR) ? moo_tensor_summe(p, moo_number(-1.0)) : moo_none();
+        loss = (s.tag == MOO_TENSOR)
+            ? moo_tensor_muls(s, moo_number(-1.0 / (double)batch)) : moo_none();
+        moo_release(s);
+    }
+    moo_release(ls); moo_release(p); moo_release(onehot);
     return loss;
+}
+
+/* kreuzentropie(logits, ziele): unmaskiert, ueber batch normiert. */
+MooValue moo_nn_kreuzentropie(MooValue logits, MooValue ziele) {
+    return ce_kern(logits, ziele, moo_none());
+}
+/* kreuzentropie(logits, ziele, maske): KIP-B4a — Next-Token-Loss nur auf
+ * maske==1 (Doc-Grenzen/SFT-Loss-Maske kommen von aussen, X3 §2). */
+MooValue moo_nn_kreuzentropie_maskiert(MooValue logits, MooValue ziele,
+                                       MooValue maske) {
+    return ce_kern(logits, ziele, maske);
 }
 
 /* ============================================================

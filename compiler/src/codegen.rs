@@ -2608,8 +2608,16 @@ impl<'ctx> CodeGen<'ctx> {
                     "kreuzentropie" | "cross_entropy" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
-                        let r = self.call_rt(self.rt.moo_nn_kreuzentropie,
-                            &[a.into(), b.into()], "nn_ce")?;
+                        let r = if args.len() > 2 {
+                            let m = self.compile_expr(&args[2])?;
+                            let r = self.call_rt(self.rt.moo_nn_kreuzentropie_maskiert,
+                                &[a.into(), b.into(), m.into()], "nn_ce_m")?;
+                            self.call_rt_void(self.rt.moo_release, &[m.into()], "rel_ce_m")?;
+                            r
+                        } else {
+                            self.call_rt(self.rt.moo_nn_kreuzentropie,
+                                &[a.into(), b.into()], "nn_ce")?
+                        };
                         self.call_rt_void(self.rt.moo_release, &[a.into()], "rel_ce_a")?;
                         self.call_rt_void(self.rt.moo_release, &[b.into()], "rel_ce_b")?;
                         return Ok(r);

@@ -300,6 +300,7 @@ MooValue moo_nn_vorwaerts(MooValue netz, MooValue x);
 MooValue moo_nn_parameter(MooValue netz);
 MooValue moo_nn_mse(MooValue a, MooValue b);
 MooValue moo_nn_kreuzentropie(MooValue logits, MooValue ziele);
+MooValue moo_nn_kreuzentropie_maskiert(MooValue logits, MooValue ziele, MooValue maske);  // KIP-B4a
 MooValue moo_nn_opt_sgd(MooValue params, MooValue rate, MooValue momentum);
 MooValue moo_nn_opt_adam(MooValue params, MooValue rate);
 MooValue moo_nn_opt_adamw(MooValue params, MooValue rate, MooValue decay);

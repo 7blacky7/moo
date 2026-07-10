@@ -1140,6 +1140,56 @@ int main(void) {
         moo_ag_reset();
     }
 
+    /* ===== 19. Maskierte Kreuzentropie (KIP-B4a, X3 §2) ===== */
+    {
+        moo_ag_reset();
+        float lv[12] = { 2.0f, 1.0f, 0.0f, -1.0f,  0.5f, 0.5f, 0.5f, 0.5f,
+                         -1.0f, 3.0f, 0.0f, 1.0f };
+        MooValue logits = t2(3, 4, lv);
+        float ztv[3] = { 0.0f, 2.0f, 1.0f };
+        MooValue ziele = t1(3, ztv);
+        float mkv[3] = { 1.0f, 0.0f, 1.0f };
+        MooValue maske = t1(3, mkv);
+        MooValue lm = moo_nn_kreuzentropie_maskiert(logits, ziele, maske);
+        CHECK(lm.tag == MOO_TENSOR, "masked-CE: laeuft");
+        /* Referenz: Mittel der Einzel-CE aktiver Zeilen (0 und 2), /count=2 */
+        float l0[4] = { 2.0f, 1.0f, 0.0f, -1.0f };
+        float l2[4] = { -1.0f, 3.0f, 0.0f, 1.0f };
+        float z0[1] = { 0.0f }, z2[1] = { 1.0f };
+        MooValue L0 = t2(1,4,l0), z0v = t1(1,z0);
+        MooValue L2 = t2(1,4,l2), z2v = t1(1,z2);
+        MooValue c0 = moo_nn_kreuzentropie(L0, z0v);
+        MooValue c2 = moo_nn_kreuzentropie(L2, z2v);
+        double ref = (T(c0)->data[0] + T(c2)->data[0]) / 2.0;
+        CHECK(NAHE(T(lm)->data[0], ref), "masked-CE == Mittel der aktiven Zeilen-CE");
+        moo_release(c0); moo_release(c2); moo_release(L0); moo_release(z0v);
+        moo_release(L2); moo_release(z2v); moo_release(lm);
+        /* all-1-Maske == unmaskiert (beide /3, BIT-gleich) */
+        float m1v[3] = { 1.0f, 1.0f, 1.0f };
+        MooValue m1 = t1(3, m1v);
+        MooValue lmall = moo_nn_kreuzentropie_maskiert(logits, ziele, m1);
+        MooValue lun = moo_nn_kreuzentropie(logits, ziele);
+        CHECK(lmall.tag==MOO_TENSOR && lun.tag==MOO_TENSOR &&
+              T(lmall)->data[0] == T(lun)->data[0],
+              "masked-CE all-1 == unmaskierte CE (BIT-gleich)");
+        moo_release(lmall); moo_release(lun); moo_release(m1);
+        /* Grad nur in aktiven Zeilen: maskierte Zeile 1 -> 0 Gradient */
+        moo_ag_reset();
+        MooValue lg = moo_tensor_mit_gradient(logits);
+        MooValue lmg = moo_nn_kreuzentropie_maskiert(lg, ziele, maske);
+        moo_release(moo_tensor_rueckwaerts(lmg));
+        MooTensor* gt = MV_TENSOR(lg);
+        bool zeile1_null = true, zeile0_da = false;
+        if (gt->grad) {
+            for (int j = 0; j < 4; j++) if (gt->grad[4+j] != 0.0f) zeile1_null = false;
+            for (int j = 0; j < 4; j++) if (gt->grad[j]   != 0.0f) zeile0_da  = true;
+        }
+        CHECK(zeile1_null, "masked-CE: maskierte Zeile bekommt KEINEN Gradient");
+        CHECK(zeile0_da,  "masked-CE: aktive Zeile bekommt Gradient");
+        moo_release(lg); moo_release(maske); moo_release(ziele); moo_release(logits);
+        moo_ag_reset();
+    }
+
     printf("test_nn_asan: alle %d Checks bestanden\n", checks);
     return 0;
 }
