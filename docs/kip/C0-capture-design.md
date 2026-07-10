@@ -160,7 +160,67 @@ Vor Release mindestens eine echte MJPEG-UVC-Kamera und ein Mikrofon. Hotplug/Dis
 - Nicht-Linux stellt dieselben Builtins bereit, antwortet bis zu späteren Backends aber mit einer klaren Plattformmeldung.
 - Native PipeWire, Windows Media Foundation, macOS AVFoundation und Capture-Threads sind Folgephasen ohne Änderung der Grundbegriffe.
 
-## 8. C1-Abnahmekriterien
+## 8. Normative P0-Details
+
+### 8.1 Beschränkter Latest-Drain
+
+Nach erfolgreichem poll werden **ohne zwischenzeitliches QBUF** höchstens so viele Buffer dequeuet, wie der Stream erfolgreich gemappt und initial gequeued hat (`mapped_count`). Der Drain endet früher bei `EAGAIN` oder Deadline. Alle dequeueten Indizes werden lokal gehalten; ein Index darf pro Aufruf höchstens einmal gehalten werden.
+
+Nur der letzte erfolgreich dequeuete Buffer wird konvertiert/kopiert. Danach werden alle gehaltenen Buffer genau einmal requeued. Ältere Buffer müssen nicht kopiert werden. Auf jedem Fehlerpfad erfolgt best-effort-Requeue aller gehaltenen Buffer. Nicht behebbarer DQBUF-, QBUF- oder Disconnect-Fehler setzt BROKEN und startet zustandsbewussten Cleanup. Überschreitet Drain oder Konversion die Deadline, wird ein eventuell erzeugter Frame verworfen und Timeout geliefert.
+
+### 8.2 Deterministische Negotiation
+
+Kamera-v1 verlangt standardmäßig Exact Match. Wird `breite`, `hoehe` oder `fps` weggelassen, wählt Moo deterministisch:
+
+1. kleinste euklidische Distanz in normierten Komponenten `abs(w-rw)/rw + abs(h-rh)/rh + abs(fps-rfps)/rfps`;
+2. Tie-Breaker: kleinere Pixelzahl;
+3. danach höhere FPS;
+4. danach numerisch kleinerer FourCC.
+
+Diskrete, stepwise und continuous Bereiche werden zuerst in overflow-sicher begrenzte Kandidaten für Requested-Wert, beide Nachbarn und Grenzen überführt. Ein Treiberergebnis außerhalb enumerierter/angegebener Bereiche wird abgelehnt.
+
+Audio-v1 akzeptiert tatsächlich nur 1 oder 2 Kanäle. Andere Kanalzahlen sind Unsupported. `daten` ist Tensor f32. S16_LE wird exakt als `sample / 32768.0f` nach [-1,1) skaliert. Mono wird direkt skaliert. Stereo wird zuerst in int32 als `left + right` summiert und dann durch `65536.0f` geteilt; es gibt keine Integer-Rundung vor f32.
+
+### 8.3 Audio-Recovery
+
+Pro `mikro_lesen` sind maximal **3 Recovery-Versuche insgesamt** erlaubt, zusätzlich begrenzt durch die Restdeadline. EINTR zählt nicht als Recovery, EAGAIN wartet nur auf die Restdeadline. EPIPE und ESTRPIPE verbrauchen je einen Versuch.
+
+Tritt XRUN oder Suspend nach bereits gelesenen Samples auf, werden alle Teildaten verworfen. Nach erfolgreichem Recover beginnt der komplette Block erneut innerhalb derselben ursprünglichen Deadline. Vor- und Nachfehler-Samples werden nie als kontinuierlicher Block kombiniert. Ist kein vollständiger Block mehr rechtzeitig lesbar, schlägt der Aufruf atomar fehl.
+
+### 8.4 Vollständige Lifecycle-Übergänge
+
+Zulässig sind ausschließlich:
+
+- OPEN→STREAMING
+- OPEN→BROKEN
+- OPEN→CLOSED
+- STREAMING→BROKEN
+- STREAMING→CLOSED
+- BROKEN→CLOSED
+- CLOSED→CLOSED
+
+Kamera erreicht STREAMING erst nach erfolgreichem STREAMON. Audio erreicht STREAMING nach erfolgreicher hw/sw-Konfiguration und prepare; der erste Read ändert den Zustand nicht erneut. frame/read sind nur in STREAMING erlaubt. close ist in jedem Zustand erlaubt und idempotent. Alle anderen Operationen in BROKEN/CLOSED liefern den passenden erklärenden Fehler ohne Backendzugriff.
+
+### 8.5 Fehlerwert-Ownership und Return-Gate
+
+Fehlermeldungen werden vor Cleanup in eigenem Moo-String/Error-Speicher materialisiert und dürfen keine Zeiger auf Treiber-, mmap-, ALSA- oder Handle-Puffer behalten. Danach erfolgt Cleanup, genau ein `moo_throw(error)` und unmittelbar `return moo_none()` beziehungsweise `return`.
+
+Das Pflichtgate ersetzt/instrumentiert `moo_throw` als zurückkehrende Funktion und beweist je Fault-Punkt: Cleanup vor Throw, genau ein Throw, unmittelbarer Return, keine weitere Zustandsmutation und korrektes Error-Ownership/Release.
+
+### 8.6 Konkrete Caps und Checked Arithmetic
+
+Feste v1-Defaults:
+
+- `MOO_CAPTURE_MAX_WIDTH = 8192`
+- `MOO_CAPTURE_MAX_HEIGHT = 8192`
+- `MOO_CAPTURE_MAX_FRAME_BYTES = 256 MiB`
+- `MOO_CAPTURE_MAX_BUFFERS = 16`
+- `MOO_CAPTURE_MAX_AUDIO_SAMPLES = 16_777_216`
+- `MOO_CAPTURE_MAX_TIMEOUT_MS = 60_000`
+
+`timeout_ms` liegt in 0..60000; `n_samples` in 1..MAX_AUDIO_SAMPLES; tatsächliche Kanäle in 1..2. Vor Backendzugriff oder Allokation werden REQBUFS.count, jede Mapping-Länge, width×height×4, bytesperline×height, sizeimage und n_samples×channels×sizeof(int16_t) mit checked size_t/uint64-Arithmetik validiert. REQBUFS-Antwort 0 oder >16, Mapping-Länge 0 oder >MAX_FRAME_BYTES und jede Cap-/Overflow-Verletzung liefern Bounds/Invalid-Argument ohne Allokation oder weiteren Backendzugriff.
+
+## 9. C1-Abnahmekriterien
 
 C1 ist erst fertig, wenn:
 
@@ -172,7 +232,7 @@ C1 ist erst fertig, wenn:
 - moolang-docs DE/EN-Aliase, Timeout, Drops und Fehlerklassen dokumentiert
 - unabhängiger Subagent die Implementierung adversarial mit GO bewertet
 
-## 9. Review-Entscheidung
+## 10. Review-Entscheidung
 
 Die vier ursprünglichen Fragen sind geschlossen:
 
