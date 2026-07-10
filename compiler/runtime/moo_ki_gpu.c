@@ -127,6 +127,10 @@ bool moo_ki_gpu_scatter_add_res(void* g, void* idx, void* gw,
                                 int32_t rows, int32_t dim, int32_t vocab) {
     (void)g; (void)idx; (void)gw; (void)rows; (void)dim; (void)vocab; return false;
 }
+bool moo_ki_gpu_matmul_bw_res(void* a, void* b, void* g, void* da, void* db,
+                              int32_t m, int32_t k, int32_t n) {
+    (void)a; (void)b; (void)g; (void)da; (void)db; (void)m; (void)k; (void)n; return false;
+}
 bool moo_ki_gpu_opt_sgd_res(void* p, void* m, void* grad, int64_t n,
                             float lr, float momentum) {
     (void)p; (void)m; (void)grad; (void)n; (void)lr; (void)momentum; return false;
@@ -1335,6 +1339,32 @@ bool moo_ki_gpu_scatter_add_res(void* g, void* idx, void* gw,
     bool ok = dispatch_sync(G.pipe_scatter_add, bufs, push,
                             (uint32_t)(((int64_t)vocab * dim + 255) / 256), 1,
                             /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3d-e: matmul-Backward fuer C = A@B (A[m,k], B[k,n], C[m,n]) als
+ * KOMPOSITION bestehender residenter Ops (G3d-c transpose + G2 tiled matmul):
+ *   dA = g @ B^T  (B[k,n] -> bt[n,k];  da[m,k] = g[m,n] @ bt[n,k])
+ *   dB = A^T @ g  (A[m,k] -> at[k,m];  db[k,n] = at[k,m] @ g[m,n])
+ * bt/at leihweise aus dem Pool. da/db sind REINE Beitraege ohne += (die
+ * Fan-out-Akkumulation macht der Aufrufer via moo_ki_gpu_grad_accum_res, G3c).
+ * 4 Compute-Submits (2 transpose + 2 matmul). */
+bool moo_ki_gpu_matmul_bw_res(void* a, void* b, void* g, void* da, void* db,
+                              int32_t m, int32_t k, int32_t n) {
+    if (!a || !b || !g || !da || !db) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf bt, at;
+    if (!buf_holen(&bt, (VkDeviceSize)n * k * 4)) { g_tel.cpu_fallbacks++; return false; }
+    if (!buf_holen(&at, (VkDeviceSize)k * m * 4)) {
+        buf_zurueck(&bt); g_tel.cpu_fallbacks++; return false;
+    }
+    bool ok = moo_ki_gpu_transpose_res(b, &bt, k, n)
+           && moo_ki_gpu_matmul_res(g, &bt, da, m, n, k)
+           && moo_ki_gpu_transpose_res(a, &at, m, k)
+           && moo_ki_gpu_matmul_res(&at, g, db, k, m, n);
+    buf_zurueck(&bt);
+    buf_zurueck(&at);
     if (!ok) g_tel.cpu_fallbacks++;
     return ok;
 }

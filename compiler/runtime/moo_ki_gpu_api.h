@@ -177,6 +177,12 @@ bool moo_ki_gpu_gather_res(void* w, void* idx, void* o,
  * Beitrag OHNE += (das += ist G3c). */
 bool moo_ki_gpu_scatter_add_res(void* g, void* idx, void* gw,
                                 int32_t rows, int32_t dim, int32_t vocab);
+/* === KIP-G3d-e: matmul-Backward (Komposition transpose + tiled matmul) ===
+ * Fuer C = A@B (A[m,k], B[k,n], C[m,n]): da = g @ B^T [m,k], db = A^T @ g [k,n].
+ * REINE Beitraege OHNE += (Fan-out-Akkumulation via moo_ki_gpu_grad_accum_res).
+ * a/b/g/da/db sind residente Handles; 4 interne Compute-Submits. */
+bool moo_ki_gpu_matmul_bw_res(void* a, void* b, void* g, void* da, void* db,
+                              int32_t m, int32_t k, int32_t n);
 
 /* === Telemetrie (G1 §5 — G4-Beweismittel) ===
  * submits       = Compute-Dispatches (residente + nicht-residente Ops; genau
