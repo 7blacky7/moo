@@ -1,0 +1,3 @@
+# GitHub-Syntax-Highlighting: .moo als Python einfaerben (Linguist-Override,
+# bis moo offiziellen Linguist-Support hat — braucht ~2000 oeffentliche Repos)
+*.moo linguist-language=Python
