@@ -204,8 +204,7 @@ bool moo_capture_camera_open_native(MooKamera* camera, const char* path,
         camera_fail("kamera_oeffnen: VIDIOC_QUERYCAP fehlgeschlagen"); return false;
     }
     uint32_t caps = cap.device_caps ? cap.device_caps : cap.capabilities;
-    if (!(caps & V4L2_CAP_VIDEO_CAPTURE) || !(caps & V4L2_CAP_STREAMING) ||
-        (caps & V4L2_CAP_VIDEO_CAPTURE_MPLANE)) {
+    if (!(caps & V4L2_CAP_VIDEO_CAPTURE) || !(caps & V4L2_CAP_STREAMING)) {
         camera_fail("kamera_oeffnen: Capture/Streaming nicht unterstuetzt (MPLANE ist v1 nicht erlaubt)");
         return false;
     }
@@ -251,7 +250,8 @@ bool moo_capture_camera_open_native(MooKamera* camera, const char* path,
          format.fmt.pix.pixelformat != V4L2_PIX_FMT_BGR24) ||
         !checked_frame(format.fmt.pix.width, format.fmt.pix.height, &frame_bytes) ||
         format.fmt.pix.bytesperline < format.fmt.pix.width * 3u ||
-        format.fmt.pix.sizeimage < format.fmt.pix.bytesperline * format.fmt.pix.height ||
+        (uint64_t)format.fmt.pix.sizeimage <
+            (uint64_t)format.fmt.pix.bytesperline * format.fmt.pix.height ||
         format.fmt.pix.sizeimage > MOO_CAPTURE_MAX_FRAME_BYTES ||
         (require_exact && (format.fmt.pix.width != (uint32_t)width ||
                            format.fmt.pix.height != (uint32_t)height))) {
@@ -330,7 +330,8 @@ MooValue moo_capture_camera_frame_native(MooKamera* camera, int32_t timeout_ms) 
     struct v4l2_buffer held[MOO_CAPTURE_MAX_BUFFERS];
     bool seen[MOO_CAPTURE_MAX_BUFFERS] = {0};
     uint32_t held_count = 0;
-    for (uint32_t n = 0; n < native->mapped_count && remaining_ms(deadline) > 0; ++n) {
+    for (uint32_t n = 0; n < native->mapped_count &&
+                         (n == 0 || remaining_ms(deadline) > 0); ++n) {
         struct v4l2_buffer buf = {0};
         buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE; buf.memory = V4L2_MEMORY_MMAP;
         if (v4l2_ioctl(native->fd, VIDIOC_DQBUF, &buf) < 0) {
@@ -373,7 +374,7 @@ MooValue moo_capture_camera_frame_native(MooKamera* camera, int32_t timeout_ms) 
         free(rgba); camera->state = MOO_CAPTURE_BROKEN;
         return camera_fail("kamera_frame: QBUF fehlgeschlagen");
     }
-    if (remaining_ms(deadline) == 0) {
+    if (timeout_ms > 0 && remaining_ms(deadline) == 0) {
         free(rgba); return camera_fail("kamera_frame: Timeout");
     }
     return moo_frame_new_take(camera->width, camera->height, rgba);

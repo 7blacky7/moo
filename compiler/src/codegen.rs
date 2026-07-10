@@ -4109,6 +4109,67 @@ impl<'ctx> CodeGen<'ctx> {
                         let pfad = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_wav_lesen, &[pfad.into()], "audio_wav");
                     }
+                    // Realtime-Capture (KI-MULTI-C1). Runtime-Argumente sind borrowed;
+                    // alle kompilierten Heap-Temps werden nach dem Call released.
+                    "kamera_liste" | "camera_list" => {
+                        return self.call_rt(self.rt.moo_kamera_liste, &[], "camera_list");
+                    }
+                    "kamera_oeffnen" | "camera_open" => {
+                        let mut values = Vec::with_capacity(4);
+                        for i in 0..4 {
+                            values.push(if i < args.len() { self.compile_expr(&args[i])? }
+                                else { self.call_rt(self.rt.moo_none, &[], "camera_none")? });
+                        }
+                        let result = self.call_rt(self.rt.moo_kamera_oeffnen,
+                            &[values[0].into(), values[1].into(), values[2].into(), values[3].into()], "camera_open")?;
+                        for value in values { self.call_rt_void(self.rt.moo_release, &[value.into()], "camera_arg_release")?; }
+                        return Ok(result);
+                    }
+                    "kamera_frame" | "camera_frame" => {
+                        let camera = self.compile_expr(&args[0])?;
+                        let timeout = if args.len() > 1 { self.compile_expr(&args[1])? }
+                            else { self.call_rt(self.rt.moo_none, &[], "camera_timeout_none")? };
+                        let result = self.call_rt(self.rt.moo_kamera_frame,
+                            &[camera.into(), timeout.into()], "camera_frame")?;
+                        self.call_rt_void(self.rt.moo_release, &[camera.into()], "camera_release")?;
+                        self.call_rt_void(self.rt.moo_release, &[timeout.into()], "camera_timeout_release")?;
+                        return Ok(result);
+                    }
+                    "kamera_schliessen" | "camera_close" => {
+                        let camera = self.compile_expr(&args[0])?;
+                        let result = self.call_rt(self.rt.moo_kamera_schliessen, &[camera.into()], "camera_close")?;
+                        self.call_rt_void(self.rt.moo_release, &[camera.into()], "camera_close_release")?;
+                        return Ok(result);
+                    }
+                    "mikro_oeffnen" | "microphone_open" => {
+                        let mut values = Vec::with_capacity(3);
+                        for i in 0..3 {
+                            values.push(if i < args.len() { self.compile_expr(&args[i])? }
+                                else { self.call_rt(self.rt.moo_none, &[], "microphone_none")? });
+                        }
+                        let result = self.call_rt(self.rt.moo_mikro_oeffnen,
+                            &[values[0].into(), values[1].into(), values[2].into()], "microphone_open")?;
+                        for value in values { self.call_rt_void(self.rt.moo_release, &[value.into()], "microphone_arg_release")?; }
+                        return Ok(result);
+                    }
+                    "mikro_lesen" | "microphone_read" => {
+                        let microphone = self.compile_expr(&args[0])?;
+                        let samples = self.compile_expr(&args[1])?;
+                        let timeout = if args.len() > 2 { self.compile_expr(&args[2])? }
+                            else { self.call_rt(self.rt.moo_none, &[], "microphone_timeout_none")? };
+                        let result = self.call_rt(self.rt.moo_mikro_lesen,
+                            &[microphone.into(), samples.into(), timeout.into()], "microphone_read")?;
+                        for value in [microphone, samples, timeout] {
+                            self.call_rt_void(self.rt.moo_release, &[value.into()], "microphone_read_release")?;
+                        }
+                        return Ok(result);
+                    }
+                    "mikro_schliessen" | "microphone_close" => {
+                        let microphone = self.compile_expr(&args[0])?;
+                        let result = self.call_rt(self.rt.moo_mikro_schliessen, &[microphone.into()], "microphone_close")?;
+                        self.call_rt_void(self.rt.moo_release, &[microphone.into()], "microphone_close_release")?;
+                        return Ok(result);
+                    }
                     // GIF-Recorder (Plan-008 A3B). Frame-bounded: streamt direkt
                     // in die Datei, sammelt KEINE Frame-Sequenz im RAM.
                     // test_gif_start(win_oder_frame, pfad, fps) -> MOO_GIF.

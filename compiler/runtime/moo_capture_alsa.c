@@ -97,7 +97,9 @@ bool moo_capture_microphone_open_native(MooMikro* microphone, const char* device
         return false;
     }
 
-    snd_pcm_hw_params_get_channels(hw, (unsigned int*)&microphone->channels);
+    unsigned int actual_channels = 0;
+    snd_pcm_hw_params_get_channels(hw, &actual_channels);
+    microphone->channels = (int32_t)actual_channels;
     snd_pcm_hw_params_get_rate(hw, &actual_rate, &direction);
     snd_pcm_hw_params_get_period_size(hw, &period, &direction);
     snd_pcm_hw_params_get_buffer_size(hw, &buffer);

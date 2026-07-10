@@ -690,6 +690,14 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_profile_report: FunctionValue<'ctx>,
     // Eval
     pub moo_eval: FunctionValue<'ctx>,
+    // Realtime-Capture (KI-MULTI-C1)
+    pub moo_kamera_liste: FunctionValue<'ctx>,
+    pub moo_kamera_oeffnen: FunctionValue<'ctx>,
+    pub moo_kamera_frame: FunctionValue<'ctx>,
+    pub moo_kamera_schliessen: FunctionValue<'ctx>,
+    pub moo_mikro_oeffnen: FunctionValue<'ctx>,
+    pub moo_mikro_lesen: FunctionValue<'ctx>,
+    pub moo_mikro_schliessen: FunctionValue<'ctx>,
     // Webserver
     pub moo_web_server: FunctionValue<'ctx>,
     pub moo_web_accept: FunctionValue<'ctx>,
@@ -1472,9 +1480,16 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_profile_enter: module.add_function("moo_profile_enter", void_type.fn_type(mv1, false), None),
             moo_profile_exit: module.add_function("moo_profile_exit", void_type.fn_type(mv1, false), None),
             moo_profile_report: module.add_function("moo_profile_report", void_type.fn_type(&[], false), None),
-            // Webserver
             // Eval
             moo_eval: decl_mv_mv!("moo_eval", mv1),
+            // Realtime-Capture
+            moo_kamera_liste: decl_mv_mv!("moo_kamera_liste", &[]),
+            moo_kamera_oeffnen: decl_mv_mv!("moo_kamera_oeffnen", mv4),
+            moo_kamera_frame: decl_mv_mv!("moo_kamera_frame", mv2),
+            moo_kamera_schliessen: decl_mv_mv!("moo_kamera_schliessen", mv1),
+            moo_mikro_oeffnen: decl_mv_mv!("moo_mikro_oeffnen", mv3),
+            moo_mikro_lesen: decl_mv_mv!("moo_mikro_lesen", mv3),
+            moo_mikro_schliessen: decl_mv_mv!("moo_mikro_schliessen", mv1),
             // Webserver
             moo_web_server: decl_mv_mv!("moo_web_server", mv1),
             moo_web_accept: decl_mv_mv!("moo_web_accept", mv1),
