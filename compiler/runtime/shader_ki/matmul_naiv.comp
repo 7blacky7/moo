@@ -1,0 +1,19 @@
+#version 450
+// matmul_naiv.comp — GPU2/KIP-G2: naive Referenz (nur fuer den A/B-
+// Mikrobenchmark alt-vs-neu). Identisch zur urspruenglichen matmul.comp
+// vor dem Tiling. NICHT im Produktivpfad — matmul.comp (tiled) ist aktiv.
+// C[m,n] = A[m,k] @ B[k,n], 16x16-Workgroups.
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(std430, binding = 0) readonly buffer BufA { float a[]; };
+layout(std430, binding = 1) readonly buffer BufB { float b[]; };
+layout(std430, binding = 2) writeonly buffer BufO { float o[]; };
+layout(push_constant) uniform PC { uint M; uint K; uint N; uint op; } pc;
+void main() {
+    uint zeile = gl_GlobalInvocationID.y;
+    uint spalte = gl_GlobalInvocationID.x;
+    if (zeile >= pc.M || spalte >= pc.N) return;
+    float summe = 0.0;
+    for (uint i = 0u; i < pc.K; i++)
+        summe += a[zeile * pc.K + i] * b[i * pc.N + spalte];
+    o[zeile * pc.N + spalte] = summe;
+}

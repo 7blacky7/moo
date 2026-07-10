@@ -1,17 +1,51 @@
 #version 450
-// matmul.comp — GPU2: C[m,n] = A[m,k] @ B[k,n], naive, 16x16-Workgroups.
-// Push-Constants: M, K, N. Tiling/Shared-Memory = Backlog nach Review.
+// matmul.comp — GPU2/KIP-G2: C[m,n] = A[m,k] @ B[k,n] mit 16x16 Shared-
+// Memory-Tiling. Loest den Tiling-Backlog der naiven Fassung ein.
+//
+// Jede 16x16-Workgroup berechnet eine 16x16-Kachel von C. Pro K-Tile werden
+// eine A- und eine B-Kachel kooperativ in Shared Memory geladen (jeder Thread
+// ein Element), dann aus dem schnellen Shared-Memory akkumuliert — statt K-mal
+// global zu lesen liest jeder Thread nur ~K/16-mal global (Bandbreite geteilt).
+//
+// NICHT-TEILBARE DIMS: Randkacheln laden 0.0 fuer out-of-range Indizes; die
+// 0-Beitraege aendern die Summe nicht. Die Akkumulation laeuft k = 0..K-1 in
+// aufsteigender Reihenfolge (Tile fuer Tile, innerhalb i=0..15) — identische
+// Summationsreihenfolge wie die naive Fassung => bit-gleiches Ergebnis.
+//
+// 16x16 gewaehlt (nicht 32x32): 2*16*16*4 = 2 KiB Shared/Workgroup, 256 Threads
+// — konservativ portabel. 32x32 (8 KiB, 1024 Threads) + Register-Blocking sind
+// eine spaetere Optimierungsstufe (im G2-Mikrobenchmark evaluiert/dokumentiert).
 layout(local_size_x = 16, local_size_y = 16) in;
 layout(std430, binding = 0) readonly buffer BufA { float a[]; };
 layout(std430, binding = 1) readonly buffer BufB { float b[]; };
 layout(std430, binding = 2) writeonly buffer BufO { float o[]; };
 layout(push_constant) uniform PC { uint M; uint K; uint N; uint op; } pc;
+
+const uint T = 16u;
+shared float As[16][16];
+shared float Bs[16][16];
+
 void main() {
-    uint zeile = gl_GlobalInvocationID.y;
-    uint spalte = gl_GlobalInvocationID.x;
-    if (zeile >= pc.M || spalte >= pc.N) return;
+    uint zeile   = gl_GlobalInvocationID.y;   // m-Index dieses Threads
+    uint spalte  = gl_GlobalInvocationID.x;   // n-Index dieses Threads
+    uint ly = gl_LocalInvocationID.y;
+    uint lx = gl_LocalInvocationID.x;
+
     float summe = 0.0;
-    for (uint i = 0u; i < pc.K; i++)
-        summe += a[zeile * pc.K + i] * b[i * pc.N + spalte];
-    o[zeile * pc.N + spalte] = summe;
+    uint tiles = (pc.K + T - 1u) / T;
+    for (uint t = 0u; t < tiles; t++) {
+        uint tk = t * T;
+        // A-Kachel: A[zeile, tk+lx]
+        uint ak = tk + lx;
+        As[ly][lx] = (zeile < pc.M && ak < pc.K) ? a[zeile * pc.K + ak] : 0.0;
+        // B-Kachel: B[tk+ly, spalte]
+        uint bk = tk + ly;
+        Bs[ly][lx] = (bk < pc.K && spalte < pc.N) ? b[bk * pc.N + spalte] : 0.0;
+        barrier();
+        for (uint i = 0u; i < T; i++)
+            summe += As[ly][i] * Bs[i][lx];
+        barrier();
+    }
+    if (zeile < pc.M && spalte < pc.N)
+        o[zeile * pc.N + spalte] = summe;
 }

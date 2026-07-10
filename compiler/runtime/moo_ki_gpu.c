@@ -60,6 +60,9 @@ bool  moo_ki_gpu_download(void* handle, float* dst, int64_t bytes) {
 bool moo_ki_gpu_matmul_res(void* a, void* b, void* o, int32_t m, int32_t k, int32_t n) {
     (void)a; (void)b; (void)o; (void)m; (void)k; (void)n; return false;
 }
+bool moo_ki_gpu_matmul_naiv_res(void* a, void* b, void* o, int32_t m, int32_t k, int32_t n) {
+    (void)a; (void)b; (void)o; (void)m; (void)k; (void)n; return false;
+}
 bool moo_ki_gpu_ew_res(int32_t op, void* a, void* b, void* o, int64_t n) {
     (void)op; (void)a; (void)b; (void)o; (void)n; return false;
 }
@@ -90,6 +93,7 @@ typedef struct {
     VkDescriptorSetLayout dsl;        /* 3 Storage-Buffers */
     VkPipelineLayout playout;         /* + 16B Push-Constants */
     VkPipeline pipe_matmul, pipe_ew, pipe_reduce;
+    VkPipeline pipe_matmul_naiv;      /* KIP-G2: nur A/B-Mikrobenchmark */
     VkCommandPool cmdpool;
     VkDescriptorPool descpool;
     /* GPU3-C: Per-Op-Allokationen gecacht — lazy beim ersten Dispatch
@@ -266,7 +270,9 @@ static bool ki_gpu_init(void) {
     G.pipe_matmul = pipeline_bauen(ki_matmul_spv, ki_matmul_spv_len);
     G.pipe_ew = pipeline_bauen(ki_elementwise_spv, ki_elementwise_spv_len);
     G.pipe_reduce = pipeline_bauen(ki_reduce_spv, ki_reduce_spv_len);
-    if (!G.pipe_matmul || !G.pipe_ew || !G.pipe_reduce) return false;
+    G.pipe_matmul_naiv = pipeline_bauen(ki_matmul_naiv_spv, ki_matmul_naiv_spv_len);
+    if (!G.pipe_matmul || !G.pipe_ew || !G.pipe_reduce || !G.pipe_matmul_naiv)
+        return false;
 
     VkCommandPoolCreateInfo cpi = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -769,6 +775,21 @@ bool moo_ki_gpu_matmul_res(void* a, void* b, void* o,
     KiBuf bufs[3] = { *(KiBuf*)a, *(KiBuf*)b, *(KiBuf*)o };
     KiPush push = { (uint32_t)m, (uint32_t)k, (uint32_t)n, 0 };
     bool ok = dispatch_sync(G.pipe_matmul, bufs, push,
+                            ((uint32_t)n + 15u) / 16u, ((uint32_t)m + 15u) / 16u,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G2: naive residente Matmul — NUR fuer den A/B-Mikrobenchmark (alt vs
+ * neu). Identisch zu matmul_res bis auf die Pipeline. Nicht im Produktivpfad. */
+bool moo_ki_gpu_matmul_naiv_res(void* a, void* b, void* o,
+                                int32_t m, int32_t k, int32_t n) {
+    if (!a || !b || !o) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf bufs[3] = { *(KiBuf*)a, *(KiBuf*)b, *(KiBuf*)o };
+    KiPush push = { (uint32_t)m, (uint32_t)k, (uint32_t)n, 0 };
+    bool ok = dispatch_sync(G.pipe_matmul_naiv, bufs, push,
                             ((uint32_t)n + 15u) / 16u, ((uint32_t)m + 15u) / 16u,
                             /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
     if (!ok) g_tel.cpu_fallbacks++;

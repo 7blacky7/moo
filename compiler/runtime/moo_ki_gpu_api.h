@@ -50,6 +50,9 @@ bool  moo_ki_gpu_download(void* handle, float* dst, int64_t bytes);
  * Submit-Memory-Barrier am Dispatch-Anfang macht Writes vorheriger Ops/Uploads
  * fuer diese Op sichtbar. Rueckgabe false = nicht ausgefuehrt (cpu_fallbacks++). */
 bool moo_ki_gpu_matmul_res(void* a, void* b, void* o, int32_t m, int32_t k, int32_t n);
+/* KIP-G2: naive Matmul-Variante — NUR fuer den A/B-Mikrobenchmark (alt vs neu),
+ * nicht im Produktivpfad. Gleiche Signatur/Semantik wie matmul_res. */
+bool moo_ki_gpu_matmul_naiv_res(void* a, void* b, void* o, int32_t m, int32_t k, int32_t n);
 bool moo_ki_gpu_ew_res(int32_t op, void* a, void* b, void* o, int64_t n);
 /* Voll-Reduktion einer residenten Eingabe zu einem Host-Skalar. Die
  * Partial-Readback ist inhaerent (Reduktion verlaesst die GPU): submits++

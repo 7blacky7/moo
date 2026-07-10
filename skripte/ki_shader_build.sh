@@ -11,7 +11,7 @@ OUT=moo_ki_gpu_shaders.h
   echo "/* AUTOGENERIERT von skripte/ki_shader_build.sh — NICHT von Hand editieren."
   echo " * Quellen: runtime/shader_ki/*.comp (GPU2, Plan-014). */"
 } > "$OUT"
-for s in matmul elementwise reduce; do
+for s in matmul matmul_naiv elementwise reduce; do
   glslc -O -fshader-stage=compute "shader_ki/$s.comp" -o "/tmp/ki_$s.spv"
   xxd -i -n "ki_${s}_spv" "/tmp/ki_$s.spv" >> "$OUT"
   rm -f "/tmp/ki_$s.spv"

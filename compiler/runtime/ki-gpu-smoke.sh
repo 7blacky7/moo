@@ -24,3 +24,9 @@ gcc -std=gnu11 -O2 -DMOO_HAS_VULKAN -I. \
     -o /tmp/test_ki_gpu_resident tests/test_ki_gpu_resident.c moo_ki_gpu.c -lvulkan -lm
 
 /tmp/test_ki_gpu_resident
+
+# KIP-G2: Tiled Matmul (Shape-Matrix-Differential + Mikrobenchmark alt vs neu)
+gcc -std=gnu11 -O2 -DMOO_HAS_VULKAN -I. \
+    -o /tmp/test_ki_gpu_matmul tests/test_ki_gpu_matmul.c moo_ki_gpu.c -lvulkan -lm
+
+/tmp/test_ki_gpu_matmul
