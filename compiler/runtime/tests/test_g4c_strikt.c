@@ -13,7 +13,11 @@
  *      (das unterscheidet diesen Test von test_nn_asan.c, das deshalb NICHT
  *      1:1 als STRIKT-Gate wiederverwendbar ist, siehe Channel-Diskussion
  *      2026-07-10 ~10:48-10:51).
- *   3. Negativ-Kontrolle: der bekannte asymmetrische bw_matmul-Fall (nur
+ *   3. Adam/AdamW-Zwei-Handle-Residenz (Commit 853bc2c, moo_ki_gpu_opt_adam2_res):
+ *      Fwd(matmul)+Bwd(matmul)+Adam-Schritt komplett resident, cpu_fallbacks==0.
+ *      Bisher nur Ad-hoc (/tmp, nicht committet) verifiziert — hiermit
+ *      nachgezogen als reproduzierbarer Teil des Gates.
+ *   4. Negativ-Kontrolle: der bekannte asymmetrische bw_matmul-Fall (nur
  *      EIN Input requires_grad) wirft unter STRIKT NICHT (dokumentierte
  *      Luecke, kein residenter Pfad dafuer, aber auch kein falscher STRIKT-
  *      Fehler — Regressionstest fuer den am 2026-07-10 gefundenen Bug, wo
@@ -116,7 +120,55 @@ int main(void) {
     moo_release(A); moo_release(B);
     moo_ag_reset();
 
-    /* ===== 2. Negativ-Kontrolle: asymmetrischer Fall wirft NICHT =====
+    /* ===== 2. Fwd+Bwd+Adam, symmetrischer Fall, komplett resident =====
+     * Nachzug aus Handoff kip-gpu-g4c-handoff-2026-07-10-1108 Punkt 1: die
+     * Adam-Verifikation aus Commit 853bc2c war nur Ad-hoc (/tmp), hier
+     * committet als reproduzierbarer Teil des STRIKT-Gates. Nicht 256-
+     * teilbare Groesse (n=37 ueber N*N=49... hier bewusst N=7 -> 49 Elemente,
+     * ungerade/nicht potenz-of-2) deckt Randbehandlung ab. */
+    moo_ki_gpu_telemetrie_reset();
+    int32_t N2 = 7;
+    float av2[49], bv2[49];
+    for (int i = 0; i < N2 * N2; i++) {
+        av2[i] = (float)(i % 5) * 0.13f;
+        bv2[i] = (float)((i * 7) % 11) * 0.07f;
+    }
+    MooValue A3 = t2(N2, N2, av2);
+    MooValue B3 = t2(N2, N2, bv2);
+    moo_release(moo_tensor_mit_gradient(A3));
+    moo_release(moo_tensor_mit_gradient(B3));
+
+    float a3_before[49];
+    memcpy(a3_before, T(A3)->data, sizeof(a3_before));
+
+    MooValue C3 = moo_tensor_matmul(A3, B3);
+    CHECK(!moo_error_flag, "Adam: Forward wirft nicht unter STRIKT");
+    MooValue Z3 = moo_tensor_summe(C3, moo_number(-1));
+    moo_tensor_rueckwaerts(Z3);
+    CHECK(!moo_error_flag, "Adam: Backward wirft nicht unter STRIKT (symmetrischer Fall)");
+
+    MooValue params3 = moo_list_new(1);
+    moo_retain(A3); moo_list_append(params3, A3);
+    MooValue opt3 = moo_nn_opt_adam(params3, moo_number(0.1));
+    moo_release(moo_nn_opt_schritt(opt3));
+    CHECK(!moo_error_flag, "Adam: opt_schritt wirft nicht unter STRIKT");
+
+    MooKiGpuTelemetrie tel3;
+    moo_ki_gpu_telemetrie(&tel3);
+    CHECK(tel3.submits > 0, "Adam: mind. 1 residenter GPU-Submit fand statt");
+    CHECK(tel3.cpu_fallbacks == 0, "Adam: keine CPU-Fallbacks unter STRIKT (Fwd+Bwd+opt_adam2_res)");
+
+    moo_tensor_host_sichern(T(A3));
+    int diffs3 = 0;
+    for (int i = 0; i < N2 * N2; i++)
+        if (T(A3)->data[i] == a3_before[i]) diffs3++;
+    CHECK(diffs3 == 0, "Adam: Parameter nach host_sichern vollstaendig aktualisiert");
+
+    moo_release(C3); moo_release(Z3); moo_release(opt3); moo_release(params3);
+    moo_release(A3); moo_release(B3);
+    moo_ag_reset();
+
+    /* ===== 3. Negativ-Kontrolle: asymmetrischer Fall wirft NICHT =====
      * Regressionstest fuer den am 2026-07-10 gefundenen Bug (Commit 49bcf01):
      * bw_matmul warf hier faelschlich, obwohl kein residenter Pfad existiert
      * (matmul_bw_res braucht BEIDE da/db) -- der dokumentierte, akzeptierte
