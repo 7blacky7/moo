@@ -1,160 +1,184 @@
-# KI-MULTI-C0 — Design: Kamera-/Mikrofon-Capture (Realtime-Eingabe)
+# KI-MULTI-C0 — Capture-Vertrag für Kamera und Mikrofon
 
-**Status:** DESIGN (kein Code). Vor Implementierung (C1) GPT-Gegenreview PFLICHT.
-**Autor:** claude-local, 2026-07-10. **Owner-Task:** d222221a.
+**Status:** DESIGN V2 — P0-Befunde aus `verification-ki-multi-c0-gpt` eingearbeitet.  
+**Owner-Task:** `d222221a`. C1 darf erst nach unabhängigem GO dieses Vertrags starten.
 
-Dieses Dokument legt den API-**Vertrag** und die Backend-/Test-Strategie für
-Echtzeit-Capture fest. Ziel ist die durchgehende Pipeline
-**Kamera → MOO_FRAME → Tensor (V1-Brücke) → Netz** und
-**Mikrofon → Tensor → Spektrogramm (A1) → Conv-Netz (V2)**.
+Ziel sind robuste, plattformneutrale Pipelines:
 
----
+- Kamera → `MOO_FRAME` → `tensor_aus_frame` → Netz
+- Mikrofon → Tensor → `spektrogramm` → Netz
 
-## 1. Recherche (2026-Stand)
+## 1. Verbindliche v1-Entscheidungen
 
-### 1.1 Empirische Baseline (dieses Ziel-System, verifiziert)
-- **Audio:** `PulseAudio on PipeWire 1.6.4` — PipeWire IST das Backend, Pulse
-  nur Compat-Layer. `pw-cli`, `wpctl` nativ vorhanden.
-- **Kamera:** `v4l2-ctl` vorhanden, **kein** `/dev/video*` (keine Webcam an
-  diesem PC). `v4l2loopback.ko` liegt im Kernel-Tree (7.0.5-cachyos).
-- **Konsequenz:** Der Fake-Device-Pfad (v4l2loopback) ist nicht nur CI-Pflicht,
-  sondern hier auch für lokale Entwicklung zwingend.
+- Linux-Kamera: V4L2-MMAP über libv4l2/libv4lconvert.
+- Keine eigene MJPEG-Dekodierung.
+- Linux-Audio: libasound. `default` ist nur ein Default-Gerät und nicht garantiert PipeWire.
+- Synchrones Pull ohne Capture-Thread.
+- Kamera verwendet ausdrücklich **latest-frame-Semantik**.
+- Alle blockierenden Aufrufe besitzen eine monotone Deadline.
+- Deterministische Backend-Injection ist das Pflichtgate; Loopback-Geräte sind ein zusätzliches Integrationsgate.
 
-### 1.2 Web-Recherche (ki-browser, 2026-07-10; Quellen zitiert)
-- **PipeWire ist 2026 Default-Audioserver** auf Fedora, Ubuntu (22.10+), Debian
-  12 Bookworm, Pop!_OS (22.04+). Bietet Kompatibilitätsschichten für PulseAudio,
-  JACK **und ALSA** — bestehende Anwendungen laufen unverändert. Niedrigere
-  Latenz als raw ALSA, besser dokumentiert. (Quellen: mehrere Distro-Audio-
-  Stack-Übersichten & PipeWire-Wiki, abgerufen 2026-07-10.)
-- **V4L2-Capture:** Standard ist **MMAP-Streaming** (`VIDIOC_REQBUFS` mit
-  `V4L2_MEMORY_MMAP`, danach `VIDIOC_QBUF`/`VIDIOC_DQBUF`) — zero-copy,
-  nur Puffer-Pointer werden getauscht. `VIDIOC_ENUM_FMT` listet Hardware-Formate
-  **plus die von libv4l emulierten** Formate. **libv4l** stellt
-  `v4l2_open/close/ioctl/read/mmap` bereit und konvertiert MJPEG/YUYV → RGB
-  transparent. Praxis-Hinweis: generische USB-Webcams liefern bei FullHD oft
-  **nur MJPEG**, nicht raw YUYV → Dekodierung/Konvertierung ist Pflicht.
-  (Quellen: kernel.org V4L2-API-Doku, usb_cam-Pixelformat-System, abgerufen
-  2026-07-10.)
+## 2. Öffentliche Kamera-API
 
----
-
-## 2. Kamera-API (Vertrag)
-
-Plattform-neutrale Signatur nach `moo_ui.h`-Muster: **gleiche API, Backend
-wechselt** (Linux zuerst, Windows/macOS später identisch).
-
-```
-kamera_liste()                       -> Liste von {pfad, name}   # Enumeration
-kamera_oeffnen(pfad?, breite?, hoehe?) -> MOO_KAMERA (opaker Heap-Handle)
-kamera_frame(kamera)                 -> MOO_FRAME                # RGBA8, top-left
-kamera_schliessen(kamera)            -> nichts
+```moolang
+kamera_liste() -> Liste<{pfad, name, id?}>
+kamera_oeffnen(pfad?, breite?, hoehe?, fps?) -> MOO_KAMERA
+kamera_frame(kamera, timeout_ms?) -> MOO_FRAME
+kamera_schliessen(kamera) -> nichts
 ```
 
-- **kamera_frame liefert MOO_FRAME** → fügt sich nahtlos in die V1-Brücke:
-  `tensor_aus_frame(kamera_frame(k), "grau")` = Echtzeit-Vision in 2 Zeilen.
-- **Format:** intern immer RGBA8 top-left (Frame-Konvention). Die MJPEG/YUYV→RGBA-
-  Konvertierung macht **libv4l** (nicht selbst dekodieren). Fällt eine Kamera nur
-  MJPEG, übernimmt libv4l die JPEG-Dekodierung.
-- **Blockierend vs. non-blocking:** kamera_frame blockiert per Default bis zum
-  nächsten Frame (`VIDIOC_DQBUF`), mit optionalem Timeout. Frame-Dropping siehe §4.
-- **Backend Linux:** V4L2 über **libv4l** (`v4l2_open` etc.), MMAP-Streaming mit
-  4 Puffern (üblicher Standard), `VIDIOC_S_FMT` für Format-Negotiation.
-- **Fehler:** erklärende deutsche Fehler (kein Gerät, Format nicht verhandelbar,
-  Gerät belegt) — Kinderleicht-Philosophie.
+Englische Aliase: `camera_list`, `camera_open`, `camera_frame`, `camera_close`.
 
-### 2.1 Opaker Heap-Typ MOO_KAMERA
-Neuer refcounteter Heap-Typ (refcount erstes Feld, Muster MOO_GIF/MOO_FRAME):
-hält fd, mmap-Puffer, Format, Dims. `moo_kamera_free` gibt mmap frei + `v4l2_close`.
-Pixeldaten NIE als moo-Liste (opaker Block, Muster MOO_FRAME).
+### 2.1 Timeout
 
----
+- Standard: 1000 ms.
+- `timeout_ms == 0`: nicht blockieren; sofort Frame oder Timeout-Fehler.
+- Negative, nicht-endliche oder zu große Werte werden erklärt abgelehnt.
+- Deadline basiert auf monotoner Zeit und gilt für poll + drain + Konversion zusammen.
+- Timeout ist von Busy, Permission, Unsupported, Disconnect und Closed unterscheidbar.
+- Kein API-Pfad darf unbegrenzt blockieren.
 
-## 3. Mikrofon-API (Vertrag)
+### 2.2 Latest-frame-Semantik
+
+Der FD ist nonblocking. `kamera_frame` pollt bis zur Deadline und dequeuet danach alle sofort verfügbaren Buffer. Ältere Buffer werden unmittelbar requeued; nur der neueste wird kopiert/konvertiert. Drops sind Teil dieses Vertrags. V4L2-`DQBUF` allein verspricht nicht automatisch den neuesten Frame.
+
+Jeder erfolgreich dequeuete Buffer wird auf **jedem** Pfad requeued, nachdem die Daten in einen eigenen `MOO_FRAME` kopiert wurden. Ein Treiberbuffer darf nie Eigentum des Frames werden.
+
+### 2.3 Verhandlung und Ausgabe
+
+Vor Streaming sind verpflichtend:
+
+1. `VIDIOC_QUERYCAP`: Capture + Streaming; MPLANE wird in v1 klar abgelehnt.
+2. `ENUM_FMT`, `ENUM_FRAMESIZES`, `ENUM_FRAMEINTERVALS`.
+3. Exact Match, wenn möglich; sonst dokumentierte nächste unterstützte Größe/FPS.
+4. `S_FMT`-Rückgabe ist Wahrheit: pixelformat, width, height, bytesperline, sizeimage validieren.
+5. FPS mit `S_PARM`/ `G_PARM` setzen und tatsächlichen Wert speichern.
+6. MMAP- und Konversionsfähigkeit des gewählten libv4l-Pfads prüfen.
+
+libv4l muss ein tatsächlich unterstütztes RGB24 oder BGR24 liefern. Moo ergänzt Alpha=255 beziehungsweise swizzelt BGR→RGBA. RGBA-Ausgabe durch libv4l wird nicht vorausgesetzt. Ausgabe ist immer RGBA8, top-left, kompakter eigener Frame-Stride.
+
+Alle Rechnungen wie `width*height*4`, `bytesperline*height` und `sizeimage` erfolgen overflow-sicher und unter konfigurierten Caps.
+
+## 3. Öffentliche Mikrofon-API
+
+```moolang
+mikro_oeffnen(rate?, kanaele?, geraet?) -> MOO_MIKRO
+mikro_lesen(mikro, n_samples, timeout_ms?) -> {daten: Tensor[n], rate}
+mikro_schliessen(mikro) -> nichts
+```
+
+Englische Aliase: `microphone_open`, `microphone_read`, `microphone_close`.
+
+- Standardgerät: `"default"`; expliziter Gerätename ist möglich.
+- Standardtimeout: 1000 ms; `0` und ungültige Werte wie bei Kamera.
+- `n_samples` bezeichnet mono Output-Samples, nicht interleaved Eingabewerte.
+- Internes Format v1: S16_LE, interleaved.
+- Gewünschte und tatsächlich ausgehandelte Rate/Kanäle/Period/Buffer werden getrennt gehalten.
+- Rückgabe-`rate` ist immer die tatsächliche Rate.
+- Stereo→Mono: arithmetisches Mittel in ausreichend breiter Zwischenrepräsentation.
+- v1 resampelt nicht stillschweigend. Kann die gewünschte Rate nicht exakt gesetzt werden, wird die tatsächliche Rate zurückgegeben.
+
+`snd_pcm_readi` läuft bis exakt `n_samples` Output-Samples oder bis zur Deadline. Short Reads sind normal. Behandelt werden begrenzt:
+
+- `EINTR`: wiederholen.
+- `EAGAIN`: poll/wait bis zur Restdeadline.
+- XRUN `EPIPE`: `snd_pcm_recover`/prepare.
+- Suspend `ESTRPIPE`: begrenzter Resume-/Prepare-Versuch.
+- Disconnect oder erschöpftes Recovery-Budget: Handle wird BROKEN und liefert erklärenden Fehler.
+
+Timeout nach bereits gelesenen Teildaten liefert keinen stillen kürzeren Tensor; der Aufruf scheitert atomar.
+
+## 4. Handle-Lifecycle
+
+Beide opaken Heap-Typen besitzen:
 
 ```
-mikro_oeffnen(rate?, kanaele?)  -> MOO_MIKRO
-mikro_lesen(mikro, n_samples)   -> { daten: Tensor[n], rate }   # f32 [-1,1), Mono
-mikro_schliessen(mikro)         -> nichts
+OPEN -> STREAMING -> BROKEN -> CLOSED
 ```
 
-- **Rückgabe passt zu A1:** `spektrogramm(mikro_lesen(m, 16000)["daten"], 1024, 256)`
-  = Echtzeit-Audio-Features. Stereo→Mono-Mittel wie `wav_lesen`.
-- **BACKEND-ENTSCHEID (begründet):** **v1 = ALSA-Capture-API** (`snd_pcm_*`)
-  gegen das Default-Device. Begründung: (a) ALSA ist Kernel-Teil, überall da;
-  (b) PipeWire stellt 2026 auf allen Ziel-Distros die **ALSA-Compat-Schicht** →
-  ein ALSA-Client spricht faktisch mit PipeWire, ohne PipeWire-spezifischen Code;
-  (c) die ALSA-PCM-API ist deutlich kleiner/stabiler als die native
-  libpipewire-Graph-API. **libpipewire (native Streams)** ist der spätere
-  Upgrade-Pfad für niedrigste Latenz / Graph-Awareness — als Phase 2 mit
-  identischer moo-Signatur (Backend wechselt, API bleibt).
-- **MOO_MIKRO:** opaker Heap-Typ (snd_pcm_t*, rate, kanaele). `moo_mikro_free`
-  = `snd_pcm_close`.
+- `schliessen` ist idempotent.
+- Ressourcenfelder werden nach Freigabe sofort auf Sentinel/NULL gesetzt.
+- Der Destruktor schließt nur noch vorhandene Ressourcen.
+- Operationen nach Close liefern `Closed Handle`.
+- Gleichzeitiges read/frame/close auf demselben Handle ist in v1 nicht threadsicher und wird nicht unterstützt.
+- `moo_throw` unwindingt nicht: Cleanup erfolgt vollständig **vor** throw und danach unmittelbar return.
 
----
+Kamera-Cleanup rückwärts: STREAMOFF, alle erfolgreich gemappten Buffer munmap, fd close. Jeder partielle Fehler von Open bis STREAMON nutzt denselben zustandsbewussten Cleanup.
 
-## 4. Realtime-Budget & Threading
+Audio-Cleanup: laufenden Zugriff abbrechen/drop, PCM schließen, Felder nullen. Partielle hw-/sw-param-Fehler dürfen nichts leaken.
 
-- **Ziel-Latenz v1:** Kamera ≤ 1 Frame (~33 ms @ 30 fps) Ende-zu-Ende bis MOO_FRAME;
-  Mikro-Blockgröße wählbar (Default 1024 Samples @ 16 kHz ≈ 64 ms).
-- **Threading v1 (einfach):** **synchron/pull-basiert** — kamera_frame/mikro_lesen
-  blockieren im aufrufenden moo-Thread bis Daten da sind. Kein eigener Capture-
-  Thread in v1 (Komplexität vermeiden; die meisten Demos sind Pull-Loops).
-- **Frame-Dropping:** V4L2-MMAP mit Ringpuffer; wenn der Consumer langsamer ist
-  als die Kamera, wird beim nächsten DQBUF automatisch der neueste Puffer geliefert
-  (ältere requeued/verworfen) → kein unbegrenztes Aufstauen.
-- **Phase 2 (später):** optionaler Capture-Thread + `kanal` (bestehende
-  moo-Threads/Channels) für entkoppeltes Producer/Consumer — NICHT v1.
+## 5. Fehlerklassen
 
----
+Mindestens unterscheidbar und auf Deutsch erklärt:
 
-## 5. Test-Strategie OHNE Hardware (CI-tauglich)
+- Timeout
+- Gerät belegt oder keine Berechtigung
+- Nicht unterstütztes Format
+- Gerät getrennt / BROKEN
+- XRUN/Suspend nicht wiederherstellbar
+- Geschlossener Handle
+- Treiber lieferte ungültige Dimensionen/Strides
 
-- **Kamera:** **v4l2loopback** erzeugt ein virtuelles `/dev/videoN`; ein
-  deterministisches Testmuster (z.B. mit `ffmpeg`/`gst` in den Loopback gespeist
-  oder direkt Frames geschrieben) füttert bekannte RGBA-Werte → `kamera_frame`
-  muss exakt diese liefern. Gate-Skript startet/entfernt das Loopback-Device.
-  Da dieser PC keine echte Kamera hat, ist der Loopback auch das **lokale** Gate.
-- **Mikrofon:** ALSA **`snd-aloop`** (Loopback-Soundkarte) oder Datei-gefütterter
-  PCM-Strom; ein bekanntes Sinus-Signal rein → `mikro_lesen` muss es bit-nah
-  zurückliefern (Roundtrip-Check analog `synth`→`wav_lesen`).
-- **ASan/UBSan:** Capture-Pfad leak-clean; NVIDIA-/Treiber-Rausch-Suppressions
-  nach kip_g4-Muster nur mit Begründung.
-- **Echte Hardware:** separates lokales Gate nur wo Gerät existiert (nicht in CI,
-  nicht auf diesem PC).
+## 6. Testarchitektur
 
----
+### 6.1 Deterministisches Pflichtgate
 
-## 6. Abgrenzung v1 vs. später
+C1 erhält interne injizierbare Adapter/Vtables für V4L2-, poll/clock- und ALSA-Operationen. Kein öffentliches Fake-Backend.
 
-| Aspekt              | v1 (dieser Vertrag)                   | Später (Folge-Tasks)              |
-|---------------------|---------------------------------------|-----------------------------------|
-| Kamera-Plattform    | Linux V4L2 (libv4l)                   | Windows Media Foundation, macOS AVFoundation (identische Signatur) |
-| Kamera-Geräte       | ein Gerät gleichzeitig                | mehrere parallel                  |
-| Kamera-Format       | ein verhandeltes Format → RGBA8       | Format-Auswahl-API, Hardware-Timestamps |
-| Mikro-Backend       | ALSA-Capture (via PW-Compat)          | native libpipewire (Latenz)       |
-| Threading           | synchron/pull                         | Capture-Thread + moo-Channel      |
+Fault-Matrix:
 
----
+- jeder Initialisierungsschritt schlägt einzeln fehl
+- S_FMT verändert Format oder Dimensionen
+- ungültiges bytesperline/sizeimage und Overflow
+- QBUF/DQBUF/STREAMON/STREAMOFF-Fehler
+- mehrere fertige Frames: latest wird gewählt, ältere requeued
+- Timeout vor Daten und nach Audio-Teildaten
+- Short Reads, EINTR, EAGAIN, XRUN, Suspend, Disconnect
+- wiederholtes Open/Close und Close nach BROKEN/Timeout
+- Alias/Refcount-Lifecycle
 
-## 7. Neue opake Typen & Build (Vorschau für C1)
+Alle laufen unter ASan und UBSan.
 
-- Neue Heap-Typen `MOO_KAMERA`, `MOO_MIKRO` (refcount-Konvention, `moo_*_free`
-  im Release-Dispatch — Struct-Feld nur durch kip-kern, Dispatch-Verdrahtung wie
-  MOO_FRAME/MOO_GIF).
-- Neue C-Dateien `moo_kamera.c` (libv4l) + `moo_mikro.c` (ALSA), plattform-gated
-  im Build wie die 3D-Backends. Linkt `-lv4l2` bzw. `-lasound`.
-- DE/EN-Builtins nach codegen-Muster; Doku moolang-docs + je ein getestetes
-  Beispiel (ki_kamera_live.moo, ki_mikro_spektrum.moo) im selben Zug.
+### 6.2 Linux-Integrationsgate
 
----
+Auf kontrolliertem privilegiertem Runner:
 
-## 8. Offene Fragen für den GPT-Gegenreview
+- v4l2loopback mit verlustfreiem Raw-Testmuster
+- snd-aloop mit bekanntem PCM-Signal
+- optional eigene PipeWire-`default`-Route
 
-1. ALSA-Capture vs. direkt libpipewire für v1 — ist der Compat-Weg robust genug,
-   oder verdient PipeWire-native schon v1 (Latenz/Sample-Genauigkeit)?
-2. libv4l-Abhängigkeit akzeptabel, oder MJPEG-Dekodierung selbst (stb_image/
-   turbojpeg) für weniger Laufzeit-Deps?
-3. Synchron/pull für v1 ausreichend, oder ist der Capture-Thread schon v1 nötig
-   (Frame-Drops bei langsamem Netz-Forward)?
-4. Reichen v4l2loopback + snd-aloop für ein ehrliches CI-Gate, oder brauchen wir
-   Datei-basierte Fake-Backends hinter der Backend-Vtable?
+MJPEG-Vergleiche verwenden Toleranz beziehungsweise Referenz derselben Decoderstrecke. Audio über Mixer/Resampler verwendet Alignment plus numerische Toleranz/SNR, nicht pauschale Bitgleichheit.
+
+### 6.3 Hardware-Smoke
+
+Vor Release mindestens eine echte MJPEG-UVC-Kamera und ein Mikrofon. Hotplug/Disconnect wird manuell geprüft.
+
+## 7. Build und Plattformen
+
+- Linux feature-detection für libv4l2/libv4lconvert und libasound.
+- Fehlende Development- oder Runtime-Libraries ergeben klare Build-/Laufzeitdiagnosen.
+- Nicht-Linux stellt dieselben Builtins bereit, antwortet bis zu späteren Backends aber mit einer klaren Plattformmeldung.
+- Native PipeWire, Windows Media Foundation, macOS AVFoundation und Capture-Threads sind Folgephasen ohne Änderung der Grundbegriffe.
+
+## 8. C1-Abnahmekriterien
+
+C1 ist erst fertig, wenn:
+
+- alle Fault-Injection-Gates ASan/UBSan-grün sind
+- Timeout und Latest-Vertrag nachweisbar sind
+- partieller Cleanup und idempotentes Close bewiesen sind
+- tatsächliche Kamera-/Audioformate zurückgespiegelt werden
+- Beispiele `ki_kamera_live.moo` und `ki_mikro_spektrum.moo` existieren
+- moolang-docs DE/EN-Aliase, Timeout, Drops und Fehlerklassen dokumentiert
+- unabhängiger Subagent die Implementierung adversarial mit GO bewertet
+
+## 9. Review-Entscheidung
+
+Die vier ursprünglichen Fragen sind geschlossen:
+
+1. ALSA v1: GO mit explizitem Gerät, echter Negotiation und Deadline.
+2. libv4l: GO; eigene MJPEG-Dekodierung NO-GO.
+3. synchron/pull: GO; latest wird durch drain/requeue implementiert.
+4. Loopbacks allein: NO-GO; Pflichtgate ist deterministische Injection, Loopbacks ergänzen es.
+
+Dieser V2-Vertrag erfüllt die P0-Auflagen aus `verification-ki-multi-c0-gpt` und wartet auf unabhängiges Re-Review.
