@@ -2086,6 +2086,9 @@ impl<'ctx> CodeGen<'ctx> {
         if let Some(var_name) = catch_var {
             let error_val = self.call_rt(self.rt.moo_get_error, &[], "error")?;
             let error_str = self.call_rt(self.rt.moo_to_string, &[error_val.into()], "err_str")?;
+            // moo_get_error liefert +1 retained. moo_to_string leiht den Wert nur;
+            // daher muss der Catch-Temp nach erfolgreicher Konvertierung frei werden.
+            self.call_rt_void(self.rt.moo_release, &[error_val.into()], "release_error")?;
             self.store_var(var_name, error_str)?;
         }
         // try_leave raeumt auf
