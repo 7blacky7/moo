@@ -100,6 +100,13 @@ bool moo_ki_gpu_ce_bw_res(void* logits, void* target, void* grad,
                           int32_t rows, int32_t cols, float scale) {
     (void)logits; (void)target; (void)grad; (void)rows; (void)cols; (void)scale; return false;
 }
+bool moo_ki_gpu_norm_res(int32_t op, void* x, void* o, int32_t rows, int32_t cols, float eps) {
+    (void)op; (void)x; (void)o; (void)rows; (void)cols; (void)eps; return false;
+}
+bool moo_ki_gpu_norm_bw_res(int32_t op, void* x, void* g, void* dx,
+                            int32_t rows, int32_t cols, float eps) {
+    (void)op; (void)x; (void)g; (void)dx; (void)rows; (void)cols; (void)eps; return false;
+}
 bool moo_ki_gpu_opt_sgd_res(void* p, void* m, void* grad, int64_t n,
                             float lr, float momentum) {
     (void)p; (void)m; (void)grad; (void)n; (void)lr; (void)momentum; return false;
@@ -143,6 +150,7 @@ typedef struct {
     VkPipeline pipe_opt_sgd, pipe_opt_adam;/* KIP-G3c: Optimizer-Schritt SGD-Momentum / Adam(W) */
     VkPipeline pipe_softmax, pipe_softmax_bw; /* KIP-G3a: Softmax/LogSoftmax F+B (zeilenweise) */
     VkPipeline pipe_ce_fwd, pipe_ce_bw;       /* KIP-G3a: fused Cross-Entropy F+B (zeilenweise) */
+    VkPipeline pipe_norm, pipe_norm_bw;       /* KIP-G3b: LayerNorm/RMSNorm-Kern F+B (zeilenweise) */
     VkCommandPool cmdpool;
     VkDescriptorPool descpool;
     /* GPU3-C: Per-Op-Allokationen gecacht — lazy beim ersten Dispatch
@@ -357,10 +365,14 @@ static bool ki_gpu_init(void) {
     G.pipe_softmax_bw = pipeline_bauen(ki_softmax_bw_spv, ki_softmax_bw_spv_len, G.playout);
     G.pipe_ce_fwd = pipeline_bauen(ki_ce_fwd_spv, ki_ce_fwd_spv_len, G.playout);
     G.pipe_ce_bw = pipeline_bauen(ki_ce_bw_spv, ki_ce_bw_spv_len, G.playout);
+    /* KIP-G3b: LayerNorm/RMSNorm-Kern (16B-playout, ein Thread/Zeile). */
+    G.pipe_norm = pipeline_bauen(ki_norm_fwd_spv, ki_norm_fwd_spv_len, G.playout);
+    G.pipe_norm_bw = pipeline_bauen(ki_norm_bw_spv, ki_norm_bw_spv_len, G.playout);
     if (!G.pipe_matmul || !G.pipe_ew || !G.pipe_reduce || !G.pipe_matmul_naiv ||
         !G.pipe_unary || !G.pipe_unary_bw || !G.pipe_transpose || !G.pipe_copy ||
         !G.pipe_grad_accum || !G.pipe_opt_sgd || !G.pipe_opt_adam ||
-        !G.pipe_softmax || !G.pipe_softmax_bw || !G.pipe_ce_fwd || !G.pipe_ce_bw)
+        !G.pipe_softmax || !G.pipe_softmax_bw || !G.pipe_ce_fwd || !G.pipe_ce_bw ||
+        !G.pipe_norm || !G.pipe_norm_bw)
         return false;
 
     VkCommandPoolCreateInfo cpi = {
@@ -1172,6 +1184,40 @@ bool moo_ki_gpu_ce_bw_res(void* logits, void* target, void* grad,
     KiBuf bufs[3] = { *(KiBuf*)logits, *(KiBuf*)target, *(KiBuf*)grad };
     KiPush push = { (uint32_t)rows, (uint32_t)cols, sbits, 0 };
     bool ok = dispatch_sync(G.pipe_ce_bw, bufs, push,
+                            ((uint32_t)rows + 255u) / 256u, 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3b: zeilenweiser Normalisierungs-KERN (ohne Affine). op 0 LayerNorm
+ * (x-mean)/sqrt(var+eps), op 1 RMSNorm x/sqrt(mean(x^2)+eps). Affine (*gamma
+ * [+beta]) ist ew-Komposition. x an binding 0 UND 1 (ungenutzt). eps via
+ * KiPush.N (float-Bit). */
+bool moo_ki_gpu_norm_res(int32_t op, void* x, void* o, int32_t rows, int32_t cols, float eps) {
+    if (!x || !o) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    uint32_t ebits; memcpy(&ebits, &eps, sizeof(ebits));
+    KiBuf bufs[3] = { *(KiBuf*)x, *(KiBuf*)x, *(KiBuf*)o };
+    KiPush push = { (uint32_t)rows, (uint32_t)cols, ebits, (uint32_t)op };
+    bool ok = dispatch_sync(G.pipe_norm, bufs, push,
+                            ((uint32_t)rows + 255u) / 256u, 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3b: zugehoeriger Backward w.r.t. x (Stats aus x rekonstruiert).
+ * op 0 LN: dx=(1/s)(g-mean(g)-n*mean(g*n)); op 1 RMS: dx=(1/s)(g-n*mean(g*n)).
+ * REINER Beitrag ohne += (das += ist G3c). */
+bool moo_ki_gpu_norm_bw_res(int32_t op, void* x, void* g, void* dx,
+                            int32_t rows, int32_t cols, float eps) {
+    if (!x || !g || !dx) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    uint32_t ebits; memcpy(&ebits, &eps, sizeof(ebits));
+    KiBuf bufs[3] = { *(KiBuf*)x, *(KiBuf*)g, *(KiBuf*)dx };
+    KiPush push = { (uint32_t)rows, (uint32_t)cols, ebits, (uint32_t)op };
+    bool ok = dispatch_sync(G.pipe_norm_bw, bufs, push,
                             ((uint32_t)rows + 255u) / 256u, 1,
                             /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
     if (!ok) g_tel.cpu_fallbacks++;

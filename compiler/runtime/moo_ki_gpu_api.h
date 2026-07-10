@@ -35,6 +35,9 @@ enum {
 /* === KIP-G3a: Softmax/LogSoftmax-Variante (Forward + Backward teilen Codes) === */
 enum { MOO_KI_SM_SOFTMAX = 0, MOO_KI_SM_LOGSOFTMAX = 1 };
 
+/* === KIP-G3b: Normalisierungs-Variante (Forward + Backward teilen Codes) === */
+enum { MOO_KI_NORM_LAYER = 0, MOO_KI_NORM_RMS = 1 };
+
 /* === Residente Buffer-Handles (opaque) ===
  * Ein Handle kapselt ein pool-verwaltetes VRAM/Staging-Paar (GPU3-A/B).
  * Der Tensor besitzt genau EINEN Handle (MooTensor.gpu_buf, opaque void*),
@@ -132,6 +135,15 @@ bool moo_ki_gpu_ce_fwd_res(void* logits, void* target, int32_t rows, int32_t col
  * fuer loss=mean). REINER Beitrag OHNE += (das += ist G3c). */
 bool moo_ki_gpu_ce_bw_res(void* logits, void* target, void* grad,
                           int32_t rows, int32_t cols, float scale);
+/* === KIP-G3b: LayerNorm/RMSNorm-KERN (Forward + Backward, ohne Affine) ===
+ * Zeilenweise ueber [rows,cols]. Affine (*gamma [+beta]) ist ew-Komposition
+ * (wie CPU-Ref moo_nn.c fw_layernorm/fw_rmsnorm). op = MOO_KI_NORM_LAYER|RMS. */
+/* Forward: op LAYER -> (x-mean)/sqrt(var+eps); op RMS -> x/sqrt(mean(x^2)+eps). */
+bool moo_ki_gpu_norm_res(int32_t op, void* x, void* o, int32_t rows, int32_t cols, float eps);
+/* Backward w.r.t. x (Stats aus x rekonstruiert): op LAYER -> dx=(1/s)(g-mean(g)
+ * -n*mean(g*n)); op RMS -> dx=(1/s)(g-n*mean(g*n)). REINER Beitrag OHNE +=. */
+bool moo_ki_gpu_norm_bw_res(int32_t op, void* x, void* g, void* dx,
+                            int32_t rows, int32_t cols, float eps);
 
 /* === Telemetrie (G1 §5 — G4-Beweismittel) ===
  * submits       = Compute-Dispatches (residente + nicht-residente Ops; genau
