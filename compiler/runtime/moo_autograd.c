@@ -1160,11 +1160,23 @@ MooValue moo_tensor_gradient(MooValue tv) {
         return moo_none();
     }
     MooTensor* t = T(tv);
-    if (!t->grad) {
+    // KIP-FINAL-FIX2 (67efae9e): Guard muss GPU-only Grad akzeptieren (t->grad
+    // kann NULL sein, obwohl ein echter Beitrag NUR auf der GPU liegt --
+    // grad_valid==MOO_V_DEV, analog opt_schritt/grad_clip). Nur wenn WEDER ein
+    // CPU-Puffer existiert NOCH die GPU-Seite autoritativ ist, gibt es
+    // wirklich keinen Gradienten.
+    if (!t->grad && !(t->grad_valid & MOO_V_DEV)) {
         moo_throw(moo_error("gradient: noch kein Gradient da — erst mit_gradient() "
                             "setzen und rueckwaerts() auf dem Verlust aufrufen"));
         return moo_none();
     }
+    // Materialisiert die CPU-Seite (Download aus gpu_grad falls grad_valid nur
+    // MOO_V_DEV war) -- OHNE diesen Aufruf lieferte gradient() bei rein GPU-
+    // residentem Backward (z.B. bw_mul unter STRIKT) einen stalen/genullten
+    // Host-Puffer statt des echten Werts (GPT-Gegenreview KI-PROD-01, echter
+    // 4070-Ti-Repro: submits=4/cpu_fallbacks=0, aber gradient(x)==[0,0] statt
+    // [0.5,3.0]). Trichter ist derselbe wie fuer den Optimizer (I2/I8).
+    moo_tensor_grad_sichern(t);
     MooTensor* g = moo_tensor_raw(t->ndim, t->shape);
     if (!g) return moo_none();
     memcpy(g->data, t->grad, (size_t)t->size * sizeof(float));

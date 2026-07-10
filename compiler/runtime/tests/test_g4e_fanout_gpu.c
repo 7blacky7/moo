@@ -98,6 +98,34 @@ int main(void) {
     MooValue X = t1(2, xv);
     MooValue C = t1(2, cv);
     MooValue W = t2(3, 2, wv);
+
+    /* ===== KIP-FINAL-FIX2 (67efae9e, koordinator2-Gegenreview-Fund) =====
+     * Regressionstest: REINER same-shape bw_mul (kein Fan-out, keine CPU-
+     * Kontribution) setzt x2.grad_valid=MOO_V_DEV. Die OEFFENTLICHE Export-
+     * API moo_tensor_gradient(x2) MUSS trotzdem den echten Wert liefern --
+     * vorher lieferte sie (ohne moo_tensor_grad_sichern-Trichter) einen
+     * stalen/genullten Host-Puffer ([0,0] statt [0.5,3.0]), obwohl
+     * submits>0 und cpu_fallbacks==0 (Bug sah nach Erfolg aus). */
+    float x2v[2] = { 1.5f, -2.0f };
+    float c2v[2] = { 0.5f, 3.0f };
+    MooValue X2 = t1(2, x2v);
+    MooValue C2 = t1(2, c2v);
+    moo_release(moo_tensor_mit_gradient(X2));
+    MooValue Y2 = moo_tensor_mul(X2, C2);
+    CHECK(!moo_error_flag, "y2=mul(x2,c2) Forward wirft nicht unter STRIKT");
+    MooValue Loss2 = moo_tensor_summe(Y2, moo_number(-1));
+    moo_tensor_rueckwaerts(Loss2);
+    CHECK(!moo_error_flag, "rueckwaerts(loss2) wirft nicht");
+    CHECK((T(X2)->grad_valid & MOO_V_DEV) != 0, "x2.grad ist rein GPU-resident (Voraussetzung fuer den Repro)");
+
+    MooValue G2 = moo_tensor_gradient(X2);   // OEFFENTLICHE API, NICHT moo_tensor_grad_sichern direkt
+    CHECK(!moo_error_flag, "moo_tensor_gradient(x2) wirft nicht");
+    float* g2 = T(G2)->data;
+    CHECK(NAHE(g2[0], 0.5f), "moo_tensor_gradient(x2)[0] == c2[0] (0.5) -- NICHT 0 (stale Host-Puffer waere der alte Bug)");
+    CHECK(NAHE(g2[1], 3.0f), "moo_tensor_gradient(x2)[1] == c2[1] (3.0) -- NICHT 0 (stale Host-Puffer waere der alte Bug)");
+    moo_release(G2); moo_release(Y2); moo_release(Loss2); moo_release(X2); moo_release(C2);
+    moo_ag_reset();
+
     moo_release(moo_tensor_mit_gradient(X));
 
     /* y = x*c (gleiche Form -> nimmt den NEUEN residenten gpu_grad-Pfad) */
