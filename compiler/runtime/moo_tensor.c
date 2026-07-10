@@ -242,6 +242,20 @@ static inline float moo_bf16_zu_f32(uint16_t h) {
     return f;
 }
 
+// === KIP-D2 Mixed-Precision: Aktivierung auf bf16-Praezision runden ===
+// Reduziert die (gueltige) f32-`data` IN-PLACE auf bf16-Praezision:
+// round-trip f32->bf16->f32 (round-to-nearest-even, identisch zum Storage-Pfad).
+// Numerisch IDENTISCH zu als_dtype("bf16")+f32_sichern, aber OHNE store-Alloc /
+// data-Free -> `data` bleibt autoritativ (valid unveraendert = MOO_V_DATA),
+// KEIN Sicherungs-Vertrag/ASan-Risiko fuer Direkt-Leser (Backward liest weiter
+// gueltiges f32). Aufrufer: moo_ag_record fuer Op-Output-Aktivierungen (D2 an).
+void moo_tensor_bf16_runden(MooTensor* t) {
+    if (!t || !t->data) return;
+    if (!(t->valid & MOO_V_DATA)) return;   // nur gueltige f32-Aktivierung runden
+    for (int64_t i = 0; i < t->size; i++)
+        t->data[i] = moo_bf16_zu_f32(moo_f32_zu_bf16(t->data[i]));
+}
+
 // === Repraesentations-Sicherung (KIP-D1, Valid-Masken-Vertrag D0 §2) ===
 // f32_sichern: garantiert gueltiges f32-`data` (materialisiert ggf. aus bf16-store).
 //   Schneller Pfad: MOO_V_DATA schon gesetzt -> no-op (der F32-Normalfall).

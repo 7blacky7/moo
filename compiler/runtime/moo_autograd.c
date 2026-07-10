@@ -37,6 +37,12 @@ static int64_t tape_len = 0, tape_cap = 0;
 static bool ag_enabled = true;     // autograd_an/aus (Inferenz-Modus)
 static bool in_backward = false;   // Ops IN backward zeichnen nicht auf
 static bool bw_registriert = false;
+// KIP-D2 Mixed-Precision: Op-Output-Aktivierungen auf bf16-Praezision runden.
+// Parameter-Master (Leaf-Inputs), Gradienten und Optimizer bleiben f32. Default
+// AUS -> moo_ag_record verhaelt sich unveraendert (Basisgates gruen).
+static bool ag_bf16 = false;
+static bool ag_bf16_env_gelesen = false;
+static void ag_bf16_env_init(void);   // Definition unten (nach moo_ag_ist_an)
 
 static MooTensor* T(MooValue v) { return MV_TENSOR(v); }
 
@@ -84,6 +90,11 @@ void moo_ag_record(const char* op_name, MooValue a, MooValue b,
     n->skalar = n->hat_skalar ? MV_NUM(skalar) : 0.0;
     // Gradient-Bedarf propagiert durch den Graphen:
     T(out)->requires_grad = true;
+    // KIP-D2: Aktivierung (Op-Output) auf bf16-Praezision runden, wenn Mixed-
+    // Precision aktiv. Leaf-Parameter sind nie `out` -> f32-Master unberuehrt;
+    // Gradienten/Optimizer rechnen weiter in f32.
+    if (!ag_bf16_env_gelesen) ag_bf16_env_init();
+    if (ag_bf16) moo_tensor_bf16_runden(T(out));
 }
 
 MooValue moo_ag_reset(void) {
@@ -100,6 +111,16 @@ MooValue moo_ag_aus(void) { ag_enabled = false; return moo_none(); }
 /* D1: Zustand abfragbar — vorhersage() schaltet temporaer aus und stellt
  * den vorherigen Zustand wieder her (statt blind an zu schalten). */
 bool moo_ag_ist_an(void) { return ag_enabled; }
+
+// KIP-D2: Mixed-Precision-Schalter. Einmalig lazy aus MOO_KI_BF16 (== "1").
+static void ag_bf16_env_init(void) {
+    if (ag_bf16_env_gelesen) return;
+    ag_bf16_env_gelesen = true;
+    const char* e = getenv("MOO_KI_BF16");
+    if (e && e[0] == '1' && e[1] == '\0') ag_bf16 = true;
+}
+void moo_ag_bf16_setzen(bool an) { ag_bf16 = an; ag_bf16_env_gelesen = true; }
+bool moo_ag_bf16_an(void) { ag_bf16_env_init(); return ag_bf16; }
 
 // ============================================================
 // Broadcast-Reduktion: akkumuliere g (Form von out) in ziel->grad
