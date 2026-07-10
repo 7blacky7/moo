@@ -497,24 +497,71 @@ static void bw_matmul(const MooAgNode* n) {
     MooTensor* b = T(n->inputs[1]);
     const float* g = o->grad;
     int64_t m = a->shape[0], k = a->shape[1], p = b->shape[1];
-    if (a->requires_grad) {
-        float* zg = grad_sicherstellen(a);
-        for (int64_t i = 0; i < m; i++)
-            for (int64_t j = 0; j < p; j++) {
-                float gv = g[i * p + j];
-                const float* brow = b->data + 0;
-                for (int64_t kk = 0; kk < k; kk++)
-                    zg[i * k + kk] += gv * brow[kk * p + j];
+
+    // KIP-G4c Stufe 2 (docs/kip/G4c-production-wiring-plan.md): residenter
+    // Backward-Pfad, analog zu Stufe 1 (Forward-Routing in moo_tensor_ops.c).
+    // Nur wenn BEIDE Inputs Grad brauchen (moo_ki_gpu_matmul_bw_res verlangt
+    // da UND db != NULL, G3d-e-Vertrag) und beide bereits GPU-resident sind
+    // (aus Stufe 1) und die Groesse ueber der Schwelle liegt (gleiche Schwelle
+    // wie Stufe 1, 2^24). da/db sind REINE Beitraege ohne += (wie der CPU-Pfad
+    // unten) — Download + Akkumulation in zg identisch zur bestehenden CPU-
+    // Semantik (I3-Vertrag aus PREFLIGHT be01ac8: der Akkumulator zg bleibt in
+    // diesem Schritt immer CPU-seitig, GPU dient nur als Rechenbeschleuniger
+    // fuer das Delta — kein gemischter CPU/GPU-Akkumulator auf demselben Ziel).
+    bool done = false;
+    if (a->requires_grad && b->requires_grad &&
+        m * k * p >= (1LL << 24) &&
+        (a->valid & MOO_V_DEV) && (b->valid & MOO_V_DEV)) {
+        int64_t obytes = (int64_t)o->size * (int64_t)sizeof(float);
+        int64_t abytes = (int64_t)a->size * (int64_t)sizeof(float);
+        int64_t bbytes = (int64_t)b->size * (int64_t)sizeof(float);
+        void* gbuf = moo_ki_gpu_buf_belegen(obytes);
+        void* dabuf = gbuf ? moo_ki_gpu_buf_belegen(abytes) : NULL;
+        void* dbbuf = dabuf ? moo_ki_gpu_buf_belegen(bbytes) : NULL;
+        float* tmp_a = NULL;
+        float* tmp_b = NULL;
+        if (dbbuf && moo_ki_gpu_upload(gbuf, g, obytes) &&
+            moo_ki_gpu_matmul_bw_res(a->gpu_buf, b->gpu_buf, gbuf, dabuf, dbbuf,
+                                      (int32_t)m, (int32_t)k, (int32_t)p)) {
+            tmp_a = (float*)malloc((size_t)abytes);
+            tmp_b = (float*)malloc((size_t)bbytes);
+            if (tmp_a && tmp_b &&
+                moo_ki_gpu_download(dabuf, tmp_a, abytes) &&
+                moo_ki_gpu_download(dbbuf, tmp_b, bbytes)) {
+                float* zga = grad_sicherstellen(a);
+                for (int64_t i = 0; i < a->size; i++) zga[i] += tmp_a[i];
+                float* zgb = grad_sicherstellen(b);
+                for (int64_t i = 0; i < b->size; i++) zgb[i] += tmp_b[i];
+                done = true;
             }
+        }
+        free(tmp_a);
+        free(tmp_b);
+        moo_ki_gpu_buf_freigeben(gbuf);
+        moo_ki_gpu_buf_freigeben(dabuf);
+        moo_ki_gpu_buf_freigeben(dbbuf);
     }
-    if (b->requires_grad) {
-        float* zg = grad_sicherstellen(b);
-        for (int64_t kk = 0; kk < k; kk++)
-            for (int64_t i = 0; i < m; i++) {
-                float av = a->data[i * k + kk];
-                for (int64_t j = 0; j < p; j++)
-                    zg[kk * p + j] += av * g[i * p + j];
-            }
+
+    if (!done) {
+        if (a->requires_grad) {
+            float* zg = grad_sicherstellen(a);
+            for (int64_t i = 0; i < m; i++)
+                for (int64_t j = 0; j < p; j++) {
+                    float gv = g[i * p + j];
+                    const float* brow = b->data + 0;
+                    for (int64_t kk = 0; kk < k; kk++)
+                        zg[i * k + kk] += gv * brow[kk * p + j];
+                }
+        }
+        if (b->requires_grad) {
+            float* zg = grad_sicherstellen(b);
+            for (int64_t kk = 0; kk < k; kk++)
+                for (int64_t i = 0; i < m; i++) {
+                    float av = a->data[i * k + kk];
+                    for (int64_t j = 0; j < p; j++)
+                        zg[kk * p + j] += av * g[i * p + j];
+                }
+        }
     }
 }
 
