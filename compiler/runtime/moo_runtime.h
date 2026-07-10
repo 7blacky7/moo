@@ -185,6 +185,7 @@ void moo_tensor_host_sichern(MooTensor* t);   // sichert Host-Sicht (Download GP
 void moo_tensor_nach_gpu(MooTensor* t);       // GPU-resident machen (Upload) — G1, idempotent
 void moo_tensor_nach_cpu(MooTensor* t);       // Host-resident machen (Download) — G1, idempotent
 void moo_tensor_bf16_runden(MooTensor* t);    // KIP-D2: f32-`data` in-place auf bf16-Praezision runden (Aktivierungs-Storage-Numerik)
+void moo_tensor_grad_sichern(MooTensor* t);   // KIP-G4c: sichert ->grad (Download gpu_grad->CPU falls grad_valid nur MOO_V_DEV), macht CPU-Grad autoritativ (Preflight I2/I3)
 
 // === Tensor-Ops + Registry (Plan-014 A2) ===
 // Alle Ops: Tensor-Konvention (Args borrowed, Rueckgabe +1 owning).

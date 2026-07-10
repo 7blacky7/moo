@@ -28,6 +28,7 @@
  * ============================================================================
  */
 #include "moo_runtime.h"
+#include "moo_ki_gpu_api.h"   // KIP-G4c: moo_ki_gpu_download fuer Grad-Materialisierung (Preflight I2/I3)
 
 // ============================================================
 // Tape
@@ -46,11 +47,32 @@ static void ag_bf16_env_init(void);   // Definition unten (nach moo_ag_ist_an)
 
 static MooTensor* T(MooValue v) { return MV_TENSOR(v); }
 
-// grad-Buffer lazy anlegen (genullt).
-static float* grad_sicherstellen(MooTensor* t) {
+// grad-Buffer lazy anlegen (genullt) + KIP-G4c (Preflight I2/I3, kip-kern
+// docs/kip/G4c-preflight-ownership-vertrag.md): garantiert dass ->grad die
+// GPU-Seite bereits erfasst (Download aus gpu_grad), falls dort resident
+// akkumuliert wurde, BEVOR der naechste CPU-Beitrag (+=) draufschreibt —
+// sonst geht ein GPU-Fan-out-Beitrag verloren. No-op im reinen CPU/F32-Fall
+// (grad_valid bleibt 0/MOO_V_DATA, solange keine residente Backward-Op
+// existiert — kommt erst in einer spaeteren G4c-Phase-2-Stufe).
+static void grad_materialisieren(MooTensor* t) {
+    if (!t) return;
     if (!t->grad) t->grad = (float*)calloc((size_t)t->size, sizeof(float));
+    if (!t->grad) { moo_throw(moo_error("autograd: Speicher voll bei Grad-Sicherung")); return; }
+    if ((t->grad_valid & MOO_V_DEV) && !(t->grad_valid & MOO_V_DATA)) {
+        if (!moo_ki_gpu_download(t->gpu_grad, t->grad,
+                                 (int64_t)t->size * (int64_t)sizeof(float))) {
+            moo_throw(moo_error("autograd: GPU-Grad-Download fehlgeschlagen")); return;
+        }
+    }
+    t->grad_valid = MOO_V_DATA;   // CPU jetzt autoritativ fuer die naechsten Reads/Writes (I2)
+}
+static float* grad_sicherstellen(MooTensor* t) {
+    grad_materialisieren(t);
     return t->grad;
 }
+// Oeffentlich fuer moo_nn.c::moo_nn_opt_schritt (Optimizer liest/schreibt
+// ->grad direkt, braucht denselben Trichter — KIP-G4c I2).
+void moo_tensor_grad_sichern(MooTensor* t) { grad_materialisieren(t); }
 
 static void moo_ag_init_bw(void);
 
@@ -784,7 +806,17 @@ MooValue moo_tensor_rueckwaerts(MooValue loss) {
     in_backward = true;
     for (int64_t i = tape_len - 1; i >= 0; i--) {
         MooAgNode* n = &tape[i];
-        if (!T(n->output)->grad) continue;    // Zweig traegt nicht zum Loss bei
+        MooTensor* out = T(n->output);
+        if (!out->grad && !(out->grad_valid & MOO_V_DEV)) continue;  // Zweig traegt nicht zum Loss bei
+        // KIP-G4c Trichter (Preflight I1/I2, kip-kern docs/kip/G4c-preflight-
+        // ownership-vertrag.md): garantiert gueltige CPU-Sicht auf data/grad
+        // BEVOR bw_* direkt darauf zugreift. No-op im reinen CPU/F32-Fall
+        // (Basisgates bit-identisch) — Voraussetzung fuer jedes residente
+        // Backward-Routing in einer spaeteren G4c-Stufe.
+        moo_tensor_f32_sichern(out);
+        grad_sicherstellen(out);
+        for (int32_t k = 0; k < n->n_in; k++)
+            moo_tensor_f32_sichern(T(n->inputs[k]));
         n->op->bw(n);
     }
     in_backward = false;

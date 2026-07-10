@@ -2316,7 +2316,9 @@ MooValue moo_nn_opt_schritt(MooValue opt) {
             float mu = (float)dnum(opt, "momentum", 0.0);
             for (int32_t i = 0; i < pl->length; i++) {
                 MooTensor* p = T(pl->items[i]);
-                if (!p->grad) continue;   /* Param traegt nicht zum Loss bei */
+                if (!p->grad && !(p->grad_valid & MOO_V_DEV)) continue;   /* Param traegt nicht zum Loss bei */
+                moo_tensor_f32_sichern(p);    /* KIP-G4c I1: p->data koennte nur MOO_V_DEV sein */
+                moo_tensor_grad_sichern(p);   /* KIP-G4c I2: p->grad koennte nur MOO_V_DEV sein */
                 float* m = T(mlist->items[i])->data;
                 for (int64_t j = 0; j < p->size; j++) {
                     m[j] = mu * m[j] + p->grad[j];
@@ -2335,7 +2337,9 @@ MooValue moo_nn_opt_schritt(MooValue opt) {
             float fb1 = (float)b1, fb2 = (float)b2;
             for (int32_t i = 0; i < pl->length; i++) {
                 MooTensor* p = T(pl->items[i]);
-                if (!p->grad) continue;
+                if (!p->grad && !(p->grad_valid & MOO_V_DEV)) continue;
+                moo_tensor_f32_sichern(p);    /* KIP-G4c I1 */
+                moo_tensor_grad_sichern(p);   /* KIP-G4c I2 */
                 float* m = T(mlist->items[i])->data;
                 float* v = vlist ? T(vlist->items[i])->data : NULL;
                 if (!v) continue;
@@ -2354,7 +2358,10 @@ MooValue moo_nn_opt_schritt(MooValue opt) {
         for (int32_t i = 0; i < pl->length; i++) {
             MooTensor* p = T(pl->items[i]);
             p->valid = MOO_V_DATA;   /* KIP-D1 Mutations-Invalidierung (D0 §4.2): Optimizer schrieb p->data */
-            if (p->grad) memset(p->grad, 0, (size_t)p->size * sizeof(float));
+            if (p->grad) {
+                memset(p->grad, 0, (size_t)p->size * sizeof(float));
+                p->grad_valid = MOO_V_DATA;   /* KIP-G4c I6: CPU-Grad nach Nullung autoritativ */
+            }
         }
     }
     moo_release(artv); moo_release(params); moo_release(ml); moo_release(vl);
