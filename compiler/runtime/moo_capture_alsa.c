@@ -7,6 +7,75 @@
 #include <string.h>
 #include <time.h>
 
+#include "moo_capture_alsa_ops.h"
+
+static const MooCaptureAlsaOps system_ops = {
+    snd_pcm_open,
+    snd_pcm_hw_params_any,
+    snd_pcm_hw_params_set_access,
+    snd_pcm_hw_params_set_format,
+    snd_pcm_hw_params_set_channels,
+    snd_pcm_hw_params_set_rate_near,
+    snd_pcm_hw_params_set_period_size_near,
+    snd_pcm_hw_params_set_buffer_size_near,
+    snd_pcm_hw_params,
+    snd_pcm_hw_params_get_channels,
+    snd_pcm_hw_params_get_rate,
+    snd_pcm_hw_params_get_period_size,
+    snd_pcm_hw_params_get_buffer_size,
+    snd_pcm_sw_params_current,
+    snd_pcm_sw_params_set_avail_min,
+    snd_pcm_sw_params,
+    snd_pcm_prepare,
+    snd_pcm_wait,
+    snd_pcm_resume,
+    snd_pcm_readi,
+    snd_pcm_drop,
+    snd_pcm_close,
+    clock_gettime
+};
+static MooCaptureAlsaOps selected_ops;
+static bool selected_ops_ready = false;
+static const MooCaptureAlsaOps* alsa_ops(void) {
+    if (!selected_ops_ready) {
+        selected_ops = system_ops;
+        selected_ops_ready = true;
+    }
+    return &selected_ops;
+}
+void moo_capture_alsa_set_ops_for_tests(const MooCaptureAlsaOps* ops) {
+    selected_ops = ops ? *ops : system_ops;
+    selected_ops_ready = true;
+}
+void moo_capture_alsa_reset_ops_for_tests(void) {
+    selected_ops = system_ops;
+    selected_ops_ready = true;
+}
+
+#define snd_pcm_open(...) alsa_ops()->pcm_open(__VA_ARGS__)
+#define snd_pcm_hw_params_any(...) alsa_ops()->hw_any(__VA_ARGS__)
+#define snd_pcm_hw_params_set_access(...) alsa_ops()->hw_access(__VA_ARGS__)
+#define snd_pcm_hw_params_set_format(...) alsa_ops()->hw_format(__VA_ARGS__)
+#define snd_pcm_hw_params_set_channels(...) alsa_ops()->hw_channels(__VA_ARGS__)
+#define snd_pcm_hw_params_set_rate_near(...) alsa_ops()->hw_rate_near(__VA_ARGS__)
+#define snd_pcm_hw_params_set_period_size_near(...) alsa_ops()->hw_period_near(__VA_ARGS__)
+#define snd_pcm_hw_params_set_buffer_size_near(...) alsa_ops()->hw_buffer_near(__VA_ARGS__)
+#define snd_pcm_hw_params(pcm, params) alsa_ops()->hw_commit((pcm), (params))
+#define snd_pcm_hw_params_get_channels(...) alsa_ops()->hw_get_channels(__VA_ARGS__)
+#define snd_pcm_hw_params_get_rate(...) alsa_ops()->hw_get_rate(__VA_ARGS__)
+#define snd_pcm_hw_params_get_period_size(...) alsa_ops()->hw_get_period(__VA_ARGS__)
+#define snd_pcm_hw_params_get_buffer_size(...) alsa_ops()->hw_get_buffer(__VA_ARGS__)
+#define snd_pcm_sw_params_current(...) alsa_ops()->sw_current(__VA_ARGS__)
+#define snd_pcm_sw_params_set_avail_min(...) alsa_ops()->sw_avail_min(__VA_ARGS__)
+#define snd_pcm_sw_params(pcm, params) alsa_ops()->sw_commit((pcm), (params))
+#define snd_pcm_prepare(...) alsa_ops()->prepare(__VA_ARGS__)
+#define snd_pcm_wait(...) alsa_ops()->wait(__VA_ARGS__)
+#define snd_pcm_resume(...) alsa_ops()->resume(__VA_ARGS__)
+#define snd_pcm_readi(...) alsa_ops()->readi(__VA_ARGS__)
+#define snd_pcm_drop(...) alsa_ops()->drop(__VA_ARGS__)
+#define snd_pcm_close(...) alsa_ops()->close(__VA_ARGS__)
+#define clock_gettime(...) alsa_ops()->clock_now(__VA_ARGS__)
+
 typedef struct {
     snd_pcm_t* pcm;
 } MicrophoneNative;

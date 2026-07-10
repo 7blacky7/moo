@@ -13,6 +13,60 @@
 #include <sys/stat.h>
 #include <time.h>
 
+#include "moo_capture_v4l2_ops.h"
+
+static int system_open_device(const char* path, int flags, int mode) {
+    return v4l2_open(path, flags, mode);
+}
+static int system_ioctl_device(int fd, unsigned long request, void* argument) {
+    return v4l2_ioctl(fd, request, argument);
+}
+static void* system_mmap_device(void* address, size_t length, int protection,
+                                int flags, int fd, off_t offset) {
+    return v4l2_mmap(address, length, protection, flags, fd, offset);
+}
+static int system_munmap_device(void* address, size_t length) {
+    return v4l2_munmap(address, length);
+}
+static int system_close_device(int fd) { return v4l2_close(fd); }
+static int system_poll_wait(struct pollfd* fds, nfds_t count, int timeout) {
+    return poll(fds, count, timeout);
+}
+static int system_clock_now(clockid_t clock, struct timespec* value) {
+    return clock_gettime(clock, value);
+}
+
+static const MooCaptureV4l2Ops system_ops = {
+    system_open_device, system_ioctl_device, system_mmap_device,
+    system_munmap_device, system_close_device, system_poll_wait,
+    system_clock_now
+};
+static MooCaptureV4l2Ops selected_ops;
+static bool selected_ops_ready = false;
+static const MooCaptureV4l2Ops* v4l2_ops(void) {
+    if (!selected_ops_ready) {
+        selected_ops = system_ops;
+        selected_ops_ready = true;
+    }
+    return &selected_ops;
+}
+void moo_capture_v4l2_set_ops_for_tests(const MooCaptureV4l2Ops* ops) {
+    selected_ops = ops ? *ops : system_ops;
+    selected_ops_ready = true;
+}
+void moo_capture_v4l2_reset_ops_for_tests(void) {
+    selected_ops = system_ops;
+    selected_ops_ready = true;
+}
+
+#define v4l2_open(path, flags, mode) v4l2_ops()->open_device((path), (flags), (mode))
+#define v4l2_ioctl(fd, req, arg) v4l2_ops()->ioctl_device((fd), (req), (arg))
+#define v4l2_mmap(addr, len, prot, flags, fd, off) v4l2_ops()->mmap_device((addr), (len), (prot), (flags), (fd), (off))
+#define v4l2_munmap(addr, len) v4l2_ops()->munmap_device((addr), (len))
+#define v4l2_close(fd) v4l2_ops()->close_device((fd))
+#define poll(fds, count, timeout) v4l2_ops()->poll_wait((fds), (count), (timeout))
+#define clock_gettime(clock, value) v4l2_ops()->clock_now((clock), (value))
+
 typedef struct { void* start; size_t length; } CameraBuffer;
 typedef struct {
     int fd;
