@@ -78,6 +78,15 @@ MooTensor* moo_tensor_raw(int32_t ndim, const int32_t* shape) {
     }
     t->grad = NULL;
     t->requires_grad = false;
+    // D0/G1-Skelett (KIP-STRUCT f2cbebc7): F32/CPU-Default, `data` autoritativ.
+    // moo_alloc nullt NICHT -> alle neuen Felder explizit setzen.
+    t->dtype = MOO_DT_F32;
+    t->valid = MOO_V_DATA;     // Invariante: mindestens ein Repr.-Bit gesetzt
+    t->grad_valid = 0;         // kein Grad -> Maske leer (erlaubt)
+    t->device = MOO_DEV_CPU;
+    t->store = NULL;
+    t->gpu_buf = NULL;
+    t->gpu_grad = NULL;
     return t;
 }
 
@@ -201,8 +210,18 @@ void moo_tensor_free(void* ptr) {
     MooTensor* t = (MooTensor*)ptr;
     if (t->data) free(t->data);
     if (t->grad) free(t->grad);
+    // Hinweis (KIP-STRUCT f2cbebc7): store/gpu_buf/gpu_grad sind im F32/CPU-Skelett
+    // stets NULL -> hier bewusst NICHT freigegeben. store-Free kommt mit D1,
+    // gpu_buf/gpu_grad-Pool-Rueckgabe (kein free!) mit G1 — Owner-Grenzen bleiben klar.
     free(t);
 }
+
+// === Repraesentations-Sicherung (KIP-STRUCT f2cbebc7) — F32-Skelett-Stubs ===
+// Im reinen F32/CPU-Skelett ist `data` immer die autoritative Repraesentation;
+// alle drei Funktionen sind no-op. Volle Semantik: D1 (store) / G1-PoC (gpu_buf).
+void moo_tensor_f32_sichern(MooTensor* t)   { (void)t; /* data im F32-Skelett stets gueltig */ }
+void moo_tensor_store_sichern(MooTensor* t) { (void)t; /* kein bf16-store im F32-Skelett */ }
+void moo_tensor_host_sichern(MooTensor* t)  { (void)t; /* keine GPU-Residenz im F32/CPU-Skelett */ }
 
 // ============================================================
 // Konstruktoren — alle: Args geliehen, Rueckgabe +1 owning.

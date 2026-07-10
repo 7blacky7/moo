@@ -117,15 +117,43 @@ void moo_tensor_free(void* ptr);
 //   * Die Codegen-Arms machen Post-Call-Release aller Heap-Args
 //     (pure-Reader-Muster, Commit 072834f) — leak-messbar, kein Mix.
 #define MOO_TENSOR_MAX_DIMS 8
+
+// === DType-/Device-/Valid-Konstanten (KIP-STRUCT f2cbebc7, D0 §2 + G1 §1) ===
+// dtype: Storage-Repraesentation. Der COMPUTE-Pfad bleibt f32 (D0-Vertrag).
+#define MOO_DT_F32   0   // Default: data (float*) ist autoritativ
+#define MOO_DT_BF16  1   // erster Zusatz-Storage-DType (D1) — nur `store`, kein Compute
+// valid/grad_valid: EINE geteilte Bitmaske ueber alle Repraesentationen eines
+// Tensors (D0 §2, mit G1 §1 vereinheitlicht). Schreiben macht genau eine Repr.
+// autoritativ und loescht die anderen Bits. Invariante: valid != 0.
+#define MOO_V_DATA   0x1 // f32-`data` gueltig
+#define MOO_V_STORE  0x2 // dtype-`store` gueltig (D1)
+#define MOO_V_DEV    0x4 // GPU-`gpu_buf` gueltig (G1)
+// device: BEVORZUGTER Compute-Ort (nie die einzige Kopie).
+#define MOO_DEV_CPU  0
+#define MOO_DEV_GPU  1
+
+// LAYOUT-HINWEIS (KIP-STRUCT): refcount MUSS erstes Feld bleiben (moo_release
+// liest es via generischem Header). Neue D0/G1-Felder wurden ANS ENDE angehaengt;
+// sizeof(MooTensor) waechst um dtype/valid/grad_valid/device (4x uint8_t, gepackt)
+// + store/gpu_buf/gpu_grad (3x void*). MooValue transportiert nur einen Zeiger
+// auf dieses Struct — die 16-Byte-MooValue-ABI ist UNBERUEHRT.
 typedef struct MooTensor {
     int32_t  refcount;                       // MUSS erstes Feld sein
     int32_t  ndim;                           // 1..MOO_TENSOR_MAX_DIMS
     int64_t  size;                           // Produkt aller shape-Eintraege
     int32_t  shape[MOO_TENSOR_MAX_DIMS];
     int64_t  strides[MOO_TENSOR_MAX_DIMS];   // in Elementen, row-major
-    float*   data;                           // size Elemente, owned
-    float*   grad;                           // NULL oder size Elemente, owned (Autograd B1)
+    float*   data;                           // f32-COMPUTE-Buffer, owned; ab D1 NULLABLE wenn store autoritativ
+    float*   grad;                           // NULL oder size Elemente, owned; bleibt IMMER f32 (Autograd B1)
     bool     requires_grad;
+    // --- D0/G1-Erweiterung (KIP-STRUCT f2cbebc7) — F32/CPU-Default, keine Verhaltensaenderung ---
+    uint8_t  dtype;                          // MOO_DT_F32 (Default) | MOO_DT_BF16 — Storage-DType (D1)
+    uint8_t  valid;                          // geteilte Repr.-Bitmaske MOO_V_DATA|MOO_V_STORE|MOO_V_DEV; Invariante != 0
+    uint8_t  grad_valid;                     // eigene Grad-Maske MOO_V_DATA|MOO_V_DEV (grad hat kein bf16-store); 0 = kein Grad
+    uint8_t  device;                         // MOO_DEV_CPU (Default) | MOO_DEV_GPU — bevorzugter Compute-Ort (G1)
+    void*    store;                          // dtype-Storage-Buffer (bf16, ...), NULL bei reinem f32 (D1)
+    void*    gpu_buf;                         // opaque MooKiGpuBuf*, Pool-verwaltet, NULL bis G1-PoC
+    void*    gpu_grad;                        // opaque GPU-Gradient-Handle, NULL bis G3c
 } MooTensor;
 #define MV_TENSOR(v) ((MooTensor*)moo_val_as_ptr(v))
 
@@ -144,6 +172,15 @@ MooValue moo_tensor_to_string(MooValue t);
 // Intern (P014-A2): Roh-Konstruktor fuer die Ops-Schicht (moo_tensor_ops.c).
 // Liefert refcount=1, data calloc'd (0.0f). NICHT fuer Codegen/Bindings.
 MooTensor* moo_tensor_raw(int32_t ndim, const int32_t* shape);
+
+// === Repraesentations-Sicherung (KIP-STRUCT f2cbebc7, D0 §2 / G1 §3) ===
+// Stellen sicher, dass die jeweilige Repraesentation gueltig ist (valid-Bit
+// gesetzt), indem sie ggf. aus der autoritativen Repr. konvertieren. Im reinen
+// F32/CPU-Skelett ist `data` stets autoritativ -> alle drei sind no-op.
+// Volle Konvertierungs-Semantik: D1 (store) bzw. G1-PoC (gpu_buf/Download).
+void moo_tensor_f32_sichern(MooTensor* t);    // sichert f32-`data`    (MOO_V_DATA)
+void moo_tensor_store_sichern(MooTensor* t);  // sichert dtype-`store`  (MOO_V_STORE) — D1
+void moo_tensor_host_sichern(MooTensor* t);   // sichert Host-Sicht (Download GPU->CPU) — G1
 
 // === Tensor-Ops + Registry (Plan-014 A2) ===
 // Alle Ops: Tensor-Konvention (Args borrowed, Rueckgabe +1 owning).
