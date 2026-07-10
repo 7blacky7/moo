@@ -1,266 +1,273 @@
 # ============================================================
-# zelda.moo — Top-Down Adventure mit Zelda-like Sprites
+# zelda.moo — Top-Down-Adventure (Referenz-Beispiel Gameplay)
+#
+# ZIEL: Hol das TRIFORCE!
+#   Finde den Schlüssel, öffne die verschlossene Tür im Norden,
+#   besiege den Boss und berühre das Triforce.
 #
 # Kompilieren: moo-compiler compile beispiele/zelda.moo -o beispiele/zelda
 # Starten:     ./beispiele/zelda
 #
-# Steuerung: WASD=Bewegen, Leertaste=Schwert, Escape=Beenden
+# Steuerung: WASD = Bewegen, Leertaste = Schwert, R = Neustart,
+#            Escape = Beenden
 #
-# Assets: opengameart.org/content/zelda-like-tilesets-and-sprites
+# Aufbau (Lehrbeispiel):
+#   1. Pixelfont  2. Räume als Text-Karten  3. Zustands-Dict S
+#      (WICHTIG: moo-Funktionen können globale Skalare nicht neu
+#      zuweisen — Dicts/Listen sind aber Referenz-geteilt, darum
+#      lebt aller veränderlicher Zustand in S)
+#   4. Deterministische Gegner-/Boss-Muster
+#   5. Spiellogik in spiel_schritt(inp) — headless testbar,
+#      zelda_selftest.moo spielt per Input-Skript bis zum Sieg
+#   6. Interaktiver Loop (übersprungen wenn Env ZELDA_SELFTEST)
 # ============================================================
 
 konstante TILE auf 32
 konstante MAP_W auf 20
-konstante MAP_H auf 15
+konstante MAP_H auf 13
+konstante HUD_H auf 64
 konstante WIN_W auf 640
 konstante WIN_H auf 480
 konstante SPEED auf 3
 konstante P_SIZE auf 28
 konstante F_SIZE auf 28
+konstante BOSS_SIZE auf 48
+konstante MAX_LEBEN auf 5
 
-# Sprite-Pfade
-konstante GFX auf "beispiele/assets/sprites/zelda_like/gfx/"
+# Tiles: 0=Boden 1=Wand 2=Wasser 3=Busch 4=Tür 5=Tür(zu) 6=Boss-Tor
 
-# Richtungen: 0=unten, 1=links, 2=rechts, 3=oben
-# Character-Sheet: 34x32 Frames, 8 Spalten x 8 Reihen
-# Row 0=unten walk, Row 1=links walk, Row 2=rechts walk, Row 3=oben walk
+# ============================================================
+# 1. Pixelfont (3x5) — nur die Zeichen, die wir anzeigen
+# ============================================================
+setze FONT auf {}
+FONT[" "] = [0,0,0, 0,0,0, 0,0,0, 0,0,0, 0,0,0]
+FONT[":"] = [0,0,0, 0,1,0, 0,0,0, 0,1,0, 0,0,0]
+FONT["A"] = [0,1,0, 1,0,1, 1,1,1, 1,0,1, 1,0,1]
+FONT["C"] = [1,1,1, 1,0,0, 1,0,0, 1,0,0, 1,1,1]
+FONT["D"] = [1,1,0, 1,0,1, 1,0,1, 1,0,1, 1,1,0]
+FONT["E"] = [1,1,1, 1,0,0, 1,1,0, 1,0,0, 1,1,1]
+FONT["F"] = [1,1,1, 1,0,0, 1,1,0, 1,0,0, 1,0,0]
+FONT["G"] = [1,1,1, 1,0,0, 1,0,1, 1,0,1, 1,1,1]
+FONT["I"] = [1,1,1, 0,1,0, 0,1,0, 0,1,0, 1,1,1]
+FONT["K"] = [1,0,1, 1,1,0, 1,0,0, 1,1,0, 1,0,1]
+FONT["L"] = [1,0,0, 1,0,0, 1,0,0, 1,0,0, 1,1,1]
+FONT["M"] = [1,0,1, 1,1,1, 1,1,1, 1,0,1, 1,0,1]
+FONT["O"] = [1,1,1, 1,0,1, 1,0,1, 1,0,1, 1,1,1]
+FONT["R"] = [1,1,1, 1,0,1, 1,1,0, 1,0,1, 1,0,1]
+FONT["S"] = [1,1,1, 1,0,0, 1,1,1, 0,0,1, 1,1,1]
+FONT["T"] = [1,1,1, 0,1,0, 0,1,0, 0,1,0, 0,1,0]
+FONT["U"] = [1,0,1, 1,0,1, 1,0,1, 1,0,1, 1,1,1]
+FONT["V"] = [1,0,1, 1,0,1, 1,0,1, 1,0,1, 0,1,0]
+FONT["Z"] = [1,1,1, 0,0,1, 0,1,0, 1,0,0, 1,1,1]
 
-# === Sprites laden ===
-funktion lade_sprites(win):
-    setze s auf {}
-    s["char"] = sprite_laden(win, GFX + "character.png")
-    s["world"] = sprite_laden(win, GFX + "Overworld.png")
-    s["obj"] = sprite_laden(win, GFX + "objects.png")
-    s["cave"] = sprite_laden(win, GFX + "cave.png")
-    gib_zurück s
+funktion zeichne_bitmap(win, bits, x, y, px, farbe):
+    setze zy auf 0
+    solange zy < 5:
+        setze zx auf 0
+        solange zx < 3:
+            wenn bits[zy * 3 + zx] == 1:
+                zeichne_rechteck(win, x + zx * px, y + zy * px, px, px, farbe)
+            setze zx auf zx + 1
+        setze zy auf zy + 1
 
-# === Charakter zeichnen (animiert) ===
-funktion held_zeichnen(win, s, x, y, richtung, frame, angriff):
-    # Walk: Row = richtung, Col = frame % 4 (34x32 Frames)
-    setze row auf richtung
-    setze col auf frame % 4
-    wenn angriff > 0:
-        setze col auf 4
-    setze sx auf col * 34
-    setze sy auf row * 32
-    setze char_spr auf s["char"]
-    sprite_ausschnitt(win, char_spr, sx, sy, 34, 32, x - 8, y - 8, 48, 48)
+funktion zeichne_text_px(win, s, x, y, px, farbe):
+    setze i auf 0
+    setze cx auf x
+    solange i < länge(s):
+        setze ch auf s[i]
+        wenn FONT.enthält(ch):
+            zeichne_bitmap(win, FONT[ch], cx, y, px, farbe)
+        setze cx auf cx + 4 * px
+        setze i auf i + 1
 
-# === Overworld-Tile zeichnen ===
-# Overworld.png: 16x16 Tiles, 40 Spalten x 36 Reihen
-# Gras: ~(0,0), Wand/Stein: ~(0,16), Wasser: ~(0,128), Baum: ~(16,0)
-funktion tile_zeichnen(win, s, typ, dx, dy):
-    setze world_spr auf s["world"]
-    wenn typ == 0:
-        sprite_ausschnitt(win, world_spr, 0, 0, 16, 16, dx, dy, TILE, TILE)
-    wenn typ == 1:
-        sprite_ausschnitt(win, world_spr, 96, 0, 16, 16, dx, dy, TILE, TILE)
-    wenn typ == 2:
-        sprite_ausschnitt(win, world_spr, 128, 0, 16, 16, dx, dy, TILE, TILE)
-    wenn typ == 3:
-        sprite_ausschnitt(win, world_spr, 0, 0, 16, 16, dx, dy, TILE, TILE)
-        sprite_ausschnitt(win, world_spr, 16, 0, 16, 16, dx, dy, TILE, TILE)
-    wenn typ == 4:
-        sprite_ausschnitt(win, world_spr, 48, 16, 16, 16, dx, dy, TILE, TILE)
-
-# === Items zeichnen ===
-# Objects.png: Herz ~(0,0), Muenze ~(32,16), Schluessel ~(64,0)
-funktion item_zeichnen(win, s, typ, dx, dy):
-    setze obj_spr auf s["obj"]
-    wenn typ == 0:
-        sprite_ausschnitt(win, obj_spr, 32, 32, 16, 16, dx, dy, 24, 24)
-    wenn typ == 1:
-        sprite_ausschnitt(win, obj_spr, 0, 0, 16, 16, dx, dy, 24, 24)
-    wenn typ == 2:
-        sprite_ausschnitt(win, obj_spr, 0, 16, 16, 16, dx, dy, 24, 24)
-
-# === Feind zeichnen ===
-funktion feind_zeichnen(win, s, x, y):
-    setze char_spr auf s["char"]
-    sprite_ausschnitt(win, char_spr, 0, 128, 34, 32, x - 8, y - 8, 48, 48)
-
-funktion tile_fest(t):
-    gib_zurück t == 1 oder t == 2 oder t == 3
-
-# === Karten ===
-funktion erstelle_raum_0():
+# ============================================================
+# 2. Räume als Text-Karten (lesbar + leicht änderbar)
+# ============================================================
+funktion karte_parse(zeilen):
     setze k auf []
     setze y auf 0
     solange y < MAP_H:
+        setze zeile auf zeilen[y]
         setze x auf 0
         solange x < MAP_W:
-            wenn y == 0 oder y == MAP_H - 1 oder x == 0 oder x == MAP_W - 1:
+            setze c auf zeile[x]
+            wenn c == "#":
                 k.hinzufügen(1)
-            sonst wenn x >= 9 und x <= 11 und y >= 4 und y <= 7:
+            sonst wenn c == "~":
                 k.hinzufügen(2)
-            sonst wenn (x == 4 oder x == 5) und (y == 4 oder y == 5):
+            sonst wenn c == "B":
                 k.hinzufügen(3)
-            sonst wenn (x == 14 oder x == 15) und (y == 9 oder y == 10):
-                k.hinzufügen(3)
-            sonst wenn x == 3 und y >= 8 und y <= 11:
-                k.hinzufügen(3)
+            sonst wenn c == "D":
+                k.hinzufügen(4)
+            sonst wenn c == "S":
+                k.hinzufügen(5)
+            sonst wenn c == "G":
+                k.hinzufügen(6)
             sonst:
                 k.hinzufügen(0)
             setze x auf x + 1
         setze y auf y + 1
-    k[7 * MAP_W + MAP_W - 1] = 4
     gib_zurück k
 
-funktion erstelle_raum_1():
-    setze k auf []
-    setze y auf 0
-    solange y < MAP_H:
-        setze x auf 0
-        solange x < MAP_W:
-            wenn y == 0 oder y == MAP_H - 1 oder x == 0 oder x == MAP_W - 1:
-                k.hinzufügen(1)
-            sonst wenn x == 5 und y >= 2 und y <= 8:
-                k.hinzufügen(1)
-            sonst wenn x == 10 und y >= 6 und y <= 12:
-                k.hinzufügen(1)
-            sonst wenn x == 15 und y >= 2 und y <= 8:
-                k.hinzufügen(1)
-            sonst wenn y == 5 und x >= 7 und x <= 9:
-                k.hinzufügen(1)
-            sonst wenn y == 10 und x >= 12 und x <= 14:
-                k.hinzufügen(1)
-            sonst:
-                k.hinzufügen(0)
-            setze x auf x + 1
-        setze y auf y + 1
-    k[7 * MAP_W + 0] = 4
-    gib_zurück k
+funktion raum_start():
+    setze z auf []
+    z.hinzufügen("####################")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#..BB..........BB..#")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#......~~~~~.......#")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#..................D")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#......~~~~~.......#")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#..BB..........BB..#")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("####################")
+    gib_zurück karte_parse(z)
 
-funktion karte_zeichnen(win, s, karte):
-    setze y auf 0
-    solange y < MAP_H:
-        setze x auf 0
-        solange x < MAP_W:
-            setze t auf karte[y * MAP_W + x]
-            tile_zeichnen(win, s, t, x * TILE, y * TILE)
-            setze x auf x + 1
-        setze y auf y + 1
+funktion raum_hub():
+    # Hub: links Start, rechts Schlüsselraum, oben Tür (S) zum Boss
+    setze z auf []
+    z.hinzufügen("##########S#########")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#....BB......BB....#")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("D..................D")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#....BB......BB....#")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("####################")
+    gib_zurück karte_parse(z)
 
-# === Feinde ===
-setze fx auf []
-setze fy auf []
-setze fd auf []
-setze feind_a auf []
+funktion raum_schluessel():
+    setze z auf []
+    z.hinzufügen("####################")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#........~~........#")
+    z.hinzufügen("#........~~........#")
+    z.hinzufügen("D..................#")
+    z.hinzufügen("#........~~........#")
+    z.hinzufügen("#........~~........#")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("#..................#")
+    z.hinzufügen("####################")
+    gib_zurück karte_parse(z)
+
+funktion raum_arena(kopfzeile):
+    # Raum 3 (Boss, Tor G oben) und Raum 4 (Triforce-Kammer):
+    # leere Halle, Tür unten, oberste Zeile als Parameter
+    setze z auf []
+    z.hinzufügen(kopfzeile)
+    setze i auf 0
+    solange i < 11:
+        z.hinzufügen("#..................#")
+        setze i auf i + 1
+    z.hinzufügen("##########D#########")
+    gib_zurück karte_parse(z)
+
+funktion baue_karten():
+    gib_zurück [raum_start(), raum_hub(), raum_schluessel(), raum_arena("##########G#########"), raum_arena("####################")]
+
+# ============================================================
+# 3. Spielzustand — alles in EINEM Dict (siehe Kopf-Kommentar)
+#    modus: 0=spielen, 1=game over, 2=sieg
+# ============================================================
+setze S auf {}
+
+funktion feind_neu(x, y, d, mi, ma):
+    S["e_x"].hinzufügen(x)
+    S["e_y"].hinzufügen(y)
+    S["e_d"].hinzufügen(d)
+    S["e_min"].hinzufügen(mi)
+    S["e_max"].hinzufügen(ma)
+    S["e_lebt"].hinzufügen(wahr)
 
 funktion feinde_init(raum):
-    setze fx auf []
-    setze fy auf []
-    setze fd auf []
-    setze feind_a auf []
-    wenn raum == 0:
-        fx.hinzufügen(224.0)
-        fy.hinzufügen(128.0)
-        fd.hinzufügen(1)
-        feind_a.hinzufügen(wahr)
-        fx.hinzufügen(384.0)
-        fy.hinzufügen(320.0)
-        fd.hinzufügen(-1)
-        feind_a.hinzufügen(wahr)
-        fx.hinzufügen(480.0)
-        fy.hinzufügen(192.0)
-        fd.hinzufügen(1)
-        feind_a.hinzufügen(wahr)
+    S["e_x"] = []
+    S["e_y"] = []
+    S["e_d"] = []
+    S["e_min"] = []
+    S["e_max"] = []
+    S["e_lebt"] = []
     wenn raum == 1:
-        fx.hinzufügen(224.0)
-        fy.hinzufügen(96.0)
-        fd.hinzufügen(1)
-        feind_a.hinzufügen(wahr)
-        fx.hinzufügen(384.0)
-        fy.hinzufügen(288.0)
-        fd.hinzufügen(-1)
-        feind_a.hinzufügen(wahr)
+        feind_neu(128.0, 96.0, 1, 64.0, 512.0)
+        feind_neu(416.0, 290.0, -1, 96.0, 544.0)
+    wenn raum == 2:
+        # Die Wache im Engpass vor dem Schlüssel MUSS besiegt werden
+        feind_neu(256.0, 196.0, 1, 192.0, 448.0)
+        feind_neu(128.0, 66.0, 1, 64.0, 512.0)
+        feind_neu(448.0, 354.0, -1, 96.0, 544.0)
 
-funktion feinde_update(karte):
-    setze i auf 0
-    solange i < länge(fx):
-        wenn feind_a[i]:
-            setze nx auf fx[i] + fd[i] * 2
-            setze tx auf boden(nx / TILE)
-            setze ty auf boden(fy[i] / TILE)
-            wenn tx < 1 oder tx >= MAP_W - 1 oder tile_fest(karte[ty * MAP_W + tx]):
-                fd[i] = fd[i] * -1
-            sonst:
-                fx[i] = nx
-        setze i auf i + 1
-
-funktion feinde_malen(win, s):
-    setze i auf 0
-    solange i < länge(fx):
-        wenn feind_a[i]:
-            feind_zeichnen(win, s, fx[i], fy[i])
-        setze i auf i + 1
-
-# === Items ===
-setze ix auf []
-setze iy auf []
-setze it auf []
-setze ia auf []
+funktion item_neu(x, y, typ):
+    S["i_x"].hinzufügen(x)
+    S["i_y"].hinzufügen(y)
+    S["i_typ"].hinzufügen(typ)
+    S["i_da"].hinzufügen(wahr)
 
 funktion items_init(raum):
-    setze ix auf []
-    setze iy auf []
-    setze it auf []
-    setze ia auf []
-    wenn raum == 0:
-        ix.hinzufügen(128.0)
-        iy.hinzufügen(96.0)
-        it.hinzufügen(0)
-        ia.hinzufügen(wahr)
-        ix.hinzufügen(320.0)
-        iy.hinzufügen(288.0)
-        it.hinzufügen(0)
-        ia.hinzufügen(wahr)
-        ix.hinzufügen(448.0)
-        iy.hinzufügen(96.0)
-        it.hinzufügen(0)
-        ia.hinzufügen(wahr)
-        ix.hinzufügen(192.0)
-        iy.hinzufügen(384.0)
-        it.hinzufügen(0)
-        ia.hinzufügen(wahr)
-        ix.hinzufügen(64.0)
-        iy.hinzufügen(384.0)
-        it.hinzufügen(1)
-        ia.hinzufügen(wahr)
-        ix.hinzufügen(544.0)
-        iy.hinzufügen(384.0)
-        it.hinzufügen(2)
-        ia.hinzufügen(wahr)
+    # 0=Herz, 1=Schlüssel, 2=Triforce
+    S["i_x"] = []
+    S["i_y"] = []
+    S["i_typ"] = []
+    S["i_da"] = []
     wenn raum == 1:
-        ix.hinzufügen(288.0)
-        iy.hinzufügen(128.0)
-        it.hinzufügen(0)
-        ia.hinzufügen(wahr)
-        ix.hinzufügen(416.0)
-        iy.hinzufügen(352.0)
-        it.hinzufügen(0)
-        ia.hinzufügen(wahr)
-        ix.hinzufügen(160.0)
-        iy.hinzufügen(256.0)
-        it.hinzufügen(1)
-        ia.hinzufügen(wahr)
+        item_neu(160.0, 96.0, 0)
+    wenn raum == 2:
+        item_neu(484.0, 196.0, 1)
+        item_neu(160.0, 320.0, 0)
+    wenn raum == 3:
+        item_neu(64.0, 320.0, 0)
+    wenn raum == 4:
+        item_neu(306.0, 128.0, 2)
 
-funktion items_malen(win, s):
-    setze i auf 0
-    solange i < länge(ix):
-        wenn ia[i]:
-            item_zeichnen(win, s, it[i], ix[i], iy[i])
-        setze i auf i + 1
+funktion wechsel(nr, sx, sy):
+    S["raum_nr"] = nr
+    S["px"] = sx
+    S["py"] = sy
+    feinde_init(nr)
+    items_init(nr)
+    wenn nr == 3 und S["boss_tot"] == falsch:
+        S["boss_x"] = 306.0
+        S["boss_y"] = 128.0
+        S["boss_hp"] = 5
+        S["boss_iv"] = 0
 
-# === Kollision ===
+funktion neustart():
+    S["karten"] = baue_karten()
+    S["leben"] = 3
+    S["hat_key"] = falsch
+    S["schwert"] = 0
+    S["unverw"] = 0
+    S["frame"] = 0
+    S["modus"] = 0
+    S["boss_tot"] = falsch
+    S["richtung"] = 2
+    wechsel(0, 96.0, 194.0)
+
+# ============================================================
+# 4. Kollision
+# ============================================================
+funktion tile_fest(t):
+    wenn t == 5 und S["hat_key"]:
+        gib_zurück falsch
+    gib_zurück t == 1 oder t == 2 oder t == 3 oder t == 5 oder t == 6
+
 funktion aabb(x1, y1, w1, h1, x2, y2, w2, h2):
     gib_zurück x1 < x2 + w2 und x1 + w1 > x2 und y1 < y2 + h2 und y1 + h1 > y2
 
-funktion tile_check(karte, px, py, pw, ph):
-    setze tx1 auf boden(px / TILE)
-    setze ty1 auf boden(py / TILE)
-    setze tx2 auf boden((px + pw - 1) / TILE)
-    setze ty2 auf boden((py + ph - 1) / TILE)
+funktion tile_check(karte, kx, ky, kw, kh):
+    setze tx1 auf boden(kx / TILE)
+    setze ty1 auf boden(ky / TILE)
+    setze tx2 auf boden((kx + kw - 1) / TILE)
+    setze ty2 auf boden((ky + kh - 1) / TILE)
     wenn tx1 < 0 oder ty1 < 0 oder tx2 >= MAP_W oder ty2 >= MAP_H:
         gib_zurück wahr
     wenn tile_fest(karte[ty1 * MAP_W + tx1]):
@@ -273,185 +280,320 @@ funktion tile_check(karte, px, py, pw, ph):
         gib_zurück wahr
     gib_zurück falsch
 
-# === State ===
-setze px auf 64.0
-setze py auf 224.0
-setze leben auf 3
-setze score auf 0
-setze hat_key auf falsch
-setze raum_nr auf 0
-setze schwert auf 0
-setze richtung auf 0
-setze walk_frame auf 0
-setze walk_timer auf 0
-setze unverw auf 0
+# ============================================================
+# 5. Spiellogik — ein Frame pro Aufruf, komplett headless testbar.
+#    inp = {"hoch","runter","links","rechts","schwert","neustart"}
+# ============================================================
+funktion tuer_pruefen():
+    setze karte auf S["karten"][S["raum_nr"]]
+    setze tcx auf boden((S["px"] + P_SIZE / 2) / TILE)
+    setze tcy auf boden((S["py"] + P_SIZE / 2) / TILE)
+    wenn tcx < 0 oder tcx >= MAP_W oder tcy < 0 oder tcy >= MAP_H:
+        gib_zurück 0
+    setze t auf karte[tcy * MAP_W + tcx]
+    wenn t == 5:
+        # Schlüssel öffnet die Tür dauerhaft
+        karte[tcy * MAP_W + tcx] = 4
+        setze t auf 4
+    wenn t != 4:
+        gib_zurück 0
+    setze nr auf S["raum_nr"]
+    wenn nr == 0 und tcx == 19:
+        wechsel(1, 38.0, 194.0)
+    sonst wenn nr == 1 und tcx == 0:
+        wechsel(0, 578.0, 194.0)
+    sonst wenn nr == 1 und tcx == 19:
+        wechsel(2, 38.0, 194.0)
+    sonst wenn nr == 1 und tcy == 0:
+        wechsel(3, 322.0, 352.0)
+    sonst wenn nr == 2 und tcx == 0:
+        wechsel(1, 578.0, 194.0)
+    sonst wenn nr == 3 und tcy == 12:
+        wechsel(1, 322.0, 34.0)
+    sonst wenn nr == 3 und tcy == 0:
+        wechsel(4, 322.0, 352.0)
+    sonst wenn nr == 4 und tcy == 12:
+        wechsel(3, 322.0, 352.0)
+    gib_zurück 0
 
-setze karten auf [erstelle_raum_0(), erstelle_raum_1()]
-setze karte auf karten[0]
-feinde_init(0)
-items_init(0)
+funktion schaden(anzahl):
+    wenn S["unverw"] > 0:
+        gib_zurück 0
+    S["leben"] = S["leben"] - anzahl
+    S["unverw"] = 60
+    wenn S["leben"] <= 0:
+        S["leben"] = 0
+        S["modus"] = 1
+    gib_zurück 0
 
-funktion wechsel(nr, sx, sy):
-    setze raum_nr auf nr
-    setze karte auf karten[nr]
-    setze px auf sx
-    setze py auf sy
-    feinde_init(nr)
-    items_init(nr)
+funktion spiel_schritt(inp):
+    wenn S["modus"] != 0:
+        wenn inp["neustart"]:
+            neustart()
+        gib_zurück 0
+    S["frame"] = S["frame"] + 1
+    setze karte auf S["karten"][S["raum_nr"]]
 
-funktion hud(win, s):
-    setze obj_spr auf s["obj"]
-    zeichne_rechteck(win, 0, 0, WIN_W, 28, "#1A1A2E")
-    setze i auf 0
-    solange i < leben:
-        sprite_ausschnitt(win, obj_spr, 0, 0, 16, 16, 8 + i * 26, 2, 24, 24)
-        setze i auf i + 1
-    setze sc auf 0
-    solange sc < score und sc < 20:
-        sprite_ausschnitt(win, obj_spr, 32, 32, 16, 16, WIN_W - 28 - sc * 14, 4, 20, 20)
-        setze sc auf sc + 1
-    wenn hat_key:
-        sprite_ausschnitt(win, obj_spr, 0, 16, 16, 16, WIN_W / 2 - 12, 2, 24, 24)
-
-# === Hauptprogramm ===
-zeige "=== moo Zelda-Adventure ==="
-zeige "WASD=Bewegen, Leertaste=Schwert, Escape=Beenden"
-
-setze win auf fenster_erstelle("moo Zelda", WIN_W, WIN_H)
-setze spr auf lade_sprites(win)
-
-solange fenster_offen(win):
-    wenn taste_gedrückt("escape"):
-        stopp
-
-    setze bewegt auf falsch
-    setze nx auf px
-    setze ny auf py
-
-    wenn taste_gedrückt("w"):
+    # --- Bewegung (Achsen getrennt, damit Wände nicht kleben) ---
+    setze nx auf S["px"]
+    setze ny auf S["py"]
+    wenn inp["hoch"]:
         setze ny auf ny - SPEED
-        setze richtung auf 3
-        setze bewegt auf wahr
-    wenn taste_gedrückt("s"):
+        S["richtung"] = 3
+    wenn inp["runter"]:
         setze ny auf ny + SPEED
-        setze richtung auf 0
-        setze bewegt auf wahr
-    wenn taste_gedrückt("a"):
+        S["richtung"] = 0
+    wenn inp["links"]:
         setze nx auf nx - SPEED
-        setze richtung auf 1
-        setze bewegt auf wahr
-    wenn taste_gedrückt("d"):
+        S["richtung"] = 1
+    wenn inp["rechts"]:
         setze nx auf nx + SPEED
-        setze richtung auf 2
-        setze bewegt auf wahr
+        S["richtung"] = 2
+    wenn tile_check(karte, nx, S["py"], P_SIZE, P_SIZE) == falsch:
+        S["px"] = nx
+    wenn tile_check(karte, S["px"], ny, P_SIZE, P_SIZE) == falsch:
+        S["py"] = ny
 
-    wenn tile_check(karte, nx, py, P_SIZE, P_SIZE) == falsch:
-        setze px auf nx
-    wenn tile_check(karte, px, ny, P_SIZE, P_SIZE) == falsch:
-        setze py auf ny
-
-    # Walk-Animation
-    wenn bewegt:
-        setze walk_timer auf walk_timer + 1
-        wenn walk_timer >= 6:
-            setze walk_frame auf walk_frame + 1
-            setze walk_timer auf 0
-
-    # Schwert
-    wenn taste_gedrückt("leertaste") und schwert == 0:
-        setze schwert auf 8
-    wenn schwert > 0:
-        setze schwert auf schwert - 1
-
-    # Schwert-Richtungsvektoren
+    # --- Schwert (10 Frames aktiv, dann wieder bereit) ---
+    wenn inp["schwert"] und S["schwert"] == 0:
+        S["schwert"] = 10
+    wenn S["schwert"] > 0:
+        S["schwert"] = S["schwert"] - 1
     setze sdx auf 0
     setze sdy auf 0
-    wenn richtung == 0:
+    wenn S["richtung"] == 0:
         setze sdy auf 1
-    wenn richtung == 1:
+    wenn S["richtung"] == 1:
         setze sdx auf -1
-    wenn richtung == 2:
+    wenn S["richtung"] == 2:
         setze sdx auf 1
-    wenn richtung == 3:
+    wenn S["richtung"] == 3:
         setze sdy auf -1
+    setze swx auf S["px"] + 2 + sdx * 26
+    setze swy auf S["py"] + 2 + sdy * 26
 
-    setze swx auf px + sdx * 24
-    setze swy auf py + sdy * 24
-
-    # Feinde
-    feinde_update(karte)
-
-    wenn schwert > 0:
-        setze i auf 0
-        solange i < länge(fx):
-            wenn feind_a[i]:
-                wenn aabb(swx, swy, 20, 20, fx[i], fy[i], F_SIZE, F_SIZE):
-                    feind_a[i] = falsch
-                    setze score auf score + 10
-            setze i auf i + 1
-
-    wenn unverw > 0:
-        setze unverw auf unverw - 1
-    sonst:
-        setze i auf 0
-        solange i < länge(fx):
-            wenn feind_a[i]:
-                wenn aabb(px, py, P_SIZE, P_SIZE, fx[i], fy[i], F_SIZE, F_SIZE):
-                    setze leben auf leben - 1
-                    setze unverw auf 45
-                    wenn leben <= 0:
-                        zeige "GAME OVER! Score: " + text(score)
-                        stopp
-            setze i auf i + 1
-
-    # Items
+    # --- Gegner: feste Patrouille, Schwert tötet, Kontakt kostet Herz ---
+    setze ex auf S["e_x"]
+    setze ed auf S["e_d"]
+    setze el auf S["e_lebt"]
     setze i auf 0
-    solange i < länge(ix):
-        wenn ia[i]:
-            wenn aabb(px, py, P_SIZE, P_SIZE, ix[i], iy[i], 24, 24):
-                wenn it[i] == 0:
-                    setze score auf score + 5
-                wenn it[i] == 1:
-                    setze leben auf min(leben + 1, 5)
-                wenn it[i] == 2:
-                    setze hat_key auf wahr
-                ia[i] = falsch
+    solange i < länge(ex):
+        wenn el[i]:
+            setze ex_neu auf ex[i] + ed[i] * 2
+            wenn ex_neu < S["e_min"][i] oder ex_neu > S["e_max"][i]:
+                ed[i] = ed[i] * -1
+            sonst:
+                ex[i] = ex_neu
+            wenn S["schwert"] > 0 und aabb(swx, swy, 24, 24, ex[i], S["e_y"][i], F_SIZE, F_SIZE):
+                el[i] = falsch
+            sonst wenn aabb(S["px"], S["py"], P_SIZE, P_SIZE, ex[i], S["e_y"][i], F_SIZE, F_SIZE):
+                schaden(1)
         setze i auf i + 1
 
-    # Tuer
-    setze tcx auf boden((px + 14) / TILE)
-    setze tcy auf boden((py + 14) / TILE)
-    wenn tcx >= 0 und tcx < MAP_W und tcy >= 0 und tcy < MAP_H:
-        wenn karte[tcy * MAP_W + tcx] == 4:
-            wenn raum_nr == 0 und tcx == MAP_W - 1 und hat_key:
-                wechsel(1, 48.0, 224.0)
-            sonst wenn raum_nr == 1 und tcx == 0:
-                wechsel(0, 576.0, 224.0)
+    # --- Boss: verfolgt den Helden, Treffer wirft ihn zurück ---
+    wenn S["raum_nr"] == 3 und S["boss_tot"] == falsch:
+        wenn S["boss_iv"] > 0:
+            S["boss_iv"] = S["boss_iv"] - 1
+        sonst:
+            wenn S["px"] > S["boss_x"] + 1:
+                S["boss_x"] = S["boss_x"] + 1
+            wenn S["px"] < S["boss_x"] - 1:
+                S["boss_x"] = S["boss_x"] - 1
+            wenn S["py"] > S["boss_y"] + 1:
+                S["boss_y"] = S["boss_y"] + 1
+            wenn S["py"] < S["boss_y"] - 1:
+                S["boss_y"] = S["boss_y"] - 1
+        wenn S["schwert"] > 0 und S["boss_iv"] == 0 und aabb(swx, swy, 24, 24, S["boss_x"], S["boss_y"], BOSS_SIZE, BOSS_SIZE):
+            S["boss_hp"] = S["boss_hp"] - 1
+            S["boss_iv"] = 30
+            # Knockback: 48px vom Helden weg (bleibt im Raum)
+            wenn S["boss_x"] > S["px"]:
+                S["boss_x"] = min(S["boss_x"] + 48, 556.0)
+            sonst:
+                S["boss_x"] = max(S["boss_x"] - 48, 36.0)
+            wenn S["boss_y"] > S["py"]:
+                S["boss_y"] = min(S["boss_y"] + 48, 330.0)
+            sonst:
+                S["boss_y"] = max(S["boss_y"] - 48, 36.0)
+            wenn S["boss_hp"] <= 0:
+                S["boss_tot"] = wahr
+                # Boss-Tor öffnen (Tile 6 -> 4, Position (10,0))
+                setze bosskarte auf S["karten"][3]
+                bosskarte[10] = 4
+        sonst wenn aabb(S["px"], S["py"], P_SIZE, P_SIZE, S["boss_x"], S["boss_y"], BOSS_SIZE, BOSS_SIZE):
+            schaden(1)
 
-    # === Zeichnen ===
-    fenster_löschen(win, "#1A1A2E")
-    karte_zeichnen(win, spr, karte)
-    items_malen(win, spr)
-    feinde_malen(win, spr)
+    wenn S["unverw"] > 0:
+        S["unverw"] = S["unverw"] - 1
 
-    # Spieler (blinkt bei Unverwundbarkeit)
-    wenn unverw == 0 oder unverw % 4 < 2:
-        held_zeichnen(win, spr, px, py, richtung, walk_frame, schwert)
+    # --- Items einsammeln ---
+    setze ida auf S["i_da"]
+    setze i auf 0
+    solange i < länge(ida):
+        wenn ida[i] und aabb(S["px"], S["py"], P_SIZE, P_SIZE, S["i_x"][i], S["i_y"][i], 24, 24):
+            wenn S["i_typ"][i] == 0:
+                S["leben"] = min(S["leben"] + 1, MAX_LEBEN)
+            wenn S["i_typ"][i] == 1:
+                S["hat_key"] = wahr
+            wenn S["i_typ"][i] == 2:
+                S["modus"] = 2
+            ida[i] = falsch
+        setze i auf i + 1
 
-    # Schwert-Effekt (Richtungsabhaengig)
-    wenn schwert > 0:
-        wenn richtung == 0:
-            zeichne_rechteck(win, px + 4, py + P_SIZE, 20, 6, "#E0E0E0")
-        wenn richtung == 3:
-            zeichne_rechteck(win, px + 4, py - 8, 20, 6, "#E0E0E0")
-        wenn richtung == 1:
-            zeichne_rechteck(win, px - 10, py + 4, 6, 20, "#E0E0E0")
-        wenn richtung == 2:
-            zeichne_rechteck(win, px + P_SIZE + 2, py + 4, 6, 20, "#E0E0E0")
+    tuer_pruefen()
+    gib_zurück 0
 
-    hud(win, spr)
-    fenster_aktualisieren(win)
-    warte(16)
+# ============================================================
+# 6. Zeichnen (reine Rechteck-Grafik, keine Assets nötig)
+# ============================================================
+funktion tile_farbe(t):
+    wenn t == 1:
+        gib_zurück "#5D4037"
+    wenn t == 2:
+        gib_zurück "#1976D2"
+    wenn t == 3:
+        gib_zurück "#1B5E20"
+    wenn t == 4:
+        gib_zurück "#111111"
+    wenn t == 5:
+        gib_zurück "#8D6E63"
+    wenn t == 6:
+        gib_zurück "#B71C1C"
+    wenn S["raum_nr"] >= 3:
+        gib_zurück "#4E4E56"
+    gib_zurück "#2F6B2F"
 
-fenster_schliessen(win)
-zeige "Zelda-Adventure beendet. Score: " + text(score)
+funktion triforce_zeichnen(win, x, y, zh):
+    # Pyramide aus Rechteck-Zeilen (zh = Zeilenhöhe in px)
+    setze r auf 0
+    solange r < 8:
+        zeichne_rechteck(win, x - r * zh, y + r * zh, 2 * r * zh + zh, zh, "#FFD54F")
+        setze r auf r + 1
+
+funktion held_zeichnen(win):
+    wenn S["unverw"] > 0 und S["unverw"] % 4 >= 2:
+        gib_zurück 0
+    setze dx auf S["px"]
+    setze dy auf S["py"] + HUD_H
+    zeichne_rechteck(win, dx, dy, P_SIZE, P_SIZE, "#43A047")
+    zeichne_rechteck(win, dx + 5, dy + 6, 5, 5, "#FFFFFF")
+    zeichne_rechteck(win, dx + 17, dy + 6, 5, 5, "#FFFFFF")
+    wenn S["schwert"] > 0:
+        wenn S["richtung"] == 0:
+            zeichne_rechteck(win, dx + 5, dy + P_SIZE, 18, 8, "#E0E0E0")
+        wenn S["richtung"] == 3:
+            zeichne_rechteck(win, dx + 5, dy - 8, 18, 8, "#E0E0E0")
+        wenn S["richtung"] == 1:
+            zeichne_rechteck(win, dx - 10, dy + 5, 10, 18, "#E0E0E0")
+        wenn S["richtung"] == 2:
+            zeichne_rechteck(win, dx + P_SIZE, dy + 5, 10, 18, "#E0E0E0")
+    gib_zurück 0
+
+funktion hud_zeichnen(win):
+    zeichne_rechteck(win, 0, 0, WIN_W, HUD_H, "#1A1A2E")
+    zeichne_text_px(win, "ZIEL: TRIFORCE", 8, 8, 2, "#FFFFFF")
+    setze i auf 0
+    solange i < MAX_LEBEN:
+        wenn i < S["leben"]:
+            zeichne_rechteck(win, 8 + i * 26, 36, 20, 18, "#E53935")
+        sonst:
+            zeichne_rechteck(win, 8 + i * 26, 36, 20, 18, "#3A2A2A")
+        setze i auf i + 1
+    wenn S["hat_key"]:
+        zeichne_rechteck(win, 160, 38, 18, 12, "#FFD54F")
+        zeichne_rechteck(win, 176, 42, 12, 4, "#FFD54F")
+    triforce_zeichnen(win, 600, 14, 4)
+
+funktion welt_zeichnen(win):
+    fenster_löschen(win, "#101018")
+    setze karte auf S["karten"][S["raum_nr"]]
+    setze y auf 0
+    solange y < MAP_H:
+        setze x auf 0
+        solange x < MAP_W:
+            setze t auf karte[y * MAP_W + x]
+            zeichne_rechteck(win, x * TILE, HUD_H + y * TILE, TILE, TILE, tile_farbe(t))
+            wenn t == 5:
+                zeichne_rechteck(win, x * TILE + 10, HUD_H + y * TILE + 10, 12, 14, "#FFD54F")
+            setze x auf x + 1
+        setze y auf y + 1
+
+    setze i auf 0
+    solange i < länge(S["i_x"]):
+        wenn S["i_da"][i]:
+            setze dx auf S["i_x"][i]
+            setze dy auf S["i_y"][i] + HUD_H
+            wenn S["i_typ"][i] == 0:
+                zeichne_rechteck(win, dx, dy, 20, 18, "#E53935")
+            wenn S["i_typ"][i] == 1:
+                zeichne_rechteck(win, dx, dy, 18, 12, "#FFD54F")
+                zeichne_rechteck(win, dx + 14, dy + 4, 12, 4, "#FFD54F")
+            wenn S["i_typ"][i] == 2:
+                triforce_zeichnen(win, dx + 14, dy, 6)
+        setze i auf i + 1
+
+    setze i auf 0
+    solange i < länge(S["e_x"]):
+        wenn S["e_lebt"][i]:
+            setze dx auf S["e_x"][i]
+            setze dy auf S["e_y"][i] + HUD_H
+            zeichne_rechteck(win, dx, dy, F_SIZE, F_SIZE, "#C62828")
+            zeichne_rechteck(win, dx + 5, dy + 7, 5, 5, "#FFFFFF")
+            zeichne_rechteck(win, dx + 17, dy + 7, 5, 5, "#FFFFFF")
+        setze i auf i + 1
+
+    wenn S["raum_nr"] == 3 und S["boss_tot"] == falsch:
+        setze bf auf "#6A1B9A"
+        wenn S["boss_iv"] > 0 und S["boss_iv"] % 4 >= 2:
+            setze bf auf "#FFFFFF"
+        setze bx auf S["boss_x"]
+        setze by auf S["boss_y"] + HUD_H
+        zeichne_rechteck(win, bx, by, BOSS_SIZE, BOSS_SIZE, bf)
+        zeichne_rechteck(win, bx + 8, by + 12, 8, 8, "#FFEB3B")
+        zeichne_rechteck(win, bx + 32, by + 12, 8, 8, "#FFEB3B")
+        # Boss-Lebensbalken
+        zeichne_rechteck(win, 220, HUD_H + 8, 200, 10, "#3A2A2A")
+        zeichne_rechteck(win, 220, HUD_H + 8, S["boss_hp"] * 40, 10, "#C62828")
+
+    held_zeichnen(win)
+    hud_zeichnen(win)
+
+    wenn S["modus"] == 1:
+        zeichne_rechteck(win, 60, 180, 520, 140, "#1A1A2E")
+        zeichne_text_px(win, "GAME OVER", 100, 210, 6, "#E53935")
+        zeichne_text_px(win, "DRUECKE R", 200, 270, 3, "#FFFFFF")
+    wenn S["modus"] == 2:
+        zeichne_rechteck(win, 60, 180, 520, 140, "#3E2F00")
+        zeichne_text_px(win, "SIEG", 200, 200, 8, "#FFD54F")
+        zeichne_text_px(win, "DRUECKE R", 200, 270, 3, "#FFFFFF")
+    gib_zurück 0
+
+neustart()
+
+# ============================================================
+# 7. Interaktiver Loop (im Selftest per Env-Variable übersprungen)
+# ============================================================
+wenn umgebung("ZELDA_SELFTEST") == nichts:
+    zeige "=== moo Zelda-Adventure ==="
+    zeige "ZIEL: Hol das Triforce! Schlüssel -> Tür -> Boss -> Triforce"
+    zeige "WASD=Bewegen, Leertaste=Schwert, R=Neustart, Escape=Beenden"
+
+    setze win auf fenster_erstelle("moo Zelda", WIN_W, WIN_H)
+
+    solange fenster_offen(win):
+        wenn taste_gedrückt("escape"):
+            stopp
+        setze inp auf {}
+        inp["hoch"] = taste_gedrückt("w")
+        inp["runter"] = taste_gedrückt("s")
+        inp["links"] = taste_gedrückt("a")
+        inp["rechts"] = taste_gedrückt("d")
+        inp["schwert"] = taste_gedrückt("leertaste")
+        inp["neustart"] = taste_gedrückt("r")
+        spiel_schritt(inp)
+        welt_zeichnen(win)
+        fenster_aktualisieren(win)
+        warte(16)
+
+    fenster_schliessen(win)
+    zeige "Zelda-Adventure beendet."
