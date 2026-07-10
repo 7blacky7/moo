@@ -1179,5 +1179,11 @@ MooValue moo_tensor_gradient_loeschen(MooValue tv) {
     }
     MooTensor* t = T(tv);
     if (t->grad) memset(t->grad, 0, (size_t)t->size * sizeof(float));
+    // KIP-G4e-Folgefix: Host ist nach dem Nullen autoritativ (I9-Muster) —
+    // sonst akkumuliert ein residenter bw_* (grad_valid==MOO_V_DEV) auf den
+    // stalen gpu_grad weiter (gefunden via ki_gpu_g4d_bench.c: maxdiff≈2×iters).
+    // grad==NULL-Fall ist mit abgedeckt: grad_sicherstellen liefert calloc-Null,
+    // kein Download mehr von der alten GPU-Seite.
+    if (t->grad_valid) t->grad_valid = MOO_V_DATA;
     return moo_none();
 }
