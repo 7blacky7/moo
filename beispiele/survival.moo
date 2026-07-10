@@ -1,53 +1,98 @@
 # ============================================================
-# moo Survival — Crafting + Ueberleben in prozeduraler Welt
+# survival.moo — Crafting + Überleben in prozeduraler Welt
 #
-# Kompilieren + Starten:
-#   moo-compiler compile beispiele/survival.moo -o beispiele/survival
-#   ./beispiele/survival
+# ZIEL: Überlebe 3 Nächte! Sammle tagsüber Holz/Stein/Nahrung,
+#       crafte Werkzeuge, verschanze dich nachts hinter Mauern.
 #
-# Bedienung:
-#   WASD - Bewegen
-#   Leertaste - Ressource abbauen / Angriff
-#   1/2/3 - Werkzeug waehlen (Hand/Axt/Spitzhacke)
-#   E - Crafting (wenn Materialien vorhanden)
-#   Escape - Beenden
+# Start: moo-compiler run beispiele/survival.moo
 #
-# Features:
-#   * 150x150 prozedurale Welt (Biome, Fluesse, Waelder)
-#   * Ressourcen: Holz, Stein, Nahrung, Eisen
-#   * Crafting: Axt, Spitzhacke, Schwert, Mauer
-#   * Hunger-System (sinkt ueber Zeit, Nahrung heilt)
-#   * Tag-Nacht-Zyklus (Nacht = mehr Monster)
-#   * Monster spawnen bei Nacht
-#   * Mauern bauen zur Verteidigung
+# Steuerung: WASD=Bewegen, Leertaste=Abbauen/Angriff, E=Craften,
+#            M+Leertaste=Mauer bauen, 1/2/3=Werkzeug,
+#            R=Neustart, Escape=Beenden
+#
+# Aufbau: 1. Pixelfont  2. Zustands-Dict S (Globals-Shadowing!
+#   siehe zelda.moo — hier lieferte rng() konstante Werte)
+#   3. Prozedurale Welt (Noise)  4. spiel_schritt(inp) — headless
+#   testbar (survival_selftest.moo)  5. Zeichnen  6. Loop
+#   (Env-Guard SURVIVAL_SELFTEST)
 # ============================================================
 
-setze BREITE auf 800
-setze HOEHE auf 600
-setze TILE auf 16
-setze WELT_W auf 150
-setze WELT_H auf 150
-setze SICHT_W auf 52
-setze SICHT_H auf 40
+konstante BREITE auf 800
+konstante HOEHE auf 600
+konstante TILE auf 16
+konstante WELT_W auf 150
+konstante WELT_H auf 150
+konstante SICHT_W auf 52
+konstante SICHT_H auf 40
+konstante MAX_MONSTER auf 30
+konstante ZIEL_NAECHTE auf 3
 
 # Tiles
-setze GRAS auf 0
-setze BAUM auf 1
-setze WASSER auf 2
-setze STEIN auf 3
-setze ERZE auf 4
-setze BUSCH auf 5
-setze MAUER auf 6
-setze SAND auf 7
+konstante GRAS auf 0
+konstante BAUM auf 1
+konstante WASSER auf 2
+konstante STEIN auf 3
+konstante ERZE auf 4
+konstante BUSCH auf 5
+konstante MAUER auf 6
+konstante SAND auf 7
 
-setze welt auf []
-setze rng_state auf 98765
+# ============================================================
+# 1. Pixelfont (3x5) — nur die Zeichen, die wir anzeigen
+# ============================================================
+setze FONT auf {}
+FONT[" "] = [0,0,0, 0,0,0, 0,0,0, 0,0,0, 0,0,0]
+FONT[":"] = [0,0,0, 0,1,0, 0,0,0, 0,1,0, 0,0,0]
+FONT["3"] = [1,1,1, 0,0,1, 1,1,1, 0,0,1, 1,1,1]
+FONT["A"] = [0,1,0, 1,0,1, 1,1,1, 1,0,1, 1,0,1]
+FONT["C"] = [1,1,1, 1,0,0, 1,0,0, 1,0,0, 1,1,1]
+FONT["D"] = [1,1,0, 1,0,1, 1,0,1, 1,0,1, 1,1,0]
+FONT["E"] = [1,1,1, 1,0,0, 1,1,0, 1,0,0, 1,1,1]
+FONT["G"] = [1,1,1, 1,0,0, 1,0,1, 1,0,1, 1,1,1]
+FONT["H"] = [1,0,1, 1,0,1, 1,1,1, 1,0,1, 1,0,1]
+FONT["I"] = [1,1,1, 0,1,0, 0,1,0, 0,1,0, 1,1,1]
+FONT["K"] = [1,0,1, 1,1,0, 1,0,0, 1,1,0, 1,0,1]
+FONT["L"] = [1,0,0, 1,0,0, 1,0,0, 1,0,0, 1,1,1]
+FONT["M"] = [1,0,1, 1,1,1, 1,1,1, 1,0,1, 1,0,1]
+FONT["N"] = [1,1,0, 1,0,1, 1,0,1, 1,0,1, 1,0,1]
+FONT["O"] = [1,1,1, 1,0,1, 1,0,1, 1,0,1, 1,1,1]
+FONT["R"] = [1,1,1, 1,0,1, 1,1,0, 1,0,1, 1,0,1]
+FONT["S"] = [1,1,1, 1,0,0, 1,1,1, 0,0,1, 1,1,1]
+FONT["T"] = [1,1,1, 0,1,0, 0,1,0, 0,1,0, 0,1,0]
+FONT["U"] = [1,0,1, 1,0,1, 1,0,1, 1,0,1, 1,1,1]
+FONT["V"] = [1,0,1, 1,0,1, 1,0,1, 1,0,1, 0,1,0]
+FONT["Z"] = [1,1,1, 0,0,1, 0,1,0, 1,0,0, 1,1,1]
+
+funktion zeichne_bitmap(win, bits, x, y, px, farbe):
+    setze zy auf 0
+    solange zy < 5:
+        setze zx auf 0
+        solange zx < 3:
+            wenn bits[zy * 3 + zx] == 1:
+                zeichne_rechteck(win, x + zx * px, y + zy * px, px, px, farbe)
+            setze zx auf zx + 1
+        setze zy auf zy + 1
+
+funktion zeichne_text_px(win, s, x, y, px, farbe):
+    setze i auf 0
+    setze cx auf x
+    solange i < länge(s):
+        setze ch auf s[i]
+        wenn FONT.enthält(ch):
+            zeichne_bitmap(win, FONT[ch], cx, y, px, farbe)
+        setze cx auf cx + 4 * px
+        setze i auf i + 1
+
+# ============================================================
+# 2. Zustand + Helfer
+#    modus: 0=spielen, 1=game over, 2=sieg
+# ============================================================
+setze S auf {}
 
 funktion rng():
-    setze rng_state auf (rng_state * 1103515245 + 12345) % 2147483647
-    wenn rng_state < 0:
-        setze rng_state auf 0 - rng_state
-    gib_zurück rng_state
+    # Exakter Klein-LCG (mod 65537) — double-präzisionssicher
+    S["rng"] = (S["rng"] * 75 + 74) % 65537
+    gib_zurück S["rng"]
 
 funktion abs_wert(v):
     wenn v < 0:
@@ -68,22 +113,23 @@ funktion noise(x, y, scale):
 funktion welt_get(x, y):
     wenn x < 0 oder x >= WELT_W oder y < 0 oder y >= WELT_H:
         gib_zurück WASSER
-    gib_zurück welt[y * WELT_W + x]
+    gib_zurück S["welt"][y * WELT_W + x]
 
 funktion welt_set(x, y, val):
     wenn x >= 0 und x < WELT_W und y >= 0 und y < WELT_H:
-        welt[y * WELT_W + x] = val
+        setze w auf S["welt"]
+        w[y * WELT_W + x] = val
 
 funktion ist_begehbar(x, y):
     setze tile auf welt_get(x, y)
     gib_zurück tile == GRAS oder tile == SAND
 
-# === WELT GENERIEREN ===
+# ============================================================
+# 3. Prozedurale Welt (Noise: Höhe, Feuchtigkeit, Detail)
+# ============================================================
 funktion welt_gen():
-    setze idx auf 0
-    solange idx < WELT_W * WELT_H:
-        welt.hinzufügen(GRAS)
-        setze idx auf idx + 1
+    S["welt"] = []
+    setze w auf S["welt"]
     setze wy auf 0
     solange wy < WELT_H:
         setze wx auf 0
@@ -104,276 +150,261 @@ funktion welt_gen():
                 setze tile auf BUSCH
             wenn tile == STEIN und detail > 0.7:
                 setze tile auf ERZE
-            welt_set(wx, wy, tile)
+            w.hinzufügen(tile)
             setze wx auf wx + 1
         setze wy auf wy + 1
-
-welt_gen()
-
-# === SPIELER ===
-setze spieler_x auf WELT_W / 2
-setze spieler_y auf WELT_H / 2
-# Startposition auf begehbarem Tile finden
-solange nicht ist_begehbar(spieler_x, spieler_y):
-    setze spieler_x auf spieler_x + 1
-    wenn spieler_x >= WELT_W:
-        setze spieler_x auf 0
-        setze spieler_y auf spieler_y + 1
-
-setze spieler_hp auf 100
-setze spieler_max_hp auf 100
-setze spieler_hunger auf 100
-setze spieler_dx auf 0
-setze spieler_dy auf 1
-setze move_cooldown auf 0
-setze angriff_timer auf 0
-
-# Inventar
-setze inv_holz auf 0
-setze inv_stein auf 0
-setze inv_nahrung auf 5
-setze inv_eisen auf 0
-setze hat_axt auf falsch
-setze hat_spitzhacke auf falsch
-setze hat_schwert auf falsch
-setze werkzeug auf 0
-setze score auf 0
-
-# Tag-Nacht
-setze tageszeit auf 0.25
-setze tag_speed auf 0.0003
-
-# === MONSTER ===
-setze MAX_MONSTER auf 30
-setze mon_x auf []
-setze mon_y auf []
-setze mon_hp auf []
-setze mon_aktiv auf []
-setze mi auf 0
-solange mi < MAX_MONSTER:
-    mon_x.hinzufügen(0)
-    mon_y.hinzufügen(0)
-    mon_hp.hinzufügen(0)
-    mon_aktiv.hinzufügen(falsch)
-    setze mi auf mi + 1
-
-setze spawn_timer auf 0
 
 funktion monster_spawnen(px, py):
     setze mi auf 0
     solange mi < MAX_MONSTER:
-        wenn nicht mon_aktiv[mi]:
+        wenn S["mon_aktiv"][mi] == falsch:
             setze mx auf px + rng() % 30 - 15
             setze my auf py + rng() % 30 - 15
             wenn ist_begehbar(mx, my):
                 setze dist auf abs_wert(mx - px) + abs_wert(my - py)
                 wenn dist > 8:
-                    mon_x[mi] = mx
-                    mon_y[mi] = my
-                    mon_hp[mi] = 15
-                    mon_aktiv[mi] = wahr
-                    gib_zurück nichts
+                    S["mon_x"][mi] = mx
+                    S["mon_y"][mi] = my
+                    S["mon_hp"][mi] = 15
+                    S["mon_aktiv"][mi] = wahr
+                    gib_zurück 0
         setze mi auf mi + 1
+    gib_zurück 0
 
-# === HAUPTPROGRAMM ===
-setze win auf fenster_erstelle("moo Survival", BREITE, HOEHE)
+funktion neustart():
+    S["rng"] = 98765
+    welt_gen()
+    # Startposition auf begehbarem Tile finden
+    setze sx auf boden(WELT_W / 2)
+    setze sy auf boden(WELT_H / 2)
+    solange ist_begehbar(sx, sy) == falsch:
+        setze sx auf sx + 1
+        wenn sx >= WELT_W:
+            setze sx auf 0
+            setze sy auf sy + 1
+    S["spieler_x"] = sx
+    S["spieler_y"] = sy
+    S["spieler_hp"] = 100.0
+    S["spieler_max_hp"] = 100
+    S["spieler_hunger"] = 100.0
+    S["spieler_dx"] = 0
+    S["spieler_dy"] = 1
+    S["cooldown"] = 0
+    S["angriff_timer"] = 0
+    S["inv_holz"] = 0
+    S["inv_stein"] = 0
+    S["inv_nahrung"] = 5
+    S["inv_eisen"] = 0
+    S["hat_axt"] = falsch
+    S["hat_spitzhacke"] = falsch
+    S["hat_schwert"] = falsch
+    S["werkzeug"] = 0
+    S["score"] = 0
+    S["tageszeit"] = 0.25
+    S["naechte"] = 0
+    S["war_nacht"] = falsch
+    S["spawn_timer"] = 0
+    S["mon_x"] = []
+    S["mon_y"] = []
+    S["mon_hp"] = []
+    S["mon_aktiv"] = []
+    setze mi auf 0
+    solange mi < MAX_MONSTER:
+        S["mon_x"].hinzufügen(0)
+        S["mon_y"].hinzufügen(0)
+        S["mon_hp"].hinzufügen(0)
+        S["mon_aktiv"].hinzufügen(falsch)
+        setze mi auf mi + 1
+    S["modus"] = 0
 
-solange fenster_offen(win):
-    wenn taste_gedrückt("escape"):
-        stopp
-    wenn spieler_hp <= 0:
-        stopp
+# ============================================================
+# 4. Spiellogik — ein Frame pro Aufruf, komplett headless testbar.
+#    inp = {"hoch","runter","links","rechts","aktion","mauer",
+#           "craft","w1","w2","w3","neustart"}
+# ============================================================
+funktion spiel_schritt(inp):
+    wenn S["modus"] != 0:
+        wenn inp["neustart"]:
+            neustart()
+        gib_zurück 0
 
-    # Tag-Nacht
-    setze tageszeit auf tageszeit + tag_speed
-    wenn tageszeit >= 1.0:
-        setze tageszeit auf tageszeit - 1.0
-    setze ist_nacht auf tageszeit > 0.75 oder tageszeit < 0.2
+    # --- Tag-Nacht: Morgengrauen zählt die überlebte Nacht ---
+    S["tageszeit"] = S["tageszeit"] + 0.0003
+    wenn S["tageszeit"] >= 1.0:
+        S["tageszeit"] = S["tageszeit"] - 1.0
+    setze ist_nacht auf S["tageszeit"] > 0.75 oder S["tageszeit"] < 0.2
+    wenn S["war_nacht"] und ist_nacht == falsch:
+        S["naechte"] = S["naechte"] + 1
+        wenn S["naechte"] >= ZIEL_NAECHTE:
+            S["modus"] = 2
+            gib_zurück 0
+    S["war_nacht"] = ist_nacht
 
-    # Hunger
-    setze spieler_hunger auf spieler_hunger - 0.02
-    wenn spieler_hunger <= 0:
-        setze spieler_hunger auf 0.0
-        setze spieler_hp auf spieler_hp - 0.1
+    # --- Hunger: leerer Magen kostet Leben ---
+    S["spieler_hunger"] = S["spieler_hunger"] - 0.02
+    wenn S["spieler_hunger"] <= 0:
+        S["spieler_hunger"] = 0.0
+        S["spieler_hp"] = S["spieler_hp"] - 0.1
+    wenn S["spieler_hp"] <= 0:
+        S["spieler_hp"] = 0.0
+        S["modus"] = 1
+        gib_zurück 0
 
-    # Werkzeug
-    wenn taste_gedrückt("1"):
-        setze werkzeug auf 0
-    wenn taste_gedrückt("2") und hat_axt:
-        setze werkzeug auf 1
-    wenn taste_gedrückt("3") und hat_spitzhacke:
-        setze werkzeug auf 2
+    # --- Werkzeug wählen ---
+    wenn inp["w1"]:
+        S["werkzeug"] = 0
+    wenn inp["w2"] und S["hat_axt"]:
+        S["werkzeug"] = 1
+    wenn inp["w3"] und S["hat_spitzhacke"]:
+        S["werkzeug"] = 2
 
-    # Crafting (E)
-    wenn taste_gedrückt("e") und move_cooldown == 0:
-        # Axt: 5 Holz
-        wenn nicht hat_axt und inv_holz >= 5:
-            setze hat_axt auf wahr
-            setze inv_holz auf inv_holz - 5
-        # Spitzhacke: 3 Holz + 3 Stein
-        wenn nicht hat_spitzhacke und inv_holz >= 3 und inv_stein >= 3:
-            setze hat_spitzhacke auf wahr
-            setze inv_holz auf inv_holz - 3
-            setze inv_stein auf inv_stein - 3
-        # Schwert: 2 Holz + 5 Eisen
-        wenn nicht hat_schwert und inv_holz >= 2 und inv_eisen >= 5:
-            setze hat_schwert auf wahr
-            setze inv_holz auf inv_holz - 2
-            setze inv_eisen auf inv_eisen - 5
-        setze move_cooldown auf 10
+    # --- Crafting: Axt(5H), Spitzhacke(3H+3S), Schwert(2H+5E) ---
+    wenn inp["craft"] und S["cooldown"] == 0:
+        wenn S["hat_axt"] == falsch und S["inv_holz"] >= 5:
+            S["hat_axt"] = wahr
+            S["inv_holz"] = S["inv_holz"] - 5
+        wenn S["hat_spitzhacke"] == falsch und S["inv_holz"] >= 3 und S["inv_stein"] >= 3:
+            S["hat_spitzhacke"] = wahr
+            S["inv_holz"] = S["inv_holz"] - 3
+            S["inv_stein"] = S["inv_stein"] - 3
+        wenn S["hat_schwert"] == falsch und S["inv_holz"] >= 2 und S["inv_eisen"] >= 5:
+            S["hat_schwert"] = wahr
+            S["inv_holz"] = S["inv_holz"] - 2
+            S["inv_eisen"] = S["inv_eisen"] - 5
+        S["cooldown"] = 10
 
-    # === INPUT ===
-    wenn move_cooldown > 0:
-        setze move_cooldown auf move_cooldown - 1
+    # --- Bewegung / Aktion (turn-artig mit Cooldown) ---
+    wenn S["cooldown"] > 0:
+        S["cooldown"] = S["cooldown"] - 1
     sonst:
         setze moved auf falsch
-        wenn taste_gedrückt("w"):
-            setze spieler_dy auf -1
-            setze spieler_dx auf 0
+        wenn inp["hoch"]:
+            S["spieler_dy"] = -1
+            S["spieler_dx"] = 0
             setze moved auf wahr
-        wenn taste_gedrückt("s"):
-            setze spieler_dy auf 1
-            setze spieler_dx auf 0
+        wenn inp["runter"]:
+            S["spieler_dy"] = 1
+            S["spieler_dx"] = 0
             setze moved auf wahr
-        wenn taste_gedrückt("a"):
-            setze spieler_dx auf -1
-            setze spieler_dy auf 0
+        wenn inp["links"]:
+            S["spieler_dx"] = -1
+            S["spieler_dy"] = 0
             setze moved auf wahr
-        wenn taste_gedrückt("d"):
-            setze spieler_dx auf 1
-            setze spieler_dy auf 0
+        wenn inp["rechts"]:
+            S["spieler_dx"] = 1
+            S["spieler_dy"] = 0
             setze moved auf wahr
 
-        # Leertaste = Abbauen/Angriff
-        wenn taste_gedrückt("leertaste"):
-            setze tx auf spieler_x + spieler_dx
-            setze ty auf spieler_y + spieler_dy
+        wenn inp["aktion"]:
+            setze tx auf S["spieler_x"] + S["spieler_dx"]
+            setze ty auf S["spieler_y"] + S["spieler_dy"]
             setze tile auf welt_get(tx, ty)
-            setze angriff_timer auf 8
-
-            # Monster treffen
+            S["angriff_timer"] = 8
             setze hit auf falsch
             setze mi auf 0
             solange mi < MAX_MONSTER:
-                wenn mon_aktiv[mi] und mon_x[mi] == tx und mon_y[mi] == ty:
+                wenn S["mon_aktiv"][mi] und S["mon_x"][mi] == tx und S["mon_y"][mi] == ty:
                     setze dmg auf 3
-                    wenn hat_schwert:
+                    wenn S["hat_schwert"]:
                         setze dmg auf 12
-                    mon_hp[mi] = mon_hp[mi] - dmg
-                    wenn mon_hp[mi] <= 0:
-                        mon_aktiv[mi] = falsch
-                        setze score auf score + 20
-                        # Monster droppen Nahrung
-                        setze inv_nahrung auf inv_nahrung + 3
+                    S["mon_hp"][mi] = S["mon_hp"][mi] - dmg
+                    wenn S["mon_hp"][mi] <= 0:
+                        S["mon_aktiv"][mi] = falsch
+                        S["score"] = S["score"] + 20
+                        S["inv_nahrung"] = S["inv_nahrung"] + 3
                     setze hit auf wahr
                 setze mi auf mi + 1
-
-            wenn nicht hit:
-                # Baum abbauen
+            wenn hit == falsch:
                 wenn tile == BAUM:
                     setze ertrag auf 1
-                    wenn hat_axt:
+                    wenn S["hat_axt"]:
                         setze ertrag auf 3
                     welt_set(tx, ty, GRAS)
-                    setze inv_holz auf inv_holz + ertrag
-                    setze score auf score + 2
-                # Busch = Nahrung
+                    S["inv_holz"] = S["inv_holz"] + ertrag
+                    S["score"] = S["score"] + 2
                 wenn tile == BUSCH:
                     welt_set(tx, ty, GRAS)
-                    setze inv_nahrung auf inv_nahrung + 2
-                    setze score auf score + 1
-                # Stein abbauen
-                wenn tile == STEIN:
-                    wenn hat_spitzhacke:
-                        welt_set(tx, ty, GRAS)
-                        setze inv_stein auf inv_stein + 3
-                        setze score auf score + 3
-                # Erz abbauen
-                wenn tile == ERZE:
-                    wenn hat_spitzhacke:
-                        welt_set(tx, ty, GRAS)
-                        setze inv_eisen auf inv_eisen + 2
-                        setze score auf score + 5
-                # Mauer bauen (auf Gras, kostet 3 Stein)
-                wenn tile == GRAS und inv_stein >= 3:
-                    wenn taste_gedrückt("m"):
-                        welt_set(tx, ty, MAUER)
-                        setze inv_stein auf inv_stein - 3
+                    S["inv_nahrung"] = S["inv_nahrung"] + 2
+                    S["score"] = S["score"] + 1
+                wenn tile == STEIN und S["hat_spitzhacke"]:
+                    welt_set(tx, ty, GRAS)
+                    S["inv_stein"] = S["inv_stein"] + 3
+                    S["score"] = S["score"] + 3
+                wenn tile == ERZE und S["hat_spitzhacke"]:
+                    welt_set(tx, ty, GRAS)
+                    S["inv_eisen"] = S["inv_eisen"] + 2
+                    S["score"] = S["score"] + 5
+                wenn tile == GRAS und S["inv_stein"] >= 3 und inp["mauer"]:
+                    welt_set(tx, ty, MAUER)
+                    S["inv_stein"] = S["inv_stein"] - 3
             setze moved auf wahr
-            setze move_cooldown auf 6
+            S["cooldown"] = 6
 
-        wenn moved und nicht taste_gedrückt("leertaste"):
-            setze nx auf spieler_x + spieler_dx
-            setze ny auf spieler_y + spieler_dy
+        wenn moved und inp["aktion"] == falsch:
+            setze nx auf S["spieler_x"] + S["spieler_dx"]
+            setze ny auf S["spieler_y"] + S["spieler_dy"]
             wenn ist_begehbar(nx, ny):
-                setze spieler_x auf nx
-                setze spieler_y auf ny
-
-            # Essen (automatisch wenn Hunger < 50 und Nahrung da)
-            wenn spieler_hunger < 50 und inv_nahrung > 0:
-                setze inv_nahrung auf inv_nahrung - 1
-                setze spieler_hunger auf spieler_hunger + 25
-                wenn spieler_hunger > 100:
-                    setze spieler_hunger auf 100.0
-                setze spieler_hp auf spieler_hp + 5
-                wenn spieler_hp > spieler_max_hp:
-                    setze spieler_hp auf spieler_max_hp
-
-            # Monster bewegen
+                S["spieler_x"] = nx
+                S["spieler_y"] = ny
+            # Automatisch essen wenn hungrig
+            wenn S["spieler_hunger"] < 50 und S["inv_nahrung"] > 0:
+                S["inv_nahrung"] = S["inv_nahrung"] - 1
+                S["spieler_hunger"] = min(S["spieler_hunger"] + 25, 100.0)
+                S["spieler_hp"] = min(S["spieler_hp"] + 5, S["spieler_max_hp"])
+            # Monster: Kontakt kostet Leben, sonst Verfolgung
             setze mi auf 0
             solange mi < MAX_MONSTER:
-                wenn mon_aktiv[mi]:
-                    setze dist auf abs_wert(mon_x[mi] - spieler_x) + abs_wert(mon_y[mi] - spieler_y)
+                wenn S["mon_aktiv"][mi]:
+                    setze dist auf abs_wert(S["mon_x"][mi] - S["spieler_x"]) + abs_wert(S["mon_y"][mi] - S["spieler_y"])
                     wenn dist <= 1:
-                        setze spieler_hp auf spieler_hp - 5
+                        S["spieler_hp"] = S["spieler_hp"] - 5
+                        wenn S["spieler_hp"] <= 0:
+                            S["spieler_hp"] = 0.0
+                            S["modus"] = 1
                     wenn dist > 1 und dist < 12:
                         setze gdx auf 0
                         setze gdy auf 0
-                        wenn mon_x[mi] < spieler_x:
+                        wenn S["mon_x"][mi] < S["spieler_x"]:
                             setze gdx auf 1
-                        wenn mon_x[mi] > spieler_x:
+                        wenn S["mon_x"][mi] > S["spieler_x"]:
                             setze gdx auf -1
-                        wenn mon_y[mi] < spieler_y:
+                        wenn S["mon_y"][mi] < S["spieler_y"]:
                             setze gdy auf 1
-                        wenn mon_y[mi] > spieler_y:
+                        wenn S["mon_y"][mi] > S["spieler_y"]:
                             setze gdy auf -1
                         wenn rng() % 2 == 0:
-                            wenn ist_begehbar(mon_x[mi] + gdx, mon_y[mi]):
-                                mon_x[mi] = mon_x[mi] + gdx
-                            sonst:
-                                wenn ist_begehbar(mon_x[mi], mon_y[mi] + gdy):
-                                    mon_y[mi] = mon_y[mi] + gdy
+                            wenn ist_begehbar(S["mon_x"][mi] + gdx, S["mon_y"][mi]):
+                                S["mon_x"][mi] = S["mon_x"][mi] + gdx
+                            sonst wenn ist_begehbar(S["mon_x"][mi], S["mon_y"][mi] + gdy):
+                                S["mon_y"][mi] = S["mon_y"][mi] + gdy
                         sonst:
-                            wenn ist_begehbar(mon_x[mi], mon_y[mi] + gdy):
-                                mon_y[mi] = mon_y[mi] + gdy
-                            sonst:
-                                wenn ist_begehbar(mon_x[mi] + gdx, mon_y[mi]):
-                                    mon_x[mi] = mon_x[mi] + gdx
+                            wenn ist_begehbar(S["mon_x"][mi], S["mon_y"][mi] + gdy):
+                                S["mon_y"][mi] = S["mon_y"][mi] + gdy
+                            sonst wenn ist_begehbar(S["mon_x"][mi] + gdx, S["mon_y"][mi]):
+                                S["mon_x"][mi] = S["mon_x"][mi] + gdx
                 setze mi auf mi + 1
+            S["cooldown"] = 4
 
-            setze move_cooldown auf 4
-
-    # Monster spawnen bei Nacht
+    # --- Nachts spawnen Monster ---
     wenn ist_nacht:
-        setze spawn_timer auf spawn_timer + 1
-        wenn spawn_timer > 60:
-            setze spawn_timer auf 0
-            monster_spawnen(spieler_x, spieler_y)
+        S["spawn_timer"] = S["spawn_timer"] + 1
+        wenn S["spawn_timer"] > 60:
+            S["spawn_timer"] = 0
+            monster_spawnen(S["spieler_x"], S["spieler_y"])
 
-    wenn angriff_timer > 0:
-        setze angriff_timer auf angriff_timer - 1
+    wenn S["angriff_timer"] > 0:
+        S["angriff_timer"] = S["angriff_timer"] - 1
+    gib_zurück 0
 
-    # === ZEICHNEN ===
-    # Himmelfarbe basierend auf Tageszeit
-    setze sky_bright auf 0.5
-    wenn tageszeit > 0.2 und tageszeit < 0.75:
-        setze sky_bright auf 1.0
+# ============================================================
+# 5. Zeichnen
+# ============================================================
+funktion welt_zeichnen(win):
     fenster_löschen(win, "#1B5E20")
+    setze cam_x auf S["spieler_x"] - boden(SICHT_W / 2)
+    setze cam_y auf S["spieler_y"] - boden(SICHT_H / 2)
+    setze ist_nacht auf S["tageszeit"] > 0.75 oder S["tageszeit"] < 0.2
 
-    setze cam_x auf spieler_x - SICHT_W / 2
-    setze cam_y auf spieler_y - SICHT_H / 2
-
-    # Welt
     setze sy auf 0
     solange sy < SICHT_H:
         setze sx auf 0
@@ -409,8 +440,6 @@ solange fenster_offen(win):
                 wenn tile == MAUER:
                     zeichne_rechteck(win, draw_x, draw_y, TILE, TILE, "#795548")
                     zeichne_rechteck(win, draw_x + 1, draw_y + 1, TILE - 2, TILE - 2, "#8D6E63")
-                    zeichne_linie(win, draw_x + 8, draw_y, draw_x + 8, draw_y + TILE, "#6D4C41")
-                    zeichne_linie(win, draw_x, draw_y + 8, draw_x + TILE, draw_y + 8, "#6D4C41")
                 wenn tile == SAND:
                     zeichne_rechteck(win, draw_x, draw_y, TILE, TILE, "#FFE082")
             sonst:
@@ -418,9 +447,8 @@ solange fenster_offen(win):
             setze sx auf sx + 1
         setze sy auf sy + 1
 
-    # Nacht-Overlay
+    # Nacht: dunkler Rahmen
     wenn ist_nacht:
-        # Dunkler Rahmen um den Sichtbereich
         setze ni auf 0
         solange ni < SICHT_W:
             zeichne_rechteck(win, ni * TILE, 0, TILE, TILE * 3, "#000033")
@@ -435,9 +463,9 @@ solange fenster_offen(win):
     # Monster
     setze mi auf 0
     solange mi < MAX_MONSTER:
-        wenn mon_aktiv[mi]:
-            setze draw_x auf (mon_x[mi] - cam_x) * TILE
-            setze draw_y auf (mon_y[mi] - cam_y) * TILE
+        wenn S["mon_aktiv"][mi]:
+            setze draw_x auf (S["mon_x"][mi] - cam_x) * TILE
+            setze draw_y auf (S["mon_y"][mi] - cam_y) * TILE
             wenn draw_x > -TILE und draw_x < BREITE und draw_y > -TILE und draw_y < HOEHE:
                 zeichne_rechteck(win, draw_x + 2, draw_y + 2, TILE - 4, TILE - 4, "#9C27B0")
                 zeichne_kreis(win, draw_x + 5, draw_y + 5, 2, "#E1BEE7")
@@ -445,78 +473,103 @@ solange fenster_offen(win):
         setze mi auf mi + 1
 
     # Spieler
-    setze draw_x auf (spieler_x - cam_x) * TILE
-    setze draw_y auf (spieler_y - cam_y) * TILE
+    setze draw_x auf (S["spieler_x"] - cam_x) * TILE
+    setze draw_y auf (S["spieler_y"] - cam_y) * TILE
     zeichne_rechteck(win, draw_x + 1, draw_y + 1, TILE - 2, TILE - 2, "#FFD700")
     zeichne_rechteck(win, draw_x + 3, draw_y + 3, TILE - 6, TILE - 6, "#FFC107")
-    zeichne_rechteck(win, draw_x + 5 + spieler_dx * 2, draw_y + 4 + spieler_dy * 2, 2, 2, "#000000")
-    zeichne_rechteck(win, draw_x + 9 + spieler_dx * 2, draw_y + 4 + spieler_dy * 2, 2, 2, "#000000")
-    # Angriff
-    wenn angriff_timer > 0:
-        setze ax auf draw_x + spieler_dx * TILE
-        setze ay auf draw_y + spieler_dy * TILE
+    wenn S["angriff_timer"] > 0:
+        setze ax auf draw_x + S["spieler_dx"] * TILE
+        setze ay auf draw_y + S["spieler_dy"] * TILE
         zeichne_rechteck(win, ax + 4, ay + 4, TILE - 8, TILE - 8, "#FFEB3B")
 
     # HUD
     zeichne_rechteck(win, 0, HOEHE - 40, BREITE, 40, "#1B2631")
-    # HP
-    setze hp_w auf spieler_hp * 100 / spieler_max_hp
+    zeichne_text_px(win, "ZIEL: 3 NAECHTE", 560, HOEHE - 34, 2, "#FFFFFF")
+    # Überstandene Nächte als Monde
+    setze ni auf 0
+    solange ni < ZIEL_NAECHTE:
+        wenn ni < S["naechte"]:
+            zeichne_kreis(win, 580 + ni * 24, HOEHE - 12, 8, "#FDD835")
+        sonst:
+            zeichne_kreis(win, 580 + ni * 24, HOEHE - 12, 8, "#37474F")
+        setze ni auf ni + 1
+    # HP + Hunger
     zeichne_rechteck(win, 10, HOEHE - 35, 100, 10, "#333333")
-    zeichne_rechteck(win, 10, HOEHE - 35, hp_w, 10, "#4CAF50")
-    # Hunger
-    setze hunger_w auf spieler_hunger
+    zeichne_rechteck(win, 10, HOEHE - 35, boden(S["spieler_hp"]), 10, "#4CAF50")
     zeichne_rechteck(win, 10, HOEHE - 20, 100, 10, "#333333")
-    zeichne_rechteck(win, 10, HOEHE - 20, hunger_w, 10, "#FF9800")
+    zeichne_rechteck(win, 10, HOEHE - 20, boden(S["spieler_hunger"]), 10, "#FF9800")
     # Inventar
-    setze ix auf 130
-    # Holz
     setze hi auf 0
-    solange hi < inv_holz und hi < 15:
-        zeichne_rechteck(win, ix + hi * 8, HOEHE - 35, 6, 10, "#8D6E63")
+    solange hi < S["inv_holz"] und hi < 15:
+        zeichne_rechteck(win, 130 + hi * 8, HOEHE - 35, 6, 10, "#8D6E63")
         setze hi auf hi + 1
-    # Stein
     setze si auf 0
-    solange si < inv_stein und si < 15:
-        zeichne_rechteck(win, ix + si * 8, HOEHE - 20, 6, 10, "#9E9E9E")
+    solange si < S["inv_stein"] und si < 15:
+        zeichne_rechteck(win, 130 + si * 8, HOEHE - 20, 6, 10, "#9E9E9E")
         setze si auf si + 1
-    # Nahrung
     setze fi auf 0
-    solange fi < inv_nahrung und fi < 10:
+    solange fi < S["inv_nahrung"] und fi < 10:
         zeichne_kreis(win, 280 + fi * 12, HOEHE - 30, 4, "#F44336")
         setze fi auf fi + 1
-    # Eisen
     setze ei auf 0
-    solange ei < inv_eisen und ei < 10:
+    solange ei < S["inv_eisen"] und ei < 10:
         zeichne_kreis(win, 280 + ei * 12, HOEHE - 14, 4, "#FF9800")
         setze ei auf ei + 1
-    # Werkzeug
-    setze wx auf 420
-    wenn hat_axt:
-        zeichne_rechteck(win, wx, HOEHE - 35, 20, 12, "#8D6E63")
-        wenn werkzeug == 1:
-            zeichne_rechteck(win, wx - 1, HOEHE - 36, 22, 14, "#FFFFFF")
-            zeichne_rechteck(win, wx, HOEHE - 35, 20, 12, "#8D6E63")
-    wenn hat_spitzhacke:
-        zeichne_rechteck(win, wx + 25, HOEHE - 35, 20, 12, "#78909C")
-        wenn werkzeug == 2:
-            zeichne_rechteck(win, wx + 24, HOEHE - 36, 22, 14, "#FFFFFF")
-            zeichne_rechteck(win, wx + 25, HOEHE - 35, 20, 12, "#78909C")
-    wenn hat_schwert:
-        zeichne_rechteck(win, wx + 50, HOEHE - 35, 20, 12, "#B0BEC5")
-    # Tag/Nacht Anzeige
-    setze tn_x auf BREITE - 60
+    # Werkzeuge
+    wenn S["hat_axt"]:
+        zeichne_rechteck(win, 420, HOEHE - 35, 20, 12, "#8D6E63")
+    wenn S["hat_spitzhacke"]:
+        zeichne_rechteck(win, 445, HOEHE - 35, 20, 12, "#78909C")
+    wenn S["hat_schwert"]:
+        zeichne_rechteck(win, 470, HOEHE - 35, 20, 12, "#B0BEC5")
+    # Tag/Nacht-Anzeige
     wenn ist_nacht:
-        zeichne_kreis(win, tn_x, HOEHE - 20, 10, "#FDD835")
+        zeichne_kreis(win, BREITE - 320, HOEHE - 20, 10, "#B0BEC5")
     sonst:
-        zeichne_kreis(win, tn_x, HOEHE - 20, 10, "#FF9800")
-    # Score
-    setze si auf 0
-    solange si < score / 10 und si < 15:
-        zeichne_kreis(win, BREITE - 100 + si * 10, HOEHE - 35, 3, "#FFD700")
-        setze si auf si + 1
+        zeichne_kreis(win, BREITE - 320, HOEHE - 20, 10, "#FDD835")
 
-    fenster_aktualisieren(win)
-    warte(16)
+    # Overlays
+    wenn S["modus"] == 1:
+        zeichne_rechteck(win, 150, 200, 500, 140, "#1A1A2E")
+        zeichne_text_px(win, "GAME OVER", 190, 230, 6, "#E53935")
+        zeichne_text_px(win, "DRUECKE R", 290, 300, 3, "#FFFFFF")
+    wenn S["modus"] == 2:
+        zeichne_rechteck(win, 150, 200, 500, 140, "#3E2F00")
+        zeichne_text_px(win, "SIEG", 300, 220, 8, "#FFD54F")
+        zeichne_text_px(win, "DRUECKE R", 290, 300, 3, "#FFFFFF")
+    gib_zurück 0
 
-fenster_schliessen(win)
-zeige "Survival beendet! Score: " + text(score) + " | Holz:" + text(inv_holz) + " Stein:" + text(inv_stein) + " Eisen:" + text(inv_eisen)
+neustart()
+
+# ============================================================
+# 6. Interaktiver Loop (im Selftest per Env-Variable übersprungen)
+# ============================================================
+wenn umgebung("SURVIVAL_SELFTEST") == nichts:
+    zeige "=== moo Survival ==="
+    zeige "ZIEL: Überlebe 3 Nächte! Sammeln, craften, kämpfen."
+    zeige "WASD, Leertaste=Abbauen/Angriff, E=Craften, M+Leertaste=Mauer, R=Neustart"
+
+    setze win auf fenster_erstelle("moo Survival", BREITE, HOEHE)
+
+    solange fenster_offen(win):
+        wenn taste_gedrückt("escape"):
+            stopp
+        setze inp auf {}
+        inp["hoch"] = taste_gedrückt("w")
+        inp["runter"] = taste_gedrückt("s")
+        inp["links"] = taste_gedrückt("a")
+        inp["rechts"] = taste_gedrückt("d")
+        inp["aktion"] = taste_gedrückt("leertaste")
+        inp["mauer"] = taste_gedrückt("m")
+        inp["craft"] = taste_gedrückt("e")
+        inp["w1"] = taste_gedrückt("1")
+        inp["w2"] = taste_gedrückt("2")
+        inp["w3"] = taste_gedrückt("3")
+        inp["neustart"] = taste_gedrückt("r")
+        spiel_schritt(inp)
+        welt_zeichnen(win)
+        fenster_aktualisieren(win)
+        warte(16)
+
+    fenster_schliessen(win)
+    zeige "Survival beendet."
