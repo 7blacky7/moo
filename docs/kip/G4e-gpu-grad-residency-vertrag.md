@@ -189,6 +189,29 @@ GPU-Trichter, nie direkter Buffer-Zugriff) eingehalten wird.**
 
 ---
 
+## 7a. Addendum I14 (kip-gpu, nach Implementierung Schritt 1-3, Commit af5dbf3,
+Channel-Bestaetigung kip-kern Msg 12920) — Buffer-Pool liefert KEINE Zero-Garantie
+
+Beim Bau von `grad_materialisieren_gpu` wurde verifiziert (`moo_ki_gpu.c`, `buf_holen`/
+`buf_anlegen`): der Vulkan-Buffer-Pool zerot wiederverwendete UND frisch angelegte
+Buffer NICHT (kein `memset` bei Slot-Reuse). Das urspruengliche Pseudocode-Muster in
+§2 ("nur hochladen wenn `grad_valid & MOO_V_DATA` gesetzt ist") ging implizit von
+calloc-aehnlicher Zero-Semantik aus — bei `grad_valid==0` (frischer Tensor, noch nie
+geschrieben) haette das den Upload uebersprungen und `moo_ki_gpu_grad_accum_res`
+haette auf UNDEFINIERTEM VRAM-Inhalt akkumuliert (stiller Bug, kein Crash).
+
+- **I14 (Keine Zero-Garantie des Buffer-Pools):** `grad_materialisieren_gpu` MUSS
+  IMMER ueber `grad_sicherstellen(t)` hochladen, AUSSER `t->grad_valid & MOO_V_DEV`
+  ist bereits gesetzt (GPU schon autoritativ, No-Op). Ein bedingtes Skip bei
+  `grad_valid==0` (nach dem Muster "nur bei MOO_V_DATA hochladen") ist VERBOTEN —
+  `grad_sicherstellen` liefert in JEDEM anderen Fall einen korrekten Puffer (echten
+  CPU-Beitrag ODER frische calloc-Null), das deckt sowohl den MOO_V_DATA-Fall als
+  auch den "noch nie geschrieben"-Fall (`grad_valid==0`) ab. Gilt fuer JEDEN
+  weiteren Op-Typ, der in Doc §5 Punkt 4 auf echte Residenz umgestellt wird
+  (bw_matmul/bw_gather/bw_div-db) — dieselbe Falle wuerde dort identisch zuschlagen.
+- Verifiziert durch `test_g4e_fanout_gpu.c` (Fan-out-Cross-Residenz-Gate, echte
+  4070-Ti-Hardware, 9/9 Checks gruen, exakter Gradientwert gegen Hand-Referenz).
+
 ## 7. Offene Frage an kip-ops (B2-Vertrag)
 
 Test-Erweiterung aus §5 Punkt 3 (Fan-out-Cross-Residenz-Gradcheck) fällt laut kip-ops' eigenem Angebot
