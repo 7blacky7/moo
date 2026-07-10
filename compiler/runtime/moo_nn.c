@@ -833,8 +833,10 @@ static MooValue rope_matrix(int32_t dh) {
 
 /* cos/sin [rows, dh] fuer absolute Positionen p0..p0+rows-1 (grad-los).
  * angle(p,i) = p * basis^(-(2i)/dh); beide Paar-Komponenten teilen cos/sin. */
-static bool rope_cossin(int32_t rows, int32_t dh, int32_t p0, double basis,
-                        MooValue* cos_out, MooValue* sin_out) {
+/* pos != NULL: absolute Position von Zeile r = pos[r] (Per-Doc-Reset beim
+ * Packing, KIP-B4a); pos == NULL: kontiguierlich p0+r (Normal/Cache-Pfad). */
+static bool rope_cossin(int32_t rows, int32_t dh, int32_t p0, const float* pos,
+                        double basis, MooValue* cos_out, MooValue* sin_out) {
     int32_t shape[2] = { rows, dh };
     MooTensor* c = moo_tensor_raw(2, shape);
     MooTensor* s = moo_tensor_raw(2, shape);
@@ -844,7 +846,7 @@ static bool rope_cossin(int32_t rows, int32_t dh, int32_t p0, double basis,
         return false;
     }
     for (int32_t r = 0; r < rows; r++) {
-        double p = (double)(p0 + r);
+        double p = pos ? (double)pos[r] : (double)(p0 + r);
         for (int32_t i = 0; i < dh / 2; i++) {
             double freq = pow(basis, -((double)(2 * i)) / (double)dh);
             double ang = p * freq;
@@ -928,7 +930,7 @@ static MooValue fw_attention_cache(MooValue schicht, MooValue x, int32_t nd,
     int32_t t_alt = cache_laenge(schicht);
     MooValue rcos = moo_none(), rsin = moo_none(), rmat = moo_none();
     if (rope_an) {
-        if (!rope_cossin(t_neu, dh, t_alt, rope_basis, &rcos, &rsin))
+        if (!rope_cossin(t_neu, dh, t_alt, NULL, rope_basis, &rcos, &rsin))
             return moo_none();
         rmat = rope_matrix(dh);
         if (rmat.tag != MOO_TENSOR) {
@@ -1086,9 +1088,25 @@ static MooValue fw_attention(MooValue schicht, MooValue x) {
         return fw_attention_cache(schicht, x, nd, nk, kv, rep, sliding,
                                   (int32_t)dnum(schicht, "fenster", 1.0));
     }
-    MooValue maske = sliding
-        ? sliding_maske(seq, (int32_t)dnum(schicht, "fenster", 1.0))
-        : causal_maske(seq);
+    /* KIP-B4a (X3 §2): externe Maske (Packing = block-diagonal) ueberschreibt
+     * die interne causal/sliding-Maske. Muss [seq, seq] passen. */
+    MooValue pmaske = dget(schicht, "pack_maske");
+    MooValue maske;
+    if (pmaske.tag == MOO_TENSOR) {
+        if (T(pmaske)->ndim != 2 || T(pmaske)->shape[0] != seq ||
+            T(pmaske)->shape[1] != seq) {
+            moo_release(pmaske);
+            moo_throw(moo_error("attention: pack_maske hat nicht die Form "
+                                "[seq, seq] der Eingabe"));
+            return moo_none();
+        }
+        maske = pmaske;   /* +1 owning; unten released */
+    } else {
+        moo_release(pmaske);
+        maske = sliding
+            ? sliding_maske(seq, (int32_t)dnum(schicht, "fenster", 1.0))
+            : causal_maske(seq);
+    }
     if (maske.tag != MOO_TENSOR) return moo_none();
     MooValue skal = moo_number(1.0 / sqrt((double)dh));
     /* KIP-B2: RoPE fuer den Voll-Pfad — Positionen 0..seq-1 (p0=0). Selbe
@@ -1097,10 +1115,24 @@ static MooValue fw_attention(MooValue schicht, MooValue x) {
     MooValue rcos = moo_none(), rsin = moo_none(), rmat = moo_none();
     if (rope_an) {
         double rope_basis = dnum(schicht, "rope_basis", 10000.0);
-        if (!rope_cossin(seq, dh, 0, rope_basis, &rcos, &rsin)) {
-            moo_release(maske);
-            return moo_none();
+        /* KIP-B4a: externe Positionen (Per-Doc-Reset beim Packing) via pack_pos
+         * [seq] — noetig fuer BIT-Identitaet gepackt==ungepackt (Rotation bei
+         * absoluter vs doc-lokaler Position rundet in float unterschiedlich). */
+        MooValue ppos = dget(schicht, "pack_pos");
+        const float* posdat = NULL;
+        if (ppos.tag == MOO_TENSOR) {
+            if (T(ppos)->size != (int64_t)seq) {
+                moo_release(ppos); moo_release(maske);
+                moo_throw(moo_error("attention: pack_pos hat nicht die Laenge "
+                                    "der Sequenz"));
+                return moo_none();
+            }
+            moo_tensor_f32_sichern(T(ppos));
+            posdat = T(ppos)->data;
         }
+        bool ok = rope_cossin(seq, dh, 0, posdat, rope_basis, &rcos, &rsin);
+        moo_release(ppos);   /* posdat wurde in cos/sin kopiert */
+        if (!ok) { moo_release(maske); return moo_none(); }
         rmat = rope_matrix(dh);
         if (rmat.tag != MOO_TENSOR) {
             moo_release(maske); moo_release(rcos); moo_release(rsin);
@@ -1733,6 +1765,164 @@ MooValue moo_nn_cache_leeren(MooValue netz) {
     }
     moo_throw(moo_error("cache_leeren: erwarte eine Schicht, eine Liste von "
                         "Schichten oder ein ki_netz"));
+    return moo_none();
+}
+
+/* ============================================================
+ * KIP-B4a: Sequence Packing (Block-Maske + Loss-Maske + Positions-Reset)
+ * ============================================================ */
+
+/* sequence_packen(docs, block_len): docs = Liste von 1D-Token-ID-Tensoren.
+ * Packt sie sequenziell in EINEN Block der Laenge block_len (Rest 0-gepadded).
+ * Liefert Dict { ids[block], attn_maske[block,block] (BLOCKDIAGONAL + kausal
+ * pro Doc), loss_maske[block] (0 an der letzten Doc-Position + Padding),
+ * positionen[block] (Per-Doc-Reset 0..len-1), doc_offsets[n+1] }. Alle Masken
+ * sind grad-lose Konstanten aus den Doc-Grenzen. X3 §2: SFT-Loss-Masken
+ * kommen separat von aussen — hier nur die Packing-Grenzen. */
+MooValue moo_nn_sequence_packen(MooValue docs, MooValue block_len) {
+    if (docs.tag != MOO_LIST) {
+        moo_throw(moo_error("sequence_packen: erwarte eine Liste von Token-Tensoren"));
+        return moo_none();
+    }
+    int32_t bl = ganze_zahl(block_len, "sequence_packen (block_len)", 1);
+    if (bl < 0) return moo_none();
+    MooList* dl = MV_LIST(docs);
+    int32_t nd = dl->length;
+    if (nd <= 0) {
+        moo_throw(moo_error("sequence_packen: die Doc-Liste ist leer"));
+        return moo_none();
+    }
+    int32_t* len = (int32_t*)calloc((size_t)nd, sizeof(int32_t));
+    int32_t* docof = (int32_t*)calloc((size_t)(nd + 1), sizeof(int32_t));
+    if (!len || !docof) { free(len); free(docof); return moo_none(); }
+    int32_t sum = 0;
+    for (int32_t d = 0; d < nd; d++) {
+        MooValue di = dl->items[d];
+        if (di.tag != MOO_TENSOR) {
+            free(len); free(docof);
+            moo_throw(moo_error("sequence_packen: jedes Dokument muss ein Token-Tensor sein"));
+            return moo_none();
+        }
+        MooTensor* dt = T(di);
+        moo_tensor_f32_sichern(dt);
+        int32_t l = (int32_t)dt->size;
+        if (l <= 0) {
+            free(len); free(docof);
+            moo_throw(moo_error("sequence_packen: ein Dokument ist leer"));
+            return moo_none();
+        }
+        len[d] = l; sum += l;
+    }
+    if (sum > bl) {
+        free(len); free(docof);
+        moo_throw(moo_error("sequence_packen: die Summe der Doc-Laengen "
+                            "uebersteigt block_len"));
+        return moo_none();
+    }
+    for (int32_t d = 0; d < nd; d++) docof[d + 1] = docof[d] + len[d];
+
+    int32_t sh1[1] = { bl };
+    int32_t sh2[2] = { bl, bl };
+    int32_t sho[1] = { nd + 1 };
+    MooTensor* ids  = moo_tensor_raw(1, sh1);
+    MooTensor* mask = moo_tensor_raw(2, sh2);
+    MooTensor* lm   = moo_tensor_raw(1, sh1);
+    MooTensor* pos  = moo_tensor_raw(1, sh1);
+    MooTensor* off  = moo_tensor_raw(1, sho);
+    if (!ids || !mask || !lm || !pos || !off) {
+        free(len); free(docof);
+#define B4A_RELT(t) do { if (t) { MooValue _v; _v.tag = MOO_TENSOR; moo_val_set_ptr(&_v, t); moo_release(_v); } } while (0)
+        B4A_RELT(ids); B4A_RELT(mask); B4A_RELT(lm); B4A_RELT(pos); B4A_RELT(off);
+#undef B4A_RELT
+        return moo_none();
+    }
+    /* ids + Per-Doc-Positionen + Loss-Maske; Padding bleibt 0 (raw nullt). */
+    for (int32_t d = 0; d < nd; d++) {
+        MooTensor* dt = T(dl->items[d]);
+        int32_t s = docof[d];
+        for (int32_t i = 0; i < len[d]; i++) {
+            ids->data[s + i] = dt->data[i];
+            pos->data[s + i] = (float)i;
+            lm->data[s + i]  = (i < len[d] - 1) ? 1.0f : 0.0f;
+        }
+        off->data[d] = (float)docof[d];
+    }
+    off->data[nd] = (float)docof[nd];
+    /* Block-diagonale + kausale Maske: 0 nur wenn selber Doc UND j<=i. */
+    for (int32_t i = 0; i < bl; i++) {
+        int32_t di = -1;
+        if (i < sum)
+            for (int32_t d = 0; d < nd; d++)
+                if (i >= docof[d] && i < docof[d + 1]) { di = d; break; }
+        for (int32_t j = 0; j < bl; j++) {
+            int32_t dj = -1;
+            if (j < sum)
+                for (int32_t d = 0; d < nd; d++)
+                    if (j >= docof[d] && j < docof[d + 1]) { dj = d; break; }
+            bool ok = (di >= 0 && di == dj && j <= i);
+            mask->data[(int64_t)i * bl + j] = ok ? 0.0f : -1e9f;
+        }
+    }
+    free(len); free(docof);
+    MooValue r = moo_dict_new();
+#define B4A_PUT(name, t) do { MooValue _v; _v.tag = MOO_TENSOR; moo_val_set_ptr(&_v, t); dset(r, name, _v); } while (0)
+    B4A_PUT("ids", ids); B4A_PUT("attn_maske", mask); B4A_PUT("loss_maske", lm);
+    B4A_PUT("positionen", pos); B4A_PUT("doc_offsets", off);
+#undef B4A_PUT
+    return r;
+}
+
+/* Setzt/entfernt die transienten Packing-Felder (pack_maske/pack_pos) an ALLEN
+ * attention-Schichten des Netzes — die Attention-Forward liest sie (X3 §2,
+ * Muster wie das cache-Flag). Dieselbe Maske/Positionen gelten fuer alle Layer. */
+static void packung_setzen_schicht(MooValue schicht, MooValue maske, MooValue pos) {
+    if (!nn_ist(schicht, "attention")) return;
+    moo_retain(maske); dset(schicht, "pack_maske", maske);
+    moo_retain(pos);   dset(schicht, "pack_pos", pos);
+}
+static void packung_leeren_schicht(MooValue schicht) {
+    if (!nn_ist(schicht, "attention")) return;
+    moo_dict_remove(schicht, moo_string_new("pack_maske"));
+    moo_dict_remove(schicht, moo_string_new("pack_pos"));
+}
+MooValue moo_nn_packung_setzen(MooValue netz, MooValue maske, MooValue positionen) {
+    if (maske.tag != MOO_TENSOR || positionen.tag != MOO_TENSOR) {
+        moo_throw(moo_error("packung_setzen: erwarte (netz, attn_maske, positionen)"));
+        return moo_none();
+    }
+    if (nn_ist(netz, "netz")) {
+        MooValue s = dget(netz, "schichten");
+        MooValue r = moo_nn_packung_setzen(s, maske, positionen);
+        moo_release(s); return r;
+    }
+    if (netz.tag == MOO_DICT && nn_ist_schicht(netz)) {
+        packung_setzen_schicht(netz, maske, positionen); return moo_none();
+    }
+    if (netz.tag == MOO_LIST) {
+        MooList* l = MV_LIST(netz);
+        for (int32_t i = 0; i < l->length; i++)
+            packung_setzen_schicht(l->items[i], maske, positionen);
+        return moo_none();
+    }
+    moo_throw(moo_error("packung_setzen: erwarte eine Schicht, Liste oder ki_netz"));
+    return moo_none();
+}
+MooValue moo_nn_packung_leeren(MooValue netz) {
+    if (nn_ist(netz, "netz")) {
+        MooValue s = dget(netz, "schichten");
+        MooValue r = moo_nn_packung_leeren(s);
+        moo_release(s); return r;
+    }
+    if (netz.tag == MOO_DICT && nn_ist_schicht(netz)) {
+        packung_leeren_schicht(netz); return moo_none();
+    }
+    if (netz.tag == MOO_LIST) {
+        MooList* l = MV_LIST(netz);
+        for (int32_t i = 0; i < l->length; i++)
+            packung_leeren_schicht(l->items[i]);
+        return moo_none();
+    }
+    moo_throw(moo_error("packung_leeren: erwarte eine Schicht, Liste oder ki_netz"));
     return moo_none();
 }
 

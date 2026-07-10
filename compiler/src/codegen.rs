@@ -2708,6 +2708,32 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[netz.into()], "rel_cl_netz")?;
                         return Ok(r);
                     }
+                    "sequence_packen" | "pack_sequence" => {
+                        let docs = self.compile_expr(&args[0])?;
+                        let bl = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_nn_sequence_packen,
+                            &[docs.into(), bl.into()], "nn_pack")?;
+                        self.call_rt_void(self.rt.moo_release, &[docs.into()], "rel_pack_docs")?;
+                        return Ok(r);
+                    }
+                    "packung_setzen" | "set_packing" => {
+                        let netz = self.compile_expr(&args[0])?;
+                        let m = self.compile_expr(&args[1])?;
+                        let p = self.compile_expr(&args[2])?;
+                        let r = self.call_rt(self.rt.moo_nn_packung_setzen,
+                            &[netz.into(), m.into(), p.into()], "nn_packset")?;
+                        self.call_rt_void(self.rt.moo_release, &[netz.into()], "rel_ps_netz")?;
+                        self.call_rt_void(self.rt.moo_release, &[m.into()], "rel_ps_m")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_ps_p")?;
+                        return Ok(r);
+                    }
+                    "packung_leeren" | "clear_packing" => {
+                        let netz = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_nn_packung_leeren,
+                            &[netz.into()], "nn_packclr")?;
+                        self.call_rt_void(self.rt.moo_release, &[netz.into()], "rel_pl_netz")?;
+                        return Ok(r);
+                    }
                     "gradienten_kappen" | "clip_gradients" => {
                         let params = self.compile_expr(&args[0])?;
                         let m = self.compile_expr(&args[1])?;

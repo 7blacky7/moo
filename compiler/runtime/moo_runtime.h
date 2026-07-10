@@ -296,6 +296,9 @@ MooValue moo_nn_schicht_position(MooValue max_laenge, MooValue dim, MooValue art
 MooValue moo_nn_schicht_moe(MooValue dim, MooValue versteckt, MooValue n_experten, MooValue k, MooValue seed);  // KI-M1
 MooValue moo_nn_moe_balance(MooValue netz);   // KI-M1: Balance-Verlust Gl. 12 (nach vorwaerts)
 MooValue moo_nn_cache_leeren(MooValue netz);  // KI-M2c: KV-Cache-Zustand leeren (Flag bleibt)
+MooValue moo_nn_sequence_packen(MooValue docs, MooValue block_len);  // KIP-B4a
+MooValue moo_nn_packung_setzen(MooValue netz, MooValue maske, MooValue positionen);  // KIP-B4a
+MooValue moo_nn_packung_leeren(MooValue netz);  // KIP-B4a
 MooValue moo_nn_vorwaerts(MooValue netz, MooValue x);
 MooValue moo_nn_parameter(MooValue netz);
 MooValue moo_nn_mse(MooValue a, MooValue b);

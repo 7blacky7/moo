@@ -1190,6 +1190,69 @@ int main(void) {
         moo_ag_reset();
     }
 
+    /* ===== 20. Sequence Packing (KIP-B4a) ===== */
+    {
+        moo_ag_reset();
+        float da[3] = { 1.0f, 2.0f, 3.0f };
+        float db[2] = { 4.0f, 5.0f };
+        MooValue docA = t1(3, da), docB = t1(2, db);
+        MooValue docs = moo_list_new(2);
+        moo_list_append(docs, docA);   /* append transferiert +1 -> Liste besitzt */
+        moo_list_append(docs, docB);
+        MooValue pack = moo_nn_sequence_packen(docs, moo_number(6.0));  /* 1 Padding */
+        CHECK(pack.tag == MOO_DICT, "packen: liefert Dict");
+        MooValue pids = dget_(pack, "ids");
+        MooValue pmask = dget_(pack, "attn_maske");
+        MooValue plm = dget_(pack, "loss_maske");
+        MooValue ppos = dget_(pack, "positionen");
+        MooValue poff = dget_(pack, "doc_offsets");
+        CHECK(pids.tag==MOO_TENSOR && T(pids)->size==6, "packen: ids[6]");
+        CHECK(T(plm)->data[0]==1 && T(plm)->data[1]==1 && T(plm)->data[2]==0 &&
+              T(plm)->data[3]==1 && T(plm)->data[4]==0 && T(plm)->data[5]==0,
+              "packen: loss_maske 0 an Doc-Grenzen + Padding");
+        CHECK(T(ppos)->data[0]==0 && T(ppos)->data[1]==1 && T(ppos)->data[2]==2 &&
+              T(ppos)->data[3]==0 && T(ppos)->data[4]==1,
+              "packen: Per-Doc-Positions-Reset");
+        CHECK(T(poff)->size==3 && T(poff)->data[0]==0 && T(poff)->data[1]==3 &&
+              T(poff)->data[2]==5, "packen: doc_offsets [0,3,5]");
+        CHECK(T(pmask)->data[0*6+3] < -1e8 && T(pmask)->data[3*6+0] < -1e8 &&
+              T(pmask)->data[2*6+2]==0 && T(pmask)->data[0*6+1] < -1e8 &&
+              T(pmask)->data[3*6+3]==0 && T(pmask)->data[4*6+3]==0 &&
+              T(pmask)->data[0*6+5] < -1e8,
+              "packen: block-diagonale + kausale Maske (Padding-Spalte blockt)");
+
+        /* GATE: gepackt == ungepackt (Attention-Output pro Doc BIT-identisch) */
+        moo_ag_aus();
+        MooValue emb = moo_nn_schicht_embedding(moo_number(8.0), moo_number(8.0),
+                                                moo_number(1.0));
+        MooValue at = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                       moo_number(7.0), moo_none(), moo_none(), moo_none(),
+                       moo_number(10000.0));
+        MooValue xp = moo_nn_vorwaerts(emb, pids);            /* [6,8] */
+        moo_release(moo_nn_packung_setzen(at, pmask, ppos));
+        MooValue yp = moo_nn_vorwaerts(at, xp);               /* [6,8] gepackt */
+        moo_release(moo_nn_packung_leeren(at));
+        MooValue xA = moo_nn_vorwaerts(emb, docA);            /* [3,8] */
+        MooValue yA = moo_nn_vorwaerts(at, xA);               /* ungepackt A (causal) */
+        MooValue xB = moo_nn_vorwaerts(emb, docB);            /* [2,8] */
+        MooValue yB = moo_nn_vorwaerts(at, xB);               /* ungepackt B */
+        bool gleichA = (yp.tag==MOO_TENSOR && yA.tag==MOO_TENSOR);
+        for (int i=0;i<3 && gleichA;i++) for (int j=0;j<8 && gleichA;j++)
+            gleichA = (T(yp)->data[i*8+j] == T(yA)->data[i*8+j]);
+        bool gleichB = (yp.tag==MOO_TENSOR && yB.tag==MOO_TENSOR);
+        for (int i=0;i<2 && gleichB;i++) for (int j=0;j<8 && gleichB;j++)
+            gleichB = (T(yp)->data[(3+i)*8+j] == T(yB)->data[i*8+j]);
+        CHECK(gleichA, "packen-Gate: Doc A gepackt == ungepackt BIT-identisch");
+        CHECK(gleichB, "packen-Gate: Doc B gepackt == ungepackt BIT-identisch");
+        moo_ag_an();
+        moo_release(xp); moo_release(yp); moo_release(xA); moo_release(yA);
+        moo_release(xB); moo_release(yB); moo_release(emb); moo_release(at);
+        moo_release(pids); moo_release(pmask); moo_release(plm);
+        moo_release(ppos); moo_release(poff);
+        moo_release(pack); moo_release(docs);   /* docs-Liste released docA/docB */
+        moo_ag_reset();
+    }
+
     printf("test_nn_asan: alle %d Checks bestanden\n", checks);
     return 0;
 }
