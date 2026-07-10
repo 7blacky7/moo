@@ -85,6 +85,21 @@ bool moo_ki_gpu_copy_res(void* a, void* o, int64_t n, int64_t src_off, int64_t d
 bool moo_ki_gpu_grad_accum_res(void* acc, void* g, int64_t n) {
     (void)acc; (void)g; (void)n; return false;
 }
+bool moo_ki_gpu_softmax_res(int32_t op, void* a, void* o, int32_t rows, int32_t cols) {
+    (void)op; (void)a; (void)o; (void)rows; (void)cols; return false;
+}
+bool moo_ki_gpu_softmax_bw_res(int32_t op, void* y, void* g, void* gin,
+                               int32_t rows, int32_t cols) {
+    (void)op; (void)y; (void)g; (void)gin; (void)rows; (void)cols; return false;
+}
+bool moo_ki_gpu_ce_fwd_res(void* logits, void* target, int32_t rows, int32_t cols,
+                           double* out_loss) {
+    (void)logits; (void)target; (void)rows; (void)cols; (void)out_loss; return false;
+}
+bool moo_ki_gpu_ce_bw_res(void* logits, void* target, void* grad,
+                          int32_t rows, int32_t cols, float scale) {
+    (void)logits; (void)target; (void)grad; (void)rows; (void)cols; (void)scale; return false;
+}
 bool moo_ki_gpu_opt_sgd_res(void* p, void* m, void* grad, int64_t n,
                             float lr, float momentum) {
     (void)p; (void)m; (void)grad; (void)n; (void)lr; (void)momentum; return false;
@@ -126,6 +141,8 @@ typedef struct {
     VkPipeline pipe_transpose, pipe_copy;  /* KIP-G3d-c: Layout-Ops transpose/reshape/concat */
     VkPipeline pipe_grad_accum;            /* KIP-G3c: gpu_grad += Beitrag (Fan-out) */
     VkPipeline pipe_opt_sgd, pipe_opt_adam;/* KIP-G3c: Optimizer-Schritt SGD-Momentum / Adam(W) */
+    VkPipeline pipe_softmax, pipe_softmax_bw; /* KIP-G3a: Softmax/LogSoftmax F+B (zeilenweise) */
+    VkPipeline pipe_ce_fwd, pipe_ce_bw;       /* KIP-G3a: fused Cross-Entropy F+B (zeilenweise) */
     VkCommandPool cmdpool;
     VkDescriptorPool descpool;
     /* GPU3-C: Per-Op-Allokationen gecacht — lazy beim ersten Dispatch
@@ -335,9 +352,15 @@ static bool ki_gpu_init(void) {
     G.pipe_grad_accum = pipeline_bauen(ki_grad_accum_spv, ki_grad_accum_spv_len, G.playout);
     G.pipe_opt_sgd = pipeline_bauen(ki_opt_sgd_spv, ki_opt_sgd_spv_len, G.playout_opt);
     G.pipe_opt_adam = pipeline_bauen(ki_opt_adam_spv, ki_opt_adam_spv_len, G.playout_opt);
+    /* KIP-G3a: Softmax/LogSoftmax + fused CE — alle 16B-playout, ein Thread/Zeile. */
+    G.pipe_softmax = pipeline_bauen(ki_softmax_fwd_spv, ki_softmax_fwd_spv_len, G.playout);
+    G.pipe_softmax_bw = pipeline_bauen(ki_softmax_bw_spv, ki_softmax_bw_spv_len, G.playout);
+    G.pipe_ce_fwd = pipeline_bauen(ki_ce_fwd_spv, ki_ce_fwd_spv_len, G.playout);
+    G.pipe_ce_bw = pipeline_bauen(ki_ce_bw_spv, ki_ce_bw_spv_len, G.playout);
     if (!G.pipe_matmul || !G.pipe_ew || !G.pipe_reduce || !G.pipe_matmul_naiv ||
         !G.pipe_unary || !G.pipe_unary_bw || !G.pipe_transpose || !G.pipe_copy ||
-        !G.pipe_grad_accum || !G.pipe_opt_sgd || !G.pipe_opt_adam)
+        !G.pipe_grad_accum || !G.pipe_opt_sgd || !G.pipe_opt_adam ||
+        !G.pipe_softmax || !G.pipe_softmax_bw || !G.pipe_ce_fwd || !G.pipe_ce_bw)
         return false;
 
     VkCommandPoolCreateInfo cpi = {
@@ -1077,6 +1100,80 @@ bool moo_ki_gpu_opt_adam_res(void* p, void* grad, void* mv, int64_t n,
                        eps, wd, bc1, bc2 };
     KiBuf bufs[3] = { *(KiBuf*)p, *(KiBuf*)mv, *(KiBuf*)grad };
     bool ok = dispatch_opt(G.pipe_opt_adam, bufs, push, (uint32_t)((n + 255) / 256));
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3a: zeilenweise Softmax (op 0) / LogSoftmax (op 1), max-shift-stabil.
+ * Ein Thread pro Zeile. a wird an binding 0 UND 1 (ungenutzt) gebunden. */
+bool moo_ki_gpu_softmax_res(int32_t op, void* a, void* o, int32_t rows, int32_t cols) {
+    if (!a || !o) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf bufs[3] = { *(KiBuf*)a, *(KiBuf*)a, *(KiBuf*)o };
+    KiPush push = { (uint32_t)rows, (uint32_t)cols, 0, (uint32_t)op };
+    bool ok = dispatch_sync(G.pipe_softmax, bufs, push,
+                            ((uint32_t)rows + 255u) / 256u, 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3a: zugehoeriger Backward. op 0: da = y*(g - sum(g*y)); op 1: da =
+ * g - exp(y)*sum(g). y = Forward-Ausgang, g = grad_out. REINER Beitrag (kein +=). */
+bool moo_ki_gpu_softmax_bw_res(int32_t op, void* y, void* g, void* gin,
+                               int32_t rows, int32_t cols) {
+    if (!y || !g || !gin) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf bufs[3] = { *(KiBuf*)y, *(KiBuf*)g, *(KiBuf*)gin };
+    KiPush push = { (uint32_t)rows, (uint32_t)cols, 0, (uint32_t)op };
+    bool ok = dispatch_sync(G.pipe_softmax_bw, bufs, push,
+                            ((uint32_t)rows + 255u) / 256u, 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3a: fused Cross-Entropy Forward. loss_i pro Zeile in ein Partial-
+ * Buffer (leihweise aus dem Pool, binding 2), readback 0x4 faltet den
+ * Partial-Download in den Compute-Submit; der Host mittelt (loss = mean_i).
+ * logits/target sind resident (binding 0/1). submits++ + downloads++. */
+bool moo_ki_gpu_ce_fwd_res(void* logits, void* target, int32_t rows, int32_t cols,
+                           double* out_loss) {
+    if (!logits || !target || !out_loss) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf part;
+    if (!buf_holen(&part, (VkDeviceSize)rows * 4)) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf bufs[3] = { *(KiBuf*)logits, *(KiBuf*)target, part };
+    KiPush push = { (uint32_t)rows, (uint32_t)cols, 0, 0 };
+    bool ok = dispatch_sync(G.pipe_ce_fwd, bufs, push,
+                            ((uint32_t)rows + 255u) / 256u, 1,
+                            /*upload*/ 0u, /*readback*/ 0x4u, /*resident*/ true);
+    if (ok) {
+        const float* pt = (const float*)part.map;
+        double s = 0.0;
+        for (int32_t i = 0; i < rows; i++) s += (double)pt[i];
+        *out_loss = s / (double)rows;
+        g_tel.downloads++;
+    } else {
+        g_tel.cpu_fallbacks++;
+    }
+    buf_zurueck(&part);
+    return ok;
+}
+
+/* KIP-G3a: fused Cross-Entropy Backward. grad_ij = (softmax(x)_ij - t_ij)*scale
+ * (scale = 1/batch fuer loss=mean). REINER Beitrag (kein +=). scale via
+ * KiPush.N (float-Bitmuster). logits/target/grad resident. */
+bool moo_ki_gpu_ce_bw_res(void* logits, void* target, void* grad,
+                          int32_t rows, int32_t cols, float scale) {
+    if (!logits || !target || !grad) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    uint32_t sbits; memcpy(&sbits, &scale, sizeof(sbits));
+    KiBuf bufs[3] = { *(KiBuf*)logits, *(KiBuf*)target, *(KiBuf*)grad };
+    KiPush push = { (uint32_t)rows, (uint32_t)cols, sbits, 0 };
+    bool ok = dispatch_sync(G.pipe_ce_bw, bufs, push,
+                            ((uint32_t)rows + 255u) / 256u, 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
     if (!ok) g_tel.cpu_fallbacks++;
     return ok;
 }

@@ -32,6 +32,9 @@ enum {
     MOO_KI_U_TANH = 11, MOO_KI_U_GELU = 12
 };
 
+/* === KIP-G3a: Softmax/LogSoftmax-Variante (Forward + Backward teilen Codes) === */
+enum { MOO_KI_SM_SOFTMAX = 0, MOO_KI_SM_LOGSOFTMAX = 1 };
+
 /* === Residente Buffer-Handles (opaque) ===
  * Ein Handle kapselt ein pool-verwaltetes VRAM/Staging-Paar (GPU3-A/B).
  * Der Tensor besitzt genau EINEN Handle (MooTensor.gpu_buf, opaque void*),
@@ -112,6 +115,23 @@ bool moo_ki_gpu_opt_adam_res(void* p, void* grad, void* mv, int64_t n,
  * Partial-Readback ist inhaerent (Reduktion verlaesst die GPU): submits++
  * (Compute) + downloads++ (Partials). */
 bool moo_ki_gpu_reduce_sum_res(void* a, int64_t n, double* out_summe);
+/* === KIP-G3a: Softmax/LogSoftmax + fused Cross-Entropy (Forward + Backward) ===
+ * Alle zeilenweise (ein Thread pro Zeile [rows,cols]), max-shift-stabil wie die
+ * CPU-Referenz (moo_tensor_ops.c softmax_impl / moo_nn.c kreuzentropie). */
+/* Forward: o = softmax(a) (op=MOO_KI_SM_SOFTMAX) bzw. logsoftmax (LOGSOFTMAX). */
+bool moo_ki_gpu_softmax_res(int32_t op, void* a, void* o, int32_t rows, int32_t cols);
+/* Backward: op SOFTMAX -> da = y*(g-sum(g*y)); op LOGSOFTMAX -> da = g-exp(y)*sum(g).
+ * y = Forward-Ausgang, g = grad_out. REINER Beitrag OHNE += (das += ist G3c). */
+bool moo_ki_gpu_softmax_bw_res(int32_t op, void* y, void* g, void* gin,
+                               int32_t rows, int32_t cols);
+/* Fused CE Forward: loss = mean_i(-sum_j target_ij*logsoftmax(logits)_ij). target
+ * = one-hot/soft [rows,cols]. Partial-Readback inhaerent: submits++ + downloads++. */
+bool moo_ki_gpu_ce_fwd_res(void* logits, void* target, int32_t rows, int32_t cols,
+                           double* out_loss);
+/* Fused CE Backward: grad = (softmax(logits) - target) * scale (scale = 1/batch
+ * fuer loss=mean). REINER Beitrag OHNE += (das += ist G3c). */
+bool moo_ki_gpu_ce_bw_res(void* logits, void* target, void* grad,
+                          int32_t rows, int32_t cols, float scale);
 
 /* === Telemetrie (G1 §5 — G4-Beweismittel) ===
  * submits       = Compute-Dispatches (residente + nicht-residente Ops; genau
