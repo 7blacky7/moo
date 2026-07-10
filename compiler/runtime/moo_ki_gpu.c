@@ -107,6 +107,18 @@ bool moo_ki_gpu_norm_bw_res(int32_t op, void* x, void* g, void* dx,
                             int32_t rows, int32_t cols, float eps) {
     (void)op; (void)x; (void)g; (void)dx; (void)rows; (void)cols; (void)eps; return false;
 }
+bool moo_ki_gpu_reduce_axis_res(int32_t op, int32_t axis, void* a, void* o,
+                                int32_t rows, int32_t cols) {
+    (void)op; (void)axis; (void)a; (void)o; (void)rows; (void)cols; return false;
+}
+bool moo_ki_gpu_broadcast_res(int32_t axis, void* src, void* o,
+                              int32_t rows, int32_t cols, float scale) {
+    (void)axis; (void)src; (void)o; (void)rows; (void)cols; (void)scale; return false;
+}
+bool moo_ki_gpu_reduce_max_bw_res(int32_t axis, void* a, void* g, void* gin,
+                                  int32_t rows, int32_t cols) {
+    (void)axis; (void)a; (void)g; (void)gin; (void)rows; (void)cols; return false;
+}
 bool moo_ki_gpu_opt_sgd_res(void* p, void* m, void* grad, int64_t n,
                             float lr, float momentum) {
     (void)p; (void)m; (void)grad; (void)n; (void)lr; (void)momentum; return false;
@@ -151,6 +163,7 @@ typedef struct {
     VkPipeline pipe_softmax, pipe_softmax_bw; /* KIP-G3a: Softmax/LogSoftmax F+B (zeilenweise) */
     VkPipeline pipe_ce_fwd, pipe_ce_bw;       /* KIP-G3a: fused Cross-Entropy F+B (zeilenweise) */
     VkPipeline pipe_norm, pipe_norm_bw;       /* KIP-G3b: LayerNorm/RMSNorm-Kern F+B (zeilenweise) */
+    VkPipeline pipe_reduce_axis, pipe_broadcast, pipe_reduce_max_bw; /* KIP-G3d-b: Achsen-Red + Broadcast + Max-Subgradient */
     VkCommandPool cmdpool;
     VkDescriptorPool descpool;
     /* GPU3-C: Per-Op-Allokationen gecacht — lazy beim ersten Dispatch
@@ -368,11 +381,16 @@ static bool ki_gpu_init(void) {
     /* KIP-G3b: LayerNorm/RMSNorm-Kern (16B-playout, ein Thread/Zeile). */
     G.pipe_norm = pipeline_bauen(ki_norm_fwd_spv, ki_norm_fwd_spv_len, G.playout);
     G.pipe_norm_bw = pipeline_bauen(ki_norm_bw_spv, ki_norm_bw_spv_len, G.playout);
+    /* KIP-G3d-b: Achsen-Reduktion + Broadcast + Max-Subgradient (16B-playout). */
+    G.pipe_reduce_axis = pipeline_bauen(ki_reduce_axis_spv, ki_reduce_axis_spv_len, G.playout);
+    G.pipe_broadcast = pipeline_bauen(ki_broadcast_spv, ki_broadcast_spv_len, G.playout);
+    G.pipe_reduce_max_bw = pipeline_bauen(ki_reduce_max_bw_spv, ki_reduce_max_bw_spv_len, G.playout);
     if (!G.pipe_matmul || !G.pipe_ew || !G.pipe_reduce || !G.pipe_matmul_naiv ||
         !G.pipe_unary || !G.pipe_unary_bw || !G.pipe_transpose || !G.pipe_copy ||
         !G.pipe_grad_accum || !G.pipe_opt_sgd || !G.pipe_opt_adam ||
         !G.pipe_softmax || !G.pipe_softmax_bw || !G.pipe_ce_fwd || !G.pipe_ce_bw ||
-        !G.pipe_norm || !G.pipe_norm_bw)
+        !G.pipe_norm || !G.pipe_norm_bw ||
+        !G.pipe_reduce_axis || !G.pipe_broadcast || !G.pipe_reduce_max_bw)
         return false;
 
     VkCommandPoolCreateInfo cpi = {
@@ -1219,6 +1237,57 @@ bool moo_ki_gpu_norm_bw_res(int32_t op, void* x, void* g, void* dx,
     KiPush push = { (uint32_t)rows, (uint32_t)cols, ebits, (uint32_t)op };
     bool ok = dispatch_sync(G.pipe_norm_bw, bufs, push,
                             ((uint32_t)rows + 255u) / 256u, 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3d-b: Achsen-Reduktion mit keepdims. op sum/mean/max, axis 0 -> [1,c],
+ * axis 1 -> [r,1] (CPU-Ref moo_tensor_ops.c reduce_op). a an binding 0 UND 1
+ * (ungenutzt). Ein Thread pro Ausgabe-Element. */
+bool moo_ki_gpu_reduce_axis_res(int32_t op, int32_t axis, void* a, void* o,
+                                int32_t rows, int32_t cols) {
+    if (!a || !o) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    uint32_t outn = (axis == 0) ? (uint32_t)cols : (uint32_t)rows;
+    KiBuf bufs[3] = { *(KiBuf*)a, *(KiBuf*)a, *(KiBuf*)o };
+    KiPush push = { (uint32_t)rows, (uint32_t)cols, (uint32_t)axis, (uint32_t)op };
+    bool ok = dispatch_sync(G.pipe_reduce_axis, bufs, push,
+                            (outn + 255u) / 256u, 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3d-b: Broadcast mit Skalierung (Reduktions-Backward fuer sum/mean +
+ * Baustein fuer ew-Broadcast-Forward). out[i,j]=src[axis==0?j:i]*scale. scale=1
+ * fuer sum-bw / reinen Broadcast, 1/r|1/c fuer mean-bw. REINER Beitrag (kein +=). */
+bool moo_ki_gpu_broadcast_res(int32_t axis, void* src, void* o,
+                              int32_t rows, int32_t cols, float scale) {
+    if (!src || !o) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    uint32_t sbits; memcpy(&sbits, &scale, sizeof(sbits));
+    KiBuf bufs[3] = { *(KiBuf*)src, *(KiBuf*)src, *(KiBuf*)o };
+    KiPush push = { (uint32_t)rows, (uint32_t)cols, sbits, (uint32_t)axis };
+    bool ok = dispatch_sync(G.pipe_broadcast, bufs, push,
+                            (uint32_t)(((int64_t)rows * cols + 255) / 256), 1,
+                            /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KIP-G3d-b: Subgradient der Max-Reduktion. g fliesst an die (erste) argmax-
+ * Position je Gruppe (CPU-Ref bw_max). a=Input (fuer argmax), g=grad_out,
+ * gin=[r,c]-Ergebnis. Ein Thread pro reduzierter Gruppe. REINER Beitrag (kein +=). */
+bool moo_ki_gpu_reduce_max_bw_res(int32_t axis, void* a, void* g, void* gin,
+                                  int32_t rows, int32_t cols) {
+    if (!a || !g || !gin) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    uint32_t grpn = (axis == 0) ? (uint32_t)cols : (uint32_t)rows;
+    KiBuf bufs[3] = { *(KiBuf*)a, *(KiBuf*)g, *(KiBuf*)gin };
+    KiPush push = { (uint32_t)rows, (uint32_t)cols, (uint32_t)axis, 0 };
+    bool ok = dispatch_sync(G.pipe_reduce_max_bw, bufs, push,
+                            (grpn + 255u) / 256u, 1,
                             /*upload*/ 0u, /*readback*/ 0u, /*resident*/ true);
     if (!ok) g_tel.cpu_fallbacks++;
     return ok;

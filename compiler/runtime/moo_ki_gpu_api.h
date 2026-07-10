@@ -38,6 +38,9 @@ enum { MOO_KI_SM_SOFTMAX = 0, MOO_KI_SM_LOGSOFTMAX = 1 };
 /* === KIP-G3b: Normalisierungs-Variante (Forward + Backward teilen Codes) === */
 enum { MOO_KI_NORM_LAYER = 0, MOO_KI_NORM_RMS = 1 };
 
+/* === KIP-G3d-b: Achsen-Reduktions-Art (sum/mean/max) === */
+enum { MOO_KI_RED_SUM = 0, MOO_KI_RED_MEAN = 1, MOO_KI_RED_MAX = 2 };
+
 /* === Residente Buffer-Handles (opaque) ===
  * Ein Handle kapselt ein pool-verwaltetes VRAM/Staging-Paar (GPU3-A/B).
  * Der Tensor besitzt genau EINEN Handle (MooTensor.gpu_buf, opaque void*),
@@ -144,6 +147,23 @@ bool moo_ki_gpu_norm_res(int32_t op, void* x, void* o, int32_t rows, int32_t col
  * -n*mean(g*n)); op RMS -> dx=(1/s)(g-n*mean(g*n)). REINER Beitrag OHNE +=. */
 bool moo_ki_gpu_norm_bw_res(int32_t op, void* x, void* g, void* dx,
                             int32_t rows, int32_t cols, float eps);
+/* === KIP-G3d-b: Achsen-Reduktionen + Broadcast (Fwd-Luecken + Backward) ===
+ * Ueber [rows,cols], keepdims (CPU-Ref moo_tensor_ops.c reduce_op / autograd
+ * bw_sum/bw_mean/bw_max). axis 0 -> [1,cols], axis 1 -> [rows,1]. */
+/* Achsen-Reduktion: op = MOO_KI_RED_SUM|MEAN|MAX. o hat keepdims-Groesse
+ * (cols bei axis 0, rows bei axis 1). */
+bool moo_ki_gpu_reduce_axis_res(int32_t op, int32_t axis, void* a, void* o,
+                                int32_t rows, int32_t cols);
+/* Broadcast+Skalierung: out[i,j] = src[axis==0?j:i]*scale. Deckt sum/mean-
+ * Reduktions-Backward (scale 1 bzw. 1/rows|1/cols) UND ew-Broadcast-Forward-
+ * Baustein ab. REINER Beitrag OHNE +=. */
+bool moo_ki_gpu_broadcast_res(int32_t axis, void* src, void* o,
+                              int32_t rows, int32_t cols, float scale);
+/* Max-Reduktions-Subgradient: g fliesst an die erste argmax-Position je Gruppe.
+ * a = Original-Input (argmax), g = grad_out (keepdims), gin = [rows,cols].
+ * REINER Beitrag OHNE +=. */
+bool moo_ki_gpu_reduce_max_bw_res(int32_t axis, void* a, void* g, void* gin,
+                                  int32_t rows, int32_t cols);
 
 /* === Telemetrie (G1 §5 — G4-Beweismittel) ===
  * submits       = Compute-Dispatches (residente + nicht-residente Ops; genau

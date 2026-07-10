@@ -1,0 +1,27 @@
+#version 450
+// broadcast.comp — KIP-G3d-b: Broadcast mit Skalierung. Deckt (a) den
+// Reduktions-Backward fuer sum/mean (Gradient-Broadcast auf Input-Shape) und
+// (b) den Baustein fuer ew-Broadcast-Forward ab.
+//   out[i*c + j] = src[(axis==0) ? j : i] * scale
+// axis 0: src ist [1,c] (broadcast ueber Zeilen); axis 1: src ist [r,1]
+// (broadcast ueber Spalten). scale = 1 (sum-bw / reiner Broadcast) bzw.
+// 1/r | 1/c (mean-bw). REINER Beitrag ohne += (das += ist G3c).
+// binding 0 = src, binding 1 ungenutzt, binding 2 = out.
+// pc.M = r, pc.K = c, pc.op = Achse, pc.N = scale (float-Bitmuster).
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly  buffer BufS { float src[]; };
+layout(std430, binding = 1) readonly  buffer BufB { float b_unused[]; };
+layout(std430, binding = 2) writeonly buffer BufO { float o[]; };
+layout(push_constant) uniform PC { uint M; uint K; uint N; uint op; } pc;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint r = pc.M, c = pc.K;
+    uint total = r * c;
+    if (gid >= total) return;
+    uint i = gid / c;
+    uint j = gid - i * c;
+    float scale = uintBitsToFloat(pc.N);
+    float v = (pc.op == 0u) ? src[j] : src[i];
+    o[gid] = v * scale;
+}
