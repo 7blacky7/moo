@@ -1750,7 +1750,13 @@ MooValue moo_nn_grad_clip(MooValue params, MooValue max_norm) {
     for (int32_t i = 0; i < pl->length; i++) {
         if (pl->items[i].tag != MOO_TENSOR) continue;
         MooTensor* p = MV_TENSOR(pl->items[i]);
-        if (!p->grad) continue;
+        /* KIP-G4e-Disziplin (kip-ops-Befund, Msg 12934): NICHT nur auf
+         * p->grad pruefen — bei echter gpu_grad-Residenz kann grad NULL/stale
+         * sein, waehrend gpu_grad autoritativ ist (grad_valid & MOO_V_DEV).
+         * Guard wie im bw-Dispatcher, dann Host-Trichter (I2) vor jedem Read. */
+        if (!p->grad && !(p->grad_valid & MOO_V_DEV)) continue;
+        moo_tensor_grad_sichern(p);
+        if (!p->grad) continue;   /* Sicherung fehlgeschlagen (throw gesetzt) */
         for (int64_t j = 0; j < p->size; j++)
             q += (double)p->grad[j] * (double)p->grad[j];
     }
@@ -1763,6 +1769,9 @@ MooValue moo_nn_grad_clip(MooValue params, MooValue max_norm) {
             MooTensor* p = MV_TENSOR(pl->items[i]);
             if (!p->grad) continue;
             for (int64_t j = 0; j < p->size; j++) p->grad[j] *= faktor;
+            /* Host ist nach dem Kappen autoritativ (I9-Muster, analog
+             * opt_schritt I6) — naechster GPU-Trichter laedt gekappte Werte. */
+            if (p->grad_valid) p->grad_valid = MOO_V_DATA;
         }
     }
     return moo_number(norm);
