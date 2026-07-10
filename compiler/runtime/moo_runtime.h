@@ -382,7 +382,9 @@ MooValue moo_frame_read_pixel(MooValue frame, MooValue x, MooValue y);
 // Pfad in moo_test_api.c (moo_test_pixel).
 MooValue moo_frame_pixel_dict(const MooFrame* f, int x, int y);
 MooValue moo_test_frame_save_bmp(MooValue frame, MooValue pfad);
-// Folgende sind im test_*-Layer (moo_test_api.c, nur 3D-Build) implementiert:
+// Folgende sind im test_*-Layer (moo_test_api.c) implementiert. Gebaut nur im
+// Grafik-Build (Feature gl21/gl33/vulkan) — arbeitet dann mit ALLEN Fenster-
+// typen: 2D-SDL (MOO_WINDOW), 3D (MOO_WINDOW3D) und Hybrid:
 //   moo_test_frame_grab(win) -> MOO_FRAME (Backend-Grab, RGBA top-left)
 //   moo_test_pixel(frame_oder_win, x, y) -> Farbe (Frame direkt ODER Fenster grabben)
 MooValue moo_test_frame_grab(MooValue win);
@@ -401,7 +403,8 @@ typedef struct {
 } MooGifHandle;
 #define MV_GIF(v)  ((MooGifHandle*)moo_val_as_ptr(v))
 
-// test_gif_*-Builtins (moo_test_api.c, nur 3D-Build — brauchen Fenster-Grab):
+// test_gif_*-Builtins (moo_test_api.c, Grafik-Build gl21/gl33/vulkan). Grab
+// funktioniert fuer 2D-SDL-, 3D- und Hybrid-Fenster sowie MOO_FRAME direkt:
 //   test_gif_start(win_oder_frame, pfad, fps) -> MOO_GIF (Dimensionen aus erstem
 //                                                Grab/Frame; oeffnet die Datei)
 //   test_gif_frame(gif, frame_oder_win)        -> Bool (grabbt bzw. nutzt MOO_FRAME,
@@ -433,7 +436,8 @@ MooValue moo_video_handle_new(MooVideoWriter* writer);
 // Refcount-0-Destruktor, aus moo_release()/MOO_VIDEO aufgerufen.
 void moo_video_handle_free(void* ptr);
 
-// test_video_*-Builtins (moo_test_api.c, nur 3D-Build - brauchen Fenster-Grab,
+// test_video_*-Builtins (moo_test_api.c, Grafik-Build gl21/gl33/vulkan; Grab
+// wie test_gif_*: 2D-SDL-, 3D-, Hybrid-Fenster oder MOO_FRAME,
 // Plan-009 V1): test_video_start(win_oder_frame, pfad, fps) -> MOO_VIDEO;
 // test_video_frame(video, frame_oder_win) -> Bool; test_video_ende(video) -> Bool.
 // Symbole immer deklariert (wie test_gif_*); C-seitig nur im 3D-Build gelinkt.
