@@ -1072,6 +1072,81 @@ static void bw_norm_kern(const MooAgNode* n, int32_t normop) {
 static void bw_layernorm_kern(const MooAgNode* n) { bw_norm_kern(n, MOO_KI_NORM_LAYER); }
 static void bw_rmsnorm_kern(const MooAgNode* n)   { bw_norm_kern(n, MOO_KI_NORM_RMS); }
 
+// KI-MULTI-V2 im2col-Backward = col2im: g der entfalteten Spalten
+// zurueck ins Bild scatter-addieren (Padding-Positionen uebersprungen).
+// Geometrie aus n->skalar (kh|kw<<8|stride<<16|pad<<24).
+static void bw_im2col(const MooAgNode* n) {
+    const MooTensor* o = T(n->output);   // [rows, kh*kw*c]
+    MooTensor* x = T(n->inputs[0]);      // [b,h,w,c]
+    if (!x->requires_grad) return;
+    float* xg = grad_sicherstellen(x);
+    uint32_t p = (uint32_t)n->skalar;
+    int32_t kh = (int32_t)(p & 0xFFu), kw = (int32_t)((p >> 8) & 0xFFu);
+    int32_t stride = (int32_t)((p >> 16) & 0xFFu), pad = (int32_t)((p >> 24) & 0xFFu);
+    int32_t b = x->shape[0], h = x->shape[1], w = x->shape[2], c = x->shape[3];
+    int32_t oh = (h + 2 * pad - kh) / stride + 1;
+    int32_t ow = (w + 2 * pad - kw) / stride + 1;
+    int64_t kcol = (int64_t)kh * kw * c;
+    for (int32_t bi = 0; bi < b; bi++)
+        for (int32_t oy = 0; oy < oh; oy++)
+            for (int32_t ox = 0; ox < ow; ox++) {
+                int64_t row = ((int64_t)bi * oh + oy) * ow + ox;
+                const float* grow = o->grad + row * kcol;
+                for (int32_t ky = 0; ky < kh; ky++) {
+                    int32_t iy = oy * stride - pad + ky;
+                    for (int32_t kx = 0; kx < kw; kx++) {
+                        int32_t ix = ox * stride - pad + kx;
+                        int64_t col = ((int64_t)ky * kw + kx) * c;
+                        if (iy >= 0 && iy < h && ix >= 0 && ix < w) {
+                            float* dst = xg + (((int64_t)bi * h + iy) * w + ix) * c;
+                            for (int32_t ch = 0; ch < c; ch++) dst[ch] += grow[col + ch];
+                        }
+                    }
+                }
+            }
+}
+
+// KI-MULTI-V2 pooling-Backward. mittel: g gleichmaessig aufs Fenster.
+// max: Subgradient an die (erste) argmax-Position, aus dem retained Input
+// x->data rekonstruiert (wie bw_max). Geometrie aus n->skalar.
+static void bw_pool(const MooAgNode* n) {
+    const MooTensor* o = T(n->output);   // [b,oh,ow,c]
+    MooTensor* x = T(n->inputs[0]);      // [b,h,w,c]
+    if (!x->requires_grad) return;
+    float* xg = grad_sicherstellen(x);
+    uint32_t p = (uint32_t)n->skalar;
+    int32_t art = (int32_t)(p & 0xFFu), g = (int32_t)((p >> 8) & 0xFFu);
+    int32_t s = (int32_t)((p >> 16) & 0xFFu);
+    int32_t b = x->shape[0], h = x->shape[1], w = x->shape[2], c = x->shape[3];
+    int32_t oh = (h - g) / s + 1, ow = (w - g) / s + 1;
+    float inv = (float)(1.0 / ((double)g * (double)g));
+    for (int32_t bi = 0; bi < b; bi++)
+        for (int32_t oy = 0; oy < oh; oy++)
+            for (int32_t ox = 0; ox < ow; ox++)
+                for (int32_t ch = 0; ch < c; ch++) {
+                    float go = o->grad[(((int64_t)bi * oh + oy) * ow + ox) * c + ch];
+                    if (art == 1) {
+                        for (int32_t ky = 0; ky < g; ky++)
+                            for (int32_t kx = 0; kx < g; kx++) {
+                                int32_t iy = oy * s + ky, ix = ox * s + kx;
+                                xg[(((int64_t)bi * h + iy) * w + ix) * c + ch] += go * inv;
+                            }
+                    } else {
+                        int32_t amy = 0, amx = 0;
+                        float best = 0.0f; bool erst = true;
+                        for (int32_t ky = 0; ky < g; ky++)
+                            for (int32_t kx = 0; kx < g; kx++) {
+                                int32_t iy = oy * s + ky, ix = ox * s + kx;
+                                float v = x->data[(((int64_t)bi * h + iy) * w + ix) * c + ch];
+                                if (erst || v > best) { best = v; amy = ky; amx = kx; }
+                                erst = false;
+                            }
+                        int32_t iy = oy * s + amy, ix = ox * s + amx;
+                        xg[(((int64_t)bi * h + iy) * w + ix) * c + ch] += go;
+                    }
+                }
+}
+
 static void moo_ag_init_bw(void) {
     moo_tensor_op_set_bw("add", bw_add);
     moo_tensor_op_set_bw("sub", bw_sub);
@@ -1101,7 +1176,9 @@ static void moo_ag_init_bw(void) {
     moo_tensor_op_set_bw("softmax", bw_softmax);
     moo_tensor_op_set_bw("logsoftmax", bw_logsoftmax);
     moo_tensor_op_set_bw("layernorm_kern", bw_layernorm_kern);
-    moo_tensor_op_set_bw("rmsnorm_kern", bw_rmsnorm_kern);
+    moo_tensor_op_set_bw("rmsnorm_kern",   bw_rmsnorm_kern);
+    moo_tensor_op_set_bw("im2col",  bw_im2col);
+    moo_tensor_op_set_bw("pooling", bw_pool);
     bw_registriert = true;
 }
 

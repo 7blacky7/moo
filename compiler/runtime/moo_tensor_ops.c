@@ -857,6 +857,148 @@ MooValue moo_tensor_layernorm_kern(MooValue a) { return norm_kern_impl(a, MOO_KI
 MooValue moo_tensor_rmsnorm_kern(MooValue a)   { return norm_kern_impl(a, MOO_KI_NORM_RMS,   "rmsnorm_kern",   "tensor_rmsnorm_kern"); }
 
 // ============================================================
+// KI-MULTI-V2: Faltung (im2col) + Pooling. CPU-Feature-Extraktion mit
+// Autograd-Backward. Die Geometrie ist in EINE Zahl gepackt (jeder Wert
+// 0..255, exakt in der double-Mantisse), damit der bestehende BINARY_SCALAR-
+// Tape-Pfad ohne Aenderung am MooAgNode-Struct (kip-kern-Revier) traegt.
+// ============================================================
+
+/* im2col-Packung: kh | kw<<8 | stride<<16 | pad<<24 (jeweils 0..255). */
+static bool entpacke_conv(double packed, int32_t* kh, int32_t* kw,
+                          int32_t* stride, int32_t* pad) {
+    if (!(packed >= 0.0) || packed > 4294967295.0 || floor(packed) != packed)
+        return false;
+    uint32_t p = (uint32_t)packed;
+    *kh = (int32_t)(p & 0xFFu);
+    *kw = (int32_t)((p >> 8) & 0xFFu);
+    *stride = (int32_t)((p >> 16) & 0xFFu);
+    *pad = (int32_t)((p >> 24) & 0xFFu);
+    return (*kh >= 1 && *kw >= 1 && *stride >= 1);
+}
+
+/* pool-Packung: art(0=max,1=mittel) | groesse<<8 | schritt<<16. */
+static bool entpacke_pool(double packed, int32_t* art, int32_t* g, int32_t* s) {
+    if (!(packed >= 0.0) || packed > 16777215.0 || floor(packed) != packed)
+        return false;
+    uint32_t p = (uint32_t)packed;
+    *art = (int32_t)(p & 0xFFu);
+    *g   = (int32_t)((p >> 8) & 0xFFu);
+    *s   = (int32_t)((p >> 16) & 0xFFu);
+    return (*g >= 1 && *s >= 1 && (*art == 0 || *art == 1));
+}
+
+/* im2col(x, packed): NHWC [b,h,w,c] -> [b*oh*ow, kh*kw*c]. Padding = 0.
+ * Spaltenordnung (ky*kw+kx)*c+ch passt zu W[kh*kw*c, cout] (matmul danach). */
+MooValue moo_tensor_im2col(MooValue xv, MooValue packedv) {
+    MooTensor* x = expect_t(xv, "faltung"); if (!x) return moo_none();
+    if (x->ndim != 4) {
+        moo_throw(moo_error("faltung: Eingabe muss die Form [bilder, hoehe, breite, kanaele] haben (NHWC)"));
+        return moo_none();
+    }
+    if (packedv.tag != MOO_NUMBER) {
+        moo_throw(moo_error("faltung: interne Geometrie fehlt"));
+        return moo_none();
+    }
+    int32_t kh, kw, stride, pad;
+    if (!entpacke_conv(MV_NUM(packedv), &kh, &kw, &stride, &pad)) {
+        moo_throw(moo_error("faltung: ungueltige Kernel-/Schritt-Geometrie"));
+        return moo_none();
+    }
+    int32_t b = x->shape[0], h = x->shape[1], w = x->shape[2], c = x->shape[3];
+    if (h + 2 * pad < kh || w + 2 * pad < kw) {
+        moo_throw(moo_error("faltung: Kernel groesser als das (gepolsterte) Bild"));
+        return moo_none();
+    }
+    int32_t oh = (h + 2 * pad - kh) / stride + 1;
+    int32_t ow = (w + 2 * pad - kw) / stride + 1;
+    int64_t rows = (int64_t)b * oh * ow;
+    int64_t kcol = (int64_t)kh * kw * c;
+    if (rows < 1 || kcol < 1 || rows > INT32_MAX || kcol > INT32_MAX) {
+        moo_throw(moo_error("faltung: Ausgabegroesse ausserhalb des Bereichs"));
+        return moo_none();
+    }
+    int32_t oshape[2] = { (int32_t)rows, (int32_t)kcol };
+    MooTensor* out = moo_tensor_raw(2, oshape);
+    if (!out) return moo_none();
+    const float* xd = x->data;
+    float* od = out->data;
+    for (int32_t bi = 0; bi < b; bi++) {
+        for (int32_t oy = 0; oy < oh; oy++) {
+            for (int32_t ox = 0; ox < ow; ox++) {
+                int64_t row = ((int64_t)bi * oh + oy) * ow + ox;
+                float* orow = od + row * kcol;
+                for (int32_t ky = 0; ky < kh; ky++) {
+                    int32_t iy = oy * stride - pad + ky;
+                    for (int32_t kx = 0; kx < kw; kx++) {
+                        int32_t ix = ox * stride - pad + kx;
+                        int64_t col = ((int64_t)ky * kw + kx) * c;
+                        if (iy >= 0 && iy < h && ix >= 0 && ix < w) {
+                            const float* src = xd + (((int64_t)bi * h + iy) * w + ix) * c;
+                            for (int32_t ch = 0; ch < c; ch++) orow[col + ch] = src[ch];
+                        } else {
+                            for (int32_t ch = 0; ch < c; ch++) orow[col + ch] = 0.0f;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    MooValue ret = wrap_t(out);
+    moo_ag_record("im2col", xv, moo_none(), packedv, ret);
+    return ret;
+}
+
+/* pooling(x, packed): NHWC [b,h,w,c] -> [b,oh,ow,c]. max oder mittel, kein Pad. */
+MooValue moo_tensor_pool(MooValue xv, MooValue packedv) {
+    MooTensor* x = expect_t(xv, "pooling"); if (!x) return moo_none();
+    if (x->ndim != 4) {
+        moo_throw(moo_error("pooling: Eingabe muss [bilder, hoehe, breite, kanaele] sein (NHWC)"));
+        return moo_none();
+    }
+    if (packedv.tag != MOO_NUMBER) {
+        moo_throw(moo_error("pooling: interne Geometrie fehlt"));
+        return moo_none();
+    }
+    int32_t art, g, s;
+    if (!entpacke_pool(MV_NUM(packedv), &art, &g, &s)) {
+        moo_throw(moo_error("pooling: ungueltige Fenster-/Schritt-Geometrie"));
+        return moo_none();
+    }
+    int32_t b = x->shape[0], h = x->shape[1], w = x->shape[2], c = x->shape[3];
+    if (h < g || w < g) {
+        moo_throw(moo_error("pooling: Fenster groesser als das Bild"));
+        return moo_none();
+    }
+    int32_t oh = (h - g) / s + 1, ow = (w - g) / s + 1;
+    int32_t oshape[4] = { b, oh, ow, c };
+    MooTensor* out = moo_tensor_raw(4, oshape);
+    if (!out) return moo_none();
+    const float* xd = x->data;
+    float* od = out->data;
+    double inv = 1.0 / ((double)g * (double)g);
+    for (int32_t bi = 0; bi < b; bi++)
+        for (int32_t oy = 0; oy < oh; oy++)
+            for (int32_t ox = 0; ox < ow; ox++)
+                for (int32_t ch = 0; ch < c; ch++) {
+                    float acc = 0.0f;
+                    bool erst = true;
+                    for (int32_t ky = 0; ky < g; ky++)
+                        for (int32_t kx = 0; kx < g; kx++) {
+                            int32_t iy = oy * s + ky, ix = ox * s + kx;
+                            float v = xd[(((int64_t)bi * h + iy) * w + ix) * c + ch];
+                            if (art == 0) { if (erst || v > acc) acc = v; }
+                            else acc += v;
+                            erst = false;
+                        }
+                    if (art == 1) acc = (float)((double)acc * inv);
+                    od[(((int64_t)bi * oh + oy) * ow + ox) * c + ch] = acc;
+                }
+    MooValue ret = wrap_t(out);
+    moo_ag_record("pooling", xv, moo_none(), packedv, ret);
+    return ret;
+}
+
+// ============================================================
 // Op-Registry — DER Erweiterbarkeits-Vertrag.
 // Neuer Op: Funktion oben implementieren + HIER eine Zeile. Fertig.
 // bw (Autograd-backward) traegt B1 nach; B2 verlangt pro bw eine
@@ -894,6 +1036,9 @@ static MooTensorOp op_tabelle[] = {
     { "logsoftmax", MOO_OP_UNARY,         moo_tensor_logsoftmax, NULL, NULL },
     { "layernorm_kern", MOO_OP_UNARY, moo_tensor_layernorm_kern, NULL, NULL },
     { "rmsnorm_kern",   MOO_OP_UNARY, moo_tensor_rmsnorm_kern,   NULL, NULL },
+    // KI-MULTI-V2: Geometrie im Skalar gepackt (BINARY_SCALAR, wie sum/max).
+    { "im2col",     MOO_OP_BINARY_SCALAR, NULL, moo_tensor_im2col, NULL },
+    { "pooling",    MOO_OP_BINARY_SCALAR, NULL, moo_tensor_pool,   NULL },
 };
 #define OP_COUNT ((int)(sizeof(op_tabelle) / sizeof(op_tabelle[0])))
 

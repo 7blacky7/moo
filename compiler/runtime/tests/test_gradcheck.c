@@ -223,6 +223,29 @@ int main(void) {
             strcmp(op->name, "rmsnorm_kern") == 0)
             tol = 1e-2;   // f32-Akkumulation/steile Kruemmung bei h=1e-3; KIP-G4d: Division/rsqrt
 
+        // KI-MULTI-V2: im2col/pooling brauchen 4D-Inputs + gepackte Geometrie
+        // (BINARY_SCALAR, aber Sonderformen) -> vor dem generischen Pfad abfangen.
+        if (strcmp(op->name, "im2col") == 0) {
+            int32_t s4[4] = { 1, 4, 4, 1 };
+            MooValue A = mk_rand(4, s4, 3400, 0.0f);
+            double p1 = 2.0 + 2.0 * 256 + 2.0 * 65536 + 0.0 * 16777216;      // 2x2, s2, p0
+            check_op(op, A, moo_none(), p1, 1e-3, "conv2x2s2");
+            double p2 = 3.0 + 3.0 * 256 + 1.0 * 65536 + 1.0 * 16777216;      // 3x3, s1, p1
+            check_op(op, A, moo_none(), p2, 1e-3, "conv3x3s1p1");
+            moo_release(A);
+            continue;
+        }
+        if (strcmp(op->name, "pooling") == 0) {
+            int32_t s4[4] = { 1, 4, 4, 2 };
+            MooValue A = mk_rand(4, s4, 3500, 0.0f);
+            double pmax = 0.0 + 2.0 * 256 + 2.0 * 65536;                     // max, 2x2, s2
+            check_op(op, A, moo_none(), pmax, 1e-3, "maxpool2");
+            double pavg = 1.0 + 2.0 * 256 + 2.0 * 65536;                     // mittel, 2x2, s2
+            check_op(op, A, moo_none(), pavg, 1e-3, "avgpool2");
+            moo_release(A);
+            continue;
+        }
+
         if (op->art == MOO_OP_UNARY) {
             MooValue A = mk_rand(2, s34, 1000 + (uint64_t)oi, shift);
             check_op(op, A, moo_none(), 0.0, tol, "std");
