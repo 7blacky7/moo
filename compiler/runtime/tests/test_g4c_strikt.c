@@ -22,6 +22,9 @@
  *      Luecke, kein residenter Pfad dafuer, aber auch kein falscher STRIKT-
  *      Fehler — Regressionstest fuer den am 2026-07-10 gefundenen Bug, wo
  *      genau dieser Fall faelschlich warf).
+ *   5. KIP-G4c Stufe 5 (ew_res-Routing, moo_tensor_ops.c ew_op): tensor_plus
+ *      auf n=2^20 (Schwelle) resident, bit-exakt gegen CPU-Referenz, genau
+ *      1 GPU-Submit, cpu_fallbacks==0 unter STRIKT.
  * ============================================================================
  */
 #include "../moo_runtime.h"
@@ -30,6 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <math.h>
 
 /* --- Test-throw-Modell (wie test_autograd_asan.c) ------------------------- */
 int moo_error_flag = 0;
@@ -189,6 +193,39 @@ int main(void) {
     moo_ag_reset();
     moo_tensor_gradient_loeschen(W);
     moo_release(A2); moo_release(W);
+
+    /* ===== 4. ew_res-Routing (Stufe 5, moo_tensor_ops.c ew_op) =====
+     * tensor_plus auf n=2^20 (Schwelle) -- resident, bit-exakt gegen CPU-
+     * Referenz, genau 1 GPU-Submit, cpu_fallbacks==0 unter STRIKT. */
+    {
+        moo_ki_gpu_telemetrie_reset();
+        int64_t n = (int64_t)1 << 20;
+        int32_t shape1[1] = { (int32_t)n };
+        MooTensor* ea = moo_tensor_raw(1, shape1);
+        MooTensor* eb = moo_tensor_raw(1, shape1);
+        float* ref = (float*)malloc((size_t)n * sizeof(float));
+        for (int64_t i = 0; i < n; i++) {
+            ea->data[i] = (float)(i % 97) * 0.01f;
+            eb->data[i] = (float)((i * 3) % 53) * 0.02f;
+            ref[i] = ea->data[i] + eb->data[i];
+        }
+        MooValue eav; eav.tag = MOO_TENSOR; moo_val_set_ptr(&eav, ea);
+        MooValue ebv; ebv.tag = MOO_TENSOR; moo_val_set_ptr(&ebv, eb);
+        MooValue ecv = moo_tensor_add(eav, ebv);
+        CHECK(!moo_error_flag, "ew_res: tensor_plus wirft nicht unter STRIKT");
+        MooTensor* ec = T(ecv);
+        moo_tensor_host_sichern(ec);
+        int64_t ediffs = 0;
+        for (int64_t i = 0; i < n; i++)
+            if (fabsf(ec->data[i] - ref[i]) > 1e-5f) ediffs++;
+        CHECK(ediffs == 0, "ew_res: tensor_plus bit-exakt gegen CPU-Referenz");
+        MooKiGpuTelemetrie tel4;
+        moo_ki_gpu_telemetrie(&tel4);
+        CHECK(tel4.submits > 0, "ew_res: mind. 1 residenter GPU-Submit fand statt");
+        CHECK(tel4.cpu_fallbacks == 0, "ew_res: keine CPU-Fallbacks unter STRIKT");
+        free(ref);
+        moo_release(ecv); moo_release(eav); moo_release(ebv);
+    }
 
     printf("test_g4c_strikt: %d Checks OK (submits=%llu uploads=%llu downloads=%llu cpu_fallbacks=%llu)\n",
            checks, 0ULL, 0ULL, 0ULL, 0ULL);

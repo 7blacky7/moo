@@ -148,8 +148,37 @@ static MooValue ew_op(MooValue av, MooValue bv, FOp f, const char* wo, const cha
          * auf (Schwellen + Verfuegbarkeit entscheidet moo_ki_gpu.c). */
         int32_t gop = (f == f_add) ? 0 : (f == f_sub) ? 1
                     : (f == f_mul) ? 2 : (f == f_div) ? 3 : -1;
-        if (gop < 0 || !moo_ki_gpu_ew(gop, a->data, b->data, out->data, out->size))
+        bool done = false;
+        /* KIP-G4c Stufe 5 (docs/kip/G4c-production-wiring-plan.md §2.5 Punkt 3):
+         * residenter ew_res-Pfad zuerst versuchen, gleiche Schwelle wie der
+         * bestehende non-resident GPU2-Hook (moo_ki_gpu_ew, n>=2^20). Unter
+         * STRIKT wird die Schwelle ignoriert (immer resident versuchen); reine
+         * CPU-Ausfuehrung bleibt fuer nicht-geroutete Ops (gop<0) unveraendert
+         * moeglich, da fuer die kein GPU-Pfad je existierte (dokumentierte
+         * Luecke, analog asymmetrischer bw_matmul-Fall). */
+        bool strikt = moo_ki_gpu_strikt_aktiv();
+        if (gop >= 0 && (strikt || out->size >= (1LL << 20))) {
+            moo_tensor_nach_gpu(a);
+            moo_tensor_nach_gpu(b);
+            if ((a->valid & MOO_V_DEV) && (b->valid & MOO_V_DEV)) {
+                if (!out->gpu_buf)
+                    out->gpu_buf = moo_ki_gpu_buf_belegen((int64_t)out->size * (int64_t)sizeof(float));
+                if (out->gpu_buf &&
+                    moo_ki_gpu_ew_res(gop, a->gpu_buf, b->gpu_buf, out->gpu_buf, out->size)) {
+                    out->valid = MOO_V_DEV;   /* nur GPU-Seite gueltig; I1-Trichter sichert bei Lesezugriff */
+                    out->device = MOO_DEV_GPU;
+                    done = true;
+                }
+            }
+        }
+        if (!done && (gop < 0 || !moo_ki_gpu_ew(gop, a->data, b->data, out->data, out->size))) {
+            if (strikt && gop >= 0) {
+                moo_release(wrap_t(out));
+                moo_throw(moo_error("STRIKT: elementweise Op nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
+                return moo_none();
+            }
             ew_same(a->data, b->data, out->data, out->size, f);
+        }
     } else if (out->ndim == 2 && b->size == out->shape[1] &&
                a->ndim == 2 && a->shape[0] == out->shape[0] && a->shape[1] == out->shape[1]) {
         ew_row(a->data, b->data, out->data, out->shape[0], out->shape[1], f);  // Bias
