@@ -3664,6 +3664,12 @@ impl<'ctx> CodeGen<'ctx> {
                     "zeit" | "time" => {
                         return self.call_rt(self.rt.moo_time, &[], "time");
                     }
+                    "gpu_statistik" => {
+                        return self.call_rt(self.rt.moo_ki_gpu_statistik, &[], "gpu_statistik");
+                    }
+                    "gpu_statistik_reset" => {
+                        return self.call_rt(self.rt.moo_ki_gpu_statistik_reset, &[], "gpu_statistik_reset");
+                    }
                     "haltepunkt" | "breakpoint" => {
                         // Zeilennummer als Argument übergeben
                         let line_num = if args.is_empty() {
