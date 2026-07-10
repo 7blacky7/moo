@@ -524,10 +524,28 @@ static MooValue reduce_op(MooValue av, MooValue achsev, RedArt art, const char* 
             out->data[0] = m;
         } else {
             double acc = 0.0;
-            /* GPU2: Voll-Summe/-Mittel gross -> Vulkan-Partials + Host-Finish */
-            if (!moo_ki_gpu_reduce_sum(a->data, a->size, &acc)) {
-                acc = 0.0;
-                for (int64_t i = 0; i < a->size; i++) acc += (double)a->data[i];
+            bool done = false;
+            bool strikt = moo_ki_gpu_strikt_aktiv();
+            /* KIP-G4c Folgeschritt (WEG 1): residenter Pfad zuerst (vermeidet
+             * unnoetigen Host-Roundtrip vs. der alten nicht-residenten
+             * moo_ki_gpu_reduce_sum), sonst gleiches STRIKT-Muster wie ew_op. */
+            if (strikt || a->size >= (1LL << 20)) {
+                if (strikt) moo_tensor_nach_gpu(a);
+                if (a->valid & MOO_V_DEV) {
+                    done = moo_ki_gpu_reduce_sum_res(a->gpu_buf, a->size, &acc);
+                }
+            }
+            if (!done) {
+                if (strikt) {
+                    moo_release(wrap_t(out));
+                    moo_throw(moo_error("STRIKT: Voll-Reduktion nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
+                    return moo_none();
+                }
+                /* GPU2: Voll-Summe/-Mittel gross -> Vulkan-Partials + Host-Finish */
+                if (!moo_ki_gpu_reduce_sum(a->data, a->size, &acc)) {
+                    acc = 0.0;
+                    for (int64_t i = 0; i < a->size; i++) acc += (double)a->data[i];
+                }
             }
             out->data[0] = (float)(art == RED_MEAN ? acc / (double)a->size : acc);
         }
@@ -547,30 +565,57 @@ static MooValue reduce_op(MooValue av, MooValue achsev, RedArt art, const char* 
     int32_t oshape[2] = { achse == 0 ? 1 : (int32_t)r, achse == 0 ? (int32_t)c : 1 };
     MooTensor* out = moo_tensor_raw(2, oshape);
     if (!out) return moo_none();
-    if (achse == 0) {           // ueber Zeilen reduzieren -> [1,c]
-        for (int64_t j = 0; j < c; j++) {
-            if (art == RED_MAX) {
-                float m = a->data[j];
-                for (int64_t i = 1; i < r; i++)
-                    if (a->data[i * c + j] > m) m = a->data[i * c + j];
-                out->data[j] = m;
-            } else {
-                double acc = 0.0;
-                for (int64_t i = 0; i < r; i++) acc += (double)a->data[i * c + j];
-                out->data[j] = (float)(art == RED_MEAN ? acc / (double)r : acc);
+
+    /* KIP-G4c Folgeschritt (WEG 1): Achsen-Reduktion residenzfaehig ueber den
+     * bestehenden moo_ki_gpu_reduce_axis_res-Kernel (deckt sum/mean/max ab --
+     * RedArt-Werte sind 1:1 identisch zu MOO_KI_RED_*). Gleiches STRIKT/
+     * Schwellen-Muster wie ew_op/u_op. */
+    bool done = false;
+    bool strikt = moo_ki_gpu_strikt_aktiv();
+    if (strikt || out->size >= (1LL << 20)) {
+        if (strikt) moo_tensor_nach_gpu(a);
+        if (a->valid & MOO_V_DEV) {
+            if (!out->gpu_buf)
+                out->gpu_buf = moo_ki_gpu_buf_belegen((int64_t)out->size * (int64_t)sizeof(float));
+            if (out->gpu_buf &&
+                moo_ki_gpu_reduce_axis_res((int32_t)art, achse, a->gpu_buf, out->gpu_buf, (int32_t)r, (int32_t)c)) {
+                out->valid = MOO_V_DEV;
+                out->device = MOO_DEV_GPU;
+                done = true;
             }
         }
-    } else {                    // ueber Spalten reduzieren -> [r,1]
-        for (int64_t i = 0; i < r; i++) {
-            const float* row = a->data + i * c;
-            if (art == RED_MAX) {
-                float m = row[0];
-                for (int64_t j = 1; j < c; j++) if (row[j] > m) m = row[j];
-                out->data[i] = m;
-            } else {
-                double acc = 0.0;
-                for (int64_t j = 0; j < c; j++) acc += (double)row[j];
-                out->data[i] = (float)(art == RED_MEAN ? acc / (double)c : acc);
+    }
+    if (!done) {
+        if (strikt) {
+            moo_release(wrap_t(out));
+            moo_throw(moo_error("STRIKT: Achsen-Reduktion nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
+            return moo_none();
+        }
+        if (achse == 0) {           // ueber Zeilen reduzieren -> [1,c]
+            for (int64_t j = 0; j < c; j++) {
+                if (art == RED_MAX) {
+                    float m = a->data[j];
+                    for (int64_t i = 1; i < r; i++)
+                        if (a->data[i * c + j] > m) m = a->data[i * c + j];
+                    out->data[j] = m;
+                } else {
+                    double acc = 0.0;
+                    for (int64_t i = 0; i < r; i++) acc += (double)a->data[i * c + j];
+                    out->data[j] = (float)(art == RED_MEAN ? acc / (double)r : acc);
+                }
+            }
+        } else {                    // ueber Spalten reduzieren -> [r,1]
+            for (int64_t i = 0; i < r; i++) {
+                const float* row = a->data + i * c;
+                if (art == RED_MAX) {
+                    float m = row[0];
+                    for (int64_t j = 1; j < c; j++) if (row[j] > m) m = row[j];
+                    out->data[i] = m;
+                } else {
+                    double acc = 0.0;
+                    for (int64_t j = 0; j < c; j++) acc += (double)row[j];
+                    out->data[i] = (float)(art == RED_MEAN ? acc / (double)c : acc);
+                }
             }
         }
     }
@@ -607,7 +652,36 @@ static MooValue u_op(MooValue av, UOp f, const char* wo, const char* ag) {
     MooTensor* a = expect_t(av, wo); if (!a) return moo_none();
     MooTensor* out = moo_tensor_raw(a->ndim, a->shape);
     if (!out) return moo_none();
-    for (int64_t i = 0; i < a->size; i++) out->data[i] = f(a->data[i]);
+
+    /* KIP-G4c Folgeschritt (WEG 1, Channel-Konsens 2026-07-10, kip-kern-Go):
+     * sqrt residenzfaehig ueber den bestehenden moo_ki_gpu_unary_res-Kernel
+     * (MOO_KI_U_SQRT), gleiches STRIKT/Schwellen-Muster wie ew_op Stufe 5.
+     * Andere u_op-Varianten (exp/log/neg/relu/...) bleiben bewusst CPU --
+     * nur sqrt wird fuer norm-Komposition gebraucht, kein Scope-Creep. */
+    int32_t uop = (f == u_sqrt) ? MOO_KI_U_SQRT : -1;
+    bool done = false;
+    bool strikt = moo_ki_gpu_strikt_aktiv();
+    if (uop >= 0 && (strikt || out->size >= (1LL << 20))) {
+        moo_tensor_nach_gpu(a);
+        if (a->valid & MOO_V_DEV) {
+            if (!out->gpu_buf)
+                out->gpu_buf = moo_ki_gpu_buf_belegen((int64_t)out->size * (int64_t)sizeof(float));
+            if (out->gpu_buf &&
+                moo_ki_gpu_unary_res(uop, a->gpu_buf, out->gpu_buf, out->size, 0.0f)) {
+                out->valid = MOO_V_DEV;   /* nur GPU-Seite gueltig; I1-Trichter sichert bei Lesezugriff */
+                out->device = MOO_DEV_GPU;
+                done = true;
+            }
+        }
+    }
+    if (!done) {
+        if (strikt && uop >= 0) {
+            moo_release(wrap_t(out));
+            moo_throw(moo_error("STRIKT: unaere Op nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
+            return moo_none();
+        }
+        for (int64_t i = 0; i < a->size; i++) out->data[i] = f(a->data[i]);
+    }
     MooValue ret = wrap_t(out);
     moo_ag_record(ag, av, moo_none(), moo_none(), ret);
     return ret;
