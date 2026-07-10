@@ -658,7 +658,8 @@ static MooValue u_op(MooValue av, UOp f, const char* wo, const char* ag) {
      * (MOO_KI_U_SQRT), gleiches STRIKT/Schwellen-Muster wie ew_op Stufe 5.
      * Andere u_op-Varianten (exp/log/neg/relu/...) bleiben bewusst CPU --
      * nur sqrt wird fuer norm-Komposition gebraucht, kein Scope-Creep. */
-    int32_t uop = (f == u_sqrt) ? MOO_KI_U_SQRT : -1;
+    int32_t uop = (f == u_sqrt) ? MOO_KI_U_SQRT
+                : (f == u_tanh) ? MOO_KI_U_TANH : -1;
     bool done = false;
     bool strikt = moo_ki_gpu_strikt_aktiv();
     if (uop >= 0 && (strikt || out->size >= (1LL << 20))) {
