@@ -5,9 +5,8 @@
 #
 # Start: moo-compiler run beispiele/dungeon.moo
 #
-# Steuerung: WASD/Pfeile = Bewegen (turn-based), in Gegner laufen
-#            = Angriff, R = Neustart, Escape = Beenden
-#
+# Steuerung: WASD/Pfeile (turn-based), in Gegner laufen = Angriff,
+#            R = Neustart, Escape = Beenden
 # Aufbau: 1. Pixelfont  2. Zustands-Dict S (Globals-Shadowing!
 #   siehe zelda.moo)  3. Generierung (Räume + L-Gänge, exakter LCG)
 #   4. spiel_schritt(inp) — headless testbar (dungeon_selftest.moo)
