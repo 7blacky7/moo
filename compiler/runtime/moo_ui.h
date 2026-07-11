@@ -103,6 +103,16 @@ MooValue moo_ui_fenster_groesse_setze(MooValue fenster, MooValue b, MooValue h);
 MooValue moo_ui_fenster_position_setze(MooValue fenster, MooValue x, MooValue y);
 MooValue moo_ui_fenster_schliessen(MooValue fenster);
 
+/* Maus-Cursor des Fensters setzen (Welle UIMOO-1). name: "standard" |
+ * "hand" | "text" | "groesse" (Verschieben). Unbekannte Namen werden
+ * unveraendert ans Backend durchgereicht (GTK: CSS-Cursor-Namen wie
+ * "crosshair"). Wirkt erst nach Realisierung des Fensters (sichtbar).
+ * Hauptzweck: Hover-Feedback fuer ui_moo-Widgets (Schicht 3).
+ * Backend: GTK gdk_cursor_new_from_name + gdk_window_set_cursor;
+ * Win32 SetClassLongPtrW(GCLP_HCURSOR) + SetCursor; macOS [NSCursor set]
+ * via cursorUpdate:/TrackingArea. */
+MooValue moo_ui_fenster_cursor_setze(MooValue fenster, MooValue name);
+
 /* Zeigt Fenster non-blocking (kein impliziter Event-Loop-Start).
  * Ruft Event-Loop-Start ueber moo_ui_laufen(). */
 MooValue moo_ui_zeige(MooValue fenster);
@@ -549,8 +559,7 @@ MooValue moo_ui_leinwand_anfordern(MooValue leinwand); /* Repaint-Request */
  * Koordinaten sind Leinwand-lokal (links-oben = 0,0), Pixel-Einheit,
  * konsistent mit den Zeichner-Primitiven.
  *
- * Tasten-Events (on_taste) sind bewusst NICHT Teil dieser Welle —
- * Keyboard-Fokus/Tab-Order ist backend-spezifisch und kommt separat.
+ * Tasten-Events: siehe moo_ui_leinwand_on_taste (Welle UIMOO-1) unten.
  * ------------------------------------------------------------------------- */
 
 /* Registriert einen Maus-Klick-Callback.
@@ -608,6 +617,57 @@ MooValue moo_ui_leinwand_on_maus(MooValue leinwand, MooValue callback);
  */
 MooValue moo_ui_leinwand_on_bewegung(MooValue leinwand, MooValue callback);
 
+/* -------------------------------------------------------------------------
+ * Leinwand-Events, Welle UIMOO-1 (Custom-Widget-Grundlage fuer ui_moo)
+ *
+ * Status: Linux (GTK3) implementiert; Win32/Cocoa folgen (Signaturen fix,
+ * Backend-Mapping siehe je Funktion). Ownership aller Callbacks wie
+ * on_maus: retain beim Bind, release bei Re-Bind oder Widget-Destroy.
+ * ------------------------------------------------------------------------- */
+
+/* Maus-Release. Callback-Signatur wie on_maus:
+ *   on_maus_los(leinwand, x, y, taste)   taste: 1=links, 2=mitte, 3=rechts
+ * Feuert auf ButtonRelease — zusammen mit on_maus/on_bewegung die Basis
+ * fuer Drag-Interaktion (Slider-Knob, Scrollbar) in ui_moo (Schicht 3).
+ * Backend: GTK "button-release-event" (GDK_BUTTON_RELEASE_MASK);
+ * Win32 WM_LBUTTONUP/WM_MBUTTONUP/WM_RBUTTONUP; macOS mouseUp:-Familie. */
+MooValue moo_ui_leinwand_on_maus_los(MooValue leinwand, MooValue callback);
+
+/* Scrollrad. Callback-Signatur:
+ *   on_rad(leinwand, x, y, delta)
+ * delta: MOO_NUMBER. +1 = nach unten, -1 = nach oben; bei Smooth-Scroll
+ * (Touchpad) kann delta nicht-ganzzahlig sein (gleiche Vorzeichen-
+ * Konvention). Horizontal-Scroll ist nicht Teil dieser Welle.
+ * Backend: GTK "scroll-event" (GDK_SCROLL_MASK|GDK_SMOOTH_SCROLL_MASK,
+ * Muster wie on_treeview_scroll_trampoline); Win32 WM_MOUSEWHEEL
+ * (delta = -GET_WHEEL_DELTA_WPARAM/120); macOS scrollWheel: (-deltaY). */
+MooValue moo_ui_leinwand_on_rad(MooValue leinwand, MooValue callback);
+
+/* Tastatur auf der Leinwand. Callback-Signatur:
+ *   on_taste(leinwand, taste, gedrueckt, modifier)
+ *     taste:     MOO_STRING, Backend-Keyname (GTK: gdk_keyval_name, z.B.
+ *                "a", "Return", "Escape", "Left", "space").
+ *     gedrueckt: MOO_BOOL — wahr = Press, falsch = Release.
+ *     modifier:  MOO_NUMBER Bitmaske: 1=Shift, 2=Strg, 4=Alt.
+ * Callback-Rueckgabe wahr → Default-Handling unterdruecken (wie
+ * textbereich_on_key). Registrierung setzt can-focus auf der Leinwand
+ * und grabbt den Fokus automatisch bei Maus-Klick auf die Leinwand
+ * (Ergonomie: klicken → tippen).
+ * Backend: GTK "key-press-event"/"key-release-event" (+can_focus);
+ * Win32 WM_KEYDOWN/WM_KEYUP (+WM_LBUTTONDOWN→SetFocus);
+ * macOS keyDown:/keyUp: (+acceptsFirstResponder=YES). */
+MooValue moo_ui_leinwand_on_taste(MooValue leinwand, MooValue callback);
+
+/* Keyboard-Fokus programmatisch auf die Leinwand setzen (setzt can-focus). */
+MooValue moo_ui_leinwand_fokus_setze(MooValue leinwand);
+
+/* Fokus-Wechsel. Callback-Signatur:
+ *   on_fokus(leinwand, hat_fokus)   hat_fokus: MOO_BOOL
+ * Backend: GTK "focus-in-event"/"focus-out-event" (GDK_FOCUS_CHANGE_MASK);
+ * Win32 WM_SETFOCUS/WM_KILLFOCUS; macOS becomeFirstResponder/
+ * resignFirstResponder-Overrides. */
+MooValue moo_ui_leinwand_on_fokus(MooValue leinwand, MooValue callback);
+
 /* =========================================================================
  * Zeichner-Primitive (nur im on_zeichne-Callback gueltig)
  *
@@ -629,6 +689,15 @@ MooValue moo_ui_zeichne_rechteck(MooValue zeichner,
                                  MooValue x, MooValue y,
                                  MooValue b, MooValue h,
                                  MooValue gefuellt);
+
+/* Abgerundetes Rechteck (Welle UIMOO-1). radius in Pixeln, wird auf
+ * min(b,h)/2 gekappt; radius <= 0 verhaelt sich wie ui_zeichne_rechteck.
+ * Backend: GTK cairo-Arc-Pfad (vier Viertelkreise); Win32 RoundRect(hdc);
+ * macOS NSBezierPath bezierPathWithRoundedRect:xRadius:yRadius:. */
+MooValue moo_ui_zeichne_rechteck_rund(MooValue zeichner,
+                                      MooValue x, MooValue y,
+                                      MooValue b, MooValue h,
+                                      MooValue radius, MooValue gefuellt);
 
 MooValue moo_ui_zeichne_kreis(MooValue zeichner,
                               MooValue cx, MooValue cy,
@@ -667,6 +736,21 @@ MooValue moo_ui_zeichne_bild(MooValue zeichner,
                              MooValue x, MooValue y,
                              MooValue b, MooValue h,
                              MooValue pfad);
+
+/* Clip-Rechteck / Scissor (Welle UIMOO-1). Alle folgenden Zeichenaufrufe
+ * werden auf das Rechteck beschnitten, bis clip_loesche gerufen wird.
+ * Schachtelbar (Stack); clip_loesche entfernt die oberste Ebene und
+ * liefert falsch, wenn keine Ebene offen ist. Nicht geschlossene Ebenen
+ * raeumt das Backend am Ende des on_zeichne-Callbacks automatisch ab
+ * (kein Zustand leckt in den naechsten Frame).
+ * Hauptzweck: Scrollbereiche/Listen in ui_moo (Schicht 3).
+ * Backend: GTK cairo_save+rectangle+clip / cairo_restore;
+ * Win32 SaveDC+IntersectClipRect / RestoreDC; macOS
+ * CGContextSaveGState+CGContextClipToRect / CGContextRestoreGState. */
+MooValue moo_ui_zeichne_clip_setze(MooValue zeichner,
+                                   MooValue x, MooValue y,
+                                   MooValue b, MooValue h);
+MooValue moo_ui_zeichne_clip_loesche(MooValue zeichner);
 
 /* =========================================================================
  * Layout-Hilfen

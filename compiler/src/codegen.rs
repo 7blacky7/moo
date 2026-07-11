@@ -5037,6 +5037,47 @@ impl<'ctx> CodeGen<'ctx> {
                         let c = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_ui_leinwand_on_bewegung, &[l.into(), c.into()], "ui_leinwand_on_bewegung");
                     }
+                    "ui_leinwand_on_maus_los" | "ui_canvas_on_mouse_up" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_leinwand_on_maus_los, &[l.into(), c.into()], "ui_leinwand_on_maus_los");
+                    }
+                    "ui_leinwand_on_rad" | "ui_canvas_on_scroll" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_leinwand_on_rad, &[l.into(), c.into()], "ui_leinwand_on_rad");
+                    }
+                    "ui_leinwand_on_taste" | "ui_canvas_on_key" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_leinwand_on_taste, &[l.into(), c.into()], "ui_leinwand_on_taste");
+                    }
+                    "ui_leinwand_fokus_setze" | "ui_canvas_focus" => {
+                        let l = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_leinwand_fokus_setze, &[l.into()], "ui_leinwand_fokus_setze");
+                    }
+                    "ui_leinwand_on_fokus" | "ui_canvas_on_focus" => {
+                        let l = self.compile_expr(&args[0])?;
+                        let c = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_leinwand_on_fokus, &[l.into(), c.into()], "ui_leinwand_on_fokus");
+                    }
+                    "ui_zeichne_rechteck_rund" | "ui_draw_round_rect" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_rechteck_rund, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into()], "ui_zeichne_rechteck_rund");
+                    }
+                    "ui_zeichne_clip_setze" | "ui_draw_clip_set" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_clip_setze, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_zeichne_clip_setze");
+                    }
+                    "ui_zeichne_clip_loesche" | "ui_draw_clip_clear" => {
+                        let z = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_clip_loesche, &[z.into()], "ui_zeichne_clip_loesche");
+                    }
+                    "ui_fenster_cursor_setze" | "ui_window_cursor_set" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let n = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_fenster_cursor_setze, &[f.into(), n.into()], "ui_fenster_cursor_setze");
+                    }
                     "ui_zeichne_farbe" | "ui_draw_color" | "ui_draw_colour" => {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_ui_zeichne_farbe, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_zeichne_farbe");

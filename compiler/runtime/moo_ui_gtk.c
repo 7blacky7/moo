@@ -1041,6 +1041,7 @@ typedef struct {
     double   r, g, b, a;    /* aktuelle Farbe 0..1 */
     int      valid;         /* 1 = cr nutzbar, 0 = entwertet */
     int      widget_w, widget_h;
+    int      clip_depth;    /* offene clip_setze-Ebenen (cairo_save-Stack) */
 } MooZeichnerGtk;
 
 static inline MooValue wrap_zeichner(MooZeichnerGtk* z) {
@@ -1064,12 +1065,16 @@ static gboolean on_draw_trampoline(GtkWidget* w, cairo_t* cr, gpointer ud) {
         z.cr = cr;
         z.r = 0.0; z.g = 0.0; z.b = 0.0; z.a = 1.0;
         z.valid = 1;
+        z.clip_depth = 0;
         z.widget_w = gtk_widget_get_allocated_width(w);
         z.widget_h = gtk_widget_get_allocated_height(w);
         MooValue handle   = wrap_widget(w);
         MooValue zeichner = wrap_zeichner(&z);
         MooValue rv = moo_func_call_2(*cb, handle, zeichner);
         moo_release(rv);
+        /* Nicht geschlossene Clip-Ebenen abraeumen (siehe moo_ui.h,
+         * ui_zeichne_clip_setze) — kein cairo-Save-Leak in Folge-Frames. */
+        while (z.clip_depth > 0) { cairo_restore(cr); z.clip_depth--; }
         z.valid = 0;
         z.cr = NULL;
     }
@@ -1118,6 +1123,42 @@ MooValue moo_ui_zeichne_rechteck(MooValue zeichner,
     apply_color(z);
     cairo_rectangle(z->cr, num_or(x, 0), num_or(y, 0),
                     num_or(b, 0), num_or(h, 0));
+    if (bool_or(gefuellt, 1)) {
+        cairo_fill(z->cr);
+    } else {
+        cairo_set_line_width(z->cr, 1.0);
+        cairo_stroke(z->cr);
+    }
+    return moo_bool(1);
+}
+
+/* Abgerundetes Rechteck (UIMOO-1): Pfad aus vier Viertelkreis-Arcs.
+ * radius wird auf min(b,h)/2 gekappt; radius <= 0 → normales Rechteck. */
+MooValue moo_ui_zeichne_rechteck_rund(MooValue zeichner,
+                                      MooValue x, MooValue y,
+                                      MooValue b, MooValue h,
+                                      MooValue radius, MooValue gefuellt) {
+    MooZeichnerGtk* z = unwrap_zeichner(zeichner);
+    if (!z) return moo_bool(0);
+    double px = (double)num_or(x, 0), py = (double)num_or(y, 0);
+    double pb = (double)num_or(b, 0), ph = (double)num_or(h, 0);
+    double r  = (radius.tag == MOO_NUMBER) ? MV_NUM(radius) : 0.0;
+    if (pb < 0.0) pb = 0.0;
+    if (ph < 0.0) ph = 0.0;
+    double rmax = ((pb < ph) ? pb : ph) / 2.0;
+    if (r > rmax) r = rmax;
+    apply_color(z);
+    if (r <= 0.0) {
+        cairo_rectangle(z->cr, px, py, pb, ph);
+    } else {
+        const double PI = 3.14159265358979323846;
+        cairo_new_sub_path(z->cr);
+        cairo_arc(z->cr, px + pb - r, py + r,      r, -PI / 2.0, 0.0);
+        cairo_arc(z->cr, px + pb - r, py + ph - r, r, 0.0,       PI / 2.0);
+        cairo_arc(z->cr, px + r,      py + ph - r, r, PI / 2.0,  PI);
+        cairo_arc(z->cr, px + r,      py + r,      r, PI,        1.5 * PI);
+        cairo_close_path(z->cr);
+    }
     if (bool_or(gefuellt, 1)) {
         cairo_fill(z->cr);
     } else {
@@ -1223,6 +1264,31 @@ MooValue moo_ui_zeichne_bild(MooValue zeichner,
     return moo_bool(1);
 }
 
+/* Clip-Stack (UIMOO-1): setze = cairo_save + rectangle + clip;
+ * loesche = cairo_restore. Tiefe wird im Zeichner mitgezaehlt;
+ * unbalancierte Ebenen raeumt on_draw_trampoline nach dem Callback ab. */
+MooValue moo_ui_zeichne_clip_setze(MooValue zeichner,
+                                   MooValue x, MooValue y,
+                                   MooValue b, MooValue h) {
+    MooZeichnerGtk* z = unwrap_zeichner(zeichner);
+    if (!z) return moo_bool(0);
+    cairo_save(z->cr);
+    cairo_rectangle(z->cr, num_or(x, 0), num_or(y, 0),
+                    num_or(b, 0), num_or(h, 0));
+    cairo_clip(z->cr);
+    z->clip_depth++;
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_clip_loesche(MooValue zeichner) {
+    MooZeichnerGtk* z = unwrap_zeichner(zeichner);
+    if (!z) return moo_bool(0);
+    if (z->clip_depth <= 0) return moo_bool(0);  /* keine Ebene offen */
+    cairo_restore(z->cr);
+    z->clip_depth--;
+    return moo_bool(1);
+}
+
 MooValue moo_ui_leinwand(MooValue parent,
                          MooValue x, MooValue y, MooValue b, MooValue h,
                          MooValue on_zeichne) {
@@ -1325,6 +1391,236 @@ MooValue moo_ui_leinwand_on_bewegung(MooValue leinwand, MooValue callback) {
                                       G_CALLBACK(on_canvas_motion_trampoline),
                                       box, cb_box_destroy, 0);
     g_object_set_data(G_OBJECT(da), "moo-bewegung-id", GSIZE_TO_POINTER(id));
+    return moo_bool(1);
+}
+
+/* ------------------------------------------------------------------ *
+ * Leinwand-Events Welle UIMOO-1: Release, Rad, Taste, Fokus + Cursor
+ *
+ * Pattern identisch zu on_maus/on_bewegung: eine cb-Box pro Signal,
+ * Handler-ID via g_object_set_data, Re-Bind disconnectet still (Box
+ * wird via cb_box_destroy released). on_taste/on_fokus verbinden ZWEI
+ * Signale (press+release bzw. in+out) mit je EIGENER Box — dieselbe
+ * Box an zwei Signale haengen wuerde bei destroy doppelt freigeben.
+ * ------------------------------------------------------------------ */
+
+static gboolean on_canvas_release_trampoline(GtkWidget* w, GdkEventButton* ev,
+                                             gpointer ud) {
+    MooValue* cb = (MooValue*)ud;
+    if (!cb || cb->tag != MOO_FUNC || !ev) return FALSE;
+    int taste = (int)ev->button;
+    if (taste < 1 || taste > 3) return FALSE;
+    MooValue handle = wrap_widget(w);
+    MooValue rv = moo_func_call_4(*cb, handle,
+                                  moo_number((double)(int)ev->x),
+                                  moo_number((double)(int)ev->y),
+                                  moo_number((double)taste));
+    moo_release(rv);
+    return FALSE;
+}
+
+MooValue moo_ui_leinwand_on_maus_los(MooValue leinwand, MooValue callback) {
+    GtkWidget* da = unwrap_widget(leinwand);
+    if (!da) return moo_bool(0);
+    gulong old_id = (gulong)GPOINTER_TO_SIZE(
+        g_object_get_data(G_OBJECT(da), "moo-mauslos-id"));
+    if (old_id != 0) {
+        g_signal_handler_disconnect(da, old_id);
+        g_object_set_data(G_OBJECT(da), "moo-mauslos-id", GSIZE_TO_POINTER(0));
+    }
+    if (callback.tag != MOO_FUNC) return moo_bool(1);
+    /* PRESS-Maske mit dazu: GDK liefert Release nur zuverlaessig, wenn der
+     * zugehoerige Press auf demselben Widget gesehen wurde. */
+    gtk_widget_add_events(da, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK);
+    MooValue* box = cb_box_new(callback);
+    gulong id = g_signal_connect_data(da, "button-release-event",
+                                      G_CALLBACK(on_canvas_release_trampoline),
+                                      box, cb_box_destroy, 0);
+    g_object_set_data(G_OBJECT(da), "moo-mauslos-id", GSIZE_TO_POINTER(id));
+    return moo_bool(1);
+}
+
+static gboolean on_canvas_scroll_trampoline(GtkWidget* w, GdkEventScroll* ev,
+                                            gpointer ud) {
+    MooValue* cb = (MooValue*)ud;
+    if (!cb || cb->tag != MOO_FUNC || !ev) return FALSE;
+    double delta = 0.0;
+    if (ev->direction == GDK_SCROLL_SMOOTH) {
+        delta = ev->delta_y;
+    } else if (ev->direction == GDK_SCROLL_UP) {
+        delta = -1.0;
+    } else if (ev->direction == GDK_SCROLL_DOWN) {
+        delta = 1.0;
+    } else {
+        return FALSE;  /* Horizontal-Scroll: nicht Teil dieser Welle. */
+    }
+    if (delta == 0.0) return FALSE;
+    MooValue handle = wrap_widget(w);
+    MooValue rv = moo_func_call_4(*cb, handle,
+                                  moo_number((double)(int)ev->x),
+                                  moo_number((double)(int)ev->y),
+                                  moo_number(delta));
+    moo_release(rv);
+    return TRUE;  /* konsumiert — kein Weiterreichen an Scroll-Container. */
+}
+
+MooValue moo_ui_leinwand_on_rad(MooValue leinwand, MooValue callback) {
+    GtkWidget* da = unwrap_widget(leinwand);
+    if (!da) return moo_bool(0);
+    gulong old_id = (gulong)GPOINTER_TO_SIZE(
+        g_object_get_data(G_OBJECT(da), "moo-rad-id"));
+    if (old_id != 0) {
+        g_signal_handler_disconnect(da, old_id);
+        g_object_set_data(G_OBJECT(da), "moo-rad-id", GSIZE_TO_POINTER(0));
+    }
+    if (callback.tag != MOO_FUNC) return moo_bool(1);
+    gtk_widget_add_events(da, GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK);
+    MooValue* box = cb_box_new(callback);
+    gulong id = g_signal_connect_data(da, "scroll-event",
+                                      G_CALLBACK(on_canvas_scroll_trampoline),
+                                      box, cb_box_destroy, 0);
+    g_object_set_data(G_OBJECT(da), "moo-rad-id", GSIZE_TO_POINTER(id));
+    return moo_bool(1);
+}
+
+/* Ein Trampoline fuer Press UND Release: ev->type unterscheidet.
+ * keyname wird per Owning-+1 an moo_func_call_4 transferiert (Konvention
+ * wie on_textview_key_trampoline) — KEIN zusaetzliches moo_release hier. */
+static gboolean on_canvas_key_trampoline(GtkWidget* w, GdkEventKey* ev,
+                                         gpointer ud) {
+    MooValue* cb = (MooValue*)ud;
+    if (!cb || cb->tag != MOO_FUNC || !ev) return FALSE;
+    const char* name = gdk_keyval_name(ev->keyval);
+    long mod = 0;
+    if (ev->state & GDK_SHIFT_MASK)   mod |= 1;
+    if (ev->state & GDK_CONTROL_MASK) mod |= 2;
+    if (ev->state & GDK_MOD1_MASK)    mod |= 4;
+    int gedrueckt = (ev->type == GDK_KEY_PRESS) ? 1 : 0;
+    MooValue handle = wrap_widget(w);
+    MooValue keyname = moo_string_new(name ? name : "");
+    MooValue rv = moo_func_call_4(*cb, handle, keyname,
+                                  moo_bool(gedrueckt),
+                                  moo_number((double)mod));
+    gboolean handled = moo_is_truthy(rv);
+    moo_release(rv);
+    return handled ? TRUE : FALSE;
+}
+
+/* Klick auf die Leinwand grabbt den Keyboard-Fokus (Ergonomie fuer
+ * on_taste: klicken → tippen). Laeuft VOR dem User-on_maus-Handler,
+ * konsumiert das Event aber nicht (return FALSE). */
+static gboolean on_canvas_focusclick_trampoline(GtkWidget* w,
+                                                GdkEventButton* ev,
+                                                gpointer ud) {
+    (void)ev; (void)ud;
+    if (!gtk_widget_has_focus(w)) gtk_widget_grab_focus(w);
+    return FALSE;
+}
+
+MooValue moo_ui_leinwand_on_taste(MooValue leinwand, MooValue callback) {
+    GtkWidget* da = unwrap_widget(leinwand);
+    if (!da) return moo_bool(0);
+    gulong old_p = (gulong)GPOINTER_TO_SIZE(
+        g_object_get_data(G_OBJECT(da), "moo-taste-p-id"));
+    if (old_p != 0) {
+        g_signal_handler_disconnect(da, old_p);
+        g_object_set_data(G_OBJECT(da), "moo-taste-p-id", GSIZE_TO_POINTER(0));
+    }
+    gulong old_r = (gulong)GPOINTER_TO_SIZE(
+        g_object_get_data(G_OBJECT(da), "moo-taste-r-id"));
+    if (old_r != 0) {
+        g_signal_handler_disconnect(da, old_r);
+        g_object_set_data(G_OBJECT(da), "moo-taste-r-id", GSIZE_TO_POINTER(0));
+    }
+    if (callback.tag != MOO_FUNC) return moo_bool(1);
+    gtk_widget_set_can_focus(da, TRUE);
+    gtk_widget_add_events(da, GDK_KEY_PRESS_MASK | GDK_KEY_RELEASE_MASK |
+                              GDK_BUTTON_PRESS_MASK);
+    /* Fokus-Grab-bei-Klick nur EINMAL verbinden (ueberlebt Re-Binds). */
+    if (g_object_get_data(G_OBJECT(da), "moo-fokusklick") == NULL) {
+        g_signal_connect(da, "button-press-event",
+                         G_CALLBACK(on_canvas_focusclick_trampoline), NULL);
+        g_object_set_data(G_OBJECT(da), "moo-fokusklick", GSIZE_TO_POINTER(1));
+    }
+    MooValue* box_p = cb_box_new(callback);
+    gulong idp = g_signal_connect_data(da, "key-press-event",
+                                       G_CALLBACK(on_canvas_key_trampoline),
+                                       box_p, cb_box_destroy, 0);
+    g_object_set_data(G_OBJECT(da), "moo-taste-p-id", GSIZE_TO_POINTER(idp));
+    MooValue* box_r = cb_box_new(callback);
+    gulong idr = g_signal_connect_data(da, "key-release-event",
+                                       G_CALLBACK(on_canvas_key_trampoline),
+                                       box_r, cb_box_destroy, 0);
+    g_object_set_data(G_OBJECT(da), "moo-taste-r-id", GSIZE_TO_POINTER(idr));
+    return moo_bool(1);
+}
+
+MooValue moo_ui_leinwand_fokus_setze(MooValue leinwand) {
+    GtkWidget* da = unwrap_widget(leinwand);
+    if (!da) return moo_bool(0);
+    gtk_widget_set_can_focus(da, TRUE);
+    gtk_widget_grab_focus(da);
+    return moo_bool(1);
+}
+
+static gboolean on_canvas_focus_trampoline(GtkWidget* w, GdkEventFocus* ev,
+                                           gpointer ud) {
+    MooValue* cb = (MooValue*)ud;
+    if (!cb || cb->tag != MOO_FUNC || !ev) return FALSE;
+    MooValue handle = wrap_widget(w);
+    MooValue rv = moo_func_call_2(*cb, handle, moo_bool(ev->in ? 1 : 0));
+    moo_release(rv);
+    return FALSE;
+}
+
+MooValue moo_ui_leinwand_on_fokus(MooValue leinwand, MooValue callback) {
+    GtkWidget* da = unwrap_widget(leinwand);
+    if (!da) return moo_bool(0);
+    gulong old_i = (gulong)GPOINTER_TO_SIZE(
+        g_object_get_data(G_OBJECT(da), "moo-fokus-i-id"));
+    if (old_i != 0) {
+        g_signal_handler_disconnect(da, old_i);
+        g_object_set_data(G_OBJECT(da), "moo-fokus-i-id", GSIZE_TO_POINTER(0));
+    }
+    gulong old_o = (gulong)GPOINTER_TO_SIZE(
+        g_object_get_data(G_OBJECT(da), "moo-fokus-o-id"));
+    if (old_o != 0) {
+        g_signal_handler_disconnect(da, old_o);
+        g_object_set_data(G_OBJECT(da), "moo-fokus-o-id", GSIZE_TO_POINTER(0));
+    }
+    if (callback.tag != MOO_FUNC) return moo_bool(1);
+    gtk_widget_set_can_focus(da, TRUE);
+    gtk_widget_add_events(da, GDK_FOCUS_CHANGE_MASK);
+    MooValue* box_i = cb_box_new(callback);
+    gulong idi = g_signal_connect_data(da, "focus-in-event",
+                                       G_CALLBACK(on_canvas_focus_trampoline),
+                                       box_i, cb_box_destroy, 0);
+    g_object_set_data(G_OBJECT(da), "moo-fokus-i-id", GSIZE_TO_POINTER(idi));
+    MooValue* box_o = cb_box_new(callback);
+    gulong ido = g_signal_connect_data(da, "focus-out-event",
+                                       G_CALLBACK(on_canvas_focus_trampoline),
+                                       box_o, cb_box_destroy, 0);
+    g_object_set_data(G_OBJECT(da), "moo-fokus-o-id", GSIZE_TO_POINTER(ido));
+    return moo_bool(1);
+}
+
+/* Maus-Cursor des Fensters (UIMOO-1). moo-Namen → CSS-Cursor-Namen;
+ * unbekannte Namen werden direkt durchgereicht. */
+MooValue moo_ui_fenster_cursor_setze(MooValue fenster, MooValue name) {
+    GtkWidget* w = unwrap_widget(fenster);
+    if (!w) return moo_bool(0);
+    GdkWindow* gw = gtk_widget_get_window(w);
+    if (!gw) return moo_bool(0);  /* Fenster noch nicht realisiert */
+    const char* n = str_or(name, "standard");
+    const char* css = n;
+    if      (strcmp(n, "standard") == 0) css = "default";
+    else if (strcmp(n, "hand") == 0)     css = "pointer";
+    else if (strcmp(n, "text") == 0)     css = "text";
+    else if (strcmp(n, "groesse") == 0)  css = "move";
+    GdkCursor* cur = gdk_cursor_new_from_name(gtk_widget_get_display(w), css);
+    if (!cur) return moo_bool(0);
+    gdk_window_set_cursor(gw, cur);
+    g_object_unref(cur);
     return moo_bool(1);
 }
 

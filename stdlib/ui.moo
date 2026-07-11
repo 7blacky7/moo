@@ -61,6 +61,15 @@
 #     ui_zeichne_kreis(z, cx, cy, radius, gefuellt)
 #     ui_zeichne_text(z, x, y, text, schriftgroesse)
 #     ui_zeichne_bild(z, x, y, b, h, pfad)             -> PNG-Datei
+#     ui_zeichne_rechteck_rund(z, x, y, b, h, radius, gefuellt)
+#     ui_zeichne_clip_setze(z, x, y, b, h)             # Scissor (schachtelbar)
+#     ui_zeichne_clip_loesche(z)                       # oberste Clip-Ebene weg
+#     ui_leinwand_on_maus_los(lw, callback)   # callback(lw, x, y, taste)
+#     ui_leinwand_on_rad(lw, callback)        # callback(lw, x, y, delta)
+#     ui_leinwand_on_taste(lw, callback)      # callback(lw, taste, gedrueckt, mod)
+#     ui_leinwand_fokus_setze(lw)             # Keyboard-Fokus auf Leinwand
+#     ui_leinwand_on_fokus(lw, callback)      # callback(lw, hat_fokus)
+#     ui_fenster_cursor_setze(fenster, name)  # standard|hand|text|groesse
 #     ui_rahmen(parent, titel, x, y, b, h)
 #     ui_trenner(parent, x, y, b, h)
 #     ui_tabs(parent, x, y, b, h)
