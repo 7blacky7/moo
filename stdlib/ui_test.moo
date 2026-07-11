@@ -341,6 +341,11 @@ funktion ui_test_aktion(fenster, aktion_dict):
 funktion ui_test_frame(fenster, pfad_basis, aktion_dict):
     setze erg auf ui_test_aktion(fenster, aktion_dict)
 
+    # Ein Pump verarbeitet Events, garantiert aber nicht auf jedem Backend,
+    # dass der native Offscreen-Puffer bereits neu gezeichnet wurde.
+    ui_test_warte(20)
+    ui_test_pump()
+
     setze png_pfad auf pfad_basis + ".png"
     setze json_pfad auf pfad_basis + ".json"
 
@@ -353,7 +358,11 @@ funktion ui_test_frame(fenster, pfad_basis, aktion_dict):
     setze wb auf __uit_feld(info, "b", 0)
     setze wh auf __uit_feld(info, "h", 0)
 
-    setze baum auf erg["widget_tree_nach"]
+    # Nach Redraw erneut lesen; der in erg gespeicherte Baum stammt direkt
+    # nach der Aktion und kann vor einem deferred Relayout liegen.
+    setze baum auf ui_widget_baum(fenster)
+    wenn baum == nichts:
+        setze baum auf []
 
     setze ts_unix auf datei_mtime(png_pfad)
     wenn ts_unix < 0:

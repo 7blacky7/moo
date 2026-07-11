@@ -57,7 +57,20 @@ if [ -z "${DISPLAY:-}" ]; then
 fi
 export MOO_UI_BACKEND="${MOO_UI_BACKEND:-gtk}"
 
-echo "[runner] DISPLAY=$DISPLAY BACKEND=$MOO_UI_BACKEND"
+# Vorhandenen Release-Compiler bevorzugen. So bleibt der Visualtest von der
+# Shell-PATH-Konfiguration unabhängig und baut nicht vor jedem Test neu.
+if [ -n "${MOO_COMPILER:-}" ]; then
+    COMPILER_CMD=("$MOO_COMPILER")
+elif [ -x "compiler/target/release/moo-compiler" ]; then
+    COMPILER_CMD=("compiler/target/release/moo-compiler")
+elif command -v cargo >/dev/null 2>&1; then
+    COMPILER_CMD=(cargo run --release --manifest-path compiler/Cargo.toml --)
+else
+    echo "FEHLER: Weder MOO_COMPILER noch Release-Compiler noch cargo verfügbar." >&2
+    exit 2
+fi
+
+echo "[runner] DISPLAY=$DISPLAY BACKEND=$MOO_UI_BACKEND COMPILER=${COMPILER_CMD[*]}"
 
 # -------------------- Hilfsfunktionen ------------------------
 
@@ -80,11 +93,11 @@ run_one_test() {
     # Alte Artefakte bereinigen
     rm -f "$snap_dir"/frame_*.png "$snap_dir"/frame_*.json "$snap_dir"/run.log 2>/dev/null || true
 
-    # Ausfuehren (timeout 15s)
+    # Ausfuehren (timeout 15s). Exitcode VOR jeder Negation sichern —
+    # `if ! cmd; then $?` waere sonst der Status von `!` und damit faelschlich 0.
     local rc=0
-    if ! timeout 15 cargo run --release --manifest-path compiler/Cargo.toml -- \
-            run "$moo_file" >"$log" 2>&1; then
-        rc=$?
+    timeout 15 "${COMPILER_CMD[@]}" run "$moo_file" >"$log" 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ]; then
         echo "FEHLER: Test '$name' rc=$rc (log: $log)"
         tail -n 30 "$log" || true
         return 1
@@ -123,7 +136,46 @@ run_one_test() {
     done
     shopt -u nullglob
 
-    echo "[runner] $name: frames_ok=$frames_ok frames_fail=$frames_fail png_ok=$png_ok png_fail=$png_fail"
+    # Wenn sich der logische Widget-Baum aendert, muss sich auch das PNG
+    # aendern. Andernfalls wurde ein veralteter nativer Puffer fotografiert.
+    local visual_metrics
+    visual_metrics=$(python3 - "$snap_dir" <<'PY'
+import glob, hashlib, json, os, sys
+frames = []
+for jf in sorted(glob.glob(os.path.join(sys.argv[1], "frame_*.json"))):
+    with open(jf, encoding="utf-8") as f:
+        data = json.load(f)
+    pf = os.path.splitext(jf)[0] + ".png"
+    digest = ""
+    if os.path.exists(pf):
+        with open(pf, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+    frames.append((data, digest))
+
+changes = 0
+stale = 0
+for (prev, prev_hash), (cur, cur_hash) in zip(frames, frames[1:]):
+    if prev.get("widget_tree") != cur.get("widget_tree"):
+        changes += 1
+        if prev_hash == cur_hash:
+            stale += 1
+
+sizes = []
+for data, _ in frames:
+    ws = data.get("window_size") or {}
+    sizes.append((int(ws.get("b", 0)), int(ws.get("h", 0))))
+runaway = 0
+if len(sizes) >= 3 and all(w > 0 and h > 0 for w, h in sizes):
+    areas = [w * h for w, h in sizes]
+    if all(b > a for a, b in zip(areas, areas[1:])):
+        runaway = 1
+print(changes, stale, runaway)
+PY
+)
+    local semantic_changes stale_visual runaway_geometry
+    read -r semantic_changes stale_visual runaway_geometry <<<"$visual_metrics"
+
+    echo "[runner] $name: frames_ok=$frames_ok frames_fail=$frames_fail png_ok=$png_ok png_fail=$png_fail semantic_changes=$semantic_changes stale_visual=$stale_visual runaway_geometry=$runaway_geometry"
 
     # Aufbau JSON-Eintrag
     TEST_RESULT="$(python3 - "$name" "$frames_ok" "$frames_fail" "$png_ok" "$png_fail" "$snap_dir" <<'PY'
@@ -146,7 +198,7 @@ PY
 )"
     ALL_RESULTS+=("$TEST_RESULT")
 
-    if [ "$frames_fail" -gt 0 ] || [ "$png_fail" -gt 0 ] || [ "$frames_ok" -eq 0 ]; then
+    if [ "$frames_fail" -gt 0 ] || [ "$png_fail" -gt 0 ] || [ "$frames_ok" -eq 0 ] || [ "$stale_visual" -gt 0 ] || [ "$runaway_geometry" -gt 0 ]; then
         return 1
     fi
     return 0

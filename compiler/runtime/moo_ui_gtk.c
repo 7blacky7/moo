@@ -1753,29 +1753,39 @@ MooValue moo_ui_widget_suche(MooValue fenster, MooValue id_string) {
  * opak). Fehlerfall → g_warning + MOO_FALSE.
  * ================================================================== */
 
-/* Speichert einen Ausschnitt einer GdkWindow als PNG. Liefert gboolean. */
-static gboolean snapshot_region_to_png(GdkWindow* win,
-                                       gint src_x, gint src_y,
-                                       gint width, gint height,
-                                       const char* pfad) {
-    if (!win || !pfad || width <= 0 || height <= 0) {
-        g_warning("moo_ui_test_snapshot: ungueltige Parameter (win=%p, pfad=%p, %dx%d)",
-                  (void*)win, (void*)pfad, width, height);
+/* Rendert den aktuellen Widget-Zustand synchron in eine Cairo-Image-Surface.
+ * Anders als gdk_pixbuf_get_from_window ist das unabhaengig von Frame-Clock,
+ * Compositor und einem eventuell noch veralteten Window-Backing-Store. */
+static gboolean snapshot_widget_to_png(GtkWidget* widget, const char* pfad) {
+    if (!widget || !pfad) return FALSE;
+    int width = gtk_widget_get_allocated_width(widget);
+    int height = gtk_widget_get_allocated_height(widget);
+    if (width <= 0 || height <= 0) return FALSE;
+
+    cairo_surface_t* surface =
+        cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+        cairo_surface_destroy(surface);
         return FALSE;
     }
-    GdkPixbuf* pb = gdk_pixbuf_get_from_window(win, src_x, src_y, width, height);
-    if (!pb) {
-        g_warning("moo_ui_test_snapshot: gdk_pixbuf_get_from_window liefert NULL "
-                  "(Fenster nicht gemappt oder nicht erfassbar).");
+    cairo_t* cr = cairo_create(surface);
+    if (cairo_status(cr) != CAIRO_STATUS_SUCCESS) {
+        cairo_destroy(cr);
+        cairo_surface_destroy(surface);
         return FALSE;
     }
-    GError* err = NULL;
-    gboolean ok = gdk_pixbuf_save(pb, pfad, "png", &err, NULL);
-    g_object_unref(pb);
-    if (!ok) {
-        g_warning("moo_ui_test_snapshot: gdk_pixbuf_save(%s) fehlgeschlagen: %s",
-                  pfad, err ? err->message : "unbekannt");
-        if (err) g_error_free(err);
+
+    gtk_widget_draw(widget, cr);
+    cairo_status_t draw_status = cairo_status(cr);
+    cairo_destroy(cr);
+    cairo_surface_flush(surface);
+    cairo_status_t status = draw_status == CAIRO_STATUS_SUCCESS
+        ? cairo_surface_write_to_png(surface, pfad)
+        : draw_status;
+    cairo_surface_destroy(surface);
+    if (status != CAIRO_STATUS_SUCCESS) {
+        g_warning("moo_ui_test_snapshot: Cairo-Snapshot nach %s fehlgeschlagen: %s",
+                  pfad, cairo_status_to_string(status));
         return FALSE;
     }
     return TRUE;
@@ -1801,11 +1811,7 @@ MooValue moo_ui_test_snapshot(MooValue fenster, MooValue pfad) {
                   "ui_zeige + ui_pump vor snapshot aufrufen.");
         return moo_bool(0);
     }
-    GdkWindow* gwin = gtk_widget_get_window(top);
-    int ww = gtk_widget_get_allocated_width(top);
-    int hh = gtk_widget_get_allocated_height(top);
-    return moo_bool(snapshot_region_to_png(gwin, 0, 0, ww, hh,
-                                           MV_STR(pfad)->chars));
+    return moo_bool(snapshot_widget_to_png(top, MV_STR(pfad)->chars));
 }
 
 MooValue moo_ui_test_snapshot_widget(MooValue widget, MooValue pfad) {
@@ -1822,23 +1828,7 @@ MooValue moo_ui_test_snapshot_widget(MooValue widget, MooValue pfad) {
         g_warning("moo_ui_test_snapshot_widget: Widget nicht realisiert/gemappt.");
         return moo_bool(0);
     }
-    GdkWindow* gwin = gtk_widget_get_window(w);
-    if (!gwin) {
-        g_warning("moo_ui_test_snapshot_widget: kein GdkWindow verfuegbar.");
-        return moo_bool(0);
-    }
-    GtkAllocation a;
-    gtk_widget_get_allocation(w, &a);
-    /* Fuer Top-Level (eigener GdkWindow) ist die Client-Area bei (0,0);
-     * fuer Kind-Widgets teilt sich das GdkWindow mit dem Parent und
-     * die Allokation gibt die Position im Parent-Window an. */
-    int src_x = 0, src_y = 0, ww = a.width, hh = a.height;
-    if (!gtk_widget_is_toplevel(w)) {
-        src_x = a.x;
-        src_y = a.y;
-    }
-    return moo_bool(snapshot_region_to_png(gwin, src_x, src_y, ww, hh,
-                                           MV_STR(pfad)->chars));
+    return moo_bool(snapshot_widget_to_png(w, MV_STR(pfad)->chars));
 }
 
 /* ================================================================== *
