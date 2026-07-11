@@ -132,10 +132,20 @@ funktion _uim_basis(typ, x, y, b, h):
     w["max"] = 0
     gib_zurück w
 
-# Oberstes getroffenes Widget (z-Order: zuletzt hinzugefügt gewinnt).
-# Rückwärts-Suche ohne break: erster Treffer bleibt stehen.
-funktion _uim_treffer(kontext, x, y):
-    setze kinder auf kontext["wurzel"]["kinder"]
+# Treffer-Ergebnis: Widget + Koordinaten LOKAL zur Eltern-Ebene des
+# Widgets (lx liegt in w.x..w.x+w.b). Nötig für Slider/Liste in Panels.
+funktion _uim_tref(w, lx, ly):
+    setze t auf {}
+    t["w"] = w
+    t["lx"] = lx
+    t["ly"] = ly
+    gib_zurück t
+
+# Rekursives Hit-Testing (z-Order: zuletzt hinzugefügt gewinnt).
+# Panels/Scrollbereiche transformieren in ihr lokales Koordinatensystem;
+# Scroll addiert scroll_y. Container decken ab: kein Kind getroffen →
+# Container selbst ist der Treffer (blockt darunterliegende Widgets).
+funktion _uim_treffer_rek(kinder, x, y):
     setze gefunden auf nichts
     setze i auf länge(kinder) - 1
     solange i >= 0:
@@ -143,7 +153,45 @@ funktion _uim_treffer(kontext, x, y):
             setze w auf kinder[i]
             wenn w["sichtbar"] und w["aktiv"]:
                 wenn x >= w["x"] und x < w["x"] + w["b"] und y >= w["y"] und y < w["y"] + w["h"]:
-                    setze gefunden auf w
+                    wenn w["typ"] == "panel":
+                        setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"])
+                        wenn innen == nichts:
+                            setze gefunden auf _uim_tref(w, x, y)
+                        sonst:
+                            setze gefunden auf innen
+                    sonst wenn w["typ"] == "scroll":
+                        setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"] + w["scroll_y"])
+                        wenn innen == nichts:
+                            setze gefunden auf _uim_tref(w, x, y)
+                        sonst:
+                            setze gefunden auf innen
+                    sonst:
+                        setze gefunden auf _uim_tref(w, x, y)
+        setze i auf i - 1
+    gib_zurück gefunden
+
+funktion _uim_treffer(kontext, x, y):
+    gib_zurück _uim_treffer_rek(kontext["wurzel"]["kinder"], x, y)
+
+# Oberstes scrollbares Widget (scroll/liste) unter dem Punkt.
+funktion _uim_scrollziel_rek(kinder, x, y):
+    setze gefunden auf nichts
+    setze i auf länge(kinder) - 1
+    solange i >= 0:
+        wenn gefunden == nichts:
+            setze w auf kinder[i]
+            wenn w["sichtbar"] und w["aktiv"]:
+                wenn x >= w["x"] und x < w["x"] + w["b"] und y >= w["y"] und y < w["y"] + w["h"]:
+                    wenn w["typ"] == "panel":
+                        setze gefunden auf _uim_scrollziel_rek(w["kinder"], x - w["x"], y - w["y"])
+                    sonst wenn w["typ"] == "scroll":
+                        setze innen auf _uim_scrollziel_rek(w["kinder"], x - w["x"], y - w["y"] + w["scroll_y"])
+                        wenn innen == nichts:
+                            setze gefunden auf w
+                        sonst:
+                            setze gefunden auf innen
+                    sonst wenn w["typ"] == "liste":
+                        setze gefunden auf w
         setze i auf i - 1
     gib_zurück gefunden
 
@@ -218,6 +266,29 @@ funktion _uim_fokus_weiter(kontext, rueckwaerts):
     kontext["fokus"] = ziel
     gib_zurück wahr
 
+# Listen-Zeilenhöhe: rein theme-getrieben.
+funktion _uim_zeilenhoehe(kontext):
+    setze t auf kontext["theme"]
+    gib_zurück t["schrift"] + t["abstand"]
+
+# Listen-Klick: Zeile aus lokaler Y-Koordinate (ohne floor-Builtin:
+# beschränkte Zählschleife). Setzt auswahl + feuert on_auswahl.
+funktion _uim_liste_klick(kontext, w, ly):
+    setze zh auf _uim_zeilenhoehe(kontext)
+    setze rel auf ly - w["y"] + w["scroll_y"]
+    wenn rel < 0:
+        gib_zurück falsch
+    setze idx auf 0
+    solange (idx + 1) * zh <= rel:
+        setze idx auf idx + 1
+    wenn idx >= länge(w["zeilen"]):
+        gib_zurück falsch
+    w["auswahl"] = idx
+    setze cb auf w["on_auswahl"]
+    wenn cb != nichts:
+        cb(w, idx)
+    gib_zurück wahr
+
 # ------------------------------------------------------------
 # Event-Dispatcher (an die Leinwand gebunden von uim_wurzel)
 # ------------------------------------------------------------
@@ -228,16 +299,23 @@ funktion _uim_on_maus(lw, x, y, taste):
         gib_zurück falsch
     wenn taste != 1:
         gib_zurück falsch
-    setze w auf _uim_treffer(kontext, x, y)
-    kontext["druck"] = w
-    wenn w == nichts:
+    setze tref auf _uim_treffer(kontext, x, y)
+    wenn tref == nichts:
+        kontext["druck"] = nichts
         kontext["fokus"] = nichts
     sonst:
+        setze w auf tref["w"]
+        kontext["druck"] = w
+        # Offset Leinwand-global -> Widget-Eltern-lokal, für Drag ausserhalb.
+        kontext["druck_ox"] = x - tref["lx"]
+        kontext["druck_oy"] = y - tref["ly"]
         w["druck"] = wahr
         wenn w["fokussierbar"]:
             kontext["fokus"] = w
         wenn w["typ"] == "slider":
-            _uim_slider_setze_aus_x(w, x)
+            _uim_slider_setze_aus_x(w, tref["lx"])
+        wenn w["typ"] == "liste":
+            _uim_liste_klick(kontext, w, tref["ly"])
     ui_leinwand_anfordern(lw)
     gib_zurück wahr
 
@@ -256,10 +334,10 @@ funktion _uim_on_maus_los(lw, x, y, taste):
         # Drag-Ende: Wert wurde bereits bei Press/Drag gesetzt.
         ui_leinwand_anfordern(lw)
         gib_zurück wahr
-    setze w auf _uim_treffer(kontext, x, y)
-    wenn w != nichts:
-        wenn w["uid"] == p["uid"]:
-            _uim_aktiviere(kontext, w)
+    setze tref auf _uim_treffer(kontext, x, y)
+    wenn tref != nichts:
+        wenn tref["w"]["uid"] == p["uid"]:
+            _uim_aktiviere(kontext, p)
     ui_leinwand_anfordern(lw)
     gib_zurück wahr
 
@@ -267,14 +345,18 @@ funktion _uim_on_bewegung(lw, x, y):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
-    # Aktiver Slider-Drag hat Vorrang vor Hover.
+    # Aktiver Slider-Drag hat Vorrang vor Hover. Lokales X über den beim
+    # Press gemerkten Offset (Zeiger darf den Slider verlassen).
     setze p auf kontext["druck"]
     wenn p != nichts:
         wenn p["typ"] == "slider":
-            wenn _uim_slider_setze_aus_x(p, x):
+            wenn _uim_slider_setze_aus_x(p, x - kontext["druck_ox"]):
                 ui_leinwand_anfordern(lw)
             gib_zurück wahr
-    setze w auf _uim_treffer(kontext, x, y)
+    setze tref auf _uim_treffer(kontext, x, y)
+    setze w auf nichts
+    wenn tref != nichts:
+        setze w auf tref["w"]
     setze uid_treffer auf 0
     wenn w != nichts:
         setze uid_treffer auf w["uid"]
@@ -329,16 +411,59 @@ funktion _uim_on_taste(lw, taste, gedrueckt, mod):
                     cw(f, wert)
             ui_leinwand_anfordern(lw)
             gib_zurück wahr
+    wenn f["typ"] == "liste":
+        wenn taste == "Up" oder taste == "Down":
+            setze n auf länge(f["zeilen"])
+            wenn n == 0:
+                gib_zurück wahr
+            setze idx auf f["auswahl"]
+            wenn taste == "Up":
+                setze idx auf idx - 1
+            sonst:
+                setze idx auf idx + 1
+            wenn idx < 0:
+                setze idx auf 0
+            wenn idx > n - 1:
+                setze idx auf n - 1
+            wenn idx != f["auswahl"]:
+                f["auswahl"] = idx
+                setze cb auf f["on_auswahl"]
+                wenn cb != nichts:
+                    cb(f, idx)
+            ui_leinwand_anfordern(lw)
+            gib_zurück wahr
     gib_zurück falsch
 
-# ------------------------------------------------------------
-# Zeichnen: pro Frame Hintergrund + alle Kinder in Einfüge-Reihenfolge.
-# Widget-Zeichner sind rein: Zustand rein, Pixel raus, KEINE Werte
-# außerhalb des Themes.
-# ------------------------------------------------------------
+# Scrollrad: oberstes scrollbares Widget unter dem Zeiger scrollen.
+funktion _uim_on_rad(lw, x, y, delta):
+    setze kontext auf _uim_ctx(lw)
+    wenn kontext == nichts:
+        gib_zurück falsch
+    setze w auf _uim_scrollziel_rek(kontext["wurzel"]["kinder"], x, y)
+    wenn w == nichts:
+        gib_zurück falsch
+    setze zh auf _uim_zeilenhoehe(kontext)
+    setze max_scroll auf 0
+    wenn w["typ"] == "liste":
+        setze max_scroll auf länge(w["zeilen"]) * zh - w["h"]
+    sonst:
+        setze max_scroll auf w["inhalt_hoehe"] - w["h"]
+    wenn max_scroll < 0:
+        setze max_scroll auf 0
+    setze s auf w["scroll_y"] + delta * zh * 2
+    wenn s < 0:
+        setze s auf 0
+    wenn s > max_scroll:
+        setze s auf max_scroll
+    wenn s != w["scroll_y"]:
+        w["scroll_y"] = s
+        ui_leinwand_anfordern(lw)
+    gib_zurück wahr
 
-funktion _uim_z_knopf(kontext, z, w):
+funktion _uim_z_knopf(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
     setze flaeche auf t["flaeche"]
     wenn w["aktiv"] == falsch:
         setze flaeche auf t["flaeche_druck"]
@@ -347,16 +472,16 @@ funktion _uim_z_knopf(kontext, z, w):
     sonst wenn w["hover"]:
         setze flaeche auf t["flaeche_hover"]
     _uim_farbe(z, flaeche)
-    ui_zeichne_rechteck_rund(z, w["x"], w["y"], w["b"], w["h"], t["radius"], wahr)
+    ui_zeichne_rechteck_rund(z, ax, ay, w["b"], w["h"], t["radius"], wahr)
     _uim_farbe(z, t["rand"])
-    ui_zeichne_rechteck_rund(z, w["x"], w["y"], w["b"], w["h"], t["radius"], falsch)
+    ui_zeichne_rechteck_rund(z, ax, ay, w["b"], w["h"], t["radius"], falsch)
     wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
         _uim_farbe(z, t["akzent"])
-        ui_zeichne_rechteck_rund(z, w["x"] - 2, w["y"] - 2, w["b"] + 4, w["h"] + 4, t["radius"] + 2, falsch)
+        ui_zeichne_rechteck_rund(z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, t["radius"] + 2, falsch)
     setze schrift auf t["schrift"]
     setze tb auf ui_zeichne_text_breite(z, w["text"], schrift)
-    setze tx auf w["x"] + (w["b"] - tb) / 2
-    setze ty auf w["y"] + (w["h"] - schrift) / 2 - 1
+    setze tx auf ax + (w["b"] - tb) / 2
+    setze ty auf ay + (w["h"] - schrift) / 2 - 1
     setze farbe auf t["text"]
     wenn w["aktiv"] == falsch:
         setze farbe auf t["text_gedimmt"]
@@ -364,57 +489,61 @@ funktion _uim_z_knopf(kontext, z, w):
     ui_zeichne_text(z, tx, ty, w["text"], schrift)
     gib_zurück wahr
 
-funktion _uim_z_label(kontext, z, w):
+funktion _uim_z_label(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
     _uim_farbe(z, t["text"])
-    ui_zeichne_text(z, w["x"], w["y"], w["text"], t["schrift"])
+    ui_zeichne_text(z, ox + w["x"], oy + w["y"], w["text"], t["schrift"])
     gib_zurück wahr
 
-funktion _uim_z_checkbox(kontext, z, w):
+funktion _uim_z_checkbox(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
     setze kh auf w["h"]
     wenn kh > 18:
         setze kh auf 18
-    setze ky auf w["y"] + (w["h"] - kh) / 2
+    setze ky auf ay + (w["h"] - kh) / 2
     setze flaeche auf t["flaeche"]
     wenn w["hover"]:
         setze flaeche auf t["flaeche_hover"]
     wenn w["druck"]:
         setze flaeche auf t["flaeche_druck"]
     _uim_farbe(z, flaeche)
-    ui_zeichne_rechteck_rund(z, w["x"], ky, kh, kh, 3, wahr)
+    ui_zeichne_rechteck_rund(z, ax, ky, kh, kh, 3, wahr)
     _uim_farbe(z, t["rand"])
-    ui_zeichne_rechteck_rund(z, w["x"], ky, kh, kh, 3, falsch)
+    ui_zeichne_rechteck_rund(z, ax, ky, kh, kh, 3, falsch)
     wenn w["wert"]:
         _uim_farbe(z, t["akzent"])
-        ui_zeichne_linie(z, w["x"] + kh * 0.22, ky + kh * 0.52, w["x"] + kh * 0.42, ky + kh * 0.74, 2)
-        ui_zeichne_linie(z, w["x"] + kh * 0.42, ky + kh * 0.74, w["x"] + kh * 0.80, ky + kh * 0.28, 2)
+        ui_zeichne_linie(z, ax + kh * 0.22, ky + kh * 0.52, ax + kh * 0.42, ky + kh * 0.74, 2)
+        ui_zeichne_linie(z, ax + kh * 0.42, ky + kh * 0.74, ax + kh * 0.80, ky + kh * 0.28, 2)
     wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
         _uim_farbe(z, t["akzent"])
-        ui_zeichne_rechteck_rund(z, w["x"] - 2, ky - 2, kh + 4, kh + 4, 5, falsch)
+        ui_zeichne_rechteck_rund(z, ax - 2, ky - 2, kh + 4, kh + 4, 5, falsch)
     setze farbe auf t["text"]
     wenn w["aktiv"] == falsch:
         setze farbe auf t["text_gedimmt"]
     _uim_farbe(z, farbe)
-    setze ty auf w["y"] + (w["h"] - t["schrift"]) / 2 - 1
-    ui_zeichne_text(z, w["x"] + kh + t["abstand"], ty, w["text"], t["schrift"])
+    setze ty auf ay + (w["h"] - t["schrift"]) / 2 - 1
+    ui_zeichne_text(z, ax + kh + t["abstand"], ty, w["text"], t["schrift"])
     gib_zurück wahr
 
-funktion _uim_z_slider(kontext, z, w):
+funktion _uim_z_slider(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
     setze spanne auf w["max"] - w["min"]
     setze anteil auf 0
     wenn spanne > 0:
         setze anteil auf (w["wert"] - w["min"]) / spanne
-    setze mitte_y auf w["y"] + w["h"] / 2
+    setze mitte_y auf ay + w["h"] / 2
     # Track (voll) + gefüllter Teil in Akzent
     _uim_farbe(z, t["flaeche"])
-    ui_zeichne_rechteck_rund(z, w["x"], mitte_y - 3, w["b"], 6, 3, wahr)
+    ui_zeichne_rechteck_rund(z, ax, mitte_y - 3, w["b"], 6, 3, wahr)
     wenn anteil > 0:
         _uim_farbe(z, t["akzent"])
-        ui_zeichne_rechteck_rund(z, w["x"], mitte_y - 3, w["b"] * anteil, 6, 3, wahr)
+        ui_zeichne_rechteck_rund(z, ax, mitte_y - 3, w["b"] * anteil, 6, 3, wahr)
     # Knob
-    setze kx auf w["x"] + w["b"] * anteil
+    setze kx auf ax + w["b"] * anteil
     setze radius auf 8
     wenn w["druck"] oder w["hover"]:
         setze radius auf 9
@@ -430,21 +559,131 @@ funktion _uim_z_slider(kontext, z, w):
         ui_zeichne_kreis(z, kx, mitte_y, radius + 3, falsch)
     gib_zurück wahr
 
-funktion _uim_z_fortschritt(kontext, z, w):
+funktion _uim_z_fortschritt(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
     setze anteil auf w["wert"]
     wenn anteil < 0:
         setze anteil auf 0
     wenn anteil > 1:
         setze anteil auf 1
     _uim_farbe(z, t["flaeche"])
-    ui_zeichne_rechteck_rund(z, w["x"], w["y"], w["b"], w["h"], t["radius"], wahr)
+    ui_zeichne_rechteck_rund(z, ax, ay, w["b"], w["h"], t["radius"], wahr)
     wenn anteil > 0:
         _uim_farbe(z, t["akzent"])
-        ui_zeichne_rechteck_rund(z, w["x"], w["y"], w["b"] * anteil, w["h"], t["radius"], wahr)
+        ui_zeichne_rechteck_rund(z, ax, ay, w["b"] * anteil, w["h"], t["radius"], wahr)
     _uim_farbe(z, t["rand"])
-    ui_zeichne_rechteck_rund(z, w["x"], w["y"], w["b"], w["h"], t["radius"], falsch)
+    ui_zeichne_rechteck_rund(z, ax, ay, w["b"], w["h"], t["radius"], falsch)
     gib_zurück wahr
+
+funktion _uim_z_panel(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_farbe(z, t["flaeche"])
+    ui_zeichne_rechteck_rund(z, ax, ay, w["b"], w["h"], t["radius"], wahr)
+    _uim_farbe(z, t["rand"])
+    ui_zeichne_rechteck_rund(z, ax, ay, w["b"], w["h"], t["radius"], falsch)
+    wenn w["text"] != "":
+        _uim_farbe(z, t["text_gedimmt"])
+        ui_zeichne_text(z, ax + t["abstand"], ay + t["abstand"] / 2, w["text"], t["schrift"] - 1)
+    gib_zurück wahr
+
+funktion _uim_z_liste(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze zh auf _uim_zeilenhoehe(kontext)
+    setze zeilen auf w["zeilen"]
+    setze n auf länge(zeilen)
+    _uim_farbe(z, t["hintergrund"])
+    ui_zeichne_rechteck(z, ax, ay, w["b"], w["h"], wahr)
+    ui_zeichne_clip_setze(z, ax, ay, w["b"], w["h"])
+    # Virtuelles Rendering: erste sichtbare Zeile ohne floor-Builtin.
+    setze start auf 0
+    solange (start + 1) * zh <= w["scroll_y"]:
+        setze start auf start + 1
+    setze i auf start
+    setze zy auf ay + start * zh - w["scroll_y"]
+    solange i < n und zy < ay + w["h"]:
+        wenn i == w["auswahl"]:
+            _uim_farbe(z, t["akzent"])
+            ui_zeichne_rechteck(z, ax, zy, w["b"], zh, wahr)
+            _uim_farbe(z, t["hintergrund"])
+        sonst:
+            _uim_farbe(z, t["text"])
+        ui_zeichne_text(z, ax + t["abstand"], zy + (zh - t["schrift"]) / 2, zeilen[i], t["schrift"])
+        setze i auf i + 1
+        setze zy auf zy + zh
+    ui_zeichne_clip_loesche(z)
+    _uim_farbe(z, t["rand"])
+    ui_zeichne_rechteck(z, ax, ay, w["b"], w["h"], falsch)
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(z, t["akzent"])
+        ui_zeichne_rechteck(z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
+    gib_zurück wahr
+
+# Scrollbereich: Rahmen + Clip öffnen (Kinder zeichnet _uim_zeichne_widget)
+funktion _uim_z_scroll_rahmen(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    ui_zeichne_clip_setze(z, ox + w["x"], oy + w["y"], w["b"], w["h"])
+    gib_zurück wahr
+
+# Scrollbereich: Clip schliessen + Scrollbar rechts zeichnen
+funktion _uim_z_scroll_leiste(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    ui_zeichne_clip_loesche(z)
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_farbe(z, t["rand"])
+    ui_zeichne_rechteck(z, ax, ay, w["b"], w["h"], falsch)
+    setze inhalt auf w["inhalt_hoehe"]
+    wenn inhalt <= w["h"]:
+        gib_zurück wahr
+    # Thumb: Groesse und Position proportional.
+    setze leiste_x auf ax + w["b"] - 6
+    _uim_farbe(z, t["flaeche"])
+    ui_zeichne_rechteck_rund(z, leiste_x, ay, 5, w["h"], 2, wahr)
+    setze thumb_h auf w["h"] * w["h"] / inhalt
+    wenn thumb_h < 16:
+        setze thumb_h auf 16
+    setze max_scroll auf inhalt - w["h"]
+    setze thumb_y auf ay
+    wenn max_scroll > 0:
+        setze thumb_y auf ay + (w["h"] - thumb_h) * (w["scroll_y"] / max_scroll)
+    _uim_farbe(z, t["text_gedimmt"])
+    ui_zeichne_rechteck_rund(z, leiste_x, thumb_y, 5, thumb_h, 2, wahr)
+    gib_zurück wahr
+
+# Zentraler rekursiver Zeichner: Container transformieren ihre Kinder.
+funktion _uim_zeichne_widget(kontext, z, w, ox, oy):
+    wenn w["sichtbar"] == falsch:
+        gib_zurück falsch
+    wenn w["typ"] == "panel":
+        _uim_z_panel(kontext, z, w, ox, oy)
+        für k in w["kinder"]:
+            _uim_zeichne_widget(kontext, z, k, ox + w["x"], oy + w["y"])
+        gib_zurück wahr
+    wenn w["typ"] == "scroll":
+        _uim_z_scroll_rahmen(kontext, z, w, ox, oy)
+        für k in w["kinder"]:
+            _uim_zeichne_widget(kontext, z, k, ox + w["x"], oy + w["y"] - w["scroll_y"])
+        _uim_z_scroll_leiste(kontext, z, w, ox, oy)
+        gib_zurück wahr
+    wenn w["typ"] == "knopf":
+        gib_zurück _uim_z_knopf(kontext, z, w, ox, oy)
+    wenn w["typ"] == "label":
+        gib_zurück _uim_z_label(kontext, z, w, ox, oy)
+    wenn w["typ"] == "checkbox":
+        gib_zurück _uim_z_checkbox(kontext, z, w, ox, oy)
+    wenn w["typ"] == "slider":
+        gib_zurück _uim_z_slider(kontext, z, w, ox, oy)
+    wenn w["typ"] == "fortschritt":
+        gib_zurück _uim_z_fortschritt(kontext, z, w, ox, oy)
+    wenn w["typ"] == "liste":
+        gib_zurück _uim_z_liste(kontext, z, w, ox, oy)
+    gib_zurück falsch
 
 funktion _uim_on_zeichne(lw, z):
     setze kontext auf _uim_ctx(lw)
@@ -454,19 +693,8 @@ funktion _uim_on_zeichne(lw, z):
     setze wurzel auf kontext["wurzel"]
     _uim_farbe(z, t["hintergrund"])
     ui_zeichne_rechteck(z, 0, 0, wurzel["b"], wurzel["h"], wahr)
-    setze kinder auf wurzel["kinder"]
-    für w in kinder:
-        wenn w["sichtbar"]:
-            wenn w["typ"] == "knopf":
-                _uim_z_knopf(kontext, z, w)
-            sonst wenn w["typ"] == "label":
-                _uim_z_label(kontext, z, w)
-            sonst wenn w["typ"] == "checkbox":
-                _uim_z_checkbox(kontext, z, w)
-            sonst wenn w["typ"] == "slider":
-                _uim_z_slider(kontext, z, w)
-            sonst wenn w["typ"] == "fortschritt":
-                _uim_z_fortschritt(kontext, z, w)
+    für w in wurzel["kinder"]:
+        _uim_zeichne_widget(kontext, z, w, 0, 0)
     gib_zurück wahr
 
 # ------------------------------------------------------------
@@ -481,6 +709,8 @@ funktion uim_wurzel(fenster, x, y, b, h):
     kontext["theme"] = uim_theme_dunkel()
     kontext["hover"] = nichts
     kontext["druck"] = nichts
+    kontext["druck_ox"] = 0
+    kontext["druck_oy"] = 0
     kontext["fokus"] = nichts
     setze wurzel auf _uim_basis("wurzel", 0, 0, b, h)
     kontext["wurzel"] = wurzel
@@ -490,11 +720,15 @@ funktion uim_wurzel(fenster, x, y, b, h):
     ui_leinwand_on_maus_los(lw, _uim_on_maus_los)
     ui_leinwand_on_bewegung(lw, _uim_on_bewegung)
     ui_leinwand_on_taste(lw, _uim_on_taste)
+    ui_leinwand_on_rad(lw, _uim_on_rad)
     gib_zurück kontext
 
-funktion uim_hinzu(kontext, widget):
-    kontext["wurzel"]["kinder"].hinzufügen(widget)
-    ui_leinwand_anfordern(kontext["leinwand"])
+funktion uim_hinzu(ziel, widget):
+    wenn ziel.enthält("wurzel"):
+        ziel["wurzel"]["kinder"].hinzufügen(widget)
+        ui_leinwand_anfordern(ziel["leinwand"])
+    sonst:
+        ziel["kinder"].hinzufügen(widget)
     gib_zurück widget
 
 funktion uim_theme_setze(kontext, theme):
@@ -579,3 +813,35 @@ funktion uim_slider_setze(kontext, w, wert):
     w["wert"] = wert
     ui_leinwand_anfordern(kontext["leinwand"])
     gib_zurück wahr
+
+# ------------------------------------------------------------
+# Container (UIMOO-5). Kind-Koordinaten sind RELATIV zum Container.
+# Tab-Fokus läuft in V1 nur über Top-Level-Widgets (dokumentierte
+# Einschränkung); Klick-Fokus funktioniert auch in Containern.
+# ------------------------------------------------------------
+
+# Panel: Fläche + optionaler Titel + Kinder. uim_hinzu(panel, w).
+funktion uim_panel(titel, x, y, b, h):
+    setze w auf _uim_basis("panel", x, y, b, h)
+    w["text"] = titel
+    gib_zurück w
+
+# Scrollbereich: Kinder werden am Rechteck geclippt (UIMOO-1-Scissor),
+# Rad scrollt, Scrollbar rechts. inhalt_hoehe = virtuelle Gesamthöhe.
+funktion uim_scroll(x, y, b, h, inhalt_hoehe):
+    setze w auf _uim_basis("scroll", x, y, b, h)
+    w["inhalt_hoehe"] = inhalt_hoehe
+    w["scroll_y"] = 0
+    gib_zurück w
+
+# Liste: virtuelles Rendering (nur sichtbare Zeilen), Klick/Up/Down
+# wählt aus, Rad scrollt. zeilen = Liste von Strings.
+# on_auswahl(w, index).
+funktion uim_liste(x, y, b, h, zeilen, on_auswahl):
+    setze w auf _uim_basis("liste", x, y, b, h)
+    w["zeilen"] = zeilen
+    w["auswahl"] = 0 - 1
+    w["scroll_y"] = 0
+    w["on_auswahl"] = on_auswahl
+    w["fokussierbar"] = wahr
+    gib_zurück w
