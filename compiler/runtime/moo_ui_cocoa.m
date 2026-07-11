@@ -74,6 +74,10 @@ static const void *kMooCBTargetChangeKey = &kMooCBTargetChangeKey;
 static const void *kMooCBTargetDrawKey   = &kMooCBTargetDrawKey;
 static const void *kMooCBTargetMouseKey  = &kMooCBTargetMouseKey;
 static const void *kMooCBTargetMotionKey = &kMooCBTargetMotionKey;
+static const void *kMooCBTargetMouseUpKey = &kMooCBTargetMouseUpKey;
+static const void *kMooCBTargetScrollKey  = &kMooCBTargetScrollKey;
+static const void *kMooCBTargetKeyKey     = &kMooCBTargetKeyKey;
+static const void *kMooCBTargetFocusKey   = &kMooCBTargetFocusKey;
 static const void *kMooTableDSKey        = &kMooTableDSKey;
 static const void *kMooTVKey             = &kMooTVKey;
 static const void *kMooScrollViewKey     = &kMooScrollViewKey;
@@ -1273,6 +1277,7 @@ typedef struct {
     CGFloat r, g, b, a;    /* 0..1 */
     int    valid;
     CGFloat view_w, view_h;
+    int    clip_depth;     /* UIMOO-1: offene clip_setze-Ebenen (GState) */
 } MooZeichnerCG;
 
 static inline MooZeichnerCG *unwrap_zeichner_cg(MooValue v) {
@@ -1305,6 +1310,10 @@ static inline MooZeichnerCG *unwrap_zeichner_cg(MooValue v) {
 @property (nonatomic, strong, nullable) MooCallbackTarget *mouseTarget;
 @property (nonatomic, strong, nullable) MooCallbackTarget *motionTarget;
 @property (nonatomic, strong, nullable) NSTrackingArea *trackingArea;
+@property (nonatomic, strong, nullable) MooCallbackTarget *mouseUpTarget;
+@property (nonatomic, strong, nullable) MooCallbackTarget *scrollTarget;
+@property (nonatomic, strong, nullable) MooCallbackTarget *keyTarget;
+@property (nonatomic, strong, nullable) MooCallbackTarget *focusTarget;
 @end
 @implementation MooCanvasView
 - (BOOL)acceptsFirstResponder { return YES; }
@@ -1317,9 +1326,12 @@ static inline MooZeichnerCG *unwrap_zeichner_cg(MooValue v) {
         z.ctx = cg;
         z.r = 0; z.g = 0; z.b = 0; z.a = 1.0;
         z.valid = 1;
+        z.clip_depth = 0;
         z.view_w = self.bounds.size.width;
         z.view_h = self.bounds.size.height;
         [self.drawTarget fireWithHandle:self zeichner:&z];
+        /* UIMOO-1: unbalancierte Clip-Ebenen abraeumen. */
+        while (z.clip_depth > 0) { CGContextRestoreGState(cg); z.clip_depth--; }
         z.valid = 0;
         z.ctx = NULL;
     }
@@ -1341,7 +1353,12 @@ static inline MooZeichnerCG *unwrap_zeichner_cg(MooValue v) {
     moo_release(rv);
 }
 
-- (void)mouseDown:(NSEvent *)event      { [self fireMouse:event taste:1]; [super mouseDown:event]; }
+- (void)mouseDown:(NSEvent *)event {
+    /* UIMOO-1: Klick grabbt Keyboard-Fokus, wenn on_taste gebunden. */
+    if (self.keyTarget) [[self window] makeFirstResponder:self];
+    [self fireMouse:event taste:1];
+    [super mouseDown:event];
+}
 - (void)rightMouseDown:(NSEvent *)event { [self fireMouse:event taste:3]; [super rightMouseDown:event]; }
 - (void)otherMouseDown:(NSEvent *)event {
     int taste = 2;  /* Mitte ist typischerweise buttonNumber==2 */
@@ -1366,6 +1383,109 @@ static inline MooZeichnerCG *unwrap_zeichner_cg(MooValue v) {
 - (void)mouseDragged:(NSEvent *)event      { [self mouseMoved:event]; }
 - (void)rightMouseDragged:(NSEvent *)event { [self mouseMoved:event]; }
 - (void)otherMouseDragged:(NSEvent *)event { [self mouseMoved:event]; }
+
+/* --- UIMOO-1: Release, Rad, Taste, Fokus (blind — Entspricht moo_ui_gtk.c) --- */
+
+- (void)fireMouseUp:(NSEvent *)event taste:(int)taste {
+    if (!self.mouseUpTarget) return;
+    MooValue cb = self.mouseUpTarget->cb;
+    if (cb.tag != MOO_FUNC) return;
+    NSPoint lp = [self convertPoint:[event locationInWindow] fromView:nil];
+    MooValue vSelf; vSelf.tag = MOO_NUMBER; moo_val_set_ptr(&vSelf, (__bridge void *)self);
+    MooValue rv = moo_func_call_4(cb, vSelf,
+                                  moo_number((double)(int)lp.x),
+                                  moo_number((double)(int)lp.y),
+                                  moo_number((double)taste));
+    moo_release(rv);
+}
+- (void)mouseUp:(NSEvent *)event      { [self fireMouseUp:event taste:1]; [super mouseUp:event]; }
+- (void)rightMouseUp:(NSEvent *)event { [self fireMouseUp:event taste:3]; [super rightMouseUp:event]; }
+- (void)otherMouseUp:(NSEvent *)event {
+    int taste = 2;
+    if (event.buttonNumber != 2) taste = (int)event.buttonNumber + 1;
+    [self fireMouseUp:event taste:taste];
+    [super otherMouseUp:event];
+}
+
+- (void)scrollWheel:(NSEvent *)event {
+    if (!self.scrollTarget) { [super scrollWheel:event]; return; }
+    MooValue cb = self.scrollTarget->cb;
+    if (cb.tag != MOO_FUNC) { [super scrollWheel:event]; return; }
+    /* Vorzeichen-Konvention wie GTK: +1 = nach unten. Cocoa liefert
+     * scrollingDeltaY > 0 fuer "nach oben" → negieren. Praezise Touchpad-
+     * Deltas daempfen, damit die Groessenordnung zu Step-Wheels passt. */
+    double delta = -(double)event.scrollingDeltaY;
+    if (event.hasPreciseScrollingDeltas) delta /= 10.0;
+    if (delta == 0.0) { [super scrollWheel:event]; return; }
+    NSPoint lp = [self convertPoint:[event locationInWindow] fromView:nil];
+    MooValue vSelf; vSelf.tag = MOO_NUMBER; moo_val_set_ptr(&vSelf, (__bridge void *)self);
+    MooValue rv = moo_func_call_4(cb, vSelf,
+                                  moo_number((double)(int)lp.x),
+                                  moo_number((double)(int)lp.y),
+                                  moo_number(delta));
+    moo_release(rv);
+}
+
+/* Keyname-Mapping Cocoa → GTK-kompatibel (Teilmenge; Fallback "kc<code>"). */
+static const char *cocoa_keyname(NSEvent *event, char *buf, size_t buflen) {
+    switch (event.keyCode) {
+        case 36:  return "Return";
+        case 53:  return "Escape";
+        case 49:  return "space";
+        case 48:  return "Tab";
+        case 51:  return "BackSpace";
+        case 117: return "Delete";
+        case 123: return "Left";
+        case 124: return "Right";
+        case 126: return "Up";
+        case 125: return "Down";
+        case 115: return "Home";
+        case 119: return "End";
+        case 116: return "Page_Up";
+        case 121: return "Page_Down";
+    }
+    NSString *chars = [event.charactersIgnoringModifiers lowercaseString];
+    if (chars.length > 0) {
+        const char *u = [chars UTF8String];
+        if (u && *u) {
+            snprintf(buf, buflen, "%s", u);
+            return buf;
+        }
+    }
+    snprintf(buf, buflen, "kc%d", (int)event.keyCode);
+    return buf;
+}
+
+- (void)fireKey:(NSEvent *)event gedrueckt:(int)gedrueckt {
+    MooValue cb = self.keyTarget->cb;
+    if (cb.tag != MOO_FUNC) return;
+    long mod = 0;
+    if (event.modifierFlags & NSEventModifierFlagShift)   mod |= 1;
+    if (event.modifierFlags & NSEventModifierFlagControl) mod |= 2;
+    if (event.modifierFlags & NSEventModifierFlagOption)  mod |= 4;
+    char tmp[32];
+    /* keyname Owning-+1 an moo_func_call_4 (Konvention wie GTK-Backend) —
+     * KEIN zusaetzliches moo_release hier. */
+    MooValue keyname = moo_string_new(cocoa_keyname(event, tmp, sizeof(tmp)));
+    MooValue vSelf; vSelf.tag = MOO_NUMBER; moo_val_set_ptr(&vSelf, (__bridge void *)self);
+    MooValue rv = moo_func_call_4(cb, vSelf, keyname,
+                                  moo_bool(gedrueckt),
+                                  moo_number((double)mod));
+    moo_release(rv);
+}
+- (void)keyDown:(NSEvent *)event { if (self.keyTarget) [self fireKey:event gedrueckt:1]; else [super keyDown:event]; }
+- (void)keyUp:(NSEvent *)event   { if (self.keyTarget) [self fireKey:event gedrueckt:0]; else [super keyUp:event]; }
+
+- (void)fireFocus:(int)hat {
+    if (!self.focusTarget) return;
+    MooValue cb = self.focusTarget->cb;
+    if (cb.tag != MOO_FUNC) return;
+    MooValue vSelf; vSelf.tag = MOO_NUMBER; moo_val_set_ptr(&vSelf, (__bridge void *)self);
+    MooValue rv = moo_func_call_2(cb, vSelf, moo_bool(hat));
+    moo_release(rv);
+}
+- (BOOL)becomeFirstResponder { BOOL ok = [super becomeFirstResponder]; if (ok) [self fireFocus:1]; return ok; }
+- (BOOL)resignFirstResponder { BOOL ok = [super resignFirstResponder]; if (ok) [self fireFocus:0]; return ok; }
 
 - (void)updateTrackingAreas {
     [super updateTrackingAreas];
@@ -1439,6 +1559,61 @@ MooValue moo_ui_zeichne_rechteck(MooValue zeichner,
         CGContextSetLineWidth(z->ctx, 1.0);
         CGContextStrokeRect(z->ctx, r);
     }
+    return moo_bool(1);
+}
+
+/* Abgerundetes Rechteck (UIMOO-1, blind — Entspricht moo_ui_gtk.c).
+ * radius auf min(b,h)/2 gekappt — PFLICHT: CGPathCreateWithRoundedRect
+ * asserted bei radius > min/2. radius <= 0 → normales Rechteck. */
+MooValue moo_ui_zeichne_rechteck_rund(MooValue zeichner,
+                                      MooValue x, MooValue y,
+                                      MooValue b, MooValue h,
+                                      MooValue radius, MooValue gefuellt) {
+    MooZeichnerCG *z = unwrap_zeichner_cg(zeichner);
+    if (!z) return moo_bool(0);
+    CGFloat pb = num_or(b, 0), ph = num_or(h, 0);
+    if (pb < 0) pb = 0;
+    if (ph < 0) ph = 0;
+    CGFloat r = (radius.tag == MOO_NUMBER) ? MV_NUM(radius) : 0.0;
+    CGFloat rmax = ((pb < ph) ? pb : ph) / 2.0;
+    if (r > rmax) r = rmax;
+    if (r <= 0.0)
+        return moo_ui_zeichne_rechteck(zeichner, x, y, b, h, gefuellt);
+    CGRect rect = CGRectMake(num_or(x, 0), num_or(y, 0), pb, ph);
+    CGPathRef path = CGPathCreateWithRoundedRect(rect, r, r, NULL);
+    cg_apply_color(z);
+    CGContextBeginPath(z->ctx);
+    CGContextAddPath(z->ctx, path);
+    if (bool_or(gefuellt, YES)) {
+        CGContextFillPath(z->ctx);
+    } else {
+        CGContextSetLineWidth(z->ctx, 1.0);
+        CGContextStrokePath(z->ctx);
+    }
+    CGPathRelease(path);
+    return moo_bool(1);
+}
+
+/* Clip-Stack (UIMOO-1, blind): SaveGState + ClipToRect / RestoreGState.
+ * Unbalancierte Ebenen raeumt drawRect: nach dem Callback ab. */
+MooValue moo_ui_zeichne_clip_setze(MooValue zeichner,
+                                   MooValue x, MooValue y,
+                                   MooValue b, MooValue h) {
+    MooZeichnerCG *z = unwrap_zeichner_cg(zeichner);
+    if (!z) return moo_bool(0);
+    CGContextSaveGState(z->ctx);
+    CGContextClipToRect(z->ctx, CGRectMake(num_or(x, 0), num_or(y, 0),
+                                           num_or(b, 0), num_or(h, 0)));
+    z->clip_depth++;
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_clip_loesche(MooValue zeichner) {
+    MooZeichnerCG *z = unwrap_zeichner_cg(zeichner);
+    if (!z) return moo_bool(0);
+    if (z->clip_depth <= 0) return moo_bool(0);  /* keine Ebene offen */
+    CGContextRestoreGState(z->ctx);
+    z->clip_depth--;
     return moo_bool(1);
 }
 
@@ -2377,6 +2552,73 @@ MooValue moo_ui_leinwand_on_bewegung(MooValue leinwand, MooValue callback) {
         /* Tracking-Area (neu) aufsetzen — liefert fortan mouseMoved-Events
          * sobald das Fenster Key-Window ist. */
         [cv updateTrackingAreas];
+        return moo_bool(1);
+    }
+}
+
+/* ------------------------------------------------------------------ *
+ * UIMOO-1 Registrierung (blind — Entspricht moo_ui_gtk.c): Muster wie
+ * on_maus/on_bewegung (Property + Associated Object, Unbind via nil).
+ * ------------------------------------------------------------------ */
+
+static MooValue cocoa_canvas_bind(MooValue leinwand, MooValue callback,
+                                  const void *key, int slot) {
+    @autoreleasepool {
+        MooCanvasView *cv = canvas_view(leinwand);
+        if (!cv) return moo_bool(0);
+        MooCallbackTarget *tgt = nil;
+        if (callback.tag == MOO_FUNC)
+            tgt = [[MooCallbackTarget alloc] initWithCallback:callback];
+        switch (slot) {
+            case 0: cv.mouseUpTarget = tgt; break;
+            case 1: cv.scrollTarget  = tgt; break;
+            case 2: cv.keyTarget     = tgt; break;
+            case 3: cv.focusTarget   = tgt; break;
+        }
+        objc_setAssociatedObject(cv, key, tgt, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return moo_bool(1);
+    }
+}
+
+MooValue moo_ui_leinwand_on_maus_los(MooValue leinwand, MooValue callback) {
+    return cocoa_canvas_bind(leinwand, callback, kMooCBTargetMouseUpKey, 0);
+}
+
+MooValue moo_ui_leinwand_on_rad(MooValue leinwand, MooValue callback) {
+    return cocoa_canvas_bind(leinwand, callback, kMooCBTargetScrollKey, 1);
+}
+
+MooValue moo_ui_leinwand_on_taste(MooValue leinwand, MooValue callback) {
+    return cocoa_canvas_bind(leinwand, callback, kMooCBTargetKeyKey, 2);
+}
+
+MooValue moo_ui_leinwand_on_fokus(MooValue leinwand, MooValue callback) {
+    return cocoa_canvas_bind(leinwand, callback, kMooCBTargetFocusKey, 3);
+}
+
+MooValue moo_ui_leinwand_fokus_setze(MooValue leinwand) {
+    @autoreleasepool {
+        MooCanvasView *cv = canvas_view(leinwand);
+        if (!cv) return moo_bool(0);
+        [[cv window] makeFirstResponder:cv];
+        return moo_bool(1);
+    }
+}
+
+/* Fenster-Cursor (UIMOO-1, blind). Setzt den Cursor sofort; gilt bis
+ * AppKit ihn (Fenster-Wechsel, TrackingAreas) neu setzt. */
+MooValue moo_ui_fenster_cursor_setze(MooValue fenster, MooValue name) {
+    @autoreleasepool {
+        id w = unwrap_objc(fenster);
+        if (!w || ![w isKindOfClass:[NSWindow class]]) return moo_bool(0);
+        const char *n = str_or(name, "standard");
+        NSCursor *cur = nil;
+        if      (strcmp(n, "standard") == 0) cur = [NSCursor arrowCursor];
+        else if (strcmp(n, "hand") == 0)     cur = [NSCursor pointingHandCursor];
+        else if (strcmp(n, "text") == 0)     cur = [NSCursor IBeamCursor];
+        else if (strcmp(n, "groesse") == 0)  cur = [NSCursor openHandCursor];
+        else return moo_bool(0);  /* kein CSS-Passthrough unter Cocoa */
+        [cur set];
         return moo_bool(1);
     }
 }

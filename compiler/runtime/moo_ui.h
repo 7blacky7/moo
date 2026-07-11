@@ -620,8 +620,9 @@ MooValue moo_ui_leinwand_on_bewegung(MooValue leinwand, MooValue callback);
 /* -------------------------------------------------------------------------
  * Leinwand-Events, Welle UIMOO-1 (Custom-Widget-Grundlage fuer ui_moo)
  *
- * Status: Linux (GTK3) implementiert; Win32/Cocoa folgen (Signaturen fix,
- * Backend-Mapping siehe je Funktion). Ownership aller Callbacks wie
+ * Status: Linux (GTK3) implementiert + getestet; Win32/Cocoa blind
+ * portiert (Verifikation auf Windows-/macOS-Runnern steht aus).
+ * Ownership aller Callbacks wie
  * on_maus: retain beim Bind, release bei Re-Bind oder Widget-Destroy.
  * ------------------------------------------------------------------------- */
 

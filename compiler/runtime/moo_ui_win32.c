@@ -175,6 +175,7 @@ typedef struct {
     int  r, g, b, a;   /* 0..255 */
     int  valid;
     RECT rect;
+    int  clip_depth;   /* UIMOO-1: offene clip_setze-Ebenen (SaveDC-Stack) */
 } MooZeichnerW32;
 
 static inline MooValue wrap_zeichner_w32(MooZeichnerW32* z) {
@@ -499,6 +500,7 @@ static LRESULT CALLBACK moo_window_proc(HWND hwnd, UINT msg,
                     z.hdc = di->hDC;
                     z.r = 0; z.g = 0; z.b = 0; z.a = 255;
                     z.valid = 1;
+                    z.clip_depth = 0;
                     z.rect = di->rcItem;
                     MooValue handle   = wrap_hwnd(di->hwndItem);
                     MooValue zeichner = wrap_zeichner_w32(&z);
@@ -507,6 +509,8 @@ static LRESULT CALLBACK moo_window_proc(HWND hwnd, UINT msg,
                     MooValue rv = moo_func_call_2(cb->v, handle, zeichner);
                     g_active_zeichner = prev;
                     moo_release(rv);
+                    /* UIMOO-1: unbalancierte Clip-Ebenen abraeumen. */
+                    while (z.clip_depth > 0) { RestoreDC(di->hDC, -1); z.clip_depth--; }
                     z.valid = 0; z.hdc = NULL;
                 }
             }
@@ -1363,6 +1367,66 @@ MooValue moo_ui_zeichne_rechteck(MooValue zeichner,
     return moo_bool(1);
 }
 
+/* Abgerundetes Rechteck (UIMOO-1, blind — Entspricht moo_ui_gtk.c).
+ * radius auf min(b,h)/2 gekappt; radius <= 0 → normales Rechteck. */
+MooValue moo_ui_zeichne_rechteck_rund(MooValue zeichner,
+                                      MooValue x, MooValue y,
+                                      MooValue b, MooValue h,
+                                      MooValue radius, MooValue gefuellt) {
+    MooZeichnerW32* z = unwrap_zeichner_w32(zeichner);
+    if (!z) return moo_bool(0);
+    int xi = num_or(x, 0), yi = num_or(y, 0);
+    int bi = num_or(b, 0), hi = num_or(h, 0);
+    if (bi < 0) bi = 0;
+    if (hi < 0) hi = 0;
+    double rd = (radius.tag == MOO_NUMBER) ? MV_NUM(radius) : 0.0;
+    double rmax = ((bi < hi) ? bi : hi) / 2.0;
+    if (rd > rmax) rd = rmax;
+    if (rd <= 0.0)
+        return moo_ui_zeichne_rechteck(zeichner, x, y, b, h, gefuellt);
+    int d = (int)(rd * 2.0 + 0.5);
+    COLORREF c = zeichner_color(z);
+    HPEN pen = CreatePen(PS_SOLID, 1, c);
+    HPEN oldp = (HPEN)SelectObject(z->hdc, pen);
+    HBRUSH br = NULL;
+    HBRUSH oldb;
+    if (bool_or(gefuellt, 1)) {
+        br = CreateSolidBrush(c);
+        oldb = (HBRUSH)SelectObject(z->hdc, br);
+    } else {
+        oldb = (HBRUSH)SelectObject(z->hdc, GetStockObject(NULL_BRUSH));
+    }
+    RoundRect(z->hdc, xi, yi, xi + bi, yi + hi, d, d);
+    SelectObject(z->hdc, oldp);
+    SelectObject(z->hdc, oldb);
+    DeleteObject(pen);
+    if (br) DeleteObject(br);
+    return moo_bool(1);
+}
+
+/* Clip-Stack (UIMOO-1, blind): SaveDC + IntersectClipRect / RestoreDC(-1).
+ * Unbalancierte Ebenen raeumt der WM_DRAWITEM-Handler ab. */
+MooValue moo_ui_zeichne_clip_setze(MooValue zeichner,
+                                   MooValue x, MooValue y,
+                                   MooValue b, MooValue h) {
+    MooZeichnerW32* z = unwrap_zeichner_w32(zeichner);
+    if (!z) return moo_bool(0);
+    int xi = num_or(x, 0), yi = num_or(y, 0);
+    SaveDC(z->hdc);
+    IntersectClipRect(z->hdc, xi, yi, xi + num_or(b, 0), yi + num_or(h, 0));
+    z->clip_depth++;
+    return moo_bool(1);
+}
+
+MooValue moo_ui_zeichne_clip_loesche(MooValue zeichner) {
+    MooZeichnerW32* z = unwrap_zeichner_w32(zeichner);
+    if (!z) return moo_bool(0);
+    if (z->clip_depth <= 0) return moo_bool(0);  /* keine Ebene offen */
+    RestoreDC(z->hdc, -1);
+    z->clip_depth--;
+    return moo_bool(1);
+}
+
 MooValue moo_ui_zeichne_kreis(MooValue zeichner,
                               MooValue cx, MooValue cy,
                               MooValue radius, MooValue gefuellt) {
@@ -2158,6 +2222,51 @@ MooValue moo_ui_liste_entferne(MooValue liste, MooValue zeile_index) {
  * WM_NCDESTROY der Leinwand entfernen wir Subclass + Props.
  * ========================================================================= */
 
+/* UIMOO-1: VK-Code → GTK-kompatibler Keyname (Teilmenge; Fallback "vk<code>").
+ * Statischer Puffer: nur im UI-Thread benutzt (Message-Loop). */
+static const char* w32_keyname(int vk) {
+    static char buf[16];
+    switch (vk) {
+        case VK_RETURN:  return "Return";
+        case VK_ESCAPE:  return "Escape";
+        case VK_SPACE:   return "space";
+        case VK_TAB:     return "Tab";
+        case VK_BACK:    return "BackSpace";
+        case VK_DELETE:  return "Delete";
+        case VK_LEFT:    return "Left";
+        case VK_RIGHT:   return "Right";
+        case VK_UP:      return "Up";
+        case VK_DOWN:    return "Down";
+        case VK_HOME:    return "Home";
+        case VK_END:     return "End";
+        case VK_PRIOR:   return "Page_Up";
+        case VK_NEXT:    return "Page_Down";
+        case VK_SHIFT:   return "Shift_L";
+        case VK_CONTROL: return "Control_L";
+        case VK_MENU:    return "Alt_L";
+    }
+    if (vk >= VK_F1 && vk <= VK_F12) {
+        int n = vk - VK_F1 + 1;
+        buf[0] = 'F';
+        if (n < 10) { buf[1] = (char)('0' + n); buf[2] = 0; }
+        else        { buf[1] = '1'; buf[2] = (char)('0' + (n - 10)); buf[3] = 0; }
+        return buf;
+    }
+    if (vk >= 'A' && vk <= 'Z') { buf[0] = (char)(vk - 'A' + 'a'); buf[1] = 0; return buf; }
+    if (vk >= '0' && vk <= '9') { buf[0] = (char)vk; buf[1] = 0; return buf; }
+    {
+        /* Fallback "vk<code>" ohne snprintf-Abhaengigkeit. */
+        char tmp[8];
+        int n = vk, t = 0, i = 2;
+        buf[0] = 'v'; buf[1] = 'k';
+        if (n <= 0) tmp[t++] = '0';
+        while (n > 0 && t < 7) { tmp[t++] = (char)('0' + n % 10); n /= 10; }
+        while (t > 0 && i < 15) buf[i++] = tmp[--t];
+        buf[i] = 0;
+    }
+    return buf;
+}
+
 static LRESULT CALLBACK moo_leinwand_subclass(HWND hwnd, UINT msg,
                                               WPARAM wp, LPARAM lp,
                                               UINT_PTR uid_subclass,
@@ -2167,6 +2276,9 @@ static LRESULT CALLBACK moo_leinwand_subclass(HWND hwnd, UINT msg,
         case WM_LBUTTONDOWN:
         case WM_MBUTTONDOWN:
         case WM_RBUTTONDOWN: {
+            /* UIMOO-1: Klick grabbt Keyboard-Fokus, wenn on_taste gebunden. */
+            if (msg == WM_LBUTTONDOWN && GetPropW(hwnd, L"moo-ontaste"))
+                SetFocus(hwnd);
             MooCbBox* cb = (MooCbBox*)GetPropW(hwnd, L"moo-onmaus");
             if (cb && cb->v.tag == MOO_FUNC) {
                 int x = GET_X_LPARAM(lp);
@@ -2195,9 +2307,83 @@ static LRESULT CALLBACK moo_leinwand_subclass(HWND hwnd, UINT msg,
             }
             break;
         }
+        case WM_LBUTTONUP:
+        case WM_MBUTTONUP:
+        case WM_RBUTTONUP: {
+            MooCbBox* cb = (MooCbBox*)GetPropW(hwnd, L"moo-onmauslos");
+            if (cb && cb->v.tag == MOO_FUNC) {
+                int x = GET_X_LPARAM(lp);
+                int y = GET_Y_LPARAM(lp);
+                int taste = (msg == WM_LBUTTONUP) ? 1
+                          : (msg == WM_MBUTTONUP) ? 2 : 3;
+                MooValue rv = moo_func_call_4(cb->v, wrap_hwnd(hwnd),
+                    moo_number((double)x), moo_number((double)y),
+                    moo_number((double)taste));
+                moo_release(rv);
+            }
+            break;
+        }
+        case WM_MOUSEWHEEL: {
+            MooCbBox* cb = (MooCbBox*)GetPropW(hwnd, L"moo-onrad");
+            if (cb && cb->v.tag == MOO_FUNC) {
+                /* Wheel liefert SCREEN-Koordinaten → client-lokal wandeln. */
+                POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+                ScreenToClient(hwnd, &pt);
+                /* Konvention wie GTK: +1 = nach unten (Wheel-Delta negieren). */
+                double delta = -((double)GET_WHEEL_DELTA_WPARAM(wp)) / 120.0;
+                if (delta != 0.0) {
+                    MooValue rv = moo_func_call_4(cb->v, wrap_hwnd(hwnd),
+                        moo_number((double)pt.x), moo_number((double)pt.y),
+                        moo_number(delta));
+                    moo_release(rv);
+                    return 0;  /* konsumiert — kein Scroll-Container-Bubbling */
+                }
+            }
+            break;
+        }
+        case WM_GETDLGCODE: {
+            /* Pfeiltasten/Tab nicht vom Dialog-Manager wegfangen lassen,
+             * sobald ein Taste-Callback registriert ist. */
+            if (GetPropW(hwnd, L"moo-ontaste")) return DLGC_WANTALLKEYS;
+            break;
+        }
+        case WM_KEYDOWN:
+        case WM_KEYUP: {
+            MooCbBox* cb = (MooCbBox*)GetPropW(hwnd, L"moo-ontaste");
+            if (cb && cb->v.tag == MOO_FUNC) {
+                long mod = 0;
+                if (GetKeyState(VK_SHIFT)   & 0x8000) mod |= 1;
+                if (GetKeyState(VK_CONTROL) & 0x8000) mod |= 2;
+                if (GetKeyState(VK_MENU)    & 0x8000) mod |= 4;
+                /* keyname Owning-+1 an moo_func_call_4 (Konvention wie GTK) —
+                 * KEIN zusaetzliches moo_release hier. */
+                MooValue keyname = moo_string_new(w32_keyname((int)wp));
+                MooValue rv = moo_func_call_4(cb->v, wrap_hwnd(hwnd), keyname,
+                    moo_bool(msg == WM_KEYDOWN ? 1 : 0),
+                    moo_number((double)mod));
+                int handled = moo_is_truthy(rv);
+                moo_release(rv);
+                if (handled) return 0;
+            }
+            break;
+        }
+        case WM_SETFOCUS:
+        case WM_KILLFOCUS: {
+            MooCbBox* cb = (MooCbBox*)GetPropW(hwnd, L"moo-onfokus");
+            if (cb && cb->v.tag == MOO_FUNC) {
+                MooValue rv = moo_func_call_2(cb->v, wrap_hwnd(hwnd),
+                                              moo_bool(msg == WM_SETFOCUS ? 1 : 0));
+                moo_release(rv);
+            }
+            break;
+        }
         case WM_NCDESTROY: {
             cb_box_free_prop(hwnd, L"moo-onmaus");
             cb_box_free_prop(hwnd, L"moo-onbewegung");
+            cb_box_free_prop(hwnd, L"moo-onmauslos");
+            cb_box_free_prop(hwnd, L"moo-onrad");
+            cb_box_free_prop(hwnd, L"moo-ontaste");
+            cb_box_free_prop(hwnd, L"moo-onfokus");
             RemoveWindowSubclass(hwnd, moo_leinwand_subclass, 1);
             break;
         }
@@ -2230,6 +2416,67 @@ MooValue moo_ui_leinwand_on_bewegung(MooValue leinwand, MooValue callback) {
     MooCbBox* box = cb_box_new(callback);
     cb_box_free_prop(h, L"moo-onbewegung");
     SetPropW(h, L"moo-onbewegung", (HANDLE)box);
+    return moo_bool(1);
+}
+
+/* ------------------------------------------------------------------ *
+ * Leinwand-Events Welle UIMOO-1 (blind — Entspricht moo_ui_gtk.c):
+ * Release, Rad, Taste, Fokus + Fenster-Cursor. Muster wie on_maus,
+ * Unbind (callback != FUNC) gibt die Prop-Box frei und liefert wahr
+ * (GTK-Semantik).
+ * ------------------------------------------------------------------ */
+
+static MooValue w32_leinwand_bind(MooValue leinwand, MooValue callback,
+                                  const wchar_t* prop) {
+    HWND h = unwrap_hwnd(leinwand);
+    if (!h) return moo_bool(0);
+    ensure_leinwand_subclass(h);
+    cb_box_free_prop(h, prop);
+    if (callback.tag != MOO_FUNC) return moo_bool(1);  /* nur unbind */
+    MooCbBox* box = cb_box_new(callback);
+    SetPropW(h, prop, (HANDLE)box);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_leinwand_on_maus_los(MooValue leinwand, MooValue callback) {
+    return w32_leinwand_bind(leinwand, callback, L"moo-onmauslos");
+}
+
+MooValue moo_ui_leinwand_on_rad(MooValue leinwand, MooValue callback) {
+    return w32_leinwand_bind(leinwand, callback, L"moo-onrad");
+}
+
+MooValue moo_ui_leinwand_on_taste(MooValue leinwand, MooValue callback) {
+    return w32_leinwand_bind(leinwand, callback, L"moo-ontaste");
+}
+
+MooValue moo_ui_leinwand_on_fokus(MooValue leinwand, MooValue callback) {
+    return w32_leinwand_bind(leinwand, callback, L"moo-onfokus");
+}
+
+MooValue moo_ui_leinwand_fokus_setze(MooValue leinwand) {
+    HWND h = unwrap_hwnd(leinwand);
+    if (!h) return moo_bool(0);
+    SetFocus(h);
+    return moo_bool(1);
+}
+
+/* Fenster-Cursor (UIMOO-1, blind). Klassencursor umsetzen + sofort
+ * anwenden. Kein CSS-Passthrough unter Win32 — unbekannte Namen → falsch. */
+MooValue moo_ui_fenster_cursor_setze(MooValue fenster, MooValue name) {
+    HWND h = unwrap_hwnd(fenster);
+    if (!h) return moo_bool(0);
+    const char* n = str_or(name, "standard");
+    LPCWSTR idc;
+    if      (strcmp(n, "standard") == 0) idc = IDC_ARROW;
+    else if (strcmp(n, "hand") == 0)     idc = IDC_HAND;
+    else if (strcmp(n, "text") == 0)     idc = IDC_IBEAM;
+    else if (strcmp(n, "groesse") == 0)  idc = IDC_SIZEALL;
+    else return moo_bool(0);
+    HCURSOR cur = LoadCursorW(NULL, idc);
+    if (!cur) return moo_bool(0);
+    SetClassLongPtrW(h, GCLP_HCURSOR, (LONG_PTR)cur);
+    SetCursor(cur);
     return moo_bool(1);
 }
 
