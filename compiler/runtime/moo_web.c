@@ -420,9 +420,9 @@ static void write_extra_headers(moo_sockfd_t client_fd, MooValue headers, bool* 
         // widerspruechliche Antworten zu vermeiden. User-Content-Type wird
         // durchgereicht; wir merken das, um das Default-Content-Type zu
         // unterdruecken.
-        if (strcasecmp(kn, "content-length") == 0) continue;
-        if (strcasecmp(kn, "connection") == 0) continue;
-        if (strcasecmp(kn, "content-type") == 0 && seen_content_type) *seen_content_type = true;
+        if (moo_strcasecmp(kn, "content-length") == 0) continue;
+        if (moo_strcasecmp(kn, "connection") == 0) continue;
+        if (moo_strcasecmp(kn, "content-type") == 0 && seen_content_type) *seen_content_type = true;
         const char* vs = (v.tag == MOO_STRING) ? MV_STR(v)->chars : "";
         char line[1024];
         int n = snprintf(line, sizeof(line), "%s: %s\r\n", kn, vs);

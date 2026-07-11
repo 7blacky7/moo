@@ -254,7 +254,7 @@ MooValue moo_http_post_with_headers(MooValue url, MooValue body, MooValue hdr_di
         for (int i = 0; i < d->capacity && !has_ct; i++) {
             if (!d->entries[i].occupied) continue;
             MooString* ks = d->entries[i].key;
-            if (ks && strcasecmp(ks->chars, "content-type") == 0) has_ct = true;
+            if (ks && moo_strcasecmp(ks->chars, "content-type") == 0) has_ct = true;
         }
     }
     if (!has_ct) req_headers = curl_slist_append(req_headers, "Content-Type: application/json");

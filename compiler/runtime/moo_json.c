@@ -16,24 +16,11 @@ static void json_skip_ws(JsonParser* p) {
     }
 }
 
-static char json_peek(JsonParser* p) {
-    json_skip_ws(p);
-    if (p->pos >= p->len) return '\0';
-    return p->src[p->pos];
-}
-
-static char json_next(JsonParser* p) {
-    json_skip_ws(p);
-    if (p->pos >= p->len) return '\0';
-    return p->src[p->pos++];
-}
-
 static MooValue json_parse_value(JsonParser* p);
 
 static MooValue json_parse_string(JsonParser* p) {
     // skip opening quote
     p->pos++;
-    int start = p->pos;
     // Calculate needed size first (for escape sequences)
     int cap = 64;
     char* buf = (char*)moo_alloc(cap);

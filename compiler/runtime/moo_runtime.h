@@ -6,6 +6,12 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#ifdef _WIN32
+#define moo_strcasecmp _stricmp
+#else
+#include <strings.h>
+#define moo_strcasecmp strcasecmp
+#endif
 #include <math.h>
 #include <setjmp.h>
 

@@ -128,13 +128,6 @@ typedef struct {
     int32_t bound_count;
 } MooCurried;
 
-// Trampoline-Funktionen fuer verschiedene Aritaeten
-static MooValue curry_call_1(MooValue arg1) {
-    // Wir holen das MooCurried ueber einen globalen Pointer — das ist NICHT threadsafe
-    // EHRLICH: Eine echte Loesung braeuchte Closures mit Capture-Environment
-    return moo_none();
-}
-
 MooValue moo_curry(MooValue func, MooValue arg) {
     if (func.tag != MOO_FUNC) {
         moo_throw(moo_string_new("curry: Erstes Argument muss eine Funktion sein"));

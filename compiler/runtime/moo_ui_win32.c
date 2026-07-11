@@ -654,7 +654,8 @@ MooValue moo_ui_fenster(MooValue titel, MooValue breite, MooValue hoehe,
     if (f & MOO_UI_FLAG_MAXIMIZED)  ShowWindow(hwnd, SW_MAXIMIZE);
     if (f & MOO_UI_FLAG_FULLSCREEN) {
         SetWindowLongW(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-        MONITORINFO mi = { sizeof(mi) };
+        MONITORINFO mi = {0};
+        mi.cbSize = sizeof(mi);
         if (GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &mi)) {
             SetWindowPos(hwnd, HWND_TOP,
                 mi.rcMonitor.left, mi.rcMonitor.top,
@@ -1841,7 +1842,7 @@ MooValue moo_ui_eingabe_dialog(MooValue parent, MooValue titel,
     CreateWindowExW(0, L"STATIC", wprompt ? wprompt : L"",
         WS_CHILD | WS_VISIBLE | SS_LEFT,
         12, 12, 368, 20, dlg, (HMENU)100, g_hinstance, NULL);
-    HWND ed = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", wdef ? wdef : L"",
+    CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", wdef ? wdef : L"",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
         12, 38, 368, 24, dlg, (HMENU)101, g_hinstance, NULL);
     CreateWindowExW(0, L"BUTTON", L"OK",
@@ -1960,7 +1961,7 @@ MooValue moo_ui_ordner_waehlen(MooValue parent, MooValue titel) {
     free(wt);
     if (!il) return moo_none();
     SHGetPathFromIDListW(il, path);
-    CoTaskMemFree(il);
+    CoTaskMemFree((void*)il);
     char* u = wide_to_utf8(path);
     MooValue rv = moo_string_new(u ? u : "");
     free(u);

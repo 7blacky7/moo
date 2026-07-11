@@ -90,14 +90,6 @@ static bool nn_ist_schicht(MooValue d) {
  * Konstruktions-Helfer
  * ============================================================ */
 
-/* [r] bzw. [r,c] Shape-Liste bauen (c<=0 -> 1D). +1 owning. */
-static MooValue shape_liste(int64_t r, int64_t c) {
-    MooValue l = moo_list_new(2);
-    moo_list_append(l, moo_number((double)r));
-    if (c > 0) moo_list_append(l, moo_number((double)c));
-    return l;
-}
-
 /* splitmix64 (Muster moo_tensor.c / moo_noise.c): deterministisch, unsigned. */
 static uint64_t sm64(uint64_t* s) {
     uint64_t z = (*s += 0x9E3779B97F4A7C15ULL);

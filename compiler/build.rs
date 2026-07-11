@@ -78,6 +78,11 @@ fn main() {
     // regcomp/regexec (Doppel-Definition vermeiden).
     // ========================================================================
     if target_windows {
+        // MSVC markiert portable ISO-/POSIX-Namen wie fopen/getenv/strdup
+        // standardmaessig als veraltet. Moo nutzt diese APIs bewusst portabel;
+        // die Defines verhindern Warnrauschen ohne die Semantik zu aendern.
+        build.define("_CRT_SECURE_NO_WARNINGS", None);
+        build.define("_CRT_NONSTDC_NO_DEPRECATE", None);
         build
             .file("runtime/win_regex/regcomp.c")
             .file("runtime/win_regex/regexec.c")

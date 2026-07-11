@@ -13,6 +13,7 @@
 /* === prozess_id/pid — getpid() Cross-Platform === */
 #ifdef _WIN32
 #include <process.h>
+#include <windows.h>
 #define moo_getpid() ((int)_getpid())
 #else
 #define moo_getpid() ((int)getpid())
@@ -28,10 +29,17 @@ void moo_sleep(MooValue duration) {
     double secs = moo_as_number(duration);
     if (secs <= 0) return;
 
+#ifdef _WIN32
+    // Sleep erwartet Millisekunden als DWORD. Sehr lange Wartezeiten auf das
+    // groesste darstellbare Intervall saettigen statt beim Cast zu wrappen.
+    DWORD millis = secs >= 4294967.295 ? MAXDWORD : (DWORD)(secs * 1000.0);
+    Sleep(millis);
+#else
     struct timespec ts;
     ts.tv_sec = (time_t)secs;
     ts.tv_nsec = (long)((secs - (double)ts.tv_sec) * 1e9);
     nanosleep(&ts, NULL);
+#endif
 }
 
 /* === env/umgebung === */
