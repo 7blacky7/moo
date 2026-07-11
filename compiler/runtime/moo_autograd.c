@@ -1071,81 +1071,93 @@ static void bw_norm_kern(const MooAgNode* n, int32_t normop) {
 }
 static void bw_layernorm_kern(const MooAgNode* n) { bw_norm_kern(n, MOO_KI_NORM_LAYER); }
 static void bw_rmsnorm_kern(const MooAgNode* n)   { bw_norm_kern(n, MOO_KI_NORM_RMS); }
+// KI-MULTI-V2b: stellt den Ausgangsgradienten als residenten Read-Buffer bereit.
+// gpu_grad wird geliehen; ein Host-Gradient bekommt einen temporaeren Upload.
+static void* bild_grad_quelle_gpu(MooTensor* o, bool* temporaer) {
+    *temporaer = false;
+    if ((o->grad_valid & MOO_V_DEV) && o->gpu_grad) return o->gpu_grad;
+    float* g = grad_sicherstellen(o);
+    if (!g) return NULL;
+    void* p = moo_ki_gpu_buf_belegen((int64_t)o->size * (int64_t)sizeof(float));
+    if (!p || !moo_ki_gpu_upload(p, g, (int64_t)o->size * (int64_t)sizeof(float))) {
+        moo_ki_gpu_buf_freigeben(p); return NULL;
+    }
+    *temporaer = true;
+    return p;
+}
 
-// KI-MULTI-V2 im2col-Backward = col2im: g der entfalteten Spalten
-// zurueck ins Bild scatter-addieren (Padding-Positionen uebersprungen).
-// Geometrie aus n->skalar (kh|kw<<8|stride<<16|pad<<24).
+// KI-MULTI-V2 im2col-Backward = col2im. V2b haelt Beitrag und Fan-out-Akku
+// resident; CPU ist nur normaler Fallback ausserhalb Schwelle/ohne Vulkan.
 static void bw_im2col(const MooAgNode* n) {
-    const MooTensor* o = T(n->output);   // [rows, kh*kw*c]
-    MooTensor* x = T(n->inputs[0]);      // [b,h,w,c]
+    MooTensor* o = T(n->output), *x = T(n->inputs[0]);
     if (!x->requires_grad) return;
-    float* xg = grad_sicherstellen(x);
-    uint32_t p = (uint32_t)n->skalar;
-    int32_t kh = (int32_t)(p & 0xFFu), kw = (int32_t)((p >> 8) & 0xFFu);
-    int32_t stride = (int32_t)((p >> 16) & 0xFFu), pad = (int32_t)((p >> 24) & 0xFFu);
-    int32_t b = x->shape[0], h = x->shape[1], w = x->shape[2], c = x->shape[3];
-    int32_t oh = (h + 2 * pad - kh) / stride + 1;
-    int32_t ow = (w + 2 * pad - kw) / stride + 1;
-    int64_t kcol = (int64_t)kh * kw * c;
-    for (int32_t bi = 0; bi < b; bi++)
-        for (int32_t oy = 0; oy < oh; oy++)
-            for (int32_t ox = 0; ox < ow; ox++) {
-                int64_t row = ((int64_t)bi * oh + oy) * ow + ox;
-                const float* grow = o->grad + row * kcol;
-                for (int32_t ky = 0; ky < kh; ky++) {
-                    int32_t iy = oy * stride - pad + ky;
-                    for (int32_t kx = 0; kx < kw; kx++) {
-                        int32_t ix = ox * stride - pad + kx;
-                        int64_t col = ((int64_t)ky * kw + kx) * c;
-                        if (iy >= 0 && iy < h && ix >= 0 && ix < w) {
-                            float* dst = xg + (((int64_t)bi * h + iy) * w + ix) * c;
-                            for (int32_t ch = 0; ch < c; ch++) dst[ch] += grow[col + ch];
-                        }
-                    }
+    uint32_t p=(uint32_t)n->skalar;
+    int32_t kh=(int32_t)(p&0xFFu),kw=(int32_t)((p>>8)&0xFFu);
+    int32_t stride=(int32_t)((p>>16)&0xFFu),pad=(int32_t)((p>>24)&0xFFu);
+    int32_t b=x->shape[0],h=x->shape[1],w=x->shape[2],c=x->shape[3];
+    bool strikt=moo_ki_gpu_strikt_aktiv(),done=false,tmpg=false;
+    if(strikt||(o->grad_valid&MOO_V_DEV)||o->size>=(1LL<<18)){
+        void* gbuf=bild_grad_quelle_gpu(o,&tmpg);
+        void* dxbuf=gbuf?moo_ki_gpu_buf_belegen((int64_t)x->size*(int64_t)sizeof(float)):NULL;
+        if(dxbuf&&grad_materialisieren_gpu(x)&&
+           moo_ki_gpu_col2im_res(gbuf,dxbuf,b,h,w,c,kh,kw,stride,pad)&&
+           moo_ki_gpu_grad_accum_res(x->gpu_grad,dxbuf,x->size)){
+            x->grad_valid=MOO_V_DEV; done=true;
+        }
+        moo_ki_gpu_buf_freigeben(dxbuf);
+        if(tmpg)moo_ki_gpu_buf_freigeben(gbuf);
+    }
+    if(done)return;
+    if(strikt){moo_throw(moo_error("STRIKT: col2im-Backward nicht GPU-resident routbar"));return;}
+    moo_tensor_f32_sichern(x); float* xg=grad_sicherstellen(x); float* og=grad_sicherstellen(o);
+    int32_t oh=(h+2*pad-kh)/stride+1,ow=(w+2*pad-kw)/stride+1;
+    int64_t kcol=(int64_t)kh*kw*c;
+    for(int32_t bi=0;bi<b;bi++)for(int32_t oy=0;oy<oh;oy++)for(int32_t ox=0;ox<ow;ox++){
+        int64_t row=((int64_t)bi*oh+oy)*ow+ox;const float* grow=og+row*kcol;
+        for(int32_t ky=0;ky<kh;ky++){int32_t iy=oy*stride-pad+ky;
+            for(int32_t kx=0;kx<kw;kx++){int32_t ix=ox*stride-pad+kx;
+                if(iy>=0&&iy<h&&ix>=0&&ix<w){int64_t col=((int64_t)ky*kw+kx)*c;
+                    float* dst=xg+(((int64_t)bi*h+iy)*w+ix)*c;
+                    for(int32_t ch=0;ch<c;ch++)dst[ch]+=grow[col+ch];
                 }
             }
+        }
+    }
 }
 
-// KI-MULTI-V2 pooling-Backward. mittel: g gleichmaessig aufs Fenster.
-// max: Subgradient an die (erste) argmax-Position, aus dem retained Input
-// x->data rekonstruiert (wie bw_max). Geometrie aus n->skalar.
+// KI-MULTI-V2b pooling-Backward, resident fuer max und mittel.
 static void bw_pool(const MooAgNode* n) {
-    const MooTensor* o = T(n->output);   // [b,oh,ow,c]
-    MooTensor* x = T(n->inputs[0]);      // [b,h,w,c]
-    if (!x->requires_grad) return;
-    float* xg = grad_sicherstellen(x);
-    uint32_t p = (uint32_t)n->skalar;
-    int32_t art = (int32_t)(p & 0xFFu), g = (int32_t)((p >> 8) & 0xFFu);
-    int32_t s = (int32_t)((p >> 16) & 0xFFu);
-    int32_t b = x->shape[0], h = x->shape[1], w = x->shape[2], c = x->shape[3];
-    int32_t oh = (h - g) / s + 1, ow = (w - g) / s + 1;
-    float inv = (float)(1.0 / ((double)g * (double)g));
-    for (int32_t bi = 0; bi < b; bi++)
-        for (int32_t oy = 0; oy < oh; oy++)
-            for (int32_t ox = 0; ox < ow; ox++)
-                for (int32_t ch = 0; ch < c; ch++) {
-                    float go = o->grad[(((int64_t)bi * oh + oy) * ow + ox) * c + ch];
-                    if (art == 1) {
-                        for (int32_t ky = 0; ky < g; ky++)
-                            for (int32_t kx = 0; kx < g; kx++) {
-                                int32_t iy = oy * s + ky, ix = ox * s + kx;
-                                xg[(((int64_t)bi * h + iy) * w + ix) * c + ch] += go * inv;
-                            }
-                    } else {
-                        int32_t amy = 0, amx = 0;
-                        float best = 0.0f; bool erst = true;
-                        for (int32_t ky = 0; ky < g; ky++)
-                            for (int32_t kx = 0; kx < g; kx++) {
-                                int32_t iy = oy * s + ky, ix = ox * s + kx;
-                                float v = x->data[(((int64_t)bi * h + iy) * w + ix) * c + ch];
-                                if (erst || v > best) { best = v; amy = ky; amx = kx; }
-                                erst = false;
-                            }
-                        int32_t iy = oy * s + amy, ix = ox * s + amx;
-                        xg[(((int64_t)bi * h + iy) * w + ix) * c + ch] += go;
-                    }
-                }
+    MooTensor* o=T(n->output),*x=T(n->inputs[0]); if(!x->requires_grad)return;
+    uint32_t p=(uint32_t)n->skalar;int32_t art=(int32_t)(p&0xFFu);
+    int32_t g=(int32_t)((p>>8)&0xFFu),s=(int32_t)((p>>16)&0xFFu);
+    int32_t b=x->shape[0],h=x->shape[1],w=x->shape[2],c=x->shape[3];
+    bool strikt=moo_ki_gpu_strikt_aktiv(),done=false,tmpg=false;
+    if(strikt||(x->valid&MOO_V_DEV)||(o->grad_valid&MOO_V_DEV)||o->size>=(1LL<<18)){
+        moo_tensor_nach_gpu(x);void* gbuf=bild_grad_quelle_gpu(o,&tmpg);
+        void* dxbuf=gbuf?moo_ki_gpu_buf_belegen((int64_t)x->size*(int64_t)sizeof(float)):NULL;
+        if((x->valid&MOO_V_DEV)&&dxbuf&&grad_materialisieren_gpu(x)&&
+           moo_ki_gpu_pool_bw_res(art,x->gpu_buf,gbuf,dxbuf,b,h,w,c,g,s)&&
+           moo_ki_gpu_grad_accum_res(x->gpu_grad,dxbuf,x->size)){
+            x->grad_valid=MOO_V_DEV;done=true;
+        }
+        moo_ki_gpu_buf_freigeben(dxbuf);if(tmpg)moo_ki_gpu_buf_freigeben(gbuf);
+    }
+    if(done)return;
+    if(strikt){moo_throw(moo_error("STRIKT: pooling-Backward nicht GPU-resident routbar"));return;}
+    moo_tensor_f32_sichern(x);float* xg=grad_sicherstellen(x);float* og=grad_sicherstellen(o);
+    int32_t oh=(h-g)/s+1,ow=(w-g)/s+1;float inv=1.0f/(float)(g*g);
+    for(int32_t bi=0;bi<b;bi++)for(int32_t oy=0;oy<oh;oy++)for(int32_t ox=0;ox<ow;ox++)
+      for(int32_t ch=0;ch<c;ch++){float go=og[(((int64_t)bi*oh+oy)*ow+ox)*c+ch];
+        if(art==1){for(int32_t ky=0;ky<g;ky++)for(int32_t kx=0;kx<g;kx++)
+          xg[(((int64_t)bi*h+oy*s+ky)*w+ox*s+kx)*c+ch]+=go*inv;
+        }else{int32_t by=0,bx=0;float best=0;bool first=true;
+          for(int32_t ky=0;ky<g;ky++)for(int32_t kx=0;kx<g;kx++){float v=x->data[(((int64_t)bi*h+oy*s+ky)*w+ox*s+kx)*c+ch];
+            if(first||v>best){best=v;by=ky;bx=kx;}first=false;}
+          xg[(((int64_t)bi*h+oy*s+by)*w+ox*s+bx)*c+ch]+=go;
+        }
+      }
 }
+
 
 static void moo_ag_init_bw(void) {
     moo_tensor_op_set_bw("add", bw_add);
@@ -1216,15 +1228,18 @@ MooValue moo_tensor_rueckwaerts(MooValue loss) {
         MooAgNode* n = &tape[i];
         MooTensor* out = T(n->output);
         if (!out->grad && !(out->grad_valid & MOO_V_DEV)) continue;  // Zweig traegt nicht zum Loss bei
-        // KIP-G4c Trichter (Preflight I1/I2, kip-kern docs/kip/G4c-preflight-
-        // ownership-vertrag.md): garantiert gueltige CPU-Sicht auf data/grad
-        // BEVOR bw_* direkt darauf zugreift. No-op im reinen CPU/F32-Fall
-        // (Basisgates bit-identisch) — Voraussetzung fuer jedes residente
-        // Backward-Routing in einer spaeteren G4c-Stufe.
-        moo_tensor_f32_sichern(out);
-        grad_sicherstellen(out);
-        for (int32_t k = 0; k < n->n_in; k++)
-            moo_tensor_f32_sichern(T(n->inputs[k]));
+        /* V2b-Bildops besitzen ihren eigenen GPU/CPU-Trichter. Sie duerfen
+         * GPU-only Aktivierungen/Gradienten nicht vor dem residenten Versuch
+         * herunterladen. Alle anderen Ops behalten den historischen CPU-
+         * Sicherungsvertrag unveraendert. */
+        bool bildop = strcmp(n->op->name, "im2col") == 0 ||
+                      strcmp(n->op->name, "pooling") == 0;
+        if (!bildop) {
+            moo_tensor_f32_sichern(out);
+            grad_sicherstellen(out);
+            for (int32_t k = 0; k < n->n_in; k++)
+                moo_tensor_f32_sichern(T(n->inputs[k]));
+        }
         n->op->bw(n);
     }
     in_backward = false;

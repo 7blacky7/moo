@@ -31,15 +31,18 @@
 // Gemeinsame Helfer
 // ============================================================
 
-static MooTensor* expect_t(MooValue v, const char* wo) {
+static MooTensor* expect_t_meta(MooValue v, const char* wo) {
     if (v.tag != MOO_TENSOR) {
         char msg[128];
         snprintf(msg, sizeof(msg), "%s: das ist kein Tensor", wo);
         moo_throw(moo_error(msg));
         return NULL;
     }
-    MooTensor* t = MV_TENSOR(v);
-    moo_tensor_f32_sichern(t);   // KIP-D1 Eintrittspunkt (D0 §4.1): DER Trichter aller 26 Registry-Ops -> f32-data garantiert
+    return MV_TENSOR(v);
+}
+static MooTensor* expect_t(MooValue v, const char* wo) {
+    MooTensor* t = expect_t_meta(v, wo);
+    if (t) moo_tensor_f32_sichern(t);   // CPU-lesende Ops brauchen f32-data
     return t;
 }
 
@@ -239,8 +242,10 @@ static void matmul_ikj(const float* a, const float* b, float* o,
 }
 
 MooValue moo_tensor_matmul(MooValue av, MooValue bv) {
-    MooTensor* a = expect_t(av, "tensor_matmul"); if (!a) return moo_none();
-    MooTensor* b = expect_t(bv, "tensor_matmul"); if (!b) return moo_none();
+    /* Metadaten zuerst: GPU-only Eingaben duerfen ohne vorzeitigen Download
+     * direkt in matmul_res fliessen. CPU-Sicherung erfolgt erst im Fallback. */
+    MooTensor* a = expect_t_meta(av, "tensor_matmul"); if (!a) return moo_none();
+    MooTensor* b = expect_t_meta(bv, "tensor_matmul"); if (!b) return moo_none();
     if (a->ndim != 2 || b->ndim != 2) {
         moo_throw(moo_error("tensor_matmul: beide Tensoren muessen 2-dimensional sein "
                             "(Matrix @ Matrix) — nutze umformen() fuer Vektoren"));
@@ -286,6 +291,9 @@ MooValue moo_tensor_matmul(MooValue av, MooValue bv) {
             }
         }
     }
+    /* GPU2/CPU brauchen Hostdaten erst hier; der residente Erfolgsfall
+     * bleibt dadurch ohne Zwischen-Download. */
+    if (!done) { moo_tensor_f32_sichern(a); moo_tensor_f32_sichern(b); }
     /* GPU2: grosse MatMuls (non-resident) auf Vulkan, CPU-ikj als Fallback. */
     if (!done && !moo_ki_gpu_matmul(a->data, b->data, out->data,
                            a->shape[0], a->shape[1], b->shape[1])) {
@@ -890,7 +898,7 @@ static bool entpacke_pool(double packed, int32_t* art, int32_t* g, int32_t* s) {
 /* im2col(x, packed): NHWC [b,h,w,c] -> [b*oh*ow, kh*kw*c]. Padding = 0.
  * Spaltenordnung (ky*kw+kx)*c+ch passt zu W[kh*kw*c, cout] (matmul danach). */
 MooValue moo_tensor_im2col(MooValue xv, MooValue packedv) {
-    MooTensor* x = expect_t(xv, "faltung"); if (!x) return moo_none();
+    MooTensor* x = expect_t_meta(xv, "faltung"); if (!x) return moo_none();
     if (x->ndim != 4) {
         moo_throw(moo_error("faltung: Eingabe muss die Form [bilder, hoehe, breite, kanaele] haben (NHWC)"));
         return moo_none();
@@ -920,6 +928,24 @@ MooValue moo_tensor_im2col(MooValue xv, MooValue packedv) {
     int32_t oshape[2] = { (int32_t)rows, (int32_t)kcol };
     MooTensor* out = moo_tensor_raw(2, oshape);
     if (!out) return moo_none();
+    bool strikt = moo_ki_gpu_strikt_aktiv(), done = false;
+    /* 2^18 Elemente: konservativer Startwert; Hardware-Gate kalibriert ihn.
+     * Bereits residente Eingaben bleiben unabhaengig von der Groesse resident. */
+    if (strikt || (x->valid & MOO_V_DEV) || out->size >= (1LL << 18)) {
+        moo_tensor_nach_gpu(x);
+        out->gpu_buf = moo_ki_gpu_buf_belegen((int64_t)out->size * (int64_t)sizeof(float));
+        if ((x->valid & MOO_V_DEV) && out->gpu_buf &&
+            moo_ki_gpu_im2col_res(x->gpu_buf, out->gpu_buf,b,h,w,c,kh,kw,stride,pad)) {
+            out->valid=MOO_V_DEV; out->device=MOO_DEV_GPU; done=true;
+        }
+    }
+    if (!done && strikt) {
+        moo_release(wrap_t(out));
+        moo_throw(moo_error("STRIKT: faltung-im2col nicht GPU-resident routbar"));
+        return moo_none();
+    }
+    if (!done) {
+    moo_tensor_f32_sichern(x);
     const float* xd = x->data;
     float* od = out->data;
     for (int32_t bi = 0; bi < b; bi++) {
@@ -943,6 +969,7 @@ MooValue moo_tensor_im2col(MooValue xv, MooValue packedv) {
             }
         }
     }
+    }
     MooValue ret = wrap_t(out);
     moo_ag_record("im2col", xv, moo_none(), packedv, ret);
     return ret;
@@ -950,7 +977,7 @@ MooValue moo_tensor_im2col(MooValue xv, MooValue packedv) {
 
 /* pooling(x, packed): NHWC [b,h,w,c] -> [b,oh,ow,c]. max oder mittel, kein Pad. */
 MooValue moo_tensor_pool(MooValue xv, MooValue packedv) {
-    MooTensor* x = expect_t(xv, "pooling"); if (!x) return moo_none();
+    MooTensor* x = expect_t_meta(xv, "pooling"); if (!x) return moo_none();
     if (x->ndim != 4) {
         moo_throw(moo_error("pooling: Eingabe muss [bilder, hoehe, breite, kanaele] sein (NHWC)"));
         return moo_none();
@@ -973,6 +1000,22 @@ MooValue moo_tensor_pool(MooValue xv, MooValue packedv) {
     int32_t oshape[4] = { b, oh, ow, c };
     MooTensor* out = moo_tensor_raw(4, oshape);
     if (!out) return moo_none();
+    bool strikt = moo_ki_gpu_strikt_aktiv(), done = false;
+    if (strikt || (x->valid & MOO_V_DEV) || out->size >= (1LL << 18)) {
+        moo_tensor_nach_gpu(x);
+        out->gpu_buf=moo_ki_gpu_buf_belegen((int64_t)out->size*(int64_t)sizeof(float));
+        if ((x->valid&MOO_V_DEV) && out->gpu_buf &&
+            moo_ki_gpu_pool_res(art,x->gpu_buf,out->gpu_buf,b,h,w,c,g,s)) {
+            out->valid=MOO_V_DEV; out->device=MOO_DEV_GPU; done=true;
+        }
+    }
+    if (!done && strikt) {
+        moo_release(wrap_t(out));
+        moo_throw(moo_error("STRIKT: pooling-Forward nicht GPU-resident routbar"));
+        return moo_none();
+    }
+    if (!done) {
+    moo_tensor_f32_sichern(x);
     const float* xd = x->data;
     float* od = out->data;
     double inv = 1.0 / ((double)g * (double)g);
@@ -993,6 +1036,7 @@ MooValue moo_tensor_pool(MooValue xv, MooValue packedv) {
                     if (art == 1) acc = (float)((double)acc * inv);
                     od[(((int64_t)bi * oh + oy) * ow + ox) * c + ch] = acc;
                 }
+    }
     MooValue ret = wrap_t(out);
     moo_ag_record("pooling", xv, moo_none(), packedv, ret);
     return ret;

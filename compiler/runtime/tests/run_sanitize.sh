@@ -259,7 +259,9 @@ build_and_run_explicit() {
   local bin="$OUT_DIR/${tag}.${mode}"
   local log="$OUT_DIR/${tag}.${mode}.log"
 
-  local srcs=( "$base" )
+  # C1: moo_memory.c kennt Kamera/Mikro-Tags. Schwache Test-Stubs
+  # verhindern Linkfehler in Harnesses ohne Capture; echte Symbole gewinnen.
+  local srcs=( "$base" "capture_free_stubs.c" )
   local s
   for s in $src_list; do
     srcs+=( "$RUNTIME_DIR/$s" )
@@ -297,7 +299,7 @@ build_ub_ops_string() {
   local bin="$OUT_DIR/${tag}.${mode}"
   local log="$OUT_DIR/${tag}.${mode}.log"
   local srcs=(
-    "${tag}.c"
+    "${tag}.c" "capture_free_stubs.c"
     "$RUNTIME_DIR/moo_ops.c" "$RUNTIME_DIR/moo_string.c"
     "$RUNTIME_DIR/moo_memory.c" "$RUNTIME_DIR/moo_value.c"
     "$RUNTIME_DIR/moo_error.c" "$RUNTIME_DIR/moo_print.c"

@@ -1,0 +1,20 @@
+#version 450
+// KI-MULTI-V2b: NHWC max/mean pooling forward.
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly buffer BufX { float x[]; };
+layout(std430, binding = 1) readonly buffer BufUnused { float unused[]; };
+layout(std430, binding = 2) writeonly buffer BufO { float o[]; };
+layout(push_constant) uniform PC { uint M; uint K; uint N; uint op; } pc;
+void main() {
+    uint b=pc.M&0xffffu,h=pc.M>>16,w=pc.K&0xffffu,c=pc.K>>16;
+    uint g=pc.N&0xffu,st=(pc.N>>8)&0xffu,art=(pc.N>>16)&0xffu;
+    uint oh=(h-g)/st+1u,ow=(w-g)/st+1u;
+    uint i=gl_GlobalInvocationID.x,total=b*oh*ow*c; if(i>=total)return;
+    uint ch=i%c,q=i/c,ox=q%ow;q/=ow;uint oy=q%oh,bi=q/oh;
+    float acc=0.0; bool first=true;
+    for(uint ky=0u;ky<g;ky++)for(uint kx=0u;kx<g;kx++){
+        float v=x[((bi*h+oy*st+ky)*w+ox*st+kx)*c+ch];
+        if(art==0u){if(first||v>acc)acc=v;}else acc+=v; first=false;
+    }
+    o[i]=art==1u?acc/float(g*g):acc;
+}

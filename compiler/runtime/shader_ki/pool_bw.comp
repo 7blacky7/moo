@@ -1,0 +1,27 @@
+#version 450
+// KI-MULTI-V2b: NHWC max/mean pooling backward; ein Thread je dx.
+layout(local_size_x = 256) in;
+layout(std430, binding = 0) readonly buffer BufX { float x[]; };
+layout(std430, binding = 1) readonly buffer BufG { float gout[]; };
+layout(std430, binding = 2) writeonly buffer BufDX { float dx[]; };
+layout(push_constant) uniform PC { uint M; uint K; uint N; uint op; } pc;
+void main(){
+    uint b=pc.M&0xffffu,h=pc.M>>16,w=pc.K&0xffffu,c=pc.K>>16;
+    uint g=pc.N&0xffu,st=(pc.N>>8)&0xffu,art=(pc.N>>16)&0xffu;
+    uint oh=(h-g)/st+1u,ow=(w-g)/st+1u;
+    uint i=gl_GlobalInvocationID.x,total=b*h*w*c;if(i>=total)return;
+    uint ch=i%c,q=i/c,ix=q%w;q/=w;uint iy=q%h,bi=q/h; float acc=0.0;
+    for(uint oy=0u;oy<oh;oy++)for(uint ox=0u;ox<ow;ox++){
+        uint y0=oy*st,x0=ox*st;if(iy<y0||iy>=y0+g||ix<x0||ix>=x0+g)continue;
+        float go=gout[((bi*oh+oy)*ow+ox)*c+ch];
+        if(art==1u)acc+=go/float(g*g); else {
+            uint by=0u,bx=0u;float best=0.0;bool first=true;
+            for(uint ky=0u;ky<g;ky++)for(uint kx=0u;kx<g;kx++){
+                float v=x[((bi*h+y0+ky)*w+x0+kx)*c+ch];
+                if(first||v>best){best=v;by=ky;bx=kx;}first=false;
+            }
+            if(iy==y0+by&&ix==x0+bx)acc+=go;
+        }
+    }
+    dx[i]=acc;
+}

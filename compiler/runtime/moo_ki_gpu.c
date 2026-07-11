@@ -160,6 +160,23 @@ bool moo_ki_gpu_matmul_bw_res(void* a, void* b, void* g, void* da, void* db,
                               int32_t m, int32_t k, int32_t n) {
     (void)a; (void)b; (void)g; (void)da; (void)db; (void)m; (void)k; (void)n; return false;
 }
+bool moo_ki_gpu_im2col_res(void* x, void* out, int32_t b, int32_t h, int32_t w,
+                           int32_t c, int32_t kh, int32_t kw, int32_t stride, int32_t pad) {
+    (void)x;(void)out;(void)b;(void)h;(void)w;(void)c;(void)kh;(void)kw;(void)stride;(void)pad; return false;
+}
+bool moo_ki_gpu_col2im_res(void* gcol, void* dx, int32_t b, int32_t h, int32_t w,
+                           int32_t c, int32_t kh, int32_t kw, int32_t stride, int32_t pad) {
+    (void)gcol;(void)dx;(void)b;(void)h;(void)w;(void)c;(void)kh;(void)kw;(void)stride;(void)pad; return false;
+}
+bool moo_ki_gpu_pool_res(int32_t art, void* x, void* out, int32_t b, int32_t h,
+                         int32_t w, int32_t c, int32_t groesse, int32_t stride) {
+    (void)art;(void)x;(void)out;(void)b;(void)h;(void)w;(void)c;(void)groesse;(void)stride; return false;
+}
+bool moo_ki_gpu_pool_bw_res(int32_t art, void* x, void* gout, void* dx,
+                            int32_t b, int32_t h, int32_t w, int32_t c,
+                            int32_t groesse, int32_t stride) {
+    (void)art;(void)x;(void)gout;(void)dx;(void)b;(void)h;(void)w;(void)c;(void)groesse;(void)stride; return false;
+}
 bool moo_ki_gpu_opt_sgd_res(void* p, void* m, void* grad, int64_t n,
                             float lr, float momentum) {
     (void)p; (void)m; (void)grad; (void)n; (void)lr; (void)momentum; return false;
@@ -213,6 +230,7 @@ typedef struct {
     VkPipeline pipe_reduce_axis, pipe_broadcast, pipe_reduce_max_bw; /* KIP-G3d-b: Achsen-Red + Broadcast + Max-Subgradient */
     VkPipeline pipe_gather, pipe_scatter_add;  /* KIP-G3d-d: gather / deterministische scatter-add */
     VkPipeline pipe_rope, pipe_head_slice;     /* KIP-G4b: strided RoPE-Paarrotation / Kopf-Slice (MHA/GQA) */
+    VkPipeline pipe_im2col, pipe_col2im, pipe_pool_fwd, pipe_pool_bw; /* KI-MULTI-V2b */
     VkCommandPool cmdpool;
     VkDescriptorPool descpool;
     /* GPU3-C: Per-Op-Allokationen gecacht — lazy beim ersten Dispatch
@@ -441,6 +459,11 @@ static bool ki_gpu_init(void) {
     /* KIP-G4b: strided RoPE + Kopf-Slice (16B-playout, dispatch_sync). */
     G.pipe_rope = pipeline_bauen(ki_rope_spv, ki_rope_spv_len, G.playout);
     G.pipe_head_slice = pipeline_bauen(ki_head_slice_spv, ki_head_slice_spv_len, G.playout);
+    /* KI-MULTI-V2b: GPU-residente Faltungsentfaltung und Pooling F/B. */
+    G.pipe_im2col = pipeline_bauen(ki_im2col_spv, ki_im2col_spv_len, G.playout);
+    G.pipe_col2im = pipeline_bauen(ki_col2im_spv, ki_col2im_spv_len, G.playout);
+    G.pipe_pool_fwd = pipeline_bauen(ki_pool_fwd_spv, ki_pool_fwd_spv_len, G.playout);
+    G.pipe_pool_bw = pipeline_bauen(ki_pool_bw_spv, ki_pool_bw_spv_len, G.playout);
     if (!G.pipe_matmul || !G.pipe_ew || !G.pipe_reduce || !G.pipe_matmul_naiv ||
         !G.pipe_unary || !G.pipe_unary_bw || !G.pipe_transpose || !G.pipe_copy ||
         !G.pipe_grad_accum || !G.pipe_opt_sgd || !G.pipe_opt_adam ||
@@ -448,7 +471,8 @@ static bool ki_gpu_init(void) {
         !G.pipe_norm || !G.pipe_norm_bw ||
         !G.pipe_reduce_axis || !G.pipe_broadcast || !G.pipe_reduce_max_bw ||
         !G.pipe_gather || !G.pipe_scatter_add ||
-        !G.pipe_rope || !G.pipe_head_slice)
+        !G.pipe_rope || !G.pipe_head_slice ||
+        !G.pipe_im2col || !G.pipe_col2im || !G.pipe_pool_fwd || !G.pipe_pool_bw)
         return false;
 
     VkCommandPoolCreateInfo cpi = {
@@ -1501,6 +1525,82 @@ bool moo_ki_gpu_matmul_bw_res(void* a, void* b, void* g, void* da, void* db,
            && moo_ki_gpu_matmul_res(&at, g, db, k, m, n);
     buf_zurueck(&bt);
     buf_zurueck(&at);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+
+/* KI-MULTI-V2b: kompakter 16-Byte-Push-Vertrag fuer NHWC-Bildoperatoren.
+ * Die Limits sind ein Routing-Vertrag, kein Sprachlimit: ausserhalb davon
+ * liefert die GPU-API false und der normale Modus nutzt die CPU; STRIKT wirft
+ * an der Tensor-Routingstelle fail-loud. */
+static bool bild_geo_ok(int32_t b, int32_t h, int32_t w, int32_t c,
+                        int32_t g, int32_t stride, int32_t pad) {
+    return b > 0 && h > 0 && w > 0 && c > 0 &&
+           b <= 65535 && h <= 65535 && w <= 65535 && c <= 65535 &&
+           g > 0 && g <= 255 && stride > 0 && stride <= 255 &&
+           pad >= 0 && pad <= 255;
+}
+static KiPush bild_push(int32_t b, int32_t h, int32_t w, int32_t c,
+                        int32_t a, int32_t z, int32_t stride, int32_t pad) {
+    return (KiPush){ (uint32_t)b | ((uint32_t)h << 16),
+                     (uint32_t)w | ((uint32_t)c << 16),
+                     (uint32_t)a | ((uint32_t)z << 8) |
+                     ((uint32_t)stride << 16) | ((uint32_t)pad << 24), 0 };
+}
+
+bool moo_ki_gpu_im2col_res(void* x, void* out, int32_t b, int32_t h, int32_t w,
+                           int32_t c, int32_t kh, int32_t kw, int32_t stride, int32_t pad) {
+    if (!x || !out || !bild_geo_ok(b,h,w,c,kh,stride,pad) || kw < 1 || kw > 255 ||
+        h + 2 * pad < kh || w + 2 * pad < kw) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    int64_t oh=(h+2LL*pad-kh)/stride+1, ow=(w+2LL*pad-kw)/stride+1;
+    int64_t total=(int64_t)b*oh*ow*kh*kw*c;
+    if (total < 1 || total > (1LL<<30)) { g_tel.cpu_fallbacks++; return false; }
+    KiBuf bufs[3]={*(KiBuf*)x,*(KiBuf*)x,*(KiBuf*)out};
+    bool ok=dispatch_sync(G.pipe_im2col,bufs,bild_push(b,h,w,c,kh,kw,stride,pad),
+                          (uint32_t)((total+255)/256),1,0u,0u,true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+bool moo_ki_gpu_col2im_res(void* gcol, void* dx, int32_t b, int32_t h, int32_t w,
+                           int32_t c, int32_t kh, int32_t kw, int32_t stride, int32_t pad) {
+    if (!gcol || !dx || !bild_geo_ok(b,h,w,c,kh,stride,pad) || kw < 1 || kw > 255 ||
+        h + 2 * pad < kh || w + 2 * pad < kw) { g_tel.cpu_fallbacks++; return false; }
+    if (!ki_gpu_init()) { g_tel.cpu_fallbacks++; return false; }
+    int64_t total=(int64_t)b*h*w*c;
+    if(total<1||total>(1LL<<30)){g_tel.cpu_fallbacks++;return false;}
+    KiBuf bufs[3]={*(KiBuf*)gcol,*(KiBuf*)gcol,*(KiBuf*)dx};
+    bool ok=dispatch_sync(G.pipe_col2im,bufs,bild_push(b,h,w,c,kh,kw,stride,pad),
+                          (uint32_t)((total+255)/256),1,0u,0u,true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+bool moo_ki_gpu_pool_res(int32_t art, void* x, void* out, int32_t b, int32_t h,
+                         int32_t w, int32_t c, int32_t groesse, int32_t stride) {
+    if ((art!=0&&art!=1)||!x||!out||!bild_geo_ok(b,h,w,c,groesse,stride,0)||
+        h<groesse||w<groesse){g_tel.cpu_fallbacks++;return false;}
+    if(!ki_gpu_init()){g_tel.cpu_fallbacks++;return false;}
+    int64_t oh=(h-groesse)/stride+1,ow=(w-groesse)/stride+1,total=(int64_t)b*oh*ow*c;
+    if(total<1||total>(1LL<<30)){g_tel.cpu_fallbacks++;return false;}
+    KiPush p=bild_push(b,h,w,c,groesse,stride,art,0);
+    /* pool packt g|stride<<8|art<<16; bild_push setzt a|z<<8|stride<<16. */
+    p.N=(uint32_t)groesse|((uint32_t)stride<<8)|((uint32_t)art<<16);
+    KiBuf bufs[3]={*(KiBuf*)x,*(KiBuf*)x,*(KiBuf*)out};
+    bool ok=dispatch_sync(G.pipe_pool_fwd,bufs,p,(uint32_t)((total+255)/256),1,0u,0u,true);
+    if (!ok) g_tel.cpu_fallbacks++;
+    return ok;
+}
+bool moo_ki_gpu_pool_bw_res(int32_t art, void* x, void* gout, void* dx,
+                            int32_t b, int32_t h, int32_t w, int32_t c,
+                            int32_t groesse, int32_t stride) {
+    if((art!=0&&art!=1)||!x||!gout||!dx||!bild_geo_ok(b,h,w,c,groesse,stride,0)||
+       h<groesse||w<groesse){g_tel.cpu_fallbacks++;return false;}
+    if(!ki_gpu_init()){g_tel.cpu_fallbacks++;return false;}
+    int64_t total=(int64_t)b*h*w*c;if(total<1||total>(1LL<<30)){g_tel.cpu_fallbacks++;return false;}
+    KiPush p=bild_push(b,h,w,c,groesse,stride,art,0);
+    p.N=(uint32_t)groesse|((uint32_t)stride<<8)|((uint32_t)art<<16);
+    KiBuf bufs[3]={*(KiBuf*)x,*(KiBuf*)gout,*(KiBuf*)dx};
+    bool ok=dispatch_sync(G.pipe_pool_bw,bufs,p,(uint32_t)((total+255)/256),1,0u,0u,true);
     if (!ok) g_tel.cpu_fallbacks++;
     return ok;
 }

@@ -200,6 +200,21 @@ bool moo_ki_gpu_scatter_add_res(void* g, void* idx, void* gw,
  * a/b/g/da/db sind residente Handles; 4 interne Compute-Submits. */
 bool moo_ki_gpu_matmul_bw_res(void* a, void* b, void* g, void* da, void* db,
                               int32_t m, int32_t k, int32_t n);
+
+/* === KI-MULTI-V2b: residente Bild-Operatoren (NHWC) ===
+ * Geometrie wird validiert; Dimensionen b/h/w/c muessen fuer den kompakten
+ * Push-Vertrag <= 65535, Kernel/Schritt/Polster <= 255 sein.
+ * Alle Backward-Funktionen liefern einen REINEN Beitrag; Fan-out-Akkumulation
+ * bleibt beim Aufrufer via moo_ki_gpu_grad_accum_res. */
+bool moo_ki_gpu_im2col_res(void* x, void* out, int32_t b, int32_t h, int32_t w,
+                           int32_t c, int32_t kh, int32_t kw, int32_t stride, int32_t pad);
+bool moo_ki_gpu_col2im_res(void* gcol, void* dx, int32_t b, int32_t h, int32_t w,
+                           int32_t c, int32_t kh, int32_t kw, int32_t stride, int32_t pad);
+bool moo_ki_gpu_pool_res(int32_t art, void* x, void* out, int32_t b, int32_t h,
+                         int32_t w, int32_t c, int32_t groesse, int32_t stride);
+bool moo_ki_gpu_pool_bw_res(int32_t art, void* x, void* gout, void* dx,
+                            int32_t b, int32_t h, int32_t w, int32_t c,
+                            int32_t groesse, int32_t stride);
 /* === KIP-G4b: strided RoPE-Paarrotation (loest die G4-additive-Pos-Vereinfachung auf) ===
  * a = [rows, dim] (Q oder K; bei GQA hat K dim = kv_koepfe*head_dim). RoPE wird
  * ueber den vollen Tensor angewandt, der In-Head-Paarindex ergibt sich aus
