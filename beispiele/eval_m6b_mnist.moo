@@ -1,0 +1,90 @@
+# ============================================================
+# MNIST: Handgeschriebene Ziffern erkennen (Plan-014 E1-Gate).
+# Vorher einmal ausfuehren:  ./skripte/mnist_download.sh
+# Dann:  moo-compiler compile ki_mnist.moo -o ki_mnist && ./ki_mnist
+# Gate: >95% Test-Genauigkeit, <5min CPU, seed-reproduzierbar.
+# ============================================================
+
+# M6b-EVAL NUR: simuliert per-output-channel int8 absmax und dequantisiert
+# sofort zurück nach f32. Das ist KEIN Produktiv-Builtin und ändert kein Format.
+funktion m6b_abs(x):
+    wenn x < 0:
+        gib_zurück 0 - x
+    gib_zurück x
+
+funktion m6b_int8_pc_dequant(t):
+    setze a auf t.zu_liste()
+    setze form auf t.form()
+    setze zeilen auf form[0]
+    setze spalten auf form[1]
+    setze skalen auf []
+    setze j auf 0
+    solange j < spalten:
+        setze mx auf 0
+        setze i auf 0
+        solange i < zeilen:
+            setze av auf m6b_abs(a[i * spalten + j])
+            wenn av > mx:
+                setze mx auf av
+            setze i auf i + 1
+        wenn mx == 0:
+            skalen.hinzufügen(1)
+        sonst:
+            skalen.hinzufügen(mx / 127.0)
+        setze j auf j + 1
+    setze ausgabe_liste auf []
+    setze i auf 0
+    solange i < zeilen:
+        setze z auf []
+        setze j auf 0
+        solange j < spalten:
+            setze q auf runde(a[i * spalten + j] / skalen[j])
+            wenn q > 127:
+                setze q auf 127
+            wenn q < -127:
+                setze q auf -127
+            z.hinzufügen(q * skalen[j])
+            setze j auf j + 1
+        ausgabe_liste.hinzufügen(z)
+        setze i auf i + 1
+    gib_zurück tensor_aus_liste(ausgabe_liste)
+
+zeige "Lade MNIST ..."
+setze training auf mnist_laden("daten/mnist/train")
+setze test auf mnist_laden("daten/mnist/t10k")
+zeige "Trainingsbilder: " + text(training["bilder"].form())
+zeige "Testbilder:      " + text(test["bilder"].form())
+
+# Netz: 784 Pixel -> 128 Neuronen (relu) -> 10 Ziffern (softmax)
+setze netz auf ki_netz([
+    schicht_dicht(784, 128, "relu", 1),
+    schicht_dicht(128, 10, "softmax", 2)
+])
+
+zeige "Trainiere ..."
+setze verlauf auf netz.trainiere(training["bilder"], training["labels"], {
+    "epochen": 5,
+    "rate": 0.001,
+    "batch": 64,
+    "seed": 42
+})
+
+setze genauigkeit auf netz.genauigkeit(test["bilder"], test["labels"])
+zeige "Test-Genauigkeit: " + text(genauigkeit)
+wenn genauigkeit > 0.95:
+    zeige "GATE BESTANDEN (>95%)"
+sonst:
+    zeige "GATE VERFEHLT"
+
+
+# M6b EVAL: Baseline wurde oben als "genauigkeit" gemessen.
+setze schs auf netz["schichten"]
+schs[0]["w"] = m6b_int8_pc_dequant(schs[0]["w"])
+schs[1]["w"] = m6b_int8_pc_dequant(schs[1]["w"])
+setze q_genauigkeit auf netz.genauigkeit(test["bilder"], test["labels"])
+zeige "M6B_EVAL_MNIST_BASELINE=" + text(genauigkeit)
+zeige "M6B_EVAL_MNIST_INT8_PC=" + text(q_genauigkeit)
+zeige "M6B_EVAL_MNIST_DELTA_PP=" + text((q_genauigkeit - genauigkeit) * 100)
+# 101632 int8-Werte + 138 f32-Skalen statt 101632 f32-Werte.
+zeige "M6B_EVAL_MNIST_WEIGHT_BYTES_F32=406528"
+zeige "M6B_EVAL_MNIST_WEIGHT_BYTES_INT8_PC=102184"
