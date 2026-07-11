@@ -27,8 +27,8 @@ hardware- und build-unverifiziert.
 - AVAudioEngine.inputNode liefert Float32-Mono/Stereo-Pakete.
 - Der Adapter kopiert und interleavt planare Kanäle; der gemeinsame Pull-Core
   übernimmt exakte Blockgrößen, Stereo→Mono und Spill-Reste.
-- Der native Puffer ist auf 8192 Frames begrenzt; bei Überlauf bleiben die
-  neuesten Samples erhalten.
+- Periodengröße und Ringpuffergrenze werden vom CoreAudio-Standardgerät
+  abgeleitet (acht Perioden); bei Überlauf bleiben die neuesten Samples erhalten.
 - Eine AVAudioEngineConfigurationChangeNotification wird als recoverable
   gemeldet. Recovery baut Engine, InputNode und Tap vollständig neu auf und
   ist im Pull-Core auf drei Versuche begrenzt.

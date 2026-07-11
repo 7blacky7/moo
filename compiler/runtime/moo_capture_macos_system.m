@@ -1,11 +1,19 @@
 #import <AVFoundation/AVFoundation.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
+#import <CoreAudio/CoreAudio.h>
+#import <AvailabilityMacros.h>
 #include "moo_capture_pull_internal.h"
 #include <mach/mach_time.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 120000
+#define MOO_AUDIO_ELEMENT_MAIN        MOO_AUDIO_ELEMENT_MAIN
+#else
+#define MOO_AUDIO_ELEMENT_MAIN kAudioObjectPropertyElementMaster
+#endif
 
 static void set_error(char *out, size_t cap, NSString *message) {
     if (!out || cap == 0) return;
@@ -144,6 +152,26 @@ static bool request_permission(AVMediaType type, NSString *usage, char *error, s
 - (void)close;
 @end
 
+static int32_t input_period_frames(void) {
+    AudioDeviceID device = kAudioObjectUnknown;
+    UInt32 size = sizeof device;
+    AudioObjectPropertyAddress address = {
+        kAudioHardwarePropertyDefaultInputDevice,
+        kAudioObjectPropertyScopeGlobal,
+        MOO_AUDIO_ELEMENT_MAIN
+    };
+    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, NULL,
+                                   &size, &device) != noErr ||
+        device == kAudioObjectUnknown) return 1024;
+    UInt32 frames = 0;
+    size = sizeof frames;
+    address.mSelector = kAudioDevicePropertyBufferFrameSize;
+    address.mScope = kAudioDevicePropertyScopeInput;
+    if (AudioObjectGetPropertyData(device, &address, 0, NULL, &size, &frames) != noErr ||
+        frames == 0 || frames > INT32_MAX) return 1024;
+    return (int32_t)frames;
+}
+
 @implementation MooMacMicrophone
 - (instancetype)init {
     if ((self = [super init])) {
@@ -151,8 +179,6 @@ static bool request_permission(AVMediaType type, NSString *usage, char *error, s
         _event = dispatch_semaphore_create(0);
         _lock = [[NSLock alloc] init];
         _pending = [[NSMutableData alloc] init];
-        _period = 1024;
-        _buffer = 8192;
     }
     return self;
 }
@@ -167,6 +193,8 @@ static bool request_permission(AVMediaType type, NSString *usage, char *error, s
     }
     _rate = (int32_t)llround(format.sampleRate);
     _channels = (int32_t)format.channelCount;
+    _period = input_period_frames();
+    _buffer = _period <= INT32_MAX / 8 ? _period * 8 : INT32_MAX;
     __weak MooMacMicrophone *weakSelf = self;
     [_input installTapOnBus:0 bufferSize:(AVAudioFrameCount)_period format:format
         block:^(AVAudioPCMBuffer *buffer, AVAudioTime *when) {
@@ -247,9 +275,14 @@ static bool system_startup(char *error, size_t cap) {
 static void system_shutdown(void) {}
 
 static NSArray<AVCaptureDevice *> *camera_devices(void) {
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 140000
+    AVCaptureDeviceType external_type = AVCaptureDeviceTypeExternal;
+#else
+    AVCaptureDeviceType external_type = AVCaptureDeviceTypeExternalUnknown;
+#endif
     AVCaptureDeviceDiscoverySession *discovery =
         [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:@[
-            AVCaptureDeviceTypeBuiltInWideAngleCamera, AVCaptureDeviceTypeExternal
+            AVCaptureDeviceTypeBuiltInWideAngleCamera, external_type
         ] mediaType:AVMediaTypeVideo position:AVCaptureDevicePositionUnspecified];
     return discovery.devices;
 }
