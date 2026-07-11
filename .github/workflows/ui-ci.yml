@@ -115,6 +115,7 @@ jobs:
             zstd
             zlib
             libxml2
+            libxml2-devel
           cache-environment: true
 
       - name: Install Windows deps (SDL2, sqlite, curl via vcpkg + LLVM env)
