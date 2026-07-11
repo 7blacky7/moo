@@ -391,7 +391,8 @@ funktion _uim_bm_befehl(kontext, name, args):
     gib_zurück wahr
 
 funktion _uim_bm_anfordern(kontext, args):
-    kontext["backend_zustand"]["ungueltig"] = wahr
+    setze zustand auf kontext["backend_zustand"]
+    zustand["ungueltig"] = wahr
     gib_zurück wahr
 
 funktion _uim_bm_farbe(kontext, args):
@@ -506,6 +507,123 @@ funktion _uim_tref(w, lx, ly):
     t["ly"] = ly
     gib_zurück t
 
+funktion _uim_finde_rek(kinder, id):
+    setze gefunden auf nichts
+    für w in kinder:
+        wenn gefunden == nichts:
+            wenn w["id"] == id:
+                setze gefunden auf w
+            sonst:
+                setze gefunden auf _uim_finde_rek(w["kinder"], id)
+    gib_zurück gefunden
+
+funktion _uim_fokus_uids(kinder, ziele):
+    für w in kinder:
+        wenn w["sichtbar"] und w["aktiv"]:
+            wenn w["fokussierbar"]:
+                ziele.hinzufügen(w["uid"])
+            _uim_fokus_uids(w["kinder"], ziele)
+    gib_zurück ziele
+
+funktion _uim_finde_uid_rek(kinder, uid):
+    setze gefunden auf nichts
+    für w in kinder:
+        wenn gefunden == nichts:
+            wenn w["uid"] == uid:
+                setze gefunden auf w
+            sonst:
+                setze gefunden auf _uim_finde_uid_rek(w["kinder"], uid)
+    gib_zurück gefunden
+
+# 0 = nicht gefunden, 1 = durch Widget/Vorfahre blockiert, 2 = interaktiv.
+funktion _uim_interaktiv_uid_rek(kinder, uid, erlaubt):
+    setze ergebnis auf 0
+    für w in kinder:
+        wenn ergebnis == 0:
+            setze kind_erlaubt auf erlaubt und w["sichtbar"] und w["aktiv"]
+            wenn w["uid"] == uid:
+                wenn kind_erlaubt:
+                    setze ergebnis auf 2
+                sonst:
+                    setze ergebnis auf 1
+            sonst:
+                setze ergebnis auf _uim_interaktiv_uid_rek(w["kinder"], uid, kind_erlaubt)
+    gib_zurück ergebnis
+
+funktion _uim_ist_interaktiv(kontext, w):
+    wenn w == nichts:
+        gib_zurück falsch
+    gib_zurück _uim_interaktiv_uid_rek(kontext["wurzel"]["kinder"], w["uid"], wahr) == 2
+
+funktion _uim_scroll_max(kontext, w):
+    setze inhalt auf w["inhalt_hoehe"]
+    wenn w["typ"] == "liste":
+        setze inhalt auf länge(w["zeilen"]) * _uim_zeilenhoehe(kontext)
+    setze max_scroll auf inhalt - w["h"]
+    wenn max_scroll < 0:
+        setze max_scroll auf 0
+    gib_zurück max_scroll
+
+funktion _uim_scroll_klemme(kontext, w):
+    setze max_scroll auf _uim_scroll_max(kontext, w)
+    wenn w["scroll_y"] < 0:
+        w["scroll_y"] = 0
+    wenn w["scroll_y"] > max_scroll:
+        w["scroll_y"] = max_scroll
+    gib_zurück wahr
+
+funktion _uim_scroll_klemme_rek(kontext, kinder):
+    für w in kinder:
+        wenn w["typ"] == "scroll" oder w["typ"] == "liste":
+            _uim_scroll_klemme(kontext, w)
+        _uim_scroll_klemme_rek(kontext, w["kinder"])
+    gib_zurück wahr
+
+funktion _uim_liste_sichtbar_machen(kontext, w, idx):
+    setze zh auf _uim_zeilenhoehe(kontext)
+    setze oben auf idx * zh
+    setze unten auf oben + zh
+    wenn oben < w["scroll_y"]:
+        w["scroll_y"] = oben
+    wenn unten > w["scroll_y"] + w["h"]:
+        w["scroll_y"] = unten - w["h"]
+    _uim_scroll_klemme(kontext, w)
+    gib_zurück wahr
+
+funktion _uim_scroll_thumb_h(w):
+    setze thumb_h auf w["h"] * w["h"] / w["inhalt_hoehe"]
+    wenn thumb_h < 16:
+        setze thumb_h auf 16
+    wenn thumb_h > w["h"]:
+        setze thumb_h auf w["h"]
+    gib_zurück thumb_h
+
+funktion _uim_scroll_setze_aus_y(kontext, w, ly, greif_y):
+    setze max_scroll auf _uim_scroll_max(kontext, w)
+    setze thumb_h auf _uim_scroll_thumb_h(w)
+    setze lauf auf w["h"] - thumb_h
+    setze anteil auf 0
+    wenn lauf > 0:
+        setze anteil auf (ly - w["y"] - greif_y) / lauf
+    wenn anteil < 0:
+        setze anteil auf 0
+    wenn anteil > 1:
+        setze anteil auf 1
+    setze wert auf anteil * max_scroll
+    wenn wert == w["scroll_y"]:
+        gib_zurück falsch
+    w["scroll_y"] = wert
+    gib_zurück wahr
+
+funktion _uim_druck_loesche(kontext):
+    setze p auf kontext["druck"]
+    wenn p != nichts:
+        p["druck"] = falsch
+    kontext["druck"] = nichts
+    kontext["druck_art"] = ""
+    kontext["druck_greif_y"] = 0
+    gib_zurück p
+
 # Rekursives Hit-Testing (z-Order: zuletzt hinzugefügt gewinnt).
 # Panels/Scrollbereiche transformieren in ihr lokales Koordinatensystem;
 # Scroll addiert scroll_y. Container decken ab: kein Kind getroffen →
@@ -516,20 +634,27 @@ funktion _uim_treffer_rek(kinder, x, y):
     solange i >= 0:
         wenn gefunden == nichts:
             setze w auf kinder[i]
-            wenn w["sichtbar"] und w["aktiv"]:
+            wenn w["sichtbar"]:
                 wenn x >= w["x"] und x < w["x"] + w["b"] und y >= w["y"] und y < w["y"] + w["h"]:
-                    wenn w["typ"] == "panel":
+                    wenn w["aktiv"] == falsch:
+                        # Sichtbar-deaktivierte Widgets blocken tiefere Z-Ebenen.
+                        setze gefunden auf _uim_tref(w, x, y)
+                    sonst wenn w["typ"] == "panel":
                         setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"])
                         wenn innen == nichts:
                             setze gefunden auf _uim_tref(w, x, y)
                         sonst:
                             setze gefunden auf innen
                     sonst wenn w["typ"] == "scroll":
-                        setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"] + w["scroll_y"])
-                        wenn innen == nichts:
+                        # Die rechte 8px-Zone gehoert der Scrollbar, nicht Kindern.
+                        wenn x >= w["x"] + w["b"] - 8 und w["inhalt_hoehe"] > w["h"]:
                             setze gefunden auf _uim_tref(w, x, y)
                         sonst:
-                            setze gefunden auf innen
+                            setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"] + w["scroll_y"])
+                            wenn innen == nichts:
+                                setze gefunden auf _uim_tref(w, x, y)
+                            sonst:
+                                setze gefunden auf innen
                     sonst:
                         setze gefunden auf _uim_tref(w, x, y)
         setze i auf i - 1
@@ -545,9 +670,11 @@ funktion _uim_scrollziel_rek(kinder, x, y):
     solange i >= 0:
         wenn gefunden == nichts:
             setze w auf kinder[i]
-            wenn w["sichtbar"] und w["aktiv"]:
+            wenn w["sichtbar"]:
                 wenn x >= w["x"] und x < w["x"] + w["b"] und y >= w["y"] und y < w["y"] + w["h"]:
-                    wenn w["typ"] == "panel":
+                    wenn w["aktiv"] == falsch:
+                        setze gefunden auf w
+                    sonst wenn w["typ"] == "panel":
                         setze gefunden auf _uim_scrollziel_rek(w["kinder"], x - w["x"], y - w["y"])
                     sonst wenn w["typ"] == "scroll":
                         setze innen auf _uim_scrollziel_rek(w["kinder"], x - w["x"], y - w["y"] + w["scroll_y"])
@@ -564,6 +691,8 @@ funktion _uim_scrollziel_rek(kinder, x, y):
 # toggelt + feuert on_wechsel. (Slider aktiviert nicht per Klick-Ende —
 # sein Wert wird schon bei Press/Drag gesetzt.)
 funktion _uim_aktiviere(kontext, w):
+    wenn _uim_ist_interaktiv(kontext, w) == falsch:
+        gib_zurück falsch
     wenn w["typ"] == "checkbox":
         wenn w["wert"]:
             w["wert"] = falsch
@@ -602,34 +731,32 @@ funktion _uim_slider_setze_aus_x(w, x):
 # Fokus auf nächstes fokussierbares Widget (Tab-Reihenfolge =
 # Einfüge-Reihenfolge, mit Umlauf). rueckwaerts: wahr bei Shift+Tab.
 funktion _uim_fokus_weiter(kontext, rueckwaerts):
-    setze kinder auf kontext["wurzel"]["kinder"]
-    setze n auf länge(kinder)
+    setze ziele auf []
+    _uim_fokus_uids(kontext["wurzel"]["kinder"], ziele)
+    setze n auf länge(ziele)
     wenn n == 0:
+        kontext["fokus"] = nichts
         gib_zurück falsch
-    setze start auf 0
     setze aktuell_uid auf _uim_slot_uid(kontext, "fokus")
+    setze gefunden auf falsch
+    setze start auf 0
     setze i auf 0
     solange i < n:
-        setze w auf kinder[i]
-        wenn w["uid"] == aktuell_uid:
+        wenn ziele[i] == aktuell_uid:
             setze start auf i
+            setze gefunden auf wahr
         setze i auf i + 1
     setze schritt auf 1
     wenn rueckwaerts:
         setze schritt auf n - 1
-    setze i auf 1
-    setze ziel auf nichts
-    solange i <= n:
-        wenn ziel == nichts:
-            setze idx auf (start + i * schritt) % n
-            setze w auf kinder[idx]
-            wenn w["fokussierbar"] und w["sichtbar"] und w["aktiv"]:
-                setze ziel auf w
-        setze i auf i + 1
-    wenn ziel == nichts:
-        gib_zurück falsch
-    kontext["fokus"] = ziel
-    gib_zurück wahr
+        wenn gefunden == falsch:
+            setze start auf 0
+    sonst wenn gefunden == falsch:
+        setze start auf n - 1
+    setze idx auf (start + schritt) % n
+    setze ziel_uid auf ziele[idx]
+    kontext["fokus"] = _uim_finde_uid_rek(kontext["wurzel"]["kinder"], ziel_uid)
+    gib_zurück kontext["fokus"] != nichts
 
 # Listen-Zeilenhöhe: rein theme-getrieben.
 funktion _uim_zeilenhoehe(kontext):
@@ -669,21 +796,40 @@ funktion _uim_kern_maus(kontext, x, y, taste):
         gib_zurück falsch
     setze tref auf _uim_treffer(kontext, x, y)
     wenn tref == nichts:
-        kontext["druck"] = nichts
+        _uim_druck_loesche(kontext)
         kontext["fokus"] = nichts
     sonst:
         setze w auf tref["w"]
-        kontext["druck"] = w
-        # Offset Leinwand-global -> Widget-Eltern-lokal, für Drag ausserhalb.
-        kontext["druck_ox"] = x - tref["lx"]
-        kontext["druck_oy"] = y - tref["ly"]
-        w["druck"] = wahr
-        wenn w["fokussierbar"]:
-            kontext["fokus"] = w
-        wenn w["typ"] == "slider":
-            _uim_slider_setze_aus_x(w, tref["lx"])
-        wenn w["typ"] == "liste":
-            _uim_liste_klick(kontext, w, tref["ly"])
+        wenn w["aktiv"] == falsch oder w["sichtbar"] == falsch:
+            _uim_druck_loesche(kontext)
+            wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+                kontext["fokus"] = nichts
+        sonst:
+            kontext["druck"] = w
+            kontext["druck_art"] = "widget"
+            # Offset Leinwand-global -> Widget-Eltern-lokal, fuer Drag ausserhalb.
+            kontext["druck_ox"] = x - tref["lx"]
+            kontext["druck_oy"] = y - tref["ly"]
+            w["druck"] = wahr
+            wenn w["fokussierbar"]:
+                kontext["fokus"] = w
+            wenn w["typ"] == "slider":
+                kontext["druck_art"] = "slider"
+                _uim_slider_setze_aus_x(w, tref["lx"])
+            wenn w["typ"] == "scroll" und tref["lx"] >= w["x"] + w["b"] - 8 und w["inhalt_hoehe"] > w["h"]:
+                kontext["druck_art"] = "scrollbar"
+                setze max_scroll auf _uim_scroll_max(kontext, w)
+                setze thumb_h auf _uim_scroll_thumb_h(w)
+                setze thumb_y auf w["y"]
+                wenn max_scroll > 0:
+                    setze thumb_y auf w["y"] + (w["h"] - thumb_h) * (w["scroll_y"] / max_scroll)
+                setze greif auf tref["ly"] - thumb_y
+                wenn greif < 0 oder greif > thumb_h:
+                    setze greif auf thumb_h / 2
+                kontext["druck_greif_y"] = greif
+                _uim_scroll_setze_aus_y(kontext, w, tref["ly"], greif)
+            wenn w["typ"] == "liste":
+                _uim_liste_klick(kontext, w, tref["ly"])
     _uim_anfordern(kontext)
     gib_zurück wahr
 
@@ -699,15 +845,19 @@ funktion _uim_kern_maus_los(kontext, x, y, taste):
     setze p auf kontext["druck"]
     wenn p == nichts:
         gib_zurück falsch
-    p["druck"] = falsch
-    kontext["druck"] = nichts
-    wenn p["typ"] == "slider":
-        # Drag-Ende: Wert wurde bereits bei Press/Drag gesetzt.
+    setze art auf kontext["druck_art"]
+    _uim_druck_loesche(kontext)
+    wenn art == "slider" oder art == "scrollbar":
+        # Drag-Ende: Wert/Scrollposition wurde bereits bei Press/Drag gesetzt.
+        _uim_anfordern(kontext)
+        gib_zurück wahr
+    wenn _uim_ist_interaktiv(kontext, p) == falsch:
         _uim_anfordern(kontext)
         gib_zurück wahr
     setze tref auf _uim_treffer(kontext, x, y)
     wenn tref != nichts:
-        wenn tref["w"]["uid"] == p["uid"]:
+        setze ziel auf tref["w"]
+        wenn ziel["uid"] == p["uid"]:
             _uim_aktiviere(kontext, p)
     _uim_anfordern(kontext)
     gib_zurück wahr
@@ -719,12 +869,20 @@ funktion _uim_on_bewegung(lw, x, y):
     gib_zurück uim_backend_bewegung(kontext, x, y)
 
 funktion _uim_kern_bewegung(kontext, x, y):
-    # Aktiver Slider-Drag hat Vorrang vor Hover. Lokales X über den beim
-    # Press gemerkten Offset (Zeiger darf den Slider verlassen).
+    # Aktiver Capture hat Vorrang vor Hover; Eltern-lokale Koordinaten
+    # entstehen aus dem beim Press gemerkten globalen Offset.
     setze p auf kontext["druck"]
     wenn p != nichts:
-        wenn p["typ"] == "slider":
+        wenn _uim_ist_interaktiv(kontext, p) == falsch:
+            _uim_druck_loesche(kontext)
+            _uim_anfordern(kontext)
+            gib_zurück wahr
+        wenn kontext["druck_art"] == "slider":
             wenn _uim_slider_setze_aus_x(p, x - kontext["druck_ox"]):
+                _uim_anfordern(kontext)
+            gib_zurück wahr
+        wenn kontext["druck_art"] == "scrollbar":
+            wenn _uim_scroll_setze_aus_y(kontext, p, y - kontext["druck_oy"], kontext["druck_greif_y"]):
                 _uim_anfordern(kontext)
             gib_zurück wahr
     setze tref auf _uim_treffer(kontext, x, y)
@@ -765,6 +923,10 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
     setze f auf kontext["fokus"]
     wenn f == nichts:
         gib_zurück falsch
+    wenn _uim_ist_interaktiv(kontext, f) == falsch:
+        kontext["fokus"] = nichts
+        _uim_anfordern(kontext)
+        gib_zurück falsch
     wenn taste == "Return" oder taste == "space":
         _uim_aktiviere(kontext, f)
         _uim_anfordern(kontext)
@@ -804,6 +966,7 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
                 setze idx auf n - 1
             wenn idx != f["auswahl"]:
                 f["auswahl"] = idx
+                _uim_liste_sichtbar_machen(kontext, f, idx)
                 setze cb auf f["on_auswahl"]
                 wenn cb != nichts:
                     cb(f, idx)
@@ -822,14 +985,12 @@ funktion _uim_kern_rad(kontext, x, y, delta):
     setze w auf _uim_scrollziel_rek(kontext["wurzel"]["kinder"], x, y)
     wenn w == nichts:
         gib_zurück falsch
+    wenn w["aktiv"] == falsch:
+        gib_zurück falsch
+    wenn w["typ"] != "liste" und w["typ"] != "scroll":
+        gib_zurück falsch
     setze zh auf _uim_zeilenhoehe(kontext)
-    setze max_scroll auf 0
-    wenn w["typ"] == "liste":
-        setze max_scroll auf länge(w["zeilen"]) * zh - w["h"]
-    sonst:
-        setze max_scroll auf w["inhalt_hoehe"] - w["h"]
-    wenn max_scroll < 0:
-        setze max_scroll auf 0
+    setze max_scroll auf _uim_scroll_max(kontext, w)
     setze s auf w["scroll_y"] + delta * zh * 2
     wenn s < 0:
         setze s auf 0
@@ -1107,10 +1268,13 @@ funktion uim_backend_wurzel(backend, b, h):
     kontext["druck"] = nichts
     kontext["druck_ox"] = 0
     kontext["druck_oy"] = 0
+    kontext["druck_art"] = ""
+    kontext["druck_greif_y"] = 0
     kontext["fokus"] = nichts
     kontext["hat_fokus"] = wahr
     kontext["_maus_war"] = falsch
     kontext["_maus_taste"] = 1
+    kontext["_maus_blockiert_bis_los"] = falsch
     kontext["wurzel"] = _uim_basis("wurzel", 0, 0, b, h)
     gib_zurück kontext
 
@@ -1118,9 +1282,13 @@ funktion uim_backend_zeichne(kontext, zeichner):
     gib_zurück _uim_kern_zeichne(kontext, zeichner)
 
 funktion uim_backend_maus_taste(kontext, x, y, taste, gedrueckt):
-    wenn kontext["hat_fokus"] == falsch:
-        gib_zurück falsch
     wenn taste != 1:
+        gib_zurück falsch
+    wenn kontext["_maus_blockiert_bis_los"]:
+        wenn gedrueckt == falsch:
+            kontext["_maus_blockiert_bis_los"] = falsch
+        gib_zurück falsch
+    wenn kontext["hat_fokus"] == falsch:
         gib_zurück falsch
     setze war auf kontext["_maus_war"]
     wenn gedrueckt und war == falsch:
@@ -1153,13 +1321,12 @@ funktion uim_backend_rad(kontext, x, y, delta):
 funktion uim_backend_fokus(kontext, hat_fokus):
     kontext["hat_fokus"] = hat_fokus
     wenn hat_fokus == falsch:
-        setze p auf kontext["druck"]
-        wenn p != nichts:
-            p["druck"] = falsch
+        wenn kontext["_maus_war"]:
+            kontext["_maus_blockiert_bis_los"] = wahr
+        _uim_druck_loesche(kontext)
         setze h auf kontext["hover"]
         wenn h != nichts:
             h["hover"] = falsch
-        kontext["druck"] = nichts
         kontext["hover"] = nichts
         kontext["_maus_war"] = falsch
     _uim_anfordern(kontext)
@@ -1200,6 +1367,19 @@ funktion uim_hinzu(ziel, widget):
 
 funktion uim_theme_setze(kontext, theme):
     kontext["theme"] = theme
+    _uim_scroll_klemme_rek(kontext, kontext["wurzel"]["kinder"])
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion uim_groesse_setze(kontext, b, h):
+    wenn b < 0:
+        setze b auf 0
+    wenn h < 0:
+        setze h auf 0
+    setze wurzel auf kontext["wurzel"]
+    wurzel["b"] = b
+    wurzel["h"] = h
+    _uim_scroll_klemme_rek(kontext, wurzel["kinder"])
     _uim_anfordern(kontext)
     gib_zurück wahr
 
@@ -1208,13 +1388,7 @@ funktion uim_neuzeichnen(kontext):
     gib_zurück wahr
 
 funktion uim_finde(kontext, id):
-    setze kinder auf kontext["wurzel"]["kinder"]
-    setze gefunden auf nichts
-    für w in kinder:
-        wenn gefunden == nichts:
-            wenn w["id"] == id:
-                setze gefunden auf w
-    gib_zurück gefunden
+    gib_zurück _uim_finde_rek(kontext["wurzel"]["kinder"], id)
 
 # ------------------------------------------------------------
 # Referenz-Widgets (voller Satz folgt in UIMOO-3)
@@ -1344,6 +1518,12 @@ funktion uim_frame_zeichne(kontext, win):
 funktion uim_frame_maus(kontext, x, y, gedrueckt):
     gib_zurück uim_backend_maus(kontext, x, y, gedrueckt)
 
+funktion uim_frame_bewegung(kontext, x, y):
+    gib_zurück uim_backend_bewegung(kontext, x, y)
+
+funktion uim_frame_groesse_setze(kontext, b, h):
+    gib_zurück uim_groesse_setze(kontext, b, h)
+
 funktion uim_frame_taste(kontext, taste, gedrueckt, mod):
     gib_zurück uim_backend_taste(kontext, taste, gedrueckt, mod)
 
@@ -1356,25 +1536,35 @@ funktion uim_frame_fokus(kontext, hat_fokus):
 # Toolkit-freies Mock-Framebuffer fuer Kernel-/Moo-OS- und Unit-Tests.
 funktion uim_mock_wurzel(b, h):
     setze kontext auf uim_backend_wurzel(uim_backend_mock(), b, h)
-    kontext["backend_zustand"]["befehle"] = []
-    kontext["backend_zustand"]["ungueltig"] = wahr
+    setze zustand auf kontext["backend_zustand"]
+    zustand["befehle"] = []
+    zustand["ungueltig"] = wahr
     gib_zurück kontext
 
 funktion uim_mock_leeren(kontext):
-    kontext["backend_zustand"]["befehle"] = []
+    setze zustand auf kontext["backend_zustand"]
+    zustand["befehle"] = []
     gib_zurück wahr
 
 funktion uim_mock_befehle(kontext):
-    gib_zurück kontext["backend_zustand"]["befehle"]
+    setze zustand auf kontext["backend_zustand"]
+    gib_zurück zustand["befehle"]
 
 funktion uim_mock_zeichne(kontext):
     uim_mock_leeren(kontext)
     setze ok auf uim_backend_zeichne(kontext, nichts)
-    kontext["backend_zustand"]["ungueltig"] = falsch
+    setze zustand auf kontext["backend_zustand"]
+    zustand["ungueltig"] = falsch
     gib_zurück ok
 
 funktion uim_mock_maus(kontext, x, y, gedrueckt):
     gib_zurück uim_backend_maus(kontext, x, y, gedrueckt)
+
+funktion uim_mock_bewegung(kontext, x, y):
+    gib_zurück uim_backend_bewegung(kontext, x, y)
+
+funktion uim_mock_groesse_setze(kontext, b, h):
+    gib_zurück uim_groesse_setze(kontext, b, h)
 
 funktion uim_mock_taste(kontext, taste, gedrueckt, mod):
     gib_zurück uim_backend_taste(kontext, taste, gedrueckt, mod)
