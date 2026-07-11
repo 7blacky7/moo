@@ -138,11 +138,9 @@ funktion uim_theme_hell():
 # Interne Helfer
 # ------------------------------------------------------------
 
-# Repaint anfordern — nur im Leinwand-Backend (Frame zeichnet eh je Tick).
+# Repaint-Anforderung wird vom Backendvertrag behandelt.
 funktion _uim_anfordern(kontext):
-    wenn kontext["leinwand"] != nichts:
-        ui_leinwand_anfordern(kontext["leinwand"])
-    gib_zurück wahr
+    gib_zurück _uim_backend_aufruf(kontext, "anfordern", [])
 
 funktion _uim_neue_uid():
     setze uid auf _UIM["naechste_uid"]
@@ -158,9 +156,7 @@ funktion _uim_ctx(leinwand):
 
 funktion _uim_farbe(kontext, z, f):
     kontext["_farbe"] = f
-    wenn kontext["backend"] == "leinwand":
-        ui_zeichne_farbe(z, f[0], f[1], f[2], f[3])
-    gib_zurück wahr
+    gib_zurück _uim_backend_aufruf(kontext, "farbe", [z, f])
 
 # ------------------------------------------------------------
 # Zeichner-Abstraktion (UIMOO-6): ALLE Widget-Zeichner laufen über
@@ -188,10 +184,128 @@ funktion _uim_hexfarbe(kontext):
     setze f auf kontext["_farbe"]
     gib_zurück "#" + _uim_hex2(f[0]) + _uim_hex2(f[1]) + _uim_hex2(f[2])
 
-funktion _uim_zf_rechteck(kontext, zz, x, y, b, h, gefuellt):
-    wenn kontext["backend"] == "leinwand":
-        gib_zurück ui_zeichne_rechteck(zz, x, y, b, h, gefuellt)
+# ------------------------------------------------------------
+# Formeller Backendvertrag (P016-A1)
+# Jede Operation hat die Signatur op(kontext, args_liste). Dadurch bleibt
+# der Widget-Kern in Moo und kennt weder GTK/Win32/Cocoa noch SDL.
+# ------------------------------------------------------------
+
+funktion uim_backend_neu(name, faehigkeiten, operationen):
+    wenn name == nichts oder faehigkeiten == nichts oder operationen == nichts:
+        gib_zurück nichts
+    setze benoetigt auf ["anfordern", "farbe", "rechteck", "rechteck_rund", "kreis", "linie", "text", "text_breite", "clip_setze", "clip_loesche"]
+    für schluessel in benoetigt:
+        wenn operationen.enthält(schluessel) == falsch:
+            gib_zurück nichts
+        wenn operationen[schluessel] == nichts:
+            gib_zurück nichts
+    setze faehigkeit_keys auf ["alpha", "clip", "rechteck_rund", "kreis_rand", "text_metrik"]
+    für schluessel in faehigkeit_keys:
+        wenn faehigkeiten.enthält(schluessel) == falsch:
+            gib_zurück nichts
+        wenn faehigkeiten[schluessel] == nichts:
+            gib_zurück nichts
+    setze bool_faehigkeiten auf ["alpha", "clip", "rechteck_rund", "kreis_rand"]
+    für schluessel in bool_faehigkeiten:
+        setze wert auf faehigkeiten[schluessel]
+        wenn wert != wahr und wert != falsch:
+            gib_zurück nichts
+    setze text_metrik auf faehigkeiten["text_metrik"]
+    wenn typ_von(text_metrik) != "Text" oder text_metrik == "":
+        gib_zurück nichts
+    setze backend auf {}
+    backend["name"] = name
+    backend["version"] = 1
+    backend["faehigkeiten"] = faehigkeiten
+    backend["operationen"] = operationen
+    gib_zurück backend
+
+funktion _uim_faehigkeiten(alpha, clip, rund, kreis_rand, text_metrik):
+    setze f auf {}
+    f["alpha"] = alpha
+    f["clip"] = clip
+    f["rechteck_rund"] = rund
+    f["kreis_rand"] = kreis_rand
+    f["text_metrik"] = text_metrik
+    gib_zurück f
+
+funktion _uim_backend_aufruf(kontext, name, args):
+    wenn kontext.enthält("backend_vertrag") == falsch:
+        gib_zurück falsch
+    setze vertrag auf kontext["backend_vertrag"]
+    wenn vertrag == nichts:
+        gib_zurück falsch
+    setze operationen auf vertrag["operationen"]
+    wenn operationen.enthält(name) == falsch:
+        gib_zurück falsch
+    setze op auf operationen[name]
+    wenn op == nichts:
+        gib_zurück falsch
+    gib_zurück op(kontext, args)
+
+# Desktop-Leinwand-Adapter
+funktion _uim_bl_anfordern(kontext, args):
+    wenn kontext["leinwand"] != nichts:
+        gib_zurück ui_leinwand_anfordern(kontext["leinwand"])
+    gib_zurück falsch
+
+funktion _uim_bl_farbe(kontext, args):
+    setze z auf args[0]
+    setze f auf args[1]
+    gib_zurück ui_zeichne_farbe(z, f[0], f[1], f[2], f[3])
+
+funktion _uim_bl_rechteck(kontext, args):
+    gib_zurück ui_zeichne_rechteck(args[0], args[1], args[2], args[3], args[4], args[5])
+
+funktion _uim_bl_rechteck_rund(kontext, args):
+    gib_zurück ui_zeichne_rechteck_rund(args[0], args[1], args[2], args[3], args[4], args[5], args[6])
+
+funktion _uim_bl_kreis(kontext, args):
+    gib_zurück ui_zeichne_kreis(args[0], args[1], args[2], args[3], args[4])
+
+funktion _uim_bl_linie(kontext, args):
+    gib_zurück ui_zeichne_linie(args[0], args[1], args[2], args[3], args[4], args[5], args[6])
+
+funktion _uim_bl_text(kontext, args):
+    gib_zurück ui_zeichne_text(args[0], args[1], args[2], args[3], args[4])
+
+funktion _uim_bl_text_breite(kontext, args):
+    gib_zurück ui_zeichne_text_breite(args[0], args[1], args[2])
+
+funktion _uim_bl_clip_setze(kontext, args):
+    gib_zurück ui_zeichne_clip_setze(args[0], args[1], args[2], args[3], args[4])
+
+funktion _uim_bl_clip_loesche(kontext, args):
+    gib_zurück ui_zeichne_clip_loesche(args[0])
+
+funktion uim_backend_leinwand():
+    setze ops auf {}
+    ops["anfordern"] = _uim_bl_anfordern
+    ops["farbe"] = _uim_bl_farbe
+    ops["rechteck"] = _uim_bl_rechteck
+    ops["rechteck_rund"] = _uim_bl_rechteck_rund
+    ops["kreis"] = _uim_bl_kreis
+    ops["linie"] = _uim_bl_linie
+    ops["text"] = _uim_bl_text
+    ops["text_breite"] = _uim_bl_text_breite
+    ops["clip_setze"] = _uim_bl_clip_setze
+    ops["clip_loesche"] = _uim_bl_clip_loesche
+    gib_zurück uim_backend_neu("leinwand", _uim_faehigkeiten(wahr, wahr, wahr, wahr, "host"), ops)
+
+# Frame-/SDL-Adapter. Degradierungen stehen explizit in faehigkeiten.
+funktion _uim_bf_anfordern(kontext, args):
+    gib_zurück wahr
+
+funktion _uim_bf_farbe(kontext, args):
+    gib_zurück wahr
+
+funktion _uim_bf_rechteck(kontext, args):
     setze win auf kontext["_win"]
+    setze x auf args[1]
+    setze y auf args[2]
+    setze b auf args[3]
+    setze h auf args[4]
+    setze gefuellt auf args[5]
     setze hex auf _uim_hexfarbe(kontext)
     wenn gefuellt:
         zeichne_rechteck(win, x, y, b, h, hex)
@@ -202,43 +316,27 @@ funktion _uim_zf_rechteck(kontext, zz, x, y, b, h, gefuellt):
         zeichne_rechteck(win, x + b - 1, y, 1, h, hex)
     gib_zurück wahr
 
-funktion _uim_zf_rechteck_rund(kontext, zz, x, y, b, h, radius, gefuellt):
-    wenn kontext["backend"] == "leinwand":
-        gib_zurück ui_zeichne_rechteck_rund(zz, x, y, b, h, radius, gefuellt)
-    # Frame: eckig (pixeliger Game-Look, Radius bewusst ignoriert).
-    gib_zurück _uim_zf_rechteck(kontext, zz, x, y, b, h, gefuellt)
+funktion _uim_bf_rechteck_rund(kontext, args):
+    gib_zurück _uim_bf_rechteck(kontext, [args[0], args[1], args[2], args[3], args[4], args[6]])
 
-funktion _uim_zf_kreis(kontext, zz, cx, cy, radius, gefuellt):
-    wenn kontext["backend"] == "leinwand":
-        gib_zurück ui_zeichne_kreis(zz, cx, cy, radius, gefuellt)
-    wenn gefuellt == falsch:
-        gib_zurück falsch  # Outline-Kreis = Rand-Kosmetik, im Frame entfallen
-    zeichne_kreis(kontext["_win"], cx, cy, radius, _uim_hexfarbe(kontext))
+funktion _uim_bf_kreis(kontext, args):
+    wenn args[4] == falsch:
+        gib_zurück falsch
+    zeichne_kreis(kontext["_win"], args[1], args[2], args[3], _uim_hexfarbe(kontext))
     gib_zurück wahr
 
-funktion _uim_zf_linie(kontext, zz, x1, y1, x2, y2, breite):
-    wenn kontext["backend"] == "leinwand":
-        gib_zurück ui_zeichne_linie(zz, x1, y1, x2, y2, breite)
-    setze win auf kontext["_win"]
-    setze hex auf _uim_hexfarbe(kontext)
+funktion _uim_bf_linie(kontext, args):
     setze i auf 0
-    solange i < breite:
-        zeichne_linie(win, x1, y1 + i, x2, y2 + i, hex)
+    solange i < args[6]:
+        zeichne_linie(kontext["_win"], args[1], args[2] + i, args[3], args[4] + i, _uim_hexfarbe(kontext))
         setze i auf i + 1
     gib_zurück wahr
 
-# Frame-Schriftgroesse -> Pixelfont-Skalierung (3x5-Glyphen).
-funktion _uim_zf_px(groesse):
-    wenn groesse >= 12:
-        gib_zurück 2
-    gib_zurück 1
-
-funktion _uim_zf_text(kontext, zz, x, y, s, groesse):
-    wenn kontext["backend"] == "leinwand":
-        gib_zurück ui_zeichne_text(zz, x, y, s, groesse)
-    setze win auf kontext["_win"]
-    setze hex auf _uim_hexfarbe(kontext)
-    setze px auf _uim_zf_px(groesse)
+funktion _uim_bf_text(kontext, args):
+    setze x auf args[1]
+    setze y auf args[2]
+    setze s auf args[3]
+    setze px auf _uim_zf_px(args[4])
     setze i auf 0
     setze cx auf x
     solange i < länge(s):
@@ -250,27 +348,122 @@ funktion _uim_zf_text(kontext, zz, x, y, s, groesse):
                 setze zx auf 0
                 solange zx < 3:
                     wenn bits[zy * 3 + zx] == 1:
-                        zeichne_rechteck(win, cx + zx * px, y + zy * px, px, px, hex)
+                        zeichne_rechteck(kontext["_win"], cx + zx * px, y + zy * px, px, px, _uim_hexfarbe(kontext))
                     setze zx auf zx + 1
                 setze zy auf zy + 1
         setze cx auf cx + 4 * px
         setze i auf i + 1
     gib_zurück wahr
 
+funktion _uim_bf_text_breite(kontext, args):
+    gib_zurück länge(args[1]) * 4 * _uim_zf_px(args[2])
+
+funktion _uim_bf_clip_setze(kontext, args):
+    gib_zurück falsch
+
+funktion _uim_bf_clip_loesche(kontext, args):
+    gib_zurück falsch
+
+funktion uim_backend_frame():
+    setze ops auf {}
+    ops["anfordern"] = _uim_bf_anfordern
+    ops["farbe"] = _uim_bf_farbe
+    ops["rechteck"] = _uim_bf_rechteck
+    ops["rechteck_rund"] = _uim_bf_rechteck_rund
+    ops["kreis"] = _uim_bf_kreis
+    ops["linie"] = _uim_bf_linie
+    ops["text"] = _uim_bf_text
+    ops["text_breite"] = _uim_bf_text_breite
+    ops["clip_setze"] = _uim_bf_clip_setze
+    ops["clip_loesche"] = _uim_bf_clip_loesche
+    gib_zurück uim_backend_neu("frame", _uim_faehigkeiten(falsch, falsch, falsch, falsch, "pixelfont-3x5"), ops)
+
+# Toolkit-freies Mock-Framebuffer: schreibt Draw-Commands in eine Moo-Liste.
+funktion _uim_bm_befehl(kontext, name, args):
+    setze zustand auf kontext["backend_zustand"]
+    wenn zustand.enthält("befehle") == falsch:
+        zustand["befehle"] = []
+    setze befehl auf {}
+    befehl["op"] = name
+    befehl["args"] = args
+    befehl["farbe"] = kontext["_farbe"]
+    zustand["befehle"].hinzufügen(befehl)
+    gib_zurück wahr
+
+funktion _uim_bm_anfordern(kontext, args):
+    kontext["backend_zustand"]["ungueltig"] = wahr
+    gib_zurück wahr
+
+funktion _uim_bm_farbe(kontext, args):
+    gib_zurück _uim_bm_befehl(kontext, "farbe", [args[1]])
+
+funktion _uim_bm_rechteck(kontext, args):
+    gib_zurück _uim_bm_befehl(kontext, "rechteck", [args[1], args[2], args[3], args[4], args[5]])
+
+funktion _uim_bm_rechteck_rund(kontext, args):
+    gib_zurück _uim_bm_befehl(kontext, "rechteck_rund", [args[1], args[2], args[3], args[4], args[5], args[6]])
+
+funktion _uim_bm_kreis(kontext, args):
+    gib_zurück _uim_bm_befehl(kontext, "kreis", [args[1], args[2], args[3], args[4]])
+
+funktion _uim_bm_linie(kontext, args):
+    gib_zurück _uim_bm_befehl(kontext, "linie", [args[1], args[2], args[3], args[4], args[5], args[6]])
+
+funktion _uim_bm_text(kontext, args):
+    gib_zurück _uim_bm_befehl(kontext, "text", [args[1], args[2], args[3], args[4]])
+
+funktion _uim_bm_text_breite(kontext, args):
+    gib_zurück länge(args[1]) * 8
+
+funktion _uim_bm_clip_setze(kontext, args):
+    gib_zurück _uim_bm_befehl(kontext, "clip_setze", [args[1], args[2], args[3], args[4]])
+
+funktion _uim_bm_clip_loesche(kontext, args):
+    gib_zurück _uim_bm_befehl(kontext, "clip_loesche", [])
+
+funktion uim_backend_mock():
+    setze ops auf {}
+    ops["anfordern"] = _uim_bm_anfordern
+    ops["farbe"] = _uim_bm_farbe
+    ops["rechteck"] = _uim_bm_rechteck
+    ops["rechteck_rund"] = _uim_bm_rechteck_rund
+    ops["kreis"] = _uim_bm_kreis
+    ops["linie"] = _uim_bm_linie
+    ops["text"] = _uim_bm_text
+    ops["text_breite"] = _uim_bm_text_breite
+    ops["clip_setze"] = _uim_bm_clip_setze
+    ops["clip_loesche"] = _uim_bm_clip_loesche
+    gib_zurück uim_backend_neu("mock-framebuffer", _uim_faehigkeiten(wahr, wahr, wahr, wahr, "deterministisch-8px"), ops)
+
+funktion _uim_zf_rechteck(kontext, zz, x, y, b, h, gefuellt):
+    gib_zurück _uim_backend_aufruf(kontext, "rechteck", [zz, x, y, b, h, gefuellt])
+
+funktion _uim_zf_rechteck_rund(kontext, zz, x, y, b, h, radius, gefuellt):
+    gib_zurück _uim_backend_aufruf(kontext, "rechteck_rund", [zz, x, y, b, h, radius, gefuellt])
+
+funktion _uim_zf_kreis(kontext, zz, cx, cy, radius, gefuellt):
+    gib_zurück _uim_backend_aufruf(kontext, "kreis", [zz, cx, cy, radius, gefuellt])
+
+funktion _uim_zf_linie(kontext, zz, x1, y1, x2, y2, breite):
+    gib_zurück _uim_backend_aufruf(kontext, "linie", [zz, x1, y1, x2, y2, breite])
+
+# Frame-Schriftgroesse -> Pixelfont-Skalierung (3x5-Glyphen).
+funktion _uim_zf_px(groesse):
+    wenn groesse >= 12:
+        gib_zurück 2
+    gib_zurück 1
+
+funktion _uim_zf_text(kontext, zz, x, y, s, groesse):
+    gib_zurück _uim_backend_aufruf(kontext, "text", [zz, x, y, s, groesse])
+
 funktion _uim_zf_text_breite(kontext, zz, s, groesse):
-    wenn kontext["backend"] == "leinwand":
-        gib_zurück ui_zeichne_text_breite(zz, s, groesse)
-    gib_zurück länge(s) * 4 * _uim_zf_px(groesse)
+    gib_zurück _uim_backend_aufruf(kontext, "text_breite", [zz, s, groesse])
 
 funktion _uim_zf_clip_setze(kontext, zz, x, y, b, h):
-    wenn kontext["backend"] == "leinwand":
-        gib_zurück ui_zeichne_clip_setze(zz, x, y, b, h)
-    gib_zurück falsch  # 2D-API hat keinen Scissor (V1-Einschränkung)
+    gib_zurück _uim_backend_aufruf(kontext, "clip_setze", [zz, x, y, b, h])
 
 funktion _uim_zf_clip_loesche(kontext, zz):
-    wenn kontext["backend"] == "leinwand":
-        gib_zurück ui_zeichne_clip_loesche(zz)
-    gib_zurück falsch
+    gib_zurück _uim_backend_aufruf(kontext, "clip_loesche", [zz])
 
 # uid eines Widget-Slots im Kontext ("hover"/"druck"/"fokus"), 0 = leer.
 funktion _uim_slot_uid(kontext, slot):
@@ -469,7 +662,7 @@ funktion _uim_on_maus(lw, x, y, taste):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
-    gib_zurück _uim_kern_maus(kontext, x, y, taste)
+    gib_zurück uim_backend_maus_taste(kontext, x, y, taste, wahr)
 
 funktion _uim_kern_maus(kontext, x, y, taste):
     wenn taste != 1:
@@ -498,7 +691,7 @@ funktion _uim_on_maus_los(lw, x, y, taste):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
-    gib_zurück _uim_kern_maus_los(kontext, x, y, taste)
+    gib_zurück uim_backend_maus_taste(kontext, x, y, taste, falsch)
 
 funktion _uim_kern_maus_los(kontext, x, y, taste):
     wenn taste != 1:
@@ -523,7 +716,7 @@ funktion _uim_on_bewegung(lw, x, y):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
-    gib_zurück _uim_kern_bewegung(kontext, x, y)
+    gib_zurück uim_backend_bewegung(kontext, x, y)
 
 funktion _uim_kern_bewegung(kontext, x, y):
     # Aktiver Slider-Drag hat Vorrang vor Hover. Lokales X über den beim
@@ -557,7 +750,7 @@ funktion _uim_on_taste(lw, taste, gedrueckt, mod):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
-    gib_zurück _uim_kern_taste(kontext, taste, gedrueckt, mod)
+    gib_zurück uim_backend_taste(kontext, taste, gedrueckt, mod)
 
 funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
     wenn gedrueckt == falsch:
@@ -623,7 +816,7 @@ funktion _uim_on_rad(lw, x, y, delta):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
-    gib_zurück _uim_kern_rad(kontext, x, y, delta)
+    gib_zurück uim_backend_rad(kontext, x, y, delta)
 
 funktion _uim_kern_rad(kontext, x, y, delta):
     setze w auf _uim_scrollziel_rek(kontext["wurzel"]["kinder"], x, y)
@@ -895,16 +1088,17 @@ funktion _uim_kern_zeichne(kontext, z):
         _uim_zeichne_widget(kontext, z, w, 0, 0)
     gib_zurück wahr
 
-# ------------------------------------------------------------
-# Öffentliche API
-# ------------------------------------------------------------
 
-funktion uim_wurzel(fenster, x, y, b, h):
-    setze lw auf ui_leinwand(fenster, x, y, b, h, _uim_on_zeichne)
+# Generischer Kontext und normalisierte Eingabe fuer beliebige Backends.
+funktion uim_backend_wurzel(backend, b, h):
+    wenn backend == nichts:
+        gib_zurück nichts
     setze kontext auf {}
-    kontext["leinwand"] = lw
-    kontext["fenster"] = fenster
-    kontext["backend"] = "leinwand"
+    kontext["leinwand"] = nichts
+    kontext["fenster"] = nichts
+    kontext["backend"] = backend["name"]
+    kontext["backend_vertrag"] = backend
+    kontext["backend_zustand"] = {}
     kontext["_win"] = nichts
     kontext["_farbe"] = [0, 0, 0, 255]
     kontext["hintergrund_zeichnen"] = wahr
@@ -914,8 +1108,78 @@ funktion uim_wurzel(fenster, x, y, b, h):
     kontext["druck_ox"] = 0
     kontext["druck_oy"] = 0
     kontext["fokus"] = nichts
-    setze wurzel auf _uim_basis("wurzel", 0, 0, b, h)
-    kontext["wurzel"] = wurzel
+    kontext["hat_fokus"] = wahr
+    kontext["_maus_war"] = falsch
+    kontext["_maus_taste"] = 1
+    kontext["wurzel"] = _uim_basis("wurzel", 0, 0, b, h)
+    gib_zurück kontext
+
+funktion uim_backend_zeichne(kontext, zeichner):
+    gib_zurück _uim_kern_zeichne(kontext, zeichner)
+
+funktion uim_backend_maus_taste(kontext, x, y, taste, gedrueckt):
+    wenn kontext["hat_fokus"] == falsch:
+        gib_zurück falsch
+    wenn taste != 1:
+        gib_zurück falsch
+    setze war auf kontext["_maus_war"]
+    wenn gedrueckt und war == falsch:
+        kontext["_maus_war"] = wahr
+        kontext["_maus_taste"] = taste
+        gib_zurück _uim_kern_maus(kontext, x, y, taste)
+    wenn gedrueckt == falsch und war:
+        kontext["_maus_war"] = falsch
+        gib_zurück _uim_kern_maus_los(kontext, x, y, kontext["_maus_taste"])
+    gib_zurück _uim_kern_bewegung(kontext, x, y)
+
+funktion uim_backend_maus(kontext, x, y, gedrueckt):
+    gib_zurück uim_backend_maus_taste(kontext, x, y, 1, gedrueckt)
+
+funktion uim_backend_bewegung(kontext, x, y):
+    wenn kontext["hat_fokus"] == falsch:
+        gib_zurück falsch
+    gib_zurück _uim_kern_bewegung(kontext, x, y)
+
+funktion uim_backend_taste(kontext, taste, gedrueckt, mod):
+    wenn kontext["hat_fokus"] == falsch:
+        gib_zurück falsch
+    gib_zurück _uim_kern_taste(kontext, taste, gedrueckt, mod)
+
+funktion uim_backend_rad(kontext, x, y, delta):
+    wenn kontext["hat_fokus"] == falsch:
+        gib_zurück falsch
+    gib_zurück _uim_kern_rad(kontext, x, y, delta)
+
+funktion uim_backend_fokus(kontext, hat_fokus):
+    kontext["hat_fokus"] = hat_fokus
+    wenn hat_fokus == falsch:
+        setze p auf kontext["druck"]
+        wenn p != nichts:
+            p["druck"] = falsch
+        setze h auf kontext["hover"]
+        wenn h != nichts:
+            h["hover"] = falsch
+        kontext["druck"] = nichts
+        kontext["hover"] = nichts
+        kontext["_maus_war"] = falsch
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion _uim_on_fokus(lw, hat_fokus):
+    setze kontext auf _uim_ctx(lw)
+    wenn kontext == nichts:
+        gib_zurück falsch
+    gib_zurück uim_backend_fokus(kontext, hat_fokus)
+
+# ------------------------------------------------------------
+# Öffentliche API
+# ------------------------------------------------------------
+
+funktion uim_wurzel(fenster, x, y, b, h):
+    setze lw auf ui_leinwand(fenster, x, y, b, h, _uim_on_zeichne)
+    setze kontext auf uim_backend_wurzel(uim_backend_leinwand(), b, h)
+    kontext["leinwand"] = lw
+    kontext["fenster"] = fenster
     setze alle auf _UIM["kontexte"]
     alle["k" + text(lw)] = kontext
     ui_leinwand_on_maus(lw, _uim_on_maus)
@@ -923,6 +1187,7 @@ funktion uim_wurzel(fenster, x, y, b, h):
     ui_leinwand_on_bewegung(lw, _uim_on_bewegung)
     ui_leinwand_on_taste(lw, _uim_on_taste)
     ui_leinwand_on_rad(lw, _uim_on_rad)
+    ui_leinwand_on_fokus(lw, _uim_on_fokus)
     gib_zurück kontext
 
 funktion uim_hinzu(ziel, widget):
@@ -1067,42 +1332,55 @@ funktion uim_liste(x, y, b, h, zeilen, on_auswahl):
 # ------------------------------------------------------------
 
 funktion uim_frame_wurzel(b, h):
-    setze kontext auf {}
-    kontext["leinwand"] = nichts
-    kontext["fenster"] = nichts
-    kontext["backend"] = "frame"
-    kontext["_win"] = nichts
-    kontext["_farbe"] = [0, 0, 0, 255]
+    setze kontext auf uim_backend_wurzel(uim_backend_frame(), b, h)
     kontext["hintergrund_zeichnen"] = falsch
-    kontext["theme"] = uim_theme_dunkel()
-    kontext["hover"] = nichts
-    kontext["druck"] = nichts
-    kontext["druck_ox"] = 0
-    kontext["druck_oy"] = 0
-    kontext["fokus"] = nichts
-    kontext["_maus_war"] = falsch
-    kontext["wurzel"] = _uim_basis("wurzel", 0, 0, b, h)
     gib_zurück kontext
 
 # Pro Spiel-Tick aufrufen: zeichnet den Widget-Baum aufs Fenster.
 funktion uim_frame_zeichne(kontext, win):
     kontext["_win"] = win
-    gib_zurück _uim_kern_zeichne(kontext, nichts)
+    gib_zurück uim_backend_zeichne(kontext, nichts)
 
-# Maus-Polling: Zustand (gedrueckt wahr/falsch) je Tick einspeisen.
-# Erzeugt intern Press-/Release-/Bewegungs-Ereignisse.
 funktion uim_frame_maus(kontext, x, y, gedrueckt):
-    setze war auf kontext["_maus_war"]
-    wenn gedrueckt und war == falsch:
-        kontext["_maus_war"] = wahr
-        gib_zurück _uim_kern_maus(kontext, x, y, 1)
-    wenn gedrueckt == falsch und war:
-        kontext["_maus_war"] = falsch
-        gib_zurück _uim_kern_maus_los(kontext, x, y, 1)
-    gib_zurück _uim_kern_bewegung(kontext, x, y)
+    gib_zurück uim_backend_maus(kontext, x, y, gedrueckt)
 
 funktion uim_frame_taste(kontext, taste, gedrueckt, mod):
-    gib_zurück _uim_kern_taste(kontext, taste, gedrueckt, mod)
+    gib_zurück uim_backend_taste(kontext, taste, gedrueckt, mod)
 
 funktion uim_frame_rad(kontext, x, y, delta):
-    gib_zurück _uim_kern_rad(kontext, x, y, delta)
+    gib_zurück uim_backend_rad(kontext, x, y, delta)
+
+funktion uim_frame_fokus(kontext, hat_fokus):
+    gib_zurück uim_backend_fokus(kontext, hat_fokus)
+
+# Toolkit-freies Mock-Framebuffer fuer Kernel-/Moo-OS- und Unit-Tests.
+funktion uim_mock_wurzel(b, h):
+    setze kontext auf uim_backend_wurzel(uim_backend_mock(), b, h)
+    kontext["backend_zustand"]["befehle"] = []
+    kontext["backend_zustand"]["ungueltig"] = wahr
+    gib_zurück kontext
+
+funktion uim_mock_leeren(kontext):
+    kontext["backend_zustand"]["befehle"] = []
+    gib_zurück wahr
+
+funktion uim_mock_befehle(kontext):
+    gib_zurück kontext["backend_zustand"]["befehle"]
+
+funktion uim_mock_zeichne(kontext):
+    uim_mock_leeren(kontext)
+    setze ok auf uim_backend_zeichne(kontext, nichts)
+    kontext["backend_zustand"]["ungueltig"] = falsch
+    gib_zurück ok
+
+funktion uim_mock_maus(kontext, x, y, gedrueckt):
+    gib_zurück uim_backend_maus(kontext, x, y, gedrueckt)
+
+funktion uim_mock_taste(kontext, taste, gedrueckt, mod):
+    gib_zurück uim_backend_taste(kontext, taste, gedrueckt, mod)
+
+funktion uim_mock_rad(kontext, x, y, delta):
+    gib_zurück uim_backend_rad(kontext, x, y, delta)
+
+funktion uim_mock_fokus(kontext, hat_fokus):
+    gib_zurück uim_backend_fokus(kontext, hat_fokus)
