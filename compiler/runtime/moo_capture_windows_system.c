@@ -42,6 +42,8 @@ static void wide_to_utf8(const WCHAR* w, char* out, size_t cap) {
     out[cap - 1] = 0;
 }
 
+/* COM apartments are thread-affine: every successful startup must be paired
+ * with shutdown on the same thread. The public capture layer preserves this. */
 static bool system_startup(char* error, size_t cap) {
     HRESULT co = CoInitializeEx(NULL, COINIT_MULTITHREADED);
     if (FAILED(co) && co != RPC_E_CHANGED_MODE) {
@@ -152,8 +154,14 @@ static HRESULT STDMETHODCALLTYPE cb_sample(IMFSourceReaderCallback* self,HRESULT
         EnterCriticalSection(&c->lock);c->last_hr=status;LeaveCriticalSection(&c->lock);
         SetEvent(c->event);
     }
-    if(c->running&&c->reader)
-        (void)IMFSourceReader_ReadSample(c->reader,MF_SOURCE_READER_FIRST_VIDEO_STREAM,0,NULL,NULL,NULL,NULL);
+    IMFSourceReader*reader=NULL;
+    EnterCriticalSection(&c->lock);
+    if(c->running&&c->reader){reader=c->reader;IMFSourceReader_AddRef(reader);}
+    LeaveCriticalSection(&c->lock);
+    if(reader){
+        (void)IMFSourceReader_ReadSample(reader,MF_SOURCE_READER_FIRST_VIDEO_STREAM,0,NULL,NULL,NULL,NULL);
+        IMFSourceReader_Release(reader);
+    }
     return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE cb_flush(IMFSourceReaderCallback* self,DWORD stream){
@@ -231,11 +239,14 @@ static MooWinCaptureResult system_camera_open(const char* id,int32_t width,int32
       IMFSourceReader_Release(n->reader);IMFMediaSource_Release(n->source);
       IMFSourceReaderCallback_Release(&n->callback->iface);free(n);return MOO_WIN_ERROR;
     }
+    EnterCriticalSection(&n->callback->lock);
     n->callback->reader=n->reader;n->callback->running=true;n->callback->width=got_width;
     n->callback->height=got_height;n->callback->stride=(LONG)actual_stride_bits;
+    LeaveCriticalSection(&n->callback->lock);
     hr=IMFSourceReader_ReadSample(n->reader,MF_SOURCE_READER_FIRST_VIDEO_STREAM,0,NULL,NULL,NULL,NULL);
     if(FAILED(hr)){set_hr(error,ecap,"kamera_oeffnen: erster ReadSample fehlgeschlagen",hr);
-      n->callback->running=false;IMFSourceReader_Release(n->reader);IMFMediaSource_Release(n->source);
+      EnterCriticalSection(&n->callback->lock);n->callback->running=false;n->callback->reader=NULL;
+      LeaveCriticalSection(&n->callback->lock);IMFSourceReader_Release(n->reader);IMFMediaSource_Release(n->source);
       IMFSourceReaderCallback_Release(&n->callback->iface);free(n);return MOO_WIN_ERROR;}
     *session=n;*aw=got_width;*ah=got_height;*afps=got_fps;*bound=1;return MOO_WIN_OK;
 }
@@ -255,7 +266,8 @@ static MooWinCaptureResult system_camera_next(void* session,MooWinFramePacket*ou
 static void system_camera_release(MooWinFramePacket*p){free(p->bgra);memset(p,0,sizeof(*p));}
 static void system_camera_close(void* session){
     MfCamera*n=(MfCamera*)session;if(!n)return;
-    n->callback->running=false;n->callback->reader=NULL;
+    EnterCriticalSection(&n->callback->lock);n->callback->running=false;n->callback->reader=NULL;
+    LeaveCriticalSection(&n->callback->lock);
     if(n->reader){(void)IMFSourceReader_Flush(n->reader,MF_SOURCE_READER_FIRST_VIDEO_STREAM);IMFSourceReader_Release(n->reader);}
     if(n->source){(void)IMFMediaSource_Shutdown(n->source);IMFMediaSource_Release(n->source);}
     IMFSourceReaderCallback_Release(&n->callback->iface);free(n);
