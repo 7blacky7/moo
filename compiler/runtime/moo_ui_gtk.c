@@ -2249,11 +2249,13 @@ MooValue moo_ui_test_klick_xy(MooValue fenster, MooValue x, MooValue y) {
         return moo_bool(0);
     }
 
-    /* Leinwand mit on_maus-Bindung: synthetisches button-press-event
-     * dispatchen, damit der registrierte Callback mit lokalen Koords
-     * und taste=1 feuert. */
+    /* Leinwand mit Maus-Bindung: synthetisches Press+Release dispatchen —
+     * ein echter Klick besteht aus beidem. Press feuert on_maus, Release
+     * on_maus_los (UIMOO-1); Widgets mit Klick-auf-Release-Semantik
+     * (ui_moo Schicht 3) funktionieren damit auch im Test-Apparat. */
     if (GTK_IS_DRAWING_AREA(s.hit) &&
-        g_object_get_data(G_OBJECT(s.hit), "moo-maus-id") != NULL) {
+        (g_object_get_data(G_OBJECT(s.hit), "moo-maus-id") != NULL ||
+         g_object_get_data(G_OBJECT(s.hit), "moo-mauslos-id") != NULL)) {
         GdkWindow* gwin = gtk_widget_get_window(s.hit);
         if (!gwin) return moo_bool(0);
         GdkDisplay* disp = gtk_widget_get_display(s.hit);
@@ -2264,20 +2266,23 @@ MooValue moo_ui_test_klick_xy(MooValue fenster, MooValue x, MooValue y) {
         int lx = s.x - ca.x;
         int ly = s.y - ca.y;
 
-        GdkEvent* ev = gdk_event_new(GDK_BUTTON_PRESS);
-        ev->button.window = g_object_ref(gwin);
-        ev->button.send_event = TRUE;
-        ev->button.time = GDK_CURRENT_TIME;
-        ev->button.x = (gdouble)lx;
-        ev->button.y = (gdouble)ly;
-        ev->button.axes = NULL;
-        ev->button.state = 0;
-        ev->button.button = 1;
-        ev->button.x_root = (gdouble)lx;
-        ev->button.y_root = (gdouble)ly;
-        if (ptr) gdk_event_set_device(ev, ptr);
-        gtk_main_do_event(ev);
-        gdk_event_free(ev);
+        GdkEventType typen[2] = { GDK_BUTTON_PRESS, GDK_BUTTON_RELEASE };
+        for (int t = 0; t < 2; t++) {
+            GdkEvent* ev = gdk_event_new(typen[t]);
+            ev->button.window = g_object_ref(gwin);
+            ev->button.send_event = TRUE;
+            ev->button.time = GDK_CURRENT_TIME;
+            ev->button.x = (gdouble)lx;
+            ev->button.y = (gdouble)ly;
+            ev->button.axes = NULL;
+            ev->button.state = 0;
+            ev->button.button = 1;
+            ev->button.x_root = (gdouble)lx;
+            ev->button.y_root = (gdouble)ly;
+            if (ptr) gdk_event_set_device(ev, ptr);
+            gtk_main_do_event(ev);
+            gdk_event_free(ev);
+        }
         return moo_bool(1);
     }
 
