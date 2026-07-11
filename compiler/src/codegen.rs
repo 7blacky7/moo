@@ -112,6 +112,9 @@ pub struct CodeGen<'ctx> {
 impl<'ctx> CodeGen<'ctx> {
     pub fn new(context: &'ctx Context, module_name: &str) -> Self {
         let module = context.create_module(module_name);
+        // Der Target-Triple muss bereits vor Runtime-Deklarationen gesetzt sein:
+        // LLVM senkt Aggregate-Aufrufe (MooValue) sonst mit der falschen Host-ABI ab.
+        module.set_triple(&TargetMachine::get_default_triple());
         let builder = context.create_builder();
         let rt = RuntimeBindings::declare(context, &module);
 
@@ -701,6 +704,35 @@ impl<'ctx> CodeGen<'ctx> {
     fn call_rt(&self, func: FunctionValue<'ctx>, args: &[BasicMetadataValueEnum<'ctx>], name: &str)
         -> Result<StructValue<'ctx>, String>
     {
+        if cfg!(windows) && func.get_type().get_return_type().is_none() {
+            // MSVC x64 ABI: 16-Byte-MooValue wird via verstecktem sret-Puffer
+            // als erstem Argument zurueckgegeben.
+            let result_ptr = self.entry_alloca(self.mv_type(), &format!("{name}_sret"))
+                .map_err(|e| format!("{e}"))?;
+            let mut win_args = Vec::with_capacity(args.len() + 1);
+            win_args.push(result_ptr.into());
+            for (index, arg) in args.iter().enumerate() {
+                match arg {
+                    BasicMetadataValueEnum::StructValue(value) => {
+                        // MSVC x64 uebergibt 16-Byte-Aggregate ebenfalls indirekt.
+                        let arg_ptr = self.entry_alloca(
+                            self.mv_type(),
+                            &format!("{name}_arg{index}"),
+                        )?;
+                        self.builder.build_store(arg_ptr, *value)
+                            .map_err(|e| format!("{e}"))?;
+                        win_args.push(arg_ptr.into());
+                    }
+                    other => win_args.push(*other),
+                }
+            }
+            self.builder.build_call(func, &win_args, name)
+                .map_err(|e| format!("{e}"))?;
+            return self.builder.build_load(self.mv_type(), result_ptr, &format!("{name}_value"))
+                .map(|value| value.into_struct_value())
+                .map_err(|e| format!("{e}"));
+        }
+
         let result = self.builder.build_call(func, args, name)
             .map_err(|e| format!("{e}"))?;
         match result.try_as_basic_value() {
@@ -713,9 +745,132 @@ impl<'ctx> CodeGen<'ctx> {
     fn call_rt_void(&self, func: FunctionValue<'ctx>, args: &[BasicMetadataValueEnum<'ctx>], name: &str)
         -> Result<(), String>
     {
-        self.builder.build_call(func, args, name)
-            .map_err(|e| format!("{e}"))?;
+        if cfg!(windows) {
+            let mut win_args = Vec::with_capacity(args.len());
+            for (index, arg) in args.iter().enumerate() {
+                match arg {
+                    BasicMetadataValueEnum::StructValue(value) => {
+                        let arg_ptr = self.entry_alloca(
+                            self.mv_type(),
+                            &format!("{name}_arg{index}"),
+                        )?;
+                        self.builder.build_store(arg_ptr, *value)
+                            .map_err(|e| format!("{e}"))?;
+                        win_args.push(arg_ptr.into());
+                    }
+                    other => win_args.push(*other),
+                }
+            }
+            self.builder.build_call(func, &win_args, name)
+                .map_err(|e| format!("{e}"))?;
+        } else {
+            self.builder.build_call(func, args, name)
+                .map_err(|e| format!("{e}"))?;
+        }
         Ok(())
+    }
+
+
+    /// Runtime-Call mit beliebigem Rueckgabetyp; passt unter MSVC x64
+    /// 16-Byte-MooValue-Argumente auf indirekte Zeiger an.
+    fn call_rt_abi(
+        &self,
+        func: FunctionValue<'ctx>,
+        args: &[BasicMetadataValueEnum<'ctx>],
+        name: &str,
+    ) -> Result<inkwell::values::CallSiteValue<'ctx>, String> {
+        if cfg!(windows) {
+            let mut win_args = Vec::with_capacity(args.len());
+            for (index, arg) in args.iter().enumerate() {
+                match arg {
+                    BasicMetadataValueEnum::StructValue(value) => {
+                        let arg_ptr = self.entry_alloca(
+                            self.mv_type(),
+                            &format!("{name}_arg{index}"),
+                        )?;
+                        self.builder.build_store(arg_ptr, *value)
+                            .map_err(|e| format!("{e}"))?;
+                        win_args.push(arg_ptr.into());
+                    }
+                    other => win_args.push(*other),
+                }
+            }
+            self.builder.build_call(func, &win_args, name)
+                .map_err(|e| format!("{e}"))
+        } else {
+            self.builder.build_call(func, args, name)
+                .map_err(|e| format!("{e}"))
+        }
+    }
+
+
+    /// Erzeugt fuer einen internen Moo-Funktionstyp einen Adapter, den die
+    /// C-Runtime unter MSVC x64 sicher als MooValue(*)(MooValue...) aufrufen kann.
+    fn windows_callable_wrapper(
+        &self,
+        function: FunctionValue<'ctx>,
+        source_name: &str,
+    ) -> Result<FunctionValue<'ctx>, String> {
+        if !cfg!(windows) {
+            return Ok(function);
+        }
+
+        let wrapper_name = format!("{source_name}.__moo_winabi");
+        if let Some(existing) = self.module.get_function(&wrapper_name) {
+            return Ok(existing);
+        }
+
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let inner_param_types = function.get_type().get_param_types();
+        let mut wrapper_param_types: Vec<BasicMetadataTypeEnum<'ctx>> =
+            Vec::with_capacity(inner_param_types.len() + 1);
+        wrapper_param_types.push(ptr_type.into());
+        wrapper_param_types.extend(inner_param_types.iter().map(|param| match param {
+            BasicMetadataTypeEnum::StructType(_) => ptr_type.into(),
+            other => *other,
+        }));
+
+        // Die MSVC-sret-Konvention liefert den Rueckgabepuffer zusaetzlich in RAX.
+        let wrapper_type = ptr_type.fn_type(&wrapper_param_types, false);
+        let wrapper = self.module.add_function(&wrapper_name, wrapper_type, None);
+        let entry = self.context.append_basic_block(wrapper, "entry");
+        let previous_block = self.builder.get_insert_block();
+        self.builder.position_at_end(entry);
+
+        let mut inner_args = Vec::with_capacity(inner_param_types.len());
+        for (index, param_type) in inner_param_types.iter().enumerate() {
+            let wrapper_arg = wrapper.get_nth_param((index + 1) as u32)
+                .ok_or_else(|| format!("Windows-ABI-Wrapper '{source_name}': Argument fehlt"))?;
+            match param_type {
+                BasicMetadataTypeEnum::StructType(_) => {
+                    let loaded = self.builder.build_load(
+                        self.mv_type(),
+                        wrapper_arg.into_pointer_value(),
+                        &format!("arg{index}"),
+                    ).map_err(|e| format!("{e}"))?;
+                    inner_args.push(loaded.into());
+                }
+                _ => inner_args.push(wrapper_arg.into()),
+            }
+        }
+
+        let result = self.builder.build_call(function, &inner_args, "inner")
+            .map_err(|e| format!("{e}"))?
+            .try_as_basic_value();
+        let value = match result {
+            inkwell::values::ValueKind::Basic(value) => value.into_struct_value(),
+            _ => return Err(format!("Windows-ABI-Wrapper '{source_name}': kein MooValue")),
+        };
+        let result_ptr = wrapper.get_nth_param(0)
+            .ok_or_else(|| format!("Windows-ABI-Wrapper '{source_name}': sret fehlt"))?
+            .into_pointer_value();
+        self.builder.build_store(result_ptr, value).map_err(|e| format!("{e}"))?;
+        self.builder.build_return(Some(&result_ptr)).map_err(|e| format!("{e}"))?;
+
+        if let Some(block) = previous_block {
+            self.builder.position_at_end(block);
+        }
+        Ok(wrapper)
     }
 
     fn store_var(&mut self, name: &str, val: StructValue<'ctx>) -> Result<(), String> {
@@ -968,7 +1123,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Stmt::Precondition { condition, message } | Stmt::Postcondition { condition, message } => {
                 let cond_val = self.compile_expr(condition)?;
-                let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+                let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
                     &[cond_val.into()], "contract").map_err(|e| format!("{e}"))?;
                 let cond_bool = match is_true.try_as_basic_value() {
                     inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
@@ -1039,7 +1194,7 @@ impl<'ctx> CodeGen<'ctx> {
             Stmt::Expect(expr) => {
                 // erwarte expr → wenn falsch, print Fehler + return false
                 let val = self.compile_expr(expr)?;
-                let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+                let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
                     &[val.into()], "expect")
                     .map_err(|e| format!("{e}"))?
                     .try_as_basic_value();
@@ -1101,7 +1256,7 @@ impl<'ctx> CodeGen<'ctx> {
             let result = self.call_rt(test_fn, &[], "test_result")?;
 
             // Ergebnis pruefen (truthy = bestanden)
-            let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+            let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
                 &[result.into()], "test_pass")
                 .map_err(|e| format!("{e}"))?
                 .try_as_basic_value();
@@ -1195,7 +1350,7 @@ impl<'ctx> CodeGen<'ctx> {
         let cond_val = self.compile_expr(condition)?;
         let func = self.current_function.unwrap();
 
-        let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+        let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
             &[cond_val.into()], "guard_truthy")
             .map_err(|e| format!("{e}"))?
             .try_as_basic_value();
@@ -1231,7 +1386,7 @@ impl<'ctx> CodeGen<'ctx> {
         let cond_val = self.compile_expr(condition)?;
         let func = self.current_function.unwrap();
 
-        let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+        let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
             &[cond_val.into()], "truthy")
             .map_err(|e| format!("{e}"))?
             .try_as_basic_value();
@@ -1283,7 +1438,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         self.builder.position_at_end(cond_bb);
         let cond_val = self.compile_expr(condition)?;
-        let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+        let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
             &[cond_val.into()], "truthy")
             .map_err(|e| format!("{e}"))?
             .try_as_basic_value();
@@ -1319,7 +1474,7 @@ impl<'ctx> CodeGen<'ctx> {
         let list_val = self.compile_expr(iterable)?;
 
         // Laenge holen
-        let len_result = self.builder.build_call(self.rt.moo_list_iter_len,
+        let len_result = self.call_rt_abi(self.rt.moo_list_iter_len,
             &[list_val.into()], "len")
             .map_err(|e| format!("{e}"))?;
         let len = match len_result.try_as_basic_value() {
@@ -1879,7 +2034,7 @@ impl<'ctx> CodeGen<'ctx> {
                             let key_val = self.compile_expr(key_expr)?;
                             let has = self.call_rt(self.rt.moo_dict_has,
                                 &[current_val.into(), key_val.into()], "has_key")?;
-                            let is_true_result = self.builder.build_call(self.rt.moo_is_truthy,
+                            let is_true_result = self.call_rt_abi(self.rt.moo_is_truthy,
                                 &[has.into()], "truthy")
                                 .map_err(|e| format!("{e}"))?;
                             let is_true = match is_true_result.try_as_basic_value() {
@@ -1909,7 +2064,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                         if let Some(guard_expr) = guard {
                             let guard_val = self.compile_expr(guard_expr)?;
-                            let guard_true_result = self.builder.build_call(self.rt.moo_is_truthy,
+                            let guard_true_result = self.call_rt_abi(self.rt.moo_is_truthy,
                                 &[guard_val.into()], "guard")
                                 .map_err(|e| format!("{e}"))?;
                             let guard_bool = match guard_true_result.try_as_basic_value() {
@@ -1933,7 +2088,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 // Identifier mit Guard: binde Variable, prüfe nur Guard
                                 self.store_var(name, current_val)?;
                                 let guard_val = self.compile_expr(guard.as_ref().unwrap())?;
-                                let guard_true_result = self.builder.build_call(self.rt.moo_is_truthy,
+                                let guard_true_result = self.call_rt_abi(self.rt.moo_is_truthy,
                                     &[guard_val.into()], "guard")
                                     .map_err(|e| format!("{e}"))?;
                                 let guard_bool = match guard_true_result.try_as_basic_value() {
@@ -1946,7 +2101,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 // Normaler Vergleich + Guard
                                 let pat_val = self.compile_expr(pat_expr)?;
                                 let eq = self.call_rt(self.rt.moo_eq, &[current_val.into(), pat_val.into()], "match_eq")?;
-                                let is_true_result = self.builder.build_call(self.rt.moo_is_truthy,
+                                let is_true_result = self.call_rt_abi(self.rt.moo_is_truthy,
                                     &[eq.into()], "truthy")
                                     .map_err(|e| format!("{e}"))?;
                                 let is_true = match is_true_result.try_as_basic_value() {
@@ -1959,7 +2114,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                                 self.builder.position_at_end(guard_bb);
                                 let guard_val = self.compile_expr(guard.as_ref().unwrap())?;
-                                let guard_true_result = self.builder.build_call(self.rt.moo_is_truthy,
+                                let guard_true_result = self.call_rt_abi(self.rt.moo_is_truthy,
                                     &[guard_val.into()], "guard")
                                     .map_err(|e| format!("{e}"))?;
                                 let guard_bool = match guard_true_result.try_as_basic_value() {
@@ -1973,7 +2128,7 @@ impl<'ctx> CodeGen<'ctx> {
                             // Normaler Wert-Vergleich ohne Guard
                             let pat_val = self.compile_expr(pat_expr)?;
                             let eq = self.call_rt(self.rt.moo_eq, &[current_val.into(), pat_val.into()], "match_eq")?;
-                            let is_true_result = self.builder.build_call(self.rt.moo_is_truthy,
+                            let is_true_result = self.call_rt_abi(self.rt.moo_is_truthy,
                                 &[eq.into()], "truthy")
                                 .map_err(|e| format!("{e}"))?;
                             let is_true = match is_true_result.try_as_basic_value() {
@@ -2180,7 +2335,8 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(v);
                 }
                 if let Some(llvm_fn) = self.module.get_function(name) {
-                    let fn_ptr = llvm_fn.as_global_value().as_pointer_value();
+                    let callable_fn = self.windows_callable_wrapper(llvm_fn, name)?;
+                    let fn_ptr = callable_fn.as_global_value().as_pointer_value();
                     let arity = self.context.i32_type()
                         .const_int(llvm_fn.count_params() as u64, false);
                     let name_ptr = self.make_global_str(name, &format!("__fname_{name}"))?;
@@ -5735,7 +5891,7 @@ impl<'ctx> CodeGen<'ctx> {
                             .map_err(|e| format!("{e}"))?;
                         self.builder.build_store(obj_ptr, obj).map_err(|e| format!("{e}"))?;
 
-                        let len_result = self.builder.build_call(self.rt.moo_list_iter_len,
+                        let len_result = self.call_rt_abi(self.rt.moo_list_iter_len,
                             &[obj.into()], "len")
                             .map_err(|e| format!("{e}"))?;
                         let len = match len_result.try_as_basic_value() {
@@ -5822,7 +5978,7 @@ impl<'ctx> CodeGen<'ctx> {
                             .map_err(|e| format!("{e}"))?;
                         self.builder.build_store(obj_ptr, obj).map_err(|e| format!("{e}"))?;
 
-                        let len_result = self.builder.build_call(self.rt.moo_list_iter_len,
+                        let len_result = self.call_rt_abi(self.rt.moo_list_iter_len,
                             &[obj.into()], "len")
                             .map_err(|e| format!("{e}"))?;
                         let len = match len_result.try_as_basic_value() {
@@ -5880,7 +6036,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 &[fn_val.into(), element.into()], "filter_call")?
                         };
                         {
-                            let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+                            let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
                                 &[test_val.into()], "truthy")
                                 .map_err(|e| format!("{e}"))?
                                 .try_as_basic_value();
@@ -6004,7 +6160,7 @@ impl<'ctx> CodeGen<'ctx> {
                             let result_ptr = self.builder.build_alloca(self.mv_type(), "dispatch_result")
                                 .map_err(|e| format!("{e}"))?;
                             // Runtime: const char* class_name_ptr = moo_object_class_name(obj)
-                            let class_ptr_call = self.builder.build_call(
+                            let class_ptr_call = self.call_rt_abi(
                                 self.rt.moo_object_class_name, &[obj.into()], "obj_class")
                                 .map_err(|e| format!("{e}"))?;
                             let class_ptr = match class_ptr_call.try_as_basic_value() {
@@ -6143,7 +6299,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let func = self.current_function.unwrap();
 
                 // Prüfe ob obj none ist
-                let is_none_result = self.builder.build_call(self.rt.moo_is_none,
+                let is_none_result = self.call_rt_abi(self.rt.moo_is_none,
                     &[obj.into()], "is_none")
                     .map_err(|e| format!("{e}"))?
                     .try_as_basic_value();
@@ -6187,7 +6343,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let lhs = self.compile_expr(left)?;
                 let func = self.current_function.unwrap();
 
-                let is_none_result = self.builder.build_call(self.rt.moo_is_none,
+                let is_none_result = self.call_rt_abi(self.rt.moo_is_none,
                     &[lhs.into()], "is_none")
                     .map_err(|e| format!("{e}"))?
                     .try_as_basic_value();
@@ -6294,7 +6450,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let list_ptr = self.entry_alloca(self.mv_type(), "comp_iter_ptr")?;
                 self.builder.build_store(list_ptr, list_val).map_err(|e| format!("{e}"))?;
 
-                let len_result = self.builder.build_call(self.rt.moo_list_iter_len,
+                let len_result = self.call_rt_abi(self.rt.moo_list_iter_len,
                     &[list_val.into()], "len")
                     .map_err(|e| format!("{e}"))?;
                 let len = match len_result.try_as_basic_value() {
@@ -6339,7 +6495,7 @@ impl<'ctx> CodeGen<'ctx> {
                     let filter_bb = self.context.append_basic_block(func, "comp_filter");
                     let skip_bb = self.context.append_basic_block(func, "comp_skip");
                     let cond_val = self.compile_expr(cond_expr)?;
-                    let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+                    let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
                         &[cond_val.into()], "truthy")
                         .map_err(|e| format!("{e}"))?
                         .try_as_basic_value();
@@ -6573,7 +6729,8 @@ impl<'ctx> CodeGen<'ctx> {
                 // Lambda als First-Class-Value verpacken.
                 if free_vars.is_empty() {
                     // Kein Capture-Environment — direkter MOO_FUNC-Wrapper.
-                    let fn_ptr = function.as_global_value().as_pointer_value();
+                    let callable_fn = self.windows_callable_wrapper(function, &lambda_name)?;
+                    let fn_ptr = callable_fn.as_global_value().as_pointer_value();
                     let arity = self.context.i32_type()
                         .const_int(params.len() as u64, false);
                     let name_ptr = self.make_global_str(&lambda_name,
@@ -6604,7 +6761,11 @@ impl<'ctx> CodeGen<'ctx> {
                         self.builder.build_store(elem_ptr, cap_val)
                             .map_err(|e| format!("{e}"))?;
                     }
-                    let tramp_ptr = tramp.as_global_value().as_pointer_value();
+                    let callable_tramp = self.windows_callable_wrapper(
+                        tramp,
+                        &format!("{lambda_name}_tramp"),
+                    )?;
+                    let tramp_ptr = callable_tramp.as_global_value().as_pointer_value();
                     let arity = self.context.i32_type()
                         .const_int(params.len() as u64, false);
                     let name_ptr = self.make_global_str(&lambda_name,
@@ -6619,7 +6780,7 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::Ternary { condition, then_val, else_val } => {
                 let func = self.current_function.unwrap();
                 let cond_val = self.compile_expr(condition)?;
-                let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+                let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
                     &[cond_val.into()], "tern_truthy")
                     .map_err(|e| format!("{e}"))?
                     .try_as_basic_value();
@@ -6712,20 +6873,20 @@ impl<'ctx> CodeGen<'ctx> {
                             if let Expr::Identifier(name) = pe {
                                 self.store_var(name, cv)?;
                                 let gv = self.compile_expr(guard.as_ref().unwrap())?;
-                                let gr = self.builder.build_call(self.rt.moo_is_truthy, &[gv.into()], "g").map_err(|e| format!("{e}"))?;
+                                let gr = self.call_rt_abi(self.rt.moo_is_truthy, &[gv.into()], "g").map_err(|e| format!("{e}"))?;
                                 let gb = match gr.try_as_basic_value() { inkwell::values::ValueKind::Basic(v) => v.into_int_value(), _ => return Err("truthy".into()) };
                                 self.builder.build_conditional_branch(gb, cb, nb).map_err(|e| format!("{e}"))?;
                             } else {
                                 let pv = self.compile_expr(pe)?;
                                 let eq = self.call_rt(self.rt.moo_eq, &[cv.into(), pv.into()], "eq")?;
-                                let tr = self.builder.build_call(self.rt.moo_is_truthy, &[eq.into()], "t").map_err(|e| format!("{e}"))?;
+                                let tr = self.call_rt_abi(self.rt.moo_is_truthy, &[eq.into()], "t").map_err(|e| format!("{e}"))?;
                                 let tb = match tr.try_as_basic_value() { inkwell::values::ValueKind::Basic(v) => v.into_int_value(), _ => return Err("truthy".into()) };
                                 self.builder.build_conditional_branch(tb, cb, nb).map_err(|e| format!("{e}"))?;
                             }
                         } else {
                             let pv = self.compile_expr(pe)?;
                             let eq = self.call_rt(self.rt.moo_eq, &[cv.into(), pv.into()], "eq")?;
-                            let tr = self.builder.build_call(self.rt.moo_is_truthy, &[eq.into()], "t").map_err(|e| format!("{e}"))?;
+                            let tr = self.call_rt_abi(self.rt.moo_is_truthy, &[eq.into()], "t").map_err(|e| format!("{e}"))?;
                             let tb = match tr.try_as_basic_value() { inkwell::values::ValueKind::Basic(v) => v.into_int_value(), _ => return Err("truthy".into()) };
                             self.builder.build_conditional_branch(tb, cb, nb).map_err(|e| format!("{e}"))?;
                         }
@@ -6853,7 +7014,7 @@ impl<'ctx> CodeGen<'ctx> {
                     // Binding-Pattern mit Guard
                     if let Some(guard_expr) = guard {
                         let guard_val = self.compile_expr(guard_expr)?;
-                        let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+                        let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
                             &[guard_val.into()], "truthy")
                             .map_err(|e| format!("{e}"))?
                             .try_as_basic_value();
@@ -6869,7 +7030,7 @@ impl<'ctx> CodeGen<'ctx> {
                     let pat_val = self.compile_expr(pat_expr)?;
                     let eq_result = self.call_rt(self.rt.moo_eq,
                         &[current_val.into(), pat_val.into()], "eq")?;
-                    let is_true = self.builder.build_call(self.rt.moo_is_truthy,
+                    let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
                         &[eq_result.into()], "truthy")
                         .map_err(|e| format!("{e}"))?
                         .try_as_basic_value();
@@ -6929,7 +7090,7 @@ impl<'ctx> CodeGen<'ctx> {
             self.builder.build_store(fp, filt).map_err(|e| format!("{e}"))?;
             let sp = self.builder.build_alloca(self.mv_type(), "qsp").map_err(|e| format!("{e}"))?;
             self.builder.build_store(sp, src_val).map_err(|e| format!("{e}"))?;
-            let lr = self.builder.build_call(self.rt.moo_list_iter_len, &[src_val.into()], "l")
+            let lr = self.call_rt_abi(self.rt.moo_list_iter_len, &[src_val.into()], "l")
                 .map_err(|e| format!("{e}"))?;
             let len = match lr.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
@@ -6956,7 +7117,7 @@ impl<'ctx> CodeGen<'ctx> {
             self.store_var(var_name, el)?;
 
             let cv = self.compile_expr(cond)?;
-            let tr = self.builder.build_call(self.rt.moo_is_truthy, &[cv.into()], "t")
+            let tr = self.call_rt_abi(self.rt.moo_is_truthy, &[cv.into()], "t")
                 .map_err(|e| format!("{e}"))?;
             let tb = match tr.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
@@ -6997,7 +7158,7 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.build_store(rp, res).map_err(|e| format!("{e}"))?;
         let sp2 = self.builder.build_alloca(self.mv_type(), "qsp2").map_err(|e| format!("{e}"))?;
         self.builder.build_store(sp2, sorted).map_err(|e| format!("{e}"))?;
-        let lr2 = self.builder.build_call(self.rt.moo_list_iter_len, &[sorted.into()], "l2")
+        let lr2 = self.call_rt_abi(self.rt.moo_list_iter_len, &[sorted.into()], "l2")
             .map_err(|e| format!("{e}"))?;
         let len2 = match lr2.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
@@ -7045,7 +7206,7 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| format!("{e}"))?;
         self.builder.build_store(src_ptr, source).map_err(|e| format!("{e}"))?;
 
-        let len_result = self.builder.build_call(self.rt.moo_list_iter_len,
+        let len_result = self.call_rt_abi(self.rt.moo_list_iter_len,
             &[source.into()], "spread_len")
             .map_err(|e| format!("{e}"))?;
         let len = match len_result.try_as_basic_value() {
@@ -7111,7 +7272,7 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| format!("{e}"))?;
         self.builder.build_store(keys_ptr, keys).map_err(|e| format!("{e}"))?;
 
-        let len_result = self.builder.build_call(self.rt.moo_list_iter_len,
+        let len_result = self.call_rt_abi(self.rt.moo_list_iter_len,
             &[keys.into()], "dspread_len")
             .map_err(|e| format!("{e}"))?;
         let len = match len_result.try_as_basic_value() {

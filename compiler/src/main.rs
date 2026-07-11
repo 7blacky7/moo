@@ -898,8 +898,12 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
             PathBuf::from(stem)
         });
 
-    // Runtime-Archiv finden (von build.rs kompiliert)
+    // Runtime-Archiv finden (von build.rs kompiliert). cc-rs erzeugt
+    // unter MSVC eine .lib, auf Unix eine lib*.a.
     let runtime_dir = PathBuf::from(env!("OUT_DIR"));
+    #[cfg(target_os = "windows")]
+    let runtime_lib = runtime_dir.join("moo_runtime.lib");
+    #[cfg(not(target_os = "windows"))]
     let runtime_lib = runtime_dir.join("libmoo_runtime.a");
 
     let mut link_args = vec![
@@ -907,13 +911,27 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         runtime_lib.to_str().unwrap().to_string(),
         "-o".to_string(),
         output_path.to_str().unwrap().to_string(),
-        "-lm".to_string(),
-        "-lpthread".to_string(),
-        "-lcurl".to_string(),
-        "-lsqlite3".to_string(),
-        "-lSDL2".to_string(),
-        "-lSDL2_image".to_string(),
     ];
+
+    #[cfg(target_os = "windows")]
+    link_args.extend([
+        // cc-rs baut die Runtime mit MSVC /MD. Der finale clang-Link muss
+        // dasselbe DLL-CRT-Modell verwenden, sonst entstehen __imp_*-Luecken
+        // und LNK4098-Konflikte zwischen MSVCRT und statischer UCRT.
+        "-fms-runtime-lib=dll".to_string(),
+        // Clang 18s GNU-Treiber fuegt auf windows-msvc trotzdem libcmt als
+        // Default ein. /MD-Objekte referenzieren bereits msvcrt; libcmt muss
+        // daher explizit ausgeschlossen werden, um CRT-Mischung zu vermeiden.
+        "-Wl,/NODEFAULTLIB:libcmt".to_string(),
+        "-llibcurl".to_string(), "-lsqlite3".to_string(),
+        "-lws2_32".to_string(), "-lbcrypt".to_string(),
+    ]);
+    #[cfg(not(target_os = "windows"))]
+    link_args.extend([
+        "-lm".to_string(), "-lpthread".to_string(),
+        "-lcurl".to_string(), "-lsqlite3".to_string(),
+        "-lSDL2".to_string(), "-lSDL2_image".to_string(),
+    ]);
 
     // Linux-only UI-Libs (GTK3 + libappindicator3 + Co.) — nur wenn das
     // UI-Modul wirklich mitgebaut wurde. 3D-only Builds auf Linux duerfen
@@ -951,6 +969,16 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
             "-lobjc".to_string(),
         ]);
     }
+
+    // Win32-UI-Systembibliotheken fuer die finale Link-Stufe eines kompilierten
+    // Moo-Programms (analog zu build.rs::link_ui_windows).
+    #[cfg(all(target_os = "windows", feature = "moo_ui"))]
+    link_args.extend([
+        "-luser32".to_string(), "-lgdi32".to_string(),
+        "-lcomctl32".to_string(), "-lcomdlg32".to_string(),
+        "-lshell32".to_string(), "-lole32".to_string(),
+        "-luxtheme".to_string(),
+    ]);
 
     // 3D-Backend-Libs — nur wenn ein 3D-Feature aktiv ist (analog build.rs).
     // moo_ui-only Build (ohne gl33/gl21/vulkan) linkt kein GL/Vulkan/GLFW.
@@ -1003,7 +1031,11 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         link_args.push(entry.to_string());
     }
 
-    let link_status = Command::new("cc")
+    #[cfg(target_os = "windows")]
+    let linker_program = "clang";
+    #[cfg(not(target_os = "windows"))]
+    let linker_program = "cc";
+    let link_status = Command::new(linker_program)
         .args(&link_args)
         .status()
         .map_err(|e| format!("Linker starten fehlgeschlagen: {e}"))?;

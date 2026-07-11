@@ -31,7 +31,11 @@ DEFINE_GUID(IID_IAudioCaptureClient,
 
 static LONG startup_refs = 0;
 static SRWLOCK startup_lock = SRWLOCK_INIT;
+#if defined(_MSC_VER)
+static __declspec(thread) int com_uninit_pending = 0;
+#else
 static _Thread_local int com_uninit_pending = 0;
+#endif
 static void set_hr(char* out, size_t cap, const char* where, HRESULT hr) {
     if (out && cap) snprintf(out, cap, "%s (HRESULT 0x%08lx)", where, (unsigned long)hr);
 }

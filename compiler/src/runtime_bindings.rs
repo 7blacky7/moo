@@ -728,7 +728,14 @@ impl<'ctx> RuntimeBindings<'ctx> {
             false,
         );
 
-        let mv: BasicMetadataTypeEnum = moo_value_type.into();
+        // MSVC x64 uebergibt 16-Byte-MooValue-Parameter indirekt. Alle mvN-
+        // Signaturen — auch historische direkte module.add_function-Aufrufe —
+        // muessen deshalb unter Windows ptr statt Struct verwenden.
+        let mv: BasicMetadataTypeEnum = if cfg!(windows) {
+            ptr_type.into()
+        } else {
+            moo_value_type.into()
+        };
         let mv1 = &[mv];
         let mv2 = &[mv, mv];
         let mv3 = &[mv, mv, mv];
@@ -740,16 +747,40 @@ impl<'ctx> RuntimeBindings<'ctx> {
 
         // Makro fuer Deklaration
         macro_rules! decl {
-            ($name:expr, ret $ret:expr, $($params:expr),*) => {
-                module.add_function($name, $ret.fn_type(&[$($params.into()),*], false), None)
-            };
+            ($name:expr, ret $ret:expr, $($params:expr),*) => {{
+                let params: &[BasicMetadataTypeEnum<'ctx>] = &[$($params.into()),*];
+                if cfg!(windows) {
+                    let win_params: Vec<BasicMetadataTypeEnum<'ctx>> = params.iter()
+                        .map(|param| match param {
+                            BasicMetadataTypeEnum::StructType(_) => ptr_type.into(),
+                            other => *other,
+                        })
+                        .collect();
+                    module.add_function($name, $ret.fn_type(&win_params, false), None)
+                } else {
+                    module.add_function($name, $ret.fn_type(params, false), None)
+                }
+            }};
         }
 
         // MooValue-returning, N MooValue params
         macro_rules! decl_mv_mv {
-            ($name:expr, $params:expr) => {
-                module.add_function($name, moo_value_type.fn_type($params, false), None)
-            };
+            ($name:expr, $params:expr) => {{
+                let params: &[BasicMetadataTypeEnum<'ctx>] = $params;
+                if cfg!(windows) {
+                    // MSVC x64 gibt das 16-Byte-MooValue ueber einen versteckten
+                    // Rueckgabepuffer als erstes Argument zurueck.
+                    let mut win_params = Vec::with_capacity(params.len() + 1);
+                    win_params.push(ptr_type.into());
+                    win_params.extend(params.iter().map(|param| match param {
+                        BasicMetadataTypeEnum::StructType(_) => ptr_type.into(),
+                        other => *other,
+                    }));
+                    module.add_function($name, void_type.fn_type(&win_params, false), None)
+                } else {
+                    module.add_function($name, moo_value_type.fn_type($params, false), None)
+                }
+            }};
         }
 
         Self {
@@ -936,21 +967,17 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_dir_list: decl_mv_mv!("moo_dir_list", mv1),
             // First-Class Funktionen
             // moo_func_new(void* fn_ptr, int32 arity, const char* name) -> MooValue
-            moo_func_new: module.add_function("moo_func_new",
-                moo_value_type.fn_type(&[ptr_type.into(), i32_type.into(), ptr_type.into()], false),
-                None),
+            moo_func_new: decl_mv_mv!("moo_func_new",
+                &[ptr_type.into(), i32_type.into(), ptr_type.into()]),
             // moo_func_with_captures(void* tramp, int32 arity, const char* name,
             //                        MooValue* caps, int32 n) -> MooValue
-            moo_func_with_captures: module.add_function("moo_func_with_captures",
-                moo_value_type.fn_type(&[
-                    ptr_type.into(), i32_type.into(), ptr_type.into(),
-                    ptr_type.into(), i32_type.into(),
-                ], false),
-                None),
+            moo_func_with_captures: decl_mv_mv!("moo_func_with_captures", &[
+                ptr_type.into(), i32_type.into(), ptr_type.into(),
+                ptr_type.into(), i32_type.into(),
+            ]),
             // moo_func_captured_at(MooFunc* fn, int32 i) -> MooValue
-            moo_func_captured_at: module.add_function("moo_func_captured_at",
-                moo_value_type.fn_type(&[ptr_type.into(), i32_type.into()], false),
-                None),
+            moo_func_captured_at: decl_mv_mv!("moo_func_captured_at",
+                &[ptr_type.into(), i32_type.into()]),
             moo_func_call_0: decl_mv_mv!("moo_func_call_0", mv1),
             moo_func_call_1: decl_mv_mv!("moo_func_call_1", mv2),
             moo_func_call_2: decl_mv_mv!("moo_func_call_2", mv3),
