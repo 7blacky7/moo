@@ -7448,12 +7448,24 @@ impl<'ctx> CodeGen<'ctx> {
                 if Self::expr_uses_var(condition, name) { return Some(false); }
                 Self::first_use_is_local_write(body, name)
             }
-            Stmt::For { iterable, body, .. } => {
+            Stmt::For { var_name, iterable, body }
+            | Stmt::ParallelFor { var_name, iterable, body } => {
+                // First-access-wins: Liest das Iterable denselben Namen,
+                // bleibt der Name fuer die GANZE Funktion global (auch der
+                // spaetere Binder). Ohne diesen Read ist der Binder der erste
+                // lokale Write. Echtes block-lokales Shadowing waere ein
+                // separater Sprach-/Scope-Umbau.
                 if Self::expr_uses_var(iterable, name) { return Some(false); }
+                // Die For-Bindung selbst ist der erste lokale Write.
+                if var_name == name { return Some(true); }
                 Self::first_use_is_local_write(body, name)
             }
-            Stmt::TryCatch { try_body, catch_body, .. } => {
+            Stmt::TryCatch { try_body, catch_var, catch_body, .. } => {
                 if let Some(r) = Self::first_use_is_local_write(try_body, name) { return Some(r); }
+                // First-access-wins auch hier: Nur wenn try_body den Namen
+                // nicht vorher liest/schreibt, ist der Catch-Binder der erste
+                // lokale Write.
+                if catch_var.as_ref().is_some_and(|v| v == name) { return Some(true); }
                 Self::first_use_is_local_write(catch_body, name)
             }
             Stmt::Match { value, cases } => {
@@ -7493,7 +7505,8 @@ impl<'ctx> CodeGen<'ctx> {
                 Stmt::While { body, .. } => {
                     names.extend(Self::collect_all_var_names(body));
                 }
-                Stmt::For { var_name, body, .. } => {
+                Stmt::For { var_name, body, .. }
+                | Stmt::ParallelFor { var_name, body, .. } => {
                     if !names.contains(var_name) { names.push(var_name.clone()); }
                     names.extend(Self::collect_all_var_names(body));
                 }
