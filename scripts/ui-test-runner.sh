@@ -37,24 +37,18 @@ done
 
 # -------------------- Headless-Setup -------------------------
 export MOO_UI_BACKEND="${MOO_UI_BACKEND:-gtk}"
-XVFB_PID=""
-cleanup() {
-    if [ -n "$XVFB_PID" ] && kill -0 "$XVFB_PID" 2>/dev/null; then
-        kill "$XVFB_PID" 2>/dev/null || true
-    fi
-}
-trap cleanup EXIT
-
-if [ "$MOO_UI_BACKEND" = "gtk" ] && [ -z "${DISPLAY:-}" ]; then
-    if ! command -v Xvfb >/dev/null 2>&1; then
-        echo "FEHLER: Kein DISPLAY gesetzt und Xvfb nicht installiert." >&2
-        exit 2
-    fi
-    echo "[runner] Starte Xvfb auf :99 ..."
-    Xvfb :99 -screen 0 1024x768x24 >/dev/null 2>&1 &
-    XVFB_PID=$!
-    sleep 1
-    export DISPLAY=:99
+# Standardmaessig NIEMALS das Host-DISPLAY verwenden. Der gemeinsame
+# Harness waehlt einen freien privaten Xvfb und verwaltet alle Kindprozesse.
+# Nur MOO_UI_ALLOW_HOST_DISPLAY=1 erlaubt ein bereits gesetztes DISPLAY.
+source "$ROOT/scripts/ui-harness-lib.sh"
+harness_rc=0
+ui_harness_init "suite" || harness_rc=$?
+if [ "$harness_rc" -ne 0 ]; then
+    exit "$harness_rc"
+fi
+ui_harness_start_display || harness_rc=$?
+if [ "$harness_rc" -ne 0 ]; then
+    exit "$harness_rc"
 fi
 
 # Vorhandenen Release-Compiler bevorzugen. So bleibt der Visualtest von der
@@ -97,15 +91,37 @@ run_one_test() {
     fi
 
     # Alte Artefakte bereinigen
-    rm -f "$snap_dir"/frame_*.png "$snap_dir"/frame_*.json "$snap_dir"/run.log 2>/dev/null || true
+    local compile_log="$snap_dir/compile.log"
+    rm -f "$snap_dir"/frame_*.png "$snap_dir"/frame_*.json         "$snap_dir"/run.log "$compile_log" 2>/dev/null || true
 
-    # Ausfuehren (timeout 15s). Exitcode VOR jeder Negation sichern —
-    # `if ! cmd; then $?` waere sonst der Status von `!` und damit faelschlich 0.
+    # Compile und Run sind absichtlich getrennt. So liegt kein wartender
+    # moo-compiler-Parent zwischen Watchdog und UI-Prozess.
+    local binary="$UI_HARNESS_RUN_DIR/ui_${name}"
+    if [ "${OS:-}" = "Windows_NT" ]; then
+        binary="${binary}.exe"
+    fi
+
     local rc=0
-    timeout 15 "${COMPILER_CMD[@]}" run "$moo_file" >"$log" 2>&1 || rc=$?
+    ui_harness_run 120 "$compile_log"         "${COMPILER_CMD[@]}" compile "$moo_file" --output "$binary" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "FEHLER: Kompilieren von '$name' rc=$rc (log: $compile_log)"
+        tail -n 30 "$compile_log" || true
+        if [ "$rc" -eq 125 ] || [ "$rc" -eq 126 ]; then
+            HARNESS_FATAL="$rc"
+            UI_HARNESS_KEEP_RUN_DIR=1
+        fi
+        return 1
+    fi
+
+    rc=0
+    ui_harness_run 15 "$log" "$binary" || rc=$?
     if [ "$rc" -ne 0 ]; then
         echo "FEHLER: Test '$name' rc=$rc (log: $log)"
         tail -n 30 "$log" || true
+        if [ "$rc" -eq 125 ] || [ "$rc" -eq 126 ]; then
+            HARNESS_FATAL="$rc"
+            UI_HARNESS_KEEP_RUN_DIR=1
+        fi
         return 1
     fi
 
@@ -219,12 +235,18 @@ PY
 declare -a ALL_RESULTS=()
 FAILED=()
 PASSED=()
+HARNESS_FATAL=0
 
 for t in "${TESTS[@]}"; do
     if run_one_test "$t"; then
         PASSED+=("$t")
     else
         FAILED+=("$t")
+    fi
+    if [ "$HARNESS_FATAL" -ne 0 ]; then
+        echo "[runner] FATALER Harness-Fehler rc=$HARNESS_FATAL — keine weiteren UI-Tests."
+        echo "[runner] Diagnose: $UI_HARNESS_RUN_DIR"
+        exit "$HARNESS_FATAL"
     fi
 done
 

@@ -16,6 +16,7 @@ importiere ui
 importiere ui_moo
 
 setze g auf {}
+g["auto_timer"] = nichts
 
 funktion status(text_neu):
     g["status"]["text"] = text_neu
@@ -52,9 +53,12 @@ funktion auf_theme(w):
     gib_zurück wahr
 
 funktion auto_ende():
+    wenn g["auto_timer"] != nichts:
+        ui_timer_entfernen(g["auto_timer"])
+        g["auto_timer"] = nichts
     zeige "UIMOO-DEMO-OK"
     ui_beenden()
-    gib_zurück wahr
+    gib_zurück falsch
 
 g["hFenster"] = ui_fenster("ui_moo — Schaufenster", 640, 500, 0, nichts)
 g["k"] = uim_wurzel(g["hFenster"], 10, 10, 620, 440)
@@ -90,5 +94,5 @@ g["status"] = uim_hinzu(g["k"], uim_label("Bereit.", 20, 416, 400, 18))
 
 ui_zeige_nebenbei(g["hFenster"])
 wenn umgebung("UIMOO_DEMO_AUTO") != nichts:
-    ui_timer_hinzu(800, auto_ende)
+    g["auto_timer"] = ui_timer_hinzu(800, auto_ende)
 ui_laufen()

@@ -16,3 +16,11 @@ run = "uv run python -m moo run"
 [tasks.test-compiler]
 description = "Run compiler test suite"
 run = "bash compiler/tests/run_all.sh"
+
+[tasks.test-ui]
+description = "Run visual UI tests in the isolated harness"
+run = "bash scripts/ui-test-runner.sh"
+
+[tasks.test-ui-moo-demo]
+description = "Run the ui_moo demo 20 times in the isolated harness"
+run = "bash scripts/ui-moo-demo-smoke.sh"
