@@ -9,7 +9,7 @@
 # Pro Test:
 #   - Kompiliere + Run (cargo run ... run <test>)
 #   - Timeout 15s
-#   - Nach Run: alle frame_*.json via python3 -m json.tool validieren
+#   - Nach Run: alle frame_*.json via "$PYTHON_BIN" -m json.tool validieren
 #   - PNG-Groesse > 1KB pruefen
 #
 # Aggregiert nach beispiele/snapshots/test_report.json
@@ -36,6 +36,7 @@ for t in "${TESTS[@]}"; do
 done
 
 # -------------------- Headless-Setup -------------------------
+export MOO_UI_BACKEND="${MOO_UI_BACKEND:-gtk}"
 XVFB_PID=""
 cleanup() {
     if [ -n "$XVFB_PID" ] && kill -0 "$XVFB_PID" 2>/dev/null; then
@@ -44,7 +45,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ -z "${DISPLAY:-}" ]; then
+if [ "$MOO_UI_BACKEND" = "gtk" ] && [ -z "${DISPLAY:-}" ]; then
     if ! command -v Xvfb >/dev/null 2>&1; then
         echo "FEHLER: Kein DISPLAY gesetzt und Xvfb nicht installiert." >&2
         exit 2
@@ -55,7 +56,6 @@ if [ -z "${DISPLAY:-}" ]; then
     sleep 1
     export DISPLAY=:99
 fi
-export MOO_UI_BACKEND="${MOO_UI_BACKEND:-gtk}"
 
 # Vorhandenen Release-Compiler bevorzugen. So bleibt der Visualtest von der
 # Shell-PATH-Konfiguration unabhängig und baut nicht vor jedem Test neu.
@@ -70,7 +70,13 @@ else
     exit 2
 fi
 
-echo "[runner] DISPLAY=$DISPLAY BACKEND=$MOO_UI_BACKEND COMPILER=${COMPILER_CMD[*]}"
+PYTHON_BIN="$(command -v python3 || command -v python || true)"
+if [ -z "$PYTHON_BIN" ]; then
+    echo "FEHLER: python3/python für JSON- und Visual-Gates fehlt." >&2
+    exit 2
+fi
+
+echo "[runner] DISPLAY=${DISPLAY:-native} BACKEND=$MOO_UI_BACKEND COMPILER=${COMPILER_CMD[*]} PYTHON=$PYTHON_BIN"
 
 # -------------------- Hilfsfunktionen ------------------------
 
@@ -111,7 +117,7 @@ run_one_test() {
 
     shopt -s nullglob
     for jf in "$snap_dir"/frame_*.json; do
-        if python3 -m json.tool "$jf" >/dev/null 2>&1; then
+        if "$PYTHON_BIN" -m json.tool "$jf" >/dev/null 2>&1; then
             frames_ok=$((frames_ok + 1))
         else
             frames_fail=$((frames_fail + 1))
@@ -139,7 +145,7 @@ run_one_test() {
     # Wenn sich der logische Widget-Baum aendert, muss sich auch das PNG
     # aendern. Andernfalls wurde ein veralteter nativer Puffer fotografiert.
     local visual_metrics
-    visual_metrics=$(python3 - "$snap_dir" <<'PY'
+    visual_metrics=$("$PYTHON_BIN" - "$snap_dir" <<'PY'
 import glob, hashlib, json, os, sys
 frames = []
 for jf in sorted(glob.glob(os.path.join(sys.argv[1], "frame_*.json"))):
@@ -182,7 +188,7 @@ PY
     echo "[runner] $name: frames_ok=$frames_ok frames_fail=$frames_fail png_ok=$png_ok png_fail=$png_fail semantic_changes=$semantic_changes stale_visual=$stale_visual runaway_geometry=$runaway_geometry"
 
     # Aufbau JSON-Eintrag
-    TEST_RESULT="$(python3 - "$name" "$frames_ok" "$frames_fail" "$png_ok" "$png_fail" "$snap_dir" <<'PY'
+    TEST_RESULT="$("$PYTHON_BIN" - "$name" "$frames_ok" "$frames_fail" "$png_ok" "$png_fail" "$snap_dir" <<'PY'
 import json, sys, glob, os
 name, fok, ffail, pok, pfail, snap_dir = sys.argv[1:7]
 frames = sorted(os.path.basename(p) for p in glob.glob(os.path.join(snap_dir, "frame_*.json")))
@@ -224,7 +230,7 @@ done
 
 # -------------------- Report schreiben -----------------------
 
-python3 - "$REPORT" "${#PASSED[@]}" "${#FAILED[@]}" "${PASSED[*]}" "${FAILED[*]}" "${ALL_RESULTS[@]}" <<'PY'
+"$PYTHON_BIN" - "$REPORT" "${#PASSED[@]}" "${#FAILED[@]}" "${PASSED[*]}" "${FAILED[*]}" "${ALL_RESULTS[@]}" <<'PY'
 import json, sys, datetime
 report_path  = sys.argv[1]
 n_pass       = int(sys.argv[2])

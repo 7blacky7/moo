@@ -898,13 +898,25 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
             PathBuf::from(stem)
         });
 
-    // Runtime-Archiv finden (von build.rs kompiliert). cc-rs erzeugt
-    // unter MSVC eine .lib, auf Unix eine lib*.a.
-    let runtime_dir = PathBuf::from(env!("OUT_DIR"));
+    // Runtime-Archiv: installierte/bundled Compiler muessen relocatable sein.
+    // Override > lib/ neben der EXE > build.rs-OUT_DIR fuer Dev-Builds.
     #[cfg(target_os = "windows")]
-    let runtime_lib = runtime_dir.join("moo_runtime.lib");
+    let runtime_name = "moo_runtime.lib";
     #[cfg(not(target_os = "windows"))]
-    let runtime_lib = runtime_dir.join("libmoo_runtime.a");
+    let runtime_name = "libmoo_runtime.a";
+    let embedded_runtime = PathBuf::from(env!("OUT_DIR")).join(runtime_name);
+    let bundled_runtime = std::env::current_exe().ok()
+        .and_then(|p| p.parent().map(|d| d.join("lib").join(runtime_name)));
+    let runtime_lib = std::env::var_os("MOO_RUNTIME_LIB")
+        .map(PathBuf::from)
+        .or_else(|| bundled_runtime.filter(|p| p.exists()))
+        .unwrap_or(embedded_runtime);
+    if !runtime_lib.exists() {
+        return Err(format!(
+            "Moo-Runtime nicht gefunden: {} (MOO_RUNTIME_LIB setzen oder lib/{} neben moo-compiler ablegen)",
+            runtime_lib.display(), runtime_name
+        ));
+    }
 
     let mut link_args = vec![
         obj_path.to_str().unwrap().to_string(),
@@ -1032,10 +1044,31 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     }
 
     #[cfg(target_os = "windows")]
-    let linker_program = "clang";
+    let linker_program = {
+        // Portable SDK: Override oder toolchain/bin/clang.exe neben der EXE.
+        let bundled = std::env::current_exe().ok()
+            .and_then(|p| p.parent().map(|d| d.join("toolchain").join("bin").join("clang.exe")));
+        std::env::var_os("MOO_CLANG")
+            .map(PathBuf::from)
+            .or_else(|| bundled.filter(|p| p.exists()))
+            .unwrap_or_else(|| PathBuf::from("clang"))
+    };
     #[cfg(not(target_os = "windows"))]
-    let linker_program = "cc";
-    let link_status = Command::new(linker_program)
+    let linker_program = PathBuf::from("cc");
+    #[cfg(target_os = "windows")]
+    {
+        // Vermeidet jede Abhaengigkeit von Visual Studios link.exe.
+        link_args.push("-fuse-ld=lld".to_string());
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let bundled_lib = dir.join("lib");
+                if bundled_lib.exists() {
+                    link_args.push(format!("-L{}", bundled_lib.display()));
+                }
+            }
+        }
+    }
+    let link_status = Command::new(&linker_program)
         .args(&link_args)
         .status()
         .map_err(|e| format!("Linker starten fehlgeschlagen: {e}"))?;
@@ -1055,7 +1088,11 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
 
 fn run(file: &PathBuf) -> Result<(), String> {
     let tmp_dir = std::env::temp_dir();
-    let tmp_output = tmp_dir.join("moo_tmp_binary");
+    #[cfg(target_os = "windows")]
+    let tmp_name = format!("moo_tmp_binary_{}.exe", std::process::id());
+    #[cfg(not(target_os = "windows"))]
+    let tmp_name = format!("moo_tmp_binary_{}", std::process::id());
+    let tmp_output = tmp_dir.join(tmp_name);
 
     compile(file, Some(&tmp_output), false, None, false, None, None, false, false, false, "elf", None)?;
 

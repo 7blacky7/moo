@@ -38,7 +38,9 @@ on:
       - "compiler/Cargo.toml"
       - "compiler/build.rs"
       - "beispiele/ui_login_demo.moo"
-      - "stdlib/ui.moo"
+      - "beispiele/tests/**"
+      - "scripts/ui-test-runner.sh"
+      - "stdlib/ui*.moo"
       - ".github/workflows/ui-ci.yml"
   pull_request:
     paths:
@@ -47,7 +49,9 @@ on:
       - "compiler/Cargo.toml"
       - "compiler/build.rs"
       - "beispiele/ui_login_demo.moo"
-      - "stdlib/ui.moo"
+      - "beispiele/tests/**"
+      - "scripts/ui-test-runner.sh"
+      - "stdlib/ui*.moo"
       - ".github/workflows/ui-ci.yml"
   workflow_dispatch:
 
@@ -112,6 +116,7 @@ jobs:
             -c conda-forge
             llvmdev=18.1.*
             clangdev=18.1.*
+            lld=18.1.*
             zstd
             zlib
             libxml2
@@ -325,6 +330,133 @@ jobs:
           Write-Host "Prozess lebt nach 2s — OK. Beende ihn nun."
           Stop-Process -Id $proc.Id -Force
           exit 0
+
+      - name: Native Win32 UI API + Visual Regression Suite
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        env:
+          MOO_COMPILER: ./compiler/target/release/moo-compiler.exe
+          MOO_UI_BACKEND: win32
+        run: bash scripts/ui-test-runner.sh
+
+      - name: Upload Win32 UI test evidence
+        if: matrix.os == 'windows-latest' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: moo-win32-ui-test-evidence
+          path: |
+            beispiele/snapshots/**/frame_*.png
+            beispiele/snapshots/**/frame_*.json
+            beispiele/snapshots/**/run.log
+            beispiele/snapshots/test_report.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Bundle portable Moo SDK (Windows x64)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $sdk = Join-Path $PWD "moo-sdk-windows-x64"
+          New-Item -ItemType Directory -Force -Path $sdk, "$sdk\bin", "$sdk\lib", "$sdk\toolchain\bin" | Out-Null
+
+          Copy-Item ".\compiler\target\release\moo-compiler.exe" "$sdk\moo-compiler.exe"
+          Copy-Item ".\stdlib" "$sdk\stdlib" -Recurse
+
+          $runtime = Get-ChildItem ".\compiler\target\release\build\moo-compiler-*\out\moo_runtime.lib" |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (!$runtime) { throw "moo_runtime.lib nicht gefunden" }
+          Copy-Item $runtime.FullName "$sdk\lib\moo_runtime.lib"
+
+          $clang = Get-Command clang.exe -ErrorAction Stop
+          $lld = Get-Command lld-link.exe -ErrorAction Stop
+          Copy-Item $clang.Source "$sdk\toolchain\bin\clang.exe"
+          Copy-Item $lld.Source "$sdk\toolchain\bin\lld-link.exe"
+
+          # Alle aktiven Link-Suchpfade flach bündeln: conda/vcpkg sowie
+          # MSVC-, UCRT- und Windows-SDK-Importbibliotheken.
+          foreach ($dir in ($env:LIB -split ';' | Where-Object { $_ -and (Test-Path $_) })) {
+            Get-ChildItem $dir -Filter "*.lib" -File -ErrorAction SilentlyContinue |
+              Copy-Item -Destination "$sdk\lib" -Force
+          }
+
+          # Clang-Builtins für lld-link ohne installierte LLVM-Toolchain.
+          $resourceDir = (& $clang.Source --print-resource-dir).Trim()
+          Get-ChildItem $resourceDir -Recurse -Filter "clang_rt.builtins*.lib" -File -ErrorAction SilentlyContinue |
+            Copy-Item -Destination "$sdk\lib" -Force
+
+          $condaBin = Join-Path $env:LLVM_SYS_181_PREFIX "bin"
+          $vcpkgBin = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin"
+          foreach ($dir in @($condaBin, $vcpkgBin)) {
+            if (Test-Path $dir) {
+              Get-ChildItem $dir -Filter "*.dll" -File |
+                Copy-Item -Destination "$sdk\bin" -Force
+            }
+          }
+          # clang.exe lädt seine LLVM-DLLs bevorzugt direkt neben sich.
+          Get-ChildItem $condaBin -Filter "*.dll" -File |
+            Copy-Item -Destination "$sdk\toolchain\bin" -Force
+
+          if (!$env:VCToolsRedistDir -or !(Test-Path $env:VCToolsRedistDir)) {
+            throw "VCToolsRedistDir fehlt — portables SDK darf keine CRT-DLLs still auslassen"
+          }
+          Get-ChildItem $env:VCToolsRedistDir -Recurse -Filter "*.dll" -File |
+            Where-Object { $_.FullName -match '\\x64\\' } |
+            Copy-Item -Destination "$sdk\bin" -Force
+          foreach ($requiredDll in @("vcruntime140.dll", "msvcp140.dll")) {
+            if (!(Test-Path (Join-Path "$sdk\bin" $requiredDll))) {
+              throw "Pflicht-DLL fehlt im SDK: $requiredDll"
+            }
+          }
+
+          @'
+          @echo off
+          set "MOO_HOME=%~dp0"
+          set "PATH=%~dp0bin;%~dp0toolchain\bin;%PATH%"
+          "%~dp0moo-compiler.exe" %*
+          '@ | Set-Content "$sdk\moo.cmd" -Encoding ASCII
+
+          @'
+          @echo off
+          set "MOO_HOME=%~dp0"
+          set "PATH=%~dp0bin;%~dp0toolchain\bin;%PATH%"
+          cmd /K
+          '@ | Set-Content "$sdk\moo-shell.cmd" -Encoding ASCII
+
+          # Selftest ohne geerbte Visual-Studio-/Runner-Linkumgebung.
+          $selftest = Join-Path $sdk "sdk_selftest.moo"
+          'zeige "MOO-WINDOWS-SDK-RUN-OK"' | Set-Content $selftest -Encoding UTF8
+          $savedPath = $env:PATH
+          $savedLib = $env:LIB
+          $savedInclude = $env:INCLUDE
+          $env:PATH = "$sdk\bin;$sdk\toolchain\bin;$env:SystemRoot\System32;$env:SystemRoot"
+          Remove-Item Env:LIB -ErrorAction SilentlyContinue
+          Remove-Item Env:INCLUDE -ErrorAction SilentlyContinue
+          Remove-Item Env:VCToolsInstallDir -ErrorAction SilentlyContinue
+
+          & "$sdk\moo.cmd" run $selftest
+          if ($LASTEXITCODE -ne 0) { throw "Portables SDK: moo run fehlgeschlagen ($LASTEXITCODE)" }
+          $selfExe = Join-Path $sdk "sdk_selftest.exe"
+          & "$sdk\moo.cmd" compile $selftest -o $selfExe
+          if ($LASTEXITCODE -ne 0) { throw "Portables SDK: compile fehlgeschlagen ($LASTEXITCODE)" }
+          & $selfExe
+          if ($LASTEXITCODE -ne 0) { throw "Portables SDK: erzeugte EXE fehlgeschlagen ($LASTEXITCODE)" }
+
+          $env:PATH = $savedPath
+          $env:LIB = $savedLib
+          $env:INCLUDE = $savedInclude
+
+          Get-ChildItem $sdk
+          Get-ChildItem "$sdk\lib" -Filter "*.lib" | Measure-Object
+          Get-ChildItem "$sdk\bin" -Filter "*.dll" | Measure-Object
+
+      - name: Upload portable Moo SDK (Windows x64)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: moo-sdk-windows-x64
+          path: moo-sdk-windows-x64
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Smoke-Test (macOS, Process lebt 2s)
         if: matrix.os == 'macos-latest'
