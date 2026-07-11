@@ -298,6 +298,7 @@ funktion _uim_basis(typ, x, y, b, h):
     w["kinder"] = []
     w["on_klick"] = nichts
     w["on_wechsel"] = nichts
+    w["ausrichtung"] = "links"
     w["wert"] = 0
     w["min"] = 0
     w["max"] = 0
@@ -677,8 +678,15 @@ funktion _uim_z_knopf(kontext, z, w, ox, oy):
 
 funktion _uim_z_label(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    wenn w["ausrichtung"] == "mitte":
+        setze tb auf _uim_zf_text_breite(kontext, z, w["text"], t["schrift"])
+        setze ax auf ax + (w["b"] - tb) / 2
+    sonst wenn w["ausrichtung"] == "rechts":
+        setze tb auf _uim_zf_text_breite(kontext, z, w["text"], t["schrift"])
+        setze ax auf ax + w["b"] - tb
     _uim_farbe(kontext, z, t["text"])
-    _uim_zf_text(kontext, z, ox + w["x"], oy + w["y"], w["text"], t["schrift"])
+    _uim_zf_text(kontext, z, ax, oy + w["y"], w["text"], t["schrift"])
     gib_zurück wahr
 
 funktion _uim_z_checkbox(kontext, z, w, ox, oy):
@@ -957,6 +965,12 @@ funktion uim_knopf(beschriftung, x, y, b, h, on_klick):
 funktion uim_label(beschriftung, x, y, b, h):
     setze w auf _uim_basis("label", x, y, b, h)
     w["text"] = beschriftung
+    w["ausrichtung"] = "links"
+    gib_zurück w
+
+# Label-Ausrichtung: "links" (Standard) | "mitte" | "rechts" (innerhalb b).
+funktion uim_label_ausrichtung(w, ausrichtung):
+    w["ausrichtung"] = ausrichtung
     gib_zurück w
 
 # Checkbox: Klick oder space/Return toggelt. on_wechsel(w, wert).
