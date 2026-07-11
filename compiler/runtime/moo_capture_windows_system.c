@@ -1,6 +1,6 @@
 #define COBJMACROS
 #define INITGUID
-#include "moo_capture_windows_internal.h"
+#include "moo_capture_pull_internal.h"
 #include <windows.h>
 #include <mfapi.h>
 #include <mfidl.h>
@@ -85,10 +85,10 @@ static void release_activates(IMFActivate** a, UINT32 n) {
     for (UINT32 i=0;i<n;i++) if (a[i]) IMFActivate_Release(a[i]);
     CoTaskMemFree(a);
 }
-static MooWinCaptureResult system_camera_enumerate(MooWinCameraInfo* out, int32_t capn,
+static MooPullResult system_camera_enumerate(MooPullCameraInfo* out, int32_t capn,
                                                     int32_t* total, char* error, size_t ecap) {
     IMFActivate** a=NULL; UINT32 n=0; HRESULT hr=camera_activates(&a,&n);
-    if (FAILED(hr)) { set_hr(error,ecap,"kamera_liste: MFEnumDeviceSources fehlgeschlagen",hr); return MOO_WIN_ERROR; }
+    if (FAILED(hr)) { set_hr(error,ecap,"kamera_liste: MFEnumDeviceSources fehlgeschlagen",hr); return MOO_PULL_ERROR; }
     *total = n > INT32_MAX ? INT32_MAX : (int32_t)n;
     UINT32 lim = n < (UINT32)capn ? n : (UINT32)capn;
     for (UINT32 i=0;i<lim;i++) {
@@ -100,7 +100,7 @@ static MooWinCaptureResult system_camera_enumerate(MooWinCameraInfo* out, int32_
         CoTaskMemFree(name); CoTaskMemFree(id);
     }
     release_activates(a,n);
-    return MOO_WIN_OK;
+    return MOO_PULL_OK;
 }
 
 typedef struct CameraCallback CameraCallback;
@@ -197,11 +197,11 @@ static HRESULT activate_camera(const char* id, IMFMediaSource** out) {
     }
     release_activates(a,n);return hr;
 }
-static MooWinCaptureResult system_camera_open(const char* id,int32_t width,int32_t height,
+static MooPullResult system_camera_open(const char* id,int32_t width,int32_t height,
  double fps,bool exact,void** session,int32_t* aw,int32_t* ah,double* afps,int32_t* bound,
  char* error,size_t ecap){
-    (void)exact;MfCamera*n=(MfCamera*)calloc(1,sizeof(*n));if(!n)return MOO_WIN_ERROR;
-    HRESULT hr=activate_camera(id,&n->source);if(FAILED(hr)){set_hr(error,ecap,"kamera_oeffnen: Kamera nicht gefunden",hr);free(n);return MOO_WIN_ERROR;}
+    (void)exact;MfCamera*n=(MfCamera*)calloc(1,sizeof(*n));if(!n)return MOO_PULL_ERROR;
+    HRESULT hr=activate_camera(id,&n->source);if(FAILED(hr)){set_hr(error,ecap,"kamera_oeffnen: Kamera nicht gefunden",hr);free(n);return MOO_PULL_ERROR;}
     n->callback=cb_new();IMFAttributes*attr=NULL;IMFMediaType*type=NULL;
     if(!n->callback)hr=E_OUTOFMEMORY;
     if(SUCCEEDED(hr))hr=MFCreateAttributes(&attr,2);
@@ -229,7 +229,7 @@ static MooWinCaptureResult system_camera_open(const char* id,int32_t width,int32
         if(n->reader)IMFSourceReader_Release(n->reader);
         if(n->source)IMFMediaSource_Release(n->source);
         if(n->callback)IMFSourceReaderCallback_Release(&n->callback->iface);
-        free(n);return MOO_WIN_ERROR;
+        free(n);return MOO_PULL_ERROR;
     }
     int32_t got_width=(int32_t)(actual_size>>32), got_height=(int32_t)(actual_size&0xffffffffu);
     UINT32 rate_num=(UINT32)(actual_rate>>32), rate_den=(UINT32)(actual_rate&0xffffffffu);
@@ -237,7 +237,7 @@ static MooWinCaptureResult system_camera_open(const char* id,int32_t width,int32
     if(got_width<1||got_height<1||got_fps<=0.0){
       set_hr(error,ecap,"kamera_oeffnen: Media Foundation lieferte ungueltige Geometrie",E_FAIL);
       IMFSourceReader_Release(n->reader);IMFMediaSource_Release(n->source);
-      IMFSourceReaderCallback_Release(&n->callback->iface);free(n);return MOO_WIN_ERROR;
+      IMFSourceReaderCallback_Release(&n->callback->iface);free(n);return MOO_PULL_ERROR;
     }
     EnterCriticalSection(&n->callback->lock);
     n->callback->reader=n->reader;n->callback->running=true;n->callback->width=got_width;
@@ -247,23 +247,23 @@ static MooWinCaptureResult system_camera_open(const char* id,int32_t width,int32
     if(FAILED(hr)){set_hr(error,ecap,"kamera_oeffnen: erster ReadSample fehlgeschlagen",hr);
       EnterCriticalSection(&n->callback->lock);n->callback->running=false;n->callback->reader=NULL;
       LeaveCriticalSection(&n->callback->lock);IMFSourceReader_Release(n->reader);IMFMediaSource_Release(n->source);
-      IMFSourceReaderCallback_Release(&n->callback->iface);free(n);return MOO_WIN_ERROR;}
-    *session=n;*aw=got_width;*ah=got_height;*afps=got_fps;*bound=1;return MOO_WIN_OK;
+      IMFSourceReaderCallback_Release(&n->callback->iface);free(n);return MOO_PULL_ERROR;}
+    *session=n;*aw=got_width;*ah=got_height;*afps=got_fps;*bound=1;return MOO_PULL_OK;
 }
-static MooWinCaptureResult system_camera_wait(void* session,int32_t timeout,char* error,size_t cap){
+static MooPullResult system_camera_wait(void* session,int32_t timeout,char* error,size_t cap){
     MfCamera*n=(MfCamera*)session;DWORD r=WaitForSingleObject(n->callback->event,(DWORD)timeout);
-    if(r==WAIT_TIMEOUT)return MOO_WIN_TIMEOUT;
-    if(r!=WAIT_OBJECT_0){set_hr(error,cap,"kamera_frame: Event-Wait fehlgeschlagen",HRESULT_FROM_WIN32(GetLastError()));return MOO_WIN_ERROR;}
-    return MOO_WIN_OK;
+    if(r==WAIT_TIMEOUT)return MOO_PULL_TIMEOUT;
+    if(r!=WAIT_OBJECT_0){set_hr(error,cap,"kamera_frame: Event-Wait fehlgeschlagen",HRESULT_FROM_WIN32(GetLastError()));return MOO_PULL_ERROR;}
+    return MOO_PULL_OK;
 }
-static MooWinCaptureResult system_camera_next(void* session,MooWinFramePacket*out,char*error,size_t cap){
+static MooPullResult system_camera_next(void* session,MooPullFramePacket*out,char*error,size_t cap){
     MfCamera*n=(MfCamera*)session;CameraCallback*c=n->callback;EnterCriticalSection(&c->lock);
-    if(FAILED(c->last_hr)){HRESULT hr=c->last_hr;LeaveCriticalSection(&c->lock);set_hr(error,cap,"kamera_frame: asynchroner ReadSample-Fehler",hr);return MOO_WIN_DISCONNECTED;}
-    if(!c->latest){ResetEvent(c->event);LeaveCriticalSection(&c->lock);return MOO_WIN_EMPTY;}
+    if(FAILED(c->last_hr)){HRESULT hr=c->last_hr;LeaveCriticalSection(&c->lock);set_hr(error,cap,"kamera_frame: asynchroner ReadSample-Fehler",hr);return MOO_PULL_DISCONNECTED;}
+    if(!c->latest){ResetEvent(c->event);LeaveCriticalSection(&c->lock);return MOO_PULL_EMPTY;}
     out->bgra=c->latest;out->bytes=c->latest_len;out->width=c->width;out->height=c->height;out->stride=c->stride;
-    c->latest=NULL;c->latest_len=0;ResetEvent(c->event);LeaveCriticalSection(&c->lock);return MOO_WIN_OK;
+    c->latest=NULL;c->latest_len=0;ResetEvent(c->event);LeaveCriticalSection(&c->lock);return MOO_PULL_OK;
 }
-static void system_camera_release(MooWinFramePacket*p){free(p->bgra);memset(p,0,sizeof(*p));}
+static void system_camera_release(MooPullFramePacket*p){free(p->bgra);memset(p,0,sizeof(*p));}
 static void system_camera_close(void* session){
     MfCamera*n=(MfCamera*)session;if(!n)return;
     EnterCriticalSection(&n->callback->lock);n->callback->running=false;n->callback->reader=NULL;
@@ -277,9 +277,9 @@ typedef struct {
     IMMDeviceEnumerator* enumerator;IMMDevice* device;IAudioClient* client;
     IAudioCaptureClient* capture;HANDLE event;int32_t channels;
 } WasapiMic;
-static MooWinCaptureResult system_microphone_open(const char* id,int32_t rate,int32_t channels,
+static MooPullResult system_microphone_open(const char* id,int32_t rate,int32_t channels,
  void**session,int32_t*ar,int32_t*ac,int32_t*period,int32_t*buffer,char*error,size_t cap){
-    WasapiMic*n=(WasapiMic*)calloc(1,sizeof(*n));if(!n)return MOO_WIN_ERROR;HRESULT hr;
+    WasapiMic*n=(WasapiMic*)calloc(1,sizeof(*n));if(!n)return MOO_PULL_ERROR;HRESULT hr;
     hr=CoCreateInstance(&CLSID_MMDeviceEnumerator,NULL,CLSCTX_ALL,&IID_IMMDeviceEnumerator,(void**)&n->enumerator);
     WCHAR*wid=NULL;if(SUCCEEDED(hr)&&id&&id[0]&&strcmp(id,"default")!=0){
       if(!utf8_to_wide(id,&wid))hr=E_INVALIDARG;else hr=IMMDeviceEnumerator_GetDevice(n->enumerator,wid,&n->device);
@@ -300,36 +300,36 @@ static MooWinCaptureResult system_microphone_open(const char* id,int32_t rate,in
       if(n->device)IMMDevice_Release(n->device);
       if(n->enumerator)IMMDeviceEnumerator_Release(n->enumerator);
       if(n->event)CloseHandle(n->event);
-      free(n);return hr==AUDCLNT_E_DEVICE_INVALIDATED?MOO_WIN_DISCONNECTED:MOO_WIN_ERROR;}
-    n->channels=channels;*session=n;*ar=rate;*ac=channels;*buffer=(int32_t)frames;*period=frames>4?(int32_t)(frames/4):1;return MOO_WIN_OK;
+      free(n);return hr==AUDCLNT_E_DEVICE_INVALIDATED?MOO_PULL_DISCONNECTED:MOO_PULL_ERROR;}
+    n->channels=channels;*session=n;*ar=rate;*ac=channels;*buffer=(int32_t)frames;*period=frames>4?(int32_t)(frames/4):1;return MOO_PULL_OK;
 }
-static MooWinCaptureResult system_microphone_wait(void*session,int32_t timeout,char*error,size_t cap){
+static MooPullResult system_microphone_wait(void*session,int32_t timeout,char*error,size_t cap){
     WasapiMic*n=(WasapiMic*)session;DWORD r=WaitForSingleObject(n->event,(DWORD)timeout);
-    if(r==WAIT_TIMEOUT)return MOO_WIN_TIMEOUT;
-    if(r!=WAIT_OBJECT_0){set_hr(error,cap,"mikro_lesen: Event-Wait fehlgeschlagen",HRESULT_FROM_WIN32(GetLastError()));return MOO_WIN_ERROR;}
-    return MOO_WIN_OK;
+    if(r==WAIT_TIMEOUT)return MOO_PULL_TIMEOUT;
+    if(r!=WAIT_OBJECT_0){set_hr(error,cap,"mikro_lesen: Event-Wait fehlgeschlagen",HRESULT_FROM_WIN32(GetLastError()));return MOO_PULL_ERROR;}
+    return MOO_PULL_OK;
 }
-static MooWinCaptureResult system_microphone_next(void*session,MooWinAudioPacket*out,char*error,size_t cap){
+static MooPullResult system_microphone_next(void*session,MooPullAudioPacket*out,char*error,size_t cap){
     WasapiMic*n=(WasapiMic*)session;UINT32 avail=0;HRESULT hr=IAudioCaptureClient_GetNextPacketSize(n->capture,&avail);
-    if(FAILED(hr)){set_hr(error,cap,"mikro_lesen: GetNextPacketSize fehlgeschlagen",hr);return hr==AUDCLNT_E_DEVICE_INVALIDATED?MOO_WIN_DISCONNECTED:MOO_WIN_ERROR;}
-    if(!avail)return MOO_WIN_EMPTY;
+    if(FAILED(hr)){set_hr(error,cap,"mikro_lesen: GetNextPacketSize fehlgeschlagen",hr);return hr==AUDCLNT_E_DEVICE_INVALIDATED?MOO_PULL_DISCONNECTED:MOO_PULL_ERROR;}
+    if(!avail)return MOO_PULL_EMPTY;
     BYTE*data=NULL;UINT32 frames=0;DWORD flags=0;
     hr=IAudioCaptureClient_GetBuffer(n->capture,&data,&frames,&flags,NULL,NULL);
-    if(FAILED(hr)){set_hr(error,cap,"mikro_lesen: GetBuffer fehlgeschlagen",hr);return hr==AUDCLNT_E_DEVICE_INVALIDATED?MOO_WIN_DISCONNECTED:MOO_WIN_ERROR;}
+    if(FAILED(hr)){set_hr(error,cap,"mikro_lesen: GetBuffer fehlgeschlagen",hr);return hr==AUDCLNT_E_DEVICE_INVALIDATED?MOO_PULL_DISCONNECTED:MOO_PULL_ERROR;}
     size_t count=(size_t)frames*n->channels;float*copy=(float*)calloc(count,sizeof(float));
-    if(!copy){IAudioCaptureClient_ReleaseBuffer(n->capture,frames);return MOO_WIN_ERROR;}
+    if(!copy){IAudioCaptureClient_ReleaseBuffer(n->capture,frames);return MOO_PULL_ERROR;}
     if(!(flags&AUDCLNT_BUFFERFLAGS_SILENT))memcpy(copy,data,count*sizeof(float));
     hr=IAudioCaptureClient_ReleaseBuffer(n->capture,frames);
-    if(FAILED(hr)){free(copy);set_hr(error,cap,"mikro_lesen: ReleaseBuffer fehlgeschlagen",hr);return MOO_WIN_ERROR;}
-    if(flags&AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY){free(copy);return MOO_WIN_RECOVERABLE;}
-    out->samples=copy;out->frames=(int32_t)frames;out->channels=n->channels;out->token=copy;out->flags=flags;return MOO_WIN_OK;
+    if(FAILED(hr)){free(copy);set_hr(error,cap,"mikro_lesen: ReleaseBuffer fehlgeschlagen",hr);return MOO_PULL_ERROR;}
+    if(flags&AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY){free(copy);return MOO_PULL_RECOVERABLE;}
+    out->samples=copy;out->frames=(int32_t)frames;out->channels=n->channels;out->token=copy;out->flags=flags;return MOO_PULL_OK;
 }
-static void system_microphone_release(MooWinAudioPacket*p){free(p->token);memset(p,0,sizeof(*p));}
-static MooWinCaptureResult system_microphone_recover(void*session,char*error,size_t cap){
+static void system_microphone_release(MooPullAudioPacket*p){free(p->token);memset(p,0,sizeof(*p));}
+static MooPullResult system_microphone_recover(void*session,char*error,size_t cap){
     WasapiMic*n=(WasapiMic*)session;HRESULT hr=IAudioClient_Stop(n->client);
     if(SUCCEEDED(hr))hr=IAudioClient_Reset(n->client);
     if(SUCCEEDED(hr))hr=IAudioClient_Start(n->client);
-    if(FAILED(hr)){set_hr(error,cap,"mikro_lesen: WASAPI-Recovery fehlgeschlagen",hr);return MOO_WIN_ERROR;}return MOO_WIN_OK;
+    if(FAILED(hr)){set_hr(error,cap,"mikro_lesen: WASAPI-Recovery fehlgeschlagen",hr);return MOO_PULL_ERROR;}return MOO_PULL_OK;
 }
 static void system_microphone_close(void*session){
     WasapiMic*n=(WasapiMic*)session;if(!n)return;
@@ -341,10 +341,10 @@ static void system_microphone_close(void*session){
     if(n->event)CloseHandle(n->event);
     free(n);
 }
-static const MooCaptureWindowsOps ops={
+static const MooCapturePullOps ops={
  system_clock_ms,system_startup,system_shutdown,system_camera_enumerate,system_camera_open,
  system_camera_wait,system_camera_next,system_camera_release,system_camera_close,
  system_microphone_open,system_microphone_wait,system_microphone_next,
  system_microphone_release,system_microphone_recover,system_microphone_close
 };
-const MooCaptureWindowsOps* moo_capture_windows_system_ops(void){return &ops;}
+const MooCapturePullOps* moo_capture_pull_system_ops(void){return &ops;}

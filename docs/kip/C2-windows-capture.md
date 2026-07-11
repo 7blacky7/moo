@@ -12,10 +12,10 @@ Dieser Stand darf deshalb nicht als Hardware-verifiziert bezeichnet werden.
 
 ## Architektur
 
-- `moo_capture_windows.c`: plattformneutraler Zustandsautomat, Fristen,
+- `moo_capture_pull.c`: plattformneutraler Zustandsautomat, Fristen,
   Queue-/Spill-Verhalten, Konvertierung und Recovery.
 - `moo_capture_windows_system.c`: COM/Media-Foundation- und WASAPI-Grenze.
-- `moo_capture_windows_internal.h`: injizierbare Systemoperationen für
+- `moo_capture_pull_internal.h`: injizierbare Systemoperationen für
   deterministische Fehler- und Timingtests.
 - Media Foundation liefert RGB32/BGRA asynchron. MOO übernimmt jeweils das
   neueste vollständige Bild und konvertiert nach RGBA.

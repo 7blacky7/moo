@@ -163,7 +163,7 @@ fn main() {
         .map(|s| s == "linux").unwrap_or(cfg!(target_os = "linux"));
     if target_windows {
         build
-            .file("runtime/moo_capture_windows.c")
+            .file("runtime/moo_capture_pull.c")
             .file("runtime/moo_capture_windows_system.c")
             .define("MOO_HAS_WINDOWS_CAPTURE", None);
         println!("cargo:rustc-cfg=moo_has_windows_capture");

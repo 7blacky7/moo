@@ -1,4 +1,4 @@
-#include "moo_capture_windows_internal.h"
+#include "moo_capture_pull_internal.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,12 +18,12 @@ typedef struct {
     int32_t spill_channels;
 } WinMicrophone;
 
-static const MooCaptureWindowsOps* injected_ops = NULL;
-static const MooCaptureWindowsOps* win_ops(void) {
-    return injected_ops ? injected_ops : moo_capture_windows_system_ops();
+static const MooCapturePullOps* injected_ops = NULL;
+static const MooCapturePullOps* win_ops(void) {
+    return injected_ops ? injected_ops : moo_capture_pull_system_ops();
 }
-void moo_capture_windows_set_ops_for_tests(const MooCaptureWindowsOps* ops) { injected_ops = ops; }
-void moo_capture_windows_reset_ops_for_tests(void) { injected_ops = NULL; }
+void moo_capture_pull_set_ops_for_tests(const MooCapturePullOps* ops) { injected_ops = ops; }
+void moo_capture_pull_reset_ops_for_tests(void) { injected_ops = NULL; }
 
 static MooValue camera_fail(const char* message) {
     moo_throw(moo_error(message));
@@ -44,16 +44,16 @@ static int remaining_ms(int64_t deadline) {
 MooValue moo_capture_camera_list_native(void) {
     char error[256] = {0};
     if (!win_ops()->startup(error, sizeof error))
-        return camera_fail(error[0] ? error : "kamera_liste: Windows-Capture konnte nicht starten");
-    MooWinCameraInfo* infos = (MooWinCameraInfo*)calloc(MOO_WIN_CAPTURE_MAX_DEVICES,
-                                                        sizeof(MooWinCameraInfo));
+        return camera_fail(error[0] ? error : "kamera_liste: natives Capture konnte nicht starten");
+    MooPullCameraInfo* infos = (MooPullCameraInfo*)calloc(MOO_PULL_CAPTURE_MAX_DEVICES,
+                                                        sizeof(MooPullCameraInfo));
     if (!infos) { win_ops()->shutdown(); return camera_fail("kamera_liste: Speicher voll"); }
     int32_t total = 0;
-    MooWinCaptureResult r = win_ops()->camera_enumerate(
-        infos, MOO_WIN_CAPTURE_MAX_DEVICES, &total, error, sizeof error);
-    if (r != MOO_WIN_OK || total < 0 || total > MOO_WIN_CAPTURE_MAX_DEVICES) {
+    MooPullResult r = win_ops()->camera_enumerate(
+        infos, MOO_PULL_CAPTURE_MAX_DEVICES, &total, error, sizeof error);
+    if (r != MOO_PULL_OK || total < 0 || total > MOO_PULL_CAPTURE_MAX_DEVICES) {
         free(infos); win_ops()->shutdown();
-        return camera_fail(total > MOO_WIN_CAPTURE_MAX_DEVICES
+        return camera_fail(total > MOO_PULL_CAPTURE_MAX_DEVICES
             ? "kamera_liste: mehr als 1024 Kameras — Kandidatenlimit ueberschritten"
             : (error[0] ? error : "kamera_liste: Media-Foundation-Aufzaehlung fehlgeschlagen"));
     }
@@ -75,15 +75,15 @@ bool moo_capture_camera_open_native(MooKamera* camera, const char* path,
     char error[256] = {0};
     if (!win_ops()->startup(error, sizeof error))
         return open_error(camera->last_error, sizeof camera->last_error,
-                          "kamera_oeffnen: Windows-Capture konnte nicht starten", error);
+                          "kamera_oeffnen: natives Capture konnte nicht starten", error);
     WinCamera* n = (WinCamera*)calloc(1, sizeof(WinCamera));
     if (!n) { win_ops()->shutdown(); return open_error(camera->last_error,
         sizeof camera->last_error, "kamera_oeffnen: Speicher voll", NULL); }
     n->started = true;
     int32_t aw=0, ah=0, bound=0; double afps=0.0;
-    MooWinCaptureResult r = win_ops()->camera_open(path, width, height, fps, require_exact,
+    MooPullResult r = win_ops()->camera_open(path, width, height, fps, require_exact,
         &n->session, &aw, &ah, &afps, &bound, error, sizeof error);
-    if (r != MOO_WIN_OK || !n->session || aw < 1 || ah < 1 ||
+    if (r != MOO_PULL_OK || !n->session || aw < 1 || ah < 1 ||
         aw > MOO_CAPTURE_MAX_WIDTH || ah > MOO_CAPTURE_MAX_HEIGHT ||
         bound < 1 || bound > MOO_CAPTURE_MAX_BUFFERS) {
         if (n->session) win_ops()->camera_close(n->session);
@@ -106,17 +106,17 @@ MooValue moo_capture_camera_frame_native(MooKamera* camera, int32_t timeout_ms) 
     int64_t start=win_ops()->monotonic_ms();
     if(start<0)return camera_fail("kamera_frame: monotone Uhr fehlt");
     int64_t deadline=start+timeout_ms; char error[256]={0};
-    MooWinCaptureResult r=win_ops()->camera_wait(n->session,timeout_ms,error,sizeof error);
-    if(r==MOO_WIN_TIMEOUT||r==MOO_WIN_EMPTY)return camera_fail("kamera_frame: Timeout");
-    if(r!=MOO_WIN_OK){
+    MooPullResult r=win_ops()->camera_wait(n->session,timeout_ms,error,sizeof error);
+    if(r==MOO_PULL_TIMEOUT||r==MOO_PULL_EMPTY)return camera_fail("kamera_frame: Timeout");
+    if(r!=MOO_PULL_OK){
         camera->state=MOO_CAPTURE_BROKEN;moo_capture_camera_close_native(camera);
         return camera_fail(error[0]?error:"kamera_frame: Geraet getrennt");
     }
-    MooWinFramePacket latest={0};bool have=false;
+    MooPullFramePacket latest={0};bool have=false;
     for(int32_t i=0;i<n->queue_bound;i++){
-        MooWinFramePacket p={0};r=win_ops()->camera_next(n->session,&p,error,sizeof error);
-        if(r==MOO_WIN_EMPTY)break;
-        if(r!=MOO_WIN_OK){
+        MooPullFramePacket p={0};r=win_ops()->camera_next(n->session,&p,error,sizeof error);
+        if(r==MOO_PULL_EMPTY)break;
+        if(r!=MOO_PULL_OK){
             if(have)win_ops()->camera_release(&latest);
             camera->state=MOO_CAPTURE_BROKEN;moo_capture_camera_close_native(camera);
             return camera_fail(error[0]?error:"kamera_frame: Media-Foundation-Lesefehler");
@@ -162,13 +162,13 @@ bool moo_capture_microphone_open_native(MooMikro* microphone,const char* device,
                                         int32_t rate,int32_t channels){
     char error[256]={0};
     if(!win_ops()->startup(error,sizeof error))return open_error(microphone->last_error,
-      sizeof microphone->last_error,"mikro_oeffnen: Windows-Capture konnte nicht starten",error);
+      sizeof microphone->last_error,"mikro_oeffnen: natives Capture konnte nicht starten",error);
     WinMicrophone*n=(WinMicrophone*)calloc(1,sizeof(WinMicrophone));
     if(!n){win_ops()->shutdown();return open_error(microphone->last_error,sizeof microphone->last_error,"mikro_oeffnen: Speicher voll",NULL);}
     n->started=true;int32_t ar=0,ac=0,period=0,buffer=0;
-    MooWinCaptureResult r=win_ops()->microphone_open(device,rate,channels,&n->session,
+    MooPullResult r=win_ops()->microphone_open(device,rate,channels,&n->session,
       &ar,&ac,&period,&buffer,error,sizeof error);
-    if(r!=MOO_WIN_OK||!n->session||ar<1||ac<1||ac>2||period<1||buffer<period){
+    if(r!=MOO_PULL_OK||!n->session||ar<1||ac<1||ac>2||period<1||buffer<period){
       if (n->session) win_ops()->microphone_close(n->session);
       free(n);
       win_ops()->shutdown();
@@ -195,19 +195,19 @@ MooValue moo_capture_microphone_read_native(MooMikro* microphone,int32_t samples
       if(filled>=samples)break;
       int left=first?timeout_ms:remaining_ms(deadline);first=false;
       if(left==0&&timeout_ms>0){moo_tensor_free(t);return camera_fail("mikro_lesen: Timeout nach Teildaten");}
-      MooWinCaptureResult r=win_ops()->microphone_wait(n->session,left,error,sizeof error);
-      if(r==MOO_WIN_TIMEOUT||r==MOO_WIN_EMPTY){moo_tensor_free(t);return camera_fail("mikro_lesen: Timeout");}
-      if(r==MOO_WIN_RECOVERABLE){
-        if(++recoveries>MOO_WIN_CAPTURE_MAX_RECOVERIES||win_ops()->microphone_recover(n->session,error,sizeof error)!=MOO_WIN_OK){
+      MooPullResult r=win_ops()->microphone_wait(n->session,left,error,sizeof error);
+      if(r==MOO_PULL_TIMEOUT||r==MOO_PULL_EMPTY){moo_tensor_free(t);return camera_fail("mikro_lesen: Timeout");}
+      if(r==MOO_PULL_RECOVERABLE){
+        if(++recoveries>MOO_PULL_CAPTURE_MAX_RECOVERIES||win_ops()->microphone_recover(n->session,error,sizeof error)!=MOO_PULL_OK){
           moo_tensor_free(t);microphone->state=MOO_CAPTURE_BROKEN;moo_capture_microphone_close_native(microphone);
           return camera_fail("mikro_lesen: WASAPI-Stream nicht wiederherstellbar");
         }
         filled=0;continue;
       }
-      if(r!=MOO_WIN_OK){moo_tensor_free(t);microphone->state=MOO_CAPTURE_BROKEN;moo_capture_microphone_close_native(microphone);return camera_fail(error[0]?error:"mikro_lesen: Geraet getrennt");}
-      MooWinAudioPacket p={0};r=win_ops()->microphone_next(n->session,&p,error,sizeof error);
-      if(r==MOO_WIN_EMPTY)continue;
-      if(r!=MOO_WIN_OK||!p.samples||p.frames<1||p.channels<1||p.channels>2){
+      if(r!=MOO_PULL_OK){moo_tensor_free(t);microphone->state=MOO_CAPTURE_BROKEN;moo_capture_microphone_close_native(microphone);return camera_fail(error[0]?error:"mikro_lesen: Geraet getrennt");}
+      MooPullAudioPacket p={0};r=win_ops()->microphone_next(n->session,&p,error,sizeof error);
+      if(r==MOO_PULL_EMPTY)continue;
+      if(r!=MOO_PULL_OK||!p.samples||p.frames<1||p.channels<1||p.channels>2){
         if (p.token) win_ops()->microphone_release(&p);
         moo_tensor_free(t);
         microphone->state=MOO_CAPTURE_BROKEN;
