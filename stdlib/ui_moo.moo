@@ -16,6 +16,8 @@
 # Öffentliche API (Kern, UIMOO-2):
 #   uim_wurzel(fenster, x, y, b, h)      -> kontext (legt Leinwand an,
 #                                           bindet alle Events)
+#   uim_frame_wurzel(b, h)               -> kontext fürs Frame-Backend
+#                                           (In-Game-UI, siehe unten)
 #   uim_hinzu(kontext, widget)           -> widget (an Wurzel anhängen)
 #   uim_theme_setze(kontext, theme)      -> Theme wechseln + neu zeichnen
 #   uim_theme_dunkel() / uim_theme_hell()-> Theme-Dicts
@@ -43,6 +45,57 @@
 setze _UIM auf {}
 _UIM["kontexte"] = {}
 _UIM["naechste_uid"] = 1
+
+# 3x5-Pixelfont fürs Frame-Backend (Grossbuchstaben, Ziffern, wenig
+# Interpunktion; Kleinbuchstaben werden auf die Grossform gemappt).
+setze _UIMF auf {}
+_UIMF["A"] = [0,1,0, 1,0,1, 1,1,1, 1,0,1, 1,0,1]
+_UIMF["B"] = [1,1,0, 1,0,1, 1,1,0, 1,0,1, 1,1,0]
+_UIMF["C"] = [1,1,1, 1,0,0, 1,0,0, 1,0,0, 1,1,1]
+_UIMF["D"] = [1,1,0, 1,0,1, 1,0,1, 1,0,1, 1,1,0]
+_UIMF["E"] = [1,1,1, 1,0,0, 1,1,0, 1,0,0, 1,1,1]
+_UIMF["F"] = [1,1,1, 1,0,0, 1,1,0, 1,0,0, 1,0,0]
+_UIMF["G"] = [1,1,1, 1,0,0, 1,0,1, 1,0,1, 1,1,1]
+_UIMF["H"] = [1,0,1, 1,0,1, 1,1,1, 1,0,1, 1,0,1]
+_UIMF["I"] = [1,1,1, 0,1,0, 0,1,0, 0,1,0, 1,1,1]
+_UIMF["J"] = [0,0,1, 0,0,1, 0,0,1, 1,0,1, 1,1,1]
+_UIMF["K"] = [1,0,1, 1,0,1, 1,1,0, 1,0,1, 1,0,1]
+_UIMF["L"] = [1,0,0, 1,0,0, 1,0,0, 1,0,0, 1,1,1]
+_UIMF["M"] = [1,0,1, 1,1,1, 1,1,1, 1,0,1, 1,0,1]
+_UIMF["N"] = [1,0,1, 1,1,1, 1,1,1, 1,1,1, 1,0,1]
+_UIMF["O"] = [1,1,1, 1,0,1, 1,0,1, 1,0,1, 1,1,1]
+_UIMF["P"] = [1,1,1, 1,0,1, 1,1,1, 1,0,0, 1,0,0]
+_UIMF["Q"] = [1,1,1, 1,0,1, 1,0,1, 1,1,1, 0,0,1]
+_UIMF["R"] = [1,1,0, 1,0,1, 1,1,0, 1,0,1, 1,0,1]
+_UIMF["S"] = [1,1,1, 1,0,0, 1,1,1, 0,0,1, 1,1,1]
+_UIMF["T"] = [1,1,1, 0,1,0, 0,1,0, 0,1,0, 0,1,0]
+_UIMF["U"] = [1,0,1, 1,0,1, 1,0,1, 1,0,1, 1,1,1]
+_UIMF["V"] = [1,0,1, 1,0,1, 1,0,1, 1,0,1, 0,1,0]
+_UIMF["W"] = [1,0,1, 1,0,1, 1,1,1, 1,1,1, 1,0,1]
+_UIMF["X"] = [1,0,1, 1,0,1, 0,1,0, 1,0,1, 1,0,1]
+_UIMF["Y"] = [1,0,1, 1,0,1, 0,1,0, 0,1,0, 0,1,0]
+_UIMF["Z"] = [1,1,1, 0,0,1, 0,1,0, 1,0,0, 1,1,1]
+_UIMF["0"] = [1,1,1, 1,0,1, 1,0,1, 1,0,1, 1,1,1]
+_UIMF["1"] = [0,1,0, 1,1,0, 0,1,0, 0,1,0, 1,1,1]
+_UIMF["2"] = [1,1,1, 0,0,1, 1,1,1, 1,0,0, 1,1,1]
+_UIMF["3"] = [1,1,1, 0,0,1, 1,1,1, 0,0,1, 1,1,1]
+_UIMF["4"] = [1,0,1, 1,0,1, 1,1,1, 0,0,1, 0,0,1]
+_UIMF["5"] = [1,1,1, 1,0,0, 1,1,1, 0,0,1, 1,1,1]
+_UIMF["6"] = [1,1,1, 1,0,0, 1,1,1, 1,0,1, 1,1,1]
+_UIMF["7"] = [1,1,1, 0,0,1, 0,1,0, 0,1,0, 0,1,0]
+_UIMF["8"] = [1,1,1, 1,0,1, 1,1,1, 1,0,1, 1,1,1]
+_UIMF["9"] = [1,1,1, 1,0,1, 1,1,1, 0,0,1, 1,1,1]
+_UIMF["."] = [0,0,0, 0,0,0, 0,0,0, 0,0,0, 0,1,0]
+_UIMF[":"] = [0,0,0, 0,1,0, 0,0,0, 0,1,0, 0,0,0]
+_UIMF["-"] = [0,0,0, 0,0,0, 1,1,1, 0,0,0, 0,0,0]
+_UIMF["?"] = [1,1,1, 0,0,1, 0,1,1, 0,0,0, 0,1,0]
+_UIMF["!"] = [0,1,0, 0,1,0, 0,1,0, 0,0,0, 0,1,0]
+setze _uimf_gross auf "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+setze _uimf_klein auf "abcdefghijklmnopqrstuvwxyz"
+setze _uimf_i auf 0
+solange _uimf_i < 26:
+    _UIMF[_uimf_klein[_uimf_i]] = _UIMF[_uimf_gross[_uimf_i]]
+    setze _uimf_i auf _uimf_i + 1
 
 # ------------------------------------------------------------
 # Themes: JEDER Farb-/Maßwert der Zeichner kommt von hier.
@@ -85,6 +138,12 @@ funktion uim_theme_hell():
 # Interne Helfer
 # ------------------------------------------------------------
 
+# Repaint anfordern — nur im Leinwand-Backend (Frame zeichnet eh je Tick).
+funktion _uim_anfordern(kontext):
+    wenn kontext["leinwand"] != nichts:
+        ui_leinwand_anfordern(kontext["leinwand"])
+    gib_zurück wahr
+
 funktion _uim_neue_uid():
     setze uid auf _UIM["naechste_uid"]
     _UIM["naechste_uid"] = uid + 1
@@ -97,9 +156,121 @@ funktion _uim_ctx(leinwand):
         gib_zurück alle[schluessel]
     gib_zurück nichts
 
-funktion _uim_farbe(z, f):
-    ui_zeichne_farbe(z, f[0], f[1], f[2], f[3])
+funktion _uim_farbe(kontext, z, f):
+    kontext["_farbe"] = f
+    wenn kontext["backend"] == "leinwand":
+        ui_zeichne_farbe(z, f[0], f[1], f[2], f[3])
     gib_zurück wahr
+
+# ------------------------------------------------------------
+# Zeichner-Abstraktion (UIMOO-6): ALLE Widget-Zeichner laufen über
+# _uim_zf_*-Wrapper. Backend "leinwand" = ui_zeichne_* (Desktop),
+# Backend "frame" = 2D-Spiel-API (zeichne_rechteck/kreis/linie auf
+# ein Fenster, Farben als "#RRGGBB", Text über 3x5-Pixelfont).
+# Frame-Einschränkungen (dokumentiert): kein Scissor (clip = no-op,
+# virtuelles Listen-Rendering begrenzt Overdraw auf <=1 Zeile),
+# Rounded-Rects werden eckig, Outline-Kreise entfallen (Kosmetik).
+# ------------------------------------------------------------
+
+funktion _uim_hex2(n):
+    setze ziffern auf "0123456789ABCDEF"
+    wenn n < 0:
+        setze n auf 0
+    wenn n > 255:
+        setze n auf 255
+    setze hi auf 0
+    solange (hi + 1) * 16 <= n:
+        setze hi auf hi + 1
+    setze lo auf n - hi * 16
+    gib_zurück ziffern[hi] + ziffern[lo]
+
+funktion _uim_hexfarbe(kontext):
+    setze f auf kontext["_farbe"]
+    gib_zurück "#" + _uim_hex2(f[0]) + _uim_hex2(f[1]) + _uim_hex2(f[2])
+
+funktion _uim_zf_rechteck(kontext, zz, x, y, b, h, gefuellt):
+    wenn kontext["backend"] == "leinwand":
+        gib_zurück ui_zeichne_rechteck(zz, x, y, b, h, gefuellt)
+    setze win auf kontext["_win"]
+    setze hex auf _uim_hexfarbe(kontext)
+    wenn gefuellt:
+        zeichne_rechteck(win, x, y, b, h, hex)
+    sonst:
+        zeichne_rechteck(win, x, y, b, 1, hex)
+        zeichne_rechteck(win, x, y + h - 1, b, 1, hex)
+        zeichne_rechteck(win, x, y, 1, h, hex)
+        zeichne_rechteck(win, x + b - 1, y, 1, h, hex)
+    gib_zurück wahr
+
+funktion _uim_zf_rechteck_rund(kontext, zz, x, y, b, h, radius, gefuellt):
+    wenn kontext["backend"] == "leinwand":
+        gib_zurück ui_zeichne_rechteck_rund(zz, x, y, b, h, radius, gefuellt)
+    # Frame: eckig (pixeliger Game-Look, Radius bewusst ignoriert).
+    gib_zurück _uim_zf_rechteck(kontext, zz, x, y, b, h, gefuellt)
+
+funktion _uim_zf_kreis(kontext, zz, cx, cy, radius, gefuellt):
+    wenn kontext["backend"] == "leinwand":
+        gib_zurück ui_zeichne_kreis(zz, cx, cy, radius, gefuellt)
+    wenn gefuellt == falsch:
+        gib_zurück falsch  # Outline-Kreis = Rand-Kosmetik, im Frame entfallen
+    zeichne_kreis(kontext["_win"], cx, cy, radius, _uim_hexfarbe(kontext))
+    gib_zurück wahr
+
+funktion _uim_zf_linie(kontext, zz, x1, y1, x2, y2, breite):
+    wenn kontext["backend"] == "leinwand":
+        gib_zurück ui_zeichne_linie(zz, x1, y1, x2, y2, breite)
+    setze win auf kontext["_win"]
+    setze hex auf _uim_hexfarbe(kontext)
+    setze i auf 0
+    solange i < breite:
+        zeichne_linie(win, x1, y1 + i, x2, y2 + i, hex)
+        setze i auf i + 1
+    gib_zurück wahr
+
+# Frame-Schriftgroesse -> Pixelfont-Skalierung (3x5-Glyphen).
+funktion _uim_zf_px(groesse):
+    wenn groesse >= 12:
+        gib_zurück 2
+    gib_zurück 1
+
+funktion _uim_zf_text(kontext, zz, x, y, s, groesse):
+    wenn kontext["backend"] == "leinwand":
+        gib_zurück ui_zeichne_text(zz, x, y, s, groesse)
+    setze win auf kontext["_win"]
+    setze hex auf _uim_hexfarbe(kontext)
+    setze px auf _uim_zf_px(groesse)
+    setze i auf 0
+    setze cx auf x
+    solange i < länge(s):
+        setze ch auf s[i]
+        wenn _UIMF.enthält(ch):
+            setze bits auf _UIMF[ch]
+            setze zy auf 0
+            solange zy < 5:
+                setze zx auf 0
+                solange zx < 3:
+                    wenn bits[zy * 3 + zx] == 1:
+                        zeichne_rechteck(win, cx + zx * px, y + zy * px, px, px, hex)
+                    setze zx auf zx + 1
+                setze zy auf zy + 1
+        setze cx auf cx + 4 * px
+        setze i auf i + 1
+    gib_zurück wahr
+
+funktion _uim_zf_text_breite(kontext, zz, s, groesse):
+    wenn kontext["backend"] == "leinwand":
+        gib_zurück ui_zeichne_text_breite(zz, s, groesse)
+    gib_zurück länge(s) * 4 * _uim_zf_px(groesse)
+
+funktion _uim_zf_clip_setze(kontext, zz, x, y, b, h):
+    wenn kontext["backend"] == "leinwand":
+        gib_zurück ui_zeichne_clip_setze(zz, x, y, b, h)
+    gib_zurück falsch  # 2D-API hat keinen Scissor (V1-Einschränkung)
+
+funktion _uim_zf_clip_loesche(kontext, zz):
+    wenn kontext["backend"] == "leinwand":
+        gib_zurück ui_zeichne_clip_loesche(zz)
+    gib_zurück falsch
 
 # uid eines Widget-Slots im Kontext ("hover"/"druck"/"fokus"), 0 = leer.
 funktion _uim_slot_uid(kontext, slot):
@@ -297,6 +468,9 @@ funktion _uim_on_maus(lw, x, y, taste):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
+    gib_zurück _uim_kern_maus(kontext, x, y, taste)
+
+funktion _uim_kern_maus(kontext, x, y, taste):
     wenn taste != 1:
         gib_zurück falsch
     setze tref auf _uim_treffer(kontext, x, y)
@@ -316,13 +490,16 @@ funktion _uim_on_maus(lw, x, y, taste):
             _uim_slider_setze_aus_x(w, tref["lx"])
         wenn w["typ"] == "liste":
             _uim_liste_klick(kontext, w, tref["ly"])
-    ui_leinwand_anfordern(lw)
+    _uim_anfordern(kontext)
     gib_zurück wahr
 
 funktion _uim_on_maus_los(lw, x, y, taste):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
+    gib_zurück _uim_kern_maus_los(kontext, x, y, taste)
+
+funktion _uim_kern_maus_los(kontext, x, y, taste):
     wenn taste != 1:
         gib_zurück falsch
     setze p auf kontext["druck"]
@@ -332,26 +509,29 @@ funktion _uim_on_maus_los(lw, x, y, taste):
     kontext["druck"] = nichts
     wenn p["typ"] == "slider":
         # Drag-Ende: Wert wurde bereits bei Press/Drag gesetzt.
-        ui_leinwand_anfordern(lw)
+        _uim_anfordern(kontext)
         gib_zurück wahr
     setze tref auf _uim_treffer(kontext, x, y)
     wenn tref != nichts:
         wenn tref["w"]["uid"] == p["uid"]:
             _uim_aktiviere(kontext, p)
-    ui_leinwand_anfordern(lw)
+    _uim_anfordern(kontext)
     gib_zurück wahr
 
 funktion _uim_on_bewegung(lw, x, y):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
+    gib_zurück _uim_kern_bewegung(kontext, x, y)
+
+funktion _uim_kern_bewegung(kontext, x, y):
     # Aktiver Slider-Drag hat Vorrang vor Hover. Lokales X über den beim
     # Press gemerkten Offset (Zeiger darf den Slider verlassen).
     setze p auf kontext["druck"]
     wenn p != nichts:
         wenn p["typ"] == "slider":
             wenn _uim_slider_setze_aus_x(p, x - kontext["druck_ox"]):
-                ui_leinwand_anfordern(lw)
+                _uim_anfordern(kontext)
             gib_zurück wahr
     setze tref auf _uim_treffer(kontext, x, y)
     setze w auf nichts
@@ -369,13 +549,16 @@ funktion _uim_on_bewegung(lw, x, y):
     wenn w != nichts:
         w["hover"] = wahr
     kontext["hover"] = w
-    ui_leinwand_anfordern(lw)
+    _uim_anfordern(kontext)
     gib_zurück wahr
 
 funktion _uim_on_taste(lw, taste, gedrueckt, mod):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
+    gib_zurück _uim_kern_taste(kontext, taste, gedrueckt, mod)
+
+funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
     wenn gedrueckt == falsch:
         gib_zurück falsch
     wenn taste == "Tab":
@@ -383,14 +566,14 @@ funktion _uim_on_taste(lw, taste, gedrueckt, mod):
         wenn mod % 2 == 1:
             setze rueck auf wahr
         _uim_fokus_weiter(kontext, rueck)
-        ui_leinwand_anfordern(lw)
+        _uim_anfordern(kontext)
         gib_zurück wahr
     setze f auf kontext["fokus"]
     wenn f == nichts:
         gib_zurück falsch
     wenn taste == "Return" oder taste == "space":
         _uim_aktiviere(kontext, f)
-        ui_leinwand_anfordern(lw)
+        _uim_anfordern(kontext)
         gib_zurück wahr
     wenn f["typ"] == "slider":
         wenn taste == "Left" oder taste == "Right":
@@ -409,7 +592,7 @@ funktion _uim_on_taste(lw, taste, gedrueckt, mod):
                 setze cw auf f["on_wechsel"]
                 wenn cw != nichts:
                     cw(f, wert)
-            ui_leinwand_anfordern(lw)
+            _uim_anfordern(kontext)
             gib_zurück wahr
     wenn f["typ"] == "liste":
         wenn taste == "Up" oder taste == "Down":
@@ -430,7 +613,7 @@ funktion _uim_on_taste(lw, taste, gedrueckt, mod):
                 setze cb auf f["on_auswahl"]
                 wenn cb != nichts:
                     cb(f, idx)
-            ui_leinwand_anfordern(lw)
+            _uim_anfordern(kontext)
             gib_zurück wahr
     gib_zurück falsch
 
@@ -439,6 +622,9 @@ funktion _uim_on_rad(lw, x, y, delta):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
+    gib_zurück _uim_kern_rad(kontext, x, y, delta)
+
+funktion _uim_kern_rad(kontext, x, y, delta):
     setze w auf _uim_scrollziel_rek(kontext["wurzel"]["kinder"], x, y)
     wenn w == nichts:
         gib_zurück falsch
@@ -457,7 +643,7 @@ funktion _uim_on_rad(lw, x, y, delta):
         setze s auf max_scroll
     wenn s != w["scroll_y"]:
         w["scroll_y"] = s
-        ui_leinwand_anfordern(lw)
+        _uim_anfordern(kontext)
     gib_zurück wahr
 
 funktion _uim_z_knopf(kontext, z, w, ox, oy):
@@ -471,28 +657,28 @@ funktion _uim_z_knopf(kontext, z, w, ox, oy):
         setze flaeche auf t["flaeche_druck"]
     sonst wenn w["hover"]:
         setze flaeche auf t["flaeche_hover"]
-    _uim_farbe(z, flaeche)
-    ui_zeichne_rechteck_rund(z, ax, ay, w["b"], w["h"], t["radius"], wahr)
-    _uim_farbe(z, t["rand"])
-    ui_zeichne_rechteck_rund(z, ax, ay, w["b"], w["h"], t["radius"], falsch)
+    _uim_farbe(kontext, z, flaeche)
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], wahr)
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
     wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
-        _uim_farbe(z, t["akzent"])
-        ui_zeichne_rechteck_rund(z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, t["radius"] + 2, falsch)
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck_rund(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, t["radius"] + 2, falsch)
     setze schrift auf t["schrift"]
-    setze tb auf ui_zeichne_text_breite(z, w["text"], schrift)
+    setze tb auf _uim_zf_text_breite(kontext, z, w["text"], schrift)
     setze tx auf ax + (w["b"] - tb) / 2
     setze ty auf ay + (w["h"] - schrift) / 2 - 1
     setze farbe auf t["text"]
     wenn w["aktiv"] == falsch:
         setze farbe auf t["text_gedimmt"]
-    _uim_farbe(z, farbe)
-    ui_zeichne_text(z, tx, ty, w["text"], schrift)
+    _uim_farbe(kontext, z, farbe)
+    _uim_zf_text(kontext, z, tx, ty, w["text"], schrift)
     gib_zurück wahr
 
 funktion _uim_z_label(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
-    _uim_farbe(z, t["text"])
-    ui_zeichne_text(z, ox + w["x"], oy + w["y"], w["text"], t["schrift"])
+    _uim_farbe(kontext, z, t["text"])
+    _uim_zf_text(kontext, z, ox + w["x"], oy + w["y"], w["text"], t["schrift"])
     gib_zurück wahr
 
 funktion _uim_z_checkbox(kontext, z, w, ox, oy):
@@ -508,23 +694,23 @@ funktion _uim_z_checkbox(kontext, z, w, ox, oy):
         setze flaeche auf t["flaeche_hover"]
     wenn w["druck"]:
         setze flaeche auf t["flaeche_druck"]
-    _uim_farbe(z, flaeche)
-    ui_zeichne_rechteck_rund(z, ax, ky, kh, kh, 3, wahr)
-    _uim_farbe(z, t["rand"])
-    ui_zeichne_rechteck_rund(z, ax, ky, kh, kh, 3, falsch)
+    _uim_farbe(kontext, z, flaeche)
+    _uim_zf_rechteck_rund(kontext, z, ax, ky, kh, kh, 3, wahr)
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck_rund(kontext, z, ax, ky, kh, kh, 3, falsch)
     wenn w["wert"]:
-        _uim_farbe(z, t["akzent"])
-        ui_zeichne_linie(z, ax + kh * 0.22, ky + kh * 0.52, ax + kh * 0.42, ky + kh * 0.74, 2)
-        ui_zeichne_linie(z, ax + kh * 0.42, ky + kh * 0.74, ax + kh * 0.80, ky + kh * 0.28, 2)
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_linie(kontext, z, ax + kh * 0.22, ky + kh * 0.52, ax + kh * 0.42, ky + kh * 0.74, 2)
+        _uim_zf_linie(kontext, z, ax + kh * 0.42, ky + kh * 0.74, ax + kh * 0.80, ky + kh * 0.28, 2)
     wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
-        _uim_farbe(z, t["akzent"])
-        ui_zeichne_rechteck_rund(z, ax - 2, ky - 2, kh + 4, kh + 4, 5, falsch)
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck_rund(kontext, z, ax - 2, ky - 2, kh + 4, kh + 4, 5, falsch)
     setze farbe auf t["text"]
     wenn w["aktiv"] == falsch:
         setze farbe auf t["text_gedimmt"]
-    _uim_farbe(z, farbe)
+    _uim_farbe(kontext, z, farbe)
     setze ty auf ay + (w["h"] - t["schrift"]) / 2 - 1
-    ui_zeichne_text(z, ax + kh + t["abstand"], ty, w["text"], t["schrift"])
+    _uim_zf_text(kontext, z, ax + kh + t["abstand"], ty, w["text"], t["schrift"])
     gib_zurück wahr
 
 funktion _uim_z_slider(kontext, z, w, ox, oy):
@@ -537,11 +723,11 @@ funktion _uim_z_slider(kontext, z, w, ox, oy):
         setze anteil auf (w["wert"] - w["min"]) / spanne
     setze mitte_y auf ay + w["h"] / 2
     # Track (voll) + gefüllter Teil in Akzent
-    _uim_farbe(z, t["flaeche"])
-    ui_zeichne_rechteck_rund(z, ax, mitte_y - 3, w["b"], 6, 3, wahr)
+    _uim_farbe(kontext, z, t["flaeche"])
+    _uim_zf_rechteck_rund(kontext, z, ax, mitte_y - 3, w["b"], 6, 3, wahr)
     wenn anteil > 0:
-        _uim_farbe(z, t["akzent"])
-        ui_zeichne_rechteck_rund(z, ax, mitte_y - 3, w["b"] * anteil, 6, 3, wahr)
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck_rund(kontext, z, ax, mitte_y - 3, w["b"] * anteil, 6, 3, wahr)
     # Knob
     setze kx auf ax + w["b"] * anteil
     setze radius auf 8
@@ -550,13 +736,13 @@ funktion _uim_z_slider(kontext, z, w, ox, oy):
     setze knopf_farbe auf t["text"]
     wenn w["aktiv"] == falsch:
         setze knopf_farbe auf t["text_gedimmt"]
-    _uim_farbe(z, knopf_farbe)
-    ui_zeichne_kreis(z, kx, mitte_y, radius, wahr)
-    _uim_farbe(z, t["rand"])
-    ui_zeichne_kreis(z, kx, mitte_y, radius, falsch)
+    _uim_farbe(kontext, z, knopf_farbe)
+    _uim_zf_kreis(kontext, z, kx, mitte_y, radius, wahr)
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_kreis(kontext, z, kx, mitte_y, radius, falsch)
     wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
-        _uim_farbe(z, t["akzent"])
-        ui_zeichne_kreis(z, kx, mitte_y, radius + 3, falsch)
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_kreis(kontext, z, kx, mitte_y, radius + 3, falsch)
     gib_zurück wahr
 
 funktion _uim_z_fortschritt(kontext, z, w, ox, oy):
@@ -568,26 +754,26 @@ funktion _uim_z_fortschritt(kontext, z, w, ox, oy):
         setze anteil auf 0
     wenn anteil > 1:
         setze anteil auf 1
-    _uim_farbe(z, t["flaeche"])
-    ui_zeichne_rechteck_rund(z, ax, ay, w["b"], w["h"], t["radius"], wahr)
+    _uim_farbe(kontext, z, t["flaeche"])
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], wahr)
     wenn anteil > 0:
-        _uim_farbe(z, t["akzent"])
-        ui_zeichne_rechteck_rund(z, ax, ay, w["b"] * anteil, w["h"], t["radius"], wahr)
-    _uim_farbe(z, t["rand"])
-    ui_zeichne_rechteck_rund(z, ax, ay, w["b"], w["h"], t["radius"], falsch)
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"] * anteil, w["h"], t["radius"], wahr)
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
     gib_zurück wahr
 
 funktion _uim_z_panel(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
     setze ax auf ox + w["x"]
     setze ay auf oy + w["y"]
-    _uim_farbe(z, t["flaeche"])
-    ui_zeichne_rechteck_rund(z, ax, ay, w["b"], w["h"], t["radius"], wahr)
-    _uim_farbe(z, t["rand"])
-    ui_zeichne_rechteck_rund(z, ax, ay, w["b"], w["h"], t["radius"], falsch)
+    _uim_farbe(kontext, z, t["flaeche"])
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], wahr)
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
     wenn w["text"] != "":
-        _uim_farbe(z, t["text_gedimmt"])
-        ui_zeichne_text(z, ax + t["abstand"], ay + t["abstand"] / 2, w["text"], t["schrift"] - 1)
+        _uim_farbe(kontext, z, t["text_gedimmt"])
+        _uim_zf_text(kontext, z, ax + t["abstand"], ay + t["abstand"] / 2, w["text"], t["schrift"] - 1)
     gib_zurück wahr
 
 funktion _uim_z_liste(kontext, z, w, ox, oy):
@@ -597,9 +783,9 @@ funktion _uim_z_liste(kontext, z, w, ox, oy):
     setze zh auf _uim_zeilenhoehe(kontext)
     setze zeilen auf w["zeilen"]
     setze n auf länge(zeilen)
-    _uim_farbe(z, t["hintergrund"])
-    ui_zeichne_rechteck(z, ax, ay, w["b"], w["h"], wahr)
-    ui_zeichne_clip_setze(z, ax, ay, w["b"], w["h"])
+    _uim_farbe(kontext, z, t["hintergrund"])
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], wahr)
+    _uim_zf_clip_setze(kontext, z, ax, ay, w["b"], w["h"])
     # Virtuelles Rendering: erste sichtbare Zeile ohne floor-Builtin.
     setze start auf 0
     solange (start + 1) * zh <= w["scroll_y"]:
@@ -608,43 +794,43 @@ funktion _uim_z_liste(kontext, z, w, ox, oy):
     setze zy auf ay + start * zh - w["scroll_y"]
     solange i < n und zy < ay + w["h"]:
         wenn i == w["auswahl"]:
-            _uim_farbe(z, t["akzent"])
-            ui_zeichne_rechteck(z, ax, zy, w["b"], zh, wahr)
-            _uim_farbe(z, t["hintergrund"])
+            _uim_farbe(kontext, z, t["akzent"])
+            _uim_zf_rechteck(kontext, z, ax, zy, w["b"], zh, wahr)
+            _uim_farbe(kontext, z, t["hintergrund"])
         sonst:
-            _uim_farbe(z, t["text"])
-        ui_zeichne_text(z, ax + t["abstand"], zy + (zh - t["schrift"]) / 2, zeilen[i], t["schrift"])
+            _uim_farbe(kontext, z, t["text"])
+        _uim_zf_text(kontext, z, ax + t["abstand"], zy + (zh - t["schrift"]) / 2, zeilen[i], t["schrift"])
         setze i auf i + 1
         setze zy auf zy + zh
-    ui_zeichne_clip_loesche(z)
-    _uim_farbe(z, t["rand"])
-    ui_zeichne_rechteck(z, ax, ay, w["b"], w["h"], falsch)
+    _uim_zf_clip_loesche(kontext, z)
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], falsch)
     wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
-        _uim_farbe(z, t["akzent"])
-        ui_zeichne_rechteck(z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
     gib_zurück wahr
 
 # Scrollbereich: Rahmen + Clip öffnen (Kinder zeichnet _uim_zeichne_widget)
 funktion _uim_z_scroll_rahmen(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
-    ui_zeichne_clip_setze(z, ox + w["x"], oy + w["y"], w["b"], w["h"])
+    _uim_zf_clip_setze(kontext, z, ox + w["x"], oy + w["y"], w["b"], w["h"])
     gib_zurück wahr
 
 # Scrollbereich: Clip schliessen + Scrollbar rechts zeichnen
 funktion _uim_z_scroll_leiste(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
-    ui_zeichne_clip_loesche(z)
+    _uim_zf_clip_loesche(kontext, z)
     setze ax auf ox + w["x"]
     setze ay auf oy + w["y"]
-    _uim_farbe(z, t["rand"])
-    ui_zeichne_rechteck(z, ax, ay, w["b"], w["h"], falsch)
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], falsch)
     setze inhalt auf w["inhalt_hoehe"]
     wenn inhalt <= w["h"]:
         gib_zurück wahr
     # Thumb: Groesse und Position proportional.
     setze leiste_x auf ax + w["b"] - 6
-    _uim_farbe(z, t["flaeche"])
-    ui_zeichne_rechteck_rund(z, leiste_x, ay, 5, w["h"], 2, wahr)
+    _uim_farbe(kontext, z, t["flaeche"])
+    _uim_zf_rechteck_rund(kontext, z, leiste_x, ay, 5, w["h"], 2, wahr)
     setze thumb_h auf w["h"] * w["h"] / inhalt
     wenn thumb_h < 16:
         setze thumb_h auf 16
@@ -652,8 +838,8 @@ funktion _uim_z_scroll_leiste(kontext, z, w, ox, oy):
     setze thumb_y auf ay
     wenn max_scroll > 0:
         setze thumb_y auf ay + (w["h"] - thumb_h) * (w["scroll_y"] / max_scroll)
-    _uim_farbe(z, t["text_gedimmt"])
-    ui_zeichne_rechteck_rund(z, leiste_x, thumb_y, 5, thumb_h, 2, wahr)
+    _uim_farbe(kontext, z, t["text_gedimmt"])
+    _uim_zf_rechteck_rund(kontext, z, leiste_x, thumb_y, 5, thumb_h, 2, wahr)
     gib_zurück wahr
 
 # Zentraler rekursiver Zeichner: Container transformieren ihre Kinder.
@@ -689,10 +875,14 @@ funktion _uim_on_zeichne(lw, z):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
+    gib_zurück _uim_kern_zeichne(kontext, z)
+
+funktion _uim_kern_zeichne(kontext, z):
     setze t auf kontext["theme"]
     setze wurzel auf kontext["wurzel"]
-    _uim_farbe(z, t["hintergrund"])
-    ui_zeichne_rechteck(z, 0, 0, wurzel["b"], wurzel["h"], wahr)
+    wenn kontext["hintergrund_zeichnen"]:
+        _uim_farbe(kontext, z, t["hintergrund"])
+        _uim_zf_rechteck(kontext, z, 0, 0, wurzel["b"], wurzel["h"], wahr)
     für w in wurzel["kinder"]:
         _uim_zeichne_widget(kontext, z, w, 0, 0)
     gib_zurück wahr
@@ -706,6 +896,10 @@ funktion uim_wurzel(fenster, x, y, b, h):
     setze kontext auf {}
     kontext["leinwand"] = lw
     kontext["fenster"] = fenster
+    kontext["backend"] = "leinwand"
+    kontext["_win"] = nichts
+    kontext["_farbe"] = [0, 0, 0, 255]
+    kontext["hintergrund_zeichnen"] = wahr
     kontext["theme"] = uim_theme_dunkel()
     kontext["hover"] = nichts
     kontext["druck"] = nichts
@@ -726,18 +920,18 @@ funktion uim_wurzel(fenster, x, y, b, h):
 funktion uim_hinzu(ziel, widget):
     wenn ziel.enthält("wurzel"):
         ziel["wurzel"]["kinder"].hinzufügen(widget)
-        ui_leinwand_anfordern(ziel["leinwand"])
+        _uim_anfordern(ziel)
     sonst:
         ziel["kinder"].hinzufügen(widget)
     gib_zurück widget
 
 funktion uim_theme_setze(kontext, theme):
     kontext["theme"] = theme
-    ui_leinwand_anfordern(kontext["leinwand"])
+    _uim_anfordern(kontext)
     gib_zurück wahr
 
 funktion uim_neuzeichnen(kontext):
-    ui_leinwand_anfordern(kontext["leinwand"])
+    _uim_anfordern(kontext)
     gib_zurück wahr
 
 funktion uim_finde(kontext, id):
@@ -802,7 +996,7 @@ funktion uim_fortschritt_setze(kontext, w, wert):
     wenn wert > 1:
         setze wert auf 1
     w["wert"] = wert
-    ui_leinwand_anfordern(kontext["leinwand"])
+    _uim_anfordern(kontext)
     gib_zurück wahr
 
 funktion uim_slider_setze(kontext, w, wert):
@@ -811,7 +1005,7 @@ funktion uim_slider_setze(kontext, w, wert):
     wenn wert > w["max"]:
         setze wert auf w["max"]
     w["wert"] = wert
-    ui_leinwand_anfordern(kontext["leinwand"])
+    _uim_anfordern(kontext)
     gib_zurück wahr
 
 # ------------------------------------------------------------
@@ -845,3 +1039,56 @@ funktion uim_liste(x, y, b, h, zeilen, on_auswahl):
     w["on_auswahl"] = on_auswahl
     w["fokussierbar"] = wahr
     gib_zurück w
+
+# ------------------------------------------------------------
+# Frame-Backend (UIMOO-6): derselbe Widget-Satz als In-Game-UI.
+# Kein Event-Loop — das Spiel speist Ereignisse per Polling ein und
+# ruft uim_frame_zeichne jeden Tick (Overlay: Hintergrund aus).
+#
+#   setze hud auf uim_frame_wurzel(900, 700)
+#   uim_hinzu(hud, uim_knopf("WEITER", 350, 300, 200, 40, auf_weiter))
+#   # im Spiel-Loop:
+#   uim_frame_maus(hud, mx, my, maus_gedrueckt)
+#   uim_frame_zeichne(hud, win)
+# ------------------------------------------------------------
+
+funktion uim_frame_wurzel(b, h):
+    setze kontext auf {}
+    kontext["leinwand"] = nichts
+    kontext["fenster"] = nichts
+    kontext["backend"] = "frame"
+    kontext["_win"] = nichts
+    kontext["_farbe"] = [0, 0, 0, 255]
+    kontext["hintergrund_zeichnen"] = falsch
+    kontext["theme"] = uim_theme_dunkel()
+    kontext["hover"] = nichts
+    kontext["druck"] = nichts
+    kontext["druck_ox"] = 0
+    kontext["druck_oy"] = 0
+    kontext["fokus"] = nichts
+    kontext["_maus_war"] = falsch
+    kontext["wurzel"] = _uim_basis("wurzel", 0, 0, b, h)
+    gib_zurück kontext
+
+# Pro Spiel-Tick aufrufen: zeichnet den Widget-Baum aufs Fenster.
+funktion uim_frame_zeichne(kontext, win):
+    kontext["_win"] = win
+    gib_zurück _uim_kern_zeichne(kontext, nichts)
+
+# Maus-Polling: Zustand (gedrueckt wahr/falsch) je Tick einspeisen.
+# Erzeugt intern Press-/Release-/Bewegungs-Ereignisse.
+funktion uim_frame_maus(kontext, x, y, gedrueckt):
+    setze war auf kontext["_maus_war"]
+    wenn gedrueckt und war == falsch:
+        kontext["_maus_war"] = wahr
+        gib_zurück _uim_kern_maus(kontext, x, y, 1)
+    wenn gedrueckt == falsch und war:
+        kontext["_maus_war"] = falsch
+        gib_zurück _uim_kern_maus_los(kontext, x, y, 1)
+    gib_zurück _uim_kern_bewegung(kontext, x, y)
+
+funktion uim_frame_taste(kontext, taste, gedrueckt, mod):
+    gib_zurück _uim_kern_taste(kontext, taste, gedrueckt, mod)
+
+funktion uim_frame_rad(kontext, x, y, delta):
+    gib_zurück _uim_kern_rad(kontext, x, y, delta)
