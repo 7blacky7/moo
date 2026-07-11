@@ -91,6 +91,9 @@ HARNESSES=(
 EXTRA_HARNESSES=(
   # capture: KI-MULTI-C1 — injizierte Handle-/Fault-Matrix ohne Hardware.
   "test_capture_asan.c|moo_capture.c moo_capture_camera_stub.c moo_capture_audio_stub.c moo_frame.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"
+  # C2-WIN: portable Windows-Zustandsmaschine mit vollständig injizierten
+  # Media-Foundation-/WASAPI-Operationen; läuft hardwarefrei auf jedem Host.
+  "test_capture_windows_ops_asan.c|moo_capture.c moo_capture_windows.c moo_frame.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   # Native Low-Level-Ops-Fault-Matrizen: echte Backend-Logik, alle OS-/Treiber-
   # Aufrufe injiziert; benoetigen Linklibs nur fuer ungenutzte system_ops-Defaults.
   "test_capture_v4l2_ops_asan.c|moo_capture_v4l2.c moo_capture_audio_stub.c tests/capture_test_stubs.c moo_capture.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_frame.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_nn.c moo_nn_easy.c moo_json.c moo_dataset.c|-lv4l2 -lm"

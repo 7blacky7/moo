@@ -1,7 +1,7 @@
 #include "moo_capture_internal.h"
 
 static MooValue unavailable(void) {
-    MooValue error = moo_error("Mikrofon-Capture ist in diesem Build nicht verfuegbar (Linux + libasound Development-Paket erforderlich)");
+    MooValue error = moo_error("Mikrofon-Capture ist in diesem Build nicht verfuegbar (natives Mikrofon-Backend fuer dieses Zielsystem nicht mitgebaut)");
     moo_throw(error);
     return moo_none();
 }
@@ -10,7 +10,7 @@ bool moo_capture_microphone_open_native(MooMikro* microphone, const char* device
                                         int32_t rate, int32_t channels) {
     (void)microphone; (void)device; (void)rate; (void)channels;
     snprintf(microphone->last_error, sizeof(microphone->last_error),
-             "Mikrofon-Capture ist in diesem Build nicht verfuegbar (Linux + libasound Development-Paket erforderlich)");
+             "Mikrofon-Capture ist in diesem Build nicht verfuegbar (natives Mikrofon-Backend fuer dieses Zielsystem nicht mitgebaut)");
     return false;
 }
 MooValue moo_capture_microphone_read_native(MooMikro* microphone,

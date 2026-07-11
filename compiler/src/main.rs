@@ -974,6 +974,12 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     }
     #[cfg(moo_has_alsa)]
     link_args.push("-lasound".to_string());
+    #[cfg(moo_has_windows_capture)]
+    link_args.extend([
+        "-lmfplat".to_string(), "-lmf".to_string(), "-lmfreadwrite".to_string(),
+        "-lmfuuid".to_string(), "-lole32".to_string(), "-loleaut32".to_string(),
+        "-luuid".to_string(),
+    ]);
 
     // Linker-Script: -T kernel.ld
     if let Some(script) = linker_script {

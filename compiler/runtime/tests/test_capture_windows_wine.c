@@ -1,0 +1,46 @@
+#include "../moo_capture_windows_internal.h"
+#include <stdio.h>
+#include <string.h>
+
+int main(int argc, char **argv) {
+    const MooCaptureWindowsOps *ops = moo_capture_windows_system_ops();
+    char err[256] = {0};
+    int init_only = argc == 2 && strcmp(argv[1], "--init-only") == 0;
+
+    if (!ops->startup(err, sizeof err)) {
+        printf("C2WIN_SMOKE startup=FAIL %s\n", err);
+        return 1;
+    }
+    printf("C2WIN_SMOKE startup=OK\n");
+
+    if (init_only) {
+        ops->shutdown();
+        printf("C2WIN_SMOKE shutdown=OK mode=init-only\n");
+        return 0;
+    }
+
+    MooWinCameraInfo cameras[4];
+    int32_t total = 0;
+    MooWinCaptureResult camera_result =
+        ops->camera_enumerate(cameras, 4, &total, err, sizeof err);
+    printf("C2WIN_SMOKE camera_enumerate=%d total=%d detail=%s\n",
+           (int)camera_result, total, err);
+
+    void *stream = NULL;
+    int32_t rate = 0, channels = 0, period = 0, buffer = 0;
+    err[0] = 0;
+    MooWinCaptureResult audio_result =
+        ops->microphone_open("default", 48000, 1, &stream, &rate, &channels,
+                             &period, &buffer, err, sizeof err);
+    printf("C2WIN_SMOKE wasapi_open=%d rate=%d channels=%d detail=%s\n",
+           (int)audio_result, rate, channels, err);
+    if (stream) {
+        ops->microphone_close(stream);
+    }
+    ops->shutdown();
+
+    return (camera_result >= MOO_WIN_OK && camera_result <= MOO_WIN_ERROR &&
+            audio_result >= MOO_WIN_OK && audio_result <= MOO_WIN_ERROR)
+               ? 0
+               : 2;
+}

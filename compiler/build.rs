@@ -154,31 +154,40 @@ fn main() {
         build.define("MOO_HAS_VULKAN", None);
     }
 
-    // KI-MULTI-C1: native Capture-Backends nur wenn Header UND Linklibs
-    // via pkg-config verfuegbar sind; sonst ABI-identische Stubs bauen.
+    // KI-MULTI-C1/C2: native Capture-Backends target-basiert. Windows nutzt
+    // Media Foundation + WASAPI; Linux bleibt zweistufig pkg-config-gegatet.
     println!("cargo:rustc-check-cfg=cfg(moo_has_v4l2)");
     println!("cargo:rustc-check-cfg=cfg(moo_has_alsa)");
+    println!("cargo:rustc-check-cfg=cfg(moo_has_windows_capture)");
     let target_linux = std::env::var("CARGO_CFG_TARGET_OS")
         .map(|s| s == "linux").unwrap_or(cfg!(target_os = "linux"));
-    let v4l2 = target_linux &&
-        pkg_config::Config::new().probe("libv4l2").is_ok() &&
-        pkg_config::Config::new().probe("libv4lconvert").is_ok();
-    if v4l2 {
-        build.file("runtime/moo_capture_v4l2.c");
-        build.define("MOO_HAS_V4L2", None);
-        println!("cargo:rustc-cfg=moo_has_v4l2");
+    if target_windows {
+        build
+            .file("runtime/moo_capture_windows.c")
+            .file("runtime/moo_capture_windows_system.c")
+            .define("MOO_HAS_WINDOWS_CAPTURE", None);
+        println!("cargo:rustc-cfg=moo_has_windows_capture");
     } else {
-        build.file("runtime/moo_capture_camera_stub.c");
-        println!("cargo:warning=moo capture: libv4l2/libv4lconvert fehlen; Kamera-Stub wird gebaut");
-    }
-    let alsa = target_linux && pkg_config::Config::new().probe("alsa").is_ok();
-    if alsa {
-        build.file("runtime/moo_capture_alsa.c");
-        build.define("MOO_HAS_ALSA", None);
-        println!("cargo:rustc-cfg=moo_has_alsa");
-    } else {
-        build.file("runtime/moo_capture_audio_stub.c");
-        println!("cargo:warning=moo capture: libasound fehlt; Mikrofon-Stub wird gebaut");
+        let v4l2 = target_linux &&
+            pkg_config::Config::new().probe("libv4l2").is_ok() &&
+            pkg_config::Config::new().probe("libv4lconvert").is_ok();
+        if v4l2 {
+            build.file("runtime/moo_capture_v4l2.c");
+            build.define("MOO_HAS_V4L2", None);
+            println!("cargo:rustc-cfg=moo_has_v4l2");
+        } else {
+            build.file("runtime/moo_capture_camera_stub.c");
+            println!("cargo:warning=moo capture: natives Kamera-Backend fuer dieses Ziel nicht verfuegbar; Stub wird gebaut");
+        }
+        let alsa = target_linux && pkg_config::Config::new().probe("alsa").is_ok();
+        if alsa {
+            build.file("runtime/moo_capture_alsa.c");
+            build.define("MOO_HAS_ALSA", None);
+            println!("cargo:rustc-cfg=moo_has_alsa");
+        } else {
+            build.file("runtime/moo_capture_audio_stub.c");
+            println!("cargo:warning=moo capture: natives Mikrofon-Backend fuer dieses Ziel nicht verfuegbar; Stub wird gebaut");
+        }
     }
 
     build.compile("moo_runtime");
@@ -200,6 +209,10 @@ fn main() {
     if target_windows {
         println!("cargo:rustc-link-lib=ws2_32");
         println!("cargo:rustc-link-lib=bcrypt");
+        // C2-WIN: Media Foundation + WASAPI/COM.
+        for lib in ["mfplat", "mf", "mfreadwrite", "mfuuid", "ole32", "oleaut32", "uuid"] {
+            println!("cargo:rustc-link-lib={lib}");
+        }
     }
 
     // SDL2 wird nur von den feature-gated 3D/Grafik-Quellen referenziert.

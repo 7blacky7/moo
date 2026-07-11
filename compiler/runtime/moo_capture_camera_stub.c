@@ -1,7 +1,7 @@
 #include "moo_capture_internal.h"
 
 static MooValue unavailable(void) {
-    MooValue error = moo_error("Kamera-Capture ist in diesem Build nicht verfuegbar (Linux + libv4l2/libv4lconvert Development-Pakete erforderlich)");
+    MooValue error = moo_error("Kamera-Capture ist in diesem Build nicht verfuegbar (natives Kamera-Backend fuer dieses Zielsystem nicht mitgebaut)");
     moo_throw(error);
     return moo_none();
 }
@@ -13,7 +13,7 @@ bool moo_capture_camera_open_native(MooKamera* camera, const char* path,
     (void)camera; (void)path; (void)width; (void)height; (void)fps;
     (void)require_exact;
     snprintf(camera->last_error, sizeof(camera->last_error),
-             "Kamera-Capture ist in diesem Build nicht verfuegbar (Linux + libv4l2/libv4lconvert Development-Pakete erforderlich)");
+             "Kamera-Capture ist in diesem Build nicht verfuegbar (natives Kamera-Backend fuer dieses Zielsystem nicht mitgebaut)");
     return false;
 }
 MooValue moo_capture_camera_frame_native(MooKamera* camera, int32_t timeout_ms) {
