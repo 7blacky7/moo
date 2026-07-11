@@ -10,7 +10,7 @@
 #include <string.h>
 
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 120000
-#define MOO_AUDIO_ELEMENT_MAIN        MOO_AUDIO_ELEMENT_MAIN
+#define MOO_AUDIO_ELEMENT_MAIN kAudioObjectPropertyElementMain
 #else
 #define MOO_AUDIO_ELEMENT_MAIN kAudioObjectPropertyElementMaster
 #endif
