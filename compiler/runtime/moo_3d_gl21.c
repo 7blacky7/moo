@@ -47,6 +47,8 @@ static ChunkSlot g_chunks[MAX_CHUNKS];
 static int g_active_chunk = -1;
 
 static int glfw_initialized = 0;
+/* Globale Transparenz — Single-Context-Annahme wie g_ctx in moo_3d.c. */
+static float gl21_alpha = 1.0f;
 
 // ============================================================
 // Lifecycle
@@ -594,8 +596,6 @@ static void gl21_set_fog_density_f(void* vctx, float density) {
     (void)vctx;
     glFogf(GL_FOG_DENSITY, density);
 }
-/* Globale Transparenz — Single-Context-Annahme wie g_ctx in moo_3d.c. */
-static float gl21_alpha = 1.0f;
 static void gl21_set_alpha(void* vctx, float level) {
     (void)vctx;
     if (level < 0.0f) level = 0.0f;

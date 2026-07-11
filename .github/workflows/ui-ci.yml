@@ -118,6 +118,12 @@ jobs:
             libxml2-devel
           cache-environment: true
 
+      # Stellt VC- und Windows-SDK-Pfade (u.a. ws2_32.lib) auch fuer den
+      # spaeter vom Moo-Compiler gestarteten clang/link.exe-Aufruf bereit.
+      - name: Configure MSVC developer environment
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Install Windows deps (SDL2, sqlite, curl via vcpkg + LLVM env)
         if: matrix.os == 'windows-latest'
         shell: pwsh
