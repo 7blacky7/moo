@@ -678,13 +678,47 @@ static void bw_divs(const MooAgNode* n) {
 // bit-reproduzierbar). Der Index-Tensor inputs[1] bekommt NIE Gradient.
 static void bw_gather(const MooAgNode* n) {
     MooTensor* w = T(n->inputs[0]);
-    const MooTensor* idx = T(n->inputs[1]);
-    const MooTensor* o = T(n->output);
+    MooTensor* idx = T(n->inputs[1]);
+    MooTensor* o = T(n->output);
     if (!w->requires_grad) return;
-    const float* g = o->grad;
-    float* zg = grad_sicherstellen(w);
     int64_t n_idx = idx->size;
     int64_t dim = w->shape[1];
+    int64_t vocab = w->shape[0];
+    bool strikt = moo_ki_gpu_strikt_aktiv();
+    bool resident = (o->grad_valid & MOO_V_DEV) || (idx->valid & MOO_V_DEV);
+    bool gross = dim > 0 && n_idx >= ((1LL << 16) + dim - 1) / dim;
+    bool done = false;
+
+    if (strikt || resident || gross) {
+        moo_tensor_nach_gpu(idx);
+        if ((idx->valid & MOO_V_DEV) && grad_materialisieren_gpu(o)) {
+            int64_t bytes = w->size * (int64_t)sizeof(float);
+            void* delta = moo_ki_gpu_buf_belegen(bytes);
+            if (delta && moo_ki_gpu_scatter_add_res(
+                    o->gpu_grad, idx->gpu_buf, delta,
+                    (int32_t)n_idx, (int32_t)dim, (int32_t)vocab)) {
+                if (grad_materialisieren_gpu(w)) {
+                    if (!moo_ki_gpu_grad_accum_res(w->gpu_grad, delta, w->size)) {
+                        moo_ki_gpu_buf_freigeben(delta);
+                        moo_throw(moo_error("autograd: gather GPU-Grad-Akkumulation fehlgeschlagen"));
+                        return;
+                    }
+                    done = true;
+                }
+            }
+            moo_ki_gpu_buf_freigeben(delta);
+        }
+    }
+    if (!done && strikt) {
+        moo_throw(moo_error("STRIKT: gather-Backward nicht GPU-resident routbar"));
+        return;
+    }
+    if (done) return;
+
+    /* CPU-Fallback materialisiert nur bei tatsächlich gescheitertem GPU-Versuch. */
+    moo_tensor_f32_sichern(idx);
+    const float* g = grad_sicherstellen(o);
+    float* zg = grad_sicherstellen(w);
     for (int64_t i = 0; i < n_idx; i++) {
         int64_t r = (int64_t)idx->data[i];
         for (int64_t d = 0; d < dim; d++)
@@ -693,93 +727,84 @@ static void bw_gather(const MooAgNode* n) {
 }
 
 static void bw_matmul(const MooAgNode* n) {
-    // out[m,p] = a[m,k] @ b[k,p]:  da += g @ b^T ; db += a^T @ g
-    const MooTensor* o = T(n->output);
+    /* out[m,p] = a[m,k] @ b[k,p]: da += g@b^T, db += a^T@g.
+     * KIP-G5 akkumuliert beide reinen Beiträge direkt in gpu_grad. */
+    MooTensor* o = T(n->output);
     MooTensor* a = T(n->inputs[0]);
     MooTensor* b = T(n->inputs[1]);
-    const float* g = o->grad;
     int64_t m = a->shape[0], k = a->shape[1], p = b->shape[1];
-
-    // KIP-G4c Stufe 2 (docs/kip/G4c-production-wiring-plan.md): residenter
-    // Backward-Pfad, analog zu Stufe 1 (Forward-Routing in moo_tensor_ops.c).
-    // Nur wenn BEIDE Inputs Grad brauchen (moo_ki_gpu_matmul_bw_res verlangt
-    // da UND db != NULL, G3d-e-Vertrag) und beide bereits GPU-resident sind
-    // (aus Stufe 1) und die Groesse ueber der Schwelle liegt (gleiche Schwelle
-    // wie Stufe 1, 2^24). da/db sind REINE Beitraege ohne += (wie der CPU-Pfad
-    // unten) — Download + Akkumulation in zg identisch zur bestehenden CPU-
-    // Semantik (I3-Vertrag aus PREFLIGHT be01ac8: der Akkumulator zg bleibt in
-    // diesem Schritt immer CPU-seitig, GPU dient nur als Rechenbeschleuniger
-    // fuer das Delta — kein gemischter CPU/GPU-Akkumulator auf demselben Ziel).
-    // KIP-G4c Stufe 4 (STRIKT-Vertrag): unter STRIKT Groessen-Schwelle ignorieren
-    // und beide Inputs zwangsweise resident machen. STRIKT-Durchsetzung ist hier
-    // bewusst nur fuer den symmetrischen Fall (BEIDE Inputs requires_grad) aktiv
-    // -- das ist die einzige Form, fuer die ein residenter Pfad ueberhaupt
-    // existiert (matmul_bw_res verlangt da UND db, G3d-e). Der einseitige Fall
-    // (nur a ODER b requires_grad) hat noch KEINEN residenten Pfad und bleibt
-    // daher auch unter STRIKT CPU (dokumentierte Luecke, kein stiller Fallback
-    // im symmetrischen Fall).
     bool strikt = moo_ki_gpu_strikt_aktiv();
+    bool irgendein_grad = a->requires_grad || b->requires_grad;
+    if (!irgendein_grad) return;
+
+    int64_t kp = k * p; /* k/p sind int32-Formwerte: Produkt passt in int64. */
+    bool gross = kp >= (1LL << 20) ||
+        (kp > 0 && m >= (((1LL << 20) + kp - 1) / kp));
+    bool resident = (o->grad_valid & MOO_V_DEV) ||
+                    (a->valid & MOO_V_DEV) || (b->valid & MOO_V_DEV);
     bool done = false;
-    bool symmetrisch = a->requires_grad && b->requires_grad;   /* einzige Form mit residentem Pfad */
-    if (symmetrisch &&
-        (strikt || m * k * p >= (1LL << 24))) {
-        if (strikt) { moo_tensor_nach_gpu(a); moo_tensor_nach_gpu(b); }
-        if ((a->valid & MOO_V_DEV) && (b->valid & MOO_V_DEV)) {
-        int64_t obytes = (int64_t)o->size * (int64_t)sizeof(float);
-        int64_t abytes = (int64_t)a->size * (int64_t)sizeof(float);
-        int64_t bbytes = (int64_t)b->size * (int64_t)sizeof(float);
-        void* gbuf = moo_ki_gpu_buf_belegen(obytes);
-        void* dabuf = gbuf ? moo_ki_gpu_buf_belegen(abytes) : NULL;
-        void* dbbuf = dabuf ? moo_ki_gpu_buf_belegen(bbytes) : NULL;
-        float* tmp_a = NULL;
-        float* tmp_b = NULL;
-        if (dbbuf && moo_ki_gpu_upload(gbuf, g, obytes) &&
-            moo_ki_gpu_matmul_bw_res(a->gpu_buf, b->gpu_buf, gbuf, dabuf, dbbuf,
-                                      (int32_t)m, (int32_t)k, (int32_t)p)) {
-            tmp_a = (float*)malloc((size_t)abytes);
-            tmp_b = (float*)malloc((size_t)bbytes);
-            if (tmp_a && tmp_b &&
-                moo_ki_gpu_download(dabuf, tmp_a, abytes) &&
-                moo_ki_gpu_download(dbbuf, tmp_b, bbytes)) {
-                float* zga = grad_sicherstellen(a);
-                for (int64_t i = 0; i < a->size; i++) zga[i] += tmp_a[i];
-                float* zgb = grad_sicherstellen(b);
-                for (int64_t i = 0; i < b->size; i++) zgb[i] += tmp_b[i];
-                done = true;
+
+    if (strikt || resident || gross) {
+        moo_tensor_nach_gpu(a);
+        moo_tensor_nach_gpu(b);
+        if ((a->valid & MOO_V_DEV) && (b->valid & MOO_V_DEV) &&
+            grad_materialisieren_gpu(o)) {
+            int64_t abytes = a->size * (int64_t)sizeof(float);
+            int64_t bbytes = b->size * (int64_t)sizeof(float);
+            void* da = moo_ki_gpu_buf_belegen(abytes);
+            void* db = da ? moo_ki_gpu_buf_belegen(bbytes) : NULL;
+            if (db && moo_ki_gpu_matmul_bw_res(
+                    a->gpu_buf, b->gpu_buf, o->gpu_grad, da, db,
+                    (int32_t)m, (int32_t)k, (int32_t)p)) {
+                bool ready_a = !a->requires_grad || grad_materialisieren_gpu(a);
+                bool ready_b = !b->requires_grad || grad_materialisieren_gpu(b);
+                if (ready_a && ready_b) {
+                    bool ok_a = !a->requires_grad ||
+                        moo_ki_gpu_grad_accum_res(a->gpu_grad, da, a->size);
+                    bool ok_b = !b->requires_grad ||
+                        moo_ki_gpu_grad_accum_res(b->gpu_grad, db, b->size);
+                    if (!ok_a || !ok_b) {
+                        moo_ki_gpu_buf_freigeben(da);
+                        moo_ki_gpu_buf_freigeben(db);
+                        moo_throw(moo_error("autograd: matmul GPU-Grad-Akkumulation fehlgeschlagen"));
+                        return;
+                    }
+                    done = true;
+                }
             }
-        }
-        free(tmp_a);
-        free(tmp_b);
-        moo_ki_gpu_buf_freigeben(gbuf);
-        moo_ki_gpu_buf_freigeben(dabuf);
-        moo_ki_gpu_buf_freigeben(dbbuf);
+            moo_ki_gpu_buf_freigeben(da);
+            moo_ki_gpu_buf_freigeben(db);
         }
     }
 
-    if (!done && strikt && symmetrisch) {
-        moo_throw(moo_error("STRIKT: matmul-Backward nicht GPU-resident routbar (kein Vulkan/Op-Fehler)"));
+    if (!done && strikt) {
+        moo_throw(moo_error("STRIKT: matmul-Backward nicht GPU-resident routbar"));
         return;
     }
-    if (!done) {
-        if (a->requires_grad) {
-            float* zg = grad_sicherstellen(a);
-            for (int64_t i = 0; i < m; i++)
-                for (int64_t j = 0; j < p; j++) {
-                    float gv = g[i * p + j];
-                    const float* brow = b->data + 0;
-                    for (int64_t kk = 0; kk < k; kk++)
-                        zg[i * k + kk] += gv * brow[kk * p + j];
-                }
-        }
-        if (b->requires_grad) {
-            float* zg = grad_sicherstellen(b);
-            for (int64_t kk = 0; kk < k; kk++)
-                for (int64_t i = 0; i < m; i++) {
-                    float av = a->data[i * k + kk];
-                    for (int64_t j = 0; j < p; j++)
-                        zg[kk * p + j] += av * g[i * p + j];
-                }
-        }
+    if (done) return;
+
+    /* Historischer CPU-Pfad bleibt bit-identisch und materialisiert erst jetzt. */
+    moo_tensor_f32_sichern(o);
+    moo_tensor_f32_sichern(a);
+    moo_tensor_f32_sichern(b);
+    const float* g = grad_sicherstellen(o);
+    if (a->requires_grad) {
+        float* zg = grad_sicherstellen(a);
+        for (int64_t i = 0; i < m; i++)
+            for (int64_t j = 0; j < p; j++) {
+                float gv = g[i * p + j];
+                for (int64_t kk = 0; kk < k; kk++)
+                    zg[i * k + kk] += gv * b->data[kk * p + j];
+            }
+    }
+    if (b->requires_grad) {
+        float* zg = grad_sicherstellen(b);
+        for (int64_t kk = 0; kk < k; kk++)
+            for (int64_t i = 0; i < m; i++) {
+                float av = a->data[i * k + kk];
+                for (int64_t j = 0; j < p; j++)
+                    zg[kk * p + j] += av * g[i * p + j];
+            }
     }
 }
 
@@ -1026,7 +1051,7 @@ static void bw_norm_kern(const MooAgNode* n, int32_t normop) {
     float* buf = (float*)malloc((size_t)o->size * sizeof(float));
     if (!buf) { moo_throw(moo_error("autograd: Speicher voll")); return; }
     bool done = false;
-    if (strikt || o->size >= (1LL << 20)) {
+    if (strikt || o->size >= MOO_KI_NORM_FUSED_GPU_MIN_ELEMENTS) {
         done = gpu_norm_bw_kontribution(normop, a, g, rows, cols, eps, buf);
     }
     if (!done && strikt) {
@@ -1232,9 +1257,11 @@ MooValue moo_tensor_rueckwaerts(MooValue loss) {
          * GPU-only Aktivierungen/Gradienten nicht vor dem residenten Versuch
          * herunterladen. Alle anderen Ops behalten den historischen CPU-
          * Sicherungsvertrag unveraendert. */
-        bool bildop = strcmp(n->op->name, "im2col") == 0 ||
-                      strcmp(n->op->name, "pooling") == 0;
-        if (!bildop) {
+        bool eigener_gpu_trichter = strcmp(n->op->name, "im2col") == 0 ||
+                                  strcmp(n->op->name, "pooling") == 0 ||
+                                  strcmp(n->op->name, "matmul") == 0 ||
+                                  strcmp(n->op->name, "gather") == 0;
+        if (!eigener_gpu_trichter) {
             moo_tensor_f32_sichern(out);
             grad_sicherstellen(out);
             for (int32_t k = 0; k < n->n_in; k++)

@@ -41,7 +41,7 @@ echo "== KIP-G4c Gate =="
 # ----------------------------------------------------------------
 echo "[1] CPU-Default (run_all GPU-frei)"
 if [ -f "$ROOT/compiler/tests/run_all.sh" ]; then
-    if ( cd "$ROOT/compiler/tests" && MOO_KI_GPU=0 bash run_all.sh ) > /tmp/g4c_runall.log 2>&1; then
+    if ( cd "$ROOT" && MOO_KI_GPU=0 mise run test-compiler ) > /tmp/g4c_runall.log 2>&1; then
         pass "run_all GPU-frei gruen (Default-Pfad unveraendert)"
     else
         fail "run_all GPU-frei ROT — siehe /tmp/g4c_runall.log"

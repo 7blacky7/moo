@@ -21,6 +21,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* KIP-G5: 4070-Ti-Mikrobenchmark: bei 2^20 nur 0.65x, ab 2^22 1.24x.
+ * STRIKT ignoriert diese reine Performance-Schwelle weiterhin. */
+#define MOO_KI_NORM_FUSED_GPU_MIN_ELEMENTS (1LL << 22)
+
 /* === KIP-G3d-a: Op-Codes fuer unaere/Skalar/Aktivierungs-Ops ===
  * Von unary_fwd.comp UND unary_bw.comp geteilt (gleiche Codes). Die CPU-
  * Referenzsemantik steht in moo_tensor_ops.c (u_x / ews_op / pow) bzw.

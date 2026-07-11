@@ -816,7 +816,7 @@ static MooValue norm_kern_impl(MooValue av, int32_t normop, const char* opname, 
     bool strikt = moo_ki_gpu_strikt_aktiv();
     bool done = false;
     int64_t total = rows * cols;
-    if (strikt || total >= (1LL << 20)) {
+    if (strikt || total >= MOO_KI_NORM_FUSED_GPU_MIN_ELEMENTS) {
         moo_tensor_nach_gpu(a);
         if (a->valid & MOO_V_DEV) {
             if (!out->gpu_buf)

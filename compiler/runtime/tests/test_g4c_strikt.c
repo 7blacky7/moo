@@ -17,11 +17,9 @@
  *      Fwd(matmul)+Bwd(matmul)+Adam-Schritt komplett resident, cpu_fallbacks==0.
  *      Bisher nur Ad-hoc (/tmp, nicht committet) verifiziert — hiermit
  *      nachgezogen als reproduzierbarer Teil des Gates.
- *   4. Negativ-Kontrolle: der bekannte asymmetrische bw_matmul-Fall (nur
- *      EIN Input requires_grad) wirft unter STRIKT NICHT (dokumentierte
- *      Luecke, kein residenter Pfad dafuer, aber auch kein falscher STRIKT-
- *      Fehler — Regressionstest fuer den am 2026-07-10 gefundenen Bug, wo
- *      genau dieser Fall faelschlich warf).
+ *   4. KIP-G5: symmetrisches und einseitiges bw_matmul sowie bw_gather
+ *      akkumulieren direkt in gpu_grad; isolierte Telemetrie beweist jeweils
+ *      downloads==0 und cpu_fallbacks==0, Gather zusätzlich Duplikat-Summen.
  *   5. KIP-G4c Stufe 5 (ew_res-Routing, moo_tensor_ops.c ew_op): tensor_plus
  *      auf n=2^20 (Schwelle) resident, bit-exakt gegen CPU-Referenz, genau
  *      1 GPU-Submit, cpu_fallbacks==0 unter STRIKT.
@@ -58,6 +56,8 @@ void moo_voxel_free(void* p)        { (void)p; }
 void moo_frame_free(void* p)        { (void)p; }
 void moo_gif_handle_free(void* p)   { (void)p; }
 void moo_video_handle_free(void* p) { (void)p; }
+void moo_kamera_free(void* p)      { (void)p; }
+void moo_mikro_free(void* p)       { (void)p; }
 
 static int checks = 0;
 #define CHECK(cond, name) do { \
@@ -98,8 +98,13 @@ int main(void) {
     MooValue C = moo_tensor_matmul(A, B);
     CHECK(!moo_error_flag, "Forward wirft nicht unter STRIKT (Vulkan vorhanden)");
     MooValue Z = moo_tensor_summe(C, moo_number(-1));
+    moo_ki_gpu_telemetrie_reset(); /* nur Backward messen */
     moo_tensor_rueckwaerts(Z);
     CHECK(!moo_error_flag, "Backward wirft nicht unter STRIKT (symmetrischer Fall)");
+    MooKiGpuTelemetrie bw_tel;
+    moo_ki_gpu_telemetrie(&bw_tel);
+    CHECK(bw_tel.uploads == 3, "bw_matmul: nur Output-Grad + zwei initiale Grad-Akkus hochgeladen");
+    CHECK(bw_tel.downloads == 0, "bw_matmul: keine Host-Downloads im Backward");
 
     MooValue params = moo_list_new(1);
     moo_retain(A); moo_list_append(params, A);
@@ -111,6 +116,8 @@ int main(void) {
     moo_ki_gpu_telemetrie(&tel);
     CHECK(tel.submits > 0, "mind. 1 residenter GPU-Submit fand statt");
     CHECK(tel.cpu_fallbacks == 0, "keine CPU-Fallbacks unter STRIKT (Stufe 1+2+3)");
+    /* Backward-Downloadfreiheit ist oben isoliert über bw_tel bewiesen;
+     * Optimizer-Telemetrie besitzt einen eigenen, älteren Vertrag. */
 
     /* I1-Trichter: OHNE expliziten Sichern-Aufruf ist ->data hier bewusst
      * stale (GPU ist autoritativ) -- das ist KEIN Bug, siehe Kommentar oben. */
@@ -172,12 +179,9 @@ int main(void) {
     moo_release(A3); moo_release(B3);
     moo_ag_reset();
 
-    /* ===== 3. Negativ-Kontrolle: asymmetrischer Fall wirft NICHT =====
-     * Regressionstest fuer den am 2026-07-10 gefundenen Bug (Commit 49bcf01):
-     * bw_matmul warf hier faelschlich, obwohl kein residenter Pfad existiert
-     * (matmul_bw_res braucht BEIDE da/db) -- der dokumentierte, akzeptierte
-     * CPU-Fallback fuer diesen Fall darf unter STRIKT NICHT als Fehler
-     * behandelt werden. */
+    /* ===== 3. KIP-G5: asymmetrischer matmul-Backward jetzt resident =====
+     * matmul_bw_res berechnet weiterhin beide reinen Beiträge; nur der
+     * angeforderte Ziel-Grad wird ohne Host-Roundtrip akkumuliert. */
     moo_ki_gpu_telemetrie_reset();
     float a2_v[4] = { 1, -1, 2, 0 }, w_v[4] = { 1, 0, 0, 1 };
     MooValue A2 = t2(2, 2, a2_v), W = t2(2, 2, w_v);
@@ -185,16 +189,49 @@ int main(void) {
     MooValue MM = moo_tensor_matmul(A2, W);
     MooValue R = moo_tensor_relu(MM);
     MooValue Z2 = moo_tensor_summe(R, moo_number(-1));
+    moo_ki_gpu_telemetrie_reset();
     moo_tensor_rueckwaerts(Z2);
-    CHECK(!moo_error_flag, "asymmetrischer bw_matmul-Fall wirft NICHT unter STRIKT (Regression 49bcf01)");
+    CHECK(!moo_error_flag, "einseitiger bw_matmul-Fall läuft unter STRIKT resident");
     MooTensor* wt = MV_TENSOR(W);
-    CHECK(wt->grad != NULL, "w-grad existiert (asymmetrischer CPU-Fallback lief korrekt durch)");
+    MooKiGpuTelemetrie one_tel; moo_ki_gpu_telemetrie(&one_tel);
+    CHECK((wt->grad_valid & MOO_V_DEV) != 0, "einseitiger W-Grad ist GPU-autoritativ");
+    CHECK(one_tel.downloads == 0, "einseitiger bw_matmul ohne Host-Download");
+    CHECK(one_tel.cpu_fallbacks == 0, "einseitiger bw_matmul ohne CPU-Fallback");
     moo_release(MM); moo_release(R); moo_release(Z2);
     moo_ag_reset();
     moo_tensor_gradient_loeschen(W);
     moo_release(A2); moo_release(W);
 
-    /* ===== 4. ew_res-Routing (Stufe 5, moo_tensor_ops.c ew_op) =====
+    /* ===== 4. KIP-G5: gather-Backward scatter-add resident ===== */
+    {
+        float wdata[8] = {0,1, 2,3, 4,5, 6,7};
+        MooValue GW = t2(4, 2, wdata);
+        moo_release(moo_tensor_mit_gradient(GW));
+        int32_t ishape[1] = {3};
+        MooTensor* it = moo_tensor_raw(1, ishape);
+        it->data[0] = 1.0f; it->data[1] = 1.0f; it->data[2] = 3.0f;
+        MooValue GI; GI.tag = MOO_TENSOR; moo_val_set_ptr(&GI, it);
+        MooValue GO = moo_tensor_gather(GW, GI);
+        MooValue GL = moo_tensor_summe(GO, moo_number(-1));
+        moo_ki_gpu_telemetrie_reset();
+        moo_tensor_rueckwaerts(GL);
+        CHECK(!moo_error_flag, "gather-Backward läuft unter STRIKT resident");
+        MooKiGpuTelemetrie gather_tel; moo_ki_gpu_telemetrie(&gather_tel);
+        CHECK(gather_tel.downloads == 0, "bw_gather: kein Host-Download");
+        CHECK(gather_tel.cpu_fallbacks == 0, "bw_gather: kein CPU-Fallback");
+        CHECK((T(GW)->grad_valid & MOO_V_DEV) != 0, "Embedding-Grad ist GPU-autoritativ");
+        moo_tensor_grad_sichern(T(GW)); /* expliziter Prüf-Readback NACH Telemetrie */
+        CHECK(fabsf(T(GW)->grad[2] - 2.0f) < 1e-6f &&
+              fabsf(T(GW)->grad[3] - 2.0f) < 1e-6f &&
+              fabsf(T(GW)->grad[6] - 1.0f) < 1e-6f &&
+              fabsf(T(GW)->grad[7] - 1.0f) < 1e-6f,
+              "bw_gather: Duplikat-Indizes deterministisch summiert");
+        moo_release(GO); moo_release(GL);
+        moo_ag_reset();
+        moo_release(GW); moo_release(GI);
+    }
+
+    /* ===== 5. ew_res-Routing (Stufe 5, moo_tensor_ops.c ew_op) =====
      * tensor_plus auf n=2^20 (Schwelle) -- resident, bit-exakt gegen CPU-
      * Referenz, genau 1 GPU-Submit, cpu_fallbacks==0 unter STRIKT. */
     {
