@@ -13,9 +13,13 @@ fn main() {
 
     // P013: Target-OS korrekt ermitteln. In build.rs ist cfg!(target_os) das
     // HOST-OS des Build-Rechners; fuer Cross-Builds zaehlt CARGO_CFG_TARGET_OS.
-    let target_windows = std::env::var("CARGO_CFG_TARGET_OS")
-        .map(|s| s == "windows")
-        .unwrap_or(cfg!(target_os = "windows"));
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_else(|_| {
+        if cfg!(target_os = "windows") { "windows".into() }
+        else if cfg!(target_os = "macos") { "macos".into() }
+        else { "linux".into() }
+    });
+    let target_windows = target_os == "windows";
+    let target_macos = target_os == "macos";
 
     // ========================================================================
     // Kern-Runtime (OS-neutral)
@@ -159,6 +163,7 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(moo_has_v4l2)");
     println!("cargo:rustc-check-cfg=cfg(moo_has_alsa)");
     println!("cargo:rustc-check-cfg=cfg(moo_has_windows_capture)");
+    println!("cargo:rustc-check-cfg=cfg(moo_has_macos_capture)");
     let target_linux = std::env::var("CARGO_CFG_TARGET_OS")
         .map(|s| s == "linux").unwrap_or(cfg!(target_os = "linux"));
     if target_windows {
@@ -167,6 +172,13 @@ fn main() {
             .file("runtime/moo_capture_windows_system.c")
             .define("MOO_HAS_WINDOWS_CAPTURE", None);
         println!("cargo:rustc-cfg=moo_has_windows_capture");
+    } else if target_macos {
+        build
+            .file("runtime/moo_capture_pull.c")
+            .file("runtime/moo_capture_macos_system.m")
+            .flag("-fobjc-arc")
+            .define("MOO_HAS_MACOS_CAPTURE", None);
+        println!("cargo:rustc-cfg=moo_has_macos_capture");
     } else {
         let v4l2 = target_linux &&
             pkg_config::Config::new().probe("libv4l2").is_ok() &&
@@ -206,6 +218,12 @@ fn main() {
 
     // P013: Winsock2 fuer moo_net.c/moo_web.c + bcrypt fuer moo_crypto.c
     // (BCryptGenRandom) — nur Windows.
+    if target_macos {
+        for framework in ["AVFoundation", "CoreMedia", "CoreVideo", "CoreAudio", "AudioToolbox", "Foundation"] {
+            println!("cargo:rustc-link-lib=framework={framework}");
+        }
+        println!("cargo:rustc-link-lib=objc");
+    }
     if target_windows {
         println!("cargo:rustc-link-lib=ws2_32");
         println!("cargo:rustc-link-lib=bcrypt");

@@ -980,6 +980,15 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         "-lmfuuid".to_string(), "-lole32".to_string(), "-loleaut32".to_string(),
         "-luuid".to_string(),
     ]);
+    #[cfg(moo_has_macos_capture)]
+    {
+        for framework in ["AVFoundation", "CoreMedia", "CoreVideo", "CoreAudio", "AudioToolbox", "Foundation"] {
+            link_args.push("-framework".to_string());
+            link_args.push(framework.to_string());
+        }
+        link_args.push("-lobjc".to_string());
+        link_args.push(format!("-Wl,-sectcreate,__TEXT,__info_plist,{}/runtime/moo_capture_macos_info.plist", env!("CARGO_MANIFEST_DIR")));
+    }
 
     // Linker-Script: -T kernel.ld
     if let Some(script) = linker_script {

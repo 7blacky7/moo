@@ -63,7 +63,7 @@ int main(void){
  MooValue fr=moo_capture_camera_frame_native(&c,50);CK(fr.tag==MOO_FRAME,"Latest-Frame geliefert");
  MooFrame*f=MV_FRAME(fr);CK(f->pixels[0]==3&&f->pixels[1]==2&&f->pixels[2]==30&&releases==2,"Latest + BGRA->RGBA + alle Pakete released");moo_release(fr);
  wait_result=MOO_PULL_TIMEOUT;MooValue no=moo_capture_camera_frame_native(&c,0);CK(moo_error_flag&&no.tag==MOO_NONE,"timeout=0 definiert");moo_capture_camera_close_native(&c);CK(cam_closes>0&&c.backend==NULL,"Kamera Cleanup idempotent");
- reset();MooMikro m={.refcount=1,.state=MOO_CAPTURE_OPEN};CK(moo_capture_microphone_open_native(&m,"default",48000,2),"WASAPI open");
+ reset();MooMikro m={.refcount=1,.state=MOO_CAPTURE_OPEN};CK(moo_capture_microphone_open_native(&m,"default",48000,2),"Mikrofon open");
  MooValue ar=moo_capture_microphone_read_native(&m,3,50);CK(ar.tag==MOO_DICT,"Audio exact-block Dict");
  MooValue dv=moo_dict_get(ar,moo_string_new("daten"));MooTensor*t=MV_TENSOR(dv);
  CK(t->size==3&&fabsf(t->data[0]-2)<1e-6&&fabsf(t->data[1]-3)<1e-6&&fabsf(t->data[2]-6)<1e-6,"Stereo-Downmix + Teildaten");
@@ -74,5 +74,5 @@ int main(void){
  CK(ar.tag==MOO_DICT&&recover_count==1,"Recovery begrenzt und danach erfolgreich");moo_release(ar);
  moo_capture_microphone_close_native(&m);CK(mic_closes>0&&m.backend==NULL,"Mikro Cleanup");
  CK(startups==shutdowns,"Startup/Shutdown bilanziert");
- printf("%s C2-WIN Fault-Matrix (%d)\n",fails?"FAIL":"PASS",fails);return fails?1:0;
+ printf("%s Capture-Pull Fault-Matrix (%d)\n",fails?"FAIL":"PASS",fails);return fails?1:0;
 }

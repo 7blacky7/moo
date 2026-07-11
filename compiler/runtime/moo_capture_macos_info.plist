@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>org.moolang.program</string>
+  <key>CFBundleName</key>
+  <string>moo program</string>
+  <key>NSCameraUsageDescription</key>
+  <string>Dieses moo-Programm verwendet die Kamera für angeforderte Capture-Funktionen.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Dieses moo-Programm verwendet das Mikrofon für angeforderte Capture-Funktionen.</string>
+</dict>
+</plist>

@@ -38,8 +38,8 @@ typedef struct {
     void* token;
 } MooPullAudioPacket;
 
-/* Dünne Systemgrenze. Die Produktionsimplementierung lebt in
- * moo_capture_windows_system.c; Tests injizieren eine vollständige Fake-Tabelle.
+/* Dünne Systemgrenze. Die Produktionsimplementierungen leben in den
+ * target-spezifischen *_system-Dateien; Tests injizieren eine vollständige Fake-Tabelle.
  * Jeder erfolgreich gelieferte Frame/Audio-Puffer muss exakt einmal über die
  * passende release-Funktion zurückgegeben werden. */
 typedef struct {
