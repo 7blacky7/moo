@@ -1,0 +1,79 @@
+# ============================================================
+# ui_tray_lifecycle_test.moo — P015-L1
+#
+# Hält ein echtes Tray aktiv und ruft den zugehörigen Fenster-Callback
+# wiederholt auf. Nach jedem erneuten Anzeigen wird ein stabilisierter
+# PNG+JSON-Frame aufgenommen. Der Runner verlangt für diese Sequenz
+# exakt konstante Fenstermaße.
+# ============================================================
+
+importiere ui
+importiere ui_layout
+
+setze g auf {}
+setze FB auf 460
+setze FH auf 280
+
+setze g["fenster"] auf ui_fenster("Tray-Lifecycle-Test", FB, FH, 0, nichts)
+setze haupt auf ui_spalte(g["fenster"], 0, 0, FB, FH)
+ui_layout_padding(haupt, 14, 14, 14, 14)
+ui_layout_abstand(haupt, 8)
+setze g["titel"] auf ui_layout_label(haupt, "Tray-Fenster", {"hoehe": 26, "fill_x": wahr})
+setze g["status"] auf ui_layout_label(haupt, "Noch nicht geöffnet", {"fill_x": wahr, "gewicht": 1, "fill_y": wahr})
+setze g["knopf"] auf ui_layout_knopf(haupt, "OK", nichts, {"hoehe": 32, "fill_x": wahr})
+ui_layout_neu_berechnen(haupt)
+
+ui_widget_id_setze(g["fenster"], "root")
+ui_widget_id_setze(g["titel"], "titel")
+ui_widget_id_setze(g["status"], "status")
+ui_widget_id_setze(g["knopf"], "ok")
+
+setze g["aufrufe"] auf 0
+setze g["fertig"] auf falsch
+setze g["tray"] auf tray_create("Moo Tray Lifecycle", "application-x-executable")
+
+funktion oeffne_aus_tray():
+    setze g["aufrufe"] auf g["aufrufe"] + 1
+    ui_label_setze(g["status"], "Tray-Aufruf " + text(g["aufrufe"]))
+    ui_zeige_nebenbei(g["fenster"])
+    ui_test_warte(30)
+    ui_test_pump()
+
+tray_menu_add(g["tray"], "Fenster öffnen", oeffne_aus_tray)
+
+wenn datei_existiert("beispiele/snapshots/tray_lifecycle") != wahr:
+    datei_mkdir("beispiele/snapshots/tray_lifecycle")
+
+funktion lauf_sequenz():
+    setze i auf 0
+    solange i < 5:
+        oeffne_aus_tray()
+        setze nr auf text(i + 1001)
+        setze nr auf nr.teilstring(1, länge(nr))
+        setze basis auf "beispiele/snapshots/tray_lifecycle/frame_" + nr
+        setze aktion auf {}
+        setze aktion["action"] auf "frame"
+        setze aktion["target"] auf basis
+        setze ok auf ui_test_frame(g["fenster"], basis, aktion)
+        wenn ok != wahr:
+            zeige "Snapshot fehlgeschlagen: " + basis
+            tray_aktiv(g["tray"], falsch)
+            ui_beenden()
+            beende(1)
+        setze i auf i + 1
+
+    setze g["fertig"] auf wahr
+    tray_aktiv(g["tray"], falsch)
+    ui_beenden()
+
+ui_zeige_nebenbei(g["fenster"])
+ui_timer_hinzu(300, lauf_sequenz)
+ui_laufen()
+
+wenn g["fertig"] == wahr:
+    wenn g["aufrufe"] == 5:
+        zeige "=== TRAY-LIFECYCLE-TEST OK ==="
+        beende(0)
+
+zeige "=== TRAY-LIFECYCLE-TEST FEHLER ==="
+beende(1)

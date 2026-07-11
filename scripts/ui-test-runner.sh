@@ -28,7 +28,7 @@ cd "$ROOT"
 
 SNAP_ROOT="beispiele/snapshots"
 REPORT="$SNAP_ROOT/test_report.json"
-TESTS=(layout table binding shortcuts canvas)
+TESTS=(layout table binding shortcuts canvas tray_lifecycle)
 
 mkdir -p "$SNAP_ROOT"
 for t in "${TESTS[@]}"; do
@@ -168,6 +168,10 @@ runaway = 0
 if len(sizes) >= 3 and all(w > 0 and h > 0 for w, h in sizes):
     areas = [w * h for w, h in sizes]
     if all(b > a for a, b in zip(areas, areas[1:])):
+        runaway = 1
+    # Der historische Tray-Bug war situationsabhängiges Expandieren. Für
+    # diesen gezielten Lifecycle-Test ist daher jede Größenabweichung rot.
+    if os.path.basename(sys.argv[1]) == "tray_lifecycle" and len(set(sizes)) != 1:
         runaway = 1
 print(changes, stale, runaway)
 PY
