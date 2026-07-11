@@ -929,9 +929,11 @@ MooValue moo_tensor_im2col(MooValue xv, MooValue packedv) {
     MooTensor* out = moo_tensor_raw(2, oshape);
     if (!out) return moo_none();
     bool strikt = moo_ki_gpu_strikt_aktiv(), done = false;
-    /* 2^18 Elemente: konservativer Startwert; Hardware-Gate kalibriert ihn.
+    /* 2^16 Elemente: auf 4070 Ti ist b=1, 28x28x16, k=3 bereits 6.31x
+     * schneller (V2b-Benchmark); kleinere Formen bleiben CPU, sofern die
+     * Eingabe nicht ohnehin resident ist.
      * Bereits residente Eingaben bleiben unabhaengig von der Groesse resident. */
-    if (strikt || (x->valid & MOO_V_DEV) || out->size >= (1LL << 18)) {
+    if (strikt || (x->valid & MOO_V_DEV) || out->size >= (1LL << 16)) {
         moo_tensor_nach_gpu(x);
         out->gpu_buf = moo_ki_gpu_buf_belegen((int64_t)out->size * (int64_t)sizeof(float));
         if ((x->valid & MOO_V_DEV) && out->gpu_buf &&
@@ -1001,7 +1003,7 @@ MooValue moo_tensor_pool(MooValue xv, MooValue packedv) {
     MooTensor* out = moo_tensor_raw(4, oshape);
     if (!out) return moo_none();
     bool strikt = moo_ki_gpu_strikt_aktiv(), done = false;
-    if (strikt || (x->valid & MOO_V_DEV) || out->size >= (1LL << 18)) {
+    if (strikt || (x->valid & MOO_V_DEV) || out->size >= (1LL << 16)) {
         moo_tensor_nach_gpu(x);
         out->gpu_buf=moo_ki_gpu_buf_belegen((int64_t)out->size*(int64_t)sizeof(float));
         if ((x->valid&MOO_V_DEV) && out->gpu_buf &&

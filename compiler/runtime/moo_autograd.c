@@ -1096,7 +1096,7 @@ static void bw_im2col(const MooAgNode* n) {
     int32_t stride=(int32_t)((p>>16)&0xFFu),pad=(int32_t)((p>>24)&0xFFu);
     int32_t b=x->shape[0],h=x->shape[1],w=x->shape[2],c=x->shape[3];
     bool strikt=moo_ki_gpu_strikt_aktiv(),done=false,tmpg=false;
-    if(strikt||(o->grad_valid&MOO_V_DEV)||o->size>=(1LL<<18)){
+    if(strikt||(o->grad_valid&MOO_V_DEV)||o->size>=(1LL<<16)){
         void* gbuf=bild_grad_quelle_gpu(o,&tmpg);
         void* dxbuf=gbuf?moo_ki_gpu_buf_belegen((int64_t)x->size*(int64_t)sizeof(float)):NULL;
         if(dxbuf&&grad_materialisieren_gpu(x)&&
@@ -1132,7 +1132,7 @@ static void bw_pool(const MooAgNode* n) {
     int32_t g=(int32_t)((p>>8)&0xFFu),s=(int32_t)((p>>16)&0xFFu);
     int32_t b=x->shape[0],h=x->shape[1],w=x->shape[2],c=x->shape[3];
     bool strikt=moo_ki_gpu_strikt_aktiv(),done=false,tmpg=false;
-    if(strikt||(x->valid&MOO_V_DEV)||(o->grad_valid&MOO_V_DEV)||o->size>=(1LL<<18)){
+    if(strikt||(x->valid&MOO_V_DEV)||(o->grad_valid&MOO_V_DEV)||o->size>=(1LL<<16)){
         moo_tensor_nach_gpu(x);void* gbuf=bild_grad_quelle_gpu(o,&tmpg);
         void* dxbuf=gbuf?moo_ki_gpu_buf_belegen((int64_t)x->size*(int64_t)sizeof(float)):NULL;
         if((x->valid&MOO_V_DEV)&&dxbuf&&grad_materialisieren_gpu(x)&&
