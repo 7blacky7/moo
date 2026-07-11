@@ -208,7 +208,14 @@ jobs:
           echo "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
           echo "INCLUDE=$condaPrefix\Library\include;$vcpkgRoot\include;$env:INCLUDE" >> $env:GITHUB_ENV
           echo "LIB=$condaPrefix\Library\lib;$vcpkgRoot\lib;$env:LIB" >> $env:GITHUB_ENV
-          echo "PATH=$condaPrefix\Library\bin;$condaPrefix\Scripts;$vcpkgRoot\bin;$env:PATH" >> $env:GITHUB_ENV
+
+          # Git for Windows bringt ebenfalls eine link.exe mit (GNU coreutils).
+          # Cargo und clang muessen zwingend den MSVC-Linker davor finden.
+          $msvcBin = Join-Path $env:VCToolsInstallDir "bin\HostX64\x64"
+          $msvcLink = Join-Path $msvcBin "link.exe"
+          if (!(Test-Path $msvcLink)) { throw "MSVC link.exe nicht gefunden: $msvcLink" }
+          echo "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$msvcLink" >> $env:GITHUB_ENV
+          echo "PATH=$condaPrefix\Library\bin;$condaPrefix\Scripts;$vcpkgRoot\bin;$msvcBin;$env:PATH" >> $env:GITHUB_ENV
 
       - name: Install macOS deps (LLVM, SDL2, sqlite, curl)
         if: matrix.os == 'macos-latest'
