@@ -687,9 +687,12 @@ static void bw_gather(const MooAgNode* n) {
     bool strikt = moo_ki_gpu_strikt_aktiv();
     bool resident = (o->grad_valid & MOO_V_DEV) || (idx->valid & MOO_V_DEV);
     bool gross = dim > 0 && n_idx >= ((1LL << 16) + dim - 1) / dim;
+    bool gpu_shape = n_idx >= 0 && n_idx <= INT32_MAX &&
+                     dim > 0 && dim <= INT32_MAX &&
+                     vocab > 0 && vocab <= INT32_MAX;
     bool done = false;
 
-    if (strikt || resident || gross) {
+    if (gpu_shape && (strikt || resident || gross)) {
         moo_tensor_nach_gpu(idx);
         if ((idx->valid & MOO_V_DEV) && grad_materialisieren_gpu(o)) {
             int64_t bytes = w->size * (int64_t)sizeof(float);
@@ -710,7 +713,9 @@ static void bw_gather(const MooAgNode* n) {
         }
     }
     if (!done && strikt) {
-        moo_throw(moo_error("STRIKT: gather-Backward nicht GPU-resident routbar"));
+        moo_throw(moo_error(gpu_shape
+            ? "STRIKT: gather-Backward nicht GPU-resident routbar"
+            : "STRIKT: gather-Backward-Form ueberschreitet int32-GPU-Grenzen"));
         return;
     }
     if (done) return;
