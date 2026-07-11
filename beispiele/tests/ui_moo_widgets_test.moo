@@ -1,0 +1,65 @@
+# ============================================================
+# beispiele/tests/ui_moo_widgets_test.moo — UIMOO-3 Widget-Test
+#
+# Headless über test_klick_xy (Press+Release):
+#   Checkbox: Klick toggelt an, zweiter Klick toggelt aus,
+#             on_wechsel feuert 2x mit korrekten Werten.
+#   Slider 0..100 (x=20, b=200): Klick bei 75% -> wert ~75
+#             (Toleranz ±3 wegen Pixel-Rundung), on_wechsel feuert.
+#   Fortschritt: uim_fortschritt_setze klemmt auf 0..1.
+# Marker: UIMOO3-WIDGETS-OK
+# ============================================================
+
+importiere ui
+importiere ui_moo
+
+setze g auf {}
+g["cb_feuer"] = 0
+g["cb_letzter"] = falsch
+g["sl_feuer"] = 0
+
+funktion cb_wechsel(w, wert):
+    g["cb_feuer"] = g["cb_feuer"] + 1
+    g["cb_letzter"] = wert
+    gib_zurück wahr
+
+funktion sl_wechsel(w, wert):
+    g["sl_feuer"] = g["sl_feuer"] + 1
+    gib_zurück wahr
+
+funktion pruefe():
+    # Leinwand-Offset: 10,10. Checkbox bei (20,20) 160x24 -> Kasten links.
+    ui_test_klick_xy(g["hFenster"], 10 + 30, 10 + 32)
+    ui_test_pump()
+    setze chk_an auf g["chk"]["wert"] == wahr
+    ui_test_klick_xy(g["hFenster"], 10 + 30, 10 + 32)
+    ui_test_pump()
+    setze chk_aus auf g["chk"]["wert"] == falsch
+
+    # Slider (20,70) 200x24, Bereich 0..100 -> Klick bei x=20+150 = 75%.
+    ui_test_klick_xy(g["hFenster"], 10 + 170, 10 + 82)
+    ui_test_pump()
+    setze sw auf g["sl"]["wert"]
+    setze slider_ok auf sw > 72 und sw < 78
+
+    uim_fortschritt_setze(g["k"], g["fs"], 1.7)
+    setze klemm_ok auf g["fs"]["wert"] == 1
+
+    zeige "UIMOO3 chk_feuer=" + text(g["cb_feuer"]) + " sl_wert=" + text(sw) + " sl_feuer=" + text(g["sl_feuer"])
+    wenn chk_an und chk_aus und g["cb_feuer"] == 2 und g["cb_letzter"] == falsch und slider_ok und g["sl_feuer"] >= 1 und klemm_ok:
+        zeige "UIMOO3-WIDGETS-OK"
+    sonst:
+        zeige "UIMOO3-WIDGETS-FEHLER an=" + text(chk_an) + " aus=" + text(chk_aus) + " slider=" + text(slider_ok) + " klemm=" + text(klemm_ok)
+    ui_beenden()
+    gib_zurück wahr
+
+g["hFenster"] = ui_fenster("UIMOO3-Widgets", 600, 460, 0, nichts)
+g["k"] = uim_wurzel(g["hFenster"], 10, 10, 580, 400)
+
+g["chk"] = uim_hinzu(g["k"], uim_checkbox("Aktiviert?", 20, 20, 160, 24, falsch, cb_wechsel))
+g["sl"]  = uim_hinzu(g["k"], uim_slider(20, 70, 200, 24, 0, 100, 50, sl_wechsel))
+g["fs"]  = uim_hinzu(g["k"], uim_fortschritt(20, 110, 200, 16))
+
+ui_zeige_nebenbei(g["hFenster"])
+ui_timer_hinzu(500, pruefe)
+ui_laufen()

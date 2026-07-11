@@ -22,13 +22,17 @@
 #   uim_neuzeichnen(kontext)             -> Repaint anfordern
 #   uim_finde(kontext, id)               -> Widget per String-ID
 #
-# Referenz-Widgets (Rest folgt in UIMOO-3):
+# Referenz-Widgets (voller Satz folgt in UIMOO-3):
 #   uim_knopf(text, x, y, b, h, on_klick)
 #   uim_label(text, x, y, b, h)
+#   uim_checkbox(text, x, y, b, h, initial, on_wechsel)   # on_wechsel(w, wert)
+#   uim_slider(x, y, b, h, min, max, start, on_wechsel)   # Drag + Pfeiltasten
+#   uim_fortschritt(x, y, b, h) + uim_fortschritt_setze(kontext, w, wert01)
+#   uim_slider_setze(kontext, w, wert)
 #
 # Widget-Dict (Konvention):
 #   typ, uid, id, x, y, b, h, sichtbar, aktiv, fokussierbar,
-#   text, hover, druck, kinder, on_klick
+#   text, hover, druck, kinder, on_klick, on_wechsel, wert, min, max
 #
 # Zustands-Regel: moo-Funktionen können globale SKALARE nicht neu
 # zuweisen — Dicts/Listen sind Referenz-geteilt. Darum lebt ALLER
@@ -122,6 +126,10 @@ funktion _uim_basis(typ, x, y, b, h):
     w["druck"] = falsch
     w["kinder"] = []
     w["on_klick"] = nichts
+    w["on_wechsel"] = nichts
+    w["wert"] = 0
+    w["min"] = 0
+    w["max"] = 0
     gib_zurück w
 
 # Oberstes getroffenes Widget (z-Order: zuletzt hinzugefügt gewinnt).
@@ -139,12 +147,43 @@ funktion _uim_treffer(kontext, x, y):
         setze i auf i - 1
     gib_zurück gefunden
 
-# Klick-Aktivierung (Knopf-Callback; weitere Typen folgen in UIMOO-3).
+# Klick-Aktivierung, typ-bewusst: Knopf feuert on_klick, Checkbox
+# toggelt + feuert on_wechsel. (Slider aktiviert nicht per Klick-Ende —
+# sein Wert wird schon bei Press/Drag gesetzt.)
 funktion _uim_aktiviere(kontext, w):
+    wenn w["typ"] == "checkbox":
+        wenn w["wert"]:
+            w["wert"] = falsch
+        sonst:
+            w["wert"] = wahr
+        setze cw auf w["on_wechsel"]
+        wenn cw != nichts:
+            cw(w, w["wert"])
+        gib_zurück wahr
     setze cb auf w["on_klick"]
     wenn cb == nichts:
         gib_zurück falsch
     cb(w)
+    gib_zurück wahr
+
+# Slider-Wert aus Maus-X ableiten (klemmt auf min..max) und bei
+# Änderung on_wechsel feuern. Liefert wahr wenn sich der Wert änderte.
+funktion _uim_slider_setze_aus_x(w, x):
+    setze spanne auf w["max"] - w["min"]
+    wenn spanne <= 0:
+        gib_zurück falsch
+    setze anteil auf (x - w["x"]) / w["b"]
+    wenn anteil < 0:
+        setze anteil auf 0
+    wenn anteil > 1:
+        setze anteil auf 1
+    setze wert auf w["min"] + anteil * spanne
+    wenn wert == w["wert"]:
+        gib_zurück falsch
+    w["wert"] = wert
+    setze cw auf w["on_wechsel"]
+    wenn cw != nichts:
+        cw(w, wert)
     gib_zurück wahr
 
 # Fokus auf nächstes fokussierbares Widget (Tab-Reihenfolge =
@@ -197,6 +236,8 @@ funktion _uim_on_maus(lw, x, y, taste):
         w["druck"] = wahr
         wenn w["fokussierbar"]:
             kontext["fokus"] = w
+        wenn w["typ"] == "slider":
+            _uim_slider_setze_aus_x(w, x)
     ui_leinwand_anfordern(lw)
     gib_zurück wahr
 
@@ -211,6 +252,10 @@ funktion _uim_on_maus_los(lw, x, y, taste):
         gib_zurück falsch
     p["druck"] = falsch
     kontext["druck"] = nichts
+    wenn p["typ"] == "slider":
+        # Drag-Ende: Wert wurde bereits bei Press/Drag gesetzt.
+        ui_leinwand_anfordern(lw)
+        gib_zurück wahr
     setze w auf _uim_treffer(kontext, x, y)
     wenn w != nichts:
         wenn w["uid"] == p["uid"]:
@@ -222,6 +267,13 @@ funktion _uim_on_bewegung(lw, x, y):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
+    # Aktiver Slider-Drag hat Vorrang vor Hover.
+    setze p auf kontext["druck"]
+    wenn p != nichts:
+        wenn p["typ"] == "slider":
+            wenn _uim_slider_setze_aus_x(p, x):
+                ui_leinwand_anfordern(lw)
+            gib_zurück wahr
     setze w auf _uim_treffer(kontext, x, y)
     setze uid_treffer auf 0
     wenn w != nichts:
@@ -258,6 +310,25 @@ funktion _uim_on_taste(lw, taste, gedrueckt, mod):
         _uim_aktiviere(kontext, f)
         ui_leinwand_anfordern(lw)
         gib_zurück wahr
+    wenn f["typ"] == "slider":
+        wenn taste == "Left" oder taste == "Right":
+            setze schritt auf (f["max"] - f["min"]) / 20
+            wenn schritt <= 0:
+                setze schritt auf 1
+            wenn taste == "Left":
+                setze schritt auf 0 - schritt
+            setze wert auf f["wert"] + schritt
+            wenn wert < f["min"]:
+                setze wert auf f["min"]
+            wenn wert > f["max"]:
+                setze wert auf f["max"]
+            wenn wert != f["wert"]:
+                f["wert"] = wert
+                setze cw auf f["on_wechsel"]
+                wenn cw != nichts:
+                    cw(f, wert)
+            ui_leinwand_anfordern(lw)
+            gib_zurück wahr
     gib_zurück falsch
 
 # ------------------------------------------------------------
@@ -299,6 +370,82 @@ funktion _uim_z_label(kontext, z, w):
     ui_zeichne_text(z, w["x"], w["y"], w["text"], t["schrift"])
     gib_zurück wahr
 
+funktion _uim_z_checkbox(kontext, z, w):
+    setze t auf kontext["theme"]
+    setze kh auf w["h"]
+    wenn kh > 18:
+        setze kh auf 18
+    setze ky auf w["y"] + (w["h"] - kh) / 2
+    setze flaeche auf t["flaeche"]
+    wenn w["hover"]:
+        setze flaeche auf t["flaeche_hover"]
+    wenn w["druck"]:
+        setze flaeche auf t["flaeche_druck"]
+    _uim_farbe(z, flaeche)
+    ui_zeichne_rechteck_rund(z, w["x"], ky, kh, kh, 3, wahr)
+    _uim_farbe(z, t["rand"])
+    ui_zeichne_rechteck_rund(z, w["x"], ky, kh, kh, 3, falsch)
+    wenn w["wert"]:
+        _uim_farbe(z, t["akzent"])
+        ui_zeichne_linie(z, w["x"] + kh * 0.22, ky + kh * 0.52, w["x"] + kh * 0.42, ky + kh * 0.74, 2)
+        ui_zeichne_linie(z, w["x"] + kh * 0.42, ky + kh * 0.74, w["x"] + kh * 0.80, ky + kh * 0.28, 2)
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(z, t["akzent"])
+        ui_zeichne_rechteck_rund(z, w["x"] - 2, ky - 2, kh + 4, kh + 4, 5, falsch)
+    setze farbe auf t["text"]
+    wenn w["aktiv"] == falsch:
+        setze farbe auf t["text_gedimmt"]
+    _uim_farbe(z, farbe)
+    setze ty auf w["y"] + (w["h"] - t["schrift"]) / 2 - 1
+    ui_zeichne_text(z, w["x"] + kh + t["abstand"], ty, w["text"], t["schrift"])
+    gib_zurück wahr
+
+funktion _uim_z_slider(kontext, z, w):
+    setze t auf kontext["theme"]
+    setze spanne auf w["max"] - w["min"]
+    setze anteil auf 0
+    wenn spanne > 0:
+        setze anteil auf (w["wert"] - w["min"]) / spanne
+    setze mitte_y auf w["y"] + w["h"] / 2
+    # Track (voll) + gefüllter Teil in Akzent
+    _uim_farbe(z, t["flaeche"])
+    ui_zeichne_rechteck_rund(z, w["x"], mitte_y - 3, w["b"], 6, 3, wahr)
+    wenn anteil > 0:
+        _uim_farbe(z, t["akzent"])
+        ui_zeichne_rechteck_rund(z, w["x"], mitte_y - 3, w["b"] * anteil, 6, 3, wahr)
+    # Knob
+    setze kx auf w["x"] + w["b"] * anteil
+    setze radius auf 8
+    wenn w["druck"] oder w["hover"]:
+        setze radius auf 9
+    setze knopf_farbe auf t["text"]
+    wenn w["aktiv"] == falsch:
+        setze knopf_farbe auf t["text_gedimmt"]
+    _uim_farbe(z, knopf_farbe)
+    ui_zeichne_kreis(z, kx, mitte_y, radius, wahr)
+    _uim_farbe(z, t["rand"])
+    ui_zeichne_kreis(z, kx, mitte_y, radius, falsch)
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(z, t["akzent"])
+        ui_zeichne_kreis(z, kx, mitte_y, radius + 3, falsch)
+    gib_zurück wahr
+
+funktion _uim_z_fortschritt(kontext, z, w):
+    setze t auf kontext["theme"]
+    setze anteil auf w["wert"]
+    wenn anteil < 0:
+        setze anteil auf 0
+    wenn anteil > 1:
+        setze anteil auf 1
+    _uim_farbe(z, t["flaeche"])
+    ui_zeichne_rechteck_rund(z, w["x"], w["y"], w["b"], w["h"], t["radius"], wahr)
+    wenn anteil > 0:
+        _uim_farbe(z, t["akzent"])
+        ui_zeichne_rechteck_rund(z, w["x"], w["y"], w["b"] * anteil, w["h"], t["radius"], wahr)
+    _uim_farbe(z, t["rand"])
+    ui_zeichne_rechteck_rund(z, w["x"], w["y"], w["b"], w["h"], t["radius"], falsch)
+    gib_zurück wahr
+
 funktion _uim_on_zeichne(lw, z):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
@@ -314,6 +461,12 @@ funktion _uim_on_zeichne(lw, z):
                 _uim_z_knopf(kontext, z, w)
             sonst wenn w["typ"] == "label":
                 _uim_z_label(kontext, z, w)
+            sonst wenn w["typ"] == "checkbox":
+                _uim_z_checkbox(kontext, z, w)
+            sonst wenn w["typ"] == "slider":
+                _uim_z_slider(kontext, z, w)
+            sonst wenn w["typ"] == "fortschritt":
+                _uim_z_fortschritt(kontext, z, w)
     gib_zurück wahr
 
 # ------------------------------------------------------------
@@ -377,3 +530,52 @@ funktion uim_label(beschriftung, x, y, b, h):
     setze w auf _uim_basis("label", x, y, b, h)
     w["text"] = beschriftung
     gib_zurück w
+
+# Checkbox: Klick oder space/Return toggelt. on_wechsel(w, wert).
+funktion uim_checkbox(beschriftung, x, y, b, h, initial, on_wechsel):
+    setze w auf _uim_basis("checkbox", x, y, b, h)
+    w["text"] = beschriftung
+    w["fokussierbar"] = wahr
+    w["wert"] = initial
+    w["on_wechsel"] = on_wechsel
+    gib_zurück w
+
+# Slider: Press setzt Wert, Drag zieht, Pfeiltasten in 1/20-Schritten.
+# on_wechsel(w, wert) bei jeder Wertänderung.
+funktion uim_slider(x, y, b, h, min, max, start, on_wechsel):
+    setze w auf _uim_basis("slider", x, y, b, h)
+    w["fokussierbar"] = wahr
+    w["min"] = min
+    w["max"] = max
+    setze anfang auf start
+    wenn anfang < min:
+        setze anfang auf min
+    wenn anfang > max:
+        setze anfang auf max
+    w["wert"] = anfang
+    w["on_wechsel"] = on_wechsel
+    gib_zurück w
+
+# Fortschrittsbalken: passiv, wert 0..1 über uim_fortschritt_setze.
+funktion uim_fortschritt(x, y, b, h):
+    setze w auf _uim_basis("fortschritt", x, y, b, h)
+    w["wert"] = 0
+    gib_zurück w
+
+funktion uim_fortschritt_setze(kontext, w, wert):
+    wenn wert < 0:
+        setze wert auf 0
+    wenn wert > 1:
+        setze wert auf 1
+    w["wert"] = wert
+    ui_leinwand_anfordern(kontext["leinwand"])
+    gib_zurück wahr
+
+funktion uim_slider_setze(kontext, w, wert):
+    wenn wert < w["min"]:
+        setze wert auf w["min"]
+    wenn wert > w["max"]:
+        setze wert auf w["max"]
+    w["wert"] = wert
+    ui_leinwand_anfordern(kontext["leinwand"])
+    gib_zurück wahr
