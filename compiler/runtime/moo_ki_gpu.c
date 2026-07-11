@@ -1538,7 +1538,8 @@ static bool bild_geo_ok(int32_t b, int32_t h, int32_t w, int32_t c,
     return b > 0 && h > 0 && w > 0 && c > 0 &&
            b <= 65535 && h <= 65535 && w <= 65535 && c <= 65535 &&
            g > 0 && g <= 255 && stride > 0 && stride <= 255 &&
-           pad >= 0 && pad <= 255;
+           pad >= 0 && pad <= 255 &&
+           (int64_t)b * h * w * c <= (1LL << 30); /* Shader-Indizes sind uint32 */
 }
 static KiPush bild_push(int32_t b, int32_t h, int32_t w, int32_t c,
                         int32_t a, int32_t z, int32_t stride, int32_t pad) {
