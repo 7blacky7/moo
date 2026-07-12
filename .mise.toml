@@ -65,3 +65,28 @@ UBSAN_OPTIONS=halt_on_error=1 "$OUT/compositor-ubsan"
 "$CC" -nostdlib -r "$OUT/core.o" "$OUT/raster.o" -o "$OUT/compositor.o"
 test -z "$(nm -u "$OUT/compositor.o")"
 '''
+
+
+[tasks.test-ui-moo-input]
+description = "Run toolkit-free Moo input, IME and accessibility gates"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-input.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+CC="${CC:-cc}"
+SRC="compiler/runtime/tests/test_input_a11y_asan.c compiler/runtime/moo_input_core.c compiler/runtime/moo_a11y_core.c"
+"$CC" -std=c11 -Wall -Wextra -Werror -fsanitize=address -fno-omit-frame-pointer -Icompiler/runtime $SRC -o "$OUT/input-asan"
+ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 "$OUT/input-asan"
+"$CC" -std=c11 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -Icompiler/runtime $SRC -o "$OUT/input-ubsan"
+UBSAN_OPTIONS=halt_on_error=1 "$OUT/input-ubsan"
+BRIDGE_SRC="compiler/runtime/tests/test_input_compositor_bridge.c compiler/runtime/moo_input_compositor_bridge.c compiler/runtime/moo_input_core.c compiler/runtime/moo_compositor_core.c compiler/runtime/moo_compositor_raster.c"
+"$CC" -std=c11 -Wall -Wextra -Werror -fsanitize=address -fno-omit-frame-pointer -Icompiler/runtime $BRIDGE_SRC -o "$OUT/bridge-asan"
+ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 "$OUT/bridge-asan"
+TRACE_SRC="compiler/runtime/tests/test_input_trace.c compiler/runtime/moo_input_core.c compiler/runtime/moo_a11y_core.c"
+"$CC" -std=c11 -O2 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -Icompiler/runtime $TRACE_SRC -o "$OUT/trace-sanitize"
+ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 "$OUT/trace-sanitize"
+"$CC" -std=c11 -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -O2 -Icompiler/runtime -c compiler/runtime/moo_input_core.c -o "$OUT/input.o"
+"$CC" -std=c11 -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -O2 -Icompiler/runtime -c compiler/runtime/moo_a11y_core.c -o "$OUT/a11y.o"
+"$CC" -nostdlib -r "$OUT/input.o" "$OUT/a11y.o" -o "$OUT/input-a11y.o"
+test -z "$(nm -u "$OUT/input-a11y.o")"
+'''
