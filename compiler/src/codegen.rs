@@ -741,6 +741,43 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
+    /// Ruft einen MooValue-Builtin mit geborgten Argumenten auf.
+    ///
+    /// `compile_expr` liefert fuer jedes Argument eine owning +1-Referenz.
+    /// Surface-Runtimefunktionen konsumieren diese Argumente nicht, daher
+    /// werden alle Temps unmittelbar nach dem Call wieder freigegeben.
+    fn call_rt_borrowed_builtin(
+        &mut self,
+        func: FunctionValue<'ctx>,
+        args: &[Expr],
+        expected_args: usize,
+        builtin: &str,
+        ir_name: &str,
+    ) -> Result<StructValue<'ctx>, String> {
+        if args.len() != expected_args {
+            return Err(format!(
+                "{builtin} erwartet {expected_args} Argumente, erhalten: {}",
+                args.len()
+            ));
+        }
+
+        let values: Vec<_> = args
+            .iter()
+            .map(|arg| self.compile_expr(arg))
+            .collect::<Result<Vec<_>, _>>()?;
+        let call_args: Vec<BasicMetadataValueEnum<'ctx>> =
+            values.iter().map(|value| (*value).into()).collect();
+        let result = self.call_rt(func, &call_args, ir_name)?;
+        for value in values {
+            self.call_rt_void(
+                self.rt.moo_release,
+                &[value.into()],
+                &format!("{ir_name}_arg_release"),
+            )?;
+        }
+        Ok(result)
+    }
+
     /// Ruft eine void Runtime-Funktion auf
     fn call_rt_void(&self, func: FunctionValue<'ctx>, args: &[BasicMetadataValueEnum<'ctx>], name: &str)
         -> Result<(), String>
@@ -4237,6 +4274,108 @@ impl<'ctx> CodeGen<'ctx> {
                     "frame_aus_tensor" | "frame_from_tensor" => {
                         let t = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_frame_aus_tensor, &[t.into()], "f_aus_tensor");
+                    }
+                    // Toolkit-freie RGBA8888-Surface (P016-O1).
+                    // Der C-Vertrag borgt alle MooValue-Argumente; der gemeinsame
+                    // Helper released deshalb jedes von compile_expr erzeugte Temp.
+                    "surface_new" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_new,
+                            args,
+                            2,
+                            name,
+                            "surface_new",
+                        );
+                    }
+                    "surface_clear" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_clear,
+                            args,
+                            5,
+                            name,
+                            "surface_clear",
+                        );
+                    }
+                    "surface_clip_push" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_clip_push,
+                            args,
+                            5,
+                            name,
+                            "surface_clip_push",
+                        );
+                    }
+                    "surface_clip_pop" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_clip_pop,
+                            args,
+                            1,
+                            name,
+                            "surface_clip_pop",
+                        );
+                    }
+                    "surface_rect" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_rect,
+                            args,
+                            9,
+                            name,
+                            "surface_rect",
+                        );
+                    }
+                    "surface_roundrect" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_roundrect,
+                            args,
+                            10,
+                            name,
+                            "surface_roundrect",
+                        );
+                    }
+                    "surface_circle" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_circle,
+                            args,
+                            8,
+                            name,
+                            "surface_circle",
+                        );
+                    }
+                    "surface_line" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_line,
+                            args,
+                            9,
+                            name,
+                            "surface_line",
+                        );
+                    }
+                    "surface_read_pixel" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_read_pixel,
+                            args,
+                            3,
+                            name,
+                            "surface_read_pixel",
+                        );
+                    }
+                    "surface_hash" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_hash,
+                            args,
+                            1,
+                            name,
+                            "surface_hash",
+                        );
+                    }
+                    "surface_snapshot_to_frame" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_snapshot_to_frame,
+                            args,
+                            1,
+                            name,
+                            "surface_snapshot_to_frame",
+                        );
                     }
                     // Audio-Feature-Extraktion (KI-MULTI-A1, kein Autograd).
                     // fft/spektrum(t) -> [bins,2] mit Real-/Imaginaerteil.

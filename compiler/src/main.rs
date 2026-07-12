@@ -529,8 +529,12 @@ fn build_kernel(
     // die kern_*-MooValue-Wrapper nutzen double (SSE); die ISRs in
     // moo_bare_idt.c tragen __attribute__((interrupt, target("general-regs-only")))
     // bereits per Funktion (Plan-010 K4).
-    const KERNEL_SOURCES: [&str; 10] = [
+    // Der Surface-Rasterkern ist freestanding und wird bereits in die
+    // Kernel-Runtime aufgenommen. Der refcountete MooValue-Wrapper und ein
+    // Presenter folgen erst mit dem Surface-/Compositor-Protokoll (P016-O3).
+    const KERNEL_SOURCES: [&str; 11] = [
         "moo_bare.c",
+        "moo_surface_core.c",
         "moo_bare_console.c",
         "moo_bare_alloc.c",
         "moo_bare_idt.c",

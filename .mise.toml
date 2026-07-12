@@ -24,3 +24,25 @@ run = "bash scripts/ui-test-runner.sh"
 [tasks.test-ui-moo-demo]
 description = "Run the ui_moo demo 20 times in the isolated harness"
 run = "bash scripts/ui-moo-demo-smoke.sh"
+
+
+[tasks.test-ui-moo-surface]
+description = "Run toolkit-free ui_moo Surface regression tests"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-ui-moo-surface.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+cargo build --release --manifest-path compiler/Cargo.toml
+TARGET="${CARGO_TARGET_DIR:-$PWD/compiler/target}"
+case "$TARGET" in
+  /*) ;;
+  *) TARGET="$PWD/$TARGET" ;;
+esac
+COMPILER="$TARGET/release/moo-compiler"
+cp beispiele/tests/ui_moo_surface_primitives_test.moo "$OUT/primitives.moo"
+cp beispiele/tests/ui_moo_surface_golden_test.moo "$OUT/golden.moo"
+"$COMPILER" compile "$OUT/primitives.moo" -o "$OUT/primitives"
+"$OUT/primitives"
+"$COMPILER" compile "$OUT/golden.moo" -o "$OUT/golden"
+"$OUT/golden"
+'''

@@ -129,6 +129,8 @@ MooValue moo_to_string(MooValue v) {
         case MOO_TENSOR:
             // Delegiert an moo_tensor.c (liefert +1 owning String).
             return moo_tensor_to_string(v);
+        case MOO_SURFACE:
+            return moo_string_new("<Oberflaeche>");
         default:
             return moo_string_new("<unbekannt>");
     }

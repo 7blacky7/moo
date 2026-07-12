@@ -426,6 +426,19 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_test_frame_save_png: FunctionValue<'ctx>,
     pub moo_tensor_aus_frame: FunctionValue<'ctx>,
     pub moo_frame_aus_tensor: FunctionValue<'ctx>,
+    // Toolkit-freie RGBA8888-Surface (P016-O1). Alle Args sind MooValue;
+    // Surface-Args werden von der Runtime nur geborgt.
+    pub moo_surface_new: FunctionValue<'ctx>,
+    pub moo_surface_clear: FunctionValue<'ctx>,
+    pub moo_surface_clip_push: FunctionValue<'ctx>,
+    pub moo_surface_clip_pop: FunctionValue<'ctx>,
+    pub moo_surface_rect: FunctionValue<'ctx>,
+    pub moo_surface_roundrect: FunctionValue<'ctx>,
+    pub moo_surface_circle: FunctionValue<'ctx>,
+    pub moo_surface_line: FunctionValue<'ctx>,
+    pub moo_surface_read_pixel: FunctionValue<'ctx>,
+    pub moo_surface_hash: FunctionValue<'ctx>,
+    pub moo_surface_snapshot_to_frame: FunctionValue<'ctx>,
     // Audio-Feature-Extraktion (KI-MULTI-A1, SDL-frei, kein Autograd).
     pub moo_fft: FunctionValue<'ctx>,
     pub moo_spektrum_betrag: FunctionValue<'ctx>,
@@ -750,9 +763,11 @@ impl<'ctx> RuntimeBindings<'ctx> {
         let mv3 = &[mv, mv, mv];
         let mv4 = &[mv, mv, mv, mv];
         let mv5 = &[mv, mv, mv, mv, mv];
-        // mv7 = welt + 6 Zahlen (voxel_aabb); mv8 = welt + 7 Zahlen (voxel_strahl).
+        // mv7 = welt + 6 Zahlen (voxel_aabb); mv8 = welt + 7 Zahlen (voxel_strahl/circle).
         let mv7 = &[mv, mv, mv, mv, mv, mv, mv];
         let mv8 = &[mv, mv, mv, mv, mv, mv, mv, mv];
+        let mv9 = &[mv, mv, mv, mv, mv, mv, mv, mv, mv];
+        let mv10 = &[mv, mv, mv, mv, mv, mv, mv, mv, mv, mv];
 
         // Makro fuer Deklaration
         macro_rules! decl {
@@ -1249,6 +1264,22 @@ impl<'ctx> RuntimeBindings<'ctx> {
             //   moo_frame_aus_tensor(t)              -> MOO_FRAME             (1 Arg  = mv1)
             moo_tensor_aus_frame: decl_mv_mv!("moo_tensor_aus_frame", mv2),
             moo_frame_aus_tensor: decl_mv_mv!("moo_frame_aus_tensor", mv1),
+            // Toolkit-freie RGBA8888-Surface (P016-O1). C-Vertrag:
+            //   new(w,h); clear(s,rgba); clip push(s,xywh)/pop(s);
+            //   rect(s,xywh,rgba); roundrect(s,xywh,radius,rgba);
+            //   circle(s,cx,cy,radius,rgba); line(s,x0,y0,x1,y1,rgba);
+            //   read_pixel(s,x,y); hash(s); snapshot_to_frame(s).
+            moo_surface_new: decl_mv_mv!("moo_surface_new", mv2),
+            moo_surface_clear: decl_mv_mv!("moo_surface_clear", mv5),
+            moo_surface_clip_push: decl_mv_mv!("moo_surface_clip_push", mv5),
+            moo_surface_clip_pop: decl_mv_mv!("moo_surface_clip_pop", mv1),
+            moo_surface_rect: decl_mv_mv!("moo_surface_rect", mv9),
+            moo_surface_roundrect: decl_mv_mv!("moo_surface_roundrect", mv10),
+            moo_surface_circle: decl_mv_mv!("moo_surface_circle", mv8),
+            moo_surface_line: decl_mv_mv!("moo_surface_line", mv9),
+            moo_surface_read_pixel: decl_mv_mv!("moo_surface_read_pixel", mv3),
+            moo_surface_hash: decl_mv_mv!("moo_surface_hash", mv1),
+            moo_surface_snapshot_to_frame: decl_mv_mv!("moo_surface_snapshot_to_frame", mv1),
             // Audio-Features (KI-MULTI-A1): FFT/Betrag/WAV = mv1, STFT = mv3.
             moo_fft: decl_mv_mv!("moo_fft", mv1),
             moo_spektrum_betrag: decl_mv_mv!("moo_spektrum_betrag", mv1),

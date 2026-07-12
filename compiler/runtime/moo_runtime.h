@@ -43,6 +43,7 @@ typedef enum {
     MOO_TENSOR = 23,
     MOO_KAMERA = 24,
     MOO_MIKRO = 25,
+    MOO_SURFACE = 26,
 } MooTag;
 
 // === Forward Declarations ===
@@ -57,6 +58,7 @@ typedef struct MooValue MooValue;
 typedef struct MooError MooError;
 typedef struct MooKamera MooKamera;
 typedef struct MooMikro MooMikro;
+typedef struct MooSurface MooSurface;
 
 // === MooValue: Der universelle Wert ===
 // Layout: { uint64_t tag, uint64_t data } = 16 Bytes
@@ -103,6 +105,7 @@ static inline void moo_val_set_bool(MooValue* v, bool b) { v->data = (uint64_t)b
 #define MV_ERR(v)    (MV_ERROR(v)->chars)
 #define MV_KAMERA(v) ((MooKamera*)moo_val_as_ptr(v))
 #define MV_MIKRO(v)  ((MooMikro*)moo_val_as_ptr(v))
+#define MV_SURFACE(v) ((MooSurface*)moo_val_as_ptr(v))
 
 // === Reference Counting ===
 // Erstes Feld in jedem Heap-Objekt. Startet bei 1 bei Erstellung.
@@ -121,6 +124,7 @@ void moo_gif_handle_free(void* ptr);
 void moo_tensor_free(void* ptr);
 void moo_kamera_free(void* ptr);
 void moo_mikro_free(void* ptr);
+void moo_surface_free(void* ptr);
 
 // === Realtime-Capture (KI-MULTI-C1) ===
 MooValue moo_kamera_liste(void);
@@ -445,6 +449,31 @@ MooValue moo_wav_lesen(MooValue pfad);
 //   moo_test_pixel(frame_oder_win, x, y) -> Farbe (Frame direkt ODER Fenster grabben)
 MooValue moo_test_frame_grab(MooValue win);
 MooValue moo_test_pixel(MooValue frame_oder_win, MooValue x, MooValue y);
+
+/* === Mutable RGBA8 Surface (P016-O1, moo_surface.c) ===
+ * Surface arguments are borrowed. Mutators are filled-only and return false
+ * without changing pixels/state when validation, guards or clip-stack fail. */
+MooValue moo_surface_new(MooValue width, MooValue height);
+MooValue moo_surface_clear(MooValue surface, MooValue r, MooValue g,
+                           MooValue b, MooValue a);
+MooValue moo_surface_clip_push(MooValue surface, MooValue x, MooValue y,
+                               MooValue width, MooValue height);
+MooValue moo_surface_clip_pop(MooValue surface);
+MooValue moo_surface_rect(MooValue surface, MooValue x, MooValue y,
+                          MooValue width, MooValue height, MooValue r,
+                          MooValue g, MooValue b, MooValue a);
+MooValue moo_surface_roundrect(MooValue surface, MooValue x, MooValue y,
+                               MooValue width, MooValue height, MooValue radius,
+                               MooValue r, MooValue g, MooValue b, MooValue a);
+MooValue moo_surface_circle(MooValue surface, MooValue cx, MooValue cy,
+                            MooValue radius, MooValue r, MooValue g,
+                            MooValue b, MooValue a);
+MooValue moo_surface_line(MooValue surface, MooValue x0, MooValue y0,
+                          MooValue x1, MooValue y1, MooValue r, MooValue g,
+                          MooValue b, MooValue a);
+MooValue moo_surface_read_pixel(MooValue surface, MooValue x, MooValue y);
+MooValue moo_surface_hash(MooValue surface);
+MooValue moo_surface_snapshot_to_frame(MooValue surface);
 
 // === GIF-Recorder (opaker Heap-Typ MOO_GIF, Plan-008 A3B) ===
 // Wrappt den isolierten Encoder-Kern (moo_gif.c / MooGifWriter*, frame-bounded:

@@ -6,9 +6,16 @@ importiere ui_moo
 
 setze s auf {}
 s["klicks"] = 0
+s["linien_args_laenge"] = 0
+s["linien_breite"] = 0
 
 funktion auf_klick(w):
     s["klicks"] = s["klicks"] + 1
+    gib_zurück wahr
+
+funktion linien_probe(kontext, args):
+    s["linien_args_laenge"] = länge(args)
+    s["linien_breite"] = args[5]
     gib_zurück wahr
 
 setze k auf uim_mock_wurzel(320, 200)
@@ -41,6 +48,23 @@ setze version_ok auf backend["version"] == 1
 setze faehigkeiten auf backend["faehigkeiten"]
 setze vertrag_ok auf faehigkeiten["alpha"] und faehigkeiten["clip"] und faehigkeiten["rechteck_rund"]
 
+# Der kanonische Linienvertrag transportiert exakt [z,x1,y1,x2,y2,breite].
+setze probe_ops auf {}
+setze alle_op_namen auf ["anfordern", "farbe", "rechteck", "rechteck_rund", "kreis", "linie", "text", "text_breite", "clip_setze", "clip_loesche"]
+für probe_name in alle_op_namen:
+    probe_ops[probe_name] = backend["operationen"][probe_name]
+probe_ops["linie"] = linien_probe
+setze probe_backend auf uim_backend_neu("linien-probe", faehigkeiten, probe_ops)
+setze probe_k auf uim_backend_wurzel(probe_backend, 16, 16)
+setze linien_aufruf_ok auf _uim_zf_linie(probe_k, 17, 1, 2, 3, 4, 7)
+setze linien_vertrag_ok auf s["linien_args_laenge"] == 6 und s["linien_breite"] == 7
+
+# Auch der echte Mock-Recorder darf nicht mehr auf args[6] zugreifen.
+setze mock_linie_ok auf _uim_zf_linie(k, 17, 1, 2, 3, 4, 7)
+setze linien_befehle auf uim_mock_befehle(k)
+setze linien_befehl auf linien_befehle[länge(linien_befehle) - 1]
+setze mock_linie_args_ok auf linien_befehl["op"] == "linie" und länge(linien_befehl["args"]) == 5 und linien_befehl["args"][4] == 7
+
 setze ops_unvollstaendig auf {}
 setze op_namen_ohne_clip_loesche auf ["anfordern", "farbe", "rechteck", "rechteck_rund", "kreis", "linie", "text", "text_breite", "clip_setze"]
 für op_name in op_namen_ohne_clip_loesche:
@@ -62,7 +86,7 @@ setze text_metrik_zahl_abgelehnt auf uim_backend_neu("ungueltig-text-metrik-zahl
 caps_falscher_typ["text_metrik"] = ""
 setze text_metrik_leer_abgelehnt auf uim_backend_neu("ungueltig-text-metrik-leer", caps_falscher_typ, backend["operationen"]) == nichts
 
-wenn zeichnen_ok und hat_befehle und klick_ok und fokus_ok und fokus_event_ok und druck_geloest und hover_geloest und blur_blockiert und version_ok und vertrag_ok und fehlende_op_abgelehnt und fehlende_caps_abgelehnt und falscher_cap_typ_abgelehnt und text_metrik_bool_abgelehnt und text_metrik_zahl_abgelehnt und text_metrik_leer_abgelehnt:
+wenn zeichnen_ok und hat_befehle und klick_ok und fokus_ok und fokus_event_ok und druck_geloest und hover_geloest und blur_blockiert und version_ok und vertrag_ok und linien_aufruf_ok und linien_vertrag_ok und mock_linie_ok und mock_linie_args_ok und fehlende_op_abgelehnt und fehlende_caps_abgelehnt und falscher_cap_typ_abgelehnt und text_metrik_bool_abgelehnt und text_metrik_zahl_abgelehnt und text_metrik_leer_abgelehnt:
     zeige "UIMOO-MOCK-BACKEND-OK"
 sonst:
     zeige "UIMOO-MOCK-BACKEND-FEHLER befehle=" + text(länge(befehle)) + " klicks=" + text(s["klicks"])

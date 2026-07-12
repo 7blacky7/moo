@@ -1,0 +1,252 @@
+# ============================================================
+# stdlib/ui_moo_host.moo — bestehende Desktop-/Game-Hostadapter
+#
+# Diese Schicht darf importiere ui und Hostzeichenprimitive verwenden.
+# Der Widget-/Inputkern bleibt in ui_moo_kern toolkitfrei.
+# ============================================================
+
+importiere ui_moo_kern
+importiere ui
+
+funktion _uim_bl_anfordern(kontext, args):
+    wenn kontext["leinwand"] != nichts:
+        gib_zurück ui_leinwand_anfordern(kontext["leinwand"])
+    gib_zurück falsch
+
+funktion _uim_bl_farbe(kontext, args):
+    setze z auf args[0]
+    setze f auf args[1]
+    gib_zurück ui_zeichne_farbe(z, f[0], f[1], f[2], f[3])
+
+funktion _uim_bl_rechteck(kontext, args):
+    gib_zurück ui_zeichne_rechteck(args[0], args[1], args[2], args[3], args[4], args[5])
+
+funktion _uim_bl_rechteck_rund(kontext, args):
+    gib_zurück ui_zeichne_rechteck_rund(args[0], args[1], args[2], args[3], args[4], args[5], args[6])
+
+funktion _uim_bl_kreis(kontext, args):
+    gib_zurück ui_zeichne_kreis(args[0], args[1], args[2], args[3], args[4])
+
+funktion _uim_bl_linie(kontext, args):
+    gib_zurück ui_zeichne_linie(args[0], args[1], args[2], args[3], args[4], args[5])
+
+funktion _uim_bl_text(kontext, args):
+    gib_zurück ui_zeichne_text(args[0], args[1], args[2], args[3], args[4])
+
+funktion _uim_bl_text_breite(kontext, args):
+    gib_zurück ui_zeichne_text_breite(args[0], args[1], args[2])
+
+funktion _uim_bl_clip_setze(kontext, args):
+    gib_zurück ui_zeichne_clip_setze(args[0], args[1], args[2], args[3], args[4])
+
+funktion _uim_bl_clip_loesche(kontext, args):
+    gib_zurück ui_zeichne_clip_loesche(args[0])
+
+funktion uim_backend_leinwand():
+    setze ops auf {}
+    ops["anfordern"] = _uim_bl_anfordern
+    ops["farbe"] = _uim_bl_farbe
+    ops["rechteck"] = _uim_bl_rechteck
+    ops["rechteck_rund"] = _uim_bl_rechteck_rund
+    ops["kreis"] = _uim_bl_kreis
+    ops["linie"] = _uim_bl_linie
+    ops["text"] = _uim_bl_text
+    ops["text_breite"] = _uim_bl_text_breite
+    ops["clip_setze"] = _uim_bl_clip_setze
+    ops["clip_loesche"] = _uim_bl_clip_loesche
+    gib_zurück uim_backend_neu("leinwand", _uim_faehigkeiten(wahr, wahr, wahr, wahr, "host"), ops)
+
+# Frame-/SDL-Adapter. Degradierungen stehen explizit in faehigkeiten.
+funktion _uim_bf_anfordern(kontext, args):
+    gib_zurück wahr
+
+funktion _uim_bf_farbe(kontext, args):
+    gib_zurück wahr
+
+funktion _uim_bf_rechteck(kontext, args):
+    setze win auf kontext["_win"]
+    setze x auf args[1]
+    setze y auf args[2]
+    setze b auf args[3]
+    setze h auf args[4]
+    setze gefuellt auf args[5]
+    setze hex auf _uim_hexfarbe(kontext)
+    wenn gefuellt:
+        zeichne_rechteck(win, x, y, b, h, hex)
+    sonst:
+        zeichne_rechteck(win, x, y, b, 1, hex)
+        zeichne_rechteck(win, x, y + h - 1, b, 1, hex)
+        zeichne_rechteck(win, x, y, 1, h, hex)
+        zeichne_rechteck(win, x + b - 1, y, 1, h, hex)
+    gib_zurück wahr
+
+funktion _uim_bf_rechteck_rund(kontext, args):
+    gib_zurück _uim_bf_rechteck(kontext, [args[0], args[1], args[2], args[3], args[4], args[6]])
+
+funktion _uim_bf_kreis(kontext, args):
+    wenn args[4] == falsch:
+        gib_zurück falsch
+    zeichne_kreis(kontext["_win"], args[1], args[2], args[3], _uim_hexfarbe(kontext))
+    gib_zurück wahr
+
+funktion _uim_bf_linie(kontext, args):
+    setze i auf 0
+    solange i < args[5]:
+        zeichne_linie(kontext["_win"], args[1], args[2] + i, args[3], args[4] + i, _uim_hexfarbe(kontext))
+        setze i auf i + 1
+    gib_zurück wahr
+
+funktion _uim_bf_text(kontext, args):
+    setze x auf args[1]
+    setze y auf args[2]
+    setze s auf args[3]
+    setze px auf _uim_zf_px(args[4])
+    setze i auf 0
+    setze cx auf x
+    solange i < länge(s):
+        setze ch auf s[i]
+        wenn _UIMF.enthält(ch):
+            setze bits auf _UIMF[ch]
+            setze zy auf 0
+            solange zy < 5:
+                setze zx auf 0
+                solange zx < 3:
+                    wenn bits[zy * 3 + zx] == 1:
+                        zeichne_rechteck(kontext["_win"], cx + zx * px, y + zy * px, px, px, _uim_hexfarbe(kontext))
+                    setze zx auf zx + 1
+                setze zy auf zy + 1
+        setze cx auf cx + 4 * px
+        setze i auf i + 1
+    gib_zurück wahr
+
+funktion _uim_bf_text_breite(kontext, args):
+    gib_zurück länge(args[1]) * 4 * _uim_zf_px(args[2])
+
+funktion _uim_bf_clip_setze(kontext, args):
+    gib_zurück falsch
+
+funktion _uim_bf_clip_loesche(kontext, args):
+    gib_zurück falsch
+
+funktion uim_backend_frame():
+    setze ops auf {}
+    ops["anfordern"] = _uim_bf_anfordern
+    ops["farbe"] = _uim_bf_farbe
+    ops["rechteck"] = _uim_bf_rechteck
+    ops["rechteck_rund"] = _uim_bf_rechteck_rund
+    ops["kreis"] = _uim_bf_kreis
+    ops["linie"] = _uim_bf_linie
+    ops["text"] = _uim_bf_text
+    ops["text_breite"] = _uim_bf_text_breite
+    ops["clip_setze"] = _uim_bf_clip_setze
+    ops["clip_loesche"] = _uim_bf_clip_loesche
+    gib_zurück uim_backend_neu("frame", _uim_faehigkeiten(falsch, falsch, falsch, falsch, "pixelfont-3x5"), ops)
+
+
+# Hostcallbacks leiten ausschließlich in den normalisierten Kern weiter.
+funktion _uim_on_maus(lw, x, y, taste):
+    setze kontext auf _uim_ctx(lw)
+    wenn kontext == nichts:
+        gib_zurück falsch
+    gib_zurück uim_backend_maus_taste(kontext, x, y, taste, wahr)
+
+
+funktion _uim_on_maus_los(lw, x, y, taste):
+    setze kontext auf _uim_ctx(lw)
+    wenn kontext == nichts:
+        gib_zurück falsch
+    gib_zurück uim_backend_maus_taste(kontext, x, y, taste, falsch)
+
+
+funktion _uim_on_bewegung(lw, x, y):
+    setze kontext auf _uim_ctx(lw)
+    wenn kontext == nichts:
+        gib_zurück falsch
+    gib_zurück uim_backend_bewegung(kontext, x, y)
+
+
+funktion _uim_on_taste(lw, taste, gedrueckt, mod):
+    setze kontext auf _uim_ctx(lw)
+    wenn kontext == nichts:
+        gib_zurück falsch
+    gib_zurück uim_backend_taste(kontext, taste, gedrueckt, mod)
+
+
+funktion _uim_on_rad(lw, x, y, delta):
+    setze kontext auf _uim_ctx(lw)
+    wenn kontext == nichts:
+        gib_zurück falsch
+    gib_zurück uim_backend_rad(kontext, x, y, delta)
+
+
+funktion _uim_on_zeichne(lw, z):
+    setze kontext auf _uim_ctx(lw)
+    wenn kontext == nichts:
+        gib_zurück falsch
+    gib_zurück _uim_kern_zeichne(kontext, z)
+
+
+funktion _uim_on_fokus(lw, hat_fokus):
+    setze kontext auf _uim_ctx(lw)
+    wenn kontext == nichts:
+        gib_zurück falsch
+    gib_zurück uim_backend_fokus(kontext, hat_fokus)
+
+
+# Öffentliche Desktop-Wurzel.
+funktion uim_wurzel(fenster, x, y, b, h):
+    setze lw auf ui_leinwand(fenster, x, y, b, h, _uim_on_zeichne)
+    setze kontext auf uim_backend_wurzel(uim_backend_leinwand(), b, h)
+    kontext["leinwand"] = lw
+    kontext["fenster"] = fenster
+    setze alle auf _UIM["kontexte"]
+    alle["k" + text(lw)] = kontext
+    ui_leinwand_on_maus(lw, _uim_on_maus)
+    ui_leinwand_on_maus_los(lw, _uim_on_maus_los)
+    ui_leinwand_on_bewegung(lw, _uim_on_bewegung)
+    ui_leinwand_on_taste(lw, _uim_on_taste)
+    ui_leinwand_on_rad(lw, _uim_on_rad)
+    ui_leinwand_on_fokus(lw, _uim_on_fokus)
+    gib_zurück kontext
+
+
+# ------------------------------------------------------------
+# Frame-Backend (UIMOO-6): derselbe Widget-Satz als In-Game-UI.
+# Kein Event-Loop — das Spiel speist Ereignisse per Polling ein und
+# ruft uim_frame_zeichne jeden Tick (Overlay: Hintergrund aus).
+#
+#   setze hud auf uim_frame_wurzel(900, 700)
+#   uim_hinzu(hud, uim_knopf("WEITER", 350, 300, 200, 40, auf_weiter))
+#   # im Spiel-Loop:
+#   uim_frame_maus(hud, mx, my, maus_gedrueckt)
+#   uim_frame_zeichne(hud, win)
+# ------------------------------------------------------------
+
+funktion uim_frame_wurzel(b, h):
+    setze kontext auf uim_backend_wurzel(uim_backend_frame(), b, h)
+    kontext["hintergrund_zeichnen"] = falsch
+    gib_zurück kontext
+
+# Pro Spiel-Tick aufrufen: zeichnet den Widget-Baum aufs Fenster.
+funktion uim_frame_zeichne(kontext, win):
+    kontext["_win"] = win
+    gib_zurück uim_backend_zeichne(kontext, nichts)
+
+funktion uim_frame_maus(kontext, x, y, gedrueckt):
+    gib_zurück uim_backend_maus(kontext, x, y, gedrueckt)
+
+funktion uim_frame_bewegung(kontext, x, y):
+    gib_zurück uim_backend_bewegung(kontext, x, y)
+
+funktion uim_frame_groesse_setze(kontext, b, h):
+    gib_zurück uim_groesse_setze(kontext, b, h)
+
+funktion uim_frame_taste(kontext, taste, gedrueckt, mod):
+    gib_zurück uim_backend_taste(kontext, taste, gedrueckt, mod)
+
+funktion uim_frame_rad(kontext, x, y, delta):
+    gib_zurück uim_backend_rad(kontext, x, y, delta)
+
+funktion uim_frame_fokus(kontext, hat_fokus):
+    gib_zurück uim_backend_fokus(kontext, hat_fokus)
+

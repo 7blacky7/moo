@@ -28,6 +28,8 @@ fn main() {
         .file("runtime/moo_value.c")
         .file("runtime/moo_memory.c")
         .file("runtime/moo_frame.c")
+        .file("runtime/moo_surface_core.c") // P016-O1: freestanding RGBA8-Rasterkern
+        .file("runtime/moo_surface.c")      // P016-O1: refcounteter MOO_SURFACE-Wrapper
         .file("runtime/moo_frame_tensor.c") // Frame<->Tensor-Bruecke (KI-MULTI-V1, SDL-frei)
         .file("runtime/moo_capture.c")      // KI-MULTI-C1: gemeinsame Handle-/Lifecycle-Schicht
         .file("runtime/moo_audio.c")        // FFT/STFT/WAV-Reader (KI-MULTI-A1, SDL-frei)
@@ -69,7 +71,8 @@ fn main() {
         .file("runtime/moo_profiler.c")
         .include("runtime")
         .opt_level(2)
-        .flag_if_supported("-fPIC");
+        .flag_if_supported("-fPIC")
+        .define("MOO_HAS_SURFACE", None);
 
     // ========================================================================
     // P013: POSIX-Regex-Vendoring fuer Windows (musl v1.2.5 / TRE) — siehe
