@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "name": "analytic-alpha-v1",
+  "status": "red-scaffold",
+  "format": "RGBA8888",
+  "origin": "top-left",
+  "alpha": "straight",
+  "rounding": "nearest-half-up",
+  "wire_encoding": false,
+  "vectors": [
+    {
+      "source": [255, 0, 0, 255],
+      "destination": [7, 11, 13, 255],
+      "expected": [255, 0, 0, 255]
+    },
+    {
+      "source": [99, 88, 77, 0],
+      "destination": [37, 41, 43, 255],
+      "expected": [37, 41, 43, 255]
+    }
+  ],
+  "bless_policy": "No automatic update; require raw diff, key pixels and reviewer."
+}

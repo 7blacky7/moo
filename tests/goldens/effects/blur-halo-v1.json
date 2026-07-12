@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "name": "blur-halo-v1",
+  "status": "red-scaffold",
+  "geometry": "half-open",
+  "input_rect": {"x": 10, "y": 20, "width": 30, "height": 40},
+  "blur_radius": 4,
+  "expected_damage": {"x": 6, "y": 16, "width": 38, "height": 48},
+  "mutant": {
+    "name": "missing-blur-halo",
+    "damage": {"x": 10, "y": 20, "width": 30, "height": 40},
+    "must_fail": true
+  },
+  "bless_policy": "No automatic update; require full-vs-partial differential evidence."
+}
