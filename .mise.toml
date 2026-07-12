@@ -46,3 +46,22 @@ cp beispiele/tests/ui_moo_surface_golden_test.moo "$OUT/golden.moo"
 "$COMPILER" compile "$OUT/golden.moo" -o "$OUT/golden"
 "$OUT/golden"
 '''
+
+
+[tasks.test-ui-moo-compositor]
+description = "Run toolkit-free Moo compositor sanitizer and freestanding gates"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-compositor.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+CC="${CC:-cc}"
+SRC="compiler/runtime/tests/test_compositor_asan.c compiler/runtime/moo_compositor_core.c compiler/runtime/moo_compositor_raster.c"
+"$CC" -std=c11 -Wall -Wextra -Werror -fsanitize=address -fno-omit-frame-pointer -Icompiler/runtime $SRC -o "$OUT/compositor-asan"
+ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 "$OUT/compositor-asan"
+"$CC" -std=c11 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -Icompiler/runtime $SRC -o "$OUT/compositor-ubsan"
+UBSAN_OPTIONS=halt_on_error=1 "$OUT/compositor-ubsan"
+"$CC" -std=c11 -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -O2 -Icompiler/runtime -c compiler/runtime/moo_compositor_core.c -o "$OUT/core.o"
+"$CC" -std=c11 -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -O2 -Icompiler/runtime -c compiler/runtime/moo_compositor_raster.c -o "$OUT/raster.o"
+"$CC" -nostdlib -r "$OUT/core.o" "$OUT/raster.o" -o "$OUT/compositor.o"
+test -z "$(nm -u "$OUT/compositor.o")"
+'''

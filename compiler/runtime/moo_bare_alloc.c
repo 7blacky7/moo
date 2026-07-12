@@ -11,7 +11,8 @@
  * (UB-Policy: kein signed overflow, kein -fwrapv).
  *
  * Host-Test (test_bare_alloc_asan.c) ersetzt die Heap-Region durch eine
- * malloc-Arena und prueft alloc/frei/Split/Coalesce ASan+UBSan-clean.
+ * malloc-Arena und prueft alloc/frei/Split sowie harte Grenzfaelle
+ * ASan+UBSan-clean. Coalescing ist nicht Teil dieses Allocators.
  */
 #include "moo_bare_kern.h"
 
@@ -32,109 +33,284 @@ static KernBlock*  g_freelist   = 0;   /* Kopf der Free-List */
 static uint64_t    g_belegt     = 0;   /* aktuell vergebene Nutzbytes */
 static uint64_t    g_peak       = 0;   /* high-water Mark */
 
-static inline uint64_t align_up(uint64_t n, uint64_t a) {
-    /* a ist Zweierpotenz. Reine unsigned-Arithmetik. */
-    return (n + (a - 1u)) & ~(a - 1u);
+#define KERN_MOO_MAX_EXACT_U64 UINT64_C(9007199254740992) /* 2^53 */
+
+static bool checked_align_up_u64(uint64_t n, uint64_t a, uint64_t* out) {
+    uint64_t mask;
+    if (!out || a == 0u || (a & (a - 1u)) != 0u) return false;
+    mask = a - 1u;
+    if (n > UINT64_MAX - mask) return false;
+    *out = (n + mask) & ~mask;
+    return true;
+}
+
+/* Prueft einen Header erst numerisch gegen die bekannte Heap-Region und
+ * dereferenziert ihn erst danach. Die reale Objektprovenienz der Region bleibt
+ * Vertrag von kern_heap_init_c; fremde free-Pointer werden nie dereferenziert. */
+static bool kern_block_layout(uintptr_t header, KernBlock** out_block,
+                              uintptr_t* out_ende) {
+    uintptr_t payload;
+    KernBlock* block;
+    if (g_heap_start == 0u || g_bump < g_heap_start ||
+        g_bump > g_heap_ende) return false;
+    if (header < g_heap_start || header >= g_bump) return false;
+    if (((header - g_heap_start) & (KERN_ALLOC_ALIGN - 1u)) != 0u)
+        return false;
+    if ((uint64_t)(g_bump - header) < (uint64_t)sizeof(KernBlock))
+        return false;
+
+    payload = header + sizeof(KernBlock);
+    block = (KernBlock*)header;
+    if (block->magic != KERN_ALLOC_MAGIC || block->frei > 1u ||
+        block->size < KERN_ALLOC_ALIGN ||
+        (block->size & (KERN_ALLOC_ALIGN - 1u)) != 0u)
+        return false;
+    if (block->size > (uint64_t)(g_bump - payload)) return false;
+
+    if (out_block) *out_block = block;
+    if (out_ende) *out_ende = payload + (uintptr_t)block->size;
+    return true;
+}
+
+static KernBlock* kern_find_payload(uintptr_t payload) {
+    uintptr_t header = g_heap_start;
+    while (header < g_bump) {
+        KernBlock* block;
+        uintptr_t block_ende;
+        if (!kern_block_layout(header, &block, &block_ende))
+            kern_panic("kern_frei: Heap-Blockkette korrupt");
+        if (header + sizeof(KernBlock) == payload) return block;
+        header = block_ende;
+    }
+    return 0;
 }
 
 /* ----------------------------------------------------------------------
  * C-Seite (vom Boot-Trampolin genutzt)
  * ---------------------------------------------------------------------- */
 void kern_heap_init_c(uintptr_t start, uintptr_t ende) {
-    g_heap_start = align_up((uint64_t)start, KERN_ALLOC_ALIGN);
-    g_heap_ende  = ende;
-    g_bump       = g_heap_start;
+    uint64_t aligned64;
+    uintptr_t aligned;
+
+    /* Jeder Fehler deaktiviert den alten Heap fail-closed. */
+    g_heap_start = 0u;
+    g_heap_ende  = 0u;
+    g_bump       = 0u;
     g_freelist   = 0;
-    g_belegt     = 0;
-    g_peak       = 0;
+    g_belegt     = 0u;
+    g_peak       = 0u;
+
+    if (start == 0u || start >= ende ||
+        !checked_align_up_u64((uint64_t)start, KERN_ALLOC_ALIGN, &aligned64) ||
+        aligned64 > (uint64_t)UINTPTR_MAX)
+        return;
+    aligned = (uintptr_t)aligned64;
+    if (aligned >= ende ||
+        (uint64_t)(ende - aligned) <
+            (uint64_t)sizeof(KernBlock) + KERN_ALLOC_ALIGN)
+        return;
+
+    g_heap_start = aligned;
+    g_heap_ende  = ende;
+    g_bump       = aligned;
 }
 
 void* kern_alloc_c(uint64_t n) {
-    if (g_heap_start == 0 || n == 0) return 0;
-    uint64_t need = align_up(n, KERN_ALLOC_ALIGN);
+    uint64_t need;
+    KernBlock** prev;
+    KernBlock* block;
+    uint64_t gesehen = 0u;
+    uint64_t max_knoten;
 
-    /* 1) Free-List first-fit. */
-    KernBlock** prev = &g_freelist;
-    for (KernBlock* b = g_freelist; b; b = b->naechster) {
-        if (b->magic == KERN_ALLOC_MAGIC && b->frei && b->size >= need) {
-            /* Optionaler Split, wenn der Rest noch einen Header+Mindestblock traegt. */
-            uint64_t rest = b->size - need;
-            if (rest >= sizeof(KernBlock) + KERN_ALLOC_ALIGN) {
-                uintptr_t split_at = (uintptr_t)b + sizeof(KernBlock) + need;
-                KernBlock* nb = (KernBlock*)split_at;
-                nb->magic     = KERN_ALLOC_MAGIC;
-                nb->size      = rest - sizeof(KernBlock);
-                nb->frei      = 1;
-                nb->naechster = b->naechster;
-                b->size       = need;
-                b->naechster  = nb;
+    if (g_heap_start == 0u || n == 0u ||
+        !checked_align_up_u64(n, KERN_ALLOC_ALIGN, &need))
+        return 0;
+    if (g_bump < g_heap_start || g_bump > g_heap_ende) return 0;
+
+    /* 1) Free-List first-fit. Jede Verkettung wird vor Nutzung validiert. */
+    max_knoten = (uint64_t)(g_bump - g_heap_start) /
+                  ((uint64_t)sizeof(KernBlock) + KERN_ALLOC_ALIGN) + 1u;
+    prev = &g_freelist;
+    block = g_freelist;
+    while (block) {
+        KernBlock* next;
+        uintptr_t block_ende;
+        if (++gesehen > max_knoten ||
+            !kern_block_layout((uintptr_t)block, 0, &block_ende) ||
+            block->frei != 1u)
+            kern_panic("kern_alloc: Free-List korrupt");
+        next = block->naechster;
+
+        if (block->size >= need) {
+            uint64_t rest = block->size - need;
+            if (rest >= (uint64_t)sizeof(KernBlock) + KERN_ALLOC_ALIGN) {
+                uintptr_t payload = (uintptr_t)block + sizeof(KernBlock);
+                uintptr_t split_at = payload + (uintptr_t)need;
+                KernBlock* neu = (KernBlock*)split_at;
+                neu->magic     = KERN_ALLOC_MAGIC;
+                neu->size      = rest - sizeof(KernBlock);
+                neu->frei      = 1u;
+                neu->naechster = next;
+                block->size    = need;
+                block->naechster = neu;
             }
-            *prev = b->naechster;     /* aus Free-List aushaengen */
-            b->frei = 0;
-            b->naechster = 0;
-            g_belegt += b->size;
+            *prev = block->naechster;
+            if (g_belegt > UINT64_MAX - block->size)
+                kern_panic("kern_alloc: Belegt-Zaehler overflow");
+            block->frei = 0u;
+            block->naechster = 0;
+            g_belegt += block->size;
             if (g_belegt > g_peak) g_peak = g_belegt;
-            return (void*)((uintptr_t)b + sizeof(KernBlock));
+            return (void*)((uintptr_t)block + sizeof(KernBlock));
         }
-        prev = &b->naechster;
+        prev = &block->naechster;
+        block = next;
     }
 
-    /* 2) Bump aus der noch ungenutzten Region. */
-    uintptr_t hdr = g_bump;
-    uintptr_t neu = hdr + sizeof(KernBlock) + need;
-    if (neu > g_heap_ende) return 0;   /* OOM */
-    KernBlock* b = (KernBlock*)hdr;
-    b->magic     = KERN_ALLOC_MAGIC;
-    b->size      = need;
-    b->frei      = 0;
-    b->naechster = 0;
-    g_bump = neu;
-    g_belegt += need;
-    if (g_belegt > g_peak) g_peak = g_belegt;
-    return (void*)(hdr + sizeof(KernBlock));
+    /* 2) Bump: nur Subtraktionen, bis alle Summanden nachweislich passen. */
+    {
+        uintptr_t header = g_bump;
+        uint64_t rest = (uint64_t)(g_heap_ende - header);
+        uintptr_t neu;
+        if (rest < (uint64_t)sizeof(KernBlock) ||
+            need > rest - (uint64_t)sizeof(KernBlock))
+            return 0;
+        neu = header + sizeof(KernBlock) + (uintptr_t)need;
+
+        block = (KernBlock*)header;
+        block->magic     = KERN_ALLOC_MAGIC;
+        block->size      = need;
+        block->frei      = 0u;
+        block->naechster = 0;
+        g_bump = neu;
+        if (g_belegt > UINT64_MAX - need)
+            kern_panic("kern_alloc: Belegt-Zaehler overflow");
+        g_belegt += need;
+        if (g_belegt > g_peak) g_peak = g_belegt;
+        return (void*)(header + sizeof(KernBlock));
+    }
 }
 
 void kern_frei_c(void* p) {
+    uintptr_t payload;
+    KernBlock* block;
     if (!p) return;
-    KernBlock* b = (KernBlock*)((uintptr_t)p - sizeof(KernBlock));
-    if (b->magic != KERN_ALLOC_MAGIC) {
-        kern_panic("kern_frei: ungueltiger Block (Magic-Mismatch)");
-    }
-    if (b->frei) {
+    payload = (uintptr_t)p;
+
+    /* Noch vor irgendeinem Headerzugriff: aktive Region, Bereich und
+     * Payload-Alignment pruefen. Exakte Mitgliedschaft folgt per Blockscan. */
+    if (g_heap_start == 0u || g_bump < g_heap_start ||
+        g_bump > g_heap_ende || payload < g_heap_start ||
+        payload >= g_bump || payload - g_heap_start < sizeof(KernBlock) ||
+        (payload & (KERN_ALLOC_ALIGN - 1u)) != 0u)
+        kern_panic("kern_frei: Adresse ausserhalb Heap/Alignment");
+
+    block = kern_find_payload(payload);
+    if (!block)
+        kern_panic("kern_frei: Adresse ist kein Blockanfang");
+    if (block->frei)
         kern_panic("kern_frei: Doppel-free erkannt");
-    }
-    b->frei = 1;
-    b->naechster = g_freelist;
-    g_freelist = b;
-    if (g_belegt >= b->size) g_belegt -= b->size; else g_belegt = 0;
+    if (g_belegt < block->size)
+        kern_panic("kern_frei: Belegt-Zaehler korrupt");
+
+    block->frei = 1u;
+    block->naechster = g_freelist;
+    g_freelist = block;
+    g_belegt -= block->size;
 }
 
 /* ----------------------------------------------------------------------
  * moo-Builtin-Wrapper (MooValue)
  * ---------------------------------------------------------------------- */
+
+/* Die Bare-ABI transportiert historische Adressen als Moo-Zahl. IEEE-754
+ * repraesentiert nur Integer bis einschliesslich 2^53 exakt. O3 verwendet
+ * diesen Pfad fuer Handles ausdruecklich NICHT. */
+static bool kern_number_u64(MooValue value, uint64_t* out) {
+    double number;
+    uint64_t converted;
+    if (!out || value.tag != MOO_NUMBER) return false;
+    number = kern_as_double(value);
+    /* NaN faellt ebenfalls durch !(number >= 0.0); +Inf und zu grosse Werte
+     * werden vor der float->int-Konversion abgefangen. */
+    if (!(number >= 0.0) || number > (double)KERN_MOO_MAX_EXACT_U64)
+        return false;
+    converted = (uint64_t)number;
+    if ((double)converted != number) return false;
+    *out = converted;
+    return true;
+}
+
+static bool kern_number_uintptr(MooValue value, uintptr_t* out) {
+    uint64_t converted;
+    if (!out || !kern_number_u64(value, &converted) ||
+        converted > (uint64_t)UINTPTR_MAX)
+        return false;
+    *out = (uintptr_t)converted;
+    return true;
+}
+
 MooValue kern_speicher_init(MooValue start, MooValue ende) {
-    kern_heap_init_c((uintptr_t)kern_as_double(start),
-                     (uintptr_t)kern_as_double(ende));
+    uintptr_t start_addr;
+    uintptr_t end_addr;
+    if (!kern_number_uintptr(start, &start_addr) ||
+        !kern_number_uintptr(ende, &end_addr)) {
+        kern_heap_init_c(0u, 0u);
+        return moo_none();
+    }
+    kern_heap_init_c(start_addr, end_addr);
     return moo_none();
 }
 
 MooValue kern_alloc(MooValue groesse) {
-    void* p = kern_alloc_c((uint64_t)kern_as_double(groesse));
-    return moo_number((double)(uintptr_t)p);
+    uint64_t bytes;
+    void* p;
+    uintptr_t adresse;
+    if (!kern_number_u64(groesse, &bytes) || bytes == 0u)
+        return moo_number(0.0);
+    p = kern_alloc_c(bytes);
+    if (!p) return moo_number(0.0);
+    adresse = (uintptr_t)p;
+    if ((uint64_t)adresse > KERN_MOO_MAX_EXACT_U64) {
+        kern_frei_c(p);
+        return moo_number(0.0);
+    }
+    return moo_number((double)adresse);
 }
 
 MooValue kern_frei(MooValue adresse) {
-    uintptr_t a = (uintptr_t)kern_as_double(adresse);
-    if (a == 0) return moo_bool(false);
+    uintptr_t a;
+    if (!kern_number_uintptr(adresse, &a) || a == 0u)
+        return moo_bool(false);
     kern_frei_c((void*)a);
     return moo_bool(true);
 }
 
 MooValue kern_speicher_frei(void) {
-    /* Noch nicht gebumpte Region + (vereinfacht) nicht aufsummierte Free-List. */
-    uint64_t bump_rest = (g_heap_ende > g_bump) ? (uint64_t)(g_heap_ende - g_bump) : 0;
-    uint64_t fl = 0;
-    for (KernBlock* b = g_freelist; b; b = b->naechster) fl += b->size;
+    uint64_t bump_rest =
+        (g_heap_ende > g_bump) ? (uint64_t)(g_heap_ende - g_bump) : 0u;
+    uint64_t fl = 0u;
+    uint64_t gesehen = 0u;
+    uint64_t max_knoten =
+        g_bump >= g_heap_start
+            ? (uint64_t)(g_bump - g_heap_start) /
+                  ((uint64_t)sizeof(KernBlock) + KERN_ALLOC_ALIGN) + 1u
+            : 0u;
+    KernBlock* block = g_freelist;
+    while (block) {
+        KernBlock* next;
+        if (++gesehen > max_knoten ||
+            !kern_block_layout((uintptr_t)block, 0, 0) ||
+            block->frei != 1u)
+            kern_panic("kern_speicher_frei: Free-List korrupt");
+        if (fl > UINT64_MAX - block->size)
+            kern_panic("kern_speicher_frei: Zaehler overflow");
+        fl += block->size;
+        next = block->naechster;
+        block = next;
+    }
+    if (bump_rest > UINT64_MAX - fl)
+        kern_panic("kern_speicher_frei: Gesamtzaehler overflow");
     return moo_number((double)(bump_rest + fl));
 }
 

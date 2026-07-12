@@ -29,6 +29,8 @@ fn main() {
         .file("runtime/moo_memory.c")
         .file("runtime/moo_frame.c")
         .file("runtime/moo_surface_core.c") // P016-O1: freestanding RGBA8-Rasterkern
+        .file("runtime/moo_compositor_core.c")   // P016-O3: allocatorfreier Multi-Client-Zustandskern
+        .file("runtime/moo_compositor_raster.c") // P016-O3: deterministische RGBA-Komposition
         .file("runtime/moo_surface.c")      // P016-O1: refcounteter MOO_SURFACE-Wrapper
         .file("runtime/moo_frame_tensor.c") // Frame<->Tensor-Bruecke (KI-MULTI-V1, SDL-frei)
         .file("runtime/moo_capture.c")      // KI-MULTI-C1: gemeinsame Handle-/Lifecycle-Schicht
