@@ -3,6 +3,15 @@
 
 #include <stdint.h>
 
+#include "moo_compositor_effects_protocol.h"
+
+/* V1 values are permanent. Negotiation selects the highest common version. */
+#define MOO_COMP_PROTOCOL_VERSION_V1 1u
+#define MOO_COMP_PROTOCOL_VERSION_V2 2u
+#define MOO_COMP_PROTOCOL_MIN_VERSION MOO_COMP_PROTOCOL_VERSION_V1
+#define MOO_COMP_PROTOCOL_MAX_VERSION MOO_COMP_PROTOCOL_VERSION_V2
+#define MOO_COMP_PROTOCOL_CURRENT_VERSION MOO_COMP_PROTOCOL_MAX_VERSION
+/* Legacy V1 dispatcher alias; keep until its explicit V1/V2 handshake lands. */
 #define MOO_COMP_PROTOCOL_VERSION 1u
 #define MOO_COMP_HANDLE_INVALID UINT64_C(0)
 #define MOO_COMP_SCALE_MIN 1u
@@ -44,11 +53,32 @@ enum {
     MOO_COMP_FEATURE_OPACITY = UINT64_C(1) << 4,
     MOO_COMP_FEATURE_FRAME_CALLBACK = UINT64_C(1) << 5,
     MOO_COMP_FEATURE_CURSOR = UINT64_C(1) << 6,
+    MOO_COMP_FEATURE_CORNER_CLIP = UINT64_C(1) << 7,
+    MOO_COMP_FEATURE_SHADOW = UINT64_C(1) << 8,
+    MOO_COMP_FEATURE_BACKDROP_BLUR = UINT64_C(1) << 9,
+    MOO_COMP_FEATURE_SATURATION = UINT64_C(1) << 10,
+    MOO_COMP_FEATURE_TINT = UINT64_C(1) << 11,
+    MOO_COMP_FEATURE_NOISE = UINT64_C(1) << 12,
+    MOO_COMP_FEATURE_AFFINE_2D = UINT64_C(1) << 13,
+    MOO_COMP_FEATURE_ANIMATION = UINT64_C(1) << 14,
     MOO_COMP_FEATURE_CLIPBOARD = UINT64_C(1) << 16,
     MOO_COMP_FEATURE_DRAG_AND_DROP = UINT64_C(1) << 17
 };
 
-#define MOO_COMP_FEATURES_V1     (MOO_COMP_FEATURE_SURFACES | MOO_COMP_FEATURE_DAMAGE |      MOO_COMP_FEATURE_Z_ORDER | MOO_COMP_FEATURE_INTEGER_SCALE |      MOO_COMP_FEATURE_OPACITY | MOO_COMP_FEATURE_FRAME_CALLBACK |      MOO_COMP_FEATURE_CURSOR)
+#define MOO_COMP_FEATURES_V1 \
+    (MOO_COMP_FEATURE_SURFACES | MOO_COMP_FEATURE_DAMAGE | \
+     MOO_COMP_FEATURE_Z_ORDER | MOO_COMP_FEATURE_INTEGER_SCALE | \
+     MOO_COMP_FEATURE_OPACITY | MOO_COMP_FEATURE_FRAME_CALLBACK | \
+     MOO_COMP_FEATURE_CURSOR)
+
+#define MOO_COMP_FEATURES_EFFECTS_V2 \
+    (MOO_COMP_FEATURE_CORNER_CLIP | MOO_COMP_FEATURE_SHADOW | \
+     MOO_COMP_FEATURE_BACKDROP_BLUR | MOO_COMP_FEATURE_SATURATION | \
+     MOO_COMP_FEATURE_TINT | MOO_COMP_FEATURE_NOISE | \
+     MOO_COMP_FEATURE_AFFINE_2D | MOO_COMP_FEATURE_ANIMATION)
+
+#define MOO_COMP_FEATURES_V2 \
+    (MOO_COMP_FEATURES_V1 | MOO_COMP_FEATURES_EFFECTS_V2)
 
 typedef enum {
     MOO_COMP_REQUEST_INVALID = 0,
@@ -70,13 +100,18 @@ typedef enum {
     MOO_COMP_REQUEST_DND_BEGIN = 40,
     MOO_COMP_REQUEST_DND_ACCEPT = 41,
     MOO_COMP_REQUEST_DND_DROP = 42,
-    MOO_COMP_REQUEST_DND_CANCEL = 43
+    MOO_COMP_REQUEST_DND_CANCEL = 43,
+    MOO_COMP_REQUEST_SURFACE_SET_EFFECTS = 44,
+    MOO_COMP_REQUEST_SURFACE_ANIMATE_EFFECT = 45,
+    MOO_COMP_REQUEST_SURFACE_CANCEL_ANIMATION = 46
 } MooCompRequestOpcode;
 
 typedef enum {
     MOO_COMP_EVENT_INVALID = 0,
     MOO_COMP_EVENT_BUFFER_RELEASE = 1,
-    MOO_COMP_EVENT_FRAME_DONE = 2
+    MOO_COMP_EVENT_FRAME_DONE = 2,
+    MOO_COMP_EVENT_EFFECT_STATUS = 3,
+    MOO_COMP_EVENT_ANIMATION_DONE = 4
 } MooCompEventType;
 
 typedef enum {
@@ -148,5 +183,67 @@ typedef struct {
     uint64_t present_sequence;
     uint64_t timestamp_ns;
 } MooCompEvent;
+
+typedef enum {
+    MOO_COMP_ANIMATION_DONE_COMPLETED = 1,
+    MOO_COMP_ANIMATION_DONE_CANCELLED = 2,
+    MOO_COMP_ANIMATION_DONE_REPLACED = 3,
+    MOO_COMP_ANIMATION_DONE_SURFACE_DESTROYED = 4,
+    MOO_COMP_ANIMATION_DONE_REDUCED_MOTION = 5
+} MooCompAnimationDoneStatus;
+
+/*
+ * Additive V2 messages. MooCompRequest and MooCompEvent above remain the
+ * complete, ABI-stable V1 value records and never grow. A V2 codec selects the
+ * record by header.opcode, verifies header.version==V2 and the exact
+ * byte_length below, then encodes/decodes every nested field in declaration
+ * order. It never copies struct bytes or padding.
+ */
+#define MOO_COMP_REQUEST_SET_EFFECTS_V2_BYTE_LENGTH UINT32_C(128)
+#define MOO_COMP_REQUEST_ANIMATE_EFFECT_V2_BYTE_LENGTH UINT32_C(144)
+#define MOO_COMP_REQUEST_CANCEL_ANIMATION_V2_BYTE_LENGTH UINT32_C(40)
+#define MOO_COMP_EVENT_EFFECT_STATUS_V2_BYTE_LENGTH UINT32_C(232)
+#define MOO_COMP_EVENT_ANIMATION_DONE_V2_BYTE_LENGTH UINT32_C(40)
+
+typedef struct {
+    MooCompMessageHeader header;
+    MooCompHandle surface;
+    MooCompEffectState effects;
+} MooCompRequestSetEffectsV2;
+
+typedef struct {
+    MooCompMessageHeader header;
+    MooCompHandle surface;
+    MooCompAnimationDesc animation;
+} MooCompRequestAnimateEffectV2;
+
+typedef struct {
+    MooCompMessageHeader header;
+    MooCompHandle surface;
+    uint64_t token;
+} MooCompRequestCancelAnimationV2;
+
+/*
+ * Dedicated V2 event records make degradation and completion observable
+ * without changing the 40-byte V1 MooCompEvent. result is a MooCompResult.
+ * An accepted animation token produces exactly one AnimationDoneV2 event.
+ */
+typedef struct {
+    uint32_t type;
+    uint32_t result;
+    MooCompHandle surface;
+    uint64_t commit_sequence;
+    uint64_t timestamp_ns;
+    MooCompEffectStatus effects;
+} MooCompEventEffectStatusV2;
+
+typedef struct {
+    uint32_t type;
+    uint32_t status;
+    MooCompHandle surface;
+    uint64_t token;
+    uint64_t commit_sequence;
+    uint64_t timestamp_ns;
+} MooCompEventAnimationDoneV2;
 
 #endif
