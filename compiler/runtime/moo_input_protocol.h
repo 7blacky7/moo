@@ -6,6 +6,7 @@
 #define MOO_INPUT_PROTOCOL_VERSION 1u
 #define MOO_INPUT_HANDLE_INVALID UINT64_C(0)
 #define MOO_INPUT_TEXT_CAPACITY 64u
+#define MOO_INPUT_LOGICAL_HID_BASE UINT32_C(0x00110000)
 
 /* Fixed-width protocol values only. A wire codec must encode each field
  * explicitly; C layout, padding and host endianness are never wire format. */
@@ -71,7 +72,8 @@ typedef enum {
 } MooInputTouchPhase;
 
 enum {
-    MOO_INPUT_EVENT_SENSITIVE = 1u << 0
+    MOO_INPUT_EVENT_SENSITIVE = 1u << 0,
+    MOO_INPUT_EVENT_SYNTHETIC = 1u << 1
 };
 
 typedef enum {

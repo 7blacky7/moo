@@ -626,6 +626,8 @@ uint64_t moo_input_state_hash(const MooInputCore *core) {
     hash = hash_mix(hash, core->ime_active);
     hash = hash_mix(hash, core->ime_target);
     hash = hash_mix(hash, core->pointer_buttons);
+    hash = hash_mix(hash, (uint32_t)core->pointer_x);
+    hash = hash_mix(hash, (uint32_t)core->pointer_y);
     hash = hash_mix(hash, core->lock_modifiers);
     hash = hash_mix(hash, core->high_contrast);
     hash = hash_mix(hash, core->reduced_motion);

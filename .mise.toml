@@ -90,3 +90,15 @@ ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 "$OUT
 "$CC" -nostdlib -r "$OUT/input.o" "$OUT/a11y.o" -o "$OUT/input-a11y.o"
 test -z "$(nm -u "$OUT/input-a11y.o")"
 '''
+
+
+[tasks.test-ui-moo-input-win32-cross]
+description = "Cross-compile the Win32 input/IME adapter contract"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-input-win32.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+CC="${MINGW_CC:-x86_64-w64-mingw32-gcc}"
+"$CC" -std=c11 -O2 -Wall -Wextra -Werror -Icompiler/runtime   compiler/runtime/tests/test_input_win32.c   compiler/runtime/moo_input_win32.c   compiler/runtime/moo_input_core.c   compiler/runtime/moo_a11y_core.c   -limm32 -o "$OUT/input-win32-test.exe"
+file "$OUT/input-win32-test.exe"
+'''

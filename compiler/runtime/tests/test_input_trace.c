@@ -169,7 +169,8 @@ int main(void) {
             return 1;
         }
         reserved_model = popcount_keys(&a.core) + live_touches(&a.core) +
-            popcount32(a.core.pointer_buttons) + (a.core.ime_active ? 1u : 0u);
+            popcount32(a.core.pointer_buttons) + (a.core.ime_active ? 1u : 0u) +
+            (a.core.pointer_target != MOO_INPUT_HANDLE_INVALID ? 1u : 0u);
         if (a.clients[0].reserved_cleanup != reserved_model) {
             fprintf(stderr, "reservation drift step=%u got=%u want=%u\n",
                     step, a.clients[0].reserved_cleanup, reserved_model);

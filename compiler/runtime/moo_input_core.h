@@ -58,6 +58,7 @@ typedef struct {
     MooInputTouchSlot touches[MOO_INPUT_MAX_TOUCHES];
     MooInputShortcutSlot shortcuts[MOO_INPUT_MAX_SHORTCUTS];
     uint32_t pointer_buttons, lock_modifiers, high_contrast, reduced_motion;
+    int32_t pointer_x, pointer_y;
 } MooInputCore;
 
 MooInputResult moo_input_init(MooInputCore *core, const MooInputConfig *config,
@@ -83,6 +84,8 @@ MooInputResult moo_input_pointer_motion(MooInputCore *core, MooInputHandle targe
 MooInputResult moo_input_pointer_button(MooInputCore *core, uint32_t button,
     uint32_t state, int32_t x, int32_t y, uint64_t serial, uint64_t timestamp_ns);
 MooInputResult moo_input_pointer_axis(MooInputCore *core, int32_t x_120, int32_t y_120,
+    uint64_t serial, uint64_t timestamp_ns);
+MooInputResult moo_input_pointer_cancel(MooInputCore *core,
     uint64_t serial, uint64_t timestamp_ns);
 MooInputResult moo_input_stylus(MooInputCore *core, MooInputHandle target,
     int32_t x, int32_t y, uint32_t pressure, int32_t tilt_x, int32_t tilt_y,

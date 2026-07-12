@@ -19,6 +19,10 @@ ohne Toolkit, Allokation, Syscalls, Uhr oder Hardwarezugriff.
   Surface-Owner, bevor ein Input-Target entsteht.
 - Hostadapter übersetzen ausschließlich native Events. Fokus-, IME-,
   Shortcut- und A11y-Policy bleiben im gemeinsamen Kern.
+- `moo_input_win32`: normalisiert Set-1-Scancodes auf USB-HID, Pointer,
+  Key-Repeats, Fokus, UTF-16/Surrogates, `WM_CHAR` und IMM-Composition. Er
+  meldet nur Pointer, Keyboard, IME und Shortcuts; Touch, Stift und UIA sind
+  bis zu eigenen Implementierungen ausgeschaltet.
 
 ## Vertrauensgrenzen
 
@@ -61,9 +65,10 @@ den semantischen Statehash ein; sensitive Texte und Passwortwerte nicht.
 `MooInputConfig.features` enthält nur vom konkreten Adapter belegte
 Fähigkeiten. Nicht gesetzte Features liefern `MOO_INPUT_UNSUPPORTED`.
 Insbesondere bedeutet ein vorhandener Eventtyp nicht, dass GTK, Win32 oder
-Cocoa ihn bereits nativ liefern. Der Core-/Fake-Adapter ist belegt; native
-IME-, UIA/AT-SPI/NSAccessibility- und Touch/Stift-Brücken werden erst nach
-ihrem jeweiligen Plattformlauf als verfügbar markiert.
+Cocoa ihn bereits nativ liefern. Core/Fake und der isolierte Win32-
+Pointer/Keyboard/IMM-Adapter sind belegt. UIA/AT-SPI/NSAccessibility,
+GTK/Cocoa-IME sowie native Touch-/Stift-Brücken werden erst nach ihrem
+jeweiligen Plattformlauf als verfügbar markiert.
 
 ## Reproduzierbares Gate
 

@@ -120,43 +120,64 @@ static MooInputResult can_queue(const MooInputCore *core, MooInputHandle owner,
     return MOO_INPUT_OK;
 }
 
-static MooInputResult can_queue_pair(const MooInputCore *core,
-    MooInputHandle owner_a, uint32_t count_a,
-    MooInputHandle owner_b, uint32_t count_b) {
-    uint32_t ai = UINT32_MAX;
-    uint32_t bi = UINT32_MAX;
-    uint32_t total = count_a + count_b;
-    uint32_t reserved;
+static MooInputResult can_pointer_transition(const MooInputCore *core,
+    MooInputHandle old_owner, uint32_t has_old,
+    MooInputHandle new_owner, uint32_t has_new) {
+    uint32_t old_index = UINT32_MAX;
+    uint32_t new_index = UINT32_MAX;
+    uint32_t old_count = has_old ? 1u : 0u;
+    uint32_t new_count = has_new ? 2u : 0u;
+    uint32_t total = old_count + new_count;
+    uint32_t reserved = total_cleanup_reservations(core);
+    uint32_t final_reserved;
     MooInputResult result;
-    if (total < count_a) return MOO_INPUT_LIMIT;
-    if (count_a != 0u) {
-        result = client_slot(core, owner_a, &ai);
+    if (has_old) {
+        result = client_slot(core, old_owner, &old_index);
         if (result != MOO_INPUT_OK) return result;
+        if (core->clients[old_index].reserved_cleanup == 0u)
+            return MOO_INPUT_BAD_STATE;
     }
-    if (count_b != 0u) {
-        result = client_slot(core, owner_b, &bi);
+    if (has_new) {
+        result = client_slot(core, new_owner, &new_index);
         if (result != MOO_INPUT_OK) return result;
+        if (core->clients[new_index].reserved_cleanup == UINT32_MAX)
+            return MOO_INPUT_LIMIT;
     }
-    if (ai != UINT32_MAX && ai == bi) {
+    if (reserved < old_count ||
+        (has_new && reserved - old_count == UINT32_MAX))
+        return MOO_INPUT_LIMIT;
+    final_reserved = reserved - old_count + (has_new ? 1u : 0u);
+    if (old_index != UINT32_MAX && old_index == new_index) {
+        uint32_t ci = old_index;
+        uint32_t final_client_reserved =
+            core->clients[ci].reserved_cleanup - 1u + (has_new ? 1u : 0u);
         if (total > core->config.max_events_per_client ||
-            core->clients[ai].queued + core->clients[ai].reserved_cleanup >
-            core->config.max_events_per_client - total)
+            core->clients[ci].queued >
+                core->config.max_events_per_client - total ||
+            final_client_reserved >
+                core->config.max_events_per_client - total -
+                    core->clients[ci].queued)
             return MOO_INPUT_WOULD_BLOCK;
     } else {
-        if (ai != UINT32_MAX &&
-            (count_a > core->config.max_events_per_client ||
-             core->clients[ai].queued + core->clients[ai].reserved_cleanup >
-             core->config.max_events_per_client - count_a))
+        if (old_index != UINT32_MAX &&
+            (old_count > core->config.max_events_per_client ||
+             core->clients[old_index].queued >
+                core->config.max_events_per_client - old_count ||
+             core->clients[old_index].reserved_cleanup - 1u >
+                core->config.max_events_per_client - old_count -
+                    core->clients[old_index].queued))
             return MOO_INPUT_WOULD_BLOCK;
-        if (bi != UINT32_MAX &&
-            (count_b > core->config.max_events_per_client ||
-             core->clients[bi].queued + core->clients[bi].reserved_cleanup >
-             core->config.max_events_per_client - count_b))
+        if (new_index != UINT32_MAX &&
+            (new_count > core->config.max_events_per_client ||
+             core->clients[new_index].queued >
+                core->config.max_events_per_client - new_count ||
+             core->clients[new_index].reserved_cleanup + 1u >
+                core->config.max_events_per_client - new_count -
+                    core->clients[new_index].queued))
             return MOO_INPUT_WOULD_BLOCK;
     }
-    reserved = total_cleanup_reservations(core);
     if (free_events(core) < total ||
-        free_events(core) - total < reserved)
+        free_events(core) - total < final_reserved)
         return MOO_INPUT_WOULD_BLOCK;
     if (core->event_sequence > UINT64_MAX - total)
         return MOO_INPUT_LIMIT;
@@ -279,6 +300,7 @@ MooInputResult moo_input_init(MooInputCore *core, const MooInputConfig *config,
     core->ime_active = 0u;
     core->ime_target = MOO_INPUT_HANDLE_INVALID;
     core->pointer_buttons = 0u; core->lock_modifiers = 0u;
+    core->pointer_x = 0; core->pointer_y = 0;
     core->high_contrast = 0u;
     core->reduced_motion = 0u;
     for (i = 0u; i < MOO_INPUT_KEY_WORDS; ++i) core->key_bits[i] = 0u;
@@ -452,7 +474,7 @@ MooInputResult moo_input_target_destroy(MooInputCore *core,
     result = serial_ok(core, serial);
     if (result != MOO_INPUT_OK) return result;
     if (core->focus == target || core->pointer_capture == target ||
-        (core->pointer_target == target && core->pointer_buttons != 0u))
+        core->pointer_target == target)
         return MOO_INPUT_BAD_STATE;
     for (i = 0u; i < MOO_INPUT_MAX_TOUCHES; ++i)
         if (core->touches[i].live && core->touches[i].target == target)
@@ -630,17 +652,23 @@ MooInputResult moo_input_pointer_motion(MooInputCore *core,
             result = owner_for_target(core, target, &owner);
             if (result != MOO_INPUT_OK) return result;
         }
-        result = can_queue_pair(core, old_owner,
-                    core->pointer_target != MOO_INPUT_HANDLE_INVALID ? 1u : 0u,
-                    owner, target != MOO_INPUT_HANDLE_INVALID ? 2u : 0u);
+        result = can_pointer_transition(core, old_owner,
+                    core->pointer_target != MOO_INPUT_HANDLE_INVALID,
+                    owner, target != MOO_INPUT_HANDLE_INVALID);
         if (result != MOO_INPUT_OK) return result;
+        if (target != MOO_INPUT_HANDLE_INVALID) {
+            uint32_t ci;
+            result = client_slot(core, owner, &ci);
+            if (result != MOO_INPUT_OK) return result;
+            core->clients[ci].reserved_cleanup++;
+        }
         if (core->pointer_target != MOO_INPUT_HANDLE_INVALID) {
             event_base(&event, MOO_INPUT_EVENT_POINTER_LEAVE,
                        core->pointer_target, serial, timestamp_ns,
                        core->focus_epoch);
             event.data.pointer.x = x; event.data.pointer.y = y;
             event.data.pointer.dx = dx; event.data.pointer.dy = dy;
-            result = push_event(core, old_owner, &event, 0u);
+            result = push_event(core, old_owner, &event, 1u);
             if (result != MOO_INPUT_OK) return result;
         }
         core->pointer_target = target;
@@ -663,6 +691,8 @@ MooInputResult moo_input_pointer_motion(MooInputCore *core,
         result = push_event(core, owner, &event, 0u);
         if (result != MOO_INPUT_OK) return result;
     }
+    core->pointer_x = x;
+    core->pointer_y = y;
     core->accepted_serial = serial;
     return MOO_INPUT_OK;
 }
@@ -744,6 +774,65 @@ MooInputResult moo_input_pointer_axis(MooInputCore *core,
     event.data.axis.x_120 = x_120; event.data.axis.y_120 = y_120;
     result = push_event(core, owner, &event, 0u);
     if (result != MOO_INPUT_OK) return result;
+    core->accepted_serial = serial;
+    return MOO_INPUT_OK;
+}
+
+MooInputResult moo_input_pointer_cancel(MooInputCore *core,
+    uint64_t serial, uint64_t timestamp_ns) {
+    MooInputHandle target;
+    MooInputHandle owner;
+    MooInputEvent event;
+    uint32_t button;
+    uint32_t cleanup = 0u;
+    uint32_t needed;
+    MooInputResult result = serial_ok(core, serial);
+    if (result != MOO_INPUT_OK) return result;
+    if ((core->config.features & MOO_INPUT_FEATURE_POINTER) == 0u)
+        return MOO_INPUT_UNSUPPORTED;
+    target = core->pointer_capture != MOO_INPUT_HANDLE_INVALID
+           ? core->pointer_capture : core->pointer_target;
+    if (target == MOO_INPUT_HANDLE_INVALID) {
+        core->accepted_serial = serial;
+        return MOO_INPUT_OK;
+    }
+    result = owner_for_target(core, target, &owner);
+    if (result != MOO_INPUT_OK) return result;
+    for (button = 0u; button < 32u; ++button)
+        if ((core->pointer_buttons & (UINT32_C(1) << button)) != 0u)
+            cleanup++;
+    if (core->pointer_target != MOO_INPUT_HANDLE_INVALID) cleanup++;
+    needed = cleanup;
+    result = can_queue(core, owner, needed, cleanup);
+    if (result != MOO_INPUT_OK) return result;
+    for (button = 0u; button < 32u; ++button) {
+        uint32_t bit = UINT32_C(1) << button;
+        if ((core->pointer_buttons & bit) == 0u) continue;
+        event_base(&event, MOO_INPUT_EVENT_POINTER_BUTTON, target, serial,
+                   timestamp_ns, core->focus_epoch);
+        event.flags = MOO_INPUT_EVENT_SYNTHETIC;
+        event.data.button.button = button;
+        event.data.button.state = MOO_INPUT_RELEASED;
+        event.data.button.x = core->pointer_x;
+        event.data.button.y = core->pointer_y;
+        result = push_event(core, owner, &event, 1u);
+        if (result != MOO_INPUT_OK) return result;
+    }
+    if (core->pointer_target != MOO_INPUT_HANDLE_INVALID) {
+        event_base(&event, MOO_INPUT_EVENT_POINTER_LEAVE,
+                   core->pointer_target, serial, timestamp_ns,
+                   core->focus_epoch);
+        event.flags = MOO_INPUT_EVENT_SYNTHETIC;
+        event.data.pointer.x = core->pointer_x;
+        event.data.pointer.y = core->pointer_y;
+        event.data.pointer.dx = 0;
+        event.data.pointer.dy = 0;
+        result = push_event(core, owner, &event, 1u);
+        if (result != MOO_INPUT_OK) return result;
+    }
+    core->pointer_buttons = 0u;
+    core->pointer_capture = MOO_INPUT_HANDLE_INVALID;
+    core->pointer_target = MOO_INPUT_HANDLE_INVALID;
     core->accepted_serial = serial;
     return MOO_INPUT_OK;
 }

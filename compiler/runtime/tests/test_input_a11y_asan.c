@@ -146,12 +146,12 @@ static void test_pointer_touch_stylus_and_quota(void) {
         accepted_axes++;
         serial++;
     }
-    CHECK(accepted_axes == 6u, "quota leaves cleanup slot");
+    CHECK(accepted_axes == 5u, "quota leaves button and hover cleanup slots");
     CHECK(moo_input_pointer_button(&f.core, 1u, MOO_INPUT_RELEASED, 1, 2,
                                    serial++, 3u) == MOO_INPUT_OK,
           "button release survives saturation");
-    CHECK(f.clients[0].reserved_cleanup == 0u, "pointer reserve consumed");
-    CHECK(drain(&f.core, app, 0) == 8u, "saturated queue drains");
+    CHECK(f.clients[0].reserved_cleanup == 1u, "button reserve consumed, hover reserve remains");
+    CHECK(drain(&f.core, app, 0) == 7u, "saturated queue drains");
 
     CHECK(moo_input_touch(&f.core, target, 77u, MOO_INPUT_TOUCH_DOWN,
                           4, 5, 300u, serial++, 4u) == MOO_INPUT_OK,
@@ -163,6 +163,16 @@ static void test_pointer_touch_stylus_and_quota(void) {
                            serial++, 6u) == MOO_INPUT_OK, "stylus");
     CHECK(drain(&f.core, app, &event) == 3u &&
           event.type == MOO_INPUT_EVENT_STYLUS, "touch stylus events");
+    CHECK(moo_input_pointer_button(&f.core, 0u, MOO_INPUT_PRESSED, 8, 9,
+          serial++, 7u) == MOO_INPUT_OK, "cancel seed button");
+    CHECK(moo_input_pointer_cancel(&f.core, serial++, 8u) == MOO_INPUT_OK,
+          "pointer cancel");
+    CHECK(drain(&f.core, app, &event) == 3u &&
+          event.type == MOO_INPUT_EVENT_POINTER_LEAVE &&
+          (event.flags & MOO_INPUT_EVENT_SYNTHETIC) != 0u,
+          "synthetic release and leave");
+    CHECK(f.core.pointer_target == MOO_INPUT_HANDLE_INVALID &&
+          f.clients[0].reserved_cleanup == 0u, "pointer cancel state");
 }
 
 static void test_shortcut_and_modifiers(void) {
