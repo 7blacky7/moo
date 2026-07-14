@@ -544,6 +544,14 @@ static LRESULT CALLBACK moo_window_proc(HWND hwnd, UINT msg,
             return 0;
         }
 
+        case WM_CTLCOLORSTATIC: {
+            /* Paritaet mit GTK/Cocoa: Labels haben KEINEN opaken Hintergrund.
+             * Ohne das liegen ui_label-Texte als weisse Balken ueber
+             * Compositor-/Leinwand-Inhalten (Glass Gallery). */
+            SetBkMode((HDC)wp, TRANSPARENT);
+            return (LRESULT)GetStockObject(HOLLOW_BRUSH);
+        }
+
         case WM_NCDESTROY: {
             cb_box_free_prop(hwnd, L"moo-onclose");
             cb_box_free_prop(hwnd, L"moo-cb");
@@ -783,6 +791,20 @@ MooValue moo_ui_label_setze(MooValue label, MooValue text) {
     wchar_t* wt = utf8_to_wide(str_or(text, ""));
     BOOL ok = SetWindowTextW(h, wt ? wt : L"");
     free(wt);
+    /* Labels sind transparent (WM_CTLCOLORSTATIC/HOLLOW_BRUSH) — beim
+     * Textwechsel muss der Parent den Bereich neu malen, sonst Ghosting. */
+    if (ok) {
+        HWND par = GetParent(h);
+        if (par) {
+            RECT r;
+            if (GetWindowRect(h, &r)) {
+                MapWindowPoints(NULL, par, (POINT*)&r, 2);
+                InvalidateRect(par, &r, TRUE);
+            }
+        } else {
+            InvalidateRect(h, NULL, TRUE);
+        }
+    }
     return moo_bool(ok ? 1 : 0);
 }
 

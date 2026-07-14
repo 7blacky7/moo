@@ -1,0 +1,137 @@
+# ============================================================
+# beispiele/moo_glass_drag.moo — Live-Glass-Beweis (P016-O5-AERO)
+#
+# Eine Glass-Karte laesst sich mit der Maus verschieben. Bei jedem
+# Drag-Schritt wird die Karte per uim_effekt_vorschau_zeichnen NEU
+# gegen den aktuellen Untergrund aufgeloest (surface_read_pixel!) —
+# Blur/Saettigung/Toenung zeigen also live den jeweiligen Hintergrund.
+# Kein vorgebackenes Bitmap: der Beweis ist, dass sich der Glas-Inhalt
+# beim Schieben mit dem Untergrund veraendert.
+# ============================================================
+
+importiere ui
+importiere ui_moo_effects
+
+setze G auf {}
+G["b"] = 720
+G["h"] = 480
+G["karte_b"] = 260
+G["karte_h"] = 140
+G["kx"] = 60
+G["ky"] = 60
+G["drag"] = falsch
+G["off_x"] = 0
+G["off_y"] = 0
+G["render_x"] = 0 - 1000
+G["render_y"] = 0 - 1000
+G["bmp"] = "moo_glass_drag.bmp"
+
+funktion drag_hintergrund(z):
+    surface_clear(z, 10, 18, 34, 255)
+    setze y auf 0
+    solange y < G["h"]:
+        setze x auf 0
+        solange x < G["b"]:
+            setze band auf (boden(x / 80) + boden(y / 60)) % 4
+            wenn band == 0:
+                surface_rect(z, x, y, 80, 60, 18, 56, 98, 255)
+            sonst wenn band == 1:
+                surface_rect(z, x, y, 80, 60, 38, 48, 96, 255)
+            sonst wenn band == 2:
+                surface_rect(z, x, y, 80, 60, 24, 82, 104, 255)
+            sonst:
+                surface_rect(z, x, y, 80, 60, 54, 38, 92, 255)
+            setze x auf x + 80
+        setze y auf y + 60
+    # Markante helle Formen: hier sieht man das Live-Resampling deutlich.
+    surface_circle(z, 170, 140, 80, 80, 178, 255, 220)
+    surface_circle(z, 560, 330, 95, 255, 96, 170, 200)
+    surface_roundrect(z, 280, 60, 240, 70, 24, 255, 196, 92, 200)
+    surface_roundrect(z, 90, 330, 220, 90, 30, 72, 210, 166, 200)
+    gib_zurück wahr
+
+funktion drag_effekt():
+    setze e auf uim_effekt_neu()
+    uim_effekt_ecken_setze(e, 22, 22, 22, 22)
+    uim_effekt_schatten_setze(e, 4, 10, 8, 2, 0, 0, 0, 132)
+    uim_effekt_hintergrund_setze(e, 8, 336, 92, 156, 255, 255, 92, 18, 20260714)
+    gib_zurück e
+
+funktion render_frame():
+    setze z auf G["z"]
+    drag_hintergrund(z)
+    setze a auf uim_effekt_aufloesen(drag_effekt(), 255)
+    wenn a["ok"]:
+        uim_effekt_vorschau_zeichnen(z, G["kx"], G["ky"], G["karte_b"], G["karte_h"], a, falsch, 65536)
+    setze frame auf surface_snapshot_to_frame(z)
+    wenn frame == nichts:
+        gib_zurück falsch
+    wenn test_frame_save_bmp(frame, G["bmp"]) == falsch:
+        gib_zurück falsch
+    G["render_x"] = G["kx"]
+    G["render_y"] = G["ky"]
+    gib_zurück wahr
+
+funktion draw_cb(w, zeichner):
+    ui_zeichne_bild(zeichner, 0, 0, G["b"], G["h"], G["bmp"])
+    gib_zurück wahr
+
+funktion klemme(wert, lo, hi):
+    wenn wert < lo:
+        gib_zurück lo
+    wenn wert > hi:
+        gib_zurück hi
+    gib_zurück wert
+
+funktion on_maus(w, x, y, taste):
+    wenn taste != 1:
+        gib_zurück wahr
+    wenn x >= G["kx"] und x < G["kx"] + G["karte_b"] und y >= G["ky"] und y < G["ky"] + G["karte_h"]:
+        G["drag"] = wahr
+        G["off_x"] = x - G["kx"]
+        G["off_y"] = y - G["ky"]
+    gib_zurück wahr
+
+funktion on_bewegung(w, x, y):
+    wenn G["drag"] == falsch:
+        gib_zurück wahr
+    setze nx auf klemme(x - G["off_x"], 0, G["b"] - G["karte_b"])
+    setze ny auf klemme(y - G["off_y"], 0, G["h"] - G["karte_h"])
+    setze dx auf nx - G["render_x"]
+    wenn dx < 0:
+        setze dx auf 0 - dx
+    setze dy auf ny - G["render_y"]
+    wenn dy < 0:
+        setze dy auf 0 - dy
+    G["kx"] = nx
+    G["ky"] = ny
+    # Throttle: erst ab 6px Distanz neu rendern (Vollframe + Effekt-Resampling).
+    wenn dx + dy >= 6:
+        render_frame()
+        ui_leinwand_anfordern(G["leinwand"])
+    gib_zurück wahr
+
+funktion on_maus_los(w, x, y, taste):
+    wenn taste == 1 und G["drag"]:
+        G["drag"] = falsch
+        render_frame()
+        ui_leinwand_anfordern(G["leinwand"])
+    gib_zurück wahr
+
+setze z auf surface_new(G["b"], G["h"])
+wenn z == nichts:
+    wirf "Surface konnte nicht erzeugt werden"
+G["z"] = z
+wenn render_frame() == falsch:
+    wirf "Initialer Frame konnte nicht gerendert werden"
+
+setze fenster auf ui_fenster("Moo Glass — Live-Drag-Beweis", 760, 590, 0, nichts)
+ui_label(fenster, "Karte mit der Maus verschieben: Glas rendert den Untergrund LIVE neu", 20, 12, 700, 22)
+G["leinwand"] = ui_leinwand(fenster, 20, 44, G["b"], G["h"], draw_cb)
+ui_leinwand_on_maus(G["leinwand"], on_maus)
+ui_leinwand_on_bewegung(G["leinwand"], on_bewegung)
+ui_leinwand_on_maus_los(G["leinwand"], on_maus_los)
+ui_label(fenster, "backend=portable-vorschau | resampling=surface_read_pixel | throttle=6px", 20, 534, 700, 22)
+zeige "P016-UI1-DRAG-START"
+ui_zeige_nebenbei(fenster)
+ui_laufen()
