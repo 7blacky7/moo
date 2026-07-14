@@ -36,6 +36,7 @@ function New-P016ManagedFixture([string]$Path, [string]$Source) {
     $ErrorActionPreference='Stop'
     try {
         $compilerParameters=New-Object System.CodeDom.Compiler.CompilerParameters
+        [void]$compilerParameters.ReferencedAssemblies.Add('System.dll');[void]$compilerParameters.ReferencedAssemblies.Add('System.Core.dll')
         $compilerParameters.GenerateExecutable=$true;$compilerParameters.GenerateInMemory=$false;$compilerParameters.OutputAssembly=$Path;$compilerParameters.CompilerOptions='/platform:x64 /optimize+'
         $null=Add-Type -TypeDefinition $Source -Language CSharp -CompilerParameters $compilerParameters
     } catch { throw 'FIXTURE_BUILD_FAILED' }

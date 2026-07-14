@@ -82,7 +82,7 @@ function Invoke-P016WindowsLinkerFixtureSelfTest {
     if ($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1) { throw 'INFRA_POWERSHELL_5_1_REQUIRED' }
     if (-not (Get-Command Add-Type -CommandType Cmdlet -ErrorAction SilentlyContinue)) { throw 'INFRA_ADDTYPE_REQUIRED' }
     $helper=Get-P016SelfTestBoundSibling 'windows_linker_behavior_helpers.ps1' 'ab65a9e2670eed4c2edb3fa87852b15b0706c2ae27731eaffdc4e9ce11eeac50'
-    $builder=Get-P016SelfTestBoundSibling 'windows_linker_behavior_fixtures.ps1' 'f69f166ffb53b107251a8c2e9df3077521e7a0977ba66cdc2760acb9df28c5af'
+    $builder=Get-P016SelfTestBoundSibling 'windows_linker_behavior_fixtures.ps1' 'e17feb86442a5393b3cb9623e8e592ca4605c835f95f3796f7da92cec1ed3bf2'
     try { . $helper; . $builder } catch { throw 'INFRA_IMPORT_FAILED' }
     foreach($api in @('Invoke-P016BoundedProcess','Get-P016EnvironmentSnapshot','Restore-P016EnvironmentSnapshot','Test-P016EnvironmentSnapshot','Get-P016Sha256','Test-P016Sha256Manifest','New-P016WindowsLinkerFixtures')) {
         if (-not (Get-Command $api -CommandType Function -ErrorAction SilentlyContinue)) { throw 'INFRA_API_MISSING' }
