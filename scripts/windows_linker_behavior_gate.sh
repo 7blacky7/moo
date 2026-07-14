@@ -209,7 +209,7 @@ try{
     '-RepoRoot',$source,'-CompilerPath',$compiler,'-RuntimePath',$runtime,'-SourcePath',$main
     '-SourceManifestPath',$manifest,'-EvidencePath',$production,'-TimeoutMs',[string]$CaseTimeoutMs
   )
-  $gate=Run (Join-Path $PSHOME 'powershell.exe') $gateArgs $source $gateTimeout @{}
+  $gate=Run (Join-Path $PSHOME 'powershell.exe') $gateArgs $source $gateTimeout $child
   WriteText (Join-Path $evidence 'production.stdout') $gate.Stdout
   WriteText (Join-Path $evidence 'production.stderr') $gate.Stderr
   WriteText (Join-Path $evidence 'production.exit') ([string]$gate.ExitCode+[string][char]10)
