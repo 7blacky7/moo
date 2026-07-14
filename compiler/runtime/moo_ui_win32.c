@@ -3215,6 +3215,8 @@ static void w32_ensure_com(void) {
 /* Speichert ein HBITMAP als PNG nach `wpath` (UTF-16). Rueckgabe: 1 Erfolg,
  * 0 Fehler. Kein Einfluss auf das HBITMAP — Caller bleibt Eigentuemer. */
 static int w32_save_hbitmap_png(HBITMAP hbmp, const wchar_t* wpath) {
+    const char* step = "init";
+    HRESULT step_hr = S_OK;
     if (!hbmp || !wpath) return 0;
     w32_ensure_com();
 
@@ -3230,17 +3232,17 @@ static int w32_save_hbitmap_png(HBITMAP hbmp, const wchar_t* wpath) {
                           CLSCTX_INPROC_SERVER,
                           &MOO_IID_IWICImagingFactory,
                           (void**)&factory);
-    if (FAILED(hr) || !factory) goto cleanup;
+    if (FAILED(hr) || !factory) { step = "CoCreateInstance(WICFactory)"; step_hr = hr; goto cleanup; }
 
     hr = IWICImagingFactory_CreateBitmapFromHBITMAP(factory, hbmp, NULL,
                                                     WICBitmapIgnoreAlpha, &bmp);
-    if (FAILED(hr) || !bmp) goto cleanup;
+    if (FAILED(hr) || !bmp) { step = "CreateBitmapFromHBITMAP"; step_hr = hr; goto cleanup; }
 
     hr = IWICImagingFactory_CreateStream(factory, &stream);
     if (FAILED(hr) || !stream) goto cleanup;
 
     hr = IWICStream_InitializeFromFilename(stream, wpath, GENERIC_WRITE);
-    if (FAILED(hr)) goto cleanup;
+    if (FAILED(hr)) { step = "InitializeFromFilename"; step_hr = hr; goto cleanup; }
 
     hr = IWICImagingFactory_CreateEncoder(factory, &MOO_GUID_ContainerFormatPng,
                                           NULL, &encoder);
@@ -3272,7 +3274,7 @@ static int w32_save_hbitmap_png(HBITMAP hbmp, const wchar_t* wpath) {
     }
 
     hr = IWICBitmapFrameEncode_WriteSource(frame, (IWICBitmapSource*)bmp, NULL);
-    if (FAILED(hr)) goto cleanup;
+    if (FAILED(hr)) { step = "WriteSource"; step_hr = hr; goto cleanup; }
 
     hr = IWICBitmapFrameEncode_Commit(frame);
     if (FAILED(hr)) goto cleanup;
@@ -3283,6 +3285,11 @@ static int w32_save_hbitmap_png(HBITMAP hbmp, const wchar_t* wpath) {
     ok = 1;
 
 cleanup:
+    if (!ok) {
+        char diag[128];
+        snprintf(diag, sizeof(diag), "%s hr=0x%08lX", step, (unsigned long)step_hr);
+        ui_log("png-encode fehlgeschlagen", diag);
+    }
     if (frame)   IWICBitmapFrameEncode_Release(frame);
     if (encoder) IWICBitmapEncoder_Release(encoder);
     if (stream)  IWICStream_Release(stream);
@@ -3295,8 +3302,15 @@ cleanup:
  * Chrome ab (PW_CLIENTONLY). */
 static int w32_capture_hwnd_png(HWND hwnd, const wchar_t* wpath,
                                 int client_only) {
-    if (!hwnd || !IsWindow(hwnd)) return 0;
-    if (!IsWindowVisible(hwnd))  return 0;
+    if (!hwnd || !IsWindow(hwnd)) { ui_log("snapshot: hwnd ungueltig", NULL); return 0; }
+    if (!IsWindowVisible(hwnd))  { ui_log("snapshot: fenster nicht sichtbar", NULL); return 0; }
+
+    /* Ausstehende Paints synchron abarbeiten, bevor wir capturen — sonst
+     * liefert PrintWindow bei Owner-Draw-Kindern (Leinwand) veralteten
+     * Inhalt (stale_visual im Test-Harness). */
+    RedrawWindow(hwnd, NULL, NULL,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+    GdiFlush();
 
     RECT rc;
     if (client_only) {
@@ -3310,7 +3324,7 @@ static int w32_capture_hwnd_png(HWND hwnd, const wchar_t* wpath,
     }
     int w = rc.right;
     int h = rc.bottom;
-    if (w <= 0 || h <= 0) return 0;
+    if (w <= 0 || h <= 0) { ui_log("snapshot: leere client-area", NULL); return 0; }
 
     HDC hdc_ref = GetDC(NULL);
     if (!hdc_ref) return 0;
