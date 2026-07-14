@@ -1657,6 +1657,50 @@ MooValue moo_ui_zeichne_text(MooValue zeichner,
     }
 }
 
+MooValue moo_ui_zeichne_frame(MooValue zeichner,
+                              MooValue x, MooValue y,
+                              MooValue b, MooValue h,
+                              MooValue frame) {
+    @autoreleasepool {
+        MooZeichnerCG *z = unwrap_zeichner_cg(zeichner);
+        if (!z || frame.tag != MOO_FRAME) return moo_bool(0);
+        MooFrame *f = MV_FRAME(frame);
+        if (!f || !f->pixels || f->width <= 0 || f->height <= 0)
+            return moo_bool(0);
+        int tw = num_or(b, f->width);
+        int th = num_or(h, f->height);
+        if (tw < 1 || th < 1) return moo_bool(0);
+        NSBitmapImageRep *rep = [[NSBitmapImageRep alloc]
+            initWithBitmapDataPlanes:NULL
+                          pixelsWide:f->width
+                          pixelsHigh:f->height
+                       bitsPerSample:8
+                     samplesPerPixel:4
+                            hasAlpha:YES
+                            isPlanar:NO
+                      colorSpaceName:NSDeviceRGBColorSpace
+                        bitmapFormat:NSBitmapFormatAlphaNonpremultiplied
+                         bytesPerRow:(NSInteger)f->width * 4
+                        bitsPerPixel:32];
+        if (!rep || !rep.bitmapData) return moo_bool(0);
+        for (int32_t row = 0; row < f->height; ++row)
+            memcpy(rep.bitmapData + (size_t)row * (size_t)f->width * 4u,
+                   f->pixels + (size_t)row * (size_t)f->stride,
+                   (size_t)f->width * 4u);
+        NSImage *img = [[NSImage alloc]
+                         initWithSize:NSMakeSize(f->width, f->height)];
+        [img addRepresentation:rep];
+        NSRect dst = NSMakeRect(num_or(x, 0), num_or(y, 0), tw, th);
+        [img drawInRect:dst
+               fromRect:NSZeroRect
+              operation:NSCompositingOperationSourceOver
+               fraction:1.0
+         respectFlipped:YES
+                  hints:nil];
+        return moo_bool(1);
+    }
+}
+
 MooValue moo_ui_zeichne_bild(MooValue zeichner,
                              MooValue x, MooValue y,
                              MooValue b, MooValue h,

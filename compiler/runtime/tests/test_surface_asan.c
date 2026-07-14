@@ -82,6 +82,23 @@ void moo_dict_set(MooValue dict_value, MooValue key, MooValue value) {
     abort();
 }
 
+MooValue moo_dict_get(MooValue dict_value, MooValue key) {
+    /* Wie moo_dict.c: konsumiert den Key (Transfer), Owning-Rueckgabe. */
+    MooDict* dict = MV_DICT(dict_value);
+    MooValue result = moo_none();
+    int32_t i;
+    for (i = 0; i < dict->capacity; ++i) {
+        if (dict->entries[i].occupied &&
+            strcmp(dict->entries[i].key->chars, MV_STR(key)->chars) == 0) {
+            result = dict->entries[i].value;
+            moo_retain(result);
+            break;
+        }
+    }
+    moo_release(key);
+    return result;
+}
+
 MooValue moo_frame_new_take(int width, int height, uint8_t* pixels) {
     MooFrame* frame;
     MooValue value;

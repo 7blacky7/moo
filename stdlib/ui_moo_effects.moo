@@ -396,7 +396,11 @@ funktion _uime_im_rundclip(e, lx, ly, b, h):
     gib_zurück dx * dx + dy * dy <= radius * radius
 
 funktion _uime_preview_noise(seed, x, y, staerke):
-    setze n auf (seed % 65521 + (x % 65521) * 17 + (y % 65521) * 31) % 251
+    # Gescrambelter Hash statt linearem Muster — lineare Formeln wie
+    # (x*17 + y*31) % 251 erzeugen sichtbare Diagonalstreifen im Glas.
+    setze hx auf (x * 73856093) % 65521
+    setze hy auf (y * 19349663) % 65521
+    setze n auf (hx * 31 + hy * 17 + seed % 65521) % 251
     gib_zurück (n - 125) * staerke / 1020
 
 funktion _uime_preview_fehler(grund):
@@ -407,6 +411,66 @@ funktion _uime_preview_fehler(grund):
     r["effektiv"] = 0
     r["degradiert"] = 0
     gib_zurück r
+
+# Moo-Referenz des Farb-Passes (Blur-Resampling, Saettigung, Toenung,
+# Rauschen, Rund-Clip). Der C-Fastpath surface_glass_farbpass portiert diese
+# Semantik exakt; die Effekt-Goldens gelten fuer beide Pfade.
+funktion _uime_farbpass_langsam(z, px, py, pb, ph, e):
+    setze scratch auf []
+    setze blur auf e["hintergrund"]["unschaerfe"]
+    wenn blur > 24:
+        setze blur auf 24
+    setze ly auf 0
+    solange ly < ph:
+        setze lx auf 0
+        solange lx < pb:
+            wenn _uime_im_rundclip(e, lx, ly, pb, ph):
+                setze sum_r auf 0
+                setze sum_g auf 0
+                setze sum_b auf 0
+                setze sum_a auf 0
+                setze anzahl auf 0
+                setze sy auf 0 - blur
+                solange sy <= blur:
+                    setze sx auf 0 - blur
+                    solange sx <= blur:
+                        setze q auf surface_read_pixel(z, px + lx + sx, py + ly + sy)
+                        wenn q != nichts:
+                            setze sum_r auf sum_r + q["rot"]
+                            setze sum_g auf sum_g + q["gruen"]
+                            setze sum_b auf sum_b + q["blau"]
+                            setze sum_a auf sum_a + q["alpha"]
+                            setze anzahl auf anzahl + 1
+                        setze sx auf sx + 1
+                    setze sy auf sy + 1
+                wenn anzahl > 0:
+                    setze rr auf sum_r / anzahl
+                    setze gg auf sum_g / anzahl
+                    setze bb auf sum_b / anzahl
+                    setze aa auf sum_a / anzahl
+                    wenn _uime_bit_an(e["aktiv"], 8):
+                        setze lum auf (rr + gg + bb) / 3
+                        setze sat auf e["hintergrund"]["saettigung"] / 256
+                        setze rr auf lum + (rr - lum) * sat
+                        setze gg auf lum + (gg - lum) * sat
+                        setze bb auf lum + (bb - lum) * sat
+                    wenn _uime_bit_an(e["aktiv"], 16):
+                        setze tf auf e["hintergrund"]["toenung"]
+                        setze mix auf e["hintergrund"]["toenung_mix"] / 255
+                        setze rr auf rr * (1 - mix) + tf["r"] * mix
+                        setze gg auf gg * (1 - mix) + tf["g"] * mix
+                        setze bb auf bb * (1 - mix) + tf["b"] * mix
+                    wenn _uime_bit_an(e["aktiv"], 32):
+                        setze n auf _uime_preview_noise(e["hintergrund"]["rauschen_seed"], px + lx, py + ly, e["hintergrund"]["rauschen"])
+                        setze rr auf rr + n
+                        setze gg auf gg + n
+                        setze bb auf bb + n
+                    scratch.hinzufügen([px + lx, py + ly, _uime_klemme_kanal(rr), _uime_klemme_kanal(gg), _uime_klemme_kanal(bb), _uime_klemme_kanal(aa)])
+            setze lx auf lx + 1
+        setze ly auf ly + 1
+    für punkt in scratch:
+        surface_rect(z, punkt[0], punkt[1], 1, 1, punkt[2], punkt[3], punkt[4], punkt[5])
+    gib_zurück wahr
 
 funktion uim_effekt_vorschau_zeichnen(z, x, y, b, h, aufloesung, reduzierte_bewegung, fortschritt_q16):
     wenn aufloesung["ok"] == falsch:
@@ -450,60 +514,11 @@ funktion uim_effekt_vorschau_zeichnen(z, x, y, b, h, aufloesung, reduzierte_bewe
 
     setze farb_pass auf _uime_bit_an(e["aktiv"], 4) oder _uime_bit_an(e["aktiv"], 8) oder _uime_bit_an(e["aktiv"], 16) oder _uime_bit_an(e["aktiv"], 32)
     wenn farb_pass:
-        setze scratch auf []
-        setze blur auf e["hintergrund"]["unschaerfe"]
-        wenn blur > 3:
-            setze blur auf 3
-        setze ly auf 0
-        solange ly < ph:
-            setze lx auf 0
-            solange lx < pb:
-                wenn _uime_im_rundclip(e, lx, ly, pb, ph):
-                    setze sum_r auf 0
-                    setze sum_g auf 0
-                    setze sum_b auf 0
-                    setze sum_a auf 0
-                    setze anzahl auf 0
-                    setze sy auf 0 - blur
-                    solange sy <= blur:
-                        setze sx auf 0 - blur
-                        solange sx <= blur:
-                            setze q auf surface_read_pixel(z, px + lx + sx, py + ly + sy)
-                            wenn q != nichts:
-                                setze sum_r auf sum_r + q["rot"]
-                                setze sum_g auf sum_g + q["gruen"]
-                                setze sum_b auf sum_b + q["blau"]
-                                setze sum_a auf sum_a + q["alpha"]
-                                setze anzahl auf anzahl + 1
-                            setze sx auf sx + 1
-                        setze sy auf sy + 1
-                    wenn anzahl > 0:
-                        setze rr auf sum_r / anzahl
-                        setze gg auf sum_g / anzahl
-                        setze bb auf sum_b / anzahl
-                        setze aa auf sum_a / anzahl
-                        wenn _uime_bit_an(e["aktiv"], 8):
-                            setze lum auf (rr + gg + bb) / 3
-                            setze sat auf e["hintergrund"]["saettigung"] / 256
-                            setze rr auf lum + (rr - lum) * sat
-                            setze gg auf lum + (gg - lum) * sat
-                            setze bb auf lum + (bb - lum) * sat
-                        wenn _uime_bit_an(e["aktiv"], 16):
-                            setze tf auf e["hintergrund"]["toenung"]
-                            setze mix auf e["hintergrund"]["toenung_mix"] / 255
-                            setze rr auf rr * (1 - mix) + tf["r"] * mix
-                            setze gg auf gg * (1 - mix) + tf["g"] * mix
-                            setze bb auf bb * (1 - mix) + tf["b"] * mix
-                        wenn _uime_bit_an(e["aktiv"], 32):
-                            setze n auf _uime_preview_noise(e["hintergrund"]["rauschen_seed"], px + lx, py + ly, e["hintergrund"]["rauschen"])
-                            setze rr auf rr + n
-                            setze gg auf gg + n
-                            setze bb auf bb + n
-                        scratch.hinzufügen([px + lx, py + ly, _uime_klemme_kanal(rr), _uime_klemme_kanal(gg), _uime_klemme_kanal(bb), _uime_klemme_kanal(aa)])
-                setze lx auf lx + 1
-            setze ly auf ly + 1
-        für punkt in scratch:
-            surface_rect(z, punkt[0], punkt[1], 1, 1, punkt[2], punkt[3], punkt[4], punkt[5])
+        # Fastpath: identische Semantik in C (surface_glass_farbpass in
+        # moo_surface.c); bei falsch (alter Runtime/ungueltige Args) laeuft
+        # die Moo-Referenz.
+        wenn surface_glass_farbpass(z, px, py, pb, ph, e) == falsch:
+            _uime_farbpass_langsam(z, px, py, pb, ph, e)
 
     setze deckkraft auf fortschritt_q16
     wenn reduzierte_bewegung oder _uime_bit_an(e["aktiv"], 128) == falsch:
@@ -514,14 +529,20 @@ funktion uim_effekt_vorschau_zeichnen(z, x, y, b, h, aufloesung, reduzierte_bewe
     wenn ph > 7 und pb > 7:
         setze sheen_h auf boden(ph * 2 / 5)
         wenn sheen_h > 3:
-            setze kappe auf radius + 2
-            wenn kappe > sheen_h:
-                setze kappe auf sheen_h
-            surface_roundrect(z, px + 2, py + 2, pb - 4, kappe, radius, 255, 255, 255, _uime_klemme_kanal(64 * deckkraft / 65536))
-            setze zeile auf kappe
+            # Kontinuierlicher Verlauf 64 -> 0 ohne Kappen-Sprung; Zeilen im
+            # Eckbereich folgen dem Radius per Kreisbogen-Inset.
+            setze zeile auf 0
             solange zeile < sheen_h:
                 setze sheen_a auf 64 * (sheen_h - zeile) / sheen_h
-                surface_rect(z, px + 2, py + 2 + zeile, pb - 4, 1, 255, 255, 255, _uime_klemme_kanal(sheen_a * deckkraft / 65536))
+                setze inset auf 2
+                wenn zeile < radius:
+                    setze bogen_dy auf radius - zeile - 0.5
+                    setze bogen auf radius * radius - bogen_dy * bogen_dy
+                    wenn bogen < 0:
+                        setze bogen auf 0
+                    setze inset auf 2 + runde(radius - wurzel(bogen))
+                wenn pb - 2 * inset >= 1:
+                    surface_rect(z, px + inset, py + 2 + zeile, pb - 2 * inset, 1, 255, 255, 255, _uime_klemme_kanal(sheen_a * deckkraft / 65536))
                 setze zeile auf zeile + 1
         setze rand_b auf pb - 2 * radius
         setze rand_h auf ph - 2 * radius

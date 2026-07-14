@@ -474,6 +474,11 @@ MooValue moo_surface_line(MooValue surface, MooValue x0, MooValue y0,
 MooValue moo_surface_read_pixel(MooValue surface, MooValue x, MooValue y);
 MooValue moo_surface_hash(MooValue surface);
 MooValue moo_surface_snapshot_to_frame(MooValue surface);
+// Glass-Farbpass-Fastpath (P016-O5-AERO): exakter C-Port des Farb-Passes aus
+// stdlib/ui_moo_effects.moo (Blur/Saettigung/Toenung/Rauschen/Rund-Clip).
+// effekt = aufloesung["effektiv"]-Dict. Liefert falsch bei ungueltigen Args.
+MooValue moo_surface_glass_farbpass(MooValue surface, MooValue x, MooValue y,
+                                    MooValue b, MooValue h, MooValue effekt);
 
 // === GIF-Recorder (opaker Heap-Typ MOO_GIF, Plan-008 A3B) ===
 // Wrappt den isolierten Encoder-Kern (moo_gif.c / MooGifWriter*, frame-bounded:

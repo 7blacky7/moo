@@ -738,6 +738,14 @@ MooValue moo_ui_zeichne_bild(MooValue zeichner,
                              MooValue b, MooValue h,
                              MooValue pfad);
 
+/* Zeichnet einen In-Memory-Frame (MOO_FRAME, RGBA8 top-left, straight alpha)
+ * ohne Datei-Umweg auf die Leinwand. b/h = Zielgroesse (Skalierung);
+ * nichts/0 uebernimmt die Frame-Groesse. */
+MooValue moo_ui_zeichne_frame(MooValue zeichner,
+                              MooValue x, MooValue y,
+                              MooValue b, MooValue h,
+                              MooValue frame);
+
 /* Clip-Rechteck / Scissor (Welle UIMOO-1). Alle folgenden Zeichenaufrufe
  * werden auf das Rechteck beschnitten, bis clip_loesche gerufen wird.
  * Schachtelbar (Stack); clip_loesche entfernt die oberste Ebene und

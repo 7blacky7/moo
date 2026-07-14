@@ -1233,6 +1233,59 @@ MooValue moo_ui_zeichne_text_breite(MooValue zeichner, MooValue text,
     return moo_number((double)iw);
 }
 
+MooValue moo_ui_zeichne_frame(MooValue zeichner,
+                              MooValue x, MooValue y,
+                              MooValue b, MooValue h,
+                              MooValue frame) {
+    MooZeichnerGtk* z = unwrap_zeichner(zeichner);
+    if (!z || frame.tag != MOO_FRAME) return moo_bool(0);
+    MooFrame* f = MV_FRAME(frame);
+    if (!f || !f->pixels || f->width <= 0 || f->height <= 0)
+        return moo_bool(0);
+    int iw = f->width;
+    int ih = f->height;
+    int tw = num_or(b, iw);
+    int th = num_or(h, ih);
+    if (tw < 1 || th < 1) return moo_bool(0);
+    int stride = cairo_format_stride_for_width(CAIRO_FORMAT_ARGB32, iw);
+    if (stride <= 0) return moo_bool(0);
+    unsigned char* data = (unsigned char*)malloc((size_t)stride * (size_t)ih);
+    if (!data) return moo_bool(0);
+    /* RGBA straight (top-left) -> premultipliziertes natives ARGB32. */
+    for (int row = 0; row < ih; ++row) {
+        const uint8_t* src = f->pixels + (size_t)row * (size_t)f->stride;
+        uint32_t* dst = (uint32_t*)(data + (size_t)row * (size_t)stride);
+        for (int col = 0; col < iw; ++col) {
+            uint32_t a = src[3];
+            uint32_t r = (src[0] * a + 127u) / 255u;
+            uint32_t g = (src[1] * a + 127u) / 255u;
+            uint32_t bl = (src[2] * a + 127u) / 255u;
+            dst[col] = (a << 24) | (r << 16) | (g << 8) | bl;
+            src += 4;
+        }
+    }
+    cairo_surface_t* surf = cairo_image_surface_create_for_data(
+        data, CAIRO_FORMAT_ARGB32, iw, ih, stride);
+    if (!surf || cairo_surface_status(surf) != CAIRO_STATUS_SUCCESS) {
+        if (surf) cairo_surface_destroy(surf);
+        free(data);
+        return moo_bool(0);
+    }
+    cairo_save(z->cr);
+    if (tw != iw || th != ih) {
+        cairo_translate(z->cr, num_or(x, 0), num_or(y, 0));
+        cairo_scale(z->cr, (double)tw / (double)iw, (double)th / (double)ih);
+        cairo_set_source_surface(z->cr, surf, 0, 0);
+    } else {
+        cairo_set_source_surface(z->cr, surf, num_or(x, 0), num_or(y, 0));
+    }
+    cairo_paint(z->cr);
+    cairo_restore(z->cr);
+    cairo_surface_destroy(surf);
+    free(data);
+    return moo_bool(1);
+}
+
 MooValue moo_ui_zeichne_bild(MooValue zeichner,
                              MooValue x, MooValue y,
                              MooValue b, MooValue h,

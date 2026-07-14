@@ -4,7 +4,7 @@
 
 importiere ui_moo_effects
 
-setze GOLDEN_HASH auf "7a7922e92244858f"
+setze GOLDEN_HASH auf "d8f5b38dea71bd5a"
 setze qa auf {}
 qa["fehler"] = 0
 

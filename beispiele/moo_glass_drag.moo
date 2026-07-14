@@ -24,7 +24,7 @@ G["off_x"] = 0
 G["off_y"] = 0
 G["render_x"] = 0 - 1000
 G["render_y"] = 0 - 1000
-G["bmp"] = "moo_glass_drag.bmp"
+G["frame"] = nichts
 
 funktion drag_hintergrund(z):
     surface_clear(z, 10, 18, 34, 255)
@@ -54,7 +54,7 @@ funktion drag_effekt():
     setze e auf uim_effekt_neu()
     uim_effekt_ecken_setze(e, 22, 22, 22, 22)
     uim_effekt_schatten_setze(e, 4, 10, 8, 2, 0, 0, 0, 132)
-    uim_effekt_hintergrund_setze(e, 8, 336, 92, 156, 255, 255, 92, 18, 20260714)
+    uim_effekt_hintergrund_setze(e, 12, 336, 92, 156, 255, 255, 92, 10, 20260714)
     gib_zurück e
 
 funktion render_frame():
@@ -66,14 +66,14 @@ funktion render_frame():
     setze frame auf surface_snapshot_to_frame(z)
     wenn frame == nichts:
         gib_zurück falsch
-    wenn test_frame_save_bmp(frame, G["bmp"]) == falsch:
-        gib_zurück falsch
+    G["frame"] = frame
     G["render_x"] = G["kx"]
     G["render_y"] = G["ky"]
     gib_zurück wahr
 
 funktion draw_cb(w, zeichner):
-    ui_zeichne_bild(zeichner, 0, 0, G["b"], G["h"], G["bmp"])
+    wenn G["frame"] != nichts:
+        ui_zeichne_frame(zeichner, 0, 0, G["b"], G["h"], G["frame"])
     gib_zurück wahr
 
 funktion klemme(wert, lo, hi):
@@ -105,8 +105,8 @@ funktion on_bewegung(w, x, y):
         setze dy auf 0 - dy
     G["kx"] = nx
     G["ky"] = ny
-    # Throttle: erst ab 6px Distanz neu rendern (Vollframe + Effekt-Resampling).
-    wenn dx + dy >= 6:
+    # Throttle: ab 2px Distanz neu rendern (C-Fastpath macht den Vollframe billig).
+    wenn dx + dy >= 2:
         render_frame()
         ui_leinwand_anfordern(G["leinwand"])
     gib_zurück wahr
@@ -131,7 +131,7 @@ G["leinwand"] = ui_leinwand(fenster, 20, 44, G["b"], G["h"], draw_cb)
 ui_leinwand_on_maus(G["leinwand"], on_maus)
 ui_leinwand_on_bewegung(G["leinwand"], on_bewegung)
 ui_leinwand_on_maus_los(G["leinwand"], on_maus_los)
-ui_label(fenster, "backend=portable-vorschau | resampling=surface_read_pixel | throttle=6px", 20, 534, 700, 22)
+ui_label(fenster, "backend=portable-fastpath | zeichnen=ui_zeichne_frame | throttle=2px", 20, 534, 700, 22)
 zeige "P016-UI1-DRAG-START"
 ui_zeige_nebenbei(fenster)
 ui_laufen()

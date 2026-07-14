@@ -4359,6 +4359,15 @@ impl<'ctx> CodeGen<'ctx> {
                             "surface_read_pixel",
                         );
                     }
+                    "surface_glass_farbpass" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_glass_farbpass,
+                            args,
+                            6,
+                            name,
+                            "surface_glass_farbpass",
+                        );
+                    }
                     "surface_hash" => {
                         return self.call_rt_borrowed_builtin(
                             self.rt.moo_surface_hash,
@@ -5246,6 +5255,10 @@ impl<'ctx> CodeGen<'ctx> {
                     "ui_zeichne_bild" | "ui_draw_image" => {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_ui_zeichne_bild, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_zeichne_bild");
+                    }
+                    "ui_zeichne_frame" | "ui_draw_frame" => {
+                        let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_ui_zeichne_frame, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "ui_zeichne_frame");
                     }
                     "ui_rahmen" | "ui_frame" => {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;

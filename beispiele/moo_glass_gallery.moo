@@ -135,7 +135,7 @@ zeige "P016-UI1-GALLERY-CARDS " + text(länge(ergebnis["karten"]))
 
 setze non_ui auf umgebung("MOO_GLASS_GALLERY_NON_UI")
 wenn non_ui == "1":
-    wenn ergebnis["hash"] != "57d72e833512436f" oder länge(ergebnis["karten"]) != 6:
+    wenn ergebnis["hash"] != "10996657a7b5aeef" oder länge(ergebnis["karten"]) != 6:
         wirf "Glass Gallery Non-UI-Golden verletzt"
     zeige "P016-UI1-GLASS-GALLERY-NONUI-OK"
 sonst:

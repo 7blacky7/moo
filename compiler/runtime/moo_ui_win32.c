@@ -1516,6 +1516,50 @@ MooValue moo_ui_zeichne_text(MooValue zeichner,
     return moo_bool(1);
 }
 
+MooValue moo_ui_zeichne_frame(MooValue zeichner,
+                              MooValue x, MooValue y,
+                              MooValue b, MooValue h,
+                              MooValue frame) {
+    MooZeichnerW32* z = unwrap_zeichner_w32(zeichner);
+    if (!z || frame.tag != MOO_FRAME) return moo_bool(0);
+    MooFrame* f = MV_FRAME(frame);
+    if (!f || !f->pixels || f->width <= 0 || f->height <= 0)
+        return moo_bool(0);
+    int tw = num_or(b, f->width);
+    int th = num_or(h, f->height);
+    if (tw < 1 || th < 1) return moo_bool(0);
+    /* RGBA (top-left, straight) -> BGRA-DIB; biHeight negativ = top-down. */
+    size_t row_bytes = (size_t)f->width * 4u;
+    uint8_t* bgra = (uint8_t*)malloc(row_bytes * (size_t)f->height);
+    if (!bgra) return moo_bool(0);
+    for (int32_t row = 0; row < f->height; ++row) {
+        const uint8_t* src = f->pixels + (size_t)row * (size_t)f->stride;
+        uint8_t* dst = bgra + (size_t)row * row_bytes;
+        for (int32_t col = 0; col < f->width; ++col) {
+            dst[0] = src[2];
+            dst[1] = src[1];
+            dst[2] = src[0];
+            dst[3] = src[3];
+            src += 4;
+            dst += 4;
+        }
+    }
+    BITMAPINFO bi;
+    ZeroMemory(&bi, sizeof(bi));
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = f->width;
+    bi.bmiHeader.biHeight = -f->height;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    SetStretchBltMode(z->hdc, HALFTONE);
+    StretchDIBits(z->hdc, num_or(x, 0), num_or(y, 0), tw, th,
+                  0, 0, f->width, f->height, bgra, &bi,
+                  DIB_RGB_COLORS, SRCCOPY);
+    free(bgra);
+    return moo_bool(1);
+}
+
 MooValue moo_ui_zeichne_bild(MooValue zeichner,
                              MooValue x, MooValue y,
                              MooValue b, MooValue h,
@@ -2314,9 +2358,17 @@ static LRESULT CALLBACK moo_leinwand_subclass(HWND hwnd, UINT msg,
                                               DWORD_PTR ref_data) {
     (void)uid_subclass; (void)ref_data;
     switch (msg) {
+        case WM_NCHITTEST:
+            /* STATIC antwortet ohne SS_NOTIFY mit HTTRANSPARENT — echte
+             * Maus-Events wuerden das Control nie erreichen. Subclass ist
+             * nur installiert, wenn Event-Callbacks gebunden sind. */
+            return HTCLIENT;
         case WM_LBUTTONDOWN:
         case WM_MBUTTONDOWN:
         case WM_RBUTTONDOWN: {
+            /* Implizites Grab wie GTK: Drag liefert Bewegung/Release auch
+             * ausserhalb der Leinwand-Flaeche. */
+            SetCapture(hwnd);
             /* UIMOO-1: Klick grabbt Keyboard-Fokus, wenn on_taste gebunden. */
             if (msg == WM_LBUTTONDOWN && GetPropW(hwnd, L"moo-ontaste"))
                 SetFocus(hwnd);
@@ -2351,6 +2403,7 @@ static LRESULT CALLBACK moo_leinwand_subclass(HWND hwnd, UINT msg,
         case WM_LBUTTONUP:
         case WM_MBUTTONUP:
         case WM_RBUTTONUP: {
+            if (GetCapture() == hwnd) ReleaseCapture();
             MooCbBox* cb = (MooCbBox*)GetPropW(hwnd, L"moo-onmauslos");
             if (cb && cb->v.tag == MOO_FUNC) {
                 int x = GET_X_LPARAM(lp);
