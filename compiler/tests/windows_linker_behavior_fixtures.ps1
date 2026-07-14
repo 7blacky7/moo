@@ -35,10 +35,13 @@ function Assert-P016RegularX64Fixture([string]$Path) {
 function New-P016ManagedFixture([string]$Path, [string]$Source) {
     $ErrorActionPreference='Stop'
     try {
-        $compilerParameters=New-Object System.CodeDom.Compiler.CompilerParameters
-        [void]$compilerParameters.ReferencedAssemblies.Add('System.dll');[void]$compilerParameters.ReferencedAssemblies.Add('System.Core.dll')
-        $compilerParameters.GenerateExecutable=$true;$compilerParameters.GenerateInMemory=$false;$compilerParameters.OutputAssembly=$Path;$compilerParameters.CompilerOptions='/platform:x64 /optimize+'
-        $null=Add-Type -TypeDefinition $Source -Language CSharp -CompilerParameters $compilerParameters
+        $csc=Join-Path ([Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()) 'csc.exe'
+        if (-not [IO.File]::Exists($csc)) { throw 'FIXTURE_BUILD_FAILED' }
+        $csSource=$Path+'.cs'
+        [IO.File]::WriteAllText($csSource,$Source,(New-Object Text.UTF8Encoding($false)))
+        $null=& $csc '/nologo' '/optimize+' '/platform:x64' '/target:exe' ('/out:'+$Path) '/r:System.dll' '/r:System.Core.dll' $csSource 2>&1
+        if ($LASTEXITCODE -ne 0) { throw 'FIXTURE_BUILD_FAILED' }
+        [IO.File]::Delete($csSource)
     } catch { throw 'FIXTURE_BUILD_FAILED' }
     Assert-P016RegularX64Fixture $Path
 }

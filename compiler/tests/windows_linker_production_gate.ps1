@@ -83,7 +83,7 @@ function Assert-P016ProductionEvidence($Evidence) {
     Assert-P016ExactProperties $Evidence.runtime @('path','sha256') 'INFRA_EVIDENCE_RUNTIME_SCHEMA'
     Assert-P016ExactProperties $Evidence.fixtures @('clang','lld','payload') 'INFRA_EVIDENCE_FIXTURES_SCHEMA'
     Assert-P016ExactProperties $Evidence.totals @('compiler_starts','linker_starts','payload_exec','blocked') 'INFRA_EVIDENCE_TOTALS_SCHEMA'
-    if ([string]$Evidence.schema -cne 'p016-windows-linker-production-v1' -or [string]$Evidence.source_manifest_sha256 -cne $SourceManifestSha -or [string]$Evidence.source_sha256 -cne $SourceSha -or [string]$Evidence.selftest_sha256 -cne '1f1e60d5d6bb1c3420ebaae00779f5a9e397cda1e669c3772380eaa77bfec318' -or [string]$Evidence.toolchain_evidence_sha256 -cne $ToolchainEvidenceSha) { throw 'INFRA_EVIDENCE_BINDING' }
+    if ([string]$Evidence.schema -cne 'p016-windows-linker-production-v1' -or [string]$Evidence.source_manifest_sha256 -cne $SourceManifestSha -or [string]$Evidence.source_sha256 -cne $SourceSha -or [string]$Evidence.selftest_sha256 -cne 'c971c929e9048d8412ff8d4861b3af987f354bd4910bff77370af03d6eaeb7c4' -or [string]$Evidence.toolchain_evidence_sha256 -cne $ToolchainEvidenceSha) { throw 'INFRA_EVIDENCE_BINDING' }
     if ([string]$Evidence.compiler.path -cne $CompilerPath -or [string]$Evidence.compiler.sha256 -cne $CompilerSha -or [string]$Evidence.runtime.path -cne $RuntimePath -or [string]$Evidence.runtime.sha256 -cne $RuntimeSha) { throw 'INFRA_EVIDENCE_ARTIFACT' }
     if ([int]$Evidence.totals.compiler_starts -ne 3 -or [int]$Evidence.totals.linker_starts -ne 3 -or [int]$Evidence.totals.payload_exec -ne 1 -or [int]$Evidence.totals.blocked -ne 2) { throw 'INFRA_EVIDENCE_TOTALS' }
     $cases=@($Evidence.cases); if ($cases.Count -ne 3) { throw 'INFRA_EVIDENCE_CASES' }
@@ -151,8 +151,8 @@ function ConvertTo-P016ProductionReason([string]$Message) {
 }
 function Invoke-P016WindowsLinkerProductionGate {
     $helper=Get-P016ProductionBoundSibling 'windows_linker_behavior_helpers.ps1' 'ab65a9e2670eed4c2edb3fa87852b15b0706c2ae27731eaffdc4e9ce11eeac50'
-    $fixturesScript=Get-P016ProductionBoundSibling 'windows_linker_behavior_fixtures.ps1' 'e17feb86442a5393b3cb9623e8e592ca4605c835f95f3796f7da92cec1ed3bf2'
-    $selftest=Get-P016ProductionBoundSibling 'windows_linker_fixture_selftest.ps1' '1f1e60d5d6bb1c3420ebaae00779f5a9e397cda1e669c3772380eaa77bfec318'
+    $fixturesScript=Get-P016ProductionBoundSibling 'windows_linker_behavior_fixtures.ps1' '2b7d211736f415d0c6e8d3427e9a5fa5424105fc1cab6cd60f7a65dea57f33e1'
+    $selftest=Get-P016ProductionBoundSibling 'windows_linker_fixture_selftest.ps1' 'c971c929e9048d8412ff8d4861b3af987f354bd4910bff77370af03d6eaeb7c4'
     try { . $helper; . $fixturesScript; . $selftest } catch { throw 'INFRA_IMPORT_FAILED' }
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or $PSVersionTable.PSVersion.ToString() -notlike '5.1*') { throw 'INFRA_WINDOWS_PS51_REQUIRED' }
     foreach($path in @($CompilerPath,$RuntimePath,$SourcePath,$SourceManifestPath)) {
@@ -280,7 +280,7 @@ function Invoke-P016WindowsLinkerProductionGate {
         Assert-P016SelfTestContract ($caseEvidence.Count -eq 3) 'CASE_EVIDENCE_COUNT'
         $document=[ordered]@{
             schema='p016-windows-linker-production-v1';source_manifest_sha256=$SourceManifestSha;source_sha256=$SourceSha
-            selftest_sha256='1f1e60d5d6bb1c3420ebaae00779f5a9e397cda1e669c3772380eaa77bfec318'
+            selftest_sha256='c971c929e9048d8412ff8d4861b3af987f354bd4910bff77370af03d6eaeb7c4'
             toolchain=$toolchain;toolchain_evidence_sha256=$ToolchainEvidenceSha
             compiler=[ordered]@{path=$CompilerPath;sha256=$CompilerSha};runtime=[ordered]@{path=$RuntimePath;sha256=$RuntimeSha}
             fixtures=[ordered]@{clang=$fixtures.ClangHash;lld=$fixtures.LldHash;payload=$fixtures.PayloadHash}
