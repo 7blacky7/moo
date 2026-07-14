@@ -16,7 +16,7 @@ int moo_error_flag = 0;
 MooValue moo_last_error;
 int moo_try_depth = 0;
 jmp_buf moo_try_stack[MOO_TRY_STACK_SIZE];
-void moo_throw(MooValue error) { if (error.tag == MOO_ERROR) free(moo_val_as_ptr(error)); moo_error_flag = 1; }
+void moo_throw(MooValue error) { moo_release(error); moo_error_flag = 1; }
 
 void moo_socket_free(void* p){(void)p;} void moo_thread_free(void* p){(void)p;}
 void moo_channel_free(void* p){(void)p;} void moo_db_free(void* p){(void)p;}

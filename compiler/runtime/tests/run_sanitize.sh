@@ -104,7 +104,15 @@ EXTRA_HARNESSES=(
   "test_surface_asan.c|moo_surface_core.c moo_surface.c moo_memory.c|-DMOO_HAS_SURFACE -lm"
   # compositor: P016-O3 — allocatorfreier Multi-Client-Core, deterministischer
   #             Rasterpfad und caller-owned Buffers; keine UI oder Hardware.
-  "test_compositor_asan.c|moo_compositor_core.c moo_compositor_raster.c|-lm"
+  "test_compositor_asan.c|moo_ui_host_parity_instrumentation.c moo_compositor_core.c moo_compositor_raster.c moo_compositor_effects_state.c moo_compositor_animation.c moo_compositor_effects_math.c moo_compositor_effects_cpu.c moo_compositor_effects_damage.c|-lm"
+  # effects: P016-I1/G1 — portable State/Animation/CPU/Damage/GPU contracts.
+  #          Jeder Harness bekommt nur seine explizite Produktions-Quellmenge;
+  #          Integration bindet den vollständigen Compositor-Stack zusammen.
+  "test_effects_asan.c|moo_compositor_effects_state.c moo_compositor_animation.c moo_compositor_effects_math.c moo_compositor_effects_cpu.c|-lm"
+  "test_effects_damage.c|moo_compositor_effects_math.c moo_compositor_effects_damage.c|-lm"
+  "test_effects_determinism.c|moo_compositor_effects_state.c moo_compositor_animation.c moo_compositor_effects_math.c moo_compositor_effects_cpu.c|-lm"
+  "bench_effects.c|moo_compositor_effects_state.c moo_compositor_effects_math.c moo_compositor_effects_cpu.c|-lm"
+  "test_effects_integration.c|moo_compositor_core.c moo_compositor_raster.c moo_compositor_effects_state.c moo_compositor_animation.c moo_compositor_effects_math.c moo_compositor_effects_cpu.c moo_compositor_effects_damage.c moo_compositor_effects_gpu.c|-lm"
   # frame_tensor: Frame<->Tensor-Bruecke (KI-MULTI-V1). Braucht Frame- UND
   #               Tensor-Familie (f32_sichern -> ki_gpu/autograd-Symbole).
   "test_frame_tensor_asan.c|moo_frame_tensor.c moo_frame.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"

@@ -3,7 +3,7 @@
  * ============================================================================
  * BAUEN/LAUFEN: run_sanitize.sh (EXTRA_HARNESSES). Quell-Satz wie
  * test_tensor_asan.c plus moo_tensor_ops.c; gleiches Test-throw-Modell
- * (moo_error.c NICHT gelinkt, strdup-Text wird im Stub gefreed).
+ * (moo_error.c NICHT gelinkt, Stub konsumiert den Fehler via moo_release).
  *
  * PRUEFT (handgerechnete Referenzen):
  *   1. Elementwise same-shape + alle Broadcast-Pfade (row [1,c], col [r,1],
@@ -29,7 +29,7 @@ MooValue moo_last_error;
 int moo_try_depth = 0;
 jmp_buf moo_try_stack[MOO_TRY_STACK_SIZE];
 void moo_throw(MooValue error) {
-    if (error.tag == MOO_ERROR) free(moo_val_as_ptr(error));
+    moo_release(error);
     moo_error_flag = 1;
 }
 static void fehler_reset(void) { moo_error_flag = 0; }
