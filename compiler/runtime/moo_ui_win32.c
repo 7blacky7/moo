@@ -166,6 +166,15 @@ static void cb_box_free(MooCbBox* box) {
     free(box);
 }
 
+MooValue moo_ui_callback_call0_owned(MooValue callback) {
+    MooValue in_flight = callback;
+    MooValue result;
+    moo_retain(in_flight);
+    result = moo_func_call_0(in_flight);
+    moo_release(in_flight);
+    return result;
+}
+
 /* =========================================================================
  * Zeichner (Custom-Draw Phase 5) — wrapped HDC + Farbstate
  * ========================================================================= */
@@ -392,7 +401,7 @@ static LRESULT CALLBACK moo_window_proc(HWND hwnd, UINT msg,
             if (ctrl == NULL && code == 0) {
                 MooCbBox* cb = lookup_cb(id);
                 if (cb && cb->v.tag == MOO_FUNC) {
-                    MooValue rv = moo_func_call_0(cb->v);
+                    MooValue rv = moo_ui_callback_call0_owned(cb->v);
                     moo_release(rv);
                 }
                 return 0;
@@ -404,7 +413,7 @@ static LRESULT CALLBACK moo_window_proc(HWND hwnd, UINT msg,
                 if (code == EN_CHANGE) {
                     MooCbBox* cb = (MooCbBox*)GetPropW(ctrl, L"moo-change");
                     if (cb && cb->v.tag == MOO_FUNC) {
-                        MooValue rv = moo_func_call_0(cb->v);
+                        MooValue rv = moo_ui_callback_call0_owned(cb->v);
                         moo_release(rv);
                     }
                     return 0;
@@ -413,7 +422,7 @@ static LRESULT CALLBACK moo_window_proc(HWND hwnd, UINT msg,
                     /* Combobox selection change */
                     MooCbBox* cb = (MooCbBox*)GetPropW(ctrl, L"moo-cb");
                     if (cb && cb->v.tag == MOO_FUNC) {
-                        MooValue rv = moo_func_call_0(cb->v);
+                        MooValue rv = moo_ui_callback_call0_owned(cb->v);
                         moo_release(rv);
                     }
                     return 0;
@@ -425,7 +434,7 @@ static LRESULT CALLBACK moo_window_proc(HWND hwnd, UINT msg,
                     if (cb && cb->v.tag == MOO_FUNC) {
                         /* Bei Checkbox/Radio: Zustand automatisch togglen
                          * (BS_AUTOCHECKBOX/BS_AUTORADIOBUTTON macht das bereits). */
-                        MooValue rv = moo_func_call_0(cb->v);
+                        MooValue rv = moo_ui_callback_call0_owned(cb->v);
                         moo_release(rv);
                     }
                     return 0;
@@ -441,7 +450,7 @@ static LRESULT CALLBACK moo_window_proc(HWND hwnd, UINT msg,
             if (nm->code == LVN_ITEMCHANGED || nm->code == TCN_SELCHANGE) {
                 MooCbBox* cb = (MooCbBox*)GetPropW(nm->hwndFrom, L"moo-onsel");
                 if (cb && cb->v.tag == MOO_FUNC) {
-                    MooValue rv = moo_func_call_0(cb->v);
+                    MooValue rv = moo_ui_callback_call0_owned(cb->v);
                     moo_release(rv);
                 }
             }
@@ -479,7 +488,7 @@ static LRESULT CALLBACK moo_window_proc(HWND hwnd, UINT msg,
             if (ctrl) {
                 MooCbBox* cb = (MooCbBox*)GetPropW(ctrl, L"moo-cb");
                 if (cb && cb->v.tag == MOO_FUNC) {
-                    MooValue rv = moo_func_call_0(cb->v);
+                    MooValue rv = moo_ui_callback_call0_owned(cb->v);
                     moo_release(rv);
                 }
             }
@@ -520,7 +529,7 @@ static LRESULT CALLBACK moo_window_proc(HWND hwnd, UINT msg,
         case WM_CLOSE: {
             MooCbBox* cb = (MooCbBox*)GetPropW(hwnd, L"moo-onclose");
             if (cb && cb->v.tag == MOO_FUNC) {
-                MooValue rv = moo_func_call_0(cb->v);
+                MooValue rv = moo_ui_callback_call0_owned(cb->v);
                 int allow = moo_is_truthy(rv);
                 moo_release(rv);
                 if (!allow) return 0;  /* abort close */
@@ -608,6 +617,11 @@ MooValue moo_ui_pump(void) {
     ensure_init();
     MSG msg;
     while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+        if (msg.message == WM_QUIT) {
+            /* Quit-Signal nicht schlucken — re-posten und Pump beenden. */
+            PostQuitMessage((int)msg.wParam);
+            break;
+        }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
@@ -1746,6 +1760,7 @@ MooValue moo_ui_zerstoere(MooValue widget) {
 typedef struct {
     UINT_PTR id;
     MooCbBox* cb;
+    int in_flight; /* Reentrancy-Guard: periodischer Timer feuert waehrend test_warte-Pumps erneut */
 } MooTimer;
 
 #define MOO_TIMER_MAX 256
@@ -1755,8 +1770,11 @@ static void CALLBACK moo_timer_proc(HWND hwnd, UINT msg, UINT_PTR id, DWORD t) {
     (void)hwnd; (void)msg; (void)t;
     for (int i = 0; i < MOO_TIMER_MAX; i++) {
         if (g_timers[i].id == id && g_timers[i].cb) {
-            MooValue rv = moo_func_call_0(g_timers[i].cb->v);
+            if (g_timers[i].in_flight) return; /* verschachtelten Wiedereintritt blockieren */
+            g_timers[i].in_flight = 1;
+            MooValue rv = moo_ui_callback_call0_owned(g_timers[i].cb->v);
             moo_release(rv);
+            if (g_timers[i].id == id) g_timers[i].in_flight = 0;
             return;
         }
     }
@@ -1772,6 +1790,7 @@ MooValue moo_ui_timer_hinzu(MooValue ms, MooValue callback) {
             if (tid == 0) return moo_bool(0);
             g_timers[i].id = tid;
             g_timers[i].cb = cb_box_new(callback);
+            g_timers[i].in_flight = 0;
             return moo_number((double)(uintptr_t)tid);
         }
     }
@@ -3556,7 +3575,7 @@ MooValue moo_ui_test_shortcut(MooValue fenster, MooValue sequenz) {
             UINT id = L->ids[i];
             MooCbBox* cb = lookup_cb(id);
             if (!cb || cb->v.tag != MOO_FUNC) return moo_bool(0);
-            MooValue rv = moo_func_call_0(cb->v);
+            MooValue rv = moo_ui_callback_call0_owned(cb->v);
             moo_release(rv);
             return moo_bool(1);
         }
@@ -3577,7 +3596,12 @@ MooValue moo_ui_test_warte(MooValue millisekunden) {
         int drained = 0;
         while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
             drained = 1;
-            if (msg.message == WM_QUIT) { quit = 1; break; }
+            if (msg.message == WM_QUIT) {
+                /* WM_QUIT wurde per PM_REMOVE konsumiert — re-posten, damit die
+                 * aeussere GetMessage-Loop (moo_ui_laufen) es noch sieht. */
+                PostQuitMessage((int)msg.wParam);
+                quit = 1; break;
+            }
             /* Accelerator-Auswertung wie in moo_ui_laufen. */
             HWND top = msg.hwnd ? GetAncestor(msg.hwnd, GA_ROOT) : NULL;
             if (top) {
