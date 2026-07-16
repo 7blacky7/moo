@@ -23,12 +23,12 @@ compiler/runtime/test_runtime*
 compiler/runtime/test_3d
 
 # Kompilierte moo-Beispiele — Whitelist-Ansatz:
-# beispiele/<name> neben beispiele/<name>.moo ist eine Binary
+# beispiele/<name> neben beispiele/<name>.moos ist eine Binary
 # Alle Dateien im beispiele-Baum ignorieren, nur bekannte Source-Typen tracken
 beispiele/**
 !beispiele/
 !beispiele/**/
-!beispiele/**/*.moo
+!beispiele/**/*.moos
 !beispiele/**/*.md
 !beispiele/**/*.html
 !beispiele/**/*.py
@@ -64,15 +64,15 @@ beispiele/test_screenshots/
 
 # Lokale Beispiel-/Smoke-Arbeitsflächen: funktionieren, aber nicht automatisch versionieren.
 # Bei Bedarf bewusst auskommentieren und gezielt committen.
-/beispiele/domain/system/kernel_test_builtins.moo
-/beispiele/ui_snapshot_smoke.moo
+/beispiele/domain/system/kernel_test_builtins.moos
+/beispiele/ui_snapshot_smoke.moos
 /beispiele/city_builder/reconnect-session.sh
 /beispiele/snapshots/
 
 # Compiler-Beispiele (nur Source)
 compiler/beispiele/**
 !compiler/beispiele/
-!compiler/beispiele/**/*.moo
+!compiler/beispiele/**/*.moos
 !compiler/beispiele/**/*.expected
 
 # Compiler-Test-Binaries im compiler/ Root
@@ -81,7 +81,7 @@ compiler/pong
 compiler/runtime/test_3d.c
 
 # Root-Test-Artefakte (nur Source behalten).
-# Siehe spec/repo_cleanup_phase_b.md — in Phase B wandern die .moo-Quellen
+# Siehe spec/repo_cleanup_phase_b.md — in Phase B wandern die .moos-Quellen
 # nach compiler/tests/ bzw. scratch/; die kompilierten Binaries hier bleiben
 # dauerhaft gitignored.
 /test_neu
@@ -98,7 +98,7 @@ compiler/runtime/test_3d.c
 
 # Lokale Root-Testflächen / manuelle Leak-Smokes.
 # Bei Bedarf bewusst auskommentieren und als Regression integrieren.
-/tests/test_memory_leaks.moo
+/tests/test_memory_leaks.moos
 /tests/verify_leaks.py
 
 # Lokale Beispiel-Binaries
