@@ -16,7 +16,7 @@ static int fails=0,startups=0,shutdowns=0,cam_closes=0,mic_closes=0,releases=0;
 #define CK(x,m) do{if(x)printf(" OK  %s\n",m);else{printf(" FAIL %s\n",m);fails++;}}while(0)
 static int64_t now_ms=1000;
 static MooPullResult wait_result=MOO_PULL_OK;
-static int cam_step=0,total_devices=2,audio_step=0,recover_count=0;
+static int cam_step=0,total_devices=2,audio_step=0,recover_count=0,next_recover_once=0;
 static int64_t clock_ms(void){return now_ms++;}
 static bool startup(char*e,size_t c){(void)e;(void)c;startups++;return true;}
 static void shutdown_(void){shutdowns++;}
@@ -44,7 +44,11 @@ static MooPullResult mic_wait(void*s,int32_t t,char*e,size_t ec){
 }
 static const float a0[]={1,3,2,4,5,7,6,8};
 static MooPullResult mic_next(void*s,MooPullAudioPacket*p,char*e,size_t ec){
- (void)s;(void)e;(void)ec;if(audio_step++)return MOO_PULL_EMPTY;
+ (void)s;(void)e;(void)ec;
+ /* C2-WIN first-packet-Kontrakt: RECOVERABLE aus next (z.B. Mid-Stream-
+  * DATA_DISCONTINUITY) muss recover+weiterlesen ausloesen, nie BROKEN. */
+ if(next_recover_once){next_recover_once=0;return MOO_PULL_RECOVERABLE;}
+ if(audio_step++)return MOO_PULL_EMPTY;
  p->samples=a0;p->frames=4;p->channels=2;p->token=(void*)a0;return MOO_PULL_OK;
 }
 static void mic_release(MooPullAudioPacket*p){releases++;p->token=NULL;}
@@ -72,6 +76,9 @@ int main(void){
  CK(fabsf(t->data[0]-7)<1e-6,"Paket-Rest wird verlustfrei weitergereicht");moo_release(dv);moo_release(ar);
  wait_result=MOO_PULL_RECOVERABLE;audio_step=0;ar=moo_capture_microphone_read_native(&m,1,50);
  CK(ar.tag==MOO_DICT&&recover_count==1,"Recovery begrenzt und danach erfolgreich");moo_release(ar);
+ wait_result=MOO_PULL_OK;next_recover_once=1;audio_step=0;
+ ar=moo_capture_microphone_read_native(&m,4,50);
+ CK(ar.tag==MOO_DICT&&recover_count==2,"next-RECOVERABLE: recover + weiterlesen statt BROKEN (C2-WIN Discontinuity-Kontrakt)");moo_release(ar);
  moo_capture_microphone_close_native(&m);CK(mic_closes>0&&m.backend==NULL,"Mikro Cleanup");
  CK(startups==shutdowns,"Startup/Shutdown bilanziert");
  printf("%s Capture-Pull Fault-Matrix (%d)\n",fails?"FAIL":"PASS",fails);return fails?1:0;
