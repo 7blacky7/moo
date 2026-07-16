@@ -1,7 +1,7 @@
 # ============================================================
 # moo Asteroids — Klassisches Weltraum-Spiel
 #
-# Kompilieren: moo-compiler compile beispiele/asteroids.moo -o beispiele/asteroids
+# Kompilieren: moo-compiler compile beispiele/asteroids.moos -o beispiele/asteroids
 # Starten:     ./beispiele/asteroids
 #
 # Links/Rechts oder A/D = Drehen

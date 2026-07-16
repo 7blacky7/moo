@@ -104,7 +104,7 @@ fn main() {
 
     // 3D/Game Runtime-Core nur bauen, wenn ein 3D-Feature aktiv ist.
     // Sonst ziehen UI-only Builds unnötig SDL/GL/Vulkan/GLFW-Symbole in
-    // libmoo_runtime.a und gelinkte .moo-Programme scheitern trotz
+    // libmoo_runtime.a und gelinkte .moos-Programme scheitern trotz
     // `--no-default-features --features moo_ui`.
     #[cfg(any(feature = "gl21", feature = "gl33", feature = "vulkan"))]
     {

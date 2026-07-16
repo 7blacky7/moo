@@ -1,5 +1,5 @@
 # ============================================================
-# beispiele/tests/ui_moo_widgets_test.moo — UIMOO-3 Widget-Test
+# beispiele/tests/ui_moo_widgets_test.moos — UIMOO-3 Widget-Test
 #
 # Headless über test_klick_xy (Press+Release):
 #   Checkbox: Klick toggelt an, zweiter Klick toggelt aus,

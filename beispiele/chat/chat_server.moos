@@ -2,7 +2,7 @@
 # moo Chat-Server — HTTP Long-Polling + SQLite
 # Multi-Room Chat mit persistenter History
 #
-# Kompilieren: moo-compiler compile chat_server.moo -o chat_server
+# Kompilieren: moo-compiler compile chat_server.moos -o chat_server
 # Starten:     ./chat_server
 # Oeffnen:     http://localhost:4000
 # ============================================================

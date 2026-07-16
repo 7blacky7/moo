@@ -1,5 +1,5 @@
 # ============================================================
-# ui_shortcuts_demo.moo — Aktionen, Toolbar, Menue, Shortcuts
+# ui_shortcuts_demo.moos — Aktionen, Toolbar, Menue, Shortcuts
 #
 # Zeigt:
 #   - ui_aktion(g, name, titel, shortcut, callback)  registriert
@@ -12,7 +12,7 @@
 #
 # ALIVE-Test:
 #   cargo run --release --manifest-path compiler/Cargo.toml -- \
-#       compile beispiele/ui_shortcuts_demo.moo
+#       compile beispiele/ui_shortcuts_demo.moos
 #   ./beispiele/ui_shortcuts_demo
 #   → Fenster mit Toolbar, Menue 'Datei', Status-Leiste erscheint.
 #     Ctrl+S / Ctrl+O / Esc feuern die Callbacks, Status-Leiste

@@ -1,7 +1,7 @@
 # ============================================================
 # moo Pong — Klassiker (2 Spieler)
 #
-# Kompilieren: moo-compiler compile beispiele/pong.moo -o beispiele/pong
+# Kompilieren: moo-compiler compile beispiele/pong.moos -o beispiele/pong
 # Starten:     ./beispiele/pong
 #
 # Spieler 1: W/S

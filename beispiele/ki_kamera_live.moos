@@ -1,4 +1,4 @@
-# ki_kamera_live.moo — Live-Kamera -> Frame -> Tensor
+# ki_kamera_live.moos — Live-Kamera -> Frame -> Tensor
 #
 # Optional: kamera_oeffnen("/dev/video2", 1280, 720, 30)
 # Vollstaendig angegebene Werte verlangen ein exaktes Format.

@@ -1,4 +1,4 @@
-importiere "../../beispiele/domain/db/postgres_client.moo"
+importiere "../../beispiele/domain/db/postgres_client.moos"
 
 setze HOST auf "192.168.50.65"
 setze PORT auf 5433

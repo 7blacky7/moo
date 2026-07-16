@@ -1,5 +1,5 @@
 # ============================================================
-# voxel_kamera_video_selftest.moo — Referenz-Selftest MP4-Aufnahme
+# voxel_kamera_video_selftest.moos — Referenz-Selftest MP4-Aufnahme
 # (Plan-009 V2)
 #
 # Erzeugt mit test_video_* (Plan-009 V0/V1) ein kurzes, stummes MP4 einer
@@ -20,7 +20,7 @@
 # darum vorab `command -v ffmpeg` und ueberspringt diesen Test sauber.
 #
 # Headless: xvfb-run -a -s "-screen 0 1280x800x24" env MOO_3D_BACKEND=gl33 \
-#   moo-compiler run beispiele/voxel_kamera_video_selftest.moo
+#   moo-compiler run beispiele/voxel_kamera_video_selftest.moos
 # ============================================================
 
 # yuv420p braucht gerade Breite/Hoehe (Plan-009 S3) -> 640x400 (beide gerade).

@@ -1,5 +1,5 @@
 # Markdown-Parser Tests — erwartet dass markdown_zu_html definiert ist
-# NOTE: Kopiere die Funktionen aus markdown.moo
+# NOTE: Kopiere die Funktionen aus markdown.moos
 
 # HTML-Escape
 funktion html_escape(text):

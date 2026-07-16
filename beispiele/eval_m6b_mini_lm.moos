@@ -12,7 +12,7 @@
 # Sprung von Rauschen zu Struktur ist der Beweis, DASS es lernt.
 #
 # Vorher einmal ausfuehren:  ./skripte/maerchen_download.sh
-# Dann:  moo-compiler compile beispiele/ki_sprachmodell.moo -o ki_lm
+# Dann:  moo-compiler compile beispiele/ki_sprachmodell.moos -o ki_lm
 #        ./ki_lm            (aus dem Repo-Wurzelverzeichnis)
 #
 # Was dieses Beispiel zeigt, was ki_xor/ki_mnist nicht zeigen:

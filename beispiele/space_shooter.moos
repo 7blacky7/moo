@@ -2,7 +2,7 @@
 # moo Space Shooter — Vertikaler Scrolling Shooter
 #
 # Kompilieren + Starten:
-#   moo-compiler compile beispiele/space_shooter.moo -o beispiele/space_shooter
+#   moo-compiler compile beispiele/space_shooter.moos -o beispiele/space_shooter
 #   ./beispiele/space_shooter
 #
 # Bedienung:

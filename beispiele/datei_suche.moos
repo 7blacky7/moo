@@ -1,5 +1,5 @@
 # moo Dateisuche — sucht Text in einer Datei
-# Starten: moo-compiler run beispiele/datei_suche.moo
+# Starten: moo-compiler run beispiele/datei_suche.moos
 
 zeige "=== moo Dateisuche ==="
 

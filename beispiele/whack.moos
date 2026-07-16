@@ -1,7 +1,7 @@
 # ============================================================
-# whack.moo — Whack-a-Mole
+# whack.moos — Whack-a-Mole
 #
-# Kompilieren: moo-compiler compile beispiele/whack.moo -o beispiele/whack
+# Kompilieren: moo-compiler compile beispiele/whack.moos -o beispiele/whack
 # Starten:     ./beispiele/whack
 #
 # Steuerung: Mausklick = Maulwurf treffen, Escape = Beenden

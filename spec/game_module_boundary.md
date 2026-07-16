@@ -5,8 +5,8 @@ von ChatGPT (#5083). **Rein additiv**, keine Moves, keine Renames — nur
 Trennschärfe für Phase B.
 
 Quellen: `compiler/src/runtime_bindings.rs`, `compiler/src/codegen.rs`
-(DE/EN/Kurz-Alias-Pattern), `compiler/runtime/*.c`, `stdlib/welt.moo`,
-`beispiele/*.moo`, `docs/referenz/*.md`.
+(DE/EN/Kurz-Alias-Pattern), `compiler/runtime/*.c`, `stdlib/welt.moos`,
+`beispiele/*.moos`, `docs/referenz/*.md`.
 
 ## 1. Scope-Definition "Game-Strang"
 
@@ -60,7 +60,7 @@ Namens-Quelle: `compiler/src/codegen.rs` Pattern-Match-Aliase.
 `chunk_zeichne|chunk_draw`, `chunk_lösche|chunk_delete` →
 `moo_3d_*` / `moo_3d_chunk_*`.
 
-### Welt-Engine (öffentliche Wrapper in `stdlib/welt.moo`)
+### Welt-Engine (öffentliche Wrapper in `stdlib/welt.moos`)
 `welt_erstelle`, `welt_offen`, `welt_aktualisieren`, `welt_beenden`,
 `welt_seed`, `welt_biom`, `welt_baeume`, `welt_hoehe_bei`, `welt_sonne`,
 `welt_nebel`, `welt_meeresspiegel`, `welt_render_distanz`,
@@ -98,15 +98,15 @@ siehe `spec/runtime_layers.md` (k3-Lead).
 ### `__welt_*`-Prefix-Pattern (codegen.rs:2374ff)
 Die Runtime-Symbole `moo_world_*` sind im Compiler **nur** über die
 interne Form `__welt_erstelle` / `__world_create` etc. aufrufbar; die
-kompakten `welt_*`-Namen werden in `stdlib/welt.moo` als moo-Funktionen
+kompakten `welt_*`-Namen werden in `stdlib/welt.moos` als moo-Funktionen
 definiert, die ihrerseits `__welt_*` aufrufen. **Grund**: historisch
 entstandene Layer-B-Namespace-Trennung (Compiler-Builtin vs. User-API).
 **Folge für Phase B**: das Pattern muss erhalten bleiben, damit
 bestehender User-Code (`importiere welt` → `welt_erstelle(...)`) nicht
-bricht. Weder `__welt_*` noch `stdlib/welt.moo` dürfen in Phase B
+bricht. Weder `__welt_*` noch `stdlib/welt.moos` dürfen in Phase B
 verschwinden.
 
-### `stdlib/welt.moo` als Wrapper-Layer
+### `stdlib/welt.moos` als Wrapper-Layer
 Aktuell 13 Wrapper für 13 Runtime-Builtins (seit commit 4a39983 auch
 `welt_baeume`). Vollständiges Inventar: `/tmp/moo-verify/welt_api_inventar.md`.
 
@@ -116,7 +116,7 @@ Ausbau geplant.
 
 ### `chunk_*`-Builtins direkt (kein Wrapper-Layer)
 `chunk_erstelle` etc. werden im Codegen direkt gemappt. Kein
-`stdlib/chunk.moo`. In Phase B weiter so.
+`stdlib/chunk.moos`. In Phase B weiter so.
 
 ### `raum_*` + `3d_*` Doppel-Namespacing
 Jede 3D-Funktion existiert unter **vier** Namen: `raum_X`, `space_X`,
@@ -131,26 +131,26 @@ Zu Game zählen: `grafik-2d.md`, `sprites.md`, `grafik-3d.md`, `welt.md`,
 "3D & Game-Dev Modul" (getrennt von "Sprache & Stdlib") seit
 commit 863ae6f. ✓
 
-### `beispiele/*.moo`
+### `beispiele/*.moos`
 Game-Beispiele (~40 von 130, nicht abschließend):
-`pong.moo`, `breakout.moo`, `asteroids.moo`, `bomberman.moo`,
-`brawler.moo`, `columns.moo`, `connect4.moo`, `defender.moo`,
-`doodle_jump.moo`, `fighter.moo`, `snake.moo`, `tetris.moo`,
-`zelda.moo`, `3d_demo.moo`, `welten.moo`, `welt_test.moo`,
-`block_dude.moo`, `boulder_dash.moo`, `astar.moo` (AI-Demo),
-`bubble_shooter/`, `dungeon.moo`, `raytracer/`, `test_pong.moo`
+`pong.moos`, `breakout.moos`, `asteroids.moos`, `bomberman.moos`,
+`brawler.moos`, `columns.moos`, `connect4.moos`, `defender.moos`,
+`doodle_jump.moos`, `fighter.moos`, `snake.moos`, `tetris.moos`,
+`zelda.moos`, `3d_demo.moos`, `welten.moos`, `welt_test.moos`,
+`block_dude.moos`, `boulder_dash.moos`, `astar.moos` (AI-Demo),
+`bubble_shooter/`, `dungeon.moos`, `raytracer/`, `test_pong.moos`
 (+ weitere Test-Suites). **Ziel-Struktur in Phase B**:
 `examples/game/` (flach oder nach Genre 2d/3d unterteilt).
 
 ## 6. Was explizit NICHT im Game-Strang ist
 
 Beispiele zur Abgrenzung (damit Phase B nicht versehentlich zu breit schneidet):
-- `blog_engine.moo`, `chat_server.moo`, `http_api.moo`, `mqtt_broker.moo`,
-  `dns_resolver.moo`, `proxy.moo`, `websocket_server.moo` → Domäne
+- `blog_engine.moos`, `chat_server.moos`, `http_api.moos`, `mqtt_broker.moos`,
+  `dns_resolver.moos`, `proxy.moos`, `websocket_server.moos` → Domäne
   Web/Net, nicht Game.
-- `adressbuch.moo`, `cms_posts.moo`, `datei_suche.moo`, `elf_reader.moo`,
-  `mysql_client.moo` → CLI/Data-Domäne.
-- `ascii_editor.moo` → CLI-Tool (text-basiert, kein Fenster).
+- `adressbuch.moos`, `cms_posts.moos`, `datei_suche.moos`, `elf_reader.moos`,
+  `mysql_client.moos` → CLI/Data-Domäne.
+- `ascii_editor.moos` → CLI-Tool (text-basiert, kein Fenster).
 
 Diese bleiben in Phase B in `examples/` (kein `game/`-Prefix).
 
@@ -158,8 +158,8 @@ Diese bleiben in Phase B in `examples/` (kein `game/`-Prefix).
 
 Damit Phase B (Dateien verschieben) keinen User-Code bricht:
 
-1. `importiere welt` muss funktional identisch bleiben — `stdlib/welt.moo`
-   darf in Phase B verschoben werden (z.B. `modules/game/welt.moo`), aber
+1. `importiere welt` muss funktional identisch bleiben — `stdlib/welt.moos`
+   darf in Phase B verschoben werden (z.B. `modules/game/welt.moos`), aber
    der Import-Resolver muss diesen Pfad kennen.
 2. Alle `moo_*`-C-Symbole behalten ihre Namen; nur die Dateien ziehen um.
 3. Alle moo-API-Namen (`raum_*`, `welt_*`, `sprite_*`, `fenster_*`,

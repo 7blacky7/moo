@@ -1,7 +1,7 @@
-# stackprot_test.moo — P012-A4: Stack-Protector-Fail-Test (Kernel-Panic).
+# stackprot_test.moos — P012-A4: Stack-Protector-Fail-Test (Kernel-Panic).
 #
 # Build (One-Shot-Pipeline):
-#   moo-compiler compile beispiele/kernel/stackprot_test.moo \
+#   moo-compiler compile beispiele/kernel/stackprot_test.moos \
 #       --no-stdlib --target x86_64-bare --kernel -o stackprot_test.elf
 # Boot-Test: scripts/sp-smoke.sh (GRUB-ISO + QEMU).
 #

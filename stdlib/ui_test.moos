@@ -1,5 +1,5 @@
 # ============================================================
-# stdlib/ui_test.moo — Snapshot-Wrapper + JSON-Sidecar (Plan-004 P2)
+# stdlib/ui_test.moos — Snapshot-Wrapper + JSON-Sidecar (Plan-004 P2)
 #                      + Automation-Wrapper + Frame-Metadaten (Plan-004 P3)
 #
 # Ergaenzt die nativen Snapshot-Builtins (Runtime-Seite):
@@ -33,7 +33,7 @@
 #   - Keine Keyword-Args am Call-Site.
 #   - Reservierte Bezeichner vermeiden (default/standard/neu/st).
 #   - JSON wird OHNE externe Lib erzeugt, aber MUSS python3 json.loads
-#     bestehen (getestet in beispiele/ui_snapshot_demo.moo).
+#     bestehen (getestet in beispiele/ui_snapshot_demo.moos).
 # ============================================================
 
 
@@ -54,7 +54,7 @@ funktion __uit_json_esc(s):
 
 # JSON-Literal fuer einen beliebigen Wert. Nutzt das Runtime-Builtin
 # json_string, damit wir das Rad fuer Dicts/Listen/Zahlen/Bool nicht
-# neu erfinden — dieser Pfad ist bereits in stdlib/ui_introspect.moo
+# neu erfinden — dieser Pfad ist bereits in stdlib/ui_introspect.moos
 # erprobt und liefert validen Output.
 funktion __uit_json_any(v):
     wenn v == nichts:

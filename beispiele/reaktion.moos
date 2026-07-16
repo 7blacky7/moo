@@ -1,7 +1,7 @@
 # ============================================================
-# reaktion.moo — Reaktionstest
+# reaktion.moos — Reaktionstest
 #
-# Kompilieren: moo-compiler compile beispiele/reaktion.moo -o beispiele/reaktion
+# Kompilieren: moo-compiler compile beispiele/reaktion.moos -o beispiele/reaktion
 # Starten:     ./beispiele/reaktion
 #
 # Steuerung: Mausklick wenn Bildschirm GRUEN wird!

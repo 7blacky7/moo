@@ -1,5 +1,5 @@
 # moo Taschenrechner — interaktiver CLI-Rechner
-# Starten: moo-compiler run beispiele/taschenrechner.moo
+# Starten: moo-compiler run beispiele/taschenrechner.moos
 
 zeige "=== moo Taschenrechner ==="
 zeige "Gib einen Ausdruck ein (oder 'ende' zum Beenden)"

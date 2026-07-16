@@ -1,7 +1,7 @@
 # ============================================================
 # moo Helicopter — Endloser Side-Scroller
 #
-# Kompilieren: moo-compiler compile beispiele/helicopter.moo -o beispiele/helicopter
+# Kompilieren: moo-compiler compile beispiele/helicopter.moos -o beispiele/helicopter
 # Starten:     ./beispiele/helicopter
 #
 # Leertaste/Maus = Steigen, Loslassen = Sinken

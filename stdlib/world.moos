@@ -1,5 +1,5 @@
 # ============================================================
-# stdlib/world.moo — World Module (English)
+# stdlib/world.moos — World Module (English)
 #
 # Creates procedural 3D worlds with a single call.
 # Usage: import world

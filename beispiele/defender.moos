@@ -2,7 +2,7 @@
 # moo Defender — Horizontaler Scrolling-Shooter
 #
 # Kompilieren + Starten:
-#   moo-compiler compile beispiele/defender.moo -o beispiele/defender
+#   moo-compiler compile beispiele/defender.moos -o beispiele/defender
 #   ./beispiele/defender
 #
 # Bedienung:

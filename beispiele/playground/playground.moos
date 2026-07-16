@@ -1,7 +1,7 @@
 # moo Playground — KOMPLETT in moo geschrieben!
 # Self-Hosting: moo-Webserver + moo-Eval = Web-IDE fuer moo
 #
-# Kompilieren: moo-compiler compile playground.moo -o playground
+# Kompilieren: moo-compiler compile playground.moos -o playground
 # Starten:     ./playground
 # Oeffnen:     http://localhost:8080
 

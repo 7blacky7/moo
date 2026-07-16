@@ -1,7 +1,7 @@
 # ============================================================
 # moo Pinball
 #
-# Kompilieren: moo-compiler compile beispiele/pinball.moo -o beispiele/pinball
+# Kompilieren: moo-compiler compile beispiele/pinball.moos -o beispiele/pinball
 # Starten:     ./beispiele/pinball
 #
 # Links/A = Linker Flipper, Rechts/D = Rechter Flipper

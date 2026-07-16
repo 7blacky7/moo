@@ -1,7 +1,7 @@
 # ============================================================
 # moo Sudoku — SDL2 GUI mit Backtracking-Solver & Generator
 #
-# Kompilieren: moo-compiler compile sudoku.moo -o sudoku
+# Kompilieren: moo-compiler compile sudoku.moos -o sudoku
 # Starten:     ./sudoku
 #
 # Bedienung (Maus-Only):

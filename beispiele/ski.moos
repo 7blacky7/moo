@@ -1,7 +1,7 @@
 # ============================================================
 # moo Ski — SkiFree-Style Abfahrt
 #
-# Kompilieren: moo-compiler compile beispiele/ski.moo -o beispiele/ski
+# Kompilieren: moo-compiler compile beispiele/ski.moos -o beispiele/ski
 # Starten:     ./beispiele/ski
 #
 # Links/Rechts oder A/D = Lenken

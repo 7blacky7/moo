@@ -41,7 +41,7 @@ git checkout -b update-deps-$(date +%Y%m)
 cd compiler && cargo update
 cargo build --release
 # Alle Stresstest-Beispiele probelaufen lassen
-for f in beispiele/*.moo; do
+for f in beispiele/*.moos; do
   timeout 30 compiler/target/release/moo-compiler compile "$f" -o /tmp/out
 done
 git commit -am "chore(deps): cargo update $(date +%Y-%m)"

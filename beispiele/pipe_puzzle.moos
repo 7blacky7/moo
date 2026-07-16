@@ -1,7 +1,7 @@
 # ============================================================
-# pipe_puzzle.moo — Pipe-Mania Puzzle
+# pipe_puzzle.moos — Pipe-Mania Puzzle
 #
-# Kompilieren: moo-compiler compile beispiele/pipe_puzzle.moo -o beispiele/pipe_puzzle
+# Kompilieren: moo-compiler compile beispiele/pipe_puzzle.moos -o beispiele/pipe_puzzle
 # Starten:     ./beispiele/pipe_puzzle
 #
 # Steuerung: Mausklick = Pipe rotieren, N = Neue Karte, Escape = Beenden

@@ -5,10 +5,10 @@
 # ist teurer als bytes_neu-Builtin im Text-Pfad).
 #
 # Reproduktion:
-#   { head -n 978 ../../beispiele/domain/db/postgres_client.moo;
-#     cat bench_binary.moo;
-#   } > /tmp/bench_binary_run.moo
-#   ./compiler/target/release/moo-compiler run /tmp/bench_binary_run.moo
+#   { head -n 978 ../../beispiele/domain/db/postgres_client.moos;
+#     cat bench_binary.moos;
+#   } > /tmp/bench_binary_run.moos
+#   ./compiler/target/release/moo-compiler run /tmp/bench_binary_run.moos
 
 setze db auf neu PgClient("192.168.50.65", 5433, "moo_scram", "moo_scram", "xjJ6FnbwV9KX43nnBT9PoOHTuJVw")
 db.verbinde()

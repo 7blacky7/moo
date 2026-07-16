@@ -1,8 +1,8 @@
 # ============================================================
-# buildings.moo — Gebaeude-Definitionen (Modul-Skizze)
+# buildings.moos — Gebaeude-Definitionen (Modul-Skizze)
 #
 # Saubere Referenz fuer alle Gebaeudetypen mit Farbe, Hoehe, Kosten,
-# Effekten. Im Haupt-Spiel city_builder.moo sind diese Funktionen
+# Effekten. Im Haupt-Spiel city_builder.moos sind diese Funktionen
 # inline, damit das Spiel ohne lokale Imports kompiliert.
 # ============================================================
 

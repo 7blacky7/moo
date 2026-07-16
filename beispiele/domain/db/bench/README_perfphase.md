@@ -14,9 +14,9 @@ Dokumentation der Bench-Methodik nach Phase-0/Phase-1 (2026-05-06).
 
 | Datei | Was | Erwartung (Median) |
 |---|---|---|
-| `bench_baseline_perfphase.moo` | Connect/SELECT/INSERT/SELECT-1000 ohne T1-T4 | siehe Memory `postgres-bench-baseline-perfphase` |
-| `bench_copy.moo` | T2 COPY UNLOGGED 1000 rows | 5.26 ms = 29.4x Win vs Baseline (5/10 erfolgreich) |
-| `scram_crypto_smoke.moo` | RFC-Vektoren fuer hmac/pbkdf2/sha256 (Phase 0) | 5/5 OK |
+| `bench_baseline_perfphase.moos` | Connect/SELECT/INSERT/SELECT-1000 ohne T1-T4 | siehe Memory `postgres-bench-baseline-perfphase` |
+| `bench_copy.moos` | T2 COPY UNLOGGED 1000 rows | 5.26 ms = 29.4x Win vs Baseline (5/10 erfolgreich) |
+| `scram_crypto_smoke.moos` | RFC-Vektoren fuer hmac/pbkdf2/sha256 (Phase 0) | 5/5 OK |
 
 ## Reproduktion
 
@@ -31,10 +31,10 @@ Klassenenden-Validierung), Tests werden dadurch ungueltig (False-Positives
 moeglich).
 
 ```bash
-{ head -n 587 ../../beispiele/domain/db/postgres_client.moo;
-  cat bench_copy.moo;
-} > /tmp/bench_copy_run.moo
-./compiler/target/release/moo-compiler run /tmp/bench_copy_run.moo
+{ head -n 587 ../../beispiele/domain/db/postgres_client.moos;
+  cat bench_copy.moos;
+} > /tmp/bench_copy_run.moos
+./compiler/target/release/moo-compiler run /tmp/bench_copy_run.moos
 ```
 
 ## Bekannter Bug

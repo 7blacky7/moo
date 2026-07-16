@@ -1,5 +1,5 @@
 # ============================================================
-# ui_file_browser_demo.moo — Showcase fuer setup_file_browser
+# ui_file_browser_demo.moos — Showcase fuer setup_file_browser
 #
 # Primitiver File-Open-Dialog. Zeigt eine hart codierte Datei-Liste
 # (da moo's Datei-I/O-Stdlib variiert). In einer echten App wird
@@ -42,7 +42,7 @@ setze beispiele auf [
     "daten.json",
     "notizen.md",
     "foto.jpg",
-    "skript.moo",
+    "skript.moos",
 ]
 für datei in beispiele:
     ui_liste_zeile_hinzu(g["listFiles"], [datei])

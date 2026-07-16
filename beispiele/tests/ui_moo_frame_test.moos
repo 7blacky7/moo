@@ -1,5 +1,5 @@
 # ============================================================
-# beispiele/tests/ui_moo_frame_test.moo — UIMOO-6 Frame-Backend
+# beispiele/tests/ui_moo_frame_test.moos — UIMOO-6 Frame-Backend
 #
 # ui_moo als In-Game-Overlay auf der 2D-Spiel-API, headless nach
 # dungeon_selftest-Muster. ENDLICH echte Pixel-Regression:

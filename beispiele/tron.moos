@@ -1,7 +1,7 @@
 # ============================================================
 # moo Tron — Lichtrennen (2 Spieler)
 #
-# Kompilieren: moo-compiler compile beispiele/tron.moo -o beispiele/tron
+# Kompilieren: moo-compiler compile beispiele/tron.moos -o beispiele/tron
 # Starten:     ./beispiele/tron
 #
 # Spieler 1 (Blau): WASD

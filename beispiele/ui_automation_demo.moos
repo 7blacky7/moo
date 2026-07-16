@@ -1,5 +1,5 @@
 # ============================================================
-# beispiele/ui_automation_demo.moo — Automation + Frame-Metadaten
+# beispiele/ui_automation_demo.moos — Automation + Frame-Metadaten
 #                                    (Plan-004 P3)
 #
 # Oeffnet ein kleines Fenster (Eingabe "name" + Knopf "speichern" +
@@ -22,7 +22,7 @@
 #
 # Externe Verifikation:
 #   cargo run --release --manifest-path compiler/Cargo.toml -- \
-#       run beispiele/ui_automation_demo.moo
+#       run beispiele/ui_automation_demo.moos
 #   python3 -c "import json; json.load(open('beispiele/snapshots/auto_01.json'))"
 #   python3 -c "import json; json.load(open('beispiele/snapshots/auto_02.json'))"
 # ============================================================

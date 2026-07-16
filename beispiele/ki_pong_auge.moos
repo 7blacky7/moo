@@ -1,5 +1,5 @@
 # ============================================================
-# ki_pong_auge.moo — Das Netz bekommt Augen (KI-MULTI-V1)
+# ki_pong_auge.moos — Das Netz bekommt Augen (KI-MULTI-V1)
 #
 # Beweist die Pipeline Spiel -> Frame -> Tensor -> Training
 # end-to-end: eine Pong-Szene wird gerendert, per test_frame_grab
@@ -7,7 +7,7 @@
 # Kinderleicht-Netz lernt aus den PIXELN, ob der Ball links oder
 # rechts ist. Vorstufe für "Netz lernt Pong spielen".
 #
-# Headless: xvfb-run -a moo-compiler run beispiele/ki_pong_auge.moo
+# Headless: xvfb-run -a moo-compiler run beispiele/ki_pong_auge.moos
 # Endet mit SELFTEST_RESULT: PASS/FAIL (Genauigkeit >= 0.9 auf
 # ungesehenen Test-Szenen). Deterministisch (fester Seed).
 # ============================================================

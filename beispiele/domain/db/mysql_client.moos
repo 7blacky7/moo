@@ -1,7 +1,7 @@
 # ============================================================
 # moo MySQL-Client — MySQL Wire-Protocol in pure moo
 #
-# Kompilieren: moo-compiler compile mysql_client.moo -o mysql_client
+# Kompilieren: moo-compiler compile mysql_client.moos -o mysql_client
 # Starten:     ./mysql_client
 #
 # Stresst das Binary-Protokoll mit Little-Endian-Integern und

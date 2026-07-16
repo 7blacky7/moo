@@ -1,19 +1,19 @@
 # ============================================================
-# brawler.moo — Streets-of-Rage-Style (2-Spieler Coop)
+# brawler.moos — Streets-of-Rage-Style (2-Spieler Coop)
 #
 # ZIEL: Kämpft euch gemeinsam nach rechts bis ans Levelende!
 #
-# Start: moo-compiler run beispiele/brawler.moo
+# Start: moo-compiler run beispiele/brawler.moos
 #
 # Spieler 1 (BLAU):  A/D=Bewegen, W=Springen, F=Schlag, G=Kick
 # Spieler 2 (ROT):   Links/Rechts=Bewegen, Hoch=Springen, K=Schlag, L=Kick
 # R = Neustart, Escape = Beenden
 #
 # Aufbau: 1. Pixelfont  2. Zustands-Dict S (Globals-Shadowing!
-#   siehe zelda.moo — hier lag der Bug, dass gegner_count nie
+#   siehe zelda.moos — hier lag der Bug, dass gegner_count nie
 #   global wurde und daher NIE Gegner erschienen)  3. Wellen +
 #   Kampf in spiel_schritt(i1, i2) — headless testbar
-#   (brawler_selftest.moo)  4. Zeichnen  5. Loop (Env-Guard
+#   (brawler_selftest.moos)  4. Zeichnen  5. Loop (Env-Guard
 #   BRAWLER_SELFTEST)
 # ============================================================
 

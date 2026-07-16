@@ -1,7 +1,7 @@
-# hallo_uefi.moo — moo als UEFI-Application (P011-E1 -> F1).
+# hallo_uefi.moos — moo als UEFI-Application (P011-E1 -> F1).
 #
 # Build (reproduzierbar via scripts/uefi-smoke.sh):
-#   moo-compiler compile hallo_uefi.moo --no-stdlib \
+#   moo-compiler compile hallo_uefi.moos --no-stdlib \
 #       --target x86_64-unknown-uefi -o uefi_moo.obj   (echtes PE/COFF)
 #   clang --target=x86_64-unknown-windows  efi_entry.c uefi_rt.c
 #   lld-link /subsystem:efi_application /entry:efi_main -> BOOTX64.EFI

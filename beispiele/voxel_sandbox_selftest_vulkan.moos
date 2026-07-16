@@ -1,9 +1,9 @@
 # ============================================================
-# voxel_sandbox_selftest_vulkan.moo — Vulkan-Visual-Selftest
+# voxel_sandbox_selftest_vulkan.moos — Vulkan-Visual-Selftest
 # fuer die Voxel-Sandbox (Plan-006 R5).
 #
 # IDENTISCHE Welt/Seed (1337), Kamera und Abbau-Logik wie
-# beispiele/voxel_sandbox_selftest.moo, damit gl33 und vulkan
+# beispiele/voxel_sandbox_selftest.moos, damit gl33 und vulkan
 # direkt vergleichbar sind. Unterschiede:
 #   - Screenshots -> /tmp/voxel_vulkan_before.bmp / _after.bmp
 #   - explizit als Vulkan-Lauf gedacht (MOO_3D_BACKEND=vulkan)
@@ -19,7 +19,7 @@
 #
 # START (echter lokaler Vulkan-Lauf, GPU-Session, kein xvfb):
 #   env MOO_3D_BACKEND=vulkan \
-#     moo-compiler run beispiele/voxel_sandbox_selftest_vulkan.moo
+#     moo-compiler run beispiele/voxel_sandbox_selftest_vulkan.moos
 #
 # Automatisierter Run + Validierung (non-blank, Farbschwelle,
 # gl33-Vergleich) inkl. CI-Skip:

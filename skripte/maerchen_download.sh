@@ -7,7 +7,7 @@
 # SHA256-Doppel-Pinning: Rohdatei UND extrahiertes Ergebnis wurden
 # beim Erst-Download am 2026-07-05 gemessen und hier fixiert —
 # jede spaetere Abweichung (Quelle geaendert, Extraktion driftet)
-# bricht ab. Damit ist das Trainings-Gate von ki_sprachmodell.moo
+# bricht ab. Damit ist das Trainings-Gate von ki_sprachmodell.moos
 # byte-genau reproduzierbar.
 # Extraktion: PG-Boilerplate weg, CRLF->LF, Zeilen 57-1300 des Kerns
 # (= 9 vollstaendige Maerchen: Marienkind, Die Wichtelmaenner,
@@ -75,4 +75,4 @@ if [[ "$ist" != "$ZIEL_SOLL" ]]; then
 fi
 
 echo "Korpus bereit + verifiziert: $ZIEL ($(wc -c < "$ZIEL") Bytes)"
-echo "Nutzung in moo:  siehe beispiele/ki_sprachmodell.moo"
+echo "Nutzung in moo:  siehe beispiele/ki_sprachmodell.moos"

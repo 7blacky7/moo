@@ -229,7 +229,7 @@ C1 ist erst fertig, wenn:
 - Timeout und Latest-Vertrag nachweisbar sind
 - partieller Cleanup und idempotentes Close bewiesen sind
 - tatsächliche Kamera-/Audioformate zurückgespiegelt werden
-- Beispiele `ki_kamera_live.moo` und `ki_mikro_spektrum.moo` existieren
+- Beispiele `ki_kamera_live.moos` und `ki_mikro_spektrum.moos` existieren
 - moolang-docs DE/EN-Aliase, Timeout, Drops und Fehlerklassen dokumentiert
 - unabhängiger Subagent die Implementierung adversarial mit GO bewertet
 

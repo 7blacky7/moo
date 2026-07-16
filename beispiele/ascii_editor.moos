@@ -1,7 +1,7 @@
 # ============================================================
 # moo ASCII-Art-Editor — 80x25 Zeichen-Grid mit SDL2
 #
-# Kompilieren: moo-compiler compile ascii_editor.moo -o ascii_editor
+# Kompilieren: moo-compiler compile ascii_editor.moos -o ascii_editor
 # Starten:     ./ascii_editor
 #
 # Bedienung:

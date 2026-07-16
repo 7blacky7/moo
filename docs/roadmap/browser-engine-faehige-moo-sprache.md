@@ -172,7 +172,7 @@ Ziel: Erst `moo` als Script-Sprache fuer die Engine, nicht sofort JavaScript.
 
 Moegliche Richtung:
 
-- Dokument laedt `.moo`-Scripte.
+- Dokument laedt `.moos`-Scripte.
 - Script kann DOM lesen/aendern.
 - Script kann Events registrieren.
 

@@ -2,7 +2,7 @@
 # pf-smoke.sh — P012-A3: #PF-Handler-Smoke (intentionaler Page Fault).
 # ============================================================================
 # PHASEN
-#   [1/3] Build: beispiele/kernel/pf_test.moo via One-Shot-Kernel-Pipeline
+#   [1/3] Build: beispiele/kernel/pf_test.moos via One-Shot-Kernel-Pipeline
 #   [2/3] Tooling-Check (qemu-system-x86_64 / grub-mkrescue / xorriso)
 #         -> fehlend: TRANSPARENTER SKIP, Exit 0 (Projekt-Konvention).
 #            Der Skip ist KEIN finaler Beweis — das A-Gate verlangt den Boot.
@@ -22,7 +22,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MOO_BIN="${MOO_BIN:-$ROOT/compiler/target/release/moo-compiler}"
-KERNEL_SRC="$ROOT/beispiele/kernel/pf_test.moo"
+KERNEL_SRC="$ROOT/beispiele/kernel/pf_test.moos"
 
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo_pf_smoke.XXXXXX")"
 trap 'rm -rf "$OUT"' EXIT

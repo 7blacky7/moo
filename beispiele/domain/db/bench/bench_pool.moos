@@ -4,10 +4,10 @@
 # Erwartung: 40-50x Win durch eliminierte SCRAM-Auth-Roundtrips.
 #
 # Reproduktion:
-#   { head -n 1024 ../../beispiele/domain/db/postgres_client.moo;
-#     cat bench_pool.moo;
-#   } > /tmp/bench_pool_run.moo
-#   ./compiler/target/release/moo-compiler run /tmp/bench_pool_run.moo
+#   { head -n 1024 ../../beispiele/domain/db/postgres_client.moos;
+#     cat bench_pool.moos;
+#   } > /tmp/bench_pool_run.moos
+#   ./compiler/target/release/moo-compiler run /tmp/bench_pool_run.moos
 
 # Variante A: 100x fresh PgClient
 setze t0 auf zeit_ms()

@@ -1,7 +1,7 @@
 # ============================================================
-# sokoban.moo — Kisten-Schiebe-Raetsel
+# sokoban.moos — Kisten-Schiebe-Raetsel
 #
-# Kompilieren: moo-compiler compile beispiele/sokoban.moo -o beispiele/sokoban
+# Kompilieren: moo-compiler compile beispiele/sokoban.moos -o beispiele/sokoban
 # Starten:     ./beispiele/sokoban
 #
 # Steuerung:

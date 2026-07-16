@@ -1,7 +1,7 @@
 /**
  * moo_world.c — Prozedurale Welt-Engine fuer moo.
  * Noise, Terrain, Chunks, Spieler-Physik, Rendering in einer C-Runtime.
- * Verfuegbar ueber: importiere welt → stdlib/welt.moo → Builtins
+ * Verfuegbar ueber: importiere welt → stdlib/welt.moos → Builtins
  */
 
 #include "moo_runtime.h"

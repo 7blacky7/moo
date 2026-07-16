@@ -2,7 +2,7 @@
 # Nutzt den moo-Webserver um das Playground-HTML auszuliefern
 # und moo-Code zu transpilieren + auszufuehren.
 #
-# Starten: moo-compiler run beispiele/playground/playground_server.moo
+# Starten: moo-compiler run beispiele/playground/playground_server.moos
 
 # HTML-Datei laden
 setze html auf datei_lesen("beispiele/playground/index.html")

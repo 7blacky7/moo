@@ -1,5 +1,5 @@
 # ============================================================
-# test_sokoban.moo — Automatisierter Test
+# test_sokoban.moos — Automatisierter Test
 #
 # Testet: Fenster, Level-Rendering, Spieler-Bewegung, Kiste-Schieben,
 #         Wand-Blockierung, Ziel-Erkennung, Screenshot pro Aktion

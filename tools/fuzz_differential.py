@@ -2,7 +2,7 @@
 """
 fuzz_differential.py — Lexer-Differential zwischen Rust-Compiler und Python-Toolchain.
 
-Phase 1 (dieser Commit): Compilierbarkeit. Für eine Korpus-Menge von .moo-Dateien
+Phase 1 (dieser Commit): Compilierbarkeit. Für eine Korpus-Menge von .moos-Dateien
 prüfen: kompiliert der Rust-Compiler? Parst der Python-Transpiler?
 
 Wenn Rust OK und Python NOK oder umgekehrt → Drift gefunden, ausgeben.
@@ -11,7 +11,7 @@ Phase 2 (nicht in diesem Commit): Tokenvergleich per Stream, Parser-AST-Vergleic
 
 Aufruf:
   python3 tools/fuzz_differential.py               # default corpus
-  python3 tools/fuzz_differential.py compiler/tests/*.moo beispiele/*.moo
+  python3 tools/fuzz_differential.py compiler/tests/*.moos beispiele/*.moos
 """
 from __future__ import annotations
 
@@ -50,8 +50,8 @@ def main() -> int:
     if len(sys.argv) > 1:
         files = [pathlib.Path(a) for a in sys.argv[1:]]
     else:
-        files = list((ROOT / "compiler" / "tests").glob("*.moo"))[:20]
-        files += list((ROOT / "beispiele").glob("*.moo"))[:20]
+        files = list((ROOT / "compiler" / "tests").glob("*.moos"))[:20]
+        files += list((ROOT / "beispiele").glob("*.moos"))[:20]
     files = [f.resolve() for f in files if f.exists()]
 
     rust_ok = rust_fail = py_ok = py_fail = 0

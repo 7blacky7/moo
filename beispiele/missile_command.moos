@@ -2,7 +2,7 @@
 # moo Missile Command — Staedte verteidigen
 #
 # Kompilieren + Starten:
-#   moo-compiler compile beispiele/missile_command.moo -o beispiele/missile_command
+#   moo-compiler compile beispiele/missile_command.moos -o beispiele/missile_command
 #   ./beispiele/missile_command
 #
 # Bedienung:

@@ -14,8 +14,8 @@ des Scopes. f32 bleibt Hauptpfad; bf16-Training bleibt unverändert.
 
 ## Methode
 
-Die reproduzierbaren EVAL-Programme `eval_m6b_mnist.moo` und
-`eval_m6b_mini_lm.moo` trainieren die bestehenden Referenzmodelle unverändert.
+Die reproduzierbaren EVAL-Programme `eval_m6b_mnist.moos` und
+`eval_m6b_mini_lm.moos` trainieren die bestehenden Referenzmodelle unverändert.
 Danach simulieren sie ausschließlich für 2D-dicht/matmul-Gewichte eine
 symmetrische per-output-channel-Quantisierung:
 
@@ -60,8 +60,8 @@ Shader. Das ist die geforderte P0-Disziplin.
 
 ## Reproduzieren
 
-    mise exec -- compiler/target/release/moo-compiler run beispiele/eval_m6b_mnist.moo
-    mise exec -- compiler/target/release/moo-compiler run beispiele/eval_m6b_mini_lm.moo
+    mise exec -- compiler/target/release/moo-compiler run beispiele/eval_m6b_mnist.moos
+    mise exec -- compiler/target/release/moo-compiler run beispiele/eval_m6b_mini_lm.moos
 
 ## Wiederaufnahme-Gate
 

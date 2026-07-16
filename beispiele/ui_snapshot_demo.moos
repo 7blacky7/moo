@@ -1,5 +1,5 @@
 # ============================================================
-# beispiele/ui_snapshot_demo.moo — Snapshot + Sidecar (Plan-004 P2)
+# beispiele/ui_snapshot_demo.moos — Snapshot + Sidecar (Plan-004 P2)
 #
 # Oeffnet ein kleines Fenster mit 4 Widgets (Label / Eingabe /
 # Knopf / Checkbox), setzt IDs, zeigt das Fenster non-blocking,
@@ -16,7 +16,7 @@
 #
 # Verifikation (shell):
 #   cargo run --release --manifest-path compiler/Cargo.toml -- \
-#       run beispiele/ui_snapshot_demo.moo
+#       run beispiele/ui_snapshot_demo.moos
 #   python3 -c "import json; json.load(open('beispiele/snapshots/demo1.json'))"
 #   ls -l beispiele/snapshots/demo1.png
 # ============================================================

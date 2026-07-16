@@ -23,7 +23,7 @@
           "Moo"
         ],
         "extensions": [
-          ".moo"
+          ".moos"
         ],
         "configuration": "./language-configuration.json"
       }
@@ -31,7 +31,7 @@
     "grammars": [
       {
         "language": "moo",
-        "scopeName": "source.moo",
+        "scopeName": "source.moos",
         "path": "./syntaxes/moo.tmLanguage.json"
       }
     ]

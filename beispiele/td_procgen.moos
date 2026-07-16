@@ -1,7 +1,7 @@
 # ============================================================
-# td_procgen.moo — Tower Defense mit prozeduraler Karte
+# td_procgen.moos — Tower Defense mit prozeduraler Karte
 #
-# Kompilieren: moo-compiler compile beispiele/td_procgen.moo -o beispiele/td_procgen
+# Kompilieren: moo-compiler compile beispiele/td_procgen.moos -o beispiele/td_procgen
 # Starten:     ./beispiele/td_procgen
 #
 # Steuerung:

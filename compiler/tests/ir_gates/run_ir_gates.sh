@@ -2,7 +2,7 @@
 # run_ir_gates.sh — REG-G1: Entry-Alloca-Guard (Task f9b5e570, G1-LEAK-Lesson)
 # ============================================================================
 # ZWECK
-#   Kompiliert probe_loop_alloca.moo mit --emit-ir und prueft das LLVM-IR:
+#   Kompiliert probe_loop_alloca.moos mit --emit-ir und prueft das LLVM-IR:
 #   JEDE alloca muss im Entry-Block ihrer Funktion liegen. Eine alloca im
 #   Schleifenkoerper waechst den Stack pro Iteration (G1-LEAK: 16B/Iter =>
 #   SEGV nach ~700k bei list/dict/comp-Slots; for_idx-Fund 2026-07-05:
@@ -27,7 +27,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPILER_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"   # compiler/
 COMPILER="$COMPILER_DIR/target/release/moo-compiler"
-PROBE="$SCRIPT_DIR/probe_loop_alloca.moo"
+PROBE="$SCRIPT_DIR/probe_loop_alloca.moos"
 IR_OUT="$(mktemp "${TMPDIR:-/tmp}/moo_ir_gate.XXXXXX")"
 trap 'rm -f "$IR_OUT"' EXIT
 

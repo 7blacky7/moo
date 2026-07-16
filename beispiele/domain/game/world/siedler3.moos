@@ -1,7 +1,7 @@
 # ============================================================
 # Siedler 3 — Echte 3D-Szene (raum_*-API) mit Wind + Atmosphaere
 #
-# Kompilieren: moo-compiler compile beispiele/domain/game/world/siedler3.moo \
+# Kompilieren: moo-compiler compile beispiele/domain/game/world/siedler3.moos \
 #              -o beispiele/domain/game/world/siedler3
 # Starten:     ./beispiele/domain/game/world/siedler3
 #

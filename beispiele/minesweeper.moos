@@ -1,7 +1,7 @@
 # ============================================================
-# minesweeper.moo — Klassisches Minesweeper
+# minesweeper.moos — Klassisches Minesweeper
 #
-# Kompilieren: moo-compiler compile beispiele/minesweeper.moo -o beispiele/minesweeper
+# Kompilieren: moo-compiler compile beispiele/minesweeper.moos -o beispiele/minesweeper
 # Starten:     ./beispiele/minesweeper
 #
 # Steuerung:

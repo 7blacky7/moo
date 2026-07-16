@@ -1,5 +1,5 @@
 # ============================================================
-# stdlib/ui_aktionen.moo — Aktionen, Toolbar, Menue-Integration
+# stdlib/ui_aktionen.moos — Aktionen, Toolbar, Menue-Integration
 #
 # Eine "Aktion" ist die Single-Source-of-Truth fuer
 # Menueeintrag, Toolbar-Knopf und Tastenkuerzel.

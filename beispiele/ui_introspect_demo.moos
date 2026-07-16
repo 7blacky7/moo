@@ -1,5 +1,5 @@
 # ============================================================
-# beispiele/ui_introspect_demo.moo — Diagnose-Demo (Plan-004 P1)
+# beispiele/ui_introspect_demo.moos — Diagnose-Demo (Plan-004 P1)
 #
 # Zeigt die Introspection-API:
 #   - Fenster mit ein paar Widgets bauen
@@ -12,7 +12,7 @@
 #
 # ALIVE-Test:
 #   ./compiler/target/release/moo-compiler run \
-#       beispiele/ui_introspect_demo.moo
+#       beispiele/ui_introspect_demo.moos
 # ============================================================
 
 importiere ui

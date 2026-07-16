@@ -2,7 +2,7 @@
 
 `ui_moo` ist das plattformübergreifend identische Design-/Widget-System von moo:
 Widgets, Theme, Fokus, Hit-Testing und Eventlogik sind **vollständig in moo**
-implementiert (`stdlib/ui_moo.moo`). Es setzt **keine nativen Controls** voraus —
+implementiert (`stdlib/ui_moo.moos`). Es setzt **keine nativen Controls** voraus —
 der Host liefert nur Fenster/Zeichenfläche/Eingaben. `ui_moo` ist optional:
 die nativen UI-APIs (`ui_*`, Schicht 1/2) bleiben der direkte Weg zu
 GTK/Win32/Cocoa und werden davon nicht berührt.
@@ -15,8 +15,8 @@ setze k auf uim_wurzel(fenster, 10, 10, 580, 400)
 uim_hinzu(k, uim_knopf("Speichern", 20, 20, 130, 32, auf_speichern))
 ```
 
-Demo: `beispiele/ui_moo_demo.moo` (Desktop-Schaufenster mit Theme-Umschalter),
-`beispiele/ui_moo_spiel_overlay.moo` (Pausemenü als In-Game-Overlay).
+Demo: `beispiele/ui_moo_demo.moos` (Desktop-Schaufenster mit Theme-Umschalter),
+`beispiele/ui_moo_spiel_overlay.moos` (Pausemenü als In-Game-Overlay).
 
 ## Backend-Vertrag
 
@@ -111,8 +111,8 @@ die `_uim_zf_*`-Primitive — kein C-Rebuild nötig.
 
 ## Tests
 
-`beispiele/tests/ui_moo_kern_test.moo` (Dispatch/Fokus),
-`ui_moo_widgets_test.moo` (Checkbox/Slider/Klemmung),
-`ui_moo_container_test.moo` (Panel/Liste/Scroll-Transformation),
-`ui_moo_visuell_test.moo` (Snapshot-Frames),
-`ui_moo_frame_test.moo` (Pixel-Regression via `test_frame_diff/region`).
+`beispiele/tests/ui_moo_kern_test.moos` (Dispatch/Fokus),
+`ui_moo_widgets_test.moos` (Checkbox/Slider/Klemmung),
+`ui_moo_container_test.moos` (Panel/Liste/Scroll-Transformation),
+`ui_moo_visuell_test.moos` (Snapshot-Frames),
+`ui_moo_frame_test.moos` (Pixel-Regression via `test_frame_diff/region`).

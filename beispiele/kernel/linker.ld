@@ -5,7 +5,7 @@
  * Bare-Allocator (kern_speicher_init).
  *
  * Verwendung (ueber die One-Shot-Pipeline, P010-C2):
- *   moo compile beispiele/kernel/hallo_kern.moo --target x86_64-bare --kernel
+ *   moo compile beispiele/kernel/hallo_kern.moos --target x86_64-bare --kernel
  */
 ENTRY(_start)
 

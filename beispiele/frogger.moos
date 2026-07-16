@@ -1,7 +1,7 @@
 # ============================================================
 # moo Frogger — Klassisches Strassenüberquerungs-Spiel
 #
-# Kompilieren: moo-compiler compile beispiele/frogger.moo -o beispiele/frogger
+# Kompilieren: moo-compiler compile beispiele/frogger.moos -o beispiele/frogger
 # Starten:     ./beispiele/frogger
 #
 # Hoch/W = Vorwaerts springen

@@ -1,5 +1,5 @@
 # ============================================================
-# beispiele/tests/ui_uimoo1_smoke.moo — Smoke: UIMOO-1 Primitive
+# beispiele/tests/ui_uimoo1_smoke.moos — Smoke: UIMOO-1 Primitive
 #
 # Prueft Codegen + Linking + Grundverhalten der neuen Welle:
 #   ui_zeichne_rechteck_rund, ui_zeichne_clip_setze/loesche,

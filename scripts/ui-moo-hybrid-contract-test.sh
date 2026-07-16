@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOC="$ROOT/docs/ui_moo-backendvertrag.md"
 CODEGEN="$ROOT/compiler/src/codegen.rs"
 BINDINGS="$ROOT/compiler/src/runtime_bindings.rs"
-CORE="$ROOT/stdlib/ui_moo_kern.moo"
+CORE="$ROOT/stdlib/ui_moo_kern.moos"
 FEHLER=0
 
 fehler() {

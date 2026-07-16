@@ -10,7 +10,7 @@ description = "Run tests"
 run = "uv run pytest tests/ -v"
 
 [tasks.run]
-description = "Run a .moo file"
+description = "Run a .moos file"
 run = "uv run python -m moo run"
 
 [tasks.test-compiler]
@@ -38,7 +38,7 @@ case "$TARGET" in
   *) TARGET="$PWD/$TARGET" ;;
 esac
 COMPILER="$TARGET/release/moo-compiler"
-"$COMPILER" compile beispiele/tests/ui_moo_lifecycle_test.moo -o "$OUT/lifecycle"
+"$COMPILER" compile beispiele/tests/ui_moo_lifecycle_test.moos -o "$OUT/lifecycle"
 env -u DISPLAY -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS \
     -u PULSE_SERVER -u PIPEWIRE_REMOTE -u XAUTHORITY \
     MOO_UI_BACKEND=gtk "$OUT/lifecycle"
@@ -58,11 +58,11 @@ case "$TARGET" in
   *) TARGET="$PWD/$TARGET" ;;
 esac
 COMPILER="$TARGET/release/moo-compiler"
-cp beispiele/tests/ui_moo_surface_primitives_test.moo "$OUT/primitives.moo"
-cp beispiele/tests/ui_moo_surface_golden_test.moo "$OUT/golden.moo"
-"$COMPILER" compile "$OUT/primitives.moo" -o "$OUT/primitives"
+cp beispiele/tests/ui_moo_surface_primitives_test.moos "$OUT/primitives.moos"
+cp beispiele/tests/ui_moo_surface_golden_test.moos "$OUT/golden.moos"
+"$COMPILER" compile "$OUT/primitives.moos" -o "$OUT/primitives"
 "$OUT/primitives"
-"$COMPILER" compile "$OUT/golden.moo" -o "$OUT/golden"
+"$COMPILER" compile "$OUT/golden.moos" -o "$OUT/golden"
 "$OUT/golden"
 '''
 
@@ -80,11 +80,11 @@ case "$TARGET" in
   *) TARGET="$PWD/$TARGET" ;;
 esac
 COMPILER="$TARGET/release/moo-compiler"
-"$COMPILER" compile beispiele/tests/ui_moo_effects_contract_test.moo -o "$OUT/contract"
+"$COMPILER" compile beispiele/tests/ui_moo_effects_contract_test.moos -o "$OUT/contract"
 "$OUT/contract"
-"$COMPILER" compile beispiele/tests/ui_moo_effects_golden_test.moo -o "$OUT/golden"
+"$COMPILER" compile beispiele/tests/ui_moo_effects_golden_test.moos -o "$OUT/golden"
 "$OUT/golden"
-"$COMPILER" compile beispiele/moo_glass_gallery.moo -o "$OUT/gallery"
+"$COMPILER" compile beispiele/moo_glass_gallery.moos -o "$OUT/gallery"
 MOO_GLASS_GALLERY_NON_UI=1 MOO_GLASS_GALLERY_BMP="$OUT/gallery.bmp" "$OUT/gallery"
 test -s "$OUT/gallery.bmp"
 '''
@@ -270,7 +270,7 @@ OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-a11y-metadata.XXXXXX")"
 trap 'rm -rf "$OUT"' EXIT
 COMPILER="$PWD/compiler/target/release/moo-compiler"
 test -x "$COMPILER"
-"$COMPILER" compile beispiele/tests/ui_moo_a11y_metadata_test.moo -o "$OUT/a11y-metadata"
+"$COMPILER" compile beispiele/tests/ui_moo_a11y_metadata_test.moos -o "$OUT/a11y-metadata"
 env -u DISPLAY -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS -u PULSE_SERVER -u PIPEWIRE_REMOTE -u XAUTHORITY -u MIR_SOCKET -u SWAYSOCK "$OUT/a11y-metadata" >"$OUT/a11y-metadata.log" 2>"$OUT/a11y-metadata.err"
 test ! -s "$OUT/a11y-metadata.err"
 test "$(grep -c '^PASS ' "$OUT/a11y-metadata.log")" -eq 14
@@ -405,7 +405,7 @@ OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-ime-event.XXXXXX")"
 trap 'rm -rf "$OUT"' EXIT
 COMPILER="$PWD/compiler/target/release/moo-compiler"
 test -x "$COMPILER"
-"$COMPILER" compile beispiele/tests/ui_moo_ime_event_contract_test.moo -o "$OUT/ime-event"
+"$COMPILER" compile beispiele/tests/ui_moo_ime_event_contract_test.moos -o "$OUT/ime-event"
 env -u DISPLAY -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS -u PULSE_SERVER -u PIPEWIRE_REMOTE -u XAUTHORITY -u MIR_SOCKET -u SWAYSOCK "$OUT/ime-event" >"$OUT/ime-event.log" 2>"$OUT/ime-event.err"
 test ! -s "$OUT/ime-event.err"
 test "$(grep -c '^PASS ' "$OUT/ime-event.log")" -eq 18

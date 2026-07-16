@@ -1,7 +1,7 @@
 # ============================================================
 # moo MIDI-File-Parser + Renderer (.mid → .wav)
 #
-# Kompilieren: moo-compiler compile midi_player.moo -o midi_player
+# Kompilieren: moo-compiler compile midi_player.moos -o midi_player
 # Starten:     ./midi_player
 #
 # Flow:

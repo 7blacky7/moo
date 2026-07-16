@@ -11,7 +11,7 @@
 #   - DISCONNECT
 #   - Topic-Routing mit '+' und '#' Wildcards
 #
-# Starten: moo-compiler compile mqtt_broker.moo -o mqtt_broker
+# Starten: moo-compiler compile mqtt_broker.moos -o mqtt_broker
 #          ./mqtt_broker   (Port 1884)
 # Testen:  mosquitto_pub -h 127.0.0.1 -p 1884 -t test/foo -m hello
 # ============================================================

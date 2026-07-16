@@ -13,9 +13,9 @@
 # andere KIs die Ergebnisse automatisiert finden.
 #
 # Selftests:
-#   2D       beispiele/snake_plus_selftest.moo              (SDL-2D)
-#   3D-Welt  beispiele/domain/game/world/siedler3_selftest.moo (Hybrid gl33)
-#   Voxel    beispiele/voxel_sandbox_selftest.moo           (Hybrid gl33 + Voxel)
+#   2D       beispiele/snake_plus_selftest.moos              (SDL-2D)
+#   3D-Welt  beispiele/domain/game/world/siedler3_selftest.moos (Hybrid gl33)
+#   Voxel    beispiele/voxel_sandbox_selftest.moos           (Hybrid gl33 + Voxel)
 #
 # Headless-Support:
 #   - DISPLAY gesetzt  -> direkt dort fahren (echte GPU).
@@ -91,10 +91,10 @@ fi
 # will_mp4=1 markiert Selftests, die per test_video_* ein MP4 erzeugen. Fehlt
 # ffmpeg, wird der Test als video_status=skipped uebersprungen (kein Fehler).
 TESTS=(
-    "snake_plus_2d|beispiele/snake_plus_selftest.moo|0|0"
-    "siedler3_3d|beispiele/domain/game/world/siedler3_selftest.moo|1|0"
-    "voxel_sandbox|beispiele/voxel_sandbox_selftest.moo|1|0"
-    "voxel_kamera_video|beispiele/voxel_kamera_video_selftest.moo|1|1"
+    "snake_plus_2d|beispiele/snake_plus_selftest.moos|0|0"
+    "siedler3_3d|beispiele/domain/game/world/siedler3_selftest.moos|1|0"
+    "voxel_sandbox|beispiele/voxel_sandbox_selftest.moos|1|0"
+    "voxel_kamera_video|beispiele/voxel_kamera_video_selftest.moos|1|1"
 )
 
 declare -a RESULT_JSON=()

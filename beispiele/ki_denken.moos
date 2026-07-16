@@ -13,7 +13,7 @@
 # '?'/'!' = Modus-Praefixe, '{' = Denk-Start, '}' = Antwort-Token,
 # '.' = Denk-Schritt, ';' = Ende. Alles deterministisch (Seeds fix,
 # Generierung greedy ohne zufall()).
-# Kompilieren: moo-compiler compile ki_denken.moo -o ki_denken
+# Kompilieren: moo-compiler compile ki_denken.moos -o ki_denken
 # ============================================================
 setze dim auf 32
 setze block auf 16

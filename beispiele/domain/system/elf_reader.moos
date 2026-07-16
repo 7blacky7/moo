@@ -1,7 +1,7 @@
 # ============================================================
 # moo ELF-Reader — ELF64 Binary Inspector in pure moo
 #
-# Kompilieren: moo-compiler compile elf_reader.moo -o elf_reader
+# Kompilieren: moo-compiler compile elf_reader.moos -o elf_reader
 # Starten:     ./elf_reader
 #
 # Parst:

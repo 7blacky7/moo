@@ -2,7 +2,7 @@
 # moo Paratrooper — Turm-Verteidigung gegen Fallschirmspringer
 #
 # Kompilieren + Starten:
-#   moo-compiler compile beispiele/paratrooper.moo -o beispiele/paratrooper
+#   moo-compiler compile beispiele/paratrooper.moos -o beispiele/paratrooper
 #   ./beispiele/paratrooper
 #
 # Bedienung:

@@ -1,7 +1,7 @@
 # ============================================================
 # moo Lemmings — Rette die Lemminge!
 #
-# Kompilieren: moo-compiler compile beispiele/lemmings.moo -o beispiele/lemmings
+# Kompilieren: moo-compiler compile beispiele/lemmings.moos -o beispiele/lemmings
 # Starten:     ./beispiele/lemmings
 #
 # Maus = Lemming anklicken + Aktion zuweisen

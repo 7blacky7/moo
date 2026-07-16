@@ -1,7 +1,7 @@
 # ============================================================
 # moo Space Invaders
 #
-# Kompilieren: moo-compiler compile beispiele/invaders.moo -o beispiele/invaders
+# Kompilieren: moo-compiler compile beispiele/invaders.moos -o beispiele/invaders
 # Starten:     ./beispiele/invaders
 #
 # Links/Rechts oder A/D = Bewegen

@@ -1,5 +1,5 @@
 # ============================================================
-# voxel_sandbox.moo — Minecraft-artige Voxel-Sandbox (Plan-005 Phase 4)
+# voxel_sandbox.moos — Minecraft-artige Voxel-Sandbox (Plan-005 Phase 4)
 #
 # Nutzt die moo Voxel-Engine-Runtime (moo_voxel.c) ueber die Builtins:
 #   voxel_welt_neu(seed)              -> VoxelWorld-Handle
@@ -15,7 +15,7 @@
 #
 # Fenster: fenster_unified (Hybrid 2D+3D) — das 3D-Voxel-Mesh wird ueber
 # die raum_*-Bridge (gl33) gezeichnet, die 2D-Hotbar liegt als
-# zeichne_rechteck_z-Overlay darueber (Hybrid-Pattern wie siedler3.moo).
+# zeichne_rechteck_z-Overlay darueber (Hybrid-Pattern wie siedler3.moos).
 #
 # Steuerung:
 #   W/A/S/D     Bewegen (vorne/links/zurueck/rechts), bezogen auf Blickrichtung
@@ -28,12 +28,12 @@
 #   Escape      Beenden
 #
 # Kompilieren/Starten (mit gl33-Backend):
-#   MOO_3D_BACKEND=gl33 moo-compiler run beispiele/voxel_sandbox.moo
+#   MOO_3D_BACKEND=gl33 moo-compiler run beispiele/voxel_sandbox.moos
 #   (headless: xvfb-run -a -s "-screen 0 1280x800x24" ... )
 #
 # Test-Modus (env MOO_VOXEL_TEST=1): laeuft eine feste Frame-Zahl ohne
 # echte Eingabe und beendet sich sauber. Der Screenshot-Selftest
-# (beispiele/voxel_sandbox_selftest.moo) nutzt dieselben Engine-Aufrufe.
+# (beispiele/voxel_sandbox_selftest.moos) nutzt dieselben Engine-Aufrufe.
 # ============================================================
 
 konstante WIN_B auf 1280

@@ -1,7 +1,7 @@
 # ============================================================
-# game_2048.moo — 2048 Puzzle
+# game_2048.moos — 2048 Puzzle
 #
-# Kompilieren: moo-compiler compile beispiele/game_2048.moo -o beispiele/game_2048
+# Kompilieren: moo-compiler compile beispiele/game_2048.moos -o beispiele/game_2048
 # Starten:     ./beispiele/game_2048
 #
 # Steuerung: WASD oder Pfeiltasten = Verschieben, R = Neu, Escape = Beenden

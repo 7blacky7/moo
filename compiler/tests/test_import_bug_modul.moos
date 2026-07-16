@@ -1,4 +1,4 @@
-# test_import_bug_modul.moo — Modul mit 6 Funktionen
+# test_import_bug_modul.moos — Modul mit 6 Funktionen
 funktion eins():
     gib_zurück 1
 

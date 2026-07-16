@@ -1,7 +1,7 @@
 # ============================================================
-# lights_out.moo — Lights Out Puzzle
+# lights_out.moos — Lights Out Puzzle
 #
-# Kompilieren: moo-compiler compile beispiele/lights_out.moo -o beispiele/lights_out
+# Kompilieren: moo-compiler compile beispiele/lights_out.moos -o beispiele/lights_out
 # Starten:     ./beispiele/lights_out
 #
 # Steuerung: Mausklick = Feld umschalten (auch 4 Nachbarn), R = Neu

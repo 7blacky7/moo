@@ -431,7 +431,7 @@ MooValue moo_surface_blit_frame(MooValue value, MooValue x, MooValue y,
  * Glass-Farbpass-Fastpath (P016-O5-AERO)
  *
  * Semantisch exakter C-Port des Farb-Passes aus
- * stdlib/ui_moo_effects.moo::uim_effekt_vorschau_zeichnen. Die Moo-Schleife
+ * stdlib/ui_moo_effects.moos::uim_effekt_vorschau_zeichnen. Die Moo-Schleife
  * bleibt dort als Referenz/Fallback (_uime_farbpass_langsam); die Effekt-
  * Goldens gelten fuer beide Pfade und dienen als Paritaetsgate.
  * Two-Phase wie die Referenz: erst ALLE Reads (scratch), dann die Writes.

@@ -1,5 +1,5 @@
 # ============================================================
-# fighter_selftest.moo — Gameplay-Selftest für fighter.moo
+# fighter_selftest.moos — Gameplay-Selftest für fighter.moos
 #
 # Treibt spiel_schritt(i1, i2) deterministisch: P2 läuft zu P1
 # und prügelt ihn nieder (P1 passiv) -> P2 GEWINNT; danach
@@ -7,7 +7,7 @@
 #
 # Start:
 #   FIGHTER_SELFTEST=1 xvfb-run -a -s "-screen 0 800x600x24" \
-#     ./compiler/target/release/moo-compiler run beispiele/fighter_selftest.moo
+#     ./compiler/target/release/moo-compiler run beispiele/fighter_selftest.moos
 # ============================================================
 
 importiere fighter

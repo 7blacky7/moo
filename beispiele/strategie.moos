@@ -1,7 +1,7 @@
 # ============================================================
 # moo Strategie — Mini-Civilization
 #
-# Kompilieren: moo-compiler compile beispiele/strategie.moo -o beispiele/strategie
+# Kompilieren: moo-compiler compile beispiele/strategie.moos -o beispiele/strategie
 # Starten:     ./beispiele/strategie
 #
 # Maus = Einheit waehlen + Ziel setzen

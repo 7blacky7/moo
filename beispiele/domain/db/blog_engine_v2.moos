@@ -5,9 +5,9 @@
 #   - req.antworten_mit_headers mit Set-Cookie (statt ?token=-Query-Workaround)
 #   - req["headers"]["cookie"] zum Session-Lookup
 #
-# Das Original beispiele/blog_engine.moo bleibt als Referenz fuer die alte API.
+# Das Original beispiele/blog_engine.moos bleibt als Referenz fuer die alte API.
 #
-# Kompilieren: moo-compiler compile blog_engine_v2.moo -o /tmp/blog_v2
+# Kompilieren: moo-compiler compile blog_engine_v2.moos -o /tmp/blog_v2
 # Starten:     /tmp/blog_v2   (Port 3002)
 
 zeige "=== moo Blog v2 (prepared + cookies) ==="

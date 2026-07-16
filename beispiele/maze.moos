@@ -1,7 +1,7 @@
 # ============================================================
 # moo Maze — Prozedurales Labyrinth
 #
-# Kompilieren: moo-compiler compile beispiele/maze.moo -o beispiele/maze
+# Kompilieren: moo-compiler compile beispiele/maze.moos -o beispiele/maze
 # Starten:     ./beispiele/maze
 #
 # WASD/Pfeiltasten = Bewegen

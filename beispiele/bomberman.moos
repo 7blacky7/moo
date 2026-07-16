@@ -2,7 +2,7 @@
 # moo Bomberman — 2-Spieler Arena
 #
 # Kompilieren + Starten:
-#   moo-compiler compile beispiele/bomberman.moo -o beispiele/bomberman
+#   moo-compiler compile beispiele/bomberman.moos -o beispiele/bomberman
 #   ./beispiele/bomberman
 #
 # Spieler 1 (BLAU):  WASD=Bewegen, F=Bombe legen

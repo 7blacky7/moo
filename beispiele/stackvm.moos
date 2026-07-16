@@ -1,7 +1,7 @@
 # ============================================================
 # moo Stack-VM — Bytecode Interpreter + Compiler
 #
-# Kompilieren: moo-compiler compile stackvm.moo -o stackvm
+# Kompilieren: moo-compiler compile stackvm.moos -o stackvm
 # Starten:     ./stackvm
 #
 # Sprache: Mini-Lisp S-Expressions

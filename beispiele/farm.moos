@@ -1,7 +1,7 @@
 # ============================================================
 # moo Farm — Harvest Moon Style
 #
-# Kompilieren: moo-compiler compile beispiele/farm.moo -o beispiele/farm
+# Kompilieren: moo-compiler compile beispiele/farm.moos -o beispiele/farm
 # Starten:     ./beispiele/farm
 #
 # WASD = Bewegen, Leertaste = Pflanzen/Ernten/Interagieren

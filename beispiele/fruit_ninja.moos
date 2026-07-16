@@ -1,7 +1,7 @@
 # ============================================================
-# fruit_ninja.moo — Obst zerschneiden!
+# fruit_ninja.moos — Obst zerschneiden!
 #
-# Kompilieren: moo-compiler compile beispiele/fruit_ninja.moo -o beispiele/fruit_ninja
+# Kompilieren: moo-compiler compile beispiele/fruit_ninja.moos -o beispiele/fruit_ninja
 # Starten:     ./beispiele/fruit_ninja
 #
 # Steuerung: Maus bewegen = Klinge, Maus gedrueckt = Schneiden

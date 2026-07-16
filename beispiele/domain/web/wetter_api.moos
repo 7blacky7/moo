@@ -1,6 +1,6 @@
 # moo Wetter — HTTP API abfragen
 # Nutzt wttr.in (einfaches Text-Format)
-# Starten: moo-compiler run beispiele/wetter_api.moo
+# Starten: moo-compiler run beispiele/wetter_api.moos
 
 zeige "=== moo Wetter ==="
 

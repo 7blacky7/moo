@@ -1,7 +1,7 @@
 # ============================================================
 # moo Solitaire — Klondike Kartenspiel
 #
-# Kompilieren: moo-compiler compile beispiele/solitaire.moo -o beispiele/solitaire
+# Kompilieren: moo-compiler compile beispiele/solitaire.moos -o beispiele/solitaire
 # Starten:     ./beispiele/solitaire
 #
 # Maus = Karte waehlen + ablegen

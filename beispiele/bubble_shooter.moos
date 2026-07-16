@@ -2,7 +2,7 @@
 # moo Bubble Shooter — Puzzle Bobble Style
 #
 # Kompilieren + Starten:
-#   moo-compiler compile beispiele/bubble_shooter.moo -o beispiele/bubble_shooter
+#   moo-compiler compile beispiele/bubble_shooter.moos -o beispiele/bubble_shooter
 #   ./beispiele/bubble_shooter
 #
 # Bedienung:

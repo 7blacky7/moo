@@ -1,6 +1,6 @@
 # scratch/ — Ad-hoc & Scratchpad
 
-Dieses Verzeichnis ist der Parkplatz für lose `.moo`-Dateien, die **keine** Regressions-Tests sind.
+Dieses Verzeichnis ist der Parkplatz für lose `.moos`-Dateien, die **keine** Regressions-Tests sind.
 
 ## Was gehört hier rein?
 
@@ -10,16 +10,16 @@ Dieses Verzeichnis ist der Parkplatz für lose `.moo`-Dateien, die **keine** Reg
 
 ## Was gehört hier NICHT rein?
 
-- **Regressions-Tests** → `compiler/tests/<name>.moo` + `<name>.expected`
+- **Regressions-Tests** → `compiler/tests/<name>.moos` + `<name>.expected`
 - **Vorzeige-Beispiele** → `beispiele/showcase/`
 - **Stresstests** → `beispiele/stress/`
 
 ## Policy
 
 - **Nicht CI-relevant.** Dateien hier werden nicht von `compiler/tests/run_all.sh` ausgeführt.
-- **Keine neuen `test_*.moo` im Repo-Root.** Bitte hier oder in `compiler/tests/` anlegen.
-- **Binaries werden gitignored** (siehe `.gitignore`). Nur `.moo`, `.md`, `.expected`-Dateien werden getrackt.
+- **Keine neuen `test_*.moos` im Repo-Root.** Bitte hier oder in `compiler/tests/` anlegen.
+- **Binaries werden gitignored** (siehe `.gitignore`). Nur `.moos`, `.md`, `.expected`-Dateien werden getrackt.
 
 ## Historischer Kontext
 
-Siehe `spec/repo_cleanup_phase_b.md` für die Cleanup-Sequenz, mit der dieses Verzeichnis sinnvoll wird, und `spec/tests_phase_b_selection.md` für die konkrete Triage der Root-`test_*.moo`-Dateien.
+Siehe `spec/repo_cleanup_phase_b.md` für die Cleanup-Sequenz, mit der dieses Verzeichnis sinnvoll wird, und `spec/tests_phase_b_selection.md` für die konkrete Triage der Root-`test_*.moos`-Dateien.

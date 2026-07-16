@@ -1,5 +1,5 @@
 # ============================================================
-# test_platformer.moo — Automatisierter Test fuer Platformer
+# test_platformer.moos — Automatisierter Test fuer Platformer
 #
 # Testet: Fenster, Sprites, Bewegung, Sprung, Schwerkraft,
 #         Plattform-Kollision, Muenzen, Feinde, Screenshot pro Aktion

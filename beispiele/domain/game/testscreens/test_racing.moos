@@ -1,5 +1,5 @@
 # ============================================================
-# test_racing.moo — Automatisierter Test fuer Racing
+# test_racing.moos — Automatisierter Test fuer Racing
 #
 # Testet: Fenster, Beschleunigung, Lenkung, Bremsen, Reibung,
 #         Checkpoint-Erkennung, Screenshot pro Aktion

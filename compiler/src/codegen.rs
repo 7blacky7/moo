@@ -5684,7 +5684,7 @@ impl<'ctx> CodeGen<'ctx> {
                 // +1 auf dem Receiver zurueck — bei frischen Receivern ein
                 // messbarer Heap-Leak (G1-LEAK: 430B/Iteration), bei loop-
                 // invarianten nur RSS-unsichtbare Refcount-Inflation.
-                // Gate: regression/test_method_multi_call_abort.moo.
+                // Gate: regression/test_method_multi_call_abort.moos.
 
                 let obj = obj_val;
                 // P014-A3: Tensor-Methoden nur, wenn KEINE User-Klasse den Namen
@@ -6955,7 +6955,7 @@ impl<'ctx> CodeGen<'ctx> {
                         // released ihren Param am Frame-Ende (release_function_locals).
                         // Ohne extra retain hier: jeder Closure-Aufruf sinkt den
                         // captured-Refcount um 1 -> nach 2-3 Aufrufen freed -> SIGSEGV
-                        // (siehe regression/test_closure_multi_call.moo).
+                        // (siehe regression/test_closure_multi_call.moos).
                         self.call_rt_void(self.rt.moo_retain,
                             &[cap.into()],
                             &format!("retain_cap_{i}"))?;

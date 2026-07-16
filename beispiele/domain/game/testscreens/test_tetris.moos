@@ -1,5 +1,5 @@
 # ============================================================
-# test_tetris.moo — Automatisierter Test fuer Tetris
+# test_tetris.moos — Automatisierter Test fuer Tetris
 #
 # Testet: Fenster, Brett-Init, Stueck-Bewegung, Rotation,
 #         Fall, Fixierung, Linien-Clearing, Screenshot pro Aktion

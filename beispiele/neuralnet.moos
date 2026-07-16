@@ -1,7 +1,7 @@
 # ============================================================
 # moo Neural Network from Scratch — XOR-Lernproblem
 #
-# Kompilieren: moo-compiler compile neuralnet.moo -o neuralnet
+# Kompilieren: moo-compiler compile neuralnet.moos -o neuralnet
 # Starten:     ./neuralnet
 #
 # Netz-Architektur:

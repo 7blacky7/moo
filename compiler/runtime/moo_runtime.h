@@ -475,7 +475,7 @@ MooValue moo_surface_read_pixel(MooValue surface, MooValue x, MooValue y);
 MooValue moo_surface_hash(MooValue surface);
 MooValue moo_surface_snapshot_to_frame(MooValue surface);
 // Glass-Farbpass-Fastpath (P016-O5-AERO): exakter C-Port des Farb-Passes aus
-// stdlib/ui_moo_effects.moo (Blur/Saettigung/Toenung/Rauschen/Rund-Clip).
+// stdlib/ui_moo_effects.moos (Blur/Saettigung/Toenung/Rauschen/Rund-Clip).
 // effekt = aufloesung["effektiv"]-Dict. Liefert falsch bei ungueltigen Args.
 MooValue moo_surface_glass_farbpass(MooValue surface, MooValue x, MooValue y,
                                     MooValue b, MooValue h, MooValue effekt);

@@ -1,7 +1,7 @@
-# hallo_kern.moo — Bootbarer moo-Demo-Kernel (Plan-010 D1).
+# hallo_kern.moos — Bootbarer moo-Demo-Kernel (Plan-010 D1).
 #
 # Build (One-Shot-Pipeline, P010-C2):
-#   moo-compiler compile beispiele/kernel/hallo_kern.moo \
+#   moo-compiler compile beispiele/kernel/hallo_kern.moos \
 #       --no-stdlib --target x86_64-bare --kernel -o hallo_kern.elf
 #
 # Boot-Test: scripts/kernel-smoke.sh (GRUB-ISO + QEMU, P010-T1).

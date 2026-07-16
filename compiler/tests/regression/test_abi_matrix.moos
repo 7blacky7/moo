@@ -1,4 +1,4 @@
-# test_abi_matrix.moo — P012-B2: MooValue-Struct-Passing-ABI-Matrix.
+# test_abi_matrix.moos — P012-B2: MooValue-Struct-Passing-ABI-Matrix.
 #
 # Aritaeten 0/1/2/4/5/8, Return-Werte, verschachtelte Calls (Returns als
 # Args), benannte Funktionen + 4-arg-Lambda (plain-fn_ptr-Arity-Cast in

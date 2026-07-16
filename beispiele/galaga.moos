@@ -2,7 +2,7 @@
 # moo Galaga — Klassischer Arcade Shoot-em-up
 #
 # Kompilieren + Starten:
-#   moo-compiler compile beispiele/galaga.moo -o beispiele/galaga
+#   moo-compiler compile beispiele/galaga.moos -o beispiele/galaga
 #   ./beispiele/galaga
 #
 # Bedienung:

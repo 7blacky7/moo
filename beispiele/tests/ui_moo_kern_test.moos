@@ -1,5 +1,5 @@
 # ============================================================
-# beispiele/tests/ui_moo_kern_test.moo — Kern-Test UIMOO-2
+# beispiele/tests/ui_moo_kern_test.moos — Kern-Test UIMOO-2
 #
 # Headless-Verifikation des ui_moo-Kerns über test_klick_xy:
 #   1. Wurzel + 2 Knöpfe + Label anlegen

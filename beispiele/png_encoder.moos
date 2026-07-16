@@ -1,7 +1,7 @@
 # ============================================================
 # moo PNG-Encoder — schreibt PNG-Dateien in pure moo
 #
-# Kompilieren: moo-compiler compile png_encoder.moo -o png_encoder
+# Kompilieren: moo-compiler compile png_encoder.moos -o png_encoder
 # Starten:     ./png_encoder
 #
 # Erzeugt zwei Testbilder:

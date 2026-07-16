@@ -1,11 +1,11 @@
 # ============================================================
-# zelda.moo — Top-Down-Adventure (Referenz-Beispiel Gameplay)
+# zelda.moos — Top-Down-Adventure (Referenz-Beispiel Gameplay)
 #
 # ZIEL: Hol das TRIFORCE!
 #   Finde den Schlüssel, öffne die verschlossene Tür im Norden,
 #   besiege den Boss und berühre das Triforce.
 #
-# Kompilieren: moo-compiler compile beispiele/zelda.moo -o beispiele/zelda
+# Kompilieren: moo-compiler compile beispiele/zelda.moos -o beispiele/zelda
 # Starten:     ./beispiele/zelda
 #
 # Steuerung: WASD = Bewegen, Leertaste = Schwert, R = Neustart,
@@ -18,7 +18,7 @@
 #      lebt aller veränderlicher Zustand in S)
 #   4. Deterministische Gegner-/Boss-Muster
 #   5. Spiellogik in spiel_schritt(inp) — headless testbar,
-#      zelda_selftest.moo spielt per Input-Skript bis zum Sieg
+#      zelda_selftest.moos spielt per Input-Skript bis zum Sieg
 #   6. Interaktiver Loop (übersprungen wenn Env ZELDA_SELFTEST)
 # ============================================================
 

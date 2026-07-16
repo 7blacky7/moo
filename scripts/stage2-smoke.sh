@@ -2,7 +2,7 @@
 # P011-F1: Reproduzierbarer Legacy-BIOS-Boot-Smoke (Stage1 -> Stage2 in moo).
 #
 # Baut aus FESTEN Projektdateien (kein /tmp-PoC mehr):
-#   beispiele/bootloader/stage2.moo          (moo-Anteil, 32-bit PM)
+#   beispiele/bootloader/stage2.moos          (moo-Anteil, 32-bit PM)
 #   beispiele/bootloader/stage2_entry.S     (PM-Entry, SSE-Enable, call haupt)
 #   compiler/runtime/boot/stage2_rt.c        (32-bit MooValue-Stubs)
 #   beispiele/bootloader/stage1_loader.S     (16-bit, LBA-DAP int 0x13 AH=42)
@@ -27,7 +27,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$ROOT/compiler/target/release/moo-compiler"
-MOO_SRC="$ROOT/beispiele/bootloader/stage2.moo"
+MOO_SRC="$ROOT/beispiele/bootloader/stage2.moos"
 ENTRY_S="$ROOT/beispiele/bootloader/stage2_entry.S"
 STAGE1_S="$ROOT/beispiele/bootloader/stage1_loader.S"
 RT_C="$ROOT/compiler/runtime/boot/stage2_rt.c"

@@ -1,5 +1,5 @@
 # ============================================================
-# beispiele/ui_moo_demo.moo — Schaufenster für ui_moo (Schicht 3)
+# beispiele/ui_moo_demo.moos — Schaufenster für ui_moo (Schicht 3)
 #
 # Alle Widgets der ersten Generation in einem Fenster, mit
 # Theme-Umschalter hell/dunkel. Komplett moo-gezeichnet — kein
@@ -7,7 +7,7 @@
 #
 # Kompilieren + Starten:
 #   cargo run --release --manifest-path compiler/Cargo.toml -- \
-#       compile beispiele/ui_moo_demo.moo && ./beispiele/ui_moo_demo
+#       compile beispiele/ui_moo_demo.moos && ./beispiele/ui_moo_demo
 #
 # Headless-Smoke: UIMOO_DEMO_AUTO=1 beendet nach 800ms selbst.
 # ============================================================

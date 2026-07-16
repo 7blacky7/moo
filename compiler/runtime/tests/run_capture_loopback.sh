@@ -34,6 +34,6 @@ cleanup() { kill "$VIDEO_PID" "$AUDIO_PID" 2>/dev/null || true; wait "$VIDEO_PID
 trap cleanup EXIT INT TERM
 
 sleep 1
-OUT="$(MOO_CAPTURE_CAMERA_DEVICE="$CAM" MOO_CAPTURE_AUDIO_DEVICE="$CAPTURE"   timeout 15 "$COMPILER" run "$ROOT/beispiele/ki_capture_loopback_gate.moo" 2>&1)"
+OUT="$(MOO_CAPTURE_CAMERA_DEVICE="$CAM" MOO_CAPTURE_AUDIO_DEVICE="$CAPTURE"   timeout 15 "$COMPILER" run "$ROOT/beispiele/ki_capture_loopback_gate.moos" 2>&1)"
 printf '%s\n' "$OUT"
 grep -q "SELFTEST_RESULT: PASS ki_capture_loopback" <<<"$OUT"

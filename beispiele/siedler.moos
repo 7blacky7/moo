@@ -1,7 +1,7 @@
 # ============================================================
 # moo Siedler — Aufbauspiel (Anno/Siedler Style)
 #
-# Kompilieren: moo-compiler compile beispiele/siedler.moo -o beispiele/siedler
+# Kompilieren: moo-compiler compile beispiele/siedler.moos -o beispiele/siedler
 # Starten:     ./beispiele/siedler
 #
 # WASD = Karte scrollen

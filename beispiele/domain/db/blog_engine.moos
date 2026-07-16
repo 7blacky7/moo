@@ -1,7 +1,7 @@
 # moo Mini-Blog-Engine
 # Stresstest: HTTP-Server + SQLite + Sessions + Templates + Passwort-Hashing
 #
-# Kompilieren:  compiler/target/release/moo-compiler compile beispiele/blog_engine.moo -o /tmp/blog
+# Kompilieren:  compiler/target/release/moo-compiler compile beispiele/blog_engine.moos -o /tmp/blog
 # Starten:      /tmp/blog
 # Testen:       curl http://localhost:3000/
 #

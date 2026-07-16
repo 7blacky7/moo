@@ -42,7 +42,7 @@ function Assert-P016ProductionSourceManifest {
         Assert-P016ProductionFile $full $hash 'SOURCE_ENTRY'
         $seen[$key]=$true
     }
-    foreach($required in @('compiler/Cargo.toml','compiler/Cargo.lock','compiler/build.rs','compiler/src/main.rs','compiler/tests/windows_linker_behavior_helpers.ps1','compiler/tests/windows_linker_behavior_fixtures.ps1','compiler/tests/windows_linker_fixture_selftest.ps1','compiler/tests/windows_linker_production_gate.ps1','beispiele/tests/ui_moo_import_link_test.moo','stdlib/ui_moo.moo','stdlib/ui_moo_kern.moo','stdlib/ui_moo_host.moo','stdlib/ui_moo_surface.moo')) {
+    foreach($required in @('compiler/Cargo.toml','compiler/Cargo.lock','compiler/build.rs','compiler/src/main.rs','compiler/tests/windows_linker_behavior_helpers.ps1','compiler/tests/windows_linker_behavior_fixtures.ps1','compiler/tests/windows_linker_fixture_selftest.ps1','compiler/tests/windows_linker_production_gate.ps1','beispiele/tests/ui_moo_import_link_test.moos','stdlib/ui_moo.moos','stdlib/ui_moo_kern.moos','stdlib/ui_moo_host.moos','stdlib/ui_moo_surface.moos')) {
         if (-not $seen.ContainsKey($required)) { throw ('INFRA_SOURCE_MANIFEST_REQUIRED_'+($required -replace '[^A-Za-z0-9]','_')) }
     }
     foreach($directory in @('compiler/src','compiler/runtime','stdlib')) {
@@ -165,7 +165,7 @@ function Invoke-P016WindowsLinkerProductionGate {
     Assert-P016ProductionFile $SourcePath $SourceSha 'SOURCE'
     $rootFull=[IO.Path]::GetFullPath($RepoRoot)
     if (-not [IO.Directory]::Exists($rootFull) -or ((Get-Item -LiteralPath $rootFull).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'INFRA_STAGED_ROOT' }
-    $expectedSource=[IO.Path]::GetFullPath((Join-Path $rootFull 'beispiele/tests/ui_moo_import_link_test.moo'))
+    $expectedSource=[IO.Path]::GetFullPath((Join-Path $rootFull 'beispiele/tests/ui_moo_import_link_test.moos'))
     if (-not [string]::Equals([IO.Path]::GetFullPath($SourcePath),$expectedSource,[StringComparison]::OrdinalIgnoreCase)) { throw 'INFRA_SOURCE_PATH' }
     $runRoot=[IO.Directory]::GetParent($rootFull).FullName
     if ([IO.Path]::GetFileName($rootFull) -cne 'source') { throw 'INFRA_STAGED_ROOT_NAME' }
@@ -221,7 +221,7 @@ function Invoke-P016WindowsLinkerProductionGate {
             $null=New-Item -ItemType Directory -Path $caseRoot -ErrorAction Stop
             $null=New-Item -ItemType Directory -Path $temp -ErrorAction Stop; $null=New-Item -ItemType Directory -Path $argv -ErrorAction Stop
             if (((Get-Item -LiteralPath $caseRoot).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or ((Get-Item -LiteralPath $temp).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or ((Get-Item -LiteralPath $argv).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw ('INFRA_'+$definition.Name+'_DIRECTORY_REPARSE') }
-            $caseSource=Join-Path $caseRoot 'ui_moo_import_link_test.moo'; [IO.File]::Copy($SourcePath,$caseSource,$false)
+            $caseSource=Join-Path $caseRoot 'ui_moo_import_link_test.moos'; [IO.File]::Copy($SourcePath,$caseSource,$false)
             Assert-P016ProductionFile $caseSource $SourceSha ($definition.Name+'_SOURCE')
             $object=[IO.Path]::ChangeExtension($caseSource,'o'); $sentinel=Join-Path $caseRoot 'payload sentinel.txt'
             if ((Test-Path -LiteralPath $object) -or (Test-Path -LiteralPath $sentinel)) { throw ('INFRA_'+$definition.Name+'_PRECONDITION') }

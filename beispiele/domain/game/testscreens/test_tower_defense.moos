@@ -1,5 +1,5 @@
 # ============================================================
-# test_tower_defense.moo — Automatisierter Test
+# test_tower_defense.moos — Automatisierter Test
 #
 # Testet: Fenster, Grid-Rendering, Turm-Platzierung, Gegner-Spawn,
 #         Gegner-Bewegung, Geschoss-System, Screenshot pro Aktion

@@ -1,18 +1,18 @@
 # ============================================================
-# fighter.moo — 2-Spieler Kampfspiel (geteilte Tastatur)
+# fighter.moos — 2-Spieler Kampfspiel (geteilte Tastatur)
 #
 # ZIEL: Bring die HP deines Gegners auf 0 — Best-of-Rounds
 #       entscheidet ihr selbst, R startet die nächste Runde!
 #
-# Start: moo-compiler run beispiele/fighter.moo
+# Start: moo-compiler run beispiele/fighter.moos
 #
 # Spieler 1 (BLAU):  A/D=Bewegen, W=Springen, F=Schlagen, G=Blocken
 # Spieler 2 (ROT):   Links/Rechts=Bewegen, Hoch=Springen, K=Schlagen, L=Blocken
 # R = Neue Runde, Escape = Beenden
 #
 # Aufbau: 1. Pixelfont  2. Zustands-Dict S (Globals-Shadowing!
-#   siehe zelda.moo)  3. spiel_schritt(i1, i2) — headless testbar
-#   (fighter_selftest.moo)  4. Zeichnen  5. Loop (Env-Guard
+#   siehe zelda.moos)  3. spiel_schritt(i1, i2) — headless testbar
+#   (fighter_selftest.moos)  4. Zeichnen  5. Loop (Env-Guard
 #   FIGHTER_SELFTEST)
 # ============================================================
 

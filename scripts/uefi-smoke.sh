@@ -2,7 +2,7 @@
 # P011-F1: Reproduzierbarer UEFI-Boot-Smoke fuer moo als EFI-Application.
 #
 # Baut aus FESTEN Projektdateien (kein /tmp-PoC mehr):
-#   beispiele/uefi/hallo_uefi.moo           (moo-App)
+#   beispiele/uefi/hallo_uefi.moos           (moo-App)
 #   compiler/runtime/boot/uefi_entry.c      (efi_main-Entry)
 #   compiler/runtime/boot/uefi_rt.c         (COFF-MooValue-Stubs)
 #
@@ -22,7 +22,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$ROOT/compiler/target/release/moo-compiler"
-MOO_SRC="$ROOT/beispiele/uefi/hallo_uefi.moo"
+MOO_SRC="$ROOT/beispiele/uefi/hallo_uefi.moos"
 ENTRY_C="$ROOT/compiler/runtime/boot/uefi_entry.c"
 RT_C="$ROOT/compiler/runtime/boot/uefi_rt.c"
 

@@ -1,15 +1,15 @@
 # ============================================================
-# dungeon.moo — Roguelike mit prozeduraler Dungeon-Generierung
+# dungeon.moos — Roguelike mit prozeduraler Dungeon-Generierung
 #
 # ZIEL: Steige über die goldenen Treppen bis Level 10 hinab!
 #
-# Start: moo-compiler run beispiele/dungeon.moo
+# Start: moo-compiler run beispiele/dungeon.moos
 #
 # Steuerung: WASD/Pfeile (turn-based), in Gegner laufen = Angriff,
 #            R = Neustart, Escape = Beenden
 # Aufbau: 1. Pixelfont  2. Zustands-Dict S (Globals-Shadowing!
-#   siehe zelda.moo)  3. Generierung (Räume + L-Gänge, exakter LCG)
-#   4. spiel_schritt(inp) — headless testbar (dungeon_selftest.moo)
+#   siehe zelda.moos)  3. Generierung (Räume + L-Gänge, exakter LCG)
+#   4. spiel_schritt(inp) — headless testbar (dungeon_selftest.moos)
 #   5. Fog-of-War + Zeichnen  6. Loop (Env-Guard DUNGEON_SELFTEST)
 # ============================================================
 

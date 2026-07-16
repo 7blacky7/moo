@@ -200,7 +200,7 @@ void* gl33_init_ctx_from_window(void* win_void, int w, int h) {
     ctx->light_dir[0] = -0.7f;
     ctx->light_dir[1] = 0.4f;
     ctx->light_dir[2] = 0.5f;
-    // Horizont-Farbe: Passt zu welten.moo Clear-Color (0.53, 0.81, 0.92)
+    // Horizont-Farbe: Passt zu welten.moos Clear-Color (0.53, 0.81, 0.92)
     ctx->fog_color[0] = 0.85f;
     ctx->fog_color[1] = 0.87f;
     ctx->fog_color[2] = 0.90f;

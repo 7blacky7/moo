@@ -1,5 +1,5 @@
 # ============================================================
-# test_space_shooter.moo — Automatisierter Test fuer Space Shooter
+# test_space_shooter.moos — Automatisierter Test fuer Space Shooter
 #
 # Testet: Fenster, Schiff-Bewegung, Schiessen, Sternen-Parallax,
 #         Gegner-Spawn, Kollision, Screenshot pro Aktion

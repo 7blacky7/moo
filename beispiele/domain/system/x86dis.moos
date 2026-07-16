@@ -1,7 +1,7 @@
 # ============================================================
 # moo x86-64 Mini-Disassembler
 #
-# Kompilieren: moo-compiler compile x86dis.moo -o x86dis
+# Kompilieren: moo-compiler compile x86dis.moos -o x86dis
 # Starten:     ./x86dis
 #
 # Subset:

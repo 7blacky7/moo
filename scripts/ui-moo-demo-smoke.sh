@@ -50,7 +50,7 @@ fi
 COMPILE_LOG="$UI_HARNESS_RUN_DIR/compile.log"
 
 rc=0
-ui_harness_run 120 "$COMPILE_LOG"     "${COMPILER_CMD[@]}" compile beispiele/ui_moo_demo.moo --output "$BINARY" || rc=$?
+ui_harness_run 120 "$COMPILE_LOG"     "${COMPILER_CMD[@]}" compile beispiele/ui_moo_demo.moos --output "$BINARY" || rc=$?
 if [ "$rc" -ne 0 ]; then
     echo "FEHLER: Demo-Kompilierung rc=$rc" >&2
     tail -n 40 "$COMPILE_LOG" >&2 || true

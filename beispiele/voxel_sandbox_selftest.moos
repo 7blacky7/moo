@@ -1,5 +1,5 @@
 # ============================================================
-# voxel_sandbox_selftest.moo — Referenz-Selftest Voxel (Plan-008 A4 + D1)
+# voxel_sandbox_selftest.moos — Referenz-Selftest Voxel (Plan-008 A4 + D1)
 #
 # Verifiziert die D1-Fixes der voxel_sandbox-Demo mit der Sim-/Pixel-API:
 #   1. ACHSEN: Welt-Z (Hoehe) -> Render-Y. Backend-Kamera nutzt fixes

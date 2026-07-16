@@ -1,5 +1,5 @@
 # moo REST API — Todo-Server
-# Kompilieren: moo-compiler compile http_api.moo -o api_server
+# Kompilieren: moo-compiler compile http_api.moos -o api_server
 # Testen:      curl http://localhost:3000/api/todos
 
 setze todos auf []

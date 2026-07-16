@@ -12,7 +12,7 @@ werden und welche dem **User** als oeffentliche moo-API zur Verfuegung stehen.
 - **B — Compiler/Binding/Alias**: Eintrag in `compiler/src/runtime_bindings.rs`
   + optionaler Dispatcher/Smart-Wrapper (z.B. `moo_smart_close`). Macht A
   ueber Codegen verfuegbar.
-- **C — Oeffentliche moo-API**: der Name, den User in `.moo`-Dateien
+- **C — Oeffentliche moo-API**: der Name, den User in `.moos`-Dateien
   schreiben (DE/EN/Kurz-Alias).
 
 ## Kategorie-Spalte
@@ -82,7 +82,7 @@ auf Basis von `spec/game_module_boundary.md §2`.
 
 | A | B | C | Kategorie | notes |
 |---|---|---|-----------|-------|
-| `moo_world_create/is_open/update/close/seed/biome/trees/sun/fog/sea_level/render_dist/time_of_day/height_at` (13 Bindings) | `__welt_*` / `__world_*` (raw) | `welt_*` (stdlib-Wrapper, siehe `stdlib/welt.moo`) | WRAPPED | `__welt_*` ist INTERNAL. User-Pfad via `importiere welt` |
+| `moo_world_create/is_open/update/close/seed/biome/trees/sun/fog/sea_level/render_dist/time_of_day/height_at` (13 Bindings) | `__welt_*` / `__world_*` (raw) | `welt_*` (stdlib-Wrapper, siehe `stdlib/welt.moos`) | WRAPPED | `__welt_*` ist INTERNAL. User-Pfad via `importiere welt` |
 | — | — | `welt_baeume` | WRAPPED | P2c-Nachzug 4a39983 |
 
 ### Rein interne Compiler-Bindings (nicht user-sichtbar)

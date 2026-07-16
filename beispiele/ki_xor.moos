@@ -1,8 +1,8 @@
 # ============================================================
 # XOR mit dem eingebauten KI-Stack (Plan-014 C1)
-# Vergleich: beispiele/neuralnet.moo loest dasselbe Problem
+# Vergleich: beispiele/neuralnet.moos loest dasselbe Problem
 # from scratch in 321 Zeilen — hier sind es 14 Code-Zeilen.
-# Kompilieren: moo-compiler compile ki_xor.moo -o ki_xor
+# Kompilieren: moo-compiler compile ki_xor.moos -o ki_xor
 # ============================================================
 setze x auf tensor_aus_liste([[0,0],[0,1],[1,0],[1,1]])
 setze ziel auf tensor_aus_liste([[0],[1],[1],[0]])

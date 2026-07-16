@@ -7,13 +7,13 @@ moo `raum_*`-API (Vulkan-Backend, OpenGL-Backend als Fallback).
 
 ```bash
 # Mit Vulkan-Backend (empfohlen):
-MOO_3D_BACKEND=vulkan moo-compiler run beispiele/city_builder/city_builder.moo
+MOO_3D_BACKEND=vulkan moo-compiler run beispiele/city_builder/city_builder.moos
 
 # Standard-Backend (OpenGL):
-moo-compiler run beispiele/city_builder/city_builder.moo
+moo-compiler run beispiele/city_builder/city_builder.moos
 
 # Als Binary kompilieren:
-moo-compiler compile beispiele/city_builder/city_builder.moo \
+moo-compiler compile beispiele/city_builder/city_builder.moos \
     -o beispiele/city_builder/city_builder
 ./beispiele/city_builder/city_builder
 ```
@@ -56,12 +56,12 @@ Ein Tick erfolgt etwa jede Sekunde (60 Frames a 16 ms).
 
 | Datei                | Inhalt                                              |
 |----------------------|-----------------------------------------------------|
-| `city_builder.moo`   | Hauptspiel: Render-Loop, Input, HUD, Game-Logik     |
-| `grid.moo`           | Modul-Skizze: NxN-Grid, get/set, Adjazenz, Bilanz   |
-| `buildings.moo`      | Modul-Skizze: Gebaeude-Typen, Farben, Kosten        |
+| `city_builder.moos`   | Hauptspiel: Render-Loop, Input, HUD, Game-Logik     |
+| `grid.moos`           | Modul-Skizze: NxN-Grid, get/set, Adjazenz, Bilanz   |
+| `buildings.moos`      | Modul-Skizze: Gebaeude-Typen, Farben, Kosten        |
 | `README.md`          | Diese Datei                                         |
 
-`grid.moo` und `buildings.moo` sind eigenstaendige Referenz-Module —
+`grid.moos` und `buildings.moos` sind eigenstaendige Referenz-Module —
 die Funktionen sind im Hauptspiel zusaetzlich inline, damit das Spiel
 auch ohne lokales Modul-System kompilierbar bleibt.
 

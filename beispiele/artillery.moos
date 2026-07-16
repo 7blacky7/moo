@@ -1,7 +1,7 @@
 # ============================================================
 # moo Artillery — Worms/Scorched Earth Style
 #
-# Kompilieren: moo-compiler compile beispiele/artillery.moo -o beispiele/artillery
+# Kompilieren: moo-compiler compile beispiele/artillery.moos -o beispiele/artillery
 # Starten:     ./beispiele/artillery
 #
 # Links/Rechts = Winkel aendern

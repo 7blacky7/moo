@@ -1,5 +1,5 @@
 # ============================================================
-# test_snake.moo — Automatisierter Test fuer Snake
+# test_snake.moos — Automatisierter Test fuer Snake
 #
 # Testet: Fenster, Schlangen-Bewegung, Richtungswechsel,
 #         Wand-Kollision, Essen, Wachstum, Screenshot pro Aktion

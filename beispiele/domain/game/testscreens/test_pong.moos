@@ -1,5 +1,5 @@
 # ============================================================
-# test_pong.moo — Automatisierter Test fuer Pong
+# test_pong.moos — Automatisierter Test fuer Pong
 #
 # Testet: Fenster, Paddle-Bewegung, Ball-Physik, Wand-Reflexion,
 #         Paddle-Kollision, Screenshot pro Aktion

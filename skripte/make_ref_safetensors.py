@@ -10,7 +10,7 @@ Netz: dicht(2,2, keine Aktivierung): y = x @ w + b
   x = [[1.0, 2.0]]
   y = [1*1.5 + 2*0.25 + 0.5,  1*(-2) + 2*4 - 1] = [2.5, 5.0]
 
-Das Gegenstueck (beispiele/ki_safetensors_import.moo) laedt die Datei,
+Das Gegenstueck (beispiele/ki_safetensors_import.moos) laedt die Datei,
 baut die Matmul von Hand nach und muss exakt [2.5, 5.0] liefern.
 """
 import json

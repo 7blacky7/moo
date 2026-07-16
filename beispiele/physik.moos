@@ -1,7 +1,7 @@
 # ============================================================
 # moo Physik-Simulation — 2D Rigid-Body mit Kreisen
 #
-# Kompilieren: moo-compiler compile physik.moo -o physik
+# Kompilieren: moo-compiler compile physik.moos -o physik
 # Starten:     ./physik
 #
 # Bedienung:

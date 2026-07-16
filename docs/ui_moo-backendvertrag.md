@@ -5,7 +5,7 @@ Status: P016-A1. Dieses Dokument ist der kanonische Backendvertrag. Die kollidie
 ## Zwei gleichwertige UI-Wege
 
 1. Die native API `ui_*` bleibt direkt aus Moo nutzbar und führt über die Runtime zu GTK, Win32 oder Cocoa.
-2. `ui_moo` ist optional. Widget-Tree, Zustand, Theme, Hit-Testing, Fokus und Event-Dispatch liegen in `stdlib/ui_moo.moo`.
+2. `ui_moo` ist optional. Widget-Tree, Zustand, Theme, Hit-Testing, Fokus und Event-Dispatch liegen in `stdlib/ui_moo.moos`.
 
 Ein `ui_moo`-Backend ist kein natives Widget-Toolkit. Es ist ein Dict aus Zeichenoperationen und Fähigkeiten.
 

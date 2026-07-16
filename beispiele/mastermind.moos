@@ -1,7 +1,7 @@
 # ============================================================
 # moo Mastermind-Solver mit SDL2 GUI
 #
-# Kompilieren: moo-compiler compile mastermind.moo -o mastermind
+# Kompilieren: moo-compiler compile mastermind.moos -o mastermind
 # Starten:     ./mastermind
 #
 # Bedienung:

@@ -1,7 +1,7 @@
 # ============================================================
 # moo TAR-Reader — POSIX ustar Archive Parser in pure moo
 #
-# Kompilieren: moo-compiler compile tar_reader.moo -o tar_reader
+# Kompilieren: moo-compiler compile tar_reader.moos -o tar_reader
 # Starten:     ./tar_reader
 #
 # Liest eine .tar Datei, parst alle Member-Header (POSIX ustar

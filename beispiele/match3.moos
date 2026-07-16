@@ -2,7 +2,7 @@
 # moo Match-3 — Bejeweled/Candy Crush Style Puzzle
 #
 # Kompilieren + Starten:
-#   moo-compiler compile beispiele/match3.moo -o beispiele/match3
+#   moo-compiler compile beispiele/match3.moos -o beispiele/match3
 #   ./beispiele/match3
 #
 # Bedienung:

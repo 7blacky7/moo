@@ -1,5 +1,5 @@
 # ============================================================
-# stdlib/ui_bind.moo — State-Binding-Registry (P4 Phase 1)
+# stdlib/ui_bind.moos — State-Binding-Registry (P4 Phase 1)
 #
 # Schlanke stdlib-Bruecke zwischen UI-Widgets und einem
 # state-Dict. Keine native Binding-Handles, keine Magie.

@@ -1,5 +1,5 @@
 # ============================================================
-# ui_shortcut_smoke.moo — automatischer ALIVE-Test fuer
+# ui_shortcut_smoke.moos — automatischer ALIVE-Test fuer
 # moo_ui_shortcut_bind (Linux/GTK).
 #
 # Bindet Ctrl+S ans Fenster. Nach 500ms Timeout wird ein

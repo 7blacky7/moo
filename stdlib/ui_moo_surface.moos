@@ -1,5 +1,5 @@
 # ============================================================
-# stdlib/ui_moo_surface.moo — toolkitfreies RGBA-Offscreen-Backend
+# stdlib/ui_moo_surface.moos — toolkitfreies RGBA-Offscreen-Backend
 #
 # Nutzt ausschließlich die finalen Surface-Builtins. Text und Textmetrik
 # bleiben bewusst in Moo und verwenden den deterministischen _UIMF-3x5-Font.

@@ -1,8 +1,8 @@
 # ui_moo — Referenz (Schicht 3: moo-eigene gezeichnete Widgets)
 
-Stand: 2026-07-11, UIMOO-1 bis -7. Modul: `stdlib/ui_moo.moo`. Design-Memo: Synapse-Memory `plan-uimoo-widget-toolkit`.
+Stand: 2026-07-11, UIMOO-1 bis -7. Modul: `stdlib/ui_moo.moos`. Design-Memo: Synapse-Memory `plan-uimoo-widget-toolkit`.
 
-ui_moo ist ein Widget-Toolkit, das **vollständig in moo implementiert** ist: Widget-Baum, Layout, Theme, Fokus, Hit-Testing und Eventlogik leben in `stdlib/ui_moo.moo`. Die Plattform (GTK/Win32/Cocoa) liefert nur eine austauschbare **Host-Brücke**: Fenster + Leinwand + Eingabe-Events + Zeichenprimitive. ui_moo setzt **keine** nativen Controls (GtkButton, Win32-BUTTON, NSButton …) voraus.
+ui_moo ist ein Widget-Toolkit, das **vollständig in moo implementiert** ist: Widget-Baum, Layout, Theme, Fokus, Hit-Testing und Eventlogik leben in `stdlib/ui_moo.moos`. Die Plattform (GTK/Win32/Cocoa) liefert nur eine austauschbare **Host-Brücke**: Fenster + Leinwand + Eingabe-Events + Zeichenprimitive. ui_moo setzt **keine** nativen Controls (GtkButton, Win32-BUTTON, NSButton …) voraus.
 
 ui_moo ist ein **optionaler zweiter UI-Weg**. Der native Weg (`importiere ui`, Schicht 1/2) bleibt vollwertig erhalten — für Texteingabe (IME), Dateidialoge, Menüleiste und Tray ist er weiterhin der richtige Werkzeugkasten (bewusster Hybrid-Schnitt).
 
@@ -22,7 +22,7 @@ ui_zeige_nebenbei(fenster)
 ui_laufen()
 ```
 
-Vollständiges Schaufenster: `beispiele/ui_moo_demo.moo`.
+Vollständiges Schaufenster: `beispiele/ui_moo_demo.moos`.
 
 ## Backend-Vertrag
 
@@ -53,7 +53,7 @@ uim_frame_maus(hud, maus_x, maus_y, maus_gedrueckt)   # Flanken-Erkennung intern
 uim_frame_zeichne(hud, win)                            # Overlay (Hintergrund aus)
 ```
 
-Referenz-Testfall mit Pixel-Regression: `beispiele/tests/ui_moo_frame_test.moo`.
+Referenz-Testfall mit Pixel-Regression: `beispiele/tests/ui_moo_frame_test.moos`.
 
 ## Öffentliche API
 
@@ -99,11 +99,11 @@ Referenz-Testfall mit Pixel-Regression: `beispiele/tests/ui_moo_frame_test.moo`.
 
 | Test | Deckt ab |
 |---|---|
-| `beispiele/tests/ui_moo_kern_test.moo` | Klick-Dispatch, Fokus, Theme-Wechsel, `uim_finde` |
-| `beispiele/tests/ui_moo_widgets_test.moo` | Checkbox-Toggle, Slider-Klick-Positionierung, Klemmung |
-| `beispiele/tests/ui_moo_container_test.moo` | Panel-Transformation, Listen-Scroll-Zuordnung, Scroll-Treffbarkeit |
-| `beispiele/tests/ui_moo_visuell_test.moo` | 4 Zustands-Snapshots (JSON+PNG) unter `beispiele/snapshots/ui_moo/` |
-| `beispiele/tests/ui_moo_frame_test.moo` | Frame-Backend inkl. echter Pixel-Regression (`test_frame_diff/region`) |
+| `beispiele/tests/ui_moo_kern_test.moos` | Klick-Dispatch, Fokus, Theme-Wechsel, `uim_finde` |
+| `beispiele/tests/ui_moo_widgets_test.moos` | Checkbox-Toggle, Slider-Klick-Positionierung, Klemmung |
+| `beispiele/tests/ui_moo_container_test.moos` | Panel-Transformation, Listen-Scroll-Zuordnung, Scroll-Treffbarkeit |
+| `beispiele/tests/ui_moo_visuell_test.moos` | 4 Zustands-Snapshots (JSON+PNG) unter `beispiele/snapshots/ui_moo/` |
+| `beispiele/tests/ui_moo_frame_test.moos` | Frame-Backend inkl. echter Pixel-Regression (`test_frame_diff/region`) |
 
 ## Bekannte V1-Einschränkungen
 

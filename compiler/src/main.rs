@@ -420,7 +420,7 @@ fn kernel_source_root() -> Option<PathBuf> {
     None
 }
 
-/// One-Shot-Kernel-Pipeline (Plan-010 C2): erzeugt aus einer .moo-Datei ein
+/// One-Shot-Kernel-Pipeline (Plan-010 C2): erzeugt aus einer .moos-Datei ein
 /// bootbares Multiboot2-ELF. Reproduzierbar: FESTE Quell-Liste + FESTE
 /// Flag-Liste, keine Umgebungs-Magie. MOO_VERBOSE=1 zeigt alle Kommandos.
 fn build_kernel(
@@ -1060,7 +1060,7 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
 
     // Linux-only UI-Libs (GTK3 + libappindicator3 + Co.) — nur wenn das
     // UI-Modul wirklich mitgebaut wurde. 3D-only Builds auf Linux duerfen
-    // beim finalen Linken eines .moo-Programms keine GTK/AppIndicator-Libs
+    // beim finalen Linken eines .moos-Programms keine GTK/AppIndicator-Libs
     // verlangen.
     #[cfg(all(target_os = "linux", feature = "moo_ui"))]
     {
@@ -1079,7 +1079,7 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
 
     // macOS UI-Libs/Frameworks — der Compiler-Build linkt diese bereits via
     // build.rs fuer das moo-compiler Binary. Beim spaeteren finalen Link eines
-    // kompilierten .moo-Programms muessen sie aber erneut an cc/clang uebergeben
+    // kompilierten .moos-Programms muessen sie aber erneut an cc/clang uebergeben
     // werden, sonst fehlen AppKit/Foundation/CoreGraphics/Objective-C-Symbole
     // aus moo_ui_cocoa.o.
     #[cfg(target_os = "macos")]

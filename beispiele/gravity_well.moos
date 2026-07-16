@@ -2,7 +2,7 @@
 # moo Gravity Well — Physik-Puzzle mit Gravitation
 #
 # Kompilieren + Starten:
-#   moo-compiler compile beispiele/gravity_well.moo -o beispiele/gravity_well
+#   moo-compiler compile beispiele/gravity_well.moos -o beispiele/gravity_well
 #   ./beispiele/gravity_well
 #
 # Bedienung:

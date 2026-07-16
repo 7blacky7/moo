@@ -22,10 +22,10 @@ phase() { echo "############################################################"; e
 [ -x "$BIN" ] || fail "moo-compiler fehlt: $BIN (erst cargo build --release)"
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo_loader_smoke.XXXXXX")"
 trap 'rm -rf "$OUT"' EXIT
-printf 'setze egal auf 1\n' > "$OUT/dummy.moo"
+printf 'setze egal auf 1\n' > "$OUT/dummy.moos"
 
 phase 1 "Sector-Image via --emit sector (Stage1-asm-Template)"
-"$BIN" compile "$OUT/dummy.moo" --no-stdlib --target x86_64-bare \
+"$BIN" compile "$OUT/dummy.moos" --no-stdlib --target x86_64-bare \
     --linker-script "$ROOT/beispiele/bootloader/stage1.ld" \
     --emit sector -o "$OUT/stage1.img" 2>"$OUT/build.err" | sed 's/^/      /'
 [ -f "$OUT/stage1.img" ] || { sed 's/^/      | /' "$OUT/build.err"; fail "Sector-Image nicht gebaut"; }
@@ -36,7 +36,7 @@ SZ=$(stat -c %s "$OUT/stage1.img")
 SIG=$(od -A n -t x1 -j 510 -N 2 "$OUT/stage1.img" | tr -d ' ')
 [ "$SIG" = "55aa" ] || fail "Signatur ist '$SIG' statt 55aa"
 echo "      OK: exakt 512 Bytes, Signatur 0x55AA an 510/511"
-if "$BIN" compile "$ROOT/beispiele/kernel/hallo_kern.moo" --no-stdlib --target x86_64-bare \
+if "$BIN" compile "$ROOT/beispiele/kernel/hallo_kern.moos" --no-stdlib --target x86_64-bare \
     --kernel --emit sector -o "$OUT/neg.img" >/dev/null 2>"$OUT/neg.err"; then
   fail "Negativ-Gate: uebergrosses Image wurde NICHT abgelehnt"
 fi

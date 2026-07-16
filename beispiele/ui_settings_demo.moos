@@ -1,5 +1,5 @@
 # ============================================================
-# ui_settings_demo.moo — Showcase fuer setup_settings_panel
+# ui_settings_demo.moos — Showcase fuer setup_settings_panel
 #
 # Tab-basiertes Einstellungen-Fenster mit 3 Kategorien.
 # Jeder Tab bekommt ein paar Demo-Widgets.

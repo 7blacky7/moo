@@ -1,5 +1,5 @@
 # moo REST API mit CORS + Cookie-Sessions (neue Header-API).
-# Kompilieren: moo-compiler compile http_api_cors.moo -o api_cors_server
+# Kompilieren: moo-compiler compile http_api_cors.moos -o api_cors_server
 # Testen:
 #   curl -i http://localhost:3001/api/status
 #   curl -i -X OPTIONS http://localhost:3001/api/status -H "Origin: https://example.com"

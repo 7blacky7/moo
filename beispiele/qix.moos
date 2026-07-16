@@ -2,7 +2,7 @@
 # moo Qix — Territorium einnehmen (Atari-Klassiker)
 #
 # Kompilieren + Starten:
-#   moo-compiler compile beispiele/qix.moo -o beispiele/qix
+#   moo-compiler compile beispiele/qix.moos -o beispiele/qix
 #   ./beispiele/qix
 #
 # Bedienung:

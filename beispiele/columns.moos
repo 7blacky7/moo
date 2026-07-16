@@ -1,7 +1,7 @@
 # ============================================================
-# columns.moo — Columns (Sega-Style Match-3 Puzzle)
+# columns.moos — Columns (Sega-Style Match-3 Puzzle)
 #
-# Kompilieren: moo-compiler compile beispiele/columns.moo -o beispiele/columns
+# Kompilieren: moo-compiler compile beispiele/columns.moos -o beispiele/columns
 # Starten:     ./beispiele/columns
 #
 # Steuerung:

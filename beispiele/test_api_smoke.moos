@@ -1,11 +1,11 @@
 # ============================================================
-# test_api_smoke.moo — Smoke-Test fuer den einheitlichen test_*-Layer
+# test_api_smoke.moos — Smoke-Test fuer den einheitlichen test_*-Layer
 # (Plan-008 A2). Uebt alle test_*-Builtins gegen ein 3D-Fenster UND
 # ein Hybrid-Fenster aus. Headless lauffaehig via xvfb-run (gl33).
 #
 # START (headless):
 #   xvfb-run -a -s "-screen 0 1280x800x24" \
-#     env MOO_3D_BACKEND=gl33 moo-compiler run beispiele/test_api_smoke.moo
+#     env MOO_3D_BACKEND=gl33 moo-compiler run beispiele/test_api_smoke.moos
 #
 # Prueft:
 #   - test_sim_taste / test_sim_maus_pos / test_sim_maus_taste /

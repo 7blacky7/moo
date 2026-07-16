@@ -498,7 +498,7 @@ static int create_ubo(VulkanContext* ctx) {
     ctx->ubo_data.lightDir[1] = 0.4f;
     ctx->ubo_data.lightDir[2] = 0.5f;
     ctx->ubo_data.fogDist = 20.0f;
-    // Horizont-Farbe: Passt zu welten.moo Clear-Color (0.53, 0.81, 0.92)
+    // Horizont-Farbe: Passt zu welten.moos Clear-Color (0.53, 0.81, 0.92)
     // Etwas heller fuer nahtlosen Nebel→Himmel Uebergang
     ctx->ubo_data.fogColor[0] = 0.85f;
     ctx->ubo_data.fogColor[1] = 0.87f;

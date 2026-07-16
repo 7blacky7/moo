@@ -1,5 +1,5 @@
 # ============================================================
-# beispiele/ui_table_demo.moo — ListView-Demo (P2 Polish)
+# beispiele/ui_table_demo.moos — ListView-Demo (P2 Polish)
 #
 # File-Browser-aehnliche Liste mit 3 Spalten:
 #   - Name, Groesse, Typ
@@ -32,7 +32,7 @@ setze datei_daten auf [
     ["video.mp4",     "50 MB",   "Video"],
     ["musik.mp3",     "4.5 MB",  "Audio"],
     ["archiv.zip",    "10 MB",   "Archiv"],
-    ["skript.moo",    "8 KB",    "Quellcode"],
+    ["skript.moos",    "8 KB",    "Quellcode"],
     ["tabelle.csv",   "32 KB",   "CSV"],
 ]
 

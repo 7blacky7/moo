@@ -107,8 +107,8 @@ measure_min() {
 fail=0
 for probe in user_class tensor string listdict; do
   for n in 1000000 4000000; do
-    sed "s/__N__/$n/" "$WORK/$probe.tmpl" > "$WORK/${probe}_$n.moo"
-    if ! "$COMPILER" compile "$WORK/${probe}_$n.moo" -o "$WORK/${probe}_$n.bin" >/dev/null 2>&1; then
+    sed "s/__N__/$n/" "$WORK/$probe.tmpl" > "$WORK/${probe}_$n.moos"
+    if ! "$COMPILER" compile "$WORK/${probe}_$n.moos" -o "$WORK/${probe}_$n.bin" >/dev/null 2>&1; then
       echo "[leak-gate] FAIL: $probe N=$n kompiliert nicht"; fail=1; continue 2
     fi
   done

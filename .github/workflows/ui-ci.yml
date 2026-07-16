@@ -37,10 +37,10 @@ on:
       - "compiler/runtime/**"
       - "compiler/Cargo.toml"
       - "compiler/build.rs"
-      - "beispiele/ui_login_demo.moo"
+      - "beispiele/ui_login_demo.moos"
       - "beispiele/tests/**"
       - "scripts/ui-test-runner.sh"
-      - "stdlib/ui*.moo"
+      - "stdlib/ui*.moos"
       - ".github/workflows/ui-ci.yml"
   pull_request:
     paths:
@@ -48,10 +48,10 @@ on:
       - "compiler/runtime/**"
       - "compiler/Cargo.toml"
       - "compiler/build.rs"
-      - "beispiele/ui_login_demo.moo"
+      - "beispiele/ui_login_demo.moos"
       - "beispiele/tests/**"
       - "scripts/ui-test-runner.sh"
-      - "stdlib/ui*.moo"
+      - "stdlib/ui*.moos"
       - ".github/workflows/ui-ci.yml"
   workflow_dispatch:
 
@@ -276,24 +276,24 @@ jobs:
         run: cargo build --release --no-default-features --features moo_ui
 
       # ---------------------------------------------------------------------
-      # Compile ui_login_demo.moo → IR
+      # Compile ui_login_demo.moos → IR
       # ---------------------------------------------------------------------
       - name: moo-compiler — emit IR (ui_login_demo)
         shell: bash
         run: |
           ./compiler/target/release/moo-compiler${{ matrix.exe_suffix }} \
-            compile beispiele/ui_login_demo.moo --emit-ir -o ui_login_demo.ll
+            compile beispiele/ui_login_demo.moos --emit-ir -o ui_login_demo.ll
           test -s ui_login_demo.ll
           echo "IR-Groesse: $(wc -c < ui_login_demo.ll) Bytes"
 
       # ---------------------------------------------------------------------
-      # Compile ui_login_demo.moo → Binary (Linker-Smoke)
+      # Compile ui_login_demo.moos → Binary (Linker-Smoke)
       # ---------------------------------------------------------------------
       - name: moo-compiler — build binary (ui_login_demo)
         shell: bash
         run: |
           ./compiler/target/release/moo-compiler${{ matrix.exe_suffix }} \
-            compile beispiele/ui_login_demo.moo -o ui_login_demo${{ matrix.exe_suffix }}
+            compile beispiele/ui_login_demo.moos -o ui_login_demo${{ matrix.exe_suffix }}
           ls -la ui_login_demo${{ matrix.exe_suffix }}
 
       # ---------------------------------------------------------------------
@@ -423,7 +423,7 @@ jobs:
           '@ | Set-Content "$sdk\moo-shell.cmd" -Encoding ASCII
 
           # Selftest ohne geerbte Visual-Studio-/Runner-Linkumgebung.
-          $selftest = Join-Path $sdk "sdk_selftest.moo"
+          $selftest = Join-Path $sdk "sdk_selftest.moos"
           'zeige "MOO-WINDOWS-SDK-RUN-OK"' | Set-Content $selftest -Encoding UTF8
           $savedPath = $env:PATH
           $savedLib = $env:LIB

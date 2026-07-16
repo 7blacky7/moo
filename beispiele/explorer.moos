@@ -1,7 +1,7 @@
 # ============================================================
-# explorer.moo — 2D Welt-Explorer mit prozeduralem Terrain
+# explorer.moos — 2D Welt-Explorer mit prozeduralem Terrain
 #
-# Kompilieren: moo-compiler compile beispiele/explorer.moo -o beispiele/explorer
+# Kompilieren: moo-compiler compile beispiele/explorer.moos -o beispiele/explorer
 # Starten:     ./beispiele/explorer
 #
 # Steuerung: WASD=Bewegen, M=Minimap toggle, Escape=Beenden

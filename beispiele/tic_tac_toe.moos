@@ -1,7 +1,7 @@
 # ============================================================
-# tic_tac_toe.moo — Tic Tac Toe mit KI
+# tic_tac_toe.moos — Tic Tac Toe mit KI
 #
-# Kompilieren: moo-compiler compile beispiele/tic_tac_toe.moo -o beispiele/tic_tac_toe
+# Kompilieren: moo-compiler compile beispiele/tic_tac_toe.moos -o beispiele/tic_tac_toe
 # Starten:     ./beispiele/tic_tac_toe
 #
 # Steuerung: Mausklick auf Feld, R = Neu, Escape = Beenden

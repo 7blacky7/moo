@@ -1,7 +1,7 @@
 # ============================================================
 # moo Wordle — Wort-Ratespiel (visuell)
 #
-# Kompilieren: moo-compiler compile beispiele/wordle.moo -o beispiele/wordle
+# Kompilieren: moo-compiler compile beispiele/wordle.moos -o beispiele/wordle
 # Starten:     ./beispiele/wordle
 #
 # A-Z = Buchstabe eingeben

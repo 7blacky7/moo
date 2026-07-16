@@ -1,5 +1,5 @@
 # ============================================================
-# test_minesweeper.moo — Automatisierter Test
+# test_minesweeper.moos — Automatisierter Test
 #
 # Testet: Fenster, Grid-Rendering, Mausklick-Aufdecken,
 #         Minen-Erkennung, Flaggen, Screenshot pro Aktion

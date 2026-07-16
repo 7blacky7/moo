@@ -141,13 +141,13 @@ sichtbaren Flaechen ab. Vervollstaendigung in Phase B.
 | `moo_smart_contains` | KERN | intern | rust+c | Dispatcher fuer contains |
 | `moo_error`, `moo_throw` | KERN | intern | rust+c | Fehlerpfade |
 | `moo_json_antworten` (C-Funktionsname) | DOMAENE:web | intern | rust+c | Codegen-Alias fuer `.json_antworten` |
-| `__welt_*` (13 Bindings) | DOMAENE:game | intern | rust+c | nur via stdlib/welt.moo-Wrapper |
+| `__welt_*` (13 Bindings) | DOMAENE:game | intern | rust+c | nur via stdlib/welt.moos-Wrapper |
 
 ## Toolchain-Drift (Rust vs Python — aus E3-Fuzzing und GPT-Review 927d3272)
 
 - `ASYNC`/`AWAIT`, `fg` (catch-Alias): nur Python-Tokenizer.
 - Python-Transpiler kennt groessere Lexer-Oberflaeche als der Rust-Compiler, hat aber keinen Test-Runner fuer Showcase-Beispiele.
-- `beispiele/showcase.moo`: Python-Timeout > 10s beim Parsen (separates Ticket, gpt 5060).
+- `beispiele/showcase.moos`: Python-Timeout > 10s beim Parsen (separates Ticket, gpt 5060).
 - Drift-Tracking: `tools/check_tokens.py` und `tools/fuzz_differential.py` laufen pro Commit (k2 P1/E3).
 
 ## Offen fuer Phase B

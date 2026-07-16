@@ -13,12 +13,12 @@ git status
 git log --oneline -10
 
 # 2. Alle 5 Bench-Files laufen lassen (sollten alle grün sein)
-SMOKE_LINE=$(grep -n "^# Smoketest" beispiele/domain/db/postgres_client.moo | head -1 | cut -d: -f1)
+SMOKE_LINE=$(grep -n "^# Smoketest" beispiele/domain/db/postgres_client.moos | head -1 | cut -d: -f1)
 LIB_END=$((SMOKE_LINE - 1))
 for name in bench_copy bench_prepared bench_pipelining bench_binary bench_pool; do
     echo "=== $name ==="
-    { head -n "$LIB_END" beispiele/domain/db/postgres_client.moo; cat beispiele/domain/db/bench/$name.moo; } > /tmp/run.moo
-    ./compiler/target/release/moo-compiler run /tmp/run.moo
+    { head -n "$LIB_END" beispiele/domain/db/postgres_client.moos; cat beispiele/domain/db/bench/$name.moos; } > /tmp/run.moos
+    ./compiler/target/release/moo-compiler run /tmp/run.moos
 done
 
 # 3. Memories laden
@@ -58,7 +58,7 @@ git checkout -b perfphase-postgres-2026-05
 3. `feat(runtime+codegen): SCRAM-Crypto-Primitives` — `moo_crypto.c` + `moo_runtime.h` + `runtime_bindings.rs` + `codegen.rs` (crypto-aliases)
 4. `feat(compiler): Lexer Multi-Line-Argument-Listen via Bracket-Depth` — `compiler/src/lexer.rs`
 5. `fix(compiler): User-Method execute/ausfuehren respektiert sqlite-stmt-Shadow nicht` — `compiler/src/codegen.rs` (nur execute-Block)
-6. `feat(beispiele/db): postgres_client SCRAM + COPY + Prepared + Pipelining + Binary + Pool` — `beispiele/domain/db/postgres_client.moo`
+6. `feat(beispiele/db): postgres_client SCRAM + COPY + Prepared + Pipelining + Binary + Pool` — `beispiele/domain/db/postgres_client.moos`
 7. `docs(scratch): perfphase bench-files + README` — `scratch/db_bench/*` (nur falls scratch in den Branch soll, sonst skip; ist `.synapseignore`-d)
 
 ### B) Compiler-Bug-Fixes (Folge-Arbeiten, eigene Sessions)

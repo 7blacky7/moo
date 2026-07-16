@@ -1,10 +1,10 @@
 # ============================================================
-# ki_audio.moo — Audio wird zum KI-Merkmal (KI-MULTI-A1)
+# ki_audio.moos — Audio wird zum KI-Merkmal (KI-MULTI-A1)
 #
 # Pipeline: deterministische Tonleiter -> WAV -> wav_lesen ->
 # Hann-Spektrogramm -> Kinderleicht-Netz klassifiziert vier Noten.
 #
-# Start: compiler/target/release/moo-compiler run beispiele/ki_audio.moo
+# Start: compiler/target/release/moo-compiler run beispiele/ki_audio.moos
 # Erwartet: SELFTEST_RESULT: PASS ki_audio
 #
 # Bis KI-MULTI-V2 die Faltungsschicht bereitstellt, nutzt dieses Beispiel
@@ -57,7 +57,7 @@ funktion liste_anhaengen(ziel, quelle):
         ziel.hinzufügen(quelle[i])
         setze i auf i + 1
 
-# Minimaler WAV-Writer aus dem Muster in synth.moo.
+# Minimaler WAV-Writer aus dem Muster in synth.moos.
 funktion push_le16(liste, v):
     setze x auf v
     wenn x < 0:

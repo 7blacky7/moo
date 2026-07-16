@@ -1,7 +1,7 @@
 # ============================================================
 # moo Rhythm — Guitar Hero Style
 #
-# Kompilieren: moo-compiler compile beispiele/rhythm.moo -o beispiele/rhythm
+# Kompilieren: moo-compiler compile beispiele/rhythm.moos -o beispiele/rhythm
 # Starten:     ./beispiele/rhythm
 #
 # A/S/D/F = 4 Lanes treffen

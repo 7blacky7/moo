@@ -15,7 +15,7 @@ zeige fibonacci(20)
 
 - **Bauen & ausführen:** siehe `DEPENDENCIES.md`, dann
   `cd compiler && cargo build --release` und
-  `./compiler/target/release/moo-compiler run <datei>.moo`.
+  `./compiler/target/release/moo-compiler run <datei>.moos`.
 - **Sprache lernen:** `docs/tutorial.md` und `docs/lernen.md`.
 - **Referenz aller Builtins:** [moolang-docs](https://7blacky7.github.io/moolang-docs/).
 - **Beispiele:** `beispiele/` mit Zonen `domain/{web,db,game,system}/` plus lose Showcases (Taxonomie in `spec/examples_taxonomy.md`), KI-Beispiele unter `beispiele/ki_*`.
@@ -30,7 +30,7 @@ compiler/   Rust-Compiler (compiler/src) + C-Runtime (compiler/runtime) + Tests
             runtime/shader_ki/  Vulkan-Compute-Shader (Tensor-Ops, SPIR-V)
 src/moo/    Python-Toolchain: LSP, Formatter, Transpiler
 stdlib/     moo-Stdlib-Module (mathe, liste, text, ...)
-beispiele/  Lauffähige .moo-Programme (130+ Samples; Zonen: domain/{web,db,game,system})
+beispiele/  Lauffähige .moos-Programme (130+ Samples; Zonen: domain/{web,db,game,system})
 skripte/    KIP-/GPU-Gate-Skripte (Coverage, LM-Trainings-Gates, QA-Verträge)
 scratch/    Ad-hoc-Skripte, nicht CI-relevant (siehe scratch/README.md)
 docs/       Benutzer-Doku (mkdocs-Material) + docs/kip/ (KI-Design-Docs) + docs/roadmap/
@@ -86,8 +86,8 @@ Alles andere ist Code- oder Doku-Verzeichnis (`compiler/`, `src/`,
 `stdlib/`, `beispiele/`, `docs/`, `editors/`, `scripts/`, `skripte/`,
 `spec/`, `scratch/`, `tests/`, `tools/`, `website/`). Die
 Phase-B-Aufräumung (W1–W3) ist **abgeschlossen** — Root ist frei von
-losen `test_*.moo`-Dateien. Bitte weiterhin keine neuen losen
-`test_*.moo` im Root anlegen (siehe `scratch/README.md`). Details zum
+losen `test_*.moos`-Dateien. Bitte weiterhin keine neuen losen
+`test_*.moos` im Root anlegen (siehe `scratch/README.md`). Details zum
 Verlauf: `spec/phase_b_progress.md`.
 
 ## Lizenz

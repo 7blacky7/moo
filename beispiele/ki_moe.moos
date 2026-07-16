@@ -7,7 +7,7 @@
 #   (d) .mook-Roundtrip: /tmp/moe1.mook + /tmp/moe2.mook werden
 #       geschrieben — Bit-Identitaet prueft das Gate-Skript per cmp;
 #       hier zusaetzlich: geladenes Netz sagt exakt dasselbe.
-# Kompilieren: moo-compiler compile ki_moe.moo -o ki_moe
+# Kompilieren: moo-compiler compile ki_moe.moos -o ki_moe
 # ============================================================
 
 # --- Deterministische Toy-Regression: 16 Zeilen, dim 4 ---

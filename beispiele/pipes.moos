@@ -1,7 +1,7 @@
 # ============================================================
 # moo Pipes — Rohre verbinden (Puzzle)
 #
-# Kompilieren: moo-compiler compile beispiele/pipes.moo -o beispiele/pipes
+# Kompilieren: moo-compiler compile beispiele/pipes.moos -o beispiele/pipes
 # Starten:     ./beispiele/pipes
 #
 # Maus = Rohr drehen (Klick)

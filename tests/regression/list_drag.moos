@@ -1,4 +1,4 @@
-# tests/regression/list_drag.moo
+# tests/regression/list_drag.moos
 # Beweist Drag-/Resize-Faehigkeit von ui_liste-Spalten via Programmatic-API.
 #
 # Test 1: ui_liste_spalte_breite(l, idx, px) setzt die Breite -> Lesen via

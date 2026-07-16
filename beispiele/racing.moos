@@ -1,7 +1,7 @@
 # ============================================================
 # moo Racing — Top-Down Rennspiel
 #
-# Kompilieren: moo-compiler compile beispiele/racing.moo -o beispiele/racing
+# Kompilieren: moo-compiler compile beispiele/racing.moos -o beispiele/racing
 # Starten:     ./beispiele/racing
 #
 # Bedienung:

@@ -89,7 +89,7 @@ mise run test-ui-moo-surface
 
 Die Task kompiliert und startet ausschließlich:
 
-- `ui_moo_surface_primitives_test.moo`: Pixel, Alpha, Clip, Primitive, Linienbreite ohne Doppelblend, Capability, Hash und Snapshot.
-- `ui_moo_surface_golden_test.moo`: echter Widgetbaum, Schlüsselpixel, fester Golden-/State-Hash, normalisierter Input, 500 Repaints und fail-closed Clipstack-Überlauf.
+- `ui_moo_surface_primitives_test.moos`: Pixel, Alpha, Clip, Primitive, Linienbreite ohne Doppelblend, Capability, Hash und Snapshot.
+- `ui_moo_surface_golden_test.moos`: echter Widgetbaum, Schlüsselpixel, fester Golden-/State-Hash, normalisierter Input, 500 Repaints und fail-closed Clipstack-Überlauf.
 
 Die Task selbst öffnet kein Fenster. Für die vollständige Isolation wird sie zusätzlich in Bubblewrap mit getrennten Namespaces, maskiertem `/run` und ohne Display-/Wayland-/DBus-/Audio-Umgebungsvariablen ausgeführt. Die Desktop-Tasks `test-ui` und `test-ui-moo-demo` gehören nicht zum O1-Gate.

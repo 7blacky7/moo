@@ -1,5 +1,5 @@
 # ============================================================
-# stdlib/ui_leinwand.moo — Canvas-Event-Wrapper (P5 Phase 1)
+# stdlib/ui_leinwand.moos — Canvas-Event-Wrapper (P5 Phase 1)
 #
 # Komfort-Schicht ueber den drei neuen P5-Primitiven (C-Builtins):
 #   ui_leinwand_on_maus(leinwand, callback)

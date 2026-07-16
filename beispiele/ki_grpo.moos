@@ -15,7 +15,7 @@
 #
 # Determinismus: eigener LCG statt zufall() => Doppellauf byte-
 # identisch. KEINE Runtime-Aenderung, KEIN Agentensystem.
-# Kompilieren: moo-compiler compile ki_grpo.moo -o ki_grpo
+# Kompilieren: moo-compiler compile ki_grpo.moos -o ki_grpo
 # ============================================================
 setze dim auf 32
 setze block auf 5

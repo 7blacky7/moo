@@ -1,5 +1,5 @@
 # ============================================================
-# ui_layout_demo.moo — Showcase fuer Flexbox-light Layouts
+# ui_layout_demo.moos — Showcase fuer Flexbox-light Layouts
 #
 # Demonstriert:
 #   - ui_spalte als Haupt-Container (Vertikal)
@@ -10,7 +10,7 @@
 #
 # Kompilieren:
 #   cargo run --release --manifest-path compiler/Cargo.toml -- \
-#       compile beispiele/ui_layout_demo.moo
+#       compile beispiele/ui_layout_demo.moos
 # Starten:
 #   ./beispiele/ui_layout_demo
 # ============================================================

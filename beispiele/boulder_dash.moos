@@ -2,7 +2,7 @@
 # moo Boulder Dash — Diamanten sammeln, Steinen ausweichen
 #
 # Kompilieren + Starten:
-#   moo-compiler compile beispiele/boulder_dash.moo -o beispiele/boulder_dash
+#   moo-compiler compile beispiele/boulder_dash.moos -o beispiele/boulder_dash
 #   ./beispiele/boulder_dash
 #
 # Bedienung:

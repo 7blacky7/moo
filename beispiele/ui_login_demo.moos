@@ -1,5 +1,5 @@
 # ============================================================
-# ui_login_demo.moo — Minimaler Showcase fuer stdlib/ui
+# ui_login_demo.moos — Minimaler Showcase fuer stdlib/ui
 #
 # Zeigt: ui_baue + setup_login_form + setup_status_bar.
 # Klick auf "Anmelden" -> Benutzername in Status-Leiste.
@@ -9,7 +9,7 @@
 #
 # Kompilieren:
 #   cargo run --release --manifest-path compiler/Cargo.toml -- \
-#       compile beispiele/ui_login_demo.moo
+#       compile beispiele/ui_login_demo.moos
 # Starten:
 #   ./beispiele/ui_login_demo
 # ============================================================

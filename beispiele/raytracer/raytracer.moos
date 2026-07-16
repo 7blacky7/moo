@@ -1,7 +1,7 @@
 # ============================================================
 # moo Raytracer — Pinhole-Projektion mit Sphaeren, Lighting, Schatten, Reflektion
 #
-# Kompilieren: moo-compiler compile raytracer.moo -o raytracer
+# Kompilieren: moo-compiler compile raytracer.moos -o raytracer
 # Starten:     ./raytracer
 # Ausgabe:     output.ppm (P3 ASCII)
 # Anzeigen:    feh output.ppm  oder  eog output.ppm

@@ -1,5 +1,5 @@
 # ============================================================
-# stdlib/ui_moo_effects.moo — oeffentliche portable Effekt-API
+# stdlib/ui_moo_effects.moos — oeffentliche portable Effekt-API
 #
 # Moo-Dicts spiegeln die semantischen Werte des Compositor-Effects-Protokolls
 # V2. Sie sind keine C-Struct-/Wire-Abbildung. Dadurch bleibt die API auf

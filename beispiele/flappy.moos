@@ -1,7 +1,7 @@
 # ============================================================
-# flappy.moo — Flappy Bird Klon
+# flappy.moos — Flappy Bird Klon
 #
-# Kompilieren: moo-compiler compile beispiele/flappy.moo -o beispiele/flappy
+# Kompilieren: moo-compiler compile beispiele/flappy.moos -o beispiele/flappy
 # Starten:     ./beispiele/flappy
 #
 # Steuerung: Leertaste = Fluegel schlagen, Escape = Beenden

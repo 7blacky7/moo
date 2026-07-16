@@ -1,5 +1,5 @@
 # ============================================================
-# ui_tray_lifecycle_test.moo — P015-L1
+# ui_tray_lifecycle_test.moos — P015-L1
 #
 # Hält ein echtes Tray aktiv und ruft den zugehörigen Fenster-Callback
 # wiederholt auf. Nach jedem erneuten Anzeigen wird ein stabilisierter

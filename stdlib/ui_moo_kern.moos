@@ -1,5 +1,5 @@
 # ============================================================
-# stdlib/ui_moo_kern.moo — toolkitfreier retained-mode Widget-Kern
+# stdlib/ui_moo_kern.moos — toolkitfreier retained-mode Widget-Kern
 #
 # Enthält ausschließlich Themes, Widgetbaum, Layout, Zeichnen über den
 # Backendvertrag, normalisierte Eingabe und das reine Mock-Backend.

@@ -1,7 +1,7 @@
 # ============================================================
 # Die Kinderleicht-API (Plan-014 D1): ein neuronales Netz in
 # 5 Zeilen — bauen, trainieren, pruefen, speichern, laden.
-# Kompilieren: moo-compiler compile ki_kinderleicht.moo -o ki_kl
+# Kompilieren: moo-compiler compile ki_kinderleicht.moos -o ki_kl
 # Hinweis: Optionen kommen als Dict ({"epochen": 100, ...}) —
 # das ist der dokumentierte D1-Weg (keine Named-Args im Parser).
 # ============================================================

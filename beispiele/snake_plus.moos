@@ -1,7 +1,7 @@
 # ============================================================
-# snake_plus.moo — Snake mit Power-Ups und Hindernissen
+# snake_plus.moos — Snake mit Power-Ups und Hindernissen
 #
-# Kompilieren: moo-compiler compile beispiele/snake_plus.moo -o beispiele/snake_plus
+# Kompilieren: moo-compiler compile beispiele/snake_plus.moos -o beispiele/snake_plus
 # Starten:     ./beispiele/snake_plus
 #
 # Steuerung: WASD/Pfeile=Richtung, Escape=Beenden

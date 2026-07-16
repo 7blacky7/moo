@@ -1,4 +1,4 @@
-# stage2.moo — moo-Anteil des Legacy-BIOS-Stage2-Loaders (P011-D1 -> F1).
+# stage2.moos — moo-Anteil des Legacy-BIOS-Stage2-Loaders (P011-D1 -> F1).
 #
 # Wird vom 16-bit-Stage1 nach 0x8000 geladen und im 32-bit Protected Mode
 # (NICHT Long Mode!) ausgefuehrt. Der Entry stage2_entry.S aktiviert SSE

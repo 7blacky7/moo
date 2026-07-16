@@ -1,5 +1,5 @@
 # ============================================================
-# test_maus.moo — Demo: Maus-Simulation + Screenshot vorher/nachher
+# test_maus.moos — Demo: Maus-Simulation + Screenshot vorher/nachher
 #
 # Zeigt automatisierten UI-Selftest mit den neuen Builtins:
 #   raum_sim_maus_pos(win, x, y)
@@ -15,7 +15,7 @@
 #   5. Vergleich-Hinweis ausgeben
 #
 # Kompilieren / Starten:
-#   moo-compiler run beispiele/city_builder/test_maus.moo
+#   moo-compiler run beispiele/city_builder/test_maus.moos
 #   ls -la /tmp/test_maus_*.bmp
 # ============================================================
 

@@ -1,7 +1,7 @@
 # ============================================================
 # moo WAV-Synthesizer — generiert Sinus-Audio-Dateien
 #
-# Kompilieren: moo-compiler compile synth.moo -o synth
+# Kompilieren: moo-compiler compile synth.moos -o synth
 # Starten:     ./synth
 #
 # Erzeugt:

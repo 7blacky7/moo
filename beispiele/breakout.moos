@@ -1,7 +1,7 @@
 # ============================================================
 # moo Breakout — Klassisches Brick-Breaker-Spiel
 #
-# Kompilieren: moo-compiler run beispiele/breakout.moo
+# Kompilieren: moo-compiler run beispiele/breakout.moos
 #
 # Bedienung:
 #   Links/Rechts oder A/D - Paddle bewegen

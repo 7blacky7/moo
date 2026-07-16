@@ -1,5 +1,5 @@
 # ============================================================
-# beispiele/tests/ui_layout_test.moo — visueller Test: Layout
+# beispiele/tests/ui_layout_test.moos — visueller Test: Layout
 # (Plan-004 P4)
 #
 # Baut ein Layout aus ui_spalte/ui_zeile (analog ui_layout_demo,

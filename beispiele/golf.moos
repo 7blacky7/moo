@@ -1,7 +1,7 @@
 # ============================================================
 # moo Golf — 2D Mini-Golf
 #
-# Kompilieren: moo-compiler compile beispiele/golf.moo -o beispiele/golf
+# Kompilieren: moo-compiler compile beispiele/golf.moos -o beispiele/golf
 # Starten:     ./beispiele/golf
 #
 # Maus = Zielen (Linie zeigt Richtung+Kraft)

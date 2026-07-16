@@ -1,7 +1,7 @@
 # ============================================================
-# video_smoke.moo — Smoke fuer test_video_* (Plan-009 V1) + GIF-Regression.
+# video_smoke.moos — Smoke fuer test_video_* (Plan-009 V1) + GIF-Regression.
 # Headless: xvfb-run -a -s "-screen 0 1280x800x24" \
-#   env MOO_3D_BACKEND=gl33 moo-compiler run tmp/video_smoke.moo
+#   env MOO_3D_BACKEND=gl33 moo-compiler run tmp/video_smoke.moos
 # Oeffnet ein 3D-Fenster, rendert ein paar Frames, nimmt sie als MP4 auf
 # (test_video_*) UND als GIF (test_gif_*, Regression nach Helper-Umbau).
 # ============================================================

@@ -4,10 +4,10 @@
 # EINORDNUNG (Beispiel-Triage 2026-07-10, Task 8b6ff34b): Diese Demo
 # zeigt prozedurale Weltgenerierung, Kamera-Scrolling und einfache
 # Monster-KI. Sie hat BEWUSST kein Spielziel, keinen Sieg und keinen
-# Neustart — als Showcase-SPIEL gilt die Messlatte aus zelda.moo.
+# Neustart — als Showcase-SPIEL gilt die Messlatte aus zelda.moos.
 #
 # Kompilieren + Starten:
-#   moo-compiler compile beispiele/rpg_world.moo -o beispiele/rpg_world
+#   moo-compiler compile beispiele/rpg_world.moos -o beispiele/rpg_world
 #   ./beispiele/rpg_world
 #
 # Bedienung:
@@ -59,7 +59,7 @@ funktion abs_wert(v):
         gib_zurück 0 - v
     gib_zurück v
 
-# Einfacher Noise (Hash-basiert, wie welten.moo)
+# Einfacher Noise (Hash-basiert, wie welten.moos)
 funktion hash_2d(ix, iy):
     setze n auf ((ix + 1) * 374761 + (iy + 1) * 668265 + 42) % 2147483647
     wenn n < 0:

@@ -1,5 +1,5 @@
 # ============================================================
-# stdlib/ui.moo — oeffentliches UI-Modul fuer moo
+# stdlib/ui.moos — oeffentliches UI-Modul fuer moo
 #
 # Cross-platform Desktop-UI. Inspiriert vom AutoIt GUIBuilder
 # (Moritz Kolar). Schicht 1 (Primitive) liegt in C (moo_ui.h),
@@ -91,7 +91,7 @@
 #     ui_menueleiste(fenster), ui_menue(leiste, titel),
 #     ui_menue_eintrag(menue, text, callback), ui_menue_trenner(menue)
 #
-#   === Schicht 2 — Komposition (in moo, siehe ui_baue.moo + ui_komponenten.moo) ===
+#   === Schicht 2 — Komposition (in moo, siehe ui_baue.moos + ui_komponenten.moos) ===
 #     ui_baue(container, titel, b, h, setups, resizable, maximiert, parent)
 #     ui_debug_baue(container, titel, b, h, setups, ...)
 #     rufe_mit(funk, args)

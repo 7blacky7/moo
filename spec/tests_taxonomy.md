@@ -16,7 +16,7 @@ ist die Merge-Bedingung.
 |-------|-------|-------------|--------------|
 | Regression + Feature-Lock fuer Compiler + Runtime | alle | **pflicht** vor Merge | `tests/compiler/` |
 
-**Inhalt** (27 `.moo`-Dateien, 17 aktiv via `.expected`, 10 Skip als Compile-Smoke):
+**Inhalt** (27 `.moos`-Dateien, 17 aktiv via `.expected`, 10 Skip als Compile-Smoke):
 
 Kern/Sprache:
 - `test_bitwise_ops` (k2 A4 bit ops), `test_closures`, `test_global_scope_in_function` (P2a Regressions-Muster), `test_lists`, `test_match`, `test_oop`, `test_strings`, `test_json`, `test_fileio`
@@ -32,9 +32,9 @@ Neue APIs aus Konsolidierungs-Welle:
 - `test_db_prepared_{named,bulk,rollback}` (P3c-A, k3)
 - `test_http_with_headers_{client,server}` (P2b, k3-Client + k4-Server)
 
-### Zone 2 — Root-Level `test_*.moo` (Ad-hoc / historisch)
+### Zone 2 — Root-Level `test_*.moos` (Ad-hoc / historisch)
 
-38 `.moo`-Dateien im Projekt-Root. Kein Runner, kein `.expected`. Gemischte
+38 `.moos`-Dateien im Projekt-Root. Kein Runner, kein `.expected`. Gemischte
 Qualitaet: manche sind fruehe Bug-Repros, manche experimentelle Snippets.
 
 | Zweck | owner | CI-Relevanz | phase_b_ziel |
@@ -76,7 +76,7 @@ Einzelner C-Level-Smoke fuer 3D-Rendering. Kein Automation-Runner.
 
 ### Zone 4 — `/tmp/moo-verify/` (ephemer)
 
-Arbeitsverzeichnis der Koordinatoren-Verifikation. 107+ `.moo`-Dateien aus
+Arbeitsverzeichnis der Koordinatoren-Verifikation. 107+ `.moos`-Dateien aus
 A-Block (Kompat-Smokes, Regressions-Aufbau), `.ll`-Dateien, result-logs.
 
 | Zweck | owner | CI-Relevanz | phase_b_ziel |
@@ -116,7 +116,7 @@ Signatur- und Output-Drift.
 ```
 tests/
   compiler/            # Zone 1 unveraendert, nur umbenannt
-    test_*.moo
+    test_*.moos
     test_*.expected
     run_all.sh
   runtime/
@@ -138,7 +138,7 @@ Ephemere Zonen 4 + 5 bleiben unter `/tmp/`.
 
 ## Offen fuer Phase B
 
-- Root-Level-Selektion: welche der 38 `test_*.moo` sind echte Regressions,
+- Root-Level-Selektion: welche der 38 `test_*.moos` sind echte Regressions,
   welche historischer Scratchpad? (handarbeit, ca. 1 h).
 - CI-Hook fuer differential-fuzzer.
 - Ephemer-Verzeichnisse aus `.gitignore` bestaetigen — aktuell ohnehin

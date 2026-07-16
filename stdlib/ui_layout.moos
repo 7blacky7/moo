@@ -1,5 +1,5 @@
 # ============================================================
-# stdlib/ui_layout.moo — Flexbox-light Layout-Primitive (Schicht 2)
+# stdlib/ui_layout.moos — Flexbox-light Layout-Primitive (Schicht 2)
 #
 # Additiv zu ui_baue. ui_baue bleibt unveraendert — Layout-Funktionen
 # bauen Container innerhalb eines Parents und platzieren vorhandene

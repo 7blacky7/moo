@@ -59,7 +59,7 @@ Ziel-Mapping Backward → `_res`:
 - Optimizer-Kern (in-place, kein Tape): `moo_nn_opt_schritt` (`moo_nn.c:2294`):
   SGD `:2314-2325`, Adam/AdamW `:2326-2351`, Grad-Nullung + `p->valid=MOO_V_DATA` `:2353`,
   `moo_ag_reset()` `:2362`. Konstruktoren `_sgd:2242 / _adam:2260 / _adamw:2271`; State m/v in `opt_basis:2218`.
-- **Low-Level-Loop (Gate-Ziel):** `beispiele/ki_sprachmodell.moo:178-193` — manuelle Schleife
+- **Low-Level-Loop (Gate-Ziel):** `beispiele/ki_sprachmodell.moos:178-193` — manuelle Schleife
   `vorwaerts → kreuzentropie → rueckwaerts → opt.schritt()`, nutzt NICHT `trainiere()`.
   Optimizer `optimierer_sgd(params, rate, 0.9)` `:158`.
 
@@ -166,7 +166,7 @@ Jede Stufe einzeln durch das G4c-Gate (§4) abgesichert, bevor die nächste dazu
 
 ### 3.2 `gpu_statistik()` — moo-sichtbare Telemetrie
 - Neuer moo-Builtin `gpu_statistik()` → gibt Dict `{submits, uploads, downloads, cpu_fallbacks}` zurück
-  (Backend: `moo_ki_gpu_telemetrie`). Ermöglicht dem `.moo`-Programm (ki_sprachmodell) die
+  (Backend: `moo_ki_gpu_telemetrie`). Ermöglicht dem `.moos`-Programm (ki_sprachmodell) die
   Residenz-Prüfung zur Laufzeit.
 - Reset-Builtin `gpu_statistik_reset()` → `moo_ki_gpu_telemetrie_reset` (für Loop-Messfenster).
 - Codegen/Binding-Anbindung (runtime_bindings.rs/codegen.rs) ist **kip-kern/kip-ops-koordiniert** —

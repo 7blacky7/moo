@@ -1,6 +1,6 @@
-# arm64_test.moo — P012-D5: minimaler moo-Kernel fuer qemu-virt-aarch64.
+# arm64_test.moos — P012-D5: minimaler moo-Kernel fuer qemu-virt-aarch64.
 #
-# Build: moo-compiler compile beispiele/kernel/arm64_test.moo \
+# Build: moo-compiler compile beispiele/kernel/arm64_test.moos \
 #            --no-stdlib --kernel --board qemu-virt-aarch64 -o arm64_test.elf
 # Boot-Test: scripts/kernel-smoke-arm64.sh (qemu-system-aarch64 -M virt, KEIN GRUB).
 #

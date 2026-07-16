@@ -8,7 +8,7 @@
 #   - Echo-Server: jedes text/binary frame wird zurueckgesendet
 #   - Close-Frame Handhabung
 #
-# Starten: moo-compiler compile websocket_server.moo -o ws_server
+# Starten: moo-compiler compile websocket_server.moos -o ws_server
 #          ./ws_server
 # Testen:  wscat -c ws://localhost:9001
 # ============================================================

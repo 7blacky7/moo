@@ -1,11 +1,11 @@
 # ============================================================
-# snake_plus_selftest.moo — Referenz-Selftest 2D (Plan-008 A4)
+# snake_plus_selftest.moos — Referenz-Selftest 2D (Plan-008 A4)
 #
 # Gleiches Schema wie die 3D/Voxel-Selftests:
 #   starten -> test_sim_*-Eingaben -> Zustands-/Pixel-Asserts
 #   (test_pixel) -> test_screenshot -> sauberer Exit.
 #
-# Getestetes Spiel: snake_plus.moo (2D, SDL-Fenster, zeichne_rechteck/
+# Getestetes Spiel: snake_plus.moos (2D, SDL-Fenster, zeichne_rechteck/
 # zeichne_kreis, taste_gedrückt). Der Selftest baut eine DETERMINISTISCHE
 # Mini-Szene mit denselben Render-Bausteinen und prueft per test_pixel,
 # dass die gezeichneten Farben am erwarteten Ort liegen. Zusaetzlich wird

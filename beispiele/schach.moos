@@ -1,7 +1,7 @@
 # ============================================================
 # moo Schach — Vollstaendiges Schachspiel
 #
-# Kompilieren: moo-compiler compile beispiele/schach.moo -o beispiele/schach
+# Kompilieren: moo-compiler compile beispiele/schach.moos -o beispiele/schach
 # Starten:     ./beispiele/schach
 #
 # Maus = Figur waehlen + Ziel klicken

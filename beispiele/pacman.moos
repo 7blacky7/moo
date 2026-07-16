@@ -2,7 +2,7 @@
 # moo Pac-Man — Klassisches Labyrinth-Spiel
 #
 # Kompilieren + Starten:
-#   moo-compiler compile beispiele/pacman.moo -o beispiele/pacman
+#   moo-compiler compile beispiele/pacman.moos -o beispiele/pacman
 #   ./beispiele/pacman
 #
 # Bedienung:

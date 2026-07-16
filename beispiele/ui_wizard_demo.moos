@@ -1,5 +1,5 @@
 # ============================================================
-# ui_wizard_demo.moo — Showcase fuer setup_wizard_pages
+# ui_wizard_demo.moos — Showcase fuer setup_wizard_pages
 #
 # 4-Schritt-Wizard fuer eine fiktive Installation.
 # Zeigt: Tabs pro Seite + Fortschrittsbalken + Navigations-Buttons.

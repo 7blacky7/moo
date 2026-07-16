@@ -2,7 +2,7 @@
 # kernel-smoke-arm64.sh — P012-D5/E2: ARM64 Kernel-Boot-Smoke (qemu-virt-aarch64).
 # ============================================================================
 # PHASEN
-#   [1/3] Build: beispiele/kernel/arm64_test.moo via Kernel-Pipeline
+#   [1/3] Build: beispiele/kernel/arm64_test.moos via Kernel-Pipeline
 #         (--board qemu-virt-aarch64: PL011-Defines, ld.lld, Linker-Script
 #         linker-arm64-virt.ld @ 0x40080000)
 #   [2/3] readelf-Gates: ELF64 + AArch64 + Entry == Board-load_addr
@@ -21,7 +21,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MOO_BIN="${MOO_BIN:-$ROOT/compiler/target/release/moo-compiler}"
-KERNEL_SRC="$ROOT/beispiele/kernel/arm64_test.moo"
+KERNEL_SRC="$ROOT/beispiele/kernel/arm64_test.moos"
 
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo_arm64_smoke.XXXXXX")"
 trap 'rm -rf "$OUT"' EXIT

@@ -1,7 +1,7 @@
 # ============================================================
-# pong_plus.moo — Pong gegen KI
+# pong_plus.moos — Pong gegen KI
 #
-# Kompilieren: moo-compiler compile beispiele/pong_plus.moo -o beispiele/pong_plus
+# Kompilieren: moo-compiler compile beispiele/pong_plus.moos -o beispiele/pong_plus
 # Starten:     ./beispiele/pong_plus
 #
 # Steuerung: W/S oder Pfeile = Paddle, Escape = Beenden

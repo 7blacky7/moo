@@ -2,7 +2,7 @@
 # moo Block Dude — TI-83 Puzzle-Klassiker
 #
 # Kompilieren + Starten:
-#   moo-compiler compile beispiele/block_dude.moo -o beispiele/block_dude
+#   moo-compiler compile beispiele/block_dude.moos -o beispiele/block_dude
 #   ./beispiele/block_dude
 #
 # Bedienung:

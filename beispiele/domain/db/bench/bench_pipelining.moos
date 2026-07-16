@@ -8,10 +8,10 @@
 # 1000 zeigt einen moo-Runtime-Akkumulations-Bug (haengt). Separat OK.
 #
 # Reproduktion:
-#   { head -n 1024 ../../beispiele/domain/db/postgres_client.moo;
-#     cat bench_pipelining.moo;
-#   } > /tmp/bench_pipelining_run.moo
-#   ./compiler/target/release/moo-compiler run /tmp/bench_pipelining_run.moo
+#   { head -n 1024 ../../beispiele/domain/db/postgres_client.moos;
+#     cat bench_pipelining.moos;
+#   } > /tmp/bench_pipelining_run.moos
+#   ./compiler/target/release/moo-compiler run /tmp/bench_pipelining_run.moos
 
 setze db auf neu PgClient("192.168.50.65", 5433, "moo_scram", "moo_scram", "xjJ6FnbwV9KX43nnBT9PoOHTuJVw")
 db.verbinde()

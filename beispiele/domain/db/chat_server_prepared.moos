@@ -1,12 +1,12 @@
 # ============================================================
 # moo Chat-Server — Prepared-Statement-Variante (neue API).
 #
-# Zeigt die additive Prio3c-API gegenueber chat_server.moo:
+# Zeigt die additive Prio3c-API gegenueber chat_server.moos:
 #   - db_abfrage_mit_params / db_ausführen_mit_params statt sql_bereinigen +
 #     String-Konkatenation
 #   - db_vorbereite fuer wiederholte Inserts (nachricht_speichern)
 #
-# Kompilieren: moo-compiler compile chat_server_prepared.moo -o chat_server_p
+# Kompilieren: moo-compiler compile chat_server_prepared.moos -o chat_server_p
 # Starten:     ./chat_server_p   (Port 4001 — parallel zu Original moeglich)
 # ============================================================
 

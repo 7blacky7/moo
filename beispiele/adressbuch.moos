@@ -1,5 +1,5 @@
 # moo Adressbuch — Kontakte in SQLite
-# Starten: moo-compiler run beispiele/adressbuch.moo
+# Starten: moo-compiler run beispiele/adressbuch.moos
 
 zeige "=== moo Adressbuch ==="
 

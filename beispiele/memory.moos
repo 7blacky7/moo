@@ -1,7 +1,7 @@
 # ============================================================
-# memory.moo — Karten-Memory-Spiel
+# memory.moos — Karten-Memory-Spiel
 #
-# Kompilieren: moo-compiler compile beispiele/memory.moo -o beispiele/memory
+# Kompilieren: moo-compiler compile beispiele/memory.moos -o beispiele/memory
 # Starten:     ./beispiele/memory
 #
 # Steuerung: Mausklick = Karte aufdecken, R = Neu, Escape = Beenden

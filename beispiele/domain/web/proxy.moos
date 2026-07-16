@@ -1,7 +1,7 @@
 # ============================================================
 # moo TCP Reverse-Proxy — sequenzieller HTTP-Forward-Proxy
 #
-# Kompilieren: moo-compiler compile proxy.moo -o proxy
+# Kompilieren: moo-compiler compile proxy.moos -o proxy
 # Starten:     ./proxy
 #
 # Listen  auf: 0.0.0.0:9000

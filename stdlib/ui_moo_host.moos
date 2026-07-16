@@ -1,5 +1,5 @@
 # ============================================================
-# stdlib/ui_moo_host.moo — bestehende Desktop-/Game-Hostadapter
+# stdlib/ui_moo_host.moos — bestehende Desktop-/Game-Hostadapter
 #
 # Diese Schicht darf importiere ui und Hostzeichenprimitive verwenden.
 # Der Widget-/Inputkern bleibt in ui_moo_kern toolkitfrei.

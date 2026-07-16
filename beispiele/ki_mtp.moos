@@ -9,7 +9,7 @@
 # MTP-Heads als Draft, der Haupt-Head verifiziert; Akzeptanzrate
 # wird nur PROTOKOLLIERT. KEINE Serving-Architektur, KEINE
 # Runtime-Aenderung, alles deterministisch (Seeds fix, greedy).
-# Kompilieren: moo-compiler compile ki_mtp.moo -o ki_mtp
+# Kompilieren: moo-compiler compile ki_mtp.moos -o ki_mtp
 # ============================================================
 setze dim auf 32
 setze block auf 16

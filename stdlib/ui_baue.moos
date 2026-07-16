@@ -1,5 +1,5 @@
 # ============================================================
-# stdlib/ui_baue.moo — Master-Constructor fuer UI-Komposition
+# stdlib/ui_baue.moos — Master-Constructor fuer UI-Komposition
 #
 # Schicht 2 der moo-UI-Architektur. Inspiriert vom AutoIt
 # GUIBuilder `_GUI_Create_` (Moritz Kolar).

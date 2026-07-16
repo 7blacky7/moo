@@ -1,7 +1,7 @@
-# pf_test.moo — P012-A3: Intentionaler Page-Fault-Test fuer den #PF-Handler.
+# pf_test.moos — P012-A3: Intentionaler Page-Fault-Test fuer den #PF-Handler.
 #
 # Build (One-Shot-Pipeline):
-#   moo-compiler compile beispiele/kernel/pf_test.moo \
+#   moo-compiler compile beispiele/kernel/pf_test.moos \
 #       --no-stdlib --target x86_64-bare --kernel -o pf_test.elf
 # Boot-Test: scripts/pf-smoke.sh (GRUB-ISO + QEMU).
 #

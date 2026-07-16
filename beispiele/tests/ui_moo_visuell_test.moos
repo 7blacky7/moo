@@ -1,5 +1,5 @@
 # ============================================================
-# beispiele/tests/ui_moo_visuell_test.moo — UIMOO-4 visuelle Tests
+# beispiele/tests/ui_moo_visuell_test.moos — UIMOO-4 visuelle Tests
 #
 # Snapshot-Sequenz über den Plan-004-Apparat (ui_test_sequenz):
 #   frame_001  initial, Theme dunkel (Knopf, Checkbox aus,

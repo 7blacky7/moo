@@ -1,7 +1,7 @@
 # ============================================================
 # moo Redis-Client — Reiner RESP-Wire-Protocol Client in moo
 #
-# Kompilieren: moo-compiler compile redis_client.moo -o redis_client
+# Kompilieren: moo-compiler compile redis_client.moos -o redis_client
 # Starten:     ./redis_client
 #
 # Testet gegen lokalen Docker-Redis (moo-test-redis auf Port 6380).

@@ -1,6 +1,6 @@
 # Repo-Cleanup Phase B — Kontrollierter Umbauplan
 
-**Status (Stand 2026-04-14):** **W1+W2+W3 umgesetzt.** Root-`test_*.moo` = 0,
+**Status (Stand 2026-04-14):** **W1+W2+W3 umgesetzt.** Root-`test_*.moos` = 0,
 `scratch/` lebt, `beispiele/domain/{web,db,game,system}/` haben echte Inhalte.
 Siehe `spec/phase_b_progress.md` für den exakten Stand. Dieses Dokument
 beschreibt den ursprünglichen **Plan**; Abweichungen sind in
@@ -13,9 +13,9 @@ bestehende Arbeitsabläufe zu brechen.
 
 ## Aktueller Ist-Zustand (Repo-Root, 2026-04-14)
 
-`ls ~/dev/moo/` zeigt **66 Einträge** im Root. Davon **40 `.moo`-Dateien**,
-darunter 28 mit Prefix `test_*.moo` und 2 Freitext-Skripte (`beispiel.moo`,
-`example.moo`). Plus loose Artefakte wie `test_native.ll`,
+`ls ~/dev/moo/` zeigt **66 Einträge** im Root. Davon **40 `.moos`-Dateien**,
+darunter 28 mit Prefix `test_*.moos` und 2 Freitext-Skripte (`beispiel.moos`,
+`example.moos`). Plus loose Artefakte wie `test_native.ll`,
 `test_mini_import.ll`, `test_alle`, `test_en`, `test_mix`, `test_native`,
 `test_neu`, `test_oop` (ohne Endung → Binaries), `adventure_save.json`.
 
@@ -35,8 +35,8 @@ Sowie die bestehenden Unterverzeichnisse, die bereits klar sind:
    quickstart/, showcase/, stress/,
    domain/{web,db,game,system}/
 /scratch/      ← NEU: Freitext-/Ad-hoc-/Scratchpad-Dateien aus dem
-                 Root (`beispiel.moo`, `example.moo`, alte
-                 `test_*.moo` die keine Tests sind — siehe
+                 Root (`beispiel.moos`, `example.moos`, alte
+                 `test_*.moos` die keine Tests sind — siehe
                  spec/tests_taxonomy.md). Gitignore die Binaries.
 /spec/         ← Single-Source-of-Truth Spezifikationen (tokens.yaml,
                  soft_keywords.md, followup-tickets.md,
@@ -50,7 +50,7 @@ Sowie die bestehenden Unterverzeichnisse, die bereits klar sind:
 ## Reihenfolge (keine Kette brechen)
 
 1. **Spec-Phase abschließen (B-Block + C-Block, laufend).** Bevor
-   irgendwas bewegt wird, muss jedes Root-`.moo` in `tests_taxonomy.md`
+   irgendwas bewegt wird, muss jedes Root-`.moos` in `tests_taxonomy.md`
    eine Zielzone haben (kompilertest / Ad-hoc / Scratch / verschrottbar).
 
 2. **`.gitignore` aktualisieren.** `*.ll`, `test_alle`, `test_en`,
@@ -63,11 +63,11 @@ Sowie die bestehenden Unterverzeichnisse, die bereits klar sind:
 
 4. **Einzelne Dateien verschieben — immer in kleinen Paketen, je
    1 Commit pro Kategorie.** Reihenfolge:
-   - (a) `test_*.moo` die echte Regressions-Tests sind → `compiler/tests/`
+   - (a) `test_*.moos` die echte Regressions-Tests sind → `compiler/tests/`
      (bereits dort laufende Struktur, `.expected` nachliefern wo nötig).
-   - (b) `test_*.moo` die Demos/Ad-hoc sind → `scratch/` oder
+   - (b) `test_*.moos` die Demos/Ad-hoc sind → `scratch/` oder
      `beispiele/showcase/` je nach Taxonomie.
-   - (c) `beispiel.moo`, `example.moo` → `scratch/` (oder
+   - (c) `beispiel.moos`, `example.moos` → `scratch/` (oder
      `beispiele/quickstart/` falls tatsächlich kanonische Beispiele).
    - (d) `.ll`-Dateien: prüfen ob produktionsrelevant; wenn ja
      → `compiler/tests/fixtures/`, sonst löschen.
@@ -119,7 +119,7 @@ entstanden:
 | Risiko | Gegenmaßnahme |
 |---|---|
 | CI bricht weil Root-Datei weg ist | Move + CI-Pfad-Update in einem Commit, lokal grün vor Push. |
-| User-Skripte referenzieren Root-`.moo` | Deprecation-Hinweis im `MOVED.md`, eine Version lang. |
+| User-Skripte referenzieren Root-`.moos` | Deprecation-Hinweis im `MOVED.md`, eine Version lang. |
 | Git-Blame geht verloren | `git mv` statt `rm + add`, in kleinen Paketen. |
 | Entwickler macht neue Root-Dateien | `.gitignore` + README-Hinweis "Root ist dokumentiert". |
 | Spec-Dateien driften von Realität weg | CI-Check erweitern: `spec/tokens.yaml` hat schon einen; für `examples_taxonomy`, `tests_taxonomy` analoges Skript (Phase C). |

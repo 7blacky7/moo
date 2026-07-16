@@ -1,7 +1,7 @@
 # ============================================================
 # moo 3D Wireframe-Renderer — Software-3D ohne OpenGL
 #
-# Kompilieren: moo-compiler compile wireframe.moo -o wireframe
+# Kompilieren: moo-compiler compile wireframe.moos -o wireframe
 # Starten:     ./wireframe
 #
 # Bedienung:

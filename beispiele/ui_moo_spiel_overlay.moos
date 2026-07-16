@@ -1,5 +1,5 @@
 # ============================================================
-# beispiele/ui_moo_spiel_overlay.moo — ui_moo als In-Game-Menü
+# beispiele/ui_moo_spiel_overlay.moos — ui_moo als In-Game-Menü
 #
 # Zeigt das Frame-Backend (UIMOO-6): ein Pausemenü-Overlay über
 # einem laufenden "Spielfeld" auf der 2D-API. Dasselbe Widget-Set

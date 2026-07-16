@@ -15,8 +15,8 @@ Z. 157–176, 405–452).
 **Pikant:** Der Thought wurde 17 Minuten **nach** dem Fix-Commit
 geschrieben — vermutlich wurde der Fix vom Reporter noch nicht gepullt.
 Bug ist seitdem geschlossen, verifiziert per Regressions-Tests:
-- `compiler/tests/test_global_in_func.moo` (Lesen aus Funktion)
-- `compiler/tests/test_global_counter.moo` (Schreiben/Counter-Pattern)
+- `compiler/tests/test_global_in_func.moos` (Lesen aus Funktion)
+- `compiler/tests/test_global_counter.moos` (Schreiben/Counter-Pattern)
 
 Beide grün.
 
@@ -40,18 +40,18 @@ Verifiziert durch Tests (siehe unten).
 
 # Lexer/Parser-Drift-Befunde (Rust vs Python)
 
-Ergebnis von `tools/fuzz_differential.py` gegen `compiler/tests/*.moo`.
+Ergebnis von `tools/fuzz_differential.py` gegen `compiler/tests/*.moos`.
 
 ## Stand 2026-04-14
 
 - Rust-Compiler: 26/26 OK
 - Python-Toolchain: 23/26 OK
 - **3 Drift-Fälle** (Rust akzeptiert, Python lehnt ab):
-  - `test_bitwise_ops.moo` — Python kennt die Bit-Operatoren `&` `|` `^` `<<` `>>` `~` nicht. Token-SSoT (`spec/tokens.yaml`) markiert sie als `implementations: [rust]`, das ist konsistent.
-  - `test_json.moo` — erste Analyse: vermutlich Lexer-/Parser-Unterstützung fehlt für eine bestimmte Syntax. Zu untersuchen.
-  - `test_lists.moo` — analog, Detail-Analyse offen.
+  - `test_bitwise_ops.moos` — Python kennt die Bit-Operatoren `&` `|` `^` `<<` `>>` `~` nicht. Token-SSoT (`spec/tokens.yaml`) markiert sie als `implementations: [rust]`, das ist konsistent.
+  - `test_json.moos` — erste Analyse: vermutlich Lexer-/Parser-Unterstützung fehlt für eine bestimmte Syntax. Zu untersuchen.
+  - `test_lists.moos` — analog, Detail-Analyse offen.
 
-Außerdem: `beispiele/showcase.moo` → Python-TIMEOUT (>10s). Vermutlich Endlos-Schleife im Python-Parser bei bestimmter Eingabe. HIGH — separates Ticket.
+Außerdem: `beispiele/showcase.moos` → Python-TIMEOUT (>10s). Vermutlich Endlos-Schleife im Python-Parser bei bestimmter Eingabe. HIGH — separates Ticket.
 
 ## Phase 2 (TBD)
 
@@ -62,5 +62,5 @@ AST-Vergleich: deutlich aufwendiger, erst nach Token-Stream-Differential sinnvol
 ## Nächste Schritte
 
 1. Python-Transpiler: Bit-Operatoren als "Ablehnen mit klarer Fehlermeldung" statt Traceback (benötigt Lexer-Eintrag mit `status: legacy` → Fehler statt Crash).
-2. `showcase.moo`-Timeout debuggen (Endlos-Schleife finden).
-3. `test_json.moo` und `test_lists.moo` Detail-Analyse.
+2. `showcase.moos`-Timeout debuggen (Endlos-Schleife finden).
+3. `test_json.moos` und `test_lists.moos` Detail-Analyse.

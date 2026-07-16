@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Compiler-Testsuite fuer moo
-# Fuer jede .moo Datei mit zugehoeriger .expected:
+# Fuer jede .moos Datei mit zugehoeriger .expected:
 #   1. Kompiliere mit moo-compiler
 #   2. Fuehre aus
 #   3. Vergleiche Output mit .expected
@@ -53,10 +53,10 @@ if ! "$SCRIPT_DIR/ir_gates/run_tag_sync_gate.sh"; then
     exit 1
 fi
 
-# Alle .moo Dateien mit .expected durchgehen (top-level + regression/)
-for moo_file in "$SCRIPT_DIR"/*.moo "$SCRIPT_DIR"/regression/*.moo; do
+# Alle .moos Dateien mit .expected durchgehen (top-level + regression/)
+for moo_file in "$SCRIPT_DIR"/*.moos "$SCRIPT_DIR"/regression/*.moos; do
     [[ -f "$moo_file" ]] || continue
-    test_name="$(basename "$moo_file" .moo)"
+    test_name="$(basename "$moo_file" .moos)"
     test_dir="$(dirname "$moo_file")"
     expected_file="${test_dir}/${test_name}.expected"
 
@@ -107,7 +107,7 @@ done
 # scripts/game-test-runner.sh (braucht xvfb/GPU) und sind hier BEWUSST
 # NICHT enthalten, damit run_all.sh in CI ohne GPU/Vulkan/GIF gruen bleibt.
 # Hier nur: (1) Runner-Skript bash-syntax-pruefen, (2) die drei Selftest-
-# .moo NUR KOMPILIEREN (kein run -> kein Fenster -> kein Display noetig).
+# .moos NUR KOMPILIEREN (kein run -> kein Fenster -> kein Display noetig).
 # So verrottet die Test-API-Verdrahtung nicht unbemerkt.
 # ============================================================
 echo ""
@@ -115,9 +115,9 @@ echo "--------------------------------"
 echo "Game-Test-Smoke (GPU-unabhaengig: nur Syntax + Compile)"
 RUNNER="$COMPILER_DIR/../scripts/game-test-runner.sh"
 SELFTESTS=(
-    "$COMPILER_DIR/../beispiele/snake_plus_selftest.moo"
-    "$COMPILER_DIR/../beispiele/domain/game/world/siedler3_selftest.moo"
-    "$COMPILER_DIR/../beispiele/voxel_sandbox_selftest.moo"
+    "$COMPILER_DIR/../beispiele/snake_plus_selftest.moos"
+    "$COMPILER_DIR/../beispiele/domain/game/world/siedler3_selftest.moos"
+    "$COMPILER_DIR/../beispiele/voxel_sandbox_selftest.moos"
 )
 
 if [[ -f "$RUNNER" ]]; then
@@ -132,7 +132,7 @@ else
 fi
 
 for st in "${SELFTESTS[@]}"; do
-    st_name="$(basename "$st" .moo)"
+    st_name="$(basename "$st" .moos)"
     if [[ ! -f "$st" ]]; then
         skip=$((skip + 1)); echo -e "${YELLOW}SKIP${NC} $st_name (fehlt)"
         continue

@@ -1,5 +1,5 @@
 # ============================================================
-# test_match3.moo — Automatisierter Test
+# test_match3.moos — Automatisierter Test
 #
 # Testet: Fenster, Grid-Init, Rendering, Swap, Match-Erkennung,
 #         Gravity-Drop, Screenshot pro Aktion

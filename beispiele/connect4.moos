@@ -1,7 +1,7 @@
 # ============================================================
 # moo Vier Gewinnt (Connect 4) — 2 Spieler
 #
-# Kompilieren: moo-compiler compile beispiele/connect4.moo -o beispiele/connect4
+# Kompilieren: moo-compiler compile beispiele/connect4.moos -o beispiele/connect4
 # Starten:     ./beispiele/connect4
 #
 # 1-7 oder Links/Rechts + Leertaste = Spalte waehlen

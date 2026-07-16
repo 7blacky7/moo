@@ -1,8 +1,8 @@
 # ============================================================
-# grid.moo — Grid-System fuer den City Builder (Modul-Skizze)
+# grid.moos — Grid-System fuer den City Builder (Modul-Skizze)
 #
 # Diese Datei ist das logische "Modul" fuer alle Grid-Operationen.
-# Im Hauptspiel city_builder.moo sind die Funktionen aus
+# Im Hauptspiel city_builder.moos sind die Funktionen aus
 # Kompatibilitaetsgruenden bereits inline enthalten — diese Datei
 # dient als saubere, isoliert testbare Referenz-Implementierung
 # und kann mit `importiere grid` eingebunden werden, sobald das

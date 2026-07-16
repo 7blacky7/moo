@@ -1,7 +1,7 @@
 # ============================================================
-# simon.moo — Simon Says Memory-Spiel
+# simon.moos — Simon Says Memory-Spiel
 #
-# Kompilieren: moo-compiler compile beispiele/simon.moo -o beispiele/simon
+# Kompilieren: moo-compiler compile beispiele/simon.moos -o beispiele/simon
 # Starten:     ./beispiele/simon
 #
 # Steuerung: Mausklick auf Farbe nachdem Sequenz gezeigt wurde

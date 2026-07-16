@@ -8,7 +8,7 @@ NUR Design — kein Code. Liefert bindende Schnittstellen-Verträge an KIP-B2
 - moo-RUNTIME (C11) liefert: Cache-Primitiven, Sampling-Primitiven, inkrementellen
   Decode-Schritt, Abbruch-Flag. Alles synchron, sessionlos, zustandslos außer
   explizit übergebenen Handles.
-- moo-USERLAND (.moo-Programme) baut daraus: HTTP-Server (moo_web.c-Bestand:
+- moo-USERLAND (.moos-Programme) baut daraus: HTTP-Server (moo_web.c-Bestand:
   eigener Webserver existiert), Request-Scheduler, Session-Verwaltung,
   Continuous Batching. Begründung: Scheduler-Logik ist Policy, nicht Mathematik —
   sie gehört in die Sprache, nicht in die C-Runtime. Das hält die Runtime testbar.
@@ -71,7 +71,7 @@ NUR Design — kein Code. Liefert bindende Schnittstellen-Verträge an KIP-B2
    versprechen bevor G4-Zahlen existieren).
 5. Speculative Decoding produktiv (ki_mtp-Basis; erst nach 1–3).
 6. API: Moo-nativ (Dict rein/raus) zuerst; OpenAI-kompatible HTTP-Schicht
-   als .moo-Programm auf moo_web.c — optional, klar getrennt.
+   als .moos-Programm auf moo_web.c — optional, klar getrennt.
 - Quantisierte Inferenz: außerhalb KIP (M6-Plan, fp8/int-Pfad).
 
 ## 5. Exit-Gate

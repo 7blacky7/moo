@@ -66,7 +66,7 @@ Ausfuehren, nur zur Orientierung.
 | `moo_3d_gl33.c` + `_mesh.c/.h` + `_shaders.h` | OpenGL 3.3 Backend | intern (Backend) | `moo_3d_backend.h` | `runtime/domain/game/backend_gl33/...` |
 | `moo_3d_terrain.c`/`.h` | Terrain-Meshing fuer Chunks | intern (Backend-shared) | — | `runtime/domain/game/moo_3d_terrain.*` |
 | `moo_3d_vulkan.c` + `_mem.c/.h` + `_sync.h` + `_shaders.h` + `_*_spv.h` | Vulkan Backend | intern (Backend, optional) | `moo_3d_backend.h` | `runtime/domain/game/backend_vulkan/...` |
-| `moo_world.c` | Prozedurale Welt-Engine (Perlin, Chunks, Biomes, Tag/Nacht) | oeffentlich (via stdlib/welt.moo) | `moo_3d.c` | `runtime/domain/game/moo_world.c` |
+| `moo_world.c` | Prozedurale Welt-Engine (Perlin, Chunks, Biomes, Tag/Nacht) | oeffentlich (via stdlib/welt.moos) | `moo_3d.c` | `runtime/domain/game/moo_world.c` |
 | `moo_world_daynight.h` | Tag/Nacht-Presets | intern | — | `runtime/domain/game/moo_world_daynight.h` |
 | `test_3d.c` | Manueller 3D-Smoke (kein Automation-Test) | intern | — | `runtime/domain/game/tests/test_3d.c` |
 

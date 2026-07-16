@@ -1,5 +1,5 @@
 # ============================================================
-# beispiele/moo_glass_drag.moo — Live-Glass-Beweis (P016-O5-AERO)
+# beispiele/moo_glass_drag.moos — Live-Glass-Beweis (P016-O5-AERO)
 #
 # Eine Glass-Karte laesst sich mit der Maus verschieben. Bei jedem
 # Drag-Schritt wird die Karte per uim_effekt_vorschau_zeichnen NEU

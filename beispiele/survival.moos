@@ -1,19 +1,19 @@
 # ============================================================
-# survival.moo — Crafting + Überleben in prozeduraler Welt
+# survival.moos — Crafting + Überleben in prozeduraler Welt
 #
 # ZIEL: Überlebe 3 Nächte! Sammle tagsüber Holz/Stein/Nahrung,
 #       crafte Werkzeuge, verschanze dich nachts hinter Mauern.
 #
-# Start: moo-compiler run beispiele/survival.moo
+# Start: moo-compiler run beispiele/survival.moos
 #
 # Steuerung: WASD=Bewegen, Leertaste=Abbauen/Angriff, E=Craften,
 #            M+Leertaste=Mauer bauen, 1/2/3=Werkzeug,
 #            R=Neustart, Escape=Beenden
 #
 # Aufbau: 1. Pixelfont  2. Zustands-Dict S (Globals-Shadowing!
-#   siehe zelda.moo — hier lieferte rng() konstante Werte)
+#   siehe zelda.moos — hier lieferte rng() konstante Werte)
 #   3. Prozedurale Welt (Noise)  4. spiel_schritt(inp) — headless
-#   testbar (survival_selftest.moo)  5. Zeichnen  6. Loop
+#   testbar (survival_selftest.moos)  5. Zeichnen  6. Loop
 #   (Env-Guard SURVIVAL_SELFTEST)
 # ============================================================
 

@@ -2,7 +2,7 @@
 # sp-smoke.sh — P012-A4: Stack-Protector-Fail-Smoke (Canary -> Kernel-Panic).
 # ============================================================================
 # PHASEN
-#   [1/3] Build: beispiele/kernel/stackprot_test.moo via Kernel-Pipeline
+#   [1/3] Build: beispiele/kernel/stackprot_test.moos via Kernel-Pipeline
 #   [2/3] Tooling-Check (qemu-system-x86_64 / grub-mkrescue / xorriso)
 #         -> fehlend: TRANSPARENTER SKIP, Exit 0 (Projekt-Konvention).
 #   [3/3] QEMU-Boot (GRUB-ISO): asserts auf seriell
@@ -20,7 +20,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MOO_BIN="${MOO_BIN:-$ROOT/compiler/target/release/moo-compiler}"
-KERNEL_SRC="$ROOT/beispiele/kernel/stackprot_test.moo"
+KERNEL_SRC="$ROOT/beispiele/kernel/stackprot_test.moos"
 
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo_sp_smoke.XXXXXX")"
 trap 'rm -rf "$OUT"' EXIT

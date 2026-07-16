@@ -1,5 +1,5 @@
 # ============================================================
-# stdlib/ui_liste.moo — Convenience-Wrapper fuer ListView-Erweiterungen
+# stdlib/ui_liste.moos — Convenience-Wrapper fuer ListView-Erweiterungen
 #
 # Die 6 neuen Bridge-Funktionen sind bereits als C-Builtins
 # im Runtime verfuegbar (commit d71ef86). Dieses Modul bietet

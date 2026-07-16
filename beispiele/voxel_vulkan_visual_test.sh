@@ -7,8 +7,8 @@
 #   1. Praeflight: Display (Wayland/X11) + echte Vulkan-GPU vorhanden?
 #      -> wenn NICHT: sauberer SKIP (Exit 0) mit Diagnose. (CI-Fallback;
 #         auf einem echten Arbeitsplatz mit GPU laeuft der Test ECHT.)
-#   2. gl33-Referenzlauf (voxel_sandbox_selftest.moo) -> _before/_after.
-#   3. echter Vulkan-Lauf (voxel_sandbox_selftest_vulkan.moo,
+#   2. gl33-Referenzlauf (voxel_sandbox_selftest.moos) -> _before/_after.
+#   3. echter Vulkan-Lauf (voxel_sandbox_selftest_vulkan.moos,
 #      MOO_3D_BACKEND=vulkan) -> /tmp/voxel_vulkan_before/after.bmp.
 #      stderr wird gesichert und auf Vulkan-Validation-Errors geprueft.
 #   4. Pixel-Validierung beider Backends (non-blank, Farbanzahl-Schwelle)
@@ -59,7 +59,7 @@ echo "[vk-visual] Display: DISPLAY='${DISPLAY:-}' WAYLAND_DISPLAY='${WAYLAND_DIS
 # --- 2. gl33-Referenzlauf -------------------------------------------
 echo "[vk-visual] === gl33-Referenzlauf ==="
 rm -f "$GL33_BEFORE" "$GL33_AFTER" "$GL33_REF_BEFORE"
-if ! env MOO_3D_BACKEND=gl33 "$COMPILER" run "$ROOT/beispiele/voxel_sandbox_selftest.moo" 2>&1 | grep -v '^warning:'; then
+if ! env MOO_3D_BACKEND=gl33 "$COMPILER" run "$ROOT/beispiele/voxel_sandbox_selftest.moos" 2>&1 | grep -v '^warning:'; then
     fail "gl33-Selftest-Lauf fehlgeschlagen"
 fi
 [ -s "$GL33_BEFORE" ] || fail "gl33: kein before-Screenshot"
@@ -68,7 +68,7 @@ cp "$GL33_BEFORE" "$GL33_REF_BEFORE"
 # --- 3. echter Vulkan-Lauf ------------------------------------------
 echo "[vk-visual] === Vulkan-Lauf (MOO_3D_BACKEND=vulkan) ==="
 rm -f "$VK_BEFORE" "$VK_AFTER" "$VK_STDERR"
-env MOO_3D_BACKEND=vulkan "$COMPILER" run "$ROOT/beispiele/voxel_sandbox_selftest_vulkan.moo" 2>"$VK_STDERR" | grep -v '^warning:'
+env MOO_3D_BACKEND=vulkan "$COMPILER" run "$ROOT/beispiele/voxel_sandbox_selftest_vulkan.moos" 2>"$VK_STDERR" | grep -v '^warning:'
 [ -s "$VK_BEFORE" ] || fail "Vulkan: kein before-Screenshot (blank/Crash?) — siehe $VK_STDERR"
 [ -s "$VK_AFTER" ]  || fail "Vulkan: kein after-Screenshot — siehe $VK_STDERR"
 

@@ -1,5 +1,5 @@
 # ============================================================
-# survival_selftest.moo — Gameplay-Selftest für survival.moo
+# survival_selftest.moos — Gameplay-Selftest für survival.moos
 #
 # White-Box über S (prozedurale Welt): Tiles/Monster werden gezielt
 # platziert, Zeit wird vorgespult. Geprüft: Abbauen, Crafting,
@@ -8,7 +8,7 @@
 #
 # Start:
 #   SURVIVAL_SELFTEST=1 xvfb-run -a -s "-screen 0 800x600x24" \
-#     ./compiler/target/release/moo-compiler run beispiele/survival_selftest.moo
+#     ./compiler/target/release/moo-compiler run beispiele/survival_selftest.moos
 # ============================================================
 
 importiere survival

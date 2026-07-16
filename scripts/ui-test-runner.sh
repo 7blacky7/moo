@@ -76,7 +76,7 @@ echo "[runner] DISPLAY=${DISPLAY:-native} BACKEND=$MOO_UI_BACKEND COMPILER=${COM
 
 run_one_test() {
     local name="$1"
-    local moo_file="beispiele/tests/ui_${name}_test.moo"
+    local moo_file="beispiele/tests/ui_${name}_test.moos"
     local snap_dir="$SNAP_ROOT/$name"
     local log="$snap_dir/run.log"
 

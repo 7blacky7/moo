@@ -2,7 +2,7 @@
 # moo Tower Defense — Klassisches Turm-Verteidigungsspiel
 #
 # Kompilieren + Starten:
-#   moo-compiler compile beispiele/tower_defense.moo -o beispiele/tower_defense
+#   moo-compiler compile beispiele/tower_defense.moos -o beispiele/tower_defense
 #   ./beispiele/tower_defense
 #
 # Bedienung:

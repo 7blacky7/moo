@@ -50,7 +50,7 @@ uv sync
 
 ## Erstes Programm
 
-Erstelle eine Datei `hallo.moo`:
+Erstelle eine Datei `hallo.moos`:
 
 ```
 zeige "Hallo Welt!"
@@ -59,7 +59,7 @@ zeige "Hallo Welt!"
 Ausführen:
 
 ```bash
-moo run hallo.moo
+moo run hallo.moos
 ```
 
 Ausgabe:
@@ -921,23 +921,23 @@ Die komplette Referenz aller Schlüsselwörter:
 
 ```bash
 # Programm ausführen (Transpiler — über Python)
-moo run datei.moo
+moo run datei.moos
 
 # Nach Python übersetzen
-moo build datei.moo -t python
+moo build datei.moos -t python
 
 # Nach JavaScript übersetzen
-moo build datei.moo -t javascript
+moo build datei.moos -t javascript
 
 # In Datei speichern
-moo build datei.moo -t python -o ausgabe.py
-moo build datei.moo -t javascript -o ausgabe.js
+moo build datei.moos -t python -o ausgabe.py
+moo build datei.moos -t javascript -o ausgabe.js
 
 # Nativer Compiler — direkt ausführen
-moo-compiler run datei.moo
+moo-compiler run datei.moos
 
 # Nativer Compiler — native Binary erzeugen
-moo-compiler compile datei.moo
+moo-compiler compile datei.moos
 ```
 
 ---
@@ -958,7 +958,7 @@ Neben dem Transpiler (der moo-Code nach Python oder JavaScript übersetzt) gibt 
 ### Direkt ausführen
 
 ```bash
-moo-compiler run hallo.moo
+moo-compiler run hallo.moos
 ```
 
 Kompiliert und führt das Programm in einem Schritt aus. Praktisch für die Entwicklung.
@@ -966,7 +966,7 @@ Kompiliert und führt das Programm in einem Schritt aus. Praktisch für die Entw
 ### Binary erzeugen
 
 ```bash
-moo-compiler compile hallo.moo
+moo-compiler compile hallo.moos
 ```
 
 Erzeugt eine eigenständige Binary-Datei, die ohne moo ausgeführt werden kann:
@@ -1132,7 +1132,7 @@ solange i < 400:
 Genau das macht `trainiere` intern — plus Mischen und Batches. Es gibt
 auch `schicht_dropout`, `schicht_layernorm`, `schicht_embedding`,
 `kreuzentropie` und `optimierer_adamw`, wenn du tiefer einsteigen willst.
-Schau dir `beispiele/ki_xor.moo` (14 Zeilen) und `beispiele/neuralnet.moo`
+Schau dir `beispiele/ki_xor.moos` (14 Zeilen) und `beispiele/neuralnet.moos`
 (dasselbe komplett von Hand, 321 Zeilen) an — der Unterschied ist der
 ganze Punkt.
 
@@ -1164,7 +1164,7 @@ Ableitungen fließen also durch beide Wege:
 setze x auf x + vorwaerts([norm, attention], x)   # Residual!
 ```
 
-Das komplette Beispiel ist `beispiele/ki_sprachmodell.moo`: ein
+Das komplette Beispiel ist `beispiele/ki_sprachmodell.moos`: ein
 Mini-Transformer (2 Blöcke, ~120.000 Parameter) lernt auf echten
 Grimm-Märchen (`./skripte/maerchen_download.sh` holt den Text), das
 nächste Zeichen vorherzusagen. Nach ~90 Sekunden CPU-Training wird aus
@@ -1208,7 +1208,7 @@ sind 0 bis 60000 ms. Fehler unterscheiden Timeout, Belegt/Berechtigung,
 nicht unterstützte Formate, Disconnect/BROKEN, nicht reparierbaren
 XRUN/Suspend und bereits geschlossene Handles. Ein Audio-Timeout liefert
 niemals einen still verkürzten Tensor. Vollständige Beispiele:
-`beispiele/ki_kamera_live.moo` und `beispiele/ki_mikro_spektrum.moo`.
+`beispiele/ki_kamera_live.moos` und `beispiele/ki_mikro_spektrum.moos`.
 Das zusätzliche privilegierte Integrationsgate
 `compiler/runtime/tests/run_capture_loopback.sh` verwendet ein echtes
 `v4l2loopback`-Gerät plus `snd-aloop`; ohne diese Runner-Voraussetzungen

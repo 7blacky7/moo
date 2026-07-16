@@ -1,11 +1,11 @@
 # ============================================================
-# siedler3_selftest.moo — Referenz-Selftest 3D-Welt (Plan-008 A4)
+# siedler3_selftest.moos — Referenz-Selftest 3D-Welt (Plan-008 A4)
 #
 # Gleiches Schema wie die 2D/Voxel-Selftests:
 #   starten -> test_sim_*-Eingaben -> Zustands-/Pixel-Asserts
 #   (test_pixel) -> test_screenshot -> sauberer Exit.
 #
-# Getestetes Spiel: siedler3.moo (Hybrid-Fenster fenster_unified, iso-
+# Getestetes Spiel: siedler3.moos (Hybrid-Fenster fenster_unified, iso-
 # Terrain via zeichne_rechteck_z + raum_*-Kamera-Bridge auf gl33). Der
 # Selftest baut eine deterministische Mini-Szene mit denselben Render-
 # Bausteinen (Himmel via hybrid_löschen, iso-Tiles via zeichne_rechteck_z,

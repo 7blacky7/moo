@@ -1,7 +1,7 @@
 # ============================================================
 # moo Markdown → PDF Converter
 #
-# Kompilieren: moo-compiler compile md_to_pdf.moo -o md_to_pdf
+# Kompilieren: moo-compiler compile md_to_pdf.moos -o md_to_pdf
 # Starten:     ./md_to_pdf
 #
 # Liest ein Markdown-Subset (Headings, Listen, Absaetze, Inline

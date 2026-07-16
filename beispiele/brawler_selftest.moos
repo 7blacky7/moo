@@ -1,5 +1,5 @@
 # ============================================================
-# brawler_selftest.moo — Gameplay-Selftest für brawler.moo
+# brawler_selftest.moos — Gameplay-Selftest für brawler.moos
 #
 # Prüft: Wellen spawnen wirklich Gegner (Regression für den alten
 # gegner_count-Shadowing-Bug, durch den NIE Gegner erschienen),
@@ -9,7 +9,7 @@
 #
 # Start:
 #   BRAWLER_SELFTEST=1 xvfb-run -a -s "-screen 0 800x600x24" \
-#     ./compiler/target/release/moo-compiler run beispiele/brawler_selftest.moo
+#     ./compiler/target/release/moo-compiler run beispiele/brawler_selftest.moos
 # ============================================================
 
 importiere brawler

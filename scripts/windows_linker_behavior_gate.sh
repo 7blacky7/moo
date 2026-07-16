@@ -20,7 +20,7 @@ required=(
   compiler/tests/windows_linker_behavior_fixtures.ps1
   compiler/tests/windows_linker_fixture_selftest.ps1
   compiler/tests/windows_linker_production_gate.ps1
-  beispiele/tests/ui_moo_import_link_test.moo
+  beispiele/tests/ui_moo_import_link_test.moos
 )
 for optional in Cargo.toml Cargo.lock; do [[ ! -e "$ROOT/$optional" || ( -f "$ROOT/$optional" && ! -L "$ROOT/$optional" ) ]] || infra ROOT_CARGO_TYPE; [[ ! -f "$ROOT/$optional" ]] || required+=("$optional"); done
 for p in "${required[@]}"; do [[ -f "$ROOT/$p" && ! -L "$ROOT/$p" ]] || infra REQUIRED_SOURCE; done
@@ -202,7 +202,7 @@ try{
   $buildRoot=Join-Path $release 'build';foreach ($d in Get-ChildItem -LiteralPath $buildRoot -Directory -Force){if ($d.Name -like 'moo-compiler-*'){
     if ($d.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'RUNTIME_REPARSE'};$p=Join-Path $d.FullName 'out\moo_runtime.lib';if (Test-Path -LiteralPath $p -PathType Leaf){$candidates.Add($p)}
   }};if ($candidates.Count -ne 1 -or -not (Regular $candidates[0])){throw 'RUNTIME_COUNT'};$runtime=[IO.Path]::GetFullPath($candidates[0])
-  $runner=Join-Path $source 'compiler\tests\windows_linker_production_gate.ps1';$main=Join-Path $source 'beispiele\tests\ui_moo_import_link_test.moo';$production=Join-Path $evidence 'production-evidence.json'
+  $runner=Join-Path $source 'compiler\tests\windows_linker_production_gate.ps1';$main=Join-Path $source 'beispiele\tests\ui_moo_import_link_test.moos';$production=Join-Path $evidence 'production-evidence.json'
   $gateTimeout=[int][Math]::Min([long][int]::MaxValue,([long]$CaseTimeoutMs*5))
   $gateArgs=@(
     '-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$runner

@@ -3,7 +3,7 @@
 # ============================================================================
 # PHASEN
 #   [1/4] Build: One-Shot-Kernel-Pipeline (P010-C2)
-#         moo-compiler compile <kernel.moo> --no-stdlib --target x86_64-bare
+#         moo-compiler compile <kernel.moos> --no-stdlib --target x86_64-bare
 #                              --kernel -o hallo_kern.elf
 #   [2/4] nm-Gate: KEINE undefined-Symbole, KEINE hosted-Symbole
 #         (malloc/free/printf/puts/calloc/realloc/moo_string_new/moo_alloc,
@@ -26,8 +26,8 @@
 #     Beweis: das Final-Gate verlangt den ECHTEN QEMU-Boot mit beiden Markern.
 #
 # NUTZUNG
-#   scripts/kernel-smoke.sh [pfad/zur/kernel.moo]
-#   (Default: beispiele/kernel/hallo_kern.moo)
+#   scripts/kernel-smoke.sh [pfad/zur/kernel.moos]
+#   (Default: beispiele/kernel/hallo_kern.moos)
 #   MOO_BIN=... ueberschreibt den Compiler-Pfad.
 #
 # EXIT-CODES: 0 = alle Phasen gruen ODER QEMU sauber geskippt; 1 = Fehler.
@@ -38,7 +38,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MOO_BIN="${MOO_BIN:-$ROOT/compiler/target/release/moo-compiler}"
-KERNEL_SRC="${1:-$ROOT/beispiele/kernel/hallo_kern.moo}"
+KERNEL_SRC="${1:-$ROOT/beispiele/kernel/hallo_kern.moos}"
 
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo_kernel_smoke.XXXXXX")"
 trap 'rm -rf "$OUT"' EXIT

@@ -6,11 +6,11 @@ Automatisierte visuelle Tests fuer die bestehenden UI-Demos.
 
 | Test                      | Fokus                                                   |
 |---------------------------|---------------------------------------------------------|
-| `ui_layout_test.moo`      | Layout (Spalte/Zeile, Padding, Abstand, Relayout)       |
-| `ui_table_test.moo`       | ListView (sortieren, Zelle setzen, Zeile entfernen)     |
-| `ui_binding_test.moo`     | Eingabe + Button-Callback (text_setze, klick_id)        |
-| `ui_shortcuts_test.moo`   | Aktionen + Tastenkombinationen (Ctrl+S, Escape)         |
-| `ui_canvas_test.moo`      | Leinwand + on_maus-Callback (klick_xy)                  |
+| `ui_layout_test.moos`      | Layout (Spalte/Zeile, Padding, Abstand, Relayout)       |
+| `ui_table_test.moos`       | ListView (sortieren, Zelle setzen, Zeile entfernen)     |
+| `ui_binding_test.moos`     | Eingabe + Button-Callback (text_setze, klick_id)        |
+| `ui_shortcuts_test.moos`   | Aktionen + Tastenkombinationen (Ctrl+S, Escape)         |
+| `ui_canvas_test.moos`      | Leinwand + on_maus-Callback (klick_xy)                  |
 
 Jeder Test nutzt die P3-Automation-Wrapper (`ui_test_sequenz`, `ui_test_frame`)
 und schreibt **PNG + JSON-Sidecar** pro Frame in `beispiele/snapshots/<name>/`.

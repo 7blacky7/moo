@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# adventure_selftest.sh — Gameplay-Selftest fuer adventure.moo
+# adventure_selftest.sh — Gameplay-Selftest fuer adventure.moos
 #
 # Spielt das Text-Adventure headless per deterministischer
 # Befehlssequenz bis zum SIEG durch (Konsolen-Spiel => stdin-Pipe
@@ -38,7 +38,7 @@ OUT=$(printf '%s\n' \
   "greife_an drache" \
   "nimm krone" \
   "n" \
-  | timeout 120 "$MOO" run beispiele/adventure.moo 2>&1)
+  | timeout 120 "$MOO" run beispiele/adventure.moos 2>&1)
 
 fehler=0
 pruefe() {

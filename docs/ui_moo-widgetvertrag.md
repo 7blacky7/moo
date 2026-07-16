@@ -1,6 +1,6 @@
 # ui_moo-Widgetvertrag v1
 
-Status: P016-F1. Dieses Dokument und `docs/ui_moo-backendvertrag.md` sind kanonisch; `docs/ui_moo.md` und `docs/ui_moo-referenz.md` bleiben bis P016-D1 historische UIMOO-7-Artefakte. Der Backendvertrag steht in `docs/ui_moo-backendvertrag.md`. Dieses Dokument beschreibt die plattformneutrale retained-mode Schicht in `stdlib/ui_moo.moo`.
+Status: P016-F1. Dieses Dokument und `docs/ui_moo-backendvertrag.md` sind kanonisch; `docs/ui_moo.md` und `docs/ui_moo-referenz.md` bleiben bis P016-D1 historische UIMOO-7-Artefakte. Der Backendvertrag steht in `docs/ui_moo-backendvertrag.md`. Dieses Dokument beschreibt die plattformneutrale retained-mode Schicht in `stdlib/ui_moo.moos`.
 
 ## Baum, Koordinaten und Z-Order
 
@@ -46,7 +46,7 @@ Das Leinwand- und Mock-Backend melden `clip=true`. Das vorhandene Frame-/Spielba
 
 ## Deterministisches Gate
 
-`beispiele/tests/ui_moo_contract_test.moo` prüft ohne Fenster oder Desktop-Toolkit:
+`beispiele/tests/ui_moo_contract_test.moos` prüft ohne Fenster oder Desktop-Toolkit:
 
 - verschachtelte Offsets, Suche, Z-Order und Disabled-Blocker,
 - logisches Clipping, Rad und draggable Scrollbar,

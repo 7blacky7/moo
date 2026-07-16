@@ -1,5 +1,5 @@
 # ============================================================
-# ui_binding_demo.moo — Showcase fuer stdlib/ui_bind (P4)
+# ui_binding_demo.moos — Showcase fuer stdlib/ui_bind (P4)
 #
 # Zeigt BEIDE Wege parallel:
 #   1) Deklarativ via ui_bind_text / ui_bind_checked / ui_bind_wert
@@ -17,7 +17,7 @@
 #
 # Fuer Alive-Test:
 #   cargo run --release --manifest-path compiler/Cargo.toml -- \
-#       compile beispiele/ui_binding_demo.moo
+#       compile beispiele/ui_binding_demo.moos
 #   ./beispiele/ui_binding_demo
 # ============================================================
 

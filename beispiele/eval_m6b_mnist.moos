@@ -1,7 +1,7 @@
 # ============================================================
 # MNIST: Handgeschriebene Ziffern erkennen (Plan-014 E1-Gate).
 # Vorher einmal ausfuehren:  ./skripte/mnist_download.sh
-# Dann:  moo-compiler compile ki_mnist.moo -o ki_mnist && ./ki_mnist
+# Dann:  moo-compiler compile ki_mnist.moos -o ki_mnist && ./ki_mnist
 # Gate: >95% Test-Genauigkeit, <5min CPU, seed-reproduzierbar.
 # ============================================================
 

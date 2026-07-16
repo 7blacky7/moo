@@ -1,4 +1,4 @@
-# mathe.moo — Test-Modul
+# mathe.moos — Test-Modul
 funktion quadrat(x):
     gib_zurück x * x
 

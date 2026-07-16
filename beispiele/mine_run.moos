@@ -1,7 +1,7 @@
 # ============================================================
-# mine_run.moo — Mine Run (Dodge & Collect)
+# mine_run.moos — Mine Run (Dodge & Collect)
 #
-# Kompilieren: moo-compiler compile beispiele/mine_run.moo -o beispiele/mine_run
+# Kompilieren: moo-compiler compile beispiele/mine_run.moos -o beispiele/mine_run
 # Starten:     ./beispiele/mine_run
 #
 # Steuerung: Links/Rechts = Bewegen, Escape = Beenden

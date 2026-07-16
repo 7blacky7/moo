@@ -6,10 +6,10 @@
 # Erwartung: Prepared 1.2x schneller + SQL-Injection-Schutz inklusive.
 #
 # Reproduktion:
-#   { head -n 760 ../../beispiele/domain/db/postgres_client.moo;
-#     cat bench_prepared.moo;
-#   } > /tmp/bench_prepared_run.moo
-#   ./compiler/target/release/moo-compiler run /tmp/bench_prepared_run.moo
+#   { head -n 760 ../../beispiele/domain/db/postgres_client.moos;
+#     cat bench_prepared.moos;
+#   } > /tmp/bench_prepared_run.moos
+#   ./compiler/target/release/moo-compiler run /tmp/bench_prepared_run.moos
 
 setze db auf neu PgClient("192.168.50.65", 5433, "moo_scram", "moo_scram", "xjJ6FnbwV9KX43nnBT9PoOHTuJVw")
 db.verbinde()

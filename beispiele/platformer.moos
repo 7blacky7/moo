@@ -1,7 +1,7 @@
 # ============================================================
 # moo Platformer — Mario-Style Side-Scroller
 #
-# Kompilieren: moo-compiler compile beispiele/platformer.moo -o beispiele/platformer
+# Kompilieren: moo-compiler compile beispiele/platformer.moos -o beispiele/platformer
 # Starten:     ./beispiele/platformer
 #
 # Bedienung:

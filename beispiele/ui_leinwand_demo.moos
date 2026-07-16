@@ -1,5 +1,5 @@
 # ============================================================
-# ui_leinwand_demo.moo — Custom-Draw-Leinwand Smoke-Demo
+# ui_leinwand_demo.moos — Custom-Draw-Leinwand Smoke-Demo
 #
 # Zeigt die Zeichner-API aus Phase 5 (cairo/GDI/CoreGraphics).
 # Zeichnet Rechtecke, Kreise, Linien und Text auf eine 380x280-
@@ -7,7 +7,7 @@
 #
 # Kompilieren:
 #   cargo run --release --manifest-path compiler/Cargo.toml -- \
-#       compile beispiele/ui_leinwand_demo.moo
+#       compile beispiele/ui_leinwand_demo.moos
 # Starten:
 #   ./beispiele/ui_leinwand_demo
 # ============================================================

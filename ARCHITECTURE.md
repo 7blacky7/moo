@@ -78,7 +78,7 @@ Alles was **eine Domäne** (Web, DB, Grafik, 3D, …) in die Runtime bringt. Jed
 ## Wer spricht mit wem?
 
 ```
-   User-Quellcode (*.moo)
+   User-Quellcode (*.moos)
          │
          ▼
   compiler/src/lexer.rs ──► tokens ──► compiler/src/parser.rs ──► AST
@@ -99,7 +99,7 @@ Parallel dazu: die Python-Toolchain (`src/moo/`) teilt sich die **Sprachoberflä
 
 Siehe `spec/public_vs_internal_api.md`. Grob:
 
-- **Public Moo-API** (DE/EN) ist das, was Anwender in `.moo`-Code aufrufen sollen. Stabil, dokumentiert in `docs/referenz/`.
+- **Public Moo-API** (DE/EN) ist das, was Anwender in `.moos`-Code aufrufen sollen. Stabil, dokumentiert in `docs/referenz/`.
 - **Compiler-/Binding-/Alias-Schicht** (`codegen.rs` + `runtime_bindings.rs`) — Implementation Detail, kann sich ändern.
 - **C-Runtime-Symbole** (`moo_*` in `.c`) — ABI-stabil für LLVM-Interop, aber nicht direkt Teil der Anwender-API.
 
@@ -113,7 +113,7 @@ Siehe `spec/public_vs_internal_api.md`. Grob:
 
 ## Phase-B-Umbau
 
-`spec/repo_cleanup_phase_b.md` beschreibt die kontrollierte Move-Sequenz. Stand 2026-04-14: **W1 + W2 + W3 durchgeführt** (40 Root-`test_*.moo` in `compiler/tests/` oder `scratch/`, 30 Beispiele in `beispiele/domain/{web,db,game,system}/` einsortiert, `.ll`-Artefakte gitignored). W4 = Abschluss. Laufender Stand in `spec/phase_b_progress.md`.
+`spec/repo_cleanup_phase_b.md` beschreibt die kontrollierte Move-Sequenz. Stand 2026-04-14: **W1 + W2 + W3 durchgeführt** (40 Root-`test_*.moos` in `compiler/tests/` oder `scratch/`, 30 Beispiele in `beispiele/domain/{web,db,game,system}/` einsortiert, `.ll`-Artefakte gitignored). W4 = Abschluss. Laufender Stand in `spec/phase_b_progress.md`.
 
 ## Weitere Spec-Dokumente
 

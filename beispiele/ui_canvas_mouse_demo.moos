@@ -1,5 +1,5 @@
 # ============================================================
-# ui_canvas_mouse_demo.moo — Rechteck-per-Maus-ziehen Demo
+# ui_canvas_mouse_demo.moos — Rechteck-per-Maus-ziehen Demo
 #
 # Demonstriert die P5-Canvas-Event-API:
 #   ui_leinwand_on_maus(canvas, callback)       — Mausklick
@@ -21,7 +21,7 @@
 #
 # Kompilieren:
 #   cargo run --release --manifest-path compiler/Cargo.toml -- \
-#       compile beispiele/ui_canvas_mouse_demo.moo
+#       compile beispiele/ui_canvas_mouse_demo.moos
 # Starten:
 #   ./beispiele/ui_canvas_mouse_demo
 # Linux/Xvfb-Test:

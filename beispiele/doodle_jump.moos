@@ -1,7 +1,7 @@
 # ============================================================
-# doodle_jump.moo — Vertikaler Endlos-Platformer
+# doodle_jump.moos — Vertikaler Endlos-Platformer
 #
-# Kompilieren: moo-compiler compile beispiele/doodle_jump.moo -o beispiele/doodle_jump
+# Kompilieren: moo-compiler compile beispiele/doodle_jump.moos -o beispiele/doodle_jump
 # Starten:     ./beispiele/doodle_jump
 #
 # Steuerung: Links/Rechts oder A/D = Bewegen, Escape = Beenden

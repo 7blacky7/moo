@@ -18,7 +18,7 @@
  *
  * Diese Datei wird NUR vom Vollruntime-Build (compiler/build.rs) mitgebaut,
  * NICHT von den Standalone-GPU-Skripten -- dort ist gpu_statistik() ueber
- * die volle moo-Sprache ohnehin nicht erreichbar (kein .moo-Programm-Kontext).
+ * die volle moo-Sprache ohnehin nicht erreichbar (kein .moos-Programm-Kontext).
  * Verhalten von moo_ki_gpu_statistik()/_reset() ist UNVERAENDERT: reiner
  * Wrapper um die branch-unabhaengigen moo_ki_gpu_telemetrie()/_reset() aus
  * moo_ki_gpu.c (funktionieren identisch mit und ohne MOO_HAS_VULKAN).

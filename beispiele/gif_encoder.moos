@@ -1,7 +1,7 @@
 # ============================================================
 # moo GIF89a-Encoder mit LZW und Animation
 #
-# Kompilieren: moo-compiler compile gif_encoder.moo -o gif_encoder
+# Kompilieren: moo-compiler compile gif_encoder.moos -o gif_encoder
 # Starten:     ./gif_encoder
 #
 # Erzeugt:

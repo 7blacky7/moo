@@ -1,5 +1,5 @@
 # ============================================================
-# stdlib/ui_moo.moo — kompatibles Umbrella-Modul
+# stdlib/ui_moo.moos — kompatibles Umbrella-Modul
 #
 # Schichten:
 #   ui_moo_kern    retained Widget-/Inputkern, vollständig toolkitfrei

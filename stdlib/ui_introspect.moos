@@ -1,5 +1,5 @@
 # ============================================================
-# stdlib/ui_introspect.moo — Introspection-Wrapper (Plan-004 P1)
+# stdlib/ui_introspect.moos — Introspection-Wrapper (Plan-004 P1)
 #
 # Komfort-Hilfen rund um die nativen Introspection-Builtins
 # aus der Bridge (siehe moo_ui.h):

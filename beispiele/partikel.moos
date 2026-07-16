@@ -1,7 +1,7 @@
 # ============================================================
 # moo Partikel-System — 1000+ Partikel mit mehreren Emittern
 #
-# Kompilieren: moo-compiler compile partikel.moo -o partikel
+# Kompilieren: moo-compiler compile partikel.moos -o partikel
 # Starten:     ./partikel
 #
 # Bedienung:

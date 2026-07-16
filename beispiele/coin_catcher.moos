@@ -1,7 +1,7 @@
 # ============================================================
-# coin_catcher.moo — Coin Catcher
+# coin_catcher.moos — Coin Catcher
 #
-# Kompilieren: moo-compiler compile beispiele/coin_catcher.moo -o beispiele/coin_catcher
+# Kompilieren: moo-compiler compile beispiele/coin_catcher.moos -o beispiele/coin_catcher
 # Starten:     ./beispiele/coin_catcher
 #
 # Steuerung: Maus bewegt Korb, Escape=Beenden

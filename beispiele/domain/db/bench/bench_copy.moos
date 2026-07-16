@@ -7,10 +7,10 @@
 #   - ASan:   10/10 grün, ~7-8 ms (mit ASan-Overhead)
 #
 # Reproduktion:
-#   { head -n 592 ../../beispiele/domain/db/postgres_client.moo;
-#     cat bench_copy.moo;
-#   } > /tmp/bench_copy_run.moo
-#   ./compiler/target/release/moo-compiler run /tmp/bench_copy_run.moo
+#   { head -n 592 ../../beispiele/domain/db/postgres_client.moos;
+#     cat bench_copy.moos;
+#   } > /tmp/bench_copy_run.moos
+#   ./compiler/target/release/moo-compiler run /tmp/bench_copy_run.moos
 
 setze HOST auf "192.168.50.65"
 setze PORT auf 5433
