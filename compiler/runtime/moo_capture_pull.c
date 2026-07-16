@@ -207,6 +207,15 @@ MooValue moo_capture_microphone_read_native(MooMikro* microphone,int32_t samples
       if(r!=MOO_PULL_OK){moo_tensor_free(t);microphone->state=MOO_CAPTURE_BROKEN;moo_capture_microphone_close_native(microphone);return camera_fail(error[0]?error:"mikro_lesen: Geraet getrennt");}
       MooPullAudioPacket p={0};r=pull_ops()->microphone_next(n->session,&p,error,sizeof error);
       if(r==MOO_PULL_EMPTY)continue;
+      if(r==MOO_PULL_RECOVERABLE){
+        /* z.B. WASAPI-Glitch mid-stream: Paket wurde vom System-Layer
+         * verworfen — Stream wiederherstellen und neu sammeln. */
+        if(++recoveries>MOO_PULL_CAPTURE_MAX_RECOVERIES||pull_ops()->microphone_recover(n->session,error,sizeof error)!=MOO_PULL_OK){
+          moo_tensor_free(t);microphone->state=MOO_CAPTURE_BROKEN;moo_capture_microphone_close_native(microphone);
+          return camera_fail("mikro_lesen: Mikrofon-Stream nicht wiederherstellbar");
+        }
+        filled=0;continue;
+      }
       if(r!=MOO_PULL_OK||!p.samples||p.frames<1||p.channels<1||p.channels>2){
         if (p.token) pull_ops()->microphone_release(&p);
         moo_tensor_free(t);

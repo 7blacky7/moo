@@ -17,6 +17,10 @@
 // diese Core-Audio-GUIDs nicht immer. Lokale Definitionen sind link-sicher:
 // Wenn uuid.lib sie anbietet, wird das entsprechende Archivobjekt nicht mehr
 // eingezogen; andernfalls liefert dieses Translation Unit die Symbole selbst.
+// AUSNAHME mingw-w64 >= 14: mmdeviceapi.h/audioclient.h definieren die GUIDs
+// selbst (initguid.h ist oben eingebunden) — lokale Kopien waeren dort eine
+// Redefinition und brechen -Werror.
+#if !defined(__MINGW64_VERSION_MAJOR) || __MINGW64_VERSION_MAJOR < 14
 DEFINE_GUID(CLSID_MMDeviceEnumerator,
             0xbcde0395, 0xe52f, 0x467c, 0x8e, 0x3d, 0xc4, 0x57, 0x92, 0x91, 0x69, 0x2e);
 DEFINE_GUID(IID_IMMDeviceEnumerator,
@@ -25,6 +29,7 @@ DEFINE_GUID(IID_IAudioClient,
             0x1cb9ad4c, 0xdbfa, 0x4c32, 0xb1, 0x78, 0xc2, 0xf5, 0x68, 0xa7, 0x03, 0xb2);
 DEFINE_GUID(IID_IAudioCaptureClient,
             0xc8adbd64, 0xe71e, 0x48a0, 0xa4, 0xde, 0x18, 0x5c, 0x39, 0x5c, 0xd3, 0x17);
+#endif
 
 #include <stdlib.h>
 #include <string.h>
@@ -296,6 +301,7 @@ static void system_camera_close(void* session){
 typedef struct {
     IMMDeviceEnumerator* enumerator;IMMDevice* device;IAudioClient* client;
     IAudioCaptureClient* capture;HANDLE event;int32_t channels;
+    bool first_packet;
 } WasapiMic;
 static MooPullResult system_microphone_open(const char* id,int32_t rate,int32_t channels,
  void**session,int32_t*ar,int32_t*ac,int32_t*period,int32_t*buffer,char*error,size_t cap){
@@ -321,7 +327,7 @@ static MooPullResult system_microphone_open(const char* id,int32_t rate,int32_t 
       if(n->enumerator)IMMDeviceEnumerator_Release(n->enumerator);
       if(n->event)CloseHandle(n->event);
       free(n);return hr==AUDCLNT_E_DEVICE_INVALIDATED?MOO_PULL_DISCONNECTED:MOO_PULL_ERROR;}
-    n->channels=channels;*session=n;*ar=rate;*ac=channels;*buffer=(int32_t)frames;*period=frames>4?(int32_t)(frames/4):1;return MOO_PULL_OK;
+    n->channels=channels;n->first_packet=true;*session=n;*ar=rate;*ac=channels;*buffer=(int32_t)frames;*period=frames>4?(int32_t)(frames/4):1;return MOO_PULL_OK;
 }
 static MooPullResult system_microphone_wait(void*session,int32_t timeout,char*error,size_t cap){
     WasapiMic*n=(WasapiMic*)session;DWORD r=WaitForSingleObject(n->event,(DWORD)timeout);
@@ -341,7 +347,12 @@ static MooPullResult system_microphone_next(void*session,MooPullAudioPacket*out,
     if(!(flags&AUDCLNT_BUFFERFLAGS_SILENT))memcpy(copy,data,count*sizeof(float));
     hr=IAudioCaptureClient_ReleaseBuffer(n->capture,frames);
     if(FAILED(hr)){free(copy);set_hr(error,cap,"mikro_lesen: ReleaseBuffer fehlgeschlagen",hr);return MOO_PULL_ERROR;}
-    if(flags&AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY){free(copy);return MOO_PULL_RECOVERABLE;}
+    /* WASAPI flaggt das erste Paket nach Start/Recovery regulaer als
+     * DATA_DISCONTINUITY (Luecke VOR dem Paket) — die Daten selbst sind
+     * gueltig. Nur Mid-Stream-Discontinuitaeten sind ein echter Glitch
+     * fuer den Recovery-Pfad. */
+    if(flags&AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY&&!n->first_packet){free(copy);return MOO_PULL_RECOVERABLE;}
+    n->first_packet=false;
     out->samples=copy;out->frames=(int32_t)frames;out->channels=n->channels;out->token=copy;out->flags=flags;return MOO_PULL_OK;
 }
 static void system_microphone_release(MooPullAudioPacket*p){free(p->token);memset(p,0,sizeof(*p));}
@@ -349,7 +360,7 @@ static MooPullResult system_microphone_recover(void*session,char*error,size_t ca
     WasapiMic*n=(WasapiMic*)session;HRESULT hr=IAudioClient_Stop(n->client);
     if(SUCCEEDED(hr))hr=IAudioClient_Reset(n->client);
     if(SUCCEEDED(hr))hr=IAudioClient_Start(n->client);
-    if(FAILED(hr)){set_hr(error,cap,"mikro_lesen: WASAPI-Recovery fehlgeschlagen",hr);return MOO_PULL_ERROR;}return MOO_PULL_OK;
+    if(FAILED(hr)){set_hr(error,cap,"mikro_lesen: WASAPI-Recovery fehlgeschlagen",hr);return MOO_PULL_ERROR;}n->first_packet=true;return MOO_PULL_OK;
 }
 static void system_microphone_close(void*session){
     WasapiMic*n=(WasapiMic*)session;if(!n)return;

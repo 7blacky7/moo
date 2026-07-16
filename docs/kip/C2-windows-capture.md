@@ -42,3 +42,28 @@ Der Vollmodus von `test_capture_windows_wine.c` (ohne `--init-only`) prüft
 Enumerierung und WASAPI-Open. Er gehört in echte Windows-CI und anschließend
 auf einen Rechner mit Kamera und Mikrofon. Erst dieses Hardware-Gate kann
 C2-WIN vollständig freigeben.
+
+## Natives Hardware-Gate (bestanden 2026-07-16)
+
+Auf der Win10-VM (19044, `pro@192.168.50.246`) mit durchgereichter Logitech
+BRIO 4K (UVC-Kamera + Mikrofon) nativ ausgeführt — MinGW-Cross-Build, SCP,
+SHA256-Abgleich, Lauf ohne Wine:
+
+- `c2win-smoke.exe`: `startup=OK`, `camera_enumerate total=1`,
+  `wasapi_open rate=48000 channels=1`.
+- `test_capture_windows_native_stream.c` (`c2win-stream.exe`): 3 Open/Close-
+  Zyklen mit je 30 Kameraframes (640x480@30, nonzero_ratio 1.00) und je
+  48000 WASAPI-Samples (avg_abs 0.003-0.006, echtes Mikrofonsignal),
+  `recoveries=0`, `RESULT=PASS`.
+
+Das Gate fand einen realen Bug, den Wine nie zeigte: WASAPI flaggt das erste
+Paket nach `Start`/Recovery als `DATA_DISCONTINUITY`. Alt-Verhalten verwarf
+das Paket als `MOO_PULL_RECOVERABLE` und `moo_capture_pull.c` behandelte
+`RECOVERABLE` aus `microphone_next` gar nicht (Handle → BROKEN): `mikro_lesen`
+schlug auf echter Hardware beim ersten Lesen immer fehl. Fix: erstes Paket
+wird ausgeliefert (`first_packet`-Flag, auch nach Recovery); Mid-Stream-
+Discontinuity bleibt `RECOVERABLE`, und der Pull-Core beherrscht den
+Recovery-Pfad jetzt auch für `microphone_next`.
+
+Bewusst offen: Application-Verifier-/TSan-artiges Race-Gate unter Last
+(AppVerifier ist auf der VM nicht installiert) und Hotplug/Disconnect-Smoke.
