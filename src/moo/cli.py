@@ -132,7 +132,7 @@ def cmd_doc(args: argparse.Namespace):
     all_entries: list[dict] = []
 
     if path.is_dir():
-        for moo_file in sorted(path.rglob("*.moo")):
+        for moo_file in sorted([*path.rglob("*.moos"), *path.rglob("*.moo")]):
             source = moo_file.read_text()
             entries = extract_docs(source, str(moo_file))
             all_entries.extend(entries)
@@ -157,12 +157,12 @@ def main():
     sub = ap.add_subparsers(dest="command")
 
     # moo run <file>
-    run_p = sub.add_parser("run", help="Eine .moo-Datei ausführen")
-    run_p.add_argument("file", help="Die .moo-Datei")
+    run_p = sub.add_parser("run", help="Eine .moos-Datei ausführen")
+    run_p.add_argument("file", help="Die .moos-Datei")
 
     # moo build <file>
-    build_p = sub.add_parser("build", help="Eine .moo-Datei transpilieren")
-    build_p.add_argument("file", help="Die .moo-Datei")
+    build_p = sub.add_parser("build", help="Eine .moos-Datei transpilieren")
+    build_p.add_argument("file", help="Die .moos-Datei")
     build_p.add_argument("-t", "--target", default="python", help="Zielsprache (python, javascript)")
     build_p.add_argument("-o", "--output", help="Ausgabedatei")
 
@@ -171,7 +171,7 @@ def main():
 
     # moo fmt <file>
     fmt_p = sub.add_parser("fmt", help="Code formatieren")
-    fmt_p.add_argument("file", help="Die .moo-Datei")
+    fmt_p.add_argument("file", help="Die .moos-Datei")
     fmt_p.add_argument("--check", action="store_true", help="Nur prüfen ob formatiert (Exit 1 wenn nicht)")
 
     # moo lsp
@@ -179,7 +179,7 @@ def main():
 
     # moo doc <file>
     doc_p = sub.add_parser("doc", help="API-Dokumentation generieren")
-    doc_p.add_argument("file", help="Die .moo-Datei (oder Verzeichnis)")
+    doc_p.add_argument("file", help="Die .moos-Datei (oder Verzeichnis)")
     doc_p.add_argument("-o", "--output", default="docs/api.md", help="Ausgabedatei (Standard: docs/api.md)")
 
     args = ap.parse_args()

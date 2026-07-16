@@ -94,7 +94,7 @@ MooValue moo_eval(MooValue code) {
 
     // Eindeutige Temp-Dateien pro Prozess
     char src_path[256], out_path[256], bin_path[256];
-    eval_tmp_path(src_path, sizeof(src_path), "moo_eval", pid_val, ".moo");
+    eval_tmp_path(src_path, sizeof(src_path), "moo_eval", pid_val, ".moos");
     eval_tmp_path(out_path, sizeof(out_path), "moo_eval", pid_val, ".txt");
     eval_tmp_path(bin_path, sizeof(bin_path), "moo_eval_bin", pid_val, "");
 

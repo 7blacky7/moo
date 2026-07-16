@@ -264,7 +264,8 @@ static const char* guess_content_type(const char* path) {
     if (strcmp(ext, ".woff2") == 0) return "font/woff2";
     if (strcmp(ext, ".txt") == 0) return "text/plain; charset=utf-8";
     if (strcmp(ext, ".xml") == 0) return "application/xml";
-    if (strcmp(ext, ".moo") == 0) return "text/plain; charset=utf-8";
+    if (strcmp(ext, ".moos") == 0) return "text/plain; charset=utf-8";
+    if (strcmp(ext, ".moo") == 0) return "text/plain; charset=utf-8";  /* Alt-Endung */
     return "application/octet-stream";
 }
 

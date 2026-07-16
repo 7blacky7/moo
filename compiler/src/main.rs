@@ -19,11 +19,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Eine .moo-Datei kompilieren und als native Binary erzeugen
+    /// Eine .moos-Datei kompilieren und als native Binary erzeugen
     Compile {
-        /// Die .moo-Quelldatei
+        /// Die .moos-Quelldatei
         file: PathBuf,
-        /// Ausgabedatei (Standard: Name ohne .moo)
+        /// Ausgabedatei (Standard: Name ohne .moos)
         #[arg(short, long)]
         output: Option<PathBuf>,
         /// Nur LLVM IR erzeugen (.ll)
@@ -57,9 +57,9 @@ enum Commands {
         #[arg(long)]
         board: Option<String>,
     },
-    /// Eine .moo-Datei kompilieren und sofort ausführen
+    /// Eine .moos-Datei kompilieren und sofort ausführen
     Run {
-        /// Die .moo-Quelldatei
+        /// Die .moos-Quelldatei
         file: PathBuf,
     },
     /// Interaktiver Modus (REPL)
@@ -121,7 +121,7 @@ fn main() {
             for b in boards::BOARDS {
                 println!("  {:<18} {} [target {}]", b.name, b.beschreibung, b.target);
             }
-            println!("\nVerwendung: moo-compiler compile datei.moo --target <name>");
+            println!("\nVerwendung: moo-compiler compile datei.moos --target <name>");
         }
         Commands::Paket { action } => {
             if let Err(e) = handle_paket(action) {
@@ -132,7 +132,7 @@ fn main() {
     }
 }
 
-/// Parst eine .moo-Datei zu einem AST
+/// Parst eine .moos-Datei zu einem AST
 fn parse_file(file: &PathBuf) -> Result<ast::Program, String> {
     let source = std::fs::read_to_string(file)
         .map_err(|e| format!("Datei '{}' lesen fehlgeschlagen: {e}", file.display()))?;
@@ -142,28 +142,32 @@ fn parse_file(file: &PathBuf) -> Result<ast::Program, String> {
     par.parse().map_err(|e| e.to_string())
 }
 
-/// Findet die .moo-Datei fuer ein Modul (relativ zum Import-Ort oder in packages)
+/// Findet die Quelldatei fuer ein Modul (relativ zum Import-Ort oder in packages).
+/// Endung: bevorzugt .moos (MooScript); .moo bleibt als Fallback lesbar.
+fn module_file(dir: &std::path::Path, name: &str) -> Option<PathBuf> {
+    for ext in ["moos", "moo"] {
+        let candidate = dir.join(format!("{name}.{ext}"));
+        if candidate.exists() { return Some(candidate); }
+    }
+    None
+}
+
 fn find_module(name: &str, dir: &std::path::Path) -> Option<PathBuf> {
     // Relativ zum aktuellen Verzeichnis
-    let local = dir.join(format!("{name}.moo"));
-    if local.exists() { return Some(local); }
+    if let Some(p) = module_file(dir, name) { return Some(p); }
     // In stdlib/ relativ zum aktuellen Verzeichnis
-    let stdlib = dir.join("stdlib").join(format!("{name}.moo"));
-    if stdlib.exists() { return Some(stdlib); }
+    if let Some(p) = module_file(&dir.join("stdlib"), name) { return Some(p); }
     // In stdlib/ relativ zum Compiler-Binary (fuer installierte stdlib)
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
-            let installed_stdlib = exe_dir.join("stdlib").join(format!("{name}.moo"));
-            if installed_stdlib.exists() { return Some(installed_stdlib); }
+            if let Some(p) = module_file(&exe_dir.join("stdlib"), name) { return Some(p); }
         }
     }
     // In stdlib/ relativ zum cwd (K4 Fix)
     let cwd = std::env::current_dir().unwrap_or_default();
-    let cwd_stdlib = cwd.join("stdlib").join(format!("{name}.moo"));
-    if cwd_stdlib.exists() { return Some(cwd_stdlib); }
-    // In ~/.moo/packages/<name>/<name>.moo
-    let pkg = packages_dir().join(name).join(format!("{name}.moo"));
-    if pkg.exists() { return Some(pkg); }
+    if let Some(p) = module_file(&cwd.join("stdlib"), name) { return Some(p); }
+    // In ~/.moo/packages/<name>/<name>.moos (bzw. .moo)
+    if let Some(p) = module_file(&packages_dir().join(name), name) { return Some(p); }
     None
 }
 
@@ -1330,7 +1334,7 @@ fn repl() {
 
         // Kompilieren und ausführen
         let tmp_dir = std::env::temp_dir();
-        let tmp_src = tmp_dir.join("moo_repl.moo");
+        let tmp_src = tmp_dir.join("moo_repl.moos");
         let tmp_bin = tmp_dir.join("moo_repl_bin");
 
         if std::fs::write(&tmp_src, &full_source).is_err() {
