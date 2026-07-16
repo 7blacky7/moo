@@ -134,6 +134,82 @@ static void put_le32(unsigned char* p, uint32_t v) {
     p[3] = (unsigned char)((v >> 24) & 0xFFu);
 }
 
+static uint32_t get_le32(const unsigned char* p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static uint16_t get_le16(const unsigned char* p) {
+    return (uint16_t)((uint32_t)p[0] | ((uint32_t)p[1] << 8));
+}
+
+/* BMP -> Frame (Gegenstueck zu test_frame_save_bmp). Unterstuetzt 24/32bpp
+ * unkomprimiert (BI_RGB), bottom-up (h>0) und top-down (h<0). Liefert
+ * MOO_FRAME oder nichts bei Datei-/Formatfehler (kein throw — Caller kann
+ * still auf Fallback gehen). */
+MooValue moo_frame_lade_bmp(MooValue pfad) {
+    if (pfad.tag != MOO_STRING) return moo_none();
+    FILE* fp = fopen(MV_STR(pfad)->chars, "rb");
+    if (!fp) return moo_none();
+    unsigned char hdr[54];
+    if (fread(hdr, 1, 54, fp) != 54u || hdr[0] != 'B' || hdr[1] != 'M') {
+        fclose(fp);
+        return moo_none();
+    }
+    uint32_t off = get_le32(hdr + 10);
+    int32_t w = (int32_t)get_le32(hdr + 18);
+    int32_t h_raw = (int32_t)get_le32(hdr + 22);
+    uint16_t bpp = get_le16(hdr + 28);
+    uint32_t comp = get_le32(hdr + 30);
+    bool top_down = h_raw < 0;
+    int32_t h = top_down ? -h_raw : h_raw;
+    /* comp 0 = BI_RGB; comp 3 (BI_BITFIELDS) nur bei 32bpp mit dem
+     * Standard-BGRA-Layout akzeptieren (so schreibt u.a. ImageMagick
+     * Alpha-BMPs als V4/V5) — Byte-Reihenfolge ist identisch zu BI_RGB-32. */
+    if (w <= 0 || h <= 0 || w > 16384 || h > 16384 ||
+        (comp != 0u && !(comp == 3u && bpp == 32u)) ||
+        (bpp != 24u && bpp != 32u) || off < 54u) {
+        fclose(fp);
+        return moo_none();
+    }
+    uint32_t src_px = (uint32_t)bpp / 8u;
+    uint32_t row_bytes = (uint32_t)w * src_px;
+    uint32_t row_padded = (row_bytes + 3u) & ~3u;
+    if (fseek(fp, (long)off, SEEK_SET) != 0) {
+        fclose(fp);
+        return moo_none();
+    }
+    uint8_t* pixels = (uint8_t*)malloc((size_t)w * (size_t)h * 4u);
+    unsigned char* row = (unsigned char*)malloc(row_padded);
+    if (!pixels || !row) {
+        free(pixels);
+        free(row);
+        fclose(fp);
+        return moo_none();
+    }
+    for (int32_t yy = 0; yy < h; ++yy) {
+        if (fread(row, 1, row_padded, fp) != row_padded) {
+            free(pixels);
+            free(row);
+            fclose(fp);
+            return moo_none();
+        }
+        int32_t dst_y = top_down ? yy : (h - 1 - yy);
+        uint8_t* dp = pixels + (size_t)dst_y * (size_t)w * 4u;
+        for (int32_t xx = 0; xx < w; ++xx) {
+            const unsigned char* sp = row + (size_t)xx * src_px;
+            dp[0] = sp[2];
+            dp[1] = sp[1];
+            dp[2] = sp[0];
+            dp[3] = (src_px == 4u) ? sp[3] : 255u;
+            dp += 4;
+        }
+    }
+    free(row);
+    fclose(fp);
+    return moo_frame_new_take(w, h, pixels);
+}
+
 MooValue moo_test_frame_save_bmp(MooValue frame, MooValue pfad) {
     if (frame.tag != MOO_FRAME) {
         moo_throw(moo_string_new("test_frame_save_bmp: erstes Argument ist kein Frame"));

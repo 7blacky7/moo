@@ -235,12 +235,87 @@ static void test_overlap_rejected(void) {
           "partial overlap mutated shared output storage");
 }
 
+static void test_seeded_sequence_determinism(void) {
+    uint32_t sequence;
+    for (sequence = 0u; sequence < 256u; ++sequence) {
+        MooCompRect full = {0, 0, 100, 100};
+        MooCompRect seed = {
+            (int32_t)(sequence % 37u),
+            (int32_t)((sequence * 7u) % 41u),
+            (int32_t)(1u + sequence % 4u),
+            (int32_t)(1u + (sequence / 4u) % 4u)
+        };
+        MooCompEffectDamageSurface surfaces[3] = {
+            backdrop(UINT64_C(1), (uint16_t)(sequence % 4u)),
+            backdrop(UINT64_C(2), (uint16_t)((sequence + 1u) % 5u)),
+            backdrop(UINT64_C(3), (uint16_t)((sequence + 2u) % 6u))
+        };
+        MooCompRect scratch_a[32];
+        MooCompRect scratch_b[32];
+        MooCompRect regions_a[32];
+        MooCompRect regions_b[32];
+        MooCompRect before_a[32];
+        MooCompRect before_b[32];
+        MooCompEffectDamageWorkspace workspace_a = {
+            scratch_a, 32u, 0u
+        };
+        MooCompEffectDamageWorkspace workspace_b = {
+            scratch_b, 32u, 0u
+        };
+        MooCompEffectDamageOutput output_a = {
+            regions_a, 32u, 0u, 0u, 0u
+        };
+        MooCompEffectDamageOutput output_b = {
+            regions_b, 32u, 0u, 0u, 0u
+        };
+        uint32_t region;
+        int same = 1;
+
+        memset(scratch_a, (int)(sequence & 0xffu), sizeof(scratch_a));
+        memset(scratch_b, (int)((~sequence) & 0xffu), sizeof(scratch_b));
+        memset(regions_a, 0x35, sizeof(regions_a));
+        memset(regions_b, 0xca, sizeof(regions_b));
+        memcpy(before_a, regions_a, sizeof(regions_a));
+        memcpy(before_b, regions_b, sizeof(regions_b));
+
+        CHECK(moo_comp_effect_damage_build(
+                  full, &seed, 1u, surfaces, 3u,
+                  &workspace_a, &output_a) == MOO_COMP_OK &&
+              moo_comp_effect_damage_build(
+                  full, &seed, 1u, surfaces, 3u,
+                  &workspace_b, &output_b) == MOO_COMP_OK,
+              "seeded damage sequence build failed");
+        CHECK(output_a.count == output_b.count &&
+                  output_a.full_damage == output_b.full_damage,
+              "seeded damage sequence shape depends on prior bytes");
+        for (region = 0u; region < output_a.count; ++region) {
+            if (!rect_eq(output_a.regions[region],
+                         output_b.regions[region])) {
+                same = 0;
+            }
+        }
+        CHECK(same, "seeded damage region order/content changed");
+        CHECK(moo_comp_effect_damage_hash(&output_a) ==
+                  moo_comp_effect_damage_hash(&output_b),
+              "seeded damage semantic hash changed");
+        CHECK(memcmp(regions_a + output_a.count,
+                     before_a + output_a.count,
+                     (32u - output_a.count) * sizeof(*regions_a)) == 0 &&
+                  memcmp(regions_b + output_b.count,
+                         before_b + output_b.count,
+                         (32u - output_b.count) * sizeof(*regions_b)) == 0,
+              "damage builder wrote beyond published region count");
+    }
+}
+
+
 int main(void) {
     test_primitive();
     test_closure_and_hash();
     test_changed_and_capacity();
     test_fail_closed_atomicity();
     test_overlap_rejected();
+    test_seeded_sequence_determinism();
 
     if (failures != 0) {
         fprintf(stderr, "P016-O5 EFFECTS DAMAGE RED: %d/%d failed\n",

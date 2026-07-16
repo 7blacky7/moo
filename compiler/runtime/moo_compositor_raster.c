@@ -24,6 +24,20 @@ static int moo_comp_source_valid(const MooCompBufferView *source) {
     if ((size_t)source->height > SIZE_MAX / source->stride) return 0;
     return source->stride * (size_t)source->height <= source->buffer_bytes;
 }
+static int moo_comp_ranges_overlap(const void *left, size_t left_size,
+                                   const void *right, size_t right_size) {
+    uintptr_t left_begin;
+    uintptr_t right_begin;
+    if (!left || !right || left_size == 0u || right_size == 0u) return 0;
+    left_begin = (uintptr_t)left;
+    right_begin = (uintptr_t)right;
+    if (left_size > UINTPTR_MAX - left_begin ||
+        right_size > UINTPTR_MAX - right_begin)
+        return 1;
+    return left_begin < right_begin + right_size &&
+           right_begin < left_begin + left_size;
+}
+
 
 static int32_t moo_comp_i64_to_low(int64_t value, int32_t low) {
     return value < (int64_t)low ? low : (int32_t)value;
@@ -178,6 +192,34 @@ MooCompResult moo_comp_raster_blit(const MooCompOutput *output,
                            moo_comp_source_pixel(source, source_x, source_y),
                            opacity);
         }
+    }
+    return MOO_COMP_OK;
+}
+MooCompResult moo_comp_raster_copy_rgba(
+    const MooCompOutput *output, uint8_t *destination,
+    size_t destination_bytes, size_t destination_stride) {
+    size_t active_bytes;
+    size_t destination_total;
+    size_t source_total;
+    int32_t y;
+    if (!moo_comp_output_valid(output) || !destination)
+        return MOO_COMP_INVALID;
+    active_bytes = (size_t)output->width * 4u;
+    if (destination_stride < active_bytes ||
+        (size_t)output->height > SIZE_MAX / destination_stride)
+        return MOO_COMP_INVALID;
+    destination_total = destination_stride * (size_t)output->height;
+    source_total = output->stride * (size_t)output->height;
+    if (destination_total > destination_bytes) return MOO_COMP_INVALID;
+    if (moo_comp_ranges_overlap(output->pixels, source_total,
+                                destination, destination_total))
+        return MOO_COMP_INVALID;
+    for (y = 0; y < output->height; ++y) {
+        size_t x;
+        const uint8_t *source =
+            output->pixels + (size_t)y * output->stride;
+        uint8_t *target = destination + (size_t)y * destination_stride;
+        for (x = 0u; x < active_bytes; ++x) target[x] = source[x];
     }
     return MOO_COMP_OK;
 }

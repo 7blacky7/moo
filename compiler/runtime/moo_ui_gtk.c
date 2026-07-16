@@ -82,10 +82,22 @@ static MooValue* cb_box_new(MooValue callback) {
     return box;
 }
 
+MooValue moo_ui_callback_call0_owned(MooValue callback) {
+    MooValue in_flight = callback;
+    MooValue result;
+    moo_retain(in_flight);
+    result = moo_func_call_0(in_flight);
+    moo_release(in_flight);
+    return result;
+}
+
 static void on_click_trampoline(GtkButton* btn, gpointer user_data) {
     (void)btn;
     MooValue* cb = (MooValue*)user_data;
-    if (cb && cb->tag == MOO_FUNC) moo_func_call_0(*cb);
+    if (cb && cb->tag == MOO_FUNC) {
+        MooValue rv = moo_ui_callback_call0_owned(*cb);
+        moo_release(rv);
+    }
 }
 
 /* ------------------------------------------------------------------ *
@@ -278,7 +290,7 @@ static gboolean on_delete_event_trampoline(GtkWidget* w, GdkEvent* ev,
     (void)w; (void)ev;
     MooValue* cb = (MooValue*)user_data;
     if (!cb || cb->tag != MOO_FUNC) return FALSE;  /* allow close */
-    MooValue rv = moo_func_call_0(*cb);
+    MooValue rv = moo_ui_callback_call0_owned(*cb);
     gboolean allow = moo_is_truthy(rv);
     moo_release(rv);
     return allow ? FALSE : TRUE;  /* FALSE = proceed to destroy */
@@ -346,7 +358,10 @@ MooValue moo_ui_knopf(MooValue parent, MooValue text,
 static void on_toggle_trampoline(GtkToggleButton* tb, gpointer user_data) {
     (void)tb;
     MooValue* cb = (MooValue*)user_data;
-    if (cb && cb->tag == MOO_FUNC) moo_func_call_0(*cb);
+    if (cb && cb->tag == MOO_FUNC) {
+        MooValue rv = moo_ui_callback_call0_owned(*cb);
+        moo_release(rv);
+    }
 }
 
 MooValue moo_ui_checkbox(MooValue parent, MooValue text,
@@ -423,7 +438,10 @@ MooValue moo_ui_radio_wert(MooValue radio) {
 static void on_entry_changed_trampoline(GtkEditable* e, gpointer user_data) {
     (void)e;
     MooValue* cb = (MooValue*)user_data;
-    if (cb && cb->tag == MOO_FUNC) moo_func_call_0(*cb);
+    if (cb && cb->tag == MOO_FUNC) {
+        MooValue rv = moo_ui_callback_call0_owned(*cb);
+        moo_release(rv);
+    }
 }
 
 MooValue moo_ui_eingabe(MooValue parent,
@@ -531,7 +549,10 @@ MooValue moo_ui_textbereich_anhaengen(MooValue tb, MooValue text) {
 static void on_combo_changed_trampoline(GtkComboBox* cb, gpointer user_data) {
     (void)cb;
     MooValue* cv = (MooValue*)user_data;
-    if (cv && cv->tag == MOO_FUNC) moo_func_call_0(*cv);
+    if (cv && cv->tag == MOO_FUNC) {
+        MooValue rv = moo_ui_callback_call0_owned(*cv);
+        moo_release(rv);
+    }
 }
 
 MooValue moo_ui_dropdown(MooValue parent, MooValue optionen,
@@ -775,7 +796,10 @@ MooValue moo_ui_liste_leeren(MooValue liste) {
 static void on_tree_selection_trampoline(GtkTreeSelection* sel, gpointer ud) {
     (void)sel;
     MooValue* cb = (MooValue*)ud;
-    if (cb && cb->tag == MOO_FUNC) moo_func_call_0(*cb);
+    if (cb && cb->tag == MOO_FUNC) {
+        MooValue rv = moo_ui_callback_call0_owned(*cb);
+        moo_release(rv);
+    }
 }
 
 MooValue moo_ui_liste_on_auswahl(MooValue liste, MooValue callback) {
@@ -950,7 +974,10 @@ MooValue moo_ui_liste_entferne(MooValue liste, MooValue zeile_index) {
 static void on_slider_changed_trampoline(GtkRange* r, gpointer ud) {
     (void)r;
     MooValue* cb = (MooValue*)ud;
-    if (cb && cb->tag == MOO_FUNC) moo_func_call_0(*cb);
+    if (cb && cb->tag == MOO_FUNC) {
+        MooValue rv = moo_ui_callback_call0_owned(*cb);
+        moo_release(rv);
+    }
 }
 
 MooValue moo_ui_slider(MooValue parent, MooValue min, MooValue max, MooValue start,
@@ -2477,7 +2504,10 @@ MooValue moo_ui_test_pump(void) {
 /* Timer analog moo_tray.c: g_timeout_add_full mit Destroy-Notify. */
 static gboolean ui_timer_tick(gpointer ud) {
     MooValue* cb = (MooValue*)ud;
-    if (cb && cb->tag == MOO_FUNC) moo_func_call_0(*cb);
+    if (cb && cb->tag == MOO_FUNC) {
+        MooValue rv = moo_ui_callback_call0_owned(*cb);
+        moo_release(rv);
+    }
     return G_SOURCE_CONTINUE;
 }
 
@@ -2689,7 +2719,8 @@ static void on_menu_item_trampoline(GtkMenuItem* it, gpointer ud) {
     if (cb && cb->tag == MOO_FUNC) {
         GtkWidget* prev = moo_ui_g_current_menu_item;
         moo_ui_g_current_menu_item = GTK_WIDGET(it);
-        moo_func_call_0(*cb);
+        MooValue rv = moo_ui_callback_call0_owned(*cb);
+        moo_release(rv);
         moo_ui_g_current_menu_item = prev;
     }
 }
@@ -2903,7 +2934,10 @@ static gboolean on_accel_trampoline(GtkAccelGroup* ag, GObject* acceleratable,
                                     gpointer user_data) {
     (void)ag; (void)acceleratable; (void)keyval; (void)mods;
     MooValue* cb = (MooValue*)user_data;
-    if (cb && cb->tag == MOO_FUNC) moo_func_call_0(*cb);
+    if (cb && cb->tag == MOO_FUNC) {
+        MooValue rv = moo_ui_callback_call0_owned(*cb);
+        moo_release(rv);
+    }
     return TRUE;
 }
 
@@ -2972,7 +3006,7 @@ static void on_entry_activate_trampoline(GtkEntry* e, gpointer ud) {
     (void)e;
     MooValue* cb = (MooValue*)ud;
     if (cb && cb->tag == MOO_FUNC) {
-        MooValue rv = moo_func_call_0(*cb);
+        MooValue rv = moo_ui_callback_call0_owned(*cb);
         moo_release(rv);
     }
 }

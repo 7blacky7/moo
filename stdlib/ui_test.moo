@@ -43,29 +43,13 @@
 # Steuerzeichen < 0x20 werden als \uXXXX kodiert. Nicht-ASCII wird
 # 1:1 durchgereicht (UTF-8 ist in JSON erlaubt).
 funktion __uit_json_esc(s):
-    setze puffer auf ""
-    setze i auf 0
-    setze n auf länge(s)
-    solange i < n:
-        setze c auf s[i]
-        wenn c == "\\":
-            setze puffer auf puffer + "\\\\"
-        sonst wenn c == "\"":
-            setze puffer auf puffer + "\\\""
-        sonst wenn c == "\n":
-            setze puffer auf puffer + "\\n"
-        sonst wenn c == "\r":
-            setze puffer auf puffer + "\\r"
-        sonst wenn c == "\t":
-            setze puffer auf puffer + "\\t"
-        sonst wenn c == "\b":
-            setze puffer auf puffer + "\\b"
-        sonst wenn c == "\f":
-            setze puffer auf puffer + "\\f"
-        sonst:
-            setze puffer auf puffer + c
-        setze i auf i + 1
-    gib_zurück puffer
+    setze kodiert auf json_string(s)
+    wenn typ_von(kodiert) != "Text" oder länge(kodiert) < 2:
+        gib_zurück ""
+    setze ende auf länge(kodiert) - 1
+    wenn kodiert[0] != "\"" oder kodiert[ende] != "\"":
+        gib_zurück ""
+    gib_zurück kodiert.teilstring(1, ende)
 
 
 # JSON-Literal fuer einen beliebigen Wert. Nutzt das Runtime-Builtin
@@ -76,6 +60,44 @@ funktion __uit_json_any(v):
     wenn v == nichts:
         gib_zurück "null"
     gib_zurück json_string(v)
+
+# Unzweideutiges Laengenpraefix ueber UTF-8-Bytes.
+funktion __uit_lp(v):
+    setze typ_tag auf typ_von(v)
+    setze s auf ""
+    wenn v == nichts:
+        setze s auf "<nichts>"
+    sonst:
+        setze s auf text(v)
+    gib_zurück text(länge(bytes_zu_liste(typ_tag))) + ":" + typ_tag + text(länge(bytes_zu_liste(s))) + ":" + s
+
+# Kanonische Widget-Serialisierung: feste Feldreihenfolge, stabile Listen-
+# reihenfolge und optionale rekursive Kinder ohne Dict-Iterationsordnung.
+funktion __uit_knoten_kanonisch(knoten):
+    wenn typ_von(knoten) != "Woerterbuch":
+        gib_zurück "X" + __uit_lp(typ_von(knoten))
+    setze out auf "K"
+    setze felder auf ["typ", "x", "y", "b", "h", "sichtbar", "aktiv", "id", "text", "name", "tiefe", "eltern"]
+    für feld in felder:
+        wenn knoten.enthält(feld):
+            setze out auf out + "1" + __uit_lp(knoten[feld])
+        sonst:
+            setze out auf out + "0"
+    wenn knoten.enthält("kinder"):
+        setze out auf out + "C" + __uit_baum_kanonisch(knoten["kinder"])
+    sonst:
+        setze out auf out + "C0:"
+    gib_zurück out
+
+funktion __uit_baum_kanonisch(baum):
+    wenn typ_von(baum) != "Liste":
+        gib_zurück "L0:"
+    setze out auf "L" + __uit_lp(länge(baum))
+    setze i auf 0
+    solange i < länge(baum):
+        setze out auf out + __uit_lp(__uit_knoten_kanonisch(baum[i]))
+        setze i auf i + 1
+    gib_zurück out
 
 
 # Zweistellige Zahl (fuer ISO-Zeit).
@@ -287,6 +309,7 @@ funktion ui_test_aktion(fenster, aktion_dict):
     setze aktion auf aktion_dict["action"]
     setze erfolg auf falsch
     setze target auf nichts
+    setze visual_state auf __uit_feld(aktion_dict, "visual_state", "")
 
     wenn aktion == "klick":
         setze target auf aktion_dict["target"]
@@ -326,6 +349,7 @@ funktion ui_test_aktion(fenster, aktion_dict):
     setze ergebnis["target"] auf target
     setze ergebnis["erfolg"] auf erfolg
     setze ergebnis["zeitstempel"] auf boden(zeit_ms())
+    setze ergebnis["visual_state"] auf visual_state
     setze baum auf ui_widget_baum(fenster)
     wenn baum == nichts:
         setze baum auf []
@@ -349,11 +373,10 @@ funktion ui_test_frame(fenster, pfad_basis, aktion_dict):
     setze png_pfad auf pfad_basis + ".png"
     setze json_pfad auf pfad_basis + ".json"
 
-    setze ok auf ui_test_snapshot(fenster, png_pfad)
-    wenn ok != wahr:
-        gib_zurück falsch
+    setze snapshot_ok auf ui_test_snapshot(fenster, png_pfad)
 
     setze info auf ui_widget_info(fenster)
+    setze info_fehlt auf info == nichts
     setze fenster_titel auf __uit_feld(info, "text", "")
     setze wb auf __uit_feld(info, "b", 0)
     setze wh auf __uit_feld(info, "h", 0)
@@ -361,7 +384,8 @@ funktion ui_test_frame(fenster, pfad_basis, aktion_dict):
     # Nach Redraw erneut lesen; der in erg gespeicherte Baum stammt direkt
     # nach der Aktion und kann vor einem deferred Relayout liegen.
     setze baum auf ui_widget_baum(fenster)
-    wenn baum == nichts:
+    setze baum_fehlt auf baum == nichts oder typ_von(baum) != "Liste"
+    wenn baum_fehlt:
         setze baum auf []
 
     setze ts_unix auf datei_mtime(png_pfad)
@@ -371,10 +395,30 @@ funktion ui_test_frame(fenster, pfad_basis, aktion_dict):
 
     setze backend auf __uit_backend()
     setze png_name auf __uit_basename(png_pfad)
+    setze visual_state auf __uit_feld(erg, "visual_state", "")
 
     setze window_size auf {}
     setze window_size["b"] auf wb
     setze window_size["h"] auf wh
+
+    # Hash-Eingabe hat feste Feldreihenfolge und enthaelt weder Label,
+    # Timestamp noch Pfad. So kann ein Label keinen Zustandswechsel vortaeuschen.
+    setze png_inhalt auf nichts
+    wenn snapshot_ok:
+        setze png_inhalt auf datei_lesen(png_pfad)
+    setze png_hash auf ""
+    wenn typ_von(png_inhalt) == "Text":
+        setze png_hash auf sha256(png_inhalt)
+    setze kanonisch auf __uit_lp(backend) + __uit_lp(1) + __uit_lp(wb) + __uit_lp(wh)
+    setze kanonisch auf kanonisch + __uit_lp(__uit_baum_kanonisch(baum)) + __uit_lp(png_hash)
+    setze state_hash auf ""
+    setze hash_eingabe_ok auf typ_von(png_hash) == "Text" und länge(png_hash) == 64
+    wenn hash_eingabe_ok:
+        setze state_hash auf sha256(kanonisch)
+    setze hash_ok auf typ_von(state_hash) == "Text" und länge(state_hash) == 64
+    setze state_ok auf typ_von(visual_state) == "Text" und visual_state != ""
+    setze stale_visual auf erg["erfolg"] != wahr oder snapshot_ok != wahr oder state_ok == falsch oder hash_ok == falsch
+    setze runaway_geometry auf info_fehlt oder wb <= 0 oder wh <= 0 oder baum_fehlt
 
     # action-Block (widget_tree_nach wird NICHT dupliziert — liegt
     # bereits top-level als "widget_tree").
@@ -383,6 +427,7 @@ funktion ui_test_frame(fenster, pfad_basis, aktion_dict):
     setze ablock["target"] auf erg["target"]
     setze ablock["erfolg"] auf erg["erfolg"]
     setze ablock["zeitstempel_ms"] auf erg["zeitstempel"]
+    setze ablock["visual_state"] auf visual_state
 
     setze j auf "{"
     setze j auf j + "\"fenster_titel\":\"" + __uit_json_esc(fenster_titel) + "\","
@@ -391,12 +436,17 @@ funktion ui_test_frame(fenster, pfad_basis, aktion_dict):
     setze j auf j + "\"backend\":\"" + __uit_json_esc(backend) + "\","
     setze j auf j + "\"scale\":1,"
     setze j auf j + "\"window_size\":" + __uit_json_any(window_size) + ","
+    setze j auf j + "\"visual_state\":\"" + __uit_json_esc(visual_state) + "\","
+    setze j auf j + "\"state_hash\":\"" + __uit_json_esc(state_hash) + "\","
+    setze j auf j + "\"stale_visual\":" + __uit_json_any(stale_visual) + ","
+    setze j auf j + "\"runaway_geometry\":" + __uit_json_any(runaway_geometry) + ","
     setze j auf j + "\"action\":" + __uit_json_any(ablock) + ","
     setze j auf j + "\"widget_tree\":" + __uit_json_any(baum) + ","
     setze j auf j + "\"screenshot_path\":\"" + __uit_json_esc(png_name) + "\""
     setze j auf j + "}"
 
-    gib_zurück datei_schreiben(json_pfad, j)
+    setze sidecar_ok auf datei_schreiben(json_pfad, j)
+    gib_zurück sidecar_ok und stale_visual == falsch und runaway_geometry == falsch
 
 
 # Fuehrt eine Liste von Aktionen nacheinander aus. Je aktion:
@@ -426,12 +476,14 @@ funktion ui_test_sequenz(fenster, ordner, aktionen_liste):
             setze noop auf {}
             setze noop["action"] auf "frame"
             setze noop["target"] auf pfad_basis
+            setze noop["visual_state"] auf __uit_feld(a, "visual_state", "")
             setze ok auf ui_test_frame(fenster, pfad_basis, noop)
             setze erg auf {}
             setze erg["action"] auf "frame"
             setze erg["target"] auf pfad_basis
             setze erg["erfolg"] auf ok
             setze erg["zeitstempel"] auf boden(zeit_ms())
+            setze erg["visual_state"] auf __uit_feld(a, "visual_state", "")
             ergebnisse.hinzufügen(erg)
             setze frame_nr auf frame_nr + 1
         sonst:

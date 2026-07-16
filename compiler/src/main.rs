@@ -7,7 +7,7 @@ mod runtime_bindings;
 mod tokens;
 
 use clap::{Parser as ClapParser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(ClapParser)]
@@ -778,6 +778,109 @@ fn build_kernel(
     Ok(())
 }
 
+fn resolve_windows_linker_candidates(
+    env_clang: Option<(PathBuf, bool)>,
+    env_lld: Option<(PathBuf, bool)>,
+    sibling_clang: Option<(PathBuf, bool)>,
+    sibling_lld: Option<(PathBuf, bool)>,
+    path_clang: Option<(PathBuf, bool)>,
+    path_lld: Option<(PathBuf, bool)>,
+) -> Result<(PathBuf, PathBuf), String> {
+    for (tier, clang, lld) in [
+        ("MOO_CLANG/MOO_LLD", env_clang, env_lld),
+        ("gebündelte Toolchain", sibling_clang, sibling_lld),
+        ("PATH", path_clang, path_lld),
+    ] {
+        match (clang, lld) {
+            (None, None) => continue,
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(format!(
+                    "{tier}: clang.exe und lld-link.exe müssen als vollständiges Paar vorhanden sein"
+                ));
+            }
+            (Some((clang, clang_executable)), Some((lld, lld_executable))) => {
+                if !clang_executable || !lld_executable {
+                    return Err(format!(
+                        "{tier}: clang.exe und lld-link.exe müssen ausführbare Dateien sein"
+                    ));
+                }
+                let clang_identity_ok = clang
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.eq_ignore_ascii_case("clang.exe"))
+                    .unwrap_or(false);
+                let lld_identity_ok = lld
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.eq_ignore_ascii_case("lld-link.exe"))
+                    .unwrap_or(false);
+                if !clang_identity_ok || !lld_identity_ok {
+                    return Err(format!(
+                        "{tier}: erwartete Tool-Identitäten clang.exe und lld-link.exe"
+                    ));
+                }
+                return Ok((clang, lld));
+            }
+        }
+    }
+
+    Err(
+        "Windows-Linker nicht gefunden: MOO_CLANG/MOO_LLD, gebündelte Toolchain und PATH enthalten kein vollständiges Paar"
+            .to_string(),
+    )
+}
+
+fn append_windows_linker_args(
+    args: &mut Vec<String>,
+    lld_path: &Path,
+) -> Result<(), String> {
+    if !lld_path.is_absolute() {
+        return Err("lld-link-Pfad muss absolut sein".to_string());
+    }
+    let lld_path = lld_path
+        .to_str()
+        .ok_or_else(|| "lld-link-Pfad ist kein gültiger Unicode-Pfad".to_string())?;
+    const WINDOWS_LIBS: [&str; 4] = [
+        "-lmsvcrt",
+        "-lvcruntime",
+        "-lucrt",
+        "-lkernel32",
+    ];
+
+    let mut normalized = Vec::with_capacity(args.len() + 5);
+    let mut skip_ld_path_value = false;
+    for arg in args.drain(..) {
+        if skip_ld_path_value {
+            skip_ld_path_value = false;
+            continue;
+        }
+        if arg == "--ld-path" {
+            skip_ld_path_value = true;
+            continue;
+        }
+        if arg == "-fuse-ld=lld"
+            || arg.starts_with("--ld-path=")
+            || WINDOWS_LIBS.contains(&arg.as_str())
+        {
+            continue;
+        }
+        normalized.push(arg);
+    }
+    normalized.push(format!("--ld-path={lld_path}"));
+    normalized.extend(WINDOWS_LIBS.into_iter().map(str::to_string));
+    *args = normalized;
+    Ok(())
+}
+
+fn windows_compile_allows_run(
+    started: bool,
+    timed_out: bool,
+    return_code: Option<i32>,
+    output_exists: bool,
+) -> bool {
+    started && !timed_out && return_code == Some(0) && output_exists
+}
+
 fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, target: Option<&str>, no_stdlib: bool, linker_script: Option<&std::path::Path>, entry_point: Option<&str>, profile: bool, erlaube_kern: bool, kernel: bool, emit: &str, board: Option<&str>) -> Result<(), String> {
     // P011-C1: --emit frueh validieren (vor jeder Kompilierung).
     if !matches!(emit, "elf" | "flat" | "sector") {
@@ -1050,21 +1153,72 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     }
 
     #[cfg(target_os = "windows")]
-    let linker_program = {
-        // Portable SDK: Override oder toolchain/bin/clang.exe neben der EXE.
-        let bundled = std::env::current_exe().ok()
-            .and_then(|p| p.parent().map(|d| d.join("toolchain").join("bin").join("clang.exe")));
-        std::env::var_os("MOO_CLANG")
+    let (linker_program, windows_lld_program) = {
+        let candidate = |path: PathBuf| {
+            let path = if path.is_absolute() {
+                path
+            } else {
+                match std::env::current_dir() {
+                    Ok(dir) => dir.join(path),
+                    Err(_) => path,
+                }
+            };
+            let executable = path.is_absolute()
+                && path.is_file()
+                && path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .map(|extension| extension.eq_ignore_ascii_case("exe"))
+                    .unwrap_or(false);
+            (path, executable)
+        };
+
+        let env_clang = std::env::var_os("MOO_CLANG")
             .map(PathBuf::from)
-            .or_else(|| bundled.filter(|p| p.exists()))
-            .unwrap_or_else(|| PathBuf::from("clang"))
+            .map(|path| candidate(path));
+        let env_lld = std::env::var_os("MOO_LLD")
+            .map(PathBuf::from)
+            .map(|path| candidate(path));
+
+        let bundled_bin = std::env::current_exe().ok().and_then(|path| {
+            path.parent()
+                .map(|dir| dir.join("toolchain").join("bin"))
+        });
+        let sibling_clang = bundled_bin.as_ref().and_then(|dir| {
+            let path = dir.join("clang.exe");
+            path.exists().then(|| candidate(path))
+        });
+        let sibling_lld = bundled_bin.as_ref().and_then(|dir| {
+            let path = dir.join("lld-link.exe");
+            path.exists().then(|| candidate(path))
+        });
+
+        let first_path_candidate = |name: &str| {
+            std::env::var_os("PATH").and_then(|path_value| {
+                std::env::split_paths(&path_value)
+                    .map(|dir| dir.join(name))
+                    .find(|path| path.exists())
+                    .map(|path| candidate(path))
+            })
+        };
+        let path_clang = first_path_candidate("clang.exe");
+        let path_lld = first_path_candidate("lld-link.exe");
+
+        resolve_windows_linker_candidates(
+            env_clang,
+            env_lld,
+            sibling_clang,
+            sibling_lld,
+            path_clang,
+            path_lld,
+        )?
     };
     #[cfg(not(target_os = "windows"))]
     let linker_program = PathBuf::from("cc");
     #[cfg(target_os = "windows")]
     {
-        // Vermeidet jede Abhaengigkeit von Visual Studios link.exe.
-        link_args.push("-fuse-ld=lld".to_string());
+        // Bindet clang an das validierte lld-link-Paar statt an Visual Studios link.exe.
+        append_windows_linker_args(&mut link_args, &windows_lld_program)?;
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
                 let bundled_lib = dir.join("lib");
@@ -1082,6 +1236,16 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     // Object-File aufräumen
     let _ = std::fs::remove_file(&obj_path);
 
+    #[cfg(target_os = "windows")]
+    if !windows_compile_allows_run(
+        true,
+        false,
+        link_status.code(),
+        output_path.exists(),
+    ) {
+        return Err("Linken fehlgeschlagen oder Ausgabedatei fehlt".to_string());
+    }
+    #[cfg(not(target_os = "windows"))]
     if !link_status.success() {
         return Err("Linken fehlgeschlagen".to_string());
     }
@@ -1254,6 +1418,146 @@ fn handle_paket(action: PaketAction) -> Result<(), String> {
                 .map_err(|e| format!("Paket loeschen fehlgeschlagen: {e}"))?;
             println!("✓ Paket '{name}' entfernt.");
             Ok(())
+        }
+    }
+}
+
+
+
+#[cfg(test)]
+mod windows_linker_contract_tests {
+    use super::{
+        append_windows_linker_args, resolve_windows_linker_candidates,
+        windows_compile_allows_run,
+    };
+    use std::path::PathBuf;
+
+    fn c(path: &str, executable: bool) -> Option<(PathBuf, bool)> {
+        Some((PathBuf::from(path), executable))
+    }
+
+    #[test]
+    fn resolver_precedence_is_exact_and_fail_closed() {
+        let plan = resolve_windows_linker_candidates(
+            c("/env/clang.exe", true), c("/env/lld-link.exe", true),
+            c("/sibling/clang.exe", true), c("/sibling/lld-link.exe", true),
+            c("/path/clang.exe", true), c("/path/lld-link.exe", true),
+        ).unwrap();
+        assert_eq!(
+            plan,
+            (
+                PathBuf::from("/env/clang.exe"),
+                PathBuf::from("/env/lld-link.exe"),
+            )
+        );
+
+        let sibling = resolve_windows_linker_candidates(
+            None, None,
+            c("/sibling/clang.exe", true), c("/sibling/lld-link.exe", true),
+            c("/path/clang.exe", true), c("/path/lld-link.exe", true),
+        ).unwrap();
+        assert_eq!(
+            sibling,
+            (
+                PathBuf::from("/sibling/clang.exe"),
+                PathBuf::from("/sibling/lld-link.exe"),
+            )
+        );
+
+        let path = resolve_windows_linker_candidates(
+            None, None, None, None,
+            c("/path/clang.exe", true), c("/path/lld-link.exe", true),
+        ).unwrap();
+        assert_eq!(
+            path,
+            (
+                PathBuf::from("/path/clang.exe"),
+                PathBuf::from("/path/lld-link.exe"),
+            )
+        );
+
+        assert!(resolve_windows_linker_candidates(
+            c("/bad/clang.exe", false), c("/bad/lld-link.exe", false),
+            c("/sibling/clang.exe", true), c("/sibling/lld-link.exe", true),
+            None, None,
+        ).is_err());
+        assert!(resolve_windows_linker_candidates(
+            c("/env/clang.exe", true), None, None, None, None, None,
+        ).is_err());
+    }
+
+    #[test]
+    fn linker_args_bind_absolute_lld_and_canonical_crt_once() {
+        let mut args: Vec<String> = vec!["-fuse-ld=lld".to_string()];
+        append_windows_linker_args(
+            &mut args,
+            &PathBuf::from("/toolchain/lld-link.exe"),
+        ).unwrap();
+        append_windows_linker_args(
+            &mut args,
+            &PathBuf::from("/toolchain/lld-link.exe"),
+        ).unwrap();
+
+        assert_eq!(
+            args.iter()
+                .filter(|a| *a == "--ld-path=/toolchain/lld-link.exe")
+                .count(),
+            1
+        );
+        assert_eq!(
+            args.iter().filter(|a| *a == "-fuse-ld=lld").count(),
+            0
+        );
+        for lib in ["-lmsvcrt", "-lvcruntime", "-lucrt", "-lkernel32"] {
+            assert_eq!(
+                args.iter().filter(|a| a.as_str() == lib).count(),
+                1,
+                "{lib}"
+            );
+        }
+
+        let mut empty: Vec<String> = Vec::new();
+        assert!(append_windows_linker_args(
+            &mut empty,
+            &PathBuf::from("lld-link.exe"),
+        ).is_err());
+    }
+
+    #[test]
+    fn compile_gate_allows_run_only_after_complete_success() {
+        for case in [
+            (false, false, None, false),   // StartException/start failure
+            (true, true, None, false),     // timeout
+            (true, false, Some(7), false), // nonzero rc
+            (true, false, None, false),    // missing rc
+            (true, false, Some(0), false), // rc0, no EXE
+        ] {
+            assert!(!windows_compile_allows_run(
+                case.0, case.1, case.2, case.3,
+            ));
+        }
+        assert!(windows_compile_allows_run(true, false, Some(0), true));
+    }
+
+    #[test]
+    fn resolver_rejects_swapped_or_aliased_tool_identities() {
+        let resolve_env = |clang: &str, lld: &str| {
+            resolve_windows_linker_candidates(
+                c(clang, true), c(lld, true), None, None, None, None,
+            )
+        };
+
+        assert!(resolve_env("/toolchain/clang.exe", "/toolchain/lld-link.exe").is_ok());
+        assert!(resolve_env("/toolchain/ClAnG.ExE", "/toolchain/LLD-LINK.EXE").is_ok());
+        for (clang, lld) in [
+            ("/toolchain/lld-link.exe", "/toolchain/clang.exe"),
+            ("/toolchain/clang.exe", "/toolchain/clang.exe"),
+            ("/toolchain/clang.exe", "/toolchain/lld.exe"),
+        ] {
+            assert!(
+                resolve_env(clang, lld).is_err(),
+                "unexpectedly accepted clang={clang} lld={lld}"
+            );
         }
     }
 }

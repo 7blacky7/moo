@@ -126,6 +126,105 @@ static void test_capability_fallback_and_atomicity(void) {
           "invalid-mask preflight mutated surface state");
 }
 
+static void test_injected_capability_matrix(void) {
+    const uint64_t requested_mask =
+        MOO_COMP_EFFECT_BACKDROP_BLUR |
+        MOO_COMP_EFFECT_TINT |
+        MOO_COMP_EFFECT_NOISE |
+        MOO_COMP_EFFECT_SHADOW;
+    MooCompEffectLimits limits = moo_comp_effect_limits_default();
+    MooCompEffectStateConfig config;
+    MooCompEffectStateConfig config_before;
+    MooCompEffectSurfaceState surface;
+    MooCompEffectUsage usage = {0u, 0u, UINT64_C(64)};
+    MooCompEffectState requested = moo_comp_effect_state_neutral();
+    MooCompEffectPreflight preflight;
+    MooCompEffectPreflight preflight_before;
+    uint64_t surface_before;
+
+    CHECK(moo_comp_effect_surface_init(
+              &surface, UINT64_C(41), UINT64_C(42)) == MOO_COMP_OK,
+          "capability matrix surface init failed");
+    requested.enabled_mask = requested_mask;
+    requested.fallback_policy = MOO_COMP_EFFECT_FALLBACK_ALLOW_DISABLE;
+    requested.shadow.blur_radius = 2u;
+    requested.backdrop.blur_radius = 2u;
+    requested.backdrop.tint = (MooCompRgba8){8u, 16u, 24u, 255u};
+    requested.backdrop.tint_mix = 64u;
+    requested.backdrop.noise = 16u;
+
+    CHECK(moo_comp_effect_state_config_init(
+              &config, requested_mask, &limits) == MOO_COMP_OK &&
+          moo_comp_effect_state_preflight(
+              &config, &surface, UINT64_C(41), UINT64_C(42),
+              &requested, &usage, &preflight) == MOO_COMP_OK,
+          "full capability path failed");
+    CHECK(preflight.effective.enabled_mask == requested_mask &&
+              preflight.degraded_mask == 0u,
+          "full capability path degraded unexpectedly");
+
+    CHECK(moo_comp_effect_state_config_init(
+              &config, requested_mask & ~MOO_COMP_EFFECT_BACKDROP_BLUR,
+              &limits) == MOO_COMP_OK &&
+          moo_comp_effect_state_preflight(
+              &config, &surface, UINT64_C(41), UINT64_C(42),
+              &requested, &usage, &preflight) == MOO_COMP_OK,
+          "no-blur allow-disable fallback failed");
+    CHECK(preflight.effective.enabled_mask ==
+              (requested_mask & ~MOO_COMP_EFFECT_BACKDROP_BLUR) &&
+              preflight.degraded_mask == MOO_COMP_EFFECT_BACKDROP_BLUR,
+          "no-blur fallback capability/degraded masks changed");
+
+    CHECK(moo_comp_effect_state_config_init(
+              &config, 0u, &limits) == MOO_COMP_OK &&
+          moo_comp_effect_state_preflight(
+              &config, &surface, UINT64_C(41), UINT64_C(42),
+              &requested, &usage, &preflight) == MOO_COMP_OK,
+          "zero-capability allow-disable fallback failed");
+    CHECK(preflight.effective.enabled_mask == 0u &&
+              preflight.degraded_mask == requested_mask,
+          "zero-capability fallback was not explicit/opaque");
+
+    requested.fallback_policy =
+        MOO_COMP_EFFECT_FALLBACK_ALLOW_APPROXIMATE;
+    memset(&preflight, 0x6d, sizeof(preflight));
+    preflight_before = preflight;
+    surface_before = moo_comp_effect_surface_hash(&surface);
+    CHECK(moo_comp_effect_state_config_init(
+              &config, requested_mask & ~MOO_COMP_EFFECT_TINT,
+              &limits) == MOO_COMP_OK &&
+          moo_comp_effect_state_preflight(
+              &config, &surface, UINT64_C(41), UINT64_C(42),
+              &requested, &usage, &preflight) == MOO_COMP_UNSUPPORTED,
+          "non-approximable tint loss did not fail closed");
+    CHECK(memcmp(&preflight, &preflight_before, sizeof(preflight)) == 0 &&
+              moo_comp_effect_surface_hash(&surface) == surface_before,
+          "failed approximate fallback mutated output/state");
+
+    requested.fallback_policy = MOO_COMP_EFFECT_FALLBACK_ALLOW_DISABLE;
+    requested.required_mask = MOO_COMP_EFFECT_NOISE;
+    memset(&preflight, 0x96, sizeof(preflight));
+    preflight_before = preflight;
+    CHECK(moo_comp_effect_state_config_init(
+              &config, requested_mask & ~MOO_COMP_EFFECT_NOISE,
+              &limits) == MOO_COMP_OK &&
+          moo_comp_effect_state_preflight(
+              &config, &surface, UINT64_C(41), UINT64_C(42),
+              &requested, &usage, &preflight) == MOO_COMP_UNSUPPORTED,
+          "missing required noise did not fail closed");
+    CHECK(memcmp(&preflight, &preflight_before, sizeof(preflight)) == 0,
+          "missing-required failure mutated preflight output");
+
+    memset(&config, 0x3c, sizeof(config));
+    config_before = config;
+    CHECK(moo_comp_effect_state_config_init(
+              &config, UINT64_C(1) << 63, &limits) == MOO_COMP_INVALID,
+          "unknown capability bit was accepted");
+    CHECK(memcmp(&config, &config_before, sizeof(config)) == 0,
+          "invalid capability config init mutated output");
+}
+
+
 static void test_reduced_motion(void) {
     MooCompEffectLimits limits = moo_comp_effect_limits_default();
     MooCompAnimationTimeline timeline;
@@ -191,11 +290,56 @@ static MooCompResult portable_cpu_renderer_probe(void) {
     job.effect.backdrop.tint = (MooCompRgba8){20u, 40u, 60u, 255u};
     job.effect.backdrop.tint_mix = 128u;
     job.content_opacity = 255u;
+    job.content_scale = 1u;
     scratch.rgba_ping = rgba_ping;
     scratch.rgba_pong = rgba_pong;
     scratch.rgba_words_per_buffer = 16u;
     return moo_comp_effect_cpu_render(&job, &scratch, &stats);
 }
+
+static void test_cpu_alpha_edge_vectors(void) {
+    static const uint8_t opacity[4] = {0u, 1u, 254u, 255u};
+    static const uint8_t expected[4][4] = {
+        {7u, 11u, 13u, 255u},
+        {8u, 11u, 13u, 255u},
+        {254u, 0u, 0u, 255u},
+        {255u, 0u, 0u, 255u}
+    };
+    uint8_t content[4] = {255u, 0u, 0u, 255u};
+    uint8_t target[4];
+    uint32_t rgba_ping[1];
+    uint32_t rgba_pong[1];
+    MooCompEffectCpuJob job = {0};
+    MooCompEffectCpuScratch scratch = {0};
+    MooCompEffectCpuStats stats;
+    uint32_t i;
+
+    job.content = (MooCompEffectCpuSource){
+        content, sizeof(content), 4u, 1, 1
+    };
+    job.target = (MooCompEffectCpuTarget){
+        target, sizeof(target), 4u, 1, 1
+    };
+    job.content_rect = (MooCompRect){0, 0, 1, 1};
+    job.effect = moo_comp_effect_state_neutral();
+    job.content_scale = 1u;
+    scratch.rgba_ping = rgba_ping;
+    scratch.rgba_pong = rgba_pong;
+    scratch.rgba_words_per_buffer = 1u;
+
+    for (i = 0u; i < 4u; ++i) {
+        target[0] = 7u;
+        target[1] = 11u;
+        target[2] = 13u;
+        target[3] = 255u;
+        job.content_opacity = opacity[i];
+        CHECK(moo_comp_effect_cpu_render(&job, &scratch, &stats) == MOO_COMP_OK,
+              "1x1 analytical alpha render failed");
+        CHECK(memcmp(target, expected[i], sizeof(target)) == 0,
+              "1x1 analytical alpha edge vector mismatch");
+    }
+}
+
 
 static int cpu_stats_eq(
     const MooCompEffectCpuStats *a,
@@ -208,14 +352,26 @@ static int cpu_stats_eq(
 }
 
 static void test_cpu_blur_unpremul_clamp(void) {
+    static const uint8_t golden[36] = {
+        255u, 0u, 0u, 28u, 255u, 0u, 0u, 28u,
+        255u, 0u, 0u, 28u, 255u, 0u, 0u, 28u,
+        255u, 0u, 0u, 28u, 255u, 0u, 0u, 28u,
+        255u, 0u, 0u, 28u, 255u, 0u, 0u, 28u,
+        255u, 0u, 0u, 28u
+    };
     uint8_t content[36] = {0};
     uint8_t target[36] = {0};
+    uint8_t mutant[36];
     uint32_t rgba_ping[36];
     uint32_t rgba_pong[36];
     MooCompEffectCpuJob job = {0};
     MooCompEffectCpuScratch scratch = {0};
     MooCompEffectCpuStats stats;
+    MooCompEffectCpuSource actual;
+    MooCompEffectCpuSource mutant_image;
     MooCompResult result;
+    uint64_t actual_hash = 0u;
+    uint64_t mutant_hash = 0u;
 
     target[16] = 255u;
     target[19] = 255u;
@@ -230,14 +386,35 @@ static void test_cpu_blur_unpremul_clamp(void) {
     job.effect.enabled_mask = MOO_COMP_EFFECT_BACKDROP_BLUR;
     job.effect.backdrop.blur_radius = 1u;
     job.content_opacity = 0u;
+    job.content_scale = 1u;
     scratch.rgba_ping = rgba_ping;
     scratch.rgba_pong = rgba_pong;
     scratch.rgba_words_per_buffer = 36u;
 
     result = moo_comp_effect_cpu_render(&job, &scratch, &stats);
     CHECK(result == MOO_COMP_OK, "blur impulse render failed");
-    CHECK(target[16] == 255u && target[19] == 28u,
-          "premultiplied blur unpremul must clamp red to 255");
+    CHECK(memcmp(target, golden, sizeof(golden)) == 0,
+          "3x3 raw RGBA blur-halo golden changed");
+    actual = (MooCompEffectCpuSource){
+        target, sizeof(target), 12u, 3, 3
+    };
+    CHECK(moo_comp_effect_cpu_hash_rgba(&actual, &actual_hash) == MOO_COMP_OK &&
+              actual_hash == UINT64_C(12603579689958376968),
+          "3x3 raw RGBA blur-halo hash changed");
+    CHECK(target[0] == 255u && target[3] == 28u &&
+              target[16] == 255u && target[19] == 28u &&
+              target[32] == 255u && target[35] == 28u,
+          "blur-halo key pixels/invariants changed");
+
+    memcpy(mutant, golden, sizeof(mutant));
+    mutant[3] = 0u;
+    mutant_image = (MooCompEffectCpuSource){
+        mutant, sizeof(mutant), 12u, 3, 3
+    };
+    CHECK(moo_comp_effect_cpu_hash_rgba(
+              &mutant_image, &mutant_hash) == MOO_COMP_OK &&
+              mutant_hash != actual_hash,
+          "blur-halo omission mutant escaped the raw RGBA oracle");
 }
 
 static void test_cpu_lower_z_content_overlap_atomicity(void) {
@@ -275,6 +452,7 @@ static void test_cpu_lower_z_content_overlap_atomicity(void) {
         MOO_COMP_EFFECT_SHADOW | MOO_COMP_EFFECT_BACKDROP_BLUR;
     job.effect.backdrop.blur_radius = 1u;
     job.content_opacity = 0u;
+    job.content_scale = 1u;
     scratch.rgba_ping = rgba_ping;
     scratch.rgba_pong = rgba_pong;
     scratch.rgba_words_per_buffer = 16u;
@@ -313,6 +491,7 @@ static void test_cpu_extreme_shadow_preflight_atomicity(void) {
     job.effect.shadow.spread_radius = 1u;
     job.effect.shadow.color = (MooCompRgba8){1u, 2u, 3u, 255u};
     job.content_opacity = 255u;
+    job.content_scale = 1u;
 
     result = moo_comp_effect_cpu_render(&job, NULL, &stats);
     CHECK(result == MOO_COMP_LIMIT,
@@ -326,10 +505,12 @@ static void test_cpu_extreme_shadow_preflight_atomicity(void) {
 int main(void) {
     test_alpha_rounding_mutant();
     test_capability_fallback_and_atomicity();
+    test_injected_capability_matrix();
     test_reduced_motion();
 
     CHECK(portable_cpu_renderer_probe() == MOO_COMP_OK,
           "portable CPU effect renderer failed");
+    test_cpu_alpha_edge_vectors();
     test_cpu_blur_unpremul_clamp();
     test_cpu_lower_z_content_overlap_atomicity();
     test_cpu_extreme_shadow_preflight_atomicity();

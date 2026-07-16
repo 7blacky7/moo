@@ -1,0 +1,384 @@
+# ============================================================
+# beispiele/moo_desktop.moo — Mini-Desktop mit Moo-Leiste (P016-O5-AERO)
+#
+# Ein Desktop IM Fenster: Wallpaper, drei ziehbare Glass-Fenster
+# (Titelleiste = Drag-Zone, X = schliessen, Klick = nach vorn),
+# unten die Moo-Leiste: Startknopf mit Kuhflecken, Startmenue,
+# Task-Buttons (holen/minimieren) und Live-Uhr.
+# Rendering: Surface + uim_effekt_vorschau_zeichnen (C-Fastpath),
+# Blit via ui_zeichne_frame, Texte als GDI-Overlay im draw_cb.
+# ============================================================
+
+importiere ui
+importiere ui_moo_effects
+
+setze G auf {}
+G["b"] = 1000
+G["h"] = 620
+G["leiste_h"] = 44
+G["frame"] = nichts
+G["drag"] = nichts
+G["off_x"] = 0
+G["off_y"] = 0
+G["ref_x"] = 0
+G["ref_y"] = 0
+G["start_offen"] = falsch
+G["uhr"] = ""
+G["tick"] = 0
+
+# ---------------- Fenster-Verwaltung ----------------
+
+funktion desk_fenster_neu(id, titel, x, y, b, h, tr, tg, tb, seed):
+    setze f auf {}
+    f["id"] = id
+    f["titel"] = titel
+    f["x"] = x
+    f["y"] = y
+    f["b"] = b
+    f["h"] = h
+    f["sichtbar"] = wahr
+    setze e auf uim_effekt_neu()
+    uim_effekt_ecken_setze(e, 12, 12, 12, 12)
+    uim_effekt_schatten_setze(e, 3, 8, 8, 2, 0, 0, 0, 120)
+    uim_effekt_hintergrund_setze(e, 8, 336, tr, tg, tb, 255, 104, 8, seed)
+    f["aufl"] = uim_effekt_aufloesen(e, 255)
+    gib_zurück f
+
+funktion desk_finde(id):
+    für f in G["fenster"]:
+        wenn f["id"] == id:
+            gib_zurück f
+    gib_zurück nichts
+
+funktion desk_nach_vorn(f):
+    setze neue auf []
+    für g in G["fenster"]:
+        wenn g["id"] != f["id"]:
+            neue.hinzufügen(g)
+    neue.hinzufügen(f)
+    G["fenster"] = neue
+
+funktion desk_vorderstes():
+    setze n auf länge(G["fenster"])
+    setze i auf n - 1
+    solange i >= 0:
+        setze f auf G["fenster"][i]
+        wenn f["sichtbar"]:
+            gib_zurück f
+        setze i auf i - 1
+    gib_zurück nichts
+
+# ---------------- Rendering ----------------
+
+funktion desk_wallpaper(z):
+    setze wp auf G["wallpaper"]
+    wenn G["wp_aktiv"] == 2 und G["wallpaper2"] != nichts:
+        setze wp auf G["wallpaper2"]
+    wenn wp != nichts:
+        surface_blit_frame(z, 0, 0, wp)
+        desk_icons(z)
+        gib_zurück wahr
+    setze y auf 0
+    solange y < G["h"]:
+        setze t auf y * 100 / G["h"]
+        setze wr auf boden(12 + 18 * t / 100)
+        setze wg auf boden(40 + 100 * t / 100)
+        setze wb auf boden(48 + 52 * t / 100)
+        surface_rect(z, 0, y, G["b"], 4, wr, wg, wb, 255)
+        setze y auf y + 4
+    # Sonne + Huegel
+    surface_circle(z, 860, 90, 56, 255, 224, 150, 170)
+    surface_circle(z, 200, 760, 260, 26, 96, 58, 235)
+    surface_circle(z, 640, 820, 320, 20, 82, 50, 235)
+    desk_icons(z)
+    gib_zurück wahr
+
+funktion desk_icons(z):
+    # Desktop-Icons: Compost (Deko), Seed (toggelt das Wallpaper)
+    surface_roundrect(z, 26, 26, 52, 52, 10, 255, 255, 255, 46)
+    surface_roundrect(z, 38, 38, 28, 24, 4, 210, 220, 235, 200)
+    surface_roundrect(z, 26, 118, 52, 52, 10, 255, 255, 255, 46)
+    surface_circle(z, 52, 140, 14, 130, 220, 140, 220)
+    surface_text(z, 24, 84, 1, "COMPOST", 40, 60, 46, 255)
+    surface_text(z, 36, 176, 1, "SEED", 40, 60, 46, 255)
+    gib_zurück wahr
+
+funktion desk_fenster_zeichnen(z, f):
+    setze fx auf f["x"]
+    setze fy auf f["y"]
+    wenn f["aufl"]["ok"]:
+        uim_effekt_vorschau_zeichnen(z, fx, fy, f["b"], f["h"], f["aufl"], falsch, 65536)
+    # Titelleisten-Akzent + Trennlinie
+    surface_roundrect(z, fx + 2, fy + 2, f["b"] - 4, 26, 10, 255, 255, 255, 24)
+    surface_rect(z, fx + 10, fy + 30, f["b"] - 20, 1, 255, 255, 255, 60)
+    # X-Knopf-Flaeche
+    surface_roundrect(z, fx + f["b"] - 26, fy + 6, 20, 20, 6, 235, 90, 90, 150)
+    # Titel + X + Inhalt IN der Surface — so blurt darueberliegendes Glas
+    # den Text korrekt mit.
+    setze vorn auf desk_vorderstes()
+    wenn vorn != nichts und vorn["id"] == f["id"]:
+        surface_text(z, fx + 14, fy + 11, 2, f["titel"], 255, 255, 255, 255)
+    sonst:
+        surface_text(z, fx + 14, fy + 11, 2, f["titel"], 208, 214, 224, 255)
+    surface_text(z, fx + f["b"] - 20, fy + 11, 2, "x", 255, 255, 255, 235)
+    wenn f["id"] == 1:
+        surface_text(z, fx + 16, fy + 48, 2, "GROWBOX LOCKED.", 235, 250, 242, 255)
+        surface_text(z, fx + 16, fy + 70, 2, "KERNEL INTEGRITY PROTECTED.", 235, 250, 242, 255)
+        surface_text(z, fx + 16, fy + 92, 2, "SEED OK - ROOTSYSTEM MONTIERT", 220, 240, 230, 255)
+        surface_text(z, fx + 16, fy + 114, 2, "SPROUTS 3 - RAIN OK", 220, 240, 230, 255)
+        surface_text(z, fx + 16, fy + 152, 2, "ZIEH MICH AN DER TITELLEISTE!", 255, 255, 255, 255)
+    wenn f["id"] == 2:
+        surface_text(z, fx + 16, fy + 48, 2, "x MOOS-LEISTE BAUEN", 240, 250, 242, 255)
+        surface_text(z, fx + 16, fy + 70, 2, "x SAT-BLUR BUTTERWEICH", 240, 250, 242, 255)
+        surface_text(z, fx + 16, fy + 92, 2, "- MYCELIUM-AGENTENBUS", 240, 250, 242, 255)
+        surface_text(z, fx + 16, fy + 114, 2, "- NUTRIENTS-PAKETMANAGER", 240, 250, 242, 255)
+    wenn f["id"] == 3:
+        surface_text(z, fx + 16, fy + 44, 2, "NOW PLAYING - MOSS GARDEN LOFI", 255, 244, 250, 255)
+    # Fensterspezifischer Inhalt
+    wenn f["id"] == 3:
+        # Musik: Equalizer-Balken, bewegen sich im Sekundentakt
+        setze i auf 0
+        solange i < 8:
+            setze hoehe auf 24 + (i * 53 + G["tick"] * 29) % 96
+            setze bx auf fx + 24 + i * 38
+            surface_roundrect(z, bx, fy + f["h"] - 24 - hoehe, 24, hoehe, 6, 120 + (i * 33) % 135, 200 - (i * 21) % 110, 255 - (i * 45) % 160, 215)
+            setze i auf i + 1
+    gib_zurück wahr
+
+funktion desk_leiste_zeichnen(z):
+    setze ly auf G["h"] - G["leiste_h"]
+    wenn G["leiste"]["ok"]:
+        uim_effekt_vorschau_zeichnen(z, 0, ly, G["b"], G["leiste_h"], G["leiste"], falsch, 65536)
+    surface_rect(z, 0, ly, G["b"], 1, 255, 255, 255, 90)
+    # Startknopf: Moos-Polster (moosgruen mit hellen Polsterflecken)
+    surface_roundrect(z, 6, ly + 6, 82, 32, 10, 46, 104, 62, 235)
+    surface_circle(z, 22, ly + 16, 6, 110, 190, 120, 200)
+    surface_circle(z, 32, ly + 30, 5, 92, 170, 104, 200)
+    surface_circle(z, 76, ly + 13, 4, 120, 200, 130, 200)
+    # Task-Buttons
+    setze i auf 0
+    setze vorn auf desk_vorderstes()
+    solange i < länge(G["fenster"]):
+        setze f auf G["fenster"][i]
+        setze bx auf 100 + f["id"] * 158 - 158
+        setze alpha auf 36
+        wenn f["sichtbar"] und vorn != nichts und vorn["id"] == f["id"]:
+            setze alpha auf 96
+        surface_roundrect(z, bx, ly + 6, 150, 32, 8, 255, 255, 255, alpha)
+        wenn f["sichtbar"]:
+            surface_text(z, bx + 12, ly + 17, 2, f["titel"], 255, 255, 255, 255)
+        sonst:
+            surface_text(z, bx + 12, ly + 17, 2, f["titel"], 190, 196, 206, 255)
+        setze i auf i + 1
+    surface_text(z, 36, ly + 17, 2, "MOOS", 235, 255, 240, 255)
+    surface_text(z, G["b"] - 72, ly + 17, 2, G["uhr"], 255, 255, 255, 255)
+    gib_zurück wahr
+
+funktion desk_startmenue_zeichnen(z):
+    setze mx auf 6
+    setze my auf G["h"] - G["leiste_h"] - 252
+    wenn G["menue"]["ok"]:
+        uim_effekt_vorschau_zeichnen(z, mx, my, 232, 246, G["menue"], falsch, 65536)
+    # Eintrags-Flaechen
+    setze i auf 0
+    solange i < 4:
+        setze alpha auf 22
+        wenn i == 3:
+            setze alpha auf 34
+        surface_roundrect(z, mx + 10, my + 14 + i * 46, 212, 38, 8, 255, 255, 255, alpha)
+        setze i auf i + 1
+    # Trenner vor "Beenden"
+    surface_rect(z, mx + 14, my + 14 + 3 * 46 - 6, 204, 1, 255, 255, 255, 80)
+    surface_text(z, mx + 24, my + 28, 2, "GROWBOX MONITOR", 255, 255, 255, 255)
+    surface_text(z, mx + 24, my + 74, 2, "GREENHOUSE", 255, 255, 255, 255)
+    surface_text(z, mx + 24, my + 120, 2, "MOOSIK-PLAYER", 255, 255, 255, 255)
+    surface_text(z, mx + 24, my + 166, 2, "GROWBOX SCHLIESSEN", 255, 255, 255, 255)
+    gib_zurück wahr
+
+funktion render_frame():
+    setze z auf G["z"]
+    desk_wallpaper(z)
+    für f in G["fenster"]:
+        wenn f["sichtbar"]:
+            desk_fenster_zeichnen(z, f)
+    desk_leiste_zeichnen(z)
+    wenn G["start_offen"]:
+        desk_startmenue_zeichnen(z)
+    setze frame auf surface_snapshot_to_frame(z)
+    wenn frame == nichts:
+        gib_zurück falsch
+    G["frame"] = frame
+    gib_zurück wahr
+
+# ---------------- Text-Overlay (GDI, ueber dem Frame) ----------------
+
+funktion draw_cb(w, zeichner):
+    # Saemtlicher Text lebt IN der Surface (surface_text) — hier nur der Blit.
+    wenn G["frame"] != nichts:
+        ui_zeichne_frame(zeichner, 0, 0, G["b"], G["h"], G["frame"])
+    gib_zurück wahr
+
+# ---------------- Interaktion ----------------
+
+funktion desk_neu_zeichnen():
+    render_frame()
+    ui_leinwand_anfordern(G["leinwand"])
+    gib_zurück wahr
+
+funktion desk_oeffne(id):
+    setze f auf desk_finde(id)
+    wenn f == nichts:
+        gib_zurück falsch
+    f["sichtbar"] = wahr
+    desk_nach_vorn(f)
+    gib_zurück wahr
+
+funktion klemme(wert, lo, hi):
+    wenn wert < lo:
+        gib_zurück lo
+    wenn wert > hi:
+        gib_zurück hi
+    gib_zurück wert
+
+funktion on_maus(w, x, y, taste):
+    wenn taste != 1:
+        gib_zurück wahr
+    setze ly auf G["h"] - G["leiste_h"]
+    # 1) Startmenue offen?
+    wenn G["start_offen"]:
+        setze mx auf 6
+        setze my auf ly - 252
+        wenn x >= mx und x < mx + 232 und y >= my und y < my + 246:
+            setze eintrag auf boden((y - my - 14) / 46)
+            wenn eintrag >= 0 und eintrag <= 2:
+                desk_oeffne(eintrag + 1)
+            wenn eintrag == 3:
+                ui_beenden()
+            G["start_offen"] = falsch
+            desk_neu_zeichnen()
+            gib_zurück wahr
+        G["start_offen"] = falsch
+        desk_neu_zeichnen()
+        gib_zurück wahr
+    # 2) Moo-Leiste
+    wenn y >= ly:
+        wenn x >= 6 und x < 88:
+            G["start_offen"] = wahr
+            desk_neu_zeichnen()
+            gib_zurück wahr
+        # Task-Buttons
+        für f in G["fenster"]:
+            setze bx auf 100 + f["id"] * 158 - 158
+            wenn x >= bx und x < bx + 150:
+                setze vorn auf desk_vorderstes()
+                wenn f["sichtbar"] und vorn != nichts und vorn["id"] == f["id"]:
+                    f["sichtbar"] = falsch
+                sonst:
+                    desk_oeffne(f["id"])
+                desk_neu_zeichnen()
+        gib_zurück wahr
+    # 3) Seed-Icon: Wallpaper wechseln
+    wenn x >= 26 und x < 78 und y >= 118 und y < 170:
+        wenn G["wp_aktiv"] == 1:
+            G["wp_aktiv"] = 2
+        sonst:
+            G["wp_aktiv"] = 1
+        desk_neu_zeichnen()
+        gib_zurück wahr
+    # 4) Fenster (von oben nach unten)
+    setze i auf länge(G["fenster"]) - 1
+    solange i >= 0:
+        setze f auf G["fenster"][i]
+        wenn f["sichtbar"] und x >= f["x"] und x < f["x"] + f["b"] und y >= f["y"] und y < f["y"] + f["h"]:
+            # X-Knopf?
+            wenn x >= f["x"] + f["b"] - 26 und x < f["x"] + f["b"] - 6 und y >= f["y"] + 6 und y < f["y"] + 26:
+                f["sichtbar"] = falsch
+                desk_neu_zeichnen()
+                gib_zurück wahr
+            desk_nach_vorn(f)
+            # Titelleiste = Drag-Zone
+            wenn y < f["y"] + 30:
+                G["drag"] = f
+                G["off_x"] = x - f["x"]
+                G["off_y"] = y - f["y"]
+                G["ref_x"] = f["x"]
+                G["ref_y"] = f["y"]
+            desk_neu_zeichnen()
+            gib_zurück wahr
+        setze i auf i - 1
+    gib_zurück wahr
+
+funktion on_bewegung(w, x, y):
+    wenn G["drag"] == nichts:
+        gib_zurück wahr
+    setze f auf G["drag"]
+    setze nx auf klemme(x - G["off_x"], 0 - f["b"] + 60, G["b"] - 60)
+    setze ny auf klemme(y - G["off_y"], 0, G["h"] - G["leiste_h"] - 24)
+    f["x"] = nx
+    f["y"] = ny
+    setze dx auf nx - G["ref_x"]
+    wenn dx < 0:
+        setze dx auf 0 - dx
+    setze dy auf ny - G["ref_y"]
+    wenn dy < 0:
+        setze dy auf 0 - dy
+    wenn dx + dy >= 2:
+        G["ref_x"] = nx
+        G["ref_y"] = ny
+        desk_neu_zeichnen()
+    gib_zurück wahr
+
+funktion on_maus_los(w, x, y, taste):
+    wenn taste == 1 und G["drag"] != nichts:
+        G["drag"] = nichts
+        desk_neu_zeichnen()
+    gib_zurück wahr
+
+funktion on_uhr():
+    G["uhr"] = ui_zeit_format(ui_zeit_jetzt(), "%H.%M.%S")
+    G["tick"] = G["tick"] + 1
+    # Sekuendlich: Equalizer bewegt sich -> kompletter Frame neu
+    desk_neu_zeichnen()
+    gib_zurück wahr
+
+# ---------------- Setup ----------------
+
+setze z auf surface_new(G["b"], G["h"])
+wenn z == nichts:
+    wirf "Surface konnte nicht erzeugt werden"
+G["z"] = z
+
+G["fenster"] = []
+G["fenster"].hinzufügen(desk_fenster_neu(1, "Growbox Monitor", 90, 70, 360, 230, 84, 180, 150, 20260714))
+G["fenster"].hinzufügen(desk_fenster_neu(2, "Greenhouse", 320, 210, 320, 210, 120, 230, 160, 20260715))
+G["fenster"].hinzufügen(desk_fenster_neu(3, "Moosik-Player", 580, 110, 344, 240, 255, 120, 190, 20260716))
+
+setze leiste auf uim_effekt_neu()
+uim_effekt_ecken_setze(leiste, 0, 0, 0, 0)
+uim_effekt_hintergrund_setze(leiste, 5, 300, 18, 22, 34, 255, 150, 6, 20260717)
+G["leiste"] = uim_effekt_aufloesen(leiste, 255)
+
+setze menue auf uim_effekt_neu()
+uim_effekt_ecken_setze(menue, 10, 10, 10, 10)
+uim_effekt_schatten_setze(menue, 2, 6, 8, 2, 0, 0, 0, 130)
+uim_effekt_hintergrund_setze(menue, 8, 320, 44, 66, 56, 255, 132, 8, 20260718)
+G["menue"] = uim_effekt_aufloesen(menue, 255)
+
+G["uhr"] = ui_zeit_format(ui_zeit_jetzt(), "%H.%M.%S")
+G["wallpaper"] = frame_lade_bmp("beispiele/assets/moos/wallpaper.bmp")
+G["wallpaper2"] = frame_lade_bmp("beispiele/assets/moos/wallpaper2.bmp")
+G["wp_aktiv"] = 1
+
+wenn render_frame() == falsch:
+    wirf "Initialer Frame konnte nicht gerendert werden"
+
+setze fenster auf ui_fenster("MOOS Desktop — grows inside the Growbox", 1040, 700, 0, nichts)
+ui_label(fenster, "Growing up M O O S ...  Fenster ziehen (Titelleiste), X schliesst, MOOS-Knopf oeffnet das Startmenue", 20, 10, 990, 22)
+G["leinwand"] = ui_leinwand(fenster, 12, 36, G["b"], G["h"], draw_cb)
+ui_leinwand_on_maus(G["leinwand"], on_maus)
+ui_leinwand_on_bewegung(G["leinwand"], on_bewegung)
+ui_leinwand_on_maus_los(G["leinwand"], on_maus_los)
+ui_timer_hinzu(1000, on_uhr)
+zeige "P016-UI1-DESKTOP-START"
+ui_zeige_nebenbei(fenster)
+ui_laufen()

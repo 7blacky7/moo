@@ -197,6 +197,10 @@ void moo_ki_gpu_telemetrie(MooKiGpuTelemetrie* out) {
     if (out) { out->submits = 0; out->uploads = 0; out->downloads = 0; out->cpu_fallbacks = 0; }
 }
 void moo_ki_gpu_telemetrie_reset(void) { }
+bool moo_ki_gpu_device_info(MooKiGpuDeviceInfo* out) {
+    if (out) *out = (MooKiGpuDeviceInfo){0};
+    return false;
+}
 
 #else /* MOO_HAS_VULKAN ------------------------------------------------- */
 
@@ -498,6 +502,34 @@ static bool ki_gpu_init(void) {
         return false;
 
     G.bereit = true;
+    return true;
+}
+
+bool moo_ki_gpu_device_info(MooKiGpuDeviceInfo* out) {
+    VkPhysicalDeviceProperties props;
+    uint32_t kind;
+    if (!out) return false;
+    *out = (MooKiGpuDeviceInfo){0};
+    if (!ki_gpu_init()) return false;
+    vkGetPhysicalDeviceProperties(G.phys, &props);
+    switch (props.deviceType) {
+        case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+            kind = MOO_KI_GPU_DEVICE_INTEGRATED; break;
+        case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+            kind = MOO_KI_GPU_DEVICE_DISCRETE; break;
+        case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+            kind = MOO_KI_GPU_DEVICE_VIRTUAL; break;
+        case VK_PHYSICAL_DEVICE_TYPE_CPU:
+            kind = MOO_KI_GPU_DEVICE_CPU; break;
+        case VK_PHYSICAL_DEVICE_TYPE_OTHER:
+        default:
+            kind = MOO_KI_GPU_DEVICE_OTHER; break;
+    }
+    out->device_kind = kind;
+    out->api_version = props.apiVersion;
+    out->driver_version = props.driverVersion;
+    out->vendor_id = props.vendorID;
+    out->device_id = props.deviceID;
     return true;
 }
 

@@ -18,6 +18,8 @@ typedef struct {
 } MooInputWin32Adapter;
 
 uint64_t moo_input_win32_features(void);
+MooInputResult moo_input_win32_refresh_preferences(
+    MooInputWin32Adapter *adapter, uint64_t timestamp_ns);
 MooInputResult moo_input_win32_init(MooInputWin32Adapter *adapter,
     MooInputCore *core, MooInputHandle target);
 MooInputResult moo_input_win32_message(MooInputWin32Adapter *adapter,

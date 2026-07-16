@@ -1,5 +1,6 @@
 #include "moo_runtime.h"
 #include "moo_surface_core.h"
+#include "moo_font_aa.h"
 
 #include <limits.h>
 #include <math.h>
@@ -265,6 +266,69 @@ MooValue moo_surface_line(MooValue value, MooValue x0, MooValue y0,
     return moo_bool(ok && moo_surface_guards_ok(surface));
 }
 
+/* Text mit eingebettetem Antialiasing-Font (moo_font_aa.h, ASCII 32..126,
+ * Graustufen-Alpha wie ClearType) in die Surface zeichnen. Unbekannte
+ * Zeichen rendern als '?', '\n' bricht um. skala vergroessert blockweise;
+ * die weichen Kanten bleiben durch das eingebackene Alpha erhalten. */
+MooValue moo_surface_text(MooValue value, MooValue x, MooValue y,
+                          MooValue skala, MooValue text, MooValue r,
+                          MooValue g, MooValue b, MooValue a) {
+    MooSurface* surface = moo_surface_get(value);
+    MooSurfaceColor color;
+    int32_t ix;
+    int32_t iy;
+    int32_t isk;
+    if (!surface || text.tag != MOO_STRING ||
+        !moo_surface_number_i32(x, &ix) ||
+        !moo_surface_number_i32(y, &iy) ||
+        !moo_surface_number_i32(skala, &isk) || isk < 1 || isk > 16 ||
+        !moo_surface_color(r, g, b, a, &color)) return moo_bool(false);
+    const char* s = MV_STR(text)->chars;
+    int32_t len = MV_STR(text)->length;
+    int32_t W = surface->core.width;
+    int32_t H = surface->core.height;
+    int64_t pen_x = ix;
+    int64_t pen_y = iy;
+    int64_t advance = (int64_t)MOO_FONT_AA_W * isk;
+    int64_t line_adv = (int64_t)(MOO_FONT_AA_H + 1) * isk;
+    for (int32_t i = 0; i < len; ++i) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == '\n') {
+            pen_x = ix;
+            pen_y += line_adv;
+            continue;
+        }
+        if (c < MOO_FONT_AA_FIRST || c >= MOO_FONT_AA_FIRST + MOO_FONT_AA_COUNT)
+            c = '?';
+        const uint8_t* glyph = moo_font_aa[c - MOO_FONT_AA_FIRST];
+        for (int32_t gy = 0; gy < MOO_FONT_AA_H; ++gy) {
+            for (int32_t gx = 0; gx < MOO_FONT_AA_W; ++gx) {
+                uint32_t cov = glyph[gy * MOO_FONT_AA_W + gx];
+                if (cov == 0u) continue;
+                uint32_t aa = (cov * (uint32_t)color.a + 127u) / 255u;
+                if (aa == 0u) continue;
+                uint32_t ia = 255u - aa;
+                for (int32_t sy = 0; sy < isk; ++sy) {
+                    int64_t py = pen_y + (int64_t)gy * isk + sy;
+                    if (py < 0 || py >= H) continue;
+                    for (int32_t sx = 0; sx < isk; ++sx) {
+                        int64_t px = pen_x + (int64_t)gx * isk + sx;
+                        if (px < 0 || px >= W) continue;
+                        uint8_t* dp = surface->core.pixels +
+                                      ((size_t)py * (size_t)W + (size_t)px) * 4u;
+                        dp[0] = (uint8_t)(((uint32_t)color.r * aa + (uint32_t)dp[0] * ia + 127u) / 255u);
+                        dp[1] = (uint8_t)(((uint32_t)color.g * aa + (uint32_t)dp[1] * ia + 127u) / 255u);
+                        dp[2] = (uint8_t)(((uint32_t)color.b * aa + (uint32_t)dp[2] * ia + 127u) / 255u);
+                        dp[3] = (uint8_t)(aa + ((uint32_t)dp[3] * ia + 127u) / 255u);
+                    }
+                }
+            }
+        }
+        pen_x += advance;
+    }
+    return moo_bool(moo_surface_guards_ok(surface));
+}
+
 MooValue moo_surface_read_pixel(MooValue value, MooValue x, MooValue y) {
     MooSurface* surface = moo_surface_get(value);
     MooSurfaceColor color;
@@ -315,6 +379,52 @@ MooValue moo_surface_snapshot_to_frame(MooValue value) {
         return moo_none();
     }
     return moo_frame_new_take(surface->core.width, surface->core.height, pixels);
+}
+
+/* Frame src-over in die Surface blitten (straight alpha, Integer-Blend mit
+ * +127-Rundung; a=255 ersetzt exakt). Bounds-geclippt; der Surface-Clip-Stack
+ * wird bewusst NICHT angewendet (Vollflaechen-Blit, z.B. Wallpaper). */
+MooValue moo_surface_blit_frame(MooValue value, MooValue x, MooValue y,
+                                MooValue frame) {
+    MooSurface* surface = moo_surface_get(value);
+    int32_t bx;
+    int32_t by;
+    if (!surface || frame.tag != MOO_FRAME ||
+        !moo_surface_number_i32(x, &bx) ||
+        !moo_surface_number_i32(y, &by)) return moo_bool(false);
+    MooFrame* f = MV_FRAME(frame);
+    if (!f || !f->pixels || f->width <= 0 || f->height <= 0)
+        return moo_bool(false);
+    int32_t W = surface->core.width;
+    int32_t H = surface->core.height;
+    int32_t x0 = bx < 0 ? -bx : 0;
+    int32_t y0 = by < 0 ? -by : 0;
+    int32_t x1 = (bx + f->width > W) ? (W - bx) : f->width;
+    int32_t y1 = (by + f->height > H) ? (H - by) : f->height;
+    for (int32_t yy = y0; yy < y1; ++yy) {
+        const uint8_t* sp = f->pixels + (size_t)yy * (size_t)f->stride +
+                            (size_t)x0 * 4u;
+        uint8_t* dp = surface->core.pixels +
+                      ((size_t)(by + yy) * (size_t)W + (size_t)(bx + x0)) * 4u;
+        for (int32_t xx = x0; xx < x1; ++xx) {
+            uint32_t a = sp[3];
+            if (a == 255u) {
+                dp[0] = sp[0];
+                dp[1] = sp[1];
+                dp[2] = sp[2];
+                dp[3] = 255u;
+            } else if (a > 0u) {
+                uint32_t ia = 255u - a;
+                dp[0] = (uint8_t)(((uint32_t)sp[0] * a + (uint32_t)dp[0] * ia + 127u) / 255u);
+                dp[1] = (uint8_t)(((uint32_t)sp[1] * a + (uint32_t)dp[1] * ia + 127u) / 255u);
+                dp[2] = (uint8_t)(((uint32_t)sp[2] * a + (uint32_t)dp[2] * ia + 127u) / 255u);
+                dp[3] = (uint8_t)(a + ((uint32_t)dp[3] * ia + 127u) / 255u);
+            }
+            sp += 4;
+            dp += 4;
+        }
+    }
+    return moo_bool(moo_surface_guards_ok(surface));
 }
 
 /* =========================================================================
@@ -445,6 +555,67 @@ MooValue moo_surface_glass_farbpass(MooValue value, MooValue x, MooValue y,
     GlassScratch* scratch =
         (GlassScratch*)malloc((size_t)pb * (size_t)ph * sizeof(GlassScratch));
     if (!scratch) return moo_bool(false);
+
+    /* Integral-Bild (SAT) ueber das geclippte Sample-Fenster: bit-identisch
+     * zur naiven Sampling-Schleife (Ganzzahlsummen sind in double exakt,
+     * Bounds-Klemmung entspricht den core_read_pixel-Skips), aber O(1) pro
+     * Pixel statt O((2*blur+1)^2). Bei malloc-Fail/Riesenregion greift der
+     * naive Pfad. */
+    int32_t cw = 0;
+    int32_t ch = 0;
+    int32_t cx0 = px - iblur;
+    int32_t cy0 = py - iblur;
+    double* integral = NULL;
+    size_t satw = 0u;
+    {
+        int32_t W = surface->core.width;
+        int32_t H = surface->core.height;
+        int32_t cx1 = px + pb + iblur;
+        int32_t cy1 = py + ph + iblur;
+        if (cx0 < 0) cx0 = 0;
+        if (cy0 < 0) cy0 = 0;
+        if (cx1 > W) cx1 = W;
+        if (cy1 > H) cy1 = H;
+        cw = cx1 - cx0;
+        ch = cy1 - cy0;
+        if (cw > 0 && ch > 0) {
+            size_t sat_px = ((size_t)cw + 1u) * ((size_t)ch + 1u);
+            if (sat_px <= 20u * 1024u * 1024u)
+                integral = (double*)malloc(sat_px * 4u * sizeof(double));
+        }
+        if (integral) {
+            const uint8_t* pixels = surface->core.pixels;
+            satw = (size_t)cw + 1u;
+            for (size_t i = 0u; i < satw * 4u; ++i) integral[i] = 0.0;
+            for (int32_t yy = 0; yy < ch; ++yy) {
+                const double* prev = integral + (size_t)yy * satw * 4u;
+                double* dst = integral + ((size_t)yy + 1u) * satw * 4u;
+                const uint8_t* src = pixels +
+                    ((size_t)(cy0 + yy) * (size_t)W + (size_t)cx0) * 4u;
+                double row_r = 0.0;
+                double row_g = 0.0;
+                double row_b = 0.0;
+                double row_a = 0.0;
+                dst[0] = 0.0;
+                dst[1] = 0.0;
+                dst[2] = 0.0;
+                dst[3] = 0.0;
+                for (int32_t xx = 0; xx < cw; ++xx) {
+                    size_t o = ((size_t)xx + 1u) * 4u;
+                    row_r += (double)src[0];
+                    row_g += (double)src[1];
+                    row_b += (double)src[2];
+                    row_a += (double)src[3];
+                    dst[o + 0u] = prev[o + 0u] + row_r;
+                    dst[o + 1u] = prev[o + 1u] + row_g;
+                    dst[o + 2u] = prev[o + 2u] + row_b;
+                    dst[o + 3u] = prev[o + 3u] + row_a;
+                    src += 4;
+                }
+            }
+        }
+    }
+
     size_t n = 0u;
     for (int32_t ly = 0; ly < ph; ++ly) {
         for (int32_t lx = 0; lx < pb; ++lx) {
@@ -458,17 +629,45 @@ MooValue moo_surface_glass_farbpass(MooValue value, MooValue x, MooValue y,
             double bb;
             double aa;
             if (!glass_im_rundclip(ecken, lx, ly, pb, ph)) continue;
-            for (int32_t sy = -iblur; sy <= iblur; ++sy) {
-                for (int32_t sx = -iblur; sx <= iblur; ++sx) {
-                    MooSurfaceColor q;
-                    if (moo_surface_core_read_pixel(&surface->core,
-                                                    px + lx + sx,
-                                                    py + ly + sy, &q)) {
-                        sum_r += (double)q.r;
-                        sum_g += (double)q.g;
-                        sum_b += (double)q.b;
-                        sum_a += (double)q.a;
-                        anzahl += 1.0;
+            if (integral) {
+                int32_t sx0 = px + lx - iblur;
+                int32_t sy0 = py + ly - iblur;
+                int32_t sx1 = px + lx + iblur + 1;
+                int32_t sy1 = py + ly + iblur + 1;
+                if (sx0 < cx0) sx0 = cx0;
+                if (sy0 < cy0) sy0 = cy0;
+                if (sx1 > cx0 + cw) sx1 = cx0 + cw;
+                if (sy1 > cy0 + ch) sy1 = cy0 + ch;
+                if (sx1 > sx0 && sy1 > sy0) {
+                    size_t ax = (size_t)(sx0 - cx0);
+                    size_t bx = (size_t)(sx1 - cx0);
+                    size_t ay = (size_t)(sy0 - cy0);
+                    size_t by = (size_t)(sy1 - cy0);
+                    const double* rb = integral + by * satw * 4u;
+                    const double* ra = integral + ay * satw * 4u;
+                    sum_r = rb[bx * 4u + 0u] - ra[bx * 4u + 0u] -
+                            rb[ax * 4u + 0u] + ra[ax * 4u + 0u];
+                    sum_g = rb[bx * 4u + 1u] - ra[bx * 4u + 1u] -
+                            rb[ax * 4u + 1u] + ra[ax * 4u + 1u];
+                    sum_b = rb[bx * 4u + 2u] - ra[bx * 4u + 2u] -
+                            rb[ax * 4u + 2u] + ra[ax * 4u + 2u];
+                    sum_a = rb[bx * 4u + 3u] - ra[bx * 4u + 3u] -
+                            rb[ax * 4u + 3u] + ra[ax * 4u + 3u];
+                    anzahl = (double)((sx1 - sx0) * (sy1 - sy0));
+                }
+            } else {
+                for (int32_t sy = -iblur; sy <= iblur; ++sy) {
+                    for (int32_t sx = -iblur; sx <= iblur; ++sx) {
+                        MooSurfaceColor q;
+                        if (moo_surface_core_read_pixel(&surface->core,
+                                                        px + lx + sx,
+                                                        py + ly + sy, &q)) {
+                            sum_r += (double)q.r;
+                            sum_g += (double)q.g;
+                            sum_b += (double)q.b;
+                            sum_a += (double)q.a;
+                            anzahl += 1.0;
+                        }
                     }
                 }
             }
@@ -509,6 +708,7 @@ MooValue moo_surface_glass_farbpass(MooValue value, MooValue x, MooValue y,
             n++;
         }
     }
+    free(integral);
     bool ok = true;
     for (size_t i = 0u; i < n; ++i) {
         if (!moo_surface_core_rect(&surface->core, scratch[i].x, scratch[i].y,

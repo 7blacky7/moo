@@ -31,6 +31,12 @@ fn main() {
         .file("runtime/moo_surface_core.c") // P016-O1: freestanding RGBA8-Rasterkern
         .file("runtime/moo_compositor_core.c")   // P016-O3: allocatorfreier Multi-Client-Zustandskern
         .file("runtime/moo_compositor_raster.c") // P016-O3: deterministische RGBA-Komposition
+        .file("runtime/moo_compositor_effects_state.c")  // P016-I1: Effects-State und Validierung
+        .file("runtime/moo_compositor_animation.c")      // P016-I1: deterministische Animationen
+        .file("runtime/moo_compositor_effects_math.c")   // P016-I1: portable Effekt-Mathematik
+        .file("runtime/moo_compositor_effects_cpu.c")    // P016-I1: CPU-Referenzrenderer
+        .file("runtime/moo_compositor_effects_damage.c") // P016-I1: konservative Damage-Berechnung
+        .file("runtime/moo_compositor_effects_gpu.c")    // P016-I1: GPU-Vertragsadapter
         .file("runtime/moo_surface.c")      // P016-O1: refcounteter MOO_SURFACE-Wrapper
         .file("runtime/moo_frame_tensor.c") // Frame<->Tensor-Bruecke (KI-MULTI-V1, SDL-frei)
         .file("runtime/moo_capture.c")      // KI-MULTI-C1: gemeinsame Handle-/Lifecycle-Schicht
@@ -127,6 +133,15 @@ fn main() {
     // deaktiviert werden (kein UI, kein Tray → keine GTK/appindicator-Dep).
     // ========================================================================
     let ui_enabled = cfg!(feature = "moo_ui");
+
+    // Das kompatible ui_moo-Umbrella-Modul enthaelt den Frame-Adapter auch
+    // in UI-only Builds. Ohne 3D-Feature stellt dieser kleine Provider die
+    // drei benoetigten ABI-Symbole explizit fail-closed bereit, ohne SDL
+    // einzubinden. Bei aktivem 3D-Feature liefert moo_graphics.c exklusiv
+    // die realen Implementierungen.
+    if ui_enabled && !cfg!(any(feature = "gl21", feature = "gl33", feature = "vulkan")) {
+        build.file("runtime/moo_graphics_unavailable.c");
+    }
 
     if ui_enabled {
         if cfg!(target_os = "linux") {

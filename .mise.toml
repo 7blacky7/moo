@@ -25,6 +25,25 @@ run = "bash scripts/ui-test-runner.sh"
 description = "Run the ui_moo demo 20 times in the isolated harness"
 run = "bash scripts/ui-moo-demo-smoke.sh"
 
+[tasks.test-ui-moo-lifecycle]
+description = "Run the toolkit-free headless ui_moo lifecycle and callback ownership gates"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-ui-moo-lifecycle.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+cargo build --release --manifest-path compiler/Cargo.toml
+TARGET="${CARGO_TARGET_DIR:-$PWD/compiler/target}"
+case "$TARGET" in
+  /*) ;;
+  *) TARGET="$PWD/$TARGET" ;;
+esac
+COMPILER="$TARGET/release/moo-compiler"
+"$COMPILER" compile beispiele/tests/ui_moo_lifecycle_test.moo -o "$OUT/lifecycle"
+env -u DISPLAY -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS \
+    -u PULSE_SERVER -u PIPEWIRE_REMOTE -u XAUTHORITY \
+    MOO_UI_BACKEND=gtk "$OUT/lifecycle"
+'''
+
 
 [tasks.test-ui-moo-surface]
 description = "Run toolkit-free ui_moo Surface regression tests"
@@ -48,6 +67,28 @@ cp beispiele/tests/ui_moo_surface_golden_test.moo "$OUT/golden.moo"
 '''
 
 
+[tasks.test-ui-moo-effects-ui1]
+description = "Run public Moo effects API, pixel golden and non-UI Glass Gallery"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-ui1-effects.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+cargo build --release --manifest-path compiler/Cargo.toml
+TARGET="${CARGO_TARGET_DIR:-$PWD/compiler/target}"
+case "$TARGET" in
+  /*) ;;
+  *) TARGET="$PWD/$TARGET" ;;
+esac
+COMPILER="$TARGET/release/moo-compiler"
+"$COMPILER" compile beispiele/tests/ui_moo_effects_contract_test.moo -o "$OUT/contract"
+"$OUT/contract"
+"$COMPILER" compile beispiele/tests/ui_moo_effects_golden_test.moo -o "$OUT/golden"
+"$OUT/golden"
+"$COMPILER" compile beispiele/moo_glass_gallery.moo -o "$OUT/gallery"
+MOO_GLASS_GALLERY_NON_UI=1 MOO_GLASS_GALLERY_BMP="$OUT/gallery.bmp" "$OUT/gallery"
+test -s "$OUT/gallery.bmp"
+'''
+
 [tasks.test-ui-moo-compositor]
 description = "Run toolkit-free Moo compositor sanitizer and freestanding gates"
 run = '''
@@ -55,15 +96,187 @@ set -eu
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-compositor.XXXXXX")"
 trap 'rm -rf "$OUT"' EXIT
 CC="${CC:-cc}"
-SRC="compiler/runtime/tests/test_compositor_asan.c compiler/runtime/moo_compositor_core.c compiler/runtime/moo_compositor_raster.c"
+SRC="compiler/runtime/tests/test_compositor_asan.c compiler/runtime/moo_ui_host_parity_instrumentation.c compiler/runtime/moo_compositor_core.c compiler/runtime/moo_compositor_raster.c compiler/runtime/moo_compositor_effects_state.c compiler/runtime/moo_compositor_animation.c compiler/runtime/moo_compositor_effects_math.c compiler/runtime/moo_compositor_effects_cpu.c compiler/runtime/moo_compositor_effects_damage.c"
 "$CC" -std=c11 -Wall -Wextra -Werror -fsanitize=address -fno-omit-frame-pointer -Icompiler/runtime $SRC -o "$OUT/compositor-asan"
 ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 "$OUT/compositor-asan"
 "$CC" -std=c11 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -Icompiler/runtime $SRC -o "$OUT/compositor-ubsan"
 UBSAN_OPTIONS=halt_on_error=1 "$OUT/compositor-ubsan"
+"$CC" -std=c11 -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -O2 -Icompiler/runtime -c compiler/runtime/moo_freestanding_mem.c -o "$OUT/freestanding-mem.o"
 "$CC" -std=c11 -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -O2 -Icompiler/runtime -c compiler/runtime/moo_compositor_core.c -o "$OUT/core.o"
 "$CC" -std=c11 -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -O2 -Icompiler/runtime -c compiler/runtime/moo_compositor_raster.c -o "$OUT/raster.o"
-"$CC" -nostdlib -r "$OUT/core.o" "$OUT/raster.o" -o "$OUT/compositor.o"
+"$CC" -std=c11 -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -O2 -Icompiler/runtime -c compiler/runtime/moo_compositor_effects_state.c -o "$OUT/effects-state.o"
+"$CC" -std=c11 -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -O2 -Icompiler/runtime -c compiler/runtime/moo_compositor_animation.c -o "$OUT/animation.o"
+"$CC" -std=c11 -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -O2 -Icompiler/runtime -c compiler/runtime/moo_compositor_effects_math.c -o "$OUT/effects-math.o"
+"$CC" -std=c11 -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -O2 -Icompiler/runtime -c compiler/runtime/moo_compositor_effects_cpu.c -o "$OUT/effects-cpu.o"
+"$CC" -std=c11 -ffreestanding -fno-builtin -fno-stack-protector -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -O2 -Icompiler/runtime -c compiler/runtime/moo_compositor_effects_damage.c -o "$OUT/effects-damage.o"
+"$CC" -nostdlib -r "$OUT/freestanding-mem.o" "$OUT/core.o" "$OUT/raster.o" "$OUT/effects-state.o" "$OUT/animation.o" "$OUT/effects-math.o" "$OUT/effects-cpu.o" "$OUT/effects-damage.o" -o "$OUT/compositor.o"
 test -z "$(nm -u "$OUT/compositor.o")"
+'''
+
+
+[tasks.test-ui-moo-parity-helper-win32]
+description = "Run the isolated Win32 reduced-idle helper contract gate"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-parity-helper.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+CC="${CC:-cc}"
+SRC="compiler/runtime/tests/test_ui_host_parity_helper_win32.c compiler/runtime/moo_ui_host_parity_helper_win32.c compiler/runtime/moo_ui_host_parity_instrumentation.c compiler/runtime/moo_compositor_core.c compiler/runtime/moo_compositor_raster.c compiler/runtime/moo_compositor_effects_state.c compiler/runtime/moo_compositor_animation.c compiler/runtime/moo_compositor_effects_math.c compiler/runtime/moo_compositor_effects_cpu.c compiler/runtime/moo_compositor_effects_damage.c"
+"$CC" -std=c11 -Wall -Wextra -Werror -Icompiler/runtime $SRC -o "$OUT/helper"
+"$OUT/helper"
+'''
+
+[tasks.test-ui-moo-effects]
+description = "Run toolkit-free Moo compositor effects ASan and UBSan smoke gates"
+run = '''
+set -eu
+EFFECTS_SANITIZER=asan bash scripts/effects-test-runner.sh verify-green
+EFFECTS_SANITIZER=ubsan bash scripts/effects-test-runner.sh verify-green
+'''
+
+[tasks.test-ui-moo-effects-opt]
+description = "Run toolkit-free Moo compositor effects at O0, O2 and O3"
+run = '''
+set -eu
+for opt in O0 O2 O3; do
+  EFFECTS_SANITIZER=none EFFECTS_OPT_LEVEL="$opt" bash scripts/effects-test-runner.sh verify-green
+done
+'''
+
+[tasks.test-ui-moo-effects-portable]
+description = "Run Moo compositor effects with GCC and Clang at O0, O2 and O3"
+run = '''
+set -eu
+for cc in gcc clang; do
+  if ! command -v "$cc" >/dev/null 2>&1; then
+    echo "P016-G1 COMPILER N/A: $cc unavailable" >&2
+    exit 2
+  fi
+  for opt in O0 O2 O3; do
+    CC="$cc" EFFECTS_SANITIZER=none EFFECTS_OPT_LEVEL="$opt" bash scripts/effects-test-runner.sh verify-green
+  done
+done
+'''
+
+[tasks.test-ui-moo-effects-freestanding]
+description = "Prove the Moo compositor effects stack is freestanding and self-contained"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-effects-freestanding.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+for cc in ${CC:-gcc clang}; do
+  if ! command -v "$cc" >/dev/null 2>&1; then
+    echo "P016-G1 FREESTANDING N/A: $cc unavailable" >&2
+    exit 2
+  fi
+  CC_OUT="$OUT/$cc"
+  mkdir -p "$CC_OUT"
+  for src in \
+    moo_freestanding_mem.c \
+    moo_compositor_core.c \
+    moo_compositor_raster.c \
+    moo_compositor_effects_state.c \
+    moo_compositor_animation.c \
+    moo_compositor_effects_math.c \
+    moo_compositor_effects_cpu.c \
+    moo_compositor_effects_damage.c \
+    moo_compositor_effects_gpu.c; do
+    "$cc" -std=c11 -ffreestanding -fno-builtin -fno-stack-protector \
+      -fno-asynchronous-unwind-tables -Wall -Wextra -Werror -pedantic -O2 \
+      -Icompiler/runtime -c "compiler/runtime/$src" -o "$CC_OUT/${src%.c}.o"
+  done
+  "$cc" -nostdlib -r "$CC_OUT"/*.o -o "$CC_OUT/effects-stack.o"
+  undefined="$(nm -u "$CC_OUT/effects-stack.o")"
+  if [ -n "$undefined" ]; then
+    echo "P016-G1 FREESTANDING FAIL: cc=$cc undefined symbols" >&2
+    echo "$undefined" >&2
+    exit 1
+  fi
+  echo "P016-G1 FREESTANDING PASS: cc=$cc undefined=0"
+done
+'''
+
+[tasks.test-ui-moo-effects-ilp32]
+description = "Compile and close the Moo compositor effects stack as ILP32"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-effects-ilp32.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+for cc in gcc clang; do
+  if ! command -v "$cc" >/dev/null 2>&1; then
+    echo "P016-G1 ILP32 N/A: $cc unavailable" >&2
+    exit 2
+  fi
+  CC_OUT="$OUT/$cc"
+  mkdir -p "$CC_OUT"
+  for src in \
+    moo_freestanding_mem.c \
+    moo_compositor_core.c \
+    moo_compositor_raster.c \
+    moo_compositor_effects_state.c \
+    moo_compositor_animation.c \
+    moo_compositor_effects_math.c \
+    moo_compositor_effects_cpu.c \
+    moo_compositor_effects_damage.c \
+    moo_compositor_effects_gpu.c; do
+    "$cc" -m32 -std=c11 -ffreestanding -fno-builtin -fno-pic -fno-pie \
+      -fno-stack-protector -fno-asynchronous-unwind-tables \
+      -Wall -Wextra -Werror -pedantic -O2 \
+      -Icompiler/runtime -c "compiler/runtime/$src" -o "$CC_OUT/${src%.c}.o"
+  done
+  compiler_runtime="$("$cc" -m32 -print-libgcc-file-name)"
+  if [ ! -f "$compiler_runtime" ]; then
+    echo "P016-G1 ILP32 N/A: cc=$cc compiler-runtime missing: $compiler_runtime" >&2
+    exit 2
+  fi
+  "$cc" -m32 -nostdlib -r "$CC_OUT"/*.o "$compiler_runtime" \
+    -o "$CC_OUT/effects-stack.o"
+  object_kind="$(file "$CC_OUT/effects-stack.o")"
+  case "$object_kind" in
+    *"ELF 32-bit"*) ;;
+    *) echo "P016-G1 ILP32 FAIL: cc=$cc object=$object_kind" >&2; exit 1 ;;
+  esac
+  undefined="$(nm -u "$CC_OUT/effects-stack.o")"
+  if [ -n "$undefined" ]; then
+    echo "P016-G1 ILP32 FAIL: cc=$cc undefined symbols" >&2
+    echo "$undefined" >&2
+    exit 1
+  fi
+  echo "P016-G1 ILP32 PASS: cc=$cc object=ELF32 undefined=0"
+done
+'''
+
+[tasks.test-ui-moo-effects-repeat]
+description = "Run each Moo compositor effects harness in 20 output-identical processes"
+run = "EFFECTS_SANITIZER=none EFFECTS_OPT_LEVEL=O2 EFFECTS_REPEAT=20 bash scripts/effects-test-runner.sh verify-green"
+
+[tasks.test-ui-moo-effects-g1]
+description = "Run the complete portable G1 compositor effects gate"
+run = '''
+set -eu
+mise run test-ui-moo-effects
+mise run test-ui-moo-effects-portable
+mise run test-ui-moo-effects-freestanding
+mise run test-ui-moo-effects-ilp32
+mise run test-ui-moo-effects-repeat
+'''
+
+
+[tasks.test-ui-moo-a11y-metadata]
+description = "Run the toolkit-free ui_moo accessibility metadata contract"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-a11y-metadata.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+COMPILER="$PWD/compiler/target/release/moo-compiler"
+test -x "$COMPILER"
+"$COMPILER" compile beispiele/tests/ui_moo_a11y_metadata_test.moo -o "$OUT/a11y-metadata"
+env -u DISPLAY -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS -u PULSE_SERVER -u PIPEWIRE_REMOTE -u XAUTHORITY -u MIR_SOCKET -u SWAYSOCK "$OUT/a11y-metadata" >"$OUT/a11y-metadata.log" 2>"$OUT/a11y-metadata.err"
+test ! -s "$OUT/a11y-metadata.err"
+test "$(grep -c '^PASS ' "$OUT/a11y-metadata.log")" -eq 14
+test "$(grep -c '^FAIL ' "$OUT/a11y-metadata.log")" -eq 0
+test "$(grep -c '^P016-O4-MOO-A11Y-OK checks=14 no_ui=1$' "$OUT/a11y-metadata.log")" -eq 1
+cat "$OUT/a11y-metadata.log"
 '''
 
 
@@ -71,15 +284,17 @@ test -z "$(nm -u "$OUT/compositor.o")"
 description = "Run toolkit-free Moo input, IME and accessibility gates"
 run = '''
 set -eu
+mise run test-ui-moo-a11y-metadata
+mise run test-ui-moo-ime-event-contract
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-input.XXXXXX")"
 trap 'rm -rf "$OUT"' EXIT
 CC="${CC:-cc}"
-SRC="compiler/runtime/tests/test_input_a11y_asan.c compiler/runtime/moo_input_core.c compiler/runtime/moo_a11y_core.c"
+SRC="compiler/runtime/tests/test_input_a11y_asan.c compiler/runtime/moo_input_core.c compiler/runtime/moo_a11y_core.c compiler/runtime/moo_ui_host_parity_devtools.c compiler/runtime/moo_ui_host_parity_instrumentation.c compiler/runtime/moo_compositor_core.c compiler/runtime/moo_compositor_raster.c compiler/runtime/moo_compositor_effects_state.c compiler/runtime/moo_compositor_animation.c compiler/runtime/moo_compositor_effects_math.c compiler/runtime/moo_compositor_effects_cpu.c compiler/runtime/moo_compositor_effects_damage.c"
 "$CC" -std=c11 -Wall -Wextra -Werror -fsanitize=address -fno-omit-frame-pointer -Icompiler/runtime $SRC -o "$OUT/input-asan"
 ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 "$OUT/input-asan"
 "$CC" -std=c11 -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -Icompiler/runtime $SRC -o "$OUT/input-ubsan"
 UBSAN_OPTIONS=halt_on_error=1 "$OUT/input-ubsan"
-BRIDGE_SRC="compiler/runtime/tests/test_input_compositor_bridge.c compiler/runtime/moo_input_compositor_bridge.c compiler/runtime/moo_input_core.c compiler/runtime/moo_compositor_core.c compiler/runtime/moo_compositor_raster.c"
+BRIDGE_SRC="compiler/runtime/tests/test_input_compositor_bridge.c compiler/runtime/moo_input_compositor_bridge.c compiler/runtime/moo_input_core.c compiler/runtime/moo_compositor_core.c compiler/runtime/moo_compositor_raster.c compiler/runtime/moo_compositor_effects_state.c compiler/runtime/moo_compositor_animation.c compiler/runtime/moo_compositor_effects_math.c compiler/runtime/moo_compositor_effects_cpu.c compiler/runtime/moo_compositor_effects_damage.c"
 "$CC" -std=c11 -Wall -Wextra -Werror -fsanitize=address -fno-omit-frame-pointer -Icompiler/runtime $BRIDGE_SRC -o "$OUT/bridge-asan"
 ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 "$OUT/bridge-asan"
 TRACE_SRC="compiler/runtime/tests/test_input_trace.c compiler/runtime/moo_input_core.c compiler/runtime/moo_a11y_core.c"
@@ -101,4 +316,100 @@ trap 'rm -rf "$OUT"' EXIT
 CC="${MINGW_CC:-x86_64-w64-mingw32-gcc}"
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror -Icompiler/runtime   compiler/runtime/tests/test_input_win32.c   compiler/runtime/moo_input_win32.c   compiler/runtime/moo_input_core.c   compiler/runtime/moo_a11y_core.c   -limm32 -o "$OUT/input-win32-test.exe"
 file "$OUT/input-win32-test.exe"
+'''
+
+
+[tasks.test-ui-moo-parity-clipboard-win32-cross]
+description = "Cross-build the static Win32 private clipboard/drag harness and producer"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-parity-clipboard-win32.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+HOST_CXX="${HOST_CXX:-c++}"
+CXX="${MINGW_CXX:-x86_64-w64-mingw32-g++}"
+"$HOST_CXX" -std=c++17 -O2 -Wall -Wextra -Werror -pedantic -Icompiler/runtime \
+  compiler/runtime/tests/test_ui_host_parity_clipboard_producer.cpp \
+  compiler/runtime/moo_ui_host_parity_clipboard_producer_win32.cpp \
+  -o "$OUT/producer-test"
+"$OUT/producer-test"
+"$CXX" -std=c++17 -O2 -Wall -Wextra -Werror -pedantic -Icompiler/runtime \
+  -c compiler/runtime/moo_ui_host_parity_clipboard_producer_win32.cpp \
+  -o "$OUT/producer.o"
+"$CXX" -std=c++17 -O2 -Wall -Wextra -Werror -pedantic -municode \
+  -DMOO_UI_HOST_PARITY_TESTING -static -static-libgcc -static-libstdc++ \
+  -Icompiler/runtime \
+  compiler/runtime/tests/test_ui_host_parity_clipboard_win32.cpp \
+  compiler/runtime/moo_ui_host_parity_clipboard_launcher_win32.cpp \
+  compiler/runtime/moo_ui_host_parity_clipboard_win32.cpp \
+  -lole32 -luuid -luser32 -o "$OUT/clipboard-win32-test.exe"
+file "$OUT/clipboard-win32-test.exe" "$OUT/producer.o"
+sha256sum "$OUT/clipboard-win32-test.exe" "$OUT/producer.o"
+'''
+
+[tasks.test-ui-moo-parity-macos-native]
+description = "Run the fail-closed native AppKit parity evidence gate on a real macOS host"
+run = '''
+bash scripts/macos_appkit_gate.sh
+'''
+
+[tasks.test-ui-moo-parity-win32-active-ime-contract]
+description = "Run the no-VM fail-closed active-IME evidence classifier contract"
+run = '''
+bash scripts/windows_active_ime_evidence_contract_test.sh
+'''
+
+[tasks.test-ui-moo-parity-win32-active-ime]
+description = "Run the hash-bound active-IME follow-up gate on the always-on Windows VM"
+run = '''
+mise run test-ui-moo-parity-win32-active-ime-contract
+bash scripts/windows_active_ime_gate.sh
+'''
+
+[tasks.test-ui-moo-parity-win32-instrumented-devtools]
+description = "Run the hash-bound public Win32 instrumented DEVTOOLS gate on the always-on Windows VM"
+run = '''
+bash scripts/windows_instrumented_devtools_gate.sh
+'''
+
+[tasks.test-compiler-windows-linker-win32]
+description = "Run the hash-bound native Windows compiler linker gate on the always-on VM"
+run = '''
+set -eu
+bash scripts/windows_linker_behavior_gate.sh
+'''
+
+[tasks.test-ui-moo-hybrid-contract]
+description = "Run the no-UI D1 hybrid native-service boundary contract"
+run = '''
+bash scripts/ui-moo-hybrid-contract-test.sh
+'''
+
+[tasks.test-ui-moo-platform-matrix-contract]
+description = "Run the no-UI fail-closed P016 platform-matrix classifier contract"
+run = '''
+bash scripts/ui_moo_platform_matrix_contract_test.sh
+'''
+
+[tasks.test-ui-moo-platform-matrix]
+description = "Run the executable fail-closed P016 O6/P1 local, Windows and macOS matrix"
+run = '''
+bash scripts/ui_moo_platform_matrix_gate.sh
+'''
+
+
+[tasks.test-ui-moo-ime-event-contract]
+description = "Run the toolkit-free ui_moo IME event value contract"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-ime-event.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+COMPILER="$PWD/compiler/target/release/moo-compiler"
+test -x "$COMPILER"
+"$COMPILER" compile beispiele/tests/ui_moo_ime_event_contract_test.moo -o "$OUT/ime-event"
+env -u DISPLAY -u WAYLAND_DISPLAY -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS -u PULSE_SERVER -u PIPEWIRE_REMOTE -u XAUTHORITY -u MIR_SOCKET -u SWAYSOCK "$OUT/ime-event" >"$OUT/ime-event.log" 2>"$OUT/ime-event.err"
+test ! -s "$OUT/ime-event.err"
+test "$(grep -c '^PASS ' "$OUT/ime-event.log")" -eq 18
+test "$(grep -c '^FAIL ' "$OUT/ime-event.log")" -eq 0
+test "$(grep -c '^P016-O4-MOO-IME-EVENT-OK checks=18 offsets=utf8-bytes no_ui=1$' "$OUT/ime-event.log")" -eq 1
+cat "$OUT/ime-event.log"
 '''

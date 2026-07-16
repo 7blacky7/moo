@@ -95,6 +95,45 @@ int main(void) {
     CHECK(portable_renderer_hash(&renderer_hash) == MOO_COMP_OK,
           "portable renderer semantic hash failed");
 
+    {
+        uint64_t surface_hash = moo_comp_effect_surface_hash(&a);
+        uint64_t animation_hash = moo_comp_animation_state_hash(&ta);
+        uint32_t i;
+        for (i = 0u; i < 1000u; ++i) {
+            MooCompEffectSurfaceState probe_surface;
+            MooCompEffectPreflight probe_preflight;
+            MooCompAnimationSlot probe_slots[2];
+            MooCompAnimationTimeline probe_timeline;
+            uint64_t probe_renderer_hash = 0u;
+
+            memset(&probe_surface, (int)(i & 0xffu), sizeof(probe_surface));
+            CHECK(moo_comp_effect_surface_init(
+                      &probe_surface, 1u, 2u) == MOO_COMP_OK &&
+                  moo_comp_effect_state_preflight(
+                      &config, &probe_surface, 1u, 2u,
+                      &requested, &usage, &probe_preflight) == MOO_COMP_OK,
+                  "repeated surface setup failed");
+            moo_comp_effect_state_apply(&probe_surface, &probe_preflight);
+            CHECK(moo_comp_effect_surface_hash(&probe_surface) == surface_hash,
+                  "surface hash changed across storage fill/repetition");
+
+            memset(probe_slots, (int)((~i) & 0xffu), sizeof(probe_slots));
+            CHECK(moo_comp_animation_timeline_init(
+                      &probe_timeline, probe_slots, 2u, &limits) == MOO_COMP_OK,
+                  "repeated timeline setup failed");
+            CHECK(moo_comp_animation_state_hash(&probe_timeline) ==
+                      animation_hash,
+                  "animation hash changed across slot fill/repetition");
+
+            CHECK(portable_renderer_hash(&probe_renderer_hash) == MOO_COMP_OK &&
+                      probe_renderer_hash == renderer_hash,
+                  "renderer hash changed across repetition");
+            CHECK(moo_comp_effect_cpu_noise_hash(17u, 29u, 123u) ==
+                      moo_comp_effect_cpu_noise_hash(17u, 29u, 123u),
+                  "noise hash changed across repetition");
+        }
+    }
+
     if (failures != 0) {
         fprintf(stderr, "P016-O5 EFFECTS DETERMINISM RED: %d/%d failed\n",
                 failures, checks);

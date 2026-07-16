@@ -83,6 +83,18 @@ static int equal_events(Twin *a, Twin *b) {
     }
 }
 
+static int free_event_slots_canonical(const Twin *t) {
+    MooInputEventSlot zero;
+    uint32_t i;
+    memset(&zero, 0, sizeof(zero));
+    for (i = 0u; i < 64u; ++i) {
+        if (!t->events[i].live &&
+            memcmp(&t->events[i], &zero, sizeof(zero)) != 0)
+            return 0;
+    }
+    return 1;
+}
+
 static MooInputResult apply(Twin *t, uint32_t op, uint32_t r,
                             uint64_t serial) {
     uint32_t physical;
@@ -152,6 +164,11 @@ int main(void) {
     uint32_t step;
     if (!setup(&a) || !setup(&b)) return 2;
     if (!equal_events(&a, &b)) return 3;
+    if (!free_event_slots_canonical(&a) ||
+        !free_event_slots_canonical(&b)) {
+        fprintf(stderr, "free event slot retained dequeued payload/metadata\n");
+        return 1;
+    }
     for (step = 0u; step < STEPS; ++step) {
         uint32_t r = random_u32();
         uint32_t op = r % 9u;
@@ -178,6 +195,11 @@ int main(void) {
         }
         if (!equal_events(&a, &b)) {
             fprintf(stderr, "event drift step=%u\n", step);
+            return 1;
+        }
+        if (!free_event_slots_canonical(&a) ||
+            !free_event_slots_canonical(&b)) {
+            fprintf(stderr, "free event cleanup drift step=%u\n", step);
             return 1;
         }
     }

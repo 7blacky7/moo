@@ -14,9 +14,22 @@ setze _UIM auf {}
 _UIM["kontexte"] = {}
 _UIM["naechste_uid"] = 1
 
+# Oeffentlicher, rein deklarativer D1-Faehigkeitsvertrag. Jeder Aufruf
+# erzeugt ein neues Woerterbuch; es gibt keinen gemeinsam mutierbaren Cache.
+funktion uim_faehigkeiten():
+    setze f auf {}
+    f["version"] = 1
+    f["theme_schema"] = 1
+    f["backend_registry"] = 1
+    f["custom_widget"] = 1
+    f["hybrid_services"] = 1
+    f["hybrid_host_adapter_owned"] = wahr
+    gib_zurück f
+
 # 3x5-Pixelfont fürs Frame-Backend (Grossbuchstaben, Ziffern, wenig
 # Interpunktion; Kleinbuchstaben werden auf die Grossform gemappt).
 setze _UIMF auf {}
+_UIMF[" "] = [0,0,0, 0,0,0, 0,0,0, 0,0,0, 0,0,0]
 _UIMF["A"] = [0,1,0, 1,0,1, 1,1,1, 1,0,1, 1,0,1]
 _UIMF["B"] = [1,1,0, 1,0,1, 1,1,0, 1,0,1, 1,1,0]
 _UIMF["C"] = [1,1,1, 1,0,0, 1,0,0, 1,0,0, 1,1,1]
@@ -72,6 +85,7 @@ solange _uimf_i < 26:
 
 funktion uim_theme_dunkel():
     setze t auf {}
+    t["version"] = 1
     t["name"] = "dunkel"
     t["hintergrund"]   = [30, 32, 38, 255]
     t["flaeche"]       = [58, 62, 74, 255]
@@ -88,6 +102,7 @@ funktion uim_theme_dunkel():
 
 funktion uim_theme_hell():
     setze t auf {}
+    t["version"] = 1
     t["name"] = "hell"
     t["hintergrund"]   = [244, 245, 248, 255]
     t["flaeche"]       = [224, 227, 233, 255]
@@ -186,6 +201,90 @@ funktion uim_backend_neu(name, faehigkeiten, operationen):
     backend["version"] = 1
     backend["faehigkeiten"] = faehigkeiten
     backend["operationen"] = operationen
+    gib_zurück backend
+
+funktion _uim_backend_register_gueltig(register):
+    wenn typ_von(register) != "Woerterbuch":
+        gib_zurück falsch
+    wenn register.enthält("version") == falsch oder register["version"] != 1:
+        gib_zurück falsch
+    wenn register.enthält("backends") == falsch oder typ_von(register["backends"]) != "Woerterbuch":
+        gib_zurück falsch
+    wenn register.enthält("auswahl") == falsch oder typ_von(register["auswahl"]) != "Text":
+        gib_zurück falsch
+    gib_zurück wahr
+
+funktion _uim_backend_register_backend_gueltig(backend):
+    wenn typ_von(backend) != "Woerterbuch":
+        gib_zurück falsch
+    wenn backend.enthält("name") == falsch oder typ_von(backend["name"]) != "Text":
+        gib_zurück falsch
+    wenn backend["name"] == "":
+        gib_zurück falsch
+    wenn backend.enthält("version") == falsch oder backend["version"] != 1:
+        gib_zurück falsch
+    wenn backend.enthält("operationen") == falsch oder typ_von(backend["operationen"]) != "Woerterbuch":
+        gib_zurück falsch
+    setze operationen auf backend["operationen"]
+    setze benoetigt auf ["anfordern", "farbe", "rechteck", "rechteck_rund", "kreis", "linie", "text", "text_breite", "clip_setze", "clip_loesche"]
+    für schluessel in benoetigt:
+        wenn operationen.enthält(schluessel) == falsch oder operationen[schluessel] == nichts:
+            gib_zurück falsch
+    wenn backend.enthält("faehigkeiten") == falsch oder typ_von(backend["faehigkeiten"]) != "Woerterbuch":
+        gib_zurück falsch
+    setze faehigkeiten auf backend["faehigkeiten"]
+    setze faehigkeit_keys auf ["alpha", "clip", "rechteck_rund", "kreis_rand", "text_metrik"]
+    für schluessel in faehigkeit_keys:
+        wenn faehigkeiten.enthält(schluessel) == falsch oder faehigkeiten[schluessel] == nichts:
+            gib_zurück falsch
+    setze bool_faehigkeiten auf ["alpha", "clip", "rechteck_rund", "kreis_rand"]
+    für schluessel in bool_faehigkeiten:
+        setze wert auf faehigkeiten[schluessel]
+        wenn wert != wahr und wert != falsch:
+            gib_zurück falsch
+    setze text_metrik auf faehigkeiten["text_metrik"]
+    wenn typ_von(text_metrik) != "Text" oder text_metrik == "":
+        gib_zurück falsch
+    gib_zurück wahr
+
+funktion uim_backend_register_neu():
+    setze register auf {}
+    register["version"] = 1
+    register["backends"] = {}
+    register["auswahl"] = ""
+    gib_zurück register
+
+funktion uim_backend_registriere(register, backend):
+    wenn _uim_backend_register_gueltig(register) == falsch:
+        gib_zurück falsch
+    wenn _uim_backend_register_backend_gueltig(backend) == falsch:
+        gib_zurück falsch
+    setze name auf backend["name"]
+    register["backends"][name] = backend
+    gib_zurück wahr
+
+funktion uim_backend_finde(register, name, version):
+    wenn _uim_backend_register_gueltig(register) == falsch:
+        gib_zurück nichts
+    wenn typ_von(name) != "Text" oder name == "":
+        gib_zurück nichts
+    wenn version != 1:
+        gib_zurück nichts
+    setze backends auf register["backends"]
+    wenn backends.enthält(name) == falsch:
+        gib_zurück nichts
+    setze backend auf backends[name]
+    wenn _uim_backend_register_backend_gueltig(backend) == falsch:
+        gib_zurück nichts
+    wenn backend["name"] != name oder backend["version"] != version:
+        gib_zurück nichts
+    gib_zurück backend
+
+funktion uim_backend_waehle(register, name, version):
+    setze backend auf uim_backend_finde(register, name, version)
+    wenn backend == nichts:
+        gib_zurück nichts
+    register["auswahl"] = name
     gib_zurück backend
 
 funktion _uim_faehigkeiten(alpha, clip, rund, kreis_rand, text_metrik):
@@ -311,6 +410,7 @@ funktion _uim_slot_uid(kontext, slot):
 funktion _uim_basis(typ, x, y, b, h):
     setze w auf {}
     w["typ"] = typ
+    w["version"] = 1
     w["uid"] = _uim_neue_uid()
     w["id"] = ""
     w["x"] = x
@@ -330,7 +430,152 @@ funktion _uim_basis(typ, x, y, b, h):
     w["wert"] = 0
     w["min"] = 0
     w["max"] = 0
+    w["a11y_name"] = ""
+    w["a11y_beschreibung"] = ""
     gib_zurück w
+
+# O4: Öffentliche, toolkitfreie Accessibility-Metadaten.
+# Rollen, States und Aktionen spiegeln moo_input_protocol.h v1. Bounds sind
+# ausdrücklich lokal zum direkten Elternknoten, nicht Bildschirmkoordinaten.
+funktion _uim_a11y_widget_gueltig(w):
+    wenn typ_von(w) != "Woerterbuch":
+        gib_zurück falsch
+    setze pflicht auf ["typ", "uid", "x", "y", "b", "h", "sichtbar", "aktiv", "fokussierbar", "text"]
+    für feld in pflicht:
+        wenn w.enthält(feld) == falsch:
+            gib_zurück falsch
+    gib_zurück wahr
+
+funktion _uim_a11y_rolle(art):
+    wenn art == "panel" oder art == "scroll":
+        gib_zurück 2
+    wenn art == "label":
+        gib_zurück 3
+    wenn art == "knopf":
+        gib_zurück 4
+    wenn art == "checkbox":
+        gib_zurück 5
+    wenn art == "slider":
+        gib_zurück 6
+    wenn art == "liste":
+        gib_zurück 8
+    gib_zurück 0
+
+funktion _uim_a11y_aktionen(art):
+    wenn art == "knopf" oder art == "checkbox":
+        gib_zurück 3
+    wenn art == "slider":
+        gib_zurück 29
+    wenn art == "liste":
+        gib_zurück 33
+    gib_zurück 0
+
+funktion uim_a11y(kontext, w):
+    wenn typ_von(kontext) != "Woerterbuch" oder kontext.enthält("fokus") == falsch:
+        gib_zurück nichts
+    wenn _uim_a11y_widget_gueltig(w) == falsch:
+        gib_zurück nichts
+
+    setze ergebnis auf {}
+    ergebnis["version"] = 1
+    ergebnis["uid"] = w["uid"]
+    ergebnis["role"] = _uim_a11y_rolle(w["typ"])
+
+    setze states auf 0
+    wenn w["aktiv"] == falsch:
+        setze states auf states + 1
+    setze fokus auf kontext["fokus"]
+    wenn fokus != nichts und typ_von(fokus) == "Woerterbuch" und fokus.enthält("uid") und fokus["uid"] == w["uid"]:
+        setze states auf states + 2
+    wenn w["typ"] == "checkbox" und w.enthält("wert") und w["wert"]:
+        setze states auf states + 4
+    wenn w["sichtbar"] == falsch:
+        setze states auf states + 64
+    ergebnis["states"] = states
+    ergebnis["actions"] = _uim_a11y_aktionen(w["typ"])
+
+    setze bounds auf {}
+    bounds["x"] = w["x"]
+    bounds["y"] = w["y"]
+    bounds["b"] = w["b"]
+    bounds["h"] = w["h"]
+    ergebnis["bounds"] = bounds
+    ergebnis["bounds_space"] = "parent-local"
+
+    setze name auf w["text"]
+    wenn w.enthält("a11y_name") und typ_von(w["a11y_name"]) == "Text" und w["a11y_name"] != "":
+        setze name auf w["a11y_name"]
+    ergebnis["name"] = name
+
+    setze value auf ""
+    wenn w["typ"] == "checkbox" und w.enthält("wert"):
+        setze value auf text(w["wert"])
+    wenn w["typ"] == "slider" und w.enthält("wert"):
+        setze value auf text(w["wert"])
+    wenn w["typ"] == "fortschritt" und w.enthält("wert"):
+        setze value auf text(w["wert"])
+    wenn w["typ"] == "liste" und w.enthält("auswahl"):
+        setze value auf text(w["auswahl"])
+    ergebnis["value"] = value
+
+    setze beschreibung auf ""
+    wenn w.enthält("a11y_beschreibung") und typ_von(w["a11y_beschreibung"]) == "Text":
+        setze beschreibung auf w["a11y_beschreibung"]
+    ergebnis["description"] = beschreibung
+    gib_zurück ergebnis
+
+# O4: Reiner, plattformneutraler IME-Ereigniswert nach
+# moo_input_protocol.h v1. Auswahlgrenzen sind UTF-8-Byteoffsets.
+# Diese Funktion beweist weder Zustandsfortschritt noch eine native Bruecke.
+funktion _uim_ime_ganze_zahl(wert):
+    wenn typ_von(wert) != "Zahl":
+        gib_zurück falsch
+    gib_zurück boden(wert) == wert
+
+funktion _uim_ime_utf8_grenze(bytes, position):
+    wenn position < 0 oder position > länge(bytes):
+        gib_zurück falsch
+    wenn position == 0 oder position == länge(bytes):
+        gib_zurück wahr
+    setze byte auf bytes[position]
+    gib_zurück byte < 128 oder byte >= 192
+
+funktion uim_ime_ereignis(art, inhalt, auswahl_start, auswahl_ende, revision):
+    wenn typ_von(art) != "Text" oder typ_von(inhalt) != "Text":
+        gib_zurück nichts
+    wenn art != "preedit" und art != "commit" und art != "cancel":
+        gib_zurück nichts
+    wenn _uim_ime_ganze_zahl(revision) == falsch oder revision <= 0:
+        gib_zurück nichts
+    wenn _uim_ime_ganze_zahl(auswahl_start) == falsch oder _uim_ime_ganze_zahl(auswahl_ende) == falsch:
+        gib_zurück nichts
+
+    setze bytes auf bytes_zu_liste(inhalt)
+    setze ereignis_text auf inhalt
+    setze start auf auswahl_start
+    setze ende auf auswahl_ende
+
+    wenn art == "preedit":
+        wenn start < 0 oder ende < start oder ende > länge(bytes):
+            gib_zurück nichts
+        wenn _uim_ime_utf8_grenze(bytes, start) == falsch oder _uim_ime_utf8_grenze(bytes, ende) == falsch:
+            gib_zurück nichts
+    sonst wenn art == "commit":
+        setze start auf länge(bytes)
+        setze ende auf länge(bytes)
+    sonst:
+        setze ereignis_text auf ""
+        setze start auf 0
+        setze ende auf 0
+
+    setze ergebnis auf {}
+    ergebnis["version"] = 1
+    ergebnis["art"] = art
+    ergebnis["text"] = ereignis_text
+    ergebnis["selection_start"] = start
+    ergebnis["selection_end"] = ende
+    ergebnis["revision"] = revision
+    gib_zurück ergebnis
 
 # Treffer-Ergebnis: Widget + Koordinaten LOKAL zur Eltern-Ebene des
 # Widgets (lx liegt in w.x..w.x+w.b). Nötig für Slider/Liste in Panels.
@@ -1042,11 +1287,26 @@ funktion _uim_zeichne_widget(kontext, z, w, ox, oy):
         gib_zurück _uim_z_fortschritt(kontext, z, w, ox, oy)
     wenn w["typ"] == "liste":
         gib_zurück _uim_z_liste(kontext, z, w, ox, oy)
+    wenn w["typ"] == "eigen":
+        wenn w.enthält("on_zeichne") == falsch:
+            gib_zurück falsch
+        setze on_zeichne auf w["on_zeichne"]
+        wenn on_zeichne == nichts:
+            gib_zurück falsch
+        gib_zurück on_zeichne(kontext, w, ox + w["x"], oy + w["y"])
     gib_zurück falsch
 
 funktion _uim_kern_zeichne(kontext, z):
-    setze t auf kontext["theme"]
+    wenn kontext.enthält("wurzel") == falsch:
+        gib_zurück falsch
+    wenn kontext.enthält("backend_vertrag") == falsch:
+        gib_zurück falsch
     setze wurzel auf kontext["wurzel"]
+    wenn wurzel == nichts:
+        gib_zurück falsch
+    wenn kontext["backend_vertrag"] == nichts:
+        gib_zurück falsch
+    setze t auf kontext["theme"]
     wenn kontext["hintergrund_zeichnen"]:
         _uim_farbe(kontext, z, t["hintergrund"])
         _uim_zf_rechteck(kontext, z, 0, 0, wurzel["b"], wurzel["h"], wahr)
@@ -1150,7 +1410,43 @@ funktion uim_hinzu(ziel, widget):
         ziel["kinder"].hinzufügen(widget)
     gib_zurück widget
 
+funktion _uim_theme_farbe_v1(theme, feld):
+    wenn theme.enthält(feld) == falsch:
+        gib_zurück falsch
+    setze farbe auf theme[feld]
+    wenn typ_von(farbe) != "Liste" oder länge(farbe) != 4:
+        gib_zurück falsch
+    für kanal in farbe:
+        wenn typ_von(kanal) != "Zahl" oder kanal < 0 oder kanal > 255:
+            gib_zurück falsch
+    gib_zurück wahr
+
+funktion _uim_theme_schema_v1(theme):
+    wenn typ_von(theme) != "Woerterbuch":
+        gib_zurück falsch
+    setze felder auf ["version", "name", "radius", "schrift", "abstand"]
+    für feld in felder:
+        wenn theme.enthält(feld) == falsch:
+            gib_zurück falsch
+    wenn theme["version"] != 1:
+        gib_zurück falsch
+    wenn typ_von(theme["name"]) != "Text" oder theme["name"] == "":
+        gib_zurück falsch
+    wenn typ_von(theme["radius"]) != "Zahl" oder theme["radius"] < 0:
+        gib_zurück falsch
+    wenn typ_von(theme["schrift"]) != "Zahl" oder theme["schrift"] <= 0:
+        gib_zurück falsch
+    wenn typ_von(theme["abstand"]) != "Zahl" oder theme["abstand"] < 0:
+        gib_zurück falsch
+    setze farben auf ["hintergrund", "flaeche", "flaeche_hover", "flaeche_druck", "rand", "akzent", "text", "text_gedimmt"]
+    für farbfeld in farben:
+        wenn _uim_theme_farbe_v1(theme, farbfeld) == falsch:
+            gib_zurück falsch
+    gib_zurück wahr
+
 funktion uim_theme_setze(kontext, theme):
+    wenn _uim_theme_schema_v1(theme) == falsch:
+        gib_zurück falsch
     kontext["theme"] = theme
     _uim_scroll_klemme_rek(kontext, kontext["wurzel"]["kinder"])
     _uim_anfordern(kontext)
@@ -1178,6 +1474,13 @@ funktion uim_finde(kontext, id):
 # ------------------------------------------------------------
 # Referenz-Widgets (voller Satz folgt in UIMOO-3)
 # ------------------------------------------------------------
+
+funktion uim_widget_eigen(x, y, b, h, on_zeichne):
+    wenn on_zeichne == nichts:
+        gib_zurück nichts
+    setze w auf _uim_basis("eigen", x, y, b, h)
+    w["on_zeichne"] = on_zeichne
+    gib_zurück w
 
 funktion uim_knopf(beschriftung, x, y, b, h, on_klick):
     setze w auf _uim_basis("knopf", x, y, b, h)

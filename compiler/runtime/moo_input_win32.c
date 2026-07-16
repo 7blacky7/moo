@@ -8,7 +8,9 @@
 
 uint64_t moo_input_win32_features(void) {
     return MOO_INPUT_FEATURE_POINTER | MOO_INPUT_FEATURE_KEYBOARD |
-           MOO_INPUT_FEATURE_IME | MOO_INPUT_FEATURE_SHORTCUTS;
+           MOO_INPUT_FEATURE_IME | MOO_INPUT_FEATURE_SHORTCUTS |
+           MOO_INPUT_FEATURE_HIGH_CONTRAST |
+           MOO_INPUT_FEATURE_REDUCED_MOTION;
 }
 
 static uint64_t next_serial(const MooInputWin32Adapter *adapter) {
@@ -31,6 +33,29 @@ MooInputResult moo_input_win32_init(MooInputWin32Adapter *adapter,
     adapter->pending_leave = 0u;
     adapter->releasing_capture = 0u;
     return MOO_INPUT_OK;
+}
+
+MooInputResult moo_input_win32_refresh_preferences(
+    MooInputWin32Adapter *adapter, uint64_t timestamp_ns) {
+    HIGHCONTRASTW high_contrast;
+    BOOL client_area_animation = FALSE;
+    uint64_t serial;
+    if (!adapter || !adapter->core) return MOO_INPUT_INVALID;
+    serial = next_serial(adapter);
+    if (serial == 0u) return MOO_INPUT_LIMIT;
+    ZeroMemory(&high_contrast, sizeof(high_contrast));
+    high_contrast.cbSize = sizeof(high_contrast);
+    if (!SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(high_contrast),
+                               &high_contrast, 0))
+        return MOO_INPUT_UNSUPPORTED;
+    if (!SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0,
+                               &client_area_animation, 0))
+        return MOO_INPUT_UNSUPPORTED;
+    return moo_input_set_preferences(
+        adapter->core,
+        (high_contrast.dwFlags & HCF_HIGHCONTRASTON) != 0u ? 1u : 0u,
+        client_area_animation == FALSE ? 1u : 0u,
+        serial, timestamp_ns);
 }
 
 static uint32_t set1_to_hid(uint32_t scan, uint32_t extended) {
@@ -265,6 +290,12 @@ MooInputResult moo_input_win32_message(MooInputWin32Adapter *adapter,
     *out_handled = 0u;
     serial = next_serial(adapter);
     switch (message) {
+    case WM_SETTINGCHANGE: {
+        MooInputResult result =
+            moo_input_win32_refresh_preferences(adapter, timestamp_ns);
+        if (result == MOO_INPUT_OK) *out_handled = 1u;
+        return result;
+    }
     case WM_SETFOCUS:
         if (serial == 0u) return MOO_INPUT_LIMIT;
         *out_handled = 1u;

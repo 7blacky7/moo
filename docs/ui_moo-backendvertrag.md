@@ -9,6 +9,15 @@ Status: P016-A1. Dieses Dokument ist der kanonische Backendvertrag. Die kollidie
 
 Ein `ui_moo`-Backend ist kein natives Widget-Toolkit. Es ist ein Dict aus Zeichenoperationen und Fähigkeiten.
 
+## Hybrid-Grenze: native Plattformdienste
+
+Diese Dienste bleiben Eigentum des Host-Adapters; ui_moo implementiert diese Plattformdienste nicht selbst:
+
+- Dialoge: `ui_info`, `ui_warnung`, `ui_fehler`, `ui_frage`, `ui_eingabe_dialog`, `ui_datei_oeffnen` und `ui_datei_speichern`.
+- Native Texteingabe und IME: `ui_eingabe`; Komposition, Kandidatenfenster und Plattformintegration bleiben beim Host.
+- Menüleiste und Menüs: `ui_menueleiste`, `ui_menue` und `ui_menue_eintrag`.
+- System-Tray: `tray_create` und `tray_menu_add`.
+
 ## Abhängigkeitsgraph
 
 ```text

@@ -21,8 +21,10 @@ int main(void) {
     MooCompHandle owner;
     MooCompHandle foreign;
     MooCompHandle surface;
+    MooCompHandle replacement;
     MooInputHandle client;
     MooInputHandle target;
+    MooInputHandle bound_target;
 
     CHECK(moo_comp_init(&comp, &cc, comp_clients, 3u, surfaces, 4u,
           buffers, 2u, frames, 3u, comp_events, 8u) == MOO_COMP_OK, "comp init");
@@ -38,11 +40,26 @@ int main(void) {
           surface, 0u, &target) == MOO_INPUT_ACCESS, "foreign surface denied");
     CHECK(moo_input_target_create_for_surface(&input, &comp, client, owner,
           surface, 0u, &target) == MOO_INPUT_OK, "owned surface accepted");
+    bound_target = target;
     CHECK(moo_comp_surface_destroy(&comp, owner, surface) == MOO_COMP_OK,
           "surface destroy");
+    CHECK(moo_input_target_destroy(&input, client, bound_target,
+          UINT64_C(1)) == MOO_INPUT_OK,
+          "host lifecycle destroys bound input target");
     CHECK(moo_input_target_create_for_surface(&input, &comp, client, owner,
           surface, 0u, &target) == MOO_INPUT_STALE_HANDLE,
           "stale surface denied");
+    CHECK(moo_comp_surface_create(&comp, owner, &replacement) == MOO_COMP_OK,
+          "replacement surface");
+    CHECK((uint32_t)replacement == (uint32_t)surface &&
+          (uint32_t)(replacement >> 32u) != (uint32_t)(surface >> 32u),
+          "reused surface slot advances generation");
+    CHECK(moo_input_target_create_for_surface(&input, &comp, client, foreign,
+          replacement, 0u, &target) == MOO_INPUT_ACCESS,
+          "replacement preserves owner isolation");
+    CHECK(moo_input_pointer_motion(&input, bound_target, 1, 1, 0, 0,
+          UINT64_C(2), UINT64_C(2)) == MOO_INPUT_STALE_HANDLE,
+          "explicitly destroyed bound input target is stale");
     puts("P016-O4-COMPOSITOR-BRIDGE-OK");
     return 0;
 }

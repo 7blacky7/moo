@@ -24,6 +24,51 @@ ohne Toolkit, Allokation, Syscalls, Uhr oder Hardwarezugriff.
   meldet nur Pointer, Keyboard, IME und Shortcuts; Touch, Stift und UIA sind
   bis zu eigenen Implementierungen ausgeschaltet.
 
+## Öffentliche `ui_moo`-Metadaten
+
+`uim_a11y(kontext, widget)` liefert für ein gültiges retained-mode Widget
+eine neue, frei mutierbare Kopie mit exakt zehn Schlüsseln:
+`version`, `uid`, `role`, `states`, `actions`, `bounds`,
+`bounds_space`, `name`, `value` und `description`. Der Aufruf verändert
+weder Widget noch Kontext. `nichts`, ein ungültiger Kontext oder ein
+unvollständiges Widget liefern fail closed `nichts`.
+
+Die numerischen Werte spiegeln `moo_input_protocol.h` Version 1:
+
+- Rollen: none=0, group=2, text=3, button=4, checkbox=5, slider=6, list=8.
+- States: disabled=1, focused=2, checked=4, hidden=64.
+- Actions: focus=1, activate=2, increment=4, decrement=8, set-value=16,
+  set-selection=32.
+
+`focused` wird aus dem vorhandenen Fokus-Slot des übergebenen Kontextes
+abgeleitet. `name` nutzt ein nichtleeres `a11y_name`, andernfalls den
+Widgettext; `description` nutzt `a11y_beschreibung`. `bounds` enthält
+`x`, `y`, `b` und `h`; `bounds_space` ist ausdrücklich
+`parent-local`. Das ist keine Behauptung absoluter Bildschirmkoordinaten.
+
+Diese reine Moo-Abfrage ist ein Baustein für einen späteren Hostadapter. Sie
+beweist weder eine native UIA-, AT-SPI- oder NSAccessibility-Brücke noch
+Plattformparität. Solche Fähigkeiten bleiben ausgeschaltet, bis ein echter
+Plattformlauf sie belegt.
+
+## Öffentliche `ui_moo`-IME-Ereigniswerte
+
+`uim_ime_ereignis(art, text, selection_start, selection_end, revision)`
+liefert einen neuen, frei mutierbaren Wert mit exakt sechs Schlüsseln:
+`version`, `art`, `text`, `selection_start`, `selection_end` und `revision`.
+Version 1 kennt ausschließlich `preedit`, `commit` und `cancel`.
+
+Auswahlgrenzen sind UTF-8-Byteoffsets. `preedit` akzeptiert nur geordnete
+Grenzen innerhalb des Textes, die nicht mitten in einer Mehrbyte-Sequenz
+liegen. `commit` normalisiert beide Grenzen auf das UTF-8-Byteende des
+Textes; `cancel` normalisiert Text und Grenzen auf leer, 0 und 0. Die Revision
+muss pro Ereignis eine positive ganze Zahl sein.
+
+Der reine Wertkonstruktor verändert keinen Widget- oder Eingabestatus. Er
+beweist weder monotone Revisionen über mehrere Aufrufe noch eine native
+Windows-, GTK- oder Cocoa-IME-Brücke oder Plattformparität. Diese Aussagen
+bleiben den zustandsbehafteten Kern- und echten Plattformgates vorbehalten.
+
 ## Vertrauensgrenzen
 
 Native Ingress-Serials werden vom Server vergeben und müssen lückenlos

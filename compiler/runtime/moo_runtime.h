@@ -479,6 +479,15 @@ MooValue moo_surface_snapshot_to_frame(MooValue surface);
 // effekt = aufloesung["effektiv"]-Dict. Liefert falsch bei ungueltigen Args.
 MooValue moo_surface_glass_farbpass(MooValue surface, MooValue x, MooValue y,
                                     MooValue b, MooValue h, MooValue effekt);
+// Frame src-over in die Surface blitten (Wallpaper/Sprites im Glass-Pfad).
+MooValue moo_surface_blit_frame(MooValue surface, MooValue x, MooValue y,
+                                MooValue frame);
+// BMP (24/32bpp, BI_RGB) -> MOO_FRAME; nichts bei Fehler.
+MooValue moo_frame_lade_bmp(MooValue pfad);
+// 3x5-Pixelfont in die Surface (A-Z, 0-9, ' ', '-', '.', '!').
+MooValue moo_surface_text(MooValue surface, MooValue x, MooValue y,
+                          MooValue skala, MooValue text, MooValue r,
+                          MooValue g, MooValue b, MooValue a);
 
 // === GIF-Recorder (opaker Heap-Typ MOO_GIF, Plan-008 A3B) ===
 // Wrappt den isolierten Encoder-Kern (moo_gif.c / MooGifWriter*, frame-bounded:

@@ -468,6 +468,19 @@ impl<'ctx> CodeGen<'ctx> {
 
         // Sicherstellen dass main terminiert ist
         if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            // Normal-main-Epilog: Nur die per collect_all_var_names vorallokierten
+            // Main-Frame-Locals freigeben. Direkte Top-Level-Zuweisungen sind
+            // LLVM-Globals und behalten bewusst ihre bisherige Prozess-Lifetime.
+            for name in &var_names {
+                if self.globals.contains_key(name) {
+                    continue;
+                }
+                if let Some(ptr) = self.variables.get(name).copied() {
+                    let val = self.builder.build_load(self.mv_type(), ptr, "main_local_exit")
+                        .map_err(|e| format!("{e}"))?.into_struct_value();
+                    self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_main_local")?;
+                }
+            }
             self.builder.build_return(Some(&i32_type.const_int(0, false)))
                 .map_err(|e| format!("Return-Fehler: {e}"))?;
         }
@@ -2688,8 +2701,17 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_random, &[], "random");
                     }
                     "typ_von" | "type_of" => {
+                        // moo_type_of borrows its input and returns a fresh Text.
+                        // compile_expr produced an owning temporary, so release it
+                        // after the call without touching the returned value.
                         let arg = self.compile_expr(&args[0])?;
-                        return self.call_rt(self.rt.moo_type_of, &[arg.into()], "typeof");
+                        let result = self.call_rt(
+                            self.rt.moo_type_of,
+                            &[arg.into()],
+                            "typeof",
+                        )?;
+                        self.call_rt_void(self.rt.moo_release, &[arg.into()], "rel_typeof_arg")?;
+                        return Ok(result);
                     }
                     "tensor" => {
                         // Plan-014 A3. Tensor-Konvention: Runtime borrowed —
@@ -4368,6 +4390,33 @@ impl<'ctx> CodeGen<'ctx> {
                             "surface_glass_farbpass",
                         );
                     }
+                    "surface_blit_frame" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_blit_frame,
+                            args,
+                            4,
+                            name,
+                            "surface_blit_frame",
+                        );
+                    }
+                    "frame_lade_bmp" | "frame_load_bmp" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_frame_lade_bmp,
+                            args,
+                            1,
+                            name,
+                            "frame_lade_bmp",
+                        );
+                    }
+                    "surface_text" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_text,
+                            args,
+                            9,
+                            name,
+                            "surface_text",
+                        );
+                    }
                     "surface_hash" => {
                         return self.call_rt_borrowed_builtin(
                             self.rt.moo_surface_hash,
@@ -5501,8 +5550,20 @@ impl<'ctx> CodeGen<'ctx> {
                                      benannte Funktion oder weniger Argumente."
                                 )),
                             };
-                            return self.call_rt(helper, &compiled_args,
-                                &format!("indirect_{name}"));
+                            let result = self.call_rt(
+                                helper,
+                                &compiled_args,
+                                &format!("indirect_{name}"),
+                            )?;
+                            // load_var created an owning function temporary.
+                            // moo_func_call_N only borrows it; the generated
+                            // callee owns the forwarded argument temporaries.
+                            self.call_rt_void(
+                                self.rt.moo_release,
+                                &[fn_val.into()],
+                                "rel_indirect_fn",
+                            )?;
+                            return Ok(result);
                         }
                         // Weder LLVM-Function noch Variable → Fehler mit Suggestion
                         let mut suggestion = String::new();

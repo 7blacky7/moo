@@ -226,8 +226,13 @@ MooCompResult moo_comp_effect_cpu_requirements(
           job->lower_z.width != job->target.width ||
           job->lower_z.height != job->target.height)) ||
         !moo_fx_rect_valid(job->content_rect) ||
-        job->content.width != job->content_rect.width ||
-        job->content.height != job->content_rect.height)
+        job->content_scale == 0u || job->reserved_scale != 0u ||
+        (uint64_t)(uint32_t)job->content_rect.width *
+            (uint64_t)job->content_scale !=
+            (uint64_t)(uint32_t)job->content.width ||
+        (uint64_t)(uint32_t)job->content_rect.height *
+            (uint64_t)job->content_scale !=
+            (uint64_t)(uint32_t)job->content.height)
         return MOO_COMP_INVALID;
     if (job->reserved[0] || job->reserved[1] || job->reserved[2] ||
         job->reserved[3] || job->reserved[4] || job->reserved[5] ||
@@ -251,8 +256,8 @@ MooCompResult moo_comp_effect_cpu_requirements(
     geometry_result = moo_fx_geometry_preflight(job);
     if (geometry_result != MOO_COMP_OK)
         return geometry_result;
-    if (!moo_fx_mul_u64((uint64_t)(uint32_t)job->target.width,
-                        (uint64_t)(uint32_t)job->target.height, &pixels))
+    if (!moo_fx_mul_u64((uint64_t)(uint32_t)job->content_rect.width,
+                        (uint64_t)(uint32_t)job->content_rect.height, &pixels))
         return MOO_COMP_LIMIT;
     s.affected_pixels = pixels;
 #define MOO_FX_ADD_WORK(bit, cost) do {                                      \
@@ -367,7 +372,7 @@ static MooCompResult moo_fx_geometry_preflight(
     result = moo_comp_effect_affine_inverse(&affine, &inverse);
     if (result != MOO_COMP_OK) return result;
     result = moo_comp_effect_corners_normalize(
-        job->content.width, job->content.height,
+        job->content_rect.width, job->content_rect.height,
         &job->effect.corners, &normalized);
     if (result != MOO_COMP_OK) return result;
     for (iy = 0u; iy < 2u; ++iy)
@@ -777,16 +782,20 @@ static void moo_fx_render_content(const MooCompEffectCpuJob *job,
             if (!moo_fx_local_sample(inverse, job->content_rect, x, y, 0, 0,
                                      &sx, &sy) ||
                 sx < 0 || sy < 0 ||
-                sx >= job->content.width || sy >= job->content.height)
+                sx >= job->content_rect.width ||
+                sy >= job->content_rect.height)
                 continue;
             coverage = 255u;
             if ((job->effect.enabled_mask & MOO_COMP_EFFECT_CORNER_CLIP) != 0u &&
                 moo_comp_effect_rounded_coverage_a8(
-                    job->content.width, job->content.height, corners,
+                    job->content_rect.width, job->content_rect.height, corners,
                     sx, sy, &coverage) != MOO_COMP_OK)
                 continue;
             if (coverage == 0u) continue;
-            source = moo_fx_source_pixel(&job->content, sx, sy);
+            source = moo_fx_source_pixel(
+                &job->content,
+                sx * (int32_t)job->content_scale,
+                sy * (int32_t)job->content_scale);
             src[0] = source[0]; src[1] = source[1]; src[2] = source[2];
             src[3] = (uint8_t)moo_fx_round_u64(
                 (uint64_t)source[3] * job->content_opacity,
@@ -874,7 +883,7 @@ MooCompResult moo_comp_effect_cpu_render(
     result = moo_comp_effect_affine_inverse(&affine, &inverse);
     if (result != MOO_COMP_OK) return result;
     result = moo_comp_effect_corners_normalize(
-        job->content.width, job->content.height,
+        job->content_rect.width, job->content_rect.height,
         &job->effect.corners, &corners);
     if (result != MOO_COMP_OK) return result;
 

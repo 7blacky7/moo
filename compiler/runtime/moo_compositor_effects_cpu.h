@@ -47,6 +47,9 @@ typedef struct {
     MooCompEffectState effect;
     uint8_t content_opacity;
     uint8_t reserved[7];
+    /* Positive integer source-pixel scale per logical content pixel. */
+    uint32_t content_scale;
+    uint32_t reserved_scale;
     /* Zero means no additional caller limit. */
     uint64_t max_work_units;
 } MooCompEffectCpuJob;

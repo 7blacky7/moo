@@ -234,6 +234,10 @@ static void clear_event(MooInputEvent *event) {
     clear_record(event, sizeof(*event));
 }
 
+static void clear_event_slot(MooInputEventSlot *slot) {
+    clear_record(slot, sizeof(*slot));
+}
+
 static void event_base(MooInputEvent *event, uint32_t type,
                        MooInputHandle target, uint64_t serial,
                        uint64_t timestamp_ns, uint64_t focus_epoch) {
@@ -329,10 +333,8 @@ MooInputResult moo_input_init(MooInputCore *core, const MooInputConfig *config,
         targets[i].owner = MOO_INPUT_HANDLE_INVALID; targets[i].surface = 0u;
         targets[i].text_mode = 0u; targets[i].reserved = 0u;
     }
-    for (i = 0u; i < event_capacity; ++i) {
-        events[i].live = 0u; events[i].reserved = 0u;
-        events[i].owner = MOO_INPUT_HANDLE_INVALID; events[i].sequence = 0u;
-    }
+    for (i = 0u; i < event_capacity; ++i)
+        clear_event_slot(&events[i]);
     for (i = 0u; i < node_capacity; ++i) {
         nodes[i].live = 0u; nodes[i].generation = 1u;
         nodes[i].owner = MOO_INPUT_HANDLE_INVALID;
@@ -387,7 +389,7 @@ MooInputResult moo_input_client_disconnect(MooInputCore *core,
     }
     for (i = 0u; i < core->event_capacity; ++i) {
         if (core->events[i].live && core->events[i].owner == client)
-            core->events[i].live = 0u;
+            clear_event_slot(&core->events[i]);
     }
     for (i = 0u; i < MOO_INPUT_MAX_SHORTCUTS; ++i)
         if (core->shortcuts[i].live && core->shortcuts[i].owner == client)
@@ -1275,7 +1277,7 @@ MooInputResult moo_input_next_event(MooInputCore *core,
     if (best == UINT32_MAX) return MOO_INPUT_WOULD_BLOCK;
     copy_record(out_event, &core->events[best].event,
                 sizeof(*out_event));
-    core->events[best].live = 0u;
+    clear_event_slot(&core->events[best]);
     core->clients[ci].queued--;
     return MOO_INPUT_OK;
 }

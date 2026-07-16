@@ -1,4 +1,6 @@
 #include "../moo_input_core.h"
+#include "../moo_ui_host_parity_devtools.h"
+#include "../moo_ui_host_parity_instrumentation_internal.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -50,6 +52,24 @@ static uint32_t drain(MooInputCore *core, MooInputHandle client,
         count++;
     }
     return count;
+}
+
+static uint32_t free_event_slots_canonical(const Fixture *f) {
+    MooInputEventSlot zero;
+    uint32_t i;
+    memset(&zero, 0, sizeof(zero));
+    for (i = 0u; i < EVENT_CAP; ++i)
+        if (!f->events[i].live &&
+            memcmp(&f->events[i], &zero, sizeof(zero)) != 0)
+            return 0u;
+    return 1u;
+}
+
+static uint32_t text_tail_zero(const MooInputEvent *event) {
+    uint32_t i;
+    for (i = event->data.text.text.length; i < MOO_INPUT_TEXT_CAPACITY; ++i)
+        if (event->data.text.text.bytes[i] != 0u) return 0u;
+    return 1u;
 }
 
 static MooA11yNodeData node_data(uint32_t role, const char *name) {
@@ -384,13 +404,209 @@ static void test_text_hash_privacy(void) {
           "normal text payload affects statehash");
 }
 
+static void test_sensitive_saturated_disconnect_atomicity(void) {
+    Fixture f;
+    Fixture before;
+    MooInputHandle app;
+    MooInputHandle foreign;
+    MooInputHandle target;
+    MooInputEvent event;
+    const uint8_t secret[] = {'s', 'e', 'c'};
+    init(&f, 2u);
+    CHECK(moo_input_client_create(&f.core, 0u, &app) == MOO_INPUT_OK,
+          "cleanup app");
+    CHECK(moo_input_client_create(&f.core, 0u, &foreign) == MOO_INPUT_OK,
+          "cleanup foreign");
+    CHECK(moo_input_target_create_trusted(&f.core, app, UINT64_C(71),
+          MOO_INPUT_TEXT_SENSITIVE, &target) == MOO_INPUT_OK,
+          "cleanup sensitive target");
+    CHECK(moo_input_set_focus(&f.core, target, 0u, UINT64_C(1),
+          UINT64_C(1)) == MOO_INPUT_OK, "cleanup focus");
+    CHECK(drain(&f.core, app, 0) == 1u, "cleanup initial focus drain");
+    CHECK(moo_input_text_preedit(&f.core, f.core.focus_epoch, UINT64_C(1),
+          secret, (uint32_t)sizeof(secret), 0u, (uint32_t)sizeof(secret),
+          UINT64_C(2), UINT64_C(2)) == MOO_INPUT_OK,
+          "sensitive preedit saturates quota");
+    CHECK(f.clients[0].queued == 1u &&
+          f.clients[0].reserved_cleanup == 1u,
+          "sensitive preedit owns exact cleanup reservation");
+    memcpy(&before, &f, sizeof(f));
+    CHECK(moo_input_target_destroy(&f.core, foreign, target, UINT64_C(3)) ==
+          MOO_INPUT_ACCESS && memcmp(&before, &f, sizeof(f)) == 0,
+          "cross-owner destroy is byte-atomic");
+    memcpy(&before, &f, sizeof(f));
+    CHECK(moo_input_set_preferences(&f.core, 1u, 1u, UINT64_C(4),
+          UINT64_C(4)) == MOO_INPUT_STALE_SERIAL &&
+          memcmp(&before, &f, sizeof(f)) == 0,
+          "stale serial reject is byte-atomic");
+    memcpy(&before, &f, sizeof(f));
+    CHECK(moo_input_set_preferences(&f.core, 1u, 1u, UINT64_MAX,
+          UINT64_C(4)) == MOO_INPUT_INVALID &&
+          memcmp(&before, &f, sizeof(f)) == 0,
+          "MAX serial reject is byte-atomic");
+    CHECK(moo_input_next_event(&f.core, app, &event) == MOO_INPUT_OK &&
+          (event.flags & MOO_INPUT_EVENT_SENSITIVE) != 0u &&
+          event.data.text.text.length == (uint32_t)sizeof(secret) &&
+          memcmp(event.data.text.text.bytes, secret, sizeof(secret)) == 0 &&
+          text_tail_zero(&event), "sensitive event canonical payload");
+    CHECK(moo_input_text_preedit(&f.core, f.core.focus_epoch, UINT64_C(2),
+          secret, (uint32_t)sizeof(secret), 0u, (uint32_t)sizeof(secret),
+          UINT64_C(3), UINT64_C(3)) == MOO_INPUT_OK,
+          "sensitive event re-saturates quota");
+    CHECK(moo_input_client_disconnect(&f.core, app, UINT64_C(4)) ==
+          MOO_INPUT_OK, "saturated disconnect consumes cleanup");
+    CHECK(free_event_slots_canonical(&f),
+          "disconnect scrubs sensitive event payload and metadata");
+}
+
+static void test_devtools_actual_redacted_producer(void) {
+    Fixture f;
+    MooInputHandle app;
+    MooInputHandle reader;
+    MooInputHandle target;
+    MooInputHandle root;
+    MooInputHandle password;
+    MooA11yNodeData root_data;
+    MooA11yNodeData password_data;
+    MooA11yNodeData observed;
+    MooUiHostParityInstrumentation instrumentation;
+    MooUiHostParityDevtoolsInspection inspection;
+    MooUiHostParityMeasurement measurement;
+    const uint8_t secret[] = {'1', '2', '3', '4'};
+    uint64_t revision = 0u;
+
+    init(&f, 16u);
+    CHECK(moo_input_client_create(&f.core, 0u, &app) == MOO_INPUT_OK,
+          "devtools app");
+    CHECK(moo_input_client_create(&f.core, MOO_INPUT_CLIENT_SCREEN_READER,
+                                  &reader) == MOO_INPUT_OK,
+          "devtools privileged reader");
+    CHECK(moo_input_target_create_trusted(&f.core, app, 91u, 1u, &target) ==
+              MOO_INPUT_OK,
+          "devtools target");
+    root_data = node_data(MOO_A11Y_ROLE_WINDOW, "root");
+    CHECK(moo_a11y_node_create(&f.core, app, target, &root_data, &root) ==
+              MOO_INPUT_OK,
+          "devtools root");
+    password_data = node_data(MOO_A11Y_ROLE_TEXT_FIELD, "secret-name");
+    password_data.parent = root;
+    password_data.states = MOO_A11Y_STATE_PASSWORD;
+    password_data.actions = MOO_A11Y_ACTION_FOCUS |
+        MOO_A11Y_ACTION_SET_VALUE;
+    password_data.value.length = (uint32_t)sizeof(secret);
+    memcpy(password_data.value.bytes, secret, sizeof(secret));
+    CHECK(moo_a11y_node_create(&f.core, app, target, &password_data,
+                               &password) == MOO_INPUT_OK,
+          "devtools password node");
+    CHECK(moo_a11y_node_read(&f.core, reader, password, &observed,
+                             &revision) == MOO_INPUT_OK &&
+          revision == 1u && observed.value.length == 0u,
+          "devtools authoritative redacted revision");
+
+    CHECK(moo_ui_host_parity_instrumentation_init(
+              &instrumentation, 101u) == MOO_UI_HOST_PARITY_RESULT_OK &&
+          moo_ui_host_parity_helper_bind(&instrumentation, 101u) ==
+              MOO_UI_HOST_PARITY_RESULT_OK,
+          "devtools producer instrumentation");
+    inspection.core = &f.core;
+    inspection.privileged_reader = app;
+    inspection.node = password;
+    inspection.expected_revision = revision;
+    inspection.seeded_secret = secret;
+    inspection.seeded_secret_length = (uint32_t)sizeof(secret);
+    CHECK(moo_ui_host_parity_devtools_inspect_password_node(
+              &instrumentation, 101u, &inspection) ==
+              MOO_UI_HOST_PARITY_RESULT_INVALID &&
+          instrumentation.devtools_trace_count == 0u,
+          "ordinary app inspection denied without trace");
+    inspection.privileged_reader = reader;
+    inspection.expected_revision = revision + 1u;
+    CHECK(moo_ui_host_parity_devtools_inspect_password_node(
+              &instrumentation, 101u, &inspection) ==
+              MOO_UI_HOST_PARITY_RESULT_INVALID &&
+          instrumentation.devtools_trace_count == 0u,
+          "revision drift rejected without trace");
+    inspection.expected_revision = revision;
+    inspection.node = root;
+    CHECK(moo_ui_host_parity_devtools_inspect_password_node(
+              &instrumentation, 101u, &inspection) ==
+              MOO_UI_HOST_PARITY_RESULT_INVALID &&
+          instrumentation.devtools_trace_count == 0u,
+          "non-password node rejected");
+    inspection.node = password;
+    CHECK(moo_ui_host_parity_devtools_inspect_password_node(
+              &instrumentation, 101u, &inspection) ==
+              MOO_UI_HOST_PARITY_RESULT_OK &&
+          moo_ui_host_parity_devtools_inspect_password_node(
+              &instrumentation, 101u, &inspection) ==
+              MOO_UI_HOST_PARITY_RESULT_OK,
+          "two actual stable redacted inspections");
+    CHECK(instrumentation.devtools_trace_count == 2u &&
+          instrumentation.devtools_privacy_leaks == 0u &&
+          instrumentation.devtools_traces[0].node == password &&
+          instrumentation.devtools_traces[0].revision == revision &&
+          instrumentation.devtools_traces[0].trace_hash != 0u &&
+          instrumentation.devtools_traces[0].trace_hash ==
+              instrumentation.devtools_traces[1].trace_hash,
+          "stable node revision and trace hash exact");
+    CHECK(moo_ui_host_parity_devtools_seal(
+              &instrumentation, 101u) == MOO_UI_HOST_PARITY_RESULT_OK,
+          "actual devtools independent seal");
+    memset(&measurement, 0, sizeof(measurement));
+    CHECK(moo_ui_host_parity_instrumentation_probe(
+              &instrumentation, 7u, &measurement) ==
+              MOO_UI_HOST_PARITY_RESULT_OK &&
+          measurement.evidence ==
+              (uint32_t)MOO_UI_HOST_PARITY_EVIDENCE_PASS &&
+          measurement.sample_count == 2u &&
+          measurement.value_a == 2u && measurement.value_b == 2u &&
+          measurement.value_c == 0u,
+          "actual devtools pass metrics");
+
+    CHECK(moo_a11y_node_update(&f.core, app, password, revision,
+                               &password_data) == MOO_INPUT_OK,
+          "devtools revision update");
+    CHECK(moo_ui_host_parity_instrumentation_init(
+              &instrumentation, 102u) == MOO_UI_HOST_PARITY_RESULT_OK &&
+          moo_ui_host_parity_helper_bind(&instrumentation, 102u) ==
+              MOO_UI_HOST_PARITY_RESULT_OK,
+          "devtools updated revision fixture");
+    inspection.expected_revision = revision;
+    CHECK(moo_ui_host_parity_devtools_inspect_password_node(
+              &instrumentation, 102u, &inspection) ==
+              MOO_UI_HOST_PARITY_RESULT_INVALID &&
+          instrumentation.devtools_trace_count == 0u,
+          "old revision rejected after update");
+    inspection.expected_revision = revision + 1u;
+    CHECK(moo_ui_host_parity_devtools_inspect_password_node(
+              &instrumentation, 102u, &inspection) ==
+              MOO_UI_HOST_PARITY_RESULT_OK &&
+          instrumentation.devtools_traces[0].revision == revision + 1u,
+          "new revision inspected exactly");
+
+    CHECK(moo_a11y_node_destroy(&f.core, app, password) == MOO_INPUT_OK,
+          "devtools stale node destroy");
+    CHECK(moo_ui_host_parity_instrumentation_init(
+              &instrumentation, 103u) == MOO_UI_HOST_PARITY_RESULT_OK &&
+          moo_ui_host_parity_helper_bind(&instrumentation, 103u) ==
+              MOO_UI_HOST_PARITY_RESULT_OK,
+          "devtools stale fixture");
+    CHECK(moo_ui_host_parity_devtools_inspect_password_node(
+              &instrumentation, 103u, &inspection) ==
+              MOO_UI_HOST_PARITY_RESULT_INVALID &&
+          instrumentation.devtools_trace_count == 0u,
+          "stale node rejected without trace");
+}
+
 int main(void) {
+    test_devtools_actual_redacted_producer();
     test_focus_key_ime();
     test_pointer_touch_stylus_and_quota();
     test_shortcut_and_modifiers();
     test_a11y_security_relations();
     test_disconnect_isolation_and_preferences();
     test_text_hash_privacy();
+    test_sensitive_saturated_disconnect_atomicity();
     if (failures) {
         fprintf(stderr, "P016-O4-FAIL checks=%d failures=%d\n", checks, failures);
         return 1;

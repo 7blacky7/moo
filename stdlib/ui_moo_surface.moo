@@ -101,34 +101,516 @@ funktion _uims_linie(kontext, args):
         setze i auf i + 1
     gib_zurück ok
 
+# Dekodiert genau einen UTF-8-Codepoint aus einer numerischen Byte-Liste.
+# Rueckgabe: [codepoint, naechster_byte_index, gueltig].
+funktion _uims_utf8_cp(bs, i):
+    setze n auf länge(bs)
+    wenn i < 0 oder i >= n:
+        gib_zurück [65533, i + 1, falsch]
+    setze b0 auf bs[i]
+    wenn b0 < 128:
+        gib_zurück [b0, i + 1, wahr]
+    wenn b0 >= 194 und b0 <= 223 und i + 1 < n:
+        setze b1 auf bs[i + 1]
+        wenn b1 >= 128 und b1 <= 191:
+            gib_zurück [(b0 - 192) * 64 + (b1 - 128), i + 2, wahr]
+    wenn b0 >= 224 und b0 <= 239 und i + 2 < n:
+        setze b1 auf bs[i + 1]
+        setze b2 auf bs[i + 2]
+        setze rand_ok auf (b0 != 224 oder b1 >= 160) und (b0 != 237 oder b1 <= 159)
+        wenn rand_ok und b1 >= 128 und b1 <= 191 und b2 >= 128 und b2 <= 191:
+            gib_zurück [(b0 - 224) * 4096 + (b1 - 128) * 64 + (b2 - 128), i + 3, wahr]
+    wenn b0 >= 240 und b0 <= 244 und i + 3 < n:
+        setze b1 auf bs[i + 1]
+        setze b2 auf bs[i + 2]
+        setze b3 auf bs[i + 3]
+        setze rand_ok auf (b0 != 240 oder b1 >= 144) und (b0 != 244 oder b1 <= 143)
+        wenn rand_ok und b1 >= 128 und b1 <= 191 und b2 >= 128 und b2 <= 191 und b3 >= 128 und b3 <= 191:
+            gib_zurück [(b0 - 240) * 262144 + (b1 - 128) * 4096 + (b2 - 128) * 64 + (b3 - 128), i + 4, wahr]
+    gib_zurück [65533, i + 1, falsch]
+
+funktion _uims_cp_extend(cp):
+    gib_zurück (cp >= 768 und cp <= 879) oder (cp >= 6832 und cp <= 6911) oder (cp >= 7616 und cp <= 7679) oder (cp >= 8400 und cp <= 8447) oder (cp >= 65024 und cp <= 65039) oder (cp >= 65056 und cp <= 65071) oder (cp >= 127995 und cp <= 127999) oder (cp >= 917760 und cp <= 917999)
+
+funktion _uims_cp_ri(cp):
+    gib_zurück cp >= 127462 und cp <= 127487
+
+# Bounded Graphem-Fallback: CRLF, Extend/VS/Emoji-Modifier, ZWJ und RI-Paare.
+# Ein Eintrag ist das eine 3x5-Glyph, das fuer genau einen Cluster gerastert wird.
+# Bounded Graphem-Fallback plus ehrlicher logischer Textplan v1.
+# v1 klassifiziert UTF-8-Quell-Runs; es verspricht weder volles BiDi noch Shaping.
+funktion _uims_cp_richtung(cp):
+    wenn (cp >= 1424 und cp <= 1535) oder (cp >= 1536 und cp <= 1791) oder (cp >= 1872 und cp <= 1919) oder (cp >= 2208 und cp <= 2303) oder (cp >= 64336 und cp <= 65023) oder (cp >= 65136 und cp <= 65279):
+        gib_zurück "rtl"
+    gib_zurück "ltr"
+
+funktion _uims_cp_griechisch_stark(cp):
+    wenn (cp >= 880 und cp <= 884) oder (cp >= 886 und cp <= 887) oder (cp >= 890 und cp <= 893) oder cp == 895 oder cp == 902 oder (cp >= 904 und cp <= 906) oder cp == 908 oder (cp >= 910 und cp <= 929) oder (cp >= 931 und cp <= 993) oder (cp >= 1008 und cp <= 1013) oder (cp >= 1015 und cp <= 1023):
+        gib_zurück wahr
+    wenn (cp >= 7936 und cp <= 7957) oder (cp >= 7960 und cp <= 7965) oder (cp >= 7968 und cp <= 8005) oder (cp >= 8008 und cp <= 8013) oder (cp >= 8016 und cp <= 8023) oder cp == 8025 oder cp == 8027 oder cp == 8029 oder (cp >= 8031 und cp <= 8061) oder (cp >= 8064 und cp <= 8116):
+        gib_zurück wahr
+    gib_zurück (cp >= 8118 und cp <= 8124) oder cp == 8126 oder (cp >= 8130 und cp <= 8132) oder (cp >= 8134 und cp <= 8140) oder (cp >= 8144 und cp <= 8147) oder (cp >= 8150 und cp <= 8155) oder (cp >= 8160 und cp <= 8172) oder (cp >= 8178 und cp <= 8180) oder (cp >= 8182 und cp <= 8188)
+
+funktion _uims_cp_kyrillisch_stark(cp):
+    gib_zurück (cp >= 1024 und cp <= 1153) oder (cp >= 1162 und cp <= 1327) oder (cp >= 7296 und cp <= 7304) oder (cp >= 42560 und cp <= 42606) oder (cp >= 42623 und cp <= 42653)
+
+funktion _uims_skript_stark(skript):
+    gib_zurück skript == "latin" oder skript == "hebrew" oder skript == "arabic" oder skript == "greek" oder skript == "cyrillic"
+
+funktion _uims_cp_skript(cp):
+    wenn cp >= 1424 und cp <= 1535:
+        gib_zurück "hebrew"
+    wenn (cp >= 1536 und cp <= 1791) oder (cp >= 1872 und cp <= 1919) oder (cp >= 2208 und cp <= 2303) oder (cp >= 64336 und cp <= 65023) oder (cp >= 65136 und cp <= 65279):
+        gib_zurück "arabic"
+    wenn _uims_cp_griechisch_stark(cp):
+        gib_zurück "greek"
+    wenn _uims_cp_kyrillisch_stark(cp):
+        gib_zurück "cyrillic"
+    wenn (cp >= 65 und cp <= 90) oder (cp >= 97 und cp <= 122) oder (cp >= 192 und cp <= 214) oder (cp >= 216 und cp <= 246) oder (cp >= 248 und cp <= 255):
+        gib_zurück "latin"
+    gib_zurück "common"
+
+funktion _uims_plan_optionen_standard():
+    setze o auf {}
+    o["version"] = 1
+    o["direction"] = "auto"
+    o["script"] = "auto"
+    gib_zurück o
+
+funktion _uims_plan_optionen_gueltig(optionen):
+    wenn typ_von(optionen) != "Woerterbuch" oder länge(optionen) != 3:
+        gib_zurück falsch
+    wenn optionen.enthält("version") == falsch oder optionen.enthält("direction") == falsch oder optionen.enthält("script") == falsch:
+        gib_zurück falsch
+    wenn typ_von(optionen["version"]) != "Zahl" oder optionen["version"] != 1:
+        gib_zurück falsch
+    setze richtung auf optionen["direction"]
+    setze skript auf optionen["script"]
+    wenn richtung != "auto" und richtung != "ltr" und richtung != "rtl":
+        gib_zurück falsch
+    wenn skript != "auto" und _uims_skript_stark(skript) == falsch:
+        gib_zurück falsch
+    gib_zurück wahr
+
+# Eine einzige bounded-v1-Segmentierung speist Textplan, Rasterung und Auswahl.
+funktion _uims_cluster_plan(s):
+    setze s_typ auf typ_von(s)
+    wenn s_typ != "Text" und s_typ != "Bytes":
+        gib_zurück nichts
+    setze bs auf bytes_zu_liste(s)
+    setze cluster auf []
+    setze glyphen auf []
+    setze i auf 0
+    setze vor_cp auf 0 - 1
+    setze zwj_verbindet auf falsch
+    setze ri_offen auf falsch
+    solange i < länge(bs):
+        setze start auf i
+        setze dek auf _uims_utf8_cp(bs, i)
+        setze cp auf dek[0]
+        setze naechster_index auf dek[1]
+        setze gueltig auf dek[2]
+        setze neuer_cluster auf länge(cluster) == 0
+        wenn neuer_cluster == falsch:
+            wenn cp == 10 und vor_cp == 13:
+                setze neuer_cluster auf falsch
+            sonst wenn _uims_cp_extend(cp) oder cp == 8205 oder zwj_verbindet:
+                setze neuer_cluster auf falsch
+            sonst wenn _uims_cp_ri(cp):
+                wenn _uims_cp_ri(vor_cp) und ri_offen:
+                    setze neuer_cluster auf falsch
+                    setze ri_offen auf falsch
+                sonst:
+                    setze neuer_cluster auf wahr
+                    setze ri_offen auf wahr
+            sonst:
+                setze neuer_cluster auf wahr
+                setze ri_offen auf falsch
+        sonst wenn _uims_cp_ri(cp):
+            setze ri_offen auf wahr
+
+        wenn neuer_cluster:
+            setze glyph auf "?"
+            setze gestuetzt auf falsch
+            wenn gueltig und cp < 128:
+                setze probe auf s[start]
+                wenn _UIMF.enthält(probe):
+                    setze glyph auf probe
+                    setze gestuetzt auf wahr
+            setze c auf {}
+            c["source_start"] = start
+            c["source_end"] = naechster_index
+            c["direction"] = _uims_cp_richtung(cp)
+            c["script"] = _uims_cp_skript(cp)
+            c["supported"] = gestuetzt
+            wenn gestuetzt:
+                c["fallback"] = "none"
+            sonst:
+                c["fallback"] = "logical-glyph"
+            cluster.hinzufügen(c)
+            glyphen.hinzufügen(glyph)
+        sonst:
+            setze ci auf länge(cluster) - 1
+            setze c auf cluster[ci]
+            c["source_end"] = naechster_index
+            cluster[ci] = c
+
+        setze zwj_verbindet auf cp == 8205
+        setze vor_cp auf cp
+        setze i auf naechster_index
+
+    setze ergebnis auf {}
+    ergebnis["byte_count"] = länge(bs)
+    ergebnis["clusters"] = cluster
+    ergebnis["glyphs"] = glyphen
+    gib_zurück ergebnis
+
+funktion uim_text_faehigkeiten(version):
+    wenn typ_von(version) != "Zahl" oder version != 1:
+        gib_zurück nichts
+    setze f auf {}
+    f["version"] = 1
+    f["source_unit"] = "utf8-bytes"
+    f["engine"] = "embedded-pixel-v1"
+    f["adapter_kind"] = "embedded"
+    f["plan_version"] = 1
+    f["cluster_model"] = "bounded-v1"
+    f["order"] = "logical"
+    f["full_bidi"] = falsch
+    f["full_shaping"] = falsch
+    f["kerning"] = falsch
+    f["font_source"] = "embedded-3x5"
+    f["font_fallback"] = falsch
+    f["replacement_glyph"] = "?"
+    f["replacement_unit"] = "bounded-cluster"
+    f["rasterization"] = "monochrome"
+    f["grayscale"] = falsch
+    f["subpixel"] = falsch
+    f["metrics"] = "deterministic-integer"
+    f["scale_model"] = "font-size-threshold"
+    f["scale_threshold"] = 12
+    f["scale_below"] = 1
+    f["scale_at_or_above"] = 2
+    gib_zurück f
+
+funktion uim_text_zeilenmetrik_px(version, groesse):
+    wenn typ_von(version) != "Zahl" oder version != 1:
+        gib_zurück nichts
+    wenn typ_von(groesse) != "Zahl" oder groesse <= 0:
+        gib_zurück nichts
+    setze scale auf _uim_zf_px(groesse)
+    setze metrik auf {}
+    metrik["version"] = 1
+    metrik["engine"] = "embedded-pixel-v1"
+    metrik["unit"] = "surface-pixels"
+    metrik["line_model"] = "single-line-top-origin-v1"
+    metrik["origin"] = "top-left"
+    metrik["scale"] = scale
+    metrik["bitmap_width"] = 3 * scale
+    metrik["bitmap_height"] = 5 * scale
+    metrik["advance_x"] = 4 * scale
+    metrik["line_height"] = 5 * scale
+    metrik["baseline_supported"] = falsch
+    gib_zurück metrik
+
+funktion uim_text_plan(s, optionen):
+    wenn _uims_plan_optionen_gueltig(optionen) == falsch:
+        gib_zurück nichts
+    setze segmentierung auf _uims_cluster_plan(s)
+    wenn segmentierung == nichts:
+        gib_zurück nichts
+    setze richtung_option auf optionen["direction"]
+    setze skript_option auf optionen["script"]
+    setze cluster auf segmentierung["clusters"]
+    setze glyphen auf segmentierung["glyphs"]
+
+    setze runs auf []
+    setze ci auf 0
+    solange ci < länge(cluster):
+        setze c auf cluster[ci]
+        setze run_neu auf länge(runs) == 0
+        wenn run_neu == falsch:
+            setze ri auf länge(runs) - 1
+            setze r auf runs[ri]
+            setze run_neu auf r["direction"] != c["direction"] oder r["script"] != c["script"] oder r["supported"] != c["supported"] oder r["fallback"] != c["fallback"]
+        wenn run_neu:
+            setze r auf {}
+            r["source_start"] = c["source_start"]
+            r["source_end"] = c["source_end"]
+            r["cluster_start"] = ci
+            r["cluster_count"] = 1
+            r["direction"] = c["direction"]
+            r["script"] = c["script"]
+            r["supported"] = c["supported"]
+            r["fallback"] = c["fallback"]
+            runs.hinzufügen(r)
+        sonst:
+            setze ri auf länge(runs) - 1
+            setze r auf runs[ri]
+            r["source_end"] = c["source_end"]
+            r["cluster_count"] = r["cluster_count"] + 1
+            runs[ri] = r
+        setze ci auf ci + 1
+
+    setze basis_richtung auf richtung_option
+    wenn basis_richtung == "auto":
+        setze basis_richtung auf "ltr"
+        setze ci auf 0
+        setze stark_gefunden auf falsch
+        solange ci < länge(cluster) und stark_gefunden == falsch:
+            setze c auf cluster[ci]
+            wenn _uims_skript_stark(c["script"]):
+                setze basis_richtung auf c["direction"]
+                setze stark_gefunden auf wahr
+            setze ci auf ci + 1
+
+    setze plan_skript auf skript_option
+    wenn plan_skript == "auto":
+        setze plan_skript auf "common"
+        setze gesehenes_skript auf ""
+        setze ci auf 0
+        solange ci < länge(cluster):
+            setze c auf cluster[ci]
+            wenn _uims_skript_stark(c["script"]):
+                wenn gesehenes_skript == "":
+                    setze gesehenes_skript auf c["script"]
+                    setze plan_skript auf gesehenes_skript
+                sonst wenn gesehenes_skript != c["script"]:
+                    setze plan_skript auf "mixed"
+            setze ci auf ci + 1
+
+    setze alles_gestuetzt auf wahr
+    setze ci auf 0
+    solange ci < länge(cluster):
+        wenn cluster[ci]["supported"] == falsch:
+            setze alles_gestuetzt auf falsch
+        setze ci auf ci + 1
+
+    setze plan auf {}
+    plan["version"] = 1
+    plan["order"] = "logical"
+    plan["source_unit"] = "utf8-bytes"
+    plan["cluster_model"] = "bounded-v1"
+    plan["full_bidi"] = falsch
+    plan["full_shaping"] = falsch
+    plan["direction"] = basis_richtung
+    plan["script"] = plan_skript
+    plan["supported"] = alles_gestuetzt
+    wenn alles_gestuetzt:
+        plan["fallback"] = "none"
+    sonst:
+        plan["fallback"] = "logical-glyph"
+    plan["glyphs"] = glyphen
+    plan["advance"] = länge(glyphen) * 4
+    plan["runs"] = runs
+    gib_zurück plan
+
+funktion uim_text_plan_px(s, optionen, groesse):
+    wenn _uims_plan_optionen_gueltig(optionen) == falsch:
+        gib_zurück nichts
+    wenn typ_von(groesse) != "Zahl" oder groesse <= 0:
+        gib_zurück nichts
+    setze plan auf uim_text_plan(s, optionen)
+    wenn plan == nichts:
+        gib_zurück nichts
+    setze scale auf _uim_zf_px(groesse)
+    plan["scale"] = scale
+    plan["pixel_advance"] = plan["advance"] * scale
+    gib_zurück plan
+
+funktion uim_text_auswahl_plan(s, optionen, start, ende):
+    wenn _uims_plan_optionen_gueltig(optionen) == falsch:
+        gib_zurück nichts
+    wenn typ_von(start) != "Zahl" oder typ_von(ende) != "Zahl":
+        gib_zurück nichts
+    wenn start % 1 != 0 oder ende % 1 != 0:
+        gib_zurück nichts
+    setze segmentierung auf _uims_cluster_plan(s)
+    wenn segmentierung == nichts:
+        gib_zurück nichts
+    setze byte_count auf segmentierung["byte_count"]
+    wenn start < 0 oder ende < 0 oder start > ende oder ende > byte_count:
+        gib_zurück nichts
+
+    setze cluster auf segmentierung["clusters"]
+    setze cluster_start auf 0 - 1
+    setze cluster_ende auf 0 - 1
+    wenn start == 0:
+        setze cluster_start auf 0
+    wenn ende == 0:
+        setze cluster_ende auf 0
+    setze ci auf 0
+    solange ci < länge(cluster):
+        wenn cluster[ci]["source_end"] == start:
+            setze cluster_start auf ci + 1
+        wenn cluster[ci]["source_end"] == ende:
+            setze cluster_ende auf ci + 1
+        setze ci auf ci + 1
+    wenn cluster_start < 0 oder cluster_ende < 0:
+        gib_zurück nichts
+
+    setze auswahl auf {}
+    auswahl["version"] = 1
+    auswahl["source_unit"] = "utf8-bytes"
+    auswahl["cluster_model"] = "bounded-v1"
+    auswahl["order"] = "logical"
+    auswahl["full_bidi"] = falsch
+    auswahl["selection_start"] = start
+    auswahl["selection_end"] = ende
+    auswahl["cluster_start"] = cluster_start
+    auswahl["cluster_end"] = cluster_ende
+    auswahl["advance_start"] = cluster_start * 4
+    auswahl["advance_end"] = cluster_ende * 4
+    auswahl["collapsed"] = start == ende
+    gib_zurück auswahl
+
+funktion uim_text_auswahl_plan_px(s, optionen, groesse, start, ende):
+    wenn _uims_plan_optionen_gueltig(optionen) == falsch:
+        gib_zurück nichts
+    wenn typ_von(groesse) != "Zahl" oder groesse <= 0:
+        gib_zurück nichts
+    setze auswahl auf uim_text_auswahl_plan(s, optionen, start, ende)
+    wenn auswahl == nichts:
+        gib_zurück nichts
+    setze scale auf _uim_zf_px(groesse)
+    auswahl["scale"] = scale
+    auswahl["pixel_advance_start"] = auswahl["advance_start"] * scale
+    auswahl["pixel_advance_end"] = auswahl["advance_end"] * scale
+    gib_zurück auswahl
+
+funktion uim_text_auswahl_box_px(s, optionen, groesse, start, ende):
+    setze auswahl auf uim_text_auswahl_plan_px(s, optionen, groesse, start, ende)
+    wenn auswahl == nichts:
+        gib_zurück nichts
+    setze metrik auf uim_text_zeilenmetrik_px(1, groesse)
+    wenn metrik == nichts:
+        gib_zurück nichts
+    auswahl["box_model"] = "logical-advance-single-line-top-origin-v1"
+    auswahl["pixel_x"] = auswahl["pixel_advance_start"]
+    auswahl["pixel_y"] = 0
+    auswahl["pixel_width"] = auswahl["pixel_advance_end"] - auswahl["pixel_advance_start"]
+    auswahl["pixel_height"] = metrik["line_height"]
+    gib_zurück auswahl
+
+funktion uim_text_caret_treffer(s, optionen, advance):
+    wenn _uims_plan_optionen_gueltig(optionen) == falsch:
+        gib_zurück nichts
+    wenn typ_von(advance) != "Zahl" oder advance % 1 != 0:
+        gib_zurück nichts
+    setze segmentierung auf _uims_cluster_plan(s)
+    wenn segmentierung == nichts:
+        gib_zurück nichts
+    setze cluster auf segmentierung["clusters"]
+    setze ordinal auf 0
+    wenn advance <= 0:
+        setze ordinal auf 0
+    sonst wenn advance >= länge(cluster) * 4:
+        setze ordinal auf länge(cluster)
+    sonst:
+        setze ci auf 0
+        solange ci < länge(cluster) und advance >= ci * 4 + 2:
+            setze ci auf ci + 1
+        setze ordinal auf ci
+    setze offset auf 0
+    wenn ordinal > 0:
+        setze offset auf cluster[ordinal - 1]["source_end"]
+    gib_zurück uim_text_auswahl_plan(s, optionen, offset, offset)
+
+funktion uim_text_caret_treffer_px(s, optionen, groesse, advance_px):
+    wenn _uims_plan_optionen_gueltig(optionen) == falsch:
+        gib_zurück nichts
+    wenn typ_von(groesse) != "Zahl" oder groesse <= 0:
+        gib_zurück nichts
+    wenn typ_von(advance_px) != "Zahl" oder advance_px % 1 != 0:
+        gib_zurück nichts
+    setze scale auf _uim_zf_px(groesse)
+    setze treffer auf uim_text_caret_treffer(s, optionen, boden(advance_px / scale))
+    wenn treffer == nichts:
+        gib_zurück nichts
+    treffer["scale"] = scale
+    treffer["pixel_advance_start"] = treffer["advance_start"] * scale
+    treffer["pixel_advance_end"] = treffer["advance_end"] * scale
+    gib_zurück treffer
+
+funktion uim_text_caret_schritt(s, optionen, offset, delta):
+    wenn _uims_plan_optionen_gueltig(optionen) == falsch:
+        gib_zurück nichts
+    wenn typ_von(offset) != "Zahl" oder typ_von(delta) != "Zahl":
+        gib_zurück nichts
+    wenn offset % 1 != 0 oder delta % 1 != 0:
+        gib_zurück nichts
+    setze segmentierung auf _uims_cluster_plan(s)
+    wenn segmentierung == nichts:
+        gib_zurück nichts
+    setze byte_count auf segmentierung["byte_count"]
+    wenn offset < 0 oder offset > byte_count:
+        gib_zurück nichts
+    setze cluster auf segmentierung["clusters"]
+    setze ordinal auf 0 - 1
+    wenn offset == 0:
+        setze ordinal auf 0
+    setze ci auf 0
+    solange ci < länge(cluster):
+        wenn cluster[ci]["source_end"] == offset:
+            setze ordinal auf ci + 1
+        setze ci auf ci + 1
+    wenn ordinal < 0:
+        gib_zurück nichts
+    setze ziel_ordinal auf ordinal + delta
+    wenn ziel_ordinal < 0:
+        setze ziel_ordinal auf 0
+    sonst wenn ziel_ordinal > länge(cluster):
+        setze ziel_ordinal auf länge(cluster)
+    setze ziel_offset auf 0
+    wenn ziel_ordinal > 0:
+        setze ziel_offset auf cluster[ziel_ordinal - 1]["source_end"]
+    gib_zurück uim_text_auswahl_plan(s, optionen, ziel_offset, ziel_offset)
+
+funktion uim_text_caret_schritt_px(s, optionen, groesse, offset, delta):
+    wenn _uims_plan_optionen_gueltig(optionen) == falsch:
+        gib_zurück nichts
+    wenn typ_von(groesse) != "Zahl" oder groesse <= 0:
+        gib_zurück nichts
+    setze schritt auf uim_text_caret_schritt(s, optionen, offset, delta)
+    wenn schritt == nichts:
+        gib_zurück nichts
+    setze scale auf _uim_zf_px(groesse)
+    schritt["scale"] = scale
+    schritt["pixel_advance_start"] = schritt["advance_start"] * scale
+    schritt["pixel_advance_end"] = schritt["advance_end"] * scale
+    gib_zurück schritt
+
+funktion _uims_grapheme_glyphen(s):
+    gib_zurück uim_text_plan(s, _uims_plan_optionen_standard())["glyphs"]
+
 funktion _uims_text(kontext, args):
     setze z auf args[0]
     setze x auf args[1]
     setze y auf args[2]
-    setze s auf args[3]
+    setze plan auf uim_text_plan(args[3], _uims_plan_optionen_standard())
+    setze glyphen auf plan["glyphs"]
     setze px auf _uim_zf_px(args[4])
     setze f auf kontext["_farbe"]
     setze i auf 0
     setze cx auf x
     setze ok auf wahr
-    solange i < länge(s):
-        setze ch auf s[i]
-        wenn _UIMF.enthält(ch):
-            setze bits auf _UIMF[ch]
-            setze zy auf 0
-            solange zy < 5:
-                setze zx auf 0
-                solange zx < 3:
-                    wenn bits[zy * 3 + zx] == 1:
-                        setze ok auf surface_rect(z, cx + zx * px, y + zy * px, px, px, f[0], f[1], f[2], f[3]) und ok
-                    setze zx auf zx + 1
-                setze zy auf zy + 1
+    solange i < länge(glyphen):
+        setze bits auf _UIMF[glyphen[i]]
+        setze zy auf 0
+        solange zy < 5:
+            setze zx auf 0
+            solange zx < 3:
+                wenn bits[zy * 3 + zx] == 1:
+                    setze ok auf surface_rect(z, cx + zx * px, y + zy * px, px, px, f[0], f[1], f[2], f[3]) und ok
+                setze zx auf zx + 1
+            setze zy auf zy + 1
         setze cx auf cx + 4 * px
         setze i auf i + 1
     gib_zurück ok
 
 funktion _uims_text_breite(kontext, args):
-    gib_zurück länge(args[1]) * 4 * _uim_zf_px(args[2])
+    setze plan auf uim_text_plan(args[1], _uims_plan_optionen_standard())
+    gib_zurück plan["advance"] * _uim_zf_px(args[2])
 
 funktion _uims_clip_setze(kontext, args):
     gib_zurück surface_clip_push(args[0], args[1], args[2], args[3], args[4])

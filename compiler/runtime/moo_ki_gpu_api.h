@@ -258,6 +258,27 @@ void moo_ki_gpu_telemetrie(MooKiGpuTelemetrie* out);
 /* Zaehler auf 0 setzen (Test-Isolation / Steady-State-Messung). */
 void moo_ki_gpu_telemetrie_reset(void);
 
+/* Runtime-attested Vulkan device identity for no-fake presenter routing. */
+typedef enum {
+    MOO_KI_GPU_DEVICE_UNKNOWN = 0,
+    MOO_KI_GPU_DEVICE_INTEGRATED = 1,
+    MOO_KI_GPU_DEVICE_DISCRETE = 2,
+    MOO_KI_GPU_DEVICE_VIRTUAL = 3,
+    MOO_KI_GPU_DEVICE_CPU = 4,
+    MOO_KI_GPU_DEVICE_OTHER = 5
+} MooKiGpuDeviceKind;
+
+typedef struct {
+    uint32_t device_kind;
+    uint32_t api_version;
+    uint32_t driver_version;
+    uint32_t vendor_id;
+    uint32_t device_id;
+} MooKiGpuDeviceInfo;
+
+/* false + zeroed output means unavailable or a non-Vulkan build. */
+bool moo_ki_gpu_device_info(MooKiGpuDeviceInfo* out);
+
 /* === KIP-G4c: STRIKT-Vertrag (docs/kip/G4c-production-wiring-plan.md §3.1) ===
  * Orthogonal zum bestehenden `MOO_KI_GPU_ERZWINGEN` (das bypassed nur interne
  * Groessen-Schwellen der ALTEN nicht-residenten GPU2-Hooks). STRIKT ist neu:
