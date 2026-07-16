@@ -69,7 +69,8 @@ Details: siehe [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Status
 
-Alpha — Name und Dateiendung sind nicht final. Der Sprachkern ist stabil,
+Alpha — Dateiendung final: `.moos` (MooScript-Quellen; `.moo` wird als
+Alt-Endung weiterhin gelesen). Der Sprachkern ist stabil,
 die Runtime wird kontinuierlich konsolidiert. Qualitätsdisziplin: kein
 Feature ohne echten Test, `run_all` bleibt QEMU-/GPU-frei, GPU-/Kernel-Beweise
 laufen über eigene Gate-Skripte auf echter Hardware, Doppel-Verifikation
