@@ -1,0 +1,174 @@
+# ============================================================
+# stdlib/ki_bild_easy.moos — Kinderleicht-API "Bild -> Text"
+# (KI-MULTI-V3d Folgearbeit; realisiert den Vorschlag aus
+#  beispiele/ki_multimodal.moos / Thought 17aece85.)
+#
+# Kapselt die komplette V3d-Inferenzkette hinter EIN Handle:
+#
+#     importiere ki_bild_easy
+#     setze modell auf neu BildModell("/tmp/ki_multimodal_modell.mook")
+#     zeige modell.beschreibe(frame)      # Frame-Objekt -> Caption-Text
+#
+# beschreibe(frame) macht: tensor_aus_frame(grau) -> 32x32 (Nearest-
+# Neighbor-Subsampling falls groesser) -> Zwei-Pfad-Conv-Encoder (Summe)
+# -> Projektion -> Greedy-Caption durch das Mini-LLM.
+#
+# Das .mook enthaelt die 22 GELERNTEN Schichten (Encoder Form/Ort +
+# Mini-LLM + Projektion), gespeichert von beispiele/ki_multimodal.moos.
+# Architektur, Konstanten und Zeichen-Vokabular sind deterministisch und
+# werden hier im Code rekonstruiert (nicht im Gewichts-File abgelegt).
+#
+# EHRLICH: form_emb/ort_emb (Trainings-Lehr-Slots) und die Prototypen
+# liegen NICHT im Inferenzpfad — greedy_slot dekodiert aus dem
+# projizierten Encoder-Ausgang. Sie werden daher weder gespeichert noch
+# geladen. Das Toy-Modell kennt nur kreis/quadrat/dreieck an 4 Orten.
+#
+# Diese Datei enthaelt NUR Definitionen (eine Klasse), keine
+# Seiteneffekte -> `importiere ki_bild_easy` ist nebenwirkungsfrei.
+# ============================================================
+
+klasse BildModell:
+    # pfad = .mook-Checkpoint aus ki_multimodal.moos (22 Schichten in
+    # cnetz-Reihenfolge). Baut Konstanten, Vokab und Schicht-Referenzen.
+    funktion erstelle(pfad):
+        selbst.BILD = 32
+        selbst.DIM_ENC = 32
+        selbst.DIM = 48
+        selbst.KOEPFE = 4
+        selbst.T_TEXT = 22
+
+        # Vokabular deterministisch aus dem Toy-Korpus rekonstruieren —
+        # IDENTISCH zum Training: "." + alle FORMEN x ORTE Captions,
+        # jeweils mit "." auf T_TEXT gepaddet, dann text_tokenizer.
+        setze formen auf ["kreis", "quadrat", "dreieck"]
+        setze orte auf ["oben links", "oben rechts", "unten links", "unten rechts"]
+        setze korpus auf "."
+        setze fi auf 0
+        solange fi < 3:
+            setze oi auf 0
+            solange oi < 4:
+                setze c auf formen[fi] + " " + orte[oi]
+                solange länge(c) < selbst.T_TEXT:
+                    setze c auf c + "."
+                setze korpus auf korpus + c
+                setze oi auf oi + 1
+            setze fi auf fi + 1
+        setze tok auf text_tokenizer(korpus)
+        selbst.vokab = tok["vokab"]
+        selbst.id_zu_zeichen = tok["id_zu_zeichen"]
+
+        # Gelernte Schichten laden (Reihenfolge = cnetz in ki_multimodal.moos).
+        setze z auf checkpoint_laden(pfad)
+        setze sch auf z["netz"]["schichten"]
+        selbst.f1 = sch[0]
+        selbst.p1 = sch[1]
+        selbst.f2 = sch[2]
+        selbst.p2 = sch[3]
+        selbst.pg = sch[4]
+        selbst.fl = sch[5]
+        selbst.ed = sch[6]
+        selbst.f1o = sch[7]
+        selbst.p1o = sch[8]
+        selbst.po = sch[9]
+        selbst.flo = sch[10]
+        selbst.edo = sch[11]
+        selbst.emb = sch[12]
+        selbst.pos = sch[13]
+        selbst.ln1 = sch[14]
+        selbst.att = sch[15]
+        selbst.ln2 = sch[16]
+        selbst.ff1 = sch[17]
+        selbst.ff2 = sch[18]
+        selbst.lnf = sch[19]
+        selbst.kopf = sch[20]
+        selbst.proj = sch[21]
+
+    funktion form_schichten():
+        gib_zurück [selbst.f1, selbst.p1, selbst.f2, selbst.p2, selbst.pg, selbst.fl, selbst.ed]
+
+    funktion ort_schichten():
+        gib_zurück [selbst.f1o, selbst.p1o, selbst.po, selbst.flo, selbst.edo]
+
+    # Frame -> flache 32x32-Grau-Pixelliste. Identitaets-Pfad bei bereits
+    # 32x32, sonst Nearest-Neighbor-Subsampling ueber die flache Pixelliste
+    # (exakt wie ki_multimodal.frame_zu_pixel32; tensor_aus_frame hat keinen
+    # Resize-Param, es gibt kein Resize-Builtin).
+    funktion frame_zu_pixel32(frame):
+        setze t auf tensor_aus_frame(frame, "grau")
+        setze fm auf t.form()
+        setze H auf fm[0]
+        setze B auf fm[1]
+        setze flach auf t.zu_liste()
+        wenn H == selbst.BILD und B == selbst.BILD:
+            gib_zurück flach
+        setze out auf []
+        setze ty auf 0
+        solange ty < selbst.BILD:
+            setze sy auf boden(ty * H / selbst.BILD)
+            setze tx auf 0
+            solange tx < selbst.BILD:
+                setze sx auf boden(tx * B / selbst.BILD)
+                out.hinzufügen(flach[sy * B + sx])
+                setze tx auf tx + 1
+            setze ty auf ty + 1
+        gib_zurück out
+
+    # Zwei-Pfad-Encoder: Form-Pfad (translationsinvariant) + Ort-Pfad
+    # (grob-raeumlich), SUMME wie im Training.
+    funktion encoder(px):
+        setze x auf tensor_aus_liste([px])
+        setze x auf x.umformen([1, selbst.BILD, selbst.BILD, 1])
+        gib_zurück vorwaerts(selbst.form_schichten(), x) + vorwaerts(selbst.ort_schichten(), x)
+
+    funktion llm_kern(x):
+        setze x auf vorwaerts([selbst.pos], x)
+        setze x auf x + vorwaerts([selbst.ln1, selbst.att], x)
+        setze x auf x + vorwaerts([selbst.ln2, selbst.ff1, selbst.ff2], x)
+        gib_zurück vorwaerts([selbst.lnf, selbst.kopf], x)
+
+    # Praefix-Injection: x = concat(e_inj, emb(text)) — verketten fuer
+    # Tensor-Concat (nicht verbinden, das ist Listen-Join).
+    funktion mm_logits(e_inj, ids):
+        setze x auf e_inj
+        wenn länge(ids) > 0:
+            setze e_txt auf vorwaerts([selbst.emb], tensor_aus_liste(ids))
+            setze x auf e_inj.verketten(e_txt)
+        gib_zurück selbst.llm_kern(x)
+
+    funktion argmax(liste):
+        setze best auf 0
+        setze i auf 1
+        solange i < länge(liste):
+            wenn liste[i] > liste[best]:
+                setze best auf i
+            setze i auf i + 1
+        gib_zurück best
+
+    # Greedy-Dekodierung aus einem bereits projizierten Slot [1, DIM].
+    funktion greedy_slot(e_inj):
+        setze ids auf []
+        solange länge(ids) < selbst.T_TEXT:
+            setze logits auf selbst.mm_logits(e_inj, ids)
+            setze n auf länge(ids) + 1
+            ids.hinzufügen(selbst.argmax(logits.zeilen(n - 1, n).zu_liste()))
+        gib_zurück ids
+
+    # Komplette Kette: Frame -> ids (Frame->Tensor->32x32->Encoder->Proj->Greedy).
+    funktion frame_zu_ids(frame):
+        setze px auf selbst.frame_zu_pixel32(frame)
+        setze enc auf selbst.encoder(px)
+        gib_zurück selbst.greedy_slot(vorwaerts([selbst.proj], enc))
+
+    funktion ids_zu_text(ids):
+        setze t auf ""
+        setze i auf 0
+        solange i < länge(ids):
+            setze t auf t + selbst.id_zu_zeichen[ids[i]]
+            setze i auf i + 1
+        gib_zurück t
+
+    # DIE eine Nutzfunktion: Frame-Objekt -> Caption-Text.
+    # WICHTIG: Inferenz braucht kein Autograd-Tape — vor dem Aufruf
+    # autograd_aus() setzen (sonst wirft zeilen().zu_liste() mit Tape).
+    funktion beschreibe(frame):
+        gib_zurück selbst.ids_zu_text(selbst.frame_zu_ids(frame))

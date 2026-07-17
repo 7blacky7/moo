@@ -1,0 +1,91 @@
+# ============================================================
+# ki_bild_beschreiben.moos — DER 5-ZEILEN-KERN mit vortrainiertem
+# Modell (kein Inline-Training mehr). Nutzt stdlib/ki_bild_easy.
+#
+# Voraussetzung: einmalig das Modell erzeugen —
+#     xvfb-run -a stdbuf -o0 ./ki_multimodal
+# das schreibt /tmp/ki_multimodal_modell.mook. Danach ist die NUTZUNG:
+#
+#     importiere ki_bild_easy
+#     setze modell auf neu BildModell("/tmp/ki_multimodal_modell.mook")
+#     setze kamera auf kamera_oeffnen()
+#     setze frame  auf kamera_frame(kamera, 1000)
+#     zeige modell.beschreibe(frame)
+#     kamera_schliessen(kamera)
+#
+# ZWEI MODI:
+#   Selftest (Default): rendert ein bekanntes Toy-Bild (kreis oben links)
+#     unter xvfb, schickt es durch modell.beschreibe und prueft die exakte
+#     Caption. Deterministisch. Endet mit SELFTEST_RESULT: PASS/FAIL.
+#   Live (nur env MOO_LIVE=1): echte V4L2-Kamera -> Toy-Caption. EHRLICH:
+#     Toy-Vokabular kreis/quadrat/dreieck an 4 Orten, KEIN Weltmodell —
+#     der Live-Pfad beweist die MECHANIK, nicht Bildverstaendnis.
+#
+# Selftest:  xvfb-run -a stdbuf -o0 ./ki_bild_beschreiben
+# Live:      MOO_LIVE=1 xvfb-run -a stdbuf -o0 ./ki_bild_beschreiben
+# ============================================================
+importiere ki_bild_easy
+
+konstante MODELL_PFAD auf "/tmp/ki_multimodal_modell.mook"
+
+# Modell laden — mit klarer Meldung + sauberem Exit, falls das .mook fehlt.
+setze modell auf nichts
+setze geladen auf falsch
+versuche:
+    setze modell auf neu BildModell(MODELL_PFAD)
+    setze geladen auf wahr
+fange fehler:
+    zeige "FEHLER: Modell '" + MODELL_PFAD + "' nicht ladbar: " + fehler
+    zeige "Bitte zuerst einmalig das Modell erzeugen:"
+    zeige "    xvfb-run -a stdbuf -o0 ./ki_multimodal"
+
+wenn geladen == falsch:
+    zeige "SELFTEST_RESULT: FAIL ki_bild_beschreiben (kein Modell)"
+sonst wenn umgebung("MOO_LIVE") == "1":
+    # --------------------------------------------------------
+    # LIVE-MODUS: echte Kamera -> Toy-Caption (Mechanik-Beweis)
+    # --------------------------------------------------------
+    zeige ""
+    zeige "=== LIVE-MODUS: echte Kamera -> Toy-Caption ==="
+    zeige "    (Toy-Vokabular, kein echtes Weltmodell — Mechanik-Beweis)"
+    setze kamera auf nichts
+    versuche:
+        zeige "Kameras: " + text(kamera_liste())
+        setze kamera auf kamera_oeffnen()
+        autograd_aus()
+        setze i auf 0
+        solange i < 10:
+            setze frame auf kamera_frame(kamera, 1000)
+            wenn i == 0:
+                setze form0 auf tensor_aus_frame(frame, "grau").form()
+                zeige "Frame-Form (grau): " + text(form0) + " -> subsampled auf 32x32"
+            zeige "LIVE-FRAME " + text(i) + " -> \"" + modell.beschreibe(frame) + "\"  (Toy-Vokabular)"
+            setze i auf i + 1
+        kamera_schliessen(kamera)
+    fange fehler:
+        wenn kamera != nichts:
+            kamera_schliessen(kamera)
+        zeige "LIVE-Kamera-Fehler: " + fehler
+sonst:
+    # --------------------------------------------------------
+    # SELFTEST: bekanntes Toy-Bild (kreis oben links) durch die Kette
+    # --------------------------------------------------------
+    setze win auf fenster_erstelle("kbe selftest", 32, 32)
+    fenster_löschen(win, "#101018")
+    # kreis im oberen linken Quadranten (Zentrum 8,8), kein Jitter, r=7.
+    zeichne_kreis(win, 8, 8, 7, "#FFFFFF")
+    setze frame auf test_frame_grab(win)
+
+    autograd_aus()
+    setze ist auf modell.beschreibe(frame)
+    autograd_an()
+
+    # Soll-Caption: "kreis oben links" auf 22 mit "." gepaddet.
+    setze soll auf "kreis oben links"
+    solange länge(soll) < 22:
+        setze soll auf soll + "."
+    zeige "  SELFTEST render(kreis oben links) -> beschreibe='" + ist + "'  soll='" + soll + "'"
+    wenn ist == soll:
+        zeige "SELFTEST_RESULT: PASS ki_bild_beschreiben"
+    sonst:
+        zeige "SELFTEST_RESULT: FAIL ki_bild_beschreiben"

@@ -477,6 +477,25 @@ solange s < 3000:
     setze s auf s + 1
 
 # ------------------------------------------------------------
+# 7b. MODELL SICHERN (easy-API): alle 22 GELERNTEN Schichten in
+#     cnetz-Reihenfolge -> /tmp/ki_multimodal_modell.mook. Damit laedt
+#     stdlib/ki_bild_easy spaeter `neu BildModell(pfad).beschreibe(frame)`
+#     OHNE erneutes Inline-Training (die fehlende 5. Kern-Zeile).
+#     form_emb/ort_emb sind reine Trainings-Lehr-Slots (deterministisch
+#     reproduzierbar, NICHT im Inferenzpfad greedy_slot) -> bewusst nicht
+#     im Gewichts-File; das Vokab rekonstruiert der Loader identisch.
+#     Read-only + autograd_aus-gekapselt -> aendert die Gates unten nicht.
+# ------------------------------------------------------------
+autograd_aus()
+setze modell_netz auf ki_netz([M["f1"], M["p1"], M["f2"], M["p2"], M["pg"], M["fl"], M["ed"], M["f1o"], M["p1o"], M["po"], M["flo"], M["edo"], M["emb"], M["pos"], M["ln1"], M["att"], M["ln2"], M["ff1"], M["ff2"], M["lnf"], M["kopf"], M["proj"]])
+setze modell_zustand auf {}
+modell_zustand["netz"] = modell_netz
+modell_zustand["schritt"] = 1
+checkpoint_speichern(modell_zustand, "/tmp/ki_multimodal_modell.mook")
+zeige "V3D-MODELL gespeichert -> /tmp/ki_multimodal_modell.mook (22 Schichten)"
+autograd_an()
+
+# ------------------------------------------------------------
 # 8. V3d-GATE: aufgezeichnete Frames durch die KOMPLETTE Kette
 #    (Frame -> tensor_aus_frame -> 32x32 -> Encoder -> Proj -> Greedy),
 #    exakt gegen die Soll-Caption. Das ist der V3d-Kern: die Nutzung
@@ -561,21 +580,25 @@ wenn umgebung("MOO_LIVE") == "1":
         zeige "LIVE-Kamera-Fehler: " + fehler
 
 # ============================================================
-# EASY-API-VORSCHLAG (nicht implementiert — Doku fuer den 5-Zeilen-Kern)
+# EASY-API — REALISIERT (Modul: stdlib/ki_bild_easy.moos)
 # ------------------------------------------------------------
-# Heute muss das Modell INLINE trainiert werden (Stufen A/B0/B, ~Minuten),
-# bevor bild_beschreiben() nutzbar ist. Fuer echte "Kinderleichtigkeit"
-# fehlt Modell-Persistenz analog moo_nn_easy:
+# Der 5-Zeilen-Kern existiert jetzt: Abschnitt 7b oben sichert das
+# trainierte Modell nach /tmp/ki_multimodal_modell.mook, das duenne
+# stdlib-Modul ki_bild_easy kapselt Laden + ganze Kette. Nutzung OHNE
+# erneutes Inline-Training:
 #
-#   setze modell auf ki_bild_modell_laden("v3d_toy.mook")   # <- neu
+#   importiere ki_bild_easy
+#   setze modell auf neu BildModell("/tmp/ki_multimodal_modell.mook")
 #   setze kamera auf kamera_oeffnen()
 #   setze frame  auf kamera_frame(kamera, 1000)
-#   zeige modell.beschreibe(frame)                          # <- Kette gekapselt
+#   zeige modell.beschreibe(frame)          # <- ganze Kette gekapselt
 #   kamera_schliessen(kamera)
 #
-# Bausteine existieren bereits: checkpoint_speichern/-laden (Gate 3 in V3a
-# beweist bit-identischen Roundtrip von Encoder+LLM+Projektion). Es fehlt
-# nur ein duenner Wrapper, der (a) den Checkpoint + Vokab/id_zu_zeichen +
-# BILD/DIM in EIN Handle packt und (b) beschreibe(frame) = frame_zu_ids ->
-# ids_zu_text kapselt. Kein neuer Runtime-Kern noetig, reine Moo-stdlib.
+# Lauffaehiges Beispiel: beispiele/ki_bild_beschreiben.moos (Selftest +
+# MOO_LIVE=1). Mechanik: `importiere ki_bild_easy` zieht die Klasse
+# BildModell ohne Prefix in den Scope (Modul-Top-Level = nur Definitionen,
+# keine Seiteneffekte). Das .mook traegt die 22 gelernten Schichten;
+# Architektur + Zeichen-Vokab rekonstruiert das Modul deterministisch.
+# EHRLICH: form_emb/ort_emb sind reine Trainings-Lehr-Slots (nicht im
+# Inferenzpfad greedy_slot) und bewusst nicht im Gewichts-File.
 # ============================================================
