@@ -1,0 +1,581 @@
+# ============================================================
+# ki_multimodal.moos — KI-MULTI-V3d: Live-Demo "Kamera -> Text"
+#
+# Frame -> tensor_aus_frame -> 32x32 grau -> Conv-Encoder (V2)
+#   -> Projektion -> Praefix-Slot im Mini-LLM -> Greedy-Caption.
+# Design: docs/kip/V3-multimodal-fusion.md (§3.3, §7 V3d).
+# Basis:  beispiele/ki_multimodal_vision.moos (V3a-Vision-Adapter).
+#
+# ┌── DER 5-ZEILEN-KERN ─────────────────────────────────────┐
+# │ Sobald das Modell trainiert ist, schrumpft die NUTZUNG   │
+# │ auf diese paar Zeilen. bild_beschreiben(frame) kapselt    │
+# │ die ganze Kette (Frame->Tensor->32x32->Encoder->Proj->    │
+# │ Greedy-Caption):                                          │
+# │                                                          │
+# │     setze kamera auf kamera_oeffnen()                     │
+# │     setze frame  auf kamera_frame(kamera, 1000)           │
+# │     zeige bild_beschreiben(frame)                         │
+# │     kamera_schliessen(kamera)                             │
+# │                                                          │
+# │ Das ist es. Die fehlende 5. Zeile — einmaliges Modell-    │
+# │ Laden statt Inline-Training — braucht eine kleine easy-   │
+# │ API; konkreter Vorschlag am DATEIENDE.                    │
+# └──────────────────────────────────────────────────────────┘
+#
+# ZWEI MODI:
+#   Selftest (Default): synthetische Formen rendern, trainieren,
+#     dann selbst aufgezeichnete Frames (test_frame_grab) durch die
+#     KOMPLETTE Kette schicken und exakt pruefen. Deterministisch.
+#     Endet mit SELFTEST_RESULT: PASS/FAIL.
+#   Live (nur wenn env MOO_LIVE=1): echte V4L2-Kamera (/dev/video0,
+#     z.B. Logitech "Logi 4K Stream Edition"). ~10 Frames -> Caption
+#     auf stdout. EHRLICH: Das Toy-Modell kennt NUR kreis/quadrat/
+#     dreieck an 4 Positionen. Auf echten Kamerabildern ist die
+#     Ausgabe Toy-Vokabular, KEIN echtes Weltmodell — der Live-Pfad
+#     beweist die MECHANIK (echte Frames fliessen durch die Kette),
+#     nicht Bildverstaendnis.
+#
+# Selftest:  xvfb-run -a stdbuf -o0 ./ki_multimodal
+# Live:      MOO_LIVE=1 xvfb-run -a stdbuf -o0 ./ki_multimodal
+#            (xvfb-run: das Trainings-Fenster landet auf dem
+#             virtuellen Display, die Kamera liest reale Hardware —
+#             so entsteht KEIN Fenster auf dem User-Desktop.)
+# ============================================================
+
+konstante BILD auf 32
+konstante DIM_ENC auf 32
+konstante DIM auf 48
+konstante KOEPFE auf 4
+konstante T_TEXT auf 22
+konstante JITTER_TRAIN auf 6
+konstante JITTER_TEST auf 2
+konstante JITTER_COMBO auf 4
+
+setze FORMEN auf ["kreis", "quadrat", "dreieck"]
+setze ORTE auf ["oben links", "oben rechts", "unten links", "unten rechts"]
+
+# Kombi-Holdout: diese (form, ort)-Paare kommen NIE ins Training.
+# kreis+oben rechts (0,1) und dreieck+unten rechts (2,3).
+funktion ist_holdout(fi, oi):
+    wenn fi == 0 und oi == 1:
+        gib_zurück wahr
+    wenn fi == 2 und oi == 3:
+        gib_zurück wahr
+    gib_zurück falsch
+
+# ------------------------------------------------------------
+# 0. Zustand: LCG + alle Schichten in einem Dict (M)
+# ------------------------------------------------------------
+setze G auf {}
+G["rng"] = 7
+funktion rng():
+    G["rng"] = (G["rng"] * 75 + 74) % 65537
+    gib_zurück G["rng"]
+
+setze M auf {}
+
+# ------------------------------------------------------------
+# 1. Toy-Szenen rendern: Form in Quadrant mit Jitter, 32x32 grau
+# ------------------------------------------------------------
+setze win auf fenster_erstelle("v3d multimodal", BILD, BILD)
+
+funktion zeichne_form(fi, cx, cy, r):
+    wenn fi == 0:
+        zeichne_kreis(win, cx, cy, r, "#FFFFFF")
+    sonst wenn fi == 1:
+        zeichne_rechteck(win, cx - r, cy - r, 2 * r, 2 * r, "#FFFFFF")
+    sonst:
+        # Dreieck aus horizontalen Balken (kein Dreieck-Builtin noetig)
+        setze zeile auf 0
+        solange zeile < 2 * r:
+            setze halb auf boden(zeile / 2)
+            zeichne_rechteck(win, cx - halb, cy - r + zeile, 2 * halb + 1, 1, "#FFFFFF")
+            setze zeile auf zeile + 1
+
+# Rendert ein Sample und liefert das FRAME-Objekt (aufgezeichnet).
+funktion render_frame(fi, oi):
+    setze qx auf 8
+    wenn oi == 1 oder oi == 3:
+        setze qx auf 24
+    setze qy auf 8
+    wenn oi == 2 oder oi == 3:
+        setze qy auf 24
+    setze jx auf rng() % 5 - 2
+    setze jy auf rng() % 5 - 2
+    setze r auf 6 + rng() % 3
+    fenster_löschen(win, "#101018")
+    zeichne_form(fi, qx + jx, qy + jy, r)
+    gib_zurück test_frame_grab(win)
+
+# Frame -> flache 32x32-Grau-Pixelliste (1024). KERN der V3d-Kette:
+# tensor_aus_frame liefert [H,B,1] in Kamera-Aufloesung; es gibt kein
+# Resize-Builtin, also Nearest-Neighbor-Subsampling ueber die Pixelliste.
+# Bei bereits 32x32 (Selftest-Frames) ist das ein Identitaets-Pfad und
+# liefert exakt dieselbe Liste wie tensor_aus_frame(..).zu_liste().
+funktion frame_zu_pixel32(frame):
+    setze t auf tensor_aus_frame(frame, "grau")
+    setze fm auf t.form()
+    setze H auf fm[0]
+    setze B auf fm[1]
+    setze flach auf t.zu_liste()
+    wenn H == BILD und B == BILD:
+        gib_zurück flach
+    setze out auf []
+    setze ty auf 0
+    solange ty < BILD:
+        setze sy auf boden(ty * H / BILD)
+        setze tx auf 0
+        solange tx < BILD:
+            setze sx auf boden(tx * B / BILD)
+            out.hinzufügen(flach[sy * B + sx])
+            setze tx auf tx + 1
+        setze ty auf ty + 1
+    gib_zurück out
+
+# Die alte V3a-Signatur: rendern + zu Pixelliste (jetzt via Frame-Kette).
+funktion sample_pixel(fi, oi):
+    gib_zurück frame_zu_pixel32(render_frame(fi, oi))
+
+# ------------------------------------------------------------
+# 2. Captions + Zeichen-Vokabular
+# ------------------------------------------------------------
+funktion caption(fi, oi):
+    setze c auf FORMEN[fi] + " " + ORTE[oi]
+    solange länge(c) < T_TEXT:
+        setze c auf c + "."
+    gib_zurück c
+
+setze korpus auf "."
+setze fi auf 0
+solange fi < 3:
+    setze oi auf 0
+    solange oi < 4:
+        setze korpus auf korpus + caption(fi, oi)
+        setze oi auf oi + 1
+    setze fi auf fi + 1
+setze tok auf text_tokenizer(korpus)
+setze vokab auf tok["vokab"]
+setze id_zu_zeichen auf tok["id_zu_zeichen"]
+setze z2i auf {}
+setze k auf 0
+solange k < vokab:
+    z2i[id_zu_zeichen[k]] = k
+    setze k auf k + 1
+
+funktion caption_ids(fi, oi):
+    setze c auf caption(fi, oi)
+    setze ids auf []
+    setze i auf 0
+    solange i < T_TEXT:
+        ids.hinzufügen(z2i[c[i]])
+        setze i auf i + 1
+    gib_zurück ids
+
+funktion ids_gleich(a, b):
+    # Listen-== ist Referenzvergleich (Gotcha) -> elementweise
+    wenn länge(a) != länge(b):
+        gib_zurück falsch
+    setze i auf 0
+    solange i < länge(a):
+        wenn a[i] != b[i]:
+            gib_zurück falsch
+        setze i auf i + 1
+    gib_zurück wahr
+
+# ------------------------------------------------------------
+# 3. Datensatz erzeugen (deterministisch) + Hash-Log
+# ------------------------------------------------------------
+zeige "Erzeuge Toy-Datensatz ..."
+setze train_px auf []
+setze train_kl auf []
+setze jit_px auf []
+setze jit_kl auf []
+setze combo_px auf []
+setze combo_kl auf []
+setze pruef auf 0
+setze fi auf 0
+solange fi < 3:
+    setze oi auf 0
+    solange oi < 4:
+        setze knr auf fi * 4 + oi
+        wenn ist_holdout(fi, oi):
+            setze j auf 0
+            solange j < JITTER_COMBO:
+                setze p auf sample_pixel(fi, oi)
+                combo_px.hinzufügen(p)
+                combo_kl.hinzufügen(knr)
+                setze pruef auf (pruef + p[rng() % 1024] * 1000 + knr) % 987654321
+                setze j auf j + 1
+        sonst:
+            setze j auf 0
+            solange j < JITTER_TRAIN:
+                setze p auf sample_pixel(fi, oi)
+                train_px.hinzufügen(p)
+                train_kl.hinzufügen(knr)
+                setze pruef auf (pruef + p[rng() % 1024] * 1000 + knr) % 987654321
+                setze j auf j + 1
+            setze j auf 0
+            solange j < JITTER_TEST:
+                setze p auf sample_pixel(fi, oi)
+                jit_px.hinzufügen(p)
+                jit_kl.hinzufügen(knr)
+                setze pruef auf (pruef + p[rng() % 1024] * 1000 + knr) % 987654321
+                setze j auf j + 1
+        setze oi auf oi + 1
+    setze fi auf fi + 1
+zeige "V3D-DATEN train=" + text(länge(train_px)) + " jitter-holdout=" + text(länge(jit_px)) + " kombi-holdout=" + text(länge(combo_px)) + " pruefwert=" + text(pruef)
+
+# ------------------------------------------------------------
+# 4. Schichten (alle Seeds fest) — identisch zu V3a
+# ------------------------------------------------------------
+M["f1"] = schicht_faltung(1, 8, 3, 1, 1, "relu", 21)
+M["p1"] = schicht_pooling("max", 2, 2)
+M["f2"] = schicht_faltung(8, 16, 3, 1, 1, "relu", 22)
+M["p2"] = schicht_pooling("max", 2, 2)
+M["pg"] = schicht_pooling("max", 8, 8)
+M["fl"] = schicht_flach()
+M["ed"] = schicht_dicht(16, DIM_ENC, "tanh", 23)
+# Ort-Pfad: eigener flacher Conv-Zweig, frueh grob gepoolt (Position, kaum Form)
+M["f1o"] = schicht_faltung(1, 4, 3, 1, 1, "relu", 26)
+M["p1o"] = schicht_pooling("max", 2, 2)
+M["po"] = schicht_pooling("max", 4, 4)
+M["flo"] = schicht_flach()
+M["edo"] = schicht_dicht(4 * 4 * 4, DIM_ENC, "tanh", 27)
+M["emb"] = schicht_embedding(vokab, DIM, 31)
+M["pos"] = schicht_position(1 + T_TEXT, DIM, "gelernt", 32)
+M["ln1"] = schicht_layernorm(DIM)
+M["att"] = schicht_attention(DIM, KOEPFE, 33)
+M["ln2"] = schicht_layernorm(DIM)
+M["ff1"] = schicht_dicht(DIM, 128, "gelu", 34)
+M["ff2"] = schicht_dicht(128, DIM, "keine", 35)
+M["lnf"] = schicht_layernorm(DIM)
+M["kopf"] = schicht_dicht(DIM, vokab, "keine", 36)
+M["proj"] = schicht_dicht(DIM_ENC, DIM, "keine", 41)
+
+funktion enc_schichten():
+    gib_zurück [M["f1"], M["p1"], M["f2"], M["p2"], M["pg"], M["fl"], M["ed"], M["f1o"], M["p1o"], M["po"], M["flo"], M["edo"]]
+funktion form_schichten():
+    gib_zurück [M["f1"], M["p1"], M["f2"], M["p2"], M["pg"], M["fl"], M["ed"]]
+funktion ort_schichten():
+    gib_zurück [M["f1o"], M["p1o"], M["po"], M["flo"], M["edo"]]
+funktion llm_schichten():
+    gib_zurück [M["emb"], M["pos"], M["ln1"], M["att"], M["ln2"], M["ff1"], M["ff2"], M["lnf"], M["kopf"]]
+
+funktion encoder_batch(pixel_listen):
+    setze x auf tensor_aus_liste(pixel_listen)
+    setze x auf x.umformen([länge(pixel_listen), BILD, BILD, 1])
+    # Form-Pfad translationsinvariant (global max-pool), Ort-Pfad grob-raeumlich.
+    # Die SUMME passt zur kompositionalen Anker-Struktur form_proto + ort_proto.
+    gib_zurück vorwaerts(form_schichten(), x) + vorwaerts(ort_schichten(), x)
+
+funktion llm_kern(x):
+    setze x auf vorwaerts([M["pos"]], x)
+    setze x auf x + vorwaerts([M["ln1"], M["att"]], x)
+    setze x auf x + vorwaerts([M["ln2"], M["ff1"], M["ff2"]], x)
+    gib_zurück vorwaerts([M["lnf"], M["kopf"]], x)
+
+# Praefix-Injection (Design §3.3): x = concat(e_inj, emb(text))
+funktion mm_logits(e_inj, ids):
+    setze x auf e_inj
+    wenn länge(ids) > 0:
+        setze e_txt auf vorwaerts([M["emb"]], tensor_aus_liste(ids))
+        setze x auf e_inj.verketten(e_txt)
+    gib_zurück llm_kern(x)
+
+# Maskierte CE: Zeile 0 (Slot) -> ids[0], Zeile k -> ids[k], letzte Zeile Dummy+Maske 0
+funktion seq_loss(e_inj, ids):
+    setze logits auf mm_logits(e_inj, ids)
+    setze ziele auf []
+    setze maske auf []
+    setze i auf 0
+    solange i < länge(ids):
+        ziele.hinzufügen(ids[i])
+        maske.hinzufügen(1)
+        setze i auf i + 1
+    ziele.hinzufügen(0)
+    maske.hinzufügen(0)
+    gib_zurück kreuzentropie(logits, tensor_aus_liste(ziele), tensor_aus_liste(maske))
+
+funktion argmax(liste):
+    setze best auf 0
+    setze i auf 1
+    solange i < länge(liste):
+        wenn liste[i] > liste[best]:
+            setze best auf i
+        setze i auf i + 1
+    gib_zurück best
+
+funktion grads_loeschen(params):
+    für p in params:
+        p.gradient_loeschen()
+
+# Greedy-Dekodierung aus einem bereits projizierten Slot [1, DIM].
+funktion greedy_slot(e_inj):
+    setze ids auf []
+    solange länge(ids) < T_TEXT:
+        setze logits auf mm_logits(e_inj, ids)
+        setze n auf länge(ids) + 1
+        ids.hinzufügen(argmax(logits.zeilen(n - 1, n).zu_liste()))
+    gib_zurück ids
+
+funktion ids_zu_text(ids):
+    setze t auf ""
+    setze i auf 0
+    solange i < länge(ids):
+        setze t auf t + id_zu_zeichen[ids[i]]
+        setze i auf i + 1
+    gib_zurück t
+
+# === V3d-KERN: komplette Kette Frame -> ids bzw. Text ===
+# frame_zu_ids: Frame -> tensor_aus_frame -> 32x32 -> Encoder -> Proj -> Greedy.
+funktion frame_zu_ids(frame):
+    setze px auf frame_zu_pixel32(frame)
+    setze enc auf encoder_batch([px])
+    gib_zurück greedy_slot(vorwaerts([M["proj"]], enc))
+
+# bild_beschreiben: die eine Funktion, die der 5-Zeilen-Kern aufruft.
+funktion bild_beschreiben(frame):
+    gib_zurück ids_zu_text(frame_zu_ids(frame))
+
+# ------------------------------------------------------------
+# 5. STUFE A: Encoder contrastive vortrainieren (L1)
+# ------------------------------------------------------------
+zeige "Stufe A: Encoder contrastive (300 Schritte) ..."
+# Kompositionale Anker: Klasse = Form-Prototyp + Orts-Prototyp. Ungesehene
+# Kombis (Holdout) liegen damit automatisch am richtigen Ort im Raum.
+setze form_proto auf tensor_zufall([3, DIM_ENC], 55)
+setze ort_proto auf tensor_zufall([4, DIM_ENC], 56)
+
+funktion proto_zeile(knr):
+    gib_zurück form_proto.zeilen(boden(knr / 4), boden(knr / 4) + 1) + ort_proto.zeilen(knr % 4, knr % 4 + 1)
+
+funktion proto_stapel(klassen):
+    setze p auf proto_zeile(klassen[0])
+    setze i auf 1
+    solange i < länge(klassen):
+        setze p auf p.verketten(proto_zeile(klassen[i]))
+        setze i auf i + 1
+    gib_zurück p
+
+setze params_enc auf parameter(enc_schichten())
+setze opt_a auf optimierer_sgd(params_enc, 0.05, 0.9)
+setze s auf 0
+solange s < 300:
+    # Batch: pro Schritt eine Jitter-Variante jeder der 10 Trainings-Kombis
+    setze bx auf []
+    setze bk auf []
+    setze i auf 0
+    solange i < 10:
+        setze idx auf i * JITTER_TRAIN + s % JITTER_TRAIN
+        bx.hinzufügen(train_px[idx])
+        bk.hinzufügen(train_kl[idx])
+        setze i auf i + 1
+    setze enc auf encoder_batch(bx)
+    setze v auf kontrastiv(enc, proto_stapel(bk), 0.12)
+    v.rueckwaerts()
+    gradienten_kappen(params_enc, 1.0)
+    opt_a.schritt()
+    setze s auf s + 1
+
+# GATE A: Retrieval accuracy@1 auf den Jitter-Holdout-Bildern
+autograd_aus()
+setze enc_jit auf encoder_batch(jit_px)
+setze treffer auf 0
+setze i auf 0
+solange i < länge(jit_px):
+    setze zeile auf enc_jit.zeilen(i, i + 1)
+    setze best auf 0 - 1
+    setze best_w auf 0 - 1000000000
+    setze kk auf 0
+    solange kk < 12:
+        setze w auf kosinus(zeile, proto_zeile(kk)).zu_liste()[0]
+        wenn w > best_w:
+            setze best_w auf w
+            setze best auf kk
+        setze kk auf kk + 1
+    wenn best == jit_kl[i]:
+        setze treffer auf treffer + 1
+    setze i auf i + 1
+setze acc_a auf treffer / länge(jit_px)
+autograd_an()
+setze gate_a auf acc_a >= 0.95
+zeige "V3D-GATE-A retrieval@1=" + text(acc_a) + " -> " + text(gate_a)
+
+# Encoder ab jetzt FROZEN: Trainings-Embeddings einmal ohne Tape vorberechnen
+autograd_aus()
+setze e_train auf encoder_batch(train_px)
+autograd_an()
+
+# ------------------------------------------------------------
+# 6. STUFE B0: Mini-LLM KONDITIONAL vortrainieren (kompositionale Lehr-Slots)
+# ------------------------------------------------------------
+zeige "Stufe B0: LLM-Vortraining mit Lehr-Slots (1200 Schritte) ..."
+# Lehr-Slots in DISJUNKTEN Subraeumen: Form dims 0..DIM/2-1, Ort dims DIM/2..DIM-1.
+autograd_aus()
+setze form_emb auf tensor_nullen([3, DIM])
+setze fz auf tensor_zufall([3, DIM], 81)
+setze fi2 auf 0
+solange fi2 < 3:
+    setze j auf 0
+    solange j < boden(DIM / 2):
+        form_emb.wert_setzen([fi2, j], fz.wert([fi2, j]))
+        setze j auf j + 1
+    setze fi2 auf fi2 + 1
+setze ort_emb auf tensor_nullen([4, DIM])
+setze oz auf tensor_zufall([4, DIM], 82)
+setze oi2 auf 0
+solange oi2 < 4:
+    setze j auf boden(DIM / 2)
+    solange j < DIM:
+        ort_emb.wert_setzen([oi2, j], oz.wert([oi2, j]))
+        setze j auf j + 1
+    setze oi2 auf oi2 + 1
+autograd_an()
+
+funktion lehr_slot(knr):
+    gib_zurück form_emb.zeilen(boden(knr / 4), boden(knr / 4) + 1) + ort_emb.zeilen(knr % 4, knr % 4 + 1)
+setze params_llm auf parameter(llm_schichten())
+setze opt_b0 auf optimierer_sgd(params_llm, 0.05, 0.9)
+setze s auf 0
+solange s < 1200:
+    setze idx auf s % länge(train_px)
+    setze knr auf train_kl[idx]
+    # Slot-Rauschen gegen Punkt-Memorierung (deterministisch: Seed 200+s)
+    setze slot_j auf lehr_slot(knr) + tensor_zufall([1, DIM], 200 + s) * 0.05
+    setze v auf seq_loss(slot_j, caption_ids(boden(knr / 4), knr % 4))
+    v.rueckwaerts()
+    gradienten_kappen(params_llm, 1.0)
+    opt_b0.schritt()
+    wenn s % 400 == 399:
+        zeige "  B0 s=" + text(s) + " loss=" + text(v.zu_liste()[0])
+    setze s auf s + 1
+
+# ------------------------------------------------------------
+# 7. STUFE B: NUR die Projektion trainieren
+# ------------------------------------------------------------
+zeige "Stufe B: Projektion (3000 Schritte) ..."
+setze params_proj auf parameter([M["proj"]])
+setze opt_p auf optimierer_sgd(params_proj, 0.02, 0.9)
+setze s auf 0
+solange s < 3000:
+    setze idx auf s % länge(train_px)
+    setze knr auf train_kl[idx]
+    setze e auf e_train.zeilen(idx, idx + 1)
+    setze pe auf vorwaerts([M["proj"]], e)
+    setze ce auf seq_loss(pe, caption_ids(boden(knr / 4), knr % 4))
+    # MSE-Anker: zieht P direkt in den Lehr-Slot-Raum (Toy-Supervision);
+    # das Gate bleibt Caption-Accuracy durch das eingefrorene LLM.
+    setze dv auf pe - lehr_slot(knr)
+    setze v auf ce + (dv * dv).summe() * (1.0 / DIM)
+    v.rueckwaerts()
+    gradienten_kappen(params_proj, 1.0)
+    opt_p.schritt()
+    # Frozen-Parameter sammeln trotzdem Gradienten an -> loeschen
+    grads_loeschen(params_llm)
+    wenn s % 1000 == 999:
+        zeige "  B s=" + text(s) + " loss=" + text(v.zu_liste()[0])
+    setze s auf s + 1
+
+# ------------------------------------------------------------
+# 8. V3d-GATE: aufgezeichnete Frames durch die KOMPLETTE Kette
+#    (Frame -> tensor_aus_frame -> 32x32 -> Encoder -> Proj -> Greedy),
+#    exakt gegen die Soll-Caption. Das ist der V3d-Kern: die Nutzung
+#    startet bei einem echten Frame-Objekt, nicht bei Pixel-Listen.
+# ------------------------------------------------------------
+# knr-Listen: 10 gesehene Kombis (Jitter-Test) + 2 ungesehene (Kombi-Holdout).
+setze seen_kl auf [0, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+setze combo_klassen auf [1, 11]
+
+funktion chain_acc(klassen, draws, label):
+    setze ok auf 0
+    setze total auf 0
+    setze ci auf 0
+    solange ci < länge(klassen):
+        setze knr auf klassen[ci]
+        setze fic auf boden(knr / 4)
+        setze oic auf knr % 4
+        setze soll auf caption_ids(fic, oic)
+        setze d auf 0
+        solange d < draws:
+            setze fr auf render_frame(fic, oic)
+            setze ist auf frame_zu_ids(fr)
+            wenn ids_gleich(ist, soll):
+                setze ok auf ok + 1
+            sonst:
+                zeige "  CHAIN-FEHLER [" + label + "] ist='" + ids_zu_text(ist) + "' soll='" + ids_zu_text(soll) + "'"
+            setze total auf total + 1
+            setze d auf d + 1
+        setze ci auf ci + 1
+    gib_zurück ok / total
+
+autograd_aus()
+setze acc_chain_jit auf chain_acc(seen_kl, 3, "jit")
+setze acc_chain_combo auf chain_acc(combo_klassen, 10, "combo")
+# Demonstration: eine gerenderte Szene komplett durch die Kette, als Text.
+setze demo_frame auf render_frame(0, 0)
+zeige "  KETTE-DEMO render(kreis oben links) -> bild_beschreiben='" + bild_beschreiben(demo_frame) + "'"
+autograd_an()
+
+setze gate_chain_jit auf acc_chain_jit >= 0.9
+setze gate_chain_combo auf acc_chain_combo >= 0.9
+zeige "V3D-GATE-KETTE-JIT   frame-chain-acc=" + text(acc_chain_jit) + " -> " + text(gate_chain_jit)
+zeige "V3D-GATE-KETTE-COMBO frame-chain-acc=" + text(acc_chain_combo) + " -> " + text(gate_chain_combo)
+
+# ------------------------------------------------------------
+# 9. SELFTEST
+# ------------------------------------------------------------
+wenn gate_a und gate_chain_jit und gate_chain_combo:
+    zeige "SELFTEST_RESULT: PASS ki_multimodal"
+sonst:
+    zeige "SELFTEST_RESULT: FAIL ki_multimodal"
+
+# ------------------------------------------------------------
+# 10. LIVE-MODUS (nur env MOO_LIVE=1): echte V4L2-Kamera
+# ------------------------------------------------------------
+# EHRLICH: Toy-Modell kennt NUR kreis/quadrat/dreieck an 4 Positionen.
+# Auf echten Kamerabildern ist die Ausgabe Toy-Vokabular, KEIN echtes
+# Weltmodell. Der Live-Pfad beweist die MECHANIK (echte Frames fliessen
+# durch dieselbe Kette wie der Selftest), nicht Bildverstaendnis.
+wenn umgebung("MOO_LIVE") == "1":
+    zeige ""
+    zeige "=== LIVE-MODUS: echte Kamera -> Toy-Caption ==="
+    zeige "    (Toy-Vokabular, kein echtes Weltmodell — Mechanik-Beweis)"
+    setze kamera auf nichts
+    versuche:
+        zeige "Kameras: " + text(kamera_liste())
+        setze kamera auf kamera_oeffnen()
+        autograd_aus()
+        setze i auf 0
+        solange i < 10:
+            setze frame auf kamera_frame(kamera, 1000)
+            wenn i == 0:
+                setze form0 auf tensor_aus_frame(frame, "grau").form()
+                zeige "Frame-Form (grau): " + text(form0) + " -> subsampled auf " + text(BILD) + "x" + text(BILD)
+            setze txt auf bild_beschreiben(frame)
+            zeige "LIVE-FRAME " + text(i) + " -> \"" + txt + "\"  (Toy-Vokabular)"
+            setze i auf i + 1
+        kamera_schliessen(kamera)
+    fange fehler:
+        wenn kamera != nichts:
+            kamera_schliessen(kamera)
+        zeige "LIVE-Kamera-Fehler: " + fehler
+
+# ============================================================
+# EASY-API-VORSCHLAG (nicht implementiert — Doku fuer den 5-Zeilen-Kern)
+# ------------------------------------------------------------
+# Heute muss das Modell INLINE trainiert werden (Stufen A/B0/B, ~Minuten),
+# bevor bild_beschreiben() nutzbar ist. Fuer echte "Kinderleichtigkeit"
+# fehlt Modell-Persistenz analog moo_nn_easy:
+#
+#   setze modell auf ki_bild_modell_laden("v3d_toy.mook")   # <- neu
+#   setze kamera auf kamera_oeffnen()
+#   setze frame  auf kamera_frame(kamera, 1000)
+#   zeige modell.beschreibe(frame)                          # <- Kette gekapselt
+#   kamera_schliessen(kamera)
+#
+# Bausteine existieren bereits: checkpoint_speichern/-laden (Gate 3 in V3a
+# beweist bit-identischen Roundtrip von Encoder+LLM+Projektion). Es fehlt
+# nur ein duenner Wrapper, der (a) den Checkpoint + Vokab/id_zu_zeichen +
+# BILD/DIM in EIN Handle packt und (b) beschreibe(frame) = frame_zu_ids ->
+# ids_zu_text kapselt. Kein neuer Runtime-Kern noetig, reine Moo-stdlib.
+# ============================================================
