@@ -149,6 +149,10 @@ MooValue moo_list_iter_get(MooValue list, int32_t index) {
 }
 
 MooValue moo_list_join(MooValue list, MooValue delim) {
+    if (list.tag != MOO_LIST) {
+        moo_throw(moo_error("join/verbinden: Aufrufer ist keine Liste (Tensor-Concat heisst 'verketten')"));
+        return moo_string_new("");
+    }
     MooList* l = MV_LIST(list);
     if (l->length == 0) return moo_string_new("");
 
