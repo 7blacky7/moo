@@ -1,0 +1,590 @@
+# ============================================================
+# ki_multimodal_vision.moos — KI-MULTI-V3a: Vision-Adapter
+#
+# Bild -> Conv-Encoder (V2) -> Projektion -> Praefix-Slot im Mini-LLM
+# -> Caption. Design: docs/kip/V3-multimodal-fusion.md (§3, §7).
+#
+# Stufen: A  Encoder contrastive vortrainieren (L1), dann frozen
+#         B0 Mini-LLM KONDITIONAL vortrainieren: kompositionale Lehr-Slots
+#            (form_emb[fi]+ort_emb[oi]) als Praefix — LLM lernt Slot-LESEN
+#            (Null-Slot wuerde Slot-Ignorieren lehren; Geometrie wie Stufe B)
+#         B  NUR die Projektion trainieren (Encoder+LLM frozen)
+# Gates:  A   Retrieval accuracy@1 >= 0.95 (frische Jitter, 10 Klassen)
+#         1a  Caption-Accuracy >= 0.9 auf Jitter-Holdout (Greedy, exakt)
+#         1b  Caption-Accuracy >= 0.9 auf Kombi-Holdout (ungesehene
+#             Form-Position-Kombis — beweist Komposition)
+#         2   FD-Gradcheck der Projektion (4 Koordinaten)
+#         3   Checkpoint-Roundtrip: Save -> Load -> Loss bit-identisch
+#
+# Headless: xvfb-run -a moo-compiler run beispiele/ki_multimodal_vision.moos
+# Endet mit SELFTEST_RESULT: PASS/FAIL. Deterministisch (feste Seeds).
+# ============================================================
+
+konstante BILD auf 32
+konstante DIM_ENC auf 32
+konstante DIM auf 48
+konstante KOEPFE auf 4
+konstante T_TEXT auf 22
+konstante JITTER_TRAIN auf 6
+konstante JITTER_TEST auf 2
+konstante JITTER_COMBO auf 4
+konstante EPS_FD auf 0.02
+
+setze FORMEN auf ["kreis", "quadrat", "dreieck"]
+setze ORTE auf ["oben links", "oben rechts", "unten links", "unten rechts"]
+
+# Kombi-Holdout: diese (form, ort)-Paare kommen NIE ins Training.
+# kreis+oben rechts (0,1) und dreieck+unten rechts (2,3).
+funktion ist_holdout(fi, oi):
+    wenn fi == 0 und oi == 1:
+        gib_zurück wahr
+    wenn fi == 2 und oi == 3:
+        gib_zurück wahr
+    gib_zurück falsch
+
+# ------------------------------------------------------------
+# 0. Zustand: LCG + alle Schichten in einem Dict (M), damit nach
+#    checkpoint_laden die Referenzen per Dict-Mutation umgehaengt
+#    werden koennen (globale Neuzuweisung waere fragil).
+# ------------------------------------------------------------
+setze G auf {}
+G["rng"] = 7
+funktion rng():
+    G["rng"] = (G["rng"] * 75 + 74) % 65537
+    gib_zurück G["rng"]
+
+setze M auf {}
+
+# ------------------------------------------------------------
+# 1. Toy-Szenen rendern: Form in Quadrant mit Jitter, 32x32 grau
+# ------------------------------------------------------------
+setze win auf fenster_erstelle("v3a vision", BILD, BILD)
+
+funktion zeichne_form(fi, cx, cy, r):
+    wenn fi == 0:
+        zeichne_kreis(win, cx, cy, r, "#FFFFFF")
+    sonst wenn fi == 1:
+        zeichne_rechteck(win, cx - r, cy - r, 2 * r, 2 * r, "#FFFFFF")
+    sonst:
+        # Dreieck aus horizontalen Balken (kein Dreieck-Builtin noetig)
+        setze zeile auf 0
+        solange zeile < 2 * r:
+            setze halb auf boden(zeile / 2)
+            zeichne_rechteck(win, cx - halb, cy - r + zeile, 2 * halb + 1, 1, "#FFFFFF")
+            setze zeile auf zeile + 1
+
+# Rendert ein Sample und liefert die flache Grau-Pixelliste (1024).
+funktion sample_pixel(fi, oi):
+    setze qx auf 8
+    wenn oi == 1 oder oi == 3:
+        setze qx auf 24
+    setze qy auf 8
+    wenn oi == 2 oder oi == 3:
+        setze qy auf 24
+    setze jx auf rng() % 5 - 2
+    setze jy auf rng() % 5 - 2
+    setze r auf 6 + rng() % 3
+    fenster_löschen(win, "#101018")
+    zeichne_form(fi, qx + jx, qy + jy, r)
+    setze f auf test_frame_grab(win)
+    setze t auf tensor_aus_frame(f, "grau")
+    gib_zurück t.zu_liste()
+
+# ------------------------------------------------------------
+# 2. Captions + Zeichen-Vokabular
+# ------------------------------------------------------------
+funktion caption(fi, oi):
+    setze c auf FORMEN[fi] + " " + ORTE[oi]
+    solange länge(c) < T_TEXT:
+        setze c auf c + "."
+    gib_zurück c
+
+setze korpus auf "."
+setze fi auf 0
+solange fi < 3:
+    setze oi auf 0
+    solange oi < 4:
+        setze korpus auf korpus + caption(fi, oi)
+        setze oi auf oi + 1
+    setze fi auf fi + 1
+setze tok auf text_tokenizer(korpus)
+setze vokab auf tok["vokab"]
+setze id_zu_zeichen auf tok["id_zu_zeichen"]
+setze z2i auf {}
+setze k auf 0
+solange k < vokab:
+    z2i[id_zu_zeichen[k]] = k
+    setze k auf k + 1
+
+funktion caption_ids(fi, oi):
+    setze c auf caption(fi, oi)
+    setze ids auf []
+    setze i auf 0
+    solange i < T_TEXT:
+        ids.hinzufügen(z2i[c[i]])
+        setze i auf i + 1
+    gib_zurück ids
+
+funktion ids_gleich(a, b):
+    # Listen-== ist Referenzvergleich (Gotcha) -> elementweise
+    wenn länge(a) != länge(b):
+        gib_zurück falsch
+    setze i auf 0
+    solange i < länge(a):
+        wenn a[i] != b[i]:
+            gib_zurück falsch
+        setze i auf i + 1
+    gib_zurück wahr
+
+# ------------------------------------------------------------
+# 3. Datensatz erzeugen (deterministisch) + Hash-Log
+# ------------------------------------------------------------
+zeige "Erzeuge Toy-Datensatz ..."
+setze train_px auf []
+setze train_kl auf []
+setze jit_px auf []
+setze jit_kl auf []
+setze combo_px auf []
+setze combo_kl auf []
+setze pruef auf 0
+setze fi auf 0
+solange fi < 3:
+    setze oi auf 0
+    solange oi < 4:
+        setze knr auf fi * 4 + oi
+        wenn ist_holdout(fi, oi):
+            setze j auf 0
+            solange j < JITTER_COMBO:
+                setze p auf sample_pixel(fi, oi)
+                combo_px.hinzufügen(p)
+                combo_kl.hinzufügen(knr)
+                setze pruef auf (pruef + p[rng() % 1024] * 1000 + knr) % 987654321
+                setze j auf j + 1
+        sonst:
+            setze j auf 0
+            solange j < JITTER_TRAIN:
+                setze p auf sample_pixel(fi, oi)
+                train_px.hinzufügen(p)
+                train_kl.hinzufügen(knr)
+                setze pruef auf (pruef + p[rng() % 1024] * 1000 + knr) % 987654321
+                setze j auf j + 1
+            setze j auf 0
+            solange j < JITTER_TEST:
+                setze p auf sample_pixel(fi, oi)
+                jit_px.hinzufügen(p)
+                jit_kl.hinzufügen(knr)
+                setze pruef auf (pruef + p[rng() % 1024] * 1000 + knr) % 987654321
+                setze j auf j + 1
+        setze oi auf oi + 1
+    setze fi auf fi + 1
+zeige "V3A-DATEN train=" + text(länge(train_px)) + " jitter-holdout=" + text(länge(jit_px)) + " kombi-holdout=" + text(länge(combo_px)) + " pruefwert=" + text(pruef)
+
+# ------------------------------------------------------------
+# 4. Schichten (alle Seeds fest)
+# ------------------------------------------------------------
+M["f1"] = schicht_faltung(1, 8, 3, 1, 1, "relu", 21)
+M["p1"] = schicht_pooling("max", 2, 2)
+M["f2"] = schicht_faltung(8, 16, 3, 1, 1, "relu", 22)
+M["p2"] = schicht_pooling("max", 2, 2)
+M["pg"] = schicht_pooling("max", 8, 8)
+M["fl"] = schicht_flach()
+M["ed"] = schicht_dicht(16, DIM_ENC, "tanh", 23)
+# Ort-Pfad: eigener flacher Conv-Zweig, frueh grob gepoolt (Position, kaum Form)
+M["f1o"] = schicht_faltung(1, 4, 3, 1, 1, "relu", 26)
+M["p1o"] = schicht_pooling("max", 2, 2)
+M["po"] = schicht_pooling("max", 4, 4)
+M["flo"] = schicht_flach()
+M["edo"] = schicht_dicht(4 * 4 * 4, DIM_ENC, "tanh", 27)
+M["emb"] = schicht_embedding(vokab, DIM, 31)
+M["pos"] = schicht_position(1 + T_TEXT, DIM, "gelernt", 32)
+M["ln1"] = schicht_layernorm(DIM)
+M["att"] = schicht_attention(DIM, KOEPFE, 33)
+M["ln2"] = schicht_layernorm(DIM)
+M["ff1"] = schicht_dicht(DIM, 128, "gelu", 34)
+M["ff2"] = schicht_dicht(128, DIM, "keine", 35)
+M["lnf"] = schicht_layernorm(DIM)
+M["kopf"] = schicht_dicht(DIM, vokab, "keine", 36)
+M["proj"] = schicht_dicht(DIM_ENC, DIM, "keine", 41)
+
+funktion enc_schichten():
+    gib_zurück [M["f1"], M["p1"], M["f2"], M["p2"], M["pg"], M["fl"], M["ed"], M["f1o"], M["p1o"], M["po"], M["flo"], M["edo"]]
+funktion form_schichten():
+    gib_zurück [M["f1"], M["p1"], M["f2"], M["p2"], M["pg"], M["fl"], M["ed"]]
+funktion ort_schichten():
+    gib_zurück [M["f1o"], M["p1o"], M["po"], M["flo"], M["edo"]]
+funktion llm_schichten():
+    gib_zurück [M["emb"], M["pos"], M["ln1"], M["att"], M["ln2"], M["ff1"], M["ff2"], M["lnf"], M["kopf"]]
+
+funktion encoder_batch(pixel_listen):
+    setze x auf tensor_aus_liste(pixel_listen)
+    setze x auf x.umformen([länge(pixel_listen), BILD, BILD, 1])
+    # Form-Pfad translationsinvariant (global max-pool), Ort-Pfad grob-raeumlich.
+    # Die SUMME passt zur kompositionalen Anker-Struktur form_proto + ort_proto.
+    gib_zurück vorwaerts(form_schichten(), x) + vorwaerts(ort_schichten(), x)
+
+funktion llm_kern(x):
+    setze x auf vorwaerts([M["pos"]], x)
+    setze x auf x + vorwaerts([M["ln1"], M["att"]], x)
+    setze x auf x + vorwaerts([M["ln2"], M["ff1"], M["ff2"]], x)
+    gib_zurück vorwaerts([M["lnf"], M["kopf"]], x)
+
+# Praefix-Injection (Design §3.3): x = concat(e_inj, emb(text))
+funktion mm_logits(e_inj, ids):
+    setze x auf e_inj
+    wenn länge(ids) > 0:
+        setze e_txt auf vorwaerts([M["emb"]], tensor_aus_liste(ids))
+        setze x auf e_inj.verketten(e_txt)
+    gib_zurück llm_kern(x)
+
+# Maskierte CE: Zeile 0 (Slot) -> ids[0], Zeile k -> ids[k], letzte Zeile Dummy+Maske 0
+funktion seq_loss(e_inj, ids):
+    setze logits auf mm_logits(e_inj, ids)
+    setze ziele auf []
+    setze maske auf []
+    setze i auf 0
+    solange i < länge(ids):
+        ziele.hinzufügen(ids[i])
+        maske.hinzufügen(1)
+        setze i auf i + 1
+    ziele.hinzufügen(0)
+    maske.hinzufügen(0)
+    gib_zurück kreuzentropie(logits, tensor_aus_liste(ziele), tensor_aus_liste(maske))
+
+funktion argmax(liste):
+    setze best auf 0
+    setze i auf 1
+    solange i < länge(liste):
+        wenn liste[i] > liste[best]:
+            setze best auf i
+        setze i auf i + 1
+    gib_zurück best
+
+funktion grads_loeschen(params):
+    für p in params:
+        p.gradient_loeschen()
+
+# ------------------------------------------------------------
+# 5. STUFE A: Encoder contrastive vortrainieren (L1)
+# ------------------------------------------------------------
+zeige "Stufe A: Encoder contrastive (300 Schritte) ..."
+# Kompositionale Anker: Klasse = Form-Prototyp + Orts-Prototyp. Ungesehene
+# Kombis (Holdout) liegen damit automatisch am richtigen Ort im Raum.
+setze form_proto auf tensor_zufall([3, DIM_ENC], 55)
+setze ort_proto auf tensor_zufall([4, DIM_ENC], 56)
+
+funktion proto_zeile(knr):
+    gib_zurück form_proto.zeilen(boden(knr / 4), boden(knr / 4) + 1) + ort_proto.zeilen(knr % 4, knr % 4 + 1)
+
+funktion proto_stapel(klassen):
+    setze p auf proto_zeile(klassen[0])
+    setze i auf 1
+    solange i < länge(klassen):
+        setze p auf p.verketten(proto_zeile(klassen[i]))
+        setze i auf i + 1
+    gib_zurück p
+
+setze params_enc auf parameter(enc_schichten())
+setze opt_a auf optimierer_sgd(params_enc, 0.05, 0.9)
+setze s auf 0
+solange s < 300:
+    # Batch: pro Schritt eine Jitter-Variante jeder der 10 Trainings-Kombis
+    setze bx auf []
+    setze bk auf []
+    setze i auf 0
+    solange i < 10:
+        setze idx auf i * JITTER_TRAIN + s % JITTER_TRAIN
+        bx.hinzufügen(train_px[idx])
+        bk.hinzufügen(train_kl[idx])
+        setze i auf i + 1
+    setze enc auf encoder_batch(bx)
+    setze v auf kontrastiv(enc, proto_stapel(bk), 0.12)
+    v.rueckwaerts()
+    gradienten_kappen(params_enc, 1.0)
+    opt_a.schritt()
+    setze s auf s + 1
+
+# GATE A: Retrieval accuracy@1 auf den Jitter-Holdout-Bildern
+autograd_aus()
+setze enc_jit auf encoder_batch(jit_px)
+setze treffer auf 0
+setze i auf 0
+solange i < länge(jit_px):
+    setze zeile auf enc_jit.zeilen(i, i + 1)
+    setze best auf 0 - 1
+    setze best_w auf 0 - 1000000000
+    setze kk auf 0
+    solange kk < 12:
+        setze w auf kosinus(zeile, proto_zeile(kk)).zu_liste()[0]
+        wenn w > best_w:
+            setze best_w auf w
+            setze best auf kk
+        setze kk auf kk + 1
+    wenn best == jit_kl[i]:
+        setze treffer auf treffer + 1
+    sonst:
+        zeige "  A-FEHLER i=" + text(i) + " soll=" + text(jit_kl[i]) + " ist=" + text(best) + " w=" + text(best_w)
+    setze i auf i + 1
+setze acc_a auf treffer / länge(jit_px)
+autograd_an()
+setze gate_a auf acc_a >= 0.95
+zeige "V3A-GATE-A retrieval@1=" + text(acc_a) + " -> " + text(gate_a)
+
+# DEBUG: Retrieval auf Kombi-Holdout — generalisiert der Encoder-Raum?
+autograd_aus()
+setze enc_c auf encoder_batch(combo_px)
+setze ctreffer auf 0
+setze i auf 0
+solange i < länge(combo_px):
+    setze zeile auf enc_c.zeilen(i, i + 1)
+    setze best auf 0 - 1
+    setze best_w auf 0 - 1000000000
+    setze kk auf 0
+    solange kk < 12:
+        setze w auf kosinus(zeile, proto_zeile(kk)).zu_liste()[0]
+        wenn w > best_w:
+            setze best_w auf w
+            setze best auf kk
+        setze kk auf kk + 1
+    wenn best == combo_kl[i]:
+        setze ctreffer auf ctreffer + 1
+    setze i auf i + 1
+autograd_an()
+zeige "  A-DEBUG combo-retrieval=" + text(ctreffer / länge(combo_px))
+
+# Encoder ab jetzt FROZEN: alle Embeddings einmal ohne Tape vorberechnen
+autograd_aus()
+setze e_train auf encoder_batch(train_px)
+setze e_jit auf encoder_batch(jit_px)
+setze e_combo auf encoder_batch(combo_px)
+autograd_an()
+
+# ------------------------------------------------------------
+# 6. STUFE B0: Mini-LLM KONDITIONAL vortrainieren (kompositionale Lehr-Slots)
+# ------------------------------------------------------------
+zeige "Stufe B0: LLM-Vortraining mit Lehr-Slots (1200 Schritte) ..."
+# Lehr-Slots in DISJUNKTEN Subraeumen: Form dims 0..DIM/2-1, Ort dims DIM/2..DIM-1.
+# Getrennte Kanaele -> lineares Auslesen pro Faktor ist fuers LLM die
+# einfachste Loesung (Komposition statt Kombi-Memorierung).
+autograd_aus()
+setze form_emb auf tensor_nullen([3, DIM])
+setze fz auf tensor_zufall([3, DIM], 81)
+setze fi2 auf 0
+solange fi2 < 3:
+    setze j auf 0
+    solange j < boden(DIM / 2):
+        form_emb.wert_setzen([fi2, j], fz.wert([fi2, j]))
+        setze j auf j + 1
+    setze fi2 auf fi2 + 1
+setze ort_emb auf tensor_nullen([4, DIM])
+setze oz auf tensor_zufall([4, DIM], 82)
+setze oi2 auf 0
+solange oi2 < 4:
+    setze j auf boden(DIM / 2)
+    solange j < DIM:
+        ort_emb.wert_setzen([oi2, j], oz.wert([oi2, j]))
+        setze j auf j + 1
+    setze oi2 auf oi2 + 1
+autograd_an()
+
+funktion lehr_slot(knr):
+    gib_zurück form_emb.zeilen(boden(knr / 4), boden(knr / 4) + 1) + ort_emb.zeilen(knr % 4, knr % 4 + 1)
+setze params_llm auf parameter(llm_schichten())
+setze opt_b0 auf optimierer_sgd(params_llm, 0.05, 0.9)
+setze s auf 0
+solange s < 1200:
+    setze idx auf s % länge(train_px)
+    setze knr auf train_kl[idx]
+    # Slot-Rauschen gegen Punkt-Memorierung (deterministisch: Seed 200+s)
+    setze slot_j auf lehr_slot(knr) + tensor_zufall([1, DIM], 200 + s) * 0.05
+    setze v auf seq_loss(slot_j, caption_ids(boden(knr / 4), knr % 4))
+    v.rueckwaerts()
+    gradienten_kappen(params_llm, 1.0)
+    opt_b0.schritt()
+    wenn s % 300 == 299:
+        zeige "  B0 s=" + text(s) + " loss=" + text(v.zu_liste()[0])
+    setze s auf s + 1
+zeige "B0-Endverlust: " + text(seq_loss(lehr_slot(0), caption_ids(0, 0)).zu_liste()[0])
+
+# ------------------------------------------------------------
+# 7. STUFE B: NUR die Projektion trainieren
+# ------------------------------------------------------------
+zeige "Stufe B: Projektion (3000 Schritte) ..."
+setze params_proj auf parameter([M["proj"]])
+setze opt_p auf optimierer_sgd(params_proj, 0.02, 0.9)
+setze s auf 0
+solange s < 3000:
+    setze idx auf s % länge(train_px)
+    setze knr auf train_kl[idx]
+    setze e auf e_train.zeilen(idx, idx + 1)
+    setze pe auf vorwaerts([M["proj"]], e)
+    setze ce auf seq_loss(pe, caption_ids(boden(knr / 4), knr % 4))
+    # MSE-Anker: zieht P direkt in den Lehr-Slot-Raum (Toy-Supervision);
+    # das Gate bleibt Caption-Accuracy durch das eingefrorene LLM.
+    setze dv auf pe - lehr_slot(knr)
+    setze v auf ce + (dv * dv).summe() * (1.0 / DIM)
+    v.rueckwaerts()
+    gradienten_kappen(params_proj, 1.0)
+    opt_p.schritt()
+    # Frozen-Parameter sammeln trotzdem Gradienten an -> loeschen
+    grads_loeschen(params_llm)
+    wenn s % 300 == 299:
+        zeige "  B s=" + text(s) + " loss=" + text(v.zu_liste()[0])
+    setze s auf s + 1
+
+# ------------------------------------------------------------
+# 8. GATE 1: Greedy-Caption exakt (Jitter- und Kombi-Holdout)
+# ------------------------------------------------------------
+funktion greedy_slot(e_inj):
+    setze ids auf []
+    solange länge(ids) < T_TEXT:
+        setze logits auf mm_logits(e_inj, ids)
+        setze n auf länge(ids) + 1
+        ids.hinzufügen(argmax(logits.zeilen(n - 1, n).zu_liste()))
+    gib_zurück ids
+
+funktion greedy_ids(e_konst):
+    gib_zurück greedy_slot(vorwaerts([M["proj"]], e_konst))
+
+funktion ids_zu_text(ids):
+    setze t auf ""
+    setze i auf 0
+    solange i < länge(ids):
+        setze t auf t + id_zu_zeichen[ids[i]]
+        setze i auf i + 1
+    gib_zurück t
+
+funktion caption_acc(e_batch, klassen):
+    setze ok auf 0
+    setze i auf 0
+    solange i < länge(klassen):
+        setze knr auf klassen[i]
+        setze soll auf caption_ids(boden(knr / 4), knr % 4)
+        setze ist auf greedy_ids(e_batch.zeilen(i, i + 1))
+        wenn ids_gleich(ist, soll):
+            setze ok auf ok + 1
+        sonst:
+            zeige "  CAP-FEHLER ist='" + ids_zu_text(ist) + "' soll='" + ids_zu_text(soll) + "'"
+        setze i auf i + 1
+    gib_zurück ok / länge(klassen)
+
+autograd_aus()
+setze acc_jit auf caption_acc(e_jit, jit_kl)
+setze acc_combo auf caption_acc(e_combo, combo_kl)
+autograd_an()
+autograd_aus()
+zeige "  B-DEBUG train0 ist='" + ids_zu_text(greedy_ids(e_train.zeilen(0, 1))) + "' soll='" + ids_zu_text(caption_ids(boden(train_kl[0] / 4), train_kl[0] % 4)) + "'"
+zeige "  B-DEBUG jit0   ist='" + ids_zu_text(greedy_ids(e_jit.zeilen(0, 1))) + "' soll='" + ids_zu_text(caption_ids(boden(jit_kl[0] / 4), jit_kl[0] % 4)) + "'"
+zeige "  B-DEBUG combo0 ist='" + ids_zu_text(greedy_ids(e_combo.zeilen(0, 1))) + "' soll='" + ids_zu_text(caption_ids(boden(combo_kl[0] / 4), combo_kl[0] % 4)) + "'"
+zeige "  B-DEBUG lehrslot-combo ist='" + ids_zu_text(greedy_slot(lehr_slot(combo_kl[0]))) + "' (liest LLM ungesehene Slots?)"
+setze pe auf vorwaerts([M["proj"]], e_combo.zeilen(0, 1))
+setze ls auf lehr_slot(combo_kl[0])
+setze pdiff auf 0
+setze j auf 0
+solange j < DIM:
+    setze dd auf pe.wert([0, j]) - ls.wert([0, j])
+    wenn dd < 0:
+        setze dd auf 0 - dd
+    setze pdiff auf pdiff + dd
+    setze j auf j + 1
+zeige "  B-DEBUG |P(enc combo0)-lehrslot| L1/dim=" + text(pdiff / DIM)
+autograd_an()
+setze gate_1a auf acc_jit >= 0.9
+setze gate_1b auf acc_combo >= 0.9
+zeige "V3A-GATE-1A jitter-holdout-acc=" + text(acc_jit) + " -> " + text(gate_1a)
+zeige "V3A-GATE-1B kombi-holdout-acc=" + text(acc_combo) + " -> " + text(gate_1b)
+
+# ------------------------------------------------------------
+# 9. GATE 2: FD-Gradcheck der Projektion (4 Koordinaten)
+# ------------------------------------------------------------
+setze e0 auf e_train.zeilen(0, 0 + 1)
+setze ids0 auf caption_ids(boden(train_kl[0] / 4), train_kl[0] % 4)
+grads_loeschen(params_proj)
+grads_loeschen(params_llm)
+setze v auf seq_loss(vorwaerts([M["proj"]], e0), ids0)
+v.rueckwaerts()
+setze pw auf params_proj[0]
+setze g auf pw.gradient()
+setze pform auf pw.form()
+setze gate_2 auf wahr
+autograd_aus()
+setze t auf 0
+solange t < 4:
+    setze i auf rng() % pform[0]
+    setze j auf rng() % pform[1]
+    setze ana auf g.wert([i, j])
+    setze w0 auf pw.wert([i, j])
+    pw.wert_setzen([i, j], w0 + EPS_FD)
+    setze lp auf seq_loss(vorwaerts([M["proj"]], e0), ids0).zu_liste()[0]
+    pw.wert_setzen([i, j], w0 - EPS_FD)
+    setze lm auf seq_loss(vorwaerts([M["proj"]], e0), ids0).zu_liste()[0]
+    pw.wert_setzen([i, j], w0)
+    setze fd auf (lp - lm) / (2 * EPS_FD)
+    setze diff auf fd - ana
+    wenn diff < 0:
+        setze diff auf 0 - diff
+    setze skala auf fd
+    wenn skala < 0:
+        setze skala auf 0 - skala
+    setze askala auf ana
+    wenn askala < 0:
+        setze askala auf 0 - askala
+    wenn diff > 0.05 * (skala + askala + 0.001):
+        setze gate_2 auf falsch
+        zeige "  FD-Abweichung [" + text(i) + "," + text(j) + "]: fd=" + text(fd) + " ana=" + text(ana)
+    setze t auf t + 1
+autograd_an()
+grads_loeschen(params_proj)
+grads_loeschen(params_llm)
+zeige "V3A-GATE-2 fd-gradcheck -> " + text(gate_2)
+
+# ------------------------------------------------------------
+# 10. GATE 3: Checkpoint-Roundtrip bit-identisch
+# ------------------------------------------------------------
+setze cnetz auf ki_netz([M["f1"], M["p1"], M["f2"], M["p2"], M["pg"], M["fl"], M["ed"], M["f1o"], M["p1o"], M["po"], M["flo"], M["edo"], M["emb"], M["pos"], M["ln1"], M["att"], M["ln2"], M["ff1"], M["ff2"], M["lnf"], M["kopf"], M["proj"]])
+autograd_aus()
+# Batch-1-Forward wie nach dem Laden — Encoder-Forward ist batchgrößen-abhängig
+# (f32-Akkumulation, Repro6: Diff ~7e-07 zwischen B=60-Slice und B=1)
+setze e0_rt auf encoder_batch([train_px[0]])
+setze loss_vor auf seq_loss(vorwaerts([M["proj"]], e0_rt), ids0).zu_liste()[0]
+setze zustand auf {}
+zustand["netz"] = cnetz
+zustand["schritt"] = 1
+checkpoint_speichern(zustand, "/tmp/v3a_ckpt.mook")
+setze z2 auf checkpoint_laden("/tmp/v3a_ckpt.mook")
+setze sch2 auf z2["netz"]["schichten"]
+M["f1"] = sch2[0]
+M["p1"] = sch2[1]
+M["f2"] = sch2[2]
+M["p2"] = sch2[3]
+M["pg"] = sch2[4]
+M["fl"] = sch2[5]
+M["ed"] = sch2[6]
+M["f1o"] = sch2[7]
+M["p1o"] = sch2[8]
+M["po"] = sch2[9]
+M["flo"] = sch2[10]
+M["edo"] = sch2[11]
+M["emb"] = sch2[12]
+M["pos"] = sch2[13]
+M["ln1"] = sch2[14]
+M["att"] = sch2[15]
+M["ln2"] = sch2[16]
+M["ff1"] = sch2[17]
+M["ff2"] = sch2[18]
+M["lnf"] = sch2[19]
+M["kopf"] = sch2[20]
+M["proj"] = sch2[21]
+# Encoder-Roundtrip mitpruefen: e0 aus GELADENEN Encoder-Gewichten neu
+setze e0b auf encoder_batch([train_px[0]]) 
+setze loss_nach auf seq_loss(vorwaerts([M["proj"]], e0b), ids0).zu_liste()[0]
+autograd_an()
+setze gate_3 auf loss_vor == loss_nach
+zeige "V3A-GATE-3 roundtrip vor=" + text(loss_vor) + " nach=" + text(loss_nach) + " -> " + text(gate_3)
+
+# ------------------------------------------------------------
+# 11. SELFTEST
+# ------------------------------------------------------------
+wenn gate_a und gate_1a und gate_1b und gate_2 und gate_3:
+    zeige "SELFTEST_RESULT: PASS ki_multimodal_vision"
+sonst:
+    zeige "SELFTEST_RESULT: FAIL ki_multimodal_vision"
