@@ -143,6 +143,11 @@ EXTRA_HARNESSES=(
   #               Fan-out-Akkumulation, Broadcast-Reduktion Bias-Grad,
   #               no_grad). ASan haelt das Tape-Retain/Release-Gate.
   "test_autograd_asan.c|moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   gradient_setzen: KIP-X1b Phase A — gradient_setzen(quelle) aus Tensor
+  #               gleicher Form ODER flacher Zahlenliste; Puffer-on-demand,
+  #               grad_valid=MOO_V_DATA, Selbstzuweisung, Negativ/kein-Teilzustand.
+  #               ASan haelt das Listen-Element-Release-Gate (moo_list_get +1).
+  "test_gradient_setzen_asan.c|moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   gradcheck:  Plan-014 B2 — DAS Ehrlichkeits-Gate: numerischer Gradient
   #               vs. Autograd fuer JEDEN Registry-Op (automatische Iteration
   #               via op_count/at — neuer Op ohne Gradcheck faellt hier auf).

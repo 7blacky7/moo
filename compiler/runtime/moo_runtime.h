@@ -308,6 +308,7 @@ MooValue moo_tensor_mit_gradient(MooValue t);        // requires_grad=true, t re
 MooValue moo_tensor_rueckwaerts(MooValue loss);      // backward ab Skalar-Loss
 MooValue moo_tensor_gradient(MooValue t);            // grad als Kopie (+1)
 MooValue moo_tensor_gradient_loeschen(MooValue t);   // grad-Buffer nullen
+MooValue moo_tensor_gradient_setzen(MooValue t, MooValue quelle); // grad direkt setzen (Tensor gleicher Form ODER flache Zahlenliste); KIP-X1b
 MooValue moo_ag_reset(void);                         // Tape leeren (Nodes releasen)
 MooValue moo_ag_an(void);                            // Aufzeichnung an
 MooValue moo_ag_aus(void);                            // Aufzeichnung aus (Inferenz)

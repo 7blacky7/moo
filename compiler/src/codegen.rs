@@ -5714,6 +5714,16 @@ impl<'ctx> CodeGen<'ctx> {
                     "gradient_löschen" | "gradient_loeschen" | "zero_grad" if !user_hat_methode => {
                         return self.call_rt(self.rt.moo_tensor_gradient_loeschen, &[obj.into()], "t_zerograd");
                     }
+                    // KIP-X1b: t.gradient_setzen(quelle) — quelle Tensor gleicher
+                    // Form ODER flache Zahlenliste. Runtime liest die Quelle nur
+                    // (kein Retain), daher wird das +1-Arg hier wieder released.
+                    "gradient_setzen" | "set_gradient" if !user_hat_methode => {
+                        let q = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_tensor_gradient_setzen,
+                            &[obj.into(), q.into()], "t_gradsetzen")?;
+                        self.call_rt_void(self.rt.moo_release, &[q.into()], "rel_tgs_q")?;
+                        return Ok(r);
+                    }
                     "matmul" if !user_hat_methode => {
                         let b = self.compile_expr(&args[0])?;
                         let r = self.call_rt(self.rt.moo_tensor_matmul,

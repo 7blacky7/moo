@@ -1323,3 +1323,90 @@ MooValue moo_tensor_gradient_loeschen(MooValue tv) {
     if (t->grad_valid) t->grad_valid = MOO_V_DATA;
     return moo_none();
 }
+
+// KIP-X1b Phase A (Design §4a / §8.6): setzt den Gradienten eines Parameters
+// direkt — fuer verteiltes Training wird der gemittelte Gradient in t->grad
+// geschrieben, bevor gradienten_kappen()/opt.schritt() folgen.
+// Vertrag: Ziel Tensor mit requires_grad==true; Quelle Tensor GLEICHER Form
+// ODER flache Zahlenliste mit exakter Elementanzahl; Host-Grad-Puffer wird bei
+// Bedarf angelegt (grad_sicherstellen); Werte als f32 nach t->grad; danach
+// grad_valid = MOO_V_DATA (Host autoritativ, GPU-Grad stale — Maske nach G0/I9,
+// analog gradient_loeschen); KEIN Tape-Knoten; Selbstzuweisung definiert (data
+// und grad sind getrennte Puffer); Shape-/Typfehler brechen HART ab OHNE
+// Teilzustand (alle Pruefungen laufen vor dem ersten Schreiben).
+MooValue moo_tensor_gradient_setzen(MooValue tv, MooValue quelle) {
+    if (tv.tag != MOO_TENSOR) {
+        moo_throw(moo_error("gradient_setzen: das Ziel ist kein Tensor"));
+        return moo_none();
+    }
+    MooTensor* t = T(tv);
+    if (!t->requires_grad) {
+        moo_throw(moo_error("gradient_setzen: Ziel-Tensor hat kein requires_grad "
+                            "— erst mit_gradient() setzen"));
+        return moo_none();
+    }
+
+    if (quelle.tag == MOO_TENSOR) {
+        MooTensor* s = T(quelle);
+        // Shape-Gleichheit strikt (ndim + jede Dimension + Gesamtgroesse)
+        bool gleich = (s->ndim == t->ndim && s->size == t->size);
+        if (gleich) {
+            for (int32_t d = 0; d < t->ndim; d++) {
+                if (s->shape[d] != t->shape[d]) { gleich = false; break; }
+            }
+        }
+        if (!gleich) {
+            moo_throw(moo_error("gradient_setzen: Quell-Tensor hat andere Form als das Ziel"));
+            return moo_none();
+        }
+        // f32-Daten der Quelle sicherstellen (bf16-store/GPU -> f32 data)
+        moo_tensor_f32_sichern(s);
+        if (!s->data) {
+            moo_throw(moo_error("gradient_setzen: Quell-Tensor hat keine f32-Daten"));
+            return moo_none();
+        }
+        float* g = grad_sicherstellen(t);
+        if (!g) {
+            moo_throw(moo_error("gradient_setzen: Grad-Puffer konnte nicht angelegt werden"));
+            return moo_none();
+        }
+        memcpy(g, s->data, (size_t)t->size * sizeof(float));
+    } else if (quelle.tag == MOO_LIST) {
+        int64_t n = (int64_t)MV_NUM(moo_list_length(quelle));
+        if (n != t->size) {
+            moo_throw(moo_error("gradient_setzen: Zahlenliste hat andere Elementanzahl als das Ziel"));
+            return moo_none();
+        }
+        // Erst ALLE Elemente auf Zahl pruefen (kein Teilzustand bei Fehler).
+        // moo_list_get liefert eine eigene (+1) Referenz -> jedes Element wieder
+        // freigeben, sonst leakt ein Nicht-Zahl-Element (ASan-Gate).
+        for (int64_t i = 0; i < n; i++) {
+            MooValue e = moo_list_get(quelle, moo_number((double)i));
+            bool ist_zahl = (e.tag == MOO_NUMBER);
+            moo_release(e);
+            if (!ist_zahl) {
+                moo_throw(moo_error("gradient_setzen: Zahlenliste enthaelt einen "
+                                    "Nicht-Zahlen-Wert"));
+                return moo_none();
+            }
+        }
+        float* g = grad_sicherstellen(t);
+        if (!g) {
+            moo_throw(moo_error("gradient_setzen: Grad-Puffer konnte nicht angelegt werden"));
+            return moo_none();
+        }
+        for (int64_t i = 0; i < n; i++) {
+            MooValue e = moo_list_get(quelle, moo_number((double)i));
+            g[i] = (float)MV_NUM(e);
+            moo_release(e);
+        }
+    } else {
+        moo_throw(moo_error("gradient_setzen: Quelle muss ein Tensor gleicher Form "
+                            "oder eine flache Zahlenliste sein"));
+        return moo_none();
+    }
+
+    // Host-Grad ist jetzt autoritativ; GPU-Grad ist stale (Maske nach G0/I9).
+    t->grad_valid = MOO_V_DATA;
+    return moo_none();
+}
