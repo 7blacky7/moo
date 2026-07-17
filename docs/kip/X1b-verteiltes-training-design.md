@@ -78,3 +78,162 @@ Beides mit ASan-Tests nach bestehendem Muster (run_sanitize), keine Änderungen 
 (3) Phasenreihenfolge A→B→C ok, oder GPU früher erzwingen?
 (4) CRC32+FNV-1a als Integritäts-/Synchronitätsnachweis im PoC ausreichend (kein TLS, LAN-only)?
 (5) Ist das Wallclock-Ehrlichkeits-Gate (GATE 4, verteilt darf langsamer sein) als PoC-Abschluss akzeptabel?
+
+## 7. GPT-Gegenreview auf Codebasis (2026-07-17)
+
+**Review-Status: Designentscheidung grundsätzlich akzeptiert, Implementierungsfreigabe noch nicht.**
+
+Die Gegenprüfung erfolgte gegen die aktuelle Codebasis im Projekt `moo`, insbesondere gegen:
+- `compiler/runtime/moo_net.c` und die Netzwerk-Bindings,
+- `compiler/runtime/moo_autograd.c`,
+- `compiler/runtime/moo_nn.c`,
+- `compiler/src/runtime_bindings.rs` und `compiler/src/codegen.rs`,
+- vorhandene Moo-Netzwerk- und Trainingsbeispiele.
+
+### 7.1 Bestätigte Grundlagen
+
+- Die benötigten TCP-Grundfunktionen sind vorhanden: Server, Connect, Accept, Byte-Lesen/-Schreiben und Timeouts.
+- Binäre Protokolle auf Moo-Ebene sind durch vorhandene Beispiele praktisch belegt.
+- `gradient()` materialisiert auch GPU-residente Gradienten korrekt auf der CPU-Seite.
+- `gradient_loeschen()` setzt die CPU-Seite anschließend als autoritativ (`grad_valid = MOO_V_DATA`).
+- Ein öffentlicher Schreibpfad für Gradienten fehlt tatsächlich. `gradient_setzen` ist daher eine echte notwendige Runtime-Erweiterung.
+- Der CPU-SGD-Pfad arbeitet elementweise in `float`; bei identischem Gradient, identischem Parameterstand und identischem Optimizer-State sind bitidentische Folgezustände auf demselben Host realistisch.
+
+### 7.2 BLOCKER 1 — GATE 1 ist in der aktuellen Form logisch falsch
+
+Die Forderung
+
+> Loss-Folge Leader == Follower == lokale Referenz bit-identisch
+
+kann nicht gelten, wenn Leader Block 1 und Follower Block 2 verarbeiten. Vor dem Gradientenaustausch entstehen unterschiedliche lokale Losswerte.
+
+**Korrektur:**
+- Leader-Loss muss bitidentisch zum lokalen Referenz-Loss für Block 1 sein.
+- Follower-Loss muss bitidentisch zum lokalen Referenz-Loss für Block 2 sein.
+- Optional wird ein globaler Referenz-Loss definiert als `(loss_block1 + loss_block2) * 0.5`.
+- Nach Gradient-Averaging und Optimizer-Schritt müssen Parameter und Optimizer-State identisch sein.
+
+### 7.3 BLOCKER 2 — TCP-Framing ist noch nicht vollständig spezifiziert
+
+TCP garantiert nicht, dass `lesen_bytes(n)` die komplette angeforderte Nutzlast in einem Aufruf liefert. Das Protokoll braucht zwingend:
+
+- einen festen Frame-Header,
+- ein explizites Payload-Längenfeld,
+- eine `lies_genau(n)`-Schleife,
+- ein maximales Frame-Größenlimit,
+- eine feste Kommunikationsreihenfolge zur Deadlock-Vermeidung.
+
+Empfohlene Reihenfolge bei zwei Nodes:
+- Leader sendet zuerst und liest danach.
+- Follower liest zuerst und sendet danach.
+
+Der Frame-Header sollte mindestens Magic, Version, Frame-Typ, Step, Payload-Länge, Param-Anzahl und CRC32 enthalten.
+
+### 7.4 BLOCKER 3 — Gradient-Clipping muss nach dem Averaging erfolgen
+
+Falls `gradienten_kappen(params, 1.0)` verwendet wird, muss die Reihenfolge sein:
+
+1. lokaler Forward/Backward,
+2. Gradientenaustausch,
+3. elementweises globales Averaging,
+4. Clipping des gemittelten Gradienten,
+5. Optimizer-Schritt.
+
+Lokales Clipping vor dem Austausch ist mathematisch nicht identisch zum Clipping des global gemittelten Gradienten und würde das Referenz-Gate verfälschen.
+
+### 7.5 BLOCKER 4 — Modell-Fingerprint muss Parameteridentität absichern
+
+Param-Gesamtzahl und Shape-Liste reichen nicht aus. Zwei Parameter gleicher Form könnten vertauscht werden.
+
+Der HELLO-Fingerprint muss pro Parameter mindestens enthalten:
+- stabilen Index,
+- stabilen Namen/Pfad, soweit verfügbar,
+- Datentyp,
+- Dimensionen und Elementanzahl,
+- Hash der Initialdaten.
+
+Zusätzlich sollten Binary-, Korpus-, Build-/Runtime- und Seed-Fingerprints übertragen werden.
+
+### 7.6 Präzisierter Vertrag für `gradient_setzen`
+
+Empfohlener Vertrag für `t.gradient_setzen(quelle)`:
+
+- Ziel und Tensorquelle müssen Tensoren sein; alternativ ist eine flache Zahlenliste erlaubt.
+- Ziel muss `requires_grad == true` besitzen. Eine sichere Prüfung auf „echter Modellparameter“ existiert derzeit nicht; daher nicht enger formulieren.
+- Exakte Elementanzahl muss übereinstimmen; bei Tensorquelle zusätzlich Shape-Gleichheit prüfen.
+- Der Host-Gradientenpuffer wird bei Bedarf angelegt.
+- Werte werden als f32 in `t->grad` geschrieben.
+- Danach gilt ausschließlich `t->grad_valid = MOO_V_DATA`; ein vorhandener GPU-Gradient ist stale.
+- Es wird kein Tape-Knoten erzeugt.
+- Selbstzuweisung muss definiert funktionieren.
+- Shape-/Typfehler brechen hart ab und dürfen keinen Teilzustand hinterlassen.
+
+### 7.7 Zusätzliche Gates
+
+Der SYNC-Nachweis sollte nicht nur Parameter, sondern auch Optimizer-State umfassen:
+- Momentum beziehungsweise Adam `m`/`v`,
+- Optimizer-Step `t`,
+- Lernrate,
+- Step-Nummer.
+
+Für den ersten PoC ist SGD ohne Momentum die kleinste beweisbare Variante. Momentum kann danach als eigenes Gate ergänzt werden.
+
+### 7.8 Bitidentität localhost versus Cross-Host
+
+- **Phase A localhost:** Bitidentität ist ein angemessenes Pflicht-Gate.
+- **Phase B Cross-Host:** Bitidentität zuerst verlangen, aber CPU-/Compiler-/FMA-Unterschiede als mögliche Ursache prüfen. Falls ausschließlich hardwarebedingte Unterschiede auftreten, ist vor einer Lockerung ein eigener ULP-/Absolut-Toleranzvertrag zu dokumentieren.
+
+### 7.9 Antworten auf die offenen Fragen
+
+1. **Getrennte Backwards:** akzeptiert; das gemeinsame Loss-Gate muss jedoch wie in §7.2 korrigiert werden.
+2. **`gradient_setzen`:** grundsätzlich akzeptiert, mit dem präzisierten Vertrag aus §7.6.
+3. **Phasenfolge A → B → C:** akzeptiert; GPU nicht früher erzwingen, damit Protokoll-, Autograd- und GPU-Fehler getrennt bleiben.
+4. **CRC32 + FNV-1a:** für den LAN-PoC ausreichend; finaler SHA-256-Abschlussnachweis empfohlen. Kein Authentizitätsschutz.
+5. **Wallclock-Gate:** akzeptiert. Der PoC beweist Korrektheit und misst Overhead, nicht zwingend Speedup.
+
+### 7.10 Freigabebedingung
+
+Phase A kann implementiert werden, sobald mindestens diese Punkte in das Design übernommen sind:
+
+1. korrigiertes Loss-/Referenz-Gate,
+2. vollständiges TCP-Framing mit `lies_genau`, Größenlimit und Rollenreihenfolge,
+3. Gradient-Clipping erst nach globalem Averaging,
+4. stärkerer Modell-/Parameter-Fingerprint,
+5. Optimizer-State im Synchronitätsnachweis.
+
+
+## 8. Design-Update: Übernahme der Review-Auflagen (2026-07-17, verbindlich für Phase A)
+
+Dieser Abschnitt übernimmt alle 5 Freigabebedingungen aus §7.10 und ÜBERSCHREIBT die
+betroffenen Stellen in §3/§4. Bei Widerspruch gilt §8.
+
+### 8.1 GATE 1 korrigiert (ersetzt §3.3 GATE 1)
+- GATE 1a: Leader-Loss-Folge (Block-1-Batches) == lokale Referenz-Loss-Folge für Block 1, **bit-identisch** über ≥ 200 Steps (f32-Bits).
+- GATE 1b: Follower-Loss-Folge (Block-2-Batches) == lokale Referenz-Loss-Folge für Block 2, bit-identisch.
+- GATE 1c (protokolliert, informativ): globaler Referenz-Loss `(loss_b1 + loss_b2) * 0.5` je Step im Log.
+- Identität der REPLIKATE wird über GATE 2 (Parameter + Optimizer-State nach jedem Averaging-Schritt, §8.5) bewiesen — nicht über Loss-Gleichheit zwischen Leader und Follower (die rechnen verschiedene Blöcke; Loss-Gleichheit dort wäre logisch falsch, Review §7.2).
+
+### 8.2 MOODIST01 v2 — vollständiges TCP-Framing (ersetzt GRAD-Format in §3.2)
+- **Frame-Header (24 Bytes, little-endian):** MAGIC u32 ("MD01"), VERSION u16, TYP u16 (1=HELLO, 2=GRAD, 3=SYNC, 4=BYE), STEP u32, PARAM_ANZAHL u32, PAYLOAD_LAENGE u32, CRC32 u32 (über Header ohne CRC-Feld + Payload).
+- **`lies_genau(sock, n)`:** Schleife über `sock.lesen_bytes(rest)` bis exakt n Bytes gelesen (TCP liefert Teilstücke!); Timeout/EOF → harter Abbruch.
+- **MAX_FRAME:** 64 MB hart; PAYLOAD_LAENGE darüber → Abbruch vor jeder Allokation.
+- **Rollen-Reihenfolge (Deadlock-frei):** Leader sendet zuerst und liest danach; Follower liest zuerst und sendet danach. Gilt für jeden Step und jeden Frame-Typ.
+- **MOOS-OS-KONTEXT (User-Entscheid 2026-07-17):** Moo soll mittelfristig Richtung eigenes OS wachsen — Netzwerkfunktionen/Protokolle werden ohnehin ausgebaut. Der Framing-Layer (Header, lies_genau, CRC, Größenlimit) wird deshalb als EIGENSTÄNDIGES, wiederverwendbares Moo-Modul geschnitten (`bibliothek/netz_frame.moos` o. ä.); MOODIST01 ist nur der erste Nutzer. Kein Ad-hoc-Framing im Trainingsbeispiel.
+
+### 8.3 Gradient-Clipping erst nach globalem Averaging (Review §7.4)
+Verbindliche Reihenfolge pro Step: (1) lokaler Forward/Backward → (2) Gradientenaustausch → (3) elementweises Averaging in fester Reihenfolge → (4) `gradient_setzen(g_avg)` auf die Parameter → (5) `gradienten_kappen(params, 1.0)` auf den GEMITTELTEN Gradient → (6) `opt.schritt()`. Lokale Referenz identisch. Lokales Clipping vor dem Austausch ist VERBOTEN (verfälscht das Referenz-Gate).
+
+### 8.4 Modell-Fingerprint v2 (ersetzt HELLO-Fingerprint in §3.2)
+HELLO enthält pro Parameter: stabilen Index (parameter(alle)-Reihenfolge), Namen/Pfad soweit verfügbar, Datentyp, Dimensionsliste, Elementanzahl, FNV-1a-Hash der Initialdaten. Global zusätzlich: Binary-SHA256, Korpus-SHA256, Build-/Runtime-Kennung, komplettes Seed-Set, Schrittzahl. JEDER Mismatch → harter Abbruch (kein Teil-Match).
+
+### 8.5 SYNC v2 — Optimizer-State im Synchronitätsnachweis (Review §7.7)
+SYNC-Frame (alle 100 Steps) prüft per FNV-1a: Parameter-Bits UND Optimizer-State (Momentum-Puffer soweit vorhanden, Step-Nummer, Lernrate). **PoC-Erststufe: SGD OHNE Momentum** (kleinste beweisbare Variante); Momentum danach als eigenes Folge-Gate, Adam erst mit Phase C.
+
+### 8.6 `gradient_setzen`-Vertrag v2 (übernimmt Review §7.6 wörtlich als Spezifikation)
+Ziel muss Tensor mit `requires_grad == true` sein; Quelle Tensor (Shape-Gleichheit) oder flache Zahlenliste (Elementanzahl exakt); Host-Grad-Puffer wird bei Bedarf angelegt; Werte als f32 nach `t->grad`; danach `grad_valid = MOO_V_DATA` (GPU-Gradient stale); kein Tape-Knoten; Selbstzuweisung definiert; Shape-/Typfehler brechen hart ab ohne Teilzustand. ASan-Positiv- und Negativ-Tests Pflicht.
+
+### 8.7 Bitidentität Cross-Host (Review §7.8)
+Phase B fordert zunächst Bit-Identität. Treten Abweichungen auf, sind CPU-/Compiler-/FMA-Unterschiede als Ursache nachzuweisen; erst DANN darf ein dokumentierter ULP-/Absolut-Toleranzvertrag (E2b-Muster) die Lockerung definieren — nie stillschweigend.
+
+### 8.8 Status
+Alle 5 Freigabebedingungen aus §7.10 sind hiermit ins Design übernommen. **Phase A (CPU, localhost) ist implementierungsbereit.** Erste Implementierungsschritte: (1) `netz_frame.moos`-Modul + Selftest, (2) `gradient_setzen` (Runtime + ASan-Tests), (3) `ki_verteilt.moos` mit den korrigierten Gates.
