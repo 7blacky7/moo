@@ -19,7 +19,7 @@ Ziel: Data-Parallel-Training über Netz: 4070 Ti (lokal, CachyOS) + RTX 2070 (Un
 - **Alternative bereits vorhanden:** LinuxMint-VM auf dem Unraid hat PCI-Passthrough konfiguriert (managed hostdev). Weg C in §5.
 
 ### 1.3 Vorhandene Moo-Bausteine (Code-Inventur)
-- Netz (compiler/runtime/moo_net.c, Moo-Builtins): `tcp_server(port)`, `tcp_verbinden(host, port)` (moo_tcp_connect), `sock.annehmen()`, `sock.lesen_bytes(n)` / `sock.schreibe_bytes(liste)`, `sock.timeout_setzen(ms)`, `bytes_zu_text`/`text_zu_bytes`. Byte-Level-Protokolle in Moo bewiesen (beispiele/mqtt_broker.moos: MQTT 3.1.1 komplett).
+- Netz (compiler/runtime/moo_net.c, Moo-Builtins): `tcp_server(port)`, `tcp_verbinde(host, port)` (moo_tcp_connect; Name in Phase A verifiziert — NICHT tcp_verbinden), `sock.annehmen()`, `sock.lesen_bytes(n)` / `sock.schreibe_bytes(liste)`, `sock.timeout_setzen(ms)`, `bytes_zu_text`/`text_zu_bytes`. Byte-Level-Protokolle in Moo bewiesen (beispiele/mqtt_broker.moos: MQTT 3.1.1 komplett).
 - Training auf Moo-Ebene bewiesen (beispiele/ki_sprachmodell.moos, Plan-014 G1): `schicht_*`-Bau, `parameter(alle)`, `kreuzentropie`, `verlust.rueckwaerts()`, `gradienten_kappen(params, 1.0)`, `optimierer_sgd(params, rate, momentum)`, `opt.schritt()`, deterministische Seeds, Loss-Checkpoint-Gate.
 - Gradienten: `t.gradient()` (lesen, Download aus gpu_grad vorhanden), `t.gradient_loeschen()`. **LÜCKE: kein `gradient_setzen` auf Moo-Ebene** → Runtime-Erweiterung nötig (§4).
 - GPU-resident (C-Ebene, KIP-Grundstock): kompletter LM-Trainings-Step resident bewiesen (G4/G4b), Adam resident, Telemetrie. Für PoC-Phase B/C relevant, Phase A ist CPU-only.

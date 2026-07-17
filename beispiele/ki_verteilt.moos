@@ -1,0 +1,356 @@
+# ============================================================
+# ki_verteilt.moos — KIP-X1b Phase A: verteiltes Training
+# (CPU, localhost). Leader/Follower/lokale Referenz.
+# ============================================================
+# Beweist KORREKTHEIT (nicht Speedup): synchrones Gradient-
+# Averaging pro Step ergibt bit-identische Loss-Folgen wie die
+# lokale Zwei-Block-Referenz.
+#
+# ROLLEN (Umgebungsvariable MOO_DIST_ROLLE):
+#   leader   MOO_DIST_PORT=5299                      -> rechnet Block 1
+#   follower MOO_DIST_HOST=127.0.0.1 MOO_DIST_PORT=5299 -> rechnet Block 2
+#   lokal                                            -> beide Bloecke selbst
+# MOO_DIST_SEED (default 0): Seed-Offset fuer den GATE-3-Negativtest.
+#
+# ABLAUF pro Step (§8.3): (1) lokaler fwd/bwd -> (2) Austausch der
+# Gradienten (netz_frame) -> (3) Averaging in fester Block-Reihenfolge
+# (block1+block2)*0.5 -> (4) gradient_setzen(g_avg) -> (5)
+# gradienten_kappen -> (6) opt.schritt(). Rollen-Reihenfolge (§8.2):
+# Leader sendet zuerst, Follower liest zuerst.
+#
+# GATES (§8.1): der Runner beispiele/ki_verteilt_run.sh vergleicht die
+# gedruckten f32-BITS der Loss-Folgen:
+#   1a Leader-Loss (Block 1) == lokale Referenz Block 1
+#   1b Follower-Loss (Block 2) == lokale Referenz Block 2
+#   2  Parameter-Fingerprint Leader==Follower alle 100 Steps (SYNC)
+#   3  Negativtest: falscher Seed -> HELLO-Abbruch
+#   4  Wallclock: der Runner misst lokal vs. verteilt (ehrlich)
+# ============================================================
+
+importiere netz_frame
+
+# ---- Konfiguration (klein & schnell, feste LR = deterministisch) ----
+setze BLOCK auf 16
+setze DIM auf 32
+setze KOEPFE auf 2
+setze RATE auf 0.05
+setze GATE_STEPS auf 200
+setze SYNC_INTERVALL auf 100
+
+# ---- Rolle / Netz / Seed aus der Umgebung ----
+setze ROLLE auf umgebung("MOO_DIST_ROLLE")
+wenn ROLLE == nichts:
+    setze ROLLE auf "lokal"
+setze HOST auf umgebung("MOO_DIST_HOST")
+wenn HOST == nichts:
+    setze HOST auf "127.0.0.1"
+setze PORT auf 5299
+setze PORT_S auf umgebung("MOO_DIST_PORT")
+wenn PORT_S != nichts:
+    wenn länge(PORT_S) > 0:
+        setze PORT auf zahl(PORT_S)
+setze SEED_OFF auf 0
+setze SEED_S auf umgebung("MOO_DIST_SEED")
+wenn SEED_S != nichts:
+    wenn länge(SEED_S) > 0:
+        setze SEED_OFF auf zahl(SEED_S)
+
+# ---- Deterministischer synthetischer Korpus (kein Datei-Zugriff) ----
+setze basis auf "es war einmal ein koenig der hatte drei toechter. "
+setze korpus auf ""
+setze r auf 0
+solange r < 60:
+    setze korpus auf korpus + basis
+    setze r auf r + 1
+setze tok auf text_tokenizer(korpus)
+setze ids auf tok["ids"]
+setze vokab auf tok["vokab"]
+setze n auf ids.groesse()
+
+# ---- Modell (alle Seeds fest; SEED_OFF nur fuer den Negativtest) ----
+setze emb  auf schicht_embedding(vokab, DIM, 1 + SEED_OFF)
+setze pos  auf schicht_position(BLOCK, DIM, "gelernt", 2 + SEED_OFF)
+setze ln1a auf schicht_layernorm(DIM)
+setze att1 auf schicht_attention(DIM, KOEPFE, 3 + SEED_OFF)
+setze ln1b auf schicht_layernorm(DIM)
+setze ff1a auf schicht_dicht(DIM, 64, "gelu", 4 + SEED_OFF)
+setze ff1b auf schicht_dicht(64, DIM, "keine", 5 + SEED_OFF)
+setze lnf  auf schicht_layernorm(DIM)
+setze kopf auf schicht_dicht(DIM, vokab, "keine", 6 + SEED_OFF)
+setze alle auf [emb, pos, ln1a, att1, ln1b, ff1a, ff1b, lnf, kopf]
+
+funktion modell(ids_block):
+    setze x auf vorwaerts([emb], ids_block)
+    setze x auf vorwaerts([pos], x)
+    setze x auf x + vorwaerts([ln1a, att1], x)
+    setze x auf x + vorwaerts([ln1b, ff1a, ff1b], x)
+    gib_zurück vorwaerts([lnf, kopf], x)
+
+setze params auf parameter(alle)
+setze P_ANZ auf länge(params)
+
+# Gesamt-Elementzahl aller Parameter (Wire-Vektorlaenge)
+setze gesamt auf 0
+setze pi auf 0
+solange pi < P_ANZ:
+    setze gesamt auf gesamt + params[pi].groesse()
+    setze pi auf pi + 1
+
+# ---- Hilfen: Grad flach sammeln / setzen; Fingerprints ----
+funktion grad_flach():
+    setze out auf []
+    setze k auf 0
+    solange k < P_ANZ:
+        setze ne auf params[k].groesse()
+        setze gl auf params[k].gradient().umformen([ne]).zu_liste()
+        setze j auf 0
+        solange j < ne:
+            out.hinzufügen(gl[j])
+            setze j auf j + 1
+        setze k auf k + 1
+    gib_zurück out
+
+funktion grad_setzen_flach(flach):
+    setze off auf 0
+    setze k auf 0
+    solange k < P_ANZ:
+        setze ne auf params[k].groesse()
+        setze slice auf []
+        setze j auf 0
+        solange j < ne:
+            slice.hinzufügen(flach[off + j])
+            setze j auf j + 1
+        params[k].gradient_setzen(slice)
+        setze off auf off + ne
+        setze k auf k + 1
+
+funktion grads_nullen():
+    setze k auf 0
+    solange k < P_ANZ:
+        params[k].gradient_loeschen()
+        setze k auf k + 1
+
+# FNV-1a ueber die aktuellen Parameter-Werte (flach, parameter-Reihenfolge).
+# autograd_aus(): umformen ist eine Tape-Op — auf live-Parametern (requires_grad)
+# wuerde sie sonst Tape-Knoten aufzeichnen und die Params retainen. Reines Lesen.
+funktion param_fingerprint():
+    autograd_aus()
+    setze h auf nf_fnv1a_start()
+    setze k auf 0
+    solange k < P_ANZ:
+        setze ne auf params[k].groesse()
+        setze pl auf params[k].umformen([ne]).zu_liste()
+        setze h auf nf_fnv1a_f32_liste(h, pl)
+        setze k auf k + 1
+    autograd_an()
+    gib_zurück h
+
+# Averaging in fester Block-Reihenfolge: (block1 + block2) * 0.5
+funktion mittele(block1, block2):
+    setze out auf []
+    setze i auf 0
+    solange i < länge(block1):
+        out.hinzufügen((block1[i] + block2[i]) * 0.5)
+        setze i auf i + 1
+    gib_zurück out
+
+# Blockpositionen pro Step (deterministisch, identisch auf allen Rollen)
+funktion pos_block1(s):
+    setze grenze auf n - BLOCK - 1
+    setze p auf (s * 631) - boden((s * 631) / grenze) * grenze
+    gib_zurück p
+
+funktion pos_block2(s):
+    setze grenze auf n - BLOCK - 1
+    setze p auf ((s * 631) + 173) - boden(((s * 631) + 173) / grenze) * grenze
+    gib_zurück p
+
+# ---- HELLO-Fingerprint v2 (§8.4): FNV ueber Init-Parameter + Struktur ----
+setze INIT_FP auf param_fingerprint()
+
+funktion hello_senden(sock):
+    setze p auf []
+    nf_put_u32(p, INIT_FP)
+    nf_put_u32(p, gesamt)
+    nf_put_u32(p, GATE_STEPS)
+    nf_frame_senden(sock, NF_TYP_HELLO, 0, P_ANZ, p)
+
+funktion hello_pruefen(sock):
+    setze f auf nf_frame_empfangen(sock)
+    wenn f["typ"] != NF_TYP_HELLO:
+        wirf "HELLO erwartet, anderer Frame-Typ"
+    setze pl auf f["payload"]
+    setze fp auf nf_get_u32(pl, 0)
+    setze ge auf nf_get_u32(pl, 4)
+    setze gs auf nf_get_u32(pl, 8)
+    wenn fp != INIT_FP:
+        zeige "HELLO-MISMATCH: Modell-Fingerprint unterschiedlich (Seed?)"
+        wirf "HELLO-Fingerprint-Mismatch (GATE 3)"
+    wenn ge != gesamt oder gs != GATE_STEPS:
+        wirf "HELLO-Mismatch: Param-Anzahl oder Schrittzahl"
+    zeige "HELLO ok: Fingerprint " + text(INIT_FP) + " uebereinstimmend"
+
+# ---- SYNC (GATE 2): Parameter-Fingerprint alle 100 Steps ----
+funktion sync_senden(sock, schritt):
+    setze p auf []
+    nf_put_u32(p, param_fingerprint())
+    nf_put_u32(p, schritt)
+    nf_frame_senden(sock, NF_TYP_SYNC, schritt, P_ANZ, p)
+
+funktion sync_pruefen(sock, schritt):
+    setze f auf nf_frame_empfangen(sock)
+    wenn f["typ"] != NF_TYP_SYNC:
+        wirf "SYNC erwartet"
+    setze pl auf f["payload"]
+    setze fp auf nf_get_u32(pl, 0)
+    setze meins auf param_fingerprint()
+    wenn fp == meins:
+        zeige "GATE2 step " + text(schritt) + " FP=" + text(meins) + " MATCH"
+    sonst:
+        zeige "GATE2 step " + text(schritt) + " MISMATCH mein=" + text(meins) + " fremd=" + text(fp)
+
+# ============================================================
+# Ein verteilter Schritt (Leader ODER Follower)
+# ist_leader: 1 = Leader (rechnet Block 1, sendet zuerst)
+#             0 = Follower (rechnet Block 2, liest zuerst)
+# ============================================================
+funktion schritt_verteilt(sock, s, ist_leader, opt):
+    autograd_reset()
+    grads_nullen()
+    setze p auf pos_block1(s)
+    wenn ist_leader == 0:
+        setze p auf pos_block2(s)
+    setze v auf kreuzentropie(modell(ids.zeilen(p, p + BLOCK)), ids.zeilen(p + 1, p + BLOCK + 1))
+    v.rueckwaerts()
+    setze verlust auf v.zu_liste()[0]
+    setze g_own auf grad_flach()
+
+    setze g_remote auf nichts
+    wenn ist_leader == 1:
+        # Leader sendet zuerst, liest danach
+        nf_frame_senden(sock, NF_TYP_GRAD, s, gesamt, nf_f32_liste_zu_payload(g_own))
+        setze fr auf nf_frame_empfangen(sock)
+        setze g_remote auf nf_payload_zu_f32_liste(fr["payload"], gesamt)
+    sonst:
+        # Follower liest zuerst, sendet danach
+        setze fr auf nf_frame_empfangen(sock)
+        setze g_remote auf nf_payload_zu_f32_liste(fr["payload"], gesamt)
+        nf_frame_senden(sock, NF_TYP_GRAD, s, gesamt, nf_f32_liste_zu_payload(g_own))
+
+    # Kanonische Block-Reihenfolge: block1 zuerst, block2 danach
+    setze g_avg auf nichts
+    wenn ist_leader == 1:
+        setze g_avg auf mittele(g_own, g_remote)
+    sonst:
+        setze g_avg auf mittele(g_remote, g_own)
+
+    grad_setzen_flach(g_avg)
+    gradienten_kappen(params, 1.0)
+    opt.schritt()
+    gib_zurück verlust
+
+# ============================================================
+# ROLLE: lokale Referenz — ZWEI getrennte Backwards (§3.3)
+# ============================================================
+funktion lauf_lokal():
+    setze opt auf optimierer_sgd(params, RATE, 0.0)
+    zeige "ROLLE lokal: " + text(GATE_STEPS) + " Steps, gesamt-elemente=" + text(gesamt)
+    setze s auf 0
+    solange s < GATE_STEPS:
+        # Block 1
+        autograd_reset()
+        grads_nullen()
+        setze p1 auf pos_block1(s)
+        setze v1 auf kreuzentropie(modell(ids.zeilen(p1, p1 + BLOCK)), ids.zeilen(p1 + 1, p1 + BLOCK + 1))
+        v1.rueckwaerts()
+        setze l1 auf v1.zu_liste()[0]
+        setze g1 auf grad_flach()
+        # Block 2 (frischer Tape, genullte Grads)
+        autograd_reset()
+        grads_nullen()
+        setze p2 auf pos_block2(s)
+        setze v2 auf kreuzentropie(modell(ids.zeilen(p2, p2 + BLOCK)), ids.zeilen(p2 + 1, p2 + BLOCK + 1))
+        v2.rueckwaerts()
+        setze l2 auf v2.zu_liste()[0]
+        setze g2 auf grad_flach()
+        # Identisches Averaging (block1 + block2) * 0.5
+        grad_setzen_flach(mittele(g1, g2))
+        gradienten_kappen(params, 1.0)
+        opt.schritt()
+        # Referenz-Loss-Bits: R1 = Block 1, R2 = Block 2
+        zeige "R1BITS " + text(s) + " " + text(nf_f32_bits(l1))
+        zeige "R2BITS " + text(s) + " " + text(nf_f32_bits(l2))
+        setze s auf s + 1
+    zeige "LOKAL FERTIG"
+
+# ============================================================
+# ROLLE: Leader (Block 1, sendet zuerst)
+# ============================================================
+funktion lauf_leader():
+    setze srv auf tcp_server(PORT)
+    srv.timeout_setzen(300)
+    zeige "ROLLE leader: warte auf Follower an Port " + text(PORT)
+    setze sock auf nichts
+    setze warte auf 0
+    solange sock == nichts und warte < 400:
+        versuche:
+            setze sock auf srv.annehmen()
+        fange e:
+            setze warte auf warte + 1
+    wenn sock == nichts:
+        zeige "LEADER: kein Follower — Abbruch"
+        gib_zurück
+    sock.timeout_setzen(20000)
+    hello_senden(sock)
+    hello_pruefen(sock)
+    setze opt auf optimierer_sgd(params, RATE, 0.0)
+    setze s auf 0
+    solange s < GATE_STEPS:
+        setze verlust auf schritt_verteilt(sock, s, 1, opt)
+        zeige "L1BITS " + text(s) + " " + text(nf_f32_bits(verlust))
+        wenn ((s + 1) - boden((s + 1) / SYNC_INTERVALL) * SYNC_INTERVALL) == 0:
+            sync_senden(sock, s + 1)
+        setze s auf s + 1
+    nf_frame_senden(sock, NF_TYP_BYE, 0, 0, [])
+    zeige "LEADER FERTIG"
+
+# ============================================================
+# ROLLE: Follower (Block 2, liest zuerst)
+# ============================================================
+funktion lauf_follower():
+    zeige "ROLLE follower: verbinde " + HOST + ":" + text(PORT)
+    setze sock auf nichts
+    setze tries auf 0
+    solange sock == nichts und tries < 400:
+        versuche:
+            setze sock auf tcp_verbinde(HOST, PORT)
+        fange e:
+            setze tries auf tries + 1
+            schlafe(0.05)
+    wenn sock == nichts:
+        zeige "FOLLOWER: keine Verbindung — Abbruch"
+        gib_zurück
+    sock.timeout_setzen(20000)
+    # Rollen-Reihenfolge: Follower liest HELLO zuerst, sendet danach
+    hello_pruefen(sock)
+    hello_senden(sock)
+    setze opt auf optimierer_sgd(params, RATE, 0.0)
+    setze s auf 0
+    solange s < GATE_STEPS:
+        setze verlust auf schritt_verteilt(sock, s, 0, opt)
+        zeige "F2BITS " + text(s) + " " + text(nf_f32_bits(verlust))
+        wenn ((s + 1) - boden((s + 1) / SYNC_INTERVALL) * SYNC_INTERVALL) == 0:
+            sync_pruefen(sock, s + 1)
+        setze s auf s + 1
+    zeige "FOLLOWER FERTIG"
+
+# ============================================================
+# Dispatch
+# ============================================================
+zeige "== ki_verteilt Rolle=" + ROLLE + " Seed-Offset=" + text(SEED_OFF) + " Params=" + text(P_ANZ) + " Elemente=" + text(gesamt) + " =="
+wenn ROLLE == "leader":
+    lauf_leader()
+sonst wenn ROLLE == "follower":
+    lauf_follower()
+sonst:
+    lauf_lokal()

@@ -1,0 +1,314 @@
+# ============================================================
+# netz_frame.moos — Wiederverwendbares TCP-Framing fuer Moo
+# ============================================================
+# Moos-OS-Baustein (KIP-X1b Design §8.2). Erster Nutzer: das
+# verteilte Training (MOODIST01 v2), aber bewusst protokoll-
+# unabhaengig geschnitten: Frame-Header, laengengenaues Lesen,
+# CRC32-Integritaet, Groessenlimit sowie f32<->Byte-Konvertierung.
+#
+# NUTZUNG:
+#   importiere netz_frame
+# Danach stehen alle nf_*-Funktionen und NF_*-Konstanten im
+# Scope zur Verfuegung. Das Modul enthaelt AUSSCHLIESSLICH
+# Definitionen (Funktionen + Konstanten) und keinen top-level
+# Ausfuehrungscode — `importiere netz_frame` inlinet alle
+# Statements, daher darf hier nichts "laufen".
+#
+# WIRE-FORMAT (little-endian, Header = 24 Byte):
+#   [0..4)   MAGIC          u32   "MD01" (LE -> Bytes 'M','D','0','1')
+#   [4..6)   VERSION        u16
+#   [6..8)   TYP            u16   1=HELLO 2=GRAD 3=SYNC 4=BYE
+#   [8..12)  STEP           u32
+#   [12..16) PARAM_ANZAHL   u32
+#   [16..20) PAYLOAD_LAENGE u32
+#   [20..24) CRC32          u32   ueber Header[0..20) + Payload
+#   [24..)   PAYLOAD               PAYLOAD_LAENGE Bytes
+#
+# GRENZEN / EHRLICHE HINWEISE:
+#   - schreibe_bytes (Runtime moo_socket_write_bytes) ruft send()
+#     genau einmal auf. Fuer die kleinen PoC-Frames ist das sicher;
+#     sehr grosse Frames koennten theoretisch einen Kurz-Write
+#     erzeugen. Ein Runtime-seitiger send-Loop waere die saubere
+#     Loesung fuer den OS-Ausbau (ausserhalb Phase-A-Scope).
+#   - Negatives Null (-0.0) wird zu +0.0 (Bitmuster 0) kodiert:
+#     Moo wirft bei 1/0, daher ist das Vorzeichen einer Null nicht
+#     zerstoerungsfrei bestimmbar. Deterministisch und fuer die
+#     Gleichheits-Gates unschaedlich (alle Replikate kodieren gleich).
+# ============================================================
+
+# ---- Konstanten (auch fuer externe Nutzer) ----
+setze NF_MAGIC auf 825246797          # "MD01" als u32 LE
+setze NF_VERSION auf 2
+setze NF_MAX_FRAME auf 67108864       # 64 MiB harte Obergrenze
+setze NF_KOPF_LEN auf 24
+setze NF_TYP_HELLO auf 1
+setze NF_TYP_GRAD auf 2
+setze NF_TYP_SYNC auf 3
+setze NF_TYP_BYE auf 4
+
+# ============================================================
+# Byte-Encoder / -Decoder (little-endian), rein arithmetisch
+# ============================================================
+funktion nf_put_u16(liste, v):
+    liste.hinzufügen(v % 256)
+    liste.hinzufügen(boden(v / 256) % 256)
+
+funktion nf_put_u32(liste, v):
+    liste.hinzufügen(v % 256)
+    liste.hinzufügen(boden(v / 256) % 256)
+    liste.hinzufügen(boden(v / 65536) % 256)
+    liste.hinzufügen(boden(v / 16777216) % 256)
+
+funktion nf_get_u16(bytes, off):
+    gib_zurück bytes[off] + bytes[off + 1] * 256
+
+funktion nf_get_u32(bytes, off):
+    gib_zurück bytes[off] + bytes[off + 1] * 256 + bytes[off + 2] * 65536 + bytes[off + 3] * 16777216
+
+# ============================================================
+# Potenz von 2, exakt via Schleife (auch negativ) — keine
+# Abhaengigkeit von libm-pow, damit bit-exakt.
+# ============================================================
+funktion nf_pow2(n):
+    setze r auf 1.0
+    wenn n >= 0:
+        setze i auf 0
+        solange i < n:
+            setze r auf r * 2.0
+            setze i auf i + 1
+    sonst:
+        setze i auf 0
+        solange i < (0 - n):
+            setze r auf r * 0.5
+            setze i auf i + 1
+    gib_zurück r
+
+# Round-half-to-even (IEEE-Standardrundung)
+funktion nf_runden_gerade(x):
+    setze fl auf boden(x)
+    setze rest auf x - fl
+    wenn rest > 0.5:
+        gib_zurück fl + 1
+    wenn rest < 0.5:
+        gib_zurück fl
+    wenn (fl % 2) == 0:
+        gib_zurück fl
+    gib_zurück fl + 1
+
+# ============================================================
+# IEEE754 single (f32): double <-> 32-Bit-Muster
+# Moo-Zahlen sind double; f32-Werte sind darin verlustfrei.
+# ============================================================
+funktion nf_f32_bits(d):
+    wenn d != d:
+        gib_zurück 2143289344            # NaN (quiet)
+    wenn d == 0:
+        gib_zurück 0                     # +0 und -0 -> +0 (siehe Kopf)
+    setze sign auf 0
+    setze x auf d
+    wenn x < 0:
+        setze sign auf 1
+        setze x auf (0 - x)
+    # Ueberlauf -> +/-Inf
+    wenn x > 340282346638528859811704183484516925440.0:
+        gib_zurück sign * 2147483648 + 2139095040
+    # Normalisieren auf 1 <= x < 2
+    setze e auf 0
+    solange x >= 2.0:
+        setze x auf x / 2.0
+        setze e auf e + 1
+    solange x < 1.0:
+        setze x auf x * 2.0
+        setze e auf e - 1
+    setze be auf e + 127
+    wenn be >= 255:
+        gib_zurück sign * 2147483648 + 2139095040
+    wenn be >= 1:
+        setze m auf nf_runden_gerade((x - 1.0) * 8388608.0)
+        wenn m >= 8388608:
+            setze m auf 0
+            setze be auf be + 1
+            wenn be >= 255:
+                gib_zurück sign * 2147483648 + 2139095040
+        gib_zurück sign * 2147483648 + be * 8388608 + m
+    # Subnormal: Wert = m * 2^-149
+    setze m auf nf_runden_gerade((0 - (sign * 2 - 1)) * d * nf_pow2(149))
+    wenn m >= 8388608:
+        gib_zurück sign * 2147483648 + 8388608
+    gib_zurück sign * 2147483648 + m
+
+funktion nf_bits_f32(bits):
+    setze sign auf boden(bits / 2147483648) % 2
+    setze be auf boden(bits / 8388608) % 256
+    setze m auf bits % 8388608
+    setze val auf 0.0
+    wenn be == 0:
+        setze val auf m * nf_pow2(0 - 149)
+    sonst wenn be == 255:
+        wenn m == 0:
+            setze val auf nf_pow2(1024)   # +Inf
+        sonst:
+            setze val auf 0.0             # NaN -> 0 (nicht rekonstruierbar)
+    sonst:
+        setze val auf (1.0 + m / 8388608.0) * nf_pow2(be - 127)
+    wenn sign == 1:
+        setze val auf (0 - val)
+    gib_zurück val
+
+# f32 an eine Byte-Liste anhaengen (LE)
+funktion nf_put_f32(liste, d):
+    nf_put_u32(liste, nf_f32_bits(d))
+
+# f32 aus einer Byte-Liste lesen (LE)
+funktion nf_get_f32(bytes, off):
+    gib_zurück nf_bits_f32(nf_get_u32(bytes, off))
+
+# Flache Zahlenliste -> f32-Byte-Payload (LE)
+funktion nf_f32_liste_zu_payload(werte):
+    setze out auf []
+    setze i auf 0
+    solange i < werte.länge():
+        nf_put_f32(out, werte[i])
+        setze i auf i + 1
+    gib_zurück out
+
+# f32-Byte-Payload -> flache Zahlenliste
+funktion nf_payload_zu_f32_liste(payload, anzahl):
+    setze out auf []
+    setze i auf 0
+    solange i < anzahl:
+        out.hinzufügen(nf_get_f32(payload, i * 4))
+        setze i auf i + 1
+    gib_zurück out
+
+# ============================================================
+# CRC32 (reflektiert, Poly 0xEDB88320, Init/Final 0xFFFFFFFF)
+# Verifiziert gegen Python zlib.crc32("123456789") = 0xCBF43926.
+# ============================================================
+funktion nf_crc32_update(crc, bytes, start, ende):
+    setze i auf start
+    solange i < ende:
+        setze crc auf crc ^ bytes[i]
+        setze j auf 0
+        solange j < 8:
+            wenn (crc & 1) == 1:
+                setze crc auf (crc >> 1) ^ 3988292384
+            sonst:
+                setze crc auf crc >> 1
+            setze j auf j + 1
+        setze i auf i + 1
+    gib_zurück crc
+
+funktion nf_crc32(bytes, start, ende):
+    gib_zurück nf_crc32_update(4294967295, bytes, start, ende) ^ 4294967295
+
+# ============================================================
+# FNV-1a 32-Bit. Multiplikation via 16-Bit-Halbierung, damit
+# das Zwischenprodukt < 2^42 bleibt (double-exakt < 2^53).
+# Verifiziert: FNV-1a("a") = 0xE40C292C.
+# ============================================================
+funktion nf_fnv1a_start():
+    gib_zurück 2166136261                 # 0x811C9DC5 offset basis
+
+funktion nf_fnv1a_byte(h, b):
+    setze h2 auf h ^ b
+    setze lo auf h2 % 65536
+    setze hi auf boden(h2 / 65536)
+    gib_zurück (((hi * 16777619) % 65536) * 65536 + lo * 16777619) % 4294967296
+
+funktion nf_fnv1a_bytes(h, bytes, start, ende):
+    setze i auf start
+    solange i < ende:
+        setze h auf nf_fnv1a_byte(h, bytes[i])
+        setze i auf i + 1
+    gib_zurück h
+
+# FNV-1a ueber die f32-Bits einer flachen Zahlenliste (LE-Reihenfolge)
+funktion nf_fnv1a_f32_liste(h, werte):
+    setze i auf 0
+    solange i < werte.länge():
+        setze bits auf nf_f32_bits(werte[i])
+        setze h auf nf_fnv1a_byte(h, bits % 256)
+        setze h auf nf_fnv1a_byte(h, boden(bits / 256) % 256)
+        setze h auf nf_fnv1a_byte(h, boden(bits / 65536) % 256)
+        setze h auf nf_fnv1a_byte(h, boden(bits / 16777216) % 256)
+        setze i auf i + 1
+    gib_zurück h
+
+# ============================================================
+# Laengengenaues Lesen: TCP liefert Teilstuecke, daher Schleife.
+# Leerer Rueckgabewert von lesen_bytes = Timeout/EOF -> harter
+# Abbruch (wirf).
+# ============================================================
+funktion nf_lies_genau(sock, n):
+    setze buf auf []
+    solange buf.länge() < n:
+        setze rest auf n - buf.länge()
+        setze teil auf sock.lesen_bytes(rest)
+        wenn teil.länge() == 0:
+            wirf "netz_frame: Verbindung geschlossen oder Timeout (lies_genau)"
+        setze k auf 0
+        solange k < teil.länge():
+            buf.hinzufügen(teil[k])
+            setze k auf k + 1
+    gib_zurück buf
+
+# ============================================================
+# Frame bauen -> vollstaendige Byte-Liste (Header + CRC + Payload)
+# payload = Liste von Bytes (0..255)
+# ============================================================
+funktion nf_frame_bauen(typ, step, param_anzahl, payload):
+    setze plen auf payload.länge()
+    setze kopf auf []
+    nf_put_u32(kopf, 825246797)       # NF_MAGIC
+    nf_put_u16(kopf, 2)               # NF_VERSION
+    nf_put_u16(kopf, typ)
+    nf_put_u32(kopf, step)
+    nf_put_u32(kopf, param_anzahl)
+    nf_put_u32(kopf, plen)
+    # CRC ueber Header[0..20) + Payload
+    setze c auf nf_crc32_update(4294967295, kopf, 0, 20)
+    setze c auf nf_crc32_update(c, payload, 0, plen)
+    setze c auf c ^ 4294967295
+    # Frame = Header[0..20) + CRC(4) + Payload
+    nf_put_u32(kopf, c)
+    setze i auf 0
+    solange i < plen:
+        kopf.hinzufügen(payload[i])
+        setze i auf i + 1
+    gib_zurück kopf
+
+# Frame senden
+funktion nf_frame_senden(sock, typ, step, param_anzahl, payload):
+    sock.schreibe_bytes(nf_frame_bauen(typ, step, param_anzahl, payload))
+
+# Frame empfangen -> Dict {version, typ, step, param_anzahl, payload}
+# Wirft bei MAGIC-, Groessen- oder CRC-Fehler.
+funktion nf_frame_empfangen(sock):
+    setze kopf auf nf_lies_genau(sock, 24)
+    setze magic auf nf_get_u32(kopf, 0)
+    wenn magic != 825246797:
+        wirf "netz_frame: falsche MAGIC (kein MOODIST01-Frame)"
+    setze version auf nf_get_u16(kopf, 4)
+    setze typ auf nf_get_u16(kopf, 6)
+    setze step auf nf_get_u32(kopf, 8)
+    setze param_anzahl auf nf_get_u32(kopf, 12)
+    setze plen auf nf_get_u32(kopf, 16)
+    setze crc_erwartet auf nf_get_u32(kopf, 20)
+    wenn plen > 67108864:
+        wirf "netz_frame: PAYLOAD_LAENGE ueber MAX_FRAME (64 MiB)"
+    setze payload auf []
+    wenn plen > 0:
+        setze payload auf nf_lies_genau(sock, plen)
+    setze c auf nf_crc32_update(4294967295, kopf, 0, 20)
+    setze c auf nf_crc32_update(c, payload, 0, plen)
+    setze c auf c ^ 4294967295
+    wenn c != crc_erwartet:
+        wirf "netz_frame: CRC-Fehler (Frame beschaedigt)"
+    setze f auf {}
+    f["version"] = version
+    f["typ"] = typ
+    f["step"] = step
+    f["param_anzahl"] = param_anzahl
+    f["payload"] = payload
+    gib_zurück f

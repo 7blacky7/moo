@@ -1,0 +1,210 @@
+# ============================================================
+# netz_frame_selftest.moos — Loopback-Selftest fuer netz_frame
+# ============================================================
+# Zwei Rollen ueber Umgebungsvariable NF_ROLLE:
+#   NF_ROLLE=server  NF_PORT=5399  ./netz_frame_selftest
+#   NF_ROLLE=client  NF_PORT=5399  ./netz_frame_selftest
+# Ohne NF_ROLLE: nur lokale Unit-Checks (keine Sockets).
+#
+# Getestet:
+#   - Unit: f32<->Bits, CRC32, FNV-1a gegen Referenzwerte
+#   - Test A: kleiner GRAD-Frame, Echo, bit-identischer Vergleich
+#   - Test B: 400 KB-Frame -> erzwingt Teilstueck-Lesen (lies_genau)
+#   - Test C: gekipptes Byte -> CRC-Fehler MUSS erkannt werden
+# Der Client druckt PASS/FAIL je Test und "SELFTEST PASS"/"FAIL".
+# ============================================================
+
+importiere netz_frame
+
+# ---- Vergleichs- und Hilfsfunktionen ----
+funktion f32_listen_gleich(a, b):
+    wenn a.länge() != b.länge():
+        gib_zurück falsch
+    setze i auf 0
+    solange i < a.länge():
+        wenn nf_f32_bits(a[i]) != nf_f32_bits(b[i]):
+            gib_zurück falsch
+        setze i auf i + 1
+    gib_zurück wahr
+
+# Deterministische Testwerte (indexbasiert, exakt reproduzierbar)
+funktion mach_werte(anzahl):
+    setze out auf []
+    setze i auf 0
+    solange i < anzahl:
+        setze roh auf ((i * 7 + 3) % 2000) / 1000.0 - 1.0
+        out.hinzufügen(roh)
+        setze i auf i + 1
+    gib_zurück out
+
+funktion verbinde_mit_retry(host, port):
+    setze tries auf 0
+    solange tries < 200:
+        versuche:
+            gib_zurück tcp_verbinde(host, port)
+        fange e:
+            setze tries auf tries + 1
+            schlafe(0.05)
+    wirf "client: connect fehlgeschlagen"
+
+# ---- Lokale Unit-Checks (ohne Sockets) ----
+funktion unit_tests():
+    setze f auf 0
+    zeige "== Unit-Checks (f32 / CRC32 / FNV-1a) =="
+    wenn nf_f32_bits(1.0) != 1065353216:
+        zeige "  FAIL f32 1.0"
+        setze f auf f + 1
+    wenn nf_f32_bits(0 - 2.0) != 3221225472:
+        zeige "  FAIL f32 -2.0"
+        setze f auf f + 1
+    wenn nf_f32_bits(0.1) != 1036831949:
+        zeige "  FAIL f32 0.1 (Rundung)"
+        setze f auf f + 1
+    wenn nf_f32_bits(nf_pow2(0 - 149)) != 1:
+        zeige "  FAIL f32 subnormal 2^-149"
+        setze f auf f + 1
+    wenn nf_bits_f32(nf_f32_bits(0 - 7.25)) != (0 - 7.25):
+        zeige "  FAIL f32 roundtrip -7.25"
+        setze f auf f + 1
+    setze v auf bytes_zu_liste("123456789")
+    wenn nf_crc32(v, 0, v.länge()) != 3421780262:
+        zeige "  FAIL CRC32 '123456789'"
+        setze f auf f + 1
+    wenn nf_fnv1a_byte(nf_fnv1a_start(), 97) != 3826002220:
+        zeige "  FAIL FNV-1a 'a'"
+        setze f auf f + 1
+    wenn f == 0:
+        zeige "  PASS alle Unit-Checks"
+    gib_zurück f
+
+# ---- Server-Rolle: nimmt einen Client an und echot GRAD-Frames ----
+funktion server_lauf(port):
+    setze srv auf tcp_server(port)
+    srv.timeout_setzen(200)
+    setze sock auf nichts
+    setze warte auf 0
+    solange sock == nichts und warte < 300:
+        versuche:
+            setze sock auf srv.annehmen()
+        fange e:
+            setze warte auf warte + 1
+    wenn sock == nichts:
+        zeige "SERVER: kein Client verbunden"
+        gib_zurück
+    sock.timeout_setzen(10000)
+    zeige "SERVER: Client verbunden, echo-Schleife"
+    solange wahr:
+        setze fehler auf 0
+        setze f auf nichts
+        versuche:
+            setze f auf nf_frame_empfangen(sock)
+        fange e:
+            setze fehler auf 1
+        wenn fehler == 1:
+            # Integritaetsfehler (z.B. CRC) -> Signal-Frame mit Marker 0xDEAD
+            nf_frame_senden(sock, NF_TYP_SYNC, 0, 57005, [])
+        sonst:
+            wenn f["typ"] == NF_TYP_BYE:
+                zeige "SERVER: BYE empfangen, beende"
+                stopp
+            nf_frame_senden(sock, NF_TYP_GRAD, f["step"], f["param_anzahl"], f["payload"])
+
+# ---- Client-Rolle: Treiber mit PASS/FAIL ----
+funktion client_lauf(host, port):
+    setze fails auf 0
+    setze sock auf verbinde_mit_retry(host, port)
+    sock.timeout_setzen(10000)
+    zeige "== Socket-Tests (Loopback " + host + ":" + text(port) + ") =="
+
+    # Test A: kleiner Frame, Echo, bit-identisch
+    setze wa auf [1.0, 0 - 2.5, 3.14159, 0.0, 100.0, 0 - 0.001, nf_pow2(0 - 140)]
+    nf_frame_senden(sock, NF_TYP_GRAD, 1, wa.länge(), nf_f32_liste_zu_payload(wa))
+    setze ea auf nf_frame_empfangen(sock)
+    setze ra auf nf_payload_zu_f32_liste(ea["payload"], ea["param_anzahl"])
+    wenn f32_listen_gleich(wa, ra) und ea["step"] == 1 und ea["typ"] == NF_TYP_GRAD:
+        zeige "  PASS Test A: kleiner Frame Roundtrip (bit-identisch)"
+    sonst:
+        zeige "  FAIL Test A"
+        setze fails auf fails + 1
+
+    # Test B: 400 KB Frame -> erzwingt Teilstueck-Lesen
+    setze wb auf mach_werte(100000)
+    nf_frame_senden(sock, NF_TYP_GRAD, 2, wb.länge(), nf_f32_liste_zu_payload(wb))
+    setze eb auf nf_frame_empfangen(sock)
+    setze rb auf nf_payload_zu_f32_liste(eb["payload"], eb["param_anzahl"])
+    wenn eb["param_anzahl"] == 100000 und f32_listen_gleich(wb, rb):
+        zeige "  PASS Test B: 400 KB Frame, Teilstueck-Reassemblierung"
+    sonst:
+        zeige "  FAIL Test B: len=" + text(eb["param_anzahl"])
+        setze fails auf fails + 1
+
+    # Test C: CRC-Negativtest (ein Payload-Byte gekippt, Laenge unveraendert)
+    setze wc auf [42.0, 0 - 7.0, 0.25]
+    setze roh auf nf_frame_bauen(NF_TYP_GRAD, 3, wc.länge(), nf_f32_liste_zu_payload(wc))
+    roh[24] = (roh[24] + 1) % 256
+    sock.schreibe_bytes(roh)
+    setze ec auf nf_frame_empfangen(sock)
+    wenn ec["typ"] == NF_TYP_SYNC und ec["param_anzahl"] == 57005:
+        zeige "  PASS Test C: CRC-Fehler serverseitig erkannt"
+    sonst:
+        zeige "  FAIL Test C: typ=" + text(ec["typ"]) + " marker=" + text(ec["param_anzahl"])
+        setze fails auf fails + 1
+
+    # Test D: gespaltenes Senden UEBER die Header-Grenze erzwingt die
+    # lies_genau-Schleife deterministisch (Teilstueck-Beweis, unabh. vom TCP-Puffer)
+    setze wd auf [11.0, 22.0, 33.0, 44.0]
+    setze rohd auf nf_frame_bauen(NF_TYP_GRAD, 4, wd.länge(), nf_f32_liste_zu_payload(wd))
+    setze mitte auf 20
+    setze teil1 auf []
+    setze teil2 auf []
+    setze i auf 0
+    solange i < rohd.länge():
+        wenn i < mitte:
+            teil1.hinzufügen(rohd[i])
+        sonst:
+            teil2.hinzufügen(rohd[i])
+        setze i auf i + 1
+    sock.schreibe_bytes(teil1)
+    schlafe(0.1)
+    sock.schreibe_bytes(teil2)
+    setze ed auf nf_frame_empfangen(sock)
+    setze rd auf nf_payload_zu_f32_liste(ed["payload"], ed["param_anzahl"])
+    wenn f32_listen_gleich(wd, rd) und ed["step"] == 4:
+        zeige "  PASS Test D: gespaltenes Senden, lies_genau reassembliert Teilstuecke"
+    sonst:
+        zeige "  FAIL Test D"
+        setze fails auf fails + 1
+
+    nf_frame_senden(sock, NF_TYP_BYE, 0, 0, [])
+    gib_zurück fails
+
+# ============================================================
+# Dispatch (nur beim direkten Ausfuehren — wird beim Import
+# von netz_frame NICHT relevant, da dies die Selftest-Datei ist)
+# ============================================================
+setze rolle auf umgebung("NF_ROLLE")
+setze port_s auf umgebung("NF_PORT")
+setze port auf 5399
+wenn port_s != nichts:
+    wenn länge(port_s) > 0:
+        setze port auf zahl(port_s)
+setze host auf "127.0.0.1"
+
+wenn rolle == "server":
+    server_lauf(port)
+sonst wenn rolle == "client":
+    setze uf auf unit_tests()
+    setze nf auf client_lauf(host, port)
+    setze gesamt auf uf + nf
+    wenn gesamt == 0:
+        zeige "SELFTEST PASS"
+    sonst:
+        zeige "SELFTEST FAIL (" + text(gesamt) + " Fehler)"
+        beende(1)
+sonst:
+    setze uf auf unit_tests()
+    wenn uf == 0:
+        zeige "UNIT PASS"
+    sonst:
+        zeige "UNIT FAIL"
+        beende(1)
