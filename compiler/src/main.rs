@@ -1074,8 +1074,8 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     // Vendored mbedTLS braucht spaeter gar keine System-Libs mehr.
     #[cfg(all(not(target_os = "windows"), not(moo_tls_mbedtls)))]
     link_args.extend(["-lssl".to_string(), "-lcrypto".to_string()]);
-    #[cfg(all(not(target_os = "windows"), moo_tls_mbedtls))]
-    link_args.extend(["-lmbedtls".to_string(), "-lmbedx509".to_string(), "-lmbedcrypto".to_string()]);
+    // Vendored mbedTLS (compiler/runtime/mbedtls/) ist in moo_runtime einkompiliert
+    // (build.rs unter MOO_TLS_BACKEND=mbedtls) — KEINE System-Libs mehr noetig.
 
     // Linux-only UI-Libs (GTK3 + libappindicator3 + Co.) — nur wenn das
     // UI-Modul wirklich mitgebaut wurde. 3D-only Builds auf Linux duerfen

@@ -18,3 +18,6 @@ nohup.out
 
 # Manuelle/lebhafte Testflächen, nur bei Bedarf indexieren.
 tests/
+
+# Vendored mbedTLS (self-contained TLS-Backend) — nicht indexieren
+compiler/runtime/mbedtls/

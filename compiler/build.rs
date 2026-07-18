@@ -236,7 +236,21 @@ fn main() {
     match std::env::var("MOO_TLS_BACKEND").as_deref() {
         Ok("mbedtls") => {
             build.file("runtime/moo_tls_mbedtls.c");
+            // Vendored mbedTLS (self-contained, kein System-libmbedtls): alle
+            // library/*.c mitkompilieren. include/ + library/ als Include-Pfade
+            // (interne Header wie psa_crypto_driver_wrappers.h liegen in library/).
+            build.include("runtime/mbedtls/include");
+            build.include("runtime/mbedtls/library");
+            let mbedtls_lib = std::fs::read_dir("runtime/mbedtls/library")
+                .expect("runtime/mbedtls/library fehlt — vendored mbedTLS nicht vorhanden");
+            for entry in mbedtls_lib {
+                let p = entry.expect("mbedtls read_dir").path();
+                if p.extension().and_then(|s| s.to_str()) == Some("c") {
+                    build.file(&p);
+                }
+            }
             println!("cargo:rustc-cfg=moo_tls_mbedtls");
+            println!("cargo:rerun-if-changed=runtime/mbedtls/library");
         }
         _ => { build.file("runtime/moo_tls_openssl.c"); }
     }
