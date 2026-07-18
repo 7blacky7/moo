@@ -1,0 +1,331 @@
+# stdlib/dns.moos — self-contained RFC-1035-DNS-Client in pure Moo.
+#
+# Nutzt nur udp_socket/udp_verbinden/lesen_bytes/schreibe_bytes und arbeitet
+# unabhaengig vom Betriebssystem-Resolver. Unterstuetzt A, AAAA, CNAME, MX,
+# NS und TXT sowie komprimierte Namen. Fuer normale TCP-/UDP-Connects bleibt
+# getaddrinfo der native Pfad; dieses Modul ist die explizite Moo-Alternative.
+
+konstante TYP_A auf 1
+konstante TYP_NS auf 2
+konstante TYP_CNAME auf 5
+konstante TYP_MX auf 15
+konstante TYP_TXT auf 16
+konstante TYP_AAAA auf 28
+konstante KLASSE_IN auf 1
+
+# ------------------------------------------------------------
+# Byte-Helfer
+# ------------------------------------------------------------
+
+funktion be16(n):
+    gib_zurück [boden(n / 256) % 256, n % 256]
+
+funktion be32(n):
+    setze b0 auf boden(n / (256 * 256 * 256)) % 256
+    setze b1 auf boden(n / (256 * 256)) % 256
+    setze b2 auf boden(n / 256) % 256
+    setze b3 auf n % 256
+    gib_zurück [b0, b1, b2, b3]
+
+funktion lies_be16(buf, off):
+    gib_zurück buf[off] * 256 + buf[off + 1]
+
+funktion lies_be32(buf, off):
+    setze a auf buf[off] * 256 * 256 * 256
+    setze b auf buf[off + 1] * 256 * 256
+    setze c auf buf[off + 2] * 256
+    setze d auf buf[off + 3]
+    gib_zurück a + b + c + d
+
+funktion bytes_anhaengen(ziel, quelle):
+    setze i auf 0
+    solange i < länge(quelle):
+        ziel.hinzufügen(quelle[i])
+        setze i auf i + 1
+
+# ------------------------------------------------------------
+# Query-Encoder
+# ------------------------------------------------------------
+
+funktion kodiere_name(name):
+    # "www.example.com" -> [3]'www'[7]'example'[3]'com'[0]
+    setze out auf []
+    setze labels auf name.teilen(".")
+    setze i auf 0
+    solange i < länge(labels):
+        setze lab auf labels[i]
+        wenn länge(lab) > 0:
+            out.hinzufügen(länge(lab))
+            setze lb auf bytes_zu_liste(lab)
+            bytes_anhaengen(out, lb)
+        setze i auf i + 1
+    out.hinzufügen(0)
+    gib_zurück out
+
+funktion baue_query(id, name, qtyp):
+    setze msg auf []
+    # Header
+    bytes_anhaengen(msg, be16(id))
+    bytes_anhaengen(msg, be16(256))   # flags: RD=1 (0x0100)
+    bytes_anhaengen(msg, be16(1))     # qdcount
+    bytes_anhaengen(msg, be16(0))     # ancount
+    bytes_anhaengen(msg, be16(0))     # nscount
+    bytes_anhaengen(msg, be16(0))     # arcount
+    # Question
+    bytes_anhaengen(msg, kodiere_name(name))
+    bytes_anhaengen(msg, be16(qtyp))
+    bytes_anhaengen(msg, be16(KLASSE_IN))
+    gib_zurück msg
+
+# ------------------------------------------------------------
+# Response-Decoder mit Label-Compression
+# ------------------------------------------------------------
+
+# Liest einen Namen ab off. Folgt Pointern (0xC0 prefix) rekursiv.
+# Liefert [name_string, neue_off_nach_ursprung]
+funktion lies_name(buf, off):
+    setze groesse auf länge(buf)
+    wenn off < 0 oder off >= groesse:
+        wirf "dns_moo: Namensoffset ausserhalb des Pakets"
+    setze teile auf []
+    setze cur auf off
+    setze erste_rueckkehr auf -1
+    setze tiefe auf 0
+    solange tiefe < 64:
+        setze tiefe auf tiefe + 1
+        wenn cur < 0 oder cur >= groesse:
+            wirf "dns_moo: abgeschnittener Name"
+        setze laenge_b auf buf[cur]
+        wenn laenge_b == 0:
+            setze cur auf cur + 1
+            wenn erste_rueckkehr == -1:
+                setze erste_rueckkehr auf cur
+            gib_zurück [verbinde_labels(teile), erste_rueckkehr]
+        wenn laenge_b >= 192:
+            wenn cur + 1 >= groesse:
+                wirf "dns_moo: abgeschnittener Kompressionspointer"
+            setze hi auf laenge_b - 192
+            setze lo auf buf[cur + 1]
+            setze ptr auf hi * 256 + lo
+            wenn ptr < 0 oder ptr >= groesse:
+                wirf "dns_moo: Kompressionspointer ausserhalb des Pakets"
+            wenn erste_rueckkehr == -1:
+                setze erste_rueckkehr auf cur + 2
+            setze cur auf ptr
+        sonst:
+            wenn laenge_b > 63:
+                wirf "dns_moo: ungueltige Label-Laenge"
+            wenn cur + 1 + laenge_b > groesse:
+                wirf "dns_moo: abgeschnittenes Label"
+            setze label_bytes auf []
+            setze i auf 0
+            solange i < laenge_b:
+                label_bytes.hinzufügen(buf[cur + 1 + i])
+                setze i auf i + 1
+            teile.hinzufügen(bytes_neu(label_bytes))
+            setze cur auf cur + 1 + laenge_b
+    wirf "dns_moo: Kompressionskette zu tief oder zyklisch"
+
+funktion verbinde_labels(teile):
+    wenn länge(teile) == 0:
+        gib_zurück ""
+    setze out auf teile[0]
+    setze i auf 1
+    solange i < länge(teile):
+        setze out auf out + "." + teile[i]
+        setze i auf i + 1
+    gib_zurück out
+
+# Parst RDATA je nach Typ zu einem lesbaren String
+funktion parse_rdata(buf, off, laenge, typ):
+    wenn off < 0 oder laenge < 0 oder off + laenge > länge(buf):
+        wirf "dns_moo: RDATA ausserhalb des Pakets"
+    wenn typ == TYP_A:
+        wenn laenge != 4:
+            wirf "dns_moo: A-Record muss 4 Bytes haben"
+        setze a auf buf[off]
+        setze b auf buf[off + 1]
+        setze c auf buf[off + 2]
+        setze d auf buf[off + 3]
+        gib_zurück text(a) + "." + text(b) + "." + text(c) + "." + text(d)
+    wenn typ == TYP_AAAA:
+        wenn laenge != 16:
+            wirf "dns_moo: AAAA-Record muss 16 Bytes haben"
+        setze s auf ""
+        setze i auf 0
+        solange i < 8:
+            setze wort auf buf[off + i*2] * 256 + buf[off + i*2 + 1]
+            wenn i > 0:
+                setze s auf s + ":"
+            setze s auf s + hex16(wort)
+            setze i auf i + 1
+        gib_zurück s
+    wenn typ == TYP_CNAME oder typ == TYP_NS:
+        setze erg auf lies_name(buf, off)
+        gib_zurück erg[0]
+    wenn typ == TYP_MX:
+        wenn laenge < 3:
+            wirf "dns_moo: MX-Record zu kurz"
+        setze prio auf lies_be16(buf, off)
+        setze erg auf lies_name(buf, off + 2)
+        gib_zurück text(prio) + " " + erg[0]
+    wenn typ == TYP_TXT:
+        setze end auf off + laenge
+        setze s auf ""
+        setze cur auf off
+        solange cur < end:
+            setze tl auf buf[cur]
+            setze cur auf cur + 1
+            wenn cur + tl > end:
+                wirf "dns_moo: abgeschnittener TXT-Record"
+            setze bytes auf []
+            setze i auf 0
+            solange i < tl:
+                bytes.hinzufügen(buf[cur + i])
+                setze i auf i + 1
+            setze s auf s + bytes_neu(bytes)
+            setze cur auf cur + tl
+        gib_zurück s
+    setze s auf ""
+    setze i auf 0
+    solange i < laenge:
+        setze s auf s + hex8(buf[off + i])
+        setze i auf i + 1
+    gib_zurück s
+
+funktion hex4(n):
+    wenn n < 10:
+        gib_zurück text(n)
+    wenn n == 10:
+        gib_zurück "a"
+    wenn n == 11:
+        gib_zurück "b"
+    wenn n == 12:
+        gib_zurück "c"
+    wenn n == 13:
+        gib_zurück "d"
+    wenn n == 14:
+        gib_zurück "e"
+    gib_zurück "f"
+
+funktion hex8(n):
+    gib_zurück hex4(boden(n / 16)) + hex4(n % 16)
+
+funktion hex16(n):
+    gib_zurück hex8(boden(n / 256)) + hex8(n % 256)
+
+# Parst einen DNS-Response. Liefert dict mit id, flags, rcode, answers[]
+funktion parse_response(buf):
+    wenn länge(buf) < 12:
+        wirf "dns_moo: DNS-Header abgeschnitten"
+    setze r auf {}
+    r["id"] = lies_be16(buf, 0)
+    setze flags auf lies_be16(buf, 2)
+    wenn boden(flags / 32768) % 2 != 1:
+        wirf "dns_moo: Paket ist keine DNS-Antwort"
+    r["flags"] = flags
+    r["rcode"] = flags % 16
+    r["qdcount"] = lies_be16(buf, 4)
+    r["ancount"] = lies_be16(buf, 6)
+    r["nscount"] = lies_be16(buf, 8)
+    r["arcount"] = lies_be16(buf, 10)
+    setze off auf 12
+    setze i auf 0
+    solange i < r["qdcount"]:
+        setze erg auf lies_name(buf, off)
+        setze off auf erg[1]
+        wenn off + 4 > länge(buf):
+            wirf "dns_moo: Question abgeschnitten"
+        setze off auf off + 4
+        setze i auf i + 1
+    setze antworten auf []
+    setze i auf 0
+    solange i < r["ancount"]:
+        setze erg auf lies_name(buf, off)
+        setze name auf erg[0]
+        setze off auf erg[1]
+        wenn off + 10 > länge(buf):
+            wirf "dns_moo: Answer-Header abgeschnitten"
+        setze typ auf lies_be16(buf, off)
+        setze klass auf lies_be16(buf, off + 2)
+        setze ttl auf lies_be32(buf, off + 4)
+        setze rdlen auf lies_be16(buf, off + 8)
+        setze off auf off + 10
+        wenn off + rdlen > länge(buf):
+            wirf "dns_moo: Answer-RDATA abgeschnitten"
+        setze rdata auf parse_rdata(buf, off, rdlen, typ)
+        setze off auf off + rdlen
+        setze a auf {}
+        a["name"] = name
+        a["typ"] = typ
+        a["klasse"] = klass
+        a["ttl"] = ttl
+        a["rdata"] = rdata
+        antworten.hinzufügen(a)
+        setze i auf i + 1
+    r["antworten"] = antworten
+    gib_zurück r
+
+# ------------------------------------------------------------
+# Query-API
+# ------------------------------------------------------------
+
+funktion typ_name(t):
+    wenn t == TYP_A:
+        gib_zurück "A"
+    wenn t == TYP_AAAA:
+        gib_zurück "AAAA"
+    wenn t == TYP_CNAME:
+        gib_zurück "CNAME"
+    wenn t == TYP_MX:
+        gib_zurück "MX"
+    wenn t == TYP_NS:
+        gib_zurück "NS"
+    wenn t == TYP_TXT:
+        gib_zurück "TXT"
+    gib_zurück "TYPE" + text(t)
+
+funktion rcode_text(rc):
+    wenn rc == 0:
+        gib_zurück "NOERROR"
+    wenn rc == 1:
+        gib_zurück "FORMERR"
+    wenn rc == 2:
+        gib_zurück "SERVFAIL"
+    wenn rc == 3:
+        gib_zurück "NXDOMAIN"
+    wenn rc == 4:
+        gib_zurück "NOTIMP"
+    wenn rc == 5:
+        gib_zurück "REFUSED"
+    gib_zurück "RCODE" + text(rc)
+
+klasse DnsResolver:
+    funktion erstelle(server_host, server_port):
+        selbst.server_host = server_host
+        selbst.server_port = server_port
+        selbst.next_id = 1
+
+    funktion aufloesen(name, qtyp):
+        setze id auf selbst.next_id
+        setze selbst.next_id auf id + 1
+        setze query auf baue_query(id, name, qtyp)
+        setze sock auf udp_socket(0)
+        sock.timeout_setzen(3000)
+        sock.udp_verbinden(selbst.server_host, selbst.server_port)
+        sock.schreibe_bytes(query)
+        setze daten auf sock.lesen_bytes(4096)
+        sock.schliessen()
+        wenn länge(daten) < 12:
+            wirf "dns_moo: leere oder zu kurze DNS-Antwort"
+        setze resp auf parse_response(daten)
+        wenn resp["id"] != id:
+            wirf "dns_moo: Transaktions-ID stimmt nicht ueberein"
+        gib_zurück resp
+
+funktion dns_moo_resolver(server_host="1.1.1.1", server_port=53):
+    gib_zurück neu DnsResolver(server_host, server_port)
+
+funktion dns_moo_aufloesen(name, qtyp=TYP_A, server_host="1.1.1.1", server_port=53):
+    setze resolver auf neu DnsResolver(server_host, server_port)
+    gib_zurück resolver.aufloesen(name, qtyp)

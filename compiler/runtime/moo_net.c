@@ -127,104 +127,130 @@ void moo_socket_free(void* ptr) {
 // === TCP Server ===
 
 MooValue moo_tcp_server(MooValue port) {
+    if (port.tag != MOO_NUMBER) {
+        moo_throw(moo_string_new("tcp_server: Port muss eine Zahl sein"));
+        return moo_none();
+    }
     int p = (int)MV_NUM(port);
+    if (p < 0 || p > 65535) {
+        moo_throw(moo_string_new("tcp_server: Port muss zwischen 0 und 65535 liegen"));
+        return moo_none();
+    }
 
-    moo_sockfd_t fd = socket(AF_INET, SOCK_STREAM, 0);
+    moo_sockfd_t fd = socket(AF_INET6, SOCK_STREAM, 0);
+    if (!MOO_SOCK_BAD(fd)) {
+        int opt = 1;
+        int v6only = 0;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, MOO_SOPT(&opt), sizeof(opt));
+        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, MOO_SOPT(&v6only), sizeof(v6only));
+
+        struct sockaddr_in6 addr6;
+        memset(&addr6, 0, sizeof(addr6));
+        addr6.sin6_family = AF_INET6;
+        addr6.sin6_addr = in6addr_any;
+        addr6.sin6_port = htons((uint16_t)p);
+        if (bind(fd, (struct sockaddr*)&addr6, sizeof(addr6)) != 0 ||
+            listen(fd, 128) != 0) {
+            moo_closesock(fd);
+            fd = MOO_INVALID_SOCK;
+        }
+    }
+
     if (MOO_SOCK_BAD(fd)) {
-        moo_throw(moo_string_new("Socket erstellen fehlgeschlagen"));
-        return moo_none();
+        fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (!MOO_SOCK_BAD(fd)) {
+            int opt = 1;
+            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, MOO_SOPT(&opt), sizeof(opt));
+            struct sockaddr_in addr4;
+            memset(&addr4, 0, sizeof(addr4));
+            addr4.sin_family = AF_INET;
+            addr4.sin_addr.s_addr = htonl(INADDR_ANY);
+            addr4.sin_port = htons((uint16_t)p);
+            if (bind(fd, (struct sockaddr*)&addr4, sizeof(addr4)) != 0 ||
+                listen(fd, 128) != 0) {
+                moo_closesock(fd);
+                fd = MOO_INVALID_SOCK;
+            }
+        }
     }
 
-    // SO_REUSEADDR damit Port sofort wiederverwendbar
-    int opt = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, MOO_SOPT(&opt), sizeof(opt));
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(p);
-
-    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        moo_closesock(fd);
-        moo_throw(moo_string_new("Bind fehlgeschlagen"));
+    if (MOO_SOCK_BAD(fd)) {
+        moo_throw(moo_string_new("tcp_server: Bind oder Listen fehlgeschlagen"));
         return moo_none();
     }
-
-    if (listen(fd, 128) < 0) {
-        moo_closesock(fd);
-        moo_throw(moo_string_new("Listen fehlgeschlagen"));
-        return moo_none();
-    }
-
     return make_socket(fd, SOCK_STREAM, true);
 }
 
 // === TCP Connect (Client) ===
 
 MooValue moo_tcp_connect(MooValue host, MooValue port) {
-    if (host.tag != MOO_STRING) {
-        moo_throw(moo_string_new("Host muss ein String sein"));
+    if (host.tag != MOO_STRING || port.tag != MOO_NUMBER) {
+        moo_throw(moo_string_new("tcp_verbinde: Host muss Text und Port eine Zahl sein"));
         return moo_none();
     }
 
     const char* h = MV_STR(host)->chars;
     int p = (int)MV_NUM(port);
-
-    moo_sockfd_t fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (MOO_SOCK_BAD(fd)) {
-        moo_throw(moo_string_new("Socket erstellen fehlgeschlagen"));
+    if (p < 1 || p > 65535) {
+        moo_throw(moo_string_new("tcp_verbinde: Port muss zwischen 1 und 65535 liegen"));
         return moo_none();
     }
 
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(p);
-
-    if (inet_pton(AF_INET, h, &addr.sin_addr) <= 0) {
-        moo_closesock(fd);
-        char err[128];
-        snprintf(err, sizeof(err), "Ungueltige Adresse: %s", h);
+    char err[256];
+    int raw_fd = moo_net_tcp_connect_timeout(h, p, 0, err, (int)sizeof err);
+    if (raw_fd < 0) {
         moo_throw(moo_string_new(err));
         return moo_none();
     }
 
-    if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        moo_closesock(fd);
-        moo_throw(moo_string_new("Verbindung fehlgeschlagen"));
-        return moo_none();
-    }
-
-    int one = 1;
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, MOO_SOPT(&one), sizeof(one));
-
-    return make_socket(fd, SOCK_STREAM, false);
+    return make_socket((moo_sockfd_t)raw_fd, SOCK_STREAM, false);
 }
 
 // === UDP Socket ===
 
 MooValue moo_udp_socket(MooValue port) {
-    moo_sockfd_t fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (MOO_SOCK_BAD(fd)) {
-        moo_throw(moo_string_new("UDP Socket erstellen fehlgeschlagen"));
+    int p = (port.tag == MOO_NUMBER) ? (int)MV_NUM(port) : 0;
+    if (p < 0 || p > 65535) {
+        moo_throw(moo_string_new("udp_socket: Port muss zwischen 0 und 65535 liegen"));
         return moo_none();
     }
 
-    if (port.tag == MOO_NUMBER && MV_NUM(port) > 0) {
-        int p = (int)MV_NUM(port);
-        struct sockaddr_in addr;
-        memset(&addr, 0, sizeof(addr));
-        addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = INADDR_ANY;
-        addr.sin_port = htons(p);
-        if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        moo_closesock(fd);
-            moo_throw(moo_string_new("UDP Bind fehlgeschlagen"));
-            return moo_none();
+    moo_sockfd_t fd = socket(AF_INET6, SOCK_DGRAM, 0);
+    if (!MOO_SOCK_BAD(fd)) {
+        int v6only = 0;
+        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, MOO_SOPT(&v6only), sizeof(v6only));
+        if (p > 0) {
+            struct sockaddr_in6 addr6;
+            memset(&addr6, 0, sizeof(addr6));
+            addr6.sin6_family = AF_INET6;
+            addr6.sin6_addr = in6addr_any;
+            addr6.sin6_port = htons((uint16_t)p);
+            if (bind(fd, (struct sockaddr*)&addr6, sizeof(addr6)) != 0) {
+                moo_closesock(fd);
+                fd = MOO_INVALID_SOCK;
+            }
         }
     }
 
+    if (MOO_SOCK_BAD(fd)) {
+        fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (!MOO_SOCK_BAD(fd) && p > 0) {
+            struct sockaddr_in addr4;
+            memset(&addr4, 0, sizeof(addr4));
+            addr4.sin_family = AF_INET;
+            addr4.sin_addr.s_addr = htonl(INADDR_ANY);
+            addr4.sin_port = htons((uint16_t)p);
+            if (bind(fd, (struct sockaddr*)&addr4, sizeof(addr4)) != 0) {
+                moo_closesock(fd);
+                fd = MOO_INVALID_SOCK;
+            }
+        }
+    }
+
+    if (MOO_SOCK_BAD(fd)) {
+        moo_throw(moo_string_new("udp_socket: Socket oder Bind fehlgeschlagen"));
+        return moo_none();
+    }
     return make_socket(fd, SOCK_DGRAM, false);
 }
 
@@ -237,7 +263,7 @@ MooValue moo_socket_accept(MooValue server) {
         return moo_none();
     }
 
-    struct sockaddr_in client_addr;
+    struct sockaddr_storage client_addr;
     socklen_t len = sizeof(client_addr);
     moo_sockfd_t client_fd = accept(s->fd, (struct sockaddr*)&client_addr, &len);
     if (MOO_SOCK_BAD(client_fd)) {
@@ -366,20 +392,60 @@ void moo_socket_close(MooValue sock) {
 void moo_udp_connect(MooValue sock, MooValue host, MooValue port) {
     MooSocket* s = get_socket(sock);
     if (!s || MOO_SOCK_BAD(s->fd)) return;
-    if (host.tag != MOO_STRING || port.tag != MOO_NUMBER) return;
-    const char* h = MV_STR(host)->chars;
-    int p = (int)MV_NUM(port);
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(p);
-    if (inet_pton(AF_INET, h, &addr.sin_addr) <= 0) {
-        moo_throw(moo_string_new("udp_verbinden: ungueltige IP"));
+    if (host.tag != MOO_STRING || port.tag != MOO_NUMBER) {
+        moo_throw(moo_string_new("udp_verbinden: Host muss Text und Port eine Zahl sein"));
         return;
     }
-    if (connect(s->fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        moo_throw(moo_string_new("udp_verbinden: connect fehlgeschlagen"));
+    const char* h = MV_STR(host)->chars;
+    int p = (int)MV_NUM(port);
+    if (p < 1 || p > 65535) {
+        moo_throw(moo_string_new("udp_verbinden: Port muss zwischen 1 und 65535 liegen"));
+        return;
+    }
+
+    struct sockaddr_storage local_addr;
+    socklen_t local_len = sizeof(local_addr);
+    if (getsockname(s->fd, (struct sockaddr*)&local_addr, &local_len) != 0) {
+        moo_throw(moo_string_new("udp_verbinden: Socket-Familie nicht bestimmbar"));
+        return;
+    }
+
+    char portstr[16];
+    snprintf(portstr, sizeof portstr, "%d", p);
+    struct addrinfo hints, *res = NULL, *rp;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    if (getaddrinfo(h, portstr, &hints, &res) != 0) {
+        moo_throw(moo_string_new("udp_verbinden: DNS-Aufloesung fehlgeschlagen"));
+        return;
+    }
+
+    int connected = 0;
+    for (rp = res; rp; rp = rp->ai_next) {
+        if (local_addr.ss_family == rp->ai_family) {
+            if (connect(s->fd, rp->ai_addr, rp->ai_addrlen) == 0) {
+                connected = 1;
+                break;
+            }
+        } else if (local_addr.ss_family == AF_INET6 && rp->ai_family == AF_INET) {
+            const struct sockaddr_in* src4 = (const struct sockaddr_in*)rp->ai_addr;
+            struct sockaddr_in6 mapped;
+            memset(&mapped, 0, sizeof(mapped));
+            mapped.sin6_family = AF_INET6;
+            mapped.sin6_port = src4->sin_port;
+            mapped.sin6_addr.s6_addr[10] = 0xff;
+            mapped.sin6_addr.s6_addr[11] = 0xff;
+            memcpy(&mapped.sin6_addr.s6_addr[12], &src4->sin_addr, 4);
+            if (connect(s->fd, (struct sockaddr*)&mapped, sizeof(mapped)) == 0) {
+                connected = 1;
+                break;
+            }
+        }
+    }
+    freeaddrinfo(res);
+    if (!connected) {
+        moo_throw(moo_string_new("udp_verbinden: keine passende Adresse erreichbar"));
     }
 }
 

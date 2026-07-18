@@ -1,0 +1,81 @@
+# Deterministischer Selftest fuer stdlib/dns.moos — kein Netzwerk.
+importiere dns
+
+setze fehler auf 0
+
+funktion pruefe(name, bedingung):
+    wenn bedingung:
+        zeige "PASS " + name
+    sonst:
+        zeige "FAIL " + name
+        setze fehler auf fehler + 1
+
+funktion kopf(id, typ, rdata):
+    setze frage auf [
+        7, 101, 120, 97, 109, 112, 108, 101,
+        3, 99, 111, 109, 0,
+        0, typ, 0, 1
+    ]
+    setze antwort auf [
+        192, 12,
+        0, typ, 0, 1,
+        0, 0, 0, 60,
+        0, länge(rdata)
+    ]
+    setze paket auf [
+        0, id, 129, 128,
+        0, 1, 0, 1,
+        0, 0, 0, 0
+    ]
+    bytes_anhaengen(paket, frage)
+    bytes_anhaengen(paket, antwort)
+    bytes_anhaengen(paket, rdata)
+    gib_zurück paket
+
+setze a_resp auf parse_response(kopf(1, TYP_A, [1, 2, 3, 4]))
+pruefe("A-ID", a_resp["id"] == 1)
+pruefe("A-Wert", a_resp["antworten"][0]["rdata"] == "1.2.3.4")
+pruefe("A-TTL", a_resp["antworten"][0]["ttl"] == 60)
+
+setze aaaa_bytes auf [
+    32, 1, 13, 184, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 1
+]
+setze aaaa_resp auf parse_response(kopf(2, TYP_AAAA, aaaa_bytes))
+pruefe("AAAA-ID", aaaa_resp["id"] == 2)
+pruefe("AAAA-Wert", aaaa_resp["antworten"][0]["rdata"] == "2001:0db8:0000:0000:0000:0000:0000:0001")
+
+setze cname_bytes auf [
+    6, 116, 97, 114, 103, 101, 116,
+    7, 101, 120, 97, 109, 112, 108, 101,
+    0
+]
+setze cname_resp auf parse_response(kopf(3, TYP_CNAME, cname_bytes))
+pruefe("CNAME-ID", cname_resp["id"] == 3)
+pruefe("CNAME-Wert", cname_resp["antworten"][0]["rdata"] == "target.example")
+
+setze kurz_gefangen auf falsch
+versuche:
+    parse_response([0, 1, 129])
+fange e:
+    setze kurz_gefangen auf wahr
+pruefe("Truncated", kurz_gefangen)
+
+setze zyklus_gefangen auf falsch
+versuche:
+    lies_name([192, 0], 0)
+fange e:
+    setze zyklus_gefangen auf wahr
+pruefe("Pointer-Zyklus", zyklus_gefangen)
+
+setze falsche_laenge_gefangen auf falsch
+versuche:
+    parse_response(kopf(4, TYP_A, [1, 2, 3]))
+fange e:
+    setze falsche_laenge_gefangen auf wahr
+pruefe("A-Laenge", falsche_laenge_gefangen)
+
+wenn fehler == 0:
+    zeige "DNS-SELFTEST PASS"
+sonst:
+    zeige "DNS-SELFTEST FAIL " + text(fehler)
