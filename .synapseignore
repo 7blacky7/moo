@@ -18,6 +18,9 @@ nohup.out
 
 # Manuelle/lebhafte Testflächen, nur bei Bedarf indexieren.
 tests/
-
-# Vendored mbedTLS (self-contained TLS-Backend) — nicht indexieren
-compiler/runtime/mbedtls/
+# Fuer die aktive Win32-Visualregression nur die zwei betroffenen Quellen
+# sichtbar machen; alle anderen Dateien unter beispiele/tests bleiben draussen.
+!beispiele/tests/
+beispiele/tests/*
+!beispiele/tests/ui_canvas_test.moos
+!beispiele/tests/ui_tray_lifecycle_test.moos

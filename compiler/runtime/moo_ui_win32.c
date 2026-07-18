@@ -3373,8 +3373,21 @@ cleanup:
     return ok;
 }
 
-/* Kern: PrintWindow → HBITMAP → PNG. `client_only`=1 schneidet Fenster-
- * Chrome ab (PW_CLIENTONLY). */
+/* Capturt den aktuell sichtbaren GDI-Inhalt nach einem synchronen Redraw.
+ * Anders als PrintWindow liefert dieser Pfad keine erfolgreich gemeldete,
+ * aber veraltete Owner-Draw-Kopie aus dem Fenster-Cache. */
+static BOOL w32_capture_hwnd_dc(HWND hwnd, HDC ziel, int w, int h,
+                                int client_only) {
+    HDC quelle = client_only ? GetDC(hwnd) : GetWindowDC(hwnd);
+    if (!quelle) return FALSE;
+
+    BOOL ok = BitBlt(ziel, 0, 0, w, h, quelle, 0, 0, SRCCOPY);
+    ReleaseDC(hwnd, quelle);
+    return ok;
+}
+
+/* Kern: synchroner GDI-DC-Capture → HBITMAP → PNG. PrintWindow bleibt
+ * Fallback fuer Fenster, deren Inhalt nicht direkt per BitBlt lesbar ist. */
 static int w32_capture_hwnd_png(HWND hwnd, const wchar_t* wpath,
                                 int client_only) {
     if (!hwnd || !IsWindow(hwnd)) { ui_log("snapshot: hwnd ungueltig", NULL); return 0; }
@@ -3429,17 +3442,13 @@ static int w32_capture_hwnd_png(HWND hwnd, const wchar_t* wpath,
     UINT flags = PW_RENDERFULLCONTENT;
     if (client_only) flags |= PW_CLIENTONLY;
 
-    BOOL rendered = PrintWindow(hwnd, hdc_mem, flags);
+    /* Win32-Controls und die Moo-Leinwand zeichnen per GDI. Nach dem
+     * synchronen Redraw ist der Fenster-DC die aktuelle Wahrheitsquelle.
+     * PrintWindow kann TRUE liefern und trotzdem einen alten Owner-Draw-
+     * Cache kopieren; deshalb nur noch als Fallback verwenden. */
+    BOOL rendered = w32_capture_hwnd_dc(hwnd, hdc_mem, w, h, client_only);
     if (!rendered) {
-        /* Fallback: direkter BitBlt vom Fenster-DC. Funktioniert bei
-         * normalen GDI-Fenstern; bei HW-beschleunigten Composited-Windows
-         * liefert PrintWindow das bessere Ergebnis. */
-        HDC src = client_only ? GetDC(hwnd) : GetWindowDC(hwnd);
-        if (src) {
-            BitBlt(hdc_mem, 0, 0, w, h, src, 0, 0, SRCCOPY);
-            ReleaseDC(hwnd, src);
-            rendered = TRUE;
-        }
+        rendered = PrintWindow(hwnd, hdc_mem, flags);
     }
 
     SelectObject(hdc_mem, old_bmp);
@@ -3525,8 +3534,8 @@ static int w32_is_combo_class(const wchar_t* cls) {
     return cls && _wcsicmp(cls, L"ComboBox") == 0;
 }
 
-/* Synchroner Klick auf ein einzelnes Control. */
-static int w32_test_klick_hwnd(HWND h) {
+/* Synchroner Klick auf ein einzelnes Control an lokalen Client-Koordinaten. */
+static int w32_test_klick_hwnd_at(HWND h, int x, int y) {
     if (!h || !IsWindow(h)) return 0;
     if (!IsWindowVisible(h)) return 0;
     if (!IsWindowEnabled(h)) return 0;
@@ -3542,17 +3551,26 @@ static int w32_test_klick_hwnd(HWND h) {
         return 1;
     }
 
-    /* Generisch: synthetischer Maus-Klick auf Center der Client-Area.
-     * Deckt Leinwand-Subclass (WM_LBUTTONDOWN → on_maus) und Custom-Controls
-     * ab. SendMessage = synchron. */
+    RECT rc;
+    if (!GetClientRect(h, &rc)) return 0;
+    int breite = rc.right - rc.left;
+    int hoehe = rc.bottom - rc.top;
+    if (x < 0 || y < 0 || x >= breite || y >= hoehe) return 0;
+
+    LPARAM pos = MAKELPARAM(x, y);
+    SendMessageW(h, WM_LBUTTONDOWN, MK_LBUTTON, pos);
+    SendMessageW(h, WM_LBUTTONUP,   0,          pos);
+    return 1;
+}
+
+/* Synchroner Center-Klick fuer die bestehende widget-basierte Test-API. */
+static int w32_test_klick_hwnd(HWND h) {
+    if (!h || !IsWindow(h)) return 0;
     RECT rc;
     if (!GetClientRect(h, &rc)) return 0;
     int cx = (rc.right  - rc.left) / 2;
     int cy = (rc.bottom - rc.top)  / 2;
-    LPARAM pos = MAKELPARAM(cx, cy);
-    SendMessageW(h, WM_LBUTTONDOWN, MK_LBUTTON, pos);
-    SendMessageW(h, WM_LBUTTONUP,   0,          pos);
-    return 1;
+    return w32_test_klick_hwnd_at(h, cx, cy);
 }
 
 MooValue moo_ui_test_klick(MooValue widget) {
@@ -3578,7 +3596,6 @@ MooValue moo_ui_test_klick_xy(MooValue fenster, MooValue x, MooValue y) {
 
     /* Wenn das gefundene Widget einen weiteren Container ist (MooContainer
      * oder Tab-Inhalt), eine Ebene tiefer hit-testen. */
-    POINT child_pt = pt;
     HWND cur = hit;
     for (int depth = 0; depth < 8; depth++) {
         if (cur == top) break;
@@ -3588,12 +3605,14 @@ MooValue moo_ui_test_klick_xy(MooValue fenster, MooValue x, MooValue y) {
         POINT loc = scr;
         ScreenToClient(cur, &loc);
         HWND deeper = RealChildWindowFromPoint(cur, loc);
-        if (!deeper || deeper == cur) { child_pt = loc; break; }
+        if (!deeper || deeper == cur) break;
         cur = deeper;
     }
-    (void)child_pt;
+    POINT ziel_pt = pt;
+    ClientToScreen(top, &ziel_pt);
+    ScreenToClient(cur, &ziel_pt);
 
-    return moo_bool(w32_test_klick_hwnd(cur) ? 1 : 0);
+    return moo_bool(w32_test_klick_hwnd_at(cur, ziel_pt.x, ziel_pt.y) ? 1 : 0);
 }
 
 MooValue moo_ui_test_text_setze(MooValue widget, MooValue text) {

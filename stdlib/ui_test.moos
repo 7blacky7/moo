@@ -402,7 +402,8 @@ funktion ui_test_frame(fenster, pfad_basis, aktion_dict):
     setze window_size["h"] auf wh
 
     # Hash-Eingabe hat feste Feldreihenfolge und enthaelt weder Label,
-    # Timestamp noch Pfad. So kann ein Label keinen Zustandswechsel vortaeuschen.
+    # Timestamp noch Pfad. Der explizite visual_state gehoert dagegen zum
+    # semantischen Frame-Zustand, auch wenn der Widget-Baum gleich bleibt.
     setze png_inhalt auf nichts
     wenn snapshot_ok:
         setze png_inhalt auf datei_lesen(png_pfad)
@@ -410,7 +411,8 @@ funktion ui_test_frame(fenster, pfad_basis, aktion_dict):
     wenn typ_von(png_inhalt) == "Text":
         setze png_hash auf sha256(png_inhalt)
     setze kanonisch auf __uit_lp(backend) + __uit_lp(1) + __uit_lp(wb) + __uit_lp(wh)
-    setze kanonisch auf kanonisch + __uit_lp(__uit_baum_kanonisch(baum)) + __uit_lp(png_hash)
+    setze kanonisch auf kanonisch + __uit_lp(__uit_baum_kanonisch(baum))
+    setze kanonisch auf kanonisch + __uit_lp(visual_state) + __uit_lp(png_hash)
     setze state_hash auf ""
     setze hash_eingabe_ok auf typ_von(png_hash) == "Text" und länge(png_hash) == 64
     wenn hash_eingabe_ok:

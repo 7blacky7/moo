@@ -65,6 +65,7 @@ funktion lauf_sequenz():
     setze a1 auf {}
     setze a1["action"] auf "frame"
     setze a1["pfad"] auf "beispiele/snapshots/canvas/frame_001"
+    setze a1["visual_state"] auf "punkte=0"
     aktionen.hinzufügen(a1)
 
     setze a2 auf {}
@@ -81,6 +82,7 @@ funktion lauf_sequenz():
     setze a4 auf {}
     setze a4["action"] auf "frame"
     setze a4["pfad"] auf "beispiele/snapshots/canvas/frame_002"
+    setze a4["visual_state"] auf "punkte=1"
     aktionen.hinzufügen(a4)
 
     setze a5 auf {}
@@ -97,6 +99,7 @@ funktion lauf_sequenz():
     setze a7 auf {}
     setze a7["action"] auf "frame"
     setze a7["pfad"] auf "beispiele/snapshots/canvas/frame_003"
+    setze a7["visual_state"] auf "punkte=2"
     aktionen.hinzufügen(a7)
 
     setze reports auf ui_test_sequenz(g["hFenster"], "beispiele/snapshots/canvas", aktionen)
@@ -130,7 +133,17 @@ solange i < total:
 
 zeige "Canvas-Test: " + text(okc) + "/" + text(total) + " Aktionen OK"
 
+setze punkte_ok auf länge(g["punkte"]) == 2
+wenn punkte_ok:
+    setze p0 auf g["punkte"][0]
+    setze p1 auf g["punkte"][1]
+    setze punkte_ok auf p0[0] == 90 und p0[1] == 90
+    setze punkte_ok auf punkte_ok und p1[0] == 190 und p1[1] == 140
+wenn punkte_ok != wahr:
+    zeige "CANVAS-KOORDINATEN FALSCH: " + text(g["punkte"])
+
 setze json_ok auf wahr
+setze erwartete_states auf ["punkte=0", "punkte=1", "punkte=2"]
 setze i auf 0
 setze nf auf länge(frames)
 solange i < nf:
@@ -146,6 +159,13 @@ solange i < nf:
             setze json_ok auf falsch
         sonst:
             setze roh auf datei_lesen(jp)
+            setze state_marker auf "\"visual_state\":\"" + erwartete_states[i] + "\""
+            wenn roh.text_enthält(state_marker) != wahr:
+                zeige "VISUAL_STATE FALSCH: " + jp
+                setze json_ok auf falsch
+            wenn roh.text_enthält("\"stale_visual\":false") != wahr:
+                zeige "STALE_VISUAL: " + jp
+                setze json_ok auf falsch
             setze parsed auf json_parse(roh)
             wenn parsed == nichts:
                 zeige "JSON UNGUELTIG: " + jp
@@ -157,7 +177,7 @@ solange i < nf:
     setze i auf i + 1
 
 wenn okc == total:
-    wenn json_ok == wahr:
+    wenn json_ok == wahr und punkte_ok == wahr:
         zeige "=== CANVAS-TEST OK ==="
         beende(0)
 

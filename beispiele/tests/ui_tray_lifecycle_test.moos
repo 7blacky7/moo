@@ -51,12 +51,21 @@ funktion lauf_sequenz():
         setze nr auf text(i + 1001)
         setze nr auf nr.teilstring(1, länge(nr))
         setze basis auf "beispiele/snapshots/tray_lifecycle/frame_" + nr
+        setze erwartet auf "tray_aufrufe=" + text(g["aufrufe"])
         setze aktion auf {}
         setze aktion["action"] auf "frame"
         setze aktion["target"] auf basis
+        setze aktion["visual_state"] auf erwartet
         setze ok auf ui_test_frame(g["fenster"], basis, aktion)
         wenn ok != wahr:
             zeige "Snapshot fehlgeschlagen: " + basis
+            tray_aktiv(g["tray"], falsch)
+            ui_beenden()
+            beende(1)
+        setze sidecar_roh auf datei_lesen(basis + ".json")
+        setze marker auf "\"visual_state\":\"" + erwartet + "\""
+        wenn sidecar_roh.text_enthält(marker) != wahr:
+            zeige "Sidecar-Zustand falsch: " + basis
             tray_aktiv(g["tray"], falsch)
             ui_beenden()
             beende(1)
