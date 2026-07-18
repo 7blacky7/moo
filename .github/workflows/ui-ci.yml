@@ -368,9 +368,13 @@ jobs:
 
           $clang = Get-Command clang.exe -ErrorAction Stop
           $rustSysroot = (& rustc --print sysroot).Trim()
-          $lldSource = Join-Path $rustSysroot "lib\rustlib\x86_64-pc-windows-msvc\bin\gcc-ld\lld-link.exe"
+          # Der gcc-ld/lld-link.exe-Pfad ist nur ein Rust-Wrapper, der im
+          # portablen Bundle sein Kind `rust-lld.exe` nicht mehr findet.
+          # Das echte Multicall-Binary wird als lld-link.exe benannt; dadurch
+          # waehlt LLD anhand von argv[0] direkt den COFF-Linkermodus.
+          $lldSource = Join-Path $rustSysroot "lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe"
           if (!(Test-Path $lldSource)) {
-            throw "Rust-MSVC lld-link.exe fehlt: $lldSource"
+            throw "Rust-MSVC rust-lld.exe fehlt: $lldSource"
           }
           $lldDest = "$sdk\toolchain\bin\lld-link.exe"
           Copy-Item $clang.Source "$sdk\toolchain\bin\clang.exe"
