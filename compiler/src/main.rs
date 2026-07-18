@@ -340,6 +340,17 @@ fn create_alias_functions(stmts: &[ast::Stmt], prefix: &str, names: &[String]) -
     aliases
 }
 
+/// Wickelt einen `exportiere X`-Wrapper (Stmt::Export) zu seinem inneren Statement aus.
+/// Das Modulsystem ist inline-basiert; `exportiere` ist nur ein Sichtbarkeits-Marker und
+/// darf die Definition nicht vor codegen verstecken (codegen behandelt Stmt::Export nicht,
+/// wuerde die umschlossene Funktion/Klasse also stillschweigend verwerfen).
+fn strip_export(stmt: ast::Stmt) -> ast::Stmt {
+    match stmt {
+        ast::Stmt::Export(inner) => *inner,
+        other => other,
+    }
+}
+
 /// Löst Imports AST-basiert auf: parst Module, prefixed Funktionen, erzeugt Aliases
 fn resolve_modules(
     program: &mut ast::Program,
@@ -368,22 +379,23 @@ fn resolve_modules(
 
                     if names.is_empty() {
                         // "importiere mathe" → ALLE Statements direkt einfuegen (kein Prefix!)
-                        imported_stmts.extend(mod_program.statements);
+                        // exportiere-Wrapper auswickeln, damit die Definition codegen erreicht.
+                        imported_stmts.extend(mod_program.statements.into_iter().map(strip_export));
                     } else {
-                        // "aus mathe importiere fakultaet" → gewuenschte Funktionen
-                        // + ALLE Variablen/Konstanten (werden von Funktionen gebraucht)
+                        // "aus mathe importiere fakultaet" → alle DEFINITIONEN des Moduls
+                        // (Funktionen, Klassen, DataClasses; exportiere ausgewickelt) plus alle
+                        // Variablen/Konstanten. Nur ausfuehrbare Top-Level-Statements werden
+                        // verworfen, damit ein Import keine Seiteneffekte ausloest. Im inline-
+                        // Modell ist das `names`-Filter rein informativ: sonst muessten Klassen
+                        // und transitiv genutzte Helfer eines Moduls einzeln importiert werden.
                         for mod_stmt in mod_program.statements {
-                            match &mod_stmt {
-                                ast::Stmt::FunctionDef { name, .. } => {
-                                    if names.contains(name) {
-                                        imported_stmts.push(mod_stmt);
-                                    }
-                                }
-                                // Variablen + Konstanten immer importieren
-                                // (Modul-Funktionen koennten sie referenzieren)
-                                ast::Stmt::Assignment { .. } |
-                                ast::Stmt::ConstAssignment { .. } => {
-                                    imported_stmts.push(mod_stmt);
+                            match strip_export(mod_stmt) {
+                                s @ (ast::Stmt::FunctionDef { .. }
+                                    | ast::Stmt::ClassDef { .. }
+                                    | ast::Stmt::DataClassDef { .. }
+                                    | ast::Stmt::Assignment { .. }
+                                    | ast::Stmt::ConstAssignment { .. }) => {
+                                    imported_stmts.push(s);
                                 }
                                 _ => {}
                             }
@@ -392,7 +404,8 @@ fn resolve_modules(
                 }
                 // Modul nicht gefunden → Import-Statement droppen
             }
-            _ => remaining_stmts.push(stmt),
+            // Eigene Statements der Datei (inkl. same-file `exportiere funktion/klasse`)
+            _ => remaining_stmts.push(strip_export(stmt)),
         }
     }
 
