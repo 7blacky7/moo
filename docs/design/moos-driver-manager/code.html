@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Moos Driver Intelligence</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Geist:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        .glass-panel {
+            background: rgba(19, 19, 19, 0.4);
+            backdrop-filter: blur(40px);
+            -webkit-backdrop-filter: blur(40px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+        }
+        .glass-border {
+            border-image: linear-gradient(to bottom right, rgba(255,255,255,0.2), rgba(255,255,255,0.02)) 1;
+        }
+        .glowing-primary {
+            box-shadow: 0 0 15px rgba(173, 198, 255, 0.3);
+        }
+        .glowing-primary:hover {
+            box-shadow: 0 0 25px rgba(173, 198, 255, 0.5);
+            filter: brightness(1.1);
+        }
+        body {
+            background-color: #0e0e0e;
+            color: #e5e2e1;
+            overflow: hidden;
+        }
+        .scroll-hide::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="font-body-md text-body-md">
+<!-- Background Shader -->
+<!-- SideNavBar (Shared Component) -->
+<aside class="fixed left-0 top-0 h-screen w-64 bg-surface/60 backdrop-blur-[40px] dark:bg-surface/60 border-r border-white/10 flex flex-col py-panel-padding gap-stack-gap z-50">
+<div class="px-6 mb-8 flex items-center gap-3">
+<div class="w-10 h-10 rounded-lg bg-primary flex items-center justify-center text-on-primary">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">memory</span>
+</div>
+<div>
+<h1 class="font-headline-md text-headline-md font-semibold text-on-surface">Driver Manager</h1>
+<p class="text-xs text-on-surface-variant/70 uppercase tracking-widest">System Control</p>
+</div>
+</div>
+<nav class="flex-1 px-3 space-y-1"><!-- Audio -->
+<button class="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-on-surface-variant hover:bg-white/5 transition-colors active:scale-95 duration-200">
+<span class="material-symbols-outlined">volume_up</span>
+<span class="font-body-md">Audio</span>
+</button>
+<!-- Display -->
+<button class="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-on-surface-variant hover:bg-white/5 transition-colors active:scale-95 duration-200">
+<span class="material-symbols-outlined">monitor</span>
+<span class="font-body-md">Display</span>
+</button>
+<!-- Network (Active) -->
+<button class="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-primary font-bold border-r-2 border-primary bg-white/5 transition-colors active:scale-95 duration-200">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">router</span>
+<span class="font-body-md">Network</span>
+</button>
+<!-- Input -->
+<button class="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-on-surface-variant hover:bg-white/5 transition-colors active:scale-95 duration-200">
+<span class="material-symbols-outlined">keyboard</span>
+<span class="font-body-md">Input</span>
+</button>
+<!-- Storage -->
+<button class="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-on-surface-variant hover:bg-white/5 transition-colors active:scale-95 duration-200">
+<span class="material-symbols-outlined">database</span>
+<span class="font-body-md">Storage</span>
+</button></nav>
+<div class="px-3 pt-6 border-t border-white/5 space-y-1">
+<button class="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-on-surface-variant hover:bg-white/5 transition-colors">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-body-md">Settings</span>
+</button>
+<button class="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-on-surface-variant hover:bg-white/5 transition-colors">
+<span class="material-symbols-outlined">help_outline</span>
+<span class="font-body-md">Support</span>
+</button>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="ml-64 relative min-h-screen z-10">
+<!-- TopNavBar (Shared Component) -->
+<header class="fixed top-0 right-0 left-64 h-16 bg-surface/40 backdrop-blur-[40px] border-b border-white/10 px-grid-margin flex items-center justify-between z-40">
+<div class="flex items-center gap-8">
+<span class="font-headline-md text-headline-md font-bold text-on-surface">Moos Driver Intelligence</span>
+<div class="flex gap-6">
+<a class="text-on-surface-variant hover:text-primary transition-all font-label-sm text-label-sm" href="#">Dashboard</a>
+<a class="text-primary border-b-2 border-primary pb-1 font-label-sm text-label-sm" href="#">Telemetry</a>
+<a class="text-on-surface-variant hover:text-primary transition-all font-label-sm text-label-sm" href="#">Updates</a>
+</div>
+<div class="flex items-center gap-2 px-2 py-1 rounded bg-tertiary/10 border border-tertiary/20 animate-pulse"><span class="material-symbols-outlined text-tertiary text-[14px]">layers</span><span class="text-[10px] font-bold text-tertiary uppercase tracking-wider">Multi-Driver Mode Active</span></div></div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface-container hover:brightness-125 transition-all cursor-pointer">
+<span class="material-symbols-outlined text-primary text-[18px]">wifi</span>
+<span class="font-label-sm text-label-sm text-on-surface">Connected</span>
+</div>
+<button class="bg-primary text-on-primary px-5 py-2 rounded-full font-label-sm text-label-sm font-semibold glowing-primary transition-all active:scale-95">
+                    Intelligent Config
+                </button>
+<div class="w-8 h-8 rounded-full overflow-hidden border border-white/20">
+<img class="w-full h-full object-cover" data-alt="A professional user profile avatar for a technical software developer. The aesthetic is clean and modern, featuring high-quality portrait lighting on a futuristic tech background. The overall tone is sophisticated, using a cool color palette of deep blues and metallic greys, consistent with a high-end operating system environment." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDzu-QPCCEBHeyBI8HUgbv0fCK-h3d_5BvLIBL84DSCvsV_orygmEdm_BIZ5YtQUFPsyIuXDjJE6OJ5f0MhaKzwb3VyvJKslI7d93f1hlK8eQGPuqMm25GVVvrruM1s4g_0CZAWlV9LlYKYAFbQfKxZw1pcDpVzgz6amASrfU58QylYiCS61L705G4TrB-0Kfy95HFRuI4KD0AzXUqAJkAYMa6MDHaAo-DhS77VwG3HbH7lR9MKBrKG"/>
+</div>
+</div>
+</header>
+<!-- Main Workspace -->
+<div class="pt-24 px-grid-margin pb-panel-padding h-screen overflow-y-auto scroll-hide">
+<!-- Grid Layout -->
+<div class="grid grid-cols-12 gap-gutter">
+<!-- Expanded Group: Graphics Adapters -->
+<div class="col-span-12 glass-panel rounded-xl p-panel-padding overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-700">
+<div class="flex items-center justify-between mb-6">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-tertiary">router</span>
+<h2 class="font-headline-md text-headline-md">Network Adapters</h2>
+<span class="px-2 py-0.5 rounded text-[10px] bg-tertiary-container/30 text-tertiary font-bold uppercase tracking-wider">Active</span>
+</div>
+<button class="text-on-surface-variant hover:text-white transition-colors">
+<span class="material-symbols-outlined">expand_less</span>
+</button>
+</div>
+<div class="w-full overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="text-on-surface-variant border-b border-white/10 bg-white/5">
+<th class="py-4 px-4 font-label-sm text-label-sm font-medium">DEVICE NAME</th>
+<th class="py-4 px-4 font-label-sm text-label-sm font-medium">WINDOWS DRIVER</th>
+<th class="py-4 px-4 font-label-sm text-label-sm font-medium">MOOS NATIVE</th>
+<th class="py-4 px-4 font-label-sm text-label-sm font-medium">LINUX DRIVER</th>
+<th class="py-4 px-4 font-label-sm text-label-sm font-medium">ASSIGNED SCOPE</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-white/5">
+<tr class="hover:bg-white/10 transition-colors group">
+<td class="py-6 px-4">
+<div class="flex items-center gap-4">
+<div class="w-10 h-10 rounded-lg bg-surface-container-highest flex items-center justify-center">
+<span class="material-symbols-outlined text-primary">settings_ethernet</span>
+</div>
+<div>
+<div class="font-bold text-on-surface">Intel(R) Ethernet Controller I225-V</div>
+<div class="text-xs text-on-surface-variant font-mono-data">Bus 0x04, Dev 0x00</div>
+</div>
+</div>
+</td>
+<td class="py-6 px-4">
+<div class="flex items-center gap-2 cursor-pointer hover:text-primary transition-colors">
+<div class="w-6 h-6 rounded-full bg-primary flex items-center justify-center">
+<span class="material-symbols-outlined text-[14px] text-on-primary">check</span>
+</div>
+<span class="font-mono-data text-mono-data text-on-surface">v2.1.3.3</span>
+</div>
+</td>
+<td class="py-6 px-4">
+<div class="inline-flex items-center px-3 py-1 rounded-full bg-surface-container border border-white/5 cursor-pointer hover:border-primary transition-all">
+<span class="font-mono-data text-mono-data">v1.0.4-stable</span>
+</div>
+</td>
+<td class="py-6 px-4">
+<span class="font-mono-data text-mono-data text-on-surface-variant/50">v5.15.0-91</span>
+</td>
+<td class="py-6 px-4">
+<div class="flex gap-1"><button class="px-2 py-0.5 rounded bg-white/10 text-[10px] text-primary uppercase hover:bg-primary/20 transition-colors flex items-center gap-1">Dienste <span class="material-symbols-outlined text-[12px]">expand_more</span></button><button class="px-2 py-0.5 rounded bg-white/10 text-[10px] text-primary uppercase hover:bg-primary/20 transition-colors flex items-center gap-1">Apps <span class="material-symbols-outlined text-[12px]">expand_more</span></button></div>
+</td>
+</tr>
+<tr class="bg-white/5 hover:bg-white/10 transition-colors group">
+<td class="py-6 px-4">
+<div class="flex items-center gap-4">
+<div class="w-10 h-10 rounded-lg bg-surface-container-highest flex items-center justify-center">
+<span class="material-symbols-outlined text-primary">wifi</span>
+</div>
+<div>
+<div class="font-bold text-on-surface">MediaTek Wi-Fi 6E MT7922</div>
+<div class="text-xs text-on-surface-variant font-mono-data">M.2 Key E 2230</div>
+</div>
+</div>
+</td>
+<td class="py-6 px-4">
+<span class="font-mono-data text-mono-data text-on-surface-variant/50">v3.3.0.832</span>
+</td>
+<td class="py-6 px-4">
+<div class="flex items-center gap-2 cursor-pointer hover:text-primary transition-colors">
+<div class="w-6 h-6 rounded-full bg-primary flex items-center justify-center">
+<span class="material-symbols-outlined text-[14px] text-on-primary">check</span>
+</div>
+<span class="font-mono-data text-mono-data text-on-surface">v1.2.0-beta</span>
+</div>
+</td>
+<td class="py-6 px-4">
+<div class="inline-flex items-center px-3 py-1 rounded-full bg-surface-container border border-white/5 cursor-pointer hover:border-primary transition-all">
+<span class="font-mono-data text-mono-data">v6.5.0-21</span>
+</div>
+</td>
+<td class="py-6 px-4">
+<div class="flex gap-1"><button class="px-2 py-0.5 rounded bg-white/10 text-[10px] text-primary uppercase hover:bg-primary/20 transition-colors flex items-center gap-1">Programme <span class="material-symbols-outlined text-[12px]">expand_more</span></button><button class="px-2 py-0.5 rounded bg-white/10 text-[10px] text-primary uppercase hover:bg-primary/20 transition-colors flex items-center gap-1">Benutzer <span class="material-symbols-outlined text-[12px]">expand_more</span></button></div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<!-- Details Panel -->
+<div class="col-span-8 glass-panel rounded-xl p-panel-padding">
+<div class="flex items-center gap-4 mb-6">
+<span class="material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 1;">insights</span>
+<h3 class="font-headline-md text-headline-md">Optimization Intelligence</h3>
+</div>
+<div class="grid grid-cols-2 gap-stack-gap">
+<div class="p-4 rounded-lg bg-white/5 border border-white/5">
+<p class="text-xs text-on-surface-variant uppercase mb-1">Current Combo</p>
+<p class="text-on-surface font-bold text-lg">Windows v551.23</p>
+</div>
+<div class="p-4 rounded-lg bg-white/5 border border-white/5">
+<p class="text-xs text-on-surface-variant uppercase mb-1">Performance</p>
+<div class="flex items-center gap-2">
+<p class="text-tertiary font-bold text-lg">98% Efficiency</p>
+<span class="text-xs text-on-surface-variant">— Best Stability</span>
+</div>
+</div>
+</div>
+<div class="mt-6 mb-6">
+<h4 class="text-label-sm font-bold text-on-surface-variant uppercase tracking-widest mb-4">Benchmark Comparison</h4>
+<div class="overflow-hidden rounded-lg border border-white/5 bg-white/5">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="text-[10px] text-on-surface-variant/70 border-b border-white/5 uppercase tracking-wider">
+<th class="py-2 px-4 font-medium">Metric</th>
+<th class="py-2 px-4 font-medium">Windows</th>
+<th class="py-2 px-4 font-medium">Moos Native</th>
+<th class="py-2 px-4 font-medium text-right">Linux</th>
+<th class="py-2 px-4 font-medium text-[10px] text-tertiary animate-pulse">Status</th></tr>
+</thead>
+<tbody class="divide-y divide-white/5 font-mono-data text-xs">
+<tr class="hover:bg-white/5 transition-colors">
+<td class="py-3 px-4 text-on-surface-variant">Latency (ms)</td>
+<td class="py-3 px-4 text-on-surface">12.4</td>
+<td class="py-3 px-4 text-tertiary font-bold">8.2 <span class="text-[10px] ml-1">▼</span></td>
+<td class="py-3 px-4 text-on-surface text-right">10.1</td>
+<td class="py-3 px-4 text-right"><span class="px-2 py-0.5 rounded bg-tertiary/20 text-tertiary text-[9px] font-bold uppercase">Testing...</span></td></tr>
+<tr class="bg-primary/5 hover:bg-primary/10 transition-colors">
+<td class="py-3 px-4 text-on-surface-variant">Throughput (Gbps)</td>
+<td class="py-3 px-4 text-on-surface">1.85</td>
+<td class="py-3 px-4 text-primary font-bold">2.42 <span class="text-[10px] ml-1">▲</span></td>
+<td class="py-3 px-4 text-on-surface text-right">2.10</td>
+<td class="py-3 px-4 text-right"><span class="px-2 py-0.5 rounded bg-tertiary/20 text-tertiary text-[9px] font-bold uppercase">Testing...</span></td></tr>
+<tr class="hover:bg-white/5 transition-colors">
+<td class="py-3 px-4 text-on-surface-variant">Stability Score</td>
+<td class="py-3 px-4 text-on-surface">94%</td>
+<td class="py-3 px-4 text-tertiary font-bold">99.8%</td>
+<td class="py-3 px-4 text-on-surface text-right">98%</td>
+<td class="py-3 px-4 text-right"><span class="px-2 py-0.5 rounded bg-tertiary/20 text-tertiary text-[9px] font-bold uppercase">Testing...</span></td></tr>
+<tr class="hover:bg-white/5 transition-colors">
+<td class="py-3 px-4 text-on-surface-variant">Power Efficiency</td>
+<td class="py-3 px-4 text-on-surface">78%</td>
+<td class="py-3 px-4 text-tertiary font-bold">92%</td>
+<td class="py-3 px-4 text-on-surface text-right">85%</td>
+<td class="py-3 px-4 text-right"><span class="px-2 py-0.5 rounded bg-tertiary/20 text-tertiary text-[9px] font-bold uppercase">Testing...</span></td></tr>
+</tbody>
+</table>
+</div>
+<div class="mt-3 flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-tertiary animate-pulse"></div>
+<span class="text-[10px] text-tertiary font-bold uppercase tracking-widest">Moos Native: Current Best Performance</span>
+</div><div class="mt-8 pt-6 border-t border-white/10">
+<h4 class="text-label-sm font-bold text-on-surface-variant uppercase tracking-widest mb-4">Driver Details</h4>
+<div class="flex gap-2 mb-4">
+<button class="px-4 py-1.5 rounded-full bg-primary text-on-primary text-xs font-bold transition-all">Moos Native</button>
+<button class="px-4 py-1.5 rounded-full bg-white/5 text-on-surface-variant text-xs font-medium hover:bg-white/10 transition-all">Windows</button>
+<button class="px-4 py-1.5 rounded-full bg-white/5 text-on-surface-variant text-xs font-medium hover:bg-white/10 transition-all">Linux</button>
+</div>
+<div class="glass-panel rounded-lg p-4 border border-white/5 bg-white/5">
+<div class="grid grid-cols-2 gap-4">
+<div class="space-y-3">
+<div>
+<p class="text-[10px] text-on-surface-variant uppercase">Version String</p>
+<p class="text-sm font-mono-data text-on-surface">v1.2.0-beta-build.402</p>
+</div>
+<div>
+<p class="text-[10px] text-on-surface-variant uppercase">Provider / Developer</p>
+<p class="text-sm text-on-surface">Moos Intelligence Systems</p>
+</div>
+<div>
+<p class="text-[10px] text-on-surface-variant uppercase">Release Date</p>
+<p class="text-sm text-on-surface">Oct 24, 2023</p>
+</div>
+</div>
+<div class="space-y-3">
+<div>
+<p class="text-[10px] text-on-surface-variant uppercase">Driver Signature</p>
+<div class="flex items-center gap-1 text-tertiary">
+<span class="material-symbols-outlined text-[14px]">verified_user</span>
+<span class="text-sm">Verified WHQL</span>
+</div>
+</div>
+<div>
+<p class="text-[10px] text-on-surface-variant uppercase">File Size</p>
+<p class="text-sm text-on-surface">14.2 MB</p>
+</div>
+<div class="pt-1">
+<button class="flex items-center gap-2 px-3 py-1.5 rounded bg-white/10 text-primary text-xs hover:bg-primary/20 transition-colors">
+<span class="material-symbols-outlined text-[16px]">search</span>
+<span>Search Online</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+</div><div class="mt-8 pt-6 border-t border-white/10">
+<h4 class="text-label-sm font-bold text-on-surface-variant uppercase tracking-widest mb-4">Driver Log / Error Protocol</h4>
+<div class="glass-panel rounded-lg p-4 border border-white/5 bg-black/40 font-mono-data text-[12px] h-48 overflow-y-auto scroll-hide">
+<div class="space-y-2">
+<div class="flex gap-3">
+<span class="text-on-surface-variant/50">[14:22:05]</span>
+<span class="text-primary font-bold">INFO:</span>
+<span class="text-on-surface-variant">Initializing Moos Native Driver testing...</span>
+</div>
+<div class="flex gap-3">
+<span class="text-on-surface-variant/50">[14:22:08]</span>
+<span class="text-tertiary font-bold">WARNING:</span>
+<span class="text-on-surface-variant">Minor latency jitter detected in Linux driver</span>
+</div>
+<div class="flex gap-3">
+<span class="text-on-surface-variant/50">[14:22:12]</span>
+<span class="text-primary font-bold">INFO:</span>
+<span class="text-on-surface-variant">Throughput optimization sequence started</span>
+</div>
+<div class="flex gap-3">
+<span class="text-on-surface-variant/50">[14:22:15]</span>
+<span class="text-error font-bold">ERROR:</span>
+<span class="text-on-surface-variant">Handshake timeout on Bus 0x04 (Retrying...)</span>
+</div>
+<div class="flex gap-3">
+<span class="text-on-surface-variant/50">[14:22:18]</span>
+<span class="text-primary font-bold">INFO:</span>
+<span class="text-on-surface-variant">Stability score recalibration complete</span>
+</div>
+<div class="flex gap-3">
+<span class="text-on-surface-variant/50">[14:22:20]</span>
+<span class="text-primary font-bold">INFO:</span>
+<span class="text-on-surface-variant">Telemetry stream established with manufacturer</span>
+</div>
+</div>
+</div>
+</div>
+</div><div class="mt-6 flex items-start gap-3 p-4 rounded-lg bg-primary/10 border border-primary/20"><div class="flex items-start gap-3">
+<span class="material-symbols-outlined text-primary">security</span>
+<div class="flex-1">
+<p class="text-body-md text-on-surface-variant leading-relaxed mb-3">
+<strong class="text-on-surface">Telemetry Note:</strong> Data shared with manufacturers for Moos native development. No personal data shared. All identifiers are hashed and anonymized prior to transmission.
+</p>
+<label class="flex items-center gap-2 cursor-pointer group">
+<div class="relative flex items-center">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-5 h-5 border-2 border-primary/40 rounded flex items-center justify-center peer-checked:bg-primary peer-checked:border-primary transition-all">
+<span class="material-symbols-outlined text-[16px] text-on-primary scale-0 peer-checked:scale-100 transition-transform">check</span>
+</div>
+</div>
+<span class="text-label-sm font-medium text-on-surface group-hover:text-primary transition-colors">Zustimmung zur anonymisierten Datenübertragung erteilt</span>
+</label>
+</div>
+</div></div>
+</div>
+<!-- Bento Card: System Health -->
+<div class="col-span-4 glass-panel rounded-xl p-panel-padding flex flex-col justify-between">
+<div>
+<h3 class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-4">Core Thermal</h3>
+<div class="flex items-end gap-2 mb-2">
+<span class="text-4xl font-mono-data font-bold text-on-surface">42°C</span>
+<span class="text-tertiary mb-1 font-bold">▲ Optimal</span>
+</div>
+</div>
+<div class="w-full h-1 bg-white/10 rounded-full overflow-hidden">
+<div class="h-full bg-gradient-to-r from-primary to-tertiary w-2/3"></div>
+</div>
+</div>
+<!-- Footer / Bottom Actions -->
+<div class="col-span-12 flex items-center justify-between glass-panel rounded-xl p-4 mt-gutter">
+<div class="flex items-center gap-6">
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-11 h-6 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+<span class="ml-3 text-body-md font-medium text-on-surface">Automatic Configuration <span class="text-on-surface-variant font-normal">(Learning from all)</span></span>
+</label>
+</div>
+<div class="flex gap-4">
+<button class="px-6 py-2.5 rounded-lg border border-white/10 text-on-surface hover:bg-white/5 transition-all active:scale-95 font-semibold">
+                            Manual Configuration
+                        </button>
+<button class="px-8 py-2.5 rounded-lg bg-primary text-on-primary font-bold glowing-primary transition-all active:scale-95">
+                            Apply Changes
+                        </button>
+</div>
+</div>
+</div>
+</div>
+</main>
+<script>
+        // Simple Micro-interactions
+        document.querySelectorAll('button, .cursor-pointer').forEach(el => {
+            el.addEventListener('click', () => {
+                // Subtle pulse or action effect could go here
+            });
+        });
+    </script>
+<div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm pointer-events-none opacity-0 transition-opacity"><div class="glass-panel w-80 rounded-xl p-6 border border-primary/30 shadow-2xl pointer-events-auto"><div class="flex justify-between items-center mb-4"><h4 class="font-headline-md text-[18px] text-on-surface">Assign Scope</h4><span class="material-symbols-outlined cursor-pointer hover:text-primary">close</span></div><p class="text-xs text-on-surface-variant mb-4">Select specific targets for this driver instance:</p><div class="space-y-2 mb-6"><label class="flex items-center gap-3 p-2 rounded hover:bg-white/5 cursor-pointer"><input checked="" class="rounded border-white/20 bg-transparent text-primary focus:ring-primary" type="checkbox"/><span class="text-body-md">Google Chrome</span></label><label class="flex items-center gap-3 p-2 rounded hover:bg-white/5 cursor-pointer"><input class="rounded border-white/20 bg-transparent text-primary focus:ring-primary" type="checkbox"/><span class="text-body-md">System Service (PID 402)</span></label><label class="flex items-center gap-3 p-2 rounded hover:bg-white/5 cursor-pointer"><input class="rounded border-white/20 bg-transparent text-primary focus:ring-primary" type="checkbox"/><span class="text-body-md">Admin User Session</span></label></div><button class="w-full py-2 bg-primary text-on-primary rounded-lg font-bold">Update Assignment</button></div></div></body></html>
