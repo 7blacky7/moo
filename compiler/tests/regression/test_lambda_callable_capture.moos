@@ -1,0 +1,25 @@
+# Regression: Ein Lambda muss einen Funktionswert aus dem aeusseren
+# Funktions-Scope capturen und ueber den bestehenden indirekten Call-Pfad
+# aufrufen koennen. Gleichzeitig werden angrenzende Call-Varianten geschuetzt.
+
+funktion antwort():
+    gib_zurück 42
+
+funktion plus_eins(x):
+    gib_zurück x + 1
+
+funktion pruefe(cb0, cb1, wert):
+    setze ohne_arg auf () => cb0()
+    setze mit_arg auf (x) => cb1(x)
+    setze wert_capture auf () => wert
+    setze parameter_call auf (funk, x) => funk(x)
+    setze top_level_call auf (x) => plus_eins(x)
+
+    zeige ohne_arg()
+    zeige ohne_arg()
+    zeige mit_arg(41)
+    zeige wert_capture()
+    zeige parameter_call(cb1, 41)
+    zeige top_level_call(41)
+
+pruefe(antwort, plus_eins, 7)

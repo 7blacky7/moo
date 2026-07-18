@@ -7768,7 +7768,14 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::UnaryOp { operand, .. } => {
                 Self::collect_free_vars(operand, params, out);
             }
-            Expr::FunctionCall { args, .. } => {
+            Expr::FunctionCall { name, args } => {
+                // Der Callee kann selbst ein freier Funktionswert sein, z. B.
+                // `() => cb()` mit `cb` als Parameter der aeusseren Funktion.
+                // Der spaetere self.variables-Filter stellt sicher, dass nur
+                // tatsaechlich vorhandene lokale Werte captured werden.
+                if !params.contains(name) {
+                    out.push(name.clone());
+                }
                 for a in args { Self::collect_free_vars(a, params, out); }
             }
             Expr::MethodCall { object, args, .. } => {
