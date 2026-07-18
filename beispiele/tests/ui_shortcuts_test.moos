@@ -59,6 +59,7 @@ funktion lauf_sequenz():
     setze a1 auf {}
     setze a1["action"] auf "frame"
     setze a1["pfad"] auf "beispiele/snapshots/shortcuts/frame_001"
+    setze a1["visual_state"] auf "status=bereit"
     aktionen.hinzufügen(a1)
 
     setze a2 auf {}
@@ -74,6 +75,7 @@ funktion lauf_sequenz():
     setze a4 auf {}
     setze a4["action"] auf "frame"
     setze a4["pfad"] auf "beispiele/snapshots/shortcuts/frame_002"
+    setze a4["visual_state"] auf "status=speichern"
     aktionen.hinzufügen(a4)
 
     setze a5 auf {}
@@ -89,6 +91,7 @@ funktion lauf_sequenz():
     setze a7 auf {}
     setze a7["action"] auf "frame"
     setze a7["pfad"] auf "beispiele/snapshots/shortcuts/frame_003"
+    setze a7["visual_state"] auf "status=escape"
     aktionen.hinzufügen(a7)
 
     setze reports auf ui_test_sequenz(g["hFenster"], "beispiele/snapshots/shortcuts", aktionen)

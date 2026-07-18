@@ -18,9 +18,13 @@ nohup.out
 
 # Manuelle/lebhafte Testflächen, nur bei Bedarf indexieren.
 tests/
-# Fuer die aktive Win32-Visualregression nur die zwei betroffenen Quellen
-# sichtbar machen; alle anderen Dateien unter beispiele/tests bleiben draussen.
+# Fuer die kanonische plattformuebergreifende UI-Visualsuite nur die sechs
+# Runner-Quellen sichtbar machen; alle anderen beispiele/tests bleiben draussen.
 !beispiele/tests/
 beispiele/tests/*
 !beispiele/tests/ui_canvas_test.moos
 !beispiele/tests/ui_tray_lifecycle_test.moos
+!beispiele/tests/ui_layout_test.moos
+!beispiele/tests/ui_table_test.moos
+!beispiele/tests/ui_binding_test.moos
+!beispiele/tests/ui_shortcuts_test.moos

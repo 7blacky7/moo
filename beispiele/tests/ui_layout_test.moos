@@ -72,6 +72,7 @@ funktion lauf_sequenz():
     setze a1 auf {}
     setze a1["action"] auf "frame"
     setze a1["pfad"] auf "beispiele/snapshots/layout/frame_001"
+    setze a1["visual_state"] auf "name=;status=bereit"
     aktionen.hinzufügen(a1)
 
     # 2) Text setzen -> Relayout
@@ -89,6 +90,7 @@ funktion lauf_sequenz():
     setze a4 auf {}
     setze a4["action"] auf "frame"
     setze a4["pfad"] auf "beispiele/snapshots/layout/frame_002"
+    setze a4["visual_state"] auf "name=Moritz;status=bereit"
     aktionen.hinzufügen(a4)
 
     # 3) Klick OK -> Status-Label Update
@@ -105,6 +107,7 @@ funktion lauf_sequenz():
     setze a7 auf {}
     setze a7["action"] auf "frame"
     setze a7["pfad"] auf "beispiele/snapshots/layout/frame_003"
+    setze a7["visual_state"] auf "name=Moritz;status=ok"
     aktionen.hinzufügen(a7)
 
     setze reports auf ui_test_sequenz(g["hFenster"], "beispiele/snapshots/layout", aktionen)

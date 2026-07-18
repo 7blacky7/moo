@@ -81,6 +81,7 @@ funktion lauf_sequenz():
     setze a1 auf {}
     setze a1["action"] auf "frame"
     setze a1["pfad"] auf "beispiele/snapshots/table/frame_001"
+    setze a1["visual_state"] auf "status=bereit;rows=7"
     aktionen.hinzufügen(a1)
 
     setze a2 auf {}
@@ -96,6 +97,7 @@ funktion lauf_sequenz():
     setze a4 auf {}
     setze a4["action"] auf "frame"
     setze a4["pfad"] auf "beispiele/snapshots/table/frame_002"
+    setze a4["visual_state"] auf "status=sortiert;rows=7"
     aktionen.hinzufügen(a4)
 
     setze a5 auf {}
@@ -111,6 +113,7 @@ funktion lauf_sequenz():
     setze a7 auf {}
     setze a7["action"] auf "frame"
     setze a7["pfad"] auf "beispiele/snapshots/table/frame_003"
+    setze a7["visual_state"] auf "status=zelle999;rows=7"
     aktionen.hinzufügen(a7)
 
     setze a8 auf {}
@@ -126,6 +129,7 @@ funktion lauf_sequenz():
     setze a10 auf {}
     setze a10["action"] auf "frame"
     setze a10["pfad"] auf "beispiele/snapshots/table/frame_004"
+    setze a10["visual_state"] auf "status=entfernt;rows=6"
     aktionen.hinzufügen(a10)
 
     setze reports auf ui_test_sequenz(g["hFenster"], "beispiele/snapshots/table", aktionen)
