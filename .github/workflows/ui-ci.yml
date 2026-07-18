@@ -368,8 +368,13 @@ jobs:
 
           $clang = Get-Command clang.exe -ErrorAction Stop
           $lld = Get-Command lld-link.exe -ErrorAction Stop
+          $lldDest = "$sdk\toolchain\bin\lld-link.exe"
           Copy-Item $clang.Source "$sdk\toolchain\bin\clang.exe"
-          Copy-Item $lld.Source "$sdk\toolchain\bin\lld-link.exe"
+          # Conda-forge kann lld-link.exe als Dateisystem-Link auf den
+          # Multicall-Treiber liefern. Copy-Item darf diesen Link nicht
+          # ausserhalb seines Prefixes reproduzieren; File.Copy uebernimmt
+          # den tatsaechlichen PE-Inhalt in das portable SDK.
+          [System.IO.File]::Copy($lld.Source, $lldDest, $true)
 
           # Alle aktiven Link-Suchpfade flach bündeln: conda/vcpkg sowie
           # MSVC-, UCRT- und Windows-SDK-Importbibliotheken.
@@ -391,9 +396,14 @@ jobs:
                 Copy-Item -Destination "$sdk\bin" -Force
             }
           }
-          # clang.exe lädt seine LLVM-DLLs bevorzugt direkt neben sich.
+          # clang.exe und lld-link.exe laden ihre LLVM-DLLs bevorzugt direkt
+          # neben sich.
           Get-ChildItem $condaBin -Filter "*.dll" -File |
             Copy-Item -Destination "$sdk\toolchain\bin" -Force
+          & $lldDest --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Gebündeltes lld-link.exe ist nicht ausführbar ($LASTEXITCODE)"
+          }
 
           if (!$env:VCToolsRedistDir -or !(Test-Path $env:VCToolsRedistDir)) {
             throw "VCToolsRedistDir fehlt — portables SDK darf keine CRT-DLLs still auslassen"
