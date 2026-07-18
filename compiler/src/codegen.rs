@@ -3749,7 +3749,16 @@ impl<'ctx> CodeGen<'ctx> {
                     "tls_verbinde" | "tls_connect" => {
                         let host = self.compile_expr(&args[0])?;
                         let port = self.compile_expr(&args[1])?;
+                        if args.len() >= 3 {
+                            let t = self.compile_expr(&args[2])?;
+                            return self.call_rt(self.rt.moo_tls_connect_timeout, &[host.into(), port.into(), t.into()], "tls_connect");
+                        }
                         return self.call_rt(self.rt.moo_tls_connect, &[host.into(), port.into()], "tls_connect");
+                    }
+                    "tls_starttls" | "tls_upgrade" => {
+                        let sock = self.compile_expr(&args[0])?;
+                        let host = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tls_starttls, &[sock.into(), host.into()], "tls_starttls");
                     }
                     "tls_sende" | "tls_send" => {
                         let h = self.compile_expr(&args[0])?;

@@ -1,9 +1,9 @@
 /*
  * moo_tls_openssl.c — TLS-Backend fuer moo, nativer Linux-Pfad (OpenSSL).
  * Erfuellt den Vertrag moo_tls.h (nur Schicht 1: der Backend). Die backend-
- * agnostischen Builtins (moo_tls_connect/send/recv/close) liegen in moo_tls.c
- * und sind fuer beide Backends gemeinsam. Genau ein Backend wird kompiliert
- * (Build-Flag MOO_TLS_BACKEND, Default openssl).
+ * agnostischen Builtins (moo_tls_connect/send/recv/close/starttls) liegen in
+ * moo_tls.c und sind fuer beide Backends gemeinsam. Genau ein Backend wird
+ * kompiliert (Build-Flag MOO_TLS_BACKEND, Default openssl).
  */
 #include "moo_runtime.h"
 #include "moo_tls.h"
@@ -12,39 +12,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <netdb.h>
-#include <sys/socket.h>
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
+
+/* Shared TCP-Connect (DNS + optionaler Connect-Timeout) aus moo_net.c. */
+extern int moo_net_tcp_connect_timeout(const char* host, int port, int timeout_ms,
+                                       char* errbuf, int errlen);
 
 typedef struct {
     SSL*     ssl;
     SSL_CTX* ctx;
     int      fd;
 } OsslConn;
-
-/* TCP-connect mit DNS (getaddrinfo, IPv4+IPv6). Gibt fd oder -1. */
-static int ossl_tcp_connect(const char* host, int port) {
-    char portstr[16];
-    snprintf(portstr, sizeof portstr, "%d", port);
-    struct addrinfo hints, *res = NULL, *rp;
-    memset(&hints, 0, sizeof hints);
-    hints.ai_family   = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(host, portstr, &hints, &res) != 0) return -1;
-    int fd = -1;
-    for (rp = res; rp; rp = rp->ai_next) {
-        fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (fd < 0) continue;
-        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) break;
-        close(fd);
-        fd = -1;
-    }
-    freeaddrinfo(res);
-    return fd;
-}
 
 static void ossl_err(char* errbuf, int errlen, const char* msg) {
     unsigned long e = ERR_get_error();
@@ -57,10 +38,9 @@ static void ossl_err(char* errbuf, int errlen, const char* msg) {
     }
 }
 
-static void* ossl_verbinde(const char* host, int port, char* errbuf, int errlen) {
-    int fd = ossl_tcp_connect(host, port);
-    if (fd < 0) { snprintf(errbuf, errlen, "TCP-Verbindung/DNS fehlgeschlagen: %s:%d", host, port); return NULL; }
-
+/* Wickelt einen bereits verbundenen fd in TLS: SNI, System-CA-Verifikation,
+ * Hostname-Check, Handshake. Uebernimmt den fd (schliesst ihn bei Fehler). */
+static void* ossl_wrap_fd(int fd, const char* host, char* errbuf, int errlen) {
     SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
     if (!ctx) { close(fd); ossl_err(errbuf, errlen, "SSL_CTX_new fehlgeschlagen"); return NULL; }
     SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
@@ -90,6 +70,16 @@ static void* ossl_verbinde(const char* host, int port, char* errbuf, int errlen)
     return c;
 }
 
+static void* ossl_verbinde(const char* host, int port, int timeout_ms, char* errbuf, int errlen) {
+    int fd = moo_net_tcp_connect_timeout(host, port, timeout_ms, errbuf, errlen);
+    if (fd < 0) return NULL;   /* errbuf ist von moo_net_tcp_connect_timeout gesetzt */
+    return ossl_wrap_fd(fd, host, errbuf, errlen);
+}
+
+static void* ossl_upgrade(int fd, const char* host, char* errbuf, int errlen) {
+    return ossl_wrap_fd(fd, host, errbuf, errlen);
+}
+
 static int ossl_schreibe(void* conn, const char* buf, int len) {
     return SSL_write(((OsslConn*)conn)->ssl, buf, len);
 }
@@ -109,7 +99,7 @@ static void ossl_schliesse(void* conn) {
 }
 
 static const MooTlsBackend OSSL_BACKEND = {
-    "openssl", ossl_verbinde, ossl_schreibe, ossl_lese, ossl_schliesse
+    "openssl", ossl_verbinde, ossl_schreibe, ossl_lese, ossl_schliesse, ossl_upgrade
 };
 
 const MooTlsBackend* moo_tls_backend(void) {

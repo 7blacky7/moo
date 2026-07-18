@@ -5,9 +5,7 @@
  *
  * Dual-Path (Memory moo-krypto-tls-dual-path-architektur): der "ui_moo"-Weg
  * — portabel/MoOS-faehig. Aktiv via Build-Flag MOO_TLS_BACKEND=mbedtls.
- * Aktuell gegen die System-libmbedtls gelinkt; volle Self-Containment durch
- * Vendoring der mbedTLS-Quellen nach runtime/mbedtls/ ist der Folgeschritt
- * (dann entfallen die -lmbedtls-System-Libs, build.rs kompiliert die Quellen).
+ * Vendored mbedTLS-Quellen unter runtime/mbedtls/ (kein System-libmbedtls).
  */
 #include "moo_runtime.h"
 #include "moo_tls.h"
@@ -15,6 +13,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include <mbedtls/ssl.h>
 #include <mbedtls/net_sockets.h>
@@ -22,6 +21,10 @@
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/x509_crt.h>
 #include <mbedtls/error.h>
+
+/* Shared TCP-Connect (DNS + optionaler Connect-Timeout) aus moo_net.c. */
+extern int moo_net_tcp_connect_timeout(const char* host, int port, int timeout_ms,
+                                       char* errbuf, int errlen);
 
 typedef struct {
     mbedtls_net_context      net;
@@ -57,15 +60,18 @@ static void mbed_err(char* errbuf, int errlen, const char* msg, int ret) {
     snprintf(errbuf, errlen, "%s (mbedtls -0x%04x: %s)", msg, (unsigned)(-ret), es);
 }
 
-static void* mbed_verbinde(const char* host, int port, char* errbuf, int errlen) {
+/* Wickelt einen bereits verbundenen fd in TLS: CA-/Hostname-Verifikation, SNI,
+ * Handshake. Uebernimmt den fd (mbedtls_net_free schliesst ihn). */
+static void* mbed_wrap_fd(int fd, const char* host, char* errbuf, int errlen) {
     MbedConn* c = (MbedConn*)calloc(1, sizeof(MbedConn));
-    if (!c) { snprintf(errbuf, errlen, "malloc fehlgeschlagen"); return NULL; }
+    if (!c) { snprintf(errbuf, errlen, "malloc fehlgeschlagen"); close(fd); return NULL; }
     mbedtls_net_init(&c->net);
     mbedtls_ssl_init(&c->ssl);
     mbedtls_ssl_config_init(&c->conf);
     mbedtls_ctr_drbg_init(&c->drbg);
     mbedtls_entropy_init(&c->entropy);
     mbedtls_x509_crt_init(&c->cacert);
+    c->net.fd = fd;   /* uebernimmt den bestehenden Socket */
 
     int ret;
     const char* pers = "moo_tls_client";
@@ -79,12 +85,6 @@ static void* mbed_verbinde(const char* host, int port, char* errbuf, int errlen)
         if (mbedtls_x509_crt_parse_file(&c->cacert, MBED_CA_PATHS[i]) >= 0) { ca_ok = 1; break; }
     }
     if (!ca_ok) { snprintf(errbuf, errlen, "System-CA-Store nicht gefunden"); mbed_free(c); return NULL; }
-
-    char portstr[16];
-    snprintf(portstr, sizeof portstr, "%d", port);
-    if ((ret = mbedtls_net_connect(&c->net, host, portstr, MBEDTLS_NET_PROTO_TCP)) != 0) {
-        mbed_err(errbuf, errlen, "TCP-Verbindung/DNS fehlgeschlagen", ret); mbed_free(c); return NULL;
-    }
 
     if ((ret = mbedtls_ssl_config_defaults(&c->conf, MBEDTLS_SSL_IS_CLIENT,
                                            MBEDTLS_SSL_TRANSPORT_STREAM,
@@ -113,6 +113,16 @@ static void* mbed_verbinde(const char* host, int port, char* errbuf, int errlen)
     return c;
 }
 
+static void* mbed_verbinde(const char* host, int port, int timeout_ms, char* errbuf, int errlen) {
+    int fd = moo_net_tcp_connect_timeout(host, port, timeout_ms, errbuf, errlen);
+    if (fd < 0) return NULL;   /* errbuf gesetzt */
+    return mbed_wrap_fd(fd, host, errbuf, errlen);
+}
+
+static void* mbed_upgrade(int fd, const char* host, char* errbuf, int errlen) {
+    return mbed_wrap_fd(fd, host, errbuf, errlen);
+}
+
 static int mbed_schreibe(void* conn, const char* buf, int len) {
     MbedConn* c = (MbedConn*)conn;
     int ret;
@@ -138,7 +148,7 @@ static void mbed_schliesse(void* conn) {
 }
 
 static const MooTlsBackend MBED_BACKEND = {
-    "mbedtls", mbed_verbinde, mbed_schreibe, mbed_lese, mbed_schliesse
+    "mbedtls", mbed_verbinde, mbed_schreibe, mbed_lese, mbed_schliesse, mbed_upgrade
 };
 
 const MooTlsBackend* moo_tls_backend(void) {

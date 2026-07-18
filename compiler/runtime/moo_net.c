@@ -5,6 +5,11 @@
 
 #include "moo_runtime.h"
 #include "moo_net_compat.h"
+#ifndef _WIN32
+#include <netdb.h>
+#include <fcntl.h>
+#include <sys/select.h>
+#endif
 
 // Neuer Tag fuer Sockets
 // MOO_SOCKET = 14 (in moo_runtime.h definiert)
@@ -43,6 +48,68 @@ static MooValue make_socket(moo_sockfd_t fd, int type, bool is_server) {
     v.tag = MOO_SOCKET;
     moo_val_set_ptr(&v, s);
     return v;
+}
+
+/* Roher fd eines TCP-Sockets (fuer STARTTLS-Upgrade), oder -1. */
+int moo_net_socket_fd(MooValue v) {
+    MooSocket* s = get_socket(v);
+    return s ? (int)s->fd : -1;
+}
+
+/* TCP-Connect mit DNS (getaddrinfo, IPv4+IPv6) + optionalem Connect-Timeout
+ * (ms; 0 = blockierend). Rueckgabe: fd oder -1 (errbuf gesetzt). Aufrufer
+ * (TLS-Backends) uebernimmt den fd. Windows: Timeout ist best-effort
+ * (blockierender connect; nativer TLS-Weg dort ist SChannel). */
+int moo_net_tcp_connect_timeout(const char* host, int port, int timeout_ms,
+                                char* errbuf, int errlen) {
+    char portstr[16];
+    snprintf(portstr, sizeof portstr, "%d", port);
+    struct addrinfo hints, *res = NULL, *rp;
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(host, portstr, &hints, &res) != 0) {
+        if (errbuf) snprintf(errbuf, errlen, "DNS-Aufloesung fehlgeschlagen: %s", host);
+        return -1;
+    }
+    moo_sockfd_t fd = MOO_INVALID_SOCK;
+    for (rp = res; rp; rp = rp->ai_next) {
+        fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (MOO_SOCK_BAD(fd)) continue;
+#ifndef _WIN32
+        if (timeout_ms > 0) {
+            int fl = fcntl(fd, F_GETFL, 0);
+            fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+            int rc = connect(fd, rp->ai_addr, rp->ai_addrlen);
+            if (rc == 0) { fcntl(fd, F_SETFL, fl); break; }
+            if (errno != EINPROGRESS) { moo_closesock(fd); fd = MOO_INVALID_SOCK; continue; }
+            fd_set wf; FD_ZERO(&wf); FD_SET(fd, &wf);
+            struct timeval tv;
+            tv.tv_sec  = timeout_ms / 1000;
+            tv.tv_usec = (timeout_ms % 1000) * 1000;
+            int sel = select((int)fd + 1, NULL, &wf, NULL, &tv);
+            if (sel <= 0) { moo_closesock(fd); fd = MOO_INVALID_SOCK; continue; }
+            int soerr = 0; socklen_t sl = sizeof soerr;
+            getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &sl);
+            if (soerr != 0) { moo_closesock(fd); fd = MOO_INVALID_SOCK; continue; }
+            fcntl(fd, F_SETFL, fl);
+            break;
+        }
+#else
+        (void)timeout_ms;
+#endif
+        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) break;
+        moo_closesock(fd); fd = MOO_INVALID_SOCK;
+    }
+    freeaddrinfo(res);
+    if (MOO_SOCK_BAD(fd)) {
+        if (errbuf) snprintf(errbuf, errlen, "TCP-Verbindung fehlgeschlagen: %s:%d%s",
+                             host, port, timeout_ms > 0 ? " (Timeout)" : "");
+        return -1;
+    }
+    int one = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, MOO_SOPT(&one), sizeof(one));
+    return (int)fd;
 }
 
 // Wird von moo_release aufgerufen wenn Socket-refcount auf 0 faellt.

@@ -21,6 +21,7 @@ extern MooValue moo_string_new_len(const char* chars, int32_t len);
 extern MooValue moo_number(double n);
 extern MooValue moo_none(void);
 extern void moo_throw(MooValue v);
+extern int moo_net_socket_fd(MooValue v);  /* aus moo_net.c (STARTTLS) */
 
 #define MOO_TLS_MAX 256
 static void* g_tls_conns[MOO_TLS_MAX];  /* Slot frei = NULL */
@@ -32,25 +33,57 @@ static int tls_slot_of(MooValue handle) {
     return i;
 }
 
-MooValue moo_tls_connect(MooValue host, MooValue port) {
+/* Legt eine fertige Verbindung in einen freien Slot -> Handle. */
+static MooValue tls_open_slot(void* conn) {
+    for (int i = 0; i < MOO_TLS_MAX; i++) {
+        if (!g_tls_conns[i]) { g_tls_conns[i] = conn; return moo_number((double)i); }
+    }
+    moo_tls_backend()->schliesse(conn);  /* kein Slot frei -> sauber schliessen */
+    moo_throw(moo_string_new("tls: zu viele offene TLS-Verbindungen"));
+    return moo_none();
+}
+
+static MooValue tls_connect_impl(MooValue host, MooValue port, int timeout_ms) {
     if (host.tag != MOO_STRING) { moo_throw(moo_string_new("tls_verbinde: host muss ein String sein")); return moo_none(); }
     const char* h = MV_STR(host)->chars;
     int p = (port.tag == MOO_NUMBER) ? (int)MV_NUM(port) : 443;
-
-    int slot = -1;
-    for (int i = 0; i < MOO_TLS_MAX; i++) if (!g_tls_conns[i]) { slot = i; break; }
-    if (slot < 0) { moo_throw(moo_string_new("tls_verbinde: zu viele offene TLS-Verbindungen")); return moo_none(); }
-
     char err[256];
-    void* conn = moo_tls_backend()->verbinde(h, p, err, sizeof err);
+    void* conn = moo_tls_backend()->verbinde(h, p, timeout_ms, err, sizeof err);
     if (!conn) {
         char msg[320];
         snprintf(msg, sizeof msg, "tls_verbinde: %s", err);
         moo_throw(moo_string_new(msg));
         return moo_none();
     }
-    g_tls_conns[slot] = conn;
-    return moo_number((double)slot);
+    return tls_open_slot(conn);
+}
+
+MooValue moo_tls_connect(MooValue host, MooValue port) {
+    return tls_connect_impl(host, port, 0);
+}
+
+MooValue moo_tls_connect_timeout(MooValue host, MooValue port, MooValue timeout_ms) {
+    int t = (timeout_ms.tag == MOO_NUMBER) ? (int)MV_NUM(timeout_ms) : 0;
+    return tls_connect_impl(host, port, t);
+}
+
+/* STARTTLS: wickelt eine bestehende Klartext-TCP-Verbindung (tcp_verbinde,
+ * Ports 143/587) in TLS. tcp_handle danach nicht mehr nutzen (TLS besitzt
+ * den fd jetzt). */
+MooValue moo_tls_starttls(MooValue tcp_handle, MooValue host) {
+    if (host.tag != MOO_STRING) { moo_throw(moo_string_new("tls_starttls: host muss ein String sein")); return moo_none(); }
+    int fd = moo_net_socket_fd(tcp_handle);
+    if (fd < 0) { moo_throw(moo_string_new("tls_starttls: kein gueltiger TCP-Socket")); return moo_none(); }
+    const char* h = MV_STR(host)->chars;
+    char err[256];
+    void* conn = moo_tls_backend()->upgrade(fd, h, err, sizeof err);
+    if (!conn) {
+        char msg[320];
+        snprintf(msg, sizeof msg, "tls_starttls: %s", err);
+        moo_throw(moo_string_new(msg));
+        return moo_none();
+    }
+    return tls_open_slot(conn);
 }
 
 MooValue moo_tls_send(MooValue handle, MooValue data) {
