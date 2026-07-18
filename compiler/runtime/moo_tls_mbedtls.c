@@ -15,7 +15,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
-#include <unistd.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <wincrypt.h>
+#endif
 
 #include <mbedtls/ssl.h>
 #include <mbedtls/net_sockets.h>
@@ -29,7 +32,7 @@ extern intptr_t moo_net_tcp_connect_timeout(const char* host, int port, int time
                                             char* errbuf, int errlen);
 
 typedef struct {
-    mbedtls_net_context      net;
+    moo_sockfd_t             fd;
     mbedtls_ssl_context      ssl;
     mbedtls_ssl_config       conf;
     mbedtls_ctr_drbg_context drbg;
@@ -37,6 +40,7 @@ typedef struct {
     mbedtls_x509_crt         cacert;
 } MbedConn;
 
+#ifndef _WIN32
 /* System-CA-Bundle-Kandidaten (Distro-abhaengig). */
 static const char* MBED_CA_PATHS[] = {
     "/etc/ssl/certs/ca-certificates.crt",  /* Debian/Arch/CachyOS */
@@ -44,6 +48,46 @@ static const char* MBED_CA_PATHS[] = {
     "/etc/ssl/cert.pem",                   /* Alpine/BSD/macOS */
     NULL
 };
+#endif
+
+#ifdef _WIN32
+static int mbed_load_windows_root_store(mbedtls_x509_crt* chain, DWORD location) {
+    HCERTSTORE store = CertOpenStore(CERT_STORE_PROV_SYSTEM_A,
+                                    X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+                                    0,
+                                    location | CERT_STORE_READONLY_FLAG,
+                                    "ROOT");
+    if (!store) return 0;
+    int parsed = 0;
+    PCCERT_CONTEXT cert = NULL;
+    while ((cert = CertEnumCertificatesInStore(store, cert)) != NULL) {
+        int ret = mbedtls_x509_crt_parse_der(chain, cert->pbCertEncoded,
+                                             (size_t)cert->cbCertEncoded);
+        if (ret >= 0) parsed++;
+    }
+    CertCloseStore(store, 0);
+    return parsed;
+}
+#endif
+
+static int mbed_load_system_cas(mbedtls_x509_crt* chain, char* errbuf, int errlen) {
+#ifdef _WIN32
+    int parsed = 0;
+    parsed += mbed_load_windows_root_store(chain, CERT_SYSTEM_STORE_CURRENT_USER);
+    parsed += mbed_load_windows_root_store(chain, CERT_SYSTEM_STORE_LOCAL_MACHINE);
+    if (parsed <= 0) {
+        snprintf(errbuf, errlen, "Windows-ROOT-Zertifikatsspeicher ist leer oder nicht lesbar");
+        return -1;
+    }
+    return 0;
+#else
+    for (int i = 0; MBED_CA_PATHS[i]; i++) {
+        if (mbedtls_x509_crt_parse_file(chain, MBED_CA_PATHS[i]) >= 0) return 0;
+    }
+    snprintf(errbuf, errlen, "System-CA-Store nicht gefunden");
+    return -1;
+#endif
+}
 
 static void mbed_free(MbedConn* c) {
     if (!c) return;
@@ -52,7 +96,10 @@ static void mbed_free(MbedConn* c) {
     mbedtls_x509_crt_free(&c->cacert);
     mbedtls_ctr_drbg_free(&c->drbg);
     mbedtls_entropy_free(&c->entropy);
-    mbedtls_net_free(&c->net);
+    if (!MOO_SOCK_BAD(c->fd)) {
+        moo_closesock(c->fd);
+        c->fd = MOO_INVALID_SOCK;
+    }
     free(c);
 }
 
@@ -62,18 +109,50 @@ static void mbed_err(char* errbuf, int errlen, const char* msg, int ret) {
     snprintf(errbuf, errlen, "%s (mbedtls -0x%04x: %s)", msg, (unsigned)(-ret), es);
 }
 
+static int mbed_sock_send(void* ctx, const unsigned char* buf, size_t len) {
+    moo_sockfd_t fd = *(moo_sockfd_t*)ctx;
+    int part = len > (size_t)INT_MAX ? INT_MAX : (int)len;
+    moo_ssize_t n = send(fd, (const char*)buf, part, 0);
+    if (n >= 0) return (int)n;
+#ifdef _WIN32
+    int e = WSAGetLastError();
+    if (e == WSAEINTR || e == WSAEWOULDBLOCK) return MBEDTLS_ERR_SSL_WANT_WRITE;
+#else
+    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) return MBEDTLS_ERR_SSL_WANT_WRITE;
+#endif
+    return MBEDTLS_ERR_NET_SEND_FAILED;
+}
+
+static int mbed_sock_recv(void* ctx, unsigned char* buf, size_t len) {
+    moo_sockfd_t fd = *(moo_sockfd_t*)ctx;
+    int part = len > (size_t)INT_MAX ? INT_MAX : (int)len;
+    moo_ssize_t n = recv(fd, (char*)buf, part, 0);
+    if (n >= 0) return (int)n;
+#ifdef _WIN32
+    int e = WSAGetLastError();
+    if (e == WSAEINTR || e == WSAEWOULDBLOCK) return MBEDTLS_ERR_SSL_WANT_READ;
+#else
+    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) return MBEDTLS_ERR_SSL_WANT_READ;
+#endif
+    return MBEDTLS_ERR_NET_RECV_FAILED;
+}
+
 /* Wickelt einen bereits verbundenen fd in TLS: CA-/Hostname-Verifikation, SNI,
  * Handshake. Uebernimmt den fd (mbedtls_net_free schliesst ihn). */
-static void* mbed_wrap_fd(int fd, const char* host, char* errbuf, int errlen) {
+static void* mbed_wrap_fd(intptr_t raw_fd, const char* host, char* errbuf, int errlen) {
+    if (raw_fd < 0) { snprintf(errbuf, errlen, "ungueltiger Socket"); return NULL; }
     MbedConn* c = (MbedConn*)calloc(1, sizeof(MbedConn));
-    if (!c) { snprintf(errbuf, errlen, "malloc fehlgeschlagen"); close(fd); return NULL; }
-    mbedtls_net_init(&c->net);
+    if (!c) {
+        snprintf(errbuf, errlen, "malloc fehlgeschlagen");
+        moo_closesock((moo_sockfd_t)raw_fd);
+        return NULL;
+    }
+    c->fd = (moo_sockfd_t)raw_fd;
     mbedtls_ssl_init(&c->ssl);
     mbedtls_ssl_config_init(&c->conf);
     mbedtls_ctr_drbg_init(&c->drbg);
     mbedtls_entropy_init(&c->entropy);
     mbedtls_x509_crt_init(&c->cacert);
-    c->net.fd = fd;   /* uebernimmt den bestehenden Socket */
 
     int ret;
     const char* pers = "moo_tls_client";
@@ -82,11 +161,10 @@ static void* mbed_wrap_fd(int fd, const char* host, char* errbuf, int errlen) {
         mbed_err(errbuf, errlen, "CTR_DRBG-Seed fehlgeschlagen", ret); mbed_free(c); return NULL;
     }
 
-    int ca_ok = 0;
-    for (int i = 0; MBED_CA_PATHS[i]; i++) {
-        if (mbedtls_x509_crt_parse_file(&c->cacert, MBED_CA_PATHS[i]) >= 0) { ca_ok = 1; break; }
+    if (mbed_load_system_cas(&c->cacert, errbuf, errlen) != 0) {
+        mbed_free(c);
+        return NULL;
     }
-    if (!ca_ok) { snprintf(errbuf, errlen, "System-CA-Store nicht gefunden"); mbed_free(c); return NULL; }
 
     if ((ret = mbedtls_ssl_config_defaults(&c->conf, MBEDTLS_SSL_IS_CLIENT,
                                            MBEDTLS_SSL_TRANSPORT_STREAM,
@@ -104,7 +182,7 @@ static void* mbed_wrap_fd(int fd, const char* host, char* errbuf, int errlen) {
     if ((ret = mbedtls_ssl_set_hostname(&c->ssl, host)) != 0) {   /* SNI + Hostname-Verifikation */
         mbed_err(errbuf, errlen, "set_hostname fehlgeschlagen", ret); mbed_free(c); return NULL;
     }
-    mbedtls_ssl_set_bio(&c->ssl, &c->net, mbedtls_net_send, mbedtls_net_recv, NULL);
+    mbedtls_ssl_set_bio(&c->ssl, &c->fd, mbed_sock_send, mbed_sock_recv, NULL);
 
     while ((ret = mbedtls_ssl_handshake(&c->ssl)) != 0) {
         if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
@@ -115,27 +193,14 @@ static void* mbed_wrap_fd(int fd, const char* host, char* errbuf, int errlen) {
     return c;
 }
 
-static int mbed_fd_from_socket(intptr_t raw_fd, char* errbuf, int errlen) {
-    if (raw_fd < 0 || raw_fd > INT_MAX) {
-        if (raw_fd >= 0) moo_closesock((moo_sockfd_t)raw_fd);
-        snprintf(errbuf, errlen, "Socket-Handle passt nicht in mbedTLS-fd");
-        return -1;
-    }
-    return (int)raw_fd;
-}
-
 static void* mbed_verbinde(const char* host, int port, int timeout_ms, char* errbuf, int errlen) {
     intptr_t raw_fd = moo_net_tcp_connect_timeout(host, port, timeout_ms, errbuf, errlen);
     if (raw_fd < 0) return NULL;
-    int fd = mbed_fd_from_socket(raw_fd, errbuf, errlen);
-    if (fd < 0) return NULL;
-    return mbed_wrap_fd(fd, host, errbuf, errlen);
+    return mbed_wrap_fd(raw_fd, host, errbuf, errlen);
 }
 
 static void* mbed_upgrade(intptr_t raw_fd, const char* host, char* errbuf, int errlen) {
-    int fd = mbed_fd_from_socket(raw_fd, errbuf, errlen);
-    if (fd < 0) return NULL;
-    return mbed_wrap_fd(fd, host, errbuf, errlen);
+    return mbed_wrap_fd(raw_fd, host, errbuf, errlen);
 }
 
 static int mbed_schreibe(void* conn, const char* buf, int len) {

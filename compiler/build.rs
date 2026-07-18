@@ -228,17 +228,16 @@ fn main() {
         }
     }
 
-    // TLS-Backend-Auswahl (Dual-Path, siehe moo-krypto-tls-dual-path-architektur):
-    // MOO_TLS_BACKEND=openssl (Default, System-libssl) | mbedtls (System-libmbedtls;
-    // spaeter vendored fuer volle Self-Containment). Beide erfuellen moo_tls.h.
+    // TLS-Backend-Auswahl (Dual-Path):
+    // Windows: SChannel als nativer Default, mbedTLS als vendored Alternative.
+    // Nicht-Windows: OpenSSL als nativer Default, mbedTLS als vendored Alternative.
     println!("cargo:rustc-check-cfg=cfg(moo_tls_mbedtls)");
+    println!("cargo:rustc-check-cfg=cfg(moo_tls_schannel)");
     println!("cargo:rerun-if-env-changed=MOO_TLS_BACKEND");
-    match std::env::var("MOO_TLS_BACKEND").as_deref() {
-        Ok("mbedtls") => {
+    let tls_backend = std::env::var("MOO_TLS_BACKEND").ok();
+    match (target_windows, tls_backend.as_deref()) {
+        (_, Some("mbedtls")) => {
             build.file("runtime/moo_tls_mbedtls.c");
-            // Vendored mbedTLS (self-contained, kein System-libmbedtls): alle
-            // library/*.c mitkompilieren. include/ + library/ als Include-Pfade
-            // (interne Header wie psa_crypto_driver_wrappers.h liegen in library/).
             build.include("runtime/mbedtls/include");
             build.include("runtime/mbedtls/library");
             let mbedtls_lib = std::fs::read_dir("runtime/mbedtls/library")
@@ -252,7 +251,23 @@ fn main() {
             println!("cargo:rustc-cfg=moo_tls_mbedtls");
             println!("cargo:rerun-if-changed=runtime/mbedtls/library");
         }
-        _ => { build.file("runtime/moo_tls_openssl.c"); }
+        (true, None) | (true, Some("schannel")) => {
+            build.file("runtime/moo_tls_schannel.c");
+            println!("cargo:rustc-cfg=moo_tls_schannel");
+            println!("cargo:rerun-if-changed=runtime/moo_tls_schannel.c");
+        }
+        (false, None) | (false, Some("openssl")) => {
+            build.file("runtime/moo_tls_openssl.c");
+        }
+        (true, Some("openssl")) => {
+            panic!("MOO_TLS_BACKEND=openssl ist fuer Windows nicht verdrahtet; schannel oder mbedtls verwenden");
+        }
+        (false, Some("schannel")) => {
+            panic!("MOO_TLS_BACKEND=schannel ist nur auf Windows verfuegbar");
+        }
+        (_, Some(other)) => {
+            panic!("Unbekanntes MOO_TLS_BACKEND={other}; erlaubt: openssl, mbedtls, schannel");
+        }
     }
 
     // AES-Backend-Auswahl (Dual-Path): MOO_AES_BACKEND=self (Default, hand-rolled
@@ -287,6 +302,8 @@ fn main() {
     if target_windows {
         println!("cargo:rustc-link-lib=ws2_32");
         println!("cargo:rustc-link-lib=bcrypt");
+        println!("cargo:rustc-link-lib=crypt32");
+        println!("cargo:rustc-link-lib=secur32");
         // C2-WIN: Media Foundation + WASAPI/COM.
         for lib in ["mfplat", "mf", "mfreadwrite", "mfuuid", "ole32", "oleaut32", "uuid"] {
             println!("cargo:rustc-link-lib={lib}");

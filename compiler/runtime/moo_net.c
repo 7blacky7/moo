@@ -59,8 +59,8 @@ intptr_t moo_net_socket_fd(MooValue v) {
 
 /* TCP-Connect mit DNS (getaddrinfo, IPv4+IPv6) + optionalem Connect-Timeout
  * (ms; 0 = blockierend). Rueckgabe: fd oder -1 (errbuf gesetzt). Aufrufer
- * (TLS-Backends) uebernimmt den fd. Windows: Timeout ist best-effort
- * (blockierender connect; nativer TLS-Weg dort ist SChannel). */
+ * (TLS-Backends) uebernimmt den fd. Der Timeout-Pfad arbeitet auf POSIX
+ * und Windows nonblocking und stellt erfolgreiche Sockets wieder auf blocking. */
 intptr_t moo_net_tcp_connect_timeout(const char* host, int port, int timeout_ms,
                                      char* errbuf, int errlen) {
     char portstr[16];
@@ -97,7 +97,40 @@ intptr_t moo_net_tcp_connect_timeout(const char* host, int port, int timeout_ms,
             break;
         }
 #else
-        (void)timeout_ms;
+        if (timeout_ms > 0) {
+            u_long nonblocking = 1;
+            if (ioctlsocket(fd, FIONBIO, &nonblocking) != 0) {
+                moo_closesock(fd); fd = MOO_INVALID_SOCK; continue;
+            }
+            int rc = connect(fd, rp->ai_addr, (int)rp->ai_addrlen);
+            if (rc == 0) {
+                u_long blocking = 0;
+                (void)ioctlsocket(fd, FIONBIO, &blocking);
+                break;
+            }
+            int connect_error = WSAGetLastError();
+            if (connect_error != WSAEWOULDBLOCK &&
+                connect_error != WSAEINPROGRESS &&
+                connect_error != WSAEALREADY) {
+                moo_closesock(fd); fd = MOO_INVALID_SOCK; continue;
+            }
+            fd_set wf; FD_ZERO(&wf); FD_SET(fd, &wf);
+            struct timeval tv;
+            tv.tv_sec  = timeout_ms / 1000;
+            tv.tv_usec = (timeout_ms % 1000) * 1000;
+            int sel = select(0, NULL, &wf, NULL, &tv);
+            if (sel <= 0) { moo_closesock(fd); fd = MOO_INVALID_SOCK; continue; }
+            int soerr = 0;
+            int sl = (int)sizeof soerr;
+            if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (char*)&soerr, &sl) != 0 || soerr != 0) {
+                moo_closesock(fd); fd = MOO_INVALID_SOCK; continue;
+            }
+            u_long blocking = 0;
+            if (ioctlsocket(fd, FIONBIO, &blocking) != 0) {
+                moo_closesock(fd); fd = MOO_INVALID_SOCK; continue;
+            }
+            break;
+        }
 #endif
         if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) break;
         moo_closesock(fd); fd = MOO_INVALID_SOCK;

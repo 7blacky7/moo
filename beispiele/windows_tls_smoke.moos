@@ -1,0 +1,88 @@
+# Native Windows TLS backend smoke.
+# Modes via MOO_TLS_TEST_MODE: https | reject | starttls | timeout
+
+funktion tls_lies_komplett(verb, max_runden):
+    setze ausgabe auf ""
+    setze i auf 0
+    solange i < max_runden:
+        setze teil auf tls_empfange(verb, 4096)
+        wenn länge(teil) == 0:
+            gib_zurück ausgabe
+        setze ausgabe auf ausgabe + teil
+        setze i auf i + 1
+    gib_zurück ausgabe
+
+funktion socket_lies_bis(sock, marker, max_runden):
+    setze ausgabe auf ""
+    setze i auf 0
+    solange i < max_runden:
+        setze teil auf sock.lesen(4096)
+        wenn länge(teil) == 0:
+            gib_zurück ausgabe
+        setze ausgabe auf ausgabe + teil
+        wenn ausgabe.text_enthält(marker):
+            gib_zurück ausgabe
+        setze i auf i + 1
+    gib_zurück ausgabe
+
+setze modus auf umgebung("MOO_TLS_TEST_MODE")
+wenn modus == nichts:
+    setze modus auf "https"
+
+wenn modus == "https":
+    setze verb auf tls_verbinde("example.com", 443, 10000)
+    tls_sende(verb, "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\nAccept: */*\r\n\r\n")
+    setze antwort auf tls_lies_komplett(verb, 64)
+    tls_schliesse(verb)
+    wenn antwort.text_enthält("200 OK") und antwort.text_enthält("Example Domain"):
+        zeige "WINDOWS-TLS-HTTPS PASS"
+    sonst:
+        zeige "WINDOWS-TLS-HTTPS FAIL"
+
+sonst wenn modus == "reject":
+    setze abgelehnt auf falsch
+    versuche:
+        setze verb auf tls_verbinde("self-signed.badssl.com", 443, 10000)
+        tls_schliesse(verb)
+    fange fehler:
+        setze abgelehnt auf wahr
+    wenn abgelehnt:
+        zeige "WINDOWS-TLS-SELF-SIGNED-REJECT PASS"
+    sonst:
+        zeige "WINDOWS-TLS-SELF-SIGNED-REJECT FAIL"
+
+sonst wenn modus == "starttls":
+    setze sock auf tcp_verbinde("smtp.gmail.com", 587)
+    sock.timeout_setzen(10000)
+    setze begruessung auf socket_lies_bis(sock, "220", 4)
+    sock.schreiben("EHLO moo.local\r\n")
+    setze ehlo_klar auf socket_lies_bis(sock, "250 ", 8)
+    sock.schreiben("STARTTLS\r\n")
+    setze bereit auf socket_lies_bis(sock, "220", 4)
+    setze verb auf tls_starttls(sock, "smtp.gmail.com")
+    tls_sende(verb, "EHLO moo.local\r\n")
+    setze ehlo_tls auf tls_lies_komplett(verb, 8)
+    tls_schliesse(verb)
+    setze ok auf begruessung.text_enthält("220") und ehlo_klar.text_enthält("250")
+    setze ok auf ok und bereit.text_enthält("220") und ehlo_tls.text_enthält("250")
+    wenn ok:
+        zeige "WINDOWS-TLS-STARTTLS PASS"
+    sonst:
+        zeige "WINDOWS-TLS-STARTTLS FAIL"
+
+sonst wenn modus == "timeout":
+    setze start_ms auf zeit_ms()
+    setze fehlgeschlagen auf falsch
+    versuche:
+        setze verb auf tls_verbinde("10.255.255.1", 443, 1200)
+        tls_schliesse(verb)
+    fange fehler:
+        setze fehlgeschlagen auf wahr
+    setze dauer auf zeit_ms() - start_ms
+    wenn fehlgeschlagen und dauer < 10000:
+        zeige "WINDOWS-TLS-TIMEOUT PASS"
+    sonst:
+        zeige "WINDOWS-TLS-TIMEOUT FAIL"
+
+sonst:
+    zeige "WINDOWS-TLS-UNKNOWN-MODE FAIL"

@@ -4,8 +4,8 @@
  * moo_tls.h — Backend-Vertrag fuer den TLS-Client von moo.
  *
  * Dual-Path (siehe Memory moo-krypto-tls-dual-path-architektur): jeder Pfad
- * — OpenSSL nativ (Linux), vendored mbedTLS (self-contained/MoOS), spaeter
- * Windows SChannel — implementiert GENAU diese vtable. Die Moo-Builtins
+ * — OpenSSL nativ (Linux/macOS), SChannel nativ (Windows) und vendored
+ * mbedTLS (self-contained/portabel) — implementiert GENAU diese vtable. Die Moo-Builtins
  * (moo_tls_*) sind backend-agnostisch: sie halten eine Handle-Tabelle und
  * rufen ausschliesslich ueber moo_tls_backend().
  */

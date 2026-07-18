@@ -1063,6 +1063,7 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         "-Wl,/NODEFAULTLIB:libcmt".to_string(),
         "-lsqlite3".to_string(),
         "-lws2_32".to_string(), "-lbcrypt".to_string(),
+        "-lcrypt32".to_string(), "-lsecur32".to_string(),
     ]);
     #[cfg(not(target_os = "windows"))]
     link_args.extend([
@@ -1070,8 +1071,8 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         "-lsqlite3".to_string(),
         "-lSDL2".to_string(), "-lSDL2_image".to_string(),
     ]);
-    // TLS-Backend-Libs per Build-Flag MOO_TLS_BACKEND (build.rs -> cfg moo_tls_mbedtls).
-    // Vendored mbedTLS braucht spaeter gar keine System-Libs mehr.
+    // TLS-Backend-Libs per Build-Flag MOO_TLS_BACKEND.
+    // Windows nutzt SChannel oder vendored mbedTLS; Nicht-Windows OpenSSL oder mbedTLS.
     #[cfg(all(not(target_os = "windows"), not(moo_tls_mbedtls)))]
     link_args.extend(["-lssl".to_string(), "-lcrypto".to_string()]);
     // Vendored mbedTLS (compiler/runtime/mbedtls/) ist in moo_runtime einkompiliert
