@@ -1061,13 +1061,13 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         // Default ein. /MD-Objekte referenzieren bereits msvcrt; libcmt muss
         // daher explizit ausgeschlossen werden, um CRT-Mischung zu vermeiden.
         "-Wl,/NODEFAULTLIB:libcmt".to_string(),
-        "-llibcurl".to_string(), "-lsqlite3".to_string(),
+        "-lsqlite3".to_string(),
         "-lws2_32".to_string(), "-lbcrypt".to_string(),
     ]);
     #[cfg(not(target_os = "windows"))]
     link_args.extend([
         "-lm".to_string(), "-lpthread".to_string(),
-        "-lcurl".to_string(), "-lsqlite3".to_string(),
+        "-lsqlite3".to_string(),
         "-lSDL2".to_string(), "-lSDL2_image".to_string(),
     ]);
     // TLS-Backend-Libs per Build-Flag MOO_TLS_BACKEND (build.rs -> cfg moo_tls_mbedtls).

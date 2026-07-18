@@ -20,7 +20,6 @@
 | `SDL2/SDL.h` | `sdl2` | `moo_graphics.c` | 2D-Grafik + Input |
 | `GLFW/glfw3.h` | `glfw` | `moo_3d.c` | 3D-Fenster |
 | `GL/gl.h` | `mesa` | `moo_3d.c` | OpenGL-Rendering |
-| `curl/curl.h` | `curl` | `moo_http.c` | HTTP-Client |
 | `regex.h` | `glibc` (system) | `moo_regex.c` | POSIX-Regex |
 | `pthread.h` | `glibc` (system) | `moo_thread.c` | Threading |
 | `dirent.h` | `glibc` (system) | `moo_file.c` | Verzeichnis-Iter |

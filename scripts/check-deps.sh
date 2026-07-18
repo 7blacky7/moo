@@ -40,7 +40,7 @@ echo
 
 # --- C System-Libraries ---
 echo "## C System-Libraries (pacman)"
-for pkg in sqlite sdl2 glfw mesa curl; do
+for pkg in sqlite sdl2 glfw mesa; do
   ver=$(pacman -Q "$pkg" 2>/dev/null | awk '{print $2}')
   if [[ -n $ver ]]; then
     printf "  %-12s %s\n" "$pkg" "$ver"

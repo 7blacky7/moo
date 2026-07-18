@@ -272,13 +272,8 @@ fn main() {
     // ========================================================================
     // Core Links (alle Plattformen)
     // ========================================================================
-    // P013: vcpkg (x64-windows) nennt die curl-Import-Lib `libcurl.lib` —
-    // `curl.lib` existiert dort nicht (LNK1181). sqlite3.lib heisst gleich.
-    if target_windows {
-        println!("cargo:rustc-link-lib=libcurl");
-    } else {
-        println!("cargo:rustc-link-lib=curl");
-    }
+    // HTTP/HTTPS ist self-contained in moo_http.c und nutzt moo_net + moo_tls.
+    // libcurl ist deshalb keine Build- oder Laufzeitabhaengigkeit mehr.
     println!("cargo:rustc-link-lib=sqlite3");
 
     // P013: Winsock2 fuer moo_net.c/moo_web.c + bcrypt fuer moo_crypto.c

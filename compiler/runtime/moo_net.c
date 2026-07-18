@@ -50,18 +50,18 @@ static MooValue make_socket(moo_sockfd_t fd, int type, bool is_server) {
     return v;
 }
 
-/* Roher fd eines TCP-Sockets (fuer STARTTLS-Upgrade), oder -1. */
-int moo_net_socket_fd(MooValue v) {
+/* Rohes Socket-Handle fuer STARTTLS, pointerbreit oder -1. */
+intptr_t moo_net_socket_fd(MooValue v) {
     MooSocket* s = get_socket(v);
-    return s ? (int)s->fd : -1;
+    return s ? (intptr_t)s->fd : (intptr_t)-1;
 }
 
 /* TCP-Connect mit DNS (getaddrinfo, IPv4+IPv6) + optionalem Connect-Timeout
  * (ms; 0 = blockierend). Rueckgabe: fd oder -1 (errbuf gesetzt). Aufrufer
  * (TLS-Backends) uebernimmt den fd. Windows: Timeout ist best-effort
  * (blockierender connect; nativer TLS-Weg dort ist SChannel). */
-int moo_net_tcp_connect_timeout(const char* host, int port, int timeout_ms,
-                                char* errbuf, int errlen) {
+intptr_t moo_net_tcp_connect_timeout(const char* host, int port, int timeout_ms,
+                                     char* errbuf, int errlen) {
     char portstr[16];
     snprintf(portstr, sizeof portstr, "%d", port);
     struct addrinfo hints, *res = NULL, *rp;
@@ -109,7 +109,7 @@ int moo_net_tcp_connect_timeout(const char* host, int port, int timeout_ms,
     }
     int one = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, MOO_SOPT(&one), sizeof(one));
-    return (int)fd;
+    return (intptr_t)fd;
 }
 
 // Wird von moo_release aufgerufen wenn Socket-refcount auf 0 faellt.
@@ -197,7 +197,7 @@ MooValue moo_tcp_connect(MooValue host, MooValue port) {
     }
 
     char err[256];
-    int raw_fd = moo_net_tcp_connect_timeout(h, p, 0, err, (int)sizeof err);
+    intptr_t raw_fd = moo_net_tcp_connect_timeout(h, p, 0, err, (int)sizeof err);
     if (raw_fd < 0) {
         moo_throw(moo_string_new(err));
         return moo_none();

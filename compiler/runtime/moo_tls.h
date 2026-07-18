@@ -27,7 +27,7 @@ typedef struct MooTlsBackend {
     /* STARTTLS: wickelt einen bereits verbundenen TCP-fd in TLS (SNI +
      * CA-/Hostname-Verifikation wie verbinde). Uebernimmt den fd. Rueckgabe:
      * opaker Verbindungszeiger oder NULL bei Fehler (errbuf gesetzt). */
-    void* (*upgrade)(int fd, const char* host, char* errbuf, int errlen);
+    void* (*upgrade)(intptr_t fd, const char* host, char* errbuf, int errlen);
 } MooTlsBackend;
 
 /* Aktiver Backend (Build-/Laufzeit-Auswahl via MOO_TLS_BACKEND). */

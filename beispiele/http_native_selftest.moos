@@ -1,0 +1,66 @@
+# Self-contained HTTP/1.1 Loopback-Test — kein Internet.
+
+konstante PORT auf 45876
+setze fehler auf 0
+
+funktion pruefe(name, bedingung):
+    wenn bedingung:
+        zeige "PASS " + name
+    sonst:
+        zeige "FAIL " + name
+        setze fehler auf fehler + 1
+
+funktion antworte(sock, status, headers, body):
+    sock.schreiben("HTTP/1.1 " + status + "\r\n" + headers + "Connection: close\r\n\r\n" + body)
+    sock.schliessen()
+
+funktion server_lauf(port):
+    setze server auf tcp_server(port)
+    setze i auf 0
+    solange i < 5:
+        setze client auf server.annehmen()
+        setze req auf client.lesen(16384)
+        wenn req.text_enthält("GET /chunk "):
+            antworte(client, "200 OK", "Transfer-Encoding: chunked\r\nX-Mode: chunked\r\n", "5\r\nchunk\r\n6\r\ned-ok!\r\n0\r\n\r\n")
+        sonst wenn req.text_enthält("GET /redirect "):
+            antworte(client, "302 Found", "Location: /length\r\nContent-Length: 0\r\n", "")
+        sonst wenn req.text_enthält("POST /post "):
+            setze gesehen auf req.text_enthält("X-Test: moo")
+            setze marker auf "nein"
+            wenn gesehen:
+                setze marker auf "ja"
+            antworte(client, "201 Created", "Content-Length: 7\r\nX-Seen: " + marker + "\r\n", "post-ok")
+        sonst:
+            antworte(client, "200 OK", "Content-Length: 5\r\nX-Mode: length\r\n", "hallo")
+        setze i auf i + 1
+    server.schliessen()
+    gib_zurück 1
+
+setze thread auf starte(server_lauf, PORT)
+schlafe(0.03)
+setze basis auf "http://localhost:" + text(PORT)
+
+setze laenge auf http_get(basis + "/length")
+pruefe("Length-Status", laenge["status"] == 200)
+pruefe("Length-Body", laenge["body"] == "hallo")
+pruefe("Length-OK", laenge["ok"])
+
+setze chunk auf http_hole_mit_headers(basis + "/chunk", {"X-Client": "moo"})
+pruefe("Chunk-Status", chunk["status"] == 200)
+pruefe("Chunk-Body", chunk["body"] == "chunked-ok!")
+pruefe("Chunk-Header", chunk["headers"]["x-mode"] == "chunked")
+
+setze redirect auf http_get(basis + "/redirect")
+pruefe("Redirect-Status", redirect["status"] == 200)
+pruefe("Redirect-Body", redirect["body"] == "hallo")
+
+setze post auf http_sende_mit_headers(basis + "/post", {"x": 7}, {"X-Test": "moo"})
+pruefe("Post-Status", post["status"] == 201)
+pruefe("Post-Body", post["body"] == "post-ok")
+pruefe("Post-Header", post["headers"]["x-seen"] == "ja")
+
+pruefe("Server", thread.warten() == 1)
+wenn fehler == 0:
+    zeige "HTTP-NATIVE SELFTEST PASS"
+sonst:
+    zeige "HTTP-NATIVE SELFTEST FAIL " + text(fehler)

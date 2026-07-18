@@ -1,0 +1,8 @@
+# Echter HTTPS-Integrationssmoke fuer die self-contained HTTP-Runtime.
+setze antwort auf http_get("https://example.com/")
+setze status_ok auf antwort["status"] == 200
+setze body_ok auf antwort["body"].text_enthält("Example Domain")
+wenn status_ok und body_ok:
+    zeige "HTTPS-SMOKE PASS"
+sonst:
+    zeige "HTTPS-SMOKE FAIL"

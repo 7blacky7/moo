@@ -87,7 +87,7 @@ jobs:
       # ---------------------------------------------------------------------
       # Plattform-spezifische System-Dependencies
       # ---------------------------------------------------------------------
-      - name: Install Linux deps (GTK3, LLVM 18, SDL2, curl, sqlite)
+      - name: Install Linux deps (GTK3, LLVM 18, SDL2, sqlite)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
@@ -98,15 +98,14 @@ jobs:
             llvm-18-dev libpolly-18-dev libclang-18-dev \
             libgtk-3-dev libappindicator3-dev \
             libsdl2-dev libsdl2-image-dev \
-            libcurl4-openssl-dev libsqlite3-dev \
-            pkg-config
+            libsqlite3-dev pkg-config
           echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
           echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> $GITHUB_ENV
 
       # Windows: Der offizielle LLVM-Windows-Installer enthaelt kein
       # llvm-config.exe, und vcpkg baut LLVM aus Source (zu langsam/instabil).
       # Deshalb nutzen wir conda-forge fuer eine vorgebaute LLVM-Dev-Distribution
-      # mit echtem llvm-config.exe. vcpkg bleibt nur fuer SDL/curl/sqlite.
+      # mit echtem llvm-config.exe. vcpkg bleibt nur fuer SDL/sqlite.
       - name: Install Windows LLVM (conda-forge, real llvm-config)
         if: matrix.os == 'windows-latest'
         uses: mamba-org/setup-micromamba@v2
@@ -129,7 +128,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Install Windows deps (SDL2, sqlite, curl via vcpkg + LLVM env)
+      - name: Install Windows deps (SDL2, sqlite via vcpkg + LLVM env)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
@@ -162,9 +161,9 @@ jobs:
           Write-Host "libdir: $(& $llvmConfig --libdir)"
           Write-Host "includedir: $(& $llvmConfig --includedir)"
 
-          # SDL2 + SDL2_image + curl + sqlite via vcpkg.
+          # SDL2 + SDL2_image + sqlite via vcpkg.
           vcpkg install --triplet x64-windows `
-            sdl2 sdl2-image curl sqlite3
+            sdl2 sdl2-image sqlite3
 
           $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows"
 
@@ -229,7 +228,7 @@ jobs:
           # LLVM (fuer inkwell) und die C-Libraries der Core-Runtime.
           brew update
           brew install llvm@18 sdl2 sdl2_image
-          # libcurl und sqlite3 sind im System vorhanden (macOS SDK).
+          # sqlite3 ist im System vorhanden (macOS SDK); HTTP braucht keine libcurl-Dev-Lib mehr.
           echo "LIBCLANG_PATH=$(brew --prefix llvm@18)/lib" >> $GITHUB_ENV
           echo "LLVM_SYS_181_PREFIX=$(brew --prefix llvm@18)" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig:$(brew --prefix llvm@18)/lib/pkgconfig" >> $GITHUB_ENV

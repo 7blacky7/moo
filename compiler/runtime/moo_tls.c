@@ -21,7 +21,7 @@ extern MooValue moo_string_new_len(const char* chars, int32_t len);
 extern MooValue moo_number(double n);
 extern MooValue moo_none(void);
 extern void moo_throw(MooValue v);
-extern int moo_net_socket_fd(MooValue v);  /* aus moo_net.c (STARTTLS) */
+extern intptr_t moo_net_socket_fd(MooValue v);  /* aus moo_net.c (STARTTLS) */
 
 #define MOO_TLS_MAX 256
 static void* g_tls_conns[MOO_TLS_MAX];  /* Slot frei = NULL */
@@ -72,7 +72,7 @@ MooValue moo_tls_connect_timeout(MooValue host, MooValue port, MooValue timeout_
  * den fd jetzt). */
 MooValue moo_tls_starttls(MooValue tcp_handle, MooValue host) {
     if (host.tag != MOO_STRING) { moo_throw(moo_string_new("tls_starttls: host muss ein String sein")); return moo_none(); }
-    int fd = moo_net_socket_fd(tcp_handle);
+    intptr_t fd = moo_net_socket_fd(tcp_handle);
     if (fd < 0) { moo_throw(moo_string_new("tls_starttls: kein gueltiger TCP-Socket")); return moo_none(); }
     const char* h = MV_STR(host)->chars;
     char err[256];

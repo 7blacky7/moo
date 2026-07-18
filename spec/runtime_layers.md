@@ -51,7 +51,7 @@ Ausfuehren, nur zur Orientierung.
 |-------|---------|---------|------------|--------------------|
 | `moo_db.c` | SQLite: connect/execute/query/close + `_mit_params` + Statement-Objekt | oeffentlich | KERN | `runtime/domain/db/moo_db.c` |
 | `moo_json.c` | JSON parse/serialize | oeffentlich | KERN | `runtime/domain/json/moo_json.c` |
-| `moo_http.c` | HTTP-Client (libcurl) + `_with_headers` | oeffentlich | KERN+SYSTEM | `runtime/domain/http/moo_http.c` |
+| `moo_http.c` | Self-contained HTTP/1.1-Client + `_with_headers` (DNS/IPv6, Chunked, Redirects, HTTPS) | oeffentlich | KERN+SYSTEM (`moo_net.c`, `moo_tls.*`) | `runtime/domain/http/moo_http.c` |
 | `moo_web.c` | HTTP-Server, Template-Engine, `_with_headers` | oeffentlich | KERN+SYSTEM (`moo_net.c`) | `runtime/domain/web/moo_web.c` |
 | `moo_regex.c` | POSIX-Regex | oeffentlich | KERN | `runtime/domain/regex/moo_regex.c` |
 | `moo_crypto.c` | SHA-1/SHA-256, Base64, secure_random, sanitize_html/sql | oeffentlich | KERN | `runtime/domain/crypto/moo_crypto.c` |

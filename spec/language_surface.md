@@ -86,7 +86,7 @@ sichtbaren Flaechen ab. Vervollstaendigung in Phase B.
 | name | layer | public | toolchain | docs | test | notes |
 |------|-------|--------|-----------|------|------|-------|
 | `json_lesen`/`json_parse`, `json_text`/`json_string` | DOMAENE:json | ja | beide | ja | ja | — |
-| `http_hole`/`http_get`, `http_sende`/`http_post` | DOMAENE:http | ja | rust+c | ja | smoke | libcurl |
+| `http_hole`/`http_get`, `http_sende`/`http_post` | DOMAENE:http | ja | rust+c | ja | ja | native HTTP/1.1 via moo_net+moo_tls; OpenSSL/mbedTLS |
 | `http_hole_mit_headers`/`http_get_with_headers` | DOMAENE:http | ja | rust+c | ja | smoke | neu P2b |
 | `http_sende_mit_headers`/`http_post_with_headers` | DOMAENE:http | ja | rust+c | ja | smoke | neu P2b |
 | `datei_lesen`/`file_read` + 8 weitere Datei-Builtins | DOMAENE:file | ja | rust+c | ja | ja | siehe referenz/dateien.md |

@@ -9,10 +9,12 @@
  */
 #include "moo_runtime.h"
 #include "moo_tls.h"
+#include "moo_net_compat.h"
 
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <unistd.h>
 
 #include <mbedtls/ssl.h>
@@ -23,8 +25,8 @@
 #include <mbedtls/error.h>
 
 /* Shared TCP-Connect (DNS + optionaler Connect-Timeout) aus moo_net.c. */
-extern int moo_net_tcp_connect_timeout(const char* host, int port, int timeout_ms,
-                                       char* errbuf, int errlen);
+extern intptr_t moo_net_tcp_connect_timeout(const char* host, int port, int timeout_ms,
+                                            char* errbuf, int errlen);
 
 typedef struct {
     mbedtls_net_context      net;
@@ -113,13 +115,26 @@ static void* mbed_wrap_fd(int fd, const char* host, char* errbuf, int errlen) {
     return c;
 }
 
+static int mbed_fd_from_socket(intptr_t raw_fd, char* errbuf, int errlen) {
+    if (raw_fd < 0 || raw_fd > INT_MAX) {
+        if (raw_fd >= 0) moo_closesock((moo_sockfd_t)raw_fd);
+        snprintf(errbuf, errlen, "Socket-Handle passt nicht in mbedTLS-fd");
+        return -1;
+    }
+    return (int)raw_fd;
+}
+
 static void* mbed_verbinde(const char* host, int port, int timeout_ms, char* errbuf, int errlen) {
-    int fd = moo_net_tcp_connect_timeout(host, port, timeout_ms, errbuf, errlen);
-    if (fd < 0) return NULL;   /* errbuf gesetzt */
+    intptr_t raw_fd = moo_net_tcp_connect_timeout(host, port, timeout_ms, errbuf, errlen);
+    if (raw_fd < 0) return NULL;
+    int fd = mbed_fd_from_socket(raw_fd, errbuf, errlen);
+    if (fd < 0) return NULL;
     return mbed_wrap_fd(fd, host, errbuf, errlen);
 }
 
-static void* mbed_upgrade(int fd, const char* host, char* errbuf, int errlen) {
+static void* mbed_upgrade(intptr_t raw_fd, const char* host, char* errbuf, int errlen) {
+    int fd = mbed_fd_from_socket(raw_fd, errbuf, errlen);
+    if (fd < 0) return NULL;
     return mbed_wrap_fd(fd, host, errbuf, errlen);
 }
 
