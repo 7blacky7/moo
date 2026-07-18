@@ -74,7 +74,7 @@ fn main() {
         .file("runtime/moo_regex.c")
         .file("runtime/moo_core.c")
         .file("runtime/moo_net.c")
-        .file("runtime/moo_tls_openssl.c") // TLS-Client (OpenSSL-Backend, nativer Linux-Pfad)
+        .file("runtime/moo_tls.c")          // TLS-Client backend-agnostische Builtins (Handle-Tabelle, immer)
         .file("runtime/moo_web.c")
         .file("runtime/moo_eval.c")
         .file("runtime/moo_profiler.c")
@@ -226,6 +226,19 @@ fn main() {
             build.file("runtime/moo_capture_audio_stub.c");
             println!("cargo:warning=moo capture: natives Mikrofon-Backend fuer dieses Ziel nicht verfuegbar; Stub wird gebaut");
         }
+    }
+
+    // TLS-Backend-Auswahl (Dual-Path, siehe moo-krypto-tls-dual-path-architektur):
+    // MOO_TLS_BACKEND=openssl (Default, System-libssl) | mbedtls (System-libmbedtls;
+    // spaeter vendored fuer volle Self-Containment). Beide erfuellen moo_tls.h.
+    println!("cargo:rustc-check-cfg=cfg(moo_tls_mbedtls)");
+    println!("cargo:rerun-if-env-changed=MOO_TLS_BACKEND");
+    match std::env::var("MOO_TLS_BACKEND").as_deref() {
+        Ok("mbedtls") => {
+            build.file("runtime/moo_tls_mbedtls.c");
+            println!("cargo:rustc-cfg=moo_tls_mbedtls");
+        }
+        _ => { build.file("runtime/moo_tls_openssl.c"); }
     }
 
     build.compile("moo_runtime");
