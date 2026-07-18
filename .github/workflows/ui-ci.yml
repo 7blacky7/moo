@@ -367,14 +367,14 @@ jobs:
           Copy-Item $runtime.FullName "$sdk\lib\moo_runtime.lib"
 
           $clang = Get-Command clang.exe -ErrorAction Stop
-          $lld = Get-Command lld-link.exe -ErrorAction Stop
+          $rustSysroot = (& rustc --print sysroot).Trim()
+          $lldSource = Join-Path $rustSysroot "lib\rustlib\x86_64-pc-windows-msvc\bin\gcc-ld\lld-link.exe"
+          if (!(Test-Path $lldSource)) {
+            throw "Rust-MSVC lld-link.exe fehlt: $lldSource"
+          }
           $lldDest = "$sdk\toolchain\bin\lld-link.exe"
           Copy-Item $clang.Source "$sdk\toolchain\bin\clang.exe"
-          # Conda-forge kann lld-link.exe als Dateisystem-Link auf den
-          # Multicall-Treiber liefern. Copy-Item darf diesen Link nicht
-          # ausserhalb seines Prefixes reproduzieren; File.Copy uebernimmt
-          # den tatsaechlichen PE-Inhalt in das portable SDK.
-          [System.IO.File]::Copy($lld.Source, $lldDest, $true)
+          Copy-Item $lldSource $lldDest
 
           # Alle aktiven Link-Suchpfade flach bündeln: conda/vcpkg sowie
           # MSVC-, UCRT- und Windows-SDK-Importbibliotheken.
@@ -396,14 +396,9 @@ jobs:
                 Copy-Item -Destination "$sdk\bin" -Force
             }
           }
-          # clang.exe und lld-link.exe laden ihre LLVM-DLLs bevorzugt direkt
-          # neben sich.
+          # clang.exe laedt seine LLVM-DLLs bevorzugt direkt neben sich.
           Get-ChildItem $condaBin -Filter "*.dll" -File |
             Copy-Item -Destination "$sdk\toolchain\bin" -Force
-          & $lldDest --version
-          if ($LASTEXITCODE -ne 0) {
-            throw "Gebündeltes lld-link.exe ist nicht ausführbar ($LASTEXITCODE)"
-          }
 
           if (!$env:VCToolsRedistDir -or !(Test-Path $env:VCToolsRedistDir)) {
             throw "VCToolsRedistDir fehlt — portables SDK darf keine CRT-DLLs still auslassen"
@@ -441,6 +436,14 @@ jobs:
           Remove-Item Env:LIB -ErrorAction SilentlyContinue
           Remove-Item Env:INCLUDE -ErrorAction SilentlyContinue
           Remove-Item Env:VCToolsInstallDir -ErrorAction SilentlyContinue
+
+          # Erst jetzt gilt derselbe abgeschlossene PATH-Vertrag wie fuer den
+          # Endnutzer. Ein fehlendes DLL oder ungueltiger Linker wird hier vor
+          # dem eigentlichen Moo-Selftest sichtbar.
+          & $lldDest --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Gebündeltes lld-link.exe ist in der SDK-Umgebung nicht ausführbar ($LASTEXITCODE)"
+          }
 
           & "$sdk\moo.cmd" run $selftest
           if ($LASTEXITCODE -ne 0) { throw "Portables SDK: moo run fehlgeschlagen ($LASTEXITCODE)" }
