@@ -1,0 +1,56 @@
+# ============================================================
+# demo.moos — Demo fuer das eigene Moo-Protokoll (protokoll.moos).
+# Zwei Parteien (Alice, Bob) fuehren den PSK-Handshake, tauschen
+# verschluesselte Nachrichten und zeigen, dass Faelschung und Replay
+# abgelehnt werden. In-process (kein Netz noetig).
+# ============================================================
+
+importiere protokoll
+
+funktion haupt():
+    setze psk auf "gemeinsames-geheimnis-2026"
+    setze nonce_a auf sichere_zufall(16)
+    setze nonce_b auf sichere_zufall(16)
+
+    setze alice auf neu SichererKanal(psk)
+    setze bob auf neu SichererKanal(psk)
+    alice.handshake(nonce_a, nonce_b)
+    bob.handshake(nonce_a, nonce_b)
+
+    wenn base64_encode(alice.session_key) == base64_encode(bob.session_key):
+        zeige "handshake-ok (gemeinsamer session-key abgeleitet)"
+    sonst:
+        zeige "handshake-FAIL"
+
+    setze m1 auf alice.sende("Hallo Bob")
+    setze m2 auf alice.sende("Zweite Nachricht")
+    setze r1 auf bob.empfange(m1)
+    setze r2 auf bob.empfange(m2)
+    wenn r1["ok"] und r2["ok"] und r1["payload"] == "Hallo Bob":
+        zeige "msg-ok (entschluesselt: '" + r1["payload"] + "', '" + r2["payload"] + "')"
+    sonst:
+        zeige "msg-FAIL"
+
+    # Faelschung: Angreifer ohne den echten PSK kann keine gueltige
+    # Nachricht erzeugen -> HMAC scheitert beim Empfaenger.
+    # Frischer Empfaenger, damit NICHT der Replay-Schutz, sondern wirklich
+    # die Authentifizierung die Faelschung ablehnt.
+    setze bob2 auf neu SichererKanal(psk)
+    bob2.handshake(nonce_a, nonce_b)
+    setze angreifer auf neu SichererKanal("falscher-psk")
+    angreifer.handshake(nonce_a, nonce_b)
+    setze gefaelscht auf angreifer.sende("boese Nachricht")
+    setze rf auf bob2.empfange(gefaelscht)
+    wenn rf["ok"] == falsch:
+        zeige "tamper-rejected (gefaelschte Nachricht: " + rf["grund"] + ")"
+    sonst:
+        zeige "tamper-FAIL (Faelschung akzeptiert!)"
+
+    # Replay: bereits empfangene m1 (alte seq) erneut -> abgelehnt.
+    setze rr auf bob.empfange(m1)
+    wenn rr["ok"] == falsch:
+        zeige "replay-rejected (" + rr["grund"] + ")"
+    sonst:
+        zeige "replay-FAIL (alte Nachricht akzeptiert!)"
+
+haupt()

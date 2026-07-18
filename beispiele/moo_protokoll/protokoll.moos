@@ -1,0 +1,68 @@
+# ============================================================
+# protokoll.moos — "MooSecure": ein EIGENES Moo-Protokoll
+# (authentifizierter Secure-Channel), komplett in Moo auf den
+# self-contained Krypto-Primitiven — OHNE TLS.
+#
+# Zeigt: Moo kann eigene Protokolle bauen. Bausteine (alle nativ,
+# ohne OpenSSL/mbedTLS):
+#   pbkdf2_sha256  -> Session-Key-Ableitung aus PSK + Nonces
+#   sichere_zufall -> Nonces
+#   aes_verschluessle/aes_entschluessle -> AES-256-CTR + HMAC-SHA256
+#       (Encrypt-then-MAC: Vertraulichkeit UND Authentizitaet)
+#
+# Design:
+#   - Pre-Shared-Key-Handshake: beide Seiten kennen ein Geheimnis
+#     (psk). Jede erzeugt eine Zufalls-Nonce; der Session-Key ist
+#     pbkdf2_sha256(psk, nonce_a + nonce_b, 4096, 32). Beide leiten
+#     denselben Key ab (Nonce-Reihenfolge kanonisch: Initiator zuerst).
+#   - Jede Nachricht wird als "seq|payload" gerahmt und verschluesselt.
+#     Die Sequenznummer schuetzt gegen Replay (beim Empfaenger streng
+#     monoton steigend).
+#   - Authentizitaet/Integritaet kommen GRATIS aus aes_* (EtM): jede
+#     Manipulation oder Faelschung ohne Key scheitert am HMAC.
+# ============================================================
+
+klasse SichererKanal:
+    funktion erstelle(psk):
+        selbst.psk = psk
+        selbst.session_key = ""
+        selbst.sende_seq = 0
+        selbst.letzte_empfangen = 0 - 1
+        selbst.bereit = falsch
+
+    # Leitet den gemeinsamen Session-Key ab. nonce_a/nonce_b muessen
+    # bei BEIDEN Parteien in derselben Reihenfolge uebergeben werden.
+    funktion handshake(nonce_a, nonce_b):
+        selbst.session_key = pbkdf2_sha256(selbst.psk, nonce_a + nonce_b, 4096, 32)
+        selbst.bereit = wahr
+        gib_zurück wahr
+
+    # Rahmt "seq|payload" und verschluesselt authentifiziert.
+    funktion sende(klartext):
+        wenn selbst.bereit == falsch:
+            wirf "Kanal nicht verbunden (handshake fehlt)"
+        setze rahmen auf text(selbst.sende_seq) + "|" + klartext
+        setze blob auf aes_verschluessle(selbst.session_key, rahmen)
+        selbst.sende_seq = selbst.sende_seq + 1
+        gib_zurück blob
+
+    # Entschluesselt, prueft Authentizitaet (aes/HMAC) und Sequenz.
+    # Rueckgabe: {"ok": wahr, "payload": ...} oder {"ok": falsch, "grund": ...}
+    funktion empfange(blob):
+        # aes_entschluessle WIRFT bei falschem Key/Manipulation nicht, sondern
+        # liefert einen Fehler-WERT (call_rt-Builtins geben moo_error als Wert,
+        # kein throw -> versuche/fange greift nicht). Zusaetzlich erkennt
+        # ist_fehler() den Wert NICHT (Bug 2026-07-18). Zuverlaessige
+        # Auth-Pruefung daher via typ_von() == "Fehler".
+        setze rahmen auf aes_entschluessle(selbst.session_key, blob)
+        wenn typ_von(rahmen) == "Fehler":
+            gib_zurück {"ok": falsch, "grund": "auth-fehlgeschlagen"}
+        setze teile auf rahmen.teilen("|")
+        setze seq auf zahl(teile[0])
+        # Frame = "seq|payload"; Payload enthaelt hier kein rohes "|"
+        # (ein Produktivprotokoll wuerde stattdessen die Laenge praefixen).
+        setze payload auf teile[1]
+        wenn seq <= selbst.letzte_empfangen:
+            gib_zurück {"ok": falsch, "grund": "replay-abgelehnt"}
+        selbst.letzte_empfangen = seq
+        gib_zurück {"ok": wahr, "payload": payload}
