@@ -106,8 +106,10 @@ sichtbaren Flaechen ab. Vervollstaendigung in Phase B.
 |------|-------|--------|-----------|------|------|-------|
 | `starte`/`spawn`, `.warten`/`.wait`, `.fertig`/`.done` | DOMAENE:thread | ja | rust+c | ja | smoke | pthreads |
 | `kanal`/`channel`, `.senden`/`.send`, `.empfangen`/`.recv`, `.schliessen`/`.close` | DOMAENE:thread | ja | rust+c | ja | ja | gepuffert |
-| `tcp_server`/`tcp_verbinde`, `udp_*`, `.annehmen`/`.accept`, `.lesen`/`.schreiben` | DOMAENE:net | ja | rust+c | ja | smoke | — |
-| `bytes_neu`/`bytes_new`, `bytes_zu_liste`/`bytes_to_list`, `string_zu_bytes`/`string_to_bytes` | DOMAENE:net | ja | rust+c | ja | smoke | binary-safe |
+| `tcp_server`/`tcp_verbinde`, `udp_*`, `.annehmen`/`.accept`, `.lesen`/`.schreiben` | DOMAENE:net | ja | rust+c | ja | ja | DNS + IPv4/IPv6 via AF_UNSPEC; Dualstack-Server; Schreibpfade senden vollstaendig |
+| `bytes_neu`/`bytes_new`, `bytes_zu_liste`/`bytes_to_list`, `string_zu_bytes`/`string_to_bytes` | DOMAENE:net | ja | rust+c | ja | ja | binary-safe |
+| `importiere dns`: `dns_moo_resolver`, `dns_moo_aufloesen`, `DnsResolver.aufloesen` | STDLIB:net | ja | rust | ja | ja | self-contained RFC 1035: A/AAAA/CNAME/MX/NS/TXT; UDP-DNS als Alternative zu System-getaddrinfo |
+| `importiere websocket`: `ws_verbinde`, `ws_verbinde_mit_headers`, `.sende_text`, `.sende_bytes`, `.empfange`, `.ping`, `.schliessen` | STDLIB:net | ja | rust | ja | ja | RFC 6455; ws:// via TCP, wss:// via OpenSSL oder vendored mbedTLS; IPv4/IPv6 |
 | `web_server`/`webserver`, `.web_annehmen`/`.web_accept`, `.antworten`/`.respond`, `.json_antworten`/`.json_respond` | DOMAENE:web | ja | rust+c | ja | smoke | HTTP 1.1 |
 | `.antworten_mit_headers`, `.json_antworten_mit_headers` + `req["headers"]` | DOMAENE:web | ja | rust+c | ja | smoke | neu P2b |
 | `.datei_senden`/`.serve_file`, `.template` | DOMAENE:web | ja | rust+c | ja | smoke | — |

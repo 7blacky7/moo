@@ -1,0 +1,470 @@
+# ============================================================
+# websocket.moos — RFC-6455-Client in pure Moo
+# ============================================================
+# Nutzung:
+#   importiere websocket
+#   setze ws auf ws_verbinde("ws://localhost:9001/chat")
+#   ws.sende_text("Hallo")
+#   setze ereignis auf ws.empfange()
+#   ws.schliessen()
+#
+# ws:// nutzt tcp_verbinde, wss:// nutzt tls_verbinde und damit den
+# aktiven OpenSSL- oder vendored-mbedTLS-Backend. Dieses Modul enthaelt
+# nur Definitionen und fuehrt beim Import keinen Netzwerkzugriff aus.
+# ============================================================
+
+setze WS_GUID auf "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+setze WS_MAX_HEADER auf 65536
+setze WS_MAX_FRAME auf 16777216
+setze WS_OPCODE_CONT auf 0
+setze WS_OPCODE_TEXT auf 1
+setze WS_OPCODE_BINARY auf 2
+setze WS_OPCODE_CLOSE auf 8
+setze WS_OPCODE_PING auf 9
+setze WS_OPCODE_PONG auf 10
+
+funktion ws_bytes_anhaengen(ziel, quelle):
+    setze i auf 0
+    solange i < länge(quelle):
+        ziel.hinzufügen(quelle[i])
+        setze i auf i + 1
+
+funktion ws_liste_abschnitt(liste, start, ende):
+    setze abschnitt_bytes auf []
+    setze i auf start
+    solange i < ende und i < länge(liste):
+        abschnitt_bytes.hinzufügen(liste[i])
+        setze i auf i + 1
+    gib_zurück abschnitt_bytes
+
+funktion ws_finde(textwert, gesucht, start=0):
+    setze i auf start
+    solange i < länge(textwert):
+        wenn textwert[i] == gesucht:
+            gib_zurück i
+        setze i auf i + 1
+    gib_zurück -1
+
+funktion ws_port_lesen(textwert):
+    setze p auf zahl(textwert)
+    wenn p == nichts oder p < 1 oder p > 65535:
+        wirf "websocket: ungueltiger Port"
+    gib_zurück p
+
+funktion ws_url_parse(url):
+    setze sicher auf falsch
+    setze start auf 0
+    wenn länge(url) >= 6 und url.teilstring(0, 6).klein() == "wss://":
+        setze sicher auf wahr
+        setze start auf 6
+    sonst wenn länge(url) >= 5 und url.teilstring(0, 5).klein() == "ws://":
+        setze start auf 5
+    sonst:
+        wirf "websocket: URL muss mit ws:// oder wss:// beginnen"
+
+    setze rest auf url.teilstring(start, länge(url))
+    setze slash auf ws_finde(rest, "/", 0)
+    setze frage auf ws_finde(rest, "?", 0)
+    setze grenze auf -1
+    wenn slash >= 0:
+        setze grenze auf slash
+    wenn frage >= 0 und (grenze < 0 oder frage < grenze):
+        setze grenze auf frage
+
+    setze autoritaet auf rest
+    setze pfad auf "/"
+    wenn grenze >= 0:
+        setze autoritaet auf rest.teilstring(0, grenze)
+        wenn rest[grenze] == "?":
+            setze pfad auf "/" + rest.teilstring(grenze, länge(rest))
+        sonst:
+            setze pfad auf rest.teilstring(grenze, länge(rest))
+
+    wenn länge(autoritaet) == 0:
+        wirf "websocket: Host fehlt"
+
+    setze host auf ""
+    setze port auf 443
+    wenn nicht sicher:
+        setze port auf 80
+
+    wenn autoritaet[0] == "[":
+        setze klammer auf ws_finde(autoritaet, "]", 1)
+        wenn klammer < 0:
+            wirf "websocket: IPv6-Host braucht schliessende Klammer"
+        setze host auf autoritaet.teilstring(1, klammer)
+        wenn klammer + 1 < länge(autoritaet):
+            wenn autoritaet[klammer + 1] != ":":
+                wirf "websocket: ungueltige IPv6-Autoritaet"
+            setze port auf ws_port_lesen(autoritaet.teilstring(klammer + 2, länge(autoritaet)))
+    sonst:
+        setze doppelpunkt auf ws_finde(autoritaet, ":", 0)
+        wenn doppelpunkt >= 0:
+            setze host auf autoritaet.teilstring(0, doppelpunkt)
+            setze port auf ws_port_lesen(autoritaet.teilstring(doppelpunkt + 1, länge(autoritaet)))
+        sonst:
+            setze host auf autoritaet
+
+    wenn länge(host) == 0:
+        wirf "websocket: Host fehlt"
+
+    setze info auf {}
+    info["sicher"] = sicher
+    info["host"] = host
+    info["port"] = port
+    info["pfad"] = pfad
+    info["host_header"] = autoritaet
+    gib_zurück info
+
+funktion ws_transport_oeffne(info, timeout_ms):
+    setze transport auf {}
+    transport["sicher"] = info["sicher"]
+    wenn info["sicher"]:
+        transport["handle"] = tls_verbinde(info["host"], info["port"], timeout_ms)
+    sonst:
+        setze sock auf tcp_verbinde(info["host"], info["port"])
+        sock.timeout_setzen(timeout_ms)
+        transport["handle"] = sock
+    gib_zurück transport
+
+funktion ws_transport_sende(transport, bytes):
+    wenn transport["sicher"]:
+        setze roh auf bytes_neu(bytes)
+        setze geschrieben auf tls_sende(transport["handle"], roh)
+        wenn geschrieben != länge(bytes):
+            wirf "websocket: TLS-Kurzschreiben"
+    sonst:
+        transport["handle"].schreibe_bytes(bytes)
+
+funktion ws_transport_lies(transport, max_bytes):
+    wenn transport["sicher"]:
+        setze roh auf tls_empfange(transport["handle"], max_bytes)
+        gib_zurück bytes_zu_liste(roh)
+    gib_zurück transport["handle"].lesen_bytes(max_bytes)
+
+funktion ws_transport_schliesse(transport):
+    wenn transport["sicher"]:
+        tls_schliesse(transport["handle"])
+    sonst:
+        transport["handle"].schliessen()
+
+funktion ws_lies_genau(verbindung, anzahl):
+    setze exakt_bytes auf []
+    solange länge(exakt_bytes) < anzahl:
+        setze rest auf anzahl - länge(exakt_bytes)
+        setze chunk auf ws_transport_lies(verbindung.transport, rest)
+        wenn länge(chunk) == 0:
+            wirf "websocket: vorzeitiges EOF"
+        ws_bytes_anhaengen(exakt_bytes, chunk)
+    gib_zurück exakt_bytes
+
+funktion ws_lies_header(verbindung):
+    setze header_bytes auf []
+    solange länge(header_bytes) < WS_MAX_HEADER:
+        setze chunk auf ws_transport_lies(verbindung.transport, 1)
+        wenn länge(chunk) == 0:
+            wirf "websocket: EOF im Upgrade-Header"
+        header_bytes.hinzufügen(chunk[0])
+        setze n auf länge(header_bytes)
+        wenn n >= 4 und header_bytes[n-4] == 13 und header_bytes[n-3] == 10 und header_bytes[n-2] == 13 und header_bytes[n-1] == 10:
+            gib_zurück bytes_neu(header_bytes)
+    wirf "websocket: Upgrade-Header zu gross"
+
+funktion ws_header_wert(header, gesucht):
+    setze zeilen auf header.teilen("\r\n")
+    setze ziel auf gesucht.klein()
+    setze i auf 1
+    solange i < länge(zeilen):
+        setze zeile auf zeilen[i]
+        setze pos auf ws_finde(zeile, ":", 0)
+        wenn pos > 0:
+            setze name auf zeile.teilstring(0, pos).trimmen().klein()
+            wenn name == ziel:
+                gib_zurück zeile.teilstring(pos + 1, länge(zeile)).trimmen()
+        setze i auf i + 1
+    gib_zurück ""
+
+funktion ws_zusatz_header(headers):
+    setze header_text auf ""
+    wenn headers == nichts:
+        gib_zurück header_text
+    setze keys auf headers.schlüssel()
+    setze i auf 0
+    solange i < länge(keys):
+        setze name auf keys[i]
+        setze wert auf text(headers[name])
+        setze klein_name auf name.klein()
+        setze geschuetzt auf klein_name == "host" oder klein_name == "upgrade" oder klein_name == "connection"
+        setze geschuetzt auf geschuetzt oder klein_name == "sec-websocket-key" oder klein_name == "sec-websocket-version"
+        wenn nicht geschuetzt:
+            wenn name.text_enthält("\r") oder name.text_enthält("\n") oder wert.text_enthält("\r") oder wert.text_enthält("\n"):
+                wirf "websocket: Header enthaelt Zeilenumbruch"
+            setze header_text auf header_text + name + ": " + wert + "\r\n"
+        setze i auf i + 1
+    gib_zurück header_text
+
+funktion ws_handshake(verbindung, headers):
+    setze zufall_roh auf sha256_bytes(sichere_zufall(32)).teilstring(0, 16)
+    setze schluessel auf base64_kodieren(zufall_roh)
+    verbindung.schluessel = schluessel
+
+    setze req auf "GET " + verbindung.info["pfad"] + " HTTP/1.1\r\n"
+    setze req auf req + "Host: " + verbindung.info["host_header"] + "\r\n"
+    setze req auf req + "Upgrade: websocket\r\n"
+    setze req auf req + "Connection: Upgrade\r\n"
+    setze req auf req + "Sec-WebSocket-Key: " + schluessel + "\r\n"
+    setze req auf req + "Sec-WebSocket-Version: 13\r\n"
+    setze req auf req + ws_zusatz_header(headers)
+    setze req auf req + "\r\n"
+    ws_transport_sende(verbindung.transport, bytes_zu_liste(req))
+
+    setze antwort auf ws_lies_header(verbindung)
+    setze zeilen auf antwort.teilen("\r\n")
+    wenn länge(zeilen) == 0 oder länge(zeilen[0]) < 12 oder zeilen[0].teilstring(9, 12) != "101":
+        wirf "websocket: Server hat Upgrade nicht mit 101 bestaetigt"
+
+    setze upgrade auf ws_header_wert(antwort, "upgrade").klein()
+    setze connection auf ws_header_wert(antwort, "connection").klein()
+    setze accept auf ws_header_wert(antwort, "sec-websocket-accept")
+    setze erwartet auf base64_kodieren(sha1_bytes(schluessel + WS_GUID))
+    wenn upgrade != "websocket":
+        wirf "websocket: Upgrade-Header fehlt"
+    wenn nicht connection.text_enthält("upgrade"):
+        wirf "websocket: Connection-Upgrade fehlt"
+    wenn accept != erwartet:
+        wirf "websocket: Sec-WebSocket-Accept ist ungueltig"
+
+funktion ws_xor_byte(a, b):
+    setze r auf 0
+    setze faktor auf 1
+    setze i auf 0
+    solange i < 8:
+        setze ab auf boden(a / faktor) % 2
+        setze bb auf boden(b / faktor) % 2
+        wenn ab != bb:
+            setze r auf r + faktor
+        setze faktor auf faktor * 2
+        setze i auf i + 1
+    gib_zurück r
+
+funktion ws_mask_neu():
+    setze roh auf sha256_bytes(sichere_zufall(16)).teilstring(0, 4)
+    gib_zurück bytes_zu_liste(roh)
+
+funktion ws_put_u16_be(ziel_bytes, n):
+    ziel_bytes.hinzufügen(boden(n / 256) % 256)
+    ziel_bytes.hinzufügen(n % 256)
+
+funktion ws_put_u64_be(ziel_bytes, n):
+    ziel_bytes.hinzufügen(0)
+    ziel_bytes.hinzufügen(0)
+    ziel_bytes.hinzufügen(0)
+    ziel_bytes.hinzufügen(0)
+    ziel_bytes.hinzufügen(boden(n / 16777216) % 256)
+    ziel_bytes.hinzufügen(boden(n / 65536) % 256)
+    ziel_bytes.hinzufügen(boden(n / 256) % 256)
+    ziel_bytes.hinzufügen(n % 256)
+
+funktion ws_client_frame(opcode, payload, fin=wahr):
+    setze n auf länge(payload)
+    wenn n > WS_MAX_FRAME:
+        wirf "websocket: Frame zu gross"
+    wenn opcode >= WS_OPCODE_CLOSE und (nicht fin oder n > 125):
+        wirf "websocket: ungueltiger Control-Frame"
+
+    setze frame_bytes auf []
+    setze b0 auf opcode
+    wenn fin:
+        setze b0 auf b0 + 128
+    frame_bytes.hinzufügen(b0)
+    wenn n < 126:
+        frame_bytes.hinzufügen(128 + n)
+    sonst wenn n < 65536:
+        frame_bytes.hinzufügen(128 + 126)
+        ws_put_u16_be(frame_bytes, n)
+    sonst:
+        frame_bytes.hinzufügen(128 + 127)
+        ws_put_u64_be(frame_bytes, n)
+
+    setze maske_bytes auf ws_mask_neu()
+    ws_bytes_anhaengen(frame_bytes, maske_bytes)
+    setze i auf 0
+    solange i < n:
+        frame_bytes.hinzufügen(ws_xor_byte(payload[i], maske_bytes[i % 4]))
+        setze i auf i + 1
+    gib_zurück frame_bytes
+
+funktion ws_server_frame_lesen(verbindung):
+    setze kopf auf ws_lies_genau(verbindung, 2)
+    setze b0 auf kopf[0]
+    setze b1 auf kopf[1]
+    setze fin auf boden(b0 / 128) % 2 == 1
+    setze rsv auf boden(b0 / 16) % 8
+    setze opcode auf b0 % 16
+    setze maskiert auf boden(b1 / 128) % 2 == 1
+    setze n auf b1 % 128
+
+    wenn rsv != 0:
+        wirf "websocket: RSV-Bits ohne Extension gesetzt"
+    wenn maskiert:
+        wirf "websocket: Server-Frames duerfen nicht maskiert sein"
+    wenn n == 126:
+        setze ext auf ws_lies_genau(verbindung, 2)
+        setze n auf ext[0] * 256 + ext[1]
+    sonst wenn n == 127:
+        setze ext auf ws_lies_genau(verbindung, 8)
+        wenn ext[0] != 0 oder ext[1] != 0 oder ext[2] != 0 oder ext[3] != 0:
+            wirf "websocket: 64-Bit-Frame ueber Moo-Groessenlimit"
+        setze n auf ext[4] * 16777216 + ext[5] * 65536 + ext[6] * 256 + ext[7]
+    wenn n > WS_MAX_FRAME:
+        wirf "websocket: empfangener Frame zu gross"
+    wenn opcode >= WS_OPCODE_CLOSE und (nicht fin oder n > 125):
+        wirf "websocket: ungueltiger Control-Frame vom Server"
+
+    setze payload auf []
+    wenn n > 0:
+        setze payload auf ws_lies_genau(verbindung, n)
+    setze frame auf {}
+    frame["fin"] = fin
+    frame["opcode"] = opcode
+    frame["payload"] = payload
+    gib_zurück frame
+
+funktion ws_daten_ereignis(opcode, payload):
+    setze e auf {}
+    e["opcode"] = opcode
+    wenn opcode == WS_OPCODE_TEXT:
+        e["typ"] = "text"
+        e["daten"] = bytes_neu(payload)
+    sonst:
+        e["typ"] = "binary"
+        e["daten"] = payload
+    gib_zurück e
+
+klasse WebSocketClient:
+    funktion erstelle(url, headers, timeout_ms):
+        selbst.info = ws_url_parse(url)
+        selbst.transport = ws_transport_oeffne(selbst.info, timeout_ms)
+        selbst.geschlossen = falsch
+        selbst.close_gesendet = falsch
+        selbst.fragment_opcode = 0
+        selbst.fragment_payload = []
+        selbst.schluessel = ""
+        ws_handshake(selbst, headers)
+
+    funktion sende_text(textwert):
+        wenn selbst.geschlossen:
+            wirf "websocket: Verbindung ist geschlossen"
+        ws_transport_sende(selbst.transport, ws_client_frame(WS_OPCODE_TEXT, bytes_zu_liste(textwert)))
+
+    funktion sende_bytes(bytes):
+        wenn selbst.geschlossen:
+            wirf "websocket: Verbindung ist geschlossen"
+        ws_transport_sende(selbst.transport, ws_client_frame(WS_OPCODE_BINARY, bytes))
+
+    funktion ping(textwert=""):
+        wenn selbst.geschlossen:
+            wirf "websocket: Verbindung ist geschlossen"
+        setze payload auf bytes_zu_liste(textwert)
+        wenn länge(payload) > 125:
+            wirf "websocket: Ping-Payload zu gross"
+        ws_transport_sende(selbst.transport, ws_client_frame(WS_OPCODE_PING, payload))
+
+    funktion empfange():
+        wenn selbst.geschlossen:
+            wirf "websocket: Verbindung ist geschlossen"
+        solange wahr:
+            setze frame auf ws_server_frame_lesen(selbst)
+            setze opcode auf frame["opcode"]
+            setze payload auf frame["payload"]
+            setze fin auf frame["fin"]
+
+            wenn opcode == WS_OPCODE_PING:
+                ws_transport_sende(selbst.transport, ws_client_frame(WS_OPCODE_PONG, payload))
+                setze ping_event auf {}
+                ping_event["typ"] = "ping"
+                ping_event["opcode"] = opcode
+                ping_event["daten"] = bytes_neu(payload)
+                gib_zurück ping_event
+
+            wenn opcode == WS_OPCODE_PONG:
+                setze pong_event auf {}
+                pong_event["typ"] = "pong"
+                pong_event["opcode"] = opcode
+                pong_event["daten"] = bytes_neu(payload)
+                gib_zurück pong_event
+
+            wenn opcode == WS_OPCODE_CLOSE:
+                setze code auf 1005
+                setze grund auf ""
+                wenn länge(payload) == 1:
+                    wirf "websocket: Close-Payload mit ungueltiger Laenge"
+                wenn länge(payload) >= 2:
+                    setze code auf payload[0] * 256 + payload[1]
+                    setze grund auf bytes_neu(ws_liste_abschnitt(payload, 2, länge(payload)))
+                wenn nicht selbst.close_gesendet:
+                    ws_transport_sende(selbst.transport, ws_client_frame(WS_OPCODE_CLOSE, payload))
+                    selbst.close_gesendet = wahr
+                ws_transport_schliesse(selbst.transport)
+                selbst.geschlossen = wahr
+                setze close_event auf {}
+                close_event["typ"] = "close"
+                close_event["opcode"] = opcode
+                close_event["code"] = code
+                close_event["grund"] = grund
+                gib_zurück close_event
+
+            wenn opcode == WS_OPCODE_CONT:
+                wenn selbst.fragment_opcode == 0:
+                    wirf "websocket: unerwarteter Continuation-Frame"
+                ws_bytes_anhaengen(selbst.fragment_payload, payload)
+                wenn länge(selbst.fragment_payload) > WS_MAX_FRAME:
+                    wirf "websocket: fragmentierte Nachricht zu gross"
+                wenn fin:
+                    setze fertig_opcode auf selbst.fragment_opcode
+                    setze fertig_payload auf selbst.fragment_payload
+                    selbst.fragment_opcode = 0
+                    selbst.fragment_payload = []
+                    gib_zurück ws_daten_ereignis(fertig_opcode, fertig_payload)
+            sonst wenn opcode == WS_OPCODE_TEXT oder opcode == WS_OPCODE_BINARY:
+                wenn selbst.fragment_opcode != 0:
+                    wirf "websocket: neuer Datenframe waehrend Fragmentierung"
+                wenn fin:
+                    gib_zurück ws_daten_ereignis(opcode, payload)
+                selbst.fragment_opcode = opcode
+                selbst.fragment_payload = payload
+            sonst:
+                wirf "websocket: unbekannter Opcode " + text(opcode)
+
+    funktion schliessen(code=1000, grund=""):
+        wenn selbst.geschlossen:
+            gib_zurück nichts
+        wenn code < 0 oder code > 65535:
+            wirf "websocket: ungueltiger Close-Code"
+        setze payload auf [boden(code / 256) % 256, code % 256]
+        setze grund_bytes auf bytes_zu_liste(grund)
+        wenn länge(grund_bytes) > 123:
+            wirf "websocket: Close-Grund zu lang"
+        ws_bytes_anhaengen(payload, grund_bytes)
+        ws_transport_sende(selbst.transport, ws_client_frame(WS_OPCODE_CLOSE, payload))
+        selbst.close_gesendet = wahr
+
+        # Plain TCP besitzt einen gesetzten Receive-Timeout und kann den
+        # RFC-Close-Handshake abwarten. TLS hat derzeit keinen Receive-Timeout;
+        # dort wird nach dem Senden kontrolliert geschlossen.
+        wenn nicht selbst.info["sicher"]:
+            versuche:
+                setze antwort auf selbst.empfange()
+                setze ignoriert auf antwort
+            fange fehler:
+                setze ignoriert auf fehler
+        wenn nicht selbst.geschlossen:
+            ws_transport_schliesse(selbst.transport)
+            selbst.geschlossen = wahr
+        gib_zurück nichts
+
+funktion ws_verbinde(url, timeout_ms=10000):
+    gib_zurück neu WebSocketClient(url, {}, timeout_ms)
+
+funktion ws_verbinde_mit_headers(url, headers, timeout_ms=10000):
+    gib_zurück neu WebSocketClient(url, headers, timeout_ms)

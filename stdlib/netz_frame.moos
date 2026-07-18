@@ -25,11 +25,10 @@
 #   [24..)   PAYLOAD               PAYLOAD_LAENGE Bytes
 #
 # GRENZEN / EHRLICHE HINWEISE:
-#   - schreibe_bytes (Runtime moo_socket_write_bytes) ruft send()
-#     genau einmal auf. Fuer die kleinen PoC-Frames ist das sicher;
-#     sehr grosse Frames koennten theoretisch einen Kurz-Write
-#     erzeugen. Ein Runtime-seitiger send-Loop waere die saubere
-#     Loesung fuer den OS-Ausbau (ausserhalb Phase-A-Scope).
+#   - schreibe_bytes nutzt seit dem Netzwerk-Foundation-Ausbau eine
+#     vollstaendige Runtime-send-Schleife (inkl. Kurzschreiben/EINTR).
+#     Der Frame-Layer muss weiterhin Teilstueck-Lesen reassemblieren,
+#     weil recv() bewusst nur den jeweils verfuegbaren Block liefert.
 #   - Negatives Null (-0.0) wird zu +0.0 (Bitmuster 0) kodiert:
 #     Moo wirft bei 1/0, daher ist das Vorzeichen einer Null nicht
 #     zerstoerungsfrei bestimmbar. Deterministisch und fuer die

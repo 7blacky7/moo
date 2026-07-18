@@ -70,9 +70,10 @@ Weniger Tutorial, mehr "kann moo das?"-Beweise. Nicht für Einsteiger.
 - `http_api_cors.moos` **(production, neu P2b)**
 - `cms_posts/` *(production, mini-CMS)*
 - `mqtt_broker.moos` *(demo)*
-- `websocket_server.moos` *(demo, Low-Level-Handshake)*
+- `websocket_server.moos` *(demo, RFC-6455-Server + One-Shot-E2E-Referenz)*
+- `websocket_client_selftest.moos` / `websocket_wss_smoke.moos` *(Regression: ws IPv4/IPv6 + wss OpenSSL/mbedTLS)*
 - `proxy.moos` *(demo, TCP-Reverse-Proxy)*
-- `dns_resolver.moos` *(demo, UDP + DNS-RFC)*
+- `dns_resolver.moos` *(demo, Konsument von `stdlib/dns.moos`)*
 - `wetter_api.moos` *(quickstart, auch hier gelistet als web-Konsument)*
 
 #### `domain/db/`
@@ -153,8 +154,9 @@ Label-Semantik:
 | 21 | `sat_solver.moos` | stress | demo | Backtracking. |
 | 22 | `kernel_hello.moos` | domain/system | demo | bare-metal-Einstieg. |
 | 23 | `elf_reader.moos` | domain/system | demo | binary-I/O. |
-| 24 | `dns_resolver.moos` | domain/web | demo | UDP + RFC 1035. |
-| 25 | `blog_engine.moos` | domain/web | legacy | durch `blog_engine_v2.moos` abgelöst (Prepared + Cookies). Kandidat für `legacy/`-Ordner oder `_deprecated`-Suffix in Phase B. |
+| 24 | `dns_resolver.moos` | domain/web | demo | Konsument des self-contained RFC-1035-Moduls `stdlib/dns.moos` (A/AAAA/CNAME). |
+| 25 | `websocket_server.moos` + Client-Smokes | domain/web | demo | RFC 6455, maskierte Clientframes, IPv4/IPv6 und wss-Dualbackend. |
+| 26 | `blog_engine.moos` | domain/web | legacy | durch `blog_engine_v2.moos` abgelöst (Prepared + Cookies). Kandidat für `legacy/`-Ordner oder `_deprecated`-Suffix in Phase B. |
 
 ## 3. Weitere Kandidaten-für-Umzug
 

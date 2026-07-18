@@ -1,0 +1,32 @@
+importiere websocket
+
+funktion pruefe(name, bedingung):
+    wenn nicht bedingung:
+        wirf "WEBSOCKET FAIL " + name
+    zeige "PASS " + name
+
+setze url auf umgebung("WS_TEST_URL")
+wenn url == nichts:
+    setze url auf "ws://localhost:9001"
+
+setze ws auf ws_verbinde(url, 10000)
+ws.sende_text("hallo websocket")
+setze text_event auf ws.empfange()
+pruefe("Text-Typ", text_event["typ"] == "text")
+pruefe("Text-Echo", text_event["daten"] == "hallo websocket")
+
+setze binary_text auf "abc" * 100
+setze binary_payload auf bytes_zu_liste(binary_text)
+ws.sende_bytes(binary_payload)
+setze binary_event auf ws.empfange()
+pruefe("Binary-Typ", binary_event["typ"] == "binary")
+pruefe("Binary-Laenge-126", länge(binary_event["daten"]) == 300)
+pruefe("Binary-Inhalt", bytes_neu(binary_event["daten"]) == binary_text)
+
+ws.ping("probe")
+setze pong_event auf ws.empfange()
+pruefe("Pong-Typ", pong_event["typ"] == "pong")
+pruefe("Pong-Inhalt", pong_event["daten"] == "probe")
+
+ws.schliessen(1000, "fertig")
+zeige "WEBSOCKET-CLIENT PASS"

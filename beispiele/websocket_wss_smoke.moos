@@ -1,0 +1,24 @@
+importiere websocket
+
+setze url auf umgebung("WS_WSS_URL")
+wenn url == nichts:
+    setze url auf "wss://ws.postman-echo.com/raw"
+
+setze ws auf ws_verbinde(url, 15000)
+setze nachricht auf "moo-wss-probe"
+ws.sende_text(nachricht)
+setze ereignis auf ws.empfange()
+wenn ereignis["typ"] != "text":
+    wirf "WSS-SMOKE: kein Text-Echo"
+wenn ereignis["daten"] != nachricht:
+    wirf "WSS-SMOKE: Echo-Inhalt falsch"
+
+# Manche oeffentlichen Echo-Dienste schliessen direkt nach einer Nachricht.
+# Der eigentliche Gatevertrag (TLS-Upgrade + maskiertes Echo) ist hier bereits
+# erfuellt; der anschliessende Close bleibt best-effort.
+versuche:
+    ws.schliessen(1000, "fertig")
+fange fehler:
+    setze ignoriert auf fehler
+
+zeige "WEBSOCKET-WSS PASS"

@@ -14,6 +14,7 @@
 # ============================================================
 
 konstante WS_GUID auf "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+konstante WS_MAX_FRAME auf 16777216
 konstante PORT auf 9001
 
 # ------------------------------------------------------------
@@ -121,14 +122,14 @@ funktion lies_frame(sock):
     setze b0 auf kopf[0]
     setze b1 auf kopf[1]
     setze frame auf neu WsFrame()
-    wenn (b0 / 128) % 2 >= 1:
-        frame.fin = wahr
-    sonst:
-        frame.fin = falsch
+    frame.fin = boden(b0 / 128) % 2 == 1
+    setze rsv auf boden(b0 / 16) % 8
+    wenn rsv != 0:
+        wirf "WebSocket: RSV-Bits ohne Extension"
     setze frame.opcode auf b0 % 16
-    setze maskiert auf falsch
-    wenn (b1 / 128) % 2 >= 1:
-        setze maskiert auf wahr
+    setze maskiert auf boden(b1 / 128) % 2 == 1
+    wenn nicht maskiert:
+        wirf "WebSocket: Client-Frames muessen maskiert sein"
     setze laenge auf b1 % 128
     wenn laenge == 126:
         setze ext auf lies_genau(sock, 2)
@@ -139,28 +140,25 @@ funktion lies_frame(sock):
         setze ext auf lies_genau(sock, 8)
         wenn ext == nichts:
             gib_zurück nichts
-        # Nimm nur untere 32 Bits (reicht fuer Tests)
-        setze laenge auf ext[4] * 256 * 256 * 256 + ext[5] * 256 * 256 + ext[6] * 256 + ext[7]
-    setze mask auf [0, 0, 0, 0]
-    wenn maskiert:
-        setze mask auf lies_genau(sock, 4)
-        wenn mask == nichts:
-            gib_zurück nichts
+        wenn ext[0] != 0 oder ext[1] != 0 oder ext[2] != 0 oder ext[3] != 0:
+            wirf "WebSocket: 64-Bit-Frame ueber Groessenlimit"
+        setze laenge auf ext[4] * 16777216 + ext[5] * 65536 + ext[6] * 256 + ext[7]
+    wenn laenge > WS_MAX_FRAME:
+        wirf "WebSocket: Frame zu gross"
+    wenn frame.opcode >= 8 und (nicht frame.fin oder laenge > 125):
+        wirf "WebSocket: ungueltiger Control-Frame"
+    setze maske auf lies_genau(sock, 4)
+    wenn maske == nichts:
+        gib_zurück nichts
     setze payload auf []
     wenn laenge > 0:
         setze payload auf lies_genau(sock, laenge)
         wenn payload == nichts:
             gib_zurück nichts
-    wenn maskiert:
-        setze i auf 0
-        solange i < länge(payload):
-            setze b auf payload[i]
-            setze m auf mask[i % 4]
-            # XOR ohne xor-Builtin: a XOR b = (a+b) - 2*(a AND b); simpler:
-            # Wir implementieren via Bit-Iteration. Aber einfacher: Tabelle.
-            setze xored auf xor_byte(b, m)
-            payload[i] = xored
-            setze i auf i + 1
+    setze i auf 0
+    solange i < länge(payload):
+        payload[i] = xor_byte(payload[i], maske[i % 4])
+        setze i auf i + 1
     frame.payload = payload
     gib_zurück frame
 
@@ -276,17 +274,33 @@ funktion bearbeite_client(sock, client_id):
 # Server-Loop
 # ------------------------------------------------------------
 
+setze lauf_port auf PORT
+setze port_env auf umgebung("WS_TEST_PORT")
+wenn port_env != nichts:
+    setze port_wert auf zahl(port_env)
+    wenn port_wert == nichts oder port_wert < 1 oder port_wert > 65535:
+        wirf "WS_TEST_PORT ist ungueltig"
+    setze lauf_port auf port_wert
+setze einmal auf umgebung("WS_TEST_ONESHOT") == "1"
+
 zeige "================================================"
 zeige "  moo WebSocket-Server (RFC 6455)"
-zeige "  Port: " + text(PORT)
-zeige "  Test:  wscat -c ws://localhost:" + text(PORT)
+zeige "  Port: " + text(lauf_port)
+zeige "  Test:  wscat -c ws://localhost:" + text(lauf_port)
 zeige "================================================"
 
-setze server auf tcp_server(PORT)
-zeige "Listening on port " + text(PORT) + " ..."
+setze server auf tcp_server(lauf_port)
+server.timeout_setzen(15000)
+zeige "Listening on port " + text(lauf_port) + " ..."
 
 setze client_id auf 0
-solange wahr:
+setze server_laeuft auf wahr
+solange server_laeuft:
     setze client auf server.annehmen()
     setze client_id auf client_id + 1
     bearbeite_client(client, client_id)
+    wenn einmal:
+        setze server_laeuft auf falsch
+server.schliessen()
+wenn einmal:
+    zeige "WEBSOCKET-SERVER PASS"
