@@ -214,6 +214,8 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_sha1_bytes: FunctionValue<'ctx>,
     pub moo_hmac_sha256: FunctionValue<'ctx>,
     pub moo_pbkdf2_sha256: FunctionValue<'ctx>,
+    pub moo_aes_encrypt: FunctionValue<'ctx>,
+    pub moo_aes_decrypt: FunctionValue<'ctx>,
     pub moo_secure_random: FunctionValue<'ctx>,
     // === Tensor (Plan-014 A3) ===
     pub moo_tensor_neu: FunctionValue<'ctx>,
@@ -1039,6 +1041,8 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_sha1_bytes: decl_mv_mv!("moo_sha1_bytes", mv1),
             moo_hmac_sha256: decl_mv_mv!("moo_hmac_sha256", mv2),
             moo_pbkdf2_sha256: decl_mv_mv!("moo_pbkdf2_sha256", &[mv, mv, mv, mv]),
+            moo_aes_encrypt: decl_mv_mv!("moo_aes_encrypt", mv2),
+            moo_aes_decrypt: decl_mv_mv!("moo_aes_decrypt", mv2),
             moo_secure_random: decl_mv_mv!("moo_secure_random", mv1),
             // === Tensor (Plan-014 A3) — Tensor-Konvention: Args borrowed,
             // Rueckgabe +1; die Codegen-Arms machen Post-Call-Release. ===

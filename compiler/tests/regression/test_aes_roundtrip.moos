@@ -1,0 +1,19 @@
+# AES-256-CTR+HMAC Round-Trip (moo_crypto.c). Deterministischer Output:
+# der Zufalls-IV/Chiffretext wird nie geprintet, nur Vergleichsergebnisse.
+setze salt auf sichere_zufall(16)
+setze schluessel auf pbkdf2_sha256("master-passwort", salt, 1000, 32)
+setze geheim auf "geheime Nachricht: hunter2 ünïcödé ✓"
+
+setze chiffre auf aes_verschluessle(schluessel, geheim)
+setze zurueck auf aes_entschluessle(schluessel, chiffre)
+wenn zurueck == geheim:
+    zeige("roundtrip-ok")
+sonst:
+    zeige("roundtrip-fail")
+
+# Zufalls-IV: zwei Verschluesselungen desselben Klartexts unterscheiden sich
+setze chiffre2 auf aes_verschluessle(schluessel, geheim)
+wenn chiffre == chiffre2:
+    zeige("iv-fail")
+sonst:
+    zeige("iv-ok")

@@ -3413,6 +3413,16 @@ impl<'ctx> CodeGen<'ctx> {
                         let b = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_hmac_sha256, &[a.into(), b.into()], "hmac_sha256");
                     }
+                    "aes_verschluessle" | "aes_encrypt" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_aes_encrypt, &[a.into(), b.into()], "aes_verschluessle");
+                    }
+                    "aes_entschluessle" | "aes_decrypt" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_aes_decrypt, &[a.into(), b.into()], "aes_entschluessle");
+                    }
                     "pbkdf2_sha256" | "pbkdf2" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
