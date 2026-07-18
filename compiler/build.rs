@@ -255,6 +255,18 @@ fn main() {
         _ => { build.file("runtime/moo_tls_openssl.c"); }
     }
 
+    // AES-Backend-Auswahl (Dual-Path): MOO_AES_BACKEND=self (Default, hand-rolled
+    // AES-256-CTR+HMAC in moo_crypto.c) | openssl (EVP, AES-NI). Beide erzeugen ein
+    // byte-identisches Container-Format (IV||CTR-ct||HMAC) und sind interoperabel.
+    // Bei openssl blendet MOO_AES_NATIVE die self-Impl in moo_crypto.c aus.
+    println!("cargo:rustc-check-cfg=cfg(moo_aes_native)");
+    println!("cargo:rerun-if-env-changed=MOO_AES_BACKEND");
+    if std::env::var("MOO_AES_BACKEND").as_deref() == Ok("openssl") {
+        build.file("runtime/moo_aes_native.c");
+        build.define("MOO_AES_NATIVE", None);
+        println!("cargo:rustc-cfg=moo_aes_native");
+    }
+
     build.compile("moo_runtime");
 
     // ========================================================================

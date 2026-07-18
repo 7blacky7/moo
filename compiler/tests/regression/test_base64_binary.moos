@@ -1,0 +1,11 @@
+# base64 muss binaere Daten (mit \0-Bytes) verlustfrei round-trippen.
+# AES-Blobs haben zufaellige IVs -> enthalten intermittierend \0.
+# Deterministischer Output: der Erfolgszaehler, nicht die Blobs.
+setze key auf pbkdf2_sha256("pw", "salt-16-bytes-xx", 300, 32)
+setze ok auf 0
+für i in 0..30:
+    setze blob auf aes_verschluessle(key, "nachricht-" + text(i))
+    setze zurueck auf base64_decode(base64_encode(blob))
+    wenn aes_entschluessle(key, zurueck) == "nachricht-" + text(i):
+        setze ok auf ok + 1
+zeige("base64-binaer-roundtrip=" + text(ok) + "/30")

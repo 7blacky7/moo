@@ -262,7 +262,9 @@ MooValue moo_base64_decode(MooValue input) {
         if (j < out_len) out[j++] = (char)(triple & 0xFF);
     }
     out[j] = '\0';
-    MooValue result = moo_string_new(out);
+    /* Binaersicher: out_len statt strlen — base64-dekodierte Rohbytes koennen
+     * eingebettete \0 enthalten (z.B. AES-Blobs). */
+    MooValue result = moo_string_new_len(out, out_len);
     free(out);
     return result;
 }
@@ -430,6 +432,7 @@ MooValue moo_pbkdf2_sha256(MooValue password, MooValue salt,
 }
 
 
+#ifndef MOO_AES_NATIVE  /* nativer AES-Backend (moo_aes_native.c) ersetzt diese self-Impl */
 // ============================================================
 // AES-256 (FIPS-197) — Block-Cipher-Kern
 // Nur Encrypt noetig: der CTR-Modus nutzt AES ausschliesslich als
@@ -624,3 +627,4 @@ MooValue moo_aes_decrypt(MooValue key, MooValue blob) {
     free(out);
     return result;
 }
+#endif /* MOO_AES_NATIVE */

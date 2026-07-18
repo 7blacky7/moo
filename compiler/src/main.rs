@@ -1076,6 +1076,9 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     link_args.extend(["-lssl".to_string(), "-lcrypto".to_string()]);
     // Vendored mbedTLS (compiler/runtime/mbedtls/) ist in moo_runtime einkompiliert
     // (build.rs unter MOO_TLS_BACKEND=mbedtls) — KEINE System-Libs mehr noetig.
+    // Nativer AES-Backend (moo_aes_native.c) braucht libcrypto (EVP/HMAC/SHA/RAND).
+    #[cfg(all(not(target_os = "windows"), moo_aes_native))]
+    link_args.extend(["-lcrypto".to_string()]);
 
     // Linux-only UI-Libs (GTK3 + libappindicator3 + Co.) — nur wenn das
     // UI-Modul wirklich mitgebaut wurde. 3D-only Builds auf Linux duerfen
