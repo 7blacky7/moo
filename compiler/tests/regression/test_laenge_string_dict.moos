@@ -1,0 +1,8 @@
+# .länge()/.length() muss fuer String, Liste UND Dict korrekt sein.
+# Regression: war hart auf moo_list_length -> 0 fuer String/Dict (Fix codegen.rs).
+zeige("hallo".länge())
+setze s auf "abc" + "de"
+zeige(s.länge())
+zeige("".länge())
+zeige([1, 2, 3].länge())
+zeige({"a": 1, "b": 2, "c": 3}.länge())

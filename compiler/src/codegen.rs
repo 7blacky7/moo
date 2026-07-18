@@ -5909,7 +5909,9 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     "length" | "länge" => {
-                        return self.call_rt(self.rt.moo_list_length, &[obj.into()], "len");
+                        // Generische Laenge: String->length, List->length, Dict->count.
+                        // (Vorher hart moo_list_length -> 0 fuer Strings/Dicts.)
+                        return self.call_rt(self.rt.moo_length, &[obj.into()], "len");
                     }
                     "pop" => {
                         return self.call_rt(self.rt.moo_list_pop, &[obj.into()], "pop");
@@ -6578,7 +6580,9 @@ impl<'ctx> CodeGen<'ctx> {
                 // Eingebaute Properties
                 match property.as_str() {
                     "length" | "länge" => {
-                        return self.call_rt(self.rt.moo_list_length, &[obj.into()], "len");
+                        // Generische Laenge: String->length, List->length, Dict->count.
+                        // (Vorher hart moo_list_length -> 0 fuer Strings/Dicts.)
+                        return self.call_rt(self.rt.moo_length, &[obj.into()], "len");
                     }
                     _ => {
                         let prop_str = self.make_global_str(property, "prop")?;
