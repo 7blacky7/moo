@@ -5,6 +5,7 @@
 
 #include "moo_runtime.h"
 #include "moo_net_compat.h"
+#include <limits.h>
 #ifndef _WIN32
 #include <netdb.h>
 #include <fcntl.h>
@@ -294,13 +295,32 @@ MooValue moo_socket_read(MooValue sock, MooValue max_bytes) {
     return result;
 }
 
+static bool moo_socket_send_all(MooSocket* s, const char* data, size_t len) {
+    size_t off = 0;
+    while (off < len) {
+        size_t rest = len - off;
+        int part = rest > (size_t)INT_MAX ? INT_MAX : (int)rest;
+        moo_ssize_t n = send(s->fd, data + off, part, 0);
+        if (n < 0) {
+#ifdef _WIN32
+            if (WSAGetLastError() == WSAEINTR) continue;
+#else
+            if (errno == EINTR) continue;
+#endif
+            return false;
+        }
+        if (n == 0) return false;
+        off += (size_t)n;
+    }
+    return true;
+}
+
 void moo_socket_write(MooValue sock, MooValue data) {
     MooSocket* s = get_socket(sock);
     if (!s || data.tag != MOO_STRING) return;
-
-    const char* str = MV_STR(data)->chars;
-    int32_t len = MV_STR(data)->length;
-    send(s->fd, str, len, 0);
+    if (!moo_socket_send_all(s, MV_STR(data)->chars, (size_t)MV_STR(data)->length)) {
+        moo_throw(moo_string_new("Socket schreiben fehlgeschlagen"));
+    }
 }
 
 // === Byte-Array API (binary-safe, fuer wire protocols) ===
@@ -336,16 +356,24 @@ MooValue moo_socket_read_bytes(MooValue sock, MooValue max_bytes) {
 void moo_socket_write_bytes(MooValue sock, MooValue list) {
     MooSocket* s = get_socket(sock);
     if (!s || list.tag != MOO_LIST) return;
-    int32_t len = (int32_t)MV_NUM(moo_list_length(list));
+    MooValue len_value = moo_list_length(list);
+    int32_t len = (int32_t)MV_NUM(len_value);
     if (len <= 0) return;
-    unsigned char* buf = (unsigned char*)malloc(len);
+    unsigned char* buf = (unsigned char*)malloc((size_t)len);
+    if (!buf) {
+        moo_throw(moo_string_new("Socket Byte-Schreiben: Speicherreservierung fehlgeschlagen"));
+        return;
+    }
     for (int32_t i = 0; i < len; i++) {
-        MooValue v = moo_list_get(list, moo_number((double)i));
+        MooValue index = moo_number((double)i);
+        MooValue v = moo_list_get(list, index);
         int b = (v.tag == MOO_NUMBER) ? (int)MV_NUM(v) : 0;
         buf[i] = (unsigned char)(b & 0xFF);
+        moo_release(v);
     }
-    send(s->fd, (const char*)buf, len, 0);
+    bool ok = moo_socket_send_all(s, (const char*)buf, (size_t)len);
     free(buf);
+    if (!ok) moo_throw(moo_string_new("Socket Byte-Schreiben fehlgeschlagen"));
 }
 
 // Konvertiert eine Liste von Zahlen in einen binary-safe String (length-tagged).
@@ -355,9 +383,11 @@ MooValue moo_bytes_to_string(MooValue list) {
     if (len <= 0) return moo_string_new_len("", 0);
     char* buf = (char*)malloc(len + 1);
     for (int32_t i = 0; i < len; i++) {
-        MooValue v = moo_list_get(list, moo_number((double)i));
+        MooValue index = moo_number((double)i);
+        MooValue v = moo_list_get(list, index);
         int b = (v.tag == MOO_NUMBER) ? (int)MV_NUM(v) : 0;
         buf[i] = (char)(b & 0xFF);
+        moo_release(v);
     }
     buf[len] = '\0';
     MooValue result = moo_string_new_len(buf, len);

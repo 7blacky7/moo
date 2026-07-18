@@ -1,0 +1,87 @@
+# Grosspayload-Regressionsgate fuer TCP-Text und Byte-Listen.
+# Zwei Prozesse ueber NET_LARGE_ROLE=server|client.
+
+konstante BLOCK auf "0123456789abcdef"
+konstante WIEDERHOLUNGEN auf 65536
+konstante BYTES_GESAMT auf 1048576
+
+funktion verbinde_mit_retry(host, port):
+    setze versuche_anzahl auf 0
+    solange versuche_anzahl < 200:
+        versuche:
+            gib_zurück tcp_verbinde(host, port)
+        fange fehler:
+            setze versuche_anzahl auf versuche_anzahl + 1
+            schlafe(0.02)
+    wirf "netz-large: Verbindung nicht moeglich"
+
+funktion lies_bis(sock, ziel):
+    setze gesamt auf 0
+    solange gesamt < ziel:
+        setze chunk auf sock.lesen(65536)
+        setze n auf länge(chunk)
+        wenn n == 0:
+            wirf "netz-large: vorzeitiges EOF"
+        setze gesamt auf gesamt + n
+        wenn gesamt > ziel:
+            wirf "netz-large: zu viele Bytes"
+    gib_zurück gesamt
+
+funktion server_lauf(port):
+    setze server auf tcp_server(port)
+    server.timeout_setzen(15000)
+
+    setze text_client auf server.annehmen()
+    text_client.timeout_setzen(15000)
+    setze text_n auf lies_bis(text_client, BYTES_GESAMT)
+    text_client.schreiben("TEXT:" + text(text_n))
+    text_client.schliessen()
+
+    setze bytes_client auf server.annehmen()
+    bytes_client.timeout_setzen(15000)
+    setze bytes_n auf lies_bis(bytes_client, BYTES_GESAMT)
+    bytes_client.schreiben("BYTES:" + text(bytes_n))
+    bytes_client.schliessen()
+    server.schliessen()
+
+    wenn text_n == BYTES_GESAMT und bytes_n == BYTES_GESAMT:
+        zeige "NET-LARGE SERVER PASS"
+    sonst:
+        wirf "NET-LARGE SERVER FAIL"
+
+funktion client_lauf(port):
+    setze payload auf BLOCK * WIEDERHOLUNGEN
+    wenn länge(payload) != BYTES_GESAMT:
+        wirf "netz-large: falsche Testpayload-Laenge"
+
+    setze text_sock auf verbinde_mit_retry("localhost", port)
+    text_sock.timeout_setzen(15000)
+    text_sock.schreiben(payload)
+    setze text_ack auf text_sock.lesen(128)
+    text_sock.schliessen()
+    wenn text_ack != "TEXT:" + text(BYTES_GESAMT):
+        wirf "netz-large: Text-ACK falsch: " + text_ack
+
+    setze bytes_payload auf bytes_zu_liste(payload)
+    wenn länge(bytes_payload) != BYTES_GESAMT:
+        wirf "netz-large: Byte-Konvertierung falsch"
+    setze bytes_sock auf verbinde_mit_retry("localhost", port)
+    bytes_sock.timeout_setzen(15000)
+    bytes_sock.schreibe_bytes(bytes_payload)
+    setze bytes_ack auf bytes_sock.lesen(128)
+    bytes_sock.schliessen()
+    wenn bytes_ack != "BYTES:" + text(BYTES_GESAMT):
+        wirf "netz-large: Bytes-ACK falsch: " + bytes_ack
+
+    zeige "NET-LARGE CLIENT PASS"
+
+setze rolle auf umgebung("NET_LARGE_ROLE")
+setze port_text auf umgebung("NET_LARGE_PORT")
+setze port auf zahl(port_text)
+
+wenn rolle == "server":
+    server_lauf(port)
+sonst wenn rolle == "client":
+    client_lauf(port)
+sonst:
+    wirf "NET_LARGE_ROLE muss server oder client sein"
