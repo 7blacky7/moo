@@ -1,0 +1,44 @@
+# ============================================================
+# fluxmail_ui_liste.moos — Mittlere Spalte: Suche+Filter + Liste
+# Eintrag = Initialen, Absender, Zeit, Betreff, Vorschau,
+# Ungelesen-Punkt.
+#
+# UNSICHER: ui_liste (natives Listen-Widget) hat keine belegte
+# Konstruktor-Arity in den Memories (nur .sortierbar/.sortiere/
+# .zeile_setze/.zelle_setze/.entferne als Methoden erwaehnt). Um
+# das Kompilieren nicht auf eine geratene Arity zu riskieren, wird
+# hier stattdessen jede Zeile aus ui_label (6 Args, belegt) + einem
+# ui_knopf (7 Args, belegt) als Klickflaeche zusammengesetzt.
+#
+# Klick-Callback wird als Funktions-PARAMETER (bei_email) uebergeben;
+# das Lambda ruft den durchgereichten Parameter auf (Compiler-Fix
+# aae7bee). Initialen aus der echten Email-Klasse (Email.initialen()).
+# ============================================================
+
+aus fluxmail_modell importiere Email, email_aus_dict
+
+konstante FLUXMAIL_ZEILE_HOEHE auf 64
+
+funktion liste_baue(fenster, x_off, breite, g, zustand, emails, bei_email):
+    setze y auf 16
+    setze feld auf ui_eingabe(fenster, x_off + 10, y, breite - 90, 28, "Suche...", "")
+    g["liste_suchfeld"] = feld
+    ui_knopf(fenster, x_off + breite - 70, y, 60, 28, "Filter", () => nichts)
+    setze y auf y + 44
+
+    wenn emails.länge() == 0:
+        ui_label(fenster, x_off + 10, y, breite - 20, 24, "Keine E-Mails in diesem Ordner")
+        gib_zurück
+
+    für i in 0..emails.länge():
+        setze mail auf emails[i]
+        setze punkt auf "○"
+        wenn mail["ungelesen"]:
+            setze punkt auf "●"
+        setze mail_obj auf email_aus_dict(mail)
+        setze initialen auf mail_obj.initialen()
+        ui_label(fenster, x_off + 10, y, 30, 26, initialen)
+        ui_label(fenster, x_off + 44, y, 16, 16, punkt)
+        setze zeile_text auf mail["absender_name"] + "  ·  " + mail["zeit"] + "\n" + mail["betreff"] + "\n" + mail["vorschau"]
+        ui_knopf(fenster, x_off + 66, y, breite - 80, FLUXMAIL_ZEILE_HOEHE - 8, zeile_text, () => bei_email(g, zustand, mail["id"]))
+        setze y auf y + FLUXMAIL_ZEILE_HOEHE

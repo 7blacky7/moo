@@ -1,0 +1,44 @@
+# ============================================================
+# fluxmail_imap.moos — IMAP-Client ueber rohes TCP (tcp_verbinde)
+#
+# FEHLT: IMAP-Builtin — Moo hat keinen fertigen IMAP-Client in der
+#   Stdlib (nur tcp_verbinde/tcp_server + Socket .lesen/.schreiben).
+#   Das IMAP-Protokoll (RFC 3501, Tag-Kommandos wie "a1 LOGIN ...",
+#   "a1 SELECT INBOX", "a1 FETCH 1:* ...") muss hier von Hand ueber
+#   den rohen Socket gebaut werden.
+#
+# FEHLT: TLS/SSL — tcp_verbinde oeffnet nur eine PLAIN TCP-Verbindung.
+#   Es gibt keinen moo-Builtin fuer TLS-Handshake/STARTTLS, also ist
+#   ein echter IMAPS-Login (Port 993) oder STARTTLS (Port 143) NICHT
+#   moeglich. Diese Implementierung baut nur den Klartext-Rahmen; ein
+#   echter Verbindungsaufbau zu einem TLS-only Mailserver wuerde am
+#   TLS-Handshake scheitern (nicht Teil dieses Moduls).
+# ============================================================
+
+funktion imap_tag_neu(zaehler):
+    gib_zurück "a" + text(zaehler)
+
+funktion imap_verbinden(host, port):
+    # UNSICHER: kein TLS moeglich (siehe FEHLT oben) — nur Klartext-TCP.
+    setze sock auf tcp_verbinde(host, port)
+    sock.timeout_setzen(5000)
+    gib_zurück sock
+
+funktion imap_befehl(sock, tag, befehl):
+    setze zeile auf tag + " " + befehl + "\r\n"
+    sock.schreiben(zeile)
+    gib_zurück sock.lesen(4096)
+
+funktion imap_login(sock, benutzer, passwort):
+    # Klartext-LOGIN — ohne TLS in echten Netzen unsicher, hier nur
+    # als Protokoll-Geruest fuer das Demo-UI relevant.
+    setze antwort auf imap_befehl(sock, imap_tag_neu(1), "LOGIN " + benutzer + " " + passwort)
+    gib_zurück antwort.text_enthält("OK")
+
+funktion imap_ordner_waehlen(sock, ordner_name):
+    setze antwort auf imap_befehl(sock, imap_tag_neu(2), "SELECT " + ordner_name)
+    gib_zurück antwort.text_enthält("OK")
+
+funktion imap_logout(sock):
+    imap_befehl(sock, imap_tag_neu(3), "LOGOUT")
+    sock.schliessen()

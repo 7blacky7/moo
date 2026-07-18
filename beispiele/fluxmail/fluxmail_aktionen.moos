@@ -1,0 +1,41 @@
+# ============================================================
+# fluxmail_aktionen.moos — Event-Handler (Klick-Aktionen) fuer
+# die UI-Module.
+#
+# Diese Handler werden von script.moos als Funktions-PARAMETER an die
+# UI-Builder (sidebar/liste/detail) durchgereicht; deren Klick-Lambdas
+# rufen den durchgereichten Parameter auf. (Frueherer Compiler-Bug —
+# Lambda konnte captured Funktionsparameter nicht aufrufen — ist
+# behoben, Commit aae7bee.)
+#
+# UNSICHER/bewusst vereinfacht: echtes dynamisches Neu-Rendern nach
+# einem Klick (Liste/Detail neu aufbauen) wuerde ui_zerstoere +
+# Rebuild aller betroffenen Widgets brauchen. Das UI wird in diesem
+# Bau-Task ohnehin NICHT gestartet; hier wird zustand aktualisiert
+# und die Aktion als Statuszeile ausgegeben — das belegt die
+# Verdrahtung (Antworten/Allen antworten/Weiterleiten/Loeschen/
+# Ordnerwechsel/Einstellungen) strukturell.
+# ============================================================
+
+funktion fluxmail_ordner_ausgewaehlt(g, zustand, schluessel):
+    zustand["aktueller_ordner"] = schluessel
+    zeige "Ordner gewechselt: " + schluessel
+
+funktion fluxmail_einstellungen_oeffnen(g, zustand):
+    zeige "Einstellungen angefordert (Konten-Verwaltung)"
+
+funktion fluxmail_email_ausgewaehlt(g, zustand, id):
+    zustand["ausgewaehlte_email_id"] = id
+    zeige "E-Mail ausgewaehlt: " + text(id)
+
+funktion fluxmail_antworten(g, zustand, id):
+    zeige "Antworten auf E-Mail " + text(id)
+
+funktion fluxmail_allen_antworten(g, zustand, id):
+    zeige "Allen antworten auf E-Mail " + text(id)
+
+funktion fluxmail_weiterleiten(g, zustand, id):
+    zeige "Weiterleiten von E-Mail " + text(id)
+
+funktion fluxmail_loeschen(g, zustand, id):
+    zeige "E-Mail geloescht: " + text(id)

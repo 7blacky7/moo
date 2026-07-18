@@ -1,0 +1,98 @@
+# ============================================================
+# fluxmail_ui.moos — Haupt-Layout (3 Spalten) + Netzeinstellungen-
+# Dialog + Konten-Verwaltung. Verdrahtet sidebar/liste/detail.
+#
+# Fensterflags (moo_ui.h, belegte Bitwerte):
+#   RESIZABLE=1, MAXIMIZED=2, FULLSCREEN=4, MODAL=8, NO_DECOR=16,
+#   ALWAYS_TOP=32.
+# UNSICHER: der 5. ui_fenster-Argument (neben titel,b,h,flags) ist
+# nicht codebelegt benannt — hier als Eltern-Fensterhandle
+# angenommen (nichts fuer das Hauptfenster, Hauptfenster-Handle fuer
+# modale Dialoge).
+# ============================================================
+
+aus fluxmail_ui_sidebar importiere sidebar_baue
+aus fluxmail_ui_liste importiere liste_baue
+aus fluxmail_ui_detail importiere detail_baue
+aus fluxmail_netz importiere netz_verschluesselungs_optionen
+
+konstante FLUXMAIL_FLAG_RESIZABLE auf 1
+konstante FLUXMAIL_FLAG_MODAL auf 8
+
+funktion netzeinstellungen_dialog_oeffnen(haupt_fenster, konto):
+    setze dialog auf ui_fenster("Netzeinstellungen — " + konto["name"], 420, 420, FLUXMAIL_FLAG_MODAL, haupt_fenster)
+
+    ui_label(dialog, 20, 16, 150, 20, "IMAP-Server")
+    setze feld_imap_host auf ui_eingabe(dialog, 180, 14, 220, 26, "server.beispiel.de", konto["imap_host"])
+
+    ui_label(dialog, 20, 50, 150, 20, "IMAP-Port")
+    setze feld_imap_port auf ui_eingabe(dialog, 180, 48, 220, 26, "993", text(konto["imap_port"]))
+
+    ui_label(dialog, 20, 84, 150, 20, "SMTP-Server")
+    setze feld_smtp_host auf ui_eingabe(dialog, 180, 82, 220, 26, "smtp.beispiel.de", konto["smtp_host"])
+
+    ui_label(dialog, 20, 118, 150, 20, "SMTP-Port")
+    setze feld_smtp_port auf ui_eingabe(dialog, 180, 116, 220, 26, "587", text(konto["smtp_port"]))
+
+    ui_label(dialog, 20, 152, 150, 20, "Benutzer")
+    setze feld_benutzer auf ui_eingabe(dialog, 180, 150, 220, 26, "name@domain.de", konto["benutzer"])
+
+    ui_label(dialog, 20, 186, 150, 20, "Passwort")
+    setze feld_passwort auf ui_eingabe(dialog, 180, 184, 220, 26, "********", "")
+
+    ui_label(dialog, 20, 220, 150, 20, "Verschluesselung")
+    setze verschl_optionen auf netz_verschluesselungs_optionen()
+    für i in 0..verschl_optionen.länge():
+        ui_label(dialog, 180 + i * 70, 220, 66, 20, verschl_optionen[i])
+
+    ui_knopf(dialog, 180, 260, 100, 32, "Speichern", () => ui_fenster_schliessen(dialog))
+    ui_knopf(dialog, 290, 260, 100, 32, "Abbrechen", () => ui_fenster_schliessen(dialog))
+
+    gib_zurück dialog
+
+funktion konten_verwaltung_oeffnen(haupt_fenster, konten_liste):
+    setze dialog auf ui_fenster("Konten verwalten", 380, 320, FLUXMAIL_FLAG_MODAL, haupt_fenster)
+    setze y auf 20
+    für i in 0..konten_liste.länge():
+        setze k auf konten_liste[i]
+        ui_label(dialog, 20, y, 180, 22, k["name"] + " (" + k["art"] + ")")
+        ui_knopf(dialog, 210, y - 2, 76, 26, "Bearbeiten", () => netzeinstellungen_dialog_oeffnen(dialog, k))
+        ui_knopf(dialog, 290, y - 2, 76, 26, "Entfernen", () => nichts)
+        setze y auf y + 36
+    ui_knopf(dialog, 20, y + 10, 160, 32, "Konto hinzufuegen", () => nichts)
+    gib_zurück dialog
+
+funktion hauptfenster_baue(g, zustand, handler):
+    ui_init()
+    setze fenster auf ui_fenster("FluxMail", 1100, 650, FLUXMAIL_FLAG_RESIZABLE, nichts)
+    g["hFenster"] = fenster
+
+    setze daten auf zustand["daten"]
+    setze ordner_liste auf daten["ordner"]
+    setze alle_emails auf daten["emails"]
+    setze aktueller_ordner auf zustand["aktueller_ordner"]
+
+    setze gefiltert auf []
+    für i in 0..alle_emails.länge():
+        setze m auf alle_emails[i]
+        wenn m["ordner"] == aktueller_ordner:
+            gefiltert.hinzufügen(m)
+
+    setze bei_ordner auf handler["ordner"]
+    setze bei_einstellungen auf handler["einstellungen"]
+    setze bei_email auf handler["email"]
+    setze bei_antworten auf handler["antworten"]
+    setze bei_allen auf handler["allen"]
+    setze bei_weiterleiten auf handler["weiterleiten"]
+    setze bei_loeschen auf handler["loeschen"]
+
+    sidebar_baue(fenster, g, zustand, ordner_liste, bei_ordner, bei_einstellungen)
+
+    setze ausgewaehlt auf nichts
+    wenn gefiltert.länge() > 0:
+        setze ausgewaehlt auf gefiltert[0]
+
+    liste_baue(fenster, 200, 420, g, zustand, gefiltert, bei_email)
+    detail_baue(fenster, 620, 480, g, zustand, ausgewaehlt, bei_antworten, bei_allen, bei_weiterleiten, bei_loeschen)
+
+    gib_zurück fenster

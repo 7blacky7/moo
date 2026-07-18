@@ -1,0 +1,93 @@
+# ============================================================
+# fluxmail_modell.moos — Datenmodell: Email, Konto, Ordner
+# Reine Datenklassen + dict-Konvertierung fuer JSON-Persistenz.
+# ============================================================
+
+exportiere funktion initialen_aus_name(name):
+    setze teile auf name.trimmen().teilen(" ")
+    wenn teile.länge() == 0:
+        gib_zurück "?"
+    wenn teile.länge() == 1:
+        gib_zurück teile[0].teilstring(0, 1).gross()
+    gib_zurück (teile[0].teilstring(0, 1) + teile[teile.länge() - 1].teilstring(0, 1)).gross()
+
+
+exportiere klasse Email:
+    funktion erstelle(id, absender, absender_name, betreff, vorschau, body, zeit, ungelesen, ordner):
+        selbst.id = id
+        selbst.absender = absender
+        selbst.absender_name = absender_name
+        selbst.betreff = betreff
+        selbst.vorschau = vorschau
+        selbst.body = body
+        selbst.zeit = zeit
+        selbst.ungelesen = ungelesen
+        selbst.ordner = ordner
+
+    funktion initialen():
+        gib_zurück initialen_aus_name(selbst.absender_name)
+
+    funktion als_dict():
+        gib_zurück {
+            "id": selbst.id,
+            "absender": selbst.absender,
+            "absender_name": selbst.absender_name,
+            "betreff": selbst.betreff,
+            "vorschau": selbst.vorschau,
+            "body": selbst.body,
+            "zeit": selbst.zeit,
+            "ungelesen": selbst.ungelesen,
+            "ordner": selbst.ordner
+        }
+
+exportiere funktion email_aus_dict(d):
+    gib_zurück neu Email(d["id"], d["absender"], d["absender_name"], d["betreff"], d["vorschau"], d["body"], d["zeit"], d["ungelesen"], d["ordner"])
+
+
+exportiere klasse Ordner:
+    funktion erstelle(schluessel, name, anzahl):
+        selbst.schluessel = schluessel
+        selbst.name = name
+        selbst.anzahl = anzahl
+
+    funktion als_text():
+        wenn selbst.anzahl > 0:
+            gib_zurück selbst.name + " (" + text(selbst.anzahl) + ")"
+        gib_zurück selbst.name
+
+exportiere funktion ordner_aus_dict(d):
+    gib_zurück neu Ordner(d["schluessel"], d["name"], d["anzahl"])
+
+
+exportiere klasse Konto:
+    funktion erstelle(name, art, imap_host, imap_port, smtp_host, smtp_port, benutzer, verschluesselung):
+        selbst.name = name
+        selbst.art = art
+        selbst.imap_host = imap_host
+        selbst.imap_port = imap_port
+        selbst.smtp_host = smtp_host
+        selbst.smtp_port = smtp_port
+        selbst.benutzer = benutzer
+        selbst.verschluesselung = verschluesselung
+        selbst.passwort_hash = ""
+        selbst.passwort_salt = ""
+
+    funktion als_dict():
+        gib_zurück {
+            "name": selbst.name,
+            "art": selbst.art,
+            "imap_host": selbst.imap_host,
+            "imap_port": selbst.imap_port,
+            "smtp_host": selbst.smtp_host,
+            "smtp_port": selbst.smtp_port,
+            "benutzer": selbst.benutzer,
+            "verschluesselung": selbst.verschluesselung,
+            "passwort_hash": selbst.passwort_hash,
+            "passwort_salt": selbst.passwort_salt
+        }
+
+exportiere funktion konto_aus_dict(d):
+    setze k auf neu Konto(d["name"], d["art"], d["imap_host"], d["imap_port"], d["smtp_host"], d["smtp_port"], d["benutzer"], d["verschluesselung"])
+    k.passwort_hash = d["passwort_hash"]
+    k.passwort_salt = d["passwort_salt"]
+    gib_zurück k

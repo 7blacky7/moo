@@ -1,0 +1,54 @@
+# ============================================================
+# fluxmail_smtp.moos — SMTP-Client ueber rohes TCP (tcp_verbinde)
+#
+# FEHLT: SMTP-Builtin — kein fertiger SMTP-Client in der Moo-Stdlib,
+#   das Protokoll (RFC 5321: EHLO/MAIL FROM/RCPT TO/DATA) wird hier
+#   von Hand ueber den Socket zusammengebaut.
+#
+# FEHLT: TLS/SSL — wie bei IMAP: tcp_verbinde ist reines Klartext-TCP.
+#   Echtes SMTPS (Port 465) oder STARTTLS (Port 587) sind ohne
+#   moo-seitigen TLS-Handshake nicht durchfuehrbar; dieses Modul
+#   baut nur den Protokollrahmen.
+# ============================================================
+
+funktion smtp_verbinden(host, port):
+    setze sock auf tcp_verbinde(host, port)
+    sock.timeout_setzen(5000)
+    gib_zurück sock
+
+funktion smtp_lies_begruessung(sock):
+    gib_zurück sock.lesen(4096)
+
+funktion smtp_ehlo(sock, absender_domain):
+    sock.schreiben("EHLO " + absender_domain + "\r\n")
+    gib_zurück sock.lesen(4096)
+
+funktion smtp_mail_from(sock, absender):
+    sock.schreiben("MAIL FROM:<" + absender + ">\r\n")
+    gib_zurück sock.lesen(4096)
+
+funktion smtp_rcpt_to(sock, empfaenger):
+    sock.schreiben("RCPT TO:<" + empfaenger + ">\r\n")
+    gib_zurück sock.lesen(4096)
+
+funktion smtp_daten_senden(sock, betreff, absender, empfaenger, body):
+    sock.schreiben("DATA\r\n")
+    sock.lesen(4096)
+    setze nachricht auf "Subject: " + betreff + "\r\nFrom: " + absender + "\r\nTo: " + empfaenger + "\r\n\r\n" + body + "\r\n.\r\n"
+    sock.schreiben(nachricht)
+    gib_zurück sock.lesen(4096)
+
+funktion smtp_senden(host, port, absender, absender_domain, empfaenger, betreff, body):
+    versuche:
+        setze sock auf smtp_verbinden(host, port)
+        smtp_lies_begruessung(sock)
+        smtp_ehlo(sock, absender_domain)
+        smtp_mail_from(sock, absender)
+        smtp_rcpt_to(sock, empfaenger)
+        setze antwort auf smtp_daten_senden(sock, betreff, absender, empfaenger, body)
+        sock.schreiben("QUIT\r\n")
+        sock.schliessen()
+        gib_zurück antwort.text_enthält("250")
+    fange fehler:
+        zeige f"SMTP-Fehler: {fehler}"
+        gib_zurück falsch

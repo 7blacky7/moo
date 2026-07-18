@@ -1,0 +1,56 @@
+# ============================================================
+# fluxmail_ui_sidebar.moos — Linke Sidebar (native ui_* Widgets)
+# Posteingang(Zaehler)/Gesendet/Entwuerfe/Spam/Papierkorb,
+# Kategorien/Kontakte/Konten, unten Einstellungen.
+#
+# UNSICHER: Die exakte Argument-BEDEUTUNG von ui_fenster/ui_label/
+# ui_knopf jenseits der aus den Memories belegten Argumentzahl
+# (Fenster=5, Label=6, Knopf=7 Args) ist nicht codebelegt. Reihen-
+# folge (fenster,x,y,b,h,text[,callback]) ist eine plausible, aber
+# nicht verifizierte Annahme (jedes Widget-Create verlangt laut
+# moo_ui.h ein Parent-Fensterhandle).
+#
+# Klick-Callbacks werden als Funktions-PARAMETER (bei_ordner,
+# bei_einstellungen) uebergeben; die Lambdas rufen den durchgereichten
+# Parameter auf (Compiler-Fix aae7bee). Ordner-Label via echter
+# Ordner-Klasse (Ordner.als_text(), cross-file).
+# ============================================================
+
+aus fluxmail_modell importiere Ordner, ordner_aus_dict
+
+konstante FLUXMAIL_SIDEBAR_BREITE auf 200
+
+funktion sidebar_baue(fenster, g, zustand, ordner_liste, bei_ordner, bei_einstellungen):
+    setze y auf 16
+    ui_label(fenster, 10, y, FLUXMAIL_SIDEBAR_BREITE - 20, 20, "FluxMail")
+    setze y auf y + 36
+
+    für i in 0..ordner_liste.länge():
+        setze ord auf ordner_liste[i]
+        setze ord_obj auf ordner_aus_dict(ord)
+        setze beschriftung auf ord_obj.als_text()
+        ui_knopf(fenster, 10, y, FLUXMAIL_SIDEBAR_BREITE - 20, 30, beschriftung, () => bei_ordner(g, zustand, ord["schluessel"]))
+        setze y auf y + 34
+
+    setze y auf y + 20
+    ui_label(fenster, 10, y, FLUXMAIL_SIDEBAR_BREITE - 20, 18, "Kategorien")
+    setze y auf y + 26
+    ui_label(fenster, 20, y, FLUXMAIL_SIDEBAR_BREITE - 30, 18, "Arbeit")
+    setze y auf y + 22
+    ui_label(fenster, 20, y, FLUXMAIL_SIDEBAR_BREITE - 30, 18, "Privat")
+    setze y auf y + 22
+    ui_label(fenster, 20, y, FLUXMAIL_SIDEBAR_BREITE - 30, 18, "Wichtig")
+    setze y auf y + 30
+
+    ui_label(fenster, 10, y, FLUXMAIL_SIDEBAR_BREITE - 20, 18, "Kontakte")
+    setze y auf y + 26
+    ui_label(fenster, 20, y, FLUXMAIL_SIDEBAR_BREITE - 30, 18, "(keine gespeichert)")
+    setze y auf y + 30
+
+    ui_label(fenster, 10, y, FLUXMAIL_SIDEBAR_BREITE - 20, 18, "Konten")
+    setze y auf y + 26
+    ui_label(fenster, 20, y, FLUXMAIL_SIDEBAR_BREITE - 30, 18, "Arbeit")
+    setze y auf y + 22
+    ui_label(fenster, 20, y, FLUXMAIL_SIDEBAR_BREITE - 30, 18, "Privat")
+
+    ui_knopf(fenster, 10, 570, FLUXMAIL_SIDEBAR_BREITE - 20, 32, "Einstellungen", () => bei_einstellungen(g, zustand))

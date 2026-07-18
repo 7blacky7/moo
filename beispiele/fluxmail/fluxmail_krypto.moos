@@ -1,0 +1,48 @@
+# ============================================================
+# fluxmail_krypto.moos — Passwort-Sicherheit fuer Konten
+# Nutzt pbkdf2_sha256 (Ableitung) + sichere_zufall (Salt) + hmac_sha256.
+# AES verfuegbar: aes_verschluessle/aes_entschluessle (AES-256-CTR+HMAC,
+#   Encrypt-then-MAC). Gespeicherte Server-Passwoerter koennen jetzt echt
+#   verschluesselt (recoverable) abgelegt werden — nicht mehr nur als
+#   nicht-umkehrbarer PBKDF2-Hash. Der PBKDF2-Hash bleibt fuer die
+#   Master-Login-Verifikation; das AES-verschluesselte Passwort erlaubt
+#   den spaeteren echten IMAP/SMTP-Login.
+# ============================================================
+
+konstante FLUXMAIL_PBKDF2_ITERATIONEN auf 100000
+konstante FLUXMAIL_PBKDF2_DKLEN auf 32
+
+funktion krypto_neues_salt():
+    gib_zurück sichere_zufall(16)
+
+funktion krypto_passwort_hash(passwort, salt):
+    setze dk auf pbkdf2_sha256(passwort, salt, FLUXMAIL_PBKDF2_ITERATIONEN, FLUXMAIL_PBKDF2_DKLEN)
+    gib_zurück base64_encode(dk)
+
+funktion krypto_passwort_setzen(konto, passwort_klartext):
+    setze salt auf krypto_neues_salt()
+    konto.passwort_salt = salt
+    konto.passwort_hash = krypto_passwort_hash(passwort_klartext, salt)
+    gib_zurück konto
+
+funktion krypto_passwort_pruefen(konto, versuch):
+    wenn konto.passwort_salt == "":
+        gib_zurück falsch
+    setze pruefhash auf krypto_passwort_hash(versuch, konto.passwort_salt)
+    gib_zurück pruefhash == konto.passwort_hash
+
+funktion krypto_signiere(schluessel, nachricht):
+    gib_zurück base64_encode(hmac_sha256(schluessel, nachricht))
+
+funktion krypto_fingerabdruck(text_wert):
+    gib_zurück sha256(text_wert)
+
+# --- AES-Vault: recoverable Server-Passwoerter (neue aes_* Builtins) ---
+funktion krypto_vault_schluessel(master_passwort, salt):
+    gib_zurück pbkdf2_sha256(master_passwort, salt, FLUXMAIL_PBKDF2_ITERATIONEN, FLUXMAIL_PBKDF2_DKLEN)
+
+funktion krypto_passwort_verschluesseln(vault_schluessel, passwort_klartext):
+    gib_zurück base64_encode(aes_verschluessle(vault_schluessel, passwort_klartext))
+
+funktion krypto_passwort_entschluesseln(vault_schluessel, blob_base64):
+    gib_zurück aes_entschluessle(vault_schluessel, base64_decode(blob_base64))

@@ -1,0 +1,29 @@
+# ============================================================
+# fluxmail_ui_detail.moos — Rechte Spalte: Betreff/Absender/Zeit,
+# Aktionen (Antworten/Allen antworten/Weiterleiten/Loeschen), Body.
+#
+# UNSICHER: ui_textbereich/ui_textarea hat keine belegte Konstruktor-
+# Arity in den Memories. Um Kompilier-Risiko zu vermeiden, wird der
+# Mail-Body hier mit ui_label (6 Args, belegt) dargestellt statt mit
+# einem ungetesteten ui_textbereich-Aufruf.
+#
+# Aktions-Callbacks werden als Funktions-PARAMETER uebergeben; die
+# Lambdas rufen die durchgereichten Parameter auf (Compiler-Fix aae7bee).
+# ============================================================
+
+funktion detail_baue(fenster, x_off, breite, g, zustand, mail, bei_antworten, bei_allen, bei_weiterleiten, bei_loeschen):
+    wenn mail == nichts:
+        ui_label(fenster, x_off + 20, 30, breite - 40, 24, "Keine E-Mail ausgewaehlt")
+        gib_zurück
+
+    ui_label(fenster, x_off + 20, 16, breite - 40, 26, mail["betreff"])
+    ui_label(fenster, x_off + 20, 46, breite - 40, 20, mail["absender_name"] + " <" + mail["absender"] + ">")
+    ui_label(fenster, x_off + 20, 68, breite - 40, 18, mail["zeit"])
+
+    konstante knopf_breite auf 110
+    ui_knopf(fenster, x_off + 20, 100, knopf_breite, 30, "Antworten", () => bei_antworten(g, zustand, mail["id"]))
+    ui_knopf(fenster, x_off + 20 + (knopf_breite + 8), 100, knopf_breite + 30, 30, "Allen antworten", () => bei_allen(g, zustand, mail["id"]))
+    ui_knopf(fenster, x_off + 20 + 2 * (knopf_breite + 8) + 30, 100, knopf_breite, 30, "Weiterleiten", () => bei_weiterleiten(g, zustand, mail["id"]))
+    ui_knopf(fenster, x_off + 20 + 3 * (knopf_breite + 8) + 30, 100, 90, 30, "Loeschen", () => bei_loeschen(g, zustand, mail["id"]))
+
+    ui_label(fenster, x_off + 20, 150, breite - 40, 400, mail["body"])

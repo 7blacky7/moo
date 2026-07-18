@@ -1,0 +1,47 @@
+# ============================================================
+# FluxMail — E-Mail-Client in Moo (nativ ui_native)
+# Realitaets-Test: mit dem bauen was Moo HAT; fehlende Faehigkeiten
+# als "# FEHLT: <feature>" markiert (siehe fluxmail_imap.moos,
+# fluxmail_smtp.moos, fluxmail_krypto.moos).
+#
+# Nach den Compiler-Fixes (e672227 Import/exportiere/Klassen cross-file,
+# aae7bee Lambda-Callable-Capture) baut dieses Beispiel sauber: ganze
+# Module per "importiere <modul>" (keine Transitiv-Helfer-Liste noetig),
+# echte Klassen mit Methoden cross-file, und Klick-Handler als
+# Callback-PARAMETER an die UI-Builder.
+#
+# Diese script.moos fuehrt die kleinen Module zusammen und startet
+# die App (ui_init/ui_fenster/.../ui_laufen). Aufruf ui_laufen()
+# ist im Code enthalten (Vertrag), wird aber in diesem Bau-Task
+# NICHT ausgefuehrt (kein shell-Start der UI).
+# ============================================================
+
+importiere ui
+
+importiere fluxmail_speicher
+importiere fluxmail_aktionen
+importiere fluxmail_ui
+
+setze g auf {}
+setze zustand auf {}
+
+funktion haupt():
+    setze daten auf lade_oder_erzeuge()
+    zustand["daten"] = daten
+    zustand["aktueller_ordner"] = "posteingang"
+
+    setze handler auf {
+        "ordner": fluxmail_ordner_ausgewaehlt,
+        "einstellungen": fluxmail_einstellungen_oeffnen,
+        "email": fluxmail_email_ausgewaehlt,
+        "antworten": fluxmail_antworten,
+        "allen": fluxmail_allen_antworten,
+        "weiterleiten": fluxmail_weiterleiten,
+        "loeschen": fluxmail_loeschen
+    }
+
+    hauptfenster_baue(g, zustand, handler)
+    ui_zeige(g["hFenster"])
+    ui_laufen()
+
+haupt()

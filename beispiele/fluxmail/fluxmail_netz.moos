@@ -1,0 +1,46 @@
+# ============================================================
+# fluxmail_netz.moos — Netzeinstellungen-Logik (Server/Port/
+# Benutzer/Passwort/Verschluesselung) fuer den Einstellungen-
+# Dialog. Reine Daten-/Validierungslogik, keine UI hier.
+# ============================================================
+
+funktion netz_verschluesselungs_optionen():
+    gib_zurück ["keine", "starttls", "ssl"]
+
+funktion netz_standard_port(art, verschluesselung):
+    prüfe art:
+        fall "imap":
+            wenn verschluesselung == "ssl":
+                gib_zurück 993
+            gib_zurück 143
+        fall "smtp":
+            wenn verschluesselung == "ssl":
+                gib_zurück 465
+            wenn verschluesselung == "starttls":
+                gib_zurück 587
+            gib_zurück 25
+        fall _:
+            gib_zurück 0
+
+funktion netz_konto_pruefen(host, port, benutzer):
+    wenn host.trimmen() == "":
+        gib_zurück "Server darf nicht leer sein"
+    wenn port <= 0 oder port > 65535:
+        gib_zurück "Port muss zwischen 1 und 65535 liegen"
+    wenn benutzer.trimmen() == "":
+        gib_zurück "Benutzername darf nicht leer sein"
+    gib_zurück ""
+
+funktion netz_konto_neu(name, art, imap_host, imap_port, smtp_host, smtp_port, benutzer, verschluesselung):
+    gib_zurück {
+        "name": name,
+        "art": art,
+        "imap_host": imap_host,
+        "imap_port": imap_port,
+        "smtp_host": smtp_host,
+        "smtp_port": smtp_port,
+        "benutzer": benutzer,
+        "verschluesselung": verschluesselung,
+        "passwort_hash": "",
+        "passwort_salt": ""
+    }

@@ -1,0 +1,85 @@
+# ============================================================
+# fluxmail_speicher.moos — lokale Persistenz (JSON-Datei-DB)
+# db_* Namenskonvention: einfache Datei-DB (datei_* + json_*),
+# kein SQL noetig fuer den Demo-Datenbestand.
+# ============================================================
+
+konstante FLUXMAIL_DB_PFAD auf "beispiele/fluxmail/fluxmail_daten.json"
+
+funktion db_existiert():
+    gib_zurück datei_existiert(FLUXMAIL_DB_PFAD)
+
+funktion db_lesen():
+    wenn nicht db_existiert():
+        gib_zurück nichts
+    setze roh auf datei_lesen(FLUXMAIL_DB_PFAD)
+    gib_zurück json_parse(roh)
+
+funktion db_schreiben(daten):
+    gib_zurück datei_schreiben(FLUXMAIL_DB_PFAD, json_string(daten))
+
+funktion demo_ordner():
+    gib_zurück [
+        {"schluessel": "posteingang", "name": "Posteingang", "anzahl": 3},
+        {"schluessel": "gesendet", "name": "Gesendet", "anzahl": 0},
+        {"schluessel": "entwuerfe", "name": "Entwuerfe", "anzahl": 1},
+        {"schluessel": "spam", "name": "Spam", "anzahl": 0},
+        {"schluessel": "papierkorb", "name": "Papierkorb", "anzahl": 0}
+    ]
+
+funktion demo_konten():
+    gib_zurück [
+        {
+            "name": "Arbeit", "art": "arbeit",
+            "imap_host": "imap.firma.de", "imap_port": 993,
+            "smtp_host": "smtp.firma.de", "smtp_port": 587,
+            "benutzer": "m.kolar@firma.de", "verschluesselung": "ssl",
+            "passwort_hash": "", "passwort_salt": ""
+        },
+        {
+            "name": "Privat", "art": "privat",
+            "imap_host": "imap.mail.de", "imap_port": 993,
+            "smtp_host": "smtp.mail.de", "smtp_port": 587,
+            "benutzer": "moritz@mail.de", "verschluesselung": "starttls",
+            "passwort_hash": "", "passwort_salt": ""
+        }
+    ]
+
+funktion demo_emails():
+    gib_zurück [
+        {
+            "id": 1, "absender": "chef@firma.de", "absender_name": "Anna Beispiel",
+            "betreff": "Projektstatus KW29",
+            "vorschau": "Kurzer Ueberblick zum aktuellen Stand des Projekts...",
+            "body": "Hallo Moritz,\n\nkurzer Ueberblick zum aktuellen Stand des Projekts. Wir liegen im Zeitplan.\n\nViele Gruesse\nAnna",
+            "zeit": "09:14", "ungelesen": wahr, "ordner": "posteingang"
+        },
+        {
+            "id": 2, "absender": "newsletter@dienst.de", "absender_name": "Tech Newsletter",
+            "betreff": "Deine woechentliche Zusammenfassung",
+            "vorschau": "Diese Woche: neue Releases, Tipps und Tricks...",
+            "body": "Diese Woche: neue Releases, Tipps und Tricks fuer dein Setup.",
+            "zeit": "08:02", "ungelesen": wahr, "ordner": "posteingang"
+        },
+        {
+            "id": 3, "absender": "info@versand.de", "absender_name": "Versand Info",
+            "betreff": "Deine Bestellung ist unterwegs",
+            "vorschau": "Sendungsverfolgung: DE123456789...",
+            "body": "Deine Bestellung ist unterwegs. Sendungsverfolgung: DE123456789",
+            "zeit": "Gestern", "ungelesen": falsch, "ordner": "posteingang"
+        },
+        {
+            "id": 4, "absender": "moritz@mail.de", "absender_name": "Ich",
+            "betreff": "Entwurf: Urlaubsantrag",
+            "vorschau": "Sehr geehrte Damen und Herren...",
+            "body": "Sehr geehrte Damen und Herren, hiermit beantrage ich Urlaub vom...",
+            "zeit": "Montag", "ungelesen": falsch, "ordner": "entwuerfe"
+        }
+    ]
+
+funktion lade_oder_erzeuge():
+    wenn db_existiert():
+        gib_zurück db_lesen()
+    setze daten auf {"konten": demo_konten(), "ordner": demo_ordner(), "emails": demo_emails()}
+    db_schreiben(daten)
+    gib_zurück daten
