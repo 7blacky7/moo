@@ -1069,6 +1069,7 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         "-lm".to_string(), "-lpthread".to_string(),
         "-lcurl".to_string(), "-lsqlite3".to_string(),
         "-lSDL2".to_string(), "-lSDL2_image".to_string(),
+        "-lssl".to_string(), "-lcrypto".to_string(),
     ]);
 
     // Linux-only UI-Libs (GTK3 + libappindicator3 + Co.) — nur wenn das

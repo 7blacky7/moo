@@ -709,6 +709,10 @@ pub struct RuntimeBindings<'ctx> {
     // Netzwerk (TCP/UDP)
     pub moo_tcp_server: FunctionValue<'ctx>,
     pub moo_tcp_connect: FunctionValue<'ctx>,
+    pub moo_tls_connect: FunctionValue<'ctx>,
+    pub moo_tls_send: FunctionValue<'ctx>,
+    pub moo_tls_recv: FunctionValue<'ctx>,
+    pub moo_tls_close: FunctionValue<'ctx>,
     pub moo_udp_socket: FunctionValue<'ctx>,
     pub moo_udp_connect: FunctionValue<'ctx>,
     pub moo_socket_accept: FunctionValue<'ctx>,
@@ -1563,6 +1567,10 @@ impl<'ctx> RuntimeBindings<'ctx> {
             // Netzwerk
             moo_tcp_server: decl_mv_mv!("moo_tcp_server", mv1),
             moo_tcp_connect: decl_mv_mv!("moo_tcp_connect", mv2),
+            moo_tls_connect: decl_mv_mv!("moo_tls_connect", mv2),
+            moo_tls_send: decl_mv_mv!("moo_tls_send", mv2),
+            moo_tls_recv: decl_mv_mv!("moo_tls_recv", mv2),
+            moo_tls_close: decl_mv_mv!("moo_tls_close", mv1),
             moo_udp_socket: decl_mv_mv!("moo_udp_socket", mv1),
             moo_udp_connect: module.add_function("moo_udp_connect", void_type.fn_type(mv3, false), None),
             moo_socket_accept: decl_mv_mv!("moo_socket_accept", mv1),

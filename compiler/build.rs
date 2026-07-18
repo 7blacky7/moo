@@ -74,6 +74,7 @@ fn main() {
         .file("runtime/moo_regex.c")
         .file("runtime/moo_core.c")
         .file("runtime/moo_net.c")
+        .file("runtime/moo_tls_openssl.c") // TLS-Client (OpenSSL-Backend, nativer Linux-Pfad)
         .file("runtime/moo_web.c")
         .file("runtime/moo_eval.c")
         .file("runtime/moo_profiler.c")

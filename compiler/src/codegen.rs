@@ -3746,6 +3746,25 @@ impl<'ctx> CodeGen<'ctx> {
                         let port = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_tcp_connect, &[host.into(), port.into()], "tcp_connect");
                     }
+                    "tls_verbinde" | "tls_connect" => {
+                        let host = self.compile_expr(&args[0])?;
+                        let port = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tls_connect, &[host.into(), port.into()], "tls_connect");
+                    }
+                    "tls_sende" | "tls_send" => {
+                        let h = self.compile_expr(&args[0])?;
+                        let d = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tls_send, &[h.into(), d.into()], "tls_send");
+                    }
+                    "tls_empfange" | "tls_recv" => {
+                        let h = self.compile_expr(&args[0])?;
+                        let m = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_tls_recv, &[h.into(), m.into()], "tls_recv");
+                    }
+                    "tls_schliesse" | "tls_close" => {
+                        let h = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tls_close, &[h.into()], "tls_close");
+                    }
                     "udp_socket" => {
                         let port = if args.is_empty() {
                             self.call_rt(self.rt.moo_none, &[], "none")?
