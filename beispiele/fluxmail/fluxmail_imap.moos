@@ -1,44 +1,41 @@
 # ============================================================
-# fluxmail_imap.moos — IMAP-Client ueber rohes TCP (tcp_verbinde)
+# fluxmail_imap.moos — IMAP-Client ueber echtes TLS (IMAPS, Port 993)
 #
-# FEHLT: IMAP-Builtin — Moo hat keinen fertigen IMAP-Client in der
-#   Stdlib (nur tcp_verbinde/tcp_server + Socket .lesen/.schreiben).
-#   Das IMAP-Protokoll (RFC 3501, Tag-Kommandos wie "a1 LOGIN ...",
-#   "a1 SELECT INBOX", "a1 FETCH 1:* ...") muss hier von Hand ueber
-#   den rohen Socket gebaut werden.
+# Nutzt die tls_*-Builtins (tls_verbinde/tls_sende/tls_empfange/
+# tls_schliesse). Die Verbindung ist von Anfang an TLS-verschluesselt
+# (implicit TLS / IMAPS); die Zertifikat-Verifikation gegen den
+# System-CA-Store ist im tls_verbinde-Builtin standardmaessig aktiv.
 #
-# FEHLT: TLS/SSL — tcp_verbinde oeffnet nur eine PLAIN TCP-Verbindung.
-#   Es gibt keinen moo-Builtin fuer TLS-Handshake/STARTTLS, also ist
-#   ein echter IMAPS-Login (Port 993) oder STARTTLS (Port 143) NICHT
-#   moeglich. Diese Implementierung baut nur den Klartext-Rahmen; ein
-#   echter Verbindungsaufbau zu einem TLS-only Mailserver wuerde am
-#   TLS-Handshake scheitern (nicht Teil dieses Moduls).
+# Das IMAP-Protokoll selbst (RFC 3501, Tag-Kommandos "a1 LOGIN ...",
+# "a1 SELECT INBOX", "a1 FETCH ...") wird ueber die TLS-Verbindung
+# von Hand aufgebaut.
+#
+# FEHLT (klein): STARTTLS (Port 143 -> TLS-Upgrade einer bestehenden
+#   Klartext-Verbindung) ist mit tls_verbinde nicht moeglich — das
+#   Builtin macht nur implicit TLS (Port 993). Ebenso kein Connect-
+#   Timeout fuer TLS (tcp hatte .timeout_setzen).
 # ============================================================
 
 funktion imap_tag_neu(zaehler):
     gib_zurück "a" + text(zaehler)
 
 funktion imap_verbinden(host, port):
-    # UNSICHER: kein TLS moeglich (siehe FEHLT oben) — nur Klartext-TCP.
-    setze sock auf tcp_verbinde(host, port)
-    sock.timeout_setzen(5000)
-    gib_zurück sock
+    # IMAPS: TLS von Anfang an (Port 993), Cert-Verifikation default AN.
+    gib_zurück tls_verbinde(host, port)
 
-funktion imap_befehl(sock, tag, befehl):
+funktion imap_befehl(verb, tag, befehl):
     setze zeile auf tag + " " + befehl + "\r\n"
-    sock.schreiben(zeile)
-    gib_zurück sock.lesen(4096)
+    tls_sende(verb, zeile)
+    gib_zurück tls_empfange(verb, 4096)
 
-funktion imap_login(sock, benutzer, passwort):
-    # Klartext-LOGIN — ohne TLS in echten Netzen unsicher, hier nur
-    # als Protokoll-Geruest fuer das Demo-UI relevant.
-    setze antwort auf imap_befehl(sock, imap_tag_neu(1), "LOGIN " + benutzer + " " + passwort)
+funktion imap_login(verb, benutzer, passwort):
+    setze antwort auf imap_befehl(verb, imap_tag_neu(1), "LOGIN " + benutzer + " " + passwort)
     gib_zurück antwort.text_enthält("OK")
 
-funktion imap_ordner_waehlen(sock, ordner_name):
-    setze antwort auf imap_befehl(sock, imap_tag_neu(2), "SELECT " + ordner_name)
+funktion imap_ordner_waehlen(verb, ordner_name):
+    setze antwort auf imap_befehl(verb, imap_tag_neu(2), "SELECT " + ordner_name)
     gib_zurück antwort.text_enthält("OK")
 
-funktion imap_logout(sock):
-    imap_befehl(sock, imap_tag_neu(3), "LOGOUT")
-    sock.schliessen()
+funktion imap_logout(verb):
+    imap_befehl(verb, imap_tag_neu(3), "LOGOUT")
+    tls_schliesse(verb)

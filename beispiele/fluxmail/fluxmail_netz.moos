@@ -5,7 +5,11 @@
 # ============================================================
 
 funktion netz_verschluesselungs_optionen():
-    gib_zurück ["keine", "starttls", "ssl"]
+    # "ssl" = implicit TLS (IMAPS 993 / SMTPS 465), von tls_verbinde
+    # unterstuetzt und Standard. "starttls" ist noch NICHT verdrahtet
+    # (Upgrade einer Klartext-Verbindung braucht ein eigenes Builtin).
+    # "keine" = unverschluesselt (nur Test/LAN).
+    gib_zurück ["ssl", "starttls", "keine"]
 
 funktion netz_standard_port(art, verschluesselung):
     prüfe art:

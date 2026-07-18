@@ -1,53 +1,51 @@
 # ============================================================
-# fluxmail_smtp.moos — SMTP-Client ueber rohes TCP (tcp_verbinde)
+# fluxmail_smtp.moos — SMTP-Client ueber echtes TLS (SMTPS, Port 465)
 #
-# FEHLT: SMTP-Builtin — kein fertiger SMTP-Client in der Moo-Stdlib,
-#   das Protokoll (RFC 5321: EHLO/MAIL FROM/RCPT TO/DATA) wird hier
-#   von Hand ueber den Socket zusammengebaut.
+# Nutzt die tls_*-Builtins. Verbindung von Anfang an TLS-
+# verschluesselt (implicit TLS / SMTPS), Cert-Verifikation default
+# aktiv. Das SMTP-Protokoll (RFC 5321: EHLO/MAIL FROM/RCPT TO/DATA)
+# wird ueber die TLS-Verbindung von Hand aufgebaut.
 #
-# FEHLT: TLS/SSL — wie bei IMAP: tcp_verbinde ist reines Klartext-TCP.
-#   Echtes SMTPS (Port 465) oder STARTTLS (Port 587) sind ohne
-#   moo-seitigen TLS-Handshake nicht durchfuehrbar; dieses Modul
-#   baut nur den Protokollrahmen.
+# FEHLT (klein): STARTTLS (Port 587, Upgrade einer Klartext-
+#   Verbindung) ist mit tls_verbinde (implicit TLS) nicht moeglich —
+#   fuer SMTPS Port 465 verwenden.
 # ============================================================
 
 funktion smtp_verbinden(host, port):
-    setze sock auf tcp_verbinde(host, port)
-    sock.timeout_setzen(5000)
-    gib_zurück sock
+    gib_zurück tls_verbinde(host, port)
 
-funktion smtp_lies_begruessung(sock):
-    gib_zurück sock.lesen(4096)
+funktion smtp_lies_begruessung(verb):
+    gib_zurück tls_empfange(verb, 4096)
 
-funktion smtp_ehlo(sock, absender_domain):
-    sock.schreiben("EHLO " + absender_domain + "\r\n")
-    gib_zurück sock.lesen(4096)
+funktion smtp_ehlo(verb, absender_domain):
+    tls_sende(verb, "EHLO " + absender_domain + "\r\n")
+    gib_zurück tls_empfange(verb, 4096)
 
-funktion smtp_mail_from(sock, absender):
-    sock.schreiben("MAIL FROM:<" + absender + ">\r\n")
-    gib_zurück sock.lesen(4096)
+funktion smtp_mail_from(verb, absender):
+    tls_sende(verb, "MAIL FROM:<" + absender + ">\r\n")
+    gib_zurück tls_empfange(verb, 4096)
 
-funktion smtp_rcpt_to(sock, empfaenger):
-    sock.schreiben("RCPT TO:<" + empfaenger + ">\r\n")
-    gib_zurück sock.lesen(4096)
+funktion smtp_rcpt_to(verb, empfaenger):
+    tls_sende(verb, "RCPT TO:<" + empfaenger + ">\r\n")
+    gib_zurück tls_empfange(verb, 4096)
 
-funktion smtp_daten_senden(sock, betreff, absender, empfaenger, body):
-    sock.schreiben("DATA\r\n")
-    sock.lesen(4096)
+funktion smtp_daten_senden(verb, betreff, absender, empfaenger, body):
+    tls_sende(verb, "DATA\r\n")
+    tls_empfange(verb, 4096)
     setze nachricht auf "Subject: " + betreff + "\r\nFrom: " + absender + "\r\nTo: " + empfaenger + "\r\n\r\n" + body + "\r\n.\r\n"
-    sock.schreiben(nachricht)
-    gib_zurück sock.lesen(4096)
+    tls_sende(verb, nachricht)
+    gib_zurück tls_empfange(verb, 4096)
 
 funktion smtp_senden(host, port, absender, absender_domain, empfaenger, betreff, body):
     versuche:
-        setze sock auf smtp_verbinden(host, port)
-        smtp_lies_begruessung(sock)
-        smtp_ehlo(sock, absender_domain)
-        smtp_mail_from(sock, absender)
-        smtp_rcpt_to(sock, empfaenger)
-        setze antwort auf smtp_daten_senden(sock, betreff, absender, empfaenger, body)
-        sock.schreiben("QUIT\r\n")
-        sock.schliessen()
+        setze verb auf smtp_verbinden(host, port)
+        smtp_lies_begruessung(verb)
+        smtp_ehlo(verb, absender_domain)
+        smtp_mail_from(verb, absender)
+        smtp_rcpt_to(verb, empfaenger)
+        setze antwort auf smtp_daten_senden(verb, betreff, absender, empfaenger, body)
+        tls_sende(verb, "QUIT\r\n")
+        tls_schliesse(verb)
         gib_zurück antwort.text_enthält("250")
     fange fehler:
         zeige f"SMTP-Fehler: {fehler}"
