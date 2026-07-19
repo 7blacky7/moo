@@ -44,3 +44,7 @@ beispiele/tests/*
 !compiler/tests/
 compiler/tests/*
 !compiler/tests/windows_linker_production_gate.ps1
+!compiler/tests/run_all.sh
+!compiler/tests/leak_gates/
+compiler/tests/leak_gates/*
+!compiler/tests/leak_gates/run_leak_gates.sh

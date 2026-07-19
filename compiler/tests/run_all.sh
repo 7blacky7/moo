@@ -2,6 +2,8 @@
 set -euo pipefail
 
 # Compiler-Testsuite fuer moo
+# Plattformvertrag: Windows-Binaerausgaben tragen explizit .exe; Temp-Artefakte
+# liegen in einem pro Lauf isolierten Arbeitsverzeichnis.
 # Fuer jede .moos Datei mit zugehoeriger .expected:
 #   1. Kompiliere mit moo-compiler
 #   2. Fuehre aus
@@ -9,7 +11,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPILER_DIR="$(dirname "$SCRIPT_DIR")"
-COMPILER="$COMPILER_DIR/target/release/moo-compiler"
+HOST_UNAME="$(uname -s)"
+case "$HOST_UNAME" in
+    MINGW*|MSYS*|CYGWIN*) EXE_SUFFIX=".exe" ;;
+    *)                    EXE_SUFFIX="" ;;
+esac
+COMPILER="$COMPILER_DIR/target/release/moo-compiler${EXE_SUFFIX}"
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/moo_core_tests.XXXXXX")"
+trap 'rm -rf "$WORK_DIR"' EXIT
 
 # Farben
 RED='\033[0;31m'
@@ -68,7 +77,7 @@ for moo_file in "$SCRIPT_DIR"/*.moos "$SCRIPT_DIR"/regression/*.moos; do
     fi
 
     # Kompilieren
-    tmp_binary="/tmp/moo_test_${test_name}"
+    tmp_binary="$WORK_DIR/moo_test_${test_name}${EXE_SUFFIX}"
     compile_output=$("$COMPILER" compile "$moo_file" -o "$tmp_binary" 2>&1) || {
         fail=$((fail + 1))
         errors="${errors}\n  ${test_name}: Kompilierung fehlgeschlagen: ${compile_output}"
@@ -137,7 +146,7 @@ for st in "${SELFTESTS[@]}"; do
         skip=$((skip + 1)); echo -e "${YELLOW}SKIP${NC} $st_name (fehlt)"
         continue
     fi
-    st_bin="/tmp/moo_smoke_${st_name}"
+    st_bin="$WORK_DIR/moo_smoke_${st_name}${EXE_SUFFIX}"
     if "$COMPILER" compile "$st" -o "$st_bin" >/dev/null 2>&1; then
         pass=$((pass + 1)); echo -e "${GREEN}PASS${NC} $st_name (compile)"
     else

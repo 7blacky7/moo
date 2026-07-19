@@ -1134,16 +1134,34 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
 
     // 3D-Backend-Libs — nur wenn ein 3D-Feature aktiv ist (analog build.rs).
     // moo_ui-only Build (ohne gl33/gl21/vulkan) linkt kein GL/Vulkan/GLFW.
+    #[cfg(all(target_os = "windows", any(feature = "gl21", feature = "gl33", feature = "vulkan")))]
+    link_args.extend(["-lSDL2".to_string(), "-lSDL2_image".to_string()]);
     #[cfg(any(feature = "gl21", feature = "gl33"))]
     {
-        link_args.push("-lGL".to_string());
-        link_args.push("-lglfw".to_string());
+        link_args.push(if cfg!(target_os = "windows") {
+            "-lopengl32".to_string()
+        } else {
+            "-lGL".to_string()
+        });
+        link_args.push(if cfg!(target_os = "windows") {
+            "-lglfw3dll".to_string()
+        } else {
+            "-lglfw".to_string()
+        });
     }
     #[cfg(feature = "vulkan")]
     {
-        link_args.push("-lvulkan".to_string());
+        link_args.push(if cfg!(target_os = "windows") {
+            "-lvulkan-1".to_string()
+        } else {
+            "-lvulkan".to_string()
+        });
         #[cfg(not(any(feature = "gl21", feature = "gl33")))]
-        link_args.push("-lglfw".to_string());
+        link_args.push(if cfg!(target_os = "windows") {
+            "-lglfw3dll".to_string()
+        } else {
+            "-lglfw".to_string()
+        });
     }
 
     // Capture-Backend-Libs fuer die separate finale Link-Stufe.

@@ -23,12 +23,18 @@
 #   string     : frischer String + .enthält (CG1-v3-Transfer-Konvention)
 #   listdict   : frische Liste/.länge + frisches Dict/.hat
 #
-# EXIT-CODES: 0 alle flach | 1 Leak/Crash | 2 transparenter Skip (python3 fehlt)
+# EXIT-CODES: 0 alle flach | 1 Leak/Crash | 2 transparenter Skip
+# (python3 fehlt oder Host ist nicht Linux; ru_maxrss ist dort nicht vergleichbar)
 # ============================================================================
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPILER_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
+HOST_UNAME="$(uname -s)"
+if [ "$HOST_UNAME" != "Linux" ]; then
+  echo "[leak-gate] SKIP: ru_maxrss-1M/4M-Gate ist Linux-spezifisch (Host=$HOST_UNAME)"
+  exit 2
+fi
 COMPILER="$COMPILER_DIR/target/release/moo-compiler"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/moo_leak_gate.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
