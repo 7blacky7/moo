@@ -65,12 +65,72 @@ if [ -z "$PYTHON_BIN" ]; then
   fi
 fi
 
+WINDOWS_COMPAT_DIR=""
+if [ "$HOST_OS" = "windows" ]; then
+  WINDOWS_COMPAT_DIR="$OUT_DIR/windows-compat"
+  mkdir -p "$WINDOWS_COMPAT_DIR"
+  "$PYTHON_BIN" - <<'PY'
+import os
+
+drive = os.path.splitdrive(os.getcwd())[0]
+if not drive:
+    raise SystemExit("Windows-Laufwerk fuer /tmp konnte nicht ermittelt werden")
+root_tmp = drive + os.sep + "tmp"
+os.makedirs(root_tmp, exist_ok=True)
+print("WINDOWS_NATIVE_TMP=" + root_tmp)
+PY
+  cat > "$WINDOWS_COMPAT_DIR/moo_sanitizer_windows_compat.h" <<'EOF'
+#ifndef MOO_SANITIZER_WINDOWS_COMPAT_H
+#define MOO_SANITIZER_WINDOWS_COMPAT_H
+#include <stdlib.h>
+static int moo_test_setenv(const char* name, const char* value, int overwrite) {
+    if (!overwrite && getenv(name) != NULL) return 0;
+    return _putenv_s(name, value);
+}
+static int moo_test_unsetenv(const char* name) {
+    return _putenv_s(name, "");
+}
+#define setenv moo_test_setenv
+#define unsetenv moo_test_unsetenv
+#endif
+EOF
+  cat > "$WINDOWS_COMPAT_DIR/unistd.h" <<'EOF'
+#ifndef MOO_SANITIZER_WINDOWS_UNISTD_H
+#define MOO_SANITIZER_WINDOWS_UNISTD_H
+#include <direct.h>
+#include <fcntl.h>
+#include <io.h>
+#include <process.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#define close _close
+#define unlink _unlink
+#define rmdir _rmdir
+#define getpid _getpid
+static int mkstemp(char* path_template) {
+    const size_t length = strlen(path_template);
+    if (_mktemp_s(path_template, length + 1u) != 0) return -1;
+    return _open(path_template,
+        _O_CREAT | _O_EXCL | _O_RDWR | _O_BINARY,
+        _S_IREAD | _S_IWRITE);
+}
+static char* mkdtemp(char* path_template) {
+    const size_t length = strlen(path_template);
+    if (_mktemp_s(path_template, length + 1u) != 0) return NULL;
+    if (_mkdir(path_template) != 0) return NULL;
+    return path_template;
+}
+#endif
+EOF
+fi
+
 # Windows/clang nutzt die MSVC-CRT: math.h exponiert M_PI nur mit
 # _USE_MATH_DEFINES; libm und pthread sind dort keine separaten Libraries.
 COMMON_CFLAGS=""
 BASE_MATH_LIB="-lm"
 if [ "$HOST_OS" = "windows" ]; then
-  COMMON_CFLAGS="-D_USE_MATH_DEFINES -D_CRT_SECURE_NO_WARNINGS -Wno-deprecated-declarations"
+  COMMON_CFLAGS="-D_USE_MATH_DEFINES -D_CRT_SECURE_NO_WARNINGS -Wno-deprecated-declarations -I$WINDOWS_COMPAT_DIR -include $WINDOWS_COMPAT_DIR/moo_sanitizer_windows_compat.h"
   BASE_MATH_LIB=""
 fi
 
@@ -106,8 +166,6 @@ platform_skip_reason() {
       echo "ALSA/Linux-Header und libasound sind auf $HOST_OS nicht verfuegbar"; return 0 ;;
     windows:test_video_wiring_asan)
       echo "Harness modelliert explizit POSIX fork/execvp/mkdtemp/sh; Windows-Core hat einen getrennten CreateProcess-Pfad"; return 0 ;;
-    windows:test_checkpoint_asan)
-      echo "Harness verwendet POSIX mkdtemp; Windows-Checkpoint-Core bleibt durch die uebrigen NN-/I/O-Harnesses abgedeckt"; return 0 ;;
   esac
   return 1
 }

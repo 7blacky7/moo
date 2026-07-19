@@ -61,6 +61,8 @@ jobs:
           if (!$ubsanLib) { throw "Windows-UBSan-Runtime fehlt unter $resource" }
           $cc = $clang.Replace('\','/')
           "CC=$cc" >> $env:GITHUB_ENV
+          $tmpDir = $env:RUNNER_TEMP.Replace('\','/')
+          "TMPDIR=$tmpDir" >> $env:GITHUB_ENV
           $llvmBin >> $env:GITHUB_PATH
           $runtimeDll.Directory.FullName >> $env:GITHUB_PATH
           & $clang --version
