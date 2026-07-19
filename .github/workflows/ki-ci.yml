@@ -1,0 +1,416 @@
+name: KI Functional CI
+
+# Funktionaler End-to-End-Beweis fuer den Moo-KI-Stack.
+# Lange Trainingsdemos werden in temporaeren CI-Kopien klar begrenzt;
+# die Projektquellen bleiben unveraendert. Konvergenz-/Qualitaetsgates bleiben
+# eigene Meilensteinbeweise. Hier muessen Compiler, Runtime, Beispiele sowie
+# ASan/UBSan auf Ubuntu, Windows und macOS real erfolgreich laufen.
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "compiler/runtime/moo_tensor*.c"
+      - "compiler/runtime/moo_autograd.c"
+      - "compiler/runtime/moo_nn*.c"
+      - "compiler/runtime/moo_dataset.c"
+      - "compiler/runtime/moo_quant.c"
+      - "compiler/runtime/moo_tokenizer.c"
+      - "compiler/runtime/tests/test_*asan.c"
+      - "compiler/runtime/tests/test_gradcheck.c"
+      - "compiler/runtime/tests/run_sanitize.sh"
+      - "compiler/src/**"
+      - "compiler/build.rs"
+      - "compiler/Cargo.toml"
+      - "beispiele/ki_*.moos"
+      - ".github/workflows/ki-ci.yml"
+  pull_request:
+    paths:
+      - "compiler/runtime/moo_tensor*.c"
+      - "compiler/runtime/moo_autograd.c"
+      - "compiler/runtime/moo_nn*.c"
+      - "compiler/runtime/moo_dataset.c"
+      - "compiler/runtime/moo_quant.c"
+      - "compiler/runtime/moo_tokenizer.c"
+      - "compiler/runtime/tests/test_*asan.c"
+      - "compiler/runtime/tests/test_gradcheck.c"
+      - "compiler/runtime/tests/run_sanitize.sh"
+      - "compiler/src/**"
+      - "compiler/build.rs"
+      - "compiler/Cargo.toml"
+      - "beispiele/ki_*.moos"
+      - ".github/workflows/ki-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ki-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ki:
+    name: ${{ matrix.os }} / KI-End-to-End
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: windows-latest
+          - os: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Ubuntu KI dependencies
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-18 llvm-18-dev libpolly-18-dev libclang-18-dev \
+            libgtk-3-dev libappindicator3-dev \
+            libglfw3-dev libgl1-mesa-dev libvulkan-dev glslang-tools \
+            libsdl2-dev libsdl2-image-dev libsqlite3-dev libssl-dev \
+            libv4l-dev libasound2-dev pkg-config python3
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> "$GITHUB_ENV"
+          echo "CC=clang-18" >> "$GITHUB_ENV"
+
+      - name: Install Windows LLVM
+        if: matrix.os == 'windows-latest'
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: moo-llvm
+          create-args: >-
+            -c conda-forge
+            llvmdev=18.1.*
+            clangdev=18.1.*
+            lld=18.1.*
+            zstd
+            zlib
+            libxml2
+            libxml2-devel
+          cache-environment: true
+
+      - name: Configure MSVC environment
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Windows KI dependencies
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $condaPrefix = $env:CONDA_PREFIX
+          if (!$condaPrefix) {
+            $condaPrefix = Join-Path $env:MAMBA_ROOT_PREFIX "envs\moo-llvm"
+          }
+          if (!(Test-Path $condaPrefix)) { throw "moo-llvm fehlt: $condaPrefix" }
+          $llvmRoot = Join-Path $condaPrefix "Library"
+          $llvmBin = Join-Path $llvmRoot "bin"
+          $llvmConfig = Join-Path $llvmBin "llvm-config.exe"
+          $buildClang = Join-Path $llvmBin "clang.exe"
+          $lld = Join-Path $llvmBin "lld-link.exe"
+          foreach ($required in @($llvmConfig, $buildClang, $lld)) {
+            if (!(Test-Path $required)) { throw "LLVM-Pflichtdatei fehlt: $required" }
+          }
+          & $llvmConfig --version
+
+          vcpkg install --triplet x64-windows `
+            sdl2 sdl2-image sqlite3 glfw3 vulkan
+          $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows"
+          $condaLib = Join-Path $llvmRoot "lib"
+          foreach ($paar in @(@("zstd.lib","zstd.dll.lib"), @("zlib.lib","z.dll.lib"))) {
+            $quelle = Join-Path $condaLib $paar[0]
+            $ziel = Join-Path $condaLib $paar[1]
+            if ((Test-Path $quelle) -and !(Test-Path $ziel)) { Copy-Item $quelle $ziel }
+          }
+
+          $vsLlvm = $env:llvmX64
+          if (!$vsLlvm) { $vsLlvm = Join-Path $env:VSINSTALLDIR 'VC\Tools\Llvm\x64\bin' }
+          $sanClang = Join-Path $vsLlvm 'clang.exe'
+          if (!(Test-Path $sanClang)) { throw "Visual-Studio-clang.exe fehlt: $sanClang" }
+          $resource = (& $sanClang --print-resource-dir).Trim()
+          $asanDll = Get-ChildItem $resource -Recurse -Filter 'clang_rt.asan_dynamic-x86_64.dll' -File | Select-Object -First 1
+          $asanLib = Get-ChildItem $resource -Recurse -Filter 'clang_rt.asan_dynamic-x86_64.lib' -File | Select-Object -First 1
+          $ubsanLib = Get-ChildItem $resource -Recurse -Filter 'clang_rt.ubsan_standalone-x86_64.lib' -File | Select-Object -First 1
+          if (!$asanDll -or !$asanLib -or !$ubsanLib) { throw "Windows-Sanitizer-Runtime fehlt unter $resource" }
+
+          $msvcBin = Join-Path $env:VCToolsInstallDir "bin\HostX64\x64"
+          $msvcLink = Join-Path $msvcBin "link.exe"
+          if (!(Test-Path $msvcLink)) { throw "MSVC link.exe fehlt: $msvcLink" }
+          $nativeTmp = Join-Path ([IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE)) "tmp"
+          New-Item -ItemType Directory -Force -Path $nativeTmp | Out-Null
+
+          "LLVM_SYS_181_PREFIX=$llvmRoot" >> $env:GITHUB_ENV
+          "LIBCLANG_PATH=$llvmBin" >> $env:GITHUB_ENV
+          "MOO_CLANG=$($buildClang.Replace('\','/'))" >> $env:GITHUB_ENV
+          "MOO_LLD=$($lld.Replace('\','/'))" >> $env:GITHUB_ENV
+          "CC=$($sanClang.Replace('\','/'))" >> $env:GITHUB_ENV
+          "TMPDIR=$($env:RUNNER_TEMP.Replace('\','/'))" >> $env:GITHUB_ENV
+          "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
+          "INCLUDE=$llvmRoot\include;$vcpkgRoot\include;$env:INCLUDE" >> $env:GITHUB_ENV
+          "LIB=$condaLib;$vcpkgRoot\lib;$env:LIB" >> $env:GITHUB_ENV
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$msvcLink" >> $env:GITHUB_ENV
+          $llvmBin >> $env:GITHUB_PATH
+          $vcpkgRoot + "\bin" >> $env:GITHUB_PATH
+          $msvcBin >> $env:GITHUB_PATH
+          $vsLlvm >> $env:GITHUB_PATH
+          $asanDll.Directory.FullName >> $env:GITHUB_PATH
+          & $sanClang --version
+
+      - name: Install macOS KI dependencies
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          brew update
+          brew install llvm@18 sdl2 sdl2_image glfw vulkan-loader openssl@3
+          LLVM_PREFIX="$(brew --prefix llvm@18)"
+          SDL2_PREFIX="$(brew --prefix sdl2)"
+          SDL2_IMAGE_PREFIX="$(brew --prefix sdl2_image)"
+          GLFW_PREFIX="$(brew --prefix glfw)"
+          VULKAN_PREFIX="$(brew --prefix vulkan-loader)"
+          VULKAN_HEADERS_PREFIX="$(brew --prefix vulkan-headers)"
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          echo "LLVM_SYS_181_PREFIX=$LLVM_PREFIX" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=$LLVM_PREFIX/lib" >> "$GITHUB_ENV"
+          echo "CPATH=$SDL2_PREFIX/include:$SDL2_PREFIX/include/SDL2:$SDL2_IMAGE_PREFIX/include:$SDL2_IMAGE_PREFIX/include/SDL2:$GLFW_PREFIX/include:$VULKAN_HEADERS_PREFIX/include:$OPENSSL_PREFIX/include:${CPATH:-}" >> "$GITHUB_ENV"
+          echo "LIBRARY_PATH=$SDL2_PREFIX/lib:$SDL2_IMAGE_PREFIX/lib:$GLFW_PREFIX/lib:$VULKAN_PREFIX/lib:$OPENSSL_PREFIX/lib:${LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$SDL2_PREFIX/lib/pkgconfig:$SDL2_IMAGE_PREFIX/lib/pkgconfig:$GLFW_PREFIX/lib/pkgconfig:$VULKAN_PREFIX/lib/pkgconfig:$OPENSSL_PREFIX/lib/pkgconfig:$LLVM_PREFIX/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$SDL2_PREFIX/include -I$SDL2_PREFIX/include/SDL2 -I$SDL2_IMAGE_PREFIX/include -I$SDL2_IMAGE_PREFIX/include/SDL2 -I$GLFW_PREFIX/include -I$VULKAN_HEADERS_PREFIX/include -I$OPENSSL_PREFIX/include" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=$(sw_vers -productVersion | cut -d. -f1).0" >> "$GITHUB_ENV"
+          echo "CC=/usr/bin/clang" >> "$GITHUB_ENV"
+          /usr/bin/clang --version
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            compiler/target
+          key: ki-ci-${{ runner.os }}-${{ hashFiles('compiler/Cargo.lock', 'compiler/Cargo.toml', 'compiler/build.rs') }}
+          restore-keys: ki-ci-${{ runner.os }}-
+
+      - name: Build Moo compiler
+        shell: bash
+        run: |
+          manifest="$GITHUB_WORKSPACE/compiler/Cargo.toml"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            manifest="$(cygpath -m "$manifest")"
+          fi
+          cargo build --release --manifest-path "$manifest"
+
+      - name: Compile and run KI examples without GPU
+        shell: bash
+        env:
+          MOO_KI_GPU: "0"
+          PYTHONIOENCODING: utf-8
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import struct
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          root = Path(os.environ["GITHUB_WORKSPACE"])
+          temp = Path(os.environ["RUNNER_TEMP"]) / "moo-ki-functional"
+          temp.mkdir(parents=True, exist_ok=True)
+          exe_suffix = ".exe" if os.name == "nt" else ""
+          compiler = root / "compiler" / "target" / "release" / f"moo-compiler{exe_suffix}"
+          if not compiler.is_file():
+              raise SystemExit(f"Compiler fehlt: {compiler}")
+
+          def write_idx(prefix: Path, count: int) -> None:
+              prefix.parent.mkdir(parents=True, exist_ok=True)
+              images = bytearray()
+              labels = bytearray()
+              for i in range(count):
+                  label = i % 10
+                  pixels = bytearray(28 * 28)
+                  pixels[label] = 255
+                  pixels[100 + label] = 200
+                  images.extend(pixels)
+                  labels.append(label)
+              with open(str(prefix) + "-images-idx3-ubyte", "wb") as f:
+                  f.write(struct.pack(">IIII", 2051, count, 28, 28))
+                  f.write(images)
+              with open(str(prefix) + "-labels-idx1-ubyte", "wb") as f:
+                  f.write(struct.pack(">II", 2049, count))
+                  f.write(labels)
+
+          mnist = temp / "mnist"
+          write_idx(mnist / "train", 100)
+          write_idx(mnist / "t10k", 20)
+          corpus = temp / "maerchen.txt"
+          # Das LM nutzt absichtlich einen zweiten Block bei Offset 36071.
+          # Die deterministische Minifixture muss deshalb groesser sein.
+          corpus.write_text(("Es war einmal ein kleines Haus im Wald. " * 2000), encoding="utf-8")
+
+          examples = [
+              "ki_xor.moos",
+              "ki_mnist.moos",
+              "ki_sprachmodell.moos",
+              "ki_moe.moos",
+              "ki_mtp.moos",
+              "ki_grpo.moos",
+              "ki_embeddings.moos",
+              "ki_multimodal.moos",
+              "ki_multimodal_vision.moos",
+              "ki_multimodal_audio.moos",
+              "ki_multimodal_joint.moos",
+              "ki_multimodal_farbe.moos",
+          ]
+          original_runs = {"ki_xor.moos", "ki_moe.moos", "ki_embeddings.moos"}
+
+          exact = {
+              "ki_mnist.moos": [
+                  ('mnist_laden("daten/mnist/train")', f'mnist_laden("{(mnist / "train").as_posix()}")'),
+                  ('mnist_laden("daten/mnist/t10k")', f'mnist_laden("{(mnist / "t10k").as_posix()}")'),
+                  ('"epochen": 5', '"epochen": 3'),
+                  ('"batch": 64', '"batch": 20'),
+              ],
+              "ki_sprachmodell.moos": [
+                  ('setze block auf 64', 'setze block auf 16'),
+                  ('setze dim auf 64', 'setze dim auf 16'),
+                  ('setze koepfe auf 4', 'setze koepfe auf 2'),
+                  ('setze schritte auf 4000', 'setze schritte auf 20'),
+                  ('setze fenster auf 1000', 'setze fenster auf 10'),
+                  ('setze warm auf 300', 'setze warm auf 4'),
+                  ('datei_lesen("beispiele/daten/maerchen.txt")', f'datei_lesen("{corpus.as_posix()}")'),
+                  ('schicht_dicht(dim, 256', 'schicht_dicht(dim, 32'),
+                  ('schicht_dicht(256, dim', 'schicht_dicht(32, dim'),
+              ],
+              "ki_mtp.moos": [
+                  ('setze dim auf 32', 'setze dim auf 16'),
+                  ('setze schritte auf 6000', 'setze schritte auf 40'),
+                  ('setze fenster auf 1500', 'setze fenster auf 10'),
+                  ('wenn s == 1500', 'wenn s == 10'),
+                  ('wenn s == 3000', 'wenn s == 20'),
+                  ('wenn s == 4500', 'wenn s == 30'),
+                  ('schicht_dicht(dim, 64', 'schicht_dicht(dim, 32'),
+                  ('schicht_dicht(64, dim', 'schicht_dicht(32, dim'),
+              ],
+              "ki_grpo.moos": [
+                  ('setze dim auf 32', 'setze dim auf 16'),
+                  ('setze sft_schritte auf 500', 'setze sft_schritte auf 20'),
+                  ('setze grpo_iter auf 900', 'setze grpo_iter auf 20'),
+                  ('schicht_dicht(dim, 64', 'schicht_dicht(dim, 32'),
+                  ('schicht_dicht(64, dim', 'schicht_dicht(32, dim'),
+              ],
+          }
+
+          def capped_source(name: str, text: str) -> tuple[str, str]:
+              for old, new in exact.get(name, []):
+                  if old not in text:
+                      raise SystemExit(f"CI-Cap-Anker fehlt in {name}: {old}")
+                  text = text.replace(old, new)
+              if name.startswith("ki_multimodal"):
+                  def cap_loop(match: re.Match[str]) -> str:
+                      count = int(match.group(2))
+                      return f"solange {match.group(1)} < {min(count, 20)}:" if count > 20 else match.group(0)
+                  text = re.sub(r"solange\s+([A-Za-z_][A-Za-z0-9_]*)\s+<\s+([0-9]+):", cap_loop, text)
+                  return text, "temporary-short-run(max-loop=20)"
+              return text, "original" if name in original_runs else "temporary-short-run"
+
+          env = os.environ.copy()
+          env["MOO_KI_GPU"] = "0"
+          passed = 0
+          for name in examples:
+              source = root / "beispiele" / name
+              if not source.is_file():
+                  raise SystemExit(f"KI-Beispiel fehlt: {source}")
+              text, mode = capped_source(name, source.read_text(encoding="utf-8"))
+              ci_source = temp / name
+              ci_source.write_text(text, encoding="utf-8")
+              output = temp / (source.stem + exe_suffix)
+              compile_cmd = [str(compiler), "compile", str(ci_source), "-o", str(output)]
+              compile_run = subprocess.run(
+                  compile_cmd, cwd=root, env=env, text=True,
+                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
+              print(f"=== COMPILE {name} mode={mode} rc={compile_run.returncode} ===")
+              print(compile_run.stdout[-6000:])
+              if compile_run.returncode != 0 or not output.is_file():
+                  raise SystemExit(f"Kompilierung fehlgeschlagen: {name}")
+              try:
+                  run = subprocess.run(
+                      [str(output)], cwd=root, env=env, text=True,
+                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
+              except subprocess.TimeoutExpired as exc:
+                  print((exc.stdout or "")[-6000:])
+                  raise SystemExit(f"KI-Beispiel Timeout: {name}")
+              log = run.stdout or ""
+              print(f"=== RUN {name} mode={mode} rc={run.returncode} ===")
+              print(log[-12000:])
+              if run.returncode != 0:
+                  raise SystemExit(f"KI-Beispiel Laufzeitfehler: {name}")
+              if "Unbehandelter Fehler" in log or "Segmentation fault" in log:
+                  raise SystemExit(f"KI-Beispiel meldet Runtimefehler: {name}")
+              if not log.strip():
+                  raise SystemExit(f"KI-Beispiel ohne sichtbaren Funktionsnachweis: {name}")
+              quality_fail = any(marker in log for marker in (
+                  "CHECK-A FAIL", "CHECK-B FAIL", "KURVEN-GATE FAIL",
+                  "GATE VERFEHLT", "SELFTEST_RESULT: FAIL"))
+              if mode == "original" and quality_fail:
+                  raise SystemExit(f"Unveraendertes KI-Qualitaetsgate rot: {name}")
+              if mode != "original":
+                  print(
+                      "CI_SHORT_RUN_QUALITY_NOT_GATED "
+                      f"name={name} reported_fail={int(quality_fail)}"
+                  )
+              print(f"KI_EXAMPLE_PASS name={name} mode={mode} gpu=off")
+              passed += 1
+          if passed != len(examples):
+              raise SystemExit(f"KI-Beispielmatrix unvollstaendig: {passed}/{len(examples)}")
+          print(f"KI_EXAMPLE_MATRIX_PASS={passed}/{len(examples)}")
+          PY
+
+      - name: Run KI ASan and UBSan harnesses
+        shell: bash
+        run: |
+          set -o pipefail
+          echo "KI_SANITIZER_REUSE: vollständiger Runtime-Runner; KI-Harnessmarker werden separat geprüft"
+          bash compiler/runtime/tests/run_sanitize.sh all 2>&1 | tee "ki-sanitizer-${{ runner.os }}.log"
+
+      - name: Assert KI sanitizer coverage
+        shell: bash
+        run: |
+          log="ki-sanitizer-${{ runner.os }}.log"
+          grep -F 'MODUS asan ABGESCHLOSSEN:' "$log"
+          grep -F 'MODUS ubsan ABGESCHLOSSEN:' "$log"
+          grep -F 'GESAMT: ALLE Harnesses sauber' "$log"
+          for test in \
+            test_nn_asan test_autograd_asan test_tensor_asan \
+            test_tensor_ops_asan test_tensor_dtype_asan \
+            test_mixed_precision_asan test_dataset_asan \
+            test_contrastive_asan test_checkpoint_asan \
+            test_checkpoint_ag_asan test_safetensors_dtype_asan \
+            test_tokenizer_asan test_gradcheck test_gradient_setzen_asan \
+            test_quant_asan test_attnres_asan; do
+            count=$(grep -Fc "[PASS]  $test" "$log" || true)
+            if [[ "$count" -ne 2 ]]; then
+              echo "KI-Harnessmarker unvollstaendig: $test count=$count erwartet=2 (ASan+UBSan)" >&2
+              exit 1
+            fi
+          done
+          echo "KI_SANITIZER_COVERAGE_PASS=16/16 modes=2"
+
+      - name: Upload KI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ki-ci-${{ runner.os }}-${{ github.run_attempt }}
+          path: |
+            ki-sanitizer-${{ runner.os }}.log
+            ${{ runner.temp }}/moo-ki-functional/**
+          if-no-files-found: ignore
+          retention-days: 14
