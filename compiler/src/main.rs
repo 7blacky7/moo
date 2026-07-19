@@ -854,9 +854,11 @@ fn append_windows_linker_args(
     if !lld_path.is_absolute() {
         return Err("lld-link-Pfad muss absolut sein".to_string());
     }
-    let lld_path = lld_path
+    let lld_dir = lld_path
+        .parent()
+        .ok_or_else(|| "lld-link-Pfad hat kein übergeordnetes Verzeichnis".to_string())?
         .to_str()
-        .ok_or_else(|| "lld-link-Pfad ist kein gültiger Unicode-Pfad".to_string())?;
+        .ok_or_else(|| "lld-link-Verzeichnis ist kein gültiger Unicode-Pfad".to_string())?;
     const WINDOWS_LIBS: [&str; 4] = [
         "-lmsvcrt",
         "-lvcruntime",
@@ -864,26 +866,28 @@ fn append_windows_linker_args(
         "-lkernel32",
     ];
 
-    let mut normalized = Vec::with_capacity(args.len() + 5);
-    let mut skip_ld_path_value = false;
+    let mut normalized = Vec::with_capacity(args.len() + 6);
+    let mut skip_option_value = false;
     for arg in args.drain(..) {
-        if skip_ld_path_value {
-            skip_ld_path_value = false;
+        if skip_option_value {
+            skip_option_value = false;
             continue;
         }
-        if arg == "--ld-path" {
-            skip_ld_path_value = true;
+        if arg == "--ld-path" || arg == "-B" {
+            skip_option_value = true;
             continue;
         }
-        if arg == "-fuse-ld=lld"
-            || arg.starts_with("--ld-path=")
+        if arg.starts_with("--ld-path=")
+            || arg.starts_with("-fuse-ld=")
+            || (arg.starts_with("-B") && arg.len() > 2)
             || WINDOWS_LIBS.contains(&arg.as_str())
         {
             continue;
         }
         normalized.push(arg);
     }
-    normalized.push(format!("--ld-path={lld_path}"));
+    normalized.push("-fuse-ld=lld".to_string());
+    normalized.push(format!("-B{lld_dir}"));
     normalized.extend(WINDOWS_LIBS.into_iter().map(str::to_string));
     *args = normalized;
     Ok(())
@@ -1514,25 +1518,34 @@ mod windows_linker_contract_tests {
     }
 
     #[test]
-    fn linker_args_bind_absolute_lld_and_canonical_crt_once() {
-        let mut args: Vec<String> = vec!["-fuse-ld=lld".to_string()];
-        append_windows_linker_args(
-            &mut args,
-            &PathBuf::from("/toolchain/lld-link.exe"),
-        ).unwrap();
-        append_windows_linker_args(
-            &mut args,
-            &PathBuf::from("/toolchain/lld-link.exe"),
-        ).unwrap();
+    fn linker_args_bind_lld_search_dir_and_canonical_crt_once() {
+        #[cfg(target_os = "windows")]
+        let lld_path = PathBuf::from(r"C:\toolchain\lld-link.exe");
+        #[cfg(target_os = "windows")]
+        let expected_search_dir = r"-BC:\toolchain";
+        #[cfg(not(target_os = "windows"))]
+        let lld_path = PathBuf::from("/toolchain/lld-link.exe");
+        #[cfg(not(target_os = "windows"))]
+        let expected_search_dir = "-B/toolchain";
+
+        let mut args: Vec<String> = vec![
+            "--ld-path=/stale/lld-link.exe".to_string(),
+            "-fuse-ld=lld-link".to_string(),
+            "-B/stale".to_string(),
+        ];
+        append_windows_linker_args(&mut args, &lld_path).unwrap();
+        append_windows_linker_args(&mut args, &lld_path).unwrap();
 
         assert_eq!(
-            args.iter()
-                .filter(|a| *a == "--ld-path=/toolchain/lld-link.exe")
-                .count(),
+            args.iter().filter(|a| *a == "-fuse-ld=lld").count(),
             1
         );
         assert_eq!(
-            args.iter().filter(|a| *a == "-fuse-ld=lld").count(),
+            args.iter().filter(|a| *a == expected_search_dir).count(),
+            1
+        );
+        assert_eq!(
+            args.iter().filter(|a| a.starts_with("--ld-path")).count(),
             0
         );
         for lib in ["-lmsvcrt", "-lvcruntime", "-lucrt", "-lkernel32"] {
