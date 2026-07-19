@@ -227,22 +227,20 @@ jobs:
           # Cocoa/AppKit/Foundation sind im System. Wir brauchen nur
           # LLVM (fuer inkwell) und die C-Libraries der Core-Runtime.
           brew update
-          brew install llvm@18 sdl2 sdl2_image
+          brew install llvm@18 sdl2 sdl2_image openssl@3
           # sqlite3 ist im System vorhanden (macOS SDK); HTTP braucht keine libcurl-Dev-Lib mehr.
-          echo "LIBCLANG_PATH=$(brew --prefix llvm@18)/lib" >> $GITHUB_ENV
-          echo "LLVM_SYS_181_PREFIX=$(brew --prefix llvm@18)" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig:$(brew --prefix llvm@18)/lib/pkgconfig" >> $GITHUB_ENV
-          # SDL2-Header liegen unter $(brew --prefix sdl2)/include, aber der
-          # cc-Build fuer runtime/moo_graphics.c setzt kein -I dort. Via CPATH
-          # und LIBRARY_PATH exposen, damit #include <SDL2/SDL.h> aufloest und
-          # der Linker libSDL2 findet. ZUSAETZLICH muss .../include/SDL2 im
-          # Include-Path sein, weil SDL_image.h intern `#include "SDL.h"`
-          # (ohne SDL2/-Prefix) macht.
+          LLVM_PREFIX="$(brew --prefix llvm@18)"
           SDL2_PREFIX="$(brew --prefix sdl2)"
           SDL2_IMAGE_PREFIX="$(brew --prefix sdl2_image)"
-          echo "CPATH=${SDL2_PREFIX}/include:${SDL2_PREFIX}/include/SDL2:${SDL2_IMAGE_PREFIX}/include:${SDL2_IMAGE_PREFIX}/include/SDL2:${CPATH}" >> $GITHUB_ENV
-          echo "LIBRARY_PATH=${SDL2_PREFIX}/lib:${SDL2_IMAGE_PREFIX}/lib:${LIBRARY_PATH}" >> $GITHUB_ENV
-          echo "BINDGEN_EXTRA_CLANG_ARGS=-I${SDL2_PREFIX}/include -I${SDL2_PREFIX}/include/SDL2 -I${SDL2_IMAGE_PREFIX}/include -I${SDL2_IMAGE_PREFIX}/include/SDL2" >> $GITHUB_ENV
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          echo "LIBCLANG_PATH=${LLVM_PREFIX}/lib" >> $GITHUB_ENV
+          echo "LLVM_SYS_181_PREFIX=${LLVM_PREFIX}" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=${SDL2_PREFIX}/lib/pkgconfig:${SDL2_IMAGE_PREFIX}/lib/pkgconfig:${OPENSSL_PREFIX}/lib/pkgconfig:${LLVM_PREFIX}/lib/pkgconfig" >> $GITHUB_ENV
+          # SDL2-Header liegen unter dem Homebrew-Prefix; OpenSSL ist keg-only
+          # und muss deshalb ebenfalls explizit in den C-/Linkpfad.
+          echo "CPATH=${SDL2_PREFIX}/include:${SDL2_PREFIX}/include/SDL2:${SDL2_IMAGE_PREFIX}/include:${SDL2_IMAGE_PREFIX}/include/SDL2:${OPENSSL_PREFIX}/include:${CPATH:-}" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=${SDL2_PREFIX}/lib:${SDL2_IMAGE_PREFIX}/lib:${OPENSSL_PREFIX}/lib:${LIBRARY_PATH:-}" >> $GITHUB_ENV
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I${SDL2_PREFIX}/include -I${SDL2_PREFIX}/include/SDL2 -I${SDL2_IMAGE_PREFIX}/include -I${SDL2_IMAGE_PREFIX}/include/SDL2 -I${OPENSSL_PREFIX}/include" >> $GITHUB_ENV
           # MACOSX_DEPLOYMENT_TARGET fuer cc-Build UND rustc-Link angleichen —
           # sonst warnt ld: 'object file built for newer macOS version (15.5)
           # than being linked (15.0)'. Dynamisch = ueberlebt Runner-Image-Bumps.
