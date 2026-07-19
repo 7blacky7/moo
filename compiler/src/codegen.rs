@@ -332,6 +332,38 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
+    /// Uebersetzt portable @sektion-Namen fuer Mach-O in die dort erforderliche
+    /// Segment/Section-Form. Funktionen muessen in einer ausfuehrbaren
+    /// __TEXT-Section liegen; Rohdaten gehen nach __DATA. Vollstaendige native
+    /// Mach-O-Angaben (mit Komma) bleiben fuer Experten unveraendert erlaubt.
+    fn target_section_name(&self, requested: &str, executable: bool) -> Result<String, String> {
+        let triple = self.module.get_triple();
+        let triple = triple.as_str().to_str().unwrap_or("");
+        if !triple.contains("apple") && !triple.contains("darwin") {
+            return Ok(requested.to_string());
+        }
+        if requested.contains(',') {
+            return Ok(requested.to_string());
+        }
+        let base = requested.trim_start_matches('.');
+        if base.is_empty() || !base.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+            return Err(format!(
+                "@sektion: Mach-O-Name '{requested}' darf nach dem optionalen Punkt nur ASCII-Buchstaben, Ziffern und '_' enthalten"
+            ));
+        }
+        let section = format!("__{base}");
+        if section.len() > 16 {
+            return Err(format!(
+                "@sektion: Mach-O-Section '{section}' ist laenger als 16 Bytes (maximal 14 Zeichen im portablen Namen)"
+            ));
+        }
+        if executable {
+            Ok(format!("__TEXT,{section},regular,pure_instructions"))
+        } else {
+            Ok(format!("__DATA,{section}"))
+        }
+    }
+
     /// P011-A3 PoC: lowert @rohdaten_u32-Konstanten zu reinen i32-Array-Globals
     /// (Layout-Daten, KEIN MooValue — nicht als moo-Wert lesbar; dokumentierte
     /// PoC-Grenze). Implizit 'used' (llvm.used), @sektion/@ausrichten anwendbar.
@@ -364,7 +396,10 @@ impl<'ctx> CodeGen<'ctx> {
             match d.name.as_str() {
                 "rohdaten_u32" | "rawdata_u32" => {}
                 "sektion" | "section" => match d.args.as_slice() {
-                    [crate::ast::DecoratorArg::Text(s)] => g.set_section(Some(s)),
+                    [crate::ast::DecoratorArg::Text(s)] => {
+                        let section = self.target_section_name(s, false)?;
+                        g.set_section(Some(&section));
+                    }
                     _ => return Err(format!("@{} erwartet genau ein Text-Argument", d.name)),
                 },
                 "ausrichten" | "align" => match d.args.as_slice() {
@@ -1670,7 +1705,8 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 "sektion" | "section" => match d.args.as_slice() {
                     [crate::ast::DecoratorArg::Text(s)] => {
-                        function.as_global_value().set_section(Some(s));
+                        let section = self.target_section_name(s, true)?;
+                        function.as_global_value().set_section(Some(&section));
                     }
                     _ => {
                         return Err(format!(
