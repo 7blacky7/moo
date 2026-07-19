@@ -1,0 +1,181 @@
+name: Core Test Suite
+
+# Vollstaendige sprach-/runtime-nahe Tests ohne Fenster, Xvfb oder GPU-Lauf.
+# Ubuntu ist das verbindliche Gate. Windows und macOS laufen bereits mit,
+# bleiben aber bis zur jeweiligen Plattformhaertung als experimental markiert.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: ${{ matrix.os }} / run_all.sh
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            experimental: false
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            experimental: true
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            experimental: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Matrix contract
+        shell: bash
+        run: |
+          echo "OS=${{ matrix.os }}"
+          echo "TARGET=${{ matrix.target }}"
+          echo "EXPERIMENTAL=${{ matrix.experimental }}"
+          if [[ "${{ matrix.experimental }}" == "true" ]]; then
+            echo "Diese Plattformzelle ist sichtbar experimentell; Fehler werden protokolliert, nicht als Ubuntu-Gate gewertet."
+          fi
+
+      - name: Install Ubuntu core dependencies
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            llvm-18-dev libpolly-18-dev libclang-18-dev \
+            libgtk-3-dev libappindicator3-dev \
+            libglfw3-dev libgl1-mesa-dev libvulkan-dev glslang-tools \
+            libsdl2-dev libsdl2-image-dev \
+            libsqlite3-dev libssl-dev pkg-config python3
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> "$GITHUB_ENV"
+
+      - name: Install Windows LLVM
+        if: matrix.os == 'windows-latest'
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: moo-llvm
+          create-args: >-
+            -c conda-forge
+            llvmdev=18.1.*
+            clangdev=18.1.*
+            lld=18.1.*
+            zstd
+            zlib
+            libxml2
+            libxml2-devel
+          cache-environment: true
+
+      - name: Configure MSVC developer environment
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Windows core dependencies
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $condaPrefix = $env:CONDA_PREFIX
+          if (!$condaPrefix) {
+            $condaPrefix = Join-Path $env:MAMBA_ROOT_PREFIX "envs\moo-llvm"
+          }
+          if (!(Test-Path $condaPrefix)) {
+            throw "moo-llvm conda environment fehlt: $condaPrefix"
+          }
+          $llvmRoot = Join-Path $condaPrefix "Library"
+          $llvmBin = Join-Path $llvmRoot "bin"
+          $llvmConfig = Join-Path $llvmBin "llvm-config.exe"
+          $clang = Join-Path $llvmBin "clang.exe"
+          $lld = Join-Path $llvmBin "lld-link.exe"
+          foreach ($required in @($llvmConfig, $clang, $lld)) {
+            if (!(Test-Path $required)) { throw "LLVM-Pflichtdatei fehlt: $required" }
+          }
+          & $llvmConfig --version
+
+          vcpkg install --triplet x64-windows `
+            sdl2 sdl2-image sqlite3 glfw3 vulkan
+          $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows"
+          $condaLib = Join-Path $llvmRoot "lib"
+
+          foreach ($paar in @(@("zstd.lib","zstd.dll.lib"), @("zlib.lib","z.dll.lib"))) {
+            $quelle = Join-Path $condaLib $paar[0]
+            $ziel = Join-Path $condaLib $paar[1]
+            if ((Test-Path $quelle) -and !(Test-Path $ziel)) { Copy-Item $quelle $ziel }
+          }
+
+          $msvcBin = Join-Path $env:VCToolsInstallDir "bin\HostX64\x64"
+          $msvcLink = Join-Path $msvcBin "link.exe"
+          if (!(Test-Path $msvcLink)) { throw "MSVC link.exe fehlt: $msvcLink" }
+
+          "LLVM_SYS_181_PREFIX=$llvmRoot" >> $env:GITHUB_ENV
+          "LIBCLANG_PATH=$llvmBin" >> $env:GITHUB_ENV
+          "MOO_CLANG=$clang" >> $env:GITHUB_ENV
+          "MOO_LLD=$lld" >> $env:GITHUB_ENV
+          "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
+          "INCLUDE=$llvmRoot\include;$vcpkgRoot\include;$env:INCLUDE" >> $env:GITHUB_ENV
+          "LIB=$condaLib;$vcpkgRoot\lib;$env:LIB" >> $env:GITHUB_ENV
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$msvcLink" >> $env:GITHUB_ENV
+          "PATH=$llvmBin;$vcpkgRoot\bin;$msvcBin;$env:PATH" >> $env:GITHUB_ENV
+
+      - name: Install macOS core dependencies
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          brew update
+          brew install llvm@18 sdl2 sdl2_image glfw vulkan-loader openssl@3
+          LLVM_PREFIX="$(brew --prefix llvm@18)"
+          SDL2_PREFIX="$(brew --prefix sdl2)"
+          SDL2_IMAGE_PREFIX="$(brew --prefix sdl2_image)"
+          GLFW_PREFIX="$(brew --prefix glfw)"
+          VULKAN_PREFIX="$(brew --prefix vulkan-loader)"
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          echo "LLVM_SYS_181_PREFIX=$LLVM_PREFIX" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=$LLVM_PREFIX/lib" >> "$GITHUB_ENV"
+          echo "CPATH=$SDL2_PREFIX/include:$SDL2_PREFIX/include/SDL2:$SDL2_IMAGE_PREFIX/include:$SDL2_IMAGE_PREFIX/include/SDL2:$GLFW_PREFIX/include:$VULKAN_PREFIX/include:$OPENSSL_PREFIX/include:${CPATH:-}" >> "$GITHUB_ENV"
+          echo "LIBRARY_PATH=$SDL2_PREFIX/lib:$SDL2_IMAGE_PREFIX/lib:$GLFW_PREFIX/lib:$VULKAN_PREFIX/lib:$OPENSSL_PREFIX/lib:${LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$SDL2_PREFIX/lib/pkgconfig:$SDL2_IMAGE_PREFIX/lib/pkgconfig:$GLFW_PREFIX/lib/pkgconfig:$VULKAN_PREFIX/lib/pkgconfig:$OPENSSL_PREFIX/lib/pkgconfig:$LLVM_PREFIX/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$SDL2_PREFIX/include -I$SDL2_PREFIX/include/SDL2 -I$SDL2_IMAGE_PREFIX/include -I$SDL2_IMAGE_PREFIX/include/SDL2 -I$GLFW_PREFIX/include -I$VULKAN_PREFIX/include -I$OPENSSL_PREFIX/include" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=$(sw_vers -productVersion | cut -d. -f1).0" >> "$GITHUB_ENV"
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            compiler/target
+          key: ${{ runner.os }}-core-${{ hashFiles('compiler/Cargo.toml', 'compiler/Cargo.lock', 'compiler/build.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-core-
+
+      - name: Run complete core suite
+        shell: bash
+        run: |
+          set -o pipefail
+          bash compiler/tests/run_all.sh 2>&1 | tee "core-ci-${{ runner.os }}.log"
+
+      - name: Upload core-suite log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-ci-${{ runner.os }}-${{ github.run_attempt }}
+          path: core-ci-${{ runner.os }}.log
+          if-no-files-found: warn
+          retention-days: 14
