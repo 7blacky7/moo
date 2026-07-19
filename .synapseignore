@@ -27,6 +27,7 @@ compiler/runtime/tests/*
 !compiler/runtime/tests/test_quant_asan.c
 !compiler/runtime/tests/test_gradcheck.c
 !compiler/runtime/tests/test_tensor_ops_asan.c
+!compiler/runtime/tests/capture_test_stubs.c
 
 # Fuer die kanonische plattformuebergreifende UI-Visualsuite nur die sechs
 # Runner-Quellen sichtbar machen; alle anderen beispiele/tests bleiben draussen.
