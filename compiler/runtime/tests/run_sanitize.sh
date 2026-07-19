@@ -107,6 +107,7 @@ EOF
 #define close _close
 #define unlink _unlink
 #define rmdir _rmdir
+#define mkdir(path, mode) _mkdir(path)
 #define getpid _getpid
 static int mkstemp(char* path_template) {
     const size_t length = strlen(path_template);
