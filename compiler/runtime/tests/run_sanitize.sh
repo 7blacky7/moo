@@ -44,20 +44,78 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || { echo "FATAL: kann nicht nach $SCRIPT_DIR wechseln"; exit 1; }
 RUNTIME_DIR=".."          # compiler/runtime/
+HOST_UNAME="$(uname -s)"
+case "$HOST_UNAME" in
+  MINGW*|MSYS*|CYGWIN*) HOST_OS="windows"; EXE_SUFFIX=".exe" ;;
+  Darwin)               HOST_OS="macos";   EXE_SUFFIX="" ;;
+  Linux)                HOST_OS="linux";   EXE_SUFFIX="" ;;
+  *)                    HOST_OS="unknown"; EXE_SUFFIX="" ;;
+esac
 OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/moo_sanitize.XXXXXX")"
 trap 'rm -rf "$OUT_DIR"' EXIT
+
+# Windows/clang nutzt die MSVC-CRT: math.h exponiert M_PI nur mit
+# _USE_MATH_DEFINES; libm und pthread sind dort keine separaten Libraries.
+COMMON_CFLAGS=""
+BASE_MATH_LIB="-lm"
+if [ "$HOST_OS" = "windows" ]; then
+  COMMON_CFLAGS="-D_USE_MATH_DEFINES -D_CRT_SECURE_NO_WARNINGS -Wno-deprecated-declarations"
+  BASE_MATH_LIB=""
+fi
 
 # --- Compiler ---------------------------------------------------------------
 CC="${CC:-}"
 if [ -z "$CC" ]; then
-  if command -v gcc >/dev/null 2>&1; then CC=gcc
-  elif command -v clang >/dev/null 2>&1; then CC=clang
+  if command -v clang >/dev/null 2>&1; then CC=clang
+  elif command -v clang-18 >/dev/null 2>&1; then CC=clang-18
+  elif command -v gcc >/dev/null 2>&1; then CC=gcc
   elif command -v cc >/dev/null 2>&1; then CC=cc
   else
-    echo "SKIP: Kein C-Compiler (gcc/clang/cc) gefunden -> Sanitizer-Lauf nicht moeglich."
+    echo "SKIP: Kein C-Compiler (clang/gcc/cc) gefunden -> Sanitizer-Lauf nicht moeglich."
     exit 2
   fi
 fi
+
+echo "HOST : $HOST_OS ($HOST_UNAME), EXE_SUFFIX='$EXE_SUFFIX'"
+echo "CFLAGS: ${COMMON_CFLAGS:-<keine host-spezifischen>}"
+echo "SANITIZER-VERTRAG: ASan + UBSan, KEIN -fwrapv; jeder Plattform-Skip wird einzeln begruendet"
+
+platform_skip_reason() {
+  local tag="$1"
+  case "$HOST_OS:$tag" in
+    linux:*) return 1 ;;
+    windows:test_capture_v4l2_ops_asan|macos:test_capture_v4l2_ops_asan)
+      echo "V4L2/Linux-Header und libv4l2 sind auf $HOST_OS nicht verfuegbar"; return 0 ;;
+    windows:test_capture_alsa_ops_asan|macos:test_capture_alsa_ops_asan)
+      echo "ALSA/Linux-Header und libasound sind auf $HOST_OS nicht verfuegbar"; return 0 ;;
+    windows:test_video_wiring_asan)
+      echo "Harness modelliert explizit POSIX fork/execvp/mkdtemp/sh; Windows-Core hat einen getrennten CreateProcess-Pfad"; return 0 ;;
+    windows:test_checkpoint_asan)
+      echo "Harness verwendet POSIX mkdtemp; Windows-Checkpoint-Core bleibt durch die uebrigen NN-/I/O-Harnesses abgedeckt"; return 0 ;;
+  esac
+  return 1
+}
+
+normalize_extra_libs() {
+  local libs="$1" token
+  local normalized=()
+  for token in $libs; do
+    if [ "$HOST_OS" = "windows" ] && { [ "$token" = "-lm" ] || [ "$token" = "-lpthread" ]; }; then
+      continue
+    fi
+    normalized+=("$token")
+  done
+  printf '%s' "${normalized[*]}"
+}
+
+mode_skip_reason() {
+  local mode="$1" tag="$2"
+  if [ "$mode" = "ubsan" ] && [ "$tag" = "test_gather_leak" ]; then
+    echo "reines /proc-RSS-Leak-Gate mit 5%-Schwelle; ASan/LSan deckt den Leakvertrag ab, UBSan misst hier keine zusaetzliche UB-Eigenschaft"
+    return 0
+  fi
+  return 1
+}
 
 # --- Harness-Matrix ---------------------------------------------------------
 # Format je Zeile: "<basename>|<zusaetzliche-quellen>|<zusaetzliche-libs>"
@@ -222,7 +280,7 @@ EXTRA_HARNESSES=(
 sanitizer_available() {
   local flags="$1"
   local probe="$OUT_DIR/_probe.c"
-  local probe_bin="$OUT_DIR/_probe.bin"
+  local probe_bin="$OUT_DIR/_probe${EXE_SUFFIX}"
   cat > "$probe" <<'EOF'
 int main(void) { return 0; }
 EOF
@@ -238,7 +296,8 @@ EOF
 build_and_run() {
   local mode="$1" bflags="$2" renv="$3" base="$4" extra_src="$5" extra_libs="$6"
   local tag="${base%.c}"
-  local bin="$OUT_DIR/${tag}.${mode}"
+  extra_libs="$(normalize_extra_libs "$extra_libs")"
+  local bin="$OUT_DIR/${tag}.${mode}${EXE_SUFFIX}"
   local log="$OUT_DIR/${tag}.${mode}.log"
 
   local srcs=( "$base" "$RUNTIME_DIR/moo_voxel.c" )
@@ -248,8 +307,8 @@ build_and_run() {
 
   echo "  [build] $tag  (src: ${srcs[*]#$RUNTIME_DIR/}  libs: -lm $extra_libs)"
   # shellcheck disable=SC2086
-  if ! "$CC" $bflags -g -std=c11 -I"$RUNTIME_DIR" \
-        "${srcs[@]}" -lm $extra_libs -o "$bin" > "$log" 2>&1; then
+  if ! "$CC" $bflags $COMMON_CFLAGS -g -std=c11 -I"$RUNTIME_DIR" \
+        "${srcs[@]}" $BASE_MATH_LIB $extra_libs -o "$bin" > "$log" 2>&1; then
     echo "  [BUILD-FAIL] $tag"
     sed 's/^/      | /' "$log"
     return 1
@@ -278,7 +337,8 @@ build_and_run() {
 build_and_run_explicit() {
   local mode="$1" bflags="$2" renv="$3" base="$4" src_list="$5" extra_libs="$6"
   local tag="${base%.c}"
-  local bin="$OUT_DIR/${tag}.${mode}"
+  extra_libs="$(normalize_extra_libs "$extra_libs")"
+  local bin="$OUT_DIR/${tag}.${mode}${EXE_SUFFIX}"
   local log="$OUT_DIR/${tag}.${mode}.log"
 
   # C1: moo_memory.c kennt Kamera/Mikro-Tags. Schwache Test-Stubs
@@ -292,7 +352,7 @@ build_and_run_explicit() {
   echo "  [build] $tag  (src: $base $src_list  libs: $extra_libs)"
   # gnu11 + _GNU_SOURCE wie der cc-crate-Default (strdup &Co in der Runtime).
   # shellcheck disable=SC2086
-  if ! "$CC" $bflags -g -std=gnu11 -D_GNU_SOURCE -I"$RUNTIME_DIR" \
+  if ! "$CC" $bflags $COMMON_CFLAGS -g -std=gnu11 -D_GNU_SOURCE -I"$RUNTIME_DIR" \
         "${srcs[@]}" $extra_libs -o "$bin" > "$log" 2>&1; then
     echo "  [BUILD-FAIL] $tag"
     sed 's/^/      | /' "$log"
@@ -318,7 +378,7 @@ build_and_run_explicit() {
 build_ub_ops_string() {
   local mode="$1" bflags="$2" renv="$3"
   local tag="test_ub_ops_string"
-  local bin="$OUT_DIR/${tag}.${mode}"
+  local bin="$OUT_DIR/${tag}.${mode}${EXE_SUFFIX}"
   local log="$OUT_DIR/${tag}.${mode}.log"
   local srcs=(
     "${tag}.c" "capture_free_stubs.c"
@@ -342,8 +402,8 @@ build_ub_ops_string() {
   )
   echo "  [build] $tag  (ops/string-Pfade, P007-U3)"
   # shellcheck disable=SC2086
-  if ! "$CC" $bflags -g -std=gnu11 -D_GNU_SOURCE -I"$RUNTIME_DIR" \
-        "${srcs[@]}" -lm -o "$bin" > "$log" 2>&1; then
+  if ! "$CC" $bflags $COMMON_CFLAGS -g -std=gnu11 -D_GNU_SOURCE -I"$RUNTIME_DIR" \
+        "${srcs[@]}" $BASE_MATH_LIB -o "$bin" > "$log" 2>&1; then
     echo "  [BUILD-FAIL] $tag"
     sed 's/^/      | /' "$log"
     return 1
@@ -381,8 +441,16 @@ run_mode() {
   case "$mode" in
     asan)
       bflags="-fsanitize=address -fno-omit-frame-pointer -O1"
-      renv="ASAN_OPTIONS=detect_leaks=1:abort_on_error=1"
-      label="AddressSanitizer (detect_leaks=1)"
+      if [ "$HOST_OS" = "linux" ]; then
+        renv="ASAN_OPTIONS=detect_leaks=1:abort_on_error=1"
+        label="AddressSanitizer + LeakSanitizer (detect_leaks=1)"
+      else
+        # LSan ist im Windows-Clang-Runtimevertrag nicht enthalten und auf
+        # macOS je nach upstream/Homebrew-Runtime nicht stabil verfuegbar.
+        # AddressSanitizer bleibt voll aktiv; der Cap wird sichtbar geloggt.
+        renv="ASAN_OPTIONS=detect_leaks=0:abort_on_error=1"
+        label="AddressSanitizer (LSan auf $HOST_OS explizit deaktiviert)"
+      fi
       ;;
     ubsan)
       # KEIN -fwrapv. UB soll trappen, nicht definiert/maskiert werden.
@@ -409,10 +477,21 @@ run_mode() {
     return 2
   fi
 
-  local fails=0 passes=0
-  local entry base extra_src extra_libs
+  local fails=0 passes=0 skips=0
+  local entry base extra_src extra_libs tag skip_reason
   for entry in "${HARNESSES[@]}"; do
     IFS='|' read -r base extra_src extra_libs <<< "$entry"
+    tag="${base%.c}"
+    if skip_reason="$(platform_skip_reason "$tag")"; then
+      echo "  [SKIP]  $tag ($skip_reason)"
+      skips=$((skips+1))
+      continue
+    fi
+    if skip_reason="$(mode_skip_reason "$mode" "$tag")"; then
+      echo "  [SKIP]  $tag ($skip_reason)"
+      skips=$((skips+1))
+      continue
+    fi
     build_and_run "$mode" "$bflags" "$renv" "$base" "$extra_src" "$extra_libs"
     case $? in
       0) passes=$((passes+1)) ;;
@@ -424,6 +503,17 @@ run_mode() {
   local esrc elibs
   for entry in "${EXTRA_HARNESSES[@]}"; do
     IFS='|' read -r base esrc elibs <<< "$entry"
+    tag="${base%.c}"
+    if skip_reason="$(platform_skip_reason "$tag")"; then
+      echo "  [SKIP]  $tag ($skip_reason)"
+      skips=$((skips+1))
+      continue
+    fi
+    if skip_reason="$(mode_skip_reason "$mode" "$tag")"; then
+      echo "  [SKIP]  $tag ($skip_reason)"
+      skips=$((skips+1))
+      continue
+    fi
     build_and_run_explicit "$mode" "$bflags" "$renv" "$base" "$esrc" "$elibs"
     case $? in
       0) passes=$((passes+1)) ;;
@@ -443,7 +533,7 @@ run_mode() {
   esac
 
   echo "------------------------------------------------------------"
-  echo " MODUS $mode ABGESCHLOSSEN: $passes ok, $fails fehlgeschlagen (von $((${#HARNESSES[@]} + ${#EXTRA_HARNESSES[@]} + 1)))"
+  echo " MODUS $mode ABGESCHLOSSEN: $passes ok, $fails fehlgeschlagen, $skips plattformbedingt geskippt (von $((${#HARNESSES[@]} + ${#EXTRA_HARNESSES[@]} + 1)))"
   echo "------------------------------------------------------------"
   [ "$fails" -eq 0 ] && return 0 || return 1
 }

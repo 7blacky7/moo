@@ -18,6 +18,16 @@ nohup.out
 
 # Manuelle/lebhafte Testflächen, nur bei Bedarf indexieren.
 tests/
+
+# Aktive Runtime-Sanitizer-/Quant-Gates gezielt sichtbar machen. Alle anderen
+# compiler/runtime/tests-Harnesses bleiben durch das Re-Include-Muster draussen.
+!compiler/runtime/tests/
+compiler/runtime/tests/*
+!compiler/runtime/tests/run_sanitize.sh
+!compiler/runtime/tests/test_quant_asan.c
+!compiler/runtime/tests/test_gradcheck.c
+!compiler/runtime/tests/test_tensor_ops_asan.c
+
 # Fuer die kanonische plattformuebergreifende UI-Visualsuite nur die sechs
 # Runner-Quellen sichtbar machen; alle anderen beispiele/tests bleiben draussen.
 !beispiele/tests/

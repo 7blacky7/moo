@@ -1,0 +1,117 @@
+name: Runtime Sanitizers
+
+# ASan + UBSan fuer die isolierten C-Runtime-Harnesses. Kein -fwrapv.
+# Alle drei Plattformjobs sind verbindlich; plattformspezifische Harness-Caps
+# werden vom Runner einzeln als SKIP mit Begruendung ausgegeben.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sanitizer-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sanitize:
+    name: ${{ matrix.os }} / ASan+UBSan
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: windows-latest
+          - os: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Ubuntu sanitizer dependencies
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 libv4l-dev libasound2-dev
+          echo "CC=clang-18" >> "$GITHUB_ENV"
+
+      - name: Install Windows LLVM sanitizer toolchain
+        if: matrix.os == 'windows-latest'
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: moo-sanitize
+          create-args: >-
+            -c conda-forge
+            clangdev=18.1.*
+            llvmdev=18.1.*
+            lld=18.1.*
+          cache-environment: true
+
+      - name: Configure MSVC environment
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure Windows clang and sanitizer runtime
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $prefix = $env:CONDA_PREFIX
+          if (!$prefix) { $prefix = Join-Path $env:MAMBA_ROOT_PREFIX 'envs\moo-sanitize' }
+          $llvmRoot = Join-Path $prefix 'Library'
+          $llvmBin = Join-Path $llvmRoot 'bin'
+          $clang = Join-Path $llvmBin 'clang.exe'
+          if (!(Test-Path $clang)) { throw "clang.exe fehlt: $clang" }
+          $resource = (& $clang --print-resource-dir).Trim()
+          if (!(Test-Path $resource)) { throw "Clang resource-dir fehlt: $resource" }
+          $runtimeDll = Get-ChildItem $resource -Recurse -Filter 'clang_rt.asan_dynamic-x86_64.dll' -File | Select-Object -First 1
+          if (!$runtimeDll) { throw "Windows-ASan-Runtime fehlt unter $resource" }
+          $cc = $clang.Replace('\','/')
+          "CC=$cc" >> $env:GITHUB_ENV
+          $llvmBin >> $env:GITHUB_PATH
+          $runtimeDll.Directory.FullName >> $env:GITHUB_PATH
+          & $clang --version
+          & $clang -print-file-name=clang_rt.asan_dynamic-x86_64.lib
+
+      - name: Install macOS sanitizer toolchain
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          brew update
+          brew install llvm@18
+          LLVM_PREFIX="$(brew --prefix llvm@18)"
+          echo "CC=$LLVM_PREFIX/bin/clang" >> "$GITHUB_ENV"
+          echo "$LLVM_PREFIX/bin" >> "$GITHUB_PATH"
+          "$LLVM_PREFIX/bin/clang" --version
+
+      - name: Run ASan and UBSan harness matrix
+        shell: bash
+        run: |
+          set -o pipefail
+          echo "CC=$CC"
+          "$CC" --version
+          bash compiler/runtime/tests/run_sanitize.sh all 2>&1 | tee "sanitizer-${{ runner.os }}.log"
+
+      - name: Assert no wrapped-overflow masking
+        shell: bash
+        run: |
+          if grep -F -- '-fwrapv' "sanitizer-${{ runner.os }}.log" | grep -v -F 'KEIN -fwrapv'; then
+            echo "Verbotenes -fwrapv im effektiven Sanitizerlauf gefunden"
+            exit 1
+          fi
+          grep -F 'MODUS: asan' "sanitizer-${{ runner.os }}.log"
+          grep -F 'MODUS: ubsan' "sanitizer-${{ runner.os }}.log"
+          grep -F 'GESAMT: ALLE Harnesses sauber' "sanitizer-${{ runner.os }}.log"
+
+      - name: Upload sanitizer log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitizer-${{ runner.os }}-${{ github.run_attempt }}
+          path: sanitizer-${{ runner.os }}.log
+          if-no-files-found: warn
+          retention-days: 14
