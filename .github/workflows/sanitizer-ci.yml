@@ -40,18 +40,6 @@ jobs:
           sudo apt-get install -y clang-18 libv4l-dev libasound2-dev
           echo "CC=clang-18" >> "$GITHUB_ENV"
 
-      - name: Install Windows LLVM sanitizer toolchain
-        if: matrix.os == 'windows-latest'
-        uses: mamba-org/setup-micromamba@v2
-        with:
-          environment-name: moo-sanitize
-          create-args: >-
-            -c conda-forge
-            clangdev=18.1.*
-            llvmdev=18.1.*
-            lld=18.1.*
-          cache-environment: true
-
       - name: Configure MSVC environment
         if: matrix.os == 'windows-latest'
         uses: ilammy/msvc-dev-cmd@v1
@@ -60,33 +48,39 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $prefix = $env:CONDA_PREFIX
-          if (!$prefix) { $prefix = Join-Path $env:MAMBA_ROOT_PREFIX 'envs\moo-sanitize' }
-          $llvmRoot = Join-Path $prefix 'Library'
-          $llvmBin = Join-Path $llvmRoot 'bin'
+          $llvmBin = $env:llvmX64
+          if (!$llvmBin) { $llvmBin = Join-Path $env:VSINSTALLDIR 'VC\Tools\Llvm\x64\bin' }
           $clang = Join-Path $llvmBin 'clang.exe'
-          if (!(Test-Path $clang)) { throw "clang.exe fehlt: $clang" }
+          if (!(Test-Path $clang)) { throw "Visual-Studio-clang.exe fehlt: $clang" }
           $resource = (& $clang --print-resource-dir).Trim()
           if (!(Test-Path $resource)) { throw "Clang resource-dir fehlt: $resource" }
           $runtimeDll = Get-ChildItem $resource -Recurse -Filter 'clang_rt.asan_dynamic-x86_64.dll' -File | Select-Object -First 1
-          if (!$runtimeDll) { throw "Windows-ASan-Runtime fehlt unter $resource" }
+          $runtimeLib = Get-ChildItem $resource -Recurse -Filter 'clang_rt.asan_dynamic-x86_64.lib' -File | Select-Object -First 1
+          $ubsanLib = Get-ChildItem $resource -Recurse -Filter 'clang_rt.ubsan_standalone-x86_64.lib' -File | Select-Object -First 1
+          if (!$runtimeDll -or !$runtimeLib) { throw "Windows-ASan-Runtime fehlt unter $resource" }
+          if (!$ubsanLib) { throw "Windows-UBSan-Runtime fehlt unter $resource" }
           $cc = $clang.Replace('\','/')
           "CC=$cc" >> $env:GITHUB_ENV
           $llvmBin >> $env:GITHUB_PATH
           $runtimeDll.Directory.FullName >> $env:GITHUB_PATH
           & $clang --version
-          & $clang -print-file-name=clang_rt.asan_dynamic-x86_64.lib
+          Write-Host "ASAN_DLL=$($runtimeDll.FullName)"
+          Write-Host "ASAN_LIB=$($runtimeLib.FullName)"
+          Write-Host "UBSAN_LIB=$($ubsanLib.FullName)"
 
-      - name: Install macOS sanitizer toolchain
+      - name: Configure macOS sanitizer toolchain
         if: matrix.os == 'macos-latest'
         shell: bash
         run: |
-          brew update
-          brew install llvm@18
-          LLVM_PREFIX="$(brew --prefix llvm@18)"
-          echo "CC=$LLVM_PREFIX/bin/clang" >> "$GITHUB_ENV"
-          echo "$LLVM_PREFIX/bin" >> "$GITHUB_PATH"
-          "$LLVM_PREFIX/bin/clang" --version
+          # Apple-Clang ist mit der aktuellen macOS-/SDK-Version des Runners
+          # gekoppelt. Homebrew clang 18 hing auf macOS 26 bereits bei einem
+          # leeren ASan-Probeprogramm.
+          test -x /usr/bin/clang
+          echo "CC=/usr/bin/clang" >> "$GITHUB_ENV"
+          /usr/bin/clang --version
+          printf 'int main(void){return 0;}\n' > "$RUNNER_TEMP/san-probe.c"
+          /usr/bin/clang -fsanitize=address "$RUNNER_TEMP/san-probe.c" -o "$RUNNER_TEMP/san-probe-asan"
+          /usr/bin/clang -fsanitize=undefined "$RUNNER_TEMP/san-probe.c" -o "$RUNNER_TEMP/san-probe-ubsan"
 
       - name: Run ASan and UBSan harness matrix
         shell: bash
@@ -103,8 +97,8 @@ jobs:
             echo "Verbotenes -fwrapv im effektiven Sanitizerlauf gefunden"
             exit 1
           fi
-          grep -F 'MODUS: asan' "sanitizer-${{ runner.os }}.log"
-          grep -F 'MODUS: ubsan' "sanitizer-${{ runner.os }}.log"
+          grep -F 'MODUS asan ABGESCHLOSSEN:' "sanitizer-${{ runner.os }}.log"
+          grep -F 'MODUS ubsan ABGESCHLOSSEN:' "sanitizer-${{ runner.os }}.log"
           grep -F 'GESAMT: ALLE Harnesses sauber' "sanitizer-${{ runner.os }}.log"
 
       - name: Upload sanitizer log

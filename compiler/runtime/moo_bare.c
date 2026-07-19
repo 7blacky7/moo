@@ -27,6 +27,44 @@ static inline double bare_as_double(MooValue v) {
     __builtin_memcpy(&d, &v.data, sizeof(double));
     return d;
 }
+
+/* Truncation Richtung null + Modulo 2^bits ohne Float-zu-Integer-Cast
+ * ausserhalb des Zielbereichs. Ein direkter Cast von z.B. 65537.0 auf
+ * uint16_t ist laut C undefiniert und wird von UBSan korrekt gemeldet.
+ *
+ * Die Bare-Runtime setzt IEEE-754 binary64 voraus (wie die MooValue-Zahl-
+ * Darstellung selbst). NaN/Inf liefern deterministisch 0. */
+static uint32_t bare_wrap_unsigned_pow2(double value, unsigned bits) {
+    uint64_t raw = 0;
+    __builtin_memcpy(&raw, &value, sizeof(raw));
+
+    const uint64_t sign = raw >> 63;
+    const uint64_t exponent = (raw >> 52) & UINT64_C(0x7ff);
+    const uint64_t fraction = raw & ((UINT64_C(1) << 52) - UINT64_C(1));
+    if (bits == 0 || bits > 32 || exponent == 0 || exponent == UINT64_C(0x7ff)) {
+        return 0;
+    }
+
+    const int unbiased = (int)exponent - 1023;
+    if (unbiased < 0) return 0;
+
+    const uint64_t mask = bits == 32
+        ? UINT64_C(0xffffffff)
+        : ((UINT64_C(1) << bits) - UINT64_C(1));
+    const uint64_t mantissa = (UINT64_C(1) << 52) | fraction;
+    uint64_t low = 0;
+
+    if (unbiased < 52) {
+        low = (mantissa >> (52 - unbiased)) & mask;
+    } else {
+        const unsigned shift = (unsigned)(unbiased - 52);
+        if (shift < bits) low = ((mantissa & mask) << shift) & mask;
+    }
+
+    if (sign && low != 0) low = (UINT64_C(0) - low) & mask;
+    return (uint32_t)low;
+}
+
 static inline void bare_set_double(MooValue* v, double d) {
     __builtin_memcpy(&v->data, &d, sizeof(double));
 }
@@ -267,18 +305,24 @@ void kern_outl(uint16_t port, uint32_t value) {
 #endif
 }
 
-// MooValue-Wrapper (P011-B1) — Truncation via Cast (unsigned, kein UB)
+// MooValue-Wrapper (P011-B1) — trunc toward zero + Modulo 2^N, UB-frei.
 MooValue moo_io_inw(MooValue port) {
-    return moo_number((double)kern_inw((uint16_t)as_num(port)));
+    const uint16_t wrapped_port = (uint16_t)bare_wrap_unsigned_pow2(as_num(port), 16);
+    return moo_number((double)kern_inw(wrapped_port));
 }
 void moo_io_outw(MooValue port, MooValue data) {
-    kern_outw((uint16_t)as_num(port), (uint16_t)as_num(data));
+    const uint16_t wrapped_port = (uint16_t)bare_wrap_unsigned_pow2(as_num(port), 16);
+    const uint16_t wrapped_data = (uint16_t)bare_wrap_unsigned_pow2(as_num(data), 16);
+    kern_outw(wrapped_port, wrapped_data);
 }
 MooValue moo_io_inl(MooValue port) {
-    return moo_number((double)kern_inl((uint16_t)as_num(port)));
+    const uint16_t wrapped_port = (uint16_t)bare_wrap_unsigned_pow2(as_num(port), 16);
+    return moo_number((double)kern_inl(wrapped_port));
 }
 void moo_io_outl(MooValue port, MooValue data) {
-    kern_outl((uint16_t)as_num(port), (uint32_t)as_num(data));
+    const uint16_t wrapped_port = (uint16_t)bare_wrap_unsigned_pow2(as_num(port), 16);
+    const uint32_t wrapped_data = bare_wrap_unsigned_pow2(as_num(data), 32);
+    kern_outl(wrapped_port, wrapped_data);
 }
 
 // === P011-B2: CPU-Steuer-Builtins (rdmsr/wrmsr, CRx, lgdt/lidt) ===

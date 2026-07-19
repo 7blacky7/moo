@@ -53,6 +53,16 @@ case "$HOST_UNAME" in
 esac
 OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/moo_sanitize.XXXXXX")"
 trap 'rm -rf "$OUT_DIR"' EXIT
+HARNESS_TIMEOUT_SECONDS="${MOO_SANITIZER_TIMEOUT_SECONDS:-120}"
+PYTHON_BIN="${PYTHON_BIN:-}"
+if [ -z "$PYTHON_BIN" ]; then
+  if command -v python3 >/dev/null 2>&1; then PYTHON_BIN=python3
+  elif command -v python >/dev/null 2>&1; then PYTHON_BIN=python
+  else
+    echo "FATAL: Python 3 wird fuer den plattformuebergreifenden Harness-Timeout benoetigt."
+    exit 1
+  fi
+fi
 
 # Windows/clang nutzt die MSVC-CRT: math.h exponiert M_PI nur mit
 # _USE_MATH_DEFINES; libm und pthread sind dort keine separaten Libraries.
@@ -79,6 +89,7 @@ fi
 echo "HOST : $HOST_OS ($HOST_UNAME), EXE_SUFFIX='$EXE_SUFFIX'"
 echo "CFLAGS: ${COMMON_CFLAGS:-<keine host-spezifischen>}"
 echo "SANITIZER-VERTRAG: ASan + UBSan, KEIN -fwrapv; jeder Plattform-Skip wird einzeln begruendet"
+echo "HARNESS-TIMEOUT: ${HARNESS_TIMEOUT_SECONDS}s pro Prozess via $PYTHON_BIN"
 
 platform_skip_reason() {
   local tag="$1"
@@ -117,6 +128,41 @@ mode_skip_reason() {
   return 1
 }
 
+run_sanitized_binary() {
+  local renv="$1" bin="$2" log="$3"
+  local env_name="${renv%%=*}" env_value="${renv#*=}"
+  local process_bin="$bin" process_log="$log"
+  if [ "$HOST_OS" = "windows" ] && command -v cygpath >/dev/null 2>&1; then
+    process_bin="$(cygpath -w "$bin")"
+    process_log="$(cygpath -w "$log")"
+  fi
+
+  "$PYTHON_BIN" - "$env_name" "$env_value" "$process_bin" "$process_log" "$HARNESS_TIMEOUT_SECONDS" <<'PY'
+import os
+import subprocess
+import sys
+
+env_name, env_value, binary, log_path, timeout_text = sys.argv[1:]
+env = os.environ.copy()
+env[env_name] = env_value
+timeout = int(timeout_text)
+with open(log_path, "wb") as log:
+    try:
+        result = subprocess.run(
+            [binary],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            env=env,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        log.write((f"SANITIZER-HARNESS-TIMEOUT: {timeout}s\n").encode("utf-8"))
+        sys.exit(124)
+sys.exit(result.returncode)
+PY
+}
+
 # --- Harness-Matrix ---------------------------------------------------------
 # Format je Zeile: "<basename>|<zusaetzliche-quellen>|<zusaetzliche-libs>"
 #   <zusaetzliche-quellen>: weitere .c relativ zu RUNTIME_DIR (leer = nur moo_voxel.c)
@@ -148,14 +194,14 @@ HARNESSES=(
 #   * sim_input: NUR moo_3d.c (Dispatcher, kein GL/GLFW; Backend wird gestubbt).
 EXTRA_HARNESSES=(
   # capture: KI-MULTI-C1 — injizierte Handle-/Fault-Matrix ohne Hardware.
-  "test_capture_asan.c|moo_capture.c moo_capture_camera_stub.c moo_capture_audio_stub.c moo_frame.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"
+  "test_capture_asan.c|moo_capture.c moo_capture_camera_stub.c moo_capture_audio_stub.c moo_frame.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"
   # C2-WIN/C2-MAC: plattformneutraler Pull-Zustandsautomat mit vollständig injizierten
   # Media-Foundation-/WASAPI-Operationen; läuft hardwarefrei auf jedem Host.
-  "test_capture_pull_ops_asan.c|moo_capture.c moo_capture_pull.c moo_frame.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_capture_pull_ops_asan.c|moo_capture.c moo_capture_pull.c moo_frame.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   # Native Low-Level-Ops-Fault-Matrizen: echte Backend-Logik, alle OS-/Treiber-
   # Aufrufe injiziert; benoetigen Linklibs nur fuer ungenutzte system_ops-Defaults.
-  "test_capture_v4l2_ops_asan.c|moo_capture_v4l2.c moo_capture_audio_stub.c tests/capture_test_stubs.c moo_capture.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_frame.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_nn.c moo_nn_easy.c moo_json.c moo_dataset.c|-lv4l2 -lm"
-  "test_capture_alsa_ops_asan.c|moo_capture_alsa.c moo_capture_camera_stub.c tests/capture_test_stubs.c moo_capture.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_frame.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_nn.c moo_nn_easy.c moo_json.c moo_dataset.c|-lasound -lm"
+  "test_capture_v4l2_ops_asan.c|moo_capture_v4l2.c moo_capture_audio_stub.c tests/capture_test_stubs.c moo_capture.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_frame.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_nn.c moo_nn_easy.c moo_json.c moo_dataset.c|-lv4l2 -lm"
+  "test_capture_alsa_ops_asan.c|moo_capture_alsa.c moo_capture_camera_stub.c tests/capture_test_stubs.c moo_capture.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_frame.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_nn.c moo_nn_easy.c moo_json.c moo_dataset.c|-lasound -lm"
   "test_frame_asan.c|moo_frame.c moo_memory.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"
   # surface: P016-O1 — freestanding Rasterkern + refcounteter Wrapper mit
   #             eigenem Minimal-Moo-Scaffold; keine UI-/Hardware-Abhaengigkeit.
@@ -173,12 +219,12 @@ EXTRA_HARNESSES=(
   "test_effects_integration.c|moo_compositor_core.c moo_compositor_raster.c moo_compositor_effects_state.c moo_compositor_animation.c moo_compositor_effects_math.c moo_compositor_effects_cpu.c moo_compositor_effects_damage.c moo_compositor_effects_gpu.c|-lm"
   # frame_tensor: Frame<->Tensor-Bruecke (KI-MULTI-V1). Braucht Frame- UND
   #               Tensor-Familie (f32_sichern -> ki_gpu/autograd-Symbole).
-  "test_frame_tensor_asan.c|moo_frame_tensor.c moo_frame.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"
+  "test_frame_tensor_asan.c|moo_frame_tensor.c moo_frame.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"
   # audio: KI-MULTI-A1 — FFT/Parseval/STFT/WAV, kein Autograd/Hardware.
   #        Gleicher Tensor/Core-Satz + Test-throw-Modell wie frame_tensor.
-  "test_audio_asan.c|moo_audio.c moo_frame.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"
+  "test_audio_asan.c|moo_audio.c moo_frame.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"
   "test_gif_core_asan.c|moo_gif.c|-lm"
-  "test_gif_wiring_asan.c|moo_gif.c moo_gif_handle.c moo_frame.c moo_value.c moo_memory.c moo_string.c moo_dict.c moo_error.c moo_print.c moo_list.c moo_ops.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_video_handle.c moo_video.c|-lm"
+  "test_gif_wiring_asan.c|moo_gif.c moo_gif_handle.c moo_frame.c moo_value.c moo_memory.c moo_string.c moo_dict.c moo_error.c moo_print.c moo_list.c moo_ops.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_video_handle.c moo_video.c|-lm"
   "test_sim_input_asan.c|moo_3d.c|-lm"
   #   video_wiring: MOO_VIDEO-Core (moo_video.c) + immer-gebauter Heap-Wrapper
   #               (moo_video_handle.c) + Core-Runtime. moo_memory.c->moo_release()
@@ -187,74 +233,78 @@ EXTRA_HARNESSES=(
   #               moo_string_new -> moo_string.c (+ dict/list/ops als deren Deps).
   #               Mock-ffmpeg: der Harness schreibt zur Laufzeit ein "ffmpeg"-sh-
   #               Skript in ein mkdtemp-Dir + setzt PATH -> KEIN echtes ffmpeg/GPU.
-  "test_video_wiring_asan.c|moo_video.c moo_video_handle.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c|-lm"
+  "test_video_wiring_asan.c|moo_video.c moo_video_handle.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c|-lm"
   #   tensor:     Plan-014 A1 — MOO_TENSOR-Kern (Konstruktoren/Zugriff/Refcount/
   #               Determinismus). Core-Runtime-Satz OHNE moo_error.c: der Harness
   #               bringt das Test-throw-Modell mit (Flag + free des strdup-Texts,
   #               Muster Voxel-Harnesses) — sonst leaken Fehlerpfade by design.
-  "test_tensor_asan.c|moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_tensor_asan.c|moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   tensor_ops: Plan-014 A2 — Op-Registry + Kern-Ops (Broadcasting/matmul/
   #               Reduktionen/Aktivierungen/Softmax-Stabilitaet). Gleicher
   #               Quell-Satz + Test-throw-Modell wie tensor.
-  "test_tensor_ops_asan.c|moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_tensor_ops_asan.c|moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   autograd:   Plan-014 B1 — Tape-Lifecycle (record/rueckwaerts/reset,
   #               Fan-out-Akkumulation, Broadcast-Reduktion Bias-Grad,
   #               no_grad). ASan haelt das Tape-Retain/Release-Gate.
-  "test_autograd_asan.c|moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_autograd_asan.c|moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   gradient_setzen: KIP-X1b Phase A — gradient_setzen(quelle) aus Tensor
   #               gleicher Form ODER flacher Zahlenliste; Puffer-on-demand,
   #               grad_valid=MOO_V_DATA, Selbstzuweisung, Negativ/kein-Teilzustand.
   #               ASan haelt das Listen-Element-Release-Gate (moo_list_get +1).
-  "test_gradient_setzen_asan.c|moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_gradient_setzen_asan.c|moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   gradcheck:  Plan-014 B2 — DAS Ehrlichkeits-Gate: numerischer Gradient
   #               vs. Autograd fuer JEDEN Registry-Op (automatische Iteration
   #               via op_count/at — neuer Op ohne Gradcheck faellt hier auf).
-  "test_gradcheck.c|moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_gradcheck.c|moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   contrastive: KI-MULTI-L1 — kosinus + symmetrisches InfoNCE als reine
   #                Registry-Op-Komposition; eigener numerischer FD-Gradcheck.
-  "test_contrastive_asan.c|moo_contrastive.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_contrastive_asan.c|moo_contrastive.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   quant: KI-Q1 — Hadamard-Registry-Op + inferenz-only QJL Sign-JL.
+  #          Eigene Determinismus-, Orthogonalitaets-, Gradcheck- und
+  #          Unbiasedness-Gates; gleicher Tensor-/Autograd-Quellsatz.
+  "test_quant_asan.c|moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   gather_leak: KIP-T1 — Refcount-/Tape-Leak-Gate fuer gather fwd+bwd. Unter
   #               ASan zaehlt LeakSanitizer (RSS-Check dort uebersprungen); der
   #               echte 1M-RSS-Stabilitaetslauf laeuft standalone ohne Sanitizer.
-  "test_gather_leak.c|moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_gather_leak.c|moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   nn:         Plan-014 C1 — Schichten/Loss/Optimizer (Dict-basiert, reine
   #               Op-Komposition, kein neuer Registry-Op). Inkl. XOR-
   #               Konvergenz-Gate im Harness; Quell-Satz + Test-throw-Modell
   #               wie autograd, plus moo_nn.c.
-  "test_nn_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_nn_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   tensor_dtype: KIP-D1 — bf16-Storage-DType. Roundtrip/Special-Values,
   #               Valid-Masken-Vertrag (D0 §2), Stale-Store-Regression,
   #               bf16-Op-Matrix (26+ Ops bit-exakt vs rundungs-f32) +
   #               ce/mse/vorwaerts. Quell-Satz wie nn. ASan-Leak-Gate.
-  "test_tensor_dtype_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_tensor_dtype_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   mixed_precision: KIP-D2 — Mixed-Precision-Training bf16 (Aktivierungen
   #               bf16-gerundet, Parameter-Master/Optimizer f32). bf16_runden ==
   #               als_dtype-Storage-Pfad bit-identisch; XOR+CE bf16 vs f32 in
   #               Toleranz + bf16 deterministisch; Default-AUS == reines f32.
-  "test_mixed_precision_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_mixed_precision_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   safeten-dt: KIP-D3 — Safetensors DType-Vertrag: F32/BF16/F16-Import (->f32),
   #               f32-Export byte-identisch, bf16-Export->Import bit-exakt,
   #               Negativ unbekannter dtype. Quell-Satz wie test_nn_asan.
-  "test_safetensors_dtype_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
-  "test_dataset_asan.c|moo_dataset.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_safetensors_dtype_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_dataset_asan.c|moo_dataset.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   tokenizer:  KIP-T2 — Byte-level BPE (train/encode/decode/save/load/hash).
   #               Test-throw-Modell wie dataset; Tensor-Kern + Core-Runtime.
   #               Gates: Determinismus ohne Seed, byte-exakter Roundtrip inkl.
   #               invalid-UTF8/NUL/Emoji, Artefakt-Roundtrip, UNK-Negativ-Gate.
-  "test_tokenizer_asan.c|moo_tokenizer.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_tokenizer_asan.c|moo_tokenizer.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   shard:      KIP-E1 — Streaming-Token-Shards + Dataloader (Format/CRC,
   #               gefenstertes Lesen, seed-deterministische Blockreihenfolge,
   #               SFT-Loss-Maske, Train/Val-Split). Test-throw-Modell.
-  "test_shard_asan.c|moo_shard.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_shard_asan.c|moo_shard.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   checkpoint: KIP-E2 — CPU-Voll-Checkpoint v2 (Modell+Optimizer m/v/t+
   #               Dropout-Zaehler+Dataloader-Pos, atomisch tmp+rename, Rotation).
   #               GATE: Kill+Resume bit-identisch MIT Dropout. Quell-Satz wie nn.
-  "test_checkpoint_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_checkpoint_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   ckpt_ag:    KIP-B4b — Activation Checkpointing (Sub-Tape Re-Forward +
   #               Dropout-Zaehler-Restore). GATE: Grad mit/ohne moo_nn_checkpoint
   #               BIT-identisch MIT Dropout (Param+Input), Determinismus, tiefes
   #               Multi-Dropout-Segment. Quell-Satz wie nn/checkpoint.
-  "test_checkpoint_ag_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_checkpoint_ag_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   bare_alloc: Plan-010 T1 — Bare-Allocator (K3) + serielle Formatter (K2)
   #               auf dem Host. Linkt NUR moo_bare_alloc.c + moo_bare_console.c;
   #               moo_bare.c/moo_bare_boot.c bewusst NICHT (echte in/out-Asm
@@ -284,9 +334,14 @@ sanitizer_available() {
   cat > "$probe" <<'EOF'
 int main(void) { return 0; }
 EOF
+  local probe_log="$OUT_DIR/_probe.log"
   # shellcheck disable=SC2086
-  "$CC" $flags -o "$probe_bin" "$probe" >/dev/null 2>&1 || return 1
-  "$probe_bin" >/dev/null 2>&1 || return 1
+  "$CC" $flags -o "$probe_bin" "$probe" >"$probe_log" 2>&1 || return 1
+  run_sanitized_binary "MOO_SANITIZER_PROBE=1" "$probe_bin" "$probe_log" || {
+    echo "SANITIZER-PROBE-FEHLER ($flags):"
+    sed 's/^/      | /' "$probe_log"
+    return 1
+  }
   return 0
 }
 
@@ -315,9 +370,9 @@ build_and_run() {
   fi
 
   echo "  [run]   $tag"
-  # env-String wie "ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=..."
-  # shellcheck disable=SC2086
-  if env $renv "$bin" > "$log" 2>&1; then
+  # Ein hängender Harness ist ein harter Fehler, blockiert aber nicht den gesamten
+  # Matrixjob bis zum Job-Timeout.
+  if run_sanitized_binary "$renv" "$bin" "$log"; then
     echo "  [PASS]  $tag"
     return 0
   else
@@ -360,8 +415,7 @@ build_and_run_explicit() {
   fi
 
   echo "  [run]   $tag"
-  # shellcheck disable=SC2086
-  if env $renv "$bin" > "$log" 2>&1; then
+  if run_sanitized_binary "$renv" "$bin" "$log"; then
     echo "  [PASS]  $tag"
     return 0
   else
@@ -420,8 +474,7 @@ build_ub_ops_string() {
     asan) run_env="ASAN_OPTIONS=detect_leaks=0:abort_on_error=1" ;;
   esac
   echo "  [run]   $tag"
-  # shellcheck disable=SC2086
-  if env $run_env "$bin" > "$log" 2>&1; then
+  if run_sanitized_binary "$run_env" "$bin" "$log"; then
     echo "  [PASS]  $tag"
     return 0
   else
@@ -553,13 +606,13 @@ case "$MODE" in
   asan|ubsan)
     run_mode "$MODE"; rc=$?
     [ "$rc" -ne 2 ] && skipped_all=0
-    [ "$rc" -eq 1 ] && overall=1
+    [ "$rc" -ne 0 ] && overall=1
     ;;
   all)
     for m in asan ubsan; do
       run_mode "$m"; rc=$?
       [ "$rc" -ne 2 ] && skipped_all=0
-      [ "$rc" -eq 1 ] && overall=1
+      [ "$rc" -ne 0 ] && overall=1
     done
     ;;
   *)
