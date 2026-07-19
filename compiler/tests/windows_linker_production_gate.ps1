@@ -87,10 +87,11 @@ function Assert-P016ProductionEvidence($Evidence) {
     if ([string]$Evidence.compiler.path -cne $CompilerPath -or [string]$Evidence.compiler.sha256 -cne $CompilerSha -or [string]$Evidence.runtime.path -cne $RuntimePath -or [string]$Evidence.runtime.sha256 -cne $RuntimeSha) { throw 'INFRA_EVIDENCE_ARTIFACT' }
     if ([int]$Evidence.totals.compiler_starts -ne 3 -or [int]$Evidence.totals.linker_starts -ne 3 -or [int]$Evidence.totals.payload_exec -ne 1 -or [int]$Evidence.totals.blocked -ne 2) { throw 'INFRA_EVIDENCE_TOTALS' }
     $cases=@($Evidence.cases); if ($cases.Count -ne 3) { throw 'INFRA_EVIDENCE_CASES' }
+    # 23 Argumente: bestehende Linkzeile plus -fuse-ld=lld und validiertes -B-Verzeichnis.
     $expected=@(@('COPY0','COPY_RC0',0),@('COPY23','COPY_RC23',1),@('NOOUTPUT0','NOOUTPUT_RC0',1))
     for($i=0;$i -lt 3;$i++) {
         Assert-P016ExactProperties $cases[$i] @('name','mode','rc','stdout_sha256','stderr_sha256','stderr','argv','argv_log_sha256','output','output_hash','sentinel_hash') 'INFRA_EVIDENCE_CASE_SCHEMA'
-        if ([string]$cases[$i].name -cne $expected[$i][0] -or [string]$cases[$i].mode -cne $expected[$i][1] -or [int]$cases[$i].rc -ne [int]$expected[$i][2] -or @($cases[$i].argv).Count -ne 22) { throw 'INFRA_EVIDENCE_CASE_BINDING' }
+        if ([string]$cases[$i].name -cne $expected[$i][0] -or [string]$cases[$i].mode -cne $expected[$i][1] -or [int]$cases[$i].rc -ne [int]$expected[$i][2] -or @($cases[$i].argv).Count -ne 23) { throw 'INFRA_EVIDENCE_CASE_BINDING' }
         foreach($hashName in @('stdout_sha256','stderr_sha256','argv_log_sha256')) { if ([string]$cases[$i].$hashName -cnotmatch '^[0-9a-f]{64}$') { throw 'INFRA_EVIDENCE_CASE_HASH' } }
     }
 }
@@ -235,16 +236,17 @@ function Invoke-P016WindowsLinkerProductionGate {
                 $result=Invoke-P016BoundedProcessAt $CompilerPath @('run',$caseSource) $TimeoutMs $overrides $RepoRoot
                 Assert-P016SelfTestProcessInfra $result ('COMPILER_'+$definition.Name)
                 $decoded=Read-P016StrictArgvLog $argv; $tokens=@($decoded.Tokens)
-                Assert-P016SelfTestContract ($tokens.Count -eq 22) ($definition.Name+'_ARGV_COUNT')
+                Assert-P016SelfTestContract ($tokens.Count -eq 23) ($definition.Name+'_ARGV_COUNT')
                 Assert-P016SelfTestContract ($tokens[2] -ceq '-o') ($definition.Name+'_OUTPUT_SWITCH')
                 $output=[string]$tokens[3]
                 Assert-P016SelfTestContract ([IO.Path]::IsPathRooted($output)) ($definition.Name+'_OUTPUT_ABSOLUTE')
                 Assert-P016SelfTestContract ([string]::Equals([IO.Path]::GetFullPath((Split-Path -Parent $output)),[IO.Path]::GetFullPath($temp),[StringComparison]::OrdinalIgnoreCase)) ($definition.Name+'_OUTPUT_OWNER')
                 Assert-P016SelfTestContract ([IO.Path]::GetFileName($output) -cmatch '^moo_tmp_binary_[1-9][0-9]*[.]exe$') ($definition.Name+'_OUTPUT_NAME')
-                $expected=@($object,$RuntimePath,'-o',$output,'-fms-runtime-lib=dll','-Wl,/NODEFAULTLIB:libcmt','-llibcurl','-lsqlite3','-lws2_32','-lbcrypt','-lmfplat','-lmf','-lmfreadwrite','-lmfuuid','-lole32','-loleaut32','-luuid',('--ld-path='+$fixtures.LldPath),'-lmsvcrt','-lvcruntime','-lucrt','-lkernel32')
+                $expected=@($object,$RuntimePath,'-o',$output,'-fms-runtime-lib=dll','-Wl,/NODEFAULTLIB:libcmt','-llibcurl','-lsqlite3','-lws2_32','-lbcrypt','-lmfplat','-lmf','-lmfreadwrite','-lmfuuid','-lole32','-loleaut32','-luuid','-fuse-ld=lld',('-B'+[IO.Path]::GetDirectoryName($fixtures.LldPath)),'-lmsvcrt','-lvcruntime','-lucrt','-lkernel32')
                 for($i=0;$i -lt $expected.Count;$i++) { Assert-P016SelfTestContract ([string]::Equals([string]$tokens[$i],[string]$expected[$i],[StringComparison]::Ordinal)) ($definition.Name+'_ARGV_'+$i) }
                 Assert-P016OrdinalCount $tokens '--ld-path' 0 ($definition.Name+'_BARE_LD_PATH')
-                Assert-P016OrdinalCount $tokens '-fuse-ld=lld' 0 ($definition.Name+'_FUSE_LLD')
+                Assert-P016OrdinalCount $tokens '-fuse-ld=lld' 1 ($definition.Name+'_FUSE_LLD')
+                Assert-P016OrdinalCount $tokens ('-B'+[IO.Path]::GetDirectoryName($fixtures.LldPath)) 1 ($definition.Name+'_LLD_SEARCH_DIR')
                 foreach($token in $tokens) { if ([IO.Path]::GetFileName([string]$token) -ieq 'link.exe') { throw ('FAIL_'+$definition.Name+'_LINK_EXE') } }
                 Assert-P016SelfTestContract ($result.ExitCode -eq $definition.Rc) ($definition.Name+'_RC')
                 Assert-P016SelfTestContract ([string]$result.Stdout -ceq '') ($definition.Name+'_STDOUT')
