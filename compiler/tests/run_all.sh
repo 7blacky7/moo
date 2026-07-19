@@ -20,6 +20,15 @@ COMPILER="$COMPILER_DIR/target/release/moo-compiler${EXE_SUFFIX}"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/moo_core_tests.XXXXXX")"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
+# Native Windows-Programme interpretieren den Literalpfad /tmp als Wurzel des
+# aktuellen Laufwerks (z. B. D:\tmp), nicht als Git-Bashs internes /tmp.
+# Einige File-/Checkpoint-Regressionen testen bewusst diesen historischen Pfad.
+if [ "$EXE_SUFFIX" = ".exe" ]; then
+    workspace_windows="$(pwd -W)"
+    drive_letter="$(printf '%s' "$workspace_windows" | cut -c1 | tr '[:upper:]' '[:lower:]')"
+    mkdir -p "/${drive_letter}/tmp"
+fi
+
 # Farben
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -159,10 +168,18 @@ done
 # REG-G1: Frische-Receiver-Leak-Gate — 1M-vs-4M-Heap-Skalierung fuer
 # Methodenketten mit frischen Receivern (loop-invariante Receiver verstecken
 # Dispatch-Leaks). Transparenter Skip (Exit 2) wenn python3 fehlt.
+set +e
 "$SCRIPT_DIR/leak_gates/run_leak_gates.sh"
 leak_rc=$?
+set -e
 if [ "$leak_rc" -eq 1 ]; then
     echo -e "${RED}FEHLER:${NC} Leak-Gate (frische Receiver) fehlgeschlagen."
+    exit 1
+elif [ "$leak_rc" -eq 2 ]; then
+    skip=$((skip + 1))
+    echo -e "${YELLOW}SKIP${NC} Leak-Gate (plattformbedingt nicht aussagekraeftig)"
+elif [ "$leak_rc" -ne 0 ]; then
+    echo -e "${RED}FEHLER:${NC} Leak-Gate lieferte unerwarteten Exit-Code $leak_rc."
     exit 1
 fi
 
