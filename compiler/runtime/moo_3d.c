@@ -5,8 +5,11 @@
 
 #include "moo_runtime.h"
 #include "moo_3d_backend.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
+static const float MOO_3D_PI_F = 3.14159265358979323846f;
 
 // Vorwaertsdeklarationen
 extern MooValue moo_string_new(const char* s);
@@ -391,10 +394,10 @@ MooValue moo_3d_time_of_day(MooValue win, MooValue t_val) {
     (void)win;
     float t = (float)MV_NUM(t_val);
     t = t - floorf(t);
-    float elev = sinf((t - 0.25f) * 2.0f * (float)M_PI);
+    float elev = sinf((t - 0.25f) * 2.0f * MOO_3D_PI_F);
 
     /* Sonnenrichtung: wandert Ost -> West, Elevation aus Sinus. */
-    float az = (t - 0.25f) * 2.0f * (float)M_PI;
+    float az = (t - 0.25f) * 2.0f * MOO_3D_PI_F;
     float sy = elev > 0.08f ? elev : 0.08f;
     moo_3d_set_light_dir(cosf(az), sy, 0.35f);
 
