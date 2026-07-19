@@ -16,6 +16,7 @@ MooValue moo_dict_new(void) {
     d->refcount = 1;
     d->frozen = false;
     d->count = 0;
+    d->tombs = 0;
     d->capacity = DICT_INITIAL_CAPACITY;
     d->entries = moo_alloc(sizeof(MooDictEntry) * d->capacity);
     memset(d->entries, 0, sizeof(MooDictEntry) * d->capacity);
@@ -26,11 +27,26 @@ MooValue moo_dict_new(void) {
 static int32_t dict_find_slot(MooDict* d, const char* key) {
     uint32_t hash = hash_string(key);
     int32_t idx = hash % d->capacity;
-    while (d->entries[idx].occupied) {
-        if (strcmp(d->entries[idx].key->chars, key) == 0) return idx;
+    /* Tombstone-korrektes lineares Probing: deleted-Slots setzen die
+     * Kette FORT (frueher brach die Suche dort ab — Keys hinter einem
+     * entfernten Slot waren unauffindbar und konnten via set doppelt
+     * angelegt werden). Erster Tombstone wird fuer Re-Insert gemerkt. */
+    int32_t first_del = -1;
+    for (int32_t probes = 0; probes < d->capacity; probes++) {
+        MooDictEntry* e = &d->entries[idx];
+        if (e->occupied) {
+            if (strcmp(e->key->chars, key) == 0) return idx;
+        } else if (e->deleted) {
+            if (first_del < 0) first_del = idx;
+        } else {
+            return (first_del >= 0) ? first_del : idx;
+        }
         idx = (idx + 1) % d->capacity;
     }
-    return idx;
+    /* Nur erreichbar wenn die Tabelle komplett occupied/tombstoned ist —
+     * der Grow-Trigger (count+tombs) haelt das unterhalb des Load-Factors,
+     * damit existiert hier immer ein Tombstone. */
+    return first_del;
 }
 
 static void dict_grow(MooDict* d) {
@@ -48,6 +64,7 @@ static void dict_grow(MooDict* d) {
     d->entries = moo_alloc(sizeof(MooDictEntry) * (size_t)d->capacity);
     memset(d->entries, 0, sizeof(MooDictEntry) * (size_t)d->capacity);
     d->count = 0;
+    d->tombs = 0;   /* neue Tabelle: alle Tombstones weg */
     for (int32_t i = 0; i < old_cap; i++) {
         if (old[i].occupied) {
             int32_t slot = dict_find_slot(d, old[i].key->chars);
@@ -80,7 +97,7 @@ void moo_dict_set(MooValue dict, MooValue key, MooValue value) {
     MooDict* d = MV_DICT(dict);
     if (d->frozen) { moo_throw(moo_string_new("Wörterbuch ist eingefroren!")); return; }
     MooValue key_str = moo_to_string(key);
-    if ((double)d->count / d->capacity > DICT_LOAD_FACTOR) dict_grow(d);
+    if ((double)(d->count + d->tombs) / d->capacity > DICT_LOAD_FACTOR) dict_grow(d);
     int32_t slot = dict_find_slot(d, MV_STR(key_str)->chars);
     // Ownership-Transfer: caller uebergibt value mit refcount=1 (Producer /
     // load_var-retain). Dict uebernimmt die Referenz, kein retain.
@@ -92,6 +109,10 @@ void moo_dict_set(MooValue dict, MooValue key, MooValue value) {
     } else {
         // Erster Insert: Dict uebernimmt die Caller-Referenz des keys
         // direkt. Kein retain, kein release — reiner Transfer.
+        if (d->entries[slot].deleted) {
+            d->entries[slot].deleted = false;   /* Tombstone-Reuse */
+            d->tombs--;
+        }
         d->entries[slot].key = MV_STR(key_str);
         d->entries[slot].occupied = true;
         d->count++;
@@ -173,6 +194,8 @@ void moo_dict_remove(MooValue dict, MooValue key) {
         moo_release(k);
         moo_release(d->entries[slot].value);
         d->entries[slot].occupied = false;
+        d->entries[slot].deleted = true;    /* Tombstone: Kette bleibt intakt */
+        d->tombs++;
         d->entries[slot].key = NULL;
         d->count--;
     }

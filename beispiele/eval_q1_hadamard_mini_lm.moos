@@ -1,0 +1,402 @@
+# ============================================================
+# KI-Q1 int8-Re-Eval: per-output-channel int8 MIT Hadamard-Pre-Rotation
+# gegen die M6b-Messlatte (eval_m6b_mini_lm.moos, identisches Training).
+#
+# Drei Messungen im SELBEN Lauf (gleicher Trainingszustand):
+#   1. f32-Basis (Q1_EVAL_LM_LOSS_BASELINE)
+#   2. int8 per-output-channel absmax wie M6b (Q1_..._INT8_PC)
+#   3. int8 per-output-channel IM ROTIERTEN RAUM (Q1_..._INT8_PC_ROT):
+#      je output-Kanal v: r = A(v) (Hadamard, fester Seed), int8-absmax
+#      auf r, zurueck v' = A_inv(r'). Incoherence-Processing (QuaRot/QJL-
+#      Familie): die Rotation verteilt Ausreisser, absmax/127-Skala wird
+#      repraesentativer. A ist orthogonal -> ohne Quant exakt verlustfrei.
+#
+# EHRLICH: Toy-Messung am Grimm-Mini-LM (dim 64) — dokumentiert die
+# Richtung, ersetzt keine Grossmodell-Aussage.
+# ============================================================
+
+setze block auf 64          # Sequenzlaenge (volle Bloecke beim Training)
+setze dim auf 64            # Modellbreite
+setze koepfe auf 4          # Attention-Koepfe
+setze schritte auf 4000    # Trainingsschritte
+setze fenster auf 1000     # Schritte pro Loss-Checkpoint
+
+# M6b-EVAL NUR: simuliert per-output-channel int8 absmax und dequantisiert
+# sofort zurück nach f32. Das ist KEIN Produktiv-Builtin und ändert kein Format.
+funktion m6b_abs(x):
+    wenn x < 0:
+        gib_zurück 0 - x
+    gib_zurück x
+
+funktion m6b_int8_pc_dequant(t, qmax):
+    setze a auf t.zu_liste()
+    setze form auf t.form()
+    setze zeilen auf form[0]
+    setze spalten auf form[1]
+    setze skalen auf []
+    setze j auf 0
+    solange j < spalten:
+        setze mx auf 0
+        setze i auf 0
+        solange i < zeilen:
+            setze av auf m6b_abs(a[i * spalten + j])
+            wenn av > mx:
+                setze mx auf av
+            setze i auf i + 1
+        wenn mx == 0:
+            skalen.hinzufügen(1)
+        sonst:
+            skalen.hinzufügen(mx / qmax)
+        setze j auf j + 1
+    setze ausgabe_liste auf []
+    setze i auf 0
+    solange i < zeilen:
+        setze z auf []
+        setze j auf 0
+        solange j < spalten:
+            setze q auf runde(a[i * spalten + j] / skalen[j])
+            wenn q > qmax:
+                setze q auf qmax
+            wenn q < 0 - qmax:
+                setze q auf 0 - qmax
+            z.hinzufügen(q * skalen[j])
+            setze j auf j + 1
+        ausgabe_liste.hinzufügen(z)
+        setze i auf i + 1
+    gib_zurück tensor_aus_liste(ausgabe_liste)
+
+# ROTIERTE Variante: quantisiere jeden output-Kanal im Hadamard-Raum.
+# t [in, out]: Spalten = output-Kanaele. Wt = t^T [out, in] -> Zeilen =
+# Kanalvektoren -> hadamard rotiert die LETZTE Achse (= je Kanal).
+# pc-Quant erwartet Kanaele als SPALTEN -> auf R^T anwenden, danach
+# zuruecktransponieren und mit hadamard_inv exakt zurueckrotieren.
+# Ohne die int8-Stufe ist die Kette bitgenau verlustfrei (A orthogonal).
+setze q1_seed auf 4242
+
+funktion m6b_int8_pc_rot_dequant(t, qmax):
+    setze r auf t.transponieren().hadamard(q1_seed)
+    setze rq auf m6b_int8_pc_dequant(r.transponieren(), qmax)
+    gib_zurück rq.transponieren().hadamard_inv(q1_seed).transponieren()
+
+setze rate auf 0.05         # SGD-Spitzen-Lernrate (mit Warmup + Cosine-Abfall)
+
+# ------------------------------------------------------------
+# 1. Korpus laden + in Zeichen-Ids uebersetzen
+# ------------------------------------------------------------
+zeige "Lade Korpus ..."
+setze korpus auf datei_lesen("beispiele/daten/maerchen.txt")
+setze tok auf text_tokenizer(korpus)
+setze ids auf tok["ids"]
+setze vokab auf tok["vokab"]
+setze id_zu_zeichen auf tok["id_zu_zeichen"]
+setze n auf ids.groesse()
+zeige "Zeichen: " + text(n) + ", Vokabular: " + text(vokab)
+
+# ------------------------------------------------------------
+# 2. Modell bauen (alle Seeds fest -> reproduzierbar)
+# ------------------------------------------------------------
+setze emb  auf schicht_embedding(vokab, dim, 1)
+setze pos  auf schicht_position(block, dim, "gelernt", 2)
+setze ln1a auf schicht_layernorm(dim)
+setze att1 auf schicht_attention(dim, koepfe, 3)
+setze ln1b auf schicht_layernorm(dim)
+setze ff1a auf schicht_dicht(dim, 256, "gelu", 4)
+setze ff1b auf schicht_dicht(256, dim, "keine", 5)
+setze ln2a auf schicht_layernorm(dim)
+setze att2 auf schicht_attention(dim, koepfe, 6)
+setze ln2b auf schicht_layernorm(dim)
+setze ff2a auf schicht_dicht(dim, 256, "gelu", 7)
+setze ff2b auf schicht_dicht(256, dim, "keine", 8)
+setze lnf  auf schicht_layernorm(dim)
+setze kopf auf schicht_dicht(dim, vokab, "keine", 9)
+
+setze alle auf [emb, pos, ln1a, att1, ln1b, ff1a, ff1b,
+                ln2a, att2, ln2b, ff2a, ff2b, lnf, kopf]
+
+# Vorwaerts mit Residuals AUF MOO-EBENE (Pre-LayerNorm, GPT-Stil):
+# jede Zeile x = x + vorwaerts(...) ist eine echte Residual-Verbindung,
+# der +-Operator zeichnet auf den Autograd-Tape auf.
+funktion modell(ids_block):
+    setze x auf vorwaerts([emb], ids_block)
+    setze x auf vorwaerts([pos], x)
+    setze x auf x + vorwaerts([ln1a, att1], x)
+    setze x auf x + vorwaerts([ln1b, ff1a, ff1b], x)
+    setze x auf x + vorwaerts([ln2a, att2], x)
+    setze x auf x + vorwaerts([ln2b, ff2a, ff2b], x)
+    gib_zurück vorwaerts([lnf, kopf], x)
+
+# ------------------------------------------------------------
+# 3. Generierung (Greedy = deterministisch, Temperatur = Demo)
+# ------------------------------------------------------------
+funktion argmax(liste):
+    setze best auf 0
+    setze i auf 1
+    solange i < länge(liste):
+        wenn liste[i] > liste[best]:
+            setze best auf i
+        setze i auf i + 1
+    gib_zurück best
+
+# kontext: Liste von Zeichen-Ids. Zieht `anzahl` neue Zeichen.
+# temperatur 0 = Greedy (argmax), sonst Temperatur-Sampling.
+funktion generiere(kontext_start, anzahl, temperatur):
+    setze kontext auf []
+    für id in kontext_start:
+        kontext.hinzufügen(id)
+    setze erzeugt auf ""
+    setze s auf 0
+    solange s < anzahl:
+        # Fenster = letzte hoechstens `block` Ids
+        setze start auf 0
+        wenn länge(kontext) > block:
+            setze start auf länge(kontext) - block
+        setze fenster_ids auf []
+        setze i auf start
+        solange i < länge(kontext):
+            fenster_ids.hinzufügen(kontext[i])
+            setze i auf i + 1
+        setze eingabe auf tensor_aus_liste(fenster_ids)
+        setze logits auf modell(eingabe)
+        # nur die letzte Zeile interessiert (naechstes Zeichen)
+        setze seq auf länge(fenster_ids)
+        setze zeile auf logits.zeilen(seq - 1, seq)
+        setze id auf 0
+        wenn temperatur > 0:
+            setze wahrsch auf (zeile * (1.0 / temperatur)).softmax().zu_liste()
+            setze r auf zufall()
+            setze summe auf 0
+            setze k auf 0
+            solange k < länge(wahrsch):
+                setze summe auf summe + wahrsch[k]
+                wenn r < summe:
+                    setze id auf k
+                    setze k auf länge(wahrsch)
+                sonst:
+                    setze k auf k + 1
+        sonst:
+            setze id auf argmax(zeile.zu_liste())
+        kontext.hinzufügen(id)
+        setze erzeugt auf erzeugt + id_zu_zeichen[id]
+        setze s auf s + 1
+    gib_zurück erzeugt
+
+# Startkontext: die ersten 16 Zeichen des Korpus (deterministisch)
+setze anfang auf ids.zeilen(0, 16).zu_liste()
+
+autograd_aus()
+zeige ""
+zeige "=== VORHER (untrainiert, Greedy): ==="
+zeige generiere(anfang, 150, 0)
+autograd_an()
+
+# ------------------------------------------------------------
+# 4. Training: Low-Level-Schleife
+#    Ziel jedes Blocks = derselbe Block, um 1 Zeichen verschoben.
+# ------------------------------------------------------------
+setze params auf parameter(alle)
+# SGD mit Momentum statt Adam — BEWUSST. DIAGNOSTIZIERT (ADAM-B1):
+# Bei batch=1 sind die Gradienten pro Koordinate am Unigramm-Plateau
+# winzig (sqrt(v) ~ 1e-3); Adams eps=1e-8 ist dagegen bedeutungslos,
+# also bekommt jede Rausch-Richtung die volle Schrittgroesse ~rate
+# (Adam degeneriert Richtung sign-SGD) -> reproduzierbarer Verlust-
+# Buckel ab dem Plateau, schlimmer je NIEDRIGER die Rate. Abhilfe,
+# falls Adam gewuenscht: opt["eps"] auf 0.01 setzen (Dosis-Wirkung
+# bewiesen: 1e-5 wirkungslos, 1e-3 gedaempft, 1e-2 Buckel weg).
+# Fuer XOR/MNIST (trainiere-API mit echten Batches) bleibt Adam mit
+# Standard-eps die richtige Wahl.
+setze opt auf optimierer_sgd(params, rate, 0.9)
+
+# Lernraten-Plan wie in der Kinderleicht-API: linearer Warmup,
+# dann Cosine-Abfall — ohne Warmup springt der Verlust bei kleinen
+# Transformern gern mitten im Training nach oben (selbst beobachtet).
+funktion lernrate(schritt):
+    setze warm auf 300
+    wenn schritt < warm:
+        gib_zurück rate * (schritt + 1) / warm
+    setze rest auf (schritt - warm) / (schritte - warm)
+    gib_zurück rate * (0.1 + 0.9 * 0.5 * (1.0 + cos(3.14159265358979 * rest)))
+setze grenze auf n - block - 1
+setze p auf 0
+setze sprung auf 631        # Positions-Schrittweite (durchmischt den Korpus)
+setze fenster_summe auf 0
+setze checkpoints auf []
+
+zeige ""
+zeige "Trainiere " + text(schritte) + " Schritte ..."
+setze s auf 0
+solange s < schritte:
+    # Zwei Bloecke pro Schritt (versetzt um die halbe Korpuslaenge) und
+    # den Verlust mitteln — halbiert das Gradienten-Rauschen, die
+    # Checkpoint-Kurve wird glatt. Beide Vorwaertslaeufe landen auf dem
+    # Autograd-Tape, rueckwaerts() geht durch beide.
+    setze p2 auf p + 36071
+    wenn p2 >= grenze:
+        setze p2 auf p2 - grenze
+    setze v1 auf kreuzentropie(modell(ids.zeilen(p, p + block)), ids.zeilen(p + 1, p + block + 1))
+    setze v2 auf kreuzentropie(modell(ids.zeilen(p2, p2 + block)), ids.zeilen(p2 + 1, p2 + block + 1))
+    setze verlust auf (v1 + v2) * 0.5
+    verlust.rueckwaerts()
+    gradienten_kappen(params, 1.0)   # gegen Loss-Spitzen (Attention!)
+    setze opt["rate"] auf lernrate(s)
+    opt.schritt()
+    setze fenster_summe auf fenster_summe + verlust.zu_liste()[0]
+    setze p auf p + sprung
+    wenn p >= grenze:
+        setze p auf p - grenze
+    setze s auf s + 1
+    wenn s - boden(s / fenster) * fenster == 0:
+        setze mittel auf fenster_summe / fenster
+        checkpoints.hinzufügen(mittel)
+        zeige "Checkpoint " + text(länge(checkpoints)) + " (Schritt " + text(s) + "): mittlerer Verlust " + text(mittel)
+        setze fenster_summe auf 0
+
+# ------------------------------------------------------------
+# 5. GATE: Verlust sinkt monoton ueber die Checkpoints
+# ------------------------------------------------------------
+setze monoton auf 1
+setze c auf 1
+solange c < länge(checkpoints):
+    wenn checkpoints[c] >= checkpoints[c - 1]:
+        setze monoton auf 0
+    setze c auf c + 1
+
+autograd_aus()
+zeige ""
+zeige "=== NACHHER (trainiert, Greedy — vergleichbar mit VORHER): ==="
+zeige generiere(anfang, 150, 0)
+zeige ""
+zeige "=== NACHHER (Temperatur 0.8 — abwechslungsreicher): ==="
+zeige generiere(anfang, 150, 0.8)
+
+zeige ""
+wenn monoton == 1:
+    zeige "GATE BESTANDEN: Verlust sinkt monoton ueber alle Checkpoints."
+sonst:
+    zeige "GATE VERFEHLT: Verlust sinkt nicht monoton — Checkpoints oben pruefen."
+
+
+funktion m6b_q_attention(a, h, qmax):
+    setze i auf 0
+    solange i < h:
+        setze qk auf "wq" + text(i)
+        setze kk auf "wk" + text(i)
+        setze vk auf "wv" + text(i)
+        a[qk] = m6b_int8_pc_dequant(a[qk], qmax)
+        a[kk] = m6b_int8_pc_dequant(a[kk], qmax)
+        a[vk] = m6b_int8_pc_dequant(a[vk], qmax)
+        setze i auf i + 1
+    a["wo"] = m6b_int8_pc_dequant(a["wo"], qmax)
+
+funktion m6b_q_attention_rot(a, h, qmax):
+    setze i auf 0
+    solange i < h:
+        setze qk auf "wq" + text(i)
+        setze kk auf "wk" + text(i)
+        setze vk auf "wv" + text(i)
+        a[qk] = m6b_int8_pc_rot_dequant(a[qk], qmax)
+        a[kk] = m6b_int8_pc_rot_dequant(a[kk], qmax)
+        a[vk] = m6b_int8_pc_rot_dequant(a[vk], qmax)
+        setze i auf i + 1
+    a["wo"] = m6b_int8_pc_rot_dequant(a["wo"], qmax)
+
+funktion m6b_att_backup(a, h):
+    setze b auf {}
+    setze i auf 0
+    solange i < h:
+        setze qk auf "wq" + text(i)
+        setze kk auf "wk" + text(i)
+        setze vk auf "wv" + text(i)
+        b[qk] = a[qk] + 0
+        b[kk] = a[kk] + 0
+        b[vk] = a[vk] + 0
+        setze i auf i + 1
+    b["wo"] = a["wo"] + 0
+    gib_zurück b
+
+funktion m6b_att_restore(a, b, h):
+    setze i auf 0
+    solange i < h:
+        setze qk auf "wq" + text(i)
+        setze kk auf "wk" + text(i)
+        setze vk auf "wv" + text(i)
+        a[qk] = b[qk] + 0
+        a[kk] = b[kk] + 0
+        a[vk] = b[vk] + 0
+        setze i auf i + 1
+    a["wo"] = b["wo"] + 0
+
+# Feste, vom Training getrennte Zwei-Block-Evaluation.
+setze ep2 auf 36071
+wenn ep2 >= grenze:
+    setze ep2 auf ep2 - grenze
+setze eval_basis auf (kreuzentropie(modell(ids.zeilen(0, block)), ids.zeilen(1, block + 1)).zu_liste()[0] + kreuzentropie(modell(ids.zeilen(ep2, ep2 + block)), ids.zeilen(ep2 + 1, ep2 + block + 1)).zu_liste()[0]) * 0.5
+# Perplexity = e^loss wird aus dem protokollierten Loss extern berechnet.
+
+# Originale sichern (t + 0 = echte Kopie), damit beide Quant-Varianten
+# denselben Trainingszustand messen.
+setze bk_att1 auf m6b_att_backup(att1, koepfe)
+setze bk_att2 auf m6b_att_backup(att2, koepfe)
+setze bk_ff1a auf ff1a["w"] + 0
+setze bk_ff1b auf ff1b["w"] + 0
+setze bk_ff2a auf ff2a["w"] + 0
+setze bk_ff2b auf ff2b["w"] + 0
+setze bk_kopf auf kopf["w"] + 0
+
+# Nur dicht/matmul-Gewichte: Attention-Projektionen, FFN und LM-Kopf.
+# Vier Varianten gegen denselben Trainingszustand: int8/int4, je plain/rot.
+funktion q1_eval():
+    gib_zurück (kreuzentropie(modell(ids.zeilen(0, block)), ids.zeilen(1, block + 1)).zu_liste()[0] + kreuzentropie(modell(ids.zeilen(ep2, ep2 + block)), ids.zeilen(ep2 + 1, ep2 + block + 1)).zu_liste()[0]) * 0.5
+
+funktion q1_restore():
+    m6b_att_restore(att1, bk_att1, koepfe)
+    m6b_att_restore(att2, bk_att2, koepfe)
+    ff1a["w"] = bk_ff1a + 0
+    ff1b["w"] = bk_ff1b + 0
+    ff2a["w"] = bk_ff2a + 0
+    ff2b["w"] = bk_ff2b + 0
+    kopf["w"] = bk_kopf + 0
+
+funktion q1_quant(qmax, rot):
+    wenn rot == 1:
+        m6b_q_attention_rot(att1, koepfe, qmax)
+        m6b_q_attention_rot(att2, koepfe, qmax)
+        ff1a["w"] = m6b_int8_pc_rot_dequant(ff1a["w"], qmax)
+        ff1b["w"] = m6b_int8_pc_rot_dequant(ff1b["w"], qmax)
+        ff2a["w"] = m6b_int8_pc_rot_dequant(ff2a["w"], qmax)
+        ff2b["w"] = m6b_int8_pc_rot_dequant(ff2b["w"], qmax)
+        kopf["w"] = m6b_int8_pc_rot_dequant(kopf["w"], qmax)
+    sonst:
+        m6b_q_attention(att1, koepfe, qmax)
+        m6b_q_attention(att2, koepfe, qmax)
+        ff1a["w"] = m6b_int8_pc_dequant(ff1a["w"], qmax)
+        ff1b["w"] = m6b_int8_pc_dequant(ff1b["w"], qmax)
+        ff2a["w"] = m6b_int8_pc_dequant(ff2a["w"], qmax)
+        ff2b["w"] = m6b_int8_pc_dequant(ff2b["w"], qmax)
+        kopf["w"] = m6b_int8_pc_dequant(kopf["w"], qmax)
+
+q1_quant(127, 0)
+setze eval_q auf q1_eval()
+q1_restore()
+q1_quant(127, 1)
+setze eval_rot auf q1_eval()
+q1_restore()
+q1_quant(7, 0)
+setze eval_q4 auf q1_eval()
+q1_restore()
+q1_quant(7, 1)
+setze eval_q4_rot auf q1_eval()
+
+zeige "Q1_EVAL_LM_LOSS_BASELINE=" + text(eval_basis)
+zeige "Q1_EVAL_LM_LOSS_INT8_PC=" + text(eval_q)
+zeige "Q1_EVAL_LM_LOSS_INT8_PC_ROT=" + text(eval_rot)
+zeige "Q1_EVAL_LM_LOSS_INT4_PC=" + text(eval_q4)
+zeige "Q1_EVAL_LM_LOSS_INT4_PC_ROT=" + text(eval_q4_rot)
+zeige "Q1_EVAL_LM_LOSS_DELTA_INT8=" + text(eval_q - eval_basis)
+zeige "Q1_EVAL_LM_LOSS_DELTA_INT8_ROT=" + text(eval_rot - eval_basis)
+zeige "Q1_EVAL_LM_LOSS_DELTA_INT4=" + text(eval_q4 - eval_basis)
+zeige "Q1_EVAL_LM_LOSS_DELTA_INT4_ROT=" + text(eval_q4_rot - eval_basis)
+zeige "Q1 misst gegen die M6b-Messlatte; M6B_*-Zeilen oben entfallen hier."
+setze m6b_werte auf 98304 + 64 * vokab
+setze m6b_skalen auf 1152 + vokab
+zeige "M6B_EVAL_LM_WEIGHT_BYTES_F32=" + text(m6b_werte * 4)
+zeige "M6B_EVAL_LM_WEIGHT_BYTES_INT8_PC=" + text(m6b_werte + m6b_skalen * 4)

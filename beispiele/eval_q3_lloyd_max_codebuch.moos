@@ -1,0 +1,206 @@
+# ============================================================
+# KI-Q3: Lloyd-Max-Codebuch (TurboQuant Stufe 1) — OFFLINE-Rechner.
+#
+# Nach der Hadamard-Rotation (KI-Q1/Q2) sind die Werte einer Zeile
+# annaehernd normalverteilt. Uniformes absmax-int4 verschwendet dort
+# Stufen an den Raendern (Q1-Befund: int4+rot SCHLECHTER als int4).
+# Lloyd-Max minimiert den MSE fuer genau diese Verteilung: 16 Stufen
+# (4-Bit-Indizes), Zentren = bedingte Mittel, Grenzen = Mittelpunkte.
+#
+# Dieses Skript ist der OFFLINE-Schritt: es zieht 16er-Zeilen aus
+# N(0,1), NORMALISIERT jede Zeile mit ihrem absmax (die Runtime-Skala!)
+# und berechnet das Lloyd-Max-Codebuch auf DIESER Verteilung (das ist
+# TurboQuants "Beta-Verteilungs"-Konstruktion: normalisierte
+# Koordinaten). So konkurriert das Codebuch im selben zeilenadaptiven
+# Suchraum wie uniform-int4 (q/7-Gitter = Spezialfall) und ist dort
+# MSE-optimal. Erster Versuch mit festem N(0,1)-Codebuch + RMS-Skala
+# VERLOR gegen zeilenadaptives uniform (MSE 0.0076 vs 0.0065) —
+# ehrlicher Befund: die 16er-Block-Adaptivitaet dominiert die globale
+# Form. Die Runtime macht spaeter NUR Lookup
+# (att["cache_quant_codebuch"]).
+# ============================================================
+
+setze K auf 16
+setze M auf 20000
+setze iters auf 50
+
+# deterministischer LCG (Dict, da globale Skalare in Funktionen
+# nicht rebindbar sind)
+setze rng auf {}
+rng["s"] = 20260719
+
+funktion uniform01():
+    setze s auf rng["s"] * 1103515245 + 12345
+    setze s auf s - boden(s / 2147483648) * 2147483648
+    rng["s"] = s
+    gib_zurück s / 2147483648
+
+# Irwin-Hall: Summe von 12 Uniforms - 6 ~ N(0,1)
+funktion normal():
+    setze x auf 0
+    setze i auf 0
+    solange i < 12:
+        setze x auf x + uniform01()
+        setze i auf i + 1
+    gib_zurück x - 6
+
+zeige "Ziehe " + text(M) + " N(0,1)-Samples (deterministisch) ..."
+setze samples auf []
+setze i auf 0
+solange i < M:
+    samples.hinzufügen(normal())
+    setze i auf i + 1
+
+funktion abs_v(x):
+    wenn x < 0:
+        gib_zurück 0 - x
+    gib_zurück x
+
+# Zeilenweise mit absmax normalisieren -> Trainingsverteilung in [-1,1]
+setze norm auf []
+setze absmaxe auf []
+setze r auf 0
+solange r < M / 16:
+    setze mx auf 0
+    setze j auf 0
+    solange j < 16:
+        wenn abs_v(samples[r * 16 + j]) > mx:
+            setze mx auf abs_v(samples[r * 16 + j])
+        setze j auf j + 1
+    absmaxe.hinzufügen(mx)
+    setze j auf 0
+    solange j < 16:
+        norm.hinzufügen(samples[r * 16 + j] / mx)
+        setze j auf j + 1
+    setze r auf r + 1
+
+# ---------- Lloyd-Max (1D k-means) auf den NORMALISIERTEN Werten ----------
+setze zentren auf []
+setze i auf 0
+solange i < K:
+    zentren.hinzufügen(0 - 0.9 + 1.8 * i / (K - 1))
+    setze i auf i + 1
+
+setze it auf 0
+solange it < iters:
+    # Grenzen = Mittelpunkte benachbarter Zentren
+    setze grenzen auf []
+    setze i auf 1
+    solange i < K:
+        grenzen.hinzufügen((zentren[i - 1] + zentren[i]) * 0.5)
+        setze i auf i + 1
+    # Samples den Intervallen zuordnen, bedingte Mittel bilden
+    setze summe auf []
+    setze anzahl auf []
+    setze i auf 0
+    solange i < K:
+        summe.hinzufügen(0)
+        anzahl.hinzufügen(0)
+        setze i auf i + 1
+    setze j auf 0
+    solange j < M:
+        setze v auf norm[j]
+        setze idx auf 0
+        solange idx < K - 1:
+            wenn v > grenzen[idx]:
+                setze idx auf idx + 1
+            sonst:
+                setze idx auf idx + (K * 2)
+        wenn idx >= K:
+            setze idx auf idx - K * 2
+        setze ns2 auf []
+        setze na2 auf []
+        setze i auf 0
+        solange i < K:
+            wenn i == idx:
+                ns2.hinzufügen(summe[i] + v)
+                na2.hinzufügen(anzahl[i] + 1)
+            sonst:
+                ns2.hinzufügen(summe[i])
+                na2.hinzufügen(anzahl[i])
+            setze i auf i + 1
+        setze summe auf ns2
+        setze anzahl auf na2
+        setze j auf j + 1
+    setze zn auf []
+    setze i auf 0
+    solange i < K:
+        wenn anzahl[i] > 0:
+            zn.hinzufügen(summe[i] / anzahl[i])
+        sonst:
+            zn.hinzufügen(zentren[i])
+        setze i auf i + 1
+    setze zentren auf zn
+    setze it auf it + 1
+
+# symmetrisieren (Verteilung ist symmetrisch, Rauschen rausmitteln)
+setze sym auf []
+setze i auf 0
+solange i < K:
+    sym.hinzufügen((zentren[i] - zentren[K - 1 - i]) * 0.5)
+    setze i auf i + 1
+setze zentren auf sym
+
+zeige ""
+zeige "Q3_CODEBUCH (16 Stufen, fuer absmax-normalisierte Zeilen):"
+setze cb_text auf "["
+setze i auf 0
+solange i < K:
+    setze cb_text auf cb_text + text(zentren[i])
+    wenn i < K - 1:
+        setze cb_text auf cb_text + ", "
+    setze i auf i + 1
+zeige cb_text + "]"
+
+# ---------- MSE-Vergleich in Zeilen a 16 (wie der Cache-Quant) ----------
+funktion abs_w(x):
+    wenn x < 0:
+        gib_zurück 0 - x
+    gib_zurück x
+
+funktion naechster(v):
+    setze best auf 0
+    setze bd auf abs_w(v - zentren[0])
+    setze i auf 1
+    solange i < K:
+        setze d auf abs_w(v - zentren[i])
+        wenn d < bd:
+            setze bd auf d
+            setze best auf i
+        setze i auf i + 1
+    gib_zurück zentren[best]
+
+setze zeilen auf M / 16
+setze mse_u auf 0
+setze mse_c auf 0
+setze r auf 0
+solange r < zeilen:
+    setze mx auf absmaxe[r]
+    setze j auf 0
+    solange j < 16:
+        setze v auf samples[r * 16 + j]
+        # uniform int4: absmax/7, runden, clampen
+        setze su auf mx / 7
+        setze q auf runde(v / su)
+        wenn q > 7:
+            setze q auf 7
+        wenn q < 0 - 7:
+            setze q auf 0 - 7
+        setze du auf v - q * su
+        setze mse_u auf mse_u + du * du
+        # Codebuch: absmax-normalisiert, nearest, zurueckskaliert
+        setze dc auf v - naechster(v / mx) * mx
+        setze mse_c auf mse_c + dc * dc
+        setze j auf j + 1
+    setze r auf r + 1
+
+setze mse_u auf mse_u / M
+setze mse_c auf mse_c / M
+zeige ""
+zeige "Q3_MSE_INT4_UNIFORM=" + text(mse_u)
+zeige "Q3_MSE_INT4_CODEBUCH=" + text(mse_c)
+zeige "Q3_MSE_VERHAELTNIS=" + text(mse_c / mse_u)
+wenn mse_c < mse_u:
+    zeige "GATE BESTANDEN: Lloyd-Max-Codebuch schlaegt uniform-int4 im MSE."
+sonst:
+    zeige "GATE VERFEHLT: Codebuch nicht besser als uniform!"

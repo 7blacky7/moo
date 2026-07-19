@@ -320,6 +320,27 @@ MooValue moo_nn_schicht_rmsnorm(MooValue dim) {
     return d;
 }
 
+/* schicht_attnres(dim) — KI-R1 (PAPER-VERIFY-05, AttnRes arXiv 2603.15031):
+ * haelt die gelernte Pseudo-Query w in R^d fuer die Tiefen-Attention
+ * (Gl. 3: q_l = w_l). NULL-initialisiert (AttnRes:538): die Start-Gewichte
+ * alpha sind dadurch UNIFORM ueber alle Quellen — das ist das MITTEL der
+ * Quellen, NICHT die Standard-Residual-SUMME (bewusste Paper-Semantik).
+ * Form [dim, 1], damit rmsnorm_kern(v) [T,dim] @ w direkt die Logit-Spalte
+ * [T,1] liefert. Verwendung: attnres(schicht, [b0, ..., partial]). */
+MooValue moo_nn_schicht_attnres(MooValue dim) {
+    int32_t nd = ganze_zahl(dim, "schicht_attnres (Dimension)", 1);
+    if (nd < 0) return moo_none();
+    MooValue d = moo_dict_new();
+    dset(d, "__nn", moo_string_new("attnres"));
+    int32_t sh[2] = { nd, 1 };
+    MooTensor* w = moo_tensor_raw(2, sh);   /* zero-init => uniforme alpha */
+    if (!w) { moo_release(d); return moo_none(); }
+    w->requires_grad = true;
+    MooValue wv; wv.tag = MOO_TENSOR; moo_val_set_ptr(&wv, w);
+    dset(d, "w", wv);
+    return d;
+}
+
 /* schicht_ffn_gated(dim, versteckt, art?) — Gated-FFN:
  *   swiglu: (silu(x@W1) * (x@W3)) @ W2   mit silu(z)=z*sigmoid(z)
  *   geglu:  (gelu(x@W1) * (x@W3)) @ W2
@@ -1053,12 +1074,129 @@ static int32_t cache_laenge(MooValue schicht) {
  * die K/V-Zeilen entstehen aus denselben Eingabezeilen mit denselben Ops wie
  * im Voll-Forward — das Gate beweist tokenweise == Voll-Forward bit-identisch
  * (Stopp-Regel: wenn nicht erreichbar, M2c stoppen + dokumentieren). */
+/* KI-Q2: TurboQuant-Stufe-2 Storage-Quant fuer den KV-Cache (VERIFY-04
+ * Entscheid B — Stufe 2 nutzt die KI-Q1-Kerne): je Zeile (= Token)
+ * Hadamard-Rotation A (Incoherence-Processing gegen Aktivierungs-
+ * Ausreisser), symmetrisches absmax-Rundungsquant auf 2^(bits-1)-1
+ * Stufen, exakte Ruecktransformation A^T. Der Cache haelt die
+ * DEQUANTISIERTEN f32-Werte (Simulation wie im M6b-Eval: der Fehler ist
+ * real, das Speicherformat unveraendert; Bytes-Ersparnis wird im
+ * Q2-Eval rechnerisch ausgewiesen). Laeuft NUR im Cache-Pfad
+ * (autograd_aus erzwungen), kein Autograd-Kontakt. In-place auf den
+ * frisch berechneten K/V-Zeilen VOR dem Append — bereits gecachte
+ * Zeilen werden nie doppelt quantisiert. */
+static void cache_quant_zeilen(MooTensor* t, int32_t bits, uint64_t seed,
+                               const float* cb, int32_t cbn) {
+    int64_t n = t->shape[t->ndim - 1];
+    int64_t zeilen = t->size / n;
+    float qmax = (float)((1 << (bits - 1)) - 1);
+    float skal = 1.0f / sqrtf((float)n);
+    float* d = (float*)malloc((size_t)n * sizeof(float));
+    if (!d) {
+        moo_throw(moo_error("attention: cache_quant — Speicher voll"));
+        return;
+    }
+    moo_quant_vorzeichen(seed, n, d);
+    for (int64_t r = 0; r < zeilen; r++) {
+        float* z = t->data + r * n;
+        /* A: Vorzeichen -> WHT -> Skalierung */
+        for (int64_t i = 0; i < n; i++) z[i] *= d[i];
+        moo_quant_wht_zeile(z, n);
+        for (int64_t i = 0; i < n; i++) z[i] *= skal;
+        /* absmax-Quant je Token-Zeile */
+        float mx = 0.0f;
+        for (int64_t i = 0; i < n; i++) {
+            float a = fabsf(z[i]);
+            if (a > mx) mx = a;
+        }
+        if (mx > 0.0f) {
+            if (cb && cbn > 0) {
+                /* KI-Q3: Lloyd-Max-Codebuch-Lookup statt uniformem Gitter.
+                 * Codebuch ist auf absmax-normalisierte Zeilen trainiert
+                 * (eval_q3_lloyd_max_codebuch.moos): v/mx -> nearest -> *mx.
+                 * Gleiches Speicherformat (Index + Skala je Zeile). */
+                for (int64_t i = 0; i < n; i++) {
+                    float w = z[i] / mx;
+                    float best = cb[0];
+                    float bd = fabsf(w - cb[0]);
+                    for (int32_t c = 1; c < cbn; c++) {
+                        float dd = fabsf(w - cb[c]);
+                        if (dd < bd) { bd = dd; best = cb[c]; }
+                    }
+                    z[i] = best * mx;
+                }
+            } else {
+                float s = mx / qmax;
+                for (int64_t i = 0; i < n; i++) {
+                    float q = roundf(z[i] / s);
+                    if (q > qmax) q = qmax;
+                    if (q < -qmax) q = -qmax;
+                    z[i] = q * s;
+                }
+            }
+        }
+        /* A^T: WHT -> Skalierung -> Vorzeichen */
+        moo_quant_wht_zeile(z, n);
+        for (int64_t i = 0; i < n; i++) z[i] = z[i] * skal * d[i];
+    }
+    free(d);
+}
+
 static MooValue fw_attention_cache(MooValue schicht, MooValue x, int32_t nd,
                                    int32_t nk, int32_t kv, int32_t rep,
                                    bool sliding, int32_t fenster) {
     MooTensor* xt = T(x);
     int32_t t_neu = xt->shape[0];
     int32_t dh = nd / nk;
+    /* KI-Q2: Cache-Quant-Konfiguration (0 = aus, Default; Flags am Layer-Dict
+     * wie "cache": att["cache_quant"] = 8 oder 4, optional
+     * att["cache_quant_seed"]). */
+    int32_t qbits = (int32_t)dnum(schicht, "cache_quant", 0.0);
+    uint64_t qseed = (uint64_t)dnum(schicht, "cache_quant_seed", 4242.0);
+    float qcb[256];
+    int32_t qcbn = 0;
+    if (qbits != 0) {
+        if (qbits != 4 && qbits != 8) {
+            moo_throw(moo_error("attention: cache_quant kann 0 (aus), 4 oder "
+                                "8 sein"));
+            return moo_none();
+        }
+        if (!moo_quant_ist_zweierpotenz(dh)) {
+            moo_throw(moo_error("attention: cache_quant braucht eine "
+                                "Kopf-Dimension (dim/koepfe), die eine "
+                                "Zweierpotenz ist"));
+            return moo_none();
+        }
+        /* KI-Q3: optionales Lloyd-Max-Codebuch (Liste normalisierter
+         * Stufen, max 2^bits Eintraege) — Runtime macht NUR Lookup. */
+        MooValue cbl = dget(schicht, "cache_quant_codebuch");
+        if (cbl.tag == MOO_LIST) {
+            int32_t len = MV_LIST(cbl)->length;
+            if (len < 2 || len > (1 << qbits)) {
+                moo_release(cbl);
+                moo_throw(moo_error("attention: cache_quant_codebuch braucht "
+                                    "2 bis 2^bits Eintraege"));
+                return moo_none();
+            }
+            for (int32_t c = 0; c < len; c++) {
+                MooValue e = MV_LIST(cbl)->items[c];
+                if (e.tag != MOO_NUMBER) {
+                    moo_release(cbl);
+                    moo_throw(moo_error("attention: cache_quant_codebuch "
+                                        "darf nur Zahlen enthalten"));
+                    return moo_none();
+                }
+                qcb[c] = (float)MV_NUM(e);
+            }
+            qcbn = len;
+        } else if (cbl.tag != MOO_NONE) {
+            moo_release(cbl);
+            moo_throw(moo_error("attention: cache_quant_codebuch muss eine "
+                                "Liste sein"));
+            return moo_none();
+        }
+        moo_release(cbl);
+    }
     char name[24];
     MooValue kg[16], vg[16];   /* kv <= koepfe <= 16 (Konstruktor-Invariante) */
     for (int32_t g = 0; g < kv; g++) { kg[g] = moo_none(); vg[g] = moo_none(); }
@@ -1101,6 +1239,13 @@ static MooValue fw_attention_cache(MooValue schicht, MooValue x, int32_t nd,
             moo_release(kn);
             if (kr.tag != MOO_TENSOR) { moo_release(vn); fehler = true; break; }
             kn = kr;
+        }
+        /* KI-Q2: Storage-Quant NUR auf die NEUEN Zeilen, nach der
+         * RoPE-Rotation (der Cache speichert rotierte K) und vor dem
+         * Append. kn/vn sind hier frische, exklusive Tensoren. */
+        if (qbits > 0) {
+            cache_quant_zeilen(T(kn), qbits, qseed, qcbn ? qcb : NULL, qcbn);
+            cache_quant_zeilen(T(vn), qbits, qseed + 1u, qcbn ? qcb : NULL, qcbn);
         }
         MooValue ka, va;
         cache_kv_lesen(schicht, g, &ka, &va);   /* EIN Indirektionspunkt */
@@ -1762,6 +1907,133 @@ static void params_moe(MooValue schicht, MooValue liste) {
 }
 
 /* === Die Registry-Tabelle. EINE Zeile pro Schicht-Typ. === */
+/* ============================================================
+ * KI-R1 (PAPER-VERIFY-05): Attention Residuals — Tiefen-Attention.
+ * h = SUM_i alpha_i (*) v_i mit alpha = softmax_i( rmsnorm_kern(v_i) @ w )
+ * (Gl. 2-4; Kernel phi(q,k) = exp(q^T RMSNorm(k)), Norm NUR auf den Keys,
+ * Values roh — AttnRes:200-216). quellen = Liste [b0(=Embedding), b1, ...,
+ * partial] nach der Block-Semantik von Gl. 5-6/Figure 2; die Block-Fuehrung
+ * bleibt bewusst kompositional beim Aufrufer (wie heute die Residuals).
+ * Reine Registry-Op-Komposition: rmsnorm_kern/matmul/transpose/concat/
+ * softmax/mul/add — B2-Gradcheck deckt jeden Gradienten automatisch;
+ * der Harness tests/test_attnres_asan.c beweist w- und Quellen-Gradienten
+ * zusaetzlich per FD. Spaltenauswahl alpha_i und Breiten-Expansion laufen
+ * ueber grad-lose Konstanten (One-Hot bzw. Einsen) via matmul — bewusst
+ * KEIN Spalten-Broadcast-Mul (Vertragssicherheit vor Mikro-Optimierung).
+ * ============================================================ */
+static MooValue fw_attnres(MooValue schicht, MooValue x) {
+    (void)schicht; (void)x;
+    moo_throw(moo_error("vorwaerts: attnres braucht eine QUELLEN-LISTE — "
+                        "nutze attnres(schicht, [b0, ..., partial]) statt "
+                        "vorwaerts()"));
+    return moo_none();
+}
+static void params_attnres(MooValue schicht, MooValue liste) {
+    moo_list_append(liste, dget(schicht, "w"));
+}
+
+MooValue moo_nn_attnres(MooValue schichtv, MooValue quellenv) {
+    if (!nn_ist(schichtv, "attnres")) {
+        moo_throw(moo_error("attnres: das erste Argument muss eine "
+                            "schicht_attnres sein"));
+        return moo_none();
+    }
+    if (quellenv.tag != MOO_LIST || MV_LIST(quellenv)->length < 1) {
+        moo_throw(moo_error("attnres: erwarte eine nicht-leere Liste von "
+                            "Quell-Tensoren [b0, ..., partial]"));
+        return moo_none();
+    }
+    MooList* q = MV_LIST(quellenv);
+    int32_t n = q->length;
+    for (int32_t i = 0; i < n; i++) {
+        if (q->items[i].tag != MOO_TENSOR) {
+            moo_throw(moo_error("attnres: alle Quellen muessen Tensoren "
+                                "gleicher Form [T, dim] sein"));
+            return moo_none();
+        }
+    }
+    MooValue w = dget(schichtv, "w");
+    if (w.tag != MOO_TENSOR) {
+        moo_release(w);
+        moo_throw(moo_error("attnres: kaputte Schicht (w fehlt)"));
+        return moo_none();
+    }
+
+    /* 1) Logits je Quelle: rmsnorm_kern(v) @ w -> [T,1]; transponiert [1,T];
+     *    concat (Achse 0) -> [n,T]. */
+    MooValue cat = moo_none();
+    bool fehler = false;
+    for (int32_t i = 0; i < n && !fehler; i++) {
+        MooValue kk = moo_tensor_rmsnorm_kern(q->items[i]);
+        MooValue li = (kk.tag == MOO_TENSOR) ? moo_tensor_matmul(kk, w)
+                                             : moo_none();
+        MooValue lt = (li.tag == MOO_TENSOR) ? moo_tensor_transponieren(li)
+                                             : moo_none();
+        moo_release(kk); moo_release(li);
+        if (lt.tag != MOO_TENSOR) { moo_release(lt); fehler = true; break; }
+        if (cat.tag == MOO_NONE) {
+            cat = lt;
+        } else {
+            MooValue neu = moo_tensor_verbinden(cat, lt);
+            moo_release(cat); moo_release(lt);
+            if (neu.tag != MOO_TENSOR) { moo_release(neu); fehler = true; break; }
+            cat = neu;
+        }
+    }
+    moo_release(w);
+    if (fehler || cat.tag != MOO_TENSOR) {
+        moo_release(cat);
+        return moo_none();   /* Fehler wurde von der Op geworfen */
+    }
+
+    /* 2) [n,T] -> [T,n], Softmax ueber die Quellen-Achse (letzte Achse). */
+    MooValue ct = moo_tensor_transponieren(cat);
+    moo_release(cat);
+    MooValue A = (ct.tag == MOO_TENSOR) ? moo_tensor_softmax(ct) : moo_none();
+    moo_release(ct);
+    if (A.tag != MOO_TENSOR) { moo_release(A); return moo_none(); }
+
+    /* 3) h = SUM_i (A @ e_i) @ einsen (*) v_i — e_i/einsen grad-lose
+     *    Konstanten (One-Hot [n,1] bzw. Einsen [1,dim]). */
+    MooTensor* v0 = MV_TENSOR(q->items[0]);
+    int32_t dim = v0->shape[v0->ndim - 1];
+    MooValue acc = moo_none();
+    fehler = false;
+    for (int32_t i = 0; i < n && !fehler; i++) {
+        int32_t she[2] = { n, 1 };
+        int32_t sh1[2] = { 1, dim };
+        MooTensor* e = moo_tensor_raw(2, she);
+        MooTensor* eins = e ? moo_tensor_raw(2, sh1) : NULL;
+        if (!eins) {
+            if (e) { MooValue tv; tv.tag = MOO_TENSOR; moo_val_set_ptr(&tv, e); moo_release(tv); }
+            fehler = true; break;
+        }
+        e->data[i] = 1.0f;
+        for (int32_t j = 0; j < dim; j++) eins->data[j] = 1.0f;
+        MooValue ev; ev.tag = MOO_TENSOR; moo_val_set_ptr(&ev, e);
+        MooValue einsv; einsv.tag = MOO_TENSOR; moo_val_set_ptr(&einsv, eins);
+        MooValue ai = moo_tensor_matmul(A, ev);                 /* [T,1] */
+        MooValue AI = (ai.tag == MOO_TENSOR) ? moo_tensor_matmul(ai, einsv)
+                                             : moo_none();     /* [T,dim] */
+        moo_release(ev); moo_release(einsv); moo_release(ai);
+        MooValue wtd = (AI.tag == MOO_TENSOR)
+                       ? moo_tensor_mul(AI, q->items[i]) : moo_none();
+        moo_release(AI);
+        if (wtd.tag != MOO_TENSOR) { moo_release(wtd); fehler = true; break; }
+        if (acc.tag == MOO_NONE) {
+            acc = wtd;
+        } else {
+            MooValue neu = moo_tensor_add(acc, wtd);
+            moo_release(acc); moo_release(wtd);
+            if (neu.tag != MOO_TENSOR) { moo_release(neu); fehler = true; break; }
+            acc = neu;
+        }
+    }
+    moo_release(A);
+    if (fehler || acc.tag != MOO_TENSOR) { moo_release(acc); return moo_none(); }
+    return acc;
+}
+
 static const MooNNLayerDesc nn_layer_registry[] = {
     { "dicht",     fw_dicht,     params_dicht     },
     { "faltung",   fw_faltung,   params_faltung   },
@@ -1775,6 +2047,7 @@ static const MooNNLayerDesc nn_layer_registry[] = {
     { "attention", fw_attention, params_attention },
     { "position",  fw_position,  params_position  },
     { "moe",       fw_moe,       params_moe       },
+    { "attnres",   fw_attnres,   params_attnres   },
 };
 
 static const MooNNLayerDesc* nn_layer_lookup(const char* name) {

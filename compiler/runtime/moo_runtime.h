@@ -273,6 +273,7 @@ MooValue moo_tensor_gather(MooValue w, MooValue indizes);
 // Der Seed steckt im Skalar-Argument, exakt wie im2col/pooling ihre Geometrie.
 // Zweck: Incoherence-Processing (Ausreisser verteilen, max|x|/||x|| senken).
 MooValue moo_tensor_hadamard(MooValue a, MooValue seed);
+MooValue moo_tensor_hadamard_inv(MooValue a, MooValue seed);   // KI-Q1: exakte Inverse A^T (Dequant im rotierten Raum)
 
 // QJL (arXiv 2406.03482, Def 3.1) - Gauss-JL + 1-Bit-Sign-Quantisierung.
 // BEWUSST KEIN Registry-Op: sign() ist nicht differenzierbar, und ein
@@ -364,6 +365,8 @@ MooValue moo_nn_schicht_flach(void);
 MooValue moo_nn_schicht_dropout(MooValue rate);
 MooValue moo_nn_schicht_layernorm(MooValue dim);
 MooValue moo_nn_schicht_rmsnorm(MooValue dim);                                   // KIP-B1: y = x*rsqrt(mean(x^2)+eps)*g
+MooValue moo_nn_schicht_attnres(MooValue dim);                                   // KI-R1: AttnRes-Pseudo-Query w (NULL-init, [dim,1])
+MooValue moo_nn_attnres(MooValue schicht, MooValue quellen);                     // KI-R1: h = Softmax-Tiefen-Attention ueber Quellen-Liste (Gl. 2-4)
 MooValue moo_nn_schicht_ffn_gated(MooValue dim, MooValue versteckt, MooValue art);  // KIP-B3: SwiGLU/Gated-FFN
 MooValue moo_nn_schicht_embedding(MooValue vokabular, MooValue dim, MooValue seed);
 MooValue moo_nn_schicht_attention(MooValue dim, MooValue koepfe, MooValue seed, MooValue kv_koepfe, MooValue maske, MooValue fenster, MooValue rope);      // G1 + KI-M2a (GQA) + KI-M2b (Sliding) + KIP-B2 (RoPE)
@@ -594,6 +597,7 @@ typedef struct {
     MooString* key;
     MooValue value;
     bool occupied;
+    bool deleted;   /* Tombstone: Slot war belegt, Probing-Kette laeuft weiter */
 } MooDictEntry;
 
 struct MooDict {
@@ -601,6 +605,7 @@ struct MooDict {
     bool frozen;
     MooDictEntry* entries;
     int32_t count;
+    int32_t tombs;  /* Anzahl Tombstones (fuer den Grow-Trigger) */
     int32_t capacity;
 };
 

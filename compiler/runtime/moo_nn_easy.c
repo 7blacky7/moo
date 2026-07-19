@@ -630,6 +630,13 @@ static bool aw_rmsnorm(Buf* b, MooValue s) {
     moo_release(g);
     return true;
 }
+static bool aw_attnres(Buf* b, MooValue s) {   /* KI-R1: dim aus w [dim,1] */
+    MooValue w = eget(s, "w");
+    if (w.tag != MOO_TENSOR) { moo_release(w); return false; }
+    buf_add(b, "{\"typ\":\"attnres\",\"dim\":%d}", T(w)->shape[0]);
+    moo_release(w);
+    return true;
+}
 static bool aw_ffn_gated(Buf* b, MooValue s) {
     MooValue w2 = eget(s, "w2");
     MooValue a  = eget(s, "art");
@@ -713,6 +720,9 @@ static MooValue rb_layernorm(MooValue e) {
 }
 static MooValue rb_rmsnorm(MooValue e) {
     return moo_nn_schicht_rmsnorm(moo_number(enum_(e, "dim", 0)));
+}
+static MooValue rb_attnres(MooValue e) {   /* KI-R1 */
+    return moo_nn_schicht_attnres(moo_number(enum_(e, "dim", 0)));
 }
 static MooValue rb_ffn_gated(MooValue e) {
     MooValue art = eget(e, "art");
@@ -798,6 +808,7 @@ static const NNSaveLoadHook nn_sl_hooks[] = {
     { "attention", aw_attention, rb_attention },
     { "position",  aw_position,  rb_position  },
     { "moe",       aw_moe,       rb_moe       },
+    { "attnres",   aw_attnres,   rb_attnres   },   /* KI-R1 */
 };
 
 static const NNSaveLoadHook* sl_hook_lookup(const char* name) {

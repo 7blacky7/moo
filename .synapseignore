@@ -25,6 +25,8 @@ tests/
 compiler/runtime/tests/*
 !compiler/runtime/tests/run_sanitize.sh
 !compiler/runtime/tests/test_quant_asan.c
+!compiler/runtime/tests/test_attnres_asan.c
+!compiler/runtime/tests/test_nn_asan.c
 !compiler/runtime/tests/test_gradcheck.c
 !compiler/runtime/tests/test_tensor_ops_asan.c
 !compiler/runtime/tests/capture_test_stubs.c
@@ -48,3 +50,6 @@ compiler/tests/*
 !compiler/tests/leak_gates/
 compiler/tests/leak_gates/*
 !compiler/tests/leak_gates/run_leak_gates.sh
+!compiler/tests/regression/
+compiler/tests/regression/*
+!compiler/tests/regression/test_decorator_layout.moos

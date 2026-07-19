@@ -1,0 +1,155 @@
+# ============================================================
+# KI-R1 (d)-Gate: Toy-LM-Vergleich Standard-Residuals vs. Block-AttnRes
+# (PAPER-VERIFY-05, AttnRes arXiv 2603.15031, Figure-2-Semantik).
+#
+# EHRLICH: Das ist ein TOY-VERGLEICH auf einer synthetischen Sequenz,
+# KEIN Beleg fuer die 48B/1.4T-Paper-Zahlen (1.25x Compute, GPQA +7.5).
+# Dokumentiert wird nur: beide Varianten bei IDENTISCHER Init (gleiche
+# Seeds), identischem Budget (Schritte/Rate/Daten) — und was dabei
+# rauskommt. Keine Zahlenversprechen, das Gate ist die REPRODUZIERBARE
+# MESSUNG selbst.
+#
+# Aufbau je Variante: emb+pos, 2 Transformer-Bloecke (att + ffn),
+# Final-Norm + Kopf. Baseline: x = x + f(x) (Standard, wie
+# ki_sprachmodell.moos). AttnRes: vor JEDEM Sub-Layer-Eingang und vor
+# dem Kopf Softmax-Tiefen-Attention ueber [b0(=Embedding), fertige
+# Bloecke, partial] — Partial-Reset an der Blockgrenze (Gl. 5-6).
+# w-Pseudo-Queries sind NULL-initialisiert: bei Schritt 0 ist der
+# AttnRes-Eingang das MITTEL der Quellen (Paper-Semantik, AttnRes:538).
+#
+# Daten: deterministische Folge id[t] = (id[t-1] + id[t-3]) mod vokab —
+# echte Mehr-Positions-Abhaengigkeit, nicht unigram-loesbar.
+# ============================================================
+
+setze vokab auf 12
+setze seq auf 24
+setze dim auf 32
+setze koepfe auf 2
+setze schritte auf 600
+setze rate auf 0.1
+setze fenster auf 100
+
+# ---------- deterministischer Korpus ----------
+setze n auf 800
+setze roh auf [3, 1, 4]
+setze t auf 3
+solange t < n:
+    roh.hinzufügen((roh[t - 1] + roh[t - 3]) - boden((roh[t - 1] + roh[t - 3]) / vokab) * vokab)
+    setze t auf t + 1
+setze ids auf tensor_aus_liste(roh)
+
+# ---------- Variante A: Standard-Residuals ----------
+setze a_emb  auf schicht_embedding(vokab, dim, 1)
+setze a_pos  auf schicht_position(seq, dim, "gelernt", 2)
+setze a_ln1a auf schicht_layernorm(dim)
+setze a_att1 auf schicht_attention(dim, koepfe, 3)
+setze a_ln1b auf schicht_layernorm(dim)
+setze a_ff1a auf schicht_dicht(dim, 64, "gelu", 4)
+setze a_ff1b auf schicht_dicht(64, dim, "keine", 5)
+setze a_ln2a auf schicht_layernorm(dim)
+setze a_att2 auf schicht_attention(dim, koepfe, 6)
+setze a_ln2b auf schicht_layernorm(dim)
+setze a_ff2a auf schicht_dicht(dim, 64, "gelu", 7)
+setze a_ff2b auf schicht_dicht(64, dim, "keine", 8)
+setze a_lnf  auf schicht_layernorm(dim)
+setze a_kopf auf schicht_dicht(dim, vokab, "keine", 9)
+setze a_alle auf [a_emb, a_pos, a_ln1a, a_att1, a_ln1b, a_ff1a, a_ff1b,
+                  a_ln2a, a_att2, a_ln2b, a_ff2a, a_ff2b, a_lnf, a_kopf]
+
+funktion modell_std(ids_block):
+    setze x auf vorwaerts([a_emb], ids_block)
+    setze x auf vorwaerts([a_pos], x)
+    setze x auf x + vorwaerts([a_ln1a, a_att1], x)
+    setze x auf x + vorwaerts([a_ln1b, a_ff1a, a_ff1b], x)
+    setze x auf x + vorwaerts([a_ln2a, a_att2], x)
+    setze x auf x + vorwaerts([a_ln2b, a_ff2a, a_ff2b], x)
+    gib_zurück vorwaerts([a_lnf, a_kopf], x)
+
+# ---------- Variante B: Block-AttnRes (GLEICHE Seeds => gleiche Init) ----------
+setze b_emb  auf schicht_embedding(vokab, dim, 1)
+setze b_pos  auf schicht_position(seq, dim, "gelernt", 2)
+setze b_ln1a auf schicht_layernorm(dim)
+setze b_att1 auf schicht_attention(dim, koepfe, 3)
+setze b_ln1b auf schicht_layernorm(dim)
+setze b_ff1a auf schicht_dicht(dim, 64, "gelu", 4)
+setze b_ff1b auf schicht_dicht(64, dim, "keine", 5)
+setze b_ln2a auf schicht_layernorm(dim)
+setze b_att2 auf schicht_attention(dim, koepfe, 6)
+setze b_ln2b auf schicht_layernorm(dim)
+setze b_ff2a auf schicht_dicht(dim, 64, "gelu", 7)
+setze b_ff2b auf schicht_dicht(64, dim, "keine", 8)
+setze b_lnf  auf schicht_layernorm(dim)
+setze b_kopf auf schicht_dicht(dim, vokab, "keine", 9)
+# je Sub-Layer-Eingang + Kopf eine Pseudo-Query (w=0 init, kostenneutral)
+setze ar1 auf schicht_attnres(dim)
+setze ar2 auf schicht_attnres(dim)
+setze ar3 auf schicht_attnres(dim)
+setze ar4 auf schicht_attnres(dim)
+setze ar5 auf schicht_attnres(dim)
+setze b_alle auf [b_emb, b_pos, b_ln1a, b_att1, b_ln1b, b_ff1a, b_ff1b,
+                  b_ln2a, b_att2, b_ln2b, b_ff2a, b_ff2b, b_lnf, b_kopf,
+                  ar1, ar2, ar3, ar4, ar5]
+
+# Figure-2-Wiring, N=2 Bloecke (Block = att+ffn):
+#   b0 = Embedding; Block 1: Sub-Layer 1 sieht [b0], Sub-Layer 2 [b0, partial];
+#   Blockgrenze: b1 = partial; Block 2 analog; Kopf sieht [b0, b1, b2].
+funktion modell_ar(ids_block):
+    setze b0 auf vorwaerts([b_emb], ids_block)
+    setze b0 auf vorwaerts([b_pos], b0)
+    # Block 1
+    setze h auf attnres(ar1, [b0])
+    setze partial auf vorwaerts([b_ln1a, b_att1], h)
+    setze h auf attnres(ar2, [b0, partial])
+    setze partial auf partial + vorwaerts([b_ln1b, b_ff1a, b_ff1b], h)
+    setze b1 auf partial
+    # Block 2 (Partial-Reset an der Grenze)
+    setze h auf attnres(ar3, [b0, b1])
+    setze partial auf vorwaerts([b_ln2a, b_att2], h)
+    setze h auf attnres(ar4, [b0, b1, partial])
+    setze partial auf partial + vorwaerts([b_ln2b, b_ff2a, b_ff2b], h)
+    setze b2 auf partial
+    # Kopf attendiert ueber alle Block-Repraesentationen
+    setze xf auf attnres(ar5, [b0, b1, b2])
+    gib_zurück vorwaerts([b_lnf, b_kopf], xf)
+
+# ---------- identisches Trainingsbudget fuer beide ----------
+setze grenze auf n - seq - 1
+
+funktion trainiere_variante(name, modell_fn, params):
+    setze opt auf optimierer_sgd(params, rate, 0.9)
+    setze p auf 0
+    setze sprung auf 131
+    setze fsum auf 0
+    setze erster auf 0 - 1
+    setze letzter auf 0
+    setze s auf 0
+    solange s < schritte:
+        setze verlust auf kreuzentropie(modell_fn(ids.zeilen(p, p + seq)), ids.zeilen(p + 1, p + seq + 1))
+        verlust.rueckwaerts()
+        gradienten_kappen(params, 1.0)
+        opt.schritt()
+        setze fsum auf fsum + verlust.zu_liste()[0]
+        setze p auf p + sprung
+        wenn p >= grenze:
+            setze p auf p - grenze
+        setze s auf s + 1
+        wenn s - boden(s / fenster) * fenster == 0:
+            setze mittel auf fsum / fenster
+            wenn erster < 0:
+                setze erster auf mittel
+            setze letzter auf mittel
+            zeige name + " Schritt " + text(s) + ": Fenster-Loss " + text(mittel)
+            setze fsum auf 0
+    gib_zurück [erster, letzter]
+
+zeige "=== KI-R1 (d)-Gate: Toy-LM, identische Init/Budget, deterministisch ==="
+zeige ""
+setze a_erg auf trainiere_variante("STANDARD", modell_std, parameter(a_alle))
+zeige ""
+setze b_erg auf trainiere_variante("ATTNRES ", modell_ar, parameter(b_alle))
+zeige ""
+zeige "=== ERGEBNIS (Fenster-Mittel, erstes -> letztes) ==="
+zeige "Standard-Residuals: " + text(a_erg[0]) + " -> " + text(a_erg[1])
+zeige "Block-AttnRes:      " + text(b_erg[0]) + " -> " + text(b_erg[1])
+zeige ""
+zeige "Toy-Scale-Messung — dokumentiert, kein Paper-Zahlen-Anspruch."

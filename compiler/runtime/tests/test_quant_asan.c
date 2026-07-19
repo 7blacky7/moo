@@ -113,6 +113,32 @@ int main(void) {
         CHECK(rt_ok == 1, "H3: Inverse-Roundtrip rekonstruiert x");
     }
 
+    /* H6 (Q1-Nachtrag): Builtin-Roundtrip — hadamard_inv ist die exakte
+     * Inverse (gleicher Kern wie H3, aber ueber die oeffentliche Op). */
+    {
+        moo_error_flag = 0;
+        MooValue z = moo_tensor_hadamard_inv(y1, moo_number(42));
+        CHECK(moo_error_flag == 0 && z.tag == MOO_TENSOR,
+              "H6: hadamard_inv laeuft");
+        int rt_ok = 1;
+        for (int i = 0; i < 16 && z.tag == MOO_TENSOR; i++) {
+            float ref = MV_TENSOR(x)->data[i];
+            if (fabsf(MV_TENSOR(z)->data[i] - ref) > 1e-4f * (fabsf(ref) + 1.0f))
+                rt_ok = 0;
+        }
+        CHECK(rt_ok == 1, "H6: hadamard_inv(hadamard(x)) == x");
+        moo_release(z);
+        moo_error_flag = 0;
+        int32_t s26[2] = { 2, 6 };
+        MooValue x6 = mk(2, s26);
+        MooValue f = moo_tensor_hadamard_inv(x6, moo_number(1));
+        CHECK(moo_error_flag == 1 && f.tag == MOO_NONE,
+              "H6: Nicht-Zweierpotenz wirft auch bei der Inversen");
+        moo_release(f);
+        moo_release(x6);
+        moo_error_flag = 0;
+    }
+
     /* H4: 6 ist keine Zweierpotenz */
     {
         int32_t s26[2] = { 2, 6 };

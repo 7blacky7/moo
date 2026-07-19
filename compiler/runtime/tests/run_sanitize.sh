@@ -327,6 +327,9 @@ EXTRA_HARNESSES=(
   #          Eigene Determinismus-, Orthogonalitaets-, Gradcheck- und
   #          Unbiasedness-Gates; gleicher Tensor-/Autograd-Quellsatz.
   "test_quant_asan.c|moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   attnres: KI-R1 — Attention-Residuals mit konvexer Softmax-Mischung,
+  #            Gesamt-FD-Gradcheck, Registry-Parameter und Determinismus.
+  "test_attnres_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   gather_leak: KIP-T1 — Refcount-/Tape-Leak-Gate fuer gather fwd+bwd. Unter
   #               ASan zaehlt LeakSanitizer (RSS-Check dort uebersprungen); der
   #               echte 1M-RSS-Stabilitaetslauf laeuft standalone ohne Sanitizer.

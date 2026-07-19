@@ -1154,6 +1154,66 @@ MooValue moo_tensor_hadamard(MooValue av, MooValue seedv) {
     return ret;
 }
 
+/* hadamard_inv: A^T = (1/sqrt(n)) * D * H — die EXAKTE Inverse (A ist
+ * orthogonal, siehe Herleitung oben). Reihenfolge UMGEKEHRT zum Forward:
+ * erst WHT, dann skalieren, dann Vorzeichen. Gebraucht fuer Dequant im
+ * rotierten Raum (KI-Q1-Eval Incoherence-Processing; KI-Q2-Cache).
+ * backward = A selbst (bw_hadamard_inv in moo_autograd.c). Validierung
+ * bewusst als eigenstaendige Kopie (kein Refactor am gruenen hadamard). */
+MooValue moo_tensor_hadamard_inv(MooValue av, MooValue seedv) {
+    MooTensor* a = expect_t(av, "hadamard_inv");
+    if (!a) return moo_none();
+
+    if (seedv.tag != MOO_NUMBER) {
+        moo_throw(moo_error("hadamard_inv: der Seed muss eine Zahl sein"));
+        return moo_none();
+    }
+    double sd = MV_NUM(seedv);
+    if (!(sd >= 0.0) || sd > 9007199254740992.0 || floor(sd) != sd) {
+        moo_throw(moo_error("hadamard_inv: der Seed muss eine ganze Zahl "
+                            "zwischen 0 und 2^53 sein"));
+        return moo_none();
+    }
+    int64_t seed = (int64_t)sd;
+
+    int64_t n = a->shape[a->ndim - 1];
+    if (!moo_quant_ist_zweierpotenz(n)) {
+        char msg[220];
+        snprintf(msg, sizeof(msg),
+                 "hadamard_inv: die letzte Achse muss eine Zweierpotenz sein "
+                 "(1, 2, 4, 8, 16, ...), ist aber %lld.",
+                 (long long)n);
+        moo_throw(moo_error(msg));
+        return moo_none();
+    }
+
+    MooTensor* out = moo_tensor_raw(a->ndim, a->shape);
+    if (!out) return moo_none();
+
+    float* d = (float*)malloc((size_t)n * sizeof(float));
+    if (!d) {
+        moo_release(wrap_t(out));
+        moo_throw(moo_error("hadamard_inv: Speicher voll"));
+        return moo_none();
+    }
+    moo_quant_vorzeichen((uint64_t)seed, n, d);
+
+    float skal = 1.0f / sqrtf((float)n);
+    int64_t zeilen = a->size / n;
+    for (int64_t r = 0; r < zeilen; r++) {
+        const float* src = a->data + r * n;
+        float* dst = out->data + r * n;
+        for (int64_t i = 0; i < n; i++) dst[i] = src[i];
+        moo_quant_wht_zeile(dst, n);
+        for (int64_t i = 0; i < n; i++) dst[i] = dst[i] * skal * d[i];
+    }
+    free(d);
+
+    MooValue ret = wrap_t(out);
+    moo_ag_record("hadamard_inv", av, moo_none(), seedv, ret);
+    return ret;
+}
+
 // ============================================================
 // Op-Registry — DER Erweiterbarkeits-Vertrag.
 // Neuer Op: Funktion oben implementieren + HIER eine Zeile. Fertig.
@@ -1200,6 +1260,7 @@ static MooTensorOp op_tabelle[] = {
     // das backward ist daher exakt die Transponierte - kein approximierter
     // Gradient, voll gradcheck-faehig.
     { "hadamard",   MOO_OP_BINARY_SCALAR, NULL, moo_tensor_hadamard, NULL },
+    { "hadamard_inv", MOO_OP_BINARY_SCALAR, NULL, moo_tensor_hadamard_inv, NULL },
 };
 #define OP_COUNT ((int)(sizeof(op_tabelle) / sizeof(op_tabelle[0])))
 

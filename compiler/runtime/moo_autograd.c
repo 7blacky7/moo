@@ -1227,6 +1227,35 @@ static void bw_hadamard(const MooAgNode* n) {
     }
     free(d); free(tmp);
 }
+static void bw_hadamard_inv(const MooAgNode* n) {
+    /* KI-Q1: Forward ist A^T; backward daher A = (1/sqrt(n)) * H * D —
+     * exakt der hadamard-Forward-Kern (Vorzeichen, dann WHT, dann Skal). */
+    MooTensor* o = T(n->output), *x = T(n->inputs[0]);
+    if (!x->requires_grad) return;
+    int64_t nn = x->shape[x->ndim - 1];
+    if (!moo_quant_ist_zweierpotenz(nn)) return;
+    moo_tensor_f32_sichern(x);
+    float* xg = grad_sicherstellen(x);
+    float* og = grad_sicherstellen(o);
+    float* d = (float*)malloc((size_t)nn * sizeof(float));
+    float* tmp = (float*)malloc((size_t)nn * sizeof(float));
+    if (!d || !tmp) {
+        free(d); free(tmp);
+        moo_throw(moo_error("hadamard_inv-Backward: Speicher voll"));
+        return;
+    }
+    moo_quant_vorzeichen((uint64_t)n->skalar, nn, d);
+    float skal = 1.0f / sqrtf((float)nn);
+    int64_t zeilen = x->size / nn;
+    for (int64_t r = 0; r < zeilen; r++) {
+        const float* grow = og + r * nn;
+        for (int64_t i = 0; i < nn; i++) tmp[i] = grow[i] * d[i];
+        moo_quant_wht_zeile(tmp, nn);
+        float* dst = xg + r * nn;
+        for (int64_t i = 0; i < nn; i++) dst[i] += tmp[i] * skal;
+    }
+    free(d); free(tmp);
+}
 
 static void moo_ag_init_bw(void) {
     moo_tensor_op_set_bw("add", bw_add);
@@ -1261,6 +1290,7 @@ static void moo_ag_init_bw(void) {
     moo_tensor_op_set_bw("im2col",  bw_im2col);
     moo_tensor_op_set_bw("pooling", bw_pool);
     moo_tensor_op_set_bw("hadamard", bw_hadamard);
+    moo_tensor_op_set_bw("hadamard_inv", bw_hadamard_inv);
     bw_registriert = true;
 }
 

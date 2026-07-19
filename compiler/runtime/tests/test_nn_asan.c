@@ -1303,6 +1303,127 @@ int main(void) {
         fehler_reset();
     }
 
+    /* ===== 18c. KV-Cache-Quant (KI-Q2, TurboQuant-Stufe-2 Storage-Simulation) ===== */
+    {
+        MooValue r_on = moo_number(10000.0);
+        float xv[48];
+        for (int i = 0; i < 48; i++) xv[i] = (float)((i * 7) % 19) * 0.09f - 0.8f;
+        MooValue at = moo_nn_schicht_attention(moo_number(8.0), moo_number(2.0),
+                      moo_number(7.0), moo_none(), moo_none(), moo_none(), r_on);
+        moo_ag_aus();
+        MooValue xf = t2(5, 8, xv);
+        MooValue yfull = moo_nn_vorwaerts(at, xf);        /* Nicht-Cache f32 */
+
+        /* a) int8-Quant-Cache: Token-fuer-Token-Decode bleibt nahe am
+         *    f32-Voll-Lauf. Toy-Schranke NORMIERT (max|Delta| / max|ref|,
+         *    per-Element-rel explodiert bei ref nahe 0): < 2%. Gemessene
+         *    Referenz bei dh=4/int8: ~0.36%. */
+        moo_dict_set(at, moo_string_new("cache"), moo_number(1.0));
+        moo_dict_set(at, moo_string_new("cache_quant"), moo_number(8.0));
+        moo_nn_cache_leeren(at);
+        float maxabs = 0.0f, maxref = 0.0f;
+        bool q8ok = (yfull.tag == MOO_TENSOR);
+        for (int i = 0; i < 5 && q8ok; i++) {
+            MooValue xi = t2(1, 8, &xv[i * 8]);
+            MooValue yi = moo_nn_vorwaerts(at, xi);
+            q8ok = (yi.tag == MOO_TENSOR);
+            for (int j = 0; j < 8 && q8ok; j++) {
+                float ref = T(yfull)->data[i * 8 + j];
+                float d = fabsf(T(yi)->data[j] - ref);
+                if (d > maxabs) maxabs = d;
+                if (fabsf(ref) > maxref) maxref = fabsf(ref);
+                q8ok = isfinite(T(yi)->data[j]);
+            }
+            moo_release(yi); moo_release(xi);
+        }
+        CHECK(q8ok && maxref > 0.0f && maxabs < 0.02f * maxref,
+              "cache_quant: int8-Decode nahe f32-Voll (normiert < 2%)");
+
+        /* b) Regression: quant aus + cache aus -> Nicht-Cache BIT-identisch */
+        moo_dict_set(at, moo_string_new("cache_quant"), moo_number(0.0));
+        moo_dict_set(at, moo_string_new("cache"), moo_number(0.0));
+        moo_nn_cache_leeren(at);
+        MooValue y2 = moo_nn_vorwaerts(at, xf);
+        bool bit = (y2.tag == MOO_TENSOR);
+        for (int64_t i = 0; i < 40 && bit; i++)
+            bit = (T(y2)->data[i] == T(yfull)->data[i]);
+        CHECK(bit, "cache_quant: Flag 0 -> Nicht-Cache-Pfad BIT-identisch");
+        moo_release(y2);
+
+        /* c) int4 laeuft und liefert endliche Werte */
+        moo_dict_set(at, moo_string_new("cache"), moo_number(1.0));
+        moo_dict_set(at, moo_string_new("cache_quant"), moo_number(4.0));
+        moo_nn_cache_leeren(at);
+        bool q4ok = true;
+        for (int i = 0; i < 2 && q4ok; i++) {
+            MooValue xi = t2(1, 8, &xv[i * 8]);
+            MooValue yi = moo_nn_vorwaerts(at, xi);
+            q4ok = (yi.tag == MOO_TENSOR);
+            for (int j = 0; j < 8 && q4ok; j++)
+                q4ok = isfinite(T(yi)->data[j]);
+            moo_release(yi); moo_release(xi);
+        }
+        CHECK(q4ok, "cache_quant: int4-Decode laeuft (endliche Werte)");
+
+        /* c2) KI-Q3: Lloyd-Max-Codebuch-Lookup laeuft (int4 + Codebuch) */
+        MooValue cbl = moo_list_new(16);
+        static const float cbw[16] = {
+            -0.9815f, -0.8046f, -0.6612f, -0.5246f, -0.3952f, -0.2761f,
+            -0.1679f, -0.0560f,  0.0560f,  0.1679f,  0.2761f,  0.3952f,
+             0.5246f,  0.6612f,  0.8046f,  0.9815f };
+        for (int c = 0; c < 16; c++)
+            moo_list_append(cbl, moo_number((double)cbw[c]));
+        moo_dict_set(at, moo_string_new("cache_quant_codebuch"), cbl);
+        moo_nn_cache_leeren(at);
+        bool cbok = true;
+        for (int i = 0; i < 2 && cbok; i++) {
+            MooValue xi = t2(1, 8, &xv[i * 8]);
+            MooValue yi = moo_nn_vorwaerts(at, xi);
+            cbok = (yi.tag == MOO_TENSOR);
+            for (int j = 0; j < 8 && cbok; j++)
+                cbok = isfinite(T(yi)->data[j]);
+            moo_release(yi); moo_release(xi);
+        }
+        CHECK(cbok, "cache_quant: Codebuch-Lookup (KI-Q3) laeuft");
+
+        /* c3) NEGATIV: Codebuch mit 17 Eintraegen bei bits=4 wirft */
+        MooValue cbg = moo_list_new(17);
+        for (int c = 0; c < 17; c++)
+            moo_list_append(cbg, moo_number(0.1 * (double)c));
+        moo_dict_set(at, moo_string_new("cache_quant_codebuch"), cbg);
+        moo_nn_cache_leeren(at);
+        {
+            MooValue xi = t2(1, 8, xv);
+            fehler_reset();
+            MooValue yi = moo_nn_vorwaerts(at, xi);
+            CHECK(moo_error_flag == 1 && yi.tag != MOO_TENSOR,
+                  "cache_quant: NEGATIV — Codebuch > 2^bits wirft");
+            fehler_reset();
+            moo_release(yi); moo_release(xi);
+        }
+        moo_dict_set(at, moo_string_new("cache_quant_codebuch"), moo_none());
+        moo_dict_set(at, moo_string_new("cache"), moo_number(0.0));
+        moo_nn_cache_leeren(at);
+        moo_release(yfull); moo_release(xf); moo_release(at);
+
+        /* d) NEGATIV: dh=12 (dim24/koepfe2, even fuer rope, KEINE
+         *    Zweierpotenz) -> Cache-Quant wirft */
+        MooValue at24 = moo_nn_schicht_attention(moo_number(24.0), moo_number(2.0),
+                        moo_number(7.0), moo_none(), moo_none(), moo_none(), r_on);
+        moo_dict_set(at24, moo_string_new("cache"), moo_number(1.0));
+        moo_dict_set(at24, moo_string_new("cache_quant"), moo_number(8.0));
+        float x24v[24];
+        for (int i = 0; i < 24; i++) x24v[i] = 0.1f * (float)i - 1.0f;
+        MooValue x24 = t2(1, 24, x24v);
+        fehler_reset();
+        MooValue yf = moo_nn_vorwaerts(at24, x24);
+        CHECK(moo_error_flag == 1 && yf.tag != MOO_TENSOR,
+              "cache_quant: NEGATIV — Kopf-Dim keine Zweierpotenz wirft");
+        fehler_reset();
+        moo_release(yf); moo_release(x24); moo_release(at24);
+        moo_ag_an();
+    }
+
     /* ===== 19. Maskierte Kreuzentropie (KIP-B4a, X3 §2) ===== */
     {
         moo_ag_reset();

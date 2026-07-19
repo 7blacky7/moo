@@ -2821,6 +2821,12 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_nn_schicht_rmsnorm,
                             &[dim.into()], "nn_rmsnorm");
                     }
+                    // KI-R1: AttnRes-Pseudo-Query-Schicht (PAPER-VERIFY-05)
+                    "schicht_attnres" | "layer_attnres" => {
+                        let dim = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_nn_schicht_attnres,
+                            &[dim.into()], "nn_attnres_schicht");
+                    }
                     "schicht_ffn_gated" | "layer_ffn_gated" => {
                         let dim = self.compile_expr(&args[0])?;
                         let versteckt = self.compile_expr(&args[1])?;
@@ -2883,6 +2889,16 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[a.into()], "rel_kon_a")?;
                         self.call_rt_void(self.rt.moo_release, &[b.into()], "rel_kon_b")?;
                         self.call_rt_void(self.rt.moo_release, &[temperatur.into()], "rel_kon_temp")?;
+                        return Ok(r);
+                    }
+                    // KI-R1: Tiefen-Attention-Residual (PAPER-VERIFY-05)
+                    "attnres" => {
+                        let s = self.compile_expr(&args[0])?;
+                        let quellen = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_nn_attnres,
+                            &[s.into(), quellen.into()], "nn_attnres")?;
+                        self.call_rt_void(self.rt.moo_release, &[s.into()], "rel_ares_s")?;
+                        self.call_rt_void(self.rt.moo_release, &[quellen.into()], "rel_ares_q")?;
                         return Ok(r);
                     }
                     // KI-Q1: QJL-Trio (inferenz-only, Vertrag in moo_quant.c)
@@ -5864,6 +5880,11 @@ impl<'ctx> CodeGen<'ctx> {
                         let z = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_tensor_hadamard,
                             &[obj.into(), z.into()], "t_hadamard");
+                    }
+                    "hadamard_inv" if !user_hat_methode => {
+                        let z = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tensor_hadamard_inv,
+                            &[obj.into(), z.into()], "t_hadamard_inv");
                     }
                     "relu" if !user_hat_methode => { return self.call_rt(self.rt.moo_tensor_relu, &[obj.into()], "t_relu"); }
                     "sigmoid" if !user_hat_methode => { return self.call_rt(self.rt.moo_tensor_sigmoid, &[obj.into()], "t_sigmoid"); }

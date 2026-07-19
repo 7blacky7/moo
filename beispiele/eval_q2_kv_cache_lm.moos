@@ -1,0 +1,222 @@
+# ============================================================
+# KI-Q2: KV-Cache-Verdrahtung in generiere() + Quant-Cache-Messung.
+#
+# Modell: RoPE-Mini-LM (KEINE gelernte Positions-Schicht — die kann im
+# inkrementellen Decode nicht offsetten; RoPE positioniert im Cache-Pfad
+# ueber t_alt, KIP-B2/KI-M2c). 2 Bloecke, dim 32, 2 Koepfe (dh=16,
+# Zweierpotenz — Voraussetzung fuer cache_quant).
+#
+# Vier Generierungs-Laeufe mit IDENTISCHEN Gewichten, greedy,
+# identischer Startkontext (Gesamtlaenge < block, damit der
+# Ohne-Cache-Lauf denselben vollen Kontext sieht):
+#   A) ohne Cache: volles Kontextfenster pro Schritt (bisheriger Stil)
+#   B) f32-Cache:  Prefill einmal, dann Token-fuer-Token (att["cache"]=1)
+#   C) int8-Quant-Cache (att["cache_quant"]=8, TurboQuant-Stufe-2)
+#   D) int4-Quant-Cache (att["cache_quant"]=4)
+#
+# GATE: A == B Token-identisch (chunked Prefill/Decode ist laut
+# test_nn_asan Sektion 18 BIT-identisch zum Voll-Lauf). C/D: Token-
+# Treue + max|Delta-Logits| am letzten Schritt dokumentiert; Bytes-
+# Ersparnis RECHNERISCH (der Cache speichert dequantisierte f32-Werte,
+# Simulation wie im M6b-/Q1-Eval — Fehler real, Format unveraendert).
+# EHRLICH: Toy-Messung, keine Paper-Zahlen (>5x QJL etc. sind A100/LLM).
+# ============================================================
+
+setze block auf 48
+setze dim auf 32
+setze koepfe auf 2
+setze schritte auf 600
+setze rate auf 0.05
+setze fenster auf 150
+
+zeige "Lade Korpus ..."
+setze korpus auf datei_lesen("beispiele/daten/maerchen.txt")
+setze tok auf text_tokenizer(korpus)
+setze ids auf tok["ids"]
+setze vokab auf tok["vokab"]
+setze id_zu_zeichen auf tok["id_zu_zeichen"]
+setze n auf ids.groesse()
+zeige "Zeichen: " + text(n) + ", Vokabular: " + text(vokab)
+
+# RoPE-Attention: (dim, koepfe, seed, kv, maske, fenster, rope)
+setze emb  auf schicht_embedding(vokab, dim, 1)
+setze ln1a auf schicht_layernorm(dim)
+setze att1 auf schicht_attention(dim, koepfe, 3, koepfe, "causal", nichts, 10000)
+setze ln1b auf schicht_layernorm(dim)
+setze ff1a auf schicht_dicht(dim, 128, "gelu", 4)
+setze ff1b auf schicht_dicht(128, dim, "keine", 5)
+setze ln2a auf schicht_layernorm(dim)
+setze att2 auf schicht_attention(dim, koepfe, 6, koepfe, "causal", nichts, 10000)
+setze ln2b auf schicht_layernorm(dim)
+setze ff2a auf schicht_dicht(dim, 128, "gelu", 7)
+setze ff2b auf schicht_dicht(128, dim, "keine", 8)
+setze lnf  auf schicht_layernorm(dim)
+setze kopf auf schicht_dicht(dim, vokab, "keine", 9)
+setze alle auf [emb, ln1a, att1, ln1b, ff1a, ff1b,
+                ln2a, att2, ln2b, ff2a, ff2b, lnf, kopf]
+
+funktion modell(ids_block):
+    setze x auf vorwaerts([emb], ids_block)
+    setze x auf x + vorwaerts([ln1a, att1], x)
+    setze x auf x + vorwaerts([ln1b, ff1a, ff1b], x)
+    setze x auf x + vorwaerts([ln2a, att2], x)
+    setze x auf x + vorwaerts([ln2b, ff2a, ff2b], x)
+    gib_zurück vorwaerts([lnf, kopf], x)
+
+# ---------- kurzes Training (nur damit die Logits nicht trivial sind) ----------
+setze params auf parameter(alle)
+setze opt auf optimierer_sgd(params, rate, 0.9)
+setze grenze auf n - block - 1
+setze p auf 0
+setze sprung auf 631
+setze fsum auf 0
+zeige "Trainiere " + text(schritte) + " Schritte ..."
+setze s auf 0
+solange s < schritte:
+    setze verlust auf kreuzentropie(modell(ids.zeilen(p, p + block)), ids.zeilen(p + 1, p + block + 1))
+    verlust.rueckwaerts()
+    gradienten_kappen(params, 1.0)
+    opt.schritt()
+    setze fsum auf fsum + verlust.zu_liste()[0]
+    setze p auf p + sprung
+    wenn p >= grenze:
+        setze p auf p - grenze
+    setze s auf s + 1
+    wenn s - boden(s / fenster) * fenster == 0:
+        zeige "Schritt " + text(s) + ": Fenster-Loss " + text(fsum / fenster)
+        setze fsum auf 0
+
+# ---------- Generierung ----------
+funktion argmax(liste):
+    setze best auf 0
+    setze i auf 1
+    solange i < länge(liste):
+        wenn liste[i] > liste[best]:
+            setze best auf i
+        setze i auf i + 1
+    gib_zurück best
+
+setze start_n auf 8
+setze gen_n auf 20
+setze anfang auf ids.zeilen(0, start_n).zu_liste()
+
+# A) ohne Cache: volles Fenster pro Schritt. Gibt [tokens, letzte_logits].
+funktion gen_ohne_cache():
+    setze kontext auf []
+    für id in anfang:
+        kontext.hinzufügen(id)
+    setze toks auf []
+    setze letzte auf 0
+    setze s auf 0
+    solange s < gen_n:
+        setze logits auf modell(tensor_aus_liste(kontext))
+        setze seq auf länge(kontext)
+        setze letzte auf logits.zeilen(seq - 1, seq)
+        setze id auf argmax(letzte.zu_liste())
+        kontext.hinzufügen(id)
+        toks.hinzufügen(id)
+        setze s auf s + 1
+    gib_zurück [toks, letzte]
+
+# B/C/D) Cache-Pfad: einmal Prefill, dann Token-fuer-Token.
+# qcb: Codebuch-Liste oder 0 (uniform).
+funktion gen_mit_cache(qbits, qcb):
+    att1["cache"] = 1
+    att2["cache"] = 1
+    att1["cache_quant"] = qbits
+    att2["cache_quant"] = qbits
+    att1["cache_quant_codebuch"] = qcb
+    att2["cache_quant_codebuch"] = qcb
+    cache_leeren(alle)
+    setze toks auf []
+    setze logits auf modell(ids.zeilen(0, start_n))     # Prefill
+    setze letzte auf logits.zeilen(start_n - 1, start_n)
+    setze id auf argmax(letzte.zu_liste())
+    toks.hinzufügen(id)
+    setze s auf 1
+    solange s < gen_n:
+        setze logits auf modell(tensor_aus_liste([id]))  # NUR das neue Token
+        setze letzte auf logits
+        setze id auf argmax(letzte.zu_liste())
+        toks.hinzufügen(id)
+        setze s auf s + 1
+    att1["cache"] = 0
+    att2["cache"] = 0
+    att1["cache_quant"] = 0
+    att2["cache_quant"] = 0
+    att1["cache_quant_codebuch"] = nichts
+    att2["cache_quant_codebuch"] = nichts
+    cache_leeren(alle)
+    gib_zurück [toks, letzte]
+
+funktion als_text(toks):
+    setze t auf ""
+    für id in toks:
+        setze t auf t + id_zu_zeichen[id]
+    gib_zurück t
+
+funktion gleich_anzahl(a, b):
+    setze g auf 0
+    setze i auf 0
+    solange i < länge(a):
+        wenn a[i] == b[i]:
+            setze g auf g + 1
+        setze i auf i + 1
+    gib_zurück g
+
+funktion max_delta(la, lb):
+    setze xa auf la.zu_liste()
+    setze xb auf lb.zu_liste()
+    setze m auf 0
+    setze i auf 0
+    solange i < länge(xa):
+        setze d auf xa[i] - xb[i]
+        wenn d < 0:
+            setze d auf 0 - d
+        wenn d > m:
+            setze m auf d
+        setze i auf i + 1
+    gib_zurück m
+
+autograd_aus()
+# KI-Q3: Lloyd-Max-Codebuch aus eval_q3_lloyd_max_codebuch.moos (offline)
+setze q3_cb auf [0 - 0.981509, 0 - 0.804552, 0 - 0.661242, 0 - 0.524637, 0 - 0.395182, 0 - 0.276124, 0 - 0.167935, 0 - 0.0560482, 0.0560482, 0.167935, 0.276124, 0.395182, 0.524637, 0.661242, 0.804552, 0.981509]
+setze a auf gen_ohne_cache()
+setze b auf gen_mit_cache(0, nichts)
+setze c auf gen_mit_cache(8, nichts)
+setze d auf gen_mit_cache(4, nichts)
+setze e auf gen_mit_cache(4, q3_cb)
+autograd_an()
+
+zeige ""
+zeige "A ohne Cache : " + als_text(a[0])
+zeige "B f32-Cache  : " + als_text(b[0])
+zeige "C int8-Cache : " + als_text(c[0])
+zeige "D int4-Cache : " + als_text(d[0])
+zeige "E int4+Codebuch: " + als_text(e[0])
+zeige ""
+zeige "Q2_EVAL_TOKENS_GLEICH_A_B=" + text(gleich_anzahl(a[0], b[0])) + "/" + text(gen_n)
+zeige "Q2_EVAL_TOKENS_GLEICH_B_C=" + text(gleich_anzahl(b[0], c[0])) + "/" + text(gen_n)
+zeige "Q2_EVAL_TOKENS_GLEICH_B_D=" + text(gleich_anzahl(b[0], d[0])) + "/" + text(gen_n)
+zeige "Q2_EVAL_TOKENS_GLEICH_B_E=" + text(gleich_anzahl(b[0], e[0])) + "/" + text(gen_n)
+zeige "Q2_EVAL_MAXDELTA_LOGITS_B_A=" + text(max_delta(b[1], a[1]))
+zeige "Q2_EVAL_MAXDELTA_LOGITS_B_C=" + text(max_delta(b[1], c[1]))
+zeige "Q2_EVAL_MAXDELTA_LOGITS_B_D=" + text(max_delta(b[1], d[1]))
+zeige "Q2_EVAL_MAXDELTA_LOGITS_B_E=" + text(max_delta(b[1], e[1]))
+wenn gleich_anzahl(a[0], b[0]) == gen_n:
+    zeige "GATE BESTANDEN: f32-Cache-Decode == Ohne-Cache (Token-identisch)."
+sonst:
+    zeige "GATE VERFEHLT: f32-Cache weicht vom Ohne-Cache-Lauf ab!"
+
+# Rechnerische Cache-Bytes am Ende der Generierung:
+# 2 Attention-Schichten x kv-Gruppen(=koepfe) x 2 (K,V) x T x dh.
+setze t_ges auf start_n + gen_n - 1
+setze dh auf dim / koepfe
+setze eintraege auf 2 * koepfe * 2 * t_ges * dh
+setze zeilen_ges auf 2 * koepfe * 2 * t_ges
+zeige "Q2_EVAL_CACHE_BYTES_F32=" + text(eintraege * 4)
+zeige "Q2_EVAL_CACHE_BYTES_INT8=" + text(eintraege + zeilen_ges * 4)
+zeige "Q2_EVAL_CACHE_BYTES_INT4=" + text(eintraege / 2 + zeilen_ges * 4)
+zeige ""
+zeige "Toy-Messung — Cache haelt dequantisierte f32-Werte (Simulation);"
+zeige "die Bytes-Zeilen zeigen die Ersparnis eines echten int-Formats."
