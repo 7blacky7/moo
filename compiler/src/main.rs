@@ -1138,11 +1138,13 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     link_args.extend(["-lSDL2".to_string(), "-lSDL2_image".to_string()]);
     #[cfg(any(feature = "gl21", feature = "gl33"))]
     {
-        link_args.push(if cfg!(target_os = "windows") {
-            "-lopengl32".to_string()
+        if cfg!(target_os = "windows") {
+            link_args.push("-lopengl32".to_string());
+        } else if cfg!(target_os = "macos") {
+            link_args.extend(["-framework".to_string(), "OpenGL".to_string()]);
         } else {
-            "-lGL".to_string()
-        });
+            link_args.push("-lGL".to_string());
+        }
         link_args.push(if cfg!(target_os = "windows") {
             "-lglfw3dll".to_string()
         } else {

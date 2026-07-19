@@ -334,16 +334,24 @@ fn main() {
 
     // 3D Backend: bedingt und mit plattformspezifischen Linknamen linken.
     // MSVC/vcpkg (dynamischer x64-windows-Triplet): opengl32.lib,
-    // glfw3dll.lib und vulkan-1.lib.
-    // Unix: GL, glfw und vulkan.
+    // glfw3dll.lib und vulkan-1.lib. Linux: GL/glfw/vulkan.
+    // macOS stellt OpenGL als Systemframework bereit; GLFW/Vulkan kommen aus Homebrew.
     #[cfg(feature = "gl21")]
     {
-        println!("cargo:rustc-link-lib={}", if target_windows { "opengl32" } else { "GL" });
+        if target_macos {
+            println!("cargo:rustc-link-lib=framework=OpenGL");
+        } else {
+            println!("cargo:rustc-link-lib={}", if target_windows { "opengl32" } else { "GL" });
+        }
         println!("cargo:rustc-link-lib={}", if target_windows { "glfw3dll" } else { "glfw" });
     }
     #[cfg(feature = "gl33")]
     {
-        println!("cargo:rustc-link-lib={}", if target_windows { "opengl32" } else { "GL" });
+        if target_macos {
+            println!("cargo:rustc-link-lib=framework=OpenGL");
+        } else {
+            println!("cargo:rustc-link-lib={}", if target_windows { "opengl32" } else { "GL" });
+        }
         println!("cargo:rustc-link-lib={}", if target_windows { "glfw3dll" } else { "glfw" });
     }
     #[cfg(feature = "vulkan")]
