@@ -332,21 +332,23 @@ fn main() {
         }
     }
 
-    // 3D Backend: bedingt linken
+    // 3D Backend: bedingt und mit plattformspezifischen Linknamen linken.
+    // MSVC/vcpkg: opengl32.lib, glfw3.lib und vulkan-1.lib.
+    // Unix: GL, glfw und vulkan.
     #[cfg(feature = "gl21")]
     {
-        println!("cargo:rustc-link-lib=GL");
-        println!("cargo:rustc-link-lib=glfw");
+        println!("cargo:rustc-link-lib={}", if target_windows { "opengl32" } else { "GL" });
+        println!("cargo:rustc-link-lib={}", if target_windows { "glfw3" } else { "glfw" });
     }
     #[cfg(feature = "gl33")]
     {
-        println!("cargo:rustc-link-lib=GL");
-        println!("cargo:rustc-link-lib=glfw");
+        println!("cargo:rustc-link-lib={}", if target_windows { "opengl32" } else { "GL" });
+        println!("cargo:rustc-link-lib={}", if target_windows { "glfw3" } else { "glfw" });
     }
     #[cfg(feature = "vulkan")]
     {
-        println!("cargo:rustc-link-lib=vulkan");
-        println!("cargo:rustc-link-lib=glfw");
+        println!("cargo:rustc-link-lib={}", if target_windows { "vulkan-1" } else { "vulkan" });
+        println!("cargo:rustc-link-lib={}", if target_windows { "glfw3" } else { "glfw" });
     }
 
     println!("cargo:rerun-if-changed=runtime/");
