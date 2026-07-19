@@ -1,8 +1,8 @@
 name: Core Test Suite
 
 # Vollstaendige sprach-/runtime-nahe Tests ohne Fenster, Xvfb oder GPU-Lauf.
-# Ubuntu ist das verbindliche Gate. Windows und macOS laufen bereits mit,
-# bleiben aber bis zur jeweiligen Plattformhaertung als experimental markiert.
+# Ubuntu, Windows und macOS sind verbindliche Gates. Plattformfehler duerfen
+# nicht durch continue-on-error als erfolgreiche Core-Suite erscheinen.
 on:
   push:
   pull_request:
@@ -33,7 +33,7 @@ jobs:
             experimental: true
           - os: macos-latest
             target: aarch64-apple-darwin
-            experimental: true
+            experimental: false
 
     steps:
       - name: Checkout
@@ -140,13 +140,14 @@ jobs:
           SDL2_IMAGE_PREFIX="$(brew --prefix sdl2_image)"
           GLFW_PREFIX="$(brew --prefix glfw)"
           VULKAN_PREFIX="$(brew --prefix vulkan-loader)"
+          VULKAN_HEADERS_PREFIX="$(brew --prefix vulkan-headers)"
           OPENSSL_PREFIX="$(brew --prefix openssl@3)"
           echo "LLVM_SYS_181_PREFIX=$LLVM_PREFIX" >> "$GITHUB_ENV"
           echo "LIBCLANG_PATH=$LLVM_PREFIX/lib" >> "$GITHUB_ENV"
-          echo "CPATH=$SDL2_PREFIX/include:$SDL2_PREFIX/include/SDL2:$SDL2_IMAGE_PREFIX/include:$SDL2_IMAGE_PREFIX/include/SDL2:$GLFW_PREFIX/include:$VULKAN_PREFIX/include:$OPENSSL_PREFIX/include:${CPATH:-}" >> "$GITHUB_ENV"
+          echo "CPATH=$SDL2_PREFIX/include:$SDL2_PREFIX/include/SDL2:$SDL2_IMAGE_PREFIX/include:$SDL2_IMAGE_PREFIX/include/SDL2:$GLFW_PREFIX/include:$VULKAN_HEADERS_PREFIX/include:$OPENSSL_PREFIX/include:${CPATH:-}" >> "$GITHUB_ENV"
           echo "LIBRARY_PATH=$SDL2_PREFIX/lib:$SDL2_IMAGE_PREFIX/lib:$GLFW_PREFIX/lib:$VULKAN_PREFIX/lib:$OPENSSL_PREFIX/lib:${LIBRARY_PATH:-}" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=$SDL2_PREFIX/lib/pkgconfig:$SDL2_IMAGE_PREFIX/lib/pkgconfig:$GLFW_PREFIX/lib/pkgconfig:$VULKAN_PREFIX/lib/pkgconfig:$OPENSSL_PREFIX/lib/pkgconfig:$LLVM_PREFIX/lib/pkgconfig" >> "$GITHUB_ENV"
-          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$SDL2_PREFIX/include -I$SDL2_PREFIX/include/SDL2 -I$SDL2_IMAGE_PREFIX/include -I$SDL2_IMAGE_PREFIX/include/SDL2 -I$GLFW_PREFIX/include -I$VULKAN_PREFIX/include -I$OPENSSL_PREFIX/include" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$SDL2_PREFIX/include -I$SDL2_PREFIX/include/SDL2 -I$SDL2_IMAGE_PREFIX/include -I$SDL2_IMAGE_PREFIX/include/SDL2 -I$GLFW_PREFIX/include -I$VULKAN_HEADERS_PREFIX/include -I$OPENSSL_PREFIX/include" >> "$GITHUB_ENV"
           echo "MACOSX_DEPLOYMENT_TARGET=$(sw_vers -productVersion | cut -d. -f1).0" >> "$GITHUB_ENV"
 
       - name: Rust toolchain
