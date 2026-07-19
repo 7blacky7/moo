@@ -264,12 +264,17 @@ jobs:
               "ki_mtp.moos",
               "ki_grpo.moos",
               "ki_embeddings.moos",
-              "ki_multimodal.moos",
-              "ki_multimodal_vision.moos",
-              "ki_multimodal_audio.moos",
-              "ki_multimodal_joint.moos",
-              "ki_multimodal_farbe.moos",
           ]
+          tracked = subprocess.check_output(
+              ["git", "ls-files", "beispiele/ki_multimodal*.moos"],
+              cwd=root, text=True,
+          ).splitlines()
+          multimodal = sorted(Path(p).name for p in tracked)
+          if len(multimodal) < 4:
+              raise SystemExit(
+                  f"Multimodal-Beispielmatrix unvollstaendig: {len(multimodal)} < 4"
+              )
+          examples.extend(multimodal)
           original_runs = {"ki_xor.moos", "ki_moe.moos", "ki_embeddings.moos"}
 
           exact = {
