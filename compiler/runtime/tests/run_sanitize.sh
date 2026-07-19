@@ -45,6 +45,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || { echo "FATAL: kann nicht nach $SCRIPT_DIR wechseln"; exit 1; }
 RUNTIME_DIR=".."          # compiler/runtime/
 HOST_UNAME="$(uname -s)"
+HOST_ARCH="$(uname -m)"
 case "$HOST_UNAME" in
   MINGW*|MSYS*|CYGWIN*) HOST_OS="windows"; EXE_SUFFIX=".exe" ;;
   Darwin)               HOST_OS="macos";   EXE_SUFFIX="" ;;
@@ -86,13 +87,17 @@ if [ -z "$CC" ]; then
   fi
 fi
 
-echo "HOST : $HOST_OS ($HOST_UNAME), EXE_SUFFIX='$EXE_SUFFIX'"
+echo "HOST : $HOST_OS ($HOST_UNAME/$HOST_ARCH), EXE_SUFFIX='$EXE_SUFFIX'"
 echo "CFLAGS: ${COMMON_CFLAGS:-<keine host-spezifischen>}"
 echo "SANITIZER-VERTRAG: ASan + UBSan, KEIN -fwrapv; jeder Plattform-Skip wird einzeln begruendet"
 echo "HARNESS-TIMEOUT: ${HARNESS_TIMEOUT_SECONDS}s pro Prozess via $PYTHON_BIN"
 
 platform_skip_reason() {
   local tag="$1"
+  if [ "$HOST_OS" = "macos" ] && [ "$HOST_ARCH" != "x86_64" ] && [ "$tag" = "test_bare_alloc_asan" ]; then
+    echo "Harness prueft den x86-16550-Portpfad; auf macOS $HOST_ARCH ist dieser Produktionspfad absichtlich nicht vorhanden"
+    return 0
+  fi
   case "$HOST_OS:$tag" in
     linux:*) return 1 ;;
     windows:test_capture_v4l2_ops_asan|macos:test_capture_v4l2_ops_asan)
@@ -116,7 +121,7 @@ normalize_extra_libs() {
     fi
     normalized+=("$token")
   done
-  printf '%s' "${normalized[*]}"
+  printf '%s' "${normalized[*]-}"
 }
 
 mode_skip_reason() {
