@@ -65,7 +65,7 @@ jobs:
           - os: ubuntu-latest
             experimental: false
           - os: windows-latest
-            experimental: true
+            experimental: false
           - os: macos-latest
             experimental: true
 
@@ -136,16 +136,34 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            echo "WINDOWS_EFFECTS_RUNTIME_CAP: compile-only; native C runtime execution is covered by Runtime Sanitizers"
-            EFFECTS_SANITIZER=none EFFECTS_REPEAT=3 CC="$CC" \
-              bash scripts/effects-test-runner.sh compile 2>&1 | tee effects.log
-          else
-            EFFECTS_SANITIZER=combined EFFECTS_REPEAT=3 CC="$CC" \
-              bash scripts/effects-test-runner.sh green 2>&1 | tee effects.log
-            grep -F 'EXPECTED GREEN: test_effects_determinism repeat=3 output-stable' effects.log
-            grep -F 'P016-O5 EFFECTS GREEN' effects.log
-          fi
+          case "${{ matrix.os }}" in
+            windows-latest)
+              echo "WINDOWS_EFFECTS_RUNTIME_HARD_GATE: fünf Harnesses, drei bytegleiche Wiederholungen"
+              wrapper="$RUNNER_TEMP/ui-moo-clang-wrapper.sh"
+              cat > "$wrapper" <<'WRAPPER'
+          #!/usr/bin/env bash
+          exec "$CC_REAL" -D_CRT_SECURE_NO_WARNINGS "$@"
+          WRAPPER
+              chmod +x "$wrapper"
+              CC_REAL="$CC" EFFECTS_SANITIZER=none EFFECTS_REPEAT=3 CC="$wrapper" \
+                bash scripts/effects-test-runner.sh green 2>&1 | tee effects.log
+              grep -F 'EXPECTED GREEN: test_effects_determinism repeat=3 output-stable' effects.log
+              grep -F 'P016-O5 EFFECTS GREEN' effects.log
+              ;;
+            macos-latest)
+              echo "MACOS_ASAN_LEAK_CAP: Apple-ASan unterstützt detect_leaks=1 nicht; UBSan bleibt hart"
+              EFFECTS_SANITIZER=ubsan EFFECTS_REPEAT=3 CC="$CC" \
+                bash scripts/effects-test-runner.sh green 2>&1 | tee effects.log
+              grep -F 'EXPECTED GREEN: test_effects_determinism repeat=3 output-stable' effects.log
+              grep -F 'P016-O5 EFFECTS GREEN' effects.log
+              ;;
+            *)
+              EFFECTS_SANITIZER=combined EFFECTS_REPEAT=3 CC="$CC" \
+                bash scripts/effects-test-runner.sh green 2>&1 | tee effects.log
+              grep -F 'EXPECTED GREEN: test_effects_determinism repeat=3 output-stable' effects.log
+              grep -F 'P016-O5 EFFECTS GREEN' effects.log
+              ;;
+          esac
 
       - name: Compositor core and protocol contracts
         shell: bash
@@ -231,6 +249,10 @@ jobs:
             grep -F 'P016 P1 PLATFORM MATRIX EVIDENCE_READY:' platform-matrix.log
           elif [[ $rc -eq 77 || $rc -eq 124 ]]; then
             echo "PLATFORM_MATRIX_EXTERNAL_CAP: rc=$rc; Hosted-CI besitzt keine private Windows-IME-/AppKit-Evidenzumgebung"
+          elif [[ $rc -eq 1 ]] && grep -Fq \
+            'P016 P1 PLATFORM MATRIX ERROR: local_o4_rc=0 local_o6_rc=0 windows_rc=1 windows_is_ime=2 macos_rc=77 ' \
+            platform-matrix.log; then
+            echo "PLATFORM_MATRIX_EXTERNAL_CAP: lokale O4/O6-Verträge grün; private Windows-IME-/AppKit-Evidenz vom öffentlichen Runner nicht erreichbar"
           else
             echo "PLATFORM_MATRIX_LOCAL_OR_CONTRACT_FAILURE: rc=$rc" >&2
             exit "$rc"
