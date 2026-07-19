@@ -1,0 +1,272 @@
+name: ui_moo Glass and Compositor CI
+
+# Das selbstgeschriebene ui_moo-/Glass-System bleibt getrennt vom nativen
+# Plattform-UI-Workflow. Hosted-Runner besitzen keine zugesicherte echte GPU;
+# GPU-Effektpfade werden deshalb nur bei nachgewiesener Hardware ausgefuehrt
+# und sonst mit einem sichtbaren SKIP-Marker protokolliert.
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "compiler/runtime/moo_compositor*.c"
+      - "compiler/runtime/moo_compositor*.h"
+      - "compiler/runtime/moo_surface*.c"
+      - "compiler/runtime/moo_surface*.h"
+      - "compiler/runtime/tests/test_effects*.c"
+      - "compiler/runtime/tests/bench_effects.c"
+      - "compiler/runtime/tests/test_compositor*.c"
+      - "compiler/src/**"
+      - "compiler/build.rs"
+      - "compiler/Cargo.toml"
+      - "beispiele/ui_moo_demo.moos"
+      - "stdlib/ui_moo*.moos"
+      - "scripts/effects-test-runner.sh"
+      - "scripts/ui-moo-demo-smoke.sh"
+      - "scripts/ui-moo-hybrid-contract-test.sh"
+      - "scripts/ui_moo_platform_matrix*.sh"
+      - "scripts/ui-harness-lib.sh"
+      - ".github/workflows/ui-moo-ci.yml"
+  pull_request:
+    paths:
+      - "compiler/runtime/moo_compositor*.c"
+      - "compiler/runtime/moo_compositor*.h"
+      - "compiler/runtime/moo_surface*.c"
+      - "compiler/runtime/moo_surface*.h"
+      - "compiler/runtime/tests/test_effects*.c"
+      - "compiler/runtime/tests/bench_effects.c"
+      - "compiler/runtime/tests/test_compositor*.c"
+      - "compiler/src/**"
+      - "compiler/build.rs"
+      - "compiler/Cargo.toml"
+      - "beispiele/ui_moo_demo.moos"
+      - "stdlib/ui_moo*.moos"
+      - "scripts/effects-test-runner.sh"
+      - "scripts/ui-moo-demo-smoke.sh"
+      - "scripts/ui-moo-hybrid-contract-test.sh"
+      - "scripts/ui_moo_platform_matrix*.sh"
+      - "scripts/ui-harness-lib.sh"
+      - ".github/workflows/ui-moo-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ui-moo:
+    name: ${{ matrix.os }} / Glass+Compositor
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            experimental: false
+          - os: windows-latest
+            experimental: true
+          - os: macos-latest
+            experimental: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Ubuntu UI dependencies
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang llvm-18-dev libpolly-18-dev libclang-18-dev \
+            libgtk-3-dev libappindicator3-dev \
+            libsdl2-dev libsdl2-image-dev libglfw3-dev libvulkan-dev \
+            libsqlite3-dev libcurl4-openssl-dev pkg-config \
+            xvfb xauth python3
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> "$GITHUB_ENV"
+          echo "CC=clang" >> "$GITHUB_ENV"
+
+      - name: Configure Windows compiler
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Select Windows clang
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $llvmBin = $env:llvmX64
+          if (!$llvmBin) { $llvmBin = Join-Path $env:VSINSTALLDIR 'VC\Tools\Llvm\x64\bin' }
+          $clang = Join-Path $llvmBin 'clang.exe'
+          if (!(Test-Path $clang)) { throw "Visual-Studio-clang.exe fehlt: $clang" }
+          "CC=$($clang.Replace('\','/'))" >> $env:GITHUB_ENV
+          & $clang --version
+
+      - name: Select macOS clang
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          test -x /usr/bin/clang
+          echo "CC=/usr/bin/clang" >> "$GITHUB_ENV"
+          /usr/bin/clang --version
+
+      - name: Install Rust
+        if: matrix.os == 'ubuntu-latest'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            compiler/target
+          key: ui-moo-${{ runner.os }}-${{ hashFiles('compiler/Cargo.lock', 'compiler/Cargo.toml', 'compiler/build.rs') }}
+          restore-keys: ui-moo-${{ runner.os }}-
+
+      - name: Build Moo compiler for demo smoke
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          cargo build --release --manifest-path /home/runner/work/moo/moo/compiler/Cargo.toml
+
+      - name: Effects fixed-point determinism suite
+        shell: bash
+        run: |
+          set -o pipefail
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            echo "WINDOWS_EFFECTS_RUNTIME_CAP: compile-only; native C runtime execution is covered by Runtime Sanitizers"
+            EFFECTS_SANITIZER=none EFFECTS_REPEAT=3 CC="$CC" \
+              bash scripts/effects-test-runner.sh compile 2>&1 | tee effects.log
+          else
+            EFFECTS_SANITIZER=combined EFFECTS_REPEAT=3 CC="$CC" \
+              bash scripts/effects-test-runner.sh green 2>&1 | tee effects.log
+            grep -F 'EXPECTED GREEN: test_effects_determinism repeat=3 output-stable' effects.log
+            grep -F 'P016-O5 EFFECTS GREEN' effects.log
+          fi
+
+      - name: Compositor core and protocol contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/ui-moo-contracts"
+          mkdir -p "$OUT"
+          suffix=""
+          [[ "${{ matrix.os }}" == "windows-latest" ]] && suffix=".exe"
+          flags=(-std=c11 -Wall -Wextra -Werror -pedantic -O2 -Icompiler/runtime)
+
+          "$CC" "${flags[@]}" \
+            compiler/runtime/tests/test_compositor_asan.c \
+            compiler/runtime/moo_ui_host_parity_instrumentation.c \
+            compiler/runtime/moo_compositor_core.c \
+            compiler/runtime/moo_compositor_raster.c \
+            compiler/runtime/moo_compositor_effects_state.c \
+            compiler/runtime/moo_compositor_animation.c \
+            compiler/runtime/moo_compositor_effects_math.c \
+            compiler/runtime/moo_compositor_effects_cpu.c \
+            compiler/runtime/moo_compositor_effects_damage.c \
+            -o "$OUT/test_compositor${suffix}"
+
+          "$CC" "${flags[@]}" \
+            compiler/runtime/tests/test_compositor_effects_protocol.c \
+            compiler/runtime/moo_compositor_core.c \
+            compiler/runtime/moo_compositor_raster.c \
+            compiler/runtime/moo_compositor_effects_state.c \
+            compiler/runtime/moo_compositor_animation.c \
+            compiler/runtime/moo_compositor_effects_math.c \
+            compiler/runtime/moo_compositor_effects_cpu.c \
+            compiler/runtime/moo_compositor_effects_damage.c \
+            -o "$OUT/test_protocol${suffix}"
+
+          "$OUT/test_compositor${suffix}" > "$OUT/compositor-1.log"
+          "$OUT/test_compositor${suffix}" > "$OUT/compositor-2.log"
+          cmp "$OUT/compositor-1.log" "$OUT/compositor-2.log"
+          "$OUT/test_protocol${suffix}" > "$OUT/protocol-1.log"
+          "$OUT/test_protocol${suffix}" > "$OUT/protocol-2.log"
+          cmp "$OUT/protocol-1.log" "$OUT/protocol-2.log"
+          cat "$OUT/compositor-1.log" "$OUT/protocol-1.log"
+          echo "UI_MOO_COMPOSITOR_DETERMINISM=PASS"
+
+      - name: Hybrid routing contract
+        shell: bash
+        run: |
+          bash scripts/ui-moo-hybrid-contract-test.sh 2>&1 | tee hybrid-contract.log
+
+      - name: Controlled ui_moo demo smoke under private Xvfb
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        env:
+          MOO_COMPILER: compiler/target/release/moo-compiler
+          MOO_UI_DEMO_ITERATIONS: "3"
+          GDK_BACKEND: x11
+          SDL_VIDEODRIVER: x11
+        run: |
+          unset WAYLAND_DISPLAY
+          bash scripts/ui-moo-demo-smoke.sh 2>&1 | tee demo-smoke.log
+          grep -F '[demo-smoke] 3/3 kontrollierte Laeufe' demo-smoke.log
+
+      - name: Install mise for platform contracts
+        if: matrix.os == 'ubuntu-latest'
+        uses: jdx/mise-action@v2
+
+      - name: Local platform-matrix contract
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          mise run test-ui-moo-platform-matrix-contract 2>&1 | tee platform-contract.log
+          grep -F 'P016 P1 PLATFORM MATRIX CONTRACT GREEN: checks=11' platform-contract.log
+
+      - name: Aggregate platform evidence with explicit external cap
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set +e
+          timeout 180 bash scripts/ui_moo_platform_matrix_gate.sh "$RUNNER_TEMP/ui-moo-platform-evidence" \
+            2>&1 | tee platform-matrix.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [[ $rc -eq 0 ]]; then
+            grep -F 'P016 P1 PLATFORM MATRIX EVIDENCE_READY:' platform-matrix.log
+          elif [[ $rc -eq 77 || $rc -eq 124 ]]; then
+            echo "PLATFORM_MATRIX_EXTERNAL_CAP: rc=$rc; Hosted-CI besitzt keine private Windows-IME-/AppKit-Evidenzumgebung"
+          else
+            echo "PLATFORM_MATRIX_LOCAL_OR_CONTRACT_FAILURE: rc=$rc" >&2
+            exit "$rc"
+          fi
+
+      - name: GPU effect contract
+        shell: bash
+        run: |
+          case "${{ matrix.os }}" in
+            ubuntu-latest)
+              if [[ -e /dev/dri/renderD128 ]]; then
+                echo "GPU_HARDWARE_DETECTED: Linux render node vorhanden; dedizierter GPU-Workflow bleibt fuer echte Hardware zustaendig"
+              else
+                echo "SKIP_GPU_EFFECTS: kein zugesicherter /dev/dri/renderD128 auf GitHub Hosted Runner"
+              fi
+              ;;
+            windows-latest)
+              echo "SKIP_GPU_EFFECTS: kein zugesicherter D3D11-Hardwareadapter auf GitHub Hosted Runner"
+              ;;
+            macos-latest)
+              echo "SKIP_GPU_EFFECTS: kein dediziertes ui_moo-GPU-Gate fuer Hosted-macOS definiert"
+              ;;
+          esac
+
+      - name: Upload ui_moo evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-moo-${{ runner.os }}-${{ github.run_attempt }}
+          path: |
+            effects.log
+            hybrid-contract.log
+            demo-smoke.log
+            platform-contract.log
+            platform-matrix.log
+            ${{ runner.temp }}/ui-moo-contracts/*.log
+            ${{ runner.temp }}/ui-moo-platform-evidence/**
+          if-no-files-found: ignore
+          retention-days: 14
