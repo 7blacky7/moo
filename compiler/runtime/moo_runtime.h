@@ -263,6 +263,33 @@ MooValue moo_tensor_rmsnorm_kern(MooValue a);     // KIP-G4d: affine-freier Norm
 // Indizes: f32-Tensor, ganzzahlig in [0, vokab). NICHT differenzierbar (KIP-T1).
 MooValue moo_tensor_gather(MooValue w, MooValue indizes);
 
+// === KI-Q1: rotationsbasierte, kalibrierungsfreie Quant-Primitiven ===
+// (moo_quant.c; Paper-Anker in docs/research/ki-papers/analysis/
+//  paper_verify_04_quant_matrix.md)
+//
+// hadamard(a, seed): randomisierte Walsh-Hadamard-Rotation ueber die LETZTE
+// Achse (muss Zweierpotenz sein). Linear und ORTHOGONAL -> voll
+// differenzierbar, deshalb regulaerer Registry-Op mit backward (B2-Vertrag).
+// Der Seed steckt im Skalar-Argument, exakt wie im2col/pooling ihre Geometrie.
+// Zweck: Incoherence-Processing (Ausreisser verteilen, max|x|/||x|| senken).
+MooValue moo_tensor_hadamard(MooValue a, MooValue seed);
+
+// QJL (arXiv 2406.03482, Def 3.1) - Gauss-JL + 1-Bit-Sign-Quantisierung.
+// BEWUSST KEIN Registry-Op: sign() ist nicht differenzierbar, und ein
+// Registry-Eintrag ohne echtes backward wuerde den B2-Vertrag aushoehlen.
+// Diese drei sind inferenz-only und haben eigene numerische Gates in
+// tests/test_quant_asan.c (Determinismus, Unbiasedness, Fehlerschranke).
+// ASYMMETRISCH: der Key wird quantisiert, die Query nur projiziert - nur so
+// ist der Schaetzer erwartungstreu.
+MooValue moo_quant_sign_jl(MooValue keys, MooValue m, MooValue seed);
+MooValue moo_quant_jl_projektion(MooValue queries, MooValue m, MooValue seed);
+MooValue moo_quant_sign_jl_skalarprodukt(MooValue q_projektion, MooValue paket);
+
+// Interner Hadamard-Kern - moo_autograd.c baut daraus das backward.
+bool moo_quant_ist_zweierpotenz(int64_t n);
+void moo_quant_wht_zeile(float* zeile, int64_t n);
+void moo_quant_vorzeichen(uint64_t seed, int64_t n, float* d_aus);
+
 // Op-Registry: neuer Op = 1 Funktion + 1 Tabelleneintrag (Erweiterbarkeits-
 // Vertrag). backward registriert moo_autograd.c beim Init via
 // moo_tensor_op_set_bw; B2 lehnt Ops ohne Gradient-Check ab.

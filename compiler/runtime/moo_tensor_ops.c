@@ -1045,6 +1045,116 @@ MooValue moo_tensor_pool(MooValue xv, MooValue packedv) {
 }
 
 // ============================================================
+// KI-Q1: Walsh-Hadamard-Kern + Registry-Op "hadamard".
+// Lebt HIER (nicht in moo_quant.c), weil moo_autograd.c (bw_hadamard) und
+// die Op-Registry die Symbole referenzieren - jede andere Heimat wuerde die
+// Link-Matrix aller Autograd-Harnesses aufblaehen (QA1-Lehre in
+// tests/run_sanitize.sh). moo_quant.c bleibt dadurch QJL-only.
+// y = (1/sqrt(n)) * H * (d (*) x) ueber die LETZTE Achse; A = (1/sqrt(n))*H*D
+// ist ORTHOGONAL (D*D=I, H symmetrisch, H*H=n*I) -> backward = A^T exakt,
+// Roundtrip-Test ist ein Beweis. Zweck: Incoherence-Processing (Ausreisser
+// verteilen, max|x|/||x|| senken) - der Hebel gegen das KI-M6b-int8-NO-GO.
+// Herleitung/Paper-Anker: moo_quant.c-Header + paper_verify_04_quant_matrix.md.
+// ============================================================
+static inline uint64_t hadamard_hash(uint64_t seed, uint64_t idx) {
+    /* Absichtliches Wrap-around (unsigned = definiert, UB-Policy Regel 1).
+     * Formel-KOPIE von quant_hash in moo_quant.c - bewusst dupliziert, damit
+     * beide Dateien standalone linkbar bleiben. Keine Cross-Konsistenz
+     * noetig: die Vorzeichen nutzen ausschliesslich DIESE Kopie. */
+    uint64_t z = seed * 0x9E3779B97F4A7C15ULL
+               + idx * 0xBF58476D1CE4E5B9ULL
+               + 0x165667B19E3779F9ULL;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+}
+
+bool moo_quant_ist_zweierpotenz(int64_t n) {
+    return n >= 1 && (((uint64_t)n & ((uint64_t)n - 1u)) == 0u);
+}
+
+/* Schnelle unnormierte Walsh-Hadamard-Transform (Radix-2 Butterfly), in-place.
+ * Liefert H*x; Komplexitaet n*log2(n) statt n^2. */
+void moo_quant_wht_zeile(float* zeile, int64_t n) {
+    for (int64_t len = 1; len < n; len <<= 1) {
+        for (int64_t i = 0; i < n; i += (len << 1)) {
+            for (int64_t j = i; j < i + len; j++) {
+                float a = zeile[j];
+                float b = zeile[j + len];
+                zeile[j]       = a + b;
+                zeile[j + len] = a - b;
+            }
+        }
+    }
+}
+
+/* Deterministische Vorzeichen d in {-1,+1}^n aus dem Seed. Ohne die
+ * Zufallsvorzeichen waere H eine FESTE Matrix und fuer bestimmte Eingaben
+ * pathologisch (konstanter Vektor -> ein einziger Koeffizient). */
+void moo_quant_vorzeichen(uint64_t seed, int64_t n, float* d_aus) {
+    for (int64_t i = 0; i < n; i++)
+        d_aus[i] = (hadamard_hash(seed, (uint64_t)i) & 1u) ? -1.0f : 1.0f;
+}
+
+MooValue moo_tensor_hadamard(MooValue av, MooValue seedv) {
+    MooTensor* a = expect_t(av, "hadamard");
+    if (!a) return moo_none();
+
+    if (seedv.tag != MOO_NUMBER) {
+        moo_throw(moo_error("hadamard: der Seed muss eine Zahl sein"));
+        return moo_none();
+    }
+    double sd = MV_NUM(seedv);
+    /* 2^53: groesste ganze Zahl, die in der double-Mantisse exakt ist -
+     * darueber waere der Seed nicht verlustfrei durch das Tape tragbar.
+     * UB-Policy Regel 2: erst validieren, dann casten. */
+    if (!(sd >= 0.0) || sd > 9007199254740992.0 || floor(sd) != sd) {
+        moo_throw(moo_error("hadamard: der Seed muss eine ganze Zahl zwischen "
+                            "0 und 2^53 sein"));
+        return moo_none();
+    }
+    int64_t seed = (int64_t)sd;
+
+    int64_t n = a->shape[a->ndim - 1];
+    if (!moo_quant_ist_zweierpotenz(n)) {
+        char msg[220];
+        snprintf(msg, sizeof(msg),
+                 "hadamard: die letzte Achse muss eine Zweierpotenz sein "
+                 "(1, 2, 4, 8, 16, ...), ist aber %lld. Die schnelle "
+                 "Walsh-Hadamard-Transform ist nur dafuer definiert.",
+                 (long long)n);
+        moo_throw(moo_error(msg));
+        return moo_none();
+    }
+
+    MooTensor* out = moo_tensor_raw(a->ndim, a->shape);
+    if (!out) return moo_none();
+
+    float* d = (float*)malloc((size_t)n * sizeof(float));
+    if (!d) {
+        moo_release(wrap_t(out));
+        moo_throw(moo_error("hadamard: Speicher voll"));
+        return moo_none();
+    }
+    moo_quant_vorzeichen((uint64_t)seed, n, d);
+
+    float skal = 1.0f / sqrtf((float)n);
+    int64_t zeilen = a->size / n;
+    for (int64_t r = 0; r < zeilen; r++) {
+        const float* src = a->data + r * n;
+        float* dst = out->data + r * n;
+        for (int64_t i = 0; i < n; i++) dst[i] = src[i] * d[i];
+        moo_quant_wht_zeile(dst, n);
+        for (int64_t i = 0; i < n; i++) dst[i] *= skal;
+    }
+    free(d);
+
+    MooValue ret = wrap_t(out);
+    moo_ag_record("hadamard", av, moo_none(), seedv, ret);
+    return ret;
+}
+
+// ============================================================
 // Op-Registry — DER Erweiterbarkeits-Vertrag.
 // Neuer Op: Funktion oben implementieren + HIER eine Zeile. Fertig.
 // bw (Autograd-backward) traegt B1 nach; B2 verlangt pro bw eine
@@ -1085,6 +1195,11 @@ static MooTensorOp op_tabelle[] = {
     // KI-MULTI-V2: Geometrie im Skalar gepackt (BINARY_SCALAR, wie sum/max).
     { "im2col",     MOO_OP_BINARY_SCALAR, NULL, moo_tensor_im2col, NULL },
     { "pooling",    MOO_OP_BINARY_SCALAR, NULL, moo_tensor_pool,   NULL },
+    // KI-Q1: randomisierte Walsh-Hadamard-Rotation (moo_quant.c). Seed im
+    // Skalar gepackt (Muster wie im2col/pooling). Die Abbildung ist orthogonal,
+    // das backward ist daher exakt die Transponierte - kein approximierter
+    // Gradient, voll gradcheck-faehig.
+    { "hadamard",   MOO_OP_BINARY_SCALAR, NULL, moo_tensor_hadamard, NULL },
 };
 #define OP_COUNT ((int)(sizeof(op_tabelle) / sizeof(op_tabelle[0])))
 

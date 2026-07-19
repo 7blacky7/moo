@@ -1189,6 +1189,45 @@ static void bw_pool(const MooAgNode* n) {
 }
 
 
+// KI-Q1 Hadamard-Backward. Die Vorwaertsabbildung A = (1/sqrt(n))*H*D ist
+// ORTHOGONAL: A*A^T = (1/n)*H*D*D*H^T = (1/n)*H*H = I (D*D = I weil d_i^2 = 1,
+// H symmetrisch mit H*H = n*I). Das exakte backward ist deshalb die
+// Transponierte A^T = (1/sqrt(n))*D*H - im Code schlicht die umgekehrte
+// Operationsreihenfolge zum Forward (erst WHT, dann skalieren, dann
+// Vorzeichen). Kein approximierter Gradient, daher im Gradcheck scharf.
+static void bw_hadamard(const MooAgNode* n) {
+    MooTensor* o = T(n->output), *x = T(n->inputs[0]);
+    if (!x->requires_grad) return;
+    int64_t nn = x->shape[x->ndim - 1];
+    // Forward haette bei ungueltiger Achse geworfen; defensiv trotzdem pruefen,
+    // damit das backward nie ueber eine kaputte Form laeuft.
+    if (!moo_quant_ist_zweierpotenz(nn)) return;
+    moo_tensor_f32_sichern(x);
+    float* xg = grad_sicherstellen(x);
+    float* og = grad_sicherstellen(o);
+    float* d = (float*)malloc((size_t)nn * sizeof(float));
+    float* tmp = (float*)malloc((size_t)nn * sizeof(float));
+    if (!d || !tmp) {
+        free(d); free(tmp);
+        moo_throw(moo_error("hadamard-Backward: Speicher voll"));
+        return;
+    }
+    // Seed kam validiert (ganzzahlig, nichtnegativ) durch den Forward ins Tape.
+    moo_quant_vorzeichen((uint64_t)n->skalar, nn, d);
+    float skal = 1.0f / sqrtf((float)nn);
+    int64_t zeilen = x->size / nn;
+    for (int64_t r = 0; r < zeilen; r++) {
+        const float* grow = og + r * nn;
+        for (int64_t i = 0; i < nn; i++) tmp[i] = grow[i];
+        moo_quant_wht_zeile(tmp, nn);
+        float* dst = xg + r * nn;
+        // Akkumulieren (+=), nicht zuweisen: derselbe Tensor kann mehrfach
+        // Eingang sein (Fan-out) - das ist die Autograd-Konvention hier.
+        for (int64_t i = 0; i < nn; i++) dst[i] += tmp[i] * skal * d[i];
+    }
+    free(d); free(tmp);
+}
+
 static void moo_ag_init_bw(void) {
     moo_tensor_op_set_bw("add", bw_add);
     moo_tensor_op_set_bw("sub", bw_sub);
@@ -1221,6 +1260,7 @@ static void moo_ag_init_bw(void) {
     moo_tensor_op_set_bw("rmsnorm_kern",   bw_rmsnorm_kern);
     moo_tensor_op_set_bw("im2col",  bw_im2col);
     moo_tensor_op_set_bw("pooling", bw_pool);
+    moo_tensor_op_set_bw("hadamard", bw_hadamard);
     bw_registriert = true;
 }
 

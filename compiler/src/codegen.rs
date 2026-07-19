@@ -2885,6 +2885,38 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[temperatur.into()], "rel_kon_temp")?;
                         return Ok(r);
                     }
+                    // KI-Q1: QJL-Trio (inferenz-only, Vertrag in moo_quant.c)
+                    "sign_jl" => {
+                        let k = self.compile_expr(&args[0])?;
+                        let m = self.compile_expr(&args[1])?;
+                        let s = self.compile_expr(&args[2])?;
+                        let r = self.call_rt(self.rt.moo_quant_sign_jl,
+                            &[k.into(), m.into(), s.into()], "qjl_sign")?;
+                        self.call_rt_void(self.rt.moo_release, &[k.into()], "rel_qjls_k")?;
+                        self.call_rt_void(self.rt.moo_release, &[m.into()], "rel_qjls_m")?;
+                        self.call_rt_void(self.rt.moo_release, &[s.into()], "rel_qjls_s")?;
+                        return Ok(r);
+                    }
+                    "jl_projektion" | "jl_projection" => {
+                        let q = self.compile_expr(&args[0])?;
+                        let m = self.compile_expr(&args[1])?;
+                        let s = self.compile_expr(&args[2])?;
+                        let r = self.call_rt(self.rt.moo_quant_jl_projektion,
+                            &[q.into(), m.into(), s.into()], "qjl_proj")?;
+                        self.call_rt_void(self.rt.moo_release, &[q.into()], "rel_qjlp_q")?;
+                        self.call_rt_void(self.rt.moo_release, &[m.into()], "rel_qjlp_m")?;
+                        self.call_rt_void(self.rt.moo_release, &[s.into()], "rel_qjlp_s")?;
+                        return Ok(r);
+                    }
+                    "sign_jl_skalarprodukt" | "sign_jl_dot" => {
+                        let qp = self.compile_expr(&args[0])?;
+                        let paket = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_quant_sign_jl_skalarprodukt,
+                            &[qp.into(), paket.into()], "qjl_dot")?;
+                        self.call_rt_void(self.rt.moo_release, &[qp.into()], "rel_qjld_qp")?;
+                        self.call_rt_void(self.rt.moo_release, &[paket.into()], "rel_qjld_paket")?;
+                        return Ok(r);
+                    }
                     "kreuzentropie" | "cross_entropy" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
@@ -5826,6 +5858,12 @@ impl<'ctx> CodeGen<'ctx> {
                         let z = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_tensor_pow,
                             &[obj.into(), z.into()], "t_pow");
+                    }
+                    // KI-Q1: randomisierte Walsh-Hadamard-Rotation (Seed als Zahl)
+                    "hadamard" if !user_hat_methode => {
+                        let z = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_tensor_hadamard,
+                            &[obj.into(), z.into()], "t_hadamard");
                     }
                     "relu" if !user_hat_methode => { return self.call_rt(self.rt.moo_tensor_relu, &[obj.into()], "t_relu"); }
                     "sigmoid" if !user_hat_methode => { return self.call_rt(self.rt.moo_tensor_sigmoid, &[obj.into()], "t_sigmoid"); }
