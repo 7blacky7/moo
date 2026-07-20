@@ -2562,10 +2562,10 @@ MooValue moo_ui_fenster_cursor_setze(MooValue fenster, MooValue name) {
     if (!h) return moo_bool(0);
     const char* n = str_or(name, "standard");
     LPCWSTR idc;
-    if      (strcmp(n, "standard") == 0) idc = MAKEINTRESOURCEW(32512);
-    else if (strcmp(n, "hand") == 0)     idc = MAKEINTRESOURCEW(32649);
-    else if (strcmp(n, "text") == 0)     idc = MAKEINTRESOURCEW(32513);
-    else if (strcmp(n, "groesse") == 0)  idc = MAKEINTRESOURCEW(32646);
+    if      (strcmp(n, "standard") == 0) idc = (LPCWSTR)(ULONG_PTR)32512;
+    else if (strcmp(n, "hand") == 0)     idc = (LPCWSTR)(ULONG_PTR)32649;
+    else if (strcmp(n, "text") == 0)     idc = (LPCWSTR)(ULONG_PTR)32513;
+    else if (strcmp(n, "groesse") == 0)  idc = (LPCWSTR)(ULONG_PTR)32646;
     else return moo_bool(0);
     HCURSOR cur = LoadCursorW(NULL, idc);
     if (!cur) return moo_bool(0);
