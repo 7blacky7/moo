@@ -337,56 +337,82 @@ jobs:
           PY
           python -m py_compile "$RUNNER_TEMP/net_crypto_gate.py"
 
-      - name: Run TLS backend and self-contained matrix
+      - name: Run Windows TLS backend and self-contained matrix
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $log = Join-Path $env:GITHUB_WORKSPACE "net-crypto-Windows.log"
+          if (Test-Path $log) { Remove-Item $log -Force }
+          $gate = Join-Path $env:GITHUB_WORKSPACE "scripts\windows_tls_backend_gate.cmd"
+          $target = Join-Path $env:GITHUB_WORKSPACE "compiler\target"
+          $functionalGate = Join-Path $env:RUNNER_TEMP "net_crypto_gate.py"
+
+          foreach ($backend in @("schannel", "mbedtls")) {
+            "=== WINDOWS BACKEND $backend ===" | Tee-Object -FilePath $log -Append
+            if (Test-Path $target) {
+              Remove-Item $target -Recurse -Force
+            }
+
+            $gateOutput = & $gate $backend 2>&1
+            $gateRc = $LASTEXITCODE
+            $gateOutput | Tee-Object -FilePath $log -Append
+            if ($gateRc -ne 0) {
+              throw "Windows-TLS-Backend-Gate fehlgeschlagen: backend=$backend rc=$gateRc"
+            }
+
+            $compiler = Join-Path $target "release\moo-compiler.exe"
+            if (!(Test-Path $compiler)) {
+              throw "Windows-Moo-Compiler fehlt nach Backend-Gate: $compiler"
+            }
+            $functionalOutput = & python $functionalGate $compiler $backend 2>&1
+            $functionalRc = $LASTEXITCODE
+            $functionalOutput | Tee-Object -FilePath $log -Append
+            if ($functionalRc -ne 0) {
+              throw "Windows-Funktionsgate fehlgeschlagen: backend=$backend rc=$functionalRc"
+            }
+          }
+
+      - name: Run POSIX TLS backend and self-contained matrix
+        if: matrix.os != 'windows-latest'
         shell: bash
         run: |
           set -euo pipefail
           LOG="net-crypto-${{ runner.os }}.log"
           {
-            if [[ "${{ runner.os }}" == "Windows" ]]; then
-              for backend in schannel mbedtls; do
-                echo "=== WINDOWS BACKEND $backend ==="
-                rm -rf compiler/target
-                cmd.exe /d /c "scripts\\windows_tls_backend_gate.cmd $backend"
-                test -f compiler/target/release/moo-compiler.exe
-                python "$RUNNER_TEMP/net_crypto_gate.py" \
-                  compiler/target/release/moo-compiler.exe "$backend"
-              done
-            else
-              for backend in openssl mbedtls; do
-                echo "=== ${{ runner.os }} BACKEND $backend ==="
-                export CARGO_TARGET_DIR="$RUNNER_TEMP/moo-target-$backend"
-                rm -rf "$CARGO_TARGET_DIR"
-                MOO_TLS_BACKEND="$backend" cargo build \
-                  --release \
-                  --no-default-features \
-                  --manifest-path "$GITHUB_WORKSPACE/compiler/Cargo.toml"
+            for backend in openssl mbedtls; do
+              echo "=== ${{ runner.os }} BACKEND $backend ==="
+              export CARGO_TARGET_DIR="$RUNNER_TEMP/moo-target-$backend"
+              rm -rf "$CARGO_TARGET_DIR"
+              MOO_TLS_BACKEND="$backend" cargo build \
+                --release \
+                --no-default-features \
+                --manifest-path "$GITHUB_WORKSPACE/compiler/Cargo.toml"
 
-                compiler="$CARGO_TARGET_DIR/release/moo-compiler"
-                runtime="$(find "$CARGO_TARGET_DIR/release/build" \
-                  -type f -path '*/out/libmoo_runtime.a' -print -quit)"
-                test -x "$compiler"
-                test -f "$runtime"
-                symbols="$RUNNER_TEMP/net-crypto-$backend-symbols.txt"
-                nm -A "$runtime" > "$symbols"
-                ! grep -q 'curl_easy_' "$symbols"
+              compiler="$CARGO_TARGET_DIR/release/moo-compiler"
+              runtime="$(find "$CARGO_TARGET_DIR/release/build" \
+                -type f -path '*/out/libmoo_runtime.a' -print -quit)"
+              test -x "$compiler"
+              test -f "$runtime"
+              symbols="$RUNNER_TEMP/net-crypto-$backend-symbols.txt"
+              nm -A "$runtime" > "$symbols"
+              ! grep -q 'curl_easy_' "$symbols"
 
-                if [[ "$backend" == "openssl" ]]; then
-                  grep -q 'SSL_connect' "$symbols"
-                  grep -q 'SSL_read' "$symbols"
-                  grep -q 'SSL_write' "$symbols"
-                  ! grep -q 'mbedtls_ssl_handshake' "$symbols"
-                else
-                  grep -q 'mbedtls_ssl_handshake' "$symbols"
-                  grep -q 'mbedtls_ssl_read' "$symbols"
-                  grep -q 'mbedtls_ssl_write' "$symbols"
-                  ! grep -q 'SSL_connect' "$symbols"
-                fi
+              if [[ "$backend" == "openssl" ]]; then
+                grep -q 'SSL_connect' "$symbols"
+                grep -q 'SSL_read' "$symbols"
+                grep -q 'SSL_write' "$symbols"
+                ! grep -q 'mbedtls_ssl_handshake' "$symbols"
+              else
+                grep -q 'mbedtls_ssl_handshake' "$symbols"
+                grep -q 'mbedtls_ssl_read' "$symbols"
+                grep -q 'mbedtls_ssl_write' "$symbols"
+                ! grep -q 'SSL_connect' "$symbols"
+              fi
 
-                python "$RUNNER_TEMP/net_crypto_gate.py" "$compiler" "$backend"
-                echo "NET-CRYPTO BACKEND PASS backend=$backend os=${{ runner.os }}"
-              done
-            fi
+              python "$RUNNER_TEMP/net_crypto_gate.py" "$compiler" "$backend"
+              echo "NET-CRYPTO BACKEND PASS backend=$backend os=${{ runner.os }}"
+            done
           } 2>&1 | tee "$LOG"
 
       - name: Upload net/crypto log
