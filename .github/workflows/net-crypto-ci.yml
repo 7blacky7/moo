@@ -1,0 +1,399 @@
+name: Net Crypto CI
+
+# Harter, self-contained Drei-OS-Beweis fuer Krypto, TLS-Backend-Wiring,
+# nativen HTTP/1.1-Client und Web-Server-Vertraege. Echte Internet-Endpunkte
+# sind bewusst kein Pflichtgate: Backend-Identitaet wird am statischen
+# Runtime-Archiv bewiesen (nm bzw. dumpbin), Funktionalitaet ueber lokale
+# Loopback-Tests. Dadurch bleiben Push-/PR-Laeufe reproduzierbar.
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "compiler/runtime/moo_crypto.c"
+      - "compiler/runtime/moo_aes_native.c"
+      - "compiler/runtime/moo_http.c"
+      - "compiler/runtime/moo_net.c"
+      - "compiler/runtime/moo_net_compat.h"
+      - "compiler/runtime/moo_tls*.c"
+      - "compiler/runtime/moo_tls*.h"
+      - "compiler/runtime/moo_web.c"
+      - "compiler/runtime/mbedtls/**"
+      - "compiler/tests/test_crypto.moos"
+      - "compiler/tests/test_http_with_headers_*.moos"
+      - "compiler/tests/test_http_with_headers_server.expected"
+      - "beispiele/http_native_selftest.moos"
+      - "beispiele/windows_tls_smoke.moos"
+      - "scripts/windows_tls_build.cmd"
+      - "scripts/windows_tls_backend_gate.cmd"
+      - "compiler/build.rs"
+      - "compiler/src/main.rs"
+      - "compiler/Cargo.toml"
+      - "compiler/Cargo.lock"
+      - ".github/workflows/net-crypto-ci.yml"
+  pull_request:
+    paths:
+      - "compiler/runtime/moo_crypto.c"
+      - "compiler/runtime/moo_aes_native.c"
+      - "compiler/runtime/moo_http.c"
+      - "compiler/runtime/moo_net.c"
+      - "compiler/runtime/moo_net_compat.h"
+      - "compiler/runtime/moo_tls*.c"
+      - "compiler/runtime/moo_tls*.h"
+      - "compiler/runtime/moo_web.c"
+      - "compiler/runtime/mbedtls/**"
+      - "compiler/tests/test_crypto.moos"
+      - "compiler/tests/test_http_with_headers_*.moos"
+      - "compiler/tests/test_http_with_headers_server.expected"
+      - "beispiele/http_native_selftest.moos"
+      - "beispiele/windows_tls_smoke.moos"
+      - "scripts/windows_tls_build.cmd"
+      - "scripts/windows_tls_backend_gate.cmd"
+      - "compiler/build.rs"
+      - "compiler/src/main.rs"
+      - "compiler/Cargo.toml"
+      - "compiler/Cargo.lock"
+      - ".github/workflows/net-crypto-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: net-crypto-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  net-crypto:
+    name: ${{ matrix.os }} / TLS+Krypto+HTTP+Web
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: windows-latest
+          - os: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Python runtime
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ubuntu net/crypto dependencies
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-18 llvm-18-dev libpolly-18-dev libclang-18-dev \
+            libsdl2-dev libsdl2-image-dev libsqlite3-dev libssl-dev \
+            pkg-config binutils
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> "$GITHUB_ENV"
+          echo "CC=clang-18" >> "$GITHUB_ENV"
+
+      - name: Install Windows LLVM and SQLite
+        if: matrix.os == 'windows-latest'
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: moo-llvm
+          create-args: >-
+            -c conda-forge
+            llvmdev=18.1.*
+            clangdev=18.1.*
+            lld=18.1.*
+            sqlite
+            zstd
+            zlib
+            libxml2
+            libxml2-devel
+          cache-environment: true
+
+      - name: Configure MSVC developer environment
+        if: matrix.os == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure Windows native TLS toolchain
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $condaPrefix = $env:CONDA_PREFIX
+          if (!$condaPrefix) {
+            $condaPrefix = Join-Path $env:MAMBA_ROOT_PREFIX "envs\moo-llvm"
+          }
+          if (!(Test-Path $condaPrefix)) {
+            throw "moo-llvm conda environment fehlt: $condaPrefix"
+          }
+
+          $llvmRoot = Join-Path $condaPrefix "Library"
+          $llvmBin = Join-Path $llvmRoot "bin"
+          $llvmLib = Join-Path $llvmRoot "lib"
+          $llvmInclude = Join-Path $llvmRoot "include"
+          $llvmConfig = Join-Path $llvmBin "llvm-config.exe"
+          $clang = Join-Path $llvmBin "clang.exe"
+          $lld = Join-Path $llvmBin "lld-link.exe"
+          $sqliteHeader = Join-Path $llvmInclude "sqlite3.h"
+          $sqliteLib = Join-Path $llvmLib "sqlite3.lib"
+
+          foreach ($required in @($llvmConfig, $clang, $lld)) {
+            if (!(Test-Path $required)) {
+              throw "LLVM-Pflichtdatei fehlt: $required"
+            }
+          }
+
+          if (!(Test-Path $sqliteHeader) -or !(Test-Path $sqliteLib)) {
+            vcpkg install --triplet x64-windows sqlite3
+            $vcpkgRoot = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-windows"
+            New-Item -ItemType Directory -Force -Path $llvmInclude, $llvmLib, $llvmBin | Out-Null
+            Copy-Item (Join-Path $vcpkgRoot "include\sqlite3.h") $sqliteHeader -Force
+            Copy-Item (Join-Path $vcpkgRoot "lib\sqlite3.lib") $sqliteLib -Force
+            $sqliteDll = Join-Path $vcpkgRoot "bin\sqlite3.dll"
+            if (Test-Path $sqliteDll) {
+              Copy-Item $sqliteDll (Join-Path $llvmBin "sqlite3.dll") -Force
+            }
+          }
+          foreach ($required in @($sqliteHeader, $sqliteLib)) {
+            if (!(Test-Path $required)) {
+              throw "SQLite-Pflichtdatei fehlt: $required"
+            }
+          }
+
+          foreach ($pair in @(@("zstd.lib", "zstd.dll.lib"), @("zlib.lib", "z.dll.lib"))) {
+            $source = Join-Path $llvmLib $pair[0]
+            $target = Join-Path $llvmLib $pair[1]
+            if ((Test-Path $source) -and !(Test-Path $target)) {
+              Copy-Item $source $target
+            }
+          }
+
+          $vcvars = Join-Path $env:VSINSTALLDIR "VC\Auxiliary\Build\vcvars64.bat"
+          $cargoHome = $env:CARGO_HOME
+          if (!$cargoHome) {
+            $cargoHome = Join-Path $env:USERPROFILE ".cargo"
+          }
+          $cargo = Join-Path $cargoHome "bin\cargo.exe"
+          $msvcBin = Join-Path $env:VCToolsInstallDir "bin\HostX64\x64"
+          $msvcLink = Join-Path $msvcBin "link.exe"
+          foreach ($required in @($vcvars, $cargo, $msvcLink)) {
+            if (!(Test-Path $required)) {
+              throw "Windows-Toolchain-Pflichtdatei fehlt: $required"
+            }
+          }
+
+          "MOO_WIN_VCVARS=$vcvars" >> $env:GITHUB_ENV
+          "MOO_WIN_LLVM_ROOT=$llvmRoot" >> $env:GITHUB_ENV
+          "CARGO_HOME=$cargoHome" >> $env:GITHUB_ENV
+          "LLVM_SYS_181_PREFIX=$llvmRoot" >> $env:GITHUB_ENV
+          "LIBCLANG_PATH=$llvmBin" >> $env:GITHUB_ENV
+          "MOO_CLANG=$clang" >> $env:GITHUB_ENV
+          "MOO_LLD=$lld" >> $env:GITHUB_ENV
+          "INCLUDE=$llvmInclude;$env:INCLUDE" >> $env:GITHUB_ENV
+          "LIB=$llvmLib;$env:LIB" >> $env:GITHUB_ENV
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$msvcLink" >> $env:GITHUB_ENV
+          $llvmBin >> $env:GITHUB_PATH
+          $msvcBin >> $env:GITHUB_PATH
+          & $llvmConfig --version
+          & $clang --version
+
+      - name: Install macOS net/crypto dependencies
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          brew update
+          brew install llvm@18 sdl2 sdl2_image openssl@3 sqlite
+          LLVM_PREFIX="$(brew --prefix llvm@18)"
+          SDL2_PREFIX="$(brew --prefix sdl2)"
+          SDL2_IMAGE_PREFIX="$(brew --prefix sdl2_image)"
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          SQLITE_PREFIX="$(brew --prefix sqlite)"
+          echo "LLVM_SYS_181_PREFIX=$LLVM_PREFIX" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=$LLVM_PREFIX/lib" >> "$GITHUB_ENV"
+          echo "CPATH=$SDL2_PREFIX/include:$SDL2_PREFIX/include/SDL2:$SDL2_IMAGE_PREFIX/include:$SDL2_IMAGE_PREFIX/include/SDL2:$OPENSSL_PREFIX/include:$SQLITE_PREFIX/include:${CPATH:-}" >> "$GITHUB_ENV"
+          echo "LIBRARY_PATH=$SDL2_PREFIX/lib:$SDL2_IMAGE_PREFIX/lib:$OPENSSL_PREFIX/lib:$SQLITE_PREFIX/lib:${LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$SDL2_PREFIX/lib/pkgconfig:$SDL2_IMAGE_PREFIX/lib/pkgconfig:$OPENSSL_PREFIX/lib/pkgconfig:$SQLITE_PREFIX/lib/pkgconfig:$LLVM_PREFIX/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$SDL2_PREFIX/include -I$SDL2_PREFIX/include/SDL2 -I$SDL2_IMAGE_PREFIX/include -I$SDL2_IMAGE_PREFIX/include/SDL2 -I$OPENSSL_PREFIX/include -I$SQLITE_PREFIX/include" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=$(sw_vers -productVersion | cut -d. -f1).0" >> "$GITHUB_ENV"
+          echo "CC=/usr/bin/clang" >> "$GITHUB_ENV"
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: net-crypto-${{ runner.os }}-${{ hashFiles('compiler/Cargo.lock', 'compiler/Cargo.toml', 'compiler/build.rs') }}
+          restore-keys: |
+            net-crypto-${{ runner.os }}-
+
+      - name: Prepare self-contained functional gate
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/net_crypto_gate.py" <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          root = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          compiler = Path(sys.argv[1]).resolve()
+          backend = sys.argv[2]
+          exe_suffix = ".exe" if os.name == "nt" else ""
+
+          if not compiler.is_file():
+              raise SystemExit(f"Compiler fehlt: {compiler}")
+
+          def run(command, timeout=180):
+              printable = " ".join(str(part) for part in command)
+              print(f"+ {printable}")
+              try:
+                  result = subprocess.run(
+                      [str(part) for part in command],
+                      cwd=root,
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.PIPE,
+                      text=True,
+                      encoding="utf-8",
+                      errors="replace",
+                      timeout=timeout,
+                  )
+              except subprocess.TimeoutExpired as error:
+                  raise SystemExit(f"Timeout nach {timeout}s: {printable}") from error
+              if result.returncode != 0:
+                  print(result.stdout)
+                  print(result.stderr, file=sys.stderr)
+                  raise SystemExit(f"Exit {result.returncode}: {printable}")
+              return result
+
+          with tempfile.TemporaryDirectory(prefix=f"moo-net-crypto-{backend}-") as temp_name:
+              temp = Path(temp_name)
+
+              def compile_source(relative_path, name):
+                  output = temp / f"{name}{exe_suffix}"
+                  run([compiler, "compile", root / relative_path, "-o", output])
+                  if not output.is_file():
+                      raise SystemExit(f"Kompilat fehlt: {output}")
+                  return output
+
+              crypto = compile_source("compiler/tests/test_crypto.moos", "crypto")
+              crypto_result = run([crypto])
+              crypto_lines = crypto_result.stdout.splitlines()
+              expected_crypto = [
+                  "d3751d33f9cd5049c4af2b462735457e4d3baf130bcbb87f389e349fbaeb20b9",
+                  None,
+                  "SGFsbG8gV2VsdA==",
+                  "Hallo Welt",
+                  "&lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt;",
+                  "''; DROP TABLE users; ",
+              ]
+              if len(crypto_lines) != len(expected_crypto):
+                  raise SystemExit(f"Krypto-Ausgabezeilen: erwartet 6, erhalten {len(crypto_lines)}")
+              if not re.fullmatch(r"[0-9a-f]{32}", crypto_lines[1]):
+                  raise SystemExit("sichere_zufall(16) lieferte keinen 32-stelligen Hexwert")
+              for index, expected in enumerate(expected_crypto):
+                  if expected is not None and crypto_lines[index] != expected:
+                      raise SystemExit(
+                          f"Krypto-Ausgabe Zeile {index + 1}: {crypto_lines[index]!r} != {expected!r}"
+                      )
+
+              compile_source(
+                  "compiler/tests/test_http_with_headers_client.moos",
+                  "http-client-contract",
+              )
+              server_contract = compile_source(
+                  "compiler/tests/test_http_with_headers_server.moos",
+                  "http-server-contract",
+              )
+              server_result = run([server_contract])
+              if server_result.stdout.strip() != "HTTP headers OK":
+                  raise SystemExit(f"HTTP-Server-Vertrag unerwartet: {server_result.stdout!r}")
+
+              http_native = compile_source(
+                  "beispiele/http_native_selftest.moos",
+                  "http-native-selftest",
+              )
+              http_result = run([http_native], timeout=45)
+              http_lines = http_result.stdout.splitlines()
+              if "HTTP-NATIVE SELFTEST PASS" not in http_lines:
+                  raise SystemExit(f"HTTP-E2E-Marker fehlt: {http_result.stdout!r}")
+              if any(line.startswith("FAIL ") for line in http_lines):
+                  raise SystemExit(f"HTTP-E2E enthielt FAIL: {http_result.stdout!r}")
+
+              compile_source(
+                  "beispiele/windows_tls_smoke.moos",
+                  "tls-public-contract",
+              )
+
+          print(f"NET-CRYPTO SELF-CONTAINED PASS backend={backend}")
+          PY
+          python -m py_compile "$RUNNER_TEMP/net_crypto_gate.py"
+
+      - name: Run TLS backend and self-contained matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOG="net-crypto-${{ runner.os }}.log"
+          {
+            if [[ "${{ runner.os }}" == "Windows" ]]; then
+              for backend in schannel mbedtls; do
+                echo "=== WINDOWS BACKEND $backend ==="
+                rm -rf compiler/target
+                cmd.exe /d /c "scripts\\windows_tls_backend_gate.cmd $backend"
+                test -f compiler/target/release/moo-compiler.exe
+                python "$RUNNER_TEMP/net_crypto_gate.py" \
+                  compiler/target/release/moo-compiler.exe "$backend"
+              done
+            else
+              for backend in openssl mbedtls; do
+                echo "=== ${{ runner.os }} BACKEND $backend ==="
+                export CARGO_TARGET_DIR="$RUNNER_TEMP/moo-target-$backend"
+                rm -rf "$CARGO_TARGET_DIR"
+                MOO_TLS_BACKEND="$backend" cargo build \
+                  --release \
+                  --no-default-features \
+                  --manifest-path "$GITHUB_WORKSPACE/compiler/Cargo.toml"
+
+                compiler="$CARGO_TARGET_DIR/release/moo-compiler"
+                runtime="$(find "$CARGO_TARGET_DIR/release/build" \
+                  -type f -path '*/out/libmoo_runtime.a' -print -quit)"
+                test -x "$compiler"
+                test -f "$runtime"
+                symbols="$RUNNER_TEMP/net-crypto-$backend-symbols.txt"
+                nm -A "$runtime" > "$symbols"
+                ! grep -q 'curl_easy_' "$symbols"
+
+                if [[ "$backend" == "openssl" ]]; then
+                  grep -q 'SSL_connect' "$symbols"
+                  grep -q 'SSL_read' "$symbols"
+                  grep -q 'SSL_write' "$symbols"
+                  ! grep -q 'mbedtls_ssl_handshake' "$symbols"
+                else
+                  grep -q 'mbedtls_ssl_handshake' "$symbols"
+                  grep -q 'mbedtls_ssl_read' "$symbols"
+                  grep -q 'mbedtls_ssl_write' "$symbols"
+                  ! grep -q 'SSL_connect' "$symbols"
+                fi
+
+                python "$RUNNER_TEMP/net_crypto_gate.py" "$compiler" "$backend"
+                echo "NET-CRYPTO BACKEND PASS backend=$backend os=${{ runner.os }}"
+              done
+            fi
+          } 2>&1 | tee "$LOG"
+
+      - name: Upload net/crypto log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: net-crypto-${{ runner.os }}-${{ github.run_attempt }}
+          path: net-crypto-${{ runner.os }}.log
+          if-no-files-found: warn
+          retention-days: 14
