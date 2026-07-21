@@ -46,6 +46,13 @@ beispiele/tests/*
 !compiler/tests/
 compiler/tests/*
 !compiler/tests/windows_linker_production_gate.ps1
+
+# Fuer CI-P2 net-crypto die getrackten Krypto-/HTTP-Testquellen indexieren.
+!compiler/tests/test_crypto.moos
+!compiler/tests/test_http_with_headers_client.moos
+!compiler/tests/test_http_with_headers_server.moos
+!compiler/tests/test_http_with_headers_server.expected
+
 !compiler/tests/run_all.sh
 !compiler/tests/leak_gates/
 compiler/tests/leak_gates/*
