@@ -270,8 +270,11 @@ jobs:
           Set-Content -Path $pwFile -Value "postgres" -NoNewline -Encoding ascii
           & (Join-Path $pgBin "initdb.exe") -D $pgData -U postgres --pwfile=$pwFile --auth-host=scram-sha-256 --auth-local=trust --encoding=UTF8
           if ($LASTEXITCODE -ne 0) { throw "initdb fuer Windows-Temp-Cluster fehlgeschlagen" }
-          & (Join-Path $pgBin "pg_ctl.exe") -D $pgData -l $pgLog -o '"-p 5432 -h 127.0.0.1"' start
-          if ($LASTEXITCODE -ne 0) { throw "pg_ctl start fuer Windows-Temp-Cluster fehlgeschlagen" }
+          & (Join-Path $pgBin "pg_ctl.exe") -D $pgData -l $pgLog -o "-p 5432 -h 127.0.0.1" start
+          if ($LASTEXITCODE -ne 0) {
+            if (Test-Path $pgLog) { Get-Content $pgLog }
+            throw "pg_ctl start fuer Windows-Temp-Cluster fehlgeschlagen"
+          }
 
           $ready = $false
           for ($i = 0; $i -lt 60; $i++) {
