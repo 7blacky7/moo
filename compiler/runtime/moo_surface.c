@@ -266,6 +266,17 @@ MooValue moo_surface_line(MooValue value, MooValue x0, MooValue y0,
     return moo_bool(ok && moo_surface_guards_ok(surface));
 }
 
+/* Codepoint -> Font-Tabellen-Index: 32..255 direkt, typografische
+ * Extra-Slots via moo_font_aa_extra_cp, sonst '?'. */
+static uint32_t moo_font_aa_index(uint32_t cp) {
+    if (cp >= (uint32_t)MOO_FONT_AA_FIRST && cp <= 255u)
+        return cp - (uint32_t)MOO_FONT_AA_FIRST;
+    for (uint32_t i = 0; i < (uint32_t)MOO_FONT_AA_EXTRA; ++i)
+        if ((uint32_t)moo_font_aa_extra_cp[i] == cp)
+            return (256u - (uint32_t)MOO_FONT_AA_FIRST) + i;
+    return (uint32_t)'?' - (uint32_t)MOO_FONT_AA_FIRST;
+}
+
 /* Text mit eingebettetem Antialiasing-Font (moo_font_aa.h, ASCII 32..126,
  * Graustufen-Alpha wie ClearType) in die Surface zeichnen. Unbekannte
  * Zeichen rendern als '?', '\n' bricht um. skala vergroessert blockweise;
@@ -317,12 +328,10 @@ MooValue moo_surface_text(MooValue value, MooValue x, MooValue y,
                 cp = (uint32_t)'?';
             }
         }
-        if (cp < (uint32_t)MOO_FONT_AA_FIRST ||
-            cp >= (uint32_t)MOO_FONT_AA_FIRST + (uint32_t)MOO_FONT_AA_COUNT)
-            cp = (uint32_t)'?';
-        const uint8_t* glyph = moo_font_aa[cp - (uint32_t)MOO_FONT_AA_FIRST];
-        int64_t advance =
-            (int64_t)moo_font_aa_adv[cp - (uint32_t)MOO_FONT_AA_FIRST] * isk;
+        if (cp < (uint32_t)MOO_FONT_AA_FIRST) cp = (uint32_t)'?';
+        uint32_t gidx = moo_font_aa_index(cp);
+        const uint8_t* glyph = moo_font_aa[gidx];
+        int64_t advance = (int64_t)moo_font_aa_adv[gidx] * isk;
         for (int32_t gy = 0; gy < MOO_FONT_AA_H; ++gy) {
             for (int32_t gx = 0; gx < MOO_FONT_AA_W; ++gx) {
                 uint32_t cov = glyph[gy * MOO_FONT_AA_W + gx];
@@ -381,16 +390,16 @@ MooValue moo_surface_text_breite(MooValue text, MooValue skala) {
             } else if ((c & 0xF0u) == 0xE0u && i + 2 < len &&
                        ((unsigned char)s[i + 1] & 0xC0u) == 0x80u &&
                        ((unsigned char)s[i + 2] & 0xC0u) == 0x80u) {
-                cp2 = (uint32_t)'?';
+                cp2 = ((uint32_t)(c & 0x0Fu) << 12) |
+                      (((unsigned char)s[i + 1] & 0x3Fu) << 6) |
+                      ((unsigned char)s[i + 2] & 0x3Fu);
                 i += 2;
             } else {
                 cp2 = (uint32_t)'?';
             }
         }
-        if (cp2 < (uint32_t)MOO_FONT_AA_FIRST ||
-            cp2 >= (uint32_t)MOO_FONT_AA_FIRST + (uint32_t)MOO_FONT_AA_COUNT)
-            cp2 = (uint32_t)'?';
-        zeile += (int64_t)moo_font_aa_adv[cp2 - (uint32_t)MOO_FONT_AA_FIRST];
+        if (cp2 < (uint32_t)MOO_FONT_AA_FIRST) cp2 = (uint32_t)'?';
+        zeile += (int64_t)moo_font_aa_adv[moo_font_aa_index(cp2)];
     }
     if (zeile > max_zeile) max_zeile = zeile;
     return moo_number((double)(max_zeile * isk));

@@ -16,17 +16,20 @@ from PIL import Image, ImageDraw, ImageFont
 PX = 16
 FIRST = 32
 LAST = 255  # inklusiv
+# Typografische Extras jenseits Latin-1 (Slots nach 255): – — ‘ ’ “ ” „ … €
+EXTRA = [0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D, 0x201E, 0x2026, 0x20AC]
 FONT_PFAD = sys.argv[1] if len(sys.argv) > 1 else "/usr/share/fonts/TTF/DejaVuSans.ttf"
 
 font = ImageFont.truetype(FONT_PFAD, PX)
 ascent, descent = font.getmetrics()
 H = ascent + descent
-COUNT = LAST - FIRST + 1
+COUNT = LAST - FIRST + 1 + len(EXTRA)
+CPS = list(range(FIRST, LAST + 1)) + EXTRA
 
 # Proportional: per-Glyph-Advance; Zelle = Maximum aus Ink und Advance.
 advances = []
 ink_w = []
-for cp in range(FIRST, LAST + 1):
+for cp in CPS:
     ch = chr(cp)
     if 127 <= cp <= 159:
         ch = " "
@@ -49,11 +52,14 @@ zeilen.append("#define MOO_FONT_AA_W %d" % W)
 zeilen.append("#define MOO_FONT_AA_H %d" % H)
 zeilen.append("#define MOO_FONT_AA_FIRST %d" % FIRST)
 zeilen.append("#define MOO_FONT_AA_COUNT %d" % COUNT)
+zeilen.append("#define MOO_FONT_AA_EXTRA %d" % len(EXTRA))
+zeilen.append("/* Codepoints der Extra-Slots (Index 224..): typografische Zeichen. */")
+zeilen.append("static const uint16_t moo_font_aa_extra_cp[%d] = {%s};" % (len(EXTRA), ",".join(str(c) for c in EXTRA)))
 zeilen.append("/* Advance pro Glyph in Pixeln (proportional). */")
 zeilen.append("static const uint8_t moo_font_aa_adv[%d] = {%s};" % (COUNT, ",".join(str(a) for a in advances)))
 zeilen.append("static const uint8_t moo_font_aa[%d][%d] = {" % (COUNT, W * H))
 
-for cp in range(FIRST, LAST + 1):
+for cp in CPS:
     img = Image.new("L", (W, H), 0)
     d = ImageDraw.Draw(img)
     ch = chr(cp)

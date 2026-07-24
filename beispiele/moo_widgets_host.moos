@@ -12,8 +12,8 @@ setze k auf uimh_fenster_csd("MOO GLASS WIDGETS", 560, 540)
 wenn k == nichts:
     wirf "Host-Fenster fehlgeschlagen (kein Backend / kein Display?)"
 
-# Titelleiste ist 32px hoch — Inhalt darunter.
-setze OY auf 44
+# Titelleiste (40px) + Menueleiste (26px) — Inhalt darunter.
+setze OY auf 76
 
 funktion on_knopf(w):
     zeige "KNOPF-KLICK"
@@ -41,6 +41,21 @@ funktion on_combo(w, idx):
 funktion on_liste(w, idx):
     zeige "LISTE " + text(idx)
     gib_zurück wahr
+
+funktion on_menue(p):
+    zeige "MENUE: " + p["text"]
+    gib_zurück wahr
+
+funktion on_menue_beenden(p):
+    zeige "MENUE: Beenden"
+    host_beenden()
+    gib_zurück wahr
+
+# Menueleiste direkt unter der Titelleiste (NATIVE-UI-11)
+setze m_datei auf uim_menue("Datei", [uim_menue_punkt("Neu", on_menue), uim_menue_punkt("Öffnen…", on_menue), uim_menue_punkt("Speichern", on_menue), uim_menue_trenner(), uim_menue_punkt("Beenden", on_menue_beenden)])
+setze m_bearb auf uim_menue("Bearbeiten", [uim_menue_punkt("Rückgängig", on_menue), uim_menue_punkt("Wiederholen", on_menue), uim_menue_trenner(), uim_menue_punkt("Ausschneiden", on_menue), uim_menue_punkt("Kopieren", on_menue), uim_menue_punkt("Einfügen", on_menue)])
+setze m_hilfe auf uim_menue("Hilfe", [uim_menue_punkt("Über moo…", on_menue)])
+uim_hinzu(k, uim_menueleiste(0, 40, 560, 26, [m_datei, m_bearb, m_hilfe]))
 
 uim_hinzu(k, uim_label("Aero Glass Widgets — Türöffner äöü ÄÖÜ ß nativ!", 24, OY, 480, 18))
 uim_hinzu(k, uim_separator(24, OY + 22, 512))

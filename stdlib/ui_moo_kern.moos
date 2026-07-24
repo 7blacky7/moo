@@ -914,6 +914,49 @@ funktion _uim_liste_klick(kontext, w, ly):
 funktion _uim_kern_maus(kontext, x, y, taste):
     wenn taste != 1:
         gib_zurück falsch
+    # Offenes Menue liegt z-oberst und faengt Klicks als Erstes ab.
+    wenn kontext.enthält("menue_offen") und kontext["menue_offen"] != nichts:
+        setze mw auf kontext["menue_offen"]
+        setze mr auf nichts
+        wenn kontext.enthält("menue_rect"):
+            setze mr auf kontext["menue_rect"]
+        wenn mr != nichts und x >= mr["x"] und x < mr["x"] + mr["b"] und y >= mr["y"] und y < mr["y"] + mr["h"]:
+            setze punkte auf mw["eintraege"][mw["offen"]]["punkte"]
+            setze zh auf _uim_zeilenhoehe(kontext)
+            setze py auf mr["y"]
+            setze i auf 0
+            solange i < länge(punkte):
+                setze ph auf zh
+                wenn punkte[i]["typ"] == "trenner":
+                    setze ph auf boden(zh / 2)
+                wenn y >= py und y < py + ph:
+                    wenn punkte[i]["typ"] == "punkt":
+                        setze pcb auf punkte[i]["cb"]
+                        setze pw auf punkte[i]
+                        _uim_menue_schliessen(kontext)
+                        wenn pcb != nichts:
+                            pcb(pw)
+                        _uim_anfordern(kontext)
+                    gib_zurück wahr
+                setze py auf py + ph
+                setze i auf i + 1
+            gib_zurück wahr
+        # Klick auf die Leiste: Toggle bzw. Titel-Wechsel.
+        setze mu auf nichts
+        wenn kontext.enthält("menue_urspr"):
+            setze mu auf kontext["menue_urspr"]
+        wenn mu != nichts und x >= mu["x"] und x < mu["x"] + mw["b"] und y >= mu["y"] und y < mu["y"] + mw["h"]:
+            setze mti auf _uim_menue_titel_bei(kontext, mw, x - mu["x"])
+            wenn mti != nichts und mti["idx"] != mw["offen"]:
+                mw["offen"] = mti["idx"]
+                kontext["menue_hover"] = 0 - 1
+            sonst:
+                _uim_menue_schliessen(kontext)
+            _uim_anfordern(kontext)
+            gib_zurück wahr
+        _uim_menue_schliessen(kontext)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
     # Offenes Combobox-Dropdown liegt z-oberst und fängt Klicks VOR dem
     # regulären Hit-Test ab (das Overlay ragt über die Widget-Bounds).
     wenn kontext.enthält("combo_offen") und kontext["combo_offen"] != nichts:
@@ -986,6 +1029,12 @@ funktion _uim_kern_maus(kontext, x, y, taste):
             wenn w["typ"] == "combobox":
                 w["offen"] = wahr
                 kontext["combo_offen"] = w
+            wenn w["typ"] == "menueleiste":
+                setze mti2 auf _uim_menue_titel_bei(kontext, w, tref["lx"] - w["x"])
+                wenn mti2 != nichts:
+                    w["offen"] = mti2["idx"]
+                    kontext["menue_offen"] = w
+                    kontext["menue_hover"] = 0 - 1
     _uim_anfordern(kontext)
     gib_zurück wahr
 
@@ -1013,6 +1062,40 @@ funktion _uim_kern_maus_los(kontext, x, y, taste):
     gib_zurück wahr
 
 funktion _uim_kern_bewegung(kontext, x, y):
+    # Offenes Menue: Punkt-Hover + klassischer Titel-Wechsel bei Hover.
+    wenn kontext.enthält("menue_offen") und kontext["menue_offen"] != nichts:
+        setze mw auf kontext["menue_offen"]
+        setze mr auf nichts
+        wenn kontext.enthält("menue_rect"):
+            setze mr auf kontext["menue_rect"]
+        wenn mr != nichts und x >= mr["x"] und x < mr["x"] + mr["b"] und y >= mr["y"] und y < mr["y"] + mr["h"]:
+            setze punkte auf mw["eintraege"][mw["offen"]]["punkte"]
+            setze zh auf _uim_zeilenhoehe(kontext)
+            setze py auf mr["y"]
+            setze i auf 0
+            setze hov_idx auf 0 - 1
+            solange i < länge(punkte):
+                setze ph auf zh
+                wenn punkte[i]["typ"] == "trenner":
+                    setze ph auf boden(zh / 2)
+                wenn y >= py und y < py + ph und punkte[i]["typ"] == "punkt":
+                    setze hov_idx auf i
+                setze py auf py + ph
+                setze i auf i + 1
+            wenn kontext.enthält("menue_hover") == falsch oder hov_idx != kontext["menue_hover"]:
+                kontext["menue_hover"] = hov_idx
+                _uim_anfordern(kontext)
+            gib_zurück wahr
+        setze mu auf nichts
+        wenn kontext.enthält("menue_urspr"):
+            setze mu auf kontext["menue_urspr"]
+        wenn mu != nichts und x >= mu["x"] und x < mu["x"] + mw["b"] und y >= mu["y"] und y < mu["y"] + mw["h"]:
+            setze mti auf _uim_menue_titel_bei(kontext, mw, x - mu["x"])
+            wenn mti != nichts und mti["idx"] != mw["offen"]:
+                mw["offen"] = mti["idx"]
+                kontext["menue_hover"] = 0 - 1
+                _uim_anfordern(kontext)
+            gib_zurück wahr
     # Aktiver Capture hat Vorrang vor Hover; Eltern-lokale Koordinaten
     # entstehen aus dem beim Press gemerkten globalen Offset.
     setze p auf kontext["druck"]
@@ -1049,6 +1132,10 @@ funktion _uim_kern_bewegung(kontext, x, y):
     gib_zurück wahr
 
 funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
+    wenn gedrueckt und taste == "Escape" und kontext.enthält("menue_offen") und kontext["menue_offen"] != nichts:
+        _uim_menue_schliessen(kontext)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
     wenn gedrueckt == falsch:
         gib_zurück falsch
     wenn taste == "Tab":
@@ -1595,6 +1682,108 @@ funktion _uim_z_combobox(kontext, z, w, ox, oy):
         kontext["combo_offen"] = w
     gib_zurück wahr
 
+# Menueleisten-Zeichner (NATIVE-UI-11): Titel nebeneinander, offener
+# Titel akzent-hinterlegt; Dropdown-Geometrie wird pro Frame frisch in
+# kontext[menue_rect]/[menue_urspr] gelegt (Overlay-Muster wie Combobox).
+funktion _uim_z_menueleiste(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_farbe(kontext, z, t["flaeche"])
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], wahr)
+    wenn _uim_glass_an(t):
+        _uim_glass_deko(kontext, z, ax, ay, w["b"], w["h"], 2)
+    setze mu auf {}
+    mu["x"] = ax
+    mu["y"] = ay
+    kontext["menue_urspr"] = mu
+    setze zh auf _uim_zeilenhoehe(kontext)
+    setze cx auf ax
+    setze i auf 0
+    solange i < länge(w["eintraege"]):
+        setze e auf w["eintraege"][i]
+        setze tb auf _uim_menue_titel_breite(kontext, t, e)
+        wenn i == w["offen"]:
+            _uim_farbe(kontext, z, t["akzent"])
+            _uim_zf_rechteck(kontext, z, cx, ay + 1, tb, w["h"] - 2, wahr)
+            wenn t.enthält("auswahl_text"):
+                _uim_farbe(kontext, z, t["auswahl_text"])
+            sonst:
+                _uim_farbe(kontext, z, t["hintergrund"])
+        sonst:
+            _uim_farbe(kontext, z, t["text"])
+        setze ty auf ay + (w["h"] - t["schrift"]) / 2 - 1
+        _uim_zf_text(kontext, z, cx + t["abstand"], ty, e["titel"], t["schrift"])
+        wenn i == w["offen"]:
+            setze punkte auf e["punkte"]
+            setze db auf 140
+            setze dh auf 0
+            setze j auf 0
+            solange j < länge(punkte):
+                wenn punkte[j]["typ"] == "trenner":
+                    setze dh auf dh + boden(zh / 2)
+                sonst:
+                    setze dh auf dh + zh
+                    setze pb auf _uim_zf_text_breite(kontext, nichts, punkte[j]["text"], t["schrift"]) + 2 * t["abstand"]
+                    wenn pb > db:
+                        setze db auf pb
+                setze j auf j + 1
+            setze rect auf {}
+            rect["x"] = cx
+            rect["y"] = ay + w["h"]
+            rect["b"] = db
+            rect["h"] = dh
+            kontext["menue_rect"] = rect
+        setze cx auf cx + tb
+        setze i auf i + 1
+    gib_zurück wahr
+
+funktion _uim_z_menue_overlay(kontext, z):
+    wenn kontext.enthält("menue_offen") == falsch:
+        gib_zurück wahr
+    setze mw auf kontext["menue_offen"]
+    wenn mw == nichts oder mw["offen"] < 0:
+        gib_zurück wahr
+    setze r auf kontext["menue_rect"]
+    wenn r == nichts:
+        gib_zurück wahr
+    setze t auf kontext["theme"]
+    setze zh auf _uim_zeilenhoehe(kontext)
+    setze punkte auf mw["eintraege"][mw["offen"]]["punkte"]
+    wenn _uim_glass_an(t):
+        _uim_farbe(kontext, z, [16, 26, 46, 235])
+    sonst:
+        _uim_farbe(kontext, z, t["flaeche"])
+    _uim_zf_rechteck(kontext, z, r["x"], r["y"], r["b"], r["h"], wahr)
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck(kontext, z, r["x"], r["y"], r["b"], r["h"], falsch)
+    setze hover auf 0 - 1
+    wenn kontext.enthält("menue_hover"):
+        setze hover auf kontext["menue_hover"]
+    setze py auf r["y"]
+    setze i auf 0
+    solange i < länge(punkte):
+        setze p auf punkte[i]
+        wenn p["typ"] == "trenner":
+            setze ph auf boden(zh / 2)
+            _uim_farbe(kontext, z, t["rand"])
+            _uim_zf_linie(kontext, z, r["x"] + 6, py + boden(ph / 2), r["x"] + r["b"] - 6, py + boden(ph / 2), 1)
+            setze py auf py + ph
+        sonst:
+            wenn i == hover:
+                _uim_farbe(kontext, z, t["akzent"])
+                _uim_zf_rechteck(kontext, z, r["x"] + 1, py, r["b"] - 2, zh, wahr)
+                wenn t.enthält("auswahl_text"):
+                    _uim_farbe(kontext, z, t["auswahl_text"])
+                sonst:
+                    _uim_farbe(kontext, z, t["hintergrund"])
+            sonst:
+                _uim_farbe(kontext, z, t["text"])
+            _uim_zf_text(kontext, z, r["x"] + t["abstand"], py + (zh - t["schrift"]) / 2, p["text"], t["schrift"])
+            setze py auf py + zh
+        setze i auf i + 1
+    gib_zurück wahr
+
 funktion _uim_z_combo_overlay(kontext, z):
     wenn kontext.enthält("combo_offen") == falsch:
         gib_zurück wahr
@@ -1664,6 +1853,8 @@ funktion _uim_zeichne_widget(kontext, z, w, ox, oy):
         gib_zurück _uim_z_textfeld(kontext, z, w, ox, oy)
     wenn w["typ"] == "combobox":
         gib_zurück _uim_z_combobox(kontext, z, w, ox, oy)
+    wenn w["typ"] == "menueleiste":
+        gib_zurück _uim_z_menueleiste(kontext, z, w, ox, oy)
     wenn w["typ"] == "eigen":
         wenn w.enthält("on_zeichne") == falsch:
             gib_zurück falsch
@@ -1696,6 +1887,7 @@ funktion _uim_kern_zeichne(kontext, z):
     für w in wurzel["kinder"]:
         setze ok auf _uim_zeichne_widget(kontext, z, w, 0, 0) und ok
     setze ok auf _uim_z_combo_overlay(kontext, z) und ok
+    setze ok auf _uim_z_menue_overlay(kontext, z) und ok
     gib_zurück ok
 
 
@@ -1963,6 +2155,64 @@ funktion uim_liste(x, y, b, h, zeilen, on_auswahl):
     w["on_auswahl"] = on_auswahl
     w["fokussierbar"] = wahr
     gib_zurück w
+
+# ------------------------------------------------------------
+# Menueleiste (NATIVE-UI-11): klassisches Datei/Bearbeiten-Menue.
+# eintraege = Liste von uim_menue(titel, punkte);
+# punkte = Liste von uim_menue_punkt(text, cb) / uim_menue_trenner().
+# ------------------------------------------------------------
+funktion uim_menue_punkt(text, cb):
+    setze p auf {}
+    p["typ"] = "punkt"
+    p["text"] = text
+    p["cb"] = cb
+    gib_zurück p
+
+funktion uim_menue_trenner():
+    setze p auf {}
+    p["typ"] = "trenner"
+    p["text"] = ""
+    gib_zurück p
+
+funktion uim_menue(titel, punkte):
+    setze e auf {}
+    e["titel"] = titel
+    e["punkte"] = punkte
+    gib_zurück e
+
+funktion uim_menueleiste(x, y, b, h, eintraege):
+    setze w auf _uim_basis("menueleiste", x, y, b, h)
+    w["eintraege"] = eintraege
+    w["offen"] = 0 - 1
+    gib_zurück w
+
+funktion _uim_menue_titel_breite(kontext, t, eintrag):
+    gib_zurück _uim_zf_text_breite(kontext, nichts, eintrag["titel"], t["schrift"]) + 2 * t["abstand"]
+
+# Titel unter widget-lokalem lx: {idx, x0, b} oder nichts.
+funktion _uim_menue_titel_bei(kontext, w, lx):
+    setze t auf kontext["theme"]
+    setze cx auf 0
+    setze i auf 0
+    solange i < länge(w["eintraege"]):
+        setze tb auf _uim_menue_titel_breite(kontext, t, w["eintraege"][i])
+        wenn lx >= cx und lx < cx + tb:
+            setze r auf {}
+            r["idx"] = i
+            r["x0"] = cx
+            r["b"] = tb
+            gib_zurück r
+        setze cx auf cx + tb
+        setze i auf i + 1
+    gib_zurück nichts
+
+funktion _uim_menue_schliessen(kontext):
+    wenn kontext.enthält("menue_offen") und kontext["menue_offen"] != nichts:
+        setze mw auf kontext["menue_offen"]
+        mw["offen"] = 0 - 1
+    kontext["menue_offen"] = nichts
+    kontext["menue_hover"] = 0 - 1
+    gib_zurück wahr
 
 # Toolkit-freies Mock-Framebuffer fuer Kernel-/Moo-OS- und Unit-Tests.
 # Textfeld: byte-basiertes Editieren mit UTF-8-Grenzen, Cursor via
