@@ -21,6 +21,17 @@ run = "bash compiler/tests/run_all.sh"
 description = "Run visual UI tests in the isolated harness"
 run = "bash scripts/ui-test-runner.sh"
 
+[tasks.test-ui-host-contract]
+description = "Host backend contract gate: vtable completeness + registry, toolkit-free (ASan+UBSan)"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-ui-host.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+CC="${CC:-cc}"
+"$CC" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -Icompiler/runtime compiler/runtime/tests/test_ui_host_contract.c compiler/runtime/moo_ui_host.c -o "$OUT/contract"
+ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 "$OUT/contract"
+'''
+
 [tasks.test-ui-moo-demo]
 description = "Run the ui_moo demo 20 times in the isolated harness"
 run = "bash scripts/ui-moo-demo-smoke.sh"

@@ -411,6 +411,47 @@ MooValue moo_ui_fenster_transparenz(MooValue fenster, MooValue einschalten) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Host-Backend-Vertrag (NATIVE-UI-4): GTK erfuellt MooUiHostOps.
+ * Reine Additive — die Tabelle zeigt auf die bestehenden Funktionen.
+ * Serial: GDK arbeitet mit GDK_CURRENT_TIME, kein Serial-Modell —
+ * Getter liefert 0, CAP_INPUT_SERIAL bewusst nicht gesetzt.
+ * ------------------------------------------------------------------ */
+#include "moo_ui_host.h"
+
+static uint32_t gtk_host_letztes_input_serial(MooValue fenster) {
+    (void)fenster;
+    return 0;
+}
+
+static const MooUiHostOps g_gtk_host_ops = {
+    .name = "gtk",
+    .capabilities = MOO_UI_HOST_CAP_TRANSPARENZ | MOO_UI_HOST_CAP_CSD_MOVE |
+                    MOO_UI_HOST_CAP_MINIMIEREN | MOO_UI_HOST_CAP_MAXIMIEREN |
+                    MOO_UI_HOST_CAP_POLL_DISPATCH,
+    .fenster = moo_ui_fenster,
+    .fenster_schliessen = moo_ui_fenster_schliessen,
+    .zeige = moo_ui_zeige,
+    .zeichne_frame = moo_ui_zeichne_frame,
+    .laufen = moo_ui_laufen,
+    .pump = moo_ui_pump,
+    .beenden = moo_ui_beenden,
+    .drag_start = moo_ui_fenster_drag_start,
+    .resize_start = moo_ui_fenster_resize_start,
+    .minimiere = moo_ui_fenster_minimiere,
+    .maximiere_umschalten = moo_ui_fenster_maximiere_umschalten,
+    .transparenz = moo_ui_fenster_transparenz,
+    .cursor_setze = moo_ui_fenster_cursor_setze,
+    .letztes_input_serial = gtk_host_letztes_input_serial,
+};
+
+const MooUiHostOps* moo_ui_host_gtk_ops(void) { return &g_gtk_host_ops; }
+
+__attribute__((constructor))
+static void gtk_host_selbstregistrierung(void) {
+    (void)moo_ui_host_registriere(&g_gtk_host_ops);
+}
+
+/* ------------------------------------------------------------------ *
  * Label + Knopf (Schritt 1: Smoke-Test-Basis)
  * ------------------------------------------------------------------ */
 

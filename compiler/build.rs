@@ -84,6 +84,7 @@ fn main() {
         .file("runtime/moo_web.c")
         .file("runtime/moo_eval.c")
         .file("runtime/moo_profiler.c")
+        .file("runtime/moo_ui_host.c")     // Host-Backend-Registry (NATIVE-UI-4, featureneutral, immer)
         .include("runtime")
         .opt_level(2)
         .flag_if_supported("-fPIC")
