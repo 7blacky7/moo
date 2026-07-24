@@ -217,6 +217,12 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_aes_encrypt: FunctionValue<'ctx>,
     pub moo_aes_decrypt: FunctionValue<'ctx>,
     pub moo_secure_random: FunctionValue<'ctx>,
+    // NETZK-4: HKDF, AEAD und X25519 auf binaersicheren Moo-Strings
+    pub moo_krypto_hkdf_api: FunctionValue<'ctx>,
+    pub moo_krypto_aead_encrypt_api: FunctionValue<'ctx>,
+    pub moo_krypto_aead_decrypt_api: FunctionValue<'ctx>,
+    pub moo_krypto_x25519_api: FunctionValue<'ctx>,
+    pub moo_krypto_x25519_public_api: FunctionValue<'ctx>,
     // === Tensor (Plan-014 A3) ===
     pub moo_tensor_neu: FunctionValue<'ctx>,
     pub moo_tensor_nullen: FunctionValue<'ctx>,
@@ -1057,6 +1063,11 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_aes_encrypt: decl_mv_mv!("moo_aes_encrypt", mv2),
             moo_aes_decrypt: decl_mv_mv!("moo_aes_decrypt", mv2),
             moo_secure_random: decl_mv_mv!("moo_secure_random", mv1),
+            moo_krypto_hkdf_api: decl_mv_mv!("moo_krypto_hkdf_api", &[mv, mv, mv, mv]),
+            moo_krypto_aead_encrypt_api: decl_mv_mv!("moo_krypto_aead_encrypt_api", &[mv, mv, mv, mv, mv]),
+            moo_krypto_aead_decrypt_api: decl_mv_mv!("moo_krypto_aead_decrypt_api", &[mv, mv, mv, mv, mv]),
+            moo_krypto_x25519_api: decl_mv_mv!("moo_krypto_x25519_api", mv2),
+            moo_krypto_x25519_public_api: decl_mv_mv!("moo_krypto_x25519_public_api", mv1),
             // === Tensor (Plan-014 A3) — Tensor-Konvention: Args borrowed,
             // Rueckgabe +1; die Codegen-Arms machen Post-Call-Release. ===
             moo_tensor_neu: decl_mv_mv!("moo_tensor_neu", mv2),

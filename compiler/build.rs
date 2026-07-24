@@ -51,6 +51,11 @@ fn main() {
         .file("runtime/moo_nn.c")           // NN-Schichten/Loss/Optimizer (Plan-014 C1, immer gebaut)
         .file("runtime/moo_contrastive.c")  // KI-MULTI-L1: Kosinus + InfoNCE-Komposition
         .file("runtime/moo_quant.c")        // KI-Q1: Hadamard-Rotation (Registry-Op) + QJL Sign-JL (inferenz-only)
+        .file("runtime/moo_krypto.c")       // NETZK-1: SHA-256/SHA-1/HMAC/HKDF (freestanding, getrennt vom KI-Zweig)
+        .file("runtime/moo_krypto_aes.c")   // NETZK-2: AES-128/256 + GCM + CCM (freestanding)
+        .file("runtime/moo_krypto_chacha.c") // NETZK-3: ChaCha20 + Poly1305 + AEAD (RFC 8439, freestanding)
+        .file("runtime/moo_krypto_x25519.c") // NETZK-3: X25519 Schluesselaustausch (RFC 7748, freestanding)
+        .file("runtime/moo_krypto_api.c")    // NETZK-4: binaersichere MooValue-API (HKDF/AEAD/X25519)
         .file("runtime/moo_nn_easy.c")      // Kinderleicht-API ki_netz/trainiere (Plan-014 D1, immer gebaut)
         .file("runtime/moo_dataset.c")      // Daten-Pipeline MNIST/CSV/PGM (Plan-014 E1, immer gebaut)
         .file("runtime/moo_tokenizer.c")    // Byte-level BPE-Tokenizer (KIP-T2, immer gebaut)

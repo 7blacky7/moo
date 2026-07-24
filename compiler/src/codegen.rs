@@ -3518,6 +3518,32 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_secure_random, &[arg.into()], "secure_random");
                     }
+                    // NETZK-4: Bytepuffer sind laengenmarkierte Moo-Strings.
+                    "hkdf_sha256" | "hkdf" => {
+                        let a = self.compile_expr(&args[0])?; let b = self.compile_expr(&args[1])?;
+                        let c = self.compile_expr(&args[2])?; let d = self.compile_expr(&args[3])?;
+                        return self.call_rt(self.rt.moo_krypto_hkdf_api, &[a.into(), b.into(), c.into(), d.into()], "hkdf_sha256");
+                    }
+                    "aead_verschluessle" | "aead_encrypt" => {
+                        let a = self.compile_expr(&args[0])?; let b = self.compile_expr(&args[1])?;
+                        let c = self.compile_expr(&args[2])?; let d = self.compile_expr(&args[3])?;
+                        let e = self.compile_expr(&args[4])?;
+                        return self.call_rt(self.rt.moo_krypto_aead_encrypt_api, &[a.into(), b.into(), c.into(), d.into(), e.into()], "aead_encrypt");
+                    }
+                    "aead_entschluessle" | "aead_decrypt" => {
+                        let a = self.compile_expr(&args[0])?; let b = self.compile_expr(&args[1])?;
+                        let c = self.compile_expr(&args[2])?; let d = self.compile_expr(&args[3])?;
+                        let e = self.compile_expr(&args[4])?;
+                        return self.call_rt(self.rt.moo_krypto_aead_decrypt_api, &[a.into(), b.into(), c.into(), d.into(), e.into()], "aead_decrypt");
+                    }
+                    "x25519" | "schluessel_tausch" => {
+                        let a = self.compile_expr(&args[0])?; let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_krypto_x25519_api, &[a.into(), b.into()], "x25519");
+                    }
+                    "x25519_oeffentlich" | "x25519_public" => {
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_krypto_x25519_public_api, &[a.into()], "x25519_public");
+                    }
                     "base64_encode" | "base64_kodieren" | "b64e" => {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_base64_encode, &[arg.into()], "base64_encode");

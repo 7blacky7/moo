@@ -936,6 +936,12 @@ MooValue moo_sanitize_sql(MooValue input);
 MooValue moo_sha256_bytes(MooValue input);
 MooValue moo_hmac_sha256(MooValue key, MooValue msg);
 MooValue moo_pbkdf2_sha256(MooValue password, MooValue salt, MooValue iterations, MooValue dk_len);
+// NETZK-4: binaersichere Wrapper; String-Laengen sind Teil des Vertrags.
+MooValue moo_krypto_hkdf_api(MooValue salz, MooValue ikm, MooValue info, MooValue laenge);
+MooValue moo_krypto_aead_encrypt_api(MooValue art, MooValue key, MooValue nonce, MooValue aad, MooValue klartext);
+MooValue moo_krypto_aead_decrypt_api(MooValue art, MooValue key, MooValue nonce, MooValue aad, MooValue blob);
+MooValue moo_krypto_x25519_api(MooValue skalar, MooValue u);
+MooValue moo_krypto_x25519_public_api(MooValue skalar);
 
 // Universelle Index-Ops (dispatcht nach Container-Typ)
 MooValue moo_string_repeat(MooValue s, MooValue count);

@@ -372,6 +372,12 @@ EXTRA_HARNESSES=(
   #               BIT-identisch MIT Dropout (Param+Input), Determinismus, tiefes
   #               Multi-Dropout-Segment. Quell-Satz wie nn/checkpoint.
   "test_checkpoint_ag_asan.c|moo_nn.c moo_nn_easy.c moo_json.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  #   netzk:     Freestanding Krypto-Kern gegen offizielle NIST-/RFC-Vektoren.
+  #              Explizite minimale Linksets; keine MooValue-/Voxel-Abhaengigkeit.
+  "test_krypto_asan.c|moo_krypto.c|"
+  "test_krypto_aes_asan.c|moo_krypto_aes.c moo_krypto.c|"
+  "test_krypto_chacha_asan.c|moo_krypto_chacha.c moo_krypto.c|"
+  "test_krypto_x25519_asan.c|moo_krypto_x25519.c moo_krypto.c|"
   #   bare_alloc: Plan-010 T1 — Bare-Allocator (K3) + serielle Formatter (K2)
   #               auf dem Host. Linkt NUR moo_bare_alloc.c + moo_bare_console.c;
   #               moo_bare.c/moo_bare_boot.c bewusst NICHT (echte in/out-Asm

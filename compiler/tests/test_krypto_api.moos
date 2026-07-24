@@ -1,0 +1,33 @@
+funktion hex(b):
+    setze chars auf "0123456789abcdef"
+    setze out auf ""
+    setze bb auf bytes_zu_liste(b)
+    setze i auf 0
+    solange i < länge(bb):
+        setze v auf bb[i]
+        setze out auf out + chars[boden(v / 16)] + chars[v % 16]
+        setze i auf i + 1
+    gib_zurück out
+
+setze hk auf hkdf_sha256("", "ikm", "info", 32)
+wenn länge(hk) != 32:
+    wirf "HKDF-Laenge falsch"
+
+setze key auf bytes_neu([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31])
+setze nonce auf bytes_neu([0,0,0,0,0,0,0,0,0,0,0,1])
+setze klartext auf bytes_neu([104,0,109,111,111])
+setze blob auf aead_verschluessle("chacha20", key, nonce, "aad", klartext)
+setze klar auf aead_entschluessle("chacha20", key, nonce, "aad", blob)
+wenn hex(klar) != "68006d6f6f":
+    wirf "ChaCha20-Poly1305 Binaer-Roundtrip falsch"
+
+setze aeskey auf bytes_neu([0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15])
+setze ablob auf aead_encrypt("aes_gcm", aeskey, nonce, "", "test")
+wenn aead_decrypt("aes_gcm", aeskey, nonce, "", ablob) != "test":
+    wirf "AES-GCM Roundtrip falsch"
+
+setze sk auf bytes_neu([119,7,109,10,115,24,165,125,60,22,193,114,81,178,102,69,223,76,47,135,235,192,153,42,177,119,251,165,29,185,44,42])
+setze pk auf x25519_oeffentlich(sk)
+wenn hex(pk) != "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a":
+    wirf "X25519 Public RFC7748 falsch"
+zeige "NETZK4-API-OK"
