@@ -141,7 +141,7 @@ jobs:
             Tee-Object -FilePath (Join-Path $out "windows-smoke.log")
           if ($LASTEXITCODE -ne 0) { throw "Media-Foundation/WASAPI Startup-Smoke fehlgeschlagen" }
           "CAPTURE-WINDOWS-HEADLESS-PASS: startup/shutdown"
-          "CAPTURE-WINDOWS-HARDWARE-GATE: test_capture_windows_native_stream.exe wurde gebaut; voller Stream-Lauf erfolgt auf der Windows-VM mit durchgereichter Kamera/Mikrofon."
+          "CAPTURE-WINDOWS-HARDWARE-GATE: test_capture_windows_native_stream.exe wurde nativ gebaut. Der volle Lauf ist ein separates optionales Gate und benoetigt eine Windows-Umgebung mit tatsaechlich exponierter Kamera und Aufnahmegeraet; im headless CI wird er nicht als bestanden simuliert."
 
       - name: Upload Windows capture logs
         if: always()
