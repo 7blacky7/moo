@@ -113,6 +113,40 @@ MooValue moo_ui_fenster_schliessen(MooValue fenster);
  * via cursorUpdate:/TrackingArea. */
 MooValue moo_ui_fenster_cursor_setze(MooValue fenster, MooValue name);
 
+/* =========================================================================
+ * Client-Side-Decorations-Hooks (UI-GLASS-CSD)
+ *
+ * Der portable Glass-Layer (stdlib/ui_moo_csd.moos) zeichnet Rahmen,
+ * Titelbalken und Buttons selbst und macht eigenes Hit-Testing (Titel-
+ * Ziehbereich, 8 Resize-Kanten, Buttons). Der Host liefert nur die
+ * WM-Operationen dahinter. Alle Funktionen sind capability-ehrlich:
+ * nicht unterstuetzte Backends liefern falsch. Linux/GTK implementiert;
+ * Win32/Cocoa folgen als separate Tasks (bis dahin Stubs -> falsch).
+ * ========================================================================= */
+
+/* Startet interaktives Fenster-Ziehen (WM-gesteuert). Aus einem
+ * Maus-Press-Callback heraus aufrufen; die Pointerposition wird intern
+ * ueber den Default-Seat ermittelt. */
+MooValue moo_ui_fenster_drag_start(MooValue fenster);
+
+/* Startet interaktives Resize an einer Kante. kante: "n" | "no" | "o" |
+ * "so" | "s" | "sw" | "w" | "nw" (Himmelsrichtungen, deutsch). */
+MooValue moo_ui_fenster_resize_start(MooValue fenster, MooValue kante);
+
+/* Minimiert das Fenster (Iconify). */
+MooValue moo_ui_fenster_minimiere(MooValue fenster);
+
+/* Maximiert bzw. stellt wieder her. Liefert den neuen Zustand
+ * (wahr = maximiert). */
+MooValue moo_ui_fenster_maximiere_umschalten(MooValue fenster);
+
+/* Schaltet das Host-Fenster auf per-pixel-transparente, selbstgezeichnete
+ * Flaeche (RGBA-Visual + app-paintable + transparente Basisflaeche).
+ * VOR ui_zeige aufrufen. Liefert falsch wenn kein Compositor/RGBA-Visual
+ * verfuegbar oder das Fenster schon realisiert ist — der Aufrufer
+ * zeichnet dann opak weiter (ehrliche Degradation, kein Fake). */
+MooValue moo_ui_fenster_transparenz(MooValue fenster, MooValue einschalten);
+
 /* Zeigt Fenster non-blocking (kein impliziter Event-Loop-Start).
  * Ruft Event-Loop-Start ueber moo_ui_laufen(). */
 MooValue moo_ui_zeige(MooValue fenster);

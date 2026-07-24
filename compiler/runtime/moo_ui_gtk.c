@@ -307,6 +307,110 @@ MooValue moo_ui_fenster_on_close(MooValue fenster, MooValue callback) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Client-Side-Decorations-Hooks (UI-GLASS-CSD)
+ *
+ * Der Glass-Layer zeichnet Rahmen/Titelbalken/Buttons selbst und macht
+ * eigenes Hit-Testing; hier stehen nur die WM-Operationen dahinter.
+ * Die Pointerposition wird ueber den Default-Seat ermittelt, weil die
+ * Aufrufe aus Leinwand-Maus-Callbacks (fensterlokale Koordinaten)
+ * heraus erfolgen und GDK Root-Koordinaten verlangt.
+ * ------------------------------------------------------------------ */
+
+static int csd_pointer_position(GtkWidget* w, gint* rx, gint* ry) {
+    GdkDisplay* display = gtk_widget_get_display(w);
+    if (!display) return 0;
+    GdkSeat* seat = gdk_display_get_default_seat(display);
+    if (!seat) return 0;
+    GdkDevice* pointer = gdk_seat_get_pointer(seat);
+    if (!pointer) return 0;
+    gdk_device_get_position(pointer, NULL, rx, ry);
+    return 1;
+}
+
+MooValue moo_ui_fenster_drag_start(MooValue fenster) {
+    GtkWidget* w = unwrap_widget(fenster);
+    if (!w || !GTK_IS_WINDOW(w)) return moo_bool(0);
+    gint rx = 0, ry = 0;
+    if (!csd_pointer_position(w, &rx, &ry)) return moo_bool(0);
+    gtk_window_begin_move_drag(GTK_WINDOW(w), 1, rx, ry, GDK_CURRENT_TIME);
+    ui_log("ui_fenster_drag_start", NULL);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_fenster_resize_start(MooValue fenster, MooValue kante) {
+    GtkWidget* w = unwrap_widget(fenster);
+    if (!w || !GTK_IS_WINDOW(w)) return moo_bool(0);
+    const char* k = str_or(kante, "");
+    GdkWindowEdge edge;
+    if      (strcmp(k, "nw") == 0) edge = GDK_WINDOW_EDGE_NORTH_WEST;
+    else if (strcmp(k, "n")  == 0) edge = GDK_WINDOW_EDGE_NORTH;
+    else if (strcmp(k, "no") == 0) edge = GDK_WINDOW_EDGE_NORTH_EAST;
+    else if (strcmp(k, "w")  == 0) edge = GDK_WINDOW_EDGE_WEST;
+    else if (strcmp(k, "o")  == 0) edge = GDK_WINDOW_EDGE_EAST;
+    else if (strcmp(k, "sw") == 0) edge = GDK_WINDOW_EDGE_SOUTH_WEST;
+    else if (strcmp(k, "s")  == 0) edge = GDK_WINDOW_EDGE_SOUTH;
+    else if (strcmp(k, "so") == 0) edge = GDK_WINDOW_EDGE_SOUTH_EAST;
+    else return moo_bool(0);
+    gint rx = 0, ry = 0;
+    if (!csd_pointer_position(w, &rx, &ry)) return moo_bool(0);
+    gtk_window_begin_resize_drag(GTK_WINDOW(w), edge, 1, rx, ry,
+                                 GDK_CURRENT_TIME);
+    ui_log("ui_fenster_resize_start", k);
+    return moo_bool(1);
+}
+
+MooValue moo_ui_fenster_minimiere(MooValue fenster) {
+    GtkWidget* w = unwrap_widget(fenster);
+    if (!w || !GTK_IS_WINDOW(w)) return moo_bool(0);
+    gtk_window_iconify(GTK_WINDOW(w));
+    return moo_bool(1);
+}
+
+MooValue moo_ui_fenster_maximiere_umschalten(MooValue fenster) {
+    GtkWidget* w = unwrap_widget(fenster);
+    if (!w || !GTK_IS_WINDOW(w)) return moo_bool(0);
+    if (gtk_window_is_maximized(GTK_WINDOW(w))) {
+        gtk_window_unmaximize(GTK_WINDOW(w));
+        return moo_bool(0);
+    }
+    gtk_window_maximize(GTK_WINDOW(w));
+    return moo_bool(1);
+}
+
+/* Transparente Basisflaeche: Fenster mit Alpha 0 fuellen, damit die vom
+ * Glass-Layer geblitteten Pixel (inkl. runder Ecken + Glow) die einzige
+ * sichtbare Flaeche sind. Handler laeuft vor den Kind-Widgets. */
+static gboolean csd_transparent_base_draw(GtkWidget* w, cairo_t* cr,
+                                          gpointer user_data) {
+    (void)w; (void)user_data;
+    cairo_save(cr);
+    cairo_set_source_rgba(cr, 0, 0, 0, 0);
+    cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+    cairo_paint(cr);
+    cairo_restore(cr);
+    return FALSE; /* Kinder normal weiterzeichnen */
+}
+
+MooValue moo_ui_fenster_transparenz(MooValue fenster, MooValue einschalten) {
+    GtkWidget* w = unwrap_widget(fenster);
+    if (!w || !GTK_IS_WINDOW(w)) return moo_bool(0);
+    if (!bool_or(einschalten, 0)) {
+        gtk_widget_set_app_paintable(w, FALSE);
+        return moo_bool(1);
+    }
+    if (gtk_widget_get_realized(w)) return moo_bool(0); /* zu spaet */
+    GdkScreen* screen = gtk_widget_get_screen(w);
+    if (!screen || !gdk_screen_is_composited(screen)) return moo_bool(0);
+    GdkVisual* visual = gdk_screen_get_rgba_visual(screen);
+    if (!visual) return moo_bool(0);
+    gtk_widget_set_visual(w, visual);
+    gtk_widget_set_app_paintable(w, TRUE);
+    g_signal_connect(w, "draw", G_CALLBACK(csd_transparent_base_draw), NULL);
+    ui_log("ui_fenster_transparenz", "rgba");
+    return moo_bool(1);
+}
+
+/* ------------------------------------------------------------------ *
  * Label + Knopf (Schritt 1: Smoke-Test-Basis)
  * ------------------------------------------------------------------ */
 

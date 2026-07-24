@@ -745,6 +745,24 @@ MooValue moo_ui_fenster_schliessen(MooValue fenster) {
     return moo_bool(1);
 }
 
+/* CSD-Hooks (UI-GLASS-CSD): Windows-Implementierung folgt als separater
+ * Task — bis dahin capability-ehrliche Stubs (falsch = nicht verfuegbar). */
+MooValue moo_ui_fenster_drag_start(MooValue fenster) {
+    (void)fenster; return moo_bool(0);
+}
+MooValue moo_ui_fenster_resize_start(MooValue fenster, MooValue kante) {
+    (void)fenster; (void)kante; return moo_bool(0);
+}
+MooValue moo_ui_fenster_minimiere(MooValue fenster) {
+    (void)fenster; return moo_bool(0);
+}
+MooValue moo_ui_fenster_maximiere_umschalten(MooValue fenster) {
+    (void)fenster; return moo_bool(0);
+}
+MooValue moo_ui_fenster_transparenz(MooValue fenster, MooValue einschalten) {
+    (void)fenster; (void)einschalten; return moo_bool(0);
+}
+
 MooValue moo_ui_zeige(MooValue fenster) {
     HWND h = unwrap_hwnd(fenster);
     if (!h) return moo_bool(0);

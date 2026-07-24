@@ -5423,6 +5423,28 @@ impl<'ctx> CodeGen<'ctx> {
                         let n = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_ui_fenster_cursor_setze, &[f.into(), n.into()], "ui_fenster_cursor_setze");
                     }
+                    "ui_fenster_drag_start" | "ui_window_drag_start" => {
+                        let f = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_fenster_drag_start, &[f.into()], "ui_fenster_drag_start");
+                    }
+                    "ui_fenster_resize_start" | "ui_window_resize_start" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let k = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_fenster_resize_start, &[f.into(), k.into()], "ui_fenster_resize_start");
+                    }
+                    "ui_fenster_minimiere" | "ui_window_minimize" => {
+                        let f = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_fenster_minimiere, &[f.into()], "ui_fenster_minimiere");
+                    }
+                    "ui_fenster_maximiere_umschalten" | "ui_window_maximize_toggle" => {
+                        let f = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_fenster_maximiere_umschalten, &[f.into()], "ui_fenster_maximiere_umschalten");
+                    }
+                    "ui_fenster_transparenz" | "ui_window_transparency" => {
+                        let f = self.compile_expr(&args[0])?;
+                        let a = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_fenster_transparenz, &[f.into(), a.into()], "ui_fenster_transparenz");
+                    }
                     "ui_zeichne_farbe" | "ui_draw_color" | "ui_draw_colour" => {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_ui_zeichne_farbe, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_zeichne_farbe");
