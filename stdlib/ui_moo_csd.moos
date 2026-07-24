@@ -37,7 +37,7 @@ funktion uim_csd_metriken(b, h):
     m["maximieren"] = [sx - 38, 9, 34, 22]
     m["minimieren"] = [sx - 76, 9, 34, 22]
     m["titel_text_x"] = 18
-    m["titel_text_y"] = 3
+    m["titel_text_y"] = 10
     gib_zurück m
 
 funktion _uim_csd_in_rect(r, mx, my):
@@ -260,8 +260,8 @@ funktion uim_csd_zeichnen(z, x, y, b, h, titel, aktiv, hover, gedrueckt, faehigk
     setze ta auf 150
     wenn aktiv:
         setze ta auf 235
-    surface_text(z, x + m["titel_text_x"] + 1, y + m["titel_text_y"] + 1, 2, titel, 10, 20, 34, 120)
-    surface_text(z, x + m["titel_text_x"], y + m["titel_text_y"], 2, titel, 255, 255, 255, ta)
+    surface_text(z, x + m["titel_text_x"] + 1, y + m["titel_text_y"] + 1, 1, titel, 10, 20, 34, 120)
+    surface_text(z, x + m["titel_text_x"], y + m["titel_text_y"], 1, titel, 255, 255, 255, ta)
 
     # --- Buttons ---
     _uim_csd_knopf(z, x, y, m["minimieren"], "minimieren", _uim_csd_zustand("minimieren", hover, gedrueckt), aktiv)

@@ -298,9 +298,30 @@ MooValue moo_surface_text(MooValue value, MooValue x, MooValue y,
             pen_y += line_adv;
             continue;
         }
-        if (c < MOO_FONT_AA_FIRST || c >= MOO_FONT_AA_FIRST + MOO_FONT_AA_COUNT)
-            c = '?';
-        const uint8_t* glyph = moo_font_aa[c - MOO_FONT_AA_FIRST];
+        /* UTF-8 -> Codepoint (1-3 Byte); ungueltig oder > Latin-1: '?'.
+         * Damit rendern deutsche Umlaute + Eszett korrekt (NATIVE-UI-3c). */
+        uint32_t cp = c;
+        if (c >= 0x80u) {
+            if ((c & 0xE0u) == 0xC0u && i + 1 < len &&
+                ((unsigned char)s[i + 1] & 0xC0u) == 0x80u) {
+                cp = ((uint32_t)(c & 0x1Fu) << 6) |
+                     ((unsigned char)s[i + 1] & 0x3Fu);
+                i += 1;
+            } else if ((c & 0xF0u) == 0xE0u && i + 2 < len &&
+                       ((unsigned char)s[i + 1] & 0xC0u) == 0x80u &&
+                       ((unsigned char)s[i + 2] & 0xC0u) == 0x80u) {
+                cp = ((uint32_t)(c & 0x0Fu) << 12) |
+                     (((unsigned char)s[i + 1] & 0x3Fu) << 6) |
+                     ((unsigned char)s[i + 2] & 0x3Fu);
+                i += 2;
+            } else {
+                cp = (uint32_t)'?';
+            }
+        }
+        if (cp < (uint32_t)MOO_FONT_AA_FIRST ||
+            cp >= (uint32_t)MOO_FONT_AA_FIRST + (uint32_t)MOO_FONT_AA_COUNT)
+            cp = (uint32_t)'?';
+        const uint8_t* glyph = moo_font_aa[cp - (uint32_t)MOO_FONT_AA_FIRST];
         for (int32_t gy = 0; gy < MOO_FONT_AA_H; ++gy) {
             for (int32_t gx = 0; gx < MOO_FONT_AA_W; ++gx) {
                 uint32_t cov = glyph[gy * MOO_FONT_AA_W + gx];
@@ -327,6 +348,42 @@ MooValue moo_surface_text(MooValue value, MooValue x, MooValue y,
         pen_x += advance;
     }
     return moo_bool(moo_surface_guards_ok(surface));
+}
+
+/* Pixelbreite eines Textes im eingebetteten AA-Font: Codepoints (UTF-8)
+ * zaehlen, laengste Zeile x Zellbreite x Skala. Identische Dekodier-
+ * Regeln wie moo_surface_text, damit Layout und Rendering deckungsgleich
+ * bleiben (Cursor-/Zentrier-Metriken der Widgets). */
+MooValue moo_surface_text_breite(MooValue text, MooValue skala) {
+    int32_t isk;
+    if (text.tag != MOO_STRING || !moo_surface_number_i32(skala, &isk) ||
+        isk < 1 || isk > 16)
+        return moo_number(0);
+    const char* s = MV_STR(text)->chars;
+    int32_t len = MV_STR(text)->length;
+    int64_t zeile = 0;
+    int64_t max_zeile = 0;
+    for (int32_t i = 0; i < len; ++i) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == '\n') {
+            if (zeile > max_zeile) max_zeile = zeile;
+            zeile = 0;
+            continue;
+        }
+        if (c >= 0x80u) {
+            if ((c & 0xE0u) == 0xC0u && i + 1 < len &&
+                ((unsigned char)s[i + 1] & 0xC0u) == 0x80u) {
+                i += 1;
+            } else if ((c & 0xF0u) == 0xE0u && i + 2 < len &&
+                       ((unsigned char)s[i + 1] & 0xC0u) == 0x80u &&
+                       ((unsigned char)s[i + 2] & 0xC0u) == 0x80u) {
+                i += 2;
+            }
+        }
+        zeile += 1;
+    }
+    if (zeile > max_zeile) max_zeile = zeile;
+    return moo_number((double)(max_zeile * (int64_t)MOO_FONT_AA_W * isk));
 }
 
 MooValue moo_surface_read_pixel(MooValue value, MooValue x, MooValue y) {

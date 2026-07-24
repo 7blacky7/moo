@@ -4570,6 +4570,15 @@ impl<'ctx> CodeGen<'ctx> {
                             "surface_text",
                         );
                     }
+                    "surface_text_breite" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_text_breite,
+                            args,
+                            2,
+                            name,
+                            "surface_text_breite",
+                        );
+                    }
                     "surface_hash" => {
                         return self.call_rt_borrowed_builtin(
                             self.rt.moo_surface_hash,

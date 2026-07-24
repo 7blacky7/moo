@@ -602,6 +602,13 @@ funktion uim_text_caret_schritt_px(s, optionen, groesse, offset, delta):
 funktion _uims_grapheme_glyphen(s):
     gib_zurück uim_text_plan(s, _uims_plan_optionen_standard())["glyphs"]
 
+# AA-Font-Skala (NATIVE-UI-3d): der eingebettete C-Font ist 19px hoch —
+# bis Schriftgroesse 20 nativ (Skala 1, feine Kanten), darueber blockweise 2.
+funktion _uims_px(groesse):
+    wenn groesse <= 20:
+        gib_zurück 1
+    gib_zurück 2
+
 funktion _uims_text(kontext, args):
     setze z auf args[0]
     # surface_*-Builtins verlangen Ganzzahlen: Zeichner zentrieren mit
@@ -609,30 +616,14 @@ funktion _uims_text(kontext, args):
     # Text still verschluckt (NATIVE-UI-3b, User-Befund).
     setze x auf boden(args[1])
     setze y auf boden(args[2])
-    setze plan auf uim_text_plan(args[3], _uims_plan_optionen_standard())
-    setze glyphen auf plan["glyphs"]
-    setze px auf _uim_zf_px(args[4])
+    setze px auf _uims_px(args[4])
     setze f auf kontext["_farbe"]
-    setze i auf 0
-    setze cx auf x
-    setze ok auf wahr
-    solange i < länge(glyphen):
-        setze bits auf _UIMF[glyphen[i]]
-        setze zy auf 0
-        solange zy < 5:
-            setze zx auf 0
-            solange zx < 3:
-                wenn bits[zy * 3 + zx] == 1:
-                    setze ok auf surface_rect(z, cx + zx * px, y + zy * px, px, px, f[0], f[1], f[2], f[3]) und ok
-                setze zx auf zx + 1
-            setze zy auf zy + 1
-        setze cx auf cx + 4 * px
-        setze i auf i + 1
-    gib_zurück ok
+    # C-AA-Font (moo_font_aa.h): DejaVu mit eingebackenem Antialiasing,
+    # UTF-8-faehig inkl. Umlauten — ersetzt den 3x5-Pixelfont-Pfad.
+    gib_zurück surface_text(z, x, y, px, args[3], f[0], f[1], f[2], f[3])
 
 funktion _uims_text_breite(kontext, args):
-    setze plan auf uim_text_plan(args[1], _uims_plan_optionen_standard())
-    gib_zurück plan["advance"] * _uim_zf_px(args[2])
+    gib_zurück surface_text_breite(args[1], _uims_px(args[2]))
 
 funktion _uims_clip_setze(kontext, args):
     gib_zurück surface_clip_push(args[0], args[1], args[2], args[3], args[4])

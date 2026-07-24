@@ -42,7 +42,7 @@ funktion on_liste(w, idx):
     zeige "LISTE " + text(idx)
     gib_zurück wahr
 
-uim_hinzu(k, uim_label("AERO GLASS WIDGETS — NATIV", 24, OY, 320, 18))
+uim_hinzu(k, uim_label("Aero Glass Widgets — Türöffner äöü ÄÖÜ ß nativ!", 24, OY, 480, 18))
 uim_hinzu(k, uim_separator(24, OY + 22, 512))
 
 uim_hinzu(k, uim_knopf("GLASS KNOPF", 24, OY + 38, 150, 30, on_knopf))
