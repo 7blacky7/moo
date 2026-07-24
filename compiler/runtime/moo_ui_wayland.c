@@ -52,6 +52,12 @@ typedef struct WlFenster {
      * Buffer) — sonst wertet der Compositor den frischen Frame gegen den
      * alten Zustand und zeigt beim Unmaximize-Drag kurz halben Inhalt. */
     int pending_b, pending_h;
+    int floating_b, floating_h;
+    int frame_verworfen;
+    uint32_t pending_serial;
+    uint32_t ack_faellig_serial;
+    int ack_faellig;
+    int hat_pending_configure;
     int soll_schliessen;
     /* SHM-Doublebuffer */
     int shm_fd;
@@ -118,15 +124,25 @@ static inline int wnum_or(MooValue v, int fb) {
     return (v.tag == MOO_NUMBER) ? (int)MV_NUM(v) : fb;
 }
 
+/* MOO_UI_DEBUG=1: Event-/Present-Tracing auf stderr (Haenger-Diagnose). */
+static int wl_debug_an(void) {
+    static int an = -1;
+    if (an < 0) an = getenv("MOO_UI_DEBUG") ? 1 : 0;
+    return an;
+}
+#define WLDBG(...) do { if (wl_debug_an()) { fprintf(stderr, __VA_ARGS__); fflush(stderr); } } while (0)
+
 static void event_an_moo(WlFenster* f, const char* art,
                          double a, double b, double c) {
     if (!f || !f->hat_cb || f->input_cb.tag != MOO_FUNC) return;
+    WLDBG("[EV] %s %.0f %.0f\n", art, a, b);
     MooValue cb = f->input_cb;
     moo_retain(cb);
     MooValue rv = moo_func_call_4(cb, moo_string_new(art),
                                   moo_number(a), moo_number(b), moo_number(c));
     moo_release(rv);
     moo_release(cb);
+    WLDBG("[EV-ENDE] %s\n", art);
 }
 
 /* ------------------------------------------------------------------ *
@@ -189,20 +205,41 @@ static int puffer_anlegen(WlFenster* f, int b, int h) {
 static void xdg_surface_configure(void* data, struct xdg_surface* s,
                                   uint32_t serial) {
     WlFenster* f = (WlFenster*)data;
-    xdg_surface_ack_configure(s, serial);
-    if (f) {
-        f->konfiguriert = 1;
-        /* Erst nach dem ack: Puffer neu + Moo rendern/committen. */
-        if (f->pending_b > 0 && f->pending_h > 0 &&
-            (f->pending_b != f->breite || f->pending_h != f->hoehe)) {
-            if (puffer_anlegen(f, f->pending_b, f->pending_h)) {
-                event_an_moo(f, "resize", (double)f->pending_b,
-                             (double)f->pending_h, 0.0);
-            }
+    (void)s;
+    if (!f) return;
+    /* Configure-Drossel (NATIVE-UI-1c): Serie nur SAMMELN — xdg erlaubt,
+     * ausschliesslich das letzte serial zu acken. ack+Puffer+Render laufen
+     * gebuendelt in wl_configure_abschliessen() nach dem Dispatch-Batch. */
+    f->pending_serial = serial;
+    f->hat_pending_configure = 1;
+    f->konfiguriert = 1;
+}
+
+/* Nach einem Dispatch-Batch: juengsten configure-Stand EINMAL anwenden. */
+static void wl_configure_abschliessen(WlFenster* f) {
+    if (!f || !f->hat_pending_configure) return;
+    f->hat_pending_configure = 0;
+    if (f->pending_b > 0 && f->pending_h > 0 &&
+        (f->pending_b != f->breite || f->pending_h != f->hoehe)) {
+        xdg_surface_ack_configure(f->xsurface, f->pending_serial);
+        f->ack_faellig = 0;
+        WLDBG("[CFG] ack serial=%u pend=%dx%d\n", f->pending_serial,
+              f->pending_b, f->pending_h);
+        if (puffer_anlegen(f, f->pending_b, f->pending_h)) {
+            event_an_moo(f, "resize", (double)f->pending_b,
+                         (double)f->pending_h, 0.0);
         }
-        f->pending_b = 0;
-        f->pending_h = 0;
+    } else {
+        /* Zustandsloses configure: ack mit dem naechsten echten Frame
+         * buendeln (Toolkit-Muster). Ein leerer Commit als Antwort
+         * provoziert bei kwin sofort das naechste configure — gemessener
+         * Ping-Pong von ~28 Zyklen/s im Leerlauf. */
+        f->ack_faellig = 1;
+        f->ack_faellig_serial = f->pending_serial;
+        WLDBG("[CFG] ack vertagt serial=%u\n", f->pending_serial);
     }
+    f->pending_b = 0;
+    f->pending_h = 0;
 }
 static const struct xdg_surface_listener xdg_surface_lst = {
     xdg_surface_configure
@@ -218,12 +255,30 @@ static void toplevel_configure(void* data, struct xdg_toplevel* t,
     wl_array_for_each(st, states) {
         if (*st == XDG_TOPLEVEL_STATE_MAXIMIZED) max = 1;
     }
+    if (max && !f->maximiert && f->breite > 0 && f->hoehe > 0) {
+        /* Uebergang zu maximiert: Floating-Groesse fuer den Restore merken
+         * (Unmaximize-configure kommt mit 0x0 = Client waehlt selbst). */
+        f->floating_b = f->breite;
+        f->floating_h = f->hoehe;
+    }
+    WLDBG("[TOP] cfg %dx%d max=%d (akt %dx%d float %dx%d)\n", b, h, max,
+          f->breite, f->hoehe, f->floating_b, f->floating_h);
     f->maximiert = max;
     /* PFLICHT-Punkt 1 (Live-Reflow): WM-Groesse nur VORMERKEN — Puffer und
      * Re-Render laufen im xdg_surface_configure NACH dem ack (s. oben). */
     if (b > 0 && h > 0 && (b != f->breite || h != f->hoehe)) {
         f->pending_b = b;
         f->pending_h = h;
+    } else if (b == 0 && h == 0 && f->konfiguriert) {
+        /* xdg: 0x0 = Client waehlt selbst (typisch beim Unmaximize).
+         * Letzte Floating-Groesse wiederherstellen, sonst wartet der
+         * Compositor ewig auf den Restore-Commit (Fenster friert ein). */
+        int zb = f->floating_b > 0 ? f->floating_b : f->breite;
+        int zh = f->floating_h > 0 ? f->floating_h : f->hoehe;
+        if (zb > 0 && zh > 0 && (zb != f->breite || zh != f->hoehe)) {
+            f->pending_b = zb;
+            f->pending_h = zh;
+        }
     }
 }
 static void toplevel_close(void* data, struct xdg_toplevel* t) {
@@ -530,10 +585,18 @@ static MooValue wl_host_praesentiere(MooValue fenster, MooValue frame) {
     if (!f || !f->konfiguriert || frame.tag != MOO_FRAME) return moo_bool(0);
     MooFrame* fr = MV_FRAME(frame);
     if (!fr || !fr->pixels) return moo_bool(0);
+    WLDBG("[PRES] %dx%d frei=%d%d\n", f->breite, f->hoehe,
+          f->buffer_frei[0], f->buffer_frei[1]);
     int idx = f->buffer_frei[0] ? 0 : (f->buffer_frei[1] ? 1 : -1);
     if (idx < 0) {
-        wl_display_roundtrip(W.display); /* auf release warten */
-        idx = f->buffer_frei[0] ? 0 : (f->buffer_frei[1] ? 1 : 0);
+        /* KEIN wl_display_roundtrip hier: praesentiere laeuft regelmaessig
+         * im Dispatch-Kontext (resize-/Input-Callback) — verschachteltes
+         * Dispatchen derselben Queue deadlockt libwayland (User-Haenger
+         * beim Maximieren: Fenster grau, Prozess steht). Zwischenframe
+         * verwerfen: der naechste Event-Render reicht den aktuellen Stand
+         * nach, buffer_release verarbeitet der aeussere Loop. */
+        f->frame_verworfen = 1;
+        return moo_bool(1);
     }
     int b = f->breite, h = f->hoehe;
     int kb = fr->width < b ? fr->width : b;
@@ -558,6 +621,13 @@ static MooValue wl_host_praesentiere(MooValue fenster, MooValue frame) {
     f->buffer_frei[idx] = 0;
     wl_surface_attach(f->surface, f->buffer[idx], 0, 0);
     wl_surface_damage_buffer(f->surface, 0, 0, b, h);
+    if (f->ack_faellig) {
+        /* Vertagtes ack zustandsloser configures mit diesem echten
+         * Frame-Commit buendeln (kein leerer Commit noetig). */
+        xdg_surface_ack_configure(f->xsurface, f->ack_faellig_serial);
+        f->ack_faellig = 0;
+        WLDBG("[PRES] gebuendeltes ack serial=%u\n", f->ack_faellig_serial);
+    }
     if (!f->frame_ausstehend) {
         struct wl_callback* cb = wl_surface_frame(f->surface);
         wl_callback_add_listener(cb, &frame_lst, f);
@@ -584,10 +654,27 @@ static MooValue wl_host_input_cb(MooValue fenster, MooValue cb) {
     return moo_bool(1);
 }
 
+/* Verworfene Frames nachreichen, sobald wieder ein Buffer frei ist —
+ * sonst bleibt nach einer Drag-/Resize-Serie der letzte Stand unsichtbar
+ * (User-Befund: Slider "verschwindet" / zeichnet viel zu spaet). */
+static void wl_frame_nachreichen(WlFenster* f) {
+    if (!f || !f->frame_verworfen) return;
+    if (!f->buffer_frei[0] && !f->buffer_frei[1]) return;
+    f->frame_verworfen = 0;
+    WLDBG("[NACH] neuzeichnen\n");
+    event_an_moo(f, "neuzeichnen", 0.0, 0.0, 0.0);
+}
+
 static MooValue wl_host_laufen(void) {
     if (!W.display) return moo_bool(0);
     while (W.laufend && W.fenster && !W.fenster->soll_schliessen) {
         if (wl_display_dispatch(W.display) == -1) break;
+        /* Configure-Serie des Batches auf den letzten Stand kollabieren. */
+        if (W.fenster) wl_configure_abschliessen(W.fenster);
+        if (W.fenster) wl_frame_nachreichen(W.fenster);
+        /* Batch-Tick: die Bruecke rendert dirty-Zustand EINMAL pro
+         * Dispatch-Batch statt pro Input-Event (Render-Drossel). */
+        if (W.fenster) event_an_moo(W.fenster, "tick", 0.0, 0.0, 0.0);
     }
     return moo_none();
 }
@@ -601,6 +688,9 @@ static MooValue wl_host_pump(void) {
     if (poll(&p, 1, 0) > 0) wl_display_read_events(W.display);
     else wl_display_cancel_read(W.display);
     wl_display_dispatch_pending(W.display);
+    if (W.fenster) wl_configure_abschliessen(W.fenster);
+    if (W.fenster) wl_frame_nachreichen(W.fenster);
+    if (W.fenster) event_an_moo(W.fenster, "tick", 0.0, 0.0, 0.0);
     return moo_none();
 }
 

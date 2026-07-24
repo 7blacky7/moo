@@ -20,8 +20,7 @@ funktion on_knopf(w):
     gib_zurück wahr
 
 funktion on_schliessen(w):
-    zeige "WIDGET-SCHLIESSEN-KLICK"
-    host_beenden()
+    zeige "KNOPF-DEMO-KLICK (beendet NICHT)"
     gib_zurück wahr
 
 funktion on_check(w, wert):
@@ -32,6 +31,7 @@ funktion on_slider(w, wert):
     gib_zurück wahr
 
 funktion on_tf(w, txt):
+    zeige "TF: " + txt
     gib_zurück wahr
 
 funktion on_combo(w, idx):
@@ -69,7 +69,7 @@ uim_hinzu(panel, uim_knopf("IM PANEL", 12, 78, 130, 26, on_knopf))
 
 uim_hinzu(k, uim_liste(276, OY + 200, 236, 150, ["ERSTE ZEILE", "ZWEITE ZEILE", "DRITTE ZEILE", "VIERTE ZEILE", "FUENFTE ZEILE", "SECHSTE ZEILE", "SIEBTE ZEILE", "ACHTE ZEILE"], on_liste))
 
-uim_hinzu(k, uim_knopf("SCHLIESSEN", 24, OY + 366, 150, 30, on_schliessen))
+uim_hinzu(k, uim_knopf("NUR EIN KNOPF", 24, OY + 366, 150, 30, on_schliessen))
 
 zeige "GLASS-WIDGETS-START"
 zeige "HOST-BACKEND " + ui_host_backend()

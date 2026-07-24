@@ -35,11 +35,22 @@ funktion _uims_rect_rand(kontext, z, x, y, b, h):
     gib_zurück ok
 
 funktion _uims_rechteck(kontext, args):
+    # surface_*-Builtins verlangen Ganzzahlen — Zeichnerkoordinaten
+    # (Anteile, Zentrierungen) koennen Floats sein: zentral runden.
+    args[1] = boden(args[1])
+    args[2] = boden(args[2])
+    args[3] = boden(args[3])
+    args[4] = boden(args[4])
     wenn args[5]:
         gib_zurück _uims_rect_fuell(kontext, args[0], args[1], args[2], args[3], args[4])
     gib_zurück _uims_rect_rand(kontext, args[0], args[1], args[2], args[3], args[4])
 
 funktion _uims_rechteck_rund(kontext, args):
+    args[1] = boden(args[1])
+    args[2] = boden(args[2])
+    args[3] = boden(args[3])
+    args[4] = boden(args[4])
+    args[5] = boden(args[5])
     wenn args[6]:
         setze f auf kontext["_farbe"]
         gib_zurück surface_roundrect(args[0], args[1], args[2], args[3], args[4], args[5], f[0], f[1], f[2], f[3])
@@ -69,12 +80,20 @@ funktion _uims_kreis_rand(kontext, z, cx, cy, radius):
     gib_zurück ok
 
 funktion _uims_kreis(kontext, args):
+    args[1] = boden(args[1])
+    args[2] = boden(args[2])
+    args[3] = boden(args[3])
     wenn args[4]:
         setze f auf kontext["_farbe"]
         gib_zurück surface_circle(args[0], args[1], args[2], args[3], f[0], f[1], f[2], f[3])
     gib_zurück _uims_kreis_rand(kontext, args[0], args[1], args[2], args[3])
 
 funktion _uims_linie(kontext, args):
+    args[1] = boden(args[1])
+    args[2] = boden(args[2])
+    args[3] = boden(args[3])
+    args[4] = boden(args[4])
+    args[5] = boden(args[5])
     setze breite auf args[5]
     wenn breite <= 0:
         gib_zurück falsch
@@ -585,8 +604,11 @@ funktion _uims_grapheme_glyphen(s):
 
 funktion _uims_text(kontext, args):
     setze z auf args[0]
-    setze x auf args[1]
-    setze y auf args[2]
+    # surface_*-Builtins verlangen Ganzzahlen: Zeichner zentrieren mit
+    # (h - schrift) / 2 und liefern x.5-Floats — ohne Rundung wird der
+    # Text still verschluckt (NATIVE-UI-3b, User-Befund).
+    setze x auf boden(args[1])
+    setze y auf boden(args[2])
     setze plan auf uim_text_plan(args[3], _uims_plan_optionen_standard())
     setze glyphen auf plan["glyphs"]
     setze px auf _uim_zf_px(args[4])

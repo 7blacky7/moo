@@ -28,6 +28,13 @@ _UIMH["hover"] = nichts
 _UIMH["gedrueckt"] = nichts
 _UIMH["b"] = 0
 _UIMH["h"] = 0
+_UIMH["dirty"] = falsch
+
+# Render-Drossel: Input-Handler markieren nur dirty; gerendert wird beim
+# tick-Event des Backends EINMAL pro Dispatch-Batch (statt pro Event).
+funktion _uimh_dirty():
+    _UIMH["dirty"] = wahr
+    gib_zurück wahr
 
 funktion _uimh_utf8(cp):
     wenn cp < 128:
@@ -102,6 +109,7 @@ funktion _uimh_input(art, a, b, c):
                 setze hz auf zone
             wenn hz != _UIMH["hover"]:
                 _UIMH["hover"] = hz
+                _uimh_dirty()
             host_cursor(_UIMH["fenster"], uim_csd_cursor_name(zone))
         wenn art == "maus_runter" und c == 1:
             setze zone auf uim_csd_hit_test(_UIMH["b"], _UIMH["h"], a, b)
@@ -114,7 +122,7 @@ funktion _uimh_input(art, a, b, c):
                 gib_zurück wahr
             wenn zone == "schliessen" oder zone == "minimieren" oder zone == "maximieren":
                 _UIMH["gedrueckt"] = zone
-                uimh_render()
+                _uimh_dirty()
                 gib_zurück wahr
         wenn art == "maus_hoch" und c == 1:
             setze zone auf uim_csd_hit_test(_UIMH["b"], _UIMH["h"], a, b)
@@ -129,24 +137,29 @@ funktion _uimh_input(art, a, b, c):
                         host_minimiere(_UIMH["fenster"])
                     wenn zone == "maximieren":
                         host_maximiere(_UIMH["fenster"])
-                uimh_render()
+                _uimh_dirty()
                 gib_zurück wahr
     wenn art == "maus_runter":
         uim_backend_maus_taste(k, a, b, c, wahr)
-        uimh_render()
+        _uimh_dirty()
         gib_zurück wahr
     wenn art == "maus_hoch":
         uim_backend_maus_taste(k, a, b, c, falsch)
-        uimh_render()
+        _uimh_dirty()
         gib_zurück wahr
     wenn art == "bewegung":
         uim_backend_bewegung(k, a, b)
-        uimh_render()
+        _uimh_dirty()
         gib_zurück wahr
     wenn art == "taste_runter":
         setze name auf uimh_keysym_name(a)
         wenn name != nichts:
             uim_backend_taste(k, name, wahr, 0)
+            _uimh_dirty()
+        gib_zurück wahr
+    wenn art == "tick":
+        wenn _UIMH["dirty"]:
+            _UIMH["dirty"] = falsch
             uimh_render()
         gib_zurück wahr
     wenn art == "resize":
@@ -157,6 +170,9 @@ funktion _uimh_input(art, a, b, c):
             _UIMH["h"] = b
             uim_groesse_setze(k, a, b)
             uimh_render()
+        gib_zurück wahr
+    wenn art == "neuzeichnen":
+        _uimh_dirty()
         gib_zurück wahr
     wenn art == "schliessen":
         host_beenden()

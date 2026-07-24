@@ -25,17 +25,19 @@ importiere ui_moo_effects
 funktion uim_csd_metriken(b, h):
     setze m auf {}
     m["rand"] = 8
-    m["titel_h"] = 32
+    # 40px Aero-Leiste: der 18px-Titeltext (gemessen y-Box bei Größe 2)
+    # sitzt zentriert, statt unten herauszuragen (User-Befund UI-3b).
+    m["titel_h"] = 40
     m["radius"] = 16
     m["knopf_b"] = 34
     m["knopf_h"] = 22
-    m["knopf_y"] = 5
+    m["knopf_y"] = 9
     setze sx auf b - 12 - 34
-    m["schliessen"] = [sx, 5, 34, 22]
-    m["maximieren"] = [sx - 38, 5, 34, 22]
-    m["minimieren"] = [sx - 76, 5, 34, 22]
+    m["schliessen"] = [sx, 9, 34, 22]
+    m["maximieren"] = [sx - 38, 9, 34, 22]
+    m["minimieren"] = [sx - 76, 9, 34, 22]
     m["titel_text_x"] = 18
-    m["titel_text_y"] = 11
+    m["titel_text_y"] = 3
     gib_zurück m
 
 funktion _uim_csd_in_rect(r, mx, my):

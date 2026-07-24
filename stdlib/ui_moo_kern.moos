@@ -125,13 +125,14 @@ funktion uim_theme_glass():
     t["version"] = 1
     t["name"] = "glass"
     t["hintergrund"]   = [0, 0, 0, 0]
-    t["flaeche"]       = [255, 255, 255, 34]
-    t["flaeche_hover"] = [255, 255, 255, 60]
-    t["flaeche_druck"] = [30, 50, 84, 110]
-    t["rand"]          = [255, 255, 255, 115]
+    t["flaeche"]       = [28, 46, 84, 130]
+    t["flaeche_hover"] = [48, 72, 118, 150]
+    t["flaeche_druck"] = [14, 24, 46, 170]
+    t["rand"]          = [255, 255, 255, 130]
     t["akzent"]        = [120, 190, 255, 255]
     t["text"]          = [240, 246, 255, 235]
     t["text_gedimmt"]  = [200, 210, 224, 150]
+    t["auswahl_text"]  = [10, 22, 44, 255]
     t["radius"]        = 6
     t["schrift"]       = 13
     t["abstand"]       = 8
@@ -1374,7 +1375,10 @@ funktion _uim_z_liste(kontext, z, w, ox, oy):
         wenn i == w["auswahl"]:
             _uim_farbe(kontext, z, t["akzent"])
             _uim_zf_rechteck(kontext, z, ax, zy, w["b"], zh, wahr)
-            _uim_farbe(kontext, z, t["hintergrund"])
+            wenn t.enthält("auswahl_text"):
+                _uim_farbe(kontext, z, t["auswahl_text"])
+            sonst:
+                _uim_farbe(kontext, z, t["hintergrund"])
         sonst:
             _uim_farbe(kontext, z, t["text"])
         _uim_zf_text(kontext, z, ax + t["abstand"], zy + (zh - t["schrift"]) / 2, zeilen[i], t["schrift"])
@@ -1617,7 +1621,10 @@ funktion _uim_z_combo_overlay(kontext, z):
         wenn i == w["auswahl"]:
             _uim_farbe(kontext, z, t["akzent"])
             _uim_zf_rechteck(kontext, z, cr["x"] + 1, zy, cr["b"] - 2, zh, wahr)
-        _uim_farbe(kontext, z, t["text"])
+        wenn i == w["auswahl"] und t.enthält("auswahl_text"):
+            _uim_farbe(kontext, z, t["auswahl_text"])
+        sonst:
+            _uim_farbe(kontext, z, t["text"])
         _uim_zf_text(kontext, z, cr["x"] + 6, zy + (zh - t["schrift"]) / 2, w["zeilen"][i], t["schrift"])
         setze i auf i + 1
     gib_zurück wahr
