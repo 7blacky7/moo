@@ -31,3 +31,8 @@ int moo_ui_host_registriere(const MooUiHostOps* ops) {
     g_aktives_backend = ops;
     return 1;
 }
+
+MooValue moo_ui_host_backend_name(void) {
+    if (!g_aktives_backend) return moo_string_new("keins");
+    return moo_string_new(g_aktives_backend->name);
+}

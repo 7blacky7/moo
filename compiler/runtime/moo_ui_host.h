@@ -83,6 +83,11 @@ int moo_ui_host_registriere(const MooUiHostOps* ops);
 /* Vertrags-Selbstpruefung: 1 wenn name und ALLE Funktionspointer gesetzt. */
 int moo_ui_host_vollstaendig(const MooUiHostOps* ops);
 
+/* Moo-Builtin ui_host_backend(): Name des aktiven Backends als Moo-String,
+ * "keins" wenn kein Backend registriert ist. Erste Vertragsnutzung aus Moo
+ * heraus (NATIVE-UI-5 Beweis-Harness prueft den Namen im Prozess-Output). */
+MooValue moo_ui_host_backend_name(void);
+
 #ifdef __cplusplus
 }
 #endif

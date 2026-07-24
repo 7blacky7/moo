@@ -213,5 +213,6 @@ sonst:
         ui_timer_hinzu(600, on_snapshot)
         ui_timer_hinzu(1600, on_ende)
     zeige "AERO-CSD-UI-START"
+    zeige "HOST-BACKEND " + ui_host_backend()
     ui_zeige_nebenbei(fenster)
     ui_laufen()

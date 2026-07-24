@@ -5445,6 +5445,9 @@ impl<'ctx> CodeGen<'ctx> {
                         let a = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_ui_fenster_transparenz, &[f.into(), a.into()], "ui_fenster_transparenz");
                     }
+                    "ui_host_backend" | "ui_host_backend_name" => {
+                        return self.call_rt(self.rt.moo_ui_host_backend_name, &[], "ui_host_backend");
+                    }
                     "ui_zeichne_farbe" | "ui_draw_color" | "ui_draw_colour" => {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_ui_zeichne_farbe, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_zeichne_farbe");

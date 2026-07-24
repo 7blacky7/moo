@@ -21,6 +21,23 @@ run = "bash compiler/tests/run_all.sh"
 description = "Run visual UI tests in the isolated harness"
 run = "bash scripts/ui-test-runner.sh"
 
+[tasks.test-native-ui-beweis]
+description = "NATIVE-UI-5: honest visible non-GTK proof (ldd + backend name + external screenshot; needs real display)"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-native-beweis.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+cargo build --release --manifest-path compiler/Cargo.toml
+TARGET="${CARGO_TARGET_DIR:-$PWD/compiler/target}"
+case "$TARGET" in
+  /*) ;;
+  *) TARGET="$PWD/$TARGET" ;;
+esac
+COMPILER="$TARGET/release/moo-compiler"
+"$COMPILER" compile beispiele/moo_aero_csd.moos -o "$OUT/aero"
+MOO_BEWEIS_OUT="$OUT/beweis" bash scripts/native-ui-beweis.sh "$OUT/aero"
+'''
+
 [tasks.test-ui-host-contract]
 description = "Host backend contract gate: vtable completeness + registry, toolkit-free (ASan+UBSan)"
 run = '''
