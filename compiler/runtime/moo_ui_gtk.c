@@ -437,18 +437,6 @@ static MooValue gtk_host_input_cb_stub(MooValue fenster, MooValue cb) {
     return moo_bool(0);
 }
 
-/* Ehrliche Stubs: GTK praesentiert ueber den Leinwand-/Zeichner-Weg,
- * hat keinen direkten Present-Pfad und keinen generischen Input-Vertrag
- * — CAP_DIRECT_PRESENT ist bewusst NICHT gesetzt. */
-static MooValue gtk_host_praesentiere_stub(MooValue fenster, MooValue frame) {
-    (void)fenster; (void)frame;
-    return moo_bool(0);
-}
-static MooValue gtk_host_input_cb_stub(MooValue fenster, MooValue cb) {
-    (void)fenster; (void)cb;
-    return moo_bool(0);
-}
-
 static const MooUiHostOps g_gtk_host_ops = {
     .name = "gtk",
     .capabilities = MOO_UI_HOST_CAP_TRANSPARENZ | MOO_UI_HOST_CAP_CSD_MOVE |
@@ -468,8 +456,6 @@ static const MooUiHostOps g_gtk_host_ops = {
     .transparenz = moo_ui_fenster_transparenz,
     .cursor_setze = moo_ui_fenster_cursor_setze,
     .letztes_input_serial = gtk_host_letztes_input_serial,
-    .praesentiere = gtk_host_praesentiere_stub,
-    .input_callback_setze = gtk_host_input_cb_stub,
     .praesentiere = gtk_host_praesentiere_stub,
     .input_callback_setze = gtk_host_input_cb_stub,
 };
