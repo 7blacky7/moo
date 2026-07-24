@@ -17,10 +17,17 @@
 
 importiere ui_moo_kern
 importiere ui_moo_surface
+importiere ui_moo_csd
 
 setze _UIMH auf {}
 _UIMH["kontext"] = nichts
 _UIMH["fenster"] = nichts
+_UIMH["csd"] = falsch
+_UIMH["titel"] = ""
+_UIMH["hover"] = nichts
+_UIMH["gedrueckt"] = nichts
+_UIMH["b"] = 0
+_UIMH["h"] = 0
 
 funktion _uimh_utf8(cp):
     wenn cp < 128:
@@ -68,6 +75,12 @@ funktion uimh_render():
     wenn k == nichts:
         gib_zurück falsch
     setze z auf k["_z"]
+    wenn _UIMH["csd"]:
+        # CSD-Modus (NATIVE-UI-3b): Aero-Glass-Fenster zuerst, der
+        # Widget-Baum blendet darüber (Glass-Theme-Hintergrund ist
+        # transparent und übermalt den Body nicht).
+        surface_clear(z, 0, 0, 0, 0)
+        uim_csd_zeichnen(z, 0, 0, _UIMH["b"], _UIMH["h"], _UIMH["titel"], wahr, _UIMH["hover"], _UIMH["gedrueckt"], 255, 65536)
     wenn uim_backend_zeichne(k, z) == falsch:
         gib_zurück falsch
     setze fr auf surface_snapshot_to_frame(z)
@@ -80,6 +93,44 @@ funktion _uimh_input(art, a, b, c):
     setze k auf _UIMH["kontext"]
     wenn k == nichts:
         gib_zurück falsch
+    # CSD-Zonen (Titelleiste/Kanten/Buttons) VOR dem Widget-Kern.
+    wenn _UIMH["csd"]:
+        wenn art == "bewegung":
+            setze zone auf uim_csd_hit_test(_UIMH["b"], _UIMH["h"], a, b)
+            setze hz auf nichts
+            wenn zone == "schliessen" oder zone == "minimieren" oder zone == "maximieren":
+                setze hz auf zone
+            wenn hz != _UIMH["hover"]:
+                _UIMH["hover"] = hz
+            host_cursor(_UIMH["fenster"], uim_csd_cursor_name(zone))
+        wenn art == "maus_runter" und c == 1:
+            setze zone auf uim_csd_hit_test(_UIMH["b"], _UIMH["h"], a, b)
+            setze kante auf uim_csd_kante(zone)
+            wenn kante != nichts:
+                host_resize_start(_UIMH["fenster"], kante)
+                gib_zurück wahr
+            wenn zone == "titel":
+                host_drag_start(_UIMH["fenster"])
+                gib_zurück wahr
+            wenn zone == "schliessen" oder zone == "minimieren" oder zone == "maximieren":
+                _UIMH["gedrueckt"] = zone
+                uimh_render()
+                gib_zurück wahr
+        wenn art == "maus_hoch" und c == 1:
+            setze zone auf uim_csd_hit_test(_UIMH["b"], _UIMH["h"], a, b)
+            setze vorher auf _UIMH["gedrueckt"]
+            wenn vorher != nichts:
+                _UIMH["gedrueckt"] = nichts
+                wenn zone == vorher:
+                    wenn zone == "schliessen":
+                        host_schliessen(_UIMH["fenster"])
+                        gib_zurück wahr
+                    wenn zone == "minimieren":
+                        host_minimiere(_UIMH["fenster"])
+                    wenn zone == "maximieren":
+                        host_maximiere(_UIMH["fenster"])
+                uimh_render()
+                gib_zurück wahr
     wenn art == "maus_runter":
         uim_backend_maus_taste(k, a, b, c, wahr)
         uimh_render()
@@ -102,6 +153,8 @@ funktion _uimh_input(art, a, b, c):
         setze z2 auf surface_new(a, b)
         wenn z2 != nichts:
             k["_z"] = z2
+            _UIMH["b"] = a
+            _UIMH["h"] = b
             uim_groesse_setze(k, a, b)
             uimh_render()
         gib_zurück wahr
@@ -127,7 +180,21 @@ funktion uimh_fenster(titel, b, h):
     k["_fenster"] = f
     _UIMH["kontext"] = k
     _UIMH["fenster"] = f
+    _UIMH["titel"] = titel
+    _UIMH["b"] = b
+    _UIMH["h"] = h
     host_on_input(f, _uimh_input)
+    gib_zurück k
+
+# CSD-Variante (NATIVE-UI-3b): eigenes Aero-Glass-Fenster als Chrome,
+# Widget-Kern im Glass-Theme darüber. Widgets unterhalb der Titelleiste
+# platzieren (uim_csd_titel_hoehe liefert die Höhe).
+funktion uimh_fenster_csd(titel, b, h):
+    setze k auf uimh_fenster(titel, b, h)
+    wenn k == nichts:
+        gib_zurück nichts
+    _UIMH["csd"] = wahr
+    uim_theme_setze(k, uim_theme_glass())
     gib_zurück k
 
 funktion uimh_laufen(k):
