@@ -16,16 +16,29 @@ from PIL import Image, ImageDraw, ImageFont
 PX = 16
 FIRST = 32
 LAST = 255  # inklusiv
-FONT_PFAD = sys.argv[1] if len(sys.argv) > 1 else "/usr/share/fonts/TTF/DejaVuSansMono.ttf"
+FONT_PFAD = sys.argv[1] if len(sys.argv) > 1 else "/usr/share/fonts/TTF/DejaVuSans.ttf"
 
 font = ImageFont.truetype(FONT_PFAD, PX)
 ascent, descent = font.getmetrics()
 H = ascent + descent
-W = int(round(font.getlength("M")))
 COUNT = LAST - FIRST + 1
 
+# Proportional: per-Glyph-Advance; Zelle = Maximum aus Ink und Advance.
+advances = []
+ink_w = []
+for cp in range(FIRST, LAST + 1):
+    ch = chr(cp)
+    if 127 <= cp <= 159:
+        ch = " "
+    adv = max(1, int(round(font.getlength(ch))))
+    bbox = font.getbbox(ch, anchor="ls")
+    w = max(adv, (bbox[2] if bbox else adv))
+    advances.append(adv)
+    ink_w.append(w)
+W = max(ink_w) + 1
+
 zeilen = []
-zeilen.append("/* Auto-generiert (scripts/gen_font_aa.py): DejaVu Sans Mono %dpx," % PX)
+zeilen.append("/* Auto-generiert (scripts/gen_font_aa.py): DejaVu Sans %dpx (proportional)," % PX)
 zeilen.append(" * Codepoints %d..%d (ASCII + Latin-1, deutsche Umlaute + Eszett)," % (FIRST, LAST))
 zeilen.append(" * Graustufen-Alpha (Antialiasing eingebacken).")
 zeilen.append(" * Deterministische Tabelle - NICHT von Hand editieren. */")
@@ -36,6 +49,8 @@ zeilen.append("#define MOO_FONT_AA_W %d" % W)
 zeilen.append("#define MOO_FONT_AA_H %d" % H)
 zeilen.append("#define MOO_FONT_AA_FIRST %d" % FIRST)
 zeilen.append("#define MOO_FONT_AA_COUNT %d" % COUNT)
+zeilen.append("/* Advance pro Glyph in Pixeln (proportional). */")
+zeilen.append("static const uint8_t moo_font_aa_adv[%d] = {%s};" % (COUNT, ",".join(str(a) for a in advances)))
 zeilen.append("static const uint8_t moo_font_aa[%d][%d] = {" % (COUNT, W * H))
 
 for cp in range(FIRST, LAST + 1):

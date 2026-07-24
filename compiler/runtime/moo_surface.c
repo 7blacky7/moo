@@ -289,7 +289,6 @@ MooValue moo_surface_text(MooValue value, MooValue x, MooValue y,
     int32_t H = surface->core.height;
     int64_t pen_x = ix;
     int64_t pen_y = iy;
-    int64_t advance = (int64_t)MOO_FONT_AA_W * isk;
     int64_t line_adv = (int64_t)(MOO_FONT_AA_H + 1) * isk;
     for (int32_t i = 0; i < len; ++i) {
         unsigned char c = (unsigned char)s[i];
@@ -322,6 +321,8 @@ MooValue moo_surface_text(MooValue value, MooValue x, MooValue y,
             cp >= (uint32_t)MOO_FONT_AA_FIRST + (uint32_t)MOO_FONT_AA_COUNT)
             cp = (uint32_t)'?';
         const uint8_t* glyph = moo_font_aa[cp - (uint32_t)MOO_FONT_AA_FIRST];
+        int64_t advance =
+            (int64_t)moo_font_aa_adv[cp - (uint32_t)MOO_FONT_AA_FIRST] * isk;
         for (int32_t gy = 0; gy < MOO_FONT_AA_H; ++gy) {
             for (int32_t gx = 0; gx < MOO_FONT_AA_W; ++gx) {
                 uint32_t cov = glyph[gy * MOO_FONT_AA_W + gx];
@@ -365,6 +366,7 @@ MooValue moo_surface_text_breite(MooValue text, MooValue skala) {
     int64_t max_zeile = 0;
     for (int32_t i = 0; i < len; ++i) {
         unsigned char c = (unsigned char)s[i];
+        uint32_t cp2 = c;
         if (c == '\n') {
             if (zeile > max_zeile) max_zeile = zeile;
             zeile = 0;
@@ -373,17 +375,25 @@ MooValue moo_surface_text_breite(MooValue text, MooValue skala) {
         if (c >= 0x80u) {
             if ((c & 0xE0u) == 0xC0u && i + 1 < len &&
                 ((unsigned char)s[i + 1] & 0xC0u) == 0x80u) {
+                cp2 = ((uint32_t)(c & 0x1Fu) << 6) |
+                      ((unsigned char)s[i + 1] & 0x3Fu);
                 i += 1;
             } else if ((c & 0xF0u) == 0xE0u && i + 2 < len &&
                        ((unsigned char)s[i + 1] & 0xC0u) == 0x80u &&
                        ((unsigned char)s[i + 2] & 0xC0u) == 0x80u) {
+                cp2 = (uint32_t)'?';
                 i += 2;
+            } else {
+                cp2 = (uint32_t)'?';
             }
         }
-        zeile += 1;
+        if (cp2 < (uint32_t)MOO_FONT_AA_FIRST ||
+            cp2 >= (uint32_t)MOO_FONT_AA_FIRST + (uint32_t)MOO_FONT_AA_COUNT)
+            cp2 = (uint32_t)'?';
+        zeile += (int64_t)moo_font_aa_adv[cp2 - (uint32_t)MOO_FONT_AA_FIRST];
     }
     if (zeile > max_zeile) max_zeile = zeile;
-    return moo_number((double)(max_zeile * (int64_t)MOO_FONT_AA_W * isk));
+    return moo_number((double)(max_zeile * isk));
 }
 
 MooValue moo_surface_read_pixel(MooValue value, MooValue x, MooValue y) {
