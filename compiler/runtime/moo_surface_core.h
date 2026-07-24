@@ -52,6 +52,34 @@ bool moo_surface_core_rect(MooSurfaceCore* core, int32_t x, int32_t y,
 bool moo_surface_core_roundrect(MooSurfaceCore* core, int32_t x, int32_t y,
                                 int32_t width, int32_t height, int32_t radius,
                                 MooSurfaceColor color);
+
+/* Eine Roundrect-Blend-Stufe fuer moo_surface_core_roundrect_stapel. */
+typedef struct MooSurfaceStufe {
+    int32_t x;
+    int32_t y;
+    int32_t width;
+    int32_t height;
+    int32_t radius;
+    MooSurfaceColor color;
+} MooSurfaceStufe;
+
+/* N Roundrect-Blends in EINEM Pixel-Pass (NATIVE-UI-1c): semantisch
+ * identisch zu n aufeinanderfolgenden moo_surface_core_roundrect-Aufrufen
+ * in Listen-Reihenfolge (gleiche Blend-Reihenfolge, gleicher Clip,
+ * gleiche round_inside-Geometrie); Stufen, die ein Einzel-Aufruf ablehnen
+ * wuerde (Radius zu gross, ausserhalb), werden uebersprungen. Spart bei
+ * gestapelten Schatten die wiederholten Vollflaechen-Durchlaeufe. */
+bool moo_surface_core_roundrect_stapel(MooSurfaceCore* core,
+                                       const MooSurfaceStufe* stufen,
+                                       int32_t anzahl);
+
+/* NATIVE-UI-1c: Zeilen-parallele Ausfuehrung (Linux: pthreads, sonst
+ * sequenziell). Partitionen sind schreibdisjunkt -> bit-identisch zur
+ * sequenziellen Reihenfolge. MOO_SURFACE_THREADS steuert die Threadzahl. */
+int moo_surface_threadzahl(void);
+void moo_surface_zeilen_parallel(void (*fn)(void*, int32_t, int32_t),
+                                 void* ctx, int32_t y0, int32_t y1,
+                                 int64_t pixel_gesamt);
 bool moo_surface_core_circle(MooSurfaceCore* core, int32_t cx, int32_t cy,
                              int32_t radius, MooSurfaceColor color);
 bool moo_surface_core_line(MooSurfaceCore* core, int32_t x0, int32_t y0,

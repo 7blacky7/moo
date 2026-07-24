@@ -4529,6 +4529,11 @@ impl<'ctx> CodeGen<'ctx> {
                             "surface_read_pixel",
                         );
                     }
+                    "surface_roundrect_stapel" => {
+                        let z = self.compile_expr(&args[0])?;
+                        let st = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_surface_roundrect_stapel, &[z.into(), st.into()], "surface_roundrect_stapel");
+                    }
                     "surface_glass_farbpass" => {
                         return self.call_rt_borrowed_builtin(
                             self.rt.moo_surface_glass_farbpass,

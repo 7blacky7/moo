@@ -504,13 +504,25 @@ funktion uim_effekt_vorschau_zeichnen(z, x, y, b, h, aufloesung, reduzierte_bewe
         setze lage auf s["unschaerfe"]
         wenn lage > 8:
             setze lage auf 8
+        # Fastpath (NATIVE-UI-1c): alle Stufen in EINEM C-Pixel-Pass —
+        # identische Stufenwerte/Reihenfolge wie die Referenzschleife.
+        setze stufen auf []
         setze i auf lage
         solange i >= 0:
             setze alpha auf sf["a"] / (lage + 2)
             wenn i == 0:
                 setze alpha auf sf["a"] / 2
-            surface_roundrect(z, px + s["x"] - s["ausbreitung"] - i, py + s["y"] - s["ausbreitung"] - i, pb + 2 * (s["ausbreitung"] + i), ph + 2 * (s["ausbreitung"] + i), radius + s["ausbreitung"] + i, sf["r"], sf["g"], sf["b"], _uime_klemme_kanal(alpha))
+            stufen.hinzufügen([px + s["x"] - s["ausbreitung"] - i, py + s["y"] - s["ausbreitung"] - i, pb + 2 * (s["ausbreitung"] + i), ph + 2 * (s["ausbreitung"] + i), radius + s["ausbreitung"] + i, sf["r"], sf["g"], sf["b"], _uime_klemme_kanal(alpha)])
             setze i auf i - 1
+        wenn surface_roundrect_stapel(z, stufen) == falsch:
+            # Referenzpfad (alter Runtime): identisches Ergebnis, n Passe.
+            setze i auf lage
+            solange i >= 0:
+                setze alpha auf sf["a"] / (lage + 2)
+                wenn i == 0:
+                    setze alpha auf sf["a"] / 2
+                surface_roundrect(z, px + s["x"] - s["ausbreitung"] - i, py + s["y"] - s["ausbreitung"] - i, pb + 2 * (s["ausbreitung"] + i), ph + 2 * (s["ausbreitung"] + i), radius + s["ausbreitung"] + i, sf["r"], sf["g"], sf["b"], _uime_klemme_kanal(alpha))
+                setze i auf i - 1
 
     setze farb_pass auf _uime_bit_an(e["aktiv"], 4) oder _uime_bit_an(e["aktiv"], 8) oder _uime_bit_an(e["aktiv"], 16) oder _uime_bit_an(e["aktiv"], 32)
     wenn farb_pass:

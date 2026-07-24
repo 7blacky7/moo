@@ -99,6 +99,29 @@ MooValue moo_dict_get(MooValue dict_value, MooValue key) {
     return result;
 }
 
+/* NATIVE-UI-1c: moo_surface_roundrect_stapel liest seine Stufenliste ueber
+ * moo_list_length/moo_list_get — Stub-Semantik wie moo_list.c (Owning-
+ * Rueckgabe mit retain; Index kommt hier immer als MOO_NUMBER). */
+MooValue moo_list_length(MooValue list) {
+    if (list.tag != MOO_LIST) return moo_number(0);
+    return moo_number((double)MV_LIST(list)->length);
+}
+
+MooValue moo_list_get(MooValue list, MooValue index) {
+    MooList* l;
+    int32_t i;
+    if (list.tag != MOO_LIST || index.tag != MOO_NUMBER) return moo_none();
+    l = MV_LIST(list);
+    i = (int32_t)MV_NUM(index);
+    if (i < 0) i += l->length;
+    if (i < 0 || i >= l->length) return moo_none();
+    {
+        MooValue v = l->items[i];
+        moo_retain(v);
+        return v;
+    }
+}
+
 MooValue moo_frame_new_take(int width, int height, uint8_t* pixels) {
     MooFrame* frame;
     MooValue value;

@@ -113,7 +113,33 @@ static void moo_surface_blend(uint8_t* dst, MooSurfaceColor src) {
         dst[3] = 255u;
         return;
     }
+    /* NATIVE-UI-1c Schnellzweige — mathematisch EXAKT identisch zur
+     * allgemeinen Formel unten (nachgerechnet inkl. Rundungsterm):
+     * dst.a==0: red_num/alpha_num = src.r*src.a*255/(src.a*255) = src.r,
+     *           out_a = (src.a*255+127)/255 = src.a -> dst = src, 0 Divs.
+     * dst.a==255: alpha_numerator = 255*(src.a+inv) = 65025 konstant ->
+     *           identische Divisionen, aber durch Literal (Multiply-Shift). */
+    if (dst[3] == 0u) {
+        dst[0] = src.r;
+        dst[1] = src.g;
+        dst[2] = src.b;
+        dst[3] = src.a;
+        return;
+    }
     inv = 255u - (uint64_t)src.a;
+    if (dst[3] == 255u) {
+        red_numerator = (uint64_t)src.r * (uint64_t)src.a * 255u +
+                        (uint64_t)dst[0] * 255u * inv;
+        green_numerator = (uint64_t)src.g * (uint64_t)src.a * 255u +
+                          (uint64_t)dst[1] * 255u * inv;
+        blue_numerator = (uint64_t)src.b * (uint64_t)src.a * 255u +
+                         (uint64_t)dst[2] * 255u * inv;
+        dst[0] = (uint8_t)((red_numerator + 65025u / 2u) / 65025u);
+        dst[1] = (uint8_t)((green_numerator + 65025u / 2u) / 65025u);
+        dst[2] = (uint8_t)((blue_numerator + 65025u / 2u) / 65025u);
+        dst[3] = 255u;
+        return;
+    }
     alpha_numerator = (uint64_t)src.a * 255u + (uint64_t)dst[3] * inv;
     if (alpha_numerator == 0u) {
         dst[0] = 0u;
@@ -246,6 +272,177 @@ bool moo_surface_core_roundrect(MooSurfaceCore* core, int32_t x, int32_t y,
                 moo_surface_blend(moo_surface_pixel(core, px, py), color);
             }
         }
+    }
+    return true;
+}
+
+/* NATIVE-UI-1c: Zeilen-parallele Helfer. Partitionen sind schreibdisjunkt
+ * und lesen nur konstante Stufen-/SAT-Daten -> Ergebnis bit-identisch zur
+ * sequenziellen Ausfuehrung, unabhaengig von der Threadzahl.
+ * MOO_SURFACE_THREADS=1 erzwingt sequenziell (Debug/ASan-Vergleich). */
+#if defined(__linux__)
+#include <pthread.h>
+#include <unistd.h>
+#include <stdlib.h>
+int moo_surface_threadzahl(void) {
+    static int cached = -1;
+    long n;
+    const char* env;
+    if (cached > 0) return cached;
+    env = getenv("MOO_SURFACE_THREADS");
+    if (env && env[0]) {
+        int v = atoi(env);
+        cached = v < 1 ? 1 : (v > 32 ? 32 : v);
+        return cached;
+    }
+    n = sysconf(_SC_NPROCESSORS_ONLN);
+    cached = n < 1 ? 1 : (n > 16 ? 16 : (int)n);
+    return cached;
+}
+typedef struct {
+    void (*fn)(void* ctx, int32_t y0, int32_t y1);
+    void* ctx;
+    int32_t y0;
+    int32_t y1;
+} MooZeilenJob;
+static void* moo_zeilen_worker(void* arg) {
+    MooZeilenJob* j = (MooZeilenJob*)arg;
+    j->fn(j->ctx, j->y0, j->y1);
+    return NULL;
+}
+void moo_surface_zeilen_parallel(void (*fn)(void*, int32_t, int32_t),
+                                 void* ctx, int32_t y0, int32_t y1,
+                                 int64_t pixel_gesamt) {
+    int nthreads = moo_surface_threadzahl();
+    pthread_t threads[32];
+    MooZeilenJob jobs[32];
+    int32_t zeilen = y1 - y0;
+    int i;
+    int gestartet = 0;
+    if (nthreads < 2 || zeilen < 2 || pixel_gesamt < 256 * 1024) {
+        fn(ctx, y0, y1);
+        return;
+    }
+    if (nthreads > zeilen) nthreads = zeilen;
+    for (i = 0; i < nthreads; ++i) {
+        int32_t a = y0 + (int32_t)((int64_t)zeilen * i / nthreads);
+        int32_t bz = y0 + (int32_t)((int64_t)zeilen * (i + 1) / nthreads);
+        jobs[i].fn = fn;
+        jobs[i].ctx = ctx;
+        jobs[i].y0 = a;
+        jobs[i].y1 = bz;
+        if (i < nthreads - 1) {
+            if (pthread_create(&threads[i], NULL, moo_zeilen_worker,
+                               &jobs[i]) == 0) {
+                gestartet++;
+                continue;
+            }
+        }
+        fn(ctx, a, bz);
+    }
+    for (i = 0; i < gestartet; ++i) pthread_join(threads[i], NULL);
+}
+#else
+int moo_surface_threadzahl(void) { return 1; }
+void moo_surface_zeilen_parallel(void (*fn)(void*, int32_t, int32_t),
+                                 void* ctx, int32_t y0, int32_t y1,
+                                 int64_t pixel_gesamt) {
+    (void)pixel_gesamt;
+    fn(ctx, y0, y1);
+}
+#endif
+
+typedef struct {
+    MooSurfaceCore* core;
+    const MooSurfaceStufe* stufen;
+    const MooSurfaceClip* clips;
+    const int64_t* sx1;
+    const int64_t* sy1;
+    const bool* aktiv;
+    int32_t anzahl;
+    int32_t ux0;
+    int32_t ux1;
+} MooStapelCtx;
+
+static void moo_stapel_zeilen(void* vctx, int32_t y0, int32_t y1) {
+    MooStapelCtx* c = (MooStapelCtx*)vctx;
+    int32_t px;
+    int32_t py;
+    int32_t i;
+    for (py = y0; py < y1; ++py) {
+        for (px = c->ux0; px < c->ux1; ++px) {
+            uint8_t* pixel = NULL;
+            for (i = 0; i < c->anzahl; ++i) {
+                if (!c->aktiv[i]) continue;
+                if (px < c->clips[i].x0 || px >= c->clips[i].x1 ||
+                    py < c->clips[i].y0 || py >= c->clips[i].y1) continue;
+                if (!moo_surface_round_inside(px, py, c->stufen[i].x,
+                                              c->stufen[i].y, c->sx1[i],
+                                              c->sy1[i],
+                                              c->stufen[i].radius)) continue;
+                if (!pixel) pixel = moo_surface_pixel(c->core, px, py);
+                moo_surface_blend(pixel, c->stufen[i].color);
+            }
+        }
+    }
+}
+
+bool moo_surface_core_roundrect_stapel(MooSurfaceCore* core,
+                                       const MooSurfaceStufe* stufen,
+                                       int32_t anzahl) {
+    /* NATIVE-UI-1c: Ein Pixel-Pass statt n Vollflaechen-Durchlaeufe.
+     * Pro Stufe vorab: gueltig? (wie core_roundrect) + Clip-Schnitt.
+     * Dann Union-Bounds iterieren und pro Pixel die Stufen in
+     * Listen-Reihenfolge blenden — bit-identisch zur Einzel-Call-Folge. */
+    enum { MAX_STUFEN = 32 };
+    MooSurfaceClip clips[MAX_STUFEN];
+    int64_t sx1[MAX_STUFEN];
+    int64_t sy1[MAX_STUFEN];
+    bool aktiv[MAX_STUFEN];
+    MooSurfaceClip uni;
+    int32_t i;
+    int32_t px;
+    int32_t py;
+    bool irgendeine = false;
+    if (!moo_surface_core_valid(core) || anzahl < 0 ||
+        anzahl > MAX_STUFEN || !stufen) return false;
+    uni.x0 = core->width;
+    uni.y0 = core->height;
+    uni.x1 = 0;
+    uni.y1 = 0;
+    for (i = 0; i < anzahl; ++i) {
+        const MooSurfaceStufe* s = &stufen[i];
+        int32_t max_radius;
+        aktiv[i] = false;
+        if (s->width < 0 || s->height < 0 || s->radius < 0) continue;
+        max_radius = (s->width < s->height ? s->width : s->height) / 2;
+        if (s->radius > max_radius) continue;
+        if (!moo_surface_rect_bounds(core, s->x, s->y, s->width, s->height,
+                                     &clips[i])) continue;
+        sx1[i] = (int64_t)s->x + (int64_t)s->width;
+        sy1[i] = (int64_t)s->y + (int64_t)s->height;
+        aktiv[i] = true;
+        irgendeine = true;
+        if (clips[i].x0 < uni.x0) uni.x0 = clips[i].x0;
+        if (clips[i].y0 < uni.y0) uni.y0 = clips[i].y0;
+        if (clips[i].x1 > uni.x1) uni.x1 = clips[i].x1;
+        if (clips[i].y1 > uni.y1) uni.y1 = clips[i].y1;
+    }
+    if (!irgendeine) return true;
+    {
+        MooStapelCtx ctx;
+        ctx.core = core;
+        ctx.stufen = stufen;
+        ctx.clips = clips;
+        ctx.sx1 = sx1;
+        ctx.sy1 = sy1;
+        ctx.aktiv = aktiv;
+        ctx.anzahl = anzahl;
+        ctx.ux0 = uni.x0;
+        ctx.ux1 = uni.x1;
+        moo_surface_zeilen_parallel(moo_stapel_zeilen, &ctx, uni.y0, uni.y1,
+                                    (int64_t)(uni.x1 - uni.x0) *
+                                    (int64_t)(uni.y1 - uni.y0));
     }
     return true;
 }

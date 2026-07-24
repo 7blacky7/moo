@@ -498,6 +498,237 @@ typedef struct {
     MooSurfaceColor color;
 } GlassScratch;
 
+/* Bit-identische Kopie von moo_surface_blend (moo_surface_core.c) —
+ * dort static; bei Aenderungen BEIDE Stellen synchron halten
+ * (Effekt-Golden-Gates sichern die Konsistenz). */
+static void glass_blend_px(uint8_t* dst, MooSurfaceColor src) {
+    uint64_t inv;
+    uint64_t alpha_numerator;
+    uint64_t red_numerator;
+    uint64_t green_numerator;
+    uint64_t blue_numerator;
+    if (src.a == 0u) return;
+    if (src.a == 255u) {
+        dst[0] = src.r;
+        dst[1] = src.g;
+        dst[2] = src.b;
+        dst[3] = 255u;
+        return;
+    }
+    if (dst[3] == 0u) {
+        dst[0] = src.r;
+        dst[1] = src.g;
+        dst[2] = src.b;
+        dst[3] = src.a;
+        return;
+    }
+    inv = 255u - (uint64_t)src.a;
+    if (dst[3] == 255u) {
+        red_numerator = (uint64_t)src.r * (uint64_t)src.a * 255u +
+                        (uint64_t)dst[0] * 255u * inv;
+        green_numerator = (uint64_t)src.g * (uint64_t)src.a * 255u +
+                          (uint64_t)dst[1] * 255u * inv;
+        blue_numerator = (uint64_t)src.b * (uint64_t)src.a * 255u +
+                         (uint64_t)dst[2] * 255u * inv;
+        dst[0] = (uint8_t)((red_numerator + 65025u / 2u) / 65025u);
+        dst[1] = (uint8_t)((green_numerator + 65025u / 2u) / 65025u);
+        dst[2] = (uint8_t)((blue_numerator + 65025u / 2u) / 65025u);
+        dst[3] = 255u;
+        return;
+    }
+    alpha_numerator = (uint64_t)src.a * 255u + (uint64_t)dst[3] * inv;
+    if (alpha_numerator == 0u) {
+        dst[0] = 0u;
+        dst[1] = 0u;
+        dst[2] = 0u;
+        dst[3] = 0u;
+        return;
+    }
+    red_numerator = (uint64_t)src.r * (uint64_t)src.a * 255u +
+                    (uint64_t)dst[0] * (uint64_t)dst[3] * inv;
+    green_numerator = (uint64_t)src.g * (uint64_t)src.a * 255u +
+                      (uint64_t)dst[1] * (uint64_t)dst[3] * inv;
+    blue_numerator = (uint64_t)src.b * (uint64_t)src.a * 255u +
+                     (uint64_t)dst[2] * (uint64_t)dst[3] * inv;
+    dst[0] = (uint8_t)((red_numerator + alpha_numerator / 2u) /
+                       alpha_numerator);
+    dst[1] = (uint8_t)((green_numerator + alpha_numerator / 2u) /
+                       alpha_numerator);
+    dst[2] = (uint8_t)((blue_numerator + alpha_numerator / 2u) /
+                       alpha_numerator);
+    dst[3] = (uint8_t)((alpha_numerator + 127u) / 255u);
+}
+
+/* NATIVE-UI-1c: N Roundrect-Blend-Stufen in einem Pass. stufen = Liste
+ * von Listen [x, y, b, h, radius, r, g, blau, a] (Zahlen, identische
+ * Konvertierung wie surface_roundrect). Ungueltige Stufen werden wie
+ * fehlgeschlagene Einzel-Calls uebersprungen. */
+MooValue moo_surface_roundrect_stapel(MooValue value, MooValue stufen) {
+    MooSurface* surface = moo_surface_get(value);
+    MooSurfaceStufe s[32];
+    int32_t n = 0;
+    int32_t i;
+    int32_t laenge;
+    if (!surface || stufen.tag != MOO_LIST) return moo_bool(false);
+    laenge = (int32_t)MV_NUM(moo_list_length(stufen));
+    if (laenge < 0 || laenge > 32) return moo_bool(false);
+    for (i = 0; i < laenge; ++i) {
+        MooValue eintrag = moo_list_get(stufen, moo_number((double)i));
+        int32_t werte[5];
+        MooSurfaceColor farbe;
+        bool ok = eintrag.tag == MOO_LIST &&
+                  (int32_t)MV_NUM(moo_list_length(eintrag)) == 9;
+        int32_t k;
+        MooValue teil[9];
+        for (k = 0; k < 9; ++k) teil[k] = moo_none();
+        if (ok) {
+            for (k = 0; k < 9; ++k)
+                teil[k] = moo_list_get(eintrag, moo_number((double)k));
+            ok = moo_surface_number_i32(teil[0], &werte[0]) &&
+                 moo_surface_number_i32(teil[1], &werte[1]) &&
+                 moo_surface_number_i32(teil[2], &werte[2]) &&
+                 moo_surface_number_i32(teil[3], &werte[3]) &&
+                 moo_surface_number_i32(teil[4], &werte[4]) &&
+                 moo_surface_color(teil[5], teil[6], teil[7], teil[8],
+                                   &farbe);
+        }
+        for (k = 0; k < 9; ++k) moo_release(teil[k]);
+        moo_release(eintrag);
+        if (!ok) continue;
+        s[n].x = werte[0];
+        s[n].y = werte[1];
+        s[n].width = werte[2];
+        s[n].height = werte[3];
+        s[n].radius = werte[4];
+        s[n].color = farbe;
+        n++;
+    }
+    if (n == 0) return moo_bool(true);
+    return moo_bool(moo_surface_core_roundrect_stapel(&surface->core, s, n) &&
+                    moo_surface_guards_ok(surface));
+}
+
+/* NATIVE-UI-1c: Zeilen-Worker fuer den SAT-Pfad des Farbpasses. Liest nur
+ * aus Integralbild + konstanten Parametern, schreibt disjunkte Zeilen —
+ * bit-identisch zur sequenziellen Schleife, unabhaengig von der Threadzahl. */
+typedef struct {
+    uint8_t* pixels;
+    int32_t width;
+    MooSurfaceClip ac;
+    const uint32_t* integral;
+    size_t satw;
+    int32_t cx0;
+    int32_t cy0;
+    int32_t cw;
+    int32_t ch;
+    int32_t px;
+    int32_t py;
+    int32_t pb;
+    int32_t ph;
+    int32_t iblur;
+    double ecken[4];
+    double rmax;
+    bool sat_an;
+    double sat;
+    bool tint_an;
+    double mix;
+    double tr;
+    double tg;
+    double tb;
+    bool noise_an;
+    double staerke;
+    double seed_mod;
+} GlassZeilenCtx;
+
+static void glass_farbpass_zeilen(void* vctx, int32_t y0, int32_t y1) {
+    GlassZeilenCtx* c = (GlassZeilenCtx*)vctx;
+    for (int32_t ly = y0; ly < y1; ++ly) {
+        for (int32_t lx = 0; lx < c->pb; ++lx) {
+            double sum_r = 0.0;
+            double sum_g = 0.0;
+            double sum_b = 0.0;
+            double sum_a = 0.0;
+            double anzahl = 0.0;
+            double rr;
+            double gg;
+            double bb;
+            double aa;
+            if (!((double)ly >= c->rmax && (double)ly < (double)c->ph - c->rmax) &&
+                !((double)lx >= c->rmax && (double)lx < (double)c->pb - c->rmax) &&
+                !glass_im_rundclip(c->ecken, lx, ly, c->pb, c->ph)) continue;
+            {
+                int32_t sx0 = c->px + lx - c->iblur;
+                int32_t sy0 = c->py + ly - c->iblur;
+                int32_t sx1 = c->px + lx + c->iblur + 1;
+                int32_t sy1 = c->py + ly + c->iblur + 1;
+                if (sx0 < c->cx0) sx0 = c->cx0;
+                if (sy0 < c->cy0) sy0 = c->cy0;
+                if (sx1 > c->cx0 + c->cw) sx1 = c->cx0 + c->cw;
+                if (sy1 > c->cy0 + c->ch) sy1 = c->cy0 + c->ch;
+                if (sx1 > sx0 && sy1 > sy0) {
+                    size_t ax = (size_t)(sx0 - c->cx0);
+                    size_t bx = (size_t)(sx1 - c->cx0);
+                    size_t ay = (size_t)(sy0 - c->cy0);
+                    size_t by = (size_t)(sy1 - c->cy0);
+                    const uint32_t* rb = c->integral + by * c->satw * 4u;
+                    const uint32_t* ra = c->integral + ay * c->satw * 4u;
+                    sum_r = (double)(rb[bx * 4u + 0u] - ra[bx * 4u + 0u] -
+                            rb[ax * 4u + 0u] + ra[ax * 4u + 0u]);
+                    sum_g = (double)(rb[bx * 4u + 1u] - ra[bx * 4u + 1u] -
+                            rb[ax * 4u + 1u] + ra[ax * 4u + 1u]);
+                    sum_b = (double)(rb[bx * 4u + 2u] - ra[bx * 4u + 2u] -
+                            rb[ax * 4u + 2u] + ra[ax * 4u + 2u]);
+                    sum_a = (double)(rb[bx * 4u + 3u] - ra[bx * 4u + 3u] -
+                            rb[ax * 4u + 3u] + ra[ax * 4u + 3u]);
+                    anzahl = (double)((sx1 - sx0) * (sy1 - sy0));
+                }
+            }
+            if (anzahl <= 0.0) continue;
+            rr = sum_r / anzahl;
+            gg = sum_g / anzahl;
+            bb = sum_b / anzahl;
+            aa = sum_a / anzahl;
+            if (c->sat_an) {
+                double lum = (rr + gg + bb) / 3.0;
+                rr = lum + (rr - lum) * c->sat;
+                gg = lum + (gg - lum) * c->sat;
+                bb = lum + (bb - lum) * c->sat;
+            }
+            if (c->tint_an) {
+                rr = rr * (1.0 - c->mix) + c->tr * c->mix;
+                gg = gg * (1.0 - c->mix) + c->tg * c->mix;
+                bb = bb * (1.0 - c->mix) + c->tb * c->mix;
+            }
+            if (c->noise_an) {
+                uint64_t nxi = (uint64_t)(c->px + lx);
+                uint64_t nyi = (uint64_t)(c->py + ly);
+                double hx = (double)((nxi * 73856093u) % 65521u);
+                double hy = (double)((nyi * 19349663u) % 65521u);
+                double nv = fmod(hx * 31.0 + hy * 17.0 + c->seed_mod, 251.0);
+                double nn = (nv - 125.0) * c->staerke / 1020.0;
+                rr += nn;
+                gg += nn;
+                bb += nn;
+            }
+            {
+                int32_t wx = c->px + lx;
+                int32_t wy = c->py + ly;
+                if (wx >= c->ac.x0 && wx < c->ac.x1 &&
+                    wy >= c->ac.y0 && wy < c->ac.y1) {
+                    MooSurfaceColor col;
+                    uint8_t* p = c->pixels +
+                        ((size_t)wy * (size_t)c->width + (size_t)wx) * 4u;
+                    col.r = glass_klemme(rr);
+                    col.g = glass_klemme(gg);
+                    col.b = glass_klemme(bb);
+                    col.a = glass_klemme(aa);
+                    glass_blend_px(p, col);
+                }
+            }
+        }
+    }
+}
+
 MooValue moo_surface_glass_farbpass(MooValue value, MooValue x, MooValue y,
                                     MooValue b, MooValue h, MooValue effekt) {
     MooSurface* surface = moo_surface_get(value);
@@ -544,11 +775,21 @@ MooValue moo_surface_glass_farbpass(MooValue value, MooValue x, MooValue y,
     }
     double staerke = glass_dnum(hg, "rauschen", 0.0);
     double seed = glass_dnum(hg, "rauschen_seed", 0.0);
+    /* NATIVE-UI-1c: fmod(seed, 65521) ist schleifenkonstant — einmal
+     * vorberechnen (identischer Wert wie der bisherige Aufruf pro Pixel). */
+    double seed_mod = fmod(seed, 65521.0);
     double ecken[4];
     ecken[0] = glass_dnum(eckd, "oben_links", 0.0);
     ecken[1] = glass_dnum(eckd, "oben_rechts", 0.0);
     ecken[2] = glass_dnum(eckd, "unten_rechts", 0.0);
     ecken[3] = glass_dnum(eckd, "unten_links", 0.0);
+    /* NATIVE-UI-1c: ausserhalb der Eck-Randstreifen liefert der Rundclip
+     * immer true (in_ecke verlangt lx UND ly im jeweiligen Radius-Streifen)
+     * — dort den Funktionsaufruf pro Pixel sparen. */
+    double rmax = ecken[0];
+    if (ecken[1] > rmax) rmax = ecken[1];
+    if (ecken[2] > rmax) rmax = ecken[2];
+    if (ecken[3] > rmax) rmax = ecken[3];
     moo_release(hg);
     moo_release(eckd);
 
@@ -565,7 +806,7 @@ MooValue moo_surface_glass_farbpass(MooValue value, MooValue x, MooValue y,
     int32_t ch = 0;
     int32_t cx0 = px - iblur;
     int32_t cy0 = py - iblur;
-    double* integral = NULL;
+    uint32_t* integral = NULL;
     size_t satw = 0u;
     {
         int32_t W = surface->core.width;
@@ -581,31 +822,31 @@ MooValue moo_surface_glass_farbpass(MooValue value, MooValue x, MooValue y,
         if (cw > 0 && ch > 0) {
             size_t sat_px = ((size_t)cw + 1u) * ((size_t)ch + 1u);
             if (sat_px <= 20u * 1024u * 1024u)
-                integral = (double*)malloc(sat_px * 4u * sizeof(double));
+                integral = (uint32_t*)malloc(sat_px * 4u * sizeof(uint32_t));
         }
         if (integral) {
             const uint8_t* pixels = surface->core.pixels;
             satw = (size_t)cw + 1u;
-            for (size_t i = 0u; i < satw * 4u; ++i) integral[i] = 0.0;
+            for (size_t i = 0u; i < satw * 4u; ++i) integral[i] = 0u;
             for (int32_t yy = 0; yy < ch; ++yy) {
-                const double* prev = integral + (size_t)yy * satw * 4u;
-                double* dst = integral + ((size_t)yy + 1u) * satw * 4u;
+                const uint32_t* prev = integral + (size_t)yy * satw * 4u;
+                uint32_t* dst = integral + ((size_t)yy + 1u) * satw * 4u;
                 const uint8_t* src = pixels +
                     ((size_t)(cy0 + yy) * (size_t)W + (size_t)cx0) * 4u;
-                double row_r = 0.0;
-                double row_g = 0.0;
-                double row_b = 0.0;
-                double row_a = 0.0;
-                dst[0] = 0.0;
-                dst[1] = 0.0;
-                dst[2] = 0.0;
-                dst[3] = 0.0;
+                uint32_t row_r = 0u;
+                uint32_t row_g = 0u;
+                uint32_t row_b = 0u;
+                uint32_t row_a = 0u;
+                dst[0] = 0u;
+                dst[1] = 0u;
+                dst[2] = 0u;
+                dst[3] = 0u;
                 for (int32_t xx = 0; xx < cw; ++xx) {
                     size_t o = ((size_t)xx + 1u) * 4u;
-                    row_r += (double)src[0];
-                    row_g += (double)src[1];
-                    row_b += (double)src[2];
-                    row_a += (double)src[3];
+                    row_r += (uint32_t)src[0];
+                    row_g += (uint32_t)src[1];
+                    row_b += (uint32_t)src[2];
+                    row_a += (uint32_t)src[3];
                     dst[o + 0u] = prev[o + 0u] + row_r;
                     dst[o + 1u] = prev[o + 1u] + row_g;
                     dst[o + 2u] = prev[o + 2u] + row_b;
@@ -617,6 +858,40 @@ MooValue moo_surface_glass_farbpass(MooValue value, MooValue x, MooValue y,
     }
 
     size_t n = 0u;
+    if (integral) {
+        GlassZeilenCtx zc;
+        zc.pixels = surface->core.pixels;
+        zc.width = surface->core.width;
+        zc.ac = surface->core.clips[surface->core.clip_depth - 1u];
+        zc.integral = integral;
+        zc.satw = satw;
+        zc.cx0 = cx0;
+        zc.cy0 = cy0;
+        zc.cw = cw;
+        zc.ch = ch;
+        zc.px = px;
+        zc.py = py;
+        zc.pb = pb;
+        zc.ph = ph;
+        zc.iblur = iblur;
+        zc.ecken[0] = ecken[0];
+        zc.ecken[1] = ecken[1];
+        zc.ecken[2] = ecken[2];
+        zc.ecken[3] = ecken[3];
+        zc.rmax = rmax;
+        zc.sat_an = sat_an;
+        zc.sat = sat;
+        zc.tint_an = tint_an;
+        zc.mix = mix;
+        zc.tr = tr;
+        zc.tg = tg;
+        zc.tb = tb;
+        zc.noise_an = noise_an;
+        zc.staerke = staerke;
+        zc.seed_mod = seed_mod;
+        moo_surface_zeilen_parallel(glass_farbpass_zeilen, &zc, 0, ph,
+                                    (int64_t)pb * (int64_t)ph);
+    } else {
     for (int32_t ly = 0; ly < ph; ++ly) {
         for (int32_t lx = 0; lx < pb; ++lx) {
             double sum_r = 0.0;
@@ -628,7 +903,9 @@ MooValue moo_surface_glass_farbpass(MooValue value, MooValue x, MooValue y,
             double gg;
             double bb;
             double aa;
-            if (!glass_im_rundclip(ecken, lx, ly, pb, ph)) continue;
+            if (!((double)ly >= rmax && (double)ly < (double)ph - rmax) &&
+                !((double)lx >= rmax && (double)lx < (double)pb - rmax) &&
+                !glass_im_rundclip(ecken, lx, ly, pb, ph)) continue;
             if (integral) {
                 int32_t sx0 = px + lx - iblur;
                 int32_t sy0 = py + ly - iblur;
@@ -643,16 +920,16 @@ MooValue moo_surface_glass_farbpass(MooValue value, MooValue x, MooValue y,
                     size_t bx = (size_t)(sx1 - cx0);
                     size_t ay = (size_t)(sy0 - cy0);
                     size_t by = (size_t)(sy1 - cy0);
-                    const double* rb = integral + by * satw * 4u;
-                    const double* ra = integral + ay * satw * 4u;
-                    sum_r = rb[bx * 4u + 0u] - ra[bx * 4u + 0u] -
-                            rb[ax * 4u + 0u] + ra[ax * 4u + 0u];
-                    sum_g = rb[bx * 4u + 1u] - ra[bx * 4u + 1u] -
-                            rb[ax * 4u + 1u] + ra[ax * 4u + 1u];
-                    sum_b = rb[bx * 4u + 2u] - ra[bx * 4u + 2u] -
-                            rb[ax * 4u + 2u] + ra[ax * 4u + 2u];
-                    sum_a = rb[bx * 4u + 3u] - ra[bx * 4u + 3u] -
-                            rb[ax * 4u + 3u] + ra[ax * 4u + 3u];
+                    const uint32_t* rb = integral + by * satw * 4u;
+                    const uint32_t* ra = integral + ay * satw * 4u;
+                    sum_r = (double)(rb[bx * 4u + 0u] - ra[bx * 4u + 0u] -
+                            rb[ax * 4u + 0u] + ra[ax * 4u + 0u]);
+                    sum_g = (double)(rb[bx * 4u + 1u] - ra[bx * 4u + 1u] -
+                            rb[ax * 4u + 1u] + ra[ax * 4u + 1u]);
+                    sum_b = (double)(rb[bx * 4u + 2u] - ra[bx * 4u + 2u] -
+                            rb[ax * 4u + 2u] + ra[ax * 4u + 2u]);
+                    sum_a = (double)(rb[bx * 4u + 3u] - ra[bx * 4u + 3u] -
+                            rb[ax * 4u + 3u] + ra[ax * 4u + 3u]);
                     anzahl = (double)((sx1 - sx0) * (sy1 - sy0));
                 }
             } else {
@@ -688,25 +965,50 @@ MooValue moo_surface_glass_farbpass(MooValue value, MooValue x, MooValue y,
                 bb = bb * (1.0 - mix) + tb * mix;
             }
             if (noise_an) {
-                double nx = (double)(px + lx);
-                double ny = (double)(py + ly);
-                double hx = fmod(nx * 73856093.0, 65521.0);
-                double hy = fmod(ny * 19349663.0, 65521.0);
-                double nv = fmod(hx * 31.0 + hy * 17.0 +
-                                 fmod(seed, 65521.0), 251.0);
+                /* NATIVE-UI-1c: Koordinaten und Produkte sind exakte
+                 * Ganzzahlen (< 2^53) — fmod auf exakten Ganzzahlen ist
+                 * der Integer-Modulo. Bit-identisch, aber ohne die drei
+                 * teuren fmod-Aufrufe pro Pixel. */
+                uint64_t nxi = (uint64_t)(px + lx);
+                uint64_t nyi = (uint64_t)(py + ly);
+                double hx = (double)((nxi * 73856093u) % 65521u);
+                double hy = (double)((nyi * 19349663u) % 65521u);
+                double nv = fmod(hx * 31.0 + hy * 17.0 + seed_mod, 251.0);
                 double nn = (nv - 125.0) * staerke / 1020.0;
                 rr += nn;
                 gg += nn;
                 bb += nn;
             }
-            scratch[n].x = px + lx;
-            scratch[n].y = py + ly;
-            scratch[n].color.r = glass_klemme(rr);
-            scratch[n].color.g = glass_klemme(gg);
-            scratch[n].color.b = glass_klemme(bb);
-            scratch[n].color.a = glass_klemme(aa);
-            n++;
+            if (integral) {
+                /* NATIVE-UI-1c: Gelesen wird ausschliesslich aus dem vorab
+                 * gebauten Integralbild — in-place-Writeback ist sicher.
+                 * Clip-Check + Blend exakt wie core_rect(1x1). */
+                int32_t wx = px + lx;
+                int32_t wy = py + ly;
+                MooSurfaceClip ac =
+                    surface->core.clips[surface->core.clip_depth - 1u];
+                if (wx >= ac.x0 && wx < ac.x1 && wy >= ac.y0 && wy < ac.y1) {
+                    MooSurfaceColor c;
+                    uint8_t* p = surface->core.pixels +
+                        ((size_t)wy * (size_t)surface->core.width +
+                         (size_t)wx) * 4u;
+                    c.r = glass_klemme(rr);
+                    c.g = glass_klemme(gg);
+                    c.b = glass_klemme(bb);
+                    c.a = glass_klemme(aa);
+                    glass_blend_px(p, c);
+                }
+            } else {
+                scratch[n].x = px + lx;
+                scratch[n].y = py + ly;
+                scratch[n].color.r = glass_klemme(rr);
+                scratch[n].color.g = glass_klemme(gg);
+                scratch[n].color.b = glass_klemme(bb);
+                scratch[n].color.a = glass_klemme(aa);
+                n++;
+            }
         }
+    }
     }
     free(integral);
     bool ok = true;

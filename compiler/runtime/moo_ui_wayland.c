@@ -47,6 +47,11 @@ typedef struct WlFenster {
     int breite, hoehe;
     int konfiguriert;
     int maximiert;
+    /* NATIVE-UI-1c: WM-Groesse aus toplevel_configure wird erst NACH dem
+     * ack_configure uebernommen (xdg-Muster: ack, dann Commit mit neuem
+     * Buffer) — sonst wertet der Compositor den frischen Frame gegen den
+     * alten Zustand und zeigt beim Unmaximize-Drag kurz halben Inhalt. */
+    int pending_b, pending_h;
     int soll_schliessen;
     /* SHM-Doublebuffer */
     int shm_fd;
@@ -185,7 +190,19 @@ static void xdg_surface_configure(void* data, struct xdg_surface* s,
                                   uint32_t serial) {
     WlFenster* f = (WlFenster*)data;
     xdg_surface_ack_configure(s, serial);
-    if (f) f->konfiguriert = 1;
+    if (f) {
+        f->konfiguriert = 1;
+        /* Erst nach dem ack: Puffer neu + Moo rendern/committen. */
+        if (f->pending_b > 0 && f->pending_h > 0 &&
+            (f->pending_b != f->breite || f->pending_h != f->hoehe)) {
+            if (puffer_anlegen(f, f->pending_b, f->pending_h)) {
+                event_an_moo(f, "resize", (double)f->pending_b,
+                             (double)f->pending_h, 0.0);
+            }
+        }
+        f->pending_b = 0;
+        f->pending_h = 0;
+    }
 }
 static const struct xdg_surface_listener xdg_surface_lst = {
     xdg_surface_configure
@@ -202,12 +219,11 @@ static void toplevel_configure(void* data, struct xdg_toplevel* t,
         if (*st == XDG_TOPLEVEL_STATE_MAXIMIZED) max = 1;
     }
     f->maximiert = max;
-    /* PFLICHT-Punkt 1 (Live-Reflow): WM-getriebene Groesse uebernehmen,
-     * Puffer neu, Moo neu rendern lassen. b/h==0 = Client entscheidet. */
+    /* PFLICHT-Punkt 1 (Live-Reflow): WM-Groesse nur VORMERKEN — Puffer und
+     * Re-Render laufen im xdg_surface_configure NACH dem ack (s. oben). */
     if (b > 0 && h > 0 && (b != f->breite || h != f->hoehe)) {
-        if (puffer_anlegen(f, b, h)) {
-            event_an_moo(f, "resize", (double)b, (double)h, 0.0);
-        }
+        f->pending_b = b;
+        f->pending_h = h;
     }
 }
 static void toplevel_close(void* data, struct xdg_toplevel* t) {
