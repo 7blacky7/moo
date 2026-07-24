@@ -1,0 +1,69 @@
+importiere ui_moo_kern
+
+setze S auf {}
+S["tf_wechsel"] = 0
+S["combo_idx"] = 0 - 1
+S["combo_rufe"] = 0
+
+funktion t_on_tf(w, txt):
+    S["tf_wechsel"] = S["tf_wechsel"] + 1
+    gib_zurück wahr
+
+funktion t_on_combo(w, idx):
+    S["combo_idx"] = idx
+    S["combo_rufe"] = S["combo_rufe"] + 1
+    gib_zurück wahr
+
+setze k auf uim_mock_wurzel(320, 240)
+
+setze tf auf uim_textfeld(10, 10, 200, 24, "AB", t_on_tf)
+uim_hinzu(k, tf)
+setze sep auf uim_separator(10, 44, 200)
+uim_hinzu(k, sep)
+setze cb auf uim_combobox(10, 60, 160, 24, ["ROT", "GRUEN", "BLAU"], 1, t_on_combo)
+uim_hinzu(k, cb)
+
+# --- Textfeld: Fokus per Klick, dann tippen ---
+uim_mock_maus(k, 20, 20, wahr)
+uim_mock_maus(k, 20, 20, falsch)
+uim_mock_taste(k, "C", wahr, 0)
+zeige "TF1 " + tf["text"]
+uim_mock_taste(k, "BackSpace", wahr, 0)
+zeige "TF2 " + tf["text"]
+uim_mock_taste(k, "Left", wahr, 0)
+uim_mock_taste(k, "Left", wahr, 0)
+uim_mock_taste(k, "X", wahr, 0)
+zeige "TF3 " + tf["text"]
+uim_mock_taste(k, "End", wahr, 0)
+uim_mock_taste(k, "space", wahr, 0)
+uim_mock_taste(k, "Z", wahr, 0)
+zeige "TF4 " + tf["text"]
+zeige "TF-WECHSEL " + text(S["tf_wechsel"])
+zeige "TF-CURSOR " + text(tf["cursor"])
+
+# --- Combobox: oeffnen per Klick, zeichnen (setzt Overlay-Rect),
+#     dann Klick auf Zeile 0 im Dropdown ---
+uim_mock_maus(k, 20, 70, wahr)
+uim_mock_maus(k, 20, 70, falsch)
+zeige "CB-OFFEN " + text(cb["offen"])
+uim_mock_zeichne(k)
+uim_mock_maus(k, 20, 86, wahr)
+zeige "CB-AUSWAHL " + text(cb["auswahl"])
+zeige "CB-IDX " + text(S["combo_idx"]) + " RUFE " + text(S["combo_rufe"])
+zeige "CB-ZU " + text(cb["offen"])
+
+# --- Combobox: Tastatur (Fokus liegt nach dem Feld-Klick auf cb) ---
+uim_mock_taste(k, "Down", wahr, 0)
+zeige "CB-DOWN " + text(cb["auswahl"])
+uim_mock_taste(k, "Return", wahr, 0)
+zeige "CB-RETURN-OFFEN " + text(cb["offen"])
+uim_mock_taste(k, "Escape", wahr, 0)
+zeige "CB-ESCAPE-OFFEN " + text(cb["offen"])
+
+# --- Separator + Gesamtbild zeichnen ---
+uim_mock_leeren(k)
+setze ok auf uim_mock_zeichne(k)
+zeige "ZEICHNEN " + text(ok)
+setze befehle auf uim_mock_befehle(k)
+zeige "BEFEHLE>0 " + text(länge(befehle) > 0)
+zeige "UIM-WIDGETS-NEU-OK"

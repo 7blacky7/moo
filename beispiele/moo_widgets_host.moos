@@ -1,0 +1,80 @@
+# ============================================================
+# beispiele/moo_widgets_host.moos — ALLE ui_moo-Widgets im
+# NATIVEN Host-Fenster (NATIVE-UI-3 Beweis-Demo).
+# Kein Toolkit im Prozess: Fenster/Present/Input laufen über den
+# MooUiHostOps-Vertrag, die Widgets zeichnet der Moo-Kern selbst
+# in die Surface.
+# Beweis: scripts/native-ui-beweis.sh <binary>
+#   (MOO_BEWEIS_BACKEND=wayland) — ldd ohne libgtk + Screenshot.
+# ============================================================
+
+importiere ui_moo_hostfenster
+
+setze S auf {}
+S["k"] = nichts
+S["status"] = nichts
+
+funktion on_knopf(w):
+    zeige "WIDGETS-HOST-KNOPF"
+    host_beenden()
+    gib_zurück wahr
+
+funktion on_check(w, wert):
+    zeige "WIDGETS-HOST-CHECK " + text(wert)
+    gib_zurück wahr
+
+funktion on_slider(w, wert):
+    setze s auf S["status"]
+    wenn s != nichts:
+        s["text"] = "WERT " + text(boden(wert))
+    gib_zurück wahr
+
+funktion on_combo(w, idx):
+    zeige "WIDGETS-HOST-COMBO " + text(idx)
+    gib_zurück wahr
+
+funktion on_tf(w, txt):
+    gib_zurück wahr
+
+funktion on_liste(w, idx):
+    zeige "WIDGETS-HOST-LISTE " + text(idx)
+    gib_zurück wahr
+
+setze k auf uimh_fenster("Moo Widgets Nativ", 640, 480)
+wenn k == nichts:
+    wirf "Host-Fenster konnte nicht erzeugt werden (kein Backend / kein Display?)"
+S["k"] = k
+
+setze panel auf uim_panel("MOO WIDGETS - KEIN TOOLKIT", 16, 16, 608, 448)
+uim_hinzu(k, panel)
+
+uim_hinzu(panel, uim_label("NATIV GEZEICHNET - HOST-VERTRAG DIREKT", 16, 34, 400, 20))
+uim_hinzu(panel, uim_separator(16, 56, 576))
+
+uim_hinzu(panel, uim_label("TEXTFELD", 16, 76, 120, 20))
+uim_hinzu(panel, uim_textfeld(140, 72, 260, 26, "HALLO MOO", on_tf))
+
+uim_hinzu(panel, uim_label("COMBOBOX", 16, 112, 120, 20))
+uim_hinzu(panel, uim_combobox(140, 108, 200, 26, ["ROT", "GRUEN", "BLAU", "GLAS"], 0, on_combo))
+
+uim_hinzu(panel, uim_checkbox("EFFEKTE AKTIV", 16, 148, 220, 24, wahr, on_check))
+uim_hinzu(panel, uim_slider(16, 184, 300, 24, 0, 100, 40, on_slider))
+
+setze fp auf uim_fortschritt(16, 220, 300, 16)
+uim_hinzu(panel, fp)
+uim_fortschritt_setze(k, fp, 0.4)
+
+setze status auf uim_label("WERT 40", 340, 184, 120, 24)
+S["status"] = status
+uim_hinzu(panel, status)
+
+uim_hinzu(panel, uim_separator(16, 248, 576))
+uim_hinzu(panel, uim_liste(16, 264, 300, 120, ["ALPHA", "BETA", "GAMMA", "DELTA", "EPSILON", "ZETA", "ETA", "THETA"], on_liste))
+
+uim_hinzu(panel, uim_knopf("SCHLIESSEN", 460, 400, 130, 32, on_knopf))
+
+zeige "AERO-CSD-UI-START"
+zeige "HOST-BACKEND " + ui_host_backend()
+zeige "WIDGETS-HOST-START"
+uimh_laufen(k)
+zeige "WIDGETS-HOST-ENDE"

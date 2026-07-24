@@ -867,6 +867,39 @@ funktion _uim_liste_klick(kontext, w, ly):
 funktion _uim_kern_maus(kontext, x, y, taste):
     wenn taste != 1:
         gib_zurück falsch
+    # Offenes Combobox-Dropdown liegt z-oberst und fängt Klicks VOR dem
+    # regulären Hit-Test ab (das Overlay ragt über die Widget-Bounds).
+    wenn kontext.enthält("combo_offen") und kontext["combo_offen"] != nichts:
+        setze cbw auf kontext["combo_offen"]
+        setze cr auf nichts
+        wenn kontext.enthält("combo_rect"):
+            setze cr auf kontext["combo_rect"]
+        wenn cr != nichts und x >= cr["x"] und x < cr["x"] + cr["b"] und y >= cr["y"] und y < cr["y"] + cr["h"]:
+            setze zh auf _uim_zeilenhoehe(kontext)
+            setze idx auf boden((y - cr["y"]) / zh)
+            setze n auf länge(cbw["zeilen"])
+            wenn idx < 0:
+                setze idx auf 0
+            wenn idx > n - 1:
+                setze idx auf n - 1
+            cbw["offen"] = falsch
+            kontext["combo_offen"] = nichts
+            wenn idx != cbw["auswahl"]:
+                cbw["auswahl"] = idx
+                setze cba auf cbw["on_auswahl"]
+                wenn cba != nichts:
+                    cba(cbw, idx)
+            _uim_anfordern(kontext)
+            gib_zurück wahr
+        cbw["offen"] = falsch
+        kontext["combo_offen"] = nichts
+        setze cf auf nichts
+        wenn kontext.enthält("combo_feld"):
+            setze cf auf kontext["combo_feld"]
+        wenn cf != nichts und x >= cf["x"] und x < cf["x"] + cf["b"] und y >= cf["y"] und y < cf["y"] + cf["h"]:
+            # Klick aufs Feld bei offenem Dropdown = Toggle-zu, nicht neu öffnen.
+            _uim_anfordern(kontext)
+            gib_zurück wahr
     setze tref auf _uim_treffer(kontext, x, y)
     wenn tref == nichts:
         _uim_druck_loesche(kontext)
@@ -903,6 +936,9 @@ funktion _uim_kern_maus(kontext, x, y, taste):
                 _uim_scroll_setze_aus_y(kontext, w, tref["ly"], greif)
             wenn w["typ"] == "liste":
                 _uim_liste_klick(kontext, w, tref["ly"])
+            wenn w["typ"] == "combobox":
+                w["offen"] = wahr
+                kontext["combo_offen"] = w
     _uim_anfordern(kontext)
     gib_zurück wahr
 
@@ -982,6 +1018,78 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
         kontext["fokus"] = nichts
         _uim_anfordern(kontext)
         gib_zurück falsch
+    wenn f["typ"] == "textfeld":
+        setze geaendert auf falsch
+        setze bytes auf bytes_zu_liste(f["text"])
+        wenn f["cursor"] < 0:
+            f["cursor"] = 0
+        wenn f["cursor"] > länge(bytes):
+            f["cursor"] = länge(bytes)
+        wenn taste == "BackSpace":
+            wenn f["cursor"] > 0:
+                setze p auf _uim_tf_grenze_zurueck(bytes, f["cursor"])
+                setze nb auf _uim_tf_teil(bytes, 0, p)
+                setze rest auf _uim_tf_teil(bytes, f["cursor"], länge(bytes))
+                für bb in rest:
+                    nb.hinzufügen(bb)
+                f["text"] = bytes_neu(nb)
+                f["cursor"] = p
+                setze geaendert auf wahr
+        sonst wenn taste == "Left":
+            f["cursor"] = _uim_tf_grenze_zurueck(bytes, f["cursor"])
+        sonst wenn taste == "Right":
+            f["cursor"] = _uim_tf_grenze_vor(bytes, f["cursor"])
+        sonst wenn taste == "Home":
+            f["cursor"] = 0
+        sonst wenn taste == "End":
+            f["cursor"] = länge(bytes)
+        sonst wenn taste == "Return":
+            _uim_aktiviere(kontext, f)
+        sonst:
+            setze eingabe auf taste
+            wenn taste == "space":
+                setze eingabe auf " "
+            wenn _uim_tf_einfuegen(kontext, f, bytes_zu_liste(eingabe)):
+                setze geaendert auf wahr
+        wenn geaendert:
+            _uim_tf_feuere_wechsel(f)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
+    wenn f["typ"] == "combobox":
+        wenn taste == "Return" oder taste == "space":
+            wenn f["offen"]:
+                f["offen"] = falsch
+                kontext["combo_offen"] = nichts
+            sonst:
+                f["offen"] = wahr
+                kontext["combo_offen"] = f
+            _uim_anfordern(kontext)
+            gib_zurück wahr
+        wenn taste == "Escape":
+            f["offen"] = falsch
+            kontext["combo_offen"] = nichts
+            _uim_anfordern(kontext)
+            gib_zurück wahr
+        wenn taste == "Up" oder taste == "Down":
+            setze n auf länge(f["zeilen"])
+            wenn n == 0:
+                gib_zurück wahr
+            setze idx auf f["auswahl"]
+            wenn taste == "Up":
+                setze idx auf idx - 1
+            sonst:
+                setze idx auf idx + 1
+            wenn idx < 0:
+                setze idx auf 0
+            wenn idx > n - 1:
+                setze idx auf n - 1
+            wenn idx != f["auswahl"]:
+                f["auswahl"] = idx
+                setze cba auf f["on_auswahl"]
+                wenn cba != nichts:
+                    cba(f, idx)
+            _uim_anfordern(kontext)
+            gib_zurück wahr
     wenn taste == "Return" oder taste == "space":
         _uim_aktiviere(kontext, f)
         _uim_anfordern(kontext)
@@ -1258,6 +1366,197 @@ funktion _uim_z_scroll_leiste(kontext, z, w, ox, oy):
     gib_zurück wahr
 
 # Zentraler rekursiver Zeichner: Container transformieren ihre Kinder.
+# ------------------------------------------------------------
+# NATIVE-UI-3: Separator, Textfeld, Combobox — gezeichnete Widgets
+# im selben Kern (kein zweiter Widget-Satz). Textfeld arbeitet
+# byte-basiert mit UTF-8-Grenzen (_uim_ime_utf8_grenze); Combobox
+# zeichnet ihr Dropdown als Overlay-Pass NACH dem Baum (z-oberst).
+# ------------------------------------------------------------
+
+funktion _uim_tf_teil(bytes, start_i, ende_i):
+    setze teil_liste auf []
+    setze i auf start_i
+    solange i < ende_i:
+        teil_liste.hinzufügen(bytes[i])
+        setze i auf i + 1
+    gib_zurück teil_liste
+
+funktion _uim_tf_grenze_zurueck(bytes, pos):
+    setze p auf pos - 1
+    wenn p < 0:
+        gib_zurück 0
+    solange p > 0 und _uim_ime_utf8_grenze(bytes, p) == falsch:
+        setze p auf p - 1
+    gib_zurück p
+
+funktion _uim_tf_grenze_vor(bytes, pos):
+    setze n auf länge(bytes)
+    setze p auf pos + 1
+    wenn p > n:
+        gib_zurück n
+    solange p < n und _uim_ime_utf8_grenze(bytes, p) == falsch:
+        setze p auf p + 1
+    gib_zurück p
+
+# Genau EIN druckbares Zeichen? (1 ASCII-Byte >= 32 oder eine einzelne
+# UTF-8-Multibyte-Sequenz.)
+funktion _uim_tf_ist_zeichen(tb):
+    setze n auf länge(tb)
+    wenn n == 0:
+        gib_zurück falsch
+    wenn n == 1:
+        gib_zurück tb[0] >= 32 und tb[0] < 127
+    wenn tb[0] < 194:
+        gib_zurück falsch
+    setze i auf 1
+    solange i < n:
+        wenn tb[i] < 128 oder tb[i] >= 192:
+            gib_zurück falsch
+        setze i auf i + 1
+    gib_zurück n <= 4
+
+funktion _uim_tf_einfuegen(kontext, f, tb):
+    wenn _uim_tf_ist_zeichen(tb) == falsch:
+        gib_zurück falsch
+    setze bytes auf bytes_zu_liste(f["text"])
+    setze cur auf f["cursor"]
+    wenn cur < 0:
+        setze cur auf 0
+    wenn cur > länge(bytes):
+        setze cur auf länge(bytes)
+    setze nb auf _uim_tf_teil(bytes, 0, cur)
+    für bb in tb:
+        nb.hinzufügen(bb)
+    setze rest auf _uim_tf_teil(bytes, cur, länge(bytes))
+    für bb in rest:
+        nb.hinzufügen(bb)
+    f["text"] = bytes_neu(nb)
+    f["cursor"] = cur + länge(tb)
+    gib_zurück wahr
+
+funktion _uim_tf_feuere_wechsel(f):
+    setze cw auf f["on_wechsel"]
+    wenn cw != nichts:
+        cw(f, f["text"])
+    gib_zurück wahr
+
+funktion _uim_z_separator(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"] + w["h"] / 2
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_linie(kontext, z, ax, ay, ax + w["b"], ay, 1)
+    gib_zurück wahr
+
+funktion _uim_z_textfeld(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze flaeche auf t["flaeche"]
+    wenn w["hover"]:
+        setze flaeche auf t["flaeche_hover"]
+    _uim_farbe(kontext, z, flaeche)
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], 3, wahr)
+    setze hat_fokus auf _uim_slot_uid(kontext, "fokus") == w["uid"]
+    wenn hat_fokus:
+        _uim_farbe(kontext, z, t["akzent"])
+    sonst:
+        _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], 3, falsch)
+    _uim_zf_clip_setze(kontext, z, ax + 4, ay, w["b"] - 8, w["h"])
+    setze farbe auf t["text"]
+    wenn w["aktiv"] == falsch:
+        setze farbe auf t["text_gedimmt"]
+    _uim_farbe(kontext, z, farbe)
+    setze ty auf ay + (w["h"] - t["schrift"]) / 2 - 1
+    _uim_zf_text(kontext, z, ax + 6, ty, w["text"], t["schrift"])
+    wenn hat_fokus:
+        setze bytes auf bytes_zu_liste(w["text"])
+        setze links auf bytes_neu(_uim_tf_teil(bytes, 0, w["cursor"]))
+        setze cx auf ax + 6 + _uim_zf_text_breite(kontext, z, links, t["schrift"])
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_linie(kontext, z, cx + 1, ay + 4, cx + 1, ay + w["h"] - 4, 1)
+    _uim_zf_clip_loesche(kontext, z)
+    gib_zurück wahr
+
+funktion _uim_z_combobox(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze flaeche auf t["flaeche"]
+    wenn w["hover"]:
+        setze flaeche auf t["flaeche_hover"]
+    wenn w["druck"]:
+        setze flaeche auf t["flaeche_druck"]
+    _uim_farbe(kontext, z, flaeche)
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], 3, wahr)
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, t["akzent"])
+    sonst:
+        _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], 3, falsch)
+    setze anzeige auf ""
+    setze n auf länge(w["zeilen"])
+    wenn n > 0 und w["auswahl"] >= 0 und w["auswahl"] < n:
+        setze anzeige auf w["zeilen"][w["auswahl"]]
+    setze farbe auf t["text"]
+    wenn w["aktiv"] == falsch:
+        setze farbe auf t["text_gedimmt"]
+    _uim_farbe(kontext, z, farbe)
+    setze ty auf ay + (w["h"] - t["schrift"]) / 2 - 1
+    _uim_zf_clip_setze(kontext, z, ax + 4, ay, w["b"] - 22, w["h"])
+    _uim_zf_text(kontext, z, ax + 6, ty, anzeige, t["schrift"])
+    _uim_zf_clip_loesche(kontext, z)
+    setze px auf ax + w["b"] - 14
+    setze py auf ay + w["h"] / 2 - 2
+    _uim_zf_linie(kontext, z, px, py, px + 4, py + 4, 2)
+    _uim_zf_linie(kontext, z, px + 4, py + 4, px + 8, py, 2)
+    wenn w["offen"]:
+        # Overlay-Geometrie global merken; gezeichnet wird das Dropdown
+        # in _uim_kern_zeichne NACH dem Baum (liegt damit z-oberst).
+        setze feld auf {}
+        feld["x"] = ax
+        feld["y"] = ay
+        feld["b"] = w["b"]
+        feld["h"] = w["h"]
+        kontext["combo_feld"] = feld
+        setze zh auf _uim_zeilenhoehe(kontext)
+        setze rect auf {}
+        rect["x"] = ax
+        rect["y"] = ay + w["h"]
+        rect["b"] = w["b"]
+        rect["h"] = n * zh
+        kontext["combo_rect"] = rect
+        kontext["combo_offen"] = w
+    gib_zurück wahr
+
+funktion _uim_z_combo_overlay(kontext, z):
+    wenn kontext.enthält("combo_offen") == falsch:
+        gib_zurück wahr
+    setze w auf kontext["combo_offen"]
+    wenn w == nichts:
+        gib_zurück wahr
+    setze cr auf kontext["combo_rect"]
+    wenn cr == nichts:
+        gib_zurück wahr
+    setze t auf kontext["theme"]
+    setze zh auf _uim_zeilenhoehe(kontext)
+    _uim_farbe(kontext, z, t["flaeche"])
+    _uim_zf_rechteck(kontext, z, cr["x"], cr["y"], cr["b"], cr["h"], wahr)
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck(kontext, z, cr["x"], cr["y"], cr["b"], cr["h"], falsch)
+    setze i auf 0
+    setze n auf länge(w["zeilen"])
+    solange i < n:
+        setze zy auf cr["y"] + i * zh
+        wenn i == w["auswahl"]:
+            _uim_farbe(kontext, z, t["akzent"])
+            _uim_zf_rechteck(kontext, z, cr["x"] + 1, zy, cr["b"] - 2, zh, wahr)
+        _uim_farbe(kontext, z, t["text"])
+        _uim_zf_text(kontext, z, cr["x"] + 6, zy + (zh - t["schrift"]) / 2, w["zeilen"][i], t["schrift"])
+        setze i auf i + 1
+    gib_zurück wahr
+
 funktion _uim_zeichne_widget(kontext, z, w, ox, oy):
     wenn w["sichtbar"] == falsch:
         gib_zurück wahr
@@ -1287,6 +1586,12 @@ funktion _uim_zeichne_widget(kontext, z, w, ox, oy):
         gib_zurück _uim_z_fortschritt(kontext, z, w, ox, oy)
     wenn w["typ"] == "liste":
         gib_zurück _uim_z_liste(kontext, z, w, ox, oy)
+    wenn w["typ"] == "separator":
+        gib_zurück _uim_z_separator(kontext, z, w, ox, oy)
+    wenn w["typ"] == "textfeld":
+        gib_zurück _uim_z_textfeld(kontext, z, w, ox, oy)
+    wenn w["typ"] == "combobox":
+        gib_zurück _uim_z_combobox(kontext, z, w, ox, oy)
     wenn w["typ"] == "eigen":
         wenn w.enthält("on_zeichne") == falsch:
             gib_zurück falsch
@@ -1311,8 +1616,14 @@ funktion _uim_kern_zeichne(kontext, z):
         _uim_farbe(kontext, z, t["hintergrund"])
         _uim_zf_rechteck(kontext, z, 0, 0, wurzel["b"], wurzel["h"], wahr)
     setze ok auf wahr
+    wenn kontext.enthält("combo_offen"):
+        wenn kontext["combo_offen"] != nichts:
+            setze co auf kontext["combo_offen"]
+            wenn co["offen"] == falsch:
+                kontext["combo_offen"] = nichts
     für w in wurzel["kinder"]:
         setze ok auf _uim_zeichne_widget(kontext, z, w, 0, 0) und ok
+    setze ok auf _uim_z_combo_overlay(kontext, z) und ok
     gib_zurück ok
 
 
@@ -1582,6 +1893,44 @@ funktion uim_liste(x, y, b, h, zeilen, on_auswahl):
     gib_zurück w
 
 # Toolkit-freies Mock-Framebuffer fuer Kernel-/Moo-OS- und Unit-Tests.
+# Textfeld: byte-basiertes Editieren mit UTF-8-Grenzen, Cursor via
+# Left/Right/Home/End, BackSpace, druckbare Zeichen + space. v1: Klick
+# fokussiert (Cursor bleibt), keine Selektion, kein IME-Preedit.
+funktion uim_textfeld(x, y, b, h, initial, on_wechsel):
+    setze w auf _uim_basis("textfeld", x, y, b, h)
+    w["fokussierbar"] = wahr
+    w["text"] = initial
+    w["cursor"] = länge(bytes_zu_liste(initial))
+    w["on_wechsel"] = on_wechsel
+    gib_zurück w
+
+funktion uim_textfeld_setze(kontext, w, txt):
+    w["text"] = txt
+    w["cursor"] = länge(bytes_zu_liste(txt))
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+# Combobox: Klick/Return/space öffnet das Dropdown (Overlay, z-oberst),
+# Klick auf Zeile bzw. Up/Down wählt, Escape schließt. v1: Dropdown
+# ohne eigenes Scrolling (alle Zeilen sichtbar).
+funktion uim_combobox(x, y, b, h, zeilen, start, on_auswahl):
+    setze w auf _uim_basis("combobox", x, y, b, h)
+    w["fokussierbar"] = wahr
+    w["zeilen"] = zeilen
+    setze idx auf start
+    wenn idx < 0:
+        setze idx auf 0
+    wenn idx > länge(zeilen) - 1:
+        setze idx auf länge(zeilen) - 1
+    w["auswahl"] = idx
+    w["offen"] = falsch
+    w["on_auswahl"] = on_auswahl
+    gib_zurück w
+
+funktion uim_separator(x, y, b):
+    setze w auf _uim_basis("separator", x, y, b, 8)
+    gib_zurück w
+
 funktion uim_mock_wurzel(b, h):
     setze kontext auf uim_backend_wurzel(uim_backend_mock(), b, h)
     setze zustand auf kontext["backend_zustand"]

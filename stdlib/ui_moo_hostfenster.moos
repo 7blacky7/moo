@@ -1,0 +1,140 @@
+# ============================================================
+# stdlib/ui_moo_hostfenster.moos — ui_moo-Widgets im NATIVEN
+# Host-Fenster (NATIVE-UI-3). Läuft komplett über den
+# MooUiHostOps-Vertrag (host_*-Builtins) + Surface-Backend:
+# KEIN Toolkit, kein importiere ui (das würde im No-GTK-Build
+# Leinwand-Symbole ziehen).
+#
+# Nutzung:
+#   setze k auf uimh_fenster("Titel", 640, 480)
+#   uim_hinzu(k, uim_knopf(...))
+#   uimh_laufen(k)
+#
+# v1-Einschränkungen: ein Fenster, Modifier immer 0 (kein
+# Shift-Tab), Tasten via X11-Keysym-Map (ASCII + Latin-1 +
+# Unicode-Keysyms; tote Tasten/IME nicht unterstützt — NATIVE-UI-9).
+# ============================================================
+
+importiere ui_moo_kern
+importiere ui_moo_surface
+
+setze _UIMH auf {}
+_UIMH["kontext"] = nichts
+_UIMH["fenster"] = nichts
+
+funktion _uimh_utf8(cp):
+    wenn cp < 128:
+        gib_zurück bytes_neu([cp])
+    wenn cp < 2048:
+        gib_zurück bytes_neu([192 + boden(cp / 64), 128 + cp % 64])
+    gib_zurück bytes_neu([224 + boden(cp / 4096), 128 + boden(cp / 64) % 64, 128 + cp % 64])
+
+# X11-/xkb-Keysym -> Kern-Tastenname ("BackSpace", "a", ...) oder nichts.
+funktion uimh_keysym_name(ks):
+    wenn ks == 65288:
+        gib_zurück "BackSpace"
+    wenn ks == 65293 oder ks == 65421:
+        gib_zurück "Return"
+    wenn ks == 65289:
+        gib_zurück "Tab"
+    wenn ks == 65307:
+        gib_zurück "Escape"
+    wenn ks == 65361:
+        gib_zurück "Left"
+    wenn ks == 65362:
+        gib_zurück "Up"
+    wenn ks == 65363:
+        gib_zurück "Right"
+    wenn ks == 65364:
+        gib_zurück "Down"
+    wenn ks == 65360:
+        gib_zurück "Home"
+    wenn ks == 65367:
+        gib_zurück "End"
+    wenn ks == 32:
+        gib_zurück "space"
+    wenn ks > 32 und ks < 127:
+        gib_zurück bytes_neu([ks])
+    wenn ks >= 160 und ks < 256:
+        gib_zurück _uimh_utf8(ks)
+    wenn ks >= 16777472:
+        setze cp auf ks - 16777216
+        wenn cp < 65536:
+            gib_zurück _uimh_utf8(cp)
+    gib_zurück nichts
+
+funktion uimh_render():
+    setze k auf _UIMH["kontext"]
+    wenn k == nichts:
+        gib_zurück falsch
+    setze z auf k["_z"]
+    wenn uim_backend_zeichne(k, z) == falsch:
+        gib_zurück falsch
+    setze fr auf surface_snapshot_to_frame(z)
+    wenn fr == nichts:
+        gib_zurück falsch
+    host_present(_UIMH["fenster"], fr)
+    gib_zurück wahr
+
+funktion _uimh_input(art, a, b, c):
+    setze k auf _UIMH["kontext"]
+    wenn k == nichts:
+        gib_zurück falsch
+    wenn art == "maus_runter":
+        uim_backend_maus_taste(k, a, b, c, wahr)
+        uimh_render()
+        gib_zurück wahr
+    wenn art == "maus_hoch":
+        uim_backend_maus_taste(k, a, b, c, falsch)
+        uimh_render()
+        gib_zurück wahr
+    wenn art == "bewegung":
+        uim_backend_bewegung(k, a, b)
+        uimh_render()
+        gib_zurück wahr
+    wenn art == "taste_runter":
+        setze name auf uimh_keysym_name(a)
+        wenn name != nichts:
+            uim_backend_taste(k, name, wahr, 0)
+            uimh_render()
+        gib_zurück wahr
+    wenn art == "resize":
+        setze z2 auf surface_new(a, b)
+        wenn z2 != nichts:
+            k["_z"] = z2
+            uim_groesse_setze(k, a, b)
+            uimh_render()
+        gib_zurück wahr
+    wenn art == "schliessen":
+        host_beenden()
+        gib_zurück wahr
+    gib_zurück wahr
+
+# Erzeugt natives Host-Fenster + Surface-Widget-Kontext. Liefert den
+# Kontext (mit k["_z"] Surface, k["_fenster"] Host-Handle) oder nichts.
+funktion uimh_fenster(titel, b, h):
+    setze z auf surface_new(b, h)
+    wenn z == nichts:
+        gib_zurück nichts
+    setze f auf host_fenster(titel, b, h, 0)
+    wenn f == falsch:
+        gib_zurück nichts
+    setze backend auf uim_backend_surface()
+    setze k auf uim_backend_wurzel(backend, b, h)
+    wenn k == nichts:
+        gib_zurück nichts
+    k["_z"] = z
+    k["_fenster"] = f
+    _UIMH["kontext"] = k
+    _UIMH["fenster"] = f
+    host_on_input(f, _uimh_input)
+    gib_zurück k
+
+funktion uimh_laufen(k):
+    setze f auf k["_fenster"]
+    setze sichtbar auf host_zeige(f)
+    wenn sichtbar == falsch:
+        gib_zurück falsch
+    uimh_render()
+    host_laufen()
+    gib_zurück wahr
