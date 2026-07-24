@@ -140,6 +140,20 @@ fn main() {
     //   cargo build --no-default-features
     // deaktiviert werden (kein UI, kein Tray → keine GTK/appindicator-Dep).
     // ========================================================================
+    // Natives Wayland-Backend (NATIVE-UI-1): direkt libwayland-client,
+    // xdg-shell/xdg-decoration-Glue eingecheckt unter runtime/wayland/
+    // (wayland-scanner-generiert), libxkbcommon fuer Keymaps. KEIN Toolkit.
+    #[cfg(all(target_os = "linux", feature = "wayland_ui"))]
+    {
+        build
+            .file("runtime/moo_ui_wayland.c")
+            .file("runtime/wayland/xdg-shell-protocol.c")
+            .file("runtime/wayland/xdg-decoration-protocol.c");
+        build.define("MOO_HAS_WAYLAND_UI", None);
+        println!("cargo:rustc-link-lib=wayland-client");
+        println!("cargo:rustc-link-lib=xkbcommon");
+    }
+
     let ui_enabled = cfg!(feature = "moo_ui");
 
     // Das kompatible ui_moo-Umbrella-Modul enthaelt den Frame-Adapter auch

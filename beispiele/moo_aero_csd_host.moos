@@ -1,0 +1,145 @@
+# ============================================================
+# beispiele/moo_aero_csd_host.moos — Aero-CSD ueber den Host-Vertrag
+# (NATIVE-UI-1). KEIN Toolkit: Fenster/Present/Input laufen komplett
+# ueber die host_*-Builtins (MooUiHostOps-Vtable), der Glass-Layer
+# zeichnet das gesamte Fenster selbst. Aero-CSD ist DAS Fenster.
+#
+# Beweis: scripts/native-ui-beweis.sh <binary> mit
+#   MOO_BEWEIS_BACKEND=wayland  — ldd ohne libgtk + Backend-Name +
+#   externer Screenshot.
+# Live-Reflow: resize-Events vom WM erzeugen eine neue Surface und
+# rendern sofort neu (Pflicht-Punkt 1 der Task 998e06d1).
+# ============================================================
+
+importiere ui_moo_csd
+
+setze G auf {}
+G["b"] = 760
+G["h"] = 520
+G["z"] = nichts
+G["frame"] = nichts
+G["fenster"] = nichts
+G["hover"] = nichts
+G["gedrueckt"] = nichts
+
+funktion host_backdrop(z, bb, hh):
+    surface_clear(z, 8, 14, 30, 255)
+    setze y auf 0
+    solange y < hh:
+        setze x auf 0
+        solange x < bb:
+            setze band auf (boden(x / 90) + boden(y / 70)) % 4
+            wenn band == 0:
+                surface_rect(z, x, y, 90, 70, 16, 52, 96, 255)
+            sonst wenn band == 1:
+                surface_rect(z, x, y, 90, 70, 34, 44, 92, 255)
+            sonst wenn band == 2:
+                surface_rect(z, x, y, 90, 70, 22, 78, 100, 255)
+            sonst:
+                surface_rect(z, x, y, 90, 70, 50, 34, 88, 255)
+            setze x auf x + 90
+        setze y auf y + 70
+    surface_circle(z, 200, 170, 100, 90, 180, 255, 210)
+    surface_circle(z, 560, 400, 110, 255, 110, 170, 185)
+    gib_zurück wahr
+
+funktion csd_render():
+    setze z auf G["z"]
+    host_backdrop(z, G["b"], G["h"])
+    setze d auf uim_csd_zeichnen(z, 0, 0, G["b"], G["h"], "MOO AERO WAYLAND", wahr, G["hover"], G["gedrueckt"], 255, 65536)
+    wenn d["ok"] == falsch:
+        gib_zurück falsch
+    surface_text(z, 30, 80, 2, "AERO GLASS - NATIV", 255, 255, 255, 210)
+    surface_text(z, 30, 110, 1, "KEIN TOOLKIT - HOST-VERTRAG DIREKT", 200, 220, 255, 190)
+    setze frame auf surface_snapshot_to_frame(z)
+    wenn frame == nichts:
+        gib_zurück falsch
+    G["frame"] = frame
+    gib_zurück wahr
+
+funktion praesentiere():
+    wenn csd_render():
+        host_present(G["fenster"], G["frame"])
+        gib_zurück wahr
+    gib_zurück falsch
+
+funktion on_input(art, a, b, c):
+    wenn art == "resize":
+        G["b"] = a
+        G["h"] = b
+        setze z2 auf surface_new(a, b)
+        wenn z2 != nichts:
+            G["z"] = z2
+            praesentiere()
+        gib_zurück wahr
+    wenn art == "schliessen":
+        zeige "HOST-CSD-SCHLIESSEN"
+        host_beenden()
+        gib_zurück wahr
+    wenn art == "bewegung":
+        setze zone auf uim_csd_hit_test(G["b"], G["h"], a, b)
+        setze hz auf nichts
+        wenn zone == "schliessen" oder zone == "minimieren" oder zone == "maximieren":
+            setze hz auf zone
+        wenn hz != G["hover"]:
+            G["hover"] = hz
+            praesentiere()
+        host_cursor(G["fenster"], uim_csd_cursor_name(zone))
+        gib_zurück wahr
+    wenn art == "maus_runter":
+        wenn c != 1:
+            gib_zurück wahr
+        setze zone auf uim_csd_hit_test(G["b"], G["h"], a, b)
+        setze kante auf uim_csd_kante(zone)
+        wenn kante != nichts:
+            host_resize_start(G["fenster"], kante)
+            gib_zurück wahr
+        wenn zone == "titel":
+            host_drag_start(G["fenster"])
+            gib_zurück wahr
+        wenn zone == "schliessen" oder zone == "minimieren" oder zone == "maximieren":
+            G["gedrueckt"] = zone
+            praesentiere()
+        gib_zurück wahr
+    wenn art == "maus_hoch":
+        wenn c != 1:
+            gib_zurück wahr
+        setze zone auf uim_csd_hit_test(G["b"], G["h"], a, b)
+        setze vorher auf G["gedrueckt"]
+        G["gedrueckt"] = nichts
+        wenn vorher != nichts und zone == vorher:
+            wenn zone == "schliessen":
+                zeige "HOST-CSD-SCHLIESSEN-KLICK"
+                host_schliessen(G["fenster"])
+                gib_zurück wahr
+            wenn zone == "minimieren":
+                zeige "HOST-CSD-MINIMIEREN"
+                host_minimiere(G["fenster"])
+            wenn zone == "maximieren":
+                setze mz auf host_maximiere(G["fenster"])
+                zeige "HOST-CSD-MAXIMIEREN " + text(mz)
+        praesentiere()
+        gib_zurück wahr
+    gib_zurück wahr
+
+# ---------------- Hauptprogramm ----------------
+
+setze z auf surface_new(G["b"], G["h"])
+wenn z == nichts:
+    wirf "Surface konnte nicht erzeugt werden"
+G["z"] = z
+
+setze f auf host_fenster("Moo Aero Wayland", G["b"], G["h"], 0)
+wenn f == falsch:
+    wirf "Host-Fenster konnte nicht erzeugt werden (kein Backend / kein Display?)"
+G["fenster"] = f
+
+host_on_input(f, on_input)
+setze sichtbar auf host_zeige(f)
+zeige "AERO-CSD-UI-START"
+zeige "HOST-BACKEND " + ui_host_backend()
+zeige "HOST-CSD-SICHTBAR " + text(sichtbar)
+wenn praesentiere() == falsch:
+    wirf "Erster Present fehlgeschlagen"
+host_laufen()
+zeige "HOST-CSD-ENDE"

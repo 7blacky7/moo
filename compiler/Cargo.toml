@@ -18,6 +18,10 @@ vulkan = []
 # Windows → Win32 (Phase 3)
 # macOS   → Cocoa (Phase 4)
 moo_ui = []
+# Natives Wayland-Backend (NATIVE-UI-1): libwayland-client + eingecheckter
+# xdg-Glue + libxkbcommon. Kein Toolkit. Beweis-Build:
+#   cargo build --release --no-default-features --features wayland_ui
+wayland_ui = []
 
 [build-dependencies]
 cc = "1"

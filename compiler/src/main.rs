@@ -1104,6 +1104,16 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         ]);
     }
 
+    // Natives Wayland-Backend (NATIVE-UI-1): beim finalen Link eines
+    // kompilierten .moos-Programms wayland-client + xkbcommon mitgeben.
+    #[cfg(all(target_os = "linux", feature = "wayland_ui"))]
+    {
+        link_args.extend([
+            "-lwayland-client".to_string(),
+            "-lxkbcommon".to_string(),
+        ]);
+    }
+
     // macOS UI-Libs/Frameworks — der Compiler-Build linkt diese bereits via
     // build.rs fuer das moo-compiler Binary. Beim spaeteren finalen Link eines
     // kompilierten .moos-Programms muessen sie aber erneut an cc/clang uebergeben

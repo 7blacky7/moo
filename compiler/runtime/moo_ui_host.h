@@ -39,6 +39,7 @@ extern "C" {
 #define MOO_UI_HOST_CAP_MAXIMIEREN    (1u << 3)
 #define MOO_UI_HOST_CAP_INPUT_SERIAL  (1u << 4) /* letztes_input_serial liefert echte Serials */
 #define MOO_UI_HOST_CAP_POLL_DISPATCH (1u << 5) /* pump ohne laufen nutzbar */
+#define MOO_UI_HOST_CAP_DIRECT_PRESENT (1u << 6) /* praesentiere() echt (nicht Leinwand-Weg) */
 
 typedef struct MooUiHostOps {
     const char* name;          /* "gtk" | "wayland" | "x11" | ... */
@@ -70,6 +71,18 @@ typedef struct MooUiHostOps {
 
     /* Letztes Pointer-Button-Serial des Fensters; 0 = kein Serial-Modell. */
     uint32_t (*letztes_input_serial)(MooValue fenster);
+
+    /* Direkter Present-Pfad (CAP_DIRECT_PRESENT): fertiges MOO_FRAME
+     * unmittelbar auf das Fenster praesentieren — der Weg fuer Backends
+     * ohne Zeichner-/Leinwand-Modell (Wayland/X11/Framebuffer). Backends
+     * ohne diesen Pfad (GTK) liefern einen ehrlichen falsch-Stub. */
+    MooValue (*praesentiere)(MooValue fenster, MooValue frame);
+
+    /* Input-Registrierung: cb(art, a, b, c) mit art als Moo-String in
+     * {"maus_runter","maus_hoch","bewegung","taste_runter","taste_hoch",
+     *  "resize","schliessen"}; maus: a=x, b=y, c=taste(1/2/3);
+     * taste: a=keysym; resize: a=breite, b=hoehe. */
+    MooValue (*input_callback_setze)(MooValue fenster, MooValue cb);
 } MooUiHostOps;
 
 /* Aktives Backend oder NULL, wenn keines registriert ist. */
@@ -87,6 +100,22 @@ int moo_ui_host_vollstaendig(const MooUiHostOps* ops);
  * "keins" wenn kein Backend registriert ist. Erste Vertragsnutzung aus Moo
  * heraus (NATIVE-UI-5 Beweis-Harness prueft den Namen im Prozess-Output). */
 MooValue moo_ui_host_backend_name(void);
+
+/* Backend-agnostische Dispatcher (Moo-Builtins host_*): routen auf das
+ * aktive Backend; ohne Backend liefern sie falsch/nichts. */
+MooValue moo_ui_host_fenster(MooValue titel, MooValue breite, MooValue hoehe, MooValue flags);
+MooValue moo_ui_host_zeige(MooValue fenster);
+MooValue moo_ui_host_schliessen(MooValue fenster);
+MooValue moo_ui_host_praesentiere(MooValue fenster, MooValue frame);
+MooValue moo_ui_host_input_callback(MooValue fenster, MooValue cb);
+MooValue moo_ui_host_laufen(void);
+MooValue moo_ui_host_pump(void);
+MooValue moo_ui_host_beenden(void);
+MooValue moo_ui_host_drag_start(MooValue fenster);
+MooValue moo_ui_host_resize_start(MooValue fenster, MooValue kante);
+MooValue moo_ui_host_minimiere(MooValue fenster);
+MooValue moo_ui_host_maximiere_umschalten(MooValue fenster);
+MooValue moo_ui_host_cursor_setze(MooValue fenster, MooValue name);
 
 #ifdef __cplusplus
 }

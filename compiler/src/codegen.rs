@@ -5448,6 +5448,62 @@ impl<'ctx> CodeGen<'ctx> {
                     "ui_host_backend" | "ui_host_backend_name" => {
                         return self.call_rt(self.rt.moo_ui_host_backend_name, &[], "ui_host_backend");
                     }
+                    "host_fenster" | "host_window" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        let c = self.compile_expr(&args[2])?;
+                        let d = self.compile_expr(&args[3])?;
+                        return self.call_rt(self.rt.moo_ui_host_fenster, &[a.into(), b.into(), c.into(), d.into()], "host_fenster");
+                    }
+                    "host_zeige" | "host_show" => {
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_host_zeige, &[a.into()], "host_zeige");
+                    }
+                    "host_schliessen" | "host_close" => {
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_host_schliessen, &[a.into()], "host_schliessen");
+                    }
+                    "host_present" | "host_praesentiere" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_host_praesentiere, &[a.into(), b.into()], "host_present");
+                    }
+                    "host_on_input" | "host_input" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_host_input_callback, &[a.into(), b.into()], "host_on_input");
+                    }
+                    "host_laufen" | "host_run" => {
+                        return self.call_rt(self.rt.moo_ui_host_laufen, &[], "host_laufen");
+                    }
+                    "host_pump" => {
+                        return self.call_rt(self.rt.moo_ui_host_pump, &[], "host_pump");
+                    }
+                    "host_beenden" | "host_quit" => {
+                        return self.call_rt(self.rt.moo_ui_host_beenden, &[], "host_beenden");
+                    }
+                    "host_drag_start" => {
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_host_drag_start, &[a.into()], "host_drag_start");
+                    }
+                    "host_resize_start" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_host_resize_start, &[a.into(), b.into()], "host_resize_start");
+                    }
+                    "host_minimiere" | "host_minimize" => {
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_host_minimiere, &[a.into()], "host_minimiere");
+                    }
+                    "host_maximiere" | "host_maximiere_umschalten" | "host_maximize_toggle" => {
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_ui_host_maximiere_umschalten, &[a.into()], "host_maximiere");
+                    }
+                    "host_cursor" | "host_cursor_setze" => {
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_ui_host_cursor_setze, &[a.into(), b.into()], "host_cursor");
+                    }
                     "ui_zeichne_farbe" | "ui_draw_color" | "ui_draw_colour" => {
                         let a: Vec<_> = args.iter().map(|x| self.compile_expr(x)).collect::<Result<Vec<_>, _>>()?;
                         return self.call_rt(self.rt.moo_ui_zeichne_farbe, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "ui_zeichne_farbe");

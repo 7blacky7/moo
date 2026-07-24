@@ -60,6 +60,8 @@ int main(void) {
      * vergessen koennen). */
     if (moo_ui_host_vollstaendig(&ops)) return fail("serial-luecke-unerkannt");
     ops.letztes_input_serial = fake_serial;
+    ops.praesentiere = f2;
+    ops.input_callback_setze = f2;
     if (!moo_ui_host_vollstaendig(&ops)) return fail("voll-als-unvollstaendig");
 
     if (!moo_ui_host_registriere(&ops)) return fail("registrierung");
