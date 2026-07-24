@@ -249,21 +249,25 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          choco install postgresql17 --yes --no-progress
-          $pgBin = Get-ChildItem "C:\Program Files\PostgreSQL" -Directory |
-            Sort-Object Name -Descending |
-            ForEach-Object { Join-Path $_.FullName "bin" } |
-            Where-Object { Test-Path (Join-Path $_ "psql.exe") } |
-            Select-Object -First 1
-          if (!$pgBin) { throw "PostgreSQL-bin-Verzeichnis wurde nicht gefunden" }
+          $pgUrl = "https://get.enterprisedb.com/postgresql/postgresql-17.10-2-windows-x64-binaries.zip"
+          $pgZip = Join-Path $env:RUNNER_TEMP "postgresql-17.10-2-windows-x64-binaries.zip"
+          $pgRoot = Join-Path $env:RUNNER_TEMP "postgresql-17.10-portable"
+          Invoke-WebRequest -Uri $pgUrl -OutFile $pgZip
+          $actualHash = (Get-FileHash -Path $pgZip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expectedHash = "ef9b1e5e23d2e8a83914ba13d9dc536a72210fba53fd1808ff1f7e06bb22b106"
+          if ($actualHash -ne $expectedHash) {
+            throw "PostgreSQL-ZIP-Hash stimmt nicht: $actualHash"
+          }
+          Expand-Archive -Path $pgZip -DestinationPath $pgRoot -Force
+          $pgBin = Get-ChildItem $pgRoot -Recurse -Filter "initdb.exe" -File |
+            Select-Object -First 1 |
+            ForEach-Object { $_.Directory.FullName }
+          if (!$pgBin) { throw "Portables PostgreSQL-bin-Verzeichnis wurde nicht gefunden" }
           "PATH=$pgBin;$env:PATH" >> $env:GITHUB_ENV
           "PGBIN=$pgBin" >> $env:GITHUB_ENV
 
-          # Der Chocolatey-Service hat paketabhaengige Zugangsdaten. Fuer ein
-          # reproduzierbares Gate starten wir deshalb einen eigenen Temp-Cluster.
-          Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue |
-            Where-Object Status -eq "Running" |
-            Stop-Service -Force
+          # Der portable ZIP-Pfad umgeht Installer, Windows-Dienst und
+          # paketabhaengige Zugangsdaten. Der Temp-Cluster ist reproduzierbar.
           $pgData = Join-Path $env:RUNNER_TEMP "moo-pgdata"
           $pgLog = Join-Path $env:RUNNER_TEMP "moo-postgres.log"
           $pwFile = Join-Path $env:RUNNER_TEMP "moo-postgres.pw"
