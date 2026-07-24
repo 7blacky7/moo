@@ -1,0 +1,217 @@
+# ============================================================
+# beispiele/moo_aero_csd.moos — Aero-CSD-Demo (UI-GLASS-CSD)
+#
+# Non-UI-Modus (MOO_AERO_CSD_NON_UI=1): rendert zwei dekorierte
+# Glass-Fenster (aktiv + inaktiv) ueber synthetischem Backdrop auf
+# MOO_SURFACE, prueft Hit-Testing (Titel, 8 Kanten, 3 Buttons,
+# Inhalt, Aussen) und den deterministischen Golden-Hash, speichert
+# ein BMP (MOO_AERO_CSD_BMP, Standard moo_aero_csd.bmp).
+#
+# UI-Modus: echtes randloses Hostfenster (NO_DECOR + RESIZABLE),
+# der Glass-Layer zeichnet den kompletten Aero-Rahmen selbst.
+# Titel-Ziehen, 8 Resize-Kanten und Min/Max/Schliessen laufen ueber
+# die CSD-Host-Hooks (ui_fenster_drag_start / resize_start /
+# minimiere / maximiere_umschalten). Transparenz wird capability-
+# ehrlich versucht und gemeldet. Optionaler Beweis-Screenshot via
+# MOO_AERO_CSD_SNAPSHOT=<pfad> (Snapshot nach 600ms, Ende 1600ms).
+# ============================================================
+
+importiere ui
+importiere ui_moo_csd
+
+setze G auf {}
+G["b"] = 900
+G["h"] = 620
+G["fb"] = 560
+G["fh"] = 380
+G["fb2"] = 760
+G["fh2"] = 520
+G["frame"] = nichts
+G["hover"] = nichts
+G["gedrueckt"] = nichts
+G["golden"] = "dfc7b1eb13333bfa"
+
+funktion demo_backdrop(z, bb, hh):
+    surface_clear(z, 8, 14, 30, 255)
+    setze y auf 0
+    solange y < hh:
+        setze x auf 0
+        solange x < bb:
+            setze band auf (boden(x / 90) + boden(y / 70)) % 4
+            wenn band == 0:
+                surface_rect(z, x, y, 90, 70, 16, 52, 96, 255)
+            sonst wenn band == 1:
+                surface_rect(z, x, y, 90, 70, 34, 44, 92, 255)
+            sonst wenn band == 2:
+                surface_rect(z, x, y, 90, 70, 22, 78, 100, 255)
+            sonst:
+                surface_rect(z, x, y, 90, 70, 50, 34, 88, 255)
+            setze x auf x + 90
+        setze y auf y + 70
+    # Helle Formen hinter den Fenstern machen den Backdrop-Blur sichtbar.
+    surface_circle(z, 200, 170, 100, 90, 180, 255, 210)
+    surface_circle(z, 700, 470, 120, 255, 110, 170, 185)
+    surface_roundrect(z, 380, 80, 300, 100, 30, 255, 200, 96, 190)
+    gib_zurück wahr
+
+funktion hit_pruefe(fb, fh, mx, my, erwartet, fehler):
+    setze zone auf uim_csd_hit_test(fb, fh, mx, my)
+    wenn zone != erwartet:
+        fehler.hinzufügen(text(mx) + "," + text(my) + " -> " + zone + " (erwartet " + erwartet + ")")
+    gib_zurück zone
+
+# ---------------- UI-Modus-Funktionen ----------------
+
+funktion csd_render():
+    setze z auf G["z"]
+    demo_backdrop(z, G["fb2"], G["fh2"])
+    setze d auf uim_csd_zeichnen(z, 0, 0, G["fb2"], G["fh2"], "MOO AERO", wahr, G["hover"], G["gedrueckt"], 255, 65536)
+    wenn d["ok"] == falsch:
+        gib_zurück falsch
+    surface_text(z, 30, 80, 2, "AERO GLASS CSD", 255, 255, 255, 210)
+    surface_text(z, 30, 110, 1, "TITEL ZIEHEN - KANTEN RESIZE - KNOEPFE MIN MAX X", 200, 220, 255, 190)
+    setze frame auf surface_snapshot_to_frame(z)
+    wenn frame == nichts:
+        gib_zurück falsch
+    G["frame"] = frame
+    gib_zurück wahr
+
+funktion csd_draw_cb(w, zeichner):
+    wenn G["frame"] != nichts:
+        ui_zeichne_frame(zeichner, 0, 0, G["fb2"], G["fh2"], G["frame"])
+    gib_zurück wahr
+
+funktion csd_on_maus(w, x, y, taste):
+    wenn taste != 1:
+        gib_zurück wahr
+    setze zone auf uim_csd_hit_test(G["fb2"], G["fh2"], x, y)
+    setze kante auf uim_csd_kante(zone)
+    wenn kante != nichts:
+        ui_fenster_resize_start(G["fenster"], kante)
+        gib_zurück wahr
+    wenn zone == "titel":
+        ui_fenster_drag_start(G["fenster"])
+        gib_zurück wahr
+    wenn zone == "schliessen" oder zone == "minimieren" oder zone == "maximieren":
+        G["gedrueckt"] = zone
+        csd_render()
+        ui_leinwand_anfordern(G["leinwand"])
+    gib_zurück wahr
+
+funktion csd_on_maus_los(w, x, y, taste):
+    wenn taste != 1:
+        gib_zurück wahr
+    setze zone auf uim_csd_hit_test(G["fb2"], G["fh2"], x, y)
+    setze vorher auf G["gedrueckt"]
+    G["gedrueckt"] = nichts
+    wenn vorher != nichts und zone == vorher:
+        wenn zone == "schliessen":
+            zeige "AERO-CSD-SCHLIESSEN"
+            ui_fenster_schliessen(G["fenster"])
+            gib_zurück wahr
+        wenn zone == "minimieren":
+            zeige "AERO-CSD-MINIMIEREN"
+            ui_fenster_minimiere(G["fenster"])
+        wenn zone == "maximieren":
+            setze mz auf ui_fenster_maximiere_umschalten(G["fenster"])
+            zeige "AERO-CSD-MAXIMIEREN " + text(mz)
+    csd_render()
+    ui_leinwand_anfordern(G["leinwand"])
+    gib_zurück wahr
+
+funktion csd_on_bewegung(w, x, y):
+    setze zone auf uim_csd_hit_test(G["fb2"], G["fh2"], x, y)
+    setze hz auf nichts
+    wenn zone == "schliessen" oder zone == "minimieren" oder zone == "maximieren":
+        setze hz auf zone
+    wenn hz != G["hover"]:
+        G["hover"] = hz
+        csd_render()
+        ui_leinwand_anfordern(G["leinwand"])
+    ui_fenster_cursor_setze(G["fenster"], uim_csd_cursor_name(zone))
+    gib_zurück wahr
+
+funktion on_snapshot():
+    setze pfad auf umgebung("MOO_AERO_CSD_SNAPSHOT")
+    wenn pfad != nichts:
+        setze ok auf ui_test_snapshot(G["fenster"], pfad)
+        wenn ok:
+            zeige "AERO-CSD-SNAPSHOT-OK " + pfad
+        sonst:
+            zeige "AERO-CSD-SNAPSHOT-FAIL"
+
+funktion on_ende():
+    zeige "AERO-CSD-TIMEOUT-ENDE"
+    ui_beenden()
+
+# ---------------- Hauptprogramm ----------------
+
+setze non_ui auf umgebung("MOO_AERO_CSD_NON_UI")
+wenn non_ui == "1":
+    setze z auf surface_new(G["b"], G["h"])
+    wenn z == nichts:
+        wirf "Surface konnte nicht erzeugt werden"
+    demo_backdrop(z, G["b"], G["h"])
+    # Inaktives Fenster zuerst (liegt hinter dem aktiven — echter Tiefen-Beweis:
+    # das aktive Fenster blurred u.a. das inaktive darunter).
+    setze d2 auf uim_csd_zeichnen(z, 480, 300, 340, 240, "INAKTIV", falsch, nichts, nichts, 255, 65536)
+    setze d1 auf uim_csd_zeichnen(z, 70, 60, G["fb"], G["fh"], "MOO AERO", wahr, "schliessen", nichts, 255, 65536)
+    wenn d1["ok"] == falsch oder d2["ok"] == falsch:
+        wirf "CSD-Zeichnung fehlgeschlagen"
+
+    setze fehler auf []
+    hit_pruefe(560, 380, 2, 2, "kante_nw", fehler)
+    hit_pruefe(560, 380, 280, 2, "kante_n", fehler)
+    hit_pruefe(560, 380, 557, 2, "kante_no", fehler)
+    hit_pruefe(560, 380, 2, 190, "kante_w", fehler)
+    hit_pruefe(560, 380, 557, 190, "kante_o", fehler)
+    hit_pruefe(560, 380, 2, 377, "kante_sw", fehler)
+    hit_pruefe(560, 380, 280, 377, "kante_s", fehler)
+    hit_pruefe(560, 380, 557, 377, "kante_so", fehler)
+    hit_pruefe(560, 380, 531, 16, "schliessen", fehler)
+    hit_pruefe(560, 380, 493, 16, "maximieren", fehler)
+    hit_pruefe(560, 380, 455, 16, "minimieren", fehler)
+    hit_pruefe(560, 380, 200, 16, "titel", fehler)
+    hit_pruefe(560, 380, 280, 200, "inhalt", fehler)
+    hit_pruefe(560, 380, 0 - 5, 10, "aussen", fehler)
+    wenn länge(fehler) > 0:
+        für f in fehler:
+            zeige "AERO-CSD-HIT-FEHLER " + f
+        wirf "Hit-Test-Gate verletzt"
+    zeige "AERO-CSD-HIT-OK 14/14"
+
+    setze frame auf surface_snapshot_to_frame(z)
+    wenn frame == nichts:
+        wirf "Snapshot fehlgeschlagen"
+    setze pfad auf umgebung("MOO_AERO_CSD_BMP")
+    wenn pfad == nichts:
+        setze pfad auf "moo_aero_csd.bmp"
+    wenn test_frame_save_bmp(frame, pfad) == falsch:
+        wirf "BMP konnte nicht gespeichert werden"
+    setze hash auf surface_hash(z)
+    zeige "AERO-CSD-HASH " + hash
+    zeige "AERO-CSD-BMP " + pfad
+    wenn hash != G["golden"]:
+        wirf "AERO-CSD-Golden verletzt: " + hash
+    zeige "AERO-CSD-NONUI-OK"
+sonst:
+    setze z2 auf surface_new(G["fb2"], G["fh2"])
+    wenn z2 == nichts:
+        wirf "Surface konnte nicht erzeugt werden"
+    G["z"] = z2
+    setze fenster auf ui_fenster("Moo Aero CSD", G["fb2"], G["fh2"], 17, nichts)
+    G["fenster"] = fenster
+    setze tp auf ui_fenster_transparenz(fenster, wahr)
+    zeige "AERO-CSD-TRANSPARENZ " + text(tp)
+    wenn csd_render() == falsch:
+        wirf "Initialer CSD-Frame konnte nicht gerendert werden"
+    G["leinwand"] = ui_leinwand(fenster, 0, 0, G["fb2"], G["fh2"], csd_draw_cb)
+    ui_leinwand_on_maus(G["leinwand"], csd_on_maus)
+    ui_leinwand_on_bewegung(G["leinwand"], csd_on_bewegung)
+    ui_leinwand_on_maus_los(G["leinwand"], csd_on_maus_los)
+    wenn umgebung("MOO_AERO_CSD_SNAPSHOT") != nichts:
+        ui_timer_hinzu(600, on_snapshot)
+        ui_timer_hinzu(1600, on_ende)
+    zeige "AERO-CSD-UI-START"
+    ui_zeige_nebenbei(fenster)
+    ui_laufen()

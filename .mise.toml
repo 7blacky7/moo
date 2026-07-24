@@ -89,6 +89,24 @@ MOO_GLASS_GALLERY_NON_UI=1 MOO_GLASS_GALLERY_BMP="$OUT/gallery.bmp" "$OUT/galler
 test -s "$OUT/gallery.bmp"
 '''
 
+[tasks.test-ui-moo-aero-csd]
+description = "Run Aero CSD decoration hit-test gate and pixel golden (non-UI)"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-aero-csd.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+cargo build --release --manifest-path compiler/Cargo.toml
+TARGET="${CARGO_TARGET_DIR:-$PWD/compiler/target}"
+case "$TARGET" in
+  /*) ;;
+  *) TARGET="$PWD/$TARGET" ;;
+esac
+COMPILER="$TARGET/release/moo-compiler"
+"$COMPILER" compile beispiele/moo_aero_csd.moos -o "$OUT/aero_csd"
+MOO_AERO_CSD_NON_UI=1 MOO_AERO_CSD_BMP="$OUT/aero_csd.bmp" "$OUT/aero_csd"
+test -s "$OUT/aero_csd.bmp"
+'''
+
 [tasks.test-ui-moo-compositor]
 description = "Run toolkit-free Moo compositor sanitizer and freestanding gates"
 run = '''

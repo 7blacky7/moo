@@ -579,24 +579,6 @@ MooValue moo_ui_fenster_transparenz(MooValue fenster, MooValue einschalten) {
     (void)fenster; (void)einschalten; return moo_bool(0);
 }
 
-/* CSD-Hooks (UI-GLASS-CSD): Cocoa-Implementierung folgt als separater
- * Task — bis dahin capability-ehrliche Stubs (falsch = nicht verfuegbar). */
-MooValue moo_ui_fenster_drag_start(MooValue fenster) {
-    (void)fenster; return moo_bool(0);
-}
-MooValue moo_ui_fenster_resize_start(MooValue fenster, MooValue kante) {
-    (void)fenster; (void)kante; return moo_bool(0);
-}
-MooValue moo_ui_fenster_minimiere(MooValue fenster) {
-    (void)fenster; return moo_bool(0);
-}
-MooValue moo_ui_fenster_maximiere_umschalten(MooValue fenster) {
-    (void)fenster; return moo_bool(0);
-}
-MooValue moo_ui_fenster_transparenz(MooValue fenster, MooValue einschalten) {
-    (void)fenster; (void)einschalten; return moo_bool(0);
-}
-
 /* Entspricht moo_ui_gtk.c:247–252 */
 MooValue moo_ui_zeige(MooValue fenster) {
     @autoreleasepool {

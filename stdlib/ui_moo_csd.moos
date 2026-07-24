@@ -1,0 +1,274 @@
+# ============================================================
+# stdlib/ui_moo_csd.moos — Selbstgezeichnete Fensterdekoration
+# (UI-GLASS-CSD, Windows-7-Aero-Look)
+#
+# Komplett portabel auf MOO_SURFACE: Glas-Rahmen mit Backdrop-Blur
+# (uim_effekt_*), 16px runde Ecken, Gloss-Titelbalken, Min/Max/
+# Schliessen-Buttons, Active-Glow. Kein Toolkit-Code — derselbe
+# Zeichenpfad laeuft auf Desktop-Hosts und dem moOS-Framebuffer.
+# Hit-Testing (Titelbalken, 8 Resize-Kanten, Buttons) ebenfalls hier;
+# der Host liefert nur die WM-Hooks dahinter (moo_ui.h CSD-Hooks).
+# Visuelle Referenz: docs/design/moos-driver-manager/DESIGN.md
+# (40px-Klasse Backdrop-Blur, 16px Ecken, Licht-Gradient-Rand,
+#  Active-Glow, Glass-Panels).
+#
+# Alle Geometrie ist Ganzzahl-basiert, alle Farbpfade laufen ueber
+# den deterministischen Effekt-/Farbpass — byte-exakt reproduzierbar.
+# ============================================================
+
+importiere ui_moo_effects
+
+# ------------------------------------------------------------
+# Metriken: Randbreite (Resize-Zone), Titelbalken, Buttonrects.
+# Buttons liegen rechts oben (Aero-Anordnung, Schliessen aussen).
+# ------------------------------------------------------------
+funktion uim_csd_metriken(b, h):
+    setze m auf {}
+    m["rand"] = 8
+    m["titel_h"] = 32
+    m["radius"] = 16
+    m["knopf_b"] = 34
+    m["knopf_h"] = 22
+    m["knopf_y"] = 5
+    setze sx auf b - 12 - 34
+    m["schliessen"] = [sx, 5, 34, 22]
+    m["maximieren"] = [sx - 38, 5, 34, 22]
+    m["minimieren"] = [sx - 76, 5, 34, 22]
+    m["titel_text_x"] = 18
+    m["titel_text_y"] = 11
+    gib_zurück m
+
+funktion _uim_csd_in_rect(r, mx, my):
+    gib_zurück mx >= r[0] und mx < r[0] + r[2] und my >= r[1] und my < r[1] + r[3]
+
+funktion _uim_csd_klemme(wert):
+    setze v auf runde(wert)
+    wenn v < 0:
+        gib_zurück 0
+    wenn v > 255:
+        gib_zurück 255
+    gib_zurück v
+
+# ------------------------------------------------------------
+# Hit-Test. Liefert:
+#   "aussen" | "schliessen" | "maximieren" | "minimieren" |
+#   "kante_nw"|"kante_n"|"kante_no"|"kante_w"|"kante_o"|
+#   "kante_sw"|"kante_s"|"kante_so" | "titel" | "inhalt"
+# Prioritaet: Buttons > Kanten > Titel > Inhalt (Aero-Verhalten).
+# ------------------------------------------------------------
+funktion uim_csd_hit_test(b, h, mx, my):
+    wenn mx < 0 oder my < 0 oder mx >= b oder my >= h:
+        gib_zurück "aussen"
+    setze m auf uim_csd_metriken(b, h)
+    wenn _uim_csd_in_rect(m["schliessen"], mx, my):
+        gib_zurück "schliessen"
+    wenn _uim_csd_in_rect(m["maximieren"], mx, my):
+        gib_zurück "maximieren"
+    wenn _uim_csd_in_rect(m["minimieren"], mx, my):
+        gib_zurück "minimieren"
+    setze rand auf m["rand"]
+    setze oben auf my < rand
+    setze unten auf my >= h - rand
+    setze links auf mx < rand
+    setze rechts auf mx >= b - rand
+    wenn oben und links:
+        gib_zurück "kante_nw"
+    wenn oben und rechts:
+        gib_zurück "kante_no"
+    wenn unten und links:
+        gib_zurück "kante_sw"
+    wenn unten und rechts:
+        gib_zurück "kante_so"
+    wenn oben:
+        gib_zurück "kante_n"
+    wenn unten:
+        gib_zurück "kante_s"
+    wenn links:
+        gib_zurück "kante_w"
+    wenn rechts:
+        gib_zurück "kante_o"
+    wenn my < m["titel_h"]:
+        gib_zurück "titel"
+    gib_zurück "inhalt"
+
+# Kanten-Zone -> Host-Kuerzel fuer ui_fenster_resize_start (nichts = keine Kante).
+funktion uim_csd_kante(zone):
+    wenn zone == "kante_n":
+        gib_zurück "n"
+    wenn zone == "kante_no":
+        gib_zurück "no"
+    wenn zone == "kante_o":
+        gib_zurück "o"
+    wenn zone == "kante_so":
+        gib_zurück "so"
+    wenn zone == "kante_s":
+        gib_zurück "s"
+    wenn zone == "kante_sw":
+        gib_zurück "sw"
+    wenn zone == "kante_w":
+        gib_zurück "w"
+    wenn zone == "kante_nw":
+        gib_zurück "nw"
+    gib_zurück nichts
+
+# Zone -> Cursor-Name (ui_fenster_cursor_setze; GTK-CSS-Namen werden
+# durchgereicht, Win32/Cocoa mappen "standard" selbst).
+funktion uim_csd_cursor_name(zone):
+    wenn zone == "kante_n":
+        gib_zurück "n-resize"
+    wenn zone == "kante_s":
+        gib_zurück "s-resize"
+    wenn zone == "kante_o":
+        gib_zurück "e-resize"
+    wenn zone == "kante_w":
+        gib_zurück "w-resize"
+    wenn zone == "kante_no":
+        gib_zurück "ne-resize"
+    wenn zone == "kante_nw":
+        gib_zurück "nw-resize"
+    wenn zone == "kante_so":
+        gib_zurück "se-resize"
+    wenn zone == "kante_sw":
+        gib_zurück "sw-resize"
+    gib_zurück "standard"
+
+funktion _uim_csd_zustand(name, hover, gedrueckt):
+    wenn gedrueckt == name:
+        gib_zurück 2
+    wenn hover == name:
+        gib_zurück 1
+    gib_zurück 0
+
+# ------------------------------------------------------------
+# Ein Fenster-Button (Aero): Glasflaeche, Hover-/Pressed-States,
+# Schliessen mit rotem Glow bei Hover, Glyphen aus Rects (portabel,
+# deterministisch, kein Font noetig).
+# ------------------------------------------------------------
+funktion _uim_csd_knopf(z, x, y, rect, art, zustand, aktiv):
+    setze kx auf x + rect[0]
+    setze ky auf y + rect[1]
+    setze kb auf rect[2]
+    setze kh auf rect[3]
+    wenn art == "schliessen" und zustand > 0:
+        wenn zustand == 2:
+            surface_roundrect(z, kx, ky, kb, kh, 6, 140, 28, 24, 235)
+        sonst:
+            surface_roundrect(z, kx - 2, ky - 2, kb + 4, kh + 4, 8, 232, 96, 80, 70)
+            surface_roundrect(z, kx, ky, kb, kh, 6, 208, 60, 48, 220)
+    sonst:
+        setze ga auf 26
+        wenn zustand == 1:
+            setze ga auf 80
+        wenn zustand == 2:
+            setze ga auf 120
+        surface_roundrect(z, kx, ky, kb, kh, 6, 255, 255, 255, ga)
+    # Lichtkante oben (Glas faengt Licht)
+    surface_rect(z, kx + 6, ky, kb - 12, 1, 255, 255, 255, 90)
+    setze cx auf kx + boden(kb / 2)
+    setze cy auf ky + boden(kh / 2)
+    setze glyph_a auf 205
+    wenn aktiv == falsch und zustand == 0:
+        setze glyph_a auf 140
+    wenn art == "minimieren":
+        surface_rect(z, cx - 5, cy + 3, 10, 2, 255, 255, 255, glyph_a)
+    sonst wenn art == "maximieren":
+        surface_rect(z, cx - 5, cy - 4, 10, 1, 255, 255, 255, glyph_a)
+        surface_rect(z, cx - 5, cy + 4, 10, 1, 255, 255, 255, glyph_a)
+        surface_rect(z, cx - 5, cy - 4, 1, 9, 255, 255, 255, glyph_a)
+        surface_rect(z, cx + 4, cy - 4, 1, 9, 255, 255, 255, glyph_a)
+    sonst:
+        # X-Glyph: zwei 2px-Diagonalen aus 2x2-Bloecken
+        setze i auf 0 - 4
+        solange i <= 4:
+            surface_rect(z, cx + i, cy + i, 2, 2, 255, 255, 255, glyph_a)
+            surface_rect(z, cx + i, cy - i - 1, 2, 2, 255, 255, 255, glyph_a)
+            setze i auf i + 1
+    gib_zurück wahr
+
+# ------------------------------------------------------------
+# Komplette Dekoration zeichnen.
+#   z                Ziel-Surface
+#   x, y, b, h       Fensterrect (Aussenkante der Dekoration)
+#   titel            Titeltext (3x5-Font: A-Z, 0-9, Leer, '-', '.', '!')
+#   aktiv            wahr = fokussiertes Fenster (blauer Glow, heller Titel)
+#   hover/gedrueckt  Zonenname ("schliessen"/...) oder nichts
+#   faehigkeiten     Effekt-Capability-Maske (255 = voll)
+#   fortschritt_q16  Animationsfortschritt Q16.16 (65536 = Endzustand)
+# Liefert Dict {ok, grund, metriken, effekt}.
+# ------------------------------------------------------------
+funktion uim_csd_zeichnen(z, x, y, b, h, titel, aktiv, hover, gedrueckt, faehigkeiten, fortschritt_q16):
+    wenn b < 140 oder h < 80:
+        setze r0 auf {}
+        r0["ok"] = falsch
+        r0["grund"] = "zu-klein"
+        gib_zurück r0
+    setze m auf uim_csd_metriken(b, h)
+    setze e auf uim_effekt_neu()
+    uim_effekt_ecken_setze(e, 16, 16, 16, 16)
+    wenn aktiv:
+        uim_effekt_schatten_setze(e, 0, 5, 8, 3, 40, 96, 210, 150)
+    sonst:
+        uim_effekt_schatten_setze(e, 0, 5, 8, 2, 0, 0, 0, 120)
+    uim_effekt_hintergrund_setze(e, 12, 340, 24, 36, 58, 255, 96, 14, 20260724)
+    setze a auf uim_effekt_aufloesen(e, faehigkeiten)
+    wenn a["ok"] == falsch:
+        # Atomare, sichtbare NOGO-Degradation (kein teilweiser Effekt).
+        surface_roundrect(z, x, y, b, h, 12, 96, 26, 40, 255)
+        surface_roundrect(z, x + 5, y + 5, b - 10, h - 10, 10, 150, 42, 58, 255)
+        setze r1 auf {}
+        r1["ok"] = falsch
+        r1["grund"] = "aufloesung-nogo"
+        r1["metriken"] = m
+        gib_zurück r1
+    setze p auf uim_effekt_vorschau_zeichnen(z, x, y, b, h, a, falsch, fortschritt_q16)
+    wenn p["ok"] == falsch:
+        setze r2 auf {}
+        r2["ok"] = falsch
+        r2["grund"] = p["grund"]
+        r2["metriken"] = m
+        gib_zurück r2
+
+    # --- Aero-Titelbalken: Gloss oben, Falloff unten, Radius-Inset ---
+    setze th auf m["titel_h"]
+    setze radius auf m["radius"]
+    setze halb auf boden(th / 2)
+    setze zeile auf 2
+    solange zeile < th:
+        setze inset auf 2
+        wenn zeile < radius:
+            setze bogen_dy auf radius - zeile - 0.5
+            setze bogen auf radius * radius - bogen_dy * bogen_dy
+            wenn bogen < 0:
+                setze bogen auf 0
+            setze inset auf 2 + runde(radius - wurzel(bogen))
+        setze zb auf b - 2 * inset
+        wenn zb >= 1:
+            wenn zeile < halb:
+                setze ga auf 26 + 44 * (halb - zeile) / halb
+                surface_rect(z, x + inset, y + zeile, zb, 1, 255, 255, 255, _uim_csd_klemme(ga))
+            sonst:
+                setze da auf 10 + 14 * (zeile - halb) / (th - halb)
+                surface_rect(z, x + inset, y + zeile, zb, 1, 16, 24, 40, _uim_csd_klemme(da))
+        setze zeile auf zeile + 1
+    # Trennlinie unter dem Titelbalken: dunkle Kante + Lichtsaum
+    surface_rect(z, x + 2, y + th, b - 4, 1, 10, 16, 28, 130)
+    surface_rect(z, x + 2, y + th + 1, b - 4, 1, 255, 255, 255, 34)
+
+    # --- Titeltext (Aero: dunkler Schattenwurf + weisser Text) ---
+    setze ta auf 150
+    wenn aktiv:
+        setze ta auf 235
+    surface_text(z, x + m["titel_text_x"] + 1, y + m["titel_text_y"] + 1, 2, titel, 10, 20, 34, 120)
+    surface_text(z, x + m["titel_text_x"], y + m["titel_text_y"], 2, titel, 255, 255, 255, ta)
+
+    # --- Buttons ---
+    _uim_csd_knopf(z, x, y, m["minimieren"], "minimieren", _uim_csd_zustand("minimieren", hover, gedrueckt), aktiv)
+    _uim_csd_knopf(z, x, y, m["maximieren"], "maximieren", _uim_csd_zustand("maximieren", hover, gedrueckt), aktiv)
+    _uim_csd_knopf(z, x, y, m["schliessen"], "schliessen", _uim_csd_zustand("schliessen", hover, gedrueckt), aktiv)
+
+    setze r auf {}
+    r["ok"] = wahr
+    r["grund"] = "ok"
+    r["metriken"] = m
+    r["effekt"] = p
+    gib_zurück r
