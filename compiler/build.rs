@@ -154,6 +154,17 @@ fn main() {
         println!("cargo:rustc-link-lib=xkbcommon");
     }
 
+    // Natives X11/XCB-Backend (NATIVE-UI-2): direkt auf der Protokoll-
+    // Ebene via libxcb, KEIN Toolkit. Laeuft auf Xorg und via Xwayland.
+    #[cfg(all(target_os = "linux", feature = "x11_ui"))]
+    {
+        build.file("runtime/moo_ui_x11.c");
+        build.define("MOO_HAS_X11_UI", None);
+        println!("cargo:rustc-link-lib=xcb");
+        println!("cargo:rustc-link-lib=xcb-shm");
+        println!("cargo:rustc-link-lib=xcb-keysyms");
+    }
+
     let ui_enabled = cfg!(feature = "moo_ui");
 
     // Das kompatible ui_moo-Umbrella-Modul enthaelt den Frame-Adapter auch

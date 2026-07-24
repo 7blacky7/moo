@@ -22,6 +22,9 @@ moo_ui = []
 # xdg-Glue + libxkbcommon. Kein Toolkit. Beweis-Build:
 #   cargo build --release --no-default-features --features wayland_ui
 wayland_ui = []
+# Natives X11/XCB-Backend (NATIVE-UI-2), analog:
+#   cargo build --release --no-default-features --features x11_ui
+x11_ui = []
 
 [build-dependencies]
 cc = "1"

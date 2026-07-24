@@ -98,6 +98,11 @@ else
         xwd -root -out "$OUT/beweis.xwd" >/dev/null 2>&1 || true
         [ -s "$OUT/beweis.xwd" ] && SHOT="$OUT/beweis.xwd"
     fi
+    # KDE-Desktop ohne ImageMagick/xwd: spectacle screenshottet den
+    # ganzen Bildschirm — das Xwayland-Fenster ist darauf sichtbar.
+    if [ ! -s "$SHOT" ] && command -v spectacle >/dev/null 2>&1; then
+        spectacle -b -n -o "$SHOT" >/dev/null 2>&1 || true
+    fi
 fi
 if [ -s "$SHOT" ]; then
     echo "NATIVE-UI-BEWEIS-SCREENSHOT PASS $SHOT"

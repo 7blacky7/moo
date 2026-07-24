@@ -1114,6 +1114,17 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         ]);
     }
 
+    // Natives X11/XCB-Backend (NATIVE-UI-2): xcb-Libs beim finalen Link
+    // eines kompilierten .moos-Programms mitgeben.
+    #[cfg(all(target_os = "linux", feature = "x11_ui"))]
+    {
+        link_args.extend([
+            "-lxcb".to_string(),
+            "-lxcb-shm".to_string(),
+            "-lxcb-keysyms".to_string(),
+        ]);
+    }
+
     // macOS UI-Libs/Frameworks — der Compiler-Build linkt diese bereits via
     // build.rs fuer das moo-compiler Binary. Beim spaeteren finalen Link eines
     // kompilierten .moos-Programms muessen sie aber erneut an cc/clang uebergeben

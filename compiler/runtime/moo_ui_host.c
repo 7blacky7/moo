@@ -15,9 +15,15 @@ static const MooUiHostOps* g_aktives_backend = NULL;
 #ifdef MOO_HAS_WAYLAND_UI
 extern void moo_ui_wayland_link_anker(void);
 #endif
+#ifdef MOO_HAS_X11_UI
+extern void moo_ui_x11_link_anker(void);
+#endif
 static void backends_ankern(void) {
 #ifdef MOO_HAS_WAYLAND_UI
     moo_ui_wayland_link_anker();
+#endif
+#ifdef MOO_HAS_X11_UI
+    moo_ui_x11_link_anker();
 #endif
 }
 
