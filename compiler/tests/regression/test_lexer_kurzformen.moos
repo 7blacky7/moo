@@ -1,0 +1,44 @@
+# ============================================================
+# Regressionstest [MOO-LEXER] Task c80e81db: Ex-Experten-Kurzformen
+# sind wieder normale Identifier.
+#
+# Praezedenz: "wi" (Task c51a657a) und "fg" wurden einzeln aus dem
+# Kurzform-Block gestrichen; dieser Test fixiert die GENERELLE
+# Streichung aller 2-Buchstaben-Kurzformen (se ze we so sl fu fn kl
+# gr ko st wt im pr fa ve un) und beweist zugleich, dass laengere
+# Identifier, die Praefixe echter Keywords sind (fal, wen, sol, funk),
+# sauber als Identifier gelext werden (Wortgrenzen-Korrektheit von
+# read_identifier + exaktem keyword_lookup).
+# ============================================================
+
+funktion summe2(se, ze):
+    gib_zurück se + ze
+
+setze se auf 1
+setze ze auf 2
+setze we auf 3
+setze so auf 4
+setze sl auf 5
+setze fu auf 6
+setze fn auf 7
+setze kl auf 8
+setze gr auf 9
+setze ko auf 10
+setze st auf 11
+setze wt auf 12
+setze im auf 13
+setze pr auf 14
+setze fa auf 15
+setze ve auf 16
+setze un auf 17
+setze wi auf 18
+setze fg auf 19
+setze fal auf 20
+setze wen auf 21
+setze sol auf 22
+setze funk auf 23
+setze gesamt auf se + ze + we + so + sl + fu + fn + kl + gr + ko + st + wt + im + pr + fa + ve + un + wi + fg + fal + wen + sol + funk
+zeige "LEXER-KURZFORM-SUMME " + text(gesamt)
+zeige "LEXER-KURZFORM-ARGS " + text(summe2(fa, so))
+zeige "LEXER-KURZFORM-OK"
+# Ende.

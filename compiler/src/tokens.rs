@@ -186,29 +186,13 @@ pub fn keyword_lookup(word: &str) -> Option<TokenType> {
         "wähle" => Some(TokenType::Select),
         "sortiere" => Some(TokenType::Order),
 
-        // Experten-Kurzformen (2 Buchstaben)
-        "se" => Some(TokenType::Set),
-        "ze" => Some(TokenType::Show),
-        "we" => Some(TokenType::If),
-        "so" => Some(TokenType::Else),
-        "sl" => Some(TokenType::While),
-        "fu" => Some(TokenType::For),
-        "fn" => Some(TokenType::Func),
-        "kl" => Some(TokenType::Class),
-        "gr" => Some(TokenType::Return),
-        "ko" => Some(TokenType::Const),
-        "st" => Some(TokenType::Break),
-        "wt" => Some(TokenType::Continue),
-        "im" => Some(TokenType::Import),
-        "pr" => Some(TokenType::Match),
-        "fa" => Some(TokenType::Case),
-        "ve" => Some(TokenType::Try),
-        // "fg" entfernt — kollidiert mit haeufigem Variablenname (foreground,
-        // file-grep, frame-grab). 'fange' bzw. 'catch' ausgeschrieben verwenden.
-        // "wi" entfernt (2026-07-09) — kollidiert mit haeufigem Variablenname
-        // (wellen-index, width, wi als Laufvariable). 'wirf' bzw. 'throw' verwenden.
-        "un" => Some(TokenType::Unsafe),
-        // "wa" => Await existiert nicht im Rust-Compiler Token-Enum
+        // Experten-Kurzformen (2 Buchstaben) — ENTFERNT (2026-07-24, Task
+        // c80e81db): Die Kurzformen (se ze we so sl fu fn kl gr ko st wt im
+        // pr fa ve un) kollidierten systematisch mit natuerlichen
+        // Variablennamen (dritter Vorfall: fa/Case; davor wi->wirf 2026-07-09
+        // und fg->fange). Ausgeschriebene Keywords (deutsch/englisch)
+        // verwenden. Regressionstest:
+        // tests/regression/test_lexer_kurzformen.moos
 
         // English
         "set" => Some(TokenType::Set),
