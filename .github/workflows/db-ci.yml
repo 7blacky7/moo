@@ -249,7 +249,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          choco install postgresql17 --yes --no-progress --params '/Password:postgres /Port:5432'
+          choco install postgresql17 --yes --no-progress
           $pgBin = Get-ChildItem "C:\Program Files\PostgreSQL" -Directory |
             Sort-Object Name -Descending |
             ForEach-Object { Join-Path $_.FullName "bin" } |
@@ -259,13 +259,30 @@ jobs:
           "PATH=$pgBin;$env:PATH" >> $env:GITHUB_ENV
           "PGBIN=$pgBin" >> $env:GITHUB_ENV
 
+          # Der Chocolatey-Service hat paketabhaengige Zugangsdaten. Fuer ein
+          # reproduzierbares Gate starten wir deshalb einen eigenen Temp-Cluster.
+          Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue |
+            Where-Object Status -eq "Running" |
+            Stop-Service -Force
+          $pgData = Join-Path $env:RUNNER_TEMP "moo-pgdata"
+          $pgLog = Join-Path $env:RUNNER_TEMP "moo-postgres.log"
+          $pwFile = Join-Path $env:RUNNER_TEMP "moo-postgres.pw"
+          Set-Content -Path $pwFile -Value "postgres" -NoNewline -Encoding ascii
+          & (Join-Path $pgBin "initdb.exe") -D $pgData -U postgres --pwfile=$pwFile --auth-host=scram-sha-256 --auth-local=trust --encoding=UTF8
+          if ($LASTEXITCODE -ne 0) { throw "initdb fuer Windows-Temp-Cluster fehlgeschlagen" }
+          & (Join-Path $pgBin "pg_ctl.exe") -D $pgData -l $pgLog -o '"-p 5432 -h 127.0.0.1"' start
+          if ($LASTEXITCODE -ne 0) { throw "pg_ctl start fuer Windows-Temp-Cluster fehlgeschlagen" }
+
           $ready = $false
           for ($i = 0; $i -lt 60; $i++) {
             & (Join-Path $pgBin "pg_isready.exe") -h 127.0.0.1 -p 5432 -U postgres
             if ($LASTEXITCODE -eq 0) { $ready = $true; break }
             Start-Sleep -Seconds 2
           }
-          if (!$ready) { throw "PostgreSQL wurde auf Windows nicht bereit" }
+          if (!$ready) {
+            if (Test-Path $pgLog) { Get-Content $pgLog }
+            throw "PostgreSQL wurde auf Windows nicht bereit"
+          }
 
           $env:PGPASSWORD = "postgres"
           $psql = Join-Path $pgBin "psql.exe"
