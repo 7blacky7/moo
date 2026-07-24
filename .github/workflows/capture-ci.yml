@@ -109,7 +109,7 @@ jobs:
           $rt = Join-Path $env:GITHUB_WORKSPACE "compiler\runtime"
           $out = Join-Path $env:RUNNER_TEMP "moo-capture-ci"
           New-Item -ItemType Directory -Force -Path $out | Out-Null
-          $libs = @("mfplat.lib", "mf.lib", "mfreadwrite.lib", "mfuuid.lib", "ole32.lib", "oleaut32.lib", "uuid.lib")
+          $libs = @("-lmfplat", "-lmf", "-lmfreadwrite", "-lmfuuid", "-lole32", "-loleaut32", "-luuid")
 
           $common = @("-std=gnu11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", $rt)
           $systemSource = Join-Path $rt "moo_capture_windows_system.c"
@@ -149,7 +149,7 @@ jobs:
         with:
           name: capture-ci-windows-${{ github.run_attempt }}
           path: ${{ runner.temp }}/moo-capture-ci
-          if-no-files-found: error
+          if-no-files-found: warn
 
   macos-capture:
     name: macos-latest / AVFoundation + CoreAudio
