@@ -1,0 +1,179 @@
+name: Capture CI
+
+on:
+  push:
+    paths:
+      - ".github/workflows/capture-ci.yml"
+      - "compiler/runtime/moo_capture*"
+      - "compiler/runtime/tests/test_capture*"
+      - "compiler/runtime/tests/capture_*stubs.c"
+      - "skripte/capture_*_gate.sh"
+  pull_request:
+    paths:
+      - ".github/workflows/capture-ci.yml"
+      - "compiler/runtime/moo_capture*"
+      - "compiler/runtime/tests/test_capture*"
+      - "compiler/runtime/tests/capture_*stubs.c"
+      - "skripte/capture_*_gate.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: capture-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ubuntu-capture:
+    name: ubuntu-latest / V4L2 + ALSA + Pull
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux capture dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libv4l-dev libasound2-dev
+
+      - name: Build and run focused capture ASan gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/compiler/runtime/tests"
+          rt=".."
+          out="$RUNNER_TEMP/moo-capture-ci"
+          mkdir -p "$out"
+          export ASAN_OPTIONS="detect_leaks=1:halt_on_error=1:abort_on_error=1"
+
+          build_run() {
+            local name="$1"
+            local sources="$2"
+            local libs="$3"
+            echo "CAPTURE-GATE BUILD $name"
+            # shellcheck disable=SC2086
+            clang -std=gnu11 -O1 -g -Wall -Wextra -fno-omit-frame-pointer \
+              -fsanitize=address -I"$rt" "$name.c" $sources $libs \
+              -o "$out/$name"
+            echo "CAPTURE-GATE RUN $name"
+            "$out/$name" | tee "$out/$name.log"
+            echo "CAPTURE-GATE PASS $name"
+          }
+
+          core="moo_capture.c moo_frame.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_error.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c"
+          media="moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c"
+          nn="moo_nn.c moo_nn_easy.c moo_json.c moo_dataset.c"
+
+          build_run test_capture_asan \
+            "$rt/moo_capture.c $rt/moo_capture_camera_stub.c $rt/moo_capture_audio_stub.c $rt/moo_frame.c $rt/moo_quant.c $rt/moo_tensor.c $rt/moo_tensor_ops.c $rt/moo_ki_gpu.c $rt/moo_autograd.c $rt/moo_memory.c $rt/moo_value.c $rt/moo_error.c $rt/moo_print.c $rt/moo_string.c $rt/moo_dict.c $rt/moo_list.c $rt/moo_ops.c $rt/moo_gif_handle.c $rt/moo_gif.c $rt/moo_video_handle.c $rt/moo_video.c" \
+            "-lm"
+          build_run test_capture_pull_ops_asan \
+            "$rt/moo_capture.c $rt/moo_capture_pull.c $rt/moo_frame.c $rt/moo_quant.c $rt/moo_tensor.c $rt/moo_tensor_ops.c $rt/moo_ki_gpu.c $rt/moo_autograd.c $rt/moo_memory.c $rt/moo_value.c $rt/moo_print.c $rt/moo_string.c $rt/moo_dict.c $rt/moo_list.c $rt/moo_ops.c" \
+            "-lm"
+          build_run test_capture_v4l2_ops_asan \
+            "$rt/moo_capture_v4l2.c $rt/moo_capture_audio_stub.c capture_test_stubs.c $rt/moo_capture.c $rt/moo_memory.c $rt/moo_value.c $rt/moo_error.c $rt/moo_print.c $rt/moo_string.c $rt/moo_dict.c $rt/moo_list.c $rt/moo_ops.c $rt/moo_frame.c $rt/moo_gif_handle.c $rt/moo_gif.c $rt/moo_video_handle.c $rt/moo_video.c $rt/moo_quant.c $rt/moo_tensor.c $rt/moo_tensor_ops.c $rt/moo_ki_gpu.c $rt/moo_autograd.c $rt/moo_nn.c $rt/moo_nn_easy.c $rt/moo_json.c $rt/moo_dataset.c" \
+            "-lv4l2 -lm"
+          build_run test_capture_alsa_ops_asan \
+            "$rt/moo_capture_alsa.c $rt/moo_capture_camera_stub.c capture_test_stubs.c $rt/moo_capture.c $rt/moo_memory.c $rt/moo_value.c $rt/moo_error.c $rt/moo_print.c $rt/moo_string.c $rt/moo_dict.c $rt/moo_list.c $rt/moo_ops.c $rt/moo_frame.c $rt/moo_gif_handle.c $rt/moo_gif.c $rt/moo_video_handle.c $rt/moo_video.c $rt/moo_quant.c $rt/moo_tensor.c $rt/moo_tensor_ops.c $rt/moo_ki_gpu.c $rt/moo_autograd.c $rt/moo_nn.c $rt/moo_nn_easy.c $rt/moo_json.c $rt/moo_dataset.c" \
+            "-lasound -lm"
+
+          echo "CAPTURE-LINUX-GATE-OK: 4/4"
+
+      - name: Upload Linux capture logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-ci-ubuntu-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/moo-capture-ci
+          if-no-files-found: warn
+
+  windows-capture:
+    name: windows-latest / Media Foundation + WASAPI
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build native Windows capture gates
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $rt = Join-Path $env:GITHUB_WORKSPACE "compiler\runtime"
+          $out = Join-Path $env:RUNNER_TEMP "moo-capture-ci"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $libs = @("mfplat.lib", "mf.lib", "mfreadwrite.lib", "mfuuid.lib", "ole32.lib", "oleaut32.lib", "uuid.lib")
+
+          $common = @("-std=gnu11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", $rt)
+          $systemSource = Join-Path $rt "moo_capture_windows_system.c"
+
+          $smoke = Join-Path $out "test_capture_windows_wine.exe"
+          $smokeArgs = $common + @(
+            (Join-Path $rt "tests\test_capture_windows_wine.c"),
+            $systemSource, "-o", $smoke
+          ) + $libs
+          & clang @smokeArgs
+          if ($LASTEXITCODE -ne 0) { throw "Windows-Capture-Smoke konnte nicht gebaut werden" }
+
+          $stream = Join-Path $out "test_capture_windows_native_stream.exe"
+          $streamArgs = $common + @(
+            (Join-Path $rt "tests\test_capture_windows_native_stream.c"),
+            $systemSource, "-o", $stream
+          ) + $libs
+          & clang @streamArgs
+          if ($LASTEXITCODE -ne 0) { throw "Windows-Native-Stream konnte nicht gebaut werden" }
+
+          "CAPTURE-WINDOWS-BUILD-OK: smoke + native_stream" | Tee-Object -FilePath (Join-Path $out "build.log")
+
+      - name: Run hardware-free Windows API smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $out = Join-Path $env:RUNNER_TEMP "moo-capture-ci"
+          & (Join-Path $out "test_capture_windows_wine.exe") --init-only 2>&1 |
+            Tee-Object -FilePath (Join-Path $out "windows-smoke.log")
+          if ($LASTEXITCODE -ne 0) { throw "Media-Foundation/WASAPI Startup-Smoke fehlgeschlagen" }
+          "CAPTURE-WINDOWS-HEADLESS-PASS: startup/shutdown"
+          "CAPTURE-WINDOWS-HARDWARE-GATE: test_capture_windows_native_stream.exe wurde gebaut; voller Stream-Lauf erfolgt auf der Windows-VM mit durchgereichter Kamera/Mikrofon."
+
+      - name: Upload Windows capture logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-ci-windows-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/moo-capture-ci
+          if-no-files-found: error
+
+  macos-capture:
+    name: macos-latest / AVFoundation + CoreAudio
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run native macOS capture gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/moo-capture-ci"
+          mkdir -p "$out"
+          bash "$GITHUB_WORKSPACE/skripte/capture_macos_gate.sh" "$out" 2>&1 |
+            tee "$out/capture-macos-gate.log"
+          grep -F "C2MAC_GATE PASS" "$out/capture-macos-gate.log"
+          echo "CAPTURE-MACOS-GATE-OK: AVFoundation/CoreAudio/Info.plist/Enumeration"
+
+      - name: Upload macOS capture logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-ci-macos-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/moo-capture-ci
+          if-no-files-found: error
