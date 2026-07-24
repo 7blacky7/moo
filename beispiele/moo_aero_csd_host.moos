@@ -22,35 +22,27 @@ G["fenster"] = nichts
 G["hover"] = nichts
 G["gedrueckt"] = nichts
 
-funktion host_backdrop(z, bb, hh):
-    surface_clear(z, 8, 14, 30, 255)
-    setze y auf 0
-    solange y < hh:
-        setze x auf 0
-        solange x < bb:
-            setze band auf (boden(x / 90) + boden(y / 70)) % 4
-            wenn band == 0:
-                surface_rect(z, x, y, 90, 70, 16, 52, 96, 255)
-            sonst wenn band == 1:
-                surface_rect(z, x, y, 90, 70, 34, 44, 92, 255)
-            sonst wenn band == 2:
-                surface_rect(z, x, y, 90, 70, 22, 78, 100, 255)
-            sonst:
-                surface_rect(z, x, y, 90, 70, 50, 34, 88, 255)
-            setze x auf x + 90
-        setze y auf y + 70
-    surface_circle(z, 200, 170, 100, 90, 180, 255, 210)
-    surface_circle(z, 560, 400, 110, 255, 110, 170, 185)
+# Inhalt NUR innerhalb des Glass-Bodys (nach uim_csd_zeichnen!).
+# Ausserhalb der Rundung bleibt die Surface transparent — der
+# Compositor-Desktop scheint an den Ecken durch (User-Befund UI-1b).
+funktion host_inhalt(z, bb, hh, titel_h):
+    setze cx auf boden(bb / 2)
+    surface_circle(z, cx - 160, titel_h + 130, 90, 120, 190, 255, 34)
+    surface_circle(z, cx + 150, hh - 150, 110, 255, 150, 200, 26)
+    surface_circle(z, cx, titel_h + 60, 46, 255, 255, 255, 18)
+    surface_text(z, 30, titel_h + 46, 2, "AERO GLASS - NATIV", 255, 255, 255, 210)
+    surface_text(z, 30, titel_h + 76, 1, "KEIN TOOLKIT - HOST-VERTRAG DIREKT", 200, 220, 255, 190)
+    surface_text(z, 30, titel_h + 96, 1, "ECKEN TRANSPARENT - GLASS LAYER VOLL", 170, 230, 210, 170)
     gib_zurück wahr
 
 funktion csd_render():
     setze z auf G["z"]
-    host_backdrop(z, G["b"], G["h"])
+    surface_clear(z, 0, 0, 0, 0)
     setze d auf uim_csd_zeichnen(z, 0, 0, G["b"], G["h"], "MOO AERO WAYLAND", wahr, G["hover"], G["gedrueckt"], 255, 65536)
     wenn d["ok"] == falsch:
         gib_zurück falsch
-    surface_text(z, 30, 80, 2, "AERO GLASS - NATIV", 255, 255, 255, 210)
-    surface_text(z, 30, 110, 1, "KEIN TOOLKIT - HOST-VERTRAG DIREKT", 200, 220, 255, 190)
+    setze m auf d["metriken"]
+    host_inhalt(z, G["b"], G["h"], m["titel_h"])
     setze frame auf surface_snapshot_to_frame(z)
     wenn frame == nichts:
         gib_zurück falsch
