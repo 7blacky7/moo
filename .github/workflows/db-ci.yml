@@ -332,6 +332,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/moo-db-ci"
+          runner_drive="${GITHUB_WORKSPACE%%:*}"
+          mkdir -p "${runner_drive}:/tmp"
+          rm -f "${runner_drive}:/tmp/moo_test.db"
           tests=(
             test_db
             test_db_prepared_bulk
