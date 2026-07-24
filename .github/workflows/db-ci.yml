@@ -1,0 +1,397 @@
+name: Database CI
+
+# Die vorhandenen compiler/tests/test_db_*.moos testen die SQLite-Runtime.
+# Zusaetzlich prueft jeder Job den reinen Moo-PostgreSQL-Wire-Client real gegen
+# einen lokalen PostgreSQL-Server mit SCRAM-SHA-256. Kein externer Testserver.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: db-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PGHOST: 127.0.0.1
+  PGPORT: "5432"
+  PGUSER: moo_ci
+  PGPASSWORD: moo-ci-password
+  PGDATABASE: moo_ci
+
+jobs:
+  ubuntu-db:
+    name: ubuntu-latest / SQLite + PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: moo_ci
+          POSTGRES_PASSWORD: moo-ci-password
+          POSTGRES_DB: moo_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U moo_ci -d moo_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Ubuntu dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            llvm-18-dev libpolly-18-dev libclang-18-dev \
+            libgtk-3-dev libappindicator3-dev \
+            libglfw3-dev libgl1-mesa-dev libvulkan-dev glslang-tools \
+            libsdl2-dev libsdl2-image-dev \
+            libsqlite3-dev libssl-dev postgresql-client pkg-config python3
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> "$GITHUB_ENV"
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            compiler/target
+          key: ubuntu-db-${{ hashFiles('compiler/Cargo.toml', 'compiler/Cargo.lock', 'compiler/build.rs') }}
+          restore-keys: |
+            ubuntu-db-
+
+      - name: Verify PostgreSQL service
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PGPASSWORD="$PGPASSWORD"
+          pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE"
+          psql -v ON_ERROR_STOP=1 -c "SELECT current_user, current_database(), version();"
+
+      - name: Build moo compiler
+        shell: bash
+        run: |
+          cargo build --release --manifest-path "$GITHUB_WORKSPACE/compiler/Cargo.toml"
+
+      - name: Run identical database test set
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/moo-db-ci"
+          tests=(
+            test_db
+            test_db_prepared_bulk
+            test_db_prepared_named
+            test_db_prepared_rollback
+            test_db_with_params_basic
+            test_db_with_params_injection
+            test_db_with_params_types
+          )
+          pass=0
+          for name in "${tests[@]}"; do
+            src="$GITHUB_WORKSPACE/compiler/tests/${name}.moos"
+            expected="$GITHUB_WORKSPACE/compiler/tests/${name}.expected"
+            bin="$RUNNER_TEMP/moo-db-ci/${name}"
+            "$GITHUB_WORKSPACE/compiler/target/release/moo-compiler" compile "$src" -o "$bin"
+            actual="$($bin)"
+            if [[ -f "$expected" ]]; then
+              wanted="$(cat "$expected")"
+              if [[ "$actual" != "$wanted" ]]; then
+                echo "FAIL $name"
+                echo "--- expected ---"
+                printf '%s\n' "$wanted"
+                echo "--- actual ---"
+                printf '%s\n' "$actual"
+                exit 1
+              fi
+            else
+              echo "SMOKE $name (keine .expected Datei, Exit 0)"
+              printf '%s\n' "$actual"
+            fi
+            echo "PASS $name"
+            pass=$((pass + 1))
+          done
+          [[ "$pass" -eq 7 ]]
+          echo "DB-SQLITE-GATE-OK: 7/7"
+
+      - name: Run real PostgreSQL SCRAM wire smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke="$RUNNER_TEMP/moo-db-ci/postgres_wire_smoke.moos"
+          head -n 1035 "$GITHUB_WORKSPACE/beispiele/domain/db/postgres_client.moos" > "$smoke"
+          cat >> "$smoke" <<'MOO'
+          setze c auf neu PgClient("127.0.0.1", 5432, "moo_ci", "moo_ci", "moo-ci-password")
+          c.verbinde()
+          wenn nicht c.ready:
+              wirf "PostgreSQL-Verbindung fehlgeschlagen: " + text(c.letzte_fehler)
+          wenn nicht c.scram_server_verified:
+              wirf "SCRAM-Server-Signatur wurde nicht verifiziert"
+          setze r auf c.query("SELECT current_user AS u, 42 AS antwort")
+          wenn r["fehler"] != nichts:
+              wirf "Simple Query fehlgeschlagen: " + text(r["fehler"])
+          wenn r["rows"][0]["u"] != "moo_ci":
+              wirf "Falscher PostgreSQL-Benutzer"
+          wenn r["rows"][0]["antwort"] != "42":
+              wirf "Falsches PostgreSQL-Query-Ergebnis"
+          wenn nicht c.prepare("ci_add", "SELECT $1::int4 + $2::int4 AS summe", [23, 23]):
+              wirf "Prepared Statement konnte nicht erstellt werden"
+          setze p auf c.execute("ci_add", [20, 22])
+          wenn p["fehler"] != nichts:
+              wirf "Prepared Execute fehlgeschlagen: " + text(p["fehler"])
+          wenn p["rows"][0]["summe"] != 42:
+              wirf "Prepared Ergebnis ist nicht 42"
+          c.schliesse()
+          zeige "DB-POSTGRES-WIRE-GATE-OK"
+          MOO
+          bin="$RUNNER_TEMP/moo-db-ci/postgres_wire_smoke"
+          "$GITHUB_WORKSPACE/compiler/target/release/moo-compiler" compile "$smoke" -o "$bin"
+          output="$($bin)"
+          printf '%s\n' "$output"
+          grep -Fxq "DB-POSTGRES-WIRE-GATE-OK" <<< "$output"
+
+      - name: Upload Ubuntu DB log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-ci-ubuntu-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/moo-db-ci
+          if-no-files-found: warn
+          retention-days: 14
+
+  windows-db:
+    name: windows-latest / SQLite + PostgreSQL
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Windows LLVM
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: moo-llvm
+          create-args: >-
+            -c conda-forge
+            llvmdev=18.1.*
+            clangdev=18.1.*
+            lld=18.1.*
+            zstd
+            zlib
+            libxml2
+            libxml2-devel
+          cache-environment: true
+
+      - name: Configure MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Windows build dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $condaPrefix = $env:CONDA_PREFIX
+          if (!$condaPrefix) {
+            $condaPrefix = Join-Path $env:MAMBA_ROOT_PREFIX "envs\moo-llvm"
+          }
+          if (!(Test-Path $condaPrefix)) {
+            throw "moo-llvm conda environment fehlt: $condaPrefix"
+          }
+          $llvmRoot = Join-Path $condaPrefix "Library"
+          $llvmBin = Join-Path $llvmRoot "bin"
+          $llvmConfig = Join-Path $llvmBin "llvm-config.exe"
+          $clang = Join-Path $llvmBin "clang.exe"
+          $lld = Join-Path $llvmBin "lld-link.exe"
+          foreach ($required in @($llvmConfig, $clang, $lld)) {
+            if (!(Test-Path $required)) { throw "LLVM-Pflichtdatei fehlt: $required" }
+          }
+          & $llvmConfig --version
+
+          vcpkg install --triplet x64-windows sdl2 sdl2-image sqlite3 glfw3 vulkan
+          $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows"
+          $condaLib = Join-Path $llvmRoot "lib"
+          foreach ($paar in @(@("zstd.lib","zstd.dll.lib"), @("zlib.lib","z.dll.lib"))) {
+            $quelle = Join-Path $condaLib $paar[0]
+            $ziel = Join-Path $condaLib $paar[1]
+            if ((Test-Path $quelle) -and !(Test-Path $ziel)) { Copy-Item $quelle $ziel }
+          }
+
+          $msvcBin = Join-Path $env:VCToolsInstallDir "bin\HostX64\x64"
+          $msvcLink = Join-Path $msvcBin "link.exe"
+          if (!(Test-Path $msvcLink)) { throw "MSVC link.exe fehlt: $msvcLink" }
+
+          "LLVM_SYS_181_PREFIX=$llvmRoot" >> $env:GITHUB_ENV
+          "LIBCLANG_PATH=$llvmBin" >> $env:GITHUB_ENV
+          "MOO_CLANG=$clang" >> $env:GITHUB_ENV
+          "MOO_LLD=$lld" >> $env:GITHUB_ENV
+          "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
+          "INCLUDE=$llvmRoot\include;$vcpkgRoot\include;$env:INCLUDE" >> $env:GITHUB_ENV
+          "LIB=$condaLib;$vcpkgRoot\lib;$env:LIB" >> $env:GITHUB_ENV
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$msvcLink" >> $env:GITHUB_ENV
+          "PATH=$llvmBin;$vcpkgRoot\bin;$msvcBin;$env:PATH" >> $env:GITHUB_ENV
+
+      - name: Install and start PostgreSQL on Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          choco install postgresql17 --yes --no-progress --params '/Password:postgres /Port:5432'
+          $pgBin = Get-ChildItem "C:\Program Files\PostgreSQL" -Directory |
+            Sort-Object Name -Descending |
+            ForEach-Object { Join-Path $_.FullName "bin" } |
+            Where-Object { Test-Path (Join-Path $_ "psql.exe") } |
+            Select-Object -First 1
+          if (!$pgBin) { throw "PostgreSQL-bin-Verzeichnis wurde nicht gefunden" }
+          "PATH=$pgBin;$env:PATH" >> $env:GITHUB_ENV
+          "PGBIN=$pgBin" >> $env:GITHUB_ENV
+
+          $ready = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            & (Join-Path $pgBin "pg_isready.exe") -h 127.0.0.1 -p 5432 -U postgres
+            if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+            Start-Sleep -Seconds 2
+          }
+          if (!$ready) { throw "PostgreSQL wurde auf Windows nicht bereit" }
+
+          $env:PGPASSWORD = "postgres"
+          $psql = Join-Path $pgBin "psql.exe"
+          $roleExists = & $psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='moo_ci'"
+          if ($roleExists.Trim() -ne "1") {
+            & $psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE moo_ci LOGIN PASSWORD 'moo-ci-password'"
+            if ($LASTEXITCODE -ne 0) { throw "CREATE ROLE fehlgeschlagen" }
+          }
+          $dbExists = & $psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='moo_ci'"
+          if ($dbExists.Trim() -ne "1") {
+            & $psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE moo_ci OWNER moo_ci"
+            if ($LASTEXITCODE -ne 0) { throw "CREATE DATABASE fehlgeschlagen" }
+          }
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            compiler/target
+          key: windows-db-${{ hashFiles('compiler/Cargo.toml', 'compiler/Cargo.lock', 'compiler/build.rs') }}
+          restore-keys: |
+            windows-db-
+
+      - name: Verify Windows PostgreSQL
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:PGPASSWORD = $env:PGPASSWORD
+          & (Join-Path $env:PGBIN "pg_isready.exe") -h $env:PGHOST -p $env:PGPORT -U $env:PGUSER -d $env:PGDATABASE
+          if ($LASTEXITCODE -ne 0) { throw "pg_isready fuer moo_ci fehlgeschlagen" }
+          & (Join-Path $env:PGBIN "psql.exe") -v ON_ERROR_STOP=1 -c "SELECT current_user, current_database(), version();"
+          if ($LASTEXITCODE -ne 0) { throw "PostgreSQL-Verifikation fehlgeschlagen" }
+
+      - name: Build moo compiler
+        shell: bash
+        run: |
+          cargo build --release --manifest-path "$GITHUB_WORKSPACE/compiler/Cargo.toml"
+
+      - name: Run identical database test set
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/moo-db-ci"
+          tests=(
+            test_db
+            test_db_prepared_bulk
+            test_db_prepared_named
+            test_db_prepared_rollback
+            test_db_with_params_basic
+            test_db_with_params_injection
+            test_db_with_params_types
+          )
+          pass=0
+          for name in "${tests[@]}"; do
+            src="$GITHUB_WORKSPACE/compiler/tests/${name}.moos"
+            expected="$GITHUB_WORKSPACE/compiler/tests/${name}.expected"
+            bin="$RUNNER_TEMP/moo-db-ci/${name}.exe"
+            "$GITHUB_WORKSPACE/compiler/target/release/moo-compiler.exe" compile "$src" -o "$bin"
+            actual="$($bin)"
+            if [[ -f "$expected" ]]; then
+              wanted="$(cat "$expected")"
+              if [[ "$actual" != "$wanted" ]]; then
+                echo "FAIL $name"
+                echo "--- expected ---"
+                printf '%s\n' "$wanted"
+                echo "--- actual ---"
+                printf '%s\n' "$actual"
+                exit 1
+              fi
+            else
+              echo "SMOKE $name (keine .expected Datei, Exit 0)"
+              printf '%s\n' "$actual"
+            fi
+            echo "PASS $name"
+            pass=$((pass + 1))
+          done
+          [[ "$pass" -eq 7 ]]
+          echo "DB-SQLITE-GATE-OK: 7/7"
+
+      - name: Run real PostgreSQL SCRAM wire smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke="$RUNNER_TEMP/moo-db-ci/postgres_wire_smoke.moos"
+          head -n 1035 "$GITHUB_WORKSPACE/beispiele/domain/db/postgres_client.moos" > "$smoke"
+          cat >> "$smoke" <<'MOO'
+          setze c auf neu PgClient("127.0.0.1", 5432, "moo_ci", "moo_ci", "moo-ci-password")
+          c.verbinde()
+          wenn nicht c.ready:
+              wirf "PostgreSQL-Verbindung fehlgeschlagen: " + text(c.letzte_fehler)
+          wenn nicht c.scram_server_verified:
+              wirf "SCRAM-Server-Signatur wurde nicht verifiziert"
+          setze r auf c.query("SELECT current_user AS u, 42 AS antwort")
+          wenn r["fehler"] != nichts:
+              wirf "Simple Query fehlgeschlagen: " + text(r["fehler"])
+          wenn r["rows"][0]["u"] != "moo_ci":
+              wirf "Falscher PostgreSQL-Benutzer"
+          wenn r["rows"][0]["antwort"] != "42":
+              wirf "Falsches PostgreSQL-Query-Ergebnis"
+          wenn nicht c.prepare("ci_add", "SELECT $1::int4 + $2::int4 AS summe", [23, 23]):
+              wirf "Prepared Statement konnte nicht erstellt werden"
+          setze p auf c.execute("ci_add", [20, 22])
+          wenn p["fehler"] != nichts:
+              wirf "Prepared Execute fehlgeschlagen: " + text(p["fehler"])
+          wenn p["rows"][0]["summe"] != 42:
+              wirf "Prepared Ergebnis ist nicht 42"
+          c.schliesse()
+          zeige "DB-POSTGRES-WIRE-GATE-OK"
+          MOO
+          bin="$RUNNER_TEMP/moo-db-ci/postgres_wire_smoke.exe"
+          "$GITHUB_WORKSPACE/compiler/target/release/moo-compiler.exe" compile "$smoke" -o "$bin"
+          output="$($bin)"
+          printf '%s\n' "$output"
+          grep -Fxq "DB-POSTGRES-WIRE-GATE-OK" <<< "$output"
+
+      - name: Upload Windows DB log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-ci-windows-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/moo-db-ci
+          if-no-files-found: warn
+          retention-days: 14
