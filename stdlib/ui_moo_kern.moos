@@ -393,6 +393,34 @@ funktion _uim_backend_aufruf(kontext, name, args):
         gib_zurück falsch
     gib_zurück op(kontext, args)
 
+funktion _uim_text_stil_vertrag(kontext):
+    setze ergebnis auf {"aktiv": falsch, "id": "legacy-normal-v1"}
+    wenn typ_von(kontext) != "Woerterbuch" oder kontext.enthält("backend_vertrag") == falsch:
+        gib_zurück ergebnis
+    setze vertrag auf kontext["backend_vertrag"]
+    wenn typ_von(vertrag) != "Woerterbuch":
+        gib_zurück ergebnis
+    wenn vertrag.enthält("faehigkeiten") == falsch oder vertrag.enthält("operationen") == falsch:
+        gib_zurück ergebnis
+    setze faehigkeiten auf vertrag["faehigkeiten"]
+    setze operationen auf vertrag["operationen"]
+    wenn typ_von(faehigkeiten) != "Woerterbuch" oder typ_von(operationen) != "Woerterbuch":
+        gib_zurück ergebnis
+    wenn faehigkeiten.enthält("text_stil") == falsch oder faehigkeiten["text_stil"] != wahr:
+        gib_zurück ergebnis
+    wenn faehigkeiten.enthält("text_stil_metrik") == falsch:
+        gib_zurück ergebnis
+    setze metrik_id auf faehigkeiten["text_stil_metrik"]
+    wenn typ_von(metrik_id) != "Text" oder metrik_id == "":
+        gib_zurück ergebnis
+    wenn operationen.enthält("text_stil") == falsch oder operationen["text_stil"] == nichts:
+        gib_zurück ergebnis
+    wenn operationen.enthält("text_breite_stil") == falsch oder operationen["text_breite_stil"] == nichts:
+        gib_zurück ergebnis
+    ergebnis["aktiv"] = wahr
+    ergebnis["id"] = metrik_id
+    gib_zurück ergebnis
+
 # Desktop-Leinwand-Adapter
 # Toolkit-freies Mock-Framebuffer: schreibt Draw-Commands in eine Moo-Liste.
 funktion _uim_bm_befehl(kontext, name, args):
@@ -475,6 +503,16 @@ funktion _uim_zf_text(kontext, zz, x, y, s, groesse):
 
 funktion _uim_zf_text_breite(kontext, zz, s, groesse):
     gib_zurück _uim_backend_aufruf(kontext, "text_breite", [zz, s, groesse])
+
+funktion _uim_zf_text_stil(kontext, zz, x, y, s, groesse, stil):
+    wenn _uim_text_stil_vertrag(kontext)["aktiv"]:
+        gib_zurück _uim_backend_aufruf(kontext, "text_stil", [zz, x, y, s, groesse, stil])
+    gib_zurück _uim_zf_text(kontext, zz, x, y, s, groesse)
+
+funktion _uim_zf_text_breite_stil(kontext, zz, s, groesse, stil):
+    wenn _uim_text_stil_vertrag(kontext)["aktiv"]:
+        gib_zurück _uim_backend_aufruf(kontext, "text_breite_stil", [zz, s, groesse, stil])
+    gib_zurück _uim_zf_text_breite(kontext, zz, s, groesse)
 
 funktion _uim_zf_clip_setze(kontext, zz, x, y, b, h):
     gib_zurück _uim_backend_aufruf(kontext, "clip_setze", [zz, x, y, b, h])
@@ -7459,8 +7497,9 @@ funktion uim_markdown_setze(kontext, w, inhalt):
 funktion _uim_markdown_layout_key(kontext, w):
     setze t auf kontext["theme"]
     setze metrik auf kontext["backend_vertrag"]["faehigkeiten"]["text_metrik"]
+    setze stil_metrik auf _uim_text_stil_vertrag(kontext)["id"]
     setze quelle auf w["markdown_parse_quelle"]
-    gib_zurück text(länge(quelle)) + ":" + quelle + "|" + text(w["b"]) + "|" + text(w["h"]) + "|" + text(t["schrift"]) + "|" + text(t["abstand"]) + "|" + metrik
+    gib_zurück text(länge(quelle)) + ":" + quelle + "|" + text(w["b"]) + "|" + text(w["h"]) + "|" + text(t["schrift"]) + "|" + text(t["abstand"]) + "|" + metrik + "|" + stil_metrik
 
 funktion _uim_markdown_span_stil(span, ersatz):
     wenn span["typ"] == "strong":

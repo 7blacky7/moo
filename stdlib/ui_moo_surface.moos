@@ -625,6 +625,17 @@ funktion _uims_text(kontext, args):
 funktion _uims_text_breite(kontext, args):
     gib_zurück surface_text_breite(args[1], _uims_px(args[2]))
 
+funktion _uims_text_stil(kontext, args):
+    setze z auf args[0]
+    setze x auf boden(args[1])
+    setze y auf boden(args[2])
+    setze px auf _uims_px(args[4])
+    setze f auf kontext["_farbe"]
+    gib_zurück surface_text_stil(z, x, y, px, args[3], args[5], f[0], f[1], f[2], f[3])
+
+funktion _uims_text_breite_stil(kontext, args):
+    gib_zurück surface_text_breite_stil(args[1], _uims_px(args[2]), args[3])
+
 funktion _uims_clip_setze(kontext, args):
     gib_zurück surface_clip_push(args[0], args[1], args[2], args[3], args[4])
 
@@ -641,9 +652,14 @@ funktion uim_backend_surface():
     ops["linie"] = _uims_linie
     ops["text"] = _uims_text
     ops["text_breite"] = _uims_text_breite
+    ops["text_stil"] = _uims_text_stil
+    ops["text_breite_stil"] = _uims_text_breite_stil
     ops["clip_setze"] = _uims_clip_setze
     ops["clip_loesche"] = _uims_clip_loesche
-    gib_zurück uim_backend_neu("surface-rgba8", _uim_faehigkeiten(wahr, wahr, falsch, wahr, "pixelfont-3x5"), ops)
+    setze faehigkeiten auf _uim_faehigkeiten(wahr, wahr, falsch, wahr, "pixelfont-3x5")
+    faehigkeiten["text_stil"] = wahr
+    faehigkeiten["text_stil_metrik"] = "embedded-aa-five-face-v1"
+    gib_zurück uim_backend_neu("surface-rgba8", faehigkeiten, ops)
 
 funktion uim_surface_wurzel(b, h):
     setze bildflaeche auf surface_new(b, h)

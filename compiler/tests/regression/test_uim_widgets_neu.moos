@@ -831,6 +831,89 @@ setze md4_r4_ok auf md4_stile_ok and md4_hat_h1 and md4_hat_strong and md4_hat_e
 zeige "W5G-MD4-LAYOUT " + text(md4_l1_ok) + "/" + text(md4_l2_l3_ok) + "/" + text(md4_l4_ok) + "/" + text(md4_l5_ok) + "/" + text(md4_r4_ok)
 
 
+# C1-B4: optionale Textstil-Backends bleiben fuer echte Minimalbackends additiv.
+funktion c1_b4_text_stil(kontext, args):
+    kontext["backend_zustand"]["c1_b4_stil"] = args[5]
+    gib_zurück _uim_bm_befehl(kontext, "text_stil", [args[1], args[2], args[3], args[4], args[5]])
+
+funktion c1_b4_text_breite_stil(kontext, args):
+    kontext["backend_zustand"]["c1_b4_breite_stil"] = args[3]
+    gib_zurück länge(args[1]) * 8 + args[3]
+
+# Echtes Minimalbackend: nur der unveraenderte Pflichtvertrag, keine neuen Keys/Ops.
+setze c1_b4_min_basis auf uim_backend_mock()
+setze c1_b4_min_backend auf uim_backend_neu("c1-b4-minimal", c1_b4_min_basis["faehigkeiten"], c1_b4_min_basis["operationen"])
+setze c1_b4_min_root auf uim_backend_wurzel(c1_b4_min_backend, 160, 100)
+c1_b4_min_root["backend_zustand"]["befehle"] = []
+c1_b4_min_root["backend_zustand"]["ungueltig"] = wahr
+setze c1_b4_min_feld auf uim_markdown(0, 0, 120, 70, "Nur normal")
+uim_hinzu(c1_b4_min_root, c1_b4_min_feld)
+uim_mock_zeichne(c1_b4_min_root)
+setze c1_b4_min_key auf c1_b4_min_feld["markdown_layout_key"]
+setze c1_b4_min_rev auf c1_b4_min_feld["markdown_layout_revision"]
+setze c1_b4_min_vertrag auf _uim_text_stil_vertrag(c1_b4_min_root)
+setze c1_b4_min_text_ok auf _uim_zf_text_stil(c1_b4_min_root, nichts, 2, 3, "F", 12, 4)
+setze c1_b4_min_breite auf _uim_zf_text_breite_stil(c1_b4_min_root, nichts, "F", 12, 4)
+setze c1_b4_min_face0 auf falsch
+für c1_b4_min_cmd in uim_mock_befehle(c1_b4_min_root):
+    wenn c1_b4_min_cmd["op"] == "text" and c1_b4_min_cmd["args"][2] == "F":
+        setze c1_b4_min_face0 auf wahr
+uim_mock_zeichne(c1_b4_min_root)
+setze c1_b4_min_ok auf c1_b4_min_vertrag["aktiv"] == falsch and c1_b4_min_vertrag["id"] == "legacy-normal-v1" and c1_b4_min_text_ok and c1_b4_min_breite == 8 and c1_b4_min_face0 and c1_b4_min_feld["markdown_layout_key"] == c1_b4_min_key and c1_b4_min_feld["markdown_layout_revision"] == c1_b4_min_rev
+
+# Surface deklariert die optionale Faehigkeit; ein stilfaehiger Mock belegt Dispatch und Cache-ID.
+setze c1_b4_surface_backend auf uim_backend_surface()
+setze c1_b4_surface_root auf uim_backend_wurzel(c1_b4_surface_backend, 20, 20)
+setze c1_b4_surface_vertrag auf _uim_text_stil_vertrag(c1_b4_surface_root)
+setze c1_b4_surface_ok auf c1_b4_surface_vertrag["aktiv"] and c1_b4_surface_vertrag["id"] == "embedded-aa-five-face-v1" and c1_b4_surface_backend["operationen"]["text_stil"] != nichts and c1_b4_surface_backend["operationen"]["text_breite_stil"] != nichts
+
+setze c1_b4_stil_basis auf uim_backend_mock()
+setze c1_b4_stil_faehigkeiten auf c1_b4_stil_basis["faehigkeiten"]
+c1_b4_stil_faehigkeiten["text_stil"] = wahr
+c1_b4_stil_faehigkeiten["text_stil_metrik"] = c1_b4_surface_vertrag["id"]
+setze c1_b4_stil_ops auf c1_b4_stil_basis["operationen"]
+c1_b4_stil_ops["text_stil"] = c1_b4_text_stil
+c1_b4_stil_ops["text_breite_stil"] = c1_b4_text_breite_stil
+setze c1_b4_stil_backend auf uim_backend_neu("c1-b4-stil-mock", c1_b4_stil_faehigkeiten, c1_b4_stil_ops)
+setze c1_b4_stil_root auf uim_backend_wurzel(c1_b4_stil_backend, 180, 100)
+c1_b4_stil_root["backend_zustand"]["befehle"] = []
+c1_b4_stil_root["backend_zustand"]["ungueltig"] = wahr
+setze c1_b4_stil_feld auf uim_markdown(0, 0, 140, 70, "Cache")
+uim_hinzu(c1_b4_stil_root, c1_b4_stil_feld)
+uim_mock_zeichne(c1_b4_stil_root)
+setze c1_b4_stil_key1 auf c1_b4_stil_feld["markdown_layout_key"]
+setze c1_b4_stil_rev1 auf c1_b4_stil_feld["markdown_layout_revision"]
+setze c1_b4_stil_text_ok auf _uim_zf_text_stil(c1_b4_stil_root, nichts, 1, 2, "S", 12, 4)
+setze c1_b4_stil_breite auf _uim_zf_text_breite_stil(c1_b4_stil_root, nichts, "S", 12, 4)
+setze c1_b4_dispatch_ok auf c1_b4_stil_text_ok and c1_b4_stil_breite == 12 and c1_b4_stil_root["backend_zustand"]["c1_b4_stil"] == 4 and c1_b4_stil_root["backend_zustand"]["c1_b4_breite_stil"] == 4
+uim_mock_zeichne(c1_b4_stil_root)
+setze c1_b4_stabil_ok auf c1_b4_stil_feld["markdown_layout_revision"] == c1_b4_stil_rev1 and c1_b4_stil_feld["markdown_layout_key"] == c1_b4_stil_key1
+c1_b4_stil_root["backend_vertrag"]["faehigkeiten"]["text_stil_metrik"] = "embedded-aa-five-face-v2"
+uim_mock_zeichne(c1_b4_stil_root)
+setze c1_b4_stil_rev2 auf c1_b4_stil_feld["markdown_layout_revision"]
+setze c1_b4_stil_key2 auf c1_b4_stil_feld["markdown_layout_key"]
+setze c1_b4_wechsel_ok auf c1_b4_stil_rev2 == c1_b4_stil_rev1 + 1 and c1_b4_stil_key2 != c1_b4_stil_key1
+uim_mock_zeichne(c1_b4_stil_root)
+setze c1_b4_cache_ok auf c1_b4_dispatch_ok and c1_b4_stabil_ok and c1_b4_wechsel_ok and c1_b4_stil_feld["markdown_layout_revision"] == c1_b4_stil_rev2 and c1_b4_stil_feld["markdown_layout_key"] == c1_b4_stil_key2
+
+# Teilvertraege duerfen fehlende optionale Keys nie indizieren und fallen auf Legacy.
+setze c1_b4_teil1_backend auf uim_backend_mock()
+c1_b4_teil1_backend["faehigkeiten"]["text_stil"] = wahr
+c1_b4_teil1_backend["faehigkeiten"]["text_stil_metrik"] = "teil1"
+setze c1_b4_teil1_root auf uim_backend_wurzel(c1_b4_teil1_backend, 10, 10)
+setze c1_b4_teil2_backend auf uim_backend_mock()
+c1_b4_teil2_backend["operationen"]["text_stil"] = c1_b4_text_stil
+c1_b4_teil2_backend["operationen"]["text_breite_stil"] = c1_b4_text_breite_stil
+setze c1_b4_teil2_root auf uim_backend_wurzel(c1_b4_teil2_backend, 10, 10)
+setze c1_b4_teil3_backend auf uim_backend_mock()
+c1_b4_teil3_backend["faehigkeiten"]["text_stil"] = wahr
+c1_b4_teil3_backend["operationen"]["text_stil"] = c1_b4_text_stil
+c1_b4_teil3_backend["operationen"]["text_breite_stil"] = c1_b4_text_breite_stil
+setze c1_b4_teil3_root auf uim_backend_wurzel(c1_b4_teil3_backend, 10, 10)
+setze c1_b4_teil_ok auf _uim_text_stil_vertrag(c1_b4_teil1_root)["id"] == "legacy-normal-v1" and _uim_text_stil_vertrag(c1_b4_teil2_root)["id"] == "legacy-normal-v1" and _uim_text_stil_vertrag(c1_b4_teil3_root)["id"] == "legacy-normal-v1"
+zeige "C1-B4-BACKEND " + text(c1_b4_min_ok) + "/" + text(c1_b4_surface_ok) + "/" + text(c1_b4_cache_ok) + "/" + text(c1_b4_teil_ok)
+
+
 # W6-MARKDOWN Batch 5: gemeinsame Scrollpfade und callbackfreie Tastennavigation.
 funktion md5_kein_callback(w):
     S["md5_callbacks"] = S["md5_callbacks"] + 1
