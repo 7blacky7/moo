@@ -496,6 +496,7 @@ MooValue moo_surface_rect(MooValue surface, MooValue x, MooValue y,
 MooValue moo_surface_roundrect(MooValue surface, MooValue x, MooValue y,
                                MooValue width, MooValue height, MooValue radius,
                                MooValue r, MooValue g, MooValue b, MooValue a);
+MooValue moo_surface_roundrect_stapel(MooValue surface, MooValue stufen);
 MooValue moo_surface_circle(MooValue surface, MooValue cx, MooValue cy,
                             MooValue radius, MooValue r, MooValue g,
                             MooValue b, MooValue a);
@@ -519,6 +520,13 @@ MooValue moo_frame_lade_bmp(MooValue pfad);
 MooValue moo_surface_text(MooValue surface, MooValue x, MooValue y,
                           MooValue skala, MooValue text, MooValue r,
                           MooValue g, MooValue b, MooValue a);
+MooValue moo_surface_text_stil(MooValue surface, MooValue x, MooValue y,
+                               MooValue skala, MooValue text, MooValue stil,
+                               MooValue r, MooValue g, MooValue b, MooValue a);
+MooValue moo_surface_text_breite(MooValue text, MooValue skala);
+MooValue moo_surface_text_breite_stil(MooValue text, MooValue skala,
+                                      MooValue stil);
+MooValue moo_surface_text_glyphen_status(MooValue text, MooValue stil);
 
 // === GIF-Recorder (opaker Heap-Typ MOO_GIF, Plan-008 A3B) ===
 // Wrappt den isolierten Encoder-Kern (moo_gif.c / MooGifWriter*, frame-bounded:

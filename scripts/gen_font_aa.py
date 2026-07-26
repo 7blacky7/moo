@@ -107,12 +107,17 @@ def emit_face(lines: list[str], face: dict[str, object]) -> None:
         f"#define MOO_FONT_AA_{upper}_TOTAL_COUNT {len(CPS)}",
         f"static const uint8_t moo_font_aa_{prefix}_adv[{len(CPS)}] = "
         + "{" + ",".join(str(value) for value in advances) + "};",
-        f"static const uint8_t moo_font_aa_{prefix}[{len(CPS)}][{width * height}] = {{",
+        f"static const uint8_t moo_font_aa_{prefix}[MOO_FONT_AA_{upper}_TOTAL_COUNT * "
+        f"MOO_FONT_AA_{upper}_W * MOO_FONT_AA_{upper}_H] = {{",
     ])
     for glyph in glyphs:
-        lines.append("{" + ",".join(str(value) for value in glyph) + "},")
+        lines.append(",".join(str(value) for value in glyph) + ",")
     lines.extend([
         "};",
+        f"_Static_assert(sizeof(moo_font_aa_{prefix}) == "
+        f"(size_t)MOO_FONT_AA_{upper}_TOTAL_COUNT * MOO_FONT_AA_{upper}_W * "
+        f"MOO_FONT_AA_{upper}_H * sizeof(moo_font_aa_{prefix}[0]), "
+        f"\"{prefix} flat glyph storage drift\");",
         f"_Static_assert(MOO_FONT_AA_{upper}_TOTAL_COUNT == "
         f"MOO_FONT_AA_{upper}_BASE_COUNT + MOO_FONT_AA_{upper}_EXTRA_COUNT, "
         f"\"{prefix} font count drift\");",
@@ -141,6 +146,7 @@ def main() -> None:
         " * Extras: " + ", ".join(f"U+{cp:04X}" for cp in EXTRA) + ". */",
         "#ifndef MOO_FONT_AA_GENERATED_H",
         "#define MOO_FONT_AA_GENERATED_H",
+        "#include <stddef.h>",
         "#include <stdint.h>",
         "",
         f"#define MOO_FONT_AA_FACE_COUNT {len(FACES)}",
@@ -184,7 +190,7 @@ def main() -> None:
         prefix = str(face["prefix"])
         upper = c_ident(prefix)
         lines.append(
-            "    {&moo_font_aa_" + prefix + "[0][0], moo_font_aa_" + prefix
+            "    {moo_font_aa_" + prefix + ", moo_font_aa_" + prefix
             + "_adv, moo_font_aa_extra_cp, MOO_FONT_AA_" + upper + "_W, "
             + "MOO_FONT_AA_" + upper + "_H, MOO_FONT_AA_" + upper + "_FIRST, "
             + "MOO_FONT_AA_" + upper + "_TOTAL_COUNT, MOO_FONT_AA_" + upper

@@ -1,5 +1,18 @@
+/* Resync 2026-07-27: Diese Datei war von der Ignore-Regel
+ * compiler/runtime/tests/* erfasst und stand nicht in der Freigabeliste.
+ * Erweiterungen landeten deshalb in der Datenbank, aber nie auf der Platte -
+ * der Sanitizer lief still auf dem alten Harness und meldete PASS fuer
+ * Tests, die es lokal gar nicht gab. Freigaberegel angelegt am 2026-07-27. */
+
 #include "../moo_runtime.h"
 #include "../moo_surface_core.h"
+
+MooValue moo_surface_text_stil(MooValue value, MooValue x, MooValue y,
+                               MooValue skala, MooValue text, MooValue stil,
+                               MooValue r, MooValue g, MooValue b, MooValue a);
+MooValue moo_surface_text_breite_stil(MooValue text, MooValue skala,
+                                      MooValue stil);
+MooValue moo_surface_text_glyphen_status(MooValue text, MooValue stil);
 
 #include <limits.h>
 #include <math.h>
@@ -195,6 +208,113 @@ static bool dict_channel(MooValue value, const char* name, int expected) {
     return false;
 }
 
+static bool dict_boolean(MooValue value, const char* name, bool expected) {
+    MooDict* dict;
+    int32_t i;
+    if (value.tag != MOO_DICT) return false;
+    dict = MV_DICT(value);
+    for (i = 0; i < dict->capacity; ++i) {
+        MooDictEntry* entry = &dict->entries[i];
+        if (entry->occupied && strcmp(entry->key->chars, name) == 0) {
+            return entry->value.tag == MOO_BOOL &&
+                   MV_BOOL(entry->value) == expected;
+        }
+    }
+    return false;
+}
+
+static void check_text_width(const char* bytes, int style, double expected,
+                             const char* message) {
+    MooValue text = moo_string_new(bytes);
+    MooValue width1 = moo_surface_text_breite_stil(text, number(1), number(style));
+    MooValue width2 = moo_surface_text_breite_stil(text, number(2), number(style));
+    MooValue width3 = moo_surface_text_breite_stil(text, number(3), number(style));
+    CHECK(width1.tag == MOO_NUMBER && MV_NUM(width1) == expected, message);
+    CHECK(width2.tag == MOO_NUMBER && MV_NUM(width2) == expected * 2.0,
+          "styled width scale 2");
+    CHECK(width3.tag == MOO_NUMBER && MV_NUM(width3) == expected * 3.0,
+          "styled width scale 3");
+    if (style == 0) {
+        MooValue legacy = moo_surface_text_breite(text, number(1));
+        CHECK(legacy.tag == MOO_NUMBER && MV_NUM(legacy) == expected,
+              "legacy width delegates to face 0");
+    }
+    moo_release(text);
+}
+
+static void check_text_hash(const char* bytes, int style, const char* expected,
+                            const char* message) {
+    MooValue text = moo_string_new(bytes);
+    MooValue surface = moo_surface_new(number(240), number(40));
+    MooValue hash;
+    CHECK(surface.tag == MOO_SURFACE, "font hash surface");
+    CHECK(MV_BOOL(rgba_call_clear(surface, 0, 0, 0, 255)),
+          "font hash clear");
+    CHECK(MV_BOOL(moo_surface_text_stil(
+        surface, number(2), number(2), number(1), text, number(style),
+        number(255), number(255), number(255), number(255))), message);
+    hash = moo_surface_hash(surface);
+    CHECK(hash.tag == MOO_STRING && strcmp(MV_STR(hash)->chars, expected) == 0,
+          message);
+    moo_release(hash);
+    if (style == 0) {
+        CHECK(MV_BOOL(rgba_call_clear(surface, 0, 0, 0, 255)),
+              "legacy hash clear");
+        CHECK(MV_BOOL(moo_surface_text(
+            surface, number(2), number(2), number(1), text,
+            number(255), number(255), number(255), number(255))),
+            "legacy render hash path");
+        hash = moo_surface_hash(surface);
+        CHECK(hash.tag == MOO_STRING &&
+              strcmp(MV_STR(hash)->chars, expected) == 0,
+              "legacy wrapper preserves independent pixel baseline");
+        moo_release(hash);
+    }
+    moo_release(surface);
+    moo_release(text);
+}
+
+static void check_multiline_line_advance(int scale, const char* expected) {
+    MooValue text = moo_string_new("A\nA");
+    MooValue surface = moo_surface_new(number(100), number(140));
+    MooValue hash;
+    CHECK(MV_BOOL(rgba_call_clear(surface, 0, 0, 0, 255)),
+          "multiline clear");
+    CHECK(MV_BOOL(moo_surface_text_stil(
+        surface, number(2), number(2), number(scale), text, number(0),
+        number(255), number(255), number(255), number(255))),
+        "styled multiline render");
+    hash = moo_surface_hash(surface);
+    CHECK(hash.tag == MOO_STRING && strcmp(MV_STR(hash)->chars, expected) == 0,
+          "line advance is 20 * scale in styled renderer");
+    moo_release(hash);
+    CHECK(MV_BOOL(rgba_call_clear(surface, 0, 0, 0, 255)),
+          "legacy multiline clear");
+    CHECK(MV_BOOL(moo_surface_text(
+        surface, number(2), number(2), number(scale), text,
+        number(255), number(255), number(255), number(255))),
+        "legacy multiline render");
+    hash = moo_surface_hash(surface);
+    CHECK(hash.tag == MOO_STRING && strcmp(MV_STR(hash)->chars, expected) == 0,
+          "line advance is 20 * scale in legacy renderer");
+    moo_release(hash);
+    moo_release(surface);
+    moo_release(text);
+}
+
+static void check_glyph_status(const char* bytes, int style, bool complete,
+                               int invalid_utf8, int missing_glyphs,
+                               const char* message) {
+    MooValue text = moo_string_new(bytes);
+    MooValue status = moo_surface_text_glyphen_status(text, number(style));
+    CHECK(status.tag == MOO_DICT, message);
+    CHECK(dict_boolean(status, "vollstaendig", complete), message);
+    CHECK(dict_channel(status, "ungueltig_utf8", invalid_utf8), message);
+    CHECK(dict_channel(status, "fehlende_glyphen", missing_glyphs), message);
+    moo_release(status);
+    moo_release(text);
+}
+
 static void test_core_contract(void) {
     uint8_t guarded[64u + 8u * 8u * 4u + 64u];
     uint8_t* pixels = guarded + 64u;
@@ -381,8 +501,138 @@ static void test_wrapper_contract(void) {
     moo_release(surface);
 }
 
+static void test_font_contract(void) {
+    MooValue surface = moo_surface_new(number(240), number(40));
+    MooValue text = moo_string_new("A");
+    MooValue invalid;
+    int style;
+    static const double face_mii_widths[5] = {22.0, 26.0, 22.0, 26.0, 30.0};
+    static const double face_omega_widths[5] = {12.0, 14.0, 12.0, 14.0, 10.0};
+    static const char* face_hashes[5] = {
+        "6f4e992d5f370abe", "fb24d8ff5ea94694", "e62f0abd314646a4",
+        "4831f32ea6912317", "6fd6dfafd6358605"
+    };
+
+    CHECK(surface.tag == MOO_SURFACE, "font contract surface");
+    CHECK(!MV_BOOL(moo_surface_text_stil(
+        surface, number(0), number(0), number(1), text, number(5),
+        number(255), number(255), number(255), number(255))),
+        "styled render rejects style 5");
+    CHECK(!MV_BOOL(moo_surface_text_stil(
+        surface, number(0), number(0), number(1), text, number(1.5),
+        number(255), number(255), number(255), number(255))),
+        "styled render rejects fractional style");
+    CHECK(!MV_BOOL(moo_surface_text_stil(
+        surface, number(0), number(0), number(1), text, number(NAN),
+        number(255), number(255), number(255), number(255))),
+        "styled render rejects NaN style");
+    CHECK(!MV_BOOL(moo_surface_text_stil(
+        surface, number(0), number(0), number(1), text, number(INFINITY),
+        number(255), number(255), number(255), number(255))),
+        "styled render rejects infinite style");
+    invalid = moo_surface_text_breite_stil(text, number(1), number(5));
+    CHECK(invalid.tag == MOO_NONE, "styled width rejects style 5 with none");
+    invalid = moo_surface_text_breite_stil(text, number(0), number(0));
+    CHECK(invalid.tag == MOO_NONE, "styled width rejects scale 0 with none");
+    invalid = moo_surface_text_breite_stil(number(1), number(1), number(0));
+    CHECK(invalid.tag == MOO_NONE, "styled width rejects non-text with none");
+    invalid = moo_surface_text_glyphen_status(text, number(1.5));
+    CHECK(invalid.tag == MOO_NONE, "glyph status rejects fractional style");
+    invalid = moo_surface_text_glyphen_status(number(1), number(0));
+    CHECK(invalid.tag == MOO_NONE, "glyph status rejects non-text");
+    CHECK(MV_NUM(moo_surface_text_breite(text, number(0))) == 0.0,
+          "legacy invalid width remains zero");
+
+    check_text_width("Hallo Welt", 0, 81.0, "ASCII baseline width");
+    check_text_width("\xE2\x80\x93", 0, 8.0, "old extra baseline width");
+    check_text_hash("Hallo Welt", 0, "0d1e2da136a03977",
+                    "ASCII baseline pixel hash");
+    check_text_hash("\xE2\x80\x93", 0, "e2206fbfbe85c375",
+                    "old extra baseline pixel hash");
+    check_text_width("\xC3\x84\xC3\x96\xC3\x9C\xC3\xA4\xC3\xB6\xC3\xBC\xC3\x9F",
+                     0, 76.0, "valid two-byte umlaut and Latin1 widths");
+    check_text_hash("\xC3\x84\xC3\x96\xC3\x9C\xC3\xA4\xC3\xB6\xC3\xBC\xC3\x9F",
+                    0, "8fb7603a89cfafeb",
+                    "valid two-byte umlaut and Latin1 pixel hash");
+    check_multiline_line_advance(1, "f7abc20ef1291e4d");
+    check_multiline_line_advance(2, "44e5a952a62906ed");
+    check_multiline_line_advance(3, "2ef42812cb3d42dd");
+
+    check_text_width("\xC0\x80", 0, 16.0, "C0 80 maximal subparts");
+    check_text_width("\xC0\xAF", 0, 16.0, "C0 AF maximal subparts");
+    check_text_width("\xC1\x81", 0, 16.0, "C1 81 maximal subparts");
+    check_text_width("\xC0\xA0", 0, 16.0, "C0 A0 maximal subparts");
+    check_text_width("\xC1\xBF", 0, 16.0, "C1 BF maximal subparts");
+    check_text_width("\xE0\x80\xAE", 0, 24.0, "E0 80 AE maximal subparts");
+    check_text_width("\xE0\x80\xAF", 0, 24.0, "E0 80 AF maximal subparts");
+    check_text_width("\xE0\x80\x81", 0, 24.0, "E0 80 81 maximal subparts");
+    check_text_width("\xE0\x9F\xBF", 0, 24.0, "E0 9F BF maximal subparts");
+    check_text_width("\xED\xA0\x80", 0, 24.0, "surrogate maximal subparts");
+    check_text_hash("\xC0\x80", 0, "5929295c8a07339d",
+                    "two invalid bytes render two fallbacks");
+    check_text_hash("\xE0\x80\xAF", 0, "3c25445719b9e505",
+                    "three invalid bytes render three fallbacks");
+
+    check_text_width("\xE2\x82", 0, 8.0, "truncated 3-byte maximal prefix");
+    check_text_width("\xF0\x9F", 0, 8.0, "truncated 4-byte prefix two");
+    check_text_width("\xF0\x9F\x98", 0, 8.0, "truncated 4-byte prefix three");
+    check_text_width("\xF0\x9F" "AB", 0, 30.0, "bad fourth-byte continuation");
+    check_text_width("\xF0\x9F\x98" "A", 0, 19.0, "truncated 4-byte then ASCII");
+    check_text_width("\xF0\x80\x80\x80", 0, 32.0, "overlong 4-byte split");
+    check_text_width("\xF5\x80\x80\x80", 0, 32.0, "above Unicode split");
+    check_text_width("\xF0\x9F\x98\x80", 0, 8.0, "valid missing emoji");
+    check_text_width("\xF0\x9F\x98\x80\xF0\x9F\x98\x80", 0, 16.0,
+                     "two valid missing emoji");
+    check_text_width("X\xF0\x9F\x98\x80Y", 0, 29.0,
+                     "valid missing emoji preserves suffix");
+    check_text_width("\xC3" "A", 0, 19.0, "bad 2-byte continuation");
+    check_text_width("\xE2" "AB", 0, 30.0, "bad 3-byte continuation");
+    check_text_width("\xC3\xC3" "A", 0, 27.0, "adjacent bad leads");
+    check_text_width("\x80", 0, 8.0, "lone continuation");
+    check_text_width("\x80\x81", 0, 16.0, "two lone continuations");
+    check_text_width("\xFE\xFF", 0, 16.0, "forbidden lead bytes");
+    check_text_width("\xC3", 0, 8.0, "truncated 2-byte lead");
+    check_text_width("\xF0", 0, 8.0, "truncated 4-byte lead");
+
+    check_text_width("\xCE\xA9", 0, 12.0, "Omega advance");
+    check_text_width("\xE2\x80\xA2", 0, 9.0, "bullet advance");
+    check_text_width("\xE2\x86\x92", 0, 13.0, "right arrow advance");
+    check_text_width("\xE2\x9C\x93", 0, 13.0, "check advance");
+    check_text_width("\xF0\x9D\x95\x9A", 0, 6.0, "four-byte embedded glyph");
+    check_text_hash("\xCE\xA9", 0, "20fe5e8a3923dfaf", "Omega pixel hash");
+    check_text_hash("\xE2\x80\xA2", 0, "af152603dcf5ee4e", "bullet pixel hash");
+    check_text_hash("\xE2\x86\x92", 0, "984dc4a964716284", "arrow pixel hash");
+    check_text_hash("\xE2\x9C\x93", 0, "b23b5d83fc8a5345", "check pixel hash");
+    check_text_hash("\xF0\x9D\x95\x9A", 0, "0ec4bd5db4b9821d",
+                    "four-byte embedded pixel hash");
+
+    for (style = 0; style < 5; ++style) {
+        check_text_width("Mii", style, face_mii_widths[style],
+                         "face-specific Mii width");
+        check_text_width("\xCE\xA9", style, face_omega_widths[style],
+                         "face-specific Omega width");
+        check_text_hash("Mii", style, face_hashes[style],
+                        "face-specific Mii pixel hash");
+    }
+
+    check_glyph_status("Hallo \xCE\xA9", 0, true, 0, 0,
+                       "complete glyph status");
+    check_glyph_status("\xC0\x80", 0, false, 2, 0,
+                       "invalid UTF-8 status counts maximal subparts");
+    check_glyph_status("\xED\xA0\x80", 0, false, 3, 0,
+                       "surrogate status counts bytes");
+    check_glyph_status("\xF0\x9F\x98\x80", 0, false, 0, 1,
+                       "valid missing glyph status");
+    check_glyph_status("\xF0\x9D\x95\x9A", 4, true, 0, 0,
+                       "four-byte embedded glyph complete in mono");
+
+    moo_release(text);
+    moo_release(surface);
+}
+
 int main(void) {
     test_core_contract();
+    test_font_contract();
     test_wrapper_contract();
     if (failures != 0) {
         fprintf(stderr, "test_surface_asan: %d failures\n", failures);

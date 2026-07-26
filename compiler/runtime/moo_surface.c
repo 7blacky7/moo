@@ -266,95 +266,216 @@ MooValue moo_surface_line(MooValue value, MooValue x0, MooValue y0,
     return moo_bool(ok && moo_surface_guards_ok(surface));
 }
 
-/* Codepoint -> Font-Tabellen-Index: 32..255 direkt, typografische
- * Extra-Slots via moo_font_aa_extra_cp, sonst '?'. */
-static uint32_t moo_font_aa_index(uint32_t cp) {
-    if (cp >= (uint32_t)MOO_FONT_AA_FIRST && cp <= 255u)
-        return cp - (uint32_t)MOO_FONT_AA_FIRST;
-    for (uint32_t i = 0; i < (uint32_t)MOO_FONT_AA_EXTRA; ++i)
-        if ((uint32_t)moo_font_aa_extra_cp[i] == cp)
-            return (256u - (uint32_t)MOO_FONT_AA_FIRST) + i;
-    return (uint32_t)'?' - (uint32_t)MOO_FONT_AA_FIRST;
+typedef struct MooSurfaceUtf8Decoded {
+    uint32_t codepoint;
+    uint32_t consumed;
+    bool valid;
+} MooSurfaceUtf8Decoded;
+
+static bool moo_surface_utf8_cont(uint8_t byte) {
+    return byte >= UINT8_C(0x80) && byte <= UINT8_C(0xbf);
 }
 
-/* Text mit eingebettetem Antialiasing-Font (moo_font_aa.h, ASCII 32..126,
- * Graustufen-Alpha wie ClearType) in die Surface zeichnen. Unbekannte
- * Zeichen rendern als '?', '\n' bricht um. skala vergroessert blockweise;
- * die weichen Kanten bleiben durch das eingebackene Alpha erhalten. */
-MooValue moo_surface_text(MooValue value, MooValue x, MooValue y,
-                          MooValue skala, MooValue text, MooValue r,
-                          MooValue g, MooValue b, MooValue a) {
+/* Unicode Table 3-7 + D93b: eingeschraenkte Folgebytebereiche bestimmen
+ * Wohlgeformtheit byteweise. Bei einem Fehler wird genau die maximale
+ * gueltige Teilfolge konsumiert, niemals ein nachtraeglich berechneter Wert. */
+static MooSurfaceUtf8Decoded moo_surface_utf8_decode(const uint8_t* bytes,
+                                                      int32_t remaining) {
+    MooSurfaceUtf8Decoded result = {(uint32_t)'?', 1u, false};
+    uint8_t b0;
+    uint8_t b1;
+    uint8_t b2;
+    uint8_t b3;
+    uint8_t second_min = UINT8_C(0x80);
+    uint8_t second_max = UINT8_C(0xbf);
+    uint32_t length;
+    if (!bytes || remaining <= 0) {
+        result.consumed = 0u;
+        return result;
+    }
+    b0 = bytes[0];
+    if (b0 <= UINT8_C(0x7f)) {
+        result.codepoint = b0;
+        result.valid = true;
+        return result;
+    }
+    if (b0 >= UINT8_C(0xc2) && b0 <= UINT8_C(0xdf)) {
+        length = 2u;
+    } else if (b0 >= UINT8_C(0xe0) && b0 <= UINT8_C(0xef)) {
+        length = 3u;
+        if (b0 == UINT8_C(0xe0)) second_min = UINT8_C(0xa0);
+        if (b0 == UINT8_C(0xed)) second_max = UINT8_C(0x9f);
+    } else if (b0 >= UINT8_C(0xf0) && b0 <= UINT8_C(0xf4)) {
+        length = 4u;
+        if (b0 == UINT8_C(0xf0)) second_min = UINT8_C(0x90);
+        if (b0 == UINT8_C(0xf4)) second_max = UINT8_C(0x8f);
+    } else {
+        return result;
+    }
+
+    if (remaining < 2) return result;
+    b1 = bytes[1];
+    if (b1 < second_min || b1 > second_max) return result;
+    result.consumed = 2u;
+    if (length == 2u) {
+        result.codepoint = ((uint32_t)(b0 & UINT8_C(0x1f)) << 6) |
+                           (uint32_t)(b1 & UINT8_C(0x3f));
+        result.valid = true;
+        return result;
+    }
+
+    if (remaining < 3) return result;
+    b2 = bytes[2];
+    if (!moo_surface_utf8_cont(b2)) return result;
+    result.consumed = 3u;
+    if (length == 3u) {
+        result.codepoint = ((uint32_t)(b0 & UINT8_C(0x0f)) << 12) |
+                           ((uint32_t)(b1 & UINT8_C(0x3f)) << 6) |
+                           (uint32_t)(b2 & UINT8_C(0x3f));
+        result.valid = true;
+        return result;
+    }
+
+    if (remaining < 4) return result;
+    b3 = bytes[3];
+    if (!moo_surface_utf8_cont(b3)) return result;
+    result.consumed = 4u;
+    result.codepoint = ((uint32_t)(b0 & UINT8_C(0x07)) << 18) |
+                       ((uint32_t)(b1 & UINT8_C(0x3f)) << 12) |
+                       ((uint32_t)(b2 & UINT8_C(0x3f)) << 6) |
+                       (uint32_t)(b3 & UINT8_C(0x3f));
+    result.valid = true;
+    return result;
+}
+
+static const MooFontAaFace* moo_font_aa_face(int32_t style) {
+    if (style < 0 || style >= (int32_t)MOO_FONT_AA_FACE_COUNT) return NULL;
+    return &moo_font_aa_faces[(uint32_t)style];
+}
+
+static uint32_t moo_font_aa_fallback_index(const MooFontAaFace* face) {
+    return (uint32_t)'?' - face->first;
+}
+
+static bool moo_font_aa_index(const MooFontAaFace* face, uint32_t cp,
+                              uint32_t* out) {
+    uint32_t base_count;
+    uint32_t i;
+    if (!face || !out || face->total_count < face->extra_count) return false;
+    base_count = face->total_count - face->extra_count;
+    if (cp >= face->first && cp - face->first < base_count) {
+        *out = cp - face->first;
+        return true;
+    }
+    for (i = 0u; i < face->extra_count; ++i) {
+        if (face->extra_cp[i] == cp) {
+            *out = base_count + i;
+            return true;
+        }
+    }
+    *out = moo_font_aa_fallback_index(face);
+    return false;
+}
+
+static bool moo_surface_text_args(MooValue text, MooValue skala,
+                                  MooValue stil, MooString** out_string,
+                                  int32_t* out_scale,
+                                  const MooFontAaFace** out_face) {
+    int32_t scale;
+    int32_t style;
+    MooString* string;
+    const MooFontAaFace* face;
+    if (!out_string || !out_scale || !out_face || text.tag != MOO_STRING ||
+        !moo_surface_number_i32(skala, &scale) || scale < 1 || scale > 16 ||
+        !moo_surface_number_i32(stil, &style)) return false;
+    face = moo_font_aa_face(style);
+    string = MV_STR(text);
+    if (!face || !string || !string->chars || string->length < 0) return false;
+    *out_string = string;
+    *out_scale = scale;
+    *out_face = face;
+    return true;
+}
+
+MooValue moo_surface_text_stil(MooValue value, MooValue x, MooValue y,
+                               MooValue skala, MooValue text, MooValue stil,
+                               MooValue r, MooValue g, MooValue b, MooValue a) {
     MooSurface* surface = moo_surface_get(value);
     MooSurfaceColor color;
+    MooString* string;
+    const MooFontAaFace* face;
     int32_t ix;
     int32_t iy;
-    int32_t isk;
-    if (!surface || text.tag != MOO_STRING ||
+    int32_t scale;
+    int32_t i;
+    int64_t pen_x;
+    int64_t pen_y;
+    int64_t line_advance;
+    MooSurfaceClip clip;
+    if (!surface ||
         !moo_surface_number_i32(x, &ix) ||
         !moo_surface_number_i32(y, &iy) ||
-        !moo_surface_number_i32(skala, &isk) || isk < 1 || isk > 16 ||
-        !moo_surface_color(r, g, b, a, &color)) return moo_bool(false);
-    const char* s = MV_STR(text)->chars;
-    int32_t len = MV_STR(text)->length;
-    int32_t W = surface->core.width;
-    int32_t H = surface->core.height;
-    if (!moo_surface_core_valid(&surface->core)) return moo_bool(false);
-    MooSurfaceClip clip = surface->core.clips[surface->core.clip_depth - 1u];
-    int64_t pen_x = ix;
-    int64_t pen_y = iy;
-    int64_t line_adv = (int64_t)(MOO_FONT_AA_H + 1) * isk;
-    for (int32_t i = 0; i < len; ++i) {
-        unsigned char c = (unsigned char)s[i];
-        if (c == '\n') {
+        !moo_surface_text_args(text, skala, stil, &string, &scale, &face) ||
+        !moo_surface_color(r, g, b, a, &color) ||
+        !moo_surface_core_valid(&surface->core)) return moo_bool(false);
+
+    clip = surface->core.clips[surface->core.clip_depth - 1u];
+    pen_x = ix;
+    pen_y = iy;
+    line_advance = ((int64_t)face->height + 1) * scale;
+    i = 0;
+    while (i < string->length) {
+        MooSurfaceUtf8Decoded decoded = moo_surface_utf8_decode(
+            (const uint8_t*)string->chars + i, string->length - i);
+        uint32_t glyph_index;
+        const uint8_t* glyph;
+        int64_t advance;
+        uint32_t gy;
+        uint32_t gx;
+        if (decoded.consumed == 0u) return moo_bool(false);
+        i += (int32_t)decoded.consumed;
+        if (decoded.valid && decoded.codepoint == (uint32_t)'\n') {
             pen_x = ix;
-            pen_y += line_adv;
+            pen_y += line_advance;
             continue;
         }
-        /* UTF-8 -> Codepoint (1-3 Byte); ungueltig oder > Latin-1: '?'.
-         * Damit rendern deutsche Umlaute + Eszett korrekt (NATIVE-UI-3c). */
-        uint32_t cp = c;
-        if (c >= 0x80u) {
-            if ((c & 0xE0u) == 0xC0u && i + 1 < len &&
-                ((unsigned char)s[i + 1] & 0xC0u) == 0x80u) {
-                cp = ((uint32_t)(c & 0x1Fu) << 6) |
-                     ((unsigned char)s[i + 1] & 0x3Fu);
-                i += 1;
-            } else if ((c & 0xF0u) == 0xE0u && i + 2 < len &&
-                       ((unsigned char)s[i + 1] & 0xC0u) == 0x80u &&
-                       ((unsigned char)s[i + 2] & 0xC0u) == 0x80u) {
-                cp = ((uint32_t)(c & 0x0Fu) << 12) |
-                     (((unsigned char)s[i + 1] & 0x3Fu) << 6) |
-                     ((unsigned char)s[i + 2] & 0x3Fu);
-                i += 2;
-            } else {
-                cp = (uint32_t)'?';
-            }
-        }
-        if (cp < (uint32_t)MOO_FONT_AA_FIRST) cp = (uint32_t)'?';
-        uint32_t gidx = moo_font_aa_index(cp);
-        const uint8_t* glyph = moo_font_aa[gidx];
-        int64_t advance = (int64_t)moo_font_aa_adv[gidx] * isk;
-        for (int32_t gy = 0; gy < MOO_FONT_AA_H; ++gy) {
-            for (int32_t gx = 0; gx < MOO_FONT_AA_W; ++gx) {
-                uint32_t cov = glyph[gy * MOO_FONT_AA_W + gx];
-                if (cov == 0u) continue;
-                uint32_t aa = (cov * (uint32_t)color.a + 127u) / 255u;
-                if (aa == 0u) continue;
-                uint32_t ia = 255u - aa;
-                for (int32_t sy = 0; sy < isk; ++sy) {
-                    int64_t py = pen_y + (int64_t)gy * isk + sy;
-                    if (py < 0 || py >= H ||
+        if (!decoded.valid ||
+            !moo_font_aa_index(face, decoded.codepoint, &glyph_index))
+            glyph_index = moo_font_aa_fallback_index(face);
+        glyph = face->glyphs +
+                (size_t)glyph_index * (size_t)face->width * (size_t)face->height;
+        advance = (int64_t)face->advances[glyph_index] * scale;
+        for (gy = 0u; gy < face->height; ++gy) {
+            for (gx = 0u; gx < face->width; ++gx) {
+                uint32_t coverage = glyph[(size_t)gy * face->width + gx];
+                uint32_t alpha;
+                uint32_t inverse;
+                int32_t sy;
+                if (coverage == 0u) continue;
+                alpha = (coverage * (uint32_t)color.a + 127u) / 255u;
+                if (alpha == 0u) continue;
+                inverse = 255u - alpha;
+                for (sy = 0; sy < scale; ++sy) {
+                    int64_t py = pen_y + (int64_t)gy * scale + sy;
+                    int32_t sx;
+                    if (py < 0 || py >= surface->core.height ||
                         py < clip.y0 || py >= clip.y1) continue;
-                    for (int32_t sx = 0; sx < isk; ++sx) {
-                        int64_t px = pen_x + (int64_t)gx * isk + sx;
-                        if (px < 0 || px >= W ||
+                    for (sx = 0; sx < scale; ++sx) {
+                        int64_t px = pen_x + (int64_t)gx * scale + sx;
+                        uint8_t* destination;
+                        if (px < 0 || px >= surface->core.width ||
                             px < clip.x0 || px >= clip.x1) continue;
-                        uint8_t* dp = surface->core.pixels +
-                                      ((size_t)py * (size_t)W + (size_t)px) * 4u;
-                        dp[0] = (uint8_t)(((uint32_t)color.r * aa + (uint32_t)dp[0] * ia + 127u) / 255u);
-                        dp[1] = (uint8_t)(((uint32_t)color.g * aa + (uint32_t)dp[1] * ia + 127u) / 255u);
-                        dp[2] = (uint8_t)(((uint32_t)color.b * aa + (uint32_t)dp[2] * ia + 127u) / 255u);
-                        dp[3] = (uint8_t)(aa + ((uint32_t)dp[3] * ia + 127u) / 255u);
+                        destination = surface->core.pixels +
+                            ((size_t)py * (size_t)surface->core.width +
+                             (size_t)px) * 4u;
+                        destination[0] = (uint8_t)(((uint32_t)color.r * alpha +
+                            (uint32_t)destination[0] * inverse + 127u) / 255u);
+                        destination[1] = (uint8_t)(((uint32_t)color.g * alpha +
+                            (uint32_t)destination[1] * inverse + 127u) / 255u);
+                        destination[2] = (uint8_t)(((uint32_t)color.b * alpha +
+                            (uint32_t)destination[2] * inverse + 127u) / 255u);
+                        destination[3] = (uint8_t)(alpha +
+                            ((uint32_t)destination[3] * inverse + 127u) / 255u);
                     }
                 }
             }
@@ -364,50 +485,94 @@ MooValue moo_surface_text(MooValue value, MooValue x, MooValue y,
     return moo_bool(moo_surface_guards_ok(surface));
 }
 
-/* Pixelbreite eines Textes im eingebetteten AA-Font: Codepoints (UTF-8)
- * zaehlen, laengste Zeile x Zellbreite x Skala. Identische Dekodier-
- * Regeln wie moo_surface_text, damit Layout und Rendering deckungsgleich
- * bleiben (Cursor-/Zentrier-Metriken der Widgets). */
-MooValue moo_surface_text_breite(MooValue text, MooValue skala) {
-    int32_t isk;
-    if (text.tag != MOO_STRING || !moo_surface_number_i32(skala, &isk) ||
-        isk < 1 || isk > 16)
-        return moo_number(0);
-    const char* s = MV_STR(text)->chars;
-    int32_t len = MV_STR(text)->length;
-    int64_t zeile = 0;
-    int64_t max_zeile = 0;
-    for (int32_t i = 0; i < len; ++i) {
-        unsigned char c = (unsigned char)s[i];
-        uint32_t cp2 = c;
-        if (c == '\n') {
-            if (zeile > max_zeile) max_zeile = zeile;
-            zeile = 0;
+MooValue moo_surface_text(MooValue value, MooValue x, MooValue y,
+                          MooValue skala, MooValue text, MooValue r,
+                          MooValue g, MooValue b, MooValue a) {
+    return moo_surface_text_stil(value, x, y, skala, text, moo_number(0),
+                                 r, g, b, a);
+}
+
+static MooValue moo_surface_text_breite_face(MooString* string, int32_t scale,
+                                             const MooFontAaFace* face) {
+    int32_t i = 0;
+    int64_t line = 0;
+    int64_t maximum = 0;
+    while (i < string->length) {
+        MooSurfaceUtf8Decoded decoded = moo_surface_utf8_decode(
+            (const uint8_t*)string->chars + i, string->length - i);
+        uint32_t glyph_index;
+        if (decoded.consumed == 0u) return moo_none();
+        i += (int32_t)decoded.consumed;
+        if (decoded.valid && decoded.codepoint == (uint32_t)'\n') {
+            if (line > maximum) maximum = line;
+            line = 0;
             continue;
         }
-        if (c >= 0x80u) {
-            if ((c & 0xE0u) == 0xC0u && i + 1 < len &&
-                ((unsigned char)s[i + 1] & 0xC0u) == 0x80u) {
-                cp2 = ((uint32_t)(c & 0x1Fu) << 6) |
-                      ((unsigned char)s[i + 1] & 0x3Fu);
-                i += 1;
-            } else if ((c & 0xF0u) == 0xE0u && i + 2 < len &&
-                       ((unsigned char)s[i + 1] & 0xC0u) == 0x80u &&
-                       ((unsigned char)s[i + 2] & 0xC0u) == 0x80u) {
-                cp2 = ((uint32_t)(c & 0x0Fu) << 12) |
-                      (((unsigned char)s[i + 1] & 0x3Fu) << 6) |
-                      ((unsigned char)s[i + 2] & 0x3Fu);
-                i += 2;
-            } else {
-                cp2 = (uint32_t)'?';
-            }
-        }
-        if (cp2 < (uint32_t)MOO_FONT_AA_FIRST) cp2 = (uint32_t)'?';
-        zeile += (int64_t)moo_font_aa_adv[moo_font_aa_index(cp2)];
+        if (!decoded.valid ||
+            !moo_font_aa_index(face, decoded.codepoint, &glyph_index))
+            glyph_index = moo_font_aa_fallback_index(face);
+        line += (int64_t)face->advances[glyph_index];
     }
-    if (zeile > max_zeile) max_zeile = zeile;
-    return moo_number((double)(max_zeile * isk));
+    if (line > maximum) maximum = line;
+    return moo_number((double)(maximum * scale));
 }
+
+MooValue moo_surface_text_breite_stil(MooValue text, MooValue skala,
+                                      MooValue stil) {
+    MooString* string;
+    const MooFontAaFace* face;
+    int32_t scale;
+    if (!moo_surface_text_args(text, skala, stil, &string, &scale, &face))
+        return moo_none();
+    return moo_surface_text_breite_face(string, scale, face);
+}
+
+MooValue moo_surface_text_breite(MooValue text, MooValue skala) {
+    MooString* string;
+    const MooFontAaFace* face;
+    int32_t scale;
+    if (!moo_surface_text_args(text, skala, moo_number(0),
+                               &string, &scale, &face)) return moo_number(0);
+    return moo_surface_text_breite_face(string, scale, face);
+}
+
+MooValue moo_surface_text_glyphen_status(MooValue text, MooValue stil) {
+    MooString* string;
+    const MooFontAaFace* face;
+    int32_t style;
+    int32_t i = 0;
+    int64_t invalid_utf8 = 0;
+    int64_t missing_glyphs = 0;
+    MooValue result;
+    if (text.tag != MOO_STRING || !moo_surface_number_i32(stil, &style))
+        return moo_none();
+    face = moo_font_aa_face(style);
+    string = MV_STR(text);
+    if (!face || !string || !string->chars || string->length < 0)
+        return moo_none();
+    while (i < string->length) {
+        MooSurfaceUtf8Decoded decoded = moo_surface_utf8_decode(
+            (const uint8_t*)string->chars + i, string->length - i);
+        uint32_t glyph_index;
+        if (decoded.consumed == 0u) return moo_none();
+        i += (int32_t)decoded.consumed;
+        if (!decoded.valid) {
+            invalid_utf8++;
+        } else if (decoded.codepoint != (uint32_t)'\n' &&
+                   !moo_font_aa_index(face, decoded.codepoint, &glyph_index)) {
+            missing_glyphs++;
+        }
+    }
+    result = moo_dict_new();
+    moo_dict_set(result, moo_string_new("vollstaendig"),
+                 moo_bool(invalid_utf8 == 0 && missing_glyphs == 0));
+    moo_dict_set(result, moo_string_new("ungueltig_utf8"),
+                 moo_number((double)invalid_utf8));
+    moo_dict_set(result, moo_string_new("fehlende_glyphen"),
+                 moo_number((double)missing_glyphs));
+    return result;
+}
+
 
 MooValue moo_surface_read_pixel(MooValue value, MooValue x, MooValue y) {
     MooSurface* surface = moo_surface_get(value);
