@@ -651,6 +651,7 @@ funktion _uim_bind_setze_widget(w, feld, wert):
     wenn feld == "text":
         w["text"] = text(wert)
         w["cursor"] = länge(bytes_zu_liste(w["text"]))
+        _uim_multiline_spalte_reset(w)
         _uim_widget_anfordern(w)
         gib_zurück wahr
     wenn feld == "wert":
@@ -1037,6 +1038,8 @@ funktion _uim_scroll_max(kontext, w):
         setze inhalt auf (länge(w["zeilen"]) + 1) * _uim_zeilenhoehe(kontext)
     wenn w["typ"] == "markdown":
         setze inhalt auf länge(w["zeilen"]) * _uim_zeilenhoehe(kontext)
+    wenn w["typ"] == "multiline":
+        setze inhalt auf länge(_uim_multiline_zeilen(bytes_zu_liste(w["text"]))) * _uim_zeilenhoehe(kontext) + 8
     setze max_scroll auf inhalt - w["h"]
     wenn max_scroll < 0:
         setze max_scroll auf 0
@@ -1052,7 +1055,7 @@ funktion _uim_scroll_klemme(kontext, w):
 
 funktion _uim_scroll_klemme_rek(kontext, kinder):
     für w in kinder:
-        wenn w["typ"] == "scroll" oder w["typ"] == "liste" oder w["typ"] == "baum" oder w["typ"] == "datengitter" oder w["typ"] == "iconview":
+        wenn w["typ"] == "scroll" oder w["typ"] == "liste" oder w["typ"] == "baum" oder w["typ"] == "datengitter" oder w["typ"] == "iconview" oder w["typ"] == "multiline":
             _uim_scroll_klemme(kontext, w)
         _uim_scroll_klemme_rek(kontext, w["kinder"])
     gib_zurück wahr
@@ -1371,7 +1374,7 @@ funktion _uim_scrollziel_rek(kinder, x, y):
                             setze gefunden auf w
                         sonst:
                             setze gefunden auf innen
-                    sonst wenn w["typ"] == "liste" oder w["typ"] == "baum" oder w["typ"] == "datengitter" oder w["typ"] == "iconview" oder w["typ"] == "terminal" oder w["typ"] == "markdown":
+                    sonst wenn w["typ"] == "liste" oder w["typ"] == "baum" oder w["typ"] == "datengitter" oder w["typ"] == "iconview" oder w["typ"] == "terminal" oder w["typ"] == "markdown" oder w["typ"] == "multiline":
                         setze gefunden auf w
         setze i auf i - 1
     gib_zurück gefunden
@@ -2025,7 +2028,9 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
         gib_zurück wahr
     wenn f["typ"] == "textfeld" oder f["typ"] == "searchbox" oder f["typ"] == "numberbox" oder f["typ"] == "passwordbox" oder f["typ"] == "multiline" oder f["typ"] == "autocomplete":
         setze geaendert auf falsch
-        wenn taste == "BackSpace" oder (taste != "Left" und taste != "Right" und taste != "Home" und taste != "End" und taste != "Return"):
+        wenn f["typ"] != "multiline" und (taste == "BackSpace" oder (taste != "Left" und taste != "Right" und taste != "Home" und taste != "End" und taste != "Return")):
+            _uim_tf_verlauf_merke(f)
+        sonst wenn f["typ"] == "multiline" und taste != "BackSpace" und taste != "Left" und taste != "Right" und taste != "Up" und taste != "Down" und taste != "Home" und taste != "End" und taste != "Return":
             _uim_tf_verlauf_merke(f)
         setze bytes auf bytes_zu_liste(f["text"])
         wenn f["cursor"] < 0:
@@ -2034,6 +2039,8 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
             f["cursor"] = länge(bytes)
         wenn taste == "BackSpace":
             wenn f["cursor"] > 0:
+                wenn f["typ"] == "multiline":
+                    _uim_tf_verlauf_merke(f)
                 setze p auf _uim_tf_grenze_zurueck(bytes, f["cursor"])
                 setze nb auf _uim_tf_teil(bytes, 0, p)
                 setze rest auf _uim_tf_teil(bytes, f["cursor"], länge(bytes))
@@ -2048,14 +2055,32 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
                 setze geaendert auf wahr
         sonst wenn taste == "Left":
             f["cursor"] = _uim_tf_grenze_zurueck(bytes, f["cursor"])
+            _uim_multiline_spalte_reset(f)
         sonst wenn taste == "Right":
             f["cursor"] = _uim_tf_grenze_vor(bytes, f["cursor"])
+            _uim_multiline_spalte_reset(f)
         sonst wenn taste == "Home":
-            f["cursor"] = 0
+            wenn f["typ"] == "multiline":
+                _uim_multiline_navigiere(f, taste)
+            sonst:
+                f["cursor"] = 0
         sonst wenn taste == "End":
-            f["cursor"] = länge(bytes)
+            wenn f["typ"] == "multiline":
+                _uim_multiline_navigiere(f, taste)
+            sonst:
+                f["cursor"] = länge(bytes)
+        sonst wenn (taste == "Up" oder taste == "Down") und f["typ"] == "multiline":
+            _uim_multiline_navigiere(f, taste)
         sonst wenn taste == "Return":
-            wenn f.enthält("dialog") und f["dialog"] != nichts:
+            wenn f["typ"] == "multiline":
+                setze multiline_strg auf mod % 4 >= 2
+                wenn multiline_strg:
+                    wenn f.enthält("dialog") und f["dialog"] != nichts:
+                        _uim_dialog_aktion(kontext, f["dialog"], f["dialog"]["standard_button"])
+                sonst:
+                    _uim_tf_verlauf_merke(f)
+                    setze geaendert auf _uim_multiline_lf_einfuegen(f)
+            sonst wenn f.enthält("dialog") und f["dialog"] != nichts:
                 _uim_dialog_aktion(kontext, f["dialog"], f["dialog"]["standard_button"])
             sonst:
                 _uim_aktiviere(kontext, f)
@@ -2066,7 +2091,10 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
             wenn _uim_tf_einfuegen(kontext, f, bytes_zu_liste(eingabe)):
                 setze geaendert auf wahr
         wenn geaendert:
+            _uim_multiline_spalte_reset(f)
             _uim_tf_feuere_wechsel(kontext, f)
+        wenn f["typ"] == "multiline":
+            _uim_multiline_caret_sichtbar(kontext, f)
         _uim_anfordern(kontext)
         gib_zurück wahr
     wenn f["typ"] == "combobox":
@@ -2458,7 +2486,7 @@ funktion _uim_kern_rad(kontext, x, y, delta):
         gib_zurück falsch
     wenn w["aktiv"] == falsch:
         gib_zurück falsch
-    wenn w["typ"] != "liste" und w["typ"] != "scroll" und w["typ"] != "baum" und w["typ"] != "datengitter" und w["typ"] != "terminal" und w["typ"] != "markdown":
+    wenn w["typ"] != "liste" und w["typ"] != "scroll" und w["typ"] != "baum" und w["typ"] != "datengitter" und w["typ"] != "terminal" und w["typ"] != "markdown" und w["typ"] != "multiline":
         gib_zurück falsch
     setze zh auf _uim_zeilenhoehe(kontext)
     setze max_scroll auf _uim_scroll_max(kontext, w)
@@ -4463,6 +4491,115 @@ funktion _uim_tf_einfuegen(kontext, f, tb):
         f["eingabe_zustand"] = "filled"
     gib_zurück wahr
 
+funktion _uim_multiline_spalte_reset(f):
+    wenn f["typ"] == "multiline":
+        f["vertikal_spalte"] = 0 - 1
+    gib_zurück wahr
+
+funktion _uim_multiline_zeilen(bytes):
+    setze ml_zeilen auf []
+    setze ml_start auf 0
+    setze ml_i auf 0
+    solange ml_i < länge(bytes):
+        wenn bytes[ml_i] == 10:
+            ml_zeilen.hinzufügen([ml_start, ml_i])
+            setze ml_start auf ml_i + 1
+        setze ml_i auf ml_i + 1
+    ml_zeilen.hinzufügen([ml_start, länge(bytes)])
+    gib_zurück ml_zeilen
+
+funktion _uim_multiline_navigiere(f, taste):
+    setze ml_bytes_nav auf bytes_zu_liste(f["text"])
+    setze ml_cursor_nav auf f["cursor"]
+    wenn ml_cursor_nav < 0:
+        setze ml_cursor_nav auf 0
+    wenn ml_cursor_nav > länge(ml_bytes_nav):
+        setze ml_cursor_nav auf länge(ml_bytes_nav)
+    wenn _uim_ime_utf8_grenze(ml_bytes_nav, ml_cursor_nav) == falsch:
+        setze ml_cursor_nav auf _uim_tf_grenze_zurueck(ml_bytes_nav, ml_cursor_nav)
+    setze ml_zeilen_nav auf _uim_multiline_zeilen(ml_bytes_nav)
+    setze ml_idx_nav auf 0
+    solange ml_idx_nav < länge(ml_zeilen_nav) - 1 und ml_cursor_nav > ml_zeilen_nav[ml_idx_nav][1]:
+        setze ml_idx_nav auf ml_idx_nav + 1
+    wenn taste == "Home":
+        f["cursor"] = ml_zeilen_nav[ml_idx_nav][0]
+        f["vertikal_spalte"] = 0 - 1
+        gib_zurück wahr
+    wenn taste == "End":
+        f["cursor"] = ml_zeilen_nav[ml_idx_nav][1]
+        f["vertikal_spalte"] = 0 - 1
+        gib_zurück wahr
+    setze ml_spalte_nav auf f["vertikal_spalte"]
+    wenn ml_spalte_nav < 0:
+        setze ml_spalte_nav auf 0
+        setze ml_pos_nav auf ml_zeilen_nav[ml_idx_nav][0]
+        solange ml_pos_nav < ml_cursor_nav:
+            setze ml_pos_nav auf _uim_tf_grenze_vor(ml_bytes_nav, ml_pos_nav)
+            setze ml_spalte_nav auf ml_spalte_nav + 1
+        f["vertikal_spalte"] = ml_spalte_nav
+    setze ml_ziel_idx auf ml_idx_nav
+    wenn taste == "Up":
+        setze ml_ziel_idx auf ml_ziel_idx - 1
+    sonst wenn taste == "Down":
+        setze ml_ziel_idx auf ml_ziel_idx + 1
+    sonst:
+        gib_zurück falsch
+    wenn ml_ziel_idx < 0:
+        setze ml_ziel_idx auf 0
+    wenn ml_ziel_idx >= länge(ml_zeilen_nav):
+        setze ml_ziel_idx auf länge(ml_zeilen_nav) - 1
+    setze ml_ziel_pos auf ml_zeilen_nav[ml_ziel_idx][0]
+    setze ml_ziel_spalte auf 0
+    solange ml_ziel_spalte < ml_spalte_nav und ml_ziel_pos < ml_zeilen_nav[ml_ziel_idx][1]:
+        setze ml_ziel_pos auf _uim_tf_grenze_vor(ml_bytes_nav, ml_ziel_pos)
+        setze ml_ziel_spalte auf ml_ziel_spalte + 1
+    f["cursor"] = ml_ziel_pos
+    gib_zurück wahr
+
+funktion _uim_multiline_caret_sichtbar(kontext, f):
+    setze ml_bytes_sicht auf bytes_zu_liste(f["text"])
+    setze ml_cursor_sicht auf f["cursor"]
+    wenn ml_cursor_sicht < 0:
+        setze ml_cursor_sicht auf 0
+    wenn ml_cursor_sicht > länge(ml_bytes_sicht):
+        setze ml_cursor_sicht auf länge(ml_bytes_sicht)
+    wenn _uim_ime_utf8_grenze(ml_bytes_sicht, ml_cursor_sicht) == falsch:
+        setze ml_cursor_sicht auf _uim_tf_grenze_zurueck(ml_bytes_sicht, ml_cursor_sicht)
+    setze ml_zeilen_sicht auf _uim_multiline_zeilen(ml_bytes_sicht)
+    setze ml_idx_sicht auf 0
+    solange ml_idx_sicht < länge(ml_zeilen_sicht) - 1 und ml_cursor_sicht > ml_zeilen_sicht[ml_idx_sicht][1]:
+        setze ml_idx_sicht auf ml_idx_sicht + 1
+    setze ml_zh_sicht auf _uim_zeilenhoehe(kontext)
+    setze ml_view_sicht auf f["h"] - 8
+    wenn ml_view_sicht < ml_zh_sicht:
+        setze ml_view_sicht auf ml_zh_sicht
+    setze ml_oben_sicht auf ml_idx_sicht * ml_zh_sicht
+    setze ml_unten_sicht auf ml_oben_sicht + ml_zh_sicht
+    setze ml_alt_scroll auf f["scroll_y"]
+    wenn ml_oben_sicht < f["scroll_y"]:
+        f["scroll_y"] = ml_oben_sicht
+    wenn ml_unten_sicht > f["scroll_y"] + ml_view_sicht:
+        f["scroll_y"] = ml_unten_sicht - ml_view_sicht
+    _uim_scroll_klemme(kontext, f)
+    gib_zurück f["scroll_y"] != ml_alt_scroll
+
+funktion _uim_multiline_lf_einfuegen(f):
+    setze ml_bytes auf bytes_zu_liste(f["text"])
+    setze ml_cur auf f["cursor"]
+    wenn ml_cur < 0:
+        setze ml_cur auf 0
+    wenn ml_cur > länge(ml_bytes):
+        setze ml_cur auf länge(ml_bytes)
+    setze ml_neu auf _uim_tf_teil(ml_bytes, 0, ml_cur)
+    ml_neu.hinzufügen(10)
+    setze ml_rest auf _uim_tf_teil(ml_bytes, ml_cur, länge(ml_bytes))
+    für ml_bb in ml_rest:
+        ml_neu.hinzufügen(ml_bb)
+    f["text"] = bytes_neu(ml_neu)
+    f["cursor"] = ml_cur + 1
+    f["eingabe_zustand"] = "filled"
+    gib_zurück wahr
+
 # UI-13/VALID: Validator-Hook und wiederverwendbare Standardprüfer.
 funktion uim_validierung_pflicht(wert, nachricht):
     wenn wert == nichts oder text(wert) == "":
@@ -4565,6 +4702,8 @@ funktion uim_text_undo(kontext, w):
     w["text"] = w["undo_stapel"][idx]
     w["undo_stapel"] = _uim_liste_ohne_letztes(w["undo_stapel"])
     w["cursor"] = länge(bytes_zu_liste(w["text"]))
+    _uim_multiline_spalte_reset(w)
+    _uim_multiline_caret_sichtbar(kontext, w)
     _uim_tf_feuere_wechsel(kontext, w)
     _uim_anfordern(kontext)
     gib_zurück wahr
@@ -4577,6 +4716,8 @@ funktion uim_text_redo(kontext, w):
     w["text"] = w["redo_stapel"][idx]
     w["redo_stapel"] = _uim_liste_ohne_letztes(w["redo_stapel"])
     w["cursor"] = länge(bytes_zu_liste(w["text"]))
+    _uim_multiline_spalte_reset(w)
+    _uim_multiline_caret_sichtbar(kontext, w)
     _uim_tf_feuere_wechsel(kontext, w)
     _uim_anfordern(kontext)
     gib_zurück wahr
@@ -4598,6 +4739,56 @@ funktion _uim_eingabe_anzeige(kontext, w):
     wenn w["text"] == "" und w.enthält("placeholder") und _uim_slot_uid(kontext, "fokus") != w["uid"]:
         gib_zurück w["placeholder"]
     gib_zurück w["text"]
+
+funktion _uim_z_multiline(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze flaeche auf _uim_zustand_farbe(kontext, w, "flaeche")
+    _uim_farbe(kontext, z, flaeche)
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], 3, wahr)
+    wenn _uim_glass_an(t):
+        _uim_glass_deko(kontext, z, ax, ay, w["b"], w["h"], 3)
+    setze hat_fokus auf _uim_slot_uid(kontext, "fokus") == w["uid"]
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], 3, falsch)
+    setze ml_bytes_z auf bytes_zu_liste(w["text"])
+    setze ml_zeilen_z auf _uim_multiline_zeilen(ml_bytes_z)
+    setze ml_cursor_z auf w["cursor"]
+    wenn ml_cursor_z < 0:
+        setze ml_cursor_z auf 0
+    wenn ml_cursor_z > länge(ml_bytes_z):
+        setze ml_cursor_z auf länge(ml_bytes_z)
+    wenn _uim_ime_utf8_grenze(ml_bytes_z, ml_cursor_z) == falsch:
+        setze ml_cursor_z auf _uim_tf_grenze_zurueck(ml_bytes_z, ml_cursor_z)
+    setze ml_cursor_zeile_z auf 0
+    solange ml_cursor_zeile_z < länge(ml_zeilen_z) - 1 und ml_cursor_z > ml_zeilen_z[ml_cursor_zeile_z][1]:
+        setze ml_cursor_zeile_z auf ml_cursor_zeile_z + 1
+    setze ml_zeilen_h_z auf _uim_zeilenhoehe(kontext)
+    setze ml_text_y_z auf ay + 4 - w["scroll_y"]
+    _uim_zf_clip_setze(kontext, z, ax + 4, ay + 4, w["b"] - 8, w["h"] - 8)
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "text"))
+    setze ml_idx_z auf 0
+    solange ml_idx_z < länge(ml_zeilen_z):
+        setze ml_bereich_z auf ml_zeilen_z[ml_idx_z]
+        setze ml_text_z auf bytes_neu(_uim_tf_teil(ml_bytes_z, ml_bereich_z[0], ml_bereich_z[1]))
+        _uim_zf_text(kontext, z, ax + 6, ml_text_y_z + ml_idx_z * ml_zeilen_h_z, ml_text_z, t["schrift"])
+        setze ml_idx_z auf ml_idx_z + 1
+    wenn hat_fokus:
+        setze ml_cursor_bereich_z auf ml_zeilen_z[ml_cursor_zeile_z]
+        setze ml_links_z auf bytes_neu(_uim_tf_teil(ml_bytes_z, ml_cursor_bereich_z[0], ml_cursor_z))
+        setze ml_cx_z auf ax + 6 + _uim_zf_text_breite(kontext, z, ml_links_z, t["schrift"])
+        setze ml_cy_z auf ml_text_y_z + ml_cursor_zeile_z * ml_zeilen_h_z
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_linie(kontext, z, ml_cx_z + 1, ml_cy_z - 1, ml_cx_z + 1, ml_cy_z + t["schrift"] + 1, 1)
+    _uim_zf_clip_loesche(kontext, z)
+    wenn w["invalid"] und w["validierungs_fehler"] != "":
+        setze fehler_schrift auf t["schrift"] - 2
+        wenn fehler_schrift < 7:
+            setze fehler_schrift auf 7
+        _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "text"))
+        _uim_zf_text(kontext, z, ax + 2, ay + w["h"] + 2, w["validierungs_fehler"], fehler_schrift)
+    gib_zurück wahr
 
 funktion _uim_z_textfeld(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
@@ -4951,7 +5142,9 @@ funktion _uim_zeichne_widget(kontext, z, w, ox, oy):
         gib_zurück _uim_z_markdown(kontext, z, w, ox, oy)
     wenn w["typ"] == "separator":
         gib_zurück _uim_z_separator(kontext, z, w, ox, oy)
-    wenn w["typ"] == "textfeld" oder w["typ"] == "searchbox" oder w["typ"] == "numberbox" oder w["typ"] == "passwordbox" oder w["typ"] == "multiline" oder w["typ"] == "autocomplete":
+    wenn w["typ"] == "multiline":
+        gib_zurück _uim_z_multiline(kontext, z, w, ox, oy)
+    wenn w["typ"] == "textfeld" oder w["typ"] == "searchbox" oder w["typ"] == "numberbox" oder w["typ"] == "passwordbox" oder w["typ"] == "autocomplete":
         gib_zurück _uim_z_textfeld(kontext, z, w, ox, oy)
     wenn w["typ"] == "image":
         gib_zurück _uim_z_image(kontext, z, w, ox, oy)
@@ -5863,6 +6056,9 @@ funktion uim_textfeld_setze(kontext, w, txt):
     sonst:
         w["eingabe_zustand"] = "filled"
     w["cursor"] = länge(bytes_zu_liste(txt))
+    _uim_multiline_spalte_reset(w)
+    wenn w["typ"] == "multiline":
+        _uim_multiline_caret_sichtbar(kontext, w)
     wenn w["validator"] != nichts:
         uim_validiere(kontext, w)
     _uim_tf_feuere_wechsel(kontext, w)
@@ -5901,6 +6097,9 @@ funktion uim_textarea(x, y, b, h, initial, on_wechsel):
     w["fokussierbar"] = wahr
     w["text"] = initial
     w["cursor"] = länge(bytes_zu_liste(initial))
+    w["vertikal_spalte"] = 0 - 1
+    w["scroll_y"] = 0
+    w["inhalt_hoehe"] = 0
     w["mehrzeilig"] = wahr
     w["on_wechsel"] = on_wechsel
     gib_zurück w

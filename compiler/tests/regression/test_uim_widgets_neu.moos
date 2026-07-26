@@ -1618,3 +1618,426 @@ setze kald16_liste_space auf uim_mock_taste(kald16_root, "space", wahr, 0)
 setze kald16_liste_space_repaint auf kald16_root["backend_zustand"]["ungueltig"]
 setze kald16_liste_ok auf kald16_liste_return and kald16_liste_space and kald16_liste_return_repaint and kald16_liste_space_repaint and kald16_liste["auswahl"] == 0 and S["kald16_rufe"] == 0
 zeige "KALD16-FREMD " + text(kald16_baum_ok) + "/" + text(kald16_grid_ok) + "/" + text(kald16_slider_ok) + "/" + text(kald16_liste_ok)
+
+
+# --- W6-MULTILINE/BATCH5: Return, Dialogstandard und Modbits ---
+S["ml5_eingabe"] = 0
+S["ml5_wechsel"] = 0
+S["ml5_aktion"] = 0
+S["ml5_index"] = 0 - 1
+funktion t_ml5_eingabe(w, wert):
+    S["ml5_eingabe"] = S["ml5_eingabe"] + 1
+    gib_zurück wahr
+
+funktion t_ml5_wechsel(w, wert):
+    S["ml5_wechsel"] = S["ml5_wechsel"] + 1
+    gib_zurück wahr
+
+funktion t_ml5_aktion(w, aktions_index):
+    S["ml5_aktion"] = S["ml5_aktion"] + 1
+    S["ml5_index"] = aktions_index
+    gib_zurück wahr
+
+funktion t_ml5_dialog_probe(modbits, erwartet_umbruch):
+    S["ml5_eingabe"] = 0
+    S["ml5_wechsel"] = 0
+    S["ml5_aktion"] = 0
+    S["ml5_index"] = 0 - 1
+    setze ml5_d_root auf uim_mock_wurzel(320, 180)
+    setze ml5_d_dialog auf uim_nachricht("T", "N", ["OK"], t_ml5_aktion)
+    setze ml5_d_feld auf uim_textarea(10, 10, 180, 60, "X", t_ml5_wechsel)
+    uim_event_setze(ml5_d_feld, "eingabe", t_ml5_eingabe)
+    ml5_d_feld["dialog"] = ml5_d_dialog
+    uim_hinzu(ml5_d_dialog, ml5_d_feld)
+    uim_hinzu(ml5_d_root, ml5_d_dialog)
+    ml5_d_root["fokus"] = ml5_d_feld
+    ml5_d_feld["cursor"] = 1
+    uim_mock_zeichne(ml5_d_root)
+    setze ml5_d_ret auf uim_mock_taste(ml5_d_root, "Return", wahr, modbits)
+    setze ml5_d_repaint auf ml5_d_root["backend_zustand"]["ungueltig"]
+    wenn erwartet_umbruch:
+        gib_zurück ml5_d_ret and ml5_d_repaint and ml5_d_feld["text"] == "X\n" and ml5_d_feld["cursor"] == 2 and S["ml5_eingabe"] == 1 and S["ml5_wechsel"] == 1 and S["ml5_aktion"] == 0 and ml5_d_dialog["offen"]
+    gib_zurück ml5_d_ret and ml5_d_repaint and ml5_d_feld["text"] == "X" and ml5_d_feld["cursor"] == 1 and S["ml5_eingabe"] == 0 and S["ml5_wechsel"] == 0 and S["ml5_aktion"] == 1 and S["ml5_index"] == 0 and ml5_d_dialog["offen"] == falsch
+
+funktion t_ml5_standalone_probe(modbits, erwartet_umbruch):
+    S["ml5_eingabe"] = 0
+    S["ml5_wechsel"] = 0
+    setze ml5_s_root auf uim_mock_wurzel(320, 180)
+    setze ml5_s_feld auf uim_textarea(10, 10, 180, 60, "X", t_ml5_wechsel)
+    uim_event_setze(ml5_s_feld, "eingabe", t_ml5_eingabe)
+    uim_hinzu(ml5_s_root, ml5_s_feld)
+    ml5_s_root["fokus"] = ml5_s_feld
+    ml5_s_feld["cursor"] = 1
+    uim_mock_zeichne(ml5_s_root)
+    setze ml5_s_ret auf uim_mock_taste(ml5_s_root, "Return", wahr, modbits)
+    setze ml5_s_repaint auf ml5_s_root["backend_zustand"]["ungueltig"]
+    wenn erwartet_umbruch:
+        gib_zurück ml5_s_ret and ml5_s_repaint and ml5_s_feld["text"] == "X\n" and ml5_s_feld["cursor"] == 2 and S["ml5_eingabe"] == 1 and S["ml5_wechsel"] == 1
+    gib_zurück ml5_s_ret and ml5_s_repaint and ml5_s_feld["text"] == "X" and ml5_s_feld["cursor"] == 1 and S["ml5_eingabe"] == 0 and S["ml5_wechsel"] == 0 and länge(ml5_s_feld["undo_stapel"]) == 0
+
+zeige "ML5-DIALOG-LF " + text(t_ml5_dialog_probe(0, wahr)) + "/" + text(t_ml5_dialog_probe(1, wahr))
+zeige "ML5-DIALOG-CTRL " + text(t_ml5_dialog_probe(2, falsch)) + "/" + text(t_ml5_dialog_probe(3, falsch))
+zeige "ML5-STANDALONE-LF " + text(t_ml5_standalone_probe(0, wahr)) + "/" + text(t_ml5_standalone_probe(1, wahr))
+zeige "ML5-STANDALONE-CTRL " + text(t_ml5_standalone_probe(2, falsch)) + "/" + text(t_ml5_standalone_probe(3, falsch))
+
+S["ml5_eingabe"] = 0
+S["ml5_wechsel"] = 0
+S["ml5_aktion"] = 0
+S["ml5_index"] = 0 - 1
+setze ml5_e_root auf uim_mock_wurzel(320, 180)
+setze ml5_e_dialog auf uim_nachricht("T", "N", ["OK"], t_ml5_aktion)
+setze ml5_e_feld auf uim_textfeld(10, 10, 180, 28, "X", t_ml5_wechsel)
+uim_event_setze(ml5_e_feld, "eingabe", t_ml5_eingabe)
+ml5_e_feld["dialog"] = ml5_e_dialog
+uim_hinzu(ml5_e_dialog, ml5_e_feld)
+uim_hinzu(ml5_e_root, ml5_e_dialog)
+ml5_e_root["fokus"] = ml5_e_feld
+uim_mock_zeichne(ml5_e_root)
+setze ml5_e_ret auf uim_mock_taste(ml5_e_root, "Return", wahr, 0)
+setze ml5_e_ok auf ml5_e_ret and ml5_e_root["backend_zustand"]["ungueltig"] and ml5_e_feld["text"] == "X" and S["ml5_eingabe"] == 0 and S["ml5_wechsel"] == 0 and S["ml5_aktion"] == 1 and S["ml5_index"] == 0 and ml5_e_dialog["offen"] == falsch
+zeige "ML5-SINGLE-DIALOG " + text(ml5_e_ok)
+
+
+# --- W6-MULTILINE/BATCH1: LF-Wahrheit, Setter/Getter, Backspace, Undo/Redo ---
+S["ml1_eingabe"] = 0
+S["ml1_wechsel"] = 0
+funktion t_ml1_eingabe(w, wert):
+    S["ml1_eingabe"] = S["ml1_eingabe"] + 1
+    gib_zurück wahr
+
+funktion t_ml1_wechsel(w, wert):
+    S["ml1_wechsel"] = S["ml1_wechsel"] + 1
+    gib_zurück wahr
+
+funktion t_ml1_return_probe(initial, cursor_pos, erwartet, erwartet_cursor):
+    S["ml1_eingabe"] = 0
+    S["ml1_wechsel"] = 0
+    setze ml1_root auf uim_mock_wurzel(320, 160)
+    setze ml1_feld auf uim_textarea(10, 10, 260, 90, initial, t_ml1_wechsel)
+    uim_event_setze(ml1_feld, "eingabe", t_ml1_eingabe)
+    setze ml1_state auf {"wert": initial}
+    uim_bind(ml1_feld, ml1_state, "wert", "text")
+    uim_hinzu(ml1_root, ml1_feld)
+    ml1_root["fokus"] = ml1_feld
+    ml1_feld["cursor"] = cursor_pos
+    uim_mock_zeichne(ml1_root)
+    setze ml1_return auf uim_mock_taste(ml1_root, "Return", wahr, 0)
+    setze ml1_repaint auf ml1_root["backend_zustand"]["ungueltig"]
+    setze ml1_edit_ok auf ml1_feld["text"] == erwartet and uim_wert_hole(ml1_feld) == erwartet and ml1_feld["cursor"] == erwartet_cursor and ml1_state["wert"] == erwartet and S["ml1_eingabe"] == 1 and S["ml1_wechsel"] == 1 and länge(ml1_feld["undo_stapel"]) == 1
+    setze ml1_undo_ok auf uim_text_undo(ml1_root, ml1_feld) and ml1_feld["text"] == initial and ml1_state["wert"] == initial and S["ml1_eingabe"] == 2 and S["ml1_wechsel"] == 2
+    setze ml1_redo_ok auf uim_text_redo(ml1_root, ml1_feld) and ml1_feld["text"] == erwartet and ml1_state["wert"] == erwartet and S["ml1_eingabe"] == 3 and S["ml1_wechsel"] == 3
+    gib_zurück ml1_return and ml1_repaint and ml1_edit_ok and ml1_undo_ok and ml1_redo_ok
+
+zeige "ML1-RETURN-POS " + text(t_ml1_return_probe("ab", 0, "\nab", 1)) + "/" + text(t_ml1_return_probe("ab", 1, "a\nb", 2)) + "/" + text(t_ml1_return_probe("ab", 2, "ab\n", 3))
+
+setze ml1_set_root auf uim_mock_wurzel(320, 160)
+setze ml1_set_feld auf uim_textarea(10, 10, 260, 90, "alt", nichts)
+uim_hinzu(ml1_set_root, ml1_set_feld)
+setze ml1_lf_wert auf "\nÄ\n\nΩ\n"
+setze ml1_set_ok auf uim_wert_setze(ml1_set_root, ml1_set_feld, ml1_lf_wert) and uim_wert_hole(ml1_set_feld) == ml1_lf_wert and ml1_set_feld["text"] == ml1_lf_wert and ml1_set_feld["cursor"] == länge(bytes_zu_liste(ml1_lf_wert))
+zeige "ML1-SETTER-LF " + text(ml1_set_ok)
+
+S["ml1_eingabe"] = 0
+S["ml1_wechsel"] = 0
+setze ml1_bs_root auf uim_mock_wurzel(320, 160)
+setze ml1_bs auf uim_textarea(10, 10, 260, 90, "ab\ncd", t_ml1_wechsel)
+uim_event_setze(ml1_bs, "eingabe", t_ml1_eingabe)
+uim_hinzu(ml1_bs_root, ml1_bs)
+ml1_bs_root["fokus"] = ml1_bs
+ml1_bs["cursor"] = 3
+uim_mock_zeichne(ml1_bs_root)
+setze ml1_bs_ret auf uim_mock_taste(ml1_bs_root, "BackSpace", wahr, 0)
+setze ml1_bs_merge_ok auf ml1_bs_ret and ml1_bs_root["backend_zustand"]["ungueltig"] and ml1_bs["text"] == "abcd" and ml1_bs["cursor"] == 2 and S["ml1_eingabe"] == 1 and S["ml1_wechsel"] == 1 and länge(ml1_bs["undo_stapel"]) == 1 and uim_text_undo(ml1_bs_root, ml1_bs) and ml1_bs["text"] == "ab\ncd"
+
+S["ml1_eingabe"] = 0
+S["ml1_wechsel"] = 0
+setze ml1_start_root auf uim_mock_wurzel(320, 160)
+setze ml1_start auf uim_textarea(10, 10, 260, 90, "ab\ncd", t_ml1_wechsel)
+uim_event_setze(ml1_start, "eingabe", t_ml1_eingabe)
+uim_hinzu(ml1_start_root, ml1_start)
+ml1_start_root["fokus"] = ml1_start
+ml1_start["cursor"] = 0
+uim_mock_zeichne(ml1_start_root)
+setze ml1_start_ret auf uim_mock_taste(ml1_start_root, "BackSpace", wahr, 0)
+setze ml1_start_ok auf ml1_start_ret and ml1_start["text"] == "ab\ncd" and ml1_start["cursor"] == 0 and S["ml1_eingabe"] == 0 and S["ml1_wechsel"] == 0 and länge(ml1_start["undo_stapel"]) == 0
+zeige "ML1-BACKSPACE " + text(ml1_bs_merge_ok) + "/" + text(ml1_start_ok)
+
+
+# --- W6-MULTILINE/BATCH2: 2D-Navigation, UTF8, bevorzugte Spalte ---
+S["ml2_eingabe"] = 0
+S["ml2_wechsel"] = 0
+funktion t_ml2_eingabe(w, wert):
+    S["ml2_eingabe"] = S["ml2_eingabe"] + 1
+    gib_zurück wahr
+
+funktion t_ml2_wechsel(w, wert):
+    S["ml2_wechsel"] = S["ml2_wechsel"] + 1
+    gib_zurück wahr
+
+setze ml2_root auf uim_mock_wurzel(360, 180)
+setze ml2_text auf "äb\nx\näbc\nq"
+setze ml2_feld auf uim_textarea(10, 10, 300, 120, ml2_text, t_ml2_wechsel)
+uim_event_setze(ml2_feld, "eingabe", t_ml2_eingabe)
+uim_hinzu(ml2_root, ml2_feld)
+ml2_root["fokus"] = ml2_feld
+
+ml2_feld["cursor"] = 4
+setze ml2_lr_ok auf uim_mock_taste(ml2_root, "Left", wahr, 0) and ml2_feld["cursor"] == 3
+setze ml2_lr_ok auf ml2_lr_ok and uim_mock_taste(ml2_root, "Left", wahr, 0) and ml2_feld["cursor"] == 2
+setze ml2_lr_ok auf ml2_lr_ok and uim_mock_taste(ml2_root, "Left", wahr, 0) and ml2_feld["cursor"] == 0
+setze ml2_lr_ok auf ml2_lr_ok and uim_mock_taste(ml2_root, "Right", wahr, 0) and ml2_feld["cursor"] == 2
+setze ml2_lr_ok auf ml2_lr_ok and uim_mock_taste(ml2_root, "Right", wahr, 0) and ml2_feld["cursor"] == 3
+setze ml2_lr_ok auf ml2_lr_ok and uim_mock_taste(ml2_root, "Right", wahr, 0) and ml2_feld["cursor"] == 4
+zeige "ML2-LR-UTF8-LF " + text(ml2_lr_ok)
+
+ml2_feld["cursor"] = 5
+setze ml2_home_end_ok auf uim_mock_taste(ml2_root, "Home", wahr, 0) and ml2_feld["cursor"] == 4 and ml2_feld["vertikal_spalte"] == 0 - 1
+setze ml2_home_end_ok auf ml2_home_end_ok and uim_mock_taste(ml2_root, "End", wahr, 0) and ml2_feld["cursor"] == 5
+ml2_feld["cursor"] = 2
+setze ml2_home_end_ok auf ml2_home_end_ok and uim_mock_taste(ml2_root, "Home", wahr, 0) and ml2_feld["cursor"] == 0
+setze ml2_home_end_ok auf ml2_home_end_ok and uim_mock_taste(ml2_root, "End", wahr, 0) and ml2_feld["cursor"] == 3
+zeige "ML2-HOME-END " + text(ml2_home_end_ok)
+
+ml2_feld["cursor"] = 3
+ml2_feld["vertikal_spalte"] = 0 - 1
+setze ml2_vert_ok auf uim_mock_taste(ml2_root, "Down", wahr, 0) and ml2_feld["cursor"] == 5 and ml2_feld["vertikal_spalte"] == 2
+setze ml2_vert_ok auf ml2_vert_ok and uim_mock_taste(ml2_root, "Down", wahr, 0) and ml2_feld["cursor"] == 9 and ml2_feld["vertikal_spalte"] == 2
+setze ml2_vert_ok auf ml2_vert_ok and uim_mock_taste(ml2_root, "Down", wahr, 0) and ml2_feld["cursor"] == 12 and ml2_feld["vertikal_spalte"] == 2
+setze ml2_vert_ok auf ml2_vert_ok and uim_mock_taste(ml2_root, "Up", wahr, 0) and ml2_feld["cursor"] == 9
+ml2_feld["cursor"] = 3
+ml2_feld["vertikal_spalte"] = 0 - 1
+setze ml2_vert_ok auf ml2_vert_ok and uim_mock_taste(ml2_root, "Up", wahr, 0) and ml2_feld["cursor"] == 3
+ml2_feld["cursor"] = 12
+ml2_feld["vertikal_spalte"] = 0 - 1
+setze ml2_vert_ok auf ml2_vert_ok and uim_mock_taste(ml2_root, "Down", wahr, 0) and ml2_feld["cursor"] == 12
+zeige "ML2-VERTIKAL " + text(ml2_vert_ok)
+
+setze ml2_silent_ok auf ml2_feld["text"] == ml2_text and S["ml2_eingabe"] == 0 and S["ml2_wechsel"] == 0 and länge(ml2_feld["undo_stapel"]) == 0
+zeige "ML2-NAV-SILENT " + text(ml2_silent_ok)
+
+ml2_feld["cursor"] = 3
+ml2_feld["vertikal_spalte"] = 0 - 1
+uim_mock_taste(ml2_root, "Down", wahr, 0)
+setze ml2_horizontal_reset auf ml2_feld["vertikal_spalte"] == 2 and uim_mock_taste(ml2_root, "Left", wahr, 0) and ml2_feld["vertikal_spalte"] == 0 - 1
+ml2_feld["cursor"] = 4
+ml2_feld["vertikal_spalte"] = 2
+uim_mock_taste(ml2_root, "Z", wahr, 0)
+setze ml2_edit_reset auf ml2_feld["vertikal_spalte"] == 0 - 1 and S["ml2_eingabe"] == 1 and S["ml2_wechsel"] == 1
+zeige "ML2-PREF-RESET " + text(ml2_horizontal_reset) + "/" + text(ml2_edit_reset)
+
+# --- W6-MULTILINE/BATCH3: harte LF-Zeilen, Cursor und Clip ---
+setze ml3_root auf uim_mock_wurzel(360, 180)
+setze ml3_feld auf uim_textarea(10, 10, 220, 100, "A\n\nB\n", nichts)
+uim_hinzu(ml3_root, ml3_feld)
+ml3_root["fokus"] = ml3_feld
+ml3_feld["cursor"] = länge(bytes_zu_liste(ml3_feld["text"]))
+uim_mock_zeichne(ml3_root)
+setze ml3_zh auf _uim_zeilenhoehe(ml3_root)
+setze ml3_y_a auf 0 - 1
+setze ml3_y_leer auf 0 - 1
+setze ml3_y_b auf 0 - 1
+setze ml3_y_ende auf 0 - 1
+setze ml3_leer_nr auf 0
+setze ml3_clip_tiefe auf 0
+setze ml3_clip_setzen auf 0
+setze ml3_clip_loeschen auf 0
+setze ml3_clip_grenzen auf wahr
+setze ml3_im_clip auf wahr
+setze ml3_caret_ok auf falsch
+für ml3_befehl in uim_mock_befehle(ml3_root):
+    wenn ml3_befehl["op"] == "clip_setze":
+        setze ml3_clip_tiefe auf ml3_clip_tiefe + 1
+        setze ml3_clip_setzen auf ml3_clip_setzen + 1
+        setze ml3_clip_args auf ml3_befehl["args"]
+        wenn ml3_clip_args[0] < ml3_feld["x"] oder ml3_clip_args[1] < ml3_feld["y"] oder ml3_clip_args[0] + ml3_clip_args[2] > ml3_feld["x"] + ml3_feld["b"] oder ml3_clip_args[1] + ml3_clip_args[3] > ml3_feld["y"] + ml3_feld["h"]:
+            setze ml3_clip_grenzen auf falsch
+    wenn ml3_befehl["op"] == "text":
+        wenn ml3_clip_tiefe != 1:
+            setze ml3_im_clip auf falsch
+        wenn ml3_befehl["args"][2] == "A":
+            setze ml3_y_a auf ml3_befehl["args"][1]
+        sonst wenn ml3_befehl["args"][2] == "B":
+            setze ml3_y_b auf ml3_befehl["args"][1]
+        sonst wenn ml3_befehl["args"][2] == "":
+            setze ml3_leer_nr auf ml3_leer_nr + 1
+            wenn ml3_leer_nr == 1:
+                setze ml3_y_leer auf ml3_befehl["args"][1]
+            sonst wenn ml3_leer_nr == 2:
+                setze ml3_y_ende auf ml3_befehl["args"][1]
+    wenn ml3_befehl["op"] == "linie":
+        wenn ml3_clip_tiefe != 1:
+            setze ml3_im_clip auf falsch
+        wenn ml3_befehl["args"][0] == ml3_feld["x"] + 7 und ml3_befehl["args"][1] == ml3_feld["y"] + 3 + 3 * ml3_zh:
+            setze ml3_caret_ok auf wahr
+    wenn ml3_befehl["op"] == "clip_loesche":
+        setze ml3_clip_tiefe auf ml3_clip_tiefe - 1
+        setze ml3_clip_loeschen auf ml3_clip_loeschen + 1
+setze ml3_zeilen_ok auf ml3_y_a == ml3_feld["y"] + 4 and ml3_y_leer == ml3_y_a + ml3_zh and ml3_y_b == ml3_y_a + 2 * ml3_zh and ml3_y_ende == ml3_y_a + 3 * ml3_zh
+setze ml3_clip_ok auf ml3_clip_setzen == 1 and ml3_clip_loeschen == 1 and ml3_clip_tiefe == 0 and ml3_im_clip and ml3_clip_grenzen
+zeige "ML3-LINES " + text(ml3_zeilen_ok) + "/" + text(ml3_leer_nr == 2)
+zeige "ML3-CARET-TRAIL " + text(ml3_caret_ok)
+zeige "ML3-CLIP " + text(ml3_clip_ok)
+
+# Echter Surface-Pfad: Text muss bei vertikal und horizontal kreuzender
+# Glyphe ausschließlich innerhalb des aktiven halb-offenen Clips landen.
+setze ml3_surface auf surface_new(64, 40)
+setze ml3_surface_clear auf surface_clear(ml3_surface, 0, 0, 0, 0)
+setze ml3_surface_push auf surface_clip_push(ml3_surface, 12, 8, 12, 10)
+setze ml3_surface_text auf surface_text(ml3_surface, 4, 2, 1, "MMMMMMMM", 255, 255, 255, 255)
+setze ml3_surface_innen auf falsch
+setze ml3_surface_aussen_leer auf wahr
+setze ml3_sy auf 0
+solange ml3_sy < 40:
+    setze ml3_sx auf 0
+    solange ml3_sx < 64:
+        setze ml3_pixel auf surface_read_pixel(ml3_surface, ml3_sx, ml3_sy)
+        wenn ml3_pixel["alpha"] > 0:
+            wenn ml3_sx >= 12 und ml3_sx < 24 und ml3_sy >= 8 und ml3_sy < 18:
+                setze ml3_surface_innen auf wahr
+            sonst:
+                setze ml3_surface_aussen_leer auf falsch
+        setze ml3_sx auf ml3_sx + 1
+    setze ml3_sy auf ml3_sy + 1
+setze ml3_surface_pop auf surface_clip_pop(ml3_surface)
+zeige "ML3-SURFACE-CLIP " + text(ml3_surface_clear and ml3_surface_push and ml3_surface_text and ml3_surface_pop and ml3_surface_innen and ml3_surface_aussen_leer)
+
+setze ml3_u_root auf uim_mock_wurzel(360, 180)
+setze ml3_u_feld auf uim_textarea(10, 10, 220, 100, "äb\nΩx", nichts)
+uim_hinzu(ml3_u_root, ml3_u_feld)
+ml3_u_root["fokus"] = ml3_u_feld
+ml3_u_feld["cursor"] = 6
+uim_mock_zeichne(ml3_u_root)
+setze ml3_u_y auf 0 - 1
+setze ml3_u_caret auf falsch
+für ml3_u_befehl in uim_mock_befehle(ml3_u_root):
+    wenn ml3_u_befehl["op"] == "text" und ml3_u_befehl["args"][2] == "Ωx":
+        setze ml3_u_y auf ml3_u_befehl["args"][1]
+    wenn ml3_u_befehl["op"] == "linie" und ml3_u_befehl["args"][0] == ml3_u_feld["x"] + 7 + länge("Ω") * 8:
+        setze ml3_u_caret auf ml3_u_befehl["args"][1] == ml3_u_y - 1 and ml3_u_befehl["args"][3] == ml3_u_y + ml3_u_root["theme"]["schrift"] + 1
+zeige "ML3-CARET-UTF8 " + text(ml3_u_y == ml3_u_feld["y"] + 4 + ml3_zh) + "/" + text(ml3_u_caret)
+
+# --- W6-MULTILINE/BATCH4: gemeinsamer Viewport, Radziel und Caret-Auto-Scroll ---
+setze ml4_text auf "0\n1\n2\n3\n4\n5\n6\n7\n8\n9"
+setze ml4_root auf uim_mock_wurzel(340, 180)
+setze ml4_aussen auf uim_scroll(10, 10, 260, 120, 400)
+setze ml4_unten auf uim_textarea(20, 20, 180, 50, ml4_text, nichts)
+setze ml4_oben auf uim_textarea(20, 20, 180, 50, ml4_text, nichts)
+uim_z_index_setze(ml4_oben, 10)
+uim_hinzu(ml4_aussen, ml4_unten)
+uim_hinzu(ml4_aussen, ml4_oben)
+uim_hinzu(ml4_root, ml4_aussen)
+uim_mock_zeichne(ml4_root)
+setze ml4_max auf _uim_scroll_max(ml4_root, ml4_oben)
+ml4_root["backend_zustand"]["ungueltig"] = falsch
+setze ml4_rad_ret auf uim_mock_rad(ml4_root, 40, 40, 1)
+setze ml4_top_ok auf ml4_rad_ret and ml4_oben["scroll_y"] > 0 and ml4_unten["scroll_y"] == 0 and ml4_aussen["scroll_y"] == 0 and ml4_root["backend_zustand"]["ungueltig"]
+zeige "ML4-TOP-WHEEL " + text(ml4_top_ok) + "/" + text(ml4_max > 0)
+
+ml4_oben["scroll_y"] = 9999
+_uim_scroll_klemme_rek(ml4_root, ml4_root["wurzel"]["kinder"])
+setze ml4_max_klemme auf ml4_oben["scroll_y"] == ml4_max
+setze ml4_max_nach auf ml4_oben["scroll_y"]
+ml4_oben["scroll_y"] = 0 - 10
+_uim_scroll_klemme_rek(ml4_root, ml4_root["wurzel"]["kinder"])
+setze ml4_min_klemme auf ml4_oben["scroll_y"] == 0
+zeige "ML4-CLAMP " + text(ml4_min_klemme) + "/" + text(ml4_max_klemme)
+
+ml4_root["backend_zustand"]["ungueltig"] = falsch
+setze ml4_outer_ret auf uim_mock_rad(ml4_root, 250, 115, 1)
+setze ml4_nested_ok auf ml4_outer_ret and ml4_aussen["scroll_y"] > 0 and ml4_oben["scroll_y"] == 0 and ml4_unten["scroll_y"] == 0 and ml4_root["backend_zustand"]["ungueltig"]
+zeige "ML4-NESTED " + text(ml4_nested_ok)
+
+setze ml4_c_root auf uim_mock_wurzel(260, 120)
+setze ml4_c_feld auf uim_textarea(10, 10, 180, 50, ml4_text, nichts)
+uim_hinzu(ml4_c_root, ml4_c_feld)
+ml4_c_root["fokus"] = ml4_c_feld
+ml4_c_feld["cursor"] = länge(bytes_zu_liste(ml4_text))
+ml4_c_root["backend_zustand"]["ungueltig"] = falsch
+setze ml4_end_ret auf uim_mock_taste(ml4_c_root, "End", wahr, 0)
+setze ml4_end_ok auf ml4_end_ret and ml4_c_feld["scroll_y"] == _uim_scroll_max(ml4_c_root, ml4_c_feld) and ml4_c_root["backend_zustand"]["ungueltig"]
+uim_mock_leeren(ml4_c_root)
+uim_mock_zeichne(ml4_c_root)
+setze ml4_caret_vertikal auf falsch
+für ml4_c_befehl in uim_mock_befehle(ml4_c_root):
+    wenn ml4_c_befehl["op"] == "linie" and ml4_c_befehl["args"][0] == ml4_c_befehl["args"][2] and ml4_c_befehl["args"][1] >= ml4_c_feld["y"] + 3 and ml4_c_befehl["args"][3] <= ml4_c_feld["y"] + ml4_c_feld["h"] - 3:
+        setze ml4_caret_vertikal auf wahr
+ml4_c_feld["cursor"] = 0
+setze ml4_home_ret auf uim_mock_taste(ml4_c_root, "Home", wahr, 0)
+setze ml4_home_ok auf ml4_home_ret and ml4_c_feld["scroll_y"] == 0
+zeige "ML4-CARET-SCROLL " + text(ml4_end_ok) + "/" + text(ml4_caret_vertikal) + "/" + text(ml4_home_ok)
+
+setze ml4_grow_root auf uim_mock_wurzel(260, 120)
+setze ml4_grow_feld auf uim_textarea(10, 10, 180, 50, "", nichts)
+uim_hinzu(ml4_grow_root, ml4_grow_feld)
+ml4_grow_root["fokus"] = ml4_grow_feld
+setze ml4_grow_ret auf uim_mock_taste(ml4_grow_root, "A", wahr, 0)
+setze ml4_grow_ret auf uim_mock_taste(ml4_grow_root, "Return", wahr, 0) and ml4_grow_ret
+setze ml4_grow_ret auf uim_mock_taste(ml4_grow_root, "B", wahr, 0) and ml4_grow_ret
+setze ml4_grow_ret auf uim_mock_taste(ml4_grow_root, "Return", wahr, 0) and ml4_grow_ret
+setze ml4_grow_ret auf uim_mock_taste(ml4_grow_root, "C", wahr, 0) and ml4_grow_ret
+setze ml4_grow_ret auf uim_mock_taste(ml4_grow_root, "Return", wahr, 0) and ml4_grow_ret
+setze ml4_grow_ret auf uim_mock_taste(ml4_grow_root, "D", wahr, 0) and ml4_grow_ret
+setze ml4_grow_ret auf uim_mock_taste(ml4_grow_root, "Return", wahr, 0) and ml4_grow_ret
+setze ml4_grow_ret auf uim_mock_taste(ml4_grow_root, "E", wahr, 0) and ml4_grow_ret
+setze ml4_grow_text_ok auf ml4_grow_feld["text"] == "A\nB\nC\nD\nE"
+setze ml4_grow_scroll_ok auf ml4_grow_feld["scroll_y"] > 0 and ml4_grow_feld["scroll_y"] == _uim_scroll_max(ml4_grow_root, ml4_grow_feld)
+uim_mock_leeren(ml4_grow_root)
+uim_mock_zeichne(ml4_grow_root)
+setze ml4_grow_caret_ok auf falsch
+für ml4_grow_befehl in uim_mock_befehle(ml4_grow_root):
+    wenn ml4_grow_befehl["op"] == "linie" and ml4_grow_befehl["args"][0] == ml4_grow_befehl["args"][2] and ml4_grow_befehl["args"][1] >= ml4_grow_feld["y"] + 3 and ml4_grow_befehl["args"][3] <= ml4_grow_feld["y"] + ml4_grow_feld["h"] - 3:
+        setze ml4_grow_caret_ok auf wahr
+zeige "ML4-INPUT-GROW " + text(ml4_grow_ret) + "/" + text(ml4_grow_text_ok) + "/" + text(ml4_grow_scroll_ok) + "/" + text(ml4_grow_caret_ok)
+
+# --- W6-MULTILINE/BATCH6: Builder, Aliasse und Einzeiler-Fremdschutz ---
+setze ml6_b_text auf "A\n\nÄΩ\n"
+setze ml6_b_textarea auf uim_baue("textarea", {"wert": ml6_b_text})
+setze ml6_b_multiline auf uim_baue("multiline", {"wert": ml6_b_text})
+setze ml6_b_deutsch auf uim_baue("mehrzeilenfeld", {"wert": ml6_b_text})
+setze ml6_builder_typ_ok auf ml6_b_textarea["typ"] == "multiline" and ml6_b_multiline["typ"] == "multiline" and ml6_b_deutsch["typ"] == "multiline" and ml6_b_textarea["mehrzeilig"] and ml6_b_multiline["mehrzeilig"] and ml6_b_deutsch["mehrzeilig"]
+setze ml6_builder_groesse_ok auf ml6_b_textarea["b"] == 240 and ml6_b_textarea["h"] == 100 and ml6_b_multiline["b"] == 240 and ml6_b_multiline["h"] == 100 and ml6_b_deutsch["b"] == 240 and ml6_b_deutsch["h"] == 100
+setze ml6_builder_text_ok auf ml6_b_textarea["text"] == ml6_b_text and ml6_b_multiline["text"] == ml6_b_text and ml6_b_deutsch["text"] == ml6_b_text and ml6_b_textarea["cursor"] == länge(bytes_zu_liste(ml6_b_text)) and ml6_b_multiline["scroll_y"] == 0 and ml6_b_deutsch["inhalt_hoehe"] == 0
+zeige "ML6-BUILDER " + text(ml6_builder_typ_ok) + "/" + text(ml6_builder_groesse_ok) + "/" + text(ml6_builder_text_ok)
+
+setze ml6_alias_root auf uim_mock_wurzel(420, 220)
+setze ml6_alias_en auf uim_multiline(10, 10, 180, 70, "EN", nichts)
+setze ml6_alias_de auf uim_mehrzeilenfeld(10, 100, 180, 70, "DE", nichts)
+uim_hinzu(ml6_alias_root, ml6_alias_en)
+uim_hinzu(ml6_alias_root, ml6_alias_de)
+ml6_alias_root["fokus"] = ml6_alias_en
+ml6_alias_en["cursor"] = 2
+setze ml6_alias_en_ret auf uim_mock_taste(ml6_alias_root, "Return", wahr, 0)
+ml6_alias_root["fokus"] = ml6_alias_de
+ml6_alias_de["cursor"] = 2
+setze ml6_alias_de_ret auf uim_mock_taste(ml6_alias_root, "Return", wahr, 0)
+setze ml6_alias_typ_ok auf ml6_alias_en["typ"] == "multiline" and ml6_alias_de["typ"] == "multiline" and ml6_alias_en["mehrzeilig"] and ml6_alias_de["mehrzeilig"]
+setze ml6_alias_lf_ok auf ml6_alias_en_ret and ml6_alias_de_ret and ml6_alias_en["text"] == "EN\n" and ml6_alias_de["text"] == "DE\n"
+zeige "ML6-ALIASE " + text(ml6_alias_typ_ok) + "/" + text(ml6_alias_lf_ok)
+
+S["ml6_eingabe"] = 0
+S["ml6_wechsel"] = 0
+funktion t_ml6_eingabe(w, wert):
+    S["ml6_eingabe"] = S["ml6_eingabe"] + 1
+    gib_zurück wahr
+
+funktion t_ml6_wechsel(w, wert):
+    S["ml6_wechsel"] = S["ml6_wechsel"] + 1
+    gib_zurück wahr
+
+funktion t_ml6_einzeiler_probe(feld):
+    S["ml6_eingabe"] = 0
+    S["ml6_wechsel"] = 0
+    feld["text"] = "X"
+    feld["cursor"] = 1
+    feld["eingabe_zustand"] = "filled"
+    feld["undo_stapel"] = []
+    uim_event_setze(feld, "eingabe", t_ml6_eingabe)
+    feld["on_wechsel"] = t_ml6_wechsel
+    setze ml6_e_root auf uim_mock_wurzel(260, 100)
+    uim_hinzu(ml6_e_root, feld)
+    ml6_e_root["fokus"] = feld
+    uim_mock_zeichne(ml6_e_root)
+    setze ml6_e_ret auf uim_mock_taste(ml6_e_root, "Return", wahr, 0)
+    gib_zurück ml6_e_ret and ml6_e_root["backend_zustand"]["ungueltig"] and feld["text"] == "X" and feld["cursor"] == 1 and länge(feld["undo_stapel"]) == 0 and S["ml6_eingabe"] == 0 and S["ml6_wechsel"] == 0
+
+zeige "ML6-EINZEILER " + text(t_ml6_einzeiler_probe(uim_textfeld(0, 0, 180, 26, "X", t_ml6_wechsel))) + "/" + text(t_ml6_einzeiler_probe(uim_searchbox(0, 0, 180, 26, "", t_ml6_wechsel))) + "/" + text(t_ml6_einzeiler_probe(uim_numberbox(0, 0, 180, 26, 1, 0, 9, t_ml6_wechsel))) + "/" + text(t_ml6_einzeiler_probe(uim_passwordbox(0, 0, 180, 26, "X", t_ml6_wechsel))) + "/" + text(t_ml6_einzeiler_probe(uim_autocomplete(0, 0, 180, 26, "X", ["X"], t_ml6_wechsel)))

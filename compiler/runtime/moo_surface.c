@@ -298,6 +298,8 @@ MooValue moo_surface_text(MooValue value, MooValue x, MooValue y,
     int32_t len = MV_STR(text)->length;
     int32_t W = surface->core.width;
     int32_t H = surface->core.height;
+    if (!moo_surface_core_valid(&surface->core)) return moo_bool(false);
+    MooSurfaceClip clip = surface->core.clips[surface->core.clip_depth - 1u];
     int64_t pen_x = ix;
     int64_t pen_y = iy;
     int64_t line_adv = (int64_t)(MOO_FONT_AA_H + 1) * isk;
@@ -341,10 +343,12 @@ MooValue moo_surface_text(MooValue value, MooValue x, MooValue y,
                 uint32_t ia = 255u - aa;
                 for (int32_t sy = 0; sy < isk; ++sy) {
                     int64_t py = pen_y + (int64_t)gy * isk + sy;
-                    if (py < 0 || py >= H) continue;
+                    if (py < 0 || py >= H ||
+                        py < clip.y0 || py >= clip.y1) continue;
                     for (int32_t sx = 0; sx < isk; ++sx) {
                         int64_t px = pen_x + (int64_t)gx * isk + sx;
-                        if (px < 0 || px >= W) continue;
+                        if (px < 0 || px >= W ||
+                            px < clip.x0 || px >= clip.x1) continue;
                         uint8_t* dp = surface->core.pixels +
                                       ((size_t)py * (size_t)W + (size_t)px) * 4u;
                         dp[0] = (uint8_t)(((uint32_t)color.r * aa + (uint32_t)dp[0] * ia + 127u) / 255u);
