@@ -4570,6 +4570,15 @@ impl<'ctx> CodeGen<'ctx> {
                             "surface_text",
                         );
                     }
+                    "surface_text_stil" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_text_stil,
+                            args,
+                            10,
+                            name,
+                            "surface_text_stil",
+                        );
+                    }
                     "surface_text_breite" => {
                         return self.call_rt_borrowed_builtin(
                             self.rt.moo_surface_text_breite,
@@ -4577,6 +4586,24 @@ impl<'ctx> CodeGen<'ctx> {
                             2,
                             name,
                             "surface_text_breite",
+                        );
+                    }
+                    "surface_text_breite_stil" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_text_breite_stil,
+                            args,
+                            3,
+                            name,
+                            "surface_text_breite_stil",
+                        );
+                    }
+                    "surface_text_glyphen_status" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_text_glyphen_status,
+                            args,
+                            2,
+                            name,
+                            "surface_text_glyphen_status",
                         );
                     }
                     "surface_hash" => {

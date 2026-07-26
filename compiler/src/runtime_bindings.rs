@@ -458,7 +458,10 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_surface_blit_frame: FunctionValue<'ctx>,
     pub moo_frame_lade_bmp: FunctionValue<'ctx>,
     pub moo_surface_text: FunctionValue<'ctx>,
+    pub moo_surface_text_stil: FunctionValue<'ctx>,
     pub moo_surface_text_breite: FunctionValue<'ctx>,
+    pub moo_surface_text_breite_stil: FunctionValue<'ctx>,
+    pub moo_surface_text_glyphen_status: FunctionValue<'ctx>,
     pub moo_surface_hash: FunctionValue<'ctx>,
     pub moo_surface_snapshot_to_frame: FunctionValue<'ctx>,
     // Audio-Feature-Extraktion (KI-MULTI-A1, SDL-frei, kein Autograd).
@@ -1346,7 +1349,10 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_surface_blit_frame: decl_mv_mv!("moo_surface_blit_frame", &[mv, mv, mv, mv]),
             moo_frame_lade_bmp: decl_mv_mv!("moo_frame_lade_bmp", mv1),
             moo_surface_text: decl_mv_mv!("moo_surface_text", mv9),
+            moo_surface_text_stil: decl_mv_mv!("moo_surface_text_stil", mv10),
             moo_surface_text_breite: decl_mv_mv!("moo_surface_text_breite", mv2),
+            moo_surface_text_breite_stil: decl_mv_mv!("moo_surface_text_breite_stil", mv3),
+            moo_surface_text_glyphen_status: decl_mv_mv!("moo_surface_text_glyphen_status", mv2),
             moo_surface_hash: decl_mv_mv!("moo_surface_hash", mv1),
             moo_surface_snapshot_to_frame: decl_mv_mv!("moo_surface_snapshot_to_frame", mv1),
             // Audio-Features (KI-MULTI-A1): FFT/Betrag/WAV = mv1, STFT = mv3.
