@@ -245,7 +245,7 @@ uim_textfeld_setze(k, w6_multiline_demo, w6_multiline_text)
 k["fokus"] = w6_multiline_demo
 
 # W5G Terminal + Markdown Viewer.
-setze w5g_demo_inhalt auf ["# MOO Markdown", "- retained-mode", "- kein Toolkit", "CODE: uim_markdown()", "- Scroll mit Pfeiltasten"].verbinden("\n")
+setze w5g_demo_inhalt auf ["# MOO Markdown", "", "Retained **stark** und *sanft* mit [Doku](lokal).", "", "- retained-mode", "- kein Toolkit", "", "```", "uim_markdown()", "```", "", "> Statischer Viewer", "", "---"].verbinden("\n")
 uim_hinzu(k, uim_terminal(584, 812, 250, 130, "MOO shell bereit", on_w5g_befehl))
 uim_hinzu(k, uim_markdown(850, 812, 222, 130, w5g_demo_inhalt))
 

@@ -1,4 +1,5 @@
 importiere ui_moo_kern
+importiere ui_moo_surface
 
 setze S auf {}
 S["tf_wechsel"] = 0
@@ -518,11 +519,468 @@ S["w5g_rufe"] = 0
 
 setze w5g auf uim_mock_wurzel(420, 220)
 setze term5g auf uim_terminal(10, 10, 180, 90, "MOO shell", t_w5g)
-setze md5g_inhalt auf ["# Titel", "CODE: test()", "- Punkt", "- Zweiter Punkt", "- Dritter Punkt", "- Vierter Punkt", "- Fuenfter Punkt", "- Sechster Punkt"].verbinden("\n")
+setze md5g_inhalt auf ["# Titel", "```", "test()", "```", "- Punkt", "- Zweiter Punkt", "- Dritter Punkt", "- Vierter Punkt", "- Fuenfter Punkt", "- Sechster Punkt"].verbinden("\n")
 setze md5g auf uim_markdown(210, 10, 180, 60, md5g_inhalt)
 uim_hinzu(w5g, term5g)
 uim_hinzu(w5g, md5g)
 zeige "W5G-FACTORY " + text(term5g["typ"] == "terminal") + "/" + text(md5g["typ"] == "markdown")
+
+# W6-MARKDOWN Batch 1: exakte LF-Segmente und reine Blockgrammatik.
+setze md1_l0 auf _uim_markdown_zeilen_exakt("")
+setze md1_l1 auf _uim_markdown_zeilen_exakt("\n")
+setze md1_l2 auf _uim_markdown_zeilen_exakt("A\n")
+setze md1_l3 auf _uim_markdown_zeilen_exakt("\nA")
+setze md1_l4 auf _uim_markdown_zeilen_exakt("A\n\nB\n")
+setze md1_lcr auf _uim_markdown_zeilen_exakt("A\r\n")
+setze md1_lf_ok auf länge(md1_l0) == 1 and md1_l0[0] == "" and länge(md1_l1) == 2 and md1_l1[0] == "" and md1_l1[1] == "" and länge(md1_l2) == 2 and md1_l2[0] == "A" and md1_l2[1] == "" and länge(md1_l3) == 2 and md1_l3[0] == "" and md1_l3[1] == "A" and länge(md1_l4) == 4 and md1_l4[0] == "A" and md1_l4[1] == "" and md1_l4[2] == "B" and md1_l4[3] == "" and md1_lcr[0] == "A\r" and md1_lcr[1] == ""
+zeige "W5G-MD1-LF " + text(md1_lf_ok)
+
+setze md1_marker_src auf ["# H1", "## H2", "### H3", "#ohne", "# ", "#### x", "Text # x", "", "Absatz eins", "Absatz zwei"].verbinden("\n")
+setze md1_marker auf _uim_markdown_bloecke_parse(md1_marker_src)
+setze md1_marker_ok auf länge(md1_marker) == 5 and md1_marker[0]["typ"] == "heading" and md1_marker[0]["ebene"] == 1 and md1_marker[0]["text"] == "H1" and md1_marker[1]["ebene"] == 2 and md1_marker[2]["ebene"] == 3 and md1_marker[3]["typ"] == "paragraph" and md1_marker[3]["text"] == "#ohne #  #### x Text # x" and md1_marker[4]["text"] == "Absatz eins Absatz zwei"
+zeige "W5G-MD1-MARKER " + text(md1_marker_ok)
+
+setze md1_list_src auf ["- A", "* B", "1. C", "999999999999999999. D", "> Z1", "> ", "  Fort"].verbinden("\n")
+setze md1_list auf _uim_markdown_bloecke_parse(md1_list_src)
+setze md1_list_ok auf länge(md1_list) == 4 and md1_list[0]["typ"] == "list" and md1_list[0]["geordnet"] == falsch and länge(md1_list[0]["eintraege"]) == 2 and md1_list[0]["eintraege"][0]["marker"] == "-" and md1_list[0]["eintraege"][1]["marker"] == "*" and md1_list[1]["geordnet"] and md1_list[1]["eintraege"][1]["marker"] == "999999999999999999." and md1_list[2]["typ"] == "quote" and md1_list[2]["text"] == "Z1\n" and md1_list[3]["typ"] == "paragraph" and md1_list[3]["text"] == "  Fort"
+zeige "W5G-MD1-LIST-QUOTE " + text(md1_list_ok)
+
+setze md1_fence auf _uim_markdown_bloecke_parse(["```", "A", "", "B", "```"].verbinden("\n"))
+setze md1_unclosed auf _uim_markdown_bloecke_parse(["```", "X", ""].verbinden("\n"))
+setze md1_fence_ok auf länge(md1_fence) == 1 and md1_fence[0]["typ"] == "code" and md1_fence[0]["geschlossen"] and md1_fence[0]["text"] == "A\n\nB\n" and länge(md1_fence[0]["zeilen"]) == 4 and md1_fence[0]["zeilen"][1] == "" and md1_fence[0]["zeilen"][3] == "" and md1_unclosed[0]["geschlossen"] == falsch and md1_unclosed[0]["text"] == "X\n"
+zeige "W5G-MD1-FENCE " + text(md1_fence_ok)
+
+setze md1_rule auf _uim_markdown_bloecke_parse(["---", "***", "___", "Text ``` innen", "   "].verbinden("\n"))
+setze md1_rule_ok auf länge(md1_rule) == 2 and md1_rule[0]["typ"] == "rule" and md1_rule[1]["typ"] == "paragraph" and md1_rule[1]["text"] == "*** ___ Text ``` innen"
+zeige "W5G-MD1-RULE " + text(md1_rule_ok)
+
+# W6-MARKDOWN Batch 2: verlustloser Inline-AST-Scanner.
+setze md2_basis auf _uim_markdown_inline_parse("`c` **s** *e* [l](u)")
+setze md2_basis_ok auf länge(md2_basis) == 7 and md2_basis[0]["typ"] == "code" and md2_basis[0]["text"] == "c" and md2_basis[1]["typ"] == "raw" and md2_basis[2]["typ"] == "strong" and md2_basis[2]["text"] == "s" and md2_basis[4]["typ"] == "emphasis" and md2_basis[4]["text"] == "e" and md2_basis[6]["typ"] == "link" and md2_basis[6]["text"] == "l" and md2_basis[6]["ziel"] == "u"
+setze md2_code auf _uim_markdown_inline_parse("`**x** [y](z)`")
+setze md2_code_ok auf länge(md2_code) == 1 and md2_code[0]["typ"] == "code" and md2_code[0]["text"] == "**x** [y](z)"
+zeige "W5G-MD2-BASIS-CODE " + text(md2_basis_ok and md2_code_ok)
+
+setze md2_slash auf bytes_neu([92])
+setze md2_escape_quelle auf md2_slash + "`" + md2_slash + "*" + md2_slash + "[" + md2_slash + "]" + md2_slash + "(" + md2_slash + ")" + md2_slash + "!" + md2_slash + "#" + md2_slash + ">" + md2_slash + "." + md2_slash + "-" + md2_slash + md2_slash + md2_slash + "q"
+setze md2_escape auf _uim_markdown_inline_parse(md2_escape_quelle)
+setze md2_escape_soll auf "`*[]()!#>.-" + md2_slash + md2_slash + "q"
+setze md2_escape_ok auf länge(md2_escape) == 1 and md2_escape[0]["typ"] == "raw" and md2_escape[0]["text"] == md2_escape_soll
+zeige "W5G-MD2-ESCAPE " + text(md2_escape_ok)
+
+setze md2_bild auf _uim_markdown_inline_parse("![alt](ziel)")
+setze md2_bad1 auf _uim_markdown_inline_parse("[](ziel)")
+setze md2_bad2 auf _uim_markdown_inline_parse("[label]()")
+setze md2_raw_ok auf länge(md2_bild) == 1 and md2_bild[0]["typ"] == "raw" and md2_bild[0]["text"] == "![alt](ziel)" and länge(md2_bad1) == 1 and md2_bad1[0]["typ"] == "raw" and md2_bad1[0]["text"] == "[](ziel)" and länge(md2_bad2) == 1 and md2_bad2[0]["typ"] == "raw" and md2_bad2[0]["text"] == "[label]()"
+zeige "W5G-MD2-BILD-MALFORMED " + text(md2_raw_ok)
+
+setze md2_konflikte auf ["***x***", "**a *b**", "*a **b*", "**a*", "*a**", "[a [b](c)](d)"]
+setze md2_konflikt_ok auf wahr
+für md2_q in md2_konflikte:
+    setze md2_s auf _uim_markdown_inline_parse(md2_q)
+    setze md2_konflikt_ok auf md2_konflikt_ok and länge(md2_s) == 1 and md2_s[0]["typ"] == "raw" and md2_s[0]["text"] == md2_q
+zeige "W5G-MD2-KONFLIKT " + text(md2_konflikt_ok)
+
+setze md2_mix1 auf _uim_markdown_inline_parse("#### **x**")
+setze md2_mix2 auf _uim_markdown_inline_parse("<b>*x*</b>")
+setze md2_mix3 auf _uim_markdown_inline_parse("| [x](y) |")
+setze md2_mix_ok auf länge(md2_mix1) == 2 and md2_mix1[0]["typ"] == "raw" and md2_mix1[0]["text"] == "#### " and md2_mix1[1]["typ"] == "strong" and md2_mix1[1]["text"] == "x" and länge(md2_mix2) == 3 and md2_mix2[0]["text"] == "<b>" and md2_mix2[1]["typ"] == "emphasis" and md2_mix2[1]["text"] == "x" and md2_mix2[2]["text"] == "</b>" and länge(md2_mix3) == 3 and md2_mix3[0]["text"] == "| " and md2_mix3[1]["typ"] == "link" and md2_mix3[1]["text"] == "x" and md2_mix3[1]["ziel"] == "y" and md2_mix3[2]["text"] == " |"
+zeige "W5G-MD2-MISCH " + text(md2_mix_ok)
+
+setze md2_utf8_raw auf _uim_markdown_inline_parse("Äpfel Ω")
+setze md2_utf8_strong auf _uim_markdown_inline_parse("**Äpfel Ω**")
+setze md2_utf8_ok auf länge(md2_utf8_raw) == 1 and md2_utf8_raw[0]["typ"] == "raw" and md2_utf8_raw[0]["text"] == "Äpfel Ω" and länge(md2_utf8_strong) == 1 and md2_utf8_strong[0]["typ"] == "strong" and md2_utf8_strong[0]["text"] == "Äpfel Ω"
+zeige "W5G-MD2-UTF8 " + text(md2_utf8_ok)
+
+# W6-MARKDOWN Batch 3: Source-/Parse-Sync, API und Builder.
+setze md3_leer auf uim_markdown(0, 0, 120, 60, "")
+setze md3_init_ok auf md3_leer["markdown_parse_gueltig"] and md3_leer["markdown_parse_quelle"] == "" and länge(md3_leer["zeilen"]) == 1 and md3_leer["zeilen"][0] == "" and länge(md3_leer["markdown_bloecke"]) == 0 and md3_leer["markdown_layout_gueltig"] == falsch
+zeige "W5G-MD3-INIT " + text(md3_init_ok)
+
+setze md3_inline_quelle auf ["# **H**", "P *E*", "- [L](Z)", "> `C`"].verbinden("\n")
+setze md3_inline auf uim_markdown(0, 0, 120, 60, md3_inline_quelle)
+setze md3_builder auf uim_baue("markdown", {"x": 0, "y": 0, "b": 120, "h": 60, "inhalt": "## Builder"})
+setze md3_inline_ok auf länge(md3_inline["markdown_bloecke"]) == 4 and md3_inline["markdown_bloecke"][0]["spans"][0]["typ"] == "strong" and md3_inline["markdown_bloecke"][0]["spans"][0]["text"] == "H" and md3_inline["markdown_bloecke"][1]["spans"][1]["typ"] == "emphasis" and md3_inline["markdown_bloecke"][2]["eintraege"][0]["spans"][0]["typ"] == "link" and md3_inline["markdown_bloecke"][2]["eintraege"][0]["spans"][0]["ziel"] == "Z" and md3_inline["markdown_bloecke"][3]["span_zeilen"][0][0]["typ"] == "code"
+setze md3_builder_ok auf md3_builder != nichts and md3_builder["typ"] == "markdown" and uim_wert_hole(md3_builder) == "## Builder" and md3_builder["markdown_bloecke"][0]["ebene"] == 2
+zeige "W5G-MD3-CTOR-BUILDER " + text(md3_inline_ok and md3_builder_ok)
+
+S["w5g_rufe"] = 0
+md3_inline["on_wechsel"] = t_w5g
+md3_inline["markdown_layout"] = [{"typ": "stale"}]
+md3_inline["markdown_layout_gueltig"] = wahr
+md3_inline["markdown_layout_key"] = "stale"
+md3_inline["inhalt_hoehe"] = 77
+md3_inline["scroll_y"] = 9
+uim_mock_zeichne(w5g)
+setze md3_set1 auf uim_markdown_setze(w5g, md3_inline, "Text **Neu**\n")
+setze md3_set1_repaint auf w5g["backend_zustand"]["ungueltig"]
+setze md3_set1_ok auf md3_set1 and uim_wert_hole(md3_inline) == "Text **Neu**\n" and md3_inline["markdown_parse_quelle"] == "Text **Neu**\n" and länge(md3_inline["zeilen"]) == 2 and md3_inline["zeilen"][1] == "" and md3_inline["markdown_bloecke"][0]["spans"][1]["typ"] == "strong" and länge(md3_inline["markdown_layout"]) == 0 and md3_inline["markdown_layout_gueltig"] == falsch and md3_inline["markdown_layout_key"] == "" and md3_inline["inhalt_hoehe"] == 0 and md3_inline["scroll_y"] == 0 and S["w5g_rufe"] == 0
+setze md3_set2 auf uim_markdown_setze(w5g, md3_inline, "---")
+setze md3_set2_ok auf md3_set2 and länge(md3_inline["markdown_bloecke"]) == 1 and md3_inline["markdown_bloecke"][0]["typ"] == "rule" and länge(md3_inline["zeilen"]) == 1 and md3_inline["zeilen"][0] == "---" and S["w5g_rufe"] == 0
+zeige "W5G-MD3-SETTER " + text(md3_set1_ok and md3_set1_repaint and md3_set2_ok)
+
+setze md3_api auf uim_markdown(0, 0, 120, 60, "alt")
+md3_api["on_wechsel"] = t_w5g
+S["w5g_rufe"] = 0
+uim_mock_zeichne(w5g)
+setze md3_api_set auf uim_wert_setze(w5g, md3_api, "# API\r\n")
+setze md3_api_ok auf md3_api_set and w5g["backend_zustand"]["ungueltig"] and uim_wert_hole(md3_api) == "# API\r\n" and md3_api["markdown_parse_quelle"] == "# API\r\n" and länge(md3_api["zeilen"]) == 2 and md3_api["zeilen"][0] == "# API\r" and md3_api["zeilen"][1] == "" and md3_api["markdown_bloecke"][0]["typ"] == "heading" and md3_api["markdown_bloecke"][0]["ebene"] == 1 and md3_api["markdown_bloecke"][0]["text"] == "API\r" and S["w5g_rufe"] == 0
+zeige "W5G-MD3-WERT-API " + text(md3_api_ok)
+
+setze md3_drift auf uim_markdown(0, 0, 120, 60, "Alt")
+md3_drift["inhalt"] = "### Drift\n\nD\n"
+md3_drift["zeilen"] = ["STALE"]
+md3_drift["markdown_layout"] = [{"typ": "stale"}]
+md3_drift["markdown_layout_gueltig"] = wahr
+md3_drift["markdown_layout_key"] = "stale"
+md3_drift["inhalt_hoehe"] = 99
+setze md3_drift_max auf _uim_scroll_max(w5g, md3_drift)
+setze md3_drift_ok auf md3_drift["markdown_parse_quelle"] == "### Drift\n\nD\n" and länge(md3_drift["zeilen"]) == 4 and md3_drift["zeilen"][1] == "" and md3_drift["zeilen"][3] == "" and länge(md3_drift["markdown_bloecke"]) == 2 and md3_drift["markdown_bloecke"][0]["typ"] == "heading" and md3_drift["markdown_bloecke"][0]["ebene"] == 3 and md3_drift["markdown_bloecke"][1]["text"] == "D" and länge(md3_drift["markdown_layout"]) == 0 and md3_drift["markdown_layout_gueltig"] == falsch and md3_drift["inhalt_hoehe"] == 0
+zeige "W5G-MD3-DIRECT-DRIFT " + text(md3_drift_ok)
+
+# Review-Reparatur: Varianten statt Parserwissen ueber konkrete Testinhalte.
+setze md3_review_konflikte auf ["***y***", "**q *z**", "*q **z*", "**q*", "*q**", "[q [z](u)](v)", "***lang [label](ziel) ende***", "**viel laenger * innen `code` und text ende**", "*anfang ** [anders](weg) mitte und schluss*", "**a* raw **b**", "*a** raw *b*"]
+setze md3_review_konflikt_ok auf wahr
+für md3_review_q in md3_review_konflikte:
+    setze md3_review_s auf _uim_markdown_inline_parse(md3_review_q)
+    setze md3_review_konflikt_ok auf md3_review_konflikt_ok and länge(md3_review_s) == 1 and md3_review_s[0]["typ"] == "raw" and md3_review_s[0]["text"] == md3_review_q
+
+# Ein breiter Konfliktkonsum darf unabhaengige gueltige Syntax nicht schlucken.
+setze md3_review_pos1 auf _uim_markdown_inline_parse("**a** *b*")
+setze md3_review_pos2 auf _uim_markdown_inline_parse("*a* **b**")
+setze md3_review_pos3 auf _uim_markdown_inline_parse("**a** raw [l](z)")
+setze md3_review_positiv_ok auf länge(md3_review_pos1) == 3 and md3_review_pos1[0]["typ"] == "strong" and md3_review_pos1[1]["typ"] == "raw" and md3_review_pos1[2]["typ"] == "emphasis" and länge(md3_review_pos2) == 3 and md3_review_pos2[0]["typ"] == "emphasis" and md3_review_pos2[1]["typ"] == "raw" and md3_review_pos2[2]["typ"] == "strong" and länge(md3_review_pos3) == 3 and md3_review_pos3[0]["typ"] == "strong" and md3_review_pos3[1]["typ"] == "raw" and md3_review_pos3[1]["text"] == " raw " and md3_review_pos3[2]["typ"] == "link" and md3_review_pos3[2]["text"] == "l" and md3_review_pos3[2]["ziel"] == "z"
+zeige "W5G-MD3-REVIEW-CONFLICT " + text(md3_review_konflikt_ok and md3_review_positiv_ok)
+
+# Revision4: kaputte Absatzzeile raw, direkt folgende saubere Zeile semantisch.
+setze md3_review_folge auf uim_markdown(0, 0, 180, 80, ["**kaputt* [l](z)", "sauber **B** und *E*"].verbinden("\n"))
+setze md3_review_folge_b auf md3_review_folge["markdown_bloecke"][0]
+setze md3_review_folge_s auf md3_review_folge_b["spans"]
+setze md3_review_folge_ok auf md3_review_folge_b["typ"] == "paragraph" and länge(md3_review_folge_b["zeilen"]) == 2 and md3_review_folge_b["text"] == "**kaputt* [l](z) sauber **B** und *E*" and länge(md3_review_folge_s) == 4 and md3_review_folge_s[0]["typ"] == "raw" and md3_review_folge_s[0]["text"] == "**kaputt* [l](z) sauber " and md3_review_folge_s[1]["typ"] == "strong" and md3_review_folge_s[1]["text"] == "B" and md3_review_folge_s[2]["typ"] == "raw" and md3_review_folge_s[2]["text"] == " und " and md3_review_folge_s[3]["typ"] == "emphasis" and md3_review_folge_s[3]["text"] == "E"
+
+# Blockmarker bleiben trotz kaputter Betonung erhalten.
+setze md3_review_block_raw auf uim_markdown(0, 0, 180, 80, ["# **kopf*", "", "- *liste**", "", "> ***zitat***"].verbinden("\n"))
+setze md3_review_block_b auf md3_review_block_raw["markdown_bloecke"]
+setze md3_review_block_ok auf länge(md3_review_block_b) == 3 and md3_review_block_b[0]["typ"] == "heading" and länge(md3_review_block_b[0]["spans"]) == 1 and md3_review_block_b[0]["spans"][0]["typ"] == "raw" and md3_review_block_b[0]["spans"][0]["text"] == "**kopf*" and md3_review_block_b[1]["typ"] == "list" and md3_review_block_b[1]["eintraege"][0]["spans"][0]["typ"] == "raw" and md3_review_block_b[1]["eintraege"][0]["spans"][0]["text"] == "*liste**" and md3_review_block_b[2]["typ"] == "quote" and md3_review_block_b[2]["span_zeilen"][0][0]["typ"] == "raw" and md3_review_block_b[2]["span_zeilen"][0][0]["text"] == "***zitat***"
+zeige "W5G-MD3-REVIEW-LINE-FALLBACK " + text(md3_review_folge_ok and md3_review_block_ok)
+
+# I1: jede v1-Inlineart in Heading, Absatz, Liste und Zitat.
+setze md3_review_inline_text auf "`c` **s** *e* [l](u)"
+setze md3_review_i1 auf uim_markdown(0, 0, 160, 80, ["# " + md3_review_inline_text, "", md3_review_inline_text, "", "- " + md3_review_inline_text, "", "> " + md3_review_inline_text].verbinden("\n"))
+setze md3_review_h_spans auf md3_review_i1["markdown_bloecke"][0]["spans"]
+setze md3_review_p_spans auf md3_review_i1["markdown_bloecke"][1]["spans"]
+setze md3_review_l_spans auf md3_review_i1["markdown_bloecke"][2]["eintraege"][0]["spans"]
+setze md3_review_q_spans auf md3_review_i1["markdown_bloecke"][3]["span_zeilen"][0]
+setze md3_review_i1_ok auf länge(md3_review_i1["markdown_bloecke"]) == 4
+für md3_review_spans in [md3_review_h_spans, md3_review_p_spans, md3_review_l_spans, md3_review_q_spans]:
+    setze md3_review_i1_ok auf md3_review_i1_ok and länge(md3_review_spans) == 7 and md3_review_spans[0]["typ"] == "code" and md3_review_spans[0]["text"] == "c" and md3_review_spans[2]["typ"] == "strong" and md3_review_spans[2]["text"] == "s" and md3_review_spans[4]["typ"] == "emphasis" and md3_review_spans[4]["text"] == "e" and md3_review_spans[6]["typ"] == "link" and md3_review_spans[6]["text"] == "l" and md3_review_spans[6]["ziel"] == "u"
+
+# I4: leere Wrapper und leere Linkteile bleiben atomar und verlustlos raw.
+setze md3_review_leer_tokens auf ["``", "****", "**", "[](x)", "[x]()"]
+setze md3_review_i4_ok auf wahr
+für md3_review_leer in md3_review_leer_tokens:
+    setze md3_review_leer_spans auf _uim_markdown_inline_parse(md3_review_leer)
+    setze md3_review_i4_ok auf md3_review_i4_ok and länge(md3_review_leer_spans) == 1 and md3_review_leer_spans[0]["typ"] == "raw" and md3_review_leer_spans[0]["text"] == md3_review_leer
+zeige "W5G-MD3-REVIEW-I1-I4 " + text(md3_review_i1_ok and md3_review_i4_ok)
+
+# S1: Konstruktor, Builder und Setter liefern fuer dieselbe Quelle denselben semantischen AST.
+funktion md3_review_ast_ok(w):
+    setze b auf w["markdown_bloecke"]
+    gib_zurück länge(b) == 3 and b[0]["typ"] == "heading" and b[0]["ebene"] == 1 and länge(b[0]["spans"]) == 1 and b[0]["spans"][0]["typ"] == "strong" and b[0]["spans"][0]["text"] == "S" and b[1]["typ"] == "list" and länge(b[1]["eintraege"]) == 1 and b[1]["eintraege"][0]["spans"][0]["typ"] == "link" and b[1]["eintraege"][0]["spans"][0]["text"] == "L" and b[1]["eintraege"][0]["spans"][0]["ziel"] == "Z" and b[2]["typ"] == "code" and b[2]["geschlossen"] and b[2]["text"] == "C\n"
+
+setze md3_review_s1_quelle auf ["# **S**", "", "- [L](Z)", "", "```", "C", "```"].verbinden("\n")
+setze md3_review_s1_ctor auf uim_markdown(0, 0, 160, 80, md3_review_s1_quelle)
+setze md3_review_s1_builder auf uim_baue("markdown", {"x": 0, "y": 0, "b": 160, "h": 80, "inhalt": md3_review_s1_quelle})
+setze md3_review_s1_setter auf uim_markdown(0, 0, 160, 80, "alt")
+setze md3_review_s1_set_ret auf uim_markdown_setze(w5g, md3_review_s1_setter, md3_review_s1_quelle)
+setze md3_review_s1_ok auf md3_review_s1_set_ret and uim_wert_hole(md3_review_s1_ctor) == md3_review_s1_quelle and uim_wert_hole(md3_review_s1_builder) == md3_review_s1_quelle and uim_wert_hole(md3_review_s1_setter) == md3_review_s1_quelle and md3_review_ast_ok(md3_review_s1_ctor) and md3_review_ast_ok(md3_review_s1_builder) and md3_review_ast_ok(md3_review_s1_setter)
+zeige "W5G-MD3-REVIEW-S1 " + text(md3_review_s1_ok)
+
+# B6: Blockmarker im Fence sind literal; ein leerer geschlossener Fence bleibt leer.
+setze md3_review_fence_marker auf _uim_markdown_bloecke_parse(["```", "# H", "- L", "---", "```"].verbinden("\n"))
+setze md3_review_fence_leer auf _uim_markdown_bloecke_parse(["```", "```"].verbinden("\n"))
+setze md3_review_b6_ok auf länge(md3_review_fence_marker) == 1 and md3_review_fence_marker[0]["typ"] == "code" and md3_review_fence_marker[0]["geschlossen"] and md3_review_fence_marker[0]["text"] == "# H\n- L\n---\n" and länge(md3_review_fence_leer) == 1 and md3_review_fence_leer[0]["typ"] == "code" and md3_review_fence_leer[0]["geschlossen"] and md3_review_fence_leer[0]["text"] == "" and länge(md3_review_fence_leer[0]["zeilen"]) == 1 and md3_review_fence_leer[0]["zeilen"][0] == ""
+zeige "W5G-MD3-REVIEW-B6 " + text(md3_review_b6_ok)
+
+
+# W6-MARKDOWN Batch 4: Layoutcache, UTF-8-Wrap, Pixelhöhe und Fallbackstile.
+setze md4_root auf uim_mock_wurzel(300, 190)
+setze md4_quelle auf ["# Titel", "", "Absatz **stark** *sanft* [Link](ziel) mit langem Inhalt", "", "> Zitat", "", "---", "", "```", "Code", "```"].verbinden("\n")
+setze md4_feld auf uim_markdown(5, 5, 92, 62, md4_quelle)
+uim_hinzu(md4_root, md4_feld)
+uim_mock_zeichne(md4_root)
+setze md4_rev_schmal auf md4_feld["markdown_layout_revision"]
+setze md4_h_schmal auf md4_feld["inhalt_hoehe"]
+setze md4_parse_schmal auf md4_feld["markdown_parse_quelle"]
+md4_feld["b"] = 210
+uim_mock_zeichne(md4_root)
+setze md4_rev_breit auf md4_feld["markdown_layout_revision"]
+setze md4_h_breit auf md4_feld["inhalt_hoehe"]
+md4_feld["b"] = 92
+md4_feld["scroll_y"] = 9999
+uim_mock_zeichne(md4_root)
+setze md4_max_schmal auf _uim_scroll_max(md4_root, md4_feld)
+setze md4_l1_ok auf md4_parse_schmal == md4_quelle and md4_feld["markdown_parse_quelle"] == md4_quelle and md4_rev_breit > md4_rev_schmal and md4_feld["markdown_layout_revision"] > md4_rev_breit and md4_h_breit < md4_h_schmal and md4_feld["inhalt_hoehe"] == md4_h_schmal and md4_feld["scroll_y"] == md4_max_schmal and md4_max_schmal == md4_feld["inhalt_hoehe"] - md4_feld["h"]
+
+# Reine Farbe bleibt außerhalb des Metrik-Keys, alle gelesenen Metriken invalidieren.
+md4_feld["scroll_y"] = 0
+setze md4_rev_farbe auf md4_feld["markdown_layout_revision"]
+setze md4_key_farbe auf md4_feld["markdown_layout_key"]
+md4_root["theme"]["akzent"] = [1, 2, 3, 255]
+uim_mock_zeichne(md4_root)
+setze md4_farb_befehl_ok auf falsch
+für md4_cmd in uim_mock_befehle(md4_root):
+    wenn md4_cmd["op"] == "text" and md4_cmd["args"][2] == "Titel":
+        setze md4_cf auf md4_cmd["farbe"]
+        setze md4_farb_befehl_ok auf md4_cf[0] == 1 and md4_cf[1] == 2 and md4_cf[2] == 3
+setze md4_l2_farbe_ok auf md4_feld["markdown_layout_revision"] == md4_rev_farbe and md4_feld["markdown_layout_key"] == md4_key_farbe and md4_farb_befehl_ok
+setze md4_rev_metrik auf md4_feld["markdown_layout_revision"]
+md4_root["theme"]["schrift"] = md4_root["theme"]["schrift"] + 1
+uim_mock_zeichne(md4_root)
+setze md4_schrift_ok auf md4_feld["markdown_layout_revision"] == md4_rev_metrik + 1
+setze md4_rev_metrik auf md4_feld["markdown_layout_revision"]
+md4_root["theme"]["abstand"] = md4_root["theme"]["abstand"] + 1
+uim_mock_zeichne(md4_root)
+setze md4_abstand_ok auf md4_feld["markdown_layout_revision"] == md4_rev_metrik + 1
+setze md4_rev_metrik auf md4_feld["markdown_layout_revision"]
+md4_feld["h"] = md4_feld["h"] + 1
+uim_mock_zeichne(md4_root)
+setze md4_h_key_ok auf md4_feld["markdown_layout_revision"] == md4_rev_metrik + 1
+setze md4_rev_metrik auf md4_feld["markdown_layout_revision"]
+md4_root["backend_vertrag"]["faehigkeiten"]["text_metrik"] = "md4-anders"
+uim_mock_zeichne(md4_root)
+setze md4_textmetrik_ok auf md4_feld["markdown_layout_revision"] == md4_rev_metrik + 1
+setze md4_l2_l3_ok auf md4_l2_farbe_ok and md4_schrift_ok and md4_abstand_ok and md4_h_key_ok and md4_textmetrik_ok
+
+# Überlanges UTF-8-Token wird nur an Codepointgrenzen geteilt und verlustlos wiedergefügt.
+setze md4_utf_root auf uim_mock_wurzel(120, 120)
+setze md4_utf_text auf "ÄpfelΩÄpfelΩ"
+setze md4_utf_feld auf uim_markdown(0, 0, 42, 100, md4_utf_text)
+uim_hinzu(md4_utf_root, md4_utf_feld)
+uim_mock_zeichne(md4_utf_root)
+setze md4_utf_sammel auf ""
+setze md4_utf_grenzen auf wahr
+für md4_utf_zeile in md4_utf_feld["markdown_layout"]:
+    wenn md4_utf_zeile["typ"] == "zeile":
+        für md4_utf_segment in md4_utf_zeile["segmente"]:
+            setze md4_utf_sammel auf md4_utf_sammel + md4_utf_segment["text"]
+            setze md4_utf_bytes auf bytes_zu_liste(md4_utf_segment["text"])
+            wenn länge(md4_utf_bytes) > 0 and md4_utf_bytes[0] >= 128 and md4_utf_bytes[0] < 192:
+                setze md4_utf_grenzen auf falsch
+setze md4_l4_ok auf md4_utf_sammel == md4_utf_text and md4_utf_grenzen and länge(md4_utf_feld["markdown_layout"]) > 1
+
+# Höhe ist letzte Unterkante plus Padding; leer bleibt exakt null.
+setze md4_letztes auf md4_utf_feld["markdown_layout"][länge(md4_utf_feld["markdown_layout"]) - 1]
+setze md4_l5_voll auf md4_utf_feld["inhalt_hoehe"] == md4_letztes["y"] + md4_letztes["hoehe"] + md4_utf_root["theme"]["abstand"]
+setze md4_leer_root auf uim_mock_wurzel(100, 80)
+setze md4_leer_feld auf uim_markdown(0, 0, 80, 60, "")
+uim_hinzu(md4_leer_root, md4_leer_feld)
+uim_mock_zeichne(md4_leer_root)
+setze md4_l5_ok auf md4_l5_voll and md4_leer_feld["inhalt_hoehe"] == 0 and länge(md4_leer_feld["markdown_layout"]) == 0 and _uim_scroll_max(md4_leer_root, md4_leer_feld) == 0
+
+# Semantische Stil-IDs, Minimaltheme ohne rand_fokus und direkte Quelldrift.
+setze md4_stile_ok auf wahr
+setze md4_hat_h1 auf falsch
+setze md4_hat_strong auf falsch
+setze md4_hat_emphasis auf falsch
+setze md4_hat_link auf falsch
+setze md4_hat_code auf falsch
+setze md4_hat_quote auf falsch
+setze md4_hat_rule auf falsch
+für md4_obj in md4_feld["markdown_layout"]:
+    wenn md4_obj["typ"] == "rule":
+        setze md4_hat_rule auf wahr
+    sonst:
+        wenn md4_obj["block"] == "quote":
+            setze md4_hat_quote auf wahr
+        für md4_seg in md4_obj["segmente"]:
+            wenn md4_seg.enthält("farbe"):
+                setze md4_stile_ok auf falsch
+            wenn md4_seg["stil"] == "heading1":
+                setze md4_hat_h1 auf wahr
+            wenn md4_seg["stil"] == "strong":
+                setze md4_hat_strong auf wahr
+            wenn md4_seg["stil"] == "emphasis":
+                setze md4_hat_emphasis auf wahr
+            wenn md4_seg["stil"] == "link":
+                setze md4_hat_link auf wahr
+            wenn md4_seg["stil"] == "code":
+                setze md4_hat_code auf wahr
+setze md4_min_theme auf {"version": 1, "name": "minimal", "hintergrund": [0, 0, 0, 255], "flaeche": [10, 10, 10, 255], "flaeche_hover": [10, 10, 10, 255], "flaeche_druck": [10, 10, 10, 255], "rand": [20, 21, 22, 255], "akzent": [30, 31, 32, 255], "text": [40, 41, 42, 255], "text_gedimmt": [50, 51, 52, 255], "radius": 2, "schrift": 12, "abstand": 4}
+md4_root["theme"] = md4_min_theme
+md4_feld["b"] = 280
+md4_feld["h"] = 180
+uim_mock_zeichne(md4_root)
+setze md4_link_farbe_ok auf falsch
+setze md4_link_linie_ok auf falsch
+für md4_cmd in uim_mock_befehle(md4_root):
+    wenn md4_cmd["op"] == "text" and md4_cmd["args"][2] == "Link":
+        setze md4_lf auf md4_cmd["farbe"]
+        setze md4_link_farbe_ok auf md4_lf[0] == 50 and md4_lf[1] == 51 and md4_lf[2] == 52
+    wenn md4_cmd["op"] == "linie":
+        setze md4_lc auf md4_cmd["farbe"]
+        wenn md4_lc[0] == 20 and md4_lc[1] == 21 and md4_lc[2] == 22:
+            setze md4_link_linie_ok auf wahr
+setze md4_alt_rev auf md4_feld["markdown_layout_revision"]
+md4_feld["inhalt"] = "Direkt **neu**"
+md4_feld["scroll_y"] = 999
+uim_mock_zeichne(md4_root)
+setze md4_drift_max auf _uim_scroll_max(md4_root, md4_feld)
+setze md4_drift_ok auf md4_feld["markdown_parse_quelle"] == "Direkt **neu**" and md4_feld["markdown_layout_revision"] > md4_alt_rev and md4_feld["scroll_y"] == md4_drift_max and md4_drift_max == 0
+setze md4_r4_ok auf md4_stile_ok and md4_hat_h1 and md4_hat_strong and md4_hat_emphasis and md4_hat_link and md4_hat_code and md4_hat_quote and md4_hat_rule and md4_link_farbe_ok and md4_link_linie_ok and md4_drift_ok
+zeige "W5G-MD4-LAYOUT " + text(md4_l1_ok) + "/" + text(md4_l2_l3_ok) + "/" + text(md4_l4_ok) + "/" + text(md4_l5_ok) + "/" + text(md4_r4_ok)
+
+
+# W6-MARKDOWN Batch 5: gemeinsame Scrollpfade und callbackfreie Tastennavigation.
+funktion md5_kein_callback(w):
+    S["md5_callbacks"] = S["md5_callbacks"] + 1
+    gib_zurück wahr
+
+S["md5_callbacks"] = 0
+setze md5_root auf uim_mock_wurzel(240, 150)
+setze md5_text auf ["# Kopf", "", "Zeile eins mit **stark**", "Zeile zwei mit *sanft*", "Zeile drei [Link](ziel)", "", "- Alpha", "- Beta", "", "> Zitat", "", "---", "", "```", "Code A", "Code B", "```", "", "Ende Ende Ende Ende Ende"].verbinden("\n")
+setze md5_feld auf uim_markdown(10, 10, 150, 70, md5_text)
+md5_feld["on_klick"] = md5_kein_callback
+md5_feld["on_wechsel"] = md5_kein_callback
+uim_hinzu(md5_root, md5_feld)
+md5_root["fokus"] = md5_feld
+uim_mock_zeichne(md5_root)
+setze md5_listen_marker_anzahl auf 0
+für md5_marker_obj in md5_feld["markdown_layout"]:
+    wenn md5_marker_obj["typ"] == "zeile" and md5_marker_obj["block"] == "list":
+        für md5_marker_segment in md5_marker_obj["segmente"]:
+            wenn länge(md5_marker_segment["text"]) >= 2 and md5_marker_segment["text"].slice(0, 2) == "- ":
+                setze md5_listen_marker_anzahl auf md5_listen_marker_anzahl + 1
+setze md5_max auf _uim_scroll_max(md5_root, md5_feld)
+setze md5_up_top auf uim_mock_taste(md5_root, "Up", wahr, 0)
+setze md5_up_top_repaint auf md5_root["backend_zustand"]["ungueltig"] and md5_feld["scroll_y"] == 0
+uim_mock_zeichne(md5_root)
+setze md5_down auf uim_mock_taste(md5_root, "Down", wahr, 0)
+setze md5_down_scroll auf md5_feld["scroll_y"]
+setze md5_down_ok auf md5_down and md5_down_scroll > 0 and md5_root["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(md5_root)
+setze md5_end auf uim_mock_taste(md5_root, "End", wahr, 0)
+setze md5_end_ok auf md5_end and md5_feld["scroll_y"] == md5_max and md5_root["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(md5_root)
+setze md5_home auf uim_mock_taste(md5_root, "Home", wahr, 0)
+setze md5_home_ok auf md5_home and md5_feld["scroll_y"] == 0 and md5_root["backend_zustand"]["ungueltig"]
+setze md5_rev_vor_aktiv auf md5_feld["markdown_layout_revision"]
+setze md5_quelle_vor_aktiv auf md5_feld["inhalt"]
+uim_mock_zeichne(md5_root)
+setze md5_return auf uim_mock_taste(md5_root, "Return", wahr, 0)
+setze md5_return_ok auf md5_return and md5_root["backend_zustand"]["ungueltig"] and md5_feld["inhalt"] == md5_quelle_vor_aktiv and md5_feld["markdown_layout_revision"] == md5_rev_vor_aktiv
+uim_mock_zeichne(md5_root)
+setze md5_space auf uim_mock_taste(md5_root, "space", wahr, 0)
+setze md5_space_ok auf md5_space and md5_root["backend_zustand"]["ungueltig"] and md5_feld["inhalt"] == md5_quelle_vor_aktiv and S["md5_callbacks"] == 0
+uim_mock_zeichne(md5_root)
+setze md5_unknown auf uim_mock_taste(md5_root, "F13", wahr, 0)
+setze md5_unknown_ok auf md5_unknown and md5_root["backend_zustand"]["ungueltig"] == falsch and md5_feld["scroll_y"] == 0
+setze md5_page auf uim_mock_taste(md5_root, "PageDown", wahr, 0)
+setze md5_page_ok auf md5_page and md5_root["backend_zustand"]["ungueltig"] == falsch and md5_feld["scroll_y"] == 0
+md5_root["fokus"] = nichts
+setze md5_unfokus auf uim_mock_taste(md5_root, "Down", wahr, 0)
+setze md5_unfokus_ok auf md5_unfokus == falsch and md5_feld["scroll_y"] == 0 and md5_root["backend_zustand"]["ungueltig"] == falsch
+setze md5_rad auf uim_mock_rad(md5_root, 20, 20, 1)
+setze md5_rad_ok auf md5_rad and md5_feld["scroll_y"] > 0 and md5_root["backend_zustand"]["ungueltig"]
+setze md5_nav_ok auf md5_max > 0 and md5_listen_marker_anzahl == 2 and md5_up_top and md5_up_top_repaint and md5_down_ok and md5_end_ok and md5_home_ok and md5_return_ok and md5_space_ok and md5_unknown_ok and md5_page_ok and md5_unfokus_ok and md5_rad_ok and S["md5_callbacks"] == 0
+
+# Rekursiver Resize-Clamp nutzt die bereits synchronisierte Pixelhöhe.
+setze md5_nested_root auf uim_mock_wurzel(260, 160)
+setze md5_panel auf uim_panel("", 5, 5, 200, 120)
+setze md5_nested auf uim_markdown(4, 4, 130, 50, md5_text)
+uim_hinzu(md5_panel, md5_nested)
+uim_hinzu(md5_nested_root, md5_panel)
+uim_mock_zeichne(md5_nested_root)
+setze md5_nested_max auf _uim_scroll_max(md5_nested_root, md5_nested)
+md5_nested["scroll_y"] = 9999
+uim_groesse_setze(md5_nested_root, 261, 161)
+setze md5_nested_ok auf md5_nested_max > 0 and md5_nested["scroll_y"] == md5_nested_max
+zeige "W5G-MD5-NAV " + text(md5_nav_ok) + "/" + text(md5_nested_ok) + "/" + text(md5_end_ok)
+
+# Mock: jeder Markdown-Inhaltsbefehl liegt unter exakt einem inneren Clip.
+setze md5_clip_root auf uim_mock_wurzel(260, 200)
+setze md5_clip_feld auf uim_markdown(20, 20, 180, 140, md5_text)
+uim_hinzu(md5_clip_root, md5_clip_feld)
+uim_mock_zeichne(md5_clip_root)
+md5_clip_feld["scroll_y"] = 5
+uim_mock_zeichne(md5_clip_root)
+setze md5_clip_tiefe auf 0
+setze md5_clip_gesehen auf falsch
+setze md5_clip_balance auf wahr
+setze md5_clip_grenzen auf wahr
+setze md5_clip_inhalt auf 0
+für md5_cmd in uim_mock_befehle(md5_clip_root):
+    wenn md5_cmd["op"] == "clip_setze":
+        setze md5_clip_tiefe auf md5_clip_tiefe + 1
+        setze md5_clip_gesehen auf wahr
+        setze md5_ca auf md5_cmd["args"]
+        wenn md5_ca[0] < md5_clip_feld["x"] oder md5_ca[1] < md5_clip_feld["y"] oder md5_ca[0] + md5_ca[2] > md5_clip_feld["x"] + md5_clip_feld["b"] oder md5_ca[1] + md5_ca[3] > md5_clip_feld["y"] + md5_clip_feld["h"]:
+            setze md5_clip_grenzen auf falsch
+    sonst wenn md5_cmd["op"] == "clip_loesche":
+        setze md5_clip_tiefe auf md5_clip_tiefe - 1
+    sonst wenn md5_cmd["op"] == "text" oder md5_cmd["op"] == "linie" oder md5_cmd["op"] == "rechteck":
+        wenn md5_clip_gesehen:
+            setze md5_clip_inhalt auf md5_clip_inhalt + 1
+            wenn md5_clip_tiefe != 1:
+                setze md5_clip_balance auf falsch
+setze md5_clip_ok auf md5_clip_gesehen and md5_clip_tiefe == 0 and md5_clip_balance and md5_clip_grenzen and md5_clip_inhalt > 0
+
+# clip=false emittiert keinen Scissor und nur viewportschneidende Layoutobjekte.
+setze md5_nc_root auf uim_mock_wurzel(200, 120)
+md5_nc_root["backend_vertrag"]["faehigkeiten"]["clip"] = falsch
+setze md5_nc_feld auf uim_markdown(10, 10, 120, 45, md5_text)
+uim_hinzu(md5_nc_root, md5_nc_feld)
+uim_mock_zeichne(md5_nc_root)
+md5_nc_feld["scroll_y"] = _uim_scroll_max(md5_nc_root, md5_nc_feld)
+uim_mock_zeichne(md5_nc_root)
+setze md5_nc_clip auf 0
+setze md5_nc_text auf 0
+für md5_cmd in uim_mock_befehle(md5_nc_root):
+    wenn md5_cmd["op"] == "clip_setze" oder md5_cmd["op"] == "clip_loesche":
+        setze md5_nc_clip auf md5_nc_clip + 1
+    wenn md5_cmd["op"] == "text":
+        setze md5_nc_text auf md5_nc_text + 1
+setze md5_nc_zeilen auf 0
+für md5_obj in md5_nc_feld["markdown_layout"]:
+    wenn md5_obj["typ"] == "zeile":
+        setze md5_nc_zeilen auf md5_nc_zeilen + 1
+setze md5_nc_ok auf md5_nc_clip == 0 and md5_nc_text > 0 and md5_nc_text < md5_nc_zeilen
+zeige "W5G-MD5-CLIP " + text(md5_clip_ok) + "/" + text(md5_nc_ok)
+
+# Echter Surface-Baseline-Diff: Inhaltsänderung ausschließlich im inneren Clip.
+setze md5_surface_leer auf uim_surface_wurzel(140, 100)
+setze md5_surface_voll auf uim_surface_wurzel(140, 100)
+setze md5_surface_leer_feld auf uim_markdown(20, 20, 80, 50, "")
+setze md5_surface_voll_feld auf uim_markdown(20, 20, 80, 50, md5_text)
+uim_hinzu(md5_surface_leer, md5_surface_leer_feld)
+uim_hinzu(md5_surface_voll, md5_surface_voll_feld)
+uim_surface_leeren(md5_surface_leer, 0, 0, 0, 0)
+uim_surface_leeren(md5_surface_voll, 0, 0, 0, 0)
+uim_surface_zeichne(md5_surface_leer)
+uim_surface_zeichne(md5_surface_voll)
+md5_surface_voll_feld["scroll_y"] = 5
+uim_surface_leeren(md5_surface_voll, 0, 0, 0, 0)
+uim_surface_zeichne(md5_surface_voll)
+setze md5_surface_innen_diff auf 0
+setze md5_surface_aussen_diff auf 0
+setze md5_sy auf 0
+solange md5_sy < 100:
+    setze md5_sx auf 0
+    solange md5_sx < 140:
+        setze md5_pa auf uim_surface_pixel(md5_surface_leer, md5_sx, md5_sy)
+        setze md5_pb auf uim_surface_pixel(md5_surface_voll, md5_sx, md5_sy)
+        setze md5_anders auf md5_pa["rot"] != md5_pb["rot"] oder md5_pa["gruen"] != md5_pb["gruen"] oder md5_pa["blau"] != md5_pb["blau"] oder md5_pa["alpha"] != md5_pb["alpha"]
+        wenn md5_anders:
+            wenn md5_sx >= 28 and md5_sx < 92 and md5_sy >= 28 and md5_sy < 62:
+                setze md5_surface_innen_diff auf md5_surface_innen_diff + 1
+            sonst:
+                setze md5_surface_aussen_diff auf md5_surface_aussen_diff + 1
+        setze md5_sx auf md5_sx + 1
+    setze md5_sy auf md5_sy + 1
+setze md5_surface_ok auf md5_surface_innen_diff > 0 and md5_surface_aussen_diff == 0
+zeige "W5G-MD5-SURFACE " + text(md5_surface_ok) + "/" + text(md5_surface_innen_diff > 0) + "/" + text(md5_surface_aussen_diff == 0)
+
+S["w5g_rufe"] = 0
 uim_mock_maus(w5g, 30, 30, wahr)
 uim_mock_maus(w5g, 30, 30, falsch)
 uim_mock_taste(w5g, "h", wahr, 0)
@@ -556,14 +1014,14 @@ setze w5g_code_mark_h auf 0
 für befehl in uim_mock_befehle(w5g):
     wenn befehl["op"] == "rechteck" und befehl["args"][0] == md5g["x"] + 1 und befehl["args"][1] == md5g["y"] + 1 und befehl["args"][2] == md5g["b"] - 2 und befehl["args"][3] == md5g["h"] - 2:
         setze w5g_fokus_innen auf wahr
-    wenn befehl["op"] == "text" und befehl["args"][2] == "CODE: test()":
+    wenn befehl["op"] == "text" und befehl["args"][2] == "test()":
         setze w5g_code_text_y auf befehl["args"][1]
         setze w5g_code_schrift auf befehl["args"][3]
-    wenn befehl["op"] == "rechteck" und befehl["args"][0] == md5g["x"] + 3 und befehl["args"][2] == md5g["b"] - 6:
+    wenn befehl["op"] == "rechteck" und w5g_code_mark_y < 0 und befehl["args"][0] == md5g["x"] + w5g["theme"]["abstand"] und befehl["args"][2] == md5g["b"] - 2 * w5g["theme"]["abstand"]:
         setze w5g_code_mark_y auf befehl["args"][1]
         setze w5g_code_mark_h auf befehl["args"][3]
 zeige "W5G-FOCUS-INSET " + text(w5g_fokus_innen)
-setze w5g_code_mark_innen auf w5g_code_text_y >= 0 und w5g_code_mark_y == w5g_code_text_y - 2 und w5g_code_mark_y + w5g_code_mark_h >= w5g_code_text_y + w5g_code_schrift
+setze w5g_code_mark_innen auf w5g_code_text_y >= 0 und w5g_code_mark_y == w5g_code_text_y - 1 und w5g_code_mark_y + w5g_code_mark_h >= w5g_code_text_y + w5g_code_schrift
 zeige "W5G-CODE-MARK-INSET " + text(w5g_code_mark_innen)
 zeige "NATIVE-UI-12-W5G-OK"
 

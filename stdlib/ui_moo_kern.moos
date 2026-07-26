@@ -1037,7 +1037,8 @@ funktion _uim_scroll_max(kontext, w):
     wenn w["typ"] == "terminal":
         setze inhalt auf (länge(w["zeilen"]) + 1) * _uim_zeilenhoehe(kontext)
     wenn w["typ"] == "markdown":
-        setze inhalt auf länge(w["zeilen"]) * _uim_zeilenhoehe(kontext)
+        _uim_markdown_parse_sync(w)
+        setze inhalt auf w["inhalt_hoehe"]
     wenn w["typ"] == "multiline":
         setze inhalt auf länge(_uim_multiline_zeilen(bytes_zu_liste(w["text"]))) * _uim_zeilenhoehe(kontext) + 8
     setze max_scroll auf inhalt - w["h"]
@@ -1055,7 +1056,7 @@ funktion _uim_scroll_klemme(kontext, w):
 
 funktion _uim_scroll_klemme_rek(kontext, kinder):
     für w in kinder:
-        wenn w["typ"] == "scroll" oder w["typ"] == "liste" oder w["typ"] == "baum" oder w["typ"] == "datengitter" oder w["typ"] == "iconview" oder w["typ"] == "multiline":
+        wenn w["typ"] == "scroll" oder w["typ"] == "liste" oder w["typ"] == "baum" oder w["typ"] == "datengitter" oder w["typ"] == "iconview" oder w["typ"] == "markdown" oder w["typ"] == "multiline":
             _uim_scroll_klemme(kontext, w)
         _uim_scroll_klemme_rek(kontext, w["kinder"])
     gib_zurück wahr
@@ -2132,7 +2133,7 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
                     cba(f, idx)
             _uim_anfordern(kontext)
             gib_zurück wahr
-    wenn (taste == "Return" oder taste == "space") und f["typ"] != "calendar" und f["typ"] != "datepicker" und f["typ"] != "terminal":
+    wenn (taste == "Return" oder taste == "space") und f["typ"] != "calendar" und f["typ"] != "datepicker" und f["typ"] != "terminal" und f["typ"] != "markdown":
         _uim_aktiviere(kontext, f)
         _uim_anfordern(kontext)
         gib_zurück wahr
@@ -2354,16 +2355,18 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
         gib_zurück wahr
     wenn f["typ"] == "markdown":
         setze max_md auf _uim_scroll_max(kontext, f)
-        setze schritt_md auf _uim_zeilenhoehe(kontext)
         setze scroll_md auf f["scroll_y"]
         wenn taste == "Up":
-            setze scroll_md auf scroll_md - schritt_md
+            setze scroll_md auf _uim_markdown_scroll_ziel(f, 0 - 1, max_md)
         sonst wenn taste == "Down":
-            setze scroll_md auf scroll_md + schritt_md
+            setze scroll_md auf _uim_markdown_scroll_ziel(f, 1, max_md)
         sonst wenn taste == "Home":
             setze scroll_md auf 0
         sonst wenn taste == "End":
             setze scroll_md auf max_md
+        sonst wenn taste == "Return" oder taste == "space":
+            _uim_anfordern(kontext)
+            gib_zurück wahr
         sonst:
             gib_zurück wahr
         wenn scroll_md < 0:
@@ -7030,37 +7033,629 @@ funktion uim_terminal_ausgabe(kontext, w, ausgabe):
     _uim_anfordern(kontext)
     gib_zurück wahr
 
+# Exakter LF-Scanner fuer Markdown. String.teilen benutzt strtok und
+# verwirft leere sowie abschliessende Segmente; fuer die Quelltreue ist
+# deshalb ein eigener linearer Scan erforderlich.
+funktion _uim_markdown_zeilen_exakt(inhalt):
+    setze quelle auf text(inhalt)
+    setze zeilen auf []
+    setze start auf 0
+    setze i auf 0
+    solange i < länge(quelle):
+        wenn quelle[i] == "\n":
+            zeilen.hinzufügen(quelle.slice(start, i))
+            setze start auf i + 1
+        setze i auf i + 1
+    zeilen.hinzufügen(quelle.slice(start, länge(quelle)))
+    gib_zurück zeilen
+
+funktion _uim_markdown_zeile_leer(zeile):
+    setze i auf 0
+    solange i < länge(zeile):
+        wenn zeile[i] != " " und zeile[i] != "\t":
+            gib_zurück falsch
+        setze i auf i + 1
+    gib_zurück wahr
+
+funktion _uim_markdown_hat_praefix(zeile, praefix):
+    wenn länge(zeile) < länge(praefix):
+        gib_zurück falsch
+    gib_zurück zeile.slice(0, länge(praefix)) == praefix
+
+# Liefert den Index direkt hinter "Ziffern. ", sonst -1. Die Ziffernfolge
+# wird absichtlich nie in eine Zahl umgewandelt.
+funktion _uim_markdown_ol_ende(zeile):
+    setze i auf 0
+    solange i < länge(zeile) und zeile[i] >= "0" und zeile[i] <= "9":
+        setze i auf i + 1
+    wenn i == 0 oder i + 2 >= länge(zeile):
+        gib_zurück -1
+    wenn zeile.slice(i, i + 2) != ". ":
+        gib_zurück -1
+    gib_zurück i + 2
+
+funktion _uim_markdown_blockart(zeile):
+    wenn zeile == "```":
+        gib_zurück "code"
+    wenn zeile == "---":
+        gib_zurück "rule"
+    wenn _uim_markdown_hat_praefix(zeile, "### ") und länge(zeile) > 4:
+        gib_zurück "h3"
+    wenn _uim_markdown_hat_praefix(zeile, "## ") und länge(zeile) > 3:
+        gib_zurück "h2"
+    wenn _uim_markdown_hat_praefix(zeile, "# ") und länge(zeile) > 2:
+        gib_zurück "h1"
+    wenn (_uim_markdown_hat_praefix(zeile, "- ") oder _uim_markdown_hat_praefix(zeile, "* ")) und länge(zeile) > 2:
+        gib_zurück "ul"
+    wenn _uim_markdown_ol_ende(zeile) >= 0:
+        gib_zurück "ol"
+    wenn _uim_markdown_hat_praefix(zeile, "> "):
+        gib_zurück "quote"
+    gib_zurück "paragraph"
+
+funktion _uim_markdown_bloecke_parse(inhalt):
+    setze zeilen auf _uim_markdown_zeilen_exakt(inhalt)
+    setze bloecke auf []
+    setze i auf 0
+    solange i < länge(zeilen):
+        setze zeile auf zeilen[i]
+        wenn _uim_markdown_zeile_leer(zeile):
+            setze i auf i + 1
+            weiter
+        setze art auf _uim_markdown_blockart(zeile)
+        wenn art == "h1" oder art == "h2" oder art == "h3":
+            setze block auf {}
+            block["typ"] = "heading"
+            wenn art == "h1":
+                block["ebene"] = 1
+                block["text"] = zeile.slice(2, länge(zeile))
+            wenn art == "h2":
+                block["ebene"] = 2
+                block["text"] = zeile.slice(3, länge(zeile))
+            wenn art == "h3":
+                block["ebene"] = 3
+                block["text"] = zeile.slice(4, länge(zeile))
+            bloecke.hinzufügen(block)
+            setze i auf i + 1
+            weiter
+        wenn art == "rule":
+            setze block auf {}
+            block["typ"] = "rule"
+            bloecke.hinzufügen(block)
+            setze i auf i + 1
+            weiter
+        wenn art == "code":
+            setze i auf i + 1
+            setze code_zeilen auf []
+            solange i < länge(zeilen) und zeilen[i] != "```":
+                code_zeilen.hinzufügen(zeilen[i])
+                setze i auf i + 1
+            setze geschlossen auf i < länge(zeilen) und zeilen[i] == "```"
+            setze code_text auf code_zeilen.verbinden("\n")
+            wenn geschlossen und länge(code_zeilen) > 0:
+                setze code_text auf code_text + "\n"
+            setze block auf {}
+            block["typ"] = "code"
+            block["text"] = code_text
+            block["zeilen"] = _uim_markdown_zeilen_exakt(code_text)
+            block["geschlossen"] = geschlossen
+            bloecke.hinzufügen(block)
+            wenn geschlossen:
+                setze i auf i + 1
+            weiter
+        wenn art == "ul" oder art == "ol":
+            setze block auf {}
+            block["typ"] = "list"
+            block["geordnet"] = art == "ol"
+            block["eintraege"] = []
+            solange i < länge(zeilen) und _uim_markdown_blockart(zeilen[i]) == art:
+                setze eintrag auf {}
+                wenn art == "ul":
+                    eintrag["marker"] = zeilen[i].slice(0, 1)
+                    eintrag["text"] = zeilen[i].slice(2, länge(zeilen[i]))
+                sonst:
+                    setze ol_ende auf _uim_markdown_ol_ende(zeilen[i])
+                    eintrag["marker"] = zeilen[i].slice(0, ol_ende - 1)
+                    eintrag["text"] = zeilen[i].slice(ol_ende, länge(zeilen[i]))
+                block["eintraege"].hinzufügen(eintrag)
+                setze i auf i + 1
+            bloecke.hinzufügen(block)
+            weiter
+        wenn art == "quote":
+            setze block auf {}
+            block["typ"] = "quote"
+            block["zeilen"] = []
+            solange i < länge(zeilen) und _uim_markdown_blockart(zeilen[i]) == "quote":
+                block["zeilen"].hinzufügen(zeilen[i].slice(2, länge(zeilen[i])))
+                setze i auf i + 1
+            block["text"] = block["zeilen"].verbinden("\n")
+            bloecke.hinzufügen(block)
+            weiter
+        setze absatz_zeilen auf []
+        solange i < länge(zeilen) und _uim_markdown_zeile_leer(zeilen[i]) == falsch und _uim_markdown_blockart(zeilen[i]) == "paragraph":
+            absatz_zeilen.hinzufügen(zeilen[i])
+            setze i auf i + 1
+        setze block auf {}
+        block["typ"] = "paragraph"
+        block["zeilen"] = absatz_zeilen
+        block["text"] = absatz_zeilen.verbinden(" ")
+        bloecke.hinzufügen(block)
+    gib_zurück bloecke
+
+funktion _uim_markdown_escape_zeichen(c):
+    gib_zurück c == "\\" oder c == "`" oder c == "*" oder c == "[" oder c == "]" oder c == "(" oder c == ")" oder c == "!" oder c == "#" oder c == ">" oder c == "." oder c == "-"
+
+funktion _uim_markdown_finde_roh(textwert, muster, start):
+    setze i auf start
+    solange i + länge(muster) <= länge(textwert):
+        wenn textwert.slice(i, i + länge(muster)) == muster:
+            gib_zurück i
+        setze i auf i + 1
+    gib_zurück -1
+
+funktion _uim_markdown_finde_unescaped(textwert, muster, start):
+    setze i auf start
+    solange i + länge(muster) <= länge(textwert):
+        wenn textwert[i] == "\\" und i + 1 < länge(textwert) und _uim_markdown_escape_zeichen(textwert[i + 1]):
+            setze i auf i + 2
+            weiter
+        wenn textwert.slice(i, i + länge(muster)) == muster:
+            gib_zurück i
+        setze i auf i + 1
+    gib_zurück -1
+
+funktion _uim_markdown_hat_unescaped(textwert, zeichen):
+    gib_zurück _uim_markdown_finde_unescaped(textwert, zeichen, 0) >= 0
+
+funktion _uim_markdown_escapes_aufloesen(textwert):
+    setze ergebnis auf ""
+    setze start auf 0
+    setze i auf 0
+    solange i < länge(textwert):
+        wenn textwert[i] == "\\" und i + 1 < länge(textwert) und _uim_markdown_escape_zeichen(textwert[i + 1]):
+            setze ergebnis auf ergebnis + textwert.slice(start, i) + textwert.slice(i + 1, i + 2)
+            setze i auf i + 2
+            setze start auf i
+            weiter
+        setze i auf i + 1
+    gib_zurück ergebnis + textwert.slice(start, länge(textwert))
+
+funktion _uim_markdown_span_hinzu(spans, art, inhalt, ziel):
+    wenn inhalt == "":
+        gib_zurück falsch
+    wenn art == "raw" und länge(spans) > 0 und spans[länge(spans) - 1]["typ"] == "raw":
+        setze letzter auf spans[länge(spans) - 1]
+        letzter["text"] = letzter["text"] + inhalt
+        spans[länge(spans) - 1] = letzter
+        gib_zurück wahr
+    setze span auf {}
+    span["typ"] = art
+    span["text"] = inhalt
+    wenn ziel != nichts:
+        span["ziel"] = ziel
+    spans.hinzufügen(span)
+    gib_zurück wahr
+
+# Erkennt eine begrenzte [label](ziel)-Form ab start. Bei bild steht dort
+# ![label](ziel). Auch ein begrenztes, aber ungueltiges Token liefert ende,
+# damit es atomar und verlustlos als raw konsumiert werden kann.
+funktion _uim_markdown_link_analysiere(textwert, start, bild):
+    setze r auf {}
+    r["erkannt"] = falsch
+    r["gueltig"] = falsch
+    r["ende"] = start
+    r["label"] = ""
+    r["ziel"] = ""
+    setze label_start auf start + 1
+    wenn bild:
+        wenn textwert.slice(start, start + 2) != "![":
+            gib_zurück r
+        setze label_start auf start + 2
+    sonst:
+        wenn start >= länge(textwert) oder textwert[start] != "[":
+            gib_zurück r
+    setze klammer_zu auf _uim_markdown_finde_unescaped(textwert, "]", label_start)
+    wenn klammer_zu < 0 oder klammer_zu + 1 >= länge(textwert) oder textwert[klammer_zu + 1] != "(":
+        gib_zurück r
+    setze ziel_start auf klammer_zu + 2
+    setze paren_zu auf _uim_markdown_finde_unescaped(textwert, ")", ziel_start)
+    wenn paren_zu < 0:
+        gib_zurück r
+    r["erkannt"] = wahr
+    r["ende"] = paren_zu + 1
+    setze label_roh auf textwert.slice(label_start, klammer_zu)
+    setze ziel_roh auf textwert.slice(ziel_start, paren_zu)
+    setze label_ok auf länge(label_roh) > 0 und _uim_markdown_hat_unescaped(label_roh, "[") == falsch und _uim_markdown_hat_unescaped(label_roh, "]") == falsch
+    setze ziel_ok auf länge(ziel_roh) > 0 und _uim_markdown_hat_unescaped(ziel_roh, "(") == falsch und _uim_markdown_hat_unescaped(ziel_roh, ")") == falsch
+    r["gueltig"] = label_ok und ziel_ok
+    r["label"] = _uim_markdown_escapes_aufloesen(label_roh)
+    r["ziel"] = _uim_markdown_escapes_aufloesen(ziel_roh)
+    gib_zurück r
+
+# Revision 4: Betonungsmarker werden pro urspruenglicher Quellzeile
+# bewusst grob validiert. Ist die Paarung nicht eindeutig sequenziell,
+# faellt genau diese Zeile vollstaendig und verlustlos auf raw zurueck.
+funktion _uim_markdown_betonung_sauber(textwert):
+    setze erwartet auf 0
+    setze oeffner_ende auf 0
+    setze i auf 0
+    solange i < länge(textwert):
+        wenn textwert[i] == "\\" und i + 1 < länge(textwert) und _uim_markdown_escape_zeichen(textwert[i + 1]):
+            setze i auf i + 2
+            weiter
+        wenn textwert[i] == "`":
+            setze code_ende auf _uim_markdown_finde_roh(textwert, "`", i + 1)
+            wenn code_ende > i + 1:
+                setze i auf code_ende + 1
+                weiter
+        wenn i + 1 < länge(textwert) und textwert.slice(i, i + 2) == "![":
+            setze bild auf _uim_markdown_link_analysiere(textwert, i, wahr)
+            wenn bild["erkannt"] und bild["gueltig"]:
+                setze i auf bild["ende"]
+                weiter
+        wenn textwert[i] == "[":
+            setze link auf _uim_markdown_link_analysiere(textwert, i, falsch)
+            wenn link["erkannt"]:
+                setze i auf link["ende"]
+                weiter
+        wenn textwert[i] == "*":
+            setze lauf_ende auf i
+            solange lauf_ende < länge(textwert) und textwert[lauf_ende] == "*":
+                setze lauf_ende auf lauf_ende + 1
+            setze lauf auf lauf_ende - i
+            wenn lauf > 2:
+                gib_zurück falsch
+            wenn erwartet == 0:
+                setze erwartet auf lauf
+                setze oeffner_ende auf lauf_ende
+            sonst:
+                wenn lauf != erwartet oder i <= oeffner_ende:
+                    gib_zurück falsch
+                setze erwartet auf 0
+            setze i auf lauf_ende
+            weiter
+        setze i auf i + 1
+    gib_zurück erwartet == 0
+
+funktion _uim_markdown_inline_parse(textwert):
+    setze quelle auf text(textwert)
+    setze spans auf []
+    wenn _uim_markdown_betonung_sauber(quelle) == falsch:
+        _uim_markdown_span_hinzu(spans, "raw", quelle, nichts)
+        gib_zurück spans
+    setze n auf länge(quelle)
+    setze i auf 0
+    setze raw_start auf 0
+    solange i < n:
+        wenn quelle[i] == "\\" und i + 1 < n und _uim_markdown_escape_zeichen(quelle[i + 1]):
+            _uim_markdown_span_hinzu(spans, "raw", quelle.slice(raw_start, i), nichts)
+            _uim_markdown_span_hinzu(spans, "raw", quelle.slice(i + 1, i + 2), nichts)
+            setze i auf i + 2
+            setze raw_start auf i
+            weiter
+        wenn quelle[i] == "`":
+            setze ende auf _uim_markdown_finde_roh(quelle, "`", i + 1)
+            wenn ende > i + 1:
+                _uim_markdown_span_hinzu(spans, "raw", quelle.slice(raw_start, i), nichts)
+                _uim_markdown_span_hinzu(spans, "code", quelle.slice(i + 1, ende), nichts)
+                setze i auf ende + 1
+                setze raw_start auf i
+                weiter
+        wenn i + 1 < n und quelle.slice(i, i + 2) == "![":
+            setze bild auf _uim_markdown_link_analysiere(quelle, i, wahr)
+            wenn bild["erkannt"] und bild["gueltig"]:
+                _uim_markdown_span_hinzu(spans, "raw", quelle.slice(raw_start, i), nichts)
+                _uim_markdown_span_hinzu(spans, "raw", quelle.slice(i, bild["ende"]), nichts)
+                setze i auf bild["ende"]
+                setze raw_start auf i
+                weiter
+        wenn quelle[i] == "[":
+            setze link auf _uim_markdown_link_analysiere(quelle, i, falsch)
+            wenn link["erkannt"]:
+                _uim_markdown_span_hinzu(spans, "raw", quelle.slice(raw_start, i), nichts)
+                wenn link["gueltig"]:
+                    _uim_markdown_span_hinzu(spans, "link", link["label"], link["ziel"])
+                sonst:
+                    _uim_markdown_span_hinzu(spans, "raw", quelle.slice(i, link["ende"]), nichts)
+                setze i auf link["ende"]
+                setze raw_start auf i
+                weiter
+        wenn i + 1 < n und quelle.slice(i, i + 2) == "**":
+            setze ende auf _uim_markdown_finde_unescaped(quelle, "**", i + 2)
+            wenn ende > i + 2:
+                setze inhalt auf quelle.slice(i + 2, ende)
+                wenn _uim_markdown_hat_unescaped(inhalt, "*") == falsch:
+                    _uim_markdown_span_hinzu(spans, "raw", quelle.slice(raw_start, i), nichts)
+                    _uim_markdown_span_hinzu(spans, "strong", _uim_markdown_escapes_aufloesen(inhalt), nichts)
+                    setze i auf ende + 2
+                    setze raw_start auf i
+                    weiter
+        wenn quelle[i] == "*" und (i + 1 >= n oder quelle[i + 1] != "*"):
+            setze ende auf _uim_markdown_finde_unescaped(quelle, "*", i + 1)
+            wenn ende > i + 1:
+                setze inhalt auf quelle.slice(i + 1, ende)
+                _uim_markdown_span_hinzu(spans, "raw", quelle.slice(raw_start, i), nichts)
+                _uim_markdown_span_hinzu(spans, "emphasis", _uim_markdown_escapes_aufloesen(inhalt), nichts)
+                setze i auf ende + 1
+                setze raw_start auf i
+                weiter
+        setze i auf i + 1
+    _uim_markdown_span_hinzu(spans, "raw", quelle.slice(raw_start, n), nichts)
+    gib_zurück spans
+
+funktion _uim_markdown_bloecke_inline(bloecke):
+    für block in bloecke:
+        wenn block["typ"] == "heading":
+            block["spans"] = _uim_markdown_inline_parse(block["text"])
+        sonst wenn block["typ"] == "paragraph":
+            block["spans"] = []
+            setze absatz_idx auf 0
+            für absatz_zeile in block["zeilen"]:
+                wenn absatz_idx > 0:
+                    _uim_markdown_span_hinzu(block["spans"], "raw", " ", nichts)
+                setze zeilen_spans auf _uim_markdown_inline_parse(absatz_zeile)
+                für zeilen_span in zeilen_spans:
+                    setze span_ziel auf nichts
+                    wenn zeilen_span.enthält("ziel"):
+                        setze span_ziel auf zeilen_span["ziel"]
+                    _uim_markdown_span_hinzu(block["spans"], zeilen_span["typ"], zeilen_span["text"], span_ziel)
+                setze absatz_idx auf absatz_idx + 1
+        sonst wenn block["typ"] == "list":
+            für eintrag in block["eintraege"]:
+                eintrag["spans"] = _uim_markdown_inline_parse(eintrag["text"])
+        sonst wenn block["typ"] == "quote":
+            block["span_zeilen"] = []
+            für quote_zeile in block["zeilen"]:
+                block["span_zeilen"].hinzufügen(_uim_markdown_inline_parse(quote_zeile))
+    gib_zurück bloecke
+
+# Synchronisiert ausschließlich aus der einzigen Wahrheit w["inhalt"].
+# Alle neuen Ableitungen entstehen lokal; erst der vollständige Erfolg
+# ersetzt AST, Kompatibilitätszeilen und Quellgeneration gemeinsam.
+funktion _uim_markdown_parse_sync(w):
+    wenn w == nichts oder w["typ"] != "markdown":
+        gib_zurück falsch
+    wenn w["markdown_parse_gueltig"] und w["markdown_parse_quelle"] == w["inhalt"]:
+        gib_zurück falsch
+    setze neue_zeilen auf _uim_markdown_zeilen_exakt(w["inhalt"])
+    setze neue_bloecke auf _uim_markdown_bloecke_inline(_uim_markdown_bloecke_parse(w["inhalt"]))
+    w["zeilen"] = neue_zeilen
+    w["markdown_bloecke"] = neue_bloecke
+    w["markdown_parse_quelle"] = w["inhalt"]
+    w["markdown_parse_gueltig"] = wahr
+    w["markdown_layout"] = []
+    w["markdown_layout_gueltig"] = falsch
+    w["markdown_layout_key"] = ""
+    w["inhalt_hoehe"] = 0
+    gib_zurück wahr
+
 funktion uim_markdown(x, y, b, h, inhalt):
     setze w auf _uim_basis("markdown", x, y, b, h)
-    w["inhalt"] = inhalt
-    w["zeilen"] = inhalt.teilen("\n")
+    w["inhalt"] = text(inhalt)
+    w["zeilen"] = []
+    w["markdown_bloecke"] = []
+    w["markdown_parse_quelle"] = ""
+    w["markdown_parse_gueltig"] = falsch
+    w["markdown_layout"] = []
+    w["markdown_layout_gueltig"] = falsch
+    w["markdown_layout_key"] = ""
+    w["markdown_layout_revision"] = 0
+    w["inhalt_hoehe"] = 0
     w["scroll_y"] = 0
     w["fokussierbar"] = wahr
+    _uim_markdown_parse_sync(w)
     gib_zurück w
 
 funktion uim_markdown_setze(kontext, w, inhalt):
     wenn w == nichts:
         gib_zurück falsch
-    w["inhalt"] = inhalt
-    w["zeilen"] = inhalt.teilen("\n")
+    w["inhalt"] = text(inhalt)
+    w["markdown_parse_gueltig"] = falsch
+    _uim_markdown_parse_sync(w)
     w["scroll_y"] = 0
     _uim_anfordern(kontext)
     gib_zurück wahr
 
-funktion _uim_markdown_art(zeile):
-    wenn zeile == "":
-        gib_zurück 0
-    wenn zeile.enthält("### "):
-        gib_zurück 3
-    wenn zeile.enthält("## "):
-        gib_zurück 2
-    wenn zeile.enthält("# "):
-        gib_zurück 1
-    wenn zeile.enthält("CODE:"):
-        gib_zurück 4
-    wenn zeile.enthält("- ") oder zeile.enthält("* "):
-        gib_zurück 5
-    gib_zurück 0
+funktion _uim_markdown_layout_key(kontext, w):
+    setze t auf kontext["theme"]
+    setze metrik auf kontext["backend_vertrag"]["faehigkeiten"]["text_metrik"]
+    setze quelle auf w["markdown_parse_quelle"]
+    gib_zurück text(länge(quelle)) + ":" + quelle + "|" + text(w["b"]) + "|" + text(w["h"]) + "|" + text(t["schrift"]) + "|" + text(t["abstand"]) + "|" + metrik
+
+funktion _uim_markdown_span_stil(span, ersatz):
+    wenn span["typ"] == "strong":
+        gib_zurück "strong"
+    wenn span["typ"] == "emphasis":
+        gib_zurück "emphasis"
+    wenn span["typ"] == "link":
+        gib_zurück "link"
+    wenn span["typ"] == "code":
+        gib_zurück "code"
+    gib_zurück ersatz
+
+funktion _uim_markdown_layout_segment_hinzu(segmente, stil, inhalt, ziel):
+    wenn inhalt == "":
+        gib_zurück segmente
+    wenn länge(segmente) > 0:
+        setze letzter_idx auf länge(segmente) - 1
+        setze letzter auf segmente[letzter_idx]
+        wenn letzter["stil"] == stil and letzter["ziel"] == ziel:
+            letzter["text"] = letzter["text"] + inhalt
+            gib_zurück segmente
+    setze segment auf {}
+    segment["stil"] = stil
+    segment["text"] = inhalt
+    segment["ziel"] = ziel
+    segmente.hinzufügen(segment)
+    gib_zurück segmente
+
+funktion _uim_markdown_tokens(textwert):
+    setze quell_bytes auf bytes_zu_liste(textwert)
+    setze tokens auf []
+    setze i auf 0
+    solange i < länge(quell_bytes):
+        setze leerraum auf quell_bytes[i] == 32
+        setze ende auf i + 1
+        solange ende < länge(quell_bytes) and (quell_bytes[ende] == 32) == leerraum:
+            setze ende auf ende + 1
+        tokens.hinzufügen(bytes_neu(_uim_tf_teil(quell_bytes, i, ende)))
+        setze i auf ende
+    gib_zurück tokens
+
+funktion _uim_markdown_layout_zeile(layout, segmente, y, schrift, blockart, einzug):
+    setze zeile auf {}
+    zeile["typ"] = "zeile"
+    zeile["y"] = y
+    zeile["hoehe"] = schrift + 4
+    zeile["schrift"] = schrift
+    zeile["block"] = blockart
+    zeile["einzug"] = einzug
+    zeile["segmente"] = segmente
+    layout.hinzufügen(zeile)
+    gib_zurück y + zeile["hoehe"]
+
+funktion _uim_markdown_wrap_spans(kontext, z, layout, spans, ersatz, blockart, y, schrift, max_b, einzug):
+    wenn max_b < 1:
+        setze max_b auf 1
+    setze zeilen_segmente auf []
+    setze zeilen_text auf ""
+    für span in spans:
+        setze stil auf _uim_markdown_span_stil(span, ersatz)
+        setze ziel auf nichts
+        wenn span.enthält("ziel"):
+            setze ziel auf span["ziel"]
+        setze tokens auf _uim_markdown_tokens(span["text"])
+        für token in tokens:
+            setze token_bytes auf bytes_zu_liste(token)
+            setze token_pos auf 0
+            solange token_pos < länge(token_bytes):
+                setze rest auf bytes_neu(_uim_tf_teil(token_bytes, token_pos, länge(token_bytes)))
+                setze kandidat auf zeilen_text + rest
+                wenn _uim_zf_text_breite(kontext, z, kandidat, schrift) <= max_b:
+                    _uim_markdown_layout_segment_hinzu(zeilen_segmente, stil, rest, ziel)
+                    setze zeilen_text auf kandidat
+                    setze token_pos auf länge(token_bytes)
+                sonst wenn zeilen_text != "":
+                    setze y auf _uim_markdown_layout_zeile(layout, zeilen_segmente, y, schrift, blockart, einzug)
+                    setze zeilen_segmente auf []
+                    setze zeilen_text auf ""
+                sonst:
+                    setze rest_bytes auf _uim_tf_teil(token_bytes, token_pos, länge(token_bytes))
+                    setze probe auf 0
+                    setze passend auf 0
+                    solange probe < länge(rest_bytes):
+                        setze naechste_grenze auf _uim_tf_grenze_vor(rest_bytes, probe)
+                        setze teiltext auf bytes_neu(_uim_tf_teil(rest_bytes, 0, naechste_grenze))
+                        wenn _uim_zf_text_breite(kontext, z, teiltext, schrift) <= max_b oder passend == 0:
+                            setze passend auf naechste_grenze
+                            setze probe auf naechste_grenze
+                        sonst:
+                            setze probe auf länge(rest_bytes)
+                    setze stueck auf bytes_neu(_uim_tf_teil(rest_bytes, 0, passend))
+                    _uim_markdown_layout_segment_hinzu(zeilen_segmente, stil, stueck, ziel)
+                    setze zeilen_text auf stueck
+                    setze token_pos auf token_pos + passend
+                    wenn token_pos < länge(token_bytes):
+                        setze y auf _uim_markdown_layout_zeile(layout, zeilen_segmente, y, schrift, blockart, einzug)
+                        setze zeilen_segmente auf []
+                        setze zeilen_text auf ""
+    setze y auf _uim_markdown_layout_zeile(layout, zeilen_segmente, y, schrift, blockart, einzug)
+    gib_zurück y
+
+funktion _uim_markdown_layout_sync(kontext, z, w):
+    _uim_markdown_parse_sync(w)
+    setze neuer_key auf _uim_markdown_layout_key(kontext, w)
+    wenn w["markdown_layout_gueltig"] and w["markdown_layout_key"] == neuer_key:
+        gib_zurück falsch
+    setze t auf kontext["theme"]
+    setze pad auf t["abstand"]
+    setze innen_b auf w["b"] - pad * 2
+    wenn innen_b < 1:
+        setze innen_b auf 1
+    setze neues_layout auf []
+    setze y auf pad
+    setze letzte_unterkante auf 0
+    für block in w["markdown_bloecke"]:
+        wenn block["typ"] == "heading":
+            setze heading_stil auf "heading3"
+            setze heading_schrift auf t["schrift"]
+            wenn block["ebene"] == 1:
+                setze heading_stil auf "heading1"
+                setze heading_schrift auf t["schrift"] + 2
+            sonst wenn block["ebene"] == 2:
+                setze heading_stil auf "heading2"
+                setze heading_schrift auf t["schrift"] + 1
+            setze y auf _uim_markdown_wrap_spans(kontext, z, neues_layout, block["spans"], heading_stil, "heading", y, heading_schrift, innen_b, 0)
+            setze letzte_unterkante auf y
+        sonst wenn block["typ"] == "paragraph":
+            setze y auf _uim_markdown_wrap_spans(kontext, z, neues_layout, block["spans"], "normal", "paragraph", y, t["schrift"], innen_b, 0)
+            setze letzte_unterkante auf y
+        sonst wenn block["typ"] == "list":
+            für eintrag in block["eintraege"]:
+                setze listen_spans auf []
+                setze marker auf "- "
+                wenn block["geordnet"]:
+                    setze marker auf eintrag["marker"] + ". "
+                setze marker_span auf {"typ": "raw", "text": marker}
+                listen_spans.hinzufügen(marker_span)
+                für eintrag_span in eintrag["spans"]:
+                    listen_spans.hinzufügen(eintrag_span)
+                setze y auf _uim_markdown_wrap_spans(kontext, z, neues_layout, listen_spans, "normal", "list", y, t["schrift"], innen_b, 0)
+                setze letzte_unterkante auf y
+        sonst wenn block["typ"] == "quote":
+            für quote_spans in block["span_zeilen"]:
+                setze y auf _uim_markdown_wrap_spans(kontext, z, neues_layout, quote_spans, "normal", "quote", y, t["schrift"], innen_b - 6, 6)
+                setze letzte_unterkante auf y
+        sonst wenn block["typ"] == "code":
+            für code_zeile in block["zeilen"]:
+                setze code_span auf {"typ": "code", "text": code_zeile}
+                setze y auf _uim_markdown_wrap_spans(kontext, z, neues_layout, [code_span], "code", "code", y, t["schrift"], innen_b, 0)
+                setze letzte_unterkante auf y
+        sonst wenn block["typ"] == "rule":
+            setze regel auf {"typ": "rule", "y": y, "hoehe": 1, "block": "rule"}
+            neues_layout.hinzufügen(regel)
+            setze y auf y + 1
+            setze letzte_unterkante auf y
+        setze y auf y + pad
+    setze neue_hoehe auf 0
+    wenn länge(neues_layout) > 0:
+        setze neue_hoehe auf letzte_unterkante + pad
+    w["markdown_layout"] = neues_layout
+    w["inhalt_hoehe"] = neue_hoehe
+    w["markdown_layout_key"] = neuer_key
+    w["markdown_layout_gueltig"] = wahr
+    w["markdown_layout_revision"] = w["markdown_layout_revision"] + 1
+    _uim_scroll_klemme(kontext, w)
+    gib_zurück wahr
+
+funktion _uim_markdown_stil_farbe(kontext, w, stil):
+    setze t auf kontext["theme"]
+    wenn stil == "heading1" oder stil == "heading2" oder stil == "heading3" oder stil == "strong":
+        gib_zurück t["akzent"]
+    wenn stil == "emphasis" oder stil == "link":
+        gib_zurück t["text_gedimmt"]
+    wenn stil == "quote" oder stil == "rule":
+        gib_zurück t["rand"]
+    gib_zurück _uim_zustand_farbe(kontext, w, "text")
+
+
+funktion _uim_markdown_scroll_ziel(w, richtung, max_scroll):
+    setze aktuell auf w["scroll_y"]
+    wenn richtung < 0:
+        setze ziel auf 0
+        für objekt in w["markdown_layout"]:
+            wenn objekt["y"] < aktuell and objekt["y"] > ziel:
+                setze ziel auf objekt["y"]
+        gib_zurück ziel
+    setze ziel auf max_scroll
+    setze gefunden auf falsch
+    für objekt in w["markdown_layout"]:
+        wenn objekt["y"] > aktuell and (gefunden == falsch oder objekt["y"] < ziel):
+            setze ziel auf objekt["y"]
+            setze gefunden auf wahr
+    wenn ziel > max_scroll:
+        setze ziel auf max_scroll
+    gib_zurück ziel
 
 funktion _uim_z_terminal(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
@@ -7105,6 +7700,7 @@ funktion _uim_z_terminal(kontext, z, w, ox, oy):
     gib_zurück wahr
 
 funktion _uim_z_markdown(kontext, z, w, ox, oy):
+    _uim_markdown_layout_sync(kontext, z, w)
     setze t auf kontext["theme"]
     setze ax auf ox + w["x"]
     setze ay auf oy + w["y"]
@@ -7113,46 +7709,46 @@ funktion _uim_z_markdown(kontext, z, w, ox, oy):
     _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
     _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
     setze pad auf t["abstand"]
-    setze zeilen_h auf t["schrift"] + 4
-    setze max_zeilen auf boden((w["h"] - 2 * pad) / zeilen_h)
-    wenn max_zeilen < 1:
-        setze max_zeilen auf 1
-    setze start auf boden(w["scroll_y"] / zeilen_h)
-    setze max_start auf länge(w["zeilen"]) - max_zeilen
-    wenn max_start < 0:
-        setze max_start auf 0
-    wenn start > max_start:
-        setze start auf max_start
-    wenn start < 0:
-        setze start auf 0
-    _uim_zf_clip_setze(kontext, z, ax + 3, ay + 2, w["b"] - 6, w["h"] - 4)
-    setze i auf start
-    setze gezeichnet auf 0
-    solange i < länge(w["zeilen"]) und gezeichnet < max_zeilen:
-        setze zeile auf w["zeilen"][i]
-        setze art auf _uim_markdown_art(zeile)
-        setze schrift auf t["schrift"]
-        wenn art == 1:
-            setze schrift auf t["schrift"] + 2
-        sonst wenn art == 2:
-            setze schrift auf t["schrift"] + 1
-        wenn art == 4:
-            # Der Codebalken folgt derselben Textbasis: 2px oberhalb bis 2px unterhalb.
-            setze code_y auf ay + pad - 2 + gezeichnet * zeilen_h
-            _uim_farbe(kontext, z, [24, 30, 42, 255])
-            _uim_zf_rechteck(kontext, z, ax + 3, code_y, w["b"] - 6, schrift + 4, wahr)
-        wenn art == 1 oder art == 2 oder art == 3:
-            _uim_farbe(kontext, z, t["akzent"])
-        sonst wenn art == 4:
-            _uim_farbe(kontext, z, t["text"])
-        sonst wenn art == 5:
-            _uim_farbe(kontext, z, t["rand_fokus"])
-        sonst:
-            _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "text"))
-        _uim_zf_text(kontext, z, ax + pad, ay + pad + gezeichnet * zeilen_h, zeile, schrift)
-        setze i auf i + 1
-        setze gezeichnet auf gezeichnet + 1
-    _uim_zf_clip_loesche(kontext, z)
+    setze innen_x auf ax + pad
+    setze innen_y auf ay + pad
+    setze innen_b auf w["b"] - pad * 2
+    setze innen_h auf w["h"] - pad * 2
+    wenn innen_b < 0:
+        setze innen_b auf 0
+    wenn innen_h < 0:
+        setze innen_h auf 0
+    setze clip_aktiv auf kontext["backend_vertrag"]["faehigkeiten"]["clip"]
+    wenn clip_aktiv:
+        _uim_zf_clip_setze(kontext, z, innen_x, innen_y, innen_b, innen_h)
+    setze sichtbar_oben auf w["scroll_y"]
+    setze sichtbar_unten auf w["scroll_y"] + w["h"]
+    für objekt in w["markdown_layout"]:
+        wenn objekt["y"] + objekt["hoehe"] > sichtbar_oben and objekt["y"] < sichtbar_unten:
+            setze objekt_y auf ay + objekt["y"] - w["scroll_y"]
+            wenn objekt["typ"] == "rule":
+                _uim_farbe(kontext, z, t["rand"])
+                _uim_zf_linie(kontext, z, innen_x, objekt_y, innen_x + innen_b, objekt_y, 1)
+            sonst:
+                wenn objekt["block"] == "code":
+                    _uim_farbe(kontext, z, [24, 30, 42, 255])
+                    _uim_zf_rechteck(kontext, z, innen_x, objekt_y - 1, innen_b, objekt["hoehe"], wahr)
+                wenn objekt["block"] == "quote":
+                    _uim_farbe(kontext, z, t["rand"])
+                    _uim_zf_linie(kontext, z, innen_x, objekt_y, innen_x, objekt_y + objekt["hoehe"], 2)
+                setze text_x auf innen_x + objekt["einzug"]
+                für segment in objekt["segmente"]:
+                    setze segment_b auf _uim_zf_text_breite(kontext, z, segment["text"], objekt["schrift"])
+                    wenn segment["stil"] == "code" and objekt["block"] != "code":
+                        _uim_farbe(kontext, z, [24, 30, 42, 255])
+                        _uim_zf_rechteck(kontext, z, text_x, objekt_y - 1, segment_b, objekt["hoehe"], wahr)
+                    _uim_farbe(kontext, z, _uim_markdown_stil_farbe(kontext, w, segment["stil"]))
+                    _uim_zf_text(kontext, z, text_x, objekt_y, segment["text"], objekt["schrift"])
+                    wenn segment["stil"] == "link":
+                        _uim_farbe(kontext, z, t["rand"])
+                        _uim_zf_linie(kontext, z, text_x, objekt_y + objekt["schrift"] + 1, text_x + segment_b, objekt_y + objekt["schrift"] + 1, 1)
+                    setze text_x auf text_x + segment_b
+    wenn clip_aktiv:
+        _uim_zf_clip_loesche(kontext, z)
     wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
         _uim_farbe(kontext, z, t["akzent"])
         _uim_zf_rechteck(kontext, z, ax + 1, ay + 1, w["b"] - 2, w["h"] - 2, falsch)
