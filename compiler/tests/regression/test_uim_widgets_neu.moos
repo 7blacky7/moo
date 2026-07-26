@@ -789,3 +789,160 @@ uim_state_setze(bind_state, "titel", "Gebunden")
 setze mut_bind auf k["backend_zustand"]["ungueltig"]
 zeige "API1-MUTATIONEN " + text(mut_metriken) + "/" + text(mut_grenzen) + "/" + text(mut_textlayout) + "/" + text(mut_clip) + "/" + text(mut_z) + "/" + text(mut_event) + "/" + text(mut_drag) + "/" + text(mut_drop) + "/" + text(mut_tooltip) + "/" + text(mut_teiler_flag) + "/" + text(mut_bind)
 zeige "W6-API1-OK"
+
+
+# --- W6-API2: deutsche und englische Namen bleiben verhaltensgleich ---
+funktion api2_paar_gleich(a, b):
+    wenn typ_von(a) != typ_von(b):
+        gib_zurück falsch
+    für feld in ["typ", "text", "titel", "beschriftung", "zustand", "wert", "min", "max", "auswahl", "monat", "jahr", "quelle", "alt", "offen", "sichtbar", "richtung", "anteil", "beschaeftigt", "unbestimmt", "phase", "zeilen", "spalten", "abstand", "min1", "min2", "schliesst_aussen"]:
+        wenn a.enthält(feld) != b.enthält(feld):
+            gib_zurück falsch
+        wenn a.enthält(feld) und typ_von(a[feld]) == "Liste" und länge(a[feld]) != länge(b[feld]):
+            gib_zurück falsch
+        wenn a.enthält(feld) und typ_von(a[feld]) != "Liste" und a[feld] != b[feld]:
+            gib_zurück falsch
+    gib_zurück wahr
+
+setze api2_status auf wahr
+setze api2_status auf api2_status und api2_paar_gleich(uim_knopf("K", 0, 0, 40, 20, nichts), uim_button("K", 0, 0, 40, 20, nichts))
+setze api2_status auf api2_status und api2_paar_gleich(uim_knopf_geschuetzt("K", 0, 0, 40, 20, nichts), uim_button_geschuetzt("K", 0, 0, 40, 20, nichts))
+setze api2_status auf api2_status und api2_paar_gleich(uim_statusansicht(0, 0, 80, 30, "leer", "T", "B", nichts), uim_statusview(0, 0, 80, 30, "leer", "T", "B", nichts))
+setze api2_status auf api2_status und api2_paar_gleich(uim_leerzustand(0, 0, 80, 30, "T", "B"), uim_emptystate(0, 0, 80, 30, "T", "B"))
+setze api2_status auf api2_status und api2_paar_gleich(uim_fehlerzustand(0, 0, 80, 30, "T", "B", nichts), uim_errorstate(0, 0, 80, 30, "T", "B", nichts))
+setze api2_status auf api2_status und api2_paar_gleich(uim_ladezustand(0, 0, 80, 30, "T", "B"), uim_loadingstate(0, 0, 80, 30, "T", "B"))
+setze api2_status auf api2_status und api2_paar_gleich(uim_skelett(0, 0, 80, 30, 2), uim_skeleton(0, 0, 80, 30, 2))
+setze api2_status auf api2_status und api2_paar_gleich(uim_bewertung(0, 0, 80, 20, 3, nichts), uim_rating(0, 0, 80, 20, 3, nichts))
+setze api2_status auf api2_status und api2_paar_gleich(uim_schalter("S", 0, 0, 40, 20, wahr, nichts), uim_switch("S", 0, 0, 40, 20, wahr, nichts))
+setze api2_status auf api2_status und api2_paar_gleich(uim_umschaltknopf("T", 0, 0, 40, 20, falsch, nichts), uim_toggle("T", 0, 0, 40, 20, falsch, nichts))
+setze api2_status auf api2_status und api2_paar_gleich(uim_optionsfeld("O", 0, 0, 40, 20, "g", wahr, nichts), uim_radio("O", 0, 0, 40, 20, "g", wahr, nichts))
+zeige "API2-STATUS " + text(api2_status)
+
+setze api2_daten auf wahr
+setze api2_daten auf api2_daten und api2_paar_gleich(uim_schieberegler(0, 0, 80, 20, 0, 10, 5, nichts), uim_slider(0, 0, 80, 20, 0, 10, 5, nichts))
+setze api2_daten auf api2_daten und api2_paar_gleich(uim_fortschritt(0, 0, 80, 10), uim_progress(0, 0, 80, 10))
+setze api2_daten auf api2_daten und api2_paar_gleich(uim_liste(0, 0, 80, 40, ["A"], nichts), uim_list(0, 0, 80, 40, ["A"], nichts))
+setze api2_daten auf api2_daten und api2_paar_gleich(uim_baum_knoten("N", []), uim_tree_node("N", []))
+setze api2_daten auf api2_daten und api2_paar_gleich(uim_baum(0, 0, 80, 40, [], nichts), uim_tree(0, 0, 80, 40, [], nichts))
+setze api2_daten auf api2_daten und api2_paar_gleich(uim_datengitter(0, 0, 80, 40, ["S"], [["Z"]], nichts), uim_datagrid(0, 0, 80, 40, ["S"], [["Z"]], nichts))
+setze api2_daten auf api2_daten und api2_paar_gleich(uim_menue_punkt("P", nichts), uim_menu_item("P", nichts))
+setze api2_daten auf api2_daten und api2_paar_gleich(uim_menue_trenner(), uim_menu_separator())
+setze api2_daten auf api2_daten und api2_paar_gleich(uim_menue("M", []), uim_menu("M", []))
+setze api2_daten auf api2_daten und api2_paar_gleich(uim_menueleiste(0, 0, 80, 20, []), uim_menubar(0, 0, 80, 20, []))
+zeige "API2-DATEN " + text(api2_daten)
+
+setze api2_eingabe auf wahr
+setze api2_eingabe auf api2_eingabe und api2_paar_gleich(uim_textfeld(0, 0, 80, 20, "A", nichts), uim_textfield(0, 0, 80, 20, "A", nichts))
+setze api2_eingabe auf api2_eingabe und api2_paar_gleich(uim_suchfeld(0, 0, 80, 20, "S", nichts), uim_searchbox(0, 0, 80, 20, "S", nichts))
+setze api2_eingabe auf api2_eingabe und api2_paar_gleich(uim_zahlenfeld(0, 0, 80, 20, 2, 0, 10, nichts), uim_numberbox(0, 0, 80, 20, 2, 0, 10, nichts))
+setze api2_eingabe auf api2_eingabe und api2_paar_gleich(uim_passwortfeld(0, 0, 80, 20, "P", nichts), uim_passwordbox(0, 0, 80, 20, "P", nichts))
+setze api2_eingabe auf api2_eingabe und api2_paar_gleich(uim_mehrzeilenfeld(0, 0, 80, 40, "M", nichts), uim_textarea(0, 0, 80, 40, "M", nichts))
+setze api2_eingabe auf api2_eingabe und api2_paar_gleich(uim_multiline(0, 0, 80, 40, "M", nichts), uim_textarea(0, 0, 80, 40, "M", nichts))
+setze api2_eingabe auf api2_eingabe und api2_paar_gleich(uim_autovervollstaendigung(0, 0, 80, 20, "A", ["AA"], nichts), uim_autocomplete(0, 0, 80, 20, "A", ["AA"], nichts))
+zeige "API2-EINGABE " + text(api2_eingabe)
+
+setze api2_medien auf wahr
+setze api2_medien auf api2_medien und api2_paar_gleich(uim_bild(0, 0, 40, 40, "q", "a"), uim_image(0, 0, 40, 40, "q", "a"))
+setze api2_medien auf api2_medien und api2_paar_gleich(uim_farbauswahl(0, 0, 80, 20, ["rot"], nichts), uim_colorpicker(0, 0, 80, 20, ["rot"], nichts))
+setze api2_medien auf api2_medien und api2_paar_gleich(uim_kalender(0, 0, 80, 80, 7, 2026, nichts), uim_calendar(0, 0, 80, 80, 7, 2026, nichts))
+setze api2_medien auf api2_medien und api2_paar_gleich(uim_datumsauswahl(0, 0, 80, 80, 7, 2026, nichts), uim_datepicker(0, 0, 80, 80, 7, 2026, nichts))
+setze api2_medien auf api2_medien und api2_paar_gleich(uim_liniendiagramm(0, 0, 80, 40, [1, 2], nichts), uim_linechart(0, 0, 80, 40, [1, 2], nichts))
+setze api2_medien auf api2_medien und api2_paar_gleich(uim_balkendiagramm(0, 0, 80, 40, [1, 2], nichts), uim_barchart(0, 0, 80, 40, [1, 2], nichts))
+setze api2_medien auf api2_medien und api2_paar_gleich(uim_kreisdiagramm(0, 0, 80, 40, [1, 2], nichts), uim_piechart(0, 0, 80, 40, [1, 2], nichts))
+setze api2_medien auf api2_medien und api2_paar_gleich(uim_messanzeige(0, 0, 80, 40, 0, 10, 5, nichts), uim_gauge(0, 0, 80, 40, 0, 10, 5, nichts))
+setze api2_medien auf api2_medien und api2_paar_gleich(uim_trenner(0, 0, 80), uim_separator(0, 0, 80))
+zeige "API2-MEDIEN " + text(api2_medien)
+
+setze api2_layout auf wahr
+setze api2_layout auf api2_layout und api2_paar_gleich(uim_reiter(0, 0, 80, 40, ["A"]), uim_tabs(0, 0, 80, 40, ["A"]))
+setze api2_layout auf api2_layout und api2_paar_gleich(uim_werkzeug("W", nichts), uim_tool("W", nichts))
+setze api2_layout auf api2_layout und api2_paar_gleich(uim_werkzeug_trenner(), uim_tool_separator())
+setze api2_layout auf api2_layout und api2_paar_gleich(uim_werkzeugleiste(0, 0, 80, 20, []), uim_toolbar(0, 0, 80, 20, []))
+setze api2_layout auf api2_layout und api2_paar_gleich(uim_statusleiste(0, 0, 80, 20, "L", "R"), uim_statusbar(0, 0, 80, 20, "L", "R"))
+setze api2_layout auf api2_layout und api2_paar_gleich(uim_kontextmenue([]), uim_contextmenu([]))
+setze api2_layout auf api2_layout und api2_paar_gleich(uim_aufklapper("A", 0, 0, 80, 40), uim_expander("A", 0, 0, 80, 40))
+setze api2_layout auf api2_layout und api2_paar_gleich(uim_teiler(0, 0, 80, 40, "horizontal", 0.5), uim_splitter(0, 0, 80, 40, "horizontal", 0.5))
+setze api2_layout auf api2_layout und api2_paar_gleich(uim_karte("K", 0, 0, 80, 40), uim_card("K", 0, 0, 80, 40))
+setze api2_layout auf api2_layout und api2_paar_gleich(uim_stapel(0, 0, 80, 40), uim_stack(0, 0, 80, 40))
+setze api2_layout auf api2_layout und api2_paar_gleich(uim_gitter(0, 0, 80, 40), uim_grid(0, 0, 80, 40))
+setze api2_layout auf api2_layout und api2_paar_gleich(uim_ueberlagerung(0, 0, 80, 40), uim_overlay(0, 0, 80, 40))
+zeige "API2-LAYOUT " + text(api2_layout)
+
+setze api2_dialog auf wahr
+setze api2_dialog auf api2_dialog und api2_paar_gleich(uim_nachricht("T", "N", ["OK"], nichts), uim_message("T", "N", ["OK"], nichts))
+setze api2_dialog auf api2_dialog und api2_paar_gleich(uim_loeschen_bestaetigung("T", "N", nichts), uim_delete_confirmation("T", "N", nichts))
+setze api2_dialog auf api2_dialog und api2_paar_gleich(uim_eingabe_dialog("T", "P", "I", nichts), uim_input_dialog("T", "P", "I", nichts))
+zeige "API2-DIALOG " + text(api2_dialog)
+
+setze api2_ops auf wahr
+setze api2_k_de auf uim_mock_wurzel(200, 200)
+setze api2_k_en auf uim_mock_wurzel(200, 200)
+setze api2_knopf_de auf uim_knopf("K", 0, 0, 40, 20, nichts)
+setze api2_knopf_en auf uim_button("K", 0, 0, 40, 20, nichts)
+uim_knopf_aktion_start(api2_knopf_de)
+uim_button_aktion_start(api2_knopf_en)
+setze api2_ops auf api2_ops und api2_paar_gleich(api2_knopf_de, api2_knopf_en)
+uim_knopf_aktion_ende(api2_knopf_de)
+uim_button_aktion_ende(api2_knopf_en)
+setze api2_ops auf api2_ops und api2_paar_gleich(api2_knopf_de, api2_knopf_en)
+setze api2_status_de auf uim_statusansicht(0, 0, 80, 30, "leer", "A", "B", nichts)
+setze api2_status_en auf uim_statusview(0, 0, 80, 30, "leer", "A", "B", nichts)
+uim_statusansicht_setze(api2_status_de, "laden", "C", "D")
+uim_statusview_setze(api2_status_en, "laden", "C", "D")
+setze api2_ops auf api2_ops und api2_paar_gleich(api2_status_de, api2_status_en)
+setze api2_progress_de auf uim_fortschritt(0, 0, 80, 10)
+setze api2_progress_en auf uim_progress(0, 0, 80, 10)
+uim_fortschritt_setze(api2_k_de, api2_progress_de, 0.6)
+uim_progress_setze(api2_k_en, api2_progress_en, 0.6)
+uim_fortschritt_unbestimmt_setze(api2_k_de, api2_progress_de, wahr)
+uim_progress_unbestimmt_setze(api2_k_en, api2_progress_en, wahr)
+setze api2_ops auf api2_ops und api2_paar_gleich(api2_progress_de, api2_progress_en)
+setze api2_slider_de auf uim_schieberegler(0, 0, 80, 20, 0, 10, 2, nichts)
+setze api2_slider_en auf uim_slider(0, 0, 80, 20, 0, 10, 2, nichts)
+uim_schieberegler_setze(api2_k_de, api2_slider_de, 7)
+uim_slider_setze(api2_k_en, api2_slider_en, 7)
+setze api2_ops auf api2_ops und api2_paar_gleich(api2_slider_de, api2_slider_en)
+setze api2_grid_de auf uim_datengitter(0, 0, 80, 40, ["S"], [], nichts)
+setze api2_grid_en auf uim_datagrid(0, 0, 80, 40, ["S"], [], nichts)
+uim_datengitter_zeilen_setze(api2_k_de, api2_grid_de, [["Z"]])
+uim_datagrid_zeilen_setze(api2_k_en, api2_grid_en, [["Z"]])
+setze api2_ops auf api2_ops und api2_paar_gleich(api2_grid_de, api2_grid_en)
+setze api2_text_de auf uim_textfeld(0, 0, 80, 20, "A", nichts)
+setze api2_text_en auf uim_textfield(0, 0, 80, 20, "A", nichts)
+uim_textfeld_setze(api2_k_de, api2_text_de, "B")
+uim_textfield_setze(api2_k_en, api2_text_en, "B")
+setze api2_ops auf api2_ops und api2_paar_gleich(api2_text_de, api2_text_en)
+setze api2_tabs_de auf uim_reiter(0, 0, 80, 40, ["A", "B"])
+setze api2_tabs_en auf uim_tabs(0, 0, 80, 40, ["A", "B"])
+uim_reiter_auswahl_setze(api2_k_de, api2_tabs_de, 1)
+uim_tabs_auswahl_setze(api2_k_en, api2_tabs_en, 1)
+setze api2_ops auf api2_ops und api2_paar_gleich(api2_tabs_de, api2_tabs_en)
+setze api2_cm_de auf uim_kontextmenue([])
+setze api2_cm_en auf uim_contextmenu([])
+api2_k_de["kontext_offen"] = api2_cm_de
+api2_k_en["kontext_offen"] = api2_cm_en
+uim_kontextmenue_schliessen(api2_k_de)
+uim_contextmenu_schliessen(api2_k_en)
+setze api2_ops auf api2_ops und api2_paar_gleich(api2_cm_de, api2_cm_en)
+setze api2_split_de auf uim_teiler(0, 0, 80, 40, "horizontal", 0.5)
+setze api2_split_en auf uim_splitter(0, 0, 80, 40, "horizontal", 0.5)
+uim_teiler_min_setze(api2_split_de, 10, 12)
+uim_splitter_min_setze(api2_split_en, 10, 12)
+setze api2_ops auf api2_ops und api2_paar_gleich(api2_split_de, api2_split_en)
+setze api2_stack_de auf uim_stapel(0, 0, 80, 40)
+setze api2_stack_en auf uim_stack(0, 0, 80, 40)
+uim_stapel_layout(api2_stack_de, "vertikal", 3)
+uim_stack_layout(api2_stack_en, "vertikal", 3)
+setze api2_ops auf api2_ops und api2_paar_gleich(api2_stack_de, api2_stack_en)
+setze api2_layout_de auf uim_gitter(0, 0, 80, 40)
+setze api2_layout_en auf uim_grid(0, 0, 80, 40)
+uim_gitter_layout(api2_layout_de, 2, 3)
+uim_grid_layout(api2_layout_en, 2, 3)
+setze api2_ops auf api2_ops und api2_paar_gleich(api2_layout_de, api2_layout_en)
+setze api2_overlay_de auf uim_ueberlagerung(0, 0, 80, 40)
+setze api2_overlay_en auf uim_overlay(0, 0, 80, 40)
+uim_ueberlagerung_setze(api2_k_de, api2_overlay_de, wahr, wahr)
+uim_overlay_setze(api2_k_en, api2_overlay_en, wahr, wahr)
+setze api2_ops auf api2_ops und api2_paar_gleich(api2_overlay_de, api2_overlay_en)
+zeige "API2-OPS " + text(api2_ops)
+zeige "W6-API2-OK"

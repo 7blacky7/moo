@@ -152,3 +152,11 @@ API1-SPEZIAL wahr/wahr/1 wahr/wahr/wahr wahr/wahr/0.5 wahr/wahr/falsch wahr/wahr
 API1-LEGACY wahr/wahr/wahr/wahr
 API1-MUTATIONEN wahr/wahr/wahr/wahr/wahr/wahr/wahr/wahr/wahr/wahr/wahr
 W6-API1-OK
+API2-STATUS wahr
+API2-DATEN wahr
+API2-EINGABE wahr
+API2-MEDIEN wahr
+API2-LAYOUT wahr
+API2-DIALOG wahr
+API2-OPS wahr
+W6-API2-OK

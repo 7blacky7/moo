@@ -4994,7 +4994,7 @@ funktion uim_passwordbox(x, y, b, h, initial, on_wechsel):
     w["on_wechsel"] = on_wechsel
     gib_zurück w
 
-funktion uim_multiline(x, y, b, h, initial, on_wechsel):
+funktion uim_textarea(x, y, b, h, initial, on_wechsel):
     setze w auf _uim_basis("multiline", x, y, b, h)
     w["fokussierbar"] = wahr
     w["text"] = initial
@@ -6012,3 +6012,195 @@ funktion _uim_z_markdown(kontext, z, w, ox, oy):
         _uim_farbe(kontext, z, t["akzent"])
         _uim_zf_rechteck(kontext, z, ax + 1, ay + 1, w["b"] - 2, w["h"] - 2, falsch)
     gib_zurück wahr
+
+
+# --- W6-API2: zweisprachige Widget-Oberflaeche ---
+# Aliase bleiben absichtlich reine Ein-Zeilen-Weiterleitungen zur kanonischen Logik.
+funktion uim_button(beschriftung, x, y, b, h, on_klick):
+    gib_zurück uim_knopf(beschriftung, x, y, b, h, on_klick)
+
+funktion uim_button_geschuetzt(beschriftung, x, y, b, h, on_klick):
+    gib_zurück uim_knopf_geschuetzt(beschriftung, x, y, b, h, on_klick)
+
+funktion uim_button_aktion_start(w):
+    gib_zurück uim_knopf_aktion_start(w)
+
+funktion uim_button_aktion_ende(w):
+    gib_zurück uim_knopf_aktion_ende(w)
+
+funktion uim_statusview(x, y, b, h, zustand, titel, beschreibung, on_retry):
+    gib_zurück uim_statusansicht(x, y, b, h, zustand, titel, beschreibung, on_retry)
+
+funktion uim_statusansicht_setze(w, zustand, titel, beschreibung):
+    gib_zurück uim_status_setze(w, zustand, titel, beschreibung)
+
+funktion uim_statusview_setze(w, zustand, titel, beschreibung):
+    gib_zurück uim_status_setze(w, zustand, titel, beschreibung)
+
+funktion uim_emptystate(x, y, b, h, titel, beschreibung):
+    gib_zurück uim_leerzustand(x, y, b, h, titel, beschreibung)
+
+funktion uim_errorstate(x, y, b, h, titel, beschreibung, on_retry):
+    gib_zurück uim_fehlerzustand(x, y, b, h, titel, beschreibung, on_retry)
+
+funktion uim_loadingstate(x, y, b, h, titel, beschreibung):
+    gib_zurück uim_ladezustand(x, y, b, h, titel, beschreibung)
+
+funktion uim_skeleton(x, y, b, h, zeilen):
+    gib_zurück uim_skelett(x, y, b, h, zeilen)
+
+funktion uim_optionsfeld(beschriftung, x, y, b, h, gruppe, initial, on_wechsel):
+    gib_zurück uim_radio(beschriftung, x, y, b, h, gruppe, initial, on_wechsel)
+
+funktion uim_schieberegler(x, y, b, h, min, max, start, on_wechsel):
+    gib_zurück uim_slider(x, y, b, h, min, max, start, on_wechsel)
+
+funktion uim_schieberegler_setze(kontext, w, wert):
+    gib_zurück uim_slider_setze(kontext, w, wert)
+
+funktion uim_progress(x, y, b, h):
+    gib_zurück uim_fortschritt(x, y, b, h)
+
+funktion uim_progress_setze(kontext, w, wert):
+    gib_zurück uim_fortschritt_setze(kontext, w, wert)
+
+funktion uim_progress_unbestimmt_setze(kontext, w, aktiv):
+    gib_zurück uim_fortschritt_unbestimmt_setze(kontext, w, aktiv)
+
+funktion uim_list(x, y, b, h, zeilen, on_auswahl):
+    gib_zurück uim_liste(x, y, b, h, zeilen, on_auswahl)
+
+funktion uim_tree_node(text, kinder):
+    gib_zurück uim_baum_knoten(text, kinder)
+
+funktion uim_tree(x, y, b, h, knoten, on_auswahl):
+    gib_zurück uim_baum(x, y, b, h, knoten, on_auswahl)
+
+funktion uim_datagrid(x, y, b, h, spalten, zeilen, on_auswahl):
+    gib_zurück uim_datengitter(x, y, b, h, spalten, zeilen, on_auswahl)
+
+funktion uim_datagrid_zeilen_setze(kontext, w, zeilen):
+    gib_zurück uim_datengitter_zeilen_setze(kontext, w, zeilen)
+
+funktion uim_menu_item(text, cb):
+    gib_zurück uim_menue_punkt(text, cb)
+
+funktion uim_menu_separator():
+    gib_zurück uim_menue_trenner()
+
+funktion uim_menu(titel, punkte):
+    gib_zurück uim_menue(titel, punkte)
+
+funktion uim_menubar(x, y, b, h, eintraege):
+    gib_zurück uim_menueleiste(x, y, b, h, eintraege)
+
+funktion uim_textfield(x, y, b, h, initial, on_wechsel):
+    gib_zurück uim_textfeld(x, y, b, h, initial, on_wechsel)
+
+funktion uim_textfield_setze(kontext, w, txt):
+    gib_zurück uim_textfeld_setze(kontext, w, txt)
+
+funktion uim_suchfeld(x, y, b, h, placeholder, on_wechsel):
+    gib_zurück uim_searchbox(x, y, b, h, placeholder, on_wechsel)
+
+funktion uim_zahlenfeld(x, y, b, h, initial, min_wert, max_wert, on_wechsel):
+    gib_zurück uim_numberbox(x, y, b, h, initial, min_wert, max_wert, on_wechsel)
+
+funktion uim_passwortfeld(x, y, b, h, initial, on_wechsel):
+    gib_zurück uim_passwordbox(x, y, b, h, initial, on_wechsel)
+
+funktion uim_multiline(x, y, b, h, initial, on_wechsel):
+    gib_zurück uim_textarea(x, y, b, h, initial, on_wechsel)
+
+funktion uim_mehrzeilenfeld(x, y, b, h, initial, on_wechsel):
+    gib_zurück uim_textarea(x, y, b, h, initial, on_wechsel)
+
+funktion uim_autovervollstaendigung(x, y, b, h, initial, vorschlaege, on_wechsel):
+    gib_zurück uim_autocomplete(x, y, b, h, initial, vorschlaege, on_wechsel)
+
+funktion uim_bild(x, y, b, h, quelle, alt):
+    gib_zurück uim_image(x, y, b, h, quelle, alt)
+
+funktion uim_farbauswahl(x, y, b, h, farben, on_auswahl):
+    gib_zurück uim_colorpicker(x, y, b, h, farben, on_auswahl)
+
+funktion uim_kalender(x, y, b, h, monat, jahr, on_auswahl):
+    gib_zurück uim_calendar(x, y, b, h, monat, jahr, on_auswahl)
+
+funktion uim_datumsauswahl(x, y, b, h, monat, jahr, on_auswahl):
+    gib_zurück uim_datepicker(x, y, b, h, monat, jahr, on_auswahl)
+
+funktion uim_liniendiagramm(x, y, b, h, werte, on_auswahl):
+    gib_zurück uim_linechart(x, y, b, h, werte, on_auswahl)
+
+funktion uim_balkendiagramm(x, y, b, h, werte, on_auswahl):
+    gib_zurück uim_barchart(x, y, b, h, werte, on_auswahl)
+
+funktion uim_kreisdiagramm(x, y, b, h, werte, on_auswahl):
+    gib_zurück uim_piechart(x, y, b, h, werte, on_auswahl)
+
+funktion uim_messanzeige(x, y, b, h, min_wert, max_wert, wert, on_wechsel):
+    gib_zurück uim_gauge(x, y, b, h, min_wert, max_wert, wert, on_wechsel)
+
+funktion uim_trenner(x, y, b):
+    gib_zurück uim_separator(x, y, b)
+
+funktion uim_reiter(x, y, b, h, titel_liste):
+    gib_zurück uim_tabs(x, y, b, h, titel_liste)
+
+funktion uim_reiter_auswahl_setze(kontext, w, idx):
+    gib_zurück uim_tabs_auswahl_setze(kontext, w, idx)
+
+funktion uim_tool(text, cb):
+    gib_zurück uim_werkzeug(text, cb)
+
+funktion uim_tool_separator():
+    gib_zurück uim_werkzeug_trenner()
+
+funktion uim_toolbar(x, y, b, h, werkzeuge):
+    gib_zurück uim_werkzeugleiste(x, y, b, h, werkzeuge)
+
+funktion uim_statusbar(x, y, b, h, links, rechts):
+    gib_zurück uim_statusleiste(x, y, b, h, links, rechts)
+
+funktion uim_contextmenu(punkte):
+    gib_zurück uim_kontextmenue(punkte)
+
+funktion uim_contextmenu_schliessen(kontext):
+    gib_zurück uim_kontextmenue_schliessen(kontext)
+
+funktion uim_expander(titel, x, y, b, h):
+    gib_zurück uim_aufklapper(titel, x, y, b, h)
+
+funktion uim_splitter(x, y, b, h, richtung, anteil):
+    gib_zurück uim_teiler(x, y, b, h, richtung, anteil)
+
+funktion uim_splitter_min_setze(w, min1, min2):
+    gib_zurück uim_teiler_min_setze(w, min1, min2)
+
+funktion uim_card(titel, x, y, b, h):
+    gib_zurück uim_karte(titel, x, y, b, h)
+
+funktion uim_stack(x, y, b, h):
+    gib_zurück uim_stapel(x, y, b, h)
+
+funktion uim_stack_layout(container, richtung, abstand):
+    gib_zurück uim_stapel_layout(container, richtung, abstand)
+
+funktion uim_grid(x, y, b, h):
+    gib_zurück uim_gitter(x, y, b, h)
+
+funktion uim_grid_layout(container, spalten, abstand):
+    gib_zurück uim_gitter_layout(container, spalten, abstand)
+
+funktion uim_overlay_setze(kontext, w, offen, schliesst_aussen):
+    gib_zurück uim_ueberlagerung_setze(kontext, w, offen, schliesst_aussen)
+
+funktion uim_message(titel, text, knoepfe, cb):
+    gib_zurück uim_nachricht(titel, text, knoepfe, cb)
+
+funktion uim_delete_confirmation(titel, text, on_bestaetigt):
+    gib_zurück uim_loeschen_bestaetigung(titel, text, on_bestaetigt)
+
+funktion uim_input_dialog(titel, prompt, initial, cb):
+    gib_zurück uim_eingabe_dialog(titel, prompt, initial, cb)
