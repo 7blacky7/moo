@@ -218,6 +218,17 @@ uim_hinzu(k, uim_colorpicker(584, 612, 120, 48, w5e_farben, on_liste))
 setze w5e_kalender_demo auf uim_baue("calendar", {"x": 716, "y": 612, "b": 356, "h": 188, "monat": 7, "jahr": 2026, "on_auswahl": on_liste})
 uim_kalender_heute_setze(w5e_kalender_demo, 26, 7, 2026)
 uim_hinzu(k, w5e_kalender_demo)
+uim_kalender_auswahlmodus_setze(w5e_kalender_demo, "bereich")
+uim_kalender_wochennummern_setze(w5e_kalender_demo, wahr)
+uim_kalender_termine_setze(w5e_kalender_demo, [[8, 7, 2026], [18, 7, 2026]])
+uim_wert_setze(k, w5e_kalender_demo, [[5, 7, 2026], [12, 7, 2026]])
+setze w5e_datepicker_demo auf uim_datepicker(584, 670, 120, 28, 7, 2026, on_liste)
+uim_kalender_heute_setze(w5e_datepicker_demo, 26, 7, 2026)
+uim_kalender_auswahlmodus_setze(w5e_datepicker_demo, "bereich")
+uim_kalender_wochennummern_setze(w5e_datepicker_demo, wahr)
+uim_kalender_termine_setze(w5e_datepicker_demo, [[8, 7, 2026], [18, 7, 2026]])
+uim_hinzu(k, w5e_datepicker_demo)
+uim_wert_setze(k, w5e_datepicker_demo, [[5, 7, 2026], [12, 7, 2026]])
 
 # W5F Diagramme.
 setze w5f_demo_werte auf [1, 3, 2, 4]

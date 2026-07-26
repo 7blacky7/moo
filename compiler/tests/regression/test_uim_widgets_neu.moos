@@ -1100,14 +1100,14 @@ uim_kalender_navigiere(kal3_dp, 1)
 uim_mock_zeichne(kal3_dp_root)
 setze kal3_dp_feb_anzeige auf falsch
 für kal3_dp_befehl in uim_mock_befehle(kal3_dp_root):
-    wenn kal3_dp_befehl["op"] == "text" und kal3_dp_befehl["args"][2] == "31.1.2025":
+    wenn kal3_dp_befehl["op"] == "text" und kal3_dp_befehl["args"][2] == "31.01.2025":
         setze kal3_dp_feb_anzeige auf wahr
 setze kal3_dp_feb_ok auf uim_wert_hole(kal3_dp) == 31 und kal3_dp_feb_anzeige
 uim_kalender_navigiere(kal3_dp, 0 - 1)
 uim_mock_zeichne(kal3_dp_root)
 setze kal3_dp_jan_anzeige auf falsch
 für kal3_dp_befehl in uim_mock_befehle(kal3_dp_root):
-    wenn kal3_dp_befehl["op"] == "text" und kal3_dp_befehl["args"][2] == "31.1.2025":
+    wenn kal3_dp_befehl["op"] == "text" und kal3_dp_befehl["args"][2] == "31.01.2025":
         setze kal3_dp_jan_anzeige auf wahr
 setze kal3_dp_jan_ok auf uim_wert_hole(kal3_dp) == 31 und kal3_dp_jan_anzeige und kal3_dp["monat"] == 1
 zeige "KAL3-CANON " + text(kal3_kanon_setzen_ok) + "/" + text(kal3_kanon_feb_ok) + "/" + text(kal3_kanon_jan_ok) + " " + text(kal3_dp_setzen_ok) + "/" + text(kal3_dp_feb_ok) + "/" + text(kal3_dp_jan_ok)
@@ -1145,3 +1145,466 @@ setze kalb_c_leer_ok auf länge(kalb_c_wert) == 0
 setze kalb_c_state_ok auf kalb_c["selected"] == falsch und kalb_c["zustand"] == "normal"
 setze kalb_c_fokus_ok auf kalb_c["fokus_tag"] == kalb_c_fokus_tag und kalb_c["fokus_monat"] == kalb_c_fokus_monat und kalb_c["fokus_jahr"] == kalb_c_fokus_jahr
 zeige "KALB-C " + text(kalb_c_multi_ok und kalb_c_wahl_ok und kalb_c_modus_ok) + "/" + text(kalb_c_leer_ok) + "/" + text(kalb_c_state_ok) + "/" + text(kalb_c_fokus_ok)
+
+# W6-KALENDER Etappe 3+4: Regressionsmatrix D1-D6, D9-D13.
+S["kald_rufe"] = 0
+funktion t_kald_auswahl(w, wert):
+    S["kald_rufe"] = S["kald_rufe"] + 1
+    gib_zurück wahr
+
+funktion t_kald_datum_gleich(a, b):
+    gib_zurück länge(a) == 3 und länge(b) == 3 und a[0] == b[0] und a[1] == b[1] und a[2] == b[2]
+
+# D1: Einzel per echten Klicks, Getter, Legacy-Spiegel und Callback.
+setze kald1_root auf uim_mock_wurzel(320, 210)
+setze kald1 auf uim_calendar(0, 0, 280, 180, 7, 2026, t_kald_auswahl)
+uim_hinzu(kald1_root, kald1)
+S["kald_rufe"] = 0
+uim_mock_maus(kald1_root, 90, 62, wahr)
+uim_mock_maus(kald1_root, 90, 62, falsch)
+uim_mock_maus(kald1_root, 130, 62, wahr)
+uim_mock_maus(kald1_root, 130, 62, falsch)
+zeige "KALD1-EINZEL " + text(uim_wert_hole(kald1) == 2) + "/" + text(kald1["auswahl"] == 2 und kald1["auswahl_datum"][0] == 2) + "/" + text(S["kald_rufe"] == 2)
+
+# D2: Bereich vorwaerts, neuer Start und rueckwaerts normalisiert.
+setze kald2 auf uim_calendar(0, 0, 280, 180, 7, 2026, nichts)
+uim_kalender_auswahlmodus_setze(kald2, "bereich")
+_uim_kalender_auswahl_anwenden(nichts, kald2, [10, 7, 2026], falsch)
+_uim_kalender_auswahl_anwenden(nichts, kald2, [20, 7, 2026], falsch)
+setze kald2_vor auf uim_wert_hole(kald2)
+_uim_kalender_auswahl_anwenden(nichts, kald2, [5, 7, 2026], falsch)
+setze kald2_neu auf uim_wert_hole(kald2)
+setze kald2_rueck auf uim_calendar(0, 0, 280, 180, 7, 2026, nichts)
+uim_kalender_auswahlmodus_setze(kald2_rueck, "bereich")
+_uim_kalender_auswahl_anwenden(nichts, kald2_rueck, [20, 7, 2026], falsch)
+_uim_kalender_auswahl_anwenden(nichts, kald2_rueck, [10, 7, 2026], falsch)
+setze kald2_rueck_wert auf uim_wert_hole(kald2_rueck)
+zeige "KALD2-BEREICH " + text(t_kald_datum_gleich(kald2_vor[0], [10, 7, 2026]) und t_kald_datum_gleich(kald2_vor[1], [20, 7, 2026])) + "/" + text(länge(kald2_neu) == 1 und t_kald_datum_gleich(kald2_neu[0], [5, 7, 2026])) + "/" + text(t_kald_datum_gleich(kald2_rueck_wert[0], [10, 7, 2026]) und t_kald_datum_gleich(kald2_rueck_wert[1], [20, 7, 2026]))
+
+# D3: Mehrfach hinzufuegen und abwaehlen.
+setze kald3 auf uim_calendar(0, 0, 280, 180, 7, 2026, nichts)
+uim_kalender_auswahlmodus_setze(kald3, "mehrfach")
+_uim_kalender_auswahl_anwenden(nichts, kald3, [10, 7, 2026], falsch)
+_uim_kalender_auswahl_anwenden(nichts, kald3, [12, 7, 2026], falsch)
+_uim_kalender_auswahl_anwenden(nichts, kald3, [10, 7, 2026], falsch)
+setze kald3_wert auf uim_wert_hole(kald3)
+zeige "KALD3-MEHRFACH " + text(länge(kald3_wert) == 1) + "/" + text(t_kald_datum_gleich(kald3_wert[0], [12, 7, 2026]))
+
+# D4: Gesperrte Tage und Bounds blockieren Klick und Auswahl; Tastatur springt nur auf erlaubte Daten.
+setze kald4_root auf uim_mock_wurzel(320, 210)
+setze kald4 auf uim_calendar(0, 0, 280, 180, 7, 2026, t_kald_auswahl)
+uim_hinzu(kald4_root, kald4)
+uim_kalender_grenzen_setze(kald4, [3, 7, 2026], [20, 7, 2026])
+uim_kalender_gesperrte_tage_setze(kald4, [[8, 7, 2026]])
+S["kald_rufe"] = 0
+uim_mock_maus(kald4_root, 90, 62, wahr)
+uim_mock_maus(kald4_root, 90, 62, falsch)
+uim_mock_maus(kald4_root, 90, 85, wahr)
+uim_mock_maus(kald4_root, 90, 85, falsch)
+uim_mock_maus(kald4_root, 220, 132, wahr)
+uim_mock_maus(kald4_root, 220, 132, falsch)
+setze kald4_klick_ok auf kald4["auswahl"] == 1 und S["kald_rufe"] == 0
+kald4_root["fokus"] = kald4
+kald4["fokus_tag"] = 1
+kald4["fokus_monat"] = 7
+kald4["fokus_jahr"] = 2026
+uim_mock_taste(kald4_root, "Down", wahr, 0)
+setze kald4_gesperrt_ok auf kald4["fokus_tag"] == 9 und kald4["auswahl"] == 1
+kald4["fokus_tag"] = 3
+uim_mock_taste(kald4_root, "Left", wahr, 0)
+setze kald4_min_ok auf kald4["fokus_tag"] == 3
+kald4["fokus_tag"] = 20
+uim_mock_taste(kald4_root, "Right", wahr, 0)
+setze kald4_max_ok auf kald4["fokus_tag"] == 20 und S["kald_rufe"] == 0
+zeige "KALD4-SPERREN " + text(kald4_klick_ok) + "/" + text(kald4_gesperrt_ok) + "/" + text(kald4_min_ok) + "/" + text(kald4_max_ok)
+
+# D5: neun handverifizierte ISO-KW-Instanzen plus gerenderte KW-Spalte.
+zeige "KALD5-ISO " + text(_uim_kalender_iso_woche([29, 12, 2014])) + "/" + text(_uim_kalender_iso_woche([1, 1, 2016])) + "/" + text(_uim_kalender_iso_woche([3, 1, 2016])) + "/" + text(_uim_kalender_iso_woche([31, 12, 2018])) + "/" + text(_uim_kalender_iso_woche([30, 12, 2019])) + "/" + text(_uim_kalender_iso_woche([31, 12, 2020])) + "/" + text(_uim_kalender_iso_woche([1, 1, 2021])) + "/" + text(_uim_kalender_iso_woche([3, 1, 2021])) + "/" + text(_uim_kalender_iso_woche([3, 1, 2022]))
+setze kald5_root auf uim_mock_wurzel(340, 220)
+setze kald5 auf uim_calendar(0, 0, 320, 190, 1, 2016, nichts)
+uim_kalender_wochennummern_setze(kald5, wahr)
+uim_hinzu(kald5_root, kald5)
+uim_mock_zeichne(kald5_root)
+setze kald5_kw53 auf falsch
+setze kald5_kw1 auf falsch
+für kald5_befehl in uim_mock_befehle(kald5_root):
+    wenn kald5_befehl["op"] == "text" und kald5_befehl["args"][0] == 3 und kald5_befehl["args"][2] == "53":
+        setze kald5_kw53 auf wahr
+    wenn kald5_befehl["op"] == "text" und kald5_befehl["args"][0] == 3 und kald5_befehl["args"][2] == "1":
+        setze kald5_kw1 auf wahr
+zeige "KALD5-RENDER " + text(kald5_kw53) + "/" + text(kald5_kw1)
+
+# D6: Terminmarker erzeugt genau einen Kreis und veraendert die Auswahl nicht.
+setze kald6_root auf uim_mock_wurzel(320, 210)
+setze kald6 auf uim_calendar(0, 0, 280, 180, 7, 2026, nichts)
+uim_kalender_termine_setze(kald6, [[5, 7, 2026]])
+uim_hinzu(kald6_root, kald6)
+uim_mock_zeichne(kald6_root)
+setze kald6_marker auf 0
+für kald6_befehl in uim_mock_befehle(kald6_root):
+    wenn kald6_befehl["op"] == "kreis":
+        setze kald6_marker auf kald6_marker + 1
+zeige "KALD6-MARKER " + text(kald6_marker == 1) + "/" + text(uim_wert_hole(kald6) == 1)
+
+# D9/D12: Wert-API fuer alle Modi, Datepicker-Volltext, Sortierung und Leertext.
+setze kald9_root auf uim_mock_wurzel(420, 260)
+setze kald9_cal auf uim_calendar(0, 0, 280, 180, 7, 2026, nichts)
+setze kald9_dp auf uim_datepicker(0, 200, 300, 28, 7, 2026, nichts)
+uim_hinzu(kald9_root, kald9_cal)
+uim_hinzu(kald9_root, kald9_dp)
+setze kald9_einzel_ok auf uim_wert_setze(kald9_root, kald9_cal, 4) und uim_wert_hole(kald9_cal) == 4
+uim_kalender_auswahlmodus_setze(kald9_cal, "bereich")
+setze kald9_bereich_ok auf uim_wert_setze(kald9_root, kald9_cal, [[20, 7, 2026], [10, 7, 2026]])
+setze kald9_bereich auf uim_wert_hole(kald9_cal)
+setze kald9_bereich_ok auf kald9_bereich_ok und t_kald_datum_gleich(kald9_bereich[0], [10, 7, 2026]) und t_kald_datum_gleich(kald9_bereich[1], [20, 7, 2026])
+uim_kalender_auswahlmodus_setze(kald9_cal, "mehrfach")
+setze kald9_multi_ok auf uim_wert_setze(kald9_root, kald9_cal, [[20, 7, 2026], [5, 7, 2026], [12, 7, 2026]])
+setze kald9_multi auf uim_wert_hole(kald9_cal)
+setze kald9_multi_ok auf kald9_multi_ok und t_kald_datum_gleich(kald9_multi[0], [5, 7, 2026]) und t_kald_datum_gleich(kald9_multi[1], [12, 7, 2026]) und t_kald_datum_gleich(kald9_multi[2], [20, 7, 2026])
+zeige "KALD9-CAL-API " + text(kald9_einzel_ok) + "/" + text(kald9_bereich_ok) + "/" + text(kald9_multi_ok)
+uim_kalender_auswahlmodus_setze(kald9_dp, "bereich")
+setze kald9_dp_bereich_ok auf uim_wert_setze(kald9_root, kald9_dp, [[20, 7, 2026], [5, 7, 2026]])
+setze kald9_dp_bereich_text auf _uim_datepicker_anzeige(kald9_dp)
+uim_kalender_auswahlmodus_setze(kald9_dp, "mehrfach")
+setze kald9_dp_multi_ok auf uim_wert_setze(kald9_root, kald9_dp, [[20, 7, 2026], [5, 7, 2026], [12, 7, 2026]])
+setze kald9_dp_multi_text auf _uim_datepicker_anzeige(kald9_dp)
+setze kald9_dp_multi_wert auf uim_wert_hole(kald9_dp)
+setze kald9_dp_sort_ok auf t_kald_datum_gleich(kald9_dp_multi_wert[0], [5, 7, 2026]) und t_kald_datum_gleich(kald9_dp_multi_wert[2], [20, 7, 2026])
+setze kald9_dp_leer_ok auf uim_wert_setze(kald9_root, kald9_dp, []) und _uim_datepicker_anzeige(kald9_dp) == ""
+zeige "KALD12-DP " + text(kald9_dp_bereich_ok) + "/" + kald9_dp_bereich_text + "/" + text(kald9_dp_multi_ok und kald9_dp_sort_ok) + "/" + kald9_dp_multi_text + "/" + text(kald9_dp_leer_ok)
+
+# D10: Alle Parameter und Callback ueber Builder und deutsche Routen.
+S["kald_rufe"] = 0
+setze kald10_cal auf uim_baue("calendar", {"x": 3, "y": 4, "b": 281, "h": 181, "monat": 8, "jahr": 2027, "on_auswahl": t_kald_auswahl})
+setze kald10_dp auf uim_baue("datepicker", {"x": 5, "y": 6, "b": 182, "h": 29, "monat": 9, "jahr": 2028, "on_auswahl": t_kald_auswahl})
+setze kald10_de_cal auf uim_kalender(7, 8, 283, 183, 10, 2029, t_kald_auswahl)
+setze kald10_de_dp auf uim_datumswaehler(9, 10, 184, 30, 11, 2030, t_kald_auswahl)
+_uim_kalender_auswahl_anwenden(nichts, kald10_cal, [2, 8, 2027], wahr)
+_uim_kalender_auswahl_anwenden(nichts, kald10_dp, [2, 9, 2028], wahr)
+_uim_kalender_auswahl_anwenden(nichts, kald10_de_cal, [2, 10, 2029], wahr)
+_uim_kalender_auswahl_anwenden(nichts, kald10_de_dp, [2, 11, 2030], wahr)
+zeige "KALD10-BAUER " + text(kald10_cal["typ"] == "calendar" und kald10_cal["x"] == 3 und kald10_cal["y"] == 4 und kald10_cal["b"] == 281 und kald10_cal["h"] == 181 und kald10_cal["monat"] == 8 und kald10_cal["jahr"] == 2027) + "/" + text(kald10_dp["typ"] == "datepicker" and kald10_dp["x"] == 5 and kald10_dp["y"] == 6 and kald10_dp["b"] == 182 and kald10_dp["h"] == 29 und kald10_dp["monat"] == 9 und kald10_dp["jahr"] == 2028) + "/" + text(S["kald_rufe"] == 4)
+zeige "KALD10-ALIASE " + text(kald10_de_cal["typ"] == "calendar" and kald10_de_cal["x"] == 7 and kald10_de_cal["y"] == 8 and kald10_de_cal["b"] == 283 and kald10_de_cal["h"] == 183 and kald10_de_cal["monat"] == 10 and kald10_de_cal["jahr"] == 2029) + "/" + text(kald10_de_dp["typ"] == "datepicker" and kald10_de_dp["x"] == 9 and kald10_de_dp["y"] == 10 and kald10_de_dp["b"] == 184 and kald10_de_dp["h"] == 30 and kald10_de_dp["monat"] == 11 and kald10_de_dp["jahr"] == 2030)
+
+# D11: Navigation und gesperrte Aktivierung feuern nicht, echte Mutation genau einmal.
+setze kald11_root auf uim_mock_wurzel(320, 210)
+setze kald11 auf uim_calendar(0, 0, 280, 180, 7, 2026, t_kald_auswahl)
+uim_hinzu(kald11_root, kald11)
+kald11_root["fokus"] = kald11
+S["kald_rufe"] = 0
+uim_mock_taste(kald11_root, "Right", wahr, 0)
+setze kald11_nav_ok auf S["kald_rufe"] == 0 und kald11["auswahl"] == 1 and kald11["fokus_tag"] == 2
+uim_kalender_gesperrte_tage_setze(kald11, [[2, 7, 2026]])
+uim_mock_taste(kald11_root, "Return", wahr, 0)
+setze kald11_block_ok auf S["kald_rufe"] == 0 und kald11["auswahl"] == 1
+uim_mock_taste(kald11_root, "Right", wahr, 0)
+uim_mock_taste(kald11_root, "Return", wahr, 0)
+zeige "KALD11-CALLBACK " + text(kald11_nav_ok) + "/" + text(kald11_block_ok) + "/" + text(S["kald_rufe"] == 1 und kald11["auswahl"] == 3)
+
+# D13: Grenzmonat erreichbar, Aussenmonat gesperrt; API und Page-Tasten spiegeln sich.
+setze kald13_min auf uim_calendar(0, 0, 280, 180, 3, 2026, nichts)
+uim_kalender_grenzen_setze(kald13_min, [15, 2, 2026], [])
+kald13_min["fokus_tag"] = 1
+uim_kalender_navigiere(kald13_min, 0 - 1)
+setze kald13_min_monat_ok auf kald13_min["monat"] == 2 und kald13_min["fokus_tag"] == 15
+uim_kalender_navigiere(kald13_min, 0 - 1)
+setze kald13_min_aussen_ok auf kald13_min["monat"] == 2 und kald13_min["fokus_tag"] == 15
+setze kald13_max auf uim_calendar(0, 0, 280, 180, 1, 2026, nichts)
+uim_kalender_grenzen_setze(kald13_max, [], [15, 2, 2026])
+kald13_max["fokus_tag"] = 31
+uim_kalender_navigiere(kald13_max, 1)
+setze kald13_max_monat_ok auf kald13_max["monat"] == 2 und kald13_max["fokus_tag"] == 15
+uim_kalender_navigiere(kald13_max, 1)
+setze kald13_max_aussen_ok auf kald13_max["monat"] == 2 und kald13_max["fokus_tag"] == 15
+setze kald13_page_root auf uim_mock_wurzel(320, 210)
+setze kald13_page auf uim_calendar(0, 0, 280, 180, 3, 2026, nichts)
+uim_kalender_grenzen_setze(kald13_page, [15, 2, 2026], [])
+kald13_page["fokus_tag"] = 1
+uim_hinzu(kald13_page_root, kald13_page)
+kald13_page_root["fokus"] = kald13_page
+uim_mock_taste(kald13_page_root, "PageUp", wahr, 0)
+setze kald13_page_monat_ok auf kald13_page["monat"] == 2 und kald13_page["fokus_tag"] == 15
+uim_mock_taste(kald13_page_root, "PageUp", wahr, 0)
+setze kald13_page_aussen_ok auf kald13_page["monat"] == 2 und kald13_page["fokus_tag"] == 15
+setze kald13_down_root auf uim_mock_wurzel(320, 210)
+setze kald13_down auf uim_calendar(0, 0, 280, 180, 1, 2026, nichts)
+uim_kalender_grenzen_setze(kald13_down, [], [15, 2, 2026])
+kald13_down["fokus_tag"] = 31
+uim_hinzu(kald13_down_root, kald13_down)
+kald13_down_root["fokus"] = kald13_down
+uim_mock_taste(kald13_down_root, "PageDown", wahr, 0)
+setze kald13_down_monat_ok auf kald13_down["monat"] == 2 und kald13_down["fokus_tag"] == 15
+uim_mock_taste(kald13_down_root, "PageDown", wahr, 0)
+setze kald13_down_aussen_ok auf kald13_down["monat"] == 2 und kald13_down["fokus_tag"] == 15
+zeige "KALD13-BOUNDS " + text(kald13_min_monat_ok und kald13_min_aussen_ok) + "/" + text(kald13_max_monat_ok und kald13_max_aussen_ok) + "/" + text(kald13_page_monat_ok und kald13_page_aussen_ok and kald13_down_monat_ok and kald13_down_aussen_ok)
+
+# D7: Vollstaendige Navigation fuer Kalender und Datepicker-Popup, ohne Auswahlmutation.
+setze kald7_root auf uim_mock_wurzel(340, 220)
+setze kald7_cal auf uim_calendar(0, 0, 300, 190, 3, 2024, t_kald_auswahl)
+uim_hinzu(kald7_root, kald7_cal)
+kald7_root["fokus"] = kald7_cal
+S["kald_rufe"] = 0
+kald7_cal["fokus_tag"] = 15
+kald7_cal["fokus_monat"] = 3
+kald7_cal["fokus_jahr"] = 2024
+uim_mock_taste(kald7_root, "Left", wahr, 0)
+setze kald7_left_ok auf kald7_cal["fokus_tag"] == 14
+uim_mock_taste(kald7_root, "Right", wahr, 0)
+setze kald7_right_ok auf kald7_cal["fokus_tag"] == 15
+uim_mock_taste(kald7_root, "Up", wahr, 0)
+setze kald7_up_ok auf kald7_cal["fokus_tag"] == 8
+uim_mock_taste(kald7_root, "Down", wahr, 0)
+setze kald7_down_ok auf kald7_cal["fokus_tag"] == 15
+uim_mock_taste(kald7_root, "Home", wahr, 0)
+setze kald7_home_ok auf kald7_cal["fokus_tag"] == 11
+uim_mock_taste(kald7_root, "End", wahr, 0)
+setze kald7_end_ok auf kald7_cal["fokus_tag"] == 17
+kald7_cal["fokus_tag"] = 31
+kald7_cal["fokus_monat"] = 3
+uim_mock_taste(kald7_root, "PageUp", wahr, 0)
+setze kald7_page_up_ok auf kald7_cal["fokus_tag"] == 29 und kald7_cal["fokus_monat"] == 2
+uim_mock_taste(kald7_root, "PageDown", wahr, 0)
+setze kald7_page_down_ok auf kald7_cal["fokus_tag"] == 29 und kald7_cal["fokus_monat"] == 3
+kald7_cal["fokus_tag"] = 1
+kald7_cal["fokus_monat"] = 3
+uim_mock_taste(kald7_root, "Left", wahr, 0)
+setze kald7_grenze_ok auf kald7_cal["fokus_tag"] == 29 und kald7_cal["fokus_monat"] == 2
+zeige "KALD7-CAL " + text(kald7_left_ok and kald7_right_ok and kald7_up_ok and kald7_down_ok) + "/" + text(kald7_home_ok and kald7_end_ok) + "/" + text(kald7_page_up_ok and kald7_page_down_ok and kald7_grenze_ok) + "/" + text(kald7_cal["auswahl"] == 1 and S["kald_rufe"] == 0)
+
+setze kald7_dp_root auf uim_mock_wurzel(420, 320)
+setze kald7_dp auf uim_datepicker(0, 0, 220, 28, 3, 2024, t_kald_auswahl)
+uim_hinzu(kald7_dp_root, kald7_dp)
+kald7_dp_root["fokus"] = kald7_dp
+S["kald_rufe"] = 0
+setze kald7_dp_open_ok auf _uim_datepicker_oeffne(kald7_dp_root, kald7_dp)
+setze kald7_popup auf kald7_dp_root["datepicker_overlay"]["kinder"][0]
+kald7_popup["fokus_tag"] = 15
+kald7_popup["fokus_monat"] = 3
+kald7_popup["fokus_jahr"] = 2024
+uim_mock_taste(kald7_dp_root, "Left", wahr, 0)
+setze kald7_dp_left_ok auf kald7_popup["fokus_tag"] == 14
+uim_mock_taste(kald7_dp_root, "Right", wahr, 0)
+uim_mock_taste(kald7_dp_root, "Up", wahr, 0)
+uim_mock_taste(kald7_dp_root, "Down", wahr, 0)
+setze kald7_dp_pfeile_ok auf kald7_popup["fokus_tag"] == 15
+uim_mock_taste(kald7_dp_root, "Home", wahr, 0)
+setze kald7_dp_home_ok auf kald7_popup["fokus_tag"] == 11
+uim_mock_taste(kald7_dp_root, "End", wahr, 0)
+setze kald7_dp_end_ok auf kald7_popup["fokus_tag"] == 17
+kald7_popup["fokus_tag"] = 31
+kald7_popup["fokus_monat"] = 3
+uim_mock_taste(kald7_dp_root, "PageUp", wahr, 0)
+setze kald7_dp_page_up_ok auf kald7_popup["fokus_tag"] == 29 and kald7_popup["fokus_monat"] == 2
+uim_mock_taste(kald7_dp_root, "PageDown", wahr, 0)
+setze kald7_dp_page_down_ok auf kald7_popup["fokus_tag"] == 29 and kald7_popup["fokus_monat"] == 3
+zeige "KALD7-DP " + text(kald7_dp_open_ok and kald7_dp_left_ok and kald7_dp_pfeile_ok) + "/" + text(kald7_dp_home_ok and kald7_dp_end_ok) + "/" + text(kald7_dp_page_up_ok and kald7_dp_page_down_ok) + "/" + text(kald7_dp["auswahl"] == 1 and S["kald_rufe"] == 0)
+uim_mock_taste(kald7_dp_root, "Escape", wahr, 0)
+
+# D8: Feldklick, einmaliges Overlay, Fokusfalle, Escape/Outside und Fokusrestauration.
+setze kald8_root auf uim_mock_wurzel(420, 320)
+setze kald8_dp auf uim_datepicker(10, 10, 220, 28, 7, 2026, t_kald_auswahl)
+uim_hinzu(kald8_root, kald8_dp)
+kald8_root["fokus"] = kald8_dp
+S["kald_rufe"] = 0
+uim_mock_maus(kald8_root, 30, 20, wahr)
+uim_mock_maus(kald8_root, 30, 20, falsch)
+setze kald8_overlay auf kald8_root["datepicker_overlay"]
+setze kald8_uid auf kald8_overlay["uid"]
+setze kald8_open_ok auf kald8_dp["offen"] and kald8_overlay["offen"] and kald8_overlay["modal"] and kald8_root["modal_overlay"]["uid"] == kald8_uid and kald8_root["fokus"]["uid"] == kald8_overlay["kinder"][0]["uid"]
+uim_mock_taste(kald8_root, "Tab", wahr, 0)
+setze kald8_trap_ok auf kald8_root["fokus"]["uid"] == kald8_overlay["kinder"][0]["uid"]
+uim_mock_taste(kald8_root, "Escape", wahr, 0)
+setze kald8_escape_ok auf kald8_dp["offen"] == falsch and kald8_overlay["offen"] == falsch and kald8_root["fokus"]["uid"] == kald8_dp["uid"]
+uim_mock_maus(kald8_root, 30, 20, wahr)
+uim_mock_maus(kald8_root, 30, 20, falsch)
+setze kald8_reuse_ok auf kald8_root["datepicker_overlay"]["uid"] == kald8_uid and länge(kald8_root["wurzel"]["kinder"]) == 2 and länge(kald8_overlay["kinder"]) == 1
+uim_mock_maus(kald8_root, 410, 310, wahr)
+uim_mock_maus(kald8_root, 410, 310, falsch)
+setze kald8_outside_ok auf kald8_dp["offen"] == falsch and kald8_overlay["offen"] == falsch and kald8_root["fokus"]["uid"] == kald8_dp["uid"]
+zeige "KALD8-LIFE " + text(kald8_open_ok and kald8_trap_ok) + "/" + text(kald8_escape_ok) + "/" + text(kald8_reuse_ok and kald8_outside_ok and S["kald_rufe"] == 0)
+
+# D12: kompletter Popup-Rueckfluss fuer Bereich und Mehrfach, Reopen behaelt Auswahl.
+setze kald12_range_root auf uim_mock_wurzel(420, 320)
+setze kald12_range auf uim_datepicker(0, 0, 300, 28, 7, 2026, t_kald_auswahl)
+uim_hinzu(kald12_range_root, kald12_range)
+uim_kalender_auswahlmodus_setze(kald12_range, "bereich")
+setze kald12_range_leer_ok auf uim_wert_setze(kald12_range_root, kald12_range, []) and _uim_datepicker_anzeige(kald12_range) == ""
+S["kald_rufe"] = 0
+setze kald12_range_open_ok auf _uim_datepicker_oeffne(kald12_range_root, kald12_range) and S["kald_rufe"] == 0
+setze kald12_range_popup auf kald12_range_root["datepicker_overlay"]["kinder"][0]
+_uim_kalender_auswahl_anwenden(kald12_range_root, kald12_range_popup, [20, 7, 2026], wahr)
+setze kald12_range_start_ok auf kald12_range["offen"] and _uim_datepicker_anzeige(kald12_range) == "20.07.2026 - ..." and S["kald_rufe"] == 1
+_uim_kalender_auswahl_anwenden(kald12_range_root, kald12_range_popup, [5, 7, 2026], wahr)
+setze kald12_range_wert auf uim_wert_hole(kald12_range)
+setze kald12_range_flow_ok auf kald12_range["offen"] == falsch and t_kald_datum_gleich(kald12_range_wert[0], [5, 7, 2026]) and t_kald_datum_gleich(kald12_range_wert[1], [20, 7, 2026]) and _uim_datepicker_anzeige(kald12_range) == "05.07.2026 - 20.07.2026" and S["kald_rufe"] == 2
+setze kald12_range_reopen_ok auf _uim_datepicker_oeffne(kald12_range_root, kald12_range)
+setze kald12_range_popup_wert auf uim_wert_hole(kald12_range_root["datepicker_overlay"]["kinder"][0])
+setze kald12_range_reopen_ok auf kald12_range_reopen_ok and t_kald_datum_gleich(kald12_range_popup_wert[0], [5, 7, 2026]) and t_kald_datum_gleich(kald12_range_popup_wert[1], [20, 7, 2026]) and S["kald_rufe"] == 2
+uim_mock_taste(kald12_range_root, "Escape", wahr, 0)
+zeige "KALD12-RANGE-FLOW " + text(kald12_range_leer_ok and kald12_range_open_ok) + "/" + text(kald12_range_start_ok) + "/" + text(kald12_range_flow_ok) + "/" + text(kald12_range_reopen_ok)
+
+setze kald12_multi_root auf uim_mock_wurzel(420, 320)
+setze kald12_multi auf uim_datepicker(0, 0, 360, 28, 7, 2026, t_kald_auswahl)
+uim_hinzu(kald12_multi_root, kald12_multi)
+uim_kalender_auswahlmodus_setze(kald12_multi, "mehrfach")
+uim_wert_setze(kald12_multi_root, kald12_multi, [])
+S["kald_rufe"] = 0
+setze kald12_multi_open_ok auf _uim_datepicker_oeffne(kald12_multi_root, kald12_multi) and S["kald_rufe"] == 0
+setze kald12_multi_popup auf kald12_multi_root["datepicker_overlay"]["kinder"][0]
+_uim_kalender_auswahl_anwenden(kald12_multi_root, kald12_multi_popup, [20, 7, 2026], wahr)
+_uim_kalender_auswahl_anwenden(kald12_multi_root, kald12_multi_popup, [5, 7, 2026], wahr)
+_uim_kalender_auswahl_anwenden(kald12_multi_root, kald12_multi_popup, [12, 7, 2026], wahr)
+setze kald12_multi_wert auf uim_wert_hole(kald12_multi)
+setze kald12_multi_flow_ok auf kald12_multi["offen"] and länge(kald12_multi_wert) == 3 and t_kald_datum_gleich(kald12_multi_wert[0], [5, 7, 2026]) and t_kald_datum_gleich(kald12_multi_wert[2], [20, 7, 2026]) and _uim_datepicker_anzeige(kald12_multi) == "05.07.2026, 12.07.2026, 20.07.2026" and S["kald_rufe"] == 3
+uim_mock_taste(kald12_multi_root, "Escape", wahr, 0)
+setze kald12_multi_reopen_ok auf _uim_datepicker_oeffne(kald12_multi_root, kald12_multi)
+setze kald12_multi_popup_wert auf uim_wert_hole(kald12_multi_root["datepicker_overlay"]["kinder"][0])
+setze kald12_multi_reopen_ok auf kald12_multi_reopen_ok and t_kald_datum_gleich(kald12_multi_popup_wert[0], [5, 7, 2026]) and t_kald_datum_gleich(kald12_multi_popup_wert[2], [20, 7, 2026]) and S["kald_rufe"] == 3
+uim_mock_taste(kald12_multi_root, "Escape", wahr, 0)
+zeige "KALD12-MULTI-FLOW " + text(kald12_multi_open_ok) + "/" + text(kald12_multi_flow_ok) + "/" + text(kald12_multi_reopen_ok)
+
+# #16878/#16891: [] loescht jeden Modus, erhaelt Fokus/Kanon/Legacy und laesst Reopen zu.
+setze kald12_clear_root auf uim_mock_wurzel(420, 320)
+setze kald12_clear_einzel auf uim_datepicker(0, 0, 240, 28, 7, 2026, t_kald_auswahl)
+uim_hinzu(kald12_clear_root, kald12_clear_einzel)
+uim_wert_setze(kald12_clear_root, kald12_clear_einzel, 4)
+setze kald12_clear_e_fokus_tag auf kald12_clear_einzel["fokus_tag"]
+setze kald12_clear_e_fokus_monat auf kald12_clear_einzel["fokus_monat"]
+setze kald12_clear_e_fokus_jahr auf kald12_clear_einzel["fokus_jahr"]
+setze kald12_clear_e_legacy auf kald12_clear_einzel["auswahl"]
+uim_mock_zeichne(kald12_clear_root)
+S["kald_rufe"] = 0
+setze kald12_clear_e_ok auf uim_wert_setze(kald12_clear_root, kald12_clear_einzel, []) and länge(uim_wert_hole(kald12_clear_einzel)) == 0 and länge(kald12_clear_einzel["auswahl_datum"]) == 0 and kald12_clear_einzel["selected"] == falsch and kald12_clear_einzel["zustand"] == "normal" and kald12_clear_einzel["fokus_tag"] == kald12_clear_e_fokus_tag and kald12_clear_einzel["fokus_monat"] == kald12_clear_e_fokus_monat and kald12_clear_einzel["fokus_jahr"] == kald12_clear_e_fokus_jahr and kald12_clear_einzel["auswahl"] == kald12_clear_e_legacy and _uim_datepicker_anzeige(kald12_clear_einzel) == "" and kald12_clear_root["backend_zustand"]["ungueltig"] and S["kald_rufe"] == 0
+setze kald12_clear_bereich auf uim_datepicker(0, 40, 240, 28, 7, 2026, t_kald_auswahl)
+uim_hinzu(kald12_clear_root, kald12_clear_bereich)
+uim_kalender_auswahlmodus_setze(kald12_clear_bereich, "bereich")
+uim_wert_setze(kald12_clear_root, kald12_clear_bereich, [[4, 7, 2026], [8, 7, 2026]])
+setze kald12_clear_b_fokus_tag auf kald12_clear_bereich["fokus_tag"]
+setze kald12_clear_b_fokus_monat auf kald12_clear_bereich["fokus_monat"]
+setze kald12_clear_b_fokus_jahr auf kald12_clear_bereich["fokus_jahr"]
+setze kald12_clear_b_datum auf _uim_kalender_datum_kopie(kald12_clear_bereich["auswahl_datum"])
+setze kald12_clear_b_legacy auf kald12_clear_bereich["auswahl"]
+uim_mock_zeichne(kald12_clear_root)
+setze kald12_clear_b_ok auf uim_wert_setze(kald12_clear_root, kald12_clear_bereich, []) and länge(uim_wert_hole(kald12_clear_bereich)) == 0 and länge(kald12_clear_bereich["bereich_start"]) == 0 and länge(kald12_clear_bereich["bereich_ende"]) == 0 and kald12_clear_bereich["selected"] == falsch and kald12_clear_bereich["zustand"] == "normal" and kald12_clear_bereich["fokus_tag"] == kald12_clear_b_fokus_tag and kald12_clear_bereich["fokus_monat"] == kald12_clear_b_fokus_monat and kald12_clear_bereich["fokus_jahr"] == kald12_clear_b_fokus_jahr and t_kald_datum_gleich(kald12_clear_bereich["auswahl_datum"], kald12_clear_b_datum) and kald12_clear_bereich["auswahl"] == kald12_clear_b_legacy and _uim_datepicker_anzeige(kald12_clear_bereich) == "" and kald12_clear_root["backend_zustand"]["ungueltig"] and S["kald_rufe"] == 0
+setze kald12_clear_multi auf uim_datepicker(0, 80, 240, 28, 7, 2026, t_kald_auswahl)
+uim_hinzu(kald12_clear_root, kald12_clear_multi)
+uim_kalender_auswahlmodus_setze(kald12_clear_multi, "mehrfach")
+uim_wert_setze(kald12_clear_root, kald12_clear_multi, [[4, 7, 2026], [8, 7, 2026]])
+setze kald12_clear_m_fokus_tag auf kald12_clear_multi["fokus_tag"]
+setze kald12_clear_m_fokus_monat auf kald12_clear_multi["fokus_monat"]
+setze kald12_clear_m_fokus_jahr auf kald12_clear_multi["fokus_jahr"]
+setze kald12_clear_m_datum auf _uim_kalender_datum_kopie(kald12_clear_multi["auswahl_datum"])
+setze kald12_clear_m_legacy auf kald12_clear_multi["auswahl"]
+uim_mock_zeichne(kald12_clear_root)
+setze kald12_clear_m_ok auf uim_wert_setze(kald12_clear_root, kald12_clear_multi, []) and länge(uim_wert_hole(kald12_clear_multi)) == 0 and länge(kald12_clear_multi["mehrfach_auswahl"]) == 0 and kald12_clear_multi["selected"] == falsch and kald12_clear_multi["zustand"] == "normal" and kald12_clear_multi["fokus_tag"] == kald12_clear_m_fokus_tag and kald12_clear_multi["fokus_monat"] == kald12_clear_m_fokus_monat and kald12_clear_multi["fokus_jahr"] == kald12_clear_m_fokus_jahr and t_kald_datum_gleich(kald12_clear_multi["auswahl_datum"], kald12_clear_m_datum) and kald12_clear_multi["auswahl"] == kald12_clear_m_legacy and _uim_datepicker_anzeige(kald12_clear_multi) == "" and kald12_clear_root["backend_zustand"]["ungueltig"] and S["kald_rufe"] == 0
+zeige "KALD12-CLEAR " + text(kald12_clear_e_ok) + "/" + text(kald12_clear_b_ok) + "/" + text(kald12_clear_m_ok)
+
+uim_kalender_grenzen_setze(kald12_clear_einzel, [5, 7, 2026], [])
+uim_kalender_gesperrte_tage_setze(kald12_clear_einzel, [[5, 7, 2026]])
+setze kald12_reopen_e_ok auf _uim_datepicker_oeffne(kald12_clear_root, kald12_clear_einzel)
+setze kald12_reopen_e_popup auf kald12_clear_root["datepicker_overlay"]["kinder"][0]
+setze kald12_reopen_e_ok auf kald12_reopen_e_ok and kald12_reopen_e_popup["monat"] == 7 and kald12_reopen_e_popup["jahr"] == 2026 and kald12_reopen_e_popup["fokus_tag"] == 6 and kald12_reopen_e_popup["fokus_monat"] == 7 and kald12_reopen_e_popup["fokus_jahr"] == 2026 and kald12_reopen_e_popup["selected"] == falsch and länge(uim_wert_hole(kald12_reopen_e_popup)) == 0 and _uim_datepicker_anzeige(kald12_clear_einzel) == ""
+setze kald12_reopen_e_wahl_ok auf _uim_kalender_auswahl_anwenden(kald12_clear_root, kald12_reopen_e_popup, [9, 7, 2026], wahr)
+setze kald12_reopen_e_wahl_ok auf kald12_reopen_e_wahl_ok and uim_wert_hole(kald12_clear_einzel) == 9 and kald12_clear_einzel["auswahl"] == 9 and t_kald_datum_gleich(kald12_clear_einzel["auswahl_datum"], [9, 7, 2026]) and _uim_datepicker_anzeige(kald12_clear_einzel) == "09.07.2026" and kald12_clear_einzel["selected"] and kald12_clear_einzel["offen"] == falsch and S["kald_rufe"] == 1
+S["kald_rufe"] = 0
+setze kald12_reopen_b_ok auf _uim_datepicker_oeffne(kald12_clear_root, kald12_clear_bereich)
+setze kald12_reopen_b_popup auf kald12_clear_root["datepicker_overlay"]["kinder"][0]
+setze kald12_reopen_b_ok auf kald12_reopen_b_ok and kald12_reopen_b_popup["monat"] == 7 and kald12_reopen_b_popup["jahr"] == 2026 and kald12_reopen_b_popup["fokus_tag"] == kald12_clear_b_fokus_tag and kald12_reopen_b_popup["fokus_monat"] == kald12_clear_b_fokus_monat and kald12_reopen_b_popup["fokus_jahr"] == kald12_clear_b_fokus_jahr and kald12_reopen_b_popup["selected"] == falsch and länge(uim_wert_hole(kald12_reopen_b_popup)) == 0 and _uim_datepicker_anzeige(kald12_clear_bereich) == ""
+uim_mock_taste(kald12_clear_root, "Escape", wahr, 0)
+setze kald12_reopen_m_ok auf _uim_datepicker_oeffne(kald12_clear_root, kald12_clear_multi)
+setze kald12_reopen_m_popup auf kald12_clear_root["datepicker_overlay"]["kinder"][0]
+setze kald12_reopen_m_ok auf kald12_reopen_m_ok and kald12_reopen_m_popup["monat"] == 7 and kald12_reopen_m_popup["jahr"] == 2026 and kald12_reopen_m_popup["fokus_tag"] == kald12_clear_m_fokus_tag and kald12_reopen_m_popup["fokus_monat"] == kald12_clear_m_fokus_monat and kald12_reopen_m_popup["fokus_jahr"] == kald12_clear_m_fokus_jahr and kald12_reopen_m_popup["selected"] == falsch and länge(uim_wert_hole(kald12_reopen_m_popup)) == 0 and _uim_datepicker_anzeige(kald12_clear_multi) == "" and S["kald_rufe"] == 0
+uim_mock_taste(kald12_clear_root, "Escape", wahr, 0)
+zeige "KALD12-REOPEN " + text(kald12_reopen_e_ok) + "/" + text(kald12_reopen_b_ok) + "/" + text(kald12_reopen_m_ok) + "/" + text(kald12_reopen_e_wahl_ok)
+
+# D14: Monatswechsel und danach Return, Enter, Space fuer Kalender UND Datepicker.
+funktion t_kald14_aktivierung(typ_name, taste_name):
+    setze pruef_root auf uim_mock_wurzel(420, 320)
+    wenn typ_name == "calendar":
+        setze pruef_widget auf uim_calendar(0, 0, 300, 190, 1, 2024, nichts)
+        uim_hinzu(pruef_root, pruef_widget)
+        pruef_root["fokus"] = pruef_widget
+        pruef_widget["fokus_tag"] = 31
+        pruef_widget["fokus_monat"] = 1
+        pruef_widget["fokus_jahr"] = 2024
+        uim_mock_taste(pruef_root, "PageDown", wahr, 0)
+        uim_mock_taste(pruef_root, taste_name, wahr, 0)
+        gib_zurück pruef_widget["monat"] == 2 and pruef_widget["auswahl_datum"][1] == 2 and pruef_widget["auswahl"] == 29
+    setze pruef_widget auf uim_datepicker(0, 0, 240, 28, 1, 2024, nichts)
+    uim_hinzu(pruef_root, pruef_widget)
+    pruef_root["fokus"] = pruef_widget
+    wenn not _uim_datepicker_oeffne(pruef_root, pruef_widget):
+        gib_zurück falsch
+    setze pruef_popup auf pruef_root["datepicker_overlay"]["kinder"][0]
+    pruef_popup["fokus_tag"] = 31
+    pruef_popup["fokus_monat"] = 1
+    pruef_popup["fokus_jahr"] = 2024
+    uim_mock_taste(pruef_root, "PageDown", wahr, 0)
+    uim_mock_taste(pruef_root, taste_name, wahr, 0)
+    gib_zurück pruef_widget["monat"] == 2 and pruef_widget["auswahl_datum"][1] == 2 and pruef_widget["auswahl"] == 29 and pruef_widget["offen"] == falsch
+
+zeige "KALD14-AKTIV " + text(t_kald14_aktivierung("calendar", "Return") and t_kald14_aktivierung("calendar", "Enter") and t_kald14_aktivierung("calendar", "Space")) + "/" + text(t_kald14_aktivierung("datepicker", "Return") and t_kald14_aktivierung("datepicker", "Enter") and t_kald14_aktivierung("datepicker", "Space"))
+
+# D15: kanonische Jan-31-Auswahl ueber Februar und zurueck, Getter und Anzeige.
+setze kald15_root auf uim_mock_wurzel(320, 100)
+setze kald15_dp auf uim_datepicker(0, 0, 240, 28, 1, 2025, nichts)
+uim_hinzu(kald15_root, kald15_dp)
+uim_wert_setze(kald15_root, kald15_dp, 31)
+uim_kalender_navigiere(kald15_dp, 1)
+setze kald15_feb_ok auf uim_wert_hole(kald15_dp) == 31 and kald15_dp["monat"] == 2 and _uim_datepicker_anzeige(kald15_dp) == "31.01.2025"
+uim_kalender_navigiere(kald15_dp, 0 - 1)
+setze kald15_jan_ok auf uim_wert_hole(kald15_dp) == 31 and kald15_dp["monat"] == 1 and _uim_datepicker_anzeige(kald15_dp) == "31.01.2025"
+zeige "KALD15-CANON " + text(kald15_feb_ok) + "/" + text(kald15_jan_ok)
+
+# D16: nur Baum/Datengitter/Slider/Liste, nur Return und space; Terminal bewusst ausgenommen.
+S["kald16_rufe"] = 0
+funktion t_kald16_cb(w, wert):
+    S["kald16_rufe"] = S["kald16_rufe"] + 1
+    gib_zurück wahr
+
+setze kald16_root auf uim_mock_wurzel(500, 360)
+setze kald16_baum auf uim_baum(0, 0, 200, 80, [uim_baum_knoten("A", []), uim_baum_knoten("B", [])], t_kald16_cb)
+setze kald16_grid auf uim_datengitter(0, 90, 200, 80, ["A"], [["1"], ["2"]], t_kald16_cb)
+setze kald16_slider auf uim_slider(0, 180, 200, 28, 0, 100, 50, nichts)
+setze kald16_liste auf uim_liste(0, 220, 200, 80, ["A", "B"], t_kald16_cb)
+uim_hinzu(kald16_root, kald16_baum)
+uim_hinzu(kald16_root, kald16_grid)
+uim_hinzu(kald16_root, kald16_slider)
+uim_hinzu(kald16_root, kald16_liste)
+kald16_baum["auswahl"] = 0
+kald16_grid["auswahl"] = 0
+kald16_liste["auswahl"] = 0
+S["kald16_rufe"] = 0
+kald16_root["fokus"] = kald16_baum
+uim_mock_zeichne(kald16_root)
+setze kald16_baum_return auf uim_mock_taste(kald16_root, "Return", wahr, 0)
+setze kald16_baum_return_repaint auf kald16_root["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(kald16_root)
+setze kald16_baum_space auf uim_mock_taste(kald16_root, "space", wahr, 0)
+setze kald16_baum_space_repaint auf kald16_root["backend_zustand"]["ungueltig"]
+setze kald16_baum_ok auf kald16_baum_return and kald16_baum_space and kald16_baum_return_repaint and kald16_baum_space_repaint and kald16_baum["auswahl"] == 0 and S["kald16_rufe"] == 0
+kald16_root["fokus"] = kald16_grid
+uim_mock_zeichne(kald16_root)
+setze kald16_grid_return auf uim_mock_taste(kald16_root, "Return", wahr, 0)
+setze kald16_grid_return_repaint auf kald16_root["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(kald16_root)
+setze kald16_grid_space auf uim_mock_taste(kald16_root, "space", wahr, 0)
+setze kald16_grid_space_repaint auf kald16_root["backend_zustand"]["ungueltig"]
+setze kald16_grid_ok auf kald16_grid_return and kald16_grid_space and kald16_grid_return_repaint and kald16_grid_space_repaint and kald16_grid["auswahl"] == 0 and S["kald16_rufe"] == 0
+kald16_root["fokus"] = kald16_slider
+uim_mock_zeichne(kald16_root)
+setze kald16_slider_return auf uim_mock_taste(kald16_root, "Return", wahr, 0)
+setze kald16_slider_return_repaint auf kald16_root["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(kald16_root)
+setze kald16_slider_space auf uim_mock_taste(kald16_root, "space", wahr, 0)
+setze kald16_slider_space_repaint auf kald16_root["backend_zustand"]["ungueltig"]
+setze kald16_slider_ok auf kald16_slider_return and kald16_slider_space and kald16_slider_return_repaint and kald16_slider_space_repaint and kald16_slider["wert"] == 50
+kald16_root["fokus"] = kald16_liste
+uim_mock_zeichne(kald16_root)
+setze kald16_liste_return auf uim_mock_taste(kald16_root, "Return", wahr, 0)
+setze kald16_liste_return_repaint auf kald16_root["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(kald16_root)
+setze kald16_liste_space auf uim_mock_taste(kald16_root, "space", wahr, 0)
+setze kald16_liste_space_repaint auf kald16_root["backend_zustand"]["ungueltig"]
+setze kald16_liste_ok auf kald16_liste_return and kald16_liste_space and kald16_liste_return_repaint and kald16_liste_space_repaint and kald16_liste["auswahl"] == 0 and S["kald16_rufe"] == 0
+zeige "KALD16-FREMD " + text(kald16_baum_ok) + "/" + text(kald16_grid_ok) + "/" + text(kald16_slider_ok) + "/" + text(kald16_liste_ok)

@@ -182,3 +182,26 @@ KAL3-CANON wahr/wahr/wahr wahr/wahr/wahr
 KALB-A wahr/wahr/wahr/wahr
 KALB-B wahr/wahr/wahr
 KALB-C wahr/wahr/wahr/wahr
+KALD1-EINZEL wahr/wahr/wahr
+KALD2-BEREICH wahr/wahr/wahr
+KALD3-MEHRFACH wahr/wahr
+KALD4-SPERREN wahr/wahr/wahr/wahr
+KALD5-ISO 1/53/53/1/1/53/53/53/1
+KALD5-RENDER wahr/wahr
+KALD6-MARKER wahr/wahr
+KALD9-CAL-API wahr/wahr/wahr
+KALD12-DP wahr/05.07.2026 - 20.07.2026/wahr/05.07.2026, 12.07.2026, 20.07.2026/wahr
+KALD10-BAUER wahr/wahr/wahr
+KALD10-ALIASE wahr/wahr
+KALD11-CALLBACK wahr/wahr/wahr
+KALD13-BOUNDS wahr/wahr/wahr
+KALD7-CAL wahr/wahr/wahr/wahr
+KALD7-DP wahr/wahr/wahr/wahr
+KALD8-LIFE wahr/wahr/wahr
+KALD12-RANGE-FLOW wahr/wahr/wahr/wahr
+KALD12-MULTI-FLOW wahr/wahr/wahr
+KALD12-CLEAR wahr/wahr/wahr
+KALD12-REOPEN wahr/wahr/wahr/wahr
+KALD14-AKTIV wahr/wahr
+KALD15-CANON wahr/wahr
+KALD16-FREMD wahr/wahr/wahr/wahr
