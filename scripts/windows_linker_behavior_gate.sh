@@ -4,7 +4,7 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WINVM_HOST="${MOO_WINVM_HOST:-192.168.50.246}"
 WINVM_USER="${MOO_WINVM_USER:-pro}"
-WINVM_KEY="${MOO_WINVM_KEY:-/tmp/moo-winvm-ed25519}"
+WINVM_KEY="${MOO_WINVM_KEY:-${HOME}/.ssh/moo-winvm-ed25519}"
 BUILD_TIMEOUT_MS="${MOO_WINVM_LINKER_BUILD_TIMEOUT_MS:-900000}"
 CASE_TIMEOUT_MS="${MOO_WINVM_LINKER_CASE_TIMEOUT_MS:-30000}"
 infra(){ printf 'P016 WINDOWS LINKER VM GATE INFRA_NOGO: reason=%s VM_STAYS_ON=1 artifacts=%s\n' "$1" "${OUT:-unavailable}" >&2; exit 2; }

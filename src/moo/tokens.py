@@ -140,25 +140,9 @@ KEYWORDS: dict[str, TokenType] = {
     "versuche_ausfuehrung": TokenType.TRY,
     "fange_fehler": TokenType.CATCH,
 
-    # Experten-Kurzformen (2 Buchstaben)
-    "se": TokenType.SET,
-    "ze": TokenType.SHOW,
-    "we": TokenType.IF,
-    "so": TokenType.ELSE,
-    "sl": TokenType.WHILE,
-    "fu": TokenType.FOR,
-    "fn": TokenType.FUNC,
-    "kl": TokenType.CLASS,
-    "gr": TokenType.RETURN,
-    "ko": TokenType.CONST,
-    "st": TokenType.BREAK,
-    "wt": TokenType.CONTINUE,
-    "im": TokenType.IMPORT,
-    "pr": TokenType.MATCH,
-    "fa": TokenType.CASE,
-    "ve": TokenType.TRY,
-    "fg": TokenType.CATCH,
-    "wi": TokenType.THROW,
+    # Experten-Kurzformen wurden wegen Kollisionen mit normalen
+    # Variablennamen entfernt (Task c80e81db). Der Python-Lexer folgt
+    # damit dem nativen Rust-Compiler; nur das legacy Await-Alias bleibt.
     "wa": TokenType.AWAIT,
 
     # English

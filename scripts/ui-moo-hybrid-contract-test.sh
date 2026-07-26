@@ -83,9 +83,12 @@ tray_menu_add:moo_tray_menu_add:compiler/runtime/moo_tray.h
 ROUTES
 [[ "$route_ok" -eq 1 ]] || fehler "mindestens eine exakte Codegen-Binding-ABI-Route fehlt"
 
-FORBIDDEN='^[[:space:]]*funktion[[:space:]]+((ui|uim)_(info|warnung|fehler|frage|eingabe_dialog|datei_oeffnen|datei_speichern|menueleiste|menue|menue_eintrag|tray_create|tray_menu_add|ime_start|ime_update|ime_commit|ime_cancel)|tray_(create|menu_add)|ui_eingabe)[[:space:]]*\('
+# Die Namespace-Grenze ist absichtlich exakt: ui_* und tray_* sind native
+# Host-Adapter. uim_* gehoert dem retained Moo-Kern und darf gleichnamige
+# Widgets wie uim_menue oder uim_eingabe_dialog implementieren.
+FORBIDDEN='^[[:space:]]*funktion[[:space:]]+(ui_(info|warnung|fehler|frage|eingabe_dialog|datei_oeffnen|datei_speichern|menueleiste|menue|menue_eintrag|tray_create|tray_menu_add|ime_start|ime_update|ime_commit|ime_cancel|eingabe)|tray_(create|menu_add))[[:space:]]*\('
 if grep -Eq "$FORBIDDEN" "$CORE"; then
-  fehler "retained ui_moo definiert verbotenen nativen Plattformdienst"
+  fehler "retained ui_moo definiert verbotenen ui_*/tray_*-Plattformdienst"
 fi
 
 if [[ "$FEHLER" -ne 0 ]]; then

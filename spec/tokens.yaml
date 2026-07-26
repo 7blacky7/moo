@@ -8,8 +8,8 @@
 #   - NEUES Token:          Einfach hier hinzufügen + in beiden Implementierungen registrieren.
 #   - ALIAS entfernen:      NICHT ohne Breaking-Change-Review. `tools/check_tokens.py` blockiert CI
 #                           wenn ein in YAML gelisteter Alias in einer Implementierung fehlt.
-#   - Alte Aliase (Python-only ASYNC/AWAIT, `fg`, `wa`) bleiben als `status: legacy` erhalten —
-#     werden weiterhin geparst, dokumentiert als "noch nicht implementiert".
+#   - Bewusst deaktivierte Experten-Kurzformen bleiben als `status: legacy` mit
+#     `implementations: []` dokumentiert; Python-only ASYNC/AWAIT bleibt separat.
 #
 # Felder pro Eintrag:
 #   kind:      hartes Keyword | soft-keyword | literal | operator | delimiter | special
@@ -58,7 +58,7 @@ tokens:
   - id: Set
     kind: keyword
     status: active
-    variants: [setze, set, setze_variable, se]
+    variants: [setze, set, setze_variable]
     implementations: [rust, python]
 
   - id: To
@@ -70,25 +70,25 @@ tokens:
   - id: If
     kind: keyword
     status: active
-    variants: [wenn, if, wenn_bedingung, we]
+    variants: [wenn, if, wenn_bedingung]
     implementations: [rust, python]
 
   - id: Else
     kind: keyword
     status: active
-    variants: [sonst, else, sonst_alternative, so]
+    variants: [sonst, else, sonst_alternative]
     implementations: [rust, python]
 
   - id: While
     kind: keyword
     status: active
-    variants: [solange, while, solange_wiederhole, sl]
+    variants: [solange, while, solange_wiederhole]
     implementations: [rust, python]
 
   - id: For
     kind: keyword
     status: active
-    variants: [für, for, fu, fuer_jedes]
+    variants: [für, for, fuer_jedes]
     implementations: [rust, python]
     note: "Rust akzeptiert zusätzlich den ASCII-Alias `fuer` (kein `ü` nötig). Python-Toolchain bisher nur `für`."
 
@@ -108,20 +108,20 @@ tokens:
   - id: Func
     kind: keyword
     status: active
-    variants: [funktion, func, funktion_definiere, fn]
+    variants: [funktion, func, funktion_definiere]
     implementations: [rust, python]
 
   - id: Return
     kind: keyword
     status: active
-    variants: [gib_zurück, return, gib_wert_zurück, gr]
+    variants: [gib_zurück, return, gib_wert_zurück]
     implementations: [rust, python]
 
   - id: Show
     kind: soft-keyword
     soft: true
     status: active
-    variants: [zeige, show, zeige_auf_bildschirm, ze]
+    variants: [zeige, show, zeige_auf_bildschirm]
     implementations: [rust, python]
     note: "Soft-Keyword: kann als Identifier verwendet werden."
 
@@ -147,7 +147,7 @@ tokens:
   - id: Class
     kind: keyword
     status: active
-    variants: [klasse, class, neue_klasse, kl]
+    variants: [klasse, class, neue_klasse]
     implementations: [rust, python]
 
   - id: New
@@ -179,7 +179,7 @@ tokens:
     kind: soft-keyword
     soft: true
     status: active
-    variants: [versuche, try, versuche_ausfuehrung, ve]
+    variants: [versuche, try, versuche_ausfuehrung]
     implementations: [rust, python]
     note: "Soft-Keyword: Block nur wenn direkt ':' folgt, sonst Identifier."
 
@@ -193,8 +193,8 @@ tokens:
     kind: keyword
     status: legacy
     variants: [fg]
-    implementations: [python]
-    note: "Kurzform `fg` nur in Python-Toolchain akzeptiert. Rust hat sie bewusst entfernt (kollidiert mit Variablennamen foreground/file-grep/frame-grab). Bleibt legacy bis Python-Lexer sie ebenfalls entfernt."
+    implementations: []
+    note: "Bewusst in beiden Toolchains deaktiviert: kollidiert mit normalen Variablennamen (Task c80e81db)."
 
   - id: Throw
     kind: keyword
@@ -206,27 +206,27 @@ tokens:
     kind: keyword
     status: legacy
     variants: [wi]
-    implementations: [python]
-    note: "Kurzform `wi` nur in Python-Toolchain akzeptiert. Rust hat sie bewusst entfernt (Commit 7c1461c — kollidiert mit Variablennamen wellen-index/width/wi als Laufvariable). Bleibt legacy bis Python-Lexer sie ebenfalls entfernt."
+    implementations: []
+    note: "Bewusst in beiden Toolchains deaktiviert: kollidiert mit normalen Variablennamen (Commit 7c1461c, Task c80e81db)."
 
   # ─── Schleifen ─────────────────────────────────────────────────────────
   - id: Break
     kind: keyword
     status: active
-    variants: [stopp, break, st]
+    variants: [stopp, break]
     implementations: [rust, python]
 
   - id: Continue
     kind: keyword
     status: active
-    variants: [weiter, continue, wt]
+    variants: [weiter, continue]
     implementations: [rust, python]
 
   # ─── Konstanten ────────────────────────────────────────────────────────
   - id: Const
     kind: keyword
     status: active
-    variants: [konstante, const, ko]
+    variants: [konstante, const]
     implementations: [rust, python]
 
   # ─── Pattern Matching ──────────────────────────────────────────────────
@@ -234,13 +234,13 @@ tokens:
     kind: soft-keyword
     soft: true
     status: active
-    variants: [prüfe, match, pr]
+    variants: [prüfe, match]
     implementations: [rust, python]
 
   - id: Case
     kind: keyword
     status: active
-    variants: [fall, case, fa]
+    variants: [fall, case]
     implementations: [rust, python]
 
   - id: Default
@@ -253,7 +253,7 @@ tokens:
   - id: Import
     kind: keyword
     status: active
-    variants: [importiere, import, importiere_modul, im]
+    variants: [importiere, import, importiere_modul]
     implementations: [rust, python]
 
   - id: From
@@ -343,7 +343,7 @@ tokens:
   - id: Unsafe
     kind: keyword
     status: active
-    variants: [unsicher, unsafe, un]
+    variants: [unsicher, unsafe]
     implementations: [rust]
 
   - id: Test
@@ -374,6 +374,15 @@ tokens:
     variants: [warte, await, wa]
     implementations: [python]
     note: "Siehe Async. `warte` ist in Praxis auch als Runtime-Funktion `warte(ms)` belegt — Lexer muss Kontext beachten."
+
+
+  # ─── Deaktivierte Experten-Kurzformen ─────────────────────────────────
+  - id: Expert_short_aliases_removed
+    kind: keyword
+    status: legacy
+    variants: [se, ze, we, so, sl, fu, fn, kl, gr, ko, st, wt, im, pr, fa, ve, un]
+    implementations: []
+    note: "Bewusst in beiden Toolchains deaktiviert: zwei Buchstaben kollidieren zu leicht mit normalen Variablen- und Parameternamen (Task c80e81db)."
 
   # ─── Bitwise Operatoren ────────────────────────────────────────────────
   - id: BitAnd
