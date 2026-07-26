@@ -562,6 +562,8 @@ funktion _uim_basis(typ, x, y, b, h):
     w["animation_aktiv"] = falsch
     w["on_entfernt"] = nichts
     w["entfernt"] = falsch
+    # Zyklusfreies Token fuer abwaertskompatible Setter ohne Kontextparameter.
+    w["_repaint_token"] = nichts
     gib_zurück w
 
 funktion _uim_layout_begrenze(w):
@@ -585,6 +587,7 @@ funktion uim_layout_metriken_setze(w, margin, padding, gap):
     w["margin"] = margin
     w["padding"] = padding
     w["gap"] = gap
+    _uim_widget_anfordern(w)
     gib_zurück w
 
 funktion uim_layout_grenzen_setze(w, min_b, min_h, max_b, max_h, auto_b, auto_h):
@@ -602,16 +605,20 @@ funktion uim_layout_grenzen_setze(w, min_b, min_h, max_b, max_h, auto_b, auto_h)
     w["max_h"] = max_h
     w["auto_b"] = auto_b
     w["auto_h"] = auto_h
-    gib_zurück _uim_layout_begrenze(w)
+    _uim_layout_begrenze(w)
+    _uim_widget_anfordern(w)
+    gib_zurück w
 
 funktion uim_text_layout_setze(w, umbruch, ellipsis):
     w["text_umbruch"] = umbruch
     w["text_ellipsis"] = ellipsis
+    _uim_widget_anfordern(w)
     gib_zurück w
 
 funktion uim_clip_kinder_setze(w, an):
     w["clip_kinder"] = an
     w["clip_kinder_explizit"] = wahr
+    _uim_widget_anfordern(w)
     gib_zurück w
 
 # Gemeinsamer Render-/Input-Vertrag. Inhaltscontainer clippen standardmäßig;
@@ -624,6 +631,7 @@ funktion _uim_clip_kinder_aktiv(w):
 
 funktion uim_z_index_setze(w, z_index):
     w["z_index"] = z_index
+    _uim_widget_anfordern(w)
     gib_zurück w
 
 # UI-13/DATA: bidirektionale retained Bindings ohne globales Capture.
@@ -643,15 +651,19 @@ funktion _uim_bind_setze_widget(w, feld, wert):
     wenn feld == "text":
         w["text"] = text(wert)
         w["cursor"] = länge(bytes_zu_liste(w["text"]))
+        _uim_widget_anfordern(w)
         gib_zurück wahr
     wenn feld == "wert":
         w["wert"] = wert
+        _uim_widget_anfordern(w)
         gib_zurück wahr
     wenn feld == "auswahl":
         w["auswahl"] = wert
+        _uim_widget_anfordern(w)
         gib_zurück wahr
     wenn feld == "status_titel":
         w["status_titel"] = text(wert)
+        _uim_widget_anfordern(w)
         gib_zurück wahr
     gib_zurück falsch
 
@@ -697,16 +709,19 @@ funktion uim_event_setze(w, art, cb):
         w["dropziel"] = wahr
     sonst:
         gib_zurück falsch
+    _uim_widget_anfordern(w)
     gib_zurück wahr
 
 funktion uim_drag_quelle(w, daten):
     w["ziehbar"] = wahr
     w["drag_daten"] = daten
+    _uim_widget_anfordern(w)
     gib_zurück w
 
 funktion uim_drop_ziel(w, cb):
     w["dropziel"] = wahr
     w["on_drop"] = cb
+    _uim_widget_anfordern(w)
     gib_zurück w
 
 funktion uim_text_kopieren(kontext, w):
@@ -2598,14 +2613,29 @@ funktion _uim_z_statusansicht(kontext, z, w, ox, oy):
     gib_zurück wahr
 
 # Fontunabhaengiger Zehnpunkt-Stern. Die normierten Punkte halten die Form
-# auf jedem Backend und bei jeder Widgetgroesse identisch.
-funktion _uim_z_stern(kontext, z, x, y, groesse, breite):
+# auf jedem Backend und bei jeder Widgetgroesse identisch. Ausgewaehlte Sterne
+# werden als Dreiecksfaecher vom Mittelpunkt zu allen Kantenpunkten gefuellt.
+funktion _uim_z_stern(kontext, z, x, y, groesse, gefuellt):
     setze stern_x auf [50, 61, 98, 68, 79, 50, 21, 32, 2, 39]
     setze stern_y auf [0, 35, 35, 57, 92, 70, 92, 57, 35, 35]
+    wenn gefuellt:
+        setze schritte auf boden(groesse / 2)
+        wenn schritte < 2:
+            setze schritte auf 2
+        setze j auf 0
+        solange j < 10:
+            setze folge auf (j + 1) % 10
+            setze scan auf 0
+            solange scan <= schritte:
+                setze rand_x auf stern_x[j] + (stern_x[folge] - stern_x[j]) * scan / schritte
+                setze rand_y auf stern_y[j] + (stern_y[folge] - stern_y[j]) * scan / schritte
+                _uim_zf_linie(kontext, z, x + groesse / 2, y + groesse / 2, x + rand_x * groesse / 100, y + rand_y * groesse / 100, 2)
+                setze scan auf scan + 1
+            setze j auf j + 1
     setze j auf 0
     solange j < 10:
         setze folge auf (j + 1) % 10
-        _uim_zf_linie(kontext, z, x + stern_x[j] * groesse / 100, y + stern_y[j] * groesse / 100, x + stern_x[folge] * groesse / 100, y + stern_y[folge] * groesse / 100, breite)
+        _uim_zf_linie(kontext, z, x + stern_x[j] * groesse / 100, y + stern_y[j] * groesse / 100, x + stern_x[folge] * groesse / 100, y + stern_y[folge] * groesse / 100, 1)
         setze j auf j + 1
     gib_zurück wahr
 
@@ -2621,15 +2651,14 @@ funktion _uim_z_bewertung(kontext, z, w, ox, oy):
         setze stern_g auf 1
     setze i auf 0
     solange i < w["max"]:
-        setze linienbreite auf 1
-        wenn i < w["wert"]:
-            setze linienbreite auf 2
+        setze ausgewaehlt auf i < w["wert"]
+        wenn ausgewaehlt:
             _uim_farbe(kontext, z, t["akzent"])
         sonst:
             _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "text"))
         setze stern_x auf ax + i * stern_b + (stern_b - stern_g) / 2
         setze stern_y auf ay + (w["h"] - stern_g) / 2
-        _uim_z_stern(kontext, z, stern_x, stern_y, stern_g, linienbreite)
+        _uim_z_stern(kontext, z, stern_x, stern_y, stern_g, ausgewaehlt)
         setze i auf i + 1
     wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
         _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
@@ -4183,9 +4212,35 @@ funktion uim_backend_fokus(kontext, hat_fokus):
 # Öffentliche API
 # ------------------------------------------------------------
 
+# Ein minimales Repaint-Token enthaelt nur Backend-/Hostreferenzen und niemals
+# Wurzel oder Widget. Dadurch koennen alte Setter invalidieren, ohne einen
+# Refcount-Zyklus Kontext -> Widget -> Kontext zu erzeugen.
+funktion _uim_repaint_token_neu(kontext):
+    setze token auf {}
+    token["backend_vertrag"] = kontext["backend_vertrag"]
+    wenn kontext.enthält("backend_zustand"):
+        token["backend_zustand"] = kontext["backend_zustand"]
+    wenn kontext.enthält("leinwand"):
+        token["leinwand"] = kontext["leinwand"]
+    wenn kontext.enthält("_win"):
+        token["_win"] = kontext["_win"]
+    gib_zurück token
+
+funktion _uim_repaint_verknuepfe_rek(w, token):
+    w["_repaint_token"] = token
+    für kind in w["kinder"]:
+        _uim_repaint_verknuepfe_rek(kind, token)
+    gib_zurück wahr
+
+funktion _uim_widget_anfordern(w):
+    wenn w == nichts oder w.enthält("_repaint_token") == falsch oder w["_repaint_token"] == nichts:
+        gib_zurück falsch
+    gib_zurück _uim_anfordern(w["_repaint_token"])
+
 funktion uim_hinzu(ziel, widget):
     wenn ziel.enthält("wurzel"):
         ziel["wurzel"]["kinder"].hinzufügen(widget)
+        _uim_repaint_verknuepfe_rek(widget, _uim_repaint_token_neu(ziel))
         wenn widget["typ"] == "ueberlagerung":
             wenn widget["b"] <= 0:
                 widget["b"] = ziel["wurzel"]["b"]
@@ -4196,6 +4251,8 @@ funktion uim_hinzu(ziel, widget):
         _uim_anfordern(ziel)
     sonst:
         ziel["kinder"].hinzufügen(widget)
+        wenn ziel.enthält("_repaint_token") und ziel["_repaint_token"] != nichts:
+            _uim_repaint_verknuepfe_rek(widget, ziel["_repaint_token"])
     gib_zurück widget
 
 # UI-13/LIFE: Fensterzustand normalisieren und persistierbar machen.
@@ -4353,6 +4410,122 @@ funktion uim_neuzeichnen(kontext):
     _uim_anfordern(kontext)
     gib_zurück wahr
 
+# W6/API1: ein Wertvertrag fuer alle interaktiven Wert-Widgetfamilien.
+funktion _uim_wert_typ_text(typ):
+    gib_zurück typ == "textfeld" oder typ == "searchbox" oder typ == "numberbox" oder typ == "passwordbox" oder typ == "multiline" oder typ == "autocomplete"
+
+funktion _uim_wert_typ_bool(typ):
+    gib_zurück typ == "switch" oder typ == "toggle" oder typ == "radio" oder typ == "checkbox"
+
+funktion _uim_wert_typ_zahl(typ):
+    gib_zurück typ == "slider" oder typ == "fortschritt" oder typ == "spinner" oder typ == "rating" oder typ == "gauge"
+
+funktion _uim_wert_typ_auswahl(typ):
+    gib_zurück typ == "combobox" oder typ == "liste" oder typ == "baum" oder typ == "datengitter" oder typ == "iconview" oder typ == "colorpicker" oder typ == "calendar" oder typ == "datepicker" oder typ == "linechart" oder typ == "barchart" oder typ == "piechart" oder typ == "tabs"
+
+funktion _uim_wert_auswahl_max(w):
+    setze typ auf w["typ"]
+    wenn typ == "combobox" oder typ == "liste" oder typ == "datengitter":
+        gib_zurück länge(w["zeilen"]) - 1
+    wenn typ == "baum":
+        gib_zurück länge(_uim_baum_sichtbare(w)) - 1
+    wenn typ == "iconview":
+        gib_zurück länge(w["eintraege"]) - 1
+    wenn typ == "colorpicker":
+        gib_zurück länge(w["farben"]) - 1
+    wenn typ == "calendar" oder typ == "datepicker":
+        gib_zurück w["tage"]
+    wenn typ == "linechart" oder typ == "barchart" oder typ == "piechart":
+        gib_zurück länge(w["werte"]) - 1
+    wenn typ == "tabs":
+        gib_zurück länge(w["kinder"]) - 1
+    gib_zurück 0 - 1
+
+funktion uim_wert_hole(w):
+    wenn w == nichts:
+        gib_zurück nichts
+    setze typ auf w["typ"]
+    wenn _uim_wert_typ_text(typ):
+        gib_zurück w["text"]
+    wenn _uim_wert_typ_bool(typ) oder _uim_wert_typ_zahl(typ):
+        gib_zurück w["wert"]
+    wenn _uim_wert_typ_auswahl(typ):
+        gib_zurück w["auswahl"]
+    wenn typ == "expander" oder typ == "ueberlagerung":
+        gib_zurück w["offen"]
+    wenn typ == "teiler":
+        gib_zurück w["anteil"]
+    wenn typ == "terminal":
+        gib_zurück w["eingabe"]
+    wenn typ == "markdown":
+        gib_zurück w["inhalt"]
+    gib_zurück nichts
+
+funktion uim_wert_setze(kontext, w, wert):
+    wenn kontext == nichts oder w == nichts:
+        gib_zurück falsch
+    setze typ auf w["typ"]
+    wenn _uim_wert_typ_text(typ):
+        gib_zurück uim_textfeld_setze(kontext, w, text(wert))
+    wenn typ == "fortschritt":
+        gib_zurück uim_fortschritt_setze(kontext, w, wert)
+    wenn typ == "slider":
+        gib_zurück uim_slider_setze(kontext, w, wert)
+    wenn typ == "spinner":
+        w["wert"] = wert % 8
+        wenn w["wert"] < 0:
+            w["wert"] = w["wert"] + 8
+    sonst wenn typ == "rating" oder typ == "gauge":
+        wenn wert < w["min"]:
+            setze wert auf w["min"]
+        wenn wert > w["max"]:
+            setze wert auf w["max"]
+        w["wert"] = wert
+        w["selected"] = wert > w["min"]
+    sonst wenn _uim_wert_typ_bool(typ):
+        wenn typ == "radio" und wert:
+            _uim_radio_gruppe_rek(kontext["wurzel"]["kinder"], w["gruppe"], w["uid"])
+        w["wert"] = wert
+        w["selected"] = wert
+    sonst wenn _uim_wert_typ_auswahl(typ):
+        setze minimum auf 0 - 1
+        wenn typ == "combobox" oder typ == "tabs":
+            setze minimum auf 0
+        wenn typ == "calendar" oder typ == "datepicker":
+            setze minimum auf 1
+        setze maximum auf _uim_wert_auswahl_max(w)
+        wenn maximum < minimum:
+            setze wert auf maximum
+        sonst:
+            wenn wert < minimum:
+                setze wert auf minimum
+            wenn wert > maximum:
+                setze wert auf maximum
+        w["auswahl"] = wert
+        w["selected"] = wert >= minimum
+    sonst wenn typ == "expander":
+        w["offen"] = wert
+    sonst wenn typ == "teiler":
+        wenn wert < 0.05:
+            setze wert auf 0.05
+        wenn wert > 0.95:
+            setze wert auf 0.95
+        w["anteil"] = wert
+        _uim_teiler_layout(w)
+    sonst wenn typ == "ueberlagerung":
+        gib_zurück uim_ueberlagerung_setze(kontext, w, wert, w["schliesst_aussen"])
+    sonst wenn typ == "terminal":
+        w["eingabe"] = text(wert)
+        w["text"] = w["eingabe"]
+        w["cursor"] = länge(bytes_zu_liste(w["eingabe"]))
+    sonst wenn typ == "markdown":
+        gib_zurück uim_markdown_setze(kontext, w, text(wert))
+    sonst:
+        gib_zurück falsch
+    _uim_bind_widget_zu_state(w)
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
 funktion uim_finde(kontext, id):
     gib_zurück _uim_finde_rek(kontext["wurzel"]["kinder"], id)
 
@@ -4437,6 +4610,7 @@ funktion uim_knopf_aktion_start(w):
     w["aktion_laeuft"] = wahr
     w["disabled"] = wahr
     w["zustand"] = "disabled"
+    _uim_widget_anfordern(w)
     gib_zurück wahr
 
 funktion uim_knopf_aktion_ende(w):
@@ -4445,6 +4619,7 @@ funktion uim_knopf_aktion_ende(w):
     w["aktion_laeuft"] = falsch
     w["disabled"] = falsch
     w["zustand"] = "normal"
+    _uim_widget_anfordern(w)
     gib_zurück wahr
 
 funktion uim_statusansicht(x, y, b, h, zustand, titel, beschreibung, on_retry):
@@ -4470,6 +4645,7 @@ funktion uim_status_setze(w, zustand, titel, beschreibung):
     w["status_text"] = beschreibung
     w["error"] = zustand == "fehler"
     w["loading"] = zustand == "laden" oder zustand == "skelett"
+    _uim_widget_anfordern(w)
     gib_zurück wahr
 
 funktion uim_leerzustand(x, y, b, h, titel, beschreibung):
@@ -4499,6 +4675,7 @@ funktion uim_spinner_phase_setze(w, phase):
     w["wert"] = phase % 8
     wenn w["wert"] < 0:
         w["wert"] = w["wert"] + 8
+    _uim_widget_anfordern(w)
     gib_zurück wahr
 
 funktion uim_bewertung(x, y, b, h, initial, on_wechsel):
@@ -4561,6 +4738,7 @@ funktion uim_label(beschriftung, x, y, b, h):
 # Label-Ausrichtung: "links" (Standard) | "mitte" | "rechts" (innerhalb b).
 funktion uim_label_ausrichtung(w, ausrichtung):
     w["ausrichtung"] = ausrichtung
+    _uim_widget_anfordern(w)
     gib_zurück w
 
 # Checkbox: Klick oder space/Return toggelt. on_wechsel(w, wert).
@@ -5192,6 +5370,7 @@ funktion uim_tooltip(w, text):
     wenn w == nichts:
         gib_zurück nichts
     w["tooltip"] = text
+    _uim_widget_anfordern(w)
     gib_zurück w
 
 funktion uim_tooltip_setze(w, text):
@@ -5385,6 +5564,7 @@ funktion uim_teiler_min_setze(w, min1, min2):
     w["min1"] = min1
     w["min2"] = min2
     _uim_teiler_layout(w)
+    _uim_widget_anfordern(w)
     gib_zurück w
 
 funktion uim_karte(titel, x, y, b, h):

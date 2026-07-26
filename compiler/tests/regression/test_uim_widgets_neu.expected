@@ -142,3 +142,13 @@ W6-C3-OK
 W6-C4-DEFAULT wahr/wahr
 W6-C4-OVERRIDE wahr/wahr
 W6-C4-OK
+API1-BOOL wahr/wahr/wahr wahr/wahr/wahr wahr/wahr/wahr wahr/wahr/wahr
+API1-ZAHL wahr/wahr/7 wahr/wahr/1 wahr/wahr/1 wahr/wahr/5 wahr/wahr/10
+API1-TEXT wahr/wahr/tf wahr/wahr/such wahr/wahr/12 wahr/wahr/pw wahr/wahr/mehr wahr/wahr/auto
+API1-AUSWAHL wahr/wahr/1 wahr/wahr/1 wahr/wahr/1 wahr/wahr/1 wahr/wahr/1 wahr/wahr/1
+API1-DATUM wahr/wahr/9 wahr/wahr/10
+API1-CHART wahr/wahr/2 wahr/wahr/2 wahr/wahr/2
+API1-SPEZIAL wahr/wahr/1 wahr/wahr/wahr wahr/wahr/0.5 wahr/wahr/falsch wahr/wahr/cmd wahr/wahr/neu
+API1-LEGACY wahr/wahr/wahr/wahr
+API1-MUTATIONEN wahr/wahr/wahr/wahr/wahr/wahr/wahr/wahr/wahr/wahr/wahr
+W6-API1-OK

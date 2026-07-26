@@ -139,7 +139,7 @@ für befehl in uim_mock_befehle(k):
         setze rating_linien auf rating_linien + 1
     wenn befehl["op"] == "text" und befehl["args"][0] >= rate["x"] und befehl["args"][0] <= rate["x"] + rate["b"] und befehl["args"][1] >= rate["y"] und befehl["args"][1] <= rate["y"] + rate["h"]:
         setze rating_text auf rating_text + 1
-zeige "RATING-VEKTOR " + text(rating_linien == rate["max"] * 10) + "/" + text(rating_text == 0)
+zeige "RATING-VEKTOR " + text(rating_linien > rate["max"] * 10) + "/" + text(rating_text == 0)
 uim_tick(k, 0.25)
 zeige "SPINNER-TICK " + text(spin["wert"])
 zeige "PROGRESS-UNBESTIMMT " + text(ind["phase"] > 0)
@@ -698,3 +698,94 @@ uim_mock_maus(c4_root, 75, 30, wahr)
 uim_mock_maus(c4_root, 75, 30, falsch)
 zeige "W6-C4-OVERRIDE " + text(c4_freies_rendern) + "/" + text(S["c4_klicks"] == 1)
 zeige "W6-C4-OK"
+
+
+# --- W6-API1: generische Wert-API ueber alle Widget-Familien ---
+funktion api1_pruefe(k, w, wert):
+    uim_hinzu(k, w)
+    uim_mock_zeichne(k)
+    setze gesetzt auf uim_wert_setze(k, w, wert)
+    setze invalidiert auf k["backend_zustand"]["ungueltig"]
+    gib_zurück text(gesetzt) + "/" + text(invalidiert) + "/" + text(uim_wert_hole(w))
+
+setze k auf uim_mock_wurzel(640, 480)
+
+zeige "API1-BOOL " + api1_pruefe(k, uim_schalter("S", 0, 0, 80, 20, falsch, nichts), wahr) + " " + api1_pruefe(k, uim_umschaltknopf("T", 0, 0, 80, 20, falsch, nichts), wahr) + " " + api1_pruefe(k, uim_radio("R", 0, 0, 80, 20, "g", falsch, nichts), wahr) + " " + api1_pruefe(k, uim_checkbox("C", 0, 0, 80, 20, falsch, nichts), wahr)
+
+zeige "API1-ZAHL " + api1_pruefe(k, uim_slider(0, 0, 100, 20, 0, 10, 0, nichts), 7) + " " + api1_pruefe(k, uim_fortschritt(0, 0, 100, 12), 1) + " " + api1_pruefe(k, uim_spinner(0, 0, 20, 20), 9) + " " + api1_pruefe(k, uim_bewertung(0, 0, 100, 20, 0, nichts), 9) + " " + api1_pruefe(k, uim_gauge(0, 0, 100, 20, 0, 10, 0, nichts), 12)
+
+zeige "API1-TEXT " + api1_pruefe(k, uim_textfeld(0, 0, 100, 20, "", nichts), "tf") + " " + api1_pruefe(k, uim_searchbox(0, 0, 100, 20, "suche", nichts), "such") + " " + api1_pruefe(k, uim_numberbox(0, 0, 100, 20, 0, 0, 99, nichts), 12) + " " + api1_pruefe(k, uim_passwordbox(0, 0, 100, 20, "", nichts), "pw") + " " + api1_pruefe(k, uim_multiline(0, 0, 100, 40, "", nichts), "mehr") + " " + api1_pruefe(k, uim_autocomplete(0, 0, 100, 20, "", ["auto"], nichts), "auto")
+
+zeige "API1-AUSWAHL " + api1_pruefe(k, uim_combobox(0, 0, 100, 20, ["A", "B"], 0, nichts), 1) + " " + api1_pruefe(k, uim_liste(0, 0, 100, 40, ["A", "B"], nichts), 1) + " " + api1_pruefe(k, uim_baum(0, 0, 100, 40, [uim_baum_knoten("A", []), uim_baum_knoten("B", [])], nichts), 1) + " " + api1_pruefe(k, uim_datengitter(0, 0, 100, 40, ["X"], [["A"], ["B"]], nichts), 1) + " " + api1_pruefe(k, uim_iconview(0, 0, 100, 80, ["A", "B"], nichts), 1) + " " + api1_pruefe(k, uim_colorpicker(0, 0, 100, 40, [[1, 2, 3, 255], [4, 5, 6, 255]], nichts), 1)
+
+zeige "API1-DATUM " + api1_pruefe(k, uim_calendar(0, 0, 120, 100, 7, 2026, nichts), 9) + " " + api1_pruefe(k, uim_datepicker(0, 0, 120, 100, 7, 2026, nichts), 10)
+
+zeige "API1-CHART " + api1_pruefe(k, uim_linechart(0, 0, 100, 60, [1, 2, 3], nichts), 2) + " " + api1_pruefe(k, uim_barchart(0, 0, 100, 60, [1, 2, 3], nichts), 2) + " " + api1_pruefe(k, uim_piechart(0, 0, 100, 60, [1, 2, 3], nichts), 2)
+
+zeige "API1-SPEZIAL " + api1_pruefe(k, uim_tabs(0, 0, 120, 80, ["A", "B"]), 1) + " " + api1_pruefe(k, uim_aufklapper("E", 0, 0, 120, 60), wahr) + " " + api1_pruefe(k, uim_teiler(0, 0, 120, 60, "horizontal", 0.2), 0.5) + " " + api1_pruefe(k, uim_ueberlagerung(0, 0, 120, 80), falsch) + " " + api1_pruefe(k, uim_terminal(0, 0, 120, 80, "bereit", nichts), "cmd") + " " + api1_pruefe(k, uim_markdown(0, 0, 120, 80, "alt"), "neu")
+
+setze alt_status auf uim_statusansicht(0, 0, 120, 50, "leer", "A", "B", nichts)
+setze alt_spinner auf uim_spinner(0, 0, 20, 20)
+setze alt_label auf uim_label("L", 0, 0, 80, 20)
+setze alt_knopf auf uim_knopf_geschuetzt("K", 0, 0, 80, 20, nichts)
+uim_hinzu(k, alt_status)
+uim_hinzu(k, alt_spinner)
+uim_hinzu(k, alt_label)
+uim_hinzu(k, alt_knopf)
+uim_mock_zeichne(k)
+uim_status_setze(alt_status, "laden", "Neu", "Text")
+setze legacy_status auf k["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(k)
+uim_spinner_phase_setze(alt_spinner, 3)
+setze legacy_spinner auf k["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(k)
+uim_label_ausrichtung(alt_label, "rechts")
+setze legacy_label auf k["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(k)
+uim_knopf_aktion_start(alt_knopf)
+setze legacy_knopf auf k["backend_zustand"]["ungueltig"]
+zeige "API1-LEGACY " + text(legacy_status) + "/" + text(legacy_spinner) + "/" + text(legacy_label) + "/" + text(legacy_knopf)
+
+setze mut_label auf uim_label("M", 0, 0, 80, 20)
+setze mut_stapel auf uim_stapel(0, 0, 80, 40)
+setze mut_teiler auf uim_teiler(0, 0, 120, 60, "horizontal", 0.5)
+uim_hinzu(k, mut_label)
+uim_hinzu(k, mut_stapel)
+uim_hinzu(k, mut_teiler)
+uim_mock_zeichne(k)
+uim_layout_metriken_setze(mut_label, 1, 2, 3)
+setze mut_metriken auf k["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(k)
+uim_layout_grenzen_setze(mut_label, 1, 1, 90, 30, falsch, falsch)
+setze mut_grenzen auf k["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(k)
+uim_text_layout_setze(mut_label, wahr, wahr)
+setze mut_textlayout auf k["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(k)
+uim_clip_kinder_setze(mut_stapel, falsch)
+setze mut_clip auf k["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(k)
+uim_z_index_setze(mut_label, 4)
+setze mut_z auf k["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(k)
+uim_event_setze(mut_label, "fokus", nichts)
+setze mut_event auf k["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(k)
+uim_drag_quelle(mut_label, "drag")
+setze mut_drag auf k["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(k)
+uim_drop_ziel(mut_label, nichts)
+setze mut_drop auf k["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(k)
+uim_tooltip_setze(mut_label, "Tipp")
+setze mut_tooltip auf k["backend_zustand"]["ungueltig"]
+uim_mock_zeichne(k)
+uim_teiler_min_setze(mut_teiler, 10, 10)
+setze mut_teiler_flag auf k["backend_zustand"]["ungueltig"]
+setze bind_state auf {}
+uim_bind(mut_label, bind_state, "titel", "text")
+uim_mock_zeichne(k)
+uim_state_setze(bind_state, "titel", "Gebunden")
+setze mut_bind auf k["backend_zustand"]["ungueltig"]
+zeige "API1-MUTATIONEN " + text(mut_metriken) + "/" + text(mut_grenzen) + "/" + text(mut_textlayout) + "/" + text(mut_clip) + "/" + text(mut_z) + "/" + text(mut_event) + "/" + text(mut_drag) + "/" + text(mut_drop) + "/" + text(mut_tooltip) + "/" + text(mut_teiler_flag) + "/" + text(mut_bind)
+zeige "W6-API1-OK"
