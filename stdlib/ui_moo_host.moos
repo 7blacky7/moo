@@ -183,6 +183,8 @@ funktion _uim_on_zeichne(lw, z):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
+    # Aktive Zeitlogik fordert selbst den naechsten Frame an.
+    uim_tick(kontext, 0.05)
     gib_zurück _uim_kern_zeichne(kontext, z)
 
 
@@ -227,9 +229,10 @@ funktion uim_frame_wurzel(b, h):
     kontext["hintergrund_zeichnen"] = falsch
     gib_zurück kontext
 
-# Pro Spiel-Tick aufrufen: zeichnet den Widget-Baum aufs Fenster.
+# Pro Spiel-Tick aufrufen: schaltet Zeitlogik weiter und zeichnet danach.
 funktion uim_frame_zeichne(kontext, win):
     kontext["_win"] = win
+    uim_tick(kontext, 0.05)
     gib_zurück uim_backend_zeichne(kontext, nichts)
 
 funktion uim_frame_maus(kontext, x, y, gedrueckt):

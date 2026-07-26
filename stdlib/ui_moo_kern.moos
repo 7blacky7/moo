@@ -542,6 +542,7 @@ funktion _uim_basis(typ, x, y, b, h):
     w["text_umbruch"] = falsch
     w["text_ellipsis"] = falsch
     w["clip_kinder"] = falsch
+    w["clip_kinder_explizit"] = falsch
     w["z_index"] = 0
     # UI-13/DATA: distinkte Events, Binding und retained DnD-Metadaten.
     w["on_fokus"] = nichts
@@ -610,7 +611,16 @@ funktion uim_text_layout_setze(w, umbruch, ellipsis):
 
 funktion uim_clip_kinder_setze(w, an):
     w["clip_kinder"] = an
+    w["clip_kinder_explizit"] = wahr
     gib_zurück w
+
+# Gemeinsamer Render-/Input-Vertrag. Inhaltscontainer clippen standardmäßig;
+# freie/custom Widgets nicht. uim_clip_kinder_setze überschreibt den Standard.
+funktion _uim_clip_kinder_aktiv(w):
+    wenn w["clip_kinder_explizit"]:
+        gib_zurück w["clip_kinder"]
+    setze typ auf w["typ"]
+    gib_zurück typ == "scroll" oder typ == "panel" oder typ == "tabs" oder typ == "tab" oder typ == "expander" oder typ == "toolbar" oder typ == "teiler" oder typ == "karte" oder typ == "stapel" oder typ == "gitter" oder typ == "ueberlagerung"
 
 funktion uim_z_index_setze(w, z_index):
     w["z_index"] = z_index
@@ -949,7 +959,23 @@ funktion _uim_fokus_uids(kinder, ziele):
         wenn w["sichtbar"] und w["aktiv"] und w["disabled"] == falsch:
             wenn w["fokussierbar"]:
                 ziele.hinzufügen(w["uid"])
-            _uim_fokus_uids(w["kinder"], ziele)
+            # Fokus folgt derselben tatsächlichen Sichtbarkeit wie Render/Input.
+            wenn w["typ"] == "tabs":
+                wenn länge(w["kinder"]) > 0:
+                    setze ti auf w["auswahl"]
+                    wenn ti < 0:
+                        setze ti auf 0
+                    wenn ti > länge(w["kinder"]) - 1:
+                        setze ti auf länge(w["kinder"]) - 1
+                    _uim_fokus_uids(w["kinder"][ti]["kinder"], ziele)
+            sonst wenn w["typ"] == "expander":
+                wenn w["offen"]:
+                    _uim_fokus_uids(w["kinder"], ziele)
+            sonst wenn w["typ"] == "ueberlagerung":
+                wenn w["offen"]:
+                    _uim_fokus_uids(w["kinder"], ziele)
+            sonst:
+                _uim_fokus_uids(w["kinder"], ziele)
     gib_zurück ziele
 
 funktion _uim_finde_uid_rek(kinder, uid):
@@ -1215,87 +1241,95 @@ funktion _uim_druck_loesche(kontext):
 # Container selbst ist der Treffer (blockt darunterliegende Widgets).
 funktion _uim_treffer_rek(kinder, x, y):
     setze gefunden auf nichts
-    setze i auf länge(kinder) - 1
+    setze geordnet auf _uim_kinder_z_sortiert(kinder)
+    setze i auf länge(geordnet) - 1
     solange i >= 0:
         wenn gefunden == nichts:
-            setze w auf kinder[i]
+            setze w auf geordnet[i]
             wenn w["sichtbar"]:
-                wenn x >= w["x"] und x < w["x"] + w["b"] und y >= w["y"] und y < w["y"] + w["h"]:
-                    wenn w["aktiv"] == falsch:
-                        # Sichtbar-deaktivierte Widgets blocken tiefere Z-Ebenen.
+                setze im_rahmen auf x >= w["x"] und x < w["x"] + w["b"] und y >= w["y"] und y < w["y"] + w["h"]
+                setze kinder_pruefen auf im_rahmen oder _uim_clip_kinder_aktiv(w) == falsch
+                wenn w["aktiv"] == falsch:
+                    # Deaktivierte Vorfahren geben nie Ereignisse an Kinder weiter.
+                    wenn im_rahmen:
                         setze gefunden auf _uim_tref(w, x, y)
-                    sonst wenn w["typ"] == "tabs":
-                        wenn y < w["y"] + w["tab_h"]:
+                sonst wenn w["typ"] == "tabs" und kinder_pruefen:
+                    wenn im_rahmen und y < w["y"] + w["tab_h"]:
+                        setze gefunden auf _uim_tref(w, x, y)
+                    sonst wenn länge(w["kinder"]) > 0:
+                        setze ti auf w["auswahl"]
+                        setze tab auf w["kinder"][ti]
+                        setze innen auf _uim_treffer_rek(tab["kinder"], x - w["x"], y - w["y"] - w["tab_h"])
+                        wenn innen != nichts:
+                            setze gefunden auf innen
+                        sonst wenn im_rahmen:
                             setze gefunden auf _uim_tref(w, x, y)
-                        sonst wenn länge(w["kinder"]) > 0:
-                            setze ti auf w["auswahl"]
-                            setze tab auf w["kinder"][ti]
-                            setze innen auf _uim_treffer_rek(tab["kinder"], x - w["x"], y - w["y"] - w["tab_h"])
-                            wenn innen == nichts:
-                                setze gefunden auf _uim_tref(w, x, y)
-                            sonst:
-                                setze gefunden auf innen
-                        sonst:
+                    sonst wenn im_rahmen:
+                        setze gefunden auf _uim_tref(w, x, y)
+                sonst wenn w["typ"] == "expander" und kinder_pruefen:
+                    wenn im_rahmen und y < w["y"] + w["kauff_h"]:
+                        setze gefunden auf _uim_tref(w, x, y)
+                    sonst wenn w["offen"]:
+                        setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"] - w["kauff_h"])
+                        wenn innen != nichts:
+                            setze gefunden auf innen
+                        sonst wenn im_rahmen:
                             setze gefunden auf _uim_tref(w, x, y)
-                    sonst wenn w["typ"] == "expander":
-                        wenn y < w["y"] + w["kauff_h"]:
-                            setze gefunden auf _uim_tref(w, x, y)
-                        sonst wenn w["offen"]:
-                            setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"] - w["kauff_h"])
-                            wenn innen == nichts:
-                                setze gefunden auf _uim_tref(w, x, y)
-                            sonst:
-                                setze gefunden auf innen
-                        sonst:
-                            setze gefunden auf _uim_tref(w, x, y)
-                    sonst wenn w["typ"] == "toolbar":
+                    sonst wenn im_rahmen:
+                        setze gefunden auf _uim_tref(w, x, y)
+                sonst wenn w["typ"] == "toolbar" und kinder_pruefen:
+                    setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"])
+                    wenn innen != nichts:
+                        setze gefunden auf innen
+                    sonst wenn im_rahmen:
+                        setze gefunden auf _uim_tref(w, x, y)
+                sonst wenn w["typ"] == "teiler" und kinder_pruefen:
+                    _uim_teiler_layout(w)
+                    setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"])
+                    wenn innen != nichts:
+                        setze gefunden auf innen
+                    sonst wenn im_rahmen:
+                        setze gefunden auf _uim_tref(w, x - w["x"], y - w["y"])
+                sonst wenn w["typ"] == "karte" und kinder_pruefen:
+                    setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"] - w["titel_h"])
+                    wenn innen != nichts:
+                        setze gefunden auf innen
+                    sonst wenn im_rahmen:
+                        setze gefunden auf _uim_tref(w, x - w["x"], y - w["y"])
+                sonst wenn (w["typ"] == "stapel" oder w["typ"] == "gitter") und kinder_pruefen:
+                    setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"])
+                    wenn innen != nichts:
+                        setze gefunden auf innen
+                    sonst wenn im_rahmen:
+                        setze gefunden auf _uim_tref(w, x - w["x"], y - w["y"])
+                sonst wenn w["typ"] == "ueberlagerung" and kinder_pruefen:
+                    wenn w["offen"]:
+                        _uim_ueberlagerung_layout(w)
                         setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"])
-                        wenn innen == nichts:
-                            setze gefunden auf _uim_tref(w, x, y)
-                        sonst:
+                        wenn innen != nichts:
                             setze gefunden auf innen
-                    sonst wenn w["typ"] == "teiler":
-                        _uim_teiler_layout(w)
-                        setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"])
-                        wenn innen == nichts:
+                        sonst wenn im_rahmen and w["modal"]:
                             setze gefunden auf _uim_tref(w, x - w["x"], y - w["y"])
-                        sonst:
-                            setze gefunden auf innen
-                    sonst wenn w["typ"] == "karte":
-                        setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"] - w["titel_h"])
-                        wenn innen == nichts:
-                            setze gefunden auf _uim_tref(w, x - w["x"], y - w["y"])
-                        sonst:
-                            setze gefunden auf innen
-                    sonst wenn w["typ"] == "stapel" oder w["typ"] == "gitter":
-                        setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"])
-                        wenn innen == nichts:
-                            setze gefunden auf _uim_tref(w, x - w["x"], y - w["y"])
-                        sonst:
-                            setze gefunden auf innen
-                    sonst wenn w["typ"] == "ueberlagerung":
-                        wenn w["offen"]:
-                            _uim_ueberlagerung_layout(w)
-                            setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"])
-                            wenn innen == nichts:
-                                wenn w["modal"]:
-                                    setze gefunden auf _uim_tref(w, x - w["x"], y - w["y"])
-                                sonst:
-                                    setze gefunden auf nichts
-                            sonst:
-                                setze gefunden auf innen
-                    sonst wenn w["typ"] == "panel":
-                        # Die rechte 8px-Zone gehoert der Scrollbar, nicht Kindern.
-                        wenn x >= w["x"] + w["b"] - 8 und w["inhalt_hoehe"] > w["h"]:
-                            setze gefunden auf _uim_tref(w, x, y)
-                        sonst:
-                            setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"] + w["scroll_y"])
-                            wenn innen == nichts:
-                                setze gefunden auf _uim_tref(w, x, y)
-                            sonst:
-                                setze gefunden auf innen
+                sonst wenn w["typ"] == "panel" and kinder_pruefen:
+                    wenn im_rahmen and x >= w["x"] + w["b"] - 8 and w["inhalt_hoehe"] > w["h"]:
+                        setze gefunden auf _uim_tref(w, x, y)
                     sonst:
+                        setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"] + w["scroll_y"])
+                        wenn innen != nichts:
+                            setze gefunden auf innen
+                        sonst wenn im_rahmen:
+                            setze gefunden auf _uim_tref(w, x, y)
+                sonst wenn w["typ"] == "scroll" and kinder_pruefen:
+                    wenn im_rahmen and x >= w["x"] + w["b"] - 8 and w["inhalt_hoehe"] > w["h"]:
                         setze gefunden auf _uim_tref(w, x, y)
+                    sonst:
+                        setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"] + w["scroll_y"])
+                        wenn innen != nichts:
+                            setze gefunden auf innen
+                        sonst wenn im_rahmen:
+                            setze gefunden auf _uim_tref(w, x, y)
+                sonst wenn im_rahmen:
+                    setze gefunden auf _uim_tref(w, x, y)
         setze i auf i - 1
     gib_zurück gefunden
 
@@ -1305,10 +1339,11 @@ funktion _uim_treffer(kontext, x, y):
 # Oberstes scrollbares Widget (scroll/liste) unter dem Punkt.
 funktion _uim_scrollziel_rek(kinder, x, y):
     setze gefunden auf nichts
-    setze i auf länge(kinder) - 1
+    setze geordnet auf _uim_kinder_z_sortiert(kinder)
+    setze i auf länge(geordnet) - 1
     solange i >= 0:
         wenn gefunden == nichts:
-            setze w auf kinder[i]
+            setze w auf geordnet[i]
             wenn w["sichtbar"]:
                 wenn x >= w["x"] und x < w["x"] + w["b"] und y >= w["y"] und y < w["y"] + w["h"]:
                     wenn w["aktiv"] == falsch:
@@ -1358,41 +1393,50 @@ funktion _uim_bewertung_setze_aus_x(w, x):
     gib_zurück wahr
 
 funktion _uim_tick_rek(kinder, schritt):
+    setze tick_aktiv auf falsch
     für w in kinder:
         wenn w["typ"] == "spinner":
             w["wert"] = (w["wert"] + 1) % w["max"]
+            setze tick_aktiv auf wahr
         wenn w["typ"] == "statusansicht" und w["status_modus"] == "laden":
             w["phase"] = (w["phase"] + 1) % 8
+            setze tick_aktiv auf wahr
         wenn w["typ"] == "fortschritt" und w["unbestimmt"]:
             w["phase"] = w["phase"] + schritt
             solange w["phase"] >= 1:
                 w["phase"] = w["phase"] - 1
             solange w["phase"] < 0:
                 w["phase"] = w["phase"] + 1
+            setze tick_aktiv auf wahr
         wenn w["typ"] == "ueberlagerung" und w["offen"] und w.enthält("rest_ticks"):
             w["rest_ticks"] = w["rest_ticks"] - schritt
+            setze tick_aktiv auf wahr
             wenn w["rest_ticks"] <= 0:
                 w["offen"] = falsch
                 w["sichtbar"] = falsch
                 setze cb_tick auf w["on_schliessen"]
                 wenn cb_tick != nichts:
                     cb_tick(w)
-        _uim_tick_rek(w["kinder"], schritt)
-    gib_zurück wahr
+        wenn _uim_tick_rek(w["kinder"], schritt):
+            setze tick_aktiv auf wahr
+    gib_zurück tick_aktiv
 
 funktion uim_tick(kontext, schritt):
     wenn kontext == nichts:
         gib_zurück falsch
     wenn schritt <= 0:
         setze schritt auf 0.1
-    _uim_tick_rek(kontext["wurzel"]["kinder"], schritt)
+    setze tick_aktiv auf _uim_tick_rek(kontext["wurzel"]["kinder"], schritt)
     wenn kontext.enthält("tooltip_widget") und kontext["tooltip_widget"] != nichts:
         setze tw auf kontext["tooltip_widget"]
         wenn tw.enthält("tooltip") und tw["tooltip"] != nichts und tw["hover"]:
             kontext["tooltip_ticks"] = kontext["tooltip_ticks"] + schritt
+            setze tick_aktiv auf wahr
         sonst:
             kontext["tooltip_ticks"] = 0
-    _uim_anfordern(kontext)
+    kontext["_tick_aktiv"] = tick_aktiv
+    wenn tick_aktiv:
+        _uim_anfordern(kontext)
     gib_zurück wahr
 
 funktion _uim_aktiviere(kontext, w):
@@ -1495,6 +1539,27 @@ funktion _uim_slider_setze_aus_x(w, x):
         cw(w, wert)
     gib_zurück wahr
 
+# Wenn Tab-Fokus ein Kind in einem Scrollbereich erreicht, wird der direkte
+# Inhaltszweig, der das Ziel enthaelt, in den Viewport gebracht.
+funktion _uim_fokus_scroll_sichtbar_rek(kontext, kinder, uid):
+    setze gefunden auf falsch
+    für w in kinder:
+        wenn w["typ"] == "scroll":
+            für kind in w["kinder"]:
+                wenn kind["uid"] == uid oder _uim_finde_uid_rek(kind["kinder"], uid) != nichts:
+                    setze oben auf kind["y"]
+                    setze unten auf kind["y"] + kind["h"]
+                    wenn oben < w["scroll_y"]:
+                        w["scroll_y"] = oben
+                    wenn unten > w["scroll_y"] + w["h"]:
+                        w["scroll_y"] = unten - w["h"]
+                    _uim_scroll_klemme(kontext, w)
+                    setze gefunden auf wahr
+        wenn _uim_fokus_scroll_sichtbar_rek(kontext, w["kinder"], uid):
+            setze gefunden auf wahr
+    gib_zurück gefunden
+
+
 # Fokus auf nächstes fokussierbares Widget (Tab-Reihenfolge =
 # Einfüge-Reihenfolge, mit Umlauf). rueckwaerts: wahr bei Shift+Tab.
 funktion _uim_fokus_weiter(kontext, rueckwaerts):
@@ -1526,6 +1591,8 @@ funktion _uim_fokus_weiter(kontext, rueckwaerts):
     setze idx auf (start + schritt) % n
     setze ziel_uid auf ziele[idx]
     setze kontext["fokus"] auf _uim_finde_uid_rek(fokus_basis, ziel_uid)
+    wenn kontext["fokus"] != nichts:
+        _uim_fokus_scroll_sichtbar_rek(kontext, kontext["wurzel"]["kinder"], ziel_uid)
     gib_zurück kontext["fokus"] != nichts
 
 # Listen-Zeilenhöhe: rein theme-getrieben.
@@ -3346,13 +3413,15 @@ funktion _uim_z_gauge(kontext, z, w, ox, oy):
 
 # Scrollbereich: Rahmen + Clip öffnen (Kinder zeichnet _uim_zeichne_widget)
 funktion _uim_z_scroll_rahmen(kontext, z, w, ox, oy):
-    gib_zurück _uim_zf_clip_setze(kontext, z, ox + w["x"], oy + w["y"], w["b"], w["h"])
-
+    wenn _uim_clip_kinder_aktiv(w):
+        gib_zurück _uim_zf_clip_setze(kontext, z, ox + w["x"], oy + w["y"], w["b"], w["h"])
+    gib_zurück wahr
 # Scrollbereich: Clip schliessen + Scrollbar rechts zeichnen
 funktion _uim_z_scroll_leiste(kontext, z, w, ox, oy):
-    setze pop_ok auf _uim_zf_clip_loesche(kontext, z)
-    wenn pop_ok == falsch:
-        gib_zurück falsch
+    wenn _uim_clip_kinder_aktiv(w):
+        setze pop_ok auf _uim_zf_clip_loesche(kontext, z)
+        wenn pop_ok == falsch:
+            gib_zurück falsch
     setze t auf kontext["theme"]
     setze ax auf ox + w["x"]
     setze ay auf oy + w["y"]
@@ -3823,7 +3892,7 @@ funktion _uim_kinder_z_sortiert(kinder):
 funktion _uim_zeichne_kinder(kontext, z, parent, ox, oy, inhalt_y):
     setze ax auf ox + parent["x"]
     setze ay auf oy + parent["y"] + inhalt_y
-    setze clip_an auf parent["clip_kinder"]
+    setze clip_an auf _uim_clip_kinder_aktiv(parent)
     wenn clip_an:
         wenn _uim_zf_clip_setze(kontext, z, ax, ay, parent["b"], parent["h"] - inhalt_y) == falsch:
             gib_zurück falsch
@@ -3841,8 +3910,7 @@ funktion _uim_zeichne_widget(kontext, z, w, ox, oy):
         setze ok auf _uim_z_tabs(kontext, z, w, ox, oy)
         wenn länge(w["kinder"]) > 0:
             setze tab auf w["kinder"][w["auswahl"]]
-            für k in tab["kinder"]:
-                setze ok auf _uim_zeichne_widget(kontext, z, k, ox + w["x"], oy + w["y"] + w["tab_h"]) und ok
+            setze ok auf _uim_zeichne_kinder(kontext, z, tab, ox + w["x"], oy + w["y"] + w["tab_h"], 0) und ok
         gib_zurück ok
     wenn w["typ"] == "expander":
         setze t auf kontext["theme"]
@@ -3854,21 +3922,18 @@ funktion _uim_zeichne_widget(kontext, z, w, ox, oy):
         _uim_zf_text(kontext, z, ax + t["abstand"], ay + (w["kauff_h"] - t["schrift"]) / 2, w["text"], t["schrift"])
         setze ok auf wahr
         wenn w["offen"]:
-            für k in w["kinder"]:
-                setze ok auf _uim_zeichne_widget(kontext, z, k, ax, ay + w["kauff_h"]) und ok
+            setze ok auf _uim_zeichne_kinder(kontext, z, w, ox, oy, w["kauff_h"]) and ok
         gib_zurück ok
     wenn w["typ"] == "toolbar":
         setze ok auf _uim_z_werkzeugleiste(kontext, z, w, ox, oy)
-        für k in w["kinder"]:
-            setze ok auf _uim_zeichne_widget(kontext, z, k, ox + w["x"], oy + w["y"]) und ok
+        gib_zurück _uim_zeichne_kinder(kontext, z, w, ox, oy, 0) and ok
         gib_zurück ok
     wenn w["typ"] == "statusleiste":
         gib_zurück _uim_z_statusleiste(kontext, z, w, ox, oy)
     wenn w["typ"] == "teiler":
         _uim_teiler_layout(w)
         setze ok auf _uim_z_teiler(kontext, z, w, ox, oy)
-        für k in w["kinder"]:
-            setze ok auf _uim_zeichne_widget(kontext, z, k, ox + w["x"], oy + w["y"]) und ok
+        gib_zurück _uim_zeichne_kinder(kontext, z, w, ox, oy, 0) and ok
         gib_zurück ok
     wenn w["typ"] == "karte":
         setze ok auf _uim_z_karte(kontext, z, w, ox, oy)
@@ -3880,8 +3945,7 @@ funktion _uim_zeichne_widget(kontext, z, w, ox, oy):
             gib_zurück wahr
         _uim_ueberlagerung_layout(w)
         setze ok auf _uim_z_ueberlagerung(kontext, z, w, ox, oy)
-        für k in w["kinder"]:
-            setze ok auf _uim_zeichne_widget(kontext, z, k, ox + w["x"], oy + w["y"]) und ok
+        gib_zurück _uim_zeichne_kinder(kontext, z, w, ox, oy, 0) and ok
         gib_zurück ok
     wenn w["typ"] == "kontextmenue":
         gib_zurück wahr
@@ -3893,7 +3957,7 @@ funktion _uim_zeichne_widget(kontext, z, w, ox, oy):
         wenn offen == falsch:
             gib_zurück falsch
         setze ok auf wahr
-        für k in w["kinder"]:
+        für k in _uim_kinder_z_sortiert(w["kinder"]):
             setze ok auf _uim_zeichne_widget(kontext, z, k, ox + w["x"], oy + w["y"] - w["scroll_y"]) und ok
         setze ok auf _uim_z_scroll_leiste(kontext, z, w, ox, oy) und ok
         gib_zurück ok
@@ -4012,6 +4076,7 @@ funktion uim_backend_wurzel(backend, b, h):
     kontext["hintergrund_zeichnen"] = wahr
     kontext["theme"] = uim_theme_dunkel()
     kontext["modal_overlay"] = nichts
+    kontext["fokus_vor_overlay"] = nichts
     kontext["hover"] = nichts
     kontext["druck"] = nichts
     kontext["druck_ox"] = 0
@@ -4108,10 +4173,7 @@ funktion uim_hinzu(ziel, widget):
             wenn widget["h"] <= 0:
                 widget["h"] = ziel["wurzel"]["h"]
             wenn widget["modal"] and widget["offen"]:
-                ziel["modal_overlay"] = widget
-                setze erste_fokus auf _uim_dialog_erstfokus(widget)
-                wenn erste_fokus != nichts:
-                    ziel["fokus"] = erste_fokus
+                _uim_overlay_fokus_oeffne(ziel, widget)
         _uim_anfordern(ziel)
     sonst:
         ziel["kinder"].hinzufügen(widget)
@@ -5401,13 +5463,9 @@ funktion uim_ueberlagerung_setze(kontext, w, offen, schliesst_aussen):
     w["sichtbar"] = offen
     w["schliesst_aussen"] = schliesst_aussen
     wenn offen und w["modal"]:
-        kontext["modal_overlay"] = w
-        setze erste_fokus auf _uim_dialog_erstfokus(w)
-        wenn erste_fokus != nichts:
-            kontext["fokus"] = erste_fokus
-    sonst wenn kontext.enthält("modal_overlay") und kontext["modal_overlay"] != nichts and kontext["modal_overlay"]["uid"] == w["uid"]:
-        kontext["modal_overlay"] = nichts
-        kontext["fokus"] = nichts
+        _uim_overlay_fokus_oeffne(kontext, w)
+    sonst:
+        _uim_overlay_fokus_schliesse(kontext, w)
     _uim_anfordern(kontext)
     gib_zurück wahr
 
@@ -5425,15 +5483,35 @@ funktion _uim_dialog_erstfokus(w):
         gib_zurück nichts
     gib_zurück _uim_finde_uid_rek(w["kinder"], ziele[0])
 
+# Modal-Fokus ist eine Falle innerhalb des Overlays. Beim ersten Öffnen wird
+# der vorherige Fokus gemerkt und beim Schließen nur dann wiederhergestellt,
+# wenn das Ziel entlang seiner Elternkette noch interaktiv ist.
+funktion _uim_overlay_fokus_oeffne(kontext, w):
+    wenn kontext["modal_overlay"] == nichts oder kontext["modal_overlay"]["uid"] != w["uid"]:
+        kontext["fokus_vor_overlay"] = kontext["fokus"]
+    kontext["modal_overlay"] = w
+    setze erste_fokus auf _uim_dialog_erstfokus(w)
+    kontext["fokus"] = erste_fokus
+    gib_zurück wahr
+
+funktion _uim_overlay_fokus_schliesse(kontext, w):
+    wenn kontext["modal_overlay"] != nichts und kontext["modal_overlay"]["uid"] == w["uid"]:
+        kontext["modal_overlay"] = nichts
+        setze vorher auf kontext["fokus_vor_overlay"]
+        kontext["fokus_vor_overlay"] = nichts
+        wenn vorher != nichts und _uim_ist_interaktiv(kontext, vorher):
+            kontext["fokus"] = vorher
+        sonst:
+            kontext["fokus"] = nichts
+    gib_zurück wahr
+
+
 funktion _uim_dialog_schliesse(kontext, w, aktion):
     wenn w == nichts:
         gib_zurück falsch
     w["offen"] = falsch
     w["sichtbar"] = falsch
-    wenn kontext.enthält("modal_overlay") und kontext["modal_overlay"] != nichts:
-        wenn kontext["modal_overlay"]["uid"] == w["uid"]:
-            kontext["modal_overlay"] = nichts
-            kontext["fokus"] = nichts
+    _uim_overlay_fokus_schliesse(kontext, w)
     setze kind auf ""
     wenn w.enthält("overlay_kind"):
         setze kind auf w["overlay_kind"]

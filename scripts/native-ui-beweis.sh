@@ -139,6 +139,22 @@ else
 fi
 if [ -s "$SHOT_NEU" ]; then
     mv -f "$SHOT_NEU" "$SHOT"
+    cp "$SHOT" "$OUT/beweis-phase-a.png"
+    sleep "${MOO_BEWEIS_PHASE_PAUSE_S:-0.35}"
+    PHASE_B_NEU="$OUT/beweis-phase-b.neu.png"
+    rm -f "$PHASE_B_NEU"
+    if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v spectacle >/dev/null 2>&1; then
+        spectacle -a -b -n -o "$PHASE_B_NEU" >/dev/null 2>&1 || true
+    elif [ -n "${WINDOW_ID:-}" ] && command -v import >/dev/null 2>&1; then
+        import -window "$WINDOW_ID" "$PHASE_B_NEU" >/dev/null 2>&1 || true
+    fi
+    if [ -s "$PHASE_B_NEU" ]; then
+        mv -f "$PHASE_B_NEU" "$OUT/beweis-phase-b.png"
+        echo "NATIVE-UI-BEWEIS-PHASEN PASS $OUT/beweis-phase-a.png $OUT/beweis-phase-b.png"
+    else
+        echo "NATIVE-UI-BEWEIS-PHASEN FAIL — zweites window-only Bild fehlt"
+        fail_gesamt=1
+    fi
     if command -v identify >/dev/null 2>&1; then
         echo "NATIVE-UI-BEWEIS-FENSTER-GEOMETRIE $(identify -format '%wx%h' "$SHOT" 2>/dev/null || echo unbekannt)"
     fi

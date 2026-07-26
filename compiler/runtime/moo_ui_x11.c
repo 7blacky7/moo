@@ -414,6 +414,8 @@ static MooValue x11_host_laufen(void) {
             if (!X.laufend || !X.fenster) break;
         }
         if (!X.laufend || !X.fenster) break;
+        /* Genau ein Host-Tick pro Dispatch-Batch. */
+        event_an_moo(X.fenster, "tick", 0, 0, 0);
         xcb_flush(X.conn);
         poll(&pfd, 1, 50);
     }
@@ -427,6 +429,7 @@ static MooValue x11_host_pump(void) {
         x11_event(ev);
         free(ev);
     }
+    if (X.fenster) event_an_moo(X.fenster, "tick", 0, 0, 0);
     xcb_flush(X.conn);
     return moo_none();
 }

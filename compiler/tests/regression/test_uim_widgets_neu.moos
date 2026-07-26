@@ -135,6 +135,14 @@ zeige "W1-DRAW2 " + text(uim_mock_zeichne(k))
 uim_tick(k, 0.25)
 zeige "SPINNER-TICK " + text(spin["wert"])
 zeige "PROGRESS-UNBESTIMMT " + text(ind["phase"] > 0)
+uim_tick(k, 0.25)
+uim_tick(k, 0.25)
+zeige "SPINNER-FRAMES " + text(spin["wert"])
+zeige "PROGRESS-FRAMES " + text(ind["phase"] > 0.7 und ind["phase"] < 0.8)
+zeige "TICK-AKTIV " + text(k["_tick_aktiv"])
+setze k_idle auf uim_mock_wurzel(40, 40)
+uim_tick(k_idle, 0.25)
+zeige "TICK-IDLE " + text(k_idle["_tick_aktiv"] == falsch)
 
 
 # --- NATIVE-UI-12/W2: Tabs, Toolbar, Statusleiste, Kontextmenue,
@@ -556,3 +564,129 @@ name13["text"] = ""
 uim_validiere(valid13, name13)
 zeige "VALID-DRAW " + text(uim_mock_zeichne(valid13))
 zeige "NATIVE-UI-13-VALID-OK"
+
+# --- W6-C1: Scroll-Kinder teilen Render-, Hit- und Fokus-Transformation ---
+S["c1_klicks"] = 0
+funktion t_c1_klick(w):
+    S["c1_klicks"] = S["c1_klicks"] + 1
+    gib_zurück wahr
+
+setze c1_root auf uim_mock_wurzel(220, 140)
+setze c1_scroll auf uim_scroll(10, 10, 140, 60, 180)
+setze c1_oben auf uim_knopf("OBEN", 10, 10, 90, 24, t_c1_klick)
+setze c1_tief auf uim_knopf("TIEF", 10, 100, 90, 24, t_c1_klick)
+uim_hinzu(c1_scroll, c1_oben)
+uim_hinzu(c1_scroll, c1_tief)
+uim_hinzu(c1_root, c1_scroll)
+c1_scroll["scroll_y"] = 80
+uim_mock_zeichne(c1_root)
+uim_mock_maus(c1_root, 30, 42, wahr)
+uim_mock_maus(c1_root, 30, 42, falsch)
+zeige "W6-C1-SCROLL-CLICK " + text(S["c1_klicks"] == 1) + "/" + text(c1_root["fokus"]["uid"] == c1_tief["uid"])
+c1_scroll["scroll_y"] = 0
+c1_root["fokus"] = c1_oben
+uim_mock_taste(c1_root, "Tab", wahr, 0)
+zeige "W6-C1-FOCUS-VISIBLE " + text(c1_root["fokus"]["uid"] == c1_tief["uid"]) + "/" + text(c1_scroll["scroll_y"] > 0)
+zeige "W6-C1-OK"
+
+# --- W6-C2: Fokus nur durch sichtbare Containerzweige + Modal-Restore ---
+setze c2_root auf uim_mock_wurzel(420, 260)
+setze c2_aussen auf uim_knopf("AUSSEN", 10, 10, 90, 24, nichts)
+setze c2_tabs auf uim_tabs(10, 45, 220, 90, ["A", "B"])
+setze c2_tab_a auf uim_knopf("TAB-A", 5, 5, 80, 24, nichts)
+setze c2_tab_b auf uim_knopf("TAB-B", 5, 5, 80, 24, nichts)
+uim_hinzu(c2_tabs["kinder"][0], c2_tab_a)
+uim_hinzu(c2_tabs["kinder"][1], c2_tab_b)
+setze c2_exp auf uim_aufklapper("MEHR", 10, 145, 220, 80)
+setze c2_exp_kind auf uim_knopf("EXP-KIND", 5, 5, 90, 24, nichts)
+uim_hinzu(c2_exp, c2_exp_kind)
+setze c2_overlay auf uim_ueberlagerung(0, 0, 420, 260)
+setze c2_overlay_kind auf uim_knopf("MODAL", 120, 100, 90, 24, nichts)
+uim_hinzu(c2_overlay, c2_overlay_kind)
+c2_overlay["offen"] = falsch
+c2_overlay["sichtbar"] = falsch
+uim_hinzu(c2_root, c2_aussen)
+uim_hinzu(c2_root, c2_tabs)
+uim_hinzu(c2_root, c2_exp)
+uim_hinzu(c2_root, c2_overlay)
+c2_root["fokus"] = c2_aussen
+uim_mock_taste(c2_root, "Tab", wahr, 0)
+setze c2_tabs_fokus auf c2_root["fokus"]["uid"] == c2_tabs["uid"]
+uim_mock_taste(c2_root, "Tab", wahr, 0)
+setze c2_tab_a_fokus auf c2_root["fokus"]["uid"] == c2_tab_a["uid"]
+uim_mock_taste(c2_root, "Tab", wahr, 0)
+setze c2_exp_fokus auf c2_root["fokus"]["uid"] == c2_exp["uid"]
+uim_mock_taste(c2_root, "Tab", wahr, 0)
+zeige "W6-C2-HIDDEN-SKIP " + text(c2_tabs_fokus and c2_tab_a_fokus and c2_exp_fokus and c2_root["fokus"]["uid"] == c2_aussen["uid"])
+c2_exp["offen"] = wahr
+c2_root["fokus"] = c2_exp
+uim_mock_taste(c2_root, "Tab", wahr, 0)
+zeige "W6-C2-EXP-OPEN " + text(c2_root["fokus"]["uid"] == c2_exp_kind["uid"])
+uim_tabs_auswahl_setze(c2_root, c2_tabs, 1)
+c2_root["fokus"] = c2_tabs
+uim_mock_taste(c2_root, "Tab", wahr, 0)
+zeige "W6-C2-TAB-ACTIVE " + text(c2_root["fokus"]["uid"] == c2_tab_b["uid"])
+c2_root["fokus"] = c2_aussen
+uim_ueberlagerung_setze(c2_root, c2_overlay, wahr, wahr)
+setze c2_modal_start auf c2_root["fokus"]["uid"] == c2_overlay_kind["uid"]
+uim_mock_taste(c2_root, "Tab", wahr, 0)
+setze c2_modal_trap auf c2_root["fokus"]["uid"] == c2_overlay_kind["uid"]
+uim_ueberlagerung_setze(c2_root, c2_overlay, falsch, wahr)
+zeige "W6-C2-MODAL " + text(c2_modal_start and c2_modal_trap) + "/" + text(c2_root["fokus"]["uid"] == c2_aussen["uid"])
+zeige "W6-C2-OK"
+
+# --- W6-C3: eine z_index-Reihenfolge für Rendern und Hit-Test ---
+S["c3_hit"] = ""
+funktion t_c3_hoch(w):
+    S["c3_hit"] = "hoch"
+    gib_zurück wahr
+
+funktion t_c3_niedrig(w):
+    S["c3_hit"] = "niedrig"
+    gib_zurück wahr
+
+setze c3_root auf uim_mock_wurzel(180, 100)
+setze c3_hoch auf uim_knopf("HOCH", 20, 20, 100, 40, t_c3_hoch)
+setze c3_niedrig auf uim_knopf("NIEDRIG", 20, 20, 100, 40, t_c3_niedrig)
+uim_z_index_setze(c3_hoch, 10)
+uim_z_index_setze(c3_niedrig, 0)
+# Absichtlich in Gegenreihenfolge: der niedrige Eintrag wird zuletzt angefügt.
+uim_hinzu(c3_root, c3_hoch)
+uim_hinzu(c3_root, c3_niedrig)
+uim_mock_zeichne(c3_root)
+uim_mock_maus(c3_root, 40, 40, wahr)
+uim_mock_maus(c3_root, 40, 40, falsch)
+zeige "W6-C3-Z-HIT " + text(S["c3_hit"] == "hoch") + "/" + text(c3_root["fokus"]["uid"] == c3_hoch["uid"])
+zeige "W6-C3-OK"
+
+# --- W6-C4: derselbe Clip-Schalter steuert Rendern und Eingabe ---
+S["c4_klicks"] = 0
+funktion t_c4_klick(w):
+    S["c4_klicks"] = S["c4_klicks"] + 1
+    gib_zurück wahr
+
+funktion t_c4_clip_anzahl(befehle):
+    setze n auf 0
+    für befehl in befehle:
+        wenn befehl["op"] == "clip_setze":
+            setze n auf n + 1
+    gib_zurück n
+
+setze c4_root auf uim_mock_wurzel(180, 100)
+setze c4_stapel auf uim_stapel(20, 20, 40, 30)
+setze c4_kind auf uim_knopf("AUSSEN", 50, 0, 70, 24, t_c4_klick)
+uim_hinzu(c4_stapel, c4_kind)
+uim_hinzu(c4_root, c4_stapel)
+uim_mock_zeichne(c4_root)
+setze c4_standard_clip auf t_c4_clip_anzahl(uim_mock_befehle(c4_root)) > 0
+uim_mock_maus(c4_root, 75, 30, wahr)
+uim_mock_maus(c4_root, 75, 30, falsch)
+zeige "W6-C4-DEFAULT " + text(c4_standard_clip) + "/" + text(S["c4_klicks"] == 0)
+uim_clip_kinder_setze(c4_stapel, falsch)
+uim_mock_leeren(c4_root)
+uim_mock_zeichne(c4_root)
+setze c4_freies_rendern auf t_c4_clip_anzahl(uim_mock_befehle(c4_root)) == 0
+uim_mock_maus(c4_root, 75, 30, wahr)
+uim_mock_maus(c4_root, 75, 30, falsch)
+zeige "W6-C4-OVERRIDE " + text(c4_freies_rendern) + "/" + text(S["c4_klicks"] == 1)
+zeige "W6-C4-OK"

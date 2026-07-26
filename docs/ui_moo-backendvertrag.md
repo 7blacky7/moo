@@ -71,6 +71,10 @@ Backends speisen plattformneutrale Ereignisse ein:
 
 Desktop-Leinwand bindet ausschließlich diese Funktionen an die nativen Callbacks. Frame-, Mock- und spätere Moo-OS-Backends rufen sie direkt auf. Bei `hat_fokus == falsch` werden Maus, Bewegung, Tastatur und Rad verworfen; ein Blur löst außerdem Druck- und Hoverzustände am Kontext und an den betroffenen Widgets. Erst ein explizites Fokus-Ereignis aktiviert Eingaben wieder.
 
+## Zeit- und Framevertrag
+
+Retained Animationen werden nie vom Demo-Code besessen. Jeder Hostpfad treibt `uim_tick(kontext, schritt)` vor dem Zeichnen: die Desktop-Leinwand in ihrem Zeichen-Callback, das Frame-Backend in `uim_frame_zeichne` und das direkte Hostfenster durch genau ein `"tick"`-Ereignis pro Dispatch-Batch. `laufen` und `pump` liefern denselben Batch-Vertrag. Der Kern fordert nur dann einen Folgeframe an, wenn mindestens ein Spinner, Ladezustand, unbestimmter Fortschritt, zeitgesteuertes Overlay oder Tooltip-Dwell aktiv ist; ruhende Bäume bleiben ereignisbasiert.
+
 ## Mitgelieferte Adapter
 
 - `uim_backend_leinwand()`: Desktop-Host über `ui_leinwand`, vollständige v1-Fähigkeiten.

@@ -6,16 +6,16 @@ Status: P016-F1. Dieses Dokument und `docs/ui_moo-backendvertrag.md` sind kanoni
 
 - Koordinaten eines Kindes sind relativ zum direkten Container.
 - Panel- und Scroll-Transformationen dürfen beliebig verschachtelt werden.
-- Geschwister werden in Einfügereihenfolge gezeichnet; beim Hit-Test gewinnt das zuletzt hinzugefügte sichtbare Widget.
+- Geschwister werden stabil nach `z_index`, bei Gleichstand nach Einfügereihenfolge gezeichnet. Der Hit-Test verwendet exakt dieselbe Sortierfunktion in Gegenrichtung; der höchste sichtbare Eintrag gewinnt.
 - Ein sichtbares, aber deaktiviertes Widget blockiert tiefere Z-Lagen. Es erhält selbst weder Fokus noch Aktivierung.
-- Scrollbereiche begrenzen Hit-Tests immer auf ihr Rechteck. Backends mit `clip=true` begrenzen dort auch das Zeichnen.
-- Panels clippen ihre Kinder in v1 bewusst nicht. Panel-Overflow kann sichtbar sein, ist außerhalb des Panel-Rechtecks aber nicht interaktiv.
+- Der Clip-Schalter ist ein gemeinsamer Zeichen- und Eingabevertrag. Standardmäßig clippen `scroll`, `panel`, `tabs`/interner `tab`, `expander`, `toolbar`, `teiler`, `karte`, `stapel`, `gitter` und `ueberlagerung`; freie/custom Widgets clippen nicht.
+- `uim_clip_kinder_setze(w, wahr|falsch)` überschreibt diesen Standard explizit. Bei aktivem Clip sind außerhalb liegende Kinder weder sichtbar noch interaktiv; bei deaktiviertem Clip dürfen sie in beiden Pfaden über den Container hinausragen.
 
 `uim_finde(kontext,id)` durchsucht den vollständigen Baum. `uim_hinzu(kontext,w)` invalidiert automatisch. Nach `uim_hinzu(container,w)` ist in v1 zusätzlich `uim_neuzeichnen(kontext)` aufzurufen; Widgets besitzen absichtlich keinen starken Rückverweis auf den Kontext.
 
 ## Fokus und Tastatur
 
-Tab-Reihenfolge ist eine Tiefensuche in Einfügereihenfolge über alle sichtbaren, aktiven Unterbäume. `uid` ist ein reserviertes, nach der Konstruktion unveränderliches Identitätsfeld; Anwendungszustand darf es nicht überschreiben. Ohne bisherigen Fokus wählt Tab das erste, Shift+Tab das letzte Ziel. Deaktivierte oder unsichtbare Ziele werden übersprungen.
+Tab-Reihenfolge ist eine Tiefensuche in Einfügereihenfolge über tatsächlich sichtbare, aktive Unterbäume: nur der gewählte Tab, ein offener Aufklapper und ein offenes Overlay liefern Kinder. `uid` ist unveränderliche Identität. Ohne bisherigen Fokus wählt Tab das erste, Shift+Tab das letzte Ziel. Ein modales Overlay begrenzt die Reihenfolge auf seine Kinder und stellt beim Schließen den vorherigen noch interaktiven Fokus wieder her.
 
 - Knopf/Checkbox: Return und Space aktivieren.
 - Slider: Links/Rechts verändert den Wert in 1/20 der Spanne.

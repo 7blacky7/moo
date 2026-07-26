@@ -78,10 +78,11 @@ typedef struct MooUiHostOps {
      * ohne diesen Pfad (GTK) liefern einen ehrlichen falsch-Stub. */
     MooValue (*praesentiere)(MooValue fenster, MooValue frame);
 
-    /* Input-Registrierung: cb(art, a, b, c) mit art als Moo-String in
-     * {"maus_runter","maus_hoch","bewegung","taste_runter","taste_hoch",
-     *  "resize","schliessen"}; maus: a=x, b=y, c=taste(1/2/3);
-     * taste: a=keysym; resize: a=breite, b=hoehe. */
+    /* Input-/Frame-Registrierung: cb(art, a, b, c) mit art als Moo-String
+     * in {"maus_runter","maus_hoch","bewegung","taste_runter","taste_hoch",
+     * "resize","neuzeichnen","tick","schliessen"}. maus: a=x, b=y,
+     * c=taste(1/2/3); taste: a=keysym; resize: a=breite, b=hoehe.
+     * Jeder laufen-/pump-Dispatch-Batch liefert genau einen "tick". */
     MooValue (*input_callback_setze)(MooValue fenster, MooValue cb);
 } MooUiHostOps;
 

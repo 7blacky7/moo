@@ -158,6 +158,9 @@ funktion _uimh_input(art, a, b, c):
             _uimh_dirty()
         gib_zurück wahr
     wenn art == "tick":
+        uim_tick(k, 0.05)
+        wenn k["_tick_aktiv"]:
+            _uimh_dirty()
         wenn _UIMH["dirty"]:
             _UIMH["dirty"] = falsch
             uimh_render()
