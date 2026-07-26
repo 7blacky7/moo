@@ -1,0 +1,7 @@
+STATUS-FACTORY leer/wahr/wahr/4
+STATUS-RETRY 1/1
+STATUS-DRAW wahr/wahr
+STATUS-GUARD 1/wahr/falsch/wahr
+STATUS-GUARD-END wahr/falsch/falsch
+STATUS-CONFIRM nachricht/2/1
+NATIVE-UI-13-STATUS-OK

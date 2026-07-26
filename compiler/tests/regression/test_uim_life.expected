@@ -1,0 +1,7 @@
+LIFE-WINDOW-NORM minimiert/0/1
+LIFE-PERSIST normal/12/640x480
+LIFE-ANIM falsch/wahr/falsch/wahr
+LIFE-REMOVE wahr/falsch/1/wahr/wahr
+LIFE-EDGE 0/999999999999/wahr
+LIFE-DRAW wahr
+NATIVE-UI-13-LIFE-OK

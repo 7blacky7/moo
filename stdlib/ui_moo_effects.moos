@@ -502,8 +502,8 @@ funktion uim_effekt_vorschau_zeichnen(z, x, y, b, h, aufloesung, reduzierte_bewe
         setze s auf e["schatten"]
         setze sf auf s["farbe"]
         setze lage auf s["unschaerfe"]
-        wenn lage > 8:
-            setze lage auf 8
+        wenn lage > 12:
+            setze lage auf 12
         # Fastpath (NATIVE-UI-1c): alle Stufen in EINEM C-Pixel-Pass —
         # identische Stufenwerte/Reihenfolge wie die Referenzschleife.
         setze stufen auf []
@@ -535,17 +535,19 @@ funktion uim_effekt_vorschau_zeichnen(z, x, y, b, h, aufloesung, reduzierte_bewe
     setze deckkraft auf fortschritt_q16
     wenn reduzierte_bewegung oder _uime_bit_an(e["aktiv"], 128) == falsch:
         setze deckkraft auf 65536
-    setze glas_alpha auf _uime_klemme_kanal(42 * deckkraft / 65536)
+    setze glas_alpha auf _uime_klemme_kanal(34 * deckkraft / 65536)
     surface_roundrect(z, px, py, pb, ph, radius, 224, 240, 255, glas_alpha)
     # Aero-Politur (P016-O5-AERO): Sheen-Verlauf + Glasrand, deterministisch.
     wenn ph > 7 und pb > 7:
         setze sheen_h auf boden(ph * 2 / 5)
         wenn sheen_h > 3:
-            # Kontinuierlicher Verlauf 64 -> 0 ohne Kappen-Sprung; Zeilen im
+            # Quadratisch abfallender Verlauf 88 -> 0: oben klarer Gloss,
+            # darunter weicher Uebergang ohne Kappen-Sprung. Zeilen im
             # Eckbereich folgen dem Radius per Kreisbogen-Inset.
             setze zeile auf 0
             solange zeile < sheen_h:
-                setze sheen_a auf 64 * (sheen_h - zeile) / sheen_h
+                setze sheen_rest auf sheen_h - zeile
+                setze sheen_a auf 88 * sheen_rest * sheen_rest / (sheen_h * sheen_h)
                 setze inset auf 2
                 wenn zeile < radius:
                     setze bogen_dy auf radius - zeile - 0.5
@@ -559,10 +561,10 @@ funktion uim_effekt_vorschau_zeichnen(z, x, y, b, h, aufloesung, reduzierte_bewe
         setze rand_b auf pb - 2 * radius
         setze rand_h auf ph - 2 * radius
         wenn rand_b >= 1 und rand_h >= 1:
-            setze rand_a auf _uime_klemme_kanal(120 * deckkraft / 65536)
-            setze kanten_a auf _uime_klemme_kanal(80 * deckkraft / 65536)
+            setze rand_a auf _uime_klemme_kanal(150 * deckkraft / 65536)
+            setze kanten_a auf _uime_klemme_kanal(105 * deckkraft / 65536)
             surface_rect(z, px + radius, py + 1, rand_b, 1, 255, 255, 255, rand_a)
-            surface_rect(z, px + radius, py + ph - 2, rand_b, 1, 255, 255, 255, _uime_klemme_kanal(60 * deckkraft / 65536))
+            surface_rect(z, px + radius, py + ph - 2, rand_b, 1, 255, 255, 255, _uime_klemme_kanal(72 * deckkraft / 65536))
             surface_rect(z, px + 1, py + radius, 1, rand_h, 255, 255, 255, rand_a)
             surface_rect(z, px + pb - 2, py + radius, 1, rand_h, 255, 255, 255, rand_a)
             surface_rect(z, px + radius, py, rand_b, 1, 20, 30, 40, kanten_a)

@@ -22,22 +22,39 @@ description = "Run visual UI tests in the isolated harness"
 run = "bash scripts/ui-test-runner.sh"
 
 [tasks.test-native-ui-beweis]
-description = "NATIVE-UI-5: honest visible non-GTK proof (ldd + backend name + external screenshot; needs real display)"
+description = "NATIVE-UI-5: honest visible non-GTK Wayland proof (ldd + backend name + window-only screenshot; needs real display)"
 run = '''
 set -eu
-OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-native-beweis.XXXXXX")"
-trap 'rm -rf "$OUT"' EXIT
-cargo build --release --manifest-path compiler/Cargo.toml
+OUT="${MOO_BEWEIS_ROOT:-/tmp/moo-native-beweis}"
+mkdir -p "$OUT"
+cargo build --release --manifest-path compiler/Cargo.toml --no-default-features --features wayland_ui
 TARGET="${CARGO_TARGET_DIR:-$PWD/compiler/target}"
 case "$TARGET" in
   /*) ;;
   *) TARGET="$PWD/$TARGET" ;;
 esac
 COMPILER="$TARGET/release/moo-compiler"
-"$COMPILER" compile beispiele/moo_aero_csd.moos -o "$OUT/aero"
-MOO_BEWEIS_OUT="$OUT/beweis" bash scripts/native-ui-beweis.sh "$OUT/aero"
+"$COMPILER" compile beispiele/moo_aero_csd_host.moos -o "$OUT/aero"
+MOO_BEWEIS_BACKEND=wayland MOO_BEWEIS_OUT="$OUT" bash scripts/native-ui-beweis.sh "$OUT/aero"
 '''
 
+[tasks.test-native-ui-widgets-beweis]
+description = "Visible non-GTK ui_moo widget proof with a retained window-only screenshot"
+run = '''
+set -eu
+OUT="${MOO_WIDGET_BEWEIS_ROOT:-/tmp/moo-widget-beweis}"
+mkdir -p "$OUT"
+cargo build --release --manifest-path compiler/Cargo.toml --no-default-features --features wayland_ui
+TARGET="${CARGO_TARGET_DIR:-$PWD/compiler/target}"
+case "$TARGET" in
+  /*) ;;
+  *) TARGET="$PWD/$TARGET" ;;
+esac
+COMPILER="$TARGET/release/moo-compiler"
+"$COMPILER" compile beispiele/moo_widgets_host.moos -o "$OUT/widgets"
+MOO_BEWEIS_BACKEND=wayland MOO_BEWEIS_OUT="$OUT" bash scripts/native-ui-beweis.sh "$OUT/widgets"
+echo "WIDGET-BEWEIS-FESTER-PFAD $OUT/beweis.png"
+'''
 [tasks.test-ui-host-contract]
 description = "Host backend contract gate: vtable completeness + registry, toolkit-free (ASan+UBSan)"
 run = '''
@@ -115,6 +132,26 @@ COMPILER="$TARGET/release/moo-compiler"
 "$COMPILER" compile beispiele/moo_glass_gallery.moos -o "$OUT/gallery"
 MOO_GLASS_GALLERY_NON_UI=1 MOO_GLASS_GALLERY_BMP="$OUT/gallery.bmp" "$OUT/gallery"
 test -s "$OUT/gallery.bmp"
+'''
+
+[tasks.test-ui-moo-glass-gallery-beweis]
+description = "Render the native Glass Gallery and retain a window-only proof screenshot"
+run = '''
+set -eu
+OUT="${MOO_GLASS_BEWEIS_ROOT:-/tmp/moo-glass-gallery-beweis}"
+mkdir -p "$OUT"
+cargo build --release --manifest-path compiler/Cargo.toml --no-default-features --features moo_ui
+TARGET="${CARGO_TARGET_DIR:-$PWD/compiler/target}"
+case "$TARGET" in
+  /*) ;;
+  *) TARGET="$PWD/$TARGET" ;;
+esac
+COMPILER="$TARGET/release/moo-compiler"
+"$COMPILER" compile beispiele/moo_glass_gallery.moos -o "$OUT/gallery"
+MOO_GLASS_GALLERY_BMP="$OUT/gallery.bmp" MOO_UI_BACKEND=gtk \
+  MOO_BEWEIS_BACKEND=gtk MOO_BEWEIS_ERLAUBE_TOOLKIT=1 MOO_BEWEIS_WARTE_S=6 MOO_BEWEIS_OUT="$OUT" \
+  bash scripts/native-ui-beweis.sh "$OUT/gallery"
+echo "GLASS-GALLERY-BEWEIS-FESTER-PFAD $OUT/beweis.png"
 '''
 
 [tasks.test-ui-moo-aero-csd]

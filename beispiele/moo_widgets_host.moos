@@ -8,7 +8,7 @@
 
 importiere ui_moo_hostfenster
 
-setze k auf uimh_fenster_csd("MOO GLASS WIDGETS", 560, 540)
+setze k auf uimh_fenster_csd("MOO GLASS WIDGETS", 1120, 900)
 wenn k == nichts:
     wirf "Host-Fenster fehlgeschlagen (kein Backend / kein Display?)"
 
@@ -34,6 +34,9 @@ funktion on_tf(w, txt):
     zeige "TF: " + txt
     gib_zurück wahr
 
+funktion validiere_suche(w, wert):
+    gib_zurück uim_validierung_pflicht(wert, "Pflicht: Suchbegriff")
+
 funktion on_combo(w, idx):
     zeige "COMBO " + text(idx)
     gib_zurück wahr
@@ -41,6 +44,12 @@ funktion on_combo(w, idx):
 funktion on_liste(w, idx):
     zeige "LISTE " + text(idx)
     gib_zurück wahr
+
+
+funktion on_w5g_befehl(w):
+    zeige "TERM: Befehl uebernommen"
+    gib_zurück wahr
+
 
 funktion on_menue(p):
     zeige "MENUE: " + p["text"]
@@ -55,9 +64,12 @@ funktion on_menue_beenden(p):
 setze m_datei auf uim_menue("Datei", [uim_menue_punkt("Neu", on_menue), uim_menue_punkt("Öffnen…", on_menue), uim_menue_punkt("Speichern", on_menue), uim_menue_trenner(), uim_menue_punkt("Beenden", on_menue_beenden)])
 setze m_bearb auf uim_menue("Bearbeiten", [uim_menue_punkt("Rückgängig", on_menue), uim_menue_punkt("Wiederholen", on_menue), uim_menue_trenner(), uim_menue_punkt("Ausschneiden", on_menue), uim_menue_punkt("Kopieren", on_menue), uim_menue_punkt("Einfügen", on_menue)])
 setze m_hilfe auf uim_menue("Hilfe", [uim_menue_punkt("Über moo…", on_menue)])
-uim_hinzu(k, uim_menueleiste(0, 40, 560, 26, [m_datei, m_bearb, m_hilfe]))
+uim_hinzu(k, uim_menueleiste(0, 40, 1120, 26, [m_datei, m_bearb, m_hilfe]))
 
-uim_hinzu(k, uim_label("Aero Glass Widgets — Türöffner äöü ÄÖÜ ß nativ!", 24, OY, 480, 18))
+setze layout_titel_demo auf uim_label("Aero Glass Widgets — Türöffner äöü ÄÖÜ ß nativ! — Padding / Ellipsis aktiv", 24, OY, 488, 18)
+uim_layout_metriken_setze(layout_titel_demo, 0, 2, 0)
+uim_text_layout_setze(layout_titel_demo, falsch, wahr)
+uim_hinzu(k, layout_titel_demo)
 uim_hinzu(k, uim_separator(24, OY + 22, 512))
 
 uim_hinzu(k, uim_knopf("GLASS KNOPF", 24, OY + 38, 150, 30, on_knopf))
@@ -66,15 +78,24 @@ uim_hinzu(k, uim_knopf("NOCH EINER", 190, OY + 38, 150, 30, on_knopf))
 uim_hinzu(k, uim_checkbox("GLAS-CHECKBOX", 24, OY + 84, 220, 22, wahr, on_check))
 uim_hinzu(k, uim_checkbox("ZWEITE OPTION", 260, OY + 84, 220, 22, falsch, on_check))
 
-uim_hinzu(k, uim_slider(24, OY + 120, 250, 24, 0, 100, 62, on_slider))
-setze fp auf uim_fortschritt(300, OY + 124, 212, 16)
+uim_hinzu(k, uim_schalter("GLAS-SCHALTER", 24, OY + 112, 220, 22, wahr, on_check))
+uim_hinzu(k, uim_umschaltknopf("GLAS-TOGGLE", 260, OY + 112, 220, 22, falsch, on_check))
+
+uim_hinzu(k, uim_slider(24, OY + 146, 250, 24, 0, 100, 62, on_slider))
+setze fp auf uim_fortschritt(300, OY + 150, 212, 16)
 fp["wert"] = 0.62
 uim_hinzu(k, fp)
 
-uim_hinzu(k, uim_textfeld(24, OY + 158, 250, 26, "GLASS TEXT", on_tf))
-uim_hinzu(k, uim_combobox(300, OY + 158, 160, 26, ["AERO", "GLASS", "MOO"], 0, on_combo))
+setze sp auf uim_spinner(24, OY + 178, 24, 22)
+uim_spinner_phase_setze(sp, 3)
+uim_hinzu(k, sp)
+uim_hinzu(k, uim_label("SPINNER", 60, OY + 178, 100, 22))
+uim_hinzu(k, uim_bewertung(300, OY + 178, 212, 22, 3, on_check))
 
-setze panel auf uim_panel("PANEL", 24, OY + 200, 236, 150)
+uim_hinzu(k, uim_textfeld(24, OY + 214, 250, 26, "GLASS TEXT", on_tf))
+uim_hinzu(k, uim_combobox(300, OY + 214, 160, 26, ["AERO", "GLASS", "MOO"], 0, on_combo))
+
+setze panel auf uim_panel("PANEL", 24, OY + 252, 236, 150)
 uim_hinzu(k, panel)
 uim_hinzu(panel, uim_label("INHALT IM PANEL", 12, 26, 200, 18))
 setze fp2 auf uim_fortschritt(12, 52, 200, 14)
@@ -82,9 +103,135 @@ fp2["wert"] = 0.35
 uim_hinzu(panel, fp2)
 uim_hinzu(panel, uim_knopf("IM PANEL", 12, 78, 130, 26, on_knopf))
 
-uim_hinzu(k, uim_liste(276, OY + 200, 236, 150, ["ERSTE ZEILE", "ZWEITE ZEILE", "DRITTE ZEILE", "VIERTE ZEILE", "FUENFTE ZEILE", "SECHSTE ZEILE", "SIEBTE ZEILE", "ACHTE ZEILE"], on_liste))
+uim_hinzu(k, uim_liste(276, OY + 252, 236, 168, ["ERSTE ZEILE", "ZWEITE ZEILE", "DRITTE ZEILE", "VIERTE ZEILE", "FUENFTE ZEILE", "SECHSTE ZEILE", "SIEBTE ZEILE", "ACHTE ZEILE"], on_liste))
 
-uim_hinzu(k, uim_knopf("NUR EIN KNOPF", 24, OY + 366, 150, 30, on_schliessen))
+uim_hinzu(k, uim_knopf("NUR EIN KNOPF", 24, OY + 424, 150, 30, on_schliessen))
+
+# W2 retained-mode controls: Tabs, Toolbar, Statusleiste,
+# Kontextmenue, Tooltip und Expander.
+funktion on_w2(w):
+    zeige "W2-KLICK"
+    gib_zurück wahr
+
+setze w2_tabs auf uim_tabs(584, 76, 250, 92, ["Übersicht", "Details"])
+setze w2_tab_knopf auf uim_knopf("TAB-AKTION", 10, 34, 120, 24, on_w2)
+uim_hinzu(w2_tabs["kinder"][0], w2_tab_knopf)
+uim_hinzu(k, w2_tabs)
+
+setze w2_toolbar auf uim_werkzeugleiste(850, 76, 222, 32, [uim_werkzeug("START", on_w2), uim_werkzeug_trenner(), uim_werkzeug("STOP", on_w2)])
+uim_tooltip(w2_toolbar["kinder"][0], "Werkzeug starten")
+uim_hinzu(k, w2_toolbar)
+
+uim_hinzu(k, uim_statusleiste(584, 180, 488, 26, "Bereit", "W2 nativ"))
+
+setze w2_expander auf uim_aufklapper("Details anzeigen", 584, 216, 488, 72)
+uim_hinzu(w2_expander, uim_label("Aktiver Tab und native Overlays", 10, 34, 360, 18))
+uim_hinzu(k, w2_expander)
+
+setze w2_kontext auf uim_kontextmenue([uim_menue_punkt("W2-Aktion", on_w2), uim_menue_trenner(), uim_menue_punkt("Schliessen", on_w2)])
+uim_hinzu(k, w2_kontext)
+
+# W3 retained-mode containers: Card, Splitter, Stack/Grid und Overlay.
+setze w3_karte_demo auf uim_karte("W3 CARD", 584, 310, 236, 120)
+setze w3_stapel_demo auf uim_stapel(10, 0, 210, 80)
+setze status_leer_demo auf uim_leerzustand(0, 0, 210, 68, "Keine Daten", "DATA + LIFE robust")
+setze data_state_demo auf {"titel": "Keine Daten"}
+uim_bind(status_leer_demo, data_state_demo, "titel", "status_titel")
+uim_hinzu(w3_stapel_demo, status_leer_demo)
+uim_stapel_layout(w3_stapel_demo, "vertikal", 4)
+uim_hinzu(w3_karte_demo, w3_stapel_demo)
+uim_hinzu(k, w3_karte_demo)
+
+setze w3_teiler_demo auf uim_teiler(850, 310, 222, 120, "horizontal", 0.5)
+uim_hinzu(w3_teiler_demo, uim_panel("W3 LINKS", 0, 0, 100, 100))
+uim_hinzu(w3_teiler_demo, uim_panel("W3 RECHTS", 0, 0, 100, 100))
+uim_hinzu(k, w3_teiler_demo)
+setze w3_overlay_demo auf uim_ueberlagerung(0, 0, 1120, 900)
+setze w3_overlay_panel_demo auf uim_karte("Overlay bereit", 0, 0, 260, 120)
+uim_hinzu(w3_overlay_demo, w3_overlay_panel_demo)
+uim_ueberlagerung_setze(k, w3_overlay_demo, falsch, wahr)
+uim_hinzu(k, w3_overlay_demo)
+
+
+# W4 dialogs/transient overlays — alles als Moo-Overlay, kein Toolkit.
+funktion on_w4_message(w, index):
+    zeige "W4 MESSAGE " + text(index)
+    gib_zurück wahr
+
+funktion on_w4_input(w, txt):
+    zeige "W4 INPUT " + txt
+    gib_zurück wahr
+
+funktion on_w4_snack(w):
+    zeige "W4 UNDO"
+    gib_zurück wahr
+
+setze w4_message_demo auf uim_nachricht("MOO MessageBox", "Aenderung speichern?", ["Speichern", "Abbrechen"], on_w4_message)
+uim_hinzu(k, w4_message_demo)
+uim_ueberlagerung_setze(k, w4_message_demo, falsch, falsch)
+setze w4_input_demo auf uim_eingabe_dialog("MOO InputDialog", "Projektname", "demo", on_w4_input)
+uim_hinzu(k, w4_input_demo)
+uim_ueberlagerung_setze(k, w4_input_demo, falsch, falsch)
+setze w4_toast_demo auf uim_toast("W4 Toast bereit", 12)
+uim_hinzu(k, w4_toast_demo)
+uim_ueberlagerung_setze(k, w4_toast_demo, falsch, falsch)
+setze w4_snack_demo auf uim_snackbar("W4 Snackbar", "UNDO", on_w4_snack)
+uim_hinzu(k, w4_snack_demo)
+uim_ueberlagerung_setze(k, w4_snack_demo, falsch, falsch)
+
+# W5A Listen+: TreeView und DataGrid.
+setze w5_tree_kind_demo auf uim_baum_knoten("Knoten", [])
+setze w5_tree_root_demo auf uim_baum_knoten("Projekt", [w5_tree_kind_demo])
+setze w5_tree_demo auf uim_baum(24, 540, 236, 120, [w5_tree_root_demo], on_liste)
+uim_hinzu(k, w5_tree_demo)
+setze w5_grid_demo auf uim_datengitter(290, 540, 222, 120, ["Datei", "Status"], [["main.moos", "OK"], ["ui.moos", "OK"], ["tests", "3"]], on_liste)
+uim_hinzu(k, w5_grid_demo)
+# W5B IconView / TileView.
+setze w5_icon_demo auf uim_iconview(584, 450, 236, 96, [{"icon": "F", "text": "Datei"}, {"icon": "O", "text": "Ordner"}, {"icon": "M", "text": "Moo"}, {"icon": "T", "text": "Test"}], on_liste)
+# Vier kompakte Spalten: alle Tiles inklusive Text bleiben in den 96px.
+w5_icon_demo["tile_b"] = 48
+w5_icon_demo["tile_h"] = 64
+uim_hinzu(k, w5_icon_demo)
+
+# W5C Text+.
+setze valid_suche_demo auf uim_searchbox(850, 450, 222, 24, "Suchen...", on_tf)
+uim_hinzu(k, valid_suche_demo)
+uim_validierung_setze(k, valid_suche_demo, validiere_suche, "Suchbegriff eingeben")
+# Beide Felder teilen eine retained Grid-Zeile statt unabhaengiger Handkoordinaten.
+setze w5c_eingabe_grid auf uim_gitter(850, 506, 222, 24)
+setze w5c_nummer_demo auf uim_numberbox(0, 0, 106, 24, 12, 0, 99, on_tf)
+setze w5c_passwort_demo auf uim_passwordbox(0, 0, 106, 24, "geheim", on_tf)
+uim_hinzu(w5c_eingabe_grid, w5c_nummer_demo)
+uim_hinzu(w5c_eingabe_grid, w5c_passwort_demo)
+uim_gitter_layout(w5c_eingabe_grid, 2, 10)
+uim_hinzu(k, w5c_eingabe_grid)
+
+# W5D Anzeige-Widgets.
+uim_hinzu(k, uim_image(584, 554, 120, 48, "demo.bmp", "Image"))
+uim_hinzu(k, uim_icon("M", 716, 554, 48, 48))
+uim_hinzu(k, uim_badge("NEU", 780, 566, 64, 24))
+uim_hinzu(k, uim_avatar("MM", 854, 554, 48, 48))
+
+# W5E Auswahl-Widgets.
+setze w5e_farben auf [[220, 70, 80, 255], [70, 220, 120, 255], [80, 120, 240, 255], [230, 210, 80, 255]]
+uim_hinzu(k, uim_colorpicker(584, 612, 120, 48, w5e_farben, on_liste))
+uim_hinzu(k, uim_calendar(716, 612, 356, 120, 7, 2026, on_liste))
+
+# W5F Diagramme.
+setze w5f_demo_werte auf [1, 3, 2, 4]
+uim_hinzu(k, uim_linechart(24, 670, 250, 100, w5f_demo_werte, on_liste))
+uim_hinzu(k, uim_barchart(290, 670, 222, 100, w5f_demo_werte, on_liste))
+uim_hinzu(k, uim_piechart(24, 780, 120, 100, w5f_demo_werte, on_liste))
+uim_hinzu(k, uim_gauge(156, 780, 356, 52, 0, 100, 64, on_liste))
+
+# W5G Terminal + Markdown Viewer.
+setze w5g_demo_inhalt auf ["# MOO Markdown", "- retained-mode", "- kein Toolkit", "CODE: uim_markdown()", "- Scroll mit Pfeiltasten"].verbinden("\n")
+uim_hinzu(k, uim_terminal(584, 746, 250, 130, "MOO shell bereit", on_w5g_befehl))
+uim_hinzu(k, uim_markdown(850, 746, 222, 130, w5g_demo_inhalt))
+
+
+
+
 
 zeige "GLASS-WIDGETS-START"
 zeige "HOST-BACKEND " + ui_host_backend()

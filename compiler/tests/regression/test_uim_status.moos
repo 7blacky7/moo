@@ -1,0 +1,48 @@
+importiere ui_moo_kern
+
+setze status13 auf uim_mock_wurzel(420, 300)
+setze leer13 auf uim_leerzustand(4, 4, 190, 64, "Keine Daten", "Liste ist leer")
+setze retry13_anzahl auf 0
+funktion retry13(w):
+    setze retry13_anzahl auf retry13_anzahl + 1
+    gib_zurück wahr
+setze fehler13 auf uim_fehlerzustand(204, 4, 190, 64, "Laden fehlgeschlagen", "Netzwerk pruefen", retry13)
+setze laden13 auf uim_ladezustand(4, 76, 190, 64, "Wird geladen", "Bitte warten")
+setze skelett13 auf uim_skelett(204, 76, 190, 64, 4)
+uim_hinzu(status13, leer13)
+uim_hinzu(status13, fehler13)
+uim_hinzu(status13, laden13)
+uim_hinzu(status13, skelett13)
+uim_mock_maus(status13, 220, 20, wahr)
+uim_mock_maus(status13, 220, 20, falsch)
+uim_tick(status13, 0.2)
+zeige "STATUS-FACTORY " + text(leer13["status_modus"]) + "/" + text(fehler13["error"]) + "/" + text(laden13["loading"]) + "/" + text(skelett13["skelett_zeilen"])
+zeige "STATUS-RETRY " + text(retry13_anzahl) + "/" + text(laden13["phase"])
+zeige "STATUS-DRAW " + text(uim_mock_zeichne(status13)) + "/" + text(länge(uim_mock_befehle(status13)) > 0)
+
+setze schutz13_anzahl auf 0
+setze schutz13_gesperrt auf falsch
+funktion schutz13_cb(w):
+    setze schutz13_anzahl auf schutz13_anzahl + 1
+    setze schutz13_gesperrt auf w["disabled"]
+    gib_zurück wahr
+setze schutz13 auf uim_mock_wurzel(160, 60)
+setze knopf13 auf uim_knopf_geschuetzt("Speichern", 4, 4, 120, 28, schutz13_cb)
+uim_hinzu(schutz13, knopf13)
+uim_mock_maus(schutz13, 20, 16, wahr)
+uim_mock_maus(schutz13, 20, 16, falsch)
+setze schutz13_start auf uim_knopf_aktion_start(knopf13)
+setze schutz13_doppelt auf uim_knopf_aktion_start(knopf13)
+zeige "STATUS-GUARD " + text(schutz13_anzahl) + "/" + text(schutz13_start) + "/" + text(schutz13_doppelt) + "/" + text(knopf13["disabled"])
+setze schutz13_ende auf uim_knopf_aktion_ende(knopf13)
+zeige "STATUS-GUARD-END " + text(schutz13_ende) + "/" + text(knopf13["aktion_laeuft"]) + "/" + text(knopf13["disabled"])
+
+setze loesch13_anzahl auf 0
+funktion loesch13_cb(w):
+    setze loesch13_anzahl auf loesch13_anzahl + 1
+    gib_zurück wahr
+setze dialog13 auf uim_loeschen_bestaetigung("Eintrag loeschen?", "Diese Aktion ist dauerhaft.", loesch13_cb)
+setze dialog13_aktion auf dialog13["on_aktion"]
+dialog13_aktion(dialog13, 0)
+zeige "STATUS-CONFIRM " + text(dialog13["overlay_kind"]) + "/" + text(länge(dialog13["dialog_buttons"])) + "/" + text(loesch13_anzahl)
+zeige "NATIVE-UI-13-STATUS-OK"

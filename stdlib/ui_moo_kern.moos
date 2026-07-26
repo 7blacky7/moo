@@ -91,7 +91,19 @@ funktion uim_theme_dunkel():
     t["flaeche"]       = [58, 62, 74, 255]
     t["flaeche_hover"] = [72, 78, 94, 255]
     t["flaeche_druck"] = [44, 48, 58, 255]
+    t["flaeche_deaktiviert"] = [48, 50, 58, 255]
+    t["flaeche_auswahl"] = [68, 98, 150, 255]
+    t["flaeche_fehler"] = [92, 48, 56, 255]
+    t["flaeche_laden"] = [52, 66, 86, 255]
     t["rand"]          = [96, 102, 120, 255]
+    t["rand_hover"]   = [96, 102, 120, 255]
+    t["rand_druck"]   = [96, 102, 120, 255]
+    t["rand_fokus"]   = [86, 156, 240, 255]
+    t["rand_deaktiviert"] = [82, 86, 98, 255]
+    t["rand_auswahl"] = [120, 190, 255, 255]
+    t["rand_fehler"] = [240, 110, 120, 255]
+    t["text_fehler"] = [255, 160, 168, 255]
+    t["text_laden"] = [190, 210, 238, 255]
     t["akzent"]        = [86, 156, 240, 255]
     t["text"]          = [230, 232, 238, 255]
     t["text_gedimmt"]  = [150, 154, 164, 255]
@@ -108,7 +120,19 @@ funktion uim_theme_hell():
     t["flaeche"]       = [224, 227, 233, 255]
     t["flaeche_hover"] = [210, 214, 224, 255]
     t["flaeche_druck"] = [196, 200, 212, 255]
+    t["flaeche_deaktiviert"] = [232, 234, 238, 255]
+    t["flaeche_auswahl"] = [204, 220, 244, 255]
+    t["flaeche_fehler"] = [252, 224, 226, 255]
+    t["flaeche_laden"] = [224, 232, 246, 255]
     t["rand"]          = [150, 156, 170, 255]
+    t["rand_hover"]   = [150, 156, 170, 255]
+    t["rand_druck"]   = [150, 156, 170, 255]
+    t["rand_fokus"]   = [40, 110, 210, 255]
+    t["rand_deaktiviert"] = [190, 194, 204, 255]
+    t["rand_auswahl"] = [40, 110, 210, 255]
+    t["rand_fehler"] = [190, 50, 60, 255]
+    t["text_fehler"] = [160, 30, 40, 255]
+    t["text_laden"] = [50, 80, 140, 255]
     t["akzent"]        = [40, 110, 210, 255]
     t["text"]          = [28, 30, 36, 255]
     t["text_gedimmt"]  = [110, 114, 126, 255]
@@ -128,7 +152,19 @@ funktion uim_theme_glass():
     t["flaeche"]       = [28, 46, 84, 130]
     t["flaeche_hover"] = [48, 72, 118, 150]
     t["flaeche_druck"] = [14, 24, 46, 170]
+    t["flaeche_deaktiviert"] = [38, 48, 66, 120]
+    t["flaeche_auswahl"] = [56, 94, 150, 170]
+    t["flaeche_fehler"] = [112, 42, 58, 180]
+    t["flaeche_laden"] = [42, 68, 104, 150]
     t["rand"]          = [255, 255, 255, 130]
+    t["rand_hover"]   = [255, 255, 255, 130]
+    t["rand_druck"]   = [255, 255, 255, 130]
+    t["rand_fokus"]   = [120, 190, 255, 255]
+    t["rand_deaktiviert"] = [180, 190, 208, 100]
+    t["rand_auswahl"] = [150, 220, 255, 220]
+    t["rand_fehler"] = [255, 150, 160, 220]
+    t["text_fehler"] = [255, 190, 198, 245]
+    t["text_laden"] = [220, 232, 250, 220]
     t["akzent"]        = [120, 190, 255, 255]
     t["text"]          = [240, 246, 255, 235]
     t["text_gedimmt"]  = [200, 210, 224, 150]
@@ -468,6 +504,15 @@ funktion _uim_basis(typ, x, y, b, h):
     w["aktiv"] = wahr
     w["fokussierbar"] = falsch
     w["text"] = ""
+    # Zentraler Querschnittszustand: jedes Widget erbt dieselben Felder.
+    w["zustand"] = "normal"
+    w["eingabe_zustand"] = "empty"
+    w["disabled"] = falsch
+    w["selected"] = falsch
+    w["error"] = falsch
+    w["loading"] = falsch
+    w["readonly"] = falsch
+    w["invalid"] = falsch
     w["hover"] = falsch
     w["druck"] = falsch
     w["kinder"] = []
@@ -479,7 +524,263 @@ funktion _uim_basis(typ, x, y, b, h):
     w["max"] = 0
     w["a11y_name"] = ""
     w["a11y_beschreibung"] = ""
+    w["tooltip"] = nichts
+    # UI-13/VALID: Validator bleibt getrennt von Widget-/Eingabelogik.
+    w["validator"] = nichts
+    w["validierungs_fehler"] = ""
+    w["hilfetext"] = ""
+    # UI-13/LAYOUT: einheitliche skalare Metriken und Zeichenordnung.
+    w["margin"] = 0
+    w["padding"] = 0
+    w["gap"] = 0
+    w["min_b"] = 0
+    w["min_h"] = 0
+    w["max_b"] = 0
+    w["max_h"] = 0
+    w["auto_b"] = falsch
+    w["auto_h"] = falsch
+    w["text_umbruch"] = falsch
+    w["text_ellipsis"] = falsch
+    w["clip_kinder"] = falsch
+    w["z_index"] = 0
+    # UI-13/DATA: distinkte Events, Binding und retained DnD-Metadaten.
+    w["on_fokus"] = nichts
+    w["on_eingabe"] = nichts
+    w["on_loslassen"] = nichts
+    w["on_drop"] = nichts
+    w["ziehbar"] = falsch
+    w["dropziel"] = falsch
+    w["drag_daten"] = nichts
+    w["bindung_state"] = nichts
+    w["bindung_key"] = ""
+    w["bindung_feld"] = ""
+    w["undo_stapel"] = []
+    w["redo_stapel"] = []
+    # UI-13/LIFE: Generation statt konkurrierender Animationen; Cleanup-Hook.
+    w["animation_generation"] = 0
+    w["animation_aktiv"] = falsch
+    w["on_entfernt"] = nichts
+    w["entfernt"] = falsch
     gib_zurück w
+
+funktion _uim_layout_begrenze(w):
+    wenn w["min_b"] > 0 und w["b"] < w["min_b"]:
+        w["b"] = w["min_b"]
+    wenn w["min_h"] > 0 und w["h"] < w["min_h"]:
+        w["h"] = w["min_h"]
+    wenn w["max_b"] > 0 und w["b"] > w["max_b"]:
+        w["b"] = w["max_b"]
+    wenn w["max_h"] > 0 und w["h"] > w["max_h"]:
+        w["h"] = w["max_h"]
+    gib_zurück w
+
+funktion uim_layout_metriken_setze(w, margin, padding, gap):
+    wenn margin < 0:
+        setze margin auf 0
+    wenn padding < 0:
+        setze padding auf 0
+    wenn gap < 0:
+        setze gap auf 0
+    w["margin"] = margin
+    w["padding"] = padding
+    w["gap"] = gap
+    gib_zurück w
+
+funktion uim_layout_grenzen_setze(w, min_b, min_h, max_b, max_h, auto_b, auto_h):
+    wenn min_b < 0:
+        setze min_b auf 0
+    wenn min_h < 0:
+        setze min_h auf 0
+    wenn max_b > 0 und max_b < min_b:
+        setze max_b auf min_b
+    wenn max_h > 0 und max_h < min_h:
+        setze max_h auf min_h
+    w["min_b"] = min_b
+    w["min_h"] = min_h
+    w["max_b"] = max_b
+    w["max_h"] = max_h
+    w["auto_b"] = auto_b
+    w["auto_h"] = auto_h
+    gib_zurück _uim_layout_begrenze(w)
+
+funktion uim_text_layout_setze(w, umbruch, ellipsis):
+    w["text_umbruch"] = umbruch
+    w["text_ellipsis"] = ellipsis
+    gib_zurück w
+
+funktion uim_clip_kinder_setze(w, an):
+    w["clip_kinder"] = an
+    gib_zurück w
+
+funktion uim_z_index_setze(w, z_index):
+    w["z_index"] = z_index
+    gib_zurück w
+
+# UI-13/DATA: bidirektionale retained Bindings ohne globales Capture.
+funktion _uim_bind_widget_wert(w):
+    setze feld auf w["bindung_feld"]
+    wenn feld == "text":
+        gib_zurück w["text"]
+    wenn feld == "wert":
+        gib_zurück w["wert"]
+    wenn feld == "auswahl":
+        gib_zurück w["auswahl"]
+    wenn feld == "status_titel":
+        gib_zurück w["status_titel"]
+    gib_zurück nichts
+
+funktion _uim_bind_setze_widget(w, feld, wert):
+    wenn feld == "text":
+        w["text"] = text(wert)
+        w["cursor"] = länge(bytes_zu_liste(w["text"]))
+        gib_zurück wahr
+    wenn feld == "wert":
+        w["wert"] = wert
+        gib_zurück wahr
+    wenn feld == "auswahl":
+        w["auswahl"] = wert
+        gib_zurück wahr
+    wenn feld == "status_titel":
+        w["status_titel"] = text(wert)
+        gib_zurück wahr
+    gib_zurück falsch
+
+funktion _uim_bind_widget_zu_state(w):
+    wenn w["bindung_state"] == nichts oder w["bindung_key"] == "":
+        gib_zurück falsch
+    w["bindung_state"][w["bindung_key"]] = _uim_bind_widget_wert(w)
+    gib_zurück wahr
+
+funktion uim_bind(w, state, key, feld):
+    wenn w == nichts oder state == nichts:
+        gib_zurück falsch
+    wenn state.enthält("__uim_bindings") == falsch:
+        state["__uim_bindings"] = []
+    w["bindung_state"] = state
+    w["bindung_key"] = key
+    w["bindung_feld"] = feld
+    state["__uim_bindings"].hinzufügen(w)
+    wenn state.enthält(key):
+        gib_zurück _uim_bind_setze_widget(w, feld, state[key])
+    state[key] = _uim_bind_widget_wert(w)
+    gib_zurück wahr
+
+funktion uim_state_setze(state, key, wert):
+    state[key] = wert
+    wenn state.enthält("__uim_bindings"):
+        für w in state["__uim_bindings"]:
+            wenn w["bindung_key"] == key:
+                _uim_bind_setze_widget(w, w["bindung_feld"], wert)
+    gib_zurück wahr
+
+funktion uim_event_setze(w, art, cb):
+    wenn w == nichts:
+        gib_zurück falsch
+    wenn art == "fokus":
+        w["on_fokus"] = cb
+    sonst wenn art == "eingabe":
+        w["on_eingabe"] = cb
+    sonst wenn art == "loslassen":
+        w["on_loslassen"] = cb
+    sonst wenn art == "drop":
+        w["on_drop"] = cb
+        w["dropziel"] = wahr
+    sonst:
+        gib_zurück falsch
+    gib_zurück wahr
+
+funktion uim_drag_quelle(w, daten):
+    w["ziehbar"] = wahr
+    w["drag_daten"] = daten
+    gib_zurück w
+
+funktion uim_drop_ziel(w, cb):
+    w["dropziel"] = wahr
+    w["on_drop"] = cb
+    gib_zurück w
+
+funktion uim_text_kopieren(kontext, w):
+    kontext["clipboard_text"] = w["text"]
+    gib_zurück kontext["clipboard_text"]
+
+funktion uim_text_ausschneiden(kontext, w):
+    uim_text_kopieren(kontext, w)
+    gib_zurück uim_textfeld_setze(kontext, w, "")
+
+funktion uim_text_einfuegen(kontext, w):
+    gib_zurück uim_textfeld_setze(kontext, w, kontext["clipboard_text"])
+
+funktion _uim_zustand_gueltig(zustand):
+    gib_zurück zustand == "normal" oder zustand == "hover" oder zustand == "pressed" oder zustand == "focused" oder zustand == "disabled" oder zustand == "selected" oder zustand == "error" oder zustand == "loading"
+
+funktion _uim_eingabe_zustand_gueltig(zustand):
+    gib_zurück zustand == "empty" oder zustand == "filled" oder zustand == "readonly" oder zustand == "invalid" oder zustand == "placeholder"
+
+funktion _uim_zustand_aktuell(kontext, w):
+    wenn w == nichts:
+        gib_zurück "normal"
+    wenn w["aktiv"] == falsch oder w["disabled"]:
+        gib_zurück "disabled"
+    wenn w["loading"]:
+        gib_zurück "loading"
+    wenn w["error"] oder w["invalid"]:
+        gib_zurück "error"
+    wenn w["druck"]:
+        gib_zurück "pressed"
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        gib_zurück "focused"
+    wenn w["selected"] or (w["typ"] == "checkbox" und w["wert"]):
+        gib_zurück "selected"
+    wenn w["hover"]:
+        gib_zurück "hover"
+    wenn _uim_zustand_gueltig(w["zustand"]) und w["zustand"] != "normal":
+        gib_zurück w["zustand"]
+    gib_zurück "normal"
+
+funktion _uim_zustand_farbe(kontext, w, feld):
+    setze t auf kontext["theme"]
+    setze zustand auf _uim_zustand_aktuell(kontext, w)
+    setze spezial auf feld
+    wenn zustand == "hover":
+        wenn feld == "flaeche":
+            setze spezial auf "flaeche_hover"
+        sonst wenn feld == "rand":
+            setze spezial auf "rand_hover"
+    sonst wenn zustand == "pressed":
+        wenn feld == "flaeche":
+            setze spezial auf "flaeche_druck"
+        sonst wenn feld == "rand":
+            setze spezial auf "rand_druck"
+    sonst wenn zustand == "focused":
+        wenn feld == "rand":
+            setze spezial auf "rand_fokus"
+    sonst wenn zustand == "disabled":
+        wenn feld == "flaeche":
+            setze spezial auf "flaeche_deaktiviert"
+        sonst wenn feld == "rand":
+            setze spezial auf "rand_deaktiviert"
+        sonst wenn feld == "text":
+            setze spezial auf "text_gedimmt"
+    sonst wenn zustand == "selected":
+        wenn feld == "flaeche":
+            setze spezial auf "flaeche_auswahl"
+        sonst wenn feld == "rand":
+            setze spezial auf "rand_auswahl"
+    sonst wenn zustand == "error":
+        wenn feld == "flaeche":
+            setze spezial auf "flaeche_fehler"
+        sonst wenn feld == "rand":
+            setze spezial auf "rand_fehler"
+        sonst wenn feld == "text":
+            setze spezial auf "text_fehler"
+    sonst wenn zustand == "loading":
+        wenn feld == "flaeche":
+            setze spezial auf "flaeche_laden"
+        sonst wenn feld == "text":
+            setze spezial auf "text_laden"
+    wenn t.enthält(spezial):
+        gib_zurück t[spezial]
+    gib_zurück t[feld]
 
 # O4: Öffentliche, toolkitfreie Accessibility-Metadaten.
 # Rollen, States und Aktionen spiegeln moo_input_protocol.h v1. Bounds sind
@@ -645,7 +946,7 @@ funktion _uim_finde_rek(kinder, id):
 
 funktion _uim_fokus_uids(kinder, ziele):
     für w in kinder:
-        wenn w["sichtbar"] und w["aktiv"]:
+        wenn w["sichtbar"] und w["aktiv"] und w["disabled"] == falsch:
             wenn w["fokussierbar"]:
                 ziele.hinzufügen(w["uid"])
             _uim_fokus_uids(w["kinder"], ziele)
@@ -666,7 +967,7 @@ funktion _uim_interaktiv_uid_rek(kinder, uid, erlaubt):
     setze ergebnis auf 0
     für w in kinder:
         wenn ergebnis == 0:
-            setze kind_erlaubt auf erlaubt und w["sichtbar"] und w["aktiv"]
+            setze kind_erlaubt auf erlaubt und w["sichtbar"] und w["aktiv"] und w["disabled"] == falsch
             wenn w["uid"] == uid:
                 wenn kind_erlaubt:
                     setze ergebnis auf 2
@@ -685,6 +986,16 @@ funktion _uim_scroll_max(kontext, w):
     setze inhalt auf w["inhalt_hoehe"]
     wenn w["typ"] == "liste":
         setze inhalt auf länge(w["zeilen"]) * _uim_zeilenhoehe(kontext)
+    wenn w["typ"] == "baum":
+        setze inhalt auf länge(_uim_baum_sichtbare(w)) * _uim_zeilenhoehe(kontext)
+    wenn w["typ"] == "datengitter":
+        setze inhalt auf (länge(w["zeilen"]) + 1) * _uim_zeilenhoehe(kontext)
+    wenn w["typ"] == "iconview":
+        setze inhalt auf _uim_iconview_zeilen(kontext, w) * w["tile_h"]
+    wenn w["typ"] == "terminal":
+        setze inhalt auf (länge(w["zeilen"]) + 1) * _uim_zeilenhoehe(kontext)
+    wenn w["typ"] == "markdown":
+        setze inhalt auf länge(w["zeilen"]) * _uim_zeilenhoehe(kontext)
     setze max_scroll auf inhalt - w["h"]
     wenn max_scroll < 0:
         setze max_scroll auf 0
@@ -700,7 +1011,7 @@ funktion _uim_scroll_klemme(kontext, w):
 
 funktion _uim_scroll_klemme_rek(kontext, kinder):
     für w in kinder:
-        wenn w["typ"] == "scroll" oder w["typ"] == "liste":
+        wenn w["typ"] == "scroll" oder w["typ"] == "liste" oder w["typ"] == "baum" oder w["typ"] == "datengitter" oder w["typ"] == "iconview":
             _uim_scroll_klemme(kontext, w)
         _uim_scroll_klemme_rek(kontext, w["kinder"])
     gib_zurück wahr
@@ -714,6 +1025,154 @@ funktion _uim_liste_sichtbar_machen(kontext, w, idx):
     wenn unten > w["scroll_y"] + w["h"]:
         w["scroll_y"] = unten - w["h"]
     _uim_scroll_klemme(kontext, w)
+    gib_zurück wahr
+
+funktion _uim_baum_sichtbare_rek(knoten, ebene, ziel):
+    für knoten_eintrag in knoten:
+        setze eintrag auf {}
+        eintrag["knoten"] = knoten_eintrag
+        eintrag["ebene"] = ebene
+        ziel.hinzufügen(eintrag)
+        wenn knoten_eintrag["offen"]:
+            _uim_baum_sichtbare_rek(knoten_eintrag["kinder"], ebene + 1, ziel)
+    gib_zurück wahr
+
+funktion _uim_baum_sichtbare(w):
+    setze ziel auf []
+    _uim_baum_sichtbare_rek(w["knoten"], 0, ziel)
+    gib_zurück ziel
+
+funktion _uim_baum_sichtbar_machen(kontext, w, idx):
+    setze zh auf _uim_zeilenhoehe(kontext)
+    setze oben auf idx * zh
+    setze unten auf oben + zh
+    wenn oben < w["scroll_y"]:
+        w["scroll_y"] = oben
+    wenn unten > w["scroll_y"] + w["h"]:
+        w["scroll_y"] = unten - w["h"]
+    _uim_scroll_klemme(kontext, w)
+    gib_zurück wahr
+
+funktion _uim_baum_klick(kontext, w, lx, ly):
+    setze t auf kontext["theme"]
+    setze zh auf _uim_zeilenhoehe(kontext)
+    setze rel auf ly - w["y"] + w["scroll_y"]
+    wenn rel < 0:
+        gib_zurück falsch
+    setze idx auf 0
+    solange (idx + 1) * zh <= rel:
+        setze idx auf idx + 1
+    setze sichtbare auf _uim_baum_sichtbare(w)
+    wenn idx >= länge(sichtbare):
+        gib_zurück falsch
+    setze eintrag auf sichtbare[idx]
+    setze knoten auf eintrag["knoten"]
+    wenn lx < t["abstand"] + eintrag["ebene"] * 12 + 14 und länge(knoten["kinder"]) > 0:
+        knoten["offen"] = knoten["offen"] == falsch
+    w["auswahl"] = idx
+    w["selected"] = wahr
+    w["zustand"] = "selected"
+    _uim_baum_sichtbar_machen(kontext, w, idx)
+    setze cb auf w["on_auswahl"]
+    wenn cb != nichts:
+        cb(w, idx)
+    gib_zurück wahr
+
+funktion _uim_datengitter_klick(kontext, w, ly):
+    setze zh auf _uim_zeilenhoehe(kontext)
+    setze rel auf ly - w["y"] - zh + w["scroll_y"]
+    wenn rel < 0:
+        gib_zurück falsch
+    setze idx auf 0
+    solange (idx + 1) * zh <= rel:
+        setze idx auf idx + 1
+    wenn idx >= länge(w["zeilen"]):
+        gib_zurück falsch
+    w["auswahl"] = idx
+    w["selected"] = wahr
+    w["zustand"] = "selected"
+    setze cb auf w["on_auswahl"]
+    wenn cb != nichts:
+        cb(w, idx)
+    gib_zurück wahr
+
+funktion _uim_iconview_text(eintrag):
+    wenn typ_von(eintrag) == "Woerterbuch":
+        wenn eintrag.enthält("text"):
+            gib_zurück text(eintrag["text"])
+        gib_zurück ""
+    gib_zurück text(eintrag)
+
+funktion _uim_iconview_icon(eintrag):
+    wenn typ_von(eintrag) == "Woerterbuch":
+        wenn eintrag.enthält("icon"):
+            gib_zurück text(eintrag["icon"])
+        gib_zurück ""
+    gib_zurück ""
+
+funktion _uim_iconview_spalten(kontext, w):
+    setze tile_b auf w["tile_b"]
+    setze abstand auf kontext["theme"]["abstand"]
+    setze n auf 0
+    setze lauf auf 0
+    solange lauf + tile_b <= w["b"]:
+        setze n auf n + 1
+        setze lauf auf lauf + tile_b + abstand
+    wenn n < 1:
+        setze n auf 1
+    gib_zurück n
+
+funktion _uim_iconview_zeilen(kontext, w):
+    setze n auf länge(w["eintraege"])
+    setze cols auf _uim_iconview_spalten(kontext, w)
+    setze zeilen auf 0
+    wenn n > 0:
+        setze zeilen auf 1
+        setze rest auf cols
+        solange rest < n:
+            setze zeilen auf zeilen + 1
+            setze rest auf rest + cols
+    gib_zurück zeilen
+
+funktion _uim_iconview_sichtbar_machen(kontext, w, idx):
+    setze cols auf _uim_iconview_spalten(kontext, w)
+    setze zeile auf 0
+    setze rest auf cols
+    solange rest <= idx:
+        setze zeile auf zeile + 1
+        setze rest auf rest + cols
+    setze oben auf zeile * w["tile_h"]
+    setze unten auf oben + w["tile_h"]
+    wenn oben < w["scroll_y"]:
+        setze w["scroll_y"] auf oben
+    wenn unten > w["scroll_y"] + w["h"]:
+        setze w["scroll_y"] auf unten - w["h"]
+    _uim_scroll_klemme(kontext, w)
+    gib_zurück wahr
+
+funktion _uim_iconview_klick(kontext, w, lx, ly):
+    setze t auf kontext["theme"]
+    setze rel_x auf lx - w["x"]
+    setze rel_y auf ly - w["y"] + w["scroll_y"]
+    wenn rel_x < 0 oder rel_y < 0:
+        gib_zurück falsch
+    setze cols auf _uim_iconview_spalten(kontext, w)
+    setze col auf 0
+    solange (col + 1) * w["tile_b"] <= rel_x:
+        setze col auf col + 1
+    setze row auf 0
+    solange (row + 1) * w["tile_h"] <= rel_y:
+        setze row auf row + 1
+    setze idx auf row * cols + col
+    wenn idx < 0 oder idx >= länge(w["eintraege"]):
+        gib_zurück falsch
+    w["auswahl"] = idx
+    w["selected"] = wahr
+    w["zustand"] = "selected"
+    _uim_iconview_sichtbar_machen(kontext, w, idx)
+    setze cb auf w["on_auswahl"]
+    wenn cb != nichts:
+        cb(w, idx)
     gib_zurück wahr
 
 funktion _uim_scroll_thumb_h(w):
@@ -765,13 +1224,67 @@ funktion _uim_treffer_rek(kinder, x, y):
                     wenn w["aktiv"] == falsch:
                         # Sichtbar-deaktivierte Widgets blocken tiefere Z-Ebenen.
                         setze gefunden auf _uim_tref(w, x, y)
-                    sonst wenn w["typ"] == "panel":
+                    sonst wenn w["typ"] == "tabs":
+                        wenn y < w["y"] + w["tab_h"]:
+                            setze gefunden auf _uim_tref(w, x, y)
+                        sonst wenn länge(w["kinder"]) > 0:
+                            setze ti auf w["auswahl"]
+                            setze tab auf w["kinder"][ti]
+                            setze innen auf _uim_treffer_rek(tab["kinder"], x - w["x"], y - w["y"] - w["tab_h"])
+                            wenn innen == nichts:
+                                setze gefunden auf _uim_tref(w, x, y)
+                            sonst:
+                                setze gefunden auf innen
+                        sonst:
+                            setze gefunden auf _uim_tref(w, x, y)
+                    sonst wenn w["typ"] == "expander":
+                        wenn y < w["y"] + w["kauff_h"]:
+                            setze gefunden auf _uim_tref(w, x, y)
+                        sonst wenn w["offen"]:
+                            setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"] - w["kauff_h"])
+                            wenn innen == nichts:
+                                setze gefunden auf _uim_tref(w, x, y)
+                            sonst:
+                                setze gefunden auf innen
+                        sonst:
+                            setze gefunden auf _uim_tref(w, x, y)
+                    sonst wenn w["typ"] == "toolbar":
                         setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"])
                         wenn innen == nichts:
                             setze gefunden auf _uim_tref(w, x, y)
                         sonst:
                             setze gefunden auf innen
-                    sonst wenn w["typ"] == "scroll":
+                    sonst wenn w["typ"] == "teiler":
+                        _uim_teiler_layout(w)
+                        setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"])
+                        wenn innen == nichts:
+                            setze gefunden auf _uim_tref(w, x - w["x"], y - w["y"])
+                        sonst:
+                            setze gefunden auf innen
+                    sonst wenn w["typ"] == "karte":
+                        setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"] - w["titel_h"])
+                        wenn innen == nichts:
+                            setze gefunden auf _uim_tref(w, x - w["x"], y - w["y"])
+                        sonst:
+                            setze gefunden auf innen
+                    sonst wenn w["typ"] == "stapel" oder w["typ"] == "gitter":
+                        setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"])
+                        wenn innen == nichts:
+                            setze gefunden auf _uim_tref(w, x - w["x"], y - w["y"])
+                        sonst:
+                            setze gefunden auf innen
+                    sonst wenn w["typ"] == "ueberlagerung":
+                        wenn w["offen"]:
+                            _uim_ueberlagerung_layout(w)
+                            setze innen auf _uim_treffer_rek(w["kinder"], x - w["x"], y - w["y"])
+                            wenn innen == nichts:
+                                wenn w["modal"]:
+                                    setze gefunden auf _uim_tref(w, x - w["x"], y - w["y"])
+                                sonst:
+                                    setze gefunden auf nichts
+                            sonst:
+                                setze gefunden auf innen
+                    sonst wenn w["typ"] == "panel":
                         # Die rechte 8px-Zone gehoert der Scrollbar, nicht Kindern.
                         wenn x >= w["x"] + w["b"] - 8 und w["inhalt_hoehe"] > w["h"]:
                             setze gefunden auf _uim_tref(w, x, y)
@@ -808,7 +1321,7 @@ funktion _uim_scrollziel_rek(kinder, x, y):
                             setze gefunden auf w
                         sonst:
                             setze gefunden auf innen
-                    sonst wenn w["typ"] == "liste":
+                    sonst wenn w["typ"] == "liste" oder w["typ"] == "baum" oder w["typ"] == "datengitter" oder w["typ"] == "iconview" oder w["typ"] == "terminal" oder w["typ"] == "markdown":
                         setze gefunden auf w
         setze i auf i - 1
     gib_zurück gefunden
@@ -816,14 +1329,129 @@ funktion _uim_scrollziel_rek(kinder, x, y):
 # Klick-Aktivierung, typ-bewusst: Knopf feuert on_klick, Checkbox
 # toggelt + feuert on_wechsel. (Slider aktiviert nicht per Klick-Ende —
 # sein Wert wird schon bei Press/Drag gesetzt.)
+funktion _uim_radio_gruppe_rek(kinder, gruppe, uid):
+    für kandidat in kinder:
+        wenn kandidat["typ"] == "radio" und kandidat["gruppe"] == gruppe und kandidat["uid"] != uid:
+            kandidat["wert"] = falsch
+            kandidat["selected"] = falsch
+            kandidat["zustand"] = "normal"
+        _uim_radio_gruppe_rek(kandidat["kinder"], gruppe, uid)
+    gib_zurück wahr
+
+funktion _uim_bewertung_setze_aus_x(w, x):
+    setze maximal auf w["max"]
+    wenn maximal <= 0:
+        gib_zurück falsch
+    setze rel auf x - w["x"]
+    wenn rel < 0:
+        setze rel auf 0
+    wenn rel >= w["b"]:
+        setze rel auf w["b"] - 1
+    setze wert auf boden(rel * maximal / w["b"]) + 1
+    wenn wert < 1:
+        setze wert auf 1
+    wenn wert > maximal:
+        setze wert auf maximal
+    w["wert"] = wert
+    w["selected"] = wahr
+    w["zustand"] = "selected"
+    gib_zurück wahr
+
+funktion _uim_tick_rek(kinder, schritt):
+    für w in kinder:
+        wenn w["typ"] == "spinner":
+            w["wert"] = (w["wert"] + 1) % w["max"]
+        wenn w["typ"] == "statusansicht" und w["status_modus"] == "laden":
+            w["phase"] = (w["phase"] + 1) % 8
+        wenn w["typ"] == "fortschritt" und w["unbestimmt"]:
+            w["phase"] = w["phase"] + schritt
+            solange w["phase"] >= 1:
+                w["phase"] = w["phase"] - 1
+            solange w["phase"] < 0:
+                w["phase"] = w["phase"] + 1
+        wenn w["typ"] == "ueberlagerung" und w["offen"] und w.enthält("rest_ticks"):
+            w["rest_ticks"] = w["rest_ticks"] - schritt
+            wenn w["rest_ticks"] <= 0:
+                w["offen"] = falsch
+                w["sichtbar"] = falsch
+                setze cb_tick auf w["on_schliessen"]
+                wenn cb_tick != nichts:
+                    cb_tick(w)
+        _uim_tick_rek(w["kinder"], schritt)
+    gib_zurück wahr
+
+funktion uim_tick(kontext, schritt):
+    wenn kontext == nichts:
+        gib_zurück falsch
+    wenn schritt <= 0:
+        setze schritt auf 0.1
+    _uim_tick_rek(kontext["wurzel"]["kinder"], schritt)
+    wenn kontext.enthält("tooltip_widget") und kontext["tooltip_widget"] != nichts:
+        setze tw auf kontext["tooltip_widget"]
+        wenn tw.enthält("tooltip") und tw["tooltip"] != nichts und tw["hover"]:
+            kontext["tooltip_ticks"] = kontext["tooltip_ticks"] + schritt
+        sonst:
+            kontext["tooltip_ticks"] = 0
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
 funktion _uim_aktiviere(kontext, w):
     wenn _uim_ist_interaktiv(kontext, w) == falsch:
         gib_zurück falsch
+    wenn w["typ"] == "ueberlagerung":
+        wenn w["schliesst_aussen"] und w["offen"]:
+            _uim_dialog_schliesse(kontext, w, 0 - 1)
+        gib_zurück wahr
+    wenn w.enthält("dialog") and w["dialog"] != nichts:
+        _uim_dialog_aktion(kontext, w["dialog"], w["dialog_index"])
+        gib_zurück wahr
+    wenn w.enthält("snackbar") and w["snackbar"] != nichts:
+        _uim_snackbar_aktion(kontext, w["snackbar"])
+        gib_zurück wahr
+    wenn w["typ"] == "expander":
+        w["offen"] = w["offen"] == falsch
+        setze cw auf w["on_wechsel"]
+        wenn cw != nichts:
+            cw(w, w["offen"])
+        gib_zurück wahr
+    wenn w["typ"] == "rating":
+        setze cw auf w["on_wechsel"]
+        wenn cw != nichts:
+            cw(w, w["wert"])
+        gib_zurück wahr
+    wenn w["typ"] == "switch" oder w["typ"] == "toggle":
+        wenn w["wert"]:
+            w["wert"] = falsch
+        sonst:
+            w["wert"] = wahr
+        w["selected"] = w["wert"]
+        wenn w["selected"]:
+            w["zustand"] = "selected"
+        sonst:
+            w["zustand"] = "normal"
+        setze cw auf w["on_wechsel"]
+        wenn cw != nichts:
+            cw(w, w["wert"])
+        gib_zurück wahr
+    wenn w["typ"] == "radio":
+        _uim_radio_gruppe_rek(kontext["wurzel"]["kinder"], w["gruppe"], w["uid"])
+        w["wert"] = wahr
+        w["selected"] = wahr
+        w["zustand"] = "selected"
+        setze cw auf w["on_wechsel"]
+        wenn cw != nichts:
+            cw(w, wahr)
+        gib_zurück wahr
     wenn w["typ"] == "checkbox":
         wenn w["wert"]:
             w["wert"] = falsch
         sonst:
             w["wert"] = wahr
+        w["selected"] = w["wert"]
+        wenn w["selected"]:
+            w["zustand"] = "selected"
+        sonst:
+            w["zustand"] = "normal"
         setze cw auf w["on_wechsel"]
         wenn cw != nichts:
             cw(w, w["wert"])
@@ -831,6 +1459,19 @@ funktion _uim_aktiviere(kontext, w):
     setze cb auf w["on_klick"]
     wenn cb == nichts:
         gib_zurück falsch
+    # UI-13/STATUS: geschuetzte Knoepfe werden vor dem Callback gesperrt.
+    # Damit kann auch ein reentranter zweiter Klick die Aktion nicht doppelt starten.
+    wenn w["typ"] == "knopf" und w.enthält("aktion_laeuft") und w["aktion_laeuft"]:
+        gib_zurück falsch
+    wenn w["typ"] == "knopf" und w.enthält("auto_sperre") und w["auto_sperre"]:
+        w["aktion_laeuft"] = wahr
+        w["disabled"] = wahr
+        w["zustand"] = "disabled"
+        cb(w)
+        w["aktion_laeuft"] = falsch
+        w["disabled"] = falsch
+        w["zustand"] = "normal"
+        gib_zurück wahr
     cb(w)
     gib_zurück wahr
 
@@ -858,7 +1499,10 @@ funktion _uim_slider_setze_aus_x(w, x):
 # Einfüge-Reihenfolge, mit Umlauf). rueckwaerts: wahr bei Shift+Tab.
 funktion _uim_fokus_weiter(kontext, rueckwaerts):
     setze ziele auf []
-    _uim_fokus_uids(kontext["wurzel"]["kinder"], ziele)
+    setze fokus_basis auf kontext["wurzel"]["kinder"]
+    wenn kontext.enthält("modal_overlay") und kontext["modal_overlay"] != nichts und kontext["modal_overlay"]["offen"]:
+        setze fokus_basis auf kontext["modal_overlay"]["kinder"]
+    _uim_fokus_uids(fokus_basis, ziele)
     setze n auf länge(ziele)
     wenn n == 0:
         kontext["fokus"] = nichts
@@ -881,7 +1525,7 @@ funktion _uim_fokus_weiter(kontext, rueckwaerts):
         setze start auf n - 1
     setze idx auf (start + schritt) % n
     setze ziel_uid auf ziele[idx]
-    kontext["fokus"] = _uim_finde_uid_rek(kontext["wurzel"]["kinder"], ziel_uid)
+    setze kontext["fokus"] auf _uim_finde_uid_rek(fokus_basis, ziel_uid)
     gib_zurück kontext["fokus"] != nichts
 
 # Listen-Zeilenhöhe: rein theme-getrieben.
@@ -902,6 +1546,8 @@ funktion _uim_liste_klick(kontext, w, ly):
     wenn idx >= länge(w["zeilen"]):
         gib_zurück falsch
     w["auswahl"] = idx
+    w["selected"] = wahr
+    w["zustand"] = "selected"
     setze cb auf w["on_auswahl"]
     wenn cb != nichts:
         cb(w, idx)
@@ -912,8 +1558,49 @@ funktion _uim_liste_klick(kontext, w, ly):
 # ------------------------------------------------------------
 
 funktion _uim_kern_maus(kontext, x, y, taste):
+    wenn taste == 3:
+        setze cm auf _uim_kontextmenue_finde_rek(kontext["wurzel"]["kinder"])
+        wenn cm != nichts:
+            cm["x"] = x
+            cm["y"] = y
+            cm["offen"] = wahr
+            cm["sichtbar"] = wahr
+            kontext["kontext_offen"] = cm
+            kontext["kontext_hover"] = 0 - 1
+            _uim_anfordern(kontext)
+            gib_zurück wahr
+        gib_zurück falsch
     wenn taste != 1:
         gib_zurück falsch
+    # Offenes Kontextmenue liegt z-oberst und faengt Klicks zuerst ab.
+    wenn kontext["kontext_offen"] != nichts:
+        setze cm2 auf kontext["kontext_offen"]
+        setze cr2 auf kontext["kontext_rect"]
+        wenn cr2 != nichts und x >= cr2["x"] und x < cr2["x"] + cr2["b"] und y >= cr2["y"] und y < cr2["y"] + cr2["h"]:
+            setze zh2 auf _uim_zeilenhoehe(kontext)
+            setze py2 auf cr2["y"]
+            setze i2 auf 0
+            solange i2 < länge(cm2["punkte"]):
+                setze ph2 auf zh2
+                wenn cm2["punkte"][i2]["typ"] == "trenner":
+                    setze ph2 auf boden(zh2 / 2)
+                wenn y >= py2 und y < py2 + ph2:
+                    wenn cm2["punkte"][i2]["typ"] == "punkt":
+                        setze cb2 auf cm2["punkte"][i2]["cb"]
+                        uim_kontextmenue_schliessen(kontext)
+                        wenn cb2 != nichts:
+                            cb2(cm2["punkte"][i2])
+                    sonst:
+                        uim_kontextmenue_schliessen(kontext)
+                    _uim_anfordern(kontext)
+                    gib_zurück wahr
+                setze py2 auf py2 + ph2
+                setze i2 auf i2 + 1
+            uim_kontextmenue_schliessen(kontext)
+        sonst:
+            uim_kontextmenue_schliessen(kontext)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
     # Offenes Menue liegt z-oberst und faengt Klicks als Erstes ab.
     wenn kontext.enthält("menue_offen") und kontext["menue_offen"] != nichts:
         setze mw auf kontext["menue_offen"]
@@ -996,6 +1683,15 @@ funktion _uim_kern_maus(kontext, x, y, taste):
         kontext["fokus"] = nichts
     sonst:
         setze w auf tref["w"]
+        wenn w["typ"] == "teiler":
+            _uim_teiler_layout(w)
+            wenn _uim_teiler_trennlinie_treffer(w, tref["lx"], tref["ly"]):
+                kontext["druck"] = w
+                kontext["druck_art"] = "teiler"
+                kontext["teiler"] = w
+                w["druck"] = wahr
+                _uim_anfordern(kontext)
+                gib_zurück wahr
         wenn w["aktiv"] == falsch oder w["sichtbar"] == falsch:
             _uim_druck_loesche(kontext)
             wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
@@ -1007,8 +1703,21 @@ funktion _uim_kern_maus(kontext, x, y, taste):
             kontext["druck_ox"] = x - tref["lx"]
             kontext["druck_oy"] = y - tref["ly"]
             w["druck"] = wahr
+            wenn w["ziehbar"]:
+                kontext["drag_quelle"] = w
+                kontext["drag_aktiv"] = falsch
             wenn w["fokussierbar"]:
-                kontext["fokus"] = w
+                setze fokus_alt auf kontext["fokus"]
+                wenn fokus_alt != w:
+                    wenn fokus_alt != nichts und fokus_alt["on_fokus"] != nichts:
+                        setze fokus_alt_cb auf fokus_alt["on_fokus"]
+                        fokus_alt_cb(fokus_alt, falsch)
+                    kontext["fokus"] = w
+                    wenn w["on_fokus"] != nichts:
+                        setze fokus_neu_cb auf w["on_fokus"]
+                        fokus_neu_cb(w, wahr)
+            wenn w["typ"] == "rating":
+                _uim_bewertung_setze_aus_x(w, tref["lx"])
             wenn w["typ"] == "slider":
                 kontext["druck_art"] = "slider"
                 _uim_slider_setze_aus_x(w, tref["lx"])
@@ -1024,11 +1733,27 @@ funktion _uim_kern_maus(kontext, x, y, taste):
                     setze greif auf thumb_h / 2
                 kontext["druck_greif_y"] = greif
                 _uim_scroll_setze_aus_y(kontext, w, tref["ly"], greif)
-            wenn w["typ"] == "liste":
-                _uim_liste_klick(kontext, w, tref["ly"])
-            wenn w["typ"] == "combobox":
+    wenn w["typ"] == "liste":
+        _uim_liste_klick(kontext, w, tref["ly"])
+    wenn w["typ"] == "baum":
+        _uim_baum_klick(kontext, w, tref["lx"], tref["ly"])
+    wenn w["typ"] == "datengitter":
+        _uim_datengitter_klick(kontext, w, tref["ly"])
+    wenn w["typ"] == "iconview":
+        _uim_iconview_klick(kontext, w, tref["lx"], tref["ly"])
+    wenn w["typ"] == "colorpicker":
+        _uim_colorpicker_klick(kontext, w, tref["lx"], tref["ly"])
+    wenn w["typ"] == "calendar" oder w["typ"] == "datepicker":
+        _uim_kalender_klick(kontext, w, tref["lx"], tref["ly"])
+    wenn w["typ"] == "linechart" oder w["typ"] == "barchart" oder w["typ"] == "piechart":
+        _uim_chart_klick(kontext, w, tref["lx"], tref["ly"])
+    wenn w["typ"] == "gauge":
+        _uim_gauge_klick(kontext, w, tref["lx"])
+    wenn w["typ"] == "combobox":
                 w["offen"] = wahr
                 kontext["combo_offen"] = w
+            wenn w["typ"] == "tabs":
+                _uim_tabs_aus_x(kontext, w, tref["lx"])
             wenn w["typ"] == "menueleiste":
                 setze mti2 auf _uim_menue_titel_bei(kontext, w, tref["lx"] - w["x"])
                 wenn mti2 != nichts:
@@ -1046,6 +1771,25 @@ funktion _uim_kern_maus_los(kontext, x, y, taste):
         gib_zurück falsch
     setze art auf kontext["druck_art"]
     _uim_druck_loesche(kontext)
+    setze los_cb auf p["on_loslassen"]
+    wenn los_cb != nichts:
+        los_cb(p, x, y)
+    wenn kontext["drag_quelle"] != nichts:
+        setze drag_quelle auf kontext["drag_quelle"]
+        setze drag_treffer auf _uim_treffer(kontext, x, y)
+        kontext["drag_quelle"] = nichts
+        kontext["drag_aktiv"] = falsch
+        wenn drag_treffer != nichts:
+            setze drag_ziel auf drag_treffer["w"]
+            wenn drag_ziel["dropziel"] und drag_ziel["on_drop"] != nichts and drag_ziel["uid"] != drag_quelle["uid"]:
+                setze drop_cb auf drag_ziel["on_drop"]
+                drop_cb(drag_ziel, drag_quelle["drag_daten"], drag_quelle)
+                _uim_anfordern(kontext)
+                gib_zurück wahr
+    wenn art == "teiler":
+        _uim_teiler_layout(p)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
     wenn art == "slider" oder art == "scrollbar":
         # Drag-Ende: Wert/Scrollposition wurde bereits bei Press/Drag gesetzt.
         _uim_anfordern(kontext)
@@ -1100,9 +1844,15 @@ funktion _uim_kern_bewegung(kontext, x, y):
     # entstehen aus dem beim Press gemerkten globalen Offset.
     setze p auf kontext["druck"]
     wenn p != nichts:
+        wenn kontext["drag_quelle"] != nichts:
+            kontext["drag_aktiv"] = wahr
         wenn _uim_ist_interaktiv(kontext, p) == falsch:
             _uim_druck_loesche(kontext)
             _uim_anfordern(kontext)
+            gib_zurück wahr
+        wenn kontext["druck_art"] == "teiler":
+            wenn _uim_teiler_ziehen(p, x, y):
+                _uim_anfordern(kontext)
             gib_zurück wahr
         wenn kontext["druck_art"] == "slider":
             wenn _uim_slider_setze_aus_x(p, x - kontext["druck_ox"]):
@@ -1128,10 +1878,25 @@ funktion _uim_kern_bewegung(kontext, x, y):
     wenn w != nichts:
         w["hover"] = wahr
     kontext["hover"] = w
+    wenn w != nichts und w.enthält("tooltip") und w["tooltip"] != nichts:
+        wenn kontext["tooltip_widget"] == nichts oder kontext["tooltip_widget"]["uid"] != w["uid"]:
+            kontext["tooltip_ticks"] = 0
+        kontext["tooltip_widget"] = w
+        kontext["tooltip_x"] = x
+        kontext["tooltip_y"] = y
+    sonst:
+        kontext["tooltip_widget"] = nichts
+        kontext["tooltip_ticks"] = 0
     _uim_anfordern(kontext)
     gib_zurück wahr
 
 funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
+    wenn gedrueckt und taste == "Escape" und kontext.enthält("modal_overlay") und kontext["modal_overlay"] != nichts:
+        setze modal_taste auf kontext["modal_overlay"]
+        wenn modal_taste["offen"]:
+            _uim_dialog_schliesse(kontext, modal_taste, 0 - 1)
+            _uim_anfordern(kontext)
+            gib_zurück wahr
     wenn gedrueckt und taste == "Escape" und kontext.enthält("menue_offen") und kontext["menue_offen"] != nichts:
         _uim_menue_schliessen(kontext)
         _uim_anfordern(kontext)
@@ -1152,8 +1917,32 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
         kontext["fokus"] = nichts
         _uim_anfordern(kontext)
         gib_zurück falsch
-    wenn f["typ"] == "textfeld":
+    wenn f["typ"] == "autocomplete" und (taste == "Up" oder taste == "Down"):
+        setze n_suggest auf länge(f["vorschlaege"])
+        wenn n_suggest == 0:
+            gib_zurück wahr
+        setze idx_suggest auf f["auswahl"]
+        wenn idx_suggest < 0:
+            setze idx_suggest auf 0
+        sonst wenn taste == "Down":
+            setze idx_suggest auf idx_suggest + 1
+        sonst:
+            setze idx_suggest auf idx_suggest - 1
+        wenn idx_suggest < 0:
+            setze idx_suggest auf 0
+        wenn idx_suggest > n_suggest - 1:
+            setze idx_suggest auf n_suggest - 1
+        f["auswahl"] = idx_suggest
+        f["text"] = text(f["vorschlaege"][idx_suggest])
+        f["cursor"] = länge(bytes_zu_liste(f["text"]))
+        f["eingabe_zustand"] = "filled"
+        _uim_tf_feuere_wechsel(kontext, f)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
+    wenn f["typ"] == "textfeld" oder f["typ"] == "searchbox" oder f["typ"] == "numberbox" oder f["typ"] == "passwordbox" oder f["typ"] == "multiline" oder f["typ"] == "autocomplete":
         setze geaendert auf falsch
+        wenn taste == "BackSpace" oder (taste != "Left" und taste != "Right" und taste != "Home" und taste != "End" und taste != "Return"):
+            _uim_tf_verlauf_merke(f)
         setze bytes auf bytes_zu_liste(f["text"])
         wenn f["cursor"] < 0:
             f["cursor"] = 0
@@ -1168,6 +1957,10 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
                     nb.hinzufügen(bb)
                 f["text"] = bytes_neu(nb)
                 f["cursor"] = p
+                wenn f["text"] == "":
+                    f["eingabe_zustand"] = "empty"
+                sonst:
+                    f["eingabe_zustand"] = "filled"
                 setze geaendert auf wahr
         sonst wenn taste == "Left":
             f["cursor"] = _uim_tf_grenze_zurueck(bytes, f["cursor"])
@@ -1178,7 +1971,10 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
         sonst wenn taste == "End":
             f["cursor"] = länge(bytes)
         sonst wenn taste == "Return":
-            _uim_aktiviere(kontext, f)
+            wenn f.enthält("dialog") und f["dialog"] != nichts:
+                _uim_dialog_aktion(kontext, f["dialog"], f["dialog"]["standard_button"])
+            sonst:
+                _uim_aktiviere(kontext, f)
         sonst:
             setze eingabe auf taste
             wenn taste == "space":
@@ -1186,7 +1982,7 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
             wenn _uim_tf_einfuegen(kontext, f, bytes_zu_liste(eingabe)):
                 setze geaendert auf wahr
         wenn geaendert:
-            _uim_tf_feuere_wechsel(f)
+            _uim_tf_feuere_wechsel(kontext, f)
         _uim_anfordern(kontext)
         gib_zurück wahr
     wenn f["typ"] == "combobox":
@@ -1247,6 +2043,230 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
                     cw(f, wert)
             _uim_anfordern(kontext)
             gib_zurück wahr
+    wenn f["typ"] == "colorpicker":
+        setze n_color auf länge(f["farben"])
+        wenn n_color == 0:
+            gib_zurück wahr
+        setze idx_color auf f["auswahl"]
+        wenn idx_color < 0:
+            setze idx_color auf 0
+        setze cols_color auf _uim_colorpicker_spalten(f)
+        wenn taste == "Left":
+            setze idx_color auf idx_color - 1
+        sonst wenn taste == "Right":
+            setze idx_color auf idx_color + 1
+        sonst wenn taste == "Up":
+            setze idx_color auf idx_color - cols_color
+        sonst wenn taste == "Down":
+            setze idx_color auf idx_color + cols_color
+        sonst:
+            gib_zurück wahr
+        wenn idx_color < 0:
+            setze idx_color auf 0
+        wenn idx_color > n_color - 1:
+            setze idx_color auf n_color - 1
+        f["auswahl"] = idx_color
+        f["selected"] = wahr
+        setze cb_color auf f["on_auswahl"]
+        wenn cb_color != nichts:
+            cb_color(f, idx_color)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
+    wenn f["typ"] == "calendar" oder f["typ"] == "datepicker":
+        setze tag_nav auf f["auswahl"]
+        wenn taste == "Left":
+            setze tag_nav auf tag_nav - 1
+        sonst wenn taste == "Right":
+            setze tag_nav auf tag_nav + 1
+        sonst wenn taste == "Up":
+            setze tag_nav auf tag_nav - 7
+        sonst wenn taste == "Down":
+            setze tag_nav auf tag_nav + 7
+        sonst:
+            gib_zurück wahr
+        wenn tag_nav < 1:
+            setze tag_nav auf 1
+        wenn tag_nav > f["tage"]:
+            setze tag_nav auf f["tage"]
+        f["auswahl"] = tag_nav
+        f["selected"] = wahr
+        setze cb_date auf f["on_auswahl"]
+        wenn cb_date != nichts:
+            cb_date(f, tag_nav)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
+    wenn f["typ"] == "linechart" oder f["typ"] == "barchart" oder f["typ"] == "piechart":
+        setze n_chart auf länge(f["werte"])
+        wenn n_chart == 0:
+            gib_zurück wahr
+        setze idx_chart auf f["auswahl"]
+        wenn idx_chart < 0:
+            setze idx_chart auf 0
+        wenn taste == "Left" oder taste == "Up":
+            setze idx_chart auf idx_chart - 1
+        sonst wenn taste == "Right" oder taste == "Down":
+            setze idx_chart auf idx_chart + 1
+        sonst:
+            gib_zurück wahr
+        wenn idx_chart < 0:
+            setze idx_chart auf 0
+        wenn idx_chart > n_chart - 1:
+            setze idx_chart auf n_chart - 1
+        f["auswahl"] = idx_chart
+        f["selected"] = wahr
+        setze cb_chart auf f["on_auswahl"]
+        wenn cb_chart != nichts:
+            cb_chart(f, idx_chart)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
+    wenn f["typ"] == "gauge":
+        setze step_gauge auf (f["max"] - f["min"]) / 20
+        wenn step_gauge <= 0:
+            setze step_gauge auf 1
+        setze wert_gauge auf f["wert"]
+        wenn taste == "Left" oder taste == "Down":
+            setze wert_gauge auf wert_gauge - step_gauge
+        sonst wenn taste == "Right" oder taste == "Up":
+            setze wert_gauge auf wert_gauge + step_gauge
+        sonst:
+            gib_zurück wahr
+        wenn wert_gauge < f["min"]:
+            setze wert_gauge auf f["min"]
+        wenn wert_gauge > f["max"]:
+            setze wert_gauge auf f["max"]
+        f["wert"] = wert_gauge
+        setze cb_gauge auf f["on_wechsel"]
+        wenn cb_gauge != nichts:
+            cb_gauge(f, wert_gauge)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
+    wenn f["typ"] == "terminal":
+        setze hist_n auf länge(f["history"])
+        wenn taste == "Up":
+            setze hist_idx auf f["history_idx"]
+            wenn hist_idx < 0:
+                setze hist_idx auf hist_n - 1
+            sonst:
+                setze hist_idx auf hist_idx - 1
+            wenn hist_idx < 0:
+                setze hist_idx auf 0
+            wenn hist_idx >= hist_n:
+                setze hist_idx auf hist_n - 1
+            wenn hist_n > 0:
+                setze f["history_idx"] auf hist_idx
+                setze f["eingabe"] auf f["history"][hist_idx]
+                setze f["cursor"] auf länge(bytes_zu_liste(f["eingabe"]))
+        sonst wenn taste == "Down":
+            setze hist_idx auf f["history_idx"] + 1
+            wenn hist_idx >= hist_n:
+                setze f["history_idx"] auf -1
+                setze f["eingabe"] auf ""
+                setze f["cursor"] auf 0
+            sonst:
+                setze f["history_idx"] auf hist_idx
+                setze f["eingabe"] auf f["history"][hist_idx]
+                setze f["cursor"] auf länge(bytes_zu_liste(f["eingabe"]))
+        sonst wenn taste == "Left":
+            setze f["cursor"] auf _uim_tf_grenze_zurueck(bytes_zu_liste(f["eingabe"]), f["cursor"])
+        sonst wenn taste == "Right":
+            setze f["cursor"] auf _uim_tf_grenze_vor(bytes_zu_liste(f["eingabe"]), f["cursor"])
+        sonst wenn taste == "Home":
+            setze f["cursor"] auf 0
+        sonst wenn taste == "End":
+            setze f["cursor"] auf länge(bytes_zu_liste(f["eingabe"]))
+        sonst wenn taste == "BackSpace":
+            setze f["text"] auf f["eingabe"]
+            setze bytes_term auf bytes_zu_liste(f["text"])
+            wenn f["cursor"] > 0:
+                setze p_term auf _uim_tf_grenze_zurueck(bytes_term, f["cursor"])
+                setze nb_term auf _uim_tf_teil(bytes_term, 0, p_term)
+                setze rest_term auf _uim_tf_teil(bytes_term, f["cursor"], länge(bytes_term))
+                für bb_term in rest_term:
+                    nb_term.hinzufügen(bb_term)
+                setze f["eingabe"] auf bytes_neu(nb_term)
+                setze f["cursor"] auf p_term
+        sonst wenn taste == "Return":
+            setze cmd_term auf bytes_neu(bytes_zu_liste(f["eingabe"]))
+            f["zeilen"].hinzufügen(f["prompt"] + cmd_term)
+            wenn cmd_term != "":
+                f["history"].hinzufügen(cmd_term)
+            setze f["history_idx"] auf -1
+            setze callback_ok_term auf wahr
+            setze cb_term auf f["on_befehl"]
+            wenn cb_term != nichts:
+                setze callback_ok_term auf cb_term(f)
+            setze f["eingabe"] auf ""
+            setze f["text"] auf ""
+            setze f["cursor"] auf 0
+            setze f["scroll_y"] auf _uim_scroll_max(kontext, f)
+            _uim_anfordern(kontext)
+            gib_zurück callback_ok_term
+        sonst:
+            setze eingabe_term auf taste
+            wenn taste == "space":
+                setze eingabe_term auf " "
+            setze f["text"] auf f["eingabe"]
+            setze f["cursor"] auf länge(bytes_zu_liste(f["eingabe"]))
+            wenn _uim_tf_einfuegen(kontext, f, bytes_zu_liste(eingabe_term)):
+                setze f["eingabe"] auf f["text"]
+        _uim_anfordern(kontext)
+        gib_zurück wahr
+    wenn f["typ"] == "markdown":
+        setze max_md auf _uim_scroll_max(kontext, f)
+        setze schritt_md auf _uim_zeilenhoehe(kontext)
+        setze scroll_md auf f["scroll_y"]
+        wenn taste == "Up":
+            setze scroll_md auf scroll_md - schritt_md
+        sonst wenn taste == "Down":
+            setze scroll_md auf scroll_md + schritt_md
+        sonst wenn taste == "Home":
+            setze scroll_md auf 0
+        sonst wenn taste == "End":
+            setze scroll_md auf max_md
+        sonst:
+            gib_zurück wahr
+        wenn scroll_md < 0:
+            setze scroll_md auf 0
+        wenn scroll_md > max_md:
+            setze scroll_md auf max_md
+        setze f["scroll_y"] auf scroll_md
+        _uim_anfordern(kontext)
+        gib_zurück wahr
+    wenn f["typ"] == "iconview":
+        setze n auf länge(f["eintraege"])
+        wenn n == 0:
+            gib_zurück wahr
+        setze cols auf _uim_iconview_spalten(kontext, f)
+        setze idx auf f["auswahl"]
+        wenn idx < 0:
+            wenn taste == "Up" oder taste == "Left":
+                setze idx auf n - 1
+            sonst:
+                setze idx auf 0
+        sonst wenn taste == "Up":
+            setze idx auf idx - cols
+        sonst wenn taste == "Down":
+            setze idx auf idx + cols
+        sonst wenn taste == "Left":
+            setze idx auf idx - 1
+        sonst wenn taste == "Right":
+            setze idx auf idx + 1
+        sonst:
+            gib_zurück wahr
+        wenn idx < 0:
+            setze idx auf 0
+        wenn idx > n - 1:
+            setze idx auf n - 1
+        wenn idx != f["auswahl"]:
+            f["auswahl"] = idx
+            f["selected"] = wahr
+            f["zustand"] = "selected"
+            _uim_iconview_sichtbar_machen(kontext, f, idx)
+            setze cb_icon auf f["on_auswahl"]
+            wenn cb_icon != nichts:
+                cb_icon(f, idx)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
     wenn f["typ"] == "liste":
         wenn taste == "Up" oder taste == "Down":
             setze n auf länge(f["zeilen"])
@@ -1269,6 +2289,53 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
                     cb(f, idx)
             _uim_anfordern(kontext)
             gib_zurück wahr
+    wenn f["typ"] == "baum":
+        setze sichtbare auf _uim_baum_sichtbare(f)
+        setze n auf länge(sichtbare)
+        wenn n == 0:
+            gib_zurück wahr
+        setze idx auf f["auswahl"]
+        wenn idx < 0:
+            setze idx auf 0
+        wenn taste == "Up":
+            setze idx auf idx - 1
+        sonst:
+            setze idx auf idx + 1
+        wenn idx < 0:
+            setze idx auf 0
+        wenn idx > n - 1:
+            setze idx auf n - 1
+        wenn idx != f["auswahl"]:
+            f["auswahl"] = idx
+            _uim_baum_sichtbar_machen(kontext, f, idx)
+            setze cb auf f["on_auswahl"]
+            wenn cb != nichts:
+                cb(f, idx)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
+    wenn f["typ"] == "datengitter":
+        setze n auf länge(f["zeilen"])
+        wenn n == 0:
+            gib_zurück wahr
+        setze idx auf f["auswahl"]
+        wenn idx < 0:
+            setze idx auf 0
+        wenn taste == "Up":
+            setze idx auf idx - 1
+        sonst:
+            setze idx auf idx + 1
+        wenn idx < 0:
+            setze idx auf 0
+        wenn idx > n - 1:
+            setze idx auf n - 1
+        wenn idx != f["auswahl"]:
+            f["auswahl"] = idx
+            _uim_baum_sichtbar_machen(kontext, f, idx)
+            setze cb auf f["on_auswahl"]
+            wenn cb != nichts:
+                cb(f, idx)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
     gib_zurück falsch
 
 # Scrollrad: oberstes scrollbares Widget unter dem Zeiger scrollen.
@@ -1278,7 +2345,7 @@ funktion _uim_kern_rad(kontext, x, y, delta):
         gib_zurück falsch
     wenn w["aktiv"] == falsch:
         gib_zurück falsch
-    wenn w["typ"] != "liste" und w["typ"] != "scroll":
+    wenn w["typ"] != "liste" und w["typ"] != "scroll" und w["typ"] != "baum" und w["typ"] != "datengitter" und w["typ"] != "terminal" und w["typ"] != "markdown":
         gib_zurück falsch
     setze zh auf _uim_zeilenhoehe(kontext)
     setze max_scroll auf _uim_scroll_max(kontext, w)
@@ -1296,18 +2363,12 @@ funktion _uim_z_knopf(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
     setze ax auf ox + w["x"]
     setze ay auf oy + w["y"]
-    setze flaeche auf t["flaeche"]
-    wenn w["aktiv"] == falsch:
-        setze flaeche auf t["flaeche_druck"]
-    sonst wenn w["druck"]:
-        setze flaeche auf t["flaeche_druck"]
-    sonst wenn w["hover"]:
-        setze flaeche auf t["flaeche_hover"]
+    setze flaeche auf _uim_zustand_farbe(kontext, w, "flaeche")
     _uim_farbe(kontext, z, flaeche)
     _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], wahr)
     wenn _uim_glass_an(t):
         _uim_glass_deko(kontext, z, ax, ay, w["b"], w["h"], t["radius"])
-    _uim_farbe(kontext, z, t["rand"])
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
     _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
     wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
         _uim_farbe(kontext, z, t["akzent"])
@@ -1316,24 +2377,246 @@ funktion _uim_z_knopf(kontext, z, w, ox, oy):
     setze tb auf _uim_zf_text_breite(kontext, z, w["text"], schrift)
     setze tx auf ax + (w["b"] - tb) / 2
     setze ty auf ay + (w["h"] - schrift) / 2 - 1
-    setze farbe auf t["text"]
-    wenn w["aktiv"] == falsch:
-        setze farbe auf t["text_gedimmt"]
+    setze farbe auf _uim_zustand_farbe(kontext, w, "text")
     _uim_farbe(kontext, z, farbe)
     _uim_zf_text(kontext, z, tx, ty, w["text"], schrift)
     gib_zurück wahr
 
+funktion _uim_text_ellipsis(kontext, z, inhalt, max_b, schrift):
+    wenn _uim_zf_text_breite(kontext, z, inhalt, schrift) <= max_b:
+        gib_zurück inhalt
+    setze punkte auf "..."
+    wenn _uim_zf_text_breite(kontext, z, punkte, schrift) > max_b:
+        gib_zurück ""
+    setze bytes auf bytes_zu_liste(inhalt)
+    setze pos auf länge(bytes)
+    solange pos > 0:
+        setze kandidat auf bytes_neu(_uim_tf_teil(bytes, 0, pos)) + punkte
+        wenn _uim_zf_text_breite(kontext, z, kandidat, schrift) <= max_b:
+            gib_zurück kandidat
+        setze pos auf _uim_tf_grenze_zurueck(bytes, pos)
+    gib_zurück punkte
+
 funktion _uim_z_label(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
-    setze ax auf ox + w["x"]
+    setze pad auf w["padding"]
+    setze max_b auf w["b"] - pad * 2
+    setze max_h auf w["h"] - pad * 2
+    wenn max_b < 0:
+        setze max_b auf 0
+    wenn max_h < 0:
+        setze max_h auf 0
+    setze ax auf ox + w["x"] + pad
+    setze ay auf oy + w["y"] + pad
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "text"))
+    wenn w["text_umbruch"]:
+        setze teile auf w["text"].teilen(" ")
+        setze zeile auf ""
+        setze yy auf ay
+        setze fertig auf falsch
+        für wort in teile:
+            wenn fertig == falsch:
+                setze kandidat auf wort
+                wenn zeile != "":
+                    setze kandidat auf zeile + " " + wort
+                wenn zeile != "" und _uim_zf_text_breite(kontext, z, kandidat, t["schrift"]) > max_b:
+                    wenn yy + t["schrift"] <= ay + max_h:
+                        _uim_zf_text(kontext, z, ax, yy, zeile, t["schrift"])
+                        setze yy auf yy + t["schrift"] + 2
+                        setze zeile auf wort
+                    sonst:
+                        setze fertig auf wahr
+                sonst:
+                    setze zeile auf kandidat
+        wenn fertig == falsch und zeile != "" und yy + t["schrift"] <= ay + max_h:
+            wenn w["text_ellipsis"]:
+                setze zeile auf _uim_text_ellipsis(kontext, z, zeile, max_b, t["schrift"])
+            _uim_zf_text(kontext, z, ax, yy, zeile, t["schrift"])
+        gib_zurück wahr
+    setze anzeige auf w["text"]
+    wenn w["text_ellipsis"]:
+        setze anzeige auf _uim_text_ellipsis(kontext, z, anzeige, max_b, t["schrift"])
     wenn w["ausrichtung"] == "mitte":
-        setze tb auf _uim_zf_text_breite(kontext, z, w["text"], t["schrift"])
-        setze ax auf ax + (w["b"] - tb) / 2
+        setze tb auf _uim_zf_text_breite(kontext, z, anzeige, t["schrift"])
+        setze ax auf ax + (max_b - tb) / 2
     sonst wenn w["ausrichtung"] == "rechts":
-        setze tb auf _uim_zf_text_breite(kontext, z, w["text"], t["schrift"])
-        setze ax auf ax + w["b"] - tb
-    _uim_farbe(kontext, z, t["text"])
-    _uim_zf_text(kontext, z, ax, oy + w["y"], w["text"], t["schrift"])
+        setze tb auf _uim_zf_text_breite(kontext, z, anzeige, t["schrift"])
+        setze ax auf ax + max_b - tb
+    _uim_zf_text(kontext, z, ax, ay, anzeige, t["schrift"])
+    gib_zurück wahr
+
+funktion _uim_z_spinner(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze cx auf ax + w["b"] / 2
+    setze cy auf ay + w["h"] / 2
+    setze radius auf w["h"] / 2 - 3
+    wenn radius < 4:
+        setze radius auf 4
+    setze dx auf [0, 1, 1, 1, 0, -1, -1, -1]
+    setze dy auf [-1, -1, 0, 1, 1, 1, 0, -1]
+    setze i auf 0
+    solange i < 8:
+        wenn i == w["wert"]:
+            _uim_farbe(kontext, z, t["akzent"])
+        sonst:
+            _uim_farbe(kontext, z, t["text_gedimmt"])
+        _uim_zf_linie(kontext, z, cx + dx[i] * (radius - 3), cy + dy[i] * (radius - 3), cx + dx[i] * radius, cy + dy[i] * radius, 3)
+        setze i auf i + 1
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
+        _uim_zf_kreis(kontext, z, cx, cy, radius + 3, falsch)
+    gib_zurück wahr
+
+# UI-13/STATUS: kompakte retained Zustandsansicht fuer leer/fehler/laden/skelett.
+funktion _uim_z_statusansicht(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze modus auf w["status_modus"]
+    setze flaeche auf t["flaeche"]
+    wenn modus == "fehler":
+        setze flaeche auf t["flaeche_fehler"]
+    sonst wenn modus == "laden":
+        setze flaeche auf t["flaeche_laden"]
+    _uim_farbe(kontext, z, flaeche)
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], wahr)
+    wenn _uim_glass_an(t):
+        _uim_glass_deko(kontext, z, ax, ay, w["b"], w["h"], t["radius"])
+    wenn modus == "skelett":
+        setze i auf 0
+        solange i < w["skelett_zeilen"]:
+            setze balken_b auf w["b"] - 28 - i * 18
+            wenn balken_b < w["b"] / 2:
+                setze balken_b auf w["b"] / 2
+            _uim_farbe(kontext, z, t["text_gedimmt"])
+            _uim_zf_rechteck_rund(kontext, z, ax + 14, ay + 12 + i * 15, balken_b, 7, 3, wahr)
+            setze i auf i + 1
+        gib_zurück wahr
+    setze text_x auf ax + 14
+    wenn modus == "laden":
+        setze cx auf ax + 20
+        setze cy auf ay + w["h"] / 2
+        setze dx auf [0, 1, 1, 1, 0, -1, -1, -1]
+        setze dy auf [-1, -1, 0, 1, 1, 1, 0, -1]
+        setze i auf 0
+        solange i < 8:
+            wenn i == w["phase"]:
+                _uim_farbe(kontext, z, t["akzent"])
+            sonst:
+                _uim_farbe(kontext, z, t["text_gedimmt"])
+            _uim_zf_linie(kontext, z, cx + dx[i] * 5, cy + dy[i] * 5, cx + dx[i] * 9, cy + dy[i] * 9, 2)
+            setze i auf i + 1
+        setze text_x auf ax + 40
+    wenn modus == "fehler":
+        _uim_farbe(kontext, z, t["text_fehler"])
+    sonst wenn modus == "laden":
+        _uim_farbe(kontext, z, t["text_laden"])
+    sonst:
+        _uim_farbe(kontext, z, t["text"])
+    _uim_zf_text(kontext, z, text_x, ay + 10, w["status_titel"], t["schrift"])
+    _uim_farbe(kontext, z, t["text_gedimmt"])
+    _uim_zf_text(kontext, z, text_x, ay + 30, w["status_text"], t["schrift"] - 2)
+    wenn modus == "fehler" und w["on_klick"] != nichts:
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck_rund(kontext, z, ax + w["b"] - 76, ay + w["h"] - 28, 64, 20, 4, wahr)
+        wenn t.enthält("auswahl_text"):
+            _uim_farbe(kontext, z, t["auswahl_text"])
+        sonst:
+            _uim_farbe(kontext, z, t["hintergrund"])
+        _uim_zf_text(kontext, z, ax + w["b"] - 68, ay + w["h"] - 25, "Erneut", t["schrift"] - 2)
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
+    gib_zurück wahr
+
+funktion _uim_z_bewertung(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze stern_b auf w["b"] / w["max"]
+    setze i auf 0
+    solange i < w["max"]:
+        setze stern auf "☆"
+        wenn i < w["wert"]:
+            setze stern auf "★"
+            _uim_farbe(kontext, z, t["akzent"])
+        sonst:
+            _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "text"))
+        _uim_zf_text(kontext, z, ax + i * stern_b, ay + (w["h"] - t["schrift"]) / 2 - 1, stern, t["schrift"])
+        setze i auf i + 1
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
+        _uim_zf_rechteck_rund(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, t["radius"] + 2, falsch)
+    gib_zurück wahr
+
+funktion _uim_z_schalter(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze track_h auf w["h"] - 4
+    wenn track_h > 20:
+        setze track_h auf 20
+    wenn track_h < 12:
+        setze track_h auf 12
+    setze track_b auf track_h * 2
+    wenn track_b > w["b"]:
+        setze track_b auf w["b"]
+    setze ty auf ay + (w["h"] - track_h) / 2
+    setze radius auf track_h / 2
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ty, track_b, track_h, radius, wahr)
+    wenn _uim_glass_an(t):
+        _uim_glass_deko(kontext, z, ax, ty, track_b, track_h, radius)
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ty, track_b, track_h, radius, falsch)
+    setze knob_r auf radius - 2
+    wenn knob_r < 3:
+        setze knob_r auf 3
+    setze kx auf ax + radius
+    wenn w["wert"]:
+        setze kx auf ax + track_b - radius
+        _uim_farbe(kontext, z, t["akzent"])
+    sonst:
+        _uim_farbe(kontext, z, t["text"])
+    wenn w["aktiv"] == falsch:
+        _uim_farbe(kontext, z, t["text_gedimmt"])
+    _uim_zf_kreis(kontext, z, kx, ty + radius, knob_r, wahr)
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
+        _uim_zf_rechteck_rund(kontext, z, ax - 2, ty - 2, track_b + 4, track_h + 4, radius + 2, falsch)
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "text"))
+    _uim_zf_text(kontext, z, ax + track_b + t["abstand"], ay + (w["h"] - t["schrift"]) / 2 - 1, w["text"], t["schrift"])
+    gib_zurück wahr
+
+funktion _uim_z_toggle(kontext, z, w, ox, oy):
+    gib_zurück _uim_z_knopf(kontext, z, w, ox, oy)
+
+funktion _uim_z_radio(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze kh auf w["h"]
+    wenn kh > 18:
+        setze kh auf 18
+    setze cx auf ax + kh / 2
+    setze cy auf ay + w["h"] / 2
+    setze radius auf kh / 2 - 2
+    wenn radius < 2:
+        setze radius auf 2
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
+    _uim_zf_kreis(kontext, z, cx, cy, radius, falsch)
+    wenn w["wert"]:
+        _uim_farbe(kontext, z, t["akzent"])
+        setze innen auf radius - 3
+        wenn innen < 1:
+            setze innen auf 1
+        _uim_zf_kreis(kontext, z, cx, cy, innen, wahr)
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
+        _uim_zf_kreis(kontext, z, cx, cy, radius + 2, falsch)
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "text"))
+    _uim_zf_text(kontext, z, ax + kh + t["abstand"], ay + (w["h"] - t["schrift"]) / 2 - 1, w["text"], t["schrift"])
     gib_zurück wahr
 
 funktion _uim_z_checkbox(kontext, z, w, ox, oy):
@@ -1344,16 +2627,12 @@ funktion _uim_z_checkbox(kontext, z, w, ox, oy):
     wenn kh > 18:
         setze kh auf 18
     setze ky auf ay + (w["h"] - kh) / 2
-    setze flaeche auf t["flaeche"]
-    wenn w["hover"]:
-        setze flaeche auf t["flaeche_hover"]
-    wenn w["druck"]:
-        setze flaeche auf t["flaeche_druck"]
+    setze flaeche auf _uim_zustand_farbe(kontext, w, "flaeche")
     _uim_farbe(kontext, z, flaeche)
     _uim_zf_rechteck_rund(kontext, z, ax, ky, kh, kh, 3, wahr)
     wenn _uim_glass_an(t):
         _uim_glass_deko(kontext, z, ax, ky, kh, kh, 3)
-    _uim_farbe(kontext, z, t["rand"])
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
     _uim_zf_rechteck_rund(kontext, z, ax, ky, kh, kh, 3, falsch)
     wenn w["wert"]:
         _uim_farbe(kontext, z, t["akzent"])
@@ -1362,9 +2641,7 @@ funktion _uim_z_checkbox(kontext, z, w, ox, oy):
     wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
         _uim_farbe(kontext, z, t["akzent"])
         _uim_zf_rechteck_rund(kontext, z, ax - 2, ky - 2, kh + 4, kh + 4, 5, falsch)
-    setze farbe auf t["text"]
-    wenn w["aktiv"] == falsch:
-        setze farbe auf t["text_gedimmt"]
+    setze farbe auf _uim_zustand_farbe(kontext, w, "text")
     _uim_farbe(kontext, z, farbe)
     setze ty auf ay + (w["h"] - t["schrift"]) / 2 - 1
     _uim_zf_text(kontext, z, ax + kh + t["abstand"], ty, w["text"], t["schrift"])
@@ -1414,14 +2691,25 @@ funktion _uim_z_fortschritt(kontext, z, w, ox, oy):
         setze anteil auf 0
     wenn anteil > 1:
         setze anteil auf 1
-    _uim_farbe(kontext, z, t["flaeche"])
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
     _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], wahr)
-    wenn anteil > 0:
+    wenn w["unbestimmt"]:
+        setze breite auf w["b"] * 0.3
+        setze start auf ax + w["phase"] * (w["b"] + breite) - breite
+        setze ende auf start + breite
+        wenn start < ax:
+            setze start auf ax
+        wenn ende > ax + w["b"]:
+            setze ende auf ax + w["b"]
+        wenn ende > start:
+            _uim_farbe(kontext, z, t["akzent"])
+            _uim_zf_rechteck_rund(kontext, z, start, ay, ende - start, w["h"], t["radius"], wahr)
+    sonst wenn anteil > 0:
         _uim_farbe(kontext, z, t["akzent"])
         _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"] * anteil, w["h"], t["radius"], wahr)
     wenn _uim_glass_an(t):
         _uim_glass_deko(kontext, z, ax, ay, w["b"], w["h"], t["radius"])
-    _uim_farbe(kontext, z, t["rand"])
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
     _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
     gib_zurück wahr
 
@@ -1437,7 +2725,107 @@ funktion _uim_z_panel(kontext, z, w, ox, oy):
     _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
     wenn w["text"] != "":
         _uim_farbe(kontext, z, t["text_gedimmt"])
-        _uim_zf_text(kontext, z, ax + t["abstand"], ay + t["abstand"] / 2, w["text"], t["schrift"] - 1)
+        _uim_zf_text(kontext, z, ax + t["abstand"] + 2, ay + t["abstand"] / 2 + 1, w["text"], t["schrift"] - 1)
+    gib_zurück wahr
+
+# TreeView: sichtbare Zeilen werden aus verschachtelten Knoten virtuell erzeugt.
+funktion _uim_z_baum(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze zh auf _uim_zeilenhoehe(kontext)
+    setze sichtbare auf _uim_baum_sichtbare(w)
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], wahr)
+    setze clip_ok auf _uim_zf_clip_setze(kontext, z, ax, ay, w["b"], w["h"])
+    wenn clip_ok == falsch:
+        gib_zurück falsch
+    setze start auf 0
+    solange (start + 1) * zh <= w["scroll_y"]:
+        setze start auf start + 1
+    setze i auf start
+    setze zy auf ay + start * zh - w["scroll_y"]
+    solange i < länge(sichtbare) und zy < ay + w["h"]:
+        setze eintrag auf sichtbare[i]
+        setze knoten auf eintrag["knoten"]
+        setze ebene auf eintrag["ebene"]
+        wenn i == w["auswahl"]:
+            _uim_farbe(kontext, z, t["akzent"])
+            _uim_zf_rechteck(kontext, z, ax, zy, w["b"], zh, wahr)
+            wenn t.enthält("auswahl_text"):
+                _uim_farbe(kontext, z, t["auswahl_text"])
+            sonst:
+                _uim_farbe(kontext, z, t["hintergrund"])
+        sonst:
+            _uim_farbe(kontext, z, t["text"])
+        setze tx auf ax + t["abstand"] + ebene * 12
+        wenn länge(knoten["kinder"]) > 0:
+            _uim_zf_linie(kontext, z, tx + 2, zy + zh / 2 - 2, tx + 6, zy + zh / 2 - 2, 1)
+            _uim_zf_linie(kontext, z, tx + 4, zy + zh / 2 - 4, tx + 4, zy + zh / 2, 1)
+        _uim_zf_text(kontext, z, tx + 12, zy + (zh - t["schrift"]) / 2, knoten["text"], t["schrift"])
+        setze i auf i + 1
+        setze zy auf zy + zh
+    setze pop_ok auf _uim_zf_clip_loesche(kontext, z)
+    wenn pop_ok == falsch:
+        gib_zurück falsch
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], falsch)
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
+    gib_zurück wahr
+
+# DataGrid v1: fixe Kopfzeile, gleich breite Spalten, virtuelle Datenzeilen.
+funktion _uim_z_datengitter(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze zh auf _uim_zeilenhoehe(kontext)
+    setze n_spalten auf länge(w["spalten"])
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], wahr)
+    wenn n_spalten == 0:
+        gib_zurück wahr
+    setze spalten_b auf w["b"] / n_spalten
+    _uim_farbe(kontext, z, t["akzent"])
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], zh, wahr)
+    setze j auf 0
+    solange j < n_spalten:
+        _uim_farbe(kontext, z, t["auswahl_text"])
+        _uim_zf_text(kontext, z, ax + j * spalten_b + t["abstand"] + 2, ay + (zh - t["schrift"]) / 2 + 1, text(w["spalten"][j]), t["schrift"])
+        setze j auf j + 1
+    setze clip_ok auf _uim_zf_clip_setze(kontext, z, ax, ay + zh, w["b"], w["h"] - zh)
+    wenn clip_ok == falsch:
+        gib_zurück falsch
+    setze start auf 0
+    solange (start + 1) * zh <= w["scroll_y"]:
+        setze start auf start + 1
+    setze i auf start
+    setze zy auf ay + zh + start * zh - w["scroll_y"]
+    solange i < länge(w["zeilen"]) und zy < ay + w["h"]:
+        setze zeile auf w["zeilen"][i]
+        wenn i == w["auswahl"]:
+            _uim_farbe(kontext, z, t["akzent"])
+            _uim_zf_rechteck(kontext, z, ax, zy, w["b"], zh, wahr)
+        setze j auf 0
+        solange j < n_spalten:
+            wenn i == w["auswahl"] und t.enthält("auswahl_text"):
+                _uim_farbe(kontext, z, t["auswahl_text"])
+            sonst:
+                _uim_farbe(kontext, z, t["text"])
+            wenn j < länge(zeile):
+                _uim_zf_text(kontext, z, ax + j * spalten_b + t["abstand"], zy + (zh - t["schrift"]) / 2, text(zeile[j]), t["schrift"])
+            setze j auf j + 1
+        setze i auf i + 1
+        setze zy auf zy + zh
+    setze pop_ok auf _uim_zf_clip_loesche(kontext, z)
+    wenn pop_ok == falsch:
+        gib_zurück falsch
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], falsch)
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
     gib_zurück wahr
 
 funktion _uim_z_liste(kontext, z, w, ox, oy):
@@ -1447,7 +2835,7 @@ funktion _uim_z_liste(kontext, z, w, ox, oy):
     setze zh auf _uim_zeilenhoehe(kontext)
     setze zeilen auf w["zeilen"]
     setze n auf länge(zeilen)
-    _uim_farbe(kontext, z, t["hintergrund"])
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
     _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], wahr)
     setze clip_ok auf _uim_zf_clip_setze(kontext, z, ax, ay, w["b"], w["h"])
     wenn clip_ok == falsch:
@@ -1458,7 +2846,9 @@ funktion _uim_z_liste(kontext, z, w, ox, oy):
         setze start auf start + 1
     setze i auf start
     setze zy auf ay + start * zh - w["scroll_y"]
-    solange i < n und zy < ay + w["h"]:
+    # Keine nur teilweise sichtbare letzte Zeile zeichnen: Nicht jedes
+    # Surface-Backend clippt Textglyphen zuverlässig an der Widget-Kante.
+    solange i < n und zy + zh <= ay + w["h"]:
         wenn i == w["auswahl"]:
             _uim_farbe(kontext, z, t["akzent"])
             _uim_zf_rechteck(kontext, z, ax, zy, w["b"], zh, wahr)
@@ -1476,6 +2866,479 @@ funktion _uim_z_liste(kontext, z, w, ox, oy):
         gib_zurück falsch
     _uim_farbe(kontext, z, t["rand"])
     _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], falsch)
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
+    gib_zurück wahr
+
+# IconView/TileView: Raster aus deklarativen Einträgen; Icons sind bewusst
+# toolkitfreie Platzhalter (Glyph-Text oder farbige Kachel).
+funktion _uim_z_iconview(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze abstand auf t["abstand"]
+    setze tile_b auf w["tile_b"]
+    setze tile_h auf w["tile_h"]
+    setze cols auf _uim_iconview_spalten(kontext, w)
+    setze zeilen auf _uim_iconview_zeilen(kontext, w)
+    setze n auf länge(w["eintraege"])
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], wahr)
+    setze clip_ok auf _uim_zf_clip_setze(kontext, z, ax, ay, w["b"], w["h"])
+    wenn clip_ok == falsch:
+        gib_zurück falsch
+    setze start auf 0
+    solange (start + 1) * tile_h <= w["scroll_y"]:
+        setze start auf start + 1
+    setze row auf start
+    setze idx auf start * cols
+    setze zy auf ay + row * tile_h - w["scroll_y"]
+    # Nur vollständig passende Tile-Zeilen rendern; partielle Tiles
+    # würden sonst inklusive Beschriftung in das nächste Widget laufen.
+    solange row < zeilen und idx < n und zy + tile_h <= ay + w["h"]:
+        setze col auf 0
+        solange col < cols und idx < n:
+            setze tx auf ax + col * tile_b + abstand / 2
+            setze ty auf zy + abstand / 2
+            setze tile_innen_b auf tile_b - abstand
+            wenn tile_innen_b > 34:
+                setze tile_innen_b auf 34
+            wenn tile_innen_b < 12:
+                setze tile_innen_b auf 12
+            wenn idx == w["auswahl"]:
+                _uim_farbe(kontext, z, t["akzent"])
+            sonst:
+                _uim_farbe(kontext, z, t["flaeche_hover"])
+            _uim_zf_rechteck_rund(kontext, z, tx, ty, tile_innen_b, tile_innen_b, 5, wahr)
+            setze icon auf _uim_iconview_icon(w["eintraege"][idx])
+            wenn icon != "":
+                _uim_farbe(kontext, z, t["text"])
+                setze ib auf _uim_zf_text_breite(kontext, z, icon, t["schrift"])
+                _uim_zf_text(kontext, z, tx + (tile_innen_b - ib) / 2, ty + (tile_innen_b - t["schrift"]) / 2, icon, t["schrift"])
+            sonst:
+                _uim_farbe(kontext, z, t["akzent"])
+                _uim_zf_rechteck_rund(kontext, z, tx + 8, ty + 8, tile_innen_b - 16, tile_innen_b - 16, 4, falsch)
+            wenn idx == w["auswahl"]:
+                _uim_farbe(kontext, z, t["auswahl_text"])
+            sonst:
+                _uim_farbe(kontext, z, t["text"])
+            setze tile_text_b auf tile_b - abstand
+            wenn tile_text_b < 1:
+                setze tile_text_b auf 1
+            setze tile_text auf _uim_text_ellipsis(kontext, z, _uim_iconview_text(w["eintraege"][idx]), tile_text_b, t["schrift"] - 1)
+            _uim_zf_text(kontext, z, tx, ty + tile_innen_b + 2, tile_text, t["schrift"] - 1)
+            setze idx auf idx + 1
+            setze col auf col + 1
+        setze row auf row + 1
+        setze zy auf zy + tile_h
+    setze pop_ok auf _uim_zf_clip_loesche(kontext, z)
+    wenn pop_ok == falsch:
+        gib_zurück falsch
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], falsch)
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
+    gib_zurück wahr
+
+# Anzeige-Widgets: toolkitfreie Platzhalter/Glyphen, zentral themisiert.
+funktion _uim_z_image(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], wahr)
+    wenn _uim_glass_an(t):
+        _uim_glass_deko(kontext, z, ax, ay, w["b"], w["h"], t["radius"])
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
+    _uim_farbe(kontext, z, t["akzent"])
+    _uim_zf_linie(kontext, z, ax + 6, ay + 6, ax + w["b"] - 6, ay + w["h"] - 6, 2)
+    _uim_zf_linie(kontext, z, ax + w["b"] - 6, ay + 6, ax + 6, ay + w["h"] - 6, 2)
+    wenn w["alt"] != "":
+        setze label_schrift auf t["schrift"] - 1
+        setze label_h auf label_schrift + 8
+        wenn label_h > w["h"] - 4:
+            setze label_h auf w["h"] - 4
+        setze label_y auf ay + w["h"] - label_h - 2
+        _uim_farbe(kontext, z, t["flaeche_hover"])
+        _uim_zf_rechteck_rund(kontext, z, ax + 3, label_y, w["b"] - 6, label_h, 4, wahr)
+        setze label_text auf _uim_text_ellipsis(kontext, z, w["alt"], w["b"] - t["abstand"] * 2, label_schrift)
+        _uim_farbe(kontext, z, t["text"])
+        _uim_zf_text(kontext, z, ax + t["abstand"], label_y + 3, label_text, label_schrift)
+    gib_zurück wahr
+
+funktion _uim_z_icon(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze radius auf w["b"] / 2
+    wenn radius > w["h"] / 2:
+        setze radius auf w["h"] / 2
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_kreis(kontext, z, ax + w["b"] / 2, ay + w["h"] / 2, radius, wahr)
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "text"))
+    setze ib auf _uim_zf_text_breite(kontext, z, w["symbol"], t["schrift"])
+    _uim_zf_text(kontext, z, ax + (w["b"] - ib) / 2, ay + (w["h"] - t["schrift"]) / 2, w["symbol"], t["schrift"])
+    gib_zurück wahr
+
+funktion _uim_z_badge(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], w["h"] / 2, wahr)
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "text"))
+    setze tb auf _uim_zf_text_breite(kontext, z, w["text"], t["schrift"] - 1)
+    _uim_zf_text(kontext, z, ax + (w["b"] - tb) / 2, ay + (w["h"] - t["schrift"]) / 2, w["text"], t["schrift"] - 1)
+    gib_zurück wahr
+
+funktion _uim_z_avatar(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze radius auf w["b"] / 2
+    wenn radius > w["h"] / 2:
+        setze radius auf w["h"] / 2
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_kreis(kontext, z, ax + w["b"] / 2, ay + w["h"] / 2, radius, wahr)
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "text"))
+    setze tb auf _uim_zf_text_breite(kontext, z, w["kuerzel"], t["schrift"])
+    _uim_zf_text(kontext, z, ax + (w["b"] - tb) / 2, ay + (w["h"] - t["schrift"]) / 2, w["kuerzel"], t["schrift"])
+    gib_zurück wahr
+
+# Auswahl-Widgets: Farbfeld und kalenderartiges Datumsgitter.
+funktion _uim_colorpicker_spalten(w):
+    setze n auf 1
+    setze lauf auf 24
+    solange lauf + 24 <= w["b"]:
+        setze n auf n + 1
+        setze lauf auf lauf + 24
+    gib_zurück n
+
+funktion _uim_colorpicker_klick(kontext, w, lx, ly):
+    setze cols auf _uim_colorpicker_spalten(w)
+    setze col auf 0
+    solange (col + 1) * 24 <= lx - w["x"]:
+        setze col auf col + 1
+    setze row auf 0
+    solange (row + 1) * 24 <= ly - w["y"]:
+        setze row auf row + 1
+    setze idx auf row * cols + col
+    wenn idx < 0 oder idx >= länge(w["farben"]):
+        gib_zurück falsch
+    w["auswahl"] = idx
+    w["selected"] = wahr
+    w["zustand"] = "selected"
+    setze cb auf w["on_auswahl"]
+    wenn cb != nichts:
+        cb(w, idx)
+    gib_zurück wahr
+
+funktion _uim_z_colorpicker(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze cols auf _uim_colorpicker_spalten(w)
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], wahr)
+    setze i auf 0
+    setze x auf ax
+    setze y auf ay
+    solange i < länge(w["farben"]):
+        _uim_farbe(kontext, z, w["farben"][i])
+        _uim_zf_rechteck_rund(kontext, z, x + 2, y + 2, 20, 20, 4, wahr)
+        wenn i == w["auswahl"]:
+            _uim_farbe(kontext, z, t["text"])
+            _uim_zf_rechteck_rund(kontext, z, x + 1, y + 1, 22, 22, 4, falsch)
+        setze i auf i + 1
+        wenn i % cols == 0:
+            setze x auf ax
+            setze y auf y + 24
+        sonst:
+            setze x auf x + 24
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], falsch)
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
+    gib_zurück wahr
+
+funktion _uim_kalender_klick(kontext, w, lx, ly):
+    setze cell_h auf (w["h"] - 24) / 6
+    wenn ly - w["y"] < 24:
+        gib_zurück wahr
+    setze col auf 0
+    setze cell_b auf w["b"] / 7
+    solange (col + 1) * cell_b <= lx - w["x"]:
+        setze col auf col + 1
+    setze row auf 0
+    solange (row + 1) * cell_h <= ly - w["y"] - 24:
+        setze row auf row + 1
+    setze tag auf row * 7 + col + 1
+    wenn tag < 1 oder tag > w["tage"]:
+        gib_zurück falsch
+    w["auswahl"] = tag
+    w["selected"] = wahr
+    w["zustand"] = "selected"
+    setze cb auf w["on_auswahl"]
+    wenn cb != nichts:
+        cb(w, tag)
+    gib_zurück wahr
+
+funktion _uim_z_kalender(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze cell_b auf w["b"] / 7
+    setze cell_h auf (w["h"] - 24) / 6
+    # SDL-Text belegt rasterseitig mehr Hoehe als die nominelle Schriftgroesse.
+    # Deshalb feste Reserve statt nomineller Zentrierung: 1px oben, >=2px unten.
+    setze tag_schrift auf t["schrift"] - 4
+    wenn tag_schrift + 7 > cell_h:
+        setze tag_schrift auf cell_h - 7
+    wenn tag_schrift < 1:
+        setze tag_schrift auf 1
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], wahr)
+    _uim_farbe(kontext, z, t["akzent"])
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], 24, wahr)
+    _uim_farbe(kontext, z, t["auswahl_text"])
+    _uim_zf_text(kontext, z, ax + t["abstand"] + 2, ay + 5, text(w["monat"]) + "/" + text(w["jahr"]), t["schrift"] - 1)
+    setze tag auf 1
+    solange tag <= w["tage"]:
+        setze idx auf tag - 1
+        setze col auf idx % 7
+        setze row auf idx / 7
+        setze tx auf ax + col * cell_b
+        setze ty auf ay + 24 + row * cell_h
+        wenn tag == w["auswahl"]:
+            _uim_farbe(kontext, z, t["akzent"])
+            _uim_zf_rechteck(kontext, z, tx, ty, cell_b, cell_h, wahr)
+        _uim_farbe(kontext, z, t["text"])
+        _uim_zf_text(kontext, z, tx + 4, ty + 1, text(tag), tag_schrift)
+        setze tag auf tag + 1
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], falsch)
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
+    gib_zurück wahr
+
+funktion _uim_chart_klick(kontext, w, lx, ly):
+    setze n auf länge(w["werte"])
+    wenn n == 0 oder w["b"] <= 0:
+        gib_zurück falsch
+    setze idx auf boden((lx - w["x"]) * n / w["b"])
+    wenn idx < 0:
+        setze idx auf 0
+    wenn idx > n - 1:
+        setze idx auf n - 1
+    w["auswahl"] = idx
+    w["selected"] = wahr
+    w["zustand"] = "selected"
+    setze cb auf w["on_auswahl"]
+    wenn cb != nichts:
+        cb(w, idx)
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion _uim_gauge_klick(kontext, w, lx):
+    wenn w["b"] <= 0:
+        gib_zurück falsch
+    setze anteil auf (lx - w["x"]) / w["b"]
+    wenn anteil < 0:
+        setze anteil auf 0
+    wenn anteil > 1:
+        setze anteil auf 1
+    setze wert auf w["min"] + (w["max"] - w["min"]) * anteil
+    w["wert"] = wert
+    setze cb auf w["on_wechsel"]
+    wenn cb != nichts:
+        cb(w, wert)
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+# Diagramm-Grundlagen: einheitliches Raster, Palette und Rahmen.
+funktion _uim_chart_max(werte):
+    setze maximum auf 1
+    für wert in werte:
+        wenn wert > maximum:
+            setze maximum auf wert
+    gib_zurück maximum
+
+funktion _uim_chart_farbe(theme, idx):
+    setze palette auf [theme["akzent"], theme["flaeche_hover"], theme["rand_fokus"], theme["text_gedimmt"]]
+    gib_zurück palette[idx % länge(palette)]
+
+funktion _uim_z_chart_rahmen(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], wahr)
+    setze pad auf t["abstand"]
+    setze plot_b auf w["b"] - 2 * pad
+    setze plot_h auf w["h"] - 2 * pad - 12
+    wenn plot_b < 1:
+        setze plot_b auf 1
+    wenn plot_h < 1:
+        setze plot_h auf 1
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_linie(kontext, z, ax + pad, ay + pad + plot_h, ax + pad + plot_b, ay + pad + plot_h, 1)
+    _uim_zf_linie(kontext, z, ax + pad, ay + pad, ax + pad, ay + pad + plot_h, 1)
+    _uim_farbe(kontext, z, t["text_gedimmt"])
+    _uim_zf_linie(kontext, z, ax + pad, ay + pad + plot_h / 2, ax + pad + plot_b, ay + pad + plot_h / 2, 1)
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
+    gib_zurück wahr
+
+funktion _uim_z_linechart(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_z_chart_rahmen(kontext, z, w, ox, oy)
+    setze pad auf t["abstand"]
+    setze plot_b auf w["b"] - 2 * pad
+    setze plot_h auf w["h"] - 2 * pad - 12
+    setze werte auf w["werte"]
+    setze n auf länge(werte)
+    setze maximum auf _uim_chart_max(werte)
+    wenn n > 0:
+        setze i auf 0
+        setze vorher_x auf ax + pad
+        setze wert0 auf werte[0]
+        wenn wert0 < 0:
+            setze wert0 auf 0
+        wenn wert0 > maximum:
+            setze wert0 auf maximum
+        setze vorher_y auf ay + pad + plot_h - plot_h * wert0 / maximum
+        solange i < n:
+            setze wert auf werte[i]
+            wenn wert < 0:
+                setze wert auf 0
+            wenn wert > maximum:
+                setze wert auf maximum
+            setze px auf ax + pad
+            wenn n > 1:
+                setze px auf ax + pad + plot_b * i / (n - 1)
+            setze py auf ay + pad + plot_h - plot_h * wert / maximum
+            wenn i > 0:
+                _uim_farbe(kontext, z, _uim_chart_farbe(t, i))
+                _uim_zf_linie(kontext, z, vorher_x, vorher_y, px, py, 2)
+            wenn i == w["auswahl"]:
+                _uim_farbe(kontext, z, t["text"])
+                _uim_zf_kreis(kontext, z, px, py, 4, wahr)
+            sonst:
+                _uim_farbe(kontext, z, _uim_chart_farbe(t, i))
+                _uim_zf_kreis(kontext, z, px, py, 3, wahr)
+            setze vorher_x auf px
+            setze vorher_y auf py
+            setze i auf i + 1
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
+    gib_zurück wahr
+
+funktion _uim_z_barchart(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_z_chart_rahmen(kontext, z, w, ox, oy)
+    setze pad auf t["abstand"]
+    setze plot_b auf w["b"] - 2 * pad
+    setze plot_h auf w["h"] - 2 * pad - 12
+    setze werte auf w["werte"]
+    setze n auf länge(werte)
+    wenn n > 0:
+        setze maximum auf _uim_chart_max(werte)
+        setze bar_b auf plot_b / n
+        setze i auf 0
+        solange i < n:
+            setze wert auf werte[i]
+            wenn wert < 0:
+                setze wert auf 0
+            wenn wert > maximum:
+                setze wert auf maximum
+            setze bh auf plot_h * wert / maximum
+            setze bx auf ax + pad + bar_b * i + 2
+            setze by auf ay + pad + plot_h - bh
+            wenn i == w["auswahl"]:
+                _uim_farbe(kontext, z, t["akzent"])
+            sonst:
+                _uim_farbe(kontext, z, _uim_chart_farbe(t, i))
+            _uim_zf_rechteck_rund(kontext, z, bx, by, bar_b - 4, bh, 3, wahr)
+            setze i auf i + 1
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
+    gib_zurück wahr
+
+funktion _uim_z_piechart(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze radius auf w["h"] / 2 - t["abstand"] - 4
+    wenn radius > w["b"] / 2 - t["abstand"] - 4:
+        setze radius auf w["b"] / 2 - t["abstand"] - 4
+    wenn radius < 4:
+        setze radius auf 4
+    setze cx auf ax + w["b"] / 2
+    setze cy auf ay + w["h"] / 2
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], wahr)
+    _uim_farbe(kontext, z, t["flaeche_hover"])
+    _uim_zf_kreis(kontext, z, cx, cy, radius, wahr)
+    setze dx auf [1, 0, -1, 0, 1, 1, -1, -1]
+    setze dy auf [0, 1, 0, -1, -1, 1, 1, -1]
+    setze n auf länge(w["werte"])
+    wenn n > 0:
+        setze i auf 0
+        solange i < n:
+            setze sektor auf i * 8 / n
+            wenn sektor > 7:
+                setze sektor auf 7
+            setze ex auf cx + radius * dx[sektor]
+            setze ey auf cy + radius * dy[sektor]
+            wenn i == w["auswahl"]:
+                _uim_farbe(kontext, z, t["text"])
+            sonst:
+                _uim_farbe(kontext, z, _uim_chart_farbe(t, i))
+            _uim_zf_linie(kontext, z, cx, cy, ex, ey, 3)
+            _uim_zf_kreis(kontext, z, ex, ey, 3, wahr)
+            setze i auf i + 1
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_kreis(kontext, z, cx, cy, radius, falsch)
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
+    gib_zurück wahr
+
+funktion _uim_z_gauge(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], wahr)
+    setze span auf w["max"] - w["min"]
+    setze anteil auf 0
+    wenn span > 0:
+        setze anteil auf (w["wert"] - w["min"]) / span
+    wenn anteil < 0:
+        setze anteil auf 0
+    wenn anteil > 1:
+        setze anteil auf 1
+    setze pad auf t["abstand"]
+    setze track_b auf w["b"] - 2 * pad
+    _uim_farbe(kontext, z, t["flaeche_hover"])
+    _uim_zf_rechteck_rund(kontext, z, ax + pad, ay + w["h"] / 2 - 6, track_b, 12, 5, wahr)
+    _uim_farbe(kontext, z, t["akzent"])
+    _uim_zf_rechteck_rund(kontext, z, ax + pad, ay + w["h"] / 2 - 6, track_b * anteil, 12, 5, wahr)
+    _uim_zf_linie(kontext, z, ax + pad + track_b * anteil, ay + 8, ax + pad + track_b * anteil, ay + w["h"] - 8, 2)
+    _uim_farbe(kontext, z, t["text"])
+    _uim_zf_text(kontext, z, ax + pad, ay + 4, text(w["wert"]), t["schrift"] - 1)
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
     wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
         _uim_farbe(kontext, z, t["akzent"])
         _uim_zf_rechteck(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
@@ -1566,6 +3429,11 @@ funktion _uim_tf_ist_zeichen(tb):
 funktion _uim_tf_einfuegen(kontext, f, tb):
     wenn _uim_tf_ist_zeichen(tb) == falsch:
         gib_zurück falsch
+    wenn f["typ"] == "numberbox":
+        wenn länge(tb) != 1:
+            gib_zurück falsch
+        wenn (tb[0] < 48 oder tb[0] > 57) und tb[0] != 45 und tb[0] != 46:
+            gib_zurück falsch
     setze bytes auf bytes_zu_liste(f["text"])
     setze cur auf f["cursor"]
     wenn cur < 0:
@@ -1580,12 +3448,128 @@ funktion _uim_tf_einfuegen(kontext, f, tb):
         nb.hinzufügen(bb)
     f["text"] = bytes_neu(nb)
     f["cursor"] = cur + länge(tb)
+    wenn f["text"] == "":
+        f["eingabe_zustand"] = "empty"
+    sonst:
+        f["eingabe_zustand"] = "filled"
     gib_zurück wahr
 
-funktion _uim_tf_feuere_wechsel(f):
+# UI-13/VALID: Validator-Hook und wiederverwendbare Standardprüfer.
+funktion uim_validierung_pflicht(wert, nachricht):
+    wenn wert == nichts oder text(wert) == "":
+        wenn nachricht == "":
+            gib_zurück "Pflichtfeld"
+        gib_zurück nachricht
+    gib_zurück ""
+
+funktion uim_validierung_zahl_bereich(wert, min_wert, max_wert, nachricht):
+    setze z auf zahl(wert)
+    wenn z == nichts oder (min_wert != nichts und z < min_wert) oder (max_wert != nichts und z > max_wert):
+        wenn nachricht == "":
+            gib_zurück "Zahl ausserhalb des Bereichs"
+        gib_zurück nachricht
+    gib_zurück ""
+
+funktion uim_validierung_format(wert, muster, nachricht):
+    wenn muster == nichts oder muster == "":
+        gib_zurück ""
+    wenn passt(text(wert), regex(muster)):
+        gib_zurück ""
+    wenn nachricht == "":
+        gib_zurück "Format ungueltig"
+    gib_zurück nachricht
+
+funktion uim_validiere(kontext, w):
+    wenn w == nichts:
+        gib_zurück falsch
+    setze fehler auf ""
+    setze validator auf w["validator"]
+    wenn validator != nichts:
+        setze ergebnis auf validator(w, w["text"])
+        wenn ergebnis == falsch:
+            setze fehler auf "Ungueltige Eingabe"
+        sonst wenn ergebnis != wahr und ergebnis != nichts:
+            setze fehler auf text(ergebnis)
+    w["validierungs_fehler"] = fehler
+    w["invalid"] = fehler != ""
+    w["error"] = w["invalid"] oder w["zustand"] == "error"
+    wenn w["invalid"]:
+        w["eingabe_zustand"] = "invalid"
+        w["tooltip"] = fehler
+        w["a11y_beschreibung"] = fehler
+    sonst:
+        wenn w["text"] == "":
+            w["eingabe_zustand"] = "empty"
+        sonst:
+            w["eingabe_zustand"] = "filled"
+        w["tooltip"] = w["hilfetext"]
+        w["a11y_beschreibung"] = w["hilfetext"]
+    _uim_anfordern(kontext)
+    gib_zurück w["invalid"] == falsch
+
+funktion uim_validierung_setze(kontext, w, validator, hilfetext):
+    wenn w == nichts:
+        gib_zurück falsch
+    w["validator"] = validator
+    wenn hilfetext == nichts:
+        w["hilfetext"] = ""
+    sonst:
+        w["hilfetext"] = text(hilfetext)
+    gib_zurück uim_validiere(kontext, w)
+
+funktion uim_validierungsfehler_hole(w):
+    wenn w == nichts oder w.enthält("validierungs_fehler") == falsch:
+        gib_zurück ""
+    gib_zurück w["validierungs_fehler"]
+
+funktion _uim_tf_verlauf_merke(f):
+    wenn länge(f["undo_stapel"]) == 0 oder f["undo_stapel"][länge(f["undo_stapel"]) - 1] != f["text"]:
+        f["undo_stapel"].hinzufügen(f["text"])
+    f["redo_stapel"] = []
+    gib_zurück wahr
+
+funktion _uim_tf_feuere_wechsel(kontext, f):
+    wenn f["validator"] != nichts:
+        uim_validiere(kontext, f)
+    _uim_bind_widget_zu_state(f)
+    setze ce auf f["on_eingabe"]
+    wenn ce != nichts:
+        ce(f, f["text"])
     setze cw auf f["on_wechsel"]
     wenn cw != nichts:
         cw(f, f["text"])
+    gib_zurück wahr
+
+funktion _uim_liste_ohne_letztes(liste):
+    setze rest_liste auf []
+    setze i auf 0
+    solange i < länge(liste) - 1:
+        rest_liste.hinzufügen(liste[i])
+        setze i auf i + 1
+    gib_zurück rest_liste
+
+funktion uim_text_undo(kontext, w):
+    wenn länge(w["undo_stapel"]) == 0:
+        gib_zurück falsch
+    w["redo_stapel"].hinzufügen(w["text"])
+    setze idx auf länge(w["undo_stapel"]) - 1
+    w["text"] = w["undo_stapel"][idx]
+    w["undo_stapel"] = _uim_liste_ohne_letztes(w["undo_stapel"])
+    w["cursor"] = länge(bytes_zu_liste(w["text"]))
+    _uim_tf_feuere_wechsel(kontext, w)
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion uim_text_redo(kontext, w):
+    wenn länge(w["redo_stapel"]) == 0:
+        gib_zurück falsch
+    w["undo_stapel"].hinzufügen(w["text"])
+    setze idx auf länge(w["redo_stapel"]) - 1
+    w["text"] = w["redo_stapel"][idx]
+    w["redo_stapel"] = _uim_liste_ohne_letztes(w["redo_stapel"])
+    w["cursor"] = länge(bytes_zu_liste(w["text"]))
+    _uim_tf_feuere_wechsel(kontext, w)
+    _uim_anfordern(kontext)
     gib_zurück wahr
 
 funktion _uim_z_separator(kontext, z, w, ox, oy):
@@ -1596,64 +3580,64 @@ funktion _uim_z_separator(kontext, z, w, ox, oy):
     _uim_zf_linie(kontext, z, ax, ay, ax + w["b"], ay, 1)
     gib_zurück wahr
 
+funktion _uim_eingabe_anzeige(kontext, w):
+    wenn w["typ"] == "passwordbox":
+        setze maskiert auf ""
+        für bb in bytes_zu_liste(w["text"]):
+            setze maskiert auf maskiert + "*"
+        gib_zurück maskiert
+    wenn w["text"] == "" und w.enthält("placeholder") und _uim_slot_uid(kontext, "fokus") != w["uid"]:
+        gib_zurück w["placeholder"]
+    gib_zurück w["text"]
+
 funktion _uim_z_textfeld(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
     setze ax auf ox + w["x"]
     setze ay auf oy + w["y"]
-    setze flaeche auf t["flaeche"]
-    wenn w["hover"]:
-        setze flaeche auf t["flaeche_hover"]
+    setze flaeche auf _uim_zustand_farbe(kontext, w, "flaeche")
     _uim_farbe(kontext, z, flaeche)
     _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], 3, wahr)
     wenn _uim_glass_an(t):
         _uim_glass_deko(kontext, z, ax, ay, w["b"], w["h"], 3)
     setze hat_fokus auf _uim_slot_uid(kontext, "fokus") == w["uid"]
-    wenn hat_fokus:
-        _uim_farbe(kontext, z, t["akzent"])
-    sonst:
-        _uim_farbe(kontext, z, t["rand"])
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
     _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], 3, falsch)
     _uim_zf_clip_setze(kontext, z, ax + 4, ay, w["b"] - 8, w["h"])
-    setze farbe auf t["text"]
-    wenn w["aktiv"] == falsch:
-        setze farbe auf t["text_gedimmt"]
+    setze farbe auf _uim_zustand_farbe(kontext, w, "text")
     _uim_farbe(kontext, z, farbe)
     setze ty auf ay + (w["h"] - t["schrift"]) / 2 - 1
-    _uim_zf_text(kontext, z, ax + 6, ty, w["text"], t["schrift"])
+    _uim_zf_text(kontext, z, ax + 6, ty, _uim_eingabe_anzeige(kontext, w), t["schrift"])
     wenn hat_fokus:
-        setze bytes auf bytes_zu_liste(w["text"])
+        setze bytes auf bytes_zu_liste(_uim_eingabe_anzeige(kontext, w))
         setze links auf bytes_neu(_uim_tf_teil(bytes, 0, w["cursor"]))
         setze cx auf ax + 6 + _uim_zf_text_breite(kontext, z, links, t["schrift"])
         _uim_farbe(kontext, z, t["akzent"])
         _uim_zf_linie(kontext, z, cx + 1, ay + 4, cx + 1, ay + w["h"] - 4, 1)
     _uim_zf_clip_loesche(kontext, z)
+    wenn w["invalid"] und w["validierungs_fehler"] != "":
+        setze fehler_schrift auf t["schrift"] - 2
+        wenn fehler_schrift < 7:
+            setze fehler_schrift auf 7
+        _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "text"))
+        _uim_zf_text(kontext, z, ax + 2, ay + w["h"] + 2, w["validierungs_fehler"], fehler_schrift)
     gib_zurück wahr
 
 funktion _uim_z_combobox(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
     setze ax auf ox + w["x"]
     setze ay auf oy + w["y"]
-    setze flaeche auf t["flaeche"]
-    wenn w["hover"]:
-        setze flaeche auf t["flaeche_hover"]
-    wenn w["druck"]:
-        setze flaeche auf t["flaeche_druck"]
+    setze flaeche auf _uim_zustand_farbe(kontext, w, "flaeche")
     _uim_farbe(kontext, z, flaeche)
     _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], 3, wahr)
     wenn _uim_glass_an(t):
         _uim_glass_deko(kontext, z, ax, ay, w["b"], w["h"], 3)
-    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
-        _uim_farbe(kontext, z, t["akzent"])
-    sonst:
-        _uim_farbe(kontext, z, t["rand"])
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
     _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], 3, falsch)
     setze anzeige auf ""
     setze n auf länge(w["zeilen"])
     wenn n > 0 und w["auswahl"] >= 0 und w["auswahl"] < n:
         setze anzeige auf w["zeilen"][w["auswahl"]]
-    setze farbe auf t["text"]
-    wenn w["aktiv"] == falsch:
-        setze farbe auf t["text_gedimmt"]
+    setze farbe auf _uim_zustand_farbe(kontext, w, "text")
     _uim_farbe(kontext, z, farbe)
     setze ty auf ay + (w["h"] - t["schrift"]) / 2 - 1
     _uim_zf_clip_setze(kontext, z, ax + 4, ay, w["b"] - 22, w["h"])
@@ -1818,14 +3802,92 @@ funktion _uim_z_combo_overlay(kontext, z):
         setze i auf i + 1
     gib_zurück wahr
 
+funktion _uim_kinder_z_sortiert(kinder):
+    setze sortiert auf []
+    setze genutzt auf []
+    für kind in kinder:
+        genutzt.hinzufügen(falsch)
+    solange länge(sortiert) < länge(kinder):
+        setze bester auf 0 - 1
+        setze i auf 0
+        solange i < länge(kinder):
+            wenn genutzt[i] == falsch:
+                wenn bester < 0 oder kinder[i]["z_index"] < kinder[bester]["z_index"]:
+                    setze bester auf i
+            setze i auf i + 1
+        wenn bester >= 0:
+            sortiert.hinzufügen(kinder[bester])
+            genutzt[bester] = wahr
+    gib_zurück sortiert
+
+funktion _uim_zeichne_kinder(kontext, z, parent, ox, oy, inhalt_y):
+    setze ax auf ox + parent["x"]
+    setze ay auf oy + parent["y"] + inhalt_y
+    setze clip_an auf parent["clip_kinder"]
+    wenn clip_an:
+        wenn _uim_zf_clip_setze(kontext, z, ax, ay, parent["b"], parent["h"] - inhalt_y) == falsch:
+            gib_zurück falsch
+    setze ok auf wahr
+    für kind in _uim_kinder_z_sortiert(parent["kinder"]):
+        setze ok auf _uim_zeichne_widget(kontext, z, kind, ax, ay) und ok
+    wenn clip_an:
+        setze ok auf _uim_zf_clip_loesche(kontext, z) und ok
+    gib_zurück ok
+
 funktion _uim_zeichne_widget(kontext, z, w, ox, oy):
     wenn w["sichtbar"] == falsch:
         gib_zurück wahr
-    wenn w["typ"] == "panel":
-        setze ok auf _uim_z_panel(kontext, z, w, ox, oy)
+    wenn w["typ"] == "tabs":
+        setze ok auf _uim_z_tabs(kontext, z, w, ox, oy)
+        wenn länge(w["kinder"]) > 0:
+            setze tab auf w["kinder"][w["auswahl"]]
+            für k in tab["kinder"]:
+                setze ok auf _uim_zeichne_widget(kontext, z, k, ox + w["x"], oy + w["y"] + w["tab_h"]) und ok
+        gib_zurück ok
+    wenn w["typ"] == "expander":
+        setze t auf kontext["theme"]
+        setze ax auf ox + w["x"]
+        setze ay auf oy + w["y"]
+        _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+        _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["kauff_h"], t["radius"], wahr)
+        _uim_farbe(kontext, z, t["text"])
+        _uim_zf_text(kontext, z, ax + t["abstand"], ay + (w["kauff_h"] - t["schrift"]) / 2, w["text"], t["schrift"])
+        setze ok auf wahr
+        wenn w["offen"]:
+            für k in w["kinder"]:
+                setze ok auf _uim_zeichne_widget(kontext, z, k, ax, ay + w["kauff_h"]) und ok
+        gib_zurück ok
+    wenn w["typ"] == "toolbar":
+        setze ok auf _uim_z_werkzeugleiste(kontext, z, w, ox, oy)
         für k in w["kinder"]:
             setze ok auf _uim_zeichne_widget(kontext, z, k, ox + w["x"], oy + w["y"]) und ok
         gib_zurück ok
+    wenn w["typ"] == "statusleiste":
+        gib_zurück _uim_z_statusleiste(kontext, z, w, ox, oy)
+    wenn w["typ"] == "teiler":
+        _uim_teiler_layout(w)
+        setze ok auf _uim_z_teiler(kontext, z, w, ox, oy)
+        für k in w["kinder"]:
+            setze ok auf _uim_zeichne_widget(kontext, z, k, ox + w["x"], oy + w["y"]) und ok
+        gib_zurück ok
+    wenn w["typ"] == "karte":
+        setze ok auf _uim_z_karte(kontext, z, w, ox, oy)
+        gib_zurück _uim_zeichne_kinder(kontext, z, w, ox, oy, w["titel_h"]) und ok
+    wenn w["typ"] == "stapel" oder w["typ"] == "gitter":
+        gib_zurück _uim_zeichne_kinder(kontext, z, w, ox, oy, 0)
+    wenn w["typ"] == "ueberlagerung":
+        wenn w["offen"] == falsch:
+            gib_zurück wahr
+        _uim_ueberlagerung_layout(w)
+        setze ok auf _uim_z_ueberlagerung(kontext, z, w, ox, oy)
+        für k in w["kinder"]:
+            setze ok auf _uim_zeichne_widget(kontext, z, k, ox + w["x"], oy + w["y"]) und ok
+        gib_zurück ok
+    wenn w["typ"] == "kontextmenue":
+        gib_zurück wahr
+    wenn w["typ"] == "panel":
+        setze ok auf _uim_z_panel(kontext, z, w, ox, oy)
+        gib_zurück _uim_zeichne_kinder(kontext, z, w, ox, oy, 0) und ok
     wenn w["typ"] == "scroll":
         setze offen auf _uim_z_scroll_rahmen(kontext, z, w, ox, oy)
         wenn offen == falsch:
@@ -1839,6 +3901,18 @@ funktion _uim_zeichne_widget(kontext, z, w, ox, oy):
         gib_zurück _uim_z_knopf(kontext, z, w, ox, oy)
     wenn w["typ"] == "label":
         gib_zurück _uim_z_label(kontext, z, w, ox, oy)
+    wenn w["typ"] == "spinner":
+        gib_zurück _uim_z_spinner(kontext, z, w, ox, oy)
+    wenn w["typ"] == "statusansicht":
+        gib_zurück _uim_z_statusansicht(kontext, z, w, ox, oy)
+    wenn w["typ"] == "rating":
+        gib_zurück _uim_z_bewertung(kontext, z, w, ox, oy)
+    wenn w["typ"] == "switch":
+        gib_zurück _uim_z_schalter(kontext, z, w, ox, oy)
+    wenn w["typ"] == "toggle":
+        gib_zurück _uim_z_toggle(kontext, z, w, ox, oy)
+    wenn w["typ"] == "radio":
+        gib_zurück _uim_z_radio(kontext, z, w, ox, oy)
     wenn w["typ"] == "checkbox":
         gib_zurück _uim_z_checkbox(kontext, z, w, ox, oy)
     wenn w["typ"] == "slider":
@@ -1847,10 +3921,40 @@ funktion _uim_zeichne_widget(kontext, z, w, ox, oy):
         gib_zurück _uim_z_fortschritt(kontext, z, w, ox, oy)
     wenn w["typ"] == "liste":
         gib_zurück _uim_z_liste(kontext, z, w, ox, oy)
+    wenn w["typ"] == "baum":
+        gib_zurück _uim_z_baum(kontext, z, w, ox, oy)
+    wenn w["typ"] == "datengitter":
+        gib_zurück _uim_z_datengitter(kontext, z, w, ox, oy)
+    wenn w["typ"] == "iconview":
+        gib_zurück _uim_z_iconview(kontext, z, w, ox, oy)
+    wenn w["typ"] == "colorpicker":
+        gib_zurück _uim_z_colorpicker(kontext, z, w, ox, oy)
+    wenn w["typ"] == "calendar" oder w["typ"] == "datepicker":
+        gib_zurück _uim_z_kalender(kontext, z, w, ox, oy)
+    wenn w["typ"] == "linechart":
+        gib_zurück _uim_z_linechart(kontext, z, w, ox, oy)
+    wenn w["typ"] == "barchart":
+        gib_zurück _uim_z_barchart(kontext, z, w, ox, oy)
+    wenn w["typ"] == "piechart":
+        gib_zurück _uim_z_piechart(kontext, z, w, ox, oy)
+    wenn w["typ"] == "gauge":
+        gib_zurück _uim_z_gauge(kontext, z, w, ox, oy)
+    wenn w["typ"] == "terminal":
+        gib_zurück _uim_z_terminal(kontext, z, w, ox, oy)
+    wenn w["typ"] == "markdown":
+        gib_zurück _uim_z_markdown(kontext, z, w, ox, oy)
     wenn w["typ"] == "separator":
         gib_zurück _uim_z_separator(kontext, z, w, ox, oy)
-    wenn w["typ"] == "textfeld":
+    wenn w["typ"] == "textfeld" oder w["typ"] == "searchbox" oder w["typ"] == "numberbox" oder w["typ"] == "passwordbox" oder w["typ"] == "multiline" oder w["typ"] == "autocomplete":
         gib_zurück _uim_z_textfeld(kontext, z, w, ox, oy)
+    wenn w["typ"] == "image":
+        gib_zurück _uim_z_image(kontext, z, w, ox, oy)
+    wenn w["typ"] == "icon":
+        gib_zurück _uim_z_icon(kontext, z, w, ox, oy)
+    wenn w["typ"] == "badge":
+        gib_zurück _uim_z_badge(kontext, z, w, ox, oy)
+    wenn w["typ"] == "avatar":
+        gib_zurück _uim_z_avatar(kontext, z, w, ox, oy)
     wenn w["typ"] == "combobox":
         gib_zurück _uim_z_combobox(kontext, z, w, ox, oy)
     wenn w["typ"] == "menueleiste":
@@ -1884,10 +3988,12 @@ funktion _uim_kern_zeichne(kontext, z):
             setze co auf kontext["combo_offen"]
             wenn co["offen"] == falsch:
                 kontext["combo_offen"] = nichts
-    für w in wurzel["kinder"]:
+    für w in _uim_kinder_z_sortiert(wurzel["kinder"]):
         setze ok auf _uim_zeichne_widget(kontext, z, w, 0, 0) und ok
     setze ok auf _uim_z_combo_overlay(kontext, z) und ok
     setze ok auf _uim_z_menue_overlay(kontext, z) und ok
+    setze ok auf _uim_z_kontext_overlay(kontext, z) und ok
+    setze ok auf _uim_z_tooltip(kontext, z) und ok
     gib_zurück ok
 
 
@@ -1905,17 +4011,33 @@ funktion uim_backend_wurzel(backend, b, h):
     kontext["_farbe"] = [0, 0, 0, 255]
     kontext["hintergrund_zeichnen"] = wahr
     kontext["theme"] = uim_theme_dunkel()
+    kontext["modal_overlay"] = nichts
     kontext["hover"] = nichts
     kontext["druck"] = nichts
     kontext["druck_ox"] = 0
     kontext["druck_oy"] = 0
     kontext["druck_art"] = ""
     kontext["druck_greif_y"] = 0
+    kontext["drag_quelle"] = nichts
+    kontext["drag_aktiv"] = falsch
+    kontext["clipboard_text"] = ""
+    kontext["fenster_x"] = 0
+    kontext["fenster_y"] = 0
+    kontext["fenster_b"] = b
+    kontext["fenster_h"] = h
+    kontext["fenster_modus"] = "normal"
     kontext["fokus"] = nichts
     kontext["hat_fokus"] = wahr
     kontext["_maus_war"] = falsch
     kontext["_maus_taste"] = 1
     kontext["_maus_blockiert_bis_los"] = falsch
+    kontext["kontext_offen"] = nichts
+    kontext["kontext_hover"] = 0 - 1
+    kontext["kontext_rect"] = nichts
+    kontext["tooltip_widget"] = nichts
+    kontext["tooltip_ticks"] = 0
+    kontext["tooltip_x"] = 0
+    kontext["tooltip_y"] = 0
     kontext["wurzel"] = _uim_basis("wurzel", 0, 0, b, h)
     gib_zurück kontext
 
@@ -1923,7 +4045,7 @@ funktion uim_backend_zeichne(kontext, zeichner):
     gib_zurück _uim_kern_zeichne(kontext, zeichner)
 
 funktion uim_backend_maus_taste(kontext, x, y, taste, gedrueckt):
-    wenn taste != 1:
+    wenn taste != 1 und taste != 3:
         gib_zurück falsch
     wenn kontext["_maus_blockiert_bis_los"]:
         wenn gedrueckt == falsch:
@@ -1980,10 +4102,113 @@ funktion uim_backend_fokus(kontext, hat_fokus):
 funktion uim_hinzu(ziel, widget):
     wenn ziel.enthält("wurzel"):
         ziel["wurzel"]["kinder"].hinzufügen(widget)
+        wenn widget["typ"] == "ueberlagerung":
+            wenn widget["b"] <= 0:
+                widget["b"] = ziel["wurzel"]["b"]
+            wenn widget["h"] <= 0:
+                widget["h"] = ziel["wurzel"]["h"]
+            wenn widget["modal"] and widget["offen"]:
+                ziel["modal_overlay"] = widget
+                setze erste_fokus auf _uim_dialog_erstfokus(widget)
+                wenn erste_fokus != nichts:
+                    ziel["fokus"] = erste_fokus
         _uim_anfordern(ziel)
     sonst:
         ziel["kinder"].hinzufügen(widget)
     gib_zurück widget
+
+# UI-13/LIFE: Fensterzustand normalisieren und persistierbar machen.
+funktion uim_fenster_zustand_setze(kontext, modus, x, y, b, h):
+    wenn modus != "normal" und modus != "minimiert" und modus != "maximiert" und modus != "vollbild":
+        setze modus auf "normal"
+    wenn x < 0:
+        setze x auf 0
+    wenn y < 0:
+        setze y auf 0
+    wenn b < 1:
+        setze b auf 1
+    wenn h < 1:
+        setze h auf 1
+    kontext["fenster_modus"] = modus
+    kontext["fenster_x"] = x
+    kontext["fenster_y"] = y
+    kontext["fenster_b"] = b
+    kontext["fenster_h"] = h
+    wenn modus == "normal":
+        kontext["wurzel"]["b"] = b
+        kontext["wurzel"]["h"] = h
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion uim_einstellungen_speichern(kontext):
+    gib_zurück {"x": kontext["fenster_x"], "y": kontext["fenster_y"], "b": kontext["fenster_b"], "h": kontext["fenster_h"], "modus": kontext["fenster_modus"], "theme": kontext["theme"]["name"]}
+
+funktion uim_einstellungen_laden(kontext, daten):
+    wenn daten == nichts oder daten.enthält("x") == falsch oder daten.enthält("y") == falsch oder daten.enthält("b") == falsch oder daten.enthält("h") == falsch oder daten.enthält("modus") == falsch:
+        gib_zurück falsch
+    gib_zurück uim_fenster_zustand_setze(kontext, daten["modus"], daten["x"], daten["y"], daten["b"], daten["h"])
+
+funktion uim_animation_start(w):
+    w["animation_generation"] = w["animation_generation"] + 1
+    w["animation_aktiv"] = wahr
+    gib_zurück w["animation_generation"]
+
+funktion uim_animation_abbrechen(w):
+    w["animation_generation"] = w["animation_generation"] + 1
+    w["animation_aktiv"] = falsch
+    gib_zurück w["animation_generation"]
+
+funktion uim_animation_gueltig(w, generation):
+    gib_zurück w["animation_aktiv"] und w["animation_generation"] == generation
+
+funktion _uim_lifecycle_referenzen_loesche(kontext, w):
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        kontext["fokus"] = nichts
+    wenn _uim_slot_uid(kontext, "hover") == w["uid"]:
+        kontext["hover"] = nichts
+    wenn _uim_slot_uid(kontext, "druck") == w["uid"]:
+        kontext["druck"] = nichts
+    wenn _uim_slot_uid(kontext, "drag_quelle") == w["uid"]:
+        kontext["drag_quelle"] = nichts
+    gib_zurück wahr
+
+funktion uim_entferne(kontext, ziel, w):
+    wenn ziel == nichts oder w == nichts oder w["entfernt"]:
+        gib_zurück falsch
+    setze kinder auf []
+    wenn ziel.enthält("wurzel"):
+        setze kinder auf ziel["wurzel"]["kinder"]
+    sonst:
+        setze kinder auf ziel["kinder"]
+    setze rest_kinder auf []
+    setze gefunden auf falsch
+    für kind in kinder:
+        wenn kind["uid"] == w["uid"]:
+            setze gefunden auf wahr
+        sonst:
+            rest_kinder.hinzufügen(kind)
+    wenn gefunden == falsch:
+        gib_zurück falsch
+    wenn ziel.enthält("wurzel"):
+        ziel["wurzel"]["kinder"] = rest_kinder
+    sonst:
+        ziel["kinder"] = rest_kinder
+    _uim_lifecycle_referenzen_loesche(kontext, w)
+    w["sichtbar"] = falsch
+    w["aktiv"] = falsch
+    w["entfernt"] = wahr
+    w["animation_aktiv"] = falsch
+    w["kinder"] = []
+    setze cleanup_cb auf w["on_entfernt"]
+    w["on_entfernt"] = nichts
+    wenn cleanup_cb != nichts:
+        cleanup_cb(w)
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion uim_on_entfernt(w, cb):
+    w["on_entfernt"] = cb
+    gib_zurück w
 
 funktion _uim_theme_farbe_v1(theme, feld):
     wenn theme.enthält(feld) == falsch:
@@ -2017,6 +4242,10 @@ funktion _uim_theme_schema_v1(theme):
     für farbfeld in farben:
         wenn _uim_theme_farbe_v1(theme, farbfeld) == falsch:
             gib_zurück falsch
+    setze zustandsfarben auf ["flaeche_deaktiviert", "flaeche_auswahl", "flaeche_fehler", "flaeche_laden", "rand_deaktiviert", "rand_auswahl", "rand_fehler", "rand_hover", "rand_druck", "rand_fokus", "text_fehler", "text_laden"]
+    für farbfeld in zustandsfarben:
+        wenn theme.enthält(farbfeld) und _uim_theme_farbe_v1(theme, farbfeld) == falsch:
+            gib_zurück falsch
     gib_zurück wahr
 
 funktion uim_theme_setze(kontext, theme):
@@ -2046,6 +4275,52 @@ funktion uim_neuzeichnen(kontext):
 funktion uim_finde(kontext, id):
     gib_zurück _uim_finde_rek(kontext["wurzel"]["kinder"], id)
 
+funktion uim_zustand_setze(kontext, w, zustand):
+    wenn w == nichts oder _uim_zustand_gueltig(zustand) == falsch:
+        gib_zurück falsch
+    wenn w["zustand"] != zustand und w["animation_aktiv"]:
+        uim_animation_abbrechen(w)
+    w["zustand"] = zustand
+    w["disabled"] = zustand == "disabled"
+    w["selected"] = zustand == "selected"
+    w["error"] = zustand == "error"
+    w["loading"] = zustand == "loading"
+    w["invalid"] = zustand == "error"
+    wenn zustand == "hover":
+        w["hover"] = wahr
+    sonst wenn zustand == "pressed":
+        w["druck"] = wahr
+    sonst wenn zustand == "focused":
+        kontext["fokus"] = w
+    sonst wenn zustand == "normal":
+        w["hover"] = falsch
+        w["druck"] = falsch
+        wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+            kontext["fokus"] = nichts
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion uim_zustand_hole(kontext, w):
+    gib_zurück _uim_zustand_aktuell(kontext, w)
+
+funktion uim_eingabe_zustand_setze(kontext, w, zustand):
+    wenn w == nichts oder _uim_eingabe_zustand_gueltig(zustand) == falsch:
+        gib_zurück falsch
+    w["eingabe_zustand"] = zustand
+    w["readonly"] = zustand == "readonly"
+    w["invalid"] = zustand == "invalid"
+    wenn zustand == "invalid":
+        w["error"] = wahr
+    sonst wenn w["zustand"] == "error":
+        w["error"] = wahr
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion uim_eingabe_zustand_hole(w):
+    wenn w == nichts oder w.enthält("eingabe_zustand") == falsch:
+        gib_zurück "empty"
+    gib_zurück w["eingabe_zustand"]
+
 # ------------------------------------------------------------
 # Referenz-Widgets (voller Satz folgt in UIMOO-3)
 # ------------------------------------------------------------
@@ -2062,6 +4337,138 @@ funktion uim_knopf(beschriftung, x, y, b, h, on_klick):
     w["text"] = beschriftung
     w["fokussierbar"] = wahr
     w["on_klick"] = on_klick
+    gib_zurück w
+
+# Geschuetzter Knopf: waehrend des synchronen Callbacks deaktiviert und
+# damit auch gegen reentrante Doppelklicks gesichert. Fuer laengere Aktionen
+# koennen start/ende explizit auf jedem Knopf verwendet werden.
+funktion uim_knopf_geschuetzt(beschriftung, x, y, b, h, on_klick):
+    setze w auf uim_knopf(beschriftung, x, y, b, h, on_klick)
+    w["auto_sperre"] = wahr
+    w["aktion_laeuft"] = falsch
+    gib_zurück w
+
+funktion uim_knopf_aktion_start(w):
+    wenn w == nichts oder w["typ"] != "knopf":
+        gib_zurück falsch
+    wenn w.enthält("aktion_laeuft") und w["aktion_laeuft"]:
+        gib_zurück falsch
+    w["aktion_laeuft"] = wahr
+    w["disabled"] = wahr
+    w["zustand"] = "disabled"
+    gib_zurück wahr
+
+funktion uim_knopf_aktion_ende(w):
+    wenn w == nichts oder w["typ"] != "knopf":
+        gib_zurück falsch
+    w["aktion_laeuft"] = falsch
+    w["disabled"] = falsch
+    w["zustand"] = "normal"
+    gib_zurück wahr
+
+funktion uim_statusansicht(x, y, b, h, zustand, titel, beschreibung, on_retry):
+    setze w auf _uim_basis("statusansicht", x, y, b, h)
+    w["status_modus"] = zustand
+    wenn zustand != "leer" und zustand != "fehler" und zustand != "laden" und zustand != "skelett":
+        w["status_modus"] = "leer"
+    w["status_titel"] = titel
+    w["status_text"] = beschreibung
+    w["on_klick"] = on_retry
+    w["fokussierbar"] = on_retry != nichts
+    w["phase"] = 0
+    w["skelett_zeilen"] = 3
+    w["error"] = w["status_modus"] == "fehler"
+    w["loading"] = w["status_modus"] == "laden" oder w["status_modus"] == "skelett"
+    gib_zurück w
+
+funktion uim_status_setze(w, zustand, titel, beschreibung):
+    wenn w == nichts oder w["typ"] != "statusansicht":
+        gib_zurück falsch
+    w["status_modus"] = zustand
+    w["status_titel"] = titel
+    w["status_text"] = beschreibung
+    w["error"] = zustand == "fehler"
+    w["loading"] = zustand == "laden" oder zustand == "skelett"
+    gib_zurück wahr
+
+funktion uim_leerzustand(x, y, b, h, titel, beschreibung):
+    gib_zurück uim_statusansicht(x, y, b, h, "leer", titel, beschreibung, nichts)
+
+funktion uim_fehlerzustand(x, y, b, h, titel, beschreibung, on_retry):
+    gib_zurück uim_statusansicht(x, y, b, h, "fehler", titel, beschreibung, on_retry)
+
+funktion uim_ladezustand(x, y, b, h, titel, beschreibung):
+    gib_zurück uim_statusansicht(x, y, b, h, "laden", titel, beschreibung, nichts)
+
+funktion uim_skelett(x, y, b, h, zeilen):
+    setze w auf uim_statusansicht(x, y, b, h, "skelett", "", "", nichts)
+    wenn zeilen > 0:
+        w["skelett_zeilen"] = zeilen
+    gib_zurück w
+
+funktion uim_spinner(x, y, b, h):
+    setze w auf _uim_basis("spinner", x, y, b, h)
+    w["wert"] = 0
+    w["max"] = 8
+    gib_zurück w
+
+funktion uim_spinner_phase_setze(w, phase):
+    wenn w == nichts:
+        gib_zurück falsch
+    w["wert"] = phase % 8
+    wenn w["wert"] < 0:
+        w["wert"] = w["wert"] + 8
+    gib_zurück wahr
+
+funktion uim_bewertung(x, y, b, h, initial, on_wechsel):
+    setze w auf _uim_basis("rating", x, y, b, h)
+    w["fokussierbar"] = wahr
+    w["max"] = 5
+    w["wert"] = initial
+    wenn w["wert"] < 0:
+        w["wert"] = 0
+    wenn w["wert"] > w["max"]:
+        w["wert"] = w["max"]
+    wenn w["wert"] > 0:
+        w["selected"] = wahr
+    w["on_wechsel"] = on_wechsel
+    gib_zurück w
+
+funktion uim_rating(x, y, b, h, initial, on_wechsel):
+    gib_zurück uim_bewertung(x, y, b, h, initial, on_wechsel)
+
+funktion uim_schalter(beschriftung, x, y, b, h, initial, on_wechsel):
+    setze w auf _uim_basis("switch", x, y, b, h)
+    w["text"] = beschriftung
+    w["fokussierbar"] = wahr
+    w["wert"] = initial
+    w["selected"] = initial
+    w["on_wechsel"] = on_wechsel
+    gib_zurück w
+
+funktion uim_umschaltknopf(beschriftung, x, y, b, h, initial, on_wechsel):
+    setze w auf _uim_basis("toggle", x, y, b, h)
+    w["text"] = beschriftung
+    w["fokussierbar"] = wahr
+    w["wert"] = initial
+    w["selected"] = initial
+    w["on_wechsel"] = on_wechsel
+    gib_zurück w
+
+funktion uim_switch(beschriftung, x, y, b, h, initial, on_wechsel):
+    gib_zurück uim_schalter(beschriftung, x, y, b, h, initial, on_wechsel)
+
+funktion uim_toggle(beschriftung, x, y, b, h, initial, on_wechsel):
+    gib_zurück uim_umschaltknopf(beschriftung, x, y, b, h, initial, on_wechsel)
+
+funktion uim_radio(beschriftung, x, y, b, h, gruppe, initial, on_wechsel):
+    setze w auf _uim_basis("radio", x, y, b, h)
+    w["text"] = beschriftung
+    w["gruppe"] = gruppe
+    w["fokussierbar"] = wahr
+    w["wert"] = initial
+    w["selected"] = initial
+    w["on_wechsel"] = on_wechsel
     gib_zurück w
 
 funktion uim_label(beschriftung, x, y, b, h):
@@ -2100,10 +4507,12 @@ funktion uim_slider(x, y, b, h, min, max, start, on_wechsel):
     w["on_wechsel"] = on_wechsel
     gib_zurück w
 
-# Fortschrittsbalken: passiv, wert 0..1 über uim_fortschritt_setze.
+# Fortschrittsbalken: wert 0..1 oder unbestimmt via uim_fortschritt_unbestimmt_setze.
 funktion uim_fortschritt(x, y, b, h):
     setze w auf _uim_basis("fortschritt", x, y, b, h)
     w["wert"] = 0
+    w["unbestimmt"] = falsch
+    w["phase"] = 0
     gib_zurück w
 
 funktion uim_fortschritt_setze(kontext, w, wert):
@@ -2112,6 +4521,14 @@ funktion uim_fortschritt_setze(kontext, w, wert):
     wenn wert > 1:
         setze wert auf 1
     w["wert"] = wert
+    w["unbestimmt"] = falsch
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion uim_fortschritt_unbestimmt_setze(kontext, w, aktiv):
+    wenn w == nichts:
+        gib_zurück falsch
+    w["unbestimmt"] = aktiv
     _uim_anfordern(kontext)
     gib_zurück wahr
 
@@ -2152,6 +4569,52 @@ funktion uim_liste(x, y, b, h, zeilen, on_auswahl):
     w["zeilen"] = zeilen
     w["auswahl"] = 0 - 1
     w["scroll_y"] = 0
+    w["on_auswahl"] = on_auswahl
+    w["fokussierbar"] = wahr
+    gib_zurück w
+
+funktion uim_baum_knoten(text, kinder):
+    setze k auf {}
+    k["text"] = text
+    k["kinder"] = kinder
+    k["offen"] = falsch
+    gib_zurück k
+
+funktion uim_baum(x, y, b, h, knoten, on_auswahl):
+    setze w auf _uim_basis("baum", x, y, b, h)
+    w["knoten"] = knoten
+    w["auswahl"] = 0 - 1
+    w["scroll_y"] = 0
+    w["on_auswahl"] = on_auswahl
+    w["fokussierbar"] = wahr
+    gib_zurück w
+
+funktion uim_datengitter(x, y, b, h, spalten, zeilen, on_auswahl):
+    setze w auf _uim_basis("datengitter", x, y, b, h)
+    w["spalten"] = spalten
+    w["zeilen"] = zeilen
+    w["auswahl"] = 0 - 1
+    w["scroll_y"] = 0
+    w["on_auswahl"] = on_auswahl
+    w["fokussierbar"] = wahr
+    gib_zurück w
+
+funktion uim_datengitter_zeilen_setze(kontext, w, zeilen):
+    w["zeilen"] = zeilen
+    w["auswahl"] = 0 - 1
+    w["scroll_y"] = 0
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+# IconView: Raster-/Tile-Ansicht mit Auswahl, Fokus und virtuellem Scrollen.
+# Eintrag = String oder Dict {"icon": "...", "text": "..."}.
+funktion uim_iconview(x, y, b, h, eintraege, on_auswahl):
+    setze w auf _uim_basis("iconview", x, y, b, h)
+    w["eintraege"] = eintraege
+    w["auswahl"] = 0 - 1
+    w["scroll_y"] = 0
+    w["tile_b"] = 76
+    w["tile_h"] = 68
     w["on_auswahl"] = on_auswahl
     w["fokussierbar"] = wahr
     gib_zurück w
@@ -2222,15 +4685,169 @@ funktion uim_textfeld(x, y, b, h, initial, on_wechsel):
     setze w auf _uim_basis("textfeld", x, y, b, h)
     w["fokussierbar"] = wahr
     w["text"] = initial
+    wenn initial == "":
+        w["eingabe_zustand"] = "empty"
+    sonst:
+        w["eingabe_zustand"] = "filled"
     w["cursor"] = länge(bytes_zu_liste(initial))
     w["on_wechsel"] = on_wechsel
     gib_zurück w
 
 funktion uim_textfeld_setze(kontext, w, txt):
+    wenn w["text"] != txt:
+        _uim_tf_verlauf_merke(w)
     w["text"] = txt
+    wenn txt == "":
+        w["eingabe_zustand"] = "empty"
+    sonst:
+        w["eingabe_zustand"] = "filled"
     w["cursor"] = länge(bytes_zu_liste(txt))
+    wenn w["validator"] != nichts:
+        uim_validiere(kontext, w)
+    _uim_tf_feuere_wechsel(kontext, w)
     _uim_anfordern(kontext)
     gib_zurück wahr
+
+# Text+-Varianten: gemeinsame bytebasierte Fokus-/Cursorlogik.
+funktion uim_searchbox(x, y, b, h, placeholder, on_wechsel):
+    setze w auf _uim_basis("searchbox", x, y, b, h)
+    w["fokussierbar"] = wahr
+    w["placeholder"] = placeholder
+    w["cursor"] = 0
+    w["on_wechsel"] = on_wechsel
+    gib_zurück w
+
+funktion uim_numberbox(x, y, b, h, initial, min_wert, max_wert, on_wechsel):
+    setze w auf _uim_basis("numberbox", x, y, b, h)
+    w["fokussierbar"] = wahr
+    w["text"] = text(initial)
+    w["cursor"] = länge(bytes_zu_liste(w["text"]))
+    w["min"] = min_wert
+    w["max"] = max_wert
+    w["on_wechsel"] = on_wechsel
+    gib_zurück w
+
+funktion uim_passwordbox(x, y, b, h, initial, on_wechsel):
+    setze w auf _uim_basis("passwordbox", x, y, b, h)
+    w["fokussierbar"] = wahr
+    w["text"] = initial
+    w["cursor"] = länge(bytes_zu_liste(initial))
+    w["on_wechsel"] = on_wechsel
+    gib_zurück w
+
+funktion uim_multiline(x, y, b, h, initial, on_wechsel):
+    setze w auf _uim_basis("multiline", x, y, b, h)
+    w["fokussierbar"] = wahr
+    w["text"] = initial
+    w["cursor"] = länge(bytes_zu_liste(initial))
+    w["mehrzeilig"] = wahr
+    w["on_wechsel"] = on_wechsel
+    gib_zurück w
+
+funktion uim_autocomplete(x, y, b, h, initial, vorschlaege, on_wechsel):
+    setze w auf _uim_basis("autocomplete", x, y, b, h)
+    w["fokussierbar"] = wahr
+    w["text"] = initial
+    w["cursor"] = länge(bytes_zu_liste(initial))
+    w["vorschlaege"] = vorschlaege
+    w["auswahl"] = 0 - 1
+    w["on_wechsel"] = on_wechsel
+    gib_zurück w
+
+# Anzeige-Widgets: Image/Icon/Badge/Avatar.
+funktion uim_image(x, y, b, h, quelle, alt):
+    setze w auf _uim_basis("image", x, y, b, h)
+    w["quelle"] = quelle
+    w["alt"] = alt
+    w["a11y_name"] = alt
+    gib_zurück w
+
+funktion uim_icon(symbol, x, y, b, h):
+    setze w auf _uim_basis("icon", x, y, b, h)
+    w["symbol"] = symbol
+    w["a11y_name"] = symbol
+    gib_zurück w
+
+funktion uim_badge(text, x, y, b, h):
+    setze w auf _uim_basis("badge", x, y, b, h)
+    w["text"] = text
+    w["a11y_name"] = text
+    gib_zurück w
+
+funktion uim_avatar(kuerzel, x, y, b, h):
+    setze w auf _uim_basis("avatar", x, y, b, h)
+    w["kuerzel"] = kuerzel
+    w["a11y_name"] = kuerzel
+    gib_zurück w
+
+# Auswahl-Widgets.
+funktion uim_colorpicker(x, y, b, h, farben, on_auswahl):
+    setze w auf _uim_basis("colorpicker", x, y, b, h)
+    w["farben"] = farben
+    w["auswahl"] = 0 - 1
+    w["on_auswahl"] = on_auswahl
+    w["fokussierbar"] = wahr
+    gib_zurück w
+
+funktion uim_calendar(x, y, b, h, monat, jahr, on_auswahl):
+    setze w auf _uim_basis("calendar", x, y, b, h)
+    w["monat"] = monat
+    w["jahr"] = jahr
+    w["tage"] = 31
+    w["auswahl"] = 1
+    w["on_auswahl"] = on_auswahl
+    w["fokussierbar"] = wahr
+    gib_zurück w
+
+funktion uim_datepicker(x, y, b, h, monat, jahr, on_auswahl):
+    setze w auf _uim_basis("datepicker", x, y, b, h)
+    w["monat"] = monat
+    w["jahr"] = jahr
+    w["tage"] = 31
+    w["auswahl"] = 1
+    w["on_auswahl"] = on_auswahl
+    w["fokussierbar"] = wahr
+    gib_zurück w
+
+# NATIVE-UI-12/W5F: Diagramme. Daten liegen deklarativ im Widget; die Zeichenpfade
+# bleiben vollständig im retained-mode Moo-Kern und nutzen ausschließlich die
+# zentralen Theme-/Backend-Primitiven.
+funktion uim_linechart(x, y, b, h, werte, on_auswahl):
+    setze w auf _uim_basis("linechart", x, y, b, h)
+    w["werte"] = werte
+    w["auswahl"] = 0 - 1
+    w["on_auswahl"] = on_auswahl
+    w["fokussierbar"] = wahr
+    gib_zurück w
+
+funktion uim_barchart(x, y, b, h, werte, on_auswahl):
+    setze w auf _uim_basis("barchart", x, y, b, h)
+    w["werte"] = werte
+    w["auswahl"] = 0 - 1
+    w["on_auswahl"] = on_auswahl
+    w["fokussierbar"] = wahr
+    gib_zurück w
+
+funktion uim_piechart(x, y, b, h, werte, on_auswahl):
+    setze w auf _uim_basis("piechart", x, y, b, h)
+    w["werte"] = werte
+    w["auswahl"] = 0 - 1
+    w["on_auswahl"] = on_auswahl
+    w["fokussierbar"] = wahr
+    gib_zurück w
+
+funktion uim_gauge(x, y, b, h, min_wert, max_wert, wert, on_wechsel):
+    setze w auf _uim_basis("gauge", x, y, b, h)
+    w["min"] = min_wert
+    w["max"] = max_wert
+    w["wert"] = wert
+    w["on_wechsel"] = on_wechsel
+    w["fokussierbar"] = wahr
+    wenn w["wert"] < w["min"]:
+        w["wert"] = w["min"]
+    wenn w["wert"] > w["max"]:
+        w["wert"] = w["max"]
+    gib_zurück w
 
 # Combobox: Klick/Return/space öffnet das Dropdown (Overlay, z-oberst),
 # Klick auf Zeile bzw. Up/Down wählt, Escape schließt. v1: Dropdown
@@ -2293,3 +4910,828 @@ funktion uim_mock_rad(kontext, x, y, delta):
 
 funktion uim_mock_fokus(kontext, hat_fokus):
     gib_zurück uim_backend_fokus(kontext, hat_fokus)
+
+# W2 retained-mode widgets: Tabs, Toolbar, Statusbar, ContextMenu, Tooltip, Expander.
+funktion _uim_tabs_aus_x(kontext, w, lx):
+    setze n auf länge(w["kinder"])
+    wenn n == 0:
+        gib_zurück falsch
+    setze idx auf boden((lx - w["x"]) / (w["b"] / n))
+    wenn idx < 0:
+        setze idx auf 0
+    wenn idx > n - 1:
+        setze idx auf n - 1
+    w["auswahl"] = idx
+    w["selected"] = wahr
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion uim_tabs(x, y, b, h, titel_liste):
+    setze w auf _uim_basis("tabs", x, y, b, h)
+    w["titel"] = titel_liste
+    w["auswahl"] = 0
+    w["tab_h"] = 28
+    w["fokussierbar"] = wahr
+    für titel in titel_liste:
+        setze tab auf _uim_basis("tab", 0, 0, b, h - w["tab_h"])
+        tab["titel"] = titel
+        w["kinder"].hinzufügen(tab)
+    gib_zurück w
+
+funktion uim_tabs_auswahl_setze(kontext, w, idx):
+    wenn w == nichts oder länge(w["kinder"]) == 0:
+        gib_zurück falsch
+    wenn idx < 0:
+        setze idx auf 0
+    wenn idx > länge(w["kinder"]) - 1:
+        setze idx auf länge(w["kinder"]) - 1
+    w["auswahl"] = idx
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion _uim_z_tabs(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    setze n auf länge(w["kinder"])
+    wenn n == 0:
+        gib_zurück wahr
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], wahr)
+    setze i auf 0
+    solange i < n:
+        setze tb auf w["b"] / n
+        setze tx auf ax + i * tb
+        wenn i == w["auswahl"]:
+            _uim_farbe(kontext, z, t["akzent"])
+        sonst:
+            _uim_farbe(kontext, z, t["flaeche"])
+        _uim_zf_rechteck(kontext, z, tx, ay, tb, w["tab_h"], wahr)
+        _uim_farbe(kontext, z, t["text"])
+        _uim_zf_text(kontext, z, tx + t["abstand"], ay + (w["tab_h"] - t["schrift"]) / 2, w["kinder"][i]["titel"], t["schrift"])
+        setze i auf i + 1
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
+    gib_zurück wahr
+
+funktion uim_werkzeug(text, cb):
+    setze w auf {}
+    w["typ"] = "punkt"
+    w["text"] = text
+    w["cb"] = cb
+    gib_zurück w
+
+funktion uim_werkzeug_trenner():
+    setze w auf {}
+    w["typ"] = "trenner"
+    gib_zurück w
+
+funktion uim_werkzeugleiste(x, y, b, h, werkzeuge):
+    setze w auf _uim_basis("toolbar", x, y, b, h)
+    setze cx auf 4
+    für item in werkzeuge:
+        wenn item["typ"] == "trenner":
+            setze sep auf _uim_basis("separator", cx, 3, 8, h - 6)
+            w["kinder"].hinzufügen(sep)
+            setze cx auf cx + 12
+        sonst:
+            setze kn auf _uim_basis("knopf", cx, 2, 72, h - 4)
+            kn["text"] = item["text"]
+            kn["fokussierbar"] = wahr
+            kn["on_klick"] = item["cb"]
+            w["kinder"].hinzufügen(kn)
+            setze cx auf cx + 76
+    gib_zurück w
+
+funktion _uim_z_werkzeugleiste(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], wahr)
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
+    gib_zurück wahr
+
+funktion uim_statusleiste(x, y, b, h, links, rechts):
+    setze w auf _uim_basis("statusleiste", x, y, b, h)
+    w["links"] = links
+    w["rechts"] = rechts
+    gib_zurück w
+
+funktion _uim_z_statusleiste(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_farbe(kontext, z, t["flaeche"])
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], wahr)
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_linie(kontext, z, ax, ay, ax + w["b"], ay, 1)
+    _uim_farbe(kontext, z, t["text_gedimmt"])
+    _uim_zf_text(kontext, z, ax + t["abstand"], ay + (w["h"] - t["schrift"]) / 2, w["links"], t["schrift"])
+    setze rb auf _uim_zf_text_breite(kontext, z, w["rechts"], t["schrift"])
+    _uim_zf_text(kontext, z, ax + w["b"] - rb - t["abstand"], ay + (w["h"] - t["schrift"]) / 2, w["rechts"], t["schrift"])
+    gib_zurück wahr
+
+funktion _uim_kontextmenue_finde_rek(kinder):
+    setze gefunden auf nichts
+    für w in kinder:
+        wenn gefunden == nichts:
+            wenn w["typ"] == "kontextmenue":
+                setze gefunden auf w
+            sonst:
+                setze gefunden auf _uim_kontextmenue_finde_rek(w["kinder"])
+    gib_zurück gefunden
+
+funktion uim_kontextmenue(punkte):
+    setze w auf _uim_basis("kontextmenue", 0, 0, 0, 0)
+    w["punkte"] = punkte
+    w["offen"] = falsch
+    w["sichtbar"] = falsch
+    gib_zurück w
+
+funktion uim_kontextmenue_schliessen(kontext):
+    wenn kontext.enthält("kontext_offen") und kontext["kontext_offen"] != nichts:
+        setze cm auf kontext["kontext_offen"]
+        cm["offen"] = falsch
+        cm["sichtbar"] = falsch
+    kontext["kontext_offen"] = nichts
+    kontext["kontext_hover"] = 0 - 1
+    gib_zurück wahr
+
+funktion _uim_z_kontext_overlay(kontext, z):
+    wenn kontext.enthält("kontext_offen") == falsch or kontext["kontext_offen"] == nichts:
+        gib_zurück wahr
+    setze cm auf kontext["kontext_offen"]
+    wenn cm["offen"] == falsch:
+        gib_zurück wahr
+    setze t auf kontext["theme"]
+    setze zh auf _uim_zeilenhoehe(kontext)
+    setze db auf 140
+    setze dh auf 0
+    für p in cm["punkte"]:
+        wenn p["typ"] == "trenner":
+            setze dh auf dh + boden(zh / 2)
+        sonst:
+            setze dh auf dh + zh
+            setze pb auf _uim_zf_text_breite(kontext, z, p["text"], t["schrift"]) + 2 * t["abstand"]
+            wenn pb > db:
+                setze db auf pb
+    setze cm["b"] auf db
+    setze cm["h"] auf dh
+    setze rect auf {}
+    rect["x"] = cm["x"]
+    rect["y"] = cm["y"]
+    rect["b"] = db
+    rect["h"] = dh
+    kontext["kontext_rect"] = rect
+    _uim_farbe(kontext, z, t["flaeche"])
+    _uim_zf_rechteck(kontext, z, rect["x"], rect["y"], db, dh, wahr)
+    _uim_farbe(kontext, z, t["rand"])
+    _uim_zf_rechteck(kontext, z, rect["x"], rect["y"], db, dh, falsch)
+    setze py auf rect["y"]
+    setze i auf 0
+    für p in cm["punkte"]:
+        setze ph auf zh
+        wenn p["typ"] == "trenner":
+            setze ph auf boden(zh / 2)
+            _uim_farbe(kontext, z, t["rand"])
+            _uim_zf_linie(kontext, z, rect["x"] + t["abstand"], py + ph / 2, rect["x"] + db - t["abstand"], py + ph / 2, 1)
+        sonst:
+            wenn kontext["kontext_hover"] == i:
+                _uim_farbe(kontext, z, t["akzent"])
+                _uim_zf_rechteck(kontext, z, rect["x"], py, db, ph, wahr)
+            _uim_farbe(kontext, z, t["text"])
+            _uim_zf_text(kontext, z, rect["x"] + t["abstand"], py + (ph - t["schrift"]) / 2, p["text"], t["schrift"])
+        setze py auf py + ph
+        setze i auf i + 1
+    gib_zurück wahr
+
+funktion uim_tooltip(w, text):
+    wenn w == nichts:
+        gib_zurück nichts
+    w["tooltip"] = text
+    gib_zurück w
+
+funktion uim_tooltip_setze(w, text):
+    gib_zurück uim_tooltip(w, text)
+
+funktion _uim_z_tooltip(kontext, z):
+    wenn kontext.enthält("tooltip_widget") == falsch or kontext["tooltip_widget"] == nichts:
+        gib_zurück wahr
+    setze tw auf kontext["tooltip_widget"]
+    wenn tw.enthält("tooltip") == falsch or tw["tooltip"] == nichts or kontext["tooltip_ticks"] < 0.5:
+        gib_zurück wahr
+    setze t auf kontext["theme"]
+    setze txt auf tw["tooltip"]
+    setze tb auf _uim_zf_text_breite(kontext, z, txt, t["schrift"])
+    setze xb auf kontext["tooltip_x"] + 12
+    setze yb auf kontext["tooltip_y"] + 16
+    _uim_farbe(kontext, z, [18, 28, 48, 245])
+    _uim_zf_rechteck_rund(kontext, z, xb, yb, tb + 2 * t["abstand"], t["schrift"] + 2 * t["abstand"], t["radius"], wahr)
+    _uim_farbe(kontext, z, t["text"])
+    _uim_zf_text(kontext, z, xb + t["abstand"], yb + t["abstand"] / 2, txt, t["schrift"])
+    gib_zurück wahr
+
+funktion uim_aufklapper(titel, x, y, b, h):
+    setze w auf _uim_basis("expander", x, y, b, h)
+    w["text"] = titel
+    w["offen"] = falsch
+    w["kauff_h"] = 28
+    w["fokussierbar"] = wahr
+    gib_zurück w
+
+
+
+# ------------------------------------------------------------
+# NATIVE-UI-12/W3: Splitter, Card, Stack/Grid und Overlay.
+# Layout ist retained-mode und positioniert nur direkte Kinder.
+# ------------------------------------------------------------
+funktion _uim_richtung_horizontal(richtung):
+    gib_zurück richtung == "horizontal" oder richtung == "h" oder richtung == "x"
+
+funktion _uim_teiler_layout(w):
+    wenn länge(w["kinder"]) == 0:
+        w["trenn_pos"] = 0
+        gib_zurück wahr
+    setze dicke auf w["trenner_breite"]
+    setze verfuegbar auf w["b"] - dicke
+    wenn verfuegbar < 0:
+        setze verfuegbar auf 0
+    setze p auf verfuegbar * w["anteil"]
+    wenn p < w["min1"]:
+        setze p auf w["min1"]
+    wenn verfuegbar - p < w["min2"]:
+        setze p auf verfuegbar - w["min2"]
+    wenn p < 0:
+        setze p auf 0
+    wenn p > verfuegbar:
+        setze p auf verfuegbar
+    w["trenn_pos"] = p
+    setze a auf w["kinder"][0]
+    wenn _uim_richtung_horizontal(w["richtung"]):
+        a["x"] = 0
+        a["y"] = 0
+        a["b"] = p
+        a["h"] = w["h"]
+        wenn länge(w["kinder"]) > 1:
+            setze z auf w["kinder"][1]
+            z["x"] = p + dicke
+            z["y"] = 0
+            z["b"] = verfuegbar - p
+            z["h"] = w["h"]
+    sonst:
+        setze verfuegbar_y auf w["h"] - dicke
+        wenn verfuegbar_y < 0:
+            setze verfuegbar_y auf 0
+        setze py auf verfuegbar_y * w["anteil"]
+        wenn py < w["min1"]:
+            setze py auf w["min1"]
+        wenn verfuegbar_y - py < w["min2"]:
+            setze py auf verfuegbar_y - w["min2"]
+        wenn py < 0:
+            setze py auf 0
+        wenn py > verfuegbar_y:
+            setze py auf verfuegbar_y
+        w["trenn_pos"] = py
+        a["x"] = 0
+        a["y"] = 0
+        a["b"] = w["b"]
+        a["h"] = py
+        wenn länge(w["kinder"]) > 1:
+            setze z auf w["kinder"][1]
+            z["x"] = 0
+            z["y"] = py + dicke
+            z["b"] = w["b"]
+            z["h"] = verfuegbar_y - py
+    gib_zurück wahr
+
+funktion _uim_teiler_trennlinie_treffer(w, lx, ly):
+    setze d auf w["trenner_breite"]
+    wenn _uim_richtung_horizontal(w["richtung"]):
+        gib_zurück lx >= w["trenn_pos"] und lx < w["trenn_pos"] + d
+    gib_zurück ly >= w["trenn_pos"] und ly < w["trenn_pos"] + d
+
+funktion _uim_teiler_ziehen(w, x, y):
+    setze alt auf w["anteil"]
+    wenn _uim_richtung_horizontal(w["richtung"]):
+        setze verfuegbar auf w["b"] - w["trenner_breite"]
+        wenn verfuegbar <= 0:
+            gib_zurück falsch
+        setze p auf x - w["x"]
+        wenn p < w["min1"]:
+            setze p auf w["min1"]
+        wenn verfuegbar - p < w["min2"]:
+            setze p auf verfuegbar - w["min2"]
+        w["anteil"] = p / verfuegbar
+    sonst:
+        setze verfuegbar auf w["h"] - w["trenner_breite"]
+        wenn verfuegbar <= 0:
+            gib_zurück falsch
+        setze p auf y - w["y"]
+        wenn p < w["min1"]:
+            setze p auf w["min1"]
+        wenn verfuegbar - p < w["min2"]:
+            setze p auf verfuegbar - w["min2"]
+        w["anteil"] = p / verfuegbar
+    _uim_teiler_layout(w)
+    gib_zurück alt != w["anteil"]
+
+funktion _uim_z_teiler(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_farbe(kontext, z, t["flaeche"])
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], wahr)
+    _uim_farbe(kontext, z, t["rand"])
+    wenn _uim_richtung_horizontal(w["richtung"]):
+        _uim_zf_linie(kontext, z, ax + w["trenn_pos"] + w["trenner_breite"] / 2, ay, ax + w["trenn_pos"] + w["trenner_breite"] / 2, ay + w["h"], 2)
+    sonst:
+        _uim_zf_linie(kontext, z, ax, ay + w["trenn_pos"] + w["trenner_breite"] / 2, ax + w["b"], ay + w["trenn_pos"] + w["trenner_breite"] / 2, 2)
+    gib_zurück wahr
+
+funktion _uim_z_karte(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], wahr)
+    wenn _uim_glass_an(t):
+        _uim_glass_deko(kontext, z, ax, ay, w["b"], w["h"], t["radius"])
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
+    _uim_farbe(kontext, z, t["text"])
+    _uim_zf_text(kontext, z, ax + t["abstand"] + 2, ay + (w["titel_h"] - t["schrift"]) / 2 + 1, w["text"], t["schrift"])
+    gib_zurück wahr
+
+funktion _uim_z_ueberlagerung(kontext, z, w, ox, oy):
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    wenn w["dimmen"]:
+        _uim_farbe(kontext, z, [0, 0, 0, 160])
+        _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], wahr)
+    gib_zurück wahr
+
+funktion _uim_ueberlagerung_layout(w):
+    wenn länge(w["kinder"]) == 0:
+        gib_zurück wahr
+    setze panel auf w["kinder"][0]
+    panel["x"] = (w["b"] - panel["b"]) / 2
+    wenn w.enthält("overlay_kind") und (w["overlay_kind"] == "toast" oder w["overlay_kind"] == "snackbar"):
+        panel["y"] = w["h"] - panel["h"] - 16
+    sonst:
+        panel["y"] = (w["h"] - panel["h"]) / 2
+    gib_zurück wahr
+
+funktion uim_teiler(x, y, b, h, richtung, anteil):
+    setze w auf _uim_basis("teiler", x, y, b, h)
+    w["richtung"] = richtung
+    w["anteil"] = anteil
+    wenn w["anteil"] < 0.05:
+        w["anteil"] = 0.05
+    wenn w["anteil"] > 0.95:
+        w["anteil"] = 0.95
+    w["min1"] = 24
+    w["min2"] = 24
+    w["trenner_breite"] = 6
+    gib_zurück w
+
+funktion uim_teiler_min_setze(w, min1, min2):
+    wenn min1 < 0:
+        setze min1 auf 0
+    wenn min2 < 0:
+        setze min2 auf 0
+    w["min1"] = min1
+    w["min2"] = min2
+    _uim_teiler_layout(w)
+    gib_zurück w
+
+funktion uim_karte(titel, x, y, b, h):
+    setze w auf _uim_basis("karte", x, y, b, h)
+    w["text"] = titel
+    w["titel_h"] = 28
+    gib_zurück w
+
+funktion uim_stapel(x, y, b, h):
+    gib_zurück _uim_basis("stapel", x, y, b, h)
+
+funktion uim_gitter(x, y, b, h):
+    gib_zurück _uim_basis("gitter", x, y, b, h)
+
+funktion uim_stapel_layout(container, richtung, abstand):
+    wenn abstand < 0:
+        setze abstand auf 0
+    container["gap"] = abstand
+    setze pos auf container["padding"]
+    setze quer_max auf 0
+    für kind in container["kinder"]:
+        _uim_layout_begrenze(kind)
+        setze rand auf kind["margin"]
+        wenn _uim_richtung_horizontal(richtung):
+            kind["x"] = pos + rand
+            kind["y"] = container["padding"] + rand
+            setze pos auf pos + kind["b"] + rand * 2 + abstand
+            wenn kind["h"] + rand * 2 > quer_max:
+                setze quer_max auf kind["h"] + rand * 2
+        sonst:
+            kind["x"] = container["padding"] + rand
+            kind["y"] = pos + rand
+            setze pos auf pos + kind["h"] + rand * 2 + abstand
+            wenn kind["b"] + rand * 2 > quer_max:
+                setze quer_max auf kind["b"] + rand * 2
+    wenn länge(container["kinder"]) > 0:
+        setze pos auf pos - abstand
+    wenn _uim_richtung_horizontal(richtung):
+        wenn container["auto_b"]:
+            container["b"] = pos + container["padding"]
+        wenn container["auto_h"]:
+            container["h"] = quer_max + container["padding"] * 2
+    sonst:
+        wenn container["auto_b"]:
+            container["b"] = quer_max + container["padding"] * 2
+        wenn container["auto_h"]:
+            container["h"] = pos + container["padding"]
+    gib_zurück _uim_layout_begrenze(container)
+
+funktion uim_gitter_layout(container, spalten, abstand):
+    wenn spalten < 1:
+        setze spalten auf 1
+    wenn abstand < 0:
+        setze abstand auf 0
+    container["gap"] = abstand
+    setze zell_b auf 0
+    setze zell_h auf 0
+    für kind in container["kinder"]:
+        _uim_layout_begrenze(kind)
+        wenn kind["b"] + kind["margin"] * 2 > zell_b:
+            setze zell_b auf kind["b"] + kind["margin"] * 2
+        wenn kind["h"] + kind["margin"] * 2 > zell_h:
+            setze zell_h auf kind["h"] + kind["margin"] * 2
+    setze i auf 0
+    für kind in container["kinder"]:
+        setze sp auf i % spalten
+        setze zeile auf boden(i / spalten)
+        kind["x"] = container["padding"] + sp * (zell_b + abstand) + kind["margin"]
+        kind["y"] = container["padding"] + zeile * (zell_h + abstand) + kind["margin"]
+        setze i auf i + 1
+    setze zeilen auf 0
+    wenn länge(container["kinder"]) > 0:
+        setze zeilen auf boden((länge(container["kinder"]) + spalten - 1) / spalten)
+    wenn container["auto_b"]:
+        container["b"] = container["padding"] * 2 + spalten * zell_b + (spalten - 1) * abstand
+    wenn container["auto_h"]:
+        container["h"] = container["padding"] * 2 + zeilen * zell_h
+        wenn zeilen > 0:
+            container["h"] = container["h"] + (zeilen - 1) * abstand
+    gib_zurück _uim_layout_begrenze(container)
+
+funktion uim_ueberlagerung(x, y, b, h):
+    setze w auf _uim_basis("ueberlagerung", x, y, b, h)
+    w["offen"] = wahr
+    w["schliesst_aussen"] = wahr
+    w["on_schliessen"] = nichts
+    w["modal"] = wahr
+    w["dimmen"] = wahr
+    gib_zurück w
+
+funktion uim_ueberlagerung_setze(kontext, w, offen, schliesst_aussen):
+    wenn w == nichts:
+        gib_zurück falsch
+    w["offen"] = offen
+    w["sichtbar"] = offen
+    w["schliesst_aussen"] = schliesst_aussen
+    wenn offen und w["modal"]:
+        kontext["modal_overlay"] = w
+        setze erste_fokus auf _uim_dialog_erstfokus(w)
+        wenn erste_fokus != nichts:
+            kontext["fokus"] = erste_fokus
+    sonst wenn kontext.enthält("modal_overlay") und kontext["modal_overlay"] != nichts and kontext["modal_overlay"]["uid"] == w["uid"]:
+        kontext["modal_overlay"] = nichts
+        kontext["fokus"] = nichts
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion uim_overlay(x, y, b, h):
+    gib_zurück uim_ueberlagerung(x, y, b, h)
+
+# ------------------------------------------------------------
+# NATIVE-UI-12/W4: Dialoge, Toast und Snackbar
+# ------------------------------------------------------------
+
+funktion _uim_dialog_erstfokus(w):
+    setze ziele auf []
+    _uim_fokus_uids(w["kinder"], ziele)
+    wenn länge(ziele) == 0:
+        gib_zurück nichts
+    gib_zurück _uim_finde_uid_rek(w["kinder"], ziele[0])
+
+funktion _uim_dialog_schliesse(kontext, w, aktion):
+    wenn w == nichts:
+        gib_zurück falsch
+    w["offen"] = falsch
+    w["sichtbar"] = falsch
+    wenn kontext.enthält("modal_overlay") und kontext["modal_overlay"] != nichts:
+        wenn kontext["modal_overlay"]["uid"] == w["uid"]:
+            kontext["modal_overlay"] = nichts
+            kontext["fokus"] = nichts
+    setze kind auf ""
+    wenn w.enthält("overlay_kind"):
+        setze kind auf w["overlay_kind"]
+    wenn kind == "eingabe":
+        wenn aktion < 0:
+            w["abgebrochen"] = wahr
+        setze cb_eingabe auf w["on_aktion"]
+        wenn cb_eingabe != nichts:
+            cb_eingabe(w, w["dialog_eingabe"]["text"])
+    sonst wenn kind == "nachricht":
+        setze cb_nachricht auf w["on_aktion"]
+        wenn cb_nachricht != nichts:
+            cb_nachricht(w, aktion)
+    sonst:
+        setze cb_schliessen auf w["on_schliessen"]
+        wenn cb_schliessen != nichts:
+            cb_schliessen(w)
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion _uim_dialog_aktion(kontext, w, index):
+    wenn w == nichts oder w["offen"] == falsch:
+        gib_zurück falsch
+    _uim_dialog_schliesse(kontext, w, index)
+    gib_zurück wahr
+
+funktion _uim_snackbar_aktion(kontext, w):
+    wenn w == nichts:
+        gib_zurück falsch
+    w["offen"] = falsch
+    w["sichtbar"] = falsch
+    setze cb_snack auf w["on_aktion"]
+    wenn cb_snack != nichts:
+        cb_snack(w)
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion _uim_dialog_button(text, x, y, b, h, dialog, index):
+    setze knopf auf uim_knopf(text, x, y, b, h, nichts)
+    knopf["dialog"] = dialog
+    knopf["dialog_index"] = index
+    gib_zurück knopf
+
+funktion uim_nachricht(titel, text, knoepfe, cb):
+    setze w auf uim_ueberlagerung(0, 0, 0, 0)
+    w["overlay_kind"] = "nachricht"
+    w["modal"] = wahr
+    w["dimmen"] = wahr
+    w["schliesst_aussen"] = falsch
+    w["on_aktion"] = cb
+    w["dialog_buttons"] = []
+    setze panel auf uim_karte(titel, 0, 0, 360, 156)
+    setze body auf uim_label(text, 16, 12, 328, 44)
+    uim_hinzu(panel, body)
+    setze i auf 0
+    für beschriftung in knoepfe:
+        setze button auf _uim_dialog_button(beschriftung, 0, 0, 92, 28, w, i)
+        w["dialog_buttons"].hinzufügen(button)
+        uim_hinzu(panel, button)
+        setze i auf i + 1
+    uim_hinzu(w, panel)
+    wenn länge(w["dialog_buttons"]) > 0:
+        w["standard_button"] = 0
+    sonst:
+        w["standard_button"] = 0 - 1
+    gib_zurück w
+
+funktion _uim_loeschen_dialog_aktion(w, index):
+    wenn index != 0:
+        gib_zurück wahr
+    setze cb auf w["on_loeschen"]
+    wenn cb != nichts:
+        cb(w)
+    gib_zurück wahr
+
+# Schutzmuster: destruktive Aktion wird immer durch die vorhandene
+# retained MessageBox bestaetigt; Index 0 ist bewusst die Loeschaktion.
+funktion uim_loeschen_bestaetigung(titel, text, on_bestaetigt):
+    setze w auf uim_nachricht(titel, text, ["Loeschen", "Abbrechen"], _uim_loeschen_dialog_aktion)
+    w["on_loeschen"] = on_bestaetigt
+    w["destruktiv"] = wahr
+    gib_zurück w
+
+funktion uim_eingabe_dialog(titel, prompt, initial, cb):
+    setze w auf uim_ueberlagerung(0, 0, 0, 0)
+    w["overlay_kind"] = "eingabe"
+    w["modal"] = wahr
+    w["dimmen"] = wahr
+    w["schliesst_aussen"] = falsch
+    w["on_aktion"] = cb
+    w["abgebrochen"] = falsch
+    w["dialog_buttons"] = []
+    setze panel auf uim_karte(titel, 0, 0, 380, 188)
+    setze frage auf uim_label(prompt, 16, 10, 348, 24)
+    setze feld auf uim_textfeld(16, 40, 348, 30, initial, nichts)
+    feld["dialog"] = w
+    w["dialog_eingabe"] = feld
+    uim_hinzu(panel, frage)
+    uim_hinzu(panel, feld)
+    setze ok auf _uim_dialog_button("OK", 178, 82, 84, 28, w, 0)
+    setze abbrechen auf _uim_dialog_button("Abbrechen", 270, 82, 94, 28, w, 1)
+    w["dialog_buttons"].hinzufügen(ok)
+    w["dialog_buttons"].hinzufügen(abbrechen)
+    uim_hinzu(panel, ok)
+    uim_hinzu(panel, abbrechen)
+    uim_hinzu(w, panel)
+    w["standard_button"] = 0
+    gib_zurück w
+
+funktion uim_toast(text, dauer_ticks):
+    setze w auf uim_ueberlagerung(0, 0, 0, 0)
+    w["overlay_kind"] = "toast"
+    w["modal"] = falsch
+    w["dimmen"] = falsch
+    w["schliesst_aussen"] = falsch
+    w["rest_ticks"] = dauer_ticks
+    wenn w["rest_ticks"] <= 0:
+        w["rest_ticks"] = 1
+    setze panel auf uim_panel("", 0, 0, 300, 44)
+    setze label auf uim_label(text, 12, 8, 276, 24)
+    uim_hinzu(panel, label)
+    uim_hinzu(w, panel)
+    gib_zurück w
+
+funktion uim_snackbar(text, aktionsknopf, cb):
+    setze w auf uim_ueberlagerung(0, 0, 0, 0)
+    w["overlay_kind"] = "snackbar"
+    w["modal"] = falsch
+    w["dimmen"] = falsch
+    w["schliesst_aussen"] = falsch
+    w["rest_ticks"] = 6
+    setze panel auf uim_panel("", 0, 0, 420, 48)
+    setze label auf uim_label(text, 12, 10, 260, 24)
+    uim_hinzu(panel, label)
+    wenn aktionsknopf != nichts und aktionsknopf != "":
+        setze button auf uim_knopf(aktionsknopf, 286, 8, 118, 28, nichts)
+        button["snackbar"] = w
+        uim_hinzu(panel, button)
+    uim_hinzu(w, panel)
+    w["on_aktion"] = cb
+    gib_zurück w
+
+# ------------------------------------------------------------
+# NATIVE-UI-12/W5G: Terminal und Markdown Viewer.
+# Beide Widgets bleiben reine retained-mode Moo-Zeichenpfade.
+# ------------------------------------------------------------
+
+funktion uim_terminal(x, y, b, h, initial, on_befehl):
+    setze w auf _uim_basis("terminal", x, y, b, h)
+    w["fokussierbar"] = wahr
+    w["zeilen"] = initial.teilen("\n")
+    w["eingabe"] = ""
+    w["text"] = ""
+    w["cursor"] = 0
+    w["prompt"] = "> "
+    w["history"] = []
+    w["history_idx"] = -1
+    w["on_befehl"] = on_befehl
+    w["scroll_y"] = 0
+    w["max_zeilen"] = 256
+    gib_zurück w
+
+
+funktion uim_terminal_ausgabe(kontext, w, ausgabe):
+    wenn w == nichts:
+        gib_zurück falsch
+    für zeile in ausgabe.teilen("\n"):
+        w["zeilen"].hinzufügen(zeile)
+    wenn länge(w["zeilen"]) > w["max_zeilen"]:
+        setze w["zeilen"] auf w["zeilen"].zeilen(länge(w["zeilen"]) - w["max_zeilen"], länge(w["zeilen"]))
+    setze w["scroll_y"] auf _uim_scroll_max(kontext, w)
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion uim_markdown(x, y, b, h, inhalt):
+    setze w auf _uim_basis("markdown", x, y, b, h)
+    w["inhalt"] = inhalt
+    w["zeilen"] = inhalt.teilen("\n")
+    w["scroll_y"] = 0
+    w["fokussierbar"] = wahr
+    gib_zurück w
+
+funktion uim_markdown_setze(kontext, w, inhalt):
+    wenn w == nichts:
+        gib_zurück falsch
+    w["inhalt"] = inhalt
+    w["zeilen"] = inhalt.teilen("\n")
+    w["scroll_y"] = 0
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion _uim_markdown_art(zeile):
+    wenn zeile == "":
+        gib_zurück 0
+    wenn zeile.enthält("### "):
+        gib_zurück 3
+    wenn zeile.enthält("## "):
+        gib_zurück 2
+    wenn zeile.enthält("# "):
+        gib_zurück 1
+    wenn zeile.enthält("CODE:"):
+        gib_zurück 4
+    wenn zeile.enthält("- ") oder zeile.enthält("* "):
+        gib_zurück 5
+    gib_zurück 0
+
+funktion _uim_z_terminal(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_farbe(kontext, z, [12, 18, 26, 255])
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], wahr)
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
+    setze pad auf t["abstand"]
+    setze zeilen_h auf t["schrift"] + 3
+    setze max_zeilen auf boden((w["h"] - 2 * pad - zeilen_h) / zeilen_h)
+    wenn max_zeilen < 1:
+        setze max_zeilen auf 1
+    setze start auf boden(w["scroll_y"] / zeilen_h)
+    setze max_start auf länge(w["zeilen"]) - max_zeilen
+    wenn max_start < 0:
+        setze max_start auf 0
+    wenn start > max_start:
+        setze start auf max_start
+    wenn start < 0:
+        setze start auf 0
+    _uim_zf_clip_setze(kontext, z, ax + 4, ay + pad, w["b"] - 8, w["h"] - pad - zeilen_h - 4)
+    setze i auf start
+    setze gezeichnet auf 0
+    solange i < länge(w["zeilen"]) und gezeichnet < max_zeilen:
+        _uim_farbe(kontext, z, t["text"])
+        _uim_zf_text(kontext, z, ax + pad, ay + pad + gezeichnet * zeilen_h, w["zeilen"][i], t["schrift"])
+        setze i auf i + 1
+        setze gezeichnet auf gezeichnet + 1
+    _uim_zf_clip_loesche(kontext, z)
+    setze eingabe_y auf ay + w["h"] - pad - zeilen_h
+    _uim_farbe(kontext, z, t["akzent"])
+    _uim_zf_text(kontext, z, ax + pad, eingabe_y, w["prompt"] + w["eingabe"], t["schrift"])
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        setze links auf w["prompt"] + w["eingabe"]
+        setze cx auf ax + pad + _uim_zf_text_breite(kontext, z, links, t["schrift"])
+        _uim_farbe(kontext, z, t["text"])
+        _uim_zf_linie(kontext, z, cx, eingabe_y - 1, cx, eingabe_y + t["schrift"] + 1, 1)
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
+    gib_zurück wahr
+
+funktion _uim_z_markdown(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], wahr)
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
+    setze pad auf t["abstand"]
+    setze zeilen_h auf t["schrift"] + 4
+    setze max_zeilen auf boden((w["h"] - 2 * pad) / zeilen_h)
+    wenn max_zeilen < 1:
+        setze max_zeilen auf 1
+    setze start auf boden(w["scroll_y"] / zeilen_h)
+    setze max_start auf länge(w["zeilen"]) - max_zeilen
+    wenn max_start < 0:
+        setze max_start auf 0
+    wenn start > max_start:
+        setze start auf max_start
+    wenn start < 0:
+        setze start auf 0
+    _uim_zf_clip_setze(kontext, z, ax + 3, ay + 2, w["b"] - 6, w["h"] - 4)
+    setze i auf start
+    setze gezeichnet auf 0
+    solange i < länge(w["zeilen"]) und gezeichnet < max_zeilen:
+        setze zeile auf w["zeilen"][i]
+        setze art auf _uim_markdown_art(zeile)
+        setze schrift auf t["schrift"]
+        wenn art == 1:
+            setze schrift auf t["schrift"] + 2
+        sonst wenn art == 2:
+            setze schrift auf t["schrift"] + 1
+        wenn art == 4:
+            # Der Codebalken folgt derselben Textbasis: 2px oberhalb bis 2px unterhalb.
+            setze code_y auf ay + pad - 2 + gezeichnet * zeilen_h
+            _uim_farbe(kontext, z, [24, 30, 42, 255])
+            _uim_zf_rechteck(kontext, z, ax + 3, code_y, w["b"] - 6, schrift + 4, wahr)
+        wenn art == 1 oder art == 2 oder art == 3:
+            _uim_farbe(kontext, z, t["akzent"])
+        sonst wenn art == 4:
+            _uim_farbe(kontext, z, t["text"])
+        sonst wenn art == 5:
+            _uim_farbe(kontext, z, t["rand_fokus"])
+        sonst:
+            _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "text"))
+        _uim_zf_text(kontext, z, ax + pad, ay + pad + gezeichnet * zeilen_h, zeile, schrift)
+        setze i auf i + 1
+        setze gezeichnet auf gezeichnet + 1
+    _uim_zf_clip_loesche(kontext, z)
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck(kontext, z, ax + 1, ay + 1, w["b"] - 2, w["h"] - 2, falsch)
+    gib_zurück wahr

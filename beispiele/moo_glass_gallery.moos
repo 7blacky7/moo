@@ -40,9 +40,9 @@ funktion gallery_hintergrund(z):
 
 funktion gallery_effekt(variante):
     setze e auf uim_effekt_neu()
-    uim_effekt_ecken_setze(e, 22, 22, 22, 22)
-    uim_effekt_schatten_setze(e, 4, 10, 8, 2, 0, 0, 0, 132)
-    uim_effekt_hintergrund_setze(e, 8, 336, 92, 156, 255, 255, 92, 18, 20260712 + variante)
+    uim_effekt_ecken_setze(e, 24, 24, 24, 24)
+    uim_effekt_schatten_setze(e, 5, 14, 12, 3, 0, 0, 0, 168)
+    uim_effekt_hintergrund_setze(e, 14, 448, 72, 142, 255, 255, 48, 10, 20260712 + variante)
     wenn variante == 4:
         uim_effekt_transform_setze(e, 68608, 2048, 0 - 2048, 68608, 131072, 65536, 0, 0)
     sonst:
@@ -65,6 +65,27 @@ funktion gallery_karte(z, titel, detail, x, y, faehigkeiten, fallback, reduziert
         setze zeichnung auf {}
         zeichnung["ok"] = falsch
         zeichnung["effektiv"] = 0
+    # Text lebt in derselben RGBA-Surface wie das Glas: AA-Glyphen werden
+    # src-over komponiert, statt native opake Label-Flaechen darueberzulegen.
+    setze label_titel auf titel
+    wenn a["ok"] == falsch:
+        setze label_titel auf label_titel + " - NOGO"
+    setze label_status auf "REQ " + text(a["angefordert"]["aktiv"]) + " EFF "
+    wenn a["effektiv"] == nichts:
+        setze label_status auf label_status + "0"
+    sonst:
+        setze label_status auf label_status + text(a["effektiv"]["aktiv"])
+    setze label_status auf label_status + " DEG " + text(a["degradiert"])
+    # 19px AA-Metrik bei Skala 1: y+12, y+108 und y+132 bleiben
+    # vollstaendig innerhalb der 160px-Karte. Dunkler 1px-Schatten sichert
+    # Kontrast auf hellem und dunklem Glas.
+    surface_text(z, x + 13, y + 13, 1, label_titel, 0, 8, 20, 170)
+    surface_text(z, x + 12, y + 12, 1, label_titel, 244, 249, 255, 242)
+    surface_text(z, x + 13, y + 109, 1, detail, 0, 8, 20, 160)
+    surface_text(z, x + 12, y + 108, 1, detail, 220, 235, 248, 224)
+    surface_text(z, x + 13, y + 133, 1, label_status, 0, 8, 20, 170)
+    surface_text(z, x + 12, y + 132, 1, label_status, 232, 242, 252, 232)
+
     setze k auf {}
     k["titel"] = titel
     k["detail"] = detail
@@ -107,21 +128,6 @@ funktion gallery_bauen(pfad):
     ergebnis["karten"] = G["karten"]
     gib_zurück ergebnis
 
-funktion gallery_label(fenster, karte, bild_x, bild_y):
-    setze a auf karte["aufloesung"]
-    setze farbe_text auf karte["titel"]
-    wenn a["ok"] == falsch:
-        setze farbe_text auf farbe_text + " — NOGO"
-    ui_label(fenster, farbe_text, bild_x + karte["x"] + 12, bild_y + karte["y"] + 10, 270, 24)
-    setze status auf karte["detail"] + " | requested=" + text(a["angefordert"]["aktiv"]) + " effective="
-    wenn a["effektiv"] == nichts:
-        setze status auf status + "0"
-    sonst:
-        setze status auf status + text(a["effektiv"]["aktiv"])
-    setze status auf status + " degraded=" + text(a["degradiert"])
-    ui_label(fenster, status, bild_x + karte["x"] + 12, bild_y + karte["y"] + 120, 276, 36)
-    gib_zurück wahr
-
 setze bmp_pfad auf umgebung("MOO_GLASS_GALLERY_BMP")
 wenn bmp_pfad == nichts:
     setze bmp_pfad auf "moo_glass_gallery.bmp"
@@ -135,7 +141,7 @@ zeige "P016-UI1-GALLERY-CARDS " + text(länge(ergebnis["karten"]))
 
 setze non_ui auf umgebung("MOO_GLASS_GALLERY_NON_UI")
 wenn non_ui == "1":
-    wenn ergebnis["hash"] != "10996657a7b5aeef" oder länge(ergebnis["karten"]) != 6:
+    wenn ergebnis["hash"] != "5030f4a694fadafd" oder länge(ergebnis["karten"]) != 6:
         wirf "Glass Gallery Non-UI-Golden verletzt"
     zeige "P016-UI1-GLASS-GALLERY-NONUI-OK"
 sonst:
@@ -146,9 +152,8 @@ sonst:
     setze fenster auf ui_fenster(titel, 1120, 760, 0, nichts)
     ui_label(fenster, "MOO GLASS / AERO EFFECTS — Backend + Capabilities + Parameter", 20, 12, 1060, 28)
     ui_bild(fenster, bmp_pfad, 20, 50, G["breite"], G["hoehe"])
-    für karte in G["karten"]:
-        gallery_label(fenster, karte, 20, 50)
     ui_label(fenster, "backend=portable-vorschau | native Hostadapter separat | nonce=" + nonce, 20, 708, 1060, 24)
     zeige "P016-UI1-GALLERY-WINDOW " + titel
+    zeige "HOST-BACKEND " + ui_host_backend()
     ui_zeige_nebenbei(fenster)
     ui_laufen()

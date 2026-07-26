@@ -48,6 +48,7 @@ uim_mock_maus(k, 20, 70, falsch)
 zeige "CB-OFFEN " + text(cb["offen"])
 uim_mock_zeichne(k)
 uim_mock_maus(k, 20, 86, wahr)
+uim_mock_maus(k, 20, 86, falsch)
 zeige "CB-AUSWAHL " + text(cb["auswahl"])
 zeige "CB-IDX " + text(S["combo_idx"]) + " RUFE " + text(S["combo_rufe"])
 zeige "CB-ZU " + text(cb["offen"])
@@ -67,3 +68,491 @@ zeige "ZEICHNEN " + text(ok)
 setze befehle auf uim_mock_befehle(k)
 zeige "BEFEHLE>0 " + text(länge(befehle) > 0)
 zeige "UIM-WIDGETS-NEU-OK"
+
+
+# --- UI-13/STATE: zentraler Zustand + Eingabezustand ---
+# Sync-Ausnahme aktiv; Regression bleibt inhaltlich unverändert.
+setze state_knopf auf uim_knopf("STATE", 10, 100, 120, 24, nichts)
+uim_hinzu(k, state_knopf)
+zeige "STATE0 " + uim_zustand_hole(k, state_knopf)
+uim_zustand_setze(k, state_knopf, "disabled")
+zeige "STATE1 " + uim_zustand_hole(k, state_knopf)
+uim_mock_taste(k, "Tab", wahr, 0)
+zeige "FOCUS-DISABLED " + text(k["fokus"]["uid"] == state_knopf["uid"])
+uim_zustand_setze(k, state_knopf, "error")
+zeige "STATE2 " + uim_zustand_hole(k, state_knopf)
+uim_zustand_setze(k, state_knopf, "loading")
+zeige "STATE3 " + uim_zustand_hole(k, state_knopf)
+uim_zustand_setze(k, state_knopf, "selected")
+zeige "STATE4 " + uim_zustand_hole(k, state_knopf)
+
+zeige "TF-IN0 " + uim_eingabe_zustand_hole(tf)
+uim_textfeld_setze(k, tf, "")
+zeige "TF-IN1 " + uim_eingabe_zustand_hole(tf)
+uim_textfeld_setze(k, tf, "neu")
+zeige "TF-IN2 " + uim_eingabe_zustand_hole(tf)
+uim_eingabe_zustand_setze(k, tf, "readonly")
+zeige "TF-IN3 " + uim_eingabe_zustand_hole(tf)
+uim_eingabe_zustand_setze(k, tf, "invalid")
+zeige "TF-IN4 " + uim_eingabe_zustand_hole(tf)
+zeige "TF-STATE " + uim_zustand_hole(k, tf)
+setze radio_a auf uim_radio("A", 10, 160, 180, 22, "gruppe", falsch, nichts)
+setze radio_b auf uim_radio("B", 10, 190, 180, 22, "gruppe", falsch, nichts)
+uim_hinzu(k, radio_a)
+uim_hinzu(k, radio_b)
+uim_mock_maus(k, 20, 170, wahr)
+uim_mock_maus(k, 20, 170, falsch)
+zeige "RADIO1 " + text(radio_a["wert"]) + "/" + text(radio_b["wert"])
+uim_mock_maus(k, 20, 200, wahr)
+uim_mock_maus(k, 20, 200, falsch)
+zeige "RADIO2 " + text(radio_a["wert"]) + "/" + text(radio_b["wert"])
+setze sw auf uim_schalter("SW", 210, 160, 100, 22, falsch, nichts)
+setze tg auf uim_umschaltknopf("TG", 210, 190, 100, 22, falsch, nichts)
+uim_hinzu(k, sw)
+uim_hinzu(k, tg)
+uim_mock_maus(k, 220, 170, wahr)
+uim_mock_maus(k, 220, 170, falsch)
+zeige "SCHALTER " + text(sw["wert"])
+uim_mock_maus(k, 220, 200, wahr)
+uim_mock_maus(k, 220, 200, falsch)
+zeige "TOGGLE " + text(tg["wert"])
+uim_mock_leeren(k)
+zeige "W1-DRAW " + text(uim_mock_zeichne(k))
+setze spin auf uim_spinner(10, 220, 24, 18)
+uim_spinner_phase_setze(spin, 3)
+setze rate auf uim_bewertung(120, 220, 100, 18, 2, nichts)
+uim_hinzu(k, spin)
+uim_hinzu(k, rate)
+uim_mock_maus(k, 160, 228, wahr)
+uim_mock_maus(k, 160, 228, falsch)
+zeige "SPINNER " + text(spin["wert"])
+zeige "RATING " + text(rate["wert"])
+setze ind auf uim_fortschritt(10, 130, 100, 12)
+uim_fortschritt_unbestimmt_setze(k, ind, wahr)
+uim_hinzu(k, ind)
+uim_mock_leeren(k)
+zeige "W1-DRAW2 " + text(uim_mock_zeichne(k))
+uim_tick(k, 0.25)
+zeige "SPINNER-TICK " + text(spin["wert"])
+zeige "PROGRESS-UNBESTIMMT " + text(ind["phase"] > 0)
+
+
+# --- NATIVE-UI-12/W2: Tabs, Toolbar, Statusleiste, Kontextmenue,
+#     Tooltip-Dwell und Expander ---
+S["w2_rufe"] = 0
+funktion t_w2_klick(w):
+    S["w2_rufe"] = S["w2_rufe"] + 1
+    gib_zurück wahr
+
+setze w2 auf uim_mock_wurzel(640, 480)
+setze tabs2 auf uim_tabs(10, 10, 300, 130, ["Eins", "Zwei"])
+setze tab_knopf2 auf uim_knopf("TAB", 10, 20, 100, 24, t_w2_klick)
+uim_hinzu(tabs2["kinder"][0], tab_knopf2)
+uim_hinzu(w2, tabs2)
+setze toolbar2 auf uim_werkzeugleiste(10, 155, 300, 34, [uim_werkzeug("RUN", t_w2_klick), uim_werkzeug_trenner(), uim_werkzeug("STOP", t_w2_klick)])
+uim_hinzu(w2, toolbar2)
+setze status2 auf uim_statusleiste(10, 200, 300, 28, "Bereit", "W2")
+uim_hinzu(w2, status2)
+setze exp2 auf uim_aufklapper("Mehr", 10, 245, 300, 90)
+setze exp_label2 auf uim_label("Inhalt", 8, 10, 100, 20)
+uim_hinzu(exp2, exp_label2)
+uim_hinzu(w2, exp2)
+setze cm2_w2 auf uim_kontextmenue([uim_menue_punkt("Aktion", t_w2_klick), uim_menue_trenner(), uim_menue_punkt("Ende", t_w2_klick)])
+uim_hinzu(w2, cm2_w2)
+uim_tooltip(toolbar2["kinder"][0], "Werkzeug-Tipp")
+uim_mock_leeren(w2)
+zeige "W2-FACTORY " + text(tabs2["typ"] == "tabs") + "/" + text(toolbar2["typ"] == "toolbar") + "/" + text(status2["typ"] == "statusleiste") + "/" + text(exp2["typ"] == "expander")
+zeige "W2-DRAW " + text(uim_mock_zeichne(w2))
+uim_mock_maus(w2, 170, 20, wahr)
+uim_mock_maus(w2, 170, 20, falsch)
+zeige "W2-TAB " + text(tabs2["auswahl"])
+uim_mock_maus(w2, 20, 260, wahr)
+uim_mock_maus(w2, 20, 260, falsch)
+zeige "W2-EXPAND " + text(exp2["offen"])
+uim_backend_bewegung(w2, 20, 182)
+uim_tick(w2, 0.5)
+zeige "W2-TOOLTIP " + text(w2["tooltip_ticks"] >= 0.5)
+uim_backend_maus_taste(w2, 420, 350, 3, wahr)
+uim_backend_maus_taste(w2, 420, 350, 3, falsch)
+zeige "W2-CONTEXT " + text(w2["kontext_offen"] != nichts)
+uim_mock_zeichne(w2)
+uim_backend_maus_taste(w2, 425, 362, 1, wahr)
+uim_backend_maus_taste(w2, 425, 362, 1, falsch)
+zeige "W2-CALLS " + text(S["w2_rufe"])
+zeige "NATIVE-UI-12-W2-OK"
+
+# --- NATIVE-UI-12/W3: Splitter, Card, Stack/Grid, Overlay ---
+# --- NATIVE-UI-12/W4: MessageBox, InputDialog, Toast, Snackbar ---
+S["w4_msg_index"] = -99
+S["w4_input_text"] = ""
+S["w4_input_abgebrochen"] = falsch
+S["w4_snack_rufe"] = 0
+
+funktion t_w4_message(w, index):
+    S["w4_msg_index"] = index
+    gib_zurück wahr
+
+funktion t_w4_input(w, txt):
+    S["w4_input_text"] = txt
+    S["w4_input_abgebrochen"] = w["abgebrochen"]
+    gib_zurück wahr
+
+funktion t_w4_snack(w):
+    S["w4_snack_rufe"] = S["w4_snack_rufe"] + 1
+    gib_zurück wahr
+
+setze w4 auf uim_mock_wurzel(480, 320)
+setze msg4 auf uim_nachricht("Hinweis", "Weiter?", ["OK", "Nein"], t_w4_message)
+uim_hinzu(w4, msg4)
+zeige "W4-FACTORY " + text(msg4["typ"] == "ueberlagerung") + "/" + text(msg4["modal"]) + "/" + text(länge(msg4["dialog_buttons"]) == 2) + "/" + text(w4["modal_overlay"]["uid"] == msg4["uid"])
+uim_mock_taste(w4, "Return", wahr, 0)
+zeige "W4-MESSAGE " + text(msg4["offen"]) + "/" + text(S["w4_msg_index"])
+
+setze inp4 auf uim_eingabe_dialog("Eingabe", "Name", "", t_w4_input)
+uim_hinzu(w4, inp4)
+uim_mock_taste(w4, "Q", wahr, 0)
+uim_mock_taste(w4, "Tab", wahr, 0)
+zeige "W4-FOCUS " + text(w4["fokus"]["uid"] == inp4["dialog_buttons"][0]["uid"])
+uim_mock_taste(w4, "Escape", wahr, 0)
+zeige "W4-INPUT " + text(inp4["offen"]) + "/" + S["w4_input_text"] + "/" + text(S["w4_input_abgebrochen"])
+
+setze toast4 auf uim_toast("Gespeichert", 2)
+uim_hinzu(w4, toast4)
+uim_mock_zeichne(w4)
+zeige "W4-TOAST-OPEN " + text(toast4["offen"]) + "/" + text(toast4["kinder"][0]["y"] == 260)
+uim_tick(w4, 2)
+zeige "W4-TOAST-CLOSE " + text(toast4["offen"])
+
+setze snack4 auf uim_snackbar("Undo möglich", "UNDO", t_w4_snack)
+uim_hinzu(w4, snack4)
+uim_mock_zeichne(w4)
+uim_mock_maus(w4, 330, 270, wahr)
+uim_mock_maus(w4, 330, 270, falsch)
+zeige "W4-SNACK " + text(snack4["offen"]) + "/" + text(S["w4_snack_rufe"])
+zeige "NATIVE-UI-12-W4-OK"
+
+setze w3 auf uim_mock_wurzel(360, 260)
+setze teiler3 auf uim_teiler(10, 10, 340, 100, "horizontal", 0.5)
+uim_hinzu(teiler3, uim_panel("Links", 0, 0, 120, 90))
+uim_hinzu(teiler3, uim_panel("Rechts", 0, 0, 120, 90))
+uim_hinzu(w3, teiler3)
+setze karte3 auf uim_karte("Karte", 10, 120, 180, 90)
+uim_hinzu(karte3, uim_label("Inhalt", 8, 10, 100, 18))
+uim_hinzu(w3, karte3)
+setze stapel3 auf uim_stapel(210, 120, 140, 80)
+uim_hinzu(stapel3, uim_knopf("A", 0, 0, 40, 20, nichts))
+uim_hinzu(stapel3, uim_knopf("B", 0, 0, 40, 20, nichts))
+uim_stapel_layout(stapel3, "vertikal", 4)
+uim_hinzu(w3, stapel3)
+setze gitter3 auf uim_gitter(210, 210, 140, 40)
+uim_hinzu(gitter3, uim_knopf("G1", 0, 0, 40, 20, nichts))
+uim_hinzu(gitter3, uim_knopf("G2", 0, 0, 40, 20, nichts))
+uim_hinzu(gitter3, uim_knopf("G3", 0, 0, 40, 20, nichts))
+uim_gitter_layout(gitter3, 2, 12)
+uim_hinzu(w3, gitter3)
+setze overlay3 auf uim_ueberlagerung(0, 0, 360, 260)
+setze overlay_panel3 auf uim_karte("Modal", 0, 0, 160, 80)
+uim_hinzu(overlay3, overlay_panel3)
+uim_hinzu(w3, overlay3)
+uim_ueberlagerung_setze(w3, overlay3, falsch, wahr)
+uim_mock_leeren(w3)
+zeige "W3-FACTORY " + text(teiler3["typ"] == "teiler") + "/" + text(karte3["typ"] == "karte") + "/" + text(stapel3["typ"] == "stapel") + "/" + text(overlay3["typ"] == "ueberlagerung")
+uim_mock_zeichne(w3)
+uim_mock_maus(w3, 180, 50, wahr)
+uim_mock_bewegung(w3, 220, 50)
+uim_mock_maus(w3, 220, 50, falsch)
+zeige "W3-DRAG " + text(teiler3["kinder"][0]["b"]) + "/" + text(teiler3["kinder"][1]["x"])
+zeige "W3-DRAW " + text(uim_mock_zeichne(w3))
+zeige "W3-TEILER " + text(teiler3["kinder"][0]["b"]) + "/" + text(teiler3["kinder"][1]["x"])
+zeige "W3-CARD " + text(karte3["kinder"][0]["y"])
+zeige "W3-STACK " + text(stapel3["kinder"][0]["y"]) + "/" + text(stapel3["kinder"][1]["y"])
+zeige "W3-GRID " + text(gitter3["kinder"][1]["x"]) + "/" + text(gitter3["kinder"][2]["y"])
+setze w3_titel_pad auf falsch
+für befehl in uim_mock_befehle(w3):
+    wenn befehl["op"] == "text" und befehl["args"][2] == "Karte" und befehl["args"][0] == karte3["x"] + 10 und befehl["args"][1] >= karte3["y"] + 8:
+        setze w3_titel_pad auf wahr
+zeige "W3-TITLE-PAD " + text(w3_titel_pad)
+uim_ueberlagerung_setze(w3, overlay3, wahr, wahr)
+uim_mock_zeichne(w3)
+zeige "W3-OVERLAY " + text(overlay_panel3["x"]) + "/" + text(overlay_panel3["y"])
+uim_mock_maus(w3, 5, 5, wahr)
+uim_mock_maus(w3, 5, 5, falsch)
+zeige "W3-CLOSE " + text(overlay3["offen"])
+zeige "NATIVE-UI-12-W3-OK"
+
+# --- NATIVE-UI-12/W5A: TreeView + DataGrid v1 ---
+S["w5_tree_rufe"] = 0
+S["w5_grid_rufe"] = 0
+
+funktion t_w5_tree(w, index):
+    S["w5_tree_rufe"] = index + 1
+    gib_zurück wahr
+
+funktion t_w5_grid(w, index):
+    S["w5_grid_rufe"] = index + 1
+    gib_zurück wahr
+
+setze w5 auf uim_mock_wurzel(420, 180)
+setze w5_kind auf uim_baum_knoten("Kind", [])
+setze w5_root auf uim_baum_knoten("Root", [w5_kind])
+setze tree5 auf uim_baum(10, 10, 150, 120, [w5_root], t_w5_tree)
+setze grid5 auf uim_datengitter(190, 10, 210, 60, ["Name", "Wert"], [["Alpha", "1"], ["Beta", "2"], ["Gamma", "3"]], t_w5_grid)
+uim_hinzu(w5, tree5)
+uim_hinzu(w5, grid5)
+zeige "W5-FACTORY " + text(tree5["typ"] == "baum") + "/" + text(grid5["typ"] == "datengitter") + "/" + text(tree5["fokussierbar"]) + "/" + text(grid5["fokussierbar"])
+zeige "W5-VISIBLE " + text(länge(_uim_baum_sichtbare(tree5)) == 1) + "/" + text(_uim_scroll_max(w5, grid5) > 0)
+uim_mock_maus(w5, 15, 20, wahr)
+uim_mock_maus(w5, 15, 20, falsch)
+zeige "W5-TREE " + text(w5_root["offen"]) + "/" + text(tree5["auswahl"]) + "/" + text(S["w5_tree_rufe"])
+uim_mock_taste(w5, "Down", wahr, 0)
+zeige "W5-TREE-DOWN " + text(tree5["auswahl"]) + "/" + text(S["w5_tree_rufe"])
+uim_mock_maus(w5, 210, 45, wahr)
+uim_mock_maus(w5, 210, 45, falsch)
+uim_mock_taste(w5, "Down", wahr, 0)
+zeige "W5-GRID " + text(grid5["auswahl"]) + "/" + text(S["w5_grid_rufe"])
+uim_mock_rad(w5, 210, 45, 1)
+zeige "W5-GRID-SCROLL " + text(grid5["scroll_y"] > 0)
+zeige "W5-DRAW " + text(uim_mock_zeichne(w5))
+setze w5_header_pad auf falsch
+für befehl in uim_mock_befehle(w5):
+    wenn befehl["op"] == "text" und befehl["args"][2] == "Name" und befehl["args"][0] == grid5["x"] + 10 und befehl["args"][1] >= grid5["y"] + 5:
+        setze w5_header_pad auf wahr
+zeige "W5-GRID-HEADER-PAD " + text(w5_header_pad)
+zeige "NATIVE-UI-12-W5A-OK"
+# --- NATIVE-UI-12/W5B: IconView / TileView ---
+S["w5_icon_rufe"] = 0
+funktion t_w5_icon(w, index):
+    S["w5_icon_rufe"] = index + 1
+    gib_zurück wahr
+
+setze icon5 auf uim_iconview(10, 90, 180, 70, [{"icon": "A", "text": "Alpha"}, {"icon": "B", "text": "Beta"}, {"icon": "C", "text": "Gamma"}, {"icon": "D", "text": "Delta"}, {"icon": "E", "text": "Epsilon"}], t_w5_icon)
+uim_hinzu(w5, icon5)
+zeige "W5B-FACTORY " + text(icon5["typ"] == "iconview") + "/" + text(icon5["fokussierbar"]) + "/" + text(_uim_iconview_spalten(w5, icon5) == 2)
+zeige "W5B-SCROLL " + text(_uim_scroll_max(w5, icon5) > 0)
+uim_mock_maus(w5, 88, 100, wahr)
+uim_mock_maus(w5, 88, 100, falsch)
+zeige "W5B-CLICK " + text(icon5["auswahl"]) + "/" + text(S["w5_icon_rufe"])
+uim_mock_taste(w5, "Down", wahr, 0)
+zeige "W5B-DOWN " + text(icon5["auswahl"]) + "/" + text(S["w5_icon_rufe"])
+uim_mock_rad(w5, 88, 100, 1)
+zeige "W5B-RAD " + text(icon5["scroll_y"] > 0)
+zeige "W5B-DRAW " + text(uim_mock_zeichne(w5))
+
+funktion t_w5b_text_gerendert(befehle, suchtext):
+    setze gefunden auf falsch
+    für befehl in befehle:
+        wenn befehl["op"] == "text" und befehl["args"][2] == suchtext:
+            setze gefunden auf wahr
+    gib_zurück gefunden
+
+setze clip5b_liste_root auf uim_mock_wurzel(140, 60)
+setze clip5b_liste auf uim_liste(10, 10, 100, 30, ["EINS", "ZWEI"], t_w5_icon)
+uim_hinzu(clip5b_liste_root, clip5b_liste)
+uim_mock_zeichne(clip5b_liste_root)
+zeige "W5B-CLIP-LIST " + text(t_w5b_text_gerendert(uim_mock_befehle(clip5b_liste_root), "ZWEI") == falsch)
+
+setze clip5b_icon_root auf uim_mock_wurzel(120, 110)
+setze clip5b_icon auf uim_iconview(10, 10, 80, 80, [{"icon": "A", "text": "EinSehrLangerName"}, {"icon": "B", "text": "Zwei"}], t_w5_icon)
+uim_hinzu(clip5b_icon_root, clip5b_icon)
+uim_mock_zeichne(clip5b_icon_root)
+zeige "W5B-CLIP-ICON " + text(t_w5b_text_gerendert(uim_mock_befehle(clip5b_icon_root), "Zwei") == falsch)
+zeige "W5B-ELLIPSIS " + text(t_w5b_text_gerendert(uim_mock_befehle(clip5b_icon_root), "EinSehrLangerName") == falsch)
+zeige "NATIVE-UI-12-W5B-OK"
+# --- NATIVE-UI-12/W5C: Text+ ---
+S["w5c_rufe"] = 0
+funktion t_w5c(w, wert):
+    S["w5c_rufe"] = S["w5c_rufe"] + 1
+    gib_zurück wahr
+
+setze w5c auf uim_mock_wurzel(420, 280)
+setze sb5c auf uim_searchbox(10, 10, 180, 24, "Suchen", t_w5c)
+setze nb5c auf uim_numberbox(10, 45, 180, 24, 12, 0, 99, t_w5c)
+setze pw5c auf uim_passwordbox(10, 80, 180, 24, "geheim", t_w5c)
+setze ml5c auf uim_multiline(10, 115, 180, 48, "ZEILE1", t_w5c)
+setze ac5c auf uim_autocomplete(10, 175, 180, 24, "", ["Alpha", "Beta"], t_w5c)
+uim_hinzu(w5c, sb5c)
+uim_hinzu(w5c, nb5c)
+uim_hinzu(w5c, pw5c)
+uim_hinzu(w5c, ml5c)
+uim_hinzu(w5c, ac5c)
+zeige "W5C-FACTORY " + text(sb5c["typ"] == "searchbox") + "/" + text(nb5c["typ"] == "numberbox") + "/" + text(pw5c["typ"] == "passwordbox") + "/" + text(ml5c["typ"] == "multiline") + "/" + text(ac5c["typ"] == "autocomplete")
+zeige "W5C-PLACEHOLDER " + _uim_eingabe_anzeige(w5c, sb5c)
+uim_mock_maus(w5c, 20, 20, wahr)
+uim_mock_maus(w5c, 20, 20, falsch)
+uim_mock_taste(w5c, "X", wahr, 0)
+zeige "W5C-SEARCH " + sb5c["text"]
+uim_mock_maus(w5c, 20, 55, wahr)
+uim_mock_maus(w5c, 20, 55, falsch)
+uim_mock_taste(w5c, "A", wahr, 0)
+uim_mock_taste(w5c, "5", wahr, 0)
+zeige "W5C-NUM " + nb5c["text"]
+zeige "W5C-PW " + _uim_eingabe_anzeige(w5c, pw5c)
+zeige "W5C-ML " + text(ml5c["mehrzeilig"])
+uim_mock_maus(w5c, 20, 185, wahr)
+uim_mock_maus(w5c, 20, 185, falsch)
+uim_mock_taste(w5c, "Down", wahr, 0)
+zeige "W5C-AUTO " + ac5c["text"] + "/" + text(ac5c["auswahl"])
+zeige "W5C-DRAW " + text(uim_mock_zeichne(w5c))
+zeige "NATIVE-UI-12-W5C-OK"
+# --- NATIVE-UI-12/W5D: Image, Icon, Badge, Avatar ---
+setze w5d auf uim_mock_wurzel(420, 220)
+setze image5d auf uim_image(10, 10, 120, 70, "bild.bmp", "Vorschau")
+setze icon5d auf uim_icon("A", 145, 10, 48, 48)
+setze badge5d auf uim_badge("NEU", 210, 12, 72, 24)
+setze avatar5d auf uim_avatar("AB", 300, 10, 56, 56)
+uim_hinzu(w5d, image5d)
+uim_hinzu(w5d, icon5d)
+uim_hinzu(w5d, badge5d)
+uim_hinzu(w5d, avatar5d)
+zeige "W5D-FACTORY " + text(image5d["typ"] == "image") + "/" + text(icon5d["typ"] == "icon") + "/" + text(badge5d["typ"] == "badge") + "/" + text(avatar5d["typ"] == "avatar")
+zeige "W5D-A11Y " + image5d["a11y_name"]
+zeige "W5D-DRAW " + text(uim_mock_zeichne(w5d))
+zeige "NATIVE-UI-12-W5D-OK"
+# --- NATIVE-UI-12/W5E: ColorPicker, DatePicker, Calendar ---
+S["w5e_rufe"] = 0
+funktion t_w5e(w, wert):
+    S["w5e_rufe"] = S["w5e_rufe"] + 1
+    gib_zurück wahr
+
+setze w5e auf uim_mock_wurzel(520, 300)
+setze farben5e auf [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 0, 255]]
+setze cp5e auf uim_colorpicker(10, 10, 120, 48, farben5e, t_w5e)
+setze cal5e auf uim_calendar(160, 10, 280, 180, 7, 2026, t_w5e)
+setze dp5e auf uim_datepicker(10, 80, 120, 180, 7, 2026, t_w5e)
+uim_hinzu(w5e, cp5e)
+uim_hinzu(w5e, cal5e)
+uim_hinzu(w5e, dp5e)
+zeige "W5E-FACTORY " + text(cp5e["typ"] == "colorpicker") + "/" + text(cal5e["typ"] == "calendar") + "/" + text(dp5e["typ"] == "datepicker")
+uim_mock_maus(w5e, 35, 20, wahr)
+uim_mock_maus(w5e, 35, 20, falsch)
+uim_mock_taste(w5e, "Right", wahr, 0)
+zeige "W5E-COLOR " + text(cp5e["auswahl"])
+uim_mock_maus(w5e, 190, 50, wahr)
+uim_mock_maus(w5e, 190, 50, falsch)
+uim_mock_taste(w5e, "Down", wahr, 0)
+zeige "W5E-CAL " + text(cal5e["auswahl"])
+zeige "W5E-DRAW " + text(uim_mock_zeichne(w5e))
+setze cal5e_klein_root auf uim_mock_wurzel(380, 150)
+setze cal5e_klein auf uim_calendar(10, 10, 356, 120, 7, 2026, t_w5e)
+uim_hinzu(cal5e_klein_root, cal5e_klein)
+uim_mock_zeichne(cal5e_klein_root)
+setze cal5e_zelle_ok auf falsch
+setze cal5e_header_pad auf falsch
+setze cal5e_zelle_h auf (cal5e_klein["h"] - 24) / 6
+für befehl in uim_mock_befehle(cal5e_klein_root):
+    wenn befehl["op"] == "text" und befehl["args"][2] == "1":
+        setze cal5e_zelle_ok auf befehl["args"][1] >= cal5e_klein["y"] + 25 und befehl["args"][1] + befehl["args"][3] <= cal5e_klein["y"] + 24 + cal5e_zelle_h - 2
+    wenn befehl["op"] == "text" und befehl["args"][2] == "7/2026" und befehl["args"][0] == cal5e_klein["x"] + 10 und befehl["args"][1] == cal5e_klein["y"] + 5:
+        setze cal5e_header_pad auf wahr
+zeige "W5E-CELL-BOUNDS " + text(cal5e_zelle_ok)
+zeige "W5E-HEADER-PAD " + text(cal5e_header_pad)
+zeige "NATIVE-UI-12-W5E-OK"
+# --- NATIVE-UI-12/W5F: LineChart, BarChart, PieChart, Gauge ---
+S["w5f_rufe"] = 0
+funktion t_w5f(w, wert):
+    S["w5f_rufe"] = S["w5f_rufe"] + 1
+    gib_zurück wahr
+
+setze w5f auf uim_mock_wurzel(620, 500)
+setze werte5f auf [1, 3, 2, 4]
+setze line5f auf uim_linechart(10, 10, 180, 100, werte5f, t_w5f)
+setze bar5f auf uim_barchart(210, 10, 180, 100, werte5f, t_w5f)
+setze pie5f auf uim_piechart(410, 10, 180, 100, werte5f, t_w5f)
+setze gauge5f auf uim_gauge(10, 140, 180, 52, 0, 100, 40, t_w5f)
+uim_hinzu(w5f, line5f)
+uim_hinzu(w5f, bar5f)
+uim_hinzu(w5f, pie5f)
+uim_hinzu(w5f, gauge5f)
+zeige "W5F-FACTORY " + text(line5f["typ"] == "linechart") + "/" + text(bar5f["typ"] == "barchart") + "/" + text(pie5f["typ"] == "piechart") + "/" + text(gauge5f["typ"] == "gauge")
+uim_mock_maus(w5f, 120, 40, wahr)
+uim_mock_maus(w5f, 120, 40, falsch)
+uim_mock_taste(w5f, "Left", wahr, 0)
+uim_mock_maus(w5f, 270, 40, wahr)
+uim_mock_maus(w5f, 270, 40, falsch)
+uim_mock_maus(w5f, 470, 40, wahr)
+uim_mock_maus(w5f, 470, 40, falsch)
+zeige "W5F-SELECT " + text(line5f["auswahl"]) + "/" + text(pie5f["auswahl"])
+uim_mock_maus(w5f, 100, 160, wahr)
+uim_mock_maus(w5f, 100, 160, falsch)
+uim_mock_taste(w5f, "Right", wahr, 0)
+zeige "W5F-GAUGE " + text(gauge5f["wert"])
+zeige "W5F-DRAW " + text(uim_mock_zeichne(w5f))
+zeige "NATIVE-UI-12-W5F-OK"
+
+# --- NATIVE-UI-12/W5G: Terminal + Markdown Viewer ---
+funktion t_w5g(w):
+    wenn länge(w["history"]) != 1:
+        gib_zurück falsch
+    gib_zurück w["history"][0] == "hi"
+
+setze w5g auf uim_mock_wurzel(420, 220)
+setze term5g auf uim_terminal(10, 10, 180, 90, "MOO shell", t_w5g)
+setze md5g_inhalt auf ["# Titel", "CODE: test()", "- Punkt", "- Zweiter Punkt", "- Dritter Punkt", "- Vierter Punkt", "- Fuenfter Punkt", "- Sechster Punkt"].verbinden("\n")
+setze md5g auf uim_markdown(210, 10, 180, 60, md5g_inhalt)
+uim_hinzu(w5g, term5g)
+uim_hinzu(w5g, md5g)
+zeige "W5G-FACTORY " + text(term5g["typ"] == "terminal") + "/" + text(md5g["typ"] == "markdown")
+uim_mock_maus(w5g, 30, 30, wahr)
+uim_mock_maus(w5g, 30, 30, falsch)
+uim_mock_taste(w5g, "h", wahr, 0)
+uim_mock_taste(w5g, "i", wahr, 0)
+setze w5g_command auf term5g["eingabe"]
+setze w5g_callback_ok auf uim_mock_taste(w5g, "Return", wahr, 0)
+zeige "W5G-CALLBACK " + text(w5g_callback_ok)
+zeige "W5G-COMMAND " + w5g_command
+uim_mock_taste(w5g, "Up", wahr, 0)
+zeige "W5G-HISTORY " + w5g_command
+uim_mock_maus(w5g, 230, 30, wahr)
+uim_mock_maus(w5g, 230, 30, falsch)
+uim_mock_taste(w5g, "Down", wahr, 0)
+zeige "W5G-SCROLL " + text(md5g["scroll_y"] > 0)
+uim_terminal_ausgabe(w5g, term5g, ["OK", "READY"].verbinden("\n"))
+zeige "W5G-DRAW " + text(uim_mock_zeichne(w5g))
+setze w5g_fokus_innen auf falsch
+setze w5g_code_text_y auf -1
+setze w5g_code_schrift auf 0
+setze w5g_code_mark_y auf -1
+setze w5g_code_mark_h auf 0
+für befehl in uim_mock_befehle(w5g):
+    wenn befehl["op"] == "rechteck" und befehl["args"][0] == md5g["x"] + 1 und befehl["args"][1] == md5g["y"] + 1 und befehl["args"][2] == md5g["b"] - 2 und befehl["args"][3] == md5g["h"] - 2:
+        setze w5g_fokus_innen auf wahr
+    wenn befehl["op"] == "text" und befehl["args"][2] == "CODE: test()":
+        setze w5g_code_text_y auf befehl["args"][1]
+        setze w5g_code_schrift auf befehl["args"][3]
+    wenn befehl["op"] == "rechteck" und befehl["args"][0] == md5g["x"] + 3 und befehl["args"][2] == md5g["b"] - 6:
+        setze w5g_code_mark_y auf befehl["args"][1]
+        setze w5g_code_mark_h auf befehl["args"][3]
+zeige "W5G-FOCUS-INSET " + text(w5g_fokus_innen)
+setze w5g_code_mark_innen auf w5g_code_text_y >= 0 und w5g_code_mark_y == w5g_code_text_y - 2 und w5g_code_mark_y + w5g_code_mark_h >= w5g_code_text_y + w5g_code_schrift
+zeige "W5G-CODE-MARK-INSET " + text(w5g_code_mark_innen)
+zeige "NATIVE-UI-12-W5G-OK"
+
+# --- NATIVE-UI-13/VALID: Validator-Hook + Pflicht/Zahl/Format ---
+funktion t_valid_name(w, wert):
+    setze fehler auf uim_validierung_pflicht(wert, "PFLICHT")
+    wenn fehler != "":
+        gib_zurück fehler
+    gib_zurück uim_validierung_format(wert, "^[A-Z]+$", "FORMAT")
+
+funktion t_valid_range(w, wert):
+    gib_zurück uim_validierung_zahl_bereich(wert, 0, 99, "BEREICH")
+
+setze valid13 auf uim_mock_wurzel(420, 220)
+setze name13 auf uim_textfeld(10, 10, 180, 24, "", nichts)
+uim_hinzu(valid13, name13)
+zeige "VALID-BIND " + text(uim_validierung_setze(valid13, name13, t_valid_name, "Nur Grossbuchstaben"))
+zeige "VALID-EMPTY " + uim_eingabe_zustand_hole(name13) + "/" + uim_validierungsfehler_hole(name13) + "/" + name13["tooltip"]
+uim_textfeld_setze(valid13, name13, "moo")
+zeige "VALID-FORMAT " + uim_eingabe_zustand_hole(name13) + "/" + uim_validierungsfehler_hole(name13)
+uim_textfeld_setze(valid13, name13, "MOO")
+zeige "VALID-NAME-OK " + text(uim_validiere(valid13, name13)) + "/" + uim_eingabe_zustand_hole(name13) + "/" + name13["tooltip"]
+setze zahl13 auf uim_numberbox(10, 70, 180, 24, 120, 0, 99, nichts)
+uim_hinzu(valid13, zahl13)
+uim_validierung_setze(valid13, zahl13, t_valid_range, "0 bis 99")
+zeige "VALID-RANGE " + uim_eingabe_zustand_hole(zahl13) + "/" + uim_validierungsfehler_hole(zahl13)
+zahl13["text"] = "42"
+zeige "VALID-RANGE-OK " + text(uim_validiere(valid13, zahl13)) + "/" + zahl13["tooltip"]
+name13["text"] = ""
+uim_validiere(valid13, name13)
+zeige "VALID-DRAW " + text(uim_mock_zeichne(valid13))
+zeige "NATIVE-UI-13-VALID-OK"

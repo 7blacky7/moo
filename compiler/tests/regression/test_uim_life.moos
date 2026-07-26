@@ -1,0 +1,42 @@
+importiere ui_moo_kern
+
+setze life13 auf uim_mock_wurzel(320, 180)
+uim_fenster_zustand_setze(life13, "normal", 12, 18, 640, 480)
+setze gespeichert13 auf uim_einstellungen_speichern(life13)
+uim_fenster_zustand_setze(life13, "minimiert", -4, -8, 0, -2)
+zeige "LIFE-WINDOW-NORM " + life13["fenster_modus"] + "/" + text(life13["fenster_x"]) + "/" + text(life13["fenster_b"])
+uim_einstellungen_laden(life13, gespeichert13)
+zeige "LIFE-PERSIST " + life13["fenster_modus"] + "/" + text(life13["fenster_x"]) + "/" + text(life13["fenster_b"]) + "x" + text(life13["fenster_h"])
+
+setze anim13 auf uim_spinner(4, 4, 24, 24)
+setze gen13a auf uim_animation_start(anim13)
+setze gen13b auf uim_animation_start(anim13)
+setze alt13 auf uim_animation_gueltig(anim13, gen13a)
+setze neu13_ok auf uim_animation_gueltig(anim13, gen13b)
+uim_zustand_setze(life13, anim13, "loading")
+zeige "LIFE-ANIM " + text(alt13) + "/" + text(neu13_ok) + "/" + text(anim13["animation_aktiv"]) + "/" + text(anim13["animation_generation"] > gen13b)
+
+setze cleanup13 auf {"n": 0}
+funktion life13_cleanup(w):
+    cleanup13["n"] = cleanup13["n"] + 1
+    gib_zurück wahr
+setze weg13 auf uim_knopf("Entfernen", 10, 40, 100, 26, nichts)
+uim_on_entfernt(weg13, life13_cleanup)
+uim_hinzu(life13, weg13)
+life13["fokus"] = weg13
+setze weg_ok13 auf uim_entferne(life13, life13, weg13)
+setze weg_doppelt13 auf uim_entferne(life13, life13, weg13)
+zeige "LIFE-REMOVE " + text(weg_ok13) + "/" + text(weg_doppelt13) + "/" + text(cleanup13["n"]) + "/" + text(life13["fokus"] == nichts) + "/" + text(weg13["entfernt"])
+
+setze lang13 auf uim_label("Sehr langer lokalisierter Text: Tueröffner Einstellungen speichern und wiederherstellen", 4, 76, 130, 18)
+uim_text_layout_setze(lang13, falsch, wahr)
+setze gross13 auf uim_numberbox(146, 76, 150, 24, 999999999999, 0, 999999999999, nichts)
+setze leer13 auf uim_liste(4, 110, 130, 42, [], nichts)
+setze lokal13 auf uim_combobox(146, 110, 150, 24, ["Einstellungen wiederherstellen", "Fenster maximieren"], 0, nichts)
+uim_hinzu(life13, lang13)
+uim_hinzu(life13, gross13)
+uim_hinzu(life13, leer13)
+uim_hinzu(life13, lokal13)
+zeige "LIFE-EDGE " + text(länge(leer13["zeilen"])) + "/" + text(gross13["text"]) + "/" + text(lang13["text_ellipsis"])
+zeige "LIFE-DRAW " + text(uim_mock_zeichne(life13))
+zeige "NATIVE-UI-13-LIFE-OK"

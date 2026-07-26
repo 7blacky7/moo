@@ -4,7 +4,8 @@
 
 importiere ui_moo_effects
 
-setze GOLDEN_HASH auf "d8f5b38dea71bd5a"
+# O5-AERO Golden aus deterministischem fail-closed Surface-Render.
+setze GOLDEN_HASH auf "fe270005e2d6b7de"
 setze qa auf {}
 qa["fehler"] = 0
 

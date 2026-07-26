@@ -1,0 +1,57 @@
+importiere ui_moo_kern
+
+setze data13 auf uim_mock_wurzel(360, 180)
+setze ev13 auf {"fokus": 0, "eingabe": 0, "los": 0, "drop": 0, "daten": ""}
+funktion ev13_fokus(w, an):
+    wenn an:
+        ev13["fokus"] = ev13["fokus"] + 1
+    gib_zurück wahr
+funktion ev13_eingabe(w, txt):
+    ev13["eingabe"] = ev13["eingabe"] + 1
+    gib_zurück wahr
+funktion ev13_los(w, x, y):
+    ev13["los"] = ev13["los"] + 1
+    gib_zurück wahr
+funktion ev13_drop(w, daten, quelle):
+    ev13["drop"] = ev13["drop"] + 1
+    ev13["daten"] = daten
+    gib_zurück wahr
+
+setze state13 auf {"name": "Start"}
+setze text13 auf uim_textfeld(4, 4, 140, 26, "Alt", nichts)
+uim_event_setze(text13, "fokus", ev13_fokus)
+uim_event_setze(text13, "eingabe", ev13_eingabe)
+uim_event_setze(text13, "loslassen", ev13_los)
+uim_bind(text13, state13, "name", "text")
+uim_hinzu(data13, text13)
+zeige "DATA-BIND-INIT " + text13["text"]
+uim_state_setze(state13, "name", "Server")
+zeige "DATA-BIND-PUSH " + text13["text"]
+uim_textfeld_setze(data13, text13, "User")
+zeige "DATA-BIND-PULL " + state13["name"] + "/" + text(ev13["eingabe"])
+uim_textfeld_setze(data13, text13, "Weiter")
+uim_text_undo(data13, text13)
+zeige "DATA-UNDO " + text13["text"]
+uim_text_redo(data13, text13)
+zeige "DATA-REDO " + text13["text"]
+
+uim_text_kopieren(data13, text13)
+uim_text_ausschneiden(data13, text13)
+setze nach_cut13 auf text13["text"]
+uim_text_einfuegen(data13, text13)
+zeige "DATA-CLIP " + nach_cut13 + "/" + text13["text"]
+
+setze quelle13 auf uim_knopf("Quelle", 4, 70, 100, 28, nichts)
+setze ziel13 auf uim_panel("Ziel", 180, 64, 140, 50)
+uim_drag_quelle(quelle13, "MOO-DATEN")
+uim_drop_ziel(ziel13, ev13_drop)
+uim_hinzu(data13, quelle13)
+uim_hinzu(data13, ziel13)
+uim_mock_maus(data13, 20, 82, wahr)
+uim_mock_bewegung(data13, 210, 82)
+uim_mock_maus(data13, 210, 82, falsch)
+uim_mock_maus(data13, 20, 14, wahr)
+uim_mock_maus(data13, 20, 14, falsch)
+zeige "DATA-EVENTS " + text(ev13["fokus"]) + "/" + text(ev13["los"]) + "/" + text(ev13["drop"]) + "/" + ev13["daten"]
+zeige "DATA-DRAW " + text(uim_mock_zeichne(data13))
+zeige "NATIVE-UI-13-DATA-OK"
