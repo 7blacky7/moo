@@ -65,6 +65,40 @@ if [ -z "$PYTHON_BIN" ]; then
   fi
 fi
 
+COMPILER_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# C1: Das statische Fontbundle darf buildweit genau eine native
+# Uebersetzungseinheit erreichen, sonst vervielfacht sich seine Datentabelle.
+"$PYTHON_BIN" - "$COMPILER_DIR" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+compiler = Path(sys.argv[1]).resolve()
+extensions = {".c", ".h", ".cc", ".cpp", ".cxx", ".hh", ".hpp", ".hxx"}
+excluded_parts = {"build", "target", "out"}
+include = re.compile(
+    rb'^[ \t]*#[ \t]*include[ \t]*[<"]moo_font_aa\.h[>"]',
+    re.MULTILINE,
+)
+hits = []
+for path in compiler.rglob("*"):
+    if not path.is_file() or path.suffix.lower() not in extensions:
+        continue
+    relative = path.relative_to(compiler)
+    if any(part in excluded_parts for part in relative.parts):
+        continue
+    if include.search(path.read_bytes()):
+        hits.append(path.resolve())
+
+expected = (compiler / "runtime" / "moo_surface.c").resolve()
+if hits != [expected]:
+    shown = ", ".join(str(path) for path in hits) if hits else "<keiner>"
+    raise SystemExit(
+        "FATAL: moo_font_aa.h braucht exakt den einzigen Includer "
+        f"{expected}; gefunden: {shown}"
+    )
+PY
+
 WINDOWS_COMPAT_DIR=""
 if [ "$HOST_OS" = "windows" ]; then
   WINDOWS_COMPAT_DIR="$OUT_DIR/windows-compat"
