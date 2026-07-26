@@ -8,7 +8,7 @@
 
 importiere ui_moo_hostfenster
 
-setze k auf uimh_fenster_csd("MOO GLASS WIDGETS", 1120, 900)
+setze k auf uimh_fenster_csd("MOO GLASS WIDGETS", 1120, 970)
 wenn k == nichts:
     wirf "Host-Fenster fehlgeschlagen (kein Backend / kein Display?)"
 
@@ -215,7 +215,9 @@ uim_hinzu(k, uim_avatar("MM", 854, 554, 48, 48))
 # W5E Auswahl-Widgets.
 setze w5e_farben auf [[220, 70, 80, 255], [70, 220, 120, 255], [80, 120, 240, 255], [230, 210, 80, 255]]
 uim_hinzu(k, uim_colorpicker(584, 612, 120, 48, w5e_farben, on_liste))
-uim_hinzu(k, uim_calendar(716, 612, 356, 120, 7, 2026, on_liste))
+setze w5e_kalender_demo auf uim_baue("calendar", {"x": 716, "y": 612, "b": 356, "h": 188, "monat": 7, "jahr": 2026, "on_auswahl": on_liste})
+uim_kalender_heute_setze(w5e_kalender_demo, 26, 7, 2026)
+uim_hinzu(k, w5e_kalender_demo)
 
 # W5F Diagramme.
 setze w5f_demo_werte auf [1, 3, 2, 4]
@@ -226,8 +228,8 @@ uim_hinzu(k, uim_gauge(156, 780, 356, 52, 0, 100, 64, on_liste))
 
 # W5G Terminal + Markdown Viewer.
 setze w5g_demo_inhalt auf ["# MOO Markdown", "- retained-mode", "- kein Toolkit", "CODE: uim_markdown()", "- Scroll mit Pfeiltasten"].verbinden("\n")
-uim_hinzu(k, uim_terminal(584, 746, 250, 130, "MOO shell bereit", on_w5g_befehl))
-uim_hinzu(k, uim_markdown(850, 746, 222, 130, w5g_demo_inhalt))
+uim_hinzu(k, uim_terminal(584, 812, 250, 130, "MOO shell bereit", on_w5g_befehl))
+uim_hinzu(k, uim_markdown(850, 812, 222, 130, w5g_demo_inhalt))
 
 
 

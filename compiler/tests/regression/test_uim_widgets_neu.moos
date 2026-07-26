@@ -443,8 +443,8 @@ uim_mock_maus(w5e, 35, 20, wahr)
 uim_mock_maus(w5e, 35, 20, falsch)
 uim_mock_taste(w5e, "Right", wahr, 0)
 zeige "W5E-COLOR " + text(cp5e["auswahl"])
-uim_mock_maus(w5e, 190, 50, wahr)
-uim_mock_maus(w5e, 190, 50, falsch)
+uim_mock_maus(w5e, 250, 62, wahr)
+uim_mock_maus(w5e, 250, 62, falsch)
 uim_mock_taste(w5e, "Down", wahr, 0)
 zeige "W5E-CAL " + text(cal5e["auswahl"])
 zeige "W5E-DRAW " + text(uim_mock_zeichne(w5e))
@@ -454,11 +454,11 @@ uim_hinzu(cal5e_klein_root, cal5e_klein)
 uim_mock_zeichne(cal5e_klein_root)
 setze cal5e_zelle_ok auf falsch
 setze cal5e_header_pad auf falsch
-setze cal5e_zelle_h auf (cal5e_klein["h"] - 24) / 6
+setze cal5e_zelle_h auf (cal5e_klein["h"] - 40) / 6
 für befehl in uim_mock_befehle(cal5e_klein_root):
     wenn befehl["op"] == "text" und befehl["args"][2] == "1":
-        setze cal5e_zelle_ok auf befehl["args"][1] >= cal5e_klein["y"] + 25 und befehl["args"][1] + befehl["args"][3] <= cal5e_klein["y"] + 24 + cal5e_zelle_h - 2
-    wenn befehl["op"] == "text" und befehl["args"][2] == "7/2026" und befehl["args"][0] == cal5e_klein["x"] + 10 und befehl["args"][1] == cal5e_klein["y"] + 5:
+        setze cal5e_zelle_ok auf befehl["args"][1] >= cal5e_klein["y"] + 41 und befehl["args"][1] + befehl["args"][3] <= cal5e_klein["y"] + 40 + cal5e_zelle_h - 2
+    wenn befehl["op"] == "text" und befehl["args"][2] == "Juli 2026" und befehl["args"][0] == cal5e_klein["x"] + 34 und befehl["args"][1] == cal5e_klein["y"] + 5:
         setze cal5e_header_pad auf wahr
 zeige "W5E-CELL-BOUNDS " + text(cal5e_zelle_ok)
 zeige "W5E-HEADER-PAD " + text(cal5e_header_pad)
@@ -989,3 +989,59 @@ setze api3_max_grenze auf uim_baue("stack", {"b": 100, "h": 40, "richtung": "hor
 zeige "API3-GRENZEN " + text(api3_min_grenze["kinder"][0]["b"]) + "/" + text(api3_max_grenze["kinder"][0]["b"]) 
 zeige "API3-UNBEKANNT " + text(uim_baue("unbekannt", {}) == nichts)
 zeige "W6-API3-OK"
+
+# --- W6-KALENDER Etappe 1: Monatslaengen, Schaltjahr, Wochenversatz ---
+zeige "KAL1-TAGE " + text(_uim_kalender_monatstage(2, 2023)) + "/" + text(_uim_kalender_monatstage(2, 2024)) + "/" + text(_uim_kalender_monatstage(4, 2026)) + "/" + text(_uim_kalender_monatstage(7, 2026))
+setze kal1_root auf uim_mock_wurzel(300, 210)
+setze kal1_juli auf uim_baue("calendar", {"x": 0, "y": 0, "b": 280, "h": 180, "monat": 7, "jahr": 2026})
+uim_hinzu(kal1_root, kal1_juli)
+uim_mock_zeichne(kal1_root)
+setze kal1_tag1_x auf 0 - 1
+setze kal1_mo auf falsch
+setze kal1_so auf falsch
+für kal1_befehl in uim_mock_befehle(kal1_root):
+    wenn kal1_befehl["op"] == "text" und kal1_befehl["args"][2] == "1":
+        setze kal1_tag1_x auf kal1_befehl["args"][0]
+    wenn kal1_befehl["op"] == "text" und kal1_befehl["args"][2] == "Mo":
+        setze kal1_mo auf wahr
+    wenn kal1_befehl["op"] == "text" und kal1_befehl["args"][2] == "So":
+        setze kal1_so auf wahr
+zeige "KAL1-OFFSET " + text(_uim_kalender_offset(kal1_juli)) + "/" + text(kal1_tag1_x)
+zeige "KAL1-KOPF " + text(kal1_mo) + "/" + text(kal1_so)
+zeige "W6-KALENDER-1-OK"
+
+# --- W6-KALENDER Etappe 2: Navigation, Ansichten, Heute ---
+setze kal2 auf uim_calendar(0, 0, 300, 180, 12, 2026, nichts)
+uim_kalender_navigiere(kal2, 1)
+setze kal2_rollover auf text(kal2["monat"]) + "/" + text(kal2["jahr"])
+uim_calendar_navigate(kal2, 0 - 1)
+uim_kalender_ansicht_setze(kal2, "jahr")
+uim_kalender_navigiere(kal2, 1)
+setze kal2_jahr_nav auf kal2["jahr"]
+uim_calendar_view_set(kal2, "jahrzehnt")
+uim_calendar_navigate(kal2, 1)
+zeige "KAL2-NAV " + kal2_rollover + "/" + text(kal2["monat"]) + "/" + text(kal2_jahr_nav) + "/" + text(kal2["jahr"])
+uim_calendar_today_set(kal2, 26, 7, 2026)
+setze kal2_heute_ok auf uim_calendar_go_today(kal2)
+zeige "KAL2-HEUTE " + text(kal2_heute_ok) + "/" + text(kal2["auswahl"]) + "/" + text(kal2["monat"]) + "/" + text(kal2["jahr"]) + "/" + kal2["ansicht"]
+setze kal2_root auf uim_mock_wurzel(320, 210)
+uim_hinzu(kal2_root, kal2)
+uim_mock_zeichne(kal2_root)
+setze kal2_titel auf falsch
+setze kal2_heute_text auf falsch
+für kal2_befehl in uim_mock_befehle(kal2_root):
+    wenn kal2_befehl["op"] == "text" und kal2_befehl["args"][2] == "Juli 2026":
+        setze kal2_titel auf wahr
+    wenn kal2_befehl["op"] == "text" und kal2_befehl["args"][2] == "Heute":
+        setze kal2_heute_text auf wahr
+uim_kalender_ansicht_setze(kal2, "jahr")
+uim_mock_zeichne(kal2_root)
+setze kal2_jan auf falsch
+setze kal2_dez auf falsch
+für kal2_befehl in uim_mock_befehle(kal2_root):
+    wenn kal2_befehl["op"] == "text" und kal2_befehl["args"][2] == "Jan":
+        setze kal2_jan auf wahr
+    wenn kal2_befehl["op"] == "text" und kal2_befehl["args"][2] == "Dez":
+        setze kal2_dez auf wahr
+zeige "KAL2-ANSICHT " + text(kal2_titel) + "/" + text(kal2_heute_text) + "/" + text(kal2_jan) + "/" + text(kal2_dez)
+zeige "W6-KALENDER-2-OK"

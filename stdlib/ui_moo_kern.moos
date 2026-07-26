@@ -3180,19 +3180,169 @@ funktion _uim_z_colorpicker(kontext, z, w, ox, oy):
         _uim_zf_rechteck(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
     gib_zurück wahr
 
-funktion _uim_kalender_klick(kontext, w, lx, ly):
-    setze cell_h auf (w["h"] - 24) / 6
-    wenn ly - w["y"] < 24:
+# Kalenderarithmetik bleibt bewusst widget-lokal: deterministisch aus den
+# uebergebenen Werten, ohne Systemzeit und ohne konkurrierende Datums-API.
+funktion _uim_kalender_schaltjahr(jahr):
+    wenn jahr % 400 == 0:
         gib_zurück wahr
-    setze col auf 0
+    wenn jahr % 100 == 0:
+        gib_zurück falsch
+    gib_zurück jahr % 4 == 0
+
+funktion _uim_kalender_monatstage(monat, jahr):
+    wenn monat < 1 oder monat > 12:
+        gib_zurück 0
+    wenn monat == 2:
+        wenn _uim_kalender_schaltjahr(jahr):
+            gib_zurück 29
+        gib_zurück 28
+    wenn monat == 4 oder monat == 6 oder monat == 9 oder monat == 11:
+        gib_zurück 30
+    gib_zurück 31
+
+# Sakamoto: 0=Sonntag .. 6=Samstag.
+funktion _uim_kalender_wochentag(tag, monat, jahr):
+    setze monatswerte auf [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]
+    setze rechenjahr auf jahr
+    wenn monat < 3:
+        setze rechenjahr auf rechenjahr - 1
+    gib_zurück (rechenjahr + boden(rechenjahr / 4) - boden(rechenjahr / 100) + boden(rechenjahr / 400) + monatswerte[monat - 1] + tag) % 7
+
+funktion _uim_kalender_offset(w):
+    setze wochenstart auf w["wochenstart"] % 7
+    wenn wochenstart < 0:
+        setze wochenstart auf wochenstart + 7
+    gib_zurück (_uim_kalender_wochentag(1, w["monat"], w["jahr"]) - wochenstart + 7) % 7
+
+funktion _uim_kalender_sync(w):
+    w["tage"] = _uim_kalender_monatstage(w["monat"], w["jahr"])
+    wenn w["auswahl"] < 1:
+        w["auswahl"] = 1
+    wenn w["auswahl"] > w["tage"]:
+        w["auswahl"] = w["tage"]
+    gib_zurück w
+
+funktion _uim_kalender_monatsname(monat):
+    setze namen auf ["Januar", "Februar", "Maerz", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
+    wenn monat < 1 oder monat > 12:
+        gib_zurück ""
+    gib_zurück namen[monat - 1]
+
+funktion _uim_kalender_dekade_start(jahr):
+    gib_zurück boden(jahr / 10) * 10
+
+funktion uim_kalender_ansicht_setze(w, ansicht):
+    wenn ansicht != "monat" und ansicht != "jahr" und ansicht != "jahrzehnt":
+        gib_zurück falsch
+    w["ansicht"] = ansicht
+    _uim_widget_anfordern(w)
+    gib_zurück wahr
+
+funktion uim_calendar_view_set(w, ansicht):
+    gib_zurück uim_kalender_ansicht_setze(w, ansicht)
+
+funktion uim_kalender_navigiere(w, schritte):
+    wenn w["ansicht"] == "monat":
+        setze ziel_monat auf w["monat"] + schritte
+        solange ziel_monat < 1:
+            setze ziel_monat auf ziel_monat + 12
+            w["jahr"] = w["jahr"] - 1
+        solange ziel_monat > 12:
+            setze ziel_monat auf ziel_monat - 12
+            w["jahr"] = w["jahr"] + 1
+        w["monat"] = ziel_monat
+        _uim_kalender_sync(w)
+    sonst wenn w["ansicht"] == "jahr":
+        w["jahr"] = w["jahr"] + schritte
+        _uim_kalender_sync(w)
+    sonst:
+        w["jahr"] = w["jahr"] + schritte * 10
+        _uim_kalender_sync(w)
+    _uim_widget_anfordern(w)
+    gib_zurück w
+
+funktion uim_calendar_navigate(w, schritte):
+    gib_zurück uim_kalender_navigiere(w, schritte)
+
+funktion uim_kalender_heute_setze(w, tag, monat, jahr):
+    w["heute_tag"] = tag
+    w["heute_monat"] = monat
+    w["heute_jahr"] = jahr
+    _uim_widget_anfordern(w)
+    gib_zurück w
+
+funktion uim_calendar_today_set(w, tag, monat, jahr):
+    gib_zurück uim_kalender_heute_setze(w, tag, monat, jahr)
+
+funktion uim_kalender_zu_heute(w):
+    wenn w["heute_tag"] < 1:
+        gib_zurück falsch
+    w["tag"] = w["heute_tag"]
+    w["auswahl"] = w["heute_tag"]
+    w["monat"] = w["heute_monat"]
+    w["jahr"] = w["heute_jahr"]
+    w["ansicht"] = "monat"
+    _uim_kalender_sync(w)
+    _uim_widget_anfordern(w)
+    gib_zurück wahr
+
+funktion uim_calendar_go_today(w):
+    gib_zurück uim_kalender_zu_heute(w)
+
+funktion _uim_kalender_kopf_klick(w, lokal_x):
+    wenn lokal_x < 28:
+        uim_kalender_navigiere(w, 0 - 1)
+        gib_zurück wahr
+    wenn lokal_x >= w["b"] - 28:
+        uim_kalender_navigiere(w, 1)
+        gib_zurück wahr
+    wenn w["b"] >= 220 und lokal_x >= w["b"] - 96:
+        uim_kalender_zu_heute(w)
+        gib_zurück wahr
+    wenn w["ansicht"] == "monat":
+        w["ansicht"] = "jahr"
+    sonst wenn w["ansicht"] == "jahr":
+        w["ansicht"] = "jahrzehnt"
+    sonst:
+        w["ansicht"] = "monat"
+    _uim_widget_anfordern(w)
+    gib_zurück wahr
+
+funktion _uim_kalender_klick(kontext, w, lx, ly):
+    _uim_kalender_sync(w)
+    setze lokal_x auf lx - w["x"]
+    setze lokal_y auf ly - w["y"]
+    wenn lokal_y < 24:
+        gib_zurück _uim_kalender_kopf_klick(w, lokal_x)
+    wenn w["ansicht"] == "jahr" oder w["ansicht"] == "jahrzehnt":
+        setze grid_y auf lokal_y - 28
+        setze cell_b auf w["b"] / 3
+        setze cell_h auf (w["h"] - 28) / 4
+        setze col auf boden(lokal_x / cell_b)
+        setze row auf boden(grid_y / cell_h)
+        setze grid_idx auf row * 3 + col
+        wenn col < 0 oder col > 2 oder row < 0 oder row > 3:
+            gib_zurück falsch
+        wenn w["ansicht"] == "jahr":
+            w["monat"] = grid_idx + 1
+            w["ansicht"] = "monat"
+            _uim_kalender_sync(w)
+        sonst:
+            w["jahr"] = _uim_kalender_dekade_start(w["jahr"]) - 1 + grid_idx
+            w["ansicht"] = "jahr"
+        _uim_anfordern(kontext)
+        gib_zurück wahr
+    setze kopf_h auf 40
+    wenn lokal_y < kopf_h:
+        gib_zurück wahr
     setze cell_b auf w["b"] / 7
-    solange (col + 1) * cell_b <= lx - w["x"]:
-        setze col auf col + 1
-    setze row auf 0
-    solange (row + 1) * cell_h <= ly - w["y"] - 24:
-        setze row auf row + 1
-    setze tag auf row * 7 + col + 1
-    wenn tag < 1 oder tag > w["tage"]:
+    setze cell_h auf (w["h"] - kopf_h) / 6
+    wenn cell_b <= 0 oder cell_h <= 0:
+        gib_zurück falsch
+    setze col auf boden(lokal_x / cell_b)
+    setze row auf boden((lokal_y - kopf_h) / cell_h)
+    setze tag auf row * 7 + col - _uim_kalender_offset(w) + 1
+    wenn col < 0 oder col > 6 oder row < 0 oder row > 5 oder tag < 1 oder tag > w["tage"]:
         gib_zurück falsch
     w["auswahl"] = tag
     w["selected"] = wahr
@@ -3202,38 +3352,111 @@ funktion _uim_kalender_klick(kontext, w, lx, ly):
         cb(w, tag)
     gib_zurück wahr
 
-funktion _uim_z_kalender(kontext, z, w, ox, oy):
+funktion _uim_z_kalender_kopf(kontext, z, w, ax, ay):
     setze t auf kontext["theme"]
-    setze ax auf ox + w["x"]
-    setze ay auf oy + w["y"]
+    _uim_farbe(kontext, z, t["akzent"])
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], 24, wahr)
+    setze titel auf text(w["jahr"])
+    wenn w["ansicht"] == "monat":
+        setze titel auf _uim_kalender_monatsname(w["monat"]) + " " + text(w["jahr"])
+        wenn w["b"] < 220:
+            setze titel auf text(w["monat"]) + "/" + text(w["jahr"])
+    sonst wenn w["ansicht"] == "jahrzehnt":
+        setze dekade auf _uim_kalender_dekade_start(w["jahr"])
+        setze titel auf text(dekade) + " - " + text(dekade + 9)
+    _uim_farbe(kontext, z, t["auswahl_text"])
+    _uim_zf_text(kontext, z, ax + 8, ay + 5, "<", t["schrift"] - 1)
+    _uim_zf_text(kontext, z, ax + 34, ay + 5, titel, t["schrift"] - 1)
+    wenn w["b"] >= 220:
+        _uim_zf_text(kontext, z, ax + w["b"] - 84, ay + 5, "Heute", t["schrift"] - 3)
+    _uim_zf_text(kontext, z, ax + w["b"] - 18, ay + 5, ">", t["schrift"] - 1)
+    gib_zurück wahr
+
+funktion _uim_z_kalender_monat(kontext, z, w, ax, ay):
+    setze t auf kontext["theme"]
+    setze kopf_h auf 40
     setze cell_b auf w["b"] / 7
-    setze cell_h auf (w["h"] - 24) / 6
-    # SDL-Text belegt rasterseitig mehr Hoehe als die nominelle Schriftgroesse.
-    # Deshalb feste Reserve statt nomineller Zentrierung: 1px oben, >=2px unten.
+    setze cell_h auf (w["h"] - kopf_h) / 6
     setze tag_schrift auf t["schrift"] - 4
     wenn tag_schrift + 7 > cell_h:
         setze tag_schrift auf cell_h - 7
     wenn tag_schrift < 1:
         setze tag_schrift auf 1
-    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
-    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], wahr)
-    _uim_farbe(kontext, z, t["akzent"])
-    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], 24, wahr)
-    _uim_farbe(kontext, z, t["auswahl_text"])
-    _uim_zf_text(kontext, z, ax + t["abstand"] + 2, ay + 5, text(w["monat"]) + "/" + text(w["jahr"]), t["schrift"] - 1)
+    setze wochentage auf ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"]
+    setze spalte auf 0
+    solange spalte < 7:
+        setze wochentag_idx auf (w["wochenstart"] + spalte) % 7
+        _uim_farbe(kontext, z, t["text"])
+        _uim_zf_text(kontext, z, ax + spalte * cell_b + 4, ay + 26, wochentage[wochentag_idx], t["schrift"] - 5)
+        setze spalte auf spalte + 1
+    setze offset auf _uim_kalender_offset(w)
     setze tag auf 1
     solange tag <= w["tage"]:
-        setze idx auf tag - 1
+        setze idx auf offset + tag - 1
         setze col auf idx % 7
-        setze row auf idx / 7
+        setze row auf boden(idx / 7)
         setze tx auf ax + col * cell_b
-        setze ty auf ay + 24 + row * cell_h
+        setze ty auf ay + kopf_h + row * cell_h
         wenn tag == w["auswahl"]:
             _uim_farbe(kontext, z, t["akzent"])
             _uim_zf_rechteck(kontext, z, tx, ty, cell_b, cell_h, wahr)
+        wenn tag == w["heute_tag"] und w["monat"] == w["heute_monat"] und w["jahr"] == w["heute_jahr"]:
+            _uim_farbe(kontext, z, t["rand"])
+            _uim_zf_rechteck(kontext, z, tx + 1, ty + 1, cell_b - 2, cell_h - 2, falsch)
         _uim_farbe(kontext, z, t["text"])
         _uim_zf_text(kontext, z, tx + 4, ty + 1, text(tag), tag_schrift)
         setze tag auf tag + 1
+    gib_zurück wahr
+
+funktion _uim_z_kalender_jahr(kontext, z, w, ax, ay):
+    setze t auf kontext["theme"]
+    setze monate auf ["Jan", "Feb", "Mae", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
+    setze cell_b auf w["b"] / 3
+    setze cell_h auf (w["h"] - 28) / 4
+    setze idx auf 0
+    solange idx < 12:
+        setze col auf idx % 3
+        setze row auf boden(idx / 3)
+        wenn idx + 1 == w["monat"]:
+            _uim_farbe(kontext, z, t["akzent"])
+            _uim_zf_rechteck(kontext, z, ax + col * cell_b + 2, ay + 28 + row * cell_h + 2, cell_b - 4, cell_h - 4, wahr)
+        _uim_farbe(kontext, z, t["text"])
+        _uim_zf_text(kontext, z, ax + col * cell_b + 8, ay + 34 + row * cell_h, monate[idx], t["schrift"] - 2)
+        setze idx auf idx + 1
+    gib_zurück wahr
+
+funktion _uim_z_kalender_jahrzehnt(kontext, z, w, ax, ay):
+    setze t auf kontext["theme"]
+    setze cell_b auf w["b"] / 3
+    setze cell_h auf (w["h"] - 28) / 4
+    setze dekade auf _uim_kalender_dekade_start(w["jahr"])
+    setze idx auf 0
+    solange idx < 12:
+        setze col auf idx % 3
+        setze row auf boden(idx / 3)
+        setze jahr_zelle auf dekade - 1 + idx
+        wenn jahr_zelle == w["jahr"]:
+            _uim_farbe(kontext, z, t["akzent"])
+            _uim_zf_rechteck(kontext, z, ax + col * cell_b + 2, ay + 28 + row * cell_h + 2, cell_b - 4, cell_h - 4, wahr)
+        _uim_farbe(kontext, z, t["text"])
+        _uim_zf_text(kontext, z, ax + col * cell_b + 8, ay + 34 + row * cell_h, text(jahr_zelle), t["schrift"] - 2)
+        setze idx auf idx + 1
+    gib_zurück wahr
+
+funktion _uim_z_kalender(kontext, z, w, ox, oy):
+    _uim_kalender_sync(w)
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], wahr)
+    _uim_z_kalender_kopf(kontext, z, w, ax, ay)
+    wenn w["ansicht"] == "monat":
+        _uim_z_kalender_monat(kontext, z, w, ax, ay)
+    sonst wenn w["ansicht"] == "jahr":
+        _uim_z_kalender_jahr(kontext, z, w, ax, ay)
+    sonst:
+        _uim_z_kalender_jahrzehnt(kontext, z, w, ax, ay)
     _uim_farbe(kontext, z, t["rand"])
     _uim_zf_rechteck(kontext, z, ax, ay, w["b"], w["h"], falsch)
     wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
@@ -5052,7 +5275,12 @@ funktion uim_calendar(x, y, b, h, monat, jahr, on_auswahl):
     setze w auf _uim_basis("calendar", x, y, b, h)
     w["monat"] = monat
     w["jahr"] = jahr
-    w["tage"] = 31
+    w["tage"] = _uim_kalender_monatstage(monat, jahr)
+    w["wochenstart"] = 1
+    w["ansicht"] = "monat"
+    w["heute_tag"] = 0
+    w["heute_monat"] = 0
+    w["heute_jahr"] = 0
     w["auswahl"] = 1
     w["on_auswahl"] = on_auswahl
     w["fokussierbar"] = wahr
@@ -5062,7 +5290,12 @@ funktion uim_datepicker(x, y, b, h, monat, jahr, on_auswahl):
     setze w auf _uim_basis("datepicker", x, y, b, h)
     w["monat"] = monat
     w["jahr"] = jahr
-    w["tage"] = 31
+    w["tage"] = _uim_kalender_monatstage(monat, jahr)
+    w["wochenstart"] = 1
+    w["ansicht"] = "monat"
+    w["heute_tag"] = 0
+    w["heute_monat"] = 0
+    w["heute_jahr"] = 0
     w["auswahl"] = 1
     w["on_auswahl"] = on_auswahl
     w["fokussierbar"] = wahr
