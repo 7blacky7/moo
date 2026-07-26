@@ -6204,3 +6204,397 @@ funktion uim_delete_confirmation(titel, text, on_bestaetigt):
 
 funktion uim_input_dialog(titel, prompt, initial, cb):
     gib_zurück uim_eingabe_dialog(titel, prompt, initial, cb)
+
+
+# --- W6-API3: additiver deklarativer Builder ---
+funktion _uim_baue_opt(optionen, schluessel, ersatz):
+    wenn optionen == nichts:
+        gib_zurück ersatz
+    wenn optionen.enthält(schluessel):
+        gib_zurück optionen[schluessel]
+    gib_zurück ersatz
+
+funktion _uim_baue_typ_kanon(typ):
+    setze aliase auf {"button": "knopf", "button_geschuetzt": "knopf_geschuetzt", "statusview": "statusansicht", "emptystate": "leerzustand", "errorstate": "fehlerzustand", "loadingstate": "ladezustand", "skeleton": "skelett", "rating": "bewertung", "switch": "schalter", "toggle": "umschaltknopf", "optionsfeld": "radio", "schieberegler": "slider", "progress": "fortschritt", "list": "liste", "tree_node": "baum_knoten", "tree": "baum", "datagrid": "datengitter", "menu_item": "menue_punkt", "menu_separator": "menue_trenner", "menu": "menue", "menubar": "menueleiste", "textfield": "textfeld", "suchfeld": "searchbox", "zahlenfeld": "numberbox", "passwortfeld": "passwordbox", "mehrzeilenfeld": "textarea", "multiline": "textarea", "autovervollstaendigung": "autocomplete", "bild": "image", "farbauswahl": "colorpicker", "kalender": "calendar", "datumsauswahl": "datepicker", "liniendiagramm": "linechart", "balkendiagramm": "barchart", "kreisdiagramm": "piechart", "messanzeige": "gauge", "trenner": "separator", "reiter": "tabs", "tool": "werkzeug", "tool_separator": "werkzeug_trenner", "toolbar": "werkzeugleiste", "statusbar": "statusleiste", "contextmenu": "kontextmenue", "expander": "aufklapper", "splitter": "teiler", "card": "karte", "stack": "stapel", "grid": "gitter", "overlay": "ueberlagerung", "message": "nachricht", "delete_confirmation": "loeschen_bestaetigung", "input_dialog": "eingabe_dialog"}
+    wenn aliase.enthält(typ):
+        gib_zurück aliase[typ]
+    gib_zurück typ
+
+funktion _uim_baue_standardgroesse(typ):
+    setze groessen auf {"spinner": [24, 24], "separator": [180, 2], "fortschritt": [180, 12], "label": [100, 20], "knopf": [100, 28], "knopf_geschuetzt": [100, 28], "combobox": [120, 28], "datepicker": [180, 28], "checkbox": [140, 24], "radio": [140, 24], "schalter": [140, 24], "umschaltknopf": [140, 24], "slider": [180, 24], "bewertung": [140, 24], "textfeld": [180, 26], "searchbox": [180, 26], "numberbox": [180, 26], "passwordbox": [180, 26], "autocomplete": [180, 26], "textarea": [240, 100], "liste": [220, 140], "baum": [220, 140], "datengitter": [320, 180], "iconview": [240, 160], "image": [160, 100], "icon": [32, 32], "badge": [72, 24], "avatar": [48, 48], "colorpicker": [180, 40], "calendar": [260, 220], "linechart": [240, 160], "barchart": [240, 160], "piechart": [240, 160], "gauge": [180, 100], "tabs": [300, 180], "panel": [300, 180], "scroll": [300, 180], "menueleiste": [320, 30], "werkzeugleiste": [320, 30], "statusleiste": [320, 30], "aufklapper": [260, 140], "karte": [260, 140], "teiler": [320, 180], "ueberlagerung": [320, 180], "terminal": [360, 220], "markdown": [360, 220], "statusansicht": [240, 80], "leerzustand": [240, 80], "fehlerzustand": [240, 80], "ladezustand": [240, 80], "skelett": [240, 80]}
+    wenn typ == "stapel" oder typ == "gitter":
+        gib_zurück [0, 0]
+    wenn groessen.enthält(typ):
+        gib_zurück groessen[typ]
+    gib_zurück [100, 28]
+
+funktion uim_messe(w):
+    wenn w == nichts oder w.enthält("typ") == falsch:
+        gib_zurück nichts
+    setze groesse auf _uim_baue_standardgroesse(w["typ"])
+    setze bevorzugt_b auf w["b"]
+    setze bevorzugt_h auf w["h"]
+    wenn bevorzugt_b <= 0:
+        setze bevorzugt_b auf groesse[0]
+    wenn bevorzugt_h <= 0:
+        setze bevorzugt_h auf groesse[1]
+    setze minimum_b auf w["min_b"]
+    setze minimum_h auf w["min_h"]
+    wenn bevorzugt_b < minimum_b:
+        setze bevorzugt_b auf minimum_b
+    wenn bevorzugt_h < minimum_h:
+        setze bevorzugt_h auf minimum_h
+    setze ergebnis auf {}
+    ergebnis["b"] = bevorzugt_b
+    ergebnis["h"] = bevorzugt_h
+    ergebnis["min_b"] = minimum_b
+    ergebnis["min_h"] = minimum_h
+    gib_zurück ergebnis
+
+funktion uim_optionen(w, optionen):
+    wenn w == nichts oder optionen == nichts oder typ_von(optionen) != "Woerterbuch":
+        gib_zurück w
+    für feld in ["id", "x", "y", "b", "h", "sichtbar", "aktiv", "disabled", "selected", "error", "loading", "readonly", "invalid", "ausrichtung", "a11y_name", "a11y_beschreibung", "tooltip", "margin", "padding", "gap", "min_b", "min_h", "max_b", "max_h", "auto_b", "auto_h", "text_umbruch", "text_ellipsis", "clip_kinder", "z_index", "on_klick", "on_wechsel", "on_auswahl", "on_retry", "on_befehl"]:
+        wenn optionen.enthält(feld):
+            w[feld] = optionen[feld]
+    wenn optionen.enthält("text"):
+        w["text"] = text(optionen["text"])
+        wenn w.enthält("cursor"):
+            w["cursor"] = länge(bytes_zu_liste(w["text"]))
+    wenn optionen.enthält("wert"):
+        setze wert_typ auf w["typ"]
+        setze option_wert auf optionen["wert"]
+        wenn _uim_wert_typ_text(wert_typ):
+            w["text"] = text(option_wert)
+            wenn w.enthält("cursor"):
+                w["cursor"] = länge(bytes_zu_liste(w["text"]))
+        sonst wenn _uim_wert_typ_bool(wert_typ):
+            w["wert"] = option_wert
+            w["selected"] = option_wert
+        sonst wenn _uim_wert_typ_zahl(wert_typ):
+            wenn option_wert < w["min"]:
+                setze option_wert auf w["min"]
+            wenn w["max"] > w["min"] und option_wert > w["max"]:
+                setze option_wert auf w["max"]
+            w["wert"] = option_wert
+        sonst wenn _uim_wert_typ_auswahl(wert_typ):
+            w["auswahl"] = option_wert
+        sonst wenn wert_typ == "expander" oder wert_typ == "ueberlagerung":
+            w["offen"] = option_wert
+        sonst wenn wert_typ == "teiler":
+            w["anteil"] = option_wert
+    w["_baue_row"] = _uim_baue_opt(optionen, "row", _uim_baue_opt(w, "_baue_row", 0 - 1))
+    w["_baue_col"] = _uim_baue_opt(optionen, "col", _uim_baue_opt(w, "_baue_col", 0 - 1))
+    w["_baue_grow"] = _uim_baue_opt(optionen, "grow", _uim_baue_opt(w, "_baue_grow", 0))
+    w["_baue_shrink"] = _uim_baue_opt(optionen, "shrink", _uim_baue_opt(w, "_baue_shrink", 0))
+    _uim_layout_begrenze(w)
+    _uim_widget_anfordern(w)
+    gib_zurück w
+
+funktion _uim_baue_stapel_layout(container):
+    setze richtung auf container["_baue_richtung"]
+    uim_stapel_layout(container, richtung, container["gap"])
+    setze grow_summe auf 0
+    setze shrink_summe auf 0
+    setze fest_summe auf 0
+    setze bevorzugt_summe auf 0
+    für kind in container["kinder"]:
+        setze metrik auf uim_messe(kind)
+        setze haupt auf metrik["h"]
+        wenn _uim_richtung_horizontal(richtung):
+            setze haupt auf metrik["b"]
+        setze haupt auf haupt + kind["margin"] * 2
+        setze bevorzugt_summe auf bevorzugt_summe + haupt
+        wenn kind["_baue_grow"] > 0:
+            setze grow_summe auf grow_summe + kind["_baue_grow"]
+        sonst:
+            setze fest_summe auf fest_summe + haupt
+        wenn kind["_baue_shrink"] > 0:
+            setze shrink_summe auf shrink_summe + kind["_baue_shrink"]
+    setze luecken auf 0
+    wenn länge(container["kinder"]) > 1:
+        setze luecken auf (länge(container["kinder"]) - 1) * container["gap"]
+    setze verfuegbar auf container["h"] - container["padding"] * 2 - luecken
+    wenn _uim_richtung_horizontal(richtung):
+        setze verfuegbar auf container["b"] - container["padding"] * 2 - luecken
+    wenn grow_summe > 0 und verfuegbar > fest_summe:
+        setze restplatz auf verfuegbar - fest_summe
+        für kind in container["kinder"]:
+            wenn kind["_baue_grow"] > 0:
+                setze anteil_groesse auf restplatz * kind["_baue_grow"] / grow_summe - kind["margin"] * 2
+                wenn _uim_richtung_horizontal(richtung):
+                    kind["b"] = anteil_groesse
+                sonst:
+                    kind["h"] = anteil_groesse
+                _uim_layout_begrenze(kind)
+    sonst wenn shrink_summe > 0 und bevorzugt_summe > verfuegbar:
+        setze ueberlauf auf bevorzugt_summe - verfuegbar
+        für kind in container["kinder"]:
+            wenn kind["_baue_shrink"] > 0:
+                setze abzug auf ueberlauf * kind["_baue_shrink"] / shrink_summe
+                wenn _uim_richtung_horizontal(richtung):
+                    kind["b"] = kind["b"] - abzug
+                sonst:
+                    kind["h"] = kind["h"] - abzug
+                _uim_layout_begrenze(kind)
+    gib_zurück uim_stapel_layout(container, richtung, container["gap"])
+
+funktion _uim_baue_gitter_layout(container):
+    setze definition auf container["_baue_spalten"]
+    setze spaltenzahl auf 1
+    wenn typ_von(definition) == "Liste":
+        setze spaltenzahl auf länge(definition)
+    sonst:
+        setze spaltenzahl auf definition
+    wenn spaltenzahl < 1:
+        setze spaltenzahl auf 1
+    setze reihenzahl auf 0
+    setze index auf 0
+    für kind in container["kinder"]:
+        setze kind_spalte auf kind["_baue_col"]
+        setze kind_reihe auf kind["_baue_row"]
+        wenn kind_spalte < 0:
+            setze kind_spalte auf index % spaltenzahl
+        wenn kind_reihe < 0:
+            setze kind_reihe auf boden(index / spaltenzahl)
+        wenn kind_spalte >= spaltenzahl:
+            setze kind_spalte auf kind_spalte % spaltenzahl
+        kind["_baue_col_eff"] = kind_spalte
+        kind["_baue_row_eff"] = kind_reihe
+        wenn kind_reihe + 1 > reihenzahl:
+            setze reihenzahl auf kind_reihe + 1
+        setze index auf index + 1
+    setze zell_b auf 0
+    für kind in container["kinder"]:
+        setze metrik auf uim_messe(kind)
+        wenn metrik["b"] + kind["margin"] * 2 > zell_b:
+            setze zell_b auf metrik["b"] + kind["margin"] * 2
+    wenn container["auto_b"]:
+        container["b"] = container["padding"] * 2 + spaltenzahl * zell_b
+        wenn spaltenzahl > 1:
+            container["b"] = container["b"] + (spaltenzahl - 1) * container["gap"]
+    sonst:
+        setze innen_b auf container["b"] - container["padding"] * 2 - (spaltenzahl - 1) * container["gap"]
+        wenn innen_b < 0:
+            setze innen_b auf 0
+        setze zell_b auf innen_b / spaltenzahl
+    setze reihen_h auf []
+    solange länge(reihen_h) < reihenzahl:
+        reihen_h.hinzufügen(0)
+    für kind in container["kinder"]:
+        setze metrik auf uim_messe(kind)
+        setze kind_h auf metrik["h"] + kind["margin"] * 2
+        setze kind_reihe auf kind["_baue_row_eff"]
+        wenn kind_h > reihen_h[kind_reihe]:
+            reihen_h[kind_reihe] = kind_h
+    wenn container["auto_h"]:
+        container["h"] = container["padding"] * 2
+        für reihe_h in reihen_h:
+            container["h"] = container["h"] + reihe_h
+        wenn reihenzahl > 1:
+            container["h"] = container["h"] + (reihenzahl - 1) * container["gap"]
+    setze reihen_y auf []
+    setze lauf_y auf container["padding"]
+    für reihe_h in reihen_h:
+        reihen_y.hinzufügen(lauf_y)
+        setze lauf_y auf lauf_y + reihe_h + container["gap"]
+    für kind in container["kinder"]:
+        setze rand auf kind["margin"]
+        setze kind_spalte auf kind["_baue_col_eff"]
+        setze kind_reihe auf kind["_baue_row_eff"]
+        kind["x"] = container["padding"] + kind_spalte * (zell_b + container["gap"]) + rand
+        kind["y"] = reihen_y[kind_reihe] + rand
+        wenn kind["_baue_grow"] > 0:
+            kind["b"] = zell_b - rand * 2
+            kind["h"] = reihen_h[kind_reihe] - rand * 2
+        sonst wenn kind["_baue_shrink"] > 0 und kind["b"] + rand * 2 > zell_b:
+            kind["b"] = zell_b - rand * 2
+        _uim_layout_begrenze(kind)
+    gib_zurück _uim_layout_begrenze(container)
+
+funktion _uim_baue_layout(container):
+    wenn container == nichts oder container.enthält("_baue_layout") == falsch oder container["_baue_layout"] == falsch:
+        gib_zurück container
+    wenn container["typ"] == "stapel":
+        gib_zurück _uim_baue_stapel_layout(container)
+    wenn container["typ"] == "gitter":
+        gib_zurück _uim_baue_gitter_layout(container)
+    gib_zurück container
+
+funktion uim_kind(container, widget, optionen):
+    wenn container == nichts oder widget == nichts:
+        gib_zurück nichts
+    uim_optionen(widget, optionen)
+    uim_hinzu(container, widget)
+    _uim_baue_layout(container)
+    gib_zurück widget
+
+funktion uim_baue(typ, optionen):
+    wenn typ_von(typ) != "Text":
+        gib_zurück nichts
+    wenn optionen == nichts:
+        setze optionen auf {}
+    wenn typ_von(optionen) != "Woerterbuch":
+        gib_zurück nichts
+    setze kanon auf _uim_baue_typ_kanon(typ)
+    wenn kanon == "baum_knoten":
+        gib_zurück uim_baum_knoten(_uim_baue_opt(optionen, "text", ""), _uim_baue_opt(optionen, "kinder", []))
+    wenn kanon == "menue_punkt":
+        gib_zurück uim_menue_punkt(_uim_baue_opt(optionen, "text", ""), _uim_baue_opt(optionen, "on_klick", nichts))
+    wenn kanon == "menue_trenner":
+        gib_zurück uim_menue_trenner()
+    wenn kanon == "menue":
+        gib_zurück uim_menue(_uim_baue_opt(optionen, "titel", ""), _uim_baue_opt(optionen, "punkte", []))
+    wenn kanon == "werkzeug":
+        gib_zurück uim_werkzeug(_uim_baue_opt(optionen, "text", ""), _uim_baue_opt(optionen, "on_klick", nichts))
+    wenn kanon == "werkzeug_trenner":
+        gib_zurück uim_werkzeug_trenner()
+    wenn kanon == "tooltip":
+        setze tooltip_ziel auf _uim_baue_opt(optionen, "ziel", nichts)
+        wenn tooltip_ziel == nichts:
+            gib_zurück nichts
+        gib_zurück uim_tooltip(tooltip_ziel, _uim_baue_opt(optionen, "text", ""))
+    setze standardgroesse auf _uim_baue_standardgroesse(kanon)
+    setze x auf _uim_baue_opt(optionen, "x", 0)
+    setze y auf _uim_baue_opt(optionen, "y", 0)
+    setze b auf _uim_baue_opt(optionen, "b", standardgroesse[0])
+    setze h auf _uim_baue_opt(optionen, "h", standardgroesse[1])
+    setze beschriftung auf _uim_baue_opt(optionen, "text", _uim_baue_opt(optionen, "titel", ""))
+    setze initial auf _uim_baue_opt(optionen, "wert", _uim_baue_opt(optionen, "initial", ""))
+    setze w auf nichts
+    wenn kanon == "widget_eigen":
+        setze w auf uim_widget_eigen(x, y, b, h, _uim_baue_opt(optionen, "on_zeichne", nichts))
+    sonst wenn kanon == "knopf":
+        setze w auf uim_knopf(beschriftung, x, y, b, h, _uim_baue_opt(optionen, "on_klick", nichts))
+    sonst wenn kanon == "knopf_geschuetzt":
+        setze w auf uim_knopf_geschuetzt(beschriftung, x, y, b, h, _uim_baue_opt(optionen, "on_klick", nichts))
+    sonst wenn kanon == "statusansicht":
+        setze w auf uim_statusansicht(x, y, b, h, _uim_baue_opt(optionen, "zustand", "leer"), _uim_baue_opt(optionen, "titel", ""), _uim_baue_opt(optionen, "beschreibung", ""), _uim_baue_opt(optionen, "on_retry", nichts))
+    sonst wenn kanon == "leerzustand":
+        setze w auf uim_leerzustand(x, y, b, h, _uim_baue_opt(optionen, "titel", ""), _uim_baue_opt(optionen, "beschreibung", ""))
+    sonst wenn kanon == "fehlerzustand":
+        setze w auf uim_fehlerzustand(x, y, b, h, _uim_baue_opt(optionen, "titel", ""), _uim_baue_opt(optionen, "beschreibung", ""), _uim_baue_opt(optionen, "on_retry", nichts))
+    sonst wenn kanon == "ladezustand":
+        setze w auf uim_ladezustand(x, y, b, h, _uim_baue_opt(optionen, "titel", ""), _uim_baue_opt(optionen, "beschreibung", ""))
+    sonst wenn kanon == "skelett":
+        setze w auf uim_skelett(x, y, b, h, _uim_baue_opt(optionen, "zeilen", 3))
+    sonst wenn kanon == "spinner":
+        setze w auf uim_spinner(x, y, b, h)
+    sonst wenn kanon == "bewertung":
+        setze w auf uim_bewertung(x, y, b, h, _uim_baue_opt(optionen, "wert", 0), _uim_baue_opt(optionen, "on_wechsel", nichts))
+    sonst wenn kanon == "schalter":
+        setze w auf uim_schalter(beschriftung, x, y, b, h, _uim_baue_opt(optionen, "wert", falsch), _uim_baue_opt(optionen, "on_wechsel", nichts))
+    sonst wenn kanon == "umschaltknopf":
+        setze w auf uim_umschaltknopf(beschriftung, x, y, b, h, _uim_baue_opt(optionen, "wert", falsch), _uim_baue_opt(optionen, "on_wechsel", nichts))
+    sonst wenn kanon == "radio":
+        setze w auf uim_radio(beschriftung, x, y, b, h, _uim_baue_opt(optionen, "gruppe", "default"), _uim_baue_opt(optionen, "wert", falsch), _uim_baue_opt(optionen, "on_wechsel", nichts))
+    sonst wenn kanon == "label":
+        setze w auf uim_label(beschriftung, x, y, b, h)
+    sonst wenn kanon == "checkbox":
+        setze w auf uim_checkbox(beschriftung, x, y, b, h, _uim_baue_opt(optionen, "wert", falsch), _uim_baue_opt(optionen, "on_wechsel", nichts))
+    sonst wenn kanon == "slider":
+        setze w auf uim_slider(x, y, b, h, _uim_baue_opt(optionen, "min", 0), _uim_baue_opt(optionen, "max", 100), _uim_baue_opt(optionen, "wert", 0), _uim_baue_opt(optionen, "on_wechsel", nichts))
+    sonst wenn kanon == "fortschritt":
+        setze w auf uim_fortschritt(x, y, b, h)
+    sonst wenn kanon == "panel":
+        setze w auf uim_panel(_uim_baue_opt(optionen, "titel", ""), x, y, b, h)
+    sonst wenn kanon == "scroll":
+        setze w auf uim_scroll(x, y, b, h, _uim_baue_opt(optionen, "inhalt_hoehe", h))
+    sonst wenn kanon == "liste":
+        setze w auf uim_liste(x, y, b, h, _uim_baue_opt(optionen, "zeilen", []), _uim_baue_opt(optionen, "on_auswahl", nichts))
+    sonst wenn kanon == "baum":
+        setze w auf uim_baum(x, y, b, h, _uim_baue_opt(optionen, "knoten", []), _uim_baue_opt(optionen, "on_auswahl", nichts))
+    sonst wenn kanon == "datengitter":
+        setze w auf uim_datengitter(x, y, b, h, _uim_baue_opt(optionen, "spalten", []), _uim_baue_opt(optionen, "zeilen", []), _uim_baue_opt(optionen, "on_auswahl", nichts))
+    sonst wenn kanon == "iconview":
+        setze w auf uim_iconview(x, y, b, h, _uim_baue_opt(optionen, "eintraege", []), _uim_baue_opt(optionen, "on_auswahl", nichts))
+    sonst wenn kanon == "menueleiste":
+        setze w auf uim_menueleiste(x, y, b, h, _uim_baue_opt(optionen, "eintraege", []))
+    sonst wenn kanon == "textfeld":
+        setze w auf uim_textfeld(x, y, b, h, text(initial), _uim_baue_opt(optionen, "on_wechsel", nichts))
+    sonst wenn kanon == "searchbox":
+        setze w auf uim_searchbox(x, y, b, h, _uim_baue_opt(optionen, "placeholder", ""), _uim_baue_opt(optionen, "on_wechsel", nichts))
+    sonst wenn kanon == "numberbox":
+        setze w auf uim_numberbox(x, y, b, h, initial, _uim_baue_opt(optionen, "min", 0), _uim_baue_opt(optionen, "max", 100), _uim_baue_opt(optionen, "on_wechsel", nichts))
+    sonst wenn kanon == "passwordbox":
+        setze w auf uim_passwordbox(x, y, b, h, text(initial), _uim_baue_opt(optionen, "on_wechsel", nichts))
+    sonst wenn kanon == "textarea":
+        setze w auf uim_textarea(x, y, b, h, text(initial), _uim_baue_opt(optionen, "on_wechsel", nichts))
+    sonst wenn kanon == "autocomplete":
+        setze w auf uim_autocomplete(x, y, b, h, text(initial), _uim_baue_opt(optionen, "vorschlaege", []), _uim_baue_opt(optionen, "on_wechsel", nichts))
+    sonst wenn kanon == "image":
+        setze w auf uim_image(x, y, b, h, _uim_baue_opt(optionen, "quelle", ""), _uim_baue_opt(optionen, "alt", ""))
+    sonst wenn kanon == "icon":
+        setze w auf uim_icon(_uim_baue_opt(optionen, "symbol", ""), x, y, b, h)
+    sonst wenn kanon == "badge":
+        setze w auf uim_badge(beschriftung, x, y, b, h)
+    sonst wenn kanon == "avatar":
+        setze w auf uim_avatar(_uim_baue_opt(optionen, "kuerzel", ""), x, y, b, h)
+    sonst wenn kanon == "colorpicker":
+        setze w auf uim_colorpicker(x, y, b, h, _uim_baue_opt(optionen, "farben", []), _uim_baue_opt(optionen, "on_auswahl", nichts))
+    sonst wenn kanon == "calendar":
+        setze w auf uim_calendar(x, y, b, h, _uim_baue_opt(optionen, "monat", 1), _uim_baue_opt(optionen, "jahr", 2000), _uim_baue_opt(optionen, "on_auswahl", nichts))
+    sonst wenn kanon == "datepicker":
+        setze w auf uim_datepicker(x, y, b, h, _uim_baue_opt(optionen, "monat", 1), _uim_baue_opt(optionen, "jahr", 2000), _uim_baue_opt(optionen, "on_auswahl", nichts))
+    sonst wenn kanon == "linechart":
+        setze w auf uim_linechart(x, y, b, h, _uim_baue_opt(optionen, "werte", []), _uim_baue_opt(optionen, "on_auswahl", nichts))
+    sonst wenn kanon == "barchart":
+        setze w auf uim_barchart(x, y, b, h, _uim_baue_opt(optionen, "werte", []), _uim_baue_opt(optionen, "on_auswahl", nichts))
+    sonst wenn kanon == "piechart":
+        setze w auf uim_piechart(x, y, b, h, _uim_baue_opt(optionen, "werte", []), _uim_baue_opt(optionen, "on_auswahl", nichts))
+    sonst wenn kanon == "gauge":
+        setze w auf uim_gauge(x, y, b, h, _uim_baue_opt(optionen, "min", 0), _uim_baue_opt(optionen, "max", 100), _uim_baue_opt(optionen, "wert", 0), _uim_baue_opt(optionen, "on_wechsel", nichts))
+    sonst wenn kanon == "combobox":
+        setze w auf uim_combobox(x, y, b, h, _uim_baue_opt(optionen, "zeilen", []), _uim_baue_opt(optionen, "auswahl", 0), _uim_baue_opt(optionen, "on_auswahl", nichts))
+    sonst wenn kanon == "separator":
+        setze w auf uim_separator(x, y, b)
+    sonst wenn kanon == "tabs":
+        setze w auf uim_tabs(x, y, b, h, _uim_baue_opt(optionen, "titel", []))
+    sonst wenn kanon == "werkzeugleiste":
+        setze w auf uim_werkzeugleiste(x, y, b, h, _uim_baue_opt(optionen, "werkzeuge", []))
+    sonst wenn kanon == "statusleiste":
+        setze w auf uim_statusleiste(x, y, b, h, _uim_baue_opt(optionen, "links", ""), _uim_baue_opt(optionen, "rechts", ""))
+    sonst wenn kanon == "kontextmenue":
+        setze w auf uim_kontextmenue(_uim_baue_opt(optionen, "punkte", []))
+    sonst wenn kanon == "aufklapper":
+        setze w auf uim_aufklapper(_uim_baue_opt(optionen, "titel", ""), x, y, b, h)
+    sonst wenn kanon == "teiler":
+        setze w auf uim_teiler(x, y, b, h, _uim_baue_opt(optionen, "richtung", "horizontal"), _uim_baue_opt(optionen, "anteil", 0.5))
+    sonst wenn kanon == "karte":
+        setze w auf uim_karte(_uim_baue_opt(optionen, "titel", ""), x, y, b, h)
+    sonst wenn kanon == "stapel":
+        setze w auf uim_stapel(x, y, b, h)
+    sonst wenn kanon == "gitter":
+        setze w auf uim_gitter(x, y, b, h)
+    sonst wenn kanon == "ueberlagerung":
+        setze w auf uim_ueberlagerung(x, y, b, h)
+    sonst wenn kanon == "nachricht":
+        setze w auf uim_nachricht(_uim_baue_opt(optionen, "titel", ""), _uim_baue_opt(optionen, "text", ""), _uim_baue_opt(optionen, "knoepfe", ["OK"]), _uim_baue_opt(optionen, "on_auswahl", nichts))
+    sonst wenn kanon == "loeschen_bestaetigung":
+        setze w auf uim_loeschen_bestaetigung(_uim_baue_opt(optionen, "titel", ""), _uim_baue_opt(optionen, "text", ""), _uim_baue_opt(optionen, "on_bestaetigt", nichts))
+    sonst wenn kanon == "eingabe_dialog":
+        setze w auf uim_eingabe_dialog(_uim_baue_opt(optionen, "titel", ""), _uim_baue_opt(optionen, "prompt", ""), text(initial), _uim_baue_opt(optionen, "on_auswahl", nichts))
+    sonst wenn kanon == "toast":
+        setze w auf uim_toast(_uim_baue_opt(optionen, "text", ""), _uim_baue_opt(optionen, "dauer_ticks", 12))
+    sonst wenn kanon == "snackbar":
+        setze w auf uim_snackbar(_uim_baue_opt(optionen, "text", ""), _uim_baue_opt(optionen, "aktionsknopf", ""), _uim_baue_opt(optionen, "on_klick", nichts))
+    sonst wenn kanon == "terminal":
+        setze w auf uim_terminal(x, y, b, h, text(initial), _uim_baue_opt(optionen, "on_befehl", nichts))
+    sonst wenn kanon == "markdown":
+        setze w auf uim_markdown(x, y, b, h, _uim_baue_opt(optionen, "inhalt", ""))
+    wenn w == nichts:
+        gib_zurück nichts
+    wenn kanon == "stapel" oder kanon == "gitter":
+        w["_baue_layout"] = wahr
+        w["_baue_richtung"] = _uim_baue_opt(optionen, "richtung", "vertikal")
+        w["_baue_spalten"] = _uim_baue_opt(optionen, "spalten", 1)
+        wenn optionen.enthält("b") == falsch:
+            w["auto_b"] = wahr
+        wenn optionen.enthält("h") == falsch:
+            w["auto_h"] = wahr
+    uim_optionen(w, optionen)
+    wenn optionen.enthält("kinder") and typ_von(optionen["kinder"]) == "Liste" and kanon != "tabs":
+        für kind in optionen["kinder"]:
+            uim_kind(w, kind, nichts)
+    _uim_baue_layout(w)
+    gib_zurück w

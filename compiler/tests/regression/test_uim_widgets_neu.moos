@@ -946,3 +946,46 @@ uim_overlay_setze(api2_k_en, api2_overlay_en, wahr, wahr)
 setze api2_ops auf api2_ops und api2_paar_gleich(api2_overlay_de, api2_overlay_en)
 zeige "API2-OPS " + text(api2_ops)
 zeige "W6-API2-OK"
+
+
+# --- W6-API3: Builder und klassische Konstruktion ergeben dieselbe Geometrie ---
+funktion api3_geometrie_gleich(a, b):
+    wenn a["x"] != b["x"] oder a["y"] != b["y"] oder a["b"] != b["b"] oder a["h"] != b["h"]:
+        gib_zurück falsch
+    wenn länge(a["kinder"]) != länge(b["kinder"]):
+        gib_zurück falsch
+    setze i auf 0
+    solange i < länge(a["kinder"]):
+        setze ak auf a["kinder"][i]
+        setze bk auf b["kinder"][i]
+        wenn ak["x"] != bk["x"] oder ak["y"] != bk["y"] oder ak["b"] != bk["b"] oder ak["h"] != bk["h"]:
+            gib_zurück falsch
+        setze i auf i + 1
+    gib_zurück wahr
+
+setze api3_alt auf uim_stapel(0, 0, 240, 150)
+uim_layout_metriken_setze(api3_alt, 0, 12, 8)
+uim_hinzu(api3_alt, uim_label("Name", 0, 0, 100, 20))
+uim_hinzu(api3_alt, uim_textfeld(0, 0, 180, 26, "Ada", nichts))
+uim_hinzu(api3_alt, uim_knopf("Speichern", 0, 0, 100, 28, nichts))
+uim_stapel_layout(api3_alt, "vertikal", 8)
+setze api3_builder auf uim_baue("stapel", {"x": 0, "y": 0, "b": 240, "h": 150, "padding": 12, "gap": 8, "richtung": "vertikal", "kinder": [uim_baue("label", {"text": "Name", "b": 100, "h": 20}), uim_baue("textfield", {"wert": "Ada", "b": 180, "h": 26}), uim_baue("button", {"text": "Speichern", "b": 100, "h": 28})]})
+zeige "API3-GEOMETRIE " + text(api3_geometrie_gleich(api3_alt, api3_builder))
+
+setze api3_intrinsisch auf uim_baue("button", {"text": "OK"})
+setze api3_metrik auf uim_messe(api3_intrinsisch)
+zeige "API3-INTRINSISCH " + text(api3_intrinsisch["b"] == 100) + "/" + text(api3_intrinsisch["h"] == 28) + "/" + text(api3_metrik["b"] == 100)
+setze api3_option auf uim_label("X", 0, 0, 40, 20)
+uim_optionen(api3_option, {"id": "option", "b": 60, "min_b": 80, "margin": 3})
+zeige "API3-OPTIONEN " + api3_option["id"] + "/" + text(api3_option["b"]) + "/" + text(api3_option["margin"])
+
+setze api3_grid auf uim_baue("grid", {"b": 220, "h": 80, "padding": 10, "gap": 10, "spalten": ["1fr", "1fr"], "kinder": [uim_baue("label", {"text": "A", "grow": 1}), uim_baue("textfield", {"wert": "B", "grow": 1})]})
+zeige "API3-GRID " + text(api3_grid["kinder"][0]["x"]) + "/" + text(api3_grid["kinder"][1]["x"]) + "/" + text(api3_grid["kinder"][0]["b"]) + "/" + text(api3_grid["kinder"][1]["b"])
+
+setze api3_grow auf uim_baue("stack", {"b": 200, "h": 50, "padding": 10, "gap": 10, "richtung": "horizontal", "kinder": [uim_baue("label", {"text": "Fest", "b": 50}), uim_baue("button", {"text": "Flex", "grow": 1})]})
+zeige "API3-GROW " + text(api3_grow["kinder"][0]["x"]) + "/" + text(api3_grow["kinder"][1]["x"]) + "/" + text(api3_grow["kinder"][1]["b"])
+setze api3_min_grenze auf uim_baue("stack", {"b": 50, "h": 40, "richtung": "horizontal", "kinder": [uim_baue("button", {"grow": 1, "min_b": 80})]})
+setze api3_max_grenze auf uim_baue("stack", {"b": 100, "h": 40, "richtung": "horizontal", "kinder": [uim_baue("button", {"grow": 1, "max_b": 60})]})
+zeige "API3-GRENZEN " + text(api3_min_grenze["kinder"][0]["b"]) + "/" + text(api3_max_grenze["kinder"][0]["b"]) 
+zeige "API3-UNBEKANNT " + text(uim_baue("unbekannt", {}) == nichts)
+zeige "W6-API3-OK"
