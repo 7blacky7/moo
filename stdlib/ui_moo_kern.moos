@@ -1825,8 +1825,10 @@ funktion _uim_kern_maus(kontext, x, y, taste):
         _uim_iconview_klick(kontext, w, tref["lx"], tref["ly"])
     wenn w["typ"] == "colorpicker":
         _uim_colorpicker_klick(kontext, w, tref["lx"], tref["ly"])
-    wenn w["typ"] == "calendar" oder w["typ"] == "datepicker":
+    wenn w["typ"] == "calendar":
         _uim_kalender_klick(kontext, w, tref["lx"], tref["ly"])
+    wenn w["typ"] == "datepicker":
+        _uim_datepicker_toggle(kontext, w)
     wenn w["typ"] == "linechart" oder w["typ"] == "barchart" oder w["typ"] == "piechart":
         _uim_chart_klick(kontext, w, tref["lx"], tref["ly"])
     wenn w["typ"] == "gauge":
@@ -2102,7 +2104,7 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
                     cba(f, idx)
             _uim_anfordern(kontext)
             gib_zurück wahr
-    wenn taste == "Return" oder taste == "space":
+    wenn (taste == "Return" oder taste == "space") und f["typ"] != "calendar" und f["typ"] != "datepicker":
         _uim_aktiviere(kontext, f)
         _uim_anfordern(kontext)
         gib_zurück wahr
@@ -2155,26 +2157,53 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
         _uim_anfordern(kontext)
         gib_zurück wahr
     wenn f["typ"] == "calendar" oder f["typ"] == "datepicker":
-        setze tag_nav auf f["auswahl"]
+        wenn f["typ"] == "datepicker" und f["offen"] == falsch und (taste == "Return" oder taste == "Enter" oder taste == "Space" oder taste == "Down"):
+            gib_zurück _uim_datepicker_oeffne(kontext, f)
+        wenn f["typ"] == "datepicker" und f["offen"]:
+            gib_zurück wahr
+        wenn f["ansicht"] != "monat":
+            wenn taste == "Left" oder taste == "Up":
+                uim_kalender_navigiere(f, 0 - 1)
+            sonst wenn taste == "Right" oder taste == "Down":
+                uim_kalender_navigiere(f, 1)
+            gib_zurück wahr
+        setze fokus_datum auf [f["fokus_tag"], f["fokus_monat"], f["fokus_jahr"]]
+        wenn nicht _uim_kalender_datum_gueltig(fokus_datum):
+            setze fokus_datum auf [f["auswahl"], f["monat"], f["jahr"]]
+        wenn taste == "Return" oder taste == "Enter" oder taste == "Space":
+            gib_zurück _uim_kalender_auswahl_anwenden(kontext, f, fokus_datum, wahr)
+        setze ziel_datum auf fokus_datum
+        setze richtung auf 0
         wenn taste == "Left":
-            setze tag_nav auf tag_nav - 1
+            setze ziel_datum auf _uim_kalender_datum_verschiebe(fokus_datum, 0 - 1)
+            setze richtung auf 0 - 1
         sonst wenn taste == "Right":
-            setze tag_nav auf tag_nav + 1
+            setze ziel_datum auf _uim_kalender_datum_verschiebe(fokus_datum, 1)
+            setze richtung auf 1
         sonst wenn taste == "Up":
-            setze tag_nav auf tag_nav - 7
+            setze ziel_datum auf _uim_kalender_datum_verschiebe(fokus_datum, 0 - 7)
+            setze richtung auf 0 - 1
         sonst wenn taste == "Down":
-            setze tag_nav auf tag_nav + 7
+            setze ziel_datum auf _uim_kalender_datum_verschiebe(fokus_datum, 7)
+            setze richtung auf 1
+        sonst wenn taste == "Home" oder taste == "End":
+            setze sonntag_null auf _uim_kalender_wochentag(fokus_datum[0], fokus_datum[1], fokus_datum[2])
+            setze wochen_offset auf (sonntag_null - f["wochenstart"] + 7) % 7
+            wenn taste == "Home":
+                setze ziel_datum auf _uim_kalender_datum_verschiebe(fokus_datum, 0 - wochen_offset)
+                setze richtung auf 0 - 1
+            sonst:
+                setze ziel_datum auf _uim_kalender_datum_verschiebe(fokus_datum, 6 - wochen_offset)
+                setze richtung auf 1
+        sonst wenn taste == "PageUp":
+            setze ziel_datum auf _uim_kalender_datum_monat_verschiebe(fokus_datum, 0 - 1)
+            setze richtung auf 0 - 1
+        sonst wenn taste == "PageDown":
+            setze ziel_datum auf _uim_kalender_datum_monat_verschiebe(fokus_datum, 1)
+            setze richtung auf 1
         sonst:
             gib_zurück wahr
-        wenn tag_nav < 1:
-            setze tag_nav auf 1
-        wenn tag_nav > f["tage"]:
-            setze tag_nav auf f["tage"]
-        f["auswahl"] = tag_nav
-        f["selected"] = wahr
-        setze cb_date auf f["on_auswahl"]
-        wenn cb_date != nichts:
-            cb_date(f, tag_nav)
+        _uim_kalender_fokus_bewege(f, ziel_datum, richtung)
         _uim_anfordern(kontext)
         gib_zurück wahr
     wenn f["typ"] == "linechart" oder f["typ"] == "barchart" oder f["typ"] == "piechart":
@@ -3200,6 +3229,123 @@ funktion _uim_kalender_monatstage(monat, jahr):
         gib_zurück 30
     gib_zurück 31
 
+
+funktion _uim_kalender_datum_gueltig(datum):
+    wenn typ_von(datum) != "Liste" oder länge(datum) < 3:
+        gib_zurück falsch
+    setze tag_nummer auf datum[0]
+    setze monat_nummer auf datum[1]
+    setze jahr_nummer auf datum[2]
+    wenn jahr_nummer < 1 oder monat_nummer < 1 oder monat_nummer > 12:
+        gib_zurück falsch
+    gib_zurück tag_nummer >= 1 und tag_nummer <= _uim_kalender_monatstage(monat_nummer, jahr_nummer)
+
+funktion _uim_kalender_datum_kopie(datum):
+    wenn nicht _uim_kalender_datum_gueltig(datum):
+        gib_zurück []
+    gib_zurück [datum[0], datum[1], datum[2]]
+
+funktion _uim_kalender_datum_schluessel(datum):
+    wenn nicht _uim_kalender_datum_gueltig(datum):
+        gib_zurück 0
+    gib_zurück datum[2] * 10000 + datum[1] * 100 + datum[0]
+
+funktion _uim_kalender_datum_gleich(a, b):
+    wenn nicht _uim_kalender_datum_gueltig(a) oder nicht _uim_kalender_datum_gueltig(b):
+        gib_zurück falsch
+    gib_zurück a[0] == b[0] und a[1] == b[1] und a[2] == b[2]
+
+
+funktion _uim_kalender_datum_verschiebe(datum, schritte):
+    setze ziel auf _uim_kalender_datum_kopie(datum)
+    wenn länge(ziel) == 0:
+        gib_zurück []
+    setze restschritte auf schritte
+    solange restschritte > 0:
+        ziel[0] = ziel[0] + 1
+        wenn ziel[0] > _uim_kalender_monatstage(ziel[1], ziel[2]):
+            ziel[0] = 1
+            ziel[1] = ziel[1] + 1
+            wenn ziel[1] > 12:
+                ziel[1] = 1
+                ziel[2] = ziel[2] + 1
+        setze restschritte auf restschritte - 1
+    solange restschritte < 0:
+        ziel[0] = ziel[0] - 1
+        wenn ziel[0] < 1:
+            ziel[1] = ziel[1] - 1
+            wenn ziel[1] < 1:
+                ziel[1] = 12
+                ziel[2] = ziel[2] - 1
+            ziel[0] = _uim_kalender_monatstage(ziel[1], ziel[2])
+        setze restschritte auf restschritte + 1
+    gib_zurück ziel
+
+funktion _uim_kalender_datum_monat_verschiebe(datum, monate):
+    setze ziel auf _uim_kalender_datum_kopie(datum)
+    wenn länge(ziel) == 0:
+        gib_zurück []
+    setze ziel_monat auf ziel[1] + monate
+    solange ziel_monat < 1:
+        setze ziel_monat auf ziel_monat + 12
+        ziel[2] = ziel[2] - 1
+    solange ziel_monat > 12:
+        setze ziel_monat auf ziel_monat - 12
+        ziel[2] = ziel[2] + 1
+    ziel[1] = ziel_monat
+    setze maximale_tage auf _uim_kalender_monatstage(ziel[1], ziel[2])
+    wenn ziel[0] > maximale_tage:
+        ziel[0] = maximale_tage
+    gib_zurück ziel
+
+funktion _uim_kalender_fokus_bewege(w, ziel, richtung):
+    setze kandidat auf _uim_kalender_datum_kopie(ziel)
+    wenn länge(kandidat) == 0:
+        gib_zurück falsch
+    solange nicht _uim_kalender_datum_erlaubt(w, kandidat):
+        setze kandidat_schluessel auf _uim_kalender_datum_schluessel(kandidat)
+        wenn richtung < 0 und länge(w["min_datum"]) > 0 und kandidat_schluessel <= _uim_kalender_datum_schluessel(w["min_datum"]):
+            gib_zurück falsch
+        wenn richtung > 0 und länge(w["max_datum"]) > 0 und kandidat_schluessel >= _uim_kalender_datum_schluessel(w["max_datum"]):
+            gib_zurück falsch
+        wenn richtung == 0:
+            gib_zurück falsch
+        setze kandidat auf _uim_kalender_datum_verschiebe(kandidat, richtung)
+        wenn länge(kandidat) == 0:
+            gib_zurück falsch
+    w["fokus_tag"] = kandidat[0]
+    w["fokus_monat"] = kandidat[1]
+    w["fokus_jahr"] = kandidat[2]
+    w["monat"] = kandidat[1]
+    w["jahr"] = kandidat[2]
+    _uim_kalender_sync(w)
+    _uim_widget_anfordern(w)
+    gib_zurück wahr
+
+funktion _uim_kalender_iso_wochen_im_jahr(jahr):
+    setze januar_eins auf _uim_kalender_wochentag(1, 1, jahr)
+    setze iso_tag auf ((januar_eins + 6) % 7) + 1
+    wenn iso_tag == 4 oder (iso_tag == 3 und _uim_kalender_schaltjahr(jahr)):
+        gib_zurück 53
+    gib_zurück 52
+
+funktion _uim_kalender_iso_woche(datum):
+    wenn nicht _uim_kalender_datum_gueltig(datum):
+        gib_zurück 0
+    setze jahrestag auf datum[0]
+    setze monat_index auf 1
+    solange monat_index < datum[1]:
+        setze jahrestag auf jahrestag + _uim_kalender_monatstage(monat_index, datum[2])
+        setze monat_index auf monat_index + 1
+    setze sonntag_null auf _uim_kalender_wochentag(datum[0], datum[1], datum[2])
+    setze iso_tag auf ((sonntag_null + 6) % 7) + 1
+    setze woche_nummer auf boden((jahrestag - iso_tag + 10) / 7)
+    wenn woche_nummer < 1:
+        gib_zurück _uim_kalender_iso_wochen_im_jahr(datum[2] - 1)
+    wenn woche_nummer > _uim_kalender_iso_wochen_im_jahr(datum[2]):
+        gib_zurück 1
+    gib_zurück woche_nummer
+
 # Sakamoto: 0=Sonntag .. 6=Samstag.
 funktion _uim_kalender_wochentag(tag, monat, jahr):
     setze monatswerte auf [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4]
@@ -3216,10 +3362,6 @@ funktion _uim_kalender_offset(w):
 
 funktion _uim_kalender_sync(w):
     w["tage"] = _uim_kalender_monatstage(w["monat"], w["jahr"])
-    wenn w["auswahl"] < 1:
-        w["auswahl"] = 1
-    wenn w["auswahl"] > w["tage"]:
-        w["auswahl"] = w["tage"]
     gib_zurück w
 
 funktion _uim_kalender_monatsname(monat):
@@ -3241,17 +3383,125 @@ funktion uim_kalender_ansicht_setze(w, ansicht):
 funktion uim_calendar_view_set(w, ansicht):
     gib_zurück uim_kalender_ansicht_setze(w, ansicht)
 
+
+funktion _uim_kalender_datumsliste_kopie(werte):
+    wenn typ_von(werte) != "Liste":
+        gib_zurück nichts
+    setze ergebnis auf []
+    setze index auf 0
+    solange index < länge(werte):
+        setze datum_kopie auf _uim_kalender_datum_kopie(werte[index])
+        wenn länge(datum_kopie) == 0:
+            gib_zurück nichts
+        ergebnis.hinzufügen(datum_kopie)
+        setze index auf index + 1
+    gib_zurück ergebnis
+
+funktion _uim_kalender_auswahlzustand_sync(w):
+    setze hat_auswahl auf falsch
+    wenn w["auswahl_modus"] == "einzel":
+        setze hat_auswahl auf _uim_kalender_datum_gueltig(w["auswahl_datum"])
+    sonst wenn w["auswahl_modus"] == "bereich":
+        setze hat_auswahl auf länge(w["bereich_start"]) > 0
+    sonst wenn w["auswahl_modus"] == "mehrfach":
+        setze hat_auswahl auf länge(w["mehrfach_auswahl"]) > 0
+    w["selected"] = hat_auswahl
+    wenn hat_auswahl:
+        w["zustand"] = "selected"
+    sonst:
+        w["zustand"] = "normal"
+    gib_zurück hat_auswahl
+
+funktion uim_kalender_auswahlmodus_setze(w, modus):
+    wenn modus != "einzel" und modus != "bereich" und modus != "mehrfach":
+        gib_zurück falsch
+    w["auswahl_modus"] = modus
+    wenn modus == "einzel":
+        wenn nicht _uim_kalender_datum_gueltig(w["auswahl_datum"]):
+            w["auswahl_datum"] = [w["auswahl"], w["monat"], w["jahr"]]
+        w["auswahl"] = w["auswahl_datum"][0]
+    sonst wenn modus == "bereich":
+        w["bereich_start"] = []
+        w["bereich_ende"] = []
+    sonst:
+        w["mehrfach_auswahl"] = []
+    _uim_kalender_auswahlzustand_sync(w)
+    _uim_widget_anfordern(w)
+    gib_zurück wahr
+
+funktion uim_calendar_selection_mode_set(w, modus):
+    gib_zurück uim_kalender_auswahlmodus_setze(w, modus)
+
+funktion uim_kalender_grenzen_setze(w, minimum_datum, maximum_datum):
+    setze minimum_kopie auf []
+    setze maximum_kopie auf []
+    wenn minimum_datum != nichts:
+        wenn typ_von(minimum_datum) != "Liste":
+            gib_zurück falsch
+        wenn länge(minimum_datum) > 0:
+            setze minimum_kopie auf _uim_kalender_datum_kopie(minimum_datum)
+            wenn länge(minimum_kopie) == 0:
+                gib_zurück falsch
+    wenn maximum_datum != nichts:
+        wenn typ_von(maximum_datum) != "Liste":
+            gib_zurück falsch
+        wenn länge(maximum_datum) > 0:
+            setze maximum_kopie auf _uim_kalender_datum_kopie(maximum_datum)
+            wenn länge(maximum_kopie) == 0:
+                gib_zurück falsch
+    wenn länge(minimum_kopie) > 0 und länge(maximum_kopie) > 0:
+        wenn _uim_kalender_datum_schluessel(minimum_kopie) > _uim_kalender_datum_schluessel(maximum_kopie):
+            gib_zurück falsch
+    w["min_datum"] = minimum_kopie
+    w["max_datum"] = maximum_kopie
+    _uim_widget_anfordern(w)
+    gib_zurück wahr
+
+funktion uim_calendar_bounds_set(w, minimum_datum, maximum_datum):
+    gib_zurück uim_kalender_grenzen_setze(w, minimum_datum, maximum_datum)
+
+funktion uim_kalender_gesperrte_tage_setze(w, tage_liste):
+    setze kopie auf _uim_kalender_datumsliste_kopie(tage_liste)
+    wenn kopie == nichts:
+        gib_zurück falsch
+    w["gesperrte_tage"] = kopie
+    _uim_widget_anfordern(w)
+    gib_zurück wahr
+
+funktion uim_calendar_disabled_dates_set(w, tage_liste):
+    gib_zurück uim_kalender_gesperrte_tage_setze(w, tage_liste)
+
+funktion uim_kalender_wochennummern_setze(w, aktiviert):
+    w["wochennummern"] = aktiviert == wahr
+    _uim_widget_anfordern(w)
+    gib_zurück wahr
+
+funktion uim_calendar_week_numbers_set(w, aktiviert):
+    gib_zurück uim_kalender_wochennummern_setze(w, aktiviert)
+
+funktion uim_kalender_termine_setze(w, termine_liste):
+    setze kopie auf _uim_kalender_datumsliste_kopie(termine_liste)
+    wenn kopie == nichts:
+        gib_zurück falsch
+    w["termine"] = kopie
+    _uim_widget_anfordern(w)
+    gib_zurück wahr
+
+funktion uim_calendar_appointments_set(w, termine_liste):
+    gib_zurück uim_kalender_termine_setze(w, termine_liste)
+
 funktion uim_kalender_navigiere(w, schritte):
     wenn w["ansicht"] == "monat":
-        setze ziel_monat auf w["monat"] + schritte
-        solange ziel_monat < 1:
-            setze ziel_monat auf ziel_monat + 12
-            w["jahr"] = w["jahr"] - 1
-        solange ziel_monat > 12:
-            setze ziel_monat auf ziel_monat - 12
-            w["jahr"] = w["jahr"] + 1
-        w["monat"] = ziel_monat
-        _uim_kalender_sync(w)
+        setze fokus_datum auf [w["fokus_tag"], w["fokus_monat"], w["fokus_jahr"]]
+        wenn nicht _uim_kalender_datum_gueltig(fokus_datum):
+            setze fokus_datum auf [w["auswahl"], w["monat"], w["jahr"]]
+        setze ziel_datum auf _uim_kalender_datum_monat_verschiebe(fokus_datum, schritte)
+        setze richtung auf 0
+        wenn schritte < 0:
+            setze richtung auf 0 - 1
+        sonst wenn schritte > 0:
+            setze richtung auf 1
+        _uim_kalender_fokus_bewege(w, ziel_datum, richtung)
     sonst wenn w["ansicht"] == "jahr":
         w["jahr"] = w["jahr"] + schritte
         _uim_kalender_sync(w)
@@ -3275,16 +3525,17 @@ funktion uim_calendar_today_set(w, tag, monat, jahr):
     gib_zurück uim_kalender_heute_setze(w, tag, monat, jahr)
 
 funktion uim_kalender_zu_heute(w):
-    wenn w["heute_tag"] < 1:
+    wenn w["heute_tag"] < 1 oder w["heute_monat"] < 1 oder w["heute_jahr"] < 1:
+        gib_zurück falsch
+    setze heute_datum auf [w["heute_tag"], w["heute_monat"], w["heute_jahr"]]
+    wenn nicht _uim_kalender_datum_erlaubt(w, heute_datum):
         gib_zurück falsch
     w["tag"] = w["heute_tag"]
-    w["auswahl"] = w["heute_tag"]
     w["monat"] = w["heute_monat"]
     w["jahr"] = w["heute_jahr"]
     w["ansicht"] = "monat"
     _uim_kalender_sync(w)
-    _uim_widget_anfordern(w)
-    gib_zurück wahr
+    gib_zurück _uim_kalender_auswahl_anwenden(nichts, w, heute_datum, falsch)
 
 funktion uim_calendar_go_today(w):
     gib_zurück uim_kalender_zu_heute(w)
@@ -3306,6 +3557,160 @@ funktion _uim_kalender_kopf_klick(w, lokal_x):
     sonst:
         w["ansicht"] = "monat"
     _uim_widget_anfordern(w)
+    gib_zurück wahr
+
+funktion _uim_kalender_datum_index(datum, liste):
+    wenn typ_von(liste) != "Liste":
+        gib_zurück 0 - 1
+    setze index auf 0
+    solange index < länge(liste):
+        wenn _uim_kalender_datum_gleich(datum, liste[index]):
+            gib_zurück index
+        setze index auf index + 1
+    gib_zurück 0 - 1
+
+funktion _uim_kalender_datum_erlaubt(w, datum):
+    wenn nicht _uim_kalender_datum_gueltig(datum):
+        gib_zurück falsch
+    setze schluessel auf _uim_kalender_datum_schluessel(datum)
+    wenn länge(w["min_datum"]) > 0 und schluessel < _uim_kalender_datum_schluessel(w["min_datum"]):
+        gib_zurück falsch
+    wenn länge(w["max_datum"]) > 0 und schluessel > _uim_kalender_datum_schluessel(w["max_datum"]):
+        gib_zurück falsch
+    gib_zurück _uim_kalender_datum_index(datum, w["gesperrte_tage"]) < 0
+
+funktion _uim_kalender_auswahlwert(w):
+    wenn w["auswahl_modus"] == "einzel":
+        wenn _uim_kalender_datum_gueltig(w["auswahl_datum"]):
+            gib_zurück w["auswahl_datum"][0]
+        gib_zurück w["auswahl"]
+    wenn w["auswahl_modus"] == "bereich":
+        setze bereich auf []
+        wenn länge(w["bereich_start"]) > 0:
+            bereich.hinzufügen(_uim_kalender_datum_kopie(w["bereich_start"]))
+        wenn länge(w["bereich_ende"]) > 0:
+            bereich.hinzufügen(_uim_kalender_datum_kopie(w["bereich_ende"]))
+        gib_zurück bereich
+    setze mehrfach auf _uim_kalender_datumsliste_kopie(w["mehrfach_auswahl"])
+    wenn mehrfach == nichts:
+        gib_zurück []
+    gib_zurück mehrfach
+
+funktion _uim_kalender_datum_ausgewaehlt(w, datum):
+    wenn w["auswahl_modus"] == "einzel":
+        gib_zurück _uim_kalender_datum_gleich(datum, w["auswahl_datum"])
+    wenn w["auswahl_modus"] == "bereich":
+        wenn länge(w["bereich_start"]) == 0:
+            gib_zurück falsch
+        setze schluessel auf _uim_kalender_datum_schluessel(datum)
+        setze start_schluessel auf _uim_kalender_datum_schluessel(w["bereich_start"])
+        wenn länge(w["bereich_ende"]) == 0:
+            gib_zurück schluessel == start_schluessel
+        gib_zurück schluessel >= start_schluessel und schluessel <= _uim_kalender_datum_schluessel(w["bereich_ende"])
+    gib_zurück _uim_kalender_datum_index(datum, w["mehrfach_auswahl"]) >= 0
+
+funktion _uim_kalender_auswahl_anwenden(kontext, w, datum, callback_aufrufen):
+    wenn nicht _uim_kalender_datum_erlaubt(w, datum):
+        gib_zurück falsch
+    setze datum_kopie auf _uim_kalender_datum_kopie(datum)
+    w["fokus_tag"] = datum_kopie[0]
+    w["fokus_monat"] = datum_kopie[1]
+    w["fokus_jahr"] = datum_kopie[2]
+    w["auswahl"] = datum_kopie[0]
+    w["auswahl_datum"] = _uim_kalender_datum_kopie(datum_kopie)
+    wenn w["auswahl_modus"] == "bereich":
+        wenn länge(w["bereich_start"]) == 0 oder länge(w["bereich_ende"]) > 0:
+            w["bereich_start"] = _uim_kalender_datum_kopie(datum_kopie)
+            w["bereich_ende"] = []
+        sonst wenn _uim_kalender_datum_schluessel(datum_kopie) < _uim_kalender_datum_schluessel(w["bereich_start"]):
+            w["bereich_ende"] = _uim_kalender_datum_kopie(w["bereich_start"])
+            w["bereich_start"] = _uim_kalender_datum_kopie(datum_kopie)
+        sonst:
+            w["bereich_ende"] = _uim_kalender_datum_kopie(datum_kopie)
+    sonst wenn w["auswahl_modus"] == "mehrfach":
+        setze fundstelle auf _uim_kalender_datum_index(datum_kopie, w["mehrfach_auswahl"])
+        setze neue_liste auf []
+        setze index auf 0
+        solange index < länge(w["mehrfach_auswahl"]):
+            wenn index != fundstelle:
+                neue_liste.hinzufügen(_uim_kalender_datum_kopie(w["mehrfach_auswahl"][index]))
+            setze index auf index + 1
+        wenn fundstelle < 0:
+            neue_liste.hinzufügen(_uim_kalender_datum_kopie(datum_kopie))
+        w["mehrfach_auswahl"] = neue_liste
+    _uim_kalender_auswahlzustand_sync(w)
+    wenn callback_aufrufen:
+        setze cb auf w["on_auswahl"]
+        wenn cb != nichts:
+            wenn w["auswahl_modus"] == "einzel":
+                cb(w, datum_kopie[0])
+            sonst:
+                cb(w, _uim_kalender_auswahlwert(w))
+        wenn w.enthält("datepicker_quelle"):
+            _uim_datepicker_popup_uebernehmen(kontext, w)
+    wenn kontext != nichts:
+        _uim_bind_widget_zu_state(w)
+        _uim_anfordern(kontext)
+    sonst:
+        _uim_widget_anfordern(w)
+    gib_zurück wahr
+
+funktion _uim_kalender_wert_setze(kontext, w, wert):
+    wenn w["auswahl_modus"] == "einzel":
+        setze tag_nummer auf wert
+        wenn tag_nummer < 1:
+            setze tag_nummer auf 1
+        wenn tag_nummer > w["tage"]:
+            setze tag_nummer auf w["tage"]
+        gib_zurück _uim_kalender_auswahl_anwenden(kontext, w, [tag_nummer, w["monat"], w["jahr"]], falsch)
+    wenn w["auswahl_modus"] == "bereich":
+        wenn typ_von(wert) != "Liste" oder länge(wert) < 1 oder länge(wert) > 2:
+            gib_zurück falsch
+        setze erster_tag auf _uim_kalender_datum_kopie(wert[0])
+        wenn länge(erster_tag) == 0 oder nicht _uim_kalender_datum_erlaubt(w, erster_tag):
+            gib_zurück falsch
+        setze letzter_tag auf []
+        wenn länge(wert) == 2:
+            setze letzter_tag auf _uim_kalender_datum_kopie(wert[1])
+            wenn länge(letzter_tag) == 0 oder nicht _uim_kalender_datum_erlaubt(w, letzter_tag):
+                gib_zurück falsch
+            wenn _uim_kalender_datum_schluessel(letzter_tag) < _uim_kalender_datum_schluessel(erster_tag):
+                setze tausch_tag auf erster_tag
+                setze erster_tag auf letzter_tag
+                setze letzter_tag auf tausch_tag
+        w["bereich_start"] = erster_tag
+        w["bereich_ende"] = letzter_tag
+        w["auswahl_datum"] = erster_tag
+        w["auswahl"] = erster_tag[0]
+    sonst:
+        setze kopie auf _uim_kalender_datumsliste_kopie(wert)
+        wenn kopie == nichts:
+            gib_zurück falsch
+        setze einzigartige_liste auf []
+        setze index auf 0
+        solange index < länge(kopie):
+            wenn nicht _uim_kalender_datum_erlaubt(w, kopie[index]):
+                gib_zurück falsch
+            wenn _uim_kalender_datum_index(kopie[index], einzigartige_liste) < 0:
+                einzigartige_liste.hinzufügen(_uim_kalender_datum_kopie(kopie[index]))
+            setze index auf index + 1
+        w["mehrfach_auswahl"] = einzigartige_liste
+        wenn länge(einzigartige_liste) > 0:
+            setze letzter_index auf länge(einzigartige_liste) - 1
+            w["auswahl_datum"] = _uim_kalender_datum_kopie(einzigartige_liste[letzter_index])
+            w["auswahl"] = einzigartige_liste[letzter_index][0]
+    _uim_kalender_auswahlzustand_sync(w)
+    wenn w["auswahl_modus"] == "bereich" und länge(w["bereich_start"]) > 0:
+        w["fokus_tag"] = w["bereich_start"][0]
+        w["fokus_monat"] = w["bereich_start"][1]
+        w["fokus_jahr"] = w["bereich_start"][2]
+    sonst wenn w["auswahl_modus"] == "mehrfach" und länge(w["mehrfach_auswahl"]) > 0:
+        setze fokus_index auf länge(w["mehrfach_auswahl"]) - 1
+        w["fokus_tag"] = w["mehrfach_auswahl"][fokus_index][0]
+        w["fokus_monat"] = w["mehrfach_auswahl"][fokus_index][1]
+        w["fokus_jahr"] = w["mehrfach_auswahl"][fokus_index][2]
+    _uim_bind_widget_zu_state(w)
+    _uim_anfordern(kontext)
     gib_zurück wahr
 
 funktion _uim_kalender_klick(kontext, w, lx, ly):
@@ -3335,22 +3740,25 @@ funktion _uim_kalender_klick(kontext, w, lx, ly):
     setze kopf_h auf 40
     wenn lokal_y < kopf_h:
         gib_zurück wahr
-    setze cell_b auf w["b"] / 7
+    setze kw_spalten auf 0
+    wenn w["wochennummern"]:
+        setze kw_spalten auf 1
+    setze spalten_gesamt auf 7 + kw_spalten
+    setze cell_b auf w["b"] / spalten_gesamt
     setze cell_h auf (w["h"] - kopf_h) / 6
     wenn cell_b <= 0 oder cell_h <= 0:
         gib_zurück falsch
     setze col auf boden(lokal_x / cell_b)
     setze row auf boden((lokal_y - kopf_h) / cell_h)
-    setze tag auf row * 7 + col - _uim_kalender_offset(w) + 1
-    wenn col < 0 oder col > 6 oder row < 0 oder row > 5 oder tag < 1 oder tag > w["tage"]:
+    wenn col < 0 oder col >= spalten_gesamt oder row < 0 oder row > 5:
         gib_zurück falsch
-    w["auswahl"] = tag
-    w["selected"] = wahr
-    w["zustand"] = "selected"
-    setze cb auf w["on_auswahl"]
-    wenn cb != nichts:
-        cb(w, tag)
-    gib_zurück wahr
+    wenn kw_spalten == 1 und col == 0:
+        gib_zurück falsch
+    setze tages_spalte auf col - kw_spalten
+    setze tag auf row * 7 + tages_spalte - _uim_kalender_offset(w) + 1
+    wenn tag < 1 oder tag > w["tage"]:
+        gib_zurück falsch
+    gib_zurück _uim_kalender_auswahl_anwenden(kontext, w, [tag, w["monat"], w["jahr"]], wahr)
 
 funktion _uim_z_kalender_kopf(kontext, z, w, ax, ay):
     setze t auf kontext["theme"]
@@ -3375,7 +3783,10 @@ funktion _uim_z_kalender_kopf(kontext, z, w, ax, ay):
 funktion _uim_z_kalender_monat(kontext, z, w, ax, ay):
     setze t auf kontext["theme"]
     setze kopf_h auf 40
-    setze cell_b auf w["b"] / 7
+    setze kw_spalten auf 0
+    wenn w["wochennummern"]:
+        setze kw_spalten auf 1
+    setze cell_b auf w["b"] / (7 + kw_spalten)
     setze cell_h auf (w["h"] - kopf_h) / 6
     setze tag_schrift auf t["schrift"] - 4
     wenn tag_schrift + 7 > cell_h:
@@ -3383,28 +3794,52 @@ funktion _uim_z_kalender_monat(kontext, z, w, ax, ay):
     wenn tag_schrift < 1:
         setze tag_schrift auf 1
     setze wochentage auf ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"]
+    wenn kw_spalten == 1:
+        _uim_farbe(kontext, z, t["text_gedimmt"])
+        _uim_zf_text(kontext, z, ax + 3, ay + 26, "KW", t["schrift"] - 6)
     setze spalte auf 0
     solange spalte < 7:
         setze wochentag_idx auf (w["wochenstart"] + spalte) % 7
         _uim_farbe(kontext, z, t["text"])
-        _uim_zf_text(kontext, z, ax + spalte * cell_b + 4, ay + 26, wochentage[wochentag_idx], t["schrift"] - 5)
+        _uim_zf_text(kontext, z, ax + (spalte + kw_spalten) * cell_b + 4, ay + 26, wochentage[wochentag_idx], t["schrift"] - 5)
         setze spalte auf spalte + 1
     setze offset auf _uim_kalender_offset(w)
+    wenn kw_spalten == 1:
+        setze kw_zeile auf 0
+        solange kw_zeile < 6:
+            setze wochen_datum auf _uim_kalender_datum_verschiebe([1, w["monat"], w["jahr"]], kw_zeile * 7 - offset)
+            _uim_farbe(kontext, z, t["text_gedimmt"])
+            _uim_zf_text(kontext, z, ax + 3, ay + kopf_h + kw_zeile * cell_h + 1, text(_uim_kalender_iso_woche(wochen_datum)), tag_schrift - 1)
+            setze kw_zeile auf kw_zeile + 1
     setze tag auf 1
     solange tag <= w["tage"]:
         setze idx auf offset + tag - 1
         setze col auf idx % 7
         setze row auf boden(idx / 7)
-        setze tx auf ax + col * cell_b
+        setze tx auf ax + (col + kw_spalten) * cell_b
         setze ty auf ay + kopf_h + row * cell_h
-        wenn tag == w["auswahl"]:
+        setze datum auf [tag, w["monat"], w["jahr"]]
+        setze erlaubt auf _uim_kalender_datum_erlaubt(w, datum)
+        wenn _uim_kalender_datum_ausgewaehlt(w, datum):
             _uim_farbe(kontext, z, t["akzent"])
             _uim_zf_rechteck(kontext, z, tx, ty, cell_b, cell_h, wahr)
         wenn tag == w["heute_tag"] und w["monat"] == w["heute_monat"] und w["jahr"] == w["heute_jahr"]:
             _uim_farbe(kontext, z, t["rand"])
             _uim_zf_rechteck(kontext, z, tx + 1, ty + 1, cell_b - 2, cell_h - 2, falsch)
-        _uim_farbe(kontext, z, t["text"])
+        wenn _uim_slot_uid(kontext, "fokus") == w["uid"] und tag == w["fokus_tag"] und w["monat"] == w["fokus_monat"] und w["jahr"] == w["fokus_jahr"]:
+            _uim_farbe(kontext, z, t["rand"])
+            _uim_zf_rechteck(kontext, z, tx + 3, ty + 3, cell_b - 6, cell_h - 6, falsch)
+        wenn erlaubt:
+            _uim_farbe(kontext, z, t["text"])
+        sonst:
+            _uim_farbe(kontext, z, t["text_gedimmt"])
         _uim_zf_text(kontext, z, tx + 4, ty + 1, text(tag), tag_schrift)
+        wenn _uim_kalender_datum_index(datum, w["termine"]) >= 0:
+            wenn erlaubt:
+                _uim_farbe(kontext, z, t["akzent"])
+            sonst:
+                _uim_farbe(kontext, z, t["text_gedimmt"])
+            _uim_zf_kreis(kontext, z, tx + cell_b / 2, ty + cell_h - 4, 2, wahr)
         setze tag auf tag + 1
     gib_zurück wahr
 
@@ -3463,6 +3898,166 @@ funktion _uim_z_kalender(kontext, z, w, ox, oy):
         _uim_farbe(kontext, z, t["akzent"])
         _uim_zf_rechteck(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
     gib_zurück wahr
+
+funktion _uim_datepicker_datum_text(datum):
+    wenn nicht _uim_kalender_datum_gueltig(datum):
+        gib_zurück ""
+    gib_zurück text(datum[0]) + "." + text(datum[1]) + "." + text(datum[2])
+
+funktion _uim_datepicker_anzeige(w):
+    wenn w["auswahl_modus"] == "einzel":
+        setze datum auf w["auswahl_datum"]
+        wenn nicht _uim_kalender_datum_gueltig(datum):
+            setze datum auf [w["auswahl"], w["monat"], w["jahr"]]
+        gib_zurück _uim_datepicker_datum_text(datum)
+    wenn w["auswahl_modus"] == "bereich":
+        wenn länge(w["bereich_start"]) == 0:
+            gib_zurück "Datum waehlen"
+        setze anzeige auf _uim_datepicker_datum_text(w["bereich_start"])
+        wenn länge(w["bereich_ende"]) == 0:
+            gib_zurück anzeige + " - ..."
+        gib_zurück anzeige + " - " + _uim_datepicker_datum_text(w["bereich_ende"])
+    setze anzahl auf länge(w["mehrfach_auswahl"])
+    wenn anzahl == 0:
+        gib_zurück "Daten waehlen"
+    gib_zurück text(anzahl) + " Daten"
+
+funktion _uim_z_datepicker(kontext, z, w, ox, oy):
+    setze t auf kontext["theme"]
+    setze ax auf ox + w["x"]
+    setze ay auf oy + w["y"]
+    w["_fenster_x"] = ax
+    w["_fenster_y"] = ay
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "flaeche"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], 3, wahr)
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))
+    _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], 3, falsch)
+    setze ty auf ay + (w["h"] - t["schrift"]) / 2 - 1
+    _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "text"))
+    _uim_zf_clip_setze(kontext, z, ax + 4, ay, w["b"] - 24, w["h"])
+    _uim_zf_text(kontext, z, ax + 6, ty, _uim_datepicker_anzeige(w), t["schrift"] - 1)
+    _uim_zf_clip_loesche(kontext, z)
+    setze px auf ax + w["b"] - 15
+    setze py auf ay + w["h"] / 2 - 2
+    _uim_zf_linie(kontext, z, px, py, px + 4, py + 4, 2)
+    _uim_zf_linie(kontext, z, px + 4, py + 4, px + 8, py, 2)
+    wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
+        _uim_farbe(kontext, z, t["akzent"])
+        _uim_zf_rechteck(kontext, z, ax - 2, ay - 2, w["b"] + 4, w["h"] + 4, falsch)
+    gib_zurück wahr
+
+funktion _uim_datepicker_oeffne(kontext, w):
+    wenn kontext == nichts oder w == nichts:
+        gib_zurück falsch
+    setze overlay auf nichts
+    wenn kontext.enthält("datepicker_overlay"):
+        setze overlay auf kontext["datepicker_overlay"]
+    wenn overlay == nichts:
+        setze overlay auf uim_ueberlagerung(0, 0, kontext["wurzel"]["b"], kontext["wurzel"]["h"])
+        overlay["offen"] = falsch
+        overlay["sichtbar"] = falsch
+        overlay["dimmen"] = falsch
+        overlay["modal"] = wahr
+        overlay["schliesst_aussen"] = wahr
+        overlay["overlay_kind"] = "datepicker"
+        overlay["z_index"] = 100000
+        setze popup_neu auf uim_calendar(0, 0, w["popup_b"], w["popup_h"], w["monat"], w["jahr"], nichts)
+        popup_neu["datepicker_quelle"] = w
+        uim_hinzu(overlay, popup_neu)
+        uim_hinzu(kontext, overlay)
+        kontext["datepicker_overlay"] = overlay
+    wenn länge(overlay["kinder"]) == 0:
+        gib_zurück falsch
+    setze popup auf overlay["kinder"][0]
+    popup["datepicker_quelle"] = w
+    popup["b"] = w["popup_b"]
+    popup["h"] = w["popup_h"]
+    popup["monat"] = w["monat"]
+    popup["jahr"] = w["jahr"]
+    popup["heute_tag"] = w["heute_tag"]
+    popup["heute_monat"] = w["heute_monat"]
+    popup["heute_jahr"] = w["heute_jahr"]
+    popup["fokus_tag"] = w["fokus_tag"]
+    popup["fokus_monat"] = w["fokus_monat"]
+    popup["fokus_jahr"] = w["fokus_jahr"]
+    _uim_kalender_sync(popup)
+    uim_kalender_auswahlmodus_setze(popup, w["auswahl_modus"])
+    uim_kalender_grenzen_setze(popup, w["min_datum"], w["max_datum"])
+    uim_kalender_gesperrte_tage_setze(popup, w["gesperrte_tage"])
+    uim_kalender_wochennummern_setze(popup, w["wochennummern"])
+    uim_kalender_termine_setze(popup, w["termine"])
+    wenn w["auswahl_modus"] == "einzel":
+        setze einzel_datum auf _uim_kalender_datum_kopie(w["auswahl_datum"])
+        wenn länge(einzel_datum) == 0:
+            gib_zurück falsch
+        popup["auswahl_datum"] = einzel_datum
+        popup["auswahl"] = einzel_datum[0]
+        popup["selected"] = wahr
+        popup["zustand"] = "selected"
+    sonst wenn not uim_wert_setze(kontext, popup, uim_wert_hole(w)):
+        gib_zurück falsch
+    setze feld_x auf w["x"]
+    setze feld_y auf w["y"]
+    wenn w.enthält("_fenster_x"):
+        setze feld_x auf w["_fenster_x"]
+        setze feld_y auf w["_fenster_y"]
+    setze popup_x auf feld_x
+    setze popup_y auf feld_y + w["h"]
+    wenn popup_y + popup["h"] > kontext["wurzel"]["h"]:
+        setze popup_y auf feld_y - popup["h"]
+    wenn popup_x + popup["b"] > kontext["wurzel"]["b"]:
+        setze popup_x auf kontext["wurzel"]["b"] - popup["b"]
+    wenn popup_x < 0:
+        setze popup_x auf 0
+    wenn popup_y < 0:
+        setze popup_y auf 0
+    popup["x"] = popup_x
+    popup["y"] = popup_y
+    overlay["x"] = 0
+    overlay["y"] = 0
+    overlay["b"] = kontext["wurzel"]["b"]
+    overlay["h"] = kontext["wurzel"]["h"]
+    overlay["datepicker_quelle"] = w
+    kontext["datepicker_feld"] = w
+    w["offen"] = wahr
+    gib_zurück uim_ueberlagerung_setze(kontext, overlay, wahr, wahr)
+
+funktion _uim_datepicker_popup_uebernehmen(kontext, popup):
+    wenn kontext == nichts oder popup.enthält("datepicker_quelle") == falsch:
+        gib_zurück falsch
+    setze quelle auf popup["datepicker_quelle"]
+    wenn quelle == nichts:
+        gib_zurück falsch
+    quelle["monat"] = popup["monat"]
+    quelle["jahr"] = popup["jahr"]
+    _uim_kalender_sync(quelle)
+    wenn nicht uim_wert_setze(kontext, quelle, _uim_kalender_auswahlwert(popup)):
+        gib_zurück falsch
+    quelle["fokus_tag"] = popup["fokus_tag"]
+    quelle["fokus_monat"] = popup["fokus_monat"]
+    quelle["fokus_jahr"] = popup["fokus_jahr"]
+    setze cb auf quelle["on_auswahl"]
+    wenn cb != nichts:
+        wenn quelle["auswahl_modus"] == "einzel":
+            cb(quelle, quelle["auswahl"])
+        sonst:
+            cb(quelle, _uim_kalender_auswahlwert(quelle))
+    setze soll_schliessen auf quelle["auswahl_modus"] == "einzel"
+    wenn quelle["auswahl_modus"] == "bereich" und länge(popup["bereich_ende"]) > 0:
+        setze soll_schliessen auf wahr
+    wenn soll_schliessen und kontext.enthält("datepicker_overlay") und kontext["datepicker_overlay"] != nichts:
+        gib_zurück _uim_dialog_schliesse(kontext, kontext["datepicker_overlay"], 1)
+    quelle["offen"] = wahr
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion _uim_datepicker_toggle(kontext, w):
+    wenn w["offen"]:
+        wenn kontext.enthält("datepicker_overlay") und kontext["datepicker_overlay"] != nichts:
+            gib_zurück _uim_dialog_schliesse(kontext, kontext["datepicker_overlay"], 0 - 1)
+        w["offen"] = falsch
+        gib_zurück wahr
+    gib_zurück _uim_datepicker_oeffne(kontext, w)
 
 funktion _uim_chart_klick(kontext, w, lx, ly):
     setze n auf länge(w["werte"])
@@ -4264,8 +4859,10 @@ funktion _uim_zeichne_widget(kontext, z, w, ox, oy):
         gib_zurück _uim_z_iconview(kontext, z, w, ox, oy)
     wenn w["typ"] == "colorpicker":
         gib_zurück _uim_z_colorpicker(kontext, z, w, ox, oy)
-    wenn w["typ"] == "calendar" oder w["typ"] == "datepicker":
+    wenn w["typ"] == "calendar":
         gib_zurück _uim_z_kalender(kontext, z, w, ox, oy)
+    wenn w["typ"] == "datepicker":
+        gib_zurück _uim_z_datepicker(kontext, z, w, ox, oy)
     wenn w["typ"] == "linechart":
         gib_zurück _uim_z_linechart(kontext, z, w, ox, oy)
     wenn w["typ"] == "barchart":
@@ -4531,6 +5128,10 @@ funktion _uim_lifecycle_referenzen_loesche(kontext, w):
         kontext["druck"] = nichts
     wenn _uim_slot_uid(kontext, "drag_quelle") == w["uid"]:
         kontext["drag_quelle"] = nichts
+    wenn kontext.enthält("datepicker_feld") und _uim_slot_uid(kontext, "datepicker_feld") == w["uid"]:
+        wenn kontext.enthält("datepicker_overlay") and kontext["datepicker_overlay"] != nichts and kontext["datepicker_overlay"]["offen"]:
+            _uim_dialog_schliesse(kontext, kontext["datepicker_overlay"], 0 - 1)
+        kontext["datepicker_feld"] = nichts
     gib_zurück wahr
 
 funktion uim_entferne(kontext, ziel, w):
@@ -4668,6 +5269,8 @@ funktion uim_wert_hole(w):
     wenn w == nichts:
         gib_zurück nichts
     setze typ auf w["typ"]
+    wenn typ == "calendar" oder typ == "datepicker":
+        gib_zurück _uim_kalender_auswahlwert(w)
     wenn _uim_wert_typ_text(typ):
         gib_zurück w["text"]
     wenn _uim_wert_typ_bool(typ) oder _uim_wert_typ_zahl(typ):
@@ -4688,6 +5291,8 @@ funktion uim_wert_setze(kontext, w, wert):
     wenn kontext == nichts oder w == nichts:
         gib_zurück falsch
     setze typ auf w["typ"]
+    wenn typ == "calendar" oder typ == "datepicker":
+        gib_zurück _uim_kalender_wert_setze(kontext, w, wert)
     wenn _uim_wert_typ_text(typ):
         gib_zurück uim_textfeld_setze(kontext, w, text(wert))
     wenn typ == "fortschritt":
@@ -5282,6 +5887,19 @@ funktion uim_calendar(x, y, b, h, monat, jahr, on_auswahl):
     w["heute_monat"] = 0
     w["heute_jahr"] = 0
     w["auswahl"] = 1
+    w["auswahl_modus"] = "einzel"
+    w["auswahl_datum"] = [1, monat, jahr]
+    w["bereich_start"] = []
+    w["bereich_ende"] = []
+    w["mehrfach_auswahl"] = []
+    w["min_datum"] = []
+    w["max_datum"] = []
+    w["gesperrte_tage"] = []
+    w["wochennummern"] = falsch
+    w["termine"] = []
+    w["fokus_tag"] = 1
+    w["fokus_monat"] = monat
+    w["fokus_jahr"] = jahr
     w["on_auswahl"] = on_auswahl
     w["fokussierbar"] = wahr
     gib_zurück w
@@ -5297,6 +5915,22 @@ funktion uim_datepicker(x, y, b, h, monat, jahr, on_auswahl):
     w["heute_monat"] = 0
     w["heute_jahr"] = 0
     w["auswahl"] = 1
+    w["auswahl_modus"] = "einzel"
+    w["auswahl_datum"] = [1, monat, jahr]
+    w["bereich_start"] = []
+    w["bereich_ende"] = []
+    w["mehrfach_auswahl"] = []
+    w["min_datum"] = []
+    w["max_datum"] = []
+    w["gesperrte_tage"] = []
+    w["wochennummern"] = falsch
+    w["termine"] = []
+    w["fokus_tag"] = 1
+    w["fokus_monat"] = monat
+    w["fokus_jahr"] = jahr
+    w["offen"] = falsch
+    w["popup_b"] = 280
+    w["popup_h"] = 260
     w["on_auswahl"] = on_auswahl
     w["fokussierbar"] = wahr
     gib_zurück w
@@ -5947,7 +6581,12 @@ funktion _uim_dialog_schliesse(kontext, w, aktion):
     setze kind auf ""
     wenn w.enthält("overlay_kind"):
         setze kind auf w["overlay_kind"]
-    wenn kind == "eingabe":
+    wenn kind == "datepicker":
+        wenn w.enthält("datepicker_quelle") und w["datepicker_quelle"] != nichts:
+            w["datepicker_quelle"]["offen"] = falsch
+        wenn kontext.enthält("datepicker_feld"):
+            kontext["datepicker_feld"] = nichts
+    sonst wenn kind == "eingabe":
         wenn aktion < 0:
             w["abgebrochen"] = wahr
         setze cb_eingabe auf w["on_aktion"]

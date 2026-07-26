@@ -103,6 +103,7 @@ NATIVE-UI-12-W5D-OK
 W5E-FACTORY wahr/wahr/wahr
 W5E-COLOR 2
 W5E-CAL 8
+W5E-CAL-TASTEN wahr/wahr/wahr
 W5E-DRAW wahr
 W5E-CELL-BOUNDS wahr
 W5E-HEADER-PAD wahr
@@ -176,3 +177,8 @@ KAL2-NAV 1/2027/12/2027/2037
 KAL2-HEUTE wahr/26/7/2026/monat
 KAL2-ANSICHT wahr/wahr/wahr/wahr
 W6-KALENDER-2-OK
+KAL3-NAV wahr/wahr/wahr wahr/wahr/wahr
+KAL3-CANON wahr/wahr/wahr wahr/wahr/wahr
+KALB-A wahr/wahr/wahr/wahr
+KALB-B wahr/wahr/wahr
+KALB-C wahr/wahr/wahr/wahr

@@ -430,6 +430,17 @@ funktion t_w5e(w, wert):
     S["w5e_rufe"] = S["w5e_rufe"] + 1
     gib_zurück wahr
 
+funktion t_w5e_kalender_aktivierung(taste):
+    setze wurzel auf uim_mock_wurzel(320, 210)
+    setze kalender auf uim_calendar(0, 0, 280, 180, 7, 2026, nichts)
+    uim_hinzu(wurzel, kalender)
+    uim_mock_maus(wurzel, 90, 62, wahr)
+    uim_mock_maus(wurzel, 90, 62, falsch)
+    uim_mock_taste(wurzel, "Down", wahr, 0)
+    setze navigation_ok auf kalender["fokus_tag"] == 8 und kalender["auswahl"] == 1
+    uim_mock_taste(wurzel, taste, wahr, 0)
+    gib_zurück navigation_ok und kalender["auswahl"] == 8
+
 setze w5e auf uim_mock_wurzel(520, 300)
 setze farben5e auf [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 0, 255]]
 setze cp5e auf uim_colorpicker(10, 10, 120, 48, farben5e, t_w5e)
@@ -446,7 +457,10 @@ zeige "W5E-COLOR " + text(cp5e["auswahl"])
 uim_mock_maus(w5e, 250, 62, wahr)
 uim_mock_maus(w5e, 250, 62, falsch)
 uim_mock_taste(w5e, "Down", wahr, 0)
+setze w5e_cal_navigation_ok auf cal5e["fokus_tag"] == 8 und cal5e["auswahl"] == 1
+uim_mock_taste(w5e, "Return", wahr, 0)
 zeige "W5E-CAL " + text(cal5e["auswahl"])
+zeige "W5E-CAL-TASTEN " + text(w5e_cal_navigation_ok und cal5e["auswahl"] == 8) + "/" + text(t_w5e_kalender_aktivierung("Enter")) + "/" + text(t_w5e_kalender_aktivierung("Space"))
 zeige "W5E-DRAW " + text(uim_mock_zeichne(w5e))
 setze cal5e_klein_root auf uim_mock_wurzel(380, 150)
 setze cal5e_klein auf uim_calendar(10, 10, 356, 120, 7, 2026, t_w5e)
@@ -1045,3 +1059,89 @@ für kal2_befehl in uim_mock_befehle(kal2_root):
         setze kal2_dez auf wahr
 zeige "KAL2-ANSICHT " + text(kal2_titel) + "/" + text(kal2_heute_text) + "/" + text(kal2_jan) + "/" + text(kal2_dez)
 zeige "W6-KALENDER-2-OK"
+
+# W6-KALENDER Etappe 3: Monatsnavigation haelt den Fokus im sichtbaren Monat.
+setze kal3_api_root auf uim_mock_wurzel(300, 210)
+setze kal3_api auf uim_calendar(0, 0, 280, 180, 1, 2025, nichts)
+uim_hinzu(kal3_api_root, kal3_api)
+setze kal3_api_setzen_ok auf uim_wert_setze(kal3_api_root, kal3_api, 31)
+uim_kalender_navigiere(kal3_api, 1)
+setze kal3_api_fokus_ok auf kal3_api["monat"] == 2 und kal3_api["jahr"] == 2025 und kal3_api["fokus_tag"] == 28 und kal3_api["fokus_monat"] == 2
+uim_mock_taste(kal3_api_root, "Tab", wahr, 0)
+uim_mock_taste(kal3_api_root, "Return", wahr, 0)
+setze kal3_api_aktiv_ok auf uim_wert_hole(kal3_api) == 28 und kal3_api["auswahl_datum"][1] == 2 und kal3_api["auswahl_datum"][2] == 2025
+
+setze kal3_kopf_root auf uim_mock_wurzel(300, 210)
+setze kal3_kopf auf uim_calendar(0, 0, 280, 180, 1, 2024, nichts)
+uim_hinzu(kal3_kopf_root, kal3_kopf)
+setze kal3_kopf_setzen_ok auf uim_wert_setze(kal3_kopf_root, kal3_kopf, 31)
+uim_mock_maus(kal3_kopf_root, 270, 10, wahr)
+uim_mock_maus(kal3_kopf_root, 270, 10, falsch)
+setze kal3_kopf_fokus_ok auf kal3_kopf["monat"] == 2 und kal3_kopf["jahr"] == 2024 und kal3_kopf["fokus_tag"] == 29 und kal3_kopf["fokus_monat"] == 2
+uim_mock_taste(kal3_kopf_root, "Return", wahr, 0)
+setze kal3_kopf_aktiv_ok auf uim_wert_hole(kal3_kopf) == 29 und kal3_kopf["auswahl_datum"][1] == 2 und kal3_kopf["auswahl_datum"][2] == 2024
+zeige "KAL3-NAV " + text(kal3_api_setzen_ok) + "/" + text(kal3_api_fokus_ok) + "/" + text(kal3_api_aktiv_ok) + " " + text(kal3_kopf_setzen_ok) + "/" + text(kal3_kopf_fokus_ok) + "/" + text(kal3_kopf_aktiv_ok)
+
+# View-Navigation bewahrt die kanonische Auswahl ueber einen kurzen Monat.
+setze kal3_kanon_root auf uim_mock_wurzel(300, 210)
+setze kal3_kanon auf uim_calendar(0, 0, 280, 180, 1, 2025, nichts)
+uim_hinzu(kal3_kanon_root, kal3_kanon)
+setze kal3_kanon_setzen_ok auf uim_wert_setze(kal3_kanon_root, kal3_kanon, 31)
+uim_kalender_navigiere(kal3_kanon, 1)
+setze kal3_kanon_feb_ok auf uim_wert_hole(kal3_kanon) == 31 und kal3_kanon["auswahl"] == 31 und kal3_kanon["auswahl_datum"][0] == 31 und kal3_kanon["auswahl_datum"][1] == 1 und kal3_kanon["monat"] == 2
+uim_kalender_navigiere(kal3_kanon, 0 - 1)
+setze kal3_kanon_jan_ok auf uim_wert_hole(kal3_kanon) == 31 und kal3_kanon["auswahl_datum"][1] == 1 und kal3_kanon["monat"] == 1
+
+setze kal3_dp_root auf uim_mock_wurzel(300, 80)
+setze kal3_dp auf uim_datepicker(0, 0, 180, 28, 1, 2025, nichts)
+uim_hinzu(kal3_dp_root, kal3_dp)
+setze kal3_dp_setzen_ok auf uim_wert_setze(kal3_dp_root, kal3_dp, 31)
+uim_kalender_navigiere(kal3_dp, 1)
+uim_mock_zeichne(kal3_dp_root)
+setze kal3_dp_feb_anzeige auf falsch
+für kal3_dp_befehl in uim_mock_befehle(kal3_dp_root):
+    wenn kal3_dp_befehl["op"] == "text" und kal3_dp_befehl["args"][2] == "31.1.2025":
+        setze kal3_dp_feb_anzeige auf wahr
+setze kal3_dp_feb_ok auf uim_wert_hole(kal3_dp) == 31 und kal3_dp_feb_anzeige
+uim_kalender_navigiere(kal3_dp, 0 - 1)
+uim_mock_zeichne(kal3_dp_root)
+setze kal3_dp_jan_anzeige auf falsch
+für kal3_dp_befehl in uim_mock_befehle(kal3_dp_root):
+    wenn kal3_dp_befehl["op"] == "text" und kal3_dp_befehl["args"][2] == "31.1.2025":
+        setze kal3_dp_jan_anzeige auf wahr
+setze kal3_dp_jan_ok auf uim_wert_hole(kal3_dp) == 31 und kal3_dp_jan_anzeige und kal3_dp["monat"] == 1
+zeige "KAL3-CANON " + text(kal3_kanon_setzen_ok) + "/" + text(kal3_kanon_feb_ok) + "/" + text(kal3_kanon_jan_ok) + " " + text(kal3_dp_setzen_ok) + "/" + text(kal3_dp_feb_ok) + "/" + text(kal3_dp_jan_ok)
+
+# Abschnitt B: selected und zustand folgen immer dem modusspezifischen Wert.
+setze kalb_root auf uim_mock_wurzel(320, 210)
+setze kalb_a auf uim_calendar(0, 0, 280, 180, 7, 2026, nichts)
+uim_hinzu(kalb_root, kalb_a)
+setze kalb_a_modus_ok auf uim_kalender_auswahlmodus_setze(kalb_a, "mehrfach")
+setze kalb_a_erste_ok auf _uim_kalender_auswahl_anwenden(kalb_root, kalb_a, [1, 7, 2026], falsch)
+setze kalb_a_zweite_ok auf _uim_kalender_auswahl_anwenden(kalb_root, kalb_a, [2, 7, 2026], falsch)
+setze kalb_a_abwahl_ok auf _uim_kalender_auswahl_anwenden(kalb_root, kalb_a, [1, 7, 2026], falsch)
+setze kalb_a_wert auf uim_wert_hole(kalb_a)
+setze kalb_a_wert_ok auf länge(kalb_a_wert) == 1 und kalb_a_wert[0][0] == 2 und kalb_a_wert[0][1] == 7 und kalb_a_wert[0][2] == 2026
+setze kalb_a_state_ok auf kalb_a["selected"] und kalb_a["zustand"] == "selected"
+setze kalb_a_interaktion_ok auf kalb_a["fokus_tag"] == 1 und kalb_a["fokus_monat"] == 7 und kalb_a["fokus_jahr"] == 2026 und kalb_a["auswahl_datum"][0] == 1 und kalb_a["auswahl_datum"][1] == 7 und kalb_a["auswahl_datum"][2] == 2026
+zeige "KALB-A " + text(kalb_a_modus_ok und kalb_a_erste_ok und kalb_a_zweite_ok und kalb_a_abwahl_ok) + "/" + text(kalb_a_wert_ok) + "/" + text(kalb_a_state_ok) + "/" + text(kalb_a_interaktion_ok)
+
+kalb_a["zustand"] = "selected"
+setze kalb_b_setzen_ok auf uim_wert_setze(kalb_root, kalb_a, [])
+setze kalb_b_wert auf uim_wert_hole(kalb_a)
+setze kalb_b_leer_ok auf länge(kalb_b_wert) == 0
+setze kalb_b_state_ok auf kalb_a["selected"] == falsch und kalb_a["zustand"] == "normal" und _uim_zustand_aktuell(kalb_root, kalb_a) == "normal"
+zeige "KALB-B " + text(kalb_b_setzen_ok) + "/" + text(kalb_b_leer_ok) + "/" + text(kalb_b_state_ok)
+
+setze kalb_c auf uim_calendar(0, 0, 280, 180, 7, 2026, nichts)
+setze kalb_c_multi_ok auf uim_kalender_auswahlmodus_setze(kalb_c, "mehrfach")
+setze kalb_c_wahl_ok auf _uim_kalender_auswahl_anwenden(nichts, kalb_c, [2, 7, 2026], falsch)
+setze kalb_c_fokus_tag auf kalb_c["fokus_tag"]
+setze kalb_c_fokus_monat auf kalb_c["fokus_monat"]
+setze kalb_c_fokus_jahr auf kalb_c["fokus_jahr"]
+setze kalb_c_modus_ok auf uim_kalender_auswahlmodus_setze(kalb_c, "bereich")
+setze kalb_c_wert auf uim_wert_hole(kalb_c)
+setze kalb_c_leer_ok auf länge(kalb_c_wert) == 0
+setze kalb_c_state_ok auf kalb_c["selected"] == falsch und kalb_c["zustand"] == "normal"
+setze kalb_c_fokus_ok auf kalb_c["fokus_tag"] == kalb_c_fokus_tag und kalb_c["fokus_monat"] == kalb_c_fokus_monat und kalb_c["fokus_jahr"] == kalb_c_fokus_jahr
+zeige "KALB-C " + text(kalb_c_multi_ok und kalb_c_wahl_ok und kalb_c_modus_ok) + "/" + text(kalb_c_leer_ok) + "/" + text(kalb_c_state_ok) + "/" + text(kalb_c_fokus_ok)
