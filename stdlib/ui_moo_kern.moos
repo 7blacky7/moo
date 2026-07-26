@@ -2597,20 +2597,39 @@ funktion _uim_z_statusansicht(kontext, z, w, ox, oy):
     _uim_zf_rechteck_rund(kontext, z, ax, ay, w["b"], w["h"], t["radius"], falsch)
     gib_zurück wahr
 
+# Fontunabhaengiger Zehnpunkt-Stern. Die normierten Punkte halten die Form
+# auf jedem Backend und bei jeder Widgetgroesse identisch.
+funktion _uim_z_stern(kontext, z, x, y, groesse, breite):
+    setze stern_x auf [50, 61, 98, 68, 79, 50, 21, 32, 2, 39]
+    setze stern_y auf [0, 35, 35, 57, 92, 70, 92, 57, 35, 35]
+    setze j auf 0
+    solange j < 10:
+        setze folge auf (j + 1) % 10
+        _uim_zf_linie(kontext, z, x + stern_x[j] * groesse / 100, y + stern_y[j] * groesse / 100, x + stern_x[folge] * groesse / 100, y + stern_y[folge] * groesse / 100, breite)
+        setze j auf j + 1
+    gib_zurück wahr
+
 funktion _uim_z_bewertung(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
     setze ax auf ox + w["x"]
     setze ay auf oy + w["y"]
     setze stern_b auf w["b"] / w["max"]
+    setze stern_g auf w["h"] - 4
+    wenn stern_g > stern_b - 4:
+        setze stern_g auf stern_b - 4
+    wenn stern_g < 1:
+        setze stern_g auf 1
     setze i auf 0
     solange i < w["max"]:
-        setze stern auf "☆"
+        setze linienbreite auf 1
         wenn i < w["wert"]:
-            setze stern auf "★"
+            setze linienbreite auf 2
             _uim_farbe(kontext, z, t["akzent"])
         sonst:
             _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "text"))
-        _uim_zf_text(kontext, z, ax + i * stern_b, ay + (w["h"] - t["schrift"]) / 2 - 1, stern, t["schrift"])
+        setze stern_x auf ax + i * stern_b + (stern_b - stern_g) / 2
+        setze stern_y auf ay + (w["h"] - stern_g) / 2
+        _uim_z_stern(kontext, z, stern_x, stern_y, stern_g, linienbreite)
         setze i auf i + 1
     wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
         _uim_farbe(kontext, z, _uim_zustand_farbe(kontext, w, "rand"))

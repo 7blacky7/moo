@@ -132,6 +132,14 @@ uim_fortschritt_unbestimmt_setze(k, ind, wahr)
 uim_hinzu(k, ind)
 uim_mock_leeren(k)
 zeige "W1-DRAW2 " + text(uim_mock_zeichne(k))
+setze rating_linien auf 0
+setze rating_text auf 0
+für befehl in uim_mock_befehle(k):
+    wenn befehl["op"] == "linie" und befehl["args"][0] >= rate["x"] und befehl["args"][0] <= rate["x"] + rate["b"] und befehl["args"][1] >= rate["y"] und befehl["args"][1] <= rate["y"] + rate["h"]:
+        setze rating_linien auf rating_linien + 1
+    wenn befehl["op"] == "text" und befehl["args"][0] >= rate["x"] und befehl["args"][0] <= rate["x"] + rate["b"] und befehl["args"][1] >= rate["y"] und befehl["args"][1] <= rate["y"] + rate["h"]:
+        setze rating_text auf rating_text + 1
+zeige "RATING-VEKTOR " + text(rating_linien == rate["max"] * 10) + "/" + text(rating_text == 0)
 uim_tick(k, 0.25)
 zeige "SPINNER-TICK " + text(spin["wert"])
 zeige "PROGRESS-UNBESTIMMT " + text(ind["phase"] > 0)
