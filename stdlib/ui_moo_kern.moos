@@ -2104,7 +2104,7 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
                     cba(f, idx)
             _uim_anfordern(kontext)
             gib_zurück wahr
-    wenn (taste == "Return" oder taste == "space") und f["typ"] != "calendar" und f["typ"] != "datepicker":
+    wenn (taste == "Return" oder taste == "space") und f["typ"] != "calendar" und f["typ"] != "datepicker" und f["typ"] != "terminal":
         _uim_aktiviere(kontext, f)
         _uim_anfordern(kontext)
         gib_zurück wahr
@@ -2305,16 +2305,15 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
             wenn cmd_term != "":
                 f["history"].hinzufügen(cmd_term)
             setze f["history_idx"] auf -1
-            setze callback_ok_term auf wahr
             setze cb_term auf f["on_befehl"]
             wenn cb_term != nichts:
-                setze callback_ok_term auf cb_term(f)
+                cb_term(f)
             setze f["eingabe"] auf ""
             setze f["text"] auf ""
             setze f["cursor"] auf 0
             setze f["scroll_y"] auf _uim_scroll_max(kontext, f)
             _uim_anfordern(kontext)
-            gib_zurück callback_ok_term
+            gib_zurück wahr
         sonst:
             setze eingabe_term auf taste
             wenn taste == "space":

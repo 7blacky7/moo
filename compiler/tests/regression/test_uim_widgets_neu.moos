@@ -511,9 +511,10 @@ zeige "NATIVE-UI-12-W5F-OK"
 
 # --- NATIVE-UI-12/W5G: Terminal + Markdown Viewer ---
 funktion t_w5g(w):
-    wenn länge(w["history"]) != 1:
-        gib_zurück falsch
-    gib_zurück w["history"][0] == "hi"
+    S["w5g_rufe"] = S["w5g_rufe"] + 1
+    gib_zurück falsch
+
+S["w5g_rufe"] = 0
 
 setze w5g auf uim_mock_wurzel(420, 220)
 setze term5g auf uim_terminal(10, 10, 180, 90, "MOO shell", t_w5g)
@@ -527,11 +528,20 @@ uim_mock_maus(w5g, 30, 30, falsch)
 uim_mock_taste(w5g, "h", wahr, 0)
 uim_mock_taste(w5g, "i", wahr, 0)
 setze w5g_command auf term5g["eingabe"]
+uim_mock_zeichne(w5g)
 setze w5g_callback_ok auf uim_mock_taste(w5g, "Return", wahr, 0)
+setze w5g_return_repaint auf w5g["backend_zustand"]["ungueltig"]
+setze w5g_return_einmal auf S["w5g_rufe"] == 1 and länge(term5g["history"]) == 1 and term5g["history"][0] == "hi" and term5g["eingabe"] == "" and term5g["zeilen"][länge(term5g["zeilen"]) - 1] == "> hi"
 zeige "W5G-CALLBACK " + text(w5g_callback_ok)
 zeige "W5G-COMMAND " + w5g_command
+uim_mock_zeichne(w5g)
+setze w5g_space_ok auf uim_mock_taste(w5g, "space", wahr, 0)
+setze w5g_space_repaint auf w5g["backend_zustand"]["ungueltig"]
+setze w5g_space_einmal auf term5g["eingabe"] == " " and term5g["cursor"] == 1 and S["w5g_rufe"] == 1
+zeige "W5G-TERMINAL-TASTEN " + text(w5g_return_einmal) + "/" + text(w5g_space_einmal) + "/" + text(w5g_callback_ok and w5g_space_ok) + "/" + text(w5g_return_repaint and w5g_space_repaint)
+uim_mock_taste(w5g, "BackSpace", wahr, 0)
 uim_mock_taste(w5g, "Up", wahr, 0)
-zeige "W5G-HISTORY " + w5g_command
+zeige "W5G-HISTORY " + term5g["eingabe"]
 uim_mock_maus(w5g, 230, 30, wahr)
 uim_mock_maus(w5g, 230, 30, falsch)
 uim_mock_taste(w5g, "Down", wahr, 0)
