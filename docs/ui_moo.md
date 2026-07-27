@@ -30,8 +30,11 @@ Fokus) kennt keine Plattform. Ein Backend muss genau zwei Dinge liefern:
    Rechtecke. Fehlt ein optionales Primitiv, degradiert die Optik
    dokumentiert (siehe Frame-Backend).
 2. **Ereignis-Einspeisung** in den Kern: Maus-Press/-Release/-Bewegung
-   (Leinwand-lokale Pixel), Tastenname + gedrückt + Modifier-Bitmaske
-   (1=Shift, 2=Strg, 4=Alt), Rad-Delta (+1 = nach unten).
+   (Leinwand-lokale Pixel), bei nativen Mausflanken zusätzlich kanonische
+   Modifier, native Zeit und Klickzahl, außerdem Tastenname + gedrückt +
+   Modifier-Bitmaske sowie Rad-Delta (+1 = nach unten). Getter-, Neutralwert-,
+   Ein-Tasten- und Zwei-Zeiten-Vertrag stehen einmalig in
+   [`ui_moo-referenz.md`](ui_moo-referenz.md#maus-metadaten-und-ein-tasten-vertrag).
 
 Vorhandene Backends:
 

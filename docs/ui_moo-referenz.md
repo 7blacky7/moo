@@ -31,8 +31,45 @@ Der Kern (`_uim_kern_*`) ist backend-neutral. Ein Backend muss liefern:
 | Richtung | Vertrag |
 |---|---|
 | Zeichnen | Rechteck (gefüllt/Umriss), abgerundetes Rechteck, Kreis, Linie (Breite), Text + Textbreiten-Metrik, optional Clip-Rechteck (Stack) |
-| Ereignisse | Maus-Press/-Release/-Bewegung, Rad-Delta, Taste (Name, gedrückt, Modifier-Bitmaske 1=Shift/2=Strg/4=Alt), Fokus |
+| Ereignisse | Maus-Press/-Release/-Bewegung, Rad-Delta, Taste (Name, gedrückt, kanonische Modifier-Bitmaske; Details unten), Fokus |
 | Farben | RGBA 0..255 (Theme-Dict), backend-intern konvertierbar |
+
+### Maus-Metadaten und Ein-Tasten-Vertrag
+
+Native Press-/Release-Flanken liefern zusätzlich Taste, Modifier, native Zeit und
+Klickzahl. Die kanonische Modifier-Maske ist `Shift=1`, `Control=2`, `Alt=4`,
+`Super=8`, `CapsLock=16`, `NumLock=32`, `AltGr=64`; unbekannte Bits werden
+entfernt. Taste 2 erreicht den Kern, hat aber erst mit einem Verbraucher eine
+Widgetwirkung.
+
+`ui_pointer_meta_hole(handle, phase, taste)` (Alias
+`ui_pointer_meta_get`) liest den synchron bereitgestellten Snapshot. `phase` ist
+`1` für Press und `2` für Release. Die Rückgabe ist immer ein Dict mit
+`domain`, `mod`, `zeit`, `klickzahl`, `gueltig`. Ein passender gültiger Abruf
+konsumiert den Snapshot genau einmal. Falscher Typ, ungültige Phase/Taste,
+falsches Handle oder ein Backend ohne Metadaten liefert neutral
+`{domain: 0, mod: 0, zeit: 0, klickzahl: 1, gueltig: falsch}` und konsumiert
+keinen fremden Snapshot. Der alte Einstieg `uim_backend_maus_taste(...)` bleibt
+kompatibel und speist genau diese neutralen Werte ein.
+
+Für die Doppelklickerkennung gelten bewusst **zwei getrennte Zeiten**:
+
+- `zeit` ist die native 32-Bit-Ereigniszeit. Sie wird bitgenau weitergereicht
+  und entscheidet allein, ob zwei Klicks zeitlich nah genug sind.
+- Eine monotone Empfangszeit bleibt intern in C und entscheidet ausschließlich,
+  ob ein wartender Kandidat verfallen oder aus einer alten 32-Bit-Epoche ist.
+
+Die monotone Empfangszeit darf niemals die Klicknähe entscheiden; andernfalls
+würde Systemlast das Doppelklickverhalten verändern. Win32 verwendet die
+Systemwerte für Intervall und Doppelklickrechteck, X11/Wayland vorläufig
+`400 ms` und `5 px` Toleranz je Achse. Nach einem erkannten Doppelklick wird der
+Kandidat gelöscht (`1/2/1` bei drei Klicks).
+
+Der Moo-Legacypfad hält genau eine Taste: Während sie gedrückt ist, werden
+weitere Presses ignoriert. Nur das Release derselben Taste beendet den Zustand;
+fremde Releases bleiben folgenlos. Nach Fokusverlust bleibt diese konkrete
+Taste blockiert, bis genau ihr Release eintrifft. Echtes Chording ist nicht Teil
+dieses Vertrags.
 
 Vorhandene Backends:
 
