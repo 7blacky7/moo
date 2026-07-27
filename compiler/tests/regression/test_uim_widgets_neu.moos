@@ -2961,3 +2961,104 @@ setze c2b_n_optionen_weg_ok auf c2b_n_opt_ok and c2b_n_selected_ok and t_c2b_n_k
 setze c2b_n_builder_weg_ok auf c2b_n_baue_ok and t_c2b_n_konsistent(c2b_n_baue)
 setze c2b_n_reset_weg_ok auf c2b_b1_reset_ok and t_c2b_n_konsistent(c2b_b1_grid)
 zeige "C2B-NACHTRAG-WEGE " + text(c2b_n_boot_ok) + "/" + text(c2b_n_maus_ok) + "/" + text(c2b_n_tast_ok) + "/" + text(c2b_n_setz_ok) + "/" + text(c2b_n_zustand_ok) + "/" + text(c2b_n_bind_hin_weg_ok) + "/" + text(c2b_n_bind_rueck_weg_ok) + "/" + text(c2b_n_optionen_weg_ok) + "/" + text(c2b_n_builder_weg_ok) + "/" + text(c2b_n_reset_weg_ok) + "/" + text(c2b_n_mod_einzel_ok) + "/" + text(c2b_n_mod_mehr_ok)
+
+# --- C2B/B3: Tastatursemantik fuer Mehrfachauswahl ---
+S["c2b_b3_rufe"] = 0
+S["c2b_b3_idx"] = 0 - 1
+S["c2b_b3_sync"] = wahr
+funktion t_c2b_b3_auswahl(w, idx):
+    S["c2b_b3_rufe"] = S["c2b_b3_rufe"] + 1
+    S["c2b_b3_idx"] = idx
+    S["c2b_b3_sync"] = S["c2b_b3_sync"] and t_c2b_n_konsistent(w)
+    gib_zurück wahr
+
+funktion t_c2b_b3_mehrfach(root, w, vor, zurueck):
+    root["fokus"] = w
+    uim_auswahlmodus_setze(root, w, "mehrfach")
+    uim_wert_setze(root, w, [])
+    S["c2b_b3_rufe"] = 0
+    S["c2b_b3_sync"] = wahr
+    uim_mock_taste(root, vor, wahr, 0)
+    setze plain_ok auf länge(uim_wert_hole(w)) == 1 and uim_wert_hole(w)[0] == 0 and w["auswahl"] == 0 and w["auswahl_anker"] == 0 and w["auswahl_fokus"] == 0 and S["c2b_b3_rufe"] == 1 and S["c2b_b3_idx"] == 0
+    uim_mock_taste(root, vor, wahr, 2)
+    setze ctrl_ok auf länge(uim_wert_hole(w)) == 1 and uim_wert_hole(w)[0] == 0 and w["auswahl"] == 0 and w["auswahl_anker"] == 0 and w["auswahl_fokus"] == 1 and S["c2b_b3_rufe"] == 1
+    uim_mock_taste(root, vor, wahr, 1)
+    setze shift_wert auf uim_wert_hole(w)
+    setze shift_ok auf länge(shift_wert) == 3 and shift_wert[0] == 0 and shift_wert[1] == 1 and shift_wert[2] == 2 and w["auswahl"] == 2 and w["auswahl_anker"] == 0 and w["auswahl_fokus"] == 2 and S["c2b_b3_rufe"] == 2
+    uim_mock_taste(root, vor, wahr, 3)
+    setze add_wert auf uim_wert_hole(w)
+    setze add_ok auf länge(add_wert) == 4 and add_wert[0] == 0 and add_wert[1] == 1 and add_wert[2] == 2 and add_wert[3] == 3 and w["auswahl"] == 3 and w["auswahl_anker"] == 0 and w["auswahl_fokus"] == 3 and S["c2b_b3_rufe"] == 3
+    uim_mock_taste(root, "space", wahr, 0)
+    setze aus_wert auf uim_wert_hole(w)
+    setze space_aus_ok auf länge(aus_wert) == 3 and aus_wert[0] == 0 and aus_wert[1] == 1 and aus_wert[2] == 2 and w["auswahl"] == 0 and w["auswahl_anker"] == 3 and w["auswahl_fokus"] == 3 and S["c2b_b3_rufe"] == 4 and S["c2b_b3_idx"] == 3
+    uim_mock_taste(root, "space", wahr, 0)
+    setze space_an_ok auf länge(uim_wert_hole(w)) == 4 and w["auswahl"] == 3 and S["c2b_b3_rufe"] == 5
+    uim_mock_taste(root, vor, wahr, 1)
+    setze grenze_ok auf länge(uim_wert_hole(w)) == 1 and uim_wert_hole(w)[0] == 3 and w["auswahl"] == 3 and w["auswahl_anker"] == 3 and w["auswahl_fokus"] == 3 and S["c2b_b3_rufe"] == 6
+    uim_wert_setze(root, w, [])
+    uim_mock_taste(root, zurueck, wahr, 0)
+    setze leer_zurueck_ok auf länge(uim_wert_hole(w)) == 1 and uim_wert_hole(w)[0] == 3 and w["auswahl_fokus"] == 3 and S["c2b_b3_rufe"] == 7
+    uim_wert_setze(root, w, [])
+    uim_mock_taste(root, vor, wahr, 0)
+    setze leer_vor_ok auf länge(uim_wert_hole(w)) == 1 and uim_wert_hole(w)[0] == 0 and w["auswahl_fokus"] == 0 and S["c2b_b3_rufe"] == 8
+    gib_zurück plain_ok and ctrl_ok and shift_ok and add_ok and space_aus_ok and space_an_ok and grenze_ok and leer_zurueck_ok and leer_vor_ok and S["c2b_b3_sync"]
+
+funktion t_c2b_b3_einzel(root, w, vor):
+    root["fokus"] = w
+    uim_wert_setze(root, w, 1)
+    S["c2b_b3_rufe"] = 0
+    uim_mock_taste(root, vor, wahr, 2)
+    setze ctrl_ok auf uim_wert_hole(w) == 2 and länge(w["auswahl_menge"]) == 1 and S["c2b_b3_rufe"] == 1
+    uim_wert_setze(root, w, 1)
+    uim_mock_taste(root, vor, wahr, 1)
+    setze shift_ok auf uim_wert_hole(w) == 2 and länge(w["auswahl_menge"]) == 1 and S["c2b_b3_rufe"] == 2
+    setze vor_aktiv auf uim_wert_hole(w)
+    setze rufe_vor_aktiv auf S["c2b_b3_rufe"]
+    setze space_ok auf uim_mock_taste(root, "space", wahr, 0) and uim_wert_hole(w) == vor_aktiv and S["c2b_b3_rufe"] == rufe_vor_aktiv
+    setze return_ok auf uim_mock_taste(root, "Return", wahr, 0) and uim_wert_hole(w) == vor_aktiv and S["c2b_b3_rufe"] == rufe_vor_aktiv
+    gib_zurück ctrl_ok and shift_ok and space_ok and return_ok
+
+setze c2b_b3_lroot auf uim_mock_wurzel(220, 80)
+setze c2b_b3_liste auf uim_liste(0, 0, 180, 35, ["A", "B", "C", "D"], t_c2b_b3_auswahl)
+uim_hinzu(c2b_b3_lroot, c2b_b3_liste)
+setze c2b_b3_liste_ok auf t_c2b_b3_mehrfach(c2b_b3_lroot, c2b_b3_liste, "Down", "Up")
+uim_wert_setze(c2b_b3_lroot, c2b_b3_liste, [])
+c2b_b3_lroot["fokus"] = c2b_b3_liste
+uim_mock_taste(c2b_b3_lroot, "Down", wahr, 0)
+uim_mock_taste(c2b_b3_lroot, "Down", wahr, 2)
+setze c2b_b3_scroll_ok auf c2b_b3_liste["scroll_y"] > 0 and länge(uim_wert_hole(c2b_b3_liste)) == 1 and uim_wert_hole(c2b_b3_liste)[0] == 0 and c2b_b3_liste["auswahl_fokus"] == 1
+setze c2b_b3_groot auf uim_mock_wurzel(220, 80)
+setze c2b_b3_grid auf uim_datengitter(0, 0, 180, 35, ["S"], [["A"], ["B"], ["C"], ["D"]], t_c2b_b3_auswahl)
+uim_hinzu(c2b_b3_groot, c2b_b3_grid)
+setze c2b_b3_grid_ok auf t_c2b_b3_mehrfach(c2b_b3_groot, c2b_b3_grid, "Down", "Up")
+setze c2b_b3_troot auf uim_mock_wurzel(220, 80)
+setze c2b_b3_tree auf uim_baum(0, 0, 180, 35, [uim_baum_knoten("A", []), uim_baum_knoten("B", []), uim_baum_knoten("C", []), uim_baum_knoten("D", [])], t_c2b_b3_auswahl)
+uim_hinzu(c2b_b3_troot, c2b_b3_tree)
+setze c2b_b3_tree_ok auf t_c2b_b3_mehrfach(c2b_b3_troot, c2b_b3_tree, "Down", "Up")
+setze c2b_b3_iroot auf uim_mock_wurzel(360, 100)
+setze c2b_b3_icons auf uim_iconview(0, 0, 330, 70, ["A", "B", "C", "D"], t_c2b_b3_auswahl)
+uim_hinzu(c2b_b3_iroot, c2b_b3_icons)
+setze c2b_b3_icon_ok auf t_c2b_b3_mehrfach(c2b_b3_iroot, c2b_b3_icons, "Right", "Left")
+zeige "C2B-B3-MEHRFACH " + text(c2b_b3_liste_ok) + "/" + text(c2b_b3_grid_ok) + "/" + text(c2b_b3_tree_ok) + "/" + text(c2b_b3_icon_ok)
+
+setze c2b_b3_single_lroot auf uim_mock_wurzel(220, 100)
+setze c2b_b3_single_liste auf uim_liste(0, 0, 180, 80, ["A", "B", "C", "D"], t_c2b_b3_auswahl)
+uim_hinzu(c2b_b3_single_lroot, c2b_b3_single_liste)
+setze c2b_b3_single_l_ok auf t_c2b_b3_einzel(c2b_b3_single_lroot, c2b_b3_single_liste, "Down")
+setze c2b_b3_single_groot auf uim_mock_wurzel(220, 100)
+setze c2b_b3_single_grid auf uim_datengitter(0, 0, 180, 80, ["S"], [["A"], ["B"], ["C"], ["D"]], t_c2b_b3_auswahl)
+uim_hinzu(c2b_b3_single_groot, c2b_b3_single_grid)
+setze c2b_b3_single_g_ok auf t_c2b_b3_einzel(c2b_b3_single_groot, c2b_b3_single_grid, "Down")
+setze c2b_b3_single_troot auf uim_mock_wurzel(220, 100)
+setze c2b_b3_single_tree auf uim_baum(0, 0, 180, 80, [uim_baum_knoten("A", []), uim_baum_knoten("B", []), uim_baum_knoten("C", []), uim_baum_knoten("D", [])], t_c2b_b3_auswahl)
+uim_hinzu(c2b_b3_single_troot, c2b_b3_single_tree)
+setze c2b_b3_single_t_ok auf t_c2b_b3_einzel(c2b_b3_single_troot, c2b_b3_single_tree, "Down")
+setze c2b_b3_single_iroot auf uim_mock_wurzel(360, 100)
+setze c2b_b3_single_icons auf uim_iconview(0, 0, 330, 70, ["A", "B", "C", "D"], t_c2b_b3_auswahl)
+uim_hinzu(c2b_b3_single_iroot, c2b_b3_single_icons)
+setze c2b_b3_single_i_ok auf t_c2b_b3_einzel(c2b_b3_single_iroot, c2b_b3_single_icons, "Right")
+zeige "C2B-B3-EINZEL " + text(c2b_b3_single_l_ok) + "/" + text(c2b_b3_single_g_ok) + "/" + text(c2b_b3_single_t_ok) + "/" + text(c2b_b3_single_i_ok)
+
+# Bestehende W5G-TERMINAL-TASTEN und KALENDER-D16 bleiben der dauerhafte
+# Beleg fuer unveraenderte Return/space-Aktivierung der Fremdtypen.
+zeige "C2B-B3-GUARD " + text(S["c2b_b3_sync"]) + "/" + text(c2b_b3_scroll_ok) + "/" + text(c2b_b3_liste["auswahl_fokus"] == 1)

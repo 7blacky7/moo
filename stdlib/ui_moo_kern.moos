@@ -2162,6 +2162,13 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
                     cba(f, idx)
             _uim_anfordern(kontext)
             gib_zurück wahr
+    # C2B/B3: space wird nur fuer die vier positiv benannten Multi-Auswahltypen
+    # vor der generischen Aktivierung verbraucht. Return bleibt vollstaendig dort.
+    wenn taste == "space" und f["auswahl_modus"] == "mehrfach" und (f["typ"] == "liste" oder f["typ"] == "datengitter" oder f["typ"] == "baum" oder f["typ"] == "iconview"):
+        setze fokus_idx auf f["auswahl_fokus"]
+        wenn fokus_idx < 0 oder fokus_idx > _uim_wert_auswahl_max(f):
+            gib_zurück wahr
+        gib_zurück _uim_auswahl_maus(kontext, f, fokus_idx, 2)
     wenn (taste == "Return" oder taste == "space") und f["typ"] != "calendar" und f["typ"] != "datepicker" und f["typ"] != "terminal" und f["typ"] != "markdown":
         _uim_aktiviere(kontext, f)
         _uim_anfordern(kontext)
@@ -2411,11 +2418,15 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
             gib_zurück wahr
         setze cols auf _uim_iconview_spalten(kontext, f)
         setze idx auf f["auswahl"]
+        wenn f["auswahl_modus"] == "mehrfach":
+            setze idx auf f["auswahl_fokus"]
         wenn idx < 0:
             wenn taste == "Up" oder taste == "Left":
                 setze idx auf n - 1
-            sonst:
+            sonst wenn taste == "Down" oder taste == "Right":
                 setze idx auf 0
+            sonst:
+                gib_zurück wahr
         sonst wenn taste == "Up":
             setze idx auf idx - cols
         sonst wenn taste == "Down":
@@ -2430,17 +2441,21 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
             setze idx auf 0
         wenn idx > n - 1:
             setze idx auf n - 1
-        wenn idx != f["auswahl"]:
-            _uim_auswahl_benutzer_setze(kontext, f, [idx], idx, idx, idx, idx, wahr)
-        _uim_anfordern(kontext)
-        gib_zurück wahr
+        gib_zurück _uim_auswahl_tastatur(kontext, f, idx, mod)
     wenn f["typ"] == "liste":
         wenn taste == "Up" oder taste == "Down":
             setze n auf länge(f["zeilen"])
             wenn n == 0:
                 gib_zurück wahr
             setze idx auf f["auswahl"]
-            wenn taste == "Up":
+            wenn f["auswahl_modus"] == "mehrfach":
+                setze idx auf f["auswahl_fokus"]
+            wenn idx < 0:
+                wenn taste == "Up":
+                    setze idx auf n - 1
+                sonst:
+                    setze idx auf 0
+            sonst wenn taste == "Up":
                 setze idx auf idx - 1
             sonst:
                 setze idx auf idx + 1
@@ -2448,19 +2463,23 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
                 setze idx auf 0
             wenn idx > n - 1:
                 setze idx auf n - 1
-            wenn idx != f["auswahl"]:
-                _uim_auswahl_benutzer_setze(kontext, f, [idx], idx, idx, idx, idx, wahr)
-            _uim_anfordern(kontext)
-            gib_zurück wahr
+            gib_zurück _uim_auswahl_tastatur(kontext, f, idx, mod)
     wenn f["typ"] == "baum":
+        wenn taste != "Up" und taste != "Down":
+            gib_zurück wahr
         setze sichtbare auf _uim_baum_sichtbare(f)
         setze n auf länge(sichtbare)
         wenn n == 0:
             gib_zurück wahr
         setze idx auf f["auswahl"]
+        wenn f["auswahl_modus"] == "mehrfach":
+            setze idx auf f["auswahl_fokus"]
         wenn idx < 0:
-            setze idx auf 0
-        wenn taste == "Up":
+            wenn taste == "Up":
+                setze idx auf n - 1
+            sonst:
+                setze idx auf 0
+        sonst wenn taste == "Up":
             setze idx auf idx - 1
         sonst:
             setze idx auf idx + 1
@@ -2468,18 +2487,22 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
             setze idx auf 0
         wenn idx > n - 1:
             setze idx auf n - 1
-        wenn idx != f["auswahl"]:
-            _uim_auswahl_benutzer_setze(kontext, f, [idx], idx, idx, idx, idx, wahr)
-        _uim_anfordern(kontext)
-        gib_zurück wahr
+        gib_zurück _uim_auswahl_tastatur(kontext, f, idx, mod)
     wenn f["typ"] == "datengitter":
+        wenn taste != "Up" und taste != "Down":
+            gib_zurück wahr
         setze n auf länge(f["zeilen"])
         wenn n == 0:
             gib_zurück wahr
         setze idx auf f["auswahl"]
+        wenn f["auswahl_modus"] == "mehrfach":
+            setze idx auf f["auswahl_fokus"]
         wenn idx < 0:
-            setze idx auf 0
-        wenn taste == "Up":
+            wenn taste == "Up":
+                setze idx auf n - 1
+            sonst:
+                setze idx auf 0
+        sonst wenn taste == "Up":
             setze idx auf idx - 1
         sonst:
             setze idx auf idx + 1
@@ -2487,10 +2510,7 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
             setze idx auf 0
         wenn idx > n - 1:
             setze idx auf n - 1
-        wenn idx != f["auswahl"]:
-            _uim_auswahl_benutzer_setze(kontext, f, [idx], idx, idx, idx, idx, wahr)
-        _uim_anfordern(kontext)
-        gib_zurück wahr
+        gib_zurück _uim_auswahl_tastatur(kontext, f, idx, mod)
     gib_zurück falsch
 
 # Scrollrad: oberstes scrollbares Widget unter dem Zeiger scrollen.
@@ -5746,6 +5766,30 @@ funktion _uim_auswahl_maus(kontext, w, idx, mod):
             setze neue_menge auf _uim_auswahl_hinzu_sortiert(w["auswahl_menge"], idx)
         gib_zurück _uim_auswahl_benutzer_setze(kontext, w, neue_menge, primaer, idx, idx, idx, wahr)
     gib_zurück _uim_auswahl_benutzer_setze(kontext, w, [idx], idx, idx, idx, idx, wahr)
+
+# C2B/B3: Pfeiltasten verwenden dieselbe Auswahlwahrheit und dieselben
+# Sichtbar-Pfade wie die Maus. Ctrl allein bewegt nur den Interaktionsfokus.
+funktion _uim_auswahl_tastatur(kontext, w, idx, mod):
+    wenn w["auswahl_modus"] == "einzel":
+        wenn idx != w["auswahl"]:
+            gib_zurück _uim_auswahl_benutzer_setze(kontext, w, [idx], idx, idx, idx, idx, wahr)
+        _uim_auswahl_sichtbar_machen(kontext, w, idx)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
+    setze shift_aktiv auf mod % 2 == 1
+    setze ctrl_aktiv auf boden(mod / 2) % 2 == 1
+    wenn ctrl_aktiv und shift_aktiv == falsch:
+        w["auswahl_fokus"] = idx
+        _uim_auswahl_sichtbar_machen(kontext, w, idx)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
+    wenn shift_aktiv:
+        gib_zurück _uim_auswahl_maus(kontext, w, idx, mod)
+    wenn w["auswahl_fokus"] == idx und länge(w["auswahl_menge"]) == 1 und _uim_auswahl_enthaelt(w, idx):
+        _uim_auswahl_sichtbar_machen(kontext, w, idx)
+        _uim_anfordern(kontext)
+        gib_zurück wahr
+    gib_zurück _uim_auswahl_maus(kontext, w, idx, 0)
 
 
 funktion uim_wert_hole(w):
