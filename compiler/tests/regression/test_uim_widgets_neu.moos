@@ -2700,3 +2700,61 @@ funktion t_ml6_einzeiler_probe(feld):
     gib_zurück ml6_e_ret and ml6_e_root["backend_zustand"]["ungueltig"] and feld["text"] == "X" and feld["cursor"] == 1 and länge(feld["undo_stapel"]) == 0 and S["ml6_eingabe"] == 0 and S["ml6_wechsel"] == 0
 
 zeige "ML6-EINZEILER " + text(t_ml6_einzeiler_probe(uim_textfeld(0, 0, 180, 26, "X", t_ml6_wechsel))) + "/" + text(t_ml6_einzeiler_probe(uim_searchbox(0, 0, 180, 26, "", t_ml6_wechsel))) + "/" + text(t_ml6_einzeiler_probe(uim_numberbox(0, 0, 180, 26, 1, 0, 9, t_ml6_wechsel))) + "/" + text(t_ml6_einzeiler_probe(uim_passwordbox(0, 0, 180, 26, "X", t_ml6_wechsel))) + "/" + text(t_ml6_einzeiler_probe(uim_autocomplete(0, 0, 180, 26, "X", ["X"], t_ml6_wechsel)))
+
+# --- C2A/B4: Metadaten am Kern und strikte Ein-Tasten-Policy ---
+setze c2a_meta_root auf uim_mock_wurzel(120, 80)
+uim_mock_maus_taste_metadaten(c2a_meta_root, 8, 8, 2, wahr, 37, 4000000001, 2)
+setze c2a_meta_exakt auf c2a_meta_root["maus_ereignis_phase"] == "druecken" and c2a_meta_root["maus_ereignis_taste"] == 2 and c2a_meta_root["maus_ereignis_mod"] == 37 and c2a_meta_root["maus_ereignis_zeit"] == 4000000001 and c2a_meta_root["maus_ereignis_klickzahl"] == 2
+setze c2a_taste2_ohne_aktion auf c2a_meta_root["druck"] == nichts
+uim_mock_maus_taste_metadaten(c2a_meta_root, 8, 8, 2, falsch, 41, 4000000002, 2)
+setze c2a_taste2_frei auf c2a_meta_root["_maus_war"] == falsch and c2a_meta_root["maus_ereignis_phase"] == "loslassen" and c2a_meta_root["maus_ereignis_taste"] == 2
+setze c2a_neutral_root auf uim_mock_wurzel(120, 80)
+uim_backend_maus_taste(c2a_neutral_root, 8, 8, 1, wahr)
+setze c2a_meta_neutral auf c2a_neutral_root["maus_ereignis_mod"] == 0 and c2a_neutral_root["maus_ereignis_zeit"] == 0 and c2a_neutral_root["maus_ereignis_klickzahl"] == 1
+uim_backend_maus_taste(c2a_neutral_root, 8, 8, 1, falsch)
+zeige "C2A-META " + text(c2a_meta_exakt) + "/" + text(c2a_meta_neutral) + "/" + text(c2a_taste2_ohne_aktion and c2a_taste2_frei)
+
+setze c2a_f1 auf uim_mock_wurzel(80, 60)
+uim_mock_maus_taste_metadaten(c2a_f1, 4, 4, 1, wahr, 1, 101, 1)
+setze c2a_f1_ok auf c2a_f1["maus_ereignis_phase"] == "druecken" and c2a_f1["maus_ereignis_taste"] == 1
+uim_mock_maus_taste_metadaten(c2a_f1, 4, 4, 3, wahr, 2, 102, 1)
+setze c2a_f1_ok auf c2a_f1_ok and c2a_f1["maus_ereignis_taste"] == 1
+uim_mock_maus_taste_metadaten(c2a_f1, 4, 4, 3, falsch, 2, 103, 1)
+setze c2a_f1_ok auf c2a_f1_ok and c2a_f1["_maus_war"] and c2a_f1["maus_ereignis_phase"] == "druecken"
+uim_mock_maus_taste_metadaten(c2a_f1, 4, 4, 1, falsch, 1, 104, 1)
+setze c2a_f1_ok auf c2a_f1_ok and c2a_f1["maus_ereignis_phase"] == "loslassen" and c2a_f1["maus_ereignis_taste"] == 1 and c2a_f1["_maus_war"] == falsch and c2a_f1["_maus_blockiert_bis_los"] == falsch
+
+setze c2a_f2 auf uim_mock_wurzel(80, 60)
+uim_mock_maus_taste_metadaten(c2a_f2, 4, 4, 1, wahr, 1, 201, 1)
+uim_mock_maus_taste_metadaten(c2a_f2, 4, 4, 3, wahr, 2, 202, 1)
+uim_mock_maus_taste_metadaten(c2a_f2, 4, 4, 1, falsch, 1, 203, 1)
+setze c2a_f2_ok auf c2a_f2["maus_ereignis_phase"] == "loslassen" and c2a_f2["maus_ereignis_taste"] == 1 and c2a_f2["_maus_war"] == falsch
+uim_mock_maus_taste_metadaten(c2a_f2, 4, 4, 3, falsch, 2, 204, 1)
+setze c2a_f2_ok auf c2a_f2_ok and c2a_f2["maus_ereignis_taste"] == 1 and c2a_f2["_maus_war"] == falsch and c2a_f2["_maus_blockiert_bis_los"] == falsch
+
+setze c2a_f3 auf uim_mock_wurzel(80, 60)
+uim_mock_maus_taste_metadaten(c2a_f3, 4, 4, 3, wahr, 3, 301, 1)
+setze c2a_f3_ok auf c2a_f3["maus_ereignis_phase"] == "druecken" and c2a_f3["maus_ereignis_taste"] == 3
+uim_mock_maus_taste_metadaten(c2a_f3, 4, 4, 1, wahr, 1, 302, 1)
+uim_mock_maus_taste_metadaten(c2a_f3, 4, 4, 1, falsch, 1, 303, 1)
+setze c2a_f3_ok auf c2a_f3_ok and c2a_f3["_maus_war"] and c2a_f3["maus_ereignis_phase"] == "druecken" and c2a_f3["maus_ereignis_taste"] == 3
+uim_mock_maus_taste_metadaten(c2a_f3, 4, 4, 3, falsch, 3, 304, 1)
+setze c2a_f3_ok auf c2a_f3_ok and c2a_f3["maus_ereignis_phase"] == "loslassen" and c2a_f3["maus_ereignis_taste"] == 3 and c2a_f3["_maus_war"] == falsch and c2a_f3["_maus_blockiert_bis_los"] == falsch
+
+setze c2a_f4 auf uim_mock_wurzel(80, 60)
+uim_mock_maus_taste_metadaten(c2a_f4, 4, 4, 3, wahr, 3, 401, 1)
+uim_mock_maus_taste_metadaten(c2a_f4, 4, 4, 1, wahr, 1, 402, 1)
+uim_mock_maus_taste_metadaten(c2a_f4, 4, 4, 3, falsch, 3, 403, 1)
+setze c2a_f4_ok auf c2a_f4["maus_ereignis_phase"] == "loslassen" and c2a_f4["maus_ereignis_taste"] == 3 and c2a_f4["_maus_war"] == falsch
+uim_mock_maus_taste_metadaten(c2a_f4, 4, 4, 1, falsch, 1, 404, 1)
+setze c2a_f4_ok auf c2a_f4_ok and c2a_f4["maus_ereignis_taste"] == 3 and c2a_f4["_maus_war"] == falsch and c2a_f4["_maus_blockiert_bis_los"] == falsch
+zeige "C2A-FOLGEN " + text(c2a_f1_ok) + "/" + text(c2a_f2_ok) + "/" + text(c2a_f3_ok) + "/" + text(c2a_f4_ok)
+
+setze c2a_fb auf uim_mock_wurzel(80, 60)
+uim_mock_maus_taste_metadaten(c2a_fb, 4, 4, 1, wahr, 5, 501, 1)
+uim_mock_fokus(c2a_fb, falsch)
+uim_mock_maus_taste_metadaten(c2a_fb, 4, 4, 3, falsch, 6, 502, 1)
+setze c2a_fb_fremd_ok auf c2a_fb["_maus_blockiert_bis_los"] and c2a_fb["_maus_taste"] == 1
+uim_mock_maus_taste_metadaten(c2a_fb, 4, 4, 1, falsch, 5, 503, 1)
+setze c2a_fb_eigen_ok auf c2a_fb["_maus_blockiert_bis_los"] == falsch and c2a_fb["_maus_war"] == falsch
+zeige "C2A-FOKUSBLOCK " + text(c2a_fb_fremd_ok) + "/" + text(c2a_fb_eigen_ok)

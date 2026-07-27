@@ -1681,7 +1681,12 @@ funktion _uim_liste_klick(kontext, w, ly):
 # Event-Dispatcher (an die Leinwand gebunden von uim_wurzel)
 # ------------------------------------------------------------
 
-funktion _uim_kern_maus(kontext, x, y, taste):
+funktion _uim_kern_maus(kontext, x, y, taste, mod, zeit, klickzahl):
+    kontext["maus_ereignis_phase"] = "druecken"
+    kontext["maus_ereignis_taste"] = taste
+    kontext["maus_ereignis_mod"] = mod
+    kontext["maus_ereignis_zeit"] = zeit
+    kontext["maus_ereignis_klickzahl"] = klickzahl
     wenn taste == 3:
         setze cm auf _uim_kontextmenue_finde_rek(kontext["wurzel"]["kinder"])
         wenn cm != nichts:
@@ -1889,7 +1894,12 @@ funktion _uim_kern_maus(kontext, x, y, taste):
     _uim_anfordern(kontext)
     gib_zurück wahr
 
-funktion _uim_kern_maus_los(kontext, x, y, taste):
+funktion _uim_kern_maus_los(kontext, x, y, taste, mod, zeit, klickzahl):
+    kontext["maus_ereignis_phase"] = "loslassen"
+    kontext["maus_ereignis_taste"] = taste
+    kontext["maus_ereignis_mod"] = mod
+    kontext["maus_ereignis_zeit"] = zeit
+    kontext["maus_ereignis_klickzahl"] = klickzahl
     wenn taste != 1:
         gib_zurück falsch
     setze p auf kontext["druck"]
@@ -5272,6 +5282,11 @@ funktion uim_backend_wurzel(backend, b, h):
     kontext["_maus_war"] = falsch
     kontext["_maus_taste"] = 1
     kontext["_maus_blockiert_bis_los"] = falsch
+    kontext["maus_ereignis_phase"] = ""
+    kontext["maus_ereignis_taste"] = 0
+    kontext["maus_ereignis_mod"] = 0
+    kontext["maus_ereignis_zeit"] = 0
+    kontext["maus_ereignis_klickzahl"] = 1
     kontext["kontext_offen"] = nichts
     kontext["kontext_hover"] = 0 - 1
     kontext["kontext_rect"] = nichts
@@ -5285,24 +5300,29 @@ funktion uim_backend_wurzel(backend, b, h):
 funktion uim_backend_zeichne(kontext, zeichner):
     gib_zurück _uim_kern_zeichne(kontext, zeichner)
 
-funktion uim_backend_maus_taste(kontext, x, y, taste, gedrueckt):
-    wenn taste != 1 und taste != 3:
+funktion uim_backend_maus_taste_metadaten(kontext, x, y, taste, gedrueckt, mod, zeit, klickzahl):
+    wenn taste < 1 oder taste > 3:
         gib_zurück falsch
     wenn kontext["_maus_blockiert_bis_los"]:
-        wenn gedrueckt == falsch:
+        wenn gedrueckt == falsch und taste == kontext["_maus_taste"]:
             kontext["_maus_blockiert_bis_los"] = falsch
         gib_zurück falsch
     wenn kontext["hat_fokus"] == falsch:
         gib_zurück falsch
     setze war auf kontext["_maus_war"]
-    wenn gedrueckt und war == falsch:
+    wenn gedrueckt:
+        wenn war:
+            gib_zurück falsch
         kontext["_maus_war"] = wahr
         kontext["_maus_taste"] = taste
-        gib_zurück _uim_kern_maus(kontext, x, y, taste)
-    wenn gedrueckt == falsch und war:
-        kontext["_maus_war"] = falsch
-        gib_zurück _uim_kern_maus_los(kontext, x, y, kontext["_maus_taste"])
-    gib_zurück _uim_kern_bewegung(kontext, x, y)
+        gib_zurück _uim_kern_maus(kontext, x, y, taste, mod, zeit, klickzahl)
+    wenn war == falsch oder taste != kontext["_maus_taste"]:
+        gib_zurück falsch
+    kontext["_maus_war"] = falsch
+    gib_zurück _uim_kern_maus_los(kontext, x, y, taste, mod, zeit, klickzahl)
+
+funktion uim_backend_maus_taste(kontext, x, y, taste, gedrueckt):
+    gib_zurück uim_backend_maus_taste_metadaten(kontext, x, y, taste, gedrueckt, 0, 0, 1)
 
 funktion uim_backend_maus(kontext, x, y, gedrueckt):
     gib_zurück uim_backend_maus_taste(kontext, x, y, 1, gedrueckt)
@@ -6335,6 +6355,9 @@ funktion uim_mock_zeichne(kontext):
 
 funktion uim_mock_maus(kontext, x, y, gedrueckt):
     gib_zurück uim_backend_maus(kontext, x, y, gedrueckt)
+
+funktion uim_mock_maus_taste_metadaten(kontext, x, y, taste, gedrueckt, mod, zeit, klickzahl):
+    gib_zurück uim_backend_maus_taste_metadaten(kontext, x, y, taste, gedrueckt, mod, zeit, klickzahl)
 
 funktion uim_mock_bewegung(kontext, x, y):
     gib_zurück uim_backend_bewegung(kontext, x, y)

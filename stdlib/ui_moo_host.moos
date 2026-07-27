@@ -148,14 +148,16 @@ funktion _uim_on_maus(lw, x, y, taste):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
-    gib_zurück uim_backend_maus_taste(kontext, x, y, taste, wahr)
+    setze maus_meta auf ui_pointer_meta_hole(lw, 1, taste)
+    gib_zurück uim_backend_maus_taste_metadaten(kontext, x, y, taste, wahr, maus_meta["mod"], maus_meta["zeit"], maus_meta["klickzahl"])
 
 
 funktion _uim_on_maus_los(lw, x, y, taste):
     setze kontext auf _uim_ctx(lw)
     wenn kontext == nichts:
         gib_zurück falsch
-    gib_zurück uim_backend_maus_taste(kontext, x, y, taste, falsch)
+    setze maus_meta auf ui_pointer_meta_hole(lw, 2, taste)
+    gib_zurück uim_backend_maus_taste_metadaten(kontext, x, y, taste, falsch, maus_meta["mod"], maus_meta["zeit"], maus_meta["klickzahl"])
 
 
 funktion _uim_on_bewegung(lw, x, y):

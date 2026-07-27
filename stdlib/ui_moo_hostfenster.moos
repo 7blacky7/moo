@@ -140,11 +140,13 @@ funktion _uimh_input(art, a, b, c):
                 _uimh_dirty()
                 gib_zurück wahr
     wenn art == "maus_runter":
-        uim_backend_maus_taste(k, a, b, c, wahr)
+        setze maus_meta auf ui_pointer_meta_hole(_UIMH["fenster"], 1, c)
+        uim_backend_maus_taste_metadaten(k, a, b, c, wahr, maus_meta["mod"], maus_meta["zeit"], maus_meta["klickzahl"])
         _uimh_dirty()
         gib_zurück wahr
     wenn art == "maus_hoch":
-        uim_backend_maus_taste(k, a, b, c, falsch)
+        setze maus_meta auf ui_pointer_meta_hole(_UIMH["fenster"], 2, c)
+        uim_backend_maus_taste_metadaten(k, a, b, c, falsch, maus_meta["mod"], maus_meta["zeit"], maus_meta["klickzahl"])
         _uimh_dirty()
         gib_zurück wahr
     wenn art == "bewegung":
