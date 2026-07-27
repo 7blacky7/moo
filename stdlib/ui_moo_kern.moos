@@ -7512,6 +7512,15 @@ funktion _uim_markdown_span_stil(span, ersatz):
         gib_zurück "code"
     gib_zurück ersatz
 
+funktion _uim_markdown_schrift_stil(stil):
+    wenn stil == "heading1" oder stil == "heading2" oder stil == "heading3" oder stil == "strong":
+        gib_zurück 1
+    wenn stil == "emphasis":
+        gib_zurück 2
+    wenn stil == "code":
+        gib_zurück 4
+    gib_zurück 0
+
 funktion _uim_markdown_layout_segment_hinzu(segmente, stil, inhalt, ziel):
     wenn inhalt == "":
         gib_zurück segmente
@@ -7557,9 +7566,10 @@ funktion _uim_markdown_wrap_spans(kontext, z, layout, spans, ersatz, blockart, y
     wenn max_b < 1:
         setze max_b auf 1
     setze zeilen_segmente auf []
-    setze zeilen_text auf ""
+    setze zeilen_breite auf 0
     für span in spans:
         setze stil auf _uim_markdown_span_stil(span, ersatz)
+        setze schrift_stil auf _uim_markdown_schrift_stil(stil)
         setze ziel auf nichts
         wenn span.enthält("ziel"):
             setze ziel auf span["ziel"]
@@ -7569,15 +7579,16 @@ funktion _uim_markdown_wrap_spans(kontext, z, layout, spans, ersatz, blockart, y
             setze token_pos auf 0
             solange token_pos < länge(token_bytes):
                 setze rest auf bytes_neu(_uim_tf_teil(token_bytes, token_pos, länge(token_bytes)))
-                setze kandidat auf zeilen_text + rest
-                wenn _uim_zf_text_breite(kontext, z, kandidat, schrift) <= max_b:
+                setze rest_breite auf _uim_zf_text_breite_stil(kontext, z, rest, schrift, schrift_stil)
+                setze kandidat_breite auf zeilen_breite + rest_breite
+                wenn kandidat_breite <= max_b:
                     _uim_markdown_layout_segment_hinzu(zeilen_segmente, stil, rest, ziel)
-                    setze zeilen_text auf kandidat
+                    setze zeilen_breite auf kandidat_breite
                     setze token_pos auf länge(token_bytes)
-                sonst wenn zeilen_text != "":
+                sonst wenn länge(zeilen_segmente) > 0:
                     setze y auf _uim_markdown_layout_zeile(layout, zeilen_segmente, y, schrift, blockart, einzug)
                     setze zeilen_segmente auf []
-                    setze zeilen_text auf ""
+                    setze zeilen_breite auf 0
                 sonst:
                     setze rest_bytes auf _uim_tf_teil(token_bytes, token_pos, länge(token_bytes))
                     setze probe auf 0
@@ -7585,19 +7596,20 @@ funktion _uim_markdown_wrap_spans(kontext, z, layout, spans, ersatz, blockart, y
                     solange probe < länge(rest_bytes):
                         setze naechste_grenze auf _uim_tf_grenze_vor(rest_bytes, probe)
                         setze teiltext auf bytes_neu(_uim_tf_teil(rest_bytes, 0, naechste_grenze))
-                        wenn _uim_zf_text_breite(kontext, z, teiltext, schrift) <= max_b oder passend == 0:
+                        wenn _uim_zf_text_breite_stil(kontext, z, teiltext, schrift, schrift_stil) <= max_b oder passend == 0:
                             setze passend auf naechste_grenze
                             setze probe auf naechste_grenze
                         sonst:
                             setze probe auf länge(rest_bytes)
                     setze stueck auf bytes_neu(_uim_tf_teil(rest_bytes, 0, passend))
+                    setze stueck_breite auf _uim_zf_text_breite_stil(kontext, z, stueck, schrift, schrift_stil)
                     _uim_markdown_layout_segment_hinzu(zeilen_segmente, stil, stueck, ziel)
-                    setze zeilen_text auf stueck
+                    setze zeilen_breite auf stueck_breite
                     setze token_pos auf token_pos + passend
                     wenn token_pos < länge(token_bytes):
                         setze y auf _uim_markdown_layout_zeile(layout, zeilen_segmente, y, schrift, blockart, einzug)
                         setze zeilen_segmente auf []
-                        setze zeilen_text auf ""
+                        setze zeilen_breite auf 0
     setze y auf _uim_markdown_layout_zeile(layout, zeilen_segmente, y, schrift, blockart, einzug)
     gib_zurück y
 
@@ -7776,12 +7788,13 @@ funktion _uim_z_markdown(kontext, z, w, ox, oy):
                     _uim_zf_linie(kontext, z, innen_x, objekt_y, innen_x, objekt_y + objekt["hoehe"], 2)
                 setze text_x auf innen_x + objekt["einzug"]
                 für segment in objekt["segmente"]:
-                    setze segment_b auf _uim_zf_text_breite(kontext, z, segment["text"], objekt["schrift"])
+                    setze schrift_stil auf _uim_markdown_schrift_stil(segment["stil"])
+                    setze segment_b auf _uim_zf_text_breite_stil(kontext, z, segment["text"], objekt["schrift"], schrift_stil)
                     wenn segment["stil"] == "code" and objekt["block"] != "code":
                         _uim_farbe(kontext, z, [24, 30, 42, 255])
                         _uim_zf_rechteck(kontext, z, text_x, objekt_y - 1, segment_b, objekt["hoehe"], wahr)
                     _uim_farbe(kontext, z, _uim_markdown_stil_farbe(kontext, w, segment["stil"]))
-                    _uim_zf_text(kontext, z, text_x, objekt_y, segment["text"], objekt["schrift"])
+                    _uim_zf_text_stil(kontext, z, text_x, objekt_y, segment["text"], objekt["schrift"], schrift_stil)
                     wenn segment["stil"] == "link":
                         _uim_farbe(kontext, z, t["rand"])
                         _uim_zf_linie(kontext, z, text_x, objekt_y + objekt["schrift"] + 1, text_x + segment_b, objekt_y + objekt["schrift"] + 1, 1)

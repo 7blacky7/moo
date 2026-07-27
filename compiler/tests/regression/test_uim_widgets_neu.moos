@@ -913,6 +913,124 @@ setze c1_b4_teil3_root auf uim_backend_wurzel(c1_b4_teil3_backend, 10, 10)
 setze c1_b4_teil_ok auf _uim_text_stil_vertrag(c1_b4_teil1_root)["id"] == "legacy-normal-v1" and _uim_text_stil_vertrag(c1_b4_teil2_root)["id"] == "legacy-normal-v1" and _uim_text_stil_vertrag(c1_b4_teil3_root)["id"] == "legacy-normal-v1"
 zeige "C1-B4-BACKEND " + text(c1_b4_min_ok) + "/" + text(c1_b4_surface_ok) + "/" + text(c1_b4_cache_ok) + "/" + text(c1_b4_teil_ok)
 
+# C1-B5: echte Markdown-Schnitte teilen ein Mapping fuer Wrap, Messung und Zeichnung.
+funktion c1_b5_breite_wert(s, stil):
+    setze schritt auf 8
+    wenn stil == 1:
+        setze schritt auf 10
+    sonst wenn stil == 4:
+        setze schritt auf 11
+    gib_zurück länge(s) * schritt
+
+funktion c1_b5_text_stil(kontext, args):
+    setze eintrag auf {"text": args[3], "stil": args[5], "x": args[1]}
+    kontext["backend_zustand"]["c1_b5_zeichnungen"].hinzufügen(eintrag)
+    gib_zurück _uim_bm_befehl(kontext, "text_stil", [args[1], args[2], args[3], args[4], args[5]])
+
+funktion c1_b5_text_breite_stil(kontext, args):
+    setze breite auf c1_b5_breite_wert(args[1], args[3])
+    setze eintrag auf {"text": args[1], "stil": args[3], "breite": breite}
+    kontext["backend_zustand"]["c1_b5_messungen"].hinzufügen(eintrag)
+    gib_zurück breite
+
+funktion c1_b5_layout_text(layout):
+    setze ergebnis auf ""
+    für zeile in layout:
+        für segment in zeile["segmente"]:
+            setze ergebnis auf ergebnis + segment["text"]
+    gib_zurück ergebnis
+
+funktion c1_b5_messungen_nur(kontext, stil):
+    setze messungen auf kontext["backend_zustand"]["c1_b5_messungen"]
+    wenn länge(messungen) == 0:
+        gib_zurück falsch
+    für messung in messungen:
+        wenn messung["stil"] != stil:
+            gib_zurück falsch
+    gib_zurück wahr
+
+funktion c1_b5_hat_zeichnung(kontext, inhalt, stil):
+    für eintrag in kontext["backend_zustand"]["c1_b5_zeichnungen"]:
+        wenn eintrag["text"] == inhalt and eintrag["stil"] == stil:
+            gib_zurück wahr
+    gib_zurück falsch
+
+funktion c1_b5_hat_messung(kontext, inhalt, stil):
+    für eintrag in kontext["backend_zustand"]["c1_b5_messungen"]:
+        wenn eintrag["text"] == inhalt and eintrag["stil"] == stil:
+            gib_zurück wahr
+    gib_zurück falsch
+
+funktion c1_b5_render_folge_ok(kontext, w):
+    setze zeichnungen auf kontext["backend_zustand"]["c1_b5_zeichnungen"]
+    setze idx auf 0
+    setze ok auf wahr
+    setze start_x auf w["x"] + kontext["theme"]["abstand"]
+    für objekt in w["markdown_layout"]:
+        wenn objekt["typ"] == "zeile":
+            setze erwartet_x auf start_x + objekt["einzug"]
+            für segment in objekt["segmente"]:
+                wenn idx >= länge(zeichnungen):
+                    setze ok auf falsch
+                sonst:
+                    setze zeichnung auf zeichnungen[idx]
+                    setze stil auf _uim_markdown_schrift_stil(segment["stil"])
+                    wenn zeichnung["text"] != segment["text"] oder zeichnung["stil"] != stil oder zeichnung["x"] != erwartet_x:
+                        setze ok auf falsch
+                    setze erwartet_x auf erwartet_x + c1_b5_breite_wert(segment["text"], stil)
+                    setze idx auf idx + 1
+    gib_zurück ok and idx == länge(zeichnungen)
+
+setze c1_b5_basis auf uim_backend_mock()
+c1_b5_basis["faehigkeiten"]["text_stil"] = wahr
+c1_b5_basis["faehigkeiten"]["text_stil_metrik"] = "c1-b5-test-v1"
+c1_b5_basis["operationen"]["text_stil"] = c1_b5_text_stil
+c1_b5_basis["operationen"]["text_breite_stil"] = c1_b5_text_breite_stil
+setze c1_b5_root auf uim_backend_wurzel(c1_b5_basis, 400, 320)
+c1_b5_root["backend_zustand"]["befehle"] = []
+c1_b5_root["backend_zustand"]["c1_b5_zeichnungen"] = []
+c1_b5_root["backend_zustand"]["c1_b5_messungen"] = []
+c1_b5_root["backend_zustand"]["ungueltig"] = wahr
+
+setze c1_b5_mapping_ok auf _uim_markdown_schrift_stil("heading1") == 1 and _uim_markdown_schrift_stil("heading2") == 1 and _uim_markdown_schrift_stil("heading3") == 1 and _uim_markdown_schrift_stil("strong") == 1 and _uim_markdown_schrift_stil("emphasis") == 2 and _uim_markdown_schrift_stil("code") == 4 and _uim_markdown_schrift_stil("normal") == 0 and _uim_markdown_schrift_stil("raw") == 0 and _uim_markdown_schrift_stil("link") == 0 and _uim_markdown_schrift_stil("quote") == 0
+
+# Segmentweise Summe: beide Reihenfolgen unterscheiden sich von der falschen Ganzpraefix-Messung.
+setze c1_b5_wrap_a auf []
+_uim_markdown_wrap_spans(c1_b5_root, nichts, c1_b5_wrap_a, [{"typ": "raw", "text": "aaaa"}, {"typ": "strong", "text": "bb"}], "normal", "paragraph", 0, 12, 52, 0)
+setze c1_b5_wrap_b auf []
+_uim_markdown_wrap_spans(c1_b5_root, nichts, c1_b5_wrap_b, [{"typ": "strong", "text": "bb"}, {"typ": "raw", "text": "aaaa"}], "normal", "paragraph", 0, 12, 50, 0)
+setze c1_b5_wrap_ok auf länge(c1_b5_wrap_a) == 1 and länge(c1_b5_wrap_a[0]["segmente"]) == 2 and länge(c1_b5_wrap_b) == 2 and c1_b5_layout_text(c1_b5_wrap_a) == "aaaabb" and c1_b5_layout_text(c1_b5_wrap_b) == "bbaaaa"
+
+# Die zweite Messstelle teilt ueberlange strong/emphasis/code-Tokens im jeweils eigenen Face.
+c1_b5_root["backend_zustand"]["c1_b5_messungen"] = []
+setze c1_b5_lang_fett auf []
+_uim_markdown_wrap_spans(c1_b5_root, nichts, c1_b5_lang_fett, [{"typ": "strong", "text": "AB"}], "normal", "paragraph", 0, 12, 11, 0)
+setze c1_b5_lang_fett_ok auf länge(c1_b5_lang_fett) == 2 and c1_b5_layout_text(c1_b5_lang_fett) == "AB" and c1_b5_messungen_nur(c1_b5_root, 1)
+c1_b5_root["backend_zustand"]["c1_b5_messungen"] = []
+setze c1_b5_lang_kursiv auf []
+_uim_markdown_wrap_spans(c1_b5_root, nichts, c1_b5_lang_kursiv, [{"typ": "emphasis", "text": "AB"}], "normal", "paragraph", 0, 12, 9, 0)
+setze c1_b5_lang_kursiv_ok auf länge(c1_b5_lang_kursiv) == 2 and c1_b5_layout_text(c1_b5_lang_kursiv) == "AB" and c1_b5_messungen_nur(c1_b5_root, 2)
+c1_b5_root["backend_zustand"]["c1_b5_messungen"] = []
+setze c1_b5_lang_code auf []
+_uim_markdown_wrap_spans(c1_b5_root, nichts, c1_b5_lang_code, [{"typ": "code", "text": "AB"}], "normal", "code", 0, 12, 12, 0)
+setze c1_b5_lang_code_ok auf länge(c1_b5_lang_code) == 2 and c1_b5_layout_text(c1_b5_lang_code) == "AB" and c1_b5_messungen_nur(c1_b5_root, 4)
+setze c1_b5_lang_ok auf c1_b5_lang_fett_ok and c1_b5_lang_kursiv_ok and c1_b5_lang_code_ok
+
+# Renderer misst und zeichnet jedes Segment im selben Face; x ist die Summe der Segmentbreiten.
+c1_b5_root["backend_zustand"]["c1_b5_messungen"] = []
+c1_b5_root["backend_zustand"]["c1_b5_zeichnungen"] = []
+setze c1_b5_feld auf uim_markdown(5, 5, 350, 280, ["# H1", "", "## H2", "", "### H3", "", "plain **bold** `code` *soft* [link](z)"].verbinden("\n"))
+uim_hinzu(c1_b5_root, c1_b5_feld)
+uim_mock_zeichne(c1_b5_root)
+setze c1_b5_faces_ok auf c1_b5_hat_zeichnung(c1_b5_root, "H1", 1) and c1_b5_hat_zeichnung(c1_b5_root, "H2", 1) and c1_b5_hat_zeichnung(c1_b5_root, "H3", 1) and c1_b5_hat_zeichnung(c1_b5_root, "bold", 1) and c1_b5_hat_zeichnung(c1_b5_root, "code", 4) and c1_b5_hat_zeichnung(c1_b5_root, "soft", 2) and c1_b5_hat_zeichnung(c1_b5_root, "link", 0)
+setze c1_b5_paar_ok auf wahr
+für c1_b5_zeichnung in c1_b5_root["backend_zustand"]["c1_b5_zeichnungen"]:
+    wenn c1_b5_hat_messung(c1_b5_root, c1_b5_zeichnung["text"], c1_b5_zeichnung["stil"]) == falsch:
+        setze c1_b5_paar_ok auf falsch
+setze c1_b5_render_ok auf c1_b5_faces_ok and c1_b5_paar_ok
+setze c1_b5_folge_ok auf c1_b5_render_folge_ok(c1_b5_root, c1_b5_feld)
+zeige "C1-B5-MARKDOWN " + text(c1_b5_mapping_ok) + "/" + text(c1_b5_wrap_ok) + "/" + text(c1_b5_lang_ok) + "/" + text(c1_b5_render_ok) + "/" + text(c1_b5_folge_ok)
+
 
 # W6-MARKDOWN Batch 5: gemeinsame Scrollpfade und callbackfreie Tastennavigation.
 funktion md5_kein_callback(w):
