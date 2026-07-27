@@ -273,3 +273,10 @@ C2B-NACHTRAG-WEGE wahr/wahr/wahr/wahr/wahr/wahr/wahr/wahr/wahr/wahr/wahr/wahr
 C2B-B3-MEHRFACH wahr/wahr/wahr/wahr
 C2B-B3-EINZEL wahr/wahr/wahr/wahr
 C2B-B3-GUARD wahr/wahr/wahr
+C2B-B5-MEHRFACH wahr/wahr/wahr/wahr
+C2B-B5-EINZEL wahr/wahr/wahr/wahr
+C2B-B5-FALLBACK wahr/wahr/wahr/wahr/wahr/wahr
+C2B-B5-SCROLL wahr/wahr/wahr/wahr
+C2B-B5-SKALA wahr/wahr/wahr/wahr
+C2B-B5-AUSWAHL-OVERRIDE wahr
+C2B-B5-GRID-KOPF wahr/wahr/wahr

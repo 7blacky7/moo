@@ -2937,6 +2937,43 @@ funktion _uim_z_panel(kontext, z, w, ox, oy):
     gib_zurück wahr
 
 # TreeView: sichtbare Zeilen werden aus verschachtelten Knoten virtuell erzeugt.
+# Auswahltext liegt je Widget auf unterschiedlichen Flächen. Der Aufrufer
+# benennt deshalb seinen bestehenden Fallback ausdrücklich; auswahl_text bleibt
+# der optionale Theme-Override.
+funktion _uim_auswahl_text_farbe(t, fallback_feld):
+    wenn t.enthält("auswahl_text"):
+        gib_zurück t["auswahl_text"]
+    gib_zurück t[fallback_feld]
+
+# Die Datengitter-Kopfzeile ist keine Auswahl. Sie teilt aus Kompatibilität den
+# Override auswahl_text, fällt auf ihrer Akzentfläche aber eigenständig zurück.
+funktion _uim_datengitter_kopf_text_farbe(t):
+    wenn t.enthält("auswahl_text"):
+        gib_zurück t["auswahl_text"]
+    gib_zurück t["hintergrund"]
+
+# Auswahlmengen sind im Normalfall strikt aufsteigend. Der Renderer prüft
+# diese Invariante selbst: bei beschädigtem Rohzustand bleibt die Darstellung
+# über den langsameren Membership-Pfad korrekt, ohne den Zustand zu reparieren.
+funktion _uim_auswahl_render_cursorfaehig(menge):
+    wenn typ_von(menge) != "Liste":
+        gib_zurück falsch
+    setze erstes auf wahr
+    setze vorher auf 0
+    für idx in menge:
+        wenn typ_von(idx) != "Zahl" oder idx != boden(idx) oder idx < 0:
+            gib_zurück falsch
+        wenn erstes == falsch und idx <= vorher:
+            gib_zurück falsch
+        setze vorher auf idx
+        setze erstes auf falsch
+    gib_zurück wahr
+
+funktion _uim_auswahl_render_cursor_vor(menge, pos, idx):
+    solange pos < länge(menge) und menge[pos] < idx:
+        setze pos auf pos + 1
+    gib_zurück pos
+
 funktion _uim_z_baum(kontext, z, w, ox, oy):
     setze t auf kontext["theme"]
     setze ax auf ox + w["x"]
@@ -2953,17 +2990,28 @@ funktion _uim_z_baum(kontext, z, w, ox, oy):
         setze start auf start + 1
     setze i auf start
     setze zy auf ay + start * zh - w["scroll_y"]
+    setze auswahl_menge auf w["auswahl_menge"]
+    setze auswahl_cursor_ok auf _uim_auswahl_render_cursorfaehig(auswahl_menge)
+    setze auswahl_pos auf 0
+    wenn auswahl_cursor_ok:
+        setze auswahl_pos auf _uim_auswahl_render_cursor_vor(auswahl_menge, auswahl_pos, start)
+    setze widget_hat_fokus auf _uim_slot_uid(kontext, "fokus") == w["uid"]
     solange i < länge(sichtbare) und zy < ay + w["h"]:
         setze eintrag auf sichtbare[i]
         setze knoten auf eintrag["knoten"]
         setze ebene auf eintrag["ebene"]
-        wenn i == w["auswahl"]:
+        setze ist_auswahl auf falsch
+        wenn auswahl_cursor_ok:
+            setze auswahl_pos auf _uim_auswahl_render_cursor_vor(auswahl_menge, auswahl_pos, i)
+            wenn auswahl_pos < länge(auswahl_menge) und auswahl_menge[auswahl_pos] == i:
+                setze ist_auswahl auf wahr
+                setze auswahl_pos auf auswahl_pos + 1
+        sonst:
+            setze ist_auswahl auf auswahl_menge.enthält(i)
+        wenn ist_auswahl:
             _uim_farbe(kontext, z, t["akzent"])
             _uim_zf_rechteck(kontext, z, ax, zy, w["b"], zh, wahr)
-            wenn t.enthält("auswahl_text"):
-                _uim_farbe(kontext, z, t["auswahl_text"])
-            sonst:
-                _uim_farbe(kontext, z, t["hintergrund"])
+            _uim_farbe(kontext, z, _uim_auswahl_text_farbe(t, "hintergrund"))
         sonst:
             _uim_farbe(kontext, z, t["text"])
         setze tx auf ax + t["abstand"] + ebene * 12
@@ -2971,6 +3019,9 @@ funktion _uim_z_baum(kontext, z, w, ox, oy):
             _uim_zf_linie(kontext, z, tx + 2, zy + zh / 2 - 2, tx + 6, zy + zh / 2 - 2, 1)
             _uim_zf_linie(kontext, z, tx + 4, zy + zh / 2 - 4, tx + 4, zy + zh / 2, 1)
         _uim_zf_text(kontext, z, tx + 12, zy + (zh - t["schrift"]) / 2, knoten["text"], t["schrift"])
+        wenn w["auswahl_modus"] == "mehrfach" und widget_hat_fokus und w["auswahl_fokus"] == i:
+            _uim_farbe(kontext, z, t["akzent"])
+            _uim_zf_rechteck(kontext, z, ax, zy, w["b"], zh, falsch)
         setze i auf i + 1
         setze zy auf zy + zh
     setze pop_ok auf _uim_zf_clip_loesche(kontext, z)
@@ -2999,7 +3050,7 @@ funktion _uim_z_datengitter(kontext, z, w, ox, oy):
     _uim_zf_rechteck(kontext, z, ax, ay, w["b"], zh, wahr)
     setze j auf 0
     solange j < n_spalten:
-        _uim_farbe(kontext, z, t["auswahl_text"])
+        _uim_farbe(kontext, z, _uim_datengitter_kopf_text_farbe(t))
         _uim_zf_text(kontext, z, ax + j * spalten_b + t["abstand"] + 2, ay + (zh - t["schrift"]) / 2 + 1, text(w["spalten"][j]), t["schrift"])
         setze j auf j + 1
     setze clip_ok auf _uim_zf_clip_setze(kontext, z, ax, ay + zh, w["b"], w["h"] - zh)
@@ -3010,20 +3061,37 @@ funktion _uim_z_datengitter(kontext, z, w, ox, oy):
         setze start auf start + 1
     setze i auf start
     setze zy auf ay + zh + start * zh - w["scroll_y"]
+    setze auswahl_menge auf w["auswahl_menge"]
+    setze auswahl_cursor_ok auf _uim_auswahl_render_cursorfaehig(auswahl_menge)
+    setze auswahl_pos auf 0
+    wenn auswahl_cursor_ok:
+        setze auswahl_pos auf _uim_auswahl_render_cursor_vor(auswahl_menge, auswahl_pos, start)
+    setze widget_hat_fokus auf _uim_slot_uid(kontext, "fokus") == w["uid"]
     solange i < länge(w["zeilen"]) und zy < ay + w["h"]:
         setze zeile auf w["zeilen"][i]
-        wenn i == w["auswahl"]:
+        setze ist_auswahl auf falsch
+        wenn auswahl_cursor_ok:
+            setze auswahl_pos auf _uim_auswahl_render_cursor_vor(auswahl_menge, auswahl_pos, i)
+            wenn auswahl_pos < länge(auswahl_menge) und auswahl_menge[auswahl_pos] == i:
+                setze ist_auswahl auf wahr
+                setze auswahl_pos auf auswahl_pos + 1
+        sonst:
+            setze ist_auswahl auf auswahl_menge.enthält(i)
+        wenn ist_auswahl:
             _uim_farbe(kontext, z, t["akzent"])
             _uim_zf_rechteck(kontext, z, ax, zy, w["b"], zh, wahr)
         setze j auf 0
         solange j < n_spalten:
-            wenn i == w["auswahl"] und t.enthält("auswahl_text"):
-                _uim_farbe(kontext, z, t["auswahl_text"])
+            wenn ist_auswahl:
+                _uim_farbe(kontext, z, _uim_auswahl_text_farbe(t, "text"))
             sonst:
                 _uim_farbe(kontext, z, t["text"])
             wenn j < länge(zeile):
                 _uim_zf_text(kontext, z, ax + j * spalten_b + t["abstand"], zy + (zh - t["schrift"]) / 2, text(zeile[j]), t["schrift"])
             setze j auf j + 1
+        wenn w["auswahl_modus"] == "mehrfach" und widget_hat_fokus und w["auswahl_fokus"] == i:
+            _uim_farbe(kontext, z, t["akzent"])
+            _uim_zf_rechteck(kontext, z, ax, zy, w["b"], zh, falsch)
         setze i auf i + 1
         setze zy auf zy + zh
     setze pop_ok auf _uim_zf_clip_loesche(kontext, z)
@@ -3054,19 +3122,33 @@ funktion _uim_z_liste(kontext, z, w, ox, oy):
         setze start auf start + 1
     setze i auf start
     setze zy auf ay + start * zh - w["scroll_y"]
+    setze auswahl_menge auf w["auswahl_menge"]
+    setze auswahl_cursor_ok auf _uim_auswahl_render_cursorfaehig(auswahl_menge)
+    setze auswahl_pos auf 0
+    wenn auswahl_cursor_ok:
+        setze auswahl_pos auf _uim_auswahl_render_cursor_vor(auswahl_menge, auswahl_pos, start)
+    setze widget_hat_fokus auf _uim_slot_uid(kontext, "fokus") == w["uid"]
     # Keine nur teilweise sichtbare letzte Zeile zeichnen: Nicht jedes
     # Surface-Backend clippt Textglyphen zuverlässig an der Widget-Kante.
     solange i < n und zy + zh <= ay + w["h"]:
-        wenn i == w["auswahl"]:
+        setze ist_auswahl auf falsch
+        wenn auswahl_cursor_ok:
+            setze auswahl_pos auf _uim_auswahl_render_cursor_vor(auswahl_menge, auswahl_pos, i)
+            wenn auswahl_pos < länge(auswahl_menge) und auswahl_menge[auswahl_pos] == i:
+                setze ist_auswahl auf wahr
+                setze auswahl_pos auf auswahl_pos + 1
+        sonst:
+            setze ist_auswahl auf auswahl_menge.enthält(i)
+        wenn ist_auswahl:
             _uim_farbe(kontext, z, t["akzent"])
             _uim_zf_rechteck(kontext, z, ax, zy, w["b"], zh, wahr)
-            wenn t.enthält("auswahl_text"):
-                _uim_farbe(kontext, z, t["auswahl_text"])
-            sonst:
-                _uim_farbe(kontext, z, t["hintergrund"])
+            _uim_farbe(kontext, z, _uim_auswahl_text_farbe(t, "hintergrund"))
         sonst:
             _uim_farbe(kontext, z, t["text"])
         _uim_zf_text(kontext, z, ax + t["abstand"], zy + (zh - t["schrift"]) / 2, zeilen[i], t["schrift"])
+        wenn w["auswahl_modus"] == "mehrfach" und widget_hat_fokus und w["auswahl_fokus"] == i:
+            _uim_farbe(kontext, z, t["akzent"])
+            _uim_zf_rechteck(kontext, z, ax, zy, w["b"], zh, falsch)
         setze i auf i + 1
         setze zy auf zy + zh
     setze pop_ok auf _uim_zf_clip_loesche(kontext, z)
@@ -3102,6 +3184,12 @@ funktion _uim_z_iconview(kontext, z, w, ox, oy):
     setze row auf start
     setze idx auf start * cols
     setze zy auf ay + row * tile_h - w["scroll_y"]
+    setze auswahl_menge auf w["auswahl_menge"]
+    setze auswahl_cursor_ok auf _uim_auswahl_render_cursorfaehig(auswahl_menge)
+    setze auswahl_pos auf 0
+    wenn auswahl_cursor_ok:
+        setze auswahl_pos auf _uim_auswahl_render_cursor_vor(auswahl_menge, auswahl_pos, start * cols)
+    setze widget_hat_fokus auf _uim_slot_uid(kontext, "fokus") == w["uid"]
     # Nur vollständig passende Tile-Zeilen rendern; partielle Tiles
     # würden sonst inklusive Beschriftung in das nächste Widget laufen.
     solange row < zeilen und idx < n und zy + tile_h <= ay + w["h"]:
@@ -3114,7 +3202,15 @@ funktion _uim_z_iconview(kontext, z, w, ox, oy):
                 setze tile_innen_b auf 34
             wenn tile_innen_b < 12:
                 setze tile_innen_b auf 12
-            wenn idx == w["auswahl"]:
+            setze ist_auswahl auf falsch
+            wenn auswahl_cursor_ok:
+                setze auswahl_pos auf _uim_auswahl_render_cursor_vor(auswahl_menge, auswahl_pos, idx)
+                wenn auswahl_pos < länge(auswahl_menge) und auswahl_menge[auswahl_pos] == idx:
+                    setze ist_auswahl auf wahr
+                    setze auswahl_pos auf auswahl_pos + 1
+            sonst:
+                setze ist_auswahl auf auswahl_menge.enthält(idx)
+            wenn ist_auswahl:
                 _uim_farbe(kontext, z, t["akzent"])
             sonst:
                 _uim_farbe(kontext, z, t["flaeche_hover"])
@@ -3127,8 +3223,8 @@ funktion _uim_z_iconview(kontext, z, w, ox, oy):
             sonst:
                 _uim_farbe(kontext, z, t["akzent"])
                 _uim_zf_rechteck_rund(kontext, z, tx + 8, ty + 8, tile_innen_b - 16, tile_innen_b - 16, 4, falsch)
-            wenn idx == w["auswahl"]:
-                _uim_farbe(kontext, z, t["auswahl_text"])
+            wenn ist_auswahl:
+                _uim_farbe(kontext, z, _uim_auswahl_text_farbe(t, "text"))
             sonst:
                 _uim_farbe(kontext, z, t["text"])
             setze tile_text_b auf tile_b - abstand
@@ -3136,6 +3232,9 @@ funktion _uim_z_iconview(kontext, z, w, ox, oy):
                 setze tile_text_b auf 1
             setze tile_text auf _uim_text_ellipsis(kontext, z, _uim_iconview_text(w["eintraege"][idx]), tile_text_b, t["schrift"] - 1)
             _uim_zf_text(kontext, z, tx, ty + tile_innen_b + 2, tile_text, t["schrift"] - 1)
+            wenn w["auswahl_modus"] == "mehrfach" und widget_hat_fokus und w["auswahl_fokus"] == idx:
+                _uim_farbe(kontext, z, t["akzent"])
+                _uim_zf_rechteck_rund(kontext, z, tx, ty, tile_innen_b, tile_innen_b, 5, falsch)
             setze idx auf idx + 1
             setze col auf col + 1
         setze row auf row + 1

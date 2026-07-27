@@ -3062,3 +3062,218 @@ zeige "C2B-B3-EINZEL " + text(c2b_b3_single_l_ok) + "/" + text(c2b_b3_single_g_o
 # Bestehende W5G-TERMINAL-TASTEN und KALENDER-D16 bleiben der dauerhafte
 # Beleg fuer unveraenderte Return/space-Aktivierung der Fremdtypen.
 zeige "C2B-B3-GUARD " + text(S["c2b_b3_sync"]) + "/" + text(c2b_b3_scroll_ok) + "/" + text(c2b_b3_liste["auswahl_fokus"] == 1)
+
+# --- C2B/B5: Mehrfachauswahl muss im Zeichenpfad sichtbar sein ---
+funktion t_c2b_b5_zeilen(n):
+    setze ergebnis auf []
+    setze i auf 0
+    solange i < n:
+        ergebnis.hinzufügen("Z" + text(i))
+        setze i auf i + 1
+    gib_zurück ergebnis
+
+funktion t_c2b_b5_paket(typ, n, h):
+    setze p auf {}
+    wenn typ == "iconview":
+        p["root"] = uim_mock_wurzel(440, h + 20)
+        p["w"] = uim_iconview(0, 0, 420, h, t_c2b_b5_icons(n), nichts)
+        p["op"] = "rechteck_rund"
+    sonst:
+        p["root"] = uim_mock_wurzel(220, h + 20)
+        p["op"] = "rechteck"
+        wenn typ == "liste":
+            p["w"] = uim_liste(0, 0, 180, h, t_c2b_b5_zeilen(n), nichts)
+        sonst wenn typ == "baum":
+            setze knoten auf []
+            setze i auf 0
+            solange i < n:
+                knoten.hinzufügen(uim_baum_knoten("K" + text(i), []))
+                setze i auf i + 1
+            p["w"] = uim_baum(0, 0, 180, h, knoten, nichts)
+        sonst:
+            setze zeilen auf []
+            setze i auf 0
+            solange i < n:
+                zeilen.hinzufügen(["G" + text(i)])
+                setze i auf i + 1
+            p["w"] = uim_datengitter(0, 0, 180, h, ["S"], zeilen, nichts)
+    uim_hinzu(p["root"], p["w"])
+    gib_zurück p
+
+funktion t_c2b_b5_icons(n):
+    setze ergebnis auf []
+    setze i auf 0
+    solange i < n:
+        ergebnis.hinzufügen({"icon": "A", "text": "I" + text(i)})
+        setze i auf i + 1
+    gib_zurück ergebnis
+
+funktion t_c2b_b5_statistik(kontext, highlight_op, fallback_feld, typ, auswahl_menge):
+    setze stat auf {"fuellungen": 0, "texte": 0, "konturen": 0, "clip_ok": wahr}
+    setze t auf kontext["theme"]
+    setze auswahl_text_farbe auf t[fallback_feld]
+    wenn t.enthält("auswahl_text"):
+        setze auswahl_text_farbe auf t["auswahl_text"]
+    setze praefix auf "Z"
+    wenn typ == "datengitter":
+        setze praefix auf "G"
+    sonst wenn typ == "baum":
+        setze praefix auf "K"
+    sonst wenn typ == "iconview":
+        setze praefix auf "I"
+    setze auswahl_labels auf {}
+    für idx in auswahl_menge:
+        auswahl_labels[praefix + text(idx)] = wahr
+    setze clip_tiefe auf 0
+    setze hat_clip auf falsch
+    für befehl in uim_mock_befehle(kontext):
+        setze op_name auf text(befehl["op"])
+        wenn op_name == "clip_setze":
+            setze hat_clip auf wahr
+            setze clip_tiefe auf clip_tiefe + 1
+        sonst wenn op_name == "clip_loesche":
+            setze clip_tiefe auf clip_tiefe - 1
+            wenn clip_tiefe < 0:
+                stat["clip_ok"] = falsch
+        sonst wenn op_name == highlight_op and text(befehl["farbe"]) == text(kontext["theme"]["akzent"]) and clip_tiefe > 0:
+            setze args auf befehl["args"]
+            wenn args[länge(args) - 1]:
+                stat["fuellungen"] = stat["fuellungen"] + 1
+            sonst:
+                stat["konturen"] = stat["konturen"] + 1
+        sonst wenn op_name == "text" and clip_tiefe > 0 and auswahl_labels.enthält(text(befehl["args"][2])) and text(befehl["farbe"]) == text(auswahl_text_farbe):
+            stat["texte"] = stat["texte"] + 1
+    wenn clip_tiefe != 0 oder hat_clip == falsch:
+        stat["clip_ok"] = falsch
+    gib_zurück stat
+
+funktion t_c2b_b5_mehrfach(typ):
+    setze h auf 110
+    wenn typ == "datengitter":
+        setze h auf 120
+    sonst wenn typ == "iconview":
+        setze h auf 68
+    setze p auf t_c2b_b5_paket(typ, 5, h)
+    setze w auf p["w"]
+    uim_auswahlmodus_setze(p["root"], w, "mehrfach")
+    uim_wert_setze(p["root"], w, [1, 3, 4])
+    w["auswahl_fokus"] = 1
+    p["root"]["fokus"] = w
+    uim_mock_zeichne(p["root"])
+    setze fallback_feld auf "hintergrund"
+    wenn typ == "datengitter" oder typ == "iconview":
+        setze fallback_feld auf "text"
+    setze stat auf t_c2b_b5_statistik(p["root"], p["op"], fallback_feld, typ, w["auswahl_menge"])
+    gib_zurück stat["fuellungen"] == 3 and stat["texte"] == 3 and stat["konturen"] == 1 and stat["clip_ok"]
+
+zeige "C2B-B5-MEHRFACH " + text(t_c2b_b5_mehrfach("liste")) + "/" + text(t_c2b_b5_mehrfach("datengitter")) + "/" + text(t_c2b_b5_mehrfach("baum")) + "/" + text(t_c2b_b5_mehrfach("iconview"))
+
+funktion t_c2b_b5_einzel(typ):
+    setze h auf 110
+    wenn typ == "datengitter":
+        setze h auf 120
+    sonst wenn typ == "iconview":
+        setze h auf 68
+    setze p auf t_c2b_b5_paket(typ, 5, h)
+    uim_wert_setze(p["root"], p["w"], 2)
+    p["root"]["fokus"] = p["w"]
+    uim_mock_zeichne(p["root"])
+    setze fallback_feld auf "hintergrund"
+    wenn typ == "datengitter" oder typ == "iconview":
+        setze fallback_feld auf "text"
+    setze stat auf t_c2b_b5_statistik(p["root"], p["op"], fallback_feld, typ, p["w"]["auswahl_menge"])
+    gib_zurück stat["fuellungen"] == 1 and stat["texte"] == 1 and stat["konturen"] == 0 and stat["clip_ok"] and p["w"]["auswahl_modus"] == "einzel"
+
+zeige "C2B-B5-EINZEL " + text(t_c2b_b5_einzel("liste")) + "/" + text(t_c2b_b5_einzel("datengitter")) + "/" + text(t_c2b_b5_einzel("baum")) + "/" + text(t_c2b_b5_einzel("iconview"))
+
+setze c2b_b5_f auf t_c2b_b5_paket("liste", 5, 110)
+setze c2b_b5_fw auf c2b_b5_f["w"]
+c2b_b5_fw["auswahl_modus"] = "mehrfach"
+c2b_b5_fw["auswahl_menge"] = [4, 1, 3]
+c2b_b5_fw["auswahl"] = 4
+c2b_b5_fw["selected"] = wahr
+c2b_b5_fw["auswahl_anker"] = 4
+c2b_b5_fw["auswahl_fokus"] = 4
+setze c2b_b5_f_vor auf text(c2b_b5_fw["auswahl_menge"]) + "/" + text(c2b_b5_fw["auswahl"]) + "/" + text(c2b_b5_fw["selected"]) + "/" + text(c2b_b5_fw["auswahl_anker"]) + "/" + text(c2b_b5_fw["auswahl_fokus"])
+setze c2b_b5_f_klass auf _uim_auswahl_render_cursorfaehig(c2b_b5_fw["auswahl_menge"]) == falsch
+uim_mock_zeichne(c2b_b5_f["root"])
+setze c2b_b5_f_stat auf t_c2b_b5_statistik(c2b_b5_f["root"], "rechteck", "hintergrund", "liste", c2b_b5_fw["auswahl_menge"])
+setze c2b_b5_f_nach auf text(c2b_b5_fw["auswahl_menge"]) + "/" + text(c2b_b5_fw["auswahl"]) + "/" + text(c2b_b5_fw["selected"]) + "/" + text(c2b_b5_fw["auswahl_anker"]) + "/" + text(c2b_b5_fw["auswahl_fokus"])
+setze c2b_b5_f_render auf c2b_b5_f_stat["fuellungen"] == 3 and c2b_b5_f_stat["texte"] == 3 and c2b_b5_f_stat["clip_ok"]
+zeige "C2B-B5-FALLBACK " + text(c2b_b5_f_klass) + "/" + text(c2b_b5_f_render) + "/" + text(c2b_b5_f_vor == c2b_b5_f_nach) + "/" + text(_uim_auswahl_render_cursorfaehig([1, 3, 4])) + "/" + text(_uim_auswahl_render_cursorfaehig([1, 1, 3]) == falsch) + "/" + text(_uim_auswahl_render_cursorfaehig([1, "x", 3]) == falsch)
+
+funktion t_c2b_b5_scroll(typ):
+    setze zh auf _uim_zeilenhoehe(c2b_b5_f["root"])
+    setze h auf zh * 3
+    setze scroll_y auf zh * 2
+    setze menge auf [0, 2, 4, 9]
+    setze n auf 10
+    wenn typ == "datengitter":
+        setze h auf zh * 4
+    sonst wenn typ == "iconview":
+        setze h auf 68
+        setze scroll_y auf 68
+        setze menge auf [0, 5, 7, 11]
+        setze n auf 12
+    setze p auf t_c2b_b5_paket(typ, n, h)
+    setze w auf p["w"]
+    w["auswahl_modus"] = "mehrfach"
+    w["auswahl_menge"] = menge
+    w["auswahl"] = menge[länge(menge) - 1]
+    w["selected"] = wahr
+    w["auswahl_fokus"] = w["auswahl"]
+    w["scroll_y"] = scroll_y
+    p["root"]["fokus"] = w
+    uim_mock_zeichne(p["root"])
+    setze fallback_feld auf "hintergrund"
+    wenn typ == "datengitter" oder typ == "iconview":
+        setze fallback_feld auf "text"
+    setze stat auf t_c2b_b5_statistik(p["root"], p["op"], fallback_feld, typ, w["auswahl_menge"])
+    gib_zurück stat["fuellungen"] == 2 and stat["texte"] == 2 and stat["konturen"] == 0 and stat["clip_ok"]
+
+zeige "C2B-B5-SCROLL " + text(t_c2b_b5_scroll("liste")) + "/" + text(t_c2b_b5_scroll("datengitter")) + "/" + text(t_c2b_b5_scroll("baum")) + "/" + text(t_c2b_b5_scroll("iconview"))
+
+setze c2b_b5_zh auf _uim_zeilenhoehe(c2b_b5_f["root"])
+setze c2b_b5_v auf t_c2b_b5_paket("liste", 1000, c2b_b5_zh * 1000)
+setze c2b_b5_v_menge auf []
+setze c2b_b5_v_i auf 0
+solange c2b_b5_v_i < 1000:
+    c2b_b5_v_menge.hinzufügen(c2b_b5_v_i)
+    setze c2b_b5_v_i auf c2b_b5_v_i + 1
+c2b_b5_v["w"]["auswahl_modus"] = "mehrfach"
+c2b_b5_v["w"]["auswahl_menge"] = c2b_b5_v_menge
+setze c2b_b5_v_klass auf _uim_auswahl_render_cursorfaehig(c2b_b5_v_menge)
+uim_mock_zeichne(c2b_b5_v["root"])
+setze c2b_b5_v_stat auf t_c2b_b5_statistik(c2b_b5_v["root"], "rechteck", "hintergrund", "liste", c2b_b5_v_menge)
+zeige "C2B-B5-SKALA " + text(c2b_b5_v_klass) + "/" + text(c2b_b5_v_stat["fuellungen"] == 1000) + "/" + text(c2b_b5_v_stat["texte"] == 1000) + "/" + text(c2b_b5_v_stat["clip_ok"])
+
+setze c2b_b5_override auf t_c2b_b5_paket("iconview", 3, 68)
+uim_theme_setze(c2b_b5_override["root"], uim_theme_glass())
+uim_wert_setze(c2b_b5_override["root"], c2b_b5_override["w"], 1)
+uim_mock_zeichne(c2b_b5_override["root"])
+setze c2b_b5_override_stat auf t_c2b_b5_statistik(c2b_b5_override["root"], "rechteck_rund", "text", "iconview", c2b_b5_override["w"]["auswahl_menge"])
+zeige "C2B-B5-AUSWAHL-OVERRIDE " + text(c2b_b5_override_stat["fuellungen"] == 1 and c2b_b5_override_stat["texte"] == 1 and c2b_b5_override_stat["clip_ok"])
+
+funktion t_c2b_b5_grid_kopf_sichtbar(root, erwartet_farbe):
+    setze clip_tiefe auf 0
+    setze gefunden auf falsch
+    für befehl in uim_mock_befehle(root):
+        setze op_name auf text(befehl["op"])
+        wenn op_name == "clip_setze":
+            setze clip_tiefe auf clip_tiefe + 1
+        sonst wenn op_name == "clip_loesche":
+            setze clip_tiefe auf clip_tiefe - 1
+        sonst wenn op_name == "text" and clip_tiefe == 0 and text(befehl["args"][2]) == "S" and text(befehl["farbe"]) == text(erwartet_farbe):
+            setze gefunden auf wahr
+    gib_zurück gefunden and clip_tiefe == 0
+
+setze c2b_b5_kopf auf t_c2b_b5_paket("datengitter", 2, 80)
+uim_mock_zeichne(c2b_b5_kopf["root"])
+setze c2b_b5_kopf_dunkel auf t_c2b_b5_grid_kopf_sichtbar(c2b_b5_kopf["root"], c2b_b5_kopf["root"]["theme"]["hintergrund"])
+uim_theme_setze(c2b_b5_kopf["root"], uim_theme_hell())
+uim_mock_zeichne(c2b_b5_kopf["root"])
+setze c2b_b5_kopf_hell auf t_c2b_b5_grid_kopf_sichtbar(c2b_b5_kopf["root"], c2b_b5_kopf["root"]["theme"]["hintergrund"])
+uim_theme_setze(c2b_b5_kopf["root"], uim_theme_glass())
+uim_mock_zeichne(c2b_b5_kopf["root"])
+setze c2b_b5_kopf_glass auf t_c2b_b5_grid_kopf_sichtbar(c2b_b5_kopf["root"], c2b_b5_kopf["root"]["theme"]["auswahl_text"])
+zeige "C2B-B5-GRID-KOPF " + text(c2b_b5_kopf_dunkel) + "/" + text(c2b_b5_kopf_hell) + "/" + text(c2b_b5_kopf_glass)
