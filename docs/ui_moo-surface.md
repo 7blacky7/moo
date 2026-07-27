@@ -49,10 +49,31 @@ Der Compiler exponiert ausschließlich diesen kanonischen Satz:
 - `surface_circle(surface, cx, cy, radius, r, g, b, a)`
 - `surface_line(surface, x0, y0, x1, y1, r, g, b, a)`
 - `surface_read_pixel(surface, x, y)`
+- `surface_text(surface, x, y, skala, text, r, g, b, a)`
+- `surface_text_breite(text, skala)`
+- `surface_text_stil(surface, x, y, skala, text, stil, r, g, b, a)`
+- `surface_text_breite_stil(text, skala, stil)`
+- `surface_text_glyphen_status(text, stil)`
 - `surface_hash(surface)`
 - `surface_snapshot_to_frame(surface)`
 
 Mutatoren liefern Bool. Ungültige Konstruktorparameter liefern `nichts`; ungültige Pixelkoordinaten liefern `nichts`. Handles werden nur geliehen und von den Builtins nicht freigegeben.
+
+Die stilfähigen Text-Builtins verwenden diese festen IDs:
+
+| ID | Schnitt |
+|---:|---|
+| `0` | normal |
+| `1` | fett |
+| `2` | kursiv |
+| `3` | fett + kursiv |
+| `4` | monospace |
+
+`surface_text_stil(...)` liefert einen Wahrheitswert und bei jedem ungültigen Argument `falsch`. `surface_text_breite_stil(...)` liefert die Breite als Zahl; `surface_text_glyphen_status(...)` liefert `{vollstaendig, ungueltig_utf8, fehlende_glyphen}`. Messen und Status liefern bei ungültigen Argumenten `nichts` — ausdrücklich nicht `0`.
+
+Rendern, Messen und Status verwenden denselben UTF-8-Dekoder. Ungültige Bytefolgen ergeben je längster gültiger Teilfolge genau ein Ersatzzeichen gemäß Unicode-Tabelle 3-7. Fehlende Glyphen werden ebenfalls als `?` gerendert und mit dessen Vorschub gemessen.
+
+Wichtig für Metriktests: Der kursive Schnitt hat dieselben Vorschübe wie normal. Ein Test nur mit kursivem Text kann daher eine stilblinde Breitenmessung nicht erkennen; dafür fett oder monospace verwenden.
 
 ## ui_moo-Adapter
 
@@ -75,8 +96,8 @@ Die Surface-Dimension ist nach der Erstellung fest. Für eine andere Größe wir
 - Schlägt ein Clip-Push oder -Pop fehl, liefert der Widgetrenderer `falsch`; ein fehlgeschlagener Push zeichnet keine Kinder und führt kein Pop aus. Der Surface-Kontext bleibt dabei `ungueltig` (fail-closed).
 - Farben werden per ganzzahligem source-over komponiert.
 - Gefüllte abgerundete Rechtecke bleiben über `surface_roundrect` und den Surface-Adapter verfügbar. Ungefüllte Varianten degradieren derzeit zu einem eckigen Umriss; deshalb meldet das Backend die Capability `rechteck_rund = falsch`.
-- Text bleibt vollständig in Moo: `ui_moo_surface` rastert den vorhandenen deterministischen `_UIMF`-3x5-Font durch gefüllte Surface-Rechtecke.
-- Es gibt keinen nativen Text-, Font- oder Textbreiten-Builtin.
+- Text wird deterministisch aus fünf eingebetteten, antialiasierten DejaVu-Sans-Schnitten in der C-Surface gerastert; es gibt keinen Systemfont- oder Laufzeit-Fallback.
+- Der Surface-Adapter reicht Zeichnung und Breitenmessung mit derselben Schnitt-ID an die nativen `surface_text_*`-Builtins weiter.
 - Der Hash ist lowercase FNV-1a-64 über Breite/ Höhe als little-endian 32 Bit und anschließend die RGBA-Bytes in top-left-Zeilenreihenfolge.
 
 Kanonischer Hashvektor: 2x1 mit `[255,0,0,255]` und `[0,255,0,0]` ergibt `e2337428034aea61`.
