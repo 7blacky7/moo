@@ -37,7 +37,8 @@ Maus und Tastatur folgen demselben Auswahlvertrag:
 | Geste | `einzel` | `mehrfach` |
 |---|---|---|
 | Klick / Pfeil | Ziel ersetzt die Auswahl | Ziel ersetzt die Auswahl |
-| Strg+Klick / Space | Klick wie ohne Modifier; Space bleibt allgemeine Aktivierung | fokussiertes Ziel wird hinzugefügt oder entfernt |
+| Strg+Klick | Klick wie ohne Modifier | angeklicktes Ziel wird hinzugefügt oder entfernt |
+| Space | allgemeine Aktivierung; Auswahl bleibt unverändert | fokussiertes Ziel wird hinzugefügt oder entfernt |
 | Shift+Klick / Shift+Pfeil | wie ohne Modifier | geschlossener Bereich vom stabilen Anker zum Ziel ersetzt die Auswahl |
 | Strg+Shift+Klick / Strg+Shift+Pfeil | wie ohne Modifier | Bereich vom Anker zum Ziel wird addiert |
 | Strg+Pfeil | wie Pfeil ohne Modifier | nur Fokus und Sichtbarkeit ändern sich; Auswahl und Callback bleiben unverändert |
@@ -58,10 +59,15 @@ Moduswechsel und Datenreset lösen keinen Auswahl-Callback aus.
 
 `auswahl_menge` ist für diese vier Typen die einzige Auswahlwahrheit. Die
 Kompatibilitätsfelder `auswahl` und `selected` werden ausschließlich daraus
-abgeleitet und dürfen von Aufrufern niemals direkt beschrieben werden. Auswahl
-wird nur über `uim_wert_setze`, `uim_auswahlmodus_setze`/`uim_selection_mode_set`,
-`uim_optionen` oder `uim_baue` geändert; `auswahl_anker` und `auswahl_fokus` sind
-reiner Interaktionszustand und keine zweite Auswahlwahrheit.
+abgeleitet und dürfen von Aufrufern niemals direkt beschrieben werden.
+Programmatische Auswahländerungen laufen über `uim_wert_setze`,
+`uim_auswahlmodus_setze`/`uim_selection_mode_set`, `uim_optionen`, `uim_baue`
+oder ein bidirektionales `uim_bind(...,"auswahl")` mit `uim_state_setze`; der
+Bindingwert ist im Einzelmodus ein Index und im Mehrfachmodus eine Liste.
+`uim_datengitter_zeilen_setze` leert die Auswahl beim Datenreset. Maus und
+Tastatur verwenden dieselbe zentrale Auswahlwahrheit. `auswahl_anker` und
+`auswahl_fokus` sind reiner Interaktionszustand und keine zweite
+Auswahlwahrheit.
 
 ## Maus, Capture und Fokusverlust
 
