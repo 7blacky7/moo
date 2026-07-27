@@ -528,6 +528,12 @@ MooValue moo_surface_text_breite_stil(MooValue text, MooValue skala,
                                       MooValue stil);
 MooValue moo_surface_text_glyphen_status(MooValue text, MooValue stil);
 
+// C2A-B3: einmaliger Pointer-Metadaten-Snapshot fuer die Moo-Ereigniskante.
+// Rueckgabe immer Dict {domain,mod,zeit,klickzahl,gueltig}; invalid ist
+// {0,0,0,1,falsch} und konsumiert keinen fremden Snapshot.
+MooValue moo_ui_pointer_meta_hole(MooValue handle, MooValue phase,
+                                  MooValue taste);
+
 // === GIF-Recorder (opaker Heap-Typ MOO_GIF, Plan-008 A3B) ===
 // Wrappt den isolierten Encoder-Kern (moo_gif.c / MooGifWriter*, frame-bounded:
 // streamt direkt in die Datei, NIE eine Frame-Sequenz im RAM). Der Handle ist

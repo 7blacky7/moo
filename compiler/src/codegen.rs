@@ -5489,6 +5489,15 @@ impl<'ctx> CodeGen<'ctx> {
                     "ui_host_backend" | "ui_host_backend_name" => {
                         return self.call_rt(self.rt.moo_ui_host_backend_name, &[], "ui_host_backend");
                     }
+                    "ui_pointer_meta_hole" | "ui_pointer_meta_get" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_ui_pointer_meta_hole,
+                            args,
+                            3,
+                            name,
+                            "ui_pointer_meta_hole",
+                        );
+                    }
                     "host_fenster" | "host_window" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;

@@ -1,0 +1,13 @@
+# C2A-B3: Compilerbindung, Typ- und Ungueltigkeitsvertrag des Pointer-Getters.
+
+setze neutral auf ui_pointer_meta_hole(0, 1, 1)
+zeige "C2A-B3-TYP " + text(typ_von(neutral) == "Woerterbuch")
+zeige "C2A-B3-NEUTRAL " + text(neutral["domain"] == 0) + "/" + text(neutral["mod"] == 0) + "/" + text(neutral["zeit"] == 0) + "/" + text(neutral["klickzahl"] == 1) + "/" + text(neutral["gueltig"] == falsch)
+
+setze handle_falsch auf ui_pointer_meta_hole("kein-handle", 1, 1)
+setze phase_falsch auf ui_pointer_meta_hole(0, "press", 1)
+setze taste_falsch auf ui_pointer_meta_hole(0, 1, 1.5)
+zeige "C2A-B3-INVALID " + text(handle_falsch["gueltig"] == falsch and handle_falsch["klickzahl"] == 1) + "/" + text(phase_falsch["gueltig"] == falsch and phase_falsch["domain"] == 0) + "/" + text(taste_falsch["gueltig"] == falsch and taste_falsch["mod"] == 0)
+
+setze alias auf ui_pointer_meta_get(0, 2, 3)
+zeige "C2A-B3-ALIAS " + text(typ_von(alias) == "Woerterbuch" and alias["domain"] == 0 and alias["klickzahl"] == 1 and alias["gueltig"] == falsch)
