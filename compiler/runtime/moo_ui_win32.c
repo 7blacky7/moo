@@ -37,6 +37,7 @@
 
 #include "moo_runtime.h"
 #include "moo_ui.h"
+#include "moo_ui_pointer_meta.h"
 
 /* P013: __thread ist ein GCC/Clang-Keyword — MSVC (C2054, Run 28744810xxx)
  * braucht __declspec(thread). Datei ist Windows-exklusiv, muss aber unter
@@ -2370,6 +2371,61 @@ static const char* w32_keyname(int vk) {
     return buf;
 }
 
+#define MOO_W32_POINTER_PROP L"moo-pointer-meta"
+
+static MooUiPointerMeta w32_pointer_neutral(void) {
+    MooUiPointerMeta meta;
+    memset(&meta, 0, sizeof(meta));
+    meta.click_count = 1u;
+    return meta;
+}
+
+static MooUiPointerTracker* w32_pointer_tracker(HWND hwnd, int create) {
+    MooUiPointerTracker* tracker =
+        (MooUiPointerTracker*)GetPropW(hwnd, MOO_W32_POINTER_PROP);
+    if (!tracker && create) {
+        tracker = (MooUiPointerTracker*)calloc(1, sizeof(*tracker));
+        if (!tracker) return NULL;
+        moo_ui_pointer_tracker_init(tracker);
+        if (!SetPropW(hwnd, MOO_W32_POINTER_PROP, (HANDLE)tracker)) {
+            free(tracker);
+            return NULL;
+        }
+    }
+    return tracker;
+}
+
+static void w32_pointer_tracker_destroy(HWND hwnd) {
+    MooUiPointerTracker* tracker;
+    moo_ui_pointer_clear(MOO_UI_POINTER_DOMAIN_WIN32, (uintptr_t)hwnd);
+    tracker =
+        (MooUiPointerTracker*)RemovePropW(hwnd, MOO_W32_POINTER_PROP);
+    if (!tracker) return;
+    moo_ui_pointer_tracker_reset(tracker);
+    free(tracker);
+}
+
+static uint32_t w32_pointer_modifiers(void) {
+    return moo_ui_pointer_modifiers(
+        (uint32_t)((GetKeyState(VK_SHIFT) & 0x8000) != 0),
+        (uint32_t)((GetKeyState(VK_CONTROL) & 0x8000) != 0),
+        (uint32_t)((GetKeyState(VK_MENU) & 0x8000) != 0),
+        (uint32_t)(((GetKeyState(VK_LWIN) | GetKeyState(VK_RWIN)) &
+                    0x8000) != 0),
+        (uint32_t)((GetKeyState(VK_CAPITAL) & 0x0001) != 0),
+        (uint32_t)((GetKeyState(VK_NUMLOCK) & 0x0001) != 0),
+        (uint32_t)((GetKeyState(VK_RMENU) & 0x8000) != 0));
+}
+
+static MooUiPointerThresholds w32_pointer_thresholds(void) {
+    int width = GetSystemMetrics(SM_CXDOUBLECLK);
+    int height = GetSystemMetrics(SM_CYDOUBLECLK);
+    return moo_ui_pointer_rectangle_thresholds(
+        (uint32_t)GetDoubleClickTime(),
+        width > 0 ? (uint32_t)width : 0u,
+        height > 0 ? (uint32_t)height : 0u);
+}
+
 static LRESULT CALLBACK moo_leinwand_subclass(HWND hwnd, UINT msg,
                                               WPARAM wp, LPARAM lp,
                                               UINT_PTR uid_subclass,
@@ -2384,23 +2440,42 @@ static LRESULT CALLBACK moo_leinwand_subclass(HWND hwnd, UINT msg,
         case WM_LBUTTONDOWN:
         case WM_MBUTTONDOWN:
         case WM_RBUTTONDOWN: {
+            MooUiPointerTracker* tracker;
+            MooUiPointerMeta meta = w32_pointer_neutral();
+            MooCbBox* cb;
+            uint64_t receive_time_ms = 0u;
+            uint32_t receive_time_valid;
+            uint32_t native_time_ms = (uint32_t)(DWORD)GetMessageTime();
+            int x = GET_X_LPARAM(lp);
+            int y = GET_Y_LPARAM(lp);
+            int taste = (msg == WM_LBUTTONDOWN) ? 1
+                      : (msg == WM_MBUTTONDOWN) ? 2 : 3;
             /* Implizites Grab wie GTK: Drag liefert Bewegung/Release auch
              * ausserhalb der Leinwand-Flaeche. */
             SetCapture(hwnd);
             /* UIMOO-1: Klick grabbt Keyboard-Fokus, wenn on_taste gebunden. */
             if (msg == WM_LBUTTONDOWN && GetPropW(hwnd, L"moo-ontaste"))
                 SetFocus(hwnd);
-            MooCbBox* cb = (MooCbBox*)GetPropW(hwnd, L"moo-onmaus");
+            tracker = w32_pointer_tracker(hwnd, 1);
+            receive_time_valid =
+                (uint32_t)moo_ui_pointer_monotonic_ms(&receive_time_ms);
+            if (tracker) {
+                meta = moo_ui_pointer_press(
+                    tracker, (uint32_t)taste, (double)x, (double)y,
+                    native_time_ms, receive_time_ms, receive_time_valid,
+                    w32_pointer_thresholds(), w32_pointer_modifiers());
+            }
+            cb = (MooCbBox*)GetPropW(hwnd, L"moo-onmaus");
             if (cb && cb->v.tag == MOO_FUNC) {
-                int x = GET_X_LPARAM(lp);
-                int y = GET_Y_LPARAM(lp);
-                int taste = (msg == WM_LBUTTONDOWN) ? 1
-                          : (msg == WM_MBUTTONDOWN) ? 2 : 3;
-                MooValue rv = moo_func_call_4(cb->v,
-                    wrap_hwnd(hwnd),
-                    moo_number((double)x),
-                    moo_number((double)y),
+                MooValue rv;
+                moo_ui_pointer_publish(
+                    MOO_UI_POINTER_DOMAIN_WIN32, (uintptr_t)hwnd,
+                    MOO_UI_POINTER_PHASE_PRESS, (uint32_t)taste, meta);
+                rv = moo_func_call_4(cb->v, wrap_hwnd(hwnd),
+                    moo_number((double)x), moo_number((double)y),
                     moo_number((double)taste));
+                moo_ui_pointer_clear(
+                    MOO_UI_POINTER_DOMAIN_WIN32, (uintptr_t)hwnd);
                 moo_release(rv);
             }
             break;
@@ -2421,16 +2496,27 @@ static LRESULT CALLBACK moo_leinwand_subclass(HWND hwnd, UINT msg,
         case WM_LBUTTONUP:
         case WM_MBUTTONUP:
         case WM_RBUTTONUP: {
+            MooUiPointerTracker* tracker = w32_pointer_tracker(hwnd, 0);
+            MooUiPointerMeta meta = w32_pointer_neutral();
+            MooCbBox* cb;
+            int x = GET_X_LPARAM(lp);
+            int y = GET_Y_LPARAM(lp);
+            int taste = (msg == WM_LBUTTONUP) ? 1
+                      : (msg == WM_MBUTTONUP) ? 2 : 3;
             if (GetCapture() == hwnd) ReleaseCapture();
-            MooCbBox* cb = (MooCbBox*)GetPropW(hwnd, L"moo-onmauslos");
+            if (tracker)
+                meta = moo_ui_pointer_release(tracker, (uint32_t)taste);
+            cb = (MooCbBox*)GetPropW(hwnd, L"moo-onmauslos");
             if (cb && cb->v.tag == MOO_FUNC) {
-                int x = GET_X_LPARAM(lp);
-                int y = GET_Y_LPARAM(lp);
-                int taste = (msg == WM_LBUTTONUP) ? 1
-                          : (msg == WM_MBUTTONUP) ? 2 : 3;
-                MooValue rv = moo_func_call_4(cb->v, wrap_hwnd(hwnd),
+                MooValue rv;
+                moo_ui_pointer_publish(
+                    MOO_UI_POINTER_DOMAIN_WIN32, (uintptr_t)hwnd,
+                    MOO_UI_POINTER_PHASE_RELEASE, (uint32_t)taste, meta);
+                rv = moo_func_call_4(cb->v, wrap_hwnd(hwnd),
                     moo_number((double)x), moo_number((double)y),
                     moo_number((double)taste));
+                moo_ui_pointer_clear(
+                    MOO_UI_POINTER_DOMAIN_WIN32, (uintptr_t)hwnd);
                 moo_release(rv);
             }
             break;
@@ -2490,6 +2576,7 @@ static LRESULT CALLBACK moo_leinwand_subclass(HWND hwnd, UINT msg,
             break;
         }
         case WM_NCDESTROY: {
+            w32_pointer_tracker_destroy(hwnd);
             cb_box_free_prop(hwnd, L"moo-onmaus");
             cb_box_free_prop(hwnd, L"moo-onbewegung");
             cb_box_free_prop(hwnd, L"moo-onmauslos");

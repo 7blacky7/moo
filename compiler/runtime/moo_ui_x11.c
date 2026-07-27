@@ -26,6 +26,7 @@
 
 #include "moo_ui_host.h"
 #include "moo_runtime.h"
+#include "moo_ui_pointer_meta.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +36,7 @@
 #include <xcb/xcb.h>
 #include <xcb/shm.h>
 #include <xcb/xcb_keysyms.h>
+#include <X11/keysym.h>
 
 /* ------------------------------------------------------------------ */
 
@@ -53,6 +55,7 @@ typedef struct X11Fenster {
     int hat_cb;
     int16_t press_root_x, press_root_y;
     uint32_t press_zeit;
+    MooUiPointerTracker pointer_tracker;
 } X11Fenster;
 
 static struct {
@@ -69,11 +72,60 @@ static struct {
     /* Atome */
     xcb_atom_t wm_protocols, wm_delete, motif_hints, net_moveresize;
     xcb_atom_t wm_change_state, net_state, net_max_h, net_max_v;
+    uint32_t mod_alt, mod_super, mod_caps, mod_num, mod_altgr;
 } X;
 
 static void xlog(const char* was) {
     const char* d = getenv("MOO_UI_DEBUG");
     if (d && d[0] == '1') fprintf(stderr, "[moo_ui_x11] %s\n", was);
+}
+
+static void x11_modifier_refresh(void) {
+    xcb_get_modifier_mapping_reply_t* reply;
+    xcb_keycode_t* keycodes;
+    uint32_t group;
+    X.mod_alt = 0u;
+    X.mod_super = 0u;
+    X.mod_caps = 0u;
+    X.mod_num = 0u;
+    X.mod_altgr = 0u;
+    if (!X.conn || !X.keysyms) return;
+    reply = xcb_get_modifier_mapping_reply(
+        X.conn, xcb_get_modifier_mapping(X.conn), NULL);
+    if (!reply) return;
+    keycodes = xcb_get_modifier_mapping_keycodes(reply);
+    for (group = 0u; group < 8u; ++group) {
+        uint32_t slot;
+        uint32_t mask = UINT32_C(1) << group;
+        for (slot = 0u; slot < reply->keycodes_per_modifier; ++slot) {
+            xcb_keycode_t code =
+                keycodes[group * reply->keycodes_per_modifier + slot];
+            int column;
+            if (!code) continue;
+            for (column = 0; column < 4; ++column) {
+                xcb_keysym_t sym =
+                    xcb_key_symbols_get_keysym(X.keysyms, code, column);
+                if (sym == XK_Alt_L || sym == XK_Alt_R)
+                    X.mod_alt |= mask;
+                else if (sym == XK_Super_L || sym == XK_Super_R)
+                    X.mod_super |= mask;
+                else if (sym == XK_Caps_Lock)
+                    X.mod_caps |= mask;
+                else if (sym == XK_Num_Lock)
+                    X.mod_num |= mask;
+                else if (sym == XK_ISO_Level3_Shift ||
+                         sym == XK_Mode_switch)
+                    X.mod_altgr |= mask;
+            }
+        }
+    }
+    free(reply);
+}
+
+static uint32_t x11_pointer_modifiers(uint32_t state) {
+    return moo_ui_pointer_modifiers_from_state(
+        state, XCB_MOD_MASK_SHIFT, XCB_MOD_MASK_CONTROL,
+        X.mod_alt, X.mod_super, X.mod_caps, X.mod_num, X.mod_altgr);
 }
 
 static inline MooValue wrap_fenster(X11Fenster* f) {
@@ -153,6 +205,7 @@ static int ensure_x11(void) {
     xcb_create_colormap(X.conn, XCB_COLORMAP_ALLOC_NONE, X.colormap,
                         X.screen->root, X.visual32);
     X.keysyms = xcb_key_symbols_alloc(X.conn);
+    x11_modifier_refresh();
     const xcb_query_extension_reply_t* shm =
         xcb_get_extension_data(X.conn, &xcb_shm_id);
     X.hat_shm = shm && shm->present;
@@ -257,6 +310,8 @@ static MooValue x11_host_schliessen(MooValue fenster) {
     X11Fenster* f = unwrap_fenster(fenster);
     if (!f || f != X.fenster) return moo_bool(0);
     if (f->hat_cb) { moo_release(f->input_cb); f->hat_cb = 0; }
+    moo_ui_pointer_clear(MOO_UI_POINTER_DOMAIN_X11, (uintptr_t)f);
+    moo_ui_pointer_tracker_reset(&f->pointer_tracker);
     shm_freigeben(f);
     xcb_free_gc(X.conn, f->gc);
     xcb_destroy_window(X.conn, f->win);
@@ -340,10 +395,24 @@ static void x11_event(xcb_generic_event_t* ev) {
     case XCB_BUTTON_PRESS: {
         xcb_button_press_event_t* e = (xcb_button_press_event_t*)ev;
         if (e->detail >= 1 && e->detail <= 3) {
+            uint64_t receive_time_ms = 0u;
+            uint32_t receive_time_valid =
+                (uint32_t)moo_ui_pointer_monotonic_ms(&receive_time_ms);
+            MooUiPointerMeta meta;
             f->press_root_x = e->root_x;
             f->press_root_y = e->root_y;
             f->press_zeit = e->time;
+            meta = moo_ui_pointer_press(
+                &f->pointer_tracker, e->detail,
+                (double)e->event_x, (double)e->event_y, e->time,
+                receive_time_ms, receive_time_valid,
+                moo_ui_pointer_linux_thresholds(),
+                x11_pointer_modifiers(e->state));
+            moo_ui_pointer_publish(
+                MOO_UI_POINTER_DOMAIN_X11, (uintptr_t)f,
+                MOO_UI_POINTER_PHASE_PRESS, e->detail, meta);
             event_an_moo(f, "maus_runter", e->event_x, e->event_y, e->detail);
+            moo_ui_pointer_clear(MOO_UI_POINTER_DOMAIN_X11, (uintptr_t)f);
         } else if (e->detail == 4 || e->detail == 5) {
             /* Rad: v1 nicht im Vertrag — bewusst still. */
         }
@@ -351,8 +420,15 @@ static void x11_event(xcb_generic_event_t* ev) {
     }
     case XCB_BUTTON_RELEASE: {
         xcb_button_release_event_t* e = (xcb_button_release_event_t*)ev;
-        if (e->detail >= 1 && e->detail <= 3)
+        if (e->detail >= 1 && e->detail <= 3) {
+            MooUiPointerMeta meta =
+                moo_ui_pointer_release(&f->pointer_tracker, e->detail);
+            moo_ui_pointer_publish(
+                MOO_UI_POINTER_DOMAIN_X11, (uintptr_t)f,
+                MOO_UI_POINTER_PHASE_RELEASE, e->detail, meta);
             event_an_moo(f, "maus_hoch", e->event_x, e->event_y, e->detail);
+            moo_ui_pointer_clear(MOO_UI_POINTER_DOMAIN_X11, (uintptr_t)f);
+        }
         break;
     }
     case XCB_MOTION_NOTIFY: {
@@ -373,6 +449,11 @@ static void x11_event(xcb_generic_event_t* ev) {
                      (double)ks, 0, 0);
         break;
     }
+    case XCB_MAPPING_NOTIFY:
+        if (X.keysyms) xcb_key_symbols_free(X.keysyms);
+        X.keysyms = xcb_key_symbols_alloc(X.conn);
+        x11_modifier_refresh();
+        break;
     case XCB_CONFIGURE_NOTIFY: {
         xcb_configure_notify_event_t* e = (xcb_configure_notify_event_t*)ev;
         if (e->width > 0 && e->height > 0 &&

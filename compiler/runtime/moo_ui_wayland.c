@@ -17,11 +17,13 @@
 
 #define _GNU_SOURCE
 #include "moo_ui_host.h"
+#include "moo_ui_pointer_meta.h"
 
 #include <wayland-client.h>
 #include "wayland/xdg-shell-client-protocol.h"
 #include "wayland/xdg-decoration-client-protocol.h"
 #include <xkbcommon/xkbcommon.h>
+#include <xkbcommon/xkbcommon-names.h>
 
 #include <errno.h>
 #include <poll.h>
@@ -71,6 +73,7 @@ typedef struct WlFenster {
     int hat_cb;
     /* frame-Callback-Throttle-Signal */
     int frame_ausstehend;
+    MooUiPointerTracker pointer_tracker;
 } WlFenster;
 
 static struct {
@@ -101,6 +104,23 @@ static struct {
 static void wlog(const char* was) {
     const char* dbg = getenv("MOO_WAYLAND_DEBUG");
     if (dbg && dbg[0] == '1') fprintf(stderr, "[moo_wayland] %s\n", was);
+}
+
+static int wl_modifier_active(const char* name) {
+    return W.xkb_state &&
+           xkb_state_mod_name_is_active(
+               W.xkb_state, name, XKB_STATE_MODS_EFFECTIVE) > 0;
+}
+
+static uint32_t wl_pointer_modifiers(void) {
+    return moo_ui_pointer_modifiers(
+        (uint32_t)wl_modifier_active(XKB_MOD_NAME_SHIFT),
+        (uint32_t)wl_modifier_active(XKB_MOD_NAME_CTRL),
+        (uint32_t)wl_modifier_active(XKB_VMOD_NAME_ALT),
+        (uint32_t)wl_modifier_active(XKB_VMOD_NAME_SUPER),
+        (uint32_t)wl_modifier_active(XKB_MOD_NAME_CAPS),
+        (uint32_t)wl_modifier_active(XKB_VMOD_NAME_NUM),
+        (uint32_t)wl_modifier_active(XKB_VMOD_NAME_LEVEL3));
 }
 
 /* ------------------------------------------------------------------ *
@@ -368,15 +388,42 @@ static void ptr_motion(void* d, struct wl_pointer* p, uint32_t t,
 }
 static void ptr_button(void* d, struct wl_pointer* p, uint32_t serial,
                        uint32_t t, uint32_t button, uint32_t state) {
-    (void)d; (void)p; (void)t;
+    uint32_t taste;
+    const char* art;
+    (void)d; (void)p;
     /* PFLICHT-Punkt 2: Serial fuer xdg_toplevel_move/resize tracken. */
     W.letztes_serial = serial;
-    double taste = button == WL_BTN_LEFT ? 1 : button == WL_BTN_RIGHT ? 3 :
-                   button == WL_BTN_MIDDLE ? 2 : 0;
-    event_an_moo(W.fenster,
-                 state == WL_POINTER_BUTTON_STATE_PRESSED ? "maus_runter"
-                                                          : "maus_hoch",
-                 W.px, W.py, taste);
+    taste = button == WL_BTN_LEFT ? 1u : button == WL_BTN_RIGHT ? 3u :
+            button == WL_BTN_MIDDLE ? 2u : 0u;
+    art = state == WL_POINTER_BUTTON_STATE_PRESSED ? "maus_runter"
+                                                   : "maus_hoch";
+    if (W.fenster && taste >= 1u && taste <= 3u) {
+        MooUiPointerMeta meta;
+        if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
+            uint64_t receive_time_ms = 0u;
+            uint32_t receive_time_valid =
+                (uint32_t)moo_ui_pointer_monotonic_ms(&receive_time_ms);
+            meta = moo_ui_pointer_press(
+                &W.fenster->pointer_tracker, taste, W.px, W.py, t,
+                receive_time_ms, receive_time_valid,
+                moo_ui_pointer_linux_thresholds(),
+                wl_pointer_modifiers());
+        } else {
+            meta = moo_ui_pointer_release(
+                &W.fenster->pointer_tracker, taste);
+        }
+        moo_ui_pointer_publish(
+            MOO_UI_POINTER_DOMAIN_WAYLAND, (uintptr_t)W.fenster,
+            state == WL_POINTER_BUTTON_STATE_PRESSED
+                ? MOO_UI_POINTER_PHASE_PRESS
+                : MOO_UI_POINTER_PHASE_RELEASE,
+            taste, meta);
+        event_an_moo(W.fenster, art, W.px, W.py, (double)taste);
+        moo_ui_pointer_clear(
+            MOO_UI_POINTER_DOMAIN_WAYLAND, (uintptr_t)W.fenster);
+    } else {
+        event_an_moo(W.fenster, art, W.px, W.py, (double)taste);
+    }
 }
 static void ptr_axis(void* d, struct wl_pointer* p, uint32_t t,
                      uint32_t axis, wl_fixed_t v) {
@@ -547,6 +594,8 @@ static MooValue wl_host_schliessen(MooValue fenster) {
     WlFenster* f = unwrap_fenster(fenster);
     if (!f || f != W.fenster) return moo_bool(0);
     if (f->hat_cb) { moo_release(f->input_cb); f->hat_cb = 0; }
+    moo_ui_pointer_clear(MOO_UI_POINTER_DOMAIN_WAYLAND, (uintptr_t)f);
+    moo_ui_pointer_tracker_reset(&f->pointer_tracker);
     puffer_zerstoeren(f);
     if (f->shm_fd >= 0) close(f->shm_fd);
     if (f->deco) zxdg_toplevel_decoration_v1_destroy(f->deco);

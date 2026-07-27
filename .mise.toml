@@ -363,10 +363,26 @@ cat "$OUT/a11y-metadata.log"
 '''
 
 
+[tasks.test-ui-moo-pointer-meta]
+description = "Run deterministic C2A pointer metadata automaton under ASan and UBSan"
+run = '''
+set -eu
+OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-pointer-meta.XXXXXX")"
+trap 'rm -rf "$OUT"' EXIT
+CC="${CC:-cc}"
+SRC="compiler/runtime/tests/test_ui_pointer_meta.c compiler/runtime/moo_ui_pointer_meta.c"
+"$CC" -std=c11 -Wall -Wextra -Werror -pedantic -pthread -fsanitize=address -fno-omit-frame-pointer -Icompiler/runtime $SRC -o "$OUT/pointer-meta-asan"
+ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 "$OUT/pointer-meta-asan"
+"$CC" -std=c11 -Wall -Wextra -Werror -pedantic -pthread -fsanitize=undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -Icompiler/runtime $SRC -o "$OUT/pointer-meta-ubsan"
+UBSAN_OPTIONS=halt_on_error=1 "$OUT/pointer-meta-ubsan"
+'''
+
+
 [tasks.test-ui-moo-input]
 description = "Run toolkit-free Moo input, IME and accessibility gates"
 run = '''
 set -eu
+mise run test-ui-moo-pointer-meta
 mise run test-ui-moo-a11y-metadata
 mise run test-ui-moo-ime-event-contract
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-input.XXXXXX")"
