@@ -22,6 +22,47 @@ Tab-Reihenfolge ist eine Tiefensuche in Einfügereihenfolge über tatsächlich s
 - Liste: Hoch/Runter verändert die Auswahl und scrollt die gewählte Zeile in den sichtbaren Bereich.
 - Wird das fokussierte Widget oder einer seiner Vorfahren deaktiviert, verborgen oder aus dem Baum gelöst, mutiert ein Tastendruck das Widget nicht; der veraltete Fokus wird gelöscht.
 
+## Auswahlmodus für Liste, Datengitter, Baum und Iconview
+
+`liste`, `datengitter`, `baum` und `iconview` beginnen im Modus `einzel`.
+`uim_auswahlmodus_setze(kontext,w,"einzel"|"mehrfach")` beziehungsweise
+`uim_selection_mode_set` wechselt den Modus. `uim_optionen` und `uim_baue`
+akzeptieren dafür `auswahl_modus`; der Modus wird vor einem zugleich gesetzten
+`wert` angewandt. Bestehende Programme bleiben ohne Umschalten im Einzelmodus.
+Dort haben Modifier keine zusätzliche Auswahlwirkung, Space toggelt die Auswahl
+nicht und Return bleibt unverändert im allgemeinen Aktivierungsvertrag.
+
+Maus und Tastatur folgen demselben Auswahlvertrag:
+
+| Geste | `einzel` | `mehrfach` |
+|---|---|---|
+| Klick / Pfeil | Ziel ersetzt die Auswahl | Ziel ersetzt die Auswahl |
+| Strg+Klick / Space | Klick wie ohne Modifier; Space bleibt allgemeine Aktivierung | fokussiertes Ziel wird hinzugefügt oder entfernt |
+| Shift+Klick / Shift+Pfeil | wie ohne Modifier | geschlossener Bereich vom stabilen Anker zum Ziel ersetzt die Auswahl |
+| Strg+Shift+Klick / Strg+Shift+Pfeil | wie ohne Modifier | Bereich vom Anker zum Ziel wird addiert |
+| Strg+Pfeil | wie Pfeil ohne Modifier | nur Fokus und Sichtbarkeit ändern sich; Auswahl und Callback bleiben unverändert |
+| Return | allgemeine Aktivierung, keine neue Auswahlsemantik | allgemeine Aktivierung, keine neue Auswahlsemantik |
+
+Pfeile bewegen Liste, Datengitter und Baum zeilenweise; Iconview behält seine
+zweidimensionale Rasterbewegung. Aus leerer Auswahl beginnt Abwärts/Rechts beim
+ersten und Aufwärts/Links beim letzten Eintrag. Ziele werden an den Grenzen
+geklemmt. Ein gültiger Auswahlgestus ruft `on_auswahl(w,index)` höchstens einmal
+und erst nach vollständiger Zustandssynchronisierung auf; reine Strg-Navigation
+ruft ihn nicht auf.
+
+`uim_wert_hole(w)` liefert in `einzel` weiterhin einen Index oder `-1`. In
+`mehrfach` liefert es stets eine frische, aufsteigend sortierte und duplikatfreie
+Liste; die leere Auswahl ist `[]`. Entsprechend nimmt `uim_wert_setze` im
+Einzelmodus einen Index und im Mehrfachmodus eine Liste. Programmatische Setter,
+Moduswechsel und Datenreset lösen keinen Auswahl-Callback aus.
+
+`auswahl_menge` ist für diese vier Typen die einzige Auswahlwahrheit. Die
+Kompatibilitätsfelder `auswahl` und `selected` werden ausschließlich daraus
+abgeleitet und dürfen von Aufrufern niemals direkt beschrieben werden. Auswahl
+wird nur über `uim_wert_setze`, `uim_auswahlmodus_setze`/`uim_selection_mode_set`,
+`uim_optionen` oder `uim_baue` geändert; `auswahl_anker` und `auswahl_fokus` sind
+reiner Interaktionszustand und keine zweite Auswahlwahrheit.
+
 ## Maus, Capture und Fokusverlust
 
 Nur die Primärtaste gehört zum v1-Vertrag. Press und Release werden flankenbasiert normalisiert.
