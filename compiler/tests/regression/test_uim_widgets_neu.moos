@@ -2758,3 +2758,206 @@ setze c2a_fb_fremd_ok auf c2a_fb["_maus_blockiert_bis_los"] and c2a_fb["_maus_ta
 uim_mock_maus_taste_metadaten(c2a_fb, 4, 4, 1, falsch, 5, 503, 1)
 setze c2a_fb_eigen_ok auf c2a_fb["_maus_blockiert_bis_los"] == falsch and c2a_fb["_maus_war"] == falsch
 zeige "C2A-FOKUSBLOCK " + text(c2a_fb_fremd_ok) + "/" + text(c2a_fb_eigen_ok)
+
+# --- C2B/B1: eine Auswahlwahrheit, Modi, Zustand und Datenreset ---
+setze c2b_b1_root auf uim_mock_wurzel(420, 260)
+setze c2b_b1_liste auf uim_liste(0, 0, 160, 100, ["A", "B", "C", "D"], nichts)
+uim_hinzu(c2b_b1_root, c2b_b1_liste)
+setze c2b_b1_default_ok auf c2b_b1_liste["auswahl_modus"] == "einzel" and uim_wert_hole(c2b_b1_liste) == 0 - 1 and länge(c2b_b1_liste["auswahl_menge"]) == 0 and c2b_b1_liste["selected"] == falsch
+setze c2b_b1_modus_ok auf uim_auswahlmodus_setze(c2b_b1_root, c2b_b1_liste, "mehrfach") and uim_wert_setze(c2b_b1_root, c2b_b1_liste, [2, 0, 2, 1])
+setze c2b_b1_wert auf uim_wert_hole(c2b_b1_liste)
+setze c2b_b1_kanon_ok auf länge(c2b_b1_wert) == 3 and c2b_b1_wert[0] == 0 and c2b_b1_wert[1] == 1 and c2b_b1_wert[2] == 2 and c2b_b1_liste["auswahl"] == 1 and c2b_b1_liste["auswahl_anker"] == 1 and c2b_b1_liste["auswahl_fokus"] == 1 and c2b_b1_liste["selected"]
+c2b_b1_wert.hinzufügen(3)
+setze c2b_b1_kopie_ok auf länge(uim_wert_hole(c2b_b1_liste)) == 3
+setze c2b_b1_vor_invalid auf uim_wert_hole(c2b_b1_liste)
+setze c2b_b1_invalid_ok auf uim_wert_setze(c2b_b1_root, c2b_b1_liste, [0, 1.5]) == falsch and länge(uim_wert_hole(c2b_b1_liste)) == länge(c2b_b1_vor_invalid) and c2b_b1_liste["auswahl"] == 1
+zeige "C2B-B1-KANON " + text(c2b_b1_default_ok) + "/" + text(c2b_b1_modus_ok) + "/" + text(c2b_b1_kanon_ok) + "/" + text(c2b_b1_kopie_ok) + "/" + text(c2b_b1_invalid_ok)
+
+uim_zustand_setze(c2b_b1_root, c2b_b1_liste, "focused")
+setze c2b_b1_fokus_ok auf uim_zustand_hole(c2b_b1_root, c2b_b1_liste) == "focused" and c2b_b1_liste["selected"] and länge(uim_wert_hole(c2b_b1_liste)) == 3
+uim_zustand_setze(c2b_b1_root, c2b_b1_liste, "disabled")
+setze c2b_b1_disabled_ok auf uim_zustand_hole(c2b_b1_root, c2b_b1_liste) == "disabled" and c2b_b1_liste["selected"] and länge(uim_wert_hole(c2b_b1_liste)) == 3
+setze c2b_b1_einzel_ok auf uim_auswahlmodus_setze(c2b_b1_root, c2b_b1_liste, "einzel") and uim_wert_hole(c2b_b1_liste) == 1 and c2b_b1_liste["auswahl_anker"] == 1 and c2b_b1_liste["auswahl_fokus"] == 1
+setze c2b_b1_zurueck_ok auf uim_selection_mode_set(c2b_b1_root, c2b_b1_liste, "mehrfach") and länge(uim_wert_hole(c2b_b1_liste)) == 1 and uim_wert_hole(c2b_b1_liste)[0] == 1
+zeige "C2B-B1-ZUSTAND " + text(c2b_b1_fokus_ok) + "/" + text(c2b_b1_disabled_ok) + "/" + text(c2b_b1_einzel_ok) + "/" + text(c2b_b1_zurueck_ok)
+
+setze c2b_b1_baum auf uim_baum(180, 0, 160, 100, [uim_baum_knoten("A", []), uim_baum_knoten("B", [])], nichts)
+setze c2b_b1_grid auf uim_datengitter(0, 120, 160, 100, ["S"], [["A"], ["B"], ["C"]], nichts)
+setze c2b_b1_icons auf uim_iconview(180, 120, 160, 100, ["A", "B", "C"], nichts)
+uim_hinzu(c2b_b1_root, c2b_b1_baum)
+uim_hinzu(c2b_b1_root, c2b_b1_grid)
+uim_hinzu(c2b_b1_root, c2b_b1_icons)
+setze c2b_b1_typen_ok auf c2b_b1_baum["auswahl_modus"] == "einzel" and c2b_b1_grid["auswahl_modus"] == "einzel" and c2b_b1_icons["auswahl_modus"] == "einzel" and länge(c2b_b1_baum["auswahl_menge"]) == 0 and länge(c2b_b1_grid["auswahl_menge"]) == 0 and länge(c2b_b1_icons["auswahl_menge"]) == 0
+uim_auswahlmodus_setze(c2b_b1_root, c2b_b1_grid, "mehrfach")
+uim_wert_setze(c2b_b1_root, c2b_b1_grid, [0, 2])
+uim_zustand_setze(c2b_b1_root, c2b_b1_grid, "focused")
+uim_datengitter_zeilen_setze(c2b_b1_root, c2b_b1_grid, [["X"]])
+setze c2b_b1_reset_ok auf länge(uim_wert_hole(c2b_b1_grid)) == 0 and c2b_b1_grid["auswahl"] == 0 - 1 and c2b_b1_grid["auswahl_anker"] == 0 - 1 and c2b_b1_grid["auswahl_fokus"] == 0 - 1 and c2b_b1_grid["selected"] == falsch and c2b_b1_grid["scroll_y"] == 0 and uim_zustand_hole(c2b_b1_root, c2b_b1_grid) == "focused"
+zeige "C2B-B1-TYPEN " + text(c2b_b1_typen_ok) + "/" + text(c2b_b1_reset_ok)
+
+# --- C2B/B2: vier Mauspfade und Desktop-Semantik A ---
+S["c2b_b2_rufe"] = 0
+S["c2b_b2_idx"] = 0 - 1
+S["c2b_b2_menge"] = []
+funktion t_c2b_b2_auswahl(w, idx):
+    S["c2b_b2_rufe"] = S["c2b_b2_rufe"] + 1
+    S["c2b_b2_idx"] = idx
+    S["c2b_b2_menge"] = uim_wert_hole(w)
+    gib_zurück wahr
+
+funktion t_c2b_b2_klick(kontext, x, y, mod, zeit):
+    uim_mock_maus_taste_metadaten(kontext, x, y, 1, wahr, mod, zeit, 1)
+    uim_mock_maus_taste_metadaten(kontext, x, y, 1, falsch, mod, zeit + 1, 1)
+    gib_zurück wahr
+
+setze c2b_b2_lroot auf uim_mock_wurzel(220, 140)
+setze c2b_b2_liste auf uim_liste(0, 0, 180, 110, ["A", "B", "C", "D"], t_c2b_b2_auswahl)
+uim_hinzu(c2b_b2_lroot, c2b_b2_liste)
+uim_auswahlmodus_setze(c2b_b2_lroot, c2b_b2_liste, "mehrfach")
+S["c2b_b2_rufe"] = 0
+t_c2b_b2_klick(c2b_b2_lroot, 20, 25, 0, 1000)
+t_c2b_b2_klick(c2b_b2_lroot, 20, 65, 1, 1010)
+setze c2b_b2_shift auf uim_wert_hole(c2b_b2_liste)
+setze c2b_b2_shift_ok auf länge(c2b_b2_shift) == 3 and c2b_b2_shift[0] == 1 and c2b_b2_shift[1] == 2 and c2b_b2_shift[2] == 3 and c2b_b2_liste["auswahl"] == 3 and c2b_b2_liste["auswahl_anker"] == 1
+t_c2b_b2_klick(c2b_b2_lroot, 20, 45, 2, 1020)
+setze c2b_b2_ctrl auf uim_wert_hole(c2b_b2_liste)
+setze c2b_b2_ctrl_ok auf länge(c2b_b2_ctrl) == 2 and c2b_b2_ctrl[0] == 1 and c2b_b2_ctrl[1] == 3 and c2b_b2_liste["auswahl"] == 3 and c2b_b2_liste["auswahl_anker"] == 2
+t_c2b_b2_klick(c2b_b2_lroot, 20, 5, 3, 1030)
+setze c2b_b2_add auf uim_wert_hole(c2b_b2_liste)
+setze c2b_b2_add_ok auf länge(c2b_b2_add) == 4 and c2b_b2_add[0] == 0 and c2b_b2_add[1] == 1 and c2b_b2_add[2] == 2 and c2b_b2_add[3] == 3 and c2b_b2_liste["auswahl"] == 0 and c2b_b2_liste["auswahl_anker"] == 2 and S["c2b_b2_idx"] == 0 and länge(S["c2b_b2_menge"]) == 4
+setze c2b_b2_callback_ok auf S["c2b_b2_rufe"] == 4
+zeige "C2B-B2-LISTE " + text(c2b_b2_shift_ok) + "/" + text(c2b_b2_ctrl_ok) + "/" + text(c2b_b2_add_ok) + "/" + text(c2b_b2_callback_ok)
+
+setze c2b_b2_single_root auf uim_mock_wurzel(200, 120)
+setze c2b_b2_single auf uim_liste(0, 0, 180, 100, ["A", "B", "C"], t_c2b_b2_auswahl)
+uim_hinzu(c2b_b2_single_root, c2b_b2_single)
+t_c2b_b2_klick(c2b_b2_single_root, 20, 45, 2, 1100)
+setze c2b_b2_single_ok auf uim_wert_hole(c2b_b2_single) == 2 and länge(c2b_b2_single["auswahl_menge"]) == 1 and c2b_b2_single["auswahl_menge"][0] == 2
+
+setze c2b_b2_groot auf uim_mock_wurzel(220, 140)
+setze c2b_b2_grid auf uim_datengitter(0, 0, 180, 110, ["S"], [["A"], ["B"], ["C"]], t_c2b_b2_auswahl)
+uim_hinzu(c2b_b2_groot, c2b_b2_grid)
+uim_auswahlmodus_setze(c2b_b2_groot, c2b_b2_grid, "mehrfach")
+t_c2b_b2_klick(c2b_b2_groot, 20, 30, 0, 1200)
+t_c2b_b2_klick(c2b_b2_groot, 20, 50, 2, 1210)
+setze c2b_b2_grid_wert auf uim_wert_hole(c2b_b2_grid)
+setze c2b_b2_grid_ok auf länge(c2b_b2_grid_wert) == 2 and c2b_b2_grid_wert[0] == 0 and c2b_b2_grid_wert[1] == 1
+
+setze c2b_b2_iroot auf uim_mock_wurzel(260, 120)
+setze c2b_b2_icons auf uim_iconview(0, 0, 240, 100, ["A", "B", "C"], t_c2b_b2_auswahl)
+uim_hinzu(c2b_b2_iroot, c2b_b2_icons)
+uim_auswahlmodus_setze(c2b_b2_iroot, c2b_b2_icons, "mehrfach")
+t_c2b_b2_klick(c2b_b2_iroot, 10, 10, 0, 1300)
+t_c2b_b2_klick(c2b_b2_iroot, 90, 10, 2, 1310)
+setze c2b_b2_icon_wert auf uim_wert_hole(c2b_b2_icons)
+setze c2b_b2_icon_ok auf länge(c2b_b2_icon_wert) == 2 and c2b_b2_icon_wert[0] == 0 and c2b_b2_icon_wert[1] == 1
+
+setze c2b_b2_troot auf uim_mock_wurzel(220, 160)
+setze c2b_b2_eltern auf uim_baum_knoten("P", [uim_baum_knoten("K", [])])
+setze c2b_b2_tree auf uim_baum(0, 0, 180, 130, [c2b_b2_eltern, uim_baum_knoten("Z", [])], t_c2b_b2_auswahl)
+uim_hinzu(c2b_b2_troot, c2b_b2_tree)
+uim_auswahlmodus_setze(c2b_b2_troot, c2b_b2_tree, "mehrfach")
+t_c2b_b2_klick(c2b_b2_troot, 30, 25, 0, 1400)
+t_c2b_b2_klick(c2b_b2_troot, 2, 5, 2, 1410)
+setze c2b_b2_tree_wert auf uim_wert_hole(c2b_b2_tree)
+setze c2b_b2_tree_ok auf c2b_b2_eltern["offen"] and länge(c2b_b2_tree_wert) == 1 and c2b_b2_tree_wert[0] == 0 and c2b_b2_tree["auswahl"] == 0
+zeige "C2B-B2-PFADE " + text(c2b_b2_single_ok) + "/" + text(c2b_b2_grid_ok) + "/" + text(c2b_b2_icon_ok) + "/" + text(c2b_b2_tree_ok)
+
+
+# --- C2B/Nachtrag: Optionen/Builder, Binding und strukturelle Zentralitaet ---
+setze c2b_n_opt auf uim_liste(0, 0, 160, 100, ["A", "B", "C", "D"], nichts)
+uim_optionen(c2b_n_opt, {"auswahl_modus": "mehrfach", "wert": [2, 0], "selected": falsch})
+setze c2b_n_opt_wert auf uim_wert_hole(c2b_n_opt)
+setze c2b_n_opt_ok auf länge(c2b_n_opt_wert) == 2 and c2b_n_opt_wert[0] == 0 and c2b_n_opt_wert[1] == 2 and c2b_n_opt["auswahl"] == 0 and c2b_n_opt["selected"] == (länge(c2b_n_opt_wert) > 0)
+setze c2b_n_leer auf uim_liste(0, 0, 160, 100, ["A", "B"], nichts)
+uim_optionen(c2b_n_leer, {"selected": wahr})
+setze c2b_n_selected_ok auf länge(c2b_n_leer["auswahl_menge"]) == 0 and c2b_n_leer["auswahl"] == 0 - 1 and c2b_n_leer["selected"] == falsch
+setze c2b_n_baue auf uim_baue("liste", {"zeilen": ["A", "B", "C", "D"], "auswahl_modus": "mehrfach", "wert": [3, 1], "selected": falsch})
+setze c2b_n_baue_wert auf uim_wert_hole(c2b_n_baue)
+setze c2b_n_baue_ok auf c2b_n_baue["auswahl_modus"] == "mehrfach" and länge(c2b_n_baue_wert) == 2 and c2b_n_baue_wert[0] == 1 and c2b_n_baue_wert[1] == 3 and c2b_n_baue["auswahl"] == 1 and c2b_n_baue["selected"]
+zeige "C2B-NACHTRAG-OPTIONEN " + text(c2b_n_opt_ok) + "/" + text(c2b_n_selected_ok) + "/" + text(c2b_n_baue_ok)
+
+S["c2b_n_state"] = nichts
+S["c2b_n_callback_state"] = falsch
+funktion t_c2b_n_bind_callback(w, idx):
+    setze gebunden auf S["c2b_n_state"]["wahl"]
+    S["c2b_n_callback_state"] = typ_von(gebunden) == "Liste" and länge(gebunden) == 3 and gebunden[0] == 0 and gebunden[1] == 1 and gebunden[2] == 2 and idx == 2
+    gib_zurück wahr
+
+setze c2b_n_broot auf uim_mock_wurzel(220, 140)
+setze c2b_n_bind auf uim_liste(0, 0, 180, 110, ["A", "B", "C", "D"], t_c2b_n_bind_callback)
+uim_hinzu(c2b_n_broot, c2b_n_bind)
+uim_auswahlmodus_setze(c2b_n_broot, c2b_n_bind, "mehrfach")
+setze c2b_n_state auf {"wahl": [2, 0, 1]}
+S["c2b_n_state"] = c2b_n_state
+setze c2b_n_bind_init_ok auf uim_bind(c2b_n_bind, c2b_n_state, "wahl", "auswahl") and länge(uim_wert_hole(c2b_n_bind)) == 3 and c2b_n_bind["auswahl"] == 1
+uim_state_setze(c2b_n_state, "wahl", [3, 1])
+setze c2b_n_bind_hin_ok auf länge(uim_wert_hole(c2b_n_bind)) == 2 and uim_wert_hole(c2b_n_bind)[0] == 1 and uim_wert_hole(c2b_n_bind)[1] == 3 and c2b_n_bind["auswahl"] == 1 and c2b_n_bind["selected"]
+uim_wert_setze(c2b_n_broot, c2b_n_bind, [0, 1, 2])
+setze c2b_n_bind_rund_ok auf typ_von(c2b_n_state["wahl"]) == "Liste" and länge(c2b_n_state["wahl"]) == 3 and c2b_n_state["wahl"][0] == 0 and c2b_n_state["wahl"][1] == 1 and c2b_n_state["wahl"][2] == 2 and länge(uim_wert_hole(c2b_n_bind)) == 3 and c2b_n_bind["auswahl"] == 2 and c2b_n_bind["selected"]
+setze c2b_n_state["wahl"] auf [0, 1]
+uim_state_setze(c2b_n_state, "wahl", [0, 1])
+t_c2b_b2_klick(c2b_n_broot, 20, 45, 2, 1500)
+setze c2b_n_callback_ok auf S["c2b_n_callback_state"] and länge(c2b_n_state["wahl"]) == 3 and c2b_n_bind["auswahl"] == 2
+
+setze c2b_n_single auf uim_liste(0, 0, 160, 100, ["A", "B", "C"], nichts)
+setze c2b_n_single_state auf {"wahl": 2}
+setze c2b_n_single_ok auf uim_bind(c2b_n_single, c2b_n_single_state, "wahl", "auswahl") and uim_wert_hole(c2b_n_single) == 2 and länge(c2b_n_single["auswahl_menge"]) == 1
+uim_state_setze(c2b_n_single_state, "wahl", 1)
+setze c2b_n_single_ok auf c2b_n_single_ok and uim_wert_hole(c2b_n_single) == 1 and c2b_n_single["auswahl_menge"][0] == 1
+zeige "C2B-NACHTRAG-BIND " + text(c2b_n_bind_init_ok) + "/" + text(c2b_n_bind_hin_ok) + "/" + text(c2b_n_bind_rund_ok) + "/" + text(c2b_n_callback_ok) + "/" + text(c2b_n_single_ok)
+
+# Verhaltensbasierte Dauermatrix: jeder bekannte Auswahl-Schreibweg muss
+# Menge, Primaerspiegel und selected konsistent hinterlassen.
+funktion t_c2b_n_konsistent(w):
+    setze menge auf w["auswahl_menge"]
+    wenn w["selected"] != (länge(menge) > 0):
+        gib_zurück falsch
+    wenn länge(menge) == 0:
+        gib_zurück w["auswahl"] == 0 - 1
+    wenn menge.enthält(w["auswahl"]) == falsch:
+        gib_zurück falsch
+    wenn w["auswahl_modus"] == "einzel" and länge(menge) != 1:
+        gib_zurück falsch
+    gib_zurück wahr
+
+setze c2b_n_boot_liste auf uim_liste(0, 0, 100, 80, ["A"], nichts)
+setze c2b_n_boot_grid auf uim_datengitter(0, 0, 100, 80, ["S"], [["A"]], nichts)
+setze c2b_n_boot_baum auf uim_baum(0, 0, 100, 80, [uim_baum_knoten("A", [])], nichts)
+setze c2b_n_boot_icons auf uim_iconview(0, 0, 100, 80, ["A"], nichts)
+setze c2b_n_boot_ok auf t_c2b_n_konsistent(c2b_n_boot_liste) and t_c2b_n_konsistent(c2b_n_boot_grid) and t_c2b_n_konsistent(c2b_n_boot_baum) and t_c2b_n_konsistent(c2b_n_boot_icons)
+
+setze c2b_n_maus_ok auf t_c2b_n_konsistent(c2b_b2_liste) and t_c2b_n_konsistent(c2b_b2_grid) and t_c2b_n_konsistent(c2b_b2_icons) and t_c2b_n_konsistent(c2b_b2_tree) and länge(c2b_b2_liste["auswahl_menge"]) == 4
+
+setze c2b_n_tast_root auf uim_mock_wurzel(200, 120)
+setze c2b_n_tast auf uim_liste(0, 0, 180, 100, ["A", "B", "C"], nichts)
+uim_hinzu(c2b_n_tast_root, c2b_n_tast)
+c2b_n_tast_root["fokus"] = c2b_n_tast
+uim_mock_taste(c2b_n_tast_root, "Down", wahr, 0)
+setze c2b_n_tast_ok auf t_c2b_n_konsistent(c2b_n_tast) and c2b_n_tast["auswahl"] == 0
+
+setze c2b_n_setz_root auf uim_mock_wurzel(200, 120)
+setze c2b_n_setz auf uim_liste(0, 0, 180, 100, ["A", "B", "C", "D"], nichts)
+uim_hinzu(c2b_n_setz_root, c2b_n_setz)
+uim_auswahlmodus_setze(c2b_n_setz_root, c2b_n_setz, "mehrfach")
+uim_wert_setze(c2b_n_setz_root, c2b_n_setz, [3, 0, 2])
+setze c2b_n_setz_ok auf t_c2b_n_konsistent(c2b_n_setz) and länge(c2b_n_setz["auswahl_menge"]) == 3
+uim_zustand_setze(c2b_n_setz_root, c2b_n_setz, "disabled")
+setze c2b_n_zustand_ok auf t_c2b_n_konsistent(c2b_n_setz) and länge(c2b_n_setz["auswahl_menge"]) == 3 and c2b_n_setz["auswahl"] == 2
+
+setze c2b_n_mod_root auf uim_mock_wurzel(200, 120)
+setze c2b_n_mod auf uim_liste(0, 0, 180, 100, ["A", "B", "C", "D"], nichts)
+uim_hinzu(c2b_n_mod_root, c2b_n_mod)
+uim_auswahlmodus_setze(c2b_n_mod_root, c2b_n_mod, "mehrfach")
+uim_wert_setze(c2b_n_mod_root, c2b_n_mod, [0, 2, 3])
+uim_auswahlmodus_setze(c2b_n_mod_root, c2b_n_mod, "einzel")
+setze c2b_n_mod_einzel_ok auf t_c2b_n_konsistent(c2b_n_mod) and c2b_n_mod["auswahl"] == 3 and länge(c2b_n_mod["auswahl_menge"]) == 1
+uim_auswahlmodus_setze(c2b_n_mod_root, c2b_n_mod, "mehrfach")
+setze c2b_n_mod_mehr_ok auf t_c2b_n_konsistent(c2b_n_mod) and länge(c2b_n_mod["auswahl_menge"]) == 1 and c2b_n_mod["auswahl_menge"][0] == 3
+
+setze c2b_n_bind_hin_weg_ok auf c2b_n_bind_hin_ok
+setze c2b_n_bind_rueck_weg_ok auf c2b_n_bind_rund_ok and c2b_n_callback_ok and t_c2b_n_konsistent(c2b_n_bind)
+setze c2b_n_optionen_weg_ok auf c2b_n_opt_ok and c2b_n_selected_ok and t_c2b_n_konsistent(c2b_n_opt) and t_c2b_n_konsistent(c2b_n_leer)
+setze c2b_n_builder_weg_ok auf c2b_n_baue_ok and t_c2b_n_konsistent(c2b_n_baue)
+setze c2b_n_reset_weg_ok auf c2b_b1_reset_ok and t_c2b_n_konsistent(c2b_b1_grid)
+zeige "C2B-NACHTRAG-WEGE " + text(c2b_n_boot_ok) + "/" + text(c2b_n_maus_ok) + "/" + text(c2b_n_tast_ok) + "/" + text(c2b_n_setz_ok) + "/" + text(c2b_n_zustand_ok) + "/" + text(c2b_n_bind_hin_weg_ok) + "/" + text(c2b_n_bind_rueck_weg_ok) + "/" + text(c2b_n_optionen_weg_ok) + "/" + text(c2b_n_builder_weg_ok) + "/" + text(c2b_n_reset_weg_ok) + "/" + text(c2b_n_mod_einzel_ok) + "/" + text(c2b_n_mod_mehr_ok)

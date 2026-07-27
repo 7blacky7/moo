@@ -680,6 +680,8 @@ funktion _uim_bind_widget_wert(w):
     wenn feld == "wert":
         gib_zurück w["wert"]
     wenn feld == "auswahl":
+        wenn _uim_auswahl_typ_mehrfach(w["typ"]):
+            gib_zurück uim_wert_hole(w)
         gib_zurück w["auswahl"]
     wenn feld == "status_titel":
         gib_zurück w["status_titel"]
@@ -697,7 +699,11 @@ funktion _uim_bind_setze_widget(w, feld, wert):
         _uim_widget_anfordern(w)
         gib_zurück wahr
     wenn feld == "auswahl":
-        w["auswahl"] = wert
+        wenn _uim_auswahl_typ_mehrfach(w["typ"]):
+            wenn _uim_auswahl_wert_setze(w, wert) == falsch:
+                gib_zurück falsch
+        sonst:
+            w["auswahl"] = wert
         _uim_widget_anfordern(w)
         gib_zurück wahr
     wenn feld == "status_titel":
@@ -1136,7 +1142,7 @@ funktion _uim_baum_sichtbar_machen(kontext, w, idx):
     _uim_scroll_klemme(kontext, w)
     gib_zurück wahr
 
-funktion _uim_baum_klick(kontext, w, lx, ly):
+funktion _uim_baum_klick(kontext, w, lx, ly, mod):
     setze t auf kontext["theme"]
     setze zh auf _uim_zeilenhoehe(kontext)
     setze rel auf ly - w["y"] + w["scroll_y"]
@@ -1152,16 +1158,10 @@ funktion _uim_baum_klick(kontext, w, lx, ly):
     setze knoten auf eintrag["knoten"]
     wenn lx < t["abstand"] + eintrag["ebene"] * 12 + 14 und länge(knoten["kinder"]) > 0:
         knoten["offen"] = knoten["offen"] == falsch
-    w["auswahl"] = idx
-    w["selected"] = wahr
-    w["zustand"] = "selected"
-    _uim_baum_sichtbar_machen(kontext, w, idx)
-    setze cb auf w["on_auswahl"]
-    wenn cb != nichts:
-        cb(w, idx)
-    gib_zurück wahr
+        _uim_auswahl_uebernehme(w, [], 0 - 1, 0 - 1, 0 - 1)
+    gib_zurück _uim_auswahl_maus(kontext, w, idx, mod)
 
-funktion _uim_datengitter_klick(kontext, w, ly):
+funktion _uim_datengitter_klick(kontext, w, ly, mod):
     setze zh auf _uim_zeilenhoehe(kontext)
     setze rel auf ly - w["y"] - zh + w["scroll_y"]
     wenn rel < 0:
@@ -1171,13 +1171,7 @@ funktion _uim_datengitter_klick(kontext, w, ly):
         setze idx auf idx + 1
     wenn idx >= länge(w["zeilen"]):
         gib_zurück falsch
-    w["auswahl"] = idx
-    w["selected"] = wahr
-    w["zustand"] = "selected"
-    setze cb auf w["on_auswahl"]
-    wenn cb != nichts:
-        cb(w, idx)
-    gib_zurück wahr
+    gib_zurück _uim_auswahl_maus(kontext, w, idx, mod)
 
 funktion _uim_iconview_text(eintrag):
     wenn typ_von(eintrag) == "Woerterbuch":
@@ -1233,7 +1227,7 @@ funktion _uim_iconview_sichtbar_machen(kontext, w, idx):
     _uim_scroll_klemme(kontext, w)
     gib_zurück wahr
 
-funktion _uim_iconview_klick(kontext, w, lx, ly):
+funktion _uim_iconview_klick(kontext, w, lx, ly, mod):
     setze t auf kontext["theme"]
     setze rel_x auf lx - w["x"]
     setze rel_y auf ly - w["y"] + w["scroll_y"]
@@ -1249,14 +1243,7 @@ funktion _uim_iconview_klick(kontext, w, lx, ly):
     setze idx auf row * cols + col
     wenn idx < 0 oder idx >= länge(w["eintraege"]):
         gib_zurück falsch
-    w["auswahl"] = idx
-    w["selected"] = wahr
-    w["zustand"] = "selected"
-    _uim_iconview_sichtbar_machen(kontext, w, idx)
-    setze cb auf w["on_auswahl"]
-    wenn cb != nichts:
-        cb(w, idx)
-    gib_zurück wahr
+    gib_zurück _uim_auswahl_maus(kontext, w, idx, mod)
 
 funktion _uim_scroll_thumb_h(w):
     setze thumb_h auf w["h"] * w["h"] / w["inhalt_hoehe"]
@@ -1659,7 +1646,7 @@ funktion _uim_zeilenhoehe(kontext):
 
 # Listen-Klick: Zeile aus lokaler Y-Koordinate (ohne floor-Builtin:
 # beschränkte Zählschleife). Setzt auswahl + feuert on_auswahl.
-funktion _uim_liste_klick(kontext, w, ly):
+funktion _uim_liste_klick(kontext, w, ly, mod):
     setze zh auf _uim_zeilenhoehe(kontext)
     setze rel auf ly - w["y"] + w["scroll_y"]
     wenn rel < 0:
@@ -1669,13 +1656,7 @@ funktion _uim_liste_klick(kontext, w, ly):
         setze idx auf idx + 1
     wenn idx >= länge(w["zeilen"]):
         gib_zurück falsch
-    w["auswahl"] = idx
-    w["selected"] = wahr
-    w["zustand"] = "selected"
-    setze cb auf w["on_auswahl"]
-    wenn cb != nichts:
-        cb(w, idx)
-    gib_zurück wahr
+    gib_zurück _uim_auswahl_maus(kontext, w, idx, mod)
 
 # ------------------------------------------------------------
 # Event-Dispatcher (an die Leinwand gebunden von uim_wurzel)
@@ -1863,13 +1844,13 @@ funktion _uim_kern_maus(kontext, x, y, taste, mod, zeit, klickzahl):
                 kontext["druck_greif_y"] = greif
                 _uim_scroll_setze_aus_y(kontext, w, tref["ly"], greif)
     wenn w["typ"] == "liste":
-        _uim_liste_klick(kontext, w, tref["ly"])
+        _uim_liste_klick(kontext, w, tref["ly"], mod)
     wenn w["typ"] == "baum":
-        _uim_baum_klick(kontext, w, tref["lx"], tref["ly"])
+        _uim_baum_klick(kontext, w, tref["lx"], tref["ly"], mod)
     wenn w["typ"] == "datengitter":
-        _uim_datengitter_klick(kontext, w, tref["ly"])
+        _uim_datengitter_klick(kontext, w, tref["ly"], mod)
     wenn w["typ"] == "iconview":
-        _uim_iconview_klick(kontext, w, tref["lx"], tref["ly"])
+        _uim_iconview_klick(kontext, w, tref["lx"], tref["ly"], mod)
     wenn w["typ"] == "colorpicker":
         _uim_colorpicker_klick(kontext, w, tref["lx"], tref["ly"])
     wenn w["typ"] == "calendar":
@@ -2450,13 +2431,7 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
         wenn idx > n - 1:
             setze idx auf n - 1
         wenn idx != f["auswahl"]:
-            f["auswahl"] = idx
-            f["selected"] = wahr
-            f["zustand"] = "selected"
-            _uim_iconview_sichtbar_machen(kontext, f, idx)
-            setze cb_icon auf f["on_auswahl"]
-            wenn cb_icon != nichts:
-                cb_icon(f, idx)
+            _uim_auswahl_benutzer_setze(kontext, f, [idx], idx, idx, idx, idx, wahr)
         _uim_anfordern(kontext)
         gib_zurück wahr
     wenn f["typ"] == "liste":
@@ -2474,11 +2449,7 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
             wenn idx > n - 1:
                 setze idx auf n - 1
             wenn idx != f["auswahl"]:
-                f["auswahl"] = idx
-                _uim_liste_sichtbar_machen(kontext, f, idx)
-                setze cb auf f["on_auswahl"]
-                wenn cb != nichts:
-                    cb(f, idx)
+                _uim_auswahl_benutzer_setze(kontext, f, [idx], idx, idx, idx, idx, wahr)
             _uim_anfordern(kontext)
             gib_zurück wahr
     wenn f["typ"] == "baum":
@@ -2498,11 +2469,7 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
         wenn idx > n - 1:
             setze idx auf n - 1
         wenn idx != f["auswahl"]:
-            f["auswahl"] = idx
-            _uim_baum_sichtbar_machen(kontext, f, idx)
-            setze cb auf f["on_auswahl"]
-            wenn cb != nichts:
-                cb(f, idx)
+            _uim_auswahl_benutzer_setze(kontext, f, [idx], idx, idx, idx, idx, wahr)
         _uim_anfordern(kontext)
         gib_zurück wahr
     wenn f["typ"] == "datengitter":
@@ -2521,11 +2488,7 @@ funktion _uim_kern_taste(kontext, taste, gedrueckt, mod):
         wenn idx > n - 1:
             setze idx auf n - 1
         wenn idx != f["auswahl"]:
-            f["auswahl"] = idx
-            _uim_baum_sichtbar_machen(kontext, f, idx)
-            setze cb auf f["on_auswahl"]
-            wenn cb != nichts:
-                cb(f, idx)
+            _uim_auswahl_benutzer_setze(kontext, f, [idx], idx, idx, idx, idx, wahr)
         _uim_anfordern(kontext)
         gib_zurück wahr
     gib_zurück falsch
@@ -5593,6 +5556,198 @@ funktion _uim_wert_auswahl_max(w):
         gib_zurück länge(w["kinder"]) - 1
     gib_zurück 0 - 1
 
+# C2B: nur diese vier Referenzwidgets besitzen den additiven Auswahlmodus.
+funktion _uim_auswahl_typ_mehrfach(typ):
+    gib_zurück typ == "liste" oder typ == "baum" oder typ == "datengitter" oder typ == "iconview"
+
+funktion _uim_auswahl_kopie(menge):
+    setze kopie auf []
+    für idx in menge:
+        kopie.hinzufügen(idx)
+    gib_zurück kopie
+
+funktion _uim_auswahl_enthaelt(w, idx):
+    gib_zurück w["auswahl_menge"].enthält(idx)
+
+funktion _uim_auswahl_hinzu_sortiert(menge, idx):
+    wenn menge.enthält(idx):
+        gib_zurück _uim_auswahl_kopie(menge)
+    setze ergebnis auf []
+    setze eingesetzt auf falsch
+    für vorhanden in menge:
+        wenn eingesetzt == falsch und idx < vorhanden:
+            ergebnis.hinzufügen(idx)
+            setze eingesetzt auf wahr
+        ergebnis.hinzufügen(vorhanden)
+    wenn eingesetzt == falsch:
+        ergebnis.hinzufügen(idx)
+    gib_zurück ergebnis
+
+funktion _uim_auswahl_ohne(menge, idx):
+    setze ergebnis auf []
+    für vorhanden in menge:
+        wenn vorhanden != idx:
+            ergebnis.hinzufügen(vorhanden)
+    gib_zurück ergebnis
+
+funktion _uim_auswahl_bereich(start_idx, ende_idx):
+    setze anfang auf start_idx
+    setze ende auf ende_idx
+    wenn anfang > ende:
+        setze tausch auf anfang
+        setze anfang auf ende
+        setze ende auf tausch
+    setze ergebnis auf []
+    setze cursor_bereich auf anfang
+    solange cursor_bereich <= ende:
+        ergebnis.hinzufügen(cursor_bereich)
+        setze cursor_bereich auf cursor_bereich + 1
+    gib_zurück ergebnis
+
+# Einziger Schreiber fuer Menge und ihre Auswahl-Kompatibilitaetsspiegel.
+funktion _uim_auswahl_uebernehme(w, menge, primaer, anker, fokus):
+    setze kanon auf _uim_auswahl_kopie(menge)
+    wenn länge(kanon) == 0:
+        setze primaer auf 0 - 1
+    sonst wenn kanon.enthält(primaer) == falsch:
+        setze primaer auf kanon[0]
+    w["auswahl_menge"] = kanon
+    w["auswahl"] = primaer
+    w["auswahl_anker"] = anker
+    w["auswahl_fokus"] = fokus
+    w["selected"] = länge(kanon) > 0
+    gib_zurück wahr
+
+funktion _uim_auswahl_initialisiere(w):
+    w["auswahl_modus"] = "einzel"
+    gib_zurück _uim_auswahl_uebernehme(w, [], 0 - 1, 0 - 1, 0 - 1)
+
+funktion _uim_auswahl_normalisiere(w, werte):
+    wenn typ_von(werte) != "Liste":
+        gib_zurück nichts
+    setze maximum auf _uim_wert_auswahl_max(w)
+    setze menge auf []
+    setze letztes auf 0 - 1
+    für idx in werte:
+        wenn typ_von(idx) != "Zahl" oder idx != boden(idx) oder idx < 0 oder idx > maximum:
+            gib_zurück nichts
+        setze menge auf _uim_auswahl_hinzu_sortiert(menge, idx)
+        setze letztes auf idx
+    setze ergebnis auf {}
+    ergebnis["menge"] = menge
+    ergebnis["letztes"] = letztes
+    gib_zurück ergebnis
+
+funktion _uim_auswahl_wert_setze(w, wert):
+    wenn w == nichts oder _uim_auswahl_typ_mehrfach(w["typ"]) == falsch:
+        gib_zurück falsch
+    wenn w["auswahl_modus"] == "mehrfach":
+        setze normalisiert auf _uim_auswahl_normalisiere(w, wert)
+        wenn normalisiert == nichts:
+            gib_zurück falsch
+        setze letzter_idx auf normalisiert["letztes"]
+        gib_zurück _uim_auswahl_uebernehme(w, normalisiert["menge"], letzter_idx, letzter_idx, letzter_idx)
+    wenn typ_von(wert) != "Zahl":
+        gib_zurück falsch
+    setze maximum auf _uim_wert_auswahl_max(w)
+    wenn wert < 0 - 1:
+        setze wert auf 0 - 1
+    wenn wert > maximum:
+        setze wert auf maximum
+    wenn wert >= 0:
+        gib_zurück _uim_auswahl_uebernehme(w, [wert], wert, wert, wert)
+    gib_zurück _uim_auswahl_uebernehme(w, [], 0 - 1, 0 - 1, 0 - 1)
+
+funktion _uim_auswahl_modus_setze_intern(w, modus):
+    wenn w == nichts oder _uim_auswahl_typ_mehrfach(w["typ"]) == falsch:
+        gib_zurück falsch
+    wenn modus != "einzel" und modus != "mehrfach":
+        gib_zurück falsch
+    wenn w["auswahl_modus"] == modus:
+        gib_zurück wahr
+    wenn modus == "mehrfach":
+        setze alt auf w["auswahl"]
+        wenn alt >= 0:
+            _uim_auswahl_uebernehme(w, [alt], alt, alt, alt)
+        sonst:
+            _uim_auswahl_uebernehme(w, [], 0 - 1, 0 - 1, 0 - 1)
+    sonst:
+        setze primaer auf w["auswahl"]
+        wenn primaer >= 0 und w["auswahl_menge"].enthält(primaer):
+            _uim_auswahl_uebernehme(w, [primaer], primaer, primaer, primaer)
+        sonst:
+            _uim_auswahl_uebernehme(w, [], 0 - 1, 0 - 1, 0 - 1)
+    w["auswahl_modus"] = modus
+    gib_zurück wahr
+
+funktion _uim_auswahl_sichtbar_machen(kontext, w, idx):
+    wenn w["typ"] == "iconview":
+        gib_zurück _uim_iconview_sichtbar_machen(kontext, w, idx)
+    wenn w["typ"] == "baum" oder w["typ"] == "datengitter":
+        gib_zurück _uim_baum_sichtbar_machen(kontext, w, idx)
+    gib_zurück _uim_liste_sichtbar_machen(kontext, w, idx)
+
+funktion _uim_auswahl_benutzer_setze(kontext, w, menge, primaer, anker, fokus, callback_idx, sichtbar):
+    _uim_auswahl_uebernehme(w, menge, primaer, anker, fokus)
+    wenn sichtbar und callback_idx >= 0:
+        _uim_auswahl_sichtbar_machen(kontext, w, callback_idx)
+    _uim_bind_widget_zu_state(w)
+    setze cb_auswahl auf w["on_auswahl"]
+    wenn cb_auswahl != nichts:
+        cb_auswahl(w, callback_idx)
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion uim_auswahlmodus_setze(kontext, w, modus):
+    wenn kontext == nichts oder w == nichts:
+        gib_zurück falsch
+    wenn w["auswahl_modus"] == modus:
+        gib_zurück _uim_auswahl_modus_setze_intern(w, modus)
+    wenn _uim_auswahl_modus_setze_intern(w, modus) == falsch:
+        gib_zurück falsch
+    _uim_bind_widget_zu_state(w)
+    _uim_anfordern(kontext)
+    gib_zurück wahr
+
+funktion uim_selection_mode_set(kontext, w, modus):
+    gib_zurück uim_auswahlmodus_setze(kontext, w, modus)
+
+# C2B/B2: Desktop-Auswahlsemantik A fuer einen bereits geometrisch validierten Index.
+funktion _uim_auswahl_maus(kontext, w, idx, mod):
+    wenn w["auswahl_modus"] == "einzel":
+        gib_zurück _uim_auswahl_benutzer_setze(kontext, w, [idx], idx, idx, idx, idx, wahr)
+    setze shift_aktiv auf mod % 2 == 1
+    setze ctrl_aktiv auf boden(mod / 2) % 2 == 1
+    wenn shift_aktiv:
+        setze anker auf w["auswahl_anker"]
+        wenn anker < 0:
+            setze anker auf w["auswahl"]
+        wenn anker < 0:
+            setze anker auf idx
+        setze neue_menge auf _uim_auswahl_bereich(anker, idx)
+        wenn ctrl_aktiv:
+            setze vereint auf _uim_auswahl_kopie(w["auswahl_menge"])
+            für bereich_idx in neue_menge:
+                setze vereint auf _uim_auswahl_hinzu_sortiert(vereint, bereich_idx)
+            setze neue_menge auf vereint
+        gib_zurück _uim_auswahl_benutzer_setze(kontext, w, neue_menge, idx, anker, idx, idx, wahr)
+    wenn ctrl_aktiv:
+        setze neue_menge auf []
+        setze primaer auf idx
+        wenn _uim_auswahl_enthaelt(w, idx):
+            setze neue_menge auf _uim_auswahl_ohne(w["auswahl_menge"], idx)
+            setze primaer auf w["auswahl"]
+            wenn primaer == idx:
+                wenn länge(neue_menge) > 0:
+                    setze primaer auf neue_menge[0]
+                sonst:
+                    setze primaer auf 0 - 1
+        sonst:
+            setze neue_menge auf _uim_auswahl_hinzu_sortiert(w["auswahl_menge"], idx)
+        gib_zurück _uim_auswahl_benutzer_setze(kontext, w, neue_menge, primaer, idx, idx, idx, wahr)
+    gib_zurück _uim_auswahl_benutzer_setze(kontext, w, [idx], idx, idx, idx, idx, wahr)
+
+
 funktion uim_wert_hole(w):
     wenn w == nichts:
         gib_zurück nichts
@@ -5603,6 +5758,8 @@ funktion uim_wert_hole(w):
         gib_zurück w["text"]
     wenn _uim_wert_typ_bool(typ) oder _uim_wert_typ_zahl(typ):
         gib_zurück w["wert"]
+    wenn _uim_auswahl_typ_mehrfach(typ) und w["auswahl_modus"] == "mehrfach":
+        gib_zurück _uim_auswahl_kopie(w["auswahl_menge"])
     wenn _uim_wert_typ_auswahl(typ):
         gib_zurück w["auswahl"]
     wenn typ == "expander" oder typ == "ueberlagerung":
@@ -5643,6 +5800,9 @@ funktion uim_wert_setze(kontext, w, wert):
             _uim_radio_gruppe_rek(kontext["wurzel"]["kinder"], w["gruppe"], w["uid"])
         w["wert"] = wert
         w["selected"] = wert
+    sonst wenn _uim_auswahl_typ_mehrfach(typ):
+        wenn _uim_auswahl_wert_setze(w, wert) == falsch:
+            gib_zurück falsch
     sonst wenn _uim_wert_typ_auswahl(typ):
         setze minimum auf 0 - 1
         wenn typ == "combobox" oder typ == "tabs":
@@ -5657,8 +5817,14 @@ funktion uim_wert_setze(kontext, w, wert):
                 setze wert auf minimum
             wenn wert > maximum:
                 setze wert auf maximum
-        w["auswahl"] = wert
-        w["selected"] = wert >= minimum
+        wenn _uim_auswahl_typ_mehrfach(typ):
+            wenn wert >= 0:
+                _uim_auswahl_uebernehme(w, [wert], wert, wert, wert)
+            sonst:
+                _uim_auswahl_uebernehme(w, [], 0 - 1, 0 - 1, 0 - 1)
+        sonst:
+            w["auswahl"] = wert
+            w["selected"] = wert >= minimum
     sonst wenn typ == "expander":
         w["offen"] = wert
     sonst wenn typ == "teiler":
@@ -5707,6 +5873,8 @@ funktion uim_zustand_setze(kontext, w, zustand):
         w["druck"] = falsch
         wenn _uim_slot_uid(kontext, "fokus") == w["uid"]:
             kontext["fokus"] = nichts
+    wenn _uim_auswahl_typ_mehrfach(w["typ"]):
+        _uim_auswahl_uebernehme(w, w["auswahl_menge"], w["auswahl"], w["auswahl_anker"], w["auswahl_fokus"])
     _uim_anfordern(kontext)
     gib_zurück wahr
 
@@ -5982,7 +6150,7 @@ funktion uim_scroll(x, y, b, h, inhalt_hoehe):
 funktion uim_liste(x, y, b, h, zeilen, on_auswahl):
     setze w auf _uim_basis("liste", x, y, b, h)
     w["zeilen"] = zeilen
-    w["auswahl"] = 0 - 1
+    _uim_auswahl_initialisiere(w)
     w["scroll_y"] = 0
     w["on_auswahl"] = on_auswahl
     w["fokussierbar"] = wahr
@@ -5998,7 +6166,7 @@ funktion uim_baum_knoten(text, kinder):
 funktion uim_baum(x, y, b, h, knoten, on_auswahl):
     setze w auf _uim_basis("baum", x, y, b, h)
     w["knoten"] = knoten
-    w["auswahl"] = 0 - 1
+    _uim_auswahl_initialisiere(w)
     w["scroll_y"] = 0
     w["on_auswahl"] = on_auswahl
     w["fokussierbar"] = wahr
@@ -6008,7 +6176,7 @@ funktion uim_datengitter(x, y, b, h, spalten, zeilen, on_auswahl):
     setze w auf _uim_basis("datengitter", x, y, b, h)
     w["spalten"] = spalten
     w["zeilen"] = zeilen
-    w["auswahl"] = 0 - 1
+    _uim_auswahl_initialisiere(w)
     w["scroll_y"] = 0
     w["on_auswahl"] = on_auswahl
     w["fokussierbar"] = wahr
@@ -6016,7 +6184,7 @@ funktion uim_datengitter(x, y, b, h, spalten, zeilen, on_auswahl):
 
 funktion uim_datengitter_zeilen_setze(kontext, w, zeilen):
     w["zeilen"] = zeilen
-    w["auswahl"] = 0 - 1
+    _uim_auswahl_uebernehme(w, [], 0 - 1, 0 - 1, 0 - 1)
     w["scroll_y"] = 0
     _uim_anfordern(kontext)
     gib_zurück wahr
@@ -6026,7 +6194,7 @@ funktion uim_datengitter_zeilen_setze(kontext, w, zeilen):
 funktion uim_iconview(x, y, b, h, eintraege, on_auswahl):
     setze w auf _uim_basis("iconview", x, y, b, h)
     w["eintraege"] = eintraege
-    w["auswahl"] = 0 - 1
+    _uim_auswahl_initialisiere(w)
     w["scroll_y"] = 0
     w["tile_b"] = 76
     w["tile_h"] = 68
@@ -8073,9 +8241,12 @@ funktion uim_messe(w):
 funktion uim_optionen(w, optionen):
     wenn w == nichts oder optionen == nichts oder typ_von(optionen) != "Woerterbuch":
         gib_zurück w
+    setze auswahl_ziel auf _uim_auswahl_typ_mehrfach(w["typ"])
     für feld in ["id", "x", "y", "b", "h", "sichtbar", "aktiv", "disabled", "selected", "error", "loading", "readonly", "invalid", "ausrichtung", "a11y_name", "a11y_beschreibung", "tooltip", "margin", "padding", "gap", "min_b", "min_h", "max_b", "max_h", "auto_b", "auto_h", "text_umbruch", "text_ellipsis", "clip_kinder", "z_index", "on_klick", "on_wechsel", "on_auswahl", "on_retry", "on_befehl"]:
-        wenn optionen.enthält(feld):
+        wenn optionen.enthält(feld) und (auswahl_ziel == falsch oder feld != "selected"):
             w[feld] = optionen[feld]
+    wenn auswahl_ziel und optionen.enthält("auswahl_modus"):
+        _uim_auswahl_modus_setze_intern(w, optionen["auswahl_modus"])
     wenn optionen.enthält("text"):
         w["text"] = text(optionen["text"])
         wenn w.enthält("cursor"):
@@ -8096,6 +8267,8 @@ funktion uim_optionen(w, optionen):
             wenn w["max"] > w["min"] und option_wert > w["max"]:
                 setze option_wert auf w["max"]
             w["wert"] = option_wert
+        sonst wenn _uim_auswahl_typ_mehrfach(wert_typ):
+            _uim_auswahl_wert_setze(w, option_wert)
         sonst wenn _uim_wert_typ_auswahl(wert_typ):
             w["auswahl"] = option_wert
         sonst wenn wert_typ == "expander" oder wert_typ == "ueberlagerung":
