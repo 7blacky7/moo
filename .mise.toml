@@ -735,3 +735,135 @@ sha256sum "$P4_COMPILER" beispiele/p4_silben/train_diagnose.moos
 "$P4_COMPILER" compile beispiele/p4_silben/train_diagnose.moos -o "$P4_RUN_DIR/train_diagnose"
 sha256sum "$P4_RUN_DIR/train_diagnose"
 '''
+
+
+[tasks.p4-paritaet]
+description = "Compile and run the sequential SIL-11 checkpoint parity experiment"
+run = '''
+set -eu
+umask 077
+P4_DIR="$PWD/beispiele/p4_silben/run_sil11_paritaet_20261030"
+P4_COMPILER="${P4_COMPILER:-$PWD/compiler/target/release/moo-compiler}"
+test -x "$P4_COMPILER"
+if [ ! -e "$P4_DIR/train_paritaet" ]; then
+  "$P4_COMPILER" compile beispiele/p4_silben/train_paritaet.moos -o "$P4_DIR/train_paritaet"
+fi
+uv run python -m skripte.p4_silben.paritaet
+'''
+
+
+[tasks.p4-paritaet-diagnose]
+description = "Run training-free CPU and strict Vulkan checkpoint parity diagnostics"
+run = '''
+set -eu
+umask 077
+P4_DIR="$PWD/beispiele/p4_silben/run_sil11_paritaet_20261030/diagnose"
+P4_COMPILER="${P4_COMPILER:-$PWD/compiler/target/release/moo-compiler}"
+test -x "$P4_COMPILER"
+test ! -e "$P4_DIR/diagnose_paritaet"
+"$P4_COMPILER" compile beispiele/p4_silben/diagnose_paritaet.moos -o "$P4_DIR/diagnose_paritaet"
+uv run python -m skripte.p4_silben.diagnose_paritaet
+'''
+
+
+[tasks.p4-checkpoint-regression]
+description = "Train tiny CPU and strict Vulkan models and check checkpoint parity"
+run = '''
+set -eu
+umask 077
+: "${P4_REGRESSION_DIR:?set P4_REGRESSION_DIR to an existing private test directory}"
+P4_COMPILER="${P4_COMPILER:-$PWD/compiler/target/release/moo-compiler}"
+test -x "$P4_COMPILER"
+test ! -e "$P4_REGRESSION_DIR/checkpoint_regression"
+"$P4_COMPILER" compile beispiele/tests/p4_checkpoint_gpu_paritaet.moos -o "$P4_REGRESSION_DIR/checkpoint_regression"
+uv run python -m skripte.p4_silben.checkpoint_regression
+'''
+
+
+[tasks.p4-build-vulkan]
+description = "Build the release compiler with its default Vulkan feature"
+run = "cargo build --manifest-path compiler/Cargo.toml --release --locked"
+
+
+[tasks.p4-fix-compile]
+description = "Compile fresh adapters against the fixed runtime"
+run = '''
+set -eu
+umask 077
+P4_RUN_DIR="$PWD/beispiele/p4_silben/run_sil11_fix_20261030/bin"
+chmod 700 "$P4_RUN_DIR"
+export P4_RUN_DIR
+mise run p4-compile-experiment
+compiler/target/release/moo-compiler compile beispiele/p4_silben/train_paritaet.moos -o "$P4_RUN_DIR/train_paritaet"
+'''
+
+[tasks.p4-fix-run]
+description = "Run one phase of the sequential fixed P4 experiment"
+run = '''
+set -eu
+: "${P4_PHASE:?set P4_PHASE to val or test}"
+uv run python -m skripte.p4_silben.run_fix_3x3 "$P4_PHASE"
+'''
+
+
+[tasks.p4-fix-resume]
+description = "Continue the authorised interrupted P4 validation phase"
+run = "uv run python -m skripte.p4_silben.run_fix_resume val"
+
+
+[tasks.p4-fix-summary]
+description = "Summarise existing P4 test reports and uniform-token baselines"
+run = "uv run python -m skripte.p4_silben.summarize_fix_3x3"
+
+
+[tasks.p4-fix-test]
+description = "Run frozen P4 test reports once if their budget is reserved"
+run = "uv run python -m skripte.p4_silben.run_fix_test test"
+
+
+[tasks.p4-bpe47-diagnose]
+description = "Inference-only diagnostics for BPE checkpoint parity"
+run = "uv run python -m skripte.p4_silben.analyse_bpe47"
+
+
+[tasks.p4-bpe47-instrument-compile]
+description = "Compile the instrumented BPE parity adapter"
+run = '''
+set -eu
+P4_DIAG="$PWD/beispiele/p4_silben/run_sil11_fix_20261030/bpe47_instrumentiert"
+test ! -e "$P4_DIAG/train_paritaet_instrumentiert"
+compiler/target/release/moo-compiler compile beispiele/p4_silben/train_paritaet_instrumentiert.moos -o "$P4_DIAG/train_paritaet_instrumentiert"
+'''
+
+[tasks.p4-bpe47-instrument-run]
+description = "Run the single authorised instrumented BPE parity experiment"
+run = "uv run python -m skripte.p4_silben.bpe47_instrumentiert"
+
+
+[tasks.p4-instrument-step]
+description = "Run one budgeted instrumented train or validation step"
+run = '''
+set -eu
+: "${P4_INST_ACTION:?set train or val}"
+: "${P4_INST_VARIANT:?set tokenizer}"
+: "${P4_INST_SEED:?set seed}"
+uv run python -m skripte.p4_silben.fix_instrument_step "$P4_INST_ACTION" "$P4_INST_VARIANT" "$P4_INST_SEED"
+'''
+
+
+[tasks.p4-instrument-freeze]
+description = "Freeze the nine instrumented validation results"
+run = "uv run python -m skripte.p4_silben.fix_instrument_final freeze"
+
+[tasks.p4-instrument-test]
+description = "Evaluate one frozen test report once"
+run = '''
+set -eu
+: "${P4_INST_VARIANT:?set tokenizer}"
+: "${P4_INST_SEED:?set seed}"
+uv run python -m skripte.p4_silben.fix_instrument_final test "$P4_INST_VARIANT" "$P4_INST_SEED"
+'''
+
+[tasks.p4-instrument-summary]
+description = "Compare completed P4 reports with uniform-token baseline"
+run = "uv run python -m skripte.p4_silben.fix_instrument_final summary"
