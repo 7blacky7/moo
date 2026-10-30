@@ -1465,6 +1465,27 @@ MooValue moo_nn_ckpt_speichern(MooValue zustand, MooValue pfad) {
     MooList* mlist = (ml.tag == MOO_LIST) ? MV_LIST(ml) : NULL;
     MooList* vlist = (vl.tag == MOO_LIST) ? MV_LIST(vl) : NULL;
 
+    /* GPU-residente Optimizer-Schritte koennen die Hostdaten veralten lassen.
+     * Vor jeder Serialisierung p/m/v synchronisieren, noch bevor eine
+     * Ausgabedatei angelegt wird. */
+    MooList* sichern[] = {pl, mlist, vlist};
+    for (size_t k = 0; k < sizeof(sichern) / sizeof(sichern[0]); k++) {
+        MooList* liste = sichern[k];
+        if (!liste) continue;
+        for (int32_t i = 0; i < liste->length; i++) {
+            if (liste->items[i].tag != MOO_TENSOR) {
+                moo_throw(moo_error("checkpoint_speichern: Parameter oder Moment ist kein Tensor"));
+            } else {
+                moo_tensor_host_sichern(T(liste->items[i]));
+            }
+            if (moo_error_flag) {
+                moo_release(params); moo_release(schichten); moo_release(netz);
+                moo_release(optv); moo_release(ml); moo_release(vl);
+                return moo_none();
+            }
+        }
+    }
+
     /* --- 1. Architektur-JSON (wie v1) --- */
     Buf arch = {0};
     buf_add(&arch, "[");
