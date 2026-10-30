@@ -780,6 +780,20 @@ uv run python -m skripte.p4_silben.checkpoint_regression
 '''
 
 
+[tasks.p4-sil13-regression]
+description = "SIL-13: forward right after GPU SGD must match host-synced and reloaded model (short and full context)"
+run = '''
+set -eu
+umask 077
+: "${P4_REGRESSION_DIR:?set P4_REGRESSION_DIR to an existing private test directory}"
+P4_COMPILER="${P4_COMPILER:-$PWD/compiler/target/release/moo-compiler}"
+test -x "$P4_COMPILER"
+test ! -e "$P4_REGRESSION_DIR/diag"
+"$P4_COMPILER" compile beispiele/p4_silben/diagnose_sil13.moos -o "$P4_REGRESSION_DIR/diag"
+uv run python -m skripte.p4_silben.sil13_regression
+'''
+
+
 [tasks.p4-build-vulkan]
 description = "Build the release compiler with its default Vulkan feature"
 run = "cargo build --manifest-path compiler/Cargo.toml --release --locked"

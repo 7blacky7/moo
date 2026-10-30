@@ -46,7 +46,10 @@ def main():
                           "first_byte": next((i for i in range(min(len(ra),len(rb))) if ra[i] != rb[i]),
                                              min(len(ra),len(rb)) if len(ra) != len(rb) else None)})
         before, after = data["params_before"], data["params_after"]
+        netz = data["params_netz"]
         result = {"mode": mode, "wall_seconds": run["wall_seconds"], "cases": cases,
+                  "netz_tensors_equal": before == netz,
+                  "netz_generation_equal": data["before"] == data["after_netz"],
                   "parameter_count_before": len(before), "parameter_count_after": len(after),
                   "all_tensor_shapes_and_json_hashes_equal": before == after,
                   "different_tensors": [i for i in range(max(len(before),len(after)))
@@ -56,6 +59,8 @@ def main():
     (OUT / "summary.json").write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     if any(not r["all_tensor_shapes_and_json_hashes_equal"] or not all(c["equal"] for c in r["cases"]) for r in results):
         raise RuntimeError("Checkpoint-Parität verletzt")
+    if any(not r["netz_tensors_equal"] or not r["netz_generation_equal"] for r in results):
+        raise RuntimeError("netz.speichern-Parität verletzt")
     if results[1]["gpu"]["submits"] <= 0 or results[1]["gpu"]["cpu_fallbacks"] != 0:
         raise RuntimeError("GPU-Training nicht belegt")
 if __name__ == "__main__":

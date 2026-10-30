@@ -1,0 +1,90 @@
+# SIL-13-Diagnose: drei kurze SGD-Schritte, danach dieselbe Eingabe
+# (a) direkt, (b) nach checkpoint_speichern (Host-Sicherung) und
+# (c) nach checkpoint_laden vorwaerts rechnen; Logits und Zwischenwerte
+# je Schicht als Listen ausgeben.
+
+funktion vorwaerts_stufen(s, eingabe):
+    setze stufen auf []
+    setze x auf vorwaerts([s[0]], eingabe)
+    stufen.hinzufügen(x.zu_liste())
+    setze x auf vorwaerts([s[1]], x)
+    stufen.hinzufügen(x.zu_liste())
+    setze x auf x + vorwaerts([s[2], s[3]], x)
+    stufen.hinzufügen(x.zu_liste())
+    setze x auf x + vorwaerts([s[4], s[5], s[6]], x)
+    stufen.hinzufügen(x.zu_liste())
+    setze x auf x + vorwaerts([s[7], s[8]], x)
+    stufen.hinzufügen(x.zu_liste())
+    setze x auf x + vorwaerts([s[9], s[10], s[11]], x)
+    stufen.hinzufügen(x.zu_liste())
+    setze logits auf vorwaerts([s[12], s[13]], x)
+    stufen.hinzufügen(logits.zu_liste())
+    gib_zurück stufen
+
+setze tokpfad auf umgebung("P4_TOKENIZER_PATH")
+setze ziel auf umgebung("P4_CHECKPOINT_OUT")
+setze tok auf zeichen_fixed_laden(tokpfad)
+setze vokab auf zeichen_fixed_info(tok)["vokab"]
+setze dim auf 32
+setze versteckt auf 128
+setze emb auf schicht_embedding(vokab, dim, 12)
+setze pos auf schicht_position(64, dim, "gelernt", 13)
+setze ln1a auf schicht_layernorm(dim)
+setze att1 auf schicht_attention(dim, 4, 14)
+setze ln1b auf schicht_layernorm(dim)
+setze ff1a auf schicht_dicht(dim, versteckt, "gelu", 15)
+setze ff1b auf schicht_dicht(versteckt, dim, "keine", 16)
+setze ln2a auf schicht_layernorm(dim)
+setze att2 auf schicht_attention(dim, 4, 17)
+setze ln2b auf schicht_layernorm(dim)
+setze ff2a auf schicht_dicht(dim, versteckt, "gelu", 18)
+setze ff2b auf schicht_dicht(versteckt, dim, "keine", 19)
+setze lnf auf schicht_layernorm(dim)
+setze kopf auf schicht_dicht(dim, vokab, "keine", 20)
+setze alle auf [emb, pos, ln1a, att1, ln1b, ff1a, ff1b, ln2a, att2, ln2b, ff2a, ff2b, lnf, kopf]
+setze netz auf ki_netz(alle)
+setze opt auf optimierer_sgd(parameter(alle), 0.01, 0.9)
+
+setze anfragen auf json_parse(datei_lesen(umgebung("P4_GENERATION_PATH")))
+setze original auf anfragen["prompts"][0]
+setze eingaben auf []
+setze ziele auf []
+setze maske auf []
+setze i auf 0
+solange i < 64:
+    eingaben.hinzufügen(original[i % länge(original)])
+    ziele.hinzufügen(original[(i + 1) % länge(original)])
+    maske.hinzufügen(1)
+    setze i auf i + 1
+gpu_statistik_reset()
+autograd_an()
+setze schritt auf 0
+solange schritt < 3:
+    setze x auf vorwaerts([alle[0]], tensor_aus_liste(eingaben))
+    setze x auf vorwaerts([alle[1]], x)
+    setze x auf x + vorwaerts([alle[2], alle[3]], x)
+    setze x auf x + vorwaerts([alle[4], alle[5], alle[6]], x)
+    setze x auf x + vorwaerts([alle[7], alle[8]], x)
+    setze x auf x + vorwaerts([alle[9], alle[10], alle[11]], x)
+    setze logits auf vorwaerts([alle[12], alle[13]], x)
+    setze verlust auf kreuzentropie(logits, tensor_aus_liste(ziele), tensor_aus_liste(maske))
+    verlust.rueckwaerts()
+    gradienten_kappen(parameter(alle), 1.0)
+    opt.schritt()
+    setze schritt auf schritt + 1
+setze gpu auf gpu_statistik()
+autograd_aus()
+
+setze laenge auf zahl(umgebung("P4_LEN"))
+setze kurz auf []
+setze i auf 0
+solange i < laenge:
+    kurz.hinzufügen(eingaben[i])
+    setze i auf i + 1
+setze eingabe auf tensor_aus_liste(kurz)
+setze direkt auf vorwaerts_stufen(alle, eingabe)
+checkpoint_speichern({"netz": netz, "opt": opt, "schritt": 3, "global_schritt": 3, "tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"}, ziel)
+setze gesichert auf vorwaerts_stufen(alle, eingabe)
+setze geladen auf checkpoint_laden(ziel, {"tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"})
+setze nach_laden auf vorwaerts_stufen(geladen["netz"]["schichten"], eingabe)
+datei_schreiben(umgebung("P4_DIAG_RESULT"), json_string({"direkt": direkt, "gesichert": gesichert, "geladen": nach_laden, "gpu": gpu}))

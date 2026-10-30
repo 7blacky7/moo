@@ -923,6 +923,16 @@ MooValue moo_nn_speichern(MooValue netz, MooValue pfad) {
     if (params.tag != MOO_LIST) { moo_release(schichten); return moo_none(); }
     MooList* pl = MV_LIST(params);
 
+    /* GPU-residente Optimizer-Schritte koennen die Hostdaten veralten lassen
+     * (wie bei checkpoint_speichern): vor dem Schreiben synchronisieren. */
+    for (int32_t i = 0; i < pl->length; i++) {
+        moo_tensor_host_sichern(T(pl->items[i]));
+        if (moo_error_flag) {
+            moo_release(params); moo_release(schichten);
+            return moo_none();
+        }
+    }
+
     /* Architektur-JSON (als String im __metadata__) */
     Buf arch = {0};
     buf_add(&arch, "[");

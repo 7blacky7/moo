@@ -160,8 +160,26 @@ Holdout. Belege: Thought `c6f2413d-1878-454d-9519-6ad839e2ee84`, Laufordner
 
 In 26 von 27 festen Fortsetzungen stimmten die Bytes direkt nach dem Training
 und nach dem Neuladen überein. Bei BPE Seed 47 kippte eine Greedy-Wahl
-(Top-2-Abstand 0,00026). Die Logits beider Pfade weichen trotz bitgleicher
-Gewichte um bis zu 0,046 ab; das wird separat als SIL-13 untersucht.
+(Top-2-Abstand 0,00026); die Logits beider Pfade wichen trotz bitgleicher
+Gewichte um bis zu 0,046 ab.
+
+**SIL-13, Ursache und Fix:** Die Positionsschicht (`fw_position` in
+`compiler/runtime/moo_nn.c`) kopiert bei Inferenz mit kürzerer Sequenz als
+ihrer Maximallänge die ersten Zeilen der Positionstabelle per `memcpy` aus
+der Hostkopie. Nach GPU-residentem SGD war diese veraltet; bei voller Länge
+läuft die Addition über den GPU-fähigen Pfad und war korrekt. Folge: Jede
+Generierung direkt nach GPU-Training rechnete mit alten Positionsgewichten
+(Diagnose: Abweichung ab der Positionsschicht, Logits bis 0,038 bei
+Kontextlänge 12). Fix: vor der Kopie `moo_tensor_f32_sichern`. Seitdem sind
+alle Schichtausgaben direkt nach dem Training, nach Host-Sicherung und nach
+Neuladen bitgleich, auf CPU und Vulkan, bei Kontextlänge 12 und 64
+(`mise run p4-sil13-regression`). Die Auswertung des Neulaufs lädt die
+Checkpoints neu und ist davon nicht betroffen.
+
+Derselbe Fehler wie bei `checkpoint_speichern` steckte auch in
+`netz.speichern` (`moo_nn_speichern`); er ist ebenfalls behoben und im
+Regressionstest `p4-checkpoint-regression` abgedeckt (vor dem Fix bei Vulkan
+rot, danach grün).
 
 ### Ursprünglicher Versuch (ungültig, nur zur Nachvollziehbarkeit)
 
@@ -268,8 +286,9 @@ Begründung:
 
 Bekannte Grenzen:
 
-- Logits direkt nach GPU-Training und nach dem Neuladen weichen trotz
-  bitgleicher Gewichte bis 0,046 ab (SIL-13, offen).
+- Generierungen direkt nach GPU-Training nutzten bis zum SIL-13-Fix veraltete
+  Positionsgewichte; die Neulauf-Auswertung (über neu geladene Checkpoints)
+  ist davon nicht betroffen.
 - BPE erhielt bei gleicher Fensterkonfiguration deutlich weniger
   Trainingsschritte; ein rechenangeglichener Vergleich steht aus.
 - Frei generierte Byte-Fortsetzungen sind häufig kein gültiges UTF-8.
@@ -281,6 +300,12 @@ Bekannte Grenzen:
 Mögliche Folgearbeiten nur mit gesondertem Auftrag: größerer,
 rechenangeglichener Vergleich auf echtem Korpus mit Paritätsprüfung,
 Ausnahmeliste für bekannte Musterfehler, Gewichtsmigration oder weitere
-Sprachvarianten. Andere nach GPU-Training gespeicherte Checkpoints (etwa
-P3 oder Grimm) können vom Checkpoint-Fehler ebenfalls betroffen sein und
-sollten geprüft werden.
+Sprachvarianten. Die GPU-Residenz für SGD gibt es seit 10.07.2026 (Commit
+`888f223`). Seitdem mit SGD auf der GPU trainierte und per
+`checkpoint_speichern` oder `netz.speichern` gesicherte Modelle (etwa Grimm
+unter `tests/local/`, `beispiele/ki_sprachmodell_gpu.moos`, multimodale
+Beispiele) können veraltete Gewichte enthalten. Die Grimm-Checkpoints vom
+28.10. haben je Stufe unterschiedliche Gewichte, sind also nicht vollständig
+veraltet; eine teilweise Veraltung lässt sich ohne neues Training nicht
+ausschließen. Weitere Stellen, die Gewichte direkt über `->data` lesen, sind
+nicht vollständig geprüft.

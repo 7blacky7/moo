@@ -129,6 +129,8 @@ solange schritt < 3:
 setze train_gpu auf gpu_statistik()
 autograd_aus()
 setze vor auf generiere(alle, anfragen)
+# netz.speichern zuerst: checkpoint_speichern materialisiert die Hostdaten.
+netz.speichern(ziel + ".netz")
 checkpoint_speichern({"netz": netz, "opt": opt, "schritt": 3, "global_schritt": 3, "tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"}, ziel)
 # Host-Materialisierung erst NACH dem Speichern, damit sie den Bug nicht verdeckt.
 setze parameter_vor auf parameter_beleg(alle)
@@ -136,4 +138,7 @@ setze geladen auf checkpoint_laden(ziel, {"tokenizer_version": sha256(tok), "arc
 setze neu_schichten auf geladen["netz"]["schichten"]
 setze parameter_nach auf parameter_beleg(neu_schichten)
 setze nach auf generiere(neu_schichten, anfragen)
-datei_schreiben(umgebung("P4_DIAG_RESULT"), json_string({"before": vor, "after": nach, "params_before": parameter_vor, "params_after": parameter_nach, "gpu": train_gpu}))
+setze netz_schichten auf ki_laden(ziel + ".netz")["schichten"]
+setze parameter_netz auf parameter_beleg(netz_schichten)
+setze nach_netz auf generiere(netz_schichten, anfragen)
+datei_schreiben(umgebung("P4_DIAG_RESULT"), json_string({"before": vor, "after": nach, "after_netz": nach_netz, "params_before": parameter_vor, "params_after": parameter_nach, "params_netz": parameter_netz, "gpu": train_gpu}))

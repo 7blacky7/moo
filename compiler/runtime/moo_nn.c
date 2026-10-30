@@ -1522,7 +1522,10 @@ static MooValue fw_position(MooValue schicht, MooValue x) {
                             "Eingaben gehen nur beim Generieren (ohne_gradient)"));
         return moo_none();
     }
-    /* Inferenz: konstante Teilkopie der ersten seq Zeilen */
+    /* Inferenz: konstante Teilkopie der ersten seq Zeilen. pos->data kann
+     * nach GPU-residentem SGD veraltet sein (nur MOO_V_DEV) — vorher sichern. */
+    moo_tensor_f32_sichern(T(pos));
+    if (moo_error_flag) { moo_release(pos); return moo_none(); }
     int32_t shape[2] = { xt->shape[0], xt->shape[1] };
     MooTensor* teil = moo_tensor_raw(2, shape);
     if (!teil) { moo_release(pos); return moo_none(); }
