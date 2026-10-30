@@ -1,0 +1,99 @@
+# P4 Multi-Window-Trainingsadapter. Nur über den zertifizierten Orchestrator.
+# Manifest-, Dokument-, Tokenizer-, Checkpoint- und Budgetbelege sowie der
+# GPU-Slot werden vor dem Aufruf im Gate und Runner geprüft.
+setze art auf umgebung("P4_TOKENIZER_KIND")
+setze tokpfad auf umgebung("P4_TOKENIZER_PATH")
+setze ckpfad auf umgebung("P4_CHECKPOINT")
+setze ziel auf umgebung("P4_CHECKPOINT_OUT")
+setze fensterpfad auf umgebung("P4_WINDOWS_PATH")
+setze erwarteter_hash auf umgebung("P4_WINDOWS_SHA256")
+setze manifesthash auf umgebung("P4_MANIFEST_SHA256")
+wenn art == nichts oder tokpfad == nichts oder ckpfad == nichts oder ziel == nichts oder fensterpfad == nichts oder erwarteter_hash == nichts oder manifesthash == nichts:
+    wirf "P4-Train: Umgebungsvariablen fehlen"
+wenn datei_existiert(ziel):
+    wirf "P4-Train: Ausgabe-Checkpoint existiert bereits"
+setze tok auf nichts
+setze info auf nichts
+wenn art == "char":
+    setze tok auf zeichen_fixed_laden(tokpfad)
+    setze info auf zeichen_fixed_info(tok)
+sonst wenn art == "bpe":
+    setze tok auf tokenizer_laden(tokpfad)
+    setze info auf tokenizer_info(tok)
+sonst wenn art == "syllable":
+    setze tok auf silben_laden(tokpfad)
+    setze info auf silben_info(tok)
+sonst:
+    wirf "P4-Train: unbekannter Tokenizer"
+setze tokenhash auf sha256(tok)
+setze zustand auf checkpoint_laden(ckpfad, {"tokenizer_version": tokenhash, "arch_version": "p4-gpt2-v1"})
+setze schichten auf zustand["netz"]["schichten"]
+setze opt auf zustand["opt"]
+wenn opt == nichts oder länge(schichten) != 14:
+    wirf "P4-Train: Checkpoint braucht Optimizer und 14 Schichten"
+setze kontextlimit auf schichten[1]["max"]
+wenn kontextlimit == nichts oder kontextlimit < 2 oder kontextlimit > 4096 oder kontextlimit != boden(kontextlimit):
+    wirf "P4-Train: ungueltiges Positionslimit"
+setze roh auf datei_lesen(fensterpfad)
+wenn sha256(roh) != erwarteter_hash:
+    wirf "P4-Train: Fensterdatei verändert"
+setze paket auf json_parse(roh)
+wenn paket["manifest_sha256"] != manifesthash oder paket["tokenizer_sha256"] != tokenhash:
+    wirf "P4-Train: Manifest oder Tokenizer passt nicht"
+setze fenster auf paket["windows"]
+wenn länge(fenster) < 1 oder länge(fenster) > 100000:
+    wirf "P4-Train: ungültige Fensterzahl"
+setze vokab auf info["vokab"]
+# Sämtliche Form- und Maskenfehler werden vor dem ersten Optimiererschritt
+# erkannt. Train-only-Zuordnung und Bytebezug prüft zusätzlich der Runner.
+für f in fenster:
+    setze eingaben auf f["input_ids"]
+    setze ziele auf f["target_ids"]
+    setze maske auf f["loss_mask"]
+    setze n auf länge(eingaben)
+    wenn n < 1 oder n > kontextlimit oder länge(ziele) != n oder länge(maske) != n:
+        wirf "P4-Train: Eingabe- und Zielform ungültig"
+    setze i auf 0
+    setze aktive auf 0
+    solange i < n:
+        wenn maske[i] != 0 und maske[i] != 1:
+            wirf "P4-Train: Verlustmaske muss binär sein"
+        setze aktive auf aktive + maske[i]
+        setze a auf eingaben[i]
+        setze b auf ziele[i]
+        wenn a < 0 oder a >= vokab oder a != boden(a) oder b < 0 oder b >= vokab oder b != boden(b):
+            wirf "P4-Train: ungültige Token-ID"
+        wenn i + 1 < n und eingaben[i + 1] != b:
+            wirf "P4-Train: Next-Token-Verschiebung inkonsistent"
+        setze i auf i + 1
+    wenn aktive == 0:
+        wirf "P4-Train: Verlustmaske ist leer"
+
+autograd_an()
+für f in fenster:
+    setze eingaben auf f["input_ids"]
+    setze ziele auf f["target_ids"]
+    setze maske auf f["loss_mask"]
+    # Pads folgen nur auf echte Eingaben; kausale Attention und Nullmaske
+    # verhindern Einfluss auf fruehere Positionen und auf den Verlust.
+    solange länge(eingaben) < kontextlimit:
+        eingaben.hinzufügen(0)
+        ziele.hinzufügen(0)
+        maske.hinzufügen(0)
+    setze x auf vorwaerts([schichten[0]], tensor_aus_liste(eingaben))
+    setze x auf vorwaerts([schichten[1]], x)
+    setze x auf x + vorwaerts([schichten[2], schichten[3]], x)
+    setze x auf x + vorwaerts([schichten[4], schichten[5], schichten[6]], x)
+    setze x auf x + vorwaerts([schichten[7], schichten[8]], x)
+    setze x auf x + vorwaerts([schichten[9], schichten[10], schichten[11]], x)
+    setze logits auf vorwaerts([schichten[12], schichten[13]], x)
+    setze verlust auf kreuzentropie(logits, tensor_aus_liste(ziele), tensor_aus_liste(maske))
+    verlust.rueckwaerts()
+    gradienten_kappen(parameter(schichten), 1.0)
+    opt.schritt()
+    setze zustand["schritt"] auf zustand["schritt"] + 1
+    setze zustand["global_schritt"] auf zustand["global_schritt"] + 1
+# Nur in privatem Staging schreiben; der Runner muss das Ergebnis prüfen und
+# anschließend exklusiv atomar veröffentlichen.
+checkpoint_speichern(zustand, ziel)
+zeige "P4 TRAIN RUN OK"

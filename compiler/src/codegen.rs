@@ -3199,6 +3199,145 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_tokld_p")?;
                         return Ok(r);
                     }
+                    "zeichen_fixed_trainiere" | "char_fixed_train" => {
+                        if args.len() != 2 { return Err(format!("zeichen_fixed_trainiere: erwartet 2 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let a1 = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_char_fixed_trainiere, &[a0.into(), a1.into()], "char_fixed_trainiere")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_char_fixed_trainiere_0")?;
+                        self.call_rt_void(self.rt.moo_release, &[a1.into()], "rel_char_fixed_trainiere_1")?;
+                        return Ok(r);
+                    }
+                    "zeichen_fixed_kodiere" | "char_fixed_encode" => {
+                        if args.len() != 2 { return Err(format!("zeichen_fixed_kodiere: erwartet 2 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let a1 = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_char_fixed_kodiere, &[a0.into(), a1.into()], "char_fixed_kodiere")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_char_fixed_kodiere_0")?;
+                        self.call_rt_void(self.rt.moo_release, &[a1.into()], "rel_char_fixed_kodiere_1")?;
+                        return Ok(r);
+                    }
+                    "zeichen_fixed_dekodiere" | "char_fixed_decode" => {
+                        if args.len() != 2 { return Err(format!("zeichen_fixed_dekodiere: erwartet 2 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let a1 = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_char_fixed_dekodiere, &[a0.into(), a1.into()], "char_fixed_dekodiere")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_char_fixed_dekodiere_0")?;
+                        self.call_rt_void(self.rt.moo_release, &[a1.into()], "rel_char_fixed_dekodiere_1")?;
+                        return Ok(r);
+                    }
+                    "zeichen_fixed_speichern" | "char_fixed_save" => {
+                        if args.len() != 2 { return Err(format!("zeichen_fixed_speichern: erwartet 2 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let a1 = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_char_fixed_speichern, &[a0.into(), a1.into()], "char_fixed_speichern")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_char_fixed_speichern_0")?;
+                        self.call_rt_void(self.rt.moo_release, &[a1.into()], "rel_char_fixed_speichern_1")?;
+                        return Ok(r);
+                    }
+                    "zeichen_fixed_laden" | "char_fixed_load" => {
+                        if args.len() != 1 { return Err(format!("zeichen_fixed_laden: erwartet 1 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_char_fixed_laden, &[a0.into()], "char_fixed_laden")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_char_fixed_laden_0")?;
+                        return Ok(r);
+                    }
+                    "zeichen_fixed_info" | "char_fixed_info" => {
+                        if args.len() != 1 { return Err(format!("zeichen_fixed_info: erwartet 1 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_char_fixed_info, &[a0.into()], "char_fixed_info")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_char_fixed_info_0")?;
+                        return Ok(r);
+                    }
+                    "zeichen_fixed_hash" | "char_fixed_hash" => {
+                        if args.len() != 1 { return Err(format!("zeichen_fixed_hash: erwartet 1 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_char_fixed_hash, &[a0.into()], "char_fixed_hash")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_char_fixed_hash_0")?;
+                        return Ok(r);
+                    }
+                    "zeichen_fixed_hash64" | "char_fixed_hash64" => {
+                        if args.len() != 1 { return Err(format!("zeichen_fixed_hash64: erwartet 1 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_char_fixed_hash64, &[a0.into()], "char_fixed_hash64")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_char_fixed_hash64_0")?;
+                        return Ok(r);
+                    }
+                    "silben_trainiere" | "syllable_train" => {
+                        if args.len() != 3 { return Err(format!("silben_trainiere: erwartet 3 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let a1 = self.compile_expr(&args[1])?;
+                        let a2 = self.compile_expr(&args[2])?;
+                        let r = self.call_rt(self.rt.moo_silben_trainiere, &[a0.into(), a1.into(), a2.into()], "silben_trainiere")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_silben_trainiere_0")?;
+                        self.call_rt_void(self.rt.moo_release, &[a1.into()], "rel_silben_trainiere_1")?;
+                        self.call_rt_void(self.rt.moo_release, &[a2.into()], "rel_silben_trainiere_2")?;
+                        return Ok(r);
+                    }
+                    "silben_grenzen" | "syllable_boundaries" => {
+                        if args.len() != 2 { return Err("silben_grenzen: erwartet 2 Argumente".to_string()); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let a1 = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_silben_grenzen, &[a0.into(), a1.into()], "silben_grenzen")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_silben_grenzen_0")?;
+                        self.call_rt_void(self.rt.moo_release, &[a1.into()], "rel_silben_grenzen_1")?;
+                        return Ok(r);
+                    }
+                    "silben_kodiere" | "syllable_encode" => {
+                        if args.len() != 2 { return Err(format!("silben_kodiere: erwartet 2 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let a1 = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_silben_kodiere, &[a0.into(), a1.into()], "silben_kodiere")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_silben_kodiere_0")?;
+                        self.call_rt_void(self.rt.moo_release, &[a1.into()], "rel_silben_kodiere_1")?;
+                        return Ok(r);
+                    }
+                    "silben_dekodiere" | "syllable_decode" => {
+                        if args.len() != 2 { return Err(format!("silben_dekodiere: erwartet 2 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let a1 = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_silben_dekodiere, &[a0.into(), a1.into()], "silben_dekodiere")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_silben_dekodiere_0")?;
+                        self.call_rt_void(self.rt.moo_release, &[a1.into()], "rel_silben_dekodiere_1")?;
+                        return Ok(r);
+                    }
+                    "silben_speichern" | "syllable_save" => {
+                        if args.len() != 2 { return Err(format!("silben_speichern: erwartet 2 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let a1 = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_silben_speichern, &[a0.into(), a1.into()], "silben_speichern")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_silben_speichern_0")?;
+                        self.call_rt_void(self.rt.moo_release, &[a1.into()], "rel_silben_speichern_1")?;
+                        return Ok(r);
+                    }
+                    "silben_laden" | "syllable_load" => {
+                        if args.len() != 1 { return Err(format!("silben_laden: erwartet 1 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_silben_laden, &[a0.into()], "silben_laden")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_silben_laden_0")?;
+                        return Ok(r);
+                    }
+                    "silben_info" | "syllable_info" => {
+                        if args.len() != 1 { return Err(format!("silben_info: erwartet 1 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_silben_info, &[a0.into()], "silben_info")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_silben_info_0")?;
+                        return Ok(r);
+                    }
+                    "silben_hash" | "syllable_hash" => {
+                        if args.len() != 1 { return Err(format!("silben_hash: erwartet 1 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_silben_hash, &[a0.into()], "silben_hash")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_silben_hash_0")?;
+                        return Ok(r);
+                    }
+                    "silben_hash64" | "syllable_hash64" => {
+                        if args.len() != 1 { return Err(format!("silben_hash64: erwartet 1 Argument(e)")); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_silben_hash64, &[a0.into()], "silben_hash64")?;
+                        self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_silben_hash64_0")?;
+                        return Ok(r);
+                    }
                     "tokenizer_info" => {
                         let t = self.compile_expr(&args[0])?;
                         let r = self.call_rt(self.rt.moo_tok_info, &[t.into()], "tok_info")?;

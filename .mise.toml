@@ -1,6 +1,10 @@
 [tools]
 python = "3.13"
 
+[tasks.p4-build-compiler]
+description = "Compile the Moo compiler for P4 without running training or tests"
+run = "cargo build --manifest-path compiler/Cargo.toml --release --locked --no-default-features"
+
 [tasks.dev]
 description = "Run moo REPL"
 run = "uv run python -m moo"
@@ -511,4 +515,223 @@ test "$(grep -c '^PASS ' "$OUT/ime-event.log")" -eq 18
 test "$(grep -c '^FAIL ' "$OUT/ime-event.log")" -eq 0
 test "$(grep -c '^P016-O4-MOO-IME-EVENT-OK checks=18 offsets=utf8-bytes no_ui=1$' "$OUT/ime-event.log")" -eq 1
 cat "$OUT/ime-event.log"
+'''
+
+[tasks.test-p4-char-fixed]
+description = "Run fixed character tokenizer under ASan and UBSan"
+run = '''
+set -eu
+P4_OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-p4-char.XXXXXX")"
+trap 'rm -rf "$P4_OUT"' EXIT
+P4_CC="${CC:-cc}"
+P4_SRC="compiler/runtime/tests/test_char_fixed_asan.c compiler/runtime/moo_char_fixed.c compiler/runtime/moo_krypto.c compiler/runtime/moo_quant.c compiler/runtime/moo_tensor.c compiler/runtime/moo_tensor_ops.c compiler/runtime/moo_ki_gpu.c compiler/runtime/moo_autograd.c compiler/runtime/moo_memory.c compiler/runtime/moo_value.c compiler/runtime/moo_print.c compiler/runtime/moo_string.c compiler/runtime/moo_dict.c compiler/runtime/moo_list.c compiler/runtime/moo_ops.c"
+"$P4_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -g -O1 -fsanitize=address -fno-omit-frame-pointer $P4_SRC -lm -o "$P4_OUT/char-asan"
+ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 "$P4_OUT/char-asan"
+"$P4_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -g -O1 -fsanitize=undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer $P4_SRC -lm -o "$P4_OUT/char-ubsan"
+UBSAN_OPTIONS=halt_on_error=1 "$P4_OUT/char-ubsan"
+'''
+
+[tasks.test-p4-silben]
+description = "Run German syllable tokenizer under ASan and UBSan"
+run = '''
+set -eu
+P4_OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-p4-silben.XXXXXX")"
+trap 'rm -rf "$P4_OUT"' EXIT
+P4_CC="${CC:-cc}"
+P4_SRC="compiler/runtime/tests/test_silben_asan.c compiler/runtime/moo_silben.c compiler/runtime/moo_krypto.c compiler/runtime/moo_quant.c compiler/runtime/moo_tensor.c compiler/runtime/moo_tensor_ops.c compiler/runtime/moo_ki_gpu.c compiler/runtime/moo_autograd.c compiler/runtime/moo_memory.c compiler/runtime/moo_value.c compiler/runtime/moo_print.c compiler/runtime/moo_string.c compiler/runtime/moo_dict.c compiler/runtime/moo_list.c compiler/runtime/moo_ops.c"
+"$P4_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -g -O1 -fsanitize=address -fno-omit-frame-pointer $P4_SRC -lm -o "$P4_OUT/silben-asan"
+ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 "$P4_OUT/silben-asan"
+"$P4_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -g -O1 -fsanitize=undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer $P4_SRC -lm -o "$P4_OUT/silben-ubsan"
+UBSAN_OPTIONS=halt_on_error=1 "$P4_OUT/silben-ubsan"
+'''
+
+[tasks.test-p4-train-compile]
+description = "Compile the P4 training adapter without running it"
+run = '''
+set -eu
+P4_OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-p4-train-compile.XXXXXX")"
+trap 'rm -rf "$P4_OUT"' EXIT
+P4_COMPILER="$PWD/compiler/target/release/moo-compiler"
+test -x "$P4_COMPILER"
+"$P4_COMPILER" compile beispiele/p4_silben/train_window.moos -o "$P4_OUT/train"
+'''
+
+[tasks.test-p4-synthetic-manifest]
+description = "Create temporary manifest for the authored synthetic multigenre corpus"
+run = '''
+set -eu
+P4_OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-p4-synthetic.XXXXXX")"
+trap 'rm -rf "$P4_OUT"' EXIT
+uv run python skripte/p4_silben/split_multigenre.py --corpus dokumentation/p4_silben/synthetic_corpus.txt --boundaries dokumentation/p4_silben/synthetic_boundaries.json --expected-sha256 01c18cd29a07f21616fb7c0ecd7f85be6b4f7feb30c70e5976dcc7f739c23e0d --output "$P4_OUT/manifest.json"
+uv run python -m json.tool "$P4_OUT/manifest.json"
+uv run python -c 'import json,sys; a=json.load(open(sys.argv[1],encoding="utf-8")); b=json.load(open(sys.argv[2],encoding="utf-8")); assert a == b, "synthetic manifest mismatch"; print("P4 SYNTHETIC MANIFEST MATCH")' "$P4_OUT/manifest.json" dokumentation/p4_silben/synthetic_manifest.json
+'''
+
+[tasks.test-p4-moos-api]
+description = "Compile and run public P4 Moo API tests with synthetic fallback artifacts"
+run = '''
+set -eu
+P4_OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-p4-moos.XXXXXX")"
+trap 'rm -rf "$P4_OUT"' EXIT
+uv run python -c 'import hashlib,struct,sys; from pathlib import Path; d=Path(sys.argv[1]); p=Path("compiler/runtime/data/silben/dehyphn-x-2024-02-28.pat").read_bytes(); u=lambda *x:struct.pack("<"+"I"*len(x),*x); c=b"MOOCF001"+u(1,0,256); s=b"MOOSIL01"+u(1,len(p),0,0)+p; (d/"char.mcf").write_bytes(c+hashlib.sha256(c).digest()); (d/"silben.msf").write_bytes(s+hashlib.sha256(s).digest())' "$P4_OUT"
+uv run python -c 'import hashlib,struct,sys; from pathlib import Path; d=Path(sys.argv[1]); p=Path("compiler/runtime/data/silben/dehyphn-x-2024-02-28.pat").read_bytes(); u=lambda *x:struct.pack("<"+"I"*len(x),*x); parts=[b"Zu",b"cker",b"Bag",b"ger"]; body=b"MOOSIL01"+u(1,len(p),len(parts),0)+p+b"".join(u(len(x))+x for x in parts); (d/"words.msf").write_bytes(body+hashlib.sha256(body).digest()); [(d/("bad-"+x)).write_bytes((b:= (d/x).read_bytes())[:-1]+bytes([b[-1]^1])) for x in ("char.mcf","silben.msf")]' "$P4_OUT"
+P4_COMPILER="$PWD/compiler/target/release/moo-compiler"
+test -x "$P4_COMPILER"
+"$P4_COMPILER" compile beispiele/tests/p4_tokenizer_api.moos -o "$P4_OUT/test"
+P4_MOOS_FIXTURES="$P4_OUT" "$P4_OUT/test"
+'''
+
+[tasks.test-p4-preflight]
+description = "Test P4 preparation without tokenizer or model training"
+run = "uv run --with pytest pytest tests/test_p4_split_manifest.py tests/test_p4_evaluation.py -v -s -k 'not test_real_untrained_moo_scorer_rejects_wrong_tokenizer'"
+
+[tasks.test-p4-split]
+description = "Independent synthetic document split and manifest tests"
+run = "uv run --with pytest pytest tests/test_p4_split_manifest.py tests/test_p4_evaluation.py -v"
+
+
+[tasks.test-p4-regression]
+description = "Run existing dataset, BPE, shard and checkpoint native regression harnesses"
+run = '''
+set -eu
+P4_OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-p4-regression.XXXXXX")"
+trap 'rm -rf "$P4_OUT"' EXIT
+P4_CC="${CC:-cc}"
+P4_DIR="compiler/runtime"
+P4_BASE="$P4_DIR/moo_quant.c $P4_DIR/moo_tensor.c $P4_DIR/moo_tensor_ops.c $P4_DIR/moo_ki_gpu.c $P4_DIR/moo_autograd.c $P4_DIR/moo_memory.c $P4_DIR/moo_value.c $P4_DIR/moo_print.c $P4_DIR/moo_string.c $P4_DIR/moo_dict.c $P4_DIR/moo_list.c $P4_DIR/moo_ops.c"
+for P4_MODE in address undefined; do
+  for P4_KIND in dataset tokenizer shard checkpoint; do
+    case "$P4_KIND" in
+      dataset) P4_EXTRA="$P4_DIR/moo_dataset.c" ;;
+      tokenizer) P4_EXTRA="$P4_DIR/moo_tokenizer.c" ;;
+      shard) P4_EXTRA="$P4_DIR/moo_shard.c" ;;
+      checkpoint) P4_EXTRA="$P4_DIR/moo_nn.c $P4_DIR/moo_nn_easy.c $P4_DIR/moo_json.c" ;;
+    esac
+    echo "P4_REGRESSION build=$P4_KIND sanitizer=$P4_MODE"
+    "$P4_CC" -std=gnu11 -D_GNU_SOURCE -g -O1 "-fsanitize=$P4_MODE" -fno-sanitize-recover=undefined -fno-omit-frame-pointer "$P4_DIR/tests/test_${P4_KIND}_asan.c" "$P4_DIR/tests/capture_free_stubs.c" $P4_EXTRA $P4_BASE -lm -o "$P4_OUT/$P4_KIND"
+    ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 "$P4_OUT/$P4_KIND"
+  done
+done
+'''
+
+
+[tasks.test-p4-alias]
+description = "Check English tokenizer aliases and compiler argument-count errors"
+run = '''
+set -eu
+P4_OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-p4-alias.XXXXXX")"
+trap 'rm -rf "$P4_OUT"' EXIT
+P4_COMPILER="$PWD/compiler/target/release/moo-compiler"
+test -x "$P4_COMPILER"
+cat > "$P4_OUT/alias.moos" <<'MOO_P4_ALIAS'
+setze muster auf datei_lesen("compiler/runtime/data/silben/dehyphn-x-2024-02-28.pat")
+setze z auf char_fixed_train("Wald", 260)
+setze s auf syllable_train("Wald", 260, muster)
+wenn char_fixed_decode(z, char_fixed_encode(z, "Wald")) != "Wald":
+    wirf "Zeichenalias"
+wenn syllable_decode(s, syllable_encode(s, "Wald")) != "Wald":
+    wirf "Silbenalias"
+zeige "P4 ALIAS OK"
+MOO_P4_ALIAS
+"$P4_COMPILER" compile "$P4_OUT/alias.moos" -o "$P4_OUT/alias"
+"$P4_OUT/alias" > "$P4_OUT/output"
+grep -qx 'P4 ALIAS OK' "$P4_OUT/output"
+printf '%s\n' 'zeige syllable_train("Wald", 260)' > "$P4_OUT/bad.moos"
+if "$P4_COMPILER" compile "$P4_OUT/bad.moos" -o "$P4_OUT/bad" > "$P4_OUT/bad.log" 2>&1; then
+    echo "FAIL: falsche Argumentanzahl akzeptiert" >&2
+    exit 1
+fi
+grep -q 'erwartet 3 Argument' "$P4_OUT/bad.log"
+cat "$P4_OUT/output"
+echo "P4 ARITY OK"
+'''
+
+
+[tasks.test-p4-demo]
+description = "Compile and run the isolated P4 tokenizer and checkpoint demo"
+run = '''
+set -eu
+P4_OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-p4-demo.XXXXXX")"
+trap 'rm -rf "$P4_OUT"' EXIT
+P4_COMPILER="$PWD/compiler/target/release/moo-compiler"
+test -x "$P4_COMPILER"
+mkdir "$P4_OUT/data"
+"$P4_COMPILER" compile beispiele/p4_silben_demo.moos -o "$P4_OUT/demo"
+MOO_P4_DEMO_DIR="$P4_OUT/data" "$P4_OUT/demo" > "$P4_OUT/output"
+grep -qx 'P4 DEMO OK' "$P4_OUT/output"
+test -s "$P4_OUT/data/zeichen.mcf"
+test -s "$P4_OUT/data/silben.msf"
+test -s "$P4_OUT/data/zeichen.mook"
+test -s "$P4_OUT/data/silben.mook"
+cat "$P4_OUT/output"
+'''
+
+
+[tasks.test-p4-vulkan-compute]
+description = "Headless Vulkan compute regression without tokenizer or model training"
+run = '''
+set -eu
+P4_OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-p4-vulkan.XXXXXX")"
+trap 'rm -rf "$P4_OUT"' EXIT
+"${CC:-cc}" -std=gnu11 -O2 -DMOO_HAS_VULKAN -Icompiler/runtime \
+  -o "$P4_OUT/test" compiler/runtime/tests/test_ki_gpu.c compiler/runtime/moo_ki_gpu.c -lvulkan -lm
+env -u DISPLAY -u WAYLAND_DISPLAY "$P4_OUT/test" > "$P4_OUT/output"
+cat "$P4_OUT/output"
+if grep -q '^SKIP:' "$P4_OUT/output"; then
+  echo "Vulkan compute unavailable: not a pass" >&2
+  exit 1
+fi
+'''
+
+
+[tasks.p4-compile-experiment]
+description = "Compile SIL-11 programs into an existing private run directory without training"
+run = '''
+set -eu
+umask 077
+: "${P4_RUN_DIR:?P4_RUN_DIR must name an existing private run directory}"
+case "$P4_RUN_DIR" in /*) ;; *) echo "P4_RUN_DIR must be absolute" >&2; exit 1;; esac
+if [ ! -d "$P4_RUN_DIR" ] || [ -L "$P4_RUN_DIR" ]; then
+  echo "P4_RUN_DIR must be a real directory" >&2; exit 1
+fi
+test "$(realpath -e "$P4_RUN_DIR")" = "$P4_RUN_DIR"
+test "$(stat -c %u "$P4_RUN_DIR")" = "$(id -u)"
+test "$(stat -c %a "$P4_RUN_DIR")" = 700
+P4_COMPILER="${P4_COMPILER:-$PWD/compiler/target/release/moo-compiler}"
+test -x "$P4_COMPILER"
+for P4_NAME in train_tokenizers init_model encode logits logits_batch train_window; do
+  if [ -e "$P4_RUN_DIR/$P4_NAME" ] || [ -L "$P4_RUN_DIR/$P4_NAME" ]; then
+    echo "P4 output already exists: $P4_NAME" >&2; exit 1
+  fi
+done
+sha256sum "$P4_COMPILER"
+for P4_NAME in train_tokenizers init_model encode logits logits_batch train_window; do
+  sha256sum "beispiele/p4_silben/$P4_NAME.moos"
+  "$P4_COMPILER" compile "beispiele/p4_silben/$P4_NAME.moos" -o "$P4_RUN_DIR/$P4_NAME"
+  sha256sum "$P4_RUN_DIR/$P4_NAME"
+done
+'''
+
+
+[tasks.p4-compile-diagnose]
+description = "Compile the training-free SIL-11 diagnostic into a private run directory"
+run = '''
+set -eu
+umask 077
+: "${P4_RUN_DIR:?P4_RUN_DIR must name an existing private run directory}"
+case "$P4_RUN_DIR" in /*) ;; *) echo "P4_RUN_DIR must be absolute" >&2; exit 1;; esac
+if [ ! -d "$P4_RUN_DIR" ] || [ -L "$P4_RUN_DIR" ]; then
+  echo "P4_RUN_DIR must be a real directory" >&2; exit 1
+fi
+test "$(realpath -e "$P4_RUN_DIR")" = "$P4_RUN_DIR"
+test "$(stat -c %u "$P4_RUN_DIR")" = "$(id -u)"
+test "$(stat -c %a "$P4_RUN_DIR")" = 700
+if [ -e "$P4_RUN_DIR/train_diagnose" ] || [ -L "$P4_RUN_DIR/train_diagnose" ]; then
+  echo "P4 diagnostic output already exists" >&2; exit 1
+fi
+P4_COMPILER="${P4_COMPILER:-$PWD/compiler/target/release/moo-compiler}"
+test -x "$P4_COMPILER"
+sha256sum "$P4_COMPILER" beispiele/p4_silben/train_diagnose.moos
+"$P4_COMPILER" compile beispiele/p4_silben/train_diagnose.moos -o "$P4_RUN_DIR/train_diagnose"
+sha256sum "$P4_RUN_DIR/train_diagnose"
 '''

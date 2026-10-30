@@ -1,0 +1,293 @@
+{
+  "boundaries_sha256": "d129debdfa5615fa6f962840ffa3dc3f8cd88dd9ca5b484ca265d50397c5d9d5",
+  "concatenation": "source order; no inserted bytes",
+  "documents": [
+    {
+      "bytes": 244,
+      "codepoints": 241,
+      "end": 244,
+      "genre": "erzählung",
+      "group": "E01",
+      "id": "E01",
+      "licence": "original-assistant-generated; intended unrestricted use",
+      "revision": "2026-10-29-v1",
+      "sha256": "b182d6214766b33b5710124f3a707ccb7c5f68e72a6c50323af52f240a12b323",
+      "source": "urn:moo:p4:synthetic:assistant",
+      "split": "train",
+      "start": 0,
+      "test_eligible": true
+    },
+    {
+      "bytes": 221,
+      "codepoints": 218,
+      "end": 465,
+      "genre": "erzählung",
+      "group": "E02",
+      "id": "E02",
+      "licence": "original-assistant-generated; intended unrestricted use",
+      "revision": "2026-10-29-v1",
+      "sha256": "bcd897048602045f0f332f36e8b4163286f88d33a293520c43251f6cdcb9f68e",
+      "source": "urn:moo:p4:synthetic:assistant",
+      "split": "train",
+      "start": 244,
+      "test_eligible": true
+    },
+    {
+      "bytes": 201,
+      "codepoints": 199,
+      "end": 666,
+      "genre": "erzählung",
+      "group": "E03",
+      "id": "E03",
+      "licence": "original-assistant-generated; intended unrestricted use",
+      "revision": "2026-10-29-v1",
+      "sha256": "d779a0aa44f24ef0185dfd87a2e059a78913d21c698d9e0254fa31b8cca0eee4",
+      "source": "urn:moo:p4:synthetic:assistant",
+      "split": "test",
+      "start": 465,
+      "test_eligible": true
+    },
+    {
+      "bytes": 220,
+      "codepoints": 217,
+      "end": 886,
+      "genre": "erzählung",
+      "group": "E04",
+      "id": "E04",
+      "licence": "original-assistant-generated; intended unrestricted use",
+      "revision": "2026-10-29-v1",
+      "sha256": "e6aa693c774d26d49e9f77cfd34b58552f87a4a669bb54b3ca2eae2c289f7959",
+      "source": "urn:moo:p4:synthetic:assistant",
+      "split": "val",
+      "start": 666,
+      "test_eligible": true
+    },
+    {
+      "bytes": 239,
+      "codepoints": 236,
+      "end": 1125,
+      "genre": "erzählung",
+      "group": "E05",
+      "id": "E05",
+      "licence": "original-assistant-generated; intended unrestricted use",
+      "revision": "2026-10-29-v1",
+      "sha256": "b459cb38b171987b476b5d1b08b48a2bbbcf2c930d43921807ba2e9f21770717",
+      "source": "urn:moo:p4:synthetic:assistant",
+      "split": "train",
+      "start": 886,
+      "test_eligible": true
+    },
+    {
+      "bytes": 293,
+      "codepoints": 287,
+      "end": 1418,
+      "genre": "sachtext",
+      "group": "S01",
+      "id": "S01",
+      "licence": "original-assistant-generated; intended unrestricted use",
+      "revision": "2026-10-29-v1",
+      "sha256": "4bfca1a1eea1bf2bbadcabc90f184f02e30a06bd1d927436e4cac61856277eb2",
+      "source": "urn:moo:p4:synthetic:assistant",
+      "split": "train",
+      "start": 1125,
+      "test_eligible": true
+    },
+    {
+      "bytes": 266,
+      "codepoints": 261,
+      "end": 1684,
+      "genre": "sachtext",
+      "group": "S02",
+      "id": "S02",
+      "licence": "original-assistant-generated; intended unrestricted use",
+      "revision": "2026-10-29-v1",
+      "sha256": "a3d7f7b10504b4db2f906fa0003118df9afa79a526717da9e2c14ebe8efcdb70",
+      "source": "urn:moo:p4:synthetic:assistant",
+      "split": "train",
+      "start": 1418,
+      "test_eligible": true
+    },
+    {
+      "bytes": 249,
+      "codepoints": 244,
+      "end": 1933,
+      "genre": "sachtext",
+      "group": "S03",
+      "id": "S03",
+      "licence": "original-assistant-generated; intended unrestricted use",
+      "revision": "2026-10-29-v1",
+      "sha256": "0c4f87870535cdaf4c6a1d46d68fd7e695a61f36f9c80a74f5b7c88d567e767f",
+      "source": "urn:moo:p4:synthetic:assistant",
+      "split": "test",
+      "start": 1684,
+      "test_eligible": true
+    },
+    {
+      "bytes": 226,
+      "codepoints": 222,
+      "end": 2159,
+      "genre": "sachtext",
+      "group": "S04",
+      "id": "S04",
+      "licence": "original-assistant-generated; intended unrestricted use",
+      "revision": "2026-10-29-v1",
+      "sha256": "6c3c7bdde4c6411632ae1ba1ffd4f64805eaa0b30af5a51a99f8d39910447333",
+      "source": "urn:moo:p4:synthetic:assistant",
+      "split": "train",
+      "start": 1933,
+      "test_eligible": true
+    },
+    {
+      "bytes": 269,
+      "codepoints": 261,
+      "end": 2428,
+      "genre": "sachtext",
+      "group": "S05",
+      "id": "S05",
+      "licence": "original-assistant-generated; intended unrestricted use",
+      "revision": "2026-10-29-v1",
+      "sha256": "33fc29cf1b0c9c92115322c069253e53dae68589ddb3502840f839b100862d0f",
+      "source": "urn:moo:p4:synthetic:assistant",
+      "split": "val",
+      "start": 2159,
+      "test_eligible": true
+    },
+    {
+      "bytes": 253,
+      "codepoints": 239,
+      "end": 2681,
+      "genre": "dialog",
+      "group": "D01",
+      "id": "D01",
+      "licence": "original-assistant-generated; intended unrestricted use",
+      "revision": "2026-10-29-v1",
+      "sha256": "5ed75353fd79afbcac84671b31651a89bd959ad64f447babcd1ba5ceb3a8829c",
+      "source": "urn:moo:p4:synthetic:assistant",
+      "split": "train",
+      "start": 2428,
+      "test_eligible": true
+    },
+    {
+      "bytes": 236,
+      "codepoints": 226,
+      "end": 2917,
+      "genre": "dialog",
+      "group": "D02",
+      "id": "D02",
+      "licence": "original-assistant-generated; intended unrestricted use",
+      "revision": "2026-10-29-v1",
+      "sha256": "33bd7f529d9bfc9ff3316762009a5e9f282ee747b47252a5768cc53ef73dc444",
+      "source": "urn:moo:p4:synthetic:assistant",
+      "split": "train",
+      "start": 2681,
+      "test_eligible": true
+    },
+    {
+      "bytes": 233,
+      "codepoints": 220,
+      "end": 3150,
+      "genre": "dialog",
+      "group": "D03",
+      "id": "D03",
+      "licence": "original-assistant-generated; intended unrestricted use",
+      "revision": "2026-10-29-v1",
+      "sha256": "9be6ea352e8c248ee567128a13293cc2cf042ef7e81f42681cbbcda4f566bae9",
+      "source": "urn:moo:p4:synthetic:assistant",
+      "split": "train",
+      "start": 2917,
+      "test_eligible": true
+    },
+    {
+      "bytes": 267,
+      "codepoints": 254,
+      "end": 3417,
+      "genre": "dialog",
+      "group": "D04",
+      "id": "D04",
+      "licence": "original-assistant-generated; intended unrestricted use",
+      "revision": "2026-10-29-v1",
+      "sha256": "7926dbd0e672b8c6345f1883c407d5724baa32ba697eb0454f1006c6b588d397",
+      "source": "urn:moo:p4:synthetic:assistant",
+      "split": "test",
+      "start": 3150,
+      "test_eligible": true
+    },
+    {
+      "bytes": 247,
+      "codepoints": 238,
+      "end": 3664,
+      "genre": "dialog",
+      "group": "D05",
+      "id": "D05",
+      "licence": "original-assistant-generated; intended unrestricted use",
+      "revision": "2026-10-29-v1",
+      "sha256": "4e1698d5429cc902a873cfd5b5dab5bdc8e26c4e5d4d9a3eaf9974b865618134",
+      "source": "urn:moo:p4:synthetic:assistant",
+      "split": "val",
+      "start": 3417,
+      "test_eligible": true
+    }
+  ],
+  "format": "moo-p4-multigenre-v1",
+  "limitations": [
+    "rights and source revisions require review",
+    "document boundaries and near-duplicate groups require independent review"
+  ],
+  "manifest_sha256": "8e74c14e607844e2172b49534edb131b07bada24320bc035554348d6ff98c80f",
+  "seed": "moo-p4-multigenre-v1-2026-10-29",
+  "selection": "per genre SHA256(seed NUL genre NUL group); >=1 val/test group, ~10% each",
+  "source_sha256": "01c18cd29a07f21616fb7c0ecd7f85be6b4f7feb30c70e5976dcc7f739c23e0d",
+  "splits": {
+    "test": {
+      "bytes": 717,
+      "codepoints": 697,
+      "document_ids": [
+        "E03",
+        "S03",
+        "D04"
+      ],
+      "genres": [
+        "dialog",
+        "erzählung",
+        "sachtext"
+      ],
+      "sha256": "f93599b89cc33d6fad68b93c8be2e49ebd5ada757326f9adfdcf32d8fef53fcb"
+    },
+    "train": {
+      "bytes": 2211,
+      "codepoints": 2150,
+      "document_ids": [
+        "E01",
+        "E02",
+        "E05",
+        "S01",
+        "S02",
+        "S04",
+        "D01",
+        "D02",
+        "D03"
+      ],
+      "genres": [
+        "dialog",
+        "erzählung",
+        "sachtext"
+      ],
+      "sha256": "aa3e5d79973ae6ec4ebfe530d6cd9d47e38d8fec3d4cd8fa1e2e8167f93909b8"
+    },
+    "val": {
+      "bytes": 736,
+      "codepoints": 716,
+      "document_ids": [
+        "E04",
+        "S05",
+        "D05"
+      ],
+      "genres": [
+        "dialog",
+        "erzählung",
+        "sachtext"
+      ],
+      "sha256": "08c02a9b126410d400d98c19d02f42675aa04841aa1dcd838fa6501ca5b02bf5"
+    }
+  }
+}

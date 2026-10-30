@@ -1,0 +1,52 @@
+# P4: additives Tokenizer-Beispiel ohne Modelltraining.
+# Aufruf im Projektwurzelverzeichnis; MOO_P4_DEMO_DIR muss auf ein neues,
+# existierendes Arbeitsverzeichnis zeigen. Dateien dort werden nicht ersetzt.
+# Nur mit gültigem UTF-8 ohne NUL; IDs sind artefaktgebunden.
+setze ziel auf umgebung("MOO_P4_DEMO_DIR")
+wenn ziel == nichts oder ziel == "":
+    wirf "MOO_P4_DEMO_DIR muss ein leeres Arbeitsverzeichnis benennen"
+
+setze c_pfad auf ziel + "/zeichen.mcf"
+setze s_pfad auf ziel + "/silben.msf"
+setze cc_pfad auf ziel + "/zeichen.mook"
+setze sc_pfad auf ziel + "/silben.mook"
+wenn datei_existiert(c_pfad) oder datei_existiert(s_pfad) oder datei_existiert(cc_pfad) oder datei_existiert(sc_pfad):
+    wirf "Ausgabedatei existiert bereits"
+
+# Die Regeldatei ist Bestandteil des Silbenartefakts. Eigene Beispiele
+# verwenden nur diesen kurzen Demo-Korpus, niemals einen Testsatz.
+setze muster auf datei_lesen("compiler/runtime/data/silben/dehyphn-x-2024-02-28.pat")
+setze korpus auf "Die Kinder lesen Märchen. Zucker und Bücher."
+setze probe auf "Bücher und unbekanntes 🐄."
+setze ct auf zeichen_fixed_trainiere(korpus, 320)
+setze st auf silben_trainiere(korpus, 320, muster)
+
+zeichen_fixed_speichern(ct, c_pfad)
+silben_speichern(st, s_pfad)
+setze cl auf zeichen_fixed_laden(c_pfad)
+setze sl auf silben_laden(s_pfad)
+setze ch auf zeichen_fixed_hash(cl)
+setze sh auf silben_hash(sl)
+wenn ch != zeichen_fixed_hash(ct) oder sh != silben_hash(st):
+    wirf "Tokenizer-Hash nach Laden verändert"
+wenn zeichen_fixed_dekodiere(cl, zeichen_fixed_kodiere(cl, probe)) != probe:
+    wirf "Zeichen-Roundtrip fehlgeschlagen"
+wenn silben_dekodiere(sl, silben_kodiere(sl, probe)) != probe:
+    wirf "Silben-Roundtrip fehlgeschlagen"
+
+# Je ein minimaler untrainierter Modellzustand: Embedding-/Kopfgröße kommt
+# aus dem tatsächlichen Vokabular. Beide Checkpoints bleiben getrennt.
+setze cv auf zeichen_fixed_info(cl)["vokab"]
+setze sv auf silben_info(sl)["vokab"]
+setze cnetz auf ki_netz([schicht_embedding(cv, 8, 1), schicht_dicht(8, cv, "keine", 2)])
+setze snetz auf ki_netz([schicht_embedding(sv, 8, 3), schicht_dicht(8, sv, "keine", 4)])
+setze arch auf "p4-demo-v1"
+checkpoint_speichern({"netz": cnetz, "schritt": 0, "tokenizer_version": ch, "arch_version": arch}, cc_pfad)
+checkpoint_speichern({"netz": snetz, "schritt": 0, "tokenizer_version": sh, "arch_version": arch}, sc_pfad)
+# Die Erwartung ist nicht optional: sie stammt vom tatsächlich geladenen
+# Tokenizer und verhindert das Verwechseln verschiedener Vokabulare.
+setze cg auf checkpoint_laden(cc_pfad, {"tokenizer_version": zeichen_fixed_hash(cl), "arch_version": arch})
+setze sg auf checkpoint_laden(sc_pfad, {"tokenizer_version": silben_hash(sl), "arch_version": arch})
+wenn cg["tokenizer_version"] != ch oder sg["tokenizer_version"] != sh:
+    wirf "Checkpoint-Identität stimmt nicht"
+zeige "P4 DEMO OK"

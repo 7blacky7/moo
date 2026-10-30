@@ -1,0 +1,55 @@
+# Initialisiert ausschließlich einen untrainierten p4-gpt2-v1-Checkpoint.
+# Führt keinen Optimiererschritt und kein Tokenizertraining aus.
+setze art auf umgebung("P4_TOKENIZER_KIND")
+setze tokpfad auf umgebung("P4_TOKENIZER_PATH")
+setze ziel auf umgebung("P4_CHECKPOINT_OUT")
+setze seed auf zahl(umgebung("P4_SEED"))
+setze dim auf zahl(umgebung("P4_DIM"))
+setze heads auf zahl(umgebung("P4_HEADS"))
+setze block auf zahl(umgebung("P4_CONTEXT"))
+setze versteckt auf zahl(umgebung("P4_HIDDEN"))
+wenn art == nichts oder tokpfad == nichts oder ziel == nichts oder seed == nichts oder dim == nichts oder heads == nichts oder block == nichts oder versteckt == nichts:
+    wirf "P4-Init: Umgebungsvariablen fehlen"
+wenn datei_existiert(ziel):
+    wirf "P4-Init: Checkpoint existiert bereits"
+wenn seed < 0 oder seed > 1000000000 oder seed != boden(seed):
+    wirf "P4-Init: Seed ungültig"
+wenn dim < 1 oder dim > 512 oder dim != boden(dim) oder heads < 1 oder heads > 16 oder heads != boden(heads) oder dim - boden(dim / heads) * heads != 0:
+    wirf "P4-Init: Dimension/Köpfe ungültig"
+wenn block < 2 oder block > 4096 oder block != boden(block) oder versteckt < 1 oder versteckt > 4096 oder versteckt != boden(versteckt):
+    wirf "P4-Init: Kontext/FF-Dimension ungültig"
+setze tok auf nichts
+setze info auf nichts
+wenn art == "char":
+    setze tok auf zeichen_fixed_laden(tokpfad)
+    setze info auf zeichen_fixed_info(tok)
+sonst wenn art == "bpe":
+    setze tok auf tokenizer_laden(tokpfad)
+    setze info auf tokenizer_info(tok)
+sonst wenn art == "syllable":
+    setze tok auf silben_laden(tokpfad)
+    setze info auf silben_info(tok)
+sonst:
+    wirf "P4-Init: unbekannter Tokenizer"
+setze vokab auf info["vokab"]
+wenn 2 * vokab * dim + 4 * dim * versteckt > 8000000:
+    wirf "P4-Init: Modellgröße über dem Ressourcenlimit"
+setze emb auf schicht_embedding(vokab, dim, seed + 1)
+setze pos auf schicht_position(block, dim, "gelernt", seed + 2)
+setze ln1a auf schicht_layernorm(dim)
+setze att1 auf schicht_attention(dim, heads, seed + 3)
+setze ln1b auf schicht_layernorm(dim)
+setze ff1a auf schicht_dicht(dim, versteckt, "gelu", seed + 4)
+setze ff1b auf schicht_dicht(versteckt, dim, "keine", seed + 5)
+setze ln2a auf schicht_layernorm(dim)
+setze att2 auf schicht_attention(dim, heads, seed + 6)
+setze ln2b auf schicht_layernorm(dim)
+setze ff2a auf schicht_dicht(dim, versteckt, "gelu", seed + 7)
+setze ff2b auf schicht_dicht(versteckt, dim, "keine", seed + 8)
+setze lnf auf schicht_layernorm(dim)
+setze kopf auf schicht_dicht(dim, vokab, "keine", seed + 9)
+setze alle auf [emb, pos, ln1a, att1, ln1b, ff1a, ff1b, ln2a, att2, ln2b, ff2a, ff2b, lnf, kopf]
+setze netz auf ki_netz(alle)
+setze opt auf optimierer_sgd(parameter(alle), 0.01, 0.9)
+checkpoint_speichern({"netz": netz, "opt": opt, "schritt": 0, "global_schritt": 0, "tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"}, ziel)
+zeige "P4 INIT OK"

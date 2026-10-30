@@ -1,0 +1,44 @@
+# Ein-Ziel-Logits fuer das P4-GPT-Beispiel, ohne Training.
+# Aufrufer stellt Variablen P4_TOKENIZER_KIND/P4_TOKENIZER_PATH/P4_CHECKPOINT
+# und P4_PREFIX_JSON. Nur der vorangehende Kontext wird übergeben.
+# Checkpoint muss tokenizer_version=SHA256 des tatsächlich geladenen
+# Tokenizers und arch_version=p4-gpt2-v1 tragen. ID 0 ist das BOS-Token.
+setze art auf umgebung("P4_TOKENIZER_KIND")
+setze tokpfad auf umgebung("P4_TOKENIZER_PATH")
+setze ckpfad auf umgebung("P4_CHECKPOINT")
+setze prefix_json auf umgebung("P4_PREFIX_JSON")
+setze pos auf zahl(umgebung("P4_POSITION"))
+wenn art == nichts oder tokpfad == nichts oder ckpfad == nichts oder prefix_json == nichts oder pos == nichts:
+    wirf "P4-Scorer: Umgebungsvariablen fehlen"
+setze tok auf nichts
+wenn art == "char":
+    setze tok auf zeichen_fixed_laden(tokpfad)
+sonst wenn art == "bpe":
+    setze tok auf tokenizer_laden(tokpfad)
+sonst wenn art == "syllable":
+    setze tok auf silben_laden(tokpfad)
+sonst:
+    wirf "P4-Scorer: unbekannter Tokenizer"
+setze h auf sha256(tok)
+setze geladen auf checkpoint_laden(ckpfad, {"tokenizer_version": h, "arch_version": "p4-gpt2-v1"})
+setze schichten auf geladen["netz"]["schichten"]
+wenn länge(schichten) != 14:
+    wirf "P4-Scorer: unerwartete Architektur"
+setze prefix auf json_parse(prefix_json)
+setze kontext auf []
+# BOS nur dann, wenn das Präfix am Dokumentanfang beginnt.
+wenn pos == länge(prefix):
+    kontext.hinzufügen(0)
+für id in prefix:
+    kontext.hinzufügen(id)
+wenn länge(kontext) == 0:
+    wirf "P4-Scorer: abgeschnittenes Fenster ohne Kontext"
+autograd_aus()
+setze x auf vorwaerts([schichten[0]], tensor_aus_liste(kontext))
+setze x auf vorwaerts([schichten[1]], x)
+setze x auf x + vorwaerts([schichten[2], schichten[3]], x)
+setze x auf x + vorwaerts([schichten[4], schichten[5], schichten[6]], x)
+setze x auf x + vorwaerts([schichten[7], schichten[8]], x)
+setze x auf x + vorwaerts([schichten[9], schichten[10], schichten[11]], x)
+setze logits auf vorwaerts([schichten[12], schichten[13]], x)
+zeige json_string(logits.zeilen(länge(kontext) - 1, länge(kontext)).zu_liste())

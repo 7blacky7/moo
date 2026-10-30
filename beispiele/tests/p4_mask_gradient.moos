@@ -1,0 +1,9 @@
+# Synthetic CPU backward probe: no model, optimizer, or training loop.
+autograd_reset()
+autograd_an()
+setze logits auf tensor_aus_liste([[2, 1, 0, -1], [0.5, 0.5, 0.5, 0.5], [-1, 3, 0, 1]])
+setze logits auf logits.mit_gradient()
+setze verlust auf kreuzentropie(logits, tensor_aus_liste([0, 2, 1]), tensor_aus_liste([1, 0, 1]))
+verlust.rueckwaerts()
+zeige json_string(logits.gradient().zu_liste())
+autograd_reset()

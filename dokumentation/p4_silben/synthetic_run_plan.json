@@ -1,0 +1,61 @@
+{
+  "status": "vorregistrierungsentwurf_gate_geschlossen",
+  "protocol_version": "moo-p4-measure-v1",
+  "variants": [
+    "char",
+    "bpe",
+    "syllable"
+  ],
+  "seeds": [
+    11,
+    23,
+    47
+  ],
+  "source_sha256": "01c18cd29a07f21616fb7c0ecd7f85be6b4f7feb30c70e5976dcc7f739c23e0d",
+  "manifest_sha256": "8e74c14e607844e2172b49534edb131b07bada24320bc035554348d6ff98c80f",
+  "split_counts": {
+    "train": {
+      "documents": 9,
+      "codepoints": 2150
+    },
+    "val": {
+      "documents": 3,
+      "codepoints": 716
+    },
+    "test": {
+      "documents": 3,
+      "codepoints": 697
+    }
+  },
+  "train_codepoint_budget": 2150,
+  "model": {
+    "architecture": "p4-gpt2-v1",
+    "dimension": 32,
+    "heads": 4,
+    "context": 64,
+    "feedforward": 128,
+    "attention_blocks": 2,
+    "optimizer": "sgd",
+    "learning_rate": 0.01,
+    "momentum": 0.9
+  },
+  "context": 64,
+  "stride": 32,
+  "gpu_seconds_per_run": 600,
+  "eval_seconds_per_run": 60,
+  "gpu_seconds_total": 7200,
+  "reserved_seconds": 6480,
+  "train_passes": 1,
+  "tokenizer_vocab_target": 512,
+  "validation_decision": "Alle vorregistrierten Varianten und Seeds unverändert in die finale Testphase übernehmen; keine Auswahl anhand der Testwerte.",
+  "phases": [
+    "train_and_val",
+    "freeze_validation",
+    "final_test"
+  ],
+  "primary_metrics": [
+    "nll_per_codepoint",
+    "bits_per_byte"
+  ],
+  "execution_ready": false
+}

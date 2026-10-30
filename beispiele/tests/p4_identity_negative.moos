@@ -1,0 +1,32 @@
+# SIL-08: same-sized tokenizer identities and malformed artifact versions.
+setze dir auf umgebung("P4_IDENTITY_DIR")
+setze original auf silben_laden(dir + "/original.msf")
+setze umgeordnet auf silben_laden(dir + "/reordered.msf")
+setze regel auf silben_laden(dir + "/rules.msf")
+wenn silben_info(original)["vokab"] != silben_info(umgeordnet)["vokab"] oder silben_info(original)["vokab"] != silben_info(regel)["vokab"]:
+    wirf "Vokabulargrößen unterscheiden sich"
+wenn silben_hash(original) == silben_hash(umgeordnet) oder silben_hash(original) == silben_hash(regel):
+    wirf "Identität unterscheidet sich nicht"
+wenn silben_kodiere(original, "Zucker").zu_liste()[0] == silben_kodiere(umgeordnet, "Zucker").zu_liste()[0]:
+    wirf "Tokenzuordnung unverändert"
+setze n auf ki_netz([schicht_embedding(260, 8, 1), schicht_dicht(8, 260, "keine", 2)])
+setze ck auf dir + "/model.mook"
+checkpoint_speichern({"netz": n, "schritt": 0, "tokenizer_version": silben_hash(original), "arch_version": "identity-test"}, ck)
+checkpoint_laden(ck, {"tokenizer_version": silben_hash(original), "arch_version": "identity-test"})
+für anders in [umgeordnet, regel]:
+    setze abgelehnt auf falsch
+    versuche:
+        checkpoint_laden(ck, {"tokenizer_version": silben_hash(anders), "arch_version": "identity-test"})
+    fange fehler:
+        setze abgelehnt auf wahr
+    wenn nicht abgelehnt:
+        wirf "Fremde Tokenizeridentität akzeptiert"
+für datei in ["version.msf", "truncated.msf"]:
+    setze abgelehnt auf falsch
+    versuche:
+        silben_laden(dir + "/" + datei)
+    fange fehler:
+        setze abgelehnt auf wahr
+    wenn nicht abgelehnt:
+        wirf "Ungültiges Artefakt akzeptiert"
+zeige "P4 IDENTITY OK"

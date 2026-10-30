@@ -1,0 +1,45 @@
+# Kausale Präfixe gruppiert auswerten, Modell und Tokenizer einmal laden.
+setze art auf umgebung("P4_TOKENIZER_KIND")
+setze tokpfad auf umgebung("P4_TOKENIZER_PATH")
+setze ckpfad auf umgebung("P4_CHECKPOINT")
+setze anfragenpfad auf umgebung("P4_REQUESTS_PATH")
+wenn art == nichts oder tokpfad == nichts oder ckpfad == nichts oder anfragenpfad == nichts:
+    wirf "P4-Batch: Umgebungsvariablen fehlen"
+setze tok auf nichts
+wenn art == "char":
+    setze tok auf zeichen_fixed_laden(tokpfad)
+sonst wenn art == "bpe":
+    setze tok auf tokenizer_laden(tokpfad)
+sonst wenn art == "syllable":
+    setze tok auf silben_laden(tokpfad)
+sonst:
+    wirf "P4-Batch: unbekannter Tokenizer"
+setze h auf sha256(tok)
+setze geladen auf checkpoint_laden(ckpfad, {"tokenizer_version": h, "arch_version": "p4-gpt2-v1"})
+setze schichten auf geladen["netz"]["schichten"]
+wenn länge(schichten) != 14:
+    wirf "P4-Batch: unerwartete Architektur"
+setze anfragen auf json_parse(datei_lesen(anfragenpfad))
+wenn länge(anfragen) < 1 oder länge(anfragen) > 32:
+    wirf "P4-Batch: ungültige Anfragezahl"
+setze ergebnisse auf []
+autograd_aus()
+für anfrage in anfragen:
+    setze prefix auf anfrage["prefix"]
+    setze pos auf anfrage["position"]
+    setze kontext auf []
+    wenn pos == länge(prefix):
+        kontext.hinzufügen(0)
+    für id in prefix:
+        kontext.hinzufügen(id)
+    wenn länge(kontext) == 0:
+        wirf "P4-Batch: abgeschnittenes Fenster ohne Kontext"
+    setze x auf vorwaerts([schichten[0]], tensor_aus_liste(kontext))
+    setze x auf vorwaerts([schichten[1]], x)
+    setze x auf x + vorwaerts([schichten[2], schichten[3]], x)
+    setze x auf x + vorwaerts([schichten[4], schichten[5], schichten[6]], x)
+    setze x auf x + vorwaerts([schichten[7], schichten[8]], x)
+    setze x auf x + vorwaerts([schichten[9], schichten[10], schichten[11]], x)
+    setze logits auf vorwaerts([schichten[12], schichten[13]], x)
+    ergebnisse.hinzufügen(logits.zeilen(länge(kontext) - 1, länge(kontext)).zu_liste())
+zeige json_string(ergebnisse)

@@ -1,0 +1,169 @@
+{
+  "documents": [
+    {
+      "id": "E01",
+      "genre": "erzählung",
+      "group": "E01",
+      "start": 0,
+      "end": 244,
+      "test_eligible": true,
+      "source": "urn:moo:p4:synthetic:assistant",
+      "revision": "2026-10-29-v1",
+      "licence": "original-assistant-generated; intended unrestricted use"
+    },
+    {
+      "id": "E02",
+      "genre": "erzählung",
+      "group": "E02",
+      "start": 244,
+      "end": 465,
+      "test_eligible": true,
+      "source": "urn:moo:p4:synthetic:assistant",
+      "revision": "2026-10-29-v1",
+      "licence": "original-assistant-generated; intended unrestricted use"
+    },
+    {
+      "id": "E03",
+      "genre": "erzählung",
+      "group": "E03",
+      "start": 465,
+      "end": 666,
+      "test_eligible": true,
+      "source": "urn:moo:p4:synthetic:assistant",
+      "revision": "2026-10-29-v1",
+      "licence": "original-assistant-generated; intended unrestricted use"
+    },
+    {
+      "id": "E04",
+      "genre": "erzählung",
+      "group": "E04",
+      "start": 666,
+      "end": 886,
+      "test_eligible": true,
+      "source": "urn:moo:p4:synthetic:assistant",
+      "revision": "2026-10-29-v1",
+      "licence": "original-assistant-generated; intended unrestricted use"
+    },
+    {
+      "id": "E05",
+      "genre": "erzählung",
+      "group": "E05",
+      "start": 886,
+      "end": 1125,
+      "test_eligible": true,
+      "source": "urn:moo:p4:synthetic:assistant",
+      "revision": "2026-10-29-v1",
+      "licence": "original-assistant-generated; intended unrestricted use"
+    },
+    {
+      "id": "S01",
+      "genre": "sachtext",
+      "group": "S01",
+      "start": 1125,
+      "end": 1418,
+      "test_eligible": true,
+      "source": "urn:moo:p4:synthetic:assistant",
+      "revision": "2026-10-29-v1",
+      "licence": "original-assistant-generated; intended unrestricted use"
+    },
+    {
+      "id": "S02",
+      "genre": "sachtext",
+      "group": "S02",
+      "start": 1418,
+      "end": 1684,
+      "test_eligible": true,
+      "source": "urn:moo:p4:synthetic:assistant",
+      "revision": "2026-10-29-v1",
+      "licence": "original-assistant-generated; intended unrestricted use"
+    },
+    {
+      "id": "S03",
+      "genre": "sachtext",
+      "group": "S03",
+      "start": 1684,
+      "end": 1933,
+      "test_eligible": true,
+      "source": "urn:moo:p4:synthetic:assistant",
+      "revision": "2026-10-29-v1",
+      "licence": "original-assistant-generated; intended unrestricted use"
+    },
+    {
+      "id": "S04",
+      "genre": "sachtext",
+      "group": "S04",
+      "start": 1933,
+      "end": 2159,
+      "test_eligible": true,
+      "source": "urn:moo:p4:synthetic:assistant",
+      "revision": "2026-10-29-v1",
+      "licence": "original-assistant-generated; intended unrestricted use"
+    },
+    {
+      "id": "S05",
+      "genre": "sachtext",
+      "group": "S05",
+      "start": 2159,
+      "end": 2428,
+      "test_eligible": true,
+      "source": "urn:moo:p4:synthetic:assistant",
+      "revision": "2026-10-29-v1",
+      "licence": "original-assistant-generated; intended unrestricted use"
+    },
+    {
+      "id": "D01",
+      "genre": "dialog",
+      "group": "D01",
+      "start": 2428,
+      "end": 2681,
+      "test_eligible": true,
+      "source": "urn:moo:p4:synthetic:assistant",
+      "revision": "2026-10-29-v1",
+      "licence": "original-assistant-generated; intended unrestricted use"
+    },
+    {
+      "id": "D02",
+      "genre": "dialog",
+      "group": "D02",
+      "start": 2681,
+      "end": 2917,
+      "test_eligible": true,
+      "source": "urn:moo:p4:synthetic:assistant",
+      "revision": "2026-10-29-v1",
+      "licence": "original-assistant-generated; intended unrestricted use"
+    },
+    {
+      "id": "D03",
+      "genre": "dialog",
+      "group": "D03",
+      "start": 2917,
+      "end": 3150,
+      "test_eligible": true,
+      "source": "urn:moo:p4:synthetic:assistant",
+      "revision": "2026-10-29-v1",
+      "licence": "original-assistant-generated; intended unrestricted use"
+    },
+    {
+      "id": "D04",
+      "genre": "dialog",
+      "group": "D04",
+      "start": 3150,
+      "end": 3417,
+      "test_eligible": true,
+      "source": "urn:moo:p4:synthetic:assistant",
+      "revision": "2026-10-29-v1",
+      "licence": "original-assistant-generated; intended unrestricted use"
+    },
+    {
+      "id": "D05",
+      "genre": "dialog",
+      "group": "D05",
+      "start": 3417,
+      "end": 3664,
+      "test_eligible": true,
+      "source": "urn:moo:p4:synthetic:assistant",
+      "revision": "2026-10-29-v1",
+      "licence": "original-assistant-generated; intended unrestricted use"
+    }
+  ]
+}

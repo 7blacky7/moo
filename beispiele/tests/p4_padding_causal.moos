@@ -1,0 +1,22 @@
+# CPU-only numerical padding diagnostic; no backward or optimizer steps.
+funktion p4_vorlauf(schichten, ids):
+    setze x auf vorwaerts([schichten[0]], tensor_aus_liste(ids))
+    setze x auf vorwaerts([schichten[1]], x)
+    setze x auf x + vorwaerts([schichten[2], schichten[3]], x)
+    setze x auf x + vorwaerts([schichten[4], schichten[5], schichten[6]], x)
+    setze x auf x + vorwaerts([schichten[7], schichten[8]], x)
+    setze x auf x + vorwaerts([schichten[9], schichten[10], schichten[11]], x)
+    gib_zurück vorwaerts([schichten[12], schichten[13]], x)
+
+setze tok auf zeichen_fixed_laden(umgebung("P4_TOKENIZER_PATH"))
+setze geladen auf checkpoint_laden(umgebung("P4_CHECKPOINT"), {"tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"})
+setze schichten auf geladen["netz"]["schichten"]
+autograd_aus()
+setze kurz auf p4_vorlauf(schichten, [1, 2, 3])
+setze kurzverlust auf kreuzentropie(kurz, tensor_aus_liste([2, 3, 4]), tensor_aus_liste([1, 1, 1]))
+autograd_an()
+setze null auf p4_vorlauf(schichten, [1, 2, 3, 0, 0, 0, 0, 0])
+setze nullverlust auf kreuzentropie(null, tensor_aus_liste([2, 3, 4, 0, 0, 0, 0, 0]), tensor_aus_liste([1, 1, 1, 0, 0, 0, 0, 0]))
+setze anders auf p4_vorlauf(schichten, [1, 2, 3, 255, 255, 255, 255, 255])
+setze andersverlust auf kreuzentropie(anders, tensor_aus_liste([2, 3, 4, 255, 255, 255, 255, 255]), tensor_aus_liste([1, 1, 1, 0, 0, 0, 0, 0]))
+zeige json_string({"short": kurz.zu_liste(), "zero": null.zeilen(0, 3).zu_liste(), "other": anders.zeilen(0, 3).zu_liste(), "short_loss": kurzverlust.zu_liste(), "zero_loss": nullverlust.zu_liste(), "other_loss": andersverlust.zu_liste()})

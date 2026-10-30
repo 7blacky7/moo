@@ -1,0 +1,22 @@
+# SIL-11: Nur der extern geprüfte, aus Train-Dokumenten zusammengesetzte Text.
+setze quelle auf umgebung("P4_TRAIN_CORPUS")
+setze erwartet auf umgebung("P4_TRAIN_CORPUS_SHA256")
+setze ziel auf umgebung("P4_TOKENIZER_DIR")
+wenn quelle == nichts oder erwartet == nichts oder ziel == nichts:
+    wirf "P4-Tokenizer: Umgebungsvariablen fehlen"
+setze korpus auf datei_lesen(quelle)
+wenn sha256(korpus) != erwartet:
+    wirf "P4-Tokenizer: Korpus-Hash stimmt nicht"
+setze cp auf ziel + "/char.mcf"
+setze bp auf ziel + "/bpe.mbt"
+setze sp auf ziel + "/syllable.msf"
+wenn datei_existiert(cp) oder datei_existiert(bp) oder datei_existiert(sp):
+    wirf "P4-Tokenizer: Ausgabe existiert bereits"
+setze muster auf datei_lesen("compiler/runtime/data/silben/dehyphn-x-2024-02-28.pat")
+setze c auf zeichen_fixed_trainiere(korpus, 512)
+setze b auf tokenizer_trainiere(korpus, 512)
+setze s auf silben_trainiere(korpus, 512, muster)
+zeichen_fixed_speichern(c, cp)
+tokenizer_speichern(b, bp)
+silben_speichern(s, sp)
+zeige "P4 TOKENIZERS OK"

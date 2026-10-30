@@ -1,0 +1,99 @@
+# Öffentliche P4-Sprachschnittstelle mit künstlichen Byte-Fallback-Artefakten.
+# Der Task erzeugt beide Artefakte anhand ihres Formats; kein Training.
+setze dir auf umgebung("P4_MOOS_FIXTURES")
+setze c auf zeichen_fixed_laden(dir + "/char.mcf")
+setze s auf silben_laden(dir + "/silben.msf")
+setze w auf silben_laden(dir + "/words.msf")
+# Amtliches Regelwerk §88: https://grammis.ids-mannheim.de/rechtschreibung/6216
+setze zu auf silben_grenzen(w, "Zucker")
+wenn länge(zu) != 2 oder zu[0][0] != 0 oder zu[0][1] != 2 oder zu[1][0] != 2 oder zu[1][1] != 6:
+    wirf "Zu|cker Mustergrenze"
+setze bag auf silben_grenzen(w, "Bagger")
+wenn länge(bag) != 2 oder bag[0][1] != 3 oder bag[1][0] != 3 oder bag[1][1] != 6:
+    wirf "Bag|ger Mustergrenze"
+wenn länge(silben_kodiere(w, "Zucker").zu_liste()) != 2:
+    wirf "Mustersegmente nicht im Vokabular"
+setze kaputt auf falsch
+versuche:
+    silben_laden(dir + "/bad-silben.msf")
+fange fehler:
+    setze kaputt auf wahr
+wenn nicht kaputt:
+    wirf "Beschädigtes Silbenartefakt akzeptiert"
+setze kaputt auf falsch
+versuche:
+    zeichen_fixed_laden(dir + "/bad-char.mcf")
+fange fehler:
+    setze kaputt auf wahr
+wenn nicht kaputt:
+    wirf "Beschädigtes Zeichenartefakt akzeptiert"
+setze probe auf "Straße Ä 🐄\n"
+wenn zeichen_fixed_dekodiere(c, zeichen_fixed_kodiere(c, probe)) != probe:
+    wirf "Zeichen-Roundtrip"
+wenn silben_dekodiere(s, silben_kodiere(s, probe)) != probe:
+    wirf "Silben-Roundtrip"
+wenn syllable_decode(s, syllable_encode(s, probe)) != probe:
+    wirf "Englischer Alias"
+wenn zeichen_fixed_info(c)["vokab"] != 256 oder silben_info(s)["vokab"] != 256:
+    wirf "Fallback-Vokabular"
+wenn silben_info(s)["hash"] != silben_hash(s):
+    wirf "Silben-Info-Hash"
+setze grenzen auf silben_grenzen(s, "Wald")
+wenn länge(grenzen) == 0 oder grenzen[0][0] != 0:
+    wirf "Silbengrenzen"
+setze unicode_grenzen auf silben_grenzen(s, "Ä")
+setze cursor auf 0
+setze i auf 0
+solange i < länge(unicode_grenzen):
+    setze teil auf unicode_grenzen[i]
+    wenn teil[0] != cursor oder teil[1] <= teil[0] oder teil[2] < 0 oder teil[2] > 2:
+        wirf "UTF-8-Bytegrenzen inkonsistent"
+    setze cursor auf teil[1]
+    setze i auf i + 1
+wenn cursor != 2:
+    wirf "UTF-8-Bytegrenzen unvollständig"
+setze fehl auf falsch
+versuche:
+    silben_dekodiere(s, [256])
+fange fehler:
+    setze fehl auf wahr
+wenn nicht fehl:
+    wirf "Ungültige Silben-ID akzeptiert"
+setze fehl auf falsch
+versuche:
+    zeichen_fixed_dekodiere(c, [-1])
+fange fehler:
+    setze fehl auf wahr
+wenn nicht fehl:
+    wirf "Ungültige Zeichen-ID akzeptiert"
+setze char_speicher auf dir + "/speicher.mcf"
+zeichen_fixed_speichern(c, char_speicher)
+wenn zeichen_fixed_hash(zeichen_fixed_laden(char_speicher)) != zeichen_fixed_hash(c):
+    wirf "Zeichen-Speichern/Laden"
+setze speicher auf dir + "/speicher.msf"
+silben_speichern(s, speicher)
+wenn silben_hash(silben_laden(speicher)) != silben_hash(s):
+    wirf "Silben-Speichern/Laden"
+setze netz auf ki_netz([schicht_embedding(256, 8, 1), schicht_dicht(8, 256, "keine", 2)])
+setze pfad auf dir + "/checkpoint.mook"
+checkpoint_speichern({"netz": netz, "schritt": 0, "tokenizer_version": silben_hash(s),
+                     "arch_version": "p4-moo-test"}, pfad)
+setze geladen auf checkpoint_laden(pfad, {"tokenizer_version": silben_hash(s),
+                                         "arch_version": "p4-moo-test"})
+wenn geladen["tokenizer_version"] != silben_hash(s):
+    wirf "Checkpoint-Identität"
+setze fehl auf falsch
+versuche:
+    checkpoint_laden(pfad, {"tokenizer_version": zeichen_fixed_hash(c), "arch_version": "p4-moo-test"})
+fange fehler:
+    setze fehl auf wahr
+wenn nicht fehl:
+    wirf "Falscher Tokenizer-Hash akzeptiert"
+setze fehl auf falsch
+versuche:
+    checkpoint_laden(pfad, {"tokenizer_version": silben_hash(s), "arch_version": "falsch"})
+fange fehler:
+    setze fehl auf wahr
+wenn nicht fehl:
+    wirf "Falsche Architektur akzeptiert"
+zeige "P4 MOOS API OK"
