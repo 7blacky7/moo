@@ -1,0 +1,77 @@
+# Bedingte Korrektur-NLL auf den 15 eingefrorenen Val-Paaren.
+aus sft_adapter importiere korrektur_fenster_aufteilen
+setze ck auf umgebung("P5_CKPT")
+wenn ck == nichts:
+    wirf "P5_CKPT fehlt"
+setze tok auf silben_laden("beispiele/p4_silben/run_sil14_grimm36k/tokenizer.msf")
+setze th auf sha256(tok)
+wenn th != "20ef4b48638359a42141de61ff30d38be7f723c7fe8c612506e9d67f59b62eed":
+    wirf "Tokenizer geaendert"
+funktion encoder(t):
+    gib_zurück silben_kodiere(tok, t)
+setze z auf checkpoint_laden(ck, {"tokenizer_version": th, "arch_version": "grimm-silben-250k-v1"})
+setze sch auf z["netz"]["schichten"]
+wenn länge(sch) != 14 oder sch[1]["max"] != 64:
+    wirf "Architektur falsch"
+funktion vorlauf(eingabe):
+    setze x auf vorwaerts([sch[0]], eingabe)
+    setze x auf vorwaerts([sch[1]], x)
+    setze x auf x + vorwaerts([sch[2], sch[3]], x)
+    setze x auf x + vorwaerts([sch[4], sch[5], sch[6]], x)
+    setze x auf x + vorwaerts([sch[7], sch[8]], x)
+    setze x auf x + vorwaerts([sch[9], sch[10], sch[11]], x)
+    gib_zurück vorwaerts([sch[12], sch[13]], x)
+setze pilottext auf datei_lesen("beispiele/p5/daten/pilot_lehrer_v2.json")
+setze split auf umgebung("P5_EXT05_SPLIT")
+wenn split == nichts:
+    setze split auf "val"
+wenn split != "val" und split != "test":
+    wirf "Split muss val oder test sein"
+setze splitpfad auf "beispiele/p5/daten/split_val.json"
+setze splithash auf "1fc768f2fcb8956d75f30d99c62b5e65978d1158d501764d68dc6ef8b35fcff2"
+wenn split == "test":
+    setze splitpfad auf "beispiele/p5/daten/split_test.json"
+    setze splithash auf "0830afb0290ee0d010754e9f345692cbdc18cddfb4e72ed07318be0651a3cf50"
+setze splittext auf datei_lesen(splitpfad)
+wenn sha256(pilottext) != "42f3f98b8a7004c0fa8ded7b94642701870edbb0c37a477c6895846be6b5c629" oder sha256(splittext) != splithash:
+    wirf "Pilot oder Val-Split veraendert"
+setze pilot auf json_parse(pilottext)
+setze ids auf json_parse(splittext)["ids"]
+setze paare auf 0
+setze tokens auf 0
+setze bytes auf 0
+setze codepoints auf 0
+setze fest auf 0
+für paar in pilot["beispiele"]:
+    wenn ids.enthält(paar["aufgabe_id"]):
+        setze paare auf paare + 1
+        setze bytes auf bytes + länge(bytes_zu_liste(paar["korrektur"]))
+        für byte in bytes_zu_liste(paar["korrektur"]):
+            wenn byte < 128 oder byte >= 192:
+                setze codepoints auf codepoints + 1
+        für f in korrektur_fenster_aufteilen(paar, encoder, 64, 0):
+            setze aktiv auf 0
+            für m in f["loss_mask"]:
+                setze aktiv auf aktiv + m
+            setze logits auf vorlauf(tensor_aus_liste(f["input_ids"]))
+            setze verlust auf kreuzentropie(logits, tensor_aus_liste(f["target_ids"]), tensor_aus_liste(f["loss_mask"])).zu_liste()[0]
+            # F32-CE wird exakt als Festkomma 2^-30 gespeichert; alle
+            # Werte im Intervall [1/128, 128] sind damit verlustfrei.
+            wenn verlust < 0.0078125 oder verlust > 128:
+                wirf "Val-Verlust ausserhalb des exakt kodierbaren Bereichs"
+            setze skaliert auf verlust * 1073741824
+            wenn skaliert != boden(skaliert):
+                wirf "Val-Verlust nicht exakt kodierbar"
+            setze fest auf fest + skaliert * aktiv
+            setze tokens auf tokens + aktiv
+wenn paare != 15 oder tokens < 1 oder bytes < 1 oder fest >= 9007199254740992:
+    wirf "Val-Abdeckung oder Genauigkeit ungueltig"
+# Zifferngruppen unter 10000 bleiben auch bei json_string exakt.
+setze gruppen auf []
+solange fest > 0:
+    gruppen.hinzufügen(fest % 10000)
+    setze fest auf boden(fest / 10000)
+setze kennung auf "EXT05_PAAR_VAL "
+wenn split == "test":
+    setze kennung auf "EXT05_PAAR_TEST "
+zeige kennung + json_string({"checkpoint_pfad": ck, "checkpoint_sha256": sha256(datei_lesen(ck)), "tokenizer_sha256": th, "split_sha256": sha256(splittext), "paare": paare, "bytes": bytes, "codepoints": codepoints, "tokens": tokens, "nll_fix30_gruppen_basis10000": gruppen})

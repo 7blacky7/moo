@@ -1,0 +1,101 @@
+# Konfigurationsgebundener Sampling-Lauf, gibt nur Bytezahlen aus.
+setze ordner auf "beispiele/p4_silben/run_sil14_grimm36k/"
+setze ckpfad auf umgebung("P5_CKPT")
+wenn ckpfad == nichts:
+    setze ckpfad auf ordner + "full.mook"
+setze roh_hash auf sha256(datei_lesen(ckpfad))
+setze tok auf silben_laden(ordner + "tokenizer.msf")
+setze config_text auf datei_lesen("beispiele/p5/daten/sampling_prompts.json")
+wenn sha256(config_text) != "44b45262831453a97ca7e67307689d8ae4a0f3a9ab7b3810df3b6dd4d73d9b69":
+    wirf "Sampling-Konfiguration geaendert"
+setze conf auf json_parse(config_text)
+setze zustand auf checkpoint_laden(ckpfad, {"tokenizer_version": sha256(tok), "arch_version": "grimm-silben-250k-v1"})
+wenn sha256(datei_lesen(ckpfad)) != roh_hash:
+    wirf "Checkpoint beim Laden geaendert"
+setze schichten auf zustand["netz"]["schichten"]
+funktion vorlauf(ids):
+    setze x auf vorwaerts([schichten[0]], ids)
+    setze x auf vorwaerts([schichten[1]], x)
+    setze x auf x + vorwaerts([schichten[2], schichten[3]], x)
+    setze x auf x + vorwaerts([schichten[4], schichten[5], schichten[6]], x)
+    setze x auf x + vorwaerts([schichten[7], schichten[8]], x)
+    setze x auf x + vorwaerts([schichten[9], schichten[10], schichten[11]], x)
+    gib_zurück vorwaerts([schichten[12], schichten[13]], x)
+setze zufallszustand auf 1
+funktion ziehe(werte):
+    global zufallszustand
+    setze beste auf []
+    setze gesamt auf 0
+    setze k auf 0
+    solange k < 20:
+        setze best auf -1
+        setze i auf 0
+        solange i < länge(werte):
+            wenn nicht beste.enthält(i):
+                wenn best < 0 oder werte[i] > werte[best]:
+                    setze best auf i
+            setze i auf i + 1
+        beste.hinzufügen(best)
+        setze gesamt auf gesamt + werte[best]
+        setze k auf k + 1
+    setze zufallszustand auf zufallszustand * 48271
+    setze zufallszustand auf zufallszustand - boden(zufallszustand / 2147483647) * 2147483647
+    setze grenze auf zufallszustand / 2147483647 * gesamt
+    setze gesamt auf 0
+    für token in beste:
+        setze gesamt auf gesamt + werte[token]
+        wenn gesamt >= grenze:
+            gib_zurück token
+    gib_zurück beste[19]
+funktion argmax(werte):
+    setze best auf 0
+    setze i auf 1
+    solange i < länge(werte):
+        wenn werte[i] > werte[best]:
+            setze best auf i
+        setze i auf i + 1
+    gib_zurück best
+funktion generiere(prompt, art, seed):
+    global zufallszustand
+    setze zufallszustand auf seed
+    setze ids auf silben_kodiere(tok, prompt).zu_liste()
+    setze erzeugt auf []
+    setze bytes auf []
+    setze fertig auf falsch
+    setze schritte auf 0
+    solange schritte < 120 und nicht fertig:
+        setze start auf max(0, länge(ids) - 64)
+        setze kontext auf []
+        setze i auf start
+        solange i < länge(ids):
+            kontext.hinzufügen(ids[i])
+            setze i auf i + 1
+        setze logits auf vorlauf(tensor_aus_liste(kontext))
+        setze zeile auf logits.zeilen(länge(kontext) - 1, länge(kontext))
+        setze token auf 0
+        wenn art == "greedy":
+            setze token auf argmax(zeile.zu_liste())
+        sonst:
+            setze token auf ziehe((zeile / 0.8).softmax().zu_liste())
+        ids.hinzufügen(token)
+        erzeugt.hinzufügen(token)
+        setze roh auf string_zu_bytes(silben_dekodiere(tok, tensor_aus_liste(erzeugt)))
+        setze bytes auf []
+        für b in roh:
+            wenn länge(bytes) < 120 und nicht fertig:
+                bytes.hinzufügen(b)
+                wenn b == 46 oder b == 33 oder b == 63:
+                    setze fertig auf wahr
+        wenn länge(bytes) >= 120:
+            setze fertig auf wahr
+        setze schritte auf schritte + 1
+    gib_zurück {"prompt": prompt, "art": art, "seed": seed, "rohbytes": bytes, "anzahl_schritte": schritte}
+autograd_aus()
+setze ausgaben auf []
+für prompt in conf["prompts"]:
+    ausgaben.hinzufügen(generiere(prompt, "greedy", 1))
+    für seed in conf["seeds"]:
+        ausgaben.hinzufügen(generiere(prompt, "sampling", seed))
+wenn sha256(datei_lesen(ckpfad)) != roh_hash:
+    wirf "Checkpoint waehrend Sampling geaendert"
+zeige json_string({"checkpoint_sha256": roh_hash, "tokenizer_sha256": sha256(tok), "prompt_sha256": sha256(config_text), "temperatur": 0.8, "top_k": 20, "sampler": "lcg48271-v1", "ausgaben": ausgaben})

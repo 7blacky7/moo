@@ -1,0 +1,71 @@
+# Optionale Val-gesteuerte Trainingsschleife auf den öffentlichen P5-APIs.
+funktion trainiere_mit_val(vorlauf, daten, konfig, zustand, fabrik, eval_konfig):
+    setze val auf konfig["val"]
+    wenn val == nichts:
+        gib_zurück trainiere_methode(vorlauf, daten, konfig)
+    setze ck auf konfig["checkpoint"]
+    setze frueh_cfg auf konfig["fruehstopp"]
+    setze gesamt auf konfig["schritte"]
+    setze intervall auf val["intervall_schritte"]
+    wenn val["daten"]["split"] != "val" oder ck == nichts oder ck["ordner"] == nichts oder ck["jeweils_bei_val"] != wahr oder konfig["auswahl"] != "beste_val":
+        wirf "Val-Orchestrierung: val, Checkpoint-Ordner und beste_val erforderlich"
+    wenn gesamt < 1 oder gesamt != boden(gesamt) oder intervall < 1 oder intervall != boden(intervall):
+        wirf "Val-Orchestrierung: Schritte und Intervall muessen positive ganze Zahlen sein"
+    wenn frueh_cfg != nichts:
+        wenn frueh_cfg["geduld_evals"] < 1 oder frueh_cfg["geduld_evals"] != boden(frueh_cfg["geduld_evals"]) oder frueh_cfg["min_verbesserung"] < 0:
+            wirf "Val-Orchestrierung: ungueltiger Fruehstopp"
+    setze beispiele auf daten["beispiele"]
+    wenn länge(beispiele) < 1:
+        wirf "Val-Orchestrierung: keine Trainingsbeispiele"
+    setze laufkonfig auf {...konfig}
+    setze auswertung auf {...eval_konfig}
+    setze laufzustand auf {...zustand}
+    setze berichte auf []
+    setze verluste auf []
+    setze start_schritt auf laufzustand["schritt"]
+    wenn start_schritt == nichts:
+        setze start_schritt auf 0
+    setze start_global auf laufzustand["global_schritt"]
+    wenn start_global == nichts:
+        setze start_global auf start_schritt
+    setze fertig auf 0
+    setze geduld auf 0
+    setze bester_wert auf nichts
+    setze frueh auf falsch
+    solange fertig < gesamt und nicht frueh:
+        setze anzahl auf min(intervall, gesamt - fertig)
+        setze pfad auf ck["ordner"] + "/val_" + text(start_schritt + fertig + anzahl) + ".mook"
+        wenn datei_existiert(pfad):
+            wirf "Val-Orchestrierung: Checkpoint existiert bereits"
+        setze gedreht auf []
+        setze i auf 0
+        solange i < länge(beispiele):
+            gedreht.hinzufügen(beispiele[(fertig + i) % länge(beispiele)])
+            setze i auf i + 1
+        setze laufdaten auf {...daten}
+        setze laufdaten["beispiele"] auf gedreht
+        setze laufkonfig["schritte"] auf anzahl
+        setze lauf auf trainiere_methode(vorlauf, laufdaten, laufkonfig)
+        für verlust in lauf["verluste"]:
+            verluste.hinzufügen(verlust)
+        setze laufkonfig["opt"] auf lauf["opt"]
+        setze laufzustand["opt"] auf lauf["opt"]
+        setze fertig auf fertig + anzahl
+        setze laufzustand["schritt"] auf start_schritt + fertig
+        setze laufzustand["global_schritt"] auf start_global + fertig
+        checkpoint_speichern(laufzustand, pfad)
+        setze auswertung["checkpoint_pfad"] auf pfad
+        setze bericht auf evaluiere_modell(fabrik, val["daten"], auswertung)
+        berichte.hinzufügen(bericht)
+        setze wert auf bericht["nll_pro_byte"]
+        wenn bester_wert == nichts:
+            setze bester_wert auf wert
+        sonst wenn frueh_cfg != nichts und wert < bester_wert - frueh_cfg["min_verbesserung"]:
+            setze bester_wert auf wert
+            setze geduld auf 0
+        sonst wenn frueh_cfg != nichts:
+            setze geduld auf geduld + 1
+            wenn geduld >= frueh_cfg["geduld_evals"]:
+                setze frueh auf wahr
+    setze sieger auf checkpoint_waehlen(berichte)
+    gib_zurück {"opt": laufkonfig["opt"], "verluste": verluste, "schritte": fertig, "val_berichte": berichte, "bester_checkpoint": sieger, "fruehstopp": frueh}

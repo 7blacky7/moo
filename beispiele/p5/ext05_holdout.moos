@@ -1,0 +1,27 @@
+# Einmalige P4-Holdout-Auswertung des zuvor auf Val gewählten Checkpoints.
+setze ck auf umgebung("P5_CKPT")
+wenn ck == nichts:
+    wirf "P5_CKPT fehlt"
+setze ordner auf "beispiele/p4_silben/run_sil14_grimm36k/"
+setze tok auf silben_laden(ordner + "tokenizer.msf")
+funktion encoder(t):
+    gib_zurück silben_kodiere(tok, t)
+funktion decoder(ids):
+    gib_zurück silben_dekodiere(tok, ids)
+funktion sil_vorwaerts(sch, eingabe):
+    setze x auf vorwaerts([sch[0]], eingabe)
+    setze x auf vorwaerts([sch[1]], x)
+    setze x auf x + vorwaerts([sch[2], sch[3]], x)
+    setze x auf x + vorwaerts([sch[4], sch[5], sch[6]], x)
+    setze x auf x + vorwaerts([sch[7], sch[8]], x)
+    setze x auf x + vorwaerts([sch[9], sch[10], sch[11]], x)
+    gib_zurück vorwaerts([sch[12], sch[13]], x)
+funktion fabrik(z):
+    setze sch auf z["netz"]["schichten"]
+    gib_zurück (x) => sil_vorwaerts(sch, x)
+setze quelle auf datei_lesen(ordner + "holdout.txt")
+wenn sha256(quelle) != "d057c8fbc0392bddfdd584cd9075e7219e61e0f55f411da3a4099025169075a8":
+    wirf "Holdout veraendert"
+setze cfg auf {"tokenizer": tok, "encoder": encoder, "decoder": decoder, "checkpoint_pfad": ck, "arch_version": "grimm-silben-250k-v1", "sequenzlaenge": 64, "vokab": 512, "pad_id": 0}
+setze r auf evaluiere_modell(fabrik, {"text": quelle, "split": "test"}, cfg)
+zeige "EXT05_HOLDOUT " + json_string({"bericht": r, "bits_pro_byte": r["nll_pro_byte"] / 0.6931471805599453})

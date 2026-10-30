@@ -1,0 +1,16 @@
+# Modell-Evaluation und Val-Auswahl
+
+`evaluiere_modell(fabrik, daten, konfig)` bewertet ein kausales Next-Token-Modell auf einem Dokument. Das ausführbare Beispiel [eval_sil14.moos](eval_sil14.moos) lädt den vorhandenen SIL-14-Checkpoint nur lesend und führt dessen Residualverbindungen aus. `mise run test-p5-eval` prüft die API an einem kleinen Modell; `mise run test-p5-eval-sil14` benötigt den vorhandenen SIL-14-Checkpoint und Tokenizer.
+
+- `fabrik(zustand)` erhält den durch `checkpoint_laden` geladenen Zustand und liefert eine Funktion `forward(ids)`, die einen Tensor mit Logits `[sequenzlaenge, vokab]` zurückgibt.
+- `daten` ist `{"text": text, "split": "train"}`, `"val"` oder `"test"`. Die Checkpoint-Auswahl akzeptiert ausschließlich `"val"`.
+- `konfig` enthält `tokenizer` (das geladene serialisierte Artefakt), `encoder(text)`, `decoder(ids)`, `checkpoint_pfad`, `arch_version`, `sequenzlaenge`, `vokab` und `pad_id`. Encoder und Decoder müssen dasselbe Tokenizer-Artefakt verwenden.
+- Der Checkpoint wird mit dem SHA-256 des Tokenizers und der Architekturversion geladen. Der Checkpoint wird vor und nach dem Laden gehasht; ein erkannter Wechsel führt zum Fehler. Encoder/Decoder-Roundtrip und Token-IDs werden geprüft. Der Bericht enthält Dokument-, Tokenizer- und Checkpoint-SHA-256 sowie den Checkpoint-Pfad.
+
+Die Fabrik muss die übergebenen Schichten tatsächlich verwenden und der Forward-Lauf muss kausal sein. Diese Eigenschaften beliebiger Callbacks kann die Runtime nicht beweisen. Das Artefakt darf während der Auswertung nicht verändert werden; die zweimalige Hashprüfung ist keine Dateisperre.
+
+Das erste Token dient als Kontext und wird nicht bewertet. Sein dekodiertes Bytepräfix wird aus dem Nenner entfernt. `nll` ist die Summe der restlichen Tokenverluste; `bytes`, `codepoints` und `tokens` beziehen sich genau auf diesen bewerteten Suffix. `nll_pro_byte` und `nll_pro_codepoint` sind natürliche NLL-Einheiten, keine Bits. Endet das erste Token mitten in einem UTF-8-Codepoint, wird mit Fehler abgebrochen. Eingaben erhalten immer die volle konfigurierte Sequenzlänge und werden rechts mit `pad_id` gefüllt; die Fabrik muss hierfür die passende Positionslänge verwenden. Die Evaluation ändert keinen Optimiererzustand und stellt den Autograd-Schalter nach dem Aufruf wieder her.
+
+`checkpoint_waehlen([bericht1, bericht2, ...])` akzeptiert nur Val-Berichte mit gleichem Dokument- und Tokenizerhash sowie gleicher Sequenzlänge, Vokabular, Padding und Bewertungsabdeckung. Inkompatible Berichte und Testberichte werden mit Fehler abgelehnt; vor der Auswahl wird jeder Checkpoint erneut gelesen und gegen den gespeicherten Hash geprüft. Gewählt wird die kleinste `nll / bytes`; bei Gleichstand der erste Bericht. Für persistente Metriken kann der zurückgegebene Bericht mit `json_string` und `datei_schreiben` in einen eigenen Laufpfad geschrieben werden. JSON-Rundung begrenzt die Vergleichsgenauigkeit nach einem Roundtrip; unveränderte Berichte im Speicher sind genauer.
+
+Die erste Position wird nicht bewertet; diese Werte dürfen nicht als Volltext-NLL mit BOS interpretiert werden. Die Beispiele sind technische Tests, keine unabhängige Qualitätsmessung oder Grundlage für Experimente.

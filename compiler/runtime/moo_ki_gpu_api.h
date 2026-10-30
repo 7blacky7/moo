@@ -251,7 +251,13 @@ typedef struct {
     uint64_t uploads;
     uint64_t downloads;
     uint64_t cpu_fallbacks;
+    uint64_t cpu_nur_ops;
+    uint64_t cpu_nur_broadcast_add, cpu_nur_broadcast_sub;
+    uint64_t cpu_nur_broadcast_mul, cpu_nur_broadcast_div;
 } MooKiGpuTelemetrie;
+
+/* CPU-only Broadcast unter aktivierter GPU-Nutzung melden; op=0..3. */
+void moo_ki_gpu_cpu_nur_broadcast(int op);
 
 /* Aktuelle Zaehler in *out kopieren (out != NULL). */
 void moo_ki_gpu_telemetrie(MooKiGpuTelemetrie* out);

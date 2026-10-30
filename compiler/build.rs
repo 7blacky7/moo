@@ -49,6 +49,11 @@ fn main() {
         .file("runtime/moo_tensor_ops.c")   // Tensor-Ops + Op-Registry (Plan-014 A2, immer gebaut)
         .file("runtime/moo_autograd.c")     // Autograd-Tape + backward (Plan-014 B1, immer gebaut)
         .file("runtime/moo_nn.c")           // NN-Schichten/Loss/Optimizer (Plan-014 C1, immer gebaut)
+        .file("runtime/moo_sft.c")          // P5: Supervised Fine-Tuning und Korrekturen
+        .file("runtime/moo_distill.c")      // P5: Distillation
+        .file("runtime/moo_dpo.c")          // P5: Praeferenztraining
+        .file("runtime/moo_train_api.c")    // P5: einheitlicher Methodendispatch
+        .file("runtime/moo_train_eval.c")   // P5: Modell-Evaluation
         .file("runtime/moo_contrastive.c")  // KI-MULTI-L1: Kosinus + InfoNCE-Komposition
         .file("runtime/moo_quant.c")        // KI-Q1: Hadamard-Rotation (Registry-Op) + QJL Sign-JL (inferenz-only)
         .file("runtime/moo_krypto.c")       // NETZK-1: SHA-256/SHA-1/HMAC/HKDF (freestanding, getrennt vom KI-Zweig)

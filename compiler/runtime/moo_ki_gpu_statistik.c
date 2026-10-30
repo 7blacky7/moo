@@ -35,6 +35,11 @@ MooValue moo_ki_gpu_statistik(void) {
     moo_dict_set(d, moo_string_new("uploads"), moo_number((double)tel.uploads));
     moo_dict_set(d, moo_string_new("downloads"), moo_number((double)tel.downloads));
     moo_dict_set(d, moo_string_new("cpu_fallbacks"), moo_number((double)tel.cpu_fallbacks));
+    moo_dict_set(d, moo_string_new("cpu_nur_ops"), moo_number((double)tel.cpu_nur_ops));
+    moo_dict_set(d, moo_string_new("cpu_nur_broadcast_add"), moo_number((double)tel.cpu_nur_broadcast_add));
+    moo_dict_set(d, moo_string_new("cpu_nur_broadcast_sub"), moo_number((double)tel.cpu_nur_broadcast_sub));
+    moo_dict_set(d, moo_string_new("cpu_nur_broadcast_mul"), moo_number((double)tel.cpu_nur_broadcast_mul));
+    moo_dict_set(d, moo_string_new("cpu_nur_broadcast_div"), moo_number((double)tel.cpu_nur_broadcast_div));
     return d;
 }
 

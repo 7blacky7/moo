@@ -1,0 +1,60 @@
+# Deterministischer Pilot: kurze Fortsetzungen des SIL-14-Checkpoints.
+# Keine Modell-/Tokenizeraenderung; Datensaetze werden vom Lehrer separat geprueft.
+setze tok auf silben_laden("beispiele/p4_silben/run_sil14_grimm36k/tokenizer.msf")
+setze ckpfad auf "beispiele/p4_silben/run_sil14_grimm36k/full.mook"
+setze zustand auf checkpoint_laden(ckpfad, {"tokenizer_version": sha256(tok), "arch_version": "grimm-silben-250k-v1"})
+setze schichten auf zustand["netz"]["schichten"]
+funktion vorlauf(ids):
+    setze x auf vorwaerts([schichten[0]], ids)
+    setze x auf vorwaerts([schichten[1]], x)
+    setze x auf x + vorwaerts([schichten[2], schichten[3]], x)
+    setze x auf x + vorwaerts([schichten[4], schichten[5], schichten[6]], x)
+    setze x auf x + vorwaerts([schichten[7], schichten[8]], x)
+    setze x auf x + vorwaerts([schichten[9], schichten[10], schichten[11]], x)
+    gib_zurück vorwaerts([schichten[12], schichten[13]], x)
+setze zufallszustand auf 12345
+funktion ziehe(werte):
+    global zufallszustand
+    setze zufallszustand auf zufallszustand * 48271
+    setze zufallszustand auf zufallszustand - boden(zufallszustand / 2147483647) * 2147483647
+    setze schwelle auf zufallszustand / 2147483647
+    setze summe auf 0
+    setze i auf 0
+    solange i < länge(werte) - 1:
+        setze summe auf summe + werte[i]
+        wenn summe >= schwelle:
+            gib_zurück i
+        setze i auf i + 1
+    gib_zurück i
+funktion fortsetzung(prompt):
+    setze ids auf silben_kodiere(tok, prompt).zu_liste()
+    setze ausgabe auf []
+    setze j auf 0
+    setze fertig auf falsch
+    solange j < 40 und nicht fertig:
+        setze logits auf vorlauf(tensor_aus_liste(ids))
+        setze zeile auf logits.zeilen(länge(ids) - 1, länge(ids))
+        setze probs auf (zeile / 0.8).softmax().zu_liste()
+        setze token auf ziehe(probs)
+        ids.hinzufügen(token)
+        ausgabe.hinzufügen(token)
+        setze textwert auf silben_dekodiere(tok, tensor_aus_liste(ausgabe))
+        wenn textwert.text_enthält(".") oder textwert.text_enthält("!") oder textwert.text_enthält("?") oder länge(textwert) >= 120:
+            setze fertig auf wahr
+        setze j auf j + 1
+    gib_zurück prompt + silben_dekodiere(tok, tensor_aus_liste(ausgabe))
+autograd_aus()
+setze figuren auf ["König", "Bauer", "Jäger", "Prinz", "Knecht", "Hirte", "Bote", "Fischer", "Riese", "Schuster"]
+setze anfaenge auf ["Es war einmal ein ", "Der ", "Der ", "Ein ", "Der "]
+setze enden auf [", der ", " ging ", " hatte ", " sprach ", " suchte "]
+setze sammlung auf []
+für figur in figuren:
+    setze i auf 0
+    solange i < länge(anfaenge):
+        setze prompt auf anfaenge[i] + figur + enden[i]
+        setze kandidat auf 0
+        solange kandidat < 3:
+            sammlung.hinzufügen({"prompt": prompt, "original": fortsetzung(prompt)})
+            setze kandidat auf kandidat + 1
+        setze i auf i + 1
+zeige json_string({"checkpoint": ckpfad, "schritt": zustand["schritt"], "tokenizer_id": sha256(tok), "verfahren": "temperatur-0.8-lcg48271", "seed": 12345, "beispiele": sammlung})

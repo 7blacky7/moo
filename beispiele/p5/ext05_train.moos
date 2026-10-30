@@ -1,0 +1,142 @@
+aus sft_adapter importiere korrektur_fenster_aufteilen
+setze ordner auf umgebung("P5_EXT05_DIR")
+setze variante auf umgebung("P5_EXT05_VARIANTE")
+setze seed auf json_parse(umgebung("P5_EXT05_SEED"))
+setze rate auf json_parse(umgebung("P5_EXT05_RATE"))
+wenn ordner == nichts oder (variante != "A" und variante != "B"):
+    wirf "EXT-05: fehlende Laufkonfiguration"
+setze tok auf silben_laden("beispiele/p4_silben/run_sil14_grimm36k/tokenizer.msf")
+setze tokhash auf sha256(tok)
+wenn tokhash != "20ef4b48638359a42141de61ff30d38be7f723c7fe8c612506e9d67f59b62eed":
+    wirf "EXT-05: Tokenizer veraendert"
+funktion encoder(t):
+    gib_zurück silben_kodiere(tok, t)
+funktion decoder(ids):
+    gib_zurück silben_dekodiere(tok, ids)
+funktion sil_vorwaerts(sch, eingabe):
+    setze x auf vorwaerts([sch[0]], eingabe)
+    setze x auf vorwaerts([sch[1]], x)
+    setze x auf x + vorwaerts([sch[2], sch[3]], x)
+    setze x auf x + vorwaerts([sch[4], sch[5], sch[6]], x)
+    setze x auf x + vorwaerts([sch[7], sch[8]], x)
+    setze x auf x + vorwaerts([sch[9], sch[10], sch[11]], x)
+    gib_zurück vorwaerts([sch[12], sch[13]], x)
+funktion fabrik(zustand):
+    setze sch auf zustand["netz"]["schichten"]
+    gib_zurück (x) => sil_vorwaerts(sch, x)
+setze basis auf ordner + "/base.mook"
+wenn sha256(datei_lesen(basis)) != "2edc53610bd0207563540c0941b67fb5bf63f3ca70442099a78dd4b56ad6ca2d":
+    wirf "EXT-05: Basischeckpoint veraendert"
+setze z auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+setze schichten auf z["netz"]["schichten"]
+wenn länge(schichten) != 14 oder schichten[1]["max"] != 64:
+    wirf "EXT-05: Architektur falsch"
+funktion vorlauf(x):
+    gib_zurück sil_vorwaerts(schichten, x)
+setze quelltext auf datei_lesen("beispiele/p5/daten/ext05_train_paare.json")
+wenn sha256(quelltext) != "b2aa8cc9b19e68a14117db8e772e5fdb1490aca631763372299462c0231ad529":
+    wirf "EXT-05: Trainingspaare veraendert"
+setze paare auf json_parse(quelltext)["beispiele"]
+wenn länge(paare) != 70:
+    wirf "EXT-05: falsche Anzahl Trainingspaare"
+setze fenster auf []
+für paar in paare:
+    für f in korrektur_fenster_aufteilen(paar, encoder, 64, 0):
+        fenster.hinzufügen(f)
+setze zufall auf seed
+setze i auf länge(fenster) - 1
+solange i > 0:
+    setze zufall auf (zufall * 48271) % 2147483647
+    setze j auf zufall % (i + 1)
+    setze temp auf fenster[i]
+    setze fenster[i] auf fenster[j]
+    setze fenster[j] auf temp
+    setze i auf i - 1
+setze normaltext auf datei_lesen("beispiele/p5/daten/ext05_normaltext.txt")
+wenn sha256(normaltext) != "71e77e722845bc603dc40127cc2d3eaca1b7b5fc1649a232ee146b503f9f822c":
+    wirf "EXT-05: Normaltext veraendert"
+setze normal_ids auf encoder(normaltext).zu_liste()
+wenn länge(normal_ids) < 65:
+    wirf "EXT-05: Normaltext zu kurz"
+setze params auf parameter(schichten)
+setze optimizer_art auf umgebung("P5_EXT08_OPTIMIERER")
+wenn optimizer_art == "sgd":
+    setze z["opt"] auf optimierer_sgd(params, rate, 0.9)
+sonst wenn optimizer_art == "adam":
+    setze z["opt"] auf optimierer_adam(params, rate)
+sonst wenn optimizer_art == "adamw":
+    setze z["opt"] auf optimierer_adamw(params, rate, 0.01)
+sonst wenn optimizer_art != nichts:
+    wirf "EXT-08: unbekannter Optimierer"
+setze z["opt"]["rate"] auf rate
+setze optimizer_start_t auf z["opt"]["t"]
+wenn optimizer_art != nichts und optimizer_start_t != 0:
+    wirf "EXT-08: Optimiererzustand ist nicht frisch"
+setze konfig auf {"tokenizer_id": tokhash, "sequenzlaenge": 64, "vokab": 512, "params": params, "opt": z["opt"], "encoder": encoder, "schritte": 1}
+setze eval_cfg auf {"tokenizer": tok, "encoder": encoder, "decoder": decoder, "checkpoint_pfad": basis, "arch_version": "grimm-silben-250k-v1", "sequenzlaenge": 64, "vokab": 512, "pad_id": 0}
+setze valtext auf datei_lesen("beispiele/p5/daten/val_korrekturen.txt")
+wenn sha256(valtext) != "c7ed332fa3d5324f0fbbcf5fab79127c88e5e370893673cd724c56aedc2ffaf7":
+    wirf "EXT-05: Validierungstext veraendert"
+setze traintext auf datei_lesen("beispiele/p5/daten/train_korrekturen.txt")
+wenn sha256(traintext) != "d3504252784c2702d959b3aa74ed7f48810652d29d4ef23d5c410074c29d7c44":
+    wirf "EXT-05: Train-Dokument veraendert"
+setze train_berichte auf [evaluiere_modell(fabrik, {"text": traintext, "split": "train"}, eval_cfg)]
+setze berichte auf [evaluiere_modell(fabrik, {"text": valtext, "split": "val"}, eval_cfg)]
+setze start_schritt auf z["schritt"]
+setze start_global auf z["global_schritt"]
+setze fertig auf 0
+setze zielanzahl auf 0
+setze limit_fenster auf länge(fenster)
+wenn umgebung("P5_EXT08_SMOKE") == "1":
+    setze limit_fenster auf 1
+gpu_statistik_reset()
+für f in fenster:
+    wenn fertig >= 2 * limit_fenster:
+        stopp
+    setze aktiv auf 0
+    für m in f["loss_mask"]:
+        setze aktiv auf aktiv + m
+    wenn aktiv < 1 oder aktiv > 64:
+        wirf "EXT-05: Maske ungueltig"
+    setze durchlauf auf 0
+    solange durchlauf < 2:
+        setze zufall auf (zufall * 48271) % 2147483647
+        setze beginn auf zufall % (länge(normal_ids) - 64)
+        setze eingaben auf []
+        setze ziele auf []
+        setze maske auf []
+        setze i auf 0
+        solange i < 64:
+            eingaben.hinzufügen(normal_ids[beginn + i])
+            ziele.hinzufügen(normal_ids[beginn + i + 1])
+            wenn i >= 64 - aktiv:
+                maske.hinzufügen(1)
+            sonst:
+                maske.hinzufügen(0)
+            setze i auf i + 1
+        setze n auf {"input_ids": eingaben, "target_ids": ziele, "loss_mask": maske, "nutzlaenge": 64, "ziel_start": 64 - aktiv}
+        setze daten auf {"tokenizer_id": tokhash, "beispiele": [n]}
+        wenn variante == "B" und durchlauf == 0:
+            setze daten["beispiele"] auf [f]
+            setze lauf auf trainiere_korrekturen(vorlauf, daten, konfig)
+        sonst:
+            setze lauf auf trainiere_sft(vorlauf, daten, konfig)
+        setze konfig["opt"] auf lauf["opt"]
+        setze z["opt"] auf lauf["opt"]
+        setze fertig auf fertig + 1
+        setze zielanzahl auf zielanzahl + aktiv
+        wenn fertig % 100 == 0 oder fertig == 2 * limit_fenster:
+            für param in params:
+                setze materialisiert auf param.zu_liste()
+            setze z["schritt"] auf start_schritt + fertig
+            setze z["global_schritt"] auf start_global + fertig
+            setze pfad auf ordner + "/val_" + text(fertig) + ".mook"
+            wenn datei_existiert(pfad):
+                wirf "EXT-05: Checkpoint existiert bereits"
+            checkpoint_speichern(z, pfad)
+            setze eval_cfg["checkpoint_pfad"] auf pfad
+            train_berichte.hinzufügen(evaluiere_modell(fabrik, {"text": traintext, "split": "train"}, eval_cfg))
+            berichte.hinzufügen(evaluiere_modell(fabrik, {"text": valtext, "split": "val"}, eval_cfg))
+        setze durchlauf auf durchlauf + 1
+setze sieger auf checkpoint_waehlen(berichte)
+zeige "EXT05_RESULT " + json_string({"variante": variante, "seed": seed, "rate": rate, "optimizer_art": optimizer_art, "optimizer_start_t": optimizer_start_t, "optimizer_end_t": z["opt"]["t"], "schritte": fertig, "zielpositionen": zielanzahl, "fenster": länge(fenster), "berichte": berichte, "train_berichte": train_berichte, "sieger": sieger, "gpu": gpu_statistik()})

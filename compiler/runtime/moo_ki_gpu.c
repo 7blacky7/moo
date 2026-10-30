@@ -194,8 +194,9 @@ bool moo_ki_gpu_opt_adam2_res(void* p, void* grad, void* m, void* v, int64_t n,
     (void)eps; (void)wd; (void)adamw; (void)t; return false;
 }
 void moo_ki_gpu_telemetrie(MooKiGpuTelemetrie* out) {
-    if (out) { out->submits = 0; out->uploads = 0; out->downloads = 0; out->cpu_fallbacks = 0; }
+    if (out) *out = (MooKiGpuTelemetrie){0};
 }
+void moo_ki_gpu_cpu_nur_broadcast(int op) { (void)op; }
 void moo_ki_gpu_telemetrie_reset(void) { }
 bool moo_ki_gpu_device_info(MooKiGpuDeviceInfo* out) {
     if (out) *out = (MooKiGpuDeviceInfo){0};
@@ -268,6 +269,26 @@ static bool env_erzwingen(void) {
     const char* e = getenv("MOO_KI_GPU_ERZWINGEN");
     if (e && e[0] == '1' && e[1] == '\0') return true;
     return moo_ki_gpu_strikt_aktiv();   /* KIP-G4c: STRIKT impliziert ERZWINGEN */
+}
+
+void moo_ki_gpu_cpu_nur_broadcast(int op) {
+    const char *gpu = getenv("MOO_KI_GPU");
+    bool strikt = moo_ki_gpu_strikt_aktiv();
+    if (env_aus() || !(strikt || env_erzwingen() || G.bereit ||
+                       (gpu && gpu[0] == '1' && gpu[1] == '\0'))) return;
+    g_tel.cpu_nur_ops++;
+    switch (op) {
+        case 0: g_tel.cpu_nur_broadcast_add++; break;
+        case 1: g_tel.cpu_nur_broadcast_sub++; break;
+        case 2: g_tel.cpu_nur_broadcast_mul++; break;
+        case 3: g_tel.cpu_nur_broadcast_div++; break;
+        default: break;
+    }
+    static bool gewarnt = false;
+    if (strikt && !gewarnt) {
+        fprintf(stderr, "STRIKT: Broadcast-Operationen laufen auf CPU (siehe gpu_statistik cpu_nur_ops).\n");
+        gewarnt = true;
+    }
 }
 
 static VkPipeline pipeline_bauen(const unsigned char* spv, unsigned int len,

@@ -1,0 +1,80 @@
+# Nur Val-IDs; die Pilot-Gesamtdatei enthaelt auch ungenutzte Testeintraege.
+aus praeferenz_adapter importiere praferenz_paar
+setze ck auf umgebung("P5_CKPT")
+wenn ck == nichts:
+    wirf "P5_CKPT fehlt"
+setze tok auf silben_laden("beispiele/p4_silben/run_sil14_grimm36k/tokenizer.msf")
+setze th auf sha256(tok)
+wenn th != "20ef4b48638359a42141de61ff30d38be7f723c7fe8c612506e9d67f59b62eed":
+    wirf "Tokenizer geaendert"
+funktion encoder(t):
+    gib_zurück silben_kodiere(tok,t)
+setze z auf checkpoint_laden(ck, {"tokenizer_version": th, "arch_version": "grimm-silben-250k-v1"})
+setze sch auf z["netz"]["schichten"]
+wenn länge(sch) != 14 oder sch[1]["max"] != 64:
+    wirf "Architektur falsch"
+funktion vorlauf(eingabe):
+    setze x auf vorwaerts([sch[0]], eingabe)
+    setze x auf vorwaerts([sch[1]], x)
+    setze x auf x + vorwaerts([sch[2], sch[3]], x)
+    setze x auf x + vorwaerts([sch[4], sch[5], sch[6]], x)
+    setze x auf x + vorwaerts([sch[7], sch[8]], x)
+    setze x auf x + vorwaerts([sch[9], sch[10], sch[11]], x)
+    gib_zurück vorwaerts([sch[12], sch[13]], x)
+funktion nll(fenster):
+    setze summe auf 0
+    für f in fenster:
+        setze aktiv auf 0
+        für m in f["loss_mask"]:
+            setze aktiv auf aktiv + m
+        setze logits auf vorlauf(tensor_aus_liste(f["input_ids"]))
+        setze wert auf kreuzentropie(logits, tensor_aus_liste(f["target_ids"]), tensor_aus_liste(f["loss_mask"])).zu_liste()[0]
+        setze summe auf summe + wert * aktiv
+    gib_zurück summe
+setze pilotpfad auf "beispiele/p5/daten/pilot_lehrer_v2.json"
+wenn umgebung("P5_EXT10_DUMMY") == "1":
+    setze pilotpfad auf umgebung("P5_EXT10_DUMMY_PILOT")
+setze pilottext auf datei_lesen(pilotpfad)
+setze splitpfad auf "beispiele/p5/daten/split_val.json"
+setze splithash auf "1fc768f2fcb8956d75f30d99c62b5e65978d1158d501764d68dc6ef8b35fcff2"
+wenn umgebung("P5_EXT10_SPLIT") == "test":
+    setze splitpfad auf "beispiele/p5/daten/split_test.json"
+    setze splithash auf "0830afb0290ee0d010754e9f345692cbdc18cddfb4e72ed07318be0651a3cf50"
+wenn umgebung("P5_EXT10_DUMMY") == "1":
+    setze splitpfad auf umgebung("P5_EXT10_DUMMY_SPLIT")
+setze splittext auf datei_lesen(splitpfad)
+wenn umgebung("P5_EXT10_DUMMY") != "1":
+    wenn sha256(pilottext) != "42f3f98b8a7004c0fa8ded7b94642701870edbb0c37a477c6895846be6b5c629" oder sha256(splittext) != splithash:
+        wirf "Pilot oder Val-Split geaendert"
+setze ids auf json_parse(splittext)["ids"]
+setze pilot auf json_parse(pilottext)["beispiele"]
+setze paare auf 0
+setze korrekt auf 0
+setze gleich auf 0
+setze logprobs auf []
+setze nicht_bewertbar auf []
+autograd_aus()
+für paar in pilot:
+    wenn ids.enthält(paar["aufgabe_id"]):
+        setze prompt auf paar["prompt"]
+        wenn prompt == nichts:
+            setze prompt auf paar["herkunft"]["prompt"]
+        wenn prompt == nichts oder prompt == "":
+            wirf "EXT-10: Prompt fehlt"
+        wenn paar["original"] == nichts oder paar["original"] == "" oder paar["korrektur"] == nichts oder paar["korrektur"] == "":
+            wirf "EXT-10: Praeferenztext fehlt"
+        wenn paar["original"] == paar["korrektur"]:
+            nicht_bewertbar.hinzufügen(paar["aufgabe_id"])
+        sonst:
+            setze p auf praferenz_paar(paar,encoder,64,0)
+            setze c auf nll(p["gewaehlt"])
+            setze r auf nll(p["verworfen"])
+            logprobs.hinzufügen({"id": paar["aufgabe_id"], "gewaehlt": -c, "verworfen": -r})
+            wenn c < r:
+                setze korrekt auf korrekt + 1
+            sonst wenn c == r:
+                setze gleich auf gleich + 1
+        setze paare auf paare + 1
+wenn paare != 15:
+    wirf "Ungueltige Val-Abdeckung"
+zeige "EXT09_PRAEF_VAL " + json_string({"checkpoint_sha256": sha256(datei_lesen(ck)), "tokenizer_sha256": th, "split_sha256": sha256(splittext), "paare": paare, "bewertbar": paare - länge(nicht_bewertbar), "nicht_bewertbar": nicht_bewertbar, "korrekt": korrekt, "gleich": gleich, "logprobs": logprobs})

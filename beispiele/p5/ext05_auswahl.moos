@@ -1,0 +1,42 @@
+# Val-Paar-NLL wird aus exakten Festkomma-Zifferngruppen rekonstruiert.
+setze manifest_pfad auf umgebung("P5_EXT05_MANIFEST")
+wenn manifest_pfad == nichts:
+    setze manifest_pfad auf "build/p5_ext05/conditional_manifest.json"
+setze manifest auf json_parse(datei_lesen(manifest_pfad))
+wenn länge(manifest) < 1:
+    wirf "EXT-05: unvollstaendiges Auswertungsmanifest"
+setze gesamtsieger auf []
+für lauf in manifest:
+    setze berichte auf []
+    für paar in lauf["berichte"]:
+        setze fest auf 0
+        setze faktor auf 1
+        für ziffer in paar["nll_fix30_gruppen_basis10000"]:
+            wenn ziffer < 0 oder ziffer >= 10000 oder ziffer != boden(ziffer):
+                wirf "EXT-05: ungueltige Festkommaziffer"
+            setze fest auf fest + ziffer * faktor
+            setze faktor auf faktor * 10000
+        wenn fest >= 9007199254740992 oder paar["paare"] != 15:
+            wirf "EXT-05: ungueltiger Val-Bericht"
+        setze nll auf fest / 1073741824
+        setze bericht auf {"split": "val", "checkpoint_pfad": paar["checkpoint_pfad"], "checkpoint_sha256": paar["checkpoint_sha256"], "tokenizer_sha256": paar["tokenizer_sha256"], "dokument_sha256": paar["split_sha256"], "sequenzlaenge": 64, "vokab": 512, "pad_id": 0, "bytes": paar["bytes"], "codepoints": paar["codepoints"], "tokens": paar["tokens"], "nll": nll, "nll_pro_byte": nll / paar["bytes"], "schritt": paar["schritt"], "rate": paar["rate"], "nll_fix30_gruppen_basis10000": paar["nll_fix30_gruppen_basis10000"]}
+        setze bericht["variante"] auf lauf["variante"]
+        setze bericht["seed"] auf lauf["seed"]
+        berichte.hinzufügen(bericht)
+    wenn umgebung("P5_EXT05_PER_RUN") == "1":
+        setze raten auf []
+        für bericht in berichte:
+            wenn nicht raten.enthält(bericht["rate"]):
+                raten.hinzufügen(bericht["rate"])
+        für rate in raten:
+            setze ratenberichte auf []
+            für bericht in berichte:
+                wenn bericht["rate"] == rate:
+                    ratenberichte.hinzufügen(bericht)
+            setze lauf_sieger auf checkpoint_waehlen(ratenberichte)
+            zeige "EXT05_LAUF " + json_string({"variante": lauf["variante"], "seed": lauf["seed"], "rate": rate, "sieger": lauf_sieger})
+    setze sieger auf checkpoint_waehlen(berichte)
+    gesamtsieger.hinzufügen(sieger)
+    zeige "EXT05_AUSWAHL " + json_string({"variante": lauf["variante"], "seed": lauf["seed"], "sieger": sieger})
+setze beste auf checkpoint_waehlen(gesamtsieger)
+zeige "EXT05_GESAMT " + json_string(beste)

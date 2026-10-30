@@ -881,3 +881,225 @@ uv run python -m skripte.p4_silben.fix_instrument_final test "$P4_INST_VARIANT" 
 [tasks.p4-instrument-summary]
 description = "Compare completed P4 reports with uniform-token baseline"
 run = "uv run python -m skripte.p4_silben.fix_instrument_final summary"
+
+[tasks.p5-grammatik-diagnose-build]
+description = "Compile CPU grammar gate diagnostic"
+run = "compiler/target/release/moo-compiler compile beispiele/p5/grammatik_diagnose.moos -o compiler/target/p5-grammatik-diagnose"
+
+[tasks.p5-grammatik-diagnose]
+description = "Run CPU grammar gate diagnostic"
+run = "MOO_KI_GPU=0 compiler/target/p5-grammatik-diagnose"
+
+[tasks.p5-ext08-eval-build]
+description = "Compile shared P5 validation and quality probes to EXT-08 binaries"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_paar_eval.moos -o compiler/target/p5-ext08-paar-val
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_auswahl.moos -o compiler/target/p5-ext08-auswahl
+compiler/target/release/moo-compiler compile beispiele/p5/eval_train_basis.moos -o compiler/target/p5-ext08-train-eval
+compiler/target/release/moo-compiler compile beispiele/p5/qualitaet_basis.moos -o compiler/target/p5-ext08-grammatik
+compiler/target/release/moo-compiler compile beispiele/p5/forgetting_basis.moos -o compiler/target/p5-ext08-forgetting
+compiler/target/release/moo-compiler compile beispiele/p5/sampling_runner.moos -o compiler/target/p5-ext08-sampling
+'''
+
+[tasks.p5-ext08-eval-smoke]
+description = "Evaluate CPU smoke checkpoints on the frozen conditional validation set"
+run = '''
+set -eu
+: "${P5_EXT08_SMOKE_DIR:?set P5_EXT08_SMOKE_DIR to a completed smoke directory}"
+uv run python skripte/p5_ext08_eval.py
+'''
+
+[tasks.p5-ext08-eval]
+description = "Select EXT-08 checkpoints by exact conditional validation loss"
+run = "uv run python skripte/p5_ext08_eval.py"
+
+[tasks.p5-ext08-qualitaet-smoke]
+description = "Run quality probes on one CPU smoke selection"
+run = '''
+set -eu
+: "${P5_EXT08_SMOKE_DIR:?set P5_EXT08_SMOKE_DIR to an evaluated smoke directory}"
+uv run python skripte/p5_ext08_qualitaet.py
+'''
+
+[tasks.p5-ext08-qualitaet]
+description = "Evaluate EXT-08 selected checkpoints on frozen quality probes"
+run = "uv run python skripte/p5_ext08_qualitaet.py"
+
+[tasks.p5-ext08-build]
+description = "Compile shared EXT-05 trainer for optimizer comparison"
+run = "compiler/target/release/moo-compiler compile beispiele/p5/ext05_train.moos -o compiler/target/p5-ext08-train"
+
+[tasks.p5-ext08-smoke]
+description = "Run short CPU smoke for three fresh optimizers"
+run = "P5_EXT08_SMOKE=1 uv run python skripte/p5_ext08.py"
+
+[tasks.p5-ext08]
+description = "Run the bounded optimizer comparison on Vulkan"
+run = "uv run python skripte/p5_ext08.py"
+
+[tasks.p5-ext05-auswahl]
+description = "Select paired experiment checkpoints using frozen validation reports"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_auswahl.moos -o compiler/target/p5-ext05-auswahl
+MOO_KI_GPU=0 compiler/target/p5-ext05-auswahl
+'''
+
+[tasks.p5-ext05-runner-build]
+description = "Compile updated EXT-05 experiment runner"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_train.moos -o compiler/target/p5-ext05-train-next
+mv compiler/target/p5-ext05-train-next compiler/target/p5-ext05-train
+'''
+
+[tasks.p5-ext05-paar-val]
+description = "Score masked conditional loss on the 15 frozen validation pairs"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_paar_eval.moos -o compiler/target/p5-ext05-paar-val
+MOO_KI_GPU=0 compiler/target/p5-ext05-paar-val
+'''
+
+[tasks.p5-ext05-conditional-auswahl]
+description = "Score all saved checkpoints on conditional validation pairs and select them"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_paar_eval.moos -o compiler/target/p5-ext05-paar-val
+uv run python skripte/p5_ext05_eval.py
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_auswahl.moos -o compiler/target/p5-ext05-auswahl
+MOO_KI_GPU=0 compiler/target/p5-ext05-auswahl
+'''
+
+[tasks.p5-ext05-qualitaet]
+description = "Evaluate selected checkpoints on frozen train and quality baselines"
+run = '''
+set -eu
+uv run python skripte/p5_ext05_qualitaet.py
+'''
+
+[tasks.p5-ext05-train-nachholen]
+description = "Recover train NLL trajectories for the first three completed runs"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/eval_train_basis.moos -o compiler/target/p5-ext05-train-eval
+MOO_KI_GPU=0 uv run python skripte/p5_ext05_train_nachholen.py
+'''
+
+[tasks.p5-ext05-resume]
+description = "Resume bounded paired comparison with learning rates selected on seed 11"
+run = '''
+set -eu
+uv run python skripte/p5_ext05_resume.py
+'''
+
+[tasks.p5-ext05-bericht]
+description = "Summarize paired val-selected checkpoint and quality measurements"
+run = '''
+set -eu
+uv run python skripte/p5_ext05_bericht.py
+'''
+
+[tasks.p5-ext05]
+description = "Run bounded paired SIL-14 correction and normal-text experiments"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_train.moos -o compiler/target/p5-ext05-train
+uv run python skripte/p5_ext05.py
+'''
+
+[tasks.p5-ext09-praef-val]
+description = "Measure chosen versus rejected logprob on the frozen validation pairs"
+run = '''
+set -eu
+P5_TEST_DIR="$(mktemp -d "$PWD/build/p5-ext09-val.XXXXXX")"
+compiler/target/release/moo-compiler compile beispiele/p5/ext09_praef_val.moos -o "$P5_TEST_DIR/test"
+MOO_KI_GPU=0 "$P5_TEST_DIR/test"
+'''
+
+[tasks.p5-ext09-build]
+description = "Build isolated EXT-09 training and validation executables"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/ext09_train.moos -o compiler/target/p5-ext09-train
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_paar_eval.moos -o compiler/target/p5-ext09-paar-val
+compiler/target/release/moo-compiler compile beispiele/p5/ext09_praef_val.moos -o compiler/target/p5-ext09-praef-val
+'''
+
+[tasks.p5-ext09]
+description = "Run budgeted EXT-09 comparison with shared GPU ledger"
+run = "uv run python skripte/p5_ext09.py"
+
+[tasks.p5-ext09-cpu]
+description = "Run serial EXT-09 CPU comparison and backend control"
+run = "uv run python skripte/p5_ext09_cpu.py"
+
+[tasks.p5-ext10-build]
+description = "Build EXT-10 evaluators without accessing test data"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_paar_eval.moos -o compiler/target/p5-ext10-paar
+compiler/target/release/moo-compiler compile beispiele/p5/ext09_praef_val.moos -o compiler/target/p5-ext10-praef
+compiler/target/release/moo-compiler compile beispiele/p5/ext10_dokument_eval.moos -o compiler/target/p5-ext10-dokument
+'''
+
+[tasks.p5-ext10]
+description = "Run EXT-10 with the fixed manifest after explicit release"
+run = "uv run python skripte/p5_ext10.py --execute --manifest build/p5_ext10/manifest.json"
+
+[tasks.p5-pilot-generieren]
+description = "Generate 100 short SIL-14 pilot texts on CPU for teacher review"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/generiere_pilot.moos -o compiler/target/p5-pilot-generieren
+MOO_KI_GPU=0 compiler/target/p5-pilot-generieren
+'''
+
+[tasks.p5-pilot-sampling]
+description = "Generate seeded SIL-14 candidate texts on CPU for teacher review"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/generiere_pilot_sampling.moos -o compiler/target/p5-pilot-sampling
+MOO_KI_GPU=0 compiler/target/p5-pilot-sampling
+'''
+
+[tasks.p5-pilot-topk]
+description = "Generate seeded top-k SIL-14 candidate texts on CPU"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/generiere_pilot_topk.moos -o compiler/target/p5-pilot-topk
+MOO_KI_GPU=0 compiler/target/p5-pilot-topk
+'''
+
+[tasks.p5-grammatik-baseline]
+description = "Score frozen grammar minimal pairs on a chosen checkpoint"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/qualitaet_basis.moos -o compiler/target/p5-qualitaet-basis
+MOO_KI_GPU=0 compiler/target/p5-qualitaet-basis
+'''
+
+[tasks.p5-sampling-baseline]
+description = "Generate reproducible greedy and sampled raw-byte outputs"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/sampling_runner.moos -o compiler/target/p5-sampling-runner
+MOO_KI_GPU=0 uv run python skripte/p5_sampling_json.py compiler/target/p5-sampling-runner
+'''
+
+[tasks.p5-forgetting-baseline]
+description = "Score frozen P4 training excerpt on a chosen checkpoint"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/forgetting_basis.moos -o compiler/target/p5-forgetting-basis
+MOO_KI_GPU=0 compiler/target/p5-forgetting-basis
+'''
+
+[tasks.p5-train-nll-baseline]
+description = "Score frozen P5 training corrections on a chosen checkpoint"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/eval_train_basis.moos -o compiler/target/p5-eval-train-basis
+MOO_KI_GPU=0 compiler/target/p5-eval-train-basis
+'''

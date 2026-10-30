@@ -1,0 +1,21 @@
+aus sft_adapter importiere korrektur_fenster_aufteilen
+# Ein Paar bleibt eine Einheit: Loss ueber alle Fenster, nicht pro Fenster.
+funktion praferenz_paar(paar, encoder, sequenzlaenge, pad):
+    setze prompt auf paar["prompt"]
+    wenn prompt == nichts:
+        setze prompt auf paar["herkunft"]["prompt"]
+    wenn prompt == nichts oder prompt == "" oder paar["original"] == paar["korrektur"]:
+        wirf "DPO-Adapter: gleicher oder fehlender Praeferenztext"
+    setze positiv auf encoder(paar["korrektur"]).zu_liste()
+    setze negativ auf encoder(paar["original"]).zu_liste()
+    setze gleich auf länge(positiv) == länge(negativ)
+    wenn gleich:
+        setze i auf 0
+        solange i < länge(positiv):
+            wenn positiv[i] != negativ[i]:
+                setze gleich auf falsch
+            setze i auf i + 1
+    wenn gleich:
+        wirf "DPO-Adapter: Praeferenz ist nach Tokenisierung identisch"
+    setze negativ_paar auf {"prompt": prompt, "akzeptiert": wahr, "aufgabe": paar["aufgabe"], "original": paar["original"], "korrektur": paar["original"], "begruendung": paar["begruendung"], "art": paar["art"]}
+    gib_zurück {"gewaehlt": korrektur_fenster_aufteilen(paar, encoder, sequenzlaenge, pad), "verworfen": korrektur_fenster_aufteilen(negativ_paar, encoder, sequenzlaenge, pad)}

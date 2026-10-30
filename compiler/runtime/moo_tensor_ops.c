@@ -183,9 +183,12 @@ static MooValue ew_op(MooValue av, MooValue bv, FOp f, const char* wo, const cha
             ew_same(a->data, b->data, out->data, out->size, f);
         }
     } else if (out->ndim == 2 && b->size == out->shape[1] &&
+               (b->ndim == 1 || (b->ndim == 2 && b->shape[0] == 1)) &&
                a->ndim == 2 && a->shape[0] == out->shape[0] && a->shape[1] == out->shape[1]) {
+        moo_ki_gpu_cpu_nur_broadcast((f == f_add) ? 0 : (f == f_sub) ? 1 : (f == f_mul) ? 2 : 3);
         ew_row(a->data, b->data, out->data, out->shape[0], out->shape[1], f);  // Bias
     } else {
+        moo_ki_gpu_cpu_nur_broadcast((f == f_add) ? 0 : (f == f_sub) ? 1 : (f == f_mul) ? 2 : 3);
         ew_generic(a, b, out, f);
     }
     MooValue ret = wrap_t(out);

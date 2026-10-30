@@ -1,0 +1,31 @@
+# P5: SIL-14 Checkpoint nur lesend auf einem kurzen synthetischen Text evaluieren.
+setze ordner auf "beispiele/p4_silben/run_sil14_grimm36k/"
+setze tok auf silben_laden(ordner + "tokenizer.msf")
+setze ckpfad auf umgebung("P5_CKPT")
+wenn ckpfad == nichts:
+    setze ckpfad auf ordner + "full.mook"
+funktion encoder(textwert):
+    gib_zurück silben_kodiere(tok, textwert)
+funktion decoder(ids):
+    gib_zurück silben_dekodiere(tok, ids)
+funktion sil_vorwaerts(sch, eingabe):
+    setze x auf vorwaerts([sch[0]], eingabe)
+    setze x auf vorwaerts([sch[1]], x)
+    setze x auf x + vorwaerts([sch[2], sch[3]], x)
+    setze x auf x + vorwaerts([sch[4], sch[5], sch[6]], x)
+    setze x auf x + vorwaerts([sch[7], sch[8]], x)
+    setze x auf x + vorwaerts([sch[9], sch[10], sch[11]], x)
+    gib_zurück vorwaerts([sch[12], sch[13]], x)
+funktion fabrik(z):
+    setze sch auf z["netz"]["schichten"]
+    gib_zurück (x) => sil_vorwaerts(sch, x)
+setze config auf {"tokenizer": tok, "encoder": encoder, "decoder": decoder,
+    "checkpoint_pfad": ckpfad, "arch_version": "grimm-silben-250k-v1",
+    "sequenzlaenge": 64, "vokab": silben_info(tok)["vokab"], "pad_id": 0}
+setze textprobe auf datei_lesen("beispiele/p5/daten/forgetting_grimm.txt")
+wenn sha256(textprobe) != "d905cebec8bdf31d5d4477f3b34973aa7f728bcb8748177b6b5f069a76d19206":
+    wirf "Forgetting-Stichprobe geaendert"
+setze bericht auf evaluiere_modell(fabrik, {"text": textprobe, "split": "train"}, config)
+wenn bericht["split"] != "train":
+    wirf "Forgetting-Daten falsch etikettiert"
+zeige json_string({"checkpoint_sha256": bericht["checkpoint_sha256"], "tokenizer_sha256": bericht["tokenizer_sha256"], "dokument_sha256": bericht["dokument_sha256"], "split": bericht["split"], "nll": bericht["nll"], "bytes": bericht["bytes"], "codepoints": bericht["codepoints"], "positionen": bericht["tokens"], "nll_pro_byte": bericht["nll_pro_byte"], "nll_pro_codepoint": bericht["nll_pro_codepoint"], "bits_pro_byte": bericht["nll_pro_byte"] / 0.6931471805599453})

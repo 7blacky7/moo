@@ -2986,6 +2986,48 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_release, &[b.into()], "rel_ce_b")?;
                         return Ok(r);
                     }
+                    "checkpoint_waehlen" => {
+                        if args.len() != 1 {
+                            return Err("checkpoint_waehlen erwartet eine Val-Berichtsliste".to_string());
+                        }
+                        let berichte = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_train_eval_waehlen, &[berichte.into()], "eval_waehlen")?;
+                        self.call_rt_void(self.rt.moo_release, &[berichte.into()], "rel_eval_berichte")?;
+                        return Ok(r);
+                    }
+                    "evaluiere_modell" => {
+                        if args.len() != 3 {
+                            return Err("evaluiere_modell erwartet 3 Argumente (factory, daten, konfig)".to_string());
+                        }
+                        let factory = self.compile_expr(&args[0])?;
+                        let daten = self.compile_expr(&args[1])?;
+                        let konfig = self.compile_expr(&args[2])?;
+                        let r = self.call_rt(self.rt.moo_train_eval_modell, &[factory.into(), daten.into(), konfig.into()], "eval_p5")?;
+                        self.call_rt_void(self.rt.moo_release, &[factory.into()], "rel_eval_factory")?;
+                        self.call_rt_void(self.rt.moo_release, &[daten.into()], "rel_eval_daten")?;
+                        self.call_rt_void(self.rt.moo_release, &[konfig.into()], "rel_eval_konfig")?;
+                        return Ok(r);
+                    }
+                    "trainiere_sft" | "trainiere_korrekturen" | "trainiere_distillation" | "trainiere_praeferenzen" | "trainiere_methode" => {
+                        if args.len() != 3 {
+                            return Err(format!("{} erwartet 3 Argumente (forward, daten, konfig)", name));
+                        }
+                        let forward = self.compile_expr(&args[0])?;
+                        let daten = self.compile_expr(&args[1])?;
+                        let konfig = self.compile_expr(&args[2])?;
+                        let fun = match name.as_str() {
+                            "trainiere_sft" => self.rt.moo_train_sft,
+                            "trainiere_korrekturen" => self.rt.moo_train_korrekturen,
+                            "trainiere_distillation" => self.rt.moo_train_distillation,
+                            "trainiere_praeferenzen" => self.rt.moo_train_praeferenzen,
+                            _ => self.rt.moo_train_methode,
+                        };
+                        let r = self.call_rt(fun, &[forward.into(), daten.into(), konfig.into()], "train_p5")?;
+                        self.call_rt_void(self.rt.moo_release, &[forward.into()], "rel_p5_forward")?;
+                        self.call_rt_void(self.rt.moo_release, &[daten.into()], "rel_p5_daten")?;
+                        self.call_rt_void(self.rt.moo_release, &[konfig.into()], "rel_p5_konfig")?;
+                        return Ok(r);
+                    }
                     "optimierer_sgd" | "optimizer_sgd" => {
                         let params = self.compile_expr(&args[0])?;
                         let rate = self.compile_expr(&args[1])?;

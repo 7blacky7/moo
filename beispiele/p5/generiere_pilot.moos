@@ -1,0 +1,43 @@
+# Deterministischer Pilot: kurze Fortsetzungen des SIL-14-Checkpoints.
+# Keine Modell-/Tokenizeraenderung; Datensaetze werden vom Lehrer separat geprueft.
+setze tok auf silben_laden("beispiele/p4_silben/run_sil14_grimm36k/tokenizer.msf")
+setze ckpfad auf "beispiele/p4_silben/run_sil14_grimm36k/full.mook"
+setze zustand auf checkpoint_laden(ckpfad, {"tokenizer_version": sha256(tok), "arch_version": "grimm-silben-250k-v1"})
+setze schichten auf zustand["netz"]["schichten"]
+funktion vorlauf(ids):
+    setze x auf vorwaerts([schichten[0]], ids)
+    setze x auf vorwaerts([schichten[1]], x)
+    setze x auf x + vorwaerts([schichten[2], schichten[3]], x)
+    setze x auf x + vorwaerts([schichten[4], schichten[5], schichten[6]], x)
+    setze x auf x + vorwaerts([schichten[7], schichten[8]], x)
+    setze x auf x + vorwaerts([schichten[9], schichten[10], schichten[11]], x)
+    gib_zurück vorwaerts([schichten[12], schichten[13]], x)
+funktion bestes_token(werte):
+    setze best auf 0
+    setze i auf 1
+    solange i < länge(werte):
+        wenn werte[i] > werte[best]:
+            setze best auf i
+        setze i auf i + 1
+    gib_zurück best
+funktion fortsetzung(prompt):
+    setze ids auf silben_kodiere(tok, prompt).zu_liste()
+    setze ausgabe auf []
+    setze j auf 0
+    solange j < 30:
+        setze logits auf vorlauf(tensor_aus_liste(ids))
+        setze zeile auf logits.zeilen(länge(ids) - 1, länge(ids)).zu_liste()
+        setze token auf bestes_token(zeile)
+        ids.hinzufügen(token)
+        ausgabe.hinzufügen(token)
+        setze j auf j + 1
+    gib_zurück prompt + silben_dekodiere(tok, tensor_aus_liste(ausgabe))
+autograd_aus()
+setze eigenschaften auf ["alte", "junge", "arme", "reiche", "kluge", "gute", "kleine", "starke", "müde", "fremde"]
+setze figuren auf ["König", "Mann", "Bauer", "Jäger", "Riese", "Prinz", "Knecht", "Hirte", "Bote", "Fischer"]
+setze sammlung auf []
+für eigenschaft in eigenschaften:
+    für figur in figuren:
+        setze prompt auf "Der " + eigenschaft + " " + figur + " "
+        sammlung.hinzufügen({"prompt": prompt, "original": fortsetzung(prompt)})
+zeige json_string({"checkpoint": ckpfad, "schritt": zustand["schritt"], "tokenizer_id": sha256(tok), "verfahren": "greedy-30", "beispiele": sammlung})

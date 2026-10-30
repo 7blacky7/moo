@@ -1,0 +1,102 @@
+# P5-Datenadapter: genau ein ganzes Beispiel pro Kontextfenster.
+# Prompt und Ziel werden getrennt kodiert; kein Abschneiden, kein stiller Verlust.
+funktion sft_fenster(prompt_ids, ziel_ids, sequenzlaenge, pad):
+    wenn länge(prompt_ids) < 1 oder länge(ziel_ids) < 1 oder sequenzlaenge < 2 oder sequenzlaenge != boden(sequenzlaenge):
+        wirf "SFT-Adapter: leere Tokens oder ungueltige Sequenzlaenge"
+    setze alle auf []
+    für token in prompt_ids:
+        alle.hinzufügen(token)
+    für token in ziel_ids:
+        alle.hinzufügen(token)
+    setze nutzlaenge auf länge(alle) - 1
+    wenn nutzlaenge > sequenzlaenge:
+        wirf "SFT-Adapter: Beispiel passt nicht in das Positionsfenster"
+    setze ziel_start auf länge(prompt_ids) - 1
+    setze eingaben auf []
+    setze ziele auf []
+    setze maske auf []
+    setze i auf 0
+    solange i < nutzlaenge:
+        eingaben.hinzufügen(alle[i])
+        ziele.hinzufügen(alle[i + 1])
+        wenn i >= ziel_start:
+            maske.hinzufügen(1)
+        sonst:
+            maske.hinzufügen(0)
+        setze i auf i + 1
+    solange i < sequenzlaenge:
+        eingaben.hinzufügen(pad)
+        ziele.hinzufügen(pad)
+        maske.hinzufügen(0)
+        setze i auf i + 1
+    gib_zurück {"input_ids": eingaben, "target_ids": ziele, "loss_mask": maske, "nutzlaenge": nutzlaenge, "ziel_start": ziel_start}
+
+funktion korrektur_fenster(paar, encoder, sequenzlaenge, pad):
+    wenn paar["akzeptiert"] != wahr oder paar["aufgabe"] == "" oder paar["original"] == "" oder paar["korrektur"] == "" oder paar["begruendung"] == "":
+        wirf "Korrektur-Adapter: nur begruendete gepruefte Paare"
+    setze prompt auf paar["aufgabe"] + "\n" + paar["original"] + "\n"
+    setze fenster auf sft_fenster(encoder(prompt).zu_liste(), encoder(paar["korrektur"]).zu_liste(), sequenzlaenge, pad)
+    setze fenster["akzeptiert"] auf wahr
+    setze fenster["aufgabe"] auf paar["aufgabe"]
+    setze fenster["original"] auf paar["original"]
+    setze fenster["korrektur"] auf paar["korrektur"]
+    setze fenster["begruendung"] auf paar["begruendung"]
+    gib_zurück fenster
+
+# Überlappende Fenster für Prompt und korrigierten Volltext. Das Original
+# bleibt als Metadatum erhalten und wird nicht als Eingabe kodiert.
+funktion korrektur_fenster_aufteilen(paar, encoder, sequenzlaenge, pad):
+    wenn paar["akzeptiert"] != wahr oder paar["aufgabe"] == "" oder paar["original"] == "" oder paar["korrektur"] == "" oder paar["begruendung"] == "":
+        wirf "Korrektur-Adapter: nur begruendete gepruefte Paare"
+    wenn sequenzlaenge < 2 oder sequenzlaenge > 4096 oder sequenzlaenge != boden(sequenzlaenge):
+        wirf "Korrektur-Adapter: ungueltige Sequenzlaenge"
+    setze prompt auf paar["prompt"]
+    wenn prompt == nichts:
+        setze prompt auf paar["herkunft"]["prompt"]
+    wenn prompt == nichts oder prompt == "":
+        wirf "Korrektur-Adapter: Modell-Prompt fehlt"
+    setze prompt_ids auf encoder(prompt).zu_liste()
+    setze ziel_ids auf encoder(paar["korrektur"]).zu_liste()
+    wenn länge(prompt_ids) == 0 oder länge(ziel_ids) == 0:
+        wirf "Korrektur-Adapter: leere Tokenfolge"
+    setze alle auf []
+    für token in prompt_ids:
+        alle.hinzufügen(token)
+    für token in ziel_ids:
+        alle.hinzufügen(token)
+    wenn länge(alle) > 1000000:
+        wirf "Korrektur-Adapter: Tokenfolge zu lang"
+    setze gesamt auf länge(alle) - 1
+    setze schritt auf boden(sequenzlaenge / 2)
+    setze offset auf 0
+    setze fenster auf []
+    solange offset < gesamt:
+        setze ende auf min(offset + sequenzlaenge, gesamt)
+        setze aktiv_ab auf länge(prompt_ids) - 1
+        wenn offset > 0:
+            setze aktiv_ab auf max(aktiv_ab, offset + sequenzlaenge - schritt)
+        setze aktiv_ab auf max(aktiv_ab, offset)
+        wenn aktiv_ab < ende:
+            setze eingaben auf []
+            setze ziele auf []
+            setze maske auf []
+            setze i auf offset
+            solange i < ende:
+                eingaben.hinzufügen(alle[i])
+                ziele.hinzufügen(alle[i + 1])
+                wenn i >= aktiv_ab:
+                    maske.hinzufügen(1)
+                sonst:
+                    maske.hinzufügen(0)
+                setze i auf i + 1
+            setze nutzlaenge auf ende - offset
+            solange länge(eingaben) < sequenzlaenge:
+                eingaben.hinzufügen(pad)
+                ziele.hinzufügen(pad)
+                maske.hinzufügen(0)
+            fenster.hinzufügen({"input_ids": eingaben, "target_ids": ziele, "loss_mask": maske, "nutzlaenge": nutzlaenge, "ziel_start": aktiv_ab - offset, "fenster_offset": offset, "prompt": prompt, "akzeptiert": wahr, "aufgabe": paar["aufgabe"], "original": paar["original"], "korrektur": paar["korrektur"], "begruendung": paar["begruendung"], "art": paar["art"]})
+        setze offset auf offset + schritt
+    wenn länge(fenster) == 0:
+        wirf "Korrektur-Adapter: keine aktiven Zielpositionen"
+    gib_zurück fenster
+

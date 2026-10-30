@@ -1,0 +1,48 @@
+# CPU-Diagnose des Grammatik-Gates und seiner Tokenisierung.
+setze ordner auf "beispiele/p4_silben/run_sil14_grimm36k/"
+setze tok auf silben_laden(ordner + "tokenizer.msf")
+setze ckpfad auf umgebung("P5_CKPT")
+wenn ckpfad == nichts:
+    setze ckpfad auf ordner + "full.mook"
+funktion encoder(textwert):
+    gib_zurück silben_kodiere(tok, textwert)
+funktion decoder(ids):
+    gib_zurück silben_dekodiere(tok, ids)
+funktion sil_vorwaerts(sch, eingabe):
+    setze x auf vorwaerts([sch[0]], eingabe)
+    setze x auf vorwaerts([sch[1]], x)
+    setze x auf x + vorwaerts([sch[2], sch[3]], x)
+    setze x auf x + vorwaerts([sch[4], sch[5], sch[6]], x)
+    setze x auf x + vorwaerts([sch[7], sch[8]], x)
+    setze x auf x + vorwaerts([sch[9], sch[10], sch[11]], x)
+    gib_zurück vorwaerts([sch[12], sch[13]], x)
+funktion fabrik(z):
+    setze sch auf z["netz"]["schichten"]
+    gib_zurück (x) => sil_vorwaerts(sch, x)
+setze config auf {"tokenizer": tok, "encoder": encoder, "decoder": decoder,
+    "checkpoint_pfad": ckpfad, "arch_version": "grimm-silben-250k-v1",
+    "sequenzlaenge": 64, "vokab": silben_info(tok)["vokab"], "pad_id": 0}
+setze quelle auf datei_lesen("beispiele/p5/daten/grammatik_minimalpaare.json")
+wenn sha256(quelle) != "d89fea83a3a3c400bc17953d9fb9b6769dff951cfade33c62f48ebae03e329aa":
+    wirf "Grammatikaufgaben geaendert"
+setze paket auf json_parse(quelle)
+setze hash auf sha256(datei_lesen(ckpfad))
+setze detail auf []
+für item in paket["items"]:
+    setze g auf evaluiere_modell(fabrik, {"text": item["gut"], "split": "test"}, config)
+    setze s auf evaluiere_modell(fabrik, {"text": item["schlecht"], "split": "test"}, config)
+    wenn g["checkpoint_sha256"] != hash oder s["checkpoint_sha256"] != hash:
+        wirf "Checkpoint geaendert"
+    setze gut_ids auf encoder(item["gut"]).zu_liste()
+    setze schlecht_ids auf encoder(item["schlecht"]).zu_liste()
+    setze roh_richtig auf g["nll"] < s["nll"]
+    setze token_richtig auf g["nll"] / (länge(gut_ids) - 1) < s["nll"] / (länge(schlecht_ids) - 1)
+    detail.hinzufügen({"id": item["id"], "kategorie": item["kategorie"], "gut_ids": gut_ids, "schlecht_ids": schlecht_ids, "roh_richtig": roh_richtig, "token_richtig": token_richtig, "gut": g, "schlecht": s})
+setze beispiele auf ["Es war einmal ein König.", "Der Hund läuft im Garten.", "Die Kinder spielen im Wald.", "Die Frau öffnet die Tür."]
+setze sanity auf []
+für satz in beispiele:
+    setze ergaenzt auf satz + " qxq zzz pfkr xyz"
+    setze kurz auf evaluiere_modell(fabrik, {"text": satz, "split": "test"}, config)
+    setze lang auf evaluiere_modell(fabrik, {"text": ergaenzt, "split": "test"}, config)
+    sanity.hinzufügen({"satz": satz, "kurz_ids": encoder(satz).zu_liste(), "lang_ids": encoder(ergaenzt).zu_liste(), "kurz": kurz, "lang": lang})
+zeige json_string({"checkpoint_sha256": hash, "daten_sha256": sha256(quelle), "items": detail, "sanity": sanity})

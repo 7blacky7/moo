@@ -1,0 +1,46 @@
+# P5: SIL-14 Checkpoint nur lesend auf einem kurzen synthetischen Text evaluieren.
+setze ordner auf "beispiele/p4_silben/run_sil14_grimm36k/"
+setze tok auf silben_laden(ordner + "tokenizer.msf")
+setze ckpfad auf umgebung("P5_CKPT")
+wenn ckpfad == nichts:
+    setze ckpfad auf ordner + "full.mook"
+funktion encoder(textwert):
+    gib_zurück silben_kodiere(tok, textwert)
+funktion decoder(ids):
+    gib_zurück silben_dekodiere(tok, ids)
+funktion sil_vorwaerts(sch, eingabe):
+    setze x auf vorwaerts([sch[0]], eingabe)
+    setze x auf vorwaerts([sch[1]], x)
+    setze x auf x + vorwaerts([sch[2], sch[3]], x)
+    setze x auf x + vorwaerts([sch[4], sch[5], sch[6]], x)
+    setze x auf x + vorwaerts([sch[7], sch[8]], x)
+    setze x auf x + vorwaerts([sch[9], sch[10], sch[11]], x)
+    gib_zurück vorwaerts([sch[12], sch[13]], x)
+funktion fabrik(z):
+    setze sch auf z["netz"]["schichten"]
+    gib_zurück (x) => sil_vorwaerts(sch, x)
+setze config auf {"tokenizer": tok, "encoder": encoder, "decoder": decoder,
+    "checkpoint_pfad": ckpfad, "arch_version": "grimm-silben-250k-v1",
+    "sequenzlaenge": 64, "vokab": silben_info(tok)["vokab"], "pad_id": 0}
+setze quelle auf datei_lesen("beispiele/p5/daten/grammatik_minimalpaare.json")
+wenn sha256(quelle) != "d89fea83a3a3c400bc17953d9fb9b6769dff951cfade33c62f48ebae03e329aa":
+    wirf "Grammatikaufgaben geaendert"
+setze paket auf json_parse(quelle)
+setze hash auf sha256(datei_lesen(ckpfad))
+setze detail auf []
+setze korrekt auf 0
+setze gleich auf 0
+für item in paket["items"]:
+    setze g auf evaluiere_modell(fabrik, {"text": item["gut"], "split": "test"}, config)
+    setze s auf evaluiere_modell(fabrik, {"text": item["schlecht"], "split": "test"}, config)
+    wenn g["checkpoint_sha256"] != hash oder s["checkpoint_sha256"] != hash:
+        wirf "Checkpoint waehrend Test geaendert"
+    setze richtig auf g["nll"] < s["nll"]
+    wenn richtig:
+        setze korrekt auf korrekt + 1
+    wenn g["nll"] == s["nll"]:
+        setze gleich auf gleich + 1
+    detail.hinzufügen({"id": item["id"], "kategorie": item["kategorie"], "nll_gut": g["nll"], "nll_schlecht": s["nll"], "richtig": richtig})
+wenn länge(detail) != 80:
+    wirf "Grammatik-Anzahl"
+zeige json_string({"checkpoint_sha256": hash, "tokenizer_sha256": sha256(tok), "daten_sha256": sha256(quelle), "anzahl": länge(detail), "richtig": korrekt, "gleichstand": gleich, "items": detail})
