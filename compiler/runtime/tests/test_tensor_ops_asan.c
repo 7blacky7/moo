@@ -238,6 +238,26 @@ int main(void) {
     CHECK(!moo_error_flag, "div wirft nicht");
     moo_release(S); moo_release(DZ); moo_release(DN);
 
+    /* Materialisierung kann fehlschlagen; Concat darf dann nicht kopieren. */
+    float concat_v[2] = { 1.0f, 2.0f };
+    MooValue CA = t1(2, concat_v), CB = t1(2, concat_v);
+    MooValue CC = moo_tensor_verbinden(CA, CB);
+    CHECK(CC.tag == MOO_TENSOR && MV_TENSOR(CC)->size == 4 &&
+          MV_TENSOR(CC)->data[0] == 1.0f && MV_TENSOR(CC)->data[3] == 2.0f,
+          "concat CPU-Referenz");
+    moo_release(CC);
+    MV_TENSOR(CA)->valid = 0;
+    CC = moo_tensor_verbinden(CA, CB);
+    CHECK(moo_error_flag && CC.tag == MOO_NONE, "concat stoppt bei Sicherungsfehler links");
+    fehler_reset();
+    MV_TENSOR(CA)->valid = MOO_V_DATA;
+    MV_TENSOR(CB)->valid = 0;
+    CC = moo_tensor_verbinden(CA, CB);
+    CHECK(moo_error_flag && CC.tag == MOO_NONE, "concat stoppt bei Sicherungsfehler rechts");
+    fehler_reset();
+    MV_TENSOR(CB)->valid = MOO_V_DATA;
+    moo_release(CA); moo_release(CB);
+
     /* ---- 8. Registry ---- */
     CHECK(moo_tensor_op_count() == 33, "registry: 33 ops");   /* +im2col/pooling (KI-MULTI-V2), +hadamard/+hadamard_inv (KI-Q1) */
     const MooTensorOp* op = moo_tensor_op_lookup("matmul");

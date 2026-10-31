@@ -488,8 +488,8 @@ MooValue moo_tensor_zeilen(MooValue av, MooValue startv, MooValue endev) {
 
 // Verbinden entlang Achse 0 (uebrige Dimensionen muessen gleich sein).
 MooValue moo_tensor_verbinden(MooValue av, MooValue bv) {
-    MooTensor* a = expect_t(av, "tensor_verbinden"); if (!a) return moo_none();
-    MooTensor* b = expect_t(bv, "tensor_verbinden"); if (!b) return moo_none();
+    MooTensor* a = expect_t(av, "tensor_verbinden"); if (!a || moo_error_flag) return moo_none();
+    MooTensor* b = expect_t(bv, "tensor_verbinden"); if (!b || moo_error_flag) return moo_none();
     if (a->ndim != b->ndim ||
         memcmp(a->shape + 1, b->shape + 1, sizeof(int32_t) * (size_t)(a->ndim - 1)) != 0) {
         char sa[64], sb[64], msg[256];
