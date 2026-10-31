@@ -54,6 +54,8 @@ int main(void) {
     ops.maximiere_umschalten = f1;
     ops.transparenz = f2;
     ops.cursor_setze = f2;
+    ops.praesentiere = f2;
+    ops.input_callback_setze = f2;
 
     /* Ein fehlender Pointer -> unvollstaendig (Stichprobe: Serial-Getter,
      * das juengste Vertragsfeld — genau das darf ein Backend nicht
