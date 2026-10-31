@@ -132,8 +132,20 @@ editors/vscode/moo/*.vsix
 Thumbs.db
 daten/
 
-# KI-Paper-Recherche (lokales Archiv, Paper-Volltexte/PDFs nicht committen — Copyright)
-docs/research/ki-papers/
+# KI-Paper-Recherche: nur die PDF-Originale nicht committen (Copyright).
+# analysis/ + text/ + Modellkarten sind absichtlich sichtbar, damit der
+# FileWatcher sie indexiert (FW respektiert .gitignore!). Text-Extrakte
+# beim Stagen weiterhin bewusst weglassen (Regel: nie git add -A).
+docs/research/ki-papers/pdf/
 
 # Render-Artefakte
 *.ppm
+
+# P6-Trainingsdaten-Exporte (können nichtsynthetische Daten enthalten, nie committen)
+build/p6/
+
+# KI-Material mit Synapse-Daten bzw. lizenzbeschraenktem Modell (nie nach GitHub, User 31.10.2026)
+beispiele/p6_wissensmix/
+skripte/p6/
+skripte/synapse_wissen_mischen_*.py
+skripte/hf_ki_browser_import_*.py
