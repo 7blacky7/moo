@@ -137,9 +137,10 @@ fn parse_file(file: &PathBuf) -> Result<ast::Program, String> {
     let source = std::fs::read_to_string(file)
         .map_err(|e| format!("Datei '{}' lesen fehlgeschlagen: {e}", file.display()))?;
     let mut lex = lexer::Lexer::new();
-    let tokens = lex.tokenize(&source).map_err(|e| e.to_string())?;
+    // Dateiname in jede Meldung: bei importierten Modulen sonst nicht zuordenbar.
+    let tokens = lex.tokenize(&source).map_err(|e| format!("{}: {e}", file.display()))?;
     let mut par = parser::Parser::new(tokens);
-    par.parse().map_err(|e| e.to_string())
+    par.parse().map_err(|e| format!("{}: {e}", file.display()))
 }
 
 /// Findet die Quelldatei fuer ein Modul (relativ zum Import-Ort oder in packages).
@@ -152,7 +153,35 @@ fn module_file(dir: &std::path::Path, name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Pfad-Import (`importiere "../lib/welt"`): enthaelt einen Pfadtrenner oder
+/// beginnt mit '.', und wird relativ zur importierenden Datei aufgeloest.
+fn is_path_import(name: &str) -> bool {
+    name.contains('/') || name.contains('\\') || name.starts_with('.')
+}
+
+/// Orte, an denen find_module sucht — fuer die Fehlermeldung bei fehlendem Modul.
+fn module_search_locations(name: &str, dir: &std::path::Path) -> Vec<String> {
+    if is_path_import(name) {
+        return vec![dir.join(name).display().to_string()];
+    }
+    let mut orte = vec![dir.display().to_string(), dir.join("stdlib").display().to_string()];
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
+        orte.push(exe_dir.join("stdlib").display().to_string());
+    }
+    orte.push(std::env::current_dir().unwrap_or_default().join("stdlib").display().to_string());
+    orte.push(packages_dir().join(name).display().to_string());
+    orte
+}
+
 fn find_module(name: &str, dir: &std::path::Path) -> Option<PathBuf> {
+    if is_path_import(name) {
+        let path = dir.join(name);
+        if path.extension().is_some_and(|e| e == "moos" || e == "moo") {
+            return path.exists().then_some(path);
+        }
+        let file_name = path.file_name()?.to_str()?.to_string();
+        return module_file(path.parent()?, &file_name);
+    }
     // Relativ zum aktuellen Verzeichnis
     if let Some(p) = module_file(dir, name) { return Some(p); }
     // In stdlib/ relativ zum aktuellen Verzeichnis
@@ -401,8 +430,13 @@ fn resolve_modules(
                             }
                         }
                     }
+                } else {
+                    // Frueher still verworfen -> spaeter nur 'Funktion nicht gefunden'.
+                    return Err(format!(
+                        "Modul '{module}' nicht gefunden (gesucht in: {})",
+                        module_search_locations(module, file_dir).join(", ")
+                    ));
                 }
-                // Modul nicht gefunden → Import-Statement droppen
             }
             // Eigene Statements der Datei (inkl. same-file `exportiere funktion/klasse`)
             _ => remaining_stmts.push(strip_export(stmt)),

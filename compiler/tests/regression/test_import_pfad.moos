@@ -1,0 +1,3 @@
+# ERDE-12: importiere "<pfad>" relativ zur importierenden Datei
+importiere "./erde12_lib/welt_hilfe"
+zeige doppelt(21)

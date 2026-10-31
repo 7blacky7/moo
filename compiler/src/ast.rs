@@ -214,6 +214,9 @@ pub enum Stmt {
         alias: Option<std::string::String>,
     },
     Export(Box<Stmt>),
+    /// `global a, b` in einer Funktion: Zuweisungen an a/b gehen an die
+    /// Top-Level-Variable statt eine lokale Variable anzulegen (ERDE-13).
+    Global(Vec<std::string::String>),
     Match {
         value: Expr,
         /// (pattern, guard, body) — pattern=None ist default, guard ist optionale wenn/if-Bedingung

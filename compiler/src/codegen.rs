@@ -1159,6 +1159,8 @@ impl<'ctx> CodeGen<'ctx> {
             Stmt::TryCatch { try_body, catch_var, catch_body } => {
                 self.compile_try_catch(try_body, catch_var, catch_body)
             }
+            // ERDE-13: reine Deklaration, wirkt in compile_function_def (keine Local-Alloca).
+            Stmt::Global(_) => Ok(()),
             Stmt::Throw(expr) => {
                 let val = self.compile_expr(expr)?;
                 self.call_rt_void(self.rt.moo_throw, &[val.into()], "throw")?;
@@ -1789,8 +1791,22 @@ impl<'ctx> CodeGen<'ctx> {
         let zero_data = self.context.i64_type().const_int(0, false);
         let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
         let local_names = Self::collect_all_var_names(body);
+        // ERDE-13: `global x` auf Funktionsebene -> keine Local-Alloca, store_var
+        // schreibt in das Top-Level-Global.
+        let global_decls: Vec<String> = body.iter()
+            .filter_map(|s| if let Stmt::Global(names) = s { Some(names.clone()) } else { None })
+            .flatten()
+            .collect();
+        for g in &global_decls {
+            if !self.globals.contains_key(g) {
+                return Err(format!(
+                    "Funktion '{name}': 'global {g}' — es gibt keine Top-Level-Variable '{g}' (zuerst ausserhalb der Funktion mit 'setze {g} auf ...' anlegen)"
+                ));
+            }
+        }
         for n in &local_names {
             if self.variables.contains_key(n.as_str()) { continue; }
+            if global_decls.iter().any(|g| g == n) { continue; }
             // Counter-Pattern auf Global → kein local-shadow
             if self.globals.contains_key(n) {
                 match Self::first_use_is_local_write(body, n) {

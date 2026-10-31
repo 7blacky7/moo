@@ -53,6 +53,29 @@ fn token_description(tt: &TokenType) -> &'static str {
     }
 }
 
+/// Deutsche Schluesselwoerter, die gern als Name gewaehlt werden. Fuer den
+/// Hinweis, wenn ein Bezeichner erwartet war (z.B. 'setze fall auf 3').
+const NAMENS_KOLLISIONEN: &[&str] = &[
+    "fall", "neu", "von", "aus", "als", "wo", "daten", "standard", "teste",
+    "erwarte", "parallel", "bis", "in", "ist", "klasse", "selbst", "zeige",
+    "solange", "setze", "auf", "funktion", "versuche", "fange", "pruefe",
+    "sortiere", "importiere", "exportiere", "konstante", "und", "oder", "nicht",
+];
+
+/// Hinweis, falls `tt` ein Schluesselwort ist, das der Nutzer als Name meinte.
+fn keyword_name_hint(tt: &TokenType) -> String {
+    let wort = NAMENS_KOLLISIONEN.iter().find(|w| {
+        crate::tokens::keyword_lookup(w)
+            .is_some_and(|k| std::mem::discriminant(&k) == std::mem::discriminant(tt))
+    });
+    match wort {
+        Some(w) => format!(
+            " Hinweis: '{w}' ist ein Schlüsselwort ({tt:?}) und kann nicht als Name verwendet werden, bitte einen anderen Namen wählen (z.B. '{w}_wert')."
+        ),
+        None => String::new(),
+    }
+}
+
 /// Beschreibung was der Parser tatsaechlich bekommen hat
 fn got_description(tt: &TokenType) -> String {
     match tt {
@@ -179,8 +202,9 @@ impl Parser {
             Ok("zeige".to_string())
         } else {
             let got_desc = got_description(self.current_type());
+            let hint = keyword_name_hint(self.current_type());
             Err(ParseError {
-                message: format!("Name/Bezeichner erwartet, aber {got_desc} gefunden."),
+                message: format!("Name/Bezeichner erwartet, aber {got_desc} gefunden.{hint}"),
                 line: self.current().line,
             })
         }
@@ -235,6 +259,11 @@ impl Parser {
 
     fn parse_statement(&mut self) -> Result<Stmt, ParseError> {
         match self.current_type().clone() {
+            // Soft-Keyword: `global name[, name]` nur wenn ein Name folgt;
+            // `global` bleibt als normaler Variablenname nutzbar.
+            TokenType::Identifier(kw) if kw == "global"
+                && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
+                            Some(TokenType::Identifier(_))) => self.parse_global_decl(),
             TokenType::Set => self.parse_assignment(),
             TokenType::Const => self.parse_const_assignment(),
             TokenType::Show => self.parse_show(),
@@ -838,9 +867,30 @@ impl Parser {
         Ok(Stmt::Throw(value))
     }
 
+    fn parse_global_decl(&mut self) -> Result<Stmt, ParseError> {
+        self.pos += 1;
+        let mut names = vec![self.eat_identifier()?];
+        while matches!(self.current_type(), TokenType::Comma) {
+            self.pos += 1;
+            names.push(self.eat_identifier()?);
+        }
+        Ok(Stmt::Global(names))
+    }
+
+    /// Modulname fuer importiere/aus: Bezeichner (`mathe`) oder Pfad-String
+    /// (`"../lib/welt"`, relativ zur importierenden Datei).
+    fn eat_module_name(&mut self) -> Result<String, ParseError> {
+        if let TokenType::String(path) = self.current_type().clone() {
+            self.pos += 1;
+            Ok(path)
+        } else {
+            self.eat_identifier()
+        }
+    }
+
     fn parse_import(&mut self) -> Result<Stmt, ParseError> {
         self.pos += 1;
-        let module = self.eat_identifier()?;
+        let module = self.eat_module_name()?;
         let alias = if matches!(self.current_type(), TokenType::As) {
             self.pos += 1;
             Some(self.eat_identifier()?)
@@ -852,7 +902,7 @@ impl Parser {
 
     fn parse_from_import(&mut self) -> Result<Stmt, ParseError> {
         self.pos += 1;
-        let module = self.eat_identifier()?;
+        let module = self.eat_module_name()?;
         self.eat(&TokenType::Import)?;
         let mut names = vec![self.eat_identifier()?];
         while matches!(self.current_type(), TokenType::Comma) {

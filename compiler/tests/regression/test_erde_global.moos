@@ -1,0 +1,21 @@
+# ERDE-13: 'global x' in Funktionen schreibt die Top-Level-Variable
+setze g_wert auf 5
+setze zaehler auf 0
+setze global auf "name bleibt nutzbar"
+
+funktion ohne_global():
+    setze g_wert auf 42
+    gib_zurück g_wert
+
+funktion mit_global():
+    global g_wert, zaehler
+    setze g_wert auf 99
+    setze zaehler auf zaehler + 1
+
+zeige ohne_global()
+zeige g_wert
+mit_global()
+mit_global()
+zeige g_wert
+zeige zaehler
+zeige global
