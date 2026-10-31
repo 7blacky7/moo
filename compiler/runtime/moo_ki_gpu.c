@@ -568,66 +568,102 @@ typedef struct {
     int pool_slot;   /* GPU3-B: >=0 = aus dem Pool geliehen, -1 = frisch */
 } KiBuf;
 
+/* Fehlerhafte Vulkan-Aufrufe duerfen undefinierte Outputs hinterlassen.
+ * Deshalb nur bestaetigt gueltige Handles veroeffentlichen und zurueckrollen. */
 static bool buf_einzeln(VkBuffer* buf, VkDeviceMemory* mem,
                         VkDeviceSize groesse, VkBufferUsageFlags usage,
                         uint32_t mem_typ, void** map_oder_null) {
+    *buf = VK_NULL_HANDLE;
+    *mem = VK_NULL_HANDLE;
+    if (map_oder_null) *map_oder_null = NULL;
+    VkBuffer neu_buf = VK_NULL_HANDLE;
+    VkDeviceMemory neu_mem = VK_NULL_HANDLE;
+    void* neu_map = NULL;
+    const char* fehlerschritt = "vkCreateBuffer";
     VkBufferCreateInfo bci = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = groesse,
         .usage = usage,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
     };
-    if (vkCreateBuffer(G.geraet, &bci, NULL, buf) != VK_SUCCESS)
-        return false;
+    VkResult result = vkCreateBuffer(G.geraet, &bci, NULL, &neu_buf);
+    if (result != VK_SUCCESS) goto melden;
     VkMemoryRequirements mr;
-    vkGetBufferMemoryRequirements(G.geraet, *buf, &mr);
+    vkGetBufferMemoryRequirements(G.geraet, neu_buf, &mr);
     VkMemoryAllocateInfo mai = {
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .allocationSize = mr.size,
         .memoryTypeIndex = mem_typ,
     };
-    if (vkAllocateMemory(G.geraet, &mai, NULL, mem) != VK_SUCCESS)
-        return false;
-    if (vkBindBufferMemory(G.geraet, *buf, *mem, 0) != VK_SUCCESS)
-        return false;
-    if (map_oder_null &&
-        vkMapMemory(G.geraet, *mem, 0, VK_WHOLE_SIZE, 0, map_oder_null) != VK_SUCCESS)
-        return false;
+    fehlerschritt = "vkAllocateMemory";
+    result = vkAllocateMemory(G.geraet, &mai, NULL, &neu_mem);
+    if (result != VK_SUCCESS) goto buffer_freigeben;
+    fehlerschritt = "vkBindBufferMemory";
+    result = vkBindBufferMemory(G.geraet, neu_buf, neu_mem, 0);
+    if (result != VK_SUCCESS) goto alles_freigeben;
+    if (map_oder_null) {
+        fehlerschritt = "vkMapMemory";
+        result = vkMapMemory(G.geraet, neu_mem, 0, VK_WHOLE_SIZE, 0, &neu_map);
+        if (result != VK_SUCCESS) goto alles_freigeben;
+    }
+    *buf = neu_buf;
+    *mem = neu_mem;
+    if (map_oder_null) *map_oder_null = neu_map;
     return true;
+
+alles_freigeben:
+    /* Kein Unmap nach fehlgeschlagenem Map. Buffer vor gebundenem Speicher. */
+    vkDestroyBuffer(G.geraet, neu_buf, NULL);
+    vkFreeMemory(G.geraet, neu_mem, NULL);
+    goto melden;
+buffer_freigeben:
+    vkDestroyBuffer(G.geraet, neu_buf, NULL);
+melden:
+    fprintf(stderr, "moo KI-GPU: %s fehlgeschlagen (VkResult=%d, Bytes=%llu)\n",
+            fehlerschritt, (int)result, (unsigned long long)groesse);
+    return false;
 }
 
+static void buf_weg(KiBuf* b);
+
+/* Transaktion: Erfolg liefert ein vollstaendiges Paar, Fehler einen leeren
+ * KiBuf. Auch ein bereits fertiger Device-Buffer wird bei Staging-Fehler frei. */
 static bool buf_anlegen(KiBuf* b, VkDeviceSize groesse) {
     memset(b, 0, sizeof(*b));
     b->pool_slot = -1;
+    if (groesse == 0) return false;
     b->groesse = groesse;
     if (G.devlocal_vereint) {
-        /* Wie vor GPU3-A: ein host-visible Buffer, Shader liest direkt. */
         if (!buf_einzeln(&b->dev, &b->dev_mem, groesse,
                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                          G.mem_typ_hostvis, &b->map))
-            return false;
+            goto fehler;
         b->stg = b->dev;
         b->stg_mem = b->dev_mem;
         return true;
     }
-    /* Getrennt: dev in VRAM (ungemappt), stg als Transferfenster. */
     if (!buf_einzeln(&b->dev, &b->dev_mem, groesse,
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                      VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
                      VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                      G.mem_typ_devlocal, NULL))
-        return false;
+        goto fehler;
     if (!buf_einzeln(&b->stg, &b->stg_mem, groesse,
                      VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
                      VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                      G.mem_typ_hostvis, &b->map))
-        return false;
+        goto fehler;
     return true;
+fehler:
+    buf_weg(b);
+    return false;
 }
 static void buf_weg(KiBuf* b) {
     if (b->map) vkUnmapMemory(G.geraet, b->stg_mem);
     if (b->stg && b->stg != b->dev) vkDestroyBuffer(G.geraet, b->stg, NULL);
     if (b->stg_mem && b->stg_mem != b->dev_mem) vkFreeMemory(G.geraet, b->stg_mem, NULL);
+    if (b->dev) vkDestroyBuffer(G.geraet, b->dev, NULL);
+    if (b->dev_mem) vkFreeMemory(G.geraet, b->dev_mem, NULL);
     memset(b, 0, sizeof(*b));
     b->pool_slot = -1;
 }
@@ -644,6 +680,9 @@ typedef struct { KiBuf buf; VkDeviceSize kapazitaet; bool belegt; } KiPoolSlot;
 static KiPoolSlot g_pool[KI_POOL_MAX];
 
 static bool buf_holen(KiBuf* b, VkDeviceSize groesse) {
+    memset(b, 0, sizeof(*b));
+    b->pool_slot = -1;
+    if (groesse == 0) return false;
     int best = -1;
     for (int i = 0; i < KI_POOL_MAX; i++) {
         if (g_pool[i].belegt || g_pool[i].kapazitaet < groesse) continue;
@@ -892,7 +931,8 @@ bool moo_ki_gpu_matmul(const float* a, const float* b, float* o,
     if (!env_erzwingen() &&
         (int64_t)m * k * n < (int64_t)1 << 24) return false;
     if (!ki_gpu_init()) return false;
-    KiBuf bufs[3];
+    /* && kann spaetere Allokationen ueberspringen; Cleanup sieht nur Null-Handles. */
+    KiBuf bufs[3] = {0};
     bool ok = buf_holen(&bufs[0], (VkDeviceSize)m * k * 4) &&
               buf_holen(&bufs[1], (VkDeviceSize)k * n * 4) &&
               buf_holen(&bufs[2], (VkDeviceSize)m * n * 4);
@@ -914,7 +954,8 @@ bool moo_ki_gpu_ew(int32_t op, const float* a, const float* b, float* o,
     if (!env_erzwingen() && n < (int64_t)1 << 20) return false;
     if (n > (int64_t)1 << 30) return false;
     if (!ki_gpu_init()) return false;
-    KiBuf bufs[3];
+    /* && kann spaetere Allokationen ueberspringen; Cleanup sieht nur Null-Handles. */
+    KiBuf bufs[3] = {0};
     bool ok = buf_holen(&bufs[0], (VkDeviceSize)n * 4) &&
               buf_holen(&bufs[1], (VkDeviceSize)n * 4) &&
               buf_holen(&bufs[2], (VkDeviceSize)n * 4);
@@ -936,7 +977,8 @@ bool moo_ki_gpu_reduce_sum(const float* a, int64_t n, double* out_summe) {
     if (n > (int64_t)1 << 30) return false;
     if (!ki_gpu_init()) return false;
     int64_t gruppen = (n + 255) / 256;
-    KiBuf bufs[3];
+    /* && kann spaetere Allokationen ueberspringen; Cleanup sieht nur Null-Handles. */
+    KiBuf bufs[3] = {0};
     /* Binding 2 wird vom Reduce-Shader nicht benutzt — Mini-Dummy, damit
      * das gemeinsame 3-Buffer-Layout gilt. */
     bool ok = buf_holen(&bufs[0], (VkDeviceSize)n * 4) &&
