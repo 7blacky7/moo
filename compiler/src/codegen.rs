@@ -2722,10 +2722,39 @@ impl<'ctx> CodeGen<'ctx> {
                         let arg = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_tan, &[arg.into()], "tan");
                     }
-                    "atan2" => {
+                    "atan2" | "arkustangens2" => {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_atan2, &[a.into(), b.into()], "atan2");
+                    }
+                    "asin" | "arkussinus" if args.len() == 1 => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_asin, &[arg.into()], "asin");
+                    }
+                    "acos" | "arkuskosinus" | "arkuscosinus" if args.len() == 1 => {
+                        let arg = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_acos, &[arg.into()], "acos");
+                    }
+                    // ERDE-11: Rauschen (Seed optional, Default 0).
+                    "rauschen_2d" | "noise_2d" if args.len() == 2 || args.len() == 3 => {
+                        let x = self.compile_expr(&args[0])?;
+                        let y = self.compile_expr(&args[1])?;
+                        let seed = if args.len() == 3 { self.compile_expr(&args[2])? } else { self.call_rt(self.rt.moo_number, &[self.context.f64_type().const_float(0.0).into()], "seed0")? };
+                        return self.call_rt(self.rt.moo_rauschen_2d, &[x.into(), y.into(), seed.into()], "rauschen_2d");
+                    }
+                    "rauschen_3d" | "noise_3d" if args.len() == 3 || args.len() == 4 => {
+                        let x = self.compile_expr(&args[0])?;
+                        let y = self.compile_expr(&args[1])?;
+                        let z = self.compile_expr(&args[2])?;
+                        let seed = if args.len() == 4 { self.compile_expr(&args[3])? } else { self.call_rt(self.rt.moo_number, &[self.context.f64_type().const_float(0.0).into()], "seed0")? };
+                        return self.call_rt(self.rt.moo_rauschen_3d, &[x.into(), y.into(), z.into(), seed.into()], "rauschen_3d");
+                    }
+                    "rauschen_fbm" | "noise_fbm" if args.len() == 3 || args.len() == 4 => {
+                        let x = self.compile_expr(&args[0])?;
+                        let y = self.compile_expr(&args[1])?;
+                        let okt = self.compile_expr(&args[2])?;
+                        let seed = if args.len() == 4 { self.compile_expr(&args[3])? } else { self.call_rt(self.rt.moo_number, &[self.context.f64_type().const_float(0.0).into()], "seed0")? };
+                        return self.call_rt(self.rt.moo_rauschen_fbm, &[x.into(), y.into(), okt.into(), seed.into()], "rauschen_fbm");
                     }
                     "runde" | "round" => {
                         let arg = self.compile_expr(&args[0])?;
@@ -6095,7 +6124,7 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::MethodCall { object, method, args } => {
                 // Crystal-inspiriert: Typ-Warnung bei inkompatiblen Methoden
                 if let Some(typ) = self.infer_type(object) {
-                    let list_methods = &["append", "hinzufügen", "pop", "sort", "sortieren", "reverse", "umkehren", "join"];
+                    let list_methods = &["append", "hinzufügen", "pop", "sort", "sortieren", "reverse", "umkehren", "join", "leeren", "entfernen", "einfügen"];
                     let string_methods = &["upper", "gross", "lower", "klein", "trim", "trimmen", "split", "teilen", "replace", "ersetzen"];
                     let dict_methods = &["keys", "schlüssel", "has", "hat"];
 
@@ -6373,6 +6402,24 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     "pop" => {
                         return self.call_rt(self.rt.moo_list_pop, &[obj.into()], "pop");
+                    }
+                    // ERDE-11: Listen leeren/entfernen/einfuegen. Klassen-Methoden
+                    // gleichen Namens gewinnen (z.B. mini_db.einfuegen).
+                    "leeren" | "clear" if !user_hat_methode && args.is_empty() => {
+                        return self.call_rt(self.rt.moo_list_clear, &[obj.into()], "clear");
+                    }
+                    "entfernen" | "remove_at" if !user_hat_methode && args.len() == 1 => {
+                        let idx = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_list_remove_at, &[obj.into(), idx.into()], "remove_at")?;
+                        self.call_rt_void(self.rt.moo_release, &[idx.into()], "rel_remove_idx")?;
+                        return Ok(r);
+                    }
+                    "einfügen" | "einfuegen" | "insert" if !user_hat_methode && args.len() == 2 => {
+                        let idx = self.compile_expr(&args[0])?;
+                        let item = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_list_insert, &[obj.into(), idx.into(), item.into()], "insert")?;
+                        self.call_rt_void(self.rt.moo_release, &[idx.into()], "rel_insert_idx")?;
+                        return Ok(r);
                     }
                     "reverse" | "umkehren" => {
                         return self.call_rt(self.rt.moo_list_reverse, &[obj.into()], "rev");

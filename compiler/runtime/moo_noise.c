@@ -83,6 +83,28 @@ float moo_noise_perlin2(int seed, float x, float y) {
     return moo_noise_lerp(moo_noise_lerp(a, b, u), moo_noise_lerp(c, d, u), v);
 }
 
+/* Gitterwert in [-1, 1] fuer (ix,iy,iz). z wird per uint32_t-Mischung
+ * (definiertes Wrap, UB-Policy) in den 2D-Hash eingerechnet. */
+static float moo_noise_corner3(int seed, int ix, int iy, int iz) {
+    uint32_t h = (uint32_t)moo_noise_hash2(seed, ix, iy);
+    h ^= (uint32_t)iz * 0x27d4eb2du;
+    h = (h ^ (h >> 15)) * 0x2c1b3c6du;
+    h = (h ^ (h >> 12)) & 0x7FFFFFFFu;
+    return (float)(h % 1000u) / 500.0f - 1.0f;
+}
+
+float moo_noise_value3(int seed, float x, float y, float z) {
+    int ix = (int)floorf(x), iy = (int)floorf(y), iz = (int)floorf(z);
+    float u = moo_noise_fade(x - ix), v = moo_noise_fade(y - iy), w = moo_noise_fade(z - iz);
+    float z0 = moo_noise_lerp(
+        moo_noise_lerp(moo_noise_corner3(seed, ix, iy, iz),     moo_noise_corner3(seed, ix + 1, iy, iz),     u),
+        moo_noise_lerp(moo_noise_corner3(seed, ix, iy + 1, iz), moo_noise_corner3(seed, ix + 1, iy + 1, iz), u), v);
+    float z1 = moo_noise_lerp(
+        moo_noise_lerp(moo_noise_corner3(seed, ix, iy, iz + 1),     moo_noise_corner3(seed, ix + 1, iy, iz + 1),     u),
+        moo_noise_lerp(moo_noise_corner3(seed, ix, iy + 1, iz + 1), moo_noise_corner3(seed, ix + 1, iy + 1, iz + 1), u), v);
+    return moo_noise_lerp(z0, z1, w);
+}
+
 float moo_noise_fbm(int seed, float x, float y, int octaves, float freq, float amp) {
     float value = 0.0f, max_val = 0.0f;
     float a = 1.0f, f = freq;

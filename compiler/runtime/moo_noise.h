@@ -36,4 +36,10 @@ float moo_noise_perlin2(int seed, float x, float y);
  */
 float moo_noise_fbm(int seed, float x, float y, int octaves, float freq, float amp);
 
+/**
+ * 3D-Wert-Noise (fade/lerp-trilinear interpoliert) im Bereich ca. [-1, 1].
+ * Fuer Hoehlen, Wolken und animiertes 2D-Rauschen (z = Zeit).
+ */
+float moo_noise_value3(int seed, float x, float y, float z);
+
 #endif /* MOO_NOISE_H */

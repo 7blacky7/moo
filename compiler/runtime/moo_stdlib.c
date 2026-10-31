@@ -1,4 +1,5 @@
 #include "moo_runtime.h"
+#include "moo_noise.h"
 #include <time.h>
 // unistd.h wurde hier nie genutzt (verifiziert: keine POSIX-only-Aufrufe in
 // dieser Datei) und brach den MSVC-Build (C1083) — P013, CI-Run 27437564015.
@@ -11,6 +12,34 @@ MooValue moo_sin(MooValue v)  { return moo_number(sin(moo_as_number(v))); }
 MooValue moo_cos(MooValue v)  { return moo_number(cos(moo_as_number(v))); }
 MooValue moo_tan(MooValue v)  { return moo_number(tan(moo_as_number(v))); }
 MooValue moo_atan2(MooValue y, MooValue x) { return moo_number(atan2(moo_as_number(y), moo_as_number(x))); }
+MooValue moo_asin(MooValue v) { return moo_number(asin(moo_as_number(v))); }
+MooValue moo_acos(MooValue v) { return moo_number(acos(moo_as_number(v))); }
+
+/* ERDE-11: Rausch-Builtins. Seed sicher nach int (NaN/ausserhalb -> 0), dann
+ * gestreut, damit benachbarte Seeds verschiedene Felder liefern. */
+static int rauschen_seed(MooValue v) {
+    double d = moo_as_number(v);
+    if (!(d >= -2147483648.0 && d <= 2147483647.0)) d = 0.0;
+    return moo_noise_scramble_seed((int)d);
+}
+
+MooValue moo_rauschen_2d(MooValue x, MooValue y, MooValue seed) {
+    return moo_number(moo_noise_perlin2(rauschen_seed(seed),
+        (float)moo_as_number(x), (float)moo_as_number(y)));
+}
+
+MooValue moo_rauschen_3d(MooValue x, MooValue y, MooValue z, MooValue seed) {
+    return moo_number(moo_noise_value3(rauschen_seed(seed),
+        (float)moo_as_number(x), (float)moo_as_number(y), (float)moo_as_number(z)));
+}
+
+MooValue moo_rauschen_fbm(MooValue x, MooValue y, MooValue oktaven, MooValue seed) {
+    double o = moo_as_number(oktaven);
+    if (!(o >= 0.0)) o = 0.0;
+    if (o > 16.0) o = 16.0;
+    return moo_number(moo_noise_fbm(rauschen_seed(seed),
+        (float)moo_as_number(x), (float)moo_as_number(y), (int)o, 1.0f, 1.0f));
+}
 MooValue moo_round(MooValue v) { return moo_number(round(moo_as_number(v))); }
 MooValue moo_floor(MooValue v) { return moo_number(floor(moo_as_number(v))); }
 MooValue moo_ceil(MooValue v) { return moo_number(ceil(moo_as_number(v))); }

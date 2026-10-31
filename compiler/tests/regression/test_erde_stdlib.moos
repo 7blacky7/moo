@@ -1,0 +1,36 @@
+# ERDE-11: Rauschen, asin/acos, Listen-Operationen
+
+# --- Mathe ---
+zeige runde(asin(1) * 1000)
+zeige runde(acos(1) * 1000)
+zeige runde(arkussinus(0.5) * 1000)
+
+# --- Rauschen: deterministisch, Bereich [-1, 1], Seed wirkt ---
+setze a auf rauschen_2d(1.3, 2.7)
+setze b auf rauschen_2d(1.3, 2.7)
+zeige a == b
+zeige a >= -1 und a <= 1
+zeige rauschen_2d(1.3, 2.7, 1) != rauschen_2d(1.3, 2.7, 2)
+setze c auf rauschen_3d(0.5, 1.5, 2.5, 7)
+zeige c >= -1 und c <= 1
+zeige c == rauschen_3d(0.5, 1.5, 2.5, 7)
+setze f auf rauschen_fbm(3.1, 4.2, 4)
+zeige f >= -1 und f <= 1
+zeige rauschen_fbm(3.1, 4.2, 0) == 0
+
+# --- Listen ---
+setze l auf [1, 2, 3, 4]
+zeige l.entfernen(1)
+zeige l
+zeige l.entfernen(-1)
+zeige l
+zeige l.entfernen(99)
+l.einfügen(0, "a")
+l.einfügen(99, "z")
+l.einfügen(-1, "y")
+zeige l
+l.leeren()
+zeige l
+zeige l.länge()
+l.hinzufügen(5)
+zeige l

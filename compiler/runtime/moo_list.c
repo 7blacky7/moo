@@ -1,4 +1,5 @@
 #include "moo_runtime.h"
+#include <string.h>
 
 MooValue moo_list_new(int32_t initial_capacity) {
     if (initial_capacity < 4) initial_capacity = 4;
@@ -93,6 +94,57 @@ MooValue moo_list_pop(MooValue list) {
     MooValue v = l->items[--l->length];
     l->items[l->length] = moo_none();
     return v;
+}
+
+/* ERDE-11: alle Eintraege freigeben, Kapazitaet bleibt. */
+MooValue moo_list_clear(MooValue list) {
+    if (list.tag != MOO_LIST) { moo_throw(moo_string_new("leeren: nur fuer Listen")); return moo_none(); }
+    MooList* l = MV_LIST(list);
+    if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return moo_none(); }
+    for (int32_t i = 0; i < l->length; i++) {
+        moo_release(l->items[i]);
+        l->items[i] = moo_none();
+    }
+    l->length = 0;
+    return moo_none();
+}
+
+/* ERDE-11: Eintrag an index entfernen und zurueckgeben (negativ = von hinten,
+ * ausserhalb -> nichts). Der Slot-Refcount geht an den Caller. */
+MooValue moo_list_remove_at(MooValue list, MooValue index) {
+    if (list.tag != MOO_LIST) { moo_throw(moo_string_new("entfernen: nur fuer Listen")); return moo_none(); }
+    MooList* l = MV_LIST(list);
+    if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return moo_none(); }
+    double d = moo_as_number(index);
+    if (!(d >= -(double)l->length && d < (double)l->length)) return moo_none();
+    int32_t i = (int32_t)d;
+    if (i < 0) i += l->length;
+    MooValue v = l->items[i];
+    memmove(&l->items[i], &l->items[i + 1], sizeof(MooValue) * (size_t)(l->length - i - 1));
+    l->length--;
+    l->items[l->length] = moo_none();
+    return v;
+}
+
+/* ERDE-11: item vor index einfuegen (index >= laenge haengt an, negativ zaehlt
+ * von hinten). Transfer-Semantik wie moo_list_append. */
+MooValue moo_list_insert(MooValue list, MooValue index, MooValue item) {
+    if (list.tag != MOO_LIST) { moo_release(item); moo_throw(moo_string_new("einfuegen: nur fuer Listen")); return moo_none(); }
+    MooList* l = MV_LIST(list);
+    if (l->frozen) { moo_release(item); moo_throw(moo_string_new("Liste ist eingefroren!")); return moo_none(); }
+    double d = moo_as_number(index);
+    if (d < 0.0) d += l->length;
+    if (!(d >= 0.0)) d = 0.0;
+    if (d > (double)l->length) d = (double)l->length;
+    int32_t i = (int32_t)d;
+    if (l->length >= l->capacity) {
+        list_grow(l);
+        if (moo_error_flag || l->length >= l->capacity) { moo_release(item); return moo_none(); }
+    }
+    memmove(&l->items[i + 1], &l->items[i], sizeof(MooValue) * (size_t)(l->length - i));
+    l->items[i] = item;
+    l->length++;
+    return moo_none();
 }
 
 MooValue moo_list_contains(MooValue list, MooValue item) {
