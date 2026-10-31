@@ -1,0 +1,48 @@
+# GFX-TESTAPI-ROI: reale Runtime/Bindings, kein Fenster/GL.
+# Fixture-BMP durch den C-Harness ueber moo_test_frame_save_bmp erzeugen.
+funktion roi_check(ok, label):
+    wenn nicht ok:
+        wirf "GFX-ROI FAIL " + label
+    zeige "GFX-ROI OK " + label
+
+setze path auf umgebung("GFX_ROI_FIXTURE")
+setze frame auf frame_lade_bmp(path)
+roi_check(frame != nichts, "BMP geladen")
+setze s auf test_frame_statistik(frame, 0, 0, 2, 2)
+setze englisch auf test_frame_statistics(frame, 0, 0, 2, 2)
+roi_check(json_text(s) == json_text(englisch), "Alias/repeat")
+roi_check(s["pixelzahl"] == 4, "count")
+roi_check(s["rot"]["mittelwert"] == 127.5, "mean")
+roi_check(s["rot"]["varianz"] == 16256.25, "population variance")
+roi_check(s["rot"]["histogramm"][0] == 2 und s["rot"]["histogramm"][255] == 2, "bins")
+roi_check(s["any_rgb255"] == 3 und s["all_rgb_le5"] == 1, "joint counts")
+roi_check(s["alpha"]["min"] == 255 und s["alpha"]["varianz"] == 0, "BMP opaque alpha")
+für name in ["rot", "gruen", "blau", "alpha"]:
+    setze hist auf s[name]["histogramm"]
+    setze total auf 0
+    setze weighted auf 0
+    für i in 0..256:
+        setze total auf total + hist[i]
+        setze weighted auf weighted + i * hist[i]
+    roi_check(länge(hist) == 256 und total == 4, "hist count " + name)
+    roi_check(weighted / total == s[name]["mittelwert"], "hist mean " + name)
+setze pixel auf test_frame_statistik(frame, 1, 0, 1, 1)
+roi_check(pixel["gruen"]["mittelwert"] == 255 und pixel["blau"]["mittelwert"] == 1, "top-left half-open")
+roi_check(pixel["rot"]["varianz"] == 0, "single pixel variance")
+setze original auf frame_lade_bmp(path)
+setze diff auf test_frame_diff(frame, original)
+roi_check(diff["geaenderte_pixel"] == 0, "frame unchanged")
+für coords in [[-1,0,1,1], [0.5,0,1,1], [0,0,0,1], [0,0,1,0], [1,1,2,1], [0,0,1.5,1]]:
+    setze rejected auf falsch
+    versuche:
+        test_frame_statistik(frame, coords[0], coords[1], coords[2], coords[3])
+    fange problem:
+        setze rejected auf wahr
+    roi_check(rejected, "invalid ROI")
+setze rejected_frame auf falsch
+versuche:
+    test_frame_statistik(nichts, 0, 0, 1, 1)
+fange problem:
+    setze rejected_frame auf wahr
+roi_check(rejected_frame, "invalid frame")
+zeige "GFX-ROI MOO PASS"

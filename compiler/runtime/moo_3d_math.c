@@ -100,6 +100,25 @@ void mat4_rotate(float* m, float angle_deg, float ax, float ay, float az) {
     memcpy(m, tmp, 16 * sizeof(float));
 }
 
+void mat4_scale(float* m, float sx, float sy, float sz) {
+    float s[16];
+    mat4_identity(s);
+    s[0] = sx; s[5] = sy; s[10] = sz;
+    float tmp[16];
+    mat4_multiply(tmp, m, s);
+    memcpy(m, tmp, 16 * sizeof(float));
+}
+
+void mat4_ortho(float* m, float l, float r, float b, float t, float n, float f) {
+    mat4_identity(m);
+    m[0]  =  2.0f / (r - l);
+    m[5]  =  2.0f / (t - b);
+    m[10] = -2.0f / (f - n);
+    m[12] = -(r + l) / (r - l);
+    m[13] = -(t + b) / (t - b);
+    m[14] = -(f + n) / (f - n);
+}
+
 void moo_matrix_stack_init(MooMatrixStack* s) {
     s->depth = 0;
     mat4_identity(s->current);

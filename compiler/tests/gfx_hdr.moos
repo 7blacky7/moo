@@ -1,0 +1,77 @@
+# HDR output oracles, repeated finalization and legacy regression, 3D + Hybrid.
+funktion gfx_hdr_assert(ok, text):
+    wenn nicht ok:
+        wirf text
+    zeige text
+funktion gfx_hdr_window():
+    wenn umgebung("GFX_TIME_MODE") == "hybrid":
+        gib_zurück fenster_unified("GFX-HDR", 160, 120)
+    gib_zurück raum_erstelle("GFX-HDR", 160, 120)
+funktion gfx_hdr_close(win):
+    wenn umgebung("GFX_TIME_MODE") == "hybrid":
+        hybrid_schliessen(win)
+    sonst:
+        raum_schliessen(win)
+funktion gfx_hdr_pixel(win, expected, label):
+    setze f auf test_frame_grab(win)
+    setze p auf test_pixel(f, 80, 60)
+    gfx_hdr_assert(abs(p["rot"] - expected) <= 2 und abs(p["gruen"] - expected) <= 2 und abs(p["blau"] - expected) <= 2, label)
+    gib_zurück f
+setze win auf gfx_hdr_window()
+raum_renderzeit(win, 1.25)
+raum_hdr(win, wahr)
+raum_belichtung(win, 1)
+raum_löschen(win, 1, 1, 1)
+raum_szene_ende(win)
+setze first auf gfx_hdr_pixel(win, 206, "PASS linear1 -> Hill -> sRGB206")
+raum_szene_ende(win)
+setze second auf test_frame_grab(win)
+gfx_hdr_assert(test_frame_diff(first, second)["geaenderte_pixel"] == 0, "PASS SceneEnd/Capture idempotent")
+setze failed auf falsch
+versuche:
+    raum_würfel(win, 0, 0, 0, 1, "#FFFFFF")
+fange e:
+    setze failed auf wahr
+gfx_hdr_assert(failed, "PASS draw after SceneEnd rejected")
+raum_löschen(win, 0, 0, 0)
+gfx_hdr_pixel(win, 0, "PASS black")
+raum_löschen(win, 0.5, 0.5, 0.5)
+gfx_hdr_pixel(win, 103, "PASS authored .5 decoded before fit")
+raum_belichtung(win, 2)
+raum_löschen(win, 1, 1, 1)
+gfx_hdr_pixel(win, 232, "PASS exposure2 >1 retained")
+raum_belichtung(win, 0)
+raum_löschen(win, 1, 1, 1)
+gfx_hdr_pixel(win, 0, "PASS exposure0")
+setze failed auf falsch
+versuche:
+    raum_belichtung(win, -1)
+fange e:
+    setze failed auf wahr
+gfx_hdr_assert(failed, "PASS invalid exposure")
+setze failed auf falsch
+versuche:
+    raum_hdr(win, falsch)
+fange e:
+    setze failed auf wahr
+gfx_hdr_assert(failed, "PASS late mode change rejected")
+wenn umgebung("GFX_TIME_MODE") == "hybrid":
+    raum_belichtung(win, 1)
+    raum_löschen(win, 0, 0, 0)
+    raum_szene_ende(win)
+    zeichne_rechteck_z(win, 0, 0, 10, 160, 120, "#FFFFFF80")
+    gfx_hdr_pixel(win, 128, "PASS HUD alpha uses code-value blending")
+    raum_szene_ende(win)
+    zeichne_rechteck_z(win, 0, 0, 20, 160, 120, "#FF0000")
+    gfx_hdr_pixel(win, 128, "PASS repeated capture/end preserve HUD depth")
+    zeichne_rechteck_z(win, 0, 0, 10, 160, 120, "#000000")
+    gfx_hdr_pixel(win, 0, "PASS equal HUD Z accepts later draw")
+    zeichne_rechteck_z(win, 0, 0, 0, 160, 120, "#00FF00")
+    setze hud_pixel auf test_pixel(test_frame_grab(win), 80, 60)
+    gfx_hdr_assert(hud_pixel["rot"] == 0 und hud_pixel["gruen"] == 255 und hud_pixel["blau"] == 0, "PASS nearer HUD Z wins")
+gfx_hdr_close(win)
+setze legacy auf gfx_hdr_window()
+raum_löschen(legacy, 0.5, 0.5, 0.5)
+gfx_hdr_pixel(legacy, 128, "PASS legacy code values unchanged")
+gfx_hdr_close(legacy)
+zeige "GFX-HDR native PASS"

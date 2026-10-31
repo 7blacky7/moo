@@ -1,0 +1,67 @@
+# Native renderer provenance, no metadata-triggered capture/post/time changes.
+funktion gfx_info_pruefen(ok, text):
+    wenn nicht ok:
+        wirf text
+    zeige text
+funktion gfx_info_neues_fenster():
+    wenn umgebung("GFX_TIME_MODE") == "hybrid":
+        gib_zurück fenster_unified("GFX-RENDERINFO", 320, 240)
+    gib_zurück raum_erstelle("GFX-RENDERINFO", 320, 240)
+funktion gfx_info_present(win):
+    wenn umgebung("GFX_TIME_MODE") == "hybrid":
+        hybrid_aktualisieren(win)
+    sonst:
+        raum_aktualisieren(win)
+funktion gfx_info_fenster_schliessen(win):
+    wenn umgebung("GFX_TIME_MODE") == "hybrid":
+        hybrid_schliessen(win)
+    sonst:
+        raum_schliessen(win)
+funktion gfx_info_draw(win):
+    raum_löschen(win, 0.02, 0.03, 0.05)
+    raum_perspektive(win, 55, 0.1, 100)
+    raum_kamera(win, 4, 3, 6, 0, 0, 0)
+    raum_umgebungslicht(win, 0.7)
+    raum_wellen(win, 0.6, 1.3, 4)
+    raum_würfel(win, 0, 0, 0, 2, "#80C0FF")
+funktion gfx_info_invalid(win):
+    setze fehler auf falsch
+    versuche:
+        test_renderer_info(win)
+    fange e:
+        setze fehler auf wahr
+    gfx_info_pruefen(fehler, "PASS invalid/closed handle")
+gfx_info_invalid(nichts)
+setze win auf gfx_info_neues_fenster()
+raum_renderzeit(win, 1.25)
+raum_bloom(win, 0.4, 0.3, 2)
+setze meta auf test_renderer_info(win)
+gfx_info_pruefen(meta["available"], "PASS available")
+gfx_info_pruefen(meta["backend"] == "gl33" und meta["api"] == "OpenGL", "PASS actual backend")
+gfx_info_pruefen(länge(meta["vendor"]) > 0 und länge(meta["renderer"]) > 0 und länge(meta["version"]) > 0, "PASS actual GL strings")
+zeige meta
+gfx_info_draw(win)
+setze a auf test_frame_grab(win)
+gfx_info_present(win)
+gfx_info_draw(win)
+setze b auf test_frame_grab(win)
+gfx_info_pruefen(test_frame_diff(a,b)["geaenderte_pixel"] == 0, "PASS first-frame metadata does not suppress bloom")
+gfx_info_present(win)
+gfx_info_draw(win)
+setze i auf 0
+solange i < 10000:
+    setze probe auf test_renderer_info(win)
+    wenn probe["renderer"] != meta["renderer"]:
+        wirf "renderer changed"
+    setze i auf i + 1
+setze c auf test_frame_grab(win)
+gfx_info_pruefen(test_frame_diff(b,c)["geaenderte_pixel"] == 0, "PASS repeated metadata preserves frame/time")
+gfx_info_present(win)
+gfx_info_fenster_schliessen(win)
+gfx_info_invalid(win)
+gfx_info_pruefen(länge(meta["renderer"]) > 0, "PASS copied strings survive close")
+setze win2 auf gfx_info_neues_fenster()
+gfx_info_pruefen(test_renderer_info(win2)["available"], "PASS recreate")
+gfx_info_fenster_schliessen(win2)
+gfx_info_invalid(win2)
+zeige "GFX-RENDERINFO PASS"

@@ -459,6 +459,11 @@ MooValue moo_test_frame_save_bmp(MooValue frame, MooValue pfad);
 // immer gebaut. Nur direkte MOO_FRAMEs (Fenster vorher via test_frame_grab).
 MooValue moo_test_frame_diff(MooValue frame_a, MooValue frame_b);
 MooValue moo_test_frame_region(MooValue frame, MooValue x, MooValue y, MooValue b, MooValue h);
+// Exact RGBA8 ROI statistics, no window/context required.
+MooValue moo_test_frame_statistics(MooValue frame, MooValue x, MooValue y, MooValue b, MooValue h);
+MooValue moo_3d_water_material(MooValue win, MooValue parameters);
+MooValue moo_3d_water_background(MooValue win);
+MooValue moo_3d_water_off(MooValue win);
 // PNG-Export (6bb03790 B) — in moo_test_api.c (Grafik-Build, SDL2_image).
 MooValue moo_test_frame_save_png(MooValue frame, MooValue pfad);
 // Frame<->Tensor-Bruecke (KI-MULTI-V1) — in moo_frame_tensor.c, SDL-frei,
@@ -485,6 +490,7 @@ MooValue moo_test_pixel(MooValue frame_oder_win, MooValue x, MooValue y);
  * Surface arguments are borrowed. Mutators are filled-only and return false
  * without changing pixels/state when validation, guards or clip-stack fail. */
 MooValue moo_surface_new(MooValue width, MooValue height);
+const uint8_t* moo_surface_rgba(MooValue value, int32_t* out_w, int32_t* out_h);
 MooValue moo_surface_clear(MooValue surface, MooValue r, MooValue g,
                            MooValue b, MooValue a);
 MooValue moo_surface_clip_push(MooValue surface, MooValue x, MooValue y,
@@ -1019,6 +1025,24 @@ void moo_sprite_free(MooValue id);
 
 // === 3D Grafik (OpenGL + GLFW) ===
 MooValue moo_3d_create(MooValue title, MooValue w, MooValue h);
+/* Internal single-active-context lifecycle; validation never dereferences win. */
+void moo_3d_register_window(MooValue win, void* ctx);
+int moo_3d_active_window(MooValue win);
+void moo_3d_detach_external(void* ctx);
+void moo_3d_hdr(MooValue win, MooValue on);
+void moo_3d_pbr(MooValue win, MooValue metallic, MooValue roughness);
+void moo_3d_pbr_off(MooValue win);
+void moo_3d_ao(MooValue win, MooValue radius, MooValue strength, MooValue bias);
+void moo_3d_ao_off(MooValue win);
+void moo_3d_ao_debug(MooValue win, MooValue on);
+void moo_3d_opaque_end(MooValue win);
+void moo_3d_exposure(MooValue win, MooValue multiplier);
+void moo_3d_auto_exposure(MooValue win, MooValue minimum, MooValue maximum, MooValue key, MooValue tau);
+MooValue moo_3d_exposure_value(MooValue win);
+void moo_3d_linear_light(MooValue win, MooValue slot, MooValue r, MooValue g, MooValue b);
+void moo_3d_scene_end(MooValue win);
+void moo_3d_render_time(MooValue win, MooValue seconds);
+void moo_3d_render_time_live(MooValue win);
 MooValue moo_3d_is_open(MooValue win);
 void moo_3d_clear(MooValue win, MooValue r, MooValue g, MooValue b);
 void moo_3d_update(MooValue win);
@@ -1058,6 +1082,7 @@ void     moo_test_sim_maus_rad(MooValue win, MooValue dy);
 void     moo_test_sim_maus_delta(MooValue win, MooValue dx, MooValue dy);
 void     moo_test_sim_reset(MooValue win);
 MooValue moo_test_screenshot(MooValue win, MooValue pfad);   // S5: wirft statt still false
+MooValue moo_test_renderer_info(MooValue win);
 MooValue moo_test_fenster_info(MooValue win);                // Dict{breite,hoehe,backend,offen}
 
 // === Welt (Game-Dev Runtime) ===
@@ -1163,6 +1188,8 @@ MooValue moo_voxel_aabb(MooValue welt,
                         MooValue maxx, MooValue maxy, MooValue maxz);
 // Plan-005 1b: 1 = ein 3D-Backend ist aktiv (g_backend && g_ctx), sonst 0.
 int moo_3d_backend_active(void);
+void moo_3d_height_fog(MooValue win, MooValue height, MooValue falloff, MooValue sun);
+void moo_3d_height_fog_off(MooValue win);
 
 // === Webserver ===
 MooValue moo_web_server(MooValue port);

@@ -527,6 +527,16 @@ MooValue moo_surface_text_breite_stil(MooValue text, MooValue skala,
     return moo_surface_text_breite_face(string, scale, face);
 }
 
+/* ERDE-10: Lesezugriff auf die RGBA8-Pixel (Stride = Breite * 4), z.B. fuer
+ * den GL-Upload in zeichne_text_z. NULL bei ungueltiger Surface. */
+const uint8_t* moo_surface_rgba(MooValue value, int32_t* out_w, int32_t* out_h) {
+    MooSurface* surface = moo_surface_get(value);
+    if (!surface || !out_w || !out_h) return NULL;
+    *out_w = surface->core.width;
+    *out_h = surface->core.height;
+    return surface->core.pixels;
+}
+
 MooValue moo_surface_text_breite(MooValue text, MooValue skala) {
     MooString* string;
     const MooFontAaFace* face;

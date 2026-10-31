@@ -1,0 +1,49 @@
+# Native close/restore safety in pure3D and Hybrid; no capture needed.
+funktion neues_fenster():
+    wenn umgebung("GFX_TIME_MODE") == "hybrid":
+        gib_zurück fenster_unified("GFX-LIFECYCLE", 64, 64)
+    gib_zurück raum_erstelle("GFX-LIFECYCLE", 64, 64)
+
+funktion schliessen(win):
+    wenn umgebung("GFX_TIME_MODE") == "hybrid":
+        hybrid_schliessen(win)
+    sonst:
+        raum_schliessen(win)
+
+funktion geschlossen_pruefen(win):
+    setze fehler auf falsch
+    versuche:
+        raum_renderzeit(win, 1.25)
+    fange e:
+        setze fehler auf wahr
+    wenn nicht fehler:
+        wirf "fixed time after close must fail"
+    setze fehler auf falsch
+    versuche:
+        raum_renderzeit_live(win)
+    fange e:
+        setze fehler auf wahr
+    wenn nicht fehler:
+        wirf "live time after close must fail"
+
+setze i auf 0
+solange i < 4:
+    setze win auf neues_fenster()
+    raum_renderzeit(win, 1.25)
+    schliessen(win)
+    geschlossen_pruefen(win)
+    setze i auf i + 1
+# Single-active regression: an old pure handle must not destroy a borrowed Hybrid.
+# Displaced pure owner is reclaimed by this short-lived process, no multiwindow claim.
+setze alter_raum auf raum_erstelle("old 3D", 64, 64)
+setze neuer_hybrid auf fenster_unified("active Hybrid", 64, 64)
+raum_schliessen(alter_raum)
+raum_schliessen(neuer_hybrid)
+raum_renderzeit(neuer_hybrid, 1.25)
+raum_löschen(neuer_hybrid, 0.25, 0.5, 0.75)
+setze lifecycle_probe auf test_frame_grab(neuer_hybrid)
+wenn nicht test_renderer_info(neuer_hybrid)["available"]:
+    wirf "old 3D close destroyed active Hybrid"
+hybrid_schliessen(neuer_hybrid)
+geschlossen_pruefen(neuer_hybrid)
+zeige "GFX-LIFECYCLE native PASS"

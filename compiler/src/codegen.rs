@@ -4174,6 +4174,12 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_hybrid_rect_z, &[win.into(), x.into(), y.into(), z.into(), w.into(), h.into(), c.into()], "rect_z")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    // ERDE-10: (fenster, text, x, y, z, groesse, farbe)
+                    "zeichne_text_z" | "draw_text_z" if args.len() == 7 => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_hybrid_text_z, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into()], "text_z")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     "zeichne_linie_z" | "draw_line_z" => {
                         let win = self.compile_expr(&args[0])?;
                         let x1 = self.compile_expr(&args[1])?;
@@ -4409,6 +4415,96 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_3d_rotate, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "3d_rot")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    // ERDE-5: (fenster, s) uniform oder (fenster, sx, sy, sz)
+                    "raum_skaliere" | "space_scale" | "3d_skaliere" if args.len() == 2 || args.len() == 4 => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        let (sx, sy, sz) = if a.len() == 2 { (a[1], a[1], a[1]) } else { (a[1], a[2], a[3]) };
+                        self.call_rt_void(self.rt.moo_3d_scale, &[a[0].into(), sx.into(), sy.into(), sz.into()], "3d_skal")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // ERDE-7: (fenster, idx, x, y, z, farbe) — idx 0 Hauptlicht, 1..3 Zusatzlichter
+                    "raum_licht_hinzufuegen" | "raum_licht_hinzufügen" | "space_add_light" if args.len() == 6 => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_light_add, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "3d_licht_add")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // ERDE-7: (fenster, idx, x, y, z, radius, farbe) — radius 0 = aus
+                    "raum_punktlicht" | "space_point_light" if args.len() == 7 => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_point_light, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into()], "3d_punktlicht")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // ERDE-8: (fenster, staerke) — Eigenleuchten, 0 = aus
+                    "raum_leuchten" | "space_emissive" if args.len() == 2 => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_emissive, &[a[0].into(), a[1].into()], "3d_leuchten")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // ERDE-8: (fenster, "additiv" | "normal")
+                    "raum_mischmodus" | "space_blend_mode" if args.len() == 2 => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_blend_mode, &[a[0].into(), a[1].into()], "3d_mischmodus")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // ERDE-10: (fenster, x1, y1, z1, x2, y2, z2, farbe) — unbeleuchtet
+                    "raum_linie" | "space_line" if args.len() == 8 => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_line, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into(), a[6].into(), a[7].into()], "3d_linie")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // ERDE-10: (fenster, x, y, z, groesse, farbe) — groesse in Pixeln
+                    "raum_punkt" | "space_point" if args.len() == 6 => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_point, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into(), a[5].into()], "3d_punkt")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // Licht-Stufe 3: (fenster, an) — Smooth-Normalen beim chunk_ende
+                    "raum_glaetten" | "raum_glätten" | "space_smooth" if args.len() == 2 => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_smooth, &[a[0].into(), a[1].into()], "3d_glaetten")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // ERDE-15: (fenster, pfad) -> Textur-ID oder nichts
+                    "raum_textur_laden" | "space_load_texture" if args.len() == 2 => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_3d_texture_load, &[a[0].into(), a[1].into()], "3d_textur_laden");
+                    }
+                    // ERDE-15: (fenster, flaeche) -> Textur-ID oder nichts
+                    "raum_textur_aus_flaeche" | "raum_textur_aus_fläche" | "space_texture_from_surface" if args.len() == 2 => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_3d_texture_from_surface, &[a[0].into(), a[1].into()], "3d_textur_flaeche");
+                    }
+                    // ERDE-15: (fenster, id[, skala]) — id 0 = aus, skala Default 1
+                    "raum_textur" | "space_texture" if args.len() == 2 || args.len() == 3 => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        let skala = if a.len() == 3 { a[2] } else { self.call_rt(self.rt.moo_number, &[self.context.f64_type().const_float(1.0).into()], "tex_skala1")? };
+                        self.call_rt_void(self.rt.moo_3d_texture, &[a[0].into(), a[1].into(), skala.into()], "3d_textur")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // Licht-Stufe 4: (fenster, an[, aufloesung[, bereich]])
+                    "raum_schatten" | "space_shadows" if args.len() >= 2 && args.len() <= 4 => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        let null = self.call_rt(self.rt.moo_number, &[self.context.f64_type().const_float(0.0).into()], "schatten_default")?;
+                        let size = if a.len() >= 3 { a[2] } else { null };
+                        let range = if a.len() >= 4 { a[3] } else { null };
+                        self.call_rt_void(self.rt.moo_3d_shadow, &[a[0].into(), a[1].into(), size.into(), range.into()], "3d_schatten")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // ERDE-16: (fenster, staerke[, schwelle]) — staerke 0 = aus, schwelle Default 0.8
+                    // ERDE-17: optional radius = Blur-Durchgaenge 1..8 (Default 2)
+                    "raum_bloom" | "raum_glühen" | "raum_gluehen" | "space_bloom" if args.len() >= 2 && args.len() <= 4 => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        let schwelle = if a.len() >= 3 { a[2] } else { self.call_rt(self.rt.moo_number, &[self.context.f64_type().const_float(0.8).into()], "bloom_schwelle")? };
+                        let radius = if a.len() == 4 { a[3] } else { self.call_rt(self.rt.moo_number, &[self.context.f64_type().const_float(2.0).into()], "bloom_radius")? };
+                        self.call_rt_void(self.rt.moo_3d_bloom, &[a[0].into(), a[1].into(), schwelle.into(), radius.into()], "3d_bloom")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // ERDE-5: Farbton pro Instanz (fenster, "#RRGGBB")
+                    "raum_farbton" | "space_tint" | "3d_farbton" => {
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_tint, &[a[0].into(), a[1].into()], "3d_farbton")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     "3d_verschiebe" | "3d_translate" | "raum_verschiebe" | "space_translate" => {
                         let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
                         self.call_rt_void(self.rt.moo_3d_translate, &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "3d_tr")?;
@@ -4531,6 +4627,18 @@ impl<'ctx> CodeGen<'ctx> {
                         self.call_rt_void(self.rt.moo_3d_ambient, &[a[0].into(), a[1].into()], "3d_ambient")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
+                    "raum_hoehennebel" | "space_height_fog" => {
+                        if args.len() != 4 { return Err("Hoehennebel erwartet 4 Argumente".into()); }
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_height_fog, &[a[0].into(), a[1].into(), a[2].into(), a[3].into()], "height_fog")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_hoehennebel_aus" | "space_height_fog_off" => {
+                        if args.len() != 1 { return Err("Hoehennebel aus erwartet 1 Argument".into()); }
+                        let win = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_3d_height_fog_off, &[win.into()], "height_fog_off")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
                     "raum_nebel" | "space_fog" | "3d_nebel" => {
                         let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
                         self.call_rt_void(self.rt.moo_3d_fog, &[a[0].into(), a[1].into()], "3d_nebel")?;
@@ -4550,6 +4658,94 @@ impl<'ctx> CodeGen<'ctx> {
                     "raum_transparenz" | "space_alpha" | "3d_transparenz" => {
                         let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
                         self.call_rt_void(self.rt.moo_3d_alpha, &[a[0].into(), a[1].into()], "3d_alpha")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_hdr" | "space_hdr" => {
+                        if args.len() != 2 { return Err("raum_hdr: falsche Argumentzahl".to_string()); }
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_hdr, &[a[0].into(), a[1].into()], "3d_hdr")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_ao" | "space_ao" => {
+                        if args.len() != 4 { return Err("raum_ao: erwartet 4 Argumente".to_string()); }
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_ao, &[a[0].into(),a[1].into(),a[2].into(),a[3].into()], "3d_ao")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_ao_aus" | "space_ao_off" => {
+                        if args.len() != 1 { return Err("raum_ao_aus: erwartet 1 Argumente".to_string()); }
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_ao_off, &[a[0].into()], "3d_ao_off")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_ao_debug" | "space_ao_debug" => {
+                        if args.len() != 2 { return Err("raum_ao_debug: erwartet 2 Argumente".to_string()); }
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_ao_debug, &[a[0].into(),a[1].into()], "3d_ao_debug")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_opak_ende" | "space_opaque_end" => {
+                        if args.len() != 1 { return Err("raum_opak_ende: erwartet 1 Argumente".to_string()); }
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_opaque_end, &[a[0].into()], "3d_opaque_end")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_pbr" | "space_pbr" => {
+                        if args.len() != 3 { return Err("raum_pbr: erwartet win,metallic,roughness".to_string()); }
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_pbr, &[a[0].into(),a[1].into(),a[2].into()], "3d_pbr")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_pbr_aus" | "space_pbr_off" => {
+                        if args.len() != 1 { return Err("raum_pbr_aus: erwartet win".to_string()); }
+                        let a=self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_3d_pbr_off, &[a.into()], "3d_pbr_off")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_licht_linear" | "space_light_linear" => {
+                        if args.len() != 5 { return Err("raum_licht_linear: erwartet win,slot,r,g,b".to_string()); }
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_linear_light, &[a[0].into(),a[1].into(),a[2].into(),a[3].into(),a[4].into()], "3d_linear_light")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_auto_belichtung" | "space_auto_exposure" => {
+                        if args.len() != 5 { return Err("raum_auto_belichtung: erwartet win,min,max,key,tau".to_string()); }
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_auto_exposure, &[a[0].into(),a[1].into(),a[2].into(),a[3].into(),a[4].into()], "3d_auto_exposure")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_belichtung_wert" | "space_exposure_value" => {
+                        if args.len() != 1 { return Err("raum_belichtung_wert: erwartet win".to_string()); }
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_3d_exposure_value, &[a.into()], "3d_exposure_value");
+                    }
+                    "raum_belichtung" | "space_exposure" => {
+                        if args.len() != 2 { return Err("raum_belichtung: falsche Argumentzahl".to_string()); }
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_exposure, &[a[0].into(), a[1].into()], "3d_exposure")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_szene_ende" | "space_scene_end" => {
+                        if args.len() != 1 { return Err("raum_szene_ende: falsche Argumentzahl".to_string()); }
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_scene_end, &[a[0].into()], "3d_scene_end")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    // Explizite Renderzeit: additive GL33-/Hybrid-Replay-API.
+                    "raum_renderzeit" | "space_render_time" => {
+                        if args.len() != 2 {
+                            return Err("raum_renderzeit erwartet (fenster, sekunden)".to_string());
+                        }
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        self.call_rt_void(self.rt.moo_3d_render_time, &[a[0].into(), a[1].into()], "3d_render_time")?;
+                        return self.call_rt(self.rt.moo_none, &[], "none");
+                    }
+                    "raum_renderzeit_live" | "space_render_time_live" => {
+                        if args.len() != 1 {
+                            return Err("raum_renderzeit_live erwartet (fenster)".to_string());
+                        }
+                        let a = self.compile_expr(&args[0])?;
+                        self.call_rt_void(self.rt.moo_3d_render_time_live, &[a.into()], "3d_render_time_live")?;
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     // Wasserwellen: (fenster, amplitude, frequenz, tempo) — amp 0 = aus
@@ -4627,6 +4823,13 @@ impl<'ctx> CodeGen<'ctx> {
                         let path = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_test_screenshot, &[win.into(), path.into()], "t_shot");
                     }
+                    "test_renderer_info" => {
+                        if args.len() != 1 {
+                            return Err("test_renderer_info erwartet genau 1 Argument".to_string());
+                        }
+                        let win = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_test_renderer_info, &[win.into()], "t_renderer_info");
+                    }
                     "test_fenster_info" | "test_window_info" => {
                         let win = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_test_fenster_info, &[win.into()], "t_win_info");
@@ -4653,6 +4856,30 @@ impl<'ctx> CodeGen<'ctx> {
                         let a0 = self.compile_expr(&args[0])?;
                         let a1 = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.moo_test_frame_diff, &[a0.into(), a1.into()], "t_frame_diff");
+                    }
+                    "raum_wasser_material" | "water_material" => {
+                        if args.len() != 2 { return Err("water_material erwartet 2 Argumente".to_string()); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        let a1 = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.moo_3d_water_material, &[a0.into(), a1.into()], "water_material");
+                    }
+                    "raum_wasser_hintergrund" | "water_background" => {
+                        if args.len() != 1 { return Err("water_background erwartet 1 Argument".to_string()); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_3d_water_background, &[a0.into()], "water_background");
+                    }
+                    "raum_wasser_aus" | "water_off" => {
+                        if args.len() != 1 { return Err("water_off erwartet 1 Argument".to_string()); }
+                        let a0 = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.moo_3d_water_off, &[a0.into()], "water_off");
+                    }
+                    // Generic RGBA8 ROI statistics; validate arity before indexing.
+                    "test_frame_statistik" | "test_frame_statistics" => {
+                        if args.len() != 5 {
+                            return Err("test_frame_statistik erwartet 5 Argumente".to_string());
+                        }
+                        let a: Vec<_> = args.iter().map(|a| self.compile_expr(a)).collect::<Result<Vec<_>, _>>()?;
+                        return self.call_rt(self.rt.moo_test_frame_statistics, &[a[0].into(), a[1].into(), a[2].into(), a[3].into(), a[4].into()], "t_frame_statistics");
                     }
                     // test_frame_region(frame, x, y, b, h) -> Dict {rot, gruen, blau, alpha} (Durchschnittsfarbe).
                     "test_frame_region" | "test_frame_bereich" => {

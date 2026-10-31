@@ -1,0 +1,90 @@
+# Public Exposure API and deterministic frame boundaries, 3D + Hybrid.
+funktion gfx_ex_assert(ok, text):
+    wenn nicht ok:
+        wirf text
+    zeige text
+funktion gfx_ex_window():
+    wenn umgebung("GFX_TIME_MODE") == "hybrid":
+        gib_zurück fenster_unified("Exposure API", 161, 121)
+    gib_zurück raum_erstelle("Exposure API", 161, 121)
+funktion gfx_ex_close(win):
+    wenn umgebung("GFX_TIME_MODE") == "hybrid":
+        hybrid_schliessen(win)
+    sonst:
+        raum_schliessen(win)
+funktion gfx_ex_invalid(win, minimum, maximum, key, tau):
+    setze prior auf raum_belichtung_wert(win)
+    setze failed auf falsch
+    versuche:
+        raum_auto_belichtung(win, minimum, maximum, key, tau)
+    fange e:
+        setze failed auf wahr
+    gfx_ex_assert(failed und raum_belichtung_wert(win) == prior, "PASS invalid auto call preserves exposure")
+funktion gfx_ex_badlight(win, slot, red):
+    setze failed auf falsch
+    versuche:
+        raum_licht_linear(win, slot, red, 0, 0)
+    fange e:
+        setze failed auf wahr
+    gfx_ex_assert(failed, "PASS invalid linear light rejected")
+setze win auf gfx_ex_window()
+setze failed auf falsch
+versuche:
+    raum_auto_belichtung(win, 0.01, 64, 0.18, 1)
+fange e:
+    setze failed auf wahr
+gfx_ex_assert(failed, "PASS auto requires HDR")
+raum_hdr(win, wahr)
+raum_renderzeit(win, 0)
+raum_auto_belichtung(win, 0.01, 64, 0.18, 1)
+gfx_ex_assert(raum_belichtung_wert(win) == 1, "PASS getter before first auto frame")
+raum_löschen(win, 1, 1, 1)
+raum_szene_ende(win)
+gfx_ex_assert(abs(raum_belichtung_wert(win) - 0.18) < 0.0001, "PASS first auto target")
+setze first auf test_frame_grab(win)
+setze prior auf raum_belichtung_wert(win)
+raum_szene_ende(win)
+setze second auf test_frame_grab(win)
+gfx_ex_assert(test_frame_diff(first, second)["geaenderte_pixel"] == 0 und raum_belichtung_wert(win) == prior, "PASS repeated captures and getter are idempotent")
+raum_löschen(win, 0.5, 0.5, 0.5)
+raum_szene_ende(win)
+gfx_ex_assert(raum_belichtung_wert(win) == prior, "PASS dt zero keeps exposure")
+raum_renderzeit(win, 1)
+raum_löschen(win, 0.5, 0.5, 0.5)
+raum_szene_ende(win)
+gfx_ex_assert(abs(raum_belichtung_wert(win) - (0.18 + (0.84116372 - 0.18) * 0.6321205588)) < 0.001, "PASS public render time drives adaptation")
+gfx_ex_invalid(win, 0, 64, 0.18, 1)
+gfx_ex_invalid(win, -1, 64, 0.18, 1)
+gfx_ex_invalid(win, 2, 1, 0.18, 1)
+gfx_ex_invalid(win, 1.0000000001, 1, 0.18, 1)
+gfx_ex_invalid(win, 0.01, 65, 0.18, 1)
+gfx_ex_invalid(win, 0.01, 64, 0, 1)
+gfx_ex_invalid(win, 0.01, 64, 0.18, -1)
+gfx_ex_invalid(win, "bad", 64, 0.18, 1)
+gfx_ex_badlight(win, -1, 1)
+gfx_ex_badlight(win, 8, 1)
+gfx_ex_badlight(win, 0.5, 1)
+gfx_ex_badlight(win, 0, -1)
+gfx_ex_badlight(win, 0, 65505)
+gfx_ex_badlight(win, "bad", 1)
+raum_licht_linear(win, 0, 0.1, 0.2, 0.3)
+raum_licht_linear(win, 1, 0.1, 0.2, 0.3)
+raum_licht_linear(win, 2, 0.1, 0.2, 0.3)
+raum_licht_linear(win, 3, 0.1, 0.2, 0.3)
+raum_licht_linear(win, 4, 0.1, 0.2, 0.3)
+raum_licht_linear(win, 5, 0.1, 0.2, 0.3)
+raum_licht_linear(win, 6, 0.1, 0.2, 0.3)
+raum_licht_linear(win, 7, 0.1, 0.2, 0.3)
+gfx_ex_assert(wahr, "PASS all public linear light slots accepted")
+raum_belichtung(win, 2)
+raum_renderzeit(win, 10)
+raum_löschen(win, 1, 1, 1)
+raum_szene_ende(win)
+gfx_ex_assert(raum_belichtung_wert(win) == 2, "PASS manual exposure disables auto")
+space_auto_exposure(win, 0.01, 64, 0.18, 0)
+raum_löschen(win, 1, 1, 1)
+space_scene_end(win)
+gfx_ex_assert(abs(space_exposure_value(win) - 0.18) < 0.0001, "PASS English exposure aliases")
+space_light_linear(win, 0, 0.1, 0.2, 0.3)
+gfx_ex_close(win)
+zeige "GFX-EXPOSURE native PASS"

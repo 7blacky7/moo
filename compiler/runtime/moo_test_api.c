@@ -26,6 +26,8 @@
  */
 
 #include "moo_runtime.h"
+#include "moo_3d_backend.h"
+extern int moo_3d_renderer_info(MooValue win, MooRendererInfo* info);
 #include <string.h>
 #include <stdlib.h>
 #include "moo_gif.h"  /* isolierter GIF89a+LZW-Encoder-Kern (Plan-008 A3B Teil 1) */
@@ -306,6 +308,25 @@ MooValue moo_test_pixel(MooValue frame_oder_win, MooValue x, MooValue y) {
     MooValue result = moo_frame_pixel_dict(f, ix, iy);
     moo_release(frame);
     return result;
+}
+
+/* Metadata only: no capture, postprocessing, frame advance or environment guess. */
+MooValue moo_test_renderer_info(MooValue win) {
+    MooRendererInfo info = {0};
+    int status = moo_3d_renderer_info(win, &info);
+    if (status < 0) {
+        moo_throw(moo_string_new("test_renderer_info: aktives 3D/Hybrid-Fenster erforderlich"));
+        return moo_none();
+    }
+    MooValue dict = moo_dict_new();
+    moo_dict_set(dict, moo_string_new("available"), moo_bool(status > 0));
+    /* moo_dict_set takes ownership of both newly allocated key and value. */
+    moo_dict_set(dict, moo_string_new("backend"), moo_string_new(status > 0 && info.backend ? info.backend : "unknown"));
+    moo_dict_set(dict, moo_string_new("api"), moo_string_new(status > 0 && info.api ? info.api : "unknown"));
+    moo_dict_set(dict, moo_string_new("vendor"), moo_string_new(status > 0 && info.vendor ? info.vendor : "unknown"));
+    moo_dict_set(dict, moo_string_new("renderer"), moo_string_new(status > 0 && info.renderer ? info.renderer : "unknown"));
+    moo_dict_set(dict, moo_string_new("version"), moo_string_new(status > 0 && info.version ? info.version : "unknown"));
+    return dict;
 }
 
 /* ============================================================

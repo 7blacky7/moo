@@ -1,0 +1,127 @@
+# AO public state contract in GL33 3D and Hybrid; no performance claim.
+funktion gfx_ao_assert(ok, label):
+    wenn nicht ok:
+        wirf label
+    zeige label
+funktion gfx_ao_window():
+    wenn umgebung("GFX_TIME_MODE") == "hybrid":
+        gib_zurück fenster_unified("AO API",161,121)
+    gib_zurück raum_erstelle("AO API",161,121)
+funktion gfx_ao_draw(win):
+    raum_löschen(win,0.1,0.1,0.1)
+    raum_perspektive(win,45,0.1,100)
+    raum_kamera(win,0,0,4,0,0,0)
+    raum_würfel(win,0,0,0,2,"#FFFFFF")
+funktion gfx_ao_finish(win):
+    raum_szene_ende(win)
+    gib_zurück test_frame_grab(win)
+funktion gfx_ao_invalid(win,r,s,b):
+    setze failed auf falsch
+    versuche:
+        raum_ao(win,r,s,b)
+    fange e:
+        setze failed auf wahr
+    gfx_ao_assert(failed,"PASS invalid AO parameters rejected")
+setze win auf gfx_ao_window()
+setze failed auf falsch
+versuche:
+    raum_ao_aus(win)
+fange e:
+    setze failed auf wahr
+gfx_ao_assert(failed,"PASS AO off requires HDR")
+raum_hdr(win,wahr)
+raum_ao(win,1,0.5,0.01)
+raum_ao_debug(win,wahr)
+raum_hdr(win,falsch)
+raum_hdr(win,wahr)
+raum_renderzeit(win,1)
+raum_belichtung(win,1)
+raum_nebel(win,0)
+raum_licht(win,0,0,1)
+raum_licht_linear(win,0,0.4,0.4,0.4)
+raum_umgebungslicht(win,0.5)
+gfx_ao_draw(win)
+setze baseline auf gfx_ao_finish(win)
+setze center auf test_pixel(baseline,80,60)
+setze corner auf test_pixel(baseline,3,3)
+# Hill fitted at linear gray 0.4, exposure 1, then sRGB: code 148.536.
+gfx_ao_assert(center["rot"]>=147 und center["rot"]<=151 und center["gruen"]>=147 und center["gruen"]<=151 und center["blau"]>=147 und center["blau"]<=151,"PASS HDR off resets AO/debug; visible cube matches absolute radiance")
+gfx_ao_assert(corner["rot"]<10 und corner["gruen"]<10 und corner["blau"]<10,"PASS baseline contains dark background distinct from geometry")
+gfx_ao_invalid(win,-1,0.5,0)
+gfx_ao_invalid(win,10001,0.5,0)
+gfx_ao_invalid(win,1,-0.1,0)
+gfx_ao_invalid(win,1,1.01,0)
+gfx_ao_invalid(win,1,0.5,-0.01)
+gfx_ao_invalid(win,1,0.5,1.0000000001)
+gfx_ao_invalid(win,"bad",0.5,0)
+gfx_ao_invalid(win,1,wahr,0)
+gfx_ao_draw(win)
+setze preserved auf gfx_ao_finish(win)
+gfx_ao_assert(test_frame_diff(baseline,preserved)["geaenderte_pixel"]==0,"PASS invalid AO leaves prior output exact")
+space_ao(win,0,0.7,0)
+gfx_ao_draw(win)
+setze failed auf falsch
+versuche:
+    raum_szene_ende(win)
+fange e:
+    setze failed auf wahr
+gfx_ao_assert(failed,"PASS configured AO requires explicit opaque end even at radius zero")
+setze failed auf falsch
+versuche:
+    raum_ao_aus(win)
+fange e:
+    setze failed auf wahr
+gfx_ao_assert(failed,"PASS midframe AO off rejected")
+setze failed auf falsch
+versuche:
+    raum_ao_debug(win,wahr)
+fange e:
+    setze failed auf wahr
+gfx_ao_assert(failed,"PASS midframe debug change rejected")
+space_opaque_end(win)
+space_opaque_end(win)
+setze zero_radius auf gfx_ao_finish(win)
+gfx_ao_assert(test_frame_diff(baseline,zero_radius)["geaenderte_pixel"]==0,"PASS radius zero exact identity")
+space_ao(win,1,0,0)
+gfx_ao_draw(win)
+raum_opak_ende(win)
+setze failed auf falsch
+versuche:
+    raum_würfel(win,0,0,0,2,"#FFFFFF")
+fange e:
+    setze failed auf wahr
+gfx_ao_assert(failed,"PASS opaque draw after opaque end rejected")
+setze zero_strength auf gfx_ao_finish(win)
+gfx_ao_assert(test_frame_diff(baseline,zero_strength)["geaenderte_pixel"]==0,"PASS strength zero exact identity")
+raum_opak_ende(win)
+setze repeated auf test_frame_grab(win)
+gfx_ao_assert(test_frame_diff(zero_strength,repeated)["geaenderte_pixel"]==0,"PASS repeated opaque end and capture idempotent")
+setze failed auf falsch
+versuche:
+    raum_ao_debug(win,1)
+fange e:
+    setze failed auf wahr
+gfx_ao_assert(failed,"PASS debug strictly requires Bool")
+space_ao_debug(win,wahr)
+gfx_ao_draw(win)
+space_opaque_end(win)
+setze debug_frame auf gfx_ao_finish(win)
+setze pixel auf test_pixel(debug_frame,80,60)
+gfx_ao_assert(pixel["rot"]==255 und pixel["gruen"]==255 und pixel["blau"]==255,"PASS zero strength debug is untonemapped white")
+space_ao_debug(win,falsch)
+space_ao_off(win)
+gfx_ao_draw(win)
+raum_opak_ende(win)
+setze off_frame auf gfx_ao_finish(win)
+gfx_ao_assert(test_frame_diff(baseline,off_frame)["geaenderte_pixel"]==0,"PASS AO off restores exact baseline")
+wenn umgebung("GFX_TIME_MODE") == "hybrid":
+    hybrid_schliessen(win)
+sonst:
+    raum_schliessen(win)
+setze failed auf falsch
+versuche:
+    raum_opak_ende(win)
+fange e:
+    setze failed auf wahr
+gfx_ao_assert(failed,"PASS closed AO handle rejected")
+zeige "GFX-AO API PASS"

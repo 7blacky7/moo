@@ -21,6 +21,7 @@
 #ifdef MOO_HAS_GL33
 #include "glad/include/glad/glad.h"
 #include <GLFW/glfw3.h>
+#include "moo_glfw_platform.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #define MOO_HYBRID_HAS_GL 1
@@ -39,6 +40,12 @@ extern void moo_throw(MooValue v);
 #ifdef MOO_HAS_GL33
 extern void* gl33_init_ctx_from_window(void* win, int w, int h);
 extern void moo_3d_attach_external(void* backend, void* ctx);
+extern void gl33_tick_time(void* ctx);
+extern void gl33_apply_post(void* ctx);
+extern void gl33_clear(void* ctx, float r, float g, float b);
+extern int gl33_hdr_enabled(void* ctx);
+extern void gl33_overlay_begin(void* ctx);
+extern void gl33_hdr_release(void* ctx);
 extern struct Moo3DBackend moo_backend_gl33;  /* deklariert in moo_3d_backend.h */
 #endif
 
@@ -105,6 +112,10 @@ typedef struct {
     unsigned int tex_vao;
     unsigned int tex_vbo;
     unsigned int tex_shader;
+    /* P6: gebundener gl33-Context (raum_*), fuer uTime in hybrid_aktualisieren */
+    void* gl33_ctx;
+    /* ERDE-10: wiederverwendete Textur fuer zeichne_text_z */
+    unsigned int text_tex;
 } MooHybridWindow;
 
 static int hybrid_glfw_initialized = 0;
@@ -326,6 +337,7 @@ MooValue moo_hybrid_create(MooValue title, MooValue w, MooValue h) {
     return moo_none();
 #else
     if (!hybrid_glfw_initialized) {
+        moo_glfw_platform_hint();
         if (!glfwInit()) {
             moo_throw(moo_string_new("glfwInit fehlgeschlagen"));
             return moo_none();
@@ -376,11 +388,13 @@ MooValue moo_hybrid_create(MooValue title, MooValue w, MooValue h) {
     void* gl33_ctx = gl33_init_ctx_from_window(glfw_win, width, height);
     if (gl33_ctx) {
         moo_3d_attach_external(&moo_backend_gl33, gl33_ctx);
+        mh->gl33_ctx = gl33_ctx;
     }
 
     MooValue result;
     result.tag = MOO_WINDOW_HYBRID;
     moo_val_set_ptr(&result, mh);
+    moo_3d_register_window(result, mh->gl33_ctx);
     return result;
 #endif
 }
@@ -405,6 +419,10 @@ void moo_hybrid_clear(MooValue win, MooValue r, MooValue g, MooValue b) {
     MooHybridWindow* mh = (MooHybridWindow*)moo_val_as_ptr(win);
     if (!mh || !mh->open) return;
     glfwMakeContextCurrent(mh->window);
+    if (gl33_hdr_enabled(mh->gl33_ctx)) {
+        gl33_clear(mh->gl33_ctx,(float)MV_NUM(r),(float)MV_NUM(g),(float)MV_NUM(b));
+        return;
+    }
     glClearColor((float)MV_NUM(r), (float)MV_NUM(g), (float)MV_NUM(b), 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 #endif
@@ -417,6 +435,10 @@ void moo_hybrid_update(MooValue win) {
     if (win.tag != MOO_WINDOW_HYBRID) return;
     MooHybridWindow* mh = (MooHybridWindow*)moo_val_as_ptr(win);
     if (!mh || !mh->open) return;
+#ifdef MOO_HAS_GL33
+    /* Wellen-Zeit (uTime) weiterschalten wie raum_aktualisieren. */
+    if (mh->gl33_ctx) gl33_tick_time(mh->gl33_ctx);
+#endif
     glfwSwapBuffers(mh->window);
     glfwPollEvents();
 #endif
@@ -429,7 +451,12 @@ void moo_hybrid_close(MooValue win) {
     if (win.tag != MOO_WINDOW_HYBRID) return;
     MooHybridWindow* mh = (MooHybridWindow*)moo_val_as_ptr(win);
     if (!mh) return;
+    /* Invalidate the dispatcher before destroying its borrowed GLFW window. */
+    moo_3d_detach_external(mh->gl33_ctx);
     if (mh->window) {
+        glfwMakeContextCurrent(mh->window);
+        gl33_hdr_release(mh->gl33_ctx);
+        if (mh->text_tex) glDeleteTextures(1, &mh->text_tex);
         glfwDestroyWindow(mh->window);
         mh->window = NULL;
     }
@@ -450,6 +477,7 @@ void moo_hybrid_rect_z(MooValue win, MooValue x, MooValue y, MooValue z, MooValu
     MooHybridWindow* mh = (MooHybridWindow*)moo_val_as_ptr(win);
     if (!mh || !mh->open || !mh->quad_shader) return;
     glfwMakeContextCurrent(mh->window);
+    gl33_overlay_begin(mh->gl33_ctx);
     HybridColor col = parse_hybrid_color(color);
     glUseProgram(mh->quad_shader);
     glUniform2f(glGetUniformLocation(mh->quad_shader, "u_screen"), (float)mh->width, (float)mh->height);
@@ -472,6 +500,7 @@ void moo_hybrid_line_z(MooValue win, MooValue x1, MooValue y1, MooValue x2, MooV
     MooHybridWindow* mh = (MooHybridWindow*)moo_val_as_ptr(win);
     if (!mh || !mh->open || !mh->raw_shader) return;
     glfwMakeContextCurrent(mh->window);
+    gl33_overlay_begin(mh->gl33_ctx);
     HybridColor col = parse_hybrid_color(color);
     float verts[4] = {
         (float)MV_NUM(x1), (float)MV_NUM(y1),
@@ -498,6 +527,7 @@ void moo_hybrid_circle_z(MooValue win, MooValue cx, MooValue cy, MooValue z, Moo
     MooHybridWindow* mh = (MooHybridWindow*)moo_val_as_ptr(win);
     if (!mh || !mh->open || !mh->raw_shader) return;
     glfwMakeContextCurrent(mh->window);
+    gl33_overlay_begin(mh->gl33_ctx);
     HybridColor col = parse_hybrid_color(color);
     /* Triangle-Fan: Mittelpunkt + 32 Randpunkte */
     int seg = 32;
@@ -525,6 +555,69 @@ void moo_hybrid_circle_z(MooValue win, MooValue cx, MooValue cy, MooValue z, Moo
 #endif
 }
 
+/* ERDE-10: zeichne_text_z(fenster, text, x, y, z, groesse, farbe) — Text mit
+ * Welt-Z. Rastert ueber die Surface-Text-API (DejaVu AA, 16 px Basis, '\n'
+ * erlaubt) und zeichnet das Ergebnis als Textur-Quad; groesse in Pixeln. */
+void moo_hybrid_text_z(MooValue win, MooValue text, MooValue x, MooValue y, MooValue z, MooValue size, MooValue color) {
+#if !MOO_HYBRID_HAS_GL
+    (void)win; (void)text; (void)x; (void)y; (void)z; (void)size; (void)color;
+#else
+    if (win.tag != MOO_WINDOW_HYBRID || text.tag != MOO_STRING) return;
+    MooHybridWindow* mh = (MooHybridWindow*)moo_val_as_ptr(win);
+    if (!mh || !mh->open || !mh->tex_shader) return;
+    MooValue breite = moo_surface_text_breite(text, moo_number(1));
+    if (breite.tag != MOO_NUMBER || !(MV_NUM(breite) >= 1.0) || MV_NUM(breite) > 8192.0) return;
+    int32_t zeilen = 1;
+    MooString* s = MV_STR(text);
+    for (int32_t i = 0; i < s->length; i++) if (s->chars[i] == '\n') zeilen++;
+    if (zeilen > 256) return;
+    MooValue surf = moo_surface_new(breite, moo_number((double)(zeilen * 20)));
+    if (surf.tag != MOO_SURFACE) return;
+    /* Weiss auf transparent: Alphakanal = Abdeckung, Farbe setzen wir unten. */
+    moo_surface_text(surf, moo_number(0), moo_number(0), moo_number(1), text,
+                     moo_number(255), moo_number(255), moo_number(255), moo_number(255));
+    int32_t w = 0, h = 0;
+    const uint8_t* px = moo_surface_rgba(surf, &w, &h);
+    uint8_t* rgba = px ? (uint8_t*)malloc((size_t)w * (size_t)h * 4u) : NULL;
+    if (!rgba) { moo_release(surf); return; }
+    gl33_overlay_begin(mh->gl33_ctx);
+    HybridColor col = parse_hybrid_color(color);
+    uint8_t cr = (uint8_t)(col.r * 255.0f + 0.5f), cg = (uint8_t)(col.g * 255.0f + 0.5f), cb = (uint8_t)(col.b * 255.0f + 0.5f);
+    for (size_t i = 0; i < (size_t)w * (size_t)h; i++) {
+        rgba[i * 4 + 0] = cr;
+        rgba[i * 4 + 1] = cg;
+        rgba[i * 4 + 2] = cb;
+        rgba[i * 4 + 3] = (uint8_t)((float)px[i * 4 + 3] * col.a + 0.5f);
+    }
+    moo_release(surf);
+
+    glfwMakeContextCurrent(mh->window);
+    if (!mh->text_tex) glGenTextures(1, &mh->text_tex);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, mh->text_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    free(rgba);
+
+    float skala = (float)MV_NUM(size) / 16.0f;
+    if (!(skala > 0.0f)) skala = 1.0f;
+    glUseProgram(mh->tex_shader);
+    glUniform2f(glGetUniformLocation(mh->tex_shader, "u_screen"), (float)mh->width, (float)mh->height);
+    glUniform4f(glGetUniformLocation(mh->tex_shader, "u_rect"),
+        (float)MV_NUM(x), (float)MV_NUM(y), (float)w * skala, (float)h * skala);
+    glUniform1f(glGetUniformLocation(mh->tex_shader, "u_z"), (float)MV_NUM(z));
+    glUniform1f(glGetUniformLocation(mh->tex_shader, "u_z_range"), MOO_HYBRID_Z_RANGE);
+    glUniform1i(glGetUniformLocation(mh->tex_shader, "u_tex"), 0);
+    glBindVertexArray(mh->tex_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+#endif
+}
+
 void moo_hybrid_sprite_z(MooValue win, MooValue id, MooValue x, MooValue y, MooValue z, MooValue w, MooValue h) {
     /* TODO P5: textured quad + sprite-Texture-Lookup aus moo_sprite.c */
     (void)win; (void)id; (void)x; (void)y; (void)z; (void)w; (void)h;
@@ -543,8 +636,15 @@ MooValue moo_hybrid_screenshot_bmp(MooValue window, MooValue path) {
     MooHybridWindow* h = (MooHybridWindow*)moo_val_as_ptr(window);
     if (!h || !h->window) return moo_bool(false);
     glfwMakeContextCurrent(h->window);
+#ifdef MOO_HAS_GL33
+    if (h->gl33_ctx) gl33_apply_post(h->gl33_ctx);  /* Bloom im Screenshot sichtbar */
+#endif
     int w = h->width;
     int ht = h->height;
+    if (gl33_hdr_enabled(h->gl33_ctx)) {
+        glfwGetFramebufferSize(h->window,&w,&ht);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER,0); glReadBuffer(GL_BACK);
+    }
     if (w <= 0 || ht <= 0) return moo_bool(false);
     unsigned char* buf = (unsigned char*)malloc((size_t)w * ht * 4);
     if (!buf) return moo_bool(false);
@@ -578,8 +678,15 @@ uint8_t* moo_hybrid_grab_rgba(MooValue window, int* out_w, int* out_h) {
     MooHybridWindow* h = (MooHybridWindow*)moo_val_as_ptr(window);
     if (!h || !h->window) return NULL;
     glfwMakeContextCurrent(h->window);
+#ifdef MOO_HAS_GL33
+    if (h->gl33_ctx) gl33_apply_post(h->gl33_ctx);  /* Bloom im Frame-Grab sichtbar */
+#endif
     int w = h->width;
     int ht = h->height;
+    if (gl33_hdr_enabled(h->gl33_ctx)) {
+        glfwGetFramebufferSize(h->window,&w,&ht);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER,0); glReadBuffer(GL_BACK);
+    }
     if (w <= 0 || ht <= 0) return NULL;
     uint8_t* buf = (uint8_t*)malloc((size_t)w * (size_t)ht * 4);
     if (!buf) return NULL;

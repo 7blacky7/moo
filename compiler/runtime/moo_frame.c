@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 /* ---- Forward-Decls (in moo_value.c / moo_dict.c / moo_string.c definiert) ---- */
 extern MooValue moo_number(double n);
@@ -369,4 +370,91 @@ MooValue moo_test_frame_region(MooValue frame, MooValue x, MooValue y, MooValue 
     moo_dict_set(dict, moo_string_new("blau"),  moo_number((double)((sum[2] + cnt / 2) / cnt)));
     moo_dict_set(dict, moo_string_new("alpha"), moo_number((double)((sum[3] + cnt / 2) / cnt)));
     return dict;
+}
+
+/* Exact counts and population statistics on immutable RGBA8 frames.
+ * Histograms avoid sum-of-squares overflow and cancellation in the variance.
+ * All exported counts fit the exact integer range of Moo's double numbers. */
+MooValue moo_test_frame_statistics(MooValue frame, MooValue x, MooValue y,
+                                   MooValue width, MooValue height) {
+    if (frame.tag != MOO_FRAME) {
+        moo_throw(moo_string_new("test_frame_statistik: Frame erwartet"));
+        return moo_none();
+    }
+    const MooFrame* f = MV_FRAME(frame);
+    if (!f || !f->pixels || f->format != MOO_FRAME_FMT_RGBA8 ||
+        f->width <= 0 || f->height <= 0 || f->stride <= 0 ||
+        (size_t)f->width > SIZE_MAX / 4 ||
+        (size_t)f->stride < (size_t)f->width * 4 ||
+        (size_t)(f->height - 1) > (SIZE_MAX - (size_t)f->width * 4) / (size_t)f->stride) {
+        moo_throw(moo_string_new("test_frame_statistik: ungueltiger Frame"));
+        return moo_none();
+    }
+    MooValue args[4] = {x, y, width, height};
+    double v[4];
+    for (int i = 0; i < 4; ++i) {
+        if (args[i].tag != MOO_NUMBER) {
+            moo_throw(moo_string_new("test_frame_statistik: ganzzahlige ROI erwartet"));
+            return moo_none();
+        }
+        v[i] = MV_NUM(args[i]);
+        if (!isfinite(v[i]) || v[i] != floor(v[i]) || v[i] < 0.0) {
+            moo_throw(moo_string_new("test_frame_statistik: ganzzahlige endliche ROI erwartet"));
+            return moo_none();
+        }
+    }
+    if (v[2] < 1.0 || v[3] < 1.0 || v[0] >= f->width || v[1] >= f->height ||
+        v[2] > (double)f->width - v[0] || v[3] > (double)f->height - v[1]) {
+        moo_throw(moo_string_new("test_frame_statistik: ROI ausserhalb des Frames"));
+        return moo_none();
+    }
+    /* Casts are now within positive int32 frame dimensions. */
+    const int ix = (int)v[0], iy = (int)v[1], iw = (int)v[2], ih = (int)v[3];
+    const uint64_t count = (uint64_t)iw * (uint64_t)ih;
+    if (count > UINT64_C(9007199254740991)) {
+        moo_throw(moo_string_new("test_frame_statistik: Pixelzahl nicht exakt darstellbar"));
+        return moo_none();
+    }
+    uint64_t hist[4][256] = {{0}};
+    uint64_t bright = 0, dark = 0;
+    for (int row = 0; row < ih; ++row) {
+        const uint8_t* p = f->pixels + (size_t)(iy + row) * (size_t)f->stride + (size_t)ix * 4;
+        for (int col = 0; col < iw; ++col, p += 4) {
+            for (int c = 0; c < 4; ++c) ++hist[c][p[c]];
+            if (p[0] == 255 || p[1] == 255 || p[2] == 255) ++bright;
+            if (p[0] <= 5 && p[1] <= 5 && p[2] <= 5) ++dark;
+        }
+    }
+    MooValue result = moo_dict_new();
+    moo_dict_set(result, moo_string_new("pixelzahl"), moo_number((double)count));
+    moo_dict_set(result, moo_string_new("any_rgb255"), moo_number((double)bright));
+    moo_dict_set(result, moo_string_new("all_rgb_le5"), moo_number((double)dark));
+    const char* names[4] = {"rot", "gruen", "blau", "alpha"};
+    for (int c = 0; c < 4; ++c) {
+        uint64_t sum = 0; /* count <= 2^53-1, sum <= 255*count < 2^61 */
+        int lo = 255, hi = 0;
+        MooValue bins = moo_list_new(256);
+        for (int k = 0; k < 256; ++k) {
+            if (hist[c][k]) {
+                if (k < lo) lo = k;
+                if (k > hi) hi = k;
+                sum += hist[c][k] * (uint64_t)k;
+            }
+            moo_list_append(bins, moo_number((double)hist[c][k]));
+        }
+        const long double mean = (long double)sum / (long double)count;
+        long double variance = 0.0L;
+        for (int k = 0; k < 256; ++k) {
+            const long double delta = (long double)k - mean;
+            variance += ((long double)hist[c][k] / (long double)count) * delta * delta;
+        }
+        MooValue channel = moo_dict_new();
+        moo_dict_set(channel, moo_string_new("min"), moo_number(lo));
+        moo_dict_set(channel, moo_string_new("max"), moo_number(hi));
+        moo_dict_set(channel, moo_string_new("mittelwert"), moo_number((double)mean));
+        moo_dict_set(channel, moo_string_new("varianz"), moo_number((double)variance));
+        moo_dict_set(channel, moo_string_new("histogramm"), bins);
+        moo_dict_set(result, moo_string_new(names[c]), channel);
+    }
+    return result;
 }

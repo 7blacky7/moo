@@ -1,0 +1,110 @@
+# GFX-TIME: run in private Xvfb; GFX_TIME_MODE=hybrid selects hybrid.
+# Uses Moo capture/diff; no screenshots of the desktop.
+funktion pruefen(ok, meldung):
+    wenn nicht ok:
+        wirf meldung
+    zeige meldung
+
+funktion neues_fenster():
+    wenn umgebung("GFX_TIME_MODE") == "hybrid":
+        gib_zurück fenster_unified("GFX-TIME", 320, 240)
+    gib_zurück raum_erstelle("GFX-TIME", 320, 240)
+
+funktion praesentieren(win):
+    wenn umgebung("GFX_TIME_MODE") == "hybrid":
+        hybrid_aktualisieren(win)
+    sonst:
+        raum_aktualisieren(win)
+
+funktion schliessen(win):
+    wenn umgebung("GFX_TIME_MODE") == "hybrid":
+        hybrid_schliessen(win)
+    sonst:
+        raum_schliessen(win)
+
+funktion zeichnen(win):
+    raum_löschen(win, 0.02, 0.03, 0.05)
+    raum_perspektive(win, 55, 0.1, 100)
+    raum_kamera(win, 4, 3, 6, 0, 0, 0)
+    raum_umgebungslicht(win, 0.7)
+    raum_wellen(win, 0.6, 1.3, 4)
+    raum_würfel(win, 0, 0, 0, 2, "#80C0FF")
+
+funktion gleich(a, b):
+    setze d auf test_frame_diff(a, b)
+    gib_zurück d["geaenderte_pixel"] == 0
+
+setze win auf neues_fenster()
+raum_bloom(win, 0.4, 0.3, 2)
+raum_renderzeit(win, 0)
+zeichnen(win)
+setze nullbild auf test_frame_grab(win)
+praesentieren(win)
+raum_renderzeit(win, 1.25)
+zeichnen(win)
+setze a auf test_frame_grab(win)
+setze b auf test_frame_grab(win)
+pruefen(gleich(a, b), "PASS capture idempotent")
+pruefen(nicht gleich(nullbild, a), "PASS time change before draw")
+praesentieren(win)
+warte(100)
+zeichnen(win)
+setze c auf test_frame_grab(win)
+pruefen(gleich(a, c), "PASS fixed through present and wallclock")
+praesentieren(win)
+space_render_time(win, 1.25)
+zeichnen(win)
+setze aliasbild auf test_frame_grab(win)
+pruefen(gleich(a, aliasbild), "PASS English alias")
+praesentieren(win)
+space_render_time(win, 2.5)
+zeichnen(win)
+setze d auf test_frame_grab(win)
+pruefen(nicht gleich(a, d), "PASS second explicit time")
+praesentieren(win)
+
+setze gefangen auf falsch
+versuche:
+    raum_renderzeit(win, -1)
+fange problem:
+    setze gefangen auf wahr
+pruefen(gefangen, "PASS negative rejected")
+setze gefangen auf falsch
+versuche:
+    raum_renderzeit(win, "ungueltig")
+fange problem:
+    setze gefangen auf wahr
+pruefen(gefangen, "PASS type rejected")
+zeichnen(win)
+pruefen(gleich(d, test_frame_grab(win)), "PASS invalid preserves time")
+praesentieren(win)
+
+raum_renderzeit_live(win)
+zeichnen(win)
+setze live_a auf test_frame_grab(win)
+warte(180)
+praesentieren(win)
+zeichnen(win)
+setze live_b auf test_frame_grab(win)
+pruefen(nicht gleich(live_a, live_b), "PASS live endframe advances")
+praesentieren(win)
+warte(180)
+space_render_time_live(win)
+zeichnen(win)
+pruefen(nicht gleich(live_b, test_frame_grab(win)), "PASS live restore immediate")
+praesentieren(win)
+raum_renderzeit(win, 1.25)
+schliessen(win)
+
+# A new context must not inherit fixed mode.
+setze win2 auf neues_fenster()
+zeichnen(win2)
+setze fresh_a auf test_frame_grab(win2)
+warte(180)
+praesentieren(win2)
+zeichnen(win2)
+setze fresh_b auf test_frame_grab(win2)
+pruefen(nicht gleich(fresh_a, fresh_b), "PASS new context live default")
+praesentieren(win2)
+schliessen(win2)
+zeige "GFX-TIME PASS"

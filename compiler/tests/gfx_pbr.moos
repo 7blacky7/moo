@@ -1,0 +1,81 @@
+# Public GGX state and validation: identical fixture in 3D and Hybrid.
+funktion gfx_pbr_assert(ok, label):
+    wenn nicht ok:
+        wirf label
+    zeige label
+funktion gfx_pbr_draw(win):
+    raum_löschen(win, 0, 0, 0)
+    raum_kamera(win, 0, 0, 4, 0, 0, 0)
+    raum_würfel(win, 0, 0, 0, 2, "#FFFFFF")
+    raum_szene_ende(win)
+    gib_zurück test_frame_grab(win)
+funktion gfx_pbr_invalid(win, metal, rough, prior):
+    setze failed auf falsch
+    versuche:
+        raum_pbr(win, metal, rough)
+    fange e:
+        setze failed auf wahr
+    gfx_pbr_assert(failed, "PASS invalid PBR rejected")
+    setze actual auf gfx_pbr_draw(win)
+    gfx_pbr_assert(test_frame_diff(prior, actual)["geaenderte_pixel"] == 0, "PASS invalid PBR preserves draw state")
+setze win auf nichts
+wenn umgebung("GFX_TIME_MODE") == "hybrid":
+    setze win auf fenster_unified("PBR API", 161, 121)
+sonst:
+    setze win auf raum_erstelle("PBR API", 161, 121)
+setze failed auf falsch
+versuche:
+    raum_pbr(win, 0, 0.5)
+fange e:
+    setze failed auf wahr
+gfx_pbr_assert(failed, "PASS PBR requires HDR")
+raum_hdr(win, wahr)
+raum_pbr(win, 1, 0.2)
+raum_hdr(win, falsch)
+setze failed auf falsch
+versuche:
+    raum_pbr(win, 0, 0.5)
+fange e:
+    setze failed auf wahr
+gfx_pbr_assert(failed, "PASS HDR off disables PBR and still rejects enabling PBR")
+raum_hdr(win, wahr)
+raum_belichtung(win, 1)
+raum_renderzeit(win, 1)
+raum_perspektive(win, 45, 0.1, 100)
+raum_nebel(win, 0)
+raum_licht(win, 0, 0, 1)
+raum_licht_linear(win, 0, 0.4, 0.4, 0.4)
+raum_umgebungslicht(win, 0)
+raum_glanz(win, 0, 32)
+setze legacy auf gfx_pbr_draw(win)
+space_pbr(win, 1, 1)
+setze material auf gfx_pbr_draw(win)
+gfx_pbr_assert(test_frame_diff(legacy, material)["geaenderte_pixel"] > 0, "PASS PBR changes actual material pixels")
+setze repeated auf test_frame_grab(win)
+gfx_pbr_assert(test_frame_diff(material, repeated)["geaenderte_pixel"] == 0, "PASS PBR repeated capture exact")
+gfx_pbr_invalid(win, -1, 1, material)
+gfx_pbr_invalid(win, 1.01, 1, material)
+gfx_pbr_invalid(win, 1, -0.01, material)
+gfx_pbr_invalid(win, 1, 1.01, material)
+gfx_pbr_invalid(win, "bad", 1, material)
+gfx_pbr_invalid(win, 1, wahr, material)
+space_pbr_off(win)
+setze restored auf gfx_pbr_draw(win)
+gfx_pbr_assert(test_frame_diff(legacy, restored)["geaenderte_pixel"] == 0, "PASS English off restores legacy exactly")
+raum_pbr(win, 1, 0)
+setze floor0 auf gfx_pbr_draw(win)
+raum_pbr(win, 1, 0.05)
+setze floor05 auf gfx_pbr_draw(win)
+gfx_pbr_assert(test_frame_diff(floor0, floor05)["geaenderte_pixel"] == 0, "PASS public roughness floor")
+raum_pbr_aus(win)
+wenn umgebung("GFX_TIME_MODE") == "hybrid":
+    hybrid_schliessen(win)
+sonst:
+    raum_schliessen(win)
+setze failed auf falsch
+versuche:
+    raum_pbr(win, 0, 0.5)
+fange e:
+    setze failed auf wahr
+gfx_pbr_assert(failed, "PASS closed PBR handle rejected")
+zeige "GFX-PBR native PASS"

@@ -23,6 +23,8 @@ void mat4_lookat(float* m,
                  float ux, float uy, float uz);
 void mat4_translate(float* m, float x, float y, float z);
 void mat4_rotate(float* m, float angle_deg, float ax, float ay, float az);
+void mat4_scale(float* m, float sx, float sy, float sz);
+void mat4_ortho(float* m, float l, float r, float b, float t, float n, float f);
 
 /* Software matrix stack (for backends without built-in stack) */
 void moo_matrix_stack_init(MooMatrixStack* s);

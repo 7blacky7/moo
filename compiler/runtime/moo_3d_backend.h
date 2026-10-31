@@ -8,6 +8,20 @@
 
 #include <stdint.h>  /* uint8_t fuer grab_rgba (Plan-008 A3A) */
 
+/* Borrowed backend strings, copied by the caller while the context is alive. */
+typedef struct {
+    const char* backend;
+    const char* api;
+    const char* vendor;
+    const char* renderer;
+    const char* version;
+} MooRendererInfo;
+
+typedef struct {
+    float ior, max_distance;
+    float absorption[3], tint[3], sky_horizon[3], sky_zenith[3];
+} MooWaterSettings;
+
 typedef struct {
     // Lifecycle
     void* (*create_window)(const char* title, int w, int h);
@@ -42,6 +56,8 @@ typedef struct {
     float (*mouse_wheel)(void* ctx);           // accumulated scroll-y, consume-on-read
     // Fog + Licht
     void  (*set_fog_density)(void* ctx, float density);
+    /* Opt-in analytic air extinction; returns 0 when HDR/backend is unavailable. */
+    int   (*set_height_fog)(void* ctx, int on, float base_height, float falloff, float sun_strength);
     void  (*set_fog_color)(void* ctx, float r, float g, float b);
     void  (*sky)(void* ctx, float zr, float zg, float zb, float hr, float hg, float hb);
     void  (*set_light_dir)(void* ctx, float x, float y, float z);
@@ -81,6 +97,47 @@ typedef struct {
     void  (*simulate_mouse_delta)(void* ctx, float dx, float dy);
     // Setzt alle Sim-States (Tastatur Tri-State + Maus-Delta) zurueck.
     void  (*simulate_reset)(void* ctx);
+    // ERDE-5: nicht-uniforme Skalierung der Model-Matrix (NULL = nicht unterstuetzt).
+    void  (*scale)(void* ctx, float sx, float sy, float sz);
+    // ERDE-5: Farbton, mit der Vertex-Farbe folgender Draws multipliziert (1,1,1 = aus).
+    void  (*set_tint)(void* ctx, float r, float g, float b);
+    // ERDE-7: Richtungslicht idx 0..3 (0 = Hauptlicht) und Punktlicht idx 0..3.
+    void  (*set_extra_light)(void* ctx, int idx, float x, float y, float z, float r, float g, float b);
+    void  (*set_point_light)(void* ctx, int idx, float x, float y, float z, float radius, float r, float g, float b);
+    // ERDE-8: Eigenleuchten (0 = aus) und Mischmodus (1 = additiv, 0 = normal).
+    void  (*set_emissive)(void* ctx, float strength);
+    void  (*set_blend_mode)(void* ctx, int additive);
+    // ERDE-10: unbeleuchtete 3D-Linie und -Punkt (size in Pixeln), sofort gezeichnet.
+    void  (*line)(void* ctx, float x1, float y1, float z1, float x2, float y2, float z2, float r, float g, float b);
+    void  (*point)(void* ctx, float x, float y, float z, float size, float r, float g, float b);
+    // Licht-Stufe 3: 1 = Normalen beim chunk_ende weich mitteln (Knick >= 60 Grad bleibt scharf).
+    void  (*set_smooth)(void* ctx, int on);
+    // ERDE-15: Textur aus RGBA8 (Zeile 0 oben) anlegen -> ID >= 1 (oder < 1 bei Fehler);
+    // set_texture: aktive Textur fuer folgende Draws (0 = aus), triplanar, scale pro Welteinheit.
+    int   (*texture_create)(void* ctx, const uint8_t* rgba, int w, int h);
+    void  (*set_texture)(void* ctx, int id, float scale);
+    // Licht-Stufe 4: Shadow-Map des Hauptlichts (size = Aufloesung, range = Bereich um den Blickpunkt).
+    void  (*set_shadow)(void* ctx, int on, int size, float range);
+    // ERDE-16: Bloom-Post-Pass am Frame-Ende (strength 0 = aus, threshold 0..1).
+    void  (*set_bloom)(void* ctx, float strength, float threshold, int passes);
+    // GFX-TIME: fixed=1 setzt Sekunden sofort; fixed=0 kehrt sofort zur Live-Uhr zurueck.
+    // NULL = nicht unterstuetzt. Capture/Present veraendern fixe Zeit nicht.
+    void  (*set_render_time)(void* ctx, int fixed, float seconds);
+    void  (*set_hdr)(void* ctx, int on);
+    void  (*set_exposure)(void* ctx, float multiplier);
+    void  (*set_auto_exposure)(void* ctx, float minimum, float maximum, float key, float tau);
+    float (*exposure_value)(void* ctx);
+    void (*set_linear_light)(void* ctx, int slot, float r, float g, float b);
+    void (*set_pbr)(void* ctx, int on, float metallic, float roughness);
+    /* AO status callbacks restore backend state before returning 0; caller throws. */
+    int (*set_ao)(void* ctx, int on, float radius, float strength, float bias);
+    int (*set_ao_debug)(void* ctx, int on);
+    int (*opaque_end)(void* ctx);
+    void  (*scene_end)(void* ctx);
+    // Metadata only. NULL/0 means unsupported; no capture, swap or frame mutation.
+    int   (*renderer_info)(void* ctx, MooRendererInfo* info);
+    int   (*water_background)(void* ctx);
+    int   (*set_water)(void* ctx, const MooWaterSettings* settings);
 } Moo3DBackend;
 
 // Backend-Deklarationen (je nach Feature-Flag verfuegbar)

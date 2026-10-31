@@ -1,0 +1,83 @@
+# Native water API/state contract. Visual/radiance gates remain separate.
+funktion gfx_water_assert(ok, label):
+    wenn nicht ok:
+        wirf label
+    zeige "PASS " + label
+funktion gfx_water_window():
+    wenn umgebung("GFX_TIME_MODE") == "hybrid":
+        gib_zurück fenster_unified("GFX-WATER", 160, 120)
+    gib_zurück raum_erstelle("GFX-WATER", 160, 120)
+funktion gfx_water_close(win):
+    wenn umgebung("GFX_TIME_MODE") == "hybrid":
+        hybrid_schliessen(win)
+    sonst:
+        raum_schliessen(win)
+funktion gfx_water_parameters():
+    gib_zurück {"ior": 1.333, "absorption": [0.055, 0.022, 0.012], "tint": "#195D69", "sky_horizon": 0x8099AA, "sky_zenith": "#336699", "max_distance": 80}
+funktion gfx_water_reject(win, parameters, label):
+    setze failed auf falsch
+    versuche:
+        raum_wasser_material(win, parameters)
+    fange e:
+        setze failed auf wahr
+    gfx_water_assert(failed, label)
+setze win auf gfx_water_window()
+raum_hdr(win, wahr)
+raum_renderzeit(win, 1.25)
+raum_löschen(win, 0.5, 0.5, 0.5)
+gfx_water_reject(win, gfx_water_parameters(), "material requires current snapshot")
+raum_wasser_hintergrund(win)
+raum_wasser_material(win, gfx_water_parameters())
+setze failed auf falsch
+versuche:
+    raum_wasser_hintergrund(win)
+fange e:
+    setze failed auf wahr
+gfx_water_assert(failed, "snapshot rejected while water active")
+raum_wasser_aus(win)
+water_material(win, gfx_water_parameters())
+water_off(win)
+water_off(win)
+gfx_water_assert(wahr, "DE/EN aliases and repeated off")
+gfx_water_reject(win, nichts, "dict required")
+gfx_water_reject(win, {}, "all fields required")
+setze p auf gfx_water_parameters()
+setze p["ior"] auf 1
+gfx_water_reject(win, p, "ior lower bound")
+setze p auf gfx_water_parameters()
+setze p["absorption"] auf [0.1, -0.1, 0.1]
+gfx_water_reject(win, p, "negative absorption")
+setze p auf gfx_water_parameters()
+setze p["absorption"] auf [0.1, 0.2]
+gfx_water_reject(win, p, "absorption length")
+setze p auf gfx_water_parameters()
+setze p["tint"] auf "#12GG56"
+gfx_water_reject(win, p, "strict hex color")
+setze p auf gfx_water_parameters()
+setze p["max_distance"] auf -1
+gfx_water_reject(win, p, "negative path bound")
+raum_wasser_material(win, gfx_water_parameters())
+raum_wasser_aus(win)
+raum_szene_ende(win)
+gfx_water_reject(win, gfx_water_parameters(), "material rejected after SceneEnd")
+setze first auf test_frame_grab(win)
+raum_wasser_aus(win)
+setze second auf test_frame_grab(win)
+gfx_water_assert(test_frame_diff(first, second)["geaenderte_pixel"] == 0, "off does not alter finalized capture")
+raum_löschen(win, 0, 0, 0)
+gfx_water_reject(win, gfx_water_parameters(), "new frame invalidates snapshot")
+water_background(win)
+water_material(win, gfx_water_parameters())
+water_off(win)
+gfx_water_close(win)
+setze legacy auf gfx_water_window()
+raum_löschen(legacy, 0, 0, 0)
+gfx_water_reject(legacy, gfx_water_parameters(), "legacy material rejected")
+setze failed auf falsch
+versuche:
+    water_background(legacy)
+fange e:
+    setze failed auf wahr
+gfx_water_assert(failed, "legacy snapshot rejected")
+gfx_water_close(legacy)
+zeige "GFX-WATER native PASS"

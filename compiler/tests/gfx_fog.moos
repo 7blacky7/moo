@@ -1,0 +1,135 @@
+# Analytic height fog: public API, true zero and output radiance.
+funktion gfx_fog_assert(ok, label):
+    wenn nicht ok:
+        wirf label
+    zeige "PASS " + label
+funktion gfx_fog_legacy(win, distance, density, expected_green):
+    raum_löschen(win,0,0,0)
+    raum_perspektive(win,45,0.1,20000)
+    raum_kamera(win,0,0,distance,0,0,0)
+    raum_nebel(win,density)
+    raum_nebel_farbe(win,"#FF0000")
+    raum_lichtfarbe(win,"#FFFFFF")
+    raum_umgebungslicht(win,1)
+    raum_leuchten(win,0)
+    raum_glanz(win,0,16)
+    raum_dreieck(win,-20000,-20000,0,20000,-20000,0,0,20000,0,"#FFFFFF")
+    setze p auf test_pixel(test_frame_grab(win),80,60)
+    gfx_fog_assert(p["rot"] == 255 und abs(p["gruen"]-expected_green) <= 1 und abs(p["blau"]-expected_green) <= 1,"nonHDR fog density=" + text(density) + " depth=" + text(distance) + " green=" + text(p["gruen"]))
+funktion gfx_fog_case(win, y, distance, density, expected):
+    raum_löschen(win, 0, 0, 0)
+    raum_perspektive(win, 45, 0.1, 500)
+    raum_kamera(win, 0, y, distance, 0, y, 0)
+    raum_nebel(win, density)
+    raum_nebel_farbe(win, "#000000")
+    raum_hoehennebel(win, 0, 0.1, 0)
+    raum_glanz(win, 0, 16)
+    raum_transparenz(win, 1)
+    raum_umgebungslicht(win, 0)
+    raum_lichtfarbe(win, "#000000")
+    raum_farbton(win, "#FFFFFF")
+    raum_leuchten(win, 1)
+    raum_dreieck(win, -1000, y-1000, 0, 1000, y-1000, 0, 0, y+1000, 0, "#FFFFFF")
+    raum_szene_ende(win)
+    setze a auf test_frame_grab(win)
+    setze b auf test_frame_grab(win)
+    gfx_fog_assert(test_frame_diff(a,b)["geaenderte_pixel"] == 0, "capture idempotent")
+    setze p auf test_pixel(a,80,60)
+    für channel in ["rot","gruen","blau"]:
+        gfx_fog_assert(abs(p[channel]-expected) <= 2, "radiance y=" + text(y) + " density=" + text(density) + " " + channel + "=" + text(p[channel]))
+funktion gfx_fog_zero(win, distance, enabled):
+    raum_löschen(win, 0, 0, 0)
+    raum_perspektive(win, 45, 0.1, 1000)
+    raum_kamera(win, 0, 0, distance, 0, 0, 0)
+    raum_nebel(win, 0)
+    raum_nebel_farbe(win, "#FF0000")
+    wenn enabled:
+        space_height_fog(win, 0, 0.1, 1)
+    sonst:
+        space_height_fog_off(win)
+    raum_dreieck(win, -2000, -2000, 0, 2000, -2000, 0, 0, 2000, 0, "#FFFFFF")
+    raum_szene_ende(win)
+    setze p auf test_pixel(test_frame_grab(win),80,60)
+    gfx_fog_assert(abs(p["rot"]-206) <= 1 und abs(p["gruen"]-206) <= 1 und abs(p["blau"]-206) <= 1, "public density0 exact contrasting fog depth=" + text(distance))
+funktion gfx_fog_source_case(win, intensity, additive, expected):
+    raum_löschen(win,0,0,0)
+    raum_kamera(win,0,0,5,0,0,0)
+    raum_nebel(win,0.2)
+    raum_nebel_farbe(win,"#000000")
+    raum_hoehennebel(win,0,0,0.5)
+    raum_licht(win,0,0,-1)
+    raum_licht_linear(win,0,intensity,intensity,intensity)
+    raum_mischmodus(win,"normal")
+    setze color auf "#000000"
+    wenn additive:
+        raum_nebel_farbe(win,"#FF0000")
+        raum_licht_linear(win,0,0,0,0)
+        raum_mischmodus(win,"additiv")
+        setze color auf "#FFFFFF"
+    raum_dreieck(win,-100,-100,0,100,-100,0,0,100,0,color)
+    raum_szene_ende(win)
+    setze p auf test_pixel(test_frame_grab(win),80,60)
+    für channel in ["rot","gruen","blau"]:
+        gfx_fog_assert(abs(p[channel]-expected) <= 2,"solar/additive intensity=" + text(intensity) + " additive=" + text(additive) + " " + channel + "=" + text(p[channel]))
+setze win auf nichts
+wenn umgebung("GFX_TIME_MODE") == "hybrid":
+    setze win auf fenster_unified("GFX-Fog",161,121)
+sonst:
+    setze win auf raum_erstelle("GFX-Fog",161,121)
+setze failed auf falsch
+versuche:
+    raum_hoehennebel(win,0,0.1,0)
+fange e:
+    setze failed auf wahr
+gfx_fog_assert(failed,"legacy rejected")
+gfx_fog_legacy(win,1000,0.001,94)
+für distance in [5,1000,10000]:
+    gfx_fog_legacy(win,distance,0,255)
+# HDR opt-in must happen before rendering resources; use a fresh window.
+wenn umgebung("GFX_TIME_MODE") == "hybrid":
+    hybrid_schliessen(win)
+    setze win auf fenster_unified("GFX-Fog HDR",161,121)
+sonst:
+    raum_schliessen(win)
+    setze win auf raum_erstelle("GFX-Fog HDR",161,121)
+raum_hdr(win,wahr)
+raum_belichtung(win,1)
+raum_renderzeit(win,1.25)
+gfx_fog_case(win,0,5,0.2,142)
+gfx_fog_case(win,5,5,0.2,171)
+gfx_fog_case(win,0,100,0.0001,206)
+gfx_fog_case(win,0,100,0.001,201)
+für distance in [5,100,500]:
+    gfx_fog_zero(win,distance,wahr)
+    gfx_fog_zero(win,distance,falsch)
+raum_löschen(win,0,0,0)
+raum_hoehennebel(win,0,0.1,0)
+für invalid in [-1,1001,"bad"]:
+    setze failed auf falsch
+    versuche:
+        raum_hoehennebel(win,0,invalid,0)
+    fange e:
+        setze failed auf wahr
+    gfx_fog_assert(failed,"invalid falloff")
+setze failed auf falsch
+versuche:
+    raum_nebel(win,-0.1)
+fange e:
+    setze failed auf wahr
+gfx_fog_assert(failed,"negative density rejected")
+raum_szene_ende(win)
+setze failed auf falsch
+versuche:
+    raum_hoehennebel(win,0,0.1,0)
+fange e:
+    setze failed auf wahr
+gfx_fog_assert(failed,"profile after SceneEnd rejected")
+raum_hoehennebel_aus(win)
+gfx_fog_source_case(win,1,falsch,131)
+gfx_fog_source_case(win,2,falsch,180)
+gfx_fog_source_case(win,0,wahr,142)
+wenn umgebung("GFX_TIME_MODE") == "hybrid":
+    hybrid_schliessen(win)
+sonst:
+    raum_schliessen(win)
+zeige "GFX-FOG native PASS"

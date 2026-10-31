@@ -1,0 +1,99 @@
+# Controlled flat interface. Independent A2 oracles c34a1b7c.
+# 161x121 gives an exact optical-axis center pixel (80,60).
+funktion gfx_wr_check(win, expected, label):
+    setze frame auf test_frame_grab(win)
+    setze p auf test_pixel(frame, 80, 60)
+    setze rgb auf [p["rot"], p["gruen"], p["blau"]]
+    für i in 0..3:
+        wenn abs(rgb[i] - expected[i]) > 2:
+            wirf label + " expected=" + text(expected) + " actual=" + text(rgb)
+    zeige "PASS " + label + " RGB=" + text(rgb)
+funktion gfx_wr_plane(win, z, color):
+    raum_dreieck(win, -100, -100, z, 100, -100, z, 0, 100, z, color)
+funktion gfx_wr_below(win, degrees, expected):
+    setze theta auf degrees * 0.017453292519943295
+    raum_löschen(win, 0, 0, 0)
+    raum_perspektive(win, 45, 0.1, 500)
+    raum_kamera(win, 5 * sinus(theta), 0, -5 * cosinus(theta), 0, 0, 0)
+    raum_wellen(win, 0, 0, 0)
+    raum_wasser_hintergrund(win)
+    raum_wasser_material(win, {"ior": 1.333, "absorption": [0, 0, 0], "tint": "#FFFFFF", "sky_horizon": "#000000", "sky_zenith": "#000000", "max_distance": 100})
+    gfx_wr_plane(win, 0, "#FF0000")
+    raum_wasser_aus(win)
+    raum_szene_ende(win)
+    gfx_wr_check(win, [expected, expected, expected], "below theta=" + text(degrees))
+funktion gfx_wr_alpha_frame(win, cycle):
+    raum_löschen(win, 1, 1, 1)
+    raum_perspektive(win, 45, 0.1, 500)
+    raum_kamera(win, 0, 0, 5, 0, 0, 0)
+    raum_transparenz(win, 1)
+    wenn cycle:
+        raum_wasser_hintergrund(win)
+        raum_wasser_material(win, {"ior": 1.333, "absorption": [0, 0, 0], "tint": "#000000", "sky_horizon": "#000000", "sky_zenith": "#000000", "max_distance": 100})
+        raum_wasser_aus(win)
+    raum_transparenz(win, 0.5)
+    gfx_wr_plane(win, 0, "#FF0000")
+    raum_szene_ende(win)
+    gib_zurück test_frame_grab(win)
+funktion gfx_wr_case(win, degrees, d, reflection, expected):
+    setze theta auf degrees * 0.017453292519943295
+    raum_löschen(win, 0, 0, 0)
+    raum_perspektive(win, 45, 0.1, 500)
+    raum_kamera(win, 5 * sinus(theta), 0, 5 * cosinus(theta), 0, 0, 0)
+    raum_wellen(win, 0, 0, 0)
+    raum_nebel(win, 0)
+    raum_glanz(win, 0, 16)
+    raum_transparenz(win, 1)
+    raum_umgebungslicht(win, 0)
+    raum_lichtfarbe(win, "#000000")
+    raum_farbton(win, "#FFFFFF")
+    raum_leuchten(win, 1)
+    setze sky auf "#000000"
+    setze background auf "#FFFFFF"
+    setze sigma auf [0.2, 0.05, 0.01]
+    wenn reflection:
+        setze sky auf "#FFFFFF"
+        setze background auf "#000000"
+        setze sigma auf [0, 0, 0]
+    # Legacy fog clamps density to >=.001; identical fog/background cancels it exactly.
+    raum_nebel_farbe(win, background)
+    gfx_wr_plane(win, -d, background)
+    raum_wasser_hintergrund(win)
+    raum_wasser_material(win, {"ior": 1.333, "absorption": sigma, "tint": "#000000", "sky_horizon": sky, "sky_zenith": sky, "max_distance": 100})
+    gfx_wr_plane(win, 0, "#FF0000")
+    raum_wasser_aus(win)
+    raum_szene_ende(win)
+    gfx_wr_check(win, expected, "theta=" + text(degrees) + " d=" + text(d) + " reflection=" + text(reflection))
+setze win auf nichts
+wenn umgebung("GFX_TIME_MODE") == "hybrid":
+    setze win auf fenster_unified("Water radiance", 161, 121)
+sonst:
+    setze win auf raum_erstelle("Water radiance", 161, 121)
+raum_hdr(win, wahr)
+raum_belichtung(win, 1)
+raum_renderzeit(win, 1.25)
+# Neutral linear-white control through the same final output transform.
+raum_löschen(win, 1, 1, 1)
+raum_szene_ende(win)
+gfx_wr_check(win, [206, 206, 206], "linear-white output control")
+gfx_wr_case(win, 0, 1, falsch, [196, 203, 204])
+gfx_wr_case(win, 0, 5, falsch, [153, 192, 201])
+gfx_wr_case(win, 60, 2, falsch, [162, 193, 201])
+gfx_wr_case(win, 0, 1, wahr, [11, 11, 11])
+gfx_wr_case(win, 60, 1, wahr, [32, 32, 32])
+gfx_wr_case(win, 80, 1, wahr, [148, 148, 148])
+setze alpha_reference auf gfx_wr_alpha_frame(win, falsch)
+setze alpha_after_water auf gfx_wr_alpha_frame(win, wahr)
+wenn test_frame_diff(alpha_reference, alpha_after_water)["geaenderte_pixel"] != 0:
+    wirf "water_off changed subsequent alpha blending"
+zeige "PASS alpha blending after water_off"
+gfx_wr_below(win, 0, 11)
+gfx_wr_below(win, 40, 35)
+gfx_wr_below(win, 48, 154)
+gfx_wr_below(win, 48.5, 187)
+gfx_wr_below(win, 49, 206)
+wenn umgebung("GFX_TIME_MODE") == "hybrid":
+    hybrid_schliessen(win)
+sonst:
+    raum_schliessen(win)
+zeige "GFX-WATER radiance PASS"

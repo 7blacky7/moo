@@ -5,7 +5,10 @@
 
 #include "moo_runtime.h"
 #include "moo_3d_backend.h"
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
 #include <math.h>
+#include <float.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -21,12 +24,159 @@ extern void moo_throw(MooValue v);
 // === Aktives Backend ===
 static Moo3DBackend* g_backend = NULL;
 static void* g_ctx = NULL;
+/* Single active context only. Pointer-backed handles are not generation IDs:
+ * allocator address reuse after close is not distinguishable from a new handle. */
+static MooValue g_active_window = { .tag = MOO_NONE };
+
+void moo_3d_register_window(MooValue win, void* ctx) {
+    if (ctx && ctx == g_ctx && g_backend &&
+        (win.tag == MOO_WINDOW3D || win.tag == MOO_WINDOW_HYBRID) &&
+        moo_val_as_ptr(win))
+        g_active_window = win;
+}
+
+int moo_3d_active_window(MooValue win) {
+    return g_backend && g_ctx &&
+        (win.tag == MOO_WINDOW3D || win.tag == MOO_WINDOW_HYBRID) &&
+        win.tag == g_active_window.tag && moo_val_as_ptr(win) &&
+        moo_val_as_ptr(win) == moo_val_as_ptr(g_active_window);
+}
+
+void moo_3d_detach_external(void* ctx) {
+    if (!ctx || ctx != g_ctx) return;
+    g_active_window.tag = MOO_NONE;
+    g_ctx = NULL;
+    g_backend = NULL;
+}
 
 /* P6: extern hook — Hybrid-Renderer kann sich als aktives 3D-Backend
  * registrieren, sodass raum_*-Calls auf das Hybrid-Fenster zeichnen. */
 void moo_3d_attach_external(void* backend, void* ctx) {
+    g_active_window.tag = MOO_NONE;
     g_backend = (Moo3DBackend*)backend;
     g_ctx = ctx;
+}
+
+/* -1: invalid/closed/unregistered handle; 0: unsupported; 1: metadata. */
+int moo_3d_renderer_info(MooValue win, MooRendererInfo* info) {
+    if (!info || !moo_3d_active_window(win)) return -1;
+    *info = (MooRendererInfo){0};
+    if (!g_backend->renderer_info) return 0;
+    return g_backend->renderer_info(g_ctx, info) ? 1 : 0;
+}
+
+static int moo_3d_hdr_window(MooValue win) {
+    if (!moo_3d_active_window(win)) {
+        moo_throw(moo_string_new("HDR: ungueltiges/geschlossenes Fenster")); return 0;
+    }
+    if (!g_backend->set_hdr || !g_backend->scene_end || !g_backend->set_exposure) {
+        moo_throw(moo_string_new("HDR: Backend nicht unterstuetzt")); return 0;
+    }
+    return 1;
+}
+static int moo_3d_ao_window(MooValue win) {
+    if(!moo_3d_hdr_window(win)) return 0;
+    if(!g_backend->set_ao || !g_backend->set_ao_debug || !g_backend->opaque_end) {
+        moo_throw(moo_string_new("AO: Backend nicht unterstuetzt")); return 0;
+    }
+    return 1;
+}
+void moo_3d_ao(MooValue win,MooValue radius,MooValue strength,MooValue bias) {
+    if(!moo_3d_ao_window(win)) return;
+    MooValue values[]={radius,strength,bias};
+    for(int i=0;i<3;i++) if(values[i].tag!=MOO_NUMBER || !isfinite(MV_NUM(values[i]))) {
+        moo_throw(moo_string_new("AO: Radius, Staerke und Bias muessen endliche Zahlen sein")); return;
+    }
+    double r=MV_NUM(radius),s=MV_NUM(strength),b=MV_NUM(bias);
+    if(r<0 || r>10000 || s<0 || s>1 || b<0 || b>r) {
+        moo_throw(moo_string_new("AO: Radius 0..10000, Staerke 0..1, Bias 0..Radius erforderlich")); return;
+    }
+    if(!g_backend->set_ao(g_ctx,1,(float)r,(float)s,(float)b))
+        moo_throw(moo_string_new("AO: HDR und Konfiguration an einer Framegrenze erforderlich"));
+}
+void moo_3d_ao_off(MooValue win) {
+    if(!moo_3d_ao_window(win)) return;
+    if(!g_backend->set_ao(g_ctx,0,0,0,0))
+        moo_throw(moo_string_new("AO aus: HDR und Framegrenze erforderlich"));
+}
+void moo_3d_ao_debug(MooValue win,MooValue on) {
+    if(!moo_3d_ao_window(win)) return;
+    if(on.tag!=MOO_BOOL) { moo_throw(moo_string_new("AO-Debug: Bool erforderlich")); return; }
+    if(!g_backend->set_ao_debug(g_ctx,MV_BOOL(on)?1:0))
+        moo_throw(moo_string_new("AO-Debug: HDR, AO-Konfiguration und Framegrenze erforderlich"));
+}
+void moo_3d_opaque_end(MooValue win) {
+    if(!moo_3d_ao_window(win)) return;
+    if(!g_backend->opaque_end(g_ctx))
+        moo_throw(moo_string_new("Opaker Abschluss: HDR-Szene erforderlich oder AO-Pass fehlgeschlagen"));
+}
+void moo_3d_pbr(MooValue win,MooValue metallic,MooValue roughness) {
+    if(!moo_3d_hdr_window(win)) return;
+    if(!g_backend->set_pbr) { moo_throw(moo_string_new("PBR: Backend nicht unterstuetzt")); return; }
+    MooValue values[]={metallic,roughness};
+    for(int i=0;i<2;i++) if(values[i].tag!=MOO_NUMBER || !isfinite(MV_NUM(values[i])) ||
+            MV_NUM(values[i])<0 || MV_NUM(values[i])>1) {
+        moo_throw(moo_string_new("PBR: metallic und roughness muessen endlich in 0..1 sein")); return;
+    }
+    g_backend->set_pbr(g_ctx,1,(float)MV_NUM(metallic),(float)MV_NUM(roughness));
+}
+void moo_3d_pbr_off(MooValue win) {
+    if(!moo_3d_hdr_window(win)) return;
+    if(!g_backend->set_pbr) { moo_throw(moo_string_new("PBR: Backend nicht unterstuetzt")); return; }
+    g_backend->set_pbr(g_ctx,0,0,1);
+}
+void moo_3d_hdr(MooValue win, MooValue on) {
+    if (!moo_3d_hdr_window(win)) return;
+    if (on.tag != MOO_BOOL && on.tag != MOO_NUMBER) {
+        moo_throw(moo_string_new("raum_hdr: erwartet Bool oder 0/1")); return;
+    }
+    double v=on.tag==MOO_BOOL ? (MV_BOOL(on)?1.0:0.0) : MV_NUM(on);
+    if (v!=0.0 && v!=1.0) { moo_throw(moo_string_new("raum_hdr: erwartet 0/1")); return; }
+    g_backend->set_hdr(g_ctx,(int)v);
+}
+void moo_3d_linear_light(MooValue win,MooValue slot,MooValue r,MooValue g,MooValue b) {
+    if (!moo_3d_hdr_window(win)) return;
+    if (!g_backend->set_linear_light) { moo_throw(moo_string_new("Lineares Licht: Backend nicht unterstuetzt")); return; }
+    MooValue values[]={slot,r,g,b};
+    for(int i=0;i<4;i++) if(values[i].tag!=MOO_NUMBER || !isfinite(MV_NUM(values[i])) ||
+            MV_NUM(values[i])<0 || MV_NUM(values[i])>(i==0?7:65504)) {
+        moo_throw(moo_string_new("Lineares Licht: Slot 0..7, RGB endlich 0..65504 erforderlich")); return;
+    }
+    double s=MV_NUM(slot);
+    if(s!=floor(s)) { moo_throw(moo_string_new("Lineares Licht: ganzzahliger Slot erforderlich")); return; }
+    g_backend->set_linear_light(g_ctx,(int)s,(float)MV_NUM(r),(float)MV_NUM(g),(float)MV_NUM(b));
+}
+void moo_3d_auto_exposure(MooValue win,MooValue minimum,MooValue maximum,MooValue key,MooValue tau) {
+    if (!moo_3d_hdr_window(win)) return;
+    if (!g_backend->set_auto_exposure) { moo_throw(moo_string_new("Auto-Belichtung: Backend nicht unterstuetzt")); return; }
+    MooValue values[]={minimum,maximum,key,tau};
+    float v[4];
+    for(int i=0;i<4;i++) {
+        if(values[i].tag!=MOO_NUMBER || !isfinite(MV_NUM(values[i])) || !isfinite((float)MV_NUM(values[i]))) {
+            moo_throw(moo_string_new("Auto-Belichtung: endliche Zahlen erforderlich")); return;
+        }
+        v[i]=(float)MV_NUM(values[i]);
+    }
+    if(v[0]<=0 || MV_NUM(maximum)<MV_NUM(minimum) || v[1]<v[0] || MV_NUM(maximum)>64 || v[2]<=0 || MV_NUM(tau)<0) {
+        moo_throw(moo_string_new("Auto-Belichtung: 0<min<=max<=64, key>0, tau>=0 erforderlich")); return;
+    }
+    g_backend->set_auto_exposure(g_ctx,v[0],v[1],v[2],v[3]);
+}
+MooValue moo_3d_exposure_value(MooValue win) {
+    if (!moo_3d_hdr_window(win)) return moo_none();
+    if (!g_backend->exposure_value) { moo_throw(moo_string_new("Belichtungswert: Backend nicht unterstuetzt")); return moo_none(); }
+    return moo_number(g_backend->exposure_value(g_ctx));
+}
+void moo_3d_exposure(MooValue win, MooValue multiplier) {
+    if (!moo_3d_hdr_window(win)) return;
+    double v=MV_NUM(multiplier);
+    if (multiplier.tag!=MOO_NUMBER || !isfinite(v) || v<0.0 || v>64.0) {
+        moo_throw(moo_string_new("Belichtung: endlicher Multiplikator 0..64 erforderlich")); return;
+    }
+    g_backend->set_exposure(g_ctx,(float)v);
+}
+void moo_3d_scene_end(MooValue win) {
+    if (moo_3d_hdr_window(win)) g_backend->scene_end(g_ctx);
 }
 
 /* Plan-005 1b: Sagt dem Voxel-Mesher, ob ein 3D-Backend aktiv ist.
@@ -85,11 +235,14 @@ static Color3 parse_color3(MooValue c) {
     return col;
 }
 
+#include "moo_3d_water_dispatch.h"
+
 // ============================================================
 // Fenster
 // ============================================================
 
 MooValue moo_3d_create(MooValue title, MooValue w, MooValue h) {
+    g_active_window.tag = MOO_NONE;
     const char* backend_name = getenv("MOO_3D_BACKEND");
     if (!backend_name) backend_name = "gl33";
 
@@ -124,6 +277,7 @@ MooValue moo_3d_create(MooValue title, MooValue w, MooValue h) {
     MooValue result;
     result.tag = MOO_WINDOW3D;
     moo_val_set_ptr(&result, g_ctx);
+    moo_3d_register_window(result, g_ctx);
     return result;
 }
 
@@ -146,10 +300,11 @@ void moo_3d_update(MooValue win) {
 }
 
 void moo_3d_close(MooValue win) {
-    (void)win;
-    if (!g_backend || !g_ctx) return;
-    g_backend->close(g_ctx);
-    g_ctx = NULL;
+    if (win.tag != MOO_WINDOW3D || !moo_3d_active_window(win)) return;
+    Moo3DBackend* backend = g_backend;
+    void* ctx = g_ctx;
+    moo_3d_detach_external(ctx);
+    backend->close(ctx);
 }
 
 // ============================================================
@@ -185,6 +340,164 @@ void moo_3d_translate(MooValue win, MooValue x, MooValue y, MooValue z) {
     (void)win;
     if (!g_backend || !g_ctx) return;
     g_backend->translate(g_ctx, (float)MV_NUM(x), (float)MV_NUM(y), (float)MV_NUM(z));
+}
+
+/* raum_skaliere(fenster, sx, sy, sz) — skaliert folgende Draws (Model-Matrix,
+ * wirkt wie verschiebe/rotiere innerhalb von push/pop). */
+void moo_3d_scale(MooValue win, MooValue sx, MooValue sy, MooValue sz) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->scale) return;
+    g_backend->scale(g_ctx, (float)MV_NUM(sx), (float)MV_NUM(sy), (float)MV_NUM(sz));
+}
+
+/* raum_farbton(fenster, "#RRGGBB") — multipliziert die Farbe folgender Draws
+ * (Tint pro chunk_zeichne-Instanz). "#FFFFFF" schaltet ihn ab. */
+void moo_3d_tint(MooValue win, MooValue color) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->set_tint) return;
+    Color3 c = parse_color3(color);
+    g_backend->set_tint(g_ctx, c.r, c.g, c.b);
+}
+
+/* Moo-Zahl sicher nach int (NaN/ausserhalb -> -1, damit Backends ablehnen). */
+static int moo_3d_index(MooValue v) {
+    double d = MV_NUM(v);
+    if (!(d >= 0.0 && d <= 1024.0)) return -1;
+    return (int)d;
+}
+
+/* raum_licht_hinzufuegen(fenster, idx, x, y, z, farbe) — idx 0 = Hauptlicht,
+ * 1..3 = zusaetzliche Richtungslichter (z.B. zweite Sonne, Mond). */
+void moo_3d_light_add(MooValue win, MooValue idx, MooValue x, MooValue y, MooValue z, MooValue color) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->set_extra_light) return;
+    Color3 c = parse_color3(color);
+    g_backend->set_extra_light(g_ctx, moo_3d_index(idx), (float)MV_NUM(x), (float)MV_NUM(y), (float)MV_NUM(z), c.r, c.g, c.b);
+}
+
+/* raum_punktlicht(fenster, idx, x, y, z, radius, farbe) — idx 0..3, radius 0 = aus. */
+void moo_3d_point_light(MooValue win, MooValue idx, MooValue x, MooValue y, MooValue z, MooValue radius, MooValue color) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->set_point_light) return;
+    Color3 c = parse_color3(color);
+    g_backend->set_point_light(g_ctx, moo_3d_index(idx), (float)MV_NUM(x), (float)MV_NUM(y), (float)MV_NUM(z), (float)MV_NUM(radius), c.r, c.g, c.b);
+}
+
+/* raum_leuchten(fenster, staerke) — Eigenleuchten folgender Draws (0 = aus). */
+void moo_3d_emissive(MooValue win, MooValue strength) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->set_emissive) return;
+    g_backend->set_emissive(g_ctx, (float)MV_NUM(strength));
+}
+
+/* raum_mischmodus(fenster, "additiv" | "normal") — additiv fuer Glow/Partikel/Blitze. */
+void moo_3d_blend_mode(MooValue win, MooValue mode) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->set_blend_mode) return;
+    int additive = 0;
+    if (mode.tag == MOO_STRING) {
+        const char* s = MV_STR(mode)->chars;
+        additive = (strcmp(s, "additiv") == 0 || strcmp(s, "additive") == 0 || strcmp(s, "add") == 0);
+    }
+    g_backend->set_blend_mode(g_ctx, additive);
+}
+
+/* raum_linie(fenster, x1, y1, z1, x2, y2, z2, farbe) — unbeleuchtete 3D-Linie. */
+void moo_3d_line(MooValue win, MooValue x1, MooValue y1, MooValue z1,
+                 MooValue x2, MooValue y2, MooValue z2, MooValue color) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->line) return;
+    Color3 c = parse_color3(color);
+    g_backend->line(g_ctx, (float)MV_NUM(x1), (float)MV_NUM(y1), (float)MV_NUM(z1),
+                    (float)MV_NUM(x2), (float)MV_NUM(y2), (float)MV_NUM(z2), c.r, c.g, c.b);
+}
+
+/* raum_punkt(fenster, x, y, z, groesse, farbe) — unbeleuchteter 3D-Punkt, groesse in Pixeln. */
+void moo_3d_point(MooValue win, MooValue x, MooValue y, MooValue z, MooValue size, MooValue color) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->point) return;
+    Color3 c = parse_color3(color);
+    g_backend->point(g_ctx, (float)MV_NUM(x), (float)MV_NUM(y), (float)MV_NUM(z),
+                     (float)MV_NUM(size), c.r, c.g, c.b);
+}
+
+/* raum_glaetten(fenster, an) — folgende chunk_ende mitteln Normalen gemeinsamer
+ * Ecken (Smooth-Shading fuer Terrain/runde Koerper); Kanten ab 60 Grad bleiben scharf. */
+void moo_3d_smooth(MooValue win, MooValue on) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->set_smooth) return;
+    int an = (on.tag == MOO_BOOL) ? (MV_BOOL(on) ? 1 : 0) : (MV_NUM(on) != 0.0);
+    g_backend->set_smooth(g_ctx, an);
+}
+
+/* raum_textur_laden(fenster, pfad) — PNG/JPG/BMP als Textur, liefert ID (>= 1)
+ * oder nichts, wenn die Datei nicht geladen werden kann. */
+MooValue moo_3d_texture_load(MooValue win, MooValue path) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->texture_create || path.tag != MOO_STRING) return moo_none();
+    SDL_Surface* raw = IMG_Load(MV_STR(path)->chars);
+    if (!raw) return moo_none();
+    SDL_Surface* rgba = SDL_ConvertSurfaceFormat(raw, SDL_PIXELFORMAT_RGBA32, 0);
+    SDL_FreeSurface(raw);
+    if (!rgba) return moo_none();
+    int w = rgba->w, h = rgba->h;
+    uint8_t* buf = (uint8_t*)malloc((size_t)w * (size_t)h * 4u);
+    int id = -1;
+    if (buf) {
+        for (int row = 0; row < h; row++)
+            memcpy(buf + (size_t)row * (size_t)w * 4u,
+                   (const uint8_t*)rgba->pixels + (size_t)row * (size_t)rgba->pitch, (size_t)w * 4u);
+        id = g_backend->texture_create(g_ctx, buf, w, h);
+        free(buf);
+    }
+    SDL_FreeSurface(rgba);
+    return id > 0 ? moo_number(id) : moo_none();
+}
+
+/* raum_textur_aus_flaeche(fenster, flaeche) — prozedurale Textur aus einer
+ * moo-Surface (flaeche_neu + flaeche_*), liefert ID oder nichts. */
+MooValue moo_3d_texture_from_surface(MooValue win, MooValue surface) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->texture_create) return moo_none();
+    int32_t w = 0, h = 0;
+    const uint8_t* px = moo_surface_rgba(surface, &w, &h);
+    if (!px) return moo_none();
+    int id = g_backend->texture_create(g_ctx, px, w, h);
+    return id > 0 ? moo_number(id) : moo_none();
+}
+
+/* raum_textur(fenster, id, skala) — aktive Textur fuer folgende Draws (0 = aus),
+ * triplanar in Weltkoordinaten; skala = Wiederholungen pro Welteinheit. */
+void moo_3d_texture(MooValue win, MooValue id, MooValue scale) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->set_texture) return;
+    int slot = (id.tag == MOO_NUMBER) ? moo_3d_index(id) : 0;
+    g_backend->set_texture(g_ctx, slot, (float)MV_NUM(scale));
+}
+
+/* raum_schatten(fenster, an, aufloesung, bereich) — Schatten des Hauptlichts.
+ * Nur Chunks (chunk_zeichne) werfen Schatten, alle Draws empfangen ihn; die
+ * Map entsteht am Frame-Ende und gilt ab dem naechsten Frame. */
+void moo_3d_shadow(MooValue win, MooValue on, MooValue size, MooValue range) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->set_shadow) return;
+    int an = (on.tag == MOO_BOOL) ? (MV_BOOL(on) ? 1 : 0) : (MV_NUM(on) != 0.0);
+    double s = (size.tag == MOO_NUMBER) ? MV_NUM(size) : 0.0;
+    if (!(s >= 0.0 && s <= 8192.0)) s = 0.0;
+    double r = (range.tag == MOO_NUMBER) ? MV_NUM(range) : 0.0;
+    g_backend->set_shadow(g_ctx, an, (int)s, (float)r);
+}
+
+/* raum_bloom(fenster, staerke, schwelle) — helle Bildteile (ab schwelle, 0..1)
+ * strahlen weich aus; staerke 0 = aus. Wirkt auf das ganze Bild inkl. HUD. */
+void moo_3d_bloom(MooValue win, MooValue strength, MooValue threshold, MooValue radius) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->set_bloom) return;
+    double t = (threshold.tag == MOO_NUMBER) ? MV_NUM(threshold) : 0.8;
+    /* ERDE-17: radius = Blur-Durchgaenge 1..8 (Default 2). */
+    double r = (radius.tag == MOO_NUMBER) ? MV_NUM(radius) : 2.0;
+    if (!(r >= 1.0 && r <= 8.0)) r = (r > 8.0) ? 8.0 : 2.0;
+    g_backend->set_bloom(g_ctx, (float)MV_NUM(strength), (float)t, (int)r);
 }
 
 void moo_3d_push(MooValue win) {
@@ -285,8 +598,35 @@ void moo_3d_ambient(MooValue win, MooValue level) {
 }
 
 void moo_3d_fog(MooValue win, MooValue density) {
+    double d = density.tag == MOO_NUMBER ? MV_NUM(density) : -1.0;
+    if (!isfinite(d) || d < 0 || d > 1e6) {
+        moo_throw(moo_string_new("raum_nebel: endliche Dichte 0..1000000 erforderlich")); return;
+    }
     (void)win;
-    moo_3d_set_fog_density((float)MV_NUM(density));
+    moo_3d_set_fog_density((float)d);
+}
+
+void moo_3d_height_fog(MooValue win, MooValue height, MooValue falloff, MooValue sun) {
+    if (!moo_3d_active_window(win) || !g_backend->set_height_fog) {
+        moo_throw(moo_string_new("Hoehennebel: aktives GL33-Fenster erforderlich")); return;
+    }
+    double h = MV_NUM(height), k = MV_NUM(falloff), s = MV_NUM(sun);
+    if (height.tag != MOO_NUMBER || falloff.tag != MOO_NUMBER || sun.tag != MOO_NUMBER ||
+        !isfinite(h) || !isfinite(k) || !isfinite(s) ||
+        fabs(h) > 1e7 || k < 0 || k > 1000 || s < 0 || s > 1) {
+        moo_throw(moo_string_new("Hoehennebel: Hoehe +/-1e7, Falloff 0..1000, Sonne 0..1 erforderlich")); return;
+    }
+    if (!g_backend->set_height_fog(g_ctx,1,(float)h,(float)k,(float)s)) {
+        moo_throw(moo_string_new("Hoehennebel: offene HDR-Szene erforderlich")); return;
+    }
+}
+void moo_3d_height_fog_off(MooValue win) {
+    if (!moo_3d_active_window(win) || !g_backend->set_height_fog) {
+        moo_throw(moo_string_new("Hoehennebel: aktives GL33-Fenster erforderlich")); return;
+    }
+    if (!g_backend->set_height_fog(g_ctx,0,0,0,0)) {
+        moo_throw(moo_string_new("Hoehennebel: Backend nicht verfuegbar")); return;
+    }
 }
 
 void moo_3d_fog_color(MooValue win, MooValue color) {
@@ -345,6 +685,31 @@ void moo_3d_set_wave(float amp, float freq, float speed) {
 void moo_3d_wave(MooValue win, MooValue amp, MooValue freq, MooValue speed) {
     (void)win;
     moo_3d_set_wave((float)MV_NUM(amp), (float)MV_NUM(freq), (float)MV_NUM(speed));
+}
+
+/* Wie die uebrigen raum_*-Aufrufe gilt dies fuer den aktiven 3D-Kontext,
+ * auch wenn dieser an ein Hybrid-Fenster gebunden ist. */
+void moo_3d_render_time(MooValue win, MooValue seconds) {
+    (void)win;
+    if (seconds.tag != MOO_NUMBER || !isfinite(MV_NUM(seconds)) ||
+        MV_NUM(seconds) < 0.0 || MV_NUM(seconds) > (double)FLT_MAX) {
+        moo_throw(moo_string_new("raum_renderzeit: Sekunden muessen endlich, nichtnegativ und im float-Bereich sein"));
+        return;
+    }
+    if (!g_backend || !g_ctx || !g_backend->set_render_time) {
+        moo_throw(moo_string_new("raum_renderzeit: aktives Backend unterstuetzt keine explizite Renderzeit"));
+        return;
+    }
+    g_backend->set_render_time(g_ctx, 1, (float)MV_NUM(seconds));
+}
+
+void moo_3d_render_time_live(MooValue win) {
+    (void)win;
+    if (!g_backend || !g_ctx || !g_backend->set_render_time) {
+        moo_throw(moo_string_new("raum_renderzeit_live: aktives Backend unterstuetzt keine explizite Renderzeit"));
+        return;
+    }
+    g_backend->set_render_time(g_ctx, 0, 0.0f);
 }
 
 void moo_3d_set_light_color(float r, float g, float b) {

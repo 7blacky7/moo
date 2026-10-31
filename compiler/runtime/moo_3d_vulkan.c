@@ -11,6 +11,7 @@
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include "moo_glfw_platform.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -525,6 +526,7 @@ static int create_ubo(VulkanContext* ctx) {
  * ================================================================ */
 
 static void* vk_create_window(const char* title, int w, int h) {
+    moo_glfw_platform_hint();
     if (!glfwInit()) return NULL;
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);

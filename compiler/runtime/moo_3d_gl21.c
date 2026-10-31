@@ -8,6 +8,7 @@
 #define GL_GLEXT_PROTOTYPES
 #include <GL/gl.h>
 #include <GLFW/glfw3.h>
+#include "moo_glfw_platform.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,6 +57,7 @@ static float gl21_alpha = 1.0f;
 
 static void* gl21_create_window(const char* title, int w, int h) {
     if (!glfw_initialized) {
+        moo_glfw_platform_hint();
         if (!glfwInit()) return NULL;
         glfw_initialized = 1;
     }
@@ -197,6 +199,13 @@ static void gl21_pop_matrix(void* vctx) {
 static void gl21_translate(void* vctx, float x, float y, float z) {
     (void)vctx;
     glTranslatef(x, y, z);
+}
+
+static void gl21_scale(void* vctx, float sx, float sy, float sz) {
+    (void)vctx;
+    /* Fixed-Function: Normalen nach Skalierung renormalisieren. */
+    glEnable(GL_NORMALIZE);
+    glScalef(sx, sy, sz);
 }
 
 static void gl21_rotate(void* vctx, float angle, float ax, float ay, float az) {
@@ -642,6 +651,7 @@ Moo3DBackend moo_backend_gl21 = {
     .push_matrix   = gl21_push_matrix,
     .pop_matrix    = gl21_pop_matrix,
     .translate     = gl21_translate,
+    .scale         = gl21_scale,
     .rotate        = gl21_rotate,
     .cube          = gl21_cube,
     .sphere        = gl21_sphere,
