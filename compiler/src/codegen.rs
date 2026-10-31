@@ -3240,52 +3240,6 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     // Byte-level BPE-Tokenizer (KIP-T2). Alle Args geliehen ->
                     // Post-Call-Release (pure-Reader-Muster wie ds_*).
-                    "tokenizer_trainiere" | "tokenizer_train" => {
-                        let k = self.compile_expr(&args[0])?;
-                        let v = self.compile_expr(&args[1])?;
-                        let r = self.call_rt(self.rt.moo_tok_trainiere, &[k.into(), v.into()], "tok_train")?;
-                        self.call_rt_void(self.rt.moo_release, &[k.into()], "rel_toktr_k")?;
-                        self.call_rt_void(self.rt.moo_release, &[v.into()], "rel_toktr_v")?;
-                        return Ok(r);
-                    }
-                    "tokenizer_kodiere" | "tokenizer_encode" => {
-                        let t = self.compile_expr(&args[0])?;
-                        let x = self.compile_expr(&args[1])?;
-                        let r = self.call_rt(self.rt.moo_tok_kodiere, &[t.into(), x.into()], "tok_enc")?;
-                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokenc_t")?;
-                        self.call_rt_void(self.rt.moo_release, &[x.into()], "rel_tokenc_x")?;
-                        return Ok(r);
-                    }
-                    "tokenizer_dekodiere" | "tokenizer_decode" => {
-                        let t = self.compile_expr(&args[0])?;
-                        let x = self.compile_expr(&args[1])?;
-                        let r = self.call_rt(self.rt.moo_tok_dekodiere, &[t.into(), x.into()], "tok_dec")?;
-                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokdec_t")?;
-                        self.call_rt_void(self.rt.moo_release, &[x.into()], "rel_tokdec_x")?;
-                        return Ok(r);
-                    }
-                    "tokenizer_kodiere_stapel" | "tokenizer_encode_batch" => {
-                        let t = self.compile_expr(&args[0])?;
-                        let x = self.compile_expr(&args[1])?;
-                        let r = self.call_rt(self.rt.moo_tok_kodiere_stapel, &[t.into(), x.into()], "tok_encb")?;
-                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokencb_t")?;
-                        self.call_rt_void(self.rt.moo_release, &[x.into()], "rel_tokencb_x")?;
-                        return Ok(r);
-                    }
-                    "tokenizer_speichern" | "tokenizer_save" => {
-                        let t = self.compile_expr(&args[0])?;
-                        let p = self.compile_expr(&args[1])?;
-                        let r = self.call_rt(self.rt.moo_tok_speichern, &[t.into(), p.into()], "tok_save")?;
-                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_toksav_t")?;
-                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_toksav_p")?;
-                        return Ok(r);
-                    }
-                    "tokenizer_laden" | "tokenizer_load" => {
-                        let p = self.compile_expr(&args[0])?;
-                        let r = self.call_rt(self.rt.moo_tok_laden, &[p.into()], "tok_load")?;
-                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_tokld_p")?;
-                        return Ok(r);
-                    }
                     "zeichen_fixed_trainiere" | "char_fixed_train" => {
                         if args.len() != 2 { return Err(format!("zeichen_fixed_trainiere: erwartet 2 Argument(e)")); }
                         let a0 = self.compile_expr(&args[0])?;
@@ -3423,6 +3377,61 @@ impl<'ctx> CodeGen<'ctx> {
                         let a0 = self.compile_expr(&args[0])?;
                         let r = self.call_rt(self.rt.moo_silben_hash64, &[a0.into()], "silben_hash64")?;
                         self.call_rt_void(self.rt.moo_release, &[a0.into()], "rel_silben_hash64_0")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_trainiere_parser" => {
+                        if args.len() != 2 { return Err("tokenizer_trainiere_parser: erwartet 2 Argumente".to_string()); }
+                        let k = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_tok_trainiere_parser, &[k.into(), v.into()], "tok_train_parser")?;
+                        self.call_rt_void(self.rt.moo_release, &[k.into()], "rel_tok_parser_k")?;
+                        self.call_rt_void(self.rt.moo_release, &[v.into()], "rel_tok_parser_v")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_trainiere" | "tokenizer_train" => {
+                        let k = self.compile_expr(&args[0])?;
+                        let v = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_tok_trainiere, &[k.into(), v.into()], "tok_train")?;
+                        self.call_rt_void(self.rt.moo_release, &[k.into()], "rel_toktr_k")?;
+                        self.call_rt_void(self.rt.moo_release, &[v.into()], "rel_toktr_v")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_kodiere" | "tokenizer_encode" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let x = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_tok_kodiere, &[t.into(), x.into()], "tok_enc")?;
+                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokenc_t")?;
+                        self.call_rt_void(self.rt.moo_release, &[x.into()], "rel_tokenc_x")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_dekodiere" | "tokenizer_decode" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let x = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_tok_dekodiere, &[t.into(), x.into()], "tok_dec")?;
+                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokdec_t")?;
+                        self.call_rt_void(self.rt.moo_release, &[x.into()], "rel_tokdec_x")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_kodiere_stapel" | "tokenizer_encode_batch" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let x = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_tok_kodiere_stapel, &[t.into(), x.into()], "tok_encb")?;
+                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_tokencb_t")?;
+                        self.call_rt_void(self.rt.moo_release, &[x.into()], "rel_tokencb_x")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_speichern" | "tokenizer_save" => {
+                        let t = self.compile_expr(&args[0])?;
+                        let p = self.compile_expr(&args[1])?;
+                        let r = self.call_rt(self.rt.moo_tok_speichern, &[t.into(), p.into()], "tok_save")?;
+                        self.call_rt_void(self.rt.moo_release, &[t.into()], "rel_toksav_t")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_toksav_p")?;
+                        return Ok(r);
+                    }
+                    "tokenizer_laden" | "tokenizer_load" => {
+                        let p = self.compile_expr(&args[0])?;
+                        let r = self.call_rt(self.rt.moo_tok_laden, &[p.into()], "tok_load")?;
+                        self.call_rt_void(self.rt.moo_release, &[p.into()], "rel_tokld_p")?;
                         return Ok(r);
                     }
                     "tokenizer_info" => {

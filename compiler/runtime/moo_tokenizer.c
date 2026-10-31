@@ -10,11 +10,15 @@
  * ============================================================================
  */
 #include "moo_tokenizer.h"
+#include "moo_tok_segment.h"
+#include "moo_krypto.h"
 
 #define TOK_MAGIC   "MOOBPE01"
 #define TOK_MAGIC_N 8
 #define TOK_HEADER  32u          /* Bytes bis zum ersten Merge */
 #define TOK_VERSION 1u
+#define TOK_PARSER_VERSION 3u
+#define TOK_KIND_PARSER 1u
 #define TOK_BASE    256u         /* 256 Einzelbyte-Basistokens */
 #define TOK_VOKAB_MAX 65536u     /* harte Obergrenze (Speicher-/ABI-Schutz) */
 
@@ -112,6 +116,37 @@ static uint64_t pair_key(uint32_t a, uint32_t b) {
     return ((uint64_t)a << 32) | (uint64_t)b;
 }
 
+/* Segmentenden werden beim Rewrite mit dem jeweils letzten Token mitgefuehrt. */
+static uint8_t *tok_segment_enden(const uint8_t *buf, size_t n, MooValue silben) {
+    size_t count = moo_tok_segmente_ctx(buf, n, NULL, 0, silben);
+    if (!count || count > n || count > SIZE_MAX / sizeof(size_t)) return NULL;
+    size_t *bounds = (size_t *)malloc(count * sizeof(size_t));
+    uint8_t *ends = (uint8_t *)calloc(n, 1);
+    if (!bounds || !ends) { free(bounds); free(ends); return NULL; }
+    if (moo_tok_segmente_ctx(buf, n, bounds, count, silben) != count) { free(bounds); free(ends); return NULL; }
+    size_t prev = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (bounds[i] <= prev || bounds[i] > n) { free(bounds); free(ends); return NULL; }
+        ends[bounds[i] - 1] = 1;
+        prev = bounds[i];
+    }
+    free(bounds);
+    if (prev != n) { free(ends); return NULL; }
+    return ends;
+}
+static int64_t tok_merge_begrenzt(int32_t *seq, uint8_t *ends, int64_t len,
+                                  int32_t a, int32_t b, int32_t c) {
+    int64_t w = 0;
+    for (int64_t r = 0; r < len;) {
+        if (r + 1 < len && !ends[r] && seq[r] == a && seq[r + 1] == b) {
+            seq[w] = c; ends[w++] = ends[r + 1]; r += 2;
+        } else {
+            seq[w] = seq[r]; ends[w++] = ends[r]; r++;
+        }
+    }
+    return w;
+}
+
 /* ------------------------------------------------------------------ *
  * Kern-Rewrite: ersetzt jedes NICHT-ueberlappende Vorkommen von (a,b)
  * durch c, links-nach-rechts. Rueckgabe: neue Laenge. In-place (out<=in).
@@ -165,7 +200,7 @@ static int cmp_merged(const uint8_t* const* tb, const uint32_t* tl,
     return 0;
 }
 
-MooValue moo_tok_trainiere(MooValue korpus, MooValue vokab_groesse) {
+static MooValue tok_trainiere(MooValue korpus, MooValue vokab_groesse, bool parser, MooValue silben) {
     if (korpus.tag != MOO_STRING) {
         moo_throw(moo_error("tokenizer_trainiere: erwarte einen Text/Bytes als Korpus"));
         return moo_none();
@@ -211,14 +246,17 @@ MooValue moo_tok_trainiere(MooValue korpus, MooValue vokab_groesse) {
     }
     for (int64_t i = 0; i < n; i++) seq[i] = (int32_t)korp[i];
     int64_t len = n;
+    uint8_t *ends = parser ? tok_segment_enden(korp, (size_t)n, silben) : NULL;
+    if (parser && !ends) oom = true;
     uint32_t M = 0;
 
-    PMap pc; if (!oom && !pm_init(&pc, 1024)) oom = true;
+    PMap pc = {0}; if (!oom && !pm_init(&pc, 1024)) oom = true;
 
     /* Merge-Schleife bis Vt erreicht oder kein Paar >=2 mehr. */
     while (!oom && (TOK_BASE + M) < Vt && len >= 2) {
         pm_clear(&pc);
         for (int64_t i = 0; i + 1 < len; i++) {
+            if (ends && ends[i]) continue;
             if (!pm_inc(&pc, pair_key((uint32_t)seq[i], (uint32_t)seq[i + 1]))) {
                 oom = true; break;
             }
@@ -251,10 +289,12 @@ MooValue moo_tok_trainiere(MooValue korpus, MooValue vokab_groesse) {
         memcpy(nbytes + tl[best_a], tb[best_b], tl[best_b]);
         tb[nid] = nbytes; tl[nid] = nlen;
         ma[M] = best_a; mb[M] = best_b; M++;
-        len = seq_merge_pair(seq, len, best_a, best_b, (int32_t)nid);
+        len = ends ? tok_merge_begrenzt(seq, ends, len, best_a, best_b, (int32_t)nid)
+                   : seq_merge_pair(seq, len, best_a, best_b, (int32_t)nid);
     }
     pm_free(&pc);
     free(seq);
+    free(ends);
 
     if (oom) {
         for (uint32_t i = 0; i < Vt; i++) free(tb[i]);
@@ -267,6 +307,7 @@ MooValue moo_tok_trainiere(MooValue korpus, MooValue vokab_groesse) {
     /* Blobgroesse: Header + Merges + Vokabtabelle. */
     size_t sz = TOK_HEADER + (size_t)M * 8u;
     for (uint32_t id = 0; id < V; id++) sz += 4u + tl[id];
+    if (parser) sz += 4u + 32u + (size_t)MV_STR(silben)->length;
     uint8_t* blob = (uint8_t*)malloc(sz);
     if (!blob) {
         for (uint32_t i = 0; i < Vt; i++) free(tb[i]);
@@ -275,12 +316,12 @@ MooValue moo_tok_trainiere(MooValue korpus, MooValue vokab_groesse) {
         return moo_none();
     }
     memcpy(blob, TOK_MAGIC, TOK_MAGIC_N);
-    put_u32(blob + 8,  TOK_VERSION);
+    put_u32(blob + 8,  parser ? TOK_PARSER_VERSION : TOK_VERSION);
     put_u32(blob + 12, 0u);                            /* flags: kein Normalize */
     put_u32(blob + 16, V);
     put_u32(blob + 20, M);
     put_u32(blob + 24, 0u);                            /* S */
-    put_u32(blob + 28, 0u);                            /* reserved */
+    put_u32(blob + 28, parser ? TOK_KIND_PARSER : 0u); /* Art */
     size_t off = TOK_HEADER;
     for (uint32_t i = 0; i < M; i++) {
         put_u32(blob + off, (uint32_t)ma[i]); off += 4;
@@ -289,6 +330,13 @@ MooValue moo_tok_trainiere(MooValue korpus, MooValue vokab_groesse) {
     for (uint32_t id = 0; id < V; id++) {
         put_u32(blob + off, tl[id]); off += 4;
         memcpy(blob + off, tb[id], tl[id]); off += tl[id];
+    }
+    if (parser) {
+        size_t slen = (size_t)MV_STR(silben)->length;
+        const uint8_t *sb = (const uint8_t *)MV_STR(silben)->chars;
+        put_u32(blob + off, (uint32_t)slen); off += 4;
+        moo_krypto_sha256(sb + 24, get_u32(sb + 12), blob + off); off += 32;
+        memcpy(blob + off, sb, slen); off += slen;
     }
     /* off == sz garantiert. */
     for (uint32_t i = 0; i < Vt; i++) free(tb[i]);
@@ -299,6 +347,33 @@ MooValue moo_tok_trainiere(MooValue korpus, MooValue vokab_groesse) {
     return out;
 }
 
+MooValue moo_tok_trainiere(MooValue korpus, MooValue vokab_groesse) {
+    return tok_trainiere(korpus, vokab_groesse, false, moo_none());
+}
+/* Muster-only-Silbenartefakt wie P4-Fixture: keine vom Korpus abhaengigen IDs. */
+MooValue moo_tok_trainiere_parser(MooValue korpus, MooValue vokab_groesse) {
+    FILE *f = fopen("compiler/runtime/data/silben/dehyphn-x-2024-02-28.pat", "rb");
+    if (!f) { moo_throw(moo_error("parser: Silbenmuster nicht lesbar")); return moo_none(); }
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); moo_throw(moo_error("parser: Silbenmuster nicht seekbar")); return moo_none(); }
+    long n = ftell(f);
+    if (n <= 0 || n > 8 * 1024 * 1024 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); moo_throw(moo_error("parser: Silbenmuster ungueltig")); return moo_none(); }
+    size_t len = 24u + (size_t)n + 32u;
+    uint8_t *b = (uint8_t *)malloc(len);
+    if (!b) { fclose(f); moo_throw(moo_error("parser: nicht genug Speicher")); return moo_none(); }
+    memcpy(b, "MOOSIL01", 8); put_u32(b + 8, 1); put_u32(b + 12, (uint32_t)n);
+    put_u32(b + 16, 0); put_u32(b + 20, 0);
+    size_t nr = fread(b + 24, 1, (size_t)n, f);
+    int rc = fclose(f);
+    if (nr != (size_t)n || rc != 0) { free(b); moo_throw(moo_error("parser: Silbenmuster unvollstaendig")); return moo_none(); }
+    moo_krypto_sha256(b, len - 32, b + len - 32);
+    MooValue silben = moo_string_new_len((const char *)b, (int32_t)len);
+    free(b);
+    if (silben.tag != MOO_STRING) return moo_none();
+    MooValue result = tok_trainiere(korpus, vokab_groesse, true, silben);
+    moo_release(silben);
+    return result;
+}
+
 /* ================================================================== *
  * ARTEFAKT-PARSING (bounds-gecheckt, untrusted-hart)
  * ================================================================== */
@@ -306,6 +381,7 @@ typedef struct {
     const uint8_t* blob; size_t blob_len;
     uint32_t version, flags, V, M, S;
     const uint8_t* merges;          /* zeigt auf M*8 Bytes im Blob */
+    const uint8_t* silben; size_t silben_len;
     const uint8_t** tok_ptr;        /* [V] Zeiger in den Blob (malloc) */
     uint32_t* tok_len;              /* [V] (malloc) */
     /* Spezial-Index (KIP-T3): Name -> Id fuer die Render-API. */
@@ -344,7 +420,8 @@ static bool tok_parse(MooValue tok, ParsedTok* pt, const char** err) {
     pt->V       = get_u32(b + 16);
     pt->M       = get_u32(b + 20);
     pt->S       = get_u32(b + 24);
-    if (pt->version != TOK_VERSION) { *err = "unbekannte Artefakt-Version"; return false; }
+    if (pt->version != TOK_VERSION && pt->version != TOK_PARSER_VERSION) { *err = "unbekannte Artefakt-Version"; return false; }
+    if (pt->version == TOK_PARSER_VERSION && get_u32(b + 28) != TOK_KIND_PARSER) { *err = "unbekannte Tokenizer-Art"; return false; }
     if (pt->V > TOK_VOKAB_MAX || pt->V < TOK_BASE) { *err = "Vokabulargroesse ausserhalb des Rahmens"; return false; }
     if ((uint64_t)TOK_BASE + pt->M + pt->S != pt->V) { *err = "Header inkonsistent (V != 256 + M + S)"; return false; }
 
@@ -400,6 +477,24 @@ static bool tok_parse(MooValue tok, ParsedTok* pt, const char** err) {
         pt->spec_name_len[i] = nl;
         off += nl;
     }
+    if (pt->version == TOK_PARSER_VERSION) {
+        if (off > blen || blen - off < 36u) { pt_free(pt); *err = "Parser-Muster fehlen"; return false; }
+        uint32_t slen = get_u32(b + off); off += 4;
+        const uint8_t *hash = b + off; off += 32;
+        if (slen < 56u || slen != blen - off) { pt_free(pt); *err = "Parser-Musterlaenge ungueltig"; return false; }
+        const uint8_t *sb = b + off;
+        uint32_t pn = get_u32(sb + 12);
+        uint8_t digest[32];
+        if (memcmp(sb, "MOOSIL01", 8) || get_u32(sb + 8) != 1 || get_u32(sb + 16) != 0 ||
+            get_u32(sb + 20) != 0 || pn != slen - 56u) {
+            pt_free(pt); *err = "Parser-Silbenartefakt ungueltig"; return false;
+        }
+        moo_krypto_sha256(sb + 24, pn, digest);
+        if (memcmp(hash, digest, 32)) { pt_free(pt); *err = "Parser-Muster-Hash ungueltig"; return false; }
+        moo_krypto_sha256(sb, slen - 32u, digest);
+        if (memcmp(sb + slen - 32u, digest, 32)) { pt_free(pt); *err = "Parser-Silben-Hash ungueltig"; return false; }
+        pt->silben = sb; pt->silben_len = slen;
+    }
     return true;
 }
 
@@ -438,6 +533,28 @@ static bool bpe_apply(const ParsedTok* pt, PMap* rm, int32_t* seq, int64_t* plen
     return true;
 }
 
+static bool tok_bpe_stuecke(const ParsedTok *pt, PMap *rm, const uint8_t *txt,
+                            int64_t tlen, int32_t *seq, int64_t *plen) {
+    if (pt->version != TOK_PARSER_VERSION) return bpe_apply(pt, rm, seq, plen);
+    MooValue silben = moo_string_new_len((const char *)pt->silben, (int32_t)pt->silben_len);
+    if (silben.tag != MOO_STRING) return false;
+    uint8_t *ends = tok_segment_enden(txt, (size_t)tlen, silben);
+    moo_release(silben);
+    if (!ends) return false;
+    int64_t w = 0, start = 0;
+    for (int64_t i = 0; i < tlen; i++) {
+        if (!ends[i]) continue;
+        int64_t part = i + 1 - start;
+        bpe_apply(pt, rm, seq + start, &part);
+        memmove(seq + w, seq + start, (size_t)part * sizeof(*seq));
+        w += part;
+        start = i + 1;
+    }
+    free(ends);
+    *plen = w;
+    return true;
+}
+
 /* Encode eines Byte-Puffers -> frischer Tensor[n] (+1). throws bei leer/OOM. */
 static MooValue encode_bytes(const ParsedTok* pt, PMap* rm,
                              const uint8_t* txt, int64_t tlen) {
@@ -449,7 +566,7 @@ static MooValue encode_bytes(const ParsedTok* pt, PMap* rm,
     if (!seq) { moo_throw(moo_error("encode: nicht genug Speicher")); return moo_none(); }
     for (int64_t i = 0; i < tlen; i++) seq[i] = (int32_t)txt[i];
     int64_t len = tlen;
-    bpe_apply(pt, rm, seq, &len);
+    if (!tok_bpe_stuecke(pt, rm, txt, tlen, seq, &len)) { free(seq); moo_throw(moo_error("encode: Segmentierung fehlgeschlagen")); return moo_none(); }
     int32_t shape[1] = { (int32_t)len };
     MooTensor* t = moo_tensor_raw(1, shape);
     if (!t) { free(seq); return moo_none(); }   /* moo_tensor_raw hat geworfen */
@@ -716,16 +833,17 @@ MooValue moo_tok_chat_init(MooValue tok) {
     for (uint32_t id = 0; id < V0; id++) sz += 4u + pt.tok_len[id];
     for (int i = 0; i < CHAT_N; i++) sz += 4u + (uint32_t)strlen(CHAT_MARKERS[i]);   /* Vokab-Bytes = Marker */
     for (int i = 0; i < CHAT_N; i++) sz += 4u + 4u + (uint32_t)strlen(CHAT_NAMES[i]); /* Spezial: id+namelen+name */
+    if (pt.version == TOK_PARSER_VERSION) sz += 36u + pt.silben_len;
 
     uint8_t* blob = (uint8_t*)malloc(sz);
     if (!blob) { pt_free(&pt); moo_throw(moo_error("tokenizer_chat_init: nicht genug Speicher")); return moo_none(); }
     memcpy(blob, TOK_MAGIC, TOK_MAGIC_N);
-    put_u32(blob + 8, TOK_VERSION);
+    put_u32(blob + 8, pt.version);
     put_u32(blob + 12, pt.flags);
     put_u32(blob + 16, Vn);
     put_u32(blob + 20, M);
     put_u32(blob + 24, (uint32_t)CHAT_N);
-    put_u32(blob + 28, 0u);
+    put_u32(blob + 28, pt.version == TOK_PARSER_VERSION ? TOK_KIND_PARSER : 0u);
     size_t off = TOK_HEADER;
     memcpy(blob + off, pt.merges, (size_t)M * 8u); off += (size_t)M * 8u;
     /* bestehende Vokabtabelle 0..V0-1 unveraendert kopieren */
@@ -745,6 +863,11 @@ MooValue moo_tok_chat_init(MooValue tok) {
         put_u32(blob + off, V0 + (uint32_t)i); off += 4;
         put_u32(blob + off, nl); off += 4;
         memcpy(blob + off, CHAT_NAMES[i], nl); off += nl;
+    }
+    if (pt.version == TOK_PARSER_VERSION) {
+        put_u32(blob + off, (uint32_t)pt.silben_len); off += 4;
+        moo_krypto_sha256(pt.silben + 24, get_u32(pt.silben + 12), blob + off); off += 32;
+        memcpy(blob + off, pt.silben, pt.silben_len); off += pt.silben_len;
     }
     pt_free(&pt);
     MooValue out = moo_string_new_len((const char*)blob, (int32_t)sz);
@@ -789,7 +912,7 @@ static bool render_content(const ParsedTok* pt, PMap* rm, const uint8_t* txt,
     if (!seq) return false;
     for (int64_t i = 0; i < tlen; i++) seq[i] = (int32_t)txt[i];
     int64_t len = tlen;
-    bpe_apply(pt, rm, seq, &len);
+    if (!tok_bpe_stuecke(pt, rm, txt, tlen, seq, &len)) { free(seq); return false; }
     for (int64_t i = 0; i < len; i++)
         if (!iv_push(out, seq[i], m)) { free(seq); return false; }
     free(seq);

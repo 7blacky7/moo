@@ -392,7 +392,8 @@ EXTRA_HARNESSES=(
   #               Test-throw-Modell wie dataset; Tensor-Kern + Core-Runtime.
   #               Gates: Determinismus ohne Seed, byte-exakter Roundtrip inkl.
   #               invalid-UTF8/NUL/Emoji, Artefakt-Roundtrip, UNK-Negativ-Gate.
-  "test_tokenizer_asan.c|moo_tokenizer.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_tokenizer_asan.c|moo_tokenizer.c moo_tok_segment.c moo_silben.c moo_krypto.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
+  "test_tokenizer_parser_asan.c|moo_tokenizer.c moo_tok_segment.c moo_silben.c moo_krypto.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c|-lm"
   #   shard:      KIP-E1 — Streaming-Token-Shards + Dataloader (Format/CRC,
   #               gefenstertes Lesen, seed-deterministische Blockreihenfolge,
   #               SFT-Loss-Maske, Train/Val-Split). Test-throw-Modell.

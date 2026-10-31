@@ -40,7 +40,9 @@
  *   Offset 16  : u32 V   Gesamt-Vokabular                 (== 256 + M + S)
  *   Offset 20  : u32 M   Anzahl gelernter Merges
  *   Offset 24  : u32 S   Anzahl Spezial-Tokens (KIP-T3; v1 == 0)
- *   Offset 28  : u32 reserved                              (== 0)
+ *   Offset 28  : u32 Art (v1: 0; v3: 1 = parser mit Silbenmustern)
+ *   Parser v3: nach Spezial-Sektion u32 Silbenlaenge, SHA-256 der Muster,
+ *   danach mustertragendes Silbenartefakt mit eigener SHA-256-Pruefsumme.
  *   Merges     : M * { u32 links_id ; u32 rechts_id }
  *                (neue Id des Merges i ist implizit 256 + i)
  *   Vokab      : V * { u32 len ; byte[len] }   fuer Id 0..V-1 in Reihenfolge
@@ -67,6 +69,8 @@
  * `vokab_groesse` erreicht (>=256, <=65536). Gibt das versionierte Artefakt
  * als MooString (+1) zurueck. Deterministisch, ohne Seed. */
 MooValue moo_tok_trainiere(MooValue korpus, MooValue vokab_groesse);
+/* Parser-Art: gemeinsames Byte-BPE, Merges nur innerhalb der Segmente. */
+MooValue moo_tok_trainiere_parser(MooValue korpus, MooValue vokab_groesse);
 
 /* encode(tok, text) -> Tensor[n] der Token-Ids (float, exakt < 2^24).
  * Leerer Text wirft (Tensoren brauchen >=1 Element). */
