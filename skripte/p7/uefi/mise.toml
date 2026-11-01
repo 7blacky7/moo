@@ -1,3 +1,7 @@
+[tasks.netz-server]
+description = "P7-T10: TFTP-Server fuer den Moo-Netz-Lader (enp60s0, 192.168.77.1, dnsmasq nur TFTP)"
+run = "bash netz-server.sh"
+
 [tasks.sicht]
 description = "P7: QEMU/OVMF screen evidence"
 run = "bash sicht-gate.sh"

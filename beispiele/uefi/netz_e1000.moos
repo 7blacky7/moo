@@ -12,7 +12,7 @@
 #   MOO-E1000-TX <n>  MOO-E1000-ARP <0|1>  MOO-E1000-FEHLER <schritt>  MOO-E1000-ENDE
 # Gate: MOO_UEFI_PRUEFUNG=e1000 bash scripts/uefi-smoke.sh
 
-aus "./netz_treiber" importiere nt_pci_init, nt_suche, nt_finde, nt_oeffnen, nt_senden, nt_empfangen, nt_mac, nt_link, nt_tempo, nt_typ, nt_dma, nt_b8, nt_b16, nt_udp_log, nt_udp_rahmen, nt_status_text
+aus "./netz_treiber" importiere nt_pci_init, nt_suche, nt_finde, nt_oeffnen, nt_senden, nt_empfangen, nt_mac, nt_link, nt_tempo, nt_typ, nt_dma, nt_b8, nt_b16, nt_udp_log, nt_udp_rahmen, nt_status_text, nt_ringe_init, nt_tx_gesendet, nt_tx_verworfen, nt_log
 
 funktion z(c):
     unsicher:
@@ -106,7 +106,7 @@ funktion fehler(schritt):
 # Schein-NIC: Zustandsblock + RAM als "MMIO"; STATUS liegt bei mmio + 8.
 funktion schein_nic(typ, status):
     unsicher:
-        setze nic auf nt_dma(128)
+        setze nic auf nt_dma(192)
         setze regs auf nt_dma(64)
         speicher_schreiben(nic, typ, 8)
         speicher_schreiben(nic + 8, regs, 8)
@@ -144,7 +144,21 @@ funktion selbsttests():
         speicher_schreiben(zwei, 2, 8)
         speicher_schreiben(zwei + 8, a, 8)
         speicher_schreiben(zwei + 16, kein, 8)
-        setze f auf f + pruefe(nt_status_text(zwei, tpuf) == "I226 0:2500 1:-")
+        setze f auf f + pruefe(nt_status_text(zwei, tpuf) == "I226 0:2500 1:- TX 0/0")
+        # TX-Ring voll, Hardware schreitet nie fort (Schein-Ring im RAM): nicht
+        # blockieren, 15 senden, 5 verwerfen; nach Kopf-Fortschritt wieder senden.
+        setze tn auf nt_dma(192)
+        setze tregs auf nt_dma(65536)
+        speicher_schreiben(tn, 1, 8)
+        speicher_schreiben(tn + 8, tregs, 8)
+        setze f auf f + pruefe(nt_ringe_init(tn, 0x2800, 0x3800, falsch))
+        setze k auf 0
+        solange k < 20:
+            nt_senden(tn, tpuf, 60)
+            setze k auf k + 1
+        setze f auf f + pruefe(nt_tx_gesendet(tn) == 15 und nt_tx_verworfen(tn) == 5)
+        speicher_schreiben(tregs + 0x3810, 10, 4)
+        setze f auf f + pruefe(nt_senden(tn, tpuf, 60) und nt_tx_gesendet(tn) == 16)
         # UDP-Rahmen mit Nutzlast "AB": Laenge 44, IPv4-Pruefsumme 0x7AD0.
         setze rahmen auf nt_dma(2048)
         setze n auf kern_text_in_puffer("AB", rahmen + 42, 1472)
@@ -204,6 +218,46 @@ funktion moo_efi_haupt():
             setze gesendet auf gesendet + 1
         wort(84, 88, 0, 0, 0, 0)
         hex(gesendet, 1)
+        zeile_ende()
+        # Serie mit mehr Rahmen als Ringplaetze (16): TX-Rueckgewinnung pruefen.
+        setze k auf 0
+        solange k < 1000:
+            nt_udp_log(nic, rahmen, "MOO-E1000-SERIE")
+            setze k auf k + 1
+        wort(83, 69, 82, 73, 69, 0)
+        hex(nt_tx_gesendet(nic), 4)
+        z(32)
+        hex(nt_tx_verworfen(nic), 4)
+        zeile_ende()
+        # Logzeilen ueber 3 Ports: echte e1000, Schein-Port mit Link aber
+        # festgefahrenem Ring (Hardware schreitet nie fort), Schein-Port ohne Link.
+        setze klemmt auf nt_dma(192)
+        setze kregs auf nt_dma(65536)
+        speicher_schreiben(klemmt, 1, 8)
+        speicher_schreiben(klemmt + 8, kregs, 8)
+        nt_ringe_init(klemmt, 0x2800, 0x3800, falsch)
+        speicher_schreiben(kregs + 8, 2, 4)
+        setze tot auf nt_dma(192)
+        setze tregs2 auf nt_dma(65536)
+        speicher_schreiben(tot, 1, 8)
+        speicher_schreiben(tot + 8, tregs2, 8)
+        nt_ringe_init(tot, 0x2800, 0x3800, falsch)
+        setze drei auf nt_dma(80)
+        speicher_schreiben(drei, 3, 8)
+        speicher_schreiben(drei + 8, nic, 8)
+        speicher_schreiben(drei + 16, klemmt, 8)
+        speicher_schreiben(drei + 24, tot, 8)
+        setze k auf 0
+        solange k < 200:
+            nt_log(drei, rahmen, "MOO-E1000-LOG")
+            setze k auf k + 1
+        # LOG <klemmt gesendet> <klemmt verworfen> <tot gesendet>
+        wort(76, 79, 71, 0, 0, 0)
+        hex(nt_tx_gesendet(klemmt), 4)
+        z(32)
+        hex(nt_tx_verworfen(klemmt), 4)
+        z(32)
+        hex(nt_tx_gesendet(tot), 4)
         zeile_ende()
         setze arp auf 0
         setze versuche auf 0

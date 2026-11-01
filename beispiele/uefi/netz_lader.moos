@@ -1,0 +1,393 @@
+# ============================================================
+# netz_lader.moos — P7-T10: Netz-Lader in Moo (UEFI-App auf dem Stick)
+# ============================================================
+# Holt das eigentliche EFI-Image per TFTP vom Linux-PC und startet es aus dem
+# Speicher, damit der Stick nicht mehr umgesteckt werden muss.
+#   1. Eigene Netzkarte hochbringen: I226 (N100), sonst e1000 (QEMU).
+#   2. Auf Link warten (bis 10 s), Port mit Link waehlen.
+#   3. TFTP-Server per ARP suchen: 192.168.77.1 (Direktkabel, eigene IP
+#      192.168.77.2) oder 10.0.2.2 (QEMU-slirp, eigene IP 10.0.2.15).
+#      Die Zeile zaehlt alle empfangenen Rahmen (Empfangstest: z. B.
+#      `ping -6 -I enp60s0 ff02::1` auf dem Linux-PC laesst sie steigen).
+#   4. moo.efi.pruef holen ("<laenge> <crc32hex>"), dann moo.efi.
+#   5. Laenge, CRC32 (wie gzip) und PE32+-Kopf (MZ, PE, x86-64) pruefen.
+#   6. kern_bild_starten: LoadImage aus dem Speicher + StartImage.
+# Jede Statuszeile steht auf dem Bildschirm und als "MOO-LADER <text>" auf COM1.
+# Fehler: Statusanzeige bleibt stehen, R = neu versuchen, Esc = Ende.
+# Host-Seite: siehe skripte/p7/netz (mise-Task), QEMU-Gate:
+#   MOO_UEFI_PRUEFUNG=lader bash scripts/uefi-smoke.sh
+
+aus "./netz_treiber" importiere nt_pci_init, nt_ports_oeffnen, nt_anzahl, nt_port, nt_link, nt_tempo, nt_mac, nt_dma, nt_dez, nt_b8, nt_multicast_an
+aus "./netz_tftp" importiere nn_ip, nn_kontext, nn_arp_aufloesen, nn_feld, nn_tftp_start, nn_tftp_schritt, nn_dez_lesen, nn_r8, nn_crc_tabelle, nn_crc32
+
+# ---------------- Anzeige ----------------
+# st (Block): 0 Zeilenzahl, 8 Schreibposition, 16 Zeilenpuffer (Aufbau),
+# 24 Zeilenspeicher (16 x 128 Byte: Laenge u16, Text ab +2), 32 Bild, 40 Breite, 48 Hoehe.
+funktion anzeige_neu():
+    unsicher:
+        setze st auf nt_dma(64)
+        speicher_schreiben(st + 16, nt_dma(256), 8)
+        speicher_schreiben(st + 24, nt_dma(16 * 128), 8)
+        setze b auf kern_bild_breite()
+        setze h auf kern_bild_hoehe()
+        speicher_schreiben(st + 32, surface_new(b, h), 8)
+        speicher_schreiben(st + 40, b, 8)
+        speicher_schreiben(st + 48, h, 8)
+        gib_zurück st
+
+funktion feld(st, o):
+    unsicher:
+        gib_zurück speicher_lesen(st + o, 8)
+
+funktion feld_setzen(st, o, wert):
+    unsicher:
+        speicher_schreiben(st + o, wert, 8)
+
+funktion z(c):
+    unsicher:
+        kern_outw(0x3F8, c)
+
+funktion tb_anfang(st):
+    feld_setzen(st, 8, 0)
+
+funktion tb_t(st, text):
+    setze pos auf feld(st, 8)
+    setze n auf kern_text_in_puffer(text, feld(st, 16) + pos, 118 - pos)
+    feld_setzen(st, 8, pos + n)
+
+funktion tb_z(st, zahl):
+    wenn zahl < 0:
+        tb_t(st, "-")
+        setze zahl auf 0 - zahl
+    feld_setzen(st, 8, nt_dez(feld(st, 16), feld(st, 8), zahl))
+
+funktion tb_h(st, wert, stellen):
+    setze p auf feld(st, 16)
+    setze pos auf feld(st, 8)
+    setze i auf stellen - 1
+    solange i >= 0:
+        setze d auf (wert >> (i * 4)) & 15
+        wenn d < 10:
+            nt_b8(p, pos, 48 + d)
+        sonst:
+            nt_b8(p, pos, 55 + d)
+        setze pos auf pos + 1
+        setze i auf i - 1
+    feld_setzen(st, 8, pos)
+
+funktion tb_ip(st, ip):
+    tb_z(st, (ip >> 24) & 255)
+    tb_t(st, ".")
+    tb_z(st, (ip >> 16) & 255)
+    tb_t(st, ".")
+    tb_z(st, (ip >> 8) & 255)
+    tb_t(st, ".")
+    tb_z(st, ip & 255)
+
+# Aufgebaute Zeile an Position i speichern.
+funktion zeile_speichern(st, i):
+    unsicher:
+        setze ziel auf feld(st, 24) + i * 128
+        setze n auf feld(st, 8)
+        speicher_schreiben(ziel, n, 2)
+        setze k auf 0
+        solange k < n:
+            speicher_schreiben(ziel + 2 + k, speicher_lesen(feld(st, 16) + k, 1), 1)
+            setze k auf k + 1
+
+# Neue Zeile anhaengen (scrollt ab 16 Zeilen) und auf COM1 ausgeben.
+funktion zeile(st):
+    unsicher:
+        setze n auf feld(st, 0)
+        wenn n >= 16:
+            setze k auf 0
+            solange k < 15 * 128:
+                speicher_schreiben(feld(st, 24) + k, speicher_lesen(feld(st, 24) + 128 + k, 1), 1)
+                setze k auf k + 1
+            setze n auf 15
+        zeile_speichern(st, n)
+        feld_setzen(st, 0, n + 1)
+        # "MOO-LADER " + Text
+        z(77)
+        z(79)
+        z(79)
+        z(45)
+        z(76)
+        z(65)
+        z(68)
+        z(69)
+        z(82)
+        z(32)
+        setze k auf 0
+        solange k < feld(st, 8):
+            z(speicher_lesen(feld(st, 16) + k, 1))
+            setze k auf k + 1
+        z(10)
+
+# Letzte Zeile ersetzen (Fortschritt, ohne COM1-Ausgabe).
+funktion zeile_ersetzen(st):
+    setze n auf feld(st, 0)
+    wenn n == 0:
+        zeile(st)
+    sonst:
+        zeile_speichern(st, n - 1)
+
+funktion zeichnen(st):
+    unsicher:
+        setze bild auf feld(st, 32)
+        setze b auf feld(st, 40)
+        surface_clear(bild, 14, 21, 35, 255)
+        surface_rect(bild, 0, 0, b, 80, 24, 36, 57, 255)
+        surface_rect(bild, 0, 80, b, 4, 73, 192, 169, 255)
+        surface_text(bild, 24, 14, 3, "MoOS NETZ-LADER", 241, 247, 250, 255)
+        setze zh auf surface_text_hoehe(2) + 10
+        setze i auf 0
+        solange i < feld(st, 0):
+            setze q auf feld(st, 24) + i * 128
+            setze text auf kern_text_aus_puffer(q + 2, speicher_lesen(q, 2))
+            surface_text(bild, 24, 110 + i * zh, 2, text, 210, 225, 235, 255)
+            setze i auf i + 1
+        kern_bild_zeige(bild)
+
+funktion melde(st, text):
+    tb_anfang(st)
+    tb_t(st, text)
+    zeile(st)
+    zeichnen(st)
+
+# ---------------- Ablauf ----------------
+funktion erster_link(ports):
+    setze i auf 0
+    solange i < nt_anzahl(ports):
+        wenn nt_link(nt_port(ports, i)):
+            gib_zurück i
+        setze i auf i + 1
+    gib_zurück -1
+
+funktion hex_lesen(p, o, e):
+    setze wert auf 0
+    solange o < e:
+        setze c auf nn_r8(p, o)
+        setze d auf -1
+        wenn c >= 48 und c <= 57:
+            setze d auf c - 48
+        wenn c >= 97 und c <= 102:
+            setze d auf c - 87
+        wenn c >= 65 und c <= 70:
+            setze d auf c - 55
+        wenn d < 0:
+            gib_zurück wert
+        setze wert auf wert * 16 + d
+        setze o auf o + 1
+    gib_zurück wert
+
+# Datei per TFTP holen; mit Fortschrittszeile. Rueckgabe wie nn_tftp_schritt.
+funktion tftp_holen(st, ctx, name, ziel, max, fortschritt):
+    nn_tftp_start(ctx, name, ziel, max)
+    tb_anfang(st)
+    tb_t(st, "LADE ")
+    tb_t(st, name)
+    zeile(st)
+    zeichnen(st)
+    setze gezeigt auf 0
+    setze r auf 0
+    solange r == 0:
+        setze r auf nn_tftp_schritt(ctx)
+        wenn fortschritt und nn_feld(ctx, 120) - gezeigt >= 65536:
+            setze gezeigt auf nn_feld(ctx, 120)
+            tb_anfang(st)
+            tb_t(st, "EMPFANGEN ")
+            tb_z(st, gezeigt)
+            tb_t(st, " / ")
+            tb_z(st, max)
+            tb_t(st, " BYTES")
+            zeile_ersetzen(st)
+            zeichnen(st)
+    gib_zurück r
+
+funktion fehler(st, text, zusatz):
+    tb_anfang(st)
+    tb_t(st, "FEHLER: ")
+    tb_t(st, text)
+    wenn zusatz >= 0:
+        tb_t(st, " ")
+        tb_z(st, zusatz)
+    zeile(st)
+    zeichnen(st)
+
+funktion lader_lauf(st):
+    unsicher:
+        melde(st, "MOO NETZ-LADER (P7-T10) STARTET")
+        setze pci auf nt_pci_init()
+        setze ports auf nt_ports_oeffnen(pci, 2)
+        setze typname auf "I226"
+        wenn nt_anzahl(ports) == 0:
+            setze ports auf nt_ports_oeffnen(pci, 1)
+            setze typname auf "E1000"
+        tb_anfang(st)
+        tb_t(st, "NETZKARTEN: ")
+        tb_z(st, nt_anzahl(ports))
+        tb_t(st, " (")
+        tb_t(st, typname)
+        tb_t(st, ")")
+        zeile(st)
+        zeichnen(st)
+        wenn nt_anzahl(ports) == 0:
+            fehler(st, "KEINE NETZKARTE GEFUNDEN", -1)
+            gib_zurück -1
+        setze i auf 0
+        solange i < nt_anzahl(ports):
+            nt_multicast_an(nt_port(ports, i))
+            setze i auf i + 1
+        melde(st, "WARTE AUF LINK ...")
+        setze s auf 0
+        setze k auf erster_link(ports)
+        solange k < 0 und s < 100:
+            kern_warte_us(100000)
+            setze s auf s + 1
+            setze k auf erster_link(ports)
+        wenn k < 0:
+            fehler(st, "KEIN LINK NACH 10 S", -1)
+            gib_zurück -2
+        setze nic auf nt_port(ports, k)
+        tb_anfang(st)
+        tb_t(st, "LINK: PORT ")
+        tb_z(st, k)
+        tb_t(st, ", ")
+        tb_z(st, nt_tempo(nic))
+        tb_t(st, " MBIT/S, MAC ")
+        setze i auf 0
+        solange i < 6:
+            tb_h(st, nt_mac(nic, i), 2)
+            setze i auf i + 1
+        zeile(st)
+        zeichnen(st)
+        # TFTP-Server suchen: Direktkabel oder QEMU.
+        setze ctx1 auf nn_kontext(nic, nn_ip(192, 168, 77, 2), nn_ip(192, 168, 77, 1))
+        setze ctx2 auf nn_kontext(nic, nn_ip(10, 0, 2, 15), nn_ip(10, 0, 2, 2))
+        melde(st, "SUCHE TFTP-SERVER 192.168.77.1 / 10.0.2.2 ...")
+        setze ctx auf 0
+        setze v auf 0
+        solange ctx == 0 und v < 60:
+            wenn nn_arp_aufloesen(ctx1, 300):
+                setze ctx auf ctx1
+            sonst:
+                wenn nn_arp_aufloesen(ctx2, 300):
+                    setze ctx auf ctx2
+            setze v auf v + 1
+            tb_anfang(st)
+            tb_t(st, "SUCHE TFTP-SERVER ... VERSUCH ")
+            tb_z(st, v)
+            tb_t(st, ", EMPFANGEN ")
+            tb_z(st, nn_feld(ctx1, 64) + nn_feld(ctx2, 64))
+            tb_t(st, " RAHMEN")
+            zeile_ersetzen(st)
+            zeichnen(st)
+        tb_anfang(st)
+        tb_t(st, "EMPFANGSTEST: ")
+        tb_z(st, nn_feld(ctx1, 64) + nn_feld(ctx2, 64))
+        tb_t(st, " RAHMEN EMPFANGEN")
+        zeile(st)
+        wenn ctx == 0:
+            fehler(st, "KEIN TFTP-SERVER ANTWORTET", -1)
+            gib_zurück -3
+        tb_anfang(st)
+        tb_t(st, "SERVER ")
+        tb_ip(st, nn_feld(ctx, 16))
+        tb_t(st, " MAC ")
+        setze i auf 0
+        solange i < 6:
+            wenn i < 4:
+                tb_h(st, (nn_feld(ctx, 24) >> (i * 8)) & 255, 2)
+            sonst:
+                tb_h(st, (nn_feld(ctx, 32) >> ((i - 4) * 8)) & 255, 2)
+            setze i auf i + 1
+        tb_t(st, ", EIGENE IP ")
+        tb_ip(st, nn_feld(ctx, 8))
+        zeile(st)
+        zeichnen(st)
+        # Pruefdatei: "<laenge> <crc32hex>"
+        setze pp auf nt_dma(512)
+        setze r auf tftp_holen(st, ctx, "moo.efi.pruef", pp, 256, falsch)
+        wenn r < 0:
+            fehler(st, "TFTP moo.efi.pruef", 0 - r)
+            gib_zurück -4
+        setze pn auf nn_feld(ctx, 120)
+        setze erwartet auf nn_dez_lesen(pp, 0, pn)
+        setze o auf 0
+        solange o < pn und nn_r8(pp, o) != 32:
+            setze o auf o + 1
+        setze crc_soll auf hex_lesen(pp, o + 1, pn)
+        tb_anfang(st)
+        tb_t(st, "ERWARTET: ")
+        tb_z(st, erwartet)
+        tb_t(st, " BYTES, CRC32 ")
+        tb_h(st, crc_soll, 8)
+        zeile(st)
+        zeichnen(st)
+        wenn erwartet < 64 oder erwartet > 33554432:
+            fehler(st, "PRUEFDATEI UNGUELTIG", erwartet)
+            gib_zurück -4
+        setze puf auf kern_alloc(erwartet + 64)
+        wenn puf == 0:
+            fehler(st, "KEIN SPEICHER FUER", erwartet)
+            gib_zurück -4
+        setze r auf tftp_holen(st, ctx, "moo.efi", puf, erwartet, wahr)
+        wenn r < 0:
+            fehler(st, "TFTP moo.efi", 0 - r)
+            gib_zurück -5
+        setze n auf nn_feld(ctx, 120)
+        tb_anfang(st)
+        tb_t(st, "EMPFANGEN: ")
+        tb_z(st, n)
+        tb_t(st, " BYTES")
+        zeile(st)
+        zeichnen(st)
+        wenn n != erwartet:
+            fehler(st, "LAENGE FALSCH", n)
+            gib_zurück -6
+        setze crc auf nn_crc32(nn_crc_tabelle(), puf, n)
+        wenn crc != crc_soll:
+            tb_anfang(st)
+            tb_t(st, "FEHLER: PRUEFSUMME FALSCH, CRC32 ")
+            tb_h(st, crc, 8)
+            zeile(st)
+            zeichnen(st)
+            gib_zurück -7
+        # PE32+-Kopf: "MZ", e_lfanew @0x3C, "PE\0\0", Maschine 0x8664 (x86-64).
+        setze pe auf speicher_lesen(puf + 0x3C, 4)
+        wenn nn_r8(puf, 0) != 0x4D oder nn_r8(puf, 1) != 0x5A oder pe + 6 > n oder speicher_lesen(puf + pe, 4) != 0x4550 oder speicher_lesen(puf + pe + 4, 2) != 0x8664:
+            fehler(st, "KEIN X86-64-EFI-IMAGE", -1)
+            gib_zurück -8
+        tb_anfang(st)
+        tb_t(st, "PRUEFSUMME OK (CRC32 ")
+        tb_h(st, crc, 8)
+        tb_t(st, "), PE32+ X86-64")
+        zeile(st)
+        melde(st, "STARTE IMAGE ...")
+        setze r auf kern_bild_starten(puf, n)
+        tb_anfang(st)
+        tb_t(st, "IMAGE ZURUECK, STATUS ")
+        tb_z(st, r)
+        zeile(st)
+        zeichnen(st)
+        gib_zurück r
+
+funktion moo_efi_haupt():
+    unsicher:
+        setze st auf anzeige_neu()
+        setze laeuft auf wahr
+        solange laeuft:
+            setze r auf lader_lauf(st)
+            melde(st, "R = NEU LADEN, ESC = ENDE")
+            setze warten auf wahr
+            solange warten:
+                kern_eingabe_warten()
+                setze t auf kern_taste_lesen()
+                solange t != "":
+                    wenn t == "r" oder t == "R":
+                        setze warten auf falsch
+                    wenn t == "Escape":
+                        setze warten auf falsch
+                        setze laeuft auf falsch
+                    setze t auf kern_taste_lesen()

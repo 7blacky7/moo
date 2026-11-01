@@ -44,6 +44,9 @@ BIN="$ROOT/compiler/target/release/moo-compiler"
 PRUEFUNG="${MOO_UEFI_PRUEFUNG:-}"
 if [ "$PRUEFUNG" = "e1000" ]; then
   MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/netz_e1000.moos}"
+elif [ "$PRUEFUNG" = "lader" ]; then
+  # P7-T10: Netz-Lader; Nutzlast ist die e1000-Pruef-App (eigener Lauf, s. u.).
+  MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/netz_lader.moos}"
 else
   MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/hallo_uefi.moos}"
 fi
@@ -160,6 +163,7 @@ mcopy -i "$DISK"@@${OFF} "$OUT/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI >/dev/null 2
 TREIBER="${MOO_UEFI_TREIBER-$ROOT/build/p7-ipxe/intel.efidrv}"
 # Im e1000-Pruefmodus darf kein Firmware-Treiber die NIC binden.
 [ "$PRUEFUNG" = "e1000" ] && TREIBER=""
+[ "$PRUEFUNG" = "lader" ] && TREIBER=""
 NIC_ROM=""
 TREIBER_ERWARTET="FEHLT"
 if [ -n "$TREIBER" ] && [ -f "$TREIBER" ]; then
@@ -206,6 +210,19 @@ if [ "$PRUEFUNG" = "e1000" ]; then
   grep -q "MOO-E1000-FEHLER" "$SERIAL_LOG" && fail "Moo-Treiber meldet FEHLER (siehe oben)"
   grep -q "MOO-E1000-SELBST 00" "$SERIAL_LOG" || fail "Selbsttests der Treiberlogik melden Fehler (MOO-E1000-SELBST != 00)"
   grep -q "MOO-E1000-I226 0" "$SERIAL_LOG" || fail "I226-Zaehlung ohne Geraet nicht 0"
+  # P7-T10: 1000 Rahmen > 16 Ringplaetze; TX-Rueckgewinnung ohne Verwerfen und alle im pcap.
+  grep -aq "MOO-E1000-SERIE 03ea 0000" "$SERIAL_LOG" || { grep -a "MOO-E1000-SERIE" "$SERIAL_LOG"; fail "Serie: erwartet 1002 gesendet (2 + 1000), 0 verworfen"; }
+  SERIE=$(grep -a -o "MOO-E1000-SERIE" "$OUT/net.pcap" | wc -l)
+  [ "$SERIE" -eq 1000 ] || fail "Serie: $SERIE statt 1000 Rahmen im pcap"
+  echo "      OK: TX-Serie: 1000 Rahmen ueber 16er-Ring, 0 verworfen, 1000 im pcap"
+  # P7-T10: 200 Logzeilen ueber 3 Ports (echt, festgefahrener Ring, ohne Link):
+  # festgefahrener Port 15 gesendet/185 verworfen, Port ohne Link 0, je Zeile < 5 ms.
+  grep -aq "MOO-E1000-LOG 000f 00b9 0000" "$SERIAL_LOG" || { grep -a "MOO-E1000-LOG" "$SERIAL_LOG"; fail "Log: erwartet LOG 000f 00b9 0000"; }
+  LOGMS=$(tcpdump -r "$OUT/net.pcap" -n -tt -A 'udp port 7777' 2>/dev/null | awk '/^[0-9]{10}/{t=$1; next} /MOO-E1000-LOG/{if(!a)a=t; b=t; n++} END{if(n>1) printf "%d %.3f", n, (b-a)*1000/(n-1); else print n " 999"}')
+  set -- $LOGMS
+  [ "$1" -eq 200 ] || fail "Log: $1 statt 200 Logzeilen im pcap"
+  awk -v ms="$2" 'BEGIN{exit !(ms < 5)}' || fail "Log: $2 ms je Zeile (Grenze 5 ms)"
+  echo "      OK: 200 Logzeilen, $2 ms je Zeile, festgefahrener Port verwirft ohne Warten, Port ohne Link unberuehrt"
   ECAM="$(grep -ao 'MOO-E1000-ECAM [0-9a-f]*' "$SERIAL_LOG" | awk '{print $2}')"
   [ -n "$ECAM" ] && [ "$((16#$ECAM))" -ne 0 ] || fail "keine ECAM-Basis aus ACPI-MCFG"
   grep -q "MOO-E1000-PCI " "$SERIAL_LOG" || fail "e1000 im PCI-Scan nicht gefunden"
@@ -222,6 +239,64 @@ if [ "$PRUEFUNG" = "e1000" ]; then
   fi
   echo "############################################################"
   echo "# ERGEBNIS: e1000-Pruefung gruen (Moo-Treiber sendet und empfaengt in QEMU)."
+  echo "############################################################"
+  exit 0
+fi
+if [ "$PRUEFUNG" = "lader" ]; then
+  # P7-T10: Nutzlast bauen und pruefen (e1000-Modus dieses Skripts), dann per
+  # QEMU-slirp-TFTP (-netdev user,tftp=) an den Lader ausliefern.
+  MOO_UEFI_PRUEFUNG=e1000 MOO_UEFI_OUT="$OUT/nutzlast" bash "$0" >"$OUT/nutzlast.log" 2>&1 \
+    || { tail -5 "$OUT/nutzlast.log" | sed 's/^/      | /'; fail "Nutzlast (e1000-Modus) nicht gruen"; }
+  echo "      OK: Nutzlast gebaut und einzeln gruen ($OUT/nutzlast/BOOTX64.EFI)"
+  pruefdatei() {  # Datei Ziel: "<laenge> <crc32hex>" (CRC32 aus dem gzip-Trailer, RFC 1952)
+    printf '%s %s\n' "$(stat -c %s "$1")" "$(gzip -c -n "$1" | tail -c8 | od -An -tx4 -N4 | tr -d ' \n')" >"$2"
+  }
+  mkdir -p "$OUT/tftp" "$OUT/tftp-falsch"
+  cp "$OUT/nutzlast/BOOTX64.EFI" "$OUT/tftp/moo.efi"
+  pruefdatei "$OUT/tftp/moo.efi" "$OUT/tftp/moo.efi.pruef"
+  cp "$OUT/tftp/moo.efi" "$OUT/tftp-falsch/moo.efi"
+  awk '{ printf "%s 00000000\n", $1 }' "$OUT/tftp/moo.efi.pruef" >"$OUT/tftp-falsch/moo.efi.pruef"
+  echo "      Pruefdatei: $(cat "$OUT/tftp/moo.efi.pruef")"
+  lader_qemu() {  # tftp-Verzeichnis, Serial-Log, Pcap, Endemuster
+    cp "$OVMF_VARS" "$OUT/vars-lader.fd"
+    : >"$2"
+    timeout --foreground $((WAIT_S + 60))s qemu-system-x86_64 -machine q35 \
+        -drive if=pflash,format=raw,unit=0,readonly=on,file="$OVMF_CODE" \
+        -drive if=pflash,format=raw,unit=1,file="$OUT/vars-lader.fd" \
+        -drive format=raw,file="$DISK" \
+        -m 512M -vga std -display none -no-reboot -monitor none \
+        -netdev user,id=n0,tftp="$1" -device e1000,netdev=n0,mac=52:54:00:12:34:58,romfile= \
+        -object filter-dump,id=f0,netdev=n0,file="$3" \
+        -serial file:"$2" -debugcon file:"$DEBUG_LOG" -global isa-debugcon.iobase=0xe9 \
+        >"$OUT/qemu-lader.log" 2>&1 &
+    local pid=$! i
+    for ((i = 0; i < WAIT_S + 50; i++)); do
+      grep -aq -- "$4" "$2" 2>/dev/null && break
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 1
+    done
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+    grep -a -E "MOO-LADER|MOO-UEFI-BILD|MOO-E1000-(SELBST|ARP|ENDE)" "$2" | tr -d '\000' | sed 's/^/      | /'
+  }
+  lader_qemu "$OUT/tftp" "$SERIAL_LOG" "$OUT/net.pcap" "MOO-E1000-ENDE"
+  for m in "MOO-LADER NETZKARTEN: 1 (E1000)" "MOO-LADER LINK: PORT 0" "MOO-LADER SERVER 10.0.2.2" \
+           "MOO-LADER PRUEFSUMME OK" "MOO-LADER STARTE IMAGE" "MOO-UEFI-BILD-START" \
+           "MOO-E1000-SELBST 00" "MOO-E1000-ARP 1" "MOO-E1000-ENDE"; do
+    grep -aq -- "$m" "$SERIAL_LOG" || fail "Lader: '$m' fehlt"
+  done
+  grep -aq "MOO-LADER FEHLER" "$SERIAL_LOG" && fail "Lader meldet FEHLER"
+  echo "      OK: Lader holt moo.efi per TFTP, CRC32/PE ok, startet die Nutzlast, Nutzlast laeuft (ARP 1, ENDE)"
+  # Negativfall: falsche Pruefsumme -> nichts starten, Statusanzeige bleibt.
+  lader_qemu "$OUT/tftp-falsch" "$OUT/serial-falsch.log" "$OUT/net-falsch.pcap" "MOO-LADER R = NEU"
+  grep -aq "MOO-LADER FEHLER: PRUEFSUMME FALSCH" "$OUT/serial-falsch.log" || fail "Negativfall: PRUEFSUMME FALSCH fehlt"
+  grep -aq "MOO-UEFI-BILD-START" "$OUT/serial-falsch.log" && fail "Negativfall: Image trotz falscher Pruefsumme gestartet"
+  grep -aq "MOO-LADER R = NEU" "$OUT/serial-falsch.log" || fail "Negativfall: Statusanzeige (R/ESC) fehlt"
+  echo "      OK: Negativfall: falsche Pruefsumme erkannt, nichts gestartet, Statusanzeige bleibt"
+  if [ -n "${MOO_UEFI_OUT:-}" ]; then
+    (cd "$OUT" && sha256sum BOOTX64.EFI uefi.img tftp/moo.efi tftp/moo.efi.pruef net.pcap serial.log >sha256.txt) && sed 's/^/      sha256: /' "$OUT/sha256.txt"
+  fi
+  echo "############################################################"
+  echo "# ERGEBNIS: Lader-Pruefung gruen (TFTP, Pruefung, Start aus dem Speicher, Negativfall)."
   echo "############################################################"
   exit 0
 fi

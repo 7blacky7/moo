@@ -299,6 +299,8 @@ impl<'ctx> CodeGen<'ctx> {
             | "kern_warte_us" | "kern_wait_us"
             | "kern_text_in_puffer" | "kern_text_to_buffer"
             | "kern_text_aus_puffer" | "kern_text_from_buffer"
+            // P7-T10: EFI-Image aus dem Speicher starten (Netz-Lader)
+            | "kern_bild_starten" | "kern_image_start"
         )
     }
 
@@ -5954,6 +5956,12 @@ impl<'ctx> CodeGen<'ctx> {
                         let a = self.compile_expr(&args[0])?;
                         let b = self.compile_expr(&args[1])?;
                         return self.call_rt(self.rt.kern_text_aus_puffer, &[a.into(), b.into()], "kern_text_aus_puffer");
+                    }
+                    "kern_bild_starten" | "kern_image_start" => {
+                        self.require_bare("kern_bild_starten")?;
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.kern_bild_starten, &[a.into(), b.into()], "kern_bild_starten");
                     }
                     "ausfuehren" | "eval" => {
                         let code = self.compile_expr(&args[0])?;

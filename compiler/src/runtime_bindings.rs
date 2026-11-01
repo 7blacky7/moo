@@ -114,6 +114,7 @@ pub struct RuntimeBindings<'ctx> {
     pub kern_warte_us: FunctionValue<'ctx>,
     pub kern_text_in_puffer: FunctionValue<'ctx>,
     pub kern_text_aus_puffer: FunctionValue<'ctx>,
+    pub kern_bild_starten: FunctionValue<'ctx>,
     // String
     pub moo_string_concat: FunctionValue<'ctx>,
     // List
@@ -1067,6 +1068,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             kern_warte_us: decl_mv_mv!("kern_warte_us", mv1),
             kern_text_in_puffer: decl_mv_mv!("kern_text_in_puffer", mv3),
             kern_text_aus_puffer: decl_mv_mv!("kern_text_aus_puffer", mv2),
+            kern_bild_starten: decl_mv_mv!("kern_bild_starten", mv2),
 
             // String
             moo_string_concat: decl_mv_mv!("moo_string_concat", mv2),

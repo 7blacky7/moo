@@ -35,7 +35,7 @@
 # Firmware nutzt es selbst). Serielle Ausgabe geht ueber COM1-Port-I/O
 # (kern_outw, P011-B1); OVMF/QEMU haben COM1.
 
-aus "./netz_treiber" importiere nt_pci_init, nt_ports_oeffnen, nt_anzahl, nt_port, nt_link, nt_udp_log, nt_status_text, nt_dma
+aus "./netz_treiber" importiere nt_pci_init, nt_ports_oeffnen, nt_anzahl, nt_port, nt_link, nt_udp_log, nt_log, nt_status_text, nt_dma
 
 # P7-T15: Logzeile auf allen eigenen Ports (Moo-I226-Treiber) mit Link senden;
 # ohne eigene Ports wie bisher ueber die Firmware-Netzschnittstelle (SNP).
@@ -44,12 +44,7 @@ funktion netz_log(ports, puf, text):
     wenn n == 0:
         kern_netz_sende(text)
         gib_zurück nichts
-    setze i auf 0
-    solange i < n:
-        setze nic auf nt_port(ports, i)
-        wenn nt_link(nic):
-            nt_udp_log(nic, puf, text)
-        setze i auf i + 1
+    nt_log(ports, puf, text)
 
 funktion sende(c):
     unsicher:

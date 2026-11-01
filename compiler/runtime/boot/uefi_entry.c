@@ -645,6 +645,32 @@ MooValue kern_text_aus_puffer(MooValue quelle, MooValue laenge) {
     return moo_string_new_len((const char *)(unsigned long long)q, (int)l);
 }
 
+/* P7-T10: kern_bild_starten(adresse, laenge) startet ein EFI-Image, das schon
+ * im Speicher liegt (Netz-Lader). LoadImage aus dem Puffer (ohne Geraetepfad,
+ * Eltern-Image = diese App), danach StartImage. Rueckgabe: 0 = gestartet und
+ * mit Erfolg zurueckgekehrt, 1 = LoadImage abgelehnt, 2 = StartImage meldete
+ * einen Fehler, -1 = ungueltige Argumente. Diagnose auf 0xE9. */
+static void *moo_image_handle;
+MooValue kern_bild_starten(MooValue adresse, MooValue laenge) {
+    EfiLoadImage lade;
+    EfiStartImage starte;
+    double a = moo_uefi_zahl(adresse), l = moo_uefi_zahl(laenge);
+    void *bild = 0;
+    u64 status;
+    if (!moo_st || !moo_image_handle || !moo_st->boot->load_image || !moo_st->boot->start_image)
+        return moo_number(-1.0);
+    if (!(a > 0.0) || !(l >= 64.0) || l > 268435456.0) return moo_number(-1.0);
+    lade = (EfiLoadImage)moo_st->boot->load_image;
+    starte = (EfiStartImage)moo_st->boot->start_image;
+    status = lade(0, moo_image_handle, 0, (void *)(u64)a, (u64)l, &bild);
+    debug("MOO-UEFI-BILD LoadImage "); debug_hex(status); debug("\n");
+    if (status != 0 || !bild) return moo_number(1.0);
+    marker("MOO-UEFI-BILD-START\n");
+    status = starte(bild, 0, 0);
+    debug("MOO-UEFI-BILD StartImage "); debug_hex(status); debug("\n");
+    return moo_number(status == 0 ? 0.0 : 2.0);
+}
+
 /* kern_treiber_status(): Moo-Text fuer die Statuszeile. */
 MooValue kern_treiber_status(void) {
     if (moo_treiber_ok) return moo_string_new("TREIBER OK");
@@ -695,6 +721,7 @@ u64 efi_main(void *ImageHandle, void *SystemTable) {
     marker("MOO-UEFI-HEAP-OK\n");
     /* Treiber VOR dem Connect-Lauf (in moo_uefi_eingabe_init) laden, damit
      * sie beim rekursiven ConnectController ihre Geraete binden. */
+    moo_image_handle = ImageHandle;
     moo_uefi_treiber_laden(ImageHandle, (EfiSystemTable *)SystemTable);
     marker(moo_treiber_ok ? "MOO-UEFI-TREIBER-OK\n"
            : moo_treiber_fehler ? "MOO-UEFI-TREIBER-FEHLER\n" : "MOO-UEFI-TREIBER-FEHLT\n");

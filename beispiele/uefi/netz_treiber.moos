@@ -56,10 +56,13 @@
 # nicht aufrufbar). Werte laufen als Zahl (exakt bis 2^53). Nur Polling, keine
 # Interrupts. Der CF8/CFC-Weg ist im QEMU-Gate (q35, ECAM) nicht ausgefuehrt.
 #
-# ZUSTAND je nic (128 Byte): 0 Typ, 8 MMIO, 16 bdf, 24 MAC 0-3, 32 MAC 4-5,
+# ZUSTAND je nic (192 Byte): 0 Typ, 8 MMIO, 16 bdf, 24 MAC 0-3, 32 MAC 4-5,
 #   40 TX-Ring, 48 TX-Puffer, 56 TX-Ende, 64 RX-Ring, 72 RX-Puffer, 80 RX-naechster,
-#   88 RX-Registerbasis, 96 TX-Registerbasis, 104 MAC gueltig (1/0).
-# Ringe: je 8 Legacy-Deskriptoren zu 16 Byte, Puffer je 2048 Byte.
+#   88 RX-Registerbasis, 96 TX-Registerbasis, 104 MAC gueltig (1/0),
+#   112 aeltester offener TX-Deskriptor, 120 TX gesendet, 128 TX verworfen.
+# Ringe: je 16 Legacy-Deskriptoren zu 16 Byte (wie iPXE), Puffer je 2048 Byte.
+# TX blockiert nie: Rueckgewinnung ueber STA.DD oder TDH, bei vollem Ring
+# hoechstens 2 ms warten, dann verwerfen und zaehlen (P7-T10, Befund N100 run4).
 
 # ---------------- Speicher ----------------
 funktion nt_dma(groesse):
@@ -231,7 +234,7 @@ funktion nt_oeffnen(pci, bdf):
             setze mmio auf mmio + pci_lese32(pci, bdf, 20) * 4294967296
         wenn mmio == 0:
             gib_zurück 0
-        setze nic auf nt_dma(128)
+        setze nic auf nt_dma(192)
         wenn nic == 0:
             gib_zurück 0
         speicher_schreiben(nic, typ, 8)
@@ -327,14 +330,17 @@ funktion nt_ringe_init(nic, rxbasis, txbasis, mit_enable):
     unsicher:
         speicher_schreiben(nic + 88, rxbasis, 8)
         speicher_schreiben(nic + 96, txbasis, 8)
-        setze ring auf nt_dma(128)
-        setze puffer auf nt_dma(8 * 2048)
-        setze tring auf nt_dma(128)
-        setze tpuffer auf nt_dma(8 * 2048)
+        setze ring auf nt_dma(16 * 16)
+        setze puffer auf nt_dma(16 * 2048)
+        setze tring auf nt_dma(16 * 16)
+        setze tpuffer auf nt_dma(16 * 2048)
         wenn ring == 0 oder puffer == 0 oder tring == 0 oder tpuffer == 0:
             gib_zurück falsch
+        speicher_schreiben(nic + 112, 0, 8)
+        speicher_schreiben(nic + 120, 0, 8)
+        speicher_schreiben(nic + 128, 0, 8)
         setze i auf 0
-        solange i < 8:
+        solange i < 16:
             speicher_schreiben(ring + i * 16, puffer + i * 2048, 8)
             setze i auf i + 1
         speicher_schreiben(nic + 40, tring, 8)
@@ -345,10 +351,10 @@ funktion nt_ringe_init(nic, rxbasis, txbasis, mit_enable):
         speicher_schreiben(nic + 80, 0, 8)
         nt_reg_setze(nic, rxbasis, ring & 0xFFFFFFFF)
         nt_reg_setze(nic, rxbasis + 4, (ring >> 32) & 0xFFFFFFFF)
-        nt_reg_setze(nic, rxbasis + 8, 128)
+        nt_reg_setze(nic, rxbasis + 8, 16 * 16)
         nt_reg_setze(nic, txbasis, tring & 0xFFFFFFFF)
         nt_reg_setze(nic, txbasis + 4, (tring >> 32) & 0xFFFFFFFF)
-        nt_reg_setze(nic, txbasis + 8, 128)
+        nt_reg_setze(nic, txbasis + 8, 16 * 16)
         wenn mit_enable:
             nt_reg_setze(nic, rxbasis + 0x28, nt_reg(nic, rxbasis + 0x28) | 0x2000000)
             nt_reg_setze(nic, txbasis + 0x28, nt_reg(nic, txbasis + 0x28) | 0x2000000)
@@ -362,13 +368,41 @@ funktion nt_ringe_init(nic, rxbasis, txbasis, mit_enable):
             nt_reg_setze(nic, rxbasis + 0x10, 0)
             nt_reg_setze(nic, txbasis + 0x10, 0)
         nt_reg_setze(nic, txbasis + 0x18, 0)
-        # 7 von 8 Empfangsdeskriptoren an die Hardware geben.
-        nt_reg_setze(nic, rxbasis + 0x18, 7)
+        # 15 von 16 Empfangsdeskriptoren an die Hardware geben.
+        nt_reg_setze(nic, rxbasis + 0x18, 15)
         gib_zurück wahr
+
+# TX-Rueckgewinnung: Deskriptoren ab dem aeltesten offenen (nic+112) gelten als
+# erledigt, wenn die Hardware STA.DD gesetzt hat ODER das Kopfregister TDH schon
+# dahinter steht (alles vor dem Kopf ist verarbeitet). Beides, weil sich das
+# Zurueckschreiben von DD je nach Schwellwerten verzoegern kann.
+funktion nt_tx_aufraeumen(nic):
+    unsicher:
+        setze ende auf speicher_lesen(nic + 56, 8)
+        setze alt auf speicher_lesen(nic + 112, 8)
+        setze kopf auf nt_reg(nic, speicher_lesen(nic + 96, 8) + 0x10) & 15
+        setze ring auf speicher_lesen(nic + 40, 8)
+        solange alt != ende und (alt != kopf oder (speicher_lesen(ring + alt * 16 + 12, 1) & 1) != 0):
+            setze alt auf (alt + 1) % 16
+        speicher_schreiben(nic + 112, alt, 8)
+
+funktion nt_tx_gesendet(nic):
+    unsicher:
+        gib_zurück speicher_lesen(nic + 120, 8)
+
+funktion nt_tx_verworfen(nic):
+    unsicher:
+        gib_zurück speicher_lesen(nic + 128, 8)
 
 funktion nt_ring_senden(nic, quelle, laenge):
     unsicher:
         wenn laenge <= 0 oder laenge > 1514:
+            gib_zurück falsch
+        # Platz im Ring? Ein Rueckgewinnungsversuch, sonst sofort verwerfen und
+        # zaehlen - nie warten (Befund N100 run5: Wartezeit summierte sich je Zeile).
+        nt_tx_aufraeumen(nic)
+        wenn (speicher_lesen(nic + 56, 8) + 1) % 16 == speicher_lesen(nic + 112, 8):
+            speicher_schreiben(nic + 128, speicher_lesen(nic + 128, 8) + 1, 8)
             gib_zurück falsch
         setze ende auf speicher_lesen(nic + 56, 8)
         setze desk auf speicher_lesen(nic + 40, 8) + ende * 16
@@ -378,16 +412,12 @@ funktion nt_ring_senden(nic, quelle, laenge):
         # Laenge @8 (16 Bit), CSO @10 = 0, CMD @11 = EOP (0) | IFCS (1) | RS (3).
         speicher_schreiben(desk + 8, laenge | (0x0B << 24), 4)
         speicher_schreiben(desk + 12, 0, 4)
-        setze naechst auf (ende + 1) % 8
+        setze naechst auf (ende + 1) % 16
         speicher_schreiben(nic + 56, naechst, 8)
         nt_reg_setze(nic, speicher_lesen(nic + 96, 8) + 0x18, naechst)
-        # Fertig, wenn die Hardware STA.DD (Bit 0 @12) setzt.
-        setze n auf 0
-        solange n < 1000000:
-            wenn (speicher_lesen(desk + 12, 1) & 1) != 0:
-                gib_zurück wahr
-            setze n auf n + 1
-        gib_zurück falsch
+        speicher_schreiben(nic + 120, speicher_lesen(nic + 120, 8) + 1, 8)
+        # Kein Warten auf STA.DD: zurueckgewonnen wird beim naechsten Senden.
+        gib_zurück wahr
 
 funktion nt_ring_empfangen(nic, ziel):
     unsicher:
@@ -401,7 +431,7 @@ funktion nt_ring_empfangen(nic, ziel):
         speicher_schreiben(desk + 12, 0, 4)
         # Deskriptor an die Hardware zurueckgeben (Ende-Register der RX-Queue).
         nt_reg_setze(nic, speicher_lesen(nic + 88, 8) + 0x18, i)
-        speicher_schreiben(nic + 80, (i + 1) % 8, 8)
+        speicher_schreiben(nic + 80, (i + 1) % 16, 8)
         gib_zurück laenge
 
 # ---------------- e1000 (Intel 8254x) ----------------
@@ -521,6 +551,25 @@ funktion i226_init(nic):
         nt_reg_setze(nic, 0x0100, (nt_reg(nic, 0x0100) & 0xFDFCFFFF) | 0x2 | 0x8000 | 0x4000000)
         gib_zurück wahr
 
+# Logzeile als UDP-Broadcast nur auf Ports mit Link senden; Ports ohne Link
+# werden nicht befuellt. Rueckgabe: Anzahl Ports, auf denen gesendet wurde.
+funktion nt_log(ports, puffer, text):
+    setze n auf 0
+    setze i auf 0
+    solange i < nt_anzahl(ports):
+        setze nic auf nt_port(ports, i)
+        wenn nt_link(nic):
+            wenn nt_udp_log(nic, puffer, text):
+                setze n auf n + 1
+        setze i auf i + 1
+    gib_zurück n
+
+# Multicast-Rahmen annehmen (RCTL.MPE, Bit 4; 8254x SDM und I210-DS gleich),
+# z. B. fuer den Empfangstest mit "ping -6 ff02::1" vom Linux-PC (P7-T10).
+funktion nt_multicast_an(nic):
+    wenn nic != 0:
+        nt_reg_setze(nic, 0x0100, nt_reg(nic, 0x0100) | 0x10)
+
 # ---------------- Rahmenbau: UDP-Log und Statustext ----------------
 # Ethernet-Broadcast + IPv4 0.0.0.0 -> 255.255.255.255 + UDP 7777 -> 7777.
 # Nutzlast liegt bereits bei puffer + 42 (laenge Byte). Rueckgabe: Rahmenlaenge.
@@ -611,4 +660,19 @@ funktion nt_status_text(ports, puffer):
         sonst:
             setze o auf nt_dez(puffer, o + 1, tempo)
         setze i auf i + 1
+    # Summe gesendet/verworfen ueber alle Ports (Diagnose).
+    setze tx auf 0
+    setze verw auf 0
+    setze i auf 0
+    solange i < n:
+        setze tx auf tx + nt_tx_gesendet(nt_port(ports, i))
+        setze verw auf verw + nt_tx_verworfen(nt_port(ports, i))
+        setze i auf i + 1
+    nt_b8(puffer, o, 32)
+    nt_b8(puffer, o + 1, 84)
+    nt_b8(puffer, o + 2, 88)
+    nt_b8(puffer, o + 3, 32)
+    setze o auf nt_dez(puffer, o + 4, tx)
+    nt_b8(puffer, o, 47)
+    setze o auf nt_dez(puffer, o + 1, verw)
     gib_zurück kern_text_aus_puffer(puffer, o)
