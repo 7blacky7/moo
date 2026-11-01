@@ -1,0 +1,9 @@
+@bibliothek("m")
+extern "C" funktion sinf(x: f32) -> f32
+@nativ
+funktion defer_float_sin(x: f32) -> f32:
+    unsicher:
+        gib_zurück sinf(x)
+setze wert auf 1.5
+aufräumen: defer_float_sin(wert)
+zeige "hauptteil"

@@ -1,0 +1,4 @@
+# Historischer dynamischer Lexer-Fallback bleibt erhalten.
+zeige 0x
+zeige 0b
+zeige 0x10000000000000000

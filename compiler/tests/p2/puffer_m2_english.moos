@@ -1,0 +1,5 @@
+setze p auf buffer_create(i32, 2)
+p[0] = -7
+p[1] = 2147483647
+zeige p[0]
+zeige p[1]

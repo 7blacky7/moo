@@ -1,0 +1,2 @@
+funktion p2_array_fehlt(wert: [u8;]) -> i32:
+    gib_zurück 0

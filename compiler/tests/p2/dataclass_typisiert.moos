@@ -1,0 +1,4 @@
+daten klasse Daten(x: i32, y, zahlen: puffer[i32])
+setze wert auf neu Daten(7, 42, [3])
+zeige wert.x
+zeige wert.y

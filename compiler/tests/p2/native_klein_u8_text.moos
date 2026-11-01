@@ -1,0 +1,6 @@
+@nativ
+funktion klein_ident(wert: u8) -> u8:
+    gib_zurück wert
+setze wert auf "text"
+zeige klein_ident(wert)
+zeige "NACH_FALSCH"

@@ -1,0 +1,191 @@
+Program {
+    statements: [
+        FunctionDef {
+            name: "p2_uefi_tabelle",
+            params: [
+                "system",
+                "text",
+                "ausgabe",
+                "seiten",
+            ],
+            param_types: [
+                Some(
+                    TypeRef {
+                        kind: Generic {
+                            name: "ptr",
+                            args: [
+                                TypeRef {
+                                    kind: Generic {
+                                        name: "ptr",
+                                        args: [
+                                            TypeRef {
+                                                kind: Name(
+                                                    "u8",
+                                                ),
+                                                line: 1,
+                                                column: 42,
+                                                end_line: 1,
+                                                end_column: 44,
+                                            },
+                                        ],
+                                    },
+                                    line: 1,
+                                    column: 38,
+                                    end_line: 1,
+                                    end_column: 45,
+                                },
+                            ],
+                        },
+                        line: 1,
+                        column: 34,
+                        end_line: 1,
+                        end_column: 46,
+                    },
+                ),
+                Some(
+                    TypeRef {
+                        kind: Generic {
+                            name: "ptr",
+                            args: [
+                                TypeRef {
+                                    kind: Name(
+                                        "u16",
+                                    ),
+                                    line: 1,
+                                    column: 58,
+                                    end_line: 1,
+                                    end_column: 61,
+                                },
+                            ],
+                        },
+                        line: 1,
+                        column: 54,
+                        end_line: 1,
+                        end_column: 62,
+                    },
+                ),
+                Some(
+                    TypeRef {
+                        kind: Generic {
+                            name: "ptr",
+                            args: [
+                                TypeRef {
+                                    kind: Function {
+                                        params: [
+                                            TypeRef {
+                                                kind: Generic {
+                                                    name: "ptr",
+                                                    args: [
+                                                        TypeRef {
+                                                            kind: Name(
+                                                                "u8",
+                                                            ),
+                                                            line: 1,
+                                                            column: 84,
+                                                            end_line: 1,
+                                                            end_column: 86,
+                                                        },
+                                                    ],
+                                                },
+                                                line: 1,
+                                                column: 80,
+                                                end_line: 1,
+                                                end_column: 87,
+                                            },
+                                            TypeRef {
+                                                kind: Generic {
+                                                    name: "ptr",
+                                                    args: [
+                                                        TypeRef {
+                                                            kind: Name(
+                                                                "u16",
+                                                            ),
+                                                            line: 1,
+                                                            column: 93,
+                                                            end_line: 1,
+                                                            end_column: 96,
+                                                        },
+                                                    ],
+                                                },
+                                                line: 1,
+                                                column: 89,
+                                                end_line: 1,
+                                                end_column: 97,
+                                            },
+                                        ],
+                                        return_type: TypeRef {
+                                            kind: Name(
+                                                "u64",
+                                            ),
+                                            line: 1,
+                                            column: 102,
+                                            end_line: 1,
+                                            end_column: 105,
+                                        },
+                                    },
+                                    line: 1,
+                                    column: 77,
+                                    end_line: 1,
+                                    end_column: 105,
+                                },
+                            ],
+                        },
+                        line: 1,
+                        column: 73,
+                        end_line: 1,
+                        end_column: 106,
+                    },
+                ),
+                Some(
+                    TypeRef {
+                        kind: Array {
+                            element: TypeRef {
+                                kind: Name(
+                                    "u64",
+                                ),
+                                line: 1,
+                                column: 117,
+                                end_line: 1,
+                                end_column: 120,
+                            },
+                            length: Number(
+                                512.0,
+                            ),
+                        },
+                        line: 1,
+                        column: 116,
+                        end_line: 1,
+                        end_column: 126,
+                    },
+                ),
+            ],
+            return_type: Some(
+                TypeRef {
+                    kind: Name(
+                        "u64",
+                    ),
+                    line: 1,
+                    column: 131,
+                    end_line: 1,
+                    end_column: 134,
+                },
+            ),
+            defaults: [
+                None,
+                None,
+                None,
+                None,
+            ],
+            body: [
+                Return(
+                    Some(
+                        Number(
+                            0.0,
+                        ),
+                    ),
+                ),
+            ],
+            decorators: [],
+        },
+    ],
+}

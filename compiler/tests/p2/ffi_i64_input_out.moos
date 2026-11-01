@@ -1,0 +1,39 @@
+@bibliothek("p2_i64")
+extern "C" funktion p2_i64_guard(wert: i64) -> i64
+@bibliothek("p2_i64")
+extern "C" funktion p2_u64_identity(wert: u64) -> u64
+@bibliothek("p2_i64")
+extern "C" funktion p2_i64_inexact() -> i64
+@bibliothek("p2_i64")
+extern "C" funktion p2_u64_inexact() -> u64
+@bibliothek("p2_i64")
+extern "C" funktion p2_u64_is_exact_literal(wert: u64) -> i32
+@bibliothek("p2_i64")
+extern "C" funktion p2_u64_is_max(wert: u64) -> i32
+@nativ
+funktion ffi_i64(wert: i64) -> i64:
+    unsicher:
+        gib_zurück p2_i64_guard(wert)
+@nativ
+funktion ffi_u64(wert: u64) -> u64:
+    unsicher:
+        gib_zurück p2_u64_identity(wert)
+@nativ
+funktion ffi_i64_inexact() -> i64:
+    unsicher:
+        gib_zurück p2_i64_inexact()
+@nativ
+funktion ffi_u64_inexact() -> u64:
+    unsicher:
+        gib_zurück p2_u64_inexact()
+@nativ
+funktion ffi_u64_literal() -> i32:
+    unsicher:
+        gib_zurück p2_u64_is_exact_literal(9007199254740993)
+@nativ
+funktion ffi_u64_max_literal() -> i32:
+    unsicher:
+        gib_zurück p2_u64_is_max(18446744073709551615)
+setze wert auf 9223372036854775808
+zeige ffi_i64(wert)
+zeige "DARF_NICHT_ERREICHT_WERDEN"

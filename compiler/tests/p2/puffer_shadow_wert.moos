@@ -1,0 +1,4 @@
+funktion macher(typ, n):
+    gib_zurück n + 30
+setze puffer_erstellen auf macher
+zeige puffer_erstellen("i32", 1)

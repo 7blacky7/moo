@@ -1,0 +1,6 @@
+@nativ
+funktion p2_lese(p: ptr[u16]) -> u16:
+    unsicher:
+        gib_zurück p[0]
+
+setze f auf p2_lese

@@ -1,0 +1,13 @@
+# P2-T6/T7: Typannotationen bleiben im dynamischen Pfad semantisch inert.
+schnittstelle Messbar:
+    funktion messe(wert: i32) -> i32
+
+funktion identitaet(wert: i32) -> i32:
+    gib_zurück wert
+
+setze wert: i32 auf 6
+setze daten_liste: puffer[i32] auf [4]
+setze inkrement auf (x: i32) => x + 1
+zeige identitaet(wert)
+zeige inkrement(4)
+zeige daten_liste[0]

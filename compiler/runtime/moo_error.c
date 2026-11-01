@@ -40,6 +40,15 @@ void moo_try_leave(void) {
     if (moo_try_depth == 0) clear_last_error();
 }
 
+/* Uebertraegt den gespeicherten Fehler (+1) und konsumiert nur das Flag.
+ * Die Handler-Tiefe bleibt fuer den separaten moo_try_leave-Aufruf unveraendert. */
+MooValue moo_try_take_error(void) {
+    MooValue error = moo_last_error;
+    moo_last_error = moo_none();
+    moo_error_flag = 0;
+    return error;
+}
+
 /* Liefert +1 owning; der Catch-Code darf den Wert ueber try_leave hinaus halten. */
 MooValue moo_get_error(void) {
     MooValue error = moo_last_error;

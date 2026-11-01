@@ -1,0 +1,1 @@
+extern "C" funktion foo(wert: [i32; 2]) -> void

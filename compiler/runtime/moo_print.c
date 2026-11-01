@@ -131,6 +131,10 @@ MooValue moo_to_string(MooValue v) {
             return moo_tensor_to_string(v);
         case MOO_SURFACE:
             return moo_string_new("<Oberflaeche>");
+        case MOO_BUFFER:
+            return moo_string_new("<Puffer>");
+        case MOO_STRUCT:
+            return moo_string_new("<Struktur>");
         default:
             return moo_string_new("<unbekannt>");
     }

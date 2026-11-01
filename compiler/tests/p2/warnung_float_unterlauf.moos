@@ -1,0 +1,4 @@
+# Erwartet sichtbare Unterlaufwarnung auf +0, keine Fehlermeldung.
+@nativ
+funktion unterlauf() -> f32:
+    gib_zurück 0.0000000000000000000000000000000000000000000001

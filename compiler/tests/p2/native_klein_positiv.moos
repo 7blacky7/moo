@@ -1,0 +1,24 @@
+@nativ
+funktion klein_s_id(x: i8) -> i8:
+    gib_zurück x
+@nativ
+funktion klein_s_plus(x: i8) -> i8:
+    gib_zurück x + 1
+@nativ
+funktion klein_u_id(x: u8) -> u8:
+    gib_zurück x
+@nativ
+funktion klein_u_plus(x: u8) -> u8:
+    gib_zurück x + 1
+zeige klein_s_id(-128)
+zeige klein_s_id(127)
+zeige klein_s_plus(127)
+zeige klein_u_id(0)
+zeige klein_u_id(255)
+zeige klein_u_plus(255)
+setze null_pos auf 0.0
+setze null_neg auf -0.0
+zeige klein_s_id(null_pos)
+zeige klein_s_id(null_neg)
+zeige klein_u_id(null_pos)
+zeige klein_u_id(null_neg)

@@ -1,0 +1,7 @@
+@bibliothek("p2_void")
+extern "C" funktion p2_void_read() -> i32
+@nativ
+funktion ffi_void_falsch() -> void:
+    unsicher:
+        p2_void_read()
+ffi_void_falsch()

@@ -1,0 +1,2 @@
+importiere "./modul_kern_typen" als treiber
+zeige treiber.p2_kern_zaehle(41)

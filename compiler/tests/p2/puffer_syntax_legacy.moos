@@ -1,0 +1,3 @@
+setze puffer_erstellen auf [5]
+setze i32 auf 0
+zeige puffer_erstellen[i32]

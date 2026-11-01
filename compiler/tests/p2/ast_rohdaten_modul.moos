@@ -1,0 +1,2 @@
+@rohdaten_u32
+konstante p2_rohdaten: [u32; 2] auf [1, 2]

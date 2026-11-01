@@ -1,0 +1,7 @@
+solange wahr:
+    versuche:
+        stopp
+    fange fehler:
+        zeige "FALSCH"
+wirf "aussen"
+zeige "NACH_FALSCH"

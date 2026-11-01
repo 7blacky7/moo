@@ -1,0 +1,9 @@
+@bibliothek(linux="p2_ffi_schmal")
+extern "C" funktion p2_ffi_schmal(a: i8, b: u8) -> i32
+
+@nativ
+funktion schmal_probe() -> i32:
+    unsicher:
+        gib_zurück p2_ffi_schmal(-1, 255)
+
+zeige schmal_probe()

@@ -1,0 +1,4 @@
+@nativ
+funktion hw_rueck(p: ptr[u32]) -> u32:
+    unsicher:
+        gib_zurück volatile_schreiben(p, 1)

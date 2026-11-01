@@ -1,0 +1,7 @@
+@nativ
+funktion p2_u64_raw() -> u64:
+    setze obergrenze: u64 auf 18446744073709551615
+    setze hex: u64 auf 0xFFFFFFFFFFFFFFFF
+    setze praezise: u64 auf 9007199254740993
+    setze binaer: u64 auf 0b101010
+    gib_zurück obergrenze

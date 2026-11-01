@@ -1,0 +1,6 @@
+setze geteilt auf 10
+teste "global":
+    setze geteilt auf geteilt + 1
+    erwarte geteilt == 11
+teste_alle()
+zeige geteilt

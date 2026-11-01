@@ -1,0 +1,8 @@
+extern "C" funktion putchar(x: i32) -> i32
+@nativ
+funktion defer_ffi_putchar(x: i32) -> i32:
+    unsicher:
+        gib_zurück putchar(x)
+setze wert auf 88
+aufräumen: defer_ffi_putchar(wert)
+zeige "hauptteil"

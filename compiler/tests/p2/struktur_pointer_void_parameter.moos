@@ -1,0 +1,4 @@
+struktur void:
+    wert: u8
+struktur P2UngültigeFunktion:
+    callback: ptr[fn(void) -> u64]

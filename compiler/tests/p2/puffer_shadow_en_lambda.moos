@@ -1,0 +1,3 @@
+setze buffer_create auf (typ, n) => typ + n
+setze i32 auf 7
+zeige buffer_create(i32, 1)

@@ -1,0 +1,9 @@
+setze i auf 0
+solange i < 1:
+    setze i auf i + 1
+    versuche:
+        weiter
+    fange fehler:
+        zeige "FALSCH"
+wirf "aussen"
+zeige "NACH_FALSCH"

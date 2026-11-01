@@ -1,0 +1,5 @@
+funktion macher(typ, n):
+    gib_zurück typ + n
+setze buffer_create auf macher
+setze i32 auf 7
+zeige buffer_create(i32, 1)

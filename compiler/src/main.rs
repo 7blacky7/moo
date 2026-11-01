@@ -1,7 +1,18 @@
 mod ast;
+mod bindgen;
 mod boards;
 mod codegen;
+mod codegen_native;
+mod ffi_types;
+mod ffi_link;
+mod native_arithmetic;
+mod native_control_flow;
+mod native_struct;
+mod native_pointer;
+mod native_hardware;
+mod native_type_id;
 mod lexer;
+mod native_vecmat;
 mod parser;
 mod runtime_bindings;
 mod tokens;
@@ -19,6 +30,36 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Erzeugt einen konservativen C-Header-Bindungsentwurf (Linux x86_64)
+    Bindgen {
+        /// C-Header
+        header: PathBuf,
+        /// Namenspräfix (mehrfach möglich)
+        #[arg(long = "prefix", required = true)]
+        prefix: Vec<String>,
+        /// C-Include-Verzeichnis (mehrfach möglich)
+        #[arg(short = 'I')]
+        include: Vec<PathBuf>,
+        /// Unvollständigen Entwurf trotz Diagnosen anzeigen
+        #[arg(long)]
+        allow_partial: bool,
+    },
+    /// Parser-AST zur Diagnose ausgeben (Debugformat, nicht stabil)
+    Ast {
+        /// Die .moos-Quelldatei
+        file: PathBuf,
+        /// Imports wie beim Kompilieren auflösen
+        #[arg(long)]
+        imports: bool,
+    },
+    /// Registrierte Ziel-Layouts als JSON diagnostizieren
+    Layout {
+        /// Die .moos-Quelldatei
+        file: PathBuf,
+        /// Ziel-Architektur wie bei compile
+        #[arg(long)]
+        target: Option<String>,
+    },
     /// Eine .moos-Datei kompilieren und als native Binary erzeugen
     Compile {
         /// Die .moos-Quelldatei
@@ -32,6 +73,9 @@ enum Commands {
         /// WebAssembly erzeugen (.wasm)
         #[arg(long)]
         target: Option<String>,
+        /// Zusätzlicher Bibliotheks-Suchpfad, mehrfach verwendbar.
+        #[arg(long = "lib-pfad", alias = "lib-path")]
+        lib_paths: Vec<PathBuf>,
         /// Bare-Metal: ohne Standard-Runtime (nur Zahlen + Bitops + Memory I/O)
         #[arg(long)]
         no_stdlib: bool,
@@ -97,8 +141,37 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Compile { file, output, emit_ir, target, no_stdlib, linker_script, entry, profile, erlaube_kern, kernel, emit, board } => {
-            if let Err(e) = compile(&file, output.as_deref(), emit_ir, target.as_deref(), no_stdlib, linker_script.as_deref(), entry.as_deref(), profile, erlaube_kern, kernel, &emit, board.as_deref()) {
+        Commands::Bindgen { header, prefix, include, allow_partial } => {
+            match bindgen::run(&header, &prefix, &include, allow_partial) {
+                Ok(code) if code != 0 => std::process::exit(code),
+                Ok(_) => {}
+                Err(e) => { eprintln!("bindgen: {e}"); std::process::exit(1); }
+            }
+        }
+        Commands::Ast { file, imports } => {
+            let result = (|| -> Result<ast::Program, String> {
+                let mut program = parse_file(&file)?;
+                if imports {
+                    let dir = file.parent().unwrap_or(std::path::Path::new("."));
+                    let mut visited = std::collections::HashSet::new();
+                    visited.insert(file.canonicalize().unwrap_or_else(|_| file.clone()));
+                    resolve_modules(&mut program, dir, &mut visited)?;
+                }
+                Ok(program)
+            })();
+            match result {
+                Ok(program) => println!("{program:#?}"),
+                Err(e) => { eprintln!("Fehler: {e}"); std::process::exit(1); }
+            }
+        }
+        Commands::Layout { file, target } => {
+            match layout_diagnostic(&file, target.as_deref().unwrap_or("native")) {
+                Ok(json) => println!("{json}"),
+                Err(e) => { eprintln!("Fehler: {e}"); std::process::exit(1); }
+            }
+        }
+        Commands::Compile { file, output, emit_ir, target, lib_paths, no_stdlib, linker_script, entry, profile, erlaube_kern, kernel, emit, board } => {
+            if let Err(e) = compile(&file, output.as_deref(), emit_ir, target.as_deref(), no_stdlib, linker_script.as_deref(), entry.as_deref(), profile, erlaube_kern, kernel, &emit, board.as_deref(), &lib_paths) {
                 eprintln!("Fehler: {e}");
                 std::process::exit(1);
             }
@@ -130,6 +203,45 @@ fn main() {
             }
         }
     }
+}
+
+// JSON string encoding without assumptions about identifiers or target names.
+fn layout_json_string(value: &str) -> String {
+    use std::fmt::Write;
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if (c as u32) < 0x20 => { write!(&mut out, "\\u{:04x}", c as u32).unwrap(); }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn layout_diagnostic(file: &PathBuf, target: &str) -> Result<String, String> {
+    let mut program = parse_file(file)?;
+    let dir = file.parent().unwrap_or(std::path::Path::new("."));
+    let mut visited = std::collections::HashSet::new();
+    visited.insert(file.canonicalize().unwrap_or_else(|_| file.clone()));
+    resolve_modules(&mut program, dir, &mut visited)?;
+    let context = inkwell::context::Context::create();
+    let name = file.file_stem().and_then(|s| s.to_str()).unwrap_or("layout");
+    let mut compiler = codegen::CodeGen::new(&context, name, target)?;
+    let layouts = compiler.diagnostic_layouts(&program)?;
+    let triple = codegen::CodeGen::resolve_triple(target);
+    let mut structs = Vec::with_capacity(layouts.len());
+    for (name, size, alignment, fields) in layouts {
+        let fields = fields.into_iter().map(|(field, offset)|
+            format!("{{\"name\":{},\"offset\":{offset}}}", layout_json_string(&field))
+        ).collect::<Vec<_>>().join(",");
+        structs.push(format!("{{\"name\":{},\"size\":{size},\"alignment\":{alignment},\"fields\":[{fields}]}}",
+            layout_json_string(&name)));
+    }
+    Ok(format!("{{\"schema\":1,\"target_triple\":{},\"structs\":[{}]}}",
+        layout_json_string(&triple), structs.join(",")))
 }
 
 /// Parst eine .moos-Datei zu einem AST
@@ -234,8 +346,8 @@ fn prefix_expr(expr: &ast::Expr, prefix: &str, names: &std::collections::HashSet
         ast::Expr::UnaryOp { op, operand } => ast::Expr::UnaryOp {
             op: op.clone(), operand: pe_box(operand),
         },
-        ast::Expr::Lambda { params, body } => ast::Expr::Lambda {
-            params: params.clone(), body: pe_box(body),
+        ast::Expr::Lambda { params, param_types, body } => ast::Expr::Lambda {
+            params: params.clone(), param_types: param_types.clone(), body: pe_box(body),
         },
         ast::Expr::List(elems) => ast::Expr::List(pe_vec(elems)),
         ast::Expr::Dict(pairs) => ast::Expr::Dict(
@@ -281,11 +393,11 @@ fn prefix_stmts(stmts: &[ast::Stmt], prefix: &str, names: &std::collections::Has
 
 fn prefix_stmt(stmt: &ast::Stmt, prefix: &str, names: &std::collections::HashSet<String>) -> ast::Stmt {
     match stmt {
-        ast::Stmt::Assignment { name, value } => ast::Stmt::Assignment {
-            name: name.clone(), value: prefix_expr(value, prefix, names),
+        ast::Stmt::Assignment { name, ty, value } => ast::Stmt::Assignment {
+            name: name.clone(), ty: ty.clone(), value: prefix_expr(value, prefix, names),
         },
-        ast::Stmt::ConstAssignment { name, value } => ast::Stmt::ConstAssignment {
-            name: name.clone(), value: prefix_expr(value, prefix, names),
+        ast::Stmt::ConstAssignment { name, ty, value } => ast::Stmt::ConstAssignment {
+            name: name.clone(), ty: ty.clone(), value: prefix_expr(value, prefix, names),
         },
         ast::Stmt::Show(e) => ast::Stmt::Show(prefix_expr(e, prefix, names)),
         ast::Stmt::Return(Some(e)) => ast::Stmt::Return(Some(prefix_expr(e, prefix, names))),
@@ -313,10 +425,12 @@ fn prefix_functions(stmts: &[ast::Stmt], prefix: &str) -> Vec<ast::Stmt> {
     let func_names = collect_function_names(stmts);
     stmts.iter().map(|stmt| {
         match stmt {
-            ast::Stmt::FunctionDef { name, params, defaults, body, decorators } => {
+            ast::Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators } => {
                 ast::Stmt::FunctionDef {
                     name: format!("{prefix}__{name}"),
                     params: params.clone(),
+                    param_types: param_types.clone(),
+                    return_type: return_type.clone(),
                     defaults: defaults.clone(),
                     body: prefix_stmts(body, prefix, &func_names),
                     decorators: decorators.clone(),
@@ -324,10 +438,12 @@ fn prefix_functions(stmts: &[ast::Stmt], prefix: &str) -> Vec<ast::Stmt> {
             }
             // Export: FunctionDef darin prefixen (KEIN rekursiver prefix_functions Aufruf!)
             ast::Stmt::Export(inner) => {
-                if let ast::Stmt::FunctionDef { name, params, defaults, body, decorators } = inner.as_ref() {
+                if let ast::Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators } = inner.as_ref() {
                     ast::Stmt::Export(Box::new(ast::Stmt::FunctionDef {
                         name: format!("{prefix}__{name}"),
                         params: params.clone(),
+                        param_types: param_types.clone(),
+                        return_type: return_type.clone(),
                         defaults: defaults.clone(),
                         body: prefix_stmts(body, prefix, &func_names),
                         decorators: decorators.clone(),
@@ -347,7 +463,7 @@ fn prefix_functions(stmts: &[ast::Stmt], prefix: &str) -> Vec<ast::Stmt> {
 fn create_alias_functions(stmts: &[ast::Stmt], prefix: &str, names: &[String]) -> Vec<ast::Stmt> {
     let mut aliases = Vec::new();
     for stmt in stmts {
-        if let ast::Stmt::FunctionDef { name, params, .. } = stmt {
+        if let ast::Stmt::FunctionDef { name, params, param_types, return_type, .. } = stmt {
             // Nur wenn der Name (ohne Prefix) in der Import-Liste ist
             let bare_name = name.strip_prefix(&format!("{prefix}__")).unwrap_or(name);
             if names.contains(&bare_name.to_string()) {
@@ -359,6 +475,8 @@ fn create_alias_functions(stmts: &[ast::Stmt], prefix: &str, names: &[String]) -
                 aliases.push(ast::Stmt::FunctionDef {
                     name: bare_name.to_string(),
                     params: params.clone(),
+                    param_types: param_types.clone(),
+                    return_type: return_type.clone(),
                     defaults: params.iter().map(|_| None).collect(),
                     body: vec![ast::Stmt::Return(Some(call))],
                     decorators: vec![],
@@ -412,18 +530,22 @@ fn resolve_modules(
                         imported_stmts.extend(mod_program.statements.into_iter().map(strip_export));
                     } else {
                         // "aus mathe importiere fakultaet" → alle DEFINITIONEN des Moduls
-                        // (Funktionen, Klassen, DataClasses; exportiere ausgewickelt) plus alle
-                        // Variablen/Konstanten. Nur ausfuehrbare Top-Level-Statements werden
+                        // (Funktionen, Klassen, Interfaces, DataClasses; exportiere ausgewickelt) plus alle
+                        // Variablen/Konstanten und Rohdaten. Nur ausfuehrbare Top-Level-Statements werden
                         // verworfen, damit ein Import keine Seiteneffekte ausloest. Im inline-
                         // Modell ist das `names`-Filter rein informativ: sonst muessten Klassen
                         // und transitiv genutzte Helfer eines Moduls einzeln importiert werden.
                         for mod_stmt in mod_program.statements {
                             match strip_export(mod_stmt) {
                                 s @ (ast::Stmt::FunctionDef { .. }
+                                    | ast::Stmt::StructDef { .. }
+                                    | ast::Stmt::ExternC { .. }
                                     | ast::Stmt::ClassDef { .. }
+                                    | ast::Stmt::InterfaceDef { .. }
                                     | ast::Stmt::DataClassDef { .. }
                                     | ast::Stmt::Assignment { .. }
-                                    | ast::Stmt::ConstAssignment { .. }) => {
+                                    | ast::Stmt::ConstAssignment { .. }
+                                    | ast::Stmt::RawDataU32 { .. }) => {
                                     imported_stmts.push(s);
                                 }
                                 _ => {}
@@ -478,6 +600,8 @@ fn build_kernel(
     linker_script: Option<&std::path::Path>,
     emit: &str,
     board: Option<&'static boards::BoardProfile>,
+    libraries: &[String],
+    lib_paths: &[PathBuf],
 ) -> Result<(), String> {
     let resolved = codegen::CodeGen::resolve_triple(target_str);
 
@@ -583,10 +707,16 @@ fn build_kernel(
     // Surface- und Compositor-Kerne sind freestanding und werden in Hosted-
     // und Bare-Build identisch verwendet. Ein Hardware-Presenter (DRM/Display)
     // bleibt davon getrennt; dieses Gate startet weder UI noch QEMU.
-    const KERNEL_SOURCES: [&str; 13] = [
+    const KERNEL_SOURCES: [&str; 19] = [
         "moo_bare.c",
+        "moo_freestanding_mem.c",
         "moo_surface_core.c",
         "moo_compositor_core.c",
+        "moo_compositor_effects_state.c",
+        "moo_compositor_effects_math.c",
+        "moo_compositor_effects_damage.c",
+        "moo_compositor_effects_cpu.c",
+        "moo_compositor_animation.c",
         "moo_compositor_raster.c",
         "moo_bare_console.c",
         "moo_bare_alloc.c",
@@ -754,6 +884,12 @@ fn build_kernel(
     ld.arg("-n").arg("-T").arg(&script).arg("-o").arg(&elf_path);
     for o in &objects {
         ld.arg(o);
+    }
+    if !libraries.is_empty() {
+        // Bare akzeptiert nur Archive; Suchpfade und Namen bleiben getrennte argv.
+        ld.arg("-Bstatic");
+        for path in lib_paths { ld.arg("-L").arg(path); }
+        for name in libraries { ld.arg(format!("-l{name}")); }
     }
     if verbose {
         eprintln!("[moo-kernel] {ld:?}");
@@ -936,7 +1072,7 @@ fn windows_compile_allows_run(
     started && !timed_out && return_code == Some(0) && output_exists
 }
 
-fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, target: Option<&str>, no_stdlib: bool, linker_script: Option<&std::path::Path>, entry_point: Option<&str>, profile: bool, erlaube_kern: bool, kernel: bool, emit: &str, board: Option<&str>) -> Result<(), String> {
+fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, target: Option<&str>, no_stdlib: bool, linker_script: Option<&std::path::Path>, entry_point: Option<&str>, profile: bool, erlaube_kern: bool, kernel: bool, emit: &str, board: Option<&str>, lib_paths: &[PathBuf]) -> Result<(), String> {
     // P011-C1: --emit frueh validieren (vor jeder Kompilierung).
     if !matches!(emit, "elf" | "flat" | "sector") {
         return Err(format!("--emit '{emit}' unbekannt — erlaubt: elf | flat | sector"));
@@ -977,11 +1113,13 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     let canonical = file.canonicalize().unwrap_or(file.clone());
     visited.insert(canonical);
     resolve_modules(&mut program, file_dir, &mut visited)?;
+    let link_triple = codegen::CodeGen::resolve_triple(target.unwrap_or("native"));
+    let libraries = ffi_link::libraries(&program.statements, &link_triple)?;
 
     // LLVM Codegen
     let context = inkwell::context::Context::create();
     let module_name = file.file_stem().unwrap().to_str().unwrap();
-    let mut compiler = codegen::CodeGen::new(&context, module_name);
+    let mut compiler = codegen::CodeGen::new(&context, module_name, target.unwrap_or("native"))?;
     if profile {
         compiler.set_profiling(true);
     }
@@ -1015,7 +1153,7 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         // *-bare-Target baut moo->.o + moo_bare*.c -> ld -T script -> kernel.elf.
         let is_bare_target = target_str.contains("-bare");
         if is_bare_target && (kernel || linker_script.is_some()) {
-            return build_kernel(file, &compiler, output, target_str, linker_script, emit, board_profile);
+            return build_kernel(file, &compiler, output, target_str, linker_script, emit, board_profile, &libraries, lib_paths);
         }
         let obj_path = output
             .map(|p| p.to_path_buf())
@@ -1024,6 +1162,9 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         let resolved = codegen::CodeGen::resolve_triple(target_str);
         println!("✓ Bare-Metal kompiliert ({}): {}", resolved, obj_path.display());
         println!("  Ohne Runtime. Linken mit: cc {0} moo_bare.o -nostdlib -o firmware", obj_path.display());
+        if !libraries.is_empty() || !lib_paths.is_empty() {
+            eprintln!("  Link-Metadaten (nur statische Archive): Bibliotheken {:?}, Suchpfade {:?}", libraries, lib_paths);
+        }
         return Ok(());
     }
 
@@ -1047,6 +1188,9 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         compiler.write_object(&obj_path, target_str)?;
         println!("✓ Cross-kompiliert fuer {}: {}", resolved, obj_path.display());
         println!("  Hinweis: Object-File fuer {}. Linken muss auf dem Zielsystem erfolgen.", resolved);
+        if !libraries.is_empty() || !lib_paths.is_empty() {
+            eprintln!("  Link-Metadaten: Bibliotheken {:?}, Suchpfade {:?}", libraries, lib_paths);
+        }
         return Ok(());
     }
 
@@ -1088,6 +1232,17 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         "-o".to_string(),
         output_path.to_str().unwrap().to_string(),
     ];
+
+    // Bibliotheken vor System-Libs: statische Bibliotheken koennen diese nutzen.
+    // Command::args uebergibt alle Werte direkt, ohne Shell-Interpolation.
+    for path in lib_paths {
+        let path = path.to_str().ok_or("Bibliothekssuchpfad ist kein gueltiges UTF-8")?;
+        link_args.push("-L".to_string());
+        link_args.push(path.to_string());
+    }
+    for name in &libraries {
+        link_args.push(format!("-l{name}"));
+    }
 
     #[cfg(target_os = "windows")]
     link_args.extend([
@@ -1370,7 +1525,7 @@ fn run(file: &PathBuf) -> Result<(), String> {
     let tmp_name = format!("moo_tmp_binary_{}", std::process::id());
     let tmp_output = tmp_dir.join(tmp_name);
 
-    compile(file, Some(&tmp_output), false, None, false, None, None, false, false, false, "elf", None)?;
+    compile(file, Some(&tmp_output), false, None, false, None, None, false, false, false, "elf", None, &[])?;
 
     let status = Command::new(&tmp_output)
         .status()
@@ -1445,7 +1600,7 @@ fn repl() {
         }
 
         unsafe { std::env::set_var("MOO_QUIET", "1"); }
-        match compile(&tmp_src, Some(&tmp_bin), false, None, false, None, None, false, false, false, "elf", None) {
+        match compile(&tmp_src, Some(&tmp_bin), false, None, false, None, None, false, false, false, "elf", None, &[]) {
             Ok(()) => {
                 // Erfolgreich kompiliert — ausfuehren (ohne den "Kompiliert" Output)
                 let _ = Command::new(&tmp_bin).status();

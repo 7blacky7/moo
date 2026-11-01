@@ -1,0 +1,11 @@
+@bibliothek("m")
+extern "C" funktion sinf(x: f32) -> f32
+funktion marke(text):
+    zeige text
+funktion probe():
+    setze i auf 0
+    solange i < 3:
+        aufräumen: marke("runde")
+        setze i auf i + 1
+    gib_zurück "wert"
+zeige probe()

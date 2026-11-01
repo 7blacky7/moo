@@ -1,0 +1,9 @@
+funktion marke(wert):
+    zeige wert
+funktion probe():
+    setze i auf 0
+    solange i < 3:
+        aufräumen: marke(i)
+        setze i auf i + 1
+    gib_zurück 0
+probe()

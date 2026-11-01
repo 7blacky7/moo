@@ -1,0 +1,11 @@
+funktion laenge_zeigen(text, liste):
+    zeige text
+    zeige länge(liste)
+teste "lokal_ok":
+    setze heap auf [1, 2, 3, 4]
+    aufräumen: laenge_zeigen("L_OK", heap)
+teste "lokal_fail":
+    setze heap auf [1, 2, 3, 4]
+    aufräumen: laenge_zeigen("L_FAIL", heap)
+    erwarte falsch
+teste_alle()

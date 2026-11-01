@@ -10,10 +10,12 @@ static inline bool is_heap_type(uint64_t tag) {
            tag == MOO_DB_STMT || tag == MOO_WINDOW || tag == MOO_WEBSERVER ||
            tag == MOO_VOXELWORLD || tag == MOO_FRAME || tag == MOO_GIF ||
            tag == MOO_VIDEO || tag == MOO_TENSOR || tag == MOO_KAMERA ||
-           tag == MOO_MIKRO || tag == MOO_SURFACE;
+           tag == MOO_MIKRO || tag == MOO_SURFACE || tag == MOO_BUFFER || tag == MOO_STRUCT;
 }
 
 extern void moo_socket_free(void* ptr);
+extern void moo_buffer_free(void* ptr);
+extern void moo_struct_box_free(void* ptr);
 
 // Gibt den Pointer auf den refcount eines Heap-Objekts zurueck
 static inline int32_t* get_refcount_ptr(MooValue v) {
@@ -129,6 +131,12 @@ void moo_release(MooValue v) {
             break;
         case MOO_MIKRO:
             moo_mikro_free(moo_val_as_ptr(v));
+            break;
+        case MOO_BUFFER:
+            moo_buffer_free(moo_val_as_ptr(v));
+            break;
+        case MOO_STRUCT:
+            moo_struct_box_free(moo_val_as_ptr(v));
             break;
         case MOO_SURFACE:
 #ifdef MOO_HAS_SURFACE

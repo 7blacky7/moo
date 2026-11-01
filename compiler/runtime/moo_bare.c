@@ -106,8 +106,32 @@ MooValue moo_mod(MooValue a, MooValue b) {
 MooValue moo_neg(MooValue v) { return moo_number(-as_num(v)); }
 
 // === Vergleiche ===
-MooValue moo_eq(MooValue a, MooValue b) { return moo_bool(as_num(a) == as_num(b)); }
-MooValue moo_neq(MooValue a, MooValue b) { return moo_bool(as_num(a) != as_num(b)); }
+/* P7-T2: Der Bare-Pfad kann Strings tragen (UEFI-Surface-Pfad liefert
+ * moo_string_new in boot/uefi_rt.c). Layout wie struct MooString in
+ * moo_runtime.h; Tag MOO_STRING = 1. Gleichheit byteweise, None nur zu None,
+ * Bool ueber den Wahrheitswert, sonst wie bisher numerisch. */
+#define BARE_TAG_STRING 1u
+typedef struct { int32_t refcount; char* chars; int32_t length; int32_t capacity; } BareString;
+static bool bare_str_eq(MooValue a, MooValue b) {
+    const BareString* x = (const BareString*)(uintptr_t)a.data;
+    const BareString* y = (const BareString*)(uintptr_t)b.data;
+    int32_t i;
+    if (!x || !y) return x == y;
+    if (x->length != y->length) return false;
+    for (i = 0; i < x->length; ++i) {
+        if (x->chars[i] != y->chars[i]) return false;
+    }
+    return true;
+}
+static bool bare_eq(MooValue a, MooValue b) {
+    if (a.tag == BARE_TAG_STRING || b.tag == BARE_TAG_STRING)
+        return a.tag == b.tag && bare_str_eq(a, b);
+    if (a.tag == MOO_NONE || b.tag == MOO_NONE) return a.tag == b.tag;
+    if (a.tag == MOO_BOOL && b.tag == MOO_BOOL) return (bool)a.data == (bool)b.data;
+    return as_num(a) == as_num(b);
+}
+MooValue moo_eq(MooValue a, MooValue b) { return moo_bool(bare_eq(a, b)); }
+MooValue moo_neq(MooValue a, MooValue b) { return moo_bool(!bare_eq(a, b)); }
 MooValue moo_lt(MooValue a, MooValue b) { return moo_bool(as_num(a) < as_num(b)); }
 MooValue moo_gt(MooValue a, MooValue b) { return moo_bool(as_num(a) > as_num(b)); }
 MooValue moo_lte(MooValue a, MooValue b) { return moo_bool(as_num(a) <= as_num(b)); }
@@ -117,6 +141,10 @@ MooValue moo_gte(MooValue a, MooValue b) { return moo_bool(as_num(a) >= as_num(b
 bool moo_is_truthy(MooValue v) {
     if (v.tag == MOO_NUMBER) return as_num(v) != 0.0;
     if (v.tag == MOO_BOOL) return (bool)v.data;
+    if (v.tag == BARE_TAG_STRING) {
+        const BareString* s = (const BareString*)(uintptr_t)v.data;
+        return s && s->length > 0;
+    }
     return false;
 }
 MooValue moo_and(MooValue a, MooValue b) { return moo_bool(moo_is_truthy(a) && moo_is_truthy(b)); }

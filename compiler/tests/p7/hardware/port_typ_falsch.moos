@@ -1,0 +1,4 @@
+@nativ
+funktion hw_port(port: u32) -> u8:
+    unsicher:
+        gib_zurück port_lese(port)

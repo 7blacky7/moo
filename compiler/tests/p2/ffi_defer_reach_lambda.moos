@@ -1,0 +1,9 @@
+funktion sauber():
+    zeige "CLEANUP"
+funktion rechne(x):
+    gib_zurück x + 10
+funktion probe():
+    aufräumen: sauber()
+    setze rechne auf (x) => x + 1
+    zeige rechne(41)
+probe()

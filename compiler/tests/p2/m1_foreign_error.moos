@@ -1,0 +1,10 @@
+@bibliothek("p2_m1_error")
+extern "C" funktion m1_foreign_error(wert: i32) -> i32
+
+@nativ
+funktion m1_foreign_probe(wert: i32) -> i32:
+    unsicher:
+        gib_zurück m1_foreign_error(wert)
+
+zeige 10 + m1_foreign_probe(1)
+zeige "NACH_FOREIGN_ERROR"

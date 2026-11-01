@@ -1,0 +1,22 @@
+@nativ
+funktion klein_summe_s(a: i8, b: i8) -> i8:
+    gib_zurück a + b
+@nativ
+funktion klein_summe_u(a: u8, b: u8) -> u8:
+    gib_zurück a + b
+funktion marke():
+    zeige "FALSCHER_WERT"
+    gib_zurück 1
+setze wert auf "text"
+versuche:
+    zeige klein_summe_s(wert, 1)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen i8"
+setze wert auf 256
+versuche:
+    zeige klein_summe_u(wert, 1)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen u8"
+zeige "weiter"

@@ -1,0 +1,27 @@
+@bibliothek("m")
+extern "C" funktion sinf(x: f32) -> f32
+@bibliothek("m")
+extern "C" funktion powf(x: f32, y: f32) -> f32
+@bibliothek("m")
+extern "C" funktion pow(x: f64, y: f64) -> f64
+
+@nativ
+funktion ffi_sin_null() -> f32:
+    unsicher:
+        gib_zurück sinf(0.0)
+
+@nativ
+funktion ffi_pow_float(x: f32, y: f32) -> f32:
+    unsicher:
+        gib_zurück powf(x, y)
+
+@nativ
+funktion ffi_pow_double(x: f64, y: f64) -> f64:
+    unsicher:
+        gib_zurück pow(x, y)
+
+setze basis auf 2.0
+setze exponent auf 3.0
+zeige ffi_sin_null()
+zeige ffi_pow_float(basis, exponent)
+zeige ffi_pow_double(basis, exponent)

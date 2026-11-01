@@ -1,0 +1,24 @@
+# C++ throws internally; the C adapter catches and returns -1.
+@bibliothek("p2_m1_cpp")
+@bibliothek("stdc++")
+extern "C" funktion p2_cpp_example(wert: i32) -> i32
+
+@nativ
+funktion cpp_probe(wert: i32) -> i32:
+    unsicher:
+        gib_zurück p2_cpp_example(wert)
+
+funktion cpp_checked(ergebnis):
+    wenn ergebnis < 0:
+        wirf "cpp fehler"
+    gib_zurück ergebnis
+
+setze ok auf cpp_probe(42)
+setze fehlgeschlagen auf cpp_probe(-1)
+zeige cpp_checked(ok)
+versuche:
+    zeige cpp_checked(fehlgeschlagen)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige fehler
+zeige "weiter"

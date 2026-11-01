@@ -1,0 +1,3 @@
+@ausrichten(wert=4)
+funktion probe():
+    gib_zurück 1

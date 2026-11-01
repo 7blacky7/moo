@@ -1,0 +1,12 @@
+# Future gate: explicit handle ownership, not a C++ ABI call.
+extern "C" funktion p2_cpp_create(wert: i32) -> ptr[void]
+extern "C" funktion p2_cpp_value(handle: ptr[void]) -> i32
+extern "C" funktion p2_cpp_destroy(handle: ptr[void]) -> i32
+
+@nativ
+funktion p2_handle_runde(wert: i32) -> i32:
+    unsicher:
+        setze handle: ptr[void] auf p2_cpp_create(wert)
+        setze ergebnis: i32 auf p2_cpp_value(handle)
+        setze freigabe: i32 auf p2_cpp_destroy(handle)
+        gib_zurück ergebnis

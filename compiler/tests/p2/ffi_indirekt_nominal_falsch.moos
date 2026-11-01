@@ -1,0 +1,8 @@
+struktur P2FfiA:
+    wert: i32
+struktur P2FfiB:
+    wert: i32
+@nativ
+funktion ffi_falsches_paket(f: ptr[fn(ptr[P2FfiA]) -> i32], wert: ptr[P2FfiB]) -> i32:
+    unsicher:
+        gib_zurück f(wert)

@@ -1,0 +1,8 @@
+@bibliothek("p2_i64")
+extern "C" funktion p2_i64_nearmin_inexact() -> i64
+@nativ
+funktion ffi_i64_nearmin_inexact() -> i64:
+    unsicher:
+        gib_zurück p2_i64_nearmin_inexact()
+zeige ffi_i64_nearmin_inexact()
+zeige "DARF_NICHT_ERREICHT_WERDEN"

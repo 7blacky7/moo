@@ -1,0 +1,3 @@
+# P2-T8: importiertes AST muss Typinformation behalten.
+funktion wert(x: i32) -> i32:
+    gib_zurück x

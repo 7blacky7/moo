@@ -1,0 +1,15 @@
+funktion marke(text):
+    zeige text
+funktion kaputt(text):
+    zeige text
+    wirf text
+funktion probe():
+    aufräumen: marke("A")
+    aufräumen: kaputt("B")
+    aufräumen: kaputt("C")
+    gib_zurück "wert"
+versuche:
+    zeige probe()
+fange fehler:
+    zeige fehler
+zeige "weiter"

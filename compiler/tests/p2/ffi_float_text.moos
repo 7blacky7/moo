@@ -1,0 +1,9 @@
+@bibliothek("m")
+extern "C" funktion sinf(x: f32) -> f32
+@nativ
+funktion ffi_float_wert(x: f32) -> f32:
+    unsicher:
+        gib_zurück sinf(x)
+setze wert auf "text"
+zeige ffi_float_wert(wert)
+zeige "DARF_NICHT_ERREICHT_WERDEN"

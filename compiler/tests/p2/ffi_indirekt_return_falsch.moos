@@ -1,0 +1,4 @@
+@nativ
+funktion p2_falsche_rueckgabe(f: ptr[fn(i32) -> i32], wert: i32) -> u32:
+    unsicher:
+        gib_zurück f(wert)

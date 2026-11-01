@@ -1,0 +1,10 @@
+funktion marke(text):
+    zeige text
+klasse Beispiel:
+    funktion ende():
+        aufräumen: marke("A")
+        zeige "body"
+aufräumen: marke("M")
+setze wert auf neu Beispiel()
+wert.ende()
+zeige "weiter"

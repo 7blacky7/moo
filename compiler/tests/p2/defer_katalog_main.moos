@@ -1,0 +1,3 @@
+funktion marke():
+    gib_zurück 0
+aufräumen: marke()

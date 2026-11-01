@@ -1,0 +1,12 @@
+funktion kaputt():
+    zeige "cleanup"
+    wirf "cleanupfehler"
+funktion probe():
+    aufräumen: kaputt()
+    versuche:
+        gib_zurück ["wert", 42]
+    fange fehler:
+        zeige fehler
+        gib_zurück "gefangen"
+zeige probe()
+zeige "weiter"

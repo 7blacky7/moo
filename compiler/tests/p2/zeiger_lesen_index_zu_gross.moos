@@ -1,0 +1,4 @@
+@nativ
+funktion zu_grosser_index(p: ptr[u8]) -> u8:
+    unsicher:
+        gib_zurück p[0x8000000000000000]

@@ -1,0 +1,15 @@
+funktion marke():
+    zeige "A"
+funktion inner():
+    setze lokal auf 2147483646..2147483647
+    setze x auf 1 / 0
+    zeige "FALSCH_INNER"
+funktion probe():
+    aufräumen: marke()
+    inner()
+    zeige "FALSCH_PROBE"
+versuche:
+    probe()
+fange fehler:
+    zeige fehler
+zeige "weiter"

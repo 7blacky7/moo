@@ -1,0 +1,4 @@
+@nativ
+funktion wort() -> u64:
+    gib_zurück 1
+zeige wort()

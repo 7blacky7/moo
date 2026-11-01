@@ -1,0 +1,11 @@
+extern "C" funktion abs(wert: i32) -> i32
+
+@nativ
+funktion abs_probe(wert: i32) -> i32:
+    unsicher:
+        gib_zurück abs(wert)
+
+versuche:
+    zeige abs_probe(-42)
+fange fehler:
+    zeige "gefangen"

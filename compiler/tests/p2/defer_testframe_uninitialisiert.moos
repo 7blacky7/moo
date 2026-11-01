@@ -1,0 +1,11 @@
+funktion marke(wert):
+    zeige "CLEANUP"
+    zeige wert
+teste "frueh":
+    aufräumen: marke(spaet)
+    zeige "BODY"
+    erwarte falsch
+    setze spaet auf [1, 2, 3]
+    zeige "UNERREICHBAR"
+teste_alle()
+zeige "ENDE"

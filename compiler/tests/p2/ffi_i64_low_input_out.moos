@@ -1,0 +1,9 @@
+@bibliothek("p2_i64")
+extern "C" funktion p2_i64_guard(wert: i64) -> i64
+@nativ
+funktion ffi_i64(wert: i64) -> i64:
+    unsicher:
+        gib_zurück p2_i64_guard(wert)
+setze wert auf -9223372036854777856
+zeige ffi_i64(wert)
+zeige "DARF_NICHT_ERREICHT_WERDEN"

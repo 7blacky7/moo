@@ -1,0 +1,14 @@
+funktion marke(text):
+    zeige text
+funktion kaputt(text):
+    wirf text
+funktion probe():
+    aufräumen: marke("cleanup")
+    versuche:
+        setze f auf (x) => kaputt(x)
+        zeige f("fehler")
+        zeige "DARF_NICHT_ERREICHT_WERDEN"
+    fange fehler:
+        zeige fehler
+    zeige "ende"
+probe()

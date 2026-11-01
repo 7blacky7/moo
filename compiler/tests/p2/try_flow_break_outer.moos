@@ -1,0 +1,10 @@
+versuche:
+    solange wahr:
+        versuche:
+            stopp
+        fange innen:
+            zeige "INNEN_FALSCH"
+    wirf "aussen"
+fange fehler:
+    zeige fehler
+zeige "weiter"

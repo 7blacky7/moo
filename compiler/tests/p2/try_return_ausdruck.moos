@@ -1,0 +1,7 @@
+funktion probe():
+    versuche:
+        gib_zurück ["heap", 1 / 0]
+    fange fehler:
+        zeige fehler
+        gib_zurück "gefangen"
+zeige probe()

@@ -1,0 +1,23 @@
+# P7-T4 5B: typisierte Port-I/O-Intrinsics (nur x86_64).
+@nativ
+funktion hw_port_lesen(port: u16) -> u8:
+    unsicher:
+        gib_zurück port_lese(port)
+
+@nativ
+funktion hw_port_lesen16(port: u16) -> u16:
+    unsicher:
+        gib_zurück port_lese16(port)
+
+@nativ
+funktion hw_port_lesen32(port: u16) -> u32:
+    unsicher:
+        gib_zurück port_in32(port)
+
+@nativ
+funktion hw_port_schreiben(port: u16, b: u8, w: u16, d: u32) -> void:
+    unsicher:
+        port_schreibe(port, b)
+        port_out16(port, w)
+        port_schreibe32(port, d)
+        port_out(0x80, 0)

@@ -1,0 +1,7 @@
+versuche:
+    zeige "vorher"
+    gib_zurück ["heap", 42]
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "CATCH_FALSCH"
+zeige "ENDE_FALSCH"

@@ -1,0 +1,11 @@
+funktion marke(text):
+    zeige text
+teste "fallthrough":
+    aufräumen: marke("CLEANUP_OK")
+    zeige "BODY_OK"
+teste "erwarte_fehler":
+    aufräumen: marke("CLEANUP_FAIL")
+    zeige "BODY_FAIL"
+    erwarte falsch
+    zeige "NACH_FALSCH"
+teste_alle()

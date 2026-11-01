@@ -1,0 +1,4 @@
+funktion raeume():
+    zeige "cleanup"
+aufräumen: raeume()
+zeige "ende"

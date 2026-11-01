@@ -1,0 +1,15 @@
+@nativ
+funktion ident(wert: i32) -> i32:
+    gib_zurück wert
+setze wert auf "text"
+versuche:
+    versuche:
+        zeige ident(wert)
+        zeige "NACH_FALSCH"
+    fange innen:
+        zeige innen
+    wirf "aussen"
+    zeige "NACH_FALSCH"
+fange aussen:
+    zeige aussen
+zeige "weiter"

@@ -1,0 +1,2 @@
+funktion p2_uefi_tabelle(system: ptr[ptr[u8]], text: ptr[u16], ausgabe: ptr[fn(ptr[u8], ptr[u16]) -> u64], seiten: [u64; 512]) -> u64:
+    gib_zurück 0

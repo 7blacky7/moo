@@ -1,0 +1,3 @@
+aus "./import_struktur_modul" importiere ImportPaket
+funktion p2_nimm_paket(p: ptr[ImportPaket]) -> u64:
+    gib_zurück 0

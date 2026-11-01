@@ -1,0 +1,13 @@
+funktion probe():
+    versuche:
+        garantiere [1, 2, 3, 4], sonst:
+            gib_zurück 0
+        gib_zurück 1
+    fange fehler:
+        gib_zurück 0
+setze i auf 0
+setze treffer auf 0
+solange i < 200000:
+    setze treffer auf treffer + probe()
+    setze i auf i + 1
+zeige treffer

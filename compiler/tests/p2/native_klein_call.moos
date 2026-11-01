@@ -1,0 +1,14 @@
+@nativ
+funktion klein_s_id(x: i8) -> i8:
+    gib_zurück x
+@nativ
+funktion klein_s_plus(x: i8) -> i8:
+    gib_zurück klein_s_id(x) + 1
+@nativ
+funktion klein_u_id(x: u8) -> u8:
+    gib_zurück x
+@nativ
+funktion klein_u_plus(x: u8) -> u8:
+    gib_zurück klein_u_id(x) + 1
+zeige klein_s_plus(127)
+zeige klein_u_plus(255)

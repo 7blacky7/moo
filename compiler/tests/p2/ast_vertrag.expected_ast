@@ -1,0 +1,373 @@
+Program {
+    statements: [
+        FunctionDef {
+            name: "p2_ast_typisiert",
+            params: [
+                "p",
+                "bytes",
+                "cb",
+            ],
+            param_types: [
+                Some(
+                    TypeRef {
+                        kind: Generic {
+                            name: "ptr",
+                            args: [
+                                TypeRef {
+                                    kind: Name(
+                                        "u64",
+                                    ),
+                                    line: 1,
+                                    column: 34,
+                                    end_line: 1,
+                                    end_column: 37,
+                                },
+                            ],
+                        },
+                        line: 1,
+                        column: 30,
+                        end_line: 1,
+                        end_column: 38,
+                    },
+                ),
+                Some(
+                    TypeRef {
+                        kind: Array {
+                            element: TypeRef {
+                                kind: Name(
+                                    "u8",
+                                ),
+                                line: 1,
+                                column: 48,
+                                end_line: 1,
+                                end_column: 50,
+                            },
+                            length: Number(
+                                16.0,
+                            ),
+                        },
+                        line: 1,
+                        column: 47,
+                        end_line: 1,
+                        end_column: 55,
+                    },
+                ),
+                Some(
+                    TypeRef {
+                        kind: Function {
+                            params: [
+                                TypeRef {
+                                    kind: Name(
+                                        "i32",
+                                    ),
+                                    line: 1,
+                                    column: 64,
+                                    end_line: 1,
+                                    end_column: 67,
+                                },
+                            ],
+                            return_type: TypeRef {
+                                kind: Name(
+                                    "f32",
+                                ),
+                                line: 1,
+                                column: 72,
+                                end_line: 1,
+                                end_column: 75,
+                            },
+                        },
+                        line: 1,
+                        column: 61,
+                        end_line: 1,
+                        end_column: 75,
+                    },
+                ),
+            ],
+            return_type: Some(
+                TypeRef {
+                    kind: Name(
+                        "u64",
+                    ),
+                    line: 1,
+                    column: 80,
+                    end_line: 1,
+                    end_column: 83,
+                },
+            ),
+            defaults: [
+                None,
+                None,
+                None,
+            ],
+            body: [
+                Assignment {
+                    name: "anzahl",
+                    ty: Some(
+                        TypeRef {
+                            kind: Name(
+                                "u32",
+                            ),
+                            line: 2,
+                            column: 19,
+                            end_line: 2,
+                            end_column: 22,
+                        },
+                    ),
+                    value: Number(
+                        3.0,
+                    ),
+                },
+                ConstAssignment {
+                    name: "kapazitaet",
+                    ty: Some(
+                        TypeRef {
+                            kind: Name(
+                                "u64",
+                            ),
+                            line: 3,
+                            column: 27,
+                            end_line: 3,
+                            end_column: 30,
+                        },
+                    ),
+                    value: Number(
+                        16.0,
+                    ),
+                },
+                Return(
+                    Some(
+                        Number(
+                            0.0,
+                        ),
+                    ),
+                ),
+            ],
+            decorators: [],
+        },
+        FunctionDef {
+            name: "p2_ast_untypisiert",
+            params: [
+                "x",
+            ],
+            param_types: [
+                None,
+            ],
+            return_type: None,
+            defaults: [
+                None,
+            ],
+            body: [
+                Return(
+                    Some(
+                        Identifier(
+                            "x",
+                        ),
+                    ),
+                ),
+            ],
+            decorators: [],
+        },
+        DataClassDef {
+            name: "P2AstDaten",
+            fields: [
+                "adresse",
+                "laenge",
+                "offen",
+            ],
+            field_types: [
+                Some(
+                    TypeRef {
+                        kind: Generic {
+                            name: "ptr",
+                            args: [
+                                TypeRef {
+                                    kind: Name(
+                                        "u8",
+                                    ),
+                                    line: 9,
+                                    column: 38,
+                                    end_line: 9,
+                                    end_column: 40,
+                                },
+                            ],
+                        },
+                        line: 9,
+                        column: 34,
+                        end_line: 9,
+                        end_column: 41,
+                    },
+                ),
+                Some(
+                    TypeRef {
+                        kind: Name(
+                            "u64",
+                        ),
+                        line: 9,
+                        column: 51,
+                        end_line: 9,
+                        end_column: 54,
+                    },
+                ),
+                None,
+            ],
+        },
+        InterfaceDef {
+            name: "P2AstSchnitt",
+            methods: [
+                "lesen",
+                "alt",
+            ],
+            signatures: [
+                Some(
+                    InterfaceSignature {
+                        name: "lesen",
+                        params: [
+                            "p",
+                            "groesse",
+                        ],
+                        param_types: [
+                            Some(
+                                TypeRef {
+                                    kind: Generic {
+                                        name: "ptr",
+                                        args: [
+                                            TypeRef {
+                                                kind: Name(
+                                                    "u8",
+                                                ),
+                                                line: 12,
+                                                column: 27,
+                                                end_line: 12,
+                                                end_column: 29,
+                                            },
+                                        ],
+                                    },
+                                    line: 12,
+                                    column: 23,
+                                    end_line: 12,
+                                    end_column: 30,
+                                },
+                            ),
+                            Some(
+                                TypeRef {
+                                    kind: Name(
+                                        "u64",
+                                    ),
+                                    line: 12,
+                                    column: 41,
+                                    end_line: 12,
+                                    end_column: 44,
+                                },
+                            ),
+                        ],
+                        defaults: [
+                            None,
+                            None,
+                        ],
+                        return_type: Some(
+                            TypeRef {
+                                kind: Name(
+                                    "i32",
+                                ),
+                                line: 12,
+                                column: 49,
+                                end_line: 12,
+                                end_column: 52,
+                            },
+                        ),
+                    },
+                ),
+                Some(
+                    InterfaceSignature {
+                        name: "alt",
+                        params: [
+                            "x",
+                        ],
+                        param_types: [
+                            None,
+                        ],
+                        defaults: [
+                            None,
+                        ],
+                        return_type: None,
+                    },
+                ),
+            ],
+        },
+        ClassDef {
+            name: "P2AstKlasse",
+            parent: None,
+            interfaces: [],
+            body: [
+                FunctionDef {
+                    name: "lesen",
+                    params: [
+                        "wert",
+                    ],
+                    param_types: [
+                        Some(
+                            TypeRef {
+                                kind: Name(
+                                    "i32",
+                                ),
+                                line: 16,
+                                column: 26,
+                                end_line: 16,
+                                end_column: 29,
+                            },
+                        ),
+                    ],
+                    return_type: Some(
+                        TypeRef {
+                            kind: Name(
+                                "i32",
+                            ),
+                            line: 16,
+                            column: 34,
+                            end_line: 16,
+                            end_column: 37,
+                        },
+                    ),
+                    defaults: [
+                        None,
+                    ],
+                    body: [
+                        Return(
+                            Some(
+                                Identifier(
+                                    "wert",
+                                ),
+                            ),
+                        ),
+                    ],
+                    decorators: [],
+                },
+            ],
+        },
+        Assignment {
+            name: "p2_ast_lambda",
+            ty: None,
+            value: Lambda {
+                params: [
+                    "wert",
+                ],
+                param_types: [
+                    Some(
+                        TypeRef {
+                            kind: Name(
+                                "i32",
+                            ),
+                            line: 19,
+                            column: 32,
+                            end_line: 19,
+                            end_column: 35,
+                        },
+                    ),
+                ],
+                body: Identifier(
+                    "wert",
+                ),
+            },
+        },
+    ],
+}

@@ -1,0 +1,5 @@
+extern "C" funktion p2_ptr_a(wert: ptr[i8]) -> void
+extern "C" funktion p2_ptr_b(wert: zeiger[i8]) -> void
+extern "C" funktion p2_ptr_unsigned(wert: ptr[u8]) -> void
+extern "C" funktion p2_ptr_nested(wert: zeiger[ptr[i32]]) -> void
+zeige "Typen akzeptiert"

@@ -1,5 +1,6 @@
 #include "moo_runtime.h"
 #include "moo_noise.h"
+#include "moo_buffer_index.h"
 #include <time.h>
 // unistd.h wurde hier nie genutzt (verifiziert: keine POSIX-only-Aufrufe in
 // dieser Datei) und brach den MSVC-Build (C1083) — P013, CI-Run 27437564015.
@@ -64,6 +65,7 @@ MooValue moo_index_get(MooValue container, MooValue index) {
         case MOO_LIST:   return moo_list_get(container, index);
         case MOO_DICT:   return moo_dict_get(container, index);
         case MOO_STRING: return moo_string_index(container, index);
+        case MOO_BUFFER: return moo_buffer_index_get(container, index);
         default:         return moo_none();
     }
 }
@@ -72,6 +74,7 @@ void moo_index_set(MooValue container, MooValue index, MooValue value) {
     switch (container.tag) {
         case MOO_LIST: moo_list_set(container, index, value); break;
         case MOO_DICT: moo_dict_set(container, index, value); break;
+        case MOO_BUFFER: moo_buffer_index_set(container, index, value); break;
         default: break;
     }
 }

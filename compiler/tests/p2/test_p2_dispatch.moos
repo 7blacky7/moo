@@ -1,0 +1,49 @@
+# T33-B: Klassenauswahl fuer Operatoren und vererbte Ueberladung.
+klasse Alpha:
+    funktion __add__(rhs):
+        gib_zurück 100 + rhs
+    funktion execute(x=0):
+        gib_zurück 11 + x
+    funktion query():
+        gib_zurück 12
+
+klasse Beta:
+    funktion __add__(rhs):
+        gib_zurück 200 + rhs
+    funktion execute(x=0):
+        gib_zurück 21 + x
+    funktion query():
+        gib_zurück 22
+
+klasse Kind(Alpha):
+    funktion marker():
+        gib_zurück 1
+
+funktion anwenden(wert):
+    gib_zurück wert + 7
+
+funktion ausfuehren_fuer(wert):
+    gib_zurück wert.execute()
+
+funktion ausfuehren_mit(wert):
+    gib_zurück wert.execute(3)
+
+funktion abfrage_fuer(wert):
+    gib_zurück wert.query()
+
+setze alpha auf neu Alpha()
+setze beta auf neu Beta()
+setze kind auf neu Kind()
+zeige anwenden(alpha)
+zeige anwenden(beta)
+zeige anwenden(kind)
+zeige 3 + 7
+zeige ausfuehren_fuer(alpha)
+zeige ausfuehren_fuer(beta)
+zeige ausfuehren_fuer(kind)
+zeige ausfuehren_mit(alpha)
+zeige ausfuehren_mit(beta)
+zeige ausfuehren_mit(kind)
+zeige abfrage_fuer(alpha)
+zeige abfrage_fuer(beta)
+zeige abfrage_fuer(kind)

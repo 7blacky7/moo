@@ -1,0 +1,8 @@
+@nativ
+funktion summe(a: i32, b: i32) -> i32:
+    gib_zurück a + b
+setze wert auf 20
+versuche:
+    zeige 1 + summe(wert, 1)
+fange fehler:
+    zeige "gefangen"

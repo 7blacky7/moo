@@ -1,0 +1,3 @@
+funktion puffer_erstellen(typ, n):
+    gib_zurück n + 10
+zeige puffer_erstellen("i32", 1)

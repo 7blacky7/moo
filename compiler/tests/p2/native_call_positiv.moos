@@ -1,0 +1,14 @@
+@nativ
+funktion p2_call_frueh(x: i32) -> i32:
+    gib_zurück p2_call_spaet(x) + 1
+
+@nativ
+funktion p2_call_doppelt(x: i32) -> i32:
+    gib_zurück x * 2
+
+@nativ
+funktion p2_call_spaet(x: i32) -> i32:
+    gib_zurück p2_call_doppelt(x) + 1
+
+zeige p2_call_frueh(20)
+zeige p2_call_spaet(20)

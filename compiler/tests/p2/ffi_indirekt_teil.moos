@@ -1,0 +1,29 @@
+@nativ
+funktion p2_indirekt(f: ptr[fn(i32) -> i32], wert: i32) -> i32:
+    unsicher:
+        gib_zurück f(wert)
+
+@nativ
+funktion p2_indirekt_i8(f: ptr[fn(i8) -> i8], wert: i8) -> i8:
+    unsicher:
+        gib_zurück f(wert)
+
+@nativ
+funktion p2_indirekt_u8(f: ptr[fn(u8) -> u8], wert: u8) -> u8:
+    unsicher:
+        gib_zurück f(wert)
+
+@nativ
+funktion p2_indirekt_i16(f: ptr[fn(i16) -> i16], wert: i16) -> i16:
+    unsicher:
+        gib_zurück f(wert)
+
+@nativ
+funktion p2_indirekt_u16(f: ptr[fn(u16) -> u16], wert: u16) -> u16:
+    unsicher:
+        gib_zurück f(wert)
+
+@nativ
+funktion p2_indirekt_zehn(f: ptr[fn(ptr[u8], ptr[u8], u32, u64, u64, u64, u64, u64, u64, u64) -> u64], a: ptr[u8], b: ptr[u8], op: u32, x1: u64, x2: u64, x3: u64, x4: u64, x5: u64, x6: u64, x7: u64) -> u64:
+    unsicher:
+        gib_zurück f(a, b, op, x1, x2, x3, x4, x5, x6, x7)

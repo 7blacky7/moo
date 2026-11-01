@@ -1,0 +1,19 @@
+funktion p2_ast_typisiert(p: ptr[u64], bytes: [u8; 16], cb: fn(i32) -> f32) -> u64:
+    setze anzahl: u32 auf 3
+    konstante kapazitaet: u64 auf 16
+    gib_zurück 0
+
+funktion p2_ast_untypisiert(x):
+    gib_zurück x
+
+daten klasse P2AstDaten(adresse: ptr[u8], laenge: u64, offen)
+
+schnittstelle P2AstSchnitt:
+    funktion lesen(p: ptr[u8], groesse: u64) -> i32
+    funktion alt(x)
+
+klasse P2AstKlasse:
+    funktion lesen(wert: i32) -> i32:
+        gib_zurück wert
+
+setze p2_ast_lambda auf (wert: i32) => wert

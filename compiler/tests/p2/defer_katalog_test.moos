@@ -1,0 +1,4 @@
+funktion marke():
+    gib_zurück 0
+teste "Katalog":
+    aufräumen: marke()

@@ -1,0 +1,13 @@
+@bibliothek("m")
+extern "C" funktion sinf(x: f32) -> f32
+@nativ
+funktion ffi_sinus(x: f32) -> f32:
+    unsicher:
+        gib_zurück sinf(x)
+funktion sauber():
+    zeige "CLEANUP"
+funktion probe():
+    aufräumen: sauber()
+    setze alias auf ffi_sinus
+    zeige alias(1.5)
+probe()

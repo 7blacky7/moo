@@ -280,7 +280,7 @@ bool moo_surface_core_roundrect(MooSurfaceCore* core, int32_t x, int32_t y,
  * und lesen nur konstante Stufen-/SAT-Daten -> Ergebnis bit-identisch zur
  * sequenziellen Ausfuehrung, unabhaengig von der Threadzahl.
  * MOO_SURFACE_THREADS=1 erzwingt sequenziell (Debug/ASan-Vergleich). */
-#if defined(__linux__)
+#if defined(__linux__) && !defined(MOO_BARE)
 #include <pthread.h>
 #include <unistd.h>
 #include <stdlib.h>

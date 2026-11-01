@@ -1,0 +1,12 @@
+klasse Erste:
+    funktion bestimme():
+        gib_zurück 11
+klasse Zweite:
+    funktion bestimme():
+        gib_zurück 22
+setze a auf neu Erste()
+setze b auf neu Zweite()
+zeige a.bestimme()
+zeige b.bestimme()
+zeige a.bestimme()
+zeige b.bestimme()

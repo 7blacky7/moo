@@ -1,0 +1,8 @@
+# P2-T6/T8: kontextuelle Typnamen bleiben als Bezeichner benutzbar.
+setze fn auf 1
+setze ptr auf 2
+setze puffer auf 3
+wenn fn + ptr + puffer == 6:
+    zeige "identifier OK"
+sonst:
+    zeige "identifier FEHLER"

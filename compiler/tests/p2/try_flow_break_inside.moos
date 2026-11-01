@@ -1,0 +1,7 @@
+versuche:
+    solange wahr:
+        stopp
+    wirf "aussen"
+fange fehler:
+    zeige fehler
+zeige "weiter"

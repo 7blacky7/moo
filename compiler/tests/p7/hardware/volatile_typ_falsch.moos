@@ -1,0 +1,4 @@
+@nativ
+funktion hw_typ(p: ptr[u32], wert: u16) -> void:
+    unsicher:
+        volatile_schreiben(p, wert)

@@ -1,0 +1,8 @@
+funktion marke(wert):
+    zeige wert
+funktion probe():
+    setze wert auf 1
+    aufräumen: marke(wert)
+    setze wert auf 2
+    gib_zurück 0
+probe()

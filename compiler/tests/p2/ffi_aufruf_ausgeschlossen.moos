@@ -1,0 +1,2 @@
+extern "C" funktion moo_p2_echo_i32(wert: i32) -> i32
+zeige moo_p2_echo_i32(1)

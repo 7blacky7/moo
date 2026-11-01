@@ -1,0 +1,4 @@
+@nativ
+funktion zu_grosser_offset(p: ptr[u16]) -> u16:
+    unsicher:
+        gib_zurück p[0x4000000000000000]

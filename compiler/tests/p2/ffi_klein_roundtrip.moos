@@ -1,0 +1,23 @@
+@bibliothek("p2_ffi_klein")
+extern "C" funktion p2_ffi_i8_identity(wert: i8) -> i8
+@bibliothek("p2_ffi_klein")
+extern "C" funktion p2_ffi_u8_identity(wert: u8) -> u8
+@bibliothek("p2_ffi_klein")
+extern "C" funktion p2_ffi_i16_identity(wert: i16) -> i16
+@bibliothek("p2_ffi_klein")
+extern "C" funktion p2_ffi_u16_identity(wert: u16) -> u16
+
+@nativ
+funktion ffi_i8(wert: i8) -> i8:
+    unsicher:
+        gib_zurück p2_ffi_i8_identity(wert)
+
+@nativ
+funktion ffi_u8(wert: u8) -> u8:
+    unsicher:
+        gib_zurück p2_ffi_u8_identity(wert)
+
+zeige ffi_i8(-128)
+zeige ffi_i8(127)
+zeige ffi_u8(0)
+zeige ffi_u8(255)

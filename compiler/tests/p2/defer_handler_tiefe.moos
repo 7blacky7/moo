@@ -1,0 +1,15 @@
+funktion kaputt():
+    zeige "cleanup"
+    wirf "cleanupfehler"
+funktion probe():
+    aufräumen: kaputt()
+    versuche:
+        gib_zurück [1, 2, 3]
+    fange fehler:
+        zeige "lokaler_catch"
+        zeige fehler
+        gib_zurück "gefangen"
+zeige probe()
+zeige "vor_aussen"
+wirf "aussen"
+zeige "FALSCH_NACH_AUSSEN"

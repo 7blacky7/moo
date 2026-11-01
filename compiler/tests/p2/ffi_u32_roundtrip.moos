@@ -1,0 +1,41 @@
+@bibliothek("p2_u32")
+extern "C" funktion p2_u32_identity(wert: u32) -> u32
+@nativ
+funktion ffi_u32(wert: u32) -> u32:
+    unsicher:
+        gib_zurück p2_u32_identity(wert)
+@bibliothek("p2_u32")
+extern "C" funktion p2_u32_mixed(wert: u32, faktor: f32) -> u32
+@nativ
+funktion ffi_u32_mixed(wert: u32, faktor: f32) -> u32:
+    unsicher:
+        gib_zurück p2_u32_mixed(wert, faktor)
+@bibliothek("p2_u32")
+extern "C" funktion p2_u32_record(wert: u32) -> void
+@bibliothek("p2_u32")
+extern "C" funktion p2_u32_read() -> u32
+@nativ
+funktion ffi_u32_record(wert: u32) -> void:
+    unsicher:
+        p2_u32_record(wert)
+@nativ
+funktion ffi_u32_read() -> u32:
+    unsicher:
+        gib_zurück p2_u32_read()
+setze nullwert auf 0
+setze mitte auf 2147483648
+setze maximum auf 4294967295
+wenn ffi_u32(nullwert) == nullwert:
+    zeige "null"
+wenn ffi_u32(mitte) == mitte:
+    zeige "mitte"
+wenn ffi_u32(maximum) == maximum:
+    zeige "max"
+wenn ffi_u32(4294967295) == 4294967295:
+    zeige "literal"
+setze faktor auf 1.5
+wenn ffi_u32_mixed(maximum, faktor) == maximum:
+    zeige "mixed"
+ffi_u32_record(maximum)
+wenn ffi_u32_read() == maximum:
+    zeige "void"

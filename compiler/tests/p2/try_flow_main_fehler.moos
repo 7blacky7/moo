@@ -1,0 +1,6 @@
+versuche:
+    gib_zurück ["heap", 1 / 0]
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige fehler
+zeige "weiter"

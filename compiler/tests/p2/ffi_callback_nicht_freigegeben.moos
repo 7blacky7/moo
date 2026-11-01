@@ -1,0 +1,2 @@
+extern "C" funktion p2_nehme_callback(cb: fn(i32)->i32) -> i32
+zeige 1

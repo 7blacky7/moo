@@ -1,0 +1,63 @@
+@bibliothek("p2_i64")
+extern "C" funktion p2_i64_identity(wert: i64) -> i64
+@bibliothek("p2_i64")
+extern "C" funktion p2_u64_identity(wert: u64) -> u64
+@bibliothek("p2_i64")
+extern "C" funktion p2_i64_inexact() -> i64
+@bibliothek("p2_i64")
+extern "C" funktion p2_u64_inexact() -> u64
+@bibliothek("p2_i64")
+extern "C" funktion p2_u64_is_exact_literal(wert: u64) -> i32
+@bibliothek("p2_i64")
+extern "C" funktion p2_u64_is_max(wert: u64) -> i32
+@nativ
+funktion ffi_i64(wert: i64) -> i64:
+    unsicher:
+        gib_zurück p2_i64_identity(wert)
+@nativ
+funktion ffi_u64(wert: u64) -> u64:
+    unsicher:
+        gib_zurück p2_u64_identity(wert)
+@nativ
+funktion ffi_i64_inexact() -> i64:
+    unsicher:
+        gib_zurück p2_i64_inexact()
+@nativ
+funktion ffi_u64_inexact() -> u64:
+    unsicher:
+        gib_zurück p2_u64_inexact()
+@nativ
+funktion ffi_u64_literal() -> i32:
+    unsicher:
+        gib_zurück p2_u64_is_exact_literal(9007199254740993)
+@nativ
+funktion ffi_u64_max_literal() -> i32:
+    unsicher:
+        gib_zurück p2_u64_is_max(18446744073709551615)
+@bibliothek("p2_i64")
+extern "C" funktion p2_i64_high_exact() -> i64
+@bibliothek("p2_i64")
+extern "C" funktion p2_u64_high_exact() -> u64
+@nativ
+funktion ffi_i64_high_exact() -> i64:
+    unsicher:
+        gib_zurück p2_i64_high_exact()
+@nativ
+funktion ffi_u64_high_exact() -> u64:
+    unsicher:
+        gib_zurück p2_u64_high_exact()
+setze exakt auf 9007199254740994
+setze minimum auf -9223372036854775808
+setze hoch auf 9223372036854775808
+wenn ffi_i64(exakt) == exakt:
+    zeige "i64-exakt"
+wenn ffi_i64(minimum) == minimum:
+    zeige "i64-min"
+wenn ffi_u64(hoch) == hoch:
+    zeige "u64-hoch"
+zeige ffi_u64_literal()
+zeige ffi_u64_max_literal()
+wenn ffi_i64_high_exact() == 9223372036854774784:
+    zeige "i64-hoch-exakt"
+wenn ffi_u64_high_exact() == 18446744073709549568:
+    zeige "u64-hoch-exakt"

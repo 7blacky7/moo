@@ -1,0 +1,12 @@
+# P2-T5: direktes Runden von Quelltext zu f32, ohne f64-Zwischenrundung.
+@nativ
+funktion floatwerte() -> bool:
+    setze gleichstand: f32 auf 1.000000059604644775390625
+    setze knapp_darueber: f32 auf 1.0000000596046447753906250000000000000001
+    setze zehntel: f64 auf 0.1
+    gib_zurück gleichstand == 1.0 und knapp_darueber == 1.00000011920928955078125 und zehntel == 0.1
+
+wenn floatwerte():
+    zeige "float OK"
+sonst:
+    zeige "float FEHLER"

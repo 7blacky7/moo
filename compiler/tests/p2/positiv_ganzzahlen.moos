@@ -1,0 +1,17 @@
+# P2-T5: Vergleich erfolgt nativ, damit u64 nicht über MooValue gerundet wird.
+@nativ
+funktion grenzen() -> bool:
+    setze a: i8 auf -128
+    setze b: i16 auf -32768
+    setze c: i32 auf -2147483648
+    setze d: i64 auf -9223372036854775808
+    setze e: u8 auf 255
+    setze f: u16 auf 65535
+    setze g: u32 auf 4294967295
+    setze h: u64 auf 18446744073709551615
+    gib_zurück a == -128 und b == -32768 und c == -2147483648 und d == -9223372036854775808 und e == 255 und f == 65535 und g == 4294967295 und h == 18446744073709551615
+
+wenn grenzen():
+    zeige "ganzzahlen OK"
+sonst:
+    zeige "ganzzahlen FEHLER"

@@ -1,0 +1,25 @@
+funktion marke():
+    gib_zurück 0
+funktion probe():
+    aufräumen: marke()
+    wenn wahr:
+        aufräumen: marke()
+    solange falsch:
+        aufräumen: marke()
+    für x in [1]:
+        aufräumen: marke()
+    versuche:
+        aufräumen: marke()
+    fange fehler:
+        aufräumen: marke()
+    prüfe 1:
+        fall 1:
+            aufräumen: marke()
+        standard:
+            aufräumen: marke()
+    unsicher:
+        aufräumen: marke()
+    garantiere wahr, sonst:
+        aufräumen: marke()
+        gib_zurück 0
+    gib_zurück 0

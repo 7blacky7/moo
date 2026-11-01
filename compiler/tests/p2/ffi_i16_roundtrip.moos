@@ -1,0 +1,20 @@
+@bibliothek("p2_ffi_klein")
+extern "C" funktion p2_ffi_i16_identity(wert: i16) -> i16
+@bibliothek("p2_ffi_klein")
+extern "C" funktion p2_ffi_u16_identity(wert: u16) -> u16
+@nativ
+funktion ffi_i16(wert: i16) -> i16:
+    unsicher:
+        gib_zurück p2_ffi_i16_identity(wert)
+@nativ
+funktion ffi_u16(wert: u16) -> u16:
+    unsicher:
+        gib_zurück p2_ffi_u16_identity(wert)
+setze i_min auf -32768
+setze i_max auf 32767
+setze u_min auf 0
+setze u_max auf 65535
+zeige ffi_i16(i_min)
+zeige ffi_i16(i_max)
+zeige ffi_u16(u_min)
+zeige ffi_u16(u_max)

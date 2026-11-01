@@ -65,6 +65,8 @@ const char* moo_type_name(MooValue v) {
         case MOO_ERROR:  return "Fehler";
         case MOO_DATABASE: return "Datenbank";
         case MOO_SURFACE: return "Oberflaeche";
+        case MOO_BUFFER: return "Puffer";
+        case MOO_STRUCT: return "Struktur";
         default:         return "Unbekannt";
     }
 }

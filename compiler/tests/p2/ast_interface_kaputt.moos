@@ -1,0 +1,2 @@
+schnittstelle P2Kaputt:
+    funktion lese(p: ptr[u64) -> i32

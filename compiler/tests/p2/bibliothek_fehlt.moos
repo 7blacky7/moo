@@ -1,0 +1,4 @@
+@bibliothek("p2_bibliothek_absichtlich_fehlt_7f3e")
+extern "C" funktion p2_unbenutzt() -> i32
+
+zeige 1

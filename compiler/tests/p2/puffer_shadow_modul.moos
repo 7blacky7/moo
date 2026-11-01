@@ -1,0 +1,2 @@
+funktion puffer_erstellen(typ, n):
+    gib_zurück typ + n

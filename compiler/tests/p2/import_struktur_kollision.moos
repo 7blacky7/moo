@@ -1,0 +1,4 @@
+aus import_struktur_modul importiere ImportPaket
+struktur ImportPaket:
+    wert: i32
+zeige 1

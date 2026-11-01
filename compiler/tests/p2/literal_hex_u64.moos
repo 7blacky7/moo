@@ -1,0 +1,7 @@
+@bibliothek("p2_hex")
+extern "C" funktion p2_hex_is_max(wert: u64) -> i32
+@nativ
+funktion hex_max() -> i32:
+    unsicher:
+        gib_zurück p2_hex_is_max(0xFFFFFFFFFFFFFFFF)
+zeige hex_max()

@@ -1,0 +1,4 @@
+@nativ
+funktion p2_zeiger_variabel(p: ptr[u16], i: i32) -> u16:
+    unsicher:
+        gib_zurück p[i]

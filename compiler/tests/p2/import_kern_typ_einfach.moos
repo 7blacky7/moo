@@ -1,0 +1,4 @@
+aus modul_kern_typen importiere P2KernTyp
+funktion p2_kern_typ_test(x: P2KernTyp) -> i32:
+    gib_zurück 1
+zeige 1

@@ -1,0 +1,11 @@
+funktion marke():
+    zeige "FALSCHER_WERT"
+    gib_zurück 1
+versuche:
+    solange 1 / 0 + marke():
+        zeige "BODY_FALSCH"
+        stopp
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen"
+zeige "weiter"

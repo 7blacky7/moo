@@ -1,0 +1,2 @@
+struktur P2UnbekannterZeiger:
+    next: ptr[P2NichtDefiniert]

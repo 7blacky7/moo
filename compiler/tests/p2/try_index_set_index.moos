@@ -1,0 +1,8 @@
+funktion marke():
+    zeige "FALSCHER_WERT"
+    gib_zurück 0
+versuche:
+    [1][1 / 0 + marke()] = marke()
+fange fehler:
+    zeige fehler
+zeige "weiter"

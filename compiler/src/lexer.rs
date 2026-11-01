@@ -192,6 +192,7 @@ impl Lexer {
                 '<' => Some(TokenType::Less),
                 '>' => Some(TokenType::Greater),
                 ':' => Some(TokenType::Colon),
+                ';' => Some(TokenType::Semicolon),
                 ',' => Some(TokenType::Comma),
                 '(' => Some(TokenType::LParen),
                 ')' => Some(TokenType::RParen),
@@ -277,7 +278,7 @@ impl Lexer {
             while i < chars.len() && chars[i].is_ascii_hexdigit() { i += 1; }
             let hex_str: String = chars[hex_start..i].iter().collect();
             let value = u64::from_str_radix(&hex_str, 16).unwrap_or(0) as f64;
-            return (Token::new(TokenType::Number(value), line, col), i);
+            return (Token::number(value, line, col, chars[start..i].iter().collect()), i);
         }
 
         // Binary: 0b1010
@@ -287,7 +288,7 @@ impl Lexer {
             while i < chars.len() && (chars[i] == '0' || chars[i] == '1') { i += 1; }
             let bin_str: String = chars[bin_start..i].iter().collect();
             let value = u64::from_str_radix(&bin_str, 2).unwrap_or(0) as f64;
-            return (Token::new(TokenType::Number(value), line, col), i);
+            return (Token::number(value, line, col, chars[start..i].iter().collect()), i);
         }
 
         // Dezimalzahl
@@ -303,7 +304,7 @@ impl Lexer {
 
         let num_str: String = chars[start..i].iter().collect();
         let value: f64 = num_str.parse().unwrap();
-        (Token::new(TokenType::Number(value), line, col), i)
+        (Token::number(value, line, col, num_str), i)
     }
 
     fn read_identifier(&self, chars: &[char], start: usize, line: usize, col: usize) -> (Token, usize) {

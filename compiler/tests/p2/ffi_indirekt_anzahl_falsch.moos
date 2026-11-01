@@ -1,0 +1,4 @@
+@nativ
+funktion p2_falsche_anzahl(f: ptr[fn(i32, i32) -> i32], wert: i32) -> i32:
+    unsicher:
+        gib_zurück f(wert)

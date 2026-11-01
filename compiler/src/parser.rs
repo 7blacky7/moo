@@ -1,5 +1,7 @@
 /// Parser für moo — wandelt Tokens in einen AST um.
 
+mod ffi;
+
 use crate::ast::*;
 use crate::tokens::{Token, TokenType};
 
@@ -45,10 +47,12 @@ fn token_description(tt: &TokenType) -> &'static str {
         TokenType::RBrace => "schließende geschweifte Klammer '}'",
         TokenType::Assign => "Gleichheitszeichen '='",
         TokenType::Arrow => "Pfeil '=>'",
+        TokenType::ThinArrow => "Pfeil '->'",
         TokenType::To => "'auf' / 'to'",
         TokenType::Newline => "Zeilenende",
         TokenType::Eof => "Dateiende",
         TokenType::Comma => "Komma ','",
+        TokenType::Semicolon => "Semikolon ';'",
         _ => "Token",
     }
 }
@@ -96,11 +100,12 @@ pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     errors: Vec<ParseError>,
+    native_context: bool,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0, errors: Vec::new() }
+        Self { tokens, pos: 0, errors: Vec::new(), native_context: false }
     }
 
     pub fn parse(&mut self) -> Result<Program, ParseError> {
@@ -264,6 +269,16 @@ impl Parser {
             TokenType::Identifier(kw) if kw == "global"
                 && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
                             Some(TokenType::Identifier(_))) => self.parse_global_decl(),
+            TokenType::Identifier(kw) if (kw == "struktur" || kw == "struct")
+                && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
+                            Some(TokenType::Identifier(_)))
+                && matches!(self.tokens.get(self.pos + 2).map(|t| &t.token_type),
+                            Some(TokenType::Colon)) => self.parse_struct_def(vec![]),
+            TokenType::Identifier(kw) if kw == "extern"
+                && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
+                            Some(TokenType::String(_)))
+                && matches!(self.tokens.get(self.pos + 2).map(|t| &t.token_type),
+                            Some(TokenType::Func)) => self.parse_extern_c(vec![]),
             TokenType::Set => self.parse_assignment(),
             TokenType::Const => self.parse_const_assignment(),
             TokenType::Show => self.parse_show(),
@@ -529,20 +544,20 @@ impl Parser {
             };
         }
         // Optionale Typ-Annotation: setze name: Typ auf wert
-        self.skip_type_annotation();
+        let ty = self.parse_optional_annotation()?;
         self.eat(&TokenType::To)?;
         let value = self.parse_expression()?;
-        Ok(Stmt::Assignment { name, value })
+        Ok(Stmt::Assignment { name, ty, value })
     }
 
     fn parse_const_assignment(&mut self) -> Result<Stmt, ParseError> {
         self.pos += 1; // const/konstante
         let name = self.eat_identifier()?;
         // Optionale Typ-Annotation
-        self.skip_type_annotation();
+        let ty = self.parse_optional_annotation()?;
         self.eat(&TokenType::To)?;
         let value = self.parse_expression()?;
-        Ok(Stmt::ConstAssignment { name, value })
+        Ok(Stmt::ConstAssignment { name, ty, value })
     }
 
     fn parse_show(&mut self) -> Result<Stmt, ParseError> {
@@ -642,6 +657,20 @@ impl Parser {
                 while !matches!(self.current_type(), TokenType::RParen) {
                     let tt = self.current_type().clone();
                     match tt {
+                        TokenType::Identifier(key)
+                            if (name == "bibliothek" || name == "library")
+                                && self.tokens.get(self.pos + 1).is_some_and(|t| matches!(t.token_type, TokenType::Assign)) =>
+                        {
+                            self.pos += 2; // Name und =
+                            let value = match self.current_type().clone() {
+                                TokenType::String(value) => { self.pos += 1; value }
+                                _ => return Err(ParseError {
+                                    message: "Benanntes Bibliotheksargument erwartet ein Text-Literal".to_string(),
+                                    line: self.current().line,
+                                }),
+                            };
+                            args.push(crate::ast::DecoratorArg::NamedText { name: key, value });
+                        }
                         TokenType::Number(n) => {
                             args.push(crate::ast::DecoratorArg::Zahl(n));
                             self.pos += 1;
@@ -668,16 +697,22 @@ impl Parser {
             decorators.push(crate::ast::Decorator { name, args });
             self.skip_newlines();
         }
+        if matches!(self.current_type(), TokenType::Identifier(name) if name == "struktur" || name == "struct") {
+            return self.parse_struct_def(decorators);
+        }
         // P011-A3: @rohdaten_u32/@rawdata_u32 + konstante -> reines Daten-Global
         if matches!(self.current_type(), TokenType::Const)
             && decorators.iter().any(|d| d.name == "rohdaten_u32" || d.name == "rawdata_u32")
         {
             self.pos += 1; // konstante/const
             let name = self.eat_identifier()?;
-            self.skip_type_annotation();
+            let ty = self.parse_optional_annotation()?;
             self.eat(&TokenType::To)?;
             let value = self.parse_expression()?;
-            return Ok(Stmt::RawDataU32 { name, value, decorators });
+            return Ok(Stmt::RawDataU32 { name, ty, value, decorators });
+        }
+        if matches!(self.current_type(), TokenType::Identifier(name) if name == "extern") {
+            return self.parse_extern_c(decorators);
         }
         if !matches!(self.current_type(), TokenType::Func) {
             return Err(ParseError {
@@ -689,27 +724,78 @@ impl Parser {
     }
 
     fn parse_function_def_with_decorators(&mut self, decorators: Vec<crate::ast::Decorator>) -> Result<Stmt, ParseError> {
-        self.pos += 1;
-        let name = self.eat_identifier()?;
-        self.eat(&TokenType::LParen)?;
-
-        let mut params = Vec::new();
-        let mut defaults = Vec::new();
-
-        if !matches!(self.current_type(), TokenType::RParen) {
-            self.parse_param(&mut params, &mut defaults)?;
-            while matches!(self.current_type(), TokenType::Comma) {
-                self.pos += 1;
-                self.parse_param(&mut params, &mut defaults)?;
+        let previous_native = self.native_context;
+        self.native_context = decorators.iter().any(|d| d.name == "nativ" || d.name == "native");
+        let result = (|| {
+            self.pos += 1;
+            let name = self.eat_identifier()?;
+            self.eat(&TokenType::LParen)?;
+            let mut params = Vec::new();
+            let mut param_types = Vec::new();
+            let mut defaults = Vec::new();
+            if !matches!(self.current_type(), TokenType::RParen) {
+                self.parse_param(&mut params, &mut param_types, &mut defaults)?;
+                while matches!(self.current_type(), TokenType::Comma) {
+                    self.pos += 1;
+                    self.parse_param(&mut params, &mut param_types, &mut defaults)?;
+                }
             }
-        }
+            self.eat(&TokenType::RParen)?;
+            let return_type = if matches!(self.current_type(), TokenType::ThinArrow) {
+                self.pos += 1;
+                if matches!(self.current_type(), TokenType::Identifier(_) | TokenType::LBracket) {
+                    Some(self.parse_type()?)
+                } else {
+                    // Legacy: ein alleinstehender Pfeil wurde bisher übersprungen.
+                    Option::None
+                }
+            } else {
+                Option::None
+            };
+            let body = self.parse_block_body(false)?;
+            Ok(Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators })
+        })();
+        // Auch bei Parserfehler und bei verschachtelten Funktionen restaurieren.
+        self.native_context = previous_native;
+        result
+    }
 
-        self.eat(&TokenType::RParen)?;
-        // Optionaler Rückgabetyp: -> Typ
-        self.skip_return_type();
-        let body = self.parse_block_body(false)?;
-
-        Ok(Stmt::FunctionDef { name, params, defaults, body, decorators })
+    fn parse_struct_def(&mut self, decorators: Vec<crate::ast::Decorator>) -> Result<Stmt, ParseError> {
+        self.pos += 1; // kontextuelles struktur/struct
+        let name = self.eat_identifier()?;
+        self.eat(&TokenType::Colon)?;
+        self.skip_newlines();
+        self.eat(&TokenType::Indent)?;
+        let previous_native = self.native_context;
+        self.native_context = true; // Arraylängen bleiben als Rohlexem exakt.
+        let result = (|| {
+            let mut fields = Vec::new();
+            loop {
+                self.skip_newlines();
+                match self.current_type() {
+                    TokenType::Dedent => { self.pos += 1; break; }
+                    TokenType::Eof => return Err(ParseError {
+                        message: "Strukturblock nicht abgeschlossen".to_string(),
+                        line: self.current().line,
+                    }),
+                    _ => {
+                        let field = self.eat_identifier()?;
+                        self.eat(&TokenType::Colon)?;
+                        let ty = self.parse_type()?;
+                        if !matches!(self.current_type(), TokenType::Newline | TokenType::Dedent | TokenType::Eof) {
+                            return Err(ParseError {
+                                message: "Zeilenende nach Strukturfeld erwartet".to_string(),
+                                line: self.current().line,
+                            });
+                        }
+                        fields.push((field, ty));
+                    }
+                }
+            }
+            Ok(Stmt::StructDef { name, fields, decorators })
+        })();
+        self.native_context = previous_native;
+        result
     }
 
     fn parse_data_class(&mut self) -> Result<Stmt, ParseError> {
@@ -725,15 +811,88 @@ impl Parser {
         let name = self.eat_identifier()?;
         self.eat(&TokenType::LParen)?;
         let mut fields = Vec::new();
+        let mut field_types = Vec::new();
         if !matches!(self.current_type(), TokenType::RParen) {
-            fields.push(self.eat_identifier()?);
-            while matches!(self.current_type(), TokenType::Comma) {
-                self.pos += 1;
+            loop {
                 fields.push(self.eat_identifier()?);
+                let ty = if matches!(self.current_type(), TokenType::Colon) {
+                    self.pos += 1;
+                    Some(self.parse_type()?)
+                } else {
+                    Option::None
+                };
+                field_types.push(ty);
+                if !matches!(self.current_type(), TokenType::Comma) { break; }
+                self.pos += 1;
             }
         }
         self.eat(&TokenType::RParen)?;
-        Ok(Stmt::DataClassDef { name, fields })
+        Ok(Stmt::DataClassDef { name, fields, field_types })
+    }
+
+    /// Rekursive Typgrammatik, ausschließlich in explizitem Typkontext.
+    fn parse_type(&mut self) -> Result<crate::ast::TypeRef, ParseError> {
+        use crate::ast::{TypeKind, TypeRef};
+
+        let start = self.current().clone();
+        let (kind, end_line, end_column) = if matches!(self.current_type(), TokenType::LBracket) {
+            self.pos += 1;
+            let element = self.parse_type()?;
+            self.eat(&TokenType::Semicolon)?;
+            let length = self.parse_expression()?;
+            let end = self.eat(&TokenType::RBracket)?.clone();
+            (TypeKind::Array { element: Box::new(element), length: Box::new(length) },
+             end.line, end.column + 1)
+        } else {
+            let name = match self.current_type().clone() {
+                TokenType::Identifier(name) => { self.pos += 1; name }
+                _ => return Err(ParseError {
+                    message: "Typname erwartet".to_string(),
+                    line: self.current().line,
+                }),
+            };
+            if name == "fn" && matches!(self.current_type(), TokenType::LParen) {
+                self.pos += 1;
+                let mut params = Vec::new();
+                if !matches!(self.current_type(), TokenType::RParen) {
+                    loop {
+                        params.push(self.parse_type()?);
+                        if !matches!(self.current_type(), TokenType::Comma) { break; }
+                        self.pos += 1;
+                    }
+                }
+                self.eat(&TokenType::RParen)?;
+                self.eat(&TokenType::ThinArrow)?;
+                let return_type = self.parse_type()?;
+                let end = (return_type.end_line, return_type.end_column);
+                (TypeKind::Function { params, return_type: Box::new(return_type) }, end.0, end.1)
+            } else if matches!(self.current_type(), TokenType::LBracket) {
+                self.pos += 1;
+                let mut args = vec![self.parse_type()?];
+                while matches!(self.current_type(), TokenType::Comma) {
+                    self.pos += 1;
+                    args.push(self.parse_type()?);
+                }
+                let end = self.eat(&TokenType::RBracket)?.clone();
+                (TypeKind::Generic { name, args }, end.line, end.column + 1)
+            } else {
+                let end_column = start.column + name.chars().count();
+                (TypeKind::Name(name), start.line, end_column)
+            }
+        };
+        Ok(TypeRef { kind, line: start.line, column: start.column, end_line, end_column })
+    }
+
+    fn parse_optional_annotation(&mut self) -> Result<Option<crate::ast::TypeRef>, ParseError> {
+        if matches!(self.current_type(), TokenType::Colon)
+            && self.tokens.get(self.pos + 1).is_some_and(|t|
+                matches!(t.token_type, TokenType::Identifier(_) | TokenType::LBracket))
+        {
+            self.pos += 1;
+            Ok(Some(self.parse_type()?))
+        } else {
+            Ok(Option::None)
+        }
     }
 
     /// Überspringt eine optionale Typ-Annotation (": Typ").
@@ -763,11 +922,19 @@ impl Parser {
         }
     }
 
-    fn parse_param(&mut self, params: &mut Vec<String>, defaults: &mut Vec<Option<Expr>>) -> Result<(), ParseError> {
+    fn parse_param(&mut self, params: &mut Vec<String>, param_types: &mut Vec<Option<crate::ast::TypeRef>>, defaults: &mut Vec<Option<Expr>>) -> Result<(), ParseError> {
         let name = self.eat_identifier()?;
         params.push(name);
-        // Optionale Typ-Annotation überspringen: param: Typ
-        self.skip_type_annotation();
+        let ty = if matches!(self.current_type(), TokenType::Colon)
+            && self.tokens.get(self.pos + 1).is_some_and(|t|
+                matches!(t.token_type, TokenType::Identifier(_) | TokenType::LBracket))
+        {
+            self.pos += 1;
+            Some(self.parse_type()?)
+        } else {
+            Option::None
+        };
+        param_types.push(ty);
         if matches!(self.current_type(), TokenType::Assign) {
             self.pos += 1;
             defaults.push(Some(self.parse_expression()?));
@@ -812,13 +979,13 @@ impl Parser {
     }
 
     fn parse_interface_def(&mut self) -> Result<Stmt, ParseError> {
-        self.pos += 1; // schnittstelle/interface
+        self.pos += 1;
         let name = self.eat_identifier()?;
         self.eat(&TokenType::Colon)?;
         self.skip_newlines();
         self.eat(&TokenType::Indent)?;
-
         let mut methods = Vec::new();
+        let mut signatures = Vec::new();
         loop {
             self.skip_newlines();
             match self.current_type() {
@@ -828,23 +995,50 @@ impl Parser {
                     self.pos += 1;
                     let method_name = self.eat_identifier()?;
                     self.eat(&TokenType::LParen)?;
-                    // Parameter-Namen ueberspringen
-                    while !matches!(self.current_type(), TokenType::RParen) {
+                    let start = self.pos;
+                    let parsed = (|| {
+                        let mut params = Vec::new();
+                        let mut param_types = Vec::new();
+                        let mut defaults = Vec::new();
+                        if !matches!(self.current_type(), TokenType::RParen) {
+                            loop {
+                                self.parse_param(&mut params, &mut param_types, &mut defaults)?;
+                                if !matches!(self.current_type(), TokenType::Comma) { break; }
+                                self.pos += 1;
+                            }
+                        }
+                        self.eat(&TokenType::RParen)?;
+                        Ok::<_, ParseError>((params, param_types, defaults))
+                    })();
+                    let parsed = match parsed {
+                        Ok(params) => Some(params),
+                        Err(_) => {
+                            // Bestehende Interfaces akzeptierten beliebige Tokens
+                            // bis zur ersten ')'. Diese alten Formen bleiben parsebar.
+                            self.pos = start;
+                            while !matches!(self.current_type(), TokenType::RParen | TokenType::Eof) {
+                                self.pos += 1;
+                            }
+                            self.eat(&TokenType::RParen)?;
+                            Option::None
+                        }
+                    };
+                    let return_type = if matches!(self.current_type(), TokenType::ThinArrow) {
                         self.pos += 1;
-                    }
-                    self.eat(&TokenType::RParen)?;
-                    methods.push(method_name);
+                        Some(self.parse_type()?)
+                    } else { Option::None };
+                    methods.push(method_name.clone());
+                    signatures.push(parsed.map(|(params, param_types, defaults)| crate::ast::InterfaceSignature {
+                        name: method_name, params, param_types, defaults, return_type,
+                    }));
                 }
-                _ => {
-                    return Err(ParseError {
-                        message: "funktion/func in Interface erwartet".to_string(),
-                        line: self.current().line,
-                    });
-                }
+                _ => return Err(ParseError {
+                    message: "funktion/func in Interface erwartet".to_string(),
+                    line: self.current().line,
+                }),
             }
         }
-
-        Ok(Stmt::InterfaceDef { name, methods })
+        Ok(Stmt::InterfaceDef { name, methods, signatures })
     }
 
     fn parse_try_catch(&mut self) -> Result<Stmt, ParseError> {
@@ -1215,11 +1409,105 @@ impl Parser {
         Ok(args)
     }
 
+    /// Validiert Basispräfixe nur in explizit nativen Funktionen. Im Legacy-
+    /// Pfad bleiben die historischen Tokens und das f64-Verhalten unverändert.
+    fn parse_native_number(&mut self, token: Token, legacy: f64) -> Result<Expr, ParseError> {
+        let mut text = token.number_text.ok_or_else(|| ParseError {
+            message: "Zahlliteral ohne Quelltext".to_string(), line: token.line,
+        })?;
+        // Der Legacy-Lexer trennt 0o... in Number(0) und Identifier(o...).
+        if text == "0" && self.current().line == token.line
+            && self.current().column == token.column + 1
+        {
+            if let TokenType::Identifier(suffix) = self.current_type() {
+                if suffix.starts_with('o') || suffix.starts_with('O') {
+                    text.push_str(suffix);
+                    self.pos += 1;
+                }
+            }
+        }
+        let base = if text.starts_with("0x") || text.starts_with("0X") {
+            Some(16)
+        } else if text.starts_with("0b") || text.starts_with("0B") {
+            Some(2)
+        } else if text.starts_with("0o") || text.starts_with("0O") {
+            Some(8)
+        } else {
+            Option::None
+        };
+        if let Some(base) = base {
+            // Der Legacy-Lexer kann ungültige Ziffern als direkt folgendes
+            // Token abschneiden; im nativen Kontext gehört das zur Diagnose.
+            if self.current().line == token.line
+                && self.current().column == token.column + text.chars().count()
+            {
+                let suffix = match self.current_type() {
+                    TokenType::Identifier(s) => Some(s.clone()),
+                    TokenType::Number(_) => self.current().number_text.clone(),
+                    _ => Option::None,
+                };
+                if let Some(suffix) = suffix { text.push_str(&suffix); }
+            }
+            let digits = &text[2..];
+            if digits.is_empty() || !digits.chars().all(|ch| ch.to_digit(base).is_some()) {
+                return Err(ParseError {
+                    message: format!("Ungültiges Zahl-Literal '{text}' zur Basis {base}"),
+                    line: token.line,
+                });
+            }
+        }
+        // Exponenten nur im nativen Kontext zusammensetzen: der Legacy-Lexer
+        // behält seine historischen Number-/Identifier-/Operator-Tokens.
+        if base.is_none() && self.current().line == token.line
+            && self.current().column == token.column + text.chars().count()
+        {
+            let exponent = match self.current_type() {
+                TokenType::Identifier(s) if s.starts_with('e') || s.starts_with('E') => Some(s.clone()),
+                _ => Option::None,
+            };
+            if let Some(exponent) = exponent {
+                text.push_str(&exponent);
+                self.pos += 1;
+                let mut digits = &exponent[1..];
+                if digits.is_empty() && self.current().line == token.line
+                    && self.current().column == token.column + text.chars().count()
+                    && matches!(self.current_type(), TokenType::Plus | TokenType::Minus)
+                {
+                    text.push(if matches!(self.current_type(), TokenType::Plus) { '+' } else { '-' });
+                    self.pos += 1;
+                    if self.current().line == token.line
+                        && self.current().column == token.column + text.chars().count()
+                    {
+                        if let TokenType::Number(_) = self.current_type() {
+                            if let Some(raw) = self.current().number_text.clone() {
+                                text.push_str(&raw);
+                                self.pos += 1;
+                            }
+                        }
+                    }
+                    digits = text.rsplit(['+', '-']).next().unwrap_or("");
+                }
+                if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+                    return Err(ParseError {
+                        message: format!("Ungültiger Exponent im Zahl-Literal '{text}'"),
+                        line: token.line,
+                    });
+                }
+            }
+        }
+        Ok(Expr::NativeNumber { legacy, text, line: token.line, column: token.column })
+    }
+
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
         match self.current_type().clone() {
             TokenType::Number(n) => {
+                let token = self.current().clone();
                 self.pos += 1;
-                Ok(Expr::Number(n))
+                if self.native_context {
+                    self.parse_native_number(token, n)
+                } else {
+                    Ok(Expr::Number(n))
+                }
             }
             TokenType::String(s) => {
                 self.pos += 1;
@@ -1442,17 +1730,19 @@ impl Parser {
     fn parse_lambda(&mut self) -> Result<Expr, ParseError> {
         self.eat(&TokenType::LParen)?;
         let mut params = Vec::new();
+        let mut param_types = Vec::new();
         if !matches!(self.current_type(), TokenType::RParen) {
-            params.push(self.eat_identifier()?);
-            while matches!(self.current_type(), TokenType::Comma) {
-                self.pos += 1;
+            loop {
                 params.push(self.eat_identifier()?);
+                param_types.push(self.parse_optional_annotation()?);
+                if !matches!(self.current_type(), TokenType::Comma) { break; }
+                self.pos += 1;
             }
         }
         self.eat(&TokenType::RParen)?;
         self.eat(&TokenType::Arrow)?;
         let body = self.parse_expression()?;
-        Ok(Expr::Lambda { params, body: Box::new(body) })
+        Ok(Expr::Lambda { params, param_types, body: Box::new(body) })
     }
 
     fn parse_list(&mut self) -> Result<Expr, ParseError> {

@@ -1,0 +1,6 @@
+@nativ
+funktion ident(wert: i32) -> i32:
+    gib_zurück wert
+funktion probe(wert):
+    gib_zurück ident(wert)
+zeige probe(20)

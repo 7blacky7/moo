@@ -1,0 +1,13 @@
+funktion raeume():
+    setze abfall auf ["anders", 123]
+    zeige "cleanup"
+funktion probe():
+    aufräumen: raeume()
+    versuche:
+        setze liste auf ["wert", 42]
+        gib_zurück liste
+    fange fehler:
+        gib_zurück ["FALSCH", 0]
+setze ergebnis auf probe()
+zeige ergebnis[0]
+zeige ergebnis[1]

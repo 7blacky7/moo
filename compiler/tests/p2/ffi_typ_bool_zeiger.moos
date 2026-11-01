@@ -1,0 +1,1 @@
+extern "C" funktion p2_bool_ptr(wert: ptr[bool]) -> void

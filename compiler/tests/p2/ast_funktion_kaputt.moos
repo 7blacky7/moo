@@ -1,0 +1,2 @@
+funktion p2_kaputt(p: ptr[u64) -> i32:
+    gib_zurück 0

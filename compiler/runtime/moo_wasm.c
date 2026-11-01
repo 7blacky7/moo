@@ -266,6 +266,7 @@ int32_t moo_try_check(void) { return 0; }
 void moo_try_enter(void) {}
 void moo_try_leave(void) {}
 MooValue moo_get_error(void) { return moo_none(); }
+MooValue moo_try_take_error(void) { return moo_none(); }
 
 /* Listen-Stubs */
 void moo_list_append(MooValue list, MooValue item) {

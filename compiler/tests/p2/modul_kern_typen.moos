@@ -1,0 +1,9 @@
+daten klasse P2KernTyp(wert: u64)
+
+
+@nativ
+funktion p2_kern_zaehle(x: i32) -> i32:
+    gib_zurück x + 1
+
+funktion p2_kern_deklaration(zeiger: ptr[u64], feld: [u8; 16]) -> u64:
+    gib_zurück 0

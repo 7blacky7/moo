@@ -1,0 +1,4 @@
+@nativ
+funktion p2_ungueltig(f: ptr[fn(i32) -> void], wert: i32) -> i32:
+    unsicher:
+        gib_zurück f(wert)

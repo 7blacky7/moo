@@ -1,0 +1,12 @@
+# M1(c): the scalar entry point owns the opaque C++ handle internally.
+@bibliothek("p2_m1_cpp")
+@bibliothek("stdc++")
+extern "C" funktion p2_cpp_example(wert: i32) -> i32
+
+@nativ
+funktion cpp_probe(wert: i32) -> i32:
+    unsicher:
+        gib_zurück p2_cpp_example(wert)
+
+zeige cpp_probe(42)
+zeige cpp_probe(-1)

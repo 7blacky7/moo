@@ -1,0 +1,15 @@
+# P2-T30: native integer core; runnable only after T9/T10 native lowering.
+@nativ
+funktion p2_native_summe(n: i64) -> i64:
+    setze i: i64 auf 0
+    setze s: i64 auf 0
+    solange i < n:
+        setze s auf s + i
+        setze i auf i + 1
+    gib_zurück s
+
+setze start auf zeit()
+setze ergebnis auf p2_native_summe(10000000)
+setze ende auf zeit()
+zeige ende - start
+zeige ergebnis

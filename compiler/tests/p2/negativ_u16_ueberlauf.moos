@@ -1,0 +1,3 @@
+@nativ
+funktion beispiel() -> u16:
+    gib_zurück 65536

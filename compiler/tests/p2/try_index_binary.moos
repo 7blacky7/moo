@@ -1,0 +1,10 @@
+funktion marke():
+    zeige "FALSCHER_WERT"
+    gib_zurück 1
+funktion identitaet(a):
+    gib_zurück a
+versuche:
+    zeige [1][1 / 0 + marke()] + 1
+fange fehler:
+    zeige fehler
+zeige "weiter"

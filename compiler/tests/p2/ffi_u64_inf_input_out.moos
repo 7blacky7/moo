@@ -1,0 +1,15 @@
+@bibliothek("p2_i64")
+extern "C" funktion p2_u64_guard(wert: u64) -> u64
+@nativ
+funktion ffi_u64(wert: u64) -> u64:
+    unsicher:
+        gib_zurück p2_u64_guard(wert)
+@bibliothek("p2_i64")
+extern "C" funktion p2_f64_inf() -> f64
+@nativ
+funktion ffi_source() -> f64:
+    unsicher:
+        gib_zurück p2_f64_inf()
+setze wert auf ffi_source()
+zeige ffi_u64(wert)
+zeige "DARF_NICHT_ERREICHT_WERDEN"

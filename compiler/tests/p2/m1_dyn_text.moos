@@ -1,0 +1,6 @@
+@nativ
+funktion ident(wert: i32) -> i32:
+    gib_zurück wert
+setze wert auf "text"
+zeige ident(wert)
+zeige "NACH_FALSCH"

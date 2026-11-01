@@ -1,0 +1,11 @@
+# P2-T7: Bestehende Datenklasse/Interface/Lambda und typisierte Methode.
+daten klasse Punkt(x, y)
+
+schnittstelle Messbar:
+    funktion messe(v)
+
+klasse Messung:
+    funktion messe(v: i32) -> i32:
+        gib_zurück v
+
+setze identitaet auf (x) => x

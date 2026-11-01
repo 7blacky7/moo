@@ -1,0 +1,76 @@
+Program {
+    statements: [
+        StructDef {
+            name: "ImportPaket",
+            fields: [
+                (
+                    "wert",
+                    TypeRef {
+                        kind: Name(
+                            "i32",
+                        ),
+                        line: 2,
+                        column: 11,
+                        end_line: 2,
+                        end_column: 14,
+                    },
+                ),
+            ],
+            decorators: [],
+        },
+        FunctionDef {
+            name: "p2_nimm_paket",
+            params: [
+                "p",
+            ],
+            param_types: [
+                Some(
+                    TypeRef {
+                        kind: Generic {
+                            name: "ptr",
+                            args: [
+                                TypeRef {
+                                    kind: Name(
+                                        "ImportPaket",
+                                    ),
+                                    line: 2,
+                                    column: 31,
+                                    end_line: 2,
+                                    end_column: 42,
+                                },
+                            ],
+                        },
+                        line: 2,
+                        column: 27,
+                        end_line: 2,
+                        end_column: 43,
+                    },
+                ),
+            ],
+            return_type: Some(
+                TypeRef {
+                    kind: Name(
+                        "u64",
+                    ),
+                    line: 2,
+                    column: 48,
+                    end_line: 2,
+                    end_column: 51,
+                },
+            ),
+            defaults: [
+                None,
+            ],
+            body: [
+                Return(
+                    Some(
+                        Number(
+                            0.0,
+                        ),
+                    ),
+                ),
+            ],
+            decorators: [],
+        },
+    ],
+}

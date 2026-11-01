@@ -1,0 +1,7 @@
+@nativ
+funktion breit() -> u64:
+    gib_zurück 1
+
+@nativ
+funktion typ_konflikt() -> i32:
+    gib_zurück breit()

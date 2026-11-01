@@ -1,0 +1,21 @@
+funktion marke():
+    zeige "CLEANUP"
+funktion inner():
+    setze i auf 0
+    solange i < 1:
+        wenn wahr:
+            zeige "AUSLOESER"
+            zeige "FALSCH_INNEN"
+        zeige "FALSCH_SCHLEIFE"
+        setze i auf i + 1
+    zeige "FALSCH_CALLEE"
+funktion probe():
+    aufräumen: marke()
+    inner()
+    zeige "FALSCH_PROBE"
+versuche:
+    probe()
+fange fehler:
+    zeige "CATCH"
+    zeige fehler
+zeige "ENDE"

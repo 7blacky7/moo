@@ -1,0 +1,6 @@
+funktion marke():
+    gib_zurück 0
+klasse Beispiel:
+    funktion methode():
+        aufräumen: marke()
+        gib_zurück 0

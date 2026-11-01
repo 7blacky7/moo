@@ -1,0 +1,9 @@
+versuche:
+    setze i auf 0
+    solange i < 1:
+        setze i auf i + 1
+        weiter
+    wirf "aussen"
+fange fehler:
+    zeige fehler
+zeige "weiter"

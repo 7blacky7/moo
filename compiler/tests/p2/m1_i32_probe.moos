@@ -1,0 +1,6 @@
+@nativ
+funktion m1_probe_summe(a: i32, b: i32) -> i32:
+    gib_zurück a + b
+
+zeige m1_probe_summe(20, 22)
+zeige m1_probe_summe(2147483647, 1)

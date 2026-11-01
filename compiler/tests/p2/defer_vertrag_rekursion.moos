@@ -1,0 +1,11 @@
+funktion marke(text):
+    zeige text
+funktion kaputt(text):
+    zeige text
+    wirf text
+funktion probe(n):
+    aufräumen: marke("lauf")
+    wenn n > 0:
+        gib_zurück probe(n - 1)
+    gib_zurück "wert"
+zeige probe(2)

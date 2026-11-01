@@ -1,0 +1,8 @@
+setze heap auf [1, 2, 3]
+versuche:
+    garantiere falsch, sonst:
+        zeige "fallback"
+    zeige "FALSCH"
+fange fehler:
+    zeige "FALSCH_CATCH"
+zeige "FALSCH_NACH_TRY"

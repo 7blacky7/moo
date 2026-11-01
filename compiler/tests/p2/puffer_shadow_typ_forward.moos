@@ -1,0 +1,4 @@
+setze i32 auf 7
+zeige puffer_erstellen(i32, 1)
+funktion puffer_erstellen(typ, n):
+    gib_zurück typ + n

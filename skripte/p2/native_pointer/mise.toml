@@ -1,0 +1,127 @@
+[tasks.lesen]
+description = "P2/P7: nativen u16-Pointer lesend und unsicher prüfen"
+run = '''
+set -eu
+cd ../../..
+out=build/p2-native-pointer
+mkdir -p "$out"
+compiler=compiler/target/release/moo-compiler
+"$compiler" compile compiler/tests/p2/zeiger_lesen.moos --no-stdlib --emit-ir --target x86_64-bare -o "$out/lesen.ll"
+mise exec -- opt -passes=verify -disable-output "$out/lesen.ll"
+mise exec -- llvm-extract -S --func=__moo_native.p2_zeiger_lesen --func=__moo_native.p2_zeiger_lesen_zwei "$out/lesen.ll" -o "$out/lesen.extract.ll"
+rg -q 'load i16, ptr .*align 1' "$out/lesen.extract.ll"
+mise exec -- llc -filetype=obj "$out/lesen.extract.ll" -o "$out/lesen.o"
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror compiler/tests/p2/zeiger_lesen_adapter.cpp "$out/lesen.o" -o "$out/probe"
+"$out/probe"
+for target in x86_64-unknown-uefi aarch64-bare; do
+    "$compiler" compile compiler/tests/p2/zeiger_lesen.moos --no-stdlib --emit-ir --target "$target" -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S --func=__moo_native.p2_zeiger_lesen --func=__moo_native.p2_zeiger_lesen_zwei "$out/$target.ll" -o "$out/$target.extract.ll"
+    rg -q 'load i16, ptr .*align 1' "$out/$target.extract.ll"
+    mise exec -- llc -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+done
+if "$compiler" compile compiler/tests/p2/zeiger_lesen_unsicher_fehlt.moos --no-stdlib --emit-ir --target x86_64-bare -o "$out/ohne.ll" >"$out/ohne.log" 2>&1; then
+    echo 'Zeigerlesen ohne unsicher wurde akzeptiert' >&2
+    exit 1
+fi
+rg -q -F 'erfordert unsicher' "$out/ohne.log"
+for case_name in index_zu_gross byteoffset_zu_gross vorzeichen_falsch; do
+    if "$compiler" compile "compiler/tests/p2/zeiger_lesen_${case_name}.moos" --no-stdlib --emit-ir --target x86_64-bare -o "$out/${case_name}.ll" >"$out/${case_name}.log" 2>&1; then
+        echo "Ungültiger Zeigerfall akzeptiert: $case_name" >&2
+        exit 1
+    fi
+done
+rg -q -F 'überschreitet den Zieladressraum' "$out/index_zu_gross.log"
+rg -q -F 'überschreitet den Zieladressraum' "$out/byteoffset_zu_gross.log"
+rg -q -F 'Zeigerziel und Rückgabetyp stimmen nicht überein' "$out/vorzeichen_falsch.log"
+for case_name in dynamisch funktionswert; do
+    if "$compiler" compile "compiler/tests/p2/zeiger_lesen_${case_name}.moos" --no-stdlib --emit-ir --target x86_64-bare -o "$out/${case_name}.ll" >"$out/${case_name}.log" 2>&1; then
+        echo "Pointer-Funktionsgrenze unerwartet akzeptiert: $case_name" >&2
+        exit 1
+    fi
+done
+rg -q -F 'Nativer Zeigerfunktionsaufruf' "$out/dynamisch.log"
+rg -q -F 'Nativer Funktionswert' "$out/funktionswert.log"
+if "$compiler" compile compiler/tests/p2/zeiger_lesen.moos --no-stdlib --emit-ir --target i686-bare -o "$out/i686.ll" >"$out/i686.log" 2>&1; then
+    echo 'Nicht freigegebenes Pointer-Ziel unerwartet akzeptiert' >&2
+    exit 1
+fi
+rg -q -F 'noch nicht freigegeben' "$out/i686.log"
+echo 'PASS Pointer-Scope, Indexgrenzen, Typidentität und Zielguard'
+'''
+
+[tasks.hardware]
+description = "P7-T4: volatile_lesen/schreiben, Barrieren und Port-I/O in @nativ (IR, Disassembly, C++-Probe, Negativfälle)"
+run = '''
+set -eu
+cd ../../..
+out=build/p7-t4-hardware
+mkdir -p "$out"
+compiler=compiler/target/release/moo-compiler
+src=compiler/tests/p7/hardware
+funcs="--func=__moo_native.hw_reg_lesen --func=__moo_native.hw_reg_lesen_index --func=__moo_native.hw_reg_schreiben --func=__moo_native.hw_klingel --func=__moo_native.hw_quittieren"
+for target in x86_64-bare x86_64-unknown-uefi aarch64-bare; do
+    "$compiler" compile "$src/volatile_mmio.moos" --no-stdlib --emit-ir --target "$target" -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S $funcs "$out/$target.ll" -o "$out/$target.extract.ll"
+    rg -q 'load volatile i32, ptr .*align 4' "$out/$target.extract.ll"
+    rg -q 'store volatile i16 .*align 2' "$out/$target.extract.ll"
+    rg -q 'store volatile i32 16, ptr .*align 4' "$out/$target.extract.ll"
+    rg -q 'load volatile i64, ptr .*align 8' "$out/$target.extract.ll"
+    mise exec -- llc -O2 -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+    mise exec -- llvm-objdump -d "$out/$target.o" > "$out/$target.dis"
+done
+for insn in mfence lfence sfence; do rg -q "\\b$insn\\b" "$out/x86_64-bare.dis"; done
+for insn in 'dmb\s+sy' 'dmb\s+ishld|dmb\s+ld' 'dmb\s+st'; do rg -q "$insn" "$out/aarch64-bare.dis"; done
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror "$src/volatile_mmio_adapter.cpp" "$out/x86_64-bare.o" -o "$out/probe"
+"$out/probe"
+"$compiler" compile "$src/port_io.moos" --no-stdlib --emit-ir --target x86_64-bare -o "$out/port.ll"
+mise exec -- opt -passes=verify -disable-output "$out/port.ll"
+mise exec -- llvm-extract -S --func=__moo_native.hw_port_lesen --func=__moo_native.hw_port_lesen16 --func=__moo_native.hw_port_lesen32 --func=__moo_native.hw_port_schreiben "$out/port.ll" -o "$out/port.extract.ll"
+mise exec -- llc -O2 -filetype=obj "$out/port.extract.ll" -o "$out/port.o"
+mise exec -- llvm-objdump -d "$out/port.o" > "$out/port.dis"
+for insn in 'inb\s+%dx, %al' 'inw\s+%dx, %ax' 'inl\s+%dx, %eax' 'outb\s+%al, %dx' 'outw\s+%ax, %dx' 'outl\s+%eax, %dx'; do rg -q "$insn" "$out/port.dis"; done
+rg -q 'mov\w*\s+\$0x80, %(e)?dx' "$out/port.dis"
+expect_fail() {  # Datei Ziel Muster [Extra-Flags]
+    if "$compiler" compile "$1" $4 --emit-ir --target "$2" -o "$out/fail.ll" >"$out/fail.log" 2>&1; then
+        echo "Unerwartet akzeptiert: $1 ($2)" >&2; exit 1
+    fi
+    rg -q -F "$3" "$out/fail.log" || { cat "$out/fail.log" >&2; echo "Falsche Diagnose fuer $1" >&2; exit 1; }
+}
+expect_fail "$src/volatile_ohne_unsicher.moos" x86_64-bare 'Hardwarezugriff erfordert unsicher' --no-stdlib
+expect_fail "$src/volatile_typ_falsch.moos" x86_64-bare 'hat nicht den Typ U32' --no-stdlib
+expect_fail "$src/volatile_float.moos" x86_64-bare 'Integer-Registertyp' --no-stdlib
+expect_fail "$src/volatile_rueckgabe_schreiben.moos" x86_64-bare 'verlangt einen Lesezugriff' --no-stdlib
+expect_fail "$src/port_typ_falsch.moos" x86_64-bare 'hat nicht den Typ U16' --no-stdlib
+expect_fail "$src/port_io.moos" aarch64-bare 'Port-I/O gibt es nur auf x86_64' --no-stdlib
+expect_fail "$src/volatile_mmio.moos" i686-bare 'noch nicht freigegeben' --no-stdlib
+expect_fail "$src/volatile_mmio.moos" native 'nur im Bare-Profil' ''
+echo 'PASS volatile_*, Barrieren, Port-I/O, Negativfaelle'
+'''
+
+[tasks.variabel]
+description = "P2/P7: variabler u32-Zeigerindex und gesperrte Indexformen"
+run = '''
+set -eu
+cd ../../..
+out=build/p2-native-pointer-variable
+mkdir -p "$out"
+compiler=compiler/target/release/moo-compiler
+for target in x86_64-bare x86_64-unknown-uefi aarch64-bare; do
+    "$compiler" compile compiler/tests/p2/zeiger_variabel.moos --no-stdlib --emit-ir --target "$target" -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S --func=__moo_native.p2_zeiger_variabel "$out/$target.ll" -o "$out/$target.extract.ll"
+    rg -q 'load i16, ptr .*align 1' "$out/$target.extract.ll"
+    mise exec -- llc -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+done
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror compiler/tests/p2/zeiger_variabel_adapter.cpp "$out/x86_64-bare.o" -o "$out/probe"
+"$out/probe"
+for case_name in signed u64; do
+    if "$compiler" compile "compiler/tests/p2/zeiger_variabel_${case_name}.moos" --no-stdlib --emit-ir --target x86_64-bare -o "$out/$case_name.ll" >"$out/$case_name.log" 2>&1; then
+        echo "Ungültiger Indexparameter akzeptiert: $case_name" >&2
+        exit 1
+    fi
+    rg -q -F 'Index-Parametertyp' "$out/$case_name.log"
+done
+echo 'PASS variabler u32-Index und Negativfälle'
+'''

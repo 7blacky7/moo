@@ -1,0 +1,3 @@
+importiere "./modul_qualifiziert_a" als links
+importiere "./modul_qualifiziert_b" als rechts
+zeige 1

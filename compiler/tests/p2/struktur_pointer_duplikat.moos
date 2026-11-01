@@ -1,0 +1,4 @@
+struktur P2Gleich:
+    wert: u32
+struktur P2Gleich:
+    next: ptr[P2Gleich]

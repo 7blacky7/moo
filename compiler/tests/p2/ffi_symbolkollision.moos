@@ -1,0 +1,2 @@
+daten klasse Paket(x)
+extern "C" funktion Paket__erstelle(wert: i32) -> i32

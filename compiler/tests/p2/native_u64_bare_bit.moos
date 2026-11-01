@@ -1,0 +1,11 @@
+@nativ
+funktion wort_und(a: u64, b: u64) -> u64:
+    gib_zurück a & b
+
+@nativ
+funktion wort_oder(a: u64, b: u64) -> u64:
+    gib_zurück a | b
+
+@nativ
+funktion wort_xor(a: u64, b: u64) -> u64:
+    gib_zurück a ^ b

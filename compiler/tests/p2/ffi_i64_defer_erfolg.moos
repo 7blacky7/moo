@@ -1,0 +1,13 @@
+@bibliothek("p2_i64")
+extern "C" funktion p2_i64_identity(wert: i64) -> i64
+@nativ
+funktion ffi_i64(wert: i64) -> i64:
+    unsicher:
+        gib_zurück p2_i64_identity(wert)
+funktion sauber():
+    zeige "CLEANUP"
+aufräumen: sauber()
+setze wert auf 9007199254740994
+wenn ffi_i64(wert) == wert:
+    zeige "EXAKT"
+zeige "ENDE"

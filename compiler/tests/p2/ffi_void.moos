@@ -1,0 +1,28 @@
+@bibliothek("p2_void")
+extern "C" funktion p2_void_record(value: i32) -> void
+@bibliothek("p2_void")
+extern "C" funktion p2_void_read() -> i32
+@nativ
+funktion ffi_void_set(value: i32) -> void:
+    unsicher:
+        p2_void_record(value)
+@nativ
+funktion ffi_void_get() -> i32:
+    unsicher:
+        gib_zurück p2_void_read()
+@bibliothek("p2_void")
+extern "C" funktion p2_void_mixed(a: i32, b: f32, c: f64, d: i8, e: u8) -> void
+@nativ
+funktion ffi_void_mixed(a: i32, b: f32, c: f64, d: i8, e: u8) -> void:
+    unsicher:
+        p2_void_mixed(a, b, c, d, e)
+setze wert auf 42
+ffi_void_set(wert)
+zeige ffi_void_get()
+setze a auf 7
+setze b auf 1.5
+setze c auf 2.5
+setze d auf -3
+setze e auf 11
+ffi_void_mixed(a, b, c, d, e)
+zeige ffi_void_get()

@@ -1,0 +1,6 @@
+@nativ
+funktion p2_call_eins(x: i32) -> i32:
+    gib_zurück p2_call_zwei(x)
+@nativ
+funktion p2_call_zwei(x: i32) -> i32:
+    gib_zurück p2_call_eins(x)

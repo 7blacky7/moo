@@ -1,0 +1,10 @@
+@bibliothek("p2_i64")
+extern "C" funktion p2_i64_inexact() -> i64
+@nativ
+funktion ffi_i64_inexact() -> i64:
+    unsicher:
+        gib_zurück p2_i64_inexact()
+funktion sauber():
+    zeige "cleanup"
+aufräumen: sauber()
+zeige ffi_i64_inexact()

@@ -1,0 +1,224 @@
+# ============================================================
+# netz_e1000.moos — P7-T14/T15 QEMU-Pruef-App fuer den Moo-Treiberrahmen
+# ============================================================
+# UEFI-App (gleicher C-Entry wie hallo_uefi.moos). Ablauf:
+#   Selbsttests der hardwarefreien Logik (Schein-Register im RAM)
+#   -> ACPI/MCFG -> ECAM -> PCI-Scan (e1000 8086:100E, I226 zaehlen)
+#   -> nt_oeffnen (e1000_init) -> MAC/Link -> UDP-Broadcast "MOO-E1000-HALLO"
+#   -> ARP-Anfrage nach 10.0.2.2 -> ARP-Antwort von QEMU-slirp empfangen.
+# Marker auf COM1 (eine Zeile je Schritt):
+#   MOO-E1000-SELBST <Fehlerzahl>  MOO-E1000-I226 <n>  MOO-E1000-ECAM <hex>
+#   MOO-E1000-PCI <bdf hex>  MOO-E1000-MAC <12 hex>  MOO-E1000-LINK <0|1>
+#   MOO-E1000-TX <n>  MOO-E1000-ARP <0|1>  MOO-E1000-FEHLER <schritt>  MOO-E1000-ENDE
+# Gate: MOO_UEFI_PRUEFUNG=e1000 bash scripts/uefi-smoke.sh
+
+aus "./netz_treiber" importiere nt_pci_init, nt_suche, nt_finde, nt_oeffnen, nt_senden, nt_empfangen, nt_mac, nt_link, nt_tempo, nt_typ, nt_dma, nt_b8, nt_b16, nt_udp_log, nt_udp_rahmen, nt_status_text
+
+funktion z(c):
+    unsicher:
+        kern_outw(0x3F8, c)
+
+# "MOO-E1000-"
+funktion vorspann():
+    z(77)
+    z(79)
+    z(79)
+    z(45)
+    z(69)
+    z(49)
+    z(48)
+    z(48)
+    z(48)
+    z(45)
+
+# Wort aus bis zu 6 Zeichen (0 = entfaellt), danach Leerzeichen.
+funktion wort(a, b, c, d, e, f):
+    vorspann()
+    z(a)
+    z(b)
+    wenn c != 0:
+        z(c)
+    wenn d != 0:
+        z(d)
+    wenn e != 0:
+        z(e)
+    wenn f != 0:
+        z(f)
+    z(32)
+
+funktion hex(wert, stellen):
+    setze i auf stellen - 1
+    solange i >= 0:
+        setze d auf (wert >> (i * 4)) & 15
+        wenn d < 10:
+            z(48 + d)
+        sonst:
+            z(87 + d)
+        setze i auf i - 1
+
+funktion zeile_ende():
+    z(10)
+
+# ARP-Anfrage: wer hat 10.0.2.2? Antwort an 10.0.2.15.
+funktion arp_anfrage(p, nic):
+    setze i auf 0
+    solange i < 6:
+        nt_b8(p, i, 255)
+        nt_b8(p, 6 + i, nt_mac(nic, i))
+        nt_b8(p, 22 + i, nt_mac(nic, i))
+        nt_b8(p, 32 + i, 0)
+        setze i auf i + 1
+    nt_b16(p, 12, 0x0806)
+    nt_b16(p, 14, 1)
+    nt_b16(p, 16, 0x0800)
+    nt_b8(p, 18, 6)
+    nt_b8(p, 19, 4)
+    nt_b16(p, 20, 1)
+    nt_b8(p, 28, 10)
+    nt_b8(p, 29, 0)
+    nt_b8(p, 30, 2)
+    nt_b8(p, 31, 15)
+    nt_b8(p, 38, 10)
+    nt_b8(p, 39, 0)
+    nt_b8(p, 40, 2)
+    nt_b8(p, 41, 2)
+    gib_zurück 42
+
+# ARP-Antwort (Opcode 2) von 10.0.2.2?
+funktion ist_arp_antwort(p, laenge):
+    unsicher:
+        wenn laenge < 42:
+            gib_zurück falsch
+        wenn speicher_lesen(p + 12, 1) != 8 oder speicher_lesen(p + 13, 1) != 6:
+            gib_zurück falsch
+        wenn speicher_lesen(p + 21, 1) != 2:
+            gib_zurück falsch
+        gib_zurück speicher_lesen(p + 28, 1) == 10 und speicher_lesen(p + 29, 1) == 0 und speicher_lesen(p + 30, 1) == 2 und speicher_lesen(p + 31, 1) == 2
+
+funktion fehler(schritt):
+    wort(70, 69, 72, 76, 69, 82)
+    hex(schritt, 1)
+    zeile_ende()
+    wort(69, 78, 68, 69, 0, 0)
+    zeile_ende()
+
+# ---------------- Selbsttests ohne Hardware ----------------
+# Schein-NIC: Zustandsblock + RAM als "MMIO"; STATUS liegt bei mmio + 8.
+funktion schein_nic(typ, status):
+    unsicher:
+        setze nic auf nt_dma(128)
+        setze regs auf nt_dma(64)
+        speicher_schreiben(nic, typ, 8)
+        speicher_schreiben(nic + 8, regs, 8)
+        speicher_schreiben(regs + 8, status, 4)
+        gib_zurück nic
+
+funktion pruefe(bedingung):
+    wenn bedingung:
+        gib_zurück 0
+    gib_zurück 1
+
+funktion selbsttests():
+    unsicher:
+        setze f auf 0
+        # Typerkennung aus Vendor/Device-ID.
+        setze f auf f + pruefe(nt_typ(0x125C8086) == 2)
+        setze f auf f + pruefe(nt_typ(0x125B8086) == 2)
+        setze f auf f + pruefe(nt_typ(0x100E8086) == 1)
+        setze f auf f + pruefe(nt_typ(0x15338086) == 0)
+        setze f auf f + pruefe(nt_typ(0x125C10EC) == 0)
+        # Link/Tempo aus STATUS (Bit 1 LU, Bits 7:6, I226 Bit 22 = 2500).
+        setze a auf schein_nic(2, 0x400002)
+        setze f auf f + pruefe(nt_link(a) und nt_tempo(a) == 2500)
+        setze f auf f + pruefe(nt_tempo(schein_nic(2, 0x82)) == 1000)
+        setze f auf f + pruefe(nt_tempo(schein_nic(2, 0x42)) == 100)
+        setze f auf f + pruefe(nt_tempo(schein_nic(2, 0x2)) == 10)
+        setze kein auf schein_nic(2, 0x400080)
+        setze f auf f + pruefe(nt_link(kein) == falsch und nt_tempo(kein) == 0)
+        setze f auf f + pruefe(nt_tempo(schein_nic(1, 0x400082)) == 1000)
+        # Statustext fuer 0 und 2 Ports.
+        setze tpuf auf nt_dma(256)
+        setze leer auf nt_dma(80)
+        setze f auf f + pruefe(nt_status_text(leer, tpuf) == "I226 FEHLT")
+        setze zwei auf nt_dma(80)
+        speicher_schreiben(zwei, 2, 8)
+        speicher_schreiben(zwei + 8, a, 8)
+        speicher_schreiben(zwei + 16, kein, 8)
+        setze f auf f + pruefe(nt_status_text(zwei, tpuf) == "I226 0:2500 1:-")
+        # UDP-Rahmen mit Nutzlast "AB": Laenge 44, IPv4-Pruefsumme 0x7AD0.
+        setze rahmen auf nt_dma(2048)
+        setze n auf kern_text_in_puffer("AB", rahmen + 42, 1472)
+        setze f auf f + pruefe(n == 2 und nt_udp_rahmen(rahmen, a, n) == 44)
+        setze f auf f + pruefe(speicher_lesen(rahmen + 24, 1) == 0x7A und speicher_lesen(rahmen + 25, 1) == 0xD0)
+        setze f auf f + pruefe(speicher_lesen(rahmen + 42, 1) == 65 und speicher_lesen(rahmen + 43, 1) == 66)
+        setze f auf f + pruefe(speicher_lesen(rahmen + 12, 1) == 8 und speicher_lesen(rahmen + 23, 1) == 17)
+        gib_zurück f
+
+funktion moo_efi_haupt():
+    unsicher:
+        wort(83, 69, 76, 66, 83, 84)
+        hex(selbsttests(), 2)
+        zeile_ende()
+        setze pci auf nt_pci_init()
+        wort(73, 50, 50, 54, 0, 0)
+        setze k auf 0
+        solange nt_finde(pci, 2, k) >= 0:
+            setze k auf k + 1
+        hex(k, 1)
+        zeile_ende()
+        wort(69, 67, 65, 77, 0, 0)
+        hex(speicher_lesen(pci, 8), 12)
+        zeile_ende()
+        setze bdf auf nt_suche(pci, 0x8086, 0x100E, 0)
+        wenn bdf < 0:
+            fehler(1)
+            gib_zurück nichts
+        wort(80, 67, 73, 0, 0, 0)
+        hex(bdf, 4)
+        zeile_ende()
+        setze nic auf nt_oeffnen(pci, bdf)
+        wenn nic == 0:
+            fehler(2)
+            gib_zurück nichts
+        wort(77, 65, 67, 0, 0, 0)
+        setze i auf 0
+        solange i < 6:
+            hex(nt_mac(nic, i), 2)
+            setze i auf i + 1
+        zeile_ende()
+        setze n auf 0
+        solange nt_link(nic) == falsch und n < 2000000:
+            setze n auf n + 1
+        wort(76, 73, 78, 75, 0, 0)
+        wenn nt_link(nic):
+            z(49)
+        sonst:
+            z(48)
+        zeile_ende()
+        setze rahmen auf nt_dma(2048)
+        setze empfang auf nt_dma(2048)
+        setze gesendet auf 0
+        wenn nt_udp_log(nic, rahmen, "MOO-E1000-HALLO"):
+            setze gesendet auf gesendet + 1
+        wenn nt_senden(nic, rahmen, arp_anfrage(rahmen, nic)):
+            setze gesendet auf gesendet + 1
+        wort(84, 88, 0, 0, 0, 0)
+        hex(gesendet, 1)
+        zeile_ende()
+        setze arp auf 0
+        setze versuche auf 0
+        solange arp == 0 und versuche < 3:
+            setze n auf 0
+            solange arp == 0 und n < 3000000:
+                setze laenge auf nt_empfangen(nic, empfang)
+                wenn laenge > 0 und ist_arp_antwort(empfang, laenge):
+                    setze arp auf 1
+                setze n auf n + 1
+            wenn arp == 0:
+                nt_senden(nic, rahmen, arp_anfrage(rahmen, nic))
+            setze versuche auf versuche + 1
+        wort(65, 82, 80, 0, 0, 0)
+        hex(arp, 1)
+        zeile_ende()
+        wort(69, 78, 68, 69, 0, 0)
+        zeile_ende()

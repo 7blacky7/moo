@@ -1,0 +1,10 @@
+extern "C" funktion abs(wert: i32) -> i32
+
+@nativ
+funktion abs_probe(wert: i32) -> i32:
+    unsicher:
+        gib_zurück abs(wert)
+
+funktion wrapper():
+    gib_zurück abs_probe(-42)
+zeige wrapper()

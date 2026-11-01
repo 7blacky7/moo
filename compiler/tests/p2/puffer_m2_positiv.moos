@@ -1,0 +1,7 @@
+setze p auf puffer_erstellen(i32, 3)
+p[0] = -2147483648
+p[1] = 42
+p[2] = 2147483647
+zeige p[0]
+zeige p[1]
+zeige p[2]

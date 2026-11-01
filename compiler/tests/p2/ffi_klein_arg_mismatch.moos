@@ -1,0 +1,8 @@
+extern "C" funktion p2_wrong_arg(wert: u8) -> i8
+
+@nativ
+funktion pruefe(wert: i8) -> i8:
+    unsicher:
+        gib_zurück p2_wrong_arg(wert)
+
+zeige pruefe(1)

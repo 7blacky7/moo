@@ -1,0 +1,12 @@
+versuche:
+    setze i auf 0
+    solange i < 1:
+        setze i auf i + 1
+        versuche:
+            weiter
+        fange innen:
+            zeige "INNEN_FALSCH"
+    wirf "aussen"
+fange fehler:
+    zeige fehler
+zeige "weiter"

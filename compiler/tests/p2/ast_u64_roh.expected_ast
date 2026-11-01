@@ -1,0 +1,116 @@
+Program {
+    statements: [
+        FunctionDef {
+            name: "p2_u64_raw",
+            params: [],
+            param_types: [],
+            return_type: Some(
+                TypeRef {
+                    kind: Name(
+                        "u64",
+                    ),
+                    line: 2,
+                    column: 26,
+                    end_line: 2,
+                    end_column: 29,
+                },
+            ),
+            defaults: [],
+            body: [
+                Assignment {
+                    name: "obergrenze",
+                    ty: Some(
+                        TypeRef {
+                            kind: Name(
+                                "u64",
+                            ),
+                            line: 3,
+                            column: 23,
+                            end_line: 3,
+                            end_column: 26,
+                        },
+                    ),
+                    value: NativeNumber {
+                        legacy: 1.8446744073709552e19,
+                        text: "18446744073709551615",
+                        line: 3,
+                        column: 31,
+                    },
+                },
+                Assignment {
+                    name: "hex",
+                    ty: Some(
+                        TypeRef {
+                            kind: Name(
+                                "u64",
+                            ),
+                            line: 4,
+                            column: 16,
+                            end_line: 4,
+                            end_column: 19,
+                        },
+                    ),
+                    value: NativeNumber {
+                        legacy: 1.8446744073709552e19,
+                        text: "0xFFFFFFFFFFFFFFFF",
+                        line: 4,
+                        column: 24,
+                    },
+                },
+                Assignment {
+                    name: "praezise",
+                    ty: Some(
+                        TypeRef {
+                            kind: Name(
+                                "u64",
+                            ),
+                            line: 5,
+                            column: 21,
+                            end_line: 5,
+                            end_column: 24,
+                        },
+                    ),
+                    value: NativeNumber {
+                        legacy: 9007199254740992.0,
+                        text: "9007199254740993",
+                        line: 5,
+                        column: 29,
+                    },
+                },
+                Assignment {
+                    name: "binaer",
+                    ty: Some(
+                        TypeRef {
+                            kind: Name(
+                                "u64",
+                            ),
+                            line: 6,
+                            column: 19,
+                            end_line: 6,
+                            end_column: 22,
+                        },
+                    ),
+                    value: NativeNumber {
+                        legacy: 42.0,
+                        text: "0b101010",
+                        line: 6,
+                        column: 27,
+                    },
+                },
+                Return(
+                    Some(
+                        Identifier(
+                            "obergrenze",
+                        ),
+                    ),
+                ),
+            ],
+            decorators: [
+                Decorator {
+                    name: "nativ",
+                    args: [],
+                },
+            ],
+        },
+    ],
+}

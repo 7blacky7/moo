@@ -1,0 +1,20 @@
+setze treffer auf 0
+funktion pruefe(werte):
+    global treffer
+    wenn werte[999] == 999:
+        setze treffer auf treffer + 1
+klasse Probe:
+    funktion lauf():
+        setze lokal auf 0..1000
+        pruefe(lokal)
+    funktion wert():
+        gib_zurück 17
+setze objekt auf neu Probe()
+setze i auf 0
+solange i < 8000:
+    setze ergebnis auf objekt.lauf()
+    wenn ergebnis != nichts:
+        wirf "unerwartete Methodenrueckgabe"
+    setze i auf i + 1
+zeige treffer
+zeige objekt.wert()

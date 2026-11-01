@@ -1,0 +1,1 @@
+extern "C" funktion ImportPaket__erstelle(wert: i32) -> i32

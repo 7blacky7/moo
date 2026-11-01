@@ -1,0 +1,8 @@
+teste "Heap":
+    setze heap auf 1..1025
+    erwarte falsch
+setze i auf 0
+solange i < 8000:
+    teste_alle()
+    setze i auf i + 1
+zeige "ENDE"

@@ -1,0 +1,4 @@
+@nativ
+funktion ffi_rufe_falschen_zeiger(f: ptr[fn(ptr[i32]) -> i32], wert: ptr[u32]) -> i32:
+    unsicher:
+        gib_zurück f(wert)

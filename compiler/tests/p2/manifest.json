@@ -1,0 +1,228 @@
+{
+  "version": 1,
+  "status": "entwurf",
+  "source_decision": "f67bfcbd-8090-479e-9546-f2713f00f59e",
+  "cases": [
+    {
+      "file": "positiv_ganzzahlen.moos",
+      "expect": "run",
+      "stdout": "positiv_ganzzahlen.expected",
+      "exit": 0
+    },
+    {
+      "file": "positiv_basen.moos",
+      "expect": "run",
+      "stdout": "positiv_basen.expected",
+      "exit": 0
+    },
+    {
+      "file": "positiv_praezision.moos",
+      "expect": "run",
+      "stdout": "positiv_praezision.expected",
+      "exit": 0
+    },
+    {
+      "file": "positiv_identifier.moos",
+      "expect": "run",
+      "stdout": "positiv_identifier.expected",
+      "exit": 0
+    },
+    {
+      "file": "legacy_basen.moos",
+      "expect": "run",
+      "stdout": "legacy_basen.expected",
+      "exit": 0
+    },
+    {
+      "file": "positiv_annotationen.moos",
+      "expect": "ast",
+      "assertions": [
+        "parameter eingabe: puffer[zeiger[i32]]",
+        "parameter zahl: i64 mit Default 7",
+        "return i64",
+        "wert: i64",
+        "grenze: i64",
+        "quellspans erhalten"
+      ]
+    },
+    {
+      "file": "negativ_u8_ueberlauf.moos",
+      "expect": "compile_error",
+      "target": "u8 zielbereich",
+      "diagnostic": "mit Quellposition",
+      "exit": "nonzero",
+      "stderr_contains": "negativ_u8_ueberlauf.expected_error"
+    },
+    {
+      "file": "negativ_u64_ueberlauf.moos",
+      "expect": "compile_error",
+      "target": "u64 zielbereich",
+      "diagnostic": "mit Quellposition",
+      "exit": "nonzero",
+      "stderr_contains": "negativ_u64_ueberlauf.expected_error"
+    },
+    {
+      "file": "negativ_i64_unterlauf.moos",
+      "expect": "compile_error",
+      "target": "i64 unterlauf",
+      "diagnostic": "mit Quellposition",
+      "exit": "nonzero",
+      "stderr_contains": "negativ_i64_unterlauf.expected_error"
+    },
+    {
+      "file": "negativ_hex_leer.moos",
+      "expect": "compile_error",
+      "target": "hex ziffer fehlt",
+      "diagnostic": "mit Quellposition",
+      "exit": "nonzero",
+      "stderr_contains": "negativ_hex_leer.expected_error"
+    },
+    {
+      "file": "negativ_binaer_ziffer.moos",
+      "expect": "compile_error",
+      "target": "ungültige binärziffer",
+      "diagnostic": "mit Quellposition",
+      "exit": "nonzero",
+      "stderr_contains": "negativ_binaer_ziffer.expected_error"
+    },
+    {
+      "file": "negativ_oktal_ziffer.moos",
+      "expect": "compile_error",
+      "target": "ungültige oktalziffer",
+      "diagnostic": "mit Quellposition",
+      "exit": "nonzero",
+      "stderr_contains": "negativ_oktal_ziffer.expected_error"
+    },
+    {
+      "file": "negativ_typ_klammer.moos",
+      "expect": "compile_error",
+      "target": "nicht geschlossene typklammer",
+      "diagnostic": "mit Quellposition",
+      "exit": "nonzero",
+      "stderr_contains": "negativ_typ_klammer.expected_error"
+    },
+    {
+      "file": "negativ_typ_leer.moos",
+      "expect": "compile_error",
+      "target": "fehlendes typargument",
+      "diagnostic": "mit Quellposition",
+      "exit": "nonzero",
+      "stderr_contains": "negativ_typ_leer.expected_error"
+    },
+    {
+      "file": "negativ_kontext_widerspruch.moos",
+      "expect": "compile_error",
+      "target": "typisierter i16 rückgabewert zu u8 ohne cast",
+      "diagnostic": "mit Quellposition",
+      "exit": "nonzero",
+      "stderr_contains": "negativ_kontext_widerspruch.expected_error"
+    },
+    {
+      "file": "positiv_maxwerte.moos",
+      "expect": "run",
+      "stdout": "positiv_maxwerte.expected",
+      "exit": 0
+    },
+    {
+      "file": "ast_typformen.moos",
+      "expect": "ast",
+      "assertions": [
+        "ptr[i32]",
+        "[u8; 16]",
+        "fn(i32)->f32",
+        "return i64",
+        "quellspans erhalten"
+      ]
+    },
+    {
+      "file": "ast_import.moos",
+      "expect": "ast_import",
+      "dependency": "typmodul.moos",
+      "assertions": [
+        "typmodul.wert parameter x: i32",
+        "return i32",
+        "alias/signatur nach Präfixierung erhalten"
+      ]
+    },
+    {
+      "file": "ast_range.moos",
+      "expect": "ast",
+      "assertions": [
+        "1..3 ist Range mit Endpunkten 1 und 3"
+      ]
+    },
+    {
+      "file": "positiv_float.moos",
+      "expect": "run",
+      "stdout": "positiv_float.expected",
+      "exit": 0
+    },
+    {
+      "file": "warnung_float_unterlauf.moos",
+      "expect": "compile_warning",
+      "stderr_contains": "warnung_float_unterlauf.expected_warning",
+      "exit": 0,
+      "assertions": [
+        "mathematisch ungleich Null rundet zu +0"
+      ]
+    },
+    {
+      "file": "ast_zusammengesetzt.moos",
+      "expect": "ast",
+      "assertions": [
+        "daten klasse Punkt mit Feldern x und y unverändert",
+        "schnittstelle Messbar mit Methode messe",
+        "Klassenmethode messe Parameter v: i32, Rückgabe i32",
+        "Lambda Parameter x und Body unverändert"
+      ]
+    },
+    {
+      "file": "negativ_i8_ueberlauf.moos",
+      "expect": "compile_error",
+      "target": "i8 zielbereich",
+      "diagnostic": "mit Quellposition",
+      "exit": "nonzero",
+      "stderr_contains": "negativ_i8_ueberlauf.expected_error"
+    },
+    {
+      "file": "negativ_i16_ueberlauf.moos",
+      "expect": "compile_error",
+      "target": "i16 zielbereich",
+      "diagnostic": "mit Quellposition",
+      "exit": "nonzero",
+      "stderr_contains": "negativ_i16_ueberlauf.expected_error"
+    },
+    {
+      "file": "negativ_i32_ueberlauf.moos",
+      "expect": "compile_error",
+      "target": "i32 zielbereich",
+      "diagnostic": "mit Quellposition",
+      "exit": "nonzero",
+      "stderr_contains": "negativ_i32_ueberlauf.expected_error"
+    },
+    {
+      "file": "negativ_i64_ueberlauf.moos",
+      "expect": "compile_error",
+      "target": "i64 zielbereich",
+      "diagnostic": "mit Quellposition",
+      "exit": "nonzero",
+      "stderr_contains": "negativ_i64_ueberlauf.expected_error"
+    },
+    {
+      "file": "negativ_u16_ueberlauf.moos",
+      "expect": "compile_error",
+      "target": "u16 zielbereich",
+      "diagnostic": "mit Quellposition",
+      "exit": "nonzero",
+      "stderr_contains": "negativ_u16_ueberlauf.expected_error"
+    },
+    {
+      "file": "negativ_u32_ueberlauf.moos",
+      "expect": "compile_error",
+      "target": "u32 zielbereich",
+      "diagnostic": "mit Quellposition",
+      "exit": "nonzero",
+      "stderr_contains": "negativ_u32_ueberlauf.expected_error"
+    }
+  ]
+}

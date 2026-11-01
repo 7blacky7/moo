@@ -1,0 +1,19 @@
+funktion kaputt():
+    wirf "cleanupfehler"
+funktion probe():
+    aufräumen: kaputt()
+    gib_zurück [1, 2, 3, 4]
+funktion test():
+    versuche:
+        probe()
+    fange fehler:
+        wenn fehler == "cleanupfehler":
+            gib_zurück 1
+        gib_zurück 0
+    gib_zurück 0
+setze i auf 0
+setze treffer auf 0
+solange i < 200000:
+    setze treffer auf treffer + test()
+    setze i auf i + 1
+zeige treffer

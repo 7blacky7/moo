@@ -99,6 +99,7 @@ pub enum TokenType {
     RBrace,
     Arrow,        // =>
     ThinArrow,    // -> (Rueckgabetyp)
+    Semicolon,    // ; (Array-Typ [T; N])
 
     // Special
     Newline,
@@ -112,11 +113,19 @@ pub struct Token {
     pub token_type: TokenType,
     pub line: usize,
     pub column: usize,
+    /// Ursprüngliche Ziffernfolge eines Zahlentokens. Der f64-Wert bleibt für
+    /// die bestehende dynamische Semantik unverändert; native Auswertung darf
+    /// nicht aus diesem bereits gerundeten Wert rekonstruiert werden.
+    pub number_text: Option<String>,
 }
 
 impl Token {
     pub fn new(token_type: TokenType, line: usize, column: usize) -> Self {
-        Self { token_type, line, column }
+        Self { token_type, line, column, number_text: None }
+    }
+
+    pub fn number(value: f64, line: usize, column: usize, text: String) -> Self {
+        Self { token_type: TokenType::Number(value), line, column, number_text: Some(text) }
     }
 }
 

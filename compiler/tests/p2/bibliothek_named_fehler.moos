@@ -1,0 +1,2 @@
+@bibliothek(linux=123)
+extern "C" funktion probe(wert: i32) -> i32

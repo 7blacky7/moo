@@ -1,0 +1,14 @@
+funktion marke():
+    zeige "A"
+funktion inner():
+    setze x auf 1 / 0
+    gib_zurück "abc"
+funktion probe():
+    aufräumen: marke()
+    setze s auf inner()[0..1]
+    zeige "FALSCH_PROBE"
+versuche:
+    probe()
+fange fehler:
+    zeige fehler
+zeige "weiter"

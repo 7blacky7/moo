@@ -1,0 +1,5 @@
+setze p auf puffer_erstellen(i32, 1)
+p[0] = 7
+setze alias auf p
+alias[0] = 9
+zeige p[0]

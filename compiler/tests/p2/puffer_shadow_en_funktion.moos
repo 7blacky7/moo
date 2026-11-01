@@ -1,0 +1,4 @@
+funktion buffer_create(typ, n):
+    gib_zurück typ + n
+setze i32 auf 7
+zeige buffer_create(i32, 1)

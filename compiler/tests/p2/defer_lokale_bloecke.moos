@@ -1,0 +1,87 @@
+setze g auf 100
+funktion fg_s():
+    garantiere falsch, sonst:
+        setze g auf 11
+        zeige g
+        setze lokal auf [7]
+        zeige lokal[0]
+funktion fg_l():
+    garantiere falsch, sonst:
+        zeige g
+        setze g auf g + 1
+        zeige g
+funktion fu_s():
+    unsicher:
+        setze g auf 11
+        zeige g
+        setze lokal auf [7]
+        zeige lokal[0]
+funktion fu_l():
+    unsicher:
+        zeige g
+        setze g auf g + 1
+        zeige g
+funktion fg_global():
+    global g
+    garantiere falsch, sonst:
+        setze g auf 33
+        zeige g
+klasse Probe:
+    funktion mg_s():
+        garantiere falsch, sonst:
+            setze g auf 11
+            zeige g
+            setze lokal auf [7]
+            zeige lokal[0]
+    funktion mg_l():
+        garantiere falsch, sonst:
+            zeige g
+            setze g auf g + 1
+            zeige g
+    funktion mu_s():
+        unsicher:
+            setze g auf 11
+            zeige g
+            setze lokal auf [7]
+            zeige lokal[0]
+    funktion mu_l():
+        unsicher:
+            zeige g
+            setze g auf g + 1
+            zeige g
+    funktion mu_global():
+        global g
+        unsicher:
+            setze g auf 44
+            zeige g
+setze objekt auf neu Probe()
+setze g auf 100
+fg_s()
+zeige g
+setze g auf 100
+fg_l()
+zeige g
+setze g auf 100
+fu_s()
+zeige g
+setze g auf 100
+fu_l()
+zeige g
+setze g auf 100
+objekt.mg_s()
+zeige g
+setze g auf 100
+objekt.mg_l()
+zeige g
+setze g auf 100
+objekt.mu_s()
+zeige g
+setze g auf 100
+objekt.mu_l()
+zeige g
+setze g auf 100
+fg_global()
+zeige g
+setze g auf 100
+objekt.mu_global()
+zeige g

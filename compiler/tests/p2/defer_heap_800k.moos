@@ -1,0 +1,10 @@
+funktion baue():
+    gib_zurück [1, 2, 3, 4]
+funktion probe():
+    aufräumen: baue()
+    gib_zurück 1
+setze i auf 0
+solange i < 800000:
+    probe()
+    setze i auf i + 1
+zeige "fertig"

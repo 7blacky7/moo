@@ -1,0 +1,4 @@
+@nativ
+funktion falsches_vorzeichen(p: ptr[i16]) -> u16:
+    unsicher:
+        gib_zurück p[0]

@@ -1,8 +1,29 @@
 /// AST-Knoten für moo — sprachunabhängige Programmstruktur.
 
+/// Quellort und verlustfrei erhaltene Struktur einer Typannotation.
+#[derive(Debug, Clone)]
+pub struct TypeRef {
+    pub kind: TypeKind,
+    pub line: usize,
+    pub column: usize,
+    /// Exklusives Ende der letzten Typ-Komponente (1-basiert).
+    pub end_line: usize,
+    pub end_column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum TypeKind {
+    Name(std::string::String),
+    Generic { name: std::string::String, args: Vec<TypeRef> },
+    Array { element: Box<TypeRef>, length: Box<Expr> },
+    Function { params: Vec<TypeRef>, return_type: Box<TypeRef> },
+}
+
 #[derive(Debug, Clone)]
 pub enum Expr {
     Number(f64),
+    /// Unverändertes Quellliteral eines explizit nativen Funktionskörpers.
+    NativeNumber { legacy: f64, text: std::string::String, line: usize, column: usize },
     String(std::string::String),
     Boolean(bool),
     None,
@@ -52,6 +73,7 @@ pub enum Expr {
     This,
     Lambda {
         params: Vec<std::string::String>,
+        param_types: Vec<Option<TypeRef>>,
         body: Box<Expr>,
     },
     OptionalChain {
@@ -116,16 +138,29 @@ pub struct Decorator {
 pub enum DecoratorArg {
     Zahl(f64),
     Text(std::string::String),
+    NamedText { name: std::string::String, value: std::string::String },
+}
+
+/// Strukturierte Interfacesignatur, soweit die alte Syntax erkennbar ist.
+#[derive(Debug, Clone)]
+pub struct InterfaceSignature {
+    pub name: std::string::String,
+    pub params: Vec<std::string::String>,
+    pub param_types: Vec<Option<TypeRef>>,
+    pub defaults: Vec<Option<Expr>>,
+    pub return_type: Option<TypeRef>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
     Assignment {
         name: std::string::String,
+        ty: Option<TypeRef>,
         value: Expr,
     },
     ConstAssignment {
         name: std::string::String,
+        ty: Option<TypeRef>,
         value: Expr,
     },
     CompoundAssignment {
@@ -176,8 +211,17 @@ pub enum Stmt {
     FunctionDef {
         name: std::string::String,
         params: Vec<std::string::String>,
+        param_types: Vec<Option<TypeRef>>,
+        return_type: Option<TypeRef>,
         defaults: Vec<Option<Expr>>,
         body: Vec<Stmt>,
+        decorators: Vec<Decorator>,
+    },
+    /// Fremdfunktion mit expliziter C-Signatur; Linknamen bleiben unveraendert.
+    ExternC {
+        name: std::string::String,
+        params: Vec<(std::string::String, TypeRef)>,
+        result: TypeRef,
         decorators: Vec<Decorator>,
     },
     /// P011-A3 PoC: reines u32-Daten-Global (kein MooValue) — fuer
@@ -185,12 +229,19 @@ pub enum Stmt {
     /// compile-time-konstante Ausdruecke sein (eval_const_f64 im Codegen).
     RawDataU32 {
         name: std::string::String,
+        ty: Option<TypeRef>,
         value: Expr,
         decorators: Vec<Decorator>,
     },
     Return(Option<Expr>),
     Break,
     Continue,
+    /// Native Strukturdefinition; Feldreihenfolge ist Bestandteil des Layouts.
+    StructDef {
+        name: std::string::String,
+        fields: Vec<(std::string::String, TypeRef)>,
+        decorators: Vec<Decorator>,
+    },
     ClassDef {
         name: std::string::String,
         parent: Option<std::string::String>,
@@ -201,6 +252,7 @@ pub enum Stmt {
     InterfaceDef {
         name: std::string::String,
         methods: Vec<std::string::String>,
+        signatures: Vec<Option<InterfaceSignature>>,
     },
     TryCatch {
         try_body: Vec<Stmt>,
@@ -235,6 +287,7 @@ pub enum Stmt {
     DataClassDef {
         name: std::string::String,
         fields: Vec<std::string::String>,
+        field_types: Vec<Option<TypeRef>>,
     },
     /// Unsafe-Block (Rust-inspiriert): unsicher: body
     UnsafeBlock {

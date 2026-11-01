@@ -71,8 +71,28 @@ if ! "$SCRIPT_DIR/ir_gates/run_tag_sync_gate.sh"; then
     exit 1
 fi
 
+# P2-T15: C-Pufferkern auf Bounds, Views und Pin-Lebensdauer pruefen.
+# Assertions muessen aktiv bleiben; der Lauf ist Teil des Compiler-Gates.
+if ! "${CC:-cc}" -std=c11 -Wall -Wextra -Werror \
+    "$COMPILER_DIR/runtime/moo_buffer.c" "$COMPILER_DIR/runtime/moo_struct_box.c" "$COMPILER_DIR/runtime/moo_memory.c" \
+    "$COMPILER_DIR/runtime/tests/test_p2_buffer.c" "$SCRIPT_DIR/p2/test_p2_buffer_value.c" \
+    -o "$WORK_DIR/p2_buffer${EXE_SUFFIX}" || ! "$WORK_DIR/p2_buffer${EXE_SUFFIX}"; then
+    echo -e "${RED}FEHLER:${NC} P2-Puffer-Harness fehlgeschlagen — Abbruch."
+    exit 1
+fi
+echo "P2-Puffer-Harness: PASS"
+
+# P2-T14: kopierende Strukturbox mit validiertem Deskriptor.
+if ! "${CC:-cc}" -std=c11 -Wall -Wextra -Werror \
+    "$COMPILER_DIR/runtime/moo_struct_box.c" "$SCRIPT_DIR/p2/test_p2_struct_box.c" \
+    -o "$WORK_DIR/p2_struct_box${EXE_SUFFIX}" || ! "$WORK_DIR/p2_struct_box${EXE_SUFFIX}"; then
+    echo -e "${RED}FEHLER:${NC} P2-Strukturbox-Harness fehlgeschlagen — Abbruch."
+    exit 1
+fi
+echo "P2-Strukturbox-Harness: PASS"
+
 # Alle .moos Dateien mit .expected durchgehen (top-level + regression/)
-for moo_file in "$SCRIPT_DIR"/*.moos "$SCRIPT_DIR"/regression/*.moos; do
+for moo_file in "$SCRIPT_DIR"/*.moos "$SCRIPT_DIR"/regression/*.moos "$SCRIPT_DIR"/p2/test_p2_dispatch.moos "$SCRIPT_DIR"/p2/test_p2_frontend_legacy.moos "$SCRIPT_DIR"/p2/ffi_deklaration.moos "$SCRIPT_DIR"/p2/struktur_layout.moos; do
     [[ -f "$moo_file" ]] || continue
     test_name="$(basename "$moo_file" .moos)"
     test_dir="$(dirname "$moo_file")"

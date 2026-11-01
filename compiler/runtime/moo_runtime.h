@@ -44,6 +44,8 @@ typedef enum {
     MOO_KAMERA = 24,
     MOO_MIKRO = 25,
     MOO_SURFACE = 26,
+    MOO_BUFFER = 27,
+    MOO_STRUCT = 28,
 } MooTag;
 
 // === Forward Declarations ===
@@ -532,6 +534,7 @@ MooValue moo_surface_text_stil(MooValue surface, MooValue x, MooValue y,
 MooValue moo_surface_text_breite(MooValue text, MooValue skala);
 MooValue moo_surface_text_breite_stil(MooValue text, MooValue skala,
                                       MooValue stil);
+MooValue moo_surface_text_hoehe(MooValue skala);
 MooValue moo_surface_text_glyphen_status(MooValue text, MooValue stil);
 
 // C2A-B3: einmaliger Pointer-Metadaten-Snapshot fuer die Moo-Ereigniskante.
@@ -870,6 +873,7 @@ void moo_throw(MooValue error);
 void moo_try_enter(void);       // enter try block
 int moo_try_check(void);        // 1 = error occurred
 void moo_try_leave(void);       // leave try/catch
+MooValue moo_try_take_error(void); /* transfers +1 error, clears flag, keeps try depth */
 MooValue moo_get_error(void);   // get the caught error
 extern int moo_error_flag;
 

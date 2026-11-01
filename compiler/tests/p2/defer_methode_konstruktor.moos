@@ -1,0 +1,29 @@
+klasse Ohne:
+    funktion wert():
+        gib_zurück 10
+klasse Implizit:
+    funktion erstelle(wert, extra = 2):
+        selbst.wert = wert + extra
+    funktion lesen_b():
+        gib_zurück selbst.wert
+klasse Explizit:
+    funktion erstelle(wert):
+        selbst.wert = wert
+        gib_zurück selbst
+    funktion lesen_c():
+        gib_zurück selbst.wert
+daten klasse Paket(werte)
+setze a auf neu Ohne()
+setze b auf neu Implizit(20)
+setze c auf neu Explizit(30)
+setze d auf neu Paket([40, 41])
+zeige a.wert()
+zeige a.wert()
+zeige b.wert
+zeige b.lesen_b()
+zeige b.lesen_b()
+zeige c.wert
+zeige c.lesen_c()
+zeige c.lesen_c()
+zeige d.werte[0]
+zeige d.werte[1]

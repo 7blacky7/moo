@@ -1,0 +1,7 @@
+teste "Wert":
+    erwarte falsch
+setze i auf 0
+solange i < 8000:
+    teste_alle()
+    setze i auf i + 1
+zeige "ENDE"

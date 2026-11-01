@@ -1,0 +1,5 @@
+@nativ
+funktion lokal(a: i32) -> i32:
+    setze zwischen: u8 auf a
+    gib_zurück a
+zeige lokal(1)

@@ -1,0 +1,1 @@
+extern "C" funktion printf(fmt: zeiger[u8], ...) -> i32

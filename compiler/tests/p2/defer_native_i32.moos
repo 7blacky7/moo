@@ -1,0 +1,6 @@
+@nativ
+funktion defer_i32_id(x: i32) -> i32:
+    gib_zurück x
+setze wert auf 7
+aufräumen: defer_i32_id(wert)
+zeige "hauptteil"

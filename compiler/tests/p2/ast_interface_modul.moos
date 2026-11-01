@@ -1,0 +1,2 @@
+schnittstelle P2ImportSchnitt:
+    funktion lesen(adresse: ptr[u8], groesse: u64) -> i32

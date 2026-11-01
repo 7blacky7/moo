@@ -1,0 +1,2 @@
+funktion beispiel(wert: puffer[zeiger[i32]) -> i64:
+    gib_zurück 0

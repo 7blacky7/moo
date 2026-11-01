@@ -1,0 +1,3 @@
+# Nur AST-/Importtransformations-Test; keine native Codegen-Annahme.
+aus "./typmodul" importiere wert
+zeige wert(7)

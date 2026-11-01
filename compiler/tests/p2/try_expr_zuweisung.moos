@@ -1,0 +1,7 @@
+setze wert auf 17
+versuche:
+    setze wert auf 1 / 0
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen"
+zeige wert

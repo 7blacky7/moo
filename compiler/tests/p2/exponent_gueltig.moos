@@ -1,0 +1,5 @@
+@nativ
+funktion probe() -> f32:
+    setze a: f32 auf 1e-45
+    setze b: f32 auf 1E+99
+    gib_zurück -1e9

@@ -1,0 +1,3 @@
+[tasks.sicht]
+description = "P7: QEMU/OVMF screen evidence"
+run = "bash sicht-gate.sh"

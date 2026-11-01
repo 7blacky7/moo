@@ -1,0 +1,6 @@
+@nativ
+funktion p2_call_ziel(x: i32) -> i32:
+    gib_zurück x
+@nativ
+funktion p2_call_ziel(x: i32) -> i32:
+    gib_zurück x + 1

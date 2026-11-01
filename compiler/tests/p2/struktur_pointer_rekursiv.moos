@@ -1,0 +1,6 @@
+struktur P2Selbst:
+    next: ptr[P2Selbst]
+struktur P2Vor:
+    next: ptr[P2Nach]
+struktur P2Nach:
+    next: ptr[P2Vor]

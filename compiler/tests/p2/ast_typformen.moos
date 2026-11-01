@@ -1,0 +1,3 @@
+# P2-T6: Parser/AST-Test für verschachtelte Typformen und Funktionszeiger.
+funktion signatur(p: ptr[i32], a: [u8; 16], f: fn(i32) -> f32) -> i64:
+    gib_zurück 0

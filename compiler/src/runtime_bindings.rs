@@ -94,6 +94,26 @@ pub struct RuntimeBindings<'ctx> {
     pub kern_timer_init: FunctionValue<'ctx>,
     pub kern_ticks: FunctionValue<'ctx>,
     pub kern_stackprot_selbsttest: FunctionValue<'ctx>,
+    // P7-T2: Framebuffer-Builtins (C: Boot-Adapter, z.B. boot/uefi_entry.c)
+    pub kern_bild_breite: FunctionValue<'ctx>,
+    pub kern_bild_hoehe: FunctionValue<'ctx>,
+    pub kern_bild_zeige: FunctionValue<'ctx>,
+    // P7-T2: Eingabe-Builtins (C: Boot-Adapter)
+    pub kern_taste_lesen: FunctionValue<'ctx>,
+    pub kern_maus_vorhanden: FunctionValue<'ctx>,
+    pub kern_maus_lesen: FunctionValue<'ctx>,
+    pub kern_maus_x: FunctionValue<'ctx>,
+    pub kern_maus_y: FunctionValue<'ctx>,
+    pub kern_maus_gedrueckt: FunctionValue<'ctx>,
+    pub kern_eingabe_warten: FunctionValue<'ctx>,
+    // P7-T9: Netzwerk-Konsole
+    pub kern_netz_sende: FunctionValue<'ctx>,
+    pub kern_netz_status: FunctionValue<'ctx>,
+    pub kern_treiber_status: FunctionValue<'ctx>,
+    pub kern_acpi_rsdp: FunctionValue<'ctx>,
+    pub kern_warte_us: FunctionValue<'ctx>,
+    pub kern_text_in_puffer: FunctionValue<'ctx>,
+    pub kern_text_aus_puffer: FunctionValue<'ctx>,
     // String
     pub moo_string_concat: FunctionValue<'ctx>,
     // List
@@ -514,6 +534,7 @@ pub struct RuntimeBindings<'ctx> {
     pub moo_surface_text_stil: FunctionValue<'ctx>,
     pub moo_surface_text_breite: FunctionValue<'ctx>,
     pub moo_surface_text_breite_stil: FunctionValue<'ctx>,
+    pub moo_surface_text_hoehe: FunctionValue<'ctx>,
     pub moo_surface_text_glyphen_status: FunctionValue<'ctx>,
     pub moo_surface_hash: FunctionValue<'ctx>,
     pub moo_surface_snapshot_to_frame: FunctionValue<'ctx>,
@@ -853,7 +874,22 @@ pub struct RuntimeBindings<'ctx> {
 }
 
 impl<'ctx> RuntimeBindings<'ctx> {
-    pub fn declare(context: &'ctx Context, module: &Module<'ctx>) -> Self {
+    /// Declare only when compiling a catch, preserving the MooValue return ABI.
+    pub fn declare_try_take_error(
+        &self, context: &'ctx Context, module: &Module<'ctx>, windows_x64_abi: bool,
+    ) -> FunctionValue<'ctx> {
+        if let Some(function) = module.get_function("moo_try_take_error") {
+            return function;
+        }
+        if windows_x64_abi {
+            let ptr = context.ptr_type(AddressSpace::default());
+            module.add_function("moo_try_take_error", context.void_type().fn_type(&[ptr.into()], false), None)
+        } else {
+            module.add_function("moo_try_take_error", self.moo_value_type.fn_type(&[], false), None)
+        }
+    }
+
+    pub fn declare(context: &'ctx Context, module: &Module<'ctx>, windows_x64_abi: bool) -> Self {
         let ptr_type = context.ptr_type(AddressSpace::default());
         let i32_type = context.i32_type();
         let i8_type = context.i8_type();
@@ -874,7 +910,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
         // MSVC x64 uebergibt 16-Byte-MooValue-Parameter indirekt. Alle mvN-
         // Signaturen — auch historische direkte module.add_function-Aufrufe —
         // muessen deshalb unter Windows ptr statt Struct verwenden.
-        let mv: BasicMetadataTypeEnum = if cfg!(windows) {
+        let mv: BasicMetadataTypeEnum = if windows_x64_abi {
             ptr_type.into()
         } else {
             moo_value_type.into()
@@ -894,7 +930,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
         macro_rules! decl {
             ($name:expr, ret $ret:expr, $($params:expr),*) => {{
                 let params: &[BasicMetadataTypeEnum<'ctx>] = &[$($params.into()),*];
-                if cfg!(windows) {
+                if windows_x64_abi {
                     let win_params: Vec<BasicMetadataTypeEnum<'ctx>> = params.iter()
                         .map(|param| match param {
                             BasicMetadataTypeEnum::StructType(_) => ptr_type.into(),
@@ -912,7 +948,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
         macro_rules! decl_mv_mv {
             ($name:expr, $params:expr) => {{
                 let params: &[BasicMetadataTypeEnum<'ctx>] = $params;
-                if cfg!(windows) {
+                if windows_x64_abi {
                     // MSVC x64 gibt das 16-Byte-MooValue ueber einen versteckten
                     // Rueckgabepuffer als erstes Argument zurueck.
                     let mut win_params = Vec::with_capacity(params.len() + 1);
@@ -1011,6 +1047,26 @@ impl<'ctx> RuntimeBindings<'ctx> {
             kern_timer_init: decl_mv_mv!("kern_timer_init", mv1),
             kern_ticks: decl_mv_mv!("kern_ticks", &[]),
             kern_stackprot_selbsttest: decl_mv_mv!("kern_stackprot_selbsttest", &[]),
+            // P7-T2: Framebuffer-Builtins
+            kern_bild_breite: decl_mv_mv!("kern_bild_breite", &[]),
+            kern_bild_hoehe: decl_mv_mv!("kern_bild_hoehe", &[]),
+            kern_bild_zeige: decl_mv_mv!("kern_bild_zeige", mv1),
+            // P7-T2: Eingabe-Builtins
+            kern_taste_lesen: decl_mv_mv!("kern_taste_lesen", &[]),
+            kern_maus_vorhanden: decl_mv_mv!("kern_maus_vorhanden", &[]),
+            kern_maus_lesen: decl_mv_mv!("kern_maus_lesen", &[]),
+            kern_maus_x: decl_mv_mv!("kern_maus_x", &[]),
+            kern_maus_y: decl_mv_mv!("kern_maus_y", &[]),
+            kern_maus_gedrueckt: decl_mv_mv!("kern_maus_gedrueckt", &[]),
+            kern_eingabe_warten: decl_mv_mv!("kern_eingabe_warten", &[]),
+            // P7-T9: Netzwerk-Konsole
+            kern_netz_sende: decl_mv_mv!("kern_netz_sende", mv1),
+            kern_netz_status: decl_mv_mv!("kern_netz_status", &[]),
+            kern_treiber_status: decl_mv_mv!("kern_treiber_status", &[]),
+            kern_acpi_rsdp: decl_mv_mv!("kern_acpi_rsdp", &[]),
+            kern_warte_us: decl_mv_mv!("kern_warte_us", mv1),
+            kern_text_in_puffer: decl_mv_mv!("kern_text_in_puffer", mv3),
+            kern_text_aus_puffer: decl_mv_mv!("kern_text_aus_puffer", mv2),
 
             // String
             moo_string_concat: decl_mv_mv!("moo_string_concat", mv2),
@@ -1477,6 +1533,7 @@ impl<'ctx> RuntimeBindings<'ctx> {
             moo_surface_text_stil: decl_mv_mv!("moo_surface_text_stil", mv10),
             moo_surface_text_breite: decl_mv_mv!("moo_surface_text_breite", mv2),
             moo_surface_text_breite_stil: decl_mv_mv!("moo_surface_text_breite_stil", mv3),
+            moo_surface_text_hoehe: decl_mv_mv!("moo_surface_text_hoehe", mv1),
             moo_surface_text_glyphen_status: decl_mv_mv!("moo_surface_text_glyphen_status", mv2),
             moo_surface_hash: decl_mv_mv!("moo_surface_hash", mv1),
             moo_surface_snapshot_to_frame: decl_mv_mv!("moo_surface_snapshot_to_frame", mv1),

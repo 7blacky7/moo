@@ -1,0 +1,12 @@
+funktion marke(text):
+    zeige text
+funktion kaputt(text):
+    zeige text
+    wirf text
+funktion probe():
+    wenn falsch:
+        aufräumen: marke("FALSCH")
+    wenn wahr:
+        aufräumen: marke("RICHTIG")
+    gib_zurück "wert"
+zeige probe()

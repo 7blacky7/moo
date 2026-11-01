@@ -1,0 +1,13 @@
+# P2-T5: Dezimal, Hex, Binär, Oktal, führende Null.
+@nativ
+funktion basen() -> bool:
+    setze a: u64 auf 0xFFFFFFFFFFFFFFFF
+    setze b: u8 auf 0b11111111
+    setze c: u16 auf 0o177777
+    setze d: i32 auf 010
+    gib_zurück a == 18446744073709551615 und b == 255 und c == 65535 und d == 10
+
+wenn basen():
+    zeige "basen OK"
+sonst:
+    zeige "basen FEHLER"

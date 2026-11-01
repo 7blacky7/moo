@@ -1,0 +1,11 @@
+@nativ
+funktion ident(wert: i32) -> i32:
+    gib_zurück wert
+setze wert auf 20
+zeige ident(wert)
+setze wert auf -2147483648
+zeige ident(wert)
+setze wert auf 2147483647
+zeige ident(wert)
+setze wert auf -0.0
+zeige ident(wert)

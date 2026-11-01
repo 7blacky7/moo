@@ -1,0 +1,12 @@
+funktion marke(text):
+    zeige text
+funktion probe():
+    aufräumen: marke("A")
+    aufräumen: marke("B")
+    aufräumen: marke("C")
+versuche:
+    probe()
+fange fehler:
+    zeige "CATCH"
+    zeige fehler
+zeige "ENDE"

@@ -1,0 +1,14 @@
+funktion marke(text):
+    zeige text
+klasse Beispiel:
+    funktion eins():
+        aufräumen: marke("A")
+        gib_zurück "eins"
+    funktion zwei():
+        aufräumen: marke("B")
+        gib_zurück "zwei"
+aufräumen: marke("M")
+setze wert auf neu Beispiel()
+zeige wert.eins()
+zeige wert.zwei()
+zeige "weiter"

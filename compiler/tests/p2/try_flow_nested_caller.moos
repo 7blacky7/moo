@@ -1,0 +1,14 @@
+funktion probe():
+    versuche:
+        versuche:
+            gib_zurück "wert"
+        fange innen:
+            gib_zurück "INNEN_FALSCH"
+    fange aussen:
+        gib_zurück "AUSSEN_FALSCH"
+versuche:
+    zeige probe()
+    wirf "aussen"
+fange fehler:
+    zeige fehler
+zeige "weiter"

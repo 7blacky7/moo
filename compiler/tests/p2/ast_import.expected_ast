@@ -1,0 +1,57 @@
+Program {
+    statements: [
+        FunctionDef {
+            name: "wert",
+            params: [
+                "x",
+            ],
+            param_types: [
+                Some(
+                    TypeRef {
+                        kind: Name(
+                            "i32",
+                        ),
+                        line: 2,
+                        column: 18,
+                        end_line: 2,
+                        end_column: 21,
+                    },
+                ),
+            ],
+            return_type: Some(
+                TypeRef {
+                    kind: Name(
+                        "i32",
+                    ),
+                    line: 2,
+                    column: 26,
+                    end_line: 2,
+                    end_column: 29,
+                },
+            ),
+            defaults: [
+                None,
+            ],
+            body: [
+                Return(
+                    Some(
+                        Identifier(
+                            "x",
+                        ),
+                    ),
+                ),
+            ],
+            decorators: [],
+        },
+        Show(
+            FunctionCall {
+                name: "wert",
+                args: [
+                    Number(
+                        7.0,
+                    ),
+                ],
+            },
+        ),
+    ],
+}

@@ -1,0 +1,32 @@
+# P7-T4 6A: typisierte volatile Zugriffe und Barrieren in @nativ-Funktionen.
+@nativ
+funktion hw_reg_lesen(p: ptr[u32]) -> u32:
+    unsicher:
+        gib_zurück volatile_lesen(p)
+
+@nativ
+funktion hw_reg_lesen_index(p: ptr[u32], i: u32) -> u32:
+    unsicher:
+        gib_zurück volatile_read(p, i)
+
+@nativ
+funktion hw_reg_schreiben(p: ptr[u32], wert: u32) -> void:
+    unsicher:
+        volatile_schreiben(p, wert)
+
+@nativ
+funktion hw_klingel(p: ptr[u32], ring: ptr[u16], kopf: u16) -> void:
+    unsicher:
+        volatile_schreiben(ring, 3, kopf)
+        schreibbarriere()
+        volatile_write(p, 6, 0x10)
+        speicherbarriere()
+        lesebarriere()
+        compilerbarriere()
+
+@nativ
+funktion hw_quittieren(p: ptr[u64]) -> u64:
+    unsicher:
+        volatile_lesen(p, 1)
+        memory_barrier()
+        gib_zurück volatile_lesen(p, 0)

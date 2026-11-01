@@ -1,0 +1,19 @@
+@nativ
+funktion wort_add(a: u64, b: u64) -> u64:
+    gib_zurück a + b
+
+@nativ
+funktion wort_sub(a: u64, b: u64) -> u64:
+    gib_zurück a - b
+
+@nativ
+funktion wort_mul(a: u64, b: u64) -> u64:
+    gib_zurück a * b
+
+@nativ
+funktion wort_max() -> u64:
+    gib_zurück 0xffffffffffffffff
+
+@nativ
+funktion wort_genau() -> u64:
+    gib_zurück 9007199254740993

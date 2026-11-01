@@ -1,0 +1,8 @@
+@nativ
+funktion defer_verschachtelt_id(x: i32) -> i32:
+    gib_zurück x
+funktion zeige_wert(x):
+    zeige x
+setze wert auf 7
+aufräumen: zeige_wert(defer_verschachtelt_id(wert))
+zeige "hauptteil"

@@ -1,0 +1,7 @@
+@nativ
+funktion addiere_eins(a: u64) -> u64:
+    gib_zurück a + 1
+
+@nativ
+funktion rufe_wort(a: u64) -> u64:
+    gib_zurück addiere_eins(a)

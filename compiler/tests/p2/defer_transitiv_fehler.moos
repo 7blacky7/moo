@@ -1,0 +1,11 @@
+funktion marke(text):
+    zeige text
+funktion inner():
+    setze x auf 1 / 0
+    zeige "FALSCH_INNER"
+funktion probe():
+    aufräumen: marke("A")
+    inner()
+    zeige "FALSCH_PROBE"
+probe()
+zeige "FALSCH_MAIN"

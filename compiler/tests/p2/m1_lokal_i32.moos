@@ -1,0 +1,5 @@
+@nativ
+funktion lokal(a: i32) -> i32:
+    setze zwischen: i32 auf a + 2
+    gib_zurück zwischen + 3
+zeige lokal(37)

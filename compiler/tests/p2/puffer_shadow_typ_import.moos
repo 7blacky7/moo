@@ -1,0 +1,3 @@
+aus puffer_shadow_modul importiere puffer_erstellen
+setze i32 auf 7
+zeige puffer_erstellen(i32, 1)

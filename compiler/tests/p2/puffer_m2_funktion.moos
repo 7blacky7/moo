@@ -1,0 +1,5 @@
+funktion lesen(p):
+    gib_zurück p[0]
+setze p auf puffer_erstellen(i32, 1)
+p[0] = 42
+zeige lesen(p)

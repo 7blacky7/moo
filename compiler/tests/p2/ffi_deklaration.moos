@@ -1,0 +1,3 @@
+extern "C" funktion moo_p2_echo_i32(wert: i32) -> i32
+setze extern auf 42
+zeige extern

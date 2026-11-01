@@ -1,0 +1,2 @@
+aus "./modul_kern_typen" importiere p2_kern_zaehle
+zeige p2_kern_zaehle(41)

@@ -1,0 +1,12 @@
+funktion probe():
+    versuche:
+        gib_zurück "wert"
+    fange fehler:
+        gib_zurück "FALSCH"
+zeige probe()
+versuche:
+    wirf "aussen"
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige fehler
+zeige "weiter"

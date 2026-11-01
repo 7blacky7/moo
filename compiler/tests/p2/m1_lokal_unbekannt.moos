@@ -1,0 +1,4 @@
+@nativ
+funktion lokal(a: i32) -> i32:
+    gib_zurück fehlt
+zeige lokal(1)

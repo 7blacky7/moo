@@ -1,0 +1,7 @@
+# AST-Erhalt: alle Typen in diesem dynamischen Programm bleiben semantisch inert.
+funktion verschachtelt(eingabe: puffer[zeiger[i32]], zahl: i64 = 7) -> i64:
+    setze wert: i64 auf zahl
+    konstante grenze: i64 auf 9
+    wenn wert < grenze:
+        gib_zurück wert
+    gib_zurück grenze

@@ -1,0 +1,15 @@
+@nativ
+funktion summe(a: i32, b: i32) -> i32:
+    gib_zurück a + b
+setze wert auf 20
+versuche:
+    zeige summe(wert, 1)
+fange fehler:
+    zeige "UNERWARTET"
+setze wert auf "text"
+versuche:
+    zeige summe(wert, 1)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen"
+zeige "weiter"

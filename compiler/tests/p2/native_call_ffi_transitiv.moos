@@ -1,0 +1,8 @@
+extern "C" funktion abs(x: i32) -> i32
+@nativ
+funktion p2_call_ffi(x: i32) -> i32:
+    unsicher:
+        gib_zurück abs(x)
+@nativ
+funktion p2_call_falsch(x: i32) -> i32:
+    gib_zurück p2_call_ffi(x)

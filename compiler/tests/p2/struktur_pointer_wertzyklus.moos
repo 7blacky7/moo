@@ -1,0 +1,4 @@
+struktur P2WertA:
+    next: P2WertB
+struktur P2WertB:
+    next: P2WertA

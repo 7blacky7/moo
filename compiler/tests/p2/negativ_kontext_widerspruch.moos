@@ -1,0 +1,4 @@
+@nativ
+funktion beispiel() -> u8:
+    setze wert: i16 auf -1
+    gib_zurück wert

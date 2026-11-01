@@ -1,0 +1,4 @@
+@nativ
+funktion ffi_rufe_falschen_typ(f: ptr[fn(i32) -> i32], wert: u32) -> i32:
+    unsicher:
+        gib_zurück f(wert)

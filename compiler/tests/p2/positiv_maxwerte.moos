@@ -1,0 +1,14 @@
+# P2-T5: positive Grenzen der vorzeichenbehafteten Typen und Null.
+@nativ
+funktion maxwerte() -> bool:
+    setze a: i8 auf 127
+    setze b: i16 auf 32767
+    setze c: i32 auf 2147483647
+    setze d: i64 auf 9223372036854775807
+    setze e: u64 auf 0
+    gib_zurück a == 127 und b == 32767 und c == 2147483647 und d == 9223372036854775807 und e == 0
+
+wenn maxwerte():
+    zeige "maxwerte OK"
+sonst:
+    zeige "maxwerte FEHLER"

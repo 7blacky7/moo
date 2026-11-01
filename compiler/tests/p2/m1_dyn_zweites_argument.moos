@@ -1,0 +1,7 @@
+@nativ
+funktion summe(a: i32, b: i32) -> i32:
+    gib_zurück a + b
+setze gut auf 20
+setze falsch_wert auf "text"
+zeige summe(gut, falsch_wert)
+zeige "NACH_FALSCH"

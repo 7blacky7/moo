@@ -1,0 +1,40 @@
+@bibliothek("p2_mixed")
+extern "C" funktion p2_mixed_value(a: i32, b: f32, c: f64, d: i8, e: u8) -> f64
+@nativ
+funktion ffi_mixed_value(a: i32, b: f32, c: f64, d: i8, e: u8) -> f64:
+    unsicher:
+        gib_zurück p2_mixed_value(a, b, c, d, e)
+@bibliothek("p2_mixed")
+extern "C" funktion p2_mixed_f32(a: i32, b: f32, c: f64, d: i8, e: u8) -> f32
+@nativ
+funktion ffi_mixed_f32(a: i32, b: f32, c: f64, d: i8, e: u8) -> f32:
+    unsicher:
+        gib_zurück p2_mixed_f32(a, b, c, d, e)
+@bibliothek("p2_mixed")
+extern "C" funktion p2_mixed_i32(a: i32, b: f32, c: f64, d: i8, e: u8) -> i32
+@nativ
+funktion ffi_mixed_i32(a: i32, b: f32, c: f64, d: i8, e: u8) -> i32:
+    unsicher:
+        gib_zurück p2_mixed_i32(a, b, c, d, e)
+@bibliothek("p2_mixed")
+extern "C" funktion p2_mixed_i8(a: i32, b: f32, c: f64, d: i8, e: u8) -> i8
+@nativ
+funktion ffi_mixed_i8(a: i32, b: f32, c: f64, d: i8, e: u8) -> i8:
+    unsicher:
+        gib_zurück p2_mixed_i8(a, b, c, d, e)
+@bibliothek("p2_mixed")
+extern "C" funktion p2_mixed_u8(a: i32, b: f32, c: f64, d: i8, e: u8) -> u8
+@nativ
+funktion ffi_mixed_u8(a: i32, b: f32, c: f64, d: i8, e: u8) -> u8:
+    unsicher:
+        gib_zurück p2_mixed_u8(a, b, c, d, e)
+setze a auf 7
+setze b auf 1.5
+setze c auf 2.5
+setze d auf -3
+setze e auf 11
+zeige ffi_mixed_value(a, b, c, d, e)
+zeige ffi_mixed_f32(a, b, c, d, e)
+zeige ffi_mixed_i32(a, b, c, d, e)
+zeige ffi_mixed_i8(a, b, c, d, e)
+zeige ffi_mixed_u8(a, b, c, d, e)

@@ -1,0 +1,11 @@
+funktion marke(text):
+    zeige text
+funktion probe():
+    aufräumen: marke("cleanup")
+    versuche:
+        gib_zurück "wert"
+    fange fehler:
+        gib_zurück "FALSCH"
+zeige probe()
+wirf "aussen"
+zeige "NACH_FALSCH"

@@ -1,0 +1,9 @@
+funktion marke():
+    zeige "FALSCHER_WERT"
+    gib_zurück 1
+versuche:
+    zeige 1 / 0 + marke()
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen"
+zeige "weiter"

@@ -1,0 +1,5 @@
+struktur void:
+    wert: u8
+struktur P2Rueckgabe:
+    callback: ptr[fn() -> void]
+    daten: ptr[void]

@@ -1,0 +1,4 @@
+@nativ
+funktion p2_indirekt_void(f: ptr[fn(i32) -> void], wert: i32) -> void:
+    unsicher:
+        f(wert)

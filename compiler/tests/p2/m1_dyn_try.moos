@@ -1,0 +1,8 @@
+@nativ
+funktion ident(wert: i32) -> i32:
+    gib_zurück wert
+setze wert auf 20
+versuche:
+    zeige ident(wert)
+fange fehler:
+    zeige "gefangen"

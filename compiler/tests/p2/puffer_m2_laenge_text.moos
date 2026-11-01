@@ -1,0 +1,2 @@
+setze p auf puffer_erstellen(i32, "text")
+zeige "NACH_FALSCH"

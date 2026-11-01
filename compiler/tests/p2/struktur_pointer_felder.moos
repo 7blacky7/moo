@@ -1,0 +1,4 @@
+struktur P2PointerTabelle:
+    status: u32
+    daten: ptr[u16]
+    ausgabe: ptr[fn(ptr[u8], ptr[u16]) -> u64]

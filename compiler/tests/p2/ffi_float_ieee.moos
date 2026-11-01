@@ -1,0 +1,64 @@
+@bibliothek("p2_ieee")
+extern "C" funktion p2_ieee_nan() -> f64
+@bibliothek("p2_ieee")
+extern "C" funktion p2_ieee_posinf() -> f64
+@bibliothek("p2_ieee")
+extern "C" funktion p2_ieee_neginf() -> f64
+@bibliothek("p2_ieee")
+extern "C" funktion p2_ieee_negzero() -> f64
+@bibliothek("p2_ieee")
+extern "C" funktion p2_ieee_poszero() -> f64
+@bibliothek("p2_ieee")
+extern "C" funktion p2_ieee_tiny() -> f64
+@bibliothek("p2_ieee")
+extern "C" funktion p2_ieee_nearmax() -> f64
+@bibliothek("p2_ieee")
+extern "C" funktion p2_ieee_class(x: f32) -> f32
+
+@nativ
+funktion ffi_ieee_nan() -> f64:
+    unsicher:
+        gib_zurück p2_ieee_nan()
+
+@nativ
+funktion ffi_ieee_posinf() -> f64:
+    unsicher:
+        gib_zurück p2_ieee_posinf()
+
+@nativ
+funktion ffi_ieee_neginf() -> f64:
+    unsicher:
+        gib_zurück p2_ieee_neginf()
+
+@nativ
+funktion ffi_ieee_negzero() -> f64:
+    unsicher:
+        gib_zurück p2_ieee_negzero()
+
+@nativ
+funktion ffi_ieee_poszero() -> f64:
+    unsicher:
+        gib_zurück p2_ieee_poszero()
+
+@nativ
+funktion ffi_ieee_tiny() -> f64:
+    unsicher:
+        gib_zurück p2_ieee_tiny()
+
+@nativ
+funktion ffi_ieee_nearmax() -> f64:
+    unsicher:
+        gib_zurück p2_ieee_nearmax()
+
+@nativ
+funktion ffi_ieee_class(x: f32) -> f32:
+    unsicher:
+        gib_zurück p2_ieee_class(x)
+
+zeige ffi_ieee_class(ffi_ieee_nan())
+zeige ffi_ieee_class(ffi_ieee_posinf())
+zeige ffi_ieee_class(ffi_ieee_neginf())
+zeige ffi_ieee_class(ffi_ieee_negzero())
+zeige ffi_ieee_class(ffi_ieee_poszero())
+zeige ffi_ieee_class(ffi_ieee_tiny())
+zeige ffi_ieee_class(ffi_ieee_nearmax())

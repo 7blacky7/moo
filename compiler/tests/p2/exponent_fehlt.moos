@@ -1,0 +1,3 @@
+@nativ
+funktion probe() -> f32:
+    gib_zurück 1e

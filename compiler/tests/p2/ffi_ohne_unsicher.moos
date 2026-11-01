@@ -1,0 +1,7 @@
+extern "C" funktion abs(wert: i32) -> i32
+
+@nativ
+funktion abs_probe(wert: i32) -> i32:
+    gib_zurück abs(wert)
+
+zeige abs_probe(-42)

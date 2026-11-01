@@ -1,0 +1,4 @@
+@bibliothek("p2_bare_bibliothek_fehlt_72ac")
+extern "C" funktion p2_bare_funktion(x: i32) -> i32
+
+zeige 1

@@ -1,0 +1,9 @@
+@bibliothek("p2_u32")
+extern "C" funktion p2_u32_guard(wert: u32) -> u32
+@nativ
+funktion ffi_u32(wert: u32) -> u32:
+    unsicher:
+        gib_zurück p2_u32_guard(wert)
+setze wert auf 4294967296
+zeige ffi_u32(wert)
+zeige "DARF_NICHT_ERREICHT_WERDEN"

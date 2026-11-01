@@ -1,0 +1,2 @@
+setze puffer_erstellen auf (typ, n) => n + 20
+zeige puffer_erstellen("i32", 1)

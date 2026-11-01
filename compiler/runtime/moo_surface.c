@@ -546,6 +546,17 @@ MooValue moo_surface_text_breite(MooValue text, MooValue skala) {
     return moo_surface_text_breite_face(string, scale, face);
 }
 
+/* P7-T2: Glyphenhoehe einer Textzeile in Pixeln (Font-Hoehe * Skala, ohne
+ * Zeilenabstand) - Gegenstueck zu moo_surface_text_breite fuer Layouts ohne
+ * Festwerte. Ungueltige Skala (nicht 1..16) -> 0. */
+MooValue moo_surface_text_hoehe(MooValue skala) {
+    int32_t scale;
+    const MooFontAaFace* face = moo_font_aa_face(0);
+    if (!face || !moo_surface_number_i32(skala, &scale) || scale < 1 ||
+        scale > 16) return moo_number(0);
+    return moo_number((double)face->height * (double)scale);
+}
+
 MooValue moo_surface_text_glyphen_status(MooValue text, MooValue stil) {
     MooString* string;
     const MooFontAaFace* face;

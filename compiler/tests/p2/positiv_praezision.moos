@@ -1,0 +1,12 @@
+# 2^53-1, 2^53, 2^53+1 müssen nativ unterscheidbar sein.
+@nativ
+funktion exakt() -> bool:
+    setze a: u64 auf 9007199254740991
+    setze b: u64 auf 9007199254740992
+    setze c: u64 auf 9007199254740993
+    gib_zurück a < b und b < c und c - b == 1
+
+wenn exakt():
+    zeige "praezision OK"
+sonst:
+    zeige "praezision FEHLER"

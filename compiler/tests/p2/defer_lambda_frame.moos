@@ -1,0 +1,9 @@
+funktion marke(text):
+    zeige text
+funktion probe():
+    aufräumen: marke("cleanup")
+    setze f auf (x) => x + 1
+    zeige f(1)
+    zeige f(2)
+    zeige "ende"
+probe()

@@ -1,0 +1,36 @@
+# P2-T9/T11: Zukunftstest. @nativ ist im aktuellen Compiler noch nicht implementiert.
+@nativ
+funktion p2_add(a: i8, b: i8) -> i8:
+    gib_zurück a + b
+
+@nativ
+funktion p2_sub(a: i8, b: i8) -> i8:
+    gib_zurück a - b
+
+@nativ
+funktion p2_mul(a: i8, b: i8) -> i8:
+    gib_zurück a * b
+
+@nativ
+funktion p2_neg(a: i8) -> i8:
+    gib_zurück -a
+
+@nativ
+funktion p2_div(a: i64, b: i64) -> i64:
+    gib_zurück a / b
+
+@nativ
+funktion p2_rem(a: i64, b: i64) -> i64:
+    gib_zurück a % b
+
+@nativ
+funktion p2_shl(a: i64, b: i64) -> i64:
+    gib_zurück a << b
+
+@nativ
+funktion p2_ashr(a: i64, b: i64) -> i64:
+    gib_zurück a >> b
+
+@nativ
+funktion p2_lshr(a: u64, b: u64) -> u64:
+    gib_zurück a >> b

@@ -18,6 +18,9 @@ use std::path::Path;
 use crate::ast::*;
 use crate::runtime_bindings::RuntimeBindings;
 
+#[path = "codegen_defer.rs"]
+mod defer_catalog;
+
 /// MooTag-Werte — EINZIGE Stelle im Rust-Code mit Tag-Zahlen.
 /// MUSS mit runtime/moo_runtime.h (typedef enum MooTag) synchron sein:
 /// Drift heisst der Codegen erzeugt Werte mit falschem Tag -> die Runtime
@@ -54,6 +57,16 @@ pub struct CodeGen<'ctx> {
     module: Module<'ctx>,
     builder: Builder<'ctx>,
     rt: RuntimeBindings<'ctx>,
+    runtime_windows_abi: bool,
+    target_data: Option<inkwell::targets::TargetData>,
+    native_structs: crate::native_struct::NativeStructRegistry<'ctx>,
+    extern_c_names: std::collections::HashSet<String>,
+    extern_bindings: crate::ffi_types::ExternRegistry<'ctx>,
+    native_functions: HashMap<String, FunctionValue<'ctx>>,
+    native_signatures: HashMap<String, crate::codegen_native::NSignature>,
+    native_ffi_functions: std::collections::HashSet<String>,
+    native_try_direct: bool,
+    native_try_zero_arg_users: std::collections::HashSet<String>,
     variables: HashMap<String, PointerValue<'ctx>>,
     /// Globale Variablen (top-level Assignments) — als LLVM-Globals angelegt,
     /// damit sie aus jeder Funktion sichtbar sind. load_var/store_var fallen
@@ -61,13 +74,17 @@ pub struct CodeGen<'ctx> {
     globals: HashMap<String, PointerValue<'ctx>>,
     current_function: Option<FunctionValue<'ctx>>,
     // Fuer break/continue
-    loop_stack: Vec<(inkwell::basic_block::BasicBlock<'ctx>, inkwell::basic_block::BasicBlock<'ctx>)>,
+    loop_stack: Vec<(inkwell::basic_block::BasicBlock<'ctx>, inkwell::basic_block::BasicBlock<'ctx>, usize)>,
     /// Aktive try-Blocks (innermost zuletzt). Wenn wirf/Stmt::Throw im Codegen
     /// auf einen nicht-leeren Stack trifft, emittiert er nach dem moo_throw
     /// einen unconditional branch zum entsprechenden catch_bb — das terminiert
     /// den try-body an der Throw-Stelle und verhindert dass weiterer Code
     /// (inkl. gib_zurueck) den Throw "verschluckt".
     try_stack: Vec<inkwell::basic_block::BasicBlock<'ctx>>,
+    // Guards are limited to the outer expression of a checked statement.
+    stmt_root_guard: bool,
+    stmt_recursive_guard: bool,
+    stmt_owned_context: Vec<StructValue<'ctx>>,
     // Klassen-Konstruktoren: class_name -> FunctionValue
     class_constructors: HashMap<String, FunctionValue<'ctx>>,
     // Klassen-Methoden: (class_name, method_name) -> FunctionValue
@@ -89,8 +106,15 @@ pub struct CodeGen<'ctx> {
     lambda_counter: usize,
     for_iter_counter: usize,
     method_obj_counter: usize,
-    // Defer-Stack (Go-inspiriert): Vec von AST-Exprs die am Funktionsende ausgeführt werden
-    defer_stack: Vec<Expr>,
+    // Bisher compilerseitiger Stack von Aktions-IDs im aktuellen Defer-Katalog.
+    defer_stack: Vec<u32>,
+    defer_catalog: defer_catalog::DeferCatalog,
+    // Slot des aktuellen Aufrufs; der Runtime-Stack wird erst bei Bedarf angelegt.
+    defer_frame: Option<PointerValue<'ctx>>,
+    defer_runtime: bool,
+    defer_safe_calls: std::collections::HashSet<String>,
+    defer_guard_targets: std::collections::HashSet<String>,
+    defer_borrowed_handler: Option<inkwell::basic_block::BasicBlock<'ctx>>,
     // Crystal-inspiriert: Typ-Tracking fuer Warnungen (kein Enforcement!)
     variable_types: HashMap<String, &'static str>,
     warnings: Vec<String>,
@@ -110,24 +134,54 @@ pub struct CodeGen<'ctx> {
 }
 
 impl<'ctx> CodeGen<'ctx> {
-    pub fn new(context: &'ctx Context, module_name: &str) -> Self {
+    pub fn new(context: &'ctx Context, module_name: &str, target: &str) -> Result<Self, String> {
         let module = context.create_module(module_name);
-        // Der Target-Triple muss bereits vor Runtime-Deklarationen gesetzt sein:
-        // LLVM senkt Aggregate-Aufrufe (MooValue) sonst mit der falschen Host-ABI ab.
-        module.set_triple(&TargetMachine::get_default_triple());
+        let triple_str = Self::resolve_triple(target);
+        Target::initialize_all(&InitializationConfig::default());
+        let triple = inkwell::targets::TargetTriple::create(&triple_str);
+        let target_obj = Target::from_triple(&triple)
+            .map_err(|e| format!("Target-Fehler fuer '{}': {}", triple_str, e.to_string()))?;
+        let native = target.is_empty() || target == "native";
+        let cpu = if native { TargetMachine::get_host_cpu_name().to_string() } else { "generic".to_string() };
+        let features = if native { TargetMachine::get_host_cpu_features().to_string() } else { String::new() };
+        let reloc = if triple_str.contains("-none") { RelocMode::Static } else { RelocMode::PIC };
+        let machine = target_obj.create_target_machine(
+            &triple, &cpu, &features, OptimizationLevel::Default, reloc, CodeModel::Default,
+        ).ok_or(format!("Konnte TargetMachine fuer '{}' nicht erstellen", triple_str))?;
+        module.set_triple(&triple);
+        let data = machine.get_target_data();
+        module.set_data_layout(&data.get_data_layout());
+        let target_data = Some(data);
+        // x86_64 UEFI uses the same aggregate C ABI as Windows x64, although
+        // its LLVM target triple contains `uefi` rather than `windows`.
+        let windows_x64_abi = triple_str.starts_with("x86_64-")
+            && (triple_str.contains("windows") || triple_str.contains("-uefi"));
         let builder = context.create_builder();
-        let rt = RuntimeBindings::declare(context, &module);
+        let rt = RuntimeBindings::declare(context, &module, windows_x64_abi);
 
-        Self {
+        Ok(Self {
             context,
             module,
             builder,
             rt,
+            runtime_windows_abi: windows_x64_abi,
+            target_data,
+            native_structs: crate::native_struct::NativeStructRegistry::new(),
+            extern_c_names: std::collections::HashSet::new(),
+            extern_bindings: crate::ffi_types::ExternRegistry::default(),
+            native_functions: HashMap::new(),
+            native_signatures: HashMap::new(),
+            native_ffi_functions: std::collections::HashSet::new(),
+            native_try_direct: false,
+            native_try_zero_arg_users: std::collections::HashSet::new(),
             variables: HashMap::new(),
             globals: HashMap::new(),
             current_function: None,
             loop_stack: Vec::new(),
             try_stack: Vec::new(),
+            stmt_root_guard: false,
+            stmt_recursive_guard: false,
+            stmt_owned_context: Vec::new(),
             class_constructors: HashMap::new(),
             class_methods: HashMap::new(),
             class_parents: HashMap::new(),
@@ -139,6 +193,12 @@ impl<'ctx> CodeGen<'ctx> {
             for_iter_counter: 0,
             method_obj_counter: 0,
             defer_stack: Vec::new(),
+            defer_catalog: defer_catalog::DeferCatalog::default(),
+            defer_frame: None,
+            defer_runtime: false,
+            defer_safe_calls: std::collections::HashSet::new(),
+            defer_guard_targets: std::collections::HashSet::new(),
+            defer_borrowed_handler: None,
             variable_types: HashMap::new(),
             warnings: Vec::new(),
             unsafe_context: false,
@@ -146,7 +206,16 @@ impl<'ctx> CodeGen<'ctx> {
             profiling: false,
             bare_mode: false,
             used_globals: Vec::new(),
-        }
+        })
+    }
+
+    pub(crate) fn target_data(&self) -> Result<&inkwell::targets::TargetData, String> {
+        self.target_data.as_ref().ok_or_else(||
+            "Ziel-Datenlayout ist nicht initialisiert".to_string())
+    }
+
+    fn windows_x64_abi(&self) -> bool {
+        self.runtime_windows_abi
     }
 
     pub fn set_profiling(&mut self, enabled: bool) {
@@ -207,6 +276,29 @@ impl<'ctx> CodeGen<'ctx> {
             | "kern_msr_lese_lo" | "kern_msr_lese_hi" | "kern_msr_schreibe"
             | "kern_cr_lese" | "kern_cr_read" | "kern_cr_setze" | "kern_cr_write"
             | "kern_lgdt" | "kern_lidt"
+            // P7-T2: Framebuffer-Builtins (UEFI-GOP heute, eigener Loader spaeter)
+            | "kern_bild_breite" | "kern_fb_width"
+            | "kern_bild_hoehe" | "kern_bild_höhe" | "kern_fb_height"
+            | "kern_bild_zeige" | "kern_fb_present"
+            // P7-T2: Eingabe im Boot-Umfeld (UEFI ConIn / Pointer-Protokolle)
+            | "kern_taste_lesen" | "kern_key_read"
+            | "kern_maus_vorhanden" | "kern_mouse_present"
+            | "kern_maus_lesen" | "kern_mouse_poll"
+            | "kern_maus_x" | "kern_mouse_x"
+            | "kern_maus_y" | "kern_mouse_y"
+            | "kern_maus_gedrueckt" | "kern_maus_gedrückt" | "kern_mouse_pressed"
+            | "kern_eingabe_warten" | "kern_input_wait"
+            // P7-T9: Netzwerk-Konsole (UEFI SimpleNetworkProtocol, UDP-Broadcast)
+            | "kern_netz_sende" | "kern_net_send"
+            | "kern_netz_status" | "kern_net_status"
+            // P7-T9: Status der vom Datentraeger geladenen UEFI-Treiber
+            | "kern_treiber_status" | "kern_driver_status"
+            // P7-T14: ACPI-Wurzel (RSDP) aus der UEFI-Konfigurationstabelle
+            | "kern_acpi_rsdp"
+            // P7-T15: Wartezeit (UEFI Stall) und Text <-> Bytepuffer fuer Treiber in Moo
+            | "kern_warte_us" | "kern_wait_us"
+            | "kern_text_in_puffer" | "kern_text_to_buffer"
+            | "kern_text_aus_puffer" | "kern_text_from_buffer"
         )
     }
 
@@ -443,10 +535,50 @@ impl<'ctx> CodeGen<'ctx> {
         self.rt.moo_value_type
     }
 
+    // Ein eigener, NULL-initialisierter Slot pro Aktivierung; noch ohne Runtime-Aufruf.
+    fn init_defer_frame(&mut self) -> Result<(), String> {
+        self.defer_frame = if self.defer_catalog.actions().is_empty() {
+            None
+        } else {
+            let ptr = self.context.ptr_type(AddressSpace::default());
+            let slot = self.builder.build_alloca(ptr, "defer.stack.slot")
+                .map_err(|e| format!("{e}"))?;
+            self.builder.build_store(slot, ptr.const_null()).map_err(|e| format!("{e}"))?;
+            Some(slot)
+        };
+        Ok(())
+    }
+
+    // One registration path for compilation and the read-only layout diagnostic.
+    fn register_native_structs(&mut self, program: &Program) -> Result<(), String> {
+        let definitions: Vec<(&str, &[(String, TypeRef)], &[Decorator])> = program.statements.iter()
+            .filter_map(|stmt| match stmt {
+                Stmt::StructDef { name, fields, decorators } =>
+                    Some((name.as_str(), fields.as_slice(), decorators.as_slice())),
+                _ => None,
+            })
+            .collect();
+        if !definitions.is_empty() {
+            let target = self.target_data.as_ref()
+                .ok_or_else(|| "Ziel-Datenlayout für Struktur fehlt".to_string())?;
+            self.native_structs.register_all(self.context, target, &definitions)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn diagnostic_layouts(&mut self, program: &Program)
+        -> Result<crate::native_struct::LayoutSnapshot, String>
+    {
+        self.register_native_structs(program)?;
+        self.native_structs.snapshot()
+    }
+
     /// Kompiliert ein ganzes Programm
     pub fn compile_program(&mut self, program: &Program) -> Result<(), String> {
+        self.register_native_structs(program)?;
         // Zuerst alle Funktionen und Klassen deklarieren (Forward-Declarations)
         self.forward_declare(program)?;
+        self.prepare_runtime_defer_graph(program)?;
 
         // main-Funktion erstellen
         let i32_type = self.context.i32_type();
@@ -455,6 +587,8 @@ impl<'ctx> CodeGen<'ctx> {
         let entry = self.context.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(entry);
         self.current_function = Some(main_fn);
+        self.defer_catalog = defer_catalog::DeferCatalog::collect(&program.statements)?;
+        self.init_defer_frame()?;
 
         // Top-Level-Assignments als LLVM-Globals anlegen — damit sie aus
         // Funktionen heraus sichtbar sind (load_var/store_var fallen auf
@@ -490,6 +624,12 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         for stmt in &program.statements {
+            // Nur direkte Top-Level-Externs wurden vorab deklariert.
+            // Verschachtelte Deklarationen bleiben in compile_stmt fail-closed.
+            if matches!(stmt, Stmt::ExternC { .. } | Stmt::StructDef { .. }) { continue; }
+            if let Stmt::FunctionDef { name, .. } = stmt {
+                if self.native_functions.contains_key(name) { continue; }
+            }
             self.compile_stmt(stmt)?;
         }
 
@@ -503,6 +643,8 @@ impl<'ctx> CodeGen<'ctx> {
 
         // Sicherstellen dass main terminiert ist
         if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            // Wie bei Funktionen muessen Defers vor dem Local-Cleanup laufen.
+            self.emit_defers()?;
             // Normal-main-Epilog: Nur die per collect_all_var_names vorallokierten
             // Main-Frame-Locals freigeben. Direkte Top-Level-Zuweisungen sind
             // LLVM-Globals und behalten bewusst ihre bisherige Prozess-Lifetime.
@@ -546,11 +688,191 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn forward_declare(&mut self, program: &Program) -> Result<(), String> {
         for stmt in &program.statements {
+            if let Stmt::ExternC { name, .. } = stmt {
+                let user_collision = program.statements.iter().any(|item| match item {
+                    Stmt::FunctionDef { name: user, .. } => user == name,
+                    Stmt::ClassDef { name: class, body, .. } => body.iter().any(|method| match method {
+                        Stmt::FunctionDef { name: method, .. } => &format!("{class}__{method}") == name,
+                        _ => false,
+                    }),
+                    Stmt::DataClassDef { name: class, .. } =>
+                        &format!("{class}__erstelle") == name || &format!("{class}__to_string") == name,
+                    _ => false,
+                });
+                if name == "main" || user_collision || self.module.get_function(name).is_some()
+                    || !self.extern_c_names.insert(name.clone()) {
+                    return Err(format!("extern C: Symbolkollision bei '{name}'"));
+                }
+            }
+        }
+        // Alle C-Signaturen vor nativen Funktionskoerpern erfassen, unabhaengig
+        // von ihrer Reihenfolge im Quelltext.
+        for stmt in &program.statements {
+            if let Stmt::ExternC { name, params, result, .. } = stmt {
+                let triple = self.module.get_triple();
+                let triple = triple.as_str().to_str().map_err(|e| format!("Ungueltiges Ziel-Triple: {e}"))?;
+                let types: Vec<TypeRef> = params.iter().map(|(_, ty)| ty.clone()).collect();
+                let signature = crate::ffi_types::FfiSignature::validate(triple, &types, result, false)?;
+                self.extern_bindings.declare(self.context, &self.module, name, &signature)?;
+            }
+        }
+        // Native Signaturen zuerst deklarieren, damit reine Vorwaertsaufrufe
+        // die gleiche Typpruefung wie Rueckwaertsaufrufe erhalten.
+        let mut pure_bodies: HashMap<String, &[Stmt]> = HashMap::new();
+        let mut pure_functions = HashMap::new();
+        let mut pointer_functions: HashMap<String, (FunctionValue<'ctx>, crate::codegen_native::NativePointerSignature)> = HashMap::new();
+        // P7-T4: @nativ-Funktionen aus Hardware-Intrinsics (volatile_*, Barrieren, Port-I/O).
+        let mut hardware_functions: HashMap<String, (FunctionValue<'ctx>, crate::codegen_native::NativePointerSignature)> = HashMap::new();
+        for stmt in &program.statements {
+            if let Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators } = stmt {
+                if !decorators.iter().any(|d| d.name == "nativ" || d.name == "native") { continue; }
+                use crate::codegen_native::{NType, NSignature};
+                if params.len() != param_types.len() || defaults.iter().any(Option::is_some)
+                    || decorators.len() != 1 || !decorators[0].args.is_empty()
+                    || program.statements.iter().filter(|s| matches!(s, Stmt::FunctionDef { name: other, .. } if other == name)).count() != 1
+                    || self.module.get_function(name).is_some()
+                    || self.native_functions.contains_key(name)
+                {
+                    return Err(format!("Native Funktion '{name}': Signatur, Defaults, Decorators oder Name nicht unterstützt"));
+                }
+                match crate::native_hardware::classify_body(body) {
+                    crate::native_hardware::BodyKind::MissingUnsafe => {
+                        return Err(format!("Native Funktion '{name}': Hardwarezugriff erfordert unsicher"));
+                    }
+                    crate::native_hardware::BodyKind::Hardware => {
+                        if !self.bare_mode {
+                            return Err(format!("Native Funktion '{name}': Hardware-Intrinsics sind nur im Bare-Profil verfügbar"));
+                        }
+                        let sig = crate::native_hardware::signature(param_types, return_type.as_ref())?;
+                        let internal = format!("__moo_native.{name}");
+                        if self.module.get_function(&internal).is_some() {
+                            return Err(format!("Native Funktion '{name}': interner Symbolkonflikt"));
+                        }
+                        let fun = self.module.add_function(&internal, sig.llvm_type(self.context),
+                            Some(inkwell::module::Linkage::Internal));
+                        self.native_functions.insert(name.clone(), fun);
+                        hardware_functions.insert(name.clone(), (fun, sig));
+                        continue;
+                    }
+                    crate::native_hardware::BodyKind::Other => {}
+                }
+                let has_pointer = param_types.iter().flatten().any(|ty| matches!(
+                    &ty.kind, TypeKind::Generic { name, .. } if name == "ptr" || name == "zeiger"
+                ));
+                if has_pointer {
+                    if !self.bare_mode {
+                        return Err("Native Zeigerfunktionen sind vorerst nur im Bare-Profil verfügbar".into());
+                    }
+                    // Nominal types need their canonical module identity; until
+                    // the registry exposes it, unknown nominal names fail closed.
+                    let nominal = crate::native_type_id::NominalTypes::new();
+                    let sig = crate::codegen_native::NativePointerSignature::from_annotations(
+                        param_types, return_type.as_ref(), &nominal,
+                    )?;
+                    let internal = format!("__moo_native.{name}");
+                    if self.module.get_function(&internal).is_some() {
+                        return Err(format!("Native Funktion '{name}': interner Symbolkonflikt"));
+                    }
+                    let fun = self.module.add_function(&internal, sig.llvm_type(self.context),
+                        Some(inkwell::module::Linkage::Internal));
+                    self.native_functions.insert(name.clone(), fun);
+                    pointer_functions.insert(name.clone(), (fun, sig));
+                    continue;
+                }
+                let sig = NSignature::from_annotations(param_types, return_type.as_ref())?;
+                let result_ty = sig.result;
+                let unsafe_ffi = matches!(body.as_slice(), [Stmt::UnsafeBlock { .. }]);
+                let valid = match result_ty {
+                    Some(ty) if unsafe_ffi => matches!(ty, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64)
+                        && sig.params.iter().all(|param| matches!(param, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64)),
+                    Some(ty) => (matches!(ty, NType::I32 | NType::I8 | NType::U8)
+                            || (self.bare_mode && ty == NType::U64))
+                        && sig.params.iter().all(|param| *param == ty),
+                    None => unsafe_ffi && sig.params.iter().all(|param| matches!(param, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64)),
+                };
+                if !valid {
+                    return Err(format!("Native Funktion '{name}': Signatur wird nicht unterstützt"));
+                }
+                let internal = format!("__moo_native.{name}");
+                if self.module.get_function(&internal).is_some() {
+                    return Err(format!("Native Funktion '{name}': interner Symbolkonflikt"));
+                }
+                let fun = self.module.add_function(&internal, sig.llvm_type(self.context),
+                    Some(inkwell::module::Linkage::Internal));
+                if matches!(body.as_slice(), [Stmt::UnsafeBlock { .. }]) {
+                    if self.bare_mode {
+                        return Err("Native C-Aufrufe sind im ersten Slice nur hosted unterstützt".into());
+                    }
+                    self.native_ffi_functions.insert(name.clone());
+                } else {
+                    pure_bodies.insert(name.clone(), body.as_slice());
+                    if result_ty == Some(NType::I32)
+                        || (self.bare_mode && result_ty == Some(NType::U64))
+                    {
+                        pure_functions.insert(name.clone(), (fun, sig.clone()));
+                    }
+                }
+                self.native_functions.insert(name.clone(), fun);
+                self.native_signatures.insert(name.clone(), sig);
+            }
+        }
+        crate::codegen_native::validate_pure_call_graph(&pure_bodies)?;
+        for stmt in &program.statements {
             match stmt {
-                Stmt::FunctionDef { name, params, decorators, .. } => {
+                Stmt::ExternC { .. } => {}
+                Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators } => {
+                    if decorators.iter().any(|d| d.name == "nativ" || d.name == "native") {
+                        if let Some((fun, sig)) = hardware_functions.get(name) {
+                            let target = self.target_data.as_ref()
+                                .ok_or("Ziel-Datenlayout für Hardwarezugriffe fehlt")?;
+                            let triple = self.module.get_triple();
+                            let triple = triple.as_str().to_str().map_err(|e| e.to_string())?;
+                            crate::native_hardware::emit_hardware_function(
+                                self.context, target, triple, *fun, sig, params, body,
+                            )?;
+                            continue;
+                        }
+                        if let Some((fun, sig)) = pointer_functions.get(name) {
+                            let target = self.target_data.as_ref()
+                                .ok_or("Ziel-Datenlayout für Zeiger fehlt")?;
+                            if matches!(body.as_slice(), [Stmt::UnsafeBlock { body }]
+                                if matches!(body.as_slice(), [Stmt::Return(Some(Expr::FunctionCall { .. }))] | [Stmt::Expression(Expr::FunctionCall { .. })])) {
+                                let result = return_type.as_ref().ok_or("Nativer Rückgabetyp fehlt")?;
+                                crate::codegen_native::emit_indirect_return_function(
+                                    self.context, &self.module, *fun, sig, params, param_types, result, body,
+                                )?;
+                            } else {
+                                let triple = self.module.get_triple();
+                                let triple = triple.as_str().to_str().map_err(|e| e.to_string())?;
+                                if !matches!(triple, "x86_64-unknown-none" | "x86_64-unknown-uefi" | "aarch64-unknown-none") {
+                                    return Err(format!("Nativer Zeigerlesezugriff: Ziel '{triple}' noch nicht freigegeben"));
+                                }
+                                crate::codegen_native::emit_pointer_load_function(
+                                    self.context, target, *fun, sig, params, body,
+                                )?;
+                            }
+                            continue;
+                        }
+                        let sig = crate::codegen_native::NSignature::from_annotations(param_types, return_type.as_ref())?;
+                        let fun = *self.native_functions.get(name).ok_or("Native Vorabdeklaration fehlt")?;
+                        if self.native_ffi_functions.contains(name) {
+                            crate::codegen_native::emit_ffi_return_function(
+                                self.context, &self.module, &self.extern_bindings,
+                                fun, &sig, params, body,
+                            )?;
+                        } else {
+                            crate::codegen_native::emit_nontrapping_function(
+                                self.context, fun, &sig, params, body, &pure_functions,
+                            )?;
+                        }
+                        continue;
+                    }
                     // Duplikat-Guard: ueberspringe wenn Funktion schon deklariert
                     if self.module.get_function(name).is_some() {
                         continue;
+                    }
+                    if params.is_empty() && decorators.is_empty() {
+                        self.native_try_zero_arg_users.insert(name.clone());
                     }
                     let mv = self.mv_type();
                     let param_types: Vec<BasicMetadataTypeEnum> = params.iter()
@@ -569,7 +891,10 @@ impl<'ctx> CodeGen<'ctx> {
                         self.class_parents.insert(name.clone(), parent_name.clone());
                     }
                     for method in body {
-                        if let Stmt::FunctionDef { name: method_name, params, .. } = method {
+                        if let Stmt::FunctionDef { name: method_name, params, decorators, .. } = method {
+                            if decorators.iter().any(|d| d.name == "nativ" || d.name == "native") {
+                                return Err(format!("Native Methode '{name}.{method_name}' wird noch nicht unterstützt"));
+                            }
                             let mv = self.mv_type();
                             // Methoden bekommen `self` als ersten Parameter
                             let mut param_types: Vec<BasicMetadataTypeEnum> = vec![mv.into()];
@@ -581,7 +906,7 @@ impl<'ctx> CodeGen<'ctx> {
                         }
                     }
                 }
-                Stmt::DataClassDef { name, fields } => {
+                Stmt::DataClassDef { name, fields, .. } => {
                     // erstelle-Konstruktor forward-declarieren
                     let mv = self.mv_type();
                     let mut param_types: Vec<BasicMetadataTypeEnum> = vec![mv.into()]; // self
@@ -610,7 +935,7 @@ impl<'ctx> CodeGen<'ctx> {
     /// Mapped einen kurzen Target-Namen auf ein LLVM Triple
     pub fn resolve_triple(target: &str) -> String {
         match target {
-            "native" | "" => TargetMachine::get_default_triple().to_string(),
+            "native" | "" => TargetMachine::get_default_triple().as_str().to_string_lossy().into_owned(),
             "x86_64" | "x64" => "x86_64-unknown-linux-gnu".to_string(),
             // P013: Windows-Cross-Target (COFF, MinGW-ABI). Objekt-only wie
             // alle Cross-Targets — gelinkt wird auf dem Zielsystem
@@ -752,7 +1077,7 @@ impl<'ctx> CodeGen<'ctx> {
     fn call_rt(&self, func: FunctionValue<'ctx>, args: &[BasicMetadataValueEnum<'ctx>], name: &str)
         -> Result<StructValue<'ctx>, String>
     {
-        if cfg!(windows) && func.get_type().get_return_type().is_none() {
+        if self.windows_x64_abi() && func.get_type().get_return_type().is_none() {
             // MSVC x64 ABI: 16-Byte-MooValue wird via verstecktem sret-Puffer
             // als erstem Argument zurueckgegeben.
             let result_ptr = self.entry_alloca(self.mv_type(), &format!("{name}_sret"))
@@ -830,7 +1155,7 @@ impl<'ctx> CodeGen<'ctx> {
     fn call_rt_void(&self, func: FunctionValue<'ctx>, args: &[BasicMetadataValueEnum<'ctx>], name: &str)
         -> Result<(), String>
     {
-        if cfg!(windows) {
+        if self.windows_x64_abi() {
             let mut win_args = Vec::with_capacity(args.len());
             for (index, arg) in args.iter().enumerate() {
                 match arg {
@@ -864,7 +1189,7 @@ impl<'ctx> CodeGen<'ctx> {
         args: &[BasicMetadataValueEnum<'ctx>],
         name: &str,
     ) -> Result<inkwell::values::CallSiteValue<'ctx>, String> {
-        if cfg!(windows) {
+        if self.windows_x64_abi() {
             let mut win_args = Vec::with_capacity(args.len());
             for (index, arg) in args.iter().enumerate() {
                 match arg {
@@ -896,7 +1221,7 @@ impl<'ctx> CodeGen<'ctx> {
         function: FunctionValue<'ctx>,
         source_name: &str,
     ) -> Result<FunctionValue<'ctx>, String> {
-        if !cfg!(windows) {
+        if !self.windows_x64_abi() {
             return Ok(function);
         }
 
@@ -1021,8 +1346,11 @@ impl<'ctx> CodeGen<'ctx> {
     // === Statement-Kompilierung ===
 
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
-        match stmt {
-            Stmt::Assignment { name, value } | Stmt::ConstAssignment { name, value } => {
+        let guarded = self.defer_runtime || self.defer_borrowed_handler.is_some();
+        let result = match stmt {
+            Stmt::ExternC { .. } => Err("extern C ist noch nicht implementiert".to_string()),
+            Stmt::StructDef { .. } => Err("Native Strukturen sind noch nicht implementiert".to_string()),
+            Stmt::Assignment { name, value, .. } | Stmt::ConstAssignment { name, value, .. } => {
                 // Crystal-inspiriert: Typ der Zuweisung tracken
                 if let Some(typ) = self.infer_type(value) {
                     self.variable_types.insert(name.clone(), typ);
@@ -1049,7 +1377,8 @@ impl<'ctx> CodeGen<'ctx> {
                     self.lambda_names.insert(name.clone(), lambda_name);
                     // Counter wird in compile_expr/Lambda erhoeht
                 }
-                let val = self.compile_expr(value)?;
+                let val = self.compile_statement_expr(value)?;
+                self.guard_local_expr_error(&[val])?;
                 self.store_var(name, val)
             }
             Stmt::CompoundAssignment { name, op, value } => {
@@ -1074,9 +1403,12 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(())
             }
             Stmt::IndexAssignment { object, index, value } => {
-                let obj = self.compile_expr(object)?;
-                let idx = self.compile_expr(index)?;
-                let val = self.compile_expr(value)?;
+                let obj = self.compile_statement_expr(object)?;
+                self.guard_local_expr_error(&[obj])?;
+                let idx = self.compile_owned_statement_expr(index, &[obj])?;
+                self.guard_local_expr_error(&[obj, idx])?;
+                let val = self.compile_owned_statement_expr(value, &[obj, idx])?;
+                self.guard_local_expr_error(&[obj, idx, val])?;
                 self.call_rt_void(self.rt.moo_index_set,
                     &[obj.into(), idx.into(), val.into()], "idx_set")?;
                 // moo_index_set / moo_dict_set uebernehmen Ownership von
@@ -1087,8 +1419,30 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(())
             }
             Stmt::Show(expr) => {
-                let val = self.compile_expr(expr)?;
+                let direct = if self.try_stack.is_empty() { false } else {
+                    match expr {
+                        Expr::FunctionCall { name, args } =>
+                            self.native_functions.contains_key(name)
+                                && !self.native_ffi_functions.contains(name)
+                                && args.iter().all(|arg| match arg {
+                                    Expr::Identifier(_) | Expr::Number(_) => true,
+                                    Expr::FunctionCall { name, args } =>
+                                        args.is_empty() && self.native_try_zero_arg_users.contains(name),
+                                    Expr::UnaryOp { op: UnaryOpKind::Neg, operand } =>
+                                        matches!(operand.as_ref(), Expr::Number(_)),
+                                    _ => false,
+                                }),
+                        _ => false,
+                    }
+                };
+                let previous = self.native_try_direct;
+                self.native_try_direct = direct;
+                let compiled = self.compile_statement_expr(expr);
+                self.native_try_direct = previous;
+                let val = compiled?;
+                self.guard_local_expr_error(&[val])?;
                 self.call_rt_void(self.rt.moo_print, &[val.into()], "print")?;
+
                 // moo_print liest nur; den Expression-Temp freigeben.
                 self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_show")?;
                 Ok(())
@@ -1102,7 +1456,10 @@ impl<'ctx> CodeGen<'ctx> {
             Stmt::For { var_name, iterable, body } => {
                 self.compile_for(var_name, iterable, body)
             }
-            Stmt::FunctionDef { name, params, defaults, body, decorators } => {
+            Stmt::FunctionDef { name, params, defaults, body, decorators, .. } => {
+                if decorators.iter().any(|d| d.name == "nativ" || d.name == "native") {
+                    return Err("Verschachtelte native Funktionen sind noch nicht unterstützt".into());
+                }
                 self.compile_function_def(name, params, defaults, body, decorators)?;
                 // Decorators: func = decorator(func)
                 for dec in decorators.iter().rev() {
@@ -1130,22 +1487,24 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 Ok(())
             }
-            Stmt::RawDataU32 { name, value, decorators } => {
+            Stmt::RawDataU32 { name, value, decorators, .. } => {
                 self.compile_raw_data_u32(name, value, decorators)
             }
-            Stmt::DataClassDef { name, fields } => {
+            Stmt::DataClassDef { name, fields, .. } => {
                 self.compile_data_class(name, fields)
             }
             Stmt::Return(value) => self.compile_return(value),
             Stmt::Break => {
-                if let Some((_, after_bb)) = self.loop_stack.last() {
-                    self.builder.build_unconditional_branch(*after_bb).map_err(|e| format!("{e}"))?;
+                if let Some((_, after_bb, target_depth)) = self.loop_stack.last().copied() {
+                    self.leave_loop_handlers(target_depth)?;
+                    self.builder.build_unconditional_branch(after_bb).map_err(|e| format!("{e}"))?;
                 }
                 Ok(())
             }
             Stmt::Continue => {
-                if let Some((cond_bb, _)) = self.loop_stack.last() {
-                    self.builder.build_unconditional_branch(*cond_bb).map_err(|e| format!("{e}"))?;
+                if let Some((cond_bb, _, target_depth)) = self.loop_stack.last().copied() {
+                    self.leave_loop_handlers(target_depth)?;
+                    self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
                 }
                 Ok(())
             }
@@ -1162,7 +1521,15 @@ impl<'ctx> CodeGen<'ctx> {
             // ERDE-13: reine Deklaration, wirkt in compile_function_def (keine Local-Alloca).
             Stmt::Global(_) => Ok(()),
             Stmt::Throw(expr) => {
-                let val = self.compile_expr(expr)?;
+                let val = self.compile_statement_expr(expr)?;
+                self.guard_local_expr_error(&[val])?;
+                if self.defer_runtime && !self.try_stack.iter().any(|bb| bb.get_parent() == self.current_function) {
+                    // Ohne lokalen Catch verlaesst wirf den Frame: registrierte
+                    // Aktionen zuerst abarbeiten, val wird zum Erstfehler.
+                    let (has, first) = self.drain_runtime_defers(Some(val))?;
+                    self.route_runtime_defer_error(has, first, None, true)?;
+                    return Ok(());
+                }
                 self.call_rt_void(self.rt.moo_throw, &[val.into()], "throw")?;
                 // Wenn wir in einem try-Block sind: sofort zum innersten catch_bb
                 // branchen. Das terminiert den aktuellen Block und stellt sicher,
@@ -1179,8 +1546,47 @@ impl<'ctx> CodeGen<'ctx> {
                 self.compile_match(value, cases)
             }
             Stmt::Defer(expr) => {
-                // Go-inspiriert: Expression auf den Defer-Stack pushen (LIFO)
-                self.defer_stack.push(expr.clone());
+                let id = self.defer_catalog.id_for(expr)
+                    .ok_or("Defer-Aktionsstelle fehlt im Funktionskatalog")?;
+                if !self.defer_runtime {
+                    self.defer_stack.push(id);
+                    return Ok(());
+                }
+                let func = self.current_function.ok_or("Defer ohne Funktion")?;
+                let slot = self.defer_frame.ok_or("Defer ohne Aktivierungs-Slot")?;
+                let abi = defer_catalog::DeferAbi::declare(self.context, &self.module)?;
+                let status = abi.emit_register(self.context, &self.builder, func, slot,
+                    self.context.i32_type().const_int(id as u64, false))?;
+                let ok = self.builder.build_int_compare(
+                    inkwell::IntPredicate::EQ, status, self.context.i32_type().const_zero(), "defer.register.ok",
+                ).map_err(|e| e.to_string())?;
+                let success = self.context.append_basic_block(func, "defer.register.success");
+                let failure = self.context.append_basic_block(func, "defer.register.failure");
+                self.builder.build_conditional_branch(ok, success, failure).map_err(|e| e.to_string())?;
+                self.builder.position_at_end(failure);
+                // EMPTY ist bei push/new ungueltig; als unbekannten Status melden.
+                let empty = self.builder.build_int_compare(
+                    inkwell::IntPredicate::EQ, status, self.context.i32_type().const_int(1, false), "defer.register.empty",
+                ).map_err(|e| e.to_string())?;
+                let mapped = self.builder.build_select(empty, self.context.i32_type().const_int(6, false),
+                    status, "defer.register.error_status").map_err(|e| e.to_string())?.into_int_value();
+                let error = self.defer_status_error(&abi, mapped)?;
+                let alloc = self.builder.build_int_compare(
+                    inkwell::IntPredicate::EQ, status, self.context.i32_type().const_int(3, false), "defer.register.alloc",
+                ).map_err(|e| e.to_string())?;
+                let overflow = self.builder.build_int_compare(
+                    inkwell::IntPredicate::EQ, status, self.context.i32_type().const_int(4, false), "defer.register.overflow",
+                ).map_err(|e| e.to_string())?;
+                let safe = self.builder.build_or(alloc, overflow, "defer.register.stack_valid").map_err(|e| e.to_string())?;
+                let drain = self.context.append_basic_block(func, "defer.register.drain");
+                let invalid = self.context.append_basic_block(func, "defer.register.invalid");
+                self.builder.build_conditional_branch(safe, drain, invalid).map_err(|e| e.to_string())?;
+                self.builder.position_at_end(drain);
+                let (has, first) = self.drain_runtime_defers(Some(error))?;
+                self.route_runtime_defer_error(has, first, None, true)?;
+                self.builder.position_at_end(invalid);
+                self.route_invalid_defer_stack(error)?;
+                self.builder.position_at_end(success);
                 Ok(())
             }
             Stmt::Guard { condition, else_body } => {
@@ -1190,16 +1596,22 @@ impl<'ctx> CodeGen<'ctx> {
                 // Rust-inspiriert: unsafe_context erlaubt gefaehrliche Operationen
                 let prev = self.unsafe_context;
                 self.unsafe_context = true;
-                for s in body {
-                    self.compile_stmt(s)?;
-                }
+                let result = body.iter().try_for_each(|s| self.compile_stmt(s));
                 self.unsafe_context = prev;
-                Ok(())
+                result
             }
             Stmt::Expression(expr) => {
                 // Ergebnis wird nicht konsumiert → Expression-Temp freigeben,
                 // sonst leakt z.B. eine nackte `d[k]`-Zeile den Return-Ref.
-                let val = self.compile_expr(expr)?;
+                let guarded = self.defer_runtime || self.defer_borrowed_handler.is_some();
+                let val = if guarded {
+                    self.compile_statement_expr(expr)?
+                } else {
+                    self.compile_expr(expr)?
+                };
+                if guarded {
+                    self.guard_local_expr_error(&[val])?;
+                }
                 self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_expr_stmt")?;
                 Ok(())
             }
@@ -1231,13 +1643,6 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.position_at_end(ok_bb);
                 Ok(())
             }
-            Stmt::UnsafeBlock { body } => {
-                // Unsafe-Block: kompiliert den Body normal (erlaubt syscall/asm Builtins)
-                for s in body {
-                    self.compile_stmt(s)?;
-                }
-                Ok(())
-            }
             Stmt::TestDef { name, body } => {
                 // Test-Framework: teste "name": body → generiert Funktion __test_<name>
                 // und registriert den Namen fuer teste_alle()
@@ -1251,17 +1656,39 @@ impl<'ctx> CodeGen<'ctx> {
                 let prev_vars = self.variables.clone();
                 let prev_block = self.builder.get_insert_block();
                 let prev_defers = std::mem::take(&mut self.defer_stack);
+                let prev_catalog = std::mem::take(&mut self.defer_catalog);
+                let prev_defer_frame = self.defer_frame.take();
+                let prev_defer_runtime = std::mem::replace(&mut self.defer_runtime, false);
+                let prev_defer_borrowed = self.defer_borrowed_handler.take();
+                self.defer_catalog = defer_catalog::DeferCatalog::collect(body)?;
 
                 self.current_function = Some(function);
                 self.builder.position_at_end(entry);
                 self.variables.clear();
+                self.init_defer_frame()?;
+
+                // Wie Funktions-Locals sind Test-Locals beim Eintritt definiert,
+                // auch wenn ein fruehes Cleanup sie vor ihrer Zuweisung liest.
+                // Test-Assignments auf bestehende Globals bleiben global.
+                let none_tag = self.context.i64_type().const_int(tag::NONE, false);
+                let zero_data = self.context.i64_type().const_zero();
+                let none = self.mv_type().const_named_struct(&[none_tag.into(), zero_data.into()]);
+                for name in Self::collect_all_var_names(body) {
+                    if self.globals.contains_key(&name) { continue; }
+                    let slot = self.builder.build_alloca(self.mv_type(), &name)
+                        .map_err(|e| format!("{e}"))?;
+                    self.builder.build_store(slot, none).map_err(|e| format!("{e}"))?;
+                    self.variables.insert(name, slot);
+                }
 
                 for s in body {
                     self.compile_stmt(s)?;
                 }
 
                 if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-                    // Test bestanden → return moo_bool(true)
+                    // Defers lesen noch Locals; erst danach die Slots freigeben.
+                    self.emit_defers()?;
+                    self.release_function_locals()?;
                     let bval = self.context.bool_type().const_int(1, false);
                     let result = self.call_rt(self.rt.moo_bool_fn, &[bval.into()], "pass")?;
                     self.builder.build_return(Some(&result)).map_err(|e| format!("{e}"))?;
@@ -1270,6 +1697,10 @@ impl<'ctx> CodeGen<'ctx> {
                 self.current_function = prev_fn;
                 self.variables = prev_vars;
                 self.defer_stack = prev_defers;
+                self.defer_catalog = prev_catalog;
+                self.defer_frame = prev_defer_frame;
+                self.defer_runtime = prev_defer_runtime;
+                self.defer_borrowed_handler = prev_defer_borrowed;
                 if let Some(bb) = prev_block {
                     self.builder.position_at_end(bb);
                 }
@@ -1289,6 +1720,8 @@ impl<'ctx> CodeGen<'ctx> {
                     inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
                     _ => return Err("expect truthy fehlgeschlagen".to_string()),
                 };
+                // Truthiness liest den owning Ausdruck nur aus.
+                self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_expect")?;
 
                 let func = self.current_function.unwrap();
                 let fail_bb = self.context.append_basic_block(func, "expect_fail");
@@ -1302,6 +1735,12 @@ impl<'ctx> CodeGen<'ctx> {
                 let msg = self.make_global_str("  FEHLGESCHLAGEN: Erwartung nicht erfuellt", "expect_msg")?;
                 let msg_val = self.call_rt(self.rt.moo_string_new, &[msg.into()], "emsg")?;
                 self.call_rt_void(self.rt.moo_print, &[msg_val.into()], "eprint")?;
+                self.call_rt_void(self.rt.moo_release, &[msg_val.into()], "rel_expect_msg")?;
+                self.emit_defers()?;
+                // main fuehrt Globals in variables; diese hier nicht freigeben.
+                if func.get_name().to_str() != Ok("main") {
+                    self.release_function_locals()?;
+                }
                 let bfalse = self.context.bool_type().const_int(0, false);
                 let fail_val = self.call_rt(self.rt.moo_bool_fn, &[bfalse.into()], "fail")?;
                 self.builder.build_return(Some(&fail_val)).map_err(|e| format!("{e}"))?;
@@ -1310,7 +1749,14 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(())
             }
             _ => Ok(()),
+        };
+        result?;
+        // Auch verschachtelte Block-Statements muessen einen von der Runtime
+        // gesetzten Fehler vor dem naechsten Statement weiterleiten.
+        if guarded && self.builder.get_insert_block().is_some_and(|bb| bb.get_terminator().is_none()) {
+            self.guard_local_expr_error(&[])?;
         }
+        Ok(())
     }
 
     /// Test-Framework: teste_alle() — ruft alle registrierten Tests auf
@@ -1434,7 +1880,8 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn compile_guard(&mut self, condition: &Expr, else_body: &[Stmt]) -> Result<(), String> {
         // Swift guard: wenn Bedingung FALSCH → else_body (muss Return enthalten)
-        let cond_val = self.compile_expr(condition)?;
+        let cond_val = self.compile_statement_expr(condition)?;
+        self.guard_local_expr_error(&[cond_val])?;
         let func = self.current_function.unwrap();
 
         let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
@@ -1445,6 +1892,9 @@ impl<'ctx> CodeGen<'ctx> {
             inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
             _ => return Err("guard truthy fehlgeschlagen".to_string()),
         };
+
+        // moo_is_truthy leiht den Bedingungswert; der Temp bleibt owning.
+        self.call_rt_void(self.rt.moo_release, &[cond_val.into()], "rel_guard_cond")?;
 
         let else_bb = self.context.append_basic_block(func, "guard_else");
         let cont_bb = self.context.append_basic_block(func, "guard_cont");
@@ -1460,9 +1910,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
         // Sicherheits-Return falls else_body keinen hat
         if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-            self.emit_defers()?;
-            let none_val = self.call_rt(self.rt.moo_none, &[], "none")?;
-            self.builder.build_return(Some(&none_val)).map_err(|e| format!("{e}"))?;
+            self.compile_return(&None)?;
         }
 
         self.builder.position_at_end(cont_bb);
@@ -1470,7 +1918,8 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_if(&mut self, condition: &Expr, body: &[Stmt], else_body: &[Stmt]) -> Result<(), String> {
-        let cond_val = self.compile_expr(condition)?;
+        let cond_val = self.compile_statement_expr(condition)?;
+        self.guard_local_expr_error(&[cond_val])?;
         let func = self.current_function.unwrap();
 
         let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
@@ -1514,6 +1963,17 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
+    /// Verlaesst nur Try-Handler, deren Geltungsbereich der Loop-Sprung verlaesst.
+    fn leave_loop_handlers(&self, target_depth: usize) -> Result<(), String> {
+        let func = self.current_function.ok_or("Schleife ohne Funktion")?;
+        let depth = self.try_stack.iter().filter(|bb| bb.get_parent() == Some(func)).count();
+        let leaving = depth.checked_sub(target_depth).ok_or("Ungueltige Try-Tiefe am Schleifenziel")?;
+        for _ in 0..leaving {
+            self.call_rt_void(self.rt.moo_try_leave, &[], "loop_try_leave")?;
+        }
+        Ok(())
+    }
+
     fn compile_while(&mut self, condition: &Expr, body: &[Stmt]) -> Result<(), String> {
         let func = self.current_function.unwrap();
 
@@ -1524,7 +1984,8 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
 
         self.builder.position_at_end(cond_bb);
-        let cond_val = self.compile_expr(condition)?;
+        let cond_val = self.compile_statement_expr(condition)?;
+        self.guard_local_expr_error(&[cond_val])?;
         let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
             &[cond_val.into()], "truthy")
             .map_err(|e| format!("{e}"))?
@@ -1538,7 +1999,8 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.build_conditional_branch(cond_bool, body_bb, after_bb)
             .map_err(|e| format!("{e}"))?;
 
-        self.loop_stack.push((cond_bb, after_bb));
+        let try_depth = self.try_stack.iter().filter(|bb| bb.get_parent() == Some(func)).count();
+        self.loop_stack.push((cond_bb, after_bb, try_depth));
         self.builder.position_at_end(body_bb);
         for stmt in body {
             // Nach Break/Continue ist der Block terminiert — keine weiteren Statements
@@ -1558,7 +2020,8 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn compile_for(&mut self, var_name: &str, iterable: &Expr, body: &[Stmt]) -> Result<(), String> {
         let func = self.current_function.unwrap();
-        let list_val = self.compile_expr(iterable)?;
+        let list_val = self.compile_statement_expr(iterable)?;
+        self.guard_local_expr_error(&[list_val])?;
 
         // Laenge holen
         let len_result = self.call_rt_abi(self.rt.moo_list_iter_len,
@@ -1623,7 +2086,8 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| format!("{e}"))?;
 
         // Body — Continue springt zu incr_bb (nicht cond_bb!), Break zu after_bb
-        self.loop_stack.push((incr_bb, after_bb));
+        let try_depth = self.try_stack.iter().filter(|bb| bb.get_parent() == Some(func)).count();
+        self.loop_stack.push((incr_bb, after_bb, try_depth));
         self.builder.position_at_end(body_bb);
 
         // Element holen
@@ -1740,10 +2204,18 @@ impl<'ctx> CodeGen<'ctx> {
         let prev_vars = self.variables.clone();
         let prev_block = self.builder.get_insert_block();
         let prev_defers = std::mem::take(&mut self.defer_stack);
+        let prev_catalog = std::mem::take(&mut self.defer_catalog);
+        let prev_defer_frame = self.defer_frame.take();
+                let prev_defer_runtime = std::mem::replace(&mut self.defer_runtime, false);
+                let prev_defer_borrowed = self.defer_borrowed_handler.take();
+        self.defer_catalog = defer_catalog::DeferCatalog::collect(body)?;
 
         self.current_function = Some(function);
         self.builder.position_at_end(entry);
         self.variables.clear();
+        self.init_defer_frame()?;
+        self.defer_runtime = self.defer_guard_targets.contains(name)
+            && !self.defer_catalog.actions().is_empty() && self.runtime_defer_scope_supported(body);
 
         for (i, param_name) in params.iter().enumerate() {
             let alloca = self.builder.build_alloca(self.mv_type(), param_name)
@@ -1827,8 +2299,32 @@ impl<'ctx> CodeGen<'ctx> {
             self.call_rt_void(self.rt.moo_profile_enter, &[name_val.into()], "prof_enter")?;
         }
 
+        // Defer-Frames besitzen einen Runtime-Handler. Erreichbare Callees
+        // ohne Defers borgen nur die Fehlerkante und lassen die Runtime-Tiefe
+        // des Aufrufers unangetastet.
+        let borrowed = !self.defer_runtime && self.defer_guard_targets.contains(name)
+            && self.runtime_defer_scope_supported(body);
+        let defer_frame_error = if self.defer_runtime || borrowed {
+            if self.defer_runtime {
+                self.call_rt_void(self.rt.moo_try_enter, &[], "defer.frame.enter")?;
+            }
+            let handler = self.context.append_basic_block(function, "defer.frame.error");
+            self.try_stack.push(handler);
+            if borrowed { self.defer_borrowed_handler = Some(handler); }
+            // Bereits gesetzten Aufruferfehler vor jedem Frame-Seiteneffekt beachten.
+            self.guard_local_expr_error(&[])?;
+            Some(handler)
+        } else {
+            None
+        };
         for stmt in body {
+            if defer_frame_error.is_some() && self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                break;
+            }
             self.compile_stmt(stmt)?;
+            if defer_frame_error.is_some() && self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                self.guard_local_expr_error(&[])?;
+            }
         }
 
         // Default return none — Defers + Profiling vor implizitem Return
@@ -1839,7 +2335,13 @@ impl<'ctx> CodeGen<'ctx> {
                 let name_val = self.call_rt(self.rt.moo_string_new, &[name_ptr.into()], "prof_str")?;
                 self.call_rt_void(self.rt.moo_profile_exit, &[name_val.into()], "prof_exit")?;
             }
-            self.emit_defers()?;
+            if self.defer_runtime {
+                let (has, first) = self.drain_runtime_defers(None)?;
+                self.route_runtime_defer_error(has, first, None, false)?;
+                self.call_rt_void(self.rt.moo_try_leave, &[], "defer.frame.leave")?;
+            } else {
+                self.emit_defers()?;
+            }
             // Function-Exit-Cleanup: Locals freigeben bevor implicit return.
             self.release_function_locals()?;
             let returns_void = function.get_type().get_return_type().is_none();
@@ -1851,9 +2353,35 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
 
+        if let Some(handler) = defer_frame_error {
+            self.try_stack.pop();
+            self.builder.position_at_end(handler);
+            if borrowed {
+                // Flag und Fehler bleiben beim Aufrufer; kein enter/leave/take.
+                self.defer_borrowed_handler = None;
+                self.release_function_locals()?;
+                if function.get_type().get_return_type().is_none() {
+                    self.builder.build_return(None).map_err(|e| format!("{e}"))?;
+                } else {
+                    let none = self.call_rt(self.rt.moo_none, &[], "defer.borrowed.return")?;
+                    self.builder.build_return(Some(&none)).map_err(|e| format!("{e}"))?;
+                }
+            } else {
+                let take = self.rt.declare_try_take_error(self.context, &self.module, self.runtime_windows_abi);
+                let error = self.call_rt(take, &[], "defer.frame.take_error")?;
+                self.call_rt_void(self.rt.moo_try_leave, &[], "defer.frame.error_leave")?;
+                let (has, first) = self.drain_runtime_defers(Some(error))?;
+                self.route_runtime_defer_error(has, first, None, true)?;
+            }
+        }
+
         self.current_function = prev_fn;
         self.variables = prev_vars;
         self.defer_stack = prev_defers;
+        self.defer_catalog = prev_catalog;
+        self.defer_frame = prev_defer_frame;
+                self.defer_runtime = prev_defer_runtime;
+                self.defer_borrowed_handler = prev_defer_borrowed;
         if let Some(bb) = prev_block {
             self.builder.position_at_end(bb);
         }
@@ -1861,12 +2389,334 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
+    // Fuer einen Runtime-Drain: erstes Error-Value behalten, spaetere freigeben.
+    fn record_defer_error(
+        &self, error: StructValue<'ctx>, first: PointerValue<'ctx>,
+        has_first: PointerValue<'ctx>, next: inkwell::basic_block::BasicBlock<'ctx>,
+    ) -> Result<(), String> {
+        let func = self.current_function.ok_or("Defer-Fehler ohne Funktion")?;
+        let already = self.builder.build_load(self.context.bool_type(), has_first, "defer.already")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let discard = self.context.append_basic_block(func, "defer.discard");
+        let save = self.context.append_basic_block(func, "defer.save");
+        self.builder.build_conditional_branch(already, discard, save).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(discard);
+        self.call_rt_void(self.rt.moo_release, &[error.into()], "defer.release_later")?;
+        self.builder.build_unconditional_branch(next).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(save);
+        self.builder.build_store(first, error).map_err(|e| e.to_string())?;
+        self.builder.build_store(has_first, self.context.bool_type().const_int(1, false))
+            .map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(next).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    // Die Status-API darf bei gueltigem out und einem Fehlerstatus nicht
+    // fehlschlagen. Ein ABI-Vertragsbruch terminiert kontrolliert per Trap.
+    fn defer_status_error(
+        &self, abi: &defer_catalog::DeferAbi<'ctx>, status: inkwell::values::IntValue<'ctx>,
+    ) -> Result<StructValue<'ctx>, String> {
+        let func = self.current_function.ok_or("Defer-Status ohne Funktion")?;
+        let out = self.entry_alloca(self.mv_type(), "defer.status.error")?;
+        let result = abi.emit_status_value(&self.builder, status, out)?;
+        let ok = self.builder.build_int_compare(
+            inkwell::IntPredicate::EQ, result, self.context.i32_type().const_zero(), "defer.status.ok",
+        ).map_err(|e| e.to_string())?;
+        let valid = self.context.append_basic_block(func, "defer.status.valid");
+        let invalid = self.context.append_basic_block(func, "defer.status.invalid");
+        self.builder.build_conditional_branch(ok, valid, invalid).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(invalid);
+        let trap = self.module.get_function("llvm.trap").unwrap_or_else(||
+            self.module.add_function("llvm.trap", self.context.void_type().fn_type(&[], false), None));
+        self.builder.build_call(trap, &[], "").map_err(|e| e.to_string())?;
+        self.builder.build_unreachable().map_err(|e| e.to_string())?;
+        self.builder.position_at_end(valid);
+        Ok(self.builder.build_load(self.mv_type(), out, "defer.status.value")
+            .map_err(|e| e.to_string())?.into_struct_value())
+    }
+
+    // Noch nicht an Stmt::Defer/Exit angeschlossen. Drain liefert einen
+    // owning Erstfehler und ein separates Flag; der Exit entscheidet ueber
+    // Catch, Handler-Tiefe, Return-Wert und Propagation.
+    #[allow(dead_code)]
+    fn drain_runtime_defers(
+        &mut self, injected: Option<StructValue<'ctx>>,
+    ) -> Result<(inkwell::values::IntValue<'ctx>, PointerValue<'ctx>), String> {
+        let func = self.current_function.ok_or("Defer-Drain ohne Funktion")?;
+        let slot = self.defer_frame.ok_or("Defer-Drain ohne Aktivierungs-Slot")?;
+        let actions = self.defer_catalog.actions().to_vec();
+        if !actions.iter().all(|expr| self.recursive_statement_expr_supported(expr)) {
+            return Err("Defer-Drain: Ausdruck noch nicht vollstaendig instrumentiert".into());
+        }
+        let abi = defer_catalog::DeferAbi::declare(self.context, &self.module)?;
+        let first = self.entry_alloca(self.mv_type(), "defer.first")?;
+        let has_first = self.entry_alloca(self.context.bool_type(), "defer.has_first")?;
+        let can_free = self.entry_alloca(self.context.bool_type(), "defer.can_free")?;
+        let action_id = self.entry_alloca(self.context.i32_type(), "defer.action_id")?;
+        let none = self.mv_type().const_named_struct(&[
+            self.context.i64_type().const_int(tag::NONE, false).into(),
+            self.context.i64_type().const_zero().into(),
+        ]);
+        self.builder.build_store(first, injected.unwrap_or(none)).map_err(|e| e.to_string())?;
+        self.builder.build_store(has_first, self.context.bool_type().const_int(injected.is_some() as u64, false))
+            .map_err(|e| e.to_string())?;
+        self.builder.build_store(can_free, self.context.bool_type().const_int(1, false))
+            .map_err(|e| e.to_string())?;
+        let take = self.rt.declare_try_take_error(self.context, &self.module, self.runtime_windows_abi);
+        let pending = self.builder.build_call(self.rt.moo_try_check, &[], "defer.pending")
+            .map_err(|e| e.to_string())?.try_as_basic_value();
+        let pending = match pending {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("moo_try_check fehlgeschlagen".into()),
+        };
+        let pending = self.builder.build_int_compare(
+            inkwell::IntPredicate::NE, pending, self.context.i32_type().const_zero(), "defer.pending.set",
+        ).map_err(|e| e.to_string())?;
+        let save_prior = self.context.append_basic_block(func, "defer.prior");
+        let begin = self.context.append_basic_block(func, "defer.begin");
+        self.builder.build_conditional_branch(pending, save_prior, begin).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(save_prior);
+        let prior = self.call_rt(take, &[], "defer.prior.error")?;
+        if let Some(error) = injected {
+            self.call_rt_void(self.rt.moo_release, &[error.into()], "defer.release_injected")?;
+        }
+        self.builder.build_store(first, prior).map_err(|e| e.to_string())?;
+        self.builder.build_store(has_first, self.context.bool_type().const_int(1, false))
+            .map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(begin).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(begin);
+        self.call_rt_void(self.rt.moo_try_enter, &[], "defer.enter")?;
+        let loop_bb = self.context.append_basic_block(func, "defer.pop.loop");
+        let pop_ok = self.context.append_basic_block(func, "defer.pop.ok");
+        let pop_error = self.context.append_basic_block(func, "defer.pop.error");
+        let finish = self.context.append_basic_block(func, "defer.finish");
+        self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(loop_bb);
+        let status = abi.emit_pop_or_empty(self.context, &self.builder, func, slot, action_id)?;
+        self.builder.build_switch(status, pop_error, &[
+            (self.context.i32_type().const_int(0, false), pop_ok),
+            (self.context.i32_type().const_int(1, false), finish),
+        ]).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(pop_error);
+        self.builder.build_store(can_free, self.context.bool_type().const_zero()).map_err(|e| e.to_string())?;
+        let error = self.defer_status_error(&abi, status)?;
+        self.record_defer_error(error, first, has_first, finish)?;
+
+        self.builder.position_at_end(pop_ok);
+        let id = self.builder.build_load(self.context.i32_type(), action_id, "defer.id")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let unknown = self.context.append_basic_block(func, "defer.unknown_action");
+        let cases: Vec<_> = actions.iter().enumerate().map(|(i, _)|
+            (self.context.i32_type().const_int(i as u64, false),
+             self.context.append_basic_block(func, "defer.action"))).collect();
+        self.builder.build_switch(id, unknown, &cases).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(unknown);
+        let unknown_error = self.defer_status_error(&abi, self.context.i32_type().const_int(5, false))?;
+        self.record_defer_error(unknown_error, first, has_first, loop_bb)?;
+        for (expr, (_, action_bb)) in actions.iter().zip(cases.iter()) {
+            self.builder.position_at_end(*action_bb);
+            let failed = self.context.append_basic_block(func, "defer.action.failed");
+            self.try_stack.push(failed);
+            let compiled = self.compile_statement_expr(expr);
+            let result = match compiled {
+                Ok(value) => {
+                    self.guard_local_expr_error(&[value])?;
+                    self.call_rt_void(self.rt.moo_release, &[value.into()], "defer.release_result")?;
+                    Ok(())
+                }
+                Err(err) => Err(err),
+            };
+            self.try_stack.pop();
+            result?;
+            self.builder.build_unconditional_branch(loop_bb).map_err(|e| e.to_string())?;
+            self.builder.position_at_end(failed);
+            let error = self.call_rt(take, &[], "defer.action.error")?;
+            self.record_defer_error(error, first, has_first, loop_bb)?;
+        }
+        self.builder.position_at_end(finish);
+        self.call_rt_void(self.rt.moo_try_leave, &[], "defer.leave")?;
+        let safe = self.builder.build_load(self.context.bool_type(), can_free, "defer.free.safe")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let free = self.context.append_basic_block(func, "defer.free");
+        let no_free = self.context.append_basic_block(func, "defer.no_free");
+        let done = self.context.append_basic_block(func, "defer.done");
+        self.builder.build_conditional_branch(safe, free, no_free).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(free);
+        abi.emit_release_slot(self.context, &self.builder, slot)?;
+        self.builder.build_unconditional_branch(done).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(no_free);
+        self.builder.build_store(slot, self.context.ptr_type(AddressSpace::default()).const_null())
+            .map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(done).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(done);
+        let has = self.builder.build_load(self.context.bool_type(), has_first, "defer.has_error")
+            .map_err(|e| e.to_string())?.into_int_value();
+        Ok((has, first))
+    }
+
+    // Verzweigt nach einem Drain nur auf dem Fehlerpfad; ein lokaler Catch
+    // behält seinen Handler und seine Locals. Ohne lokalen Handler wird der
+    // Frame vor dem Weiterwurf geschlossen.
+    fn route_runtime_defer_error(
+        &mut self, has: inkwell::values::IntValue<'ctx>, first: PointerValue<'ctx>,
+        abandoned: Option<StructValue<'ctx>>, must_fail: bool,
+    ) -> Result<(), String> {
+        let func = self.current_function.ok_or("Defer-Exit ohne Funktion")?;
+        let failure = self.context.append_basic_block(func, "defer.exit.error");
+        let success = self.context.append_basic_block(func, "defer.exit.ok");
+        self.builder.build_conditional_branch(has, failure, success).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(failure);
+        if let Some(value) = abandoned {
+            self.call_rt_void(self.rt.moo_release, &[value.into()], "defer.release_return")?;
+        }
+        let error = self.builder.build_load(self.mv_type(), first, "defer.exit.first")
+            .map_err(|e| e.to_string())?.into_struct_value();
+        if let Some(catch_bb) = self.try_stack.iter().rev().copied()
+            .find(|bb| bb.get_parent() == Some(func))
+        {
+            self.call_rt_void(self.rt.moo_throw, &[error.into()], "defer.to_catch")?;
+            self.builder.build_unconditional_branch(catch_bb).map_err(|e| e.to_string())?;
+        } else {
+            self.release_function_locals()?;
+            self.call_rt_void(self.rt.moo_throw, &[error.into()], "defer.propagate")?;
+            if func.get_type().get_return_type().is_none() {
+                self.builder.build_return(None).map_err(|e| e.to_string())?;
+            } else {
+                let none = self.call_rt(self.rt.moo_none, &[], "defer.error.return")?;
+                self.builder.build_return(Some(&none)).map_err(|e| e.to_string())?;
+            }
+        }
+        self.builder.position_at_end(success);
+        if must_fail {
+            let trap = self.module.get_function("llvm.trap").unwrap_or_else(||
+                self.module.add_function("llvm.trap", self.context.void_type().fn_type(&[], false), None));
+            self.builder.build_call(trap, &[], "").map_err(|e| e.to_string())?;
+            self.builder.build_unreachable().map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    // Bei ungueltigem Stack ist weder weiteres Poppen noch free sicher.
+    // Ein bereits gesetzter Fehler hat Vorrang vor dem neuen Statusfehler.
+    fn route_invalid_defer_stack(&mut self, error: StructValue<'ctx>) -> Result<(), String> {
+        let func = self.current_function.ok_or("Defer-Status ohne Funktion")?;
+        let first = self.entry_alloca(self.mv_type(), "defer.invalid.first")?;
+        let pending = self.builder.build_call(self.rt.moo_try_check, &[], "defer.invalid.pending")
+            .map_err(|e| e.to_string())?.try_as_basic_value();
+        let pending = match pending {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("moo_try_check fehlgeschlagen".into()),
+        };
+        let has_pending = self.builder.build_int_compare(
+            inkwell::IntPredicate::NE, pending, self.context.i32_type().const_zero(), "defer.invalid.has_pending",
+        ).map_err(|e| e.to_string())?;
+        let prior_bb = self.context.append_basic_block(func, "defer.invalid.prior");
+        let new_bb = self.context.append_basic_block(func, "defer.invalid.new");
+        let merge = self.context.append_basic_block(func, "defer.invalid.merge");
+        self.builder.build_conditional_branch(has_pending, prior_bb, new_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(prior_bb);
+        self.call_rt_void(self.rt.moo_release, &[error.into()], "defer.invalid.release_new")?;
+        let take = self.rt.declare_try_take_error(self.context, &self.module, self.runtime_windows_abi);
+        let prior = self.call_rt(take, &[], "defer.invalid.take_prior")?;
+        self.builder.build_store(first, prior).map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(merge).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(new_bb);
+        self.builder.build_store(first, error).map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(merge).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(merge);
+        if let Some(slot) = self.defer_frame {
+            self.builder.build_store(slot, self.context.ptr_type(AddressSpace::default()).const_null())
+                .map_err(|e| e.to_string())?;
+        }
+        self.route_runtime_defer_error(self.context.bool_type().const_int(1, false), first, None, true)
+    }
+
     /// Führt alle Defers in LIFO-Reihenfolge aus (Go-Semantik)
     fn emit_defers(&mut self) -> Result<(), String> {
-        let defers: Vec<Expr> = self.defer_stack.iter().rev().cloned().collect();
-        for expr in &defers {
-            self.compile_expr(expr)?;
+        let defers: Vec<Expr> = self.defer_stack.iter().rev()
+            .map(|id| self.defer_catalog.action(*id).cloned()
+                .ok_or_else(|| format!("Unbekannte Defer-Aktions-ID: {id}")))
+            .collect::<Result<_, _>>()?;
+        if defers.is_empty() { return Ok(()); }
+        // Nur vollstaendig instrumentierte Ausdrucksbaeume duerfen die
+        // synthetische Fehlerkante nutzen. Insbesondere bleiben native/FFI-
+        // Calls auf dem bisherigen Pfad, bis ihre Handlergrenzen sicher sind.
+        if self.bare_mode || !defers.iter().all(|expr| self.recursive_statement_expr_supported(expr)) {
+            for expr in &defers {
+                let value = self.compile_expr(expr)?;
+                self.call_rt_void(self.rt.moo_release, &[value.into()], "rel_defer_expr")?;
+            }
+            return Ok(());
         }
+        let func = self.current_function.unwrap();
+        let first = self.entry_alloca(self.mv_type(), "defer_first_error")?;
+        let has_first = self.entry_alloca(self.context.bool_type(), "defer_has_first")?;
+        self.builder.build_store(has_first, self.context.bool_type().const_zero())
+            .map_err(|e| e.to_string())?;
+        let take = self.rt.declare_try_take_error(self.context, &self.module, self.runtime_windows_abi);
+        let pending = self.builder.build_call(self.rt.moo_try_check, &[], "defer_pending")
+            .map_err(|e| e.to_string())?.try_as_basic_value();
+        let pending = match pending {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("moo_try_check fehlgeschlagen".into()),
+        };
+        let pending = self.builder.build_int_compare(
+            inkwell::IntPredicate::NE, pending, self.context.i32_type().const_zero(), "defer_has_pending",
+        ).map_err(|e| e.to_string())?;
+        let save_pending = self.context.append_basic_block(func, "defer_save_pending");
+        let begin = self.context.append_basic_block(func, "defer_begin");
+        self.builder.build_conditional_branch(pending, save_pending, begin).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(save_pending);
+        let prior = self.call_rt(take, &[], "defer_prior")?;
+        self.builder.build_store(first, prior).map_err(|e| e.to_string())?;
+        self.builder.build_store(has_first, self.context.bool_type().const_int(1, false)).map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(begin).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(begin);
+        self.call_rt_void(self.rt.moo_try_enter, &[], "defer_enter")?;
+        for expr in &defers {
+            let failed = self.context.append_basic_block(func, "defer_action_failed");
+            let next = self.context.append_basic_block(func, "defer_action_next");
+            self.try_stack.push(failed);
+            let compiled = self.compile_statement_expr(expr);
+            let result = match compiled {
+                Ok(value) => {
+                    self.guard_local_expr_error(&[value])?;
+                    self.call_rt_void(self.rt.moo_release, &[value.into()], "rel_defer_expr")?;
+                    Ok(())
+                }
+                Err(err) => Err(err),
+            };
+            self.try_stack.pop();
+            result?;
+            self.builder.build_unconditional_branch(next).map_err(|e| e.to_string())?;
+            self.builder.position_at_end(failed);
+            let error = self.call_rt(take, &[], "defer_action_error")?;
+            let already = self.builder.build_load(self.context.bool_type(), has_first, "defer_already")
+                .map_err(|e| e.to_string())?.into_int_value();
+            let discard = self.context.append_basic_block(func, "defer_discard_error");
+            let save = self.context.append_basic_block(func, "defer_save_error");
+            self.builder.build_conditional_branch(already, discard, save).map_err(|e| e.to_string())?;
+            self.builder.position_at_end(discard);
+            self.call_rt_void(self.rt.moo_release, &[error.into()], "rel_later_defer_error")?;
+            self.builder.build_unconditional_branch(next).map_err(|e| e.to_string())?;
+            self.builder.position_at_end(save);
+            self.builder.build_store(first, error).map_err(|e| e.to_string())?;
+            self.builder.build_store(has_first, self.context.bool_type().const_int(1, false)).map_err(|e| e.to_string())?;
+            self.builder.build_unconditional_branch(next).map_err(|e| e.to_string())?;
+            self.builder.position_at_end(next);
+        }
+        self.call_rt_void(self.rt.moo_try_leave, &[], "defer_leave")?;
+        let have_error = self.builder.build_load(self.context.bool_type(), has_first, "defer_error_final")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let propagate = self.context.append_basic_block(func, "defer_propagate");
+        let done = self.context.append_basic_block(func, "defer_done");
+        self.builder.build_conditional_branch(have_error, propagate, done).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(propagate);
+        let error = self.builder.build_load(self.mv_type(), first, "defer_first")
+            .map_err(|e| e.to_string())?.into_struct_value();
+        self.call_rt_void(self.rt.moo_throw, &[error.into()], "defer_throw_first")?;
+        self.builder.build_unconditional_branch(done).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(done);
         Ok(())
     }
 
@@ -1885,6 +2735,10 @@ impl<'ctx> CodeGen<'ctx> {
         // EINE Ref, egal unter wie vielen Namen er registriert ist.
         let mut vars: Vec<(String, PointerValue<'ctx>)> =
             self.variables.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        // HashMap-Reihenfolge ist pro Prozess zufaellig. Sortierung vor der
+        // Pointer-Deduplizierung gibt jedem Slot eine stabile Freigabereihenfolge;
+        // Aliase wie selbst/this werden weiterhin genau einmal freigegeben.
+        vars.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         let mut seen: Vec<PointerValue<'ctx>> = Vec::with_capacity(vars.len());
         vars.retain(|(_, p)| {
             if seen.contains(p) { false } else { seen.push(*p); true }
@@ -1903,27 +2757,81 @@ impl<'ctx> CodeGen<'ctx> {
         // werden ignoriert, return als i32(0) emittiert.
         let func = self.current_function.unwrap();
         if func.get_name().to_str() == Ok("main") {
-            // Expression noch evaluieren falls Side-Effects (z.B. Funktionsaufruf)
+            let local_handlers: Vec<_> = self.try_stack.iter().copied()
+                .filter(|bb| bb.get_parent() == Some(func) && Some(*bb) != self.defer_borrowed_handler).collect();
+            let checked = !local_handlers.is_empty() && !self.bare_mode;
+            // Expression noch evaluieren falls Side-Effects (z.B. Funktionsaufruf).
             if let Some(expr) = value {
-                let _ = self.compile_expr(expr)?;
+                let result = self.compile_statement_expr(expr)?;
+                // main verwirft den owning Ausdruckswert auch ohne lokalen try.
+                self.call_rt_void(self.rt.moo_release, &[result.into()], "main_return_release")?;
+            }
+            if checked {
+                let catch_bb = *local_handlers.last().unwrap();
+                let pending = self.builder.build_call(self.rt.moo_try_check, &[], "main_ret_check")
+                    .map_err(|e| e.to_string())?.try_as_basic_value();
+                let pending = match pending {
+                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("moo_try_check fehlgeschlagen".into()),
+                };
+                let is_error = self.builder.build_int_compare(
+                    inkwell::IntPredicate::NE, pending,
+                    self.context.i32_type().const_zero(), "main_ret_error",
+                ).map_err(|e| e.to_string())?;
+                let success_bb = self.context.append_basic_block(func, "main_return_ok");
+                self.builder.build_conditional_branch(is_error, catch_bb, success_bb)
+                    .map_err(|e| e.to_string())?;
+                self.builder.position_at_end(success_bb);
             }
             self.emit_defers()?;
+            if checked && self.defer_stack.is_empty() {
+                for _ in &local_handlers {
+                    self.call_rt_void(self.rt.moo_try_leave, &[], "main_return_try_leave")?;
+                }
+            } else if checked {
+                // Wie bei Funktions-Return: nur nach fehlerfreien Defers verlassen.
+                let pending = self.builder.build_call(self.rt.moo_try_check, &[], "main_defer_check")
+                    .map_err(|e| e.to_string())?.try_as_basic_value();
+                let pending = match pending {
+                    inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                    _ => return Err("moo_try_check fehlgeschlagen".into()),
+                };
+                let is_error = self.builder.build_int_compare(
+                    inkwell::IntPredicate::NE, pending,
+                    self.context.i32_type().const_zero(), "main_defer_error",
+                ).map_err(|e| e.to_string())?;
+                let leave_bb = self.context.append_basic_block(func, "main_defer_leave");
+                let resume_bb = self.context.append_basic_block(func, "main_defer_resume");
+                self.builder.build_conditional_branch(is_error, resume_bb, leave_bb)
+                    .map_err(|e| e.to_string())?;
+                self.builder.position_at_end(leave_bb);
+                for _ in &local_handlers {
+                    self.call_rt_void(self.rt.moo_try_leave, &[], "main_return_try_leave")?;
+                }
+                self.builder.build_unconditional_branch(resume_bb).map_err(|e| e.to_string())?;
+                self.builder.position_at_end(resume_bb);
+            }
             let zero = self.context.i32_type().const_int(0, false);
             self.builder.build_return(Some(&zero)).map_err(|e| format!("{e}"))?;
             return Ok(());
         }
 
         let val = if let Some(expr) = value {
-            self.compile_expr(expr)?
+            self.compile_statement_expr(expr)?
         } else {
             self.call_rt(self.rt.moo_none, &[], "none")?
         };
 
+        if self.defer_borrowed_handler.is_some() {
+            self.guard_local_expr_error(&[val])?;
+        }
+
         // Wenn wir in einem try-Block sind: pruefen ob der Expression einen Fehler
         // gesetzt hat (z.B. via Methoden-Aufruf 'gib_zurueck k.methode()'). Falls ja,
         // direkt zum catch_bb branchen statt zu returnen.
-        if let Some(catch_bb) = self.try_stack.last().copied() {
-            let func = self.current_function.unwrap();
+        let local_handlers: Vec<_> = self.try_stack.iter().copied()
+            .filter(|bb| bb.get_parent() == Some(func) && Some(*bb) != self.defer_borrowed_handler).collect();
+        if let Some(catch_bb) = local_handlers.last().copied() {
             let check_result = self.builder.build_call(self.rt.moo_try_check, &[], "ret_check")
                 .map_err(|e| format!("{e}"))?;
             let has_error = match check_result.try_as_basic_value() {
@@ -1935,13 +2843,65 @@ impl<'ctx> CodeGen<'ctx> {
                 self.context.i32_type().const_int(0, false), "ret_is_err",
             ).map_err(|e| format!("{e}"))?;
             let ret_bb = self.context.append_basic_block(func, "return_ok");
-            self.builder.build_conditional_branch(is_error, catch_bb, ret_bb)
+            let error_bb = self.context.append_basic_block(func, "return_error");
+            self.builder.build_conditional_branch(is_error, error_bb, ret_bb)
                 .map_err(|e| format!("{e}"))?;
+            self.builder.position_at_end(error_bb);
+            self.call_rt_void(self.rt.moo_release, &[val.into()], "return_release_error")?;
+            self.builder.build_unconditional_branch(catch_bb).map_err(|e| format!("{e}"))?;
             self.builder.position_at_end(ret_bb);
+        }
+
+        // Dynamischer Stack: bei Fehler den Return-Wert freigeben und
+        // zum lokalen Catch oder nach Frame-Cleanup zum Aufrufer propagieren.
+        if self.defer_runtime {
+            let (has, first) = self.drain_runtime_defers(None)?;
+            self.route_runtime_defer_error(has, first, Some(val), false)?;
+            for _ in &local_handlers {
+                self.call_rt_void(self.rt.moo_try_leave, &[], "return_try_leave")?;
+            }
+            self.release_function_locals()?;
+            if func.get_type().get_return_type().is_none() {
+                self.call_rt_void(self.rt.moo_release, &[val.into()], "return_void_release")?;
+                self.builder.build_return(None).map_err(|e| format!("{e}"))?;
+            } else {
+                self.builder.build_return(Some(&val)).map_err(|e| format!("{e}"))?;
+            }
+            return Ok(());
         }
 
         // Defer-Stack vor Return ausführen (Go-Semantik)
         self.emit_defers()?;
+        // Ohne Defers ist die Fehlerkante bereits geprueft. Nur lokal aktive
+        // Handler verlassen; Handler des Aufrufers bleiben bestehen.
+        if self.defer_stack.is_empty() {
+            for _ in &local_handlers {
+                self.call_rt_void(self.rt.moo_try_leave, &[], "return_try_leave")?;
+            }
+        } else if !local_handlers.is_empty() {
+            // Bei erfolgreichem Defer den lokalen Try-Rahmen verlassen.
+            // Fehlernde Defers behalten vorerst den bisherigen Fehlerpfad.
+            let pending = self.builder.build_call(self.rt.moo_try_check, &[], "defer_ret_check")
+                .map_err(|e| e.to_string())?.try_as_basic_value();
+            let pending = match pending {
+                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                _ => return Err("moo_try_check fehlgeschlagen".into()),
+            };
+            let is_error = self.builder.build_int_compare(
+                inkwell::IntPredicate::NE, pending,
+                self.context.i32_type().const_zero(), "defer_ret_error",
+            ).map_err(|e| e.to_string())?;
+            let leave_bb = self.context.append_basic_block(func, "defer_return_leave");
+            let resume_bb = self.context.append_basic_block(func, "defer_return_resume");
+            self.builder.build_conditional_branch(is_error, resume_bb, leave_bb)
+                .map_err(|e| e.to_string())?;
+            self.builder.position_at_end(leave_bb);
+            for _ in &local_handlers {
+                self.call_rt_void(self.rt.moo_try_leave, &[], "return_try_leave")?;
+            }
+            self.builder.build_unconditional_branch(resume_bb).map_err(|e| e.to_string())?;
+            self.builder.position_at_end(resume_bb);
+        }
         // Locals vor dem return freigeben. val haelt seine eigene +1 ueber
         // load_var-retain / Producer und ueberlebt den Slot-Cleanup.
         self.release_function_locals()?;
@@ -1968,10 +2928,17 @@ impl<'ctx> CodeGen<'ctx> {
                 let prev_fn = self.current_function;
                 let prev_vars = self.variables.clone();
                 let prev_block = self.builder.get_insert_block();
+                let prev_defers = std::mem::take(&mut self.defer_stack);
+                let prev_catalog = std::mem::take(&mut self.defer_catalog);
+                let prev_defer_frame = self.defer_frame.take();
+                let prev_defer_runtime = std::mem::replace(&mut self.defer_runtime, false);
+                let prev_defer_borrowed = self.defer_borrowed_handler.take();
+                self.defer_catalog = defer_catalog::DeferCatalog::collect(method_body)?;
 
                 self.current_function = Some(func);
                 self.builder.position_at_end(entry);
                 self.variables.clear();
+                self.init_defer_frame()?;
 
                 // self/selbst ist der erste Parameter
                 let self_alloca = self.builder.build_alloca(self.mv_type(), "self")
@@ -2027,8 +2994,18 @@ impl<'ctx> CodeGen<'ctx> {
                 let zero_data = self.context.i64_type().const_int(0, false);
                 let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
                 let local_names = Self::collect_all_var_names(method_body);
+                let global_decls: Vec<String> = method_body.iter()
+                    .filter_map(|s| if let Stmt::Global(names) = s { Some(names.clone()) } else { None })
+                    .flatten()
+                    .collect();
+                for g in &global_decls {
+                    if !self.globals.contains_key(g) {
+                        return Err(format!("Methode '{name}.{method_name}': 'global {g}' — es gibt keine Top-Level-Variable '{g}'"));
+                    }
+                }
                 for n in &local_names {
                     if self.variables.contains_key(n.as_str()) { continue; }
+                    if global_decls.iter().any(|g| g == n) { continue; }
                     if self.globals.contains_key(n) {
                         match Self::first_use_is_local_write(method_body, n) {
                             Some(true) => {}
@@ -2047,12 +3024,20 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let current_bb = self.builder.get_insert_block().unwrap();
                 if current_bb.get_terminator().is_none() {
+                    self.emit_defers()?;
+                    // Wie bei explizitem Return erst nach den Defers freigeben.
+                    self.release_function_locals()?;
                     let none_val = self.call_rt(self.rt.moo_none, &[], "none")?;
                     self.builder.build_return(Some(&none_val)).map_err(|e| format!("{e}"))?;
                 }
 
                 self.current_function = prev_fn;
                 self.variables = prev_vars;
+                self.defer_stack = prev_defers;
+                self.defer_catalog = prev_catalog;
+                self.defer_frame = prev_defer_frame;
+                self.defer_runtime = prev_defer_runtime;
+                self.defer_borrowed_handler = prev_defer_borrowed;
                 self.object_var_types.remove("selbst");
                 self.object_var_types.remove("this");
                 if let Some(bb) = prev_block {
@@ -2280,6 +3265,7 @@ impl<'ctx> CodeGen<'ctx> {
         // Catch/After schon hier anlegen, damit wir sie in den try_stack pushen
         // koennen — Stmt::Throw im try-Body soll direkt zu catch_bb springen.
         let catch_bb = self.context.append_basic_block(func, "catch_body");
+        let success_bb = self.context.append_basic_block(func, "try_success");
         let after_bb = self.context.append_basic_block(func, "after_try");
 
         // moo_try_enter() — markiert dass wir in einem try-Block sind
@@ -2332,20 +3318,26 @@ impl<'ctx> CodeGen<'ctx> {
                 inkwell::IntPredicate::NE, has_error,
                 self.context.i32_type().const_int(0, false), "is_error",
             ).map_err(|e| format!("{e}"))?;
-            self.builder.build_conditional_branch(is_error, catch_bb, after_bb)
+            self.builder.build_conditional_branch(is_error, catch_bb, success_bb)
                 .map_err(|e| format!("{e}"))?;
         }
         // Wenn try_terminated: kein Branch — catch_bb/after_bb bleiben formal
         // erreichbar fuer LLVM (beide haben eigene Terminatoren), werden aber
         // auf diesem Pfad nie besucht.
 
-        // Catch-Block
+        // Erfolg und Catch verlassen den Handler jeweils genau einmal.
+        self.builder.position_at_end(success_bb);
+        self.call_rt_void(self.rt.moo_try_leave, &[], "try_leave_ok")?;
+        self.builder.build_unconditional_branch(after_bb).map_err(|e| format!("{e}"))?;
+
+        // Fehlerwert und Flag vor dem Catch-Body konsumieren; der Wert ist +1.
         self.builder.position_at_end(catch_bb);
+        let take_error = self.rt.declare_try_take_error(self.context, &self.module, self.runtime_windows_abi);
+        let error_val = self.call_rt(take_error, &[], "error")?;
         if let Some(var_name) = catch_var {
-            let error_val = self.call_rt(self.rt.moo_get_error, &[], "error")?;
             let error_str = self.call_rt(self.rt.moo_to_string, &[error_val.into()], "err_str")?;
             // moo_to_string gibt fuer MOO_STRING denselben borrowed Wert zurueck.
-            // Dann wird der Retain aus moo_get_error direkt in die Catch-Variable
+            // Dann wird der Wert aus moo_try_take_error direkt in die Catch-Variable
             // transferiert. Fuer alle anderen Tags ist error_str ein frischer +1-
             // Wert und nur der retained Quellwert muss freigegeben werden.
             let error_tag = self.builder.build_extract_value(error_val, 0, "error_tag")
@@ -2365,6 +3357,8 @@ impl<'ctx> CodeGen<'ctx> {
             self.builder.build_unconditional_branch(store_bb).map_err(|e| format!("{e}"))?;
             self.builder.position_at_end(store_bb);
             self.store_var(var_name, error_str)?;
+        } else {
+            self.call_rt_void(self.rt.moo_release, &[error_val.into()], "discard_caught_error")?;
         }
         // try_leave raeumt auf
         self.call_rt_void(self.rt.moo_try_leave, &[], "try_leave")?;
@@ -2378,9 +3372,8 @@ impl<'ctx> CodeGen<'ctx> {
             self.builder.build_unconditional_branch(after_bb).map_err(|e| format!("{e}"))?;
         }
 
-        // After — wenn kein Fehler, auch aufraeuemen
+        // Beide regulaeren Pfade haben ihren Handler bereits verlassen.
         self.builder.position_at_end(after_bb);
-        self.call_rt_void(self.rt.moo_try_leave, &[], "try_leave_ok")?;
         Ok(())
     }
 
@@ -2410,8 +3403,655 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(p)
     }
 
+    fn runtime_defer_expr_supported(&self, expr: &Expr) -> bool {
+        if !self.recursive_statement_expr_supported(expr) { return false; }
+        match expr {
+            Expr::FunctionCall { name, args } =>
+                self.defer_safe_calls.contains(name)
+                    && args.iter().all(|arg| self.runtime_defer_expr_supported(arg)),
+            Expr::BinaryOp { left, right, .. } =>
+                self.runtime_defer_expr_supported(left) && self.runtime_defer_expr_supported(right),
+            Expr::List(elements) => elements.iter().all(|e| self.runtime_defer_expr_supported(e)),
+            Expr::IndexAccess { object, index } =>
+                self.runtime_defer_expr_supported(object) && self.runtime_defer_expr_supported(index),
+            _ => true,
+        }
+    }
+
+    // Ein Lambda-Alias beeinflusst die globale Codegen-Namensauflösung.
+    // Solche Namen werden deshalb aus dem direkten Callgraph ausgeschlossen.
+    fn collect_defer_lambda_aliases(stmts: &[Stmt], names: &mut std::collections::HashSet<String>) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Assignment { name, value: Expr::Lambda { .. }, .. }
+                | Stmt::ConstAssignment { name, value: Expr::Lambda { .. }, .. } => { names.insert(name.clone()); }
+                Stmt::FunctionDef { body, .. } | Stmt::ClassDef { body, .. }
+                | Stmt::TestDef { body, .. } | Stmt::While { body, .. }
+                | Stmt::For { body, .. } | Stmt::ParallelFor { body, .. }
+                | Stmt::UnsafeBlock { body } => Self::collect_defer_lambda_aliases(body, names),
+                Stmt::If { body, else_body, .. } => {
+                    Self::collect_defer_lambda_aliases(body, names);
+                    Self::collect_defer_lambda_aliases(else_body, names);
+                }
+                Stmt::Guard { else_body, .. } => Self::collect_defer_lambda_aliases(else_body, names),
+                Stmt::TryCatch { try_body, catch_body, .. } => {
+                    Self::collect_defer_lambda_aliases(try_body, names);
+                    Self::collect_defer_lambda_aliases(catch_body, names);
+                }
+                Stmt::Match { cases, .. } => {
+                    for (_, _, body) in cases { Self::collect_defer_lambda_aliases(body, names); }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Wird nur fuer zuvor durch runtime_defer_scope_supported akzeptierte
+    // Baeume verwendet; dort sind alle anderen Ausdrucksformen ausgeschlossen.
+    fn collect_defer_calls_expr(expr: &Expr, names: &mut std::collections::HashSet<String>) {
+        match expr {
+            Expr::FunctionCall { name, args } => {
+                names.insert(name.clone());
+                for arg in args { Self::collect_defer_calls_expr(arg, names); }
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                Self::collect_defer_calls_expr(left, names);
+                Self::collect_defer_calls_expr(right, names);
+            }
+            Expr::List(elements) => {
+                for element in elements { Self::collect_defer_calls_expr(element, names); }
+            }
+            Expr::IndexAccess { object, index } => {
+                Self::collect_defer_calls_expr(object, names);
+                Self::collect_defer_calls_expr(index, names);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_defer_calls(stmts: &[Stmt], names: &mut std::collections::HashSet<String>) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
+                | Stmt::Show(value) | Stmt::Throw(value) | Stmt::Expression(value)
+                | Stmt::Defer(value) | Stmt::Return(Some(value)) =>
+                    Self::collect_defer_calls_expr(value, names),
+                Stmt::If { condition, body, else_body } => {
+                    Self::collect_defer_calls_expr(condition, names);
+                    Self::collect_defer_calls(body, names);
+                    Self::collect_defer_calls(else_body, names);
+                }
+                Stmt::While { condition, body } => {
+                    Self::collect_defer_calls_expr(condition, names);
+                    Self::collect_defer_calls(body, names);
+                }
+                Stmt::For { iterable, body, .. } => {
+                    Self::collect_defer_calls_expr(iterable, names);
+                    Self::collect_defer_calls(body, names);
+                }
+                Stmt::TryCatch { try_body, catch_body, .. } => {
+                    Self::collect_defer_calls(try_body, names);
+                    Self::collect_defer_calls(catch_body, names);
+                }
+                Stmt::Guard { condition, else_body } => {
+                    Self::collect_defer_calls_expr(condition, names);
+                    Self::collect_defer_calls(else_body, names);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn prepare_runtime_defer_graph(&mut self, program: &Program) -> Result<(), String> {
+        self.defer_safe_calls.clear();
+        self.defer_guard_targets.clear();
+        if self.bare_mode || self.profiling {
+            return Ok(());
+        }
+        let mut aliases = std::collections::HashSet::new();
+        Self::collect_defer_lambda_aliases(&program.statements, &mut aliases);
+        let defs: std::collections::HashMap<String, &[Stmt]> = program.statements.iter().filter_map(|stmt| match stmt {
+            Stmt::FunctionDef { name, defaults, decorators, body, .. }
+                if defaults.iter().all(Option::is_none) && decorators.is_empty() && !aliases.contains(name)
+                    && !self.native_functions.contains_key(name) && !self.extern_c_names.contains(name) =>
+                    Some((name.clone(), body.as_slice())),
+            _ => None,
+        }).collect();
+        self.defer_safe_calls = defs.keys().cloned().collect();
+        loop {
+            let next: std::collections::HashSet<String> = defs.iter()
+                .filter(|(name, body)| self.defer_safe_calls.contains(*name) && self.runtime_defer_scope_supported(body))
+                .map(|(name, _)| name.clone()).collect();
+            if next == self.defer_safe_calls { break; }
+            self.defer_safe_calls = next;
+        }
+        let mut pending = Vec::new();
+        for (name, body) in &defs {
+            if self.defer_safe_calls.contains(name) && !defer_catalog::DeferCatalog::collect(body)?.actions().is_empty() {
+                pending.push(name.clone());
+            }
+        }
+        while let Some(name) = pending.pop() {
+            if !self.defer_guard_targets.insert(name.clone()) { continue; }
+            if let Some(body) = defs.get(&name) {
+                let mut calls = std::collections::HashSet::new();
+                Self::collect_defer_calls(body, &mut calls);
+                pending.extend(calls.into_iter().filter(|callee| self.defer_safe_calls.contains(callee)));
+            }
+        }
+        Ok(())
+    }
+
+    // Laufzeit-Defer vorerst nur in Frames, deren ausgefuehrte Ausdruecke
+    // und Kontrollformen durch den geprueften Fehlerpfad erfasst werden.
+    // Fremde/native Calls, Methoden und unbekannte Formen bleiben im
+    // bisherigen Fallback, bis ihre Fehlergrenzen angebunden sind.
+    fn runtime_defer_scope_supported(&self, stmts: &[Stmt]) -> bool {
+        stmts.iter().all(|stmt| match stmt {
+            Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
+            | Stmt::Show(value) | Stmt::Throw(value) | Stmt::Expression(value)
+            | Stmt::Defer(value) | Stmt::Return(Some(value)) =>
+                self.runtime_defer_expr_supported(value),
+            Stmt::Return(None) | Stmt::Break | Stmt::Continue | Stmt::Global(_) => true,
+            Stmt::If { condition, body, else_body } =>
+                self.runtime_defer_expr_supported(condition)
+                    && self.runtime_defer_scope_supported(body)
+                    && self.runtime_defer_scope_supported(else_body),
+            Stmt::While { condition, body } =>
+                self.runtime_defer_expr_supported(condition)
+                    && self.runtime_defer_scope_supported(body),
+            Stmt::For { iterable, body, .. } =>
+                self.runtime_defer_expr_supported(iterable)
+                    && self.runtime_defer_scope_supported(body),
+            Stmt::TryCatch { try_body, catch_body, .. } =>
+                self.runtime_defer_scope_supported(try_body)
+                    && self.runtime_defer_scope_supported(catch_body),
+            Stmt::Guard { condition, else_body } =>
+                self.runtime_defer_expr_supported(condition)
+                    && self.runtime_defer_scope_supported(else_body),
+            _ => false,
+        })
+    }
+
+    /// Nur vollstaendig instrumentierte Ausdrucksbaeume duerfen rekursiv
+    /// auf eine gemeinsame Fehlerkante verzweigen.
+    fn recursive_statement_expr_supported(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Number(_) | Expr::String(_) | Expr::Boolean(_) | Expr::None | Expr::Identifier(_) => true,
+            Expr::BinaryOp { left, right, .. } =>
+                self.recursive_statement_expr_supported(left) && self.recursive_statement_expr_supported(right),
+            Expr::List(elements) => elements.iter().all(|e| self.recursive_statement_expr_supported(e)),
+            // Endpunkte duerfen keine Seiteneffekte enthalten; C-Konversion
+            // bleibt innerhalb des definierten int32-Bereichs.
+            Expr::Range { start, end } => match (start.as_ref(), end.as_ref()) {
+                (Expr::Number(s), Expr::Number(e)) => [s, e].iter().all(|n|
+                    n.is_finite() && **n >= i32::MIN as f64 && **n <= i32::MAX as f64),
+                _ => false,
+            },
+            // Slice-Code hat noch keine rekursive Objekt-Fehlerkante.
+            Expr::IndexAccess { object, index } =>
+                !matches!(index.as_ref(), Expr::Range { .. })
+                    && self.recursive_statement_expr_supported(object) && self.recursive_statement_expr_supported(index),
+            Expr::FunctionCall { name, args } =>
+                !self.native_functions.contains_key(name)
+                    && !self.extern_c_names.contains(name)
+                    && !self.lambda_names.contains_key(name)
+                    && !Self::is_kern_builtin(name)
+                    && Self::fixed_cast_bits(name).is_none()
+                    && self.module.get_function(name).is_some()
+                    && args.iter().all(|a| self.recursive_statement_expr_supported(a)),
+            _ => false,
+        }
+    }
+
+    fn compile_statement_expr(&mut self, expr: &Expr) -> Result<StructValue<'ctx>, String> {
+        self.compile_owned_statement_expr(expr, &[])
+    }
+
+    fn compile_owned_statement_expr(&mut self, expr: &Expr, parents: &[StructValue<'ctx>]) -> Result<StructValue<'ctx>, String> {
+        let previous = self.stmt_root_guard;
+        let previous_recursive = self.stmt_recursive_guard;
+        let previous_owned = std::mem::take(&mut self.stmt_owned_context);
+        self.stmt_owned_context.extend_from_slice(parents);
+        self.stmt_root_guard = matches!(expr, Expr::BinaryOp { .. } | Expr::List(_) | Expr::FunctionCall { .. } | Expr::IndexAccess { .. });
+        let function = self.current_function.unwrap();
+        self.stmt_recursive_guard = !self.bare_mode
+            && self.try_stack.iter().any(|bb| bb.get_parent() == Some(function))
+            && self.recursive_statement_expr_supported(expr);
+        let result = self.compile_expr(expr);
+        self.stmt_root_guard = previous;
+        self.stmt_recursive_guard = previous_recursive;
+        self.stmt_owned_context = previous_owned;
+        result
+    }
+
+    /// Prueft eigene Expression-Resultate vor einem weiteren Seiteneffekt.
+    /// Die Fehlerausbreitung innerhalb verschachtelter Ausdruecke bleibt separat.
+    fn guard_local_expr_error(&mut self, values: &[StructValue<'ctx>]) -> Result<(), String> {
+        if self.bare_mode { return Ok(()); }
+        let function = self.current_function.unwrap();
+        let Some(catch_bb) = self.try_stack.iter().rev().copied()
+            .find(|bb| bb.get_parent() == Some(function)) else { return Ok(()); };
+        let pending = self.builder.build_call(self.rt.moo_try_check, &[], "expr_stmt_check")
+            .map_err(|e| e.to_string())?.try_as_basic_value();
+        let pending = match pending {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("moo_try_check fehlgeschlagen".into()),
+        };
+        let failed = self.builder.build_int_compare(
+            inkwell::IntPredicate::NE, pending, self.context.i32_type().const_zero(),
+            "expr_stmt_error",
+        ).map_err(|e| e.to_string())?;
+        let error_bb = self.context.append_basic_block(function, "expr_stmt_error");
+        let ok_bb = self.context.append_basic_block(function, "expr_stmt_ok");
+        self.builder.build_conditional_branch(failed, error_bb, ok_bb)
+            .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(error_bb);
+        for value in values.iter().rev().chain(self.stmt_owned_context.iter().rev()) {
+            self.call_rt_void(self.rt.moo_release, &[(*value).into()], "rel_failed_expr")?;
+        }
+        self.builder.build_unconditional_branch(catch_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(ok_bb);
+        Ok(())
+    }
+
+    /// Behandelt inkonsistente Handlerzustaende ohne erfundenen Ergebniswert.
+    fn native_argument_state_failure(
+        &self,
+        has_depth: inkwell::values::IntValue<'ctx>,
+        has_error: inkwell::values::IntValue<'ctx>,
+        target: Option<inkwell::basic_block::BasicBlock<'ctx>>,
+    ) -> Result<(), String> {
+        if let Some(catch) = target {
+            let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
+            let fatal = self.context.append_basic_block(function, "native.arg.invalid_handler_state");
+            let can_catch = self.builder.build_and(has_depth, has_error, "native.arg.can_catch")
+                .map_err(|e| e.to_string())?;
+            self.builder.build_conditional_branch(can_catch, catch, fatal).map_err(|e| e.to_string())?;
+            self.builder.position_at_end(fatal);
+            let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.trap").ok_or("llvm.trap fehlt")?;
+            let trap = intrinsic.get_declaration(&self.module, &[]).ok_or("llvm.trap-Deklaration fehlt")?;
+            self.builder.build_call(trap, &[], "").map_err(|e| e.to_string())?;
+            self.builder.build_unreachable().map_err(|e| e.to_string())?;
+        } else {
+            self.builder.build_return(Some(&self.context.i32_type().const_int(1, false)))
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Validiert ein dynamisches Number-Argument vor jeder fptosi-Konversion.
+    fn compile_native_integer_argument(&mut self, expr: &Expr, ty: crate::codegen_native::NType, catch: Option<inkwell::basic_block::BasicBlock<'ctx>>) -> Result<inkwell::values::IntValue<'ctx>, String> {
+        use crate::codegen_native::NType;
+        let (minimum, maximum, type_name) = match ty {
+            NType::I32 => (i32::MIN as f64, i32::MAX as f64, "i32"),
+            NType::U32 => (u32::MIN as f64, u32::MAX as f64, "u32"),
+            NType::I16 => (i16::MIN as f64, i16::MAX as f64, "i16"),
+            NType::U16 => (u16::MIN as f64, u16::MAX as f64, "u16"),
+            NType::I8 => (i8::MIN as f64, i8::MAX as f64, "i8"),
+            NType::U8 => (u8::MIN as f64, u8::MAX as f64, "u8"),
+            _ => return Err("Nicht unterstuetztes natives Integerargument".into()),
+        };
+        let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
+        let state_ok = self.context.append_basic_block(function, "native.arg.state_ok");
+        let state_error = self.context.append_basic_block(function, "native.arg.state_error");
+        let depth = self.module.get_global("moo_try_depth").unwrap_or_else(||
+            self.module.add_global(self.context.i32_type(), None, "moo_try_depth"));
+        let depth_value = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.try_depth")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let pending = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending")
+            .map_err(|e| e.to_string())?.try_as_basic_value();
+        let pending = match pending {
+            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+            _ => return Err("moo_try_check liefert keinen Wert".into()),
+        };
+        let has_depth = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_value,
+            self.context.i32_type().const_zero(), "native.arg.has_handler").map_err(|e| e.to_string())?;
+        let has_error = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending,
+            self.context.i32_type().const_zero(), "native.arg.has_error").map_err(|e| e.to_string())?;
+        let wrong_depth = if catch.is_some() {
+            self.builder.build_not(has_depth, "native.arg.no_handler").map_err(|e| e.to_string())?
+        } else { has_depth };
+        let invalid_state = self.builder.build_or(wrong_depth, has_error, "native.arg.invalid_state")
+            .map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(invalid_state, state_error, state_ok).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(state_error);
+        self.native_argument_state_failure(has_depth, has_error, catch)?;
+        self.builder.position_at_end(state_ok);
+        let value = self.compile_expr(expr)?;
+        let value_ok = self.context.append_basic_block(function, "native.arg.value_ok");
+        let value_error = self.context.append_basic_block(function, "native.arg.value_error");
+        let depth_after = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.depth_after")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let pending_after = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending_after")
+            .map_err(|e| e.to_string())?.try_as_basic_value();
+        let pending_after = match pending_after {
+            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+            _ => return Err("moo_try_check liefert keinen Wert".into()),
+        };
+        let has_depth_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_after,
+            self.context.i32_type().const_zero(), "native.arg.has_handler_after").map_err(|e| e.to_string())?;
+        let has_error_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending_after,
+            self.context.i32_type().const_zero(), "native.arg.has_error_after").map_err(|e| e.to_string())?;
+        let wrong_depth_after = if catch.is_some() {
+            self.builder.build_not(has_depth_after, "native.arg.no_handler_after").map_err(|e| e.to_string())?
+        } else { has_depth_after };
+        let bad_after = self.builder.build_or(wrong_depth_after, has_error_after, "native.arg.bad_after")
+            .map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(bad_after, value_error, value_ok).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(value_error);
+        self.call_rt_void(self.rt.moo_release, &[value.into()], "native.arg.release_pending")?;
+        self.native_argument_state_failure(has_depth_after, has_error_after, catch)?;
+        self.builder.position_at_end(value_ok);
+        let tag_value = self.builder.build_extract_value(value, 0, "native.arg.tag")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let raw = self.builder.build_extract_value(value, 1, "native.arg.bits")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let range_bb = self.context.append_basic_block(function, "native.arg.range");
+        let convert_bb = self.context.append_basic_block(function, "native.arg.convert");
+        let success_bb = self.context.append_basic_block(function, "native.arg.valid");
+        let failure_bb = self.context.append_basic_block(function, "native.arg.invalid");
+        let is_number = self.builder.build_int_compare(
+            inkwell::IntPredicate::EQ, tag_value, self.context.i64_type().const_zero(), "native.arg.is_number"
+        ).map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(is_number, range_bb, failure_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(range_bb);
+        let number = self.builder.build_bit_cast(raw, self.context.f64_type(), "native.arg.number")
+            .map_err(|e| e.to_string())?.into_float_value();
+        let lower = self.builder.build_float_compare(
+            inkwell::FloatPredicate::OGE, number, self.context.f64_type().const_float(minimum), "native.arg.min"
+        ).map_err(|e| e.to_string())?;
+        let upper = self.builder.build_float_compare(
+            inkwell::FloatPredicate::OLE, number, self.context.f64_type().const_float(maximum), "native.arg.max"
+        ).map_err(|e| e.to_string())?;
+        let in_range = self.builder.build_and(lower, upper, "native.arg.in_range").map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(in_range, convert_bb, failure_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(convert_bb);
+        let integer = if ty == NType::U32 {
+            self.builder.build_float_to_unsigned_int(number, self.context.i32_type(), "native.arg.u32")
+        } else {
+            self.builder.build_float_to_signed_int(number, self.context.i32_type(), "native.arg.i32")
+        }.map_err(|e| e.to_string())?;
+        let roundtrip = if ty == NType::U32 {
+            self.builder.build_unsigned_int_to_float(integer, self.context.f64_type(), "native.arg.roundtrip")
+        } else {
+            self.builder.build_signed_int_to_float(integer, self.context.f64_type(), "native.arg.roundtrip")
+        }.map_err(|e| e.to_string())?;
+        let integral = self.builder.build_float_compare(
+            inkwell::FloatPredicate::OEQ, number, roundtrip, "native.arg.integral"
+        ).map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(integral, success_bb, failure_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(failure_bb);
+        self.call_rt_void(self.rt.moo_release, &[value.into()], "native.arg.release_error")?;
+        let message = self.make_global_str(&format!("Native Funktion erwartet eine {type_name}-Ganzzahl"), "native_arg_error")?;
+        let error = self.call_rt(self.rt.moo_string_new, &[message.into()], "native.arg.error")?;
+        self.call_rt_void(self.rt.moo_throw, &[error.into()], "native.arg.throw")?;
+        if let Some(target) = catch {
+            self.builder.build_unconditional_branch(target).map_err(|e| e.to_string())?;
+        } else {
+            self.builder.build_return(Some(&self.context.i32_type().const_int(1, false)))
+                .map_err(|e| e.to_string())?;
+        }
+        self.builder.position_at_end(success_bb);
+        self.call_rt_void(self.rt.moo_release, &[value.into()], "native.arg.release")?;
+        if matches!(ty, NType::I8 | NType::U8) {
+            self.builder.build_int_truncate(integer, self.context.i8_type(), "native.arg.i8").map_err(|e| e.to_string())
+        } else if matches!(ty, NType::I16 | NType::U16) {
+            self.builder.build_int_truncate(integer, self.context.i16_type(), "native.arg.i16").map_err(|e| e.to_string())
+        } else {
+            Ok(integer)
+        }
+    }
+
+    /// Konvertiert dynamische Number-Werte an der Float-FFI-Grenze.
+    fn compile_native_float_argument(&mut self, expr: &Expr, ty: crate::codegen_native::NType, catch: Option<inkwell::basic_block::BasicBlock<'ctx>>) -> Result<inkwell::values::FloatValue<'ctx>, String> {
+        use crate::codegen_native::NType;
+        if !matches!(ty, NType::F32 | NType::F64) { return Err("Floattyp erwartet".into()); }
+        let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
+        let state_ok = self.context.append_basic_block(function, "native.arg.state_ok");
+        let state_error = self.context.append_basic_block(function, "native.arg.state_error");
+        let depth = self.module.get_global("moo_try_depth").unwrap_or_else(||
+            self.module.add_global(self.context.i32_type(), None, "moo_try_depth"));
+        let depth_value = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.try_depth")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let pending = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending")
+            .map_err(|e| e.to_string())?.try_as_basic_value();
+        let pending = match pending {
+            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+            _ => return Err("moo_try_check liefert keinen Wert".into()),
+        };
+        let has_depth = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_value,
+            self.context.i32_type().const_zero(), "native.arg.has_handler").map_err(|e| e.to_string())?;
+        let has_error = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending,
+            self.context.i32_type().const_zero(), "native.arg.has_error").map_err(|e| e.to_string())?;
+        let wrong_depth = if catch.is_some() {
+            self.builder.build_not(has_depth, "native.arg.no_handler").map_err(|e| e.to_string())?
+        } else { has_depth };
+        let invalid_state = self.builder.build_or(wrong_depth, has_error, "native.arg.invalid_state")
+            .map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(invalid_state, state_error, state_ok).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(state_error);
+        self.native_argument_state_failure(has_depth, has_error, catch)?;
+        self.builder.position_at_end(state_ok);
+        let value = self.compile_expr(expr)?;
+        let value_ok = self.context.append_basic_block(function, "native.arg.value_ok");
+        let value_error = self.context.append_basic_block(function, "native.arg.value_error");
+        let depth_after = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.depth_after")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let pending_after = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending_after")
+            .map_err(|e| e.to_string())?.try_as_basic_value();
+        let pending_after = match pending_after {
+            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+            _ => return Err("moo_try_check liefert keinen Wert".into()),
+        };
+        let has_depth_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_after,
+            self.context.i32_type().const_zero(), "native.arg.has_handler_after").map_err(|e| e.to_string())?;
+        let has_error_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending_after,
+            self.context.i32_type().const_zero(), "native.arg.has_error_after").map_err(|e| e.to_string())?;
+        let wrong_depth_after = if catch.is_some() {
+            self.builder.build_not(has_depth_after, "native.arg.no_handler_after").map_err(|e| e.to_string())?
+        } else { has_depth_after };
+        let bad_after = self.builder.build_or(wrong_depth_after, has_error_after, "native.arg.bad_after")
+            .map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(bad_after, value_error, value_ok).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(value_error);
+        self.call_rt_void(self.rt.moo_release, &[value.into()], "native.arg.release_pending")?;
+        self.native_argument_state_failure(has_depth_after, has_error_after, catch)?;
+        self.builder.position_at_end(value_ok);
+        let tag_value = self.builder.build_extract_value(value, 0, "native.arg.tag")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let raw = self.builder.build_extract_value(value, 1, "native.arg.bits")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let number_bb = self.context.append_basic_block(function, "native.float.number");
+        let convert_bb = self.context.append_basic_block(function, "native.float.convert");
+        let failure_bb = self.context.append_basic_block(function, "native.float.invalid");
+        let is_number = self.builder.build_int_compare(inkwell::IntPredicate::EQ, tag_value,
+            self.context.i64_type().const_zero(), "native.float.is_number").map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(is_number, number_bb, failure_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(number_bb);
+        let number = self.builder.build_bit_cast(raw, self.context.f64_type(), "native.float.number")
+            .map_err(|e| e.to_string())?.into_float_value();
+        let converted = if ty == NType::F32 {
+            let narrowed = self.builder.build_float_trunc(number, self.context.f32_type(), "native.float.f32").map_err(|e| e.to_string())?;
+            // Nur endliche Eingaben, deren korrekt gerundetes Ergebnis unendlich ist, scheitern.
+            let pos_inf = self.context.f32_type().const_float(f64::INFINITY);
+            let neg_inf = self.context.f32_type().const_float(f64::NEG_INFINITY);
+            let pos = self.builder.build_float_compare(inkwell::FloatPredicate::OEQ, narrowed, pos_inf, "native.float.pos_inf").map_err(|e| e.to_string())?;
+            let neg = self.builder.build_float_compare(inkwell::FloatPredicate::OEQ, narrowed, neg_inf, "native.float.neg_inf").map_err(|e| e.to_string())?;
+            let rounded_inf = self.builder.build_or(pos, neg, "native.float.rounded_inf").map_err(|e| e.to_string())?;
+            let upper = self.builder.build_float_compare(inkwell::FloatPredicate::OLE, number, self.context.f64_type().const_float(f64::MAX), "native.float.finite_upper").map_err(|e| e.to_string())?;
+            let lower = self.builder.build_float_compare(inkwell::FloatPredicate::OGE, number, self.context.f64_type().const_float(-f64::MAX), "native.float.finite_lower").map_err(|e| e.to_string())?;
+            let finite = self.builder.build_and(upper, lower, "native.float.finite").map_err(|e| e.to_string())?;
+            let overflow = self.builder.build_and(finite, rounded_inf, "native.float.overflow").map_err(|e| e.to_string())?;
+            self.builder.build_conditional_branch(overflow, failure_bb, convert_bb).map_err(|e| e.to_string())?;
+            narrowed
+        } else {
+            self.builder.build_unconditional_branch(convert_bb).map_err(|e| e.to_string())?;
+            number
+        };
+        self.builder.position_at_end(failure_bb);
+        self.call_rt_void(self.rt.moo_release, &[value.into()], "native.float.release_error")?;
+        let message = self.make_global_str("Native Funktion erwartet eine darstellbare Floatzahl", "native_float_error")?;
+        let error = self.call_rt(self.rt.moo_string_new, &[message.into()], "native.float.error")?;
+        self.call_rt_void(self.rt.moo_throw, &[error.into()], "native.float.throw")?;
+        if let Some(target) = catch {
+            self.builder.build_unconditional_branch(target).map_err(|e| e.to_string())?;
+        } else {
+            self.builder.build_return(Some(&self.context.i32_type().const_int(1, false))).map_err(|e| e.to_string())?;
+        }
+        self.builder.position_at_end(convert_bb);
+        self.call_rt_void(self.rt.moo_release, &[value.into()], "native.float.release")?;
+        Ok(converted)
+    }
+
+    /// Prueft dynamische i64/u64 vor jeder LLVM-Konversion.
+    fn compile_native_wide_argument(&mut self, expr: &Expr, ty: crate::codegen_native::NType, catch: Option<inkwell::basic_block::BasicBlock<'ctx>>) -> Result<inkwell::values::IntValue<'ctx>, String> {
+        use crate::codegen_native::NType;
+        if !matches!(ty, NType::I64 | NType::U64) { return Err("64-Bit-Ganzzahltyp erwartet".into()); }
+        let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
+        let state_ok = self.context.append_basic_block(function, "native.arg.state_ok");
+        let state_error = self.context.append_basic_block(function, "native.arg.state_error");
+        let depth = self.module.get_global("moo_try_depth").unwrap_or_else(||
+            self.module.add_global(self.context.i32_type(), None, "moo_try_depth"));
+        let depth_value = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.try_depth")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let pending = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending")
+            .map_err(|e| e.to_string())?.try_as_basic_value();
+        let pending = match pending {
+            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+            _ => return Err("moo_try_check liefert keinen Wert".into()),
+        };
+        let has_depth = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_value,
+            self.context.i32_type().const_zero(), "native.arg.has_handler").map_err(|e| e.to_string())?;
+        let has_error = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending,
+            self.context.i32_type().const_zero(), "native.arg.has_error").map_err(|e| e.to_string())?;
+        let wrong_depth = if catch.is_some() {
+            self.builder.build_not(has_depth, "native.arg.no_handler").map_err(|e| e.to_string())?
+        } else { has_depth };
+        let invalid_state = self.builder.build_or(wrong_depth, has_error, "native.arg.invalid_state")
+            .map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(invalid_state, state_error, state_ok).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(state_error);
+        self.native_argument_state_failure(has_depth, has_error, catch)?;
+        self.builder.position_at_end(state_ok);
+        let value = self.compile_expr(expr)?;
+        let value_ok = self.context.append_basic_block(function, "native.arg.value_ok");
+        let value_error = self.context.append_basic_block(function, "native.arg.value_error");
+        let depth_after = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.depth_after")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let pending_after = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending_after")
+            .map_err(|e| e.to_string())?.try_as_basic_value();
+        let pending_after = match pending_after {
+            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+            _ => return Err("moo_try_check liefert keinen Wert".into()),
+        };
+        let has_depth_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_after,
+            self.context.i32_type().const_zero(), "native.arg.has_handler_after").map_err(|e| e.to_string())?;
+        let has_error_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending_after,
+            self.context.i32_type().const_zero(), "native.arg.has_error_after").map_err(|e| e.to_string())?;
+        let wrong_depth_after = if catch.is_some() {
+            self.builder.build_not(has_depth_after, "native.arg.no_handler_after").map_err(|e| e.to_string())?
+        } else { has_depth_after };
+        let bad_after = self.builder.build_or(wrong_depth_after, has_error_after, "native.arg.bad_after")
+            .map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(bad_after, value_error, value_ok).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(value_error);
+        self.call_rt_void(self.rt.moo_release, &[value.into()], "native.arg.release_pending")?;
+        self.native_argument_state_failure(has_depth_after, has_error_after, catch)?;
+        self.builder.position_at_end(value_ok);
+        let tag_value = self.builder.build_extract_value(value, 0, "native.arg.tag")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let raw = self.builder.build_extract_value(value, 1, "native.arg.bits")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let range_bb = self.context.append_basic_block(function, "native.wide.range");
+        let convert_bb = self.context.append_basic_block(function, "native.wide.convert");
+        let success_bb = self.context.append_basic_block(function, "native.wide.valid");
+        let failure_bb = self.context.append_basic_block(function, "native.wide.invalid");
+        let is_number = self.builder.build_int_compare(inkwell::IntPredicate::EQ, tag_value,
+            self.context.i64_type().const_zero(), "native.wide.is_number").map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(is_number, range_bb, failure_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(range_bb);
+        let number = self.builder.build_bit_cast(raw, self.context.f64_type(), "native.wide.number")
+            .map_err(|e| e.to_string())?.into_float_value();
+        // Obere Grenzen sind exklusiv; diese f64-Werte sind exakt 2^63 bzw. 2^64.
+        let (minimum, upper) = if ty == NType::I64 {
+            (-9223372036854775808.0_f64, 9223372036854775808.0_f64)
+        } else { (0.0_f64, 18446744073709551616.0_f64) };
+        let lower_ok = self.builder.build_float_compare(inkwell::FloatPredicate::OGE, number,
+            self.context.f64_type().const_float(minimum), "native.wide.lower").map_err(|e| e.to_string())?;
+        let upper_ok = self.builder.build_float_compare(inkwell::FloatPredicate::OLT, number,
+            self.context.f64_type().const_float(upper), "native.wide.upper").map_err(|e| e.to_string())?;
+        let range_ok = self.builder.build_and(lower_ok, upper_ok, "native.wide.in_range").map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(range_ok, convert_bb, failure_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(convert_bb);
+        let integer = if ty == NType::I64 {
+            self.builder.build_float_to_signed_int(number, self.context.i64_type(), "native.wide.i64")
+        } else {
+            self.builder.build_float_to_unsigned_int(number, self.context.i64_type(), "native.wide.u64")
+        }.map_err(|e| e.to_string())?;
+        let back = if ty == NType::I64 {
+            self.builder.build_signed_int_to_float(integer, self.context.f64_type(), "native.wide.back")
+        } else {
+            self.builder.build_unsigned_int_to_float(integer, self.context.f64_type(), "native.wide.back")
+        }.map_err(|e| e.to_string())?;
+        let integral = self.builder.build_float_compare(inkwell::FloatPredicate::OEQ, number, back, "native.wide.integral")
+            .map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(integral, success_bb, failure_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(failure_bb);
+        self.call_rt_void(self.rt.moo_release, &[value.into()], "native.wide.release_error")?;
+        let message = self.make_global_str("Native Funktion erwartet eine darstellbare 64-Bit-Ganzzahl", "native_wide_error")?;
+        let error = self.call_rt(self.rt.moo_string_new, &[message.into()], "native.wide.error")?;
+        self.call_rt_void(self.rt.moo_throw, &[error.into()], "native.wide.throw")?;
+        if let Some(target) = catch {
+            self.builder.build_unconditional_branch(target).map_err(|e| e.to_string())?;
+        } else {
+            self.builder.build_return(Some(&self.context.i32_type().const_int(1, false))).map_err(|e| e.to_string())?;
+        }
+        self.builder.position_at_end(success_bb);
+        self.call_rt_void(self.rt.moo_release, &[value.into()], "native.wide.release")?;
+        Ok(integer)
+    }
+
+    /// Erlaubt Boxing nur, wenn genau dieser i64/u64-Wert in f64 darstellbar ist.
+    fn box_native_wide(&mut self, integer: inkwell::values::IntValue<'ctx>, unsigned: bool) -> Result<inkwell::values::FloatValue<'ctx>, String> {
+        let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
+        let range_bb = self.context.append_basic_block(function, "native.box.range");
+        let compare_bb = self.context.append_basic_block(function, "native.box.compare");
+        let failure_bb = self.context.append_basic_block(function, "native.box.invalid");
+        let success_bb = self.context.append_basic_block(function, "native.box.exact");
+        let number = if unsigned {
+            self.builder.build_unsigned_int_to_float(integer, self.context.f64_type(), "native.box.wide")
+        } else {
+            self.builder.build_signed_int_to_float(integer, self.context.f64_type(), "native.box.wide")
+        }.map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(range_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(range_bb);
+        let upper = if unsigned { 18446744073709551616.0_f64 } else { 9223372036854775808.0_f64 };
+        let valid = self.builder.build_float_compare(inkwell::FloatPredicate::OLT, number,
+            self.context.f64_type().const_float(upper), "native.box.in_range").map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(valid, compare_bb, failure_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(compare_bb);
+        // Erst nach dem Bereichscheck ist die Rueckkonversion frei von LLVM-Poison.
+        let back = if unsigned {
+            self.builder.build_float_to_unsigned_int(number, self.context.i64_type(), "native.box.back")
+        } else {
+            self.builder.build_float_to_signed_int(number, self.context.i64_type(), "native.box.back")
+        }.map_err(|e| e.to_string())?;
+        let exact = self.builder.build_int_compare(inkwell::IntPredicate::EQ, integer, back, "native.box.exact")
+            .map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(exact, success_bb, failure_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(failure_bb);
+        let message = self.make_global_str("Native Funktion liefert eine nicht exakt darstellbare 64-Bit-Ganzzahl", "native_box_error")?;
+        let error = self.call_rt(self.rt.moo_string_new, &[message.into()], "native.box.error")?;
+        self.call_rt_void(self.rt.moo_throw, &[error.into()], "native.box.throw")?;
+        self.builder.build_return(Some(&self.context.i32_type().const_int(1, false))).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(success_bb);
+        Ok(number)
+    }
+
     fn compile_expr(&mut self, expr: &Expr) -> Result<StructValue<'ctx>, String> {
         match expr {
+            Expr::NativeNumber { line, column, .. } => Err(format!("Natives Zahlenliteral bei {line}:{column} wird noch nicht unterstützt")),
             Expr::Number(n) => {
                 let f = self.context.f64_type().const_float(*n);
                 self.call_rt(self.rt.moo_number, &[f.into()], "num")
@@ -2436,6 +4076,12 @@ impl<'ctx> CodeGen<'ctx> {
                 if let Ok(v) = self.load_var(name) {
                     return Ok(v);
                 }
+                if self.native_functions.contains_key(name) {
+                    return Err(format!("Nativer Funktionswert '{name}' ist noch nicht unterstützt"));
+                }
+                if self.extern_c_names.contains(name) {
+                    return Err(format!("extern-C-Funktionswert '{name}' ist noch nicht unterstützt"));
+                }
                 if let Some(llvm_fn) = self.module.get_function(name) {
                     let callable_fn = self.windows_callable_wrapper(llvm_fn, name)?;
                     let fn_ptr = callable_fn.as_global_value().as_pointer_value();
@@ -2454,6 +4100,7 @@ impl<'ctx> CodeGen<'ctx> {
                     .or_else(|_| self.load_var("this"))
             }
             Expr::BinaryOp { left, op, right } => {
+                let guard_operands = std::mem::take(&mut self.stmt_root_guard) || self.stmt_recursive_guard;
                 // Zig-inspiriert: Const-Folding — bei Number-Literalen zur Compile-Zeit berechnen
                 if let (Expr::Number(a), Expr::Number(b)) = (left.as_ref(), right.as_ref()) {
                     let result = match op {
@@ -2492,7 +4139,12 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 let lhs = self.compile_expr(left)?;
-                let rhs = self.compile_expr(right)?;
+                if guard_operands { self.guard_local_expr_error(&[lhs])?; }
+                if self.stmt_recursive_guard { self.stmt_owned_context.push(lhs); }
+                let rhs_result = self.compile_expr(right);
+                if self.stmt_recursive_guard { self.stmt_owned_context.pop(); }
+                let rhs = rhs_result?;
+                if guard_operands { self.guard_local_expr_error(&[lhs, rhs])?; }
 
                 // Operator-Ueberladung: pruefe ob eine Klasse __op__ Methode hat
                 let dunder_name = match op {
@@ -2534,33 +4186,69 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder.build_conditional_branch(is_obj, obj_bb, normal_bb)
                         .map_err(|e| format!("{e}"))?;
 
-                    // Objekt-Branch: pruefe class_name und rufe __op__ auf
+                    // Anhand der tatsaechlichen Klasse dispatchen. Unterklassen
+                    // erben die naechste definierte Ueberladung ihrer Eltern.
                     self.builder.position_at_end(obj_bb);
-                    // Fuer jede Klasse mit Ueberladung: Vergleich
-                    let mut last_bb = obj_bb;
-                    for (class_name, method_fn) in &overloads {
-                        let class_str = self.make_global_str(class_name, "cls")?;
-                        // object->class_name vergleichen
-                        let obj_ptr = self.builder.build_int_to_ptr(
-                            self.builder.build_extract_value(lhs, 1, "data")
-                                .map_err(|e| format!("{e}"))?.into_int_value(),
-                            self.context.ptr_type(inkwell::AddressSpace::default()),
-                            "obj_ptr").map_err(|e| format!("{e}"))?;
-                        // class_name ist erstes Feld nach refcount (offset 4/8 je nach Alignment)
-                        // Einfacher: strcmp ueber Runtime. Nutze moo_object_get mit speziellem Key
-                        // Noch einfacher: Direkt die Methode aufrufen — wenn es nur eine Klasse gibt
-                        // die __add__ hat, brauchen wir keinen class_name Vergleich
-                        let result = self.call_rt(*method_fn, &[lhs.into(), rhs.into()], "op_overload")?;
+                    let class_call = self.call_rt_abi(
+                        self.rt.moo_object_class_name, &[lhs.into()], "op_class")?;
+                    let class_ptr = match class_call.try_as_basic_value() {
+                        inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                        _ => return Err("moo_object_class_name hat keinen Wert".to_string()),
+                    };
+                    let strcmp_fn = self.module.get_function("strcmp").unwrap_or_else(|| {
+                        let ptr = self.context.ptr_type(inkwell::AddressSpace::default());
+                        self.module.add_function("strcmp",
+                            self.context.i32_type().fn_type(&[ptr.into(), ptr.into()], false), None)
+                    });
+                    let mut classes: Vec<String> = self.class_methods.keys()
+                        .map(|(class, _)| class.clone())
+                        .chain(self.class_parents.keys().cloned())
+                        .collect();
+                    classes.sort();
+                    classes.dedup();
+                    for (index, class_name) in classes.iter().enumerate() {
+                        let mut current = class_name.clone();
+                        let mut visited = std::collections::HashSet::new();
+                        let method_fn = loop {
+                            if !visited.insert(current.clone()) {
+                                return Err(format!("Zyklische Klassenvererbung bei {class_name}"));
+                            }
+                            if let Some(func) = self.class_methods.get(&(current.clone(), dunder_name.to_string())) {
+                                break Some(*func);
+                            }
+                            match self.class_parents.get(&current) {
+                                Some(parent) => current = parent.clone(),
+                                None => break None,
+                            }
+                        };
+                        let Some(method_fn) = method_fn else { continue };
+                        if method_fn.count_params() != 2 {
+                            return Err(format!("{class_name}.{dunder_name} erwartet genau ein Argument"));
+                        }
+                        let name_ptr = self.make_global_str(class_name, &format!("op_class_{index}"))?;
+                        let comparison = self.builder.build_call(
+                            strcmp_fn, &[class_ptr.into(), name_ptr.into()], "op_class_cmp"
+                        ).map_err(|e| format!("{e}"))?;
+                        let cmp = match comparison.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                            _ => return Err("strcmp hat keinen Wert".to_string()),
+                        };
+                        let matches = self.builder.build_int_compare(
+                            inkwell::IntPredicate::EQ, cmp, self.context.i32_type().const_zero(), "op_class_match"
+                        ).map_err(|e| format!("{e}"))?;
+                        let call_bb = self.context.append_basic_block(func_cur, "op_overload_call");
+                        let next_bb = self.context.append_basic_block(func_cur, "op_overload_next");
+                        self.builder.build_conditional_branch(matches, call_bb, next_bb)
+                            .map_err(|e| format!("{e}"))?;
+                        self.builder.position_at_end(call_bb);
+                        // User-Methoden konsumieren beide Operand-Refs; kein Post-Call-Release.
+                        let result = self.call_rt(method_fn, &[lhs.into(), rhs.into()], "op_overload")?;
                         self.builder.build_store(result_ptr, result).map_err(|e| format!("{e}"))?;
-                        // KEIN post-call release auf lhs/rhs: method_fn ist eine
-                        // user-definierte Methode → Transfer-Semantik per
-                        // owning-ref-konvention v2 §3.3. Die +1 der Operanden
-                        // wandert in die Param-Slots der Methode und wird dort
-                        // von release_function_locals() konsumiert. Ein zusaetz-
-                        // liches Release hier waere ein Double-Free (SIGSEGV).
                         self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
-                        break; // Fuer jetzt: nur erste Ueberladung (Multi-Klassen spaeter)
+                        self.builder.position_at_end(next_bb);
                     }
+                    // Keine passende Ueberladung: normaler Runtime-Operator.
+                    self.builder.build_unconditional_branch(normal_bb).map_err(|e| format!("{e}"))?;
 
                     // Normal-Branch: Standard Runtime-Call
                     self.builder.position_at_end(normal_bb);
@@ -2643,6 +4331,127 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(res)
             }
             Expr::FunctionCall { name, args } => {
+                let guard_args = std::mem::take(&mut self.stmt_root_guard) || self.stmt_recursive_guard;
+                if let Some(function) = self.native_functions.get(name).copied() {
+                    let signature = self.native_signatures.get(name).cloned().ok_or_else(|| format!("Nativer Zeigerfunktionsaufruf '{name}' ist noch nicht unterstützt"))?;
+                    // Der aktuelle Wide-Fehlerpfad beendet main. Eine spaetere
+                    // Defer-Stelle kann in einer Schleife bereits aktiv sein; bis
+                    // zum propagierenden Cleanup-Rahmen konservativ modulweit sperren.
+                    if self.native_ffi_functions.contains(name) && !self.defer_catalog.actions().is_empty()
+                        && (matches!(signature.result, Some(crate::codegen_native::NType::I64 | crate::codegen_native::NType::U64))
+                            || signature.params.iter().any(|ty| matches!(ty, crate::codegen_native::NType::I64 | crate::codegen_native::NType::U64)))
+                    {
+                        return Err("Native 64-Bit-FFI bei vorhandenem aufräumen ist noch nicht unterstützt".into());
+                    }
+                    // Bis ein propagierender Cleanup-Rahmen existiert darf ein
+                    // Foreign-Fehler nur ohne aktiven Moo-Handler auftreten.
+                    if self.native_ffi_functions.contains(name)
+                        && (self.current_function != self.module.get_function("main")
+                            || !self.try_stack.is_empty() || self.bare_mode)
+                    {
+                        return Err("Native FFI-Aufrufe sind derzeit nur in main ausserhalb von try unterstützt".into());
+                    }
+                    if args.len() != function.count_params() as usize {
+                        return Err(format!("Native Funktion '{name}': falsche Argumentzahl"));
+                    }
+                    if self.bare_mode {
+                        return Err("Dynamische native Aufrufe sind im Bare-Profil noch nicht unterstützt".into());
+                    }
+                    let mut native_args = Vec::with_capacity(args.len());
+                    for (arg, ty) in args.iter().zip(&signature.params) {
+                        if matches!(ty, crate::codegen_native::NType::I64 | crate::codegen_native::NType::U64) {
+                            let local_catch = if self.native_try_direct { self.try_stack.last().copied() } else { None };
+                            if local_catch.is_none()
+                                && (self.current_function != self.module.get_function("main") || !self.try_stack.is_empty())
+                            {
+                                return Err("Dynamische 64-Bit-Argumente sind derzeit nur in main ausserhalb von try unterstützt".into());
+                            }
+                            native_args.push(self.compile_native_wide_argument(arg, *ty, local_catch)?.into());
+                            continue;
+                        }
+                        if matches!(ty, crate::codegen_native::NType::F32 | crate::codegen_native::NType::F64) {
+                            let local_catch = if self.native_try_direct { self.try_stack.last().copied() } else { None };
+                            if local_catch.is_none()
+                                && (self.current_function != self.module.get_function("main") || !self.try_stack.is_empty())
+                            {
+                                return Err("Dynamische Float-Argumente sind derzeit nur in main ausserhalb von try unterstützt".into());
+                            }
+                            native_args.push(self.compile_native_float_argument(arg, *ty, local_catch)?.into());
+                            continue;
+                        }
+                        let (minimum, maximum) = match ty {
+                            crate::codegen_native::NType::I32 => (i32::MIN as f64, i32::MAX as f64),
+                            crate::codegen_native::NType::U32 => (u32::MIN as f64, u32::MAX as f64),
+                            crate::codegen_native::NType::I16 => (i16::MIN as f64, i16::MAX as f64),
+                            crate::codegen_native::NType::U16 => (u16::MIN as f64, u16::MAX as f64),
+                            crate::codegen_native::NType::I8 => (i8::MIN as f64, i8::MAX as f64),
+                            crate::codegen_native::NType::U8 => (u8::MIN as f64, u8::MAX as f64),
+                            _ => return Err("Nicht unterstuetzter nativer Parametertyp".into()),
+                        };
+                        let literal = match arg {
+                            Expr::Number(value) => Some(*value),
+                            Expr::UnaryOp { op: crate::ast::UnaryOpKind::Neg, operand } =>
+                                match operand.as_ref() {
+                                    Expr::Number(value) => Some(-*value),
+                                    _ => None,
+                                },
+                            _ => None,
+                        };
+                        let value = if let Some(number) = literal {
+                            if !number.is_finite() || number.fract() != 0.0
+                                || number < minimum || number > maximum
+                            {
+                                return Err("Nativer i32-Parameter ist keine darstellbare Ganzzahl".into());
+                            }
+                            let int_ty = match ty {
+                                crate::codegen_native::NType::I32 | crate::codegen_native::NType::U32 => self.context.i32_type(),
+                                crate::codegen_native::NType::I16 | crate::codegen_native::NType::U16 => self.context.i16_type(),
+                                _ => self.context.i8_type(),
+                            };
+                            int_ty.const_int(number as i64 as u64, false)
+                        } else {
+                            let local_catch = if self.native_try_direct {
+                                self.try_stack.last().copied()
+                            } else { None };
+                            if local_catch.is_none()
+                                && (self.current_function != self.module.get_function("main") || !self.try_stack.is_empty())
+                            {
+                                return Err("Dynamische i32-Argumente sind derzeit nur in main ausserhalb von try unterstützt".into());
+                            }
+                            self.compile_native_integer_argument(arg, *ty, local_catch)?
+
+                        };
+                        native_args.push(value.into());
+                    }
+                    let call_name = if signature.result.is_some() { "native.call" } else { "" };
+                    let result = self.builder.build_call(function, &native_args, call_name)
+                        .map_err(|e| e.to_string())?.try_as_basic_value();
+                    if signature.result.is_none() {
+                        return self.call_rt(self.rt.moo_none, &[], "native.void");
+                    }
+                    let value = match result {
+                        inkwell::values::ValueKind::Basic(value) => value,
+                        _ => return Err("Native Funktion lieferte keinen Wert".into()),
+                    };
+                    let boxed = match (signature.result, value) {
+                        (Some(crate::codegen_native::NType::I64), BasicValueEnum::IntValue(value)) =>
+                            self.box_native_wide(value, false)?,
+                        (Some(crate::codegen_native::NType::U64), BasicValueEnum::IntValue(value)) =>
+                            self.box_native_wide(value, true)?,
+                        (Some(crate::codegen_native::NType::F32), BasicValueEnum::FloatValue(value)) =>
+                            self.builder.build_float_ext(value, self.context.f64_type(), "native.box").map_err(|e| e.to_string())?,
+                        (Some(crate::codegen_native::NType::F64), BasicValueEnum::FloatValue(value)) => value,
+                        (Some(crate::codegen_native::NType::U8 | crate::codegen_native::NType::U16 | crate::codegen_native::NType::U32), BasicValueEnum::IntValue(value)) =>
+                            self.builder.build_unsigned_int_to_float(value, self.context.f64_type(), "native.box").map_err(|e| e.to_string())?,
+                        (Some(crate::codegen_native::NType::I8 | crate::codegen_native::NType::I16 | crate::codegen_native::NType::I32), BasicValueEnum::IntValue(value)) =>
+                            self.builder.build_signed_int_to_float(value, self.context.f64_type(), "native.box").map_err(|e| e.to_string())?,
+                        _ => return Err("Native Funktion lieferte einen unerwarteten Werttyp".into()),
+                    };
+                    return self.call_rt(self.rt.moo_number, &[boxed.into()], "native.number");
+                }
+                if self.extern_c_names.contains(name) {
+                    return Err(format!("extern-C-Aufruf '{name}' ist noch nicht unterstützt"));
+                }
                 // P011-A2: Fixed-width-Casts (als_u8..als_u64) — reservierte
                 // Namen, dispatchen VOR dem User-Funktions-Vorrang (wie kern_*).
                 // Hosted UND bare verfuegbar (pure Arithmetik).
@@ -2667,8 +4476,16 @@ impl<'ctx> CodeGen<'ctx> {
                     // the builtin match. Wir markieren das per early-jump.
                     let func = self.module.get_function(name).unwrap();
                     let mut call_args: Vec<BasicMetadataValueEnum> = Vec::new();
+                    let mut owned_args = Vec::new();
                     for a in args {
-                        call_args.push(self.compile_expr(a)?.into());
+                        let base = self.stmt_owned_context.len();
+                        if self.stmt_recursive_guard { self.stmt_owned_context.extend_from_slice(&owned_args); }
+                        let value_result = self.compile_expr(a);
+                        self.stmt_owned_context.truncate(base);
+                        let value = value_result?;
+                        owned_args.push(value);
+                        if guard_args { self.guard_local_expr_error(&owned_args)?; }
+                        call_args.push(value.into());
                     }
                     let expected = func.count_params() as usize;
                     while call_args.len() < expected {
@@ -4047,7 +5864,97 @@ impl<'ctx> CodeGen<'ctx> {
                         self.require_bare("kern_stackprot_selbsttest")?;
                         return self.call_rt(self.rt.kern_stackprot_selbsttest, &[], "kern_stackprot_selbsttest");
                     }
+                    // P7-T2: Framebuffer (Bildschirm). Masse des Hardware-Framebuffers
+                    // abfragen und eine Surface (surface_new/surface_rect/...) hinein
+                    // zeigen. C-Seite ist nur Boot-Adapter (UEFI: boot/uefi_entry.c).
+                    "kern_bild_breite" | "kern_fb_width" => {
+                        self.require_bare("kern_bild_breite")?;
+                        return self.call_rt(self.rt.kern_bild_breite, &[], "kern_bild_breite");
+                    }
+                    "kern_bild_hoehe" | "kern_bild_höhe" | "kern_fb_height" => {
+                        self.require_bare("kern_bild_hoehe")?;
+                        return self.call_rt(self.rt.kern_bild_hoehe, &[], "kern_bild_hoehe");
+                    }
+                    "kern_bild_zeige" | "kern_fb_present" => {
+                        self.require_bare("kern_bild_zeige")?;
+                        if args.len() != 1 {
+                            return Err("kern_bild_zeige erwartet genau ein Argument (Surface)".to_string());
+                        }
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_bild_zeige, &[a.into()], "kern_bild_zeige");
+                    }
+                    // P7-T2: Eingabe im Boot-Umfeld. Tastennamen wie ui_moo ("Tab",
+                    // "Return", "Escape", "Up"/"Down"/"Left"/"Right", "BackSpace", "space",
+                    // Einzelzeichen) bzw. "" ohne Taste; Maus wie 2D-API maus_x/maus_y/
+                    // maus_gedrueckt, aber gepollt (kern_maus_lesen) und ohne Fenster.
+                    "kern_taste_lesen" | "kern_key_read" => {
+                        self.require_bare("kern_taste_lesen")?;
+                        return self.call_rt(self.rt.kern_taste_lesen, &[], "kern_taste_lesen");
+                    }
+                    "kern_maus_vorhanden" | "kern_mouse_present" => {
+                        self.require_bare("kern_maus_vorhanden")?;
+                        return self.call_rt(self.rt.kern_maus_vorhanden, &[], "kern_maus_vorhanden");
+                    }
+                    "kern_maus_lesen" | "kern_mouse_poll" => {
+                        self.require_bare("kern_maus_lesen")?;
+                        return self.call_rt(self.rt.kern_maus_lesen, &[], "kern_maus_lesen");
+                    }
+                    "kern_maus_x" | "kern_mouse_x" => {
+                        self.require_bare("kern_maus_x")?;
+                        return self.call_rt(self.rt.kern_maus_x, &[], "kern_maus_x");
+                    }
+                    "kern_maus_y" | "kern_mouse_y" => {
+                        self.require_bare("kern_maus_y")?;
+                        return self.call_rt(self.rt.kern_maus_y, &[], "kern_maus_y");
+                    }
+                    "kern_maus_gedrueckt" | "kern_maus_gedrückt" | "kern_mouse_pressed" => {
+                        self.require_bare("kern_maus_gedrueckt")?;
+                        return self.call_rt(self.rt.kern_maus_gedrueckt, &[], "kern_maus_gedrueckt");
+                    }
+                    "kern_eingabe_warten" | "kern_input_wait" => {
+                        self.require_bare("kern_eingabe_warten")?;
+                        return self.call_rt(self.rt.kern_eingabe_warten, &[], "kern_eingabe_warten");
+                    }
+                    // P7-T9: eine Textzeile als UDP-Broadcast-Log senden (Bool; falsch ohne Netz).
+                    "kern_netz_sende" | "kern_net_send" => {
+                        self.require_bare("kern_netz_sende")?;
+                        if args.len() != 1 {
+                            return Err("kern_netz_sende erwartet genau ein Argument (Text)".to_string());
+                        }
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_netz_sende, &[a.into()], "kern_netz_sende");
+                    }
                     // Netzwerk
+                    "kern_netz_status" | "kern_net_status" => {
+                        self.require_bare("kern_netz_status")?;
+                        return self.call_rt(self.rt.kern_netz_status, &[], "kern_netz_status");
+                    }
+                    "kern_treiber_status" | "kern_driver_status" => {
+                        self.require_bare("kern_treiber_status")?;
+                        return self.call_rt(self.rt.kern_treiber_status, &[], "kern_treiber_status");
+                    }
+                    "kern_acpi_rsdp" => {
+                        self.require_bare("kern_acpi_rsdp")?;
+                        return self.call_rt(self.rt.kern_acpi_rsdp, &[], "kern_acpi_rsdp");
+                    }
+                    "kern_warte_us" | "kern_wait_us" => {
+                        self.require_bare("kern_warte_us")?;
+                        let a = self.compile_expr(&args[0])?;
+                        return self.call_rt(self.rt.kern_warte_us, &[a.into()], "kern_warte_us");
+                    }
+                    "kern_text_in_puffer" | "kern_text_to_buffer" => {
+                        self.require_bare("kern_text_in_puffer")?;
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        let c = self.compile_expr(&args[2])?;
+                        return self.call_rt(self.rt.kern_text_in_puffer, &[a.into(), b.into(), c.into()], "kern_text_in_puffer");
+                    }
+                    "kern_text_aus_puffer" | "kern_text_from_buffer" => {
+                        self.require_bare("kern_text_aus_puffer")?;
+                        let a = self.compile_expr(&args[0])?;
+                        let b = self.compile_expr(&args[1])?;
+                        return self.call_rt(self.rt.kern_text_aus_puffer, &[a.into(), b.into()], "kern_text_aus_puffer");
+                    }
                     "ausfuehren" | "eval" => {
                         let code = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_eval, &[code.into()], "eval");
@@ -5057,6 +6964,16 @@ impl<'ctx> CodeGen<'ctx> {
                             3,
                             name,
                             "surface_text_breite_stil",
+                        );
+                    }
+                    // P7-T2: Glyphenhoehe (Font-Hoehe * Skala) fuer Layouts ohne Festwerte.
+                    "surface_text_hoehe" | "surface_text_höhe" => {
+                        return self.call_rt_borrowed_builtin(
+                            self.rt.moo_surface_text_hoehe,
+                            args,
+                            1,
+                            name,
+                            "surface_text_hoehe",
                         );
                     }
                     "surface_text_glyphen_status" => {
@@ -6271,8 +8188,11 @@ impl<'ctx> CodeGen<'ctx> {
                             let fn_val = self.load_var(name)?;
                             let mut compiled_args: Vec<BasicMetadataValueEnum> = Vec::new();
                             compiled_args.push(fn_val.into());
+                            let mut owned_args = vec![fn_val];
                             for a in args {
                                 let v = self.compile_expr(a)?;
+                                owned_args.push(v);
+                                if guard_args { self.guard_local_expr_error(&owned_args)?; }
                                 compiled_args.push(v.into());
                             }
                             let helper = match args.len() {
@@ -6329,8 +8249,11 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 };
                 let mut compiled_args: Vec<BasicMetadataValueEnum> = Vec::new();
+                let mut owned_args = Vec::new();
                 for a in args {
                     let v = self.compile_expr(a)?;
+                    owned_args.push(v);
+                    if guard_args { self.guard_local_expr_error(&owned_args)?; }
                     compiled_args.push(v.into());
                 }
                 // Closure-Captures anhaengen wenn vorhanden
@@ -6741,85 +8664,92 @@ impl<'ctx> CodeGen<'ctx> {
                     "schritt" | "step" => {
                         return self.call_rt(self.rt.moo_db_stmt_step, &[obj.into()], "stmt_step");
                     }
-                    "ausfuehren" | "ausführen" | "execute" => {
-                        // Analog zu query/abfrage: User-Klassen koennen ihre eigene
-                        // execute/ausfuehren-Methode haben (z.B. PgClient.execute fuer
-                        // prepared statements). Nur an moo_db_stmt_execute dispatchen
-                        // wenn KEINE User-Methode mit diesem Namen existiert.
-                        let any_user_method = self.class_methods.keys()
-                            .any(|(_, m)| m == method);
-                        if !any_user_method {
-                            return self.call_rt(self.rt.moo_db_stmt_execute, &[obj.into()], "stmt_exec");
-                        }
-                        let mut call_args: Vec<BasicMetadataValueEnum> = vec![obj.into()];
-                        for a in args {
-                            call_args.push(self.compile_expr(a)?.into());
-                        }
-                        let static_class: Option<String> = match object.as_ref() {
-                            Expr::Identifier(name) => self.object_var_types.get(name).cloned(),
-                            Expr::This => self.current_class.clone(),
-                            _ => None,
+                    "ausfuehren" | "ausführen" | "execute" | "abfrage" | "query" => {
+                        let builtin = if matches!(method.as_str(), "abfrage" | "query") {
+                            self.rt.moo_db_stmt_query
+                        } else {
+                            self.rt.moo_db_stmt_execute
                         };
-                        if let Some(mut cls) = static_class {
-                            loop {
-                                if let Some(func) = self.class_methods.get(&(cls.clone(), method.clone())).copied() {
-                                    return self.call_rt(func, &call_args, "method_call");
-                                }
-                                match self.class_parents.get(&cls).cloned() {
-                                    Some(p) => cls = p,
-                                    None => break,
-                                }
-                            }
+                        if !self.class_methods.keys().any(|(_, m)| m == method) {
+                            return self.call_rt(builtin, &[obj.into()], "stmt_dispatch");
                         }
-                        if let Some((_, func)) = self.class_methods.iter()
-                            .find(|((_, m), _)| m == method)
-                            .map(|((c, _), f)| (c.clone(), *f))
-                        {
-                            return self.call_rt(func, &call_args, "method_call_dyn");
-                        }
-                        return self.call_rt(self.rt.moo_db_stmt_execute, &[obj.into()], "stmt_exec");
-                    }
-                    "abfrage" | "query" => {
-                        // User-Klassen koennen ihre eigene query/abfrage-Methode haben
-                        // (z.B. PgClient.frage/query). Nur an moo_db_stmt_query
-                        // dispatchen wenn KEINE User-Methode mit diesem Namen
-                        // irgendwo im Programm existiert. Sonst inline user-dispatch.
-                        let any_user_method = self.class_methods.keys()
-                            .any(|(_, m)| m == method);
-                        if !any_user_method {
-                            return self.call_rt(self.rt.moo_db_stmt_query, &[obj.into()], "stmt_query");
-                        }
-                        // User-Method-Dispatch (inline, identisch zu _-Arm-Logik):
-                        let mut call_args: Vec<BasicMetadataValueEnum> = vec![obj.into()];
-                        for a in args {
-                            call_args.push(self.compile_expr(a)?.into());
-                        }
-                        let static_class: Option<String> = match object.as_ref() {
-                            Expr::Identifier(name) => self.object_var_types.get(name).cloned(),
-                            Expr::This => self.current_class.clone(),
-                            _ => None,
+                        let mut values = Vec::with_capacity(args.len());
+                        for arg in args { values.push(self.compile_expr(arg)?); }
+                        let function = self.current_function.ok_or("Methodenaufruf ohne Funktion")?;
+                        let result_ptr = self.builder.build_alloca(self.mv_type(), "stmt_dispatch_result")
+                            .map_err(|e| format!("{e}"))?;
+                        let class_call = self.call_rt_abi(self.rt.moo_object_class_name, &[obj.into()], "stmt_class")?;
+                        let class_ptr = match class_call.try_as_basic_value() {
+                            inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+                            _ => return Err("moo_object_class_name hat keinen Wert".to_string()),
                         };
-                        if let Some(mut cls) = static_class {
-                            loop {
-                                if let Some(func) = self.class_methods.get(&(cls.clone(), method.clone())).copied() {
-                                    return self.call_rt(func, &call_args, "method_call");
+                        let strcmp_fn = self.module.get_function("strcmp").unwrap_or_else(|| {
+                            let ptr = self.context.ptr_type(inkwell::AddressSpace::default());
+                            self.module.add_function("strcmp", self.context.i32_type().fn_type(&[ptr.into(), ptr.into()], false), None)
+                        });
+                        let mut classes: Vec<String> = self.class_methods.keys()
+                            .map(|(class, _)| class.clone()).chain(self.class_parents.keys().cloned()).collect();
+                        classes.sort();
+                        classes.dedup();
+                        let after_bb = self.context.append_basic_block(function, "stmt_dispatch_after");
+                        for (index, class_name) in classes.iter().enumerate() {
+                            let mut current = class_name.clone();
+                            let mut visited = std::collections::HashSet::new();
+                            let method_fn = loop {
+                                if !visited.insert(current.clone()) {
+                                    return Err(format!("Zyklische Klassenvererbung bei {class_name}"));
                                 }
-                                match self.class_parents.get(&cls).cloned() {
-                                    Some(p) => cls = p,
-                                    None => break,
+                                if let Some(func) = self.class_methods.get(&(current.clone(), method.clone())) {
+                                    break Some(*func);
                                 }
+                                match self.class_parents.get(&current) {
+                                    Some(parent) => current = parent.clone(),
+                                    None => break None,
+                                }
+                            };
+                            let Some(method_fn) = method_fn else { continue };
+                            let expected = method_fn.count_params() as usize;
+                            if expected == 0 { return Err(format!("{class_name}.{method} hat keinen Receiver")); }
+                            let name_ptr = self.make_global_str(class_name, &format!("stmt_class_{index}"))?;
+                            let cmp_call = self.builder.build_call(strcmp_fn, &[class_ptr.into(), name_ptr.into()], "stmt_class_cmp")
+                                .map_err(|e| format!("{e}"))?;
+                            let cmp = match cmp_call.try_as_basic_value() {
+                                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                _ => return Err("strcmp hat keinen Wert".to_string()),
+                            };
+                            let matches = self.builder.build_int_compare(
+                                inkwell::IntPredicate::EQ, cmp, self.context.i32_type().const_zero(), "stmt_class_match"
+                            ).map_err(|e| format!("{e}"))?;
+                            let call_bb = self.context.append_basic_block(function, "stmt_user_call");
+                            let next_bb = self.context.append_basic_block(function, "stmt_user_next");
+                            self.builder.build_conditional_branch(matches, call_bb, next_bb).map_err(|e| format!("{e}"))?;
+                            self.builder.position_at_end(call_bb);
+                            // Der temporaere Receiver-Slot bleibt Besitzer; die Methode konsumiert eine eigene Referenz.
+                            self.call_rt_void(self.rt.moo_retain, &[obj.into()], "stmt_retain_receiver")?;
+                            let mut call_args: Vec<BasicMetadataValueEnum> = vec![obj.into()];
+                            for value in values.iter().take(expected - 1) { call_args.push((*value).into()); }
+                            for value in values.iter().skip(expected - 1) {
+                                self.call_rt_void(self.rt.moo_release, &[(*value).into()], "stmt_unused_arg")?;
                             }
+                            while call_args.len() < expected {
+                                call_args.push(self.call_rt(self.rt.moo_none, &[], "stmt_default_none")?.into());
+                            }
+                            let result = self.call_rt(method_fn, &call_args, "stmt_user_result")?;
+                            self.builder.build_store(result_ptr, result).map_err(|e| format!("{e}"))?;
+                            self.builder.build_unconditional_branch(after_bb).map_err(|e| format!("{e}"))?;
+                            self.builder.position_at_end(next_bb);
                         }
-                        // Dynamic Dispatch via class-name-cascade (wie _-Arm).
-                        // Wenn nicht eindeutig: erste passende Methode nehmen.
-                        if let Some((_, func)) = self.class_methods.iter()
-                            .find(|((_, m), _)| m == method)
-                            .map(|((c, _), f)| (c.clone(), *f))
-                        {
-                            return self.call_rt(func, &call_args, "method_call_dyn");
+                        // Das DB-Builtin validiert bei keinem passenden Objekt den Receiver.
+                        let fallback = self.call_rt(builtin, &[obj.into()], "stmt_builtin")?;
+                        for value in &values {
+                            self.call_rt_void(self.rt.moo_release, &[(*value).into()], "stmt_fallback_arg")?;
                         }
-                        // Sollte nie passieren weil any_user_method == true.
-                        return self.call_rt(self.rt.moo_db_stmt_query, &[obj.into()], "stmt_query");
+                        self.builder.build_store(result_ptr, fallback).map_err(|e| format!("{e}"))?;
+                        self.builder.build_unconditional_branch(after_bb).map_err(|e| format!("{e}"))?;
+                        self.builder.position_at_end(after_bb);
+                        let result = self.builder.build_load(self.mv_type(), result_ptr, "stmt_dispatch_value")
+                            .map_err(|e| format!("{e}"))?.into_struct_value();
+                        return Ok(result);
                     }
                     "zuruecksetzen" | "zurücksetzen" | "reset" => {
                         return self.call_rt(self.rt.moo_db_stmt_reset, &[obj.into()], "stmt_reset");
@@ -6976,7 +8906,7 @@ impl<'ctx> CodeGen<'ctx> {
                         //     (schneller, kein Call-Overhead, vermeidet MooFunc-Alloc).
                         //   * Beliebige MOO_FUNC-Expression (benannte Funktion,
                         //     Variable, Closure) — indirect call via moo_func_call_1.
-                        if let Expr::Lambda { params, body } = lambda {
+                        if let Expr::Lambda { params, body, .. } = lambda {
                             if let Some(param) = params.first() {
                                 self.store_var(param, element)?;
                             }
@@ -7061,7 +8991,7 @@ impl<'ctx> CodeGen<'ctx> {
                         // Apply callback. Analog zu list.map: Inline-Lambda
                         // direkt, beliebige MOO_FUNC-Expression via
                         // moo_func_call_1.
-                        let test_val = if let Expr::Lambda { params, body } = lambda {
+                        let test_val = if let Expr::Lambda { params, body, .. } = lambda {
                             if let Some(param) = params.first() {
                                 self.store_var(param, element)?;
                             }
@@ -7419,7 +9349,10 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(phi.as_basic_value().into_struct_value())
             }
             Expr::IndexAccess { object, index } => {
+                let guard_index = (std::mem::take(&mut self.stmt_root_guard) || self.stmt_recursive_guard)
+                    && !matches!(index.as_ref(), Expr::Range { .. });
                 let obj = self.compile_expr(object)?;
+                if guard_index { self.guard_local_expr_error(&[obj])?; }
                 // String-Slicing: obj[start..end] -> moo_string_slice(obj, start, end)
                 let result = if let Expr::Range { start, end } = index.as_ref() {
                     let s = self.compile_expr(start)?;
@@ -7430,7 +9363,11 @@ impl<'ctx> CodeGen<'ctx> {
                     self.call_rt_void(self.rt.moo_release, &[e.into()], "rel_e")?;
                     slice_res
                 } else {
-                    let idx = self.compile_expr(index)?;
+                    if self.stmt_recursive_guard { self.stmt_owned_context.push(obj); }
+                    let idx_result = self.compile_expr(index);
+                    if self.stmt_recursive_guard { self.stmt_owned_context.pop(); }
+                    let idx = idx_result?;
+                    if guard_index { self.guard_local_expr_error(&[obj, idx])?; }
                     // idx ist Caller-Ref: moo_index_get (→ dict_get/list_get)
                     // nutzt idx intern, ownership wird NICHT transferiert.
                     // String/List release-idx nach Verwendung waere hier noch offen;
@@ -7452,6 +9389,8 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(range_res)
             }
             Expr::List(elements) => {
+                let guard_elements = (std::mem::take(&mut self.stmt_root_guard) || self.stmt_recursive_guard)
+                    && elements.iter().all(|element| !matches!(element, Expr::Spread(_)) );
                 let list = self.call_rt(self.rt.moo_list_new,
                     &[self.context.i32_type().const_int(0, false).into()],
                     "list")?;
@@ -7464,11 +9403,17 @@ impl<'ctx> CodeGen<'ctx> {
                         let src = self.compile_expr(inner)?;
                         self.compile_spread_into_list(list_ptr, src)?;
                     } else {
-                        let val = self.compile_expr(elem)?;
+                        if self.stmt_recursive_guard { self.stmt_owned_context.push(list); }
+                        let val_result = self.compile_expr(elem);
+                        if self.stmt_recursive_guard { self.stmt_owned_context.pop(); }
+                        let val = val_result?;
+                        if guard_elements { self.guard_local_expr_error(&[list, val])?; }
                         let current_list = self.builder.build_load(self.mv_type(), list_ptr, "list")
                             .map_err(|e| format!("{e}"))?.into_struct_value();
                         self.call_rt_void(self.rt.moo_list_append,
                             &[current_list.into(), val.into()], "append")?;
+                        // Bei Fehler hat moo_list_append val nicht uebernommen.
+                        if guard_elements { self.guard_local_expr_error(&[list, val])?; }
                     }
                 }
 
@@ -7629,12 +9574,16 @@ impl<'ctx> CodeGen<'ctx> {
                             call_args.push(none_val.into());
                         }
                     }
-                    self.call_rt(func, &call_args, "ctor")?;
+                    // Der Konstruktor konsumiert seinen Receiver; obj selbst
+                    // bleibt als owning Ergebnis von `neu` erhalten.
+                    self.call_rt_void(self.rt.moo_retain, &[obj.into()], "retain_ctor_receiver")?;
+                    let result = self.call_rt(func, &call_args, "ctor")?;
+                    self.call_rt_void(self.rt.moo_release, &[result.into()], "release_ctor_result")?;
                 }
 
                 Ok(obj)
             }
-            Expr::Lambda { params, body } => {
+            Expr::Lambda { params, body, .. } => {
                 // Lambdas als benannte Funktionen mit Closure-Captures kompilieren
                 let lambda_name = format!("__lambda_{}", self.lambda_counter);
                 self.lambda_counter += 1;
@@ -7669,6 +9618,13 @@ impl<'ctx> CodeGen<'ctx> {
                 let prev_fn = self.current_function;
                 let prev_vars = self.variables.clone();
                 let prev_block = self.builder.get_insert_block();
+                let prev_defer_frame = self.defer_frame.take();
+                let prev_defer_runtime = std::mem::replace(&mut self.defer_runtime, false);
+                let prev_defer_borrowed = self.defer_borrowed_handler.take();
+                // Lambda ist eine eigene Aktivierung: äußere Defers gehören
+                // ausschließlich zum umgebenden Funktionsrahmen.
+                let prev_defers = std::mem::take(&mut self.defer_stack);
+                let prev_catalog = std::mem::take(&mut self.defer_catalog);
 
                 self.current_function = Some(function);
                 self.builder.position_at_end(entry);
@@ -7763,6 +9719,12 @@ impl<'ctx> CodeGen<'ctx> {
                 if let Some(bb) = prev_block {
                     self.builder.position_at_end(bb);
                 }
+
+                self.defer_frame = prev_defer_frame;
+                self.defer_runtime = prev_defer_runtime;
+                self.defer_borrowed_handler = prev_defer_borrowed;
+                self.defer_stack = prev_defers;
+                self.defer_catalog = prev_catalog;
 
                 // Lambda als First-Class-Value verpacken.
                 if free_vars.is_empty() {
@@ -8410,10 +10372,10 @@ impl<'ctx> CodeGen<'ctx> {
         for stmt in stmts {
             // Pruefe direkt-zuweisende Statements zuerst
             match stmt {
-                Stmt::Assignment { name: n, value } if n == name => {
+                Stmt::Assignment { name: n, value, .. } if n == name => {
                     return Some(!Self::expr_uses_var(value, name));
                 }
-                Stmt::ConstAssignment { name: n, value } if n == name => {
+                Stmt::ConstAssignment { name: n, value, .. } if n == name => {
                     return Some(!Self::expr_uses_var(value, name));
                 }
                 Stmt::CompoundAssignment { name: n, .. } if n == name => {
@@ -8445,6 +10407,11 @@ impl<'ctx> CodeGen<'ctx> {
                 if Self::expr_uses_var(condition, name) { return Some(false); }
                 Self::first_use_is_local_write(body, name)
             }
+            Stmt::Guard { condition, else_body } => {
+                if Self::expr_uses_var(condition, name) { return Some(false); }
+                Self::first_use_is_local_write(else_body, name)
+            }
+            Stmt::UnsafeBlock { body } => Self::first_use_is_local_write(body, name),
             Stmt::For { var_name, iterable, body }
             | Stmt::ParallelFor { var_name, iterable, body } => {
                 // First-access-wins: Liest das Iterable denselben Namen,
@@ -8499,8 +10466,11 @@ impl<'ctx> CodeGen<'ctx> {
                     names.extend(Self::collect_all_var_names(body));
                     names.extend(Self::collect_all_var_names(else_body));
                 }
-                Stmt::While { body, .. } => {
+                Stmt::While { body, .. } | Stmt::UnsafeBlock { body } => {
                     names.extend(Self::collect_all_var_names(body));
+                }
+                Stmt::Guard { else_body, .. } => {
+                    names.extend(Self::collect_all_var_names(else_body));
                 }
                 Stmt::For { var_name, body, .. }
                 | Stmt::ParallelFor { var_name, body, .. } => {

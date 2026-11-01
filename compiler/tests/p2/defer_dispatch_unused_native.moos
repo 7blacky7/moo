@@ -1,0 +1,12 @@
+@nativ
+funktion ungenutzt(x: i32) -> i32:
+    gib_zurück x
+funktion marke(text):
+    zeige text
+funktion probe():
+    setze i auf 0
+    solange i < 3:
+        aufräumen: marke("runde")
+        setze i auf i + 1
+    gib_zurück "wert"
+zeige probe()

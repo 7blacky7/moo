@@ -1,0 +1,14 @@
+funktion raeume():
+    gib_zurück 0
+funktion probe():
+    aufräumen: raeume()
+    versuche:
+        gib_zurück ["heap", 1 / 0]
+    fange fehler:
+        gib_zurück 1
+setze i auf 0
+setze treffer auf 0
+solange i < 800000:
+    setze treffer auf treffer + probe()
+    setze i auf i + 1
+zeige treffer

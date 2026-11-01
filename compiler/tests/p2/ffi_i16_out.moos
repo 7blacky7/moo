@@ -1,0 +1,15 @@
+@bibliothek("p2_ffi_klein")
+extern "C" funktion p2_ffi_i16_identity(wert: i16) -> i16
+@bibliothek("p2_ffi_klein")
+extern "C" funktion p2_ffi_u16_identity(wert: u16) -> u16
+@nativ
+funktion ffi_i16(wert: i16) -> i16:
+    unsicher:
+        gib_zurück p2_ffi_i16_identity(wert)
+@nativ
+funktion ffi_u16(wert: u16) -> u16:
+    unsicher:
+        gib_zurück p2_ffi_u16_identity(wert)
+setze wert auf -32769
+zeige ffi_i16(wert)
+zeige "DARF_NICHT_ERREICHT_WERDEN"
