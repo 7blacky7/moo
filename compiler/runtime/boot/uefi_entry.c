@@ -187,15 +187,41 @@ static int moo_uefi_heap_init(void *system_table, u64 fb_bytes) {
     return 1;
 }
 
+/* P7-T13: Schattenpuffer fuer kern_bild_zeige. Der GOP-Framebuffer ist auf
+ * echter Hardware nicht wie RAM gecacht (N100 1720x1440: das volle Bild kostete
+ * ~62 ms je Taste); Lesen daraus waere noch teurer. Der Schatten haelt im RAM die
+ * zuletzt gezeigten RGBA-Pixel, geschrieben werden nur Pixel, die sich seitdem
+ * geaendert haben. Ohne Schatten (AllocatePages fehlgeschlagen) Vollkopie wie
+ * bisher. Ungueltig (naechstes Bild voll): erstes Bild, anderer Ausschnitt,
+ * Rueckkehr aus kern_bild_starten (das gestartete Image zeichnet selbst). */
+static u32 *moo_schatten;
+static u32 moo_schatten_b, moo_schatten_h;   /* gueltiger Ausschnitt, 0 = ungueltig */
+static u64 moo_zeige_pixel;                  /* zuletzt geschriebene Pixel (Diagnose) */
+
+static void moo_uefi_schatten_init(void *system_table) {
+    EfiSystemTable *st = (EfiSystemTable *)system_table;
+    EfiGopInfo *info = moo_gop->mode->info;
+    u64 bytes = (u64)info->width * (u64)info->height * 4u;
+    u64 mem = 0;
+    if (!st->boot->allocate_pages ||
+        st->boot->allocate_pages(0 /* AllocateAnyPages */, 2 /* EfiLoaderData */,
+                                 (bytes + 4095u) / 4096u, &mem) != 0 || !mem)
+        return;
+    moo_schatten = (u32 *)(unsigned long long)mem;
+}
+
 /* Source is tightly packed straight RGBA; GOP rows may contain padding.
  * Pixel format 0 is RGBX and 1 is BGRX. Reserved byte is written as zero.
- * Groessen duerfen abweichen: kopiert wird der gemeinsame Ausschnitt. */
+ * Groessen duerfen abweichen: kopiert wird der gemeinsame Ausschnitt.
+ * Mit gueltigem Schatten nur Pixel, die sich gegenueber dem Schatten geaendert
+ * haben (Vergleich der RGBA-Rohwerte im RAM). */
 int moo_uefi_present_rgba(const u8 *pixels, u32 width, u32 height) {
     EfiGopMode *mode;
     EfiGopInfo *info;
     volatile u32 *dst;
-    u32 x, y, cw, ch;
-    int bgr;
+    u32 x, x0, xe, y, cw, ch;
+    u64 n = 0;
+    int bgr, voll;
     if (!moo_gop || !pixels || !width || !height) return 0;
     mode = moo_gop->mode;
     info = mode->info;
@@ -203,14 +229,38 @@ int moo_uefi_present_rgba(const u8 *pixels, u32 width, u32 height) {
     ch = height < info->height ? height : info->height;
     bgr = info->format == 1;
     dst = (volatile u32 *)(unsigned long long)mode->base;
+    voll = !moo_schatten || moo_schatten_b != cw || moo_schatten_h != ch;
     for (y = 0; y < ch; ++y) {
         const u8 *s = pixels + (u64)y * width * 4u;
         volatile u32 *d = dst + (u64)y * info->pixels_per_scanline;
-        for (x = 0; x < cw; ++x, s += 4) {
-            u32 r = s[0], g = s[1], b = s[2];
-            d[x] = bgr ? ((r << 16) | (g << 8) | b) : ((b << 16) | (g << 8) | r);
+        u32 *sh = moo_schatten ? moo_schatten + (u64)y * info->width : 0;
+        /* Bloecke zu 64 Pixeln: erst ODER-Vergleich ohne fruehen Ausstieg
+         * (vektorisierbar), unveraenderte Bloecke ganz ueberspringen. */
+        for (x0 = 0; x0 < cw; x0 = xe) {
+            xe = cw - x0 > 64u ? x0 + 64u : cw;
+            if (!voll) {
+                u32 diff = 0;
+                for (x = x0; x < xe; ++x) {
+                    u32 roh;
+                    __builtin_memcpy(&roh, s + (u64)x * 4u, sizeof roh);
+                    diff |= roh ^ sh[x];
+                }
+                if (!diff) continue;
+            }
+            for (x = x0; x < xe; ++x) {
+                const u8 *p = s + (u64)x * 4u;
+                u32 roh, r, g, b;
+                __builtin_memcpy(&roh, p, sizeof roh);
+                if (!voll && sh[x] == roh) continue;
+                if (sh) sh[x] = roh;
+                r = p[0]; g = p[1]; b = p[2];
+                d[x] = bgr ? ((r << 16) | (g << 8) | b) : ((b << 16) | (g << 8) | r);
+                ++n;
+            }
         }
     }
+    if (moo_schatten) { moo_schatten_b = cw; moo_schatten_h = ch; }
+    moo_zeige_pixel = n;
     return 1;
 }
 
@@ -622,6 +672,32 @@ MooValue kern_warte_us(MooValue us) {
     return moo_bool(1);
 }
 
+/* P7-T13: kern_ticks() im UEFI-Pfad = Mikrosekunden seit dem ersten Aufruf.
+ * Quelle ist der TSC (rdtsc), einmalig gegen Boot-Services Stall (10 ms)
+ * kalibriert; der erste Aufruf dauert darum 10 ms. Im Kernel-Pfad zaehlt
+ * kern_ticks PIT-Interrupts (moo_bare_idt.c); die UEFI-App hat keinen eigenen
+ * Timer-IRQ, darum dieselbe Builtin-Schnittstelle mit Mikrosekunden.
+ * (MSR 0x10 per kern_rdmsr_lo liefert unter QEMU-TCG 0, rdtsc nicht.) */
+static u64 moo_rdtsc(void) {
+    u32 lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((u64)hi << 32) | lo;
+}
+static u64 moo_tsc_basis, moo_tsc_pro_ms;
+MooValue kern_ticks(void) {
+    typedef u64 (*EfiStall)(u64 mikrosekunden);
+    u64 t;
+    if (!moo_tsc_pro_ms) {
+        if (!moo_st || !moo_st->boot->stall) return moo_number(0.0);
+        moo_tsc_basis = moo_rdtsc();
+        ((EfiStall)moo_st->boot->stall)(10000);
+        moo_tsc_pro_ms = (moo_rdtsc() - moo_tsc_basis) / 10u;
+        if (!moo_tsc_pro_ms) moo_tsc_pro_ms = 1;
+    }
+    t = moo_rdtsc() - moo_tsc_basis;
+    return moo_number((double)(u64)((double)t * 1000.0 / (double)moo_tsc_pro_ms));
+}
+
 /* kern_text_in_puffer(text, ziel, max): Bytes eines Moo-Texts nach ziel
  * kopieren (hoechstens max, max <= 65536). Rueckgabe: kopierte Laenge. */
 MooValue kern_text_in_puffer(MooValue text, MooValue ziel, MooValue max) {
@@ -667,6 +743,7 @@ MooValue kern_bild_starten(MooValue adresse, MooValue laenge) {
     if (status != 0 || !bild) return moo_number(1.0);
     marker("MOO-UEFI-BILD-START\n");
     status = starte(bild, 0, 0);
+    moo_schatten_b = moo_schatten_h = 0;   /* das Image hat selbst gezeichnet */
     debug("MOO-UEFI-BILD StartImage "); debug_hex(status); debug("\n");
     return moo_number(status == 0 ? 0.0 : 2.0);
 }
@@ -689,8 +766,11 @@ MooValue kern_bild_hoehe(void) {
 MooValue kern_bild_zeige(MooValue surface) {
     int w = 0, h = 0;
     const u8 *px = moo_surface_rgba(surface, &w, &h);
+    int ok;
     if (!px || w <= 0 || h <= 0) return moo_bool(0);
-    return moo_bool(moo_uefi_present_rgba(px, (u32)w, (u32)h) != 0);
+    ok = moo_uefi_present_rgba(px, (u32)w, (u32)h) != 0;
+    debug("MOO-UEFI-ZEIGE px "); debug_hex(moo_zeige_pixel); debug("\n");
+    return moo_bool(ok);
 }
 #endif
 
@@ -719,6 +799,8 @@ u64 efi_main(void *ImageHandle, void *SystemTable) {
         return 1;
     }
     marker("MOO-UEFI-HEAP-OK\n");
+    moo_uefi_schatten_init(SystemTable);
+    debug(moo_schatten ? "MOO-UEFI-SCHATTEN-OK\n" : "MOO-UEFI-SCHATTEN-FEHLT\n");
     /* Treiber VOR dem Connect-Lauf (in moo_uefi_eingabe_init) laden, damit
      * sie beim rekursiven ConnectController ihre Geraete binden. */
     moo_image_handle = ImageHandle;

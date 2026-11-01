@@ -35,7 +35,7 @@
 # Firmware nutzt es selbst). Serielle Ausgabe geht ueber COM1-Port-I/O
 # (kern_outw, P011-B1); OVMF/QEMU haben COM1.
 
-aus "./netz_treiber" importiere nt_pci_init, nt_ports_oeffnen, nt_anzahl, nt_port, nt_link, nt_udp_log, nt_log, nt_status_text, nt_dma
+aus "./netz_treiber" importiere nt_pci_init, nt_ports_oeffnen, nt_anzahl, nt_port, nt_link, nt_udp_log, nt_log, nt_status_text, nt_dma, nt_dez
 
 # P7-T15: Logzeile auf allen eigenen Ports (Moo-I226-Treiber) mit Link senden;
 # ohne eigene Ports wie bisher ueber die Firmware-Netzschnittstelle (SNP).
@@ -243,7 +243,9 @@ funktion zeichne_status(bild, b, h, taste, aktion, maus_da, ports, tpuf):
 # bernstein statt tuerkis — sichtbare Reaktion und Pixelprobe fuer das Gate.
 funktion moo_efi_zeichnen(bild, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf):
     setze rand auf 16
-    surface_clear(bild, 14, 21, 35, 255)
+    # Deckendes Rechteck statt surface_clear: beachtet die Clip-Region
+    # (moo_efi_bereich), surface_clear loescht immer die ganze Surface.
+    surface_rect(bild, 0, 0, b, h, 14, 21, 35, 255)
 
     setze kopf_h auf lay_kopf_h()
     surface_rect(bild, 0, 0, b, kopf_h, 24, 36, 57, 255)
@@ -279,6 +281,38 @@ funktion moo_efi_zeichnen(bild, b, h, fokus, taste, aktion, maus_da, mx, my, por
     wenn maus_da:
         zeichne_zeiger(bild, mx, my)
 
+# P7-T13: Nur ein Rechteck neu zeichnen. Die ganze Szene laeuft durch, alle
+# surface_*-Aufrufe sind aber auf das Rechteck geclippt: Pixelarbeit nur dort,
+# Ergebnis pixelgleich zum Vollbild (jede Szene zeichnet den aktuellen Zustand).
+funktion moo_efi_bereich(bild, x, y, bb, hh, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf):
+    wenn bb <= 0 oder hh <= 0:
+        gib_zurück falsch
+    wenn surface_clip_push(bild, x, y, bb, hh) == falsch:
+        gib_zurück falsch
+    moo_efi_zeichnen(bild, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf)
+    surface_clip_pop(bild)
+    gib_zurück wahr
+
+# ---------------- P7-T13: Zeitmessung je Bild ----------------
+# Zeitbasis: kern_ticks() = Mikrosekunden (UEFI: rdtsc, boot/uefi_entry.c).
+# Messzeile je neu gezeichnetem Bild: 'ZEIT ZEICHNEN <us> ZEIGEN <us> US' als
+# Netz-Logzeile (N100: UDP 7777) und als 'MOO-UEFI-ZEIT ...' auf COM1.
+# ZEICHNEN = moo_efi_zeichnen in die Surface, ZEIGEN = kern_bild_zeige (GOP).
+funktion zeit_melden(ports, puf, zpuf, zeichnen_us, zeigen_us):
+    unsicher:
+        setze o auf kern_text_in_puffer("ZEIT ZEICHNEN ", zpuf, 64)
+        setze o auf nt_dez(zpuf, o, zeichnen_us)
+        setze o auf o + kern_text_in_puffer(" ZEIGEN ", zpuf + o, 64)
+        setze o auf nt_dez(zpuf, o, zeigen_us)
+        setze o auf o + kern_text_in_puffer(" US", zpuf + o, 64)
+        netz_log(ports, puf, kern_text_aus_puffer(zpuf, o))
+        marker_vorspann()
+        setze i auf 0
+        solange i < o:
+            sende(speicher_lesen(zpuf + i, 1))
+            setze i auf i + 1
+        sende(10)
+
 # moo-Anteil der UEFI-App: Lebensbeweis auf COM1, erstes Bild, dann
 # Ereignisschleife bis Escape. Tab/Right/Down und Left/Up wechseln den Fokus,
 # Return/Leertaste loesen den fokussierten Knopf aus, Mausklick trifft Knoepfe.
@@ -305,10 +339,21 @@ funktion moo_efi_haupt():
         solange nt_anzahl(ports) > 0 und w < 50 und irgendein_link(ports) == falsch:
             kern_warte_us(100000)
             setze w auf w + 1
+        # P7-T13: Zeitmessung je Bild. Erster kern_ticks-Aufruf kalibriert (10 ms).
+        kern_ticks()
+        setze zpuf auf nt_dma(128)
         moo_efi_zeichnen(bild, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf)
         wenn kern_bild_zeige(bild):
             marker_bild()
         netz_log(ports, puf, "MOO-NET MOOS STARTET")
+        # P7-T13: Zustand des zuletzt gezeigten Bilds (fuer Teil-Neuzeichnen).
+        setze fokus_alt auf fokus
+        setze aktion_alt auf aktion
+        setze mx_alt auf mx
+        setze my_alt auf my
+        setze status_h auf surface_text_hoehe(1) + 16
+        setze knoepfe_x auf lay_knopf_x(0) - 3
+        setze knoepfe_b auf lay_knopf_x(1) + lay_knopf_b(1) + 3 - knoepfe_x
         setze laeuft auf wahr
         solange laeuft:
             kern_eingabe_warten()
@@ -344,5 +389,21 @@ funktion moo_efi_haupt():
                             marker_aktion(treffer)
                     setze gedrueckt auf jetzt
             wenn neu_bild:
-                moo_efi_zeichnen(bild, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf)
+                setze t0 auf kern_ticks()
+                # Nur Bereiche, deren Inhalt vom Zustand abhaengt (Rest ist statisch).
+                moo_efi_bereich(bild, 0, h - status_h, b, status_h, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf)
+                wenn aktion != aktion_alt:
+                    moo_efi_bereich(bild, 0, lay_kopf_h(), b, 4, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf)
+                wenn fokus != fokus_alt:
+                    moo_efi_bereich(bild, knoepfe_x, lay_knopf_y() - 3, knoepfe_b, lay_knopf_h() + 6, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf)
+                wenn maus_da und (mx != mx_alt oder my != my_alt):
+                    moo_efi_bereich(bild, mx_alt - 9, my_alt - 9, 19, 19, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf)
+                    moo_efi_bereich(bild, mx - 9, my - 9, 19, 19, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf)
+                setze fokus_alt auf fokus
+                setze aktion_alt auf aktion
+                setze mx_alt auf mx
+                setze my_alt auf my
+                setze t1 auf kern_ticks()
                 kern_bild_zeige(bild)
+                setze t2 auf kern_ticks()
+                zeit_melden(ports, puf, zpuf, t1 - t0, t2 - t1)
