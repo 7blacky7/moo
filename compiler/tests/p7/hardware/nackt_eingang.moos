@@ -1,0 +1,6 @@
+# P7-T4 3A negativ: Eingang in nackter Funktion.
+@nativ
+@nackt
+funktion nackt_falsch(x: u64) -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="movq $0, %rax", eingaenge={"r": x}, clobber=[])

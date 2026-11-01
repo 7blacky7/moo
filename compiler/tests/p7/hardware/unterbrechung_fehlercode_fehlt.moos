@@ -1,0 +1,6 @@
+# P7-T4 4A negativ: #GP (13) ohne Fehlercodeparameter.
+@nativ
+@unterbrechung(13)
+funktion isr_gp(rahmen: ptr[u64]) -> void:
+    unsicher:
+        port_schreibe(0x20, 0x20)

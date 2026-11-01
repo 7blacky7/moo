@@ -10,6 +10,7 @@ mod native_control_flow;
 mod native_struct;
 mod native_pointer;
 mod native_hardware;
+mod native_const;
 mod native_type_id;
 mod lexer;
 mod native_vecmat;

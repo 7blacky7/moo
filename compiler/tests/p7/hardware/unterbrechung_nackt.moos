@@ -1,0 +1,7 @@
+# P7-T4 4A negativ: @unterbrechung und @nackt zusammen.
+@nativ
+@nackt
+@unterbrechung(32)
+funktion irq_nackt(rahmen: ptr[u64]) -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="iretq", clobber=[])

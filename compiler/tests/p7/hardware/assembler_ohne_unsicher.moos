@@ -1,0 +1,4 @@
+# P7-T4 5A negativ: assembler ausserhalb von unsicher.
+@nativ
+funktion asm_offen() -> void:
+    assembler(ziel="x86_64", code="nop", clobber=[])

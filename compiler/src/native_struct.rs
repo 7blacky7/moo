@@ -74,7 +74,7 @@ fn validate_pointer_target(ty: &TypeRef, names: &HashSet<String>) -> Result<(), 
         TypeKind::Name(name) => Err(format!("Unbekannter Pointer-Zieltyp '{name}'")),
         TypeKind::Generic { name, args } if (name == "ptr" || name == "zeiger") && args.len() == 1 =>
             validate_pointer_target(&args[0], names),
-        TypeKind::Function { params, return_type } => {
+        TypeKind::Function { params, return_type, .. } => {
             for param in params {
                 validate_function_value(param, names, false)?;
             }
@@ -118,6 +118,11 @@ pub(crate) type LayoutSnapshot = Vec<(String, u64, u32, Vec<(String, u64)>)>;
 impl<'ctx> NativeStructRegistry<'ctx> {
     pub(crate) fn new() -> Self { Self { layouts: HashMap::new(), visible_names: HashSet::new() } }
 
+    /// P7-T4 (1A): fertiges Layout einer registrierten Struktur.
+    pub(crate) fn layout(&self, name: &str) -> Option<&NativeStructLayout<'ctx>> {
+        self.layouts.get(name)
+    }
+
     pub(crate) fn snapshot(&self) -> Result<LayoutSnapshot, String> {
         let mut result = Vec::with_capacity(self.layouts.len());
         for (name, layout) in &self.layouts {
@@ -133,7 +138,7 @@ impl<'ctx> NativeStructRegistry<'ctx> {
         Ok(result)
     }
 
-    fn field_type(
+    pub(crate) fn field_type(
         &self, context: &'ctx Context, target: &TargetData, ty: &TypeRef,
     ) -> Result<BasicTypeEnum<'ctx>, String> {
         match &ty.kind {

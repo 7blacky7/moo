@@ -22,10 +22,89 @@ pub(crate) struct FfiSignature {
     source_result: Option<TypeRef>,
     semantic_params: Vec<crate::native_type_id::NativeTypeId>,
     semantic_result: crate::native_type_id::NativeTypeId,
+    // P7-T4 (7A): LLVM-CallingConv (0 = Zieldefault) und Quellname der Konvention.
+    convention: u32,
+    semantic_convention: Option<String>,
 }
 
 fn error(ty: &TypeRef, message: &str) -> String {
     format!("extern C, Zeile {} Spalte {}: {}", ty.line, ty.column, message)
+}
+
+/// P7-T4 (7A): benannte Aufrufkonventionen fuer `@aufrufkonvention("...")`
+/// (EN `@calling_convention`) und Funktionszeigertypen `fn[...](...) -> T`.
+pub(crate) const CALL_CONVENTIONS: [&str; 3] = ["sysv64", "win64", "uefi"];
+
+const CC_C: u32 = 0;
+const CC_X86_64_SYSV: u32 = 78;
+const CC_WIN64: u32 = 79;
+
+/// Name + Zieltriple -> LLVM-CallingConv. "uefi" ist ein zielabhaengiger
+/// Alias: x86_64 -> win64 (MS x64), aarch64 -> AAPCS64 (= C). Entspricht die
+/// Konvention dem Zieldefault, bleibt sie 0, damit annotierte und
+/// unannotierte Aufrufe gleich abgesenkt werden. Unbekannte Paare: Fehler.
+pub(crate) fn llvm_call_convention(name: &str, triple: &str) -> Result<u32, String> {
+    let arch = triple.split('-').next().unwrap_or("");
+    let requested = match (arch, name) {
+        ("x86_64", "sysv64") => CC_X86_64_SYSV,
+        ("x86_64", "win64" | "uefi") => CC_WIN64,
+        ("aarch64", "uefi") => CC_C,
+        _ if !CALL_CONVENTIONS.contains(&name) =>
+            return Err(format!("Unbekannte Aufrufkonvention '{name}' (erlaubt: sysv64, win64, uefi)")),
+        _ => return Err(format!("Aufrufkonvention '{name}' ist für Ziel '{triple}' nicht freigegeben")),
+    };
+    let default = match arch {
+        "x86_64" if triple.contains("windows") || triple.contains("uefi") || triple.contains("mingw") => CC_WIN64,
+        "x86_64" => CC_X86_64_SYSV,
+        _ => CC_C,
+    };
+    Ok(if requested == default { CC_C } else { requested })
+}
+
+pub(crate) fn is_call_convention_decorator(decorator: &crate::ast::Decorator) -> bool {
+    decorator.name == "aufrufkonvention" || decorator.name == "calling_convention"
+}
+
+/// `@aufrufkonvention("...")` aus einer Decoratorliste (hoechstens einmal).
+pub(crate) fn decorator_call_convention(decorators: &[crate::ast::Decorator], triple: &str) -> Result<u32, String> {
+    let mut found = None;
+    for decorator in decorators.iter().filter(|d| is_call_convention_decorator(d)) {
+        if found.is_some() {
+            return Err("@aufrufkonvention darf nur einmal angegeben werden".into());
+        }
+        match decorator.args.as_slice() {
+            [crate::ast::DecoratorArg::Text(name)] => found = Some(llvm_call_convention(name, triple)?),
+            _ => return Err(format!(
+                "@{} erwartet genau ein Text-Argument, z.B. @aufrufkonvention(\"win64\")", decorator.name
+            )),
+        }
+    }
+    Ok(found.unwrap_or(CC_C))
+}
+
+/// Direkte Aufrufe uebernehmen die explizite Konvention ihres Ziels (sysv64/
+/// win64). Andere Konventionen (z. B. Interrupt) bleiben unberuehrt; eine
+/// widerspruechliche, bereits gesetzte Aufrufkonvention ist ein Fehler.
+pub(crate) fn sync_direct_call_conventions(module: &inkwell::module::Module<'_>) -> Result<(), String> {
+    use inkwell::values::{CallSiteValue, InstructionOpcode};
+    for function in module.get_functions() {
+        for block in function.get_basic_blocks() {
+            let mut instruction = block.get_first_instruction();
+            while let Some(current) = instruction {
+                instruction = current.get_next_instruction();
+                if current.get_opcode() != InstructionOpcode::Call { continue; }
+                let Ok(call) = CallSiteValue::try_from(current) else { continue };
+                let Some(callee) = call.get_called_fn_value() else { continue };
+                let wanted = callee.get_call_conventions();
+                if !matches!(wanted, CC_X86_64_SYSV | CC_WIN64) || call.get_call_convention() == wanted { continue; }
+                if call.get_call_convention() != CC_C {
+                    return Err("Aufrufkonvention der Aufrufstelle widerspricht dem Ziel".into());
+                }
+                call.set_call_convention(wanted);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn primitive(name: &str) -> Option<FfiType> {
@@ -128,6 +207,9 @@ impl FfiSignature {
             None => context.void_type().fn_type(&params, false),
         };
         let function = module.add_function(name, function_type, None);
+        if self.convention != CC_C {
+            function.set_call_conventions(self.convention);
+        }
         let apply = |location, ty: FfiType| {
             if let Some(name) = ty.extension(&self.target) {
                 let kind = Attribute::get_named_enum_kind_id(name);
@@ -264,7 +346,7 @@ impl<'ctx> ExternBinding<'ctx> {
             Some(ty) => ty.llvm_type(context).fn_type(&param_types, false),
             None => context.void_type().fn_type(&param_types, false),
         };
-        if function.get_type() != expected_type || function.get_call_conventions() != 0 {
+        if function.get_type() != expected_type || function.get_call_conventions() != signature.convention {
             return Err("extern-C-Aufruf: LLVM-Signatur oder Calling Convention stimmt nicht".to_string());
         }
 
@@ -272,6 +354,9 @@ impl<'ctx> ExternBinding<'ctx> {
             args.iter().map(|arg| arg.value.into()).collect();
         let call = builder.build_call(function, &call_args, if signature.result.is_some() { "extern_c" } else { "" })
             .map_err(|e| format!("extern-C-Aufruf: {e}"))?;
+        if signature.convention != CC_C {
+            call.set_call_convention(signature.convention);
+        }
         let apply = |location, ty: FfiType| {
             if let Some(name) = ty.extension(&signature.target) {
                 let kind = Attribute::get_named_enum_kind_id(name);
@@ -324,7 +409,13 @@ impl FfiSignature {
         let semantic_params = source_params.iter().map(|ty| crate::native_type_id::resolve_type(ty, &nominal))
             .collect::<Result<Vec<_>, _>>()?;
         let semantic_result = crate::native_type_id::resolve_type(&source_result, &nominal)?;
-        Ok(Self { params, result, target: triple.to_string(), source_params, source_result: Some(source_result), semantic_params, semantic_result })
+        Ok(Self { params, result, target: triple.to_string(), source_params, source_result: Some(source_result), semantic_params, semantic_result, convention: CC_C, semantic_convention: None })
+    }
+
+    /// P7-T4 (7A): aufgeloeste Konvention aus `@aufrufkonvention` (0 = Zieldefault).
+    pub(crate) fn with_convention(mut self, convention: u32) -> Self {
+        self.convention = convention;
+        self
     }
 }
 
@@ -379,6 +470,7 @@ impl FfiSignature {
                 params: self.semantic_params.clone(),
                 result: Box::new(self.semantic_result.clone()),
                 variadic: false,
+                convention: self.semantic_convention.clone(),
             }),
         };
         let target = match callee.value {
@@ -412,6 +504,9 @@ impl FfiSignature {
             function_type, target, &call_args,
             if self.result.is_some() { "extern_indirect" } else { "" },
         ).map_err(|e| format!("Indirekter extern-C-Aufruf: {e}"))?;
+        if self.convention != CC_C {
+            call.set_call_convention(self.convention);
+        }
         for (index, ty) in self.params.iter().enumerate() {
             if let Some(name) = ty.extension(&self.target) {
                 let kind = Attribute::get_named_enum_kind_id(name);
@@ -484,9 +579,10 @@ impl FfiSignature {
             | "x86_64-unknown-none" | "aarch64-unknown-none") {
             return Err(format!("Indirekter Aufruf: Ziel-ABI '{triple}' nicht freigegeben"));
         }
-        let (params, result) = match callee {
+        let (params, result, semantic_convention) = match callee {
             NativeTypeId::Pointer { address_space: 0, pointee } => match pointee.as_ref() {
-                NativeTypeId::Function { params, result, variadic: false } => (params, result.as_ref()),
+                NativeTypeId::Function { params, result, variadic: false, convention } =>
+                    (params, result.as_ref(), convention),
                 _ => return Err("Indirekter Aufruf: ptr[fn(...)] erwartet".into()),
             },
             _ => return Err("Indirekter Aufruf: ptr[fn(...)] erwartet".into()),
@@ -505,6 +601,11 @@ impl FfiSignature {
             source_result: None,
             semantic_params: params.clone(),
             semantic_result: result.clone(),
+            convention: match semantic_convention {
+                Some(name) => llvm_call_convention(name, triple)?,
+                None => CC_C,
+            },
+            semantic_convention: semantic_convention.clone(),
         })
     }
 }

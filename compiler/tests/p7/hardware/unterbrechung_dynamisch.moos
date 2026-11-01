@@ -1,0 +1,4 @@
+# P7-T4 Befund: dynamischer @unterbrechung-Pfad (Bestand, MooValue-Parameter).
+@unterbrechung
+funktion isr_dynamisch(rahmen):
+    gib_zurück nichts

@@ -518,6 +518,56 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
+    /// P7-T4 (2A): @sektion/@ausrichten/@benutzt (EN section/align/used) an
+    /// nativen Konstanten und @nativ-Funktionen; @einstieg/@entry impliziert
+    /// benutzt. Objektalignment ist getrennt vom Typalignment, darf es aber
+    /// nicht unterschreiten. Andere Decorators prueft der Aufrufer.
+    fn apply_native_layout_decorators(
+        &mut self,
+        global: inkwell::values::GlobalValue<'ctx>,
+        decorators: &[crate::ast::Decorator],
+        executable: bool,
+        type_alignment: u32,
+        what: &str,
+    ) -> Result<(), String> {
+        let mut seen = std::collections::HashSet::new();
+        let mut used = false;
+        for d in decorators {
+            let kind = match d.name.as_str() {
+                "sektion" | "section" => "sektion",
+                "ausrichten" | "align" => "ausrichten",
+                "benutzt" | "used" => "benutzt",
+                "einstieg" | "entry" => "einstieg",
+                _ => continue,
+            };
+            if !seen.insert(kind) {
+                return Err(format!("{what}: @{} ist doppelt angegeben", d.name));
+            }
+            match (kind, d.args.as_slice()) {
+                ("sektion", [crate::ast::DecoratorArg::Text(s)]) => {
+                    let section = self.target_section_name(s, executable)?;
+                    global.set_section(Some(&section));
+                }
+                ("ausrichten", [crate::ast::DecoratorArg::Zahl(n)]) => {
+                    let a = *n as u64;
+                    if *n <= 0.0 || *n != a as f64 || !a.is_power_of_two() || a > (1u64 << 29) {
+                        return Err(format!("{what}: @{} erwartet eine positive Zweierpotenz, bekommen: {n}", d.name));
+                    }
+                    if (a as u32) < type_alignment {
+                        return Err(format!("{what}: @{} ({a}) ist kleiner als das Typalignment {type_alignment}", d.name));
+                    }
+                    global.set_alignment(a as u32);
+                }
+                ("benutzt" | "einstieg", []) => used = true,
+                _ => return Err(format!("{what}: ungültige Argumente für @{}", d.name)),
+            }
+        }
+        if used {
+            self.used_globals.push(global.as_pointer_value());
+        }
+        Ok(())
+    }
+
     /// Crystal-inspiriert: Bestimmt den statischen Typ einer Expression (wenn bekannt)
     fn infer_type(&self, expr: &Expr) -> Option<&'static str> {
         match expr {
@@ -578,8 +628,25 @@ impl<'ctx> CodeGen<'ctx> {
     /// Kompiliert ein ganzes Programm
     pub fn compile_program(&mut self, program: &Program) -> Result<(), String> {
         self.register_native_structs(program)?;
+        // P7-T4 (1A): Layoutabfragen und skalare native Konstanten falten.
+        let folded = crate::native_const::fold_program(
+            program, self.context, self.target_data.as_ref(), &self.native_structs,
+        )?;
+        let program = &folded;
         // Zuerst alle Funktionen und Klassen deklarieren (Forward-Declarations)
         self.forward_declare(program)?;
+        crate::native_const::emit_constants(
+            program, self.context, &self.module, self.target_data.as_ref(),
+            &self.native_structs, &self.native_functions,
+        )?;
+        for stmt in &program.statements {
+            if let Stmt::NativeConst { name, decorators, .. } = stmt {
+                let global = self.module.get_global(name).ok_or("Native Konstante fehlt im Modul")?;
+                let alignment = self.target_data.as_ref()
+                    .map(|target| target.get_abi_alignment(&global.get_value_type())).unwrap_or(1);
+                self.apply_native_layout_decorators(global, decorators, false, alignment, &format!("Native Konstante '{name}'"))?;
+            }
+        }
         self.prepare_runtime_defer_graph(program)?;
 
         // main-Funktion erstellen
@@ -628,7 +695,7 @@ impl<'ctx> CodeGen<'ctx> {
         for stmt in &program.statements {
             // Nur direkte Top-Level-Externs wurden vorab deklariert.
             // Verschachtelte Deklarationen bleiben in compile_stmt fail-closed.
-            if matches!(stmt, Stmt::ExternC { .. } | Stmt::StructDef { .. }) { continue; }
+            if matches!(stmt, Stmt::ExternC { .. } | Stmt::StructDef { .. } | Stmt::NativeConst { .. }) { continue; }
             if let Stmt::FunctionDef { name, .. } = stmt {
                 if self.native_functions.contains_key(name) { continue; }
             }
@@ -680,6 +747,9 @@ impl<'ctx> CodeGen<'ctx> {
             g.set_initializer(&arr);
         }
 
+        // P7-T4 (7A): direkte Aufrufe erben @aufrufkonvention ihres Ziels.
+        crate::ffi_types::sync_direct_call_conventions(&self.module)?;
+
         // Typ-Warnungen ausgeben (Crystal-inspiriert)
         for w in &self.warnings {
             eprintln!("Warnung: {w}");
@@ -710,11 +780,13 @@ impl<'ctx> CodeGen<'ctx> {
         // Alle C-Signaturen vor nativen Funktionskoerpern erfassen, unabhaengig
         // von ihrer Reihenfolge im Quelltext.
         for stmt in &program.statements {
-            if let Stmt::ExternC { name, params, result, .. } = stmt {
+            if let Stmt::ExternC { name, params, result, decorators } = stmt {
                 let triple = self.module.get_triple();
                 let triple = triple.as_str().to_str().map_err(|e| format!("Ungueltiges Ziel-Triple: {e}"))?;
                 let types: Vec<TypeRef> = params.iter().map(|(_, ty)| ty.clone()).collect();
-                let signature = crate::ffi_types::FfiSignature::validate(triple, &types, result, false)?;
+                let convention = crate::ffi_types::decorator_call_convention(decorators, triple)?;
+                let signature = crate::ffi_types::FfiSignature::validate(triple, &types, result, false)?
+                    .with_convention(convention);
                 self.extern_bindings.declare(self.context, &self.module, name, &signature)?;
             }
         }
@@ -730,12 +802,44 @@ impl<'ctx> CodeGen<'ctx> {
                 if !decorators.iter().any(|d| d.name == "nativ" || d.name == "native") { continue; }
                 use crate::codegen_native::{NType, NSignature};
                 if params.len() != param_types.len() || defaults.iter().any(Option::is_some)
-                    || decorators.len() != 1 || !decorators[0].args.is_empty()
+                    // P7-T4 (7A): neben @nativ ist nur @aufrufkonvention zulaessig.
+                    || decorators.iter().filter(|d| d.name == "nativ" || d.name == "native").count() != 1
+                    || !decorators.iter().all(|d| (matches!(d.name.as_str(), "nativ" | "native" | "nackt" | "naked"
+                            | "benutzt" | "used" | "einstieg" | "entry") && d.args.is_empty())
+                        || matches!(d.name.as_str(), "sektion" | "section" | "ausrichten" | "align" | "unterbrechung" | "interrupt")
+                        || crate::ffi_types::is_call_convention_decorator(d))
                     || program.statements.iter().filter(|s| matches!(s, Stmt::FunctionDef { name: other, .. } if other == name)).count() != 1
                     || self.module.get_function(name).is_some()
                     || self.native_functions.contains_key(name)
                 {
                     return Err(format!("Native Funktion '{name}': Signatur, Defaults, Decorators oder Name nicht unterstützt"));
+                }
+                let convention = {
+                    let triple = self.module.get_triple();
+                    let triple = triple.as_str().to_str().map_err(|e| e.to_string())?.to_string();
+                    crate::ffi_types::decorator_call_convention(decorators, &triple)
+                        .map_err(|e| format!("Native Funktion '{name}': {e}"))?
+                };
+                // P7-T4 (3A): @nackt nur fuer reine Assemblerkoerper (Pruefung im Emitter).
+                let naked = decorators.iter().any(|d| d.name == "nackt" || d.name == "naked");
+                if naked && !matches!(crate::native_hardware::classify_body(body), crate::native_hardware::BodyKind::Hardware) {
+                    return Err(format!("Native Funktion '{name}': @nackt verlangt einen Körper aus unsicher: assembler(...)"));
+                }
+                // P7-T4 (4A): @unterbrechung(vektor) an @nativ mit Vektorvertrag.
+                let interrupts: Vec<&crate::ast::Decorator> = decorators.iter()
+                    .filter(|d| d.name == "unterbrechung" || d.name == "interrupt").collect();
+                let interrupt = match interrupts.as_slice() {
+                    [] => None,
+                    [d] => match d.args.as_slice() {
+                        [crate::ast::DecoratorArg::Zahl(n)] if n.fract() == 0.0 && *n >= 0.0 && *n <= 255.0 => Some(*n as u8),
+                        _ => return Err(format!("Native Funktion '{name}': @{} erwartet die Vektornummer 0..255, z.B. @unterbrechung(14)", d.name)),
+                    },
+                    _ => return Err(format!("Native Funktion '{name}': @unterbrechung ist doppelt angegeben")),
+                };
+                if interrupt.is_some() && (naked || convention != 0
+                    || !matches!(crate::native_hardware::classify_body(body), crate::native_hardware::BodyKind::Hardware))
+                {
+                    return Err(format!("Native Funktion '{name}': @unterbrechung verlangt einen Hardwarekörper (unsicher: ...) ohne @nackt/@aufrufkonvention; Sonderfälle als @nackt-Trampolin"));
                 }
                 match crate::native_hardware::classify_body(body) {
                     crate::native_hardware::BodyKind::MissingUnsafe => {
@@ -752,6 +856,20 @@ impl<'ctx> CodeGen<'ctx> {
                         }
                         let fun = self.module.add_function(&internal, sig.llvm_type(self.context),
                             Some(inkwell::module::Linkage::Internal));
+                        if convention != 0 { fun.set_call_conventions(convention); }
+                        if let Some(vector) = interrupt {
+                            let triple = self.module.get_triple();
+                            let triple = triple.as_str().to_str().map_err(|e| e.to_string())?.to_string();
+                            crate::native_hardware::configure_interrupt(self.context, fun, &sig, vector, &triple)
+                                .map_err(|e| format!("Native Funktion '{name}': {e}"))?;
+                        }
+                        if naked {
+                            for attribute in ["naked", "noinline"] {
+                                let kind = inkwell::attributes::Attribute::get_named_enum_kind_id(attribute);
+                                fun.add_attribute(inkwell::attributes::AttributeLoc::Function,
+                                    self.context.create_enum_attribute(kind, 0));
+                            }
+                        }
                         self.native_functions.insert(name.clone(), fun);
                         hardware_functions.insert(name.clone(), (fun, sig));
                         continue;
@@ -777,6 +895,7 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     let fun = self.module.add_function(&internal, sig.llvm_type(self.context),
                         Some(inkwell::module::Linkage::Internal));
+                    if convention != 0 { fun.set_call_conventions(convention); }
                     self.native_functions.insert(name.clone(), fun);
                     pointer_functions.insert(name.clone(), (fun, sig));
                     continue;
@@ -801,6 +920,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 let fun = self.module.add_function(&internal, sig.llvm_type(self.context),
                     Some(inkwell::module::Linkage::Internal));
+                if convention != 0 { fun.set_call_conventions(convention); }
                 if matches!(body.as_slice(), [Stmt::UnsafeBlock { .. }]) {
                     if self.bare_mode {
                         return Err("Native C-Aufrufe sind im ersten Slice nur hosted unterstützt".into());
@@ -817,6 +937,21 @@ impl<'ctx> CodeGen<'ctx> {
                 self.native_functions.insert(name.clone(), fun);
                 self.native_signatures.insert(name.clone(), sig);
             }
+        }
+        // P7-T4 (2A): Layout-Decorators an @nativ; @einstieg exportiert die
+        // Funktion unter ihrem Moo-Namen (externe Bindung, implizit benutzt).
+        for stmt in &program.statements {
+            let Stmt::FunctionDef { name, decorators, .. } = stmt else { continue };
+            if !decorators.iter().any(|d| d.name == "nativ" || d.name == "native") { continue; }
+            let Some(fun) = self.native_functions.get(name).copied() else { continue };
+            if decorators.iter().any(|d| d.name == "einstieg" || d.name == "entry") {
+                if name == "main" || self.module.get_function(name).is_some() || self.module.get_global(name).is_some() {
+                    return Err(format!("Native Funktion '{name}': @einstieg-Symbolkollision"));
+                }
+                fun.as_global_value().set_name(name);
+                fun.set_linkage(inkwell::module::Linkage::External);
+            }
+            self.apply_native_layout_decorators(fun.as_global_value(), decorators, true, 1, &format!("Native Funktion '{name}'"))?;
         }
         crate::codegen_native::validate_pure_call_graph(&pure_bodies)?;
         for stmt in &program.statements {
@@ -2147,17 +2282,25 @@ impl<'ctx> CodeGen<'ctx> {
             return Ok(());
         }
 
-        // Interrupt Calling Convention support
-        let has_interrupt = decorators.iter().any(|d| d.name == "interrupt" || d.name == "unterbrechung");
-        if has_interrupt {
+        // Interrupt Calling Convention support (dynamischer Bestandspfad).
+        // P7-T4: Nur der parameterlose x86-Fall erzeugte je ein Objekt und bleibt
+        // unveraendert (CC 83). Mit Parametern scheiterte LLVM-Verify ("Calling
+        // convention parameter requires byval"); auf ARM/AArch64 war CC 66 =
+        // ARM_APCS keine Interrupt-Konvention (aarch64-llc: "unsupported calling
+        // convention"). Diese Faelle sind jetzt ein klarer Fehler mit Hinweis.
+        if let Some(d) = decorators.iter().find(|d| d.name == "interrupt" || d.name == "unterbrechung") {
             let triple = self.module.get_triple();
             let triple_str = triple.as_str().to_str().unwrap_or("");
-            let cc = if triple_str.contains("aarch64") || triple_str.contains("arm") {
-                66 // ARM Interrupt
-            } else {
-                83 // x86 Interrupt
-            };
-            function.set_call_conventions(cc);
+            let x86 = triple_str.starts_with("x86_64") || triple_str.starts_with("i686") || triple_str.starts_with("i386");
+            if !x86 || !params.is_empty() {
+                return Err(format!(
+                    "@{} an dynamischen Funktionen geht nur parameterlos auf x86 (MooValue-ABI hat keinen Interrupt-Rahmen); \
+                     verwende @nativ @unterbrechung(vektor) mit (rahmen: ptr[u64][, fehlercode: u64]) -> void und unsicher:-Hardwarekoerper \
+                     (x86_64) bzw. ein @nativ @nackt-Trampolin (aarch64)",
+                    d.name
+                ));
+            }
+            function.set_call_conventions(83); // x86 Interrupt
         }
 
         // P011-A1: Layout-Decorators — @benutzt/@used (+ @einstieg/@entry: implizit benutzt),
@@ -2196,6 +2339,18 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     _ => return Err(format!("@{} erwartet genau ein Zahl-Argument", d.name)),
                 },
+                "aufrufkonvention" | "calling_convention" => {
+                    return Err(format!(
+                        "@{} gilt nur für @nativ-Funktionen und extern C; dynamische Moo-Funktionen haben die MooValue-ABI",
+                        d.name
+                    ));
+                }
+                "nackt" | "naked" => {
+                    return Err(format!(
+                        "@{} gilt nur für @nativ-Funktionen mit unsicher: assembler(...); dynamische Moo-Funktionen brauchen Prolog und Runtime",
+                        d.name
+                    ));
+                }
                 _ => {}
             }
         }

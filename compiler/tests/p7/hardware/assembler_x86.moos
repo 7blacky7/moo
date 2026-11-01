@@ -1,0 +1,32 @@
+# P7-T4 5A: Inline-Assembler mit deklarierten Ein-/Ausgaengen und Clobbers.
+@nativ
+funktion asm_addiere(a: u64, b: u64) -> u64:
+    unsicher:
+        gib_zurück assembler(ziel="x86_64", code="leaq ($1,$2), $0", ausgang="=r", eingaenge={"r": a, "r": b}, clobber=[])
+
+@nativ
+funktion asm_cpuid_max(blatt: u32) -> u32:
+    unsicher:
+        gib_zurück assembler(ziel="x86_64", code="cpuid", ausgang="={eax}", eingaenge={"0": blatt}, clobber=["ebx", "ecx", "edx"])
+
+@nativ
+funktion asm_lies(p: ptr[u64]) -> u64:
+    unsicher:
+        gib_zurück assembler(ziel="x86_64", code="movq ($1), $0", ausgang="=r", eingaenge={"r": p}, clobber=["memory"])
+
+@nativ
+funktion asm_hoch32(x: u64) -> u64:
+    unsicher:
+        gib_zurück assembler(ziel="x86_64", code="shlq $$32, $0", ausgang="=r", eingaenge={"0": x}, clobber=["flags"])
+
+@nativ
+funktion asm_pause() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="pause", clobber=["memory"])
+        compilerbarriere()
+
+# Privilegiert: nur Disassembly, keine Ausfuehrung im Userspace.
+@nativ
+funktion asm_lade_gdt(tabelle: ptr[u8]) -> void:
+    unsicher:
+        assembler(target="x86_64", code="lgdt ($0)", inputs={"r": tabelle}, clobber=["memory"])

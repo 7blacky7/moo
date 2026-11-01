@@ -1,0 +1,5 @@
+# P7-T4 5A negativ: freier String ohne Constraints.
+@nativ
+funktion asm_frei() -> void:
+    unsicher:
+        assembler("cli")

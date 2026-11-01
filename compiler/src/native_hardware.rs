@@ -20,6 +20,15 @@
 //!   `port_schreibe32`/`port_out32`; Port ist u16, Wert exakt u8/u16/u32.
 //! Volatile ersetzt weder Barriere noch Atomics: die Reihenfolge zwischen
 //! Geraeteregistern und DMA-Speicher legt der Aufrufer mit Barrieren fest.
+//! - P7-T4 (5A) Inline-Assembler, nur mit benannten Argumenten:
+//!   `assembler(ziel="x86_64", code="...", ausgang="=r", eingaenge={"r": a},
+//!   clobber=["memory"])` (EN target/output/inputs). Pflicht: ziel (muss zum
+//!   Modulziel passen), code, clobber (Liste, darf leer sein). ausgang (ein
+//!   Register: "=r", "=&r", "={reg}") nur mit `gib_zurueck`, Typ = Rueckgabetyp.
+//!   Eingaenge: Constraint "r", "{reg}" oder Ziffer (an Ausgang gebunden) ->
+//!   typisierter Integer-/Zeigerparameter. Operanden im Code: `$N`/`${N:mod}`,
+//!   ein woertliches `$` als `$$`. Immer sideeffect (volatile).
+//!   Freie Strings ohne Constraints/Clobber sind ein Compilefehler.
 
 use inkwell::context::Context;
 use inkwell::targets::TargetData;
@@ -39,6 +48,7 @@ enum Intrinsic {
     Barrier(Barrier),
     PortRead(u32),
     PortWrite(u32),
+    Asm,
 }
 
 fn classify(name: &str) -> Option<Intrinsic> {
@@ -55,12 +65,13 @@ fn classify(name: &str) -> Option<Intrinsic> {
         "port_schreibe" | "port_out" => Intrinsic::PortWrite(8),
         "port_schreibe16" | "port_out16" => Intrinsic::PortWrite(16),
         "port_schreibe32" | "port_out32" => Intrinsic::PortWrite(32),
+        "assembler" => Intrinsic::Asm,
         _ => return None,
     })
 }
 
 fn is_read(kind: Intrinsic) -> bool {
-    matches!(kind, Intrinsic::VolatileRead | Intrinsic::PortRead(_))
+    matches!(kind, Intrinsic::VolatileRead | Intrinsic::PortRead(_) | Intrinsic::Asm)
 }
 
 fn intrinsic_stmt(stmt: &Stmt) -> Option<(Intrinsic, &[Expr], bool)> {
@@ -127,6 +138,88 @@ fn port_type(bits: u32) -> NType {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Arch { X86_64, AArch64 }
+
+/// `{reg}` mit Kleinbuchstaben/Ziffern (z. B. {eax}, {dx}, {x0}).
+fn register_constraint(constraint: &str) -> bool {
+    constraint.len() > 2 && constraint.starts_with('{') && constraint.ends_with('}')
+        && constraint[1..constraint.len() - 1].bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+}
+
+/// Jeder Operandenverweis `$N` bzw. `${N...}` muss deklariert sein; `$$` ist ein `$`.
+fn check_operands(code: &str, count: usize) -> Result<(), String> {
+    let bytes = code.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'$' { i += 1; continue; }
+        let start = match bytes.get(i + 1) {
+            Some(b'$') => { i += 2; continue; }
+            Some(b'{') => i + 2,
+            _ => i + 1,
+        };
+        let digits = bytes[start..].iter().take_while(|b| b.is_ascii_digit()).count();
+        if digits == 0 {
+            return Err("assembler: '$' ohne Operandennummer (wörtliches $ als $$ schreiben)".into());
+        }
+        let index: usize = code[start..start + digits].parse().map_err(|_| "assembler: Operandennummer zu groß".to_string())?;
+        if index >= count {
+            return Err(format!("assembler: Operand ${index} ist nicht deklariert ({count} Operanden)"));
+        }
+        i = start + digits;
+    }
+    Ok(())
+}
+
+struct AsmSpec<'e> {
+    target: String,
+    code: String,
+    output: Option<String>,
+    inputs: Vec<(String, &'e Expr)>,
+    clobbers: Vec<String>,
+}
+
+impl<'e> AsmSpec<'e> {
+    fn parse(args: &'e [Expr]) -> Result<Self, String> {
+        let pairs = match args {
+            [Expr::Dict(pairs)] => pairs,
+            _ => return Err("assembler erwartet benannte Argumente (ziel=, code=, clobber=, optional ausgang=, eingaenge=); freie Assembler-Strings ohne Constraints sind nicht erlaubt".into()),
+        };
+        let text = |key: &str, value: &Expr| match value {
+            Expr::String(s) => Ok(s.clone()),
+            _ => Err(format!("assembler: {key}= erwartet ein Text-Literal")),
+        };
+        let (mut target, mut code, mut output, mut inputs, mut clobbers) = (None, None, None, Vec::new(), None);
+        let mut seen = std::collections::HashSet::new();
+        for (key, value) in pairs {
+            let key = match key { Expr::String(key) => key.as_str(), _ => return Err("assembler: ungültiger Argumentname".into()) };
+            if !seen.insert(key) {
+                return Err(format!("assembler: {key}= doppelt angegeben"));
+            }
+            match key {
+                "ziel" | "target" => target = Some(text(key, value)?),
+                "code" => code = Some(text(key, value)?),
+                "ausgang" | "output" => output = Some(text(key, value)?),
+                "eingaenge" | "eingänge" | "inputs" => match value {
+                    Expr::Dict(items) => for (constraint, operand) in items {
+                        inputs.push((text(key, constraint)?, operand));
+                    },
+                    _ => return Err("assembler: eingaenge= erwartet {\"constraint\": parameter, ...}".into()),
+                },
+                "clobber" | "clobbers" => match value {
+                    Expr::List(items) => clobbers = Some(items.iter().map(|item| text(key, item)).collect::<Result<Vec<_>, _>>()?),
+                    _ => return Err("assembler: clobber= erwartet eine Liste von Text-Literalen".into()),
+                },
+                other => return Err(format!("assembler: unbekanntes Argument {other}=")),
+            }
+        }
+        Ok(Self {
+            target: target.ok_or("assembler: ziel= fehlt")?,
+            code: code.ok_or("assembler: code= fehlt")?,
+            output,
+            inputs,
+            clobbers: clobbers.ok_or("assembler: clobber= fehlt (leere Liste [] erlaubt, muss aber angegeben werden)")?,
+        })
+    }
+}
 
 struct Emitter<'a, 'ctx> {
     context: &'ctx Context,
@@ -247,9 +340,77 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         })
     }
 
+    /// P7-T4 (5A): `assembler(...)` mit deklarierten Ein-/Ausgaengen und Clobbers.
+    fn inline_asm(&self, args: &[Expr], result: Option<NType>) -> Result<Option<NValue<'ctx>>, String> {
+        let spec = AsmSpec::parse(args)?;
+        let arch = match self.arch { Arch::X86_64 => "x86_64", Arch::AArch64 => "aarch64" };
+        if spec.target != arch {
+            return Err(format!("assembler: ziel=\"{}\" passt nicht zum Modulziel {arch}", spec.target));
+        }
+        let mut constraints = Vec::new();
+        let outputs = match (&spec.output, result) {
+            (Some(output), Some(ty)) => {
+                let register = output.strip_prefix("=&").or_else(|| output.strip_prefix('='));
+                if !register.is_some_and(|r| r == "r" || register_constraint(r)) {
+                    return Err(format!("assembler: ungültige Ausgangs-Constraint '{output}' (=r, =&r, ={{reg}})"));
+                }
+                if !is_integer(ty) {
+                    return Err("assembler: ausgang verlangt einen Integer-Rückgabetyp".into());
+                }
+                constraints.push(output.clone());
+                1
+            }
+            (Some(_), None) => return Err("assembler: ausgang= ist nur mit gib_zurück erlaubt".into()),
+            (None, Some(_)) => return Err("assembler: gib_zurück verlangt ausgang=".into()),
+            (None, None) => 0,
+        };
+        let mut values: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
+        let mut types: Vec<BasicMetadataTypeEnum<'ctx>> = Vec::new();
+        for (constraint, expr) in &spec.inputs {
+            let tied = constraint.len() == 1 && constraint.chars().all(|c| c.is_ascii_digit())
+                && constraint.parse::<usize>().is_ok_and(|n| n < outputs);
+            if !(constraint == "r" || register_constraint(constraint) || tied) {
+                return Err(format!("assembler: ungültige Eingangs-Constraint '{constraint}' (r, {{reg}}, Ausgangsnummer)"));
+            }
+            let name = match expr {
+                Expr::Identifier(name) => name,
+                _ => return Err("assembler: Eingänge müssen typisierte Parameter sein".into()),
+            };
+            let (index, param) = self.param(name)?;
+            if !matches!(param, NativeParameter::Pointer { .. })
+                && !matches!(param, NativeParameter::Scalar(ty) if is_integer(*ty))
+            {
+                return Err(format!("assembler: Eingang '{name}' muss Integer oder Zeiger sein"));
+            }
+            let value = self.argument(index)?;
+            types.push(value.get_type().into());
+            values.push(value.into());
+            constraints.push(constraint.clone());
+        }
+        for clobber in &spec.clobbers {
+            if clobber.is_empty() || !clobber.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()) {
+                return Err(format!("assembler: ungültiger Clobber '{clobber}'"));
+            }
+            constraints.push(format!("~{{{clobber}}}"));
+        }
+        check_operands(&spec.code, outputs + spec.inputs.len())?;
+        let fn_type = match result {
+            Some(ty) => ty.llvm_type(self.context).fn_type(&types, false),
+            None => self.context.void_type().fn_type(&types, false),
+        };
+        let asm = self.context.create_inline_asm(fn_type, spec.code.clone(), constraints.join(","), true, false, None, false);
+        let call = self.builder.build_indirect_call(fn_type, asm, &values, "hw.asm").map_err(|e| e.to_string())?;
+        match (result, call.try_as_basic_value()) {
+            (Some(ty), inkwell::values::ValueKind::Basic(value)) => Ok(Some(NValue::checked(self.context, ty, value)?)),
+            (None, _) => Ok(None),
+            _ => Err("assembler: Ausgang liefert keinen Wert".into()),
+        }
+    }
+
     /// Ein Intrinsic ausgeben; Lesezugriffe liefern ihren typisierten Wert.
-    fn intrinsic(&self, kind: Intrinsic, args: &[Expr]) -> Result<Option<NValue<'ctx>>, String> {
+    fn intrinsic(&self, kind: Intrinsic, args: &[Expr], returns: bool) -> Result<Option<NValue<'ctx>>, String> {
         match kind {
+            Intrinsic::Asm => self.inline_asm(args, if returns { self.signature.result } else { None }),
             Intrinsic::VolatileRead => {
                 let (element, ty, source) = match args {
                     [pointer] => self.element(pointer, None)?,
@@ -327,6 +488,57 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     }
 }
 
+/// P7-T4 (4A): x86_64-Interruptvertrag fuer `@nativ @unterbrechung(vektor)`.
+/// Vektoren 8, 10-14, 17, 21, 29, 30 legen einen Fehlercode ab:
+/// `(rahmen: ptr[u64], fehlercode: u64) -> void`, alle anderen
+/// `(rahmen: ptr[u64]) -> void`. rahmen zeigt auf RIP, CS, RFLAGS, RSP, SS.
+/// LLVM x86_intrcc sichert alle benutzten Register und kehrt mit iretq
+/// zurueck (Fehlercode wird vorher entfernt). Nur Allzweckregister.
+/// EOI, Stackwechsel (IST) und Synchronisation bleiben beim Handler bzw. IDT.
+pub(crate) fn configure_interrupt<'ctx>(
+    context: &'ctx Context,
+    function: FunctionValue<'ctx>,
+    signature: &NativePointerSignature,
+    vector: u8,
+    triple: &str,
+) -> Result<(), String> {
+    use inkwell::attributes::{Attribute, AttributeLoc};
+    use inkwell::types::AnyType;
+    if !matches!(triple, "x86_64-unknown-none" | "x86_64-unknown-uefi") {
+        return Err(format!("@unterbrechung an @nativ: Ziel '{triple}' nicht unterstützt (aarch64: @nackt-Trampolin mit assembler, 4B)"));
+    }
+    let frame = match signature.params.first() {
+        Some(NativeParameter::Pointer { source, .. }) => matches!(&source.kind,
+            TypeKind::Generic { args, .. } if matches!(&args[0].kind, TypeKind::Name(n) if n == "u64")),
+        _ => false,
+    };
+    let error_code = matches!(vector, 8 | 10..=14 | 17 | 21 | 29 | 30);
+    let shape = match signature.params.as_slice() {
+        [_] => frame && !error_code,
+        [_, NativeParameter::Scalar(NType::U64)] => frame && error_code,
+        _ => false,
+    };
+    if !shape {
+        return Err(if error_code {
+            format!("@unterbrechung({vector}): Vektor legt einen Fehlercode ab, Signatur (rahmen: ptr[u64], fehlercode: u64) -> void")
+        } else {
+            format!("@unterbrechung({vector}): Vektor ohne Fehlercode, Signatur (rahmen: ptr[u64]) -> void")
+        });
+    }
+    if signature.result.is_some() {
+        return Err("@unterbrechung: Rückgabetyp muss void sein".into());
+    }
+    function.set_call_conventions(83); // x86_intrcc
+    let byval = Attribute::get_named_enum_kind_id("byval");
+    let frame_type = context.i64_type().array_type(5).as_any_type_enum();
+    function.add_attribute(AttributeLoc::Param(0), context.create_type_attribute(byval, frame_type));
+    function.add_attribute(AttributeLoc::Function,
+        context.create_enum_attribute(Attribute::get_named_enum_kind_id("noinline"), 0));
+    function.add_attribute(AttributeLoc::Function,
+        context.create_string_attribute("target-features", "-mmx,-sse,-sse2,-avx,-x87"));
+    Ok(())
+}
+
 /// Koerper einer Hardwarefunktion ausgeben (Erkennung: classify_body).
 pub(crate) fn emit_hardware_function<'ctx>(
     context: &'ctx Context,
@@ -360,6 +572,25 @@ pub(crate) fn emit_hardware_function<'ctx>(
     let builder = context.create_builder();
     builder.position_at_end(entry);
     let emitter = Emitter { context, target, arch, function, signature, param_names, builder };
+    // P7-T4 (3A): @nackt -> nur assembler ohne Ein-/Ausgang, kein Prolog/Epilog,
+    // kein ret: Ruecksprung bzw. Nichtrueckkehr liegt beim Assemblercode.
+    let naked_kind = inkwell::attributes::Attribute::get_named_enum_kind_id("naked");
+    if function.get_enum_attribute(inkwell::attributes::AttributeLoc::Function, naked_kind).is_some() {
+        for stmt in inner {
+            match intrinsic_stmt(stmt) {
+                Some((Intrinsic::Asm, args, false)) => {
+                    let spec = AsmSpec::parse(args)?;
+                    if !spec.inputs.is_empty() || spec.output.is_some() {
+                        return Err("@nackt: assembler ohne eingaenge=/ausgang= (Parameter liegen in den ABI-Registern)".into());
+                    }
+                    emitter.intrinsic(Intrinsic::Asm, args, false)?;
+                }
+                _ => return Err("@nackt erlaubt nur assembler(...)-Anweisungen (kein gib_zurück, keine anderen Intrinsics)".into()),
+            }
+        }
+        emitter.builder.build_unreachable().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
     let last = inner.len() - 1;
     for (position, stmt) in inner.iter().enumerate() {
         let (kind, args, returns) = intrinsic_stmt(stmt).ok_or("Hardwarefunktion enthält eine nicht unterstützte Anweisung")?;
@@ -370,7 +601,7 @@ pub(crate) fn emit_hardware_function<'ctx>(
             if !is_read(kind) {
                 return Err("gib_zurück verlangt einen Lesezugriff (volatile_lesen oder port_lese*)".into());
             }
-            let value = emitter.intrinsic(kind, args)?.ok_or("Lesezugriff liefert keinen Wert")?;
+            let value = emitter.intrinsic(kind, args, true)?.ok_or("Lesezugriff liefert keinen Wert")?;
             if signature.result != Some(value.ty) {
                 return Err(format!("Rückgabetyp passt nicht zum Lesezugriff ({:?})", value.ty));
             }
@@ -378,7 +609,7 @@ pub(crate) fn emit_hardware_function<'ctx>(
             return Ok(());
         }
         // Lesen als Anweisung ist erlaubt (z. B. Register lesen, um es zu quittieren).
-        emitter.intrinsic(kind, args)?;
+        emitter.intrinsic(kind, args, false)?;
     }
     if signature.result.is_some() {
         return Err("Hardwarefunktion mit Rückgabetyp endet ohne gib_zurück".into());

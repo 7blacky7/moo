@@ -1,0 +1,7 @@
+# P7-T4 1A negativ: falsche Feldanzahl.
+struktur Paar:
+    a: u32
+    b: u32
+
+@nativ
+konstante p: Paar auf Paar(1)

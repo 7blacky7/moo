@@ -1,0 +1,5 @@
+# P7-T4 2A negativ: @sektion doppelt.
+@nativ
+@sektion(".a")
+@sektion(".b")
+konstante werte: [u32; 2] auf [1, 2]

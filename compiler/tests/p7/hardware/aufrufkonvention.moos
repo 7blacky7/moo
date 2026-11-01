@@ -1,0 +1,39 @@
+# P7-T4 7A: Aufrufkonvention pro Funktion (@aufrufkonvention) und pro
+# Funktionszeigertyp (fn[...]). Fuenf Argumente pruefen den Stackanteil:
+# win64 hat vier Registerargumente plus Shadow Space, sysv64 sechs.
+
+# SysV-Code ruft einen win64-Funktionszeiger (z. B. Firmwaredienst).
+@nativ
+funktion cc_rufe_win64(f: ptr[fn[win64](u64, u64, u64, u64, u64) -> u64], a: u64, b: u64, c: u64, d: u64, e: u64) -> u64:
+    unsicher:
+        gib_zurück f(a, b, c, d, e)
+
+# "uefi" ist ein zielabhaengiger Alias (x86_64: win64).
+@nativ
+funktion cc_rufe_uefi(f: ptr[fn[uefi](ptr[u8], ptr[u16]) -> u64], kontext: ptr[u8], text: ptr[u16]) -> u64:
+    unsicher:
+        gib_zurück f(kontext, text)
+
+# Die Funktion selbst hat win64 und ruft einen sysv64-Zeiger (Loader -> Kernel).
+@nativ
+@aufrufkonvention("win64")
+funktion cc_win64_eintritt(f: ptr[fn[sysv64](u64, u64, u64, u64, u64) -> u64], a: u64, b: u64, c: u64, d: u64) -> u64:
+    unsicher:
+        gib_zurück f(a, b, c, d, d)
+
+# EN-Alias des Decorators an einer Hardwarefunktion.
+@nativ
+@calling_convention("win64")
+funktion cc_reg_lesen(p: ptr[u32]) -> u32:
+    unsicher:
+        gib_zurück volatile_lesen(p)
+
+# Direkter Aufruf: die Aufrufstelle uebernimmt die Konvention des Ziels.
+@nativ
+@aufrufkonvention("win64")
+funktion cc_doppel(x: i32) -> i32:
+    gib_zurück x + x
+
+@nativ
+funktion cc_vier(x: i32) -> i32:
+    gib_zurück cc_doppel(cc_doppel(x))

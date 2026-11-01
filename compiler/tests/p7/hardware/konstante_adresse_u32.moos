@@ -1,0 +1,10 @@
+# P7-T4 1A negativ: Linkadresse passt nicht in u32 (64-Bit-Ziel).
+# (Skalare native Konstanten sind Compilezeitwerte; ein Array ist ein Symbol.)
+struktur Eintrag:
+    adresse: u32
+
+@nativ
+konstante ziel: [u8; 1] auf [1]
+
+@nativ
+konstante e: Eintrag auf Eintrag(ziel)

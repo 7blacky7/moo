@@ -1,0 +1,9 @@
+# P7-T4 1A negativ: Funktionszeigerfeld mit Datensymbol.
+struktur Tabelle:
+    dienst: ptr[fn(u64) -> u64]
+
+@nativ
+konstante daten: [u64; 1] auf [7]
+
+@nativ
+konstante t: Tabelle auf Tabelle(daten)

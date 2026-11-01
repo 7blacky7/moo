@@ -1,0 +1,4 @@
+# P7-T4 2A negativ: Objektalignment unter Typalignment.
+@nativ
+@ausrichten(2)
+konstante werte: [u32; 2] auf [1, 2]

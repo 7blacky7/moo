@@ -67,6 +67,8 @@ pub(crate) fn libraries(stmts: &[Stmt], triple: &str) -> Result<Vec<String>, Str
                             }
                             names.push(name.to_owned()); // Wiederholungen koennen beim statischen Linken relevant sein.
                         }
+                        // P7-T4 (7A): Pruefung und Absenkung im Codegen (ffi_types).
+                        "aufrufkonvention" | "calling_convention" => {}
                         other => return Err(format!(
                             "Decorator '@{other}' fuer extern C noch nicht unterstuetzt"
                         )),

@@ -1,0 +1,8 @@
+# P7-T4 7A: extern C mit expliziter Konvention (hosted, Linux-Ziel).
+@aufrufkonvention("win64")
+extern "C" funktion cc_fremd(a: u64, b: u64, c: u64, d: u64, e: u64) -> u64
+
+@nativ
+funktion cc_extern_rufen(a: u64, b: u64, c: u64, d: u64, e: u64) -> u64:
+    unsicher:
+        gib_zurück cc_fremd(a, b, c, d, e)

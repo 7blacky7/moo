@@ -1,0 +1,15 @@
+# P7-T4 4A: @unterbrechung(vektor) an @nativ mit Rahmen- und Fehlercodevertrag.
+# IRQ 0 (PIT) auf Vektor 32: kein Fehlercode, EOI an den Master-PIC.
+@nativ
+@unterbrechung(32)
+funktion irq_timer(rahmen: ptr[u64]) -> void:
+    unsicher:
+        port_schreibe(0x20, 0x20)
+
+# Seitenfehler (#PF, Vektor 14): CPU legt einen Fehlercode ab.
+@nativ
+@interrupt(14)
+funktion isr_seitenfehler(rahmen: ptr[u64], fehlercode: u64) -> void:
+    unsicher:
+        volatile_lesen(rahmen, 0)
+        assembler(ziel="x86_64", code="movq %cr2, %rax", clobber=["rax"])

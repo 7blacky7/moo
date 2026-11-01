@@ -1,0 +1,5 @@
+# P7-T4 5A negativ: Ausgang ohne gib_zurueck.
+@nativ
+funktion asm_verloren() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="rdtsc", ausgang="={eax}", clobber=["edx"])

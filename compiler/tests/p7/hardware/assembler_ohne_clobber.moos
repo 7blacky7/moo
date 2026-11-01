@@ -1,0 +1,5 @@
+# P7-T4 5A negativ: clobber fehlt.
+@nativ
+funktion asm_ohne() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="cli")

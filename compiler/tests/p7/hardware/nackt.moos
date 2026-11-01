@@ -1,0 +1,23 @@
+# P7-T4 3A: @nackt/@naked - nur Assembler, kein Prolog/Epilog, kein ret vom Compiler.
+@nativ
+@nackt
+funktion nackt_identitaet(x: u64) -> u64:
+    unsicher:
+        assembler(ziel="x86_64", code="movq %rdi, %rax", clobber=[])
+        assembler(ziel="x86_64", code="retq", clobber=[])
+
+@nativ
+@naked
+@aufrufkonvention("win64")
+funktion nackt_win64(x: u64) -> u64:
+    unsicher:
+        assembler(ziel="x86_64", code="leaq 1(%rcx), %rax", clobber=[])
+        assembler(ziel="x86_64", code="retq", clobber=[])
+
+# Einsprung vor gueltigem Stack: setzt rsp selbst und kehrt nie zurueck.
+@nativ
+@nackt
+funktion nackt_start() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="movq $$0x90000, %rsp", clobber=[])
+        assembler(ziel="x86_64", code="cli; hlt", clobber=[])

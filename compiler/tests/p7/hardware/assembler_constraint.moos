@@ -1,0 +1,5 @@
+# P7-T4 5A negativ: Ausgangs-Constraint als Eingang.
+@nativ
+funktion asm_constraint(a: u64) -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="nop", eingaenge={"=r": a}, clobber=[])

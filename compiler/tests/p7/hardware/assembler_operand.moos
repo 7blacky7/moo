@@ -1,0 +1,5 @@
+# P7-T4 5A negativ: Operand $2 nicht deklariert.
+@nativ
+funktion asm_operand(a: u64) -> u64:
+    unsicher:
+        gib_zurück assembler(ziel="x86_64", code="movq $2, $0", ausgang="=r", eingaenge={"r": a}, clobber=[])

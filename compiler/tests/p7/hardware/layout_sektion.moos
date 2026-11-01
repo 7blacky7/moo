@@ -1,0 +1,45 @@
+# P7-T4 2A: @sektion/@ausrichten/@benutzt an nativen Konstanten und Funktionen,
+# @einstieg exportiert eine @nativ-Funktion unter ihrem Namen.
+@gepackt
+struktur Mb2Kopf:
+    magie: u32
+    arch: u32
+    laenge: u32
+    pruefsumme: u32
+
+@nativ
+@sektion(".multiboot2")
+@ausrichten(8)
+@benutzt
+konstante mb2_kopf: Mb2Kopf auf Mb2Kopf(0xE85250D6, 0, 16, 0x17ADAF1A)
+
+@nativ
+@section(".moo_daten")
+@align(64)
+konstante tabelle: [u32; 4] auf [1, 2, 3, 4]
+
+@nativ
+@sektion(".moo_halten")
+@used
+konstante gehalten: [u32; 2] auf [9, 9]
+
+@nativ
+@sektion(".moo_weg")
+konstante unbenutzt: [u32; 2] auf [7, 7]
+
+@nativ
+@nackt
+@einstieg
+@sektion(".boot")
+@ausrichten(16)
+funktion moo_einstieg() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="cli; hlt", clobber=[])
+
+@nativ
+@sektion(".text.moo_takt")
+@ausrichten(32)
+@benutzt
+funktion hw_takt() -> u64:
+    unsicher:
+        gib_zurück assembler(ziel="x86_64", code="rdtsc; shlq $$32, %rdx; orq %rdx, %rax", ausgang="={rax}", clobber=["rdx"])

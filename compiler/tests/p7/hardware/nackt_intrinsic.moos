@@ -1,0 +1,6 @@
+# P7-T4 3A negativ: anderes Intrinsic in nackter Funktion.
+@nativ
+@nackt
+funktion nackt_falsch(p: ptr[u32]) -> void:
+    unsicher:
+        volatile_schreiben(p, 1)

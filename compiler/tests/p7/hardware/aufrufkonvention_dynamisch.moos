@@ -1,0 +1,4 @@
+# P7-T4 7A negativ: dynamische Moo-Funktionen haben die MooValue-ABI.
+@aufrufkonvention("win64")
+funktion cc_dynamisch(x):
+    gib_zurück x

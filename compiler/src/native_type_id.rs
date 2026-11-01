@@ -16,8 +16,9 @@ pub(crate) enum NativeTypeId {
     Void,
     Pointer { address_space: u32, pointee: Box<NativeTypeId> },
     Buffer { element: Box<NativeTypeId> },
-    // Quelltypidentität; weder Calling Convention noch Ziel-ABI sind enthalten.
-    Function { params: Vec<NativeTypeId>, result: Box<NativeTypeId>, variadic: bool },
+    // Quelltypidentität inkl. benannter Aufrufkonvention (P7-T4, 7A); die
+    // zielabhängige Auflösung (z. B. "uefi") erfolgt erst beim Absenken.
+    Function { params: Vec<NativeTypeId>, result: Box<NativeTypeId>, variadic: bool, convention: Option<String> },
     Nominal { module: String, name: String },
 }
 
@@ -58,12 +59,17 @@ pub(crate) fn resolve_type(ty: &TypeRef, nominal: &NominalTypes) -> Result<Nativ
             if element == NativeTypeId::Void { return Err("Puffer-Elementtyp void ist ungültig".into()); }
             Ok(NativeTypeId::Buffer { element: Box::new(element) })
         }
-        TypeKind::Function { params, return_type } => {
+        TypeKind::Function { params, return_type, convention } => {
+            if let Some(name) = convention {
+                if !crate::ffi_types::CALL_CONVENTIONS.contains(&name.as_str()) {
+                    return Err(format!("Unbekannte Aufrufkonvention '{name}' (erlaubt: sysv64, win64, uefi)"));
+                }
+            }
             let params = params.iter().map(|param| resolve_type(param, nominal))
                 .collect::<Result<Vec<_>, _>>()?;
             let result = Box::new(resolve_type(return_type, nominal)?);
             // Das aktuelle TypeKind::Function kann keine Variadizität ausdrücken.
-            Ok(NativeTypeId::Function { params, result, variadic: false })
+            Ok(NativeTypeId::Function { params, result, variadic: false, convention: convention.clone() })
         }
         _ => Err("Nativer Typ kann noch nicht eindeutig aufgelöst werden".into()),
     }

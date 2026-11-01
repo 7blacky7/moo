@@ -1,0 +1,5 @@
+# P7-T4 7A negativ: unbekannte Konvention im Funktionszeigertyp.
+@nativ
+funktion cc_falsch(f: ptr[fn[stdcall](u64) -> u64], a: u64) -> u64:
+    unsicher:
+        gib_zurück f(a)

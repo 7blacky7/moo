@@ -1,0 +1,8 @@
+# P7-T4 1A negativ: Feld existiert nicht.
+struktur Paar:
+    a: u32
+    b: u32
+
+@nativ
+funktion versatz_z() -> u64:
+    gib_zurück versatz_von(Paar, z)

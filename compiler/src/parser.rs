@@ -711,6 +711,28 @@ impl Parser {
             let value = self.parse_expression()?;
             return Ok(Stmt::RawDataU32 { name, ty, value, decorators });
         }
+        // P7-T4 (1A): @nativ konstante NAME: T = wert (Literale exakt wie in @nativ).
+        if matches!(self.current_type(), TokenType::Const)
+            && decorators.iter().any(|d| d.name == "nativ" || d.name == "native")
+        {
+            self.pos += 1; // konstante/const
+            let name = self.eat_identifier()?;
+            let line = self.current().line;
+            // Typ (Arraylängen) und Wert als exakte Rohlexeme wie in @nativ.
+            let previous_native = self.native_context;
+            self.native_context = true;
+            let parsed = (|| {
+                let ty = self.parse_optional_annotation()?.ok_or_else(|| ParseError {
+                    message: "Native Konstante braucht eine Typannotation (konstante name: Typ auf wert)".to_string(),
+                    line,
+                })?;
+                self.eat(&TokenType::To)?;
+                Ok((ty, self.parse_expression()?))
+            })();
+            self.native_context = previous_native;
+            let (ty, value) = parsed?;
+            return Ok(Stmt::NativeConst { name, ty, value, decorators });
+        }
         if matches!(self.current_type(), TokenType::Identifier(name) if name == "extern") {
             return self.parse_extern_c(decorators);
         }
@@ -851,8 +873,17 @@ impl Parser {
                     line: self.current().line,
                 }),
             };
-            if name == "fn" && matches!(self.current_type(), TokenType::LParen) {
-                self.pos += 1;
+            if name == "fn" && matches!(self.current_type(), TokenType::LParen | TokenType::LBracket) {
+                // P7-T4 (7A): optionale Aufrufkonvention `fn[win64](...) -> T`.
+                let convention = if matches!(self.current_type(), TokenType::LBracket) {
+                    self.pos += 1;
+                    let convention = self.eat_identifier()?;
+                    self.eat(&TokenType::RBracket)?;
+                    Some(convention)
+                } else {
+                    Option::None
+                };
+                self.eat(&TokenType::LParen)?;
                 let mut params = Vec::new();
                 if !matches!(self.current_type(), TokenType::RParen) {
                     loop {
@@ -865,7 +896,7 @@ impl Parser {
                 self.eat(&TokenType::ThinArrow)?;
                 let return_type = self.parse_type()?;
                 let end = (return_type.end_line, return_type.end_column);
-                (TypeKind::Function { params, return_type: Box::new(return_type) }, end.0, end.1)
+                (TypeKind::Function { params, return_type: Box::new(return_type), convention }, end.0, end.1)
             } else if matches!(self.current_type(), TokenType::LBracket) {
                 self.pos += 1;
                 let mut args = vec![self.parse_type()?];
@@ -1537,7 +1568,23 @@ impl Parser {
                 self.pos += 1;
                 if matches!(self.current_type(), TokenType::LParen) {
                     self.pos += 1;
-                    let args = self.parse_args_list()?;
+                    // P7-T4 (5A): assembler(schluessel=wert, ...) in @nativ als ein Dict-Argument.
+                    let named_asm = name == "assembler" && self.native_context
+                        && matches!(self.current_type(), TokenType::Identifier(_))
+                        && self.tokens.get(self.pos + 1).is_some_and(|t| matches!(t.token_type, TokenType::Assign));
+                    let args = if named_asm {
+                        let mut pairs = Vec::new();
+                        loop {
+                            let key = self.eat_identifier()?;
+                            self.eat(&TokenType::Assign)?;
+                            pairs.push((Expr::String(key), self.parse_expression()?));
+                            if !matches!(self.current_type(), TokenType::Comma) { break; }
+                            self.pos += 1;
+                        }
+                        vec![Expr::Dict(pairs)]
+                    } else {
+                        self.parse_args_list()?
+                    };
                     self.eat(&TokenType::RParen)?;
                     Ok(Expr::FunctionCall { name, args })
                 } else {

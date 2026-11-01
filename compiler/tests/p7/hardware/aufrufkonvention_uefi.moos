@@ -1,0 +1,6 @@
+# P7-T4 7A: "uefi" ist auf x86_64 win64 und auf aarch64 AAPCS64 (= C).
+@nativ
+@aufrufkonvention("uefi")
+funktion cc_uefi_dienst(f: ptr[fn[uefi](ptr[u8], ptr[u16]) -> u64], kontext: ptr[u8], text: ptr[u16]) -> u64:
+    unsicher:
+        gib_zurück f(kontext, text)

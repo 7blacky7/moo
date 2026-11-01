@@ -1,0 +1,5 @@
+# P7-T4 3A negativ: nackt ohne Assemblerkoerper.
+@nativ
+@nackt
+funktion nackt_falsch(x: i32) -> i32:
+    gib_zurück x + x

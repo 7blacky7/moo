@@ -1,0 +1,6 @@
+# P7-T4 4A negativ: Vektor fehlt.
+@nativ
+@unterbrechung
+funktion irq(rahmen: ptr[u64]) -> void:
+    unsicher:
+        port_schreibe(0x20, 0x20)

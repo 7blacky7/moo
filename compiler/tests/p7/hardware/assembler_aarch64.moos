@@ -1,0 +1,10 @@
+# P7-T4 5A: Inline-Assembler auf aarch64.
+@nativ
+funktion asm_zaehler() -> u64:
+    unsicher:
+        gib_zurück assembler(ziel="aarch64", code="mrs $0, cntvct_el0", ausgang="=r", clobber=[])
+
+@nativ
+funktion asm_addiere(a: u64, b: u64) -> u64:
+    unsicher:
+        gib_zurück assembler(ziel="aarch64", code="add $0, $1, $2", ausgang="=r", eingaenge={"r": a, "r": b}, clobber=[])

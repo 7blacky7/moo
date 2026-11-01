@@ -1,0 +1,7 @@
+# P7-T4 7A negativ: Konvention doppelt angegeben.
+@nativ
+@aufrufkonvention("win64")
+@aufrufkonvention("sysv64")
+funktion cc_falsch(p: ptr[u32]) -> u32:
+    unsicher:
+        gib_zurück volatile_lesen(p)

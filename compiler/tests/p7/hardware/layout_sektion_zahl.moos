@@ -1,0 +1,6 @@
+# P7-T4 2A negativ: @sektion mit Zahl.
+@nativ
+@sektion(5)
+funktion takt(p: ptr[u32]) -> u32:
+    unsicher:
+        gib_zurück volatile_lesen(p)

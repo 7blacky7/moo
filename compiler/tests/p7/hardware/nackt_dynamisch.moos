@@ -1,0 +1,4 @@
+# P7-T4 3A negativ: dynamische Funktion mit @nackt.
+@nackt
+funktion nackt_dynamisch(x):
+    gib_zurück x

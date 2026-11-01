@@ -251,7 +251,7 @@ impl DeferCatalog {
                 | Stmt::CompoundAssignment { .. } | Stmt::PropertyAssignment { .. }
                 | Stmt::IndexAssignment { .. } | Stmt::Show(_)
                 | Stmt::Precondition { .. } | Stmt::Postcondition { .. }
-                | Stmt::ExternC { .. } | Stmt::RawDataU32 { .. }
+                | Stmt::ExternC { .. } | Stmt::RawDataU32 { .. } | Stmt::NativeConst { .. }
                 | Stmt::Return(_) | Stmt::Break | Stmt::Continue
                 | Stmt::StructDef { .. } | Stmt::InterfaceDef { .. }
                 | Stmt::Throw(_) | Stmt::Import { .. } | Stmt::Export(_)

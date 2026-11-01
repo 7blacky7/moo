@@ -1,0 +1,6 @@
+# P7-T4 4A negativ: Interrupt mit Rueckgabewert.
+@nativ
+@unterbrechung(32)
+funktion irq_wert(rahmen: ptr[u64]) -> u64:
+    unsicher:
+        gib_zurück volatile_lesen(rahmen, 0)

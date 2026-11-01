@@ -99,6 +99,324 @@ expect_fail "$src/volatile_mmio.moos" native 'nur im Bare-Profil' ''
 echo 'PASS volatile_*, Barrieren, Port-I/O, Negativfaelle'
 '''
 
+[tasks.aufrufkonvention]
+description = "P7-T4 7A: @aufrufkonvention/fn[...] (sysv64, win64, uefi) IR, C++-ABI-Probe, Zielalias, Negativfaelle"
+run = '''
+set -eu
+cd ../../..
+out=build/p7-t4-aufrufkonvention
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+src=compiler/tests/p7/hardware
+funcs="--recursive --func=__moo_native.cc_rufe_win64 --func=__moo_native.cc_rufe_uefi --func=__moo_native.cc_win64_eintritt --func=__moo_native.cc_reg_lesen --func=__moo_native.cc_vier"
+for target in x86_64-bare x86_64-unknown-uefi; do
+    "$compiler" compile "$src/aufrufkonvention.moos" --no-stdlib --emit-ir --target "$target" -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S $funcs "$out/$target.ll" -o "$out/$target.extract.ll"
+    mise exec -- llc -O2 -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+done
+x="$out/x86_64-bare.extract.ll"
+rg -q 'define .*win64cc .*cc_win64_eintritt' "$x"
+rg -q 'define .*win64cc .*cc_reg_lesen' "$x"
+rg -q 'define .*win64cc .*cc_doppel' "$x"
+[ "$(rg -c 'call win64cc i64 %' "$x")" -eq 2 ]
+rg -q 'call win64cc i32 @"?__moo_native\.cc_doppel' "$x"
+# sysv64 ist auf x86_64-unknown-none der Zieldefault: keine explizite CC.
+if rg -q 'x86_64_sysvcc' "$x"; then echo 'sysv64 auf x86_64-none nicht normalisiert' >&2; exit 1; fi
+u="$out/x86_64-unknown-uefi.extract.ll"
+rg -q 'call x86_64_sysvcc i64 %' "$u"
+if rg -q 'win64cc' "$u"; then echo 'win64/uefi auf UEFI nicht normalisiert' >&2; exit 1; fi
+# uefi-Alias je Ziel: x86_64-none -> win64, UEFI/aarch64 -> Zieldefault.
+for target in x86_64-bare x86_64-unknown-uefi aarch64-bare; do
+    "$compiler" compile "$src/aufrufkonvention_uefi.moos" --no-stdlib --emit-ir --target "$target" -o "$out/uefi-$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/uefi-$target.ll"
+    mise exec -- llc -O2 -filetype=obj "$out/uefi-$target.ll" -o "$out/uefi-$target.o"
+done
+rg -q 'define .*win64cc .*cc_uefi_dienst' "$out/uefi-x86_64-bare.ll"
+rg -q 'call win64cc i64 %' "$out/uefi-x86_64-bare.ll"
+for target in x86_64-unknown-uefi aarch64-bare; do
+    if rg -q 'win64cc|sysvcc' "$out/uefi-$target.ll"; then echo "uefi-Alias auf $target falsch" >&2; exit 1; fi
+done
+# extern C mit win64 (hosted): Deklaration und Aufrufstelle tragen die CC.
+"$compiler" compile "$src/aufrufkonvention_extern.moos" --emit-ir --target native -o "$out/extern.ll"
+mise exec -- opt -passes=verify -disable-output "$out/extern.ll"
+mise exec -- llvm-extract -S --recursive --func=__moo_native.cc_extern_rufen "$out/extern.ll" -o "$out/extern.extract.ll"
+rg -q 'declare win64cc i64 @cc_fremd' "$out/extern.extract.ll"
+rg -q 'call win64cc i64 @cc_fremd' "$out/extern.extract.ll"
+mise exec -- llc -O2 -filetype=obj "$out/extern.extract.ll" -o "$out/extern.o"
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror "$src/aufrufkonvention_adapter.cpp" "$out/x86_64-bare.o" "$out/extern.o" -o "$out/probe"
+"$out/probe"
+expect_fail() {  # Datei Ziel Muster [Extra-Flags]
+    if "$compiler" compile "$1" $4 --emit-ir --target "$2" -o "$out/fail.ll" >"$out/fail.log" 2>&1; then
+        echo "Unerwartet akzeptiert: $1 ($2)" >&2; exit 1
+    fi
+    rg -q -F "$3" "$out/fail.log" || { cat "$out/fail.log" >&2; echo "Falsche Diagnose fuer $1" >&2; exit 1; }
+}
+expect_fail "$src/aufrufkonvention_unbekannt.moos" x86_64-bare "Unbekannte Aufrufkonvention 'fastcall'" --no-stdlib
+expect_fail "$src/aufrufkonvention_typ_unbekannt.moos" x86_64-bare "Unbekannte Aufrufkonvention 'stdcall'" --no-stdlib
+expect_fail "$src/aufrufkonvention_doppelt.moos" x86_64-bare 'nur einmal angegeben' --no-stdlib
+expect_fail "$src/aufrufkonvention_argument.moos" x86_64-bare 'erwartet genau ein Text-Argument' --no-stdlib
+expect_fail "$src/aufrufkonvention_dynamisch.moos" x86_64-bare 'gilt nur für @nativ-Funktionen und extern C' --no-stdlib
+expect_fail "$src/aufrufkonvention.moos" aarch64-bare "Aufrufkonvention 'win64' ist für Ziel 'aarch64-unknown-none' nicht freigegeben" --no-stdlib
+expect_fail "$src/aufrufkonvention_uefi.moos" i686-bare "Aufrufkonvention 'uefi' ist für Ziel" --no-stdlib
+echo 'PASS @aufrufkonvention/fn[...]: IR, ABI-Probe, uefi-Alias, Negativfaelle'
+'''
+
+[tasks.konstanten]
+description = "P7-T4 1A: @nativ konstante (Struktur/gepackt/Array/Zeiger/Linkadresse) und groesse_von/ausrichtung_von/versatz_von gegen C++ sizeof/alignof/offsetof"
+run = '''
+set -eu
+cd ../../..
+out=build/p7-t4-konstanten
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+src=compiler/tests/p7/hardware
+sel="--glob=mb2_kopf --glob=gepackt --glob=gop_guid --glob=gemischt --glob=tabelle"
+for f in lay_groesse_gemischt lay_ausrichtung_gemischt lay_versatz_b lay_versatz_g lay_versatz_adresse lay_groesse_gepackt lay_ausrichtung_gepackt lay_versatz_gepackt_c lay_groesse_guid lay_plus_kopf; do
+    sel="$sel --func=__moo_native.$f"
+done
+for target in x86_64-bare x86_64-unknown-uefi aarch64-bare; do
+    "$compiler" compile "$src/struktur_konstante.moos" --no-stdlib --emit-ir --target "$target" -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S $sel "$out/$target.ll" -o "$out/$target.extract.ll"
+    # PIC: Adresskonstanten landen in .data.rel.ro statt Textrelokation im PIE-Probelink.
+    mise exec -- llc -O2 -relocation-model=pic -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+done
+x="$out/x86_64-bare.extract.ll"
+rg -q '^@mb2_kopf = constant <\{ i32, i32, i32, i32 \}>' "$x"
+rg -q '^@gepackt = constant <\{ i8, i32, i16 \}>' "$x"
+rg -q 'ptr @mb2_kopf, i64 ptrtoint \(ptr @gop_guid to i64\), i16 -2' "$x"
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror "$src/struktur_konstante_probe.cpp" "$out/x86_64-bare.o" -o "$out/probe"
+"$out/probe"
+expect_fail() {  # Datei Muster
+    if "$compiler" compile "$1" --no-stdlib --emit-ir --target x86_64-bare -o "$out/fail.ll" >"$out/fail.log" 2>&1; then
+        echo "Unerwartet akzeptiert: $1" >&2; exit 1
+    fi
+    rg -q -F "$2" "$out/fail.log" || { cat "$out/fail.log" >&2; echo "Falsche Diagnose fuer $1" >&2; exit 1; }
+}
+expect_fail "$src/konstante_ohne_typ.moos" 'braucht eine Typannotation'
+expect_fail "$src/konstante_bereich.moos" "passt nicht in U8"
+expect_fail "$src/konstante_felder.moos" "erwartet 2 Felder, bekommen 1"
+expect_fail "$src/konstante_array_laenge.moos" 'Array erwartet 2 Elemente, bekommen 3'
+expect_fail "$src/versatz_unbekannt.moos" "hat kein Feld 'z'"
+expect_fail "$src/konstante_adresse_u32.moos" 'vorzeichenlosen Integer in Zeigerbreite'
+expect_fail "$src/konstante_fnzeiger_daten.moos" 'passt nicht zum Zeigerziel'
+echo 'PASS native Konstanten/Layoutabfragen: IR (3 Ziele), C++-Gegenprobe, Negativfaelle'
+'''
+
+[tasks.assembler]
+description = "P7-T4 5A: assembler(ziel=, code=, ausgang=, eingaenge=, clobber=) IR, Disassembly x86_64/aarch64, C++-Probe, Negativfaelle"
+run = '''
+set -eu
+cd ../../..
+out=build/p7-t4-assembler
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+src=compiler/tests/p7/hardware
+sel=""
+for f in asm_addiere asm_cpuid_max asm_lies asm_hoch32 asm_pause asm_lade_gdt; do sel="$sel --func=__moo_native.$f"; done
+for target in x86_64-bare x86_64-unknown-uefi; do
+    "$compiler" compile "$src/assembler_x86.moos" --no-stdlib --emit-ir --target "$target" -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S $sel "$out/$target.ll" -o "$out/$target.extract.ll"
+    mise exec -- llc -O2 -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+    mise exec -- llvm-objdump -d "$out/$target.o" > "$out/$target.dis"
+done
+x="$out/x86_64-bare.extract.ll"
+rg -q -F 'asm sideeffect "cpuid", "={eax},0,~{ebx},~{ecx},~{edx}"' "$x"
+rg -q -F 'asm sideeffect "leaq ($1,$2), $0", "=r,r,r"' "$x"
+rg -q -F 'asm sideeffect "lgdt ($0)", "r,~{memory}"' "$x"
+for insn in cpuid 'lgdtq?\s+\(%rdi\)' pause 'shlq\s+\$0x20' 'leaq\s+\('; do rg -q "$insn" "$out/x86_64-bare.dis"; done
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror "$src/assembler_probe.cpp" "$out/x86_64-bare.o" -o "$out/probe"
+"$out/probe"
+"$compiler" compile "$src/assembler_aarch64.moos" --no-stdlib --emit-ir --target aarch64-bare -o "$out/aarch64.ll"
+mise exec -- opt -passes=verify -disable-output "$out/aarch64.ll"
+mise exec -- llvm-extract -S --func=__moo_native.asm_zaehler --func=__moo_native.asm_addiere "$out/aarch64.ll" -o "$out/aarch64.extract.ll"
+mise exec -- llc -O2 -filetype=obj "$out/aarch64.extract.ll" -o "$out/aarch64.o"
+mise exec -- llvm-objdump -d "$out/aarch64.o" > "$out/aarch64.dis"
+rg -q 'mrs\s+x[0-9]+, CNTVCT_EL0' "$out/aarch64.dis"
+rg -q 'add\s+x[0-9]+, x[0-9]+, x[0-9]+' "$out/aarch64.dis"
+expect_fail() {  # Datei Ziel Muster
+    if "$compiler" compile "$1" --no-stdlib --emit-ir --target "$2" -o "$out/fail.ll" >"$out/fail.log" 2>&1; then
+        echo "Unerwartet akzeptiert: $1 ($2)" >&2; exit 1
+    fi
+    rg -q -F "$3" "$out/fail.log" || { cat "$out/fail.log" >&2; echo "Falsche Diagnose fuer $1" >&2; exit 1; }
+}
+expect_fail "$src/assembler_positional.moos" x86_64-bare 'freie Assembler-Strings ohne Constraints sind nicht erlaubt'
+expect_fail "$src/assembler_ohne_clobber.moos" x86_64-bare 'clobber= fehlt'
+expect_fail "$src/assembler_operand.moos" x86_64-bare 'Operand $2 ist nicht deklariert'
+expect_fail "$src/assembler_constraint.moos" x86_64-bare "ungültige Eingangs-Constraint '=r'"
+expect_fail "$src/assembler_ausgang_anweisung.moos" x86_64-bare 'ausgang= ist nur mit gib_zurück erlaubt'
+expect_fail "$src/assembler_ohne_unsicher.moos" x86_64-bare 'Hardwarezugriff erfordert unsicher'
+expect_fail "$src/assembler_x86.moos" aarch64-bare 'passt nicht zum Modulziel aarch64'
+echo 'PASS assembler: IR-Constraints, Disassembly x86_64/aarch64, C++-Probe, Negativfaelle'
+'''
+
+[tasks.nackt]
+description = "P7-T4 3A: @nackt/@naked ohne Prolog/Epilog (Disassembly, Ausfuehrung, Negativfaelle)"
+run = '''
+set -eu
+cd ../../..
+out=build/p7-t4-nackt
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+src=compiler/tests/p7/hardware
+for target in x86_64-bare x86_64-unknown-uefi; do
+    "$compiler" compile "$src/nackt.moos" --no-stdlib --emit-ir --target "$target" -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S --func=__moo_native.nackt_identitaet --func=__moo_native.nackt_win64 --func=__moo_native.nackt_start "$out/$target.ll" -o "$out/$target.extract.ll"
+    for opt in O0 O2; do
+        mise exec -- llc -$opt -filetype=obj "$out/$target.extract.ll" -o "$out/$target.$opt.o"
+        mise exec -- llvm-objdump -d --no-show-raw-insn "$out/$target.$opt.o" > "$out/$target.$opt.dis"
+    done
+done
+x="$out/x86_64-bare.extract.ll"
+[ "$(rg -c 'naked noinline' "$x")" -ge 1 ]
+rg -q 'define .*win64cc i64 @__moo_native.nackt_win64' "$x"
+for opt in O0 O2; do
+    d="$out/x86_64-bare.$opt.dis"
+    # Erste Instruktion = erster Assemblerbefehl, keine Prolog-/Epilogbefehle.
+    awk '/<__moo_native.nackt_identitaet>:/{getline; print; exit}' "$d" | rg -q 'movq\s+%rdi, %rax'
+    awk '/<__moo_native.nackt_start>:/{getline; print; exit}' "$d" | rg -q 'movq\s+\$0x90000, %rsp'
+    awk '/<__moo_native.nackt_win64>:/{getline; print; exit}' "$d" | rg -q 'leaq\s+0x1\(%rcx\), %rax'
+    if rg -q 'push|pop|%rbp|subq\s+\$0x[0-9a-f]+, %rsp|addq\s+\$0x[0-9a-f]+, %rsp' "$d"; then
+        echo "Prolog/Epilog in nackter Funktion ($opt)" >&2; cat "$d" >&2; exit 1
+    fi
+    [ "$(rg -c '\bretq?\b' "$d")" -eq 2 ]
+done
+rg -q 'hlt' "$out/x86_64-bare.O2.dis"
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror "$src/nackt_probe.cpp" "$out/x86_64-bare.O2.o" -o "$out/probe"
+"$out/probe"
+expect_fail() {  # Datei Muster
+    if "$compiler" compile "$1" --no-stdlib --emit-ir --target x86_64-bare -o "$out/fail.ll" >"$out/fail.log" 2>&1; then
+        echo "Unerwartet akzeptiert: $1" >&2; exit 1
+    fi
+    rg -q -F "$2" "$out/fail.log" || { cat "$out/fail.log" >&2; echo "Falsche Diagnose fuer $1" >&2; exit 1; }
+}
+expect_fail "$src/nackt_eingang.moos" 'assembler ohne eingaenge=/ausgang='
+expect_fail "$src/nackt_intrinsic.moos" '@nackt erlaubt nur assembler'
+expect_fail "$src/nackt_rein.moos" '@nackt verlangt einen Körper aus unsicher: assembler'
+expect_fail "$src/nackt_dynamisch.moos" 'gilt nur für @nativ-Funktionen mit unsicher: assembler'
+echo 'PASS @nackt: Disassembly ohne Prolog/Epilog (O0/O2), Ausfuehrung, Negativfaelle'
+'''
+
+[tasks.layout]
+description = "P7-T4 2A: @sektion/@ausrichten/@benutzt/@einstieg an nativen Konstanten und Funktionen (ELF/PE: Section, Offset, Align, gc-sections)"
+run = '''
+set -eu
+cd ../../..
+out=build/p7-t4-layout
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+src=compiler/tests/p7/hardware
+sel="--glob=mb2_kopf --glob=tabelle --glob=gehalten --glob=unbenutzt --glob=llvm.used --func=moo_einstieg --func=__moo_native.hw_takt"
+for target in x86_64-bare x86_64-unknown-uefi; do
+    "$compiler" compile "$src/layout_sektion.moos" --no-stdlib --emit-ir --target "$target" -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S $sel "$out/$target.ll" -o "$out/$target.extract.ll"
+    mise exec -- llc -O2 -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+done
+x="$out/x86_64-bare.ll"
+rg -q '^@mb2_kopf = constant .* section "\.multiboot2", align 8$' "$x"
+rg -q '^@tabelle = constant .* section "\.moo_daten", align 64$' "$x"
+rg -q '^define (dso_local )?void @moo_einstieg\(\) .*section "\.boot" align 16' "$x"
+rg -q '^define internal i64 @__moo_native.hw_takt\(\) .*section "\.text\.moo_takt" align 32' "$x"
+rg -q '^@llvm.used = appending global .*@mb2_kopf.*' "$x"
+for sym in gehalten moo_einstieg __moo_native.hw_takt; do rg -q "^@llvm.used = .*@\"?$sym" "$x"; done
+if rg -q '^@llvm.used = .*@unbenutzt' "$x"; then echo 'unbenutzt in llvm.used' >&2; exit 1; fi
+o="$out/x86_64-bare.o"
+mise exec -- llvm-readelf -S -W "$o" > "$out/elf.sections"
+mise exec -- llvm-readelf -s -W "$o" > "$out/elf.symbols"
+# Section mit Alignment (Spalte Al) und Symbol am Offset 0 der Section.
+rg -q '\.multiboot2\s+PROGBITS\s+\S+\s+\S+\s+0+10\s+00\s+AR?\s+0\s+0\s+8$' "$out/elf.sections"
+rg -q '\.moo_daten\s+PROGBITS\s+\S+\s+\S+\s+0+10\s+00\s+A\s+0\s+0\s+64$' "$out/elf.sections"
+rg -q '\.boot\s+PROGBITS\s+.*AXR?\s+0\s+0\s+16$' "$out/elf.sections"
+rg -q '\.text\.moo_takt\s+PROGBITS\s+.*AXR?\s+0\s+0\s+32$' "$out/elf.sections"
+rg -q '0+0\s+16\s+OBJECT\s+GLOBAL\s+DEFAULT\s+\S+\s+mb2_kopf$' "$out/elf.symbols"
+rg -q 'FUNC\s+GLOBAL\s+DEFAULT\s+\S+\s+moo_einstieg$' "$out/elf.symbols"
+mise exec -- llvm-objdump -s -j .multiboot2 "$o" | rg -q 'd65052e8 00000000 10000000 1aafad17'
+# gc-sections: @benutzt/@einstieg bleiben, unbenutzte Konstante faellt weg.
+ld.lld --gc-sections -e moo_einstieg -o "$out/gc.elf" "$o"
+mise exec -- llvm-readelf -S -W "$out/gc.elf" > "$out/gc.sections"
+for s in .multiboot2 .moo_halten .boot; do rg -q -F " $s " "$out/gc.sections"; done
+if rg -q -F ' .moo_weg ' "$out/gc.sections"; then echo 'unbenutzte Section blieb erhalten' >&2; exit 1; fi
+# .text.* fuehrt lld in .text zusammen: dort muss die @benutzt-Funktion liegen.
+mise exec -- llvm-objdump -d "$out/gc.elf" > "$out/gc.dis"
+rg -q '<moo_einstieg>:' "$out/gc.dis"
+rg -q '<__moo_native.hw_takt>:' "$out/gc.dis"
+rg -q 'rdtsc' "$out/gc.dis"
+# PE/COFF (UEFI): Sections und Alignment-Charakteristik.
+mise exec -- llvm-readobj --sections "$out/x86_64-unknown-uefi.o" > "$out/coff.sections"
+rg -q -U 'Name: \.multiboot2[^}]*IMAGE_SCN_ALIGN_8BYTES' "$out/coff.sections"
+rg -q -U 'Name: \.moo_daten[^}]*IMAGE_SCN_ALIGN_64BYTES' "$out/coff.sections"
+rg -q -U 'Name: \.boot[^}]*IMAGE_SCN_ALIGN_16BYTES' "$out/coff.sections"
+expect_fail() {  # Datei Muster
+    if "$compiler" compile "$1" --no-stdlib --emit-ir --target x86_64-bare -o "$out/fail.ll" >"$out/fail.log" 2>&1; then
+        echo "Unerwartet akzeptiert: $1" >&2; exit 1
+    fi
+    rg -q -F "$2" "$out/fail.log" || { cat "$out/fail.log" >&2; echo "Falsche Diagnose fuer $1" >&2; exit 1; }
+}
+expect_fail "$src/layout_ausrichten_klein.moos" 'ist kleiner als das Typalignment 4'
+expect_fail "$src/layout_doppelt.moos" 'ist doppelt angegeben'
+expect_fail "$src/layout_einstieg_konstante.moos" 'Decorator @einstieg nicht unterstuetzt'
+expect_fail "$src/layout_sektion_zahl.moos" 'ungültige Argumente für @sektion'
+echo 'PASS 2A: Section/Offset/Align in ELF und PE, gc-sections, Export, Negativfaelle'
+'''
+
+[tasks.unterbrechung]
+description = "P7-T4 4A: @unterbrechung(vektor) an @nativ (x86_intrcc, byval-Rahmen, Fehlercode je Vektor, iretq, Negativfaelle)"
+run = '''
+set -eu
+cd ../../..
+out=build/p7-t4-unterbrechung
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+src=compiler/tests/p7/hardware
+for target in x86_64-bare x86_64-unknown-uefi; do
+    "$compiler" compile "$src/unterbrechung.moos" --no-stdlib --emit-ir --target "$target" -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S --func=__moo_native.irq_timer --func=__moo_native.isr_seitenfehler "$out/$target.ll" -o "$out/$target.extract.ll"
+    mise exec -- llc -O2 -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+    mise exec -- llvm-objdump -d --no-show-raw-insn "$out/$target.o" > "$out/$target.dis"
+    [ "$(rg -c 'iretq' "$out/$target.dis")" -eq 2 ]
+done
+x="$out/x86_64-bare.extract.ll"
+rg -q 'define .*x86_intrcc void @__moo_native.irq_timer\(ptr byval\(\[5 x i64\]\) %0\)' "$x"
+rg -q 'define .*x86_intrcc void @__moo_native.isr_seitenfehler\(ptr byval\(\[5 x i64\]\) %0, i64 %1\)' "$x"
+rg -q '"target-features"="-mmx,-sse,-sse2,-avx,-x87"' "$x"
+d="$out/x86_64-bare.dis"
+# irq_timer: benutzte Register werden gesichert, EOI per outb, Rueckkehr mit iretq.
+awk '/<__moo_native.irq_timer>:/,/iretq/' "$d" > "$out/timer.dis"
+rg -q 'pushq\s+%rax' "$out/timer.dis"
+rg -q 'pushq\s+%rdx' "$out/timer.dis"
+rg -q 'outb\s+%al, %dx' "$out/timer.dis"
+rg -q 'popq\s+%rax' "$out/timer.dis"
+if rg -q 'addq\s+\$0x[0-9a-f]+, %rsp' "$out/timer.dis"; then echo 'Stackkorrektur ohne Fehlercode' >&2; exit 1; fi
+# isr_seitenfehler: Rahmen liegt hinter dem Fehlercode (RIP bei 0x18 nach 2 Sicherungen),
+# CR2 gelesen, Fehlercode (ggf. mit Ausrichtungsslot) direkt vor iretq entfernt.
+awk '/<__moo_native.isr_seitenfehler>:/,/iretq/' "$d" > "$out/pf.dis"
+rg -q 'movq\s+0x18\(%rsp\), %rax' "$out/pf.dis"
+rg -q 'movq\s+%cr2, %rax' "$out/pf.dis"
+tail -2 "$out/pf.dis" | rg -q 'addq\s+\$0x(8|10), %rsp'
+expect_fail() {  # Datei Ziel Muster
+    if "$compiler" compile "$1" --no-stdlib --emit-ir --target "$2" -o "$out/fail.ll" >"$out/fail.log" 2>&1; then
+        echo "Unerwartet akzeptiert: $1 ($2)" >&2; exit 1
+    fi
+    rg -q -F "$3" "$out/fail.log" || { cat "$out/fail.log" >&2; echo "Falsche Diagnose fuer $1" >&2; exit 1; }
+}
+expect_fail "$src/unterbrechung_ohne_vektor.moos" x86_64-bare 'erwartet die Vektornummer 0..255'
+expect_fail "$src/unterbrechung_fehlercode_fehlt.moos" x86_64-bare '@unterbrechung(13): Vektor legt einen Fehlercode ab'
+expect_fail "$src/unterbrechung_fehlercode_zuviel.moos" x86_64-bare '@unterbrechung(33): Vektor ohne Fehlercode'
+expect_fail "$src/unterbrechung_rueckgabe.moos" x86_64-bare 'Rückgabetyp muss void sein'
+expect_fail "$src/unterbrechung_nackt.moos" x86_64-bare 'ohne @nackt/@aufrufkonvention'
+expect_fail "$src/unterbrechung.moos" aarch64-bare "Ziel 'aarch64-unknown-none' nicht unterstützt"
+# Bestandspfad (dynamisch) war defekt (x86: byval-Verify, ARM: CC 66): jetzt klarer Fehler.
+for target in x86_64-bare aarch64-bare; do
+    expect_fail "$src/unterbrechung_dynamisch.moos" "$target" 'verwende @nativ @unterbrechung(vektor)'
+done
+echo 'PASS 4A: x86_intrcc mit byval-Rahmen, Fehlercode je Vektor, iretq, Registererhalt, Negativfaelle'
+'''
+
 [tasks.variabel]
 description = "P2/P7: variabler u32-Zeigerindex und gesperrte Indexformen"
 run = '''

@@ -16,7 +16,8 @@ pub enum TypeKind {
     Name(std::string::String),
     Generic { name: std::string::String, args: Vec<TypeRef> },
     Array { element: Box<TypeRef>, length: Box<Expr> },
-    Function { params: Vec<TypeRef>, return_type: Box<TypeRef> },
+    /// `fn(...) -> T` bzw. mit Aufrufkonvention `fn[win64](...) -> T` (P7-T4, 7A).
+    Function { params: Vec<TypeRef>, return_type: Box<TypeRef>, convention: Option<std::string::String> },
 }
 
 #[derive(Debug, Clone)]
@@ -230,6 +231,14 @@ pub enum Stmt {
     RawDataU32 {
         name: std::string::String,
         ty: Option<TypeRef>,
+        value: Expr,
+        decorators: Vec<Decorator>,
+    },
+    /// P7-T4 (1A): `@nativ konstante NAME: T = wert` als konstantes Datenglobal
+    /// mit exaktem Ziel-ABI-Layout (kein MooValue), siehe native_const.rs.
+    NativeConst {
+        name: std::string::String,
+        ty: TypeRef,
         value: Expr,
         decorators: Vec<Decorator>,
     },

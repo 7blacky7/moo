@@ -1,0 +1,92 @@
+# P7-T4 1A: typisierte native Konstanten und statische Layoutabfragen.
+@gepackt
+struktur Mb2Kopf:
+    magie: u32
+    arch: u32
+    laenge: u32
+    pruefsumme: u32
+
+@gepackt
+struktur Gepackt:
+    a: u8
+    b: u32
+    c: u16
+
+struktur Guid:
+    d1: u32
+    d2: u16
+    d3: u16
+    d4: [u8; 8]
+
+struktur Gemischt:
+    a: u8
+    b: u64
+    c: u16
+    g: Guid
+    zeiger: ptr[u8]
+    adresse: u64
+    neg: i16
+
+@nativ
+konstante MB2_MAGIE: u32 auf 0xE85250D6
+
+@nativ
+konstante KOPF_LAENGE: u32 auf groesse_von(Mb2Kopf)
+
+@nativ
+konstante NEGATIV: i16 auf -2
+
+@nativ
+konstante mb2_kopf: Mb2Kopf auf Mb2Kopf(MB2_MAGIE, 0, KOPF_LAENGE, 0x17ADAF1A)
+
+@nativ
+konstante gepackt: Gepackt auf Gepackt(0x11, 0x22334455, 0x6677)
+
+@nativ
+konstante gop_guid: Guid auf Guid(0x9042a9de, 0x23dc, 0x4a38, [0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a])
+
+@nativ
+konstante gemischt: Gemischt auf Gemischt(0xAB, 0xFFFFFFFFFFFFFFFF, 0x1234, Guid(1, 2, 3, [4, 5, 6, 7, 8, 9, 10, 11]), mb2_kopf, gop_guid, NEGATIV)
+
+@nativ
+konstante tabelle: [u16; 4] auf [1, 2, 0xFFFF, KOPF_LAENGE]
+
+@nativ
+funktion lay_groesse_gemischt() -> u64:
+    gib_zurück groesse_von(Gemischt)
+
+@nativ
+funktion lay_ausrichtung_gemischt() -> u64:
+    gib_zurück ausrichtung_von(Gemischt)
+
+@nativ
+funktion lay_versatz_b() -> u64:
+    gib_zurück versatz_von(Gemischt, b)
+
+@nativ
+funktion lay_versatz_g() -> u64:
+    gib_zurück offset_of(Gemischt, g)
+
+@nativ
+funktion lay_versatz_adresse() -> u64:
+    gib_zurück versatz_von(Gemischt, adresse)
+
+@nativ
+funktion lay_groesse_gepackt() -> u64:
+    gib_zurück size_of(Gepackt)
+
+@nativ
+funktion lay_ausrichtung_gepackt() -> u64:
+    gib_zurück align_of(Gepackt)
+
+@nativ
+funktion lay_versatz_gepackt_c() -> u64:
+    gib_zurück versatz_von(Gepackt, c)
+
+@nativ
+funktion lay_groesse_guid() -> u64:
+    gib_zurück groesse_von(Guid)
+
+@nativ
+funktion lay_plus_kopf(x: i32) -> i32:
+    gib_zurück x + KOPF_LAENGE

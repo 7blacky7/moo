@@ -1,0 +1,4 @@
+# P7-T4 2A negativ: @einstieg an einer Konstante.
+@nativ
+@einstieg
+konstante werte: [u32; 2] auf [1, 2]
