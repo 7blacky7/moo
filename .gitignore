@@ -149,3 +149,6 @@ beispiele/p6_wissensmix/
 skripte/p6/
 skripte/synapse_wissen_mischen_*.py
 skripte/hf_ki_browser_import_*.py
+
+# Build-/Gate-Artefakte (Images, pcaps, Screenshots, fremde Downloads) – nie versionieren
+/build/
