@@ -1,0 +1,788 @@
+# ============================================================
+# moo_lader.moos — P7-T5: UEFI-Loader in Moo (ohne C)
+# ============================================================
+# Eine UEFI-App, deren gesamter Code aus diesem Moo-Quelltext stammt: kein
+# uefi_entry.c, keine C-Runtime. efi_main ist eine @nativ-Funktion mit dem
+# Zieldefault-ABI von x86_64-unknown-uefi (MS x64), alle Firmwaredienste
+# werden ueber typisierte Funktionszeiger fn[uefi](...) gerufen.
+#
+# ABLAUF
+#   1. COM1 einrichten, Watchdog aus (sonst Neustart nach 5 min, Befund P7-T2).
+#   2. Boot-Info-Seite (MooBootInfo) und 64 KiB Arbeitsspeicher fuer den Kern.
+#   3. GOP: Framebuffer, Breite, Hoehe, Stride (Pixel je Zeile), Format.
+#   4. ACPI-RSDP aus der Konfigurationstabelle (ACPI 2.0, sonst 1.0).
+#   5. Kern holen: (a) Uebergabe im LoadOptions-Block (MooKernUebergabe, z. B.
+#      vom Netz-Lader), (b) \EFI\MOO\KERN.ELF auf dem Geraet des Laders,
+#      (c) auf jedem Dateisystem.
+#   6. ELF64 (EXEC, x86-64, gelinkt ab 0xFFFFFFFF80000000) laden: alle PT_LOAD
+#      in einen Block freier physischer Seiten (Lage beliebig), Rest nullen;
+#      eigene PML4 = Kopie der Firmware-PML4 + Abbildung der oberen Haelfte.
+#   7. Speicherkarte holen, ExitBootServices (bis 4 Versuche), Karte in die
+#      Boot-Info, cli, CR3 = eigene PML4, Sprung in den Kern: kern(boot_info)
+#      mit SysV-ABI.
+# Jede Stufe meldet "MOO-LADER ..." auf COM1 und dem QEMU-debugcon (0xE9).
+#
+# BAU (scripts/uefi-smoke.sh, MOO_UEFI_PRUEFUNG=kern):
+#   moo-compiler compile beispiele/uefi/moo_lader.moos --no-stdlib --target x86_64-unknown-uefi -o lader.obj
+#   lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /opt:ref /out:BOOTX64.EFI lader.obj
+#
+# QUELLEN: UEFI Spec 2.10, Kap. 4.3 (EFI_SYSTEM_TABLE), 4.4 (EFI_BOOT_SERVICES,
+# Reihenfolge der Dienste), 7.2 (GetMemoryMap/ExitBootServices), 9.1
+# (EFI_LOADED_IMAGE_PROTOCOL), 12.9 (GOP), 13.4/13.5 (Dateisystem/Datei),
+# 4.6 (Konfigurationstabelle, ACPI-GUIDs); ELF-64 Object File Format 1.5.
+
+# ---------------- UEFI-Tabellen (Layout aus Ziel-TargetData) ----------------
+struktur EfiSystemTabelle:
+    kopf_signatur: u64
+    kopf_revision: u32
+    kopf_groesse: u32
+    kopf_crc: u32
+    kopf_reserviert: u32
+    hersteller: u64
+    hersteller_revision: u32
+    con_in_handle: u64
+    con_in: u64
+    con_out_handle: u64
+    con_out: u64
+    std_err_handle: u64
+    std_err: u64
+    laufzeitdienste: u64
+    bootdienste: u64
+    tabellen_anzahl: u64
+    konfig_tabelle: u64
+
+struktur EfiBootDienste:
+    kopf_signatur: u64
+    kopf_revision: u32
+    kopf_groesse: u32
+    kopf_crc: u32
+    kopf_reserviert: u32
+    bs_raise_tpl: u64
+    bs_restore_tpl: u64
+    bs_allocate_pages: u64
+    bs_free_pages: u64
+    bs_get_memory_map: u64
+    bs_allocate_pool: u64
+    bs_free_pool: u64
+    bs_create_event: u64
+    bs_set_timer: u64
+    bs_wait_for_event: u64
+    bs_signal_event: u64
+    bs_close_event: u64
+    bs_check_event: u64
+    bs_install_protocol_interface: u64
+    bs_reinstall_protocol_interface: u64
+    bs_uninstall_protocol_interface: u64
+    bs_handle_protocol: u64
+    bs_reserviert: u64
+    bs_register_protocol_notify: u64
+    bs_locate_handle: u64
+    bs_locate_device_path: u64
+    bs_install_configuration_table: u64
+    bs_load_image: u64
+    bs_start_image: u64
+    bs_exit: u64
+    bs_unload_image: u64
+    bs_exit_boot_services: u64
+    bs_get_next_monotonic_count: u64
+    bs_stall: u64
+    bs_set_watchdog_timer: u64
+    bs_connect_controller: u64
+    bs_disconnect_controller: u64
+    bs_open_protocol: u64
+    bs_close_protocol: u64
+    bs_open_protocol_information: u64
+    bs_protocols_per_handle: u64
+    bs_locate_handle_buffer: u64
+    bs_locate_protocol: u64
+    bs_install_multiple_protocol_interfaces: u64
+    bs_uninstall_multiple_protocol_interfaces: u64
+    bs_calculate_crc32: u64
+    bs_copy_mem: u64
+    bs_set_mem: u64
+    bs_create_event_ex: u64
+
+struktur EfiTextAusgabe:
+    to_reset: u64
+    to_output_string: u64
+
+struktur EfiGop:
+    gop_query_mode: u64
+    gop_set_mode: u64
+    gop_blt: u64
+    gop_modus: u64
+
+struktur EfiGopModus:
+    gm_max_modus: u32
+    gm_modus: u32
+    gm_info: u64
+    gm_info_groesse: u64
+    gm_fb_basis: u64
+    gm_fb_groesse: u64
+
+struktur EfiGopInfo:
+    gi_version: u32
+    gi_breite: u32
+    gi_hoehe: u32
+    gi_format: u32
+    gi_maske_rot: u32
+    gi_maske_gruen: u32
+    gi_maske_blau: u32
+    gi_maske_reserviert: u32
+    gi_pixel_pro_zeile: u32
+
+struktur EfiGeladenesBild:
+    li_revision: u32
+    li_eltern: u64
+    li_system_tabelle: u64
+    li_geraet: u64
+    li_datei_pfad: u64
+    li_reserviert: u64
+    li_optionen_groesse: u32
+    li_optionen: u64
+    li_bild_basis: u64
+    li_bild_groesse: u64
+    li_code_typ: u32
+    li_daten_typ: u32
+    li_entladen: u64
+
+struktur EfiDateisystem:
+    fs_revision: u64
+    fs_open_volume: u64
+
+struktur EfiDatei:
+    fp_revision: u64
+    fp_open: u64
+    fp_close: u64
+    fp_delete: u64
+    fp_read: u64
+    fp_write: u64
+    fp_get_position: u64
+    fp_set_position: u64
+    fp_get_info: u64
+    fp_set_info: u64
+    fp_flush: u64
+
+struktur EfiKonfigTabelle:
+    kt_guid_a: u64
+    kt_guid_b: u64
+    kt_tabelle: u64
+
+struktur EfiGuid:
+    d1: u32
+    d2: u16
+    d3: u16
+    d4: [u8; 8]
+
+# ---------------- ELF64 ----------------
+struktur Elf64Kopf:
+    e_ident_a: u64
+    e_ident_b: u64
+    e_typ: u16
+    e_maschine: u16
+    e_version: u32
+    e_einstieg: u64
+    e_phoff: u64
+    e_shoff: u64
+    e_flags: u32
+    e_ehgroesse: u16
+    e_phgroesse: u16
+    e_phanzahl: u16
+    e_shgroesse: u16
+    e_shanzahl: u16
+    e_shnamen: u16
+
+struktur Elf64Programmkopf:
+    ph_typ: u32
+    ph_flags: u32
+    ph_versatz: u64
+    ph_vadr: u64
+    ph_padr: u64
+    ph_dateigroesse: u64
+    ph_speichergroesse: u64
+    ph_ausrichtung: u64
+
+# ---------------- Vertrag Loader -> Kern ----------------
+# Gleiches Layout in beispiele/kernel/uefi_kern.moos. Alle Adressen physisch
+# (UEFI bildet identisch ab; die Seitentabellen der Firmware bleiben aktiv).
+struktur MooBootInfo:
+    magie: u64
+    version: u64
+    fb_basis: u64
+    fb_groesse: u64
+    fb_breite: u32
+    fb_hoehe: u32
+    fb_stride: u32
+    fb_format: u32
+    karte: u64
+    karte_groesse: u64
+    deskriptor_groesse: u64
+    deskriptor_version: u64
+    acpi_rsdp: u64
+    kern_basis: u64
+    kern_ende: u64
+    arbeit: u64
+    arbeit_groesse: u64
+    kern_virtuell: u64
+    seitentabelle: u64
+
+# Optionaler LoadOptions-Block eines startenden Images (z. B. Netz-Lader):
+# Kern liegt bereits im Speicher.
+struktur MooKernUebergabe:
+    ku_magie: u64
+    ku_adresse: u64
+    ku_laenge: u64
+
+@nativ
+konstante BOOT_MAGIE: u64 auf 0x31544F4F424F4F4D
+
+@nativ
+konstante KERN_UEBERGABE_MAGIE: u64 auf 0x314E52454B4F4F4D
+
+@nativ
+konstante FEHLER_LADEN: u64 auf 0x8000000000000001
+
+# Virtuelle Basis des Kerns (PML4 511, PDPT 510), siehe beispiele/kernel/linker-uefi.ld.
+@nativ
+konstante KERN_HOCH: u64 auf 0xFFFFFFFF80000000
+
+# ---------------- GUIDs ----------------
+@nativ
+konstante GOP_GUID: EfiGuid auf EfiGuid(0x9042a9de, 0x23dc, 0x4a38, [0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a])
+
+@nativ
+konstante BILD_GUID: EfiGuid auf EfiGuid(0x5b1b31a1, 0x9562, 0x11d2, [0x8e, 0x3f, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b])
+
+@nativ
+konstante DATEISYSTEM_GUID: EfiGuid auf EfiGuid(0x964e5b22, 0x6459, 0x11d2, [0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b])
+
+@nativ
+konstante ACPI20_GUID: EfiGuid auf EfiGuid(0x8868e871, 0xe4f1, 0x11d3, [0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81])
+
+@nativ
+konstante ACPI10_GUID: EfiGuid auf EfiGuid(0xeb9d2d30, 0x2d88, 0x11d3, [0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d])
+
+# ---------------- Texte ----------------
+@nativ
+konstante KERN_PFAD: [u16; _] auf "\\EFI\\MOO\\KERN.ELF"
+
+@nativ
+konstante W_START: [u16; _] auf "Moo-Lader: lade \\EFI\\MOO\\KERN.ELF\r\n"
+
+@nativ
+konstante W_OK: [u16; _] auf "Moo-Lader: Kern geladen, ExitBootServices und Sprung in den Kern ...\r\n"
+
+@nativ
+konstante W_F_SPEICHER: [u16; _] auf "Moo-Lader FEHLER: kein Speicher (Details auf COM1)\r\n"
+
+@nativ
+konstante W_F_KERN: [u16; _] auf "Moo-Lader FEHLER: Kern nicht gefunden (\\EFI\\MOO\\KERN.ELF oder moo.kern per Netz-Lader)\r\n"
+
+@nativ
+konstante W_F_ELF: [u16; _] auf "Moo-Lader FEHLER: Kern-ELF oder Seitentabelle (Details auf COM1)\r\n"
+
+@nativ
+konstante T_START: [u8; _] auf "MOO-LADER START (MOO, OHNE C)\n"
+
+@nativ
+konstante T_GOP: [u8; _] auf "MOO-LADER GOP "
+
+@nativ
+konstante T_BREITE: [u8; _] auf "MOO-LADER FB-BREITE "
+
+@nativ
+konstante T_HOEHE: [u8; _] auf "MOO-LADER FB-HOEHE "
+
+@nativ
+konstante T_STRIDE: [u8; _] auf "MOO-LADER FB-STRIDE "
+
+@nativ
+konstante T_FORMAT: [u8; _] auf "MOO-LADER FB-FORMAT "
+
+@nativ
+konstante T_KEIN_GOP: [u8; _] auf "MOO-LADER GOP FEHLT 0 "
+
+@nativ
+konstante T_RSDP: [u8; _] auf "MOO-LADER RSDP "
+
+@nativ
+konstante T_UEBERGABE: [u8; _] auf "MOO-LADER KERN AUS UEBERGABE \n"
+
+@nativ
+konstante T_DATEI: [u8; _] auf "MOO-LADER KERN-DATEI "
+
+@nativ
+konstante T_SEGMENT: [u8; _] auf "MOO-LADER SEGMENT "
+
+@nativ
+konstante T_EINSTIEG: [u8; _] auf "MOO-LADER KERN-EINSTIEG "
+
+@nativ
+konstante T_KARTE: [u8; _] auf "MOO-LADER KARTE "
+
+@nativ
+konstante T_PHYS: [u8; _] auf "MOO-LADER KERN-PHYSISCH "
+
+@nativ
+konstante T_SEITEN: [u8; _] auf "MOO-LADER SEITENTABELLE "
+
+@nativ
+konstante T_F_PAGING: [u8; _] auf "MOO-LADER FEHLER: PAGING "
+
+@nativ
+konstante T_EBS: [u8; _] auf "MOO-LADER EXITBOOTSERVICES OK "
+
+@nativ
+konstante T_SPRUNG: [u8; _] auf "MOO-LADER SPRUNG "
+
+@nativ
+konstante T_F_SPEICHER: [u8; _] auf "MOO-LADER FEHLER: KEIN SPEICHER "
+
+@nativ
+konstante T_F_KERN: [u8; _] auf "MOO-LADER FEHLER: KERN NICHT GEFUNDEN "
+
+@nativ
+konstante T_F_ELF: [u8; _] auf "MOO-LADER FEHLER: KEIN X86-64-ELF "
+
+@nativ
+konstante T_F_ADRESSE: [u8; _] auf "MOO-LADER FEHLER: ADRESSE BELEGT "
+
+@nativ
+konstante T_F_EBS: [u8; _] auf "MOO-LADER FEHLER: EXITBOOTSERVICES "
+
+@nativ
+konstante T_F_RUECKKEHR: [u8; _] auf "MOO-LADER FEHLER: KERN ZURUECK\n"
+
+# ---------------- Ausgabe: COM1 + debugcon 0xE9 ----------------
+@nativ
+funktion seriell_init() -> void:
+    unsicher:
+        port_schreibe(0x3F9, 0)
+        port_schreibe(0x3FB, 0x80)
+        port_schreibe(0x3F8, 1)
+        port_schreibe(0x3F9, 0)
+        port_schreibe(0x3FB, 3)
+        port_schreibe(0x3FA, 0xC7)
+        port_schreibe(0x3FC, 3)
+
+@nativ
+funktion zeichen(z: u8) -> void:
+    unsicher:
+        setze n: u32 auf 0
+        solange (port_lese(0x3FD) & 0x20) == 0 und n < 100000:
+            setze n auf n + 1
+        port_schreibe(0x3F8, z)
+        port_schreibe(0xE9, z)
+
+# Nullterminierter Text ab adr.
+@nativ
+funktion text(adr: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange speicher_lesen(adr + i, 1) != 0:
+            zeichen(speicher_lesen(adr + i, 1))
+            setze i auf i + 1
+
+@nativ
+funktion hex(wert: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 16:
+            setze ziffer: u8 auf u8((wert >> (60 - i * 4)) & 15)
+            wenn ziffer < 10:
+                zeichen(ziffer + 48)
+            sonst:
+                zeichen(ziffer + 55)
+            setze i auf i + 1
+
+@nativ
+funktion meldung(adr: u64, wert: u64) -> void:
+    unsicher:
+        text(adr)
+        hex(wert)
+        zeichen(10)
+
+# ---------------- Firmwaredienste ----------------
+@nativ
+funktion dienst(tabelle: u64, versatz: u64) -> u64:
+    unsicher:
+        gib_zurück speicher_lesen(tabelle + versatz, 8)
+
+@nativ
+funktion ruf1(f: u64, a: u64) -> u64:
+    unsicher:
+        setze z: ptr[fn[uefi](u64) -> u64] auf zeiger(f)
+        gib_zurück z(a)
+
+@nativ
+funktion ruf2(f: u64, a: u64, b: u64) -> u64:
+    unsicher:
+        setze z: ptr[fn[uefi](u64, u64) -> u64] auf zeiger(f)
+        gib_zurück z(a, b)
+
+@nativ
+funktion ruf3(f: u64, a: u64, b: u64, c: u64) -> u64:
+    unsicher:
+        setze z: ptr[fn[uefi](u64, u64, u64) -> u64] auf zeiger(f)
+        gib_zurück z(a, b, c)
+
+@nativ
+funktion ruf4(f: u64, a: u64, b: u64, c: u64, d: u64) -> u64:
+    unsicher:
+        setze z: ptr[fn[uefi](u64, u64, u64, u64) -> u64] auf zeiger(f)
+        gib_zurück z(a, b, c, d)
+
+@nativ
+funktion ruf5(f: u64, a: u64, b: u64, c: u64, d: u64, e: u64) -> u64:
+    unsicher:
+        setze z: ptr[fn[uefi](u64, u64, u64, u64, u64) -> u64] auf zeiger(f)
+        gib_zurück z(a, b, c, d, e)
+
+# AllocatePages(AllocateAnyPages, EfiLoaderData, anzahl) und nullen; 0 = Fehler.
+@nativ
+funktion seiten(bs: u64, anzahl: u64) -> u64:
+    unsicher:
+        setze adr: u64 auf 0
+        wenn ruf4(dienst(bs, versatz_von(EfiBootDienste, bs_allocate_pages)), 0, 2, anzahl, adresse_von(adr)) != 0:
+            gib_zurück 0
+        ruf3(dienst(bs, versatz_von(EfiBootDienste, bs_set_mem)), adr, anzahl * 4096, 0)
+        gib_zurück adr
+
+# Fehler zusaetzlich auf den Bildschirm (ConOut) und 10 s stehen lassen: der
+# N100 hat keine sichtbare serielle Schnittstelle. Nur vor ExitBootServices.
+@nativ
+funktion schirm(st: u64, bs: u64, text_w: u64, warten: bool) -> void:
+    unsicher:
+        setze con: u64 auf dienst(st, versatz_von(EfiSystemTabelle, con_out))
+        wenn con != 0:
+            ruf2(dienst(con, versatz_von(EfiTextAusgabe, to_output_string)), con, text_w)
+        wenn warten:
+            ruf1(dienst(bs, versatz_von(EfiBootDienste, bs_stall)), 10000000)
+
+@nativ
+funktion guid_gleich(a: u64, b: u64) -> bool:
+    unsicher:
+        gib_zurück speicher_lesen(a, 8) == speicher_lesen(b, 8) und speicher_lesen(a + 8, 8) == speicher_lesen(b + 8, 8)
+
+# ---------------- Kern-Datei ----------------
+# \EFI\MOO\KERN.ELF vom Dateisystem auf geraet lesen. Ergebnis: Puffer (Pool)
+# oder 0; die Laenge steht danach in *ausgabe.
+@nativ
+funktion datei_lesen(bs: u64, geraet: u64, ausgabe: u64) -> u64:
+    unsicher:
+        setze sfs: u64 auf 0
+        setze wurzel: u64 auf 0
+        setze datei: u64 auf 0
+        setze groesse: u64 auf 0
+        setze puffer: u64 auf 0
+        setze gelesen: u64 auf 0
+        setze status: u64 auf 0
+        wenn ruf3(dienst(bs, versatz_von(EfiBootDienste, bs_handle_protocol)), geraet, adresse_von(DATEISYSTEM_GUID), adresse_von(sfs)) != 0 oder sfs == 0:
+            gib_zurück 0
+        wenn ruf2(dienst(sfs, versatz_von(EfiDateisystem, fs_open_volume)), sfs, adresse_von(wurzel)) != 0 oder wurzel == 0:
+            gib_zurück 0
+        wenn ruf5(dienst(wurzel, versatz_von(EfiDatei, fp_open)), wurzel, adresse_von(datei), adresse_von(KERN_PFAD), 1, 0) != 0 oder datei == 0:
+            ruf1(dienst(wurzel, versatz_von(EfiDatei, fp_close)), wurzel)
+            gib_zurück 0
+        # Groesse: ans Ende setzen (0xFFFF...FFFF), Position lesen, zurueck auf 0.
+        ruf2(dienst(datei, versatz_von(EfiDatei, fp_set_position)), datei, 0xFFFFFFFFFFFFFFFF)
+        ruf2(dienst(datei, versatz_von(EfiDatei, fp_get_position)), datei, adresse_von(groesse))
+        ruf2(dienst(datei, versatz_von(EfiDatei, fp_set_position)), datei, 0)
+        wenn groesse >= 64 und groesse <= 0x4000000:
+            wenn ruf3(dienst(bs, versatz_von(EfiBootDienste, bs_allocate_pool)), 2, groesse, adresse_von(puffer)) == 0:
+                setze gelesen auf groesse
+                setze status auf ruf3(dienst(datei, versatz_von(EfiDatei, fp_read)), datei, adresse_von(gelesen), puffer)
+                wenn status != 0 oder gelesen != groesse:
+                    setze puffer auf 0
+        ruf1(dienst(datei, versatz_von(EfiDatei, fp_close)), datei)
+        ruf1(dienst(wurzel, versatz_von(EfiDatei, fp_close)), wurzel)
+        wenn puffer != 0:
+            speicher_schreiben(ausgabe, groesse, 8)
+        gib_zurück puffer
+
+# Kern suchen: Uebergabe (LoadOptions), Geraet des Laders, alle Dateisysteme.
+@nativ
+funktion kern_holen(bs: u64, bild: u64, ausgabe: u64) -> u64:
+    unsicher:
+        setze li: u64 auf 0
+        setze geraet: u64 auf 0
+        setze optionen: u64 auf 0
+        setze puffer: u64 auf 0
+        setze handles: u64 auf 0
+        setze anzahl: u64 auf 0
+        setze i: u64 auf 0
+        wenn ruf3(dienst(bs, versatz_von(EfiBootDienste, bs_handle_protocol)), bild, adresse_von(BILD_GUID), adresse_von(li)) == 0 und li != 0:
+            setze optionen auf speicher_lesen(li + versatz_von(EfiGeladenesBild, li_optionen), 8)
+            wenn optionen != 0 und u64(speicher_lesen(li + versatz_von(EfiGeladenesBild, li_optionen_groesse), 4)) == groesse_von(MooKernUebergabe):
+                wenn speicher_lesen(optionen + versatz_von(MooKernUebergabe, ku_magie), 8) == KERN_UEBERGABE_MAGIE:
+                    text(adresse_von(T_UEBERGABE))
+                    speicher_schreiben(ausgabe, speicher_lesen(optionen + versatz_von(MooKernUebergabe, ku_laenge), 8), 8)
+                    gib_zurück speicher_lesen(optionen + versatz_von(MooKernUebergabe, ku_adresse), 8)
+            setze geraet auf speicher_lesen(li + versatz_von(EfiGeladenesBild, li_geraet), 8)
+        wenn geraet != 0:
+            setze puffer auf datei_lesen(bs, geraet, ausgabe)
+            wenn puffer != 0:
+                gib_zurück puffer
+        # LocateHandleBuffer(ByProtocol = 2, Dateisystem-GUID)
+        wenn ruf5(dienst(bs, versatz_von(EfiBootDienste, bs_locate_handle_buffer)), 2, adresse_von(DATEISYSTEM_GUID), 0, adresse_von(anzahl), adresse_von(handles)) != 0:
+            gib_zurück 0
+        solange i < anzahl:
+            setze puffer auf datei_lesen(bs, speicher_lesen(handles + i * 8, 8), ausgabe)
+            wenn puffer != 0:
+                gib_zurück puffer
+            setze i auf i + 1
+        gib_zurück 0
+
+# ---------------- ELF64 laden (obere Adresshaelfte) ----------------
+# Der Kern ist ab KERN_HOCH (0xFFFFFFFF80000000) gelinkt; das passt zu
+# -mcmodel=kernel der C-Runtime. Alle PT_LOAD zusammen landen in EINEM Block
+# freier physischer Seiten (AllocateAnyPages, Lage beliebig, also auch auf
+# Rechnern mit belegtem Low-Memory); seitentabelle_bauen bildet KERN_HOCH..
+# darauf ab. Ergebnis: Einstieg (virtuell) oder 0.
+@nativ
+funktion elf_laden(bs: u64, elf: u64, laenge: u64, bi: u64) -> u64:
+    unsicher:
+        setze phoff: u64 auf 0
+        setze phgroesse: u64 auf 0
+        setze phanzahl: u64 auf 0
+        setze i: u64 auf 0
+        setze ph: u64 auf 0
+        setze ziel: u64 auf 0
+        setze dateigroesse: u64 auf 0
+        setze speichergroesse: u64 auf 0
+        setze quelle: u64 auf 0
+        setze vunten: u64 auf 0xFFFFFFFFFFFFFFFF
+        setze voben: u64 auf 0
+        setze seitenzahl: u64 auf 0
+        setze physisch: u64 auf 0
+        setze einstieg: u64 auf 0
+        # \x7fELF, ELFCLASS64, ET_EXEC, EM_X86_64
+        wenn speicher_lesen(elf, 4) != 0x464C457F oder speicher_lesen(elf + 4, 1) != 2 oder speicher_lesen(elf + versatz_von(Elf64Kopf, e_typ), 2) != 2 oder speicher_lesen(elf + versatz_von(Elf64Kopf, e_maschine), 2) != 0x3E:
+            meldung(adresse_von(T_F_ELF), speicher_lesen(elf, 8))
+            gib_zurück 0
+        setze phoff auf speicher_lesen(elf + versatz_von(Elf64Kopf, e_phoff), 8)
+        setze phgroesse auf u64(speicher_lesen(elf + versatz_von(Elf64Kopf, e_phgroesse), 2))
+        setze phanzahl auf u64(speicher_lesen(elf + versatz_von(Elf64Kopf, e_phanzahl), 2))
+        wenn phgroesse < groesse_von(Elf64Programmkopf) oder phoff + phanzahl * phgroesse > laenge:
+            meldung(adresse_von(T_F_ELF), phoff)
+            gib_zurück 0
+        # Durchgang 1: Bereich aller PT_LOAD (= 1) pruefen und bestimmen.
+        solange i < phanzahl:
+            setze ph auf elf + phoff + i * phgroesse
+            wenn speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_typ), 4) == 1:
+                setze ziel auf speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_vadr), 8)
+                setze dateigroesse auf speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_dateigroesse), 8)
+                setze speichergroesse auf speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_speichergroesse), 8)
+                setze quelle auf speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_versatz), 8)
+                wenn quelle + dateigroesse > laenge oder dateigroesse > speichergroesse oder ziel < KERN_HOCH:
+                    meldung(adresse_von(T_F_ELF), ziel)
+                    gib_zurück 0
+                wenn (ziel & 0xFFFFFFFFFFFFF000) < vunten:
+                    setze vunten auf ziel & 0xFFFFFFFFFFFFF000
+                wenn ziel + speichergroesse > voben:
+                    setze voben auf ziel + speichergroesse
+            setze i auf i + 1
+        # Ein Seitenverzeichnis (1 GiB) ab genau KERN_HOCH.
+        wenn voben == 0 oder vunten != KERN_HOCH oder voben - vunten > 0x40000000:
+            meldung(adresse_von(T_F_ELF), vunten)
+            gib_zurück 0
+        setze seitenzahl auf (voben - vunten + 4095) / 4096
+        setze physisch auf seiten(bs, seitenzahl)
+        wenn physisch == 0:
+            meldung(adresse_von(T_F_SPEICHER), seitenzahl)
+            gib_zurück 0
+        # Durchgang 2: Dateiinhalt kopieren (Rest ist schon genullt).
+        setze i auf 0
+        solange i < phanzahl:
+            setze ph auf elf + phoff + i * phgroesse
+            wenn speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_typ), 4) == 1:
+                setze ziel auf speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_vadr), 8)
+                setze dateigroesse auf speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_dateigroesse), 8)
+                setze quelle auf speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_versatz), 8)
+                ruf3(dienst(bs, versatz_von(EfiBootDienste, bs_copy_mem)), physisch + (ziel - vunten), elf + quelle, dateigroesse)
+                meldung(adresse_von(T_SEGMENT), ziel)
+            setze i auf i + 1
+        setze einstieg auf speicher_lesen(elf + versatz_von(Elf64Kopf, e_einstieg), 8)
+        wenn einstieg < vunten oder einstieg >= voben:
+            meldung(adresse_von(T_F_ELF), einstieg)
+            gib_zurück 0
+        speicher_schreiben(bi + versatz_von(MooBootInfo, kern_basis), physisch, 8)
+        speicher_schreiben(bi + versatz_von(MooBootInfo, kern_ende), physisch + seitenzahl * 4096, 8)
+        speicher_schreiben(bi + versatz_von(MooBootInfo, kern_virtuell), vunten, 8)
+        meldung(adresse_von(T_PHYS), physisch)
+        wenn nicht seitentabelle_bauen(bs, bi, physisch, seitenzahl):
+            gib_zurück 0
+        gib_zurück einstieg
+
+# Neue PML4 = Kopie der Firmware-PML4 (deren Identitaetsabbildung bleibt fuer
+# Loader, Boot-Info, Framebuffer und ACPI gueltig) plus PML4[511] -> PDPT,
+# PDPT[510] -> PD, PD[j] -> PT_j, PT-Eintraege = physische 4-KiB-Seiten des
+# Kerns (Present | RW). Nur 4-Level-Paging (CR4.LA57 = 0). Die Tabellen der
+# Firmware liegen in EfiBootServicesData: der Kern darf diesen Speicher erst
+# nach eigenem Paging (P7-T7) wiederverwenden.
+@nativ
+funktion seitentabelle_bauen(bs: u64, bi: u64, physisch: u64, seitenzahl: u64) -> bool:
+    unsicher:
+        setze cr3: u64 auf assembler(ziel="x86_64", code="movq %cr3, $0", ausgang="=r", clobber=[])
+        setze cr4: u64 auf assembler(ziel="x86_64", code="movq %cr4, $0", ausgang="=r", clobber=[])
+        setze alt: u64 auf cr3 & 0x000FFFFFFFFFF000
+        setze pt_anzahl: u64 auf (seitenzahl + 511) / 512
+        setze tabellen: u64 auf 0
+        setze k: u64 auf 0
+        wenn (cr4 & 0x1000) != 0:
+            meldung(adresse_von(T_F_PAGING), cr4)
+            gib_zurück falsch
+        wenn speicher_lesen(alt + 511 * 8, 8) != 0:
+            meldung(adresse_von(T_F_PAGING), speicher_lesen(alt + 511 * 8, 8))
+            gib_zurück falsch
+        # Block: PML4, PDPT, PD, danach pt_anzahl PTs (alle genullt).
+        setze tabellen auf seiten(bs, 3 + pt_anzahl)
+        wenn tabellen == 0:
+            meldung(adresse_von(T_F_SPEICHER), 3 + pt_anzahl)
+            gib_zurück falsch
+        ruf3(dienst(bs, versatz_von(EfiBootDienste, bs_copy_mem)), tabellen, alt, 4096)
+        speicher_schreiben(tabellen + 511 * 8, (tabellen + 4096) | 3, 8)
+        speicher_schreiben(tabellen + 4096 + 510 * 8, (tabellen + 8192) | 3, 8)
+        solange k < pt_anzahl:
+            speicher_schreiben(tabellen + 8192 + k * 8, (tabellen + 12288 + k * 4096) | 3, 8)
+            setze k auf k + 1
+        # Die PTs liegen hintereinander: Eintrag k von allen PTs steht bei 12288 + k * 8.
+        setze k auf 0
+        solange k < seitenzahl:
+            speicher_schreiben(tabellen + 12288 + k * 8, (physisch + k * 4096) | 3, 8)
+            setze k auf k + 1
+        speicher_schreiben(bi + versatz_von(MooBootInfo, seitentabelle), tabellen, 8)
+        meldung(adresse_von(T_SEITEN), tabellen)
+        gib_zurück wahr
+
+# ---------------- Einstieg ----------------
+@nativ
+@einstieg
+funktion efi_main(bild: u64, st: u64) -> u64:
+    unsicher:
+        setze bs: u64 auf 0
+        setze con: u64 auf 0
+        setze bi: u64 auf 0
+        setze arbeit: u64 auf 0
+        setze gop: u64 auf 0
+        setze modus: u64 auf 0
+        setze info: u64 auf 0
+        setze anzahl: u64 auf 0
+        setze tabelle: u64 auf 0
+        setze eintrag: u64 auf 0
+        setze rsdp: u64 auf 0
+        setze i: u64 auf 0
+        setze kern_laenge: u64 auf 0
+        setze kern_puffer: u64 auf 0
+        setze einstieg: u64 auf 0
+        setze karte: u64 auf 0
+        setze kapazitaet: u64 auf 0
+        setze karte_groesse: u64 auf 0
+        setze schluessel: u64 auf 0
+        setze desk_groesse: u64 auf 0
+        setze desk_version: u64 auf 0
+        setze status: u64 auf 0
+        setze versuch: u64 auf 0
+        setze beendet: bool auf falsch
+        setze pml4: u64 auf 0
+        seriell_init()
+        text(adresse_von(T_START))
+        setze bs auf dienst(st, versatz_von(EfiSystemTabelle, bootdienste))
+        # Watchdog aus: SetWatchdogTimer(0, 0, 0, NULL)
+        ruf4(dienst(bs, versatz_von(EfiBootDienste, bs_set_watchdog_timer)), 0, 0, 0, 0)
+        setze con auf dienst(st, versatz_von(EfiSystemTabelle, con_out))
+        wenn con != 0:
+            ruf2(dienst(con, versatz_von(EfiTextAusgabe, to_output_string)), con, adresse_von(W_START))
+        # Boot-Info (1 Seite) und Arbeitsspeicher fuer den Kern (16 Seiten)
+        setze bi auf seiten(bs, 1)
+        setze arbeit auf seiten(bs, 16)
+        wenn bi == 0 oder arbeit == 0:
+            meldung(adresse_von(T_F_SPEICHER), 0)
+            schirm(st, bs, adresse_von(W_F_SPEICHER), wahr)
+            gib_zurück FEHLER_LADEN
+        speicher_schreiben(bi + versatz_von(MooBootInfo, magie), BOOT_MAGIE, 8)
+        speicher_schreiben(bi + versatz_von(MooBootInfo, version), 1, 8)
+        speicher_schreiben(bi + versatz_von(MooBootInfo, arbeit), arbeit, 8)
+        speicher_schreiben(bi + versatz_von(MooBootInfo, arbeit_groesse), 16 * 4096, 8)
+        # GOP: LocateProtocol(&GOP_GUID, NULL, &gop)
+        wenn ruf3(dienst(bs, versatz_von(EfiBootDienste, bs_locate_protocol)), adresse_von(GOP_GUID), 0, adresse_von(gop)) == 0 und gop != 0:
+            setze modus auf speicher_lesen(gop + versatz_von(EfiGop, gop_modus), 8)
+            setze info auf speicher_lesen(modus + versatz_von(EfiGopModus, gm_info), 8)
+            speicher_schreiben(bi + versatz_von(MooBootInfo, fb_basis), speicher_lesen(modus + versatz_von(EfiGopModus, gm_fb_basis), 8), 8)
+            speicher_schreiben(bi + versatz_von(MooBootInfo, fb_groesse), speicher_lesen(modus + versatz_von(EfiGopModus, gm_fb_groesse), 8), 8)
+            speicher_schreiben(bi + versatz_von(MooBootInfo, fb_breite), speicher_lesen(info + versatz_von(EfiGopInfo, gi_breite), 4), 4)
+            speicher_schreiben(bi + versatz_von(MooBootInfo, fb_hoehe), speicher_lesen(info + versatz_von(EfiGopInfo, gi_hoehe), 4), 4)
+            speicher_schreiben(bi + versatz_von(MooBootInfo, fb_stride), speicher_lesen(info + versatz_von(EfiGopInfo, gi_pixel_pro_zeile), 4), 4)
+            speicher_schreiben(bi + versatz_von(MooBootInfo, fb_format), speicher_lesen(info + versatz_von(EfiGopInfo, gi_format), 4), 4)
+            meldung(adresse_von(T_GOP), speicher_lesen(bi + versatz_von(MooBootInfo, fb_basis), 8))
+            meldung(adresse_von(T_BREITE), u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_breite), 4)))
+            meldung(adresse_von(T_HOEHE), u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_hoehe), 4)))
+            meldung(adresse_von(T_STRIDE), u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_stride), 4)))
+            meldung(adresse_von(T_FORMAT), u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_format), 4)))
+        sonst:
+            meldung(adresse_von(T_KEIN_GOP), 0)
+        # ACPI-RSDP aus der Konfigurationstabelle
+        setze anzahl auf dienst(st, versatz_von(EfiSystemTabelle, tabellen_anzahl))
+        setze tabelle auf dienst(st, versatz_von(EfiSystemTabelle, konfig_tabelle))
+        solange i < anzahl:
+            setze eintrag auf tabelle + i * groesse_von(EfiKonfigTabelle)
+            wenn guid_gleich(eintrag, adresse_von(ACPI20_GUID)):
+                setze rsdp auf speicher_lesen(eintrag + versatz_von(EfiKonfigTabelle, kt_tabelle), 8)
+                stopp
+            wenn rsdp == 0 und guid_gleich(eintrag, adresse_von(ACPI10_GUID)):
+                setze rsdp auf speicher_lesen(eintrag + versatz_von(EfiKonfigTabelle, kt_tabelle), 8)
+            setze i auf i + 1
+        speicher_schreiben(bi + versatz_von(MooBootInfo, acpi_rsdp), rsdp, 8)
+        meldung(adresse_von(T_RSDP), rsdp)
+        # Kern holen und laden
+        setze kern_puffer auf kern_holen(bs, bild, adresse_von(kern_laenge))
+        wenn kern_puffer == 0:
+            meldung(adresse_von(T_F_KERN), 0)
+            schirm(st, bs, adresse_von(W_F_KERN), wahr)
+            gib_zurück FEHLER_LADEN
+        meldung(adresse_von(T_DATEI), kern_laenge)
+        setze einstieg auf elf_laden(bs, kern_puffer, kern_laenge, bi)
+        wenn einstieg == 0:
+            schirm(st, bs, adresse_von(W_F_ELF), wahr)
+            gib_zurück FEHLER_LADEN
+        meldung(adresse_von(T_EINSTIEG), einstieg)
+        schirm(st, bs, adresse_von(W_OK), falsch)
+        # Speicherkarte: erst Groesse erfragen, Puffer mit Reserve anlegen
+        # (AllocatePool selbst veraendert die Karte), dann Karte + ExitBootServices.
+        ruf5(dienst(bs, versatz_von(EfiBootDienste, bs_get_memory_map)), adresse_von(karte_groesse), 0, adresse_von(schluessel), adresse_von(desk_groesse), adresse_von(desk_version))
+        setze kapazitaet auf karte_groesse + 16 * desk_groesse + 4096
+        wenn ruf3(dienst(bs, versatz_von(EfiBootDienste, bs_allocate_pool)), 2, kapazitaet, adresse_von(karte)) != 0:
+            meldung(adresse_von(T_F_SPEICHER), kapazitaet)
+            schirm(st, bs, adresse_von(W_F_SPEICHER), wahr)
+            gib_zurück FEHLER_LADEN
+        # Nach einem gescheiterten ExitBootServices sind nur GetMemoryMap und
+        # ExitBootServices erlaubt; Ausgabe laeuft nur ueber Ports.
+        solange versuch < 4 und nicht beendet:
+            setze karte_groesse auf kapazitaet
+            setze status auf ruf5(dienst(bs, versatz_von(EfiBootDienste, bs_get_memory_map)), adresse_von(karte_groesse), karte, adresse_von(schluessel), adresse_von(desk_groesse), adresse_von(desk_version))
+            wenn status == 0:
+                setze status auf ruf2(dienst(bs, versatz_von(EfiBootDienste, bs_exit_boot_services)), bild, schluessel)
+                wenn status == 0:
+                    setze beendet auf wahr
+            setze versuch auf versuch + 1
+        wenn nicht beendet:
+            meldung(adresse_von(T_F_EBS), status)
+            gib_zurück status
+        # Ab hier: keine Firmwaredienste mehr.
+        meldung(adresse_von(T_EBS), versuch)
+        speicher_schreiben(bi + versatz_von(MooBootInfo, karte), karte, 8)
+        speicher_schreiben(bi + versatz_von(MooBootInfo, karte_groesse), karte_groesse, 8)
+        speicher_schreiben(bi + versatz_von(MooBootInfo, deskriptor_groesse), desk_groesse, 8)
+        speicher_schreiben(bi + versatz_von(MooBootInfo, deskriptor_version), desk_version, 8)
+        meldung(adresse_von(T_KARTE), karte_groesse / desk_groesse)
+        meldung(adresse_von(T_SPRUNG), einstieg)
+        # Eigene Seitentabelle aktivieren (untere Haelfte wie bisher, Kern oben).
+        setze pml4 auf speicher_lesen(bi + versatz_von(MooBootInfo, seitentabelle), 8)
+        assembler(ziel="x86_64", code="cli; movq $0, %cr3", eingaenge={"r": pml4}, clobber=["memory"])
+        # Kern: SysV-ABI, erstes Argument (rdi) = Boot-Info; kehrt nicht zurueck.
+        setze kern: ptr[fn[sysv64](u64) -> void] auf zeiger(einstieg)
+        kern(bi)
+        text(adresse_von(T_F_RUECKKEHR))
+        solange wahr:
+            assembler(ziel="x86_64", code="hlt", clobber=[])
+        gib_zurück FEHLER_LADEN

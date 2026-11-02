@@ -1,0 +1,8 @@
+# Negativ: Rueckgabetyp passt nicht (u32 statt u64).
+@nativ
+funktion fehlerhaft(a: u64) -> u64:
+    unsicher:
+        setze x: u32 auf 1
+        wenn a == 0:
+            gib_zurück x
+        gib_zurück a

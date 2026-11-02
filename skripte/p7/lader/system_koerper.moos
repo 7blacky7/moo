@@ -1,0 +1,134 @@
+# P7-T5: Systemkoerper fuer @nativ (Kontrollfluss, Locals, Speicher, Aufrufe,
+# adresse_von, Textkonstanten). Gegenprobe: system_probe.c (echte Ausfuehrung).
+struktur Paar:
+    a: u32
+    b: u64
+
+@nativ
+konstante TEXT: [u8; 6] auf "MOO-OK"
+
+@nativ
+konstante PFAD: [u16; 5] auf "\\EFI"
+
+@nativ
+konstante TABELLE: [u32; 4] auf [10, 20, 30, 40]
+
+@nativ
+konstante FAKTOR: u64 auf 3
+
+# solange + skalare Konstante
+@nativ
+@einstieg
+funktion sys_summe(n: u64) -> u64:
+    unsicher:
+        setze s: u64 auf 0
+        setze i: u64 auf 1
+        solange i <= n:
+            setze s auf s + i
+            setze i auf i + 1
+        gib_zurück s * FAKTOR
+
+# adresse_von(Konstante) + speicher_lesen
+@nativ
+@einstieg
+funktion sys_tabelle(i: u64) -> u32:
+    unsicher:
+        wenn i >= 4:
+            gib_zurück 0
+        gib_zurück speicher_lesen(adresse_von(TABELLE) + i * 4, 4)
+
+# Textkonstanten [u8; N] (UTF-8) und [u16; N] (UTF-16 mit abschliessender 0), stopp
+@nativ
+@einstieg
+funktion sys_text_summe() -> u64:
+    unsicher:
+        setze s: u64 auf 0
+        setze i: u64 auf 0
+        solange wahr:
+            wenn i == 6:
+                stopp
+            setze s auf s + u64(speicher_lesen(adresse_von(TEXT) + i, 1))
+            setze i auf i + 1
+        setze j: u64 auf 0
+        solange j < 5:
+            setze s auf s + u64(speicher_lesen(adresse_von(PFAD) + j * 2, 2))
+            setze j auf j + 1
+        gib_zurück s
+
+@nativ
+funktion verdopple(x: u64) -> u64:
+    unsicher:
+        setze y: u64 auf x
+        gib_zurück y + y
+
+# Indirekter win64-Aufruf (Firmwaredienst) mit Ausgabeparameter = Adresse eines Locals
+@nativ
+@einstieg
+funktion sys_rufe(f: ptr[fn[win64](u64, u64) -> u64], a: u64, b: u64) -> u64:
+    unsicher:
+        setze ergebnis: u64 auf 0
+        setze r: u64 auf f(a, adresse_von(ergebnis))
+        gib_zurück verdopple(ergebnis) + r + b
+
+# Konversionen: kuerzen, umdeuten, Vorzeichen erweitern
+@nativ
+@einstieg
+funktion sys_konv(x: u64) -> i64:
+    unsicher:
+        setze b: u8 auf u8(x)
+        setze k: i8 auf i8(b)
+        gib_zurück i64(k)
+
+# zeiger(...), volatile mit Index, Nullzeigervergleich, oder (Kurzschluss)
+@nativ
+@einstieg
+funktion sys_zeiger(adr: u64) -> u32:
+    unsicher:
+        setze p: ptr[u32] auf zeiger(adr)
+        volatile_schreiben(p, 1, 77)
+        wenn p == nichts oder volatile_lesen(p, 1) != 77:
+            gib_zurück 0
+        gib_zurück volatile_lesen(p) + volatile_lesen(p, 1)
+
+# Layoutabfragen im Systemkoerper
+@nativ
+@einstieg
+funktion sys_struktur(adr: u64) -> u64:
+    unsicher:
+        speicher_schreiben(adr + versatz_von(Paar, b), 99, 8)
+        gib_zurück speicher_lesen(adr + versatz_von(Paar, b), 8) + groesse_von(Paar)
+
+# weiter, Rest
+@nativ
+@einstieg
+funktion sys_gerade(n: u64) -> u64:
+    unsicher:
+        setze z: u64 auf 0
+        setze i: u64 auf 0
+        solange i < n:
+            setze i auf i + 1
+            wenn (i % 2) == 1:
+                weiter
+            setze z auf z + 1
+        gib_zurück z
+
+# assembler mit Ausdrucks-Eingaengen
+@nativ
+@einstieg
+funktion sys_asm(a: u64, b: u64) -> u64:
+    unsicher:
+        setze r: u64 auf assembler(ziel="x86_64", code="leaq ($1,$2), $0", ausgang="=r", eingaenge={"r": a + 1, "r": b}, clobber=[])
+        gib_zurück r
+
+# void-Funktion, sonst-wenn-Kette, und
+@nativ
+@einstieg
+funktion sys_klasse(adr: u64, x: u64) -> void:
+    unsicher:
+        wenn x < 10 und x != 5:
+            speicher_schreiben(adr, 1, 1)
+        sonst:
+            wenn x == 5:
+                speicher_schreiben(adr, 2, 1)
+            sonst:
+                speicher_schreiben(adr, 3, 1)

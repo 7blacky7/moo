@@ -1,0 +1,259 @@
+# ============================================================
+# uefi_kern.moos — P7-T5: minimaler Moo-Kern hinter dem Moo-UEFI-Loader
+# ============================================================
+# Einsprung moo_kern_start (@nackt): cli, eigener Stack, kern_haupt(boot_info).
+# Der Loader (beispiele/uefi/moo_lader.moos) hat ExitBootServices schon
+# gerufen; hier gibt es keine Firmwaredienste mehr, nur Ports und Speicher.
+# kern_haupt prueft die Boot-Info, meldet Framebuffer, Speicherkarte und
+# ACPI-RSDP auf COM1 (und debugcon 0xE9), fuellt den GOP-Framebuffer und
+# schreibt mit dem vorhandenen Surface-Kern (moo_surface_core, freestanding)
+# "MOO-KERNEL OK" auf den Bildschirm. Danach hlt-Schleife.
+# Bau:  moo compile beispiele/kernel/uefi_kern.moos --no-stdlib --target x86_64-bare \
+#           --kernel --linker-script beispiele/kernel/linker-uefi.ld -o kern.elf
+# Bruecke zu P7-T6 (Kernel-Einstieg + Framebuffer-Konsole in Moo).
+
+# Vertrag Loader -> Kern, gleiches Layout wie in beispiele/uefi/moo_lader.moos.
+struktur MooBootInfo:
+    magie: u64
+    version: u64
+    fb_basis: u64
+    fb_groesse: u64
+    fb_breite: u32
+    fb_hoehe: u32
+    fb_stride: u32
+    fb_format: u32
+    karte: u64
+    karte_groesse: u64
+    deskriptor_groesse: u64
+    deskriptor_version: u64
+    acpi_rsdp: u64
+    kern_basis: u64
+    kern_ende: u64
+    arbeit: u64
+    arbeit_groesse: u64
+    kern_virtuell: u64
+    seitentabelle: u64
+
+# UEFI-Speicherdeskriptor (Spec 2.10, 7.2 GetMemoryMap); Schrittweite aus der Boot-Info.
+struktur EfiSpeicherDeskriptor:
+    sd_typ: u32
+    sd_physisch: u64
+    sd_virtuell: u64
+    sd_seiten: u64
+    sd_attribute: u64
+
+@nativ
+konstante BOOT_MAGIE: u64 auf 0x31544F4F424F4F4D
+
+# "RSD PTR " als u64 (little endian)
+@nativ
+konstante RSDP_SIGNATUR: u64 auf 0x2052545020445352
+
+# Vorhandener Surface-Kern (compiler/runtime/moo_surface_core.c, RGBA8888,
+# stride in Bytes). bool-Ergebnis als u8; MooSurfaceColor {r,g,b,a} wird als
+# u32 = r | g<<8 | b<<16 | a<<24 uebergeben (SysV: beide INTEGER in einem Register).
+extern "C" funktion moo_surface_core_init(kern: ptr[u8], pixel: ptr[u8], bytes: u64, breite: i32, hoehe: i32, stride: u64) -> u8
+extern "C" funktion moo_surface_core_rect(kern: ptr[u8], x: i32, y: i32, breite: i32, hoehe: i32, farbe: u32) -> u8
+extern "C" funktion moo_surface_core_text_3x5(kern: ptr[u8], x: i32, y: i32, skala: i32, text: ptr[u8], laenge: u64, farbe: u32) -> u8
+
+@nativ
+konstante T_START: [u8; _] auf "MOO-KERNEL START\n"
+
+@nativ
+konstante T_MAGIE: [u8; _] auf "MOO-KERNEL FEHLER: BOOT-MAGIE "
+
+@nativ
+konstante T_FB: [u8; _] auf "MOO-KERNEL FB "
+
+@nativ
+konstante T_RIP: [u8; _] auf "MOO-KERNEL RIP "
+
+@nativ
+konstante T_BREITE: [u8; _] auf "MOO-KERNEL BREITE "
+
+@nativ
+konstante T_HOEHE: [u8; _] auf "MOO-KERNEL HOEHE "
+
+@nativ
+konstante T_STRIDE: [u8; _] auf "MOO-KERNEL STRIDE "
+
+@nativ
+konstante T_FORMAT: [u8; _] auf "MOO-KERNEL FORMAT "
+
+@nativ
+konstante T_KARTE: [u8; _] auf "MOO-KERNEL KARTE-ANZ "
+
+@nativ
+konstante T_FREI: [u8; _] auf "MOO-KERNEL FREI-MIB "
+
+@nativ
+konstante T_RSDP: [u8; _] auf "MOO-KERNEL RSDP "
+
+@nativ
+konstante T_RSDP_OK: [u8; _] auf "MOO-KERNEL RSDP-SIG "
+
+@nativ
+konstante T_SURFACE: [u8; _] auf "MOO-KERNEL SURFACE "
+
+@nativ
+konstante T_OK: [u8; _] auf "MOO-KERNEL OK\n"
+
+@nativ
+konstante T_SCHIRM: [u8; _] auf "MOO-KERNEL OK"
+
+@nativ
+konstante T_SCHIRM2: [u8; _] auf "MOO LADER UND KERN OHNE C"
+
+# ---------------- Einsprung ----------------
+# Vom Loader per call (SysV) mit rdi = Boot-Info erreicht. rdi bleibt
+# unberuehrt und ist damit das erste Argument von kern_haupt.
+@nativ
+@nackt
+@einstieg
+funktion moo_kern_start() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="cli; leaq kern_stapel_ende(%rip), %rsp; xorl %ebp, %ebp; call kern_haupt; 1: hlt; jmp 1b", clobber=[])
+
+# ---------------- COM1 + debugcon ----------------
+@nativ
+funktion seriell_init() -> void:
+    unsicher:
+        port_schreibe(0x3F9, 0)
+        port_schreibe(0x3FB, 0x80)
+        port_schreibe(0x3F8, 1)
+        port_schreibe(0x3F9, 0)
+        port_schreibe(0x3FB, 3)
+        port_schreibe(0x3FA, 0xC7)
+        port_schreibe(0x3FC, 3)
+
+@nativ
+funktion zeichen(z: u8) -> void:
+    unsicher:
+        setze n: u32 auf 0
+        solange (port_lese(0x3FD) & 0x20) == 0 und n < 100000:
+            setze n auf n + 1
+        port_schreibe(0x3F8, z)
+        port_schreibe(0xE9, z)
+
+@nativ
+funktion text(adr: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange speicher_lesen(adr + i, 1) != 0:
+            zeichen(speicher_lesen(adr + i, 1))
+            setze i auf i + 1
+
+@nativ
+funktion hex(wert: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 16:
+            setze ziffer: u8 auf u8((wert >> (60 - i * 4)) & 15)
+            wenn ziffer < 10:
+                zeichen(ziffer + 48)
+            sonst:
+                zeichen(ziffer + 55)
+            setze i auf i + 1
+
+@nativ
+funktion meldung(adr: u64, wert: u64) -> void:
+    unsicher:
+        text(adr)
+        hex(wert)
+        zeichen(10)
+
+@nativ
+funktion anhalten() -> void:
+    unsicher:
+        solange wahr:
+            assembler(ziel="x86_64", code="cli; hlt", clobber=[])
+
+# ---------------- Framebuffer ----------------
+# GOP-Pixel als u32: Format 1 (BGRX) = b | g<<8 | r<<16, Format 0 (RGBX) = r | g<<8 | b<<16.
+@nativ
+funktion pixel(format: u64, r: u32, g: u32, b: u32) -> u32:
+    unsicher:
+        wenn format == 1:
+            gib_zurück b | (g << 8) | (r << 16)
+        gib_zurück r | (g << 8) | (b << 16)
+
+@nativ
+funktion fuellen(fb: u64, breite: u64, hoehe: u64, stride: u64, wert: u32) -> void:
+    unsicher:
+        setze y: u64 auf 0
+        setze x: u64 auf 0
+        setze zeile: u64 auf 0
+        solange y < hoehe:
+            setze zeile auf fb + y * stride * 4
+            setze x auf 0
+            solange x < breite:
+                speicher_schreiben(zeile + x * 4, wert, 4)
+                setze x auf x + 1
+            setze y auf y + 1
+
+# ---------------- Kern ----------------
+@nativ
+@einstieg
+funktion kern_haupt(bi: u64) -> void:
+    unsicher:
+        setze fb: u64 auf 0
+        setze breite: u64 auf 0
+        setze hoehe: u64 auf 0
+        setze stride: u64 auf 0
+        setze format: u64 auf 0
+        setze karte: u64 auf 0
+        setze schritt: u64 auf 0
+        setze anzahl: u64 auf 0
+        setze frei: u64 auf 0
+        setze i: u64 auf 0
+        setze d: u64 auf 0
+        setze rsdp: u64 auf 0
+        setze kern: u64 auf 0
+        setze ok: u8 auf 0
+        setze rip: u64 auf 0
+        seriell_init()
+        text(adresse_von(T_START))
+        # Laeuft der Kern wirklich in der oberen Haelfte? RIP direkt lesen.
+        setze rip auf assembler(ziel="x86_64", code="leaq 0(%rip), $0", ausgang="=r", clobber=[])
+        meldung(adresse_von(T_RIP), rip)
+        wenn speicher_lesen(bi + versatz_von(MooBootInfo, magie), 8) != BOOT_MAGIE:
+            meldung(adresse_von(T_MAGIE), speicher_lesen(bi, 8))
+            anhalten()
+        setze fb auf speicher_lesen(bi + versatz_von(MooBootInfo, fb_basis), 8)
+        setze breite auf u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_breite), 4))
+        setze hoehe auf u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_hoehe), 4))
+        setze stride auf u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_stride), 4))
+        setze format auf u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_format), 4))
+        meldung(adresse_von(T_FB), fb)
+        meldung(adresse_von(T_BREITE), breite)
+        meldung(adresse_von(T_HOEHE), hoehe)
+        meldung(adresse_von(T_STRIDE), stride)
+        meldung(adresse_von(T_FORMAT), format)
+        # Speicherkarte: Deskriptoren zaehlen, EfiConventionalMemory (7) summieren.
+        setze karte auf speicher_lesen(bi + versatz_von(MooBootInfo, karte), 8)
+        setze schritt auf speicher_lesen(bi + versatz_von(MooBootInfo, deskriptor_groesse), 8)
+        wenn schritt >= groesse_von(EfiSpeicherDeskriptor):
+            setze anzahl auf speicher_lesen(bi + versatz_von(MooBootInfo, karte_groesse), 8) / schritt
+        solange i < anzahl:
+            setze d auf karte + i * schritt
+            wenn speicher_lesen(d + versatz_von(EfiSpeicherDeskriptor, sd_typ), 4) == 7:
+                setze frei auf frei + speicher_lesen(d + versatz_von(EfiSpeicherDeskriptor, sd_seiten), 8)
+            setze i auf i + 1
+        meldung(adresse_von(T_KARTE), anzahl)
+        meldung(adresse_von(T_FREI), frei / 256)
+        setze rsdp auf speicher_lesen(bi + versatz_von(MooBootInfo, acpi_rsdp), 8)
+        meldung(adresse_von(T_RSDP), rsdp)
+        wenn rsdp != 0:
+            meldung(adresse_von(T_RSDP_OK), u64(speicher_lesen(rsdp, 8) == RSDP_SIGNATUR))
+        # Bildschirm: Hintergrund direkt, Balken und Text ueber den Surface-Kern.
+        wenn fb != 0 und breite >= 160 und hoehe >= 200 und (format == 0 oder format == 1):
+            fuellen(fb, breite, hoehe, stride, pixel(format, 32, 96, 128))
+            setze kern auf speicher_lesen(bi + versatz_von(MooBootInfo, arbeit), 8)
+            setze ok auf moo_surface_core_init(zeiger(kern), zeiger(fb), stride * 4 * hoehe, i32(breite), i32(hoehe), stride * 4)
+            meldung(adresse_von(T_SURFACE), u64(ok))
+            wenn ok != 0:
+                moo_surface_core_rect(zeiger(kern), 40, 40, i32(breite) - 80, 140, pixel(format, 255, 196, 64) | 0xFF000000)
+                moo_surface_core_text_3x5(zeiger(kern), 64, 60, 12, zeiger(adresse_von(T_SCHIRM)), 13, pixel(format, 20, 20, 20) | 0xFF000000)
+                moo_surface_core_text_3x5(zeiger(kern), 64, 220, 6, zeiger(adresse_von(T_SCHIRM2)), 25, pixel(format, 240, 240, 240) | 0xFF000000)
+        text(adresse_von(T_OK))
+        anhalten()

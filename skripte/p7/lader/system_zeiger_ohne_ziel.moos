@@ -1,0 +1,7 @@
+# Negativ: zeiger(...) ohne Zeiger-Zieltyp aus dem Kontext.
+@nativ
+funktion fehlerhaft(a: u64) -> u64:
+    unsicher:
+        wenn a == 0:
+            gib_zurück 0
+        gib_zurück u64(zeiger(a))

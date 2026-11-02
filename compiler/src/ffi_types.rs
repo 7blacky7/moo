@@ -279,6 +279,11 @@ impl<'ctx> ExternBinding<'ctx> {
         (&self.signature.semantic_params, &self.signature.semantic_result)
     }
 
+    /// P7-T5: Deklaration fuer Systemkoerper (Aufrufstelle uebernimmt deren CC).
+    pub(crate) fn function(&self) -> inkwell::values::FunctionValue<'ctx> {
+        self.function
+    }
+
     /// Liefert nur Typen, fuer die der skalare Call-Emitter freigegeben ist.
     pub(crate) fn scalar_parameters(&self) -> Result<Vec<crate::codegen_native::NType>, String> {
         self.signature.params.iter().map(|ty| ty.native_scalar()

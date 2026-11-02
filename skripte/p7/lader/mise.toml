@@ -1,0 +1,38 @@
+[tasks.system]
+description = "P7-T5: @nativ-Systemkoerper (Kontrollfluss, Locals, Speicher, direkte/indirekte Aufrufe, adresse_von, Textkonstanten): IR-Verify, C-Gegenprobe, Negativfaelle"
+run = '''
+set -eu
+cd ../../..
+out=build/p7-t5-system
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+src=skripte/p7/lader
+for target in x86_64-bare x86_64-unknown-uefi; do
+    "$compiler" compile "$src/system_koerper.moos" --no-stdlib --emit-ir --target "$target" -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+done
+sel="--glob=TEXT --glob=PFAD --glob=TABELLE"
+for f in sys_summe sys_tabelle sys_text_summe sys_rufe sys_konv sys_zeiger sys_struktur sys_gerade sys_asm sys_klasse; do
+    sel="$sel --func=$f"
+done
+mise exec -- llvm-extract -S $sel --recursive "$out/x86_64-bare.ll" -o "$out/x86_64-bare.extract.ll"
+mise exec -- llc -O2 -relocation-model=pic -filetype=obj "$out/x86_64-bare.extract.ll" -o "$out/x86_64-bare.o"
+x="$out/x86_64-unknown-uefi.ll"
+# UEFI-Ziel: Dienstaufruf mit win64 ist Zieldefault (keine explizite CC); Textkonstante UTF-16 mit 0.
+rg -q '^@PFAD = constant \[5 x i16\] \[i16 92, i16 69, i16 70, i16 73, i16 0\]' "$x"
+rg -q '^@TEXT = constant \[6 x i8\] c"MOO-OK"' "$x"
+rg -q 'call win64cc i64 %' "$out/x86_64-bare.ll"
+${CC:-cc} -std=c11 -Wall -Wextra -Werror "$src/system_probe.c" "$out/x86_64-bare.o" -o "$out/probe"
+"$out/probe"
+expect_fail() {  # Datei Muster
+    if "$compiler" compile "$1" --no-stdlib --emit-ir --target x86_64-bare -o "$out/fail.ll" >"$out/fail.log" 2>&1; then
+        echo "Unerwartet akzeptiert: $1" >&2; exit 1
+    fi
+    rg -q -F "$2" "$out/fail.log" || { cat "$out/fail.log" >&2; echo "Falsche Diagnose fuer $1" >&2; exit 1; }
+}
+expect_fail "$src/system_typ_falsch.moos" 'gib_zurück erwartet u64, erhalten u32'
+expect_fail "$src/system_undeklariert.moos" "'y' ist nicht deklariert"
+expect_fail "$src/system_zeiger_ohne_ziel.moos" 'zeiger(...) braucht einen Zeiger-Zieltyp'
+expect_fail "$src/system_text_laenge.moos" 'Textliteral hat 6 Einheiten, das Array 3'
+echo 'PASS Systemkoerper: IR (2 Ziele), C-Gegenprobe, Negativfaelle'
+'''

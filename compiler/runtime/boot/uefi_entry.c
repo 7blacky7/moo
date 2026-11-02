@@ -501,7 +501,10 @@ struct EfiFile {
     u64 (*read)(EfiFile *, u64 *groesse, void *puffer);
 };
 typedef struct { u64 revision; u64 (*open_volume)(void *self, EfiFile **wurzel); } EfiSimpleFs;
-typedef struct { u32 revision; void *parent, *system_table, *device_handle; } EfiLoadedImage;
+typedef struct {
+    u32 revision; void *parent, *system_table, *device_handle, *file_path, *reserviert;
+    u32 load_options_size; void *load_options;   /* P7-T5: Kern-Uebergabe */
+} EfiLoadedImage;
 typedef u64 (*EfiAllocatePool)(u32 typ, u64 groesse, void **puffer);
 typedef u64 (*EfiLoadImage)(u8 boot_policy, void *parent, void *pfad, void *quelle,
                              u64 groesse, void **bild);
@@ -741,6 +744,23 @@ MooValue kern_bild_starten(MooValue adresse, MooValue laenge) {
     status = lade(0, moo_image_handle, 0, (void *)(u64)a, (u64)l, &bild);
     debug("MOO-UEFI-BILD LoadImage "); debug_hex(status); debug("\n");
     if (status != 0 || !bild) return moo_number(1.0);
+    /* P7-T5: Kern-Uebergabe an den Moo-UEFI-Loader. Der Netz-Lader legt direkt
+     * hinter das Image (sein Puffer hat Reserve) einen MooKernUebergabe-Block
+     * ("MOOKERN1", Adresse, Laenge); er wird LoadOptions des gestarteten Images. */
+    {
+        static EfiGuid li_guid = {0x5b1b31a1, 0x9562, 0x11d2,
+                                  {0x8e,0x3f,0x00,0xa0,0xc9,0x69,0x72,0x3b}};
+        u8 *block = (u8 *)(u64)a + (u64)l;
+        EfiLoadedImage *li = 0;
+        u64 magie;
+        __builtin_memcpy(&magie, block, sizeof magie);
+        if (magie == 0x314E52454B4F4F4Dull
+            && moo_st->boot->handle_protocol(bild, &li_guid, (void **)&li) == 0 && li) {
+            li->load_options_size = 24u;
+            li->load_options = block;
+            marker("MOO-UEFI-BILD-KERN\n");
+        }
+    }
     marker("MOO-UEFI-BILD-START\n");
     status = starte(bild, 0, 0);
     moo_schatten_b = moo_schatten_h = 0;   /* das Image hat selbst gezeichnet */

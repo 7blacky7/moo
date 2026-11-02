@@ -140,13 +140,13 @@ fn port_type(bits: u32) -> NType {
 enum Arch { X86_64, AArch64 }
 
 /// `{reg}` mit Kleinbuchstaben/Ziffern (z. B. {eax}, {dx}, {x0}).
-fn register_constraint(constraint: &str) -> bool {
+pub(crate) fn register_constraint(constraint: &str) -> bool {
     constraint.len() > 2 && constraint.starts_with('{') && constraint.ends_with('}')
         && constraint[1..constraint.len() - 1].bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
 }
 
 /// Jeder Operandenverweis `$N` bzw. `${N...}` muss deklariert sein; `$$` ist ein `$`.
-fn check_operands(code: &str, count: usize) -> Result<(), String> {
+pub(crate) fn check_operands(code: &str, count: usize) -> Result<(), String> {
     let bytes = code.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -169,16 +169,16 @@ fn check_operands(code: &str, count: usize) -> Result<(), String> {
     Ok(())
 }
 
-struct AsmSpec<'e> {
-    target: String,
-    code: String,
-    output: Option<String>,
-    inputs: Vec<(String, &'e Expr)>,
-    clobbers: Vec<String>,
+pub(crate) struct AsmSpec<'e> {
+    pub(crate) target: String,
+    pub(crate) code: String,
+    pub(crate) output: Option<String>,
+    pub(crate) inputs: Vec<(String, &'e Expr)>,
+    pub(crate) clobbers: Vec<String>,
 }
 
 impl<'e> AsmSpec<'e> {
-    fn parse(args: &'e [Expr]) -> Result<Self, String> {
+    pub(crate) fn parse(args: &'e [Expr]) -> Result<Self, String> {
         let pairs = match args {
             [Expr::Dict(pairs)] => pairs,
             _ => return Err("assembler erwartet benannte Argumente (ziel=, code=, clobber=, optional ausgang=, eingaenge=); freie Assembler-Strings ohne Constraints sind nicht erlaubt".into()),

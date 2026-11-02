@@ -39,7 +39,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$ROOT/compiler/target/release/moo-compiler"
+BIN="${MOO_COMPILER:-$ROOT/compiler/target/release/moo-compiler}"
 # P7-T14: MOO_UEFI_PRUEFUNG=e1000 prueft den Moo-e1000-Treiber (eigene App, eigener QEMU-Lauf).
 PRUEFUNG="${MOO_UEFI_PRUEFUNG:-}"
 if [ "$PRUEFUNG" = "e1000" ]; then
@@ -47,6 +47,12 @@ if [ "$PRUEFUNG" = "e1000" ]; then
 elif [ "$PRUEFUNG" = "lader" ]; then
   # P7-T10: Netz-Lader; Nutzlast ist die e1000-Pruef-App (eigener Lauf, s. u.).
   MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/netz_lader.moos}"
+elif [ "$PRUEFUNG" = "netz-kern" ]; then
+  # P7-T5: N100-Weg; Stick-App ist der Netz-Lader (Ablauf s. u.).
+  MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/netz_lader.moos}"
+elif [ "$PRUEFUNG" = "kern" ]; then
+  # P7-T5: Moo-UEFI-Loader + Moo-Kern (eigener Ablauf vor den C-Phasen, s. u.).
+  MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/moo_lader.moos}"
 else
   MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/hallo_uefi.moos}"
 fi
@@ -78,6 +84,153 @@ if [ -n "${MOO_UEFI_OUT:-}" ]; then
 else
   OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo_uefi_smoke.XXXXXX")"
   trap 'rm -rf "$OUT"' EXIT
+fi
+
+if [ "$PRUEFUNG" = "kern" ]; then
+  # P7-T5: UEFI-Loader in Moo (beispiele/uefi/moo_lader.moos) laedt den Moo-Kern
+  # (beispiele/kernel/uefi_kern.moos) von der ESP, ruft ExitBootServices und
+  # springt hinein. Der Loader wird aus GENAU EINEM Objekt (dem Moo-Objekt)
+  # gelinkt, ohne uefi_entry.c/uefi_rt.c. Pruefung nach ExitBootServices:
+  # Kern-Marker auf COM1, Bild per screendump, Negativfall ohne Kern-Datei.
+  LADER_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/moo_lader.moos}"
+  KERN_SRC="${MOO_UEFI_KERN:-$ROOT/beispiele/kernel/uefi_kern.moos}"
+  KERN_LD="$ROOT/beispiele/kernel/linker-uefi.ld"
+  for t in lld-link ld readelf nm qemu-system-x86_64 parted mformat mmd mcopy; do
+    command -v "$t" >/dev/null 2>&1 || skip "fehlendes Tooling: $t" \
+      "sudo pacman -S lld binutils qemu-system-x86 parted mtools" "Tooling fehlt — Kern-Pruefung uebersprungen."
+  done
+  phase K1 "Loader: moo -> COFF -> PE32+ (nur das Moo-Objekt, kein C)"
+  "$BIN" compile "$LADER_SRC" --no-stdlib --target x86_64-unknown-uefi -o "$OUT/lader.obj" >"$OUT/lader.err" 2>&1 \
+    || { sed 's/^/      | /' "$OUT/lader.err"; fail "Loader nicht kompiliert"; }
+  lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /opt:ref /Brepro \
+      /out:"$OUT/BOOTX64.EFI" "$OUT/lader.obj" >"$OUT/link.err" 2>&1 \
+    || { sed 's/^/      | /' "$OUT/link.err"; fail "Loader nicht gelinkt (fehlende Symbole = versteckte Runtime?)"; }
+  file "$OUT/BOOTX64.EFI" | grep -qiE "EFI.*application|PE32\\+" || fail "Loader ist kein PE32+ EFI-Binary"
+  echo "      OK: $(file -b "$OUT/BOOTX64.EFI"), $(stat -c %s "$OUT/BOOTX64.EFI") Bytes aus 1 Objekt"
+  phase K2 "Kern: moo -> ELF64 (--kernel, linker-uefi.ld, ohne Multiboot)"
+  "$BIN" compile "$KERN_SRC" --no-stdlib --target x86_64-bare --kernel --linker-script "$KERN_LD" \
+      -o "$OUT/KERN.ELF" >"$OUT/kern.err" 2>&1 || { sed 's/^/      | /' "$OUT/kern.err"; fail "Kern nicht gebaut"; }
+  readelf -h "$OUT/KERN.ELF" | grep -q 'Type:.*EXEC' || fail "Kern ist kein ELF EXEC"
+  readelf -h "$OUT/KERN.ELF" | grep -q 'Machine:.*X86-64' || fail "Kern ist kein x86-64"
+  [ -z "$(nm -u "$OUT/KERN.ELF")" ] || fail "Kern hat undefinierte Symbole"
+  ENTRY_ELF="$(readelf -h "$OUT/KERN.ELF" | awk '/Entry point/{print $NF}')"
+  ENTRY_SYM="$(nm "$OUT/KERN.ELF" | awk '$3=="moo_kern_start"{print $1}')"
+  [ "$((ENTRY_ELF))" -eq "$((16#$ENTRY_SYM))" ] || fail "ELF-Einstieg $ENTRY_ELF ist nicht moo_kern_start ($ENTRY_SYM)"
+  od -A n -t x1 "$OUT/KERN.ELF" | tr -d '\n' | grep -q 'd6 50 52 e8' && fail "Multiboot2-Kopf im Kern (GRUB-Pfad nicht verworfen)"
+  echo "      OK: ELF64 EXEC x86-64, Einstieg moo_kern_start $ENTRY_ELF, kein Multiboot2-Kopf"
+  phase K3 "OVMF-Boot: Moo-Loader -> ExitBootServices -> Moo-Kern"
+  KOVMF_CODE=""; KOVMF_VARS=""
+  for c in /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd \
+           /usr/share/OVMF/OVMF_CODE.4m.fd /usr/share/edk2/x64/OVMF_CODE.fd; do
+    [ -f "$c" ] && { KOVMF_CODE="$c"; KOVMF_VARS="${c/CODE/VARS}"; break; }
+  done
+  [ -n "$KOVMF_CODE" ] && [ -f "$KOVMF_VARS" ] || skip "OVMF fehlt" "sudo pacman -S edk2-ovmf" "Build K1/K2 gruen — OVMF-Boot GESKIPPT."
+  kern_image() {  # Image, mit Kern (1/0)
+    rm -f "$1"; truncate -s 48M "$1" || fail "Image nicht anlegbar"
+    parted -s "$1" mklabel gpt mkpart ESP fat32 1MiB 100% set 1 esp on >/dev/null 2>&1 || fail "parted"
+    mformat -i "$1"@@$((2048*512)) -F :: >/dev/null 2>&1 || fail "mformat"
+    mmd -i "$1"@@$((2048*512)) ::/EFI ::/EFI/BOOT ::/EFI/MOO >/dev/null 2>&1
+    mcopy -i "$1"@@$((2048*512)) "$OUT/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI >/dev/null 2>&1 || fail "mcopy Loader"
+    if [ "$2" = 1 ]; then
+      mcopy -i "$1"@@$((2048*512)) "$OUT/KERN.ELF" ::/EFI/MOO/KERN.ELF >/dev/null 2>&1 || fail "mcopy Kern"
+    fi
+  }
+  kern_image "$OUT/uefi.img" 1
+  kern_image "$OUT/ohne-kern.img" 0
+  cp "$KOVMF_VARS" "$OUT/vars.fd"; cp "$KOVMF_VARS" "$OUT/vars-ohne.fd"
+  : >"$OUT/serial.log"; : >"$OUT/debug.log"; rm -f "$OUT/monitor.in" "$OUT/screenshot.png"
+  mkfifo "$OUT/monitor.in" || fail "FIFO fuer QEMU-Monitor nicht anlegbar"
+  exec 3<>"$OUT/monitor.in"
+  timeout --foreground $((WAIT_S + 30))s qemu-system-x86_64 \
+      -drive if=pflash,format=raw,unit=0,readonly=on,file="$KOVMF_CODE" \
+      -drive if=pflash,format=raw,unit=1,file="$OUT/vars.fd" \
+      -drive format=raw,file="$OUT/uefi.img" -net none \
+      -m 256M -vga std -display none -no-reboot -monitor stdio \
+      -serial file:"$OUT/serial.log" -debugcon file:"$OUT/debug.log" -global isa-debugcon.iobase=0xe9 \
+      <"$OUT/monitor.in" >"$OUT/monitor.log" 2>&1 &
+  QPID=$!
+  for ((i = 0; i < WAIT_S; i++)); do
+    grep -aq "MOO-KERNEL OK" "$OUT/serial.log" 2>/dev/null && break
+    grep -aq "MOO-LADER FEHLER" "$OUT/serial.log" 2>/dev/null && break
+    kill -0 "$QPID" 2>/dev/null || break
+    sleep 1
+  done
+  sleep 1
+  printf 'screendump %s -f png\n' "$OUT/screenshot.png" >&3
+  for ((i = 0; i < 15; i++)); do [ -s "$OUT/screenshot.png" ] && break; sleep 1; done
+  printf 'quit\n' >&3 2>/dev/null || true; exec 3>&-; wait "$QPID" 2>/dev/null
+  tr -d '\000\r' <"$OUT/serial.log" | grep -aE "MOO-(LADER|KERNEL)" | sed 's/^/      | /'
+  grep -aq "MOO-LADER FEHLER" "$OUT/serial.log" && fail "Loader meldet FEHLER (siehe oben)"
+  for m in "MOO-LADER START (MOO, OHNE C)" "MOO-LADER GOP " "MOO-LADER FB-STRIDE " "MOO-LADER RSDP " \
+           "MOO-LADER KERN-DATEI " "MOO-LADER SEGMENT " "MOO-LADER KERN-EINSTIEG " \
+           "MOO-LADER KERN-PHYSISCH " "MOO-LADER SEITENTABELLE " \
+           "MOO-LADER EXITBOOTSERVICES OK " "MOO-LADER KARTE " "MOO-LADER SPRUNG " \
+           "MOO-KERNEL START" "MOO-KERNEL RIP FFFFFFFF8" "MOO-KERNEL RSDP-SIG 0000000000000001" "MOO-KERNEL SURFACE 0000000000000001" "MOO-KERNEL OK"; do
+    grep -aqF -- "$m" "$OUT/serial.log" || fail "Marker fehlt: '$m'"
+  done
+  # Reihenfolge: Kern laeuft erst NACH ExitBootServices.
+  Z_EBS="$(grep -an 'MOO-LADER EXITBOOTSERVICES OK' "$OUT/serial.log" | head -1 | cut -d: -f1)"
+  Z_KERN="$(grep -an 'MOO-KERNEL START' "$OUT/serial.log" | head -1 | cut -d: -f1)"
+  [ "$Z_EBS" -lt "$Z_KERN" ] || fail "MOO-KERNEL START steht nicht nach ExitBootServices"
+  SPRUNG="$(grep -ao 'MOO-LADER SPRUNG [0-9A-F]*' "$OUT/serial.log" | awk '{print $3}')"
+  [ "$((16#$SPRUNG))" -eq "$((ENTRY_ELF))" ] || fail "Sprungziel $SPRUNG != ELF-Einstieg $ENTRY_ELF"
+  # Boot-Info gegen die Loader-Werte: Framebuffer und Stride kommen im Kern an.
+  for f in "GOP:FB" "FB-BREITE:BREITE" "FB-HOEHE:HOEHE" "FB-STRIDE:STRIDE" "FB-FORMAT:FORMAT" "RSDP:RSDP"; do
+    L="$(grep -ao "MOO-LADER ${f%%:*} [0-9A-F]*" "$OUT/serial.log" | awk '{print $3}')"
+    K="$(grep -ao "MOO-KERNEL ${f##*:} [0-9A-F]*" "$OUT/serial.log" | awk '{print $3}')"
+    [ -n "$L" ] && [ "$L" = "$K" ] || fail "Boot-Info ${f%%:*}: Loader '$L' != Kern '$K'"
+  done
+  KARTE="$(grep -ao 'MOO-KERNEL KARTE-ANZ [0-9A-F]*' "$OUT/serial.log" | awk '{print $3}')"
+  [ "$((16#$KARTE))" -gt 0 ] || fail "Speicherkarte im Kern leer"
+  echo "      OK: Loader -> ExitBootServices (Zeile $Z_EBS) -> Kern (Zeile $Z_KERN), Sprung $SPRUNG = ELF-Einstieg, Boot-Info identisch, $((16#$KARTE)) Kartendeskriptoren"
+  [ -s "$OUT/screenshot.png" ] || fail "kein Screenshot"
+  if command -v magick >/dev/null 2>&1; then
+    # Hintergrund (32,96,128) direkt vom Kern, Balken (255,196,64) ueber moo_surface_core.
+    HG="$(magick "$OUT/screenshot.png" -format '%[pixel:p{10,400}]' info: 2>/dev/null)"
+    BALKEN="$(magick "$OUT/screenshot.png" -format '%[pixel:p{45,45}]' info: 2>/dev/null)"
+    case "$HG" in *"32,96,128"*) ;; *) fail "Hintergrund ist '$HG' statt srgb(32,96,128) (Kern hat nicht gezeichnet?)" ;; esac
+    case "$BALKEN" in *"255,196,64"*) ;; *) fail "Balken ist '$BALKEN' statt srgb(255,196,64)" ;; esac
+    # Text ueber moo_surface_core_text_3x5: \"M\" (Skala 12 ab 64,60) hat links eine
+    # volle Spalte (dunkel), die Luecke zwischen M und O (Spalte 3) bleibt Balken;
+    # Zeile 2 (Skala 6 ab 64,220) beginnt ebenfalls mit voller M-Spalte (hell).
+    GLYPHE="$(magick "$OUT/screenshot.png" -format '%[pixel:p{70,100}]' info: 2>/dev/null)"
+    LUECKE="$(magick "$OUT/screenshot.png" -format '%[pixel:p{106,100}]' info: 2>/dev/null)"
+    ZEILE2="$(magick "$OUT/screenshot.png" -format '%[pixel:p{66,236}]' info: 2>/dev/null)"
+    case "$GLYPHE" in *"20,20,20"*) ;; *) fail "Glyphe M (70,100) ist '$GLYPHE' statt srgb(20,20,20)" ;; esac
+    case "$LUECKE" in *"255,196,64"*) ;; *) fail "Zeichenluecke (106,100) ist '$LUECKE' statt Balkenfarbe" ;; esac
+    case "$ZEILE2" in *"240,240,240"*) ;; *) fail "Zeile 2 (66,236) ist '$ZEILE2' statt srgb(240,240,240)" ;; esac
+    echo "      OK: Pixel Hintergrund $HG, Balken $BALKEN, Glyphe $GLYPHE, Luecke $LUECKE, Zeile 2 $ZEILE2"
+  fi
+  if command -v tesseract >/dev/null 2>&1; then
+    # Nur Info: die 3x5-Pixelschrift liest tesseract unzuverlaessig (M -> H/W).
+    echo "      Info OCR: $(tesseract "$OUT/screenshot.png" - --psm 6 2>/dev/null | tr '\n' ' ')"
+  fi
+  # Negativfall: ohne Kern-Datei kein ExitBootServices, Fehlermeldung, Rueckkehr zur Firmware.
+  : >"$OUT/serial-ohne.log"
+  timeout --foreground 40s qemu-system-x86_64 \
+      -drive if=pflash,format=raw,unit=0,readonly=on,file="$KOVMF_CODE" \
+      -drive if=pflash,format=raw,unit=1,file="$OUT/vars-ohne.fd" \
+      -drive format=raw,file="$OUT/ohne-kern.img" -net none \
+      -m 256M -vga std -display none -no-reboot -monitor none \
+      -serial file:"$OUT/serial-ohne.log" >"$OUT/qemu-ohne.log" 2>&1 &
+  QPID=$!
+  for ((i = 0; i < 35; i++)); do
+    grep -aq "KERN NICHT GEFUNDEN" "$OUT/serial-ohne.log" 2>/dev/null && break
+    kill -0 "$QPID" 2>/dev/null || break
+    sleep 1
+  done
+  kill "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null
+  grep -aq "MOO-LADER FEHLER: KERN NICHT GEFUNDEN" "$OUT/serial-ohne.log" || fail "Negativfall: Fehlermeldung KERN NICHT GEFUNDEN fehlt"
+  grep -aq "EXITBOOTSERVICES OK" "$OUT/serial-ohne.log" && fail "Negativfall: ExitBootServices trotz fehlendem Kern"
+  echo "      OK: Negativfall ohne KERN.ELF: Meldung, kein ExitBootServices"
+  if [ -n "${MOO_UEFI_OUT:-}" ]; then
+    (cd "$OUT" && sha256sum BOOTX64.EFI KERN.ELF uefi.img screenshot.png serial.log >sha256.txt) && sed 's/^/      sha256: /' "$OUT/sha256.txt"
+    sha256sum "$BIN" | sed 's/^/      sha256: /'
+  fi
+  echo "############################################################"
+  echo "# ERGEBNIS: Kern-Pruefung gruen (Moo-Loader ohne C -> ExitBootServices -> Moo-Kern zeichnet)."
+  echo "############################################################"
+  exit 0
 fi
 
 # --- Tooling-Pruefung (clang/lld-link + MinGW-Header fuer den COFF-Build) ---
@@ -164,6 +317,7 @@ TREIBER="${MOO_UEFI_TREIBER-$ROOT/build/p7-ipxe/intel.efidrv}"
 # Im e1000-Pruefmodus darf kein Firmware-Treiber die NIC binden.
 [ "$PRUEFUNG" = "e1000" ] && TREIBER=""
 [ "$PRUEFUNG" = "lader" ] && TREIBER=""
+[ "$PRUEFUNG" = "netz-kern" ] && TREIBER=""
 NIC_ROM=""
 TREIBER_ERWARTET="FEHLT"
 if [ -n "$TREIBER" ] && [ -f "$TREIBER" ]; then
@@ -297,6 +451,55 @@ if [ "$PRUEFUNG" = "lader" ]; then
   fi
   echo "############################################################"
   echo "# ERGEBNIS: Lader-Pruefung gruen (TFTP, Pruefung, Start aus dem Speicher, Negativfall)."
+  echo "############################################################"
+  exit 0
+fi
+if [ "$PRUEFUNG" = "netz-kern" ]; then
+  # P7-T5: N100-Weg in QEMU. Auf der ESP liegt nur der Netz-Lader (wie auf dem
+  # Stick); per TFTP kommen moo.efi = Moo-UEFI-Loader und moo.kern = Moo-Kern.
+  # Der Netz-Lader reicht den Kern als LoadOptions (MooKernUebergabe) weiter,
+  # der Loader springt nach ExitBootServices hinein.
+  MOO_UEFI_PRUEFUNG=kern MOO_UEFI_OUT="$OUT/kern" bash "$0" >"$OUT/kern.log" 2>&1 \
+    || { tail -5 "$OUT/kern.log" | sed 's/^/      | /'; fail "Kern-Modus (Loader + Kern) nicht gruen"; }
+  echo "      OK: Loader und Kern gebaut und einzeln gruen ($OUT/kern)"
+  mkdir -p "$OUT/tftp"
+  cp "$OUT/kern/BOOTX64.EFI" "$OUT/tftp/moo.efi"
+  cp "$OUT/kern/KERN.ELF" "$OUT/tftp/moo.kern"
+  for f in moo.efi moo.kern; do  # "<laenge> <crc32hex>" (CRC32 aus dem gzip-Trailer)
+    printf '%s %s\n' "$(stat -c %s "$OUT/tftp/$f")" \
+      "$(gzip -c -n "$OUT/tftp/$f" | tail -c8 | od -An -tx4 -N4 | tr -d ' \n')" >"$OUT/tftp/$f.pruef"
+  done
+  cp "$OVMF_VARS" "$OUT/vars-netz.fd"
+  : >"$SERIAL_LOG"; : >"$DEBUG_LOG"
+  timeout --foreground $((WAIT_S + 60))s qemu-system-x86_64 -machine q35 \
+      -drive if=pflash,format=raw,unit=0,readonly=on,file="$OVMF_CODE" \
+      -drive if=pflash,format=raw,unit=1,file="$OUT/vars-netz.fd" \
+      -drive format=raw,file="$DISK" \
+      -m 512M -vga std -display none -no-reboot -monitor none \
+      -netdev user,id=n0,tftp="$OUT/tftp" -device e1000,netdev=n0,mac=52:54:00:12:34:58,romfile= \
+      -serial file:"$SERIAL_LOG" -debugcon file:"$DEBUG_LOG" -global isa-debugcon.iobase=0xe9 \
+      >"$OUT/qemu-netz.log" 2>&1 &
+  QPID=$!
+  for ((i = 0; i < WAIT_S + 50; i++)); do
+    grep -aq "MOO-KERNEL OK" "$SERIAL_LOG" 2>/dev/null && break
+    grep -aqE "MOO-LADER (FEHLER|R = NEU)" "$SERIAL_LOG" 2>/dev/null && break
+    kill -0 "$QPID" 2>/dev/null || break
+    sleep 1
+  done
+  kill "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null
+  tr -d '\000\r' <"$SERIAL_LOG" | grep -aE "MOO-(LADER|KERNEL|UEFI-BILD)" | sed 's/^/      | /'
+  for m in "UEBERGABE AN MOO.EFI" "MOO-UEFI-BILD-KERN" "MOO-LADER START (MOO, OHNE C)" \
+           "MOO-LADER KERN AUS UEBERGABE" "MOO-LADER EXITBOOTSERVICES OK" \
+           "MOO-KERNEL RIP FFFFFFFF8" "MOO-KERNEL OK"; do
+    grep -aqF -- "$m" "$SERIAL_LOG" || fail "Netz-Kern: '$m' fehlt"
+  done
+  grep -aq "MOO-LADER FEHLER" "$SERIAL_LOG" && fail "Netz-Kern: Fehler gemeldet"
+  echo "      OK: Netz-Lader -> TFTP moo.efi + moo.kern -> Uebergabe -> Moo-Loader -> ExitBootServices -> Moo-Kern"
+  if [ -n "${MOO_UEFI_OUT:-}" ]; then
+    (cd "$OUT" && sha256sum BOOTX64.EFI tftp/moo.efi tftp/moo.efi.pruef tftp/moo.kern tftp/moo.kern.pruef serial.log >sha256.txt) && sed 's/^/      sha256: /' "$OUT/sha256.txt"
+  fi
+  echo "############################################################"
+  echo "# ERGEBNIS: Netz-Kern-Pruefung gruen (N100-Weg: Netz-Lader -> Moo-Loader -> Moo-Kern)."
   echo "############################################################"
   exit 0
 fi

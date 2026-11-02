@@ -117,6 +117,8 @@ impl<'a, 'ctx> Folder<'a, 'ctx> {
         let fold = |e: &Expr| self.expr(e, shadow);
         let boxed = |e: &Expr| self.expr(e, shadow).map(Box::new);
         Ok(match expr {
+            // P7-T5: adresse_von(NAME) nimmt die Adresse, nicht den gefalteten Wert.
+            Expr::FunctionCall { name, .. } if name == "adresse_von" || name == "address_of" => expr.clone(),
             Expr::FunctionCall { name, args } => match query(name) {
                 Some(kind) => number(i128::from(self.query(kind, name, args)?)),
                 None => Expr::FunctionCall { name: name.clone(), args: args.iter().map(fold).collect::<Result<_, _>>()? },
@@ -176,6 +178,30 @@ fn collect_locals(body: &[Stmt], names: &mut HashSet<String>) {
     }
 }
 
+/// P7-T5: `[u8; _]` bzw. `[u16; _]` mit Textliteral: Laenge = Einheiten + 1
+/// (abschliessende 0), damit Texte nicht von Hand abgezaehlt werden muessen.
+fn text_length(ty: &TypeRef, value: &Expr) -> TypeRef {
+    if let (TypeKind::Array { element, length }, Expr::String(text)) = (&ty.kind, value) {
+        if matches!(length.as_ref(), Expr::Identifier(n) if n == "_") {
+            let units = match &element.kind {
+                TypeKind::Name(n) if n == "u8" => Some(text.len()),
+                TypeKind::Name(n) if n == "u16" => Some(text.encode_utf16().count()),
+                _ => None,
+            };
+            if let Some(units) = units {
+                let n = units + 1;
+                let mut out = ty.clone();
+                out.kind = TypeKind::Array {
+                    element: element.clone(),
+                    length: Box::new(Expr::NativeNumber { legacy: n as f64, text: n.to_string(), line: ty.line, column: ty.column }),
+                };
+                return out;
+            }
+        }
+    }
+    ty.clone()
+}
+
 /// Faltet Layoutabfragen und skalare native Konstanten in `@nativ`-Koerpern
 /// und nativen Konstanten. Dynamische Moo-Funktionen bleiben unveraendert.
 pub(crate) fn fold_program<'ctx>(
@@ -226,7 +252,7 @@ pub(crate) fn fold_program<'ctx>(
             }
         }
         Stmt::NativeConst { name, ty, value, decorators } => Stmt::NativeConst {
-            name: name.clone(), ty: ty.clone(),
+            name: name.clone(), ty: text_length(ty, value),
             value: folder.expr(value, &empty).map_err(|e| format!("Native Konstante '{name}': {e}"))?,
             decorators: decorators.clone(),
         },
@@ -294,7 +320,25 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 let values = items.iter().map(|item| self.value(element, item)).collect::<Result<Vec<_>, _>>()?;
                 const_array(array.get_element_type(), &values)
             }
-            (TypeKind::Array { .. }, _) => Err("Array erwartet ein Listenliteral [..]".into()),
+            // P7-T5: Textliteral fuer [u8; N] (UTF-8-Bytes) bzw. [u16; N] (UTF-16,
+            // z. B. UEFI-Pfade); N = Laenge oder Laenge + 1 (abschliessende 0).
+            (TypeKind::Array { element, .. }, Expr::String(text)) => {
+                let array = llvm.into_array_type();
+                let units: Vec<u64> = match &element.kind {
+                    TypeKind::Name(n) if n == "u8" => text.bytes().map(u64::from).collect(),
+                    TypeKind::Name(n) if n == "u16" => text.encode_utf16().map(u64::from).collect(),
+                    _ => return Err("Textliteral nur fuer [u8; N] (UTF-8) oder [u16; N] (UTF-16)".into()),
+                };
+                let n = array.len() as usize;
+                if units.len() != n && units.len() + 1 != n {
+                    return Err(format!("Textliteral hat {} Einheiten, das Array {n} (gleich oder +1 fuer die abschliessende 0)", units.len()));
+                }
+                let int = array.get_element_type().into_int_type();
+                let mut values: Vec<_> = units.iter().map(|unit| int.const_int(*unit, false)).collect();
+                values.resize(n, int.const_zero());
+                Ok(int.const_array(&values).into())
+            }
+            (TypeKind::Array { .. }, _) => Err("Array erwartet ein Listenliteral [..] oder ein Textliteral".into()),
             (TypeKind::Generic { name, args }, _) if (name == "ptr" || name == "zeiger") && args.len() == 1 => {
                 let pointer_type = llvm.into_pointer_type();
                 match expr {

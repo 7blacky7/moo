@@ -634,11 +634,9 @@ impl<'ctx> CodeGen<'ctx> {
         )?;
         let program = &folded;
         // Zuerst alle Funktionen und Klassen deklarieren (Forward-Declarations)
+        // P7-T5: native Konstanten entstehen in forward_declare vor den nativen
+        // Koerpern, damit diese ihre Adressen nehmen koennen (adresse_von).
         self.forward_declare(program)?;
-        crate::native_const::emit_constants(
-            program, self.context, &self.module, self.target_data.as_ref(),
-            &self.native_structs, &self.native_functions,
-        )?;
         for stmt in &program.statements {
             if let Stmt::NativeConst { name, decorators, .. } = stmt {
                 let global = self.module.get_global(name).ok_or("Native Konstante fehlt im Modul")?;
@@ -797,6 +795,8 @@ impl<'ctx> CodeGen<'ctx> {
         let mut pointer_functions: HashMap<String, (FunctionValue<'ctx>, crate::codegen_native::NativePointerSignature)> = HashMap::new();
         // P7-T4: @nativ-Funktionen aus Hardware-Intrinsics (volatile_*, Barrieren, Port-I/O).
         let mut hardware_functions: HashMap<String, (FunctionValue<'ctx>, crate::codegen_native::NativePointerSignature)> = HashMap::new();
+        // P7-T5: @nativ-Systemkoerper (Kontrollfluss, Locals, Speicher, Aufrufe).
+        let mut system_functions: HashMap<String, (FunctionValue<'ctx>, crate::codegen_native::NativePointerSignature)> = HashMap::new();
         for stmt in &program.statements {
             if let Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators } = stmt {
                 if !decorators.iter().any(|d| d.name == "nativ" || d.name == "native") { continue; }
@@ -876,6 +876,22 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     crate::native_hardware::BodyKind::Other => {}
                 }
+                // P7-T5: allgemeiner Systemkoerper (nur Bare-Profil), wenn kein
+                // engerer Bestandspfad (indirekter Ein-Aufruf, Zeigerlesen) passt.
+                if self.bare_mode && crate::native_system::is_system_body(body, params) {
+                    let sig = crate::native_hardware::signature(param_types, return_type.as_ref())
+                        .map_err(|e| format!("Native Funktion '{name}': {e}"))?;
+                    let internal = format!("__moo_native.{name}");
+                    if self.module.get_function(&internal).is_some() {
+                        return Err(format!("Native Funktion '{name}': interner Symbolkonflikt"));
+                    }
+                    let fun = self.module.add_function(&internal, sig.llvm_type(self.context),
+                        Some(inkwell::module::Linkage::Internal));
+                    if convention != 0 { fun.set_call_conventions(convention); }
+                    self.native_functions.insert(name.clone(), fun);
+                    system_functions.insert(name.clone(), (fun, sig));
+                    continue;
+                }
                 let has_pointer = param_types.iter().flatten().any(|ty| matches!(
                     &ty.kind, TypeKind::Generic { name, .. } if name == "ptr" || name == "zeiger"
                 ));
@@ -954,11 +970,42 @@ impl<'ctx> CodeGen<'ctx> {
             self.apply_native_layout_decorators(fun.as_global_value(), decorators, true, 1, &format!("Native Funktion '{name}'"))?;
         }
         crate::codegen_native::validate_pure_call_graph(&pure_bodies)?;
+        crate::native_const::emit_constants(
+            program, self.context, &self.module, self.target_data.as_ref(),
+            &self.native_structs, &self.native_functions,
+        )?;
+        // P7-T5: Aufrufziele fuer Systemkoerper (alle nativen Funktionsarten).
+        let mut native_callees: HashMap<String, crate::native_system::NativeCallee<'ctx>> = HashMap::new();
+        if !system_functions.is_empty() {
+            for (name, (fun, sig)) in hardware_functions.iter().chain(pointer_functions.iter()).chain(system_functions.iter()) {
+                native_callees.insert(name.clone(), crate::native_system::NativeCallee::new(*fun, sig)?);
+            }
+            for name in pure_bodies.keys() {
+                if let (Some(fun), Some(sig)) = (self.native_functions.get(name), self.native_signatures.get(name)) {
+                    let pointer_sig = crate::codegen_native::NativePointerSignature {
+                        params: sig.params.iter().map(|ty| crate::codegen_native::NativeParameter::Scalar(*ty)).collect(),
+                        result: sig.result,
+                    };
+                    if let Ok(callee) = crate::native_system::NativeCallee::new(*fun, &pointer_sig) {
+                        native_callees.insert(name.clone(), callee);
+                    }
+                }
+            }
+        }
         for stmt in &program.statements {
             match stmt {
                 Stmt::ExternC { .. } => {}
                 Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators } => {
                     if decorators.iter().any(|d| d.name == "nativ" || d.name == "native") {
+                        if let Some((fun, sig)) = system_functions.get(name) {
+                            let target = self.target_data.as_ref()
+                                .ok_or("Ziel-Datenlayout für Systemkörper fehlt")?;
+                            crate::native_system::emit_system_function(
+                                self.context, &self.module, target, *fun, sig, params, body,
+                                &native_callees, &self.extern_bindings,
+                            ).map_err(|e| format!("Native Funktion '{name}': {e}"))?;
+                            continue;
+                        }
                         if let Some((fun, sig)) = hardware_functions.get(name) {
                             let target = self.target_data.as_ref()
                                 .ok_or("Ziel-Datenlayout für Hardwarezugriffe fehlt")?;

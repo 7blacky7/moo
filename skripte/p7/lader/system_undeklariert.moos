@@ -1,0 +1,6 @@
+# Negativ: Zuweisung ohne Deklaration.
+@nativ
+funktion fehlerhaft(a: u64) -> u64:
+    unsicher:
+        setze y auf a
+        gib_zurück y

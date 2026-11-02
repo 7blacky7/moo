@@ -205,6 +205,59 @@ funktion tftp_holen(st, ctx, name, ziel, max, fortschritt):
             zeichnen(st)
     gib_zurück r
 
+# P7-T5: Kern fuer den Moo-UEFI-Loader (beispiele/uefi/moo_lader.moos), wenn der
+# Server moo.kern anbietet. Pruefdatei moo.kern.pruef wie bei moo.efi. Bei
+# Erfolg steht in block (hinter dem Image, der Puffer hat 64 Byte Reserve) ein
+# MooKernUebergabe-Block: "MOOKERN1" (als zwei u32), Adresse, Laenge;
+# kern_bild_starten reicht ihn als LoadOptions an das gestartete Image weiter.
+# Rueckgabe: Laenge, 0 = kein Kern angeboten, -1 = Fehler.
+funktion kern_uebergabe(st, ctx, block):
+    unsicher:
+        setze pp auf nt_dma(512)
+        setze r auf tftp_holen(st, ctx, "moo.kern.pruef", pp, 256, falsch)
+        wenn r < 0:
+            melde(st, "KEIN MOO.KERN AUF DEM SERVER (OHNE KERN WEITER)")
+            gib_zurück 0
+        setze pn auf nn_feld(ctx, 120)
+        setze erwartet auf nn_dez_lesen(pp, 0, pn)
+        setze o auf 0
+        solange o < pn und nn_r8(pp, o) != 32:
+            setze o auf o + 1
+        setze crc_soll auf hex_lesen(pp, o + 1, pn)
+        wenn erwartet < 64 oder erwartet > 33554432:
+            fehler(st, "MOO.KERN.PRUEF UNGUELTIG", erwartet)
+            gib_zurück -1
+        setze kp auf kern_alloc(erwartet + 64)
+        wenn kp == 0:
+            fehler(st, "KEIN SPEICHER FUER MOO.KERN", erwartet)
+            gib_zurück -1
+        setze r auf tftp_holen(st, ctx, "moo.kern", kp, erwartet, wahr)
+        wenn r < 0:
+            fehler(st, "TFTP moo.kern", 0 - r)
+            gib_zurück -1
+        setze n auf nn_feld(ctx, 120)
+        setze crc auf nn_crc32(nn_crc_tabelle(), kp, n)
+        wenn n != erwartet oder crc != crc_soll:
+            fehler(st, "MOO.KERN LAENGE/PRUEFSUMME FALSCH", n)
+            gib_zurück -1
+        # ELF64-Kopf: 0x7F 'E' 'L' 'F', Klasse 2
+        wenn speicher_lesen(kp, 4) != 0x464C457F oder nn_r8(kp, 4) != 2:
+            fehler(st, "MOO.KERN IST KEIN ELF64", -1)
+            gib_zurück -1
+        speicher_schreiben(block, 0x4B4F4F4D, 4)
+        speicher_schreiben(block + 4, 0x314E5245, 4)
+        speicher_schreiben(block + 8, kp, 8)
+        speicher_schreiben(block + 16, n, 8)
+        tb_anfang(st)
+        tb_t(st, "KERN: ")
+        tb_z(st, n)
+        tb_t(st, " BYTES, CRC32 ")
+        tb_h(st, crc, 8)
+        tb_t(st, ", UEBERGABE AN MOO.EFI")
+        zeile(st)
+        zeichnen(st)
+        gib_zurück n
+
 funktion fehler(st, text, zusatz):
     tb_anfang(st)
     tb_t(st, "FEHLER: ")
@@ -364,6 +417,10 @@ funktion lader_lauf(st):
         tb_h(st, crc, 8)
         tb_t(st, "), PE32+ X86-64")
         zeile(st)
+        # P7-T5: optionaler Kern fuer den Moo-UEFI-Loader, Block hinter dem Image.
+        speicher_schreiben(puf + n, 0, 8)
+        wenn kern_uebergabe(st, ctx, puf + n) < 0:
+            gib_zurück -9
         melde(st, "STARTE IMAGE ...")
         setze r auf kern_bild_starten(puf, n)
         tb_anfang(st)

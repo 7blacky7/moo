@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # P7-T10: TFTP-Server fuer den Moo-Netz-Lader (N100 am Direktkabel).
 #
-# Nutzung:  mise run netz-server [<efi-datei>]       (in skripte/p7/uefi)
+# Nutzung:  mise run netz-server [<efi-datei> [<kern.elf>]]   (in skripte/p7/uefi)
+#   P7-T5: mit <kern.elf> (oder MOO_NETZ_KERN) zusaetzlich moo.kern fuer den Moo-UEFI-Loader.
 #   Standard-Image: build/p7-netz/run5-hallo/BOOTX64.EFI (hallo_uefi mit I226-Treiber, TX-Fix).
 #
 # Ablauf:
@@ -37,6 +38,21 @@ printf '%s %s\n' "$(stat -c %s "$TFTP/moo.efi")" \
   "$(gzip -c -n "$TFTP/moo.efi" | tail -c8 | od -An -tx4 -N4 | tr -d ' \n')" >"$TFTP/moo.efi.pruef"
 echo "moo.efi:       $(sha256sum "$TFTP/moo.efi" | cut -c1-64)  (aus $EFI)"
 echo "moo.efi.pruef: $(cat "$TFTP/moo.efi.pruef")"
+# P7-T5: optionaler Kern fuer den Moo-UEFI-Loader (moo.efi = beispiele/uefi/moo_lader.moos),
+# 2. Argument oder MOO_NETZ_KERN. Der Netz-Lader holt ihn als moo.kern und uebergibt
+# ihn per LoadOptions. Ohne Kern werden alte moo.kern-Dateien entfernt.
+KERN="${MOO_NETZ_KERN:-${2:-}}"
+if [ -n "$KERN" ]; then
+  [ -f "$KERN" ] || { echo "Kern-Datei fehlt: $KERN" >&2; exit 2; }
+  [ "$(head -c4 "$KERN" | od -An -tx1 | tr -d ' \n')" = "7f454c46" ] || { echo "Kein ELF: $KERN" >&2; exit 2; }
+  cp "$KERN" "$TFTP/moo.kern.neu" && mv "$TFTP/moo.kern.neu" "$TFTP/moo.kern"
+  printf '%s %s\n' "$(stat -c %s "$TFTP/moo.kern")" \
+    "$(gzip -c -n "$TFTP/moo.kern" | tail -c8 | od -An -tx4 -N4 | tr -d ' \n')" >"$TFTP/moo.kern.pruef"
+  echo "moo.kern:      $(sha256sum "$TFTP/moo.kern" | cut -c1-64)  (aus $KERN)"
+  echo "moo.kern.pruef: $(cat "$TFTP/moo.kern.pruef")"
+else
+  rm -f "$TFTP/moo.kern" "$TFTP/moo.kern.pruef"
+fi
 [ -z "${MOO_NETZ_NUR_KOPIEREN:-}" ] || exit 0
 
 command -v dnsmasq >/dev/null || { echo "dnsmasq fehlt" >&2; exit 2; }
