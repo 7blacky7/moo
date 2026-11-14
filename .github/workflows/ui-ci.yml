@@ -210,6 +210,7 @@ jobs:
           echo "LLVM_SYS_181_PREFIX=$condaPrefix\Library" >> $env:GITHUB_ENV
           echo "LIBCLANG_PATH=$condaPrefix\Library\bin" >> $env:GITHUB_ENV
           echo "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
+          echo "CFLAGS_x86_64_pc_windows_msvc=/std:c11" >> $env:GITHUB_ENV
           echo "INCLUDE=$condaPrefix\Library\include;$vcpkgRoot\include;$env:INCLUDE" >> $env:GITHUB_ENV
           echo "LIB=$condaPrefix\Library\lib;$vcpkgRoot\lib;$env:LIB" >> $env:GITHUB_ENV
 
