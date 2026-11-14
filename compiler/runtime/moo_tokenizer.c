@@ -351,8 +351,31 @@ MooValue moo_tok_trainiere(MooValue korpus, MooValue vokab_groesse) {
     return tok_trainiere(korpus, vokab_groesse, false, moo_none());
 }
 /* Muster-only-Silbenartefakt wie P4-Fixture: keine vom Korpus abhaengigen IDs. */
+/* Silbenmuster (dehyphn-x) finden: 1. MOO_SILBENMUSTER, 2. relativ zum
+ * Repo-Root (bisheriger Weg), 3. relativ zu dieser Quelldatei (__FILE__),
+ * damit Tests aus compiler/runtime/tests ebenfalls funktionieren. */
+static FILE* silbenmuster_oeffnen(void) {
+    static const char rel[] = "data/silben/dehyphn-x-2024-02-28.pat";
+    const char* env = getenv("MOO_SILBENMUSTER");
+    if (env && *env) return fopen(env, "rb");
+    FILE* f = fopen("compiler/runtime/data/silben/dehyphn-x-2024-02-28.pat", "rb");
+    if (f) return f;
+    const char* src = __FILE__;
+    const char* slash = strrchr(src, '/');
+#ifdef _WIN32
+    const char* bslash = strrchr(src, '\\');
+    if (!slash || (bslash && bslash > slash)) slash = bslash;
+#endif
+    char pfad[4096];
+    size_t dir_len = slash ? (size_t)(slash - src + 1) : 0;
+    if (dir_len + sizeof(rel) > sizeof(pfad)) return NULL;
+    memcpy(pfad, src, dir_len);
+    memcpy(pfad + dir_len, rel, sizeof(rel));
+    return fopen(pfad, "rb");
+}
+
 MooValue moo_tok_trainiere_parser(MooValue korpus, MooValue vokab_groesse) {
-    FILE *f = fopen("compiler/runtime/data/silben/dehyphn-x-2024-02-28.pat", "rb");
+    FILE *f = silbenmuster_oeffnen();
     if (!f) { moo_throw(moo_error("parser: Silbenmuster nicht lesbar")); return moo_none(); }
     if (fseek(f, 0, SEEK_END) != 0) { fclose(f); moo_throw(moo_error("parser: Silbenmuster nicht seekbar")); return moo_none(); }
     long n = ftell(f);

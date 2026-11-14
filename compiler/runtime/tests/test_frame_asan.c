@@ -49,6 +49,9 @@ static jmp_buf g_throw_jmp;
 static int     g_threw = 0;
 void moo_throw(MooValue err) { (void)err; g_threw = 1; longjmp(g_throw_jmp, 1); }
 MooValue moo_error(const char* msg) { (void)msg; return moo_none(); }
+/* moo_frame.c (Frame-Statistik) baut Listen; im Harness nicht genutzt. */
+MooValue moo_list_new(int32_t capacity) { (void)capacity; return moo_none(); }
+void moo_list_append(MooValue list, MooValue value) { (void)list; (void)value; }
 
 /* String: muss layout-kompatibel zu MooString sein, weil moo_frame.c
  * MV_STR(pfad)->chars liest. Wir allokieren eine echte MooString-Struktur und

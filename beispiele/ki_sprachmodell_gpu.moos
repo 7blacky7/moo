@@ -144,7 +144,7 @@ autograd_an()
 # 4. Training: Low-Level-Schleife
 #    Ziel jedes Blocks = derselbe Block, um 1 Zeichen verschoben.
 # ------------------------------------------------------------
-setze ckpt_pfad auf "/home/blacky/moo-training/grimm_gpu/latest.mook"
+setze ckpt_pfad auf "build/ki/grimm_gpu/latest.mook"
 setze start_schritt auf 0
 setze p auf 0
 setze fenster_summe auf 0

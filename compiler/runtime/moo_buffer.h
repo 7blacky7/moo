@@ -3,6 +3,14 @@
 
 #include <stddef.h>
 
+/* Groesste von malloc/calloc garantierte Ausrichtung. MSVC kennt max_align_t
+ * im C-Modus nicht; dessen malloc liefert 2*sizeof(void*) (x64: 16). */
+#if defined(_MSC_VER) && !defined(__clang__)
+#define MOO_MAX_ALIGN ((size_t)(2 * sizeof(void*)))
+#else
+#define MOO_MAX_ALIGN ((size_t)_Alignof(max_align_t))
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -43,7 +51,7 @@ MooBufferStatus moo_buffer_set_scalar(MooBuffer* buffer, MooBufferScalarType typ
 /* Append copies one scalar. Failure preserves length and all old elements. */
 MooBufferStatus moo_buffer_append_scalar(MooBuffer* buffer, MooBufferScalarType type, const void* value);
 
-/* elem_align must be a power of two <= _Alignof(max_align_t), dividing elem_size. */
+/* elem_align must be a power of two <= MOO_MAX_ALIGN, dividing elem_size. */
 MooBufferStatus moo_buffer_new(size_t elem_size, size_t elem_align, size_t len, MooBuffer** out);
 MooBufferStatus moo_buffer_view(MooBuffer* buffer, size_t start, size_t len, MooBuffer** out);
 /* Retain/drop apply only to the owned handle; pins have separate ownership. */

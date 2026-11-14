@@ -17,3 +17,5 @@ MOO_CAPTURE_TEST_WEAK void moo_web_free(void* p){ (void)p; }
 MOO_CAPTURE_TEST_WEAK void moo_window_free(void* p){ (void)p; }
 MOO_CAPTURE_TEST_WEAK void moo_kamera_free(void* p){ (void)p; }
 MOO_CAPTURE_TEST_WEAK void moo_mikro_free(void* p){ (void)p; }
+MOO_CAPTURE_TEST_WEAK void moo_buffer_free(void* p){ (void)p; }
+MOO_CAPTURE_TEST_WEAK void moo_struct_box_free(void* p){ (void)p; }

@@ -1,4 +1,5 @@
 #include "moo_struct_box.h"
+#include "moo_buffer.h"
 #include "moo_struct_value.h"
 #include "moo_struct_typed.h"
 #include <stdint.h>
@@ -14,7 +15,7 @@ struct MooStructBox {
 static int moo_struct_valid(const MooStructDescriptor* t) {
     if (!t || !t->name || !t->size || !t->alignment ||
         (t->alignment & (t->alignment - 1)) ||
-        t->alignment > _Alignof(max_align_t) || t->size % t->alignment ||
+        t->alignment > MOO_MAX_ALIGN || t->size % t->alignment ||
         (t->field_count && !t->fields)) return 0;
     for (size_t i = 0; i < t->field_count; ++i) {
         const MooStructField* f = &t->fields[i];

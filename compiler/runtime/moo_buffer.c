@@ -38,7 +38,7 @@ MooBufferStatus moo_buffer_new(size_t elem_size, size_t elem_align, size_t len, 
     if (!out) return MOO_BUFFER_INVALID;
     *out = NULL;
     if (!elem_size || !elem_align || (elem_align & (elem_align - 1)) ||
-        elem_align > _Alignof(max_align_t) || elem_size % elem_align)
+        elem_align > MOO_MAX_ALIGN || elem_size % elem_align)
         return MOO_BUFFER_INVALID;
     if (len > SIZE_MAX / elem_size) return MOO_BUFFER_OVERFLOW;
     MooBufferStorage* s = calloc(1, sizeof(*s));

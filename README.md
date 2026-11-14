@@ -11,6 +11,8 @@ funktion fibonacci(n):
 zeige fibonacci(20)
 ```
 
+> **Neu hier?** Bauen, ausführen und KI programmieren mit moo: **[docs/KI_MIT_MOO.md](docs/KI_MIT_MOO.md)** — Schritt für Schritt mit lauffähigen Beispielen (Tensoren, neuronale Netze, Tokenizer, Training auf CPU/GPU).
+
 ## Aktueller Entwicklungsstand (November 2026)
 
 moo ist ein aktives Ein-Personen-Projekt, das mit KI-Agenten entwickelt wird.

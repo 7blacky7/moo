@@ -98,6 +98,14 @@ for moo_file in "$SCRIPT_DIR"/*.moos "$SCRIPT_DIR"/regression/*.moos "$SCRIPT_DI
     test_dir="$(dirname "$moo_file")"
     expected_file="${test_dir}/${test_name}.expected"
 
+    # extern "C" ist fuer Apple-Ziele bewusst noch nicht freigegeben
+    # (ffi_types.rs FfiSignature::validate, fail-closed).
+    if [[ "$test_name" == "ffi_deklaration" && "$(uname -s)" == "Darwin" ]]; then
+        skip=$((skip + 1))
+        echo -e "${YELLOW}SKIP${NC} $test_name (extern C fuer macOS-ABI noch nicht freigegeben)"
+        continue
+    fi
+
     # Ohne .expected ueberspringen
     if [[ ! -f "$expected_file" ]]; then
         skip=$((skip + 1))

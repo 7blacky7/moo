@@ -8,3 +8,6 @@
 #endif
 MOO_TEST_WEAK void moo_kamera_free(void* p) { (void)p; }
 MOO_TEST_WEAK void moo_mikro_free(void* p) { (void)p; }
+/* Native Ebene (P2): moo_memory.c dispatcht MOO_BUFFER/MOO_STRUCT. */
+MOO_TEST_WEAK void moo_buffer_free(void* p) { (void)p; }
+MOO_TEST_WEAK void moo_struct_box_free(void* p) { (void)p; }
