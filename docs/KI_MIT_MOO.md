@@ -163,7 +163,7 @@ mooc compile beispiele/ki_xor.moos -o ki_xor && ./ki_xor
 `run` baut das Programm im Hintergrund vollständig nativ und startet es dann; es gibt
 keinen Interpreter. Für wiederholte Läufe lohnt sich `compile`, weil das Linken dann
 entfällt. Projektaufgaben (Tests, Benchmarks, KI-Experimente) liegen als mise-Tasks vor:
-`mise tasks` listet sie, `mise run <task>` startet einen.
+`mise tasks` listet sie, `mise run <task>` startet einen (wichtige Gruppen: `p2-*` für Native/FFI/Bindgen, `p4-*` für Silben/Vulkan/Parität, `p5-*` für Trainings-API/SFT/Eval, `p6-*` für Wissensmix/Tokenizer, `test-*` für Test-Gates).
 
 Zur Sprache selbst: [docs/lernen.md](lernen.md).
 
@@ -337,22 +337,38 @@ Tests über mise, z. B. `mise run test-p5-train-api` (alle Tasks: `mise tasks`).
 | `optimierer_sgd`, `optimierer_adam`, `optimierer_adamw`, `.schritt()`, `gradienten_kappen` | Optimierung |
 | `ki_netz`, `.trainiere`, `.vorhersage`, `.genauigkeit`, `.speichern`, `ki_laden` | Kinderleicht-API |
 | `checkpoint_speichern`, `checkpoint_laden`, `checkpoint_rotieren`, `checkpoint_waehlen` | Checkpoints (`.mook`) |
+| `shard_schreiben`, `shard_info`, `shard_pruefen`, `shard_fenster`, `shard_fenster_maske`, `shard_reihenfolge`, `shard_split` | Streaming-Token-Shards |
+| `trainiere_sft`, `trainiere_korrekturen`, `trainiere_distillation`, `trainiere_praeferenzen`, `trainiere_methode`, `evaluiere_modell` | Post-Training & Evaluation |
 | `text_tokenizer` | einfacher Zeichen-Tokenizer |
-| `tokenizer_trainiere`, `tokenizer_kodiere`, `tokenizer_kodiere_stapel`, `tokenizer_dekodiere`, `tokenizer_speichern`, `tokenizer_laden`, `tokenizer_info`, `tokenizer_hash` | BPE-Tokenizer |
-| `silben_trainiere`, `silben_kodiere`, `silben_dekodiere`, `silben_speichern`, `silben_laden`, `silben_info` | deutscher Silben-Tokenizer |
+| `tokenizer_trainiere`, `tokenizer_trainiere_parser`, `tokenizer_kodiere`, `tokenizer_kodiere_stapel`, `tokenizer_dekodiere`, `tokenizer_speichern`, `tokenizer_laden`, `tokenizer_info`, `tokenizer_hash` | BPE-Tokenizer (inkl. Parser-BPE) |
+| `tokenizer_chat_init`, `tokenizer_spezial_id`, `tokenizer_rendern` | Chat-/Special-Tokens & Rendering |
+| `silben_trainiere`, `silben_grenzen`, `silben_kodiere`, `silben_dekodiere`, `silben_speichern`, `silben_laden`, `silben_info`, `silben_hash`, `silben_hash64` | deutscher Silben-Tokenizer |
 | `zeichen_fixed_trainiere`, `zeichen_fixed_kodiere`, `zeichen_fixed_dekodiere`, `zeichen_fixed_speichern`, `zeichen_fixed_laden` | fester Zeichen-Tokenizer |
+| `BildModell` (`importiere ki_bild_easy`, `.beschreibe(frame)`) | High-Level-Stdlib-API „Bild → Text“ |
 | `gpu_statistik`, `gpu_statistik_reset` | GPU-Nutzung prüfen |
 
 Viele Funktionen haben zusätzlich englische Aliasse (z. B. `tensor_from_list`,
-`autograd_off`, `tokenizer_encode`, `checkpoint_save`).
+`autograd_off`, `tokenizer_encode`, `checkpoint_save`, `shard_write`, `syllable_boundaries`).
 
 ## 7. Weitere Beispiele und Dokumente
 
-- `beispiele/ki_*.moos` – u. a. `ki_mnist.moos`, `ki_mnist_conv.moos`, `ki_embeddings.moos`,
-  `ki_moe.moos`, `ki_grpo.moos`, `ki_mtp.moos`, `ki_multimodal*.moos`,
-  `ki_safetensors_import.moos`, `ki_verteilt.moos`.
+- `beispiele/ki_*.moos` – u. a. `ki_xor.moos`, `ki_kinderleicht.moos`, `ki_mnist.moos`,
+  `ki_mnist_conv.moos`, `ki_embeddings.moos`, `ki_sprachmodell.moos`,
+  `ki_sprachmodell_gpu.moos`, `ki_moe.moos`, `ki_grpo.moos`, `ki_mtp.moos`,
+  `ki_denken.moos`, `ki_multimodal*.moos` (`_audio`, `_farbe`, `_joint`, `_vision`),
+  `ki_bild_beschreiben.moos`, `ki_audio.moos`, `ki_kamera_live.moos`,
+  `ki_mikro_spektrum.moos`, `ki_pong_auge.moos`, `ki_safetensors_import.moos`,
+  `ki_verteilt.moos`.
+- `beispiele/eval_*.moos` – Evaluations- und Benchmark-Läufe (`eval_m6b_mini_lm.moos`,
+  `eval_m6b_mnist.moos`, `eval_q1_hadamard_mini_lm.moos`, `eval_q2_kv_cache_lm.moos`,
+  `eval_q3_lloyd_max_codebuch.moos`, `eval_r1_attnres_lm.moos`).
 - `beispiele/p4_silben/` – Silben-Sprachmodell-Pipeline (Tokenizer, Training, Eval).
 - `beispiele/p5/` – Trainings-API, SFT, Distillation, DPO, Evaluation.
+- `beispiele/p6_wissensmix/` – Wissensmix-Training, LLaMmlein-Import/-Feintuning,
+  BPE-/Packing-Vergleiche und GPU-Parität (`training_10m.moos`,
+  `feintuning_llammlein.moos`, `llammlein_import.moos`, `messlauf_bpe.moos`,
+  `packing_vergleich.moos`, `gpu_paritaet.moos`).
+- `stdlib/ki_bild_easy.moos` – High-Level-Klasse `BildModell` („Bild → Text“).
 - [docs/kip/](kip/) – Design- und Vertragsdokumente zum KI-Stack (Dtypes, GPU-Residenz,
   verteiltes Training, Serving, Post-Training).
 

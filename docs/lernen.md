@@ -862,6 +862,12 @@ import math as m
 from math import sqrt, round
 ```
 
+Verfügbare Module unter `stdlib/`:
+- Basis: `mathe`, `liste`, `text`, `mini`, `primzahl`
+- Netzwerk: `dns` (RFC-1035-DNS-Client), `websocket` (RFC-6455-Client), `netz_frame` (TCP-Framing mit CRC32)
+- UI: `ui`, `ui_moo` (mit `ui_aktionen`, `ui_baue`, `ui_bind`, `ui_komponenten`, `ui_layout`, `ui_leinwand`, `ui_liste`, `ui_introspect`, `ui_test`)
+- KI & 3D: `ki_bild_easy` (`BildModell`), `welt` / `world`
+
 ---
 
 ## Schlüsselwort-Tabelle
@@ -934,6 +940,16 @@ moo-compiler run datei.moos
 
 # Nativer Compiler — native Binary erzeugen
 moo-compiler compile datei.moos
+
+# Weitere Subcommands von moo-compiler:
+#   repl                  Interaktive REPL
+#   targets               Verfügbare Cross-Targets & Boards anzeigen
+#   paket / package       Paketverwaltung (install/list/remove)
+#   ast / layout          AST- bzw. Layout-Diagnose
+#   bindgen               C-Header-Bindungsentwurf erzeugen
+# Wichtige compile-Optionen: -o/--output, --emit-ir, --target, --lib-pfad,
+#   --profile, --no-stdlib, --linker-script, --entry, --erlaube-kern,
+#   --kernel, --emit elf|flat|sector, --board
 
 # Transpiler (über Python-Toolchain / uv) — Programm ausführen
 uv run moo run datei.moos

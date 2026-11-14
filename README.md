@@ -54,7 +54,7 @@ Nachtrainieren braucht man eigene Texte.
   `./compiler/target/release/moo-compiler run <datei>.moos`.
 - **Sprache lernen:** [`docs/lernen.md`](docs/lernen.md). Bauen, Ausführen und KI-Stack: [`docs/KI_MIT_MOO.md`](docs/KI_MIT_MOO.md) (English: [`docs/AI_WITH_MOO.md`](docs/AI_WITH_MOO.md)).
 - **Referenz aller Builtins:** [moolang-docs](https://7blacky7.github.io/moolang-docs/).
-- **Beispiele:** `beispiele/` mit Zonen `domain/{web,db,game,system}/` plus lose Showcases (Taxonomie in `spec/examples_taxonomy.md`), KI-Beispiele unter `beispiele/ki_*`.
+- **Beispiele:** `beispiele/` mit Zonen `domain/{web,db,game,system}/` plus lose Showcases (Taxonomie in `spec/examples_taxonomy.md`), KI-Beispiele unter `beispiele/ki_*.moos`, Evaluationsläufe unter `beispiele/eval_*.moos` sowie Pipelines in `beispiele/p4_silben/`, `beispiele/p5/` und `beispiele/p6_wissensmix/`.
 - **KI-/LLM-Stack:** Design-Docs unter `docs/kip/` (Zielprofil, DType, GPU-Verträge, Serving/Post-Training), Gate-Skripte unter `skripte/kip_*`.
 - **Kernel & Bootloader:** `beispiele/kernel/`, Pipeline via `moo-compiler compile --target x86_64-bare --no-stdlib --kernel`, Smoke-Gates `kernel-smoke*.sh`/`loader-smoke.sh`.
 - **Architektur in 5 Minuten:** [`ARCHITECTURE.md`](ARCHITECTURE.md).
