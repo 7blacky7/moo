@@ -217,6 +217,20 @@ klasse BTree:
         btree_alle(selbst.wurzel, treffer)
         gib_zurück treffer
 
+    # Deutsche API, wie sie MiniDB und die Tests unten benutzen
+    # (put/get/scan/dump bleiben erhalten).
+    funktion einfuegen(k, v):
+        selbst.put(k, v)
+
+    funktion suche(k):
+        gib_zurück selbst.get(k)
+
+    funktion bereich(lo, hi):
+        gib_zurück selbst.scan(lo, hi)
+
+    funktion alle():
+        gib_zurück selbst.dump()
+
 # ------------------------------------------------------------
 # Operation-Klassen (Vererbung fuer WAL-Serialisierung)
 # ------------------------------------------------------------

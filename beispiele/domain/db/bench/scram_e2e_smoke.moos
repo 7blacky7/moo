@@ -1,4 +1,6 @@
-importiere "../../beispiele/domain/db/postgres_client.moos"
+# P2-T33: Pfad relativ zu dieser Datei; nur die Definitionen aus
+# postgres_client (ohne dessen Testteil).
+aus "../postgres_client" importiere PgClient
 
 setze HOST auf "192.168.50.65"
 setze PORT auf 5433

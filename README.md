@@ -26,7 +26,6 @@ Damit klar ist, was fertig ist und was noch kommt:
 | Tensoren, Autograd, Transformer-Bausteine, Vulkan-GPU-Training | **funktioniert** (siehe „Was kann moo heute?“) | laufende Optimierungen |
 | Trainingsmethoden direkt aus Moo aufrufbar (SGD/Adam/AdamW, SFT mit Masken, Lehrer-Korrektur, Distillation, DPO, Evaluation, Checkpoint/Resume) | **17 von 20 Schritten fertig** — Beispiele in `beispiele/p5/` | Messlauf ~1-Mio.-Parameter-Modell, Training vollständig GPU-resident machen, Vergleichstraining 3 × 10-Mio.-Modelle (BPE / Silbe / Zeichen) |
 | Deutscher Silben-Tokenizer (zusätzlich zu Zeichen- und Byte-BPE-Tokenizer) | **14 von 17 Schritten fertig** — `beispiele/p4_silben/`, `skripte/p4_silben/` | Neutraining eines kleinen Silbenmodells (36.000 Schritte), syntaxbewusster Tokenizer für Code |
-| GPU-Vergleich SGD vs. JEV-Steuerung | geplant, noch nicht gestartet | — |
 | Adaptive Sparse-Berechnung / hierarchisches MoE-Routing | **Forschungsidee**, nur geplant | gesamte Umsetzung |
 
 Hinweis: Trainingskorpora, eigene Testdaten und Modell-Checkpoints sind

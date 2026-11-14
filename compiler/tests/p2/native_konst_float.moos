@@ -1,0 +1,40 @@
+# P2-T48 Batch B (Plan a71947f7 B1): native Konstanten mit f32/f64/bool als
+# Skalar, Arrayelement und Strukturfeld; f32 direkt aus dem Literal gerundet
+# (ZEHNTEL != f64 0.1, == als(f32, 0.1)); Einsatz im Pure- und Systemkoerper.
+struktur Punkt:
+    x: f32
+    y: f64
+
+@nativ
+konstante PI: f64 auf 3.141592653589793
+@nativ
+konstante ZEHNTEL: f32 auf 0.1
+@nativ
+konstante NEG: f64 auf -2.5
+@nativ
+konstante AN: bool auf wahr
+@nativ
+konstante TABELLE: [f32; 3] auf [0.5, -1.25, 2.0]
+@nativ
+konstante URSPRUNG: Punkt auf Punkt(1.5, -0.25)
+
+@nativ
+funktion k_pi() -> f64:
+    gib_zurück PI * 2.0
+@nativ
+funktion k_zehntel() -> bool:
+    gib_zurück als(f64, ZEHNTEL) != 0.1 und ZEHNTEL == als(f32, 0.1)
+@nativ
+funktion k_an(x: f64) -> bool:
+    gib_zurück AN und x < NEG
+@nativ
+funktion k_system() -> f32:
+    unsicher:
+        setze z: f32 auf ZEHNTEL * 10.0
+        gib_zurück z
+zeige k_pi()
+zeige k_zehntel()
+zeige k_an(-3.0)
+zeige k_an(0.0)
+unsicher:
+    zeige k_system()

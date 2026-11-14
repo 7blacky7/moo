@@ -1,0 +1,8 @@
+3
+3
+611.25
+507.5
+2
+gefangen: Elementzugriff auf puffer[Struktur] nur in nativen Funktionen (Boxing: P2-T49)
+gefangen: Native Funktion erwartet einen Puffer mit passender Struktur (puffer[Struktur], gleiche Strukturdefinition)
+gefangen: Nativer Laufzeitfehler (Division, Shift, Index oder Konversion) in 'grenze'

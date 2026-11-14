@@ -25,7 +25,8 @@ sources=("$compiler" skripte/p2/bindgen/layout_gate.sh skripte/p2/bindgen/layout
          compiler/tests/p2/struktur_pointer_wertzyklus.moos compiler/tests/p2/ast_struktur_import.moos
          compiler/tests/p2/import_struktur_modul.moos compiler/tests/p2/struktur_layout.moos
          skripte/p2/bindgen/layout_packed_ref.c skripte/p2/bindgen/layout_generated_packed_ref.c
-         compiler/tests/p2/bindgen_fixture_packed.h)
+         compiler/tests/p2/bindgen_fixture_packed.h compiler/tests/p2/struktur_layout_matrix.moos
+         compiler/tests/p2/struktur_ausrichten_klein.moos)
 sha256sum -- "${sources[@]}" > "$out/before.sha256"
 timeout 30s "$compiler" bindgen skripte/p2/bindgen/layout_probe.h --prefix P2Layout > "$out/generated.moos"
 timeout 60s "$compiler" layout "$out/generated.moos" > "$out/layout.json"
@@ -48,7 +49,7 @@ timeout 30s "$out/compare" "$out/c.rows" "$out/moo.rows"
 # The same registered diagnostic must be stable and reject invalid structures.
 timeout 60s "$compiler" layout "$out/generated.moos" > "$out/layout-repeat.json"
 cmp "$out/layout.json" "$out/layout-repeat.json"
-for fixture in struktur_pointer_unbekannt struktur_pointer_wertzyklus; do
+for fixture in struktur_pointer_unbekannt struktur_pointer_wertzyklus struktur_ausrichten_klein; do
     rc=0
     timeout 60s "$compiler" layout "compiler/tests/p2/$fixture.moos" > "$out/invalid.out" 2> "$out/invalid.err" || rc=$?
     [[ $rc -ne 0 && $rc -ne 124 && ! -s "$out/invalid.out" && -s "$out/invalid.err" ]] || {
@@ -58,6 +59,7 @@ for fixture in struktur_pointer_unbekannt struktur_pointer_wertzyklus; do
     case "$fixture" in
         struktur_pointer_unbekannt) rg -q "Unbekannter Pointer-Zieltyp" "$out/invalid.err" ;;
         struktur_pointer_wertzyklus) rg -q "Strukturwert-Zyklus" "$out/invalid.err" ;;
+        struktur_ausrichten_klein) rg -q "unter der natürlichen Ausrichtung" "$out/invalid.err" ;;
     esac
 done
 timeout 60s "$compiler" layout "$out/generated.moos" --target x86_64-uefi > "$out/uefi.json"
@@ -102,6 +104,54 @@ jq -er '
     else [$x[0].size,$x[0].alignment,$x[0].fields[].offset] | join(" ") end
 ' "$out/generated-packed.json" > "$out/generated-packed-moo.rows"
 timeout 30s "$out/compare" "$out/generated-packed-c.rows" "$out/generated-packed-moo.rows"
+
+# P2-T13/T48 (Plan a71947f7 E2): je Ziel erzeugt Moo einen C11-Header mit
+# _Static_assert fuer sizeof/_Alignof/offsetof/Feldgroesse/Arraystride, den der
+# Ziel-C-Compiler prueft (-fsyntax-only, freestanding, auch cross). Dieselbe
+# Matrix nutzt groesse_von/ausrichtung_von/versatz_von; deren gefaltete
+# IR-Konstanten muessen zum Layout-JSON desselben Ziels passen.
+matrix=compiler/tests/p2/struktur_layout_matrix.moos
+clang_bin="${CLANG:-clang}"
+host_ziel=x86_64-unknown-linux-gnu
+for ziel in "$host_ziel" i686-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-msvc; do
+    timeout 60s "$compiler" layout "$matrix" --target "$ziel" > "$out/matrix-$ziel.json"
+    jq -e --arg z "$ziel" '.target_triple == $z and (.structs | length) >= 10' "$out/matrix-$ziel.json" >/dev/null
+    timeout 60s "$compiler" layout "$matrix" --target "$ziel" --c-header > "$out/matrix-$ziel.h"
+    [[ $(grep -c '^struct ' "$out/matrix-$ziel.h") -eq $(jq '.structs | length' "$out/matrix-$ziel.json") ]] || {
+        echo "FAIL: Matrix-Header $ziel enthaelt nicht jede Struktur" >&2; exit 1; }
+    timeout 30s "$clang_bin" --target="$ziel" -std=c11 -ffreestanding -fsyntax-only -Wall -Wextra -Werror -x c "$out/matrix-$ziel.h"
+    timeout 60s "$compiler" compile "$matrix" --emit-ir --target "$ziel" -o "$out/matrix-$ziel.ll" > /dev/null
+    soll=$(jq -r '.structs as $s
+      | def st($n): [$s[] | select(.name == $n)][0];
+        def off($n; $f): [st($n).fields[] | select(.name == $f)][0].offset;
+      "AUSRICHTUNG_KNOTEN=\(st("Knoten").alignment)", "GROESSE_VERTEX=\(st("Vertex").size)",
+      "VERSATZ_ANZAHL=\(off("Netz"; "anzahl"))", "VERSATZ_KOPF=\(off("KopfVerschachtelt"; "kopf"))"' \
+      "$out/matrix-$ziel.json" | sort | tr '\n' ' ')
+    ist=$(sed -nE 's/^@(GROESSE_VERTEX|AUSRICHTUNG_KNOTEN|VERSATZ_KOPF|VERSATZ_ANZAHL) = constant i64 ([0-9]+)$/\1=\2/p' \
+      "$out/matrix-$ziel.ll" | sort | tr '\n' ' ')
+    [[ -n "$ist" && "$ist" == "$soll" ]] || {
+        echo "FAIL: Layout-Builtins $ziel: IR '$ist' != JSON '$soll'" >&2; exit 1; }
+done
+timeout 30s "${CC:-cc}" -std=c11 -ffreestanding -fsyntax-only -Wall -Wextra -Werror -x c "$out/matrix-$host_ziel.h"
+# Kontrollproben: jede Verfaelschung muss der C-Compiler ablehnen.
+kontrolle() {
+    cmp -s "$out/matrix-$host_ziel.h" "$2" && { echo "FAIL: Kontrollprobe $1 hat nichts veraendert" >&2; exit 1; }
+    if timeout 30s "$clang_bin" --target="$3" -std=c11 -ffreestanding -fsyntax-only -x c "$2" 2>/dev/null; then
+        echo "FAIL: Kontrollprobe $1 wurde nicht erkannt" >&2; exit 1
+    fi
+}
+sed -E '0,/offsetof\(Vertex, uv\) == [0-9]+/s//offsetof(Vertex, uv) == 999/' "$out/matrix-$host_ziel.h" > "$out/kontrolle-versatz.h"
+kontrolle versatz "$out/kontrolle-versatz.h" "$host_ziel"
+sed '/#pragma pack/d' "$out/matrix-$host_ziel.h" > "$out/kontrolle-pack.h"
+kontrolle pack "$out/kontrolle-pack.h" "$host_ziel"
+# Batch C: ohne _Alignas stimmen Ausrichtung, Einbettung und Stride nicht mehr.
+sed 's/_Alignas([0-9]*) //' "$out/matrix-$host_ziel.h" > "$out/kontrolle-alignas.h"
+kontrolle alignas "$out/kontrolle-alignas.h" "$host_ziel"
+jq -e '[.structs[] | select(.name == "MitAusgerichtet")][0] | .alignment == 64 and .size == 192
+  and ([.fields[].offset] == [0, 16, 32, 64, 96, 128])' "$out/matrix-$host_ziel.json" >/dev/null
+# Zielspezifisch: das i686-Layout (4-Byte-Zeiger, i64/f64 4-Byte-ausgerichtet) passt nicht zu x86_64.
+kontrolle fremdziel "$out/matrix-i686-unknown-linux-gnu.h" "$host_ziel"
+
 sha256sum -- "${sources[@]}" > "$out/after.sha256"
 cmp "$out/before.sha256" "$out/after.sha256"
 echo 'Registered Moo/C layout comparison: PASS'

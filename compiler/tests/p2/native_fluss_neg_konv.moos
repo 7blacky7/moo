@@ -1,0 +1,7 @@
+# P2-T12 D2 (E6): ungepruefte Breitenkonversion u8(x) nur innerhalb von unsicher:.
+@nativ
+funktion f(x: u32) -> u8:
+    wenn x > 3:
+        gib_zurück u8(x)
+    gib_zurück 0
+zeige f(5)

@@ -1,0 +1,6 @@
+# P2-T13 Batch C (Plan a71947f7 C3): @ausrichten unter der natuerlichen
+# Ausrichtung ist ein Compilefehler (u32 braucht 4).
+@ausrichten(2)
+struktur ZuKlein:
+    a: u32
+    b: u8

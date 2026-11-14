@@ -35,4 +35,46 @@ echo "PASS Bare QEMU: 14 Werte der Zahlen-/Cast-/bool-Semantik seriell"
 MOO_BIN="$compiler" KERNEL_MARKER='41' KERNEL_MARKER_FEHLT='42' \
     bash scripts/kernel-smoke.sh "$tests/native_zahlen_kern_trap.moos"
 echo "PASS Bare QEMU: Division durch 0 trappt, kein Fortlauf"
+# 4. P2-T58 B8: Batch A im Bare-Profil (Locals anderer Typen, Pure->Pure mit
+#    i64/u8/bool-Rueckgabe): Fehlerpfad trappt, QEMU liefert 44 1 0.
+"$compiler" compile "$tests/native_zahlen_kern_a.moos" --no-stdlib --target x86_64-bare --emit-ir -o "$out/kern_a.ll"
+mise exec -- opt -passes=verify -disable-output "$out/kern_a.ll"
+if grep -q 'moo_native_fehler' "$out/kern_a.ll"; then echo "FEHLER: Bare-IR (Batch A) referenziert moo_native_fehler" >&2; exit 1; fi
+grep -q 'llvm.trap' "$out/kern_a.ll" || { echo "FEHLER: Bare-IR (Batch A) ohne llvm.trap" >&2; exit 1; }
+MOO_BIN="$compiler" KERNEL_MARKER='44 1 0' \
+    bash scripts/kernel-smoke.sh "$tests/native_zahlen_kern_a.moos"
+echo "PASS Bare Batch A: Locals anderer Typen und Pure->Pure (i64/u8/bool) in QEMU"
+# 5. P2-T58 D2c (Plan f40b5980 G4): Float-%/** im Bare-Profil rufen moo_native_fmod/
+#    pow/powf (kein frem, kein fmod/pow aus libm); der Kernel linkt moo_native_math.c
+#    (main.rs KERNEL_SOURCES), das nm-Gate von kernel-smoke laesst kein offenes
+#    Symbol zu. QEMU liefert 5 1024 3 -6.
+"$compiler" compile "$tests/native_zahlen_kern_float.moos" --no-stdlib --target x86_64-bare --emit-ir -o "$out/kern_float.ll"
+mise exec -- opt -passes=verify -disable-output "$out/kern_float.ll"
+grep -q 'call double @moo_native_fmod(' "$out/kern_float.ll" || { echo "FEHLER: Bare-% ohne moo_native_fmod" >&2; exit 1; }
+grep -q 'call float @moo_native_powf(' "$out/kern_float.ll" || { echo "FEHLER: Bare-** (f32) ohne moo_native_powf" >&2; exit 1; }
+if grep -qE ' frem |call .*@(fmod|fmodf|pow|powf|llvm\.pow[^(]*)\(' "$out/kern_float.ll"; then echo "FEHLER: Bare-Float-%/** ueber frem oder libm" >&2; exit 1; fi
+MOO_BIN="$compiler" KERNEL_MARKER='5 1024 3 -6' \
+    bash scripts/kernel-smoke.sh "$tests/native_zahlen_kern_float.moos"
+echo "PASS Bare Float-%/**: moo_native_math.c im Kernel, QEMU 5 1024 3 -6, keine libm"
+# 6. P2-T58 D2c (Plan f40b5980 §3.2, Review a7d2cf59 #8): UEFI-Link. Den C-Export
+#    mit Float-%/** aus dem UEFI-IR extrahieren und als COFF uebersetzen: offen sind
+#    nur moo_native_fmod/moo_native_powf (ggf. _fltused der MS-Float-ABI, sonst
+#    von boot/uefi_rt.c). Mit moo_native_math.c (clang, Flags wie
+#    scripts/uefi-smoke.sh, dort in RT_SOURCES) per lld-link zur EFI-Application.
+"$compiler" compile "$tests/native_uefi_float.moos" --no-stdlib --target x86_64-unknown-uefi --emit-ir -o "$out/uefi_float.ll"
+mise exec -- opt -passes=verify -disable-output "$out/uefi_float.ll"
+mise exec -- llvm-extract -S --recursive --func=moo_uefi_start "$out/uefi_float.ll" -o "$out/uefi_float.extract.ll"
+mise exec -- llc -O2 -filetype=obj "$out/uefi_float.extract.ll" -o "$out/uefi_float.obj"
+uefi_offen="$(mise exec -- llvm-nm -u "$out/uefi_float.obj" | awk '{print $NF}' | awk '$0 != "_fltused"' | sort | tr '\n' ' ')"
+[ "$uefi_offen" = "moo_native_fmod moo_native_powf " ] || { echo "FEHLER: UEFI-Objekt offen: '$uefi_offen'" >&2; exit 1; }
+uefi_cflags=(--target=x86_64-w64-windows-gnu -std=c11 -O2 -ffreestanding -fno-stack-protector
+             -mno-stack-arg-probe -ffunction-sections -fdata-sections -DMOO_BARE)
+clang "${uefi_cflags[@]}" -c compiler/runtime/moo_native_math.c -o "$out/uefi_native_math.obj"
+printf 'int _fltused = 0;\n' > "$out/uefi_fltused.c"
+clang "${uefi_cflags[@]}" -c "$out/uefi_fltused.c" -o "$out/uefi_fltused.obj"
+rm -f "$out/uefi_float.efi"
+lld-link /subsystem:efi_application /entry:moo_uefi_start /nodefaultlib /opt:ref \
+    /out:"$out/uefi_float.efi" "$out/uefi_float.obj" "$out/uefi_native_math.obj" "$out/uefi_fltused.obj"
+file "$out/uefi_float.efi" | grep -qiE 'EFI.*application|PE32\+' || { echo "FEHLER: kein PE32+-EFI-Binary" >&2; exit 1; }
+echo "PASS UEFI-Link Float-%/**: Export aus x86_64-unknown-uefi + moo_native_math.c -> EFI-Application"
 echo "PASS P2-T73 Bare: IR-Vertrag, QEMU-Werte, QEMU-Trap"

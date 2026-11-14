@@ -1,0 +1,7 @@
+# P2-T58 D1: negativer Exponent ohne versuche: beendet mit RC 1 und Meldung.
+@nativ
+funktion f(a: i32, b: i32) -> i32:
+    gib_zurück a ** b
+zeige "vorher"
+zeige f(2, -1)
+zeige "NACH_FALSCH"

@@ -312,6 +312,29 @@ fn fehlerblock<'ctx>(
     Ok(block)
 }
 
+/// P2-T58 C2 (Plan 4500717b): `moo_native_fehler_offen() -> i32` als SCHWACHE
+/// Definition (liefert 0) neben native_fehler_hook; die Moo-Runtime
+/// (moo_error.c) liefert die starke Fassung mit moo_error_flag. Ohne Runtime
+/// gelinkte Objekte tragen kein offenes Symbol. Erst bei Bedarf angelegt.
+pub(crate) fn native_fehler_offen_hook<'ctx>(
+    context: &'ctx Context,
+    module: &inkwell::module::Module<'ctx>,
+) -> Result<FunctionValue<'ctx>, String> {
+    if let Some(hook) = module.get_function("moo_native_fehler_offen") {
+        return Ok(hook);
+    }
+    let hook = module.add_function(
+        "moo_native_fehler_offen",
+        context.i32_type().fn_type(&[], false),
+        Some(inkwell::module::Linkage::WeakAny),
+    );
+    let entry = context.append_basic_block(hook, "entry");
+    let builder = context.create_builder();
+    builder.position_at_end(entry);
+    builder.build_return(Some(&context.i32_type().const_zero())).map_err(|e| e.to_string())?;
+    Ok(hook)
+}
+
 /// `moo_native_fehler(text)` beim ersten Bedarf als SCHWACHE Definition mit
 /// Trap-Koerper anlegen: Die Moo-Runtime (compiler/runtime/moo_error.c) liefert
 /// die starke, fangbare Fassung und gewinnt beim Link; ein ohne Runtime
@@ -371,6 +394,12 @@ fn pruefe_konstante_operanden<'ctx>(
         IntOp::Shl | IntOp::Shr => {
             if r >= u64::from(width) {
                 return Err(format!("Nativer Shiftzaehler {r} liegt ausserhalb 0..{}", width - 1));
+            }
+        }
+        // P2-T58 (Plan f40b5980 §2.1): konstant negativer Exponent ist ein Compilefehler.
+        IntOp::Pow => {
+            if left.ty.is_signed_integer() && r & (1u64 << (width - 1)) != 0 {
+                return Err("Native Potenz mit konstant negativem Exponenten".into());
             }
         }
         _ => {}
@@ -506,9 +535,15 @@ pub(crate) fn lower_nontrapping_expr<'ctx>(
                     BinOp::Sub => crate::native_arithmetic::FloatOp::Sub,
                     BinOp::Mul => crate::native_arithmetic::FloatOp::Mul,
                     BinOp::Div => crate::native_arithmetic::FloatOp::Div,
+                    BinOp::Mod => crate::native_arithmetic::FloatOp::Rem,
+                    BinOp::Pow => crate::native_arithmetic::FloatOp::Pow,
                     _ => return Err("Nativer Float-Operator noch nicht unterstützt".into()),
                 };
-                crate::native_arithmetic::float_binary(context, builder, op, left, right)
+                if matches!(op, crate::native_arithmetic::FloatOp::Rem | crate::native_arithmetic::FloatOp::Pow) {
+                    crate::native_arithmetic::float_bibliothek(context, builder, fehler.module, op, left, right)
+                } else {
+                    crate::native_arithmetic::float_binary(context, builder, op, left, right)
+                }
             } else {
                 use crate::native_arithmetic::IntOp;
                 let op = match op {
@@ -523,13 +558,20 @@ pub(crate) fn lower_nontrapping_expr<'ctx>(
                     BinOp::Mod => IntOp::Rem,
                     BinOp::LShift => IntOp::Shl,
                     BinOp::RShift => IntOp::Shr,
+                    BinOp::Pow => IntOp::Pow,
                     _ => return Err("Nicht unterstützter nativer Integer-Operator".into()),
                 };
-                if matches!(op, IntOp::Div | IntOp::Rem | IntOp::Shl | IntOp::Shr) {
+                let pow_signed = matches!(op, IntOp::Pow) && left.ty.is_signed_integer();
+                if matches!(op, IntOp::Pow) && !pow_signed {
+                    // unsigned **: kein Fehlerfall, kein Fehlerblock im IR.
+                    return crate::native_arithmetic::int_binary(context, builder, op, left, right, failure);
+                }
+                if matches!(op, IntOp::Div | IntOp::Rem | IntOp::Shl | IntOp::Shr) || pow_signed {
                     pruefe_konstante_operanden(op, &left, &right)?;
                     let (kennung, text) = match op {
                         IntOp::Div => ("div", format!("Native Division durch Null oder MIN/-1 in '{}'", fehler.funktion)),
                         IntOp::Rem => ("rem", format!("Nativer Rest durch Null oder MIN/-1 in '{}'", fehler.funktion)),
+                        IntOp::Pow => ("pow", format!("Native Potenz mit negativem Exponenten in '{}'", fehler.funktion)),
                         _ => ("shift", format!("Nativer Shiftzaehler ausserhalb 0..Breite-1 in '{}'", fehler.funktion)),
                     };
                     let block = fehlerblock(context, builder, fehler, kennung, &text)?;
@@ -634,9 +676,20 @@ fn operand_type<'ctx>(
     pure_functions: &HashMap<String, (FunctionValue<'ctx>, NSignature)>,
 ) -> Option<NType> {
     match (pure_infer(left, slots, pure_functions), pure_infer(right, slots, pure_functions)) {
+        // P2-T9 (Review 9b847d8e): zwei untypisierte Literale mit verschiedenem
+        // Standardtyp (i64/f64) -> f64, unabhaengig von der Reihenfolge. Ein
+        // Ganzzahlliteral darf den Float-Typ annehmen (ADR §2), umgekehrt nicht.
+        // Dieselbe Regel nutzt der Systemkoerper (native_system literal_paar).
+        (Some(l), Some(r)) if l != r && is_literal(left) && is_literal(right) => Some(literal_paar_typ(l, r)),
         (Some(l), Some(r)) if l != r && is_literal(left) => Some(r),
         (l, r) => l.or(r),
     }
+}
+
+/// Gemeinsamer Typ zweier untypisierter Literale (Standardtypen l, r):
+/// f64, sobald eines ein Float-Literal ist, sonst der gemeinsame Typ.
+pub(crate) fn literal_paar_typ(l: NType, r: NType) -> NType {
+    if l == r { l } else if matches!(l, NType::F64 | NType::F32) || matches!(r, NType::F64 | NType::F32) { NType::F64 } else { l }
 }
 
 /// Statischer Typ eines Teilausdrucks im Pure-Pfad; gebraucht fuer Cast-
@@ -803,14 +856,14 @@ pub(crate) fn emit_nontrapping_function<'ctx>(
         match stmt {
             Stmt::Assignment { name, ty: Some(ty), .. }
             | Stmt::ConstAssignment { name, ty: Some(ty), .. } => {
-                if Some(NType::from_type_ref(ty)?) != signature.result {
-                    return Err("Native lokale Variable verlangt den Funktionstyp".into());
-                }
+                // P2-T9 (Plan 4500717b A1): jedes Local traegt seinen eigenen
+                // nativen Typ; frueher musste er dem Rueckgabetyp gleichen.
+                NType::from_type_ref(ty)?;
                 if !names.insert(name) {
                     return Err(format!("Doppelter nativer Name '{name}'"));
                 }
             }
-            _ => return Err("Native lokale Variable braucht einen expliziten i32-Typ".into()),
+            _ => return Err("Native lokale Variable braucht eine Typannotation (setze name: T auf wert)".into()),
         }
     }
 
@@ -830,13 +883,14 @@ pub(crate) fn emit_nontrapping_function<'ctx>(
         slots.insert(name.clone(), slot);
     }
     for stmt in locals {
-        let (name, expr) = match stmt {
-            Stmt::Assignment { name, value, .. } | Stmt::ConstAssignment { name, value, .. } => (name, value),
+        let (name, expr, ty) = match stmt {
+            Stmt::Assignment { name, value, ty: Some(ty), .. }
+            | Stmt::ConstAssignment { name, value, ty: Some(ty), .. } => (name, value, ty),
             _ => return Err("Ungueltige native lokale Variable".into()),
         };
         // Initialisierung vor Eintrag in die Symboltabelle verhindert
         // versehentliches Lesen eines noch uninitialisierten Slots.
-        let local_ty = signature.result.ok_or("Native lokale Variable verlangt Funktionstyp")?;
+        let local_ty = NType::from_type_ref(ty)?;
         let value = lower_nontrapping_expr(context, &builder, expr, local_ty, &slots, failure, fehler, pure_functions)?;
         let ptr = builder.build_alloca(local_ty.llvm_type(context), name)
             .map_err(|e| e.to_string())?;

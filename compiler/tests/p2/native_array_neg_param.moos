@@ -1,0 +1,6 @@
+# P2-T48 (Plan a71947f7 A5): feste Arrays nicht als Parameter by value.
+@nativ
+funktion f(a: [i32; 3]) -> i32:
+    unsicher:
+        gib_zurück a[0]
+zeige 1

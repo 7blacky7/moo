@@ -1,0 +1,5 @@
+# P2-T58 D1: keine Mischung Ganzzahl/Float bei ** (explizite Konversion, ADR §2).
+@nativ
+funktion f(a: i32, b: f64) -> i32:
+    gib_zurück a ** b
+zeige f(2, 1.5)

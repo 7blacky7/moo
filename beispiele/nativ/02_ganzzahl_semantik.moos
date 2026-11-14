@@ -1,0 +1,30 @@
+# Native Ganzzahlen: Division rundet gegen null, der Rest trägt das Vorzeichen
+# des Dividenden, Rechtsschub ist bei signed arithmetisch und bei unsigned
+# logisch, + und - laufen modulo 2^N über.
+# Erwartete Ausgabe: -2, -1, -2, 1, 2, -1, 1, -128
+@nativ
+funktion z_div(a: i32, b: i32) -> i32:
+    gib_zurück a / b
+@nativ
+funktion z_rest(a: i32, b: i32) -> i32:
+    gib_zurück a % b
+@nativ
+funktion z_links(a: u8, n: u8) -> u8:
+    gib_zurück a << n
+@nativ
+funktion z_rechts_s(a: i8, n: i8) -> i8:
+    gib_zurück a >> n
+@nativ
+funktion z_rechts_u(a: u8, n: u8) -> u8:
+    gib_zurück a >> n
+@nativ
+funktion z_wrap(a: i8) -> i8:
+    gib_zurück a + 1
+zeige z_div(-7, 3)
+zeige z_rest(-7, 3)
+zeige z_div(7, -3)
+zeige z_rest(7, -3)
+zeige z_links(129, 1)
+zeige z_rechts_s(-128, 7)
+zeige z_rechts_u(128, 7)
+zeige z_wrap(127)

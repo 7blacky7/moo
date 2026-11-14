@@ -1,0 +1,8 @@
+# P2-T58 D2c (Plan f40b5980 §3.2, Review a7d2cf59 #8): UEFI-Linkpruefung fuer
+# Float-% / Float-**. zahlen/bare.sh §6 extrahiert den C-Export aus dem UEFI-IR
+# (x86_64-unknown-uefi) und linkt ihn mit compiler/runtime/moo_native_math.c per
+# lld-link zu einer EFI-Application; offen sind nur moo_native_fmod/powf.
+@nativ
+@einstieg
+funktion moo_uefi_start(a: f64, b: f32) -> f64:
+    gib_zurück a % 2.0 + als(f64, b ** 2.0)

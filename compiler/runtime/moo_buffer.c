@@ -12,6 +12,7 @@ typedef struct {
     size_t pins;
     size_t elem_size;
     MooBufferScalarType scalar_type;
+    uint64_t type_id; /* P2-T48 D: Strukturidentitaet, 0 = keine Struktur */
     size_t len;
     size_t capacity;
     unsigned char* data;
@@ -87,6 +88,19 @@ MooBufferStatus moo_buffer_new_scalar(MooBufferScalarType type, size_t len, MooB
 
 MooBufferScalarType moo_buffer_scalar_type(const MooBuffer* b) {
     return b ? b->storage->scalar_type : MOO_BUFFER_SCALAR_NONE;
+}
+
+MooBufferStatus moo_buffer_new_struct(size_t elem_size, size_t elem_align, uint64_t type_id, size_t len, MooBuffer** out) {
+    if (!out) return MOO_BUFFER_INVALID;
+    *out = NULL;
+    if (!type_id) return MOO_BUFFER_INVALID;
+    MooBufferStatus status = moo_buffer_new(elem_size, elem_align, len, out);
+    if (status == MOO_BUFFER_OK) (*out)->storage->type_id = type_id;
+    return status;
+}
+
+uint64_t moo_buffer_struct_id(const MooBuffer* b) {
+    return b ? b->storage->type_id : 0;
 }
 
 MooBufferStatus moo_buffer_get_scalar(const MooBuffer* b, MooBufferScalarType type, size_t index, void* out) {

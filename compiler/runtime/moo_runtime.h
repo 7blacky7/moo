@@ -871,6 +871,8 @@ MooValue moo_to_string(MooValue v);
 void moo_throw(MooValue error);
 /* P2-T34: fangbarer Fehler einer nativen Ganzzahloperation (Text ist statisch). */
 void moo_native_fehler(const char* text);
+/* P2-T58 C2: 1, wenn ein Moo-Fehler ansteht (Systemkoerper-Weitergabe). */
+int moo_native_fehler_offen(void);
 void moo_try_enter(void);       // enter try block
 int moo_try_check(void);        // 1 = error occurred
 void moo_try_leave(void);       // leave try/catch

@@ -1,0 +1,5 @@
+# P2-T9 B6: bool kennt nur == und != (ADR), keine Ordnung.
+@nativ
+funktion f(a: bool, b: bool) -> bool:
+    gib_zurück a < b
+zeige f(wahr, falsch)

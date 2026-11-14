@@ -1,0 +1,8 @@
+# P2-T12 D2 (A2): zeiger(adr) nur innerhalb von unsicher:.
+@nativ
+funktion f(adr: u64) -> u64:
+    setze p: ptr[u64] auf zeiger(adr)
+    wenn adr == 0:
+        gib_zurück 0
+    gib_zurück 1
+zeige f(0)

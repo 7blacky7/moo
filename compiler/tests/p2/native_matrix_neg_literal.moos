@@ -1,0 +1,5 @@
+# P2-T9 B6: Literal ausserhalb des Zieltyps ist ein Compilefehler.
+@nativ
+funktion f() -> u8:
+    gib_zurück 300
+zeige f()

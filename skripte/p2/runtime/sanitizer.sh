@@ -38,6 +38,10 @@ flags=(-std=c11 -Wall -Wextra -Werror -g -O1 -fno-omit-frame-pointer -fsanitize=
   "$project_root/compiler/tests/p2/test_p2_defer_bare.c" -Wl,--gc-sections -o "$build_dir/defer_bare"
 "${CC:-cc}" "${flags[@]}" "$project_root/compiler/runtime/moo_buffer.c" \
   "$project_root/compiler/tests/p2/test_p2_buffer_append_oom.c" -Wl,--wrap=calloc -o "$build_dir/buffer_append_oom"
+# P2-T58 G1: moo_native_math (fmod/pow ohne libm) gegen libm, unter ASan/UBSan.
+"${CC:-cc}" "${flags[@]}" "$project_root/compiler/runtime/moo_native_math.c" \
+  "$project_root/compiler/runtime/tests/test_p2_native_math.c" -lm -o "$build_dir/native_math"
+ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$build_dir/native_math"
 ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$build_dir/buffer_append_oom"
 ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$build_dir/defer_bare"
 ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$build_dir/oom_candidate"

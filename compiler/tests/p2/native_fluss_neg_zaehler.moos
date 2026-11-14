@@ -1,0 +1,7 @@
+# P2-T12 D2: der für-Zaehler ist im Koerper konstant.
+@nativ
+funktion f(n: i32) -> i32:
+    für i in 0..n:
+        setze i auf 3
+    gib_zurück 0
+zeige f(2)

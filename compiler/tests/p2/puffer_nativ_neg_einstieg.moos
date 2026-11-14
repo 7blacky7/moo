@@ -1,0 +1,8 @@
+# P2-T50 (Plan bb3878ef B1): puffer[T]-Parameter nicht an C-Exporten.
+@nativ
+@einstieg
+funktion e(p: puffer[i32]) -> i32:
+    unsicher:
+        setze x: i32 auf 1
+        gib_zurück x
+zeige 1

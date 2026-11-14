@@ -1,0 +1,7 @@
+# P2-T12 D2 (A2): speicher_lesen nur innerhalb von unsicher:.
+@nativ
+funktion f(x: u64) -> u64:
+    wenn x == 0:
+        gib_zurück 0
+    gib_zurück speicher_lesen(x, 8)
+zeige f(0)

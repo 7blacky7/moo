@@ -86,3 +86,13 @@ danach wie bisher uebersetzt; optimiert werden nur die `@nativ`-Funktionen.
 Programme ohne Systemkoerper (reines Legacy, skalare Pure-/FFI-Funktionen)
 nehmen weiterhin den unveraenderten Objektpfad. `--emit-ir` liegt vor den
 Paessen (Legacy-IR-Gate unberuehrt).
+
+
+Float-% und Float-** (P2-T58 D2c): native Funktionen rufen dafuer
+`moo_native_fmod`/`moo_native_fmodf`/`moo_native_pow`/`moo_native_powf` aus
+`compiler/runtime/moo_native_math.c` (freestanding, kein libm, kein LLVM-`frem`).
+Die Moo-Runtime (build.rs) und die Kernel-Pipeline (main.rs KERNEL_SOURCES)
+enthalten die Datei bereits. Wer ein natives Objekt ohne Moo-Runtime linkt
+(C-Export per `@einstieg`, `llvm-extract`), muss `moo_native_math.o` mitlinken,
+sobald das Objekt Float-% oder Float-** benutzt; sonst bleiben genau diese
+Symbole offen (Beispiel: `skripte/p2/windows_minipc/test.sh`, Zahlenprobe).

@@ -1,6 +1,6 @@
 # Native Moo: language reference (draft)
 
-**Status:** 31 October 2026. This reference describes the approved P2 language contract, not functionality already available. All snippets are illustrative drafts and have not been compiled. Constructor and helper syntax will be finalized during implementation.
+**Status:** 14 November 2026. This reference reconciles the P2 language contract with the implemented compiler. Examples that cite `beispiele/nativ/` run with `moo-compiler run`; all other snippets are target contract and not compiled. Sections that are not yet implemented are marked "not released" and listed in the status table at the end. Migration guide: `migration-guide-en.md`.
 
 ## Scope and opt-in
 
@@ -12,7 +12,7 @@ func add(a: i32, b: i32) -> i32:
     return a + b
 ```
 
-This is target syntax. Existing dynamic semantics, `as_u8` through `as_u64`, classes, data classes and the MooValue layout retain their existing behavior.
+This syntax is implemented (`beispiele/nativ/01_native_funktionen.moos`); native functions may call each other, including forward references. Existing dynamic semantics, `as_u8` through `as_u64`, classes, data classes and the MooValue layout retain their existing behavior.
 
 ## Types and literals
 
@@ -30,7 +30,7 @@ Integer `+`, `-`, `*` and unary minus wrap modulo 2 to the N in both debug and r
 
 Integer division rounds toward zero and the remainder has the dividend's sign. Division or remainder by zero, `MIN / -1`, `MIN % -1`, and shift counts outside `0..N-1` are errors. Statically known errors are compile errors; hosted runtime errors are catchable, with a defined abort when unhandled. A non-returning target hook handles fatal bare-metal errors. Signed right shift is arithmetic; unsigned right shift is logical.
 
-The planned standard cast `als(T, x)` is checked. An integer outside the target range, or a fractional, NaN, infinite or out-of-range float converted to integer, is an error. Intentional wrapping, saturation and rounding are explicit; their concrete helper names remain to be specified. Integer-to-float and float-to-float conversions allow documented ordinary rounding but reject finite-to-infinity overflow; a separate exact conversion is planned.
+The planned standard cast `als(T, x)` is checked. An integer outside the target range, or a fractional, NaN, infinite or out-of-range float converted to integer, is an error. Intentional wrapping, saturation and rounding are explicit; they are named `als_wrap(T, x)` (wrapping) and `als_saettigend(T, x)` (saturating). See `beispiele/nativ/02_ganzzahl_semantik.moos` and `beispiele/nativ/03_casts.moos`. Integer-to-float and float-to-float conversions allow documented ordinary rounding but reject finite-to-infinity overflow; a separate exact conversion is planned.
 
 The `f32`/`f64` baseline follows IEEE semantics including NaN, infinities, signed zero and gradual underflow. Reassociation, implicit FMA contraction, flush-to-zero and fast-math are off by default; changed optimization semantics require explicit opt-in.
 
@@ -44,37 +44,37 @@ struct Vertex:
     color: [u8; 4]
 ```
 
-A `struct`/`struktur` has value semantics and layout derived from the selected target ABI, including field order, size, alignment and offsets. Copying a structure copies its values; a buffer handle within it still shares storage. This layout is not a universal file format: byte order and serialization are separate contracts.
+Nested, packed structures with a fixed array field already compile (`beispiele/nativ/05_struktur_layout.moos`; the example only registers the layout). A `struct`/`struktur` has value semantics and layout derived from the selected target ABI, including field order, size, alignment and offsets. Copying a structure copies its values; a buffer handle within it still shares storage. This layout is not a universal file format: byte order and serialization are separate contracts.
 
 For the first increment, `@packed`/`@gepackt` means alignment 1 without implicit field padding. Conflicting higher alignment is rejected. Unaligned fields require suitable access; a normally aligned reference must not be invented. Padding is neither comparison content nor unchecked serialized payload.
 
 ## Buffers, pointers and unsafe operations
 
-A `buffer[T]` manages contiguous storage, checks bounds and retains its owner. Views keep the owner alive. Length changes and reallocation are prohibited while views or exported pins are active. Shared handles expose shared element mutations; deep copying is explicit. Mutable buffers are thread-bound in the first safe increment.
+A buffer is created with `puffer_erstellen(i32, 3)` and read and written by index (`beispiele/nativ/04_puffer.moos`). A `buffer[T]` manages contiguous storage, checks bounds and retains its owner. Views keep the owner alive. Length changes and reallocation are prohibited while views or exported pins are active. Shared handles expose shared element mutations; deep copying is explicit. Mutable buffers are thread-bound in the first safe increment.
 
 Declaring pointer types, copying pointer values and comparing them with null are safe. Converting integer addresses to pointers, dereferencing, free pointer arithmetic, unchecked access, raw FFI calls and MMIO require an explicit `unsafe`/`unsicher` scope. Volatile does not replace atomics or hardware barriers. A raw pointer must be valid, suitably aligned and live for its contractual duration.
 
 ## C interop and callbacks
 
 ```moos
-@library("GL")
-extern "C" func glClear(mask: u32) -> void
+@bibliothek(linux="p2_ffi_schmal")
+extern "C" funktion p2_ffi_schmal(a: i8, b: u8) -> i32
 
-@native
-func clear() -> void:
-    unsafe:
-        glClear(0x00004000)
+@nativ
+funktion schmal_probe() -> i32:
+    unsicher:
+        gib_zurück p2_ffi_schmal(-1, 255)
 ```
 
-The first planned FFI increment covers fixed scalar integer/float arguments, pointers and `void`. Variadics and aggregates by value are rejected until target ABI lowering is demonstrated. C `_Bool`, C++ `bool` and Win32 `BOOL` require separate handling. Target triple, calling convention and data layout are selected before IR generation.
+The snippet comes from the test `bibliothek_ziel_linux`; it needs a matching C library and is therefore not an example under `beispiele/nativ/`. The first FFI increment covers fixed scalar integer/float arguments, pointers and `void`; the library can be named per target (`linux="..."`). The compiler currently rejects aggregates and function types by value (message "Aggregate und Funktionstypen by value sind nicht freigegeben") and `bool` (message "C-bool ist bis zum ABI-Nachweis nicht freigegeben"). Variadics stay rejected until target ABI lowering is demonstrated. C `_Bool`, C++ `bool` and Win32 `BOOL` require separate handling. Target triple, calling convention and data layout are selected before IR generation.
 
 Each binding specifies borrowing or transfer, lifetime, nullability, mutability, pinning, deallocator and error handling. Foreign code may retain a buffer only for the agreed duration. C++ integration starts with an `extern "C"` adapter and opaque handle; the adapter catches C++ exceptions.
 
-Callbacks require a C ABI thunk with the exact signature. Captures use an explicit `user_data` contract. Registration and deregistration account for in-flight and later calls. Errors must not escape uncontrolled through foreign C frames; `void` callbacks require an out-of-band error channel. Foreign threads and reentrancy are either supported or explicitly rejected.
+Callbacks (parameters of type `fn(i32) -> i32` in `extern "C"`) are not released: the compiler rejects them with the same message as aggregates. The following contract applies to the later release. Callbacks require a C ABI thunk with the exact signature. Captures use an explicit `user_data` contract. Registration and deregistration account for in-flight and later calls. Errors must not escape uncontrolled through foreign C frames; `void` callbacks require an out-of-band error channel. Foreign threads and reentrancy are either supported or explicitly rejected.
 
 ## Vectors and matrices
 
-`vec2`, `vec3`, `vec4` and `mat4` are mathematical `f32` value types; explicit `f64` variants are possible. A matrix transforms a column vector as matrix times vector. Matrix times matrix is matrix multiplication, vector times vector is componentwise, and dot product is a named operation. No fixed SIMD or GPU layout is assumed. Row-/column-major and std140/std430 boundaries require explicit adapters.
+Not released: the compiler only contains scalar LLVM building blocks (`native_vecmat.rs`, f32, column-major matrix); there is no Moo syntax and no test. The following contract is the target state. `vec2`, `vec3`, `vec4` and `mat4` are mathematical `f32` value types; explicit `f64` variants are possible. A matrix transforms a column vector as matrix times vector. Matrix times matrix is matrix multiplication, vector times vector is componentwise, and dot product is a named operation. No fixed SIMD or GPU layout is assumed. Row-/column-major and std140/std430 boundaries require explicit adapters.
 
 ## Dynamic boundary and migration
 
@@ -84,4 +84,15 @@ When moving a C function, first specify its target ABI, signature, ownership, er
 
 ## Verification and status
 
-A reproducible snapshot and passing legacy gate precede implementation. P2-T33 investigates the currently non-reproducible IR baseline. Only after implementation can the reference snippets become compile-tested examples; Linux, Windows, bare-metal and ABI claims each require their corresponding native evidence.
+| Area | Status 14 Nov 2026 | Evidence |
+|---|---|---|
+| `@nativ` functions, forward calls | implemented | `beispiele/nativ/01_native_funktionen.moos` |
+| Integer semantics (division, remainder, shifts, wrap) | implemented | `beispiele/nativ/02_ganzzahl_semantik.moos` |
+| Casts `als`, `als_wrap`, `als_saettigend` | implemented | `beispiele/nativ/03_casts.moos` |
+| Typed buffers | implemented (basic form) | `beispiele/nativ/04_puffer.moos` |
+| Structures, `@gepackt`, fixed arrays | declaration implemented | `beispiele/nativ/05_struktur_layout.moos` |
+| `extern "C"`, `@bibliothek(target=...)`, `unsicher` | implemented for scalar signatures and pointers | tests `bibliothek_ziel_*`, `ffi_*`, `zeiger_lesen*` in `compiler/tests/p2` |
+| Arrays by value and callbacks in FFI (C `bool` and struct values are released since P2-T19/T56) | rejected (not released) | tests `ffi_aggregat`, `ffi_callback_*` |
+| `vec2/3/4`, `mat4` | compiler building blocks only, no language syntax | `compiler/src/native_vecmat.rs` |
+
+Linux, Windows and bare-metal claims each require their own evidence; the examples were run individually on Linux.

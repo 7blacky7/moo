@@ -4,7 +4,8 @@
 //!   exakt dem Ziel-ABI-Layout von T an (kein MooValue). T ist ein
 //!   Integertyp (u8..u64, i8..i64), eine native `struktur` (auch `@gepackt`),
 //!   ein festes Array `[T; N]` oder ein Zeiger `ptr[...]`.
-//!   Werte: Integerliterale (exakt, bereichsgeprueft), `Struktur(f1, f2, ...)`
+//!   Werte: Integerliterale (exakt, bereichsgeprueft), seit P2-T48 auch f32/f64
+//!   (Zielrundung) und bool (wahr/falsch), `Struktur(f1, f2, ...)`
 //!   mit allen Feldern in Deklarationsreihenfolge, `[a, b, ...]` mit genau N
 //!   Elementen, `nichts` (Nullzeiger) bzw. ein Symbolname als symbolische
 //!   Linkadresse (Zeigerfeld oder Integer in Zeigerbreite).
@@ -22,7 +23,7 @@ use inkwell::targets::TargetData;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValueEnum, FunctionValue, PointerValue};
 
-use crate::ast::{Decorator, Expr, Program, Stmt, TypeKind, TypeRef, UnaryOpKind};
+use crate::ast::{BinOp, Decorator, Expr, Program, Stmt, TypeKind, TypeRef, UnaryOpKind};
 use crate::codegen_native::NType;
 use crate::native_struct::NativeStructRegistry;
 
@@ -60,8 +61,98 @@ fn number(value: i128) -> Expr {
     }
 }
 
+/// P2-T48 B1: Float-/bool-Typ einer nativen Konstante (Skalar).
+fn float_oder_bool(ty: &TypeRef) -> Option<NType> {
+    match &ty.kind {
+        TypeKind::Name(name) => NType::from_name(name)
+            .filter(|t| matches!(t, NType::F32 | NType::F64 | NType::Bool)),
+        _ => None,
+    }
+}
+
+/// Text und Vorzeichen eines (ggf. negierten) Zahlliterals.
+fn zahl_text(expr: &Expr) -> Result<(&str, bool), String> {
+    match expr {
+        Expr::NativeNumber { text, .. } => Ok((text, false)),
+        Expr::UnaryOp { op: UnaryOpKind::Neg, operand } => match operand.as_ref() {
+            Expr::NativeNumber { text, .. } => Ok((text, true)),
+            _ => Err("Native Konstante: Zahlliteral erwartet".into()),
+        },
+        _ => Err("Native Konstante: Zahlliteral erwartet".into()),
+    }
+}
+
+/// P2-T48 B1: Initialisierer einer f32/f64/bool-Konstante. Floats werden
+/// direkt aus dem Literal auf die Zielbreite gerundet (NType::float_literal,
+/// ADR §1); ein von Null verschiedenes Literal, das auf 0 rundet, ist ein Fehler.
+fn float_bool_wert<'ctx>(context: &'ctx Context, expr: &Expr, ty: NType) -> Result<BasicValueEnum<'ctx>, String> {
+    if ty == NType::Bool {
+        return match expr {
+            Expr::Boolean(flag) => Ok(context.bool_type().const_int(u64::from(*flag), false).into()),
+            _ => Err("bool-Konstante erwartet wahr oder falsch".into()),
+        };
+    }
+    let (text, negative) = zahl_text(expr)?;
+    let (value, unterlauf) = ty.float_literal(context, text, negative)?;
+    if unterlauf {
+        return Err(format!("Floatliteral '{text}' rundet in {} auf 0", format!("{ty:?}").to_lowercase()));
+    }
+    Ok(value.value)
+}
+
+/// P2-T48 B1: skalare Float-/bool-Konstante als Ausdruck fuer @nativ-Koerper.
+/// f32 wird einmal korrekt gerundet und als exakt darstellbares f64-Literal
+/// (kuerzeste Rundreise-Darstellung) in als(f32, ...) eingesetzt; der Cast ist
+/// damit exakt und es gibt keine Doppelrundung. f64 bleibt beim Quelltext.
+fn konstanten_ausdruck(context: &Context, ty: &TypeRef, value: &Expr) -> Result<Option<Expr>, String> {
+    let Some(scalar) = float_oder_bool(ty) else { return Ok(None) };
+    float_bool_wert(context, value, scalar)?;
+    if scalar == NType::Bool {
+        return Ok(Some(value.clone()));
+    }
+    let (text, negative) = zahl_text(value)?;
+    let text = if scalar == NType::F32 {
+        let rund: f32 = text.parse().map_err(|_| format!("Ungueltiges Floatliteral '{text}'"))?;
+        format!("{:?}", f64::from(rund))
+    } else {
+        text.to_string()
+    };
+    let literal = Expr::NativeNumber { legacy: text.parse().unwrap_or(0.0), text, line: 0, column: 0 };
+    let literal = if negative {
+        Expr::UnaryOp { op: UnaryOpKind::Neg, operand: Box::new(literal) }
+    } else {
+        literal
+    };
+    let typ = if scalar == NType::F32 { "f32" } else { "f64" };
+    Ok(Some(Expr::FunctionCall { name: "als".into(), args: vec![Expr::Identifier(typ.into()), literal] }))
+}
+
 /// Exakter Wert eines (ggf. negierten) Integerliterals fuer den Typ `ty`.
+/// P2-T58 (Plan f40b5980 §3.1, Review 06d10060 #2): `a ** b` aus solchen
+/// Werten wird mit derselben Regel wie der Lowerer gefaltet: b-fache
+/// Multiplikation mit Wrap modulo 2^N, 0 ** 0 = 1, negativer Exponent
+/// (signed) ist ein Compilefehler.
 fn literal_value(context: &Context, expr: &Expr, ty: NType) -> Result<i128, String> {
+    if let Expr::BinaryOp { op: BinOp::Pow, left, right } = expr {
+        let basis = literal_value(context, left, ty)?;
+        let exponent = literal_value(context, right, ty)?;
+        if exponent < 0 {
+            return Err("Native Potenz mit konstant negativem Exponenten".into());
+        }
+        let bits = ty.llvm_type(context).into_int_type().get_bit_width();
+        let maske = if bits >= 64 { u64::MAX } else { (1u64 << bits) - 1 };
+        // Quadrieren und Multiplizieren modulo 2^64 (Zweierkomplement-Bitmuster),
+        // danach auf N Bit gekuerzt.
+        let (mut b, mut e, mut r) = (basis as u64, exponent as u64, 1u64);
+        while e != 0 {
+            if e & 1 == 1 { r = r.wrapping_mul(b); }
+            b = b.wrapping_mul(b);
+            e >>= 1;
+        }
+        let r = r & maske;
+        let negativ = ty.is_signed_integer() && (r >> (bits - 1)) & 1 == 1;
+        return Ok(if negativ { i128::from(r) - (1i128 << bits) } else { i128::from(r) });
+    }
     let (text, negative) = match expr {
         Expr::NativeNumber { text, .. } => (text, false),
         Expr::UnaryOp { op: UnaryOpKind::Neg, operand } => match operand.as_ref() {
@@ -83,6 +174,9 @@ pub(crate) struct Folder<'a, 'ctx> {
     target: &'a TargetData,
     registry: &'a NativeStructRegistry<'ctx>,
     scalars: HashMap<String, i128>,
+    /// P2-T48 B1: skalare Float-/bool-Konstanten als typisierter Ausdruck
+    /// (als(T, Literal) bzw. wahr/falsch) fuer @nativ-Koerper.
+    ausdruecke: HashMap<String, Expr>,
 }
 
 impl<'a, 'ctx> Folder<'a, 'ctx> {
@@ -125,7 +219,7 @@ impl<'a, 'ctx> Folder<'a, 'ctx> {
             },
             Expr::Identifier(name) if !shadow.contains(name) => match self.scalars.get(name) {
                 Some(value) => number(*value),
-                None => expr.clone(),
+                None => self.ausdruecke.get(name).cloned().unwrap_or_else(|| expr.clone()),
             },
             Expr::BinaryOp { left, op, right } =>
                 Expr::BinaryOp { left: boxed(left)?, op: op.clone(), right: boxed(right)? },
@@ -162,6 +256,18 @@ impl<'a, 'ctx> Folder<'a, 'ctx> {
             Stmt::ConstAssignment { name, ty, value } => Stmt::ConstAssignment {
                 name: name.clone(), ty: ty.clone(), value: self.expr(value, shadow)?,
             },
+            // P2-T48: auch Ziel und Wert von p[i] = …, p.feld = …, x += … und zeige
+            // falten; sonst bleibt z. B. `q[0] = KONST` ein unbekannter Bezeichner.
+            Stmt::CompoundAssignment { name, op, value } => Stmt::CompoundAssignment {
+                name: name.clone(), op: op.clone(), value: self.expr(value, shadow)?,
+            },
+            Stmt::PropertyAssignment { object, property, value } => Stmt::PropertyAssignment {
+                object: self.expr(object, shadow)?, property: property.clone(), value: self.expr(value, shadow)?,
+            },
+            Stmt::IndexAssignment { object, index, value } => Stmt::IndexAssignment {
+                object: self.expr(object, shadow)?, index: self.expr(index, shadow)?, value: self.expr(value, shadow)?,
+            },
+            Stmt::Show(value) => Stmt::Show(self.expr(value, shadow)?),
             other => other.clone(),
         })).collect()
     }
@@ -219,7 +325,7 @@ pub(crate) fn fold_program<'ctx>(
         Some(target) if has_native => target,
         _ => return Ok(program.clone()),
     };
-    let mut folder = Folder { context, target, registry, scalars: HashMap::new() };
+    let mut folder = Folder { context, target, registry, scalars: HashMap::new(), ausdruecke: HashMap::new() };
     let empty = HashSet::new();
     let mut names = HashSet::new();
     for stmt in &program.statements {
@@ -235,6 +341,10 @@ pub(crate) fn fold_program<'ctx>(
                 let value = literal_value(context, &folded, scalar)
                     .map_err(|e| format!("Native Konstante '{name}': {e}"))?;
                 folder.scalars.insert(name.clone(), value);
+            } else if let Some(ausdruck) = konstanten_ausdruck(context, ty, value)
+                .map_err(|e| format!("Native Konstante '{name}': {e}"))?
+            {
+                folder.ausdruecke.insert(name.clone(), ausdruck);
             }
         }
     }
@@ -283,6 +393,10 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
 
     fn value(&self, ty: &TypeRef, expr: &Expr) -> Result<BasicValueEnum<'ctx>, String> {
         let llvm = self.registry.field_type(self.context, self.target, ty)?;
+        // P2-T48 B1: f32/f64/bool als Skalar, Array- oder Strukturfeld.
+        if let Some(scalar) = float_oder_bool(ty) {
+            return float_bool_wert(self.context, expr, scalar);
+        }
         if let Some(scalar) = integer_type(ty) {
             if let Expr::Identifier(name) = expr {
                 // Symbolische Linkadresse in einem Integer exakt in Zeigerbreite.
@@ -304,10 +418,14 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 if args.len() != layout.fields.len() {
                     return Err(format!("Struktur '{name}' erwartet {} Felder, bekommen {}", layout.fields.len(), args.len()));
                 }
-                let values = layout.fields.iter().zip(args)
+                let mut values = layout.fields.iter().zip(args)
                     .map(|((field, field_ty), arg)| self.value(field_ty, arg)
                         .map_err(|e| format!("{name}.{field}: {e}")))
                     .collect::<Result<Vec<_>, _>>()?;
+                // P2-T13 C: das leere Ausrichtungselement von @ausrichten(n) bekommt den Nullwert.
+                for extra in layout.llvm_type.get_field_types().into_iter().skip(values.len()) {
+                    values.push(extra.const_zero());
+                }
                 Ok(layout.llvm_type.const_named_struct(&values).into())
             }
             (TypeKind::Name(name), _) if self.registry.layout(name).is_some() =>
@@ -364,6 +482,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
 fn const_array<'ctx>(element: BasicTypeEnum<'ctx>, values: &[BasicValueEnum<'ctx>]) -> Result<BasicValueEnum<'ctx>, String> {
     Ok(match element {
         BasicTypeEnum::IntType(t) => t.const_array(&values.iter().map(|v| v.into_int_value()).collect::<Vec<_>>()).into(),
+        BasicTypeEnum::FloatType(t) => t.const_array(&values.iter().map(|v| v.into_float_value()).collect::<Vec<_>>()).into(),
         BasicTypeEnum::StructType(t) => t.const_array(&values.iter().map(|v| v.into_struct_value()).collect::<Vec<_>>()).into(),
         BasicTypeEnum::ArrayType(t) => t.const_array(&values.iter().map(|v| v.into_array_value()).collect::<Vec<_>>()).into(),
         BasicTypeEnum::PointerType(t) => t.const_array(&values.iter().map(|v| v.into_pointer_value()).collect::<Vec<_>>()).into(),

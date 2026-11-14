@@ -1,0 +1,31 @@
+# P2-T58 B8 (Plan 4500717b): Bare-Nachweis fuer Batch A. Reine @nativ-Funktionen
+# mit Locals anderer Typen (A1) und Pure->Pure-Aufrufen mit i64/u8/bool-Rueckgabe
+# (A2), aufgerufen aus unsicher:-Systemkoerpern (Option A, P2-T43). Im Bare-
+# Profil trappen Fehlerpfade (llvm.trap), kein moo_native_fehler.
+# Erwartete serielle Zeilen: 44 1 0
+@nativ
+funktion a_halb64(x: i64) -> i64:
+    gib_zurück x / 2
+@nativ
+funktion a_lokal(a: i32) -> u8:
+    setze breit: i64 auf als(i64, a)
+    setze h: i64 auf a_halb64(breit)
+    gib_zurück als_wrap(u8, h)
+@nativ
+funktion a_klein(a: i32) -> bool:
+    gib_zurück a < 10
+@nativ
+funktion a_beide(a: i32) -> bool:
+    gib_zurück a_klein(a) und a_klein(a + 1)
+@nativ
+funktion k_lokal(a: i32) -> i32:
+    unsicher:
+        gib_zurück als(i32, a_lokal(a))
+@nativ
+funktion k_beide(a: i32) -> i32:
+    unsicher:
+        gib_zurück als(i32, a_beide(a))
+unsicher:
+    zeige k_lokal(600)
+    zeige k_beide(8)
+    zeige k_beide(9)

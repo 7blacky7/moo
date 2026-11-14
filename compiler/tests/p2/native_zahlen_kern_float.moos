@@ -1,0 +1,34 @@
+# P2-T58 D2c (Plan f40b5980 G4): Float-% und Float-** im Bare-Profil. Die
+# Kernel-Pipeline (main.rs KERNEL_SOURCES) linkt compiler/runtime/
+# moo_native_math.c; das nm-Gate von kernel-smoke belegt: kein offenes
+# fmod/pow-Symbol, keine libm. Erwartete serielle Zeilen: 5 1024 3 -6
+@nativ
+funktion b_rem(a: f64, b: f64) -> f64:
+    gib_zurück a % b
+@nativ
+funktion b_pow(a: f64, b: f64) -> f64:
+    gib_zurück a ** b
+@nativ
+funktion b_pow32(a: f32, b: f32) -> f32:
+    gib_zurück a ** b
+@nativ
+funktion k_rem() -> i32:
+    unsicher:
+        gib_zurück als(i32, b_rem(17.5, 5) * 2)
+@nativ
+funktion k_pow() -> i32:
+    unsicher:
+        gib_zurück als(i32, b_pow(2, 10))
+@nativ
+funktion k_pow32() -> i32:
+    unsicher:
+        gib_zurück als(i32, b_pow32(9, 0.5))
+@nativ
+funktion k_neg() -> i32:
+    unsicher:
+        gib_zurück als(i32, b_rem(-5.5, 2) * 4)
+unsicher:
+    zeige k_rem()
+    zeige k_pow()
+    zeige k_pow32()
+    zeige k_neg()

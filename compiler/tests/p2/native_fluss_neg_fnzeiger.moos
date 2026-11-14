@@ -1,0 +1,7 @@
+# P2-T12 D2 (A2): indirekter Aufruf ueber einen Funktionszeiger nur innerhalb von unsicher:.
+@nativ
+funktion f(g: ptr[fn(i32) -> i32], x: i32) -> i32:
+    wenn x < 0:
+        gib_zurück 0
+    gib_zurück g(x)
+zeige 1

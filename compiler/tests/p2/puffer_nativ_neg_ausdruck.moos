@@ -1,0 +1,7 @@
+# P2-T50 (Plan bb3878ef E5): Pufferargument an der dyn-Grenze vorerst nur als Variable.
+@nativ
+funktion s(p: puffer[i32]) -> i32:
+    unsicher:
+        gib_zurück als_wrap(i32, länge(p))
+unsicher:
+    zeige s(puffer_erstellen(i32, 2))

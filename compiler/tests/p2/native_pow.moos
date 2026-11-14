@@ -1,0 +1,47 @@
+# P2-T58 D1 (Plan f40b5980 §2.1): Integer-** nativ. Wrap modulo 2^N wie *,
+# 0 ** 0 = 1; negativer Exponent (signed) ist fangbar, Pure und Systemkoerper
+# mit derselben Meldung (Review 06d10060 #3); unsigned ohne Fehlerfall;
+# potenzierbar(a, b) als Vorpruefung.
+@nativ
+funktion ipow(a: i32, b: i32) -> i32:
+    gib_zurück a ** b
+@nativ
+funktion upow(a: u8, b: u8) -> u8:
+    gib_zurück a ** b
+@nativ
+funktion i64pow(a: i64, b: i64) -> i64:
+    gib_zurück a ** b
+@nativ
+funktion kann(a: i32, b: i32) -> bool:
+    gib_zurück potenzierbar(a, b)
+@nativ
+funktion kann_u(a: u8, b: u8) -> bool:
+    gib_zurück potenzierbar(a, b)
+@nativ
+funktion spow(a: i16, b: i16) -> i16:
+    unsicher:
+        gib_zurück a ** b
+zeige ipow(2, 10)
+zeige ipow(0, 0)
+zeige ipow(-3, 3)
+zeige ipow(2, 31)
+zeige ipow(3, 40)
+zeige upow(3, 5)
+zeige upow(2, 8)
+zeige i64pow(10, 15)
+zeige kann(2, -1)
+zeige kann(2, 3)
+zeige kann_u(2, 3)
+unsicher:
+    zeige spow(-2, 15)
+versuche:
+    zeige ipow(2, -1)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen: " + fehler
+versuche:
+    unsicher:
+        zeige spow(2, -1)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen sys: " + fehler

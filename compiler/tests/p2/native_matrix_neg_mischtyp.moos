@@ -1,0 +1,5 @@
+# P2-T9 B6: keine implizite Konversion zwischen nativen Ganzzahltypen.
+@nativ
+funktion f(a: i32, b: i64) -> i64:
+    gib_zurück a + b
+zeige f(1, 2)

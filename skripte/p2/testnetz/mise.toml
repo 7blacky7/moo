@@ -3,6 +3,11 @@ description = "Capture and compare legacy LLVM IR"
 dir = "{{config_root}}"
 run = "bash legacy_ir.sh"
 
+[tasks.legacy-ir-selftest]
+description = "Reject mutated legacy IR and import snapshots"
+dir = "{{config_root}}"
+run = "bash legacy_ir_selftest.sh"
+
 [tasks.legacy-output]
 description = "Capture and compare deterministic headless example output"
 dir = "{{config_root}}"

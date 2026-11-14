@@ -35,24 +35,39 @@ echo "PASS native Moo Windows x64 + separate Windows C-ABI-Referenz"
 "$compiler" compile "$quelle/zahlen_probe.moos" --target x86_64-pc-windows-gnu --emit-ir -o "$ausgabe/zahlen.ll"
 opt -passes=verify -disable-output "$ausgabe/zahlen.ll"
 zahlen_funktionen="moo_win_div moo_win_rest moo_win_links moo_win_rechts moo_win_wrap8 moo_win_als_u8
-moo_win_wrap_u8 moo_win_satt_i8 moo_win_satt_f moo_win_f2i moo_win_rund moo_win_kleiner moo_win_sicher moo_win_nan"
+moo_win_wrap_u8 moo_win_satt_i8 moo_win_satt_f moo_win_f2i moo_win_rund moo_win_kleiner moo_win_sicher moo_win_nan
+moo_win_lokal moo_win_i64_add moo_win_u64_neg moo_win_f32_rund moo_win_frest moo_win_fpow32"
 zahlen_auswahl=""
 for funktion in $zahlen_funktionen; do zahlen_auswahl="$zahlen_auswahl --func=$funktion"; done
 # Absichtlich unquotiert: die Optionsliste wird in einzelne --func Argumente zerlegt.
 llvm-extract -S --recursive --keep-const-init $zahlen_auswahl "$ausgabe/zahlen.ll" -o "$ausgabe/zahlen.extract.ll"
-if grep -q 'moo_native_fehler' "$ausgabe/zahlen.extract.ll"; then echo 'Win64-Export referenziert moo_native_fehler statt zu trappen' >&2; exit 1; fi
+# Exporte trappen selbst (llvm.trap). Interne @nativ-Callees eines Exports (hier
+# win_halb64 aus moo_win_lokal, Pure->Pure seit P2-T58 Batch A2) melden ueber
+# moo_native_fehler; im runtime-freien Objekt ist das die schwache Definition mit
+# Trap-Koerper (codegen_native.rs native_fehler_hook): der Export trappt weiter
+# (ADR §11), kein offenes Symbol (ADR §13, nm-Pruefung unten). Verboten bleiben
+# eine externe Deklaration und eine schwache Definition ohne Trap.
+if grep -q '^declare .*@moo_native_fehler(' "$ausgabe/zahlen.extract.ll"; then echo 'Win64-Export: moo_native_fehler nur deklariert statt schwacher Trap-Definition' >&2; exit 1; fi
+if grep -q 'moo_native_fehler' "$ausgabe/zahlen.extract.ll"; then
+    zahlen_hook="$(sed -n '/^define weak void @moo_native_fehler(/,/^}/p' "$ausgabe/zahlen.extract.ll")"
+    grep -q 'call void @llvm.trap()' <<<"$zahlen_hook" || { echo 'Win64-Export: moo_native_fehler ohne schwache Trap-Definition' >&2; exit 1; }
+fi
 grep -q 'llvm.trap' "$ausgabe/zahlen.extract.ll" || { echo 'Win64-Export ohne Trap-Fehlerpfad' >&2; exit 1; }
 llc -O2 -filetype=obj "$ausgabe/zahlen.extract.ll" -o "$ausgabe/zahlen.obj"
-zahlen_offen="$(llvm-nm -u "$ausgabe/zahlen.obj" | awk '{print $NF}' || true)"
+# P2-T58 D2c: einzig erlaubte offene Symbole sind die Float-%/**-Funktionen aus
+# compiler/runtime/moo_native_math.c (freestanding, kein libm); sie werden mit MinGW
+# uebersetzt und mitgelinkt. Alles andere bleibt ein Fehler (ADR §13).
+zahlen_offen="$(llvm-nm -u "$ausgabe/zahlen.obj" | awk '{print $NF}' | awk '$0 != "moo_native_fmod" && $0 != "moo_native_powf"' || true)"
 [ -z "$zahlen_offen" ] || { echo "Win64-Zahlenobjekt mit offenen Symbolen: $zahlen_offen" >&2; exit 1; }
-x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -O2 -static-libgcc "$quelle/zahlen_probe.c" "$ausgabe/zahlen.obj" -o "$ausgabe/moo_win_zahlen.exe"
-x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -O2 -static-libgcc "$quelle/zahlen_trap.c" "$ausgabe/zahlen.obj" -o "$ausgabe/moo_win_zahlen_trap.exe"
+x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -O2 -c compiler/runtime/moo_native_math.c -o "$ausgabe/moo_native_math.obj"
+x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -O2 -static-libgcc "$quelle/zahlen_probe.c" "$ausgabe/zahlen.obj" "$ausgabe/moo_native_math.obj" -o "$ausgabe/moo_win_zahlen.exe"
+x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -O2 -static-libgcc "$quelle/zahlen_trap.c" "$ausgabe/zahlen.obj" "$ausgabe/moo_native_math.obj" -o "$ausgabe/moo_win_zahlen_trap.exe"
 "$winrm" skripte/p2/windows_minipc/smb_upload.py "$ausgabe/moo_win_zahlen.exe"
 "$winrm" skripte/p2/windows_minipc/smb_upload.py "$ausgabe/moo_win_zahlen_trap.exe"
 "$winrm" skripte/p2/minipc_winrm.py run "\$ErrorActionPreference='Stop'; & 'D:\\MooTest\\moo_win_zahlen.exe'; if (\$LASTEXITCODE -ne 0) { throw 'Moo-Win64-Zahlen/Casts/bool fehlgeschlagen' }"
 # Trap-Vertrag: Exitcode != 0 (STATUS_ILLEGAL_INSTRUCTION 0xC000001D), kein Fortlauf nach dem Fehler.
 "$winrm" skripte/p2/minipc_winrm.py run "\$ErrorActionPreference='Continue'; \$ausgabe = (& 'D:\\MooTest\\moo_win_zahlen_trap.exe' 2>&1 | Out-String); \$rc = \$LASTEXITCODE; if (\$rc -eq 0) { throw 'Moo-Win64-Trap: Exitcode 0, Export hat nicht getrappt' }; if (\$ausgabe -match 'NICHT ERREICHT') { throw 'Moo-Win64-Trap: Code nach dem Fehler lief' }; Write-Output ('MOO_WIN64_TRAP_OK exit=' + \$rc)"
-echo "PASS Moo Windows x64: native Zahlen/Casts/bool (20 Faelle, C-Harness) + Trap-Vertrag der C-Exporte"
+echo "PASS Moo Windows x64: native Zahlen/Casts/bool/Float-%/** (29 Faelle, C-Harness) + Trap-Vertrag der C-Exporte"
 
 # P2-T43: eigene statische Bibliothek + eigene DLL per @bibliothek aus nativem
 # Moo. GNU-COFF: GNU ld ignoriert .drectve-Bibliotheken, daher -L/-l hier im

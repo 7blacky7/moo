@@ -1,0 +1,6 @@
+# P2-T50 (Plan bb3878ef B1): puffer[bool] ist kein Zahlen-Elementtyp.
+@nativ
+funktion b(p: puffer[bool]) -> i32:
+    unsicher:
+        gib_zurück 1
+zeige 1

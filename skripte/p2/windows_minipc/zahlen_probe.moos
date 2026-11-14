@@ -73,3 +73,45 @@ funktion moo_win_sicher(a: i32, b: i32) -> i32:
 @einstieg
 funktion moo_win_nan(a: f64, b: f64) -> i32:
     gib_zurück als(i32, a / b == a / b)
+
+# P2-T58 B8 (Plan 4500717b): Batch A ueber die Win64-ABI - Local anderen Typs
+# und Pure->Pure-Aufruf mit i64-Rueckgabe (A1/A2), i64-Wrap, unaeres Minus auf
+# u64, f32-Rundung.
+@nativ
+funktion win_halb64(x: i64) -> i64:
+    gib_zurück x / 2
+
+@nativ
+@einstieg
+funktion moo_win_lokal(a: i32) -> u8:
+    setze breit: i64 auf als(i64, a)
+    setze h: i64 auf win_halb64(breit)
+    gib_zurück als_wrap(u8, h)
+
+@nativ
+@einstieg
+funktion moo_win_i64_add(a: i64, b: i64) -> i64:
+    gib_zurück a + b
+
+@nativ
+@einstieg
+funktion moo_win_u64_neg(a: u64) -> u64:
+    gib_zurück -a
+
+@nativ
+@einstieg
+funktion moo_win_f32_rund(a: f32, b: f32) -> i32:
+    gib_zurück als(i32, als(f64, a + b) != als(f64, a) + als(f64, b))
+
+# P2-T58 D2c: Float-% / Float-** ueber compiler/runtime/moo_native_math.c. Das
+# Objekt traegt dafuer genau die offenen Symbole moo_native_fmod/moo_native_powf;
+# test.sh uebersetzt moo_native_math.c mit MinGW und linkt es zum Harness.
+@nativ
+@einstieg
+funktion moo_win_frest(a: f64, b: f64) -> f64:
+    gib_zurück a % b
+
+@nativ
+@einstieg
+funktion moo_win_fpow32(a: f32, b: f32) -> f32:
+    gib_zurück a ** b

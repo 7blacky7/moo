@@ -1,0 +1,6 @@
+# P2-T9 B6: lokale Variable im reinen @nativ-Koerper braucht eine Typannotation.
+@nativ
+funktion f(a: i32) -> i32:
+    setze x auf a + 1
+    gib_zurück x
+zeige f(1)

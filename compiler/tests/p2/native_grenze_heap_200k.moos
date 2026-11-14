@@ -1,0 +1,22 @@
+# P2-T58 B7 (Plan 4500717b): 200k Grenzfehler in versuche: (Text-Argument auf dem
+# Heap, nicht exakte i64-Rueckgabe) duerfen keinen Speicher halten; RSS-Vergleich
+# 200k gegen 800k ueber compiler/tests/p2/defer_heap_rss.c (zahlen §28).
+@nativ
+funktion i32_id(a: i32) -> i32:
+    gib_zurück a
+@nativ
+funktion i64_ueber53(p: u32) -> i64:
+    gib_zurück als_wrap(i64, (als(u64, 1) << 53) + als(u64, p))
+setze gefangen auf 0
+setze i auf 0
+solange i < 200000:
+    versuche:
+        zeige i32_id("x" + i)
+    fange fehler:
+        setze gefangen auf gefangen + 1
+    versuche:
+        setze w auf i64_ueber53(1)
+    fange fehler:
+        setze gefangen auf gefangen + 1
+    setze i auf i + 1
+zeige gefangen

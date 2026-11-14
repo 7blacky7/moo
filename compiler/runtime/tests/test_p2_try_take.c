@@ -29,6 +29,9 @@ static MooValue make_error(void) {
     moo_val_set_ptr(&v, p);
     return v;
 }
+/* moo_native_fehler (moo_error.c) erzeugt seine Meldung per moo_string_new;
+   der Stub zaehlt sie wie jeden anderen Fehlerwert. */
+MooValue moo_string_new(const char* chars) { (void)chars; return make_error(); }
 
 int main(void) {
     assert(moo_try_take_error().tag == MOO_NONE);
@@ -90,6 +93,25 @@ int main(void) {
     assert(moo_try_check() && moo_try_take_error().tag == MOO_NONE);
     moo_try_leave();
     assert(live_objects == 0);
+
+    /* P2-T58 A3: erster Fehler gewinnt. Ein Folgefehler eines nativen Aufrufers,
+       der mit dem Nullwert des gescheiterten Callees weiterrechnet, legt keine
+       neue Meldung an und ueberschreibt die erste nicht. */
+    moo_try_enter();
+    moo_native_fehler("erster");
+    assert(moo_try_check() && live_objects == 1);
+    MooValue erster = moo_last_error;
+    moo_native_fehler("zweiter");
+    assert(moo_try_check() && live_objects == 1 && moo_last_error.data == erster.data);
+    MooValue gewinner = moo_try_take_error();
+    assert(gewinner.data == erster.data && !moo_try_check());
+    moo_release(gewinner);
+    /* Nach dem Abholen gilt wieder: ein neuer Fehler wird gemeldet. */
+    moo_native_fehler("danach");
+    assert(moo_try_check() && live_objects == 1);
+    moo_release(moo_try_take_error());
+    moo_try_leave();
+    assert(moo_try_depth == 0 && live_objects == 0);
 
     /* With no outer handler, cleanup completes before rethrow exits. */
     int fd[2];

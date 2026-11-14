@@ -1,0 +1,6 @@
+# P2-T9 B6: Rekursion im reinen @nativ-Pfad bleibt abgelehnt (ohne Kontrollfluss
+# nie terminierend; Plan 4500717b E5). Gilt jetzt auch fuer i64-Rueckgaben (A2).
+@nativ
+funktion f(a: i64) -> i64:
+    gib_zurück f(a)
+zeige f(1)

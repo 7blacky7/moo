@@ -1,0 +1,34 @@
+# P2-T9 A4 + Review 9b847d8e: Literal-Standard (ADR §2) symmetrisch in beiden
+# Lowerern. Zwei untypisierte Literale: f64, sobald eines ein Float-Literal ist,
+# sonst i64 - unabhaengig von der Reihenfolge; ein typisierter Nachbar hat Vorrang.
+# p* = reiner Pfad (codegen_native), s* = Systemkoerper (native_system).
+@nativ
+funktion p1() -> bool:
+    gib_zurück 1.0 < 2
+@nativ
+funktion p2() -> bool:
+    gib_zurück 1 < 2.0
+@nativ
+funktion p3() -> bool:
+    gib_zurück 3 > -2
+@nativ
+funktion s1(x: i32) -> bool:
+    unsicher:
+        gib_zurück 1.0 < 2
+@nativ
+funktion s2(x: i32) -> bool:
+    unsicher:
+        gib_zurück 1 < 2.0
+@nativ
+funktion s3(x: i32) -> i32:
+    unsicher:
+        wenn -1 < 0:
+            gib_zurück x
+        gib_zurück 0
+zeige p1()
+zeige p2()
+zeige p3()
+unsicher:
+    zeige s1(0)
+    zeige s2(0)
+    zeige s3(7)

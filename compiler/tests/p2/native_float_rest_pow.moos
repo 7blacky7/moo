@@ -1,0 +1,62 @@
+# P2-T58 D2c (Plan f40b5980 G3): Float-% (wie C-fmod) und Float-** (wie C99-pow)
+# im Pure- und im Systemkoerper, f64 und f32, ueber compiler/runtime/
+# moo_native_math.c (kein libm, kein LLVM-frem). Kein Moo-Fehler bei x % 0 oder
+# (-2) ** 0.5: das Ergebnis ist NaN, versuche faengt nichts. NaN wird nur ueber
+# r != r geprueft (Vorzeichen eines erzeugten NaN ist plattformabhaengig).
+# s_kehr zeigt das Vorzeichen der Null: fmod(-4, 2) = -0, 1 / -0 = -inf.
+@nativ
+funktion p_rem(a: f64, b: f64) -> f64:
+    gib_zurück a % b
+@nativ
+funktion p_pow(a: f64, b: f64) -> f64:
+    gib_zurück a ** b
+@nativ
+funktion p_rem32(a: f32, b: f32) -> f32:
+    gib_zurück a % b
+@nativ
+funktion p_pow32(a: f32, b: f32) -> f32:
+    gib_zurück a ** b
+@nativ
+funktion p_konst() -> f64:
+    gib_zurück 7.5 % 2 + 2 ** 0.5
+@nativ
+funktion s_rem(a: f64, b: f64) -> f64:
+    unsicher:
+        setze r: f64 auf a % b
+        gib_zurück r
+@nativ
+funktion s_pow32(a: f32, b: f32) -> f32:
+    unsicher:
+        gib_zurück a ** b
+@nativ
+funktion s_nan(a: f64, b: f64) -> bool:
+    unsicher:
+        setze r: f64 auf a % b
+        setze q: f64 auf a ** b
+        gib_zurück r != r oder q != q
+@nativ
+funktion s_kehr(a: f64, b: f64) -> f64:
+    unsicher:
+        gib_zurück 1.0 / (a % b)
+zeige p_rem(5.5, 2)
+zeige p_rem(-5.5, 2)
+zeige p_rem(5.5, -2)
+zeige p_pow(2, 10)
+zeige p_pow(9, 0.5)
+zeige p_pow(10, -2)
+zeige p_rem32(5.5, 2)
+zeige p_pow32(1.5, 2)
+zeige p_konst()
+unsicher:
+    zeige s_rem(7, -3)
+    zeige s_pow32(2, 0.5)
+    zeige s_nan(5, 3)
+    zeige s_kehr(-4, 2)
+    zeige s_kehr(4, 2)
+versuche:
+    unsicher:
+        zeige s_nan(1, 0)
+        zeige s_nan(-2, 0.5)
+    zeige "KEIN_FEHLER"
+fange fehler:
+    zeige "FALSCH_GEFANGEN: " + fehler

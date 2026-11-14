@@ -1,4 +1,7 @@
+#include <stdbool.h>
 #include <stdint.h>
+
+bool p2_ffi_bool_not(bool wert) { return !wert; }
 
 int8_t p2_ffi_i8_identity(int8_t wert) { return wert; }
 uint8_t p2_ffi_u8_identity(uint8_t wert) { return wert; }

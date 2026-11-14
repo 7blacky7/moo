@@ -1,0 +1,27 @@
+# P2-T58 (Plan f40b5980 §3.1, Review 06d10060 #2): native Konstanten falten **
+# mit derselben Regel wie der Lowerer: Wrap modulo 2^N, 0 ** 0 = 1; ein konstant
+# negativer Exponent ist ein Compilefehler (native_konst_pow_negativ.moos).
+@nativ
+konstante K: i32 auf 2 ** 10
+@nativ
+konstante W: i8 auf 2 ** 7
+@nativ
+konstante U: u8 auf 3 ** 6
+@nativ
+konstante Z: i64 auf 0 ** 0
+@nativ
+funktion k_k() -> i32:
+    gib_zurück K
+@nativ
+funktion k_w() -> i8:
+    gib_zurück W
+@nativ
+funktion k_u() -> u8:
+    gib_zurück U
+@nativ
+funktion k_z() -> i64:
+    gib_zurück Z
+zeige k_k()
+zeige k_w()
+zeige k_u()
+zeige k_z()

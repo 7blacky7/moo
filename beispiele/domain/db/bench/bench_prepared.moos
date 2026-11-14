@@ -1,3 +1,7 @@
+# P2-T33: eigenstaendig uebersetzbar; nur die Definitionen aus postgres_client
+# (ohne dessen Testteil). Ausfuehrung braucht einen erreichbaren Postgres-Server.
+aus "../postgres_client" importiere PgClient
+
 # Phase 2 T1 Prepared-Bench (2026-05-07)
 #
 # Vergleicht Simple-Query (String-Konkat) vs Extended-Query (Prepared+Bind+Execute)

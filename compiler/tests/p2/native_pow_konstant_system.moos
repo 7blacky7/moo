@@ -1,0 +1,8 @@
+# P2-T58 (Review 06d10060 #1, Plan f40b5980 §2.1): ein konstant negativer
+# Exponent ist auch im Systemkoerper ein Compilefehler, nicht erst Laufzeitfehler.
+@nativ
+funktion f(a: i32) -> i32:
+    unsicher:
+        gib_zurück a ** -2
+unsicher:
+    zeige f(3)

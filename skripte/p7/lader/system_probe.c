@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 
 typedef uint64_t (__attribute__((ms_abi)) *dienst_t)(uint64_t, uint64_t);
 extern uint64_t sys_summe(uint64_t);
@@ -49,6 +50,20 @@ extern uint64_t sys_value_field_store(uint64_t);
 extern uint64_t sys_value_field_copy(uint64_t);
 extern uint64_t sys_value_call(uint64_t);
 extern uint64_t sys_value_nested_call(uint64_t);
+/* P2-T48 E3 (Plan a71947f7). */
+struct e3_messung { uint32_t werte[4]; float skala; _Bool gueltig; uint16_t marke; };
+_Static_assert(sizeof(struct e3_messung) == 24, "C-ABI E3Messung");
+_Static_assert(offsetof(struct e3_messung, gueltig) == 20, "C-ABI E3Messung.gueltig");
+_Static_assert(offsetof(struct e3_messung, marke) == 22, "C-ABI E3Messung.marke");
+extern uint64_t sys_e3_arrays(uint64_t);
+extern uint64_t sys_e3_null(uint64_t);
+extern uint64_t sys_e3_float(uint64_t);
+extern uint64_t sys_e3_struktur_array(uint64_t);
+extern uint64_t sys_e3_overlap(uint64_t);
+extern uint64_t sys_e3_alias(void);
+struct e3_block { _Alignas(32) uint32_t a; uint8_t b; };
+_Static_assert(sizeof(struct e3_block) == 32 && _Alignof(struct e3_block) == 32, "C-ABI E3Block");
+extern uint64_t sys_e3_ausgerichtet(uint64_t);
 extern uint64_t sys_c_abi4(uint64_t);
 extern uint64_t sys_c_abi8(uint64_t);
 extern uint64_t sys_c_abi12(uint64_t);
@@ -265,7 +280,54 @@ int main(void) {
     pruefe("abi24-wort3", aus24[3], 8);
     pruefe("abi24-wort4", aus24[4], 10);
     pruefe("abi24-wort5", aus24[5], 12);
+    /* P2-T48 E3: lokale Arrays, Arrayliteral, Nullkonstruktor, Float-Konstanten,
+     * Struktur-Array-Stride, Overlap (gegen memmove) und Slot<->Zeiger-Alias. */
+    struct e3_messung messung;
+    memset(&messung, 0xAB, sizeof messung);
+    pruefe("e3-arrays-rueckgabe", (int64_t)sys_e3_arrays((uint64_t)(uintptr_t)&messung), 141);
+    pruefe("e3-arrays-werte0", messung.werte[0], 100);
+    pruefe("e3-arrays-werte1", messung.werte[1], 2);
+    pruefe("e3-arrays-werte3", messung.werte[3], 40);
+    pruefe("e3-arrays-skala", messung.skala == 0.1f, 1);
+    pruefe("e3-arrays-gueltig", messung.gueltig, 1);
+    pruefe("e3-arrays-marke", messung.marke, 7);
+    struct e3_messung leer;
+    memset(&leer, 0xAB, sizeof leer);
+    pruefe("e3-null-rueckgabe", (int64_t)sys_e3_null((uint64_t)(uintptr_t)&leer), 0);
+    pruefe("e3-null-felder", leer.werte[0] | leer.werte[1] | leer.werte[2] | leer.werte[3] | leer.marke | leer.gueltig, 0);
+    pruefe("e3-null-skala", leer.skala == 0.0f, 1);
+    double fl[2] = {0.0, 0.0};
+    pruefe("e3-float-rueckgabe", (int64_t)sys_e3_float((uint64_t)(uintptr_t)fl), 1);
+    pruefe("e3-float-f32", fl[0] == (double)0.1f * 10.0 + 0.5, 1);
+    pruefe("e3-float-tabelle", fl[1] == -1.25, 1);
+    struct native_wert reihe[3];
+    memset(reihe, 0xAB, sizeof reihe);
+    pruefe("e3-strukturarray-rueckgabe", (int64_t)sys_e3_struktur_array((uint64_t)(uintptr_t)reihe), 23);
+    pruefe("e3-strukturarray-code0", reihe[0].code, 1);
+    pruefe("e3-strukturarray-wert0", (int64_t)reihe[0].wert, 10);
+    pruefe("e3-strukturarray-code1", reihe[1].code, 2);
+    pruefe("e3-strukturarray-wert1", (int64_t)reihe[1].wert, 20);
+    pruefe("e3-strukturarray-code2", reihe[2].code, 3);
+    pruefe("e3-strukturarray-wert2", (int64_t)reihe[2].wert, 0);
+    struct native_wert ov[2], ref[2];
+    memset(ov, 0, sizeof ov);
+    ov[0].code = 1; ov[0].wert = 2; ov[1].code = 3; ov[1].wert = 4;
+    memcpy(ref, ov, sizeof ov);
+    memmove((unsigned char *)ref, (unsigned char *)ref + 8, sizeof ref[0]);
+    pruefe("e3-overlap-rueckgabe", (int64_t)sys_e3_overlap((uint64_t)(uintptr_t)ov), (int64_t)ref[0].wert);
+    pruefe("e3-overlap-code0", ov[0].code, ref[0].code);
+    pruefe("e3-overlap-wert0", (int64_t)ov[0].wert, (int64_t)ref[0].wert);
+    pruefe("e3-overlap-code1", ov[1].code, ref[1].code);
+    pruefe("e3-overlap-wert1", (int64_t)ov[1].wert, (int64_t)ref[1].wert);
+    pruefe("e3-alias", (int64_t)sys_e3_alias(), 606);
+    struct e3_block bloecke[2];
+    memset(bloecke, 0xAB, sizeof bloecke);
+    pruefe("c-ausgerichtet-adresse-stride", (int64_t)sys_e3_ausgerichtet((uint64_t)(uintptr_t)bloecke), 32);
+    pruefe("c-ausgerichtet-a0", bloecke[0].a, 7);
+    pruefe("c-ausgerichtet-b0", bloecke[0].b, 9);
+    pruefe("c-ausgerichtet-a1", bloecke[1].a, 1);
+    pruefe("c-ausgerichtet-b1", bloecke[1].b, 2);
     if (fehler) return 1;
-    printf("PASS system_probe: 117 Pruefungen\n");
+    printf("PASS system_probe: 148 Pruefungen\n");
     return 0;
 }

@@ -1,0 +1,25 @@
+# P2-T15/T50 C4 (Plan bb3878ef): 10^7 f32 fuellen (i % 1024) und in f64 summieren,
+# nativ ueber puffer[f32]. Puffer ausserhalb des Messintervalls angelegt (wie C);
+# das Intervall enthaelt einen dyn->nativ-Aufruf inkl. Pin. Soll: 5114877120.
+@nativ
+funktion p2_puffer_fuellen_summe(p: puffer[f32]) -> f64:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(p):
+            p[i] = als(f32, i % 1024)
+            setze i auf i + 1
+        setze s: f64 auf 0.0
+        setze j: u64 auf 0
+        solange j < länge(p):
+            setze s auf s + als(f64, p[j])
+            setze j auf j + 1
+        gib_zurück s
+
+setze p auf puffer_erstellen(f32, 10000000)
+setze ergebnis auf 0
+setze start auf zeit()
+unsicher:
+    setze ergebnis auf p2_puffer_fuellen_summe(p)
+setze ende auf zeit()
+zeige ende - start
+zeige ergebnis

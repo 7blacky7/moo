@@ -65,6 +65,12 @@ pub struct CodeGen<'ctx> {
     extern_bindings: crate::ffi_types::ExternRegistry<'ctx>,
     native_functions: HashMap<String, FunctionValue<'ctx>>,
     native_signatures: HashMap<String, crate::codegen_native::NSignature>,
+    /// P2-T50 B4: puffer[T]-Positionen dyn aufrufbarer Systemkoerper (Some(T));
+    /// native_signatures traegt dort T nur als Platzhalter (siehe dyn_signature).
+    native_buffer_params: HashMap<String, Vec<Option<crate::native_system::PufferArt>>>,
+    /// P2-T12 C (Plan 31194239): sichere @nativ-Koerper mit Kontrollfluss im
+    /// System-Emitter (Sicher-Modus); dyn. ohne unsicher: aufrufbar.
+    safe_native_functions: std::collections::HashSet<String>,
     native_ffi_functions: std::collections::HashSet<String>,
     // P2-T66: hosted x86_64-Systemkoerper (nur !bare_mode). write_object
     // schaltet IR-O2 ausschliesslich ein, wenn diese Liste nicht leer ist.
@@ -186,8 +192,10 @@ impl<'ctx> CodeGen<'ctx> {
             extern_bindings: crate::ffi_types::ExternRegistry::default(),
             native_functions: HashMap::new(),
             native_signatures: HashMap::new(),
+            native_buffer_params: HashMap::new(),
             native_ffi_functions: std::collections::HashSet::new(),
             hosted_system_functions: Vec::new(),
+            safe_native_functions: std::collections::HashSet::new(),
             dyn_named_functions: std::collections::HashSet::new(),
             native_try_direct: false,
             native_skip_target: None,
@@ -645,6 +653,17 @@ impl<'ctx> CodeGen<'ctx> {
         self.native_structs.snapshot()
     }
 
+    /// P2-T13/T48 (Plan a71947f7 E1): dieselbe Registrierung wie
+    /// diagnostic_layouts, ausgegeben als vom Ziel-C-Compiler prüfbarer Header.
+    pub(crate) fn diagnostic_c_header(&mut self, program: &Program, triple: &str, guard: &str)
+        -> Result<String, String>
+    {
+        self.register_native_structs(program)?;
+        let target = self.target_data.as_ref()
+            .ok_or_else(|| "Ziel-Datenlayout für C-Header fehlt".to_string())?;
+        self.native_structs.c_header(self.context, target, triple, guard)
+    }
+
     /// Kompiliert ein ganzes Programm
     pub fn compile_program(&mut self, program: &Program) -> Result<(), String> {
         self.register_native_structs(program)?;
@@ -808,16 +827,16 @@ impl<'ctx> CodeGen<'ctx> {
                         _ => false,
                     });
                 if is_struct {
-                    // Kein pauschales Struct-ABI: nur die anhand von Clang
-                    // belegten SysV-/Win64-Formen mit bis zu zwei gleichen
-                    // Strukturen oder u64-Praefixen; andere gesperrt.
-                    if !decorators.is_empty() {
-                        return Err(format!("extern C '{name}': Strukturwert mit Decorators noch nicht freigegeben"));
-                    }
-                    self.extern_bindings.declare_struct_roundtrip(
-                        self.context, &self.module, name, &types, result,
-                        &self.native_structs,
-                    )?;
+                    // P2-T19/T56 (Plan 91033131): Strukturwerte by value laufen
+                    // ueber den allgemeinen Klassifizierer (ffi_abi): SysV x86_64,
+                    // MS x64, AAPCS64; @aufrufkonvention waehlt die ABI.
+                    let convention = crate::ffi_types::decorator_call_convention(decorators, triple)?;
+                    let target = self.target_data.as_ref()
+                        .ok_or("Ziel-Datenlayout fuer die C-ABI fehlt")?;
+                    self.extern_bindings.declare_abi(
+                        self.context, &self.module, target, name, &types, result,
+                        &self.native_structs, convention,
+                    ).map_err(|fehler| format!("extern C '{name}': {fehler}"))?;
                 } else {
                     let convention = crate::ffi_types::decorator_call_convention(decorators, triple)?;
                     let signature = crate::ffi_types::FfiSignature::validate(triple, &types, result, false)?
@@ -941,11 +960,28 @@ impl<'ctx> CodeGen<'ctx> {
                 let returns_pointer = return_type.as_ref().is_some_and(|ty| matches!(
                     &ty.kind, TypeKind::Generic { name, .. } if name == "ptr" || name == "zeiger"
                 ));
+                // P2-T50 B1: puffer[T]-Parameter vorerst nur hosted in unsicher:-
+                // Systemkoerpern (sichere Koerper folgen mit P2-T12, Bare spaeter).
+                let has_buffer = param_types.iter().flatten().any(|ty| matches!(
+                    &ty.kind, TypeKind::Generic { name, .. } if name == "puffer" || name == "buffer"
+                ));
+                // P2-T48 A5 (Plan a71947f7): feste Arrays by value wie in C nicht
+                // als Parameter/Rueckgabe (vor der Pfadwahl, auch fuer Einzeiler).
+                if param_types.iter().flatten().chain(return_type.iter())
+                    .any(|ty| matches!(ty.kind, TypeKind::Array { .. }))
+                {
+                    return Err(format!("Native Funktion '{name}': Feste Arrays sind als Parameter/Rueckgabe by value nicht freigegeben (ptr[T] oder eine Struktur mit Arrayfeld verwenden)"));
+                }
+                // P2-T12 (Plan 31194239 §4): sichere Koerper duerfen puffer[T]
+                // nutzen (Index grenzgeprueft); Bare folgt spaeter.
+                if has_buffer && self.bare_mode {
+                    return Err(format!("Native Funktion '{name}': puffer[T]-Parameter sind vorerst nur hosted nutzbar"));
+                }
                 // Ein einzelner skalarer extern-C-Aufruf bleibt im bestehenden
                 // FFI-Pfad. Mit Zeiger- oder Strukturtypen in der Signatur
                 // uebernimmt der Systemkoerper: der skalare FFI-Emitter kennt
                 // keine Zeiger (ffi_types.rs scalar_parameters/scalar_result).
-                let ffi_single = !(has_pointer || returns_pointer || struct_param || returns_struct)
+                let ffi_single = !(has_pointer || returns_pointer || struct_param || returns_struct || has_buffer)
                     && matches!(body.as_slice(), [Stmt::UnsafeBlock { body: inner }]
                     if matches!(inner.as_slice(),
                         [Stmt::Return(Some(Expr::FunctionCall { name, .. }))]
@@ -958,11 +994,24 @@ impl<'ctx> CodeGen<'ctx> {
                 // koerper, kern_*-Builtins und bare_mode bleiben unberuehrt.
                 let hosted_system = hosted_x86 && !self.bare_mode && !ffi_single
                     && matches!(body.as_slice(), [Stmt::UnsafeBlock { .. }])
-                    && (returns_struct || struct_param || has_pointer || returns_pointer
+                    && (returns_struct || struct_param || has_pointer || returns_pointer || has_buffer
                         || crate::native_system::has_struct_locals(body, &native_nominals)
                         || crate::native_system::is_system_body(body, params));
+                // P2-T12 C2 (Plan 31194239): sichere Koerper mit Kontrollfluss
+                // (wenn/solange/für, Neuzuweisung, unsicher:-Inseln) laufen im
+                // System-Emitter im Sicher-Modus; Pure-Slices, FFI-Einzelaufruf,
+                // [unsicher:]-Koerper, Zeiger-/Puffer-Signaturen und Bare-
+                // Strukturrueckgaben behalten ihre bisherigen Pfade.
+                // Hosted puffer[T]-/ptr-Signaturen (Review 074b5d17) laufen auch in
+                // Pure-Slice-Form hier (Pure-Emitter kennt sie nicht); Bare-Zeiger-
+                // funktionen behalten ihren Bestandspfad.
+                let zeiger_puffer = has_pointer || returns_pointer || has_buffer;
+                let sicher_system = !matches!(body.as_slice(), [Stmt::UnsafeBlock { .. }])
+                    && (!crate::native_system::is_pure_slice(body) || (zeiger_puffer && !self.bare_mode))
+                    && !(self.bare_mode && (returns_struct || zeiger_puffer))
+                    && (hosted_x86 || self.bare_mode);
                 if (self.bare_mode && (crate::native_system::is_system_body(body, params) || returns_struct))
-                    || hosted_system
+                    || hosted_system || sicher_system
                 {
                     let sig = crate::native_system::SystemSignature::from_annotations(
                         param_types, return_type.as_ref(), &native_nominals,
@@ -978,6 +1027,13 @@ impl<'ctx> CodeGen<'ctx> {
                             ));
                         }
                     }
+                    if sig.uses_buffers() && (convention != 0 || decorators.iter().any(|d|
+                        matches!(d.name.as_str(), "einstieg" | "entry")))
+                    {
+                        return Err(format!(
+                            "Native Funktion '{name}': puffer[T]-Parameter sind nur fuer interne Moo-Aufrufe freigegeben (keine C-Exporte)"
+                        ));
+                    }
                     let internal = format!("__moo_native.{name}");
                     if self.module.get_function(&internal).is_some() {
                         return Err(format!("Native Funktion '{name}': interner Symbolkonflikt"));
@@ -987,16 +1043,21 @@ impl<'ctx> CodeGen<'ctx> {
                         Some(inkwell::module::Linkage::Internal));
                     if convention != 0 { fun.set_call_conventions(convention); }
                     self.native_functions.insert(name.clone(), fun);
+                    if sicher_system { self.safe_native_functions.insert(name.clone()); }
                     // P2-T43: Bare-Systemkoerper ebenfalls registrieren; die
                     // Aufrufstelle laesst im Bare-Profil nur runtime-freie
                     // Literal-Argumente zu (hosted_system_functions wird sonst
                     // nur bei !bare_mode ausgewertet, write_object).
-                    if hosted_system || self.bare_mode {
+                    if hosted_system || sicher_system || self.bare_mode {
                         self.hosted_system_functions.push(fun);
                         // P2-T66 Stufe 2a: rein skalare Signatur -> aus dynamischem
                         // Moo aufrufbar; die Aufrufstelle verlangt unsicher:/main/kein try.
-                        if let Some(scalar) = sig.scalar_signature() {
-                            self.native_signatures.insert(name.clone(), scalar);
+                        // P2-T50 B4: auch mit puffer[T]-Parametern (Pin-Adapter).
+                        if let Some((dyn_sig, puffer)) = sig.dyn_signature() {
+                            if puffer.iter().any(Option::is_some) {
+                                self.native_buffer_params.insert(name.clone(), puffer);
+                            }
+                            self.native_signatures.insert(name.clone(), dyn_sig);
                         }
                     }
                     system_functions.insert(name.clone(), (fun, sig));
@@ -1052,9 +1113,11 @@ impl<'ctx> CodeGen<'ctx> {
                     self.native_ffi_functions.insert(name.clone());
                 } else {
                     pure_bodies.insert(name.clone(), body.as_slice());
-                    if result_ty == Some(NType::I32)
-                        || (self.bare_mode && result_ty == Some(NType::U64))
-                    {
+                    // P2-T9 (Plan 4500717b A2): jede skalare Rueckgabe ist direkt
+                    // aus anderen reinen @nativ-Funktionen aufrufbar (vorher nur
+                    // i32 bzw. bare u64). void bleibt aussen vor:
+                    // lower_nontrapping_expr verlangt signature.result == expected.
+                    if result_ty.is_some() {
                         pure_functions.insert(name.clone(), (fun, sig.clone()));
                     }
                 }
@@ -1103,6 +1166,25 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
             }
+            // P2-T58 C1: fehlbare Aufrufziele (Fixpunkt ueber alle nativen Koerper);
+            // Systemkoerper pruefen nach ihrem Aufruf das Fehlerflag (C3).
+            let defs: Vec<crate::native_system::FehlbarDef> = program.statements.iter().filter_map(|stmt| match stmt {
+                Stmt::FunctionDef { name, params, param_types, body, return_type, decorators, .. }
+                    if decorators.iter().any(|d| d.name == "nativ" || d.name == "native")
+                        && native_callees.contains_key(name) =>
+                    Some(crate::native_system::FehlbarDef {
+                        name: name.clone(),
+                        body: body.as_slice(),
+                        ergebnis: return_type.as_ref(),
+                        params: params.iter().map(String::as_str)
+                            .zip(param_types.iter().map(Option::as_ref)).collect(),
+                    }),
+                _ => None,
+            }).collect();
+            let fehlbar = crate::native_system::fehlbare_funktionen(&defs);
+            for (name, callee) in native_callees.iter_mut() {
+                callee.fehlbar = fehlbar.contains(name);
+            }
         }
         for stmt in &program.statements {
             match stmt {
@@ -1116,6 +1198,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 self.context, &self.module, target, &self.native_structs,
                                 &native_nominals, *fun, sig, params, body,
                                 &native_callees, &self.extern_bindings,
+                                self.safe_native_functions.contains(name),
                             ).map_err(|e| format!("Native Funktion '{name}': {e}"))?;
                             continue;
                         }
@@ -3898,6 +3981,11 @@ impl<'ctx> CodeGen<'ctx> {
                     Self::collect_defer_calls_expr(condition, names);
                     Self::collect_defer_calls(else_body, names);
                 }
+                // P2-T82: Systemkoerper-Aufrufe stehen in unsicher:-Bloecken;
+                // ohne Abstieg erhielt z.B. paar() keinen native.guard.exit.
+                // Fuer den Defer-Graph wirkungsneutral: runtime_defer_scope_supported
+                // lehnt UnsafeBlock ab, solche Koerper werden dort nie traversiert.
+                Stmt::UnsafeBlock { body } => Self::collect_defer_calls(body, names),
                 _ => {}
             }
         }
@@ -4114,29 +4202,112 @@ impl<'ctx> CodeGen<'ctx> {
         let Expr::Identifier(typ_name) = typ else {
             return Err(format!("{name}: erstes Argument muss ein Elementtyp sein ({ERLAUBT})"));
         };
+        // P2-T48 D (Plan a71947f7 D2): registrierte Struktur als Elementtyp;
+        // Groesse, Ausrichtung und Struktur-ID als Konstanten an die Runtime.
+        if let Some(layout) = self.native_structs.layout(typ_name) {
+            if layout.alignment > 16 {
+                return Err(format!("{name}: puffer[{typ_name}] mit Ausrichtung {} ist nicht freigegeben (hoechstens 16)", layout.alignment));
+            }
+            let (size, align) = (layout.size, u64::from(layout.alignment));
+            let id = self.native_structs.struktur_id(typ_name)
+                .ok_or_else(|| format!("{name}: Struktur-ID fuer '{typ_name}' fehlt"))?;
+            let create = match self.module.get_function("moo_buffer_create_struct") {
+                Some(f) => f,
+                None => {
+                    let windows = self.windows_x64_abi();
+                    let ptr = self.context.ptr_type(inkwell::AddressSpace::default());
+                    let i64t = self.context.i64_type();
+                    let mut params: Vec<BasicMetadataTypeEnum<'ctx>> = Vec::new();
+                    if windows { params.push(ptr.into()); }
+                    params.extend([BasicMetadataTypeEnum::from(i64t), i64t.into(), i64t.into()]);
+                    params.push(if windows { ptr.into() } else { self.mv_type().into() });
+                    let fn_type = if windows {
+                        self.context.void_type().fn_type(&params, false)
+                    } else {
+                        self.mv_type().fn_type(&params, false)
+                    };
+                    self.module.add_function("moo_buffer_create_struct", fn_type, None)
+                }
+            };
+            let laenge = self.compile_expr(laenge)?;
+            let i64t = self.context.i64_type();
+            return self.call_rt(create, &[
+                i64t.const_int(size, false).into(), i64t.const_int(align, false).into(),
+                i64t.const_int(id, false).into(), laenge.into(),
+            ], "puffer_struktur_neu");
+        }
         // Codes = MooBufferScalarType (compiler/runtime/moo_buffer.h).
         let code: u64 = match typ_name.as_str() {
             "i8" => 1, "u8" => 2, "i16" => 3, "u16" => 4, "i32" => 5,
             "u32" => 6, "i64" => 7, "u64" => 8, "f32" => 9, "f64" => 10,
             other => return Err(format!("{name}: unbekannter Elementtyp '{other}' ({ERLAUBT})")),
         };
-        let create = match self.module.get_function("moo_buffer_create") {
-            Some(function) => function,
-            None => {
-                let i32_type = self.context.i32_type();
-                let fn_type = if self.windows_x64_abi() {
-                    // Wie decl_mv_mv: sret-Puffer zuerst, MooValue-Parameter indirekt.
-                    let ptr = self.context.ptr_type(inkwell::AddressSpace::default());
-                    self.context.void_type().fn_type(&[ptr.into(), i32_type.into(), ptr.into()], false)
-                } else {
-                    self.mv_type().fn_type(&[i32_type.into(), self.mv_type().into()], false)
-                };
-                self.module.add_function("moo_buffer_create", fn_type, None)
-            }
-        };
+        let create = self.buffer_rt_function("moo_buffer_create", true, 1, true);
         let laenge = self.compile_expr(laenge)?;
         let typ_code = self.context.i32_type().const_int(code, false);
         self.call_rt(create, &[typ_code.into(), laenge.into()], "puffer_neu")
+    }
+
+    /// P2-T50 (Plan bb3878ef A3): Puffer-Runtimefunktion erst bei Bedarf
+    /// deklarieren, damit Programme ohne Puffer ihr bisheriges IR behalten.
+    /// Parameter: optional ein i32 vorweg, dann `mv_params` MooValues; Ergebnis
+    /// MooValue (`wert`) oder void. Windows-x64 wie decl_mv_mv: sret-Puffer
+    /// zuerst, MooValue-Parameter indirekt (call_rt/call_rt_void passen an).
+    fn buffer_rt_function(&self, symbol: &str, i32_zuerst: bool, mv_params: usize, wert: bool) -> FunctionValue<'ctx> {
+        if let Some(function) = self.module.get_function(symbol) {
+            return function;
+        }
+        let windows = self.windows_x64_abi();
+        let ptr = self.context.ptr_type(inkwell::AddressSpace::default());
+        let mut params: Vec<BasicMetadataTypeEnum<'ctx>> = Vec::new();
+        if windows && wert { params.push(ptr.into()); }
+        if i32_zuerst { params.push(self.context.i32_type().into()); }
+        for _ in 0..mv_params {
+            params.push(if windows { ptr.into() } else { self.mv_type().into() });
+        }
+        let fn_type = if wert && !windows {
+            self.mv_type().fn_type(&params, false)
+        } else {
+            self.context.void_type().fn_type(&params, false)
+        };
+        self.module.add_function(symbol, fn_type, None)
+    }
+
+    /// P2-T50 A3: `puffer_anhängen(p, wert)` / `buffer_append(p, value)` haengt
+    /// ein Element an (moo_buffer_append_value: Puffer geliehen, Wert
+    /// konsumiert); Ergebnis nichts.
+    fn compile_buffer_append(&mut self, name: &str, args: &[Expr]) -> Result<StructValue<'ctx>, String> {
+        if self.bare_mode {
+            return Err(format!("{name}: typisierte Puffer sind im Bare-Profil noch nicht verfuegbar"));
+        }
+        let [puffer, wert] = args else {
+            return Err(format!("{name} erwartet genau zwei Argumente: Puffer und Wert"));
+        };
+        let append = self.buffer_rt_function("moo_buffer_append_value", false, 2, false);
+        let puffer = self.compile_expr(puffer)?;
+        let wert = self.compile_expr(wert)?;
+        self.call_rt_void(append, &[puffer.into(), wert.into()], "puffer_anhaengen")?;
+        self.call_rt_void(self.rt.moo_release, &[puffer.into()], "puffer_anhaengen_rel")?;
+        self.call_rt(self.rt.moo_none, &[], "none")
+    }
+
+    /// P2-T50 A3: `puffer_ansicht(p, start, laenge)` / `buffer_view(p, start, len)`
+    /// liefert eine Ansicht auf denselben Speicher (moo_buffer_view_value:
+    /// Puffer geliehen, Start/Laenge konsumiert, Ergebnis owning).
+    fn compile_buffer_view(&mut self, name: &str, args: &[Expr]) -> Result<StructValue<'ctx>, String> {
+        if self.bare_mode {
+            return Err(format!("{name}: typisierte Puffer sind im Bare-Profil noch nicht verfuegbar"));
+        }
+        let [puffer, start, laenge] = args else {
+            return Err(format!("{name} erwartet genau drei Argumente: Puffer, Start und Laenge"));
+        };
+        let view = self.buffer_rt_function("moo_buffer_view_value", false, 3, true);
+        let puffer = self.compile_expr(puffer)?;
+        let start = self.compile_expr(start)?;
+        let laenge = self.compile_expr(laenge)?;
+        let ansicht = self.call_rt(view, &[puffer.into(), start.into(), laenge.into()], "puffer_ansicht")?;
+        self.call_rt_void(self.rt.moo_release, &[puffer.into()], "puffer_ansicht_rel")?;
+        Ok(ansicht)
     }
 
     /// P2-T82: Pruefpunkt-Ausgang einer benannten Funktion ohne eigenes
@@ -4512,6 +4683,104 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| e.to_string())
     }
 
+    /// P2-T50 B5 (Plan bb3878ef E1/E5): Pufferargument an der dyn->nativ-Grenze.
+    /// Stufe 1 nur als Variable: ihr Wert wird geliehen (+1 bis nach dem Aufruf)
+    /// und der Speicher fuer die Dauer des Aufrufs gepinnt (moo_buffer_native_pin):
+    /// Datenzeiger stabil, Laengenaenderung gesperrt. Liefert {daten, laenge} fuer
+    /// den nativen Parameter sowie Pin und Wert fuer das Loesen nach dem Aufruf.
+    /// Falscher Typ: die Runtime wirft; bereits gepinnte Pufferargumente dieses
+    /// Aufrufs werden geloest, dann derselbe Ausgang wie bei einem ungueltigen
+    /// Skalarargument (catch bzw. native_argument_fatal_exit).
+    fn compile_native_buffer_argument(
+        &mut self,
+        expr: &Expr,
+        element: crate::native_system::PufferArt,
+        frueher: &[(inkwell::values::PointerValue<'ctx>, StructValue<'ctx>)],
+        catch: Option<inkwell::basic_block::BasicBlock<'ctx>>,
+    ) -> Result<(StructValue<'ctx>, inkwell::values::PointerValue<'ctx>, StructValue<'ctx>), String> {
+        use crate::codegen_native::NType;
+        use crate::native_system::PufferArt;
+        let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
+        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+        // Skalar: MooBufferScalarType-Code (i32, compiler/runtime/moo_buffer.h);
+        // P2-T48 D: Struktur: Laufzeit-ID (i64, NativeStructRegistry::struktur_id).
+        let (symbol, typ_param, typ_arg): (&str, BasicMetadataTypeEnum<'ctx>, BasicMetadataValueEnum<'ctx>) = match &element {
+            PufferArt::Skalar(t) => {
+                let code: u64 = match t {
+                    NType::I8 => 1, NType::U8 => 2, NType::I16 => 3, NType::U16 => 4, NType::I32 => 5,
+                    NType::U32 => 6, NType::I64 => 7, NType::U64 => 8, NType::F32 => 9, NType::F64 => 10,
+                    NType::Bool => return Err("puffer[bool] ist nicht freigegeben".into()),
+                };
+                ("moo_buffer_native_pin", self.context.i32_type().into(),
+                 self.context.i32_type().const_int(code, false).into())
+            }
+            PufferArt::Struktur(name) => {
+                let id = self.native_structs.struktur_id(name)
+                    .ok_or_else(|| format!("puffer[{name}]: Struktur-Layout fehlt"))?;
+                ("moo_buffer_native_pin_struct", self.context.i64_type().into(),
+                 self.context.i64_type().const_int(id, false).into())
+            }
+        };
+        let pin_fn = match self.module.get_function(symbol) {
+            Some(f) => f,
+            None => self.module.add_function(symbol, ptr_type.fn_type(
+                &[ptr_type.into(), typ_param, ptr_type.into(), ptr_type.into()], false,
+            ), None),
+        };
+        let wert = self.compile_expr(expr)?;
+        let wert_slot = self.entry_alloca(self.mv_type(), "native.puffer.wert")?;
+        self.builder.build_store(wert_slot, wert).map_err(|e| e.to_string())?;
+        let daten_slot = self.entry_alloca(ptr_type, "native.puffer.daten")?;
+        let laenge_slot = self.entry_alloca(self.context.i64_type(), "native.puffer.laenge")?;
+        let pin = self.builder.build_call(pin_fn, &[
+            wert_slot.into(), typ_arg,
+            daten_slot.into(), laenge_slot.into(),
+        ], "native.puffer.pin").map_err(|e| e.to_string())?.try_as_basic_value();
+        let pin = match pin {
+            inkwell::values::ValueKind::Basic(value) => value.into_pointer_value(),
+            _ => return Err("moo_buffer_native_pin liefert keinen Wert".into()),
+        };
+        let fehlt = self.builder.build_is_null(pin, "native.puffer.fehlt").map_err(|e| e.to_string())?;
+        let ok_bb = self.context.append_basic_block(function, "native.puffer.ok");
+        let fehler_bb = self.context.append_basic_block(function, "native.puffer.fehler");
+        self.builder.build_conditional_branch(fehlt, fehler_bb, ok_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(fehler_bb);
+        self.call_rt_void(self.rt.moo_release, &[wert.into()], "native.puffer.release_fehler")?;
+        self.native_buffer_unpin(frueher)?;
+        if let Some(target) = catch {
+            self.builder.build_unconditional_branch(target).map_err(|e| e.to_string())?;
+        } else {
+            self.native_argument_fatal_exit()?;
+        }
+        self.builder.position_at_end(ok_bb);
+        let daten = self.builder.build_load(ptr_type, daten_slot, "native.puffer.daten")
+            .map_err(|e| e.to_string())?;
+        let laenge = self.builder.build_load(self.context.i64_type(), laenge_slot, "native.puffer.laenge")
+            .map_err(|e| e.to_string())?;
+        let typ = self.context.struct_type(&[ptr_type.into(), self.context.i64_type().into()], false);
+        let aggregat = self.builder.build_insert_value(typ.get_undef(), daten, 0, "native.puffer.agg")
+            .map_err(|e| e.to_string())?;
+        let aggregat = self.builder.build_insert_value(aggregat, laenge, 1, "native.puffer.agg")
+            .map_err(|e| e.to_string())?.into_struct_value();
+        Ok((aggregat, pin, wert))
+    }
+
+    /// P2-T50 B5: Pins eines nativen Aufrufs loesen und die geliehenen Werte freigeben.
+    fn native_buffer_unpin(&mut self, pins: &[(inkwell::values::PointerValue<'ctx>, StructValue<'ctx>)]) -> Result<(), String> {
+        if pins.is_empty() { return Ok(()); }
+        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+        let unpin = match self.module.get_function("moo_buffer_unpin") {
+            Some(f) => f,
+            None => self.module.add_function("moo_buffer_unpin",
+                self.context.void_type().fn_type(&[ptr_type.into()], false), None),
+        };
+        for (pin, wert) in pins {
+            self.builder.build_call(unpin, &[(*pin).into()], "").map_err(|e| e.to_string())?;
+            self.call_rt_void(self.rt.moo_release, &[(*wert).into()], "native.puffer.release")?;
+        }
+        Ok(())
+    }
+
     /// Konvertiert dynamische Number-Werte an der Float-FFI-Grenze.
     fn compile_native_float_argument(&mut self, expr: &Expr, ty: crate::codegen_native::NType, catch: Option<inkwell::basic_block::BasicBlock<'ctx>>) -> Result<inkwell::values::FloatValue<'ctx>, String> {
         use crate::codegen_native::NType;
@@ -4720,6 +4989,7 @@ impl<'ctx> CodeGen<'ctx> {
         let compare_bb = self.context.append_basic_block(function, "native.box.compare");
         let failure_bb = self.context.append_basic_block(function, "native.box.invalid");
         let success_bb = self.context.append_basic_block(function, "native.box.exact");
+        let done_bb = self.context.append_basic_block(function, "native.box.done");
         let number = if unsigned {
             self.builder.build_unsigned_int_to_float(integer, self.context.f64_type(), "native.box.wide")
         } else {
@@ -4745,9 +5015,20 @@ impl<'ctx> CodeGen<'ctx> {
         let message = self.make_global_str("Native Funktion liefert eine nicht exakt darstellbare 64-Bit-Ganzzahl", "native_box_error")?;
         let error = self.call_rt(self.rt.moo_string_new, &[message.into()], "native.box.error")?;
         self.call_rt_void(self.rt.moo_throw, &[error.into()], "native.box.throw")?;
-        self.builder.build_return(Some(&self.context.i32_type().const_int(1, false))).map_err(|e| e.to_string())?;
+        // P2-T58 (B5-Befund): frueher 'ret i32 1' - ausserhalb von main ungueltige
+        // IR (Verify-Abbruch bei i64/u64-Rueckgabe in benannten Funktionen), in
+        // main auch innerhalb versuche: ein Programmabbruch. Jetzt wie der Skip-
+        // Pfad (T78/T80): ohne Handler beendet moo_throw den Prozess wie bisher,
+        // mit Handler bleibt das Flag gesetzt, der Aufruf liefert den Platzhalter
+        // 0 und der naechste Guard bzw. Pruefpunkt faengt den Fehler.
+        self.builder.build_unconditional_branch(done_bb).map_err(|e| e.to_string())?;
         self.builder.position_at_end(success_bb);
-        Ok(number)
+        self.builder.build_unconditional_branch(done_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(done_bb);
+        let phi = self.builder.build_phi(self.context.f64_type(), "native.box.wert").map_err(|e| e.to_string())?;
+        let platzhalter = self.context.f64_type().const_float(0.0);
+        phi.add_incoming(&[(&number, success_bb), (&platzhalter, failure_bb)]);
+        Ok(phi.as_basic_value().into_float_value())
     }
 
     fn compile_expr(&mut self, expr: &Expr) -> Result<StructValue<'ctx>, String> {
@@ -5045,7 +5326,11 @@ impl<'ctx> CodeGen<'ctx> {
                     // Seiteneffekt (guard_local_expr_error). Der Aufruf ist dort also
                     // erlaubt. Bare-Koerper und C-Exporte (@einstieg) trappen weiter
                     // und bleiben ausserhalb von versuche:/aufraeumen gesperrt.
-                    let system_call = self.hosted_system_functions.contains(&function);
+                    // P2-T12 C3: sichere @nativ-Koerper (safe_native_functions) sind
+                    // kein unsicher:-Systemaufruf, sondern laufen wie reine Natives
+                    // ueber plain_fangbar (ohne unsicher:-Pflicht an der Aufrufstelle).
+                    let system_call = self.hosted_system_functions.contains(&function)
+                        && !self.safe_native_functions.contains(name);
                     let system_fangbar = system_call && !self.bare_mode
                         && function.get_name().to_str().is_ok_and(|n| n.starts_with("__moo_native."));
                     // P2-T80: reine @nativ-Koerper (ohne unsicher:, kein FFI) melden hosted
@@ -5170,7 +5455,21 @@ impl<'ctx> CodeGen<'ctx> {
                     let previous_skip = self.native_skip_target;
                     self.native_skip_target = skip_target;
                     let mut native_args = Vec::with_capacity(args.len());
-                    for (arg, ty) in args.iter().zip(&signature.params) {
+                    let puffer_params = self.native_buffer_params.get(name).cloned();
+                    for (index, (arg, ty)) in args.iter().zip(&signature.params).enumerate() {
+                        // P2-T50 B5: Pufferpositionen tragen in signature nur einen
+                        // Platzhalter (dyn_signature) und laufen nie durch die
+                        // Skalarpfade; sie werden nach allen Skalaren gepinnt.
+                        if puffer_params.as_ref().is_some_and(|p| matches!(p.get(index), Some(Some(_)))) {
+                            if !matches!(arg, Expr::Identifier(_)) {
+                                return Err(format!("Native Funktion '{name}': Pufferargument {} muss vorerst eine Variable sein", index + 1));
+                            }
+                            if adapter_catch.is_none() && (!argument_frame_ok || !self.try_stack.is_empty()) {
+                                return Err("Pufferargumente an native Funktionen sind nur hosted in main oder benannten Funktionen unterstützt".into());
+                            }
+                            native_args.push(self.context.i8_type().const_zero().into());
+                            continue;
+                        }
                         if matches!(ty, crate::codegen_native::NType::I64 | crate::codegen_native::NType::U64) {
                             let local_catch = adapter_catch;
                             if local_catch.is_none()
@@ -5248,9 +5547,23 @@ impl<'ctx> CodeGen<'ctx> {
                         };
                         native_args.push(value.into());
                     }
+                    // P2-T50 B5: Pufferargumente zuletzt (ein Skalarfehler laesst so
+                    // keinen Pin offen, Plan bb3878ef R1).
+                    let mut puffer_pins = Vec::new();
+                    if let Some(puffer) = &puffer_params {
+                        for (index, element) in puffer.iter().enumerate() {
+                            let Some(element) = element else { continue };
+                            let (aggregat, pin, wert) = self.compile_native_buffer_argument(
+                                &args[index], element.clone(), &puffer_pins, adapter_catch,
+                            )?;
+                            native_args[index] = aggregat.into();
+                            puffer_pins.push((pin, wert));
+                        }
+                    }
                     let call_name = if signature.result.is_some() { "native.call" } else { "" };
                     let result = self.builder.build_call(function, &native_args, call_name)
                         .map_err(|e| e.to_string())?.try_as_basic_value();
+                    self.native_buffer_unpin(&puffer_pins)?;
                     self.native_skip_target = previous_skip;
                     let produced = if signature.result.is_none() {
                         self.call_rt(self.rt.moo_none, &[], "native.void")?
@@ -5354,6 +5667,20 @@ impl<'ctx> CodeGen<'ctx> {
                             && !self.lambda_names.contains_key(name) =>
                     {
                         return self.compile_buffer_create(name, args);
+                    }
+                    "puffer_anhängen" | "puffer_anhaengen" | "buffer_append"
+                        if !self.variables.contains_key(name)
+                            && !self.globals.contains_key(name)
+                            && !self.lambda_names.contains_key(name) =>
+                    {
+                        return self.compile_buffer_append(name, args);
+                    }
+                    "puffer_ansicht" | "buffer_view"
+                        if !self.variables.contains_key(name)
+                            && !self.globals.contains_key(name)
+                            && !self.lambda_names.contains_key(name) =>
+                    {
+                        return self.compile_buffer_view(name, args);
                     }
                     // Result-Typ (Rust-inspiriert): ok(wert) / fehler(msg)
                     "ok" => {

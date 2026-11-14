@@ -1,0 +1,13 @@
+# Strukturen mit Ziel-ABI-Layout: verschachtelt, gepackt, mit festem Array.
+# Erwartete Ausgabe: Strukturen registriert
+struktur Innen:
+    klein: u16
+    flagge: u8
+
+@gepackt
+struktur Paket:
+    marke: u8
+    kern: Innen
+    werte: [u32; 3]
+
+zeige "Strukturen registriert"

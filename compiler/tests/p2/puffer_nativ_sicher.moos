@@ -1,0 +1,25 @@
+# P2-T12 (Plan 31194239 §4, ersetzt S4 aus Plan bb3878ef): puffer[T]-Parameter
+# in sicheren @nativ-Koerpern ohne unsicher:, Aufruf ohne unsicher:; der
+# Pufferindex bleibt grenzgeprueft (fangbar).
+@nativ
+funktion s(p: puffer[i32]) -> i32:
+    gib_zurück p[0]
+
+@nativ
+funktion summe(p: puffer[i32]) -> i64:
+    setze t: i64 auf 0
+    für i in 0..länge(p):
+        setze t auf t + als(i64, p[i])
+    gib_zurück t
+
+setze p auf puffer_erstellen(i32, 4)
+p[0] = 7
+p[3] = -2
+zeige s(p)
+zeige summe(p)
+setze leer auf puffer_erstellen(i32, 0)
+versuche:
+    zeige s(leer)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e

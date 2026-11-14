@@ -1,1 +1,0 @@
-extern "C" funktion moo_p2_bool_not(wert: bool) -> bool

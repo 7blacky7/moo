@@ -6,7 +6,52 @@
 
 void moo_test_buffer_value(void);
 
+/* P2-T48 D (Plan a71947f7 E3, Review e1635264): Strukturpuffer gegen ein
+ * C-struct. new_struct mit sizeof/_Alignof und fester ID; ID 0 und zu grosse
+ * Ausrichtung abgewiesen; struct_id fuer Besitzer, Ansicht und verschachtelte
+ * Ansicht; Ansichtsstart/Stride == sizeof ueber Pin-Adressen; Skalar-API
+ * sieht keinen Skalartyp. */
+typedef struct { uint32_t id; float x; double masse; } MooTestTeilchen;
+
+static void test_struct_buffer(void) {
+    const uint64_t id = 0x1234ABCDull;
+    MooBuffer *b = NULL, *v = NULL, *vv = NULL;
+    MooBufferPin *pin = NULL, *vpin = NULL;
+    void *data = NULL, *vdata = NULL;
+    assert(moo_buffer_new_struct(sizeof(MooTestTeilchen), _Alignof(MooTestTeilchen), 0, 2, &b) == MOO_BUFFER_INVALID && !b);
+    assert(moo_buffer_new_struct(32, MOO_MAX_ALIGN * 2, id, 1, &b) == MOO_BUFFER_INVALID && !b);
+    assert(moo_buffer_struct_id(NULL) == 0);
+    assert(moo_buffer_new_struct(sizeof(MooTestTeilchen), _Alignof(MooTestTeilchen), id, 4, &b) == MOO_BUFFER_OK);
+    assert(moo_buffer_struct_id(b) == id && moo_buffer_len(b) == 4);
+    assert(moo_buffer_scalar_type(b) == MOO_BUFFER_SCALAR_NONE);
+    for (uint32_t i = 0; i < 4; ++i) {
+        MooTestTeilchen t = { i + 1, (float)i * 0.5f, (double)i * 2.0 };
+        assert(moo_buffer_set(b, i, &t) == MOO_BUFFER_OK);
+    }
+    uint32_t wert = 0;
+    assert(moo_buffer_get_scalar(b, MOO_BUFFER_U32, 0, &wert) == MOO_BUFFER_TYPE);
+    assert(moo_buffer_view(b, 1, 3, &v) == MOO_BUFFER_OK && moo_buffer_struct_id(v) == id);
+    assert(moo_buffer_view(v, 1, 2, &vv) == MOO_BUFFER_OK && moo_buffer_struct_id(vv) == id);
+    assert(moo_buffer_pin(b, &pin, &data) == MOO_BUFFER_OK && data);
+    assert(moo_buffer_pin(vv, &vpin, &vdata) == MOO_BUFFER_OK && vdata);
+    /* Stride = sizeof(C-struct): vv beginnt bei Element 2 des Besitzers. */
+    assert((uintptr_t)vdata - (uintptr_t)data == 2 * sizeof(MooTestTeilchen));
+    assert((uintptr_t)data % _Alignof(MooTestTeilchen) == 0);
+    const MooTestTeilchen *ts = data, *vs = vdata;
+    assert(ts[3].id == 4 && ts[3].x == 1.5f && ts[3].masse == 6.0);
+    assert(vs[0].id == 3 && vs[1].id == 4 && vs[1].masse == 6.0);
+    MooTestTeilchen kopie;
+    assert(moo_buffer_get(vv, 1, &kopie) == MOO_BUFFER_OK && kopie.id == 4);
+    assert(moo_buffer_get(vv, 2, &kopie) == MOO_BUFFER_BOUNDS);
+    moo_buffer_unpin(vpin);
+    moo_buffer_unpin(pin);
+    moo_buffer_drop(vv);
+    moo_buffer_drop(v);
+    moo_buffer_drop(b);
+}
+
 int main(void) {
+    test_struct_buffer();
     moo_test_buffer_value();
     MooBuffer *b = NULL, *v = NULL, *nested = NULL;
     MooBufferPin* pin = NULL;

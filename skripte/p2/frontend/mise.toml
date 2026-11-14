@@ -269,6 +269,11 @@ description = "P2 Frontend: Moo i32-Puffer Roundtrip"
 dir = "{{config_root}}/../../.."
 run = "bash skripte/p2/frontend/puffer_m2.sh"
 
+[tasks.native-fluss]
+description = "P2-T12: nativer Kontrollfluss in sicheren @nativ-Koerpern (wenn/solange/für), Negativfaelle, IR"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/native_fluss.sh"
+
 [tasks.puffer-syntax]
 description = "P2 Frontend: Puffer-Konstruktor Kollisionsdiagnose"
 dir = "{{config_root}}/../../.."

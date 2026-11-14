@@ -2,6 +2,7 @@
 #define MOO_BUFFER_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 /* Groesste von malloc/calloc garantierte Ausrichtung. MSVC kennt max_align_t
  * im C-Modus nicht; dessen malloc liefert 2*sizeof(void*) (x64: 16). */
@@ -50,6 +51,13 @@ MooBufferStatus moo_buffer_get_scalar(const MooBuffer* buffer, MooBufferScalarTy
 MooBufferStatus moo_buffer_set_scalar(MooBuffer* buffer, MooBufferScalarType type, size_t index, const void* value);
 /* Append copies one scalar. Failure preserves length and all old elements. */
 MooBufferStatus moo_buffer_append_scalar(MooBuffer* buffer, MooBufferScalarType type, const void* value);
+
+/* P2-T48 D (Plan a71947f7 D1): Strukturpuffer. type_id != 0 ist die vom Compiler
+ * berechnete Strukturidentitaet (FNV-1a ueber das kanonische Layout); Ansichten
+ * erben sie. Skalar-APIs sehen einen Strukturpuffer als untypisiert (NONE). */
+MooBufferStatus moo_buffer_new_struct(size_t elem_size, size_t elem_align, uint64_t type_id, size_t len, MooBuffer** out);
+/* 0 = kein Strukturpuffer bzw. NULL. */
+uint64_t moo_buffer_struct_id(const MooBuffer* buffer);
 
 /* elem_align must be a power of two <= MOO_MAX_ALIGN, dividing elem_size. */
 MooBufferStatus moo_buffer_new(size_t elem_size, size_t elem_align, size_t len, MooBuffer** out);

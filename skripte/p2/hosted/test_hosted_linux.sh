@@ -78,7 +78,7 @@ expect_fail() {  # Datei Muster [weitere compile-Argumente]
 }
 expect_fail "$hosted_dir/negativ_port.moos" 'nur im Bare-Profil' --target x86_64
 expect_fail "$hosted_dir/negativ_volatile.moos" 'nur im Bare-Profil' --target x86_64
-expect_fail "$hosted_dir/negativ_zeiger_ohne_unsicher.moos" 'nur im Bare-Profil' --target x86_64
+expect_fail "$hosted_dir/negativ_zeiger_ohne_unsicher.moos" 'nur innerhalb von unsicher:' --target x86_64
 expect_fail "$hosted_dir/negativ_dyn_aufruf.moos" 'Nativer Zeigerfunktionsaufruf'
 # Stufe 2a: skalarer Systemkoerper aus dyn nur in unsicher:, in main oder benannter Funktion.
 expect_fail "$hosted_dir/negativ_dyn_ohne_unsicher.moos" 'nur innerhalb von unsicher:'

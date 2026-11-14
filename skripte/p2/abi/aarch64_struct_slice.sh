@@ -38,7 +38,7 @@ for signature in "${signatures[@]}"; do
     # die Deklaration dagegen nicht. Der Typ-Praefix ist der ABI-Vertrag.
     grep -Fq "define dso_local ${signature%)} " "$out/c-reference.ll"
 done
-grep -Fq 'declare void @moo_p2_struct6(ptr sret(' "$out/moo-only.ll"
+grep -Fq 'declare void @moo_p2_struct6(ptr noalias sret(' "$out/moo-only.ll"
 grep -Fq 'define dso_local void @moo_p2_struct6(ptr ' "$out/c-reference.ll"
 if grep -Fq 'byval(' "$out/moo-only.ll"; then
     echo "AArch64-ABI: unerwartetes x86-SysV-byval" >&2

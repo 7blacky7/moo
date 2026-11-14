@@ -23,8 +23,10 @@
 # IP-Adressen als Zahl a<<24|b<<16|c<<8|d.
 
 # Nutzt aus netz_treiber.moos: nt_senden, nt_empfangen, nt_mac, nt_dma, nt_b8,
-# nt_b16, nt_kopiere. Der Aufrufer importiert beide Module (Module werden
-# inline eingefuegt; doppelter Import wuerde Funktionen doppelt definieren).
+# nt_b16, nt_kopiere. P2-T33: eigenstaendig uebersetzbar per selektivem Import;
+# importiert der Aufrufer netz_treiber ebenfalls, ueberspringt resolve_modules
+# den zweiten Import derselben Datei (keine doppelten Definitionen).
+aus netz_treiber importiere nt_senden, nt_empfangen, nt_mac, nt_dma, nt_b8, nt_b16, nt_kopiere
 
 funktion nn_ip(a, b, c, d):
     gib_zurück (a << 24) | (b << 16) | (c << 8) | d

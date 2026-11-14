@@ -1,0 +1,149 @@
+# P2-T12 Batch D (Plan 31194239 D1): nativer Kontrollfluss in sicheren
+# @nativ-Koerpern ohne unsicher: wenn/sonst-Ketten, solange mit stopp/weiter,
+# verschachtelte für-Schleifen mit weiter, frueher Ruecksprung aus für,
+# Neuzuweisung verschiedener Typen, für mit a >= b, u8-Zaehler bis 255,
+# Fehler im k-ten Durchlauf fangbar, unsicher:-Insel, Rekursion; Aufrufe aus
+# main, einer benannten Funktion und versuche: ohne unsicher:.
+@nativ
+funktion einordnen(x: i32) -> i32:
+    wenn x < 0:
+        gib_zurück -1
+    sonst wenn x == 0:
+        gib_zurück 0
+    sonst wenn x < 10:
+        gib_zurück 1
+    gib_zurück 2
+
+@nativ
+funktion summe_bis(n: i64) -> i64:
+    setze s: i64 auf 0
+    für i in 0..n:
+        setze s auf s + i
+    gib_zurück s
+
+@nativ
+funktion gerade_summe(n: i32) -> i32:
+    setze s: i32 auf 0
+    setze i: i32 auf 0
+    solange wahr:
+        setze i auf i + 1
+        wenn i > n:
+            stopp
+        wenn i % 2 == 1:
+            weiter
+        setze s auf s + i
+    gib_zurück s
+
+@nativ
+funktion paare(n: u32) -> u32:
+    setze z: u32 auf 0
+    für a in 0..n:
+        für b in a..n:
+            wenn b == a:
+                weiter
+            setze z auf z + 1
+    gib_zurück z
+
+@nativ
+funktion zaehle(a: i64, b: i64) -> i64:
+    setze z: i64 auf 0
+    für i in a..b:
+        setze z auf z + 1
+    gib_zurück z
+
+@nativ
+funktion bytes() -> u32:
+    setze z: u32 auf 0
+    für i in als(u8, 0)..als(u8, 255):
+        setze z auf z + als(u32, i)
+    gib_zurück z
+
+@nativ
+funktion erster(n: i32) -> i32:
+    für i in 0..n:
+        wenn i * i >= n:
+            gib_zurück i
+    gib_zurück -1
+
+@nativ
+funktion fehler_bei(k: i32) -> i32:
+    setze s: i32 auf 0
+    setze teiler: i32 auf 5
+    für i in 0..k:
+        setze teiler auf teiler - 1
+        setze s auf s + 100 / teiler
+    gib_zurück s
+
+@nativ
+funktion mischung(x: f64) -> f64:
+    setze n: u16 auf 3
+    setze f: f64 auf x
+    setze b: bool auf falsch
+    solange n > 0:
+        setze f auf f * 2.0
+        setze n auf n - 1
+        setze b auf nicht b
+    wenn b:
+        gib_zurück f
+    gib_zurück -f
+
+@nativ
+funktion insel(x: u32) -> u32:
+    setze y: u32 auf x + 1
+    unsicher:
+        setze y auf u32(u8(y))
+    gib_zurück y
+
+@nativ
+funktion ggt(a: u64, b: u64) -> u64:
+    wenn b == 0:
+        gib_zurück a
+    gib_zurück ggt(b, a % b)
+
+@nativ
+funktion fakultaet(n: u64) -> u64:
+    wenn n <= 1:
+        gib_zurück 1
+    gib_zurück n * fakultaet(n - 1)
+
+# A2: Zeiger deklarieren, kopieren und vergleichen ist ohne unsicher: erlaubt.
+@nativ
+funktion gleich(a: ptr[u8], b: ptr[u8]) -> bool:
+    setze c: ptr[u8] auf a
+    wenn c != b:
+        gib_zurück falsch
+    gib_zurück c == b
+
+@nativ
+funktion zeiger_probe() -> i32:
+    setze n: ptr[u8] auf nichts
+    wenn gleich(n, nichts):
+        gib_zurück 1
+    gib_zurück 0
+
+funktion aus_funktion(n):
+    gib_zurück summe_bis(n) + paare(4)
+
+zeige einordnen(-5)
+zeige einordnen(0)
+zeige einordnen(7)
+zeige einordnen(42)
+zeige summe_bis(100000)
+zeige gerade_summe(10)
+zeige paare(5)
+zeige zaehle(5, 3)
+zeige zaehle(-2, 3)
+zeige bytes()
+zeige erster(50)
+zeige fehler_bei(3)
+zeige mischung(1.5)
+zeige insel(300)
+zeige ggt(1071, 462)
+zeige fakultaet(10)
+zeige aus_funktion(10)
+zeige zeiger_probe()
+versuche:
+    zeige fehler_bei(6)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e

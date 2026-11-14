@@ -1,0 +1,8 @@
+# P2-T58 (Plan f40b5980 §2.1/§3.1): konstant negativer Exponent in einer
+# nativen Konstante ist ein Compilefehler.
+@nativ
+konstante N: i32 auf 2 ** -1
+@nativ
+funktion k_n() -> i32:
+    gib_zurück N
+zeige k_n()

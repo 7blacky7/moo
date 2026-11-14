@@ -13,6 +13,78 @@
   },
   "cases": [
     {
+      "path": "beispiele/kernel/uefi_kern.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-unknown-uefi"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "9364ddcf-a9bb-46fe-a4ec-000a2adc88ba"
+    },
+    {
+      "path": "beispiele/uefi/moo_lader.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-unknown-uefi"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "9364ddcf-a9bb-46fe-a4ec-000a2adc88ba"
+    },
+    {
+      "path": "beispiele/uefi/netz_e1000.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-unknown-uefi"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "9364ddcf-a9bb-46fe-a4ec-000a2adc88ba"
+    },
+    {
+      "path": "beispiele/uefi/netz_lader.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-unknown-uefi"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "31a520fb-d788-48d7-b6a0-3a02da9963cd"
+    },
+    {
+      "path": "beispiele/uefi/netz_tftp.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-unknown-uefi"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P2-T33 Batch 33650 (selektiver Import aus netz_treiber)"
+    },
+    {
+      "path": "beispiele/uefi/netz_treiber.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-unknown-uefi"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "31a520fb-d788-48d7-b6a0-3a02da9963cd"
+    },
+    {
       "path": "beispiele/bootloader/stage2.moos",
       "category": "profile",
       "args": [
@@ -87,7 +159,8 @@
     {
       "path": "beispiele/domain/db/bench/bench_binary.moos",
       "category": "fragment",
-      "status": "context_unverified",
+      "status": "resolved",
+      "resolution": "P2-T33 Batch 33649: selektiver Pfad-Import aus ../postgres_client (nur Definitionen, kein Testteil); IR ok, Lauf braucht Postgres",
       "context": {
         "kind": "historical_prefix_concatenation",
         "prefix": "beispiele/domain/db/postgres_client.moos",
@@ -100,7 +173,8 @@
     {
       "path": "beispiele/domain/db/bench/bench_copy.moos",
       "category": "fragment",
-      "status": "context_unverified",
+      "status": "resolved",
+      "resolution": "P2-T33 Batch 33649: selektiver Pfad-Import aus ../postgres_client (nur Definitionen, kein Testteil); IR ok, Lauf braucht Postgres",
       "context": {
         "kind": "historical_prefix_concatenation",
         "prefix": "beispiele/domain/db/postgres_client.moos",
@@ -113,7 +187,8 @@
     {
       "path": "beispiele/domain/db/bench/bench_pipelining.moos",
       "category": "fragment",
-      "status": "context_unverified",
+      "status": "resolved",
+      "resolution": "P2-T33 Batch 33649: selektiver Pfad-Import aus ../postgres_client (nur Definitionen, kein Testteil); IR ok, Lauf braucht Postgres",
       "context": {
         "kind": "historical_prefix_concatenation",
         "prefix": "beispiele/domain/db/postgres_client.moos",
@@ -126,7 +201,8 @@
     {
       "path": "beispiele/domain/db/bench/bench_pool.moos",
       "category": "fragment",
-      "status": "context_unverified",
+      "status": "resolved",
+      "resolution": "P2-T33 Batch 33649: selektiver Pfad-Import aus ../postgres_client (nur Definitionen, kein Testteil); IR ok, Lauf braucht Postgres",
       "context": {
         "kind": "historical_prefix_concatenation",
         "prefix": "beispiele/domain/db/postgres_client.moos",
@@ -139,7 +215,8 @@
     {
       "path": "beispiele/domain/db/bench/bench_prepared.moos",
       "category": "fragment",
-      "status": "context_unverified",
+      "status": "resolved",
+      "resolution": "P2-T33 Batch 33649: selektiver Pfad-Import aus ../postgres_client (nur Definitionen, kein Testteil); IR ok, Lauf braucht Postgres",
       "context": {
         "kind": "historical_prefix_concatenation",
         "prefix": "beispiele/domain/db/postgres_client.moos",
@@ -152,7 +229,8 @@
     {
       "path": "beispiele/domain/db/bench/bench_baseline_perfphase.moos",
       "category": "import",
-      "status": "unresolved",
+      "status": "resolved",
+      "resolution": "P2-T33 Batch 33649: Import auf aus \"../postgres_client\" importiere PgClient korrigiert; IR ok, Lauf braucht Postgres",
       "context": {
         "kind": "named_module",
         "module": "postgres_client_lib"
@@ -162,7 +240,8 @@
     {
       "path": "beispiele/domain/db/bench/scram_e2e_smoke.moos",
       "category": "import",
-      "status": "unresolved",
+      "status": "resolved",
+      "resolution": "P2-T33 Batch 33649: Import auf aus \"../postgres_client\" importiere PgClient korrigiert; IR ok, Lauf braucht Postgres",
       "context": {
         "kind": "source_relative",
         "import": "../../beispiele/domain/db/postgres_client.moos"
@@ -172,14 +251,16 @@
     {
       "path": "beispiele/domain/db/mini_db.moos",
       "category": "api_mismatch",
-      "status": "unresolved",
+      "status": "resolved",
+      "resolution": "P2-T33 Batch 33649: BTree um einfuegen/suche/bereich/alle ergaenzt; Lauf 37/37 Checks",
       "context": "hosted",
       "diagnostic": "Methode 'alle' nicht gefunden"
     },
     {
       "path": "compiler/tests/test_stdlib.moos",
       "category": "api_mismatch",
-      "status": "unresolved",
+      "status": "resolved",
+      "resolution": "P2-T33 Batch 33649: stdlib/liste durchschnitt(l) (leer -> nichts); Lauf durchschnitt = 4.66667",
       "context": "hosted",
       "diagnostic": "Funktion 'durchschnitt' nicht gefunden"
     }

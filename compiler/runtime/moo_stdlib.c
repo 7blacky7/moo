@@ -1,6 +1,7 @@
 #include "moo_runtime.h"
 #include "moo_noise.h"
 #include "moo_buffer_index.h"
+#include "moo_buffer.h"
 #include <time.h>
 // unistd.h wurde hier nie genutzt (verifiziert: keine POSIX-only-Aufrufe in
 // dieser Datei) und brach den MSVC-Build (C1083) — P013, CI-Run 27437564015.
@@ -84,6 +85,8 @@ MooValue moo_length(MooValue v) {
         case MOO_STRING: return moo_number((double)MV_STR(v)->length);
         case MOO_LIST:   return moo_number((double)MV_LIST(v)->length);
         case MOO_DICT:   return moo_number((double)MV_DICT(v)->count);
+        /* P2-T50 A1: Elementanzahl des Puffers bzw. der Ansicht. */
+        case MOO_BUFFER: return moo_number((double)moo_buffer_len(moo_val_as_ptr(v)));
         default:         return moo_number(0);
     }
 }

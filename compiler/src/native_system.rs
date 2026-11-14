@@ -80,6 +80,15 @@ pub(crate) enum STy {
     Ptr(NativeTypeId),
     /// Nativer Strukturwert, ohne MooValue-Boxing.
     Struct(NativeTypeId),
+    /// P2-T50 (Plan bb3878ef E1/E2): puffer[T] als nicht besitzender Ausschnitt
+    /// {Datenzeiger, Laenge}; T ist ein Zahlentyp (i8..u64, f32, f64).
+    Buffer(NType),
+    /// P2-T48 (Plan a71947f7 D3): puffer[Struktur], wie Buffer {Datenzeiger,
+    /// Laenge}; Elementstride = Strukturgroesse, Identitaet nominal.
+    StrukturPuffer(NativeTypeId),
+    /// P2-T48 (Plan a71947f7 E1): festes Array [T; N] als Wert, im Speicher
+    /// gefuehrt wie Strukturen (Kopie per memcpy, kein Aggregat in Registern).
+    Array { element: Box<STy>, length: u32 },
 }
 
 impl STy {
@@ -91,7 +100,29 @@ impl STy {
             }
             TypeKind::Name(name) if nominal.contains_key(name) =>
                 Ok(STy::Struct(resolve_type(ty, nominal)?)),
+            TypeKind::Generic { name, .. } if name == "puffer" || name == "buffer" => match resolve_type(ty, nominal)? {
+                NativeTypeId::Buffer { element } => Self::puffer_element(&element),
+                _ => Err("Systemkoerper: puffer[T] ist nicht aufloesbar".into()),
+            },
+            TypeKind::Array { element, length } => {
+                let element = Self::from_type_ref(element, nominal)?;
+                if matches!(element, STy::Buffer(_) | STy::StrukturPuffer(_)) {
+                    return Err("Systemkoerper: Arrays aus puffer[T] sind nicht freigegeben".into());
+                }
+                let length = crate::native_struct::array_laenge(length)?;
+                Ok(STy::Array { element: Box::new(element), length })
+            }
             _ => Self::from_ntype(NType::from_type_ref(ty)?),
+        }
+    }
+
+    /// P2-T50 B1: Elementtyp eines Puffers; nur Zahlentypen (Struktur-Puffer
+    /// folgen mit P2-T13/T48, bool ist kein Pufferelement).
+    fn puffer_element(element: &NativeTypeId) -> Result<Self, String> {
+        match Self::from_identity(element) {
+            Ok(Some(STy::Int(t) | STy::Float(t))) => Ok(STy::Buffer(t)),
+            Ok(Some(STy::Struct(id))) => Ok(STy::StrukturPuffer(id)),
+            _ => Err("Systemkoerper: puffer[T] braucht einen Zahlen-Elementtyp (i8..u64, f32, f64) oder eine Struktur; bool und Zeiger sind als Element noch nicht freigegeben".into()),
         }
     }
 
@@ -108,6 +139,7 @@ impl STy {
             NativeTypeId::Void => return Ok(None),
             NativeTypeId::Pointer { .. } => STy::Ptr(identity.clone()),
             NativeTypeId::Nominal { .. } => STy::Struct(identity.clone()),
+            NativeTypeId::Buffer { element } => Self::puffer_element(element)?,
             NativeTypeId::Scalar(scalar) => match scalar {
                 ScalarType::I8 => STy::Int(NType::I8), ScalarType::I16 => STy::Int(NType::I16),
                 ScalarType::I32 => STy::Int(NType::I32), ScalarType::I64 => STy::Int(NType::I64),
@@ -121,9 +153,34 @@ impl STy {
         }))
     }
 
+    /// P2-T48: Werte, die im Speicher kopiert werden (Struktur, festes Array).
+    fn ist_aggregat(&self) -> bool {
+        matches!(self, STy::Struct(_) | STy::Array { .. })
+    }
+
+    /// P2-T50: Identitaet des Elementtyps eines Puffers (fuer puffer_zeiger).
+    fn identity_element(&self) -> NativeTypeId {
+        match self {
+            STy::Buffer(t) => match t {
+                NType::F32 | NType::F64 => STy::Float(*t),
+                _ => STy::Int(*t),
+            }.identity(),
+            STy::StrukturPuffer(id) => id.clone(),
+            other => other.identity(),
+        }
+    }
+
     fn identity(&self) -> NativeTypeId {
         match self {
             STy::Ptr(identity) | STy::Struct(identity) => identity.clone(),
+            STy::Buffer(t) => NativeTypeId::Buffer { element: Box::new(match t {
+                NType::F32 | NType::F64 => STy::Float(*t),
+                _ => STy::Int(*t),
+            }.identity()) },
+            STy::StrukturPuffer(id) => NativeTypeId::Buffer { element: Box::new(id.clone()) },
+            // P2-T48: feste Arrays haben (noch) keine eigene Typidentitaet;
+            // ptr[[T; N]] ist nicht freigegeben (Zeiger auf das Element nutzen).
+            STy::Array { .. } => NativeTypeId::Void,
             STy::Bool => NativeTypeId::Scalar(ScalarType::Bool),
             STy::Float(NType::F32) => NativeTypeId::Scalar(ScalarType::F32),
             STy::Float(NType::F64) => NativeTypeId::Scalar(ScalarType::F64),
@@ -144,6 +201,10 @@ impl STy {
             STy::Int(ty) | STy::Float(ty) => Ok(ty.llvm_type(context)),
             STy::Bool => Ok(context.bool_type().into()),
             STy::Ptr(_) => Ok(context.ptr_type(AddressSpace::default()).into()),
+            STy::Buffer(_) | STy::StrukturPuffer(_) => Ok(context.struct_type(
+                &[context.ptr_type(AddressSpace::default()).into(), context.i64_type().into()], false,
+            ).into()),
+            STy::Array { element, length } => Ok(element.llvm(context, layouts)?.array_type(*length).into()),
             STy::Struct(NativeTypeId::Nominal { name, .. }) => layouts.layout(name)
                 .map(|layout| layout.llvm_type.into())
                 .ok_or_else(|| format!("Systemkoerper: natives Struktur-Layout '{name}' fehlt")),
@@ -156,10 +217,21 @@ impl STy {
             STy::Int(ty) | STy::Float(ty) => format!("{ty:?}").to_lowercase(),
             STy::Bool => "bool".into(),
             STy::Ptr(identity) => format!("{identity:?}"),
+            STy::Buffer(t) => format!("puffer[{}]", format!("{t:?}").to_lowercase()),
+            STy::StrukturPuffer(id) => format!("puffer[{}]", STy::Struct(id.clone()).name()),
+            STy::Array { element, length } => format!("[{}; {length}]", element.name()),
             STy::Struct(NativeTypeId::Nominal { name, .. }) => name.clone(),
             STy::Struct(identity) => format!("{identity:?}"),
         }
     }
+}
+
+/// P2-T48 D: Art eines puffer-Parameters am dyn->nativ-Adapter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PufferArt {
+    Skalar(NType),
+    /// Strukturname; die Laufzeit-ID liefert NativeStructRegistry::struktur_id.
+    Struktur(String),
 }
 
 #[derive(Clone, Debug)]
@@ -184,6 +256,9 @@ pub(crate) struct NativeCallee<'ctx> {
     pub(crate) function: FunctionValue<'ctx>,
     params: Vec<STy>,
     result: Option<STy>,
+    /// P2-T58 C1: Callee kann hosted einen Moo-Fehler melden (fehlbare_funktionen);
+    /// der Aufrufer prueft danach das Flag (call_system_value, C3).
+    pub(crate) fehlbar: bool,
 }
 
 impl<'ctx> NativeCallee<'ctx> {
@@ -193,12 +268,199 @@ impl<'ctx> NativeCallee<'ctx> {
             NativeParameter::Pointer { identity, .. } => Ok(STy::Ptr(identity.clone())),
         }).collect::<Result<Vec<_>, _>>()?;
         let result = signature.result.map(STy::from_ntype).transpose()?;
-        Ok(Self { function, params, result })
+        Ok(Self { function, params, result, fehlbar: false })
     }
 
     /// Fuer reine Moo-zu-Moo-Aufrufe mit kompletten Strukturwerten.
     pub(crate) fn from_system(function: FunctionValue<'ctx>, signature: &SystemSignature) -> Self {
-        Self { function, params: signature.params.clone(), result: signature.result.clone() }
+        Self { function, params: signature.params.clone(), result: signature.result.clone(), fehlbar: false }
+    }
+}
+
+/// P2-T58 Batch C1 (Plan 4500717b): syntaktisch fehlbare native Funktionen
+/// (Fixpunkt ueber den Aufrufgraphen). Fehlbar: Div/Rest/Shift, gepruefter oder
+/// saettigender Cast, Indexzugriff, Rueckgabetyp ohne abschliessendes
+/// gib_zurück, Aufruf eines fehlbaren nativen Ziels; unbekannte Formen gelten
+/// konservativ als fehlbar. Nicht fehlbar (keine Zusatzkosten): + - * Bit,
+/// Float-Rechnung, Vergleiche, als_wrap, Aufrufe nicht-nativer Ziele.
+///
+/// P2-T58 (Review 06d10060 #4): typbewusst ueber die annotierten Typen von
+/// Parametern, Locals und Callee-Ergebnissen (expr_art). Float-/ % ** und
+/// unsigned ** melden nie einen Moo-Fehler; signed ** nur bei moeglicherweise
+/// negativem Exponenten. Unbekannter Typ bleibt konservativ fehlbar.
+pub(crate) fn fehlbare_funktionen(defs: &[FehlbarDef<'_>]) -> HashSet<String> {
+    let namen: HashSet<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+    let ergebnisse: HashMap<&str, Zahlart> = defs.iter()
+        .map(|d| (d.name.as_str(), d.ergebnis.map(zahlart).unwrap_or(Zahlart::Sonst)))
+        .collect();
+    let typen: Vec<HashMap<&str, Zahlart>> = defs.iter().map(|d| {
+        let mut typen = HashMap::new();
+        for (name, ty) in &d.params {
+            typen.insert(*name, ty.map(zahlart).unwrap_or(Zahlart::Sonst));
+        }
+        lokale_typen(d.body, &mut typen);
+        typen
+    }).collect();
+    let mut fehlbar: HashSet<String> = HashSet::new();
+    loop {
+        let mut neu = false;
+        for (index, def) in defs.iter().enumerate() {
+            if fehlbar.contains(&def.name) { continue; }
+            let ist_fehlbar = {
+                let kontext = FehlbarKontext { namen: &namen, fehlbar: &fehlbar, typen: &typen[index], ergebnisse: &ergebnisse };
+                (def.ergebnis.is_some() && !endet_mit_rueckgabe(def.body)) || stmts_fehlbar(def.body, &kontext)
+            };
+            if ist_fehlbar {
+                fehlbar.insert(def.name.clone());
+                neu = true;
+            }
+        }
+        if !neu { return fehlbar; }
+    }
+}
+
+/// Eine native Funktion fuer fehlbare_funktionen (codegen.rs forward_declare).
+pub(crate) struct FehlbarDef<'a> {
+    pub(crate) name: String,
+    pub(crate) body: &'a [Stmt],
+    pub(crate) ergebnis: Option<&'a TypeRef>,
+    pub(crate) params: Vec<(&'a str, Option<&'a TypeRef>)>,
+}
+
+/// Zahlart eines annotierten Typs; nur sie entscheidet ueber die Fehlbarkeit.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Zahlart { Signed, Unsigned, Float, Sonst }
+
+fn zahlart_von(ty: NType) -> Zahlart {
+    match ty {
+        NType::F32 | NType::F64 => Zahlart::Float,
+        NType::Bool => Zahlart::Sonst,
+        t if t.is_signed_integer() => Zahlart::Signed,
+        _ => Zahlart::Unsigned,
+    }
+}
+
+fn zahlart(ty: &TypeRef) -> Zahlart {
+    match &ty.kind {
+        TypeKind::Name(name) => NType::from_name(name).map(zahlart_von).unwrap_or(Zahlart::Sonst),
+        _ => Zahlart::Sonst,
+    }
+}
+
+fn lokale_typen<'a>(stmts: &'a [Stmt], typen: &mut HashMap<&'a str, Zahlart>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Assignment { name, ty: Some(ty), .. } | Stmt::ConstAssignment { name, ty: Some(ty), .. } => {
+                typen.insert(name.as_str(), zahlart(ty));
+            }
+            Stmt::If { body, else_body, .. } => { lokale_typen(body, typen); lokale_typen(else_body, typen); }
+            Stmt::While { body, .. } | Stmt::UnsafeBlock { body } | Stmt::For { body, .. } => lokale_typen(body, typen),
+            _ => {}
+        }
+    }
+}
+
+struct FehlbarKontext<'k, 'a> {
+    namen: &'k HashSet<&'a str>,
+    fehlbar: &'k HashSet<String>,
+    typen: &'k HashMap<&'a str, Zahlart>,
+    ergebnisse: &'k HashMap<&'a str, Zahlart>,
+}
+
+/// Zahlart eines Ausdrucks aus Annotationen; None = nicht bestimmbar (z. B.
+/// reines Ganzzahlliteral, das sich dem Nachbarn anpasst).
+fn expr_art(expr: &Expr, k: &FehlbarKontext<'_, '_>) -> Option<Zahlart> {
+    match expr {
+        Expr::Identifier(name) => k.typen.get(name.as_str()).copied(),
+        Expr::NativeNumber { text, .. } => {
+            let hex = text.starts_with("0x") || text.starts_with("0X") || text.starts_with("0b") || text.starts_with("0B");
+            (!hex && text.contains(['.', 'e', 'E'])).then_some(Zahlart::Float)
+        }
+        Expr::FunctionCall { name, args } => {
+            if crate::native_arithmetic::cast_art(name).is_some() {
+                match args.first() {
+                    Some(Expr::Identifier(ziel)) => NType::from_name(ziel).map(zahlart_von),
+                    _ => None,
+                }
+            } else if let Some(ty) = NType::from_name(name) {
+                Some(zahlart_von(ty))
+            } else {
+                k.ergebnisse.get(name.as_str()).copied()
+            }
+        }
+        Expr::BinaryOp { op, left, right } => match op {
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow
+            | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => expr_art(left, k).or_else(|| expr_art(right, k)),
+            BinOp::LShift | BinOp::RShift => expr_art(left, k),
+            _ => Some(Zahlart::Sonst),
+        },
+        Expr::UnaryOp { op: UnaryOpKind::Neg, operand } => expr_art(operand, k),
+        _ => None,
+    }
+}
+
+fn nicht_negatives_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::NativeNumber { .. } => true,
+        Expr::Number(n) => *n >= 0.0,
+        _ => false,
+    }
+}
+
+fn endet_mit_rueckgabe(body: &[Stmt]) -> bool {
+    match body.last() {
+        Some(Stmt::Return(_)) => true,
+        Some(Stmt::UnsafeBlock { body }) => endet_mit_rueckgabe(body),
+        _ => false,
+    }
+}
+
+fn stmts_fehlbar(stmts: &[Stmt], k: &FehlbarKontext<'_, '_>) -> bool {
+    let ex = |e: &Expr| expr_fehlbar(e, k);
+    stmts.iter().any(|stmt| match stmt {
+        Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
+        | Stmt::Show(value) | Stmt::Expression(value) | Stmt::Return(Some(value)) => ex(value),
+        Stmt::CompoundAssignment { op, value, .. } =>
+            op.contains('/') || op.contains('%') || op.contains('<') || op.contains('>') || ex(value),
+        Stmt::PropertyAssignment { object, value, .. } => ex(object) || ex(value),
+        Stmt::IndexAssignment { .. } => true,
+        Stmt::Return(None) | Stmt::Break | Stmt::Continue => false,
+        Stmt::If { condition, body, else_body } =>
+            ex(condition) || stmts_fehlbar(body, k) || stmts_fehlbar(else_body, k),
+        Stmt::While { condition, body } => ex(condition) || stmts_fehlbar(body, k),
+        Stmt::UnsafeBlock { body } => stmts_fehlbar(body, k),
+        _ => true,
+    })
+}
+
+fn expr_fehlbar(expr: &Expr, k: &FehlbarKontext<'_, '_>) -> bool {
+    let rec = |e: &Expr| expr_fehlbar(e, k);
+    match expr {
+        Expr::NativeNumber { .. } | Expr::Number(_) | Expr::Boolean(_) | Expr::Identifier(_)
+        | Expr::None | Expr::String(_) => false,
+        Expr::BinaryOp { op, left, right } => {
+            let art = || expr_art(left, k).or_else(|| expr_art(right, k));
+            let selbst = match op {
+                BinOp::LShift | BinOp::RShift => true,
+                BinOp::Div | BinOp::Mod => art() != Some(Zahlart::Float),
+                BinOp::Pow => match art() {
+                    Some(Zahlart::Float | Zahlart::Unsigned) => false,
+                    _ => !nicht_negatives_literal(right),
+                },
+                _ => false,
+            };
+            selbst || rec(left) || rec(right)
+        }
+        Expr::UnaryOp { operand, .. } => rec(operand),
+        Expr::PropertyAccess { object, .. } => rec(object),
+        Expr::IndexAccess { .. } => true,
+        Expr::List(elements) => elements.iter().any(rec),
+        Expr::FunctionCall { name, args } => {
+            let cast_fehlbar = matches!(crate::native_arithmetic::cast_art(name),
+                Some(crate::native_arithmetic::CastArt::Geprueft | crate::native_arithmetic::CastArt::Saettigend));
+            cast_fehlbar || (k.namen.contains(name.as_str()) && k.fehlbar.contains(name)) || args.iter().any(rec)
+        }
+        _ => true,
     }
 }
 
@@ -236,7 +498,47 @@ impl SystemSignature {
             TypeKind::Name(name) if name == "void" => None,
             _ => Some(STy::from_type_ref(result, nominals)?),
         };
+        if params.iter().any(|ty| matches!(ty, STy::Array { .. })) || matches!(result, Some(STy::Array { .. })) {
+            return Err("Feste Arrays sind als Parameter/Rueckgabe by value nicht freigegeben (ptr[T] oder eine Struktur mit Arrayfeld verwenden)".into());
+        }
+        if matches!(result, Some(STy::Buffer(_) | STy::StrukturPuffer(_))) {
+            return Err("Rueckgabetyp puffer[T] ist nicht freigegeben (nativ ist ein Puffer ein geliehener Ausschnitt)".into());
+        }
         Ok(Self { params, result })
+    }
+
+    /// P2-T50 B4: Signatur fuer den dynamischen Aufruf-Wrapper. Wie
+    /// scalar_signature, zusaetzlich puffer[T]-Parameter: an diesen Positionen
+    /// traegt die NSignature den Elementtyp NUR als Platzhalter; der zweite Wert
+    /// nennt sie (Some(T)). INVARIANTE: der Adapter wandelt diese Positionen nie
+    /// ueber die Skalar-Argumentpfade, sondern pinnt den Puffer.
+    pub(crate) fn dyn_signature(&self) -> Option<(crate::codegen_native::NSignature, Vec<Option<PufferArt>>)> {
+        let mut params = Vec::with_capacity(self.params.len());
+        let mut puffer = Vec::with_capacity(self.params.len());
+        for ty in &self.params {
+            match ty {
+                STy::Int(t) | STy::Float(t) => { params.push(*t); puffer.push(None); }
+                STy::Bool => { params.push(NType::Bool); puffer.push(None); }
+                STy::Buffer(t) => { params.push(*t); puffer.push(Some(PufferArt::Skalar(*t))); }
+                STy::StrukturPuffer(NativeTypeId::Nominal { name, .. }) => {
+                    params.push(NType::U64);
+                    puffer.push(Some(PufferArt::Struktur(name.clone())));
+                }
+                _ => return None,
+            }
+        }
+        let result = match &self.result {
+            None => None,
+            Some(STy::Int(t) | STy::Float(t)) => Some(*t),
+            Some(STy::Bool) => Some(NType::Bool),
+            Some(_) => return None,
+        };
+        Some((crate::codegen_native::NSignature { params, result }, puffer))
+    }
+
+    /// P2-T50 B1: Puffer sind nur fuer interne Moo-Aufrufe freigegeben.
+    pub(crate) fn uses_buffers(&self) -> bool {
+        self.params.iter().any(|ty| matches!(ty, STy::Buffer(_) | STy::StrukturPuffer(_)))
     }
 
     /// By-value-Nominaltypen sind vorerst fuer interne Moo-Aufrufe freigegeben.
@@ -290,6 +592,20 @@ pub(crate) fn is_system_body(body: &[Stmt], params: &[String]) -> bool {
     }
 }
 
+/// P2-T12 C1 (Plan 31194239): exakt die Koerperform, die der Pure-Emitter
+/// (codegen_native::emit_nontrapping_function) annimmt: nur typisierte Locals,
+/// danach hoechstens ein abschliessendes gib_zurück (oder leerer Koerper).
+/// Alles andere ohne unsicher: laeuft im System-Emitter im Sicher-Modus.
+pub(crate) fn is_pure_slice(body: &[Stmt]) -> bool {
+    let locals = match body.split_last() {
+        None => return true,
+        Some((Stmt::Return(_), locals)) => locals,
+        Some(_) => body,
+    };
+    locals.iter().all(|stmt| matches!(stmt,
+        Stmt::Assignment { ty: Some(_), .. } | Stmt::ConstAssignment { ty: Some(_), .. }))
+}
+
 /// P2-T74 (ADR §3, statisch erkennbar): Hat ein Koerper mit Rueckgabetyp kein
 /// einziges gib_zurück und keine Schleife, erreicht jeder Aufruf das Funktions-
 /// ende; emit_system_function lehnt ihn als Compilefehler ab. Koerper, die nur
@@ -298,7 +614,7 @@ pub(crate) fn is_system_body(body: &[Stmt], params: &[String]) -> bool {
 /// bzw. Trap), weil der Weg zum Ende dort nicht statisch sicher ist.
 fn enthaelt_rueckgabe_oder_schleife(body: &[Stmt]) -> bool {
     body.iter().any(|stmt| match stmt {
-        Stmt::Return(_) | Stmt::While { .. } => true,
+        Stmt::Return(_) | Stmt::While { .. } | Stmt::For { .. } => true,
         Stmt::UnsafeBlock { body } => enthaelt_rueckgabe_oder_schleife(body),
         Stmt::If { body, else_body, .. } =>
             enthaelt_rueckgabe_oder_schleife(body) || enthaelt_rueckgabe_oder_schleife(else_body),
@@ -314,7 +630,7 @@ pub(crate) fn has_struct_locals(body: &[Stmt], nominals: &NominalTypes) -> bool 
         Stmt::Assignment { ty: Some(ty), .. }
         | Stmt::ConstAssignment { ty: Some(ty), .. } =>
             matches!(&ty.kind, TypeKind::Name(name) if nominals.contains_key(name)),
-        Stmt::UnsafeBlock { body } | Stmt::While { body, .. } =>
+        Stmt::UnsafeBlock { body } | Stmt::While { body, .. } | Stmt::For { body, .. } =>
             has_struct_locals(body, nominals),
         Stmt::If { body, else_body, .. } =>
             has_struct_locals(body, nominals) || has_struct_locals(else_body, nominals),
@@ -423,9 +739,17 @@ struct Emitter<'a, 'ctx> {
     trap: Option<BasicBlock<'ctx>>,
     /// Nie erreichter Block fuer Operationen ohne Fehlerfall (siehe never_block).
     never: Option<BasicBlock<'ctx>>,
+    /// P2-T58 C3: Rueckkehr mit Nullwert nach fehlgeschlagenem Callee (weiter_block).
+    weiter: Option<BasicBlock<'ctx>>,
+    /// P2-T58 (Review 06d10060 #3): Fehlerblock negativer Exponent (pow_fehler_block).
+    pow_fehler: Option<BasicBlock<'ctx>>,
     result: Option<STy>,
     callees: &'a HashMap<String, NativeCallee<'ctx>>,
     externs: &'a crate::ffi_types::ExternRegistry<'ctx>,
+    /// P2-T12 A (Plan 31194239): sicherer @nativ-Koerper (nicht ganz in
+    /// unsicher:). Unsichere Operationen nur innerhalb von unsicher:-Bloecken.
+    sicher: bool,
+    unsicher_tiefe: u32,
 }
 
 fn e(err: impl ToString) -> String { err.to_string() }
@@ -493,6 +817,24 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         self.hosted && self.function.get_name().to_str().is_ok_and(|n| n.starts_with("__moo_native."))
     }
 
+    /// P2-T58 C3 (Plan 4500717b): Ziel nach einem fehlbaren nativen Aufruf, dessen
+    /// Fehler schon gemeldet ist (Flag gesetzt). Rueckkehr mit Nullwert bzw. void
+    /// OHNE neue Meldung - der Erstfehler bleibt, keine Seiteneffekte danach.
+    /// Memoisiert; nur hosted Moo-intern (fangbar), Bare/C-Exporte trappen ohnehin.
+    fn weiter_block(&mut self) -> Result<BasicBlock<'ctx>, String> {
+        if let Some(block) = self.weiter { return Ok(block); }
+        let current = self.builder.get_insert_block();
+        let block = self.context.append_basic_block(self.function, "sys.fehler.weiter");
+        self.builder.position_at_end(block);
+        match self.function.get_type().get_return_type() {
+            Some(ty) => { self.builder.build_return(Some(&ty.const_zero())).map_err(e)?; }
+            None => { self.builder.build_return(None).map_err(e)?; }
+        }
+        if let Some(current) = current { self.builder.position_at_end(current); }
+        self.weiter = Some(block);
+        Ok(block)
+    }
+
     fn trap_block(&mut self) -> Result<BasicBlock<'ctx>, String> {
         if let Some(block) = self.trap { return Ok(block); }
         let current = self.builder.get_insert_block();
@@ -507,6 +849,21 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         }
         if let Some(current) = current { self.builder.position_at_end(current); }
         self.trap = Some(block);
+        Ok(block)
+    }
+
+    /// P2-T58 (Review 06d10060 #3, Plan f40b5980 §2.1): negativer Exponent bei
+    /// signed ** meldet hosted `Native Potenz mit negativem Exponenten in '<fn>'`
+    /// (wie der Pure-Lowerer); bare/@einstieg trappt wie trap_block.
+    fn pow_fehler_block(&mut self) -> Result<BasicBlock<'ctx>, String> {
+        if let Some(block) = self.pow_fehler { return Ok(block); }
+        if !self.fangbar() { return self.trap_block(); }
+        let current = self.builder.get_insert_block();
+        let block = self.context.append_basic_block(self.function, "sys.fehler.pow");
+        self.builder.position_at_end(block);
+        self.emit_hosted_fehler("Native Potenz mit negativem Exponenten")?;
+        if let Some(current) = current { self.builder.position_at_end(current); }
+        self.pow_fehler = Some(block);
         Ok(block)
     }
 
@@ -562,8 +919,10 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             STy::Float(t) => t.llvm_type(self.context).into_float_type().const_zero().into(),
             STy::Bool => self.context.bool_type().const_zero().into(),
             STy::Ptr(_) => self.ptrt().const_null().into(),
-            STy::Struct(_) =>
+            STy::Struct(_) | STy::Buffer(_) | STy::StrukturPuffer(_) =>
                 ty.llvm(self.context, self.layouts)?.into_struct_type().const_zero().into(),
+            STy::Array { .. } =>
+                ty.llvm(self.context, self.layouts)?.into_array_type().const_zero().into(),
         })
     }
 
@@ -588,7 +947,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     let constant = matches!(stmt, Stmt::ConstAssignment { .. });
                     self.slots.insert(name.clone(), Slot { ty: sty, ptr, constant });
                 }
-                Stmt::UnsafeBlock { body } | Stmt::While { body, .. } => self.declare_locals(body, entry)?,
+                Stmt::UnsafeBlock { body } | Stmt::While { body, .. } | Stmt::For { body, .. } => self.declare_locals(body, entry)?,
                 Stmt::If { body, else_body, .. } => {
                     self.declare_locals(body, entry)?;
                     self.declare_locals(else_body, entry)?;
@@ -610,13 +969,13 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     fn store(&mut self, name: &str, value: &Expr, declaring: bool) -> Result<(), String> {
         let (ty, ptr, constant) = match self.slots.get(name) {
             Some(slot) => (slot.ty.clone(), slot.ptr, slot.constant),
-            None => return Err(format!("Systemkoerper: '{name}' ist nicht deklariert (setze {name}: TYP auf ...)")),
+            None => return Err(format!("Systemkoerper: '{name}' ist nicht deklariert; Native lokale Variable braucht eine Typannotation (setze {name}: TYP auf ...)")),
         };
         if constant && !declaring {
             return Err(format!("Systemkoerper: Konstante '{name}' kann nicht neu gesetzt werden"));
         }
-        if matches!(ty, STy::Struct(_)) {
-            // Strukturwerte wandern als Speicherkopie, nicht als LLVM-Aggregat.
+        if ty.ist_aggregat() {
+            // Struktur-/Arraywerte wandern als Speicherkopie, nicht als LLVM-Aggregat.
             let from = self.struct_place(value, &ty, name)?;
             let alignment = self.struct_size_align(&ty)?.1;
             let to = Place { ptr, alignment, origin: Origin::Slot(name.to_string()) };
@@ -693,6 +1052,14 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 self.construct_struct_into(name, args, &place)?;
                 Ok(place)
             }
+            // P2-T48 A4 (Plan a71947f7 E2): Arrayliteral [a, b, ...] fuer ein
+            // arraytypisiertes Ziel, direkt in einen frischen Zwischenspeicher.
+            Expr::List(items) if matches!(ty, STy::Array { .. }) => {
+                let (ptr, alignment) = self.entry_alloca(ty, "sys.array.neu")?;
+                let place = Place { ptr, alignment, origin: Origin::Fresh };
+                self.array_literal_into(items, ty, &place, what)?;
+                Ok(place)
+            }
             Expr::IndexAccess { object, index } => {
                 let alignment = self.local_array_alignment(object);
                 let (ptr, found) = self.pointer_index(object, index)?;
@@ -750,6 +1117,17 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             .ok_or_else(|| format!("Systemkoerper: unbekannte Struktur '{name}'"))?;
         let fields = layout.fields.clone();
         let offsets = layout.offsets.clone();
+        // P2-T48 A4: Name() ohne Argumente = Nullwert (wie die 0-Vorbelegung der Slots).
+        if args.is_empty() {
+            let (size, _) = self.struct_size_align(&self.struct_ty(name)?)?;
+            if size > 0 {
+                self.builder.build_memset(
+                    target.ptr, target.alignment, self.context.i8_type().const_zero(),
+                    self.i64t().const_int(size, false),
+                ).map_err(e)?;
+            }
+            return Ok(());
+        }
         if fields.len() != args.len() {
             return Err(format!(
                 "Systemkoerper: Struktur '{name}' erwartet {} Felder, bekommen {}",
@@ -769,7 +1147,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 )
             }.map_err(e)?;
             let alignment = field_alignment(target.alignment, offset);
-            if matches!(field_ty, STy::Struct(_)) {
+            if field_ty.ist_aggregat() {
                 let from = self.struct_place(expr, &field_ty, &label)?;
                 let to = Place { ptr: address, alignment, origin: target.origin.clone() };
                 self.copy_struct(&field_ty, to, from)?;
@@ -933,6 +1311,25 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     /// beweisbar. Ein freier ptr[T], MMIO oder ein gepacktes Feld erhaelt
     /// weiterhin align 1: sein Sprachtyp allein garantiert keine Adresse.
     fn local_array_alignment(&self, object: &Expr) -> u32 {
+        // P2-T50 B2: Pufferelemente liegen ABI-ausgerichtet (calloc, Start als
+        // Vielfaches der Elementgroesse, moo_buffer.c).
+        if let Some(STy::Buffer(t)) = self.infer(object) {
+            return self.target.get_abi_alignment(&t.llvm_type(self.context));
+        }
+        // P2-T48 D: Strukturpuffer nur mit Ausrichtung <= MOO_MAX_ALIGN (Compiler).
+        if let Some(STy::StrukturPuffer(id)) = self.infer(object) {
+            return STy::Struct(id).llvm(self.context, self.layouts)
+                .map(|llvm| self.target.get_abi_alignment(&llvm)).unwrap_or(1);
+        }
+        // P2-T48 A2: lokale Arrays liegen in ABI-ausgerichteten Slots; jedes
+        // Element ist so ausgerichtet wie sein Typ (Stride = Vielfaches davon).
+        if let Some(STy::Array { element, .. }) = self.infer(object) {
+            if self.lokales_array(object) {
+                if let Ok(llvm) = element.llvm(self.context, self.layouts) {
+                    return self.target.get_abi_alignment(&llvm);
+                }
+            }
+        }
         let Expr::PropertyAccess { object: owner, property } = object else { return 1 };
         let Expr::Identifier(local) = owner.as_ref() else { return 1 };
         let Some(slot) = self.slots.get(local) else { return 1 };
@@ -957,6 +1354,78 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         }
     }
 
+    /// P2-T48 A2: Adresse eines lokalen Arrays bzw. eines Array-Elements eines
+    /// lokalen Arrays (2D: a[i] ist selbst ein Array).
+    fn array_basis(&mut self, object: &Expr) -> Result<PointerValue<'ctx>, String> {
+        match object {
+            Expr::Identifier(name) => Ok(self.slots.get(name)
+                .ok_or_else(|| format!("Systemkoerper: Name '{name}' nicht gefunden"))?.ptr),
+            Expr::IndexAccess { object: inner, index } => Ok(self.pointer_index(inner, index)?.0),
+            _ => Err("Systemkoerper: Indexzugriff auf dieses Array wird noch nicht unterstuetzt (lokale Arrays und ihre Elemente)".into()),
+        }
+    }
+
+    /// P2-T48 A2: Ausdruck bezeichnet ein lokales Array (Slot oder Element davon).
+    fn lokales_array(&self, object: &Expr) -> bool {
+        match object {
+            Expr::Identifier(name) => self.slots.get(name).is_some_and(|slot| matches!(slot.ty, STy::Array { .. })),
+            Expr::IndexAccess { object: inner, .. } => self.lokales_array(inner),
+            _ => false,
+        }
+    }
+
+    /// P2-T48 A4: Arrayliteral elementweise in `target` schreiben; die
+    /// Elementzahl muss exakt der Laenge entsprechen (keine Teilinitialisierung).
+    fn array_literal_into(&mut self, items: &[Expr], ty: &STy, target: &Place<'ctx>, what: &str) -> Result<(), String> {
+        let STy::Array { element, length } = ty else {
+            return Err(format!("Systemkoerper: {what}: Arrayliteral braucht einen Arraytyp"));
+        };
+        if items.len() != *length as usize {
+            return Err(format!("Systemkoerper: {what} erwartet {length} Elemente, das Arrayliteral hat {}", items.len()));
+        }
+        let array_llvm = ty.llvm(self.context, self.layouts)?;
+        let element_llvm = element.llvm(self.context, self.layouts)?;
+        let stride = self.target.get_abi_size(&element_llvm);
+        for (i, item) in items.iter().enumerate() {
+            let address = unsafe {
+                self.builder.build_in_bounds_gep(
+                    array_llvm, target.ptr,
+                    &[self.i64t().const_zero(), self.i64t().const_int(i as u64, false)], "sys.array.element",
+                )
+            }.map_err(e)?;
+            let alignment = field_alignment(target.alignment, stride * i as u64);
+            let label = format!("{what}[{i}]");
+            if element.ist_aggregat() {
+                let from = self.struct_place(item, element, &label)?;
+                self.copy_struct(element, Place { ptr: address, alignment, origin: target.origin.clone() }, from)?;
+            } else {
+                let value = self.expr(item, Some(element))?;
+                self.expect(&value, element, &label)?;
+                self.builder.build_store(address, value.value).map_err(e)?
+                    .set_alignment(alignment).map_err(e)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// P2-T50 B3: `länge(p)` -> u64 und `puffer_zeiger(p)` -> ptr[T] fuer
+    /// p: puffer[T] (eigene Funktionen gleichen Namens haben Vorrang, call/infer).
+    fn puffer_builtin_typ(&self, name: &str, args: &[Expr]) -> Option<STy> {
+        let [arg] = args else { return None };
+        let puffer = match self.infer(arg) {
+            Some(ty @ (STy::Buffer(_) | STy::StrukturPuffer(_))) => ty,
+            _ => return None,
+        };
+        match name {
+            "länge" | "laenge" | "length" | "len" => Some(STy::Int(NType::U64)),
+            "puffer_zeiger" | "buffer_pointer" => Some(STy::Ptr(NativeTypeId::Pointer {
+                address_space: 0,
+                pointee: Box::new(puffer.identity_element()),
+            })),
+            _ => None,
+        }
+    }
+
     /// Indexiert einen typisierten RAM-Zeiger. Anders als volatile_* ist das
     /// ein normaler Zugriff; fuer MMIO ist ausdruecklich volatile_* zu nutzen.
     /// Der Aufrufer im unsicher-Block verantwortet Gueltigkeit und Grenzen.
@@ -968,6 +1437,57 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 FieldKind::Array { .. } => Err("Systemkoerper: verschachtelte Arrays sind noch nicht nutzbar".into()),
             };
         }
+        // P2-T50 B2 (Plan bb3878ef E4): Pufferindex ist immer grenzgeprueft
+        // (Fehlervertrag trap_block: hosted fangbar, bare/C-Export Trap);
+        // ungeprueft nur ausdruecklich ueber puffer_zeiger(p)[i].
+        let puffer_element = match self.infer(object) {
+            Some(STy::Buffer(t)) => Some((STy::Buffer(t), STy::from_ntype(t)?)),
+            Some(STy::StrukturPuffer(id)) => Some((STy::StrukturPuffer(id.clone()), STy::Struct(id))),
+            _ => None,
+        };
+        if let Some((puffer_ty, element)) = puffer_element {
+            let puffer = self.expr(object, Some(&puffer_ty))?;
+            let aggregat = puffer.value.into_struct_value();
+            let daten = self.builder.build_extract_value(aggregat, 0, "sys.puffer.daten").map_err(e)?.into_pointer_value();
+            let laenge = self.builder.build_extract_value(aggregat, 1, "sys.puffer.laenge").map_err(e)?.into_int_value();
+            let position = self.expr(index, Some(&STy::Int(NType::U64)))?;
+            self.expect(&position, &STy::Int(NType::U64), "Pufferindex")?;
+            let position = position.value.into_int_value();
+            let ausserhalb = self.builder.build_int_compare(
+                inkwell::IntPredicate::UGE, position, laenge, "sys.puffer.ausserhalb",
+            ).map_err(e)?;
+            let fehler = self.trap_block()?;
+            let gueltig = self.context.append_basic_block(self.function, "sys.puffer.gueltig");
+            self.builder.build_conditional_branch(ausserhalb, fehler, gueltig).map_err(e)?;
+            self.builder.position_at_end(gueltig);
+            let ptr = unsafe {
+                self.builder.build_gep(element.llvm(self.context, self.layouts)?, daten, &[position], "sys.puffer.index")
+            }.map_err(e)?;
+            return Ok((ptr, element));
+        }
+        // P2-T48 A2 (Plan a71947f7): lokale feste Arrays (auch [[T; N]; M]) im
+        // Slot; Index grenzgeprueft (trap_block), Stride aus dem LLVM-Arraytyp.
+        if let Some(array_ty @ STy::Array { .. }) = self.infer(object) {
+            let STy::Array { element, length } = &array_ty else { return Err("Systemkoerper: Arraytyp fehlt".into()) };
+            let basis = self.array_basis(object)?;
+            let position = self.expr(index, Some(&STy::Int(NType::U64)))?;
+            self.expect(&position, &STy::Int(NType::U64), "Arrayindex")?;
+            let position = position.value.into_int_value();
+            let ausserhalb = self.builder.build_int_compare(
+                inkwell::IntPredicate::UGE, position, self.i64t().const_int(u64::from(*length), false), "sys.array.ausserhalb",
+            ).map_err(e)?;
+            let fehler = self.trap_block()?;
+            let gueltig = self.context.append_basic_block(self.function, "sys.array.gueltig");
+            self.builder.build_conditional_branch(ausserhalb, fehler, gueltig).map_err(e)?;
+            self.builder.position_at_end(gueltig);
+            let array_llvm = array_ty.llvm(self.context, self.layouts)?;
+            let ptr = unsafe {
+                self.builder.build_in_bounds_gep(
+                    array_llvm, basis, &[self.i64t().const_zero(), position], "sys.array.index",
+                )
+            }.map_err(e)?;
+            return Ok((ptr, (**element).clone()));
+        }
         let ptr_ty = self.infer(object)
             .ok_or("Systemkoerper: Indexzugriff erfordert einen typisierten ptr[T]")?;
         let element = match &ptr_ty {
@@ -976,6 +1496,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     .ok_or("Systemkoerper: ptr[void] kann nicht indiziert werden")?,
             _ => return Err("Systemkoerper: Indexzugriff erfordert einen typisierten ptr[T]".into()),
         };
+        self.verlange_unsicher("Zeigerindex p[i] auf ptr[T]")?;
         let base = self.expr(object, Some(&ptr_ty))?;
         let position = self.expr(index, Some(&STy::Int(NType::U64)))?;
         self.expect(&position, &STy::Int(NType::U64), "Zeigerindex")?;
@@ -1044,6 +1565,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     "Systemkoerper: Arrayfeld erfordert einen Index".into()
                 ),
                 FieldKind::Value(ty) => {
+                    self.verlange_unsicher("Feldzugriff ueber ein Zeigerfeld")?;
                     let name = self.struct_name_from_type(&ty)
                         .ok_or("Systemkoerper: Feldzugriff erfordert ptr[Struktur]")?;
                     let value = self.builder.build_load(
@@ -1056,10 +1578,18 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             };
         }
         if let Expr::IndexAccess { object: base, index } = object {
+            // P2-T48 D: p[i] auf puffer[Struktur] (grenzgeprueft) als Strukturbasis.
+            if matches!(self.infer(base), Some(STy::StrukturPuffer(_))) {
+                let (address, ty) = self.pointer_index(base, index)?;
+                let name = self.struct_name_from_type(&ty)
+                    .ok_or("Systemkoerper: Pufferelement ist keine Struktur")?;
+                return Ok((address, name));
+            }
             if let Some((address, kind)) = self.array_field_index(base, index)? {
                 return match kind {
                     FieldKind::Embedded(name) => Ok((address, name)),
                     FieldKind::Value(ty) => {
+                        self.verlange_unsicher("Feldzugriff ueber ein Zeiger-Arrayelement")?;
                         let name = self.struct_name_from_type(&ty)
                             .ok_or("Systemkoerper: Arrayelement erfordert ptr[Struktur]")?;
                         let value = self.builder.build_load(
@@ -1076,6 +1606,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             }
             if let Some(ty) = self.infer(base) {
                 if let Some(name) = self.struct_name_from_type(&ty) {
+                    self.verlange_unsicher("Strukturindex auf ptr[Struktur]")?;
                     let base_value = self.expr(base, Some(&ty))?;
                     let position = self.expr(index, Some(&STy::Int(NType::U64)))?;
                     self.expect(&position, &STy::Int(NType::U64), "Strukturindex")?;
@@ -1106,6 +1637,16 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
             }
         }
+        // P2-T48 A2: Element eines lokalen Struktur-Arrays (ps[i].feld) liegt im
+        // Slot des Arrays; Adresse grenzgeprueft ueber pointer_index.
+        if let Expr::IndexAccess { object: inner, index } = object {
+            if self.lokales_array(inner) {
+                let (ptr, ty) = self.pointer_index(inner, index)?;
+                let name = self.struct_name_from_type(&ty)
+                    .ok_or("Systemkoerper: Feldzugriff erfordert ein Strukturelement")?;
+                return Ok((ptr, name));
+            }
+        }
         // Eine lokale Struktur ist bereits im Entry-Slot gespeichert.
         if let Expr::Identifier(local) = object {
             if let Some(slot) = self.slots.get(local) {
@@ -1116,6 +1657,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
             }
         }
+        self.verlange_unsicher("Feldzugriff ueber ptr[Struktur]")?;
         let ty = self.infer(object)
             .ok_or("Systemkoerper: Feldzugriff erfordert ptr[Struktur]")?;
         let name = self.struct_name_from_type(&ty)
@@ -1152,15 +1694,28 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         }
     }
 
+    /// P2-T12 A: im sicheren Koerper nur innerhalb von unsicher: erlaubt.
+    fn verlange_unsicher(&self, was: &str) -> Result<(), String> {
+        if self.sicher && self.unsicher_tiefe == 0 {
+            return Err(format!("Systemkoerper: {was} ist nur innerhalb von unsicher: erlaubt (sicherer @nativ-Koerper)"));
+        }
+        Ok(())
+    }
+
     fn stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
-            Stmt::UnsafeBlock { body } => self.block(body),
+            Stmt::UnsafeBlock { body } => {
+                self.unsicher_tiefe += 1;
+                let result = self.block(body);
+                self.unsicher_tiefe -= 1;
+                result
+            }
             Stmt::Assignment { name, ty, value } => self.store(name, value, ty.is_some()),
             Stmt::ConstAssignment { name, ty: Some(_), value } => self.store(name, value, true),
             Stmt::PropertyAssignment { object, property, value } => {
                 let alignment = self.local_field_alignment(object, property);
                 let (ptr, ty) = self.pointer_property(object, property)?;
-                if matches!(ty, STy::Struct(_)) {
+                if ty.ist_aggregat() {
                     let from = self.struct_place(value, &ty, property)?;
                     return self.copy_struct(&ty, Place { ptr, alignment, origin: Origin::Memory }, from);
                 }
@@ -1175,7 +1730,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             Stmt::IndexAssignment { object, index, value } => {
                 let alignment = self.local_array_alignment(object);
                 let (ptr, ty) = self.pointer_index(object, index)?;
-                if matches!(ty, STy::Struct(_)) {
+                if ty.ist_aggregat() {
                     let from = self.struct_place(value, &ty, "Zeiger-Element")?;
                     return self.copy_struct(&ty, Place { ptr, alignment, origin: Origin::Memory }, from);
                 }
@@ -1214,6 +1769,56 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 self.loops.pop();
                 result?;
                 crate::native_control_flow::branch_if_open(&self.builder, blocks.condition)?;
+                self.builder.position_at_end(blocks.exit);
+                Ok(())
+            }
+            // P2-T12 B (Plan 31194239 E3): für i in a..b – exklusiver Bereich mit
+            // nativem Integer-Zaehler; Ende einmal vor der Schleife ausgewertet;
+            // der Zaehler ist im Koerper konstant und nur dort sichtbar; a >= b
+            // laeuft null Mal. weiter springt in den Schritt-Block (Zaehler + 1,
+            // kein Ueberlauf moeglich, da Zaehler < Ende).
+            Stmt::For { var_name, iterable, body } => {
+                let Expr::Range { start, end } = iterable else {
+                    return Err("Systemkoerper: für erwartet einen Bereich a..b; dynamische Listen/Texte sind in @nativ nicht iterierbar (puffer[T] mit Index und solange verwenden)".into());
+                };
+                if self.slots.contains_key(var_name) {
+                    return Err(format!("Systemkoerper: Schleifenzaehler '{var_name}' ist bereits deklariert"));
+                }
+                let ty = self.infer(start).or_else(|| self.infer(end)).unwrap_or(STy::Int(NType::I64));
+                let STy::Int(zahl) = ty else {
+                    return Err(format!("Systemkoerper: für-Bereich braucht Ganzzahlgrenzen, nicht {}", ty.name()));
+                };
+                let anfang = self.expr(start, Some(&ty))?;
+                self.expect(&anfang, &ty, "für-Anfang")?;
+                let ende = self.expr(end, Some(&ty))?;
+                self.expect(&ende, &ty, "für-Ende")?;
+                let (zaehler, _) = self.entry_alloca(&ty, var_name)?;
+                let (grenze, _) = self.entry_alloca(&ty, "sys.fuer.ende")?;
+                self.builder.build_store(zaehler, anfang.value).map_err(e)?;
+                self.builder.build_store(grenze, ende.value).map_err(e)?;
+                let llvm = ty.llvm(self.context, self.layouts)?;
+                let blocks = crate::native_control_flow::LoopBlocks::new(self.context, self.function);
+                let schritt = self.context.append_basic_block(self.function, "native.loop.step");
+                self.builder.build_unconditional_branch(blocks.condition).map_err(e)?;
+                self.builder.position_at_end(blocks.condition);
+                let aktuell = self.builder.build_load(llvm, zaehler, "sys.fuer.i").map_err(e)?;
+                let bis = self.builder.build_load(llvm, grenze, "sys.fuer.bis").map_err(e)?;
+                let test = crate::native_control_flow::range_condition(self.context, &self.builder,
+                    NValue { ty: zahl, value: aktuell }, NValue { ty: zahl, value: bis })?;
+                self.builder.build_conditional_branch(test.value.into_int_value(), blocks.body, blocks.exit).map_err(e)?;
+                self.builder.position_at_end(blocks.body);
+                self.slots.insert(var_name.clone(), Slot { ty: ty.clone(), ptr: zaehler, constant: true });
+                self.loops.push((schritt, blocks.exit));
+                let result = self.block(body);
+                self.loops.pop();
+                self.slots.remove(var_name);
+                result?;
+                crate::native_control_flow::branch_if_open(&self.builder, schritt)?;
+                self.builder.position_at_end(schritt);
+                let i = self.builder.build_load(llvm, zaehler, "sys.fuer.i").map_err(e)?.into_int_value();
+                let naechster = self.builder.build_int_add(i, i.get_type().const_int(1, false), "sys.fuer.naechster").map_err(e)?;
+                self.builder.build_store(zaehler, naechster).map_err(e)?;
+                self.builder.build_unconditional_branch(blocks.condition).map_err(e)?;
                 self.builder.position_at_end(blocks.exit);
                 Ok(())
             }
@@ -1259,6 +1864,41 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         Ok(value.value.into_int_value())
     }
 
+    /// P2-T9 (Plan 4500717b A4, ADR §2): Standardtyp eines Zahlenliterals
+    /// ohne Kontext (Ganzzahl i64, Float f64), auch negiert. Nur als LETZTER
+    /// Rueckfall nach infer(): ein typisierter Nachbar behaelt Vorrang.
+    fn literal_standard(expr: &Expr) -> Option<STy> {
+        let text = match expr {
+            Expr::NativeNumber { text, .. } => text,
+            Expr::UnaryOp { op: UnaryOpKind::Neg, operand } => match operand.as_ref() {
+                Expr::NativeNumber { text, .. } => text,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        STy::from_ntype(crate::codegen_native::literal_default_type(text)).ok()
+    }
+
+    /// P2-T9 (Review 9b847d8e): Typ eines Operandenpaars ohne typisierten
+    /// Nachbarn, reihenfolgeunabhaengig und gleich zum Pure-Pfad
+    /// (codegen_native::literal_paar_typ): zwei Literale -> f64, sobald eines ein
+    /// Float-Literal ist; sonst der Standardtyp des einzigen Literals.
+    fn literal_paar(left: &Expr, right: &Expr) -> Option<STy> {
+        let standard = |e: &Expr| match e {
+            Expr::NativeNumber { text, .. } => Some(crate::codegen_native::literal_default_type(text)),
+            Expr::UnaryOp { op: UnaryOpKind::Neg, operand } => match operand.as_ref() {
+                Expr::NativeNumber { text, .. } => Some(crate::codegen_native::literal_default_type(text)),
+                _ => None,
+            },
+            _ => None,
+        };
+        let ty = match (standard(left), standard(right)) {
+            (Some(l), Some(r)) => crate::codegen_native::literal_paar_typ(l, r),
+            (l, r) => l.or(r)?,
+        };
+        STy::from_ntype(ty).ok()
+    }
+
     /// Statischer Typ eines Ausdrucks ohne Kontext (Literale: None).
     fn infer(&self, expr: &Expr) -> Option<STy> {
         match expr {
@@ -1282,6 +1922,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 match self.infer(object) {
                     Some(STy::Ptr(NativeTypeId::Pointer { pointee, .. })) =>
                         STy::from_identity(&pointee).ok().flatten(),
+                    Some(STy::Buffer(t)) => STy::from_ntype(t).ok(),
+                    Some(STy::StrukturPuffer(id)) => Some(STy::Struct(id)),
+                    Some(STy::Array { element, .. }) => Some(*element),
                     _ => None,
                 }
             },
@@ -1326,13 +1969,14 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
                 if let Some((true, bits)) = port_bits(name) { return Some(STy::Int(port_type(bits))); }
                 if let Some(callee) = self.callees.get(name) { return callee.result.clone(); }
+                if let Some(ty) = self.puffer_builtin_typ(name, args) { return Some(ty); }
                 if let Some(Slot { ty: STy::Ptr(NativeTypeId::Pointer { pointee, .. }), .. }) = self.slots.get(name) {
                     if let NativeTypeId::Function { result, .. } = pointee.as_ref() {
                         return STy::from_identity(result).ok().flatten();
                     }
                 }
-                if let Some(binding) = self.externs.get_struct(name) {
-                    return self.struct_ty(binding.struct_name()).ok();
+                if let Some(binding) = self.externs.get_abi(name) {
+                    return STy::from_type_ref(binding.result_type(), self.nominals).ok();
                 }
                 if let Some(binding) = self.externs.get(name) {
                     return STy::from_identity(binding.semantic_types().1).ok().flatten();
@@ -1349,7 +1993,10 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 Some(STy::Int(ty)) => self.literal(*ty, text, false),
                 Some(STy::Float(ty)) => self.float_literal(*ty, text, false),
                 Some(other) => Err(format!("Systemkoerper: Zahl {text} passt nicht zu {}", other.name())),
-                None => Err(format!("Systemkoerper: Typ der Zahl {text} ist aus dem Kontext nicht bestimmbar (u64(...) o. Ä. verwenden)")),
+                None => {
+                    let ty = Self::literal_standard(expr).ok_or("Systemkoerper: Literaltyp fehlt")?;
+                    self.expr(expr, Some(&ty))
+                }
             },
             Expr::Boolean(value) => Ok(SVal { ty: STy::Bool, value: self.context.bool_type().const_int(u64::from(*value), false).into() }),
             Expr::None => match expected {
@@ -1376,6 +2023,10 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                         return match expected {
                             Some(STy::Int(ty)) => self.literal(*ty, text, true),
                             Some(STy::Float(ty)) => self.float_literal(*ty, text, true),
+                            None => {
+                                let ty = Self::literal_standard(expr).ok_or("Systemkoerper: Literaltyp fehlt")?;
+                                self.expr(expr, Some(&ty))
+                            }
                             _ => Err(format!("Systemkoerper: Typ von -{text} ist nicht bestimmbar")),
                         };
                     }
@@ -1451,6 +2102,18 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 ));
             }
         }
+        // P2-T48 A4: Nullkonstruktor und Arrayfelder ueber den Speicherpfad
+        // (construct_struct_into); reine Skalar-/Strukturfelder behalten ihr IR.
+        let hat_array = fields.iter().any(|(_, field)| matches!(field.kind, TypeKind::Array { .. }));
+        if args.is_empty() || hat_array {
+            let (ptr, alignment) = self.entry_alloca(&ty, "sys.struct.neu")?;
+            let place = Place { ptr, alignment, origin: Origin::Fresh };
+            self.construct_struct_into(name, args, &place)?;
+            let value = self.builder.build_load(llvm, ptr, "sys.struct.wert").map_err(e)?;
+            value.as_instruction_value().ok_or("Systemkoerper: Struktur-Load fehlt")?
+                .set_alignment(alignment).map_err(e)?;
+            return Ok(SVal { ty, value });
+        }
         if fields.len() != args.len() {
             return Err(format!(
                 "Systemkoerper: Struktur '{name}' erwartet {} Felder, bekommen {}",
@@ -1507,7 +2170,8 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         };
         if let Some(cmp) = compare {
             let ty = self.infer(left).or_else(|| self.infer(right))
-                .ok_or("Systemkoerper: Vergleich zweier Literale ist nicht bestimmbar")?;
+                .or_else(|| Self::literal_paar(left, right))
+                .ok_or("Systemkoerper: Typ des Vergleichs ist nicht bestimmbar")?;
             let l = self.expr(left, Some(&ty))?;
             let r = self.expr(right, Some(&ty))?;
             self.expect(&r, &l.ty, "Vergleich")?;
@@ -1552,21 +2216,25 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         }
         // Float-Felder koennen dieselben IEEE-Operationen nutzen wie reine
         // native Moo-Funktionen; keine implizite Integer-/Float-Konversion.
-        let float_ty = expected.cloned().or_else(|| self.infer(left)).or_else(|| self.infer(right));
+        let float_ty = expected.cloned().or_else(|| self.infer(left)).or_else(|| self.infer(right))
+            .or_else(|| Self::literal_paar(left, right));
         if let Some(STy::Float(t)) = float_ty {
             use crate::native_arithmetic::FloatOp;
             let op = match op {
                 BinOp::Add => FloatOp::Add, BinOp::Sub => FloatOp::Sub,
                 BinOp::Mul => FloatOp::Mul, BinOp::Div => FloatOp::Div,
+                BinOp::Mod => FloatOp::Rem, BinOp::Pow => FloatOp::Pow,
                 _ => return Err("Systemkoerper: Float-Operator wird nicht unterstuetzt".into()),
             };
             let l = self.expr(left, Some(&STy::Float(t)))?;
             let r = self.expr(right, Some(&STy::Float(t)))?;
             self.expect(&r, &l.ty, "Float-Rechnung")?;
-            let result = crate::native_arithmetic::float_binary(
-                self.context, &self.builder, op,
-                NValue { ty: t, value: l.value }, NValue { ty: t, value: r.value },
-            )?;
+            let (ln, rn) = (NValue { ty: t, value: l.value }, NValue { ty: t, value: r.value });
+            let result = if matches!(op, FloatOp::Rem | FloatOp::Pow) {
+                crate::native_arithmetic::float_bibliothek(self.context, &self.builder, self.module, op, ln, rn)?
+            } else {
+                crate::native_arithmetic::float_binary(self.context, &self.builder, op, ln, rn)?
+            };
             return Ok(SVal { ty: STy::Float(t), value: result.value });
         }
         let int_op = match op {
@@ -1574,11 +2242,13 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             BinOp::Div => IntOp::Div, BinOp::Mod => IntOp::Rem,
             BinOp::BitAnd => IntOp::BitAnd, BinOp::BitOr => IntOp::BitOr, BinOp::BitXor => IntOp::BitXor,
             BinOp::LShift => IntOp::Shl, BinOp::RShift => IntOp::Shr,
+            BinOp::Pow => IntOp::Pow,
             _ => return Err("Systemkoerper: Operator wird nicht unterstützt".into()),
         };
         let ty = match expected {
             Some(ty @ STy::Int(_)) => ty.clone(),
             _ => self.infer(left).or_else(|| if matches!(int_op, IntOp::Shl | IntOp::Shr) { None } else { self.infer(right) })
+                .or_else(|| Self::literal_paar(left, right))
                 .ok_or("Systemkoerper: Typ der Rechnung ist nicht bestimmbar")?,
         };
         let l = self.int_operand(left, Some(&ty))?;
@@ -1588,7 +2258,18 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         let r = self.int_operand(right, Some(&right_ty))?;
         // Nur Div/Rem/Shift koennen fehlen; andere Operationen bekommen den
         // nie erreichten Block (kein moo_native_fehler im IR).
-        let failure = if matches!(int_op, IntOp::Div | IntOp::Rem | IntOp::Shl | IntOp::Shr) {
+        // P2-T58: ** kann nur signed fehlschlagen (negativer Exponent).
+        let pow_signed = matches!(int_op, IntOp::Pow) && matches!(&ty, STy::Int(t) if t.is_signed_integer());
+        let failure = if pow_signed {
+            // Review 06d10060 #1: konstant negativer Exponent ist auch hier ein
+            // Compilefehler (Plan f40b5980 §2.1, wie pruefe_konstante_operanden).
+            if let Some(exponent) = r.value.into_int_value().get_sign_extended_constant() {
+                if exponent < 0 {
+                    return Err("Native Potenz mit konstant negativem Exponenten".into());
+                }
+            }
+            self.pow_fehler_block()?
+        } else if matches!(int_op, IntOp::Div | IntOp::Rem | IntOp::Shl | IntOp::Shr) {
             self.trap_block()?
         } else {
             self.never_block()?
@@ -1689,7 +2370,31 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         for (position, list) in attributes {
             for attribute in list { call.add_attribute(AttributeLoc::Param(position), attribute); }
         }
+        self.nach_aufruf_pruefen(callee)?;
         Ok((call, sret))
+    }
+
+    /// P2-T58 C3: hat ein fehlbarer Moo-interner Callee gemeldet (Flag gesetzt,
+    /// Nullwert zurueck), nicht mit dem Nullwert weiterrechnen: sofort ohne neue
+    /// Meldung zurueck (weiter_block). Nur hosted fangbar; reine Float-/Bit-
+    /// Natives sind nicht fehlbar und bleiben ohne Zusatzkosten. Aufrufer:
+    /// call_system_value (Strukturen) und der skalare Pfad in call.
+    fn nach_aufruf_pruefen(&mut self, callee: &NativeCallee<'ctx>) -> Result<(), String> {
+        let intern = callee.function.get_name().to_str().is_ok_and(|n| n.starts_with("__moo_native."));
+        if !(callee.fehlbar && intern && self.fangbar()) { return Ok(()); }
+        let hook = crate::codegen_native::native_fehler_offen_hook(self.context, self.module)?;
+        let flag = match self.builder.build_call(hook, &[], "sys.fehler.offen").map_err(e)?.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+            _ => return Err("moo_native_fehler_offen liefert keinen Wert".into()),
+        };
+        let offen = self.builder.build_int_compare(
+            IntPredicate::NE, flag, self.context.i32_type().const_zero(), "sys.fehler.gesetzt",
+        ).map_err(e)?;
+        let weiter = self.weiter_block()?;
+        let ok = self.context.append_basic_block(self.function, "sys.fehler.ok");
+        self.builder.build_conditional_branch(offen, weiter, ok).map_err(e)?;
+        self.builder.position_at_end(ok);
+        Ok(())
     }
 
     fn call_result(&self, call: inkwell::values::CallSiteValue<'ctx>, result: Option<STy>) -> Result<Option<SVal<'ctx>>, String> {
@@ -1710,6 +2415,23 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             | "volatile_lesen" | "volatile_read" | "volatile_schreiben" | "volatile_write" | "assembler"))
         {
             return Err(format!("Systemkoerper: '{name}' ist nur im Bare-Profil (Bare/UEFI) verfuegbar, nicht im hosted Usermode"));
+        }
+        // P2-T12 A (Plan 31194239 A2/A3): Positivliste fuer sichere Koerper
+        // ausserhalb von unsicher:. Ein neuer oder vergessener Builtin-Zweig ist
+        // damit automatisch gesperrt (zeiger, adresse_von, speicher_*, struktur-/
+        // registerfeld_*, volatile_*, assembler, port_*, Barrieren, u8(x).., extern C,
+        // Funktionszeiger-Slots).
+        if self.sicher && self.unsicher_tiefe == 0 {
+            let eigener = self.function.get_name().to_str().ok()
+                .and_then(|n| n.strip_prefix("__moo_native.")) == Some(name);
+            let erlaubt = crate::native_arithmetic::pruef_art(name).is_some()
+                || crate::native_arithmetic::cast_art(name).is_some()
+                || self.callees.contains_key(name) || eigener
+                || self.layouts.layout(name).is_some()
+                || self.puffer_builtin_typ(name, args).is_some();
+            if !erlaubt {
+                return Err(format!("Systemkoerper: Aufruf '{name}' ist nur innerhalb von unsicher: erlaubt (sicherer @nativ-Koerper; ohne unsicher: erlaubt: als/als_wrap/als_saettigend, teilbar/verschiebbar/potenzierbar, andere @nativ-Funktionen, Strukturkonstruktoren, länge/puffer_zeiger)"));
+            }
         }
         // P2-T34 / ADR §13: Vorpruefung mit bool-Status statt Trap: teilbar(a, b),
         // verschiebbar(a, n). Erlaubt im Systemkoerper eine Fortsetzung ohne Fehler.
@@ -1777,7 +2499,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     self.builder.build_int_cast_sign_flag(raw, llvm, false, "sys.konv").map_err(e)?
                 }
                 STy::Bool => self.builder.build_int_z_extend(value.value.into_int_value(), llvm, "sys.konv").map_err(e)?,
-                STy::Struct(_) | STy::Float(_) => return Err(format!(
+                STy::Struct(_) | STy::Float(_) | STy::Buffer(_) | STy::StrukturPuffer(_) | STy::Array { .. } => return Err(format!(
                     "Systemkoerper: {name}(x) konvertiert nur Ganzzahlen, Zeiger und bool; fuer Floatwerte als({name}, x) (geprueft) oder als_saettigend({name}, x) verwenden, Strukturen per Feldzugriff"
                 )),
                 STy::Int(source) => {
@@ -2004,7 +2726,18 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             let call_args: Vec<BasicMetadataValueEnum<'ctx>> = values.iter().map(|v| v.value.into()).collect();
             let call = self.builder.build_call(callee.function, &call_args, if callee.result.is_some() { "sys.direkt" } else { "" }).map_err(e)?;
             call.set_call_convention(callee.function.get_call_conventions());
+            self.nach_aufruf_pruefen(&callee)?;
             return self.call_result(call, callee.result.clone());
+        }
+        // P2-T50 B3: länge(p) / puffer_zeiger(p) lesen das Pufferaggregat.
+        if let Some(ty) = self.puffer_builtin_typ(name, args) {
+            let puffer_ty = self.infer(&args[0]).ok_or("Systemkoerper: Puffertyp fehlt")?;
+            let puffer = self.expr(&args[0], Some(&puffer_ty))?;
+            let feld = if matches!(ty, STy::Int(_)) { 1 } else { 0 };
+            let wert = self.builder.build_extract_value(
+                puffer.value.into_struct_value(), feld, "sys.puffer.feld",
+            ).map_err(e)?;
+            return Ok(Some(SVal { ty, value: wert }));
         }
         if let Some(STy::Ptr(identity)) = self.slots.get(name).map(|slot| slot.ty.clone()) {
             let NativeTypeId::Pointer { pointee, .. } = &identity else { unreachable!() };
@@ -2026,23 +2759,25 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 _ => None,
             });
         }
-        // Identische Moo-Quellargumente fuer SysV und Win64. Die ABI-Klasse
-        // (Register, sret, byval) wird aus dem Zieltriple entschieden.
-        if let Some((struct_name, param_kinds)) = self.externs.get_struct(name)
-            .map(|binding| (binding.struct_name().to_string(), binding.param_kinds().to_vec()))
-        {
-            let ty = self.struct_ty(&struct_name)?;
-            let input_types: Vec<STy> = param_kinds.iter().map(|kind| match kind {
-                crate::ffi_types::StructAbiParam::U64 => STy::Int(NType::U64),
-                crate::ffi_types::StructAbiParam::Struct => ty.clone(),
-            }).collect();
-            let values = self.args_for(name, args, &input_types)?;
-            let raw_values: Vec<BasicValueEnum<'ctx>> = values.iter()
-                .map(|value| value.value).collect();
-            let binding = self.externs.get_struct(name)
+        // P2-T19/T56 (Plan 91033131): Struktur-ABI-Aufruf nach dem allgemeinen
+        // Klassifizierer (ffi_abi); dieselbe Moo-Quelle fuer alle Ziel-ABIs.
+        if let Some(binding) = self.externs.get_abi(name) {
+            let param_tys = binding.param_types().iter()
+                .map(|ty| STy::from_type_ref(ty, self.nominals))
+                .collect::<Result<Vec<_>, _>>()?;
+            let result_ty = match &binding.result_type().kind {
+                TypeKind::Name(n) if n == "void" => None,
+                _ => Some(STy::from_type_ref(binding.result_type(), self.nominals)?),
+            };
+            let values = self.args_for(name, args, &param_tys)?;
+            let raw: Vec<BasicValueEnum<'ctx>> = values.iter().map(|value| value.value).collect();
+            let binding = self.externs.get_abi(name)
                 .ok_or("C-ABI: Deklaration waehrend der Ausgabe verschwunden")?;
-            let raw = binding.emit_roundtrip(self.context, &self.builder, &raw_values)?;
-            return Ok(Some(SVal { ty, value: raw }));
+            let wert = binding.emit_call(self.context, &self.builder, &raw)?;
+            return Ok(match (result_ty, wert) {
+                (Some(ty), Some(value)) => Some(SVal { ty, value }),
+                _ => None,
+            });
         }
         if let Some(binding) = self.externs.get(name) {
             let (params, result) = binding.semantic_types();
@@ -2055,7 +2790,8 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 Some(ty @ STy::Ptr(_)) => Ok(ty),
                 Some(ty @ STy::Float(_)) => Ok(ty),
                 Some(ty @ STy::Int(_)) => Ok(ty),
-                _ => Err(format!("extern C '{name}': im Systemkoerper nur Ganzzahlen, f32/f64 und Zeiger als Parameter")),
+                Some(STy::Bool) => Ok(STy::Bool),
+                _ => Err(format!("extern C '{name}': im Systemkoerper nur Ganzzahlen, bool, f32/f64 und Zeiger als Parameter")),
             }).collect::<Result<Vec<_>, _>>()?;
             let result_ty = STy::from_identity(&result)?;
             let function = binding.function();
@@ -2146,6 +2882,7 @@ pub(crate) fn emit_system_function<'ctx>(
     body: &[Stmt],
     callees: &HashMap<String, NativeCallee<'ctx>>,
     externs: &crate::ffi_types::ExternRegistry<'ctx>,
+    sicher: bool,
 ) -> Result<(), String> {
     let triple = module.get_triple();
     let triple = triple.as_str().to_str().map_err(e)?.to_string();
@@ -2187,7 +2924,8 @@ pub(crate) fn emit_system_function<'ctx>(
     let mut emitter = Emitter {
         context, module, target, layouts, nominals, triple: &triple, x86, hosted, function, entry,
         sret: None, builder: context.create_builder(), slots: HashMap::new(), loops: Vec::new(),
-        trap: None, never: None, result: me.result.clone(), callees, externs,
+        trap: None, never: None, weiter: None, pow_fehler: None, result: me.result.clone(), callees, externs,
+        sicher, unsicher_tiefe: 0,
     };
     // Struktur-Rueckgabe: Parameter 0 ist der sret-Puffer des Aufrufers.
     let offset = u32::from(signature.returns_struct());

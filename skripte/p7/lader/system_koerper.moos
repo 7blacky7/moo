@@ -467,3 +467,115 @@ funktion sys_value_nested_call(adr: u64) -> u64:
         setze p: ptr[NativeBlock] auf zeiger(adr)
         p[0] = ergebnis
         gib_zurück original.innen.wert + ergebnis.innen.wert
+
+# P2-T48 E3 (Plan a71947f7): Arrays als Werte, Arrayliteral, Nullkonstruktor,
+# Float-/bool-Konstanten, Struktur-Array-Stride sowie die T63-Proben
+# (exakter/partieller Overlap, Slot<->Zeiger-Alias) gegen C (system_probe.c).
+struktur E3Messung:
+    werte: [u32; 4]
+    skala: f32
+    gueltig: bool
+    marke: u16
+
+@nativ
+konstante E3_SKALA: f32 auf 0.1
+@nativ
+konstante E3_HALB: f64 auf 0.5
+@nativ
+konstante E3_AN: bool auf wahr
+@nativ
+konstante E3_TABELLE: [f64; 3] auf [0.5, -1.25, 2.0]
+
+# Lokales Array per Literal, unabhaengige Kopie, als Strukturfeld in den RAM.
+@nativ
+@einstieg
+funktion sys_e3_arrays(adr: u64) -> u64:
+    unsicher:
+        setze a: [u32; 4] auf [1, 2, 3, 4]
+        a[3] = 40
+        setze b: [u32; 4] auf a
+        b[0] = 100
+        setze m: E3Messung auf E3Messung(b, E3_SKALA, wahr, 7)
+        setze p: ptr[E3Messung] auf zeiger(adr)
+        p[0] = m
+        gib_zurück u64(a[0]) + u64(a[3]) + u64(b[0])
+
+# Name() = Nullwert, auch fuer Arrayfelder.
+@nativ
+@einstieg
+funktion sys_e3_null(adr: u64) -> u64:
+    unsicher:
+        setze leer: E3Messung auf E3Messung()
+        setze p: ptr[E3Messung] auf zeiger(adr)
+        p[0] = leer
+        gib_zurück u64(leer.werte[2]) + u64(leer.marke)
+
+# f32-Konstante aus dem Literal gerundet (== C 0.1f), f64-Tabelle im RAM.
+@nativ
+@einstieg
+funktion sys_e3_float(adr: u64) -> u64:
+    unsicher:
+        setze q: ptr[f64] auf zeiger(adr)
+        q[0] = als(f64, E3_SKALA) * 10.0 + E3_HALB
+        setze t: ptr[f64] auf zeiger(adresse_von(E3_TABELLE))
+        q[1] = t[1]
+        wenn E3_AN:
+            gib_zurück 1
+        gib_zurück 0
+
+# Lokales Struktur-Array: Literal, Nullelement, Elementfeld schreiben, Stride.
+@nativ
+@einstieg
+funktion sys_e3_struktur_array(adr: u64) -> u64:
+    unsicher:
+        setze ws: [NativeWert; 3] auf [NativeWert(u32(1), u64(10)), NativeWert(u32(2), u64(20)), NativeWert()]
+        ws[2].code = u32(3)
+        setze p: ptr[NativeWert] auf zeiger(adr)
+        setze i: u64 auf 0
+        solange i < 3:
+            p[i] = ws[i]
+            setze i auf i + 1
+        gib_zurück ws[1].wert + u64(ws[2].code)
+
+# T63: exakter und partieller Overlap (Quelle 8 Byte hinter dem Ziel).
+@nativ
+@einstieg
+funktion sys_e3_overlap(adr: u64) -> u64:
+    unsicher:
+        setze p: ptr[NativeWert] auf zeiger(adr)
+        p[0] = p[0]
+        setze q: ptr[NativeWert] auf zeiger(adr + 8)
+        p[0] = q[0]
+        gib_zurück p[0].wert
+
+# P2-T13 Batch C: @ausrichten(32) fuer Slot, lokales Array und RAM-Kopie.
+@ausrichten(32)
+struktur E3Block:
+    a: u32
+    b: u8
+
+@nativ
+@einstieg
+funktion sys_e3_ausgerichtet(adr: u64) -> u64:
+    unsicher:
+        setze stoerer: u8 auf 1
+        setze blk: E3Block auf E3Block(u32(7), u8(9))
+        setze bs: [E3Block; 2] auf [E3Block(u32(1), u8(2)), E3Block()]
+        setze p: ptr[E3Block] auf zeiger(adr)
+        p[0] = blk
+        p[1] = bs[0]
+        setze rest: u64 auf adresse_von(blk) % 32 + adresse_von(bs[0]) % 32
+        gib_zurück rest * 1000 + (adresse_von(bs[1]) - adresse_von(bs[0])) + u64(stoerer) - 1
+
+# T63: Slot und Zeiger auf denselben Slot sehen dieselben Bytes.
+@nativ
+@einstieg
+funktion sys_e3_alias() -> u64:
+    unsicher:
+        setze w: NativeWert auf NativeWert(u32(1), u64(2))
+        setze p: ptr[NativeWert] auf zeiger(adresse_von(w))
+        p[0] = NativeWert(u32(5), u64(6))
+        setze gesehen: u64 auf w.wert
+        setze w auf p[0]
+        w.code = w.code + u32(1)
+        gib_zurück gesehen * 100 + u64(p[0].code)

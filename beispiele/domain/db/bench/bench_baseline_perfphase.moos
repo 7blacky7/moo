@@ -6,7 +6,9 @@
 # Wird als Memory 'postgres-bench-baseline-perfphase' verewigt.
 # Vergleich gegen postgres-bench-2026-05-06 zeigt Win von T6+S1+S2 isoliert.
 
-importiere postgres_client_lib
+# P2-T33: Modul postgres_client_lib gibt es nicht; nur die Definitionen aus
+# postgres_client (ohne dessen Testteil).
+aus "../postgres_client" importiere PgClient
 
 setze HOST auf "192.168.50.65"
 setze PORT auf 5433

@@ -1,0 +1,14 @@
+1024
+1
+-27
+-2147483648
+689956897
+243
+0
+1000000000000000
+falsch
+wahr
+wahr
+-32768
+gefangen: Native Potenz mit negativem Exponenten in 'ipow'
+gefangen sys: Native Potenz mit negativem Exponenten in 'spow'

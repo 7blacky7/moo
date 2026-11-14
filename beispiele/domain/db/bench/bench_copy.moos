@@ -1,3 +1,7 @@
+# P2-T33: eigenstaendig uebersetzbar; nur die Definitionen aus postgres_client
+# (ohne dessen Testteil). Ausfuehrung braucht einen erreichbaren Postgres-Server.
+aus "../postgres_client" importiere PgClient
+
 # Phase 1 T2 COPY-Bench (final, 2026-05-07).
 #
 # Stand: copy_in nutzt Inline-Frames (kein PgMessage-Subklassen-Wrapper)

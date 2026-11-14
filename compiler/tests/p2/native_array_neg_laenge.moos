@@ -1,0 +1,8 @@
+# P2-T48 (Plan a71947f7 E2): Arrayliteral muss exakt die Arraylaenge haben.
+@nativ
+funktion f() -> i32:
+    unsicher:
+        setze a: [i32; 3] auf [1, 2]
+        gib_zurück a[0]
+unsicher:
+    zeige f()

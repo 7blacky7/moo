@@ -61,5 +61,18 @@ MooValue moo_get_error(void) {
    fangbarer Moo-Fehler. Innerhalb versuche: setzt moo_throw nur das Flag und
    kehrt zurueck; ohne aktiven Handler beendet es den Prozess. */
 void moo_native_fehler(const char* text) {
+    /* P2-T58 (Plan 4500717b A3): erster Fehler gewinnt. Ein nativer Aufrufer,
+       der mit dem Nullwert eines bereits gescheiterten nativen Callees
+       weiterrechnet (z. B. 10 / b(x)), darf dessen Meldung nicht
+       ueberschreiben. Ausserhalb versuche: hat schon der erste moo_throw den
+       Prozess beendet; dort aendert sich nichts. */
+    if (moo_error_flag && moo_try_depth > 0) return;
     moo_throw(moo_string_new(text));
+}
+
+/* P2-T58 C2: Systemkoerper fragen nach einem fehlbaren nativen Aufruf, ob ein
+   Fehler ansteht (Flag), und kehren dann ohne Seiteneffekte zurueck. Starke
+   Fassung zur schwachen Moduldefinition (liefert dort 0). */
+int moo_native_fehler_offen(void) {
+    return moo_error_flag;
 }

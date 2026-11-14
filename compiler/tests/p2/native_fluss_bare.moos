@@ -1,0 +1,11 @@
+# P2-T12 D3: sicherer Kontrollfluss im Bare-Profil (x86_64-bare); Fehlervertrag
+# llvm.trap statt moo_native_fehler (Division im k-ten Durchlauf).
+@nativ
+@einstieg
+funktion fluss_bare(n: u32) -> u32:
+    setze s: u32 auf 0
+    für i in 0..n:
+        wenn i == 3:
+            weiter
+        setze s auf s + 100 / (n - i - 1)
+    gib_zurück s

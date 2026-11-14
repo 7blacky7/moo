@@ -1,0 +1,68 @@
+# P2-T48 Batch A (Plan a71947f7 A1-A4): feste Arrays als Werte im Systemkoerper.
+# Lokales [f32; 4] mit Arrayliteral und Elementzuweisung, 2D [[i32; 3]; 2] mit
+# unabhaengiger Kopie (k = m), Strukturfeld [f32; 3] im Konstruktor,
+# Nullkonstruktor Name(), Array von Strukturen mit Feldzugriff ps[i].feld,
+# Index ausserhalb fangbar (trap_block, hosted moo_native_fehler).
+struktur Vertex:
+    pos: [f32; 3]
+    farbe: u32
+
+struktur Paar:
+    a: i32
+    b: i32
+
+@nativ
+funktion summe_lokal() -> f64:
+    unsicher:
+        setze a: [f32; 4] auf [1.5, 2.0, 3.25, 4.0]
+        setze s: f64 auf 0.0
+        setze i: u64 auf 0
+        solange i < 4:
+            setze s auf s + als(f64, a[i])
+            setze i auf i + 1
+        a[2] = 10.0
+        gib_zurück s + als(f64, a[2])
+
+@nativ
+funktion matrix() -> i32:
+    unsicher:
+        setze m: [[i32; 3]; 2] auf [[1, 2, 3], [4, 5, 6]]
+        m[1][2] = 60
+        setze k: [[i32; 3]; 2] auf m
+        k[0][0] = 100
+        gib_zurück m[0][0] + m[1][2] + k[0][0] + k[1][1]
+
+@nativ
+funktion vertex_probe() -> f64:
+    unsicher:
+        setze v: Vertex auf Vertex([0.5, 1.5, 2.5], 7)
+        setze leer: Vertex auf Vertex()
+        setze s: f64 auf als(f64, v.pos[0]) + als(f64, v.pos[2]) + als(f64, leer.pos[1])
+        gib_zurück s + als(f64, v.farbe) + als(f64, leer.farbe)
+
+@nativ
+funktion paare() -> i32:
+    unsicher:
+        setze ps: [Paar; 2] auf [Paar(1, 2), Paar(3, 4)]
+        ps[1] = Paar(30, 40)
+        setze null: Paar auf Paar()
+        gib_zurück ps[0].a + ps[1].b + null.a
+
+@nativ
+funktion grenze(i: u64) -> i32:
+    unsicher:
+        setze a: [i32; 3] auf [7, 8, 9]
+        gib_zurück a[i]
+
+unsicher:
+    zeige summe_lokal()
+    zeige matrix()
+    zeige vertex_probe()
+    zeige paare()
+    zeige grenze(2)
+versuche:
+    unsicher:
+        zeige grenze(3)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e

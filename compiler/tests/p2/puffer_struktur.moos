@@ -1,0 +1,72 @@
+# P2-T48 Batch D (Plan a71947f7 D1-D3): puffer[Struktur]. Dynamisch mit
+# Strukturgroesse/-ausrichtung/-ID erzeugt, nativ gefuellt und gelesen
+# (p[i] = Wert, p[i].pos.x verschachtelt, Kopie aus p[i]); eine Ansicht prueft
+# den Stride gegen die Runtime; dynamischer Elementzugriff, Puffer einer
+# gleich aufgebauten anderen Struktur und Index == Laenge fangbar abgewiesen.
+struktur Innen:
+    x: f32
+    y: f32
+
+struktur Teilchen:
+    id: u32
+    pos: Innen
+    masse: f64
+
+struktur Anderes:
+    id: u32
+    pos: Innen
+    masse: f64
+
+@nativ
+funktion fuellen(p: puffer[Teilchen]) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(p):
+            p[i] = Teilchen(als_wrap(u32, i + 1), Innen(als(f32, 0.5), als(f32, 0.25)), 2.0)
+            p[i].pos.x = p[i].pos.x + als(f32, 1.0)
+            setze i auf i + 1
+        gib_zurück länge(p)
+
+@nativ
+funktion summe(p: puffer[Teilchen]) -> f64:
+    unsicher:
+        setze s: f64 auf 0.0
+        setze i: u64 auf 0
+        solange i < länge(p):
+            setze t: Teilchen auf p[i]
+            setze s auf s + als(f64, t.id) * 100.0 + als(f64, p[i].pos.x) + als(f64, t.pos.y) + p[i].masse
+            setze i auf i + 1
+        gib_zurück s
+
+@nativ
+funktion grenze(p: puffer[Teilchen], i: u64) -> u32:
+    unsicher:
+        gib_zurück p[i].id
+
+setze p auf puffer_erstellen(Teilchen, 3)
+zeige länge(p)
+unsicher:
+    zeige fuellen(p)
+    zeige summe(p)
+setze v auf puffer_ansicht(p, 1, 2)
+unsicher:
+    zeige summe(v)
+    zeige grenze(v, 0)
+versuche:
+    zeige p[0]
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+setze a auf puffer_erstellen(Anderes, 2)
+versuche:
+    unsicher:
+        zeige summe(a)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+versuche:
+    unsicher:
+        zeige grenze(p, 3)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e

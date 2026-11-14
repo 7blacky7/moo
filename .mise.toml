@@ -14,7 +14,7 @@ description = "P2: extern-C negative Compiletests"
 run = '''
 set -eu
 mkdir -p build/p2-abi
-for name in ffi_aufruf_ausgeschlossen ffi_bool_ausgeschlossen ffi_symbolkollision ffi_varargs ffi_aggregat; do
+for name in ffi_aufruf_ausgeschlossen ffi_symbolkollision ffi_varargs ffi_aggregat; do
   source="compiler/tests/p2/${name}.moos"
   expected="compiler/tests/p2/${name}.expected_error"
   log="build/p2-abi/${name}.log"
@@ -1801,4 +1801,20 @@ run = '''
 set -eu
 compiler/target/release/moo-compiler compile beispiele/p5/eval_train_basis.moos -o compiler/target/p5-eval-train-basis
 MOO_KI_GPU=0 compiler/target/p5-eval-train-basis
+'''
+
+
+
+[tasks.test-legacy-ir]
+description = "Build compiler, verify legacy IR baseline and mutation detector"
+run = '''
+set -eu
+mise run p4-build-compiler
+mkdir -p build/p2-ir
+mise run -C skripte/p2/testnetz legacy-ir-selftest
+mise run -C skripte/p2/testnetz legacy-ir \
+  --output build/p2-ir/root-gate.json \
+  --baseline skripte/p2/testnetz/legacy-ir-baseline.json \
+  --profiles skripte/p2/testnetz/testmanifest.json \
+  --allow-baseline-failures
 '''

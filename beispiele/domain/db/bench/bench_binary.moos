@@ -1,3 +1,7 @@
+# P2-T33: eigenstaendig uebersetzbar; nur die Definitionen aus postgres_client
+# (ohne dessen Testteil). Ausfuehrung braucht einen erreichbaren Postgres-Server.
+aus "../postgres_client" importiere PgClient
+
 # Phase 4 T4 Welle 1 Bench (2026-05-07)
 #
 # Vergleicht Simple-Query TEXT vs Prepared BINARY bei 1000 rows.

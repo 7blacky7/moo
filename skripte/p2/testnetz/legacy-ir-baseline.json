@@ -1,10 +1,10 @@
 {
   "format": 2,
-  "compiler_sha256": "7ddbbf42431f07606bcc70e4aae05b0784d28673f0fa576dfb329e118c920d97",
+  "compiler_sha256": "0326722d63af8da2d10191d9f5f45e7e6ca0f202d044fb0d06fdc8a61c72ab49",
   "normalization": "module-header-root-v2",
   "synapse_batch": null,
   "provenance_attestation": "caller-provided-unverified",
-  "compiler_runtime_inventory_sha256": "5586cf202ff42a3fc63e0dda8f4d9d60f87106cedb02d51cfd81fa98e634453f",
+  "compiler_runtime_inventory_sha256": "2bf742e4e5c6caf4377c1a06737708717ed45357c43229425545261f9e63c7ca",
   "snapshot_ref": null,
   "snapshot_ref_attestation": "caller-provided-unverified",
   "profiles": {
@@ -33,17 +33,47 @@
       "--target",
       "x86_64-bare"
     ],
+    "beispiele/kernel/uefi_kern.moos": [
+      "--no-stdlib",
+      "--target",
+      "x86_64-unknown-uefi"
+    ],
     "beispiele/uefi/hallo_uefi.moos": [
+      "--no-stdlib",
+      "--target",
+      "x86_64-unknown-uefi"
+    ],
+    "beispiele/uefi/moo_lader.moos": [
+      "--no-stdlib",
+      "--target",
+      "x86_64-unknown-uefi"
+    ],
+    "beispiele/uefi/netz_e1000.moos": [
+      "--no-stdlib",
+      "--target",
+      "x86_64-unknown-uefi"
+    ],
+    "beispiele/uefi/netz_lader.moos": [
+      "--no-stdlib",
+      "--target",
+      "x86_64-unknown-uefi"
+    ],
+    "beispiele/uefi/netz_tftp.moos": [
+      "--no-stdlib",
+      "--target",
+      "x86_64-unknown-uefi"
+    ],
+    "beispiele/uefi/netz_treiber.moos": [
       "--no-stdlib",
       "--target",
       "x86_64-unknown-uefi"
     ]
   },
   "snapshot_drift": false,
-  "failure_count": 17,
+  "failure_count": 0,
   "source_snapshot": {
     "contract": "legacy-ir-sources-v1",
-    "sha256": "1f186e76e63b65adfb9bf27bb84e663fdd682c2e38b62907688f5d117251d82e",
+    "sha256": "a9d724d722c314fa835fdac8a2996d45454e900c0f4c026ada4a37c77fdaf35c",
     "files": {
       "beispiele/adressbuch.moos": "cf706634d9fe6d21dabd304559802458468d94a9a7ab31465641a7cce218ef6b",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -75,21 +105,21 @@
       "beispiele/dns_resolver.moos": "3680aaf81ea0121c8ddb0ce16a8ad6fffd1531d90e86e3c183e7dc5dffeb095d",
       "beispiele/dns_selftest.moos": "b83285af76eccd3867e0599d62239702641872ee2bda0ae6a86253f9bb088fbd",
       "beispiele/domain/db/bench/bench.moos": "92379a0df679a554cf0ba3be18ac8166769014159c8616ed214c80b25befc6a8",
-      "beispiele/domain/db/bench/bench_baseline_perfphase.moos": "0ccb2d5b35c786740af10f1cede2678db7010443349fdf0d692f6ff934f60cb9",
-      "beispiele/domain/db/bench/bench_binary.moos": "cf928ed4f4b1f943cc5b2fcd36647c3d357f8e41c7c03e5b241b74f4d0c6e5ba",
-      "beispiele/domain/db/bench/bench_copy.moos": "5015ebae8a0262b904e9d836408e93bab75d945e4b4621d0b710e6a25138cd79",
-      "beispiele/domain/db/bench/bench_pipelining.moos": "b02221b380001c6050a18049969011f29696e0fc7c0ee9c8ce739cd2ec175c3b",
-      "beispiele/domain/db/bench/bench_pool.moos": "201690a8e5e5c9dd85e96d4944c353c9be73d2b685ffe0b89eeee5fefd99d7e4",
-      "beispiele/domain/db/bench/bench_prepared.moos": "7439b4f3914feeb80d09edab324f29e5ce1f43f0655d870da61948a72fc4621a",
+      "beispiele/domain/db/bench/bench_baseline_perfphase.moos": "8ed034670f92ff927e24ec37294235026a6f1cbded4f4e753fbedbf9ae9560b6",
+      "beispiele/domain/db/bench/bench_binary.moos": "2502aaa1f51bfaadf7791938cfe859303c5f296cafa0c8433076e3753170dff4",
+      "beispiele/domain/db/bench/bench_copy.moos": "42c9c06c0076113c7765f631d4d8cec645b1d7a9f873af865ce1b5b15d3bdade",
+      "beispiele/domain/db/bench/bench_pipelining.moos": "14b1d17d82e34099786d3318172d4c3fba74bf4b987c1eb9cf040593c00d144d",
+      "beispiele/domain/db/bench/bench_pool.moos": "f0130b91b9bd5365eb6532068f42e42f41ef21daec615138f49fad40074548a4",
+      "beispiele/domain/db/bench/bench_prepared.moos": "aa75a9ee7dd85b86cc16f4b7f9b6b630b95fb443116cabd16f3eeb22b58589a9",
       "beispiele/domain/db/bench/bench_scram.moos": "f3704b45f75d304644187d2227fae3c1c23a274a24b06abb0fd657ff03b62c50",
       "beispiele/domain/db/bench/multiline_smoke.moos": "69b05d0d94a77c3a4bbd2d204a7732ab552473b9a90328001247b6143428dffd",
       "beispiele/domain/db/bench/pg_test.moos": "e9c4ae3b07c57b8af806a2cf3a55545b400cfa1c6c2771efdb491b23a1c818e8",
       "beispiele/domain/db/bench/scram_crypto_smoke.moos": "05f5201eac747f0318dcb5d4db8673082482095f4296217b9ad090bd5cbd57b0",
-      "beispiele/domain/db/bench/scram_e2e_smoke.moos": "0c7fb4bed1a61b51161cb3a861fd9472f824038c24ece1e8396591cd377485bc",
+      "beispiele/domain/db/bench/scram_e2e_smoke.moos": "9ff067abe5157d6f9b9a677d8b3f051aac780cec00cd43a6856f1428a8e65c95",
       "beispiele/domain/db/blog_engine.moos": "d83b569e53a6af94266f84d055fbc3fe5bcc5da5bed19b155ef9f4d90cc8950b",
       "beispiele/domain/db/blog_engine_v2.moos": "9405fb647afc23b56f488408ef92434ebb4f3ae32d5630322ad828d279f60386",
       "beispiele/domain/db/chat_server_prepared.moos": "ac3ea3a3fbeed1e17515aad2a44ab7104d6fb86f47cee13ac9d70dadd57a9a21",
-      "beispiele/domain/db/mini_db.moos": "1762b55b0857d498e5ddedb066d8bccd098b8c3adce7f50d66df0b75fb5c7304",
+      "beispiele/domain/db/mini_db.moos": "3c203e5f0fc7aa9a9966731d278e1545ad3c1a741ff7ae9324e179672bbaa462",
       "beispiele/domain/db/mini_sql.moos": "f3bf1197fd2ddb2dcfb1fa073f5deeaa2815d04f8e7fb21d60afa68acd33b57b",
       "beispiele/domain/db/mysql_client.moos": "395331f46e88c311426182d0d94bd9f0a9de5c63f0b078962dedca9462b91756",
       "beispiele/domain/db/postgres_client.moos": "26b1a97007d129b6ffa12c1981996ec679fb015d9026d52b45c92e3c340e93cc",
@@ -113,11 +143,11 @@
       "beispiele/domain/game/world/welten.moos": "45ad51d3da8c2f8343e936759a6f14b14704706376bf3a6bf8740ddcac7ab8e9",
       "beispiele/domain/game/world/welten_noise_test.moos": "b688c7c7de4c8a82fd8e111fb336165d0da1336c8fc7b23424af6e2214b8a75b",
       "beispiele/domain/game/world/welten_render_test.moos": "fe20fa1e3d84166c4d53fdf1cbc34e293249b12f0625abcbd72d5df43131b91b",
-      "beispiele/domain/system/elf_reader.moos": "832f65c93e7b4d786a9fbaaec22462f0fc9786b13ff120422e00ba802047f053",
+      "beispiele/domain/system/elf_reader.moos": "94cbe0eeb4c2eba40190a9bcd14764961baf79aecdc00ceab2df3192cad97d3f",
       "beispiele/domain/system/kernel_hello.moos": "3f54533641b9bd2dddc629f5e9cdb31dd7ec031ca5224f061a331bce2f19b91e",
       "beispiele/domain/system/kernel_test_builtins.moos": "287f9306cf95524936ff213805a6f08279c2bcc4afcd402f378e7cb0d0ff7138",
       "beispiele/domain/system/tar_reader.moos": "5fdbba392fe8bdad503af532e53c3745ec2726f92594bedd2327219a34d9c213",
-      "beispiele/domain/system/x86dis.moos": "7fc82451ada4ccac069a36c4e9c14a008e4f693c2788d9c730a4f51a4bccf946",
+      "beispiele/domain/system/x86dis.moos": "3400af7428ec7504807d8d43e55bc9c0c44996cb5b2797464833c63b2fb2583a",
       "beispiele/domain/web/http_api.moos": "c77bd8c1195388609d140ab6209a2a8eb843fdc1514a7c271cbc2320e3eb97ee",
       "beispiele/domain/web/http_api_cors.moos": "e64c9aa1df55c180899fbdc0eb3556b33d7ae513e573e8121b4c7205591f0b50",
       "beispiele/domain/web/proxy.moos": "2a4532a3fcc621f12ac36185443519d5bfc862729560dbd8b1106554550e931a",
@@ -397,7 +427,7 @@
       "beispiele/uefi/moo_lader.moos": "b12a3ff6895a4c1fa5f3d25aee8f790f9bcd564161bbaa2d2b9c042638249109",
       "beispiele/uefi/netz_e1000.moos": "6b7901a4131ce03d48f74cd9304a9c184948e13a0be67e9cba259df616538e17",
       "beispiele/uefi/netz_lader.moos": "ea2b67dabe92ebdb9b630cd3c0bb920b5a188f028e10f59c7faa41b5b49db53a",
-      "beispiele/uefi/netz_tftp.moos": "804228d2f7a1644537773dd9f3aafde6fcf168c314800459c03c54db0b000bb2",
+      "beispiele/uefi/netz_tftp.moos": "73d7cd57fcb36a8bd0ae3aaff5a48251dd45edd5e1c15b5be19f8955edd3b783",
       "beispiele/uefi/netz_treiber.moos": "312e0fde62592d57d6277d18f267f8ab3543e2838868e788de8944ac9bd9f8b3",
       "beispiele/ui_automation_demo.moos": "fd9566a31db88dbfe1bcf3813c1929dfa4ac9371d3cea7c47bf2c5f378d45036",
       "beispiele/ui_binding_demo.moos": "e80f6c205a9239a00b3da57bab8880468cbb0ee8cb94171939131e6668d25cee",
@@ -521,7 +551,7 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "33984e34911cf6ca0596908de3e6867caa835cb03282ab63890950c6f9d8c4a6",
+    "sha256": "616b74a52613466680b591bad3857ed9a89d92e04fa6f6d37d0d2d3799e63972",
     "files": {
       "beispiele/adressbuch.moos": "cf706634d9fe6d21dabd304559802458468d94a9a7ab31465641a7cce218ef6b",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -553,21 +583,21 @@
       "beispiele/dns_resolver.moos": "3680aaf81ea0121c8ddb0ce16a8ad6fffd1531d90e86e3c183e7dc5dffeb095d",
       "beispiele/dns_selftest.moos": "b83285af76eccd3867e0599d62239702641872ee2bda0ae6a86253f9bb088fbd",
       "beispiele/domain/db/bench/bench.moos": "92379a0df679a554cf0ba3be18ac8166769014159c8616ed214c80b25befc6a8",
-      "beispiele/domain/db/bench/bench_baseline_perfphase.moos": "0ccb2d5b35c786740af10f1cede2678db7010443349fdf0d692f6ff934f60cb9",
-      "beispiele/domain/db/bench/bench_binary.moos": "cf928ed4f4b1f943cc5b2fcd36647c3d357f8e41c7c03e5b241b74f4d0c6e5ba",
-      "beispiele/domain/db/bench/bench_copy.moos": "5015ebae8a0262b904e9d836408e93bab75d945e4b4621d0b710e6a25138cd79",
-      "beispiele/domain/db/bench/bench_pipelining.moos": "b02221b380001c6050a18049969011f29696e0fc7c0ee9c8ce739cd2ec175c3b",
-      "beispiele/domain/db/bench/bench_pool.moos": "201690a8e5e5c9dd85e96d4944c353c9be73d2b685ffe0b89eeee5fefd99d7e4",
-      "beispiele/domain/db/bench/bench_prepared.moos": "7439b4f3914feeb80d09edab324f29e5ce1f43f0655d870da61948a72fc4621a",
+      "beispiele/domain/db/bench/bench_baseline_perfphase.moos": "8ed034670f92ff927e24ec37294235026a6f1cbded4f4e753fbedbf9ae9560b6",
+      "beispiele/domain/db/bench/bench_binary.moos": "2502aaa1f51bfaadf7791938cfe859303c5f296cafa0c8433076e3753170dff4",
+      "beispiele/domain/db/bench/bench_copy.moos": "42c9c06c0076113c7765f631d4d8cec645b1d7a9f873af865ce1b5b15d3bdade",
+      "beispiele/domain/db/bench/bench_pipelining.moos": "14b1d17d82e34099786d3318172d4c3fba74bf4b987c1eb9cf040593c00d144d",
+      "beispiele/domain/db/bench/bench_pool.moos": "f0130b91b9bd5365eb6532068f42e42f41ef21daec615138f49fad40074548a4",
+      "beispiele/domain/db/bench/bench_prepared.moos": "aa75a9ee7dd85b86cc16f4b7f9b6b630b95fb443116cabd16f3eeb22b58589a9",
       "beispiele/domain/db/bench/bench_scram.moos": "f3704b45f75d304644187d2227fae3c1c23a274a24b06abb0fd657ff03b62c50",
       "beispiele/domain/db/bench/multiline_smoke.moos": "69b05d0d94a77c3a4bbd2d204a7732ab552473b9a90328001247b6143428dffd",
       "beispiele/domain/db/bench/pg_test.moos": "e9c4ae3b07c57b8af806a2cf3a55545b400cfa1c6c2771efdb491b23a1c818e8",
       "beispiele/domain/db/bench/scram_crypto_smoke.moos": "05f5201eac747f0318dcb5d4db8673082482095f4296217b9ad090bd5cbd57b0",
-      "beispiele/domain/db/bench/scram_e2e_smoke.moos": "0c7fb4bed1a61b51161cb3a861fd9472f824038c24ece1e8396591cd377485bc",
+      "beispiele/domain/db/bench/scram_e2e_smoke.moos": "9ff067abe5157d6f9b9a677d8b3f051aac780cec00cd43a6856f1428a8e65c95",
       "beispiele/domain/db/blog_engine.moos": "d83b569e53a6af94266f84d055fbc3fe5bcc5da5bed19b155ef9f4d90cc8950b",
       "beispiele/domain/db/blog_engine_v2.moos": "9405fb647afc23b56f488408ef92434ebb4f3ae32d5630322ad828d279f60386",
       "beispiele/domain/db/chat_server_prepared.moos": "ac3ea3a3fbeed1e17515aad2a44ab7104d6fb86f47cee13ac9d70dadd57a9a21",
-      "beispiele/domain/db/mini_db.moos": "1762b55b0857d498e5ddedb066d8bccd098b8c3adce7f50d66df0b75fb5c7304",
+      "beispiele/domain/db/mini_db.moos": "3c203e5f0fc7aa9a9966731d278e1545ad3c1a741ff7ae9324e179672bbaa462",
       "beispiele/domain/db/mini_sql.moos": "f3bf1197fd2ddb2dcfb1fa073f5deeaa2815d04f8e7fb21d60afa68acd33b57b",
       "beispiele/domain/db/mysql_client.moos": "395331f46e88c311426182d0d94bd9f0a9de5c63f0b078962dedca9462b91756",
       "beispiele/domain/db/postgres_client.moos": "26b1a97007d129b6ffa12c1981996ec679fb015d9026d52b45c92e3c340e93cc",
@@ -591,11 +621,11 @@
       "beispiele/domain/game/world/welten.moos": "45ad51d3da8c2f8343e936759a6f14b14704706376bf3a6bf8740ddcac7ab8e9",
       "beispiele/domain/game/world/welten_noise_test.moos": "b688c7c7de4c8a82fd8e111fb336165d0da1336c8fc7b23424af6e2214b8a75b",
       "beispiele/domain/game/world/welten_render_test.moos": "fe20fa1e3d84166c4d53fdf1cbc34e293249b12f0625abcbd72d5df43131b91b",
-      "beispiele/domain/system/elf_reader.moos": "832f65c93e7b4d786a9fbaaec22462f0fc9786b13ff120422e00ba802047f053",
+      "beispiele/domain/system/elf_reader.moos": "94cbe0eeb4c2eba40190a9bcd14764961baf79aecdc00ceab2df3192cad97d3f",
       "beispiele/domain/system/kernel_hello.moos": "3f54533641b9bd2dddc629f5e9cdb31dd7ec031ca5224f061a331bce2f19b91e",
       "beispiele/domain/system/kernel_test_builtins.moos": "287f9306cf95524936ff213805a6f08279c2bcc4afcd402f378e7cb0d0ff7138",
       "beispiele/domain/system/tar_reader.moos": "5fdbba392fe8bdad503af532e53c3745ec2726f92594bedd2327219a34d9c213",
-      "beispiele/domain/system/x86dis.moos": "7fc82451ada4ccac069a36c4e9c14a008e4f693c2788d9c730a4f51a4bccf946",
+      "beispiele/domain/system/x86dis.moos": "3400af7428ec7504807d8d43e55bc9c0c44996cb5b2797464833c63b2fb2583a",
       "beispiele/domain/web/http_api.moos": "c77bd8c1195388609d140ab6209a2a8eb843fdc1514a7c271cbc2320e3eb97ee",
       "beispiele/domain/web/http_api_cors.moos": "e64c9aa1df55c180899fbdc0eb3556b33d7ae513e573e8121b4c7205591f0b50",
       "beispiele/domain/web/proxy.moos": "2a4532a3fcc621f12ac36185443519d5bfc862729560dbd8b1106554550e931a",
@@ -875,7 +905,7 @@
       "beispiele/uefi/moo_lader.moos": "b12a3ff6895a4c1fa5f3d25aee8f790f9bcd564161bbaa2d2b9c042638249109",
       "beispiele/uefi/netz_e1000.moos": "6b7901a4131ce03d48f74cd9304a9c184948e13a0be67e9cba259df616538e17",
       "beispiele/uefi/netz_lader.moos": "ea2b67dabe92ebdb9b630cd3c0bb920b5a188f028e10f59c7faa41b5b49db53a",
-      "beispiele/uefi/netz_tftp.moos": "804228d2f7a1644537773dd9f3aafde6fcf168c314800459c03c54db0b000bb2",
+      "beispiele/uefi/netz_tftp.moos": "73d7cd57fcb36a8bd0ae3aaff5a48251dd45edd5e1c15b5be19f8955edd3b783",
       "beispiele/uefi/netz_treiber.moos": "312e0fde62592d57d6277d18f267f8ab3543e2838868e788de8944ac9bd9f8b3",
       "beispiele/ui_automation_demo.moos": "fd9566a31db88dbfe1bcf3813c1929dfa4ac9371d3cea7c47bf2c5f378d45036",
       "beispiele/ui_binding_demo.moos": "e80f6c205a9239a00b3da57bab8880468cbb0ee8cb94171939131e6668d25cee",
@@ -1160,6 +1190,9 @@
       "compiler/tests/p2/modul_qualifiziert_a.moos": "1ce2e01438585f959d246b0d39d06dcc93249ee80d55ff04e29a235e6ec71da6",
       "compiler/tests/p2/modul_qualifiziert_b.moos": "a451db876854ae443da9901b8564fb7aa3b5b23e7c5ecb2c2f65bfa01962ae85",
       "compiler/tests/p2/modul_zeiger_lesen.moos": "b7656b2aa63bd49048c6d20a4cafee11160e128f97db9fb7d754c537bd5e8944",
+      "compiler/tests/p2/native_array_neg_laenge.moos": "4d5463d5f321185c86bff8f5c2a96eb21eb9e8299c028e7bdced618b44511909",
+      "compiler/tests/p2/native_array_neg_param.moos": "68b7fbca04fa3f059ff1fe2531fcd631169bda562f211f4bf6f2a16dbaa664f3",
+      "compiler/tests/p2/native_arrays.moos": "46e5fdde9419a12d2bef52db0e5b658d6326058d4bf020b5be7b924e252bd9b5",
       "compiler/tests/p2/native_bench.moos": "6464af338dab47178bcd7adbef662e799ff89623096885358ea9f84f1a6b8ce9",
       "compiler/tests/p2/native_bool.moos": "a916d41933d6932f3651d7ce2a3f54f42a93599d1fe34f93bdd7509bf6c282c6",
       "compiler/tests/p2/native_bool_arg.moos": "e4ad403e782d006c2ac00739b7b1cfbcbcce2fb59e3600c52ade33d8ee3f6632",
@@ -1174,11 +1207,21 @@
       "compiler/tests/p2/native_cast_positiv.moos": "f025a08769d0531711831842e2105cdfc569c06b9d4ca41379bc1b41acfcc619",
       "compiler/tests/p2/native_cast_statisch.moos": "202ea4a8d45f45403d66ef7fe8041b18457f07ce99ea0c530f07216f17669770",
       "compiler/tests/p2/native_float_rest_pow.moos": "d2675ae96fc73d28af3ccf468a7286142c974e8524af95d8495908efb21755dd",
+      "compiler/tests/p2/native_fluss.moos": "c58651ddf40376f00e9776b56db412d79d5e339ce1740bec49df96ed40d26b65",
+      "compiler/tests/p2/native_fluss_bare.moos": "5f28649723fb2cf6ccb469361e6a628481c0bda5ff6c2296cdfdb3439989c072",
+      "compiler/tests/p2/native_fluss_neg_adresse.moos": "89355c1317d3199fa74713d5a777a93289371e5502c4748af8d0d2632307933a",
+      "compiler/tests/p2/native_fluss_neg_extern.moos": "39de5c2736c4a8578a48865c8b1eccf8472546fad650742e2d8532fb1cf461fe",
+      "compiler/tests/p2/native_fluss_neg_float.moos": "a77c59b520b9a6474b417832cda834c9ad6bdd94af406bccf102e58549ebcb71",
+      "compiler/tests/p2/native_fluss_neg_fnzeiger.moos": "6ccda683a649f53141757b1971ca6eb2524e9f10710c51ce9ca128eb01d23ebf",
+      "compiler/tests/p2/native_fluss_neg_konv.moos": "ff8d1da88cdf2fd4574a50dc373104d859ef4d0e18fe7d67183ad2922e534f79",
+      "compiler/tests/p2/native_fluss_neg_liste.moos": "7d1c57f6355a4ff8de43837b4272e6d048e20fb5ebc638143eeff563eedc5e6a",
+      "compiler/tests/p2/native_fluss_neg_nach.moos": "d6b05b84483e2c55ed611a2356039cb33e4054dc3df7366411d1db3369e23286",
+      "compiler/tests/p2/native_fluss_neg_speicher.moos": "02a1f2281a46d871ec4d701682e7db2dee7fe8b37058432d0cf8d2be849390cb",
+      "compiler/tests/p2/native_fluss_neg_zaehler.moos": "c208dcb857349ef3cef544b226dd2d23320cea556be5fbbb8668295646613a9d",
+      "compiler/tests/p2/native_fluss_neg_zeiger.moos": "85e458af9640e052c1d05bac1de7b4117bae6f68cc4474d44bbf3bd27d340016",
       "compiler/tests/p2/native_grenze_heap_200k.moos": "48018258f4a5d7f96af7dfc9277291439f6c583f6bbbcf8f777bdc116fbb7d57",
       "compiler/tests/p2/native_grenze_heap_800k.moos": "316a30576811c8fc843d831037e9018997dea442f343f388b185cab93ed41e4d",
       "compiler/tests/p2/native_grenze_matrix.moos": "e58eddcb164c551fca6c8e6ee3c9afc4435b143d481d030167f14e29ac0f5d14",
-      "compiler/tests/p2/native_konst_pow.moos": "0782e39470e6946ae5eb4c8c1ebad2c189bb0084cd7caecfdabcfcd71c1f7ae3",
-      "compiler/tests/p2/native_konst_pow_negativ.moos": "3a551371c0aab5187f707a448c15c9b8331727457842792273c81a033cfc2c23",
       "compiler/tests/p2/native_klein_call.moos": "fd6ff93f043d2c22d7567e93d3152175f6b05cfe4d187ed9b96cd54a7f3a358c",
       "compiler/tests/p2/native_klein_i8_bruch.moos": "8de6aac3982881f9b82b0039dcf4b735fbd68e68047baa7edb7f8521232c13d6",
       "compiler/tests/p2/native_klein_i8_hi.moos": "7be506d3a28b5d57d9a3bc28b63e1443b2df40dfb79d72396844aa0be86a905a",
@@ -1197,6 +1240,11 @@
       "compiler/tests/p2/native_klein_u8_minus_inf.moos": "a673815db225194e9dc5be907d72c89f4f4069f59afecd701121e1ddf41f516f",
       "compiler/tests/p2/native_klein_u8_nan.moos": "3a27daaeea89e464ba52eb0fcce8230680c9218c17052a61fd319a8cbd5a9208",
       "compiler/tests/p2/native_klein_u8_text.moos": "5eab0c906008797724469dde9ccaaf673f3b5d98b67e7ae7f9b0eeabe9224375",
+      "compiler/tests/p2/native_konst_bool_zahl.moos": "2363403db4904a2253a18538ca92e490c4af47c413e0e6e8037b0b4e961f29fe",
+      "compiler/tests/p2/native_konst_float.moos": "571bcc7fcc5fc52e753188ba04dccc8418e694486be52369d3227344aba863af",
+      "compiler/tests/p2/native_konst_float_unterlauf.moos": "1eec518742a75eeffe50de13a5146a90e464607e6a0766bc7357a405ee8a1065",
+      "compiler/tests/p2/native_konst_pow.moos": "0782e39470e6946ae5eb4c8c1ebad2c189bb0084cd7caecfdabcfcd71c1f7ae3",
+      "compiler/tests/p2/native_konst_pow_negativ.moos": "3a551371c0aab5187f707a448c15c9b8331727457842792273c81a033cfc2c23",
       "compiler/tests/p2/native_literal_standard.moos": "e8ba697167217fbf971ab606de0168d4bd08874306d9fc2c145705fcc1f289b3",
       "compiler/tests/p2/native_matrix_neg_bool_arith.moos": "ba8b63e5304ab091c7711ad4244aa15d18618b2a51a5b6cf00f5f93c7358e14b",
       "compiler/tests/p2/native_matrix_neg_bool_vergleich.moos": "ce593021426da15ce39a31dd1324fe4e05a719777a63cb867e22817153f8cf70",
@@ -1204,13 +1252,15 @@
       "compiler/tests/p2/native_matrix_neg_local.moos": "8adb816be273c3ea039a25163ceac28b2a908c6d30bad722f578f9e003eb288b",
       "compiler/tests/p2/native_matrix_neg_mischtyp.moos": "5623c64d00eb56b1c119d074e40bbe624b4891cb405d4da615c4ee3ff394f5da",
       "compiler/tests/p2/native_matrix_neg_rekursion.moos": "b54a191855762e567518048a46790138a7e20e9210d267789e0ce97eccf13245",
-      "compiler/tests/p2/native_pow.moos": "d1f21b0b3f899b54d684b80eff39dac55cc8831b07d78b0d6bcb26e55b2db8a9",
+      "compiler/tests/p2/native_pow.moos": "2ecbbb3b5ed3c5fe07a5722e141ec44b065a4d833213d32ccd46f369b0a72e15",
       "compiler/tests/p2/native_pow_fehlbar.moos": "2a53aa3e9ed671cbc57a563c345f4282255931285ed03c4e7630cc0257b544f2",
       "compiler/tests/p2/native_pow_konstant.moos": "4c0ed1caf84c011d3134a5faf490acc53052aea265580517fb9e547c8cc5ade5",
       "compiler/tests/p2/native_pow_konstant_system.moos": "4b319170b93d2908a8cefbbbed3d07e517ab150a156be3567b8ad1a2633616b5",
       "compiler/tests/p2/native_pow_misch.moos": "5425e9aea36f9bf280a0e132be75c7fa934094ea5413c6779c2772afe8b84498",
       "compiler/tests/p2/native_pow_unbehandelt.moos": "9961fe869ff2f4dd917a2d7f685f151e00f9e097e99caa10ba31fd29f9fe8e8d",
       "compiler/tests/p2/native_pruefung.moos": "b7e92b6a1ea24bdf1b442e1480e4eec0781ec62f9013cb1eed306c67216f25e8",
+      "compiler/tests/p2/native_puffer_bench.moos": "78edc9b19f6cff1915639352d2ec6a2b1d5fce6f21f572cd14d726effd779040",
+      "compiler/tests/p2/native_puffer_bench_liste.moos": "7114ea890ba1e429bc6bdfbb73b6becf03df0c340c330fe5266f9179b08de7ba",
       "compiler/tests/p2/native_system_bool.moos": "e1d524de86f4e1fa0cb84db8a11100736d30044c6596181b1dc3a6b40467c03b",
       "compiler/tests/p2/native_system_direktform.moos": "d171d62716b686d75318c782ba88affe0471dda5ddcd7c2dc3d15b820d792083",
       "compiler/tests/p2/native_system_ende.moos": "db0882a331333ccea6e1d0cd41352a86de141af39cca73512c95cab43ed6cdb4",
@@ -1277,6 +1327,14 @@
       "compiler/tests/p2/puffer_m2_typ_ungueltig.moos": "0277133bd7d2d4a39f21e87ea5f401c1e5cda8bbd3bb5d72e12018be8ec20f59",
       "compiler/tests/p2/puffer_m2_wert_bruch.moos": "2c9aa7da256f63e4ff3c46eda9307477358772f2bae2027f31ba70a3da0b16e5",
       "compiler/tests/p2/puffer_m2_wert_overflow.moos": "195b814d1d90db38ff6a85a09aa7b631ee64c6ec039d940ef76a374d5962c103",
+      "compiler/tests/p2/puffer_m3_dyn.moos": "8cae5c58ede9997b0c212c97892fa13525378235472b9f6112c61feaf944891d",
+      "compiler/tests/p2/puffer_nativ.moos": "402e40a31a84c0ec508d323e92e54cfc418a324de1a51ca392214f17b8762275",
+      "compiler/tests/p2/puffer_nativ_breit.moos": "d8f94fafc55ed5132e42546242cb372cd6e56440de60c1ee4a18f9285796c932",
+      "compiler/tests/p2/puffer_nativ_neg_ausdruck.moos": "dba8f9f4a5ec4e8e0d20e28f0eadc870c98ca50d3acbe45978b477e33f10ca71",
+      "compiler/tests/p2/puffer_nativ_neg_bool.moos": "73095de34dffd9f49ce58f0f78f2001c7501172e292e3fbb423a97c1220d735e",
+      "compiler/tests/p2/puffer_nativ_neg_einstieg.moos": "e817fa2e21e6b1d90e6a515b96fe7046f177d2b62daa1762dc59f4c1f649bd82",
+      "compiler/tests/p2/puffer_nativ_neg_rueckgabe.moos": "55b5b74ce07ca46c446ccfb84f8938f1e7df46573a6672a3ccc7bce6dd6d2b46",
+      "compiler/tests/p2/puffer_nativ_sicher.moos": "a4435ba62aaadde57718cc36c4dc4811e6c891f1c6d6e0847018b84493a44954",
       "compiler/tests/p2/puffer_shadow_en_funktion.moos": "7a04f91fe6b0ff8aae87ca3022f2d4eb02fae9be47b3ef9923b890373b77c20b",
       "compiler/tests/p2/puffer_shadow_en_lambda.moos": "d49bf58ebf0dcd702a9a2709974b26c99d7cddc99bc8e630f93b6b09d318602d",
       "compiler/tests/p2/puffer_shadow_en_wert.moos": "68761471ea4feb6adc49e99627bf35e6ac58e2a206ce77ed8c34b069a1a6dd90",
@@ -1289,14 +1347,17 @@
       "compiler/tests/p2/puffer_shadow_typ_lambda.moos": "5e8496eff79efda6c75c6cc2eec800786ba65953c1a3e504d6f39d46bbc7e604",
       "compiler/tests/p2/puffer_shadow_typ_wert.moos": "65c2218a4f271c23d3e55c98172f3768c266fa67060a6eabd18cc98b3c15f0bf",
       "compiler/tests/p2/puffer_shadow_wert.moos": "793c99fff4ae555b49b1f53f62513c6466b26c6a18f95ff304ac6f31a10934c3",
+      "compiler/tests/p2/puffer_struktur.moos": "fa06ad2c6121d0b1145f41c5462d26bdeda9158e349ae286e6d8760ec86cb74e",
       "compiler/tests/p2/puffer_syntax_collision.moos": "aa0668dc42c782940fe042e63451aeed5a811b56e1e2beb30c359e4d7d4230ea",
       "compiler/tests/p2/puffer_syntax_collision_effect.moos": "78745bac601d1ac3a9b352b8a8ecada6a190db58892b188845c0773da43938d8",
       "compiler/tests/p2/puffer_syntax_legacy.moos": "3a7e76c29006651217ec6735f15091478654fc540890b621b788cdd16e768857",
       "compiler/tests/p2/puffer_typen.moos": "a5ae517b339f32b1b84851d247c7602b54489aa5b66b6dd248fa099d58a6602e",
       "compiler/tests/p2/struktur_array_null.moos": "6c815ea4a5fee5d09237d030da3ef4e6ee8f9a559d8d9101bfedf963f71f7a70",
+      "compiler/tests/p2/struktur_ausrichten_klein.moos": "d8ea10b340f3010f17da23201c8e70f5071afb636b3a565b0f41957b5de4f471",
       "compiler/tests/p2/struktur_fehler.moos": "1a1875f43a634d76dca9dccaa3c70a3ee7c2da32db2076fd984622fa5d486867",
       "compiler/tests/p2/struktur_feld_doppelt.moos": "0d1b08952c2ef7ba3aac5635fd407fadf751c88cd6bb57ed61f8afa88d91ddc0",
       "compiler/tests/p2/struktur_layout.moos": "9bf3be443d137297e6b535029775e56759490abd89cd16b82effdde988be0962",
+      "compiler/tests/p2/struktur_layout_matrix.moos": "df51122d2677b207d11cd4051a3d3dc97fc05ea990b42c529eddaa0365f18d35",
       "compiler/tests/p2/struktur_pointer_duplikat.moos": "a363c9cfd33fb002a18b14035587e4e1c07c36572e8bc9de3af273ee79d8a0c4",
       "compiler/tests/p2/struktur_pointer_felder.moos": "95c2437eb4b483053e5bbb8088491716b019ffc5bf706d9d2cfd63c24eca8a8c",
       "compiler/tests/p2/struktur_pointer_fn_unbekannt.moos": "820b06b7aa6ab704bbb6f5850f166bb08672d922fa4b190a89b1df0f5705a272",
@@ -1547,7 +1608,7 @@
       "compiler/tests/test_vollständig.moos": "c073de1c6a50692a7d53ddabf0836fc268e392fdd00a261707faeb5432a05f77",
       "stdlib/dns.moos": "0695d45182775e36137c09f1c9e14c14193a192bc08dca514a379891edaf517a",
       "stdlib/ki_bild_easy.moos": "0e83f1e0e86d7140e617b0734bafa56cdfc13c496dea272e51ca603dae7ffc94",
-      "stdlib/liste.moos": "38237eb45809ec16cd2fc0afc697e10b004caf2cb413c5c6a67114f61a912e78",
+      "stdlib/liste.moos": "867c17a65e63bacd53d5c93090f1f29da1d7dbd4d13f76d16ddfb0ea31dae52b",
       "stdlib/mathe.moos": "cde2c5bd66e078e8d7c5d5c852e5ac554c0ce14fb4f0fd01d0f6408ac2d74173",
       "stdlib/mini.moos": "c93a02fab67baff0142ba0209e5f092c1bcac5a942d8313b58e087ac0011cc74",
       "stdlib/netz_frame.moos": "2e613a9a6c89190fdc9f788ae5a399e4f0f3edc8a862d424717096d43132022b",
@@ -1723,34 +1784,28 @@
       "sha256": "11e38d1b9c433fb3ae0c6dcfcc5abeeb62ccb1b9d1c8225e4af26b044b6f9fce"
     },
     "beispiele/domain/db/bench/bench_baseline_perfphase.moos": {
-      "status": "compile_error",
-      "exit_code": 1,
-      "diagnostic_sha256": "66b151c559a936151c7adbd467ed81172b7538f8946e8ae104314a946f228544"
+      "status": "ok",
+      "sha256": "f4819b49f8553d91882a51b54dc858c591158d46f47d45cd99de498b3688deb4"
     },
     "beispiele/domain/db/bench/bench_binary.moos": {
-      "status": "compile_error",
-      "exit_code": 1,
-      "diagnostic_sha256": "4cdc70cc0ada03d6b037d42657e91eee391c9c24ff9431470e987e5dcb2236e0"
+      "status": "ok",
+      "sha256": "b9e157659bb12ad6c25f0f4aa9a6232e809a7bc040f79f54930fbb0d3a57015d"
     },
     "beispiele/domain/db/bench/bench_copy.moos": {
-      "status": "compile_error",
-      "exit_code": 1,
-      "diagnostic_sha256": "4cdc70cc0ada03d6b037d42657e91eee391c9c24ff9431470e987e5dcb2236e0"
+      "status": "ok",
+      "sha256": "791964c51616ab8400fee6829206df3275bc1815a2bf5e4751a75c1f16a7041b"
     },
     "beispiele/domain/db/bench/bench_pipelining.moos": {
-      "status": "compile_error",
-      "exit_code": 1,
-      "diagnostic_sha256": "4cdc70cc0ada03d6b037d42657e91eee391c9c24ff9431470e987e5dcb2236e0"
+      "status": "ok",
+      "sha256": "983c658243993c26bf038441d094ea9ebd3464269100152840762dda7451c71a"
     },
     "beispiele/domain/db/bench/bench_pool.moos": {
-      "status": "compile_error",
-      "exit_code": 1,
-      "diagnostic_sha256": "4cdc70cc0ada03d6b037d42657e91eee391c9c24ff9431470e987e5dcb2236e0"
+      "status": "ok",
+      "sha256": "6eaf59aa2c4fc63b73ed166e9506191ac57fff50f285071bef1f39a1ffa46156"
     },
     "beispiele/domain/db/bench/bench_prepared.moos": {
-      "status": "compile_error",
-      "exit_code": 1,
-      "diagnostic_sha256": "4cdc70cc0ada03d6b037d42657e91eee391c9c24ff9431470e987e5dcb2236e0"
+      "status": "ok",
+      "sha256": "872bf0372c867ac23624beb7983c891e8c0d6f0af30bf4d88c292b93e19c97e5"
     },
     "beispiele/domain/db/bench/bench_scram.moos": {
       "status": "ok",
@@ -1769,9 +1824,8 @@
       "sha256": "28007c21f88449f6f4b061c97445136065288fe24bb6e3aad1e9a396f1a26593"
     },
     "beispiele/domain/db/bench/scram_e2e_smoke.moos": {
-      "status": "compile_error",
-      "exit_code": 1,
-      "diagnostic_sha256": "42aec33adb0676772cc73ba99353558f593f7620c9745e029d4b44d6e3fc3605"
+      "status": "ok",
+      "sha256": "63c699fc79980a590a57908005434dfc12f25d0eb2e9ad53669f2c9b8c26f1c2"
     },
     "beispiele/domain/db/blog_engine.moos": {
       "status": "ok",
@@ -1786,9 +1840,8 @@
       "sha256": "2bb4cb74a521d73ee8e233094867339fd46b9f6e2a7c1e2249f58b1e8455e4a9"
     },
     "beispiele/domain/db/mini_db.moos": {
-      "status": "compile_error",
-      "exit_code": 1,
-      "diagnostic_sha256": "1b4ff0d5f560e8f1e426ea3d906b0ab25d6370985a516ca941629464454ccc63"
+      "status": "ok",
+      "sha256": "e86f44b49ae34d143f789bd415c05256e29051629b65534db3eecbb84e40eebb"
     },
     "beispiele/domain/db/mini_sql.moos": {
       "status": "ok",
@@ -1883,8 +1936,8 @@
       "sha256": "42e583864c0544238d4cddc8773892778e9bc21e241d1d2b1b09cf4a12664ff8"
     },
     "beispiele/domain/system/elf_reader.moos": {
-      "status": "unsafe_path_in_ir",
-      "raw_sha256": "0459b062a828c31ffa7d844659bbce3cc6e28c6c038c4be352831bdf52b53ecc"
+      "status": "ok",
+      "sha256": "48812e2c5a08696a9bbd37847d1b8ab7f8e8d18490786255eb915a686f211a40"
     },
     "beispiele/domain/system/kernel_hello.moos": {
       "status": "ok",
@@ -1899,8 +1952,8 @@
       "sha256": "99e45fed1e0827e26f5b53e9fce33dac8de41ce76c9a007954961c623bae4c32"
     },
     "beispiele/domain/system/x86dis.moos": {
-      "status": "unsafe_path_in_ir",
-      "raw_sha256": "1cee4a709fc7b19da7c250552910ec15fda0cbbd21dc7140471e12adc7b19e58"
+      "status": "ok",
+      "sha256": "49a1ec66ab74947a5869d5f19f28bf8081ff0c82508d5fe33aaa1f307903c3f0"
     },
     "beispiele/domain/web/http_api.moos": {
       "status": "ok",
@@ -2103,9 +2156,8 @@
       "sha256": "5f5534e5ef26983f6236d7205f6cb49ac1a59556f5a32b5e84f9ce52e876473b"
     },
     "beispiele/kernel/uefi_kern.moos": {
-      "status": "compile_error",
-      "exit_code": 1,
-      "diagnostic_sha256": "7eee90e44a62eaba785d806db7e7953075ca6da312c92495241d1c3015199999"
+      "status": "ok",
+      "sha256": "9b804e2a728de5d2f96c61d5d152815e8167863c773ab7edf6a56a9cacd55e27"
     },
     "beispiele/ki_audio.moos": {
       "status": "ok",
@@ -3008,29 +3060,24 @@
       "sha256": "b606198e470ad4672234bf7fbed8158e7c47db9ab1ecc92b50ab71fe9baba1e3"
     },
     "beispiele/uefi/moo_lader.moos": {
-      "status": "compile_error",
-      "exit_code": 1,
-      "diagnostic_sha256": "ef0cbe3a6109e754c0665f0dcdf9d24dcf8dac3cf1b202638e0eff2d2c557275"
+      "status": "ok",
+      "sha256": "c9702eb936a50c89a80eb34af13fc4d2e4bc068ba62e0912319b1d40b60d1eb2"
     },
     "beispiele/uefi/netz_e1000.moos": {
-      "status": "compile_error",
-      "exit_code": 1,
-      "diagnostic_sha256": "92d88c751f397e73c28696268957795433d904678daaa6aeec5dc80c4a3ce198"
+      "status": "ok",
+      "sha256": "46bd791f5605795e6a0bed34b2b90d685fcc80687f2dd2b966b2eed5a8ff197c"
     },
     "beispiele/uefi/netz_lader.moos": {
-      "status": "compile_error",
-      "exit_code": 1,
-      "diagnostic_sha256": "92d88c751f397e73c28696268957795433d904678daaa6aeec5dc80c4a3ce198"
+      "status": "ok",
+      "sha256": "0fe44696ca6b2decf7b55d533d1d8a3c3cc6f1ab0357de9874e454d52ce2a38a"
     },
     "beispiele/uefi/netz_tftp.moos": {
-      "status": "compile_error",
-      "exit_code": 1,
-      "diagnostic_sha256": "ddd5f03e3f58fc1a1146727d96b98ad728be9c0e17ba335a37eb96b814184007"
+      "status": "ok",
+      "sha256": "9e988f3f940aa7470a679e3eed0fe5b5d5e8502ce2f8541ef3ba6221f930e0ea"
     },
     "beispiele/uefi/netz_treiber.moos": {
-      "status": "compile_error",
-      "exit_code": 1,
-      "diagnostic_sha256": "92d88c751f397e73c28696268957795433d904678daaa6aeec5dc80c4a3ce198"
+      "status": "ok",
+      "sha256": "31990c28da05d30c19f70cf5a5ebfe398b0411cc71b0cb23e00db7b3016191ce"
     },
     "beispiele/ui_automation_demo.moos": {
       "status": "ok",
@@ -3449,9 +3496,8 @@
       "sha256": "d0a811eff411e0563f0d93c487c982c08d12077a777cae2fb6be74d55fed8f3d"
     },
     "compiler/tests/test_stdlib.moos": {
-      "status": "compile_error",
-      "exit_code": 1,
-      "diagnostic_sha256": "2c7ec479c1f680471392cbcd227f9d7d11c9ba6fc10b11cc52af988705c93714"
+      "status": "ok",
+      "sha256": "56412205b80469cf96eee6bffd76551d716d5913c7b99255a0f78e41cb9f6b1d"
     },
     "compiler/tests/test_stdlib_klein.moos": {
       "status": "ok",
@@ -3463,7 +3509,7 @@
     },
     "compiler/tests/test_stdlib_voll.moos": {
       "status": "ok",
-      "sha256": "2e5a15e5de913656ef49bbf2ecf79720a9e455604561d96ab75bb8474257b9a3"
+      "sha256": "80cedb91737914cfd7fc9983f9b90a1c4b076c1b67109dd4a49ce63a136d165b"
     },
     "compiler/tests/test_strings.moos": {
       "status": "ok",

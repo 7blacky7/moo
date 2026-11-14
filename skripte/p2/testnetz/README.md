@@ -75,3 +75,40 @@ ein stabiler Zeilentext als Teilstring geprüft werden. Gegentests: korrekter
 Fehler PASS, falscher Text FAIL, erfolgreiche Kompilierung FAIL. Der
 bestehende `.expected`-Lauf bleibt unverändert; Konflikte beider Endungen
 für denselben Test sind explizit abzulehnen.
+
+
+
+## Versioniertes Root-Gate und Snapshotvertrag
+
+Der Root-Task `mise run test-legacy-ir` baut zuerst das aktuelle
+Release-Binary, führt die Mutations-Selbstprobe aus und vergleicht danach eine
+neue Aufnahme mit `legacy-ir-baseline.json`. Die Baseline bindet drei getrennte
+Inventare:
+
+- direkte Testquellen (`legacy-ir-sources-v1`);
+- alle für `find_module` sichtbaren `.moos`/`.moo`-Kandidaten in
+  Quellverzeichnissen, Projekt-/Binary-Stdlib und `~/.moo/packages`
+  (`moo-find-module-candidates-v1`);
+- Host- und Werkzeugidentität einschließlich CPU-Modell/-Flags und Hash/Version
+  der verwendeten Shell-, Hash-, Rust-, LLVM- und C-Werkzeuge
+  (`legacy-ir-toolchain-v1`).
+
+Alle Inventare werden vor und nach der Aufnahme verglichen. Ein Quellen-,
+Importkandidaten-, Toolchain-, Binary- oder Produktinventarwechsel während des
+Laufs ist Drift und damit FAIL. Beim Vergleich mit der eingecheckten Baseline
+müssen Quellen-, Import- und Toolchain-Snapshot exakt übereinstimmen; der
+Compiler-Binary-Hash und das Compiler-/Runtime-Produktinventar bleiben
+informativ, weil gerade Änderungen am Compiler geprüft werden.
+
+Die neun offenen Produktfälle werden nicht verschwiegen: Compilefehler enthalten
+einen Hash der pfadnormalisierten Diagnose, IR mit sonstigem absolutem
+Projektpfad einen unveränderten Roh-IR-Hash. Nur der Root-Task verwendet
+`--allow-baseline-failures`; er akzeptiert diese Fälle ausschließlich bei
+vollständig identischem Baselineeintrag und meldet ausdrücklich, dass dies kein
+Compile-Erfolg ist. Timeout und fehlendes IR bleiben immer FAIL. T4/T33 bleiben
+bis zur Produktbereinigung und drei vollständig erfolgreichen Läufen offen.
+
+`legacy_ir_selftest.sh` verändert nur temporäre Kopien der Baseline. Es
+mutiert einen IR-Hash und den Import-Snapshot und verlangt in beiden Fällen
+einen abgelehnten Vergleich. Produktquellen und die eingecheckte Baseline werden
+dabei nicht verändert.

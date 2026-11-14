@@ -15,6 +15,9 @@ use crate::codegen_native::{NType, NValue};
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum IntOp {
     Add, Sub, Mul, Div, Rem, Shl, Shr, BitAnd, BitOr, BitXor,
+    /// P2-T58 (Plan f40b5980 §2.1): a ** b, Wrap modulo 2^N wie *, 0 ** 0 = 1;
+    /// negativer Exponent (nur signed) ist ein Fehler vor der Rechnung.
+    Pow,
 }
 
 fn int_width(ty: NType) -> Option<u32> {
@@ -66,8 +69,55 @@ fn int_invalid<'ctx>(
                 "native.shift.invalid",
             ).map_err(|e| e.to_string())?)
         }
+        // P2-T58: nur signed kann fehlschlagen (negativer Exponent).
+        IntOp::Pow if signed => {
+            Some(builder.build_int_compare(
+                IntPredicate::SLT, rhs, rhs.get_type().const_zero(), "native.pow.negativ",
+            ).map_err(|e| e.to_string())?)
+        }
         _ => None,
     })
+}
+
+/// P2-T58 (Plan f40b5980 §3.1): a ** b als Quadrieren-und-Multiplizieren-Schleife
+/// inline (kein Runtime-Symbol, bare-faehig). Exponent ist hier >= 0 bzw.
+/// unsigned; mul ohne nsw/nuw = Wrap modulo 2^N wie IntOp::Mul.
+fn int_pow<'ctx>(
+    context: &'ctx Context,
+    builder: &Builder<'ctx>,
+    function: FunctionValue<'ctx>,
+    basis: IntValue<'ctx>,
+    exponent: IntValue<'ctx>,
+) -> Result<IntValue<'ctx>, String> {
+    let e = |e: inkwell::builder::BuilderError| e.to_string();
+    let ty = basis.get_type();
+    let start = builder.get_insert_block().ok_or("Kein aktiver LLVM-Block")?;
+    let kopf = context.append_basic_block(function, "native.pow.kopf");
+    let koerper = context.append_basic_block(function, "native.pow.koerper");
+    let ende = context.append_basic_block(function, "native.pow.ende");
+    builder.build_unconditional_branch(kopf).map_err(e)?;
+    builder.position_at_end(kopf);
+    let ergebnis = builder.build_phi(ty, "native.pow.ergebnis").map_err(e)?;
+    let faktor = builder.build_phi(ty, "native.pow.basis").map_err(e)?;
+    let rest = builder.build_phi(ty, "native.pow.exponent").map_err(e)?;
+    let rest_wert = rest.as_basic_value().into_int_value();
+    let fertig = builder.build_int_compare(IntPredicate::EQ, rest_wert, ty.const_zero(), "native.pow.fertig").map_err(e)?;
+    builder.build_conditional_branch(fertig, ende, koerper).map_err(e)?;
+    builder.position_at_end(koerper);
+    let ergebnis_wert = ergebnis.as_basic_value().into_int_value();
+    let faktor_wert = faktor.as_basic_value().into_int_value();
+    let bit = builder.build_and(rest_wert, ty.const_int(1, false), "native.pow.bit").map_err(e)?;
+    let ungerade = builder.build_int_compare(IntPredicate::NE, bit, ty.const_zero(), "native.pow.ungerade").map_err(e)?;
+    let mal = builder.build_int_mul(ergebnis_wert, faktor_wert, "native.pow.mal").map_err(e)?;
+    let neues_ergebnis = builder.build_select(ungerade, mal, ergebnis_wert, "native.pow.neu").map_err(e)?.into_int_value();
+    let neuer_faktor = builder.build_int_mul(faktor_wert, faktor_wert, "native.pow.quadrat").map_err(e)?;
+    let neuer_rest = builder.build_right_shift(rest_wert, ty.const_int(1, false), false, "native.pow.halb").map_err(e)?;
+    builder.build_unconditional_branch(kopf).map_err(e)?;
+    ergebnis.add_incoming(&[(&ty.const_int(1, false), start), (&neues_ergebnis, koerper)]);
+    faktor.add_incoming(&[(&basis, start), (&neuer_faktor, koerper)]);
+    rest.add_incoming(&[(&exponent, start), (&neuer_rest, koerper)]);
+    builder.position_at_end(ende);
+    Ok(ergebnis_wert)
 }
 
 /// Arithmetik verlangt gleiche Integer-Typen; Shift-Counts duerfen einen
@@ -135,6 +185,11 @@ pub(crate) fn int_binary<'ctx>(
         IntOp::Rem => builder.build_int_unsigned_rem(lhs, rhs, "native.urem"),
         IntOp::Shl => builder.build_left_shift(lhs, shift_rhs, "native.shl"),
         IntOp::Shr => builder.build_right_shift(lhs, shift_rhs, left.ty.is_signed_integer(), "native.shr"),
+        IntOp::Pow => {
+            let function = builder.get_insert_block().and_then(|b| b.get_parent()).ok_or("LLVM-Block ohne Funktion")?;
+            let result = int_pow(context, builder, function, lhs, rhs)?;
+            return NValue::checked(context, left.ty, result.into());
+        }
     }.map_err(|e| e.to_string())?;
     NValue::checked(context, left.ty, result.into())
 }
@@ -146,6 +201,8 @@ pub(crate) fn pruef_art(name: &str) -> Option<IntOp> {
     match name {
         "teilbar" | "divisible" => Some(IntOp::Div),
         "verschiebbar" | "shiftable" => Some(IntOp::Shl),
+        // P2-T58: potenzierbar(a, b) = Exponent >= 0 (unsigned immer wahr).
+        "potenzierbar" | "can_pow" => Some(IntOp::Pow),
         _ => None,
     }
 }
@@ -169,10 +226,15 @@ pub(crate) fn pruefung<'ctx>(
     {
         return Err("Nativer LLVM-Wert passt nicht zum Integer-Typ".into());
     }
-    let invalid = int_invalid(
+    let invalid = match int_invalid(
         builder, op, left.value.into_int_value(), right.value.into_int_value(),
         left.ty.is_signed_integer(), width,
-    )?.ok_or("Operation ohne Fehlerfall braucht keine Vorpruefung")?;
+    )? {
+        Some(invalid) => invalid,
+        // P2-T58: unsigned ** kann nicht fehlschlagen -> potenzierbar ist wahr.
+        None if matches!(op, IntOp::Pow) => context.bool_type().const_zero(),
+        None => return Err("Operation ohne Fehlerfall braucht keine Vorpruefung".into()),
+    };
     let ok = builder.build_not(invalid, "native.pruefung").map_err(|e| e.to_string())?;
     NValue::checked(context, NType::Bool, ok.into())
 }
@@ -194,6 +256,9 @@ pub(crate) fn int_neg<'ctx>(
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum FloatOp {
     Add, Sub, Mul, Div,
+    /// P2-T58 (Plan f40b5980 §2.2/§2.3): Float-% wie C-fmod, Float-** wie
+    /// C99-pow. Beide laufen ueber float_bibliothek, nicht float_binary.
+    Rem, Pow,
 }
 
 /// IEEE-Basisoperationen auf gleicher f32/f64-Breite. Es werden keine
@@ -220,8 +285,71 @@ pub(crate) fn float_binary<'ctx>(
         FloatOp::Sub => builder.build_float_sub(lhs, rhs, "native.fsub"),
         FloatOp::Mul => builder.build_float_mul(lhs, rhs, "native.fmul"),
         FloatOp::Div => builder.build_float_div(lhs, rhs, "native.fdiv"),
+        FloatOp::Rem | FloatOp::Pow => {
+            return Err("Float-% und Float-** laufen ueber float_bibliothek".into());
+        }
     }.map_err(|e| e.to_string())?;
     NValue::checked(context, left.ty, result.into())
+}
+
+/// P2-T58 D2c (Plan f40b5980 §3.2): Float-% und Float-** als Aufruf der
+/// freistehenden Moo-Runtime compiler/runtime/moo_native_math.c
+/// (moo_native_fmod/fmodf, moo_native_pow/powf). Bewusst kein LLVM-frem und
+/// kein llvm.pow: beide werden zu fmod/pow aus libm abgesenkt, die es im
+/// Bare-Ziel nicht gibt. Die Deklaration entsteht erst beim ersten Bedarf
+/// (nounwind, willreturn, memory(none)); Module ohne Float-%/** bleiben
+/// unveraendert. Kein Moo-Fehlerpfad: Sonderfaelle liefern IEEE-Werte.
+pub(crate) fn float_bibliothek<'ctx>(
+    context: &'ctx Context,
+    builder: &Builder<'ctx>,
+    module: &inkwell::module::Module<'ctx>,
+    op: FloatOp,
+    left: NValue<'ctx>,
+    right: NValue<'ctx>,
+) -> Result<NValue<'ctx>, String> {
+    if !matches!(left.ty, NType::F32 | NType::F64) || left.ty != right.ty {
+        return Err("Gleiche native Float-Typen erwartet".into());
+    }
+    if left.value.get_type() != left.ty.llvm_type(context)
+        || right.value.get_type() != right.ty.llvm_type(context)
+    {
+        return Err("Nativer LLVM-Wert passt nicht zum Float-Typ".into());
+    }
+    let einfach = left.ty == NType::F32;
+    let name = match (op, einfach) {
+        (FloatOp::Rem, false) => "moo_native_fmod",
+        (FloatOp::Rem, true) => "moo_native_fmodf",
+        (FloatOp::Pow, false) => "moo_native_pow",
+        (FloatOp::Pow, true) => "moo_native_powf",
+        _ => return Err("float_bibliothek: nur Float-% und Float-**".into()),
+    };
+    let float_t = left.ty.llvm_type(context).into_float_type();
+    let signatur = float_t.fn_type(&[float_t.into(), float_t.into()], false);
+    let funktion = match module.get_function(name) {
+        Some(f) if f.get_type() == signatur => f,
+        Some(_) => return Err(format!("{name} ist im Modul mit anderer Signatur deklariert")),
+        None => {
+            use inkwell::attributes::{Attribute, AttributeLoc};
+            let f = module.add_function(name, signatur, None);
+            for art in ["nounwind", "willreturn"] {
+                f.add_attribute(AttributeLoc::Function,
+                    context.create_enum_attribute(Attribute::get_named_enum_kind_id(art), 0));
+            }
+            // memory(none): reine Funktion ohne Speicherzugriff (LLVM >= 16).
+            f.add_attribute(AttributeLoc::Function,
+                context.create_enum_attribute(Attribute::get_named_enum_kind_id("memory"), 0));
+            f
+        }
+    };
+    let lhs = left.value.into_float_value();
+    let rhs = right.value.into_float_value();
+    let aufruf = builder.build_call(funktion, &[lhs.into(), rhs.into()], "native.fbib")
+        .map_err(|e| e.to_string())?;
+    let wert = match aufruf.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(wert) => wert,
+        _ => return Err(format!("{name} liefert keinen Wert")),
+    };
+    NValue::checked(context, left.ty, wert)
 }
 
 #[derive(Clone, Copy, Debug)]

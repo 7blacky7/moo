@@ -2,6 +2,7 @@
  * Der Rechencode ist Moo (zahlen_probe.moos); dieses C-Harness prueft nur
  * unabhaengig die Werte ueber die Win64-ABI und liefert den Exitcode. Die
  * Erwartungen entsprechen den Linux-Fixtures compiler/tests/p2/native_*.moos. */
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -19,6 +20,14 @@ extern int64_t moo_win_rund(int32_t a);
 extern int32_t moo_win_kleiner(int32_t a, int32_t b);
 extern int32_t moo_win_sicher(int32_t a, int32_t b);
 extern int32_t moo_win_nan(double a, double b);
+/* P2-T58 B8: Batch A (Local anderen Typs, Pure->Pure i64), i64-Wrap, -u64, f32-Rundung. */
+extern uint8_t moo_win_lokal(int32_t a);
+extern int64_t moo_win_i64_add(int64_t a, int64_t b);
+extern uint64_t moo_win_u64_neg(uint64_t a);
+extern int32_t moo_win_f32_rund(float a, float b);
+/* P2-T58 D2c: Float-% (C-fmod) und Float-** (C99-pow) aus moo_native_math.c. */
+extern double moo_win_frest(double a, double b);
+extern float moo_win_fpow32(float a, float b);
 
 static int fehler = 0;
 static int faelle = 0;
@@ -55,6 +64,17 @@ int main(void) {
     pruefe("sicher 7/0 (Kurzschluss)", moo_win_sicher(7, 0), 0);
     pruefe("sicher 7/2", moo_win_sicher(7, 2), 1);
     pruefe("NaN == NaN", moo_win_nan(0.0, 0.0), 0);
+    /* P2-T58 B8 */
+    pruefe("lokal 600 -> i64 -> halb -> u8", moo_win_lokal(600), 44);
+    pruefe("i64 MAX+1", moo_win_i64_add(INT64_MAX, 1), INT64_MIN);
+    pruefe("u64 -1", moo_win_u64_neg(1) == UINT64_MAX, 1);
+    pruefe("f32 0.1+0.2 != f64", moo_win_f32_rund(0.1f, 0.2f), 1);
+    /* P2-T58 D2c: Vorzeichen des Dividenden, -0, exakte Wurzel/Quadrat. */
+    pruefe("f64 -5.5 % 2 (mal 4)", (long long)(moo_win_frest(-5.5, 2.0) * 4.0), -6);
+    pruefe("f64 7 % -3", (long long)moo_win_frest(7.0, -3.0), 1);
+    pruefe("f64 -4 % 2 = -0", signbit(moo_win_frest(-4.0, 2.0)) != 0, 1);
+    pruefe("f32 9 ** 0.5", (long long)moo_win_fpow32(9.0f, 0.5f), 3);
+    pruefe("f32 1.5 ** 2 (mal 4)", (long long)(moo_win_fpow32(1.5f, 2.0f) * 4.0f), 9);
     if (fehler != 0) {
         fprintf(stderr, "MOO_WIN64_ZAHLEN_FAIL: %d von %d Faellen\n", fehler, faelle);
         return 1;

@@ -1,0 +1,21 @@
+# P2-T15/T50 C4 (Plan bb3878ef): dieselbe Last rein dynamisch ueber eine Moo-Liste
+# (Liste mit 10^7 Elementen ausserhalb des Messintervalls angelegt). Soll: 5114877120.
+setze n auf 10000000
+setze liste auf []
+setze k auf 0
+solange k < n:
+    liste.hinzufügen(0)
+    setze k auf k + 1
+setze start auf zeit()
+setze i auf 0
+solange i < n:
+    liste[i] = i % 1024
+    setze i auf i + 1
+setze s auf 0
+setze j auf 0
+solange j < n:
+    setze s auf s + liste[j]
+    setze j auf j + 1
+setze ende auf zeit()
+zeige ende - start
+zeige s

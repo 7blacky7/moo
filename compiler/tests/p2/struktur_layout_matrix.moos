@@ -1,0 +1,112 @@
+# P2-T13/T48 Batch E (Plan a71947f7 E2): Layoutmatrix fuer den C-Header-Nachweis
+# (`moo-compiler layout --c-header`, geprueft in skripte/p2/bindgen/layout_gate.sh
+# fuer x86_64/i686/aarch64 Linux und x86_64 Windows).
+# Abgedeckt: Skalar-Mix, f32/f64, verschachtelt, [T; N], 2D, Zeigerfelder
+# (Selbstbezug, Zeiger auf Zeiger, Funktionszeiger, void), @gepackt, gepackt
+# verschachtelt, gepackt in normal, Struktur-Array als Feld, @ausrichten = natuerlich
+# sowie @ausrichten(16/32/64) eingebettet und als Arrayelement (Batch C).
+struktur SkalarMix:
+    a: u8
+    b: i16
+    c: u32
+    d: i64
+    e: bool
+    f: i8
+
+struktur Fliess:
+    x: f32
+    y: f64
+    z: f32
+
+struktur Vec3:
+    x: f32
+    y: f32
+    z: f32
+
+struktur Vertex:
+    pos: Vec3
+    uv: [f32; 2]
+    farbe: u32
+
+struktur Matrix:
+    m: [[f32; 4]; 4]
+    gueltig: bool
+
+struktur Raster:
+    zellen: [[u8; 3]; 5]
+    gewicht: f64
+
+struktur Knoten:
+    wert: i32
+    naechster: ptr[Knoten]
+    daten: ptr[ptr[u8]]
+    rueckruf: ptr[fn(ptr[Knoten], u32) -> bool]
+    leer: ptr[void]
+
+@gepackt
+struktur Kopf:
+    marke: u8
+    wert: u64
+    kurz: u16
+
+@gepackt
+struktur KopfVerschachtelt:
+    a: u8
+    innen: Vec3
+    kopf: Kopf
+    werte: [u16; 3]
+    d: f64
+
+struktur HuelleUmGepackt:
+    a: u8
+    kopf: Kopf
+    b: u32
+
+struktur Netz:
+    ecken: [Vertex; 3]
+    indizes: [u16; 6]
+    anzahl: u32
+    kopf: ptr[Kopf]
+
+@ausrichten(4)
+struktur Ausgerichtet:
+    a: u32
+    b: u8
+
+# Batch C: @ausrichten(n) oberhalb der natuerlichen Ausrichtung, eingebettet und als Array.
+@ausrichten(16)
+struktur Ausgerichtet16:
+    a: u32
+    b: u8
+
+@ausrichten(32)
+struktur Block32:
+    pos: Vec3
+    id: u16
+
+@ausrichten(64)
+struktur Zeile64:
+    w: [u8; 3]
+
+struktur MitAusgerichtet:
+    k: u8
+    a: Ausgerichtet16
+    z: [Ausgerichtet16; 2]
+    e: u8
+    b: Block32
+    zeile: Zeile64
+
+@nativ
+konstante AUSGERICHTET_EINS: Ausgerichtet16 auf Ausgerichtet16(1, 2)
+
+# Bestehende Compilezeit-Builtins auf derselben Matrix (Gate vergleicht mit JSON).
+@nativ
+konstante GROESSE_VERTEX: u64 auf groesse_von(Vertex)
+@nativ
+konstante AUSRICHTUNG_KNOTEN: u64 auf ausrichtung_von(Knoten)
+@nativ
+konstante VERSATZ_KOPF: u64 auf versatz_von(KopfVerschachtelt, kopf)
+@nativ
+konstante VERSATZ_ANZAHL: u64 auf versatz_von(Netz, anzahl)
+
+zeige "Layoutmatrix registriert"

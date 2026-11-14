@@ -1,0 +1,155 @@
+# P2-T58 B5 (Plan 4500717b): Grenze dyn <-> nativ je Typ. Ungueltige Argumente
+# (Bereich, Vorzeichen, Bruchteil, nichts, Text, bool statt Zahl, Zahl statt bool)
+# sind in versuche: fangbar; Rueckgaben: i64 nur exakt in f64 (2^53 ok, 2^53+1
+# Grenzfehler), u64 MAX Grenzfehler, f32 rundet (0.1 != f32(0.1)), bool hin/zurueck.
+# Rueckgabe-Grenzfehler auch aus benannter Funktion (vor Batch 33601: 'ret i32 1',
+# LLVM-Verify-Abbruch). Erweitert native_small.sh (dort i8/u8 unbehandelt).
+@nativ
+funktion i8_id(a: i8) -> i8:
+    gib_zurück a
+@nativ
+funktion i16_id(a: i16) -> i16:
+    gib_zurück a
+@nativ
+funktion i32_id(a: i32) -> i32:
+    gib_zurück a
+@nativ
+funktion i64_id(a: i64) -> i64:
+    gib_zurück a
+@nativ
+funktion u8_id(a: u8) -> u8:
+    gib_zurück a
+@nativ
+funktion u16_id(a: u16) -> u16:
+    gib_zurück a
+@nativ
+funktion u32_id(a: u32) -> u32:
+    gib_zurück a
+@nativ
+funktion u64_id(a: u64) -> u64:
+    gib_zurück a
+@nativ
+funktion f32_id(a: f32) -> f32:
+    gib_zurück a
+@nativ
+funktion f64_id(a: f64) -> f64:
+    gib_zurück a
+@nativ
+funktion bool_id(a: bool) -> bool:
+    gib_zurück a
+@nativ
+funktion i64_ueber53(p: u32) -> i64:
+    gib_zurück als_wrap(i64, (als(u64, 1) << 53) + als(u64, p))
+@nativ
+funktion u64_max() -> u64:
+    gib_zurück ~als(u64, 0)
+@nativ
+funktion b_teil(x: i32) -> i32:
+    gib_zurück 10 / x
+@nativ
+funktion a_teil(x: i32) -> i32:
+    gib_zurück 10 / b_teil(x)
+funktion p_i8(w):
+    versuche:
+        zeige "i8 " + w + " -> " + i8_id(w)
+    fange fehler:
+        zeige "i8 " + w + " -> FEHLER " + fehler
+funktion p_i16(w):
+    versuche:
+        zeige "i16 " + w + " -> " + i16_id(w)
+    fange fehler:
+        zeige "i16 " + w + " -> FEHLER " + fehler
+funktion p_i32(w):
+    versuche:
+        zeige "i32 " + w + " -> " + i32_id(w)
+    fange fehler:
+        zeige "i32 " + w + " -> FEHLER " + fehler
+funktion p_i64(w):
+    versuche:
+        zeige "i64 " + w + " -> " + i64_id(w)
+    fange fehler:
+        zeige "i64 " + w + " -> FEHLER " + fehler
+funktion p_u8(w):
+    versuche:
+        zeige "u8 " + w + " -> " + u8_id(w)
+    fange fehler:
+        zeige "u8 " + w + " -> FEHLER " + fehler
+funktion p_u16(w):
+    versuche:
+        zeige "u16 " + w + " -> " + u16_id(w)
+    fange fehler:
+        zeige "u16 " + w + " -> FEHLER " + fehler
+funktion p_u32(w):
+    versuche:
+        zeige "u32 " + w + " -> " + u32_id(w)
+    fange fehler:
+        zeige "u32 " + w + " -> FEHLER " + fehler
+funktion p_u64(w):
+    versuche:
+        zeige "u64 " + w + " -> " + u64_id(w)
+    fange fehler:
+        zeige "u64 " + w + " -> FEHLER " + fehler
+funktion p_f32(w):
+    versuche:
+        zeige "f32 " + w + " -> " + f32_id(w)
+    fange fehler:
+        zeige "f32 " + w + " -> FEHLER " + fehler
+funktion p_f64(w):
+    versuche:
+        zeige "f64 " + w + " -> " + f64_id(w)
+    fange fehler:
+        zeige "f64 " + w + " -> FEHLER " + fehler
+funktion p_bool(w):
+    versuche:
+        zeige "bool " + w + " -> " + bool_id(w)
+    fange fehler:
+        zeige "bool " + w + " -> FEHLER " + fehler
+für w in [5, -128, 127, 128, -129, 1.5, "x", nichts, wahr]:
+    p_i8(w)
+für w in [-32768, 32767, 32768, -32769]:
+    p_i16(w)
+für w in [-2147483648, 2147483647, 2147483648, -2147483649, 1.5]:
+    p_i32(w)
+für w in [9007199254740992, -9007199254740992, 9223372036854775808, 1.5, "x"]:
+    p_i64(w)
+für w in [0, 255, 256, -1, 1.5, "x", nichts, wahr]:
+    p_u8(w)
+für w in [65535, 65536, -1]:
+    p_u16(w)
+für w in [4294967295, 4294967296, -1]:
+    p_u32(w)
+für w in [9007199254740992, 18446744073709551616, -1, 0.5]:
+    p_u64(w)
+für w in [0.5, 1000000000000000000000 * 1000000000000000000, "x", nichts, wahr]:
+    p_f32(w)
+für w in [0.1, -2.5, "x", nichts]:
+    p_f64(w)
+für w in [wahr, falsch, 1, 0, "x", nichts]:
+    p_bool(w)
+zeige "f32 0.1 exakt: " + (f32_id(0.1) == 0.1)
+zeige "f32 0.5 exakt: " + (f32_id(0.5) == 0.5)
+versuche:
+    zeige "i64 2^53 -> " + i64_ueber53(0)
+    zeige "i64 2^53+1 -> " + i64_ueber53(1)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "i64 2^53+1 -> FEHLER " + fehler
+versuche:
+    zeige "u64 MAX -> " + u64_max()
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "u64 MAX -> FEHLER " + fehler
+versuche:
+    zeige a_teil(0)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "A3 erster Fehler: " + fehler
+funktion weite_rueckgabe(p):
+    gib_zurück i64_ueber53(p)
+versuche:
+    zeige "fn 2^53 -> " + weite_rueckgabe(0)
+    zeige "fn 2^53+1 -> " + weite_rueckgabe(1)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "fn 2^53+1 -> FEHLER " + fehler
+zeige "ENDE"

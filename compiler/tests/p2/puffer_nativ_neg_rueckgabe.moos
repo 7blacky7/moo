@@ -1,0 +1,6 @@
+# P2-T50 (Plan bb3878ef B1): puffer[T] als Rueckgabe ist nicht freigegeben.
+@nativ
+funktion r(p: puffer[i32]) -> puffer[i32]:
+    unsicher:
+        gib_zurück p
+zeige 1

@@ -1,0 +1,32 @@
+# P2-T58 Batch C (Plan 4500717b): Fehlerweitergabe im Systemkoerper. Schlaegt
+# ein fehlbarer nativer Callee fehl (Flag gesetzt, Nullwert), kehrt der
+# Systemkoerper sofort ohne neue Meldung zurueck: putchar('X') danach laeuft
+# NICHT, der Erstfehler nennt 'teil'. Vorher rechnete er mit 0 weiter.
+# sys_float ruft nur nicht fehlbare Float-Natives: keine Flagpruefung im IR.
+extern "C" funktion putchar(c: i32) -> i32
+@nativ
+funktion teil(x: i32) -> i32:
+    gib_zurück 10 / x
+@nativ
+funktion sys_marke(x: i32) -> i32:
+    unsicher:
+        setze r: i32 auf teil(x)
+        putchar(88)
+        putchar(10)
+        gib_zurück r
+@nativ
+funktion f_mul(a: f64, b: f64) -> f64:
+    gib_zurück a * b
+@nativ
+funktion sys_float(a: f64) -> f64:
+    unsicher:
+        gib_zurück f_mul(a, 2.0)
+versuche:
+    unsicher:
+        zeige sys_marke(5)
+        zeige sys_marke(0)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen: " + fehler
+unsicher:
+    zeige sys_float(1.5)

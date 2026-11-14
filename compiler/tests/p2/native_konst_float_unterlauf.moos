@@ -1,0 +1,4 @@
+# P2-T48 B1: ein von Null verschiedenes Literal, das in f32 auf 0 rundet, ist ein Compilefehler.
+@nativ
+konstante X: f32 auf 1e-50
+zeige 1

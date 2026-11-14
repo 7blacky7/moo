@@ -1,0 +1,4 @@
+# P2-T48 B1: bool-Konstanten nur mit wahr/falsch, keine Zahl.
+@nativ
+konstante B: bool auf 1
+zeige 1

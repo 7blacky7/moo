@@ -12,6 +12,12 @@ funktion produkt(l):
         setze p auf p * x
     gib_zurück p
 
+# Arithmetisches Mittel; leere Liste -> nichts (keine Division durch 0).
+funktion durchschnitt(l):
+    wenn länge(l) == 0:
+        gib_zurück nichts
+    gib_zurück summe(l) / länge(l)
+
 funktion minimum(l):
     setze m auf l[0]
     für x in l:

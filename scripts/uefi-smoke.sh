@@ -8,6 +8,7 @@
 #   compiler/runtime/boot/uefi_rt.c         (Heap-/String-/libm-Bruecke, _fltused)
 #   compiler/runtime/moo_bare.c, moo_bare_alloc.c, moo_freestanding_mem.c
 #   compiler/runtime/moo_surface_core.c, moo_surface.c   (vorhandener Surface-Kern)
+#   compiler/runtime/moo_native_math.c       (P2-T58: Float-%/** nativer Funktionen, kein libm)
 #
 # Phasen:
 #   1) moo -> PE/COFF (--target x86_64-unknown-uefi), file-Check
@@ -58,7 +59,7 @@ else
 fi
 ENTRY_C="$ROOT/compiler/runtime/boot/uefi_entry.c"
 RT_C="$ROOT/compiler/runtime/boot/uefi_rt.c"
-RT_SOURCES=(moo_bare.c moo_bare_alloc.c moo_freestanding_mem.c moo_surface_core.c moo_surface.c)
+RT_SOURCES=(moo_bare.c moo_bare_alloc.c moo_freestanding_mem.c moo_surface_core.c moo_surface.c moo_native_math.c)
 CFLAGS=(--target=x86_64-w64-windows-gnu -std=c11 -O2 -ffreestanding -fno-stack-protector
         -mno-stack-arg-probe -ffunction-sections -fdata-sections -DMOO_BARE)
 WAIT_S="${MOO_UEFI_WAIT:-45}"

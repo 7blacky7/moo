@@ -1,0 +1,7 @@
+# P2-T12 D2 (E4): dynamische Listen sind in @nativ nicht iterierbar.
+@nativ
+funktion f(n: i32) -> i32:
+    für x in [1, 2, 3]:
+        weiter
+    gib_zurück n
+zeige f(2)

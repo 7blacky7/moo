@@ -1,0 +1,216 @@
+# P2-T15/T50 Batch B (Plan bb3878ef B1-B5, C1): puffer[T] nativ als nicht
+# besitzender Ausschnitt. Fuellen/Summieren je Typ i8..u64/f32/f64 (Wrap per
+# als_wrap, dyn. Gegenlesen), Ansicht als Argument, nativ->nativ, leerer Puffer,
+# Index == Laenge fangbar, falscher Elementtyp und Liste statt Puffer fangbar,
+# Pin nach Fehler (zweites Pufferargument bzw. Koerperfehler) geloest: danach
+# ist puffer_anhängen wieder erlaubt.
+@nativ
+funktion fuell_i8(p: puffer[i8]) -> i64:
+    unsicher:
+        setze i: u64 auf 0
+        setze s: i64 auf 0
+        solange i < länge(p):
+            p[i] = als_wrap(i8, i * 37)
+            setze s auf s + als_wrap(i64, p[i])
+            setze i auf i + 1
+        gib_zurück s
+@nativ
+funktion fuell_u8(p: puffer[u8]) -> i64:
+    unsicher:
+        setze i: u64 auf 0
+        setze s: i64 auf 0
+        solange i < länge(p):
+            p[i] = als_wrap(u8, i * 37)
+            setze s auf s + als_wrap(i64, p[i])
+            setze i auf i + 1
+        gib_zurück s
+@nativ
+funktion fuell_i16(p: puffer[i16]) -> i64:
+    unsicher:
+        setze i: u64 auf 0
+        setze s: i64 auf 0
+        solange i < länge(p):
+            p[i] = als_wrap(i16, i * 37)
+            setze s auf s + als_wrap(i64, p[i])
+            setze i auf i + 1
+        gib_zurück s
+@nativ
+funktion fuell_u16(p: puffer[u16]) -> i64:
+    unsicher:
+        setze i: u64 auf 0
+        setze s: i64 auf 0
+        solange i < länge(p):
+            p[i] = als_wrap(u16, i * 37)
+            setze s auf s + als_wrap(i64, p[i])
+            setze i auf i + 1
+        gib_zurück s
+@nativ
+funktion fuell_i32(p: puffer[i32]) -> i64:
+    unsicher:
+        setze i: u64 auf 0
+        setze s: i64 auf 0
+        solange i < länge(p):
+            p[i] = als_wrap(i32, i * 37)
+            setze s auf s + als_wrap(i64, p[i])
+            setze i auf i + 1
+        gib_zurück s
+@nativ
+funktion fuell_u32(p: puffer[u32]) -> i64:
+    unsicher:
+        setze i: u64 auf 0
+        setze s: i64 auf 0
+        solange i < länge(p):
+            p[i] = als_wrap(u32, i * 37)
+            setze s auf s + als_wrap(i64, p[i])
+            setze i auf i + 1
+        gib_zurück s
+@nativ
+funktion fuell_i64(p: puffer[i64]) -> i64:
+    unsicher:
+        setze i: u64 auf 0
+        setze s: i64 auf 0
+        solange i < länge(p):
+            p[i] = als_wrap(i64, i * 37)
+            setze s auf s + als_wrap(i64, p[i])
+            setze i auf i + 1
+        gib_zurück s
+@nativ
+funktion fuell_u64(p: puffer[u64]) -> i64:
+    unsicher:
+        setze i: u64 auf 0
+        setze s: i64 auf 0
+        solange i < länge(p):
+            p[i] = als_wrap(u64, i * 37)
+            setze s auf s + als_wrap(i64, p[i])
+            setze i auf i + 1
+        gib_zurück s
+@nativ
+funktion fuell_f32(p: puffer[f32]) -> f64:
+    unsicher:
+        setze i: u64 auf 0
+        setze s: f64 auf 0.0
+        solange i < länge(p):
+            p[i] = als(f32, i) * 0.5
+            setze s auf s + als(f64, p[i])
+            setze i auf i + 1
+        gib_zurück s
+@nativ
+funktion fuell_f64(p: puffer[f64]) -> f64:
+    unsicher:
+        setze i: u64 auf 0
+        setze s: f64 auf 0.0
+        solange i < länge(p):
+            p[i] = als(f64, i) * 0.5
+            setze s auf s + als(f64, p[i])
+            setze i auf i + 1
+        gib_zurück s
+@nativ
+funktion summe(p: puffer[f32]) -> f64:
+    unsicher:
+        setze s: f64 auf 0.0
+        setze i: u64 auf 0
+        solange i < länge(p):
+            setze s auf s + als(f64, p[i])
+            setze i auf i + 1
+        gib_zurück s
+@nativ
+funktion fuellen(p: puffer[i32], wert: i32) -> i32:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(p):
+            p[i] = wert + als_wrap(i32, i)
+            setze i auf i + 1
+        gib_zurück als_wrap(i32, länge(p))
+@nativ
+funktion lesen(p: puffer[u8], i: u64) -> u8:
+    unsicher:
+        gib_zurück p[i]
+@nativ
+funktion durchreichen(p: puffer[i32]) -> i32:
+    unsicher:
+        gib_zurück fuellen(p, 100)
+@nativ
+funktion zwei(p: puffer[i32], q: puffer[f32]) -> i32:
+    unsicher:
+        gib_zurück als_wrap(i32, länge(p) + länge(q))
+setze f auf puffer_erstellen(f32, 4)
+f[0] = 1.5
+f[3] = 2.25
+unsicher:
+    zeige summe(f)
+setze z auf puffer_erstellen(i32, 3)
+unsicher:
+    zeige fuellen(z, 10)
+zeige z[0] + z[1] + z[2]
+unsicher:
+    zeige durchreichen(z)
+zeige z[2]
+setze b auf puffer_erstellen(u8, 2)
+b[1] = 200
+unsicher:
+    zeige lesen(b, 1)
+versuche:
+    unsicher:
+        zeige lesen(b, 2)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+versuche:
+    unsicher:
+        zeige summe(z)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+puffer_anhängen(z, 5)
+zeige länge(z)
+setze a auf puffer_ansicht(f, 2, 2)
+unsicher:
+    zeige summe(a)
+setze leer auf puffer_erstellen(f32, 0)
+unsicher:
+    zeige summe(leer)
+setze n auf 10
+setze x8 auf puffer_erstellen(i8, n)
+setze xu8 auf puffer_erstellen(u8, n)
+setze x16 auf puffer_erstellen(i16, n)
+setze xu16 auf puffer_erstellen(u16, n)
+setze x32 auf puffer_erstellen(i32, n)
+setze xu32 auf puffer_erstellen(u32, n)
+setze x64 auf puffer_erstellen(i64, n)
+setze xu64 auf puffer_erstellen(u64, n)
+setze xf32 auf puffer_erstellen(f32, n)
+setze xf64 auf puffer_erstellen(f64, n)
+unsicher:
+    zeige "i8 " + fuell_i8(x8) + " " + x8[4]
+    zeige "u8 " + fuell_u8(xu8) + " " + xu8[7]
+    zeige "i16 " + fuell_i16(x16) + " " + x16[9]
+    zeige "u16 " + fuell_u16(xu16) + " " + xu16[9]
+    zeige "i32 " + fuell_i32(x32) + " " + x32[9]
+    zeige "u32 " + fuell_u32(xu32) + " " + xu32[9]
+    zeige "i64 " + fuell_i64(x64) + " " + x64[9]
+    zeige "u64 " + fuell_u64(xu64) + " " + xu64[9]
+    zeige "f32 " + fuell_f32(xf32) + " " + xf32[3]
+    zeige "f64 " + fuell_f64(xf64) + " " + xf64[3]
+versuche:
+    unsicher:
+        zeige zwei(x32, x32)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+puffer_anhängen(x32, 1)
+zeige "nach Pinfehler anhaengbar: " + länge(x32)
+setze liste auf [1, 2]
+versuche:
+    unsicher:
+        zeige summe(liste)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+versuche:
+    unsicher:
+        zeige lesen(b, 5)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+puffer_anhängen(b, 9)
+zeige "nach Indexfehler anhaengbar: " + länge(b)

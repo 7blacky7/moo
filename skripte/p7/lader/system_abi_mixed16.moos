@@ -1,4 +1,5 @@
-# Nicht klassifizierte Mixed-Variante mit zusaetzlichem u32-Feld bleibt gesperrt.
+# Mixed-Variante {f64,u32,u32} (16 Byte, SSE+INTEGER): {double, i64} – Clang-belegt
+# (P2-T56, ffi_abi), frueher gesperrt.
 struktur Mixed:
     real: f64
     integer: u32

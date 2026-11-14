@@ -1,0 +1,25 @@
+# P2-T19/T56 (Review db841fb9): Struktur-ABI und signext/zeroext schmaler
+# Skalare folgen der expliziten Aufrufkonvention, nicht dem Zieltriple.
+# Erwartete declare-Zeilen: Clang ms_abi/sysv_abi auf linux-gnu und windows-msvc.
+struktur Paar8:
+    a: u32
+    b: u32
+
+@aufrufkonvention("win64")
+extern "C" funktion cc_win64(p: Paar8, k: i8, w: u16) -> u8
+
+@aufrufkonvention("sysv64")
+extern "C" funktion cc_sysv64(p: Paar8, k: i8, w: u16) -> u8
+
+# Skalarer Pfad (Batch C): dieselbe Regel, C-bool zeroext auch unter win64.
+@aufrufkonvention("win64")
+extern "C" funktion cs_win64(k: i8, b: bool) -> u16
+
+@aufrufkonvention("sysv64")
+extern "C" funktion cs_sysv64(k: i8, b: bool) -> u16
+
+@nativ
+@einstieg
+funktion pruefe_konvention(adr: u64) -> u64:
+    unsicher:
+        gib_zurück adr

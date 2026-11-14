@@ -1,0 +1,5 @@
+# P2-T58 D1: konstant negativer Exponent ist ein Compilefehler.
+@nativ
+funktion f(a: i32) -> i32:
+    gib_zurück a ** -2
+zeige f(2)

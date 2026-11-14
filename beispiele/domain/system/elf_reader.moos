@@ -12,7 +12,8 @@
 #   - .text Section: erste 32 Bytes als Hex-Dump
 # ============================================================
 
-konstante DATEI auf "/home/blacky/dev/moo/beispiele/mysql_client"
+# Projektrelativ (Start aus dem Projektverzeichnis), kein maschinengebundener Pfad.
+konstante DATEI auf "beispiele/mysql_client"
 
 # --- Byte/Int Helper (Little-Endian) ---
 funktion u16(bs, off):

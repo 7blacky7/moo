@@ -1,3 +1,7 @@
+# P2-T33: eigenstaendig uebersetzbar; nur die Definitionen aus postgres_client
+# (ohne dessen Testteil). Ausfuehrung braucht einen erreichbaren Postgres-Server.
+aus "../postgres_client" importiere PgClient
+
 # Phase 3 T3 Pipelining-Bench (2026-05-07)
 #
 # Vergleicht 1000x sequential execute vs 1000x batch_prepared (alle in einem Pipeline-Batch).

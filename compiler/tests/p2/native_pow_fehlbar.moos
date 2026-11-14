@@ -1,0 +1,34 @@
+# P2-T58 (Review 06d10060 #4): Fehlbarkeit typbewusst. unsigned-**, Float-%/**
+# und Float-/ melden nie einen Moo-Fehler, ebenso signed-** mit nichtnegativem
+# Literal-Exponenten: Systemkoerper rufen sie OHNE Flagpruefung
+# (moo_native_fehler_offen). signed-** mit variablem Exponenten bleibt fehlbar
+# und wird nach dem Aufruf geprueft (Meldung nennt die Callee).
+@nativ
+funktion u_pot(a: u32, b: u32) -> u32:
+    gib_zurück a ** b
+@nativ
+funktion f_rest(a: f64, b: f64) -> f64:
+    gib_zurück (a % b) / b + a ** 0.5
+@nativ
+funktion i_quadrat(a: i32) -> i32:
+    gib_zurück a ** 2
+@nativ
+funktion i_pot(a: i32, b: i32) -> i32:
+    gib_zurück a ** b
+@nativ
+funktion s_frei(a: u32) -> f64:
+    unsicher:
+        gib_zurück als(f64, u_pot(a, 2)) + f_rest(9.0, 2.0) + als(f64, i_quadrat(3))
+@nativ
+funktion s_pruef(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück i_pot(a, b)
+unsicher:
+    zeige s_frei(3)
+    zeige s_pruef(2, 5)
+versuche:
+    unsicher:
+        zeige s_pruef(2, -1)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen: " + fehler

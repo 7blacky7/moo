@@ -5,6 +5,8 @@
 
 /* Groesste Ganzzahl, bis zu der jede Ganzzahl exakt als double darstellbar ist. */
 #define MOO_BUFFER_EXAKT_MAX 9007199254740992LL /* 2^53 */
+/* P2-T48 D: Strukturelemente haben dynamisch (noch) keine Darstellung. */
+#define MOO_BUFFER_STRUKTUR_DYN "Elementzugriff auf puffer[Struktur] nur in nativen Funktionen (Boxing: P2-T49)"
 
 typedef union {
     int8_t i8; uint8_t u8; int16_t i16; uint16_t u16; int32_t i32; uint32_t u32;
@@ -90,6 +92,10 @@ MooValue moo_buffer_index_get(MooValue container, MooValue index) {
     double result = 0.0;
     int ok = buffer_index(index, &i);
     moo_release(index);
+    if (buffer && moo_buffer_struct_id(buffer)) {
+        moo_throw(moo_error(MOO_BUFFER_STRUKTUR_DYN));
+        return moo_none();
+    }
     if (!ok) {
         moo_throw(moo_error("Pufferindex muss eine nichtnegative Ganzzahl sein"));
         return moo_none();
@@ -117,6 +123,10 @@ void moo_buffer_index_set(MooValue container, MooValue index, MooValue value) {
         && element_aus_zahl(type, moo_val_as_double(value), &element);
     moo_release(index);
     moo_release(value);
+    if (buffer && moo_buffer_struct_id(buffer)) {
+        moo_throw(moo_error(MOO_BUFFER_STRUKTUR_DYN));
+        return;
+    }
     if (!index_ok || !value_ok) {
         moo_throw(moo_error("Pufferzuweisung erwartet Index und passenden Elementwert (Ganzzahl im Bereich bzw. Kommazahl)"));
         return;
@@ -143,6 +153,148 @@ MooValue moo_buffer_create(int32_t type, MooValue len) {
     MooBufferStatus status = moo_buffer_value_new((MooBufferScalarType)type, n, &out);
     if (status != MOO_BUFFER_OK) {
         moo_throw(moo_error("Puffer konnte nicht angelegt werden (Laenge zu gross oder kein Speicher)"));
+        return moo_none();
+    }
+    return out;
+}
+
+
+void moo_buffer_append_value(MooValue container, MooValue value) {
+    MooBufferScalarType type;
+    MooBuffer *buffer = buffer_of(container, &type);
+    MooBufferElement element;
+    int value_ok = value.tag == MOO_NUMBER
+        && element_aus_zahl(type, moo_val_as_double(value), &element);
+    moo_release(value);
+    if (buffer && moo_buffer_struct_id(buffer)) {
+        moo_throw(moo_error(MOO_BUFFER_STRUKTUR_DYN));
+        return;
+    }
+    if (!buffer || type == MOO_BUFFER_SCALAR_NONE) {
+        moo_throw(moo_error("puffer_anhaengen erwartet einen typisierten Puffer"));
+        return;
+    }
+    if (!value_ok) {
+        moo_throw(moo_error("puffer_anhaengen: Wert passt nicht zum Elementtyp (Ganzzahl im Bereich bzw. Kommazahl)"));
+        return;
+    }
+    switch (moo_buffer_append_scalar(buffer, type, &element)) {
+    case MOO_BUFFER_OK:
+        return;
+    case MOO_BUFFER_PINNED:
+        moo_throw(moo_error("puffer_anhaengen: Puffer ist durch eine Ansicht oder einen nativen Aufruf gesperrt"));
+        return;
+    case MOO_BUFFER_INVALID:
+        moo_throw(moo_error("puffer_anhaengen: an eine Pufferansicht kann nicht angehaengt werden"));
+        return;
+    default:
+        moo_throw(moo_error("puffer_anhaengen: Puffer konnte nicht wachsen (Laenge zu gross oder kein Speicher)"));
+        return;
+    }
+}
+
+MooBufferPin *moo_buffer_native_pin(const MooValue *value, int32_t type, void **daten, uint64_t *laenge) {
+    if (daten) *daten = NULL;
+    if (laenge) *laenge = 0;
+    MooBuffer *buffer = NULL;
+    if (!value || !daten || !laenge || type < MOO_BUFFER_I8 || type > MOO_BUFFER_F64
+        || moo_buffer_value_borrow(*value, (MooBufferScalarType)type, &buffer) != MOO_BUFFER_OK) {
+        moo_throw(moo_error("Native Funktion erwartet einen Puffer mit passendem Elementtyp (puffer[T])"));
+        return NULL;
+    }
+    MooBufferPin *pin = NULL;
+    void *data = NULL;
+    if (moo_buffer_pin(buffer, &pin, &data) != MOO_BUFFER_OK) {
+        moo_throw(moo_error("Puffer konnte fuer den nativen Aufruf nicht gesperrt werden (kein Speicher)"));
+        return NULL;
+    }
+    *daten = data;
+    *laenge = (uint64_t)moo_buffer_len(buffer);
+    return pin;
+}
+
+MooValue moo_buffer_create_struct(uint64_t size, uint64_t align, uint64_t type_id, MooValue len) {
+    size_t n = 0;
+    int ok = buffer_index(len, &n);
+    moo_release(len);
+    if (!ok) {
+        moo_throw(moo_error("Pufferlaenge muss eine nichtnegative Ganzzahl sein"));
+        return moo_none();
+    }
+    MooBuffer *buffer = NULL;
+    MooBufferStatus status = (size <= SIZE_MAX && align <= SIZE_MAX)
+        ? moo_buffer_new_struct((size_t)size, (size_t)align, type_id, n, &buffer)
+        : MOO_BUFFER_INVALID;
+    if (status != MOO_BUFFER_OK) {
+        moo_throw(moo_error("Puffer konnte nicht angelegt werden (Laenge zu gross, Ausrichtung nicht unterstuetzt oder kein Speicher)"));
+        return moo_none();
+    }
+    MooValue out = moo_none();
+    out.tag = MOO_BUFFER;
+    moo_val_set_ptr(&out, buffer);
+    return out;
+}
+
+MooBufferPin *moo_buffer_native_pin_struct(const MooValue *value, uint64_t type_id, void **daten, uint64_t *laenge) {
+    if (daten) *daten = NULL;
+    if (laenge) *laenge = 0;
+    MooBuffer *buffer = (value && value->tag == MOO_BUFFER) ? moo_val_as_ptr(*value) : NULL;
+    if (!daten || !laenge || !buffer || !type_id || moo_buffer_struct_id(buffer) != type_id) {
+        moo_throw(moo_error("Native Funktion erwartet einen Puffer mit passender Struktur (puffer[Struktur], gleiche Strukturdefinition)"));
+        return NULL;
+    }
+    MooBufferPin *pin = NULL;
+    void *data = NULL;
+    if (moo_buffer_pin(buffer, &pin, &data) != MOO_BUFFER_OK) {
+        moo_throw(moo_error("Puffer konnte fuer den nativen Aufruf nicht gesperrt werden (kein Speicher)"));
+        return NULL;
+    }
+    *daten = data;
+    *laenge = (uint64_t)moo_buffer_len(buffer);
+    return pin;
+}
+
+MooValue moo_buffer_view_value(MooValue container, MooValue start, MooValue len) {
+    MooBufferScalarType type;
+    MooBuffer *buffer = buffer_of(container, &type);
+    size_t s = 0, n = 0;
+    int start_ok = buffer_index(start, &s);
+    int len_ok = buffer_index(len, &n);
+    moo_release(start);
+    moo_release(len);
+    /* P2-T48 D: Ansicht eines Strukturpuffers erbt dessen Struktur-ID. */
+    if (buffer && type == MOO_BUFFER_SCALAR_NONE && moo_buffer_struct_id(buffer) && start_ok && len_ok) {
+        MooBuffer *view = NULL;
+        MooBufferStatus st = moo_buffer_view(buffer, s, n, &view);
+        if (st == MOO_BUFFER_BOUNDS) {
+            moo_throw(moo_error("puffer_ansicht: Bereich liegt ausserhalb des Puffers"));
+            return moo_none();
+        }
+        if (st != MOO_BUFFER_OK) {
+            moo_throw(moo_error("puffer_ansicht: Ansicht konnte nicht angelegt werden (kein Speicher)"));
+            return moo_none();
+        }
+        MooValue out = moo_none();
+        out.tag = MOO_BUFFER;
+        moo_val_set_ptr(&out, view);
+        return out;
+    }
+    if (!buffer || type == MOO_BUFFER_SCALAR_NONE) {
+        moo_throw(moo_error("puffer_ansicht erwartet einen typisierten Puffer"));
+        return moo_none();
+    }
+    if (!start_ok || !len_ok) {
+        moo_throw(moo_error("puffer_ansicht: Start und Laenge muessen nichtnegative Ganzzahlen sein"));
+        return moo_none();
+    }
+    MooValue out;
+    MooBufferStatus status = moo_buffer_value_view(container, type, s, n, &out);
+    if (status == MOO_BUFFER_BOUNDS) {
+        moo_throw(moo_error("puffer_ansicht: Bereich liegt ausserhalb des Puffers"));
+        return moo_none();
+    }
+    if (status != MOO_BUFFER_OK) {
+        moo_throw(moo_error("puffer_ansicht: Ansicht konnte nicht angelegt werden (kein Speicher)"));
         return moo_none();
     }
     return out;

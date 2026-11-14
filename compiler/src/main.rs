@@ -8,6 +8,7 @@ mod ffi_link;
 mod native_arithmetic;
 mod native_control_flow;
 mod native_struct;
+mod ffi_abi;
 mod native_pointer;
 mod native_hardware;
 mod native_const;
@@ -61,6 +62,9 @@ enum Commands {
         /// Ziel-Architektur wie bei compile
         #[arg(long)]
         target: Option<String>,
+        /// C11-Header (typedef + _Static_assert für sizeof/_Alignof/offsetof) statt JSON
+        #[arg(long = "c-header")]
+        c_header: bool,
     },
     /// Eine .moos-Datei kompilieren und als native Binary erzeugen
     Compile {
@@ -166,8 +170,11 @@ fn main() {
                 Err(e) => { eprintln!("Fehler: {e}"); std::process::exit(1); }
             }
         }
-        Commands::Layout { file, target } => {
-            match layout_diagnostic(&file, target.as_deref().unwrap_or("native")) {
+        Commands::Layout { file, target, c_header } => {
+            let target = target.as_deref().unwrap_or("native");
+            let result = if c_header { layout_c_header(&file, target) } else { layout_diagnostic(&file, target) };
+            match result {
+                Ok(header) if c_header => print!("{header}"),
                 Ok(json) => println!("{json}"),
                 Err(e) => { eprintln!("Fehler: {e}"); std::process::exit(1); }
             }
@@ -223,12 +230,32 @@ fn layout_json_string(value: &str) -> String {
     out
 }
 
-fn layout_diagnostic(file: &PathBuf, target: &str) -> Result<String, String> {
+// Gemeinsame Quelle für `layout` (JSON) und `layout --c-header`.
+fn layout_program(file: &PathBuf) -> Result<ast::Program, String> {
     let mut program = parse_file(file)?;
     let dir = file.parent().unwrap_or(std::path::Path::new("."));
     let mut visited = std::collections::HashSet::new();
     visited.insert(file.canonicalize().unwrap_or_else(|_| file.clone()));
     resolve_modules(&mut program, dir, &mut visited, &[])?;
+    Ok(program)
+}
+
+/// P2-T13/T48 (Plan a71947f7 E1): dieselben registrierten Ziel-Layouts als
+/// C11-Header, den der C-Compiler des Ziels per _Static_assert prüft.
+fn layout_c_header(file: &PathBuf, target: &str) -> Result<String, String> {
+    let program = layout_program(file)?;
+    let context = inkwell::context::Context::create();
+    let name = file.file_stem().and_then(|s| s.to_str()).unwrap_or("layout");
+    let mut compiler = codegen::CodeGen::new(&context, name, target)?;
+    let guard: String = name.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+        .collect();
+    compiler.diagnostic_c_header(&program, &codegen::CodeGen::resolve_triple(target),
+        &format!("MOO_LAYOUT_{guard}_H"))
+}
+
+fn layout_diagnostic(file: &PathBuf, target: &str) -> Result<String, String> {
+    let program = layout_program(file)?;
     let context = inkwell::context::Context::create();
     let name = file.file_stem().and_then(|s| s.to_str()).unwrap_or("layout");
     let mut compiler = codegen::CodeGen::new(&context, name, target)?;
@@ -716,9 +743,10 @@ fn build_kernel(
     // Surface- und Compositor-Kerne sind freestanding und werden in Hosted-
     // und Bare-Build identisch verwendet. Ein Hardware-Presenter (DRM/Display)
     // bleibt davon getrennt; dieses Gate startet weder UI noch QEMU.
-    const KERNEL_SOURCES: [&str; 19] = [
+    const KERNEL_SOURCES: [&str; 20] = [
         "moo_bare.c",
         "moo_freestanding_mem.c",
+        "moo_native_math.c", // P2-T58: Float-%/** nativer Funktionen ohne libm
         "moo_surface_core.c",
         "moo_compositor_core.c",
         "moo_compositor_effects_state.c",

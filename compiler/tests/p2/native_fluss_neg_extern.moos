@@ -1,0 +1,8 @@
+# P2-T12 D2 (A2): extern-C-Aufrufe nur innerhalb von unsicher:.
+extern "C" funktion abs(x: i32) -> i32
+@nativ
+funktion f(x: i32) -> i32:
+    wenn x < 0:
+        gib_zurück abs(x)
+    gib_zurück x
+zeige f(-3)

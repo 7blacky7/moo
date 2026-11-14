@@ -1,0 +1,8 @@
+# P2-T12 D2 (A2): adresse_von nur innerhalb von unsicher:.
+@nativ
+funktion f(x: u64) -> u64:
+    setze a: u64 auf adresse_von(x)
+    wenn a == 0:
+        gib_zurück 0
+    gib_zurück 1
+zeige f(0)

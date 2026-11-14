@@ -247,4 +247,234 @@ if grep -q -e 'NACH_FALSCH' -e 'Division durch Null' -e 'marke nichts' "$out/ver
 "$compiler" compile "$tests/native_verschachtelt_funktion.moos" --emit-ir -o "$out/verschachtelt_funktion.ll"
 grep -q 'native.guard.exit' "$out/verschachtelt_funktion.ll" || { echo "FEHLER: kein native.guard.exit in der IR" >&2; exit 1; }
 echo "PASS P2-T82 Funktionsrahmen: Pruefpunkt-Ausgang in Funktionen ohne versuche, Erstfehler beim Aufrufer"
+# 23. P2-T9 Batch B1/B3/B4 (Plan 4500717b): Operation x Typ fuer i8..u64. Das von
+#     matrix_int.sh erzeugte Programm wird gegen das C-Orakel matrix_ref.c geprueft
+#     (rechnet jede Ausgabezeile unabhaengig nach). IR-Reinheit: native Funktionen
+#     rufen nur andere native Funktionen oder moo_native_fehler; Div/Rem/Shift mit,
+#     alle anderen Operationen ohne Fehlerblock; keine dynamischen moo_*-Aufrufe.
+"${CC:-cc}" -std=c11 -O2 -ffp-contract=off -Wall -Wextra -Werror -Wconversion -Wsign-conversion "$zahlen_dir/matrix_ref.c" -o "$out/matrix_ref" -lm
+bash "$zahlen_dir/matrix_int.sh" > "$out/matrix_int.moos"
+"$compiler" compile "$out/matrix_int.moos" -o "$out/matrix_int"
+"$out/matrix_int" > "$out/matrix_int.out"
+matrix_faelle="$(wc -l < "$out/matrix_int.out")"
+[ "$matrix_faelle" -ge 98000 ] || { echo "FEHLER: Int-Matrix lieferte nur $matrix_faelle Faelle" >&2; exit 1; }
+sed 's/ = .*//' "$out/matrix_int.out" | "$out/matrix_ref" > "$out/matrix_int.ref"
+cmp "$out/matrix_int.ref" "$out/matrix_int.out"
+"$compiler" compile "$out/matrix_int.moos" --emit-ir -o "$out/matrix_int.ll"
+mise exec -- opt -passes=verify -disable-output "$out/matrix_int.ll"
+# ir_rein IR-Datei Ops-mit-Fehlerblock: jede native Funktion ruft nur native
+# Funktionen oder moo_native_fehler; reine Operationsfunktionen <typ>_<op> haben
+# genau dann einen Fehlerblock, wenn <op> in der Liste steht. Name ohne den
+# 14 Zeichen langen Praefix '@__moo_native.' (Review 4ead2018: vorher +13).
+ir_rein() {
+    awk -v mit="^($2)\$" '
+/^define .*@__moo_native\./ { match($0, /@__moo_native\.[a-z0-9_]+/); name = substr($0, RSTART + 14, RLENGTH - 14); fehler = 0; fremd = 0; drin = 1; next }
+drin && / call / { if ($0 ~ /@moo_native_fehler\(/) fehler++; else if ($0 !~ /@__moo_native\./) fremd++; next }
+drin && /^}/ {
+    drin = 0; funktionen++
+    if (fremd) { print "FEHLER: fremder Aufruf in " name; schlecht++ }
+    op = name
+    if (!sub(/^[iu](8|16|32|64)_/, "", op) || op ~ /_/ || op ~ /^(hi|lo|mk)$/) next
+    geprueft++
+    # P2-T58: ** hat nur signed einen Fehlerblock (negativer Exponent).
+    soll = (op ~ mit) || (op == "pow" && name ~ /^i/)
+    if (soll && !fehler) { print "FEHLER: " name " ohne Fehlerblock"; schlecht++ }
+    if (!soll && fehler) { print "FEHLER: " name " mit Fehlerblock"; schlecht++ }
+}
+END { if (geprueft < 150 || schlecht) { print "IR-Reinheit: Funktionen " funktionen ", Operationen " geprueft ", Befunde " schlecht + 0; exit 1 } }
+' "$1"
+}
+ir_rein "$out/matrix_int.ll" 'div|rem|shl|shr' >&2
+# Selbstprobe: mit absichtlich falscher Erwartung (add mit Fehlerblock) muss sie rot werden.
+if ir_rein "$out/matrix_int.ll" 'add|div|rem|shl|shr' > "$out/matrix_int.selbstprobe" 2>&1; then
+    echo "FEHLER: IR-Reinheitspruefung erkennt falsche Erwartung nicht" >&2; exit 1
+fi
+grep -q 'FEHLER: i8_add ohne Fehlerblock' "$out/matrix_int.selbstprobe" || { cat "$out/matrix_int.selbstprobe" >&2; echo "FEHLER: Selbstprobe ohne erwarteten Befund" >&2; exit 1; }
+echo "PASS P2-T9 Int-Matrix: $matrix_faelle Faelle i8..u64 (inkl. neg unsigned, lokal/A1) = C-Orakel, IR verify, IR-Reinheit mit Selbstprobe"
+# 24. P2-T9 B6: Typfehler der Wertschicht sind Compilefehler (Float-%/** sind seit
+#     P2-T58 D2c erlaubt, siehe §26 und §32).
+expect_fail "$tests/native_matrix_neg_mischtyp.moos" "Nativer Name 'a' hat Typ I32, erwartet I64"
+expect_fail "$tests/native_matrix_neg_literal.moos" "Ganzzahlliteral '300' passt nicht in U8"
+expect_fail "$tests/native_matrix_neg_bool_arith.moos" 'Ganzzahltyp erwartet'
+expect_fail "$tests/native_matrix_neg_bool_vergleich.moos" 'Vergleich ist fuer diesen Typ nicht definiert'
+expect_fail "$tests/native_matrix_neg_local.moos" 'Native lokale Variable braucht eine Typannotation'
+expect_fail "$tests/native_matrix_neg_rekursion.moos" "Rekursive native Aufrufe sind noch nicht unterstützt: 'f'"
+echo "PASS P2-T9 Negativ: Mischtyp, Literalbereich, bool-Arithmetik/-Ordnung, Local ohne Typ, Rekursion"
+# 25. P2-T9 A4 (Review 9b847d8e): Literalpaare ohne typisierten Nachbarn in beiden
+#     Lowerern reihenfolgeunabhaengig (1.0 < 2 und 1 < 2.0 -> f64; -1 < 0 -> i64).
+"$compiler" compile "$tests/native_literal_standard.moos" -o "$out/literal_standard"
+"$out/literal_standard" > "$out/literal_standard.out"
+cmp "$tests/native_literal_standard.expected" "$out/literal_standard.out"
+echo "PASS P2-T9 Literal-Standard: Pure und Systemkoerper symmetrisch (beide Reihenfolgen)"
+# 26. P2-T9 Batch B2: Float-Matrix f32/f64 (matrix_float.sh) gegen dasselbe Orakel:
+#     IEEE-Sonderwerte (Inf, NaN-Vergleiche, -0 ueber negkehr/negeq), f32-Rundung
+#     (rund), Pure->Pure-Ketten; IR: keine Fehlerbloecke, keine fremden Aufrufe.
+#     P2-T58 D2c: % und ** (rem/pow/remkehr/fnan) gegen fmod/pow des Orakels; einzige
+#     erlaubte fremde Aufrufe sind moo_native_fmod/fmodf/pow/powf, kein frem/libm.
+bash "$zahlen_dir/matrix_float.sh" > "$out/matrix_float.moos"
+"$compiler" compile "$out/matrix_float.moos" -o "$out/matrix_float"
+"$out/matrix_float" > "$out/matrix_float.out"
+float_faelle="$(wc -l < "$out/matrix_float.out")"
+[ "$float_faelle" -ge 220 ] || { echo "FEHLER: Float-Matrix lieferte nur $float_faelle Faelle" >&2; exit 1; }
+sed 's/ = .*//' "$out/matrix_float.out" | "$out/matrix_ref" > "$out/matrix_float.ref"
+cmp "$out/matrix_float.ref" "$out/matrix_float.out"
+"$compiler" compile "$out/matrix_float.moos" --emit-ir -o "$out/matrix_float.ll"
+mise exec -- opt -passes=verify -disable-output "$out/matrix_float.ll"
+awk '
+/^define .*@__moo_native\./ { match($0, /@__moo_native\.[a-z0-9_]+/); name = substr($0, RSTART + 14, RLENGTH - 14); drin = 1; next }
+drin && / call / { if ($0 !~ /@__moo_native\./ && $0 !~ /@moo_native_(fmod|fmodf|pow|powf)\(/) { print "FEHLER: Aufruf in " name ": " $0; schlecht++ } next }
+drin && / frem / { print "FEHLER: frem in " name; schlecht++; next }
+drin && /^}/ { drin = 0; geprueft++ }
+END { if (geprueft < 37 || schlecht) { print "Float-IR: geprueft " geprueft ", Befunde " schlecht + 0; exit 1 } }
+' "$out/matrix_float.ll" >&2
+grep -q 'call double @moo_native_fmod(' "$out/matrix_float.ll" || { echo "FEHLER: f64 % ruft nicht moo_native_fmod" >&2; exit 1; }
+grep -q 'call float @moo_native_powf(' "$out/matrix_float.ll" || { echo "FEHLER: f32 ** ruft nicht moo_native_powf" >&2; exit 1; }
+echo "PASS P2-T9 Float-Matrix: $float_faelle Faelle f32/f64 = C-Orakel, Inf/NaN/-0, f32-Rundung, %/** (fmod/pow), IR ohne Fehlerbloecke/libm"
+# 27. P2-T58 B5: Grenze dyn<->nativ je Typ (i8..u64, f32, f64, bool) in versuche: fangbar;
+#     Rueckgaben i64 2^53 / 2^53+1, u64 MAX als fangbarer Grenzfehler (Batch 33601, vorher
+#     'ret i32 1'), auch aus benannter Funktion; f32-Rundung; A3 Erstfehler nennt 'b_teil'.
+"$compiler" compile "$tests/native_grenze_matrix.moos" -o "$out/grenze_matrix"
+"$out/grenze_matrix" > "$out/grenze_matrix.out" 2> "$out/grenze_matrix.err"
+cmp "$tests/native_grenze_matrix.expected" "$out/grenze_matrix.out"
+if grep -q 'NACH_FALSCH' "$out/grenze_matrix.out"; then echo "FEHLER: Code nach Grenzfehler lief" >&2; exit 1; fi
+"$compiler" compile "$tests/native_grenze_matrix.moos" --emit-ir -o "$out/grenze_matrix.ll"
+mise exec -- opt -passes=verify -disable-output "$out/grenze_matrix.ll"
+grep -q 'native.box.done' "$out/grenze_matrix.ll" || { echo "FEHLER: Rueckgabe-Grenzfehler ohne Merge native.box.done" >&2; exit 1; }
+echo "PASS P2-T58 Grenze: Argumente/Rueckgaben je Typ fangbar, i64/u64-Grenzfehler auch aus Funktionen"
+# 28. P2-T58 B7: 200k/800k gefangene Grenzfehler halten keinen Speicher (RSS-Harness).
+for n in 200k 800k; do
+    "$compiler" compile "$tests/native_grenze_heap_${n}.moos" -o "$out/grenze_heap_$n"
+    timeout 120s "$out/grenze_heap_$n" > "$out/grenze_heap_$n.out"
+    cmp "$tests/native_grenze_heap_${n}.expected" "$out/grenze_heap_$n.out"
+done
+"${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Werror "$tests/defer_heap_rss.c" -o "$out/grenze_rss"
+timeout 240s "$out/grenze_rss" "$out/grenze_heap_200k" "$out/grenze_heap_800k"
+echo "PASS P2-T58 Grenze RSS: 400k/1.6M gefangene Grenzfehler ohne Speicherwachstum"
+# 29. P2-T58 B8: Int-/Float-Matrix fuer Windows x64 (MinGW-Triple) und AArch64 Linux:
+#     IR verify, Objekt per llc, IR-Reinheit der Int-Operationen wie §23. Kein Lauf auf
+#     diesen Zielen hier (Windows: windows_minipc/zahlen_probe, AArch64: nur IR/Objekt).
+for ziel in x86_64-pc-windows-gnu aarch64-unknown-linux-gnu; do
+    for m in matrix_int matrix_float; do
+        "$compiler" compile "$out/$m.moos" --target "$ziel" --emit-ir -o "$out/$m.$ziel.ll"
+        mise exec -- opt -passes=verify -disable-output "$out/$m.$ziel.ll"
+        mise exec -- llc -filetype=obj "$out/$m.$ziel.ll" -o "$out/$m.$ziel.o"
+        grep -qF "target triple = \"$ziel\"" "$out/$m.$ziel.ll" || { echo "FEHLER: falsches Triple in $m.$ziel.ll" >&2; exit 1; }
+    done
+    ir_rein "$out/matrix_int.$ziel.ll" 'div|rem|shl|shr' >&2
+done
+echo "PASS P2-T58 Plattform-IR: Int-/Float-Matrix fuer x86_64-pc-windows-gnu und aarch64-unknown-linux-gnu (verify, llc, IR-Reinheit)"
+# 30. P2-T58 Batch C: Fehlerweitergabe im Systemkoerper. Nach fehlgeschlagenem
+#     fehlbarem Callee kein Seiteneffekt (nur ein 'X' aus dem Erfolgsfall), Erstfehler
+#     bleibt; IR: Flagpruefung (moo_native_fehler_offen, sys.fehler.weiter) nur nach
+#     fehlbaren Callees, reine Float-Natives ohne Zusatzkosten; schwacher Hook im Modul.
+"$compiler" compile "$tests/native_system_weitergabe.moos" -o "$out/system_weitergabe"
+"$out/system_weitergabe" > "$out/system_weitergabe.out" 2> "$out/system_weitergabe.err"
+cmp "$tests/native_system_weitergabe.expected" "$out/system_weitergabe.out"
+"$compiler" compile "$tests/native_system_weitergabe.moos" --emit-ir -o "$out/system_weitergabe.ll"
+mise exec -- opt -passes=verify -disable-output "$out/system_weitergabe.ll"
+marke_ir="$(sed -n '/define.*__moo_native\.sys_marke(/,/^}/p' "$out/system_weitergabe.ll")"
+float_ir="$(sed -n '/define.*__moo_native\.sys_float(/,/^}/p' "$out/system_weitergabe.ll")"
+grep -q 'sys.fehler.weiter' <<<"$marke_ir" || { echo "FEHLER: sys_marke ohne Weitergabe-Block" >&2; exit 1; }
+grep -q 'moo_native_fehler_offen' <<<"$marke_ir" || { echo "FEHLER: sys_marke ohne Flagpruefung" >&2; exit 1; }
+if grep -qE 'sys.fehler.weiter|moo_native_fehler_offen' <<<"$float_ir"; then echo "FEHLER: Float-Systemkoerper mit Flagpruefung (Zusatzkosten)" >&2; exit 1; fi
+grep -qE '^define weak i32 @moo_native_fehler_offen\(\)' "$out/system_weitergabe.ll" || { echo "FEHLER: schwacher Hook moo_native_fehler_offen fehlt" >&2; exit 1; }
+echo "PASS P2-T58 Systemkoerper-Weitergabe: kein Seiteneffekt nach Callee-Fehler, Erstfehler, keine Kosten ohne fehlbaren Callee"
+# 31. P2-T58 D1 (Plan f40b5980 G3): Integer-** in Pure- und Systemkoerper, fangbar,
+#     unbehandelt RC 1, potenzierbar; Compilefehler konstant negativ und Mischtyp;
+#     IR: inline-Schleife native.pow.*, kein Runtime-Aufruf; Fehlerblock nur signed.
+"$compiler" compile "$tests/native_pow.moos" -o "$out/pow"
+"$out/pow" > "$out/pow.out" 2> "$out/pow.err"
+cmp "$tests/native_pow.expected" "$out/pow.out"
+"$compiler" compile "$tests/native_pow.moos" --emit-ir -o "$out/pow.ll"
+mise exec -- opt -passes=verify -disable-output "$out/pow.ll"
+ipow_ir="$(sed -n '/define.*__moo_native\.ipow(/,/^}/p' "$out/pow.ll")"
+upow_ir="$(sed -n '/define.*__moo_native\.upow(/,/^}/p' "$out/pow.ll")"
+grep -q 'native.pow.kopf' <<<"$ipow_ir" || { echo "FEHLER: ipow ohne Potenzschleife" >&2; exit 1; }
+grep -q 'native.fehler.pow' <<<"$ipow_ir" || { echo "FEHLER: ipow ohne Fehlerblock" >&2; exit 1; }
+if grep -q 'native.fehler' <<<"$upow_ir"; then echo "FEHLER: upow mit Fehlerblock" >&2; exit 1; fi
+if grep -qE 'call .*@(pow|powf|llvm\.pow)' <<<"$ipow_ir$upow_ir"; then echo "FEHLER: Integer-** ruft eine Bibliotheksfunktion" >&2; exit 1; fi
+"$compiler" compile "$tests/native_pow_unbehandelt.moos" -o "$out/pow_unbehandelt"
+set +e
+"$out/pow_unbehandelt" > "$out/pow_unbehandelt.out" 2> "$out/pow_unbehandelt.err"
+rc=$?
+set -e
+[ "$rc" -eq 1 ] || { echo "FEHLER: unbehandelter Potenzfehler RC $rc statt 1" >&2; exit 1; }
+grep -qF "Native Potenz mit negativem Exponenten in 'f'" "$out/pow_unbehandelt.err" "$out/pow_unbehandelt.out"
+if grep -q 'NACH_FALSCH' "$out/pow_unbehandelt.out"; then echo "FEHLER: Code nach unbehandeltem Potenzfehler lief" >&2; exit 1; fi
+expect_fail "$tests/native_pow_konstant.moos" 'Native Potenz mit konstant negativem Exponenten'
+# Review 06d10060 #1: auch im Systemkoerper ein Compilefehler; Systemkoerper-
+# Laufzeitfehler mit eigenem Block sys.fehler.pow (#3, Meldung siehe Expected).
+expect_fail "$tests/native_pow_konstant_system.moos" 'Native Potenz mit konstant negativem Exponenten'
+spow_ir="$(sed -n '/define.*__moo_native\.spow(/,/^}/p' "$out/pow.ll")"
+grep -q 'sys.fehler.pow' <<<"$spow_ir" || { echo "FEHLER: spow ohne eigenen Pow-Fehlerblock" >&2; exit 1; }
+expect_fail "$tests/native_pow_misch.moos" "Nativer Name 'b' hat Typ F64, erwartet I32"
+echo "PASS P2-T58 Integer-**: Pure/Systemkoerper, Wrap, fangbar, RC 1, potenzierbar, statisch, IR ohne Bibliothek"
+# 32. P2-T58 D2c (Plan f40b5980 G3): Float-% / Float-** in Pure- und Systemkoerper
+#     (f32/f64), kein Moo-Fehler bei NaN-Ergebnis, -0 aus fmod; IR: Aufruf
+#     moo_native_fmod/pow{,f} mit nounwind willreturn memory(none), kein frem, kein
+#     fmod/pow/llvm.pow (libm) - gilt damit auch fuer bare (bare.sh §5).
+"$compiler" compile "$tests/native_float_rest_pow.moos" -o "$out/float_rest_pow"
+"$out/float_rest_pow" > "$out/float_rest_pow.out"
+cmp "$tests/native_float_rest_pow.expected" "$out/float_rest_pow.out"
+"$compiler" compile "$tests/native_float_rest_pow.moos" --emit-ir -o "$out/float_rest_pow.ll"
+mise exec -- opt -passes=verify -disable-output "$out/float_rest_pow.ll"
+if grep -qE ' frem |call .*@(fmod|fmodf|pow|powf|llvm\.pow[^(]*)\(' "$out/float_rest_pow.ll"; then echo "FEHLER: Float-%/** ueber frem oder libm" >&2; exit 1; fi
+srem_ir="$(sed -n '/define.*__moo_native\.s_rem(/,/^}/p' "$out/float_rest_pow.ll")"
+spow_ir="$(sed -n '/define.*__moo_native\.s_pow32(/,/^}/p' "$out/float_rest_pow.ll")"
+grep -q 'call double @moo_native_fmod(' <<<"$srem_ir" || { echo "FEHLER: Systemkoerper-% ohne moo_native_fmod" >&2; exit 1; }
+grep -q 'call float @moo_native_powf(' <<<"$spow_ir" || { echo "FEHLER: Systemkoerper-** (f32) ohne moo_native_powf" >&2; exit 1; }
+for sym in 'double @moo_native_fmod(double, double)' 'double @moo_native_pow(double, double)' 'float @moo_native_fmodf(float, float)' 'float @moo_native_powf(float, float)'; do
+    decl="$(grep -F "declare $sym #" "$out/float_rest_pow.ll" | sed -E 's/.* (#[0-9]+)$/\1/')"
+    [ -n "$decl" ] || { echo "FEHLER: Deklaration fehlt: $sym" >&2; exit 1; }
+    grep -qE "^attributes $decl = \{ nounwind willreturn memory\(none\) \}" "$out/float_rest_pow.ll" || { echo "FEHLER: $sym ohne nounwind willreturn memory(none)" >&2; exit 1; }
+done
+echo "PASS P2-T58 Float-%/**: Pure/Systemkoerper f32/f64 = C-fmod/pow, NaN ohne Moo-Fehler, -0, IR ohne frem/libm"
+# 33. P2-T58 (Review 06d10060 #4): Fehlbarkeit typbewusst. s_frei ruft unsigned-**,
+#     Float-%/**/'/' und signed-** mit Literal-Exponent ohne Flagpruefung; s_pruef
+#     prueft nach signed-** mit variablem Exponenten (fangbar, Meldung nennt i_pot).
+"$compiler" compile "$tests/native_pow_fehlbar.moos" -o "$out/pow_fehlbar"
+"$out/pow_fehlbar" > "$out/pow_fehlbar.out"
+cmp "$tests/native_pow_fehlbar.expected" "$out/pow_fehlbar.out"
+"$compiler" compile "$tests/native_pow_fehlbar.moos" --emit-ir -o "$out/pow_fehlbar.ll"
+mise exec -- opt -passes=verify -disable-output "$out/pow_fehlbar.ll"
+frei_ir="$(sed -n '/define.*__moo_native\.s_frei(/,/^}/p' "$out/pow_fehlbar.ll")"
+pruef_ir="$(sed -n '/define.*__moo_native\.s_pruef(/,/^}/p' "$out/pow_fehlbar.ll")"
+if grep -qE 'moo_native_fehler_offen|sys.fehler.weiter' <<<"$frei_ir"; then echo "FEHLER: s_frei mit Flagpruefung (nicht fehlbare Callees)" >&2; exit 1; fi
+grep -q 'moo_native_fehler_offen' <<<"$pruef_ir" || { echo "FEHLER: s_pruef ohne Flagpruefung nach signed-**" >&2; exit 1; }
+echo "PASS P2-T58 Fehlbarkeit typbewusst: unsigned-**/Float-%/**/Literal-Exponent ohne Zusatzkosten, signed-** geprueft"
+# 34. P2-T58 (Plan f40b5980 §3.1, Review 06d10060 #2): native Konstanten falten **
+#     (Wrap: 2**7 in i8 = -128, 3**6 in u8 = 217, 0**0 = 1); negativ = Compilefehler.
+"$compiler" compile "$tests/native_konst_pow.moos" -o "$out/konst_pow"
+"$out/konst_pow" > "$out/konst_pow.out"
+cmp "$tests/native_konst_pow.expected" "$out/konst_pow.out"
+expect_fail "$tests/native_konst_pow_negativ.moos" 'Native Potenz mit konstant negativem Exponenten'
+echo "PASS P2-T58 Konstantenfaltung **: Wrap wie Lowerer, 0**0, negativer Exponent Compilefehler"
+# 35. P2-T48 Batch A (Plan a71947f7): feste Arrays im Systemkoerper (lokal, 2D,
+#     Kopie, Arrayliteral, Arrayfeld, Nullkonstruktor, Struktur-Array), Index
+#     grenzgeprueft; Array-Parameter und falsche Literallaenge sind Compilefehler.
+"$compiler" compile "$tests/native_arrays.moos" -o "$out/arrays"
+"$out/arrays" > "$out/arrays.out"
+cmp "$tests/native_arrays.expected" "$out/arrays.out"
+"$compiler" compile "$tests/native_arrays.moos" --emit-ir -o "$out/arrays.ll"
+mise exec -- opt -passes=verify -disable-output "$out/arrays.ll"
+grep -q 'sys.array.ausserhalb' "$out/arrays.ll" || { echo "FEHLER: Arrayindex ohne Grenzpruefung" >&2; exit 1; }
+expect_fail "$tests/native_array_neg_param.moos" 'Feste Arrays sind als Parameter/Rueckgabe by value nicht freigegeben'
+expect_fail "$tests/native_array_neg_laenge.moos" 'erwartet 3 Elemente, das Arrayliteral hat 2'
+echo "PASS P2-T48 Arrays: lokal/2D/Kopie/Literal/Arrayfeld/Nullkonstruktor/Struktur-Array, grenzgeprueft, 2 Compilefehler"
+# 36. P2-T48 Batch B (Plan a71947f7 B1): native Konstanten f32/f64/bool (Skalar,
+#     Array, Strukturfeld) mit Zielrundung; Globals im IR, Einsatz in Pure- und
+#     Systemkoerper; Unterlauf und bool aus Zahl sind Compilefehler.
+"$compiler" compile "$tests/native_konst_float.moos" -o "$out/konst_float"
+"$out/konst_float" > "$out/konst_float.out"
+cmp "$tests/native_konst_float.expected" "$out/konst_float.out"
+"$compiler" compile "$tests/native_konst_float.moos" --emit-ir -o "$out/konst_float.ll"
+mise exec -- opt -passes=verify -disable-output "$out/konst_float.ll"
+for muster in '@PI = constant double 0x400921FB54442D18' '@ZEHNTEL = constant float 0x3FB99999A0000000' \
+              '@AN = constant i1 true' '@TABELLE = constant [3 x float] [float 5.000000e-01, float -1.250000e+00, float 2.000000e+00]' \
+              '@URSPRUNG = constant { float, double } { float 1.500000e+00, double -2.500000e-01 }'; do
+    grep -qF "$muster" "$out/konst_float.ll" || { echo "FEHLER: Konstante fehlt: $muster" >&2; exit 1; }
+done
+expect_fail "$tests/native_konst_float_unterlauf.moos" "Floatliteral '1e-50' rundet in f32 auf 0"
+expect_fail "$tests/native_konst_bool_zahl.moos" 'bool-Konstante erwartet wahr oder falsch'
+echo "PASS P2-T48 Konstanten f32/f64/bool: Zielrundung, Array/Struktur, Pure/Systemkoerper, 2 Compilefehler"
 echo "PASS P2-T34 Zahlenoperationen: Orakel, IR-Guards, fangbar, unbehandelt, statisch, Casts, Vergleiche, Systemkoerper, bool-Argumente, Vorpruefung, Funktionsende, bool-Rueckgabe"

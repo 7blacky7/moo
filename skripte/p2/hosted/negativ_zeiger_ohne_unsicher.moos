@@ -1,4 +1,5 @@
-# P2-T66 negativ: Zeigerparameter brauchen hosted einen unsicher:-Systemkoerper.
+# P2-T66/P2-T12 negativ: Zeiger duerfen in sicheren @nativ-Koerpern deklariert,
+# kopiert und verglichen werden; die Dereferenz braucht unsicher: (Plan 31194239 A2).
 @nativ
 funktion ohne(p: ptr[u32]) -> u32:
-    gib_zurück 1
+    gib_zurück p[0]
