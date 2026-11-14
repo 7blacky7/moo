@@ -17,7 +17,7 @@ moo ist ein aktives Ein-Personen-Projekt, das mit KI-Agenten entwickelt wird.
 Vieles läuft bereits stabil, einige Bereiche sind bewusst noch im Umbau.
 Damit klar ist, was fertig ist und was noch kommt:
 
-### KI-Stack
+### KI-Stack (Schwerpunkt)
 
 | Bereich | Stand | Was noch ansteht |
 |---|---|---|
@@ -31,15 +31,19 @@ Hinweis: Trainingskorpora, eigene Testdaten und Modell-Checkpoints sind
 absichtlich **nicht** im Repository. Die Beispiele zeigen die API; zum
 Nachtrainieren braucht man eigene Texte.
 
-### Sprache und Compiler
+### Gesamtprojekt
 
-- **Native Ebene (`@nativ`)** — echte Maschinentypen (i8…u64, f32/f64, bool),
-  C-kompatible Strukturen, C-/C++-FFI für Engine- und Grafikcode: **in Arbeit**
-  (ca. 30 von 74 Schritten). Der bestehende dynamische Moo-Code bleibt unverändert.
-  Teile davon sind fertig und getestet (u. a. native Zahlen/Casts, nativer
-  CPU-Compositor), anderes ist noch nicht abschließend geprüft.
-- **Eigener Kernel + UEFI-Loader in Moo:** Loader und minimaler Kern laufen
-  in QEMU, Boot auf echter Hardware steht noch aus.
+| Bereich | Stand | Was noch ansteht |
+|---|---|---|
+| **Sprache, Compiler, C-Runtime, Stdlib** (DE/EN-Keywords, Klassen, Pattern Matching, Threads, LLVM-Backend) | **funktioniert** — Hauptroadmap 422 von 503 Schritten erledigt | 23 von 467 Beispiel-/Testquellen kompilieren derzeit noch nicht (bekannt, dokumentiert) |
+| **Native Ebene `@nativ`** — echte Maschinentypen (i8…u64, f32/f64, bool), C-kompatible Strukturen, C-/C++-FFI für Engine- und Grafikcode | **in Arbeit** (ca. 30 von 74 Schritten) — native Zahlen/Casts und nativer CPU-Compositor fertig und getestet | typisierte Puffer, Vektortypen, FFI vollständig, C++-Adapter, Bindungsgenerator, Grafik-Benchmark gegen C. Der dynamische Moo-Code bleibt unverändert |
+| **Grafik & Spiele** (2D/3D über GL33/GL21/Vulkan, Voxel-Engine, Testwelt „ERDE“) | **funktioniert** | sichtbare Qualitätsstufe: HDR/Belichtung, Wasser, GGX-Material, Nebel, AO, Schatten |
+| **Native UI** (Plattform-Controls unter Linux/Windows/macOS) | **funktioniert** | Windows-Geometrie-/Lebenszyklus-Tests, GTK/Cocoa-Randfälle, echte Tastatur-Automation |
+| **`ui_moo`** — eigenes Widget-/Designsystem komplett in Moo | **in Arbeit** | Abnahme auf Desktop-, Spiel- und späterem OS-Backend |
+| **Windows-Installer in Moo** (Toolchain ohne manuelle Abhängigkeiten) | geplant | Installer-Vertrag, Installationslogik + UI in Moo, Windows-E2E-Test |
+| **MoOS — eigener Kernel + UEFI-Loader in Moo** | **teilweise** — Moo-UEFI-App zeigt Ausgabe auf echter Hardware, Netzwerk-Boot (PXE/HTTP) und eigener I226-V-Netzwerktreiber laufen | Loader komplett in Moo (in Arbeit), Kernel-Einstieg mit Framebuffer-Konsole, Speicher/Interrupts/Timer/Tastatur, Boot vom USB-Stick, TCP/IP |
+| **Sprachkern: adaptive Suche/Indizierung, schneller Methoden-Dispatch** | geplant | gesamte Umsetzung |
+| **Werkzeuge** (LSP, Formatter, VSCode-Extension, Browser-Playground, Doku-Seite) | **funktioniert** | — |
 
 ## Wo ist was?
 
