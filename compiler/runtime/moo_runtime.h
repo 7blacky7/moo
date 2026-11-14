@@ -266,8 +266,7 @@ MooValue moo_tensor_rmsnorm_kern(MooValue a);     // KIP-G4d: affine-freier Norm
 MooValue moo_tensor_gather(MooValue w, MooValue indizes);
 
 // === KI-Q1: rotationsbasierte, kalibrierungsfreie Quant-Primitiven ===
-// (moo_quant.c; Paper-Anker in docs/research/ki-papers/analysis/
-//  paper_verify_04_quant_matrix.md)
+// (moo_quant.c)
 //
 // hadamard(a, seed): randomisierte Walsh-Hadamard-Rotation ueber die LETZTE
 // Achse (muss Zweierpotenz sein). Linear und ORTHOGONAL -> voll

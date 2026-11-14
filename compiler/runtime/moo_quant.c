@@ -1,8 +1,7 @@
 /**
  * moo_quant.c - KI-Q1: rotationsbasierte, kalibrierungsfreie Quant-Primitiven.
  * ============================================================================
- * QUELLEN (Primaerpaper; Zeilenanker aus
- * docs/research/ki-papers/analysis/paper_verify_04_quant_matrix.md):
+ * QUELLEN (Primaerpaper):
  *   - QJL (arXiv 2406.03482) Def 3.1, Z.27 / 177-183 / 257-267:
  *     "JL transform followed by sign-bit quantization"; die JL-Matrix ist eine
  *     random GAUSSIAN projection. Der Schaetzer ist ASYMMETRISCH: der Key wird

@@ -8,7 +8,6 @@
 # Zeichenpfad laeuft auf Desktop-Hosts und dem moOS-Framebuffer.
 # Hit-Testing (Titelbalken, 8 Resize-Kanten, Buttons) ebenfalls hier;
 # der Host liefert nur die WM-Hooks dahinter (moo_ui.h CSD-Hooks).
-# Visuelle Referenz: docs/design/moos-driver-manager/DESIGN.md
 # (40px-Klasse Backdrop-Blur, 16px Ecken, Licht-Gradient-Rand,
 #  Active-Glow, Glass-Panels).
 #
