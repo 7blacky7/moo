@@ -1,5 +1,9 @@
 # ui_moo — moo-eigene Widgets (Schicht 3)
 
+> **Hinweis:** Teile dieses Dokuments stammen aus UIMOO-1 bis -7. Verbindlich sind
+> [ui_moo-backendvertrag.md](ui_moo-backendvertrag.md) und
+> [ui_moo-widgetvertrag.md](ui_moo-widgetvertrag.md).
+
 `ui_moo` ist das plattformübergreifend identische Design-/Widget-System von moo:
 Widgets, Theme, Fokus, Hit-Testing und Eventlogik sind **vollständig in moo**
 implementiert (`stdlib/ui_moo.moos`). Es setzt **keine nativen Controls** voraus —

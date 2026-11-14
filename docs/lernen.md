@@ -43,10 +43,19 @@ Du schreibst auf Deutsch oder Englisch — moo übersetzt in Python, JavaScript 
 
 ## Installation
 
+moo hat zwei Wege, Programme auszuführen:
+
+- **Nativer Compiler `moo-compiler`** (Hauptweg): bauen und ausführen wie in
+  [KI_MIT_MOO.md, Kapitel 2 und 3](KI_MIT_MOO.md#2-bauen) beschrieben, dann
+  `moo-compiler run hallo.moos`.
+- **Transpiler `moo`** (nach Python/JavaScript, siehe [CLI-Befehle](#cli-befehle)):
+
 ```bash
-cd ~/dev/moo
 uv sync
+uv run moo run hallo.moos   # oder nach Aktivieren von .venv einfach: moo run hallo.moos
 ```
+
+Die Beispiele unten funktionieren mit beiden Wegen.
 
 ## Erstes Programm
 
@@ -56,10 +65,10 @@ Erstelle eine Datei `hallo.moos`:
 zeige "Hallo Welt!"
 ```
 
-Ausführen:
+Ausführen (Transpiler via `uv`, oder nativ mit `moo-compiler run hallo.moos`):
 
 ```bash
-moo run hallo.moos
+uv run moo run hallo.moos
 ```
 
 Ausgabe:
@@ -920,24 +929,24 @@ Die komplette Referenz aller Schlüsselwörter:
 ## CLI-Befehle
 
 ```bash
-# Programm ausführen (Transpiler — über Python)
-moo run datei.moos
-
-# Nach Python übersetzen
-moo build datei.moos -t python
-
-# Nach JavaScript übersetzen
-moo build datei.moos -t javascript
-
-# In Datei speichern
-moo build datei.moos -t python -o ausgabe.py
-moo build datei.moos -t javascript -o ausgabe.js
-
-# Nativer Compiler — direkt ausführen
+# Nativer Compiler — direkt ausführen (Standardweg)
 moo-compiler run datei.moos
 
 # Nativer Compiler — native Binary erzeugen
 moo-compiler compile datei.moos
+
+# Transpiler (über Python-Toolchain / uv) — Programm ausführen
+uv run moo run datei.moos
+
+# Nach Python übersetzen
+uv run moo build datei.moos -t python
+
+# Nach JavaScript übersetzen
+uv run moo build datei.moos -t javascript
+
+# In Datei speichern
+uv run moo build datei.moos -t python -o ausgabe.py
+uv run moo build datei.moos -t javascript -o ausgabe.js
 ```
 
 ---

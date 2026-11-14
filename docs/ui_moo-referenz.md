@@ -1,6 +1,10 @@
 # ui_moo — Referenz (Schicht 3: moo-eigene gezeichnete Widgets)
 
-Stand: 2026-07-11, UIMOO-1 bis -7. Modul: `stdlib/ui_moo.moos`. Design-Memo: Synapse-Memory `plan-uimoo-widget-toolkit`.
+> **Hinweis:** Stand UIMOO-7. Verbindlich sind
+> [ui_moo-backendvertrag.md](ui_moo-backendvertrag.md) und
+> [ui_moo-widgetvertrag.md](ui_moo-widgetvertrag.md).
+
+Stand: 2026-07-11, UIMOO-1 bis -7. Modul: `stdlib/ui_moo.moos`.
 
 ui_moo ist ein Widget-Toolkit, das **vollständig in moo implementiert** ist: Widget-Baum, Layout, Theme, Fokus, Hit-Testing und Eventlogik leben in `stdlib/ui_moo.moos`. Die Plattform (GTK/Win32/Cocoa) liefert nur eine austauschbare **Host-Brücke**: Fenster + Leinwand + Eingabe-Events + Zeichenprimitive. ui_moo setzt **keine** nativen Controls (GtkButton, Win32-BUTTON, NSButton …) voraus.
 
@@ -147,9 +151,9 @@ Referenz-Testfall mit Pixel-Regression: `beispiele/tests/ui_moo_frame_test.moos`
 - Tab-Fokus läuft nur über Top-Level-Widgets (Klick-Fokus funktioniert überall).
 - Scrollbar ist nicht draggbar (Mausrad/Tasten), kein horizontales Scrollen.
 - Kein Custom-Textfeld — Texteingabe bewusst nativ (`ui_eingabe`, IME/Selektion/Clipboard).
-- Win32/Cocoa-Leinwand-Primitive (UIMOO-1) sind blind portiert; Runner-Verifikation hängt zusätzlich hinter den bekannten Win32-Suite-Bugs (Kanal-Befund #13099: table/tray-Hang, PrintWindow-Staleness).
+- Win32/Cocoa-Leinwand-Primitive (UIMOO-1) sind blind portiert; Runner-Verifikation hängt zusätzlich hinter bekannten Win32-Suite-Bugs (table/tray-Hang, PrintWindow-Staleness).
 - Frame-Backend: siehe Backend-Vertrag (kein Clip, eckige Rounded-Rects, Pixelfont).
 
 ## Sprach-Gotchas beim Arbeiten an ui_moo
 
-Siehe Synapse-Memory `moo-gotcha-keywords-und-stdlib-muster`: `neu`, `an`, `aus`, `sl` sind Schlüsselwörter; Print ist das Statement `zeige`; Modul-Zustand gehört in Dicts (globale Skalare sind aus Funktionen nicht neu zuweisbar); Dict-gespeicherte Callbacks erst in eine lokale Variable holen, dann aufrufen.
+Bekannte Sprachbesonderheiten: `neu`, `an`, `aus`, `sl` sind Schlüsselwörter; Print ist das Statement `zeige`; Modul-Zustand gehört in Dicts (globale Skalare sind aus Funktionen nicht neu zuweisbar); Dict-gespeicherte Callbacks erst in eine lokale Variable holen, dann aufrufen.

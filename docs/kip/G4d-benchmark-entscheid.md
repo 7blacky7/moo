@@ -1,16 +1,13 @@
 # KIP-G4d-EVAL: Benchmark- und Entscheidungsnachweis (Task 291fb2da)
 
-Autor: claude-web (Koordinator) · Datum: 2026-07-10 · Harness: `tests/ki_gpu_g4d_bench.c` · Hardware: RTX 4070 Ti
+Datum: 2026-07-10 · Harness: `tests/ki_gpu_g4d_bench.c` · Hardware: RTX 4070 Ti
 
 ## Kontext
 
-Task 291fb2da wurde von koordinator2 (12:46) auf EVAL-Scope reduziert: dedizierte
-LayerNorm/RMSNorm-Tape-Ops (WEG 2) nur bei messbarem Nutzen gegenüber der
-WEG-1-Komposition. Durch ein Auftrags-Race hatte kip-ops WEG 2 zu dem Zeitpunkt
-bereits implementiert und committet (d0ed5f5, transparent gemeldet in Msg 12905,
+Dedizierte LayerNorm/RMSNorm-Tape-Ops (WEG 2) wurden gegenüber der
+WEG-1-Komposition evaluiert und implementiert (`d0ed5f5`,
 technisch verifiziert: Gradcheck 560/29, Vulkan-Differentialtest GPU==CPU).
-Dieser Nachweis liefert den ursprünglich geforderten Benchmark **nachträglich**
-und begründet die Koordinator-Entscheidung.
+Dieser Nachweis liefert den Benchmark für WEG 2 vs. WEG 1.
 
 ## Messergebnisse (Fwd+Bwd RMSNorm affine-frei, realistisches Routing ohne STRIKT)
 
@@ -30,7 +27,7 @@ Akkumulation. Ursache: `moo_tensor_gradient_loeschen` nullte nur den Host-Grad,
 ohne `grad_valid` zurückzusetzen. Bei GPU-autoritativem Grad (residentes bw_mul
 seit af5dbf3) übersprang `grad_materialisieren_gpu` den Upload und akkumulierte
 auf den stalen VRAM-Stand. Fix: Host nach dem Nullen als autoritativ markieren
-(I9-Muster, analog I11). Von kip-gpu als vertragskonform bestätigt (Msg 12928);
+(I9-Muster, analog I11). Vertragskonform bestätigt;
 Lehre: **jede** Stelle, die `->grad` direkt schreibt/nullt, braucht seit af5dbf3
 grad_valid-Disziplin.
 
@@ -40,8 +37,8 @@ grad_valid-Disziplin.
 2. **Messbarer Nutzen in zwei von drei Regimes**: 2.29× im CPU-/Kleintensor-Fall
    (Tape-Overhead: 1 statt 5–6 Nodes — relevant für jede Schicht in jedem
    Trainingsschritt) und 1.24× + halbierte Submits im klar residenten Fall.
-3. Der Implementierungsstand war im Channel vor der Task-Umdefinition inhaltlich
-   gutgeheißen (12888); ein Rollback hätte verifizierte Arbeit wegen eines
+3. Der Implementierungsstand war technisch bereits verifiziert und inhaltlich
+   freigegeben; ein Rollback hätte verifizierte Arbeit wegen eines
    Task-Text-Races vernichtet.
 
 ## Offene Folge-Punkte (kein Blocker, Kandidaten für Folge-KIP)

@@ -6,7 +6,7 @@ Kein Deployment-Blocker.
 
 ## P2c-followup: Vision-API-Wrapper für Welt-Engine
 
-**Herkunft**: Prio2c (Welt-API entdupen), thought `b4e4f5d7` (Vision 2026-04-13).
+**Herkunft**: Prio2c (Welt-API entdupen, 2026-04-13).
 
 **Fehlend als öffentliche API** (weder als `stdlib/welt.moos`-Wrapper noch als
 `__welt_*`-Builtin noch als `moo_world_*`-Runtime-Funktion vorhanden):

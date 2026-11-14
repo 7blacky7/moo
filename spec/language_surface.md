@@ -55,7 +55,7 @@ sichtbaren Flaechen ab. Vervollstaendigung in Phase B.
 | `args`, `env`, `exit` | STDLIB | ja | beide | ja | ja | — |
 | `range`, `0..n` | KERN | ja | beide | ja | ja | — |
 | `abs`, `sqrt`/`wurzel`, `runde`/`round`, `boden`/`floor`, `decke`/`ceil`, `min`, `max` | STDLIB | ja | beide | ja | ja | — |
-| `sinus`/`sin`, `cosinus`/`cos`, `tangens`/`tan`, `atan2` | STDLIB | ja | beide | ja | ja | `kosinus` NICHT, GPT-Anmerkung |
+| `sinus`/`sin`, `cosinus`/`cos`, `tangens`/`tan`, `atan2` | STDLIB | ja | beide | ja | ja | `kosinus` NICHT |
 | `zufall` / `random` | STDLIB | ja | beide | ja | ja | — |
 
 ## Listen / Dicts / Strings (KERN)
@@ -145,16 +145,16 @@ sichtbaren Flaechen ab. Vervollstaendigung in Phase B.
 | `moo_json_antworten` (C-Funktionsname) | DOMAENE:web | intern | rust+c | Codegen-Alias fuer `.json_antworten` |
 | `__welt_*` (13 Bindings) | DOMAENE:game | intern | rust+c | nur via stdlib/welt.moos-Wrapper |
 
-## Toolchain-Drift (Rust vs Python — aus E3-Fuzzing und GPT-Review 927d3272)
+## Toolchain-Drift (Rust vs Python — aus E3-Fuzzing)
 
 - `ASYNC`/`AWAIT`, `fg` (catch-Alias): nur Python-Tokenizer.
 - Python-Transpiler kennt groessere Lexer-Oberflaeche als der Rust-Compiler, hat aber keinen Test-Runner fuer Showcase-Beispiele.
-- `beispiele/showcase.moos`: Python-Timeout > 10s beim Parsen (separates Ticket, gpt 5060).
-- Drift-Tracking: `tools/check_tokens.py` und `tools/fuzz_differential.py` laufen pro Commit (k2 P1/E3).
+- `beispiele/showcase.moos`: Python-Timeout > 10s beim Parsen (separates Ticket).
+- Drift-Tracking: `tools/check_tokens.py` und `tools/fuzz_differential.py` laufen pro Commit.
 
 ## Offen fuer Phase B
 
 - Datei-Pfad-Umbauten aus `runtime_layers.md` vollziehen.
-- Game-Strang in `modules/game/` trennen (k4 B2).
+- Game-Strang in `modules/game/` trennen.
 - Python-Tooling auf Rust-Oberflaeche einschraenken oder explizit als "Transpiler-Profil" markieren.
 - `__welt_*`-API vollstaendig hinter Wrapper verstecken (aktuell nur `welt_baeume` ergaenzt).

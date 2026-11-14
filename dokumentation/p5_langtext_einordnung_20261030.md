@@ -33,7 +33,7 @@ Es wurde nur die Ausgabeauswahl verändert, nicht das Modell weitertrainiert. Dr
 
 ## Nachweis und Ablage
 
-Synapse-Job: `847fc96f-e12c-4b97-bdfc-c0d7c9b1a838`, regulär beendet mit Exit-Code 0. Inferenzlauf am 30.10.2026 von 18:32:47 bis 18:33:27 UTC, entsprechend etwa 19:32–19:33 Uhr in Deutschland. Alle vier Checkpoints sowie Tokenizer, Sampler und Eingabekonfiguration wurden auf Identität geprüft; die Checkpoints blieben unverändert.
+Inferenzlauf am 30.10.2026 von 18:32:47 bis 18:33:27 UTC, entsprechend etwa 19:32–19:33 Uhr in Deutschland. Alle vier Checkpoints sowie Tokenizer, Sampler und Eingabekonfiguration wurden auf Identität geprüft; die Checkpoints blieben unverändert.
 
 Die Originaldaten liegen im Moo-Projekt unter `build/p5_langtext_20261030T183247_434841/`. Der folgende maschinell erzeugte Rohbericht wurde beim Export bytegenau gegen seine Projekt-SHA-256 geprüft: `91620af407e677e90f984b54360c5a4e56085dc2f1e116aac4ffdf30756d42ad`. Alle Texte sind tatsächlich von Moo erzeugt; die Beurteilung in diesem Vorspann stammt von mir.
 

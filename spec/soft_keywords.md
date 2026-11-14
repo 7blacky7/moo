@@ -23,7 +23,7 @@ Die Liste hier ist die verbindliche Referenz. Quelle der Wahrheit: [`spec/tokens
 
 Diese Fälle sind durch den Soft-Keyword-Mechanismus **noch nicht** vollständig gelöst und führen aktuell zu Fehlern mit unklaren Meldungen:
 
-- **`erwarte`** als Funktionsname: `funktion erwarte(a, b)` → Lexer tokenisiert als `Expect`, Parser erwartet Test-Kontext. Gemeldet von k3 (2026-04-11, Synapse-Thought ddfac789). Lösung: `Expect` auch als Soft-Keyword mit "nur innerhalb `teste`-Block aktiv" behandeln.
+- **`erwarte`** als Funktionsname: `funktion erwarte(a, b)` → Lexer tokenisiert als `Expect`, Parser erwartet Test-Kontext. Lösung: `Expect` auch als Soft-Keyword mit "nur innerhalb `teste`-Block aktiv" behandeln.
 
 ## Regeln für neue Soft-Keywords
 

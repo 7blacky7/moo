@@ -79,7 +79,7 @@ Meilenstein wird übersprungen. Parameterzahlen sind Zielkorridore, keine Fetisc
 
 ## 4. Konsequenzen für den Task-Graph
 - G4-PoC-Modell = M-A-Architektur (kein separates Spielzeug).
-  AMENDMENT (2026-07-10, Scope-Entscheidung Channel 12766 + docs/kip/G4-
+  AMENDMENT (2026-07-10, docs/kip/G4-
   residentes-training-poc-design.md): Das G4-PoC läuft mit drei dokumentierten
   Vereinfachungen (Single-Head statt GQA, additive Position statt RoPE,
   affine-freie RMSNorm), weil strided Kernels sonst G4-Scope-Creep wären.
@@ -91,6 +91,5 @@ Meilenstein wird übersprungen. Parameterzahlen sind Zielkorridore, keine Fetisc
 - X1 erbt Abschnitt 1 als Eingangsbefund.
 
 ## 5. Exit-Gate dieses Dokuments
-Claude-Review (erledigt, Autor), GPT-Review: GO (49573fb4, Klarstellungen
-eingearbeitet). Jeder KIP-Task referenziert bei Implementierungsstart seinen
+Jeder KIP-Task referenziert bei Implementierungsstart seinen
 Meilenstein (M-A/M-B).

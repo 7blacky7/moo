@@ -52,7 +52,7 @@ CI-Check `tools/check_tokens.py` verhindert Drift.
 
 C-Runtime in `compiler/runtime/`. Die **unstrittigen Basis-Typen und -Operationen**: `MooValue`-ABI, Referenzzählung (`moo_retain/release`), `moo_add/sub/...`, Listen/Dicts/Strings, `try/catch`-Infrastruktur, `print`, `error`.
 
-Diese Schicht ist **bewusst klein** gehalten (GPT-Review `ce89cc0d`). Wenn ein Feature *potenziell* systemnahe Konsequenzen hat (Threading, Memory, Bare-Metal), gehört es eher in diese Schicht als in L3.
+Diese Schicht ist **bewusst klein** gehalten. Wenn ein Feature *potenziell* systemnahe Konsequenzen hat (Threading, Memory, Bare-Metal), gehört es eher in diese Schicht als in L3.
 
 Siehe `spec/runtime_layers.md` für die Datei-für-Datei-Zuordnung.
 
@@ -63,14 +63,14 @@ Alles was **eine Domäne** (Web, DB, Grafik, 3D, …) in die Runtime bringt. Jed
 - Registrierte C-Symbole `moo_<domäne>_<operation>`,
 - Rust-Bindings in `compiler/src/runtime_bindings.rs`,
 - Compiler-Alias-Matching in `compiler/src/codegen.rs` (DE/EN/Kurzform),
-- Mindestens eine Referenz-Seite unter `docs/referenz/`.
+- Mindestens eine Dokumentationsseite unter `docs/` bzw. `dokumentation/`.
 
 **Game-Domäne** ist ein separater Strang mit eigener Grenze — siehe `spec/game_module_boundary.md`.
 
 ### L4 — Tooling, Doku, Beispiele, Tests
 
 - `editors/vscode/` — VSCode-Extension + LSP.
-- `docs/` + `docs/referenz/` + `docs/lernen.md` — User-Doku (mkdocs).
+- `docs/` + `dokumentation/` + `docs/lernen.md` — User-Doku.
 - `beispiele/` — Lauffähige moolang-Programme, klassifiziert in `spec/examples_taxonomy.md` (quickstart / showcase / stress / domain/{web,db,game,system}).
 - `compiler/tests/` — kanonische Regressions-Tests mit `.expected`-Gegenstücken.
 - `scratch/` (Phase B) — Ad-hoc-Skripte und Altlasten aus dem Root.
@@ -99,7 +99,7 @@ Parallel dazu: die Python-Toolchain (`src/moo/`) teilt sich die **Sprachoberflä
 
 Siehe `spec/public_vs_internal_api.md`. Grob:
 
-- **Public Moo-API** (DE/EN) ist das, was Anwender in `.moos`-Code aufrufen sollen. Stabil, dokumentiert in `docs/referenz/`.
+- **Public Moo-API** (DE/EN) ist das, was Anwender in `.moos`-Code aufrufen sollen. Stabil, dokumentiert in `docs/` und `dokumentation/`.
 - **Compiler-/Binding-/Alias-Schicht** (`codegen.rs` + `runtime_bindings.rs`) — Implementation Detail, kann sich ändern.
 - **C-Runtime-Symbole** (`moo_*` in `.c`) — ABI-stabil für LLVM-Interop, aber nicht direkt Teil der Anwender-API.
 
@@ -113,17 +113,17 @@ Siehe `spec/public_vs_internal_api.md`. Grob:
 
 ## Phase-B-Umbau
 
-`spec/repo_cleanup_phase_b.md` beschreibt die kontrollierte Move-Sequenz. Stand 2026-04-14: **W1 + W2 + W3 durchgeführt** (40 Root-`test_*.moos` in `compiler/tests/` oder `scratch/`, 30 Beispiele in `beispiele/domain/{web,db,game,system}/` einsortiert, `.ll`-Artefakte gitignored). W4 = Abschluss. Laufender Stand in `spec/phase_b_progress.md`.
+`spec/repo_cleanup_phase_b.md` beschreibt die kontrollierte Move-Sequenz. **W1–W3 sind abgeschlossen** (40 Root-`test_*.moos` in `compiler/tests/` oder `scratch/`, 30 Beispiele in `beispiele/domain/{web,db,game,system}/` einsortiert, `.ll`-Artefakte gitignored). Laufender Stand in `spec/phase_b_progress.md`.
 
 ## Weitere Spec-Dokumente
 
 - `spec/tokens.yaml` — Token-SSoT
 - `spec/soft_keywords.md` — kontextabhängige Keywords
-- `spec/runtime_layers.md` — Runtime-Datei-Zuordnung (k3)
-- `spec/game_module_boundary.md` — Game-Strang-Grenze (k4, in Arbeit)
-- `spec/public_vs_internal_api.md` — API-Schichten (k3+k4, in Arbeit)
-- `spec/examples_taxonomy.md` — Beispiel-Klassifizierung (k4, in Arbeit)
-- `spec/tests_taxonomy.md` — Test-Zonen (k3, in Arbeit)
-- `spec/repo_cleanup_phase_b.md` — Phase-B-Plan (k2, fertig)
-- `spec/drift_findings.md` — Rust/Python-Differential (k2)
+- `spec/runtime_layers.md` — Runtime-Datei-Zuordnung
+- `spec/game_module_boundary.md` — Game-Strang-Grenze
+- `spec/public_vs_internal_api.md` — API-Schichten
+- `spec/examples_taxonomy.md` — Beispiel-Klassifizierung
+- `spec/tests_taxonomy.md` — Test-Zonen
+- `spec/repo_cleanup_phase_b.md` — Phase-B-Plan
+- `spec/drift_findings.md` — Rust/Python-Differential
 - `spec/followup-tickets.md` — bekannte Hebel für später

@@ -86,7 +86,7 @@ Theoretisch / real-erreichbar (TCP bzw. PCIe-Overhead):
 | Small 184 MB | 1.64 s | 0.63 s | **0.167 s** | 0.014 s |
 | Medium 496 MB | 4.4 s | 1.71 s | **0.45 s** | 0.038 s |
 
-**Vergleich mit Rechenzeit:** G4-PoC (dim256/6L, GPU-resident, 4070 Ti) = **~0.0094 s/Schritt** (Msg 12778). Selbst im günstigsten realistischen LAN-Fall (10 GbE, Tiny) ist die Kommunikation **~2.8×** der Rechenzeit; bei Small/Medium über 1 GbE liegt sie **175–470×** darüber. → **Kommunikations-gebunden, katastrophal.**
+**Vergleich mit Rechenzeit:** G4-PoC (dim256/6L, GPU-resident, 4070 Ti) = **~0.0094 s/Schritt**. Selbst im günstigsten realistischen LAN-Fall (10 GbE, Tiny) ist die Kommunikation **~2.8×** der Rechenzeit; bei Small/Medium über 1 GbE liegt sie **175–470×** darüber. → **Kommunikations-gebunden, katastrophal.**
 
 bf16-Gradienten (D1/D2-Infra) halbieren S, ändern die Größenordnung aber nicht.
 
@@ -119,7 +119,7 @@ bf16-Gradienten (D1/D2-Infra) halbieren S, ändern die Größenordnung aber nich
 
 ### Option 3 — Bewusst KEIN Multi-GPU (empfohlen)
 - **3a Gradient Accumulation** auf der 4070 Ti: große effektive Batch durch Akkumulation über K Micro-Batches vor dem Optimizer-Schritt. **Null Interconnect-Verkehr, voll deterministisch**, nutzt das existierende autograd-Tape + B4b Activation-Checkpointing für Peak-RAM. Der Standard-Skalierungshebel für Einzel-GPU.
-- **3b 2070 als Eval/Inferenz-Worker:** Training auf 4070 Ti → **E2b-Checkpoint** (493b15c: Device→Host→Device, f32-Format, bit-genau) schreiben → auf 2070 (bzw. deren Host) laden für Eval/Generierung. Vollständig **entkoppelt vom Trainings-Device**, kein All-Reduce, keine PCIe/LAN-Kosten im Trainings-Loop. kip-daten bestätigt den Pfad (Msg 12792).
+- **3b 2070 als Eval/Inferenz-Worker:** Training auf 4070 Ti → **E2b-Checkpoint** (493b15c: Device→Host→Device, f32-Format, bit-genau) schreiben → auf 2070 (bzw. deren Host) laden für Eval/Generierung. Vollständig **entkoppelt vom Trainings-Device**, kein All-Reduce, keine PCIe/LAN-Kosten im Trainings-Loop.
 - **Verdikt:** ✅ **GO.**
 
 ---

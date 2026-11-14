@@ -169,3 +169,6 @@ beispiele/p4_silben/run_*/
 # Volltexte/PDFs fremder Paper (nur Metadaten und eigene Analysen versionieren)
 docs/research/ki-papers/pdf/
 docs/research/ki-papers/text/
+
+# Agenten-/Synapse-Protokolle (nur lokal, nicht auf GitHub)
+docs/agenten/

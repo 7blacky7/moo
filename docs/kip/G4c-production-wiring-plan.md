@@ -1,16 +1,13 @@
 # KIP-G4c — Production-Wiring: moo_nn-Pfade auf residente GPU-Ops (STRIKT-Modus)
 
-Owner: **kip-gpu** · Task `ab09b47c` (in_progress) · Priorität low
 Depends: KIP-G4 (16cbc7d, done), KIP-G4b (5879a6b, done)
 Stand HEAD bei Planerstellung: `87ef09e`
 
-> **Phase-Trennung (Koordinator-Dispatch Channel 12804):**
-> - **Phase 1 (dieses Dokument):** Prework NUR in NEUEN Dateien/Thoughts. Dispatch-/Wiring-Plan,
+> **Phase-Trennung:**
+> - **Phase 1 (dieses Dokument):** Prework NUR in neuen Dateien. Dispatch-/Wiring-Plan,
 >   Symbol-/Callgraph-Inventur, STRIKT-Vertrag, Telemetrie-API, Gate-Harness-Skelett.
->   **KEINE** Änderungen an `moo_nn.c`, `moo_autograd.c`, `moo_tensor_ops.c`, `moo_runtime.h`
->   solange kip-ops (KIP-B4b) diese Dateien reserviert hält.
-> - **Phase 2 (nach FREI-Ping von kip-ops):** Production-Wiring in die geteilten Dateien nach
->   Konvention v1 (BELEGT scope=all → files-plan/commit → FREI).
+>   **KEINE** Änderungen an `moo_nn.c`, `moo_autograd.c`, `moo_tensor_ops.c`, `moo_runtime.h`.
+> - **Phase 2:** Production-Wiring in die geteilten Dateien.
 
 ---
 
@@ -79,7 +76,7 @@ Decls `moo_runtime.h:347-349`; ENV `MOO_KI_GPU=0` / `MOO_KI_GPU_ERZWINGEN=1` (`m
 `MOO_KI_GPU_STRIKT` und `gpu_statistik()` existieren HEUTE nur in Design-Docs, NICHT im Code.
 
 ### 1.5 MooTensor-Struct (`moo_runtime.h:140-157`) — bereits G4-ready
-Vorhandene Residenz-Felder (kip-kern-Revier, **kein Struct-Redesign nötig**):
+Vorhandene Residenz-Felder (**kein Struct-Redesign nötig**):
 `float* data` (nullable ab D1), `float* grad` (immer f32), `uint8_t device` (CPU/GPU `:153`),
 `uint8_t valid` (Bitmaske `MOO_V_DATA|MOO_V_STORE|MOO_V_DEV=0x4`), `uint8_t grad_valid`,
 `void* gpu_buf` (opaque `MooKiGpuBuf*`, `:155`), `void* gpu_grad` (`:156`, seit G3c).
@@ -169,8 +166,7 @@ Jede Stufe einzeln durch das G4c-Gate (§4) abgesichert, bevor die nächste dazu
   (Backend: `moo_ki_gpu_telemetrie`). Ermöglicht dem `.moos`-Programm (ki_sprachmodell) die
   Residenz-Prüfung zur Laufzeit.
 - Reset-Builtin `gpu_statistik_reset()` → `moo_ki_gpu_telemetrie_reset` (für Loop-Messfenster).
-- Codegen/Binding-Anbindung (runtime_bindings.rs/codegen.rs) ist **kip-kern/kip-ops-koordiniert** —
-  vor Edit an diesen geteilten Dateien Konvention v1 BELEGT. Alternativ als reine C-Runtime-Funktion
+- Codegen/Binding-Anbindung (`runtime_bindings.rs`/`codegen.rs`) oder alternativ als reine C-Runtime-Funktion
   `moo_gpu_statistik(...)` exponiert, falls Builtin-Registrierung zu breit streut (Entscheid Phase 2).
 
 ---
@@ -190,29 +186,29 @@ Skript: `skripte/kip_g4c_gate.sh` (neu, Skelett in Phase 1 angelegt). Kriterien:
    Negativ-Kontrolle: ein absichtlich nicht-geroutetes Op unter STRIKT MUSS hart fehlschlagen.
 6. **Stub ohne MOO_HAS_VULKAN** kompiliert; STRIKT ohne Vulkan = sauberer Init-Fehler (kein stiller CPU-Lauf).
 
-E2b↔G4c-End-to-End (Checkpoint→Restore→Weitertrainieren) ist **KIP-G4c-QA (kip-daten, 8972d152)** —
+E2b↔G4c-End-to-End (Checkpoint→Restore→Weitertrainieren) ist **KIP-G4c-QA** —
 separates Gate, dieses Doc dokumentiert nur die von G4c zu exponierenden Hooks.
 
 ---
 
-## 5. Datei-Grenzen (Konvention v1)
+## 5. Datei-Grenzen
 
-**Geteilte Dateien (Phase 2, BELEGT/FREI + files-plan/commit):**
-`moo_nn.c`, `moo_autograd.c`, `moo_tensor_ops.c`, `moo_runtime.h` — aktuell durch kip-ops (B4b) belegt.
+**Geteilte Dateien (Phase 2):**
+`moo_nn.c`, `moo_autograd.c`, `moo_tensor_ops.c`, `moo_runtime.h`.
 
-**Meine eigenen Dateien (kein BELEGT nötig, aber Phase-2-Timing):**
+**GPU-Modul-Dateien (Phase 2):**
 `moo_ki_gpu_api.h`, `moo_ki_gpu.c` (STRIKT-API + evtl. neue Routing-Helfer).
 
-**Koordinierte Binding-Dateien (falls Builtin-Route gewählt):**
-`runtime_bindings.rs`, `codegen.rs` — Konvention v1, mit kip-kern/kip-ops abstimmen.
+**Binding-Dateien (falls Builtin-Route gewählt):**
+`runtime_bindings.rs`, `codegen.rs`.
 
 **Neue Dateien (Phase 1, dieses Prework):**
 `docs/kip/G4c-production-wiring-plan.md`, `skripte/kip_g4c_gate.sh`,
 später `tests/ki_gpu_g4c_wiring.c` (Phase 2).
 
 ## 6. No-Go-Liste
-- KEIN Struct-Redesign von MooTensor (Felder existieren; kip-kern-Revier).
+- KEIN Struct-Redesign von MooTensor (Felder existieren).
 - KEIN globales -fwrapv, KEINE stillen Fallbacks unter STRIKT.
 - KEIN Antasten des CPU-Default-Pfads (muss bit-identisch bleiben).
-- KEINE Edits an den 4 Shared Files vor kip-ops FREI-Ping.
+- KEINE Edits an den 4 Shared Files in Phase 1.
 - KEIN zweiter Serializer / kein Bruch des E2/E2b-Checkpoint-Vertrags.

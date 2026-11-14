@@ -23,11 +23,11 @@ direkten Quelltexten; importierte Abhängigkeiten und Toolchain erfordern
 weiterhin einen separat eingefrorenen Snapshot. Optional speichert `--save-ir`
 normalisiertes IR pro Quellpfad unter einem Verzeichnis in `build/p2-ir/`;
 damit lassen sich spätere Hash-Abweichungen konkret untersuchen. Für eine
-Baselinemessung nimmt `--snapshot-ref <40-stellige-SHA>` die vom Koordinator
-belegte Standkennung ins JSON auf. Sie ist eine nicht vom Runner verifizierte
+Baselinemessung nimmt `--snapshot-ref <40-stellige-SHA>` die vom Aufrufer
+angegebene Standkennung ins JSON auf. Sie ist eine nicht vom Runner verifizierte
 Angabe; Quellen-, Importgraph- und Toolchain-Bindung müssen separat belegt sein.
 `--batch-ref <Nummer>` trägt stattdessen eine vom Aufrufer angegebene
-Synapse-Batchnummer ein; auch sie wird nicht automatisch verifiziert. Ein Hash
+Batchnummer ein; auch sie wird nicht automatisch verifiziert. Ein Hash
 über das Inventar der Compiler-/Runtime-Quellen und auffindbaren Release-Runtime-Archive
 wird vor und nach dem Lauf auf Drift geprüft. Er ersetzt keine vollständige
 Importgraph- und Toolchain-Attestation.

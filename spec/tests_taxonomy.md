@@ -76,7 +76,7 @@ Einzelner C-Level-Smoke fuer 3D-Rendering. Kein Automation-Runner.
 
 ### Zone 4 — `/tmp/moo-verify/` (ephemer)
 
-Arbeitsverzeichnis der Koordinatoren-Verifikation. 107+ `.moos`-Dateien aus
+Lokales Arbeitsverzeichnis für Verifikationsläufe. 107+ `.moos`-Dateien aus
 A-Block (Kompat-Smokes, Regressions-Aufbau), `.ll`-Dateien, result-logs.
 
 | Zweck | owner | CI-Relevanz | phase_b_ziel |

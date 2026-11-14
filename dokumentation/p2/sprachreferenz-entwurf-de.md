@@ -1,6 +1,6 @@
 # Native Moo: Sprachreferenz (Entwurf)
 
-**Stand:** 31. Oktober 2026. Diese Referenz beschreibt den freigegebenen P2-Sprachvertrag, keine bereits verfügbare Implementierung. Sämtliche Codebeispiele sind illustrative Entwürfe und wurden nicht kompiliert. Maßgeblich ist das Entscheidungspaket Synapse-Thought `f67bfcbd-8090-479e-9546-f2713f00f59e`. Detailsyntax von Konstruktoren und Hilfsoperationen wird mit der Implementierung festgelegt.
+**Stand:** 31. Oktober 2026. Diese Referenz beschreibt den freigegebenen P2-Sprachvertrag, keine bereits verfügbare Implementierung. Sämtliche Codebeispiele sind illustrative Entwürfe und wurden nicht kompiliert. Detailsyntax von Konstruktoren und Hilfsoperationen wird mit der Implementierung festgelegt.
 
 ## Geltungsbereich und Opt-in
 

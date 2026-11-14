@@ -24,9 +24,9 @@ werden und welche dem **User** als oeffentliche moo-API zur Verfuegung stehen.
 - `DISPATCHER` — B-Schicht ist ein Smart-Dispatcher, der auf mehrere A-Symbole
   verteilt; C sieht nur den Dispatcher-Namen.
 
-## Problemfaelle (k3-Rohgeruest)
+## Problemfaelle
 
-Gemeinsame Matrix — k4 ergaenzt in einem Folgecommit die Game-Zeilen
+Gemeinsame Matrix inkl. Game-Zeilen
 (sprite_*, raum_*, chunk_*, fenster_*, zeichne_*, screenshot, taste_simulieren)
 auf Basis von `spec/game_module_boundary.md §2`.
 

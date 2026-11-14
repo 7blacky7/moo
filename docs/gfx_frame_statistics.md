@@ -58,5 +58,4 @@ Ausgabepfad fuer ein 2x2-BMP aus dem bestehenden Moo-Saver.
 `compiler/tests/gfx_frame_statistics.moos` nutzt echte Moo-Container,
 Sprachbindungen, beide Aliase, BMP-Lader und Frame-Diff. Die Umgebungsvariable
 `GFX_ROI_FIXTURE` zeigt auf das vom C-Harness erzeugte BMP. Kein Fenster noetig.
-Die Testausfuehrung und ASan/UBSan- sowie Regel21-Gates werden im
-Synapse-Ergebnis dokumentiert.
+Die Testausfuehrung laeuft ueber `mise run test-gfx-roi` inkl. ASan/UBSan.

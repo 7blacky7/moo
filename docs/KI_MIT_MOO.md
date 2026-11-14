@@ -1,5 +1,7 @@
 # KI mit moo – Einstieg
 
+*English version: [AI_WITH_MOO.md](AI_WITH_MOO.md).*
+
 Diese Anleitung richtet sich an alle, die das Repository frisch geklont haben und
 (a) moo bauen und ausführen sowie (b) mit dem eingebauten KI-Stack arbeiten wollen:
 Tensoren, Autograd, neuronale Netze bis zum Transformer, Training auf CPU oder
@@ -12,50 +14,156 @@ Alle Befehle werden aus dem Wurzelverzeichnis des Repositorys ausgeführt.
 
 ## 1. Voraussetzungen
 
-Siehe [DEPENDENCIES.md](../DEPENDENCIES.md). Kurzfassung:
+moo besteht aus zwei Teilen, die zusammen gebaut werden:
 
-- **Rust** (cargo) – baut den Compiler.
-- **LLVM 18** – der Compiler nutzt `inkwell` mit Feature `llvm18-1`.
-- **C-Compiler** (gcc/clang) – die Runtime (`compiler/runtime/*.c`) wird über `build.rs` mitgebaut.
-- System-Bibliotheken für Grafik/UI/DB (u. a. SDL2, GLFW, Mesa/OpenGL, SQLite, GTK3).
-- **Vulkan** (Loader + Treiber) – optional für GPU-Training. Das Cargo-Feature `vulkan`
-  ist standardmäßig aktiv; ohne verfügbare GPU rechnet der KI-Stack auf der CPU.
+- dem **Compiler** `moo-compiler` (Rust, erzeugt über LLVM 18 native Programme) und
+- der **Runtime** (`compiler/runtime/*.c`), die `build.rs` beim Bauen mit dem C-Compiler
+  zu einer Bibliothek übersetzt. Jedes moo-Programm wird gegen diese Runtime gelinkt.
+
+Benötigt werden:
+
+| Was | Wozu | Hinweis |
+|---|---|---|
+| **Rust** (cargo, ab 1.85, Edition 2024) | baut den Compiler | über rustup |
+| **LLVM 18** inkl. `llvm-config` | Codegen (`inkwell`, Feature `llvm18-1`) | genau Version 18; Pfad über `LLVM_SYS_181_PREFIX` |
+| **C-Compiler** | baut die Runtime | Linux/macOS: gcc oder clang; Windows: MSVC `cl.exe` |
+| SDL2, SDL2_image, SQLite, GLFW, OpenGL, GTK3 (Linux) | Grafik, UI, Datenbank | Systempakete bzw. vcpkg |
+| **Vulkan** (Loader + Treiber) | optional, GPU-Training | Feature `vulkan` ist Standard; ohne GPU rechnet der KI-Stack auf der CPU |
+
+Details zu Versionen und Pflege: [DEPENDENCIES.md](../DEPENDENCIES.md).
 
 ## 2. Bauen
 
+### 2.1 Linux (Ubuntu/Debian; Pakete wie in der KI-CI)
+
+Der Standard-Build (Features `gl33`, `moo_ui`, `vulkan`) braucht:
+
 ```sh
+sudo apt-get install -y \
+  llvm-18-dev libpolly-18-dev libclang-18-dev \
+  libgtk-3-dev libappindicator3-dev \
+  libglfw3-dev libgl1-mesa-dev libvulkan-dev glslang-tools \
+  libsdl2-dev libsdl2-image-dev libsqlite3-dev libssl-dev \
+  libv4l-dev libasound2-dev pkg-config
+export LLVM_SYS_181_PREFIX=/usr/lib/llvm-18
+
 cd compiler
 cargo build --release
 cd ..
 ```
 
-Das Ergebnis ist `compiler/target/release/moo-compiler`. Überblick über die Befehle:
+Auf Arch/CachyOS entsprechend mit pacman (`llvm18`, `sdl2`, `sdl2_image`, `sqlite`,
+`glfw`, `mesa`, `gtk3`) und `LLVM_SYS_181_PREFIX` auf das LLVM-18-Verzeichnis setzen.
+Die Standard-LLVM vieler Distributionen ist neuer oder älter als 18 – das passt nicht.
+
+### 2.2 macOS (Homebrew)
+
+```sh
+brew install llvm@18 sdl2 sdl2_image openssl@3
+export LLVM_SYS_181_PREFIX="$(brew --prefix llvm@18)"
+export LIBCLANG_PATH="$LLVM_SYS_181_PREFIX/lib"
+export CPATH="$(brew --prefix sdl2)/include:$(brew --prefix sdl2)/include/SDL2:$(brew --prefix openssl@3)/include"
+export LIBRARY_PATH="$(brew --prefix sdl2)/lib:$(brew --prefix sdl2_image)/lib:$(brew --prefix openssl@3)/lib"
+
+cd compiler && cargo build --release && cd ..
+```
+
+SQLite bringt macOS selbst mit.
+
+### 2.3 Windows x64 (nativ, MSVC)
+
+Auf einem frischen Windows 11 geprüft (Release-Build ca. 3,5 Minuten mit `-j 2`):
+
+1. **Visual Studio 2022 Build Tools** mit der Arbeitslast „Desktopentwicklung mit C++“
+   (VC-Tools + Windows SDK).
+2. **Rust** über `rustup-init.exe`, Toolchain `stable-x86_64-pc-windows-msvc`.
+3. **LLVM 18 mit `llvm-config.exe`**: Der offizielle LLVM-Installer enthält kein
+   `llvm-config.exe`. Stattdessen conda-forge (z. B. mit micromamba):
+   ```bat
+   micromamba create -n moo-llvm -c conda-forge llvmdev=18.1.* clangdev=18.1.* lld=18.1.* zstd zlib libxml2 libxml2-devel
+   ```
+4. **vcpkg** für die C-Bibliotheken:
+   ```bat
+   vcpkg install --triplet x64-windows sdl2 sdl2-image sqlite3 glfw3 vulkan
+   ```
+5. In einer `cmd`-Konsole bauen (Pfade an die eigene Installation anpassen):
+   ```bat
+   call "C:\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+   set "LLVM_SYS_181_PREFIX=C:\moo-tools\mamba\envs\moo-llvm\Library"
+   set "VCPKG_WIN=C:\vcpkg\installed\x64-windows"
+   set "PATH=%USERPROFILE%\.cargo\bin;%LLVM_SYS_181_PREFIX%\bin;%VCPKG_WIN%\bin;%PATH%"
+   set "LIB=%VCPKG_WIN%\lib;%LLVM_SYS_181_PREFIX%\lib;%LIB%"
+   set "INCLUDE=%VCPKG_WIN%\include;%INCLUDE%"
+   cd compiler
+   cargo build --release
+   ```
+
+Stolpersteine:
+
+- Meldet der Linker `LNK1181` für `zstd.dll.lib` o. ä.: Das conda-LLVM erwartet diese
+  Namen. Im Ordner `...\moo-llvm\Library\lib` eine Kopie anlegen, z. B.
+  `copy zstd.lib zstd.dll.lib` und `copy zlib.lib z.dll.lib`.
+- Git for Windows bringt ein eigenes `link.exe` mit. Der MSVC-Linker muss im `PATH`
+  davor stehen (`vcvars64.bat` sorgt dafür, solange es zuletzt aufgerufen wird).
+- `/std:c11` für `cl.exe` setzt `build.rs` selbst, dafür ist nichts zu tun.
+
+**Ohne eigenen Build:** Die CI erzeugt bei jedem Lauf von „UI Module Cross-Platform CI“
+ein **portables Windows-SDK** (`moo-sdk-windows-x64`, als Artefakt des Laufs). Es
+enthält `moo-compiler.exe`, die Runtime, `stdlib`, clang, lld-link und alle DLLs.
+Entpacken und `moo.cmd` statt `moo-compiler` aufrufen, z. B. `moo.cmd run hallo.moos`.
+`moo-shell.cmd` öffnet eine Konsole mit passend gesetztem `PATH`. Visual Studio,
+Rust oder LLVM sind dafür nicht nötig.
+
+### 2.4 Ergebnis prüfen
+
+Das Ergebnis ist `compiler/target/release/moo-compiler` (Windows: `moo-compiler.exe`).
 
 ```sh
 ./compiler/target/release/moo-compiler --help
-# Befehle u. a.: compile, run, repl, targets, paket, ast, bindgen
 ```
+
+| Befehl | Zweck |
+|---|---|
+| `run <datei.moos>` | kompilieren und sofort ausführen |
+| `compile <datei.moos> [-o name]` | native Binary erzeugen (Standardname: Datei ohne `.moos`) |
+| `compile --emit-ir` | nur LLVM-IR (`.ll`) erzeugen |
+| `compile --target ...` | WebAssembly (`.wasm`) erzeugen; Ziele: `targets` |
+| `compile --lib-pfad <dir>` | zusätzlicher Bibliothekspfad (mehrfach möglich) |
+| `compile --profile` | Laufzeit je Funktion messen |
+| `repl` | interaktiver Modus (auch `mise run dev`) |
+| `paket install/list/remove` | Pakete von github.com/moo-packages |
+| `ast`, `layout`, `bindgen` | Diagnose bzw. C-Header-Bindungen |
+
+Bare-Metal-Optionen (`--no-stdlib`, `--kernel`, `--board` usw.) zeigt
+`moo-compiler compile --help`.
 
 ## 3. Ausführen
 
-```sh
-# kompilieren und sofort ausführen
-./compiler/target/release/moo-compiler run beispiele/fibonacci.moos
+Tipp: Den Compiler in den `PATH` legen oder einen Alias setzen, dann wird es kürzer.
+Der Name `moo` ist im Python-Umfeld des Repos schon für den Transpiler vergeben
+(siehe [lernen.md](lernen.md)), deshalb hier `mooc`:
 
-# native Binary erzeugen
-./compiler/target/release/moo-compiler compile beispiele/ki_xor.moos -o ki_xor
-./ki_xor
+```sh
+alias mooc="$PWD/compiler/target/release/moo-compiler"
 ```
 
-Kurzer Check, ob alles läuft – eine Datei `hallo.moos`:
+Erster Test – eine Datei `hallo.moos`:
 
 ```moo
 zeige "Hallo Welt"
 ```
 
 ```sh
-./compiler/target/release/moo-compiler run hallo.moos
+mooc run hallo.moos            # kompilieren und sofort ausführen
+mooc compile hallo.moos        # erzeugt ./hallo (Windows: hallo.exe)
+./hallo
+mooc compile beispiele/ki_xor.moos -o ki_xor && ./ki_xor
 ```
+
+`run` baut das Programm im Hintergrund vollständig nativ und startet es dann; es gibt
+keinen Interpreter. Für wiederholte Läufe lohnt sich `compile`, weil das Linken dann
+entfällt. Projektaufgaben (Tests, Benchmarks, KI-Experimente) liegen als mise-Tasks vor:
+`mise tasks` listet sie, `mise run <task>` startet einen.
 
 Zur Sprache selbst: [docs/lernen.md](lernen.md).
 

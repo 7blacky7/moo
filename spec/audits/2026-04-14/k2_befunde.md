@@ -1,4 +1,4 @@
-# Audit k2: TODOs/FIXMEs + Rust/Python-Drift
+# Audit: TODOs/FIXMEs + Rust/Python-Drift
 
 ## (1) TODO/FIXME/HACK/XXX in *.rs / *.c / *.moo
 
@@ -17,7 +17,7 @@ Quelle: code_intel search. FIXME/HACK/XXX haben keine Code-Treffer.
 
 ### LOW (Doku / UI)
 
-- **beispiele/minesweeper.moo** — Kommentar `TODO: braucht rechte Maustaste`. Relates to existing Synapse-Thought 20d64530 (maus_gedrueckt_rechts fehlt).
+- **beispiele/minesweeper.moo** — Kommentar `TODO: braucht rechte Maustaste` (`maus_gedrueckt_rechts` fehlt).
 - `beispiele/todo.moo`, `beispiele/http_api.moo` — "Todo" im Titel/Inhalt, keine Code-TODOs.
 
 ## (4) Drift Rust vs Python post-Token-SSoT
@@ -44,5 +44,5 @@ Differenzen dokumentiert (Status klar):
 
 - 2 HIGH-Befunde (Bit-Ops-Drift, WASM moo_pow-Stub).
 - 3 MED-Befunde (Ambient-Uniform in zwei 3D-Backends, welt_sonne Custom-Pos).
-- 1 LOW-Befund (minesweeper-Doku-TODO + Folge-Thought).
+- 1 LOW-Befund (minesweeper-Doku-TODO).
 - Token-SSoT-Drift: **keine**; Stand dokumentiert und CI-abgedeckt.

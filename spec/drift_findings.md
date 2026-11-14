@@ -1,8 +1,8 @@
 # Verified-Fixed Bugs
 
-## Top-Level-Variablen in Funktionen (Synapse-Thought `23c1749b`, 2026-04-11)
+## Top-Level-Variablen in Funktionen (2026-04-11)
 
-**Symptom (Thought-Text koordinator2, 2026-04-11 10:14):**
+**Symptom (2026-04-11):**
 `setze db auf db_verbinde(...)` am Top-Level, `db_abfrage(db, ...)` in einer
 Funktion → `"Variable 'db' nicht gefunden"`.
 
@@ -12,15 +12,13 @@ Assignments werden als LLVM-Globals (`__moo_g_<name>`) registriert;
 `load_var`/`store_var` fallen auf `self.globals` zurueck (codegen.rs
 Z. 157–176, 405–452).
 
-**Pikant:** Der Thought wurde 17 Minuten **nach** dem Fix-Commit
-geschrieben — vermutlich wurde der Fix vom Reporter noch nicht gepullt.
-Bug ist seitdem geschlossen, verifiziert per Regressions-Tests:
+**Status:** Bug ist geschlossen, verifiziert per Regressions-Tests:
 - `compiler/tests/test_global_in_func.moos` (Lesen aus Funktion)
 - `compiler/tests/test_global_counter.moos` (Schreiben/Counter-Pattern)
 
 Beide grün.
 
-## First-Class Funktionen + Closures (Synapse-Thought `23c1749b`, 2026-04-11)
+## First-Class Funktionen + Closures (2026-04-11)
 
 **Symptom:** `starte(worker, 42)` → `"Variable 'worker' nicht gefunden"`.
 `(x) => x * 2` als Wert an Thread → Segfault (exit 139).

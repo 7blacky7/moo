@@ -33,7 +33,7 @@ aufgeführten Aufgaben erzwingen CPU und enthalten kein Training.
   Tokenizer-, Architektur- und Kontextvertrag verwenden.
 - `mise run p5-train-nll-baseline` misst analog auf dem eingefrorenen
   `train_korrekturen.txt` als `split=train`. Die Eval-API akzeptiert
-  seit Batch 29865 diesen Split; `checkpoint_waehlen` bleibt val-only.
+  diesen Split; `checkpoint_waehlen` bleibt val-only.
   Dies aktualisiert den API-Verfügbarkeitsstand im ansonsten unveränderten
   `val_protokoll.md`.
 

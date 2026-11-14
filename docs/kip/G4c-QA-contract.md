@@ -1,15 +1,13 @@
 # KIP-G4c-QA — E2b↔G4c End-to-End-Gate: Vertrag + Testmatrix
 
-Owner: **kip-daten** · Task `8972d152` · Priorität low
 Depends: KIP-E2 (`cd6a48b`, done), KIP-E2b (`493b15c`, done), KIP-E2c (`a4d05a4`, done)
-Bezug: `docs/kip/G4c-production-wiring-plan.md` (kip-gpu, Owner der eigentlichen
-Production-Wiring-Aufgabe `ab09b47c`) — §4 dort verweist explizit hierher.
+Bezug: `docs/kip/G4c-production-wiring-plan.md`
 
-> **Scope-Abgrenzung (Koordinator-Dispatch Channel 12804):** Nur neue Test-/
+> **Scope-Abgrenzung:** Nur neue Test-/
 > Script-Dateien. Keine Änderungen an `moo_nn.c`, `moo_autograd.c`,
 > `moo_tensor_ops.c`, `moo_runtime.h`. Dieses Dokument beschreibt, was **heute**
 > mit den vorhandenen E2/E2b-Hooks beweisbar ist, und was **fehlt**, bis
-> KIP-G4c (kip-gpu, Phase 2) die Production-Wiring-Hooks liefert.
+> KIP-G4c (Phase 2) die Production-Wiring-Hooks liefert.
 
 ---
 
@@ -24,7 +22,7 @@ keine überlebenden globalen C-Statics (`static MooAgNode* tape` in
 `moo_autograd.c`, Telemetrie-Zähler in `moo_ki_gpu.c`, u.a.) — denselben
 Zustand liefert.
 
-Die Aufgabenstellung (Koordinator, Channel 12786/12804) verlangt explizit
+Die Spezifikation verlangt explizit
 *„Prozessneustart"*. Deshalb: `test_g4c_e2e_qa.c` ist ein **CLI-Multi-Mode-
 Tool** — jede Trainings-/Restore-Phase ist ein eigener `argv`-Modus, das
 Orchestrierungs-Skript `skripte/kip_g4c_qa.sh` startet jede Phase als
@@ -51,8 +49,7 @@ Dropout-Zähler + globaler Schritt + Residenztelemetrie).
 lokal auf 4070 Ti verifiziert: CPU-Teil A/B immer, GPU-Teil C/D/E/F/G/H mit
 Vulkan). Nachtrag 2026-07-10: Kriterium H wurde aktiviert, nachdem kip-gpu
 den Forward/Backward-Pfad für matmul/ew/sqrt/reduce/softmax/gather/Optimizer
-resident + `MOO_KI_GPU_STRIKT` hardware-verifiziert gemeldet hat (Channel
-moo-general, Msg 12897). tanh/relu/sigmoid/gelu/exp/log sind noch NICHT
+resident + `MOO_KI_GPU_STRIKT` hardware-verifiziert unterstützt. tanh/relu/sigmoid/gelu/exp/log sind noch NICHT
 resident — das Kriterium-H-Netz nutzt bewusst KEINE Aktivierung, damit die
 in §4 dokumentierte Negativ-Kontrolle nicht verwässert wird (mit tanh würde
 STRIKT den nicht-residenten Op transparent auf CPU rechnen statt zu werfen).
@@ -113,7 +110,7 @@ Ursprünglich fehlende Hooks laut
    unten geforderte Negativ-Kontrolle verwässern.
 
 **Verbleibender Vertrag, falls tanh (oder eine andere Aktivierung) später
-resident wird** (kip-gpu bot das im Channel an, gleiches u_op-Muster wie
+resident wird** (gleiches u_op-Muster wie
 sqrt): `baue_gvsc_netz()` in `test_g4c_e2e_qa.c` von `"keine"` auf `"tanh"`
 umstellen, um näher an den ursprünglichen CPU-Pfad-A heranzukommen — nicht
 blockierend, da die aktuelle Version bereits die volle Negativ-Kontrolle

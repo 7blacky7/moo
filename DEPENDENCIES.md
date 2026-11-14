@@ -9,6 +9,7 @@
 | `inkwell` | git/master + `llvm18-1` | LLVM-Bindings für Codegen | **HOCH** — git pinned, LLVM-API-Brüche möglich |
 | `clap` | 4.x | CLI-Argument-Parser | niedrig |
 | `cc` | 1.x | C-Build in `build.rs` | niedrig |
+| `pkg-config` | 0.3 | Build-Dependency: findet System-Libs in `build.rs` | niedrig |
 
 **Inkwell-Sonderfall**: Pinned auf `git = "...inkwell", branch = "master", features = ["llvm18-1"]`. Bei LLVM-Major-Updates (LLVM 19, 20…) bricht das Feature-Flag — manueller Eingriff nötig. Nicht durch normales `cargo update` geupdatet (git-Branch wird trotzdem mitgezogen).
 
@@ -23,6 +24,13 @@
 | `regex.h` | `glibc` (system) | `moo_regex.c` | POSIX-Regex |
 | `pthread.h` | `glibc` (system) | `moo_thread.c` | Threading |
 | `dirent.h` | `glibc` (system) | `moo_file.c` | Verzeichnis-Iter |
+| `SDL2/SDL_image.h` | `sdl2_image` | Grafik | Bilder laden |
+| `gtk/gtk.h` | `gtk3`, `libappindicator-gtk3` | `moo_ui_gtk.c` | native UI (Linux) |
+| `vulkan/vulkan.h` | `vulkan-icd-loader`, `vulkan-headers`, `glslang` | KI-GPU, 3D | Feature `vulkan` (Standard) |
+| `openssl/ssl.h` | `openssl` | Netz/Krypto | TLS |
+| `alsa/asoundlib.h`, `linux/videodev2.h` | `alsa-lib`, `v4l-utils` | Capture | Audio/Kamera |
+
+Ubuntu-Paketnamen für den Standard-Build stehen in `.github/workflows/ki-ci.yml` bzw. `docs/KI_MIT_MOO.md`.
 
 System-Libs werden via `pacman -Syu` aktualisiert (Distro-weit). moo bricht selten — nur bei API-Brüchen einer dieser Libs.
 
@@ -65,5 +73,6 @@ Sofort handeln bei: HIGH oder CRITICAL Funden.
 
 ## Notes
 
-- Keine npm/Python-Dependencies (außer optionalen VS-Code-Extension Tools in `editors/vscode/moo/`)
+- Python-Tooling (Transpiler-CLI `moo`, Language-Server) über `pyproject.toml` und `uv sync`; für den nativen Compiler nicht nötig.
+- npm nur für optionale VS-Code-Extension-Tools in `editors/vscode/moo/`
 - Ngrok/Docker für Test-Container sind **runtime-only**, keine Build-Deps

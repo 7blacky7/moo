@@ -155,7 +155,7 @@ mehr Bytes abdeckt. Ursache ist vermutlich die geringe Trainingsmenge: BPE
 erhielt 29 statt 71 Trainingsfenster und trainierte rund 10 s. Ein fairer
 Tokenizervergleich ist mit diesem Aufbau deshalb nicht möglich. Der Testteil
 war vor dem Neulauf bereits einmal eingesehen und ist kein unberührter
-Holdout. Belege: Thought `c6f2413d-1878-454d-9519-6ad839e2ee84`, Laufordner
+Holdout. Beleg: Laufordner
 `beispiele/p4_silben/run_sil11_fix_20261030/`.
 
 In 26 von 27 festen Fortsetzungen stimmten die Bytes direkt nach dem Training
@@ -251,18 +251,16 @@ Reproduktion samt Manifesten, Lizenzhinweisen und Umfeld erhalten werden.
 Ein erneuter Modelllauf benötigt ein dafür gültiges Gate und ein separates
 Budget; die Dokumentation ist keine pauschale Freigabe.
 
-Für die Teststufen stehen unter anderem folgende nachvollziehbare Jobs:
+Für die Teststufen liegen unter anderem folgende nachvollziehbare Läufe vor:
 
-- Lokal: Job `35a52aed-abf0-4b98-861c-8e94e829ee8f`; Zeichen- und Silbentests
-  unter ASan/UBSan und Moo-API bestanden, 14-Dateien-Marker vor und nachher gleich.
-- Workspace: Thought `0f426818-ccaa-4953-b327-72bbc932e58f`; frischer
-  14-Dateien-Vergleich und Tests in der separaten Testkopie.
+- Lokal: Zeichen- und Silbentests unter ASan/UBSan und Moo-API bestanden,
+  14-Dateien-Marker vor und nachher gleich.
+- Workspace: frischer 14-Dateien-Vergleich und Tests in der separaten Testkopie.
 - Windows: Archiv-SHA `c5a094c090f210e70a32cc29f341d9554b91e0be37a256016979b3ceb9c18bfa`,
-  Compiler-Job `aade06d6-74b2-41f9-8a1b-ed89e3e77c13` und Moo-API-Job
-  `67aa49f6-97a1-472c-b1e4-e711daf71361`; späterer Test-Snapshot-SHA
+  Compiler- und Moo-API-Tests; späterer Test-Snapshot-SHA
   `108f967ad5d5d285b0724479dc452981de63d40ebe42ad557f85898ab52737d6`.
-- Ergebnisprüfung: Job `8bd78e28-2f2c-4dad-b1bd-bc31617c351a` prüfte die
-  18 Report- und Checkpointbindungen, den Freeze, die 27 Ledgerpositionen
+- Ergebnisprüfung: Prüfung der
+  18 Report- und Checkpointbindungen, des Freeze, der 27 Ledgerpositionen
   und die Umrechnung der Testmetriken, ohne den Testtext auszugeben.
 
 ## Abschlussurteil (SIL-12)

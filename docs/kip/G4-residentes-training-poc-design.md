@@ -1,10 +1,10 @@
 # KIP-G4 — GPU-residentes Trainings-PoC (Mini-LM komplett auf GPU)
 
-Task 8a2691fa. Stand: 2026-07-10. Autor: kip-gpu. Baut auf G0 (Coverage-Gate),
+Stand: 2026-07-10. Baut auf G0 (Coverage-Gate),
 G1 (Residenz+Telemetrie), G2 (tiled matmul), G3a/b/c + G3d-a..e.
 Start-Gate erfüllt: skripte/kip_gpu_coverage.sh GRÜN (Commit b9cbd64).
 
-## 0. Ziel & Gate (aus Task 8a2691fa + Inbox 699)
+## 0. Ziel & Gate
 End-to-End: Toy-LM-Training, Gewichte/Aktivierungen/Gradienten/Optimizer-
 Zustand komplett GPU-resident; Transfers nur Batch rein / Loss raus.
 GATE:
@@ -33,9 +33,7 @@ geteilte Produktivdatei an (kein moo_nn.c/moo_tensor_ops.c/moo_autograd.c-
 Routing) — Deliverable ist ein SELBSTÄNDIGES Harness + CPU-Referenz + Skript,
 exakt das Strang-G-Muster (jedes G3-Gate war _res-Ops + CPU-Diff-Harness).
 Production-Wiring (moo_nn.c auf _res routen + MOO_KI_GPU_STRIKT im Dispatch)
-wäre ein SEPARATES, später Epic und kollidiert JETZT mit kip-kern D3 / kip-ops.
-→ @koordinator: falls stattdessen echtes Production-Wiring gewünscht ist, bitte
-melden; sonst liefere ich das Harness-PoC (verteidigt jedes Gate-Kriterium).
+wäre ein SEPARATES, späteres Epic.
 
 ## 2. Architektur (P0)
 Dims (parametrisierbar): D=Modelldim, T=Kontext, V=Vokab, F=FFN-Hidden, L=Layer.
@@ -136,7 +134,7 @@ Pflicht-Protokoll laut Task.
   + residenter GPU-Pfad + Diff/Determinismus/Telemetrie/Speedup.
 - `skripte/kip_g4_lm.sh` — Compile+Run auf 4070 Ti, SKIP ohne libvulkan
   (Muster ki-gpu-smoke.sh / kip_gpu_coverage.sh).
-- Slice 1: Design (dies) + Scope-Meldung Channel.
+- Slice 1: Design (dies).
 - Slice 2: FFN-LM (Embedding+Pos+L×SwiGLU+Head+CE) resident + CPU-Diff +
   FD-Gradcheck + Telemetrie. (Attention-freier Zwischen-Gate-Checkpoint.)
 - Slice 3: kausale Single-Head-Attention F+B ergänzen; Gate erweitern.

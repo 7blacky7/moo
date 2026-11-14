@@ -1,10 +1,10 @@
 # Moo: realer Windows-x64-Test auf Mini-PC
 
 Der Mini-PC ist **nur** Ausfuehrungs- und Beobachtungsziel. Moo-Quellcode,
-C-Referenzen, Runner und Erkenntnisse werden im Synapse-Projekt versioniert.
+C-Referenzen, Runner und Erkenntnisse werden im Repository versioniert.
 
 Ziel: `Windows 11 Pro x64 / Intel N100`, ueber WinRM und Direkt-Ethernet
-`192.168.77.1 ↔ 192.168.77.2`. Windows-Testordner: `D:\\MooTest`.
+(konfiguriert ueber `MOO_MINIPC_HOST`).
 Keine Download-Abhaengigkeit auf dem Windows-Rechner: Linux stellt
 Moo-Compiler, LLVM, MinGW und den WinRM-Transfer.
 
@@ -21,8 +21,8 @@ mise run -C skripte/p2/windows_minipc test
 3. Ein unabhaengiges C-Harness mit MinGW auf Linux zur Windows-EXE linken.
 4. EXE ueber die isolierte Windows-SMB-Testfreigabe SHA256-verifiziert kopieren.
    Einmalige Bereitstellung: `minipc_winrm.py runfile skripte/p2/windows_minipc/setup_share.ps1`.
-5. EXE auf echtem Windows ausfuehren. Ausgaben und Exitcode via Synapse-Shell.
-6. Beobachtungen + Abweichungen in Synapse Task-Thoughts/Memory dokumentieren.
+5. EXE auf echtem Windows ausfuehren (Ausgaben und Exitcode pruefen).
+6. Beobachtungen und Abweichungen dokumentieren.
 
 Diese Probe **beweist echten nativen Moo-i32-Code und Win32-FFI via
 GetCurrentProcessId() auf Win64**. Zusaetzlich wird die bestehende C-Referenz
@@ -84,7 +84,7 @@ aber **kein** natives MSVC-Programm auf Windows ausgefuehrt.
 Der Moo-Compiler wurde noch nicht **auf** Windows gebaut; weitere
 portable Ziel-ABI-Gates folgen.
 
-Nur `D:\\MooTest` ist Testziel; keine Systemdateien oder USB-Bootmedien.
+Nur das konfigurierte Testzielverzeichnis wird verwendet; keine Systemdateien oder USB-Bootmedien.
 
 ## Windows-EXE direkt aus dem Moo-Compiler (P2-T75)
 

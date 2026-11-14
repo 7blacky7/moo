@@ -1,18 +1,17 @@
 
 # KIP-G4c-PREFLIGHT — Ownership-/Kohärenz-Vertrag für Production-Wiring
 
-Owner: **kip-kern** · Task `9d808cf8-53c0-4a77-9c35-d5d3410114ec` (in_progress)
-Stand HEAD bei Erstellung: `f6b20d9` (nach kip-gpu Phase 1, G4c-Lücke dokumentiert)
+Stand HEAD bei Erstellung: `f6b20d9` (nach Phase 1, G4c-Lücke dokumentiert)
 Nur Analyse — keine Änderungen an moo_nn.c / moo_autograd.c / moo_tensor_ops.c / moo_runtime.h.
 
-Referenzen: `docs/kip/G4c-production-wiring-plan.md` (kip-gpu, kanonisch), `docs/kip/G1-device-modell-design.md`,
+Referenzen: `docs/kip/G4c-production-wiring-plan.md` (kanonisch), `docs/kip/G1-device-modell-design.md`,
 `docs/kip/G0-gpu-vertrag-inventur.md`, `moo_runtime.h:126-171` (MooTensor-Struct, KIP-STRUCT f2cbebc7).
 
 ---
 
 ## 1. Ergebnis vorweg
 
-**Kein MooTensor-Struct-Redesign nötig.** Bestätige kip-gpus Befund (Msg 12811): `dtype/valid/grad_valid/
+**Kein MooTensor-Struct-Redesign nötig.** `dtype/valid/grad_valid/
 device/store/gpu_buf/gpu_grad` existieren bereits (KIP-STRUCT f2cbebc7), sind vollständig für das G4c-Ziel
 ausgelegt. Die Struct-Frage aus dem ursprünglichen Auftrag ist damit **erledigt, ohne Codeänderung**.
 
@@ -21,7 +20,7 @@ die **Lese-Trichter in `moo_tensor_ops.c`/`moo_tensor.c`** (`expect_t`/`expect_t
 `moo_tensor_f32_sichern` vor jedem `->data`-Zugriff). **`moo_autograd.c` (alle `bw_*`-Funktionen) und
 `moo_nn_opt_schritt` lesen/schreiben `->data` und `->grad` komplett UNGESICHERT direkt** — kein
 Sichern-Aufruf, keine valid-Prüfung. Das ist im reinen CPU-Modell folgenlos (data ist immer autoritativ),
-wird aber zur **Kern-Gefahrenzone**, sobald kip-gpu Resident-Buffer in den Trainingsschritt einwebt: ein
+wird aber zur **Kern-Gefahrenzone**, sobald Resident-Buffer in den Trainingsschritt eingewebt werden: ein
 Op, der nur noch `MOO_V_DEV` setzt (Ergebnis bleibt auf der GPU), macht jeden direkten `->data[i]`-Zugriff
 in Backward/Optimizer zu einem **Stale-Read auf veraltetem/nie geschriebenem Host-Speicher** — silent
 wrong numbers, kein Crash, kein ASan-Treffer.
@@ -52,7 +51,7 @@ Zwei Klassen von Zugriffen existieren nebeneinander:
 | Optimizer (`opt_schritt`) | `moo_nn.c:2294` | ❌ direkter `p->data`/`p->grad`-Zugriff, KEIN Trichter |
 | Grad-Akkumulation (Fan-out `zg[i]+=`) | `moo_autograd.c` (`grad_sicherstellen`, `accum_bcast`) | ❌ kein Trichter, `grad` wird als IMMER-f32-autoritativ angenommen |
 
-**Konkretes Fehlerbild, wenn kip-gpu ungeschützt verdrahtet:** Sobald `bw_matmul` o.ä. GPU-resident läuft
+**Konkretes Fehlerbild bei ungeschützter Verdrahtung:** Sobald `bw_matmul` o.ä. GPU-resident läuft
 und nur `gpu_grad` beschreibt (`grad_valid = MOO_V_DEV`, `t->grad` bleibt NULL/stale), aber `moo_nn_opt_schritt`
 weiterhin `p->grad[j]` direkt liest (kein Sichern-Aufruf) → Optimizer sieht NULL-Pointer-Crash oder (falls
 `grad` aus einer früheren Iteration noch belegt ist) **stille, falsche alte Gradienten**. Gleiches gilt für
@@ -75,7 +74,7 @@ jede `bw_*`-Funktion, die ein Input `->data` liest, während der Forward-Wert nu
   natürliche Punkt, an dem Zwischen-Aktivierungen (nicht mehr referenziert) ihren `gpu_buf` an den Pool
   zurückgeben. Für G4c-Residenz heißt das: Zwischen-Buffer werden JEDE Iteration neu belegt (kein
   Cross-Iteration-Pooling der Aktivierungen) — Params/Grad-Akku-Tensoren dagegen bleiben (kein Tape-Release)
-  über Iterationen resident, wenn kip-gpu ihren `gpu_buf` nicht in `opt_schritt` freigibt.
+  über Iterationen resident, wenn ihr `gpu_buf` nicht in `opt_schritt` freigegeben wird.
 
 ## 5. Grad-Validität — Spezialfall Fan-out/Optimizer (der eigentliche Risikoschwerpunkt)
 
@@ -98,9 +97,9 @@ im AN-Modus (opportunistisch) muss ein Fallback für eine spezifische Op-Instanz
 Akkumulations-Beitrag desselben Ziel-Tensors materialisieren (`host_sichern` bzw. `nach_gpu`), nicht erst
 am Ende des ganzen Backward-Durchlaufs.
 
-## 6. Minimaler sicherer Wiring-Plan (Ergänzung zu kip-gpus §2.5-Reihenfolge)
+## 6. Minimaler sicherer Wiring-Plan (Ergänzung zur §2.5-Reihenfolge)
 
-Die von kip-gpu vorgeschlagene Reihenfolge (matmul → Optimizer → norm/softmax/ew/gather → Backward →
+Die in §2.5 vorgeschlagene Reihenfolge (matmul → Optimizer → norm/softmax/ew/gather → Backward →
 STRIKT) ist grundsätzlich richtig, hat aber eine **Ordering-Lücke**: Optimizer-Routing (Stufe 2) kommt
 VOR Backward-Residenz (Stufe 4). Das bedeutet, `opt_*_res` würde in den Zwischenstufen einen resident
 erwarteten Grad-Buffer vorfinden, der noch komplett CPU-geschrieben ist (§2.4 verlangt "g muss initial
@@ -113,23 +112,23 @@ vergessen wird). Empfehlung, den Plan um einen Trichter-Schritt VOR jeder Stufe 
    `moo_tensor_ops.c`); in `moo_nn_opt_schritt` vor der Update-Schleife für `p`/`g` denselben Trichter.
    Diese Änderung ist im reinen F32/CPU-Skelett ein **No-op** (data ist immer `MOO_V_DATA`) — sie
    verändert also keinen Basisgate-Wert, schließt aber die Lücke aus §3 bevor Resident-Ops überhaupt
-   verdrahtet werden. **Das ist der Schlüssel-Schritt, den kip-gpu vor Stufe 1 (matmul-Routing) braucht,
+   verdrahtet werden. **Das ist der Schlüssel-Schritt vor Stufe 1 (matmul-Routing),
    sonst wirkt jede weitere Stufe auf einem ungesicherten Fundament.**
 2. **`grad_valid` aktiv einführen** parallel zum Trichter: jede Stelle, die `t->grad` NEU beschreibt
    (Backward-Erstschreiber je Tensor, nicht die Fan-out-`+=`-Folgeschreiber) setzt `grad_valid = MOO_V_DATA`
    analog zu `data`. GPU-Backward setzt stattdessen `grad_valid = MOO_V_DEV`. Optimizer-Trichter aus
    Schritt 1 sichert dann konsequent über `grad_valid`, nicht implizit über "grad ist immer da".
-3. **matmul-Routing** (wie kip-gpu Stufe 1) — jetzt sicher, weil Downstream-Konsumenten (Backward,
+3. **matmul-Routing** (Stufe 1) — jetzt sicher, weil Downstream-Konsumenten (Backward,
    Optimizer) über den Trichter geschützt sind.
-4. **Optimizer-Routing** (kip-gpu Stufe 2) — NUR für Parameter, deren `grad_valid & MOO_V_DEV` bereits
+4. **Optimizer-Routing** (Stufe 2) — NUR für Parameter, deren `grad_valid & MOO_V_DEV` bereits
    gesetzt ist (aus Stufe 5/GPU-Backward); für alle anderen bleibt der CPU-Pfad automatisch aktiv (der
    Trichter aus Schritt 1 sichert das transparent, kein Extra-Fall nötig).
-5. **norm/softmax/ew/gather, dann Backward resident** wie kip-gpus Stufen 3-4.
-6. **STRIKT-Enforcement + Telemetrie** wie kip-gpus Stufe 5 — jetzt zusätzlich mit der Fan-out-Regel aus
+5. **norm/softmax/ew/gather, dann Backward resident** wie Stufen 3-4.
+6. **STRIKT-Enforcement + Telemetrie** wie Stufe 5 — jetzt zusätzlich mit der Fan-out-Regel aus
    §5 als Gate-Kriterium (Negativ-Kontrolle: absichtlich gemischter CPU/GPU-Fan-out auf denselben
    Ziel-Tensor MUSS unter STRIKT hart fehlschlagen, nicht still einen Beitrag verlieren).
 
-## 7. Konkrete Invarianten (für kip-gpus Gate-Harness, §4 im Wiring-Plan)
+## 7. Konkrete Invarianten (für das Gate-Harness, §4 im Wiring-Plan)
 
 - **I1 (Datenlese-Trichter):** Jeder Lesezugriff auf `t->data` außerhalb `moo_tensor_ops.c`s bestehenden
   Trichtern (also insbesondere `moo_autograd.c`, `moo_nn.c` Optimizer) MUSS `moo_tensor_f32_sichern(t)`
@@ -151,9 +150,9 @@ vergessen wird). Empfehlung, den Plan um einen Trichter-Schritt VOR jeder Stufe 
 - **I7 (E2/E2b-Kompatibilität, von kip-gpu bereits gefordert, hier bestätigt):** Adam `m`/`v` und der
   Dropout-`zaehler` müssen nach jedem Schritt CPU-lesbar/downloadbar bleiben — mit I1/I2-Trichtern
   automatisch erfüllt, solange `moo_nn_ckpt_speichern` (E2b) ebenfalls über `moo_tensor_host_sichern`
-  läuft (bereits der Fall laut kip-daten E2b-Bericht, Msg 12785).
+  läuft (bereits der Fall seit E2b).
 
-## 8. No-Go-Liste (für kip-gpu, Phase 2)
+## 8. No-Go-Liste (Phase 2)
 
 - **KEIN** direkter `->data`/`->grad`-Zugriff in neuem Resident-Code ohne vorherigen Sichern-Aufruf
   (I1/I2) — auch nicht "nur lesend, ist doch eh meist f32".
@@ -164,18 +163,17 @@ vergessen wird). Empfehlung, den Plan um einen Trichter-Schritt VOR jeder Stufe 
 - **KEIN** Aliasing/Sharing eines `gpu_buf`/`gpu_grad`-Handles zwischen zwei MooTensor-Instanzen (G1 §2,
   weiterhin gültig — reshape/transpose auf GPU-Tensor bleibt neuer Buffer oder CPU-Roundtrip).
 - **KEIN** MooTensor-Struct-Edit — Felder reichen (bestätigt §1). Falls im Verlauf doch ein neues Feld
-  nötig scheint, zuerst mit kip-kern klären (Struct-Hoheit).
+  nötig scheint, zuerst im `MooTensor`-Struct-Vertrag klären.
 - **KEIN** stiller Fallback unter `MOO_KI_GPU_STRIKT=1` — gilt jetzt auch explizit für den
   Fan-out-Seitenwechsel aus I3, nicht nur für "Op nicht routbar".
 - **KEIN** Entfernen/Umgehen des bestehenden Mutations-Invalidierungs-Musters
   (`t->valid = MOO_V_DATA` nach jedem Host-Write, z.B. `moo_tensor_setzen`, Optimizer) — GPU-Pfade
   ergänzen `MOO_V_DEV`/`grad_valid`, ersetzen aber nie diese bestehende Zeile.
 
-## 9. Offene Fragen an kip-gpu / kip-ops
+## 9. Offene Fragen
 
-- Wer implementiert Schritt 6.1 (Trichter in `moo_autograd.c`/`moo_nn.c`)? Das sind Shared-File-Edits in
-  genau den Dateien, die B4b heute hält — Timing mit kip-ops FREI-Ping abstimmen. Empfehlung: Trichter
+- Wer implementiert Schritt 6.1 (Trichter in `moo_autograd.c`/`moo_nn.c`)? Empfehlung: Trichter
   VOR dem ersten `_res`-Routing-Commit einbauen (kleine, isolierte No-op-Änderung, eigenes Mini-Gate:
   Basiswerte bit-identisch, da No-op auf F32/CPU).
 - `grad_valid`-Einführung (I2/I6) berührt denselben Dateikreis — sinnvoll im selben Commit wie der
-  Trichter, um nicht zweimal durch Konvention-v1-BELEGT zu müssen.
+  Trichter.

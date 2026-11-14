@@ -42,4 +42,4 @@ moeglich).
 `moo-runtime-corrupted-double-linked-list-2026-05-06`: Non-deterministisch
 Heap-Korruption bei copy_in (~50% Crash-Rate, 5-row gleich wie 1000-row).
 Bench-Werte aus erfolgreichen Runs sind valide (alle ~4-6ms). T1 Prepared
-blockiert bis Bug eingegrenzt (ASan-Build im Gange durch koordinator).
+blockiert bis Bug eingegrenzt (ASan-Build ausstehend).

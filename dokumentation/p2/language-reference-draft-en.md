@@ -1,6 +1,6 @@
 # Native Moo: language reference (draft)
 
-**Status:** 31 October 2026. This reference describes the approved P2 language contract, not functionality already available. All snippets are illustrative drafts and have not been compiled. The authoritative decision package is Synapse thought `f67bfcbd-8090-479e-9546-f2713f00f59e`. Constructor and helper syntax will be finalized during implementation.
+**Status:** 31 October 2026. This reference describes the approved P2 language contract, not functionality already available. All snippets are illustrative drafts and have not been compiled. Constructor and helper syntax will be finalized during implementation.
 
 ## Scope and opt-in
 

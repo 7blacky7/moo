@@ -79,7 +79,7 @@ zu vorsichtigen Einschätzung im G4c-PREFLIGHT-Doc §6 Punkt 2 — dort hatte ic
 
 Die Tape-Traversierung ist **strikt sequenziell** (`moo_tensor_rueckwaerts` iteriert das Tape rückwärts,
 ein `bw()`-Aufruf nach dem anderen, kein Multithreading, `in_backward`-Flag verhindert Re-Entranz — bestätigt
-durch kip-ops' B2-Analyse, Msg 12867). Solange **jeder** `bw_*`, der in `t`s Grad schreibt, VOR seinem
+durch die B2-Analyse). Solange **jeder** `bw_*`, der in `t`s Grad schreibt, VOR seinem
 eigenen Akkumulationsschritt den zu SEINER Zielseite passenden Trichter aufruft
 (`grad_materialisieren`/`grad_sicherstellen` für CPU-Beitrag, `grad_materialisieren_gpu` für GPU-Beitrag),
 gilt:
@@ -160,11 +160,11 @@ GPU-Trichter, nie direkter Buffer-Zugriff) eingehalten wird.**
    (Ergebnis bleibt resident im GPU-Buffer) → `grad_materialisieren_gpu(ziel)` →
    `moo_ki_gpu_grad_accum_res(ziel->gpu_grad, delta_buf, n)`. **`bw_matmul` und alle anderen bw_* bleiben
    unverändert** beim heutigen Download-Muster — das ist explizit erlaubt (I8-I10 machen das sicher).
-3. **Gate-Test (kip-ops' Vorschlag aus Msg 12867, hier bestätigt als Pflicht-Kriterium):** Tensor `x` als
+3. **Gate-Test (Pflicht-Kriterium):** Tensor `x` als
    Fan-out-Ziel in ZWEI Ops unterschiedlicher Residenz-Klasse (z.B. `y = matmul(x,W) + mul(x,c)`, x fließt
    in matmul UND mul), Grad(x) unter STRIKT vs. CPU-Referenz vergleichen — deckt GENAU den Seitenwechsel-Fall
    ab, den I8/I9 lösen sollen. Erweiterung von `test_autograd_asan.c` Test 3 oder neuer
-   `test_autograd_gpu_fanout.c` (kip-ops-Revier).
+   `test_autograd_gpu_fanout.c`.
 4. **Erst NACH grünem Gate für Schritt 2+3:** weitere Op-Typen (bw_matmul, bw_gather, bw_div-db) optional
    auf echte Residenz umstellen — jede Umstellung einzeln durch dasselbe Fan-out-Cross-Residenz-Gate prüfen.
 5. **Optimizer-Anpassung (I11):** `moo_nn_opt_schritt` um `p->grad_valid = MOO_V_DATA` nach dem
@@ -189,8 +189,7 @@ GPU-Trichter, nie direkter Buffer-Zugriff) eingehalten wird.**
 
 ---
 
-## 7a. Addendum I14 (kip-gpu, nach Implementierung Schritt 1-3, Commit af5dbf3,
-Channel-Bestaetigung kip-kern Msg 12920) — Buffer-Pool liefert KEINE Zero-Garantie
+## 7a. Addendum I14 (nach Implementierung Schritt 1-3, Commit af5dbf3) — Buffer-Pool liefert KEINE Zero-Garantie
 
 Beim Bau von `grad_materialisieren_gpu` wurde verifiziert (`moo_ki_gpu.c`, `buf_holen`/
 `buf_anlegen`): der Vulkan-Buffer-Pool zerot wiederverwendete UND frisch angelegte
@@ -212,9 +211,9 @@ haette auf UNDEFINIERTEM VRAM-Inhalt akkumuliert (stiller Bug, kein Crash).
 - Verifiziert durch `test_g4e_fanout_gpu.c` (Fan-out-Cross-Residenz-Gate, echte
   4070-Ti-Hardware, 9/9 Checks gruen, exakter Gradientwert gegen Hand-Referenz).
 
-## 7. Offene Frage an kip-ops (B2-Vertrag)
+## 7. Offene Frage (B2-Vertrag)
 
-Test-Erweiterung aus §5 Punkt 3 (Fan-out-Cross-Residenz-Gradcheck) fällt laut kip-ops' eigenem Angebot
-(Msg 12867) in dessen Revier (`test_autograd_asan.c`/neuer `test_autograd_gpu_fanout.c`). Empfehlung:
-dieser Test entsteht VOR oder GLEICHZEITIG mit kip-gpus Schritt 2 (erste echte Residenz-Umstellung), nicht
+Test-Erweiterung aus §5 Punkt 3 (Fan-out-Cross-Residenz-Gradcheck) gehört in
+`test_autograd_asan.c` bzw. einen neuen `test_autograd_gpu_fanout.c`. Empfehlung:
+dieser Test entsteht VOR oder GLEICHZEITIG mit Schritt 2 (erste echte Residenz-Umstellung), nicht
 danach — er ist das Korrektheits-Gate für den ganzen Ansatz, nicht nur eine nachträgliche Bestätigung.
