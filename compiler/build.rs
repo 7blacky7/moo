@@ -175,6 +175,12 @@ fn main() {
         // die Defines verhindern Warnrauschen ohne die Semantik zu aendern.
         build.define("_CRT_SECURE_NO_WARNINGS", None);
         build.define("_CRT_NONSTDC_NO_DEPRECATE", None);
+        // cl.exe braucht /std:c11 (u.a. wegen _Static_assert in moo_font_aa.h);
+        // clang lehnt /std:c11 ab und nutzt C11/GNU11 bereits als Default.
+        let cc_tool = build.get_compiler();
+        if cc_tool.is_like_msvc() && !cc_tool.is_like_clang_cl() {
+            build.flag("/std:c11");
+        }
         build
             .file("runtime/win_regex/regcomp.c")
             .file("runtime/win_regex/regexec.c")

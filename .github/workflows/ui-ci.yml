@@ -360,7 +360,8 @@ jobs:
           Copy-Item ".\compiler\target\release\moo-compiler.exe" "$sdk\moo-compiler.exe"
           Copy-Item ".\stdlib" "$sdk\stdlib" -Recurse
 
-          $runtime = Get-ChildItem ".\compiler\target\release\build\moo-compiler-*\out\moo_runtime.lib" |
+          $runtime = Get-ChildItem ".\compiler\target\release\build" -Recurse -Filter "moo_runtime.lib" -File |
+            Where-Object { $_.FullName -match '[/\\]moo-compiler[-/\\]' } |
             Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (!$runtime) { throw "moo_runtime.lib nicht gefunden" }
           Copy-Item $runtime.FullName "$sdk\lib\moo_runtime.lib"
