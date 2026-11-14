@@ -27,7 +27,7 @@ fange fehler:
     setze kaputt auf wahr
 wenn nicht kaputt:
     wirf "Beschädigtes Zeichenartefakt akzeptiert"
-setze probe auf "Straße Ä 🐄\n"
+setze probe auf "Straße Ä 🌱\n"
 wenn zeichen_fixed_dekodiere(c, zeichen_fixed_kodiere(c, probe)) != probe:
     wirf "Zeichen-Roundtrip"
 wenn silben_dekodiere(s, silben_kodiere(s, probe)) != probe:

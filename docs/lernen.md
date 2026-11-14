@@ -1,4 +1,4 @@
-# moo lernen 🐄
+# moo lernen
 
 **moo** ist eine universelle Programmiersprache, die jeder versteht.
 Du schreibst auf Deutsch oder Englisch — moo übersetzt in Python, JavaScript und mehr.

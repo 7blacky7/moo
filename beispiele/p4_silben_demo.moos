@@ -17,7 +17,7 @@ wenn datei_existiert(c_pfad) oder datei_existiert(s_pfad) oder datei_existiert(c
 # verwenden nur diesen kurzen Demo-Korpus, niemals einen Testsatz.
 setze muster auf datei_lesen("compiler/runtime/data/silben/dehyphn-x-2024-02-28.pat")
 setze korpus auf "Die Kinder lesen Märchen. Zucker und Bücher."
-setze probe auf "Bücher und unbekanntes 🐄."
+setze probe auf "Bücher und unbekanntes 🌱."
 setze ct auf zeichen_fixed_trainiere(korpus, 320)
 setze st auf silben_trainiere(korpus, 320, muster)
 
