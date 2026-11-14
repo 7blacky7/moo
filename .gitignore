@@ -172,3 +172,7 @@ docs/research/ki-papers/text/
 
 # Agenten-/Synapse-Protokolle (nur lokal, nicht auf GitHub)
 docs/agenten/
+# Roadmap, Paper-Recherche und Planungsnotizen (nur lokal, nicht auf GitHub)
+docs/roadmap/
+docs/research/
+docs/superpowers/

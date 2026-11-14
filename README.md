@@ -69,7 +69,7 @@ stdlib/     moo-Stdlib-Module (mathe, liste, text, ...)
 beispiele/  Lauffähige .moos-Programme (130+ Samples; Zonen: domain/{web,db,game,system})
 skripte/    KIP-/GPU-Gate-Skripte (Coverage, LM-Trainings-Gates, QA-Verträge)
 scratch/    Ad-hoc-Skripte, nicht CI-relevant (siehe scratch/README.md)
-docs/       Benutzer-Doku (mkdocs-Material) + docs/kip/ (KI-Design-Docs) + docs/roadmap/
+docs/       Benutzer-Doku (mkdocs-Material) + docs/kip/ (KI-Design-Docs)
 editors/    VSCode-Extension + LSP-Client
 spec/       Spezifikation (Single Source of Truth, u.a. tokens.yaml)
 scripts/    Hilfsskripte
