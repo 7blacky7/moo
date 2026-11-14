@@ -1,0 +1,26 @@
+# P2-T77 Batch 2: fangbarer Systemkoerper in einer Funktion mit aufraeumen
+# (vorher Compilefehler 'in Funktionen mit aufraeumen nicht erlaubt'). Die
+# Aufraeumaktion laeuft genau einmal, auch bei Koerperfehler (Division durch 0)
+# und bei Argumentfehler (Text statt i32); der Fehler landet beim Aufrufer.
+@nativ
+funktion s_div(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b
+funktion marke(text):
+    zeige text
+funktion probe(a, b):
+    aufräumen: marke("aufgeraeumt")
+    unsicher:
+        gib_zurück s_div(a, b)
+versuche:
+    zeige probe(8, 2)
+    zeige probe(8, 0)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen koerper"
+versuche:
+    zeige probe(8, "x")
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige fehler
+zeige "weiter"

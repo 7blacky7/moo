@@ -157,7 +157,7 @@ fn main() {
                     let dir = file.parent().unwrap_or(std::path::Path::new("."));
                     let mut visited = std::collections::HashSet::new();
                     visited.insert(file.canonicalize().unwrap_or_else(|_| file.clone()));
-                    resolve_modules(&mut program, dir, &mut visited)?;
+                    resolve_modules(&mut program, dir, &mut visited, &[])?;
                 }
                 Ok(program)
             })();
@@ -228,7 +228,7 @@ fn layout_diagnostic(file: &PathBuf, target: &str) -> Result<String, String> {
     let dir = file.parent().unwrap_or(std::path::Path::new("."));
     let mut visited = std::collections::HashSet::new();
     visited.insert(file.canonicalize().unwrap_or_else(|_| file.clone()));
-    resolve_modules(&mut program, dir, &mut visited)?;
+    resolve_modules(&mut program, dir, &mut visited, &[])?;
     let context = inkwell::context::Context::create();
     let name = file.file_stem().and_then(|s| s.to_str()).unwrap_or("layout");
     let mut compiler = codegen::CodeGen::new(&context, name, target)?;
@@ -274,11 +274,13 @@ fn is_path_import(name: &str) -> bool {
 }
 
 /// Orte, an denen find_module sucht — fuer die Fehlermeldung bei fehlendem Modul.
-fn module_search_locations(name: &str, dir: &std::path::Path) -> Vec<String> {
+fn module_search_locations(name: &str, dir: &std::path::Path, lib_paths: &[PathBuf]) -> Vec<String> {
     if is_path_import(name) {
         return vec![dir.join(name).display().to_string()];
     }
-    let mut orte = vec![dir.display().to_string(), dir.join("stdlib").display().to_string()];
+    let mut orte = vec![dir.display().to_string()];
+    orte.extend(lib_paths.iter().map(|p| p.display().to_string()));
+    orte.push(dir.join("stdlib").display().to_string());
     if let Some(exe_dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
         orte.push(exe_dir.join("stdlib").display().to_string());
     }
@@ -287,7 +289,7 @@ fn module_search_locations(name: &str, dir: &std::path::Path) -> Vec<String> {
     orte
 }
 
-fn find_module(name: &str, dir: &std::path::Path) -> Option<PathBuf> {
+fn find_module(name: &str, dir: &std::path::Path, lib_paths: &[PathBuf]) -> Option<PathBuf> {
     if is_path_import(name) {
         let path = dir.join(name);
         if path.extension().is_some_and(|e| e == "moos" || e == "moo") {
@@ -298,6 +300,10 @@ fn find_module(name: &str, dir: &std::path::Path) -> Option<PathBuf> {
     }
     // Relativ zum aktuellen Verzeichnis
     if let Some(p) = module_file(dir, name) { return Some(p); }
+    // P2-T81: --lib-pfad (erzeugte Moo-Schnittstellen liegen neben Importbibliothek/DLL)
+    for pfad in lib_paths {
+        if let Some(p) = module_file(pfad, name) { return Some(p); }
+    }
     // In stdlib/ relativ zum aktuellen Verzeichnis
     if let Some(p) = module_file(&dir.join("stdlib"), name) { return Some(p); }
     // In stdlib/ relativ zum Compiler-Binary (fuer installierte stdlib)
@@ -505,6 +511,7 @@ fn resolve_modules(
     program: &mut ast::Program,
     file_dir: &std::path::Path,
     visited: &mut std::collections::HashSet<PathBuf>,
+    lib_paths: &[PathBuf],
 ) -> Result<(), String> {
     let mut imported_stmts: Vec<ast::Stmt> = Vec::new();
     let mut remaining_stmts: Vec<ast::Stmt> = Vec::new();
@@ -512,7 +519,7 @@ fn resolve_modules(
     for stmt in program.statements.drain(..) {
         match &stmt {
             ast::Stmt::Import { module, names, .. } => {
-                if let Some(mod_path) = find_module(module, file_dir) {
+                if let Some(mod_path) = find_module(module, file_dir, lib_paths) {
                     let canonical = mod_path.canonicalize().unwrap_or(mod_path.clone());
                     if visited.contains(&canonical) {
                         continue; // Zirkulaeren Import vermeiden
@@ -524,7 +531,7 @@ fn resolve_modules(
 
                     // Rekursiv Imports im Modul aufloesen
                     let mod_dir = mod_path.parent().unwrap_or(std::path::Path::new("."));
-                    resolve_modules(&mut mod_program, mod_dir, visited)?;
+                    resolve_modules(&mut mod_program, mod_dir, visited, lib_paths)?;
 
                     if names.is_empty() {
                         // "importiere mathe" → ALLE Statements direkt einfuegen (kein Prefix!)
@@ -558,7 +565,7 @@ fn resolve_modules(
                     // Frueher still verworfen -> spaeter nur 'Funktion nicht gefunden'.
                     return Err(format!(
                         "Modul '{module}' nicht gefunden (gesucht in: {})",
-                        module_search_locations(module, file_dir).join(", ")
+                        module_search_locations(module, file_dir, lib_paths).join(", ")
                     ));
                 }
             }
@@ -967,6 +974,276 @@ fn build_kernel(
     Ok(())
 }
 
+/// P2-T75: Ziel-Triple der MinGW-Umgebung (x86_64-pc-windows-gnu, x86_64-w64-mingw32).
+fn is_windows_gnu_triple(triple: &str) -> bool {
+    triple.starts_with("x86_64-") && (triple.ends_with("-windows-gnu") || triple.contains("mingw32"))
+}
+
+/// P2-T75: MinGW-Build der Moo-Runtime (skripte/p2/windows_minipc/runtime_mingw.sh).
+/// Override > lib/x86_64-pc-windows-gnu/libmoo_runtime.a neben dem Compiler.
+fn windows_gnu_runtime_lib() -> Result<PathBuf, String> {
+    if let Some(pfad) = std::env::var_os("MOO_RUNTIME_LIB_WINDOWS_GNU") {
+        let pfad = PathBuf::from(pfad);
+        return if pfad.is_file() {
+            Ok(pfad)
+        } else {
+            Err(format!("MOO_RUNTIME_LIB_WINDOWS_GNU zeigt auf keine Datei: {}", pfad.display()))
+        };
+    }
+    let gebuendelt = std::env::current_exe().ok().and_then(|p| p.parent().map(|d|
+        d.join("lib").join("x86_64-pc-windows-gnu").join("libmoo_runtime.a")));
+    if let Some(pfad) = gebuendelt.filter(|p| p.is_file()) {
+        return Ok(pfad);
+    }
+    // P2-T76: beim Compiler-Build erzeugtes Archiv (build.rs, OUT_DIR); sonst
+    // nennt die Diagnose den Grund, warum build.rs es nicht gebaut hat.
+    let gebaut = env!("MOO_WINDOWS_GNU_RUNTIME");
+    if !gebaut.is_empty() && std::path::Path::new(gebaut).is_file() {
+        return Ok(PathBuf::from(gebaut));
+    }
+    let grund = env!("MOO_WINDOWS_GNU_RUNTIME_GRUND");
+    let grund = if grund.is_empty() { String::new() } else { format!(" (Compiler-Build: {grund})") };
+    Err(format!(
+        "Windows-Runtime (MinGW) nicht gefunden{grund}: MOO_RUNTIME_LIB_WINDOWS_GNU setzen, \
+         lib/x86_64-pc-windows-gnu/libmoo_runtime.a neben moo-compiler ablegen oder den \
+         Compiler mit x86_64-w64-mingw32-gcc im PATH neu bauen"
+    ))
+}
+
+/// P2-T75: argv fuer den MinGW-Link, ohne Shell. Reihenfolge: Objekt, Suchpfade,
+/// @bibliothek-Bibliotheken, Runtime, Windows-Systembibliotheken (wie build.rs fuer
+/// target_windows). -static: keine libwinpthread-1.dll auf dem Ziel; eine
+/// DLL-Importbibliothek muss daher libNAME.a heissen (der Import bleibt dynamisch).
+/// P2-T79: `dll` = (Moduldefinitionsdatei, Importbibliothek) -> `-shared`; die .def
+/// legt die Exporte fest (GNU ld exportiert dann nichts automatisch, auch keine Runtime).
+fn windows_gnu_link_args(
+    obj: &std::path::Path,
+    runtime: &std::path::Path,
+    exe: &std::path::Path,
+    libraries: &[String],
+    lib_paths: &[PathBuf],
+    dll: Option<(&std::path::Path, &std::path::Path)>,
+) -> Result<Vec<String>, String> {
+    let text = |p: &std::path::Path| p.to_str().map(str::to_owned)
+        .ok_or_else(|| format!("Pfad ist kein gueltiges UTF-8: {}", p.display()));
+    let mut args = vec![text(obj)?];
+    if let Some((def, implib)) = dll {
+        let implib = text(implib)?;
+        if implib.contains(',') {
+            return Err(format!("Importbibliothek-Pfad darf kein Komma enthalten (-Wl-Liste): {implib}"));
+        }
+        args.push("-shared".to_string());
+        args.push(text(def)?);
+        args.push(format!("-Wl,--out-implib,{implib}"));
+    }
+    for pfad in lib_paths {
+        args.push("-L".to_string());
+        args.push(text(pfad)?);
+    }
+    for name in libraries {
+        args.push(format!("-l{name}"));
+    }
+    args.push(text(runtime)?);
+    for arg in ["-static", "-static-libgcc", "-lws2_32", "-lbcrypt", "-lcrypt32", "-lsecur32", "-o"] {
+        args.push(arg.to_string());
+    }
+    args.push(text(exe)?);
+    Ok(args)
+}
+
+/// P2-T79: C-Exporte einer Moo-DLL. Dieselbe Auswahl wie codegen.rs (@nativ +
+/// @einstieg auf oberster Ebene, Export unter dem Moo-Namen), Reihenfolge der Quelle.
+fn einstieg_exporte(stmts: &[ast::Stmt]) -> Vec<String> {
+    stmts.iter().filter_map(|s| match s {
+        ast::Stmt::FunctionDef { name, decorators, .. } if ist_einstieg(decorators) => Some(name.clone()),
+        _ => None,
+    }).collect()
+}
+
+fn ist_einstieg(decorators: &[ast::Decorator]) -> bool {
+    decorators.iter().any(|d| d.name == "nativ" || d.name == "native")
+        && decorators.iter().any(|d| d.name == "einstieg" || d.name == "entry")
+}
+
+/// P2-T81: erste Zeile jeder erzeugten Schnittstelle; nur solche Dateien werden ersetzt.
+const SCHNITTSTELLE_MARKE: &str = "# moo-schnittstelle (erzeugt von moo compile -o *.dll, P2-T81)";
+
+/// P2-T81: Typ als extern-"C"-Quelltext. Dieselbe Freigabe wie ffi_types.rs value_type/
+/// pointee_supported (Skalare, ptr/zeiger auf void/Skalar/Pointer; void nur als Ziel).
+fn schnittstellen_typ(ty: &ast::TypeRef, als_ziel: bool) -> Result<String, String> {
+    const SKALARE: [&str; 10] = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"];
+    match &ty.kind {
+        ast::TypeKind::Name(n) if SKALARE.contains(&n.as_str()) || (als_ziel && n == "void") => Ok(n.clone()),
+        ast::TypeKind::Generic { name, args } if (name == "ptr" || name == "zeiger") && args.len() == 1 =>
+            Ok(format!("{name}[{}]", schnittstellen_typ(&args[0], true)?)),
+        _ => Err(format!("Typ in Zeile {} ist fuer extern \"C\" nicht freigegeben", ty.line)),
+    }
+}
+
+/// P2-T81: Moo-Schnittstelle einer Moo-DLL: je @nativ @einstieg eine extern-"C"-
+/// Deklaration mit @bibliothek("<NAME>") (Importbibliothek lib<NAME>.a, P2-T79).
+fn dll_schnittstelle(bibliothek: &str, stmts: &[ast::Stmt]) -> Result<String, String> {
+    let mut text = format!("{SCHNITTSTELLE_MARKE}\n# Nicht von Hand aendern: jeder DLL-Build schreibt sie neu.\n");
+    for stmt in stmts {
+        let ast::Stmt::FunctionDef { name, params, param_types, return_type, decorators, .. } = stmt else { continue };
+        if !ist_einstieg(decorators) { continue; }
+        if let Some(d) = decorators.iter().find(|d|
+            !matches!(d.name.as_str(), "nativ" | "native" | "einstieg" | "entry" | "benutzt" | "used")) {
+            return Err(format!("'{name}': @{} wird in der Schnittstelle nicht abgebildet", d.name));
+        }
+        let mut signatur = Vec::new();
+        for (param, ty) in params.iter().zip(param_types) {
+            let ty = ty.as_ref().ok_or_else(|| format!("'{name}': Parameter '{param}' ohne Typ"))?;
+            signatur.push(format!("{param}: {}", schnittstellen_typ(ty, false).map_err(|e| format!("'{name}': {e}"))?));
+        }
+        let ergebnis = match return_type {
+            Some(ty) => schnittstellen_typ(ty, true).map_err(|e| format!("'{name}': {e}"))?,
+            None => "void".to_string(),
+        };
+        text.push_str(&format!("@bibliothek(\"{bibliothek}\")\nextern \"C\" funktion {name}({}) -> {ergebnis}\n",
+            signatur.join(", ")));
+    }
+    Ok(text)
+}
+
+/// P2-T81: schreibt <NAME>_schnittstelle.moos neben die DLL (Import per --lib-pfad).
+/// Fremde Dateien ohne Marke werden nie ueberschrieben; ist eine Signatur nicht
+/// abbildbar, entfaellt eine alte erzeugte Schnittstelle (kein veralteter Stand).
+fn schnittstelle_aktualisieren(dll: &std::path::Path, stmts: &[ast::Stmt]) -> Result<(), String> {
+    let stem = dll.file_stem().and_then(|s| s.to_str())
+        .ok_or_else(|| format!("DLL-Name ist kein gueltiges UTF-8: {}", dll.display()))?;
+    let pfad = dll.with_file_name(format!("{stem}_schnittstelle.moos"));
+    if pfad.exists() && !std::fs::read_to_string(&pfad).is_ok_and(|t| t.starts_with(SCHNITTSTELLE_MARKE)) {
+        eprintln!("Warnung: {} ist keine erzeugte Moo-Schnittstelle und bleibt unveraendert", pfad.display());
+        return Ok(());
+    }
+    match dll_schnittstelle(stem, stmts) {
+        Ok(text) => {
+            std::fs::write(&pfad, text)
+                .map_err(|e| format!("Moo-Schnittstelle {} nicht schreibbar: {e}", pfad.display()))?;
+            println!("  Moo-Schnittstelle: {} (importiere \"{stem}_schnittstelle\" mit --lib-pfad)", pfad.display());
+        }
+        Err(grund) => {
+            let _ = std::fs::remove_file(&pfad);
+            eprintln!("Warnung: keine Moo-Schnittstelle fuer {} ({grund}); extern \"C\" selbst deklarieren", dll.display());
+        }
+    }
+    Ok(())
+}
+
+/// P2-T79: Moduldefinitionsdatei fuer GNU ld: genau diese Exporte.
+fn windows_def_inhalt(exporte: &[String]) -> String {
+    let mut text = String::from("EXPORTS\n");
+    for name in exporte {
+        text.push_str("    ");
+        text.push_str(name);
+        text.push('\n');
+    }
+    text
+}
+
+/// P2-T79: Windows-DLL per MinGW. Exportiert nur die @einstieg-Funktionen; die
+/// Importbibliothek heisst lib<NAME>.a neben der DLL (unter -static von ld als
+/// -l<NAME> gefunden, vgl. P2-T43). Liefert den Pfad der Importbibliothek.
+fn link_windows_gnu_dll(
+    obj: &std::path::Path,
+    dll: &std::path::Path,
+    exporte: &[String],
+    libraries: &[String],
+    lib_paths: &[PathBuf],
+) -> Result<PathBuf, String> {
+    if exporte.is_empty() {
+        return Err("Ausgabe .dll braucht mindestens eine exportierte Funktion (@nativ @einstieg)".to_string());
+    }
+    let stem = dll.file_stem().and_then(|s| s.to_str())
+        .ok_or_else(|| format!("DLL-Name ist kein gueltiges UTF-8: {}", dll.display()))?;
+    let implib = dll.with_file_name(format!("lib{stem}.a"));
+    let def = dll.with_extension("def");
+    std::fs::write(&def, windows_def_inhalt(exporte))
+        .map_err(|e| format!("Moduldefinitionsdatei {} nicht schreibbar: {e}", def.display()))?;
+    let ergebnis = link_windows_gnu(obj, dll, libraries, lib_paths, Some((def.as_path(), implib.as_path())));
+    let _ = std::fs::remove_file(&def);
+    ergebnis.map(|()| implib)
+}
+
+/// P2-T75: Windows-EXE (bzw. mit `dll` DLL, P2-T79) per MinGW linken
+/// (Linker: MOO_MINGW_CC oder x86_64-w64-mingw32-gcc).
+fn link_windows_gnu(
+    obj: &std::path::Path,
+    exe: &std::path::Path,
+    libraries: &[String],
+    lib_paths: &[PathBuf],
+    dll: Option<(&std::path::Path, &std::path::Path)>,
+) -> Result<(), String> {
+    let runtime = windows_gnu_runtime_lib()?;
+    let linker = std::env::var("MOO_MINGW_CC").unwrap_or_else(|_| "x86_64-w64-mingw32-gcc".to_string());
+    let args = windows_gnu_link_args(obj, &runtime, exe, libraries, lib_paths, dll)?;
+    let status = std::process::Command::new(&linker).args(&args).status().map_err(|e|
+        format!("Windows-Link: '{linker}' nicht startbar ({e}); MinGW installieren oder MOO_MINGW_CC setzen"))?;
+    if !status.success() {
+        return Err(format!("Windows-Link mit '{linker}' fehlgeschlagen ({status})"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod windows_gnu_cross_tests {
+    use super::*;
+
+    #[test]
+    fn gnu_triple_und_link_reihenfolge() {
+        assert!(is_windows_gnu_triple("x86_64-pc-windows-gnu"));
+        assert!(is_windows_gnu_triple("x86_64-w64-mingw32"));
+        assert!(!is_windows_gnu_triple("x86_64-pc-windows-msvc"));
+        assert!(!is_windows_gnu_triple("x86_64-unknown-linux-gnu"));
+        assert!(!is_windows_gnu_triple("aarch64-pc-windows-gnu"));
+        let args = windows_gnu_link_args(
+            std::path::Path::new("a.obj"), std::path::Path::new("rt.a"), std::path::Path::new("a.exe"),
+            &["p2_win_dll".to_string()], &[PathBuf::from("libs")], None,
+        ).unwrap();
+        assert_eq!(args, ["a.obj", "-L", "libs", "-lp2_win_dll", "rt.a", "-static", "-static-libgcc",
+            "-lws2_32", "-lbcrypt", "-lcrypt32", "-lsecur32", "-o", "a.exe"]);
+    }
+
+    #[test]
+    fn gnu_dll_link_args_und_def() {
+        let p = std::path::Path::new;
+        let args = windows_gnu_link_args(p("a.obj"), p("rt.a"), p("a.dll"), &[], &[],
+            Some((p("a.def"), p("liba.a")))).unwrap();
+        assert_eq!(args, ["a.obj", "-shared", "a.def", "-Wl,--out-implib,liba.a", "rt.a", "-static",
+            "-static-libgcc", "-lws2_32", "-lbcrypt", "-lcrypt32", "-lsecur32", "-o", "a.dll"]);
+        assert!(windows_gnu_link_args(p("a.obj"), p("rt.a"), p("a.dll"), &[], &[],
+            Some((p("a.def"), p("x,y/liba.a")))).is_err());
+        assert_eq!(windows_def_inhalt(&["f".to_string(), "g".to_string()]), "EXPORTS\n    f\n    g\n");
+        assert!(link_windows_gnu_dll(p("a.obj"), p("a.dll"), &[], &[], &[]).is_err());
+    }
+
+    fn programm(quelle: &str) -> ast::Program {
+        let tokens = lexer::Lexer::new().tokenize(quelle).expect("lexer");
+        parser::Parser::new(tokens).parse().expect("parser")
+    }
+
+    #[test]
+    fn dll_schnittstelle_ist_wieder_parsbar() {
+        let quelle = "@nativ\n@einstieg\nfunktion f(a: i32, b: ptr[u8]) -> u32:\n    gib_zurück 1\n\n\
+            @nativ\n@einstieg\nfunktion g():\n    gib_zurück\n\n\
+            @nativ\nfunktion intern(a: i32) -> i32:\n    gib_zurück a\n";
+        let text = dll_schnittstelle("bib", &programm(quelle).statements).unwrap();
+        assert!(text.starts_with(SCHNITTSTELLE_MARKE));
+        let externs: Vec<(String, usize, Vec<String>)> = programm(&text).statements.iter().filter_map(|s| match s {
+            ast::Stmt::ExternC { name, params, decorators, .. } => Some((name.clone(), params.len(),
+                decorators.iter().map(|d| d.name.clone()).collect())),
+            _ => None,
+        }).collect();
+        assert_eq!(externs, [("f".to_string(), 2, vec!["bibliothek".to_string()]),
+            ("g".to_string(), 0, vec!["bibliothek".to_string()])]);
+        assert!(text.contains("extern \"C\" funktion f(a: i32, b: ptr[u8]) -> u32\n"));
+        assert!(text.contains("extern \"C\" funktion g() -> void\n"));
+        let bool_quelle = "@nativ\n@einstieg\nfunktion h(a: bool) -> i32:\n    gib_zurück 1\n";
+        assert!(dll_schnittstelle("bib", &programm(bool_quelle).statements).is_err());
+    }
+}
+
 fn resolve_windows_linker_candidates(
     env_clang: Option<(PathBuf, bool)>,
     env_lld: Option<(PathBuf, bool)>,
@@ -1114,7 +1391,7 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     let mut visited = std::collections::HashSet::new();
     let canonical = file.canonicalize().unwrap_or(file.clone());
     visited.insert(canonical);
-    resolve_modules(&mut program, file_dir, &mut visited)?;
+    resolve_modules(&mut program, file_dir, &mut visited, lib_paths)?;
     let link_triple = codegen::CodeGen::resolve_triple(target.unwrap_or("native"));
     let libraries = ffi_link::libraries(&program.statements, &link_triple)?;
 
@@ -1131,6 +1408,8 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     let is_bare_target = target.map(|t| t.contains("-bare")).unwrap_or(false);
     compiler.set_bare_mode(no_stdlib || is_bare_target || erlaube_kern);
     compiler.compile_program(&program)?;
+    // P2-T43: MSVC-COFF traegt @bibliothek selbst (.drectve /DEFAULTLIB).
+    compiler.embed_link_libraries(&libraries, &link_triple)?;
 
     if emit_ir {
         let ir_path = output
@@ -1184,6 +1463,36 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
 
     // Cross-Compilation: Object-File fuer Ziel-Architektur (kein Linking)
     if target_str != "native" && !target_str.is_empty() {
+        // P2-T75/T79: Windows-GNU mit Ausgabe *.exe bzw. *.dll -> fertig gelinkt
+        // (MinGW auf dem Build-Host). Sonst bleibt es beim Objekt (Bestand).
+        let endung = output.and_then(|p| p.extension()).and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+        let wants_dll = endung.as_deref() == Some("dll");
+        let wants_exe = endung.as_deref() == Some("exe");
+        if let (true, Some(ziel)) = (wants_exe || wants_dll, output) {
+            if !is_windows_gnu_triple(&resolved) {
+                return Err(format!(
+                    "Ausgabe .exe/.dll wird aus einem Cross-Build nur fuer x86_64-pc-windows-gnu (MinGW) gelinkt, nicht fuer '{resolved}'. Ohne .exe/.dll entsteht ein Objekt."
+                ));
+            }
+            let exporte = if wants_dll { einstieg_exporte(&program.statements) } else { Vec::new() };
+            if wants_dll && exporte.is_empty() {
+                return Err("Ausgabe .dll braucht mindestens eine exportierte Funktion (@nativ @einstieg)".to_string());
+            }
+            let obj_path = ziel.with_extension("obj");
+            compiler.write_object(&obj_path, target_str)?;
+            if wants_dll {
+                let implib = link_windows_gnu_dll(&obj_path, ziel, &exporte, &libraries, lib_paths)?;
+                let _ = std::fs::remove_file(&obj_path);
+                println!("✓ Windows-DLL gelinkt ({}): {} (Importbibliothek {}, Exporte: {})",
+                    resolved, ziel.display(), implib.display(), exporte.join(", "));
+                schnittstelle_aktualisieren(ziel, &program.statements)?;
+            } else {
+                link_windows_gnu(&obj_path, ziel, &libraries, lib_paths, None)?;
+                let _ = std::fs::remove_file(&obj_path);
+                println!("✓ Windows-EXE gelinkt ({}): {}", resolved, ziel.display());
+            }
+            return Ok(());
+        }
         let obj_path = output
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| file.with_extension("o"));

@@ -1,0 +1,7 @@
+# P2-T66 negativ: privilegiertes Port-I/O ist hosted gesperrt.
+@nativ
+@einstieg
+funktion port_probe() -> u8:
+    unsicher:
+        setze x: u8 auf port_lese(u16(96))
+        gib_zurück x

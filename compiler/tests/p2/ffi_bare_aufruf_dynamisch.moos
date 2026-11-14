@@ -1,0 +1,10 @@
+# P2-T43 Negativfall: im Bare-Profil bleibt ein dynamisches Argument an einen
+# nativen Systemkoerper gesperrt (Adapter braucht die Moo-Runtime).
+@nativ
+funktion bare_i16(x: i16) -> i16:
+    unsicher:
+        gib_zurück x
+
+setze w auf 5
+unsicher:
+    zeige bare_i16(w)

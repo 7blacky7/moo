@@ -1,0 +1,8 @@
+# P2-T80 Negativfall (fail-closed): dynamisches Argument an eine @nativ-Funktion
+# aus einem Lambda bleibt ein Compilefehler; nur main und benannte Funktionen
+# tragen den Propagationsrahmen.
+@nativ
+funktion ident(wert: i32) -> i32:
+    gib_zurück wert
+setze f auf (x) => ident(x)
+zeige f(3)

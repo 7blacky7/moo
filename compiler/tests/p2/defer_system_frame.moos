@@ -1,0 +1,24 @@
+# P2-T77 Batch 2: Systemkoerper-Aufruf in einer Funktion, die selbst als
+# Aufraeumaktion dient (geliehener Defer-Handler). Aktionen laufen LIFO genau
+# einmal; der Fehler der Aktion wird als Erstfehler erhalten und beim Aufrufer
+# gefangen.
+@nativ
+funktion s_div(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b
+funktion rechne(a, b):
+    unsicher:
+        gib_zurück s_div(a, b)
+funktion marke():
+    zeige "marke"
+funktion probe(b):
+    aufräumen: rechne(8, b)
+    aufräumen: marke()
+    gib_zurück "wert"
+versuche:
+    zeige probe(2)
+    zeige probe(0)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen defer"
+zeige "weiter"

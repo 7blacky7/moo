@@ -1,0 +1,7 @@
+# P2-T60 Positivkontrolle: untypisierte Altformen ohne ':' bleiben parsebar.
+# 'zeichne(x y)' nutzt den toleranten Legacy-Fallback (signatures: None),
+# 'drucken()' und 'setze_wert(wert)' den regulaeren untypisierten Pfad.
+schnittstelle P2Legacy:
+    funktion zeichne(x y)
+    funktion drucken()
+    funktion setze_wert(wert)

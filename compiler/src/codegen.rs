@@ -4,6 +4,7 @@
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
+use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
@@ -65,7 +66,21 @@ pub struct CodeGen<'ctx> {
     native_functions: HashMap<String, FunctionValue<'ctx>>,
     native_signatures: HashMap<String, crate::codegen_native::NSignature>,
     native_ffi_functions: std::collections::HashSet<String>,
+    // P2-T66: hosted x86_64-Systemkoerper (nur !bare_mode). write_object
+    // schaltet IR-O2 ausschliesslich ein, wenn diese Liste nicht leer ist.
+    hosted_system_functions: Vec<FunctionValue<'ctx>>,
+    // P2-T66 (b): Namen der benannten Top-Level-Funktionen (keine Lambdas,
+    // keine Methoden) fuer den dyn-Aufruf skalarer Systemkoerper.
+    dyn_named_functions: std::collections::HashSet<String>,
     native_try_direct: bool,
+    // P2-T78: Skip-Block des aktuellen Nicht-Direktform-Systemaufrufs; Adapter
+    // springen bei Fehler dorthin (Aufruf liefert nichts, Flag bleibt gesetzt).
+    native_skip_target: Option<inkwell::basic_block::BasicBlock<'ctx>>,
+    // P2-T82: funktionsweiter Pruefpunkt-Ausgang fuer benannte Funktionen mit
+    // hosted fangbaren @nativ-Aufrufen ohne eigenes versuche:/aufraeumen
+    // (native_guard_exit_block); try_stack bleibt davon unberuehrt.
+    native_guard_enabled: bool,
+    native_guard_exit: Option<inkwell::basic_block::BasicBlock<'ctx>>,
     native_try_zero_arg_users: std::collections::HashSet<String>,
     variables: HashMap<String, PointerValue<'ctx>>,
     /// Globale Variablen (top-level Assignments) — als LLVM-Globals angelegt,
@@ -172,7 +187,12 @@ impl<'ctx> CodeGen<'ctx> {
             native_functions: HashMap::new(),
             native_signatures: HashMap::new(),
             native_ffi_functions: std::collections::HashSet::new(),
+            hosted_system_functions: Vec::new(),
+            dyn_named_functions: std::collections::HashSet::new(),
             native_try_direct: false,
+            native_skip_target: None,
+            native_guard_enabled: false,
+            native_guard_exit: None,
             native_try_zero_arg_users: std::collections::HashSet::new(),
             variables: HashMap::new(),
             globals: HashMap::new(),
@@ -782,10 +802,28 @@ impl<'ctx> CodeGen<'ctx> {
                 let triple = self.module.get_triple();
                 let triple = triple.as_str().to_str().map_err(|e| format!("Ungueltiges Ziel-Triple: {e}"))?;
                 let types: Vec<TypeRef> = params.iter().map(|(_, ty)| ty.clone()).collect();
-                let convention = crate::ffi_types::decorator_call_convention(decorators, triple)?;
-                let signature = crate::ffi_types::FfiSignature::validate(triple, &types, result, false)?
-                    .with_convention(convention);
-                self.extern_bindings.declare(self.context, &self.module, name, &signature)?;
+                let is_struct = types.iter().chain(std::iter::once(result))
+                    .any(|ty| match &ty.kind {
+                        TypeKind::Name(n) => self.native_structs.layout(n).is_some(),
+                        _ => false,
+                    });
+                if is_struct {
+                    // Kein pauschales Struct-ABI: nur die anhand von Clang
+                    // belegten SysV-/Win64-Formen mit bis zu zwei gleichen
+                    // Strukturen oder u64-Praefixen; andere gesperrt.
+                    if !decorators.is_empty() {
+                        return Err(format!("extern C '{name}': Strukturwert mit Decorators noch nicht freigegeben"));
+                    }
+                    self.extern_bindings.declare_struct_roundtrip(
+                        self.context, &self.module, name, &types, result,
+                        &self.native_structs,
+                    )?;
+                } else {
+                    let convention = crate::ffi_types::decorator_call_convention(decorators, triple)?;
+                    let signature = crate::ffi_types::FfiSignature::validate(triple, &types, result, false)?
+                        .with_convention(convention);
+                    self.extern_bindings.declare(self.context, &self.module, name, &signature)?;
+                }
             }
         }
         // Native Signaturen zuerst deklarieren, damit reine Vorwaertsaufrufe
@@ -796,7 +834,12 @@ impl<'ctx> CodeGen<'ctx> {
         // P7-T4: @nativ-Funktionen aus Hardware-Intrinsics (volatile_*, Barrieren, Port-I/O).
         let mut hardware_functions: HashMap<String, (FunctionValue<'ctx>, crate::codegen_native::NativePointerSignature)> = HashMap::new();
         // P7-T5: @nativ-Systemkoerper (Kontrollfluss, Locals, Speicher, Aufrufe).
-        let mut system_functions: HashMap<String, (FunctionValue<'ctx>, crate::codegen_native::NativePointerSignature)> = HashMap::new();
+        let mut system_functions: HashMap<String, (FunctionValue<'ctx>, crate::native_system::SystemSignature)> = HashMap::new();
+        // Typsichere ptr[Struktur]-Parameter benutzen das vorhandene Layout
+        // statt eines zweiten Hardware- oder FFI-Typregisters.
+        let module_name = self.module.get_name().to_str()
+            .map_err(|e| format!("Ungueltiger nativer Modulname: {e}"))?;
+        let native_nominals = self.native_structs.nominal_types(module_name);
         for stmt in &program.statements {
             if let Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators } = stmt {
                 if !decorators.iter().any(|d| d.name == "nativ" || d.name == "native") { continue; }
@@ -876,34 +919,97 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     crate::native_hardware::BodyKind::Other => {}
                 }
-                // P7-T5: allgemeiner Systemkoerper (nur Bare-Profil), wenn kein
-                // engerer Bestandspfad (indirekter Ein-Aufruf, Zeigerlesen) passt.
-                if self.bare_mode && crate::native_system::is_system_body(body, params) {
-                    let sig = crate::native_hardware::signature(param_types, return_type.as_ref())
-                        .map_err(|e| format!("Native Funktion '{name}': {e}"))?;
+                // P7-T5: Bare-Systemkoerper und ein enger Hosted-Win64-Slice
+                // fuer native Strukturwerte. Der restliche Hosted-Code nutzt
+                // weiterhin seine bisherigen Pure-/FFI-Pfade.
+                let returns_struct = return_type.as_ref().is_some_and(|ty|
+                    matches!(&ty.kind, TypeKind::Name(n) if native_nominals.contains_key(n)));
+                let hosted_x86 = {
+                    let triple = self.module.get_triple();
+                    let name = triple.as_str().to_str().map_err(|e| e.to_string())?;
+                    // P2-T66 (c): hosted Usermode-Triples (x86_64 Linux/Windows,
+                    // aarch64 Linux); Name beibehalten, Bedeutung = hosted Usermode.
+                    matches!(name, "x86_64-pc-windows-msvc" | "x86_64-pc-windows-gnu"
+                        | "x86_64-unknown-linux-gnu" | "x86_64-pc-linux-gnu"
+                        | "aarch64-unknown-linux-gnu")
+                };
+                let has_pointer = param_types.iter().flatten().any(|ty| matches!(
+                    &ty.kind, TypeKind::Generic { name, .. } if name == "ptr" || name == "zeiger"
+                ));
+                let struct_param = param_types.iter().flatten().any(|ty|
+                    matches!(&ty.kind, TypeKind::Name(n) if native_nominals.contains_key(n)));
+                let returns_pointer = return_type.as_ref().is_some_and(|ty| matches!(
+                    &ty.kind, TypeKind::Generic { name, .. } if name == "ptr" || name == "zeiger"
+                ));
+                // Ein einzelner skalarer extern-C-Aufruf bleibt im bestehenden
+                // FFI-Pfad. Mit Zeiger- oder Strukturtypen in der Signatur
+                // uebernimmt der Systemkoerper: der skalare FFI-Emitter kennt
+                // keine Zeiger (ffi_types.rs scalar_parameters/scalar_result).
+                let ffi_single = !(has_pointer || returns_pointer || struct_param || returns_struct)
+                    && matches!(body.as_slice(), [Stmt::UnsafeBlock { body: inner }]
+                    if matches!(inner.as_slice(),
+                        [Stmt::Return(Some(Expr::FunctionCall { name, .. }))]
+                        | [Stmt::Expression(Expr::FunctionCall { name, .. })]
+                        if self.extern_c_names.contains(name)));
+                // P2-T66: hosted x86_64 (Linux/Windows, Usermode) nutzt den
+                // Systemkoerper fuer unsicher:-Koerper mit Zeigern, Struktur-
+                // werten oder mehreren Anweisungen (vorher Compilefehler).
+                // Skalare Pure-/FFI-Formen behalten ihre Emitter; Hardware-
+                // koerper, kern_*-Builtins und bare_mode bleiben unberuehrt.
+                let hosted_system = hosted_x86 && !self.bare_mode && !ffi_single
+                    && matches!(body.as_slice(), [Stmt::UnsafeBlock { .. }])
+                    && (returns_struct || struct_param || has_pointer || returns_pointer
+                        || crate::native_system::has_struct_locals(body, &native_nominals)
+                        || crate::native_system::is_system_body(body, params));
+                if (self.bare_mode && (crate::native_system::is_system_body(body, params) || returns_struct))
+                    || hosted_system
+                {
+                    let sig = crate::native_system::SystemSignature::from_annotations(
+                        param_types, return_type.as_ref(), &native_nominals,
+                    ).map_err(|e| format!("Native Funktion '{name}': {e}"))?;
+                    if sig.uses_struct_values() {
+                        // Composite-C-ABI (sret/Registerklassifizierung) wird
+                        // erst in P2-T56 freigegeben. Interne Moo-Moo-Calls
+                        // sind bereits konsistent LLVM-typisiert.
+                        if convention != 0 || decorators.iter().any(|d|
+                            matches!(d.name.as_str(), "einstieg" | "entry")) {
+                            return Err(format!(
+                                "Native Funktion '{name}': Strukturwerte by value sind aktuell nur fuer interne Moo-Aufrufe freigegeben"
+                            ));
+                        }
+                    }
                     let internal = format!("__moo_native.{name}");
                     if self.module.get_function(&internal).is_some() {
                         return Err(format!("Native Funktion '{name}': interner Symbolkonflikt"));
                     }
-                    let fun = self.module.add_function(&internal, sig.llvm_type(self.context),
+                    let fun_type = sig.llvm_type(self.context, &self.native_structs)?;
+                    let fun = self.module.add_function(&internal, fun_type,
                         Some(inkwell::module::Linkage::Internal));
                     if convention != 0 { fun.set_call_conventions(convention); }
                     self.native_functions.insert(name.clone(), fun);
+                    // P2-T43: Bare-Systemkoerper ebenfalls registrieren; die
+                    // Aufrufstelle laesst im Bare-Profil nur runtime-freie
+                    // Literal-Argumente zu (hosted_system_functions wird sonst
+                    // nur bei !bare_mode ausgewertet, write_object).
+                    if hosted_system || self.bare_mode {
+                        self.hosted_system_functions.push(fun);
+                        // P2-T66 Stufe 2a: rein skalare Signatur -> aus dynamischem
+                        // Moo aufrufbar; die Aufrufstelle verlangt unsicher:/main/kein try.
+                        if let Some(scalar) = sig.scalar_signature() {
+                            self.native_signatures.insert(name.clone(), scalar);
+                        }
+                    }
                     system_functions.insert(name.clone(), (fun, sig));
                     continue;
                 }
-                let has_pointer = param_types.iter().flatten().any(|ty| matches!(
-                    &ty.kind, TypeKind::Generic { name, .. } if name == "ptr" || name == "zeiger"
-                ));
                 if has_pointer {
                     if !self.bare_mode {
-                        return Err("Native Zeigerfunktionen sind vorerst nur im Bare-Profil verfügbar".into());
+                        return Err("Native Zeigerfunktionen sind ohne unsicher:-Systemkoerper nur im Bare-Profil verfügbar (hosted x86_64/aarch64 Linux, x86_64 Windows: Koerper als unsicher:-Block schreiben, P2-T66)".into());
                     }
                     // Nominal types need their canonical module identity; until
                     // the registry exposes it, unknown nominal names fail closed.
-                    let nominal = crate::native_type_id::NominalTypes::new();
                     let sig = crate::codegen_native::NativePointerSignature::from_annotations(
-                        param_types, return_type.as_ref(), &nominal,
+                        param_types, return_type.as_ref(), &native_nominals,
                     )?;
                     let internal = format!("__moo_native.{name}");
                     if self.module.get_function(&internal).is_some() {
@@ -922,9 +1028,11 @@ impl<'ctx> CodeGen<'ctx> {
                 let valid = match result_ty {
                     Some(ty) if unsafe_ffi => matches!(ty, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64)
                         && sig.params.iter().all(|param| matches!(param, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64)),
-                    Some(ty) => (matches!(ty, NType::I32 | NType::I8 | NType::U8)
-                            || (self.bare_mode && ty == NType::U64))
-                        && sig.params.iter().all(|param| *param == ty),
+                    // P2-T34: reine native Koerper tragen jede skalare Signatur
+                    // (gemischte Breiten, Float, bool); Casts/Vergleiche verbinden
+                    // die Typen, der dyn-Adapter kennt alle Skalare (i64/u64 wide,
+                    // Float, bool, 8-32 Bit). Erstslice-Schranke I32/I8/U8 entfaellt.
+                    Some(_) => true,
                     None => unsafe_ffi && sig.params.iter().all(|param| matches!(param, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64)),
                 };
                 if !valid {
@@ -977,8 +1085,12 @@ impl<'ctx> CodeGen<'ctx> {
         // P7-T5: Aufrufziele fuer Systemkoerper (alle nativen Funktionsarten).
         let mut native_callees: HashMap<String, crate::native_system::NativeCallee<'ctx>> = HashMap::new();
         if !system_functions.is_empty() {
-            for (name, (fun, sig)) in hardware_functions.iter().chain(pointer_functions.iter()).chain(system_functions.iter()) {
+            for (name, (fun, sig)) in hardware_functions.iter().chain(pointer_functions.iter()) {
                 native_callees.insert(name.clone(), crate::native_system::NativeCallee::new(*fun, sig)?);
+            }
+            for (name, (fun, sig)) in &system_functions {
+                native_callees.insert(name.clone(),
+                    crate::native_system::NativeCallee::from_system(*fun, sig));
             }
             for name in pure_bodies.keys() {
                 if let (Some(fun), Some(sig)) = (self.native_functions.get(name), self.native_signatures.get(name)) {
@@ -1001,7 +1113,8 @@ impl<'ctx> CodeGen<'ctx> {
                             let target = self.target_data.as_ref()
                                 .ok_or("Ziel-Datenlayout für Systemkörper fehlt")?;
                             crate::native_system::emit_system_function(
-                                self.context, &self.module, target, *fun, sig, params, body,
+                                self.context, &self.module, target, &self.native_structs,
+                                &native_nominals, *fun, sig, params, body,
                                 &native_callees, &self.extern_bindings,
                             ).map_err(|e| format!("Native Funktion '{name}': {e}"))?;
                             continue;
@@ -1039,14 +1152,25 @@ impl<'ctx> CodeGen<'ctx> {
                         }
                         let sig = crate::codegen_native::NSignature::from_annotations(param_types, return_type.as_ref())?;
                         let fun = *self.native_functions.get(name).ok_or("Native Vorabdeklaration fehlt")?;
+                        // P2-T34: Fehlervertrag nach Ziel: bare/wasm trappen, hosted
+                        // liefert einen fangbaren Moo-Fehler (moo_native_fehler).
+                        // C-Exporte (@einstieg) trappen auch hosted: kein Moo-Fehler
+                        // ueber fremde C-Frames (ADR §11), Objekt ohne Runtime linkbar.
+                        let trap = self.bare_mode
+                            || decorators.iter().any(|d| matches!(d.name.as_str(), "einstieg" | "entry"))
+                            || {
+                                let triple = self.module.get_triple();
+                                triple.as_str().to_str().map(|t| t.starts_with("wasm")).unwrap_or(true)
+                            };
+                        let fehler = crate::codegen_native::NativeFehler { module: &self.module, trap, funktion: name };
                         if self.native_ffi_functions.contains(name) {
                             crate::codegen_native::emit_ffi_return_function(
                                 self.context, &self.module, &self.extern_bindings,
-                                fun, &sig, params, body,
+                                fun, &sig, params, body, fehler,
                             )?;
                         } else {
                             crate::codegen_native::emit_nontrapping_function(
-                                self.context, fun, &sig, params, body, &pure_functions,
+                                self.context, fun, &sig, params, body, &pure_functions, fehler,
                             )?;
                         }
                         continue;
@@ -1069,6 +1193,7 @@ impl<'ctx> CodeGen<'ctx> {
                         mv.fn_type(&param_types, false)
                     };
                     self.module.add_function(name, fn_type, None);
+                    self.dyn_named_functions.insert(name.clone());
                 }
                 Stmt::ClassDef { name, parent, body, .. } => {
                     if let Some(parent_name) = parent {
@@ -1176,6 +1301,11 @@ impl<'ctx> CodeGen<'ctx> {
         ]
     }
 
+    /// P2-T43: @bibliothek als Link-Direktive ins Modul legen (siehe ffi_link).
+    pub fn embed_link_libraries(&self, libraries: &[String], triple: &str) -> Result<(), String> {
+        crate::ffi_link::embed_link_options(self.context, &self.module, libraries, triple)
+    }
+
     pub fn write_object(&self, path: &Path, target: &str) -> Result<(), String> {
         let is_native = target.is_empty() || target == "native";
         let triple_str = Self::resolve_triple(target);
@@ -1226,6 +1356,60 @@ impl<'ctx> CodeGen<'ctx> {
                 CodeModel::Default,
             )
             .ok_or(format!("Konnte TargetMachine fuer '{}' nicht erstellen", triple_str))?;
+
+        // Die Optimierung gilt nur fuer freestanding Nativ-Objekte, fuer
+        // explizite Win64-Objekte ohne Standardbibliothek (bare_mode) und
+        // (P2-T66) fuer hosted x86_64-Objekte mit Systemkoerpern. Regulare
+        // Hosted-/Legacy-Programme ohne Systemkoerper und WASM behalten ihren
+        // Codepfad. Kein Fast-Math; Pointer-Alignment bleibt bei den belegten Werten.
+        let freestanding_native = triple_str.contains("-none");
+        let win64_no_stdlib = self.bare_mode
+            && triple_str.starts_with("x86_64-")
+            && triple_str.contains("-windows-");
+        // P2-T66: hosted x86_64 (Linux/Windows, Usermode). Der dynamische Teil
+        // (main, Userfunktionen, Lambdas, Klassen, Wrapper) wird waehrend der
+        // IR-Paesse mit optnone/noinline geschuetzt; danach werden genau die
+        // gesetzten Attribute wieder entfernt, damit sein Maschinencode wie
+        // bisher entsteht. Optimiert werden so nur die @nativ-Funktionen; der
+        // dyn->native-Aufruf bleibt ein Call auf die unveraenderte Signatur.
+        let hosted_x86_system = !self.bare_mode
+            && !self.hosted_system_functions.is_empty()
+            && matches!(triple_str.as_str(), "x86_64-pc-windows-msvc" | "x86_64-pc-windows-gnu"
+                | "x86_64-unknown-linux-gnu" | "x86_64-pc-linux-gnu"
+                | "aarch64-unknown-linux-gnu");
+        if (freestanding_native || win64_no_stdlib || hosted_x86_system) && !self.native_functions.is_empty() {
+            use inkwell::attributes::{Attribute, AttributeLoc};
+            use inkwell::values::AsValueRef;
+            let shield_kinds = ["optnone", "noinline"].map(Attribute::get_named_enum_kind_id);
+            // (Funktion, je Attribut: von uns gesetzt?) — nur eigene Attribute werden entfernt.
+            let mut shielded: Vec<(FunctionValue<'ctx>, [bool; 2])> = Vec::new();
+            if hosted_x86_system {
+                let native: std::collections::HashSet<_> = self.native_functions.values()
+                    .map(|f| f.as_value_ref()).collect();
+                for fun in self.module.get_functions() {
+                    if fun.count_basic_blocks() == 0 || native.contains(&fun.as_value_ref()) { continue; }
+                    let mut added = [false; 2];
+                    for (i, kind) in shield_kinds.iter().enumerate() {
+                        if fun.get_enum_attribute(AttributeLoc::Function, *kind).is_none() {
+                            fun.add_attribute(AttributeLoc::Function, self.context.create_enum_attribute(*kind, 0));
+                            added[i] = true;
+                        }
+                    }
+                    shielded.push((fun, added));
+                }
+            }
+            self.module.verify()
+                .map_err(|e| format!("LLVM-IR vor O2 ungueltig: {e}"))?;
+            self.module.run_passes("default<O2>", &machine, PassBuilderOptions::create())
+                .map_err(|e| format!("LLVM-IR-Optimierung fehlgeschlagen: {e}"))?;
+            for (fun, added) in &shielded {
+                for (i, kind) in shield_kinds.iter().enumerate() {
+                    if added[i] { fun.remove_enum_attribute(AttributeLoc::Function, *kind); }
+                }
+            }
+            self.module.verify()
+                .map_err(|e| format!("LLVM-IR nach O2 ungueltig: {e}"))?;
+        }
 
         machine
             .write_to_file(&self.module, FileType::Object, path)
@@ -1561,7 +1745,8 @@ impl<'ctx> CodeGen<'ctx> {
                     self.lambda_names.insert(name.clone(), lambda_name);
                     // Counter wird in compile_expr/Lambda erhoeht
                 }
-                let val = self.compile_statement_expr(value)?;
+                // P2-T74: Direktpfad wie bei zeige (native_try_direct_root).
+                let val = self.compile_statement_expr_direct(value)?;
                 self.guard_local_expr_error(&[val])?;
                 self.store_var(name, val)
             }
@@ -1603,27 +1788,9 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(())
             }
             Stmt::Show(expr) => {
-                let direct = if self.try_stack.is_empty() { false } else {
-                    match expr {
-                        Expr::FunctionCall { name, args } =>
-                            self.native_functions.contains_key(name)
-                                && !self.native_ffi_functions.contains(name)
-                                && args.iter().all(|arg| match arg {
-                                    Expr::Identifier(_) | Expr::Number(_) => true,
-                                    Expr::FunctionCall { name, args } =>
-                                        args.is_empty() && self.native_try_zero_arg_users.contains(name),
-                                    Expr::UnaryOp { op: UnaryOpKind::Neg, operand } =>
-                                        matches!(operand.as_ref(), Expr::Number(_)),
-                                    _ => false,
-                                }),
-                        _ => false,
-                    }
-                };
-                let previous = self.native_try_direct;
-                self.native_try_direct = direct;
-                let compiled = self.compile_statement_expr(expr);
-                self.native_try_direct = previous;
-                let val = compiled?;
+                // Direktpfad fuer native Argumentadapter in versuche: (P2-T66,
+                // Kriterium in native_try_direct_root; P2-T74 auch setze/gib_zurück).
+                let val = self.compile_statement_expr_direct(expr)?;
                 self.guard_local_expr_error(&[val])?;
                 self.call_rt_void(self.rt.moo_print, &[val.into()], "print")?;
 
@@ -1788,11 +1955,18 @@ impl<'ctx> CodeGen<'ctx> {
                 // Ergebnis wird nicht konsumiert → Expression-Temp freigeben,
                 // sonst leakt z.B. eine nackte `d[k]`-Zeile den Return-Ref.
                 let guarded = self.defer_runtime || self.defer_borrowed_handler.is_some();
-                let val = if guarded {
-                    self.compile_statement_expr(expr)?
+                // P2-T77: reiner Aufruf als Statement ist eine Wurzel ohne
+                // Besitztemporaere, Direktform wie bei zeige; der Kompilierpfad
+                // (guarded/ungeguardet) bleibt unveraendert (Legacy-IR).
+                let previous_direct = self.native_try_direct;
+                self.native_try_direct = self.native_try_direct_root(expr);
+                let compiled = if guarded {
+                    self.compile_statement_expr(expr)
                 } else {
-                    self.compile_expr(expr)?
+                    self.compile_expr(expr)
                 };
+                self.native_try_direct = previous_direct;
+                let val = compiled?;
                 if guarded {
                     self.guard_local_expr_error(&[val])?;
                 }
@@ -2102,7 +2276,9 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_if(&mut self, condition: &Expr, body: &[Stmt], else_body: &[Stmt]) -> Result<(), String> {
-        let cond_val = self.compile_statement_expr(condition)?;
+        // P2-T77: Bedingung ist Statement-Wurzel ohne Besitztemporaere davor,
+        // daher Direktform fuer native Argumentadapter (native_try_direct_root).
+        let cond_val = self.compile_statement_expr_direct(condition)?;
         self.guard_local_expr_error(&[cond_val])?;
         let func = self.current_function.unwrap();
 
@@ -2420,6 +2596,24 @@ impl<'ctx> CodeGen<'ctx> {
         self.init_defer_frame()?;
         self.defer_runtime = self.defer_guard_targets.contains(name)
             && !self.defer_catalog.actions().is_empty() && self.runtime_defer_scope_supported(body);
+        // P2-T82: Benannte Funktionen mit hosted fangbaren @nativ-Aufrufen erhalten
+        // einen Pruefpunkt-Ausgang (native_guard_exit_block), damit Statement-
+        // und Operanden-Guards auch ohne eigenes versuche: greifen: nach einem
+        // uebersprungenen Aufruf (nichts, Flag gesetzt) kehrt die Funktion wie
+        // bei der Direktform mit nichts zurueck statt Folgeoperationen und
+        // Seiteneffekte auszufuehren (Erstfehler-Verlust, z.B. 10 / nichts).
+        // Nicht bei aufraeumen-Aktionen (statische Defers liefen sonst ausserhalb
+        // ihrer Registrierungsreihenfolge), nicht im Defer-Frame (eigener
+        // Handler), nicht bare/profiling, nur Top-Level-Funktionen.
+        let prev_native_guard = (self.native_guard_enabled, self.native_guard_exit.take());
+        self.native_guard_enabled = !self.bare_mode && !self.profiling && !self.defer_runtime
+            && self.defer_catalog.actions().is_empty()
+            && self.dyn_named_functions.contains(name)
+            && {
+                let mut calls = std::collections::HashSet::new();
+                Self::collect_defer_calls(body, &mut calls);
+                calls.iter().any(|callee| self.native_call_fangbar(callee))
+            };
 
         for (i, param_name) in params.iter().enumerate() {
             let alloca = self.builder.build_alloca(self.mv_type(), param_name)
@@ -2586,6 +2780,8 @@ impl<'ctx> CodeGen<'ctx> {
         self.defer_frame = prev_defer_frame;
                 self.defer_runtime = prev_defer_runtime;
                 self.defer_borrowed_handler = prev_defer_borrowed;
+        self.native_guard_enabled = prev_native_guard.0;
+        self.native_guard_exit = prev_native_guard.1;
         if let Some(bb) = prev_block {
             self.builder.position_at_end(bb);
         }
@@ -2966,7 +3162,7 @@ impl<'ctx> CodeGen<'ctx> {
             let checked = !local_handlers.is_empty() && !self.bare_mode;
             // Expression noch evaluieren falls Side-Effects (z.B. Funktionsaufruf).
             if let Some(expr) = value {
-                let result = self.compile_statement_expr(expr)?;
+                let result = self.compile_statement_expr_direct(expr)?;
                 // main verwirft den owning Ausdruckswert auch ohne lokalen try.
                 self.call_rt_void(self.rt.moo_release, &[result.into()], "main_return_release")?;
             }
@@ -3021,7 +3217,8 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let val = if let Some(expr) = value {
-            self.compile_statement_expr(expr)?
+            // P2-T74: Direktpfad wie bei zeige (native_try_direct_root).
+            self.compile_statement_expr_direct(expr)?
         } else {
             self.call_rt(self.rt.moo_none, &[], "none")?
         };
@@ -3796,6 +3993,16 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::IndexAccess { object, index } =>
                 !matches!(index.as_ref(), Expr::Range { .. })
                     && self.recursive_statement_expr_supported(object) && self.recursive_statement_expr_supported(index),
+            // P2-T82: hosted fangbare reine/System-@nativ-Aufrufe sind instrumentiert:
+            // Adapterfehler enden im lokalen Catch (Direktform) oder im Skip-Block
+            // (nichts, Flag gesetzt; T78/T80), Argumentwerte werden auf jedem Pfad
+            // freigegeben, das Ergebnis ist +1 owning wie jeder compile_expr-Wert.
+            // Erst damit greifen die rekursiven Guards um den Aufruf herum: der
+            // Erstfehler bleibt erhalten (vorher lief z.B. 10 / nichts in
+            // 'Division durch Null!', moo_ops.c) und Folgeaufrufe mit dem
+            // nichts-Ergebnis unterbleiben.
+            Expr::FunctionCall { name, args } if self.native_call_fangbar(name) =>
+                args.iter().all(|a| self.recursive_statement_expr_supported(a)),
             Expr::FunctionCall { name, args } =>
                 !self.native_functions.contains_key(name)
                     && !self.extern_c_names.contains(name)
@@ -3808,8 +4015,68 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
+    /// P2-T82: hosted fangbarer @nativ-Aufruf aus dynamischem Code (Spiegel der
+    /// Kriterien system_fangbar/plain_fangbar im Native-Arm von compile_expr):
+    /// skalare Signatur, kein FFI-Koerper, nicht bare/wasm, interner Name
+    /// __moo_native.* (C-Exporte verlieren ihn per set_name und trappen).
+    fn native_call_fangbar(&self, name: &str) -> bool {
+        if self.bare_mode || self.native_ffi_functions.contains(name) || !self.native_signatures.contains_key(name) {
+            return false;
+        }
+        let Some(function) = self.native_functions.get(name) else { return false; };
+        let wasm_target = self.module.get_triple().as_str().to_str()
+            .map(|t| t.starts_with("wasm")).unwrap_or(true);
+        !wasm_target && function.get_name().to_str().is_ok_and(|n| n.starts_with("__moo_native."))
+    }
+
     fn compile_statement_expr(&mut self, expr: &Expr) -> Result<StructValue<'ctx>, String> {
         self.compile_owned_statement_expr(expr, &[])
+    }
+
+    /// Direktpfad der nativen Argumentadapter in versuche: (native_try_direct).
+    /// Ist der Statement-Ausdruck ein Aufruf einer nativen Nicht-FFI-Funktion,
+    /// dessen Argumente keine eigenen Besitzwerte hinterlassen (Variablen,
+    /// Zahlenliterale, parameterlose Moo-Funktionen), darf ein Adapter bei
+    /// ungueltigem Argument oder fremdem Fehlerflag direkt in den lokalen
+    /// Catch springen (compile_native_*_argument, local_catch). Der Handler
+    /// muss zur aktuellen Funktion gehoeren. Vorher nur fuer `zeige` (P2-T66);
+    /// seit P2-T74 auch fuer `setze` und `gib_zurück`, damit hosted
+    /// Systemkoerper mit dynamischen Argumenten in versuche: nutzbar sind.
+    fn native_try_direct_root(&self, expr: &Expr) -> bool {
+        // Reine Formpruefung; ob ein lokaler Handler existiert, entscheidet
+        // native_local_catch an der Aufrufstelle. Ohne Handler nutzt eine
+        // benannte Funktion die Form fuer die flag-basierte Propagation
+        // (native_argument_fatal_exit, P2-T74 Batch 4).
+        match expr {
+            Expr::FunctionCall { name, args } =>
+                self.native_functions.contains_key(name)
+                    && !self.native_ffi_functions.contains(name)
+                    && args.iter().all(|arg| match arg {
+                        Expr::Identifier(_) | Expr::Number(_) => true,
+                        Expr::FunctionCall { name, args } =>
+                            args.is_empty() && self.native_try_zero_arg_users.contains(name),
+                        Expr::UnaryOp { op: UnaryOpKind::Neg, operand } =>
+                            matches!(operand.as_ref(), Expr::Number(_)),
+                        _ => false,
+                    }),
+            _ => false,
+        }
+    }
+
+    /// Lokaler Catch fuer native Argumentadapter: nur bei Direktform und nur
+    /// ein Handler der aktuellen Funktion (try_stack kann fremde Handler tragen).
+    fn native_local_catch(&self) -> Option<inkwell::basic_block::BasicBlock<'ctx>> {
+        if !self.native_try_direct { return None; }
+        self.try_stack.last().copied().filter(|bb| bb.get_parent() == self.current_function)
+    }
+
+    /// Statement-Ausdruck mit aktiviertem Direktpfad (siehe native_try_direct_root).
+    fn compile_statement_expr_direct(&mut self, expr: &Expr) -> Result<StructValue<'ctx>, String> {
+        let previous = self.native_try_direct;
+        self.native_try_direct = self.native_try_direct_root(expr);
+        let compiled = self.compile_statement_expr(expr);
+        self.native_try_direct = previous;
+        compiled
     }
 
     fn compile_owned_statement_expr(&mut self, expr: &Expr, parents: &[StructValue<'ctx>]) -> Result<StructValue<'ctx>, String> {
@@ -3819,8 +4086,10 @@ impl<'ctx> CodeGen<'ctx> {
         self.stmt_owned_context.extend_from_slice(parents);
         self.stmt_root_guard = matches!(expr, Expr::BinaryOp { .. } | Expr::List(_) | Expr::FunctionCall { .. } | Expr::IndexAccess { .. });
         let function = self.current_function.unwrap();
+        // P2-T82: auch ohne eigenen Handler, wenn die Funktion den Pruefpunkt-
+        // Ausgang fuer fangbare native Aufrufe traegt (native_guard_enabled).
         self.stmt_recursive_guard = !self.bare_mode
-            && self.try_stack.iter().any(|bb| bb.get_parent() == Some(function))
+            && (self.try_stack.iter().any(|bb| bb.get_parent() == Some(function)) || self.native_guard_enabled)
             && self.recursive_statement_expr_supported(expr);
         let result = self.compile_expr(expr);
         self.stmt_root_guard = previous;
@@ -3829,13 +4098,88 @@ impl<'ctx> CodeGen<'ctx> {
         result
     }
 
+    /// P2-T50: `puffer_erstellen(T, n)` / `buffer_create(T, n)` -> MOO_BUFFER.
+    /// T ist ein Elementtypname (i8..u64, f32, f64), kein Ausdruck; unbekannte
+    /// Namen sind Compilefehler. n prueft die Runtime (moo_buffer_create wirft
+    /// fangbar bei negativer/gebrochener Laenge oder Speicherfehler). Lazy
+    /// deklariert, damit Programme ohne Puffer ihr bisheriges IR behalten.
+    fn compile_buffer_create(&mut self, name: &str, args: &[Expr]) -> Result<StructValue<'ctx>, String> {
+        if self.bare_mode {
+            return Err(format!("{name}: typisierte Puffer sind im Bare-Profil noch nicht verfuegbar"));
+        }
+        const ERLAUBT: &str = "i8, u8, i16, u16, i32, u32, i64, u64, f32, f64";
+        let [typ, laenge] = args else {
+            return Err(format!("{name} erwartet genau zwei Argumente: Elementtyp und Laenge"));
+        };
+        let Expr::Identifier(typ_name) = typ else {
+            return Err(format!("{name}: erstes Argument muss ein Elementtyp sein ({ERLAUBT})"));
+        };
+        // Codes = MooBufferScalarType (compiler/runtime/moo_buffer.h).
+        let code: u64 = match typ_name.as_str() {
+            "i8" => 1, "u8" => 2, "i16" => 3, "u16" => 4, "i32" => 5,
+            "u32" => 6, "i64" => 7, "u64" => 8, "f32" => 9, "f64" => 10,
+            other => return Err(format!("{name}: unbekannter Elementtyp '{other}' ({ERLAUBT})")),
+        };
+        let create = match self.module.get_function("moo_buffer_create") {
+            Some(function) => function,
+            None => {
+                let i32_type = self.context.i32_type();
+                let fn_type = if self.windows_x64_abi() {
+                    // Wie decl_mv_mv: sret-Puffer zuerst, MooValue-Parameter indirekt.
+                    let ptr = self.context.ptr_type(inkwell::AddressSpace::default());
+                    self.context.void_type().fn_type(&[ptr.into(), i32_type.into(), ptr.into()], false)
+                } else {
+                    self.mv_type().fn_type(&[i32_type.into(), self.mv_type().into()], false)
+                };
+                self.module.add_function("moo_buffer_create", fn_type, None)
+            }
+        };
+        let laenge = self.compile_expr(laenge)?;
+        let typ_code = self.context.i32_type().const_int(code, false);
+        self.call_rt(create, &[typ_code.into(), laenge.into()], "puffer_neu")
+    }
+
+    /// P2-T82: Pruefpunkt-Ausgang einer benannten Funktion ohne eigenes
+    /// versuche:/aufraeumen, deren Koerper hosted fangbare @nativ-Aufrufe
+    /// enthaelt (native_guard_enabled, compile_function_def). Analog zur
+    /// Direktform in native_argument_fatal_exit: Locals freigeben und flag-
+    /// basiert mit `nichts` zurueckkehren; der Aufrufer prueft das Flag nach
+    /// seinem Statement. Einmal je Funktion angelegt; guard_local_expr_error
+    /// gibt die Werte des Statements vor dem Sprung frei. Der try_stack bleibt
+    /// unberuehrt (FFI-/Systemkoerper-Schranken, native_local_catch, T74-IR).
+    fn native_guard_exit_block(&mut self) -> Result<inkwell::basic_block::BasicBlock<'ctx>, String> {
+        if let Some(exit) = self.native_guard_exit { return Ok(exit); }
+        let function = self.current_function.ok_or("Pruefpunkt-Ausgang ohne Funktion")?;
+        let current = self.builder.get_insert_block().ok_or("Pruefpunkt-Ausgang ohne Block")?;
+        let exit = self.context.append_basic_block(function, "native.guard.exit");
+        self.builder.position_at_end(exit);
+        self.release_function_locals()?;
+        if function.get_type().get_return_type().is_none() {
+            self.builder.build_return(None).map_err(|e| e.to_string())?;
+        } else {
+            let none = self.call_rt(self.rt.moo_none, &[], "native.guard.none")?;
+            self.builder.build_return(Some(&none)).map_err(|e| e.to_string())?;
+        }
+        self.builder.position_at_end(current);
+        self.native_guard_exit = Some(exit);
+        Ok(exit)
+    }
+
     /// Prueft eigene Expression-Resultate vor einem weiteren Seiteneffekt.
     /// Die Fehlerausbreitung innerhalb verschachtelter Ausdruecke bleibt separat.
     fn guard_local_expr_error(&mut self, values: &[StructValue<'ctx>]) -> Result<(), String> {
         if self.bare_mode { return Ok(()); }
         let function = self.current_function.unwrap();
-        let Some(catch_bb) = self.try_stack.iter().rev().copied()
-            .find(|bb| bb.get_parent() == Some(function)) else { return Ok(()); };
+        // Erst binden, dann verzweigen: der Iterator-Borrow auf try_stack darf
+        // nicht in den &mut-Arm (native_guard_exit_block) hineinreichen.
+        let local_catch = self.try_stack.iter().rev().copied().find(|bb| bb.get_parent() == Some(function));
+        let catch_bb = match local_catch {
+            Some(bb) => bb,
+            // P2-T82: ohne eigenen Handler, aber mit fangbaren nativen Aufrufen:
+            // funktionsweiter Pruefpunkt-Ausgang (Locals freigeben, nichts).
+            None if self.native_guard_enabled => self.native_guard_exit_block()?,
+            None => return Ok(()),
+        };
         let pending = self.builder.build_call(self.rt.moo_try_check, &[], "expr_stmt_check")
             .map_err(|e| e.to_string())?.try_as_basic_value();
         let pending = match pending {
@@ -3859,14 +4203,104 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    /// Behandelt inkonsistente Handlerzustaende ohne erfundenen Ergebniswert.
-    fn native_argument_state_failure(
+    /// Erwarteter Handlerzustand der nativen Argumentadapter: mit lokalem Catch
+    /// muss ein Handler aktiv sein; in main ohne Catch darf keiner aktiv sein
+    /// (der Fehlerausgang beendet main). P2-T74: In einer benannten Funktion
+    /// ohne lokalen Catch ist bei Direktform (native_try_direct) ein aktiver
+    /// Aufrufer-Handler erlaubt, der Fehler wird flag-basiert propagiert
+    /// (native_argument_fatal_exit); andere Formen behalten den alten Vertrag.
+    fn native_argument_wrong_depth(
         &self,
+        has_depth: inkwell::values::IntValue<'ctx>,
+        catch: Option<inkwell::basic_block::BasicBlock<'ctx>>,
+        name: &str,
+    ) -> Result<inkwell::values::IntValue<'ctx>, String> {
+        // P2-T77: Der geliehene Defer-Handler (compile_function_def, borrowed)
+        // oeffnet keinen eigenen try-Rahmen; Flag und Tiefe gehoeren dem
+        // Aufrufer. Ohne Aufrufer-Handler beendet moo_throw den Prozess, mit
+        // Handler springt der Adapter in den geliehenen Block, der mit nichts
+        // zurueckkehrt. Eine Tiefenforderung waere hier ein falscher Trap.
+        if self.native_flag_only_target(catch) {
+            return Ok(self.context.bool_type().const_zero());
+        }
+        if catch.is_some() {
+            return self.builder.build_not(has_depth, name).map_err(|e| e.to_string());
+        }
+        if self.native_try_direct && !self.in_main_function() {
+            return Ok(self.context.bool_type().const_zero());
+        }
+        Ok(has_depth)
+    }
+
+    fn in_main_function(&self) -> bool {
+        self.current_function.is_some_and(|f| f.get_name().to_str() == Ok("main"))
+    }
+
+    /// Ziele, die nur ein anhaengiges Fehlerflag erreichen und keine eigene
+    /// try-Tiefe verlangen: der geliehene Defer-Handler (P2-T77) und der
+    /// Skip-Block eines Nicht-Direktform-Systemaufrufs (P2-T78).
+    fn native_flag_only_target(&self, catch: Option<inkwell::basic_block::BasicBlock<'ctx>>) -> bool {
+        catch.is_some() && (catch == self.defer_borrowed_handler || catch == self.native_skip_target)
+    }
+
+    /// Behandelt inkonsistente Handlerzustaende ohne erfundenen Ergebniswert.
+    /// Fehlerausgang der nativen Argumentkonvertierung ohne lokalen Catch.
+    /// main: wie bisher `return 1` (moo_throw hat den Fehler ausgegeben).
+    /// Benannte Funktion mit Direktform (P2-T74): der Fehler ist per moo_throw
+    /// gemeldet (Flag bei aktivem Aufrufer-Handler, sonst Prozessende); die
+    /// Funktion gibt ihre Locals frei und kehrt wie bei jedem Moo-Fehler
+    /// flag-basiert mit `nichts` zurueck, der Aufrufer prueft das Flag nach
+    /// dem Statement. Defers gibt es hier nicht (Schranke d: Systemkoerper
+    /// nicht in Funktionen mit aufraeumen). Andere Formen (P2-T66 b): moo_throw
+    /// beendet den Prozess bei try_depth 0; ein MooValue-Rahmen hat keinen
+    /// i32-Return, daher bleibt der Rest fatal abgesichert (llvm.trap).
+    /// P2-T78: Nicht-Direktform in benannten Funktionen (und main in versuche:)
+    /// kommt hier nicht mehr an: die Adapter springen in den Skip-Block des
+    /// Aufrufs (native_skip_target), der Aufruf liefert `nichts`.
+    fn native_argument_fatal_exit(&mut self) -> Result<(), String> {
+        let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
+        if function.get_name().to_str() == Ok("main") {
+            self.builder.build_return(Some(&self.context.i32_type().const_int(1, false)))
+                .map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+        if self.native_try_direct {
+            // P2-T77: statische Defers wie in compile_return VOR dem Freigeben
+            // der Locals ausfuehren (Aktionen lesen Locals); emit_defers sichert
+            // den anhaengigen Erstfehler und wirft ihn danach erneut. Runtime-
+            // Frame und geliehener Handler kommen hier nicht an: dort liegt ein
+            // lokaler Catch auf dem try_stack (native_local_catch).
+            self.emit_defers()?;
+            self.release_function_locals()?;
+            if function.get_type().get_return_type().is_none() {
+                self.builder.build_return(None).map_err(|e| e.to_string())?;
+            } else {
+                let none = self.call_rt(self.rt.moo_none, &[], "native.arg.none")?;
+                self.builder.build_return(Some(&none)).map_err(|e| e.to_string())?;
+            }
+            return Ok(());
+        }
+        let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.trap").ok_or("llvm.trap fehlt")?;
+        let trap = intrinsic.get_declaration(&self.module, &[]).ok_or("llvm.trap-Deklaration fehlt")?;
+        self.builder.build_call(trap, &[], "").map_err(|e| e.to_string())?;
+        self.builder.build_unreachable().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn native_argument_state_failure(
+        &mut self,
         has_depth: inkwell::values::IntValue<'ctx>,
         has_error: inkwell::values::IntValue<'ctx>,
         target: Option<inkwell::basic_block::BasicBlock<'ctx>>,
     ) -> Result<(), String> {
         if let Some(catch) = target {
+            // P2-T77/P2-T78: geliehener Defer-Handler bzw. Skip-Block: nur ein
+            // anhaengiger Fehler fuehrt hierher (keine Tiefenforderung), er
+            // bleibt beim Aufrufer.
+            if self.native_flag_only_target(target) {
+                self.builder.build_unconditional_branch(catch).map_err(|e| e.to_string())?;
+                return Ok(());
+            }
             let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
             let fatal = self.context.append_basic_block(function, "native.arg.invalid_handler_state");
             let can_catch = self.builder.build_and(has_depth, has_error, "native.arg.can_catch")
@@ -3878,8 +4312,7 @@ impl<'ctx> CodeGen<'ctx> {
             self.builder.build_call(trap, &[], "").map_err(|e| e.to_string())?;
             self.builder.build_unreachable().map_err(|e| e.to_string())?;
         } else {
-            self.builder.build_return(Some(&self.context.i32_type().const_int(1, false)))
-                .map_err(|e| e.to_string())?;
+            self.native_argument_fatal_exit()?;
         }
         Ok(())
     }
@@ -3913,9 +4346,7 @@ impl<'ctx> CodeGen<'ctx> {
             self.context.i32_type().const_zero(), "native.arg.has_handler").map_err(|e| e.to_string())?;
         let has_error = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending,
             self.context.i32_type().const_zero(), "native.arg.has_error").map_err(|e| e.to_string())?;
-        let wrong_depth = if catch.is_some() {
-            self.builder.build_not(has_depth, "native.arg.no_handler").map_err(|e| e.to_string())?
-        } else { has_depth };
+        let wrong_depth = self.native_argument_wrong_depth(has_depth, catch, "native.arg.no_handler")?;
         let invalid_state = self.builder.build_or(wrong_depth, has_error, "native.arg.invalid_state")
             .map_err(|e| e.to_string())?;
         self.builder.build_conditional_branch(invalid_state, state_error, state_ok).map_err(|e| e.to_string())?;
@@ -3937,9 +4368,7 @@ impl<'ctx> CodeGen<'ctx> {
             self.context.i32_type().const_zero(), "native.arg.has_handler_after").map_err(|e| e.to_string())?;
         let has_error_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending_after,
             self.context.i32_type().const_zero(), "native.arg.has_error_after").map_err(|e| e.to_string())?;
-        let wrong_depth_after = if catch.is_some() {
-            self.builder.build_not(has_depth_after, "native.arg.no_handler_after").map_err(|e| e.to_string())?
-        } else { has_depth_after };
+        let wrong_depth_after = self.native_argument_wrong_depth(has_depth_after, catch, "native.arg.no_handler_after")?;
         let bad_after = self.builder.build_or(wrong_depth_after, has_error_after, "native.arg.bad_after")
             .map_err(|e| e.to_string())?;
         self.builder.build_conditional_branch(bad_after, value_error, value_ok).map_err(|e| e.to_string())?;
@@ -3993,8 +4422,7 @@ impl<'ctx> CodeGen<'ctx> {
         if let Some(target) = catch {
             self.builder.build_unconditional_branch(target).map_err(|e| e.to_string())?;
         } else {
-            self.builder.build_return(Some(&self.context.i32_type().const_int(1, false)))
-                .map_err(|e| e.to_string())?;
+            self.native_argument_fatal_exit()?;
         }
         self.builder.position_at_end(success_bb);
         self.call_rt_void(self.rt.moo_release, &[value.into()], "native.arg.release")?;
@@ -4005,6 +4433,83 @@ impl<'ctx> CodeGen<'ctx> {
         } else {
             Ok(integer)
         }
+    }
+
+    /// P2-T34: Konvertiert dynamische Wahrheitswerte (MOO_BOOL) an der nativen
+    /// Grenze zu i1. Andere Tags (Zahl, Text, nichts) sind ein Moo-Fehler;
+    /// es gibt keine implizite Wahrheitsumdeutung (ADR §14: Typpruefung).
+    fn compile_native_bool_argument(&mut self, expr: &Expr, catch: Option<inkwell::basic_block::BasicBlock<'ctx>>) -> Result<inkwell::values::IntValue<'ctx>, String> {
+        let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
+        let state_ok = self.context.append_basic_block(function, "native.arg.state_ok");
+        let state_error = self.context.append_basic_block(function, "native.arg.state_error");
+        let depth = self.module.get_global("moo_try_depth").unwrap_or_else(||
+            self.module.add_global(self.context.i32_type(), None, "moo_try_depth"));
+        let depth_value = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.try_depth")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let pending = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending")
+            .map_err(|e| e.to_string())?.try_as_basic_value();
+        let pending = match pending {
+            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+            _ => return Err("moo_try_check liefert keinen Wert".into()),
+        };
+        let has_depth = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_value,
+            self.context.i32_type().const_zero(), "native.arg.has_handler").map_err(|e| e.to_string())?;
+        let has_error = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending,
+            self.context.i32_type().const_zero(), "native.arg.has_error").map_err(|e| e.to_string())?;
+        let wrong_depth = self.native_argument_wrong_depth(has_depth, catch, "native.arg.no_handler")?;
+        let invalid_state = self.builder.build_or(wrong_depth, has_error, "native.arg.invalid_state")
+            .map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(invalid_state, state_error, state_ok).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(state_error);
+        self.native_argument_state_failure(has_depth, has_error, catch)?;
+        self.builder.position_at_end(state_ok);
+        let value = self.compile_expr(expr)?;
+        let value_ok = self.context.append_basic_block(function, "native.arg.value_ok");
+        let value_error = self.context.append_basic_block(function, "native.arg.value_error");
+        let depth_after = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.depth_after")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let pending_after = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending_after")
+            .map_err(|e| e.to_string())?.try_as_basic_value();
+        let pending_after = match pending_after {
+            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+            _ => return Err("moo_try_check liefert keinen Wert".into()),
+        };
+        let has_depth_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_after,
+            self.context.i32_type().const_zero(), "native.arg.has_handler_after").map_err(|e| e.to_string())?;
+        let has_error_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending_after,
+            self.context.i32_type().const_zero(), "native.arg.has_error_after").map_err(|e| e.to_string())?;
+        let wrong_depth_after = self.native_argument_wrong_depth(has_depth_after, catch, "native.arg.no_handler_after")?;
+        let bad_after = self.builder.build_or(wrong_depth_after, has_error_after, "native.arg.bad_after")
+            .map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(bad_after, value_error, value_ok).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(value_error);
+        self.call_rt_void(self.rt.moo_release, &[value.into()], "native.arg.release_pending")?;
+        self.native_argument_state_failure(has_depth_after, has_error_after, catch)?;
+        self.builder.position_at_end(value_ok);
+        let tag_value = self.builder.build_extract_value(value, 0, "native.arg.tag")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let raw = self.builder.build_extract_value(value, 1, "native.arg.bits")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let success_bb = self.context.append_basic_block(function, "native.bool.valid");
+        let failure_bb = self.context.append_basic_block(function, "native.bool.invalid");
+        // MOO_BOOL = 2 (compiler/runtime/moo_runtime.h, MooValue.tag).
+        let is_bool = self.builder.build_int_compare(inkwell::IntPredicate::EQ, tag_value,
+            self.context.i64_type().const_int(2, false), "native.bool.is_bool").map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(is_bool, success_bb, failure_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(failure_bb);
+        self.call_rt_void(self.rt.moo_release, &[value.into()], "native.bool.release_error")?;
+        let message = self.make_global_str("Native Funktion erwartet einen Wahrheitswert (bool)", "native_bool_error")?;
+        let error = self.call_rt(self.rt.moo_string_new, &[message.into()], "native.bool.error")?;
+        self.call_rt_void(self.rt.moo_throw, &[error.into()], "native.bool.throw")?;
+        if let Some(target) = catch {
+            self.builder.build_unconditional_branch(target).map_err(|e| e.to_string())?;
+        } else {
+            self.native_argument_fatal_exit()?;
+        }
+        self.builder.position_at_end(success_bb);
+        self.call_rt_void(self.rt.moo_release, &[value.into()], "native.bool.release")?;
+        self.builder.build_int_compare(inkwell::IntPredicate::NE, raw, self.context.i64_type().const_zero(), "native.bool.flag")
+            .map_err(|e| e.to_string())
     }
 
     /// Konvertiert dynamische Number-Werte an der Float-FFI-Grenze.
@@ -4028,9 +4533,7 @@ impl<'ctx> CodeGen<'ctx> {
             self.context.i32_type().const_zero(), "native.arg.has_handler").map_err(|e| e.to_string())?;
         let has_error = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending,
             self.context.i32_type().const_zero(), "native.arg.has_error").map_err(|e| e.to_string())?;
-        let wrong_depth = if catch.is_some() {
-            self.builder.build_not(has_depth, "native.arg.no_handler").map_err(|e| e.to_string())?
-        } else { has_depth };
+        let wrong_depth = self.native_argument_wrong_depth(has_depth, catch, "native.arg.no_handler")?;
         let invalid_state = self.builder.build_or(wrong_depth, has_error, "native.arg.invalid_state")
             .map_err(|e| e.to_string())?;
         self.builder.build_conditional_branch(invalid_state, state_error, state_ok).map_err(|e| e.to_string())?;
@@ -4052,9 +4555,7 @@ impl<'ctx> CodeGen<'ctx> {
             self.context.i32_type().const_zero(), "native.arg.has_handler_after").map_err(|e| e.to_string())?;
         let has_error_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending_after,
             self.context.i32_type().const_zero(), "native.arg.has_error_after").map_err(|e| e.to_string())?;
-        let wrong_depth_after = if catch.is_some() {
-            self.builder.build_not(has_depth_after, "native.arg.no_handler_after").map_err(|e| e.to_string())?
-        } else { has_depth_after };
+        let wrong_depth_after = self.native_argument_wrong_depth(has_depth_after, catch, "native.arg.no_handler_after")?;
         let bad_after = self.builder.build_or(wrong_depth_after, has_error_after, "native.arg.bad_after")
             .map_err(|e| e.to_string())?;
         self.builder.build_conditional_branch(bad_after, value_error, value_ok).map_err(|e| e.to_string())?;
@@ -4101,7 +4602,7 @@ impl<'ctx> CodeGen<'ctx> {
         if let Some(target) = catch {
             self.builder.build_unconditional_branch(target).map_err(|e| e.to_string())?;
         } else {
-            self.builder.build_return(Some(&self.context.i32_type().const_int(1, false))).map_err(|e| e.to_string())?;
+            self.native_argument_fatal_exit()?;
         }
         self.builder.position_at_end(convert_bb);
         self.call_rt_void(self.rt.moo_release, &[value.into()], "native.float.release")?;
@@ -4129,9 +4630,7 @@ impl<'ctx> CodeGen<'ctx> {
             self.context.i32_type().const_zero(), "native.arg.has_handler").map_err(|e| e.to_string())?;
         let has_error = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending,
             self.context.i32_type().const_zero(), "native.arg.has_error").map_err(|e| e.to_string())?;
-        let wrong_depth = if catch.is_some() {
-            self.builder.build_not(has_depth, "native.arg.no_handler").map_err(|e| e.to_string())?
-        } else { has_depth };
+        let wrong_depth = self.native_argument_wrong_depth(has_depth, catch, "native.arg.no_handler")?;
         let invalid_state = self.builder.build_or(wrong_depth, has_error, "native.arg.invalid_state")
             .map_err(|e| e.to_string())?;
         self.builder.build_conditional_branch(invalid_state, state_error, state_ok).map_err(|e| e.to_string())?;
@@ -4153,9 +4652,7 @@ impl<'ctx> CodeGen<'ctx> {
             self.context.i32_type().const_zero(), "native.arg.has_handler_after").map_err(|e| e.to_string())?;
         let has_error_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending_after,
             self.context.i32_type().const_zero(), "native.arg.has_error_after").map_err(|e| e.to_string())?;
-        let wrong_depth_after = if catch.is_some() {
-            self.builder.build_not(has_depth_after, "native.arg.no_handler_after").map_err(|e| e.to_string())?
-        } else { has_depth_after };
+        let wrong_depth_after = self.native_argument_wrong_depth(has_depth_after, catch, "native.arg.no_handler_after")?;
         let bad_after = self.builder.build_or(wrong_depth_after, has_error_after, "native.arg.bad_after")
             .map_err(|e| e.to_string())?;
         self.builder.build_conditional_branch(bad_after, value_error, value_ok).map_err(|e| e.to_string())?;
@@ -4209,7 +4706,7 @@ impl<'ctx> CodeGen<'ctx> {
         if let Some(target) = catch {
             self.builder.build_unconditional_branch(target).map_err(|e| e.to_string())?;
         } else {
-            self.builder.build_return(Some(&self.context.i32_type().const_int(1, false))).map_err(|e| e.to_string())?;
+            self.native_argument_fatal_exit()?;
         }
         self.builder.position_at_end(success_bb);
         self.call_rt_void(self.rt.moo_release, &[value.into()], "native.wide.release")?;
@@ -4538,6 +5035,61 @@ impl<'ctx> CodeGen<'ctx> {
                 let guard_args = std::mem::take(&mut self.stmt_root_guard) || self.stmt_recursive_guard;
                 if let Some(function) = self.native_functions.get(name).copied() {
                     let signature = self.native_signatures.get(name).cloned().ok_or_else(|| format!("Nativer Zeigerfunktionsaufruf '{name}' ist noch nicht unterstützt"))?;
+                    // P2-T66 Stufe 2a: hosted Systemkoerper rechnen C-artig (Zeiger,
+                    // Wrap, kein Boxing), deshalb nur explizit `unsicher:` und nur in
+                    // main oder einer benannten Funktion. P2-T74: Moo-interne hosted
+                    // Koerper (__moo_native.*, Spiegel von native_system.rs fangbar())
+                    // melden Fehler seit P2-T34 ueber moo_native_fehler und kehren mit
+                    // Nullwert zurueck; versuche: prueft das Flag nach jedem Statement
+                    // (compile_try_catch) bzw. der Statement-Guard vor dem naechsten
+                    // Seiteneffekt (guard_local_expr_error). Der Aufruf ist dort also
+                    // erlaubt. Bare-Koerper und C-Exporte (@einstieg) trappen weiter
+                    // und bleiben ausserhalb von versuche:/aufraeumen gesperrt.
+                    let system_call = self.hosted_system_functions.contains(&function);
+                    let system_fangbar = system_call && !self.bare_mode
+                        && function.get_name().to_str().is_ok_and(|n| n.starts_with("__moo_native."));
+                    // P2-T80: reine @nativ-Koerper (ohne unsicher:, kein FFI) melden hosted
+                    // Fehler ebenfalls ueber moo_native_fehler (Weak-Hook, codegen_native::
+                    // native_fehler_hook); der Trap-Vertrag gilt nur fuer bare/wasm und
+                    // C-Exporte (@einstieg verliert den __moo_native.-Namen, set_name).
+                    // Ihre Argumentadapter duerfen deshalb wie bei Systemkoerpern in
+                    // benannten Funktionen und versuche:-Teilausdruecken propagieren.
+                    let wasm_target = self.module.get_triple().as_str().to_str()
+                        .map(|t| t.starts_with("wasm")).unwrap_or(true);
+                    let plain_fangbar = !system_call && !self.bare_mode && !wasm_target
+                        && !self.native_ffi_functions.contains(name)
+                        && function.get_name().to_str().is_ok_and(|n| n.starts_with("__moo_native."));
+                    let fangbar = system_fangbar || plain_fangbar;
+                    let in_main = self.current_function == self.module.get_function("main");
+                    // P2-T66 (b): benannte Top-Level-Funktionen (keine Lambdas, keine Methoden).
+                    let in_named_function = !in_main && self.current_function
+                        .and_then(|f| f.get_name().to_str().ok().map(|n| self.dyn_named_functions.contains(n)))
+                        .unwrap_or(false);
+                    if system_call {
+                        if !self.unsafe_context {
+                            return Err(format!("Aufruf des nativen Systemkoerpers '{name}' nur innerhalb von unsicher: (C-artige Semantik; Fehler sind hosted fangbar, im Bare-Profil und in C-Exporten fatal)"));
+                        }
+                        if !(in_main || in_named_function) {
+                            return Err(format!("Aufruf des nativen Systemkoerpers '{name}' ist nur in main oder einer benannten Funktion erlaubt (keine Lambdas/Methoden)"));
+                        }
+                        if !self.try_stack.is_empty() && !system_fangbar {
+                            return Err(format!("Aufruf des nativen Systemkoerpers '{name}' ist innerhalb von versuche: oder einem aufraeumen-Rahmen nur hosted erlaubt (im Bare-Profil waere ein Trap nicht fangbar)"));
+                        }
+                        // P2-T77: fangbare Koerper laufen in Funktionen mit aufraeumen
+                        // ueber dieselben Pfade wie Moo-Fehler (emit_defers sichert den
+                        // Erstfehler; Runtime-Frame/geliehener Handler fangen das Flag);
+                        // der Adapter-Propagationsausgang fuehrt die Defers selbst aus.
+                        if (self.defer_runtime || !self.defer_stack.is_empty() || self.defer_borrowed_handler.is_some())
+                            && !system_fangbar
+                        {
+                            return Err(format!("Aufruf des nativen Systemkoerpers '{name}' ist in Funktionen mit aufraeumen nur hosted erlaubt (im Bare-Profil waere ein Trap nicht fangbar)"));
+                        }
+                    }
+                    // Argumentkonvertierung ausserhalb von main nur fuer Systemkoerper-
+                    // und (P2-T80) fangbare reine @nativ-Aufrufe in benannten Funktionen;
+                    // deren Fehlerpfad propagiert flag-basiert (native_argument_fatal_exit
+                    // Direktform bzw. Skip-Block) statt mit dem main-Return.
+                    let argument_frame_ok = in_main || ((system_call || plain_fangbar) && in_named_function);
                     // Der aktuelle Wide-Fehlerpfad beendet main. Eine spaetere
                     // Defer-Stelle kann in einer Schleife bereits aktiv sein; bis
                     // zum propagierenden Cleanup-Rahmen konservativ modulweit sperren.
@@ -4559,26 +5111,97 @@ impl<'ctx> CodeGen<'ctx> {
                         return Err(format!("Native Funktion '{name}': falsche Argumentzahl"));
                     }
                     if self.bare_mode {
-                        return Err("Dynamische native Aufrufe sind im Bare-Profil noch nicht unterstützt".into());
+                        // P2-T43 (#37326): runtime-frei nur Systemkoerper mit Literal-/
+                        // bool-Literal-Argumenten (Konstantenpfad unten) und einer
+                        // Rueckgabe, die moo_bare.c boxen kann (moo_none/moo_bool/
+                        // moo_number). Dynamische Werte, 64-Bit und Float-Argumente
+                        // braeuchten Adapter mit Moo-Runtime und bleiben gesperrt.
+                        let literal = |arg: &Expr| match arg {
+                            Expr::Number(_) => true,
+                            Expr::UnaryOp { op: crate::ast::UnaryOpKind::Neg, operand } =>
+                                matches!(operand.as_ref(), Expr::Number(_)),
+                            _ => false,
+                        };
+                        let args_ok = args.iter().zip(&signature.params).all(|(arg, ty)| match ty {
+                            crate::codegen_native::NType::Bool => matches!(arg, Expr::Boolean(_)),
+                            crate::codegen_native::NType::I8 | crate::codegen_native::NType::U8
+                            | crate::codegen_native::NType::I16 | crate::codegen_native::NType::U16
+                            | crate::codegen_native::NType::I32 | crate::codegen_native::NType::U32 => literal(arg),
+                            _ => false,
+                        });
+                        let result_ok = !matches!(signature.result,
+                            Some(crate::codegen_native::NType::I64 | crate::codegen_native::NType::U64));
+                        if !(system_call && args_ok && result_ok) {
+                            return Err("Dynamische native Aufrufe sind im Bare-Profil noch nicht unterstützt (erlaubt: unsicher:-Systemkoerper mit Literal-Argumenten bis 32 Bit/bool, Rueckgabe ohne 64 Bit)".into());
+                        }
                     }
+                    // P2-T78: Nicht-Direktform (Aufruf in Argumentposition oder
+                    // Teilausdruck, kein lokaler Catch) in benannten Funktionen und in
+                    // main innerhalb versuche:. Ein Adapterfehler wird wie ein
+                    // Koerperfehler behandelt: moo_throw setzt das Flag (ohne Handler
+                    // Prozessende), der Aufruf wird uebersprungen (native.skip) und
+                    // liefert nichts; der Rest des Statements laeuft wie bei jedem
+                    // dynamischen Moo-Fehler weiter, der naechste Pruefpunkt
+                    // (compile_try_catch, guard_local_expr_error, Aufrufer) faengt.
+                    // Kein direkter Sprung zum Handler: bereits kompilierte
+                    // Geschwisterwerte des umgebenden Ausdrucks wuerden leaken.
+                    // Nur hosted fangbare Koerper (fangbar: Systemkoerper, seit P2-T80
+                    // auch reine @nativ-Koerper); Direktform, Bare/Exporte/FFI und main
+                    // ohne Handler behalten den Bestand.
+                    let local_catch = self.native_local_catch();
+                    let needs_adapter = args.iter().zip(&signature.params).any(|(arg, ty)| match ty {
+                        crate::codegen_native::NType::Bool => !matches!(arg, Expr::Boolean(_)),
+                        crate::codegen_native::NType::I64 | crate::codegen_native::NType::U64
+                        | crate::codegen_native::NType::F32 | crate::codegen_native::NType::F64 => true,
+                        _ => !matches!(arg, Expr::Number(_))
+                            && !matches!(arg, Expr::UnaryOp { op: crate::ast::UnaryOpKind::Neg, operand }
+                                if matches!(operand.as_ref(), Expr::Number(_))),
+                    });
+                    let skip_target = if local_catch.is_none() && !self.native_try_direct
+                        && fangbar && needs_adapter
+                        && (in_named_function || (in_main && !self.try_stack.is_empty()))
+                    {
+                        let current = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
+                        Some(self.context.append_basic_block(current, "native.skip"))
+                    } else {
+                        None
+                    };
+                    let adapter_catch = local_catch.or(skip_target);
+                    let previous_skip = self.native_skip_target;
+                    self.native_skip_target = skip_target;
                     let mut native_args = Vec::with_capacity(args.len());
                     for (arg, ty) in args.iter().zip(&signature.params) {
                         if matches!(ty, crate::codegen_native::NType::I64 | crate::codegen_native::NType::U64) {
-                            let local_catch = if self.native_try_direct { self.try_stack.last().copied() } else { None };
+                            let local_catch = adapter_catch;
                             if local_catch.is_none()
-                                && (self.current_function != self.module.get_function("main") || !self.try_stack.is_empty())
+                                && (!argument_frame_ok || !self.try_stack.is_empty())
                             {
-                                return Err("Dynamische 64-Bit-Argumente sind derzeit nur in main ausserhalb von try unterstützt".into());
+                                return Err("Dynamische 64-Bit-Argumente an native Funktionen sind nur hosted in main oder benannten Funktionen unterstützt (in versuche:-Teilausdruecken nur fuer fangbare Koerper; nicht in Lambdas/Methoden, C-Exporten, FFI-Koerpern oder im Bare-Profil)".into());
                             }
                             native_args.push(self.compile_native_wide_argument(arg, *ty, local_catch)?.into());
                             continue;
                         }
-                        if matches!(ty, crate::codegen_native::NType::F32 | crate::codegen_native::NType::F64) {
-                            let local_catch = if self.native_try_direct { self.try_stack.last().copied() } else { None };
+                        if matches!(ty, crate::codegen_native::NType::Bool) {
+                            // P2-T34: wahr/falsch direkt, sonst Adapter mit MOO_BOOL-Tagpruefung.
+                            if let Expr::Boolean(flag) = arg {
+                                native_args.push(self.context.bool_type().const_int(u64::from(*flag), false).into());
+                                continue;
+                            }
+                            let local_catch = adapter_catch;
                             if local_catch.is_none()
-                                && (self.current_function != self.module.get_function("main") || !self.try_stack.is_empty())
+                                && (!argument_frame_ok || !self.try_stack.is_empty())
                             {
-                                return Err("Dynamische Float-Argumente sind derzeit nur in main ausserhalb von try unterstützt".into());
+                                return Err("Dynamische bool-Argumente an native Funktionen sind nur hosted in main oder benannten Funktionen unterstützt (in versuche:-Teilausdruecken nur fuer fangbare Koerper; nicht in Lambdas/Methoden, C-Exporten, FFI-Koerpern oder im Bare-Profil)".into());
+                            }
+                            native_args.push(self.compile_native_bool_argument(arg, local_catch)?.into());
+                            continue;
+                        }
+                        if matches!(ty, crate::codegen_native::NType::F32 | crate::codegen_native::NType::F64) {
+                            let local_catch = adapter_catch;
+                            if local_catch.is_none()
+                                && (!argument_frame_ok || !self.try_stack.is_empty())
+                            {
+                                return Err("Dynamische Float-Argumente an native Funktionen sind nur hosted in main oder benannten Funktionen unterstützt (in versuche:-Teilausdruecken nur fuer fangbare Koerper; nicht in Lambdas/Methoden, C-Exporten, FFI-Koerpern oder im Bare-Profil)".into());
                             }
                             native_args.push(self.compile_native_float_argument(arg, *ty, local_catch)?.into());
                             continue;
@@ -4614,13 +5237,11 @@ impl<'ctx> CodeGen<'ctx> {
                             };
                             int_ty.const_int(number as i64 as u64, false)
                         } else {
-                            let local_catch = if self.native_try_direct {
-                                self.try_stack.last().copied()
-                            } else { None };
+                            let local_catch = adapter_catch;
                             if local_catch.is_none()
-                                && (self.current_function != self.module.get_function("main") || !self.try_stack.is_empty())
+                                && (!argument_frame_ok || !self.try_stack.is_empty())
                             {
-                                return Err("Dynamische i32-Argumente sind derzeit nur in main ausserhalb von try unterstützt".into());
+                                return Err("Dynamische i32-Argumente an native Funktionen sind nur hosted in main oder benannten Funktionen unterstützt (in versuche:-Teilausdruecken nur fuer fangbare Koerper; nicht in Lambdas/Methoden, C-Exporten, FFI-Koerpern oder im Bare-Profil)".into());
                             }
                             self.compile_native_integer_argument(arg, *ty, local_catch)?
 
@@ -4630,28 +5251,51 @@ impl<'ctx> CodeGen<'ctx> {
                     let call_name = if signature.result.is_some() { "native.call" } else { "" };
                     let result = self.builder.build_call(function, &native_args, call_name)
                         .map_err(|e| e.to_string())?.try_as_basic_value();
-                    if signature.result.is_none() {
-                        return self.call_rt(self.rt.moo_none, &[], "native.void");
-                    }
-                    let value = match result {
-                        inkwell::values::ValueKind::Basic(value) => value,
-                        _ => return Err("Native Funktion lieferte keinen Wert".into()),
+                    self.native_skip_target = previous_skip;
+                    let produced = if signature.result.is_none() {
+                        self.call_rt(self.rt.moo_none, &[], "native.void")?
+                    } else {
+                        let value = match result {
+                            inkwell::values::ValueKind::Basic(value) => value,
+                            _ => return Err("Native Funktion lieferte keinen Wert".into()),
+                        };
+                        // P2-T34: bool-Ergebnis wird ein Moo-Wahrheitswert, kein Zahlenumweg.
+                        if let (Some(crate::codegen_native::NType::Bool), BasicValueEnum::IntValue(flag)) = (signature.result, value) {
+                            self.call_rt(self.rt.moo_bool_fn, &[flag.into()], "native.bool")?
+                        } else {
+                            let boxed = match (signature.result, value) {
+                                (Some(crate::codegen_native::NType::I64), BasicValueEnum::IntValue(value)) =>
+                                    self.box_native_wide(value, false)?,
+                                (Some(crate::codegen_native::NType::U64), BasicValueEnum::IntValue(value)) =>
+                                    self.box_native_wide(value, true)?,
+                                (Some(crate::codegen_native::NType::F32), BasicValueEnum::FloatValue(value)) =>
+                                    self.builder.build_float_ext(value, self.context.f64_type(), "native.box").map_err(|e| e.to_string())?,
+                                (Some(crate::codegen_native::NType::F64), BasicValueEnum::FloatValue(value)) => value,
+                                (Some(crate::codegen_native::NType::U8 | crate::codegen_native::NType::U16 | crate::codegen_native::NType::U32), BasicValueEnum::IntValue(value)) =>
+                                    self.builder.build_unsigned_int_to_float(value, self.context.f64_type(), "native.box").map_err(|e| e.to_string())?,
+                                (Some(crate::codegen_native::NType::I8 | crate::codegen_native::NType::I16 | crate::codegen_native::NType::I32), BasicValueEnum::IntValue(value)) =>
+                                    self.builder.build_signed_int_to_float(value, self.context.f64_type(), "native.box").map_err(|e| e.to_string())?,
+                                _ => return Err("Native Funktion lieferte einen unerwarteten Werttyp".into()),
+                            };
+                            self.call_rt(self.rt.moo_number, &[boxed.into()], "native.number")?
+                        }
                     };
-                    let boxed = match (signature.result, value) {
-                        (Some(crate::codegen_native::NType::I64), BasicValueEnum::IntValue(value)) =>
-                            self.box_native_wide(value, false)?,
-                        (Some(crate::codegen_native::NType::U64), BasicValueEnum::IntValue(value)) =>
-                            self.box_native_wide(value, true)?,
-                        (Some(crate::codegen_native::NType::F32), BasicValueEnum::FloatValue(value)) =>
-                            self.builder.build_float_ext(value, self.context.f64_type(), "native.box").map_err(|e| e.to_string())?,
-                        (Some(crate::codegen_native::NType::F64), BasicValueEnum::FloatValue(value)) => value,
-                        (Some(crate::codegen_native::NType::U8 | crate::codegen_native::NType::U16 | crate::codegen_native::NType::U32), BasicValueEnum::IntValue(value)) =>
-                            self.builder.build_unsigned_int_to_float(value, self.context.f64_type(), "native.box").map_err(|e| e.to_string())?,
-                        (Some(crate::codegen_native::NType::I8 | crate::codegen_native::NType::I16 | crate::codegen_native::NType::I32), BasicValueEnum::IntValue(value)) =>
-                            self.builder.build_signed_int_to_float(value, self.context.f64_type(), "native.box").map_err(|e| e.to_string())?,
-                        _ => return Err("Native Funktion lieferte einen unerwarteten Werttyp".into()),
-                    };
-                    return self.call_rt(self.rt.moo_number, &[boxed.into()], "native.number");
+                    let Some(skip) = skip_target else { return Ok(produced); };
+                    // P2-T78: Zusammenfuehrung mit dem Skip-Block ueber einen Slot im
+                    // Eintrittsblock (wie defer_status_error); der uebersprungene Aufruf
+                    // liefert nichts, das Fehlerflag ist bereits gesetzt.
+                    let current = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
+                    let slot = self.entry_alloca(self.mv_type(), "native.skip.slot")?;
+                    let merge = self.context.append_basic_block(current, "native.skip.merge");
+                    self.builder.build_store(slot, produced).map_err(|e| e.to_string())?;
+                    self.builder.build_unconditional_branch(merge).map_err(|e| e.to_string())?;
+                    self.builder.position_at_end(skip);
+                    let none = self.call_rt(self.rt.moo_none, &[], "native.skip.none")?;
+                    self.builder.build_store(slot, none).map_err(|e| e.to_string())?;
+                    self.builder.build_unconditional_branch(merge).map_err(|e| e.to_string())?;
+                    self.builder.position_at_end(merge);
+                    return Ok(self.builder.build_load(self.mv_type(), slot, "native.skip.result")
+                        .map_err(|e| e.to_string())?.into_struct_value());
                 }
                 if self.extern_c_names.contains(name) {
                     return Err(format!("extern-C-Aufruf '{name}' ist noch nicht unterstützt"));
@@ -4701,6 +5345,16 @@ impl<'ctx> CodeGen<'ctx> {
 
                 // Builtin-Funktionen pruefen
                 match name.as_str() {
+                    // P2-T50: typisierter Puffer. Eigene Funktionen gleichen Namens
+                    // haben oben schon Vorrang; Variable/Global/Lambda verschatten
+                    // das Builtin ebenfalls (indirekter Aufruf weiter unten).
+                    "puffer_erstellen" | "buffer_create"
+                        if !self.variables.contains_key(name)
+                            && !self.globals.contains_key(name)
+                            && !self.lambda_names.contains_key(name) =>
+                    {
+                        return self.compile_buffer_create(name, args);
+                    }
                     // Result-Typ (Rust-inspiriert): ok(wert) / fehler(msg)
                     "ok" => {
                         let arg = self.compile_expr(&args[0])?;

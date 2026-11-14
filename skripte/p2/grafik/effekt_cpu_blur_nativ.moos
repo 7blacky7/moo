@@ -1,0 +1,216 @@
+# P2-T72 Modul 3: Box-Blur und Capture aus
+# compiler/runtime/moo_compositor_effects_cpu.c:419-558 in nativem Moo.
+# Alle Puffer sind u32-Wortfelder (Adressen als u64); Indizes wie C in u64.
+# Gleitende Fenstersumme in u64 (Wickeln identisch zu C), Ergebnis je Pixel
+# round(summe / (2r+1)) halb-aufwaerts.
+# Maske: ausserhalb liegende Pixel zaehlen 0 (Divisor bleibt 2r+1, wie C).
+# RGBA: Randpixel werden geklemmt (clamp_coord), 4 Kanaele pro Pixel.
+
+# C :19-21.
+@nativ
+funktion blur_runden(n: u64, d: u64) -> u64:
+    unsicher:
+        gib_zurück (n + d / 2) / d
+
+# C :419-443. Horizontal, Maske (1 Wort/Pixel).
+@nativ
+@einstieg
+funktion moo_n_fx_box_mask_h(quelle: u64, ziel: u64, w: i32, h: i32, radius: u32) -> void:
+    unsicher:
+        setze s: ptr[u32] auf zeiger(quelle)
+        setze z: ptr[u32] auf zeiger(ziel)
+        setze d: u64 auf u64(radius) * 2 + 1
+        setze r: i64 auf i64(radius)
+        setze breite: i64 auf i64(w)
+        setze uw: u64 auf u64(w)
+        setze y: i32 auf 0
+        solange y < h:
+            setze basis: u64 auf u64(y) * uw
+            setze summe: u64 auf 0
+            setze k: i64 auf -r
+            solange k <= r:
+                wenn k >= 0:
+                    wenn k < breite:
+                        setze summe auf summe + u64(s[basis + u64(k)])
+                setze k auf k + 1
+            setze x: i32 auf 0
+            solange x < w:
+                setze raus: i64 auf i64(x) - r
+                setze rein: i64 auf i64(x) + r + 1
+                z[basis + u64(x)] = u32(blur_runden(summe, d))
+                wenn raus >= 0:
+                    wenn raus < breite:
+                        setze summe auf summe - u64(s[basis + u64(raus)])
+                wenn rein >= 0:
+                    wenn rein < breite:
+                        setze summe auf summe + u64(s[basis + u64(rein)])
+                setze x auf x + 1
+            setze y auf y + 1
+
+# C :445-469. Vertikal, Maske.
+@nativ
+@einstieg
+funktion moo_n_fx_box_mask_v(quelle: u64, ziel: u64, w: i32, h: i32, radius: u32) -> void:
+    unsicher:
+        setze s: ptr[u32] auf zeiger(quelle)
+        setze z: ptr[u32] auf zeiger(ziel)
+        setze d: u64 auf u64(radius) * 2 + 1
+        setze r: i64 auf i64(radius)
+        setze hoehe: i64 auf i64(h)
+        setze uw: u64 auf u64(w)
+        setze x: i32 auf 0
+        solange x < w:
+            setze ux: u64 auf u64(x)
+            setze summe: u64 auf 0
+            setze k: i64 auf -r
+            solange k <= r:
+                wenn k >= 0:
+                    wenn k < hoehe:
+                        setze summe auf summe + u64(s[u64(k) * uw + ux])
+                setze k auf k + 1
+            setze y: i32 auf 0
+            solange y < h:
+                setze raus: i64 auf i64(y) - r
+                setze rein: i64 auf i64(y) + r + 1
+                z[u64(y) * uw + ux] = u32(blur_runden(summe, d))
+                wenn raus >= 0:
+                    wenn raus < hoehe:
+                        setze summe auf summe - u64(s[u64(raus) * uw + ux])
+                wenn rein >= 0:
+                    wenn rein < hoehe:
+                        setze summe auf summe + u64(s[u64(rein) * uw + ux])
+                setze y auf y + 1
+            setze x auf x + 1
+
+# C :471-475.
+@nativ
+@einstieg
+funktion moo_n_fx_clamp_coord(v: i64, obere: i32) -> i32:
+    unsicher:
+        wenn v < 0:
+            gib_zurück 0
+        wenn v >= i64(obere):
+            gib_zurück obere - 1
+        gib_zurück i32(v)
+
+# Vier Kanal-Summen (C: uint64_t sum[4]) als lokale Struktur.
+struktur BlurSummen:
+    s0: u64
+    s1: u64
+    s2: u64
+    s3: u64
+
+# C :477-508. Horizontal, RGBA (4 Worte/Pixel), Randklemmung.
+@nativ
+@einstieg
+funktion moo_n_fx_box_rgba_h(quelle: u64, ziel: u64, w: i32, h: i32, radius: u32) -> void:
+    unsicher:
+        setze src: ptr[u32] auf zeiger(quelle)
+        setze dst: ptr[u32] auf zeiger(ziel)
+        setze d: u64 auf u64(radius) * 2 + 1
+        setze r: i64 auf i64(radius)
+        setze uw: u64 auf u64(w)
+        setze summen: BlurSummen auf BlurSummen(0, 0, 0, 0)
+        setze sp: ptr[u64] auf zeiger(adresse_von(summen))
+        setze y: i32 auf 0
+        solange y < h:
+            setze basis: u64 auf u64(y) * uw
+            setze c: u64 auf 0
+            solange c < 4:
+                sp[c] = 0
+                setze c auf c + 1
+            setze k: i64 auf -r
+            solange k <= r:
+                setze sx: i32 auf moo_n_fx_clamp_coord(k, w)
+                setze i: u64 auf (basis + u64(sx)) * 4
+                setze c auf 0
+                solange c < 4:
+                    sp[c] = sp[c] + u64(src[i + c])
+                    setze c auf c + 1
+                setze k auf k + 1
+            setze x: i32 auf 0
+            solange x < w:
+                setze di: u64 auf (basis + u64(x)) * 4
+                setze ox: i32 auf moo_n_fx_clamp_coord(i64(x) - r, w)
+                setze ix: i32 auf moo_n_fx_clamp_coord(i64(x) + r + 1, w)
+                setze oi: u64 auf (basis + u64(ox)) * 4
+                setze ii: u64 auf (basis + u64(ix)) * 4
+                setze c auf 0
+                solange c < 4:
+                    dst[di + c] = u32(blur_runden(sp[c], d))
+                    sp[c] = sp[c] - u64(src[oi + c])
+                    sp[c] = sp[c] + u64(src[ii + c])
+                    setze c auf c + 1
+                setze x auf x + 1
+            setze y auf y + 1
+
+# C :510-541. Vertikal, RGBA, Randklemmung.
+@nativ
+@einstieg
+funktion moo_n_fx_box_rgba_v(quelle: u64, ziel: u64, w: i32, h: i32, radius: u32) -> void:
+    unsicher:
+        setze src: ptr[u32] auf zeiger(quelle)
+        setze dst: ptr[u32] auf zeiger(ziel)
+        setze d: u64 auf u64(radius) * 2 + 1
+        setze r: i64 auf i64(radius)
+        setze uw: u64 auf u64(w)
+        setze summen: BlurSummen auf BlurSummen(0, 0, 0, 0)
+        setze sp: ptr[u64] auf zeiger(adresse_von(summen))
+        setze x: i32 auf 0
+        solange x < w:
+            setze ux: u64 auf u64(x)
+            setze c: u64 auf 0
+            solange c < 4:
+                sp[c] = 0
+                setze c auf c + 1
+            setze k: i64 auf -r
+            solange k <= r:
+                setze sy: i32 auf moo_n_fx_clamp_coord(k, h)
+                setze i: u64 auf (u64(sy) * uw + ux) * 4
+                setze c auf 0
+                solange c < 4:
+                    sp[c] = sp[c] + u64(src[i + c])
+                    setze c auf c + 1
+                setze k auf k + 1
+            setze y: i32 auf 0
+            solange y < h:
+                setze di: u64 auf (u64(y) * uw + ux) * 4
+                setze oy: i32 auf moo_n_fx_clamp_coord(i64(y) - r, h)
+                setze iy: i32 auf moo_n_fx_clamp_coord(i64(y) + r + 1, h)
+                setze oi: u64 auf (u64(oy) * uw + ux) * 4
+                setze ii: u64 auf (u64(iy) * uw + ux) * 4
+                setze c auf 0
+                solange c < 4:
+                    dst[di + c] = u32(blur_runden(sp[c], d))
+                    sp[c] = sp[c] - u64(src[oi + c])
+                    sp[c] = sp[c] + u64(src[ii + c])
+                    setze c auf c + 1
+                setze y auf y + 1
+            setze x auf x + 1
+
+# C :543-558. Quelle (MooCompEffectCpuSource: pixels @0, stride @16, width @24,
+# height @28) in vormultiplizierte RGBA-Worte (r*a, g*a, b*a, a).
+@nativ
+@einstieg
+funktion moo_n_fx_capture(quelle: u64, rgba: u64) -> void:
+    unsicher:
+        setze q64: ptr[u64] auf zeiger(quelle)
+        setze q32: ptr[i32] auf zeiger(quelle)
+        setze pixel: u64 auf q64[0]
+        setze abstand: u64 auf q64[2]
+        setze w: i32 auf q32[6]
+        setze h: i32 auf q32[7]
+        setze o: ptr[u32] auf zeiger(rgba)
+        setze y: i32 auf 0
+        solange y < h:
+            setze x: i32 auf 0
+            solange x < w:
+                setze p: ptr[u8] auf zeiger(pixel + u64(y) * abstand + u64(x) * 4)
+                setze i: u64 auf (u64(y) * u64(w) + u64(x)) * 4
+                setze a: u32 auf u32(p[3])
+                o[i] = u32(p[0]) * a
+                o[i + 1] = u32(p[1]) * a
+                o[i + 2] = u32(p[2]) * a
+                o[i + 3] = a
+                setze x auf x + 1
+            setze y auf y + 1

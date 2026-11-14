@@ -1,0 +1,7 @@
+[tasks.header-reference]
+description = "MB2 C-Referenzobjekt unter Linux pruefen"
+run = "bash header_reference.sh"
+
+[tasks.kernel-reference]
+description = "Bestehenden GRUB-/QEMU-Kernel headless pruefen"
+run = "bash kernel_reference.sh"

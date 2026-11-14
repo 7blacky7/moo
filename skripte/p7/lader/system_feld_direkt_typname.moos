@@ -1,0 +1,6 @@
+@nativ
+@einstieg
+funktion feld_typname(adr: u64) -> u64:
+    unsicher:
+        setze p: ptr[NichtVorhanden] auf zeiger(adr)
+        gib_zurück u64(0)

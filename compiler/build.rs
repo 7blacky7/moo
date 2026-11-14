@@ -8,6 +8,63 @@
 // Phase 1 liefert nur den Linux-Pfad funktional; die Cross-Platform-
 // Struktur (target_os-Zweige, cargo-Features) steht bereits.
 
+/// P2-T76: Baut auf einem Nicht-Windows-Build-Host mit MinGW das Windows-GNU-
+/// Runtime-Archiv ueber skripte/p2/windows_minipc/runtime_mingw.sh (dieselbe
+/// Quellenliste wie dieses build.rs, ehrliche Auslassungsliste) nach
+/// OUT_DIR/x86_64-pc-windows-gnu/libmoo_runtime.a. Pfad bzw. Grund gehen als
+/// rustc-env an den Compiler (main.rs windows_gnu_runtime_lib), damit ein
+/// fehlendes Archiv ehrlich diagnostiziert wird. MOO_WINDOWS_RUNTIME=0 schaltet
+/// ab. Ein Fehlschlag bricht den Host-Build nie ab (cargo:warning).
+fn windows_gnu_runtime_bauen(target_windows: bool) {
+    println!("cargo:rerun-if-env-changed=MOO_WINDOWS_RUNTIME");
+    println!("cargo:rerun-if-changed=../skripte/p2/windows_minipc/runtime_mingw.sh");
+    println!("cargo:rerun-if-changed=../skripte/p2/windows_minipc/db_abwesend.c");
+    let ergebnis = (|| -> Result<std::path::PathBuf, String> {
+        if target_windows {
+            return Err("Windows-Zielbuild nutzt die native Runtime".into());
+        }
+        if std::env::var("MOO_WINDOWS_RUNTIME").as_deref() == Ok("0") {
+            return Err("beim Build abgeschaltet (MOO_WINDOWS_RUNTIME=0)".into());
+        }
+        let mingw = std::process::Command::new("x86_64-w64-mingw32-gcc").arg("--version")
+            .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+            .status().map(|s| s.success()).unwrap_or(false);
+        if !mingw {
+            return Err("x86_64-w64-mingw32-gcc beim Compiler-Build nicht gefunden".into());
+        }
+        let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").map_err(|e| e.to_string())?);
+        let skript = manifest.join("../skripte/p2/windows_minipc/runtime_mingw.sh");
+        if !skript.is_file() {
+            return Err(format!("{} fehlt", skript.display()));
+        }
+        let ziel_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").map_err(|e| e.to_string())?)
+            .join("x86_64-pc-windows-gnu");
+        let arbeit = ziel_dir.join("bau");
+        let lauf = std::process::Command::new("bash").arg(&skript).arg(&arbeit).output()
+            .map_err(|e| format!("runtime_mingw.sh nicht startbar: {e}"))?;
+        if !lauf.status.success() {
+            let fehler = String::from_utf8_lossy(&lauf.stderr);
+            let letzte = fehler.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("ohne Ausgabe");
+            return Err(format!("runtime_mingw.sh fehlgeschlagen ({}): {letzte}", lauf.status));
+        }
+        let archiv = ziel_dir.join("libmoo_runtime.a");
+        std::fs::copy(arbeit.join("libmoo_runtime_win.a"), &archiv)
+            .map_err(|e| format!("Archiv nicht kopierbar: {e}"))?;
+        Ok(archiv)
+    })();
+    match ergebnis {
+        Ok(archiv) => {
+            println!("cargo:rustc-env=MOO_WINDOWS_GNU_RUNTIME={}", archiv.display());
+            println!("cargo:rustc-env=MOO_WINDOWS_GNU_RUNTIME_GRUND=");
+        }
+        Err(grund) => {
+            println!("cargo:warning=moo: Windows-GNU-Runtime nicht gebaut: {grund}");
+            println!("cargo:rustc-env=MOO_WINDOWS_GNU_RUNTIME=");
+            println!("cargo:rustc-env=MOO_WINDOWS_GNU_RUNTIME_GRUND={grund}");
+        }
+    }
+}
+
 fn main() {
     let mut build = cc::Build::new();
 
@@ -405,6 +462,9 @@ fn main() {
         println!("cargo:rustc-link-lib={}", if target_windows { "vulkan-1" } else { "vulkan" });
         println!("cargo:rustc-link-lib={}", if target_windows { "glfw3dll" } else { "glfw" });
     }
+
+    // P2-T76: Windows-GNU-Runtime-Archiv fuer `moo compile --target x86_64-pc-windows-gnu -o x.exe`.
+    windows_gnu_runtime_bauen(target_windows);
 
     println!("cargo:rerun-if-changed=runtime/");
     println!("cargo:rerun-if-changed=runtime/moo_ui.h");

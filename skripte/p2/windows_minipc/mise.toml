@@ -1,0 +1,21 @@
+# Reproduzierbarer Windows-Testlauf: Cross-Compile auf Linux, echte Windows-Ausfuehrung.
+[tasks.test]
+description = "Moo Win64 N100: native Funktionen, Win32-FFI, C-ABI-Referenz, Zahlen/Casts/bool + Trap-Vertrag (P2-T73)"
+run = "bash test.sh"
+
+[tasks.windows-mirror]
+description = "Einweg-Testspiegel Linux/Synapse -> N100 D:\\MooTest\\repo (Manifest + SHA256 je Datei). Optionen: --erzwingen, --nur-liste"
+dir = "{{config_root}}/../../.."
+run = "build/moo-winrm-client/bin/python skripte/p2/windows_minipc/smb_upload.py --spiegeln"
+
+[tasks.test-hosted-ffi]
+description = "P2-T43: komplettes Moo-Programm (main + Runtime) ruft eigene statische Bibliothek + DLL auf dem N100 (MOO_COMPILER setzen)"
+run = "bash hosted_ffi.sh"
+
+[tasks.runtime-mingw]
+description = "Moo-Runtime als Windows-Staticlib per MinGW aus der build.rs-Dateiliste (Grundlage fuer test-hosted, kein Windows-Beweis)"
+run = "bash runtime_mingw.sh"
+
+[tasks.test-hosted]
+description = "Moo Win64 N100 hosted: komplette Moo-Programme mit Runtime cross-gelinkt; fangbarer moo_native_fehler-Pfad, RC-1-Vertrag, Weak-Hook unter COFF (P2-T73)"
+run = "bash hosted_probe.sh"

@@ -1,0 +1,8 @@
+struktur Paar:
+    a: u32
+
+@nativ
+@einstieg
+funktion fehlerfall(adr: u64) -> u32:
+    unsicher:
+        gib_zurück strukturfeld_lesen(Paar, fehlend, adr)

@@ -17,17 +17,25 @@ konstante R_INNEN auf 80
 
 # Farben: 0=rot(oben), 1=gruen(rechts), 2=blau(unten), 3=gelb(links)
 funktion farbe_normal(f):
-    wenn f == 0: gib_zurück "#B71C1C"
-    wenn f == 1: gib_zurück "#1B5E20"
-    wenn f == 2: gib_zurück "#0D47A1"
-    wenn f == 3: gib_zurück "#F57F17"
+    wenn f == 0:
+        gib_zurück "#B71C1C"
+    wenn f == 1:
+        gib_zurück "#1B5E20"
+    wenn f == 2:
+        gib_zurück "#0D47A1"
+    wenn f == 3:
+        gib_zurück "#F57F17"
     gib_zurück "#000000"
 
 funktion farbe_hell(f):
-    wenn f == 0: gib_zurück "#FF5252"
-    wenn f == 1: gib_zurück "#69F0AE"
-    wenn f == 2: gib_zurück "#448AFF"
-    wenn f == 3: gib_zurück "#FFEE58"
+    wenn f == 0:
+        gib_zurück "#FF5252"
+    wenn f == 1:
+        gib_zurück "#69F0AE"
+    wenn f == 2:
+        gib_zurück "#448AFF"
+    wenn f == 3:
+        gib_zurück "#FFEE58"
     gib_zurück "#FFFFFF"
 
 # PRNG
@@ -76,10 +84,12 @@ funktion welche_farbe(mx, my):
         gib_zurück -1
     # Quadrant: oben=0, rechts=1, unten=2, links=3
     wenn abs(dy) > abs(dx):
-        wenn dy < 0: gib_zurück 0
+        wenn dy < 0:
+            gib_zurück 0
         gib_zurück 2
     sonst:
-        wenn dx > 0: gib_zurück 1
+        wenn dx > 0:
+            gib_zurück 1
         gib_zurück 3
 
 # === Hauptprogramm ===

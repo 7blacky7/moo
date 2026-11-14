@@ -1,0 +1,11 @@
+[tasks.sanitizer]
+description = "P2 Buffer- und Strukturbox-C-Harnesses mit ASan/UBSan"
+run = "bash sanitizer.sh"
+
+[tasks.bare-stack]
+description = "P2 Defer-Stack als freestanding x86-64 und AArch64 pruefen"
+run = "bash bare_stack.sh"
+
+[tasks.cross-windows]
+description = "P2 Runtime und C++-Adapter fuer Windows x64 querkompilieren"
+run = "bash cross_windows.sh"

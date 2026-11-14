@@ -1,0 +1,94 @@
+# P2-T56: Erste wirklich zwischen Moo und getrennt kompiliertem C
+# uebergebene und zurueckgeholte Strukturwerte (SysV x86_64 / Win64).
+# Die C-Referenzfunktionen sind schon in skripte/p2/abi/struct_by_value.c.
+#
+# Moo {wort:u32} entspricht dem C-Memorylayout {words[1]} und Moo
+# {wort0:u32, wort1:u32} dem C-Layout {words[2]}.
+# 4/8 Byte nutzen i32/i64-Register sowohl bei SysV als auch Win64.
+struktur P2C4:
+    wort: u32
+
+struktur P2C8:
+    wort0: u32
+    wort1: u32
+
+extern "C" funktion moo_p2_struct1(wert: P2C4) -> P2C4
+extern "C" funktion moo_p2_struct2(wert: P2C8) -> P2C8
+
+@nativ
+@einstieg
+funktion sys_c_abi4(adr: u64) -> u64:
+    unsicher:
+        setze eingabe: P2C4 auf P2C4(u32(17))
+        setze ausgabe: P2C4 auf moo_p2_struct1(eingabe)
+        setze p: ptr[P2C4] auf zeiger(adr)
+        p[0] = ausgabe
+        gib_zurück u64(ausgabe.wort)
+
+@nativ
+@einstieg
+funktion sys_c_abi8(adr: u64) -> u64:
+    unsicher:
+        setze eingabe: P2C8 auf P2C8(u32(11), u32(22))
+        setze ausgabe: P2C8 auf moo_p2_struct2(eingabe)
+        setze p: ptr[P2C8] auf zeiger(adr)
+        p[0] = ausgabe
+        gib_zurück u64(ausgabe.wort0) + u64(ausgabe.wort1)
+
+# SysV: 12/16 Bytes -> i64+i32 / i64+i64; Win64: sret + Zeiger.
+# Der C-Referenzcode schreibt wie zuvor das i-te Wort um i+1 fort.
+struktur P2C12:
+    wort0: u32
+    wort1: u32
+    wort2: u32
+
+struktur P2C16:
+    wort0: u32
+    wort1: u32
+    wort2: u32
+    wort3: u32
+
+extern "C" funktion moo_p2_struct3(wert: P2C12) -> P2C12
+extern "C" funktion moo_p2_struct4(wert: P2C16) -> P2C16
+
+@nativ
+@einstieg
+funktion sys_c_abi12(adr: u64) -> u64:
+    unsicher:
+        setze eingabe: P2C12 auf P2C12(u32(10), u32(20), u32(30))
+        setze ausgabe: P2C12 auf moo_p2_struct3(eingabe)
+        setze p: ptr[P2C12] auf zeiger(adr)
+        p[0] = ausgabe
+        gib_zurück u64(ausgabe.wort0) + u64(ausgabe.wort1) + u64(ausgabe.wort2)
+
+@nativ
+@einstieg
+funktion sys_c_abi16(adr: u64) -> u64:
+    unsicher:
+        setze eingabe: P2C16 auf P2C16(u32(1), u32(2), u32(3), u32(4))
+        setze ausgabe: P2C16 auf moo_p2_struct4(eingabe)
+        setze p: ptr[P2C16] auf zeiger(adr)
+        p[0] = ausgabe
+        gib_zurück u64(ausgabe.wort0) + u64(ausgabe.wort1) + u64(ausgabe.wort2) + u64(ausgabe.wort3)
+
+# 24-Byte-Strukturen: SysV nutzt sret + byval; Win64 sret + Zeiger.
+# Die Quelle bleibt identisch, nur das Target-ABI entscheidet.
+struktur P2C24:
+    wort0: u32
+    wort1: u32
+    wort2: u32
+    wort3: u32
+    wort4: u32
+    wort5: u32
+
+extern "C" funktion moo_p2_struct6(wert: P2C24) -> P2C24
+
+@nativ
+@einstieg
+funktion sys_c_abi24(adr: u64) -> u64:
+    unsicher:
+        setze eingabe: P2C24 auf P2C24(u32(1), u32(2), u32(3), u32(4), u32(5), u32(6))
+        setze ausgabe: P2C24 auf moo_p2_struct6(eingabe)
+        setze p: ptr[P2C24] auf zeiger(adr)
+        p[0] = ausgabe
+        gib_zurück u64(ausgabe.wort0) + u64(ausgabe.wort1) + u64(ausgabe.wort2) + u64(ausgabe.wort3) + u64(ausgabe.wort4) + u64(ausgabe.wort5)

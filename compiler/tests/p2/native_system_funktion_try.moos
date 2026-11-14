@@ -1,0 +1,26 @@
+# P2-T74: Systemkoerper-Aufruf aus benannten Funktionen mit versuche:.
+# teile_null: Fehler im Koerper, gefangen vom versuche: des Aufrufers (Flag-
+# basiert wie bei Moo-Funktionen). sicher: versuche: in der Funktion selbst.
+@nativ
+funktion s_div(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b
+funktion teile_null():
+    unsicher:
+        gib_zurück s_div(8, 0)
+funktion sicher():
+    unsicher:
+        versuche:
+            setze r auf s_div(8, 0)
+            gib_zurück r
+        fange fehler:
+            gib_zurück -1
+versuche:
+    setze x auf teile_null()
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen funktion"
+zeige sicher()
+unsicher:
+    zeige s_div(8, 4)
+zeige "weiter"

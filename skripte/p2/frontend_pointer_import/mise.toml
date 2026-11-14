@@ -1,0 +1,46 @@
+[tasks.test]
+description = "Importierten nativen Zeiger-Callee über C++ und Bare-Ziel-IR prüfen"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-frontend-pointer-import
+mkdir -p "$out"
+compiler=compiler/target/release/moo-compiler
+for form in namen pfad; do
+  for target in x86_64-bare aarch64-bare x86_64-unknown-uefi; do
+    src="compiler/tests/p2/import_zeiger_$form.moos"
+    base="$out/$form-$target"
+    timeout 120s "$compiler" compile "$src" --no-stdlib --emit-ir --target "$target" -o "$base.ll"
+    timeout 30s mise exec -- opt -passes=verify -disable-output "$base.ll"
+    timeout 30s mise exec -- llvm-extract -S --func=__moo_native.p2_modul_zeiger_u16 "$base.ll" -o "$base.extract.ll"
+    timeout 30s mise exec -- llc -filetype=obj "$base.extract.ll" -o "$base.o"
+  done
+  ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror compiler/tests/p2/import_zeiger_adapter.cpp "$out/$form-x86_64-bare.o" -o "$out/$form"
+  timeout 30s "$out/$form"
+  printf 'PASS %s: x86-Lauf sowie AArch64- und UEFI-Objekte\n' "$form"
+done
+'''
+
+
+[tasks.syntax]
+description = "Pointerimport-AST und C++-Adapter ohne Codegen prüfen"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-frontend-pointer-import
+mkdir -p "$out"
+for form in namen pfad; do
+  timeout 30s compiler/target/release/moo-compiler ast "compiler/tests/p2/import_zeiger_$form.moos" --imports >"$out/$form.ast"
+  rg -q -F 'p2_modul_zeiger_u16' "$out/$form.ast"
+  rg -q -F '"u16"' "$out/$form.ast"
+done
+cmp "$out/namen.ast" "$out/pfad.ast"
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -fsyntax-only compiler/tests/p2/import_zeiger_adapter.cpp
+echo 'PASS beide Import-ASTs und C++-Adaptersyntax; kein Pointer-Lauf'
+'''
+
+[tasks.uefi]
+description = "Importierten ptr[u16]-Callee in QEMU/OVMF über C++ aufrufen"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend_pointer_import/uefi.sh"
+

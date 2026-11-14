@@ -1,0 +1,7 @@
+# P2-T34: ohne Handler beendet der native Zahlenfehler den Prozess (RC 1).
+@nativ
+funktion z_div(a: i32, b: i32) -> i32:
+    gib_zurück a / b
+zeige "vorher"
+zeige z_div(1, 0)
+zeige "NACH_FALSCH"

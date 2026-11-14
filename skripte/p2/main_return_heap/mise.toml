@@ -1,0 +1,16 @@
+[tasks.test]
+description = "Top-Level-Return: ignorierten Heapwert freigeben"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-main-return-heap
+mkdir -p "$out"
+timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/main_return_heap.moos --emit-ir -o "$out/probe.ll"
+sed -n '/^define i32 @main(/,/^}/p' "$out/probe.ll" > "$out/main.ll"
+rg -q 'call .*@moo_list_new\(' "$out/main.ll"
+if ! rg -q 'call void @moo_release\(' "$out/main.ll"; then
+  printf 'FAIL: main verwirft die Heap-Rückgabe ohne moo_release\n' >&2
+  exit 1
+fi
+printf 'PASS: Heap-Rückgabe wird in main freigegeben\n'
+'''

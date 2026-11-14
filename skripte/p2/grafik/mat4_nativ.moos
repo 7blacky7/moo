@@ -1,0 +1,337 @@
+# P2-T26 Pilot: Matrixkern aus compiler/runtime/moo_3d_math.c in nativem Moo.
+# Vertrag wie C: 16 f32, Spaltenlayout m[spalte*4+zeile], gleiche
+# Multiplikationsreihenfolge, Ergebnis darf Eingabe aliasieren.
+# Gebaut im x86_64-bare-Systemkoerper; @einstieg exportiert C-aufrufbare
+# Symbole (Gegenprobe: test_mat4_nativ.c, Pipeline: test_mat4_nativ.sh).
+
+struktur Mat4:
+    m: [f32; 16]
+
+# Gleiches Layout wie MooMatrixStack (moo_3d_math.h:10-14):
+# float stack[32][16]; int depth; float current[16].
+struktur MatStapel:
+    stapel: [[f32; 16]; 32]
+    tiefe: i32
+    aktuell: [f32; 16]
+
+# Semantik wie moo_3d_math.c:122-137: Ueberlauf (>= 32) und Unterlauf (<= 0)
+# werden still ignoriert. Eine korrupte negative Tiefe endet hier per
+# Grenzpruefung (Trap) statt in undefiniertem Verhalten wie in C.
+@nativ
+@einstieg
+funktion moo_n_matrix_stack_init(s: ptr[MatStapel]) -> void:
+    unsicher:
+        s.tiefe = 0
+        setze i: u64 auf 0
+        solange i < 16:
+            s.aktuell[i] = 0.0
+            setze i auf i + 1
+        s.aktuell[0] = 1.0
+        s.aktuell[5] = 1.0
+        s.aktuell[10] = 1.0
+        s.aktuell[15] = 1.0
+
+@nativ
+@einstieg
+funktion moo_n_matrix_stack_push(s: ptr[MatStapel]) -> void:
+    unsicher:
+        wenn s.tiefe < 32:
+            setze d: u64 auf u64(s.tiefe)
+            setze i: u64 auf 0
+            solange i < 16:
+                s.stapel[d][i] = s.aktuell[i]
+                setze i auf i + 1
+            s.tiefe = s.tiefe + 1
+
+@nativ
+@einstieg
+funktion moo_n_matrix_stack_pop(s: ptr[MatStapel]) -> void:
+    unsicher:
+        wenn s.tiefe > 0:
+            s.tiefe = s.tiefe - 1
+            setze d: u64 auf u64(s.tiefe)
+            setze i: u64 auf 0
+            solange i < 16:
+                s.aktuell[i] = s.stapel[d][i]
+                setze i auf i + 1
+
+# Dieselben libm-Funktionen wie moo_3d_math.c (Link: -lm in test_mat4_nativ.sh).
+extern "C" funktion sinf(x: f32) -> f32
+extern "C" funktion cosf(x: f32) -> f32
+extern "C" funktion tanf(x: f32) -> f32
+extern "C" funktion sqrtf(x: f32) -> f32
+
+# Produkt als Wert: liest nur a/b, schreibt nur die lokale Kopie t.
+# Entspricht dem tmp[16] in mat4_multiply (moo_3d_math.c:15-27).
+@nativ
+funktion mat4_mul_wert(a: Mat4, b: Mat4) -> Mat4:
+    unsicher:
+        setze t: Mat4 auf a
+        setze spalte: u64 auf 0
+        solange spalte < 4:
+            setze zeile: u64 auf 0
+            solange zeile < 4:
+                setze k: u64 auf spalte * 4
+                t.m[k + zeile] = a.m[zeile] * b.m[k] + a.m[4 + zeile] * b.m[k + 1] + a.m[8 + zeile] * b.m[k + 2] + a.m[12 + zeile] * b.m[k + 3]
+                setze zeile auf zeile + 1
+            setze spalte auf spalte + 1
+        gib_zurück t
+
+# Einheitsmatrix in einen vorhandenen Wert schreiben (alle 16 Felder).
+@nativ
+funktion mat4_einheit_in(v: Mat4) -> Mat4:
+    unsicher:
+        setze t: Mat4 auf v
+        setze i: u64 auf 0
+        solange i < 16:
+            t.m[i] = 0.0
+            setze i auf i + 1
+        t.m[0] = 1.0
+        t.m[5] = 1.0
+        t.m[10] = 1.0
+        t.m[15] = 1.0
+        gib_zurück t
+
+@nativ
+@einstieg
+funktion moo_n_mat4_identity(m: ptr[Mat4]) -> void:
+    unsicher:
+        m[0] = mat4_einheit_in(m[0])
+
+@nativ
+@einstieg
+funktion moo_n_mat4_multiply(r: ptr[Mat4], a: ptr[Mat4], b: ptr[Mat4]) -> void:
+    unsicher:
+        r[0] = mat4_mul_wert(a[0], b[0])
+
+# Variante ohne Strukturwert: alle 16 Ergebnisse zuerst in f32-Locals, erst
+# danach die Stores -> r darf a/b aliasieren. Summenreihenfolge wie
+# moo_3d_math.c:19-23. Zeigerzugriffe bleiben ohne Ausrichtungsannahme.
+@nativ
+@einstieg
+funktion moo_n_mat4_multiply_skalar(r: ptr[f32], a: ptr[f32], b: ptr[f32]) -> void:
+    unsicher:
+        setze t0: f32 auf a[0] * b[0] + a[4] * b[1] + a[8] * b[2] + a[12] * b[3]
+        setze t1: f32 auf a[1] * b[0] + a[5] * b[1] + a[9] * b[2] + a[13] * b[3]
+        setze t2: f32 auf a[2] * b[0] + a[6] * b[1] + a[10] * b[2] + a[14] * b[3]
+        setze t3: f32 auf a[3] * b[0] + a[7] * b[1] + a[11] * b[2] + a[15] * b[3]
+        setze t4: f32 auf a[0] * b[4] + a[4] * b[5] + a[8] * b[6] + a[12] * b[7]
+        setze t5: f32 auf a[1] * b[4] + a[5] * b[5] + a[9] * b[6] + a[13] * b[7]
+        setze t6: f32 auf a[2] * b[4] + a[6] * b[5] + a[10] * b[6] + a[14] * b[7]
+        setze t7: f32 auf a[3] * b[4] + a[7] * b[5] + a[11] * b[6] + a[15] * b[7]
+        setze t8: f32 auf a[0] * b[8] + a[4] * b[9] + a[8] * b[10] + a[12] * b[11]
+        setze t9: f32 auf a[1] * b[8] + a[5] * b[9] + a[9] * b[10] + a[13] * b[11]
+        setze t10: f32 auf a[2] * b[8] + a[6] * b[9] + a[10] * b[10] + a[14] * b[11]
+        setze t11: f32 auf a[3] * b[8] + a[7] * b[9] + a[11] * b[10] + a[15] * b[11]
+        setze t12: f32 auf a[0] * b[12] + a[4] * b[13] + a[8] * b[14] + a[12] * b[15]
+        setze t13: f32 auf a[1] * b[12] + a[5] * b[13] + a[9] * b[14] + a[13] * b[15]
+        setze t14: f32 auf a[2] * b[12] + a[6] * b[13] + a[10] * b[14] + a[14] * b[15]
+        setze t15: f32 auf a[3] * b[12] + a[7] * b[13] + a[11] * b[14] + a[15] * b[15]
+        r[0] = t0
+        r[1] = t1
+        r[2] = t2
+        r[3] = t3
+        r[4] = t4
+        r[5] = t5
+        r[6] = t6
+        r[7] = t7
+        r[8] = t8
+        r[9] = t9
+        r[10] = t10
+        r[11] = t11
+        r[12] = t12
+        r[13] = t13
+        r[14] = t14
+        r[15] = t15
+
+# r = a * B mit B als 16 Einzelwerten (Spaltenlayout). Alle Loads vor allen
+# Stores, r darf a sein. Gleiche Operationen wie mat4_multiply mit tmp[16],
+# also auch die Multiplikationen mit 0/1 (bitgleich bei -0/Inf/NaN).
+@nativ
+funktion mat4_mul_b(r: ptr[f32], a: ptr[f32], b0: f32, b1: f32, b2: f32, b3: f32, b4: f32, b5: f32, b6: f32, b7: f32, b8: f32, b9: f32, b10: f32, b11: f32, b12: f32, b13: f32, b14: f32, b15: f32) -> void:
+    unsicher:
+        setze t0: f32 auf a[0] * b0 + a[4] * b1 + a[8] * b2 + a[12] * b3
+        setze t1: f32 auf a[1] * b0 + a[5] * b1 + a[9] * b2 + a[13] * b3
+        setze t2: f32 auf a[2] * b0 + a[6] * b1 + a[10] * b2 + a[14] * b3
+        setze t3: f32 auf a[3] * b0 + a[7] * b1 + a[11] * b2 + a[15] * b3
+        setze t4: f32 auf a[0] * b4 + a[4] * b5 + a[8] * b6 + a[12] * b7
+        setze t5: f32 auf a[1] * b4 + a[5] * b5 + a[9] * b6 + a[13] * b7
+        setze t6: f32 auf a[2] * b4 + a[6] * b5 + a[10] * b6 + a[14] * b7
+        setze t7: f32 auf a[3] * b4 + a[7] * b5 + a[11] * b6 + a[15] * b7
+        setze t8: f32 auf a[0] * b8 + a[4] * b9 + a[8] * b10 + a[12] * b11
+        setze t9: f32 auf a[1] * b8 + a[5] * b9 + a[9] * b10 + a[13] * b11
+        setze t10: f32 auf a[2] * b8 + a[6] * b9 + a[10] * b10 + a[14] * b11
+        setze t11: f32 auf a[3] * b8 + a[7] * b9 + a[11] * b10 + a[15] * b11
+        setze t12: f32 auf a[0] * b12 + a[4] * b13 + a[8] * b14 + a[12] * b15
+        setze t13: f32 auf a[1] * b12 + a[5] * b13 + a[9] * b14 + a[13] * b15
+        setze t14: f32 auf a[2] * b12 + a[6] * b13 + a[10] * b14 + a[14] * b15
+        setze t15: f32 auf a[3] * b12 + a[7] * b13 + a[11] * b14 + a[15] * b15
+        r[0] = t0
+        r[1] = t1
+        r[2] = t2
+        r[3] = t3
+        r[4] = t4
+        r[5] = t5
+        r[6] = t6
+        r[7] = t7
+        r[8] = t8
+        r[9] = t9
+        r[10] = t10
+        r[11] = t11
+        r[12] = t12
+        r[13] = t13
+        r[14] = t14
+        r[15] = t15
+
+@nativ
+@einstieg
+funktion moo_n_mat4_translate_skalar(m: ptr[f32], x: f32, y: f32, z: f32) -> void:
+    unsicher:
+        mat4_mul_b(m, m, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, x, y, z, 1.0)
+
+@nativ
+@einstieg
+funktion moo_n_mat4_scale_skalar(m: ptr[f32], sx: f32, sy: f32, sz: f32) -> void:
+    unsicher:
+        mat4_mul_b(m, m, sx, 0.0, 0.0, 0.0, 0.0, sy, 0.0, 0.0, 0.0, 0.0, sz, 0.0, 0.0, 0.0, 0.0, 1.0)
+
+@nativ
+@einstieg
+funktion moo_n_mat4_rotate_skalar(m: ptr[f32], winkel_grad: f32, ax: f32, ay: f32, az: f32) -> void:
+    unsicher:
+        setze pi: f32 auf 3.14159265358979323846
+        setze rad: f32 auf winkel_grad * pi / 180.0
+        setze c: f32 auf cosf(rad)
+        setze s: f32 auf sinf(rad)
+        setze len: f32 auf sqrtf(ax * ax + ay * ay + az * az)
+        wenn len > 0.0:
+            setze ax auf ax / len
+            setze ay auf ay / len
+            setze az auf az / len
+        setze r0: f32 auf c + ax * ax * (1.0 - c)
+        setze r1: f32 auf ay * ax * (1.0 - c) + az * s
+        setze r2: f32 auf az * ax * (1.0 - c) - ay * s
+        setze r4: f32 auf ax * ay * (1.0 - c) - az * s
+        setze r5: f32 auf c + ay * ay * (1.0 - c)
+        setze r6: f32 auf az * ay * (1.0 - c) + ax * s
+        setze r8: f32 auf ax * az * (1.0 - c) + ay * s
+        setze r9: f32 auf ay * az * (1.0 - c) - ax * s
+        setze r10: f32 auf c + az * az * (1.0 - c)
+        mat4_mul_b(m, m, r0, r1, r2, 0.0, r4, r5, r6, 0.0, r8, r9, r10, 0.0, 0.0, 0.0, 0.0, 1.0)
+
+@nativ
+@einstieg
+funktion moo_n_mat4_translate(m: ptr[Mat4], x: f32, y: f32, z: f32) -> void:
+    unsicher:
+        setze t: Mat4 auf mat4_einheit_in(m[0])
+        t.m[12] = x
+        t.m[13] = y
+        t.m[14] = z
+        m[0] = mat4_mul_wert(m[0], t)
+
+@nativ
+@einstieg
+funktion moo_n_mat4_scale(m: ptr[Mat4], sx: f32, sy: f32, sz: f32) -> void:
+    unsicher:
+        setze s: Mat4 auf mat4_einheit_in(m[0])
+        s.m[0] = sx
+        s.m[5] = sy
+        s.m[10] = sz
+        m[0] = mat4_mul_wert(m[0], s)
+
+@nativ
+@einstieg
+funktion moo_n_mat4_ortho(m: ptr[Mat4], l: f32, r: f32, b: f32, t: f32, n: f32, f: f32) -> void:
+    unsicher:
+        setze o: Mat4 auf mat4_einheit_in(m[0])
+        o.m[0] = 2.0 / (r - l)
+        o.m[5] = 2.0 / (t - b)
+        o.m[10] = -2.0 / (f - n)
+        o.m[12] = (-(r + l)) / (r - l)
+        o.m[13] = (-(t + b)) / (t - b)
+        o.m[14] = (-(f + n)) / (f - n)
+        m[0] = o
+
+# (float)M_PI: 3.14159265358979323846 auf f32 gerundet (0x40490FDB).
+@nativ
+@einstieg
+funktion moo_n_mat4_perspective(m: ptr[Mat4], fov_grad: f32, aspekt: f32, nah: f32, fern: f32) -> void:
+    unsicher:
+        setze o: Mat4 auf mat4_einheit_in(m[0])
+        o.m[15] = 0.0
+        setze pi: f32 auf 3.14159265358979323846
+        setze rad: f32 auf fov_grad * pi / 180.0
+        setze tan_halb: f32 auf tanf(rad / 2.0)
+        o.m[0] = 1.0 / (aspekt * tan_halb)
+        o.m[5] = 1.0 / tan_halb
+        o.m[10] = (-(fern + nah)) / (fern - nah)
+        o.m[11] = -1.0
+        o.m[14] = (-(2.0 * fern * nah)) / (fern - nah)
+        m[0] = o
+
+@nativ
+@einstieg
+funktion moo_n_mat4_lookat(m: ptr[Mat4], ex: f32, ey: f32, ez: f32, lx: f32, ly: f32, lz: f32, upx: f32, upy: f32, upz: f32) -> void:
+    unsicher:
+        setze fx: f32 auf lx - ex
+        setze fy: f32 auf ly - ey
+        setze fz: f32 auf lz - ez
+        setze len: f32 auf sqrtf(fx * fx + fy * fy + fz * fz)
+        wenn len > 0.0:
+            setze fx auf fx / len
+            setze fy auf fy / len
+            setze fz auf fz / len
+        setze sx: f32 auf fy * upz - fz * upy
+        setze sy: f32 auf fz * upx - fx * upz
+        setze sz: f32 auf fx * upy - fy * upx
+        setze len auf sqrtf(sx * sx + sy * sy + sz * sz)
+        wenn len > 0.0:
+            setze sx auf sx / len
+            setze sy auf sy / len
+            setze sz auf sz / len
+        setze ux: f32 auf sy * fz - sz * fy
+        setze uy: f32 auf sz * fx - sx * fz
+        setze uz: f32 auf sx * fy - sy * fx
+        setze o: Mat4 auf m[0]
+        o.m[0] = sx
+        o.m[1] = ux
+        o.m[2] = -fx
+        o.m[3] = 0.0
+        o.m[4] = sy
+        o.m[5] = uy
+        o.m[6] = -fy
+        o.m[7] = 0.0
+        o.m[8] = sz
+        o.m[9] = uz
+        o.m[10] = -fz
+        o.m[11] = 0.0
+        o.m[12] = -(sx * ex + sy * ey + sz * ez)
+        o.m[13] = -(ux * ex + uy * ey + uz * ez)
+        o.m[14] = fx * ex + fy * ey + fz * ez
+        o.m[15] = 1.0
+        m[0] = o
+
+@nativ
+@einstieg
+funktion moo_n_mat4_rotate(m: ptr[Mat4], winkel_grad: f32, ax: f32, ay: f32, az: f32) -> void:
+    unsicher:
+        setze pi: f32 auf 3.14159265358979323846
+        setze rad: f32 auf winkel_grad * pi / 180.0
+        setze c: f32 auf cosf(rad)
+        setze s: f32 auf sinf(rad)
+        setze len: f32 auf sqrtf(ax * ax + ay * ay + az * az)
+        wenn len > 0.0:
+            setze ax auf ax / len
+            setze ay auf ay / len
+            setze az auf az / len
+        setze r: Mat4 auf mat4_einheit_in(m[0])
+        r.m[0] = c + ax * ax * (1.0 - c)
+        r.m[1] = ay * ax * (1.0 - c) + az * s
+        r.m[2] = az * ax * (1.0 - c) - ay * s
+        r.m[4] = ax * ay * (1.0 - c) - az * s
+        r.m[5] = c + ay * ay * (1.0 - c)
+        r.m[6] = az * ay * (1.0 - c) + ax * s
+        r.m[8] = ax * az * (1.0 - c) + ay * s
+        r.m[9] = ay * az * (1.0 - c) - ax * s
+        r.m[10] = c + az * az * (1.0 - c)
+        m[0] = mat4_mul_wert(m[0], r)

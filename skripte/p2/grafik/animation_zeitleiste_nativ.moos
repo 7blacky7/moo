@@ -1,0 +1,520 @@
+# P2-T71: Animations-Timeline aus compiler/runtime/moo_compositor_animation.c
+# (timeline_init :341-367, start :519-623, evaluate :625-696, cancel :698-733,
+# destroy_surface :735-772, active_count :774-778, state_hash :780-827) in
+# nativem Moo. Resultcodes: 0 OK, 1 INVALID, 2 LIMIT.
+# Completion-Status: 1 COMPLETED, 2 CANCELLED, 3 REPLACED, 4 SURFACE_DESTROYED,
+# 5 REDUCED_MOTION (effects_protocol.h).
+#
+# Wiederverwendung per extern "C" (Probe linkt alle drei Objekte):
+#   moo_n_anim_eval_slot               aus animation_nativ.moos (P2-T68)
+#   moo_n_anim_limits_valid/validate_desc aus animation_pruefung_nativ.moos (P2-T69)
+#
+# Layouts (animation.h, effects_protocol.h; C-Probe sichert per _Static_assert):
+# MooCompAnimationTimeline 112 Byte: slots u64 @0, capacity u32 @8,
+#   active_count u32 @12, limits @16 (80 Byte; per_surface @16+28,
+#   per_client @16+32), last_timestamp_ns @96, has_timestamp u32 @104,
+#   reserved u32 @108.
+# MooCompAnimationSlot 176 Byte: surface @0, desc @8 (token @8, delay @16,
+#   duration @24, repeat u32 @32, property u32 @36, easing @40, direction @44,
+#   from @56, to @88), current @120, start_ns @152, end_ns @160,
+#   active u32 @168, reserved u32 @172.
+# MooCompAnimationDesc 112 Byte: token @0, delay @8, duration @16, repeat u32 @24,
+#   property u32 @28, from @48, to @80.
+# MooCompAnimationCompletion 32 Byte: surface @0, token @8, status u32 @16,
+#   reserved u32 @20, timestamp_ns @24.
+# MooCompAnimationSample 56 Byte: surface @0, token @8, property u32 @16,
+#   terminal u32 @20, value @24.
+
+extern "C" funktion moo_n_anim_eval_slot(slot: u64, zeit: u64, reduziert: u32, ergebnis: u64, terminal: u64) -> u32
+extern "C" funktion moo_n_anim_limits_valid(limits: u64) -> u32
+extern "C" funktion moo_n_anim_validate_desc(beschreibung: u64, limits: u64, maske: u64) -> u32
+
+# = MooCompAnimationValue (8 x u32), fuer lokale Werte.
+struktur KompAnimWert:
+    w0: u32
+    w1: u32
+    w2: u32
+    w3: u32
+    w4: u32
+    w5: u32
+    w6: u32
+    w7: u32
+
+# Byteweise vorwaerts kopieren (C-Strukturzuweisung, gleiche Reihenfolge).
+@nativ
+funktion zl_kopieren(ziel: u64, quelle: u64, n: u64) -> void:
+    unsicher:
+        setze z: ptr[u8] auf zeiger(ziel)
+        setze q: ptr[u8] auf zeiger(quelle)
+        setze i: u64 auf 0
+        solange i < n:
+            z[i] = q[i]
+            setze i auf i + 1
+
+@nativ
+funktion zl_slot(t: u64, i: u32) -> u64:
+    unsicher:
+        setze t64: ptr[u64] auf zeiger(t)
+        gib_zurück t64[0] + u64(i) * 176
+
+# C :10-14. 1 = gueltig.
+@nativ
+funktion zl_gueltig(t: u64) -> u32:
+    unsicher:
+        wenn t == 0:
+            gib_zurück 0
+        setze t64: ptr[u64] auf zeiger(t)
+        setze t32: ptr[u32] auf zeiger(t)
+        wenn t64[0] == 0:
+            gib_zurück 0
+        wenn t32[2] == 0:
+            gib_zurück 0
+        wenn t32[3] > t32[2]:
+            gib_zurück 0
+        gib_zurück 1
+
+# C :236-245. 0 = ok, 1 = INVALID (ungueltige Timeline oder Zeit rueckwaerts).
+@nativ
+funktion zl_zeit_pruefen(t: u64, zeit: u64) -> u32:
+    unsicher:
+        wenn zl_gueltig(t) == 0:
+            gib_zurück 1
+        setze t64: ptr[u64] auf zeiger(t)
+        setze t32: ptr[u32] auf zeiger(t)
+        wenn t32[26] != 0:
+            wenn zeit < t64[12]:
+                gib_zurück 1
+        gib_zurück 0
+
+# C :247-253. 1 = Ausgabepuffer reicht.
+@nativ
+funktion zl_ausgaben_ok(puffer: u64, kapazitaet: u32, noetig: u32) -> u32:
+    unsicher:
+        wenn noetig > kapazitaet:
+            gib_zurück 0
+        wenn noetig == 0:
+            gib_zurück 1
+        wenn puffer != 0:
+            gib_zurück 1
+        gib_zurück 0
+
+# C :255-266.
+@nativ
+funktion zl_abschluss(ziel: u64, flaeche: u64, token: u64, status: u32, zeit: u64) -> void:
+    unsicher:
+        setze c64: ptr[u64] auf zeiger(ziel)
+        setze c32: ptr[u32] auf zeiger(ziel)
+        c64[0] = flaeche
+        c64[1] = token
+        c32[4] = status
+        c32[5] = 0
+        c64[3] = zeit
+
+# C :81-90 (ohne NULL-Zweig, Aufrufer uebergeben gueltige Zeiger). 1 = gleich.
+@nativ
+funktion zl_werte_gleich(a: u64, b: u64) -> u32:
+    unsicher:
+        setze pa: ptr[u32] auf zeiger(a)
+        setze pb: ptr[u32] auf zeiger(b)
+        setze i: u64 auf 0
+        solange i < 8:
+            wenn pa[i] != pb[i]:
+                gib_zurück 0
+            setze i auf i + 1
+        gib_zurück 1
+
+# C :332-339. Index des ersten freien Slots oder capacity.
+@nativ
+funktion zl_frei(t: u64) -> u32:
+    unsicher:
+        setze t32: ptr[u32] auf zeiger(t)
+        setze i: u32 auf 0
+        solange i < t32[2]:
+            setze s32: ptr[u32] auf zeiger(zl_slot(t, i))
+            wenn s32[42] == 0:
+                gib_zurück i
+            setze i auf i + 1
+        gib_zurück t32[2]
+
+# C :341-367.
+@nativ
+@einstieg
+funktion moo_n_anim_timeline_init(t: u64, slots: u64, kapazitaet: u32, limits: u64) -> u32:
+    unsicher:
+        wenn t == 0:
+            gib_zurück 1
+        wenn slots == 0:
+            gib_zurück 1
+        wenn kapazitaet == 0:
+            gib_zurück 1
+        wenn moo_n_anim_limits_valid(limits) == 0:
+            gib_zurück 1
+        setze l32: ptr[u32] auf zeiger(limits)
+        wenn kapazitaet > l32[8]:
+            gib_zurück 1
+        setze t64: ptr[u64] auf zeiger(t)
+        setze t32: ptr[u32] auf zeiger(t)
+        t64[0] = slots
+        t32[2] = kapazitaet
+        t32[3] = 0
+        zl_kopieren(t + 16, limits, 80)
+        t64[12] = 0
+        t32[26] = 0
+        t32[27] = 0
+        setze i: u32 auf 0
+        solange i < kapazitaet:
+            setze s: u64 auf slots + u64(i) * 176
+            setze s64: ptr[u64] auf zeiger(s)
+            setze s32: ptr[u32] auf zeiger(s)
+            s64[0] = 0
+            setze w: u64 auf 0
+            solange w < 8:
+                s32[30 + w] = 0
+                setze w auf w + 1
+            s64[19] = 0
+            s64[20] = 0
+            s32[42] = 0
+            s32[43] = 0
+            setze i auf i + 1
+        gib_zurück 0
+
+# C :774-778.
+@nativ
+@einstieg
+funktion moo_n_anim_active_count(t: u64) -> u32:
+    unsicher:
+        wenn zl_gueltig(t) == 0:
+            gib_zurück 0
+        setze t32: ptr[u32] auf zeiger(t)
+        gib_zurück t32[3]
+
+# C :698-733. Genau ein passender aktiver Slot wird beendet; sonst INVALID.
+@nativ
+@einstieg
+funktion moo_n_anim_cancel(t: u64, flaeche: u64, token: u64, zeit: u64, abschluesse: u64, kapazitaet: u32, anzahl_aus: u64) -> u32:
+    unsicher:
+        wenn anzahl_aus == 0:
+            gib_zurück 1
+        setze n: ptr[u32] auf zeiger(anzahl_aus)
+        n[0] = 0
+        setze r: u32 auf zl_zeit_pruefen(t, zeit)
+        wenn r != 0:
+            gib_zurück r
+        wenn flaeche == 0:
+            gib_zurück 1
+        wenn token == 0:
+            gib_zurück 1
+        setze t64: ptr[u64] auf zeiger(t)
+        setze t32: ptr[u32] auf zeiger(t)
+        setze i: u32 auf 0
+        solange i < t32[2]:
+            setze s: u64 auf zl_slot(t, i)
+            setze s64: ptr[u64] auf zeiger(s)
+            setze s32: ptr[u32] auf zeiger(s)
+            wenn s32[42] != 0:
+                wenn s64[0] == flaeche:
+                    wenn s64[1] == token:
+                        wenn zl_ausgaben_ok(abschluesse, kapazitaet, 1) == 0:
+                            gib_zurück 2
+                        zl_abschluss(abschluesse, flaeche, token, 2, zeit)
+                        s32[42] = 0
+                        t32[3] = t32[3] - 1
+                        t64[12] = zeit
+                        t32[26] = 1
+                        n[0] = 1
+                        gib_zurück 0
+            setze i auf i + 1
+        gib_zurück 1
+
+# C :735-772. Erst zaehlen + Kapazitaet pruefen, dann alle Slots der Flaeche beenden.
+@nativ
+@einstieg
+funktion moo_n_anim_destroy_surface(t: u64, flaeche: u64, zeit: u64, abschluesse: u64, kapazitaet: u32, anzahl_aus: u64) -> u32:
+    unsicher:
+        wenn anzahl_aus == 0:
+            gib_zurück 1
+        setze n: ptr[u32] auf zeiger(anzahl_aus)
+        n[0] = 0
+        setze r: u32 auf zl_zeit_pruefen(t, zeit)
+        wenn r != 0:
+            gib_zurück r
+        wenn flaeche == 0:
+            gib_zurück 1
+        setze t64: ptr[u64] auf zeiger(t)
+        setze t32: ptr[u32] auf zeiger(t)
+        setze zahl: u32 auf 0
+        setze i: u32 auf 0
+        solange i < t32[2]:
+            setze s: u64 auf zl_slot(t, i)
+            setze s64: ptr[u64] auf zeiger(s)
+            setze s32: ptr[u32] auf zeiger(s)
+            wenn s32[42] != 0:
+                wenn s64[0] == flaeche:
+                    setze zahl auf zahl + 1
+            setze i auf i + 1
+        wenn zl_ausgaben_ok(abschluesse, kapazitaet, zahl) == 0:
+            gib_zurück 2
+        setze zahl auf 0
+        setze i auf 0
+        # Eigene Namen: der Systemkoerper verbietet Neudeklaration (QA_ROT #37259).
+        solange i < t32[2]:
+            setze s2: u64 auf zl_slot(t, i)
+            setze s2_64: ptr[u64] auf zeiger(s2)
+            setze s2_32: ptr[u32] auf zeiger(s2)
+            wenn s2_32[42] != 0:
+                wenn s2_64[0] == flaeche:
+                    zl_abschluss(abschluesse + u64(zahl) * 32, flaeche, s2_64[1], 4, zeit)
+                    setze zahl auf zahl + 1
+                    s2_32[42] = 0
+                    t32[3] = t32[3] - 1
+            setze i auf i + 1
+        t64[12] = zeit
+        t32[26] = 1
+        n[0] = zahl
+        gib_zurück 0
+
+# C :780-789: 8 Bytes des Wertes, niedrigstes zuerst.
+@nativ
+funktion zl_mix(h: u64, wert: u64) -> u64:
+    unsicher:
+        setze x: u64 auf h
+        setze i: u64 auf 0
+        solange i < 8:
+            setze x auf (x ^ ((wert >> (i * 8)) & 255)) * 1099511628211
+            setze i auf i + 1
+        gib_zurück x
+
+# C :791-827. u32-Felder werden null-erweitert gemischt (C: uint64_t-Parameter).
+@nativ
+@einstieg
+funktion moo_n_anim_state_hash(t: u64) -> u64:
+    unsicher:
+        wenn zl_gueltig(t) == 0:
+            gib_zurück 0
+        setze t64: ptr[u64] auf zeiger(t)
+        setze t32: ptr[u32] auf zeiger(t)
+        setze h: u64 auf 1469598103934665603
+        setze h auf zl_mix(h, u64(t32[2]))
+        setze h auf zl_mix(h, u64(t32[3]))
+        setze h auf zl_mix(h, u64(t32[26]))
+        setze h auf zl_mix(h, t64[12])
+        setze i: u32 auf 0
+        solange i < t32[2]:
+            setze s: u64 auf zl_slot(t, i)
+            setze s64: ptr[u64] auf zeiger(s)
+            setze s32: ptr[u32] auf zeiger(s)
+            setze h auf zl_mix(h, u64(s32[42]))
+            wenn s32[42] != 0:
+                setze h auf zl_mix(h, u64(i))
+                setze h auf zl_mix(h, s64[0])
+                setze h auf zl_mix(h, s64[1])
+                setze h auf zl_mix(h, s64[2])
+                setze h auf zl_mix(h, s64[3])
+                setze h auf zl_mix(h, u64(s32[8]))
+                setze h auf zl_mix(h, u64(s32[9]))
+                setze h auf zl_mix(h, u64(s32[10]))
+                setze h auf zl_mix(h, u64(s32[11]))
+                setze h auf zl_mix(h, s64[19])
+                setze h auf zl_mix(h, s64[20])
+                setze w: u64 auf 0
+                solange w < 8:
+                    setze h auf zl_mix(h, u64(s32[14 + w]))
+                    setze h auf zl_mix(h, u64(s32[22 + w]))
+                    setze h auf zl_mix(h, u64(s32[30 + w]))
+                    setze w auf w + 1
+            setze i auf i + 1
+        gib_zurück h
+
+# C :519-623. Alle Pruefungen (Zeit, Desc, Token-Duplikat, from-Abgleich,
+# Limits, Ausgabekapazitaet, Startzeit-Ueberlauf, freier Slot) vor jeder
+# Mutation; anzahl_aus wird wie C sofort auf 0 gesetzt. Ersetzen eines
+# laufenden Slots derselben Flaeche+Property liefert REPLACED, reduced motion
+# liefert sofort 'to' und REDUCED_MOTION ohne Slot.
+@nativ
+@einstieg
+funktion moo_n_anim_start(t: u64, flaeche: u64, beschreibung: u64, aktuell: u64, maske: u64, bild_ns: u64, reduziert: u32, wert_aus: u64, abschluesse: u64, kapazitaet: u32, anzahl_aus: u64) -> u32:
+    unsicher:
+        wenn anzahl_aus == 0:
+            gib_zurück 1
+        setze n: ptr[u32] auf zeiger(anzahl_aus)
+        n[0] = 0
+        wenn zl_gueltig(t) == 0:
+            gib_zurück 1
+        wenn flaeche == 0:
+            gib_zurück 1
+        wenn aktuell == 0:
+            gib_zurück 1
+        wenn wert_aus == 0:
+            gib_zurück 1
+        wenn reduziert > 1:
+            gib_zurück 1
+        setze r: u32 auf zl_zeit_pruefen(t, bild_ns)
+        wenn r != 0:
+            gib_zurück r
+        setze r auf moo_n_anim_validate_desc(beschreibung, t + 16, maske)
+        wenn r != 0:
+            gib_zurück r
+        setze t64: ptr[u64] auf zeiger(t)
+        setze t32: ptr[u32] auf zeiger(t)
+        setze d64: ptr[u64] auf zeiger(beschreibung)
+        setze d32: ptr[u32] auf zeiger(beschreibung)
+        setze kein: u32 auf 4294967295
+        setze ersetze: u32 auf kein
+        setze auf_flaeche: u32 auf 0
+        setze i: u32 auf 0
+        solange i < t32[2]:
+            setze s: u64 auf zl_slot(t, i)
+            setze s64: ptr[u64] auf zeiger(s)
+            setze s32: ptr[u32] auf zeiger(s)
+            wenn s32[42] != 0:
+                wenn s64[1] == d64[0]:
+                    gib_zurück 1
+                wenn s64[0] == flaeche:
+                    setze auf_flaeche auf auf_flaeche + 1
+                    wenn s32[9] == d32[7]:
+                        setze ersetze auf i
+            setze i auf i + 1
+        wenn ersetze != kein:
+            wenn zl_werte_gleich(zl_slot(t, ersetze) + 120, beschreibung + 48) == 0:
+                gib_zurück 1
+        sonst:
+            wenn zl_werte_gleich(aktuell, beschreibung + 48) == 0:
+                gib_zurück 1
+            wenn auf_flaeche >= t32[11]:
+                gib_zurück 2
+            wenn t32[3] >= t32[12]:
+                gib_zurück 2
+            wenn t32[3] >= t32[2]:
+                gib_zurück 2
+        setze noetig: u32 auf 0
+        wenn ersetze != kein:
+            setze noetig auf noetig + 1
+        wenn reduziert != 0:
+            setze noetig auf noetig + 1
+        wenn zl_ausgaben_ok(abschluesse, kapazitaet, noetig) == 0:
+            gib_zurück 2
+        setze gesamt: u64 auf d64[2] * u64(d32[6])
+        setze umax: u64 auf 0
+        setze umax auf umax - 1
+        wenn bild_ns > umax - d64[1]:
+            gib_zurück 2
+        setze start: u64 auf bild_ns + d64[1]
+        wenn start > umax - gesamt:
+            gib_zurück 2
+        setze ziel: u32 auf kein
+        wenn reduziert == 0:
+            wenn ersetze != kein:
+                setze ziel auf ersetze
+            sonst:
+                setze ziel auf zl_frei(t)
+            wenn ziel >= t32[2]:
+                gib_zurück 2
+
+        setze zahl: u32 auf 0
+        wenn ersetze != kein:
+            setze alt: u64 auf zl_slot(t, ersetze)
+            setze a64: ptr[u64] auf zeiger(alt)
+            setze a32: ptr[u32] auf zeiger(alt)
+            zl_abschluss(abschluesse + u64(zahl) * 32, a64[0], a64[1], 3, bild_ns)
+            setze zahl auf zahl + 1
+            a32[42] = 0
+            t32[3] = t32[3] - 1
+        wenn reduziert != 0:
+            zl_kopieren(wert_aus, beschreibung + 80, 32)
+            zl_abschluss(abschluesse + u64(zahl) * 32, flaeche, d64[0], 5, bild_ns)
+            setze zahl auf zahl + 1
+        sonst:
+            setze z: u64 auf zl_slot(t, ziel)
+            setze z64: ptr[u64] auf zeiger(z)
+            setze z32: ptr[u32] auf zeiger(z)
+            z64[0] = flaeche
+            zl_kopieren(z + 8, beschreibung, 112)
+            zl_kopieren(z + 120, beschreibung + 48, 32)
+            z64[19] = start
+            z64[20] = start + gesamt
+            z32[42] = 1
+            z32[43] = 0
+            t32[3] = t32[3] + 1
+            zl_kopieren(wert_aus, beschreibung + 48, 32)
+        t64[12] = bild_ns
+        t32[26] = 1
+        n[0] = zahl
+        gib_zurück 0
+
+# C :625-696. Durchlauf 1 wertet nur aus (Fehler -> Abbruch ohne Mutation)
+# und zaehlt terminale Slots; nach Kapazitaetspruefung schreibt Durchlauf 2
+# current, Samples und Abschluesse und beendet terminale Slots.
+@nativ
+@einstieg
+funktion moo_n_anim_evaluate(t: u64, zeit: u64, reduziert: u32, proben: u64, proben_kap: u32, proben_aus: u64, abschluesse: u64, abschluss_kap: u32, abschluss_aus: u64) -> u32:
+    unsicher:
+        wenn proben_aus == 0:
+            gib_zurück 1
+        wenn abschluss_aus == 0:
+            gib_zurück 1
+        wenn reduziert > 1:
+            gib_zurück 1
+        setze np: ptr[u32] auf zeiger(proben_aus)
+        setze na: ptr[u32] auf zeiger(abschluss_aus)
+        np[0] = 0
+        na[0] = 0
+        setze r: u32 auf zl_zeit_pruefen(t, zeit)
+        wenn r != 0:
+            gib_zurück r
+        setze t64: ptr[u64] auf zeiger(t)
+        setze t32: ptr[u32] auf zeiger(t)
+        wenn zl_ausgaben_ok(proben, proben_kap, t32[3]) == 0:
+            gib_zurück 2
+        setze wert: KompAnimWert auf KompAnimWert(0, 0, 0, 0, 0, 0, 0, 0)
+        setze w_adr: u64 auf adresse_von(wert)
+        setze terminal: u32 auf 0
+        setze term_adr: u64 auf adresse_von(terminal)
+        setze zahl: u32 auf 0
+        setze i: u32 auf 0
+        solange i < t32[2]:
+            setze s: u64 auf zl_slot(t, i)
+            setze s32: ptr[u32] auf zeiger(s)
+            wenn s32[42] != 0:
+                setze r auf moo_n_anim_eval_slot(s, zeit, reduziert, w_adr, term_adr)
+                wenn r != 0:
+                    gib_zurück r
+                wenn terminal != 0:
+                    setze zahl auf zahl + 1
+            setze i auf i + 1
+        wenn zl_ausgaben_ok(abschluesse, abschluss_kap, zahl) == 0:
+            gib_zurück 2
+
+        setze zahl auf 0
+        setze proben_zahl: u32 auf 0
+        setze i auf 0
+        solange i < t32[2]:
+            setze s2: u64 auf zl_slot(t, i)
+            setze s64: ptr[u64] auf zeiger(s2)
+            setze s2_32: ptr[u32] auf zeiger(s2)
+            wenn s2_32[42] != 0:
+                # Rueckgabe bewusst ignoriert wie C '(void)eval_slot' (:676): Durchlauf 1 hat ihn bereits geprueft.
+                setze r auf moo_n_anim_eval_slot(s2, zeit, reduziert, w_adr, term_adr)
+                zl_kopieren(s2 + 120, w_adr, 32)
+                setze p: u64 auf proben + u64(proben_zahl) * 56
+                setze p64: ptr[u64] auf zeiger(p)
+                setze p32: ptr[u32] auf zeiger(p)
+                p64[0] = s64[0]
+                p64[1] = s64[1]
+                p32[4] = s2_32[9]
+                p32[5] = terminal
+                zl_kopieren(p + 24, w_adr, 32)
+                setze proben_zahl auf proben_zahl + 1
+                wenn terminal != 0:
+                    setze status: u32 auf 1
+                    wenn reduziert != 0:
+                        setze status auf 5
+                    zl_abschluss(abschluesse + u64(zahl) * 32, s64[0], s64[1], status, zeit)
+                    setze zahl auf zahl + 1
+                    s2_32[42] = 0
+                    t32[3] = t32[3] - 1
+            setze i auf i + 1
+        t64[12] = zeit
+        t32[26] = 1
+        np[0] = proben_zahl
+        na[0] = zahl
+        gib_zurück 0

@@ -108,12 +108,19 @@ pub(crate) fn classify_body(body: &[Stmt]) -> BodyKind {
 /// Signatur: Zeiger (Adressraum 0) und skalare Parameter; Ergebnis skalar
 /// oder void. Mit Zeiger wird die bestehende Zeigersignatur verwendet.
 pub(crate) fn signature(params: &[Option<TypeRef>], result: Option<&TypeRef>) -> Result<NativePointerSignature, String> {
+    signature_with_nominals(params, result, &crate::native_type_id::NominalTypes::new())
+}
+
+/// Bestehendes Signatur-Lowering mit lokal aufgeloesten nativen Strukturnamen.
+pub(crate) fn signature_with_nominals(
+    params: &[Option<TypeRef>], result: Option<&TypeRef>,
+    nominal: &crate::native_type_id::NominalTypes,
+) -> Result<NativePointerSignature, String> {
     let has_pointer = params.iter().flatten().any(|ty| matches!(
         &ty.kind, TypeKind::Generic { name, .. } if name == "ptr" || name == "zeiger"
     ));
     if has_pointer {
-        let nominal = crate::native_type_id::NominalTypes::new();
-        return NativePointerSignature::from_annotations(params, result, &nominal);
+        return NativePointerSignature::from_annotations(params, result, nominal);
     }
     let mut native = Vec::with_capacity(params.len());
     for (index, param) in params.iter().enumerate() {

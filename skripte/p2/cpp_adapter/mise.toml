@@ -1,0 +1,31 @@
+[tasks.test]
+description = "P2 M1 C++-Adapter: C-ABI und Exception-Grenze"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/cpp_adapter/test.sh c"
+
+[tasks.integration]
+description = "P2 M1 C++-Adapter: Moo nach C++ Ende zu Ende"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/cpp_adapter/test.sh moo"
+
+[tasks.handle-zukunft]
+description = "P2 Zukunftsgate: Moo verwaltet C++-Handle"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/cpp_adapter/test.sh handle-zukunft"
+
+[tasks.throw]
+description = "P2 C++-Exception als Moo-Fehler behandeln"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/cpp_adapter/test.sh throw"
+
+[tasks.bindgen]
+description = "P2 Bindgen: echten C++-Adapterheader verarbeiten"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/cpp_adapter/test.sh bindgen"
+
+[tasks.sanitize]
+description = "P2 C++-Adapter: ASan und UBSan"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/cpp_adapter/test.sh sanitize"
+
+

@@ -1,0 +1,100 @@
+# P2-T73: Bare-Laufzeitnachweis (Multiboot-Kernel, QEMU seriell) der nativen
+# Zahlen-, Cast- und bool-Semantik (P2-T34) in unsicher:-Systemkoerpern. main
+# ruft sie nur mit Literalen (Option A, P2-T43: runtime-frei, keine 64-Bit- und
+# Float-Argumente); Float-Faelle rechnen deshalb im Koerper aus Ganzzahlen.
+# Fehlerpfad im Bare-Profil: llvm.trap (sys.trap), siehe native_zahlen_kern_trap.moos.
+# Erwartete serielle Zeilen: -2 -1 2 -1 -128 200 255 127 0 255 7 16777216 1 0 0
+@nativ
+funktion k_div(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b
+
+@nativ
+funktion k_rest(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a % b
+
+@nativ
+funktion k_links(a: u8, n: u8) -> u8:
+    unsicher:
+        gib_zurück a << n
+
+@nativ
+funktion k_rechts(a: i8, n: i8) -> i8:
+    unsicher:
+        gib_zurück a >> n
+
+@nativ
+funktion k_wrap8(a: i8) -> i8:
+    unsicher:
+        gib_zurück a + 1
+
+@nativ
+funktion k_als_u8(a: i32) -> u8:
+    unsicher:
+        gib_zurück als(u8, a)
+
+@nativ
+funktion k_wrap_u8(a: i32) -> u8:
+    unsicher:
+        gib_zurück als_wrap(u8, a)
+
+@nativ
+funktion k_satt_i8(a: i32) -> i8:
+    unsicher:
+        gib_zurück als_saettigend(i8, a)
+
+@nativ
+funktion k_satt_u8(a: i32) -> u8:
+    unsicher:
+        gib_zurück als_saettigend(u8, a)
+
+@nativ
+funktion k_satt_f(a: i32) -> u8:
+    unsicher:
+        gib_zurück als_saettigend(u8, als(f64, a) * 1.5)
+
+@nativ
+funktion k_f2i(a: i32) -> i32:
+    unsicher:
+        setze f: f64 auf als(f64, a)
+        gib_zurück als(i32, f / 2.0)
+
+@nativ
+funktion k_rund(a: i32) -> i32:
+    unsicher:
+        gib_zurück als(i32, als(f32, a))
+
+@nativ
+funktion k_kleiner(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück als(i32, a < b)
+
+@nativ
+funktion k_sicher(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück als(i32, b != 0 und a / b > 2)
+
+@nativ
+funktion k_nan(a: i32) -> i32:
+    unsicher:
+        setze z: f64 auf als(f64, a)
+        setze n: f64 auf z / z
+        gib_zurück als(i32, n == n)
+
+unsicher:
+    zeige k_div(-7, 3)
+    zeige k_rest(-7, 3)
+    zeige k_links(129, 1)
+    zeige k_rechts(-128, 7)
+    zeige k_wrap8(127)
+    zeige k_als_u8(200)
+    zeige k_wrap_u8(-1)
+    zeige k_satt_i8(300)
+    zeige k_satt_u8(-5)
+    zeige k_satt_f(200)
+    zeige k_f2i(14)
+    zeige k_rund(16777217)
+    zeige k_kleiner(1, 2)
+    zeige k_sicher(7, 0)
+    zeige k_nan(0)

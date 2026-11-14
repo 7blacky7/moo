@@ -209,9 +209,12 @@ solange fenster_offen(win):
                     setze food_typ auf neu_ft
                     # Neues Futter
                     setze neu_typ auf sp_rand(10)
-                    wenn neu_typ < 6: setze neu_typ auf 0
-                    sonst wenn neu_typ < 9: setze neu_typ auf 1
-                    sonst: setze neu_typ auf 2
+                    wenn neu_typ < 6:
+                        setze neu_typ auf 0
+                    sonst wenn neu_typ < 9:
+                        setze neu_typ auf 1
+                    sonst:
+                        setze neu_typ auf 2
                     spawn_food(neu_typ)
 
                     # Level-Up
@@ -265,8 +268,10 @@ solange fenster_offen(win):
         setze dx auf food_x[fi] * CELL + CELL / 2
         setze dy auf HUD_H + food_y[fi] * CELL + CELL / 2
         setze farbe auf "#F44336"
-        wenn food_typ[fi] == 1: setze farbe auf "#FFD700"
-        wenn food_typ[fi] == 2: setze farbe auf "#9C27B0"
+        wenn food_typ[fi] == 1:
+            setze farbe auf "#FFD700"
+        wenn food_typ[fi] == 2:
+            setze farbe auf "#9C27B0"
         zeichne_kreis(win, dx, dy, CELL / 2 - 2, farbe)
         zeichne_kreis(win, dx - 2, dy - 2, CELL / 3, "#FFFFFF")
         setze fi auf fi + 1

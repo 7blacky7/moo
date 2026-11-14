@@ -1,0 +1,342 @@
+
+[tasks.defer-handler-diagnose]
+description = "P2 Frontend: lokaler Cleanup-Catch und Handler-Tiefe diagnostisch"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-frontend/defer_handler
+mkdir -p "$out"
+timeout 30s compiler/target/release/moo-compiler compile compiler/tests/p2/defer_handler_tiefe.moos -o "$out/probe"
+set +e
+timeout 10s "$out/probe" > "$out/probe.out" 2> "$out/probe.err"
+rc=$?
+set -e
+echo "Diagnose-Exit: $rc"
+echo "stdout:"
+cat "$out/probe.out"
+echo "stderr:"
+cat "$out/probe.err"
+if [ "$rc" -eq 124 ] || [ "$rc" -ge 128 ]; then exit 1; fi
+'''
+
+[tasks.expect-heap]
+description = "P2 Frontend: Expect-Temporaries und RSS"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/expect_heap.sh"
+
+[tasks.testframe-cleanup-heap]
+description = "P2 Frontend: Cleanup liest Test-Heaplokal"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-frontend/testframe_cleanup_heap
+mkdir -p "$out"
+timeout 30s compiler/target/release/moo-compiler compile compiler/tests/p2/testframe_cleanup_heap.moos -o "$out/probe"
+timeout 30s "$out/probe" > "$out/probe.out" 2> "$out/probe.err"
+awk '
+  $0 == "L_OK" {if (s != 0) exit 1; s=1; next}
+  s == 1 {if ($0 != "4") exit 1; s=2; next}
+  $0 == "    OK" {if (s != 2) exit 1; s=3; next}
+  /FEHLGESCHLAGEN: Erwartung nicht erfuellt/ {if (s != 3) exit 1; s=4; next}
+  $0 == "L_FAIL" {if (s != 4) exit 1; s=5; next}
+  s == 5 {if ($0 != "4") exit 1; s=6; next}
+  $0 == "    FAIL" {if (s != 6) exit 1; s=7; next}
+  END {if (s != 7) exit 1}
+' "$out/probe.out"
+echo "PASS Cleanup liest Heaplokal vor Slot-Freigabe"
+'''
+
+[tasks.testframe-heap]
+description = "P2 Frontend: Test-Frame-Lokale und RSS"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/testframe_heap.sh"
+
+[tasks.guard-heap]
+description = "P2 Frontend: Guard-Heapbedingung unter Linux"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/guard_heap.sh"
+
+[tasks.guard-fallback]
+description = "P2 Frontend: Guard-Fallback in Funktion und main"
+dir = "{{config_root}}/../../.."
+run = '''
+set -u
+out=build/p2-frontend/guard_fallback
+mkdir -p "$out"
+failed=0
+for name in main funktion; do
+  timeout 30s compiler/target/release/moo-compiler compile "compiler/tests/p2/guard_fallback_${name}.moos" -o "$out/$name" > "$out/$name.compile.log" 2>&1
+  rc=$?
+  if [ "$rc" -ne 0 ]; then echo "FAIL $name: Compile-Exit $rc"; failed=1; continue; fi
+  timeout 10s "$out/$name" > "$out/$name.out" 2> "$out/$name.err"
+  rc=$?
+  if [ "$rc" -ne 0 ] || ! cmp -s "compiler/tests/p2/guard_fallback_${name}.expected" "$out/$name.out"; then
+    echo "FAIL $name: Exit/Ausgabe (Exit $rc)"; failed=1
+  else
+    echo "PASS $name"
+  fi
+done
+exit "$failed"
+'''
+
+[tasks.defer-testframe]
+description = "P2 Frontend: Defer bei Test-Fallthrough und erwarte-Fehler"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-frontend/defer_testframe
+mkdir -p "$out"
+timeout 30s compiler/target/release/moo-compiler compile compiler/tests/p2/defer_testframe.moos -o "$out/probe"
+timeout 30s "$out/probe" > "$out/probe.out" 2> "$out/probe.err"
+awk '
+  $0 == "BODY_OK" {if (s != 0) exit 1; s=1; next}
+  $0 == "CLEANUP_OK" {if (s != 1) exit 1; s=2; next}
+  $0 == "    OK" {if (s != 2) exit 1; s=3; next}
+  $0 == "BODY_FAIL" {if (s != 3) exit 1; s=4; next}
+  /FEHLGESCHLAGEN: Erwartung nicht erfuellt/ {if (s != 4) exit 1; s=5; next}
+  $0 == "CLEANUP_FAIL" {if (s != 5) exit 1; s=6; next}
+  $0 == "    FAIL" {if (s != 6) exit 1; s=7; next}
+  $0 == "NACH_FALSCH" {exit 1}
+  END {if (s != 7) exit 1}
+' "$out/probe.out"
+echo "PASS Test-Frame-Defer und Fehlerdiagnose"
+'''
+
+[tasks.defer-bindung]
+description = "P2 Frontend: Defer-Bindungszeit und Mehrfachregistrierung"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/defer_bindung.sh"
+
+[tasks.defer-cleanup-heap]
+description = "P2 Frontend: Cleanupfehler bei Heap-Return"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/defer_cleanup_heap.sh"
+
+[tasks.defer-katalog]
+description = "P2 Frontend: Defer-Katalog Compile-Smoke"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+mkdir -p build/p2-frontend/defer_katalog
+failed=0
+for name in funktion methode test main; do
+  out="build/p2-frontend/defer_katalog/$name"
+  if timeout 30s compiler/target/release/moo-compiler compile "compiler/tests/p2/defer_katalog_${name}.moos" --emit-ir -o "$out.ll" > "$out.log" 2>&1 && timeout 30s mise exec -- opt -passes=verify -disable-output "$out.ll"; then
+    echo "PASS $name"
+  else
+    echo "FAIL $name"
+    cat "$out.log"
+    failed=1
+  fi
+done
+exit "$failed"
+'''
+
+[tasks.try-index-set]
+description = "P2 Frontend: Fehler bei Indexzuweisungen"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/try_index_set.sh"
+
+[tasks.try-index]
+description = "P2 Frontend: Fehler in Container und Index"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/try_index.sh"
+
+[tasks.try-bedingung]
+description = "P2 Frontend: Fehler in if, while und for"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/try_bedingung.sh"
+
+[tasks.defer-vertrag]
+description = "P2 Frontend: Defer-LIFO, Fehler und Laufzeitregistrierung"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/defer_vertrag.sh"
+
+[tasks.try-expr-tief]
+description = "P2 Frontend: Fehler in verschachtelten Ausdrücken"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/try_expr_tief.sh"
+
+[tasks.lokal]
+description = "P2 Frontend: initialisierte native i32-Lokale"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+mkdir -p build/p2-frontend
+compiler=compiler/target/release/moo-compiler
+source=compiler/tests/p2/m1_lokal_i32.moos
+"$compiler" compile "$source" --emit-ir -o build/p2-frontend/m1_lokal_i32.ll
+"$compiler" compile "$source" -o build/p2-frontend/m1_lokal_i32
+timeout 30s build/p2-frontend/m1_lokal_i32 > build/p2-frontend/m1_lokal_i32.out
+cmp compiler/tests/p2/m1_lokal_i32.expected build/p2-frontend/m1_lokal_i32.out
+printf 'PASS native lokale i32-Variable\n'
+'''
+
+[tasks.dynamisch]
+description = "P2 Frontend: dynamische i32-Argumente und Fehlerpfade"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/dynamisch.sh"
+
+[tasks.import-struktur]
+description = "P2 Frontend: benannten Strukturimport erhalten"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+mkdir -p build/p2-frontend
+compiler/target/release/moo-compiler compile compiler/tests/p2/import_struktur.moos -o build/p2-frontend/import_struktur
+timeout 30s build/p2-frontend/import_struktur > build/p2-frontend/import_struktur.out
+cmp compiler/tests/p2/import_struktur.expected build/p2-frontend/import_struktur.out
+echo "PASS benannter Strukturimport"
+'''
+
+[tasks.dataclass]
+description = "P2 Frontend: typisierte dynamische Datenklasse"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+mkdir -p build/p2-frontend
+compiler/target/release/moo-compiler compile compiler/tests/p2/dataclass_typisiert.moos -o build/p2-frontend/dataclass_typisiert
+timeout 30s build/p2-frontend/dataclass_typisiert > build/p2-frontend/dataclass_typisiert.out
+cmp compiler/tests/p2/dataclass_typisiert.expected build/p2-frontend/dataclass_typisiert.out
+echo "PASS typisierte Datenklasse"
+'''
+
+[tasks.try-direkt]
+description = "P2 Frontend: direkter nativer Aufruf im lokalen try"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+mkdir -p build/p2-frontend
+compiler/target/release/moo-compiler compile compiler/tests/p2/m1_dyn_try_direkt.moos -o build/p2-frontend/m1_dyn_try_direkt
+timeout 30s build/p2-frontend/m1_dyn_try_direkt > build/p2-frontend/m1_dyn_try_direkt.out
+cmp compiler/tests/p2/m1_dyn_try_direkt.expected build/p2-frontend/m1_dyn_try_direkt.out
+echo "PASS direkter nativer Aufruf und Catch"
+'''
+
+[tasks.try-verschachtelt]
+description = "P2 Frontend: verschachtelte Catch- und Rethrow-Pfade"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+mkdir -p build/p2-frontend
+for name in fehler rethrow erfolg; do
+  src="compiler/tests/p2/try_verschachtelt_${name}.moos"
+  out="build/p2-frontend/try_verschachtelt_${name}"
+  timeout 30s compiler/target/release/moo-compiler compile "$src" -o "$out"
+  timeout 30s "$out" > "$out.out"
+  cmp "compiler/tests/p2/try_verschachtelt_${name}.expected" "$out.out"
+  echo "PASS verschachtelt $name"
+done
+'''
+
+[tasks.return-cleanup]
+description = "P2 Frontend: Return- und Cleanup-Pfade in try"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/return_cleanup.sh"
+
+[tasks.defer-diagnose]
+description = "P2 Frontend: Fehler in aufräumen diagnostisch ausführen"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+mkdir -p build/p2-frontend
+timeout 30s compiler/target/release/moo-compiler compile compiler/tests/p2/try_defer_fehler.moos -o build/p2-frontend/try_defer_fehler
+timeout 5s build/p2-frontend/try_defer_fehler
+'''
+
+[tasks.try-expr-heap]
+description = "P2 Frontend: Heap-Temporary bei Ausdrucksfehler"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/try_expr_heap.sh"
+
+[tasks.try-expr]
+description = "P2 Frontend: Fehlerausbreitung innerhalb dynamischer Ausdrücke"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/try_expr.sh"
+
+[tasks.defer-return-error]
+description = "P2 Frontend: Heap-Return bei Fehler und Cleanup"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/defer_return_error.sh"
+
+[tasks.defer-heap]
+description = "P2 Frontend: Defer-Heap-RSS-Skalierung unter Linux"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/defer_heap.sh"
+
+[tasks.puffer-m2]
+description = "P2 Frontend: Moo i32-Puffer Roundtrip"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/puffer_m2.sh"
+
+[tasks.puffer-syntax]
+description = "P2 Frontend: Puffer-Konstruktor Kollisionsdiagnose"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/puffer_syntax.sh"
+
+[tasks.literal-cross]
+description = "P2 Frontend: Literal-IR Cross Verify und Objekt"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/literal_cross.sh"
+
+[tasks.literal-roh]
+description = "P2 Frontend: Rohtext großer Literale und Range"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/literal_roh.sh"
+
+[tasks.ffi-types]
+description = "P2 Frontend: FFI-Pointer-Deklarationen"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/ffi_types.sh"
+
+[tasks.native-small-try-call]
+description = "P2 Frontend: Nullargumente an i8/u8 in try"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/native_small_try_call.sh"
+
+[tasks.native-small-call]
+description = "P2 Frontend: zukünftige native i8/u8-Direktaufrufe"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/native_small_call.sh"
+
+[tasks.native-small]
+description = "P2 Frontend: native i8/u8-Grenzen und IR"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/native_small.sh"
+
+[tasks.native-calls]
+description = "P2 Frontend: direkte native i32-Aufrufe und LLVM-IR"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/native_calls.sh"
+
+[tasks.try-flow]
+description = "P2 Frontend: Handler bei verschachteltem Return und Schleifensprüngen"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/try_flow.sh"
+
+[tasks.negativ]
+description = "P2 Frontend: native Parser- und Import-Negativtests"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+mkdir -p build/p2-frontend
+for name in exponent_gueltig exponent_fehlt exponent_vorzeichen_fehlt exponent_ungueltig import_struktur_kollision import_ffi_kollision m1_typ_parameter_fehlt m1_typ_rueckgabe_fehlt m1_lokal_typkonflikt m1_lokal_unbekannt struktur_feld_doppelt struktur_typ_unbekannt struktur_array_null dataclass_typ_fehlt bibliothek_named_fehler decorator_named_fremd; do
+  source="compiler/tests/p2/${name}.moos"
+  expected="compiler/tests/p2/${name}.expected_error"
+  log="build/p2-frontend/${name}.log"
+  test -s "$expected"
+  set +e
+  timeout 30s compiler/target/release/moo-compiler compile "$source" --emit-ir -o "build/p2-frontend/${name}.ll" >"$log" 2>&1
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ] || [ "$rc" -ge 128 ]; then
+    printf 'FAIL %s: unerwarteter Exit %s\n' "$name" "$rc"
+    exit 1
+  fi
+  if ! rg -q -F -f "$expected" "$log"; then
+    printf 'FAIL %s: erwartete Diagnose fehlt\n' "$name"
+    exit 1
+  fi
+  printf 'PASS %s\n' "$name"
+done
+'''

@@ -75,6 +75,7 @@ Program {
                                 end_line: 1,
                                 end_column: 75,
                             },
+                            convention: None,
                         },
                         line: 1,
                         column: 61,

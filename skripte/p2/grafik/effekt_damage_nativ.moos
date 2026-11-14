@@ -1,0 +1,334 @@
+# P2-T65 Produktpaket Damage: compiler/runtime/moo_compositor_effects_damage.c
+# in nativem Moo. Resultcodes wie moo_compositor_protocol.h:
+# 0 = MOO_COMP_OK, 1 = MOO_COMP_INVALID, 2 = MOO_COMP_LIMIT.
+# Konventionen wie effekt_mathe_nativ.moos: Zeiger kommen als u64-Adresse
+# (NULL -> INVALID exakt wie in C), Rechtecke per Zeiger, weil @einstieg keine
+# Strukturwerte by value exportiert. Ausgabeparameter heisst 'ergebnis'.
+#
+# Wiederverwendung statt Nachbau: Rechteck-Validierung, Erweitern, Schnitt und
+# Vereinigung kommen aus effekt_mathe_nativ.moos (moo_n_rect_*), hier per
+# extern "C" angebunden. Die Probe linkt beide Objekte.
+
+extern "C" funktion moo_n_rect_expand(rechteck: u64, radius: i32, ergebnis: u64) -> u32
+extern "C" funktion moo_n_rect_intersect(a_adr: u64, b_adr: u64, ergebnis: u64) -> u32
+extern "C" funktion moo_n_rect_union(a_adr: u64, b_adr: u64, ergebnis: u64) -> u32
+
+# = MooCompRect (x, y, width, height als int32_t), 16 Byte
+struktur KompRechteck:
+    x: i32
+    y: i32
+    breite: i32
+    hoehe: i32
+
+# = MooCompEffectDamageSurface (effects_damage.h:14-24), 80 Byte.
+# Rechteck-Offsets: alt_r 16, neu_r 32, deckung_r 48 (werden als Adressen
+# an moo_n_rect_* gereicht).
+struktur KompDamageFlaeche:
+    flaeche: u64
+    maske: u64
+    alt_r: KompRechteck
+    neu_r: KompRechteck
+    deckung_r: KompRechteck
+    radius: u16
+    reserviert16: u16
+    geaendert: u32
+    reserviert: u32
+
+# = MooCompEffectDamageWorkspace (effects_damage.h:26-30), 16 Byte.
+# regionen ist der MooCompRect-Zeiger als Adresse.
+struktur KompDamageArbeit:
+    regionen: u64
+    kapazitaet: u32
+    reserviert: u32
+
+# = MooCompEffectDamageOutput (effects_damage.h:32-38), 24 Byte.
+struktur KompDamageAusgabe:
+    regionen: u64
+    kapazitaet: u32
+    zahl: u32
+    voll: u32
+    reserviert: u32
+
+# C :10-28. 1 = Byte-Bereiche [a, a+ak*16) und [b, b+bk*16) ueberlappen
+# oder ein Ende laeuft ueber den Adressraum (dann konservativ "overlap").
+@nativ
+funktion bereiche_ueberlappen(a: u64, a_kap: u32, b: u64, b_kap: u32) -> u32:
+    unsicher:
+        setze a_bytes: u64 auf u64(a_kap) * 16
+        setze b_bytes: u64 auf u64(b_kap) * 16
+        setze umax: u64 auf 0
+        setze umax auf umax - 1
+        wenn a_bytes > umax - a:
+            gib_zurück 1
+        wenn b_bytes > umax - b:
+            gib_zurück 1
+        setze a_ende: u64 auf a + a_bytes
+        setze b_ende: u64 auf b + b_bytes
+        wenn a < b_ende:
+            wenn b < a_ende:
+                gib_zurück 1
+        gib_zurück 0
+
+# C :30-33: gueltig = rect_expand(rect, 0) liefert OK.
+@nativ
+funktion rechteck_gueltig(rechteck: u64) -> u32:
+    unsicher:
+        setze pruef: KompRechteck auf KompRechteck(0, 0, 0, 0)
+        setze rc: u32 auf moo_n_rect_expand(rechteck, 0, adresse_von(pruef))
+        gib_zurück rc
+
+# C :40-48. 1 = aufgenommen oder leer, 0 = Kapazitaet erschoepft.
+@nativ
+funktion damage_dazu(rechteck: u64, regionen: u64, kapazitaet: u32, zahl: ptr[u32]) -> u32:
+    unsicher:
+        setze r: ptr[KompRechteck] auf zeiger(rechteck)
+        wenn r.breite == 0:
+            gib_zurück 1
+        wenn r.hoehe == 0:
+            gib_zurück 1
+        setze n: u32 auf zahl[0]
+        wenn n >= kapazitaet:
+            gib_zurück 0
+        setze ziel: ptr[KompRechteck] auf zeiger(regionen + u64(n) * 16)
+        ziel[0] = r[0]
+        zahl[0] = n + 1
+        gib_zurück 1
+
+# C :50-56: Kollaps auf genau full_output.
+@nativ
+funktion damage_kollaps(voll_r: u64, regionen: u64, zahl: ptr[u32], voll: ptr[u32]) -> void:
+    unsicher:
+        setze q: ptr[KompRechteck] auf zeiger(voll_r)
+        setze ziel: ptr[KompRechteck] auf zeiger(regionen)
+        ziel[0] = q[0]
+        zahl[0] = 1
+        voll[0] = 1
+
+# C :58-79 ohne NULL-Pruefung des Ziels (macht der Einstieg).
+@nativ
+funktion propagieren_intern(dirty: u64, deckung: u64, radius: i32, ergebnis: u64) -> u32:
+    unsicher:
+        setze rc: u32 auf rechteck_gueltig(dirty)
+        wenn rc != 0:
+            gib_zurück rc
+        setze rc auf rechteck_gueltig(deckung)
+        wenn rc != 0:
+            gib_zurück rc
+        setze erweitert: KompRechteck auf KompRechteck(0, 0, 0, 0)
+        setze rc auf moo_n_rect_expand(dirty, radius, adresse_von(erweitert))
+        wenn rc != 0:
+            gib_zurück rc
+        setze geschnitten: KompRechteck auf KompRechteck(0, 0, 0, 0)
+        setze rc auf moo_n_rect_intersect(adresse_von(erweitert), deckung, adresse_von(geschnitten))
+        wenn rc != 0:
+            gib_zurück rc
+        setze o: ptr[KompRechteck] auf zeiger(ergebnis)
+        o[0] = geschnitten
+        gib_zurück 0
+
+# C :58-79. API-Differenz: Rechtecke per Zeiger, kernel_radius als u32
+# (Systemkoerper-extern sperrt 8/16-Bit-Parameter; C-Aufrufer reicht uint16_t).
+@nativ
+@einstieg
+funktion moo_n_damage_propagate_backdrop(dirty: u64, deckung: u64, radius: u32, ergebnis: u64) -> u32:
+    unsicher:
+        wenn ergebnis == 0:
+            gib_zurück 1
+        wenn radius > 65535:
+            gib_zurück 1
+        gib_zurück propagieren_intern(dirty, deckung, i32(radius), ergebnis)
+
+# C :81-97. Masken: V2 = 0xFF, BACKDROP_BLUR = 1<<2 (effects_protocol.h:85-101).
+@nativ
+funktion flaeche_pruefen(adr: u64) -> u32:
+    unsicher:
+        setze f: ptr[KompDamageFlaeche] auf zeiger(adr)
+        wenn f.flaeche == 0:
+            gib_zurück 1
+        wenn f.reserviert16 != 0:
+            gib_zurück 1
+        wenn f.reserviert != 0:
+            gib_zurück 1
+        wenn f.geaendert > 1:
+            gib_zurück 1
+        wenn f.maske > 255:
+            gib_zurück 1
+        wenn (f.maske & 4) == 0:
+            wenn f.radius != 0:
+                gib_zurück 1
+        setze rc: u32 auf rechteck_gueltig(adr + 16)
+        wenn rc != 0:
+            gib_zurück rc
+        setze rc auf rechteck_gueltig(adr + 32)
+        wenn rc != 0:
+            gib_zurück rc
+        gib_zurück rechteck_gueltig(adr + 48)
+
+# C :99-200. Validierung aller Eingaben vor jeder Mutation; Kapazitaets-
+# ueberlauf kollabiert auf voll_r mit voll=1 (OK). Fehler nach Beginn der
+# Ausbreitung lassen die Ausgabe unberuehrt (nur der Workspace aendert sich).
+# API-Differenz: full_output per Zeiger (0 -> INVALID).
+@nativ
+@einstieg
+funktion moo_n_damage_build(voll_r: u64, hinter: u64, hinter_zahl: u32, flaechen: u64, flaechen_zahl: u32, arbeit: u64, ergebnis: u64) -> u32:
+    unsicher:
+        wenn voll_r == 0:
+            gib_zurück 1
+        wenn arbeit == 0:
+            gib_zurück 1
+        wenn ergebnis == 0:
+            gib_zurück 1
+        setze w: ptr[KompDamageArbeit] auf zeiger(arbeit)
+        setze o: ptr[KompDamageAusgabe] auf zeiger(ergebnis)
+        wenn w.regionen == 0:
+            gib_zurück 1
+        wenn w.kapazitaet == 0:
+            gib_zurück 1
+        wenn w.reserviert != 0:
+            gib_zurück 1
+        wenn o.regionen == 0:
+            gib_zurück 1
+        wenn o.kapazitaet == 0:
+            gib_zurück 1
+        wenn o.reserviert != 0:
+            gib_zurück 1
+        wenn hinter_zahl != 0:
+            wenn hinter == 0:
+                gib_zurück 1
+        wenn flaechen_zahl != 0:
+            wenn flaechen == 0:
+                gib_zurück 1
+        setze w_reg: u64 auf w.regionen
+        setze w_kap: u32 auf w.kapazitaet
+        wenn bereiche_ueberlappen(w_reg, w_kap, o.regionen, o.kapazitaet) != 0:
+            gib_zurück 1
+        wenn rechteck_gueltig(voll_r) != 0:
+            gib_zurück 1
+        setze v: ptr[KompRechteck] auf zeiger(voll_r)
+        wenn v.breite == 0:
+            gib_zurück 1
+        wenn v.hoehe == 0:
+            gib_zurück 1
+
+        setze rc: u32 auf 0
+        setze i: u32 auf 0
+        solange i < hinter_zahl:
+            setze rc auf rechteck_gueltig(hinter + u64(i) * 16)
+            wenn rc != 0:
+                gib_zurück rc
+            setze i auf i + 1
+        setze i auf 0
+        solange i < flaechen_zahl:
+            setze rc auf flaeche_pruefen(flaechen + u64(i) * 80)
+            wenn rc != 0:
+                gib_zurück rc
+            setze i auf i + 1
+
+        setze zahl: u32 auf 0
+        setze voll: u32 auf 0
+        setze zahl_p: ptr[u32] auf zeiger(adresse_von(zahl))
+        setze voll_p: ptr[u32] auf zeiger(adresse_von(voll))
+        setze geschnitten: KompRechteck auf KompRechteck(0, 0, 0, 0)
+        setze g_adr: u64 auf adresse_von(geschnitten)
+
+        setze i auf 0
+        solange i < hinter_zahl:
+            wenn voll != 0:
+                stopp
+            setze rc auf moo_n_rect_intersect(voll_r, hinter + u64(i) * 16, g_adr)
+            wenn rc != 0:
+                gib_zurück rc
+            wenn damage_dazu(g_adr, w_reg, w_kap, zahl_p) == 0:
+                damage_kollaps(voll_r, w_reg, zahl_p, voll_p)
+            setze i auf i + 1
+
+        setze vereinigt: KompRechteck auf KompRechteck(0, 0, 0, 0)
+        setze u_adr: u64 auf adresse_von(vereinigt)
+        setze ausgebreitet: KompRechteck auf KompRechteck(0, 0, 0, 0)
+        setze p_adr: u64 auf adresse_von(ausgebreitet)
+        setze i auf 0
+        solange i < flaechen_zahl:
+            wenn voll != 0:
+                stopp
+            setze f_adr: u64 auf flaechen + u64(i) * 80
+            setze f: ptr[KompDamageFlaeche] auf zeiger(f_adr)
+            setze untere: u32 auf zahl
+            wenn (f.maske & 4) != 0:
+                setze radius: i32 auf i32(f.radius)
+                setze d: u32 auf 0
+                solange d < untere:
+                    wenn voll != 0:
+                        stopp
+                    setze rc auf propagieren_intern(w_reg + u64(d) * 16, f_adr + 48, radius, p_adr)
+                    wenn rc != 0:
+                        gib_zurück rc
+                    wenn damage_dazu(p_adr, w_reg, w_kap, zahl_p) == 0:
+                        damage_kollaps(voll_r, w_reg, zahl_p, voll_p)
+                    setze d auf d + 1
+            wenn f.geaendert != 0:
+                wenn voll == 0:
+                    setze rc auf moo_n_rect_union(f_adr + 16, f_adr + 32, u_adr)
+                    wenn rc != 0:
+                        gib_zurück rc
+                    setze rc auf moo_n_rect_intersect(voll_r, u_adr, g_adr)
+                    wenn rc != 0:
+                        gib_zurück rc
+                    wenn damage_dazu(g_adr, w_reg, w_kap, zahl_p) == 0:
+                        damage_kollaps(voll_r, w_reg, zahl_p, voll_p)
+            setze i auf i + 1
+
+        wenn zahl > o.kapazitaet:
+            damage_kollaps(voll_r, w_reg, zahl_p, voll_p)
+
+        setze quelle: ptr[KompRechteck] auf zeiger(w_reg)
+        setze ziel: ptr[KompRechteck] auf zeiger(o.regionen)
+        setze i auf 0
+        solange i < zahl:
+            ziel[u64(i)] = quelle[u64(i)]
+            setze i auf i + 1
+        o.zahl = zahl
+        o.voll = voll
+        o.reserviert = 0
+        gib_zurück 0
+
+# C :202-209: FNV-1a-64 ueber die vier Bytes (little-endian Reihenfolge).
+# u64-Multiplikation wickelt im Systemkoerper (wie uint64_t in C).
+@nativ
+funktion mische_u32(h: u64, wert: u32) -> u64:
+    unsicher:
+        setze hash: u64 auf h
+        setze i: u32 auf 0
+        solange i < 4:
+            setze byte: u32 auf (wert >> (i * 8)) & 255
+            setze hash auf hash ^ u64(byte)
+            setze hash auf hash * 1099511628211
+            setze i auf i + 1
+        gib_zurück hash
+
+# C :211-232. Ungueltiger Datensatz -> 0. Koordinaten werden als u32 gelesen
+# (= (uint32_t)int32_t in C, Zweierkomplement-Bitmuster).
+@nativ
+@einstieg
+funktion moo_n_damage_hash(schaden: u64) -> u64:
+    unsicher:
+        wenn schaden == 0:
+            gib_zurück 0
+        setze d: ptr[KompDamageAusgabe] auf zeiger(schaden)
+        wenn d.regionen == 0:
+            gib_zurück 0
+        wenn d.zahl > d.kapazitaet:
+            gib_zurück 0
+        wenn d.voll > 1:
+            gib_zurück 0
+        wenn d.reserviert != 0:
+            gib_zurück 0
+        setze hash: u64 auf 1469598103934665603
+        setze hash auf mische_u32(hash, d.zahl)
+        setze hash auf mische_u32(hash, d.voll)
+        setze worte: ptr[u32] auf zeiger(d.regionen)
+        setze n: u64 auf u64(d.zahl) * 4
+        setze k: u64 auf 0
+        solange k < n:
+            setze hash auf mische_u32(hash, worte[k])
+            setze k auf k + 1
+        gib_zurück hash

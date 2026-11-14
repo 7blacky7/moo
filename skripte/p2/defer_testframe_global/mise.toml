@@ -1,0 +1,13 @@
+[tasks.test]
+description = "TestDef bewahrt vorhandene Globals"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-defer-testframe-global
+mkdir -p "$out"
+timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/defer_testframe_global.moos -o "$out/probe"
+timeout 30s "$out/probe" > "$out/actual"
+rg -q -F -x '    OK' "$out/actual"
+[ "$(tail -n 1 "$out/actual")" = 11 ] || { cat "$out/actual" >&2; exit 1; }
+printf 'PASS TestDef aktualisiert bestehendes Global\n'
+'''

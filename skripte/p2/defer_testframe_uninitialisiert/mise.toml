@@ -1,0 +1,24 @@
+[tasks.diagnose]
+description = "Diagnose früher Testexit und Cleanup-Lesen einer späten Local"
+dir = "{{config_root}}/../../.."
+run = '''
+set -u
+out=build/p2-defer-testframe-uninitialisiert
+mkdir -p "$out"
+if timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/defer_testframe_uninitialisiert.moos --emit-ir -o "$out/probe.ll" >"$out/compile-ir.log" 2>&1; then rc=0; else rc=$?; fi
+printf 'IR compile RC=%s\n' "$rc"
+cat "$out/compile-ir.log"
+[ "$rc" -eq 0 ] || exit "$rc"
+if timeout 30s mise exec -- opt -passes=verify -disable-output "$out/probe.ll"; then rc=0; else rc=$?; fi
+printf 'LLVM verify RC=%s\n' "$rc"
+[ "$rc" -eq 0 ] || exit "$rc"
+if timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/defer_testframe_uninitialisiert.moos -o "$out/probe" >"$out/compile.log" 2>&1; then rc=0; else rc=$?; fi
+printf 'Executable compile RC=%s\n' "$rc"
+cat "$out/compile.log"
+[ "$rc" -eq 0 ] || exit "$rc"
+if timeout 30s "$out/probe" >"$out/actual" 2>"$out/err"; then rc=0; else rc=$?; fi
+printf 'Laufzeit RC=%s, Ausgabe:\n' "$rc"
+cat "$out/actual"
+cat "$out/err" >&2
+exit "$rc"
+'''

@@ -1,0 +1,12 @@
+# Nicht klassifizierte Mixed-Variante mit zusaetzlichem u32-Feld bleibt gesperrt.
+struktur Mixed:
+    real: f64
+    integer: u32
+    extra: u32
+
+extern "C" funktion moo_p2_struct_mixed(wert: Mixed) -> Mixed
+@nativ
+@einstieg
+funktion pruefe_sperre(adr: u64) -> u64:
+    unsicher:
+        gib_zurück adr

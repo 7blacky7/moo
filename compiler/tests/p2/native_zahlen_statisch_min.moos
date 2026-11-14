@@ -1,0 +1,5 @@
+# P2-T34 negativ: konstantes MIN / -1 ist ein Compilefehler.
+@nativ
+funktion z_min() -> i8:
+    gib_zurück -128 / -1
+zeige z_min()

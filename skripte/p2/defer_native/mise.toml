@@ -1,0 +1,33 @@
+[tasks.probe]
+description = "Defer mit dynamischen nativen i32-, Float- und FFI-Aufrufen"
+dir = "{{config_root}}/../../.."
+run = '''
+set -u
+mkdir -p build/p2-defer-native
+failed=0
+for name in i32 float ffi verschachtelt; do
+  if ! timeout 60s compiler/target/release/moo-compiler compile "compiler/tests/p2/defer_native_${name}.moos" -o "build/p2-defer-native/$name" >"build/p2-defer-native/$name.compile.log" 2>&1; then
+    printf 'FAIL %s: Compile\n' "$name"
+    cat "build/p2-defer-native/$name.compile.log"
+    failed=1
+    continue
+  fi
+  if ! timeout 30s "build/p2-defer-native/$name" >"build/p2-defer-native/$name.out" 2>"build/p2-defer-native/$name.err" || ! grep -qx 'hauptteil' "build/p2-defer-native/$name.out"; then
+    printf 'FAIL %s: Laufzeit oder Ausgabe\n' "$name"
+    failed=1
+    continue
+  fi
+  if [ "$name" = ffi ] && ! printf 'hauptteil\nX' | cmp -s - "build/p2-defer-native/$name.out"; then
+    printf 'FAIL ffi: Cleanup-Seiteneffekt fehlt oder Reihenfolge falsch\n'
+    failed=1
+    continue
+  fi
+  if [ "$name" = verschachtelt ] && ! printf 'hauptteil\n7\n' | cmp -s - "build/p2-defer-native/$name.out"; then
+    printf 'FAIL verschachtelt: Ergebnis oder Reihenfolge falsch\n'
+    failed=1
+    continue
+  fi
+  printf 'PASS %s\n' "$name"
+done
+exit "$failed"
+'''

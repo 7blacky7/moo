@@ -1,0 +1,44 @@
+# Prüft echte SIL-14-Token und genau einmalige Zielabdeckung pro Paar.
+aus sft_adapter importiere korrektur_fenster_aufteilen
+setze daten auf json_parse(datei_lesen("beispiele/p5/daten/pilot_lehrer_v2.json"))
+setze tok auf silben_laden("beispiele/p4_silben/run_sil14_grimm36k/tokenizer.msf")
+setze tokhash auf sha256(tok)
+funktion kodierer(s):
+    gib_zurück silben_kodiere(tok, s)
+setze fensterzahl auf 0
+setze aktiv auf 0
+setze geprueft auf 0
+für eintrag in daten["beispiele"]:
+    wenn eintrag["akzeptiert"] != wahr oder eintrag["herkunft"]["tokenizer_id"] != tokhash:
+        wirf "Pilot: ungeprueftes Paar oder Tokenizerkonflikt"
+    setze fenster auf korrektur_fenster_aufteilen(eintrag, kodierer, 64, 0)
+    setze promptzahl auf kodierer(eintrag["herkunft"]["prompt"]).groesse()
+    setze zielzahl auf kodierer(eintrag["korrektur"]).groesse()
+    setze gesehen auf []
+    setze i auf 0
+    solange i < zielzahl:
+        gesehen.hinzufügen(0)
+        setze i auf i + 1
+    setze paaraktiv auf 0
+    für f in fenster:
+        wenn länge(f["input_ids"]) != 64 oder länge(f["target_ids"]) != 64 oder länge(f["loss_mask"]) != 64:
+            wirf "Pilot: Fenster nicht volle Positionslaenge"
+        setze i auf 0
+        solange i < 64:
+            wenn f["loss_mask"][i] == 1:
+                setze zielindex auf f["fenster_offset"] + i - promptzahl + 1
+                wenn zielindex < 0 oder zielindex >= zielzahl:
+                    wirf "Pilot: Maske ausserhalb des Ziels"
+                wenn gesehen[zielindex] != 0:
+                    wirf "Pilot: Zielposition doppelt maskiert"
+                setze gesehen[zielindex] auf 1
+                setze paaraktiv auf paaraktiv + 1
+            setze i auf i + 1
+        setze fensterzahl auf fensterzahl + 1
+    wenn paaraktiv != zielzahl:
+        wirf "Pilot: Zielpositionen fehlen"
+    setze aktiv auf aktiv + paaraktiv
+    setze geprueft auf geprueft + 1
+wenn geprueft != 100:
+    wirf "Pilot: Anzahl ungueltig"
+zeige json_string({"geprueft": geprueft, "fenster": fensterzahl, "aktive_zielpositionen": aktiv})

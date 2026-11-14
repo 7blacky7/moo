@@ -1,0 +1,55 @@
+# EXT-07: vier Optimierer direkt mit maskiertem SFT und Vollcheckpoint testen.
+setze wurzel auf umgebung("P5_TEST_DIR")
+wenn wurzel == nichts:
+    wirf "P5_TEST_DIR fehlt"
+funktion erzeuge_vorlauf(schichten):
+    gib_zurück (ids) => vorwaerts(schichten, ids)
+setze art auf umgebung("P5_OPT_ART")
+setze sch auf [schicht_embedding(4, 4, 17), schicht_dicht(4, 4, "keine", 19)]
+setze params auf parameter(sch)
+setze vorlauf auf erzeuge_vorlauf(sch)
+setze daten auf {"tokenizer_id": "synthetisch-v1", "beispiele": [{"input_ids": [0,1,2,0], "target_ids": [1,2,2,0], "loss_mask": [0,1,1,0], "nutzlaenge": 3, "ziel_start": 1}]}
+setze opt_art auf art
+setze momentum auf 0.0
+wenn art == "momentum":
+    setze opt_art auf "sgd"
+    setze momentum auf 0.8
+setze config auf {"tokenizer_id": "synthetisch-v1", "sequenzlaenge": 4,
+    "vokab": 4, "params": params, "optimierer": opt_art, "momentum": momentum,
+    "decay": 0.02, "rate": 0.05, "schritte": 12}
+setze vorher auf params[0].zu_liste()[4]
+setze train auf trainiere_sft(vorlauf, daten, config)
+setze verluste auf train["verluste"]
+wenn länge(verluste) != 12 oder verluste[11] >= verluste[0]:
+    wirf "SFT-Verlust nicht gefallen"
+setze opt auf train["opt"]
+setze pfad auf wurzel + "/" + art + ".mook"
+checkpoint_speichern({"netz": sch, "opt": opt, "schritt": 12,
+    "tokenizer_version": "synthetisch-v1", "arch_version": "p5-sft-opt-v1"}, pfad)
+wenn params[0].zu_liste()[4] == vorher:
+    wirf "SFT-Gewicht unveraendert"
+setze folge auf {"tokenizer_id": "synthetisch-v1", "sequenzlaenge": 4,
+    "vokab": 4, "params": params, "opt": opt, "schritte": 1}
+trainiere_sft(vorlauf, daten, folge)
+checkpoint_speichern({"netz": sch, "opt": opt}, pfad + ".ref")
+setze geladen auf checkpoint_laden(pfad, {"tokenizer_version": "synthetisch-v1", "arch_version": "p5-sft-opt-v1"})
+setze sch2 auf geladen["netz"]["schichten"]
+setze params2 auf parameter(sch2)
+setze vorlauf2 auf erzeuge_vorlauf(sch2)
+setze folge2 auf {"tokenizer_id": "synthetisch-v1", "sequenzlaenge": 4,
+    "vokab": 4, "params": params2, "opt": geladen["opt"], "schritte": 1}
+trainiere_sft(vorlauf2, daten, folge2)
+checkpoint_speichern({"netz": sch2, "opt": geladen["opt"]}, pfad + ".resume")
+setze i auf 0
+solange i < länge(params):
+    setze a auf params[i].zu_liste()
+    setze b auf params2[i].zu_liste()
+    wenn länge(a) != länge(b):
+        wirf "SFT-Resume Form"
+    setze j auf 0
+    solange j < länge(a):
+        wenn abs(a[j] - b[j]) > 0.00001:
+            wirf "SFT-Resume abweichend"
+        setze j auf j + 1
+    setze i auf i + 1
+zeige "P5 SFT OPT " + art + " OK"

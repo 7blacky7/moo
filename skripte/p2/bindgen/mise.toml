@@ -1,0 +1,9 @@
+[tasks.reference]
+description = "T52: C-Layoutreferenz und C++-Vergleicher prüfen"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/bindgen/layout_gate.sh reference"
+
+[tasks.layout]
+description = "T52 Zukunftsgate: generiertes Moo-Layout gegen C"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/bindgen/layout_gate.sh layout"

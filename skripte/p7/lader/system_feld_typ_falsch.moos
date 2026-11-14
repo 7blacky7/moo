@@ -1,0 +1,8 @@
+struktur Paar:
+    a: u32
+
+@nativ
+@einstieg
+funktion fehlerfall(adr: u64) -> void:
+    unsicher:
+        strukturfeld_schreiben(Paar, a, adr, u64(1))

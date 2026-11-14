@@ -1,0 +1,42 @@
+# SIL-14: Holdout-NLL ohne Optimiererschritte, nur finaler Checkpoint.
+setze dir auf "beispiele/p4_silben/run_sil14_grimm36k/"
+setze roh auf datei_lesen(dir + "holdout.txt")
+setze tok auf silben_laden(dir + "tokenizer.msf")
+setze ids auf silben_kodiere(tok, roh)
+setze zustand auf checkpoint_laden(dir + "full.mook", {"tokenizer_version": sha256(tok), "arch_version": "grimm-silben-250k-v1"})
+setze alle auf zustand["netz"]["schichten"]
+funktion vorhersage(eingabe):
+    setze x auf vorwaerts([alle[0]], eingabe)
+    setze x auf vorwaerts([alle[1]], x)
+    setze x auf x + vorwaerts([alle[2], alle[3]], x)
+    setze x auf x + vorwaerts([alle[4], alle[5], alle[6]], x)
+    setze x auf x + vorwaerts([alle[7], alle[8]], x)
+    setze x auf x + vorwaerts([alle[9], alle[10], alle[11]], x)
+    gib_zurück vorwaerts([alle[12], alle[13]], x)
+autograd_aus()
+setze n auf ids.groesse()
+setze p auf 0
+setze block auf 64
+setze anzahl auf 0
+setze summe auf 0
+setze fenster auf 0
+solange p < n - 1:
+    setze ende auf p + block
+    wenn ende > n - 1:
+        setze ende auf n - 1
+    setze eingabe auf ids.zeilen(p, ende)
+    setze ziel auf ids.zeilen(p + 1, ende + 1)
+    setze loss auf kreuzentropie(vorhersage(eingabe), ziel).zu_liste()[0]
+    setze tokens auf ende - p
+    setze summe auf summe + loss * tokens
+    setze anzahl auf anzahl + tokens
+    setze fenster auf fenster + 1
+    setze p auf ende
+zeige "EVAL_CHECKPOINT " + text(zustand["schritt"])
+zeige "HOLDOUT_TOKENS " + text(n)
+zeige "SCORED_TOKENS " + text(anzahl)
+zeige "WINDOWS " + text(fenster)
+zeige "TOTAL_NLL " + text(summe)
+zeige "MEAN_TOKEN_NLL " + text(summe / anzahl)
+zeige "MEAN_NLL_PER_CODEPOINT " + text(summe / 7221)
+zeige "BITS_PER_BYTE " + text(summe / (länge(roh) * 0.6931471805599453))

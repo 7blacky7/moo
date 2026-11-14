@@ -1,0 +1,30 @@
+# P2-T77 Batch 1: Direktform fuer native Argumentadapter auch bei wenn-Bedingung
+# und reinem Aufruf-Statement (vorher nur zeige/setze/gib_zurück). Ungueltiges
+# Argument und Fehler im Koerper landen im fange-Zweig.
+@nativ
+funktion s_div(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b
+@nativ
+funktion s_positiv(a: i32) -> bool:
+    unsicher:
+        gib_zurück a > 0
+setze wert auf 5
+setze null auf 0
+setze text auf "x"
+unsicher:
+    versuche:
+        wenn s_positiv(wert):
+            zeige "positiv"
+        wenn s_positiv(text):
+            zeige "NACH_FALSCH"
+        zeige "NACH_FALSCH"
+    fange fehler:
+        zeige "gefangen bedingung"
+    versuche:
+        s_div(wert, 1)
+        s_div(wert, null)
+        zeige "NACH_FALSCH"
+    fange fehler:
+        zeige "gefangen ausdruck"
+zeige "weiter"

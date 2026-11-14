@@ -1,0 +1,19 @@
+[tasks.heap]
+description = "Defer-Callee: Heap-Locals bei Fehler und RSS"
+dir = "{{config_root}}/../../.."
+run = '''
+set -euo pipefail
+[ "$(uname -s)" = Linux ] || { echo 'SKIP: Linux wait4 benötigt'; exit 2; }
+out=build/p2-defer-callee-liste
+mkdir -p "$out"
+for size in 8k 32k; do
+  case "$size" in 8k) count=8000 ;; 32k) count=32000 ;; esac
+  timeout 120s compiler/target/release/moo-compiler compile "compiler/tests/p2/defer_callee_liste_$size.moos" -o "$out/heap_$size"
+  timeout 120s "$out/heap_$size" >"$out/heap_$size.out"
+  printf '%s\n%s\n' "$count" "$count" >"$out/heap_$size.expected"
+  cmp "$out/heap_$size.expected" "$out/heap_$size.out"
+  printf 'PASS heap %s: Catch und Cleanup je %s\n' "$size" "$count"
+done
+${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror compiler/tests/p2/defer_heap_rss.c -o "$out/measure"
+timeout 120s "$out/measure" "$out/heap_8k" "$out/heap_32k" | sed -e 's/200k=/8k=/g' -e 's/800k=/32k=/g'
+'''

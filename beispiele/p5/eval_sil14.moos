@@ -1,0 +1,27 @@
+# P5: SIL-14 Checkpoint nur lesend auf einem kurzen synthetischen Text evaluieren.
+setze ordner auf "beispiele/p4_silben/run_sil14_grimm36k/"
+setze tok auf silben_laden(ordner + "tokenizer.msf")
+funktion encoder(textwert):
+    gib_zurück silben_kodiere(tok, textwert)
+funktion decoder(ids):
+    gib_zurück silben_dekodiere(tok, ids)
+funktion sil_vorwaerts(sch, eingabe):
+    setze x auf vorwaerts([sch[0]], eingabe)
+    setze x auf vorwaerts([sch[1]], x)
+    setze x auf x + vorwaerts([sch[2], sch[3]], x)
+    setze x auf x + vorwaerts([sch[4], sch[5], sch[6]], x)
+    setze x auf x + vorwaerts([sch[7], sch[8]], x)
+    setze x auf x + vorwaerts([sch[9], sch[10], sch[11]], x)
+    gib_zurück vorwaerts([sch[12], sch[13]], x)
+funktion fabrik(z):
+    setze sch auf z["netz"]["schichten"]
+    gib_zurück (x) => sil_vorwaerts(sch, x)
+setze config auf {"tokenizer": tok, "encoder": encoder, "decoder": decoder,
+    "checkpoint_pfad": ordner + "full.mook", "arch_version": "grimm-silben-250k-v1",
+    "sequenzlaenge": 64, "vokab": silben_info(tok)["vokab"], "pad_id": 0}
+setze r auf evaluiere_modell(fabrik, {"text": "Es war einmal.", "split": "val"}, config)
+wenn r["tokens"] < 1 oder r["bytes"] < 1 oder r["codepoints"] < 1 oder r["nll"] < 0:
+    wirf "SIL-14 Eval ungueltig"
+wenn r["checkpoint_sha256"] != sha256(datei_lesen(ordner + "full.mook")):
+    wirf "SIL-14 Checkpoint-Hash"
+zeige "P5 SIL14 EVAL OK " + json_string(r)

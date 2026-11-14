@@ -1,0 +1,4 @@
+# P2-T66 negativ: Zeigerparameter brauchen hosted einen unsicher:-Systemkoerper.
+@nativ
+funktion ohne(p: ptr[u32]) -> u32:
+    gib_zurück 1

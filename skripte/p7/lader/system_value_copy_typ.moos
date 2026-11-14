@@ -1,0 +1,15 @@
+struktur Probe:
+    a: u32
+    b: u64
+
+struktur Andere:
+    a: u32
+    b: u64
+
+@nativ
+@einstieg
+funktion pruefe_copy_typ() -> u64:
+    unsicher:
+        setze eins: Probe auf Probe(u32(1), u64(2))
+        setze zwei: Andere auf eins
+        gib_zurück u64(zwei.a)

@@ -1,0 +1,229 @@
+# Gemeinsamer Moo→C→Moo-Struct-Roundtrip fuer SysV und Windows x64.
+# C-Callees: skripte/p2/abi/struct_by_value.c.
+struktur P2Mixed:
+    real: f64
+    integer: u32
+
+struktur P2Float4:
+    a: f32
+    b: f32
+    c: f32
+    d: f32
+
+@gepackt
+struktur P2Packed:
+    tag: u8
+    value: u32
+
+# Portable x86_64-FFI: zusätzliche Strukturformen fuer zwei C-Parameter.
+struktur P2Pair8:
+    wort0: u32
+    wort1: u32
+
+struktur P2Pair12:
+    wort0: u32
+    wort1: u32
+    wort2: u32
+
+extern "C" funktion moo_p2_struct_mixed(wert: P2Mixed) -> P2Mixed
+extern "C" funktion moo_p2_float4(wert: P2Float4) -> P2Float4
+extern "C" funktion moo_p2_packed(wert: P2Packed) -> P2Packed
+# ZWEI volle Strukturwertparameter; dieselbe Moo-Quelle fuer SysV und Win64.
+extern "C" funktion moo_p2_pair8(first: P2Pair8, second: P2Pair8) -> P2Pair8
+extern "C" funktion moo_p2_pair12(first: P2Pair12, second: P2Pair12) -> P2Pair12
+extern "C" funktion moo_p2_pair_mixed(first: P2Mixed, second: P2Mixed) -> P2Mixed
+extern "C" funktion moo_p2_pair_float4(first: P2Float4, second: P2Float4) -> P2Float4
+extern "C" funktion moo_p2_pair_packed(first: P2Packed, second: P2Packed) -> P2Packed
+
+# Die bestehende C-Referenzfunktion erzwingt Registerdruck/Stackargumente.
+extern "C" funktion moo_p2_pressure(a: u64, b: u64, c: u64, d: u64, e: u64, f: u64, wert: P2Pair8) -> P2Pair8
+
+@nativ
+@einstieg
+funktion sys_c_complex_mixed(adr: u64) -> u32:
+    unsicher:
+        setze basis: f64 auf 1.0 + 0.25
+        setze eingabe: P2Mixed auf P2Mixed(basis, u32(11))
+        setze ergebnis: P2Mixed auf moo_p2_struct_mixed(eingabe)
+        setze ziel: ptr[P2Mixed] auf zeiger(adr)
+        ziel[0] = ergebnis
+        wenn ergebnis.real != 1.75:
+            gib_zurück u32(0)
+        gib_zurück ergebnis.integer
+
+@nativ
+@einstieg
+funktion sys_c_complex_float4(adr: u64) -> u32:
+    unsicher:
+        # f32-Arithmetik aus dem Compiler, nicht aus C:
+        # +, /, * und - mit exakter Rundung zur Zielbreite.
+        setze eingabe: P2Float4 auf P2Float4(0.5 + 0.5, 4.0 / 2.0, 1.0 * 3.0, 9.0 - 5.0)
+        setze ergebnis: P2Float4 auf moo_p2_float4(eingabe)
+        setze ziel: ptr[P2Float4] auf zeiger(adr)
+        ziel[0] = ergebnis
+        wenn ergebnis.a != 2.0:
+            gib_zurück u32(0)
+        wenn ergebnis.d == 8.0:
+            gib_zurück u32(4)
+        gib_zurück u32(0)
+
+@nativ
+@einstieg
+funktion sys_c_complex_packed(adr: u64) -> u32:
+    unsicher:
+        setze eingabe: P2Packed auf P2Packed(u8(4), u32(0x12345678))
+        setze ergebnis: P2Packed auf moo_p2_packed(eingabe)
+        setze ziel: ptr[P2Packed] auf zeiger(adr)
+        ziel[0] = ergebnis
+        gib_zurück u32(ergebnis.tag)
+
+# Portabler Moo-Aufrufer: 2x8-Byte-Strukturwerte als C-Argumente.
+@nativ
+@einstieg
+funktion sys_c_pair8(adr: u64) -> u32:
+    unsicher:
+        setze a: P2Pair8 auf P2Pair8(u32(11), u32(22))
+        setze b: P2Pair8 auf P2Pair8(u32(3), u32(4))
+        setze result: P2Pair8 auf moo_p2_pair8(a, b)
+        setze p: ptr[P2Pair8] auf zeiger(adr)
+        p[0] = result
+        gib_zurück result.wort0 + result.wort1
+
+# 2x12 Byte: SysV 4 Integerregister, Win64 sret + 2 Pointer.
+@nativ
+@einstieg
+funktion sys_c_pair12(adr: u64) -> u32:
+    unsicher:
+        setze a: P2Pair12 auf P2Pair12(u32(1), u32(2), u32(3))
+        setze b: P2Pair12 auf P2Pair12(u32(10), u32(20), u32(30))
+        setze result: P2Pair12 auf moo_p2_pair12(a, b)
+        setze p: ptr[P2Pair12] auf zeiger(adr)
+        p[0] = result
+        gib_zurück result.wort0 + result.wort1 + result.wort2
+
+# 2x Mixed SSE/Integer (SysV) bzw. 2 Pointer (Win64).
+@nativ
+@einstieg
+funktion sys_c_pair_mixed(adr: u64) -> u32:
+    unsicher:
+        setze a: P2Mixed auf P2Mixed(1.25, u32(11))
+        setze b: P2Mixed auf P2Mixed(0.5, u32(7))
+        setze result: P2Mixed auf moo_p2_pair_mixed(a, b)
+        setze p: ptr[P2Mixed] auf zeiger(adr)
+        p[0] = result
+        gib_zurück result.integer
+
+# 2x f32x4 mit acht 32-Bit-Floatfeldern ueber die C-Grenze.
+@nativ
+@einstieg
+funktion sys_c_pair_float4(adr: u64) -> u32:
+    unsicher:
+        setze a: P2Float4 auf P2Float4(1.0, 2.0, 3.0, 4.0)
+        setze b: P2Float4 auf P2Float4(0.5, 1.0, 1.5, 2.0)
+        setze result: P2Float4 auf moo_p2_pair_float4(a, b)
+        setze p: ptr[P2Float4] auf zeiger(adr)
+        p[0] = result
+        wenn result.a != 1.5:
+            gib_zurück u32(0)
+        gib_zurück u32(7)
+
+# 2x5 Byte gepackt; korrekte Ausrichtung und Feld-Offsets.
+@nativ
+@einstieg
+funktion sys_c_pair_packed(adr: u64) -> u32:
+    unsicher:
+        setze a: P2Packed auf P2Packed(u8(4), u32(0x12345678))
+        setze b: P2Packed auf P2Packed(u8(3), u32(9))
+        setze result: P2Packed auf moo_p2_pair_packed(a, b)
+        setze p: ptr[P2Packed] auf zeiger(adr)
+        p[0] = result
+        gib_zurück u32(result.tag)
+
+# 6 u64-Praefixe plus ein vollstaendiger 8-Byte-Strukturwert.
+@nativ
+@einstieg
+funktion sys_c_pressure(adr: u64) -> u32:
+    unsicher:
+        setze input: P2Pair8 auf P2Pair8(u32(10), u32(20))
+        setze result: P2Pair8 auf moo_p2_pressure(u64(1), u64(2), u64(3), u64(4), u64(5), u64(6), input)
+        setze p: ptr[P2Pair8] auf zeiger(adr)
+        p[0] = result
+        gib_zurück result.wort0 + result.wort1
+
+# Clang-belegte Registerdruck-Kombinationen fuer dieselbe Moo-Quelle.
+struktur P2Pair16:
+    wort0: u32
+    wort1: u32
+    wort2: u32
+    wort3: u32
+
+extern "C" funktion moo_p2_pressure12_5(a: u64, b: u64, c: u64, d: u64, e: u64, wert: P2Pair12) -> P2Pair12
+extern "C" funktion moo_p2_pressure12_6(a: u64, b: u64, c: u64, d: u64, e: u64, f: u64, wert: P2Pair12) -> P2Pair12
+extern "C" funktion moo_p2_pressure16_5(a: u64, b: u64, c: u64, d: u64, e: u64, wert: P2Pair16) -> P2Pair16
+extern "C" funktion moo_p2_pressure_mixed6(a: u64, b: u64, c: u64, d: u64, e: u64, f: u64, wert: P2Mixed) -> P2Mixed
+extern "C" funktion moo_p2_pair12_pressure3(a: u64, b: u64, c: u64, first: P2Pair12, second: P2Pair12) -> P2Pair12
+extern "C" funktion moo_p2_pressure_float4_6(a: u64, b: u64, c: u64, d: u64, e: u64, f: u64, wert: P2Float4) -> P2Float4
+
+@nativ
+@einstieg
+funktion sys_c_pressure12_5(adr: u64) -> u32:
+    unsicher:
+        setze eingabe: P2Pair12 auf P2Pair12(u32(10), u32(20), u32(30))
+        setze ausgabe: P2Pair12 auf moo_p2_pressure12_5(u64(1), u64(2), u64(3), u64(4), u64(5), eingabe)
+        setze p: ptr[P2Pair12] auf zeiger(adr)
+        p[0] = ausgabe
+        gib_zurück ausgabe.wort0 + ausgabe.wort1 + ausgabe.wort2
+
+@nativ
+@einstieg
+funktion sys_c_pressure12_6(adr: u64) -> u32:
+    unsicher:
+        setze eingabe: P2Pair12 auf P2Pair12(u32(10), u32(20), u32(30))
+        setze ausgabe: P2Pair12 auf moo_p2_pressure12_6(u64(1), u64(2), u64(3), u64(4), u64(5), u64(6), eingabe)
+        setze p: ptr[P2Pair12] auf zeiger(adr)
+        p[0] = ausgabe
+        gib_zurück ausgabe.wort0 + ausgabe.wort1 + ausgabe.wort2
+
+@nativ
+@einstieg
+funktion sys_c_pressure16_5(adr: u64) -> u32:
+    unsicher:
+        setze eingabe: P2Pair16 auf P2Pair16(u32(1), u32(2), u32(3), u32(4))
+        setze ausgabe: P2Pair16 auf moo_p2_pressure16_5(u64(1), u64(2), u64(3), u64(4), u64(5), eingabe)
+        setze p: ptr[P2Pair16] auf zeiger(adr)
+        p[0] = ausgabe
+        gib_zurück ausgabe.wort0 + ausgabe.wort1 + ausgabe.wort2 + ausgabe.wort3
+
+@nativ
+@einstieg
+funktion sys_c_pressure_mixed6(adr: u64) -> u32:
+    unsicher:
+        setze eingabe: P2Mixed auf P2Mixed(1.25, u32(11))
+        setze ausgabe: P2Mixed auf moo_p2_pressure_mixed6(u64(1), u64(2), u64(3), u64(4), u64(5), u64(6), eingabe)
+        setze p: ptr[P2Mixed] auf zeiger(adr)
+        p[0] = ausgabe
+        gib_zurück ausgabe.integer
+
+@nativ
+@einstieg
+funktion sys_c_pair12_pressure3(adr: u64) -> u32:
+    unsicher:
+        setze a: P2Pair12 auf P2Pair12(u32(1), u32(2), u32(3))
+        setze b: P2Pair12 auf P2Pair12(u32(10), u32(20), u32(30))
+        setze ausgabe: P2Pair12 auf moo_p2_pair12_pressure3(u64(3), u64(5), u64(7), a, b)
+        setze p: ptr[P2Pair12] auf zeiger(adr)
+        p[0] = ausgabe
+        gib_zurück ausgabe.wort0 + ausgabe.wort1 + ausgabe.wort2
+
+@nativ
+@einstieg
+funktion sys_c_pressure_float4_6(adr: u64) -> u32:
+    unsicher:
+        setze eingabe: P2Float4 auf P2Float4(1.0, 2.0, 3.0, 4.0)
+        setze ausgabe: P2Float4 auf moo_p2_pressure_float4_6(u64(1), u64(2), u64(3), u64(4), u64(5), u64(6), eingabe)
+        setze p: ptr[P2Float4] auf zeiger(adr)
+        p[0] = ausgabe
+        wenn ausgabe.a != 22.0:
+            gib_zurück u32(0)
+        gib_zurück u32(6)
+

@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "status": "draft_not_integrated",
+  "purpose": "T33-Profil- und Kontextinventar nach Korrektur von neun Beispielen, kein Freigabemanifest und keine automatischen Ausnahmen",
+  "source_snapshot": "fa6bdfef36443b5e711a4a4d3e9b0559b7f736a2",
+  "compiler_sha256": "57efe709787ee966efa39f6a95542ffebe104dbfe97fcecf1535d2ff175e2298",
+  "evidence": "87704a8a-4a58-484e-95c7-2183ad916efe",
+  "policy": {
+    "unknown_case": "fail_closed",
+    "known_failures": "not_accepted_as_success",
+    "compiler_profile": "--emit-ir zeigt Frontend-/Codegen-Erfolg, kein ABI-Nachweis",
+    "runner_integration": "nicht implementiert"
+  },
+  "cases": [
+    {
+      "path": "beispiele/bootloader/stage2.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "i386-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "0f8927ca-7003-4e86-bd69-28c82fc4e898"
+    },
+    {
+      "path": "beispiele/kernel/arm64_test.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "aarch64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "0f8927ca-7003-4e86-bd69-28c82fc4e898"
+    },
+    {
+      "path": "beispiele/kernel/hallo_kern.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "0f8927ca-7003-4e86-bd69-28c82fc4e898"
+    },
+    {
+      "path": "beispiele/kernel/pf_test.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "0f8927ca-7003-4e86-bd69-28c82fc4e898"
+    },
+    {
+      "path": "beispiele/kernel/stackprot_test.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "0f8927ca-7003-4e86-bd69-28c82fc4e898"
+    },
+    {
+      "path": "beispiele/uefi/hallo_uefi.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-unknown-uefi"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "0f8927ca-7003-4e86-bd69-28c82fc4e898"
+    },
+    {
+      "path": "beispiele/domain/db/bench/bench_binary.moos",
+      "category": "fragment",
+      "status": "context_unverified",
+      "context": {
+        "kind": "historical_prefix_concatenation",
+        "prefix": "beispiele/domain/db/postgres_client.moos",
+        "prefix_lines": 978,
+        "requires_frozen_hash": true
+      },
+      "diagnostic": "Methode 'verbinde' nicht gefunden",
+      "notes": "Historischer Quellenkommentar, nicht als aktueller reproduzierbarer Build bestätigt."
+    },
+    {
+      "path": "beispiele/domain/db/bench/bench_copy.moos",
+      "category": "fragment",
+      "status": "context_unverified",
+      "context": {
+        "kind": "historical_prefix_concatenation",
+        "prefix": "beispiele/domain/db/postgres_client.moos",
+        "prefix_lines": 592,
+        "requires_frozen_hash": true
+      },
+      "diagnostic": "Methode 'verbinde' nicht gefunden",
+      "notes": "Historischer Quellenkommentar, nicht als aktueller reproduzierbarer Build bestätigt."
+    },
+    {
+      "path": "beispiele/domain/db/bench/bench_pipelining.moos",
+      "category": "fragment",
+      "status": "context_unverified",
+      "context": {
+        "kind": "historical_prefix_concatenation",
+        "prefix": "beispiele/domain/db/postgres_client.moos",
+        "prefix_lines": 1024,
+        "requires_frozen_hash": true
+      },
+      "diagnostic": "Methode 'verbinde' nicht gefunden",
+      "notes": "Historischer Quellenkommentar, nicht als aktueller reproduzierbarer Build bestätigt."
+    },
+    {
+      "path": "beispiele/domain/db/bench/bench_pool.moos",
+      "category": "fragment",
+      "status": "context_unverified",
+      "context": {
+        "kind": "historical_prefix_concatenation",
+        "prefix": "beispiele/domain/db/postgres_client.moos",
+        "prefix_lines": 1024,
+        "requires_frozen_hash": true
+      },
+      "diagnostic": "Methode 'verbinde' nicht gefunden",
+      "notes": "Historischer Quellenkommentar, nicht als aktueller reproduzierbarer Build bestätigt."
+    },
+    {
+      "path": "beispiele/domain/db/bench/bench_prepared.moos",
+      "category": "fragment",
+      "status": "context_unverified",
+      "context": {
+        "kind": "historical_prefix_concatenation",
+        "prefix": "beispiele/domain/db/postgres_client.moos",
+        "prefix_lines": 760,
+        "requires_frozen_hash": true
+      },
+      "diagnostic": "Methode 'verbinde' nicht gefunden",
+      "notes": "Historischer Quellenkommentar, nicht als aktueller reproduzierbarer Build bestätigt."
+    },
+    {
+      "path": "beispiele/domain/db/bench/bench_baseline_perfphase.moos",
+      "category": "import",
+      "status": "unresolved",
+      "context": {
+        "kind": "named_module",
+        "module": "postgres_client_lib"
+      },
+      "diagnostic": "Modul 'postgres_client_lib' nicht gefunden"
+    },
+    {
+      "path": "beispiele/domain/db/bench/scram_e2e_smoke.moos",
+      "category": "import",
+      "status": "unresolved",
+      "context": {
+        "kind": "source_relative",
+        "import": "../../beispiele/domain/db/postgres_client.moos"
+      },
+      "diagnostic": "Modul '../../beispiele/domain/db/postgres_client.moos' nicht gefunden"
+    },
+    {
+      "path": "beispiele/domain/db/mini_db.moos",
+      "category": "api_mismatch",
+      "status": "unresolved",
+      "context": "hosted",
+      "diagnostic": "Methode 'alle' nicht gefunden"
+    },
+    {
+      "path": "compiler/tests/test_stdlib.moos",
+      "category": "api_mismatch",
+      "status": "unresolved",
+      "context": "hosted",
+      "diagnostic": "Funktion 'durchschnitt' nicht gefunden"
+    }
+  ]
+}

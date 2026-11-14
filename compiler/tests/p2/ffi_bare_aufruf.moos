@@ -1,0 +1,23 @@
+# P2-T43: echter Bare-FFI-Aufruf im Multiboot-Kernel. main ruft in unsicher:
+# Systemkoerper mit Literal-Argumenten (runtime-frei), diese rufen die
+# C-Funktionen aus dem statischen Archiv libp2_bare_ffi_43.a
+# (compiler/tests/p2/ffi_klein_roundtrip.c, freestanding gebaut).
+# Erwartete serielle Ausgabe: -12345 (i16 signext) und 213 (u8 zeroext).
+@bibliothek("p2_bare_ffi_43")
+extern "C" funktion p2_ffi_i16_identity(wert: i16) -> i16
+@bibliothek("p2_bare_ffi_43")
+extern "C" funktion p2_ffi_u8_identity(wert: u8) -> u8
+
+@nativ
+funktion bare_i16(x: i16) -> i16:
+    unsicher:
+        gib_zurück p2_ffi_i16_identity(x)
+
+@nativ
+funktion bare_u8(x: u8) -> u8:
+    unsicher:
+        gib_zurück p2_ffi_u8_identity(x)
+
+unsicher:
+    zeige bare_i16(-12345)
+    zeige bare_u8(213)

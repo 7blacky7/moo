@@ -1,0 +1,8 @@
+3
+gefangen 1: Native Funktion erwartet eine i32-Ganzzahl
+marke 1
+gefangen 2: Native Funktion erwartet eine i32-Ganzzahl
+10
+weiter intern
+intern: Native Funktion erwartet eine i32-Ganzzahl
+weiter intern

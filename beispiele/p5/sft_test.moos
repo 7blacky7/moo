@@ -1,0 +1,88 @@
+# Synthetischer SFT-Lerntest und Datenvalidierung.
+aus sft_adapter importiere korrektur_fenster
+aus sft_adapter importiere korrektur_fenster_aufteilen
+
+setze schichten auf [schicht_embedding(4, 4, 17), schicht_dicht(4, 4, "keine", 19)]
+funktion vorlauf(ids):
+    gib_zurück vorwaerts(schichten, ids)
+setze params auf parameter(schichten)
+setze beispiel auf {"input_ids": [0, 1, 2, 0], "target_ids": [1, 2, 2, 0], "loss_mask": [0, 1, 1, 0], "nutzlaenge": 3, "ziel_start": 1}
+setze daten auf {"tokenizer_id": "synthetisch-v1", "beispiele": [beispiel]}
+setze konfig auf {"tokenizer_id": "synthetisch-v1", "sequenzlaenge": 4, "vokab": 4, "params": params, "optimierer": "sgd", "rate": 0.1, "schritte": 30}
+setze vorher auf params[0].zu_liste()[4]
+setze maskiert_vorher auf params[0].zu_liste()[0]
+setze ergebnis auf trainiere_sft(vorlauf, daten, konfig)
+setze verluste auf ergebnis["verluste"]
+wenn länge(verluste) != 30 oder verluste[29] >= verluste[0]:
+    wirf "SFT-Loss ist nicht gefallen"
+wenn params[0].zu_liste()[4] == vorher:
+    wirf "SFT hat Gewichte nicht veraendert"
+wenn params[0].zu_liste()[0] != maskiert_vorher:
+    wirf "Maskierter Kontext hat unerwarteten Gradienten"
+setze falsch_daten auf {"tokenizer_id": "fremd", "beispiele": [beispiel]}
+setze abgelehnt auf falsch
+versuche:
+    trainiere_sft(vorlauf, falsch_daten, konfig)
+fange fehler:
+    setze abgelehnt auf wahr
+wenn nicht abgelehnt:
+    wirf "Fremde Tokenizeridentitaet akzeptiert"
+setze falsch_maske auf {"input_ids": [0, 1, 2, 0], "target_ids": [1, 2, 2, 0], "loss_mask": [1, 1, 1, 0], "nutzlaenge": 3, "ziel_start": 1}
+setze abgelehnt auf falsch
+versuche:
+    trainiere_sft(vorlauf, {"tokenizer_id": "synthetisch-v1", "beispiele": [falsch_maske]}, konfig)
+fange fehler:
+    setze abgelehnt auf wahr
+wenn nicht abgelehnt:
+    wirf "Falsche Zielmaske akzeptiert"
+# Test-Encoder mit reproduzierbarer Zuordnung; produktive Adapter kodieren echte Texte.
+funktion test_encoder(s):
+    wenn s == "Korrigiere\nDas Original\n":
+        gib_zurück tensor_aus_liste([0, 1])
+    wenn s == "Das Ziel":
+        gib_zurück tensor_aus_liste([2, 2])
+    gib_zurück tensor_aus_liste([3, 3])
+setze paar auf korrektur_fenster({"akzeptiert": wahr, "aufgabe": "Korrigiere", "original": "Das Original", "korrektur": "Das Ziel", "begruendung": "Synthetischer Kontrollfall"}, test_encoder, 4, 0)
+setze konfig["encoder"] auf test_encoder
+setze konfig["opt"] auf ergebnis["opt"]
+setze konfig["schritte"] auf 2
+setze korrektur_resultat auf trainiere_korrekturen(vorlauf, {"tokenizer_id": "synthetisch-v1", "beispiele": [paar]}, konfig)
+wenn länge(korrektur_resultat["verluste"]) != 2:
+    wirf "Korrektur-Resume gescheitert"
+setze paar["akzeptiert"] auf falsch
+setze abgelehnt auf falsch
+versuche:
+    trainiere_korrekturen(vorlauf, {"tokenizer_id": "synthetisch-v1", "beispiele": [paar]}, konfig)
+fange fehler:
+    setze abgelehnt auf wahr
+wenn nicht abgelehnt:
+    wirf "Ungeprueftes Paar akzeptiert"
+setze paar["akzeptiert"] auf wahr
+setze paar["korrektur"] auf "Falsche Zuordnung"
+setze abgelehnt auf falsch
+versuche:
+    trainiere_korrekturen(vorlauf, {"tokenizer_id": "synthetisch-v1", "beispiele": [paar]}, konfig)
+fange fehler:
+    setze abgelehnt auf wahr
+wenn nicht abgelehnt:
+    wirf "Falschen Tokenbezug akzeptiert"
+# Überlappung: jedes Zieltoken genau einmal, auch beim letzten Teilfenster.
+funktion test_lang(s):
+    wenn s == "p":
+        gib_zurück tensor_aus_liste([0, 1])
+    gib_zurück tensor_aus_liste([2, 2, 2, 2, 2, 2])
+setze lang auf {"prompt": "p", "akzeptiert": wahr, "aufgabe": "Korrigiere", "original": "Modell", "korrektur": "Ziel", "begruendung": "Kontrollfall"}
+setze teile auf korrektur_fenster_aufteilen(lang, test_lang, 4, 0)
+wenn länge(teile) != 3:
+    wirf "Fensteranzahl ungueltig"
+setze anzahl auf 0
+für teil in teile:
+    setze anzahl auf anzahl + teil["nutzlaenge"] - teil["ziel_start"]
+wenn anzahl != 6 oder teile[0]["ziel_start"] != 1 oder teile[1]["ziel_start"] != 2 oder teile[2]["ziel_start"] != 2:
+    wirf "Zielpositionen fehlen oder doppelt maskiert"
+setze konfig["encoder"] auf test_lang
+setze konfig["schritte"] auf 3
+setze mehrere auf trainiere_korrekturen(vorlauf, {"tokenizer_id": "synthetisch-v1", "beispiele": teile}, konfig)
+wenn länge(mehrere["verluste"]) != 3:
+    wirf "Mehrfenstertraining fehlgeschlagen"
+zeige "P5 SFT OK"

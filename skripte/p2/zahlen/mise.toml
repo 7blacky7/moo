@@ -1,0 +1,7 @@
+[tasks.test]
+description = "P2-T34: native Ganzzahl-Division/Rest/Shift und Casts als/als_wrap/als_saettigend nach ADR f67bfcbd: Orakel, IR-Guards, fangbare Fehler in versuche:, unbehandelter Abbruch, konstante Fehler als Compilefehler"
+run = "bash test.sh"
+
+[tasks.test-bare]
+description = "P2-T73: Bare-Laufzeitnachweis der nativen Zahlen/Casts/bool (Multiboot-Kernel in QEMU ueber scripts/kernel-smoke.sh, Trap-Vertrag per Negativmarker)"
+run = "bash bare.sh"

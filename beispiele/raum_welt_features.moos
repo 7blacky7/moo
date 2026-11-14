@@ -1,0 +1,97 @@
+# Zeigt die 3D-Welt-Features aus EPIC 3D-WELT (Doku: docs/raum_3d.md):
+# Weltraum-Licht, zweite Sonne, Punktlicht, Schatten, Rausch-Terrain mit
+# weichen Normalen, prozedurale Textur, Skalierung/Farbton, Leuchten, Bloom,
+# Sterne und Blitz.
+
+setze win auf raum_erstelle("Welt-Features", 960, 540)
+raum_perspektive(win, 60, 0.1, 500)
+raum_licht(win, 0.4, 1.0, 0.3)
+raum_lichtfarbe(win, "#FFF1DC")
+raum_licht_hinzufuegen(win, 1, -0.7, 0.35, -0.2, "#7A2E3A")
+raum_umgebungslicht(win, 0.22)
+raum_nebel(win, 0.012)
+raum_nebel_farbe(win, "#A9BCCF")
+raum_schatten(win, wahr, 2048, 30)
+raum_bloom(win, 0.7, 0.85)
+
+# Prozedurale Schachbrett-Textur (64x64, 8x8 Felder)
+setze flaeche auf surface_new(64, 64)
+für fy in 0..8:
+    für fx in 0..8:
+        setze hell auf 200
+        wenn (fx + fy) % 2 == 0:
+            setze hell auf 255
+        surface_rect(flaeche, fx * 8, fy * 8, 8, 8, hell, hell, hell, 255)
+setze boden_textur auf raum_textur_aus_flaeche(win, flaeche)
+
+# Hoehenfunktion aus fBm-Rauschen
+funktion hoehe(x, z):
+    gib_zurück rauschen_fbm(x * 0.06, z * 0.06, 4, 7) * 4
+
+# Terrain als Chunk, Normalen weich gemittelt
+raum_glaetten(win, wahr)
+setze boden auf chunk_erstelle()
+chunk_beginne(boden)
+für i in -20..20:
+    für j in -20..20:
+        setze x0 auf i * 1.5
+        setze z0 auf j * 1.5
+        setze x1 auf x0 + 1.5
+        setze z1 auf z0 + 1.5
+        setze h00 auf hoehe(x0, z0)
+        setze h10 auf hoehe(x1, z0)
+        setze h01 auf hoehe(x0, z1)
+        setze h11 auf hoehe(x1, z1)
+        raum_dreieck(win, x0, h00, z0, x0, h01, z1, x1, h10, z0, "#8FB36A")
+        raum_dreieck(win, x1, h10, z0, x0, h01, z1, x1, h11, z1, "#8FB36A")
+chunk_ende()
+raum_glaetten(win, falsch)
+
+# Ein Turm-Modell, mehrfach instanziert
+setze turm auf chunk_erstelle()
+chunk_beginne(turm)
+raum_würfel(win, 0, 1, 0, 2, "#FFFFFF")
+chunk_ende()
+
+setze t auf 0
+solange raum_offen(win):
+    raum_löschen(win, 0, 0, 0)
+    raum_himmel(win, "#2F5E93", "#F0C08A")
+    raum_kamera(win, sinus(t) * 28, 14, cosinus(t) * 28, 0, 2, 0)
+
+    # Boden mit Textur
+    raum_textur(win, boden_textur, 0.5)
+    chunk_zeichne(boden)
+    raum_textur(win, 0)
+
+    # Tuerme: skaliert und eingefaerbt pro Instanz
+    für k in 0..4:
+        raum_push(win)
+        raum_verschiebe(win, k * 6 - 9, hoehe(k * 6 - 9, 4), 4)
+        raum_skaliere(win, 1, 1 + k * 0.5, 1)
+        wenn k % 2 == 0:
+            raum_farbton(win, "#C9A27A")
+        sonst:
+            raum_farbton(win, "#8A9BB0")
+        chunk_zeichne(turm)
+        raum_pop(win)
+    raum_farbton(win, "#FFFFFF")
+
+    # Lagerfeuer: Punktlicht + leuchtende, additive Glut
+    raum_punktlicht(win, 0, 3, hoehe(3, -3) + 1, -3, 10, "#FF8A2A")
+    raum_leuchten(win, 1.6)
+    raum_mischmodus(win, "additiv")
+    raum_kugel(win, 3, hoehe(3, -3) + 0.6, -3, 0.5, "#FF9A3A", 16)
+    raum_mischmodus(win, "normal")
+    raum_leuchten(win, 0)
+
+    # Sterne und ein Blitz (unbeleuchtet)
+    für s in 0..31:
+        raum_punkt(win, sinus(s * 12.9) * 120, 60 + (s % 7) * 4, cosinus(s * 7.3) * 120, 2, "#FFFFFF")
+    wenn runde(t * 10) % 40 == 0:
+        raum_linie(win, -6, 30, 5, -5, 18, 4, "#DDE8FF")
+        raum_linie(win, -5, 18, 4, -6.5, 8, 5, "#DDE8FF")
+
+    raum_aktualisieren(win)
+    setze t auf t + 0.004
+raum_schliessen(win)

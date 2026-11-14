@@ -42,8 +42,10 @@ setze obj_count auf 0
 funktion spawn_obj():
     setze lane auf mr_rand(LANES)
     setze typ auf mr_rand(10)
-    wenn typ < 4: setze typ auf 0
-    sonst: setze typ auf 1
+    wenn typ < 4:
+        setze typ auf 0
+    sonst:
+        setze typ auf 1
     obj_lane.hinzufügen(lane)
     obj_y.hinzufügen(-50.0)
     obj_typ.hinzufügen(typ)

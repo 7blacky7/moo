@@ -1,0 +1,7 @@
+@nativ
+@einstieg
+funktion fehlerfall(adr: u64) -> u32:
+    unsicher:
+        setze p: ptr[void] auf zeiger(adr)
+        setze wert: u32 auf p[0]
+        gib_zurück wert

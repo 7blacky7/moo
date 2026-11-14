@@ -1,0 +1,17 @@
+[tasks.test]
+description = "Gleichnamige Methoden in verschiedenen Klassen"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-methoden-gleichname
+mkdir -p "$out"
+timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/methoden_gleichname.moos -o "$out/probe"
+timeout 30s "$out/probe" > "$out/actual"
+printf '11\n22\n11\n22\n' > "$out/expected"
+if ! cmp -s "$out/expected" "$out/actual"; then
+  printf 'FAIL gleichnamige Methoden: Ausgabe\n' >&2
+  cat "$out/actual" >&2
+  exit 1
+fi
+printf 'PASS gleichnamige Methoden bleiben klassengebunden\n'
+'''

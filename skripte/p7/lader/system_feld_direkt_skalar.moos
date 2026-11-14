@@ -1,0 +1,6 @@
+@nativ
+@einstieg
+funktion feld_skalar(adr: u64) -> u32:
+    unsicher:
+        setze p: ptr[u32] auf zeiger(adr)
+        gib_zurück p.wert

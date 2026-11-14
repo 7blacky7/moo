@@ -1,0 +1,34 @@
+# P2-T74: hosted Systemkoerper duerfen innerhalb versuche: aufgerufen werden.
+# Ihre Laufzeitfehler (moo_native_fehler, P2-T34: Division, Funktionsende ohne
+# gib_zurück) landen im fange-Zweig, das Programm laeuft weiter. Literal- und
+# dynamische Argumente (zeige-Direktpfad, native_try_direct).
+@nativ
+funktion s_div(a: i32, b: i32) -> i32:
+    unsicher:
+        setze q: i32 auf a / b
+        gib_zurück q + 1
+@nativ
+funktion s_ende(a: i32) -> i32:
+    unsicher:
+        wenn a > 0:
+            gib_zurück a
+unsicher:
+    versuche:
+        zeige s_div(7, 2)
+        zeige s_div(7, 0)
+        zeige "NACH_FALSCH"
+    fange fehler:
+        zeige "gefangen div"
+    versuche:
+        zeige s_ende(-1)
+        zeige "NACH_FALSCH"
+    fange fehler:
+        zeige "gefangen ende"
+    setze b auf 0
+    versuche:
+        zeige s_div(7, b)
+        zeige "NACH_FALSCH"
+    fange fehler:
+        zeige "gefangen dyn"
+    zeige s_div(9, 3)
+zeige "weiter"

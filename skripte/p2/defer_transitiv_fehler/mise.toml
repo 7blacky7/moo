@@ -1,0 +1,31 @@
+[tasks.test]
+description = "Transitives Fehler-Routing ohne äußeres try"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-defer-transitiv-fehler
+mkdir -p "$out"
+compiler=${P2_COMPILER:-compiler/target/release/moo-compiler}
+timeout 120s "$compiler" compile compiler/tests/p2/defer_transitiv_fehler.moos -o "$out/probe"
+if timeout 30s "$out/probe" >"$out/actual" 2>"$out/err"; then
+  printf 'FAIL: unbehandelter Fehler meldet Exit 0\n' >&2
+  cat "$out/actual" >&2
+  exit 1
+else
+  rc=$?
+fi
+[ "$rc" -eq 1 ] || { printf 'FAIL: unerwarteter Exit %s\n' "$rc" >&2; exit 1; }
+if rg -q 'FALSCH_(INNER|PROBE|MAIN)' "$out/actual"; then
+  printf 'FAIL: Seiteneffekt nach transitivem Fehler\n' >&2
+  cat "$out/actual" >&2
+  exit 1
+fi
+if ! rg -Fqx 'A' "$out/actual"; then
+  printf 'FAIL: äußeres Cleanup vor Fehler fehlt\n' >&2
+  cat "$out/actual" >&2
+  exit 1
+fi
+rg -Fq 'Division durch Null' "$out/actual"
+rg -Fq 'Unbehandelter Fehler' "$out/err"
+printf 'PASS transitiver Fehler: Cleanup, keine weiteren Seiteneffekte\n'
+'''

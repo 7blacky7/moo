@@ -1,0 +1,25 @@
+# EXT-17: CPU-only broadcast counters are separate from failed GPU operations.
+setze a auf tensor_aus_liste([[2, 4], [6, 8]])
+setze col auf tensor_aus_liste([[1], [2]])
+setze row auf tensor_aus_liste([1, 2])
+gpu_statistik_reset()
+setze x auf a + col
+setze x auf a - col
+setze x auf a * row
+setze x auf a / row
+setze x auf a + a
+setze s auf gpu_statistik()
+wenn umgebung("MOO_KI_GPU") == "0":
+    wenn s["cpu_nur_ops"] != 0 oder s["cpu_fallbacks"] != 0:
+        wirf "CPU-Modus darf keine GPU-Ausweichpfade zaehlen"
+sonst:
+    wenn s["cpu_nur_ops"] != 4 oder s["cpu_nur_broadcast_add"] != 1 oder s["cpu_nur_broadcast_sub"] != 1 oder s["cpu_nur_broadcast_mul"] != 1 oder s["cpu_nur_broadcast_div"] != 1:
+        wirf "Broadcast-Zaehler falsch"
+    wenn s["cpu_fallbacks"] != 0:
+        wirf "Broadcast veraenderte den GPU-Fehlerzaehler"
+gpu_statistik_reset()
+setze s auf gpu_statistik()
+wenn s["cpu_nur_ops"] != 0 oder s["cpu_nur_broadcast_add"] != 0:
+    wirf "Reset loescht CPU-nur-Zaehler nicht"
+setze x auf a + col
+zeige "P5 CPU NUR OK"

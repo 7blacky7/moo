@@ -1,0 +1,25 @@
+# P2-T74: Systemkoerper-Aufruf in einer benannten Funktion innerhalb versuche:
+# ist erlaubt (vorher Compilefehler, negativ_dyn_in_funktion), auch mit
+# dynamischem Argument (Direktpfad fuer setze/gib_zurück, Batch 2).
+@nativ
+funktion teile(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b
+
+funktion rechne(a):
+    versuche:
+        unsicher:
+            setze r auf teile(a, 2)
+            gib_zurück r
+    fange fehler:
+        gib_zurück 0
+
+funktion rechne_null(a):
+    versuche:
+        unsicher:
+            gib_zurück teile(a, 0)
+    fange fehler:
+        gib_zurück -1
+
+zeige rechne(7)
+zeige rechne_null(7)

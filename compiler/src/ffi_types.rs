@@ -239,13 +239,466 @@ impl FfiType {
     }
 }
 
+/// Enger, durch getrennte C-Clang-Referenz belegter x86_64-ABI-Vertrag:
+/// reine u32-Werte (1..4/6), f64+u32, vier f32 sowie packed u8+u32.
+/// SysV klassifiziert Integer-/SSE-Register, Win64 Aggregate >8 Bytes
+/// indirekt. Keine allgemeine Aggregate-/Variadic-Klassifizierung.
+/// Alle anderen Aggregate bleiben bis zum vollständigen ABI-Classifier gesperrt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StructAbiParam { U64, Struct }
+
+/// Konkrete AAPCS64-C-Formen aus der Clang-aarch64-Referenz.
+/// Dies ist absichtlich kein allgemeiner Aggregate-Classifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AArch64AggregateAbi {
+    /// C-Argument i64 (8-Byte-Slot), C-Rueckgabe i32.
+    U32,
+    /// C-Argument/Rueckgabe i64.
+    U64,
+    /// C-Argument/Rueckgabe [2 x i64] fuer 12/16 Byte.
+    Pair64,
+    /// C-Rueckgabe via sret, Argument via normalen Zeiger.
+    Indirect,
+}
+
+/// SysV x86_64: ein mehrteiliges Aggregat wird GANZ als byval-
+/// Speicherargument uebergeben, wenn nicht alle benoetigten INTEGER-
+/// bzw. SSE-Register frei sind. Kleine einzelne Registerteile werden
+/// weiterhin vom LLVM-Backend korrekt im Stack-Fall abgelegt.
+fn classify_struct_argument_storage<'ctx>(
+    params: &[StructAbiParam],
+    registers: &[inkwell::types::BasicTypeEnum<'ctx>],
+    sysv: bool,
+) -> Vec<bool> {
+    use inkwell::types::BasicTypeEnum;
+    let mut gp_free: usize = if sysv && registers.is_empty() { 5 } else { 6 };
+    let mut sse_free: usize = 8;
+    let gp_need = registers.iter()
+        .filter(|reg| matches!(reg, BasicTypeEnum::IntType(_))).count();
+    let sse_need = registers.iter().filter(|reg|
+        matches!(reg, BasicTypeEnum::FloatType(_) | BasicTypeEnum::VectorType(_))
+    ).count();
+    let mut result = Vec::with_capacity(params.len());
+    for param in params {
+        match param {
+            StructAbiParam::U64 => {
+                if sysv { gp_free = gp_free.saturating_sub(1); }
+                result.push(false);
+            }
+            StructAbiParam::Struct => {
+                let spill = registers.is_empty() || (sysv && registers.len() > 1
+                    && (gp_need > gp_free || sse_need > sse_free));
+                if sysv && !spill {
+                    gp_free = gp_free.saturating_sub(gp_need);
+                    sse_free = sse_free.saturating_sub(sse_need);
+                }
+                result.push(spill);
+            }
+        }
+    }
+    result
+}
+
+pub(crate) struct StructRoundtripBinding<'ctx> {
+    function: inkwell::values::FunctionValue<'ctx>,
+    struct_name: String,
+    param_kinds: Vec<StructAbiParam>,
+    llvm_struct: inkwell::types::StructType<'ctx>,
+    /// Exakte Rueckgabe-Registerklasse (INTEGER/SSE).
+    /// Leere Liste bedeutet sret; fuer Argumente entscheidet
+    /// unabhaengig davon indirect_args nach dem verfuegbaren Registerbudget.
+    registers: Vec<inkwell::types::BasicTypeEnum<'ctx>>,
+    /// Eingabeparameter, die anstelle von 1-2 Registern als Zeiger/byval
+    /// uebergeben werden, unabhaengig von der Rueckgabe-Klassifizierung.
+    indirect_args: Vec<bool>,
+    /// AArch64 nutzt eigene Eingabe- und Rueckgabeformen (AAPCS64).
+    aarch64: Option<AArch64AggregateAbi>,
+    /// SysV markiert jeden indirekten Struct-Parameter mit byval;
+    /// Win64 uebergibt einen normalen Zeiger.
+    memory_byval: bool,
+    sret_alignment: u64,
+}
+
+impl<'ctx> StructRoundtripBinding<'ctx> {
+    pub(crate) fn struct_name(&self) -> &str { &self.struct_name }
+
+    /// Erwartete Eingabewerte in der Moo-Quellreihenfolge: erst optionale
+    /// u64-Praefixe, dann ein oder zwei nominal gleiche Strukturwerte.
+    pub(crate) fn param_kinds(&self) -> &[StructAbiParam] { &self.param_kinds }
+
+    /// ABI-Lowering fuer mehrere C-Argumente mit einem Struktur-Ergebnis.
+    /// Allocas bleiben im Entry; Zieltriple bestimmt Register und byval.
+    pub(crate) fn emit_roundtrip(
+        &self, context: &'ctx inkwell::context::Context,
+        builder: &inkwell::builder::Builder<'ctx>,
+        values: &[inkwell::values::BasicValueEnum<'ctx>],
+    ) -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
+        use inkwell::values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, ValueKind};
+        if values.len() != self.param_kinds.len() {
+            return Err(format!("C-ABI '{}': falsche Argumentzahl", self.struct_name));
+        }
+        let entry = builder.get_insert_block()
+            .and_then(|block| block.get_parent())
+            .and_then(|function| function.get_first_basic_block())
+            .ok_or("C-ABI: kein Funktions-Entry fuer Struct-Aufruf")?;
+        let alloc_builder = context.create_builder();
+        if let Some(first) = entry.get_first_instruction() {
+            alloc_builder.position_before(&first);
+        } else {
+            alloc_builder.position_at_end(entry);
+        }
+        let dest = alloc_builder.build_alloca(self.llvm_struct, "ffi.struct.dst")
+            .map_err(|e| e.to_string())?;
+        let mut args: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
+        let mut byval_indices = Vec::new();
+        if self.registers.is_empty() { args.push(dest.into()); }
+
+        for (index, (value, kind)) in values.iter().zip(&self.param_kinds).enumerate() {
+            match kind {
+                StructAbiParam::U64 => {
+                    if value.get_type() != context.i64_type().into() {
+                        return Err(format!("C-ABI: Argument {} erwartet u64", index + 1));
+                    }
+                    args.push((*value).into());
+                }
+                StructAbiParam::Struct => {
+                    if value.get_type() != self.llvm_struct.into() {
+                        return Err(format!("C-ABI: Argument {} hat falschen Strukturtyp", index + 1));
+                    }
+                    // AArch64: fuer ein 12-Byte-Aggregat braucht Clang
+                    // einen 16-Byte-Register-Slot [2 x i64]. Den Puffer
+                    // vollstaendig nullen, BEVOR die echte Struktur hinein
+                    // geschrieben wird; sonst wird Padding ueberlesen.
+                    let payload = if self.aarch64.is_some() && !self.registers.is_empty() {
+                        self.registers[0]
+                    } else {
+                        self.llvm_struct.into()
+                    };
+                    let source = alloc_builder.build_alloca(payload, "ffi.struct.src")
+                        .map_err(|e| e.to_string())?;
+                    source.as_instruction_value().ok_or("C-ABI: Entry-Alloca fehlt")?
+                        .set_alignment(8).map_err(|e| e.to_string())?;
+                    if let Some(kind) = self.aarch64 {
+                        let zero: Option<BasicValueEnum<'ctx>> = match kind {
+                            AArch64AggregateAbi::U32 | AArch64AggregateAbi::U64 =>
+                                Some(context.i64_type().const_zero().into()),
+                            AArch64AggregateAbi::Pair64 =>
+                                Some(context.i64_type().array_type(2).const_zero().into()),
+                            AArch64AggregateAbi::Indirect => None,
+                        };
+                        if let Some(zero) = zero {
+                            builder.build_store(source, zero).map_err(|e| e.to_string())?;
+                        }
+                    }
+                    builder.build_store(source, *value).map_err(|e| e.to_string())?;
+                    if self.indirect_args[index] {
+                        if self.memory_byval { byval_indices.push(args.len() as u32); }
+                        args.push(source.into());
+                    } else if self.aarch64.is_some() {
+                        // AAPCS64: ein einzelner, ggf. gepolsterter LLVM-Wert
+                        // statt eines SysV-/Win64-Registervektors.
+                        let part = builder.build_load(payload, source, "ffi.arm64.arg")
+                            .map_err(|e| e.to_string())?;
+                        part.as_instruction_value().ok_or("C-ABI: ARM64-Load fehlt")?
+                            .set_alignment(1).map_err(|e| e.to_string())?;
+                        args.push(part.into());
+                    } else {
+                        for (part_index, register) in self.registers.iter().enumerate() {
+                            let address = if part_index == 0 { source } else {
+                                unsafe { builder.build_gep(context.i8_type(), source,
+                                    &[context.i64_type().const_int((part_index * 8) as u64, false)],
+                                    "ffi.struct.arg.offset") }.map_err(|e| e.to_string())?
+                            };
+                            let part = builder.build_load(*register, address, "ffi.struct.arg")
+                                .map_err(|e| e.to_string())?;
+                            part.as_instruction_value().ok_or("C-ABI: Register-Load fehlt")?
+                                .set_alignment(1).map_err(|e| e.to_string())?;
+                            args.push(part.into());
+                        }
+                    }
+                }
+            }
+        }
+        let call = builder.build_call(self.function, &args,
+            if self.registers.is_empty() { "" } else { "ffi.struct.call" })
+            .map_err(|e| e.to_string())?;
+        call.set_call_convention(self.function.get_call_conventions());
+        use inkwell::attributes::{Attribute, AttributeLoc};
+        let align = Attribute::get_named_enum_kind_id("align");
+        for index in byval_indices {
+            let byval = Attribute::get_named_enum_kind_id("byval");
+            call.add_attribute(AttributeLoc::Param(index),
+                context.create_type_attribute(byval, self.llvm_struct.into()));
+            call.add_attribute(AttributeLoc::Param(index),
+                context.create_enum_attribute(align, 8));
+        }
+        if self.registers.is_empty() {
+            use inkwell::attributes::{Attribute, AttributeLoc};
+            let sret = Attribute::get_named_enum_kind_id("sret");
+            let align = Attribute::get_named_enum_kind_id("align");
+            call.add_attribute(AttributeLoc::Param(0),
+                context.create_type_attribute(sret, self.llvm_struct.into()));
+            call.add_attribute(AttributeLoc::Param(0),
+                context.create_enum_attribute(align, self.sret_alignment));
+            let result = builder.build_load(self.llvm_struct, dest, "ffi.struct.sret")
+                .map_err(|e| e.to_string())?;
+            result.as_instruction_value().ok_or("C-ABI: sret-Load fehlt")?
+                .set_alignment(1).map_err(|e| e.to_string())?;
+            return Ok(result);
+        }
+        let ValueKind::Basic(ret) = call.try_as_basic_value() else {
+            return Err("C-ABI: Struktur-Rueckgabe fehlt".into());
+        };
+        if let Some(kind) = self.aarch64 {
+            if kind == AArch64AggregateAbi::Indirect {
+                return Err("C-ABI: ARM64-Indirekt-Rueckgabe ohne sret".into());
+            }
+            // AAPCS64: i32, i64 bzw. [2 x i64] aus dem ABI-Wert
+            // zur echten nominalen Moo-Struktur laden. Die groessere
+            // 12-Byte-Eingabeform wurde oben vor dem Laden gepolstert.
+            let result_slot = alloc_builder.build_alloca(
+                self.registers[0], "ffi.arm64.result",
+            ).map_err(|e| e.to_string())?;
+            builder.build_store(result_slot, ret).map_err(|e| e.to_string())?;
+            let result = builder.build_load(self.llvm_struct, result_slot,
+                "ffi.arm64.struct").map_err(|e| e.to_string())?;
+            result.as_instruction_value().ok_or("C-ABI: ARM64-Resultat-Load fehlt")?
+                .set_alignment(1).map_err(|e| e.to_string())?;
+            return Ok(result);
+        }
+        for (index, register) in self.registers.iter().enumerate() {
+            let part = if self.registers.len() == 1 { ret } else {
+                builder.build_extract_value(ret.into_struct_value(), index as u32,
+                    "ffi.struct.result.part").map_err(|e| e.to_string())?
+            };
+            if part.get_type() != *register {
+                return Err("C-ABI: Ergebnisregister hat den falschen Typ".into());
+            }
+            let address = if index == 0 { dest } else {
+                unsafe { builder.build_gep(context.i8_type(), dest,
+                    &[context.i64_type().const_int((index * 8) as u64, false)],
+                    "ffi.struct.ret.offset") }.map_err(|e| e.to_string())?
+            };
+            let store = builder.build_store(address, part).map_err(|e| e.to_string())?;
+            store.set_alignment(1).map_err(|e| e.to_string())?;
+        }
+        let result = builder.build_load(self.llvm_struct, dest, "ffi.struct.value")
+            .map_err(|e| e.to_string())?;
+        result.as_instruction_value().ok_or("C-ABI: Struktur-Load fehlt")?
+            .set_alignment(1).map_err(|e| e.to_string())?;
+        Ok(result)
+    }
+}
+
 /// Modul-lokale Bindungen, deren LLVM-Deklaration und ABI-Signatur zusammenbleiben.
 #[derive(Default)]
 pub(crate) struct ExternRegistry<'ctx> {
     bindings: std::collections::HashMap<String, ExternBinding<'ctx>>,
+    struct_bindings: std::collections::HashMap<String, StructRoundtripBinding<'ctx>>,
 }
 
 impl<'ctx> ExternRegistry<'ctx> {
+    /// Fuegt einen eng klassifizierten C-Roundtrip als eigene Alternative zu
+    /// den schon etablierten skalaren Bindungen im selben Register ein.
+    pub(crate) fn declare_struct_roundtrip(
+        &mut self,
+        context: &'ctx inkwell::context::Context,
+        module: &inkwell::module::Module<'ctx>,
+        name: &str,
+        inputs: &[TypeRef],
+        result: &TypeRef,
+        layouts: &crate::native_struct::NativeStructRegistry<'ctx>,
+    ) -> Result<(), String> {
+        let triple = module.get_triple();
+        let triple = triple.as_str().to_str().map_err(|e| e.to_string())?;
+        let sysv = triple == "x86_64-unknown-none";
+        let win64 = matches!(triple, "x86_64-pc-windows-gnu" | "x86_64-pc-windows-msvc");
+        let aarch64 = triple == "aarch64-unknown-none";
+        if !sysv && !win64 && !aarch64 {
+            return Err(format!(
+                "C-ABI: Strukturwert-Aufruf nur fuer x86_64-SysV/Win64 und aarch64-bare freigegeben, nicht '{triple}'"
+            ));
+        }
+        let TypeKind::Name(result_name) = &result.kind else {
+            return Err("C-ABI: Roundtrip erwartet einen nativen Struktur-Rueckgabetyp".into());
+        };
+        let mut param_kinds = Vec::new();
+        let mut scalar_count = 0usize;
+        let mut struct_count = 0usize;
+        for input in inputs {
+            match &input.kind {
+                TypeKind::Name(name) if name == result_name => {
+                    struct_count += 1;
+                    param_kinds.push(StructAbiParam::Struct);
+                }
+                TypeKind::Name(name) if name == "u64" && struct_count == 0 => {
+                    scalar_count += 1;
+                    param_kinds.push(StructAbiParam::U64);
+                }
+                _ => return Err(
+                    "C-ABI: nur u64-Praefixe und gleichartige Strukturargumente freigegeben".into()
+                ),
+            }
+        }
+        if !(1..=2).contains(&struct_count) || scalar_count > 6 {
+            return Err("C-ABI: 1..2 Strukturargumente und bis zu 6 u64-Praefixe freigegeben".into());
+        }
+        let layout = layouts.layout(result_name)
+            .ok_or_else(|| format!("C-ABI: unbekannte Struktur '{result_name}'"))?;
+        let count = layout.fields.len();
+        // Keine Typnamens-Heuristik: genaues Layout inkl. Padding pruefen.
+        let scalar = |field: usize, name: &str| layout.fields.get(field)
+            .is_some_and(|(_, ty)| matches!(&ty.kind,
+                TypeKind::Name(actual) if actual == name));
+        let words = ((1..=4).contains(&count) || count == 6)
+            && layout.size == count as u64 * 4 && layout.alignment == 4
+            && layout.fields.iter().all(|(_, ty)| matches!(&ty.kind,
+                TypeKind::Name(name) if name == "u32"));
+        let mixed = count == 2 && scalar(0, "f64") && scalar(1, "u32")
+            && layout.size == 16 && layout.alignment == 8
+            && layout.offsets == [0, 8];
+        let float4 = count == 4 && layout.fields.iter().all(|(_, ty)|
+                matches!(&ty.kind, TypeKind::Name(name) if name == "f32"))
+            && layout.size == 16 && layout.alignment == 4
+            && layout.offsets == [0, 4, 8, 12];
+        let packed = count == 2 && scalar(0, "u8") && scalar(1, "u32")
+            && layout.size == 5 && layout.alignment == 1
+            && layout.offsets == [0, 1];
+        if !(words || mixed || float4 || packed) {
+            return Err(format!(
+                "C-ABI: Struktur '{result_name}' ist noch nicht klassifiziert (u32-Worte, f64+u32, f32x4 oder packed u8+u32)"
+            ));
+        }
+        if self.bindings.contains_key(name) || self.struct_bindings.contains_key(name)
+            || module.get_function(name).is_some()
+        {
+            return Err(format!("extern C: Symbolkollision bei '{name}'"));
+        }
+        use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
+        // AArch64: die ersten C-Referenzformen. 20B/HFA/Packed und
+        // Registerdruck bekommen eigene nachgelagerte AAPCS64-Gates.
+        let arm_kind = if aarch64 {
+            if scalar_count != 0 || struct_count != 1 {
+                return Err("C-ABI: AArch64 erlaubt vorerst genau einen Strukturparameter ohne u64-Praefix".into());
+            }
+            if words {
+                Some(match count {
+                    1 => AArch64AggregateAbi::U32,
+                    2 => AArch64AggregateAbi::U64,
+                    3 | 4 => AArch64AggregateAbi::Pair64,
+                    6 => AArch64AggregateAbi::Indirect,
+                    _ => unreachable!("u32-Wortanzahl zuvor geprueft"),
+                })
+            } else if mixed {
+                Some(AArch64AggregateAbi::Pair64)
+            } else {
+                return Err("C-ABI: AArch64 Struct-by-value noch nicht klassifiziert (nur 1/2/3/4/6 u32 oder f64+u32)".into());
+            }
+        } else {
+            None
+        };
+        let registers: Vec<BasicTypeEnum<'ctx>> = if let Some(kind) = arm_kind {
+            match kind {
+                AArch64AggregateAbi::U32 | AArch64AggregateAbi::U64 =>
+                    vec![context.i64_type().into()],
+                AArch64AggregateAbi::Pair64 =>
+                    vec![context.i64_type().array_type(2).into()],
+                AArch64AggregateAbi::Indirect => vec![],
+            }
+        } else if words {
+            match count {
+                1 => vec![context.i32_type().into()],
+                2 => vec![context.i64_type().into()],
+                3 if sysv => vec![context.i64_type().into(), context.i32_type().into()],
+                4 if sysv => vec![context.i64_type().into(), context.i64_type().into()],
+                3 | 4 | 6 => vec![], // Win64: sret + pointer; SysV 24B: byval
+                _ => unreachable!("gepruefte Feldanzahl"),
+            }
+        } else if sysv && mixed {
+            vec![context.f64_type().into(), context.i32_type().into()]
+        } else if sysv && float4 {
+            let xmm_pair = context.f32_type().vec_type(2);
+            vec![xmm_pair.into(), xmm_pair.into()]
+        } else {
+            // Win64 mixed/float4/packed sowie SysV packed ueber Speicher.
+            vec![]
+        };
+        // Das Argument- und Rueckgabe-ABI sind unabhaengig:
+        // z.B. {i64,i32}-Resultat im Register, aber ein Struct12 nach
+        // 5 u64-Praefixen als byval-Argument im Speicher.
+        let indirect_args = if aarch64 {
+            vec![arm_kind == Some(AArch64AggregateAbi::Indirect)]
+        } else {
+            classify_struct_argument_storage(&param_kinds, &registers, sysv)
+        };
+        let memory_byval = sysv;
+        let sret_alignment = u64::from(layout.alignment);
+        let pointer = context.ptr_type(inkwell::AddressSpace::default());
+        let mut params: Vec<BasicMetadataTypeEnum<'ctx>> = Vec::new();
+        let mut byval_indices = Vec::new();
+        if registers.is_empty() { params.push(pointer.into()); }
+        for (index, kind) in param_kinds.iter().enumerate() {
+            match kind {
+                StructAbiParam::U64 => params.push(context.i64_type().into()),
+                StructAbiParam::Struct if indirect_args[index] => {
+                    if memory_byval { byval_indices.push(params.len() as u32); }
+                    params.push(pointer.into());
+                }
+                StructAbiParam::Struct => {
+                    for register in &registers {
+                        params.push((*register).into());
+                    }
+                }
+            }
+        }
+        let function_type = match arm_kind {
+            Some(AArch64AggregateAbi::U32) =>
+                context.i32_type().fn_type(&params, false),
+            Some(AArch64AggregateAbi::U64) =>
+                context.i64_type().fn_type(&params, false),
+            Some(AArch64AggregateAbi::Pair64) =>
+                context.i64_type().array_type(2).fn_type(&params, false),
+            Some(AArch64AggregateAbi::Indirect) =>
+                context.void_type().fn_type(&params, false),
+            None if registers.is_empty() =>
+                context.void_type().fn_type(&params, false),
+            None if registers.len() == 1 =>
+                registers[0].fn_type(&params, false),
+            None => context.struct_type(&registers, false).fn_type(&params, false),
+        };
+        let function = module.add_function(name, function_type, None);
+        if registers.is_empty() {
+            use inkwell::attributes::{Attribute, AttributeLoc};
+            let sret = Attribute::get_named_enum_kind_id("sret");
+            let align = Attribute::get_named_enum_kind_id("align");
+            function.add_attribute(AttributeLoc::Param(0),
+                context.create_type_attribute(sret, layout.llvm_type.into()));
+            function.add_attribute(AttributeLoc::Param(0),
+                context.create_enum_attribute(align, sret_alignment));
+        }
+        if !byval_indices.is_empty() {
+            use inkwell::attributes::{Attribute, AttributeLoc};
+            let byval = Attribute::get_named_enum_kind_id("byval");
+            let align = Attribute::get_named_enum_kind_id("align");
+            for index in byval_indices {
+                function.add_attribute(AttributeLoc::Param(index),
+                    context.create_type_attribute(byval, layout.llvm_type.into()));
+                function.add_attribute(AttributeLoc::Param(index),
+                    context.create_enum_attribute(align, 8));
+            }
+        }
+        self.struct_bindings.insert(name.to_owned(), StructRoundtripBinding {
+            function, struct_name: result_name.clone(), param_kinds,
+            llvm_struct: layout.llvm_type, registers, indirect_args,
+            aarch64: arm_kind, memory_byval, sret_alignment,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn get_struct(&self, name: &str) -> Option<&StructRoundtripBinding<'ctx>> {
+        self.struct_bindings.get(name)
+    }
+
     pub(crate) fn declare(
         &mut self,
         context: &'ctx inkwell::context::Context,
@@ -295,6 +748,18 @@ impl<'ctx> ExternBinding<'ctx> {
         self.signature.result.map(|ty| ty.native_scalar()
             .ok_or_else(|| "extern-C-Pointer-Rueckgaben sind noch nicht unterstützt".to_string()))
             .transpose()
+    }
+
+    /// P2-T66: Extension-Attribute (signext/zeroext) je Parameter und fuer die
+    /// Rueckgabe, zielabhaengig identisch zu Deklaration und skalarem Call
+    /// (FfiType::extension). Der Systemkoerper setzt sie an seiner Aufrufstelle,
+    /// damit es keine zweite ABI-Regel gibt.
+    pub(crate) fn extension_attributes(&self) -> (Vec<Option<&'static str>>, Option<&'static str>) {
+        let target = self.signature.target.as_str();
+        (
+            self.signature.params.iter().map(|ty| ty.extension(target)).collect(),
+            self.signature.result.and_then(|ty| ty.extension(target)),
+        )
     }
 
     /// Vorbereiteter skalarer C-Call. Der Aufrufer muss Operanden bereits

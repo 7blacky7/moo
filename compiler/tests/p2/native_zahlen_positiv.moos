@@ -1,0 +1,29 @@
+# P2-T34: native Integer-Operationen nach ADR f67bfcbd: Division zur Null,
+# Rest mit Vorzeichen des Dividenden, Shifts (signed arithmetisch, unsigned
+# logisch, << Bitmuster der Breite), +/- wrappen.
+@nativ
+funktion z_div(a: i32, b: i32) -> i32:
+    gib_zurück a / b
+@nativ
+funktion z_rest(a: i32, b: i32) -> i32:
+    gib_zurück a % b
+@nativ
+funktion z_links(a: u8, n: u8) -> u8:
+    gib_zurück a << n
+@nativ
+funktion z_rechts_s(a: i8, n: i8) -> i8:
+    gib_zurück a >> n
+@nativ
+funktion z_rechts_u(a: u8, n: u8) -> u8:
+    gib_zurück a >> n
+@nativ
+funktion z_wrap(a: i8) -> i8:
+    gib_zurück a + 1
+zeige z_div(-7, 3)
+zeige z_rest(-7, 3)
+zeige z_div(7, -3)
+zeige z_rest(7, -3)
+zeige z_links(129, 1)
+zeige z_rechts_s(-128, 7)
+zeige z_rechts_u(128, 7)
+zeige z_wrap(127)

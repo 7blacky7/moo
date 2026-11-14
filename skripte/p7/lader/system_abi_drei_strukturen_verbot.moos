@@ -1,0 +1,13 @@
+# ABI-Klassifizierer erlaubt vorerst maximal zwei gleiche Strukturen
+# je C-Aufruf, nicht beliebig viele gleichzeitig.
+struktur Dreier:
+    links: u32
+    rechts: u32
+
+extern "C" funktion p2_drei_nicht_freigegeben(a: Dreier, b: Dreier, c: Dreier) -> Dreier
+
+@nativ
+@einstieg
+funktion pruefe_sperre(adr: u64) -> u64:
+    unsicher:
+        gib_zurück adr

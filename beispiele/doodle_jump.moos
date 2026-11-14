@@ -65,17 +65,25 @@ setze game_over auf falsch
 
 # === Plattform-Farben ===
 funktion platt_farbe(typ):
-    wenn typ == 0: gib_zurück "#4CAF50"
-    wenn typ == 1: gib_zurück "#2196F3"
-    wenn typ == 2: gib_zurück "#8D6E63"
-    wenn typ == 3: gib_zurück "#F44336"
+    wenn typ == 0:
+        gib_zurück "#4CAF50"
+    wenn typ == 1:
+        gib_zurück "#2196F3"
+    wenn typ == 2:
+        gib_zurück "#8D6E63"
+    wenn typ == 3:
+        gib_zurück "#F44336"
     gib_zurück "#4CAF50"
 
 funktion platt_farbe2(typ):
-    wenn typ == 0: gib_zurück "#66BB6A"
-    wenn typ == 1: gib_zurück "#42A5F5"
-    wenn typ == 2: gib_zurück "#A1887F"
-    wenn typ == 3: gib_zurück "#EF5350"
+    wenn typ == 0:
+        gib_zurück "#66BB6A"
+    wenn typ == 1:
+        gib_zurück "#42A5F5"
+    wenn typ == 2:
+        gib_zurück "#A1887F"
+    wenn typ == 3:
+        gib_zurück "#EF5350"
     gib_zurück "#66BB6A"
 
 # === Neues Spiel ===
@@ -176,8 +184,10 @@ solange fenster_offen(win):
         solange pi < pl_count:
             wenn pl_typ[pi] == 1:
                 pl_x[pi] = pl_x[pi] + sinus(pl_y[pi] * 0.02) * 2
-                wenn pl_x[pi] < 0: pl_x[pi] = 0
-                wenn pl_x[pi] > WIN_W - PLATT_W: pl_x[pi] = WIN_W - PLATT_W
+                wenn pl_x[pi] < 0:
+                    pl_x[pi] = 0
+                wenn pl_x[pi] > WIN_W - PLATT_W:
+                    pl_x[pi] = WIN_W - PLATT_W
             setze pi auf pi + 1
 
         # Game Over (zu weit gefallen)

@@ -1,0 +1,50 @@
+# SIL-14: Inferenzvergleich bestehender Checkpoints (kein Training).
+setze pfad auf umgebung("MOO_EVAL_CKPT")
+wenn pfad == nichts:
+    wirf "MOO_EVAL_CKPT fehlt"
+setze tok auf silben_laden("beispiele/p4_silben/run_sil14_grimm36k/tokenizer.msf")
+setze z auf checkpoint_laden(pfad, {"tokenizer_version": sha256(tok), "arch_version": "grimm-silben-250k-v1"})
+setze schichten auf z["netz"]["schichten"]
+wenn länge(schichten) != 14:
+    wirf "Schichtanzahl ungueltig"
+funktion modell(e):
+    setze x auf vorwaerts([schichten[0]], e)
+    setze x auf vorwaerts([schichten[1]], x)
+    setze x auf x + vorwaerts([schichten[2], schichten[3]], x)
+    setze x auf x + vorwaerts([schichten[4], schichten[5], schichten[6]], x)
+    setze x auf x + vorwaerts([schichten[7], schichten[8]], x)
+    setze x auf x + vorwaerts([schichten[9], schichten[10], schichten[11]], x)
+    gib_zurück vorwaerts([schichten[12], schichten[13]], x)
+funktion argmax(a):
+    setze best auf 0
+    setze i auf 1
+    solange i < länge(a):
+        wenn a[i] > a[best]:
+            setze best auf i
+        setze i auf i + 1
+    gib_zurück best
+funktion generiere(prompt):
+    setze folge auf silben_kodiere(tok, prompt).zu_liste()
+    setze erzeugt auf []
+    setze step auf 0
+    solange step < 30:
+        setze fenster auf []
+        setze start auf 0
+        wenn länge(folge) > 64:
+            setze start auf länge(folge) - 64
+        setze i auf start
+        solange i < länge(folge):
+            fenster.hinzufügen(folge[i])
+            setze i auf i + 1
+        setze logits auf modell(tensor_aus_liste(fenster))
+        setze ausgabe auf logits.zeilen(länge(fenster) - 1, länge(fenster)).zu_liste()
+        setze next auf argmax(ausgabe)
+        folge.hinzufügen(next)
+        erzeugt.hinzufügen(next)
+        setze step auf step + 1
+    gib_zurück silben_dekodiere(tok, tensor_aus_liste(erzeugt))
+autograd_aus()
+zeige "SCHRITT " + text(z["schritt"])
+zeige "TEST_1: " + generiere("Der König ")
+zeige "TEST_2: " + generiere("Die Kinder ")
+zeige "TEST_3: " + generiere("Im Schloss ")

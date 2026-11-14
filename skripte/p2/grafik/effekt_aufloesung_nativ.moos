@@ -1,0 +1,476 @@
+# P2-T70: Effekt-Aufloesung aus compiler/runtime/moo_compositor_effects_state.c
+# :217-291 (disable, resolve_one, resolve) in nativem Moo.
+# Resultcodes: 0 OK, 2 LIMIT, 9 UNSUPPORTED (moo_compositor_protocol.h).
+# Rueckfall-Politik: 0 REQUIRE, 1 ALLOW_DISABLE, 2 ALLOW_APPROXIMATE.
+# Effekt-Bits: CORNER 1, SHADOW 2, BACKDROP_BLUR 4, SATURATION 8, TINT 16,
+# NOISE 32, AFFINE_2D 64, ANIMATION 128; approximierbar sind 4, 8, 32.
+#
+# Wiederverwendung: over_mask kommt aus effekt_zustand_nativ.moos (P2-T69)
+# per extern "C"; die Probe linkt beide Objekte.
+
+extern "C" funktion moo_n_effect_over_mask(zustand: u64, limits: u64) -> u64
+extern "C" funktion moo_n_effect_limits_valid(limits: u64) -> u32
+extern "C" funktion moo_n_effect_state_valid(zustand: u64) -> u32
+extern "C" funktion moo_n_effect_estimate(zustand: u64, pixel: u64, arbeit: u64, scratch: u64) -> u32
+
+# = MooCompEffectState (effects_protocol.h:103-112), 96 Byte, flach wie in
+# effekt_zustand_nativ.moos (corners @24, shadow @32, backdrop @48, affine @64).
+struktur KompEffektZustand:
+    aktiv_maske: u64
+    pflicht_maske: u64
+    rueckfall: u32
+    reserviert: u32
+    ecke_ol: u16
+    ecke_or: u16
+    ecke_ur: u16
+    ecke_ul: u16
+    schatten_x: i32
+    schatten_y: i32
+    schatten_unschaerfe: u16
+    schatten_ausbreitung: u16
+    schatten_r: u8
+    schatten_g: u8
+    schatten_b: u8
+    schatten_a: u8
+    hg_unschaerfe: u16
+    hg_saettigung: u16
+    tint_r: u8
+    tint_g: u8
+    tint_b: u8
+    tint_a: u8
+    tint_mix: u8
+    rauschen: u8
+    hg_reserviert: u16
+    rauschen_saat: u32
+    m11: i32
+    m12: i32
+    m21: i32
+    m22: i32
+    tx: i32
+    ty: i32
+    ursprung_x: i32
+    ursprung_y: i32
+
+# C :217-242. Bit aus aktiv/pflicht loeschen (m & ~bit == m - (m & bit)) und
+# die Parameter des Effekts auf neutral setzen. ANIMATION (128) und
+# unbekannte Bits loeschen nur die Masken, wie C.
+@nativ
+@einstieg
+funktion moo_n_effect_disable(zustand: u64, bit: u64) -> void:
+    unsicher:
+        setze z: ptr[KompEffektZustand] auf zeiger(zustand)
+        setze a: u64 auf z.aktiv_maske
+        setze p: u64 auf z.pflicht_maske
+        z.aktiv_maske = a - (a & bit)
+        z.pflicht_maske = p - (p & bit)
+        wenn bit == 1:
+            z.ecke_ol = 0
+            z.ecke_or = 0
+            z.ecke_ur = 0
+            z.ecke_ul = 0
+        wenn bit == 2:
+            z.schatten_x = 0
+            z.schatten_y = 0
+            z.schatten_unschaerfe = 0
+            z.schatten_ausbreitung = 0
+            z.schatten_r = 0
+            z.schatten_g = 0
+            z.schatten_b = 0
+            z.schatten_a = 0
+        wenn bit == 4:
+            z.hg_unschaerfe = 0
+        wenn bit == 8:
+            z.hg_saettigung = 256
+        wenn bit == 16:
+            z.tint_r = 0
+            z.tint_g = 0
+            z.tint_b = 0
+            z.tint_a = 0
+            z.tint_mix = 0
+        wenn bit == 32:
+            z.rauschen = 0
+            z.rauschen_saat = 0
+        wenn bit == 64:
+            z.m11 = 65536
+            z.m12 = 0
+            z.m21 = 0
+            z.m22 = 65536
+            z.tx = 0
+            z.ty = 0
+            z.ursprung_x = 0
+            z.ursprung_y = 0
+
+# C :244-259. nicht_verfuegbar/ueber als 0/1 (C: int). Bei Erfolg mit
+# Abschaltung wird zustand veraendert und das Bit in degradiert gesetzt.
+# Vorbedingung wie C (static): Zeiger != 0.
+@nativ
+@einstieg
+funktion moo_n_effect_resolve_one(zustand: u64, pflicht: u64, politik: u32, bit: u64, nicht_verfuegbar: u32, ueber: u32, degradiert: u64) -> u32:
+    unsicher:
+        wenn nicht_verfuegbar == 0:
+            wenn ueber == 0:
+                gib_zurück 0
+        setze fehler: u32 auf 2
+        wenn nicht_verfuegbar != 0:
+            setze fehler auf 9
+        wenn (pflicht & bit) != 0:
+            gib_zurück fehler
+        wenn politik == 0:
+            gib_zurück fehler
+        wenn politik == 2:
+            setze naeherbar: u32 auf 0
+            wenn bit == 4:
+                setze naeherbar auf 1
+            wenn bit == 8:
+                setze naeherbar auf 1
+            wenn bit == 32:
+                setze naeherbar auf 1
+            wenn naeherbar == 0:
+                gib_zurück fehler
+        moo_n_effect_disable(zustand, bit)
+        setze d: ptr[u64] auf zeiger(degradiert)
+        d[0] = d[0] | bit
+        gib_zurück 0
+
+# C :261-291. Arbeitet auf einer lokalen Kopie von angefragt; ergebnis und
+# degradiert werden nur bei Erfolg geschrieben (alias-sicher, auch wenn
+# ergebnis == angefragt). Bits in fester Reihenfolge 1,2,4,...,128; nicht
+# aktivierte Bits werden uebersprungen. MooCompEffectStateConfig:
+# capabilities @0, limits @8. Vorbedingung wie C (static): Zeiger != 0.
+@nativ
+@einstieg
+funktion moo_n_effect_resolve(konfig: u64, angefragt: u64, ergebnis: u64, degradiert: u64) -> u32:
+    unsicher:
+        setze k: ptr[u64] auf zeiger(konfig)
+        setze faehig: u64 auf k[0]
+        setze z: ptr[KompEffektZustand] auf zeiger(angefragt)
+        setze ueber_maske: u64 auf moo_n_effect_over_mask(angefragt, konfig + 8)
+        setze wirk: KompEffektZustand auf z[0]
+        setze w_adr: u64 auf adresse_von(wirk)
+        setze grad: u64 auf 0
+        setze aktiv: u64 auf z.aktiv_maske
+        setze pflicht: u64 auf z.pflicht_maske
+        setze politik: u32 auf z.rueckfall
+        setze bit: u64 auf 1
+        solange bit <= 128:
+            wenn (aktiv & bit) != 0:
+                setze nv: u32 auf 0
+                wenn (faehig & bit) == 0:
+                    setze nv auf 1
+                setze ue: u32 auf 0
+                wenn (ueber_maske & bit) != 0:
+                    setze ue auf 1
+                setze rc: u32 auf moo_n_effect_resolve_one(w_adr, pflicht, politik, bit, nv, ue, adresse_von(grad))
+                wenn rc != 0:
+                    gib_zurück rc
+            setze bit auf bit * 2
+        setze o: ptr[KompEffektZustand] auf zeiger(ergebnis)
+        o[0] = wirk
+        setze d: ptr[u64] auf zeiger(degradiert)
+        d[0] = grad
+        gib_zurück 0
+
+# ---------------------------------------------------------------------------
+# Flaechen-Effektzustand (state.c:346-466). Resultcodes zusaetzlich:
+# 1 INVALID, 3 STALE_HANDLE, 4 ACCESS, 6 BAD_STATE.
+# MooCompEffectSurfaceState (effects_state.h:41-53), 344 Byte:
+#   active u32 @0, reserved u32 @4, owner @8, surface @16, commit_sequence @24,
+#   base @32, requested @128, effective @224 (je 96), degraded @320,
+#   work @328, scratch @336.
+# MooCompEffectPreflight (effects_state.h:28-39), 344 Byte:
+#   owner @0, surface @8, expected @16, next @24, base @32, requested @128,
+#   effective @224, degraded @320, work @328, scratch @336.
+# MooCompEffectUsage: on_surface u32 @0, for_client u32 @4, pixels u64 @8.
+# MooCompEffectStatus: requested @0, effective @96, degraded @192 (200 Byte).
+
+# = MooCompEffectLimits (80 Byte), nur die hier gelesenen Felder benannt.
+struktur KompAufLimits:
+    max_eckradius: u16
+    max_schatten_unschaerfe: u16
+    max_schatten_ausbreitung: u16
+    max_hintergrund_unschaerfe: u16
+    max_saettigung: u16
+    reserviert: u16
+    max_schatten_versatz: i32
+    max_affin_koeffizient: i32
+    max_affin_verschiebung: i32
+    max_affin_ursprung: i32
+    max_animationen_flaeche: u32
+    max_animationen_client: u32
+    reserviert_ausrichtung: u32
+    min_dauer_ns: u64
+    max_dauer_ns: u64
+    max_zeitleiste_ns: u64
+    max_arbeit_pro_bild: u64
+    max_scratch_bytes: u64
+
+struktur KompFlaechenKopf:
+    aktiv: u32
+    reserviert: u32
+    besitzer: u64
+    flaeche: u64
+    commit_folge: u64
+
+struktur KompNutzung:
+    auf_flaeche: u32
+    fuer_client: u32
+    pixel: u64
+
+# C copy_bytes/zero_bytes (state.c:6-18): byteweise vorwaerts.
+@nativ
+funktion bytes_kopieren(ziel: u64, quelle: u64, n: u64) -> void:
+    unsicher:
+        setze z: ptr[u8] auf zeiger(ziel)
+        setze q: ptr[u8] auf zeiger(quelle)
+        setze i: u64 auf 0
+        solange i < n:
+            z[i] = q[i]
+            setze i auf i + 1
+
+# volatile_schreiben (native_system.rs:32/1745, Bare) verhindert, dass LLVM die
+# Schleife in einen memset-Aufruf umwandelt: das Bare-Objekt hat kein memset
+# (QA_ROT #37258). Entspricht dem volatile in C zero_bytes (state.c:6-10).
+@nativ
+funktion bytes_nullen(ziel: u64, n: u64) -> void:
+    unsicher:
+        setze z: ptr[u8] auf zeiger(ziel)
+        setze i: u64 auf 0
+        solange i < n:
+            volatile_schreiben(z, i, 0)
+            setze i auf i + 1
+
+# C state_neutral (state.c:28-35) direkt an adr (96 Byte).
+@nativ
+funktion neutral_schreiben(adr: u64) -> void:
+    unsicher:
+        bytes_nullen(adr, 96)
+        setze z: ptr[KompEffektZustand] auf zeiger(adr)
+        z.hg_saettigung = 256
+        z.m11 = 65536
+        z.m22 = 65536
+
+# C :365-372.
+@nativ
+@einstieg
+funktion moo_n_effect_access(zustand: u64, besitzer: u64, flaeche: u64) -> u32:
+    unsicher:
+        wenn zustand == 0:
+            gib_zurück 1
+        wenn besitzer == 0:
+            gib_zurück 1
+        wenn flaeche == 0:
+            gib_zurück 1
+        setze s: ptr[KompFlaechenKopf] auf zeiger(zustand)
+        wenn s.aktiv != 1:
+            gib_zurück 3
+        wenn s.reserviert != 0:
+            gib_zurück 3
+        wenn s.flaeche != flaeche:
+            gib_zurück 3
+        wenn s.besitzer != besitzer:
+            gib_zurück 4
+        gib_zurück 0
+
+# C :346-363. Fehler schreiben nichts; sonst ganzer Zustand neu (344 Byte).
+@nativ
+@einstieg
+funktion moo_n_effect_surface_init(zustand: u64, besitzer: u64, flaeche: u64) -> u32:
+    unsicher:
+        wenn zustand == 0:
+            gib_zurück 1
+        wenn besitzer == 0:
+            gib_zurück 1
+        wenn flaeche == 0:
+            gib_zurück 1
+        bytes_nullen(zustand, 344)
+        setze s: ptr[KompFlaechenKopf] auf zeiger(zustand)
+        s.aktiv = 1
+        s.besitzer = besitzer
+        s.flaeche = flaeche
+        neutral_schreiben(zustand + 32)
+        neutral_schreiben(zustand + 128)
+        neutral_schreiben(zustand + 224)
+        gib_zurück 0
+
+# C :374-380.
+@nativ
+@einstieg
+funktion moo_n_effect_surface_destroy(zustand: u64, besitzer: u64, flaeche: u64) -> u32:
+    unsicher:
+        setze r: u32 auf moo_n_effect_access(zustand, besitzer, flaeche)
+        wenn r != 0:
+            gib_zurück r
+        bytes_nullen(zustand, 344)
+        gib_zurück 0
+
+# C :382-427. Reihenfolge der Pruefungen exakt wie C; das Ergebnis wird erst
+# am Ende aus lokalen Kopien geschrieben (C: lokaler candidate), daher
+# alias-sicher gegenueber angefragt/zustand.
+@nativ
+@einstieg
+funktion moo_n_effect_state_preflight(konfig: u64, zustand: u64, besitzer: u64, flaeche: u64, angefragt: u64, nutzung: u64, ergebnis: u64) -> u32:
+    unsicher:
+        wenn konfig == 0:
+            gib_zurück 1
+        wenn angefragt == 0:
+            gib_zurück 1
+        wenn nutzung == 0:
+            gib_zurück 1
+        wenn ergebnis == 0:
+            gib_zurück 1
+        wenn moo_n_effect_limits_valid(konfig + 8) == 0:
+            gib_zurück 1
+        setze k: ptr[u64] auf zeiger(konfig)
+        wenn k[0] > 255:
+            gib_zurück 1
+        setze r: u32 auf moo_n_effect_access(zustand, besitzer, flaeche)
+        wenn r != 0:
+            gib_zurück r
+        wenn moo_n_effect_state_valid(angefragt) == 0:
+            gib_zurück 1
+        setze l: ptr[KompAufLimits] auf zeiger(konfig + 8)
+        setze u: ptr[KompNutzung] auf zeiger(nutzung)
+        setze s: ptr[KompFlaechenKopf] auf zeiger(zustand)
+        setze umax: u64 auf 0
+        setze umax auf umax - 1
+        wenn u.auf_flaeche > l.max_animationen_flaeche:
+            gib_zurück 2
+        wenn u.fuer_client > l.max_animationen_client:
+            gib_zurück 2
+        wenn s.commit_folge == umax:
+            gib_zurück 2
+        setze erwartet: u64 auf s.commit_folge
+        setze z: ptr[KompEffektZustand] auf zeiger(angefragt)
+        setze anf: KompEffektZustand auf z[0]
+        setze wirk: KompEffektZustand auf anf
+        setze grad: u64 auf 0
+        setze r auf moo_n_effect_resolve(konfig, adresse_von(anf), adresse_von(wirk), adresse_von(grad))
+        wenn r != 0:
+            gib_zurück r
+        setze arbeit: u64 auf 0
+        setze scratch: u64 auf 0
+        setze r auf moo_n_effect_estimate(adresse_von(wirk), u.pixel, adresse_von(arbeit), adresse_von(scratch))
+        wenn r != 0:
+            gib_zurück r
+        wenn arbeit > l.max_arbeit_pro_bild:
+            gib_zurück 2
+        wenn scratch > l.max_scratch_bytes:
+            gib_zurück 2
+        setze o: ptr[u64] auf zeiger(ergebnis)
+        o[0] = besitzer
+        o[1] = flaeche
+        o[2] = erwartet
+        o[3] = erwartet + 1
+        bytes_kopieren(ergebnis + 32, adresse_von(anf), 96)
+        bytes_kopieren(ergebnis + 128, adresse_von(anf), 96)
+        bytes_kopieren(ergebnis + 224, adresse_von(wirk), 96)
+        o[40] = grad
+        o[41] = arbeit
+        o[42] = scratch
+        gib_zurück 0
+
+# C :429-451. Kopien direkt (byteweise vorwaerts) wie C, Reihenfolge
+# base, requested, effective, degraded, work, scratch, commit_sequence.
+@nativ
+@einstieg
+funktion moo_n_effect_state_apply(zustand: u64, vorflug: u64) -> u32:
+    unsicher:
+        wenn zustand == 0:
+            gib_zurück 1
+        wenn vorflug == 0:
+            gib_zurück 1
+        setze p: ptr[u64] auf zeiger(vorflug)
+        setze r: u32 auf moo_n_effect_access(zustand, p[0], p[1])
+        wenn r != 0:
+            gib_zurück r
+        setze umax: u64 auf 0
+        setze umax auf umax - 1
+        wenn p[2] == umax:
+            gib_zurück 1
+        wenn p[3] != p[2] + 1:
+            gib_zurück 1
+        setze s: ptr[u64] auf zeiger(zustand)
+        wenn s[3] != p[2]:
+            gib_zurück 6
+        bytes_kopieren(zustand + 32, vorflug + 32, 96)
+        bytes_kopieren(zustand + 128, vorflug + 128, 96)
+        bytes_kopieren(zustand + 224, vorflug + 224, 96)
+        s[40] = p[40]
+        s[41] = p[41]
+        s[42] = p[42]
+        s[3] = p[3]
+        gib_zurück 0
+
+# C :453-466. Ausgabe aus lokalen Kopien (C: lokales x), alias-sicher.
+@nativ
+@einstieg
+funktion moo_n_effect_surface_status(zustand: u64, ergebnis: u64) -> u32:
+    unsicher:
+        wenn zustand == 0:
+            gib_zurück 1
+        wenn ergebnis == 0:
+            gib_zurück 1
+        setze s: ptr[KompFlaechenKopf] auf zeiger(zustand)
+        wenn s.aktiv != 1:
+            gib_zurück 3
+        wenn s.reserviert != 0:
+            gib_zurück 3
+        setze a: ptr[KompEffektZustand] auf zeiger(zustand + 128)
+        setze w: ptr[KompEffektZustand] auf zeiger(zustand + 224)
+        setze anf: KompEffektZustand auf a[0]
+        setze wirk: KompEffektZustand auf w[0]
+        setze sw: ptr[u64] auf zeiger(zustand)
+        setze grad: u64 auf sw[40]
+        bytes_kopieren(ergebnis, adresse_von(anf), 96)
+        bytes_kopieren(ergebnis + 96, adresse_von(wirk), 96)
+        setze o: ptr[u64] auf zeiger(ergebnis)
+        o[24] = grad
+        gib_zurück 0
+
+# C :468-535 FNV-artiger Hash (Offset 1469598103934665603, Prime
+# 1099511628211, state.c:3-4). h8/h16/h32/h64 mischen "low byte first"; auf
+# little-endian x86_64 ist das identisch zum Mischen der Feldbytes in
+# Speicherreihenfolge. Reservierte Felder werden wie in C NICHT gehasht:
+# State: Bytes [0,20) + [24,58) + [60,96) (ohne reserved @20, backdrop.reserved @58).
+# Surface: active [0,4), [8,32), 3 x State @32/@128/@224, [320,344) (ohne reserved @4).
+@nativ
+funktion hash_bytes(h: u64, adr: u64, n: u64) -> u64:
+    unsicher:
+        setze b: ptr[u8] auf zeiger(adr)
+        setze x: u64 auf h
+        setze i: u64 auf 0
+        solange i < n:
+            setze x auf (x ^ u64(b[i])) * 1099511628211
+            setze i auf i + 1
+        gib_zurück x
+
+@nativ
+funktion hash_zustand(h: u64, adr: u64) -> u64:
+    unsicher:
+        setze x: u64 auf hash_bytes(h, adr, 20)
+        setze x auf hash_bytes(x, adr + 24, 34)
+        gib_zurück hash_bytes(x, adr + 60, 36)
+
+# C :517-520.
+@nativ
+@einstieg
+funktion moo_n_effect_state_hash(zustand: u64) -> u64:
+    unsicher:
+        wenn zustand == 0:
+            gib_zurück 0
+        gib_zurück hash_zustand(1469598103934665603, zustand)
+
+# C :521-535.
+@nativ
+@einstieg
+funktion moo_n_effect_surface_hash(zustand: u64) -> u64:
+    unsicher:
+        wenn zustand == 0:
+            gib_zurück 0
+        setze x: u64 auf hash_bytes(1469598103934665603, zustand, 4)
+        setze x auf hash_bytes(x, zustand + 8, 24)
+        setze x auf hash_zustand(x, zustand + 32)
+        setze x auf hash_zustand(x, zustand + 128)
+        setze x auf hash_zustand(x, zustand + 224)
+        gib_zurück hash_bytes(x, zustand + 320, 24)
+

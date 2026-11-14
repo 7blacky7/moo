@@ -1,0 +1,4 @@
+# P2-T60 Negativfall: explizite Typannotation ohne Typ in Interface-Methode
+# muss diagnostiziert werden (nicht im Legacy-Fallback verschwinden).
+schnittstelle P2TypLeer:
+    funktion lese(p: , q: u64) -> i32

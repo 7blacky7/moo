@@ -55,3 +55,11 @@ MooValue moo_get_error(void) {
     moo_retain(error);
     return error;
 }
+
+/* P2-T34 (ADR f67bfcbd §3): Fehler einer nativen Ganzzahloperation (Division
+   oder Rest durch Null bzw. MIN/-1, Shiftzaehler ausserhalb 0..N-1) als
+   fangbarer Moo-Fehler. Innerhalb versuche: setzt moo_throw nur das Flag und
+   kehrt zurueck; ohne aktiven Handler beendet es den Prozess. */
+void moo_native_fehler(const char* text) {
+    moo_throw(moo_string_new(text));
+}

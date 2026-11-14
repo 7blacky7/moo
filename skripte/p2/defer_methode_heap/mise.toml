@@ -1,0 +1,31 @@
+[tasks.test]
+description = "Implizites Methodenende: Heap-RSS mit und ohne Cleanup"
+dir = "{{config_root}}/../../.."
+run = '''
+set -euo pipefail
+[ "$(uname -s)" = Linux ] || { echo 'SKIP: Linux wait4 benötigt'; exit 2; }
+out=build/p2-defer-methode-heap
+mkdir -p "$out"
+for mode in defer kontrolle; do
+  for size in 2k 8k; do
+    case "$size" in 2k) count=2000 ;; 8k) count=8000 ;; esac
+    if [ "$mode" = defer ]; then source="compiler/tests/p2/defer_methode_heap_$size.moos"; else source="compiler/tests/p2/defer_methode_heap_kontrolle_$size.moos"; fi
+    timeout 120s compiler/target/release/moo-compiler compile "$source" -o "$out/${mode}_$size"
+    timeout 120s "$out/${mode}_$size" >"$out/${mode}_$size.out"
+    printf '%s\n17\n' "$count" >"$out/${mode}_$size.expected"
+    if ! cmp -s "$out/${mode}_$size.expected" "$out/${mode}_$size.out"; then
+      printf 'FAIL %s %s: Aufrufzahl oder Objektwert\n' "$mode" "$size"
+      cat "$out/${mode}_$size.out"
+      exit 1
+    fi
+    printf 'PASS %s %s: Aufrufzahl, Rückgabe und Objektwert\n' "$mode" "$size"
+  done
+done
+${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror compiler/tests/p2/defer_heap_rss.c -o "$out/measure"
+failed=0
+for mode in kontrolle defer; do
+  printf 'RSS %s\n' "$mode"
+  if ! timeout 120s "$out/measure" "$out/${mode}_2k" "$out/${mode}_8k" | sed -e 's/200k=/2k=/g' -e 's/800k=/8k=/g'; then failed=1; fi
+done
+exit "$failed"
+'''

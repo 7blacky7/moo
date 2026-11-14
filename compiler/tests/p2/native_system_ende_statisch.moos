@@ -1,0 +1,9 @@
+# P2-T74: Systemkoerper mit Rueckgabetyp ohne jedes gib_zurück ist ein
+# Compilefehler (ADR §3, statisch erkennbar). Das Laufzeitnetz bleibt fuer
+# Koerper, die nur auf manchen Pfaden zurueckkehren (native_system_ende.moos).
+@nativ
+funktion s_leer(a: i32) -> i32:
+    unsicher:
+        setze q: i32 auf a + 1
+unsicher:
+    zeige s_leer(1)

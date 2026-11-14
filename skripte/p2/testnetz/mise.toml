@@ -1,0 +1,9 @@
+[tasks.legacy-ir]
+description = "Capture and compare legacy LLVM IR"
+dir = "{{config_root}}"
+run = "bash legacy_ir.sh"
+
+[tasks.legacy-output]
+description = "Capture and compare deterministic headless example output"
+dir = "{{config_root}}"
+run = "bash legacy_output.sh"

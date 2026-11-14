@@ -1,0 +1,49 @@
+[tasks.test]
+description = "Kerneltyp-Modulimporte: Name und relativer Pfad"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-frontend-module
+mkdir -p "$out"
+for form in namen pfad; do
+  src="compiler/tests/p2/import_kern_$form.moos"
+  timeout 120s compiler/target/release/moo-compiler compile "$src" --emit-ir -o "$out/$form.ll"
+  timeout 30s mise exec -- opt -passes=verify -disable-output "$out/$form.ll"
+  rg -q 'define internal i32 @__moo_native[.]p2_kern_zaehle\(i32' "$out/$form.ll"
+  timeout 120s compiler/target/release/moo-compiler compile "$src" -o "$out/$form"
+  timeout 30s "$out/$form" >"$out/$form.actual"
+  printf '42\n' >"$out/expected"
+  cmp "$out/expected" "$out/$form.actual"
+  printf 'PASS %s: importierte native i32-Signatur und Ergebnis\n' "$form"
+done
+'''
+
+[tasks.diagnose]
+description = "Namespace- und qualifizierte Typimporte diagnostizieren"
+dir = "{{config_root}}/../../.."
+run = '''
+set -u
+out=build/p2-frontend-module
+mkdir -p "$out"
+for form in alias typ_pfad typ_einfach unbekannt; do
+  src="compiler/tests/p2/import_kern_$form.moos"
+  if timeout 120s compiler/target/release/moo-compiler compile "$src" --emit-ir -o "$out/$form.ll" >"$out/$form.log" 2>&1; then rc=0; else rc=$?; fi
+  printf 'DIAG %s compile_rc=%s\n' "$form" "$rc"
+  if [ "$rc" -ne 0 ]; then cat "$out/$form.log"; fi
+done
+echo 'DIAG: kein Namespace-/Typ-Semantikgate; Laufzeit und korrekte Auflösung gesondert prüfen'
+'''
+
+[tasks.zwei-module-diagnose]
+description = "Gleichnamige Strukturtypen aus zwei aliased Modulen diagnostizieren"
+dir = "{{config_root}}/../../.."
+run = '''
+set -u
+out=build/p2-frontend-module
+mkdir -p "$out"
+if timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/import_qualifiziert_kollision.moos --emit-ir -o "$out/zwei-module.ll" >"$out/zwei-module.log" 2>&1; then rc=0; else rc=$?; fi
+printf 'DIAG zwei-module compile_rc=%s\n' "$rc"
+if [ "$rc" -ne 0 ]; then cat "$out/zwei-module.log"; fi
+if [ "$rc" -eq 124 ] || [ "$rc" -ge 128 ]; then exit "$rc"; fi
+echo 'DIAG: kein Semantikgate für qualifizierte Identität'
+'''

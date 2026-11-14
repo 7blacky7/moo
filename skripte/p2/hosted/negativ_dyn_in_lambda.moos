@@ -1,0 +1,14 @@
+# P2-T66 (b) negativ: Systemkoerper-Aufruf aus einer Methode (kein benannter
+# Top-Level-Rahmen; gleiches gilt fuer Lambdas).
+@nativ
+funktion teile(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b
+
+klasse Rechner:
+    funktion rechne(a):
+        unsicher:
+            gib_zurück teile(a, 2)
+
+setze r auf neu Rechner()
+zeige r.rechne(7)

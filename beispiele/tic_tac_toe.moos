@@ -217,8 +217,10 @@ solange fenster_offen(win):
     # Game Over
     wenn game_over:
         setze gfarbe auf "#FFC107"
-        wenn winner == 1: setze gfarbe auf "#2196F3"
-        wenn winner == 2: setze gfarbe auf "#F44336"
+        wenn winner == 1:
+            setze gfarbe auf "#2196F3"
+        wenn winner == 2:
+            setze gfarbe auf "#F44336"
         zeichne_rechteck(win, WIN_W / 2 - 100, WIN_H - 60, 200, 40, gfarbe)
         wenn winner == 1:
             # X-Symbol

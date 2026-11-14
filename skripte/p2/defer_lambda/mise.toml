@@ -1,0 +1,36 @@
+[tasks.test]
+description = "Lambda-Rahmen und lokaler Fehlerfang bei äußerem Defer"
+dir = "{{config_root}}/../../.."
+run = '''
+set -u
+out=build/p2-defer-lambda
+mkdir -p "$out"
+failed=0
+for name in frame capture try; do
+  if ! timeout 120s compiler/target/release/moo-compiler compile "compiler/tests/p2/defer_lambda_${name}.moos" -o "$out/$name" >"$out/$name.compile.log" 2>&1; then
+    printf 'FAIL %s: Compile\n' "$name"
+    cat "$out/$name.compile.log"
+    failed=1
+    continue
+  fi
+  if ! timeout 30s "$out/$name" >"$out/$name.actual" 2>"$out/$name.err"; then
+    printf 'FAIL %s: Laufzeit\n' "$name"
+    cat "$out/$name.err"
+    failed=1
+    continue
+  fi
+  case "$name" in
+    frame) printf '2\n3\nende\ncleanup\n' > "$out/$name.expected" ;;
+    capture) printf '11\n12\nende\ncleanup\n' > "$out/$name.expected" ;;
+    try) printf 'fehler\nende\ncleanup\n' > "$out/$name.expected" ;;
+  esac
+  if ! cmp -s "$out/$name.expected" "$out/$name.actual"; then
+    printf 'FAIL %s: Ausgabe/Reihenfolge\n' "$name"
+    cat "$out/$name.actual"
+    failed=1
+    continue
+  fi
+  printf 'PASS %s\n' "$name"
+done
+exit "$failed"
+'''

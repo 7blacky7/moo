@@ -1,0 +1,16 @@
+# P2-T74: dyn-Aufruf eines hosted Systemkoerpers innerhalb versuche: ist erlaubt
+# (vorher Compilefehler 'ein Trap waere nicht fangbar', negativ_dyn_in_try):
+# Fehler im Koerper laufen ueber moo_native_fehler (P2-T34) in den fange-Zweig.
+@nativ
+funktion teile(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b
+
+versuche:
+    unsicher:
+        zeige teile(7, 2)
+        zeige teile(7, 0)
+        zeige "NICHT ERREICHT"
+fange fehler:
+    zeige "gefangen"
+zeige "weiter"

@@ -1,0 +1,3 @@
+[tasks.test-hosted-linux]
+description = "P2-T66: hosted x86_64-Linux Systemkoerper (Zeiger/Struktur/Mehrstatement) ohne Bare-Triple: IR, Executable, C-Link, FFI-Pfad, Negativfaelle, Windows-IR, Mat4 bitgleich"
+run = "bash test_hosted_linux.sh"

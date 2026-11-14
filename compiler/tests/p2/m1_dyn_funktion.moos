@@ -1,6 +1,26 @@
+# P2-T80: dynamisches Argument an eine reine @nativ-Funktion in einer benannten
+# Funktion (Direktform gib_zurück und Nicht-Direktform in Argumentposition);
+# ungueltiges Argument landet im versuche: des Aufrufers. Vorher Compilefehler
+# 'nur in main ausserhalb von try'.
 @nativ
 funktion ident(wert: i32) -> i32:
     gib_zurück wert
+funktion zweites(a, b):
+    gib_zurück b
 funktion probe(wert):
     gib_zurück ident(wert)
+funktion indirekt(wert):
+    gib_zurück zweites(1, ident(wert))
 zeige probe(20)
+zeige indirekt(20)
+versuche:
+    zeige probe("text")
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige fehler
+versuche:
+    zeige indirekt("text")
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige fehler
+zeige "weiter"

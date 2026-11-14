@@ -1,0 +1,21 @@
+[tasks.test]
+description = "Früher Expect und spätere Heap-Local im Testframe"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-defer-testframe-spaet
+mkdir -p "$out"
+timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/defer_testframe_spaet.moos --emit-ir -o "$out/probe.ll"
+timeout 30s mise exec -- opt -passes=verify -disable-output "$out/probe.ll"
+timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/defer_testframe_spaet.moos -o "$out/probe"
+timeout 30s "$out/probe" > "$out/actual"
+awk '
+  $0 == "BODY" {if (s != 0) exit 1; s=1; next}
+  $0 == "CLEANUP" {if (s != 1) exit 1; s=2; next}
+  $0 == "    FAIL" {if (s != 2) exit 1; s=3; next}
+  $0 == "ENDE" {if (s != 3) exit 1; s=4; next}
+  /^\[1, 2, 3\]$/ {exit 1}
+  END {if (s != 4) exit 1}
+' "$out/actual" || { cat "$out/actual" >&2; exit 1; }
+printf 'PASS früher Expect: Cleanup einmal, späte Local unerreichbar, IR verifiziert\n'
+'''

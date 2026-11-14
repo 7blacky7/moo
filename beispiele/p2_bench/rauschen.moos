@@ -1,0 +1,9 @@
+setze y auf 0
+setze s auf 0
+solange y < 512:
+    setze x auf 0
+    solange x < 512:
+        setze s auf s + rauschen_2d(x / 32, y / 32, 17)
+        setze x auf x + 1
+    setze y auf y + 1
+zeige s

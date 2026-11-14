@@ -1,0 +1,790 @@
+# P2-T65 Pilot: Teilmenge von compiler/runtime/moo_compositor_effects_math.c
+# in nativem Moo. Resultcodes wie moo_compositor_protocol.h:
+# 0 = MOO_COMP_OK, 1 = MOO_COMP_INVALID, 2 = MOO_COMP_LIMIT.
+# Ausgaben werden nur bei Erfolg geschrieben (wie C). Ausgabeparameter heisst
+# 'ergebnis' ('aus' ist ein Moo-Schluesselwort).
+# Zeiger kommen als u64-Adresse, damit out == NULL -> INVALID exakt wie in C
+# geprueft werden kann. Rechtecke kommen per Zeiger, weil @einstieg keine
+# Strukturwerte by value exportiert (C nimmt sie by value).
+
+# = MooCompRect (x, y, width, height als int32_t)
+struktur KompRechteck:
+    x: i32
+    y: i32
+    breite: i32
+    hoehe: i32
+
+# = MooCompAffine2D (protocol.h:74-83), 8 x int32_t
+struktur KompAffin:
+    m11: i32
+    m12: i32
+    m21: i32
+    m22: i32
+    tx: i32
+    ty: i32
+    ox: i32
+    oy: i32
+
+# = MooCompEffectPointQ16
+struktur KompPunkt:
+    x: i32
+    y: i32
+
+# = MooCompCorners (protocol.h:49-54): top_left, top_right, bottom_right, bottom_left
+struktur KompEcken:
+    oben_links: u16
+    oben_rechts: u16
+    unten_rechts: u16
+    unten_links: u16
+
+# = MooCompShadow (protocol.h:56-62), 16 Byte
+struktur KompSchatten:
+    versatz_x: i32
+    versatz_y: i32
+    unschaerfe: u16
+    ausbreitung: u16
+    farbe_r: u8
+    farbe_g: u8
+    farbe_b: u8
+    farbe_a: u8
+
+# = MooCompBackdrop (protocol.h:64-72), 16 Byte
+struktur KompHintergrund:
+    unschaerfe: u16
+    saettigung: u16
+    tint_r: u8
+    tint_g: u8
+    tint_b: u8
+    tint_a: u8
+    tint_mix: u8
+    rauschen: u8
+    reserviert: u16
+    rauschen_saat: u32
+
+# = MooCompEffectBounds (effects_math.h:11-15)
+struktur KompGrenzen:
+    inhalt_r: KompRechteck
+    sicht_r: KompRechteck
+    probe_r: KompRechteck
+
+# Geprueftes i64-Add/Sub/Mul wie C :11-39. 1 = ok (ziel geschrieben), 0 = Ueberlauf.
+@nativ
+funktion q_add(a: i64, b: i64, ziel: ptr[i64]) -> u32:
+    unsicher:
+        setze max: i64 auf 9223372036854775807
+        setze min: i64 auf -9223372036854775808
+        wenn b > 0:
+            wenn a > max - b:
+                gib_zurück 0
+        wenn b < 0:
+            wenn a < min - b:
+                gib_zurück 0
+        ziel[0] = a + b
+        gib_zurück 1
+
+@nativ
+funktion q_sub(a: i64, b: i64, ziel: ptr[i64]) -> u32:
+    unsicher:
+        setze max: i64 auf 9223372036854775807
+        setze min: i64 auf -9223372036854775808
+        wenn b < 0:
+            wenn a > max + b:
+                gib_zurück 0
+        wenn b > 0:
+            wenn a < min + b:
+                gib_zurück 0
+        ziel[0] = a - b
+        gib_zurück 1
+
+@nativ
+funktion q_mul(a: i64, b: i64, ziel: ptr[i64]) -> u32:
+    unsicher:
+        setze ua: u64 auf q_betrag(a)
+        setze ub: u64 auf q_betrag(b)
+        setze grenze: u64 auf 9223372036854775807
+        wenn ua != 0:
+            wenn ub > grenze / ua:
+                gib_zurück 0
+        setze produkt: u64 auf ua * ub
+        setze vorzeichen: u32 auf 0
+        wenn a < 0:
+            setze vorzeichen auf vorzeichen + 1
+        wenn b < 0:
+            setze vorzeichen auf vorzeichen + 1
+        wenn vorzeichen == 1:
+            ziel[0] = -i64(produkt)
+        sonst:
+            ziel[0] = i64(produkt)
+        gib_zurück 1
+
+# |v| als u64, auch fuer INT64_MIN ueberlauffrei (C :6-9).
+@nativ
+funktion q_betrag(v: i64) -> u64:
+    unsicher:
+        wenn v >= 0:
+            gib_zurück u64(v)
+        gib_zurück u64(-(v + 1)) + 1
+
+# Division mit Rundung halb-weg-von-null (C :41-61). 1 = ok, 0 = Fehler.
+@nativ
+funktion q_div_runden(zaehler: i64, nenner: i64, ziel: ptr[i64]) -> u32:
+    unsicher:
+        wenn nenner == 0:
+            gib_zurück 0
+        setze un: u64 auf q_betrag(zaehler)
+        setze ud: u64 auf q_betrag(nenner)
+        setze q: u64 auf un / ud
+        setze r: u64 auf un % ud
+        wenn r >= ud - r:
+            wenn q == 9223372036854775807:
+                gib_zurück 0
+            setze q auf q + 1
+        wenn q > 9223372036854775807:
+            gib_zurück 0
+        setze vorzeichen: u32 auf 0
+        wenn zaehler < 0:
+            setze vorzeichen auf vorzeichen + 1
+        wenn nenner < 0:
+            setze vorzeichen auf vorzeichen + 1
+        wenn vorzeichen == 1:
+            ziel[0] = -i64(q)
+        sonst:
+            ziel[0] = i64(q)
+        gib_zurück 1
+
+# Passt v in int32_t? (C :63-67)
+@nativ
+funktion q_passt_i32(v: i64) -> u32:
+    unsicher:
+        setze unten: i64 auf -2147483648
+        setze oben: i64 auf 2147483647
+        wenn v < unten:
+            gib_zurück 0
+        wenn v > oben:
+            gib_zurück 0
+        gib_zurück 1
+
+# Rechteck aus Kanten (C :80-97); schreibt nur bei Erfolg.
+@nativ
+funktion r_aus_kanten(x0: i64, y0: i64, x1: i64, y1: i64, ergebnis: ptr[KompRechteck]) -> u32:
+    unsicher:
+        wenn x1 < x0:
+            gib_zurück 0
+        wenn y1 < y0:
+            gib_zurück 0
+        setze b: i64 auf x1 - x0
+        setze h: i64 auf y1 - y0
+        wenn q_passt_i32(x0) == 0:
+            gib_zurück 0
+        wenn q_passt_i32(y0) == 0:
+            gib_zurück 0
+        wenn q_passt_i32(b) == 0:
+            gib_zurück 0
+        wenn q_passt_i32(h) == 0:
+            gib_zurück 0
+        ergebnis.x = i32(x0)
+        ergebnis.y = i32(y0)
+        ergebnis.breite = i32(b)
+        ergebnis.hoehe = i32(h)
+        gib_zurück 1
+
+# q16_mul ohne NULL-Pruefung (C :99-112); Resultcode, schreibt nur bei OK.
+@nativ
+funktion q16_mul_intern(a: i32, b: i32, ziel: ptr[i32]) -> u32:
+    unsicher:
+        setze produkt: i64 auf i64(a) * i64(b)
+        setze gerundet: i64 auf 0
+        wenn q_div_runden(produkt, 65536, zeiger(adresse_von(gerundet))) == 0:
+            gib_zurück 2
+        wenn q_passt_i32(gerundet) == 0:
+            gib_zurück 2
+        ziel[0] = i32(gerundet)
+        gib_zurück 0
+
+@nativ
+@einstieg
+funktion moo_n_q16_mul(a: i32, b: i32, ergebnis: u64) -> u32:
+    unsicher:
+        wenn ergebnis == 0:
+            gib_zurück 1
+        gib_zurück q16_mul_intern(a, b, zeiger(ergebnis))
+
+@nativ
+@einstieg
+funktion moo_n_q16_div(zaehler: i32, nenner: i32, ergebnis: u64) -> u32:
+    unsicher:
+        wenn ergebnis == 0:
+            gib_zurück 1
+        wenn nenner == 0:
+            gib_zurück 1
+        setze skaliert: i64 auf i64(zaehler) * 65536
+        setze gerundet: i64 auf 0
+        wenn q_div_runden(skaliert, i64(nenner), zeiger(adresse_von(gerundet))) == 0:
+            gib_zurück 2
+        wenn q_passt_i32(gerundet) == 0:
+            gib_zurück 2
+        setze p: ptr[i32] auf zeiger(ergebnis)
+        p[0] = i32(gerundet)
+        gib_zurück 0
+
+# C :285-301. Kanten und Flaechen werden vor dem Schreiben gelesen, aus darf a/b sein.
+@nativ
+@einstieg
+funktion moo_n_rect_union(a_adr: u64, b_adr: u64, ergebnis: u64) -> u32:
+    unsicher:
+        wenn ergebnis == 0:
+            gib_zurück 1
+        setze a: ptr[KompRechteck] auf zeiger(a_adr)
+        setze b: ptr[KompRechteck] auf zeiger(b_adr)
+        setze o: ptr[KompRechteck] auf zeiger(ergebnis)
+        wenn a.breite < 0:
+            gib_zurück 1
+        wenn a.hoehe < 0:
+            gib_zurück 1
+        wenn b.breite < 0:
+            gib_zurück 1
+        wenn b.hoehe < 0:
+            gib_zurück 1
+        setze ax0: i64 auf i64(a.x)
+        setze ay0: i64 auf i64(a.y)
+        setze ax1: i64 auf ax0 + i64(a.breite)
+        setze ay1: i64 auf ay0 + i64(a.hoehe)
+        setze bx0: i64 auf i64(b.x)
+        setze by0: i64 auf i64(b.y)
+        setze bx1: i64 auf bx0 + i64(b.breite)
+        setze by1: i64 auf by0 + i64(b.hoehe)
+        wenn a.breite == 0:
+            o[0] = b[0]
+            gib_zurück 0
+        wenn a.hoehe == 0:
+            o[0] = b[0]
+            gib_zurück 0
+        wenn b.breite == 0:
+            o[0] = a[0]
+            gib_zurück 0
+        wenn b.hoehe == 0:
+            o[0] = a[0]
+            gib_zurück 0
+        setze x0: i64 auf bx0
+        wenn ax0 < bx0:
+            setze x0 auf ax0
+        setze y0: i64 auf by0
+        wenn ay0 < by0:
+            setze y0 auf ay0
+        setze x1: i64 auf bx1
+        wenn ax1 > bx1:
+            setze x1 auf ax1
+        setze y1: i64 auf by1
+        wenn ay1 > by1:
+            setze y1 auf ay1
+        wenn r_aus_kanten(x0, y0, x1, y1, o) == 0:
+            gib_zurück 2
+        gib_zurück 0
+
+# Kern von affine_transform_point (C :128-162): 0 = OK, 2 = LIMIT.
+# Schreibt zx/zy erst, wenn beide Koordinaten erfolgreich berechnet sind.
+@nativ
+funktion affin_punkt(a: ptr[KompAffin], px: i64, py: i64, zx: ptr[i32], zy: ptr[i32]) -> u32:
+    unsicher:
+        setze rx: i64 auf 0
+        setze ry: i64 auf 0
+        setze p0: i64 auf 0
+        setze p1: i64 auf 0
+        setze summe: i64 auf 0
+        setze gerundet: i64 auf 0
+        setze t: i64 auf 0
+        wenn q_sub(px, i64(a.ox), zeiger(adresse_von(rx))) == 0:
+            gib_zurück 2
+        wenn q_sub(py, i64(a.oy), zeiger(adresse_von(ry))) == 0:
+            gib_zurück 2
+        wenn q_mul(i64(a.m11), rx, zeiger(adresse_von(p0))) == 0:
+            gib_zurück 2
+        wenn q_mul(i64(a.m12), ry, zeiger(adresse_von(p1))) == 0:
+            gib_zurück 2
+        wenn q_add(p0, p1, zeiger(adresse_von(summe))) == 0:
+            gib_zurück 2
+        wenn q_div_runden(summe, 65536, zeiger(adresse_von(gerundet))) == 0:
+            gib_zurück 2
+        wenn q_add(gerundet, i64(a.ox), zeiger(adresse_von(t))) == 0:
+            gib_zurück 2
+        wenn q_add(t, i64(a.tx), zeiger(adresse_von(t))) == 0:
+            gib_zurück 2
+        wenn q_passt_i32(t) == 0:
+            gib_zurück 2
+        setze nx: i32 auf i32(t)
+        wenn q_mul(i64(a.m21), rx, zeiger(adresse_von(p0))) == 0:
+            gib_zurück 2
+        wenn q_mul(i64(a.m22), ry, zeiger(adresse_von(p1))) == 0:
+            gib_zurück 2
+        wenn q_add(p0, p1, zeiger(adresse_von(summe))) == 0:
+            gib_zurück 2
+        wenn q_div_runden(summe, 65536, zeiger(adresse_von(gerundet))) == 0:
+            gib_zurück 2
+        wenn q_add(gerundet, i64(a.oy), zeiger(adresse_von(t))) == 0:
+            gib_zurück 2
+        wenn q_add(t, i64(a.ty), zeiger(adresse_von(t))) == 0:
+            gib_zurück 2
+        wenn q_passt_i32(t) == 0:
+            gib_zurück 2
+        zx[0] = nx
+        zy[0] = i32(t)
+        gib_zurück 0
+
+@nativ
+@einstieg
+funktion moo_n_affine_transform_point(affin: u64, punkt: u64, ergebnis: u64) -> u32:
+    unsicher:
+        wenn affin == 0:
+            gib_zurück 1
+        wenn ergebnis == 0:
+            gib_zurück 1
+        setze a: ptr[KompAffin] auf zeiger(affin)
+        setze p: ptr[KompPunkt] auf zeiger(punkt)
+        setze o: ptr[KompPunkt] auf zeiger(ergebnis)
+        setze px: i64 auf i64(p.x)
+        setze py: i64 auf i64(p.y)
+        gib_zurück affin_punkt(a, px, py, zeiger(adresse_von(o.x)), zeiger(adresse_von(o.y)))
+
+# C :164-173: round(num * 2^32 / det) als int32.
+@nativ
+funktion inverse_koeffizient(zaehler: i64, det: i64, ziel: ptr[i32]) -> u32:
+    unsicher:
+        setze skaliert: i64 auf 0
+        setze wert: i64 auf 0
+        wenn q_mul(zaehler, 4294967296, zeiger(adresse_von(skaliert))) == 0:
+            gib_zurück 0
+        wenn q_div_runden(skaliert, det, zeiger(adresse_von(wert))) == 0:
+            gib_zurück 0
+        wenn q_passt_i32(wert) == 0:
+            gib_zurück 0
+        ziel[0] = i32(wert)
+        gib_zurück 1
+
+# C :175-218. Alles wird vor dem ersten Schreiben gelesen/berechnet, ergebnis darf affin sein.
+@nativ
+@einstieg
+funktion moo_n_affine_inverse(affin: u64, ergebnis: u64) -> u32:
+    unsicher:
+        wenn affin == 0:
+            gib_zurück 1
+        wenn ergebnis == 0:
+            gib_zurück 1
+        setze a: ptr[KompAffin] auf zeiger(affin)
+        setze o: ptr[KompAffin] auf zeiger(ergebnis)
+        setze p0: i64 auf 0
+        setze p1: i64 auf 0
+        setze det: i64 auf 0
+        wenn q_mul(i64(a.m11), i64(a.m22), zeiger(adresse_von(p0))) == 0:
+            gib_zurück 2
+        wenn q_mul(i64(a.m12), i64(a.m21), zeiger(adresse_von(p1))) == 0:
+            gib_zurück 2
+        wenn q_sub(p0, p1, zeiger(adresse_von(det))) == 0:
+            gib_zurück 2
+        wenn det == 0:
+            gib_zurück 1
+        setze n11: i32 auf 0
+        setze n12: i32 auf 0
+        setze n21: i32 auf 0
+        setze n22: i32 auf 0
+        wenn inverse_koeffizient(i64(a.m22), det, zeiger(adresse_von(n11))) == 0:
+            gib_zurück 2
+        wenn inverse_koeffizient(-i64(a.m12), det, zeiger(adresse_von(n12))) == 0:
+            gib_zurück 2
+        wenn inverse_koeffizient(-i64(a.m21), det, zeiger(adresse_von(n21))) == 0:
+            gib_zurück 2
+        wenn inverse_koeffizient(i64(a.m11), det, zeiger(adresse_von(n22))) == 0:
+            gib_zurück 2
+        setze min: i64 auf -9223372036854775808
+        setze q0: i32 auf 0
+        setze q1: i32 auf 0
+        setze summe: i64 auf 0
+        wenn q16_mul_intern(n11, a.tx, zeiger(adresse_von(q0))) != 0:
+            gib_zurück 2
+        wenn q16_mul_intern(n12, a.ty, zeiger(adresse_von(q1))) != 0:
+            gib_zurück 2
+        wenn q_add(i64(q0), i64(q1), zeiger(adresse_von(summe))) == 0:
+            gib_zurück 2
+        wenn summe == min:
+            gib_zurück 2
+        wenn q_passt_i32(-summe) == 0:
+            gib_zurück 2
+        setze ntx: i32 auf i32(-summe)
+        wenn q16_mul_intern(n21, a.tx, zeiger(adresse_von(q0))) != 0:
+            gib_zurück 2
+        wenn q16_mul_intern(n22, a.ty, zeiger(adresse_von(q1))) != 0:
+            gib_zurück 2
+        wenn q_add(i64(q0), i64(q1), zeiger(adresse_von(summe))) == 0:
+            gib_zurück 2
+        wenn summe == min:
+            gib_zurück 2
+        wenn q_passt_i32(-summe) == 0:
+            gib_zurück 2
+        setze nty: i32 auf i32(-summe)
+        setze nox: i32 auf a.ox
+        setze noy: i32 auf a.oy
+        o.m11 = n11
+        o.m12 = n12
+        o.m21 = n21
+        o.m22 = n22
+        o.tx = ntx
+        o.ty = nty
+        o.ox = nox
+        o.oy = noy
+        gib_zurück 0
+
+# C :220-233 (Abrunden/Aufrunden einer Q16-Zahl auf ganze Pixel).
+@nativ
+funktion q16_boden(v: i32) -> i64:
+    unsicher:
+        setze w: i64 auf i64(v)
+        wenn w >= 0:
+            gib_zurück w / 65536
+        gib_zurück -((-w + 65535) / 65536)
+
+@nativ
+funktion q16_decke(v: i32) -> i64:
+    unsicher:
+        setze w: i64 auf i64(v)
+        wenn w >= 0:
+            gib_zurück (w + 65535) / 65536
+        gib_zurück -((-w) / 65536)
+
+# C :235-241: Pixel -> Q16 (geprueft).
+@nativ
+funktion pixel_q16(v: i64, ziel: ptr[i32]) -> u32:
+    unsicher:
+        setze s: i64 auf 0
+        wenn q_mul(v, 65536, zeiger(adresse_von(s))) == 0:
+            gib_zurück 0
+        wenn q_passt_i32(s) == 0:
+            gib_zurück 0
+        ziel[0] = i32(s)
+        gib_zurück 1
+
+# C :243-283. Rechteck wird vor dem Schreiben vollstaendig gelesen, ergebnis darf rechteck sein.
+@nativ
+@einstieg
+funktion moo_n_transform_rect_aabb(affin: u64, rechteck: u64, ergebnis: u64) -> u32:
+    unsicher:
+        wenn affin == 0:
+            gib_zurück 1
+        wenn ergebnis == 0:
+            gib_zurück 1
+        setze a: ptr[KompAffin] auf zeiger(affin)
+        setze r: ptr[KompRechteck] auf zeiger(rechteck)
+        setze o: ptr[KompRechteck] auf zeiger(ergebnis)
+        wenn r.breite < 0:
+            gib_zurück 1
+        wenn r.hoehe < 0:
+            gib_zurück 1
+        setze x0: i64 auf i64(r.x)
+        setze y0: i64 auf i64(r.y)
+        setze x1: i64 auf x0 + i64(r.breite)
+        setze y1: i64 auf y0 + i64(r.hoehe)
+        setze qx0: i32 auf 0
+        setze qy0: i32 auf 0
+        setze qx1: i32 auf 0
+        setze qy1: i32 auf 0
+        wenn pixel_q16(x0, zeiger(adresse_von(qx0))) == 0:
+            gib_zurück 2
+        wenn pixel_q16(y0, zeiger(adresse_von(qy0))) == 0:
+            gib_zurück 2
+        wenn pixel_q16(x1, zeiger(adresse_von(qx1))) == 0:
+            gib_zurück 2
+        wenn pixel_q16(y1, zeiger(adresse_von(qy1))) == 0:
+            gib_zurück 2
+        setze tx: i32 auf 0
+        setze ty: i32 auf 0
+        wenn affin_punkt(a, i64(qx0), i64(qy0), zeiger(adresse_von(tx)), zeiger(adresse_von(ty))) != 0:
+            gib_zurück 2
+        setze min_x: i32 auf tx
+        setze max_x: i32 auf tx
+        setze min_y: i32 auf ty
+        setze max_y: i32 auf ty
+        wenn affin_punkt(a, i64(qx1), i64(qy0), zeiger(adresse_von(tx)), zeiger(adresse_von(ty))) != 0:
+            gib_zurück 2
+        wenn tx < min_x:
+            setze min_x auf tx
+        wenn tx > max_x:
+            setze max_x auf tx
+        wenn ty < min_y:
+            setze min_y auf ty
+        wenn ty > max_y:
+            setze max_y auf ty
+        wenn affin_punkt(a, i64(qx0), i64(qy1), zeiger(adresse_von(tx)), zeiger(adresse_von(ty))) != 0:
+            gib_zurück 2
+        wenn tx < min_x:
+            setze min_x auf tx
+        wenn tx > max_x:
+            setze max_x auf tx
+        wenn ty < min_y:
+            setze min_y auf ty
+        wenn ty > max_y:
+            setze max_y auf ty
+        wenn affin_punkt(a, i64(qx1), i64(qy1), zeiger(adresse_von(tx)), zeiger(adresse_von(ty))) != 0:
+            gib_zurück 2
+        wenn tx < min_x:
+            setze min_x auf tx
+        wenn tx > max_x:
+            setze max_x auf tx
+        wenn ty < min_y:
+            setze min_y auf ty
+        wenn ty > max_y:
+            setze max_y auf ty
+        wenn r_aus_kanten(q16_boden(min_x), q16_boden(min_y), q16_decke(max_x), q16_decke(max_y), o) == 0:
+            gib_zurück 2
+        gib_zurück 0
+
+# C :322-338. Rechteck wird vor dem Schreiben gelesen, ergebnis darf rechteck sein.
+@nativ
+@einstieg
+funktion moo_n_rect_expand(rechteck: u64, radius: i32, ergebnis: u64) -> u32:
+    unsicher:
+        wenn ergebnis == 0:
+            gib_zurück 1
+        wenn radius < 0:
+            gib_zurück 1
+        setze r: ptr[KompRechteck] auf zeiger(rechteck)
+        wenn r.breite < 0:
+            gib_zurück 1
+        wenn r.hoehe < 0:
+            gib_zurück 1
+        setze x0: i64 auf i64(r.x)
+        setze y0: i64 auf i64(r.y)
+        setze x1: i64 auf x0 + i64(r.breite)
+        setze y1: i64 auf y0 + i64(r.hoehe)
+        setze rad: i64 auf i64(radius)
+        setze nx0: i64 auf 0
+        setze ny0: i64 auf 0
+        setze nx1: i64 auf 0
+        setze ny1: i64 auf 0
+        wenn q_sub(x0, rad, zeiger(adresse_von(nx0))) == 0:
+            gib_zurück 2
+        wenn q_sub(y0, rad, zeiger(adresse_von(ny0))) == 0:
+            gib_zurück 2
+        wenn q_add(x1, rad, zeiger(adresse_von(nx1))) == 0:
+            gib_zurück 2
+        wenn q_add(y1, rad, zeiger(adresse_von(ny1))) == 0:
+            gib_zurück 2
+        setze o: ptr[KompRechteck] auf zeiger(ergebnis)
+        wenn r_aus_kanten(nx0, ny0, nx1, ny1, o) == 0:
+            gib_zurück 2
+        gib_zurück 0
+
+# C :340-345: kleinster Bruch n/d (Kreuzmultiplikation, d == 0 wird uebersprungen).
+@nativ
+funktion bruch_min(n: u64, d: u64, bn: ptr[u64], bd: ptr[u64]) -> void:
+    unsicher:
+        wenn d != 0:
+            wenn n * bd[0] < bn[0] * d:
+                bn[0] = n
+                bd[0] = d
+
+# C :347-369. Ecken werden vor dem Schreiben gelesen, ergebnis darf ecken sein.
+@nativ
+@einstieg
+funktion moo_n_corners_normalize(breite: i32, hoehe: i32, ecken: u64, ergebnis: u64) -> u32:
+    unsicher:
+        wenn ecken == 0:
+            gib_zurück 1
+        wenn ergebnis == 0:
+            gib_zurück 1
+        wenn breite < 0:
+            gib_zurück 1
+        wenn hoehe < 0:
+            gib_zurück 1
+        setze e: ptr[KompEcken] auf zeiger(ecken)
+        setze ol: u64 auf u64(e.oben_links)
+        setze orr: u64 auf u64(e.oben_rechts)
+        setze ur: u64 auf u64(e.unten_rechts)
+        setze ul: u64 auf u64(e.unten_links)
+        setze b: u64 auf u64(breite)
+        setze h: u64 auf u64(hoehe)
+        setze n: u64 auf 1
+        setze d: u64 auf 1
+        bruch_min(b, ol + orr, zeiger(adresse_von(n)), zeiger(adresse_von(d)))
+        bruch_min(b, ul + ur, zeiger(adresse_von(n)), zeiger(adresse_von(d)))
+        bruch_min(h, ol + ul, zeiger(adresse_von(n)), zeiger(adresse_von(d)))
+        bruch_min(h, orr + ur, zeiger(adresse_von(n)), zeiger(adresse_von(d)))
+        setze vol: u16 auf u16(ol * n / d)
+        setze v_or: u16 auf u16(orr * n / d)
+        setze vur: u16 auf u16(ur * n / d)
+        setze vul: u16 auf u16(ul * n / d)
+        setze o: ptr[KompEcken] auf zeiger(ergebnis)
+        o.oben_links = vol
+        o.oben_rechts = v_or
+        o.unten_rechts = vur
+        o.unten_links = vul
+        gib_zurück 0
+
+# C :371-381. ux*ux+uy*uy wickelt wie C-unsigned (Systemkoerper: + - * wickeln,
+# native_system.rs:21); real gilt |dx|,|dy| <= 2*radius+1.
+@nativ
+funktion ecke_innen(px: i32, py: i32, cx: i32, cy: i32, radius: i32) -> u32:
+    unsicher:
+        setze sx: i64 auf i64(px) * 2 + 1
+        setze sy: i64 auf i64(py) * 2 + 1
+        setze dx: i64 auf sx - i64(cx) * 2
+        setze dy: i64 auf sy - i64(cy) * 2
+        setze ux: u64 auf q_betrag(dx)
+        setze uy: u64 auf q_betrag(dy)
+        setze rr: u64 auf u64(radius) * 2
+        wenn ux * ux + uy * uy <= rr * rr:
+            gib_zurück 255
+        gib_zurück 0
+
+# C :383-407. Binaere A8-Abdeckung (255 innen, 0 aussen).
+@nativ
+@einstieg
+funktion moo_n_rounded_coverage_a8(breite: i32, hoehe: i32, ecken: u64, x: i32, y: i32, ergebnis: u64) -> u32:
+    unsicher:
+        wenn ecken == 0:
+            gib_zurück 1
+        wenn ergebnis == 0:
+            gib_zurück 1
+        wenn breite < 0:
+            gib_zurück 1
+        wenn hoehe < 0:
+            gib_zurück 1
+        setze e: ptr[KompEcken] auf zeiger(ecken)
+        setze tl: i32 auf i32(e.oben_links)
+        setze tr: i32 auf i32(e.oben_rechts)
+        setze br: i32 auf i32(e.unten_rechts)
+        setze bl: i32 auf i32(e.unten_links)
+        setze v: u32 auf 255
+        setze fertig: u32 auf 0
+        wenn x < 0:
+            setze fertig auf 1
+        wenn y < 0:
+            setze fertig auf 1
+        wenn x >= breite:
+            setze fertig auf 1
+        wenn y >= hoehe:
+            setze fertig auf 1
+        wenn fertig == 1:
+            setze v auf 0
+        wenn fertig == 0:
+            wenn x < tl:
+                wenn y < tl:
+                    setze v auf ecke_innen(x, y, tl, tl, tl)
+                    setze fertig auf 1
+        wenn fertig == 0:
+            wenn x >= breite - tr:
+                wenn y < tr:
+                    setze v auf ecke_innen(x, y, breite - tr, tr, tr)
+                    setze fertig auf 1
+        wenn fertig == 0:
+            wenn x >= breite - br:
+                wenn y >= hoehe - br:
+                    setze v auf ecke_innen(x, y, breite - br, hoehe - br, br)
+                    setze fertig auf 1
+        wenn fertig == 0:
+            wenn x < bl:
+                wenn y >= hoehe - bl:
+                    setze v auf ecke_innen(x, y, bl, hoehe - bl, bl)
+                    setze fertig auf 1
+        setze o: ptr[u8] auf zeiger(ergebnis)
+        o[0] = u8(v)
+        gib_zurück 0
+
+# C :413-453. Masken: V2 = 0xFF, SHADOW = 1<<1, BACKDROP_BLUR = 1<<2
+# (effects_protocol.h:85-101). Ausgabe wird erst am Ende geschrieben.
+@nativ
+@einstieg
+funktion moo_n_compute_bounds(lokal: u64, affin: u64, maske: u64, schatten: u64, hintergrund: u64, ergebnis: u64) -> u32:
+    unsicher:
+        wenn affin == 0:
+            gib_zurück 1
+        wenn schatten == 0:
+            gib_zurück 1
+        wenn hintergrund == 0:
+            gib_zurück 1
+        wenn ergebnis == 0:
+            gib_zurück 1
+        wenn maske > 255:
+            gib_zurück 1
+        setze s: ptr[KompSchatten] auf zeiger(schatten)
+        setze h: ptr[KompHintergrund] auf zeiger(hintergrund)
+        setze g_inhalt: KompRechteck auf KompRechteck(0, 0, 0, 0)
+        setze rc: u32 auf moo_n_transform_rect_aabb(affin, lokal, adresse_von(g_inhalt))
+        wenn rc != 0:
+            gib_zurück rc
+        setze g_sicht: KompRechteck auf g_inhalt
+        wenn (maske & 2) != 0:
+            setze fuss: i64 auf i64(s.unschaerfe) + i64(s.ausbreitung)
+            wenn fuss > 2147483647:
+                gib_zurück 2
+            setze g_schatten: KompRechteck auf g_inhalt
+            setze rc auf moo_n_rect_expand(adresse_von(g_schatten), i32(fuss), adresse_von(g_schatten))
+            wenn rc != 0:
+                gib_zurück rc
+            setze t: i64 auf 0
+            wenn q_add(i64(g_schatten.x), i64(s.versatz_x), zeiger(adresse_von(t))) == 0:
+                gib_zurück 2
+            wenn q_passt_i32(t) == 0:
+                gib_zurück 2
+            g_schatten.x = i32(t)
+            wenn q_add(i64(g_schatten.y), i64(s.versatz_y), zeiger(adresse_von(t))) == 0:
+                gib_zurück 2
+            wenn q_passt_i32(t) == 0:
+                gib_zurück 2
+            g_schatten.y = i32(t)
+            setze rc auf moo_n_rect_union(adresse_von(g_inhalt), adresse_von(g_schatten), adresse_von(g_sicht))
+            wenn rc != 0:
+                gib_zurück rc
+        setze g_probe: KompRechteck auf g_inhalt
+        wenn (maske & 4) != 0:
+            setze rc auf moo_n_rect_expand(adresse_von(g_inhalt), i32(h.unschaerfe), adresse_von(g_probe))
+            wenn rc != 0:
+                gib_zurück rc
+        setze o: ptr[KompGrenzen] auf zeiger(ergebnis)
+        o.inhalt_r = g_inhalt
+        o.sicht_r = g_sicht
+        o.probe_r = g_probe
+        gib_zurück 0
+
+# C :303-320.
+@nativ
+@einstieg
+funktion moo_n_rect_intersect(a_adr: u64, b_adr: u64, ergebnis: u64) -> u32:
+    unsicher:
+        wenn ergebnis == 0:
+            gib_zurück 1
+        setze a: ptr[KompRechteck] auf zeiger(a_adr)
+        setze b: ptr[KompRechteck] auf zeiger(b_adr)
+        setze o: ptr[KompRechteck] auf zeiger(ergebnis)
+        wenn a.breite < 0:
+            gib_zurück 1
+        wenn a.hoehe < 0:
+            gib_zurück 1
+        wenn b.breite < 0:
+            gib_zurück 1
+        wenn b.hoehe < 0:
+            gib_zurück 1
+        setze ax0: i64 auf i64(a.x)
+        setze ay0: i64 auf i64(a.y)
+        setze ax1: i64 auf ax0 + i64(a.breite)
+        setze ay1: i64 auf ay0 + i64(a.hoehe)
+        setze bx0: i64 auf i64(b.x)
+        setze by0: i64 auf i64(b.y)
+        setze bx1: i64 auf bx0 + i64(b.breite)
+        setze by1: i64 auf by0 + i64(b.hoehe)
+        setze x0: i64 auf bx0
+        wenn ax0 > bx0:
+            setze x0 auf ax0
+        setze y0: i64 auf by0
+        wenn ay0 > by0:
+            setze y0 auf ay0
+        setze x1: i64 auf bx1
+        wenn ax1 < bx1:
+            setze x1 auf ax1
+        setze y1: i64 auf by1
+        wenn ay1 < by1:
+            setze y1 auf ay1
+        wenn x1 < x0:
+            setze x1 auf x0
+        wenn y1 < y0:
+            setze y1 auf y0
+        wenn r_aus_kanten(x0, y0, x1, y1, o) == 0:
+            gib_zurück 2
+        gib_zurück 0

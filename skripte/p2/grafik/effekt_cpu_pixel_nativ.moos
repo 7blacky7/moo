@@ -1,0 +1,332 @@
+# P2-T72 Modul 1: Pixel-/Pruef-Grundbausteine aus
+# compiler/runtime/moo_compositor_effects_cpu.c:13-204 in nativem Moo.
+# Resultcodes: 0 OK, 1 INVALID. Zeiger als u64-Adresse. u8-Ergebnisse werden
+# als u32 exportiert (Systemkoerper-@einstieg mit 8/16-Bit-Rueckgabe nicht
+# belegt); C-Aufrufer schneidet auf uint8_t.
+#
+# Layouts (effects_cpu.h): MooCompEffectCpuSource/-Target 32 Byte: pixels @0,
+# buffer_bytes @8, stride @16, width i32 @24, height i32 @28.
+# MooCompRect 16 Byte; MooCompEffectState 96 Byte (Offsets wie
+# effekt_zustand_nativ.moos).
+
+struktur KompCpuBild:
+    pixel: u64
+    puffer_bytes: u64
+    zeilenabstand: u64
+    breite: i32
+    hoehe: i32
+
+struktur KompCpuRechteck:
+    x: i32
+    y: i32
+    breite: i32
+    hoehe: i32
+
+# = MooCompEffectState, flach (wie effekt_zustand_nativ.moos).
+struktur KompCpuZustand:
+    aktiv_maske: u64
+    pflicht_maske: u64
+    rueckfall: u32
+    reserviert: u32
+    ecke_ol: u16
+    ecke_or: u16
+    ecke_ur: u16
+    ecke_ul: u16
+    schatten_x: i32
+    schatten_y: i32
+    schatten_unschaerfe: u16
+    schatten_ausbreitung: u16
+    schatten_r: u8
+    schatten_g: u8
+    schatten_b: u8
+    schatten_a: u8
+    hg_unschaerfe: u16
+    hg_saettigung: u16
+    tint_r: u8
+    tint_g: u8
+    tint_b: u8
+    tint_a: u8
+    tint_mix: u8
+    rauschen: u8
+    hg_reserviert: u16
+    rauschen_saat: u32
+    m11: i32
+    m12: i32
+    m21: i32
+    m22: i32
+    tx: i32
+    ty: i32
+    ursprung_x: i32
+    ursprung_y: i32
+
+# C :13-17.
+@nativ
+@einstieg
+funktion moo_n_fx_clamp_u8(v: i64) -> u32:
+    unsicher:
+        wenn v < 0:
+            gib_zurück 0
+        wenn v > 255:
+            gib_zurück 255
+        gib_zurück u32(v)
+
+# C :19-21. Vorbedingung d != 0; u64-Addition wickelt wie C.
+@nativ
+@einstieg
+funktion moo_n_fx_round_u64(n: u64, d: u64) -> u64:
+    unsicher:
+        gib_zurück (n + d / 2) / d
+
+# C :23-30. Divisor wie C als u64 reinterpretiert.
+@nativ
+@einstieg
+funktion moo_n_fx_round_signed(n: i64, d: i64) -> i64:
+    unsicher:
+        setze ud: u64 auf u64(d)
+        wenn n >= 0:
+            gib_zurück i64(moo_n_fx_round_u64(u64(n), ud))
+        setze betrag: u64 auf u64(-(n + 1)) + 1
+        setze q: u64 auf moo_n_fx_round_u64(betrag, ud)
+        gib_zurück -i64(q)
+
+# C :32-42. 1 = ok (ziel geschrieben), 0 = Ueberlauf.
+@nativ
+funktion fx_mul_u64(a: u64, b: u64, ziel: ptr[u64]) -> u32:
+    unsicher:
+        setze umax: u64 auf 0
+        setze umax auf umax - 1
+        wenn a != 0:
+            wenn b > umax / a:
+                gib_zurück 0
+        ziel[0] = a * b
+        gib_zurück 1
+
+@nativ
+funktion fx_add_u64(a: u64, b: u64, ziel: ptr[u64]) -> u32:
+    unsicher:
+        setze umax: u64 auf 0
+        setze umax auf umax - 1
+        wenn b > umax - a:
+            gib_zurück 0
+        ziel[0] = a + b
+        gib_zurück 1
+
+# C :44-53. size_t = u64 auf x86_64.
+@nativ
+@einstieg
+funktion moo_n_fx_view_valid(pixel: u64, bytes: u64, zeilenabstand: u64, breite: i32, hoehe: i32) -> u32:
+    unsicher:
+        wenn pixel == 0:
+            gib_zurück 0
+        wenn breite <= 0:
+            gib_zurück 0
+        wenn hoehe <= 0:
+            gib_zurück 0
+        setze umax: u64 auf 0
+        setze umax auf umax - 1
+        wenn u64(breite) > umax / 4:
+            gib_zurück 0
+        setze zeile: u64 auf u64(breite) * 4
+        wenn zeilenabstand < zeile:
+            gib_zurück 0
+        wenn u64(hoehe) > umax / zeilenabstand:
+            gib_zurück 0
+        wenn zeilenabstand * u64(hoehe) <= bytes:
+            gib_zurück 1
+        gib_zurück 0
+
+# C :55-67. Leere Bereiche/NULL ueberlappen nie; Adressraum-Ueberlauf -> 1.
+@nativ
+@einstieg
+funktion moo_n_fx_ranges_overlap(a: u64, a_bytes: u64, b: u64, b_bytes: u64) -> u32:
+    unsicher:
+        wenn a == 0:
+            gib_zurück 0
+        wenn b == 0:
+            gib_zurück 0
+        wenn a_bytes == 0:
+            gib_zurück 0
+        wenn b_bytes == 0:
+            gib_zurück 0
+        setze umax: u64 auf 0
+        setze umax auf umax - 1
+        wenn a_bytes > umax - a:
+            gib_zurück 1
+        wenn b_bytes > umax - b:
+            gib_zurück 1
+        setze a_ende: u64 auf a + a_bytes
+        setze b_ende: u64 auf b + b_bytes
+        wenn a < b_ende:
+            wenn b < a_ende:
+                gib_zurück 1
+        gib_zurück 0
+
+# C :69-77. Rechteck per Zeiger (C by value). 1 = gueltig (positiv, Enden in i32).
+@nativ
+@einstieg
+funktion moo_n_fx_rect_valid(rechteck: u64) -> u32:
+    unsicher:
+        setze r: ptr[KompCpuRechteck] auf zeiger(rechteck)
+        wenn r.breite <= 0:
+            gib_zurück 0
+        wenn r.hoehe <= 0:
+            gib_zurück 0
+        setze x1: i64 auf i64(r.x) + i64(r.breite)
+        setze y1: i64 auf i64(r.y) + i64(r.hoehe)
+        wenn x1 > 2147483647:
+            gib_zurück 0
+        wenn y1 > 2147483647:
+            gib_zurück 0
+        gib_zurück 1
+
+# C :79-82. 1 = |v| <= grenze in i64.
+@nativ
+funktion fx_betrag_ok(v: i32, grenze: i32) -> u32:
+    unsicher:
+        setze w: i64 auf i64(v)
+        setze g: i64 auf i64(grenze)
+        wenn w < -g:
+            gib_zurück 0
+        wenn w > g:
+            gib_zurück 0
+        gib_zurück 1
+
+# C :84-126. Strukturelle Pruefung gegen die Default-Grenzen (nicht gegen
+# konfigurierte Limits). Affin nur geprueft, wenn AFFINE_2D (64) aktiv.
+@nativ
+@einstieg
+funktion moo_n_fx_effect_valid(zustand: u64) -> u32:
+    unsicher:
+        setze e: ptr[KompCpuZustand] auf zeiger(zustand)
+        setze m: u64 auf e.aktiv_maske
+        wenn m > 255:
+            gib_zurück 0
+        wenn (e.pflicht_maske & m) != e.pflicht_maske:
+            gib_zurück 0
+        wenn e.rueckfall > 2:
+            gib_zurück 0
+        wenn e.reserviert != 0:
+            gib_zurück 0
+        wenn e.hg_reserviert != 0:
+            gib_zurück 0
+        wenn e.ecke_ol > 4096:
+            gib_zurück 0
+        wenn e.ecke_or > 4096:
+            gib_zurück 0
+        wenn e.ecke_ur > 4096:
+            gib_zurück 0
+        wenn e.ecke_ul > 4096:
+            gib_zurück 0
+        wenn e.schatten_unschaerfe > 64:
+            gib_zurück 0
+        wenn e.schatten_ausbreitung > 64:
+            gib_zurück 0
+        wenn e.hg_unschaerfe > 32:
+            gib_zurück 0
+        wenn e.hg_saettigung > 1024:
+            gib_zurück 0
+        wenn fx_betrag_ok(e.schatten_x, 4096) == 0:
+            gib_zurück 0
+        wenn fx_betrag_ok(e.schatten_y, 4096) == 0:
+            gib_zurück 0
+        wenn (m & 64) != 0:
+            wenn fx_betrag_ok(e.m11, 1048576) == 0:
+                gib_zurück 0
+            wenn fx_betrag_ok(e.m12, 1048576) == 0:
+                gib_zurück 0
+            wenn fx_betrag_ok(e.m21, 1048576) == 0:
+                gib_zurück 0
+            wenn fx_betrag_ok(e.m22, 1048576) == 0:
+                gib_zurück 0
+            wenn fx_betrag_ok(e.tx, 2147418112) == 0:
+                gib_zurück 0
+            wenn fx_betrag_ok(e.ty, 2147418112) == 0:
+                gib_zurück 0
+            wenn fx_betrag_ok(e.ursprung_x, 2147418112) == 0:
+                gib_zurück 0
+            wenn fx_betrag_ok(e.ursprung_y, 2147418112) == 0:
+                gib_zurück 0
+        gib_zurück 1
+
+# C :147-161. Source-over in geradem (nicht vormultipliziertem) Alpha; Ziel
+# wird erst nach Berechnung aller vier Kanaele geschrieben (alias-sicher).
+@nativ
+@einstieg
+funktion moo_n_fx_over(ziel: u64, quelle: u64) -> void:
+    unsicher:
+        setze d: ptr[u8] auf zeiger(ziel)
+        setze s: ptr[u8] auf zeiger(quelle)
+        setze sa: u64 auf u64(s[3])
+        setze da: u64 auf u64(d[3])
+        setze inv: u64 auf 255 - sa
+        setze a: u64 auf sa * 255 + da * inv
+        setze o3: u64 auf moo_n_fx_round_u64(a, 255)
+        setze o0: u64 auf 0
+        setze o1: u64 auf 0
+        setze o2: u64 auf 0
+        wenn a != 0:
+            setze o0 auf moo_n_fx_round_u64(u64(s[0]) * sa * 255 + u64(d[0]) * da * inv, a)
+            setze o1 auf moo_n_fx_round_u64(u64(s[1]) * sa * 255 + u64(d[1]) * da * inv, a)
+            setze o2 auf moo_n_fx_round_u64(u64(s[2]) * sa * 255 + u64(d[2]) * da * inv, a)
+        d[0] = u8(o0)
+        d[1] = u8(o1)
+        d[2] = u8(o2)
+        d[3] = u8(o3)
+
+# C :163-173. u32-Multiplikation wickelt (Systemkoerper) wie uint32_t in C.
+@nativ
+@einstieg
+funktion moo_n_comp_noise_hash(x: u32, y: u32, saat: u32) -> u32:
+    unsicher:
+        setze h: u32 auf saat ^ (x * 2654435761) ^ (y * 2246822519)
+        setze h auf h ^ (h >> 16)
+        setze h auf h * 2146121005
+        setze h auf h ^ (h >> 15)
+        setze h auf h * 2221713035
+        setze h auf h ^ (h >> 16)
+        gib_zurück h
+
+# C :175-184.
+@nativ
+funktion fx_hash_byte(h: u64, b: u64) -> u64:
+    unsicher:
+        gib_zurück (h ^ b) * 1099511628211
+
+@nativ
+funktion fx_hash_u32(h: u64, v: u32) -> u64:
+    unsicher:
+        setze x: u64 auf fx_hash_byte(h, u64(v & 255))
+        setze x auf fx_hash_byte(x, u64((v >> 8) & 255))
+        setze x auf fx_hash_byte(x, u64((v >> 16) & 255))
+        gib_zurück fx_hash_byte(x, u64(v >> 24))
+
+# C :186-204. FNV ueber Breite, Hoehe (als u32-Bitmuster) und die aktiven
+# RGBA-Bytes jeder Zeile (nie die Zeilen-Auffuellung). Ausgabe nur bei OK.
+@nativ
+@einstieg
+funktion moo_n_fx_hash_rgba(bild: u64, ergebnis: u64) -> u32:
+    unsicher:
+        wenn bild == 0:
+            gib_zurück 1
+        wenn ergebnis == 0:
+            gib_zurück 1
+        setze b: ptr[KompCpuBild] auf zeiger(bild)
+        wenn moo_n_fx_view_valid(b.pixel, b.puffer_bytes, b.zeilenabstand, b.breite, b.hoehe) == 0:
+            gib_zurück 1
+        setze w32: ptr[u32] auf zeiger(bild)
+        setze h: u64 auf 1469598103934665603
+        setze h auf fx_hash_u32(h, w32[6])
+        setze h auf fx_hash_u32(h, w32[7])
+        setze zeilen: u64 auf u64(b.hoehe)
+        setze spalten: u64 auf u64(b.breite) * 4
+        setze y: u64 auf 0
+        solange y < zeilen:
+            setze reihe: ptr[u8] auf zeiger(b.pixel + y * b.zeilenabstand)
+            setze x: u64 auf 0
+            solange x < spalten:
+                setze h auf fx_hash_byte(h, u64(reihe[x]))
+                setze x auf x + 1
+            setze y auf y + 1
+        setze o: ptr[u64] auf zeiger(ergebnis)
+        o[0] = h
+        gib_zurück 0

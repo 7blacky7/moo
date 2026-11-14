@@ -1,0 +1,74 @@
+# P2-T66: hosted x86_64 Systemkoerper mit Zeigern und Strukturwerten.
+# Normales Moo-main; die @nativ-Funktionen sind native->native bzw. per
+# @einstieg aus C erreichbar (dyn->native ist Stufe 2, nicht freigegeben).
+struktur Paar:
+    a: u32
+    b: u32
+
+# Ein einzelner extern-C-Aufruf mit Zeigern (Argumente und Rueckgabe) laeuft
+# hosted ueber den Systemkoerper; der skalare FFI-Pfad kennt keine Zeiger.
+extern "C" funktion memset(ziel: ptr[u8], wert: i32, n: u64) -> ptr[u8]
+
+# 8/16-Bit-Ganzzahlen an extern C: Aufrufstelle traegt signext/zeroext (SysV),
+# Orakel compiler/tests/p2/ffi_klein_roundtrip.c (vom Gate als Archiv gebaut).
+@bibliothek("p2_ffi_klein")
+extern "C" funktion p2_ffi_i8_identity(wert: i8) -> i8
+@bibliothek("p2_ffi_klein")
+extern "C" funktion p2_ffi_u8_identity(wert: u8) -> u8
+@bibliothek("p2_ffi_klein")
+extern "C" funktion p2_ffi_i16_identity(wert: i16) -> i16
+@bibliothek("p2_ffi_klein")
+extern "C" funktion p2_ffi_u16_identity(wert: u16) -> u16
+
+@nativ
+funktion vertauscht(p: Paar) -> Paar:
+    unsicher:
+        gib_zurück Paar(p.b, p.a)
+
+@nativ
+@einstieg
+funktion hosted_summe(p: ptr[u32], n: u64) -> u32:
+    unsicher:
+        setze summe: u32 auf 0
+        setze i: u64 auf 0
+        solange i < n:
+            setze summe auf summe + p[i]
+            setze i auf i + 1
+        gib_zurück summe
+
+@nativ
+@einstieg
+funktion hosted_tausche(p: ptr[Paar]) -> u32:
+    unsicher:
+        setze t: Paar auf vertauscht(p[0])
+        p[0] = t
+        gib_zurück t.a
+
+@nativ
+@einstieg
+funktion hosted_fuellen(p: ptr[u8], n: u64) -> ptr[u8]:
+    unsicher:
+        gib_zurück memset(p, i32(42), n)
+
+@nativ
+@einstieg
+funktion hosted_klein(a: i32, b: i32, c: i32, d: i32) -> i32:
+    unsicher:
+        setze x: i8 auf p2_ffi_i8_identity(i8(a))
+        setze y: u8 auf p2_ffi_u8_identity(u8(b))
+        setze z: i16 auf p2_ffi_i16_identity(i16(c))
+        setze w: u16 auf p2_ffi_u16_identity(u16(d))
+        gib_zurück i32(x) + i32(y) + i32(z) + i32(w)
+
+# Stufe 2a: rein skalarer Systemkoerper aus dynamischem Moo, explizit unsicher.
+unsicher:
+    zeige hosted_klein(-5, 200, -300, 60000)
+
+# Variante (b): Aufruf aus einer benannten Funktion, Argument aus Parameter
+# (dynamische Konvertierung, Fehler darin waere fatal).
+funktion klein_summe(a):
+    unsicher:
+        gib_zurück hosted_klein(a, 200, -300, 60000)
+
+zeige klein_summe(5)
+zeige "hosted ok"

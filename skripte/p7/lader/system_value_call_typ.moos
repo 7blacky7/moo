@@ -1,0 +1,17 @@
+struktur Erwartet:
+    code: u32
+
+struktur Andere:
+    code: u32
+
+@nativ
+funktion wert_annahme(x: Erwartet) -> u64:
+    unsicher:
+        gib_zurück u64(x.code)
+
+@nativ
+@einstieg
+funktion pruefe_unpassenden_aufruf() -> u64:
+    unsicher:
+        setze x: Andere auf Andere(u32(1))
+        gib_zurück wert_annahme(x)

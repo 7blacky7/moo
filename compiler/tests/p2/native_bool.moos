@@ -1,0 +1,36 @@
+# P2-T34: Vergleiche und Logik im reinen nativen Pfad liefern bool; und/oder
+# kurzschliessen, der rechte Operand (und sein Fehlerpfad) laeuft nur bei Bedarf.
+@nativ
+funktion v_kleiner(a: i32, b: i32) -> bool:
+    gib_zurück a < b
+@nativ
+funktion v_gleich_u(a: u8, b: u8) -> bool:
+    gib_zurück a == b
+@nativ
+funktion v_signed(a: i8) -> bool:
+    gib_zurück a < 0
+@nativ
+funktion v_float(a: f64, b: f64) -> bool:
+    gib_zurück a / b < 1.0
+@nativ
+funktion v_nan_gleich(a: f64, b: f64) -> bool:
+    gib_zurück a / b == a / b
+@nativ
+funktion v_sicher(a: i32, b: i32) -> bool:
+    gib_zurück b != 0 und a / b > 2
+@nativ
+funktion v_oder(a: i32, b: i32) -> bool:
+    gib_zurück b == 0 oder a / b > 2
+@nativ
+funktion v_nicht(a: i32, b: i32) -> bool:
+    gib_zurück nicht (a < b)
+zeige v_kleiner(1, 2)
+zeige v_kleiner(2, 1)
+zeige v_gleich_u(255, 255)
+zeige v_signed(-1)
+zeige v_float(1.0, 2.0)
+zeige v_nan_gleich(0.0, 0.0)
+zeige v_sicher(7, 0)
+zeige v_sicher(7, 2)
+zeige v_oder(7, 0)
+zeige v_nicht(1, 2)

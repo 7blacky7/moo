@@ -1,0 +1,5 @@
+# P2-T34: statisch nachweisbar ungueltiger gepruefter Cast ist ein Compilefehler.
+@nativ
+funktion k(a: u8) -> u8:
+    gib_zurück a + als(u8, 300)
+zeige k(1)

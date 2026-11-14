@@ -1,0 +1,25 @@
+# P2-T74 Batch 4: dynamisches Argument an einen Systemkoerper in einer benannten
+# Funktion OHNE eigenes versuche, waehrend der Handler des Aufrufers aktiv ist.
+# Vorher (P2-T66 b) llvm.trap im Adapter (invalid_handler_state); jetzt flag-
+# basierte Propagation: ungueltiges Argument und Koerperfehler landen im
+# versuche: des Aufrufers, die Funktion kehrt mit nichts zurueck.
+@nativ
+funktion s_div(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b
+funktion teile(a, b):
+    unsicher:
+        gib_zurück s_div(a, b)
+versuche:
+    zeige teile(9, 3)
+    zeige teile(9, "drei")
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige fehler
+versuche:
+    zeige teile(9, 0)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen koerper"
+zeige teile(8, 2)
+zeige "weiter"

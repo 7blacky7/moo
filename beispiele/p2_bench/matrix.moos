@@ -1,0 +1,12 @@
+setze m auf [1, 2, 3, 4, 2, 3, 4, 5, 3, 4, 5, 6, 4, 5, 6, 7]
+setze i auf 0
+setze s auf 0
+solange i < 1000000:
+    setze x auf i % 100
+    setze a auf m[0]*x + m[1]*2 + m[2]*3 + m[3]*4
+    setze b auf m[4]*x + m[5]*2 + m[6]*3 + m[7]*4
+    setze c auf m[8]*x + m[9]*2 + m[10]*3 + m[11]*4
+    setze d auf m[12]*x + m[13]*2 + m[14]*3 + m[15]*4
+    setze s auf s + a + b + c + d
+    setze i auf i + 1
+zeige s

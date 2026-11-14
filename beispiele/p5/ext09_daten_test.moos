@@ -1,0 +1,87 @@
+aus praeferenz_adapter importiere praferenz_paar
+setze tok auf silben_laden("beispiele/p4_silben/run_sil14_grimm36k/tokenizer.msf")
+funktion encoder(t):
+    gib_zurück silben_kodiere(tok, t)
+funktion pruefe_fenstergruppe(gruppe):
+    setze letzte auf -1
+    setze anzahl auf 0
+    für f in gruppe:
+        setze i auf 0
+        solange i < länge(f["loss_mask"]):
+            wenn f["loss_mask"][i] == 1:
+                setze aktuell auf f["fenster_offset"] + i
+                wenn letzte >= 0 und aktuell != letzte + 1:
+                    wirf "DPO: Luecke oder doppelte Zielposition"
+                setze letzte auf aktuell
+                setze anzahl auf anzahl + 1
+            setze i auf i + 1
+    gib_zurück anzahl
+funktion pruefe_prompt(p):
+    setze c auf p["gewaehlt"][0]
+    setze r auf p["verworfen"][0]
+    wenn c["fenster_offset"] != r["fenster_offset"]:
+        wirf "DPO: erstes Fenster verschieden"
+    setze ci auf 0
+    solange ci < 64 und c["loss_mask"][ci] == 0:
+        setze ci auf ci + 1
+    setze ri auf 0
+    solange ri < 64 und r["loss_mask"][ri] == 0:
+        setze ri auf ri + 1
+    wenn ci != ri oder ci >= 64:
+        wirf "DPO: Promptgrenze verschieden"
+    setze i auf 0
+    solange i <= ci:
+        wenn c["input_ids"][i] != r["input_ids"][i]:
+            wirf "DPO: Prompt verschieden"
+        setze i auf i + 1
+setze train auf json_parse(datei_lesen("beispiele/p5/daten/ext05_train_paare.json"))["beispiele"]
+setze pilot auf json_parse(datei_lesen("beispiele/p5/daten/pilot_lehrer_v2.json"))["beispiele"]
+setze val_ids auf json_parse(datei_lesen("beispiele/p5/daten/split_val.json"))["ids"]
+setze val auf []
+für paar in pilot:
+    wenn val_ids.enthält(paar["aufgabe_id"]):
+        val.hinzufügen(paar)
+wenn länge(train) != 70 oder länge(val) != 15:
+    wirf "EXT-09: Splitzaehlung falsch"
+setze count auf 0
+setze windows auf 0
+setze pos auf 0
+setze neg auf 0
+setze gleich_train auf 0
+setze gleich_val auf 0
+setze andere_fehler auf 0
+setze phase auf 0
+für satz in [train, val]:
+    für paar in satz:
+        wenn paar["original"] == paar["korrektur"]:
+            wenn phase == 0:
+                setze gleich_train auf gleich_train + 1
+            sonst:
+                setze gleich_val auf gleich_val + 1
+        sonst:
+            versuche:
+                setze p auf praferenz_paar(paar, encoder, 64, 0)
+                pruefe_prompt(p)
+                setze cp auf 0
+                setze cr auf 0
+                für f in p["gewaehlt"]:
+                    setze windows auf windows + 1
+                    für m in f["loss_mask"]:
+                        setze cp auf cp + m
+                für f in p["verworfen"]:
+                    setze windows auf windows + 1
+                    für m in f["loss_mask"]:
+                        setze cr auf cr + m
+                wenn cp != pruefe_fenstergruppe(p["gewaehlt"]) oder cr != pruefe_fenstergruppe(p["verworfen"]):
+                    wirf "Fensterabdeckung ungueltig"
+                wenn cp != encoder(paar["korrektur"]).groesse() oder cr != encoder(paar["original"]).groesse():
+                    wirf "Zielpositionen nicht exakt einmal"
+                setze count auf count + 1
+                setze pos auf pos + cp
+                setze neg auf neg + cr
+            fange fehler:
+                setze andere_fehler auf andere_fehler + 1
+    setze phase auf phase + 1
+zeige json_string({"paare": count, "train": länge(train), "val": länge(val), "gleich_train": gleich_train, "gleich_val": gleich_val, "andere_fehler": andere_fehler, "fenster": windows, "chosen_tokens": pos, "rejected_tokens": neg})
+wenn andere_fehler != 0:
+    wirf "EXT-09: weitere Adapterfehler"

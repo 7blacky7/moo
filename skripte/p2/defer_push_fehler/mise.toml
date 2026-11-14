@@ -1,0 +1,59 @@
+[tasks.test]
+description = "Defer-Push ALLOC/OVERFLOW und Erstfehler per C++-Adapter"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-defer-push-fehler
+mkdir -p "$out"
+for name in defer_push_fehler defer_wirf_nichts; do
+  timeout 120s compiler/target/release/moo-compiler compile "compiler/tests/p2/$name.moos" --emit-ir -o "$out/$name.ll"
+  timeout 30s mise exec -- opt -passes=verify -disable-output "$out/$name.ll"
+done
+if ! rg -q 'call .*@moo_defer_stack_push\(' "$out/defer_push_fehler.ll"; then
+  printf 'BLOCKED: Compiler emittiert noch keinen dynamischen Defer-Push\n' >&2
+  exit 2
+fi
+runtime_dir=$(strings compiler/target/release/moo-compiler | rg -o '/home/blacky/dev/moo/compiler/target/release/build/moo-compiler-[0-9a-f]+/out' | sort -u)
+[ "$(printf '%s\n' "$runtime_dir" | wc -l)" -eq 1 ]
+test -f "$runtime_dir/libmoo_runtime.a"
+mise exec -- clang++ -std=c++17 -Wall -Wextra -Werror -c compiler/tests/p2/defer_push_inject.cpp -o "$out/inject.o"
+for name in defer_push_fehler defer_wirf_nichts; do
+  mise exec -- clang++ "$out/$name.ll" "$out/inject.o" "$runtime_dir/libmoo_runtime.a" -Wl,--wrap=moo_defer_stack_push -lm -lpthread -lsqlite3 -lSDL2 -lSDL2_image -lssl -lcrypto -lvulkan -lglfw -lasound -lv4l2 -o "$out/$name"
+done
+for mode in alloc overflow; do
+  P2_DEFER_INJECT="$mode" timeout 30s "$out/defer_push_fehler" >"$out/$mode.out" 2>"$out/$mode.err"
+  rg -Fqx "PUSH_INJECTED:$mode" "$out/$mode.err"
+  if [ "$mode" = alloc ]; then text='Defer: Speicher voll'; else text='Defer: Kapazitaet uebergelaufen'; fi
+  awk -v error="$text" '
+    $0 == "B" {if (s != 0) exit 1; s=1; next}
+    $0 == "A" {if (s != 1) exit 1; s=2; next}
+    $0 == "CATCH" {if (s != 2) exit 1; s=3; next}
+    index($0,error) {if (s != 3) exit 1; s=4; next}
+    $0 == "ENDE" {if (s != 4) exit 1; s=5; next}
+    /C_DARF_NICHT_LAUFEN|NACH_PUSH_DARF_NICHT_LAUFEN|SPAETERER_FEHLER/ {exit 1}
+    END {if (s != 5) exit 1}
+  ' "$out/$mode.out" || { cat "$out/$mode.out" >&2; exit 1; }
+  printf 'PASS %s: Push-Fehler bleibt Erstfehler, B/A LIFO\n' "$mode"
+done
+timeout 30s "$out/defer_wirf_nichts" >"$out/nichts.out" 2>"$out/nichts.err"
+printf 'B\nA\nIST_NICHTS\nN\nENDE\n' >"$out/nichts.expected"
+cmp "$out/nichts.expected" "$out/nichts.out"
+printf 'PASS wirf nichts bleibt Erstfehler, Catch registriert N\n'
+'''
+
+[tasks.adapter]
+description = "C++-Injektionsadapter: Fehlerstatus und Stack-Erhalt"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-defer-push-fehler
+mkdir -p "$out"
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -c compiler/runtime/moo_defer_stack.c -o "$out/stack.o"
+mise exec -- clang++ -std=c++17 -Wall -Wextra -Werror compiler/tests/p2/defer_push_adapter_check.cpp compiler/tests/p2/defer_push_inject.cpp "$out/stack.o" -Wl,--wrap=moo_defer_stack_push -o "$out/adapter"
+for mode in alloc overflow; do
+  P2_DEFER_INJECT="$mode" "$out/adapter" >"$out/adapter-$mode.out" 2>"$out/adapter-$mode.err"
+  rg -Fqx "PUSH_INJECTED:$mode" "$out/adapter-$mode.err"
+  rg -Fqx 'PASS Adapter erhält alte IDs in LIFO-Reihenfolge' "$out/adapter-$mode.out"
+  printf 'PASS Adapter %s\n' "$mode"
+done
+'''

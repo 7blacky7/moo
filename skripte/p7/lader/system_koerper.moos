@@ -4,6 +4,12 @@ struktur Paar:
     a: u32
     b: u64
 
+# ABI-Fall: Feld b liegt direkt nach einem einzelnen Byte (Offset 1).
+@gepackt
+struktur GepacktesPaar:
+    marke: u8
+    wert: u32
+
 @nativ
 konstante TEXT: [u8; 6] auf "MOO-OK"
 
@@ -132,3 +138,332 @@ funktion sys_klasse(adr: u64, x: u64) -> void:
                 speicher_schreiben(adr, 2, 1)
             sonst:
                 speicher_schreiben(adr, 3, 1)
+
+# P2-T51: Typisierter RAM-Zeigerindex (NICHT fuer MMIO, dort volatile_*).
+@nativ
+@einstieg
+funktion sys_puffer_index(adr: u64) -> u64:
+    unsicher:
+        setze p: ptr[u32] auf zeiger(adr)
+        p[1] = 0x1234
+        setze wert: u32 auf p[1]
+        gib_zurück u64(wert) + u64(p[0])
+
+# P2-T48: Die Registry liefert typgeprueften Feldtyp und Ziel-ABI-Offset.
+@nativ
+@einstieg
+funktion sys_strukturfeld(adr: u64) -> u64:
+    unsicher:
+        strukturfeld_schreiben(Paar, b, adr, u64(123))
+        setze wert: u64 auf strukturfeld_lesen(Paar, b, adr)
+        gib_zurück wert + groesse_von(Paar)
+
+# Registerzugriff ist explizit volatile und unterscheidet sich vom RAM-Zugriff.
+@nativ
+@einstieg
+funktion sys_registerfeld(adr: u64) -> u32:
+    unsicher:
+        registerfeld_schreiben(Paar, a, adr, u32(71))
+        gib_zurück registerfeld_lesen(Paar, a, adr)
+
+# P2-T48: Gepackte Datenstruktur direkt ueber Zieloffset (1) beschreiben.
+@nativ
+@einstieg
+funktion sys_gepacktes_feld(adr: u64) -> u32:
+    unsicher:
+        strukturfeld_schreiben(GepacktesPaar, wert, adr, u32(0x10203040))
+        gib_zurück strukturfeld_lesen(GepacktesPaar, wert, adr)
+
+# P2-T48: direkte Typ-/Offsetaufloesung fuer Zeiger auf Moo-Struktur.
+@nativ
+@einstieg
+funktion sys_feld_direkt(adr: u64) -> u64:
+    unsicher:
+        setze p: ptr[Paar] auf zeiger(adr)
+        p.b = u64(222)
+        gib_zurück p.b + u64(p.a)
+
+# Auch ein nativer Funktionsparameter mit ptr[Paar] benutzt die Nominalidentitaet.
+@nativ
+@einstieg
+funktion sys_feld_param(p: ptr[Paar]) -> u64:
+    unsicher:
+        p.b = u64(333)
+        gib_zurück p.b + u64(p.a)
+
+# Derselbe Syntaxpfad funktioniert mit gepacktem ABI-Layout (Offset 1).
+@nativ
+@einstieg
+funktion sys_feld_gepackt(adr: u64) -> u32:
+    unsicher:
+        setze p: ptr[GepacktesPaar] auf zeiger(adr)
+        p.wert = u32(0xA1B2C3D4)
+        gib_zurück p.wert
+
+# Ptr[ptr[Struktur]]: das Index-Ergebnis ist erneut typisierter Zeiger.
+@nativ
+@einstieg
+funktion sys_feld_verschachtelt(adr: u64) -> u64:
+    unsicher:
+        setze pp: ptr[ptr[Paar]] auf zeiger(adr)
+        gib_zurück pp[0].b
+
+# P2-T48: Eingebettete Strukturen behalten ihre ABI-Adresse, kein MooValue.
+struktur InnereRegister:
+    code: u16
+    flags: u8
+
+struktur GeraeteEintrag:
+    kennung: u8
+    innen: InnereRegister
+    ende: u32
+
+struktur GeraeteVerweis:
+    ziel: ptr[InnereRegister]
+    nummer: u32
+
+@gepackt
+struktur GepacktesGeraet:
+    prefix: u8
+    innen: InnereRegister
+    ende: u16
+
+@nativ
+@einstieg
+funktion sys_innen(adr: u64) -> u32:
+    unsicher:
+        setze p: ptr[GeraeteEintrag] auf zeiger(adr)
+        p.innen.code = u16(0x1234)
+        p.innen.flags = u8(5)
+        gib_zurück u32(p.innen.code) + u32(p.innen.flags)
+
+# Der Compiler multipliziert den Index mit der ABI-Groesse der Struktur.
+@nativ
+@einstieg
+funktion sys_struktur_array(adr: u64) -> u32:
+    unsicher:
+        setze p: ptr[GeraeteEintrag] auf zeiger(adr)
+        p[1].ende = u32(555)
+        p[2].innen.code = u16(777)
+        gib_zurück p[1].ende + u32(p[2].innen.code)
+
+# Ein typisiertes Pointerfeld zeigt auf eine weitere Struktur.
+@nativ
+@einstieg
+funktion sys_link_feld(adr: u64) -> u32:
+    unsicher:
+        setze p: ptr[GeraeteVerweis] auf zeiger(adr)
+        p.ziel.flags = u8(44)
+        gib_zurück u32(p.ziel.flags) + p.nummer
+
+# @gepackt: Innenstruktur beginnt unmittelbar nach prefix (Offset 1).
+@nativ
+@einstieg
+funktion sys_packed_innen(adr: u64) -> u32:
+    unsicher:
+        setze p: ptr[GepacktesGeraet] auf zeiger(adr)
+        p.innen.code = u16(0xBEEF)
+        gib_zurück u32(p.innen.code)
+
+# P2-T48: Feste Arrayfelder in einer nativen Struktur.
+struktur FeldEintrag:
+    code: u16
+    flags: u8
+
+struktur ArrayLayout:
+    marker: u8
+    werte: [u32; 4]
+    eintraege: [FeldEintrag; 3]
+
+struktur ReferenzTabelle:
+    referenzen: [ptr[FeldEintrag]; 2]
+
+@nativ
+@einstieg
+funktion sys_array_felder(adr: u64, i: u64) -> u64:
+    unsicher:
+        setze p: ptr[ArrayLayout] auf zeiger(adr)
+        p.werte[i] = u32(70)
+        p.eintraege[1].code = u16(404)
+        p.eintraege[2].flags = u8(9)
+        gib_zurück u64(p.werte[i]) + u64(p.eintraege[1].code) + u64(p.eintraege[2].flags)
+
+# Ein festes Array kann auch native Pointer-Elemente enthalten.
+@nativ
+@einstieg
+funktion sys_array_referenzen(adr: u64) -> u32:
+    unsicher:
+        setze p: ptr[ReferenzTabelle] auf zeiger(adr)
+        p.referenzen[1].flags = u8(17)
+        gib_zurück u32(p.referenzen[1].flags)
+
+# P2-T48: Echte mehrdimensionale Hardware-/Datenarrays ohne Hilfszeiger.
+# Jede Dimension hat einen eigenen typisierten Index- und Laengenkontrakt.
+struktur MatrixDaten:
+    zaehler: u8
+    feld: [[u16; 4]; 3]
+    punkte: [[FeldEintrag; 2]; 2]
+
+struktur MatrixPointer:
+    ziele: [[ptr[FeldEintrag]; 2]; 2]
+
+@nativ
+@einstieg
+funktion sys_matrix(adr: u64, reihe: u64, spalte: u64) -> u32:
+    unsicher:
+        setze p: ptr[MatrixDaten] auf zeiger(adr)
+        p.feld[reihe][spalte] = u16(321)
+        p.punkte[1][0].code = u16(222)
+        p.punkte[1][0].flags = u8(6)
+        gib_zurück u32(p.feld[reihe][spalte]) + u32(p.punkte[1][0].code) + u32(p.punkte[1][0].flags)
+
+@nativ
+@einstieg
+funktion sys_matrix_zeiger(adr: u64) -> u32:
+    unsicher:
+        setze p: ptr[MatrixPointer] auf zeiger(adr)
+        p.ziele[1][1].flags = u8(27)
+        gib_zurück u32(p.ziele[1][1].flags)
+
+# P2-T51: Adresse bestehender nativer Unterfelder direkt erhalten,
+# ohne manuelle Versatzrechnung oder unpassendes MooValue-Boxing.
+@nativ
+@einstieg
+funktion sys_adresse_matrix(adr: u64) -> u64:
+    unsicher:
+        setze p: ptr[MatrixDaten] auf zeiger(adr)
+        gib_zurück adresse_von(p.feld[2][3])
+
+@nativ
+@einstieg
+funktion sys_adresse_zeile(adr: u64) -> u64:
+    unsicher:
+        setze p: ptr[MatrixDaten] auf zeiger(adr)
+        gib_zurück adresse_von(p.feld[1])
+
+@nativ
+@einstieg
+funktion sys_adresse_punkt(adr: u64) -> u64:
+    unsicher:
+        setze p: ptr[MatrixDaten] auf zeiger(adr)
+        gib_zurück adresse_von(p.punkte[1][0].code)
+
+@nativ
+@einstieg
+funktion sys_adresse_struktur(adr: u64) -> u64:
+    unsicher:
+        setze p: ptr[MatrixDaten] auf zeiger(adr)
+        gib_zurück adresse_von(p.punkte[1][0])
+
+# P2-T48: Echte lokale Strukturwerte; Konstruktor nutzt die native
+# Konstanten-Syntax, aber jetzt auch mit variablen Laufzeitwerten.
+struktur NativeWert:
+    code: u32
+    wert: u64
+
+struktur NativeBlock:
+    prefix: u8
+    innen: NativeWert
+    ende: u16
+
+# Wertkopie in nativen Slots: Original bleibt trotz Aenderung erhalten.
+@nativ
+@einstieg
+funktion sys_value_copy(adr: u64) -> u64:
+    unsicher:
+        setze original: NativeWert auf NativeWert(u32(7), u64(11))
+        setze kopie: NativeWert auf original
+        kopie.wert = u64(99)
+        setze p: ptr[NativeWert] auf zeiger(adr)
+        p[0] = kopie
+        gib_zurück original.wert + kopie.wert
+
+# Verschachtelte Strukturwerte werden im nativen LLVM-Layout kopiert.
+@nativ
+@einstieg
+funktion sys_value_nested(adr: u64) -> u64:
+    unsicher:
+        setze original: NativeBlock auf NativeBlock(u8(4), NativeWert(u32(5), u64(6)), u16(7))
+        setze kopie: NativeBlock auf original
+        kopie.innen.wert = u64(100)
+        setze p: ptr[NativeBlock] auf zeiger(adr)
+        p[0] = kopie
+        gib_zurück original.innen.wert + kopie.innen.wert
+
+# Nativer Struct-Load und -Store aus typisiertem RAM.
+@nativ
+@einstieg
+funktion sys_value_pointer_copy(adr: u64) -> u64:
+    unsicher:
+        setze p: ptr[NativeWert] auf zeiger(adr)
+        setze kopie: NativeWert auf p[0]
+        kopie.code = u32(42)
+        p[1] = kopie
+        gib_zurück u64(kopie.code) + p[1].wert
+
+# Die Adresse eines Feldes in einem lokalen Strukturwert ist nutzbar.
+@nativ
+@einstieg
+funktion sys_value_local_address() -> u64:
+    unsicher:
+        setze wert: NativeWert auf NativeWert(u32(1), u64(2))
+        setze adr: u64 auf adresse_von(wert.wert)
+        setze p: ptr[u64] auf zeiger(adr)
+        p[0] = u64(55)
+        gib_zurück wert.wert
+
+# Embedded Struct-Feld als Ganzes in RAM schreiben und wieder lesen.
+@nativ
+@einstieg
+funktion sys_value_field_store(adr: u64) -> u64:
+    unsicher:
+        setze wert: NativeWert auf NativeWert(u32(3), u64(88))
+        setze p: ptr[NativeBlock] auf zeiger(adr)
+        p.innen = wert
+        gib_zurück p.innen.wert
+
+@nativ
+@einstieg
+funktion sys_value_field_copy(adr: u64) -> u64:
+    unsicher:
+        setze p: ptr[NativeBlock] auf zeiger(adr)
+        setze kopie: NativeWert auf p.innen
+        kopie.wert = u64(20)
+        gib_zurück kopie.wert + p.innen.wert
+
+# P2-T48: Nativer Moo-zu-Moo-Aufruf mit kompletter Struktur als Wert.
+# Die ABI-Freigabe fuer fremde C-/UEFI-Aufrufe ist davon getrennt.
+@nativ
+funktion sys_value_transform(eingang: NativeWert) -> NativeWert:
+    unsicher:
+        setze ergebnis: NativeWert auf eingang
+        ergebnis.code = ergebnis.code + u32(10)
+        ergebnis.wert = ergebnis.wert + u64(20)
+        gib_zurück ergebnis
+
+@nativ
+@einstieg
+funktion sys_value_call(adr: u64) -> u64:
+    unsicher:
+        setze original: NativeWert auf NativeWert(u32(5), u64(9))
+        setze ergebnis: NativeWert auf sys_value_transform(original)
+        setze p: ptr[NativeWert] auf zeiger(adr)
+        p[0] = ergebnis
+        gib_zurück u64(original.code) + u64(ergebnis.code) + ergebnis.wert
+
+@nativ
+funktion sys_value_nested_transform(eingang: NativeBlock) -> NativeBlock:
+    unsicher:
+        setze ergebnis: NativeBlock auf eingang
+        ergebnis.innen.wert = ergebnis.innen.wert + u64(10)
+        gib_zurück ergebnis
+
+@nativ
+@einstieg
+funktion sys_value_nested_call(adr: u64) -> u64:
+    unsicher:
+        setze original: NativeBlock auf NativeBlock(u8(2), NativeWert(u32(3), u64(4)), u16(5))
+        setze ergebnis: NativeBlock auf sys_value_nested_transform(original)
+        setze p: ptr[NativeBlock] auf zeiger(adr)
+        p[0] = ergebnis
+        gib_zurück original.innen.wert + ergebnis.innen.wert

@@ -1,0 +1,295 @@
+# P2-T69: reine Limit-, Wert- und Descriptor-Validierung aus
+# compiler/runtime/moo_compositor_animation.c in nativem Moo.
+# Resultcodes: 0 = OK, 1 = INVALID, 2 = LIMIT. Zeiger als u64-Adresse (NULL ->
+# INVALID bzw. 0 = ungueltig, exakt wie C). Keine Timeline-/Start-Logik.
+#
+# Wiederverwendung statt Nachbau: Vorzeichen-Dekodierung kommt aus
+# animation_nativ.moos (moo_n_anim_decode_signed), per extern "C" angebunden.
+# Die Probe linkt beide Objekte.
+#
+# Effekt-Bits (effects_protocol.h:85-94): CORNER_CLIP 1, SHADOW 2,
+# BACKDROP_BLUR 4, SATURATION 8, TINT 16, NOISE 32, AFFINE_2D 64.
+# Defaults (effects_protocol.h:19-38, effects_state.h:6-7) stehen als Literale.
+
+extern "C" funktion moo_n_anim_decode_signed(raw: u32) -> i64
+
+# = MooCompEffectLimits (effects_protocol.h:253-272), 80 Byte.
+struktur KompAnimLimits:
+    max_eckradius: u16
+    max_schatten_unschaerfe: u16
+    max_schatten_ausbreitung: u16
+    max_hintergrund_unschaerfe: u16
+    max_saettigung: u16
+    reserviert: u16
+    max_schatten_versatz: i32
+    max_affin_koeffizient: i32
+    max_affin_verschiebung: i32
+    max_affin_ursprung: i32
+    max_animationen_flaeche: u32
+    max_animationen_client: u32
+    reserviert_ausrichtung: u32
+    min_dauer_ns: u64
+    max_dauer_ns: u64
+    max_zeitleiste_ns: u64
+    max_arbeit_pro_bild: u64
+    max_scratch_bytes: u64
+
+# Skalarer Kopf von MooCompAnimationDesc (effects_protocol.h:207-219), 48 Byte;
+# from liegt bei +48, to bei +80 (je 8 x u32).
+struktur KompAnimKopf:
+    token: u64
+    verzoegerung_ns: u64
+    dauer_ns: u64
+    wiederholungen: u32
+    eigenschaft: u32
+    easing: u32
+    richtung: u32
+    flags: u32
+    reserviert: u32
+
+# C :16-73. 1 = gueltig, 0 = ungueltig (C liefert int).
+@nativ
+@einstieg
+funktion moo_n_anim_limits_valid(limits: u64) -> u32:
+    unsicher:
+        wenn limits == 0:
+            gib_zurück 0
+        setze l: ptr[KompAnimLimits] auf zeiger(limits)
+        wenn l.reserviert != 0:
+            gib_zurück 0
+        wenn l.reserviert_ausrichtung != 0:
+            gib_zurück 0
+        wenn l.max_eckradius > 4096:
+            gib_zurück 0
+        wenn l.max_schatten_unschaerfe > 64:
+            gib_zurück 0
+        wenn l.max_schatten_ausbreitung > 64:
+            gib_zurück 0
+        wenn l.max_hintergrund_unschaerfe > 32:
+            gib_zurück 0
+        wenn l.max_saettigung < 256:
+            gib_zurück 0
+        wenn l.max_saettigung > 1024:
+            gib_zurück 0
+        wenn l.max_schatten_versatz < 0:
+            gib_zurück 0
+        wenn l.max_schatten_versatz > 4096:
+            gib_zurück 0
+        wenn l.max_affin_koeffizient < 65536:
+            gib_zurück 0
+        wenn l.max_affin_koeffizient > 1048576:
+            gib_zurück 0
+        wenn l.max_affin_verschiebung < 0:
+            gib_zurück 0
+        wenn l.max_affin_verschiebung > 2147418112:
+            gib_zurück 0
+        wenn l.max_affin_ursprung < 0:
+            gib_zurück 0
+        wenn l.max_affin_ursprung > 2147418112:
+            gib_zurück 0
+        wenn l.max_animationen_flaeche == 0:
+            gib_zurück 0
+        wenn l.max_animationen_flaeche > 8:
+            gib_zurück 0
+        wenn l.max_animationen_client == 0:
+            gib_zurück 0
+        wenn l.max_animationen_client > 64:
+            gib_zurück 0
+        wenn l.max_animationen_flaeche > l.max_animationen_client:
+            gib_zurück 0
+        wenn l.min_dauer_ns < 1000000:
+            gib_zurück 0
+        wenn l.min_dauer_ns > l.max_dauer_ns:
+            gib_zurück 0
+        wenn l.max_dauer_ns > 600000000000:
+            gib_zurück 0
+        wenn l.max_dauer_ns > l.max_zeitleiste_ns:
+            gib_zurück 0
+        wenn l.max_zeitleiste_ns > 3600000000000:
+            gib_zurück 0
+        wenn l.max_arbeit_pro_bild == 0:
+            gib_zurück 0
+        wenn l.max_arbeit_pro_bild > 268435456:
+            gib_zurück 0
+        wenn l.max_scratch_bytes == 0:
+            gib_zurück 0
+        wenn l.max_scratch_bytes > 67108864:
+            gib_zurück 0
+        gib_zurück 1
+
+# C :120-128. 1 = alle Woerter ab erstes sind 0.
+@nativ
+funktion anim_rest_null(w: ptr[u32], erstes: u64) -> u32:
+    unsicher:
+        setze i: u64 auf erstes
+        solange i < 8:
+            wenn w[i] != 0:
+                gib_zurück 0
+            setze i auf i + 1
+        gib_zurück 1
+
+# C :130-135. 1 = |decode(raw)| <= grenze (Vergleich in i64).
+@nativ
+funktion anim_betrag_in(raw: u32, grenze: i32) -> u32:
+    unsicher:
+        setze v: i64 auf moo_n_anim_decode_signed(raw)
+        setze g: i64 auf i64(grenze)
+        wenn v < -g:
+            gib_zurück 0
+        wenn v > g:
+            gib_zurück 0
+        gib_zurück 1
+
+# C :137-234. Strukturfehler -> INVALID, Ueberschreitung der Limits -> LIMIT;
+# Reihenfolge der Pruefungen wie C (CORNERS pruefen je Wort erst INVALID,
+# dann LIMIT). limits wird hier nur auf NULL geprueft, wie C.
+@nativ
+@einstieg
+funktion moo_n_anim_validate_value(eigenschaft: u32, wert: u64, limits: u64, maske: u64) -> u32:
+    unsicher:
+        wenn wert == 0:
+            gib_zurück 1
+        wenn limits == 0:
+            gib_zurück 1
+        setze w: ptr[u32] auf zeiger(wert)
+        setze l: ptr[KompAnimLimits] auf zeiger(limits)
+        setze i: u64 auf 0
+        wenn eigenschaft == 1:
+            wenn anim_rest_null(w, 1) == 0:
+                gib_zurück 1
+            wenn w[0] > 65536:
+                gib_zurück 1
+            gib_zurück 0
+        wenn eigenschaft == 2:
+            wenn (maske & 1) == 0:
+                gib_zurück 1
+            wenn anim_rest_null(w, 4) == 0:
+                gib_zurück 1
+            solange i < 4:
+                wenn w[i] > 65535:
+                    gib_zurück 1
+                wenn w[i] > u32(l.max_eckradius):
+                    gib_zurück 2
+                setze i auf i + 1
+            gib_zurück 0
+        wenn eigenschaft == 3:
+            wenn (maske & 2) == 0:
+                gib_zurück 1
+            wenn anim_rest_null(w, 5) == 0:
+                gib_zurück 1
+            wenn w[2] > 65535:
+                gib_zurück 1
+            wenn w[3] > 65535:
+                gib_zurück 1
+            wenn anim_betrag_in(w[0], l.max_schatten_versatz) == 0:
+                gib_zurück 2
+            wenn anim_betrag_in(w[1], l.max_schatten_versatz) == 0:
+                gib_zurück 2
+            wenn w[2] > u32(l.max_schatten_unschaerfe):
+                gib_zurück 2
+            wenn w[3] > u32(l.max_schatten_ausbreitung):
+                gib_zurück 2
+            gib_zurück 0
+        wenn eigenschaft == 4:
+            wenn (maske & 60) == 0:
+                gib_zurück 1
+            wenn anim_rest_null(w, 6) == 0:
+                gib_zurück 1
+            wenn w[0] > 65535:
+                gib_zurück 1
+            wenn w[1] > 65535:
+                gib_zurück 1
+            wenn w[3] > 255:
+                gib_zurück 1
+            wenn w[4] > 255:
+                gib_zurück 1
+            wenn (maske & 4) == 0:
+                wenn w[0] != 0:
+                    gib_zurück 1
+            wenn (maske & 8) == 0:
+                wenn w[1] != 256:
+                    gib_zurück 1
+            wenn (maske & 16) == 0:
+                wenn w[2] != 0:
+                    gib_zurück 1
+                wenn w[3] != 0:
+                    gib_zurück 1
+            wenn (maske & 32) == 0:
+                wenn w[4] != 0:
+                    gib_zurück 1
+                wenn w[5] != 0:
+                    gib_zurück 1
+            wenn w[0] > u32(l.max_hintergrund_unschaerfe):
+                gib_zurück 2
+            wenn w[1] > u32(l.max_saettigung):
+                gib_zurück 2
+            gib_zurück 0
+        wenn eigenschaft == 5:
+            wenn (maske & 64) == 0:
+                gib_zurück 1
+            solange i < 4:
+                wenn anim_betrag_in(w[i], l.max_affin_koeffizient) == 0:
+                    gib_zurück 2
+                setze i auf i + 1
+            solange i < 6:
+                wenn anim_betrag_in(w[i], l.max_affin_verschiebung) == 0:
+                    gib_zurück 2
+                setze i auf i + 1
+            solange i < 8:
+                wenn anim_betrag_in(w[i], l.max_affin_ursprung) == 0:
+                    gib_zurück 2
+                setze i auf i + 1
+            gib_zurück 0
+        gib_zurück 1
+
+# C :369-400. Reihenfolge wie C: NULL/Limits -> INVALID, Felder -> INVALID,
+# Dauer ausserhalb [min,max] -> LIMIT, repeat*dauer bzw. delay+gesamt
+# ueberlaufend oder > max_zeitleiste -> LIMIT, dann from und to pruefen.
+# Division durch dauer ist sicher: gueltige Limits erzwingen min >= 1 ms.
+@nativ
+@einstieg
+funktion moo_n_anim_validate_desc(beschreibung: u64, limits: u64, maske: u64) -> u32:
+    unsicher:
+        wenn beschreibung == 0:
+            gib_zurück 1
+        wenn moo_n_anim_limits_valid(limits) == 0:
+            gib_zurück 1
+        setze d: ptr[KompAnimKopf] auf zeiger(beschreibung)
+        setze l: ptr[KompAnimLimits] auf zeiger(limits)
+        wenn d.token == 0:
+            gib_zurück 1
+        wenn d.wiederholungen == 0:
+            gib_zurück 1
+        wenn d.eigenschaft == 0:
+            gib_zurück 1
+        wenn d.eigenschaft > 5:
+            gib_zurück 1
+        wenn d.easing > 3:
+            gib_zurück 1
+        wenn d.richtung > 3:
+            gib_zurück 1
+        wenn d.flags != 0:
+            gib_zurück 1
+        wenn d.reserviert != 0:
+            gib_zurück 1
+        setze dauer: u64 auf d.dauer_ns
+        wenn dauer < l.min_dauer_ns:
+            gib_zurück 2
+        wenn dauer > l.max_dauer_ns:
+            gib_zurück 2
+        setze umax: u64 auf 0
+        setze umax auf umax - 1
+        setze wdh: u64 auf u64(d.wiederholungen)
+        wenn wdh > umax / dauer:
+            gib_zurück 2
+        setze gesamt: u64 auf dauer * wdh
+        setze verz: u64 auf d.verzoegerung_ns
+        wenn verz > umax - gesamt:
+            gib_zurück 2
+        wenn verz + gesamt > l.max_zeitleiste_ns:
+            gib_zurück 2
+        setze rc: u32 auf moo_n_anim_validate_value(d.eigenschaft, beschreibung + 48, limits, maske)
+        wenn rc != 0:
+            gib_zurück rc
+        gib_zurück moo_n_anim_validate_value(d.eigenschaft, beschreibung + 80, limits, maske)
+

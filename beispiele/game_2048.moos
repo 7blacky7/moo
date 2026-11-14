@@ -18,17 +18,28 @@ konstante WIN_H auf 480
 
 # Farbe je Zahl (als Anzahl Punkte: 2=1, 4=2, 8=3, 16=4, ...)
 funktion tile_farbe(val):
-    wenn val == 2: gib_zurück "#EEE4DA"
-    wenn val == 4: gib_zurück "#EDE0C8"
-    wenn val == 8: gib_zurück "#F2B179"
-    wenn val == 16: gib_zurück "#F59563"
-    wenn val == 32: gib_zurück "#F67C5F"
-    wenn val == 64: gib_zurück "#F65E3B"
-    wenn val == 128: gib_zurück "#EDCF72"
-    wenn val == 256: gib_zurück "#EDCC61"
-    wenn val == 512: gib_zurück "#EDC850"
-    wenn val == 1024: gib_zurück "#EDC53F"
-    wenn val == 2048: gib_zurück "#EDC22E"
+    wenn val == 2:
+        gib_zurück "#EEE4DA"
+    wenn val == 4:
+        gib_zurück "#EDE0C8"
+    wenn val == 8:
+        gib_zurück "#F2B179"
+    wenn val == 16:
+        gib_zurück "#F59563"
+    wenn val == 32:
+        gib_zurück "#F67C5F"
+    wenn val == 64:
+        gib_zurück "#F65E3B"
+    wenn val == 128:
+        gib_zurück "#EDCF72"
+    wenn val == 256:
+        gib_zurück "#EDCC61"
+    wenn val == 512:
+        gib_zurück "#EDC850"
+    wenn val == 1024:
+        gib_zurück "#EDC53F"
+    wenn val == 2048:
+        gib_zurück "#EDC22E"
     gib_zurück "#3C3A32"
 
 # === PRNG ===
@@ -104,13 +115,13 @@ funktion move_links():
             zeile.hinzufügen(board[r * SIZE + c])
             setze c auf c + 1
         setze merged auf merge_row(zeile)
-        setze neu auf merged["row"]
+        setze neue_zeile auf merged["row"]
         setze total_score auf total_score + merged["score"]
         setze c auf 0
         solange c < SIZE:
-            wenn board[r * SIZE + c] != neu[c]:
+            wenn board[r * SIZE + c] != neue_zeile[c]:
                 setze changed auf wahr
-            board[r * SIZE + c] = neu[c]
+            board[r * SIZE + c] = neue_zeile[c]
             setze c auf c + 1
         setze r auf r + 1
     setze result auf {}

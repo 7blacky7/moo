@@ -1,0 +1,392 @@
+# P2-T69 Folgepaket: reine Pruef- und Kostenfunktionen aus
+# compiler/runtime/moo_compositor_effects_state.c in nativem Moo.
+# Resultcodes: 0 = OK, 1 = INVALID, 2 = LIMIT. Zeiger als u64-Adresse.
+# Keine Preflight-/Apply-/Surface-Zustandsmaschine.
+#
+# Effekt-Bits (effects_protocol.h:85-94): CORNER_CLIP 1, SHADOW 2,
+# BACKDROP_BLUR 4, SATURATION 8, TINT 16, NOISE 32, AFFINE_2D 64; V2 = 0xFF.
+# Defaults (effects_protocol.h:19-38, effects_state.h:6-7) als Literale.
+
+# = MooCompEffectLimits (effects_protocol.h:253-272), 80 Byte.
+struktur KompZustLimits:
+    max_eckradius: u16
+    max_schatten_unschaerfe: u16
+    max_schatten_ausbreitung: u16
+    max_hintergrund_unschaerfe: u16
+    max_saettigung: u16
+    reserviert: u16
+    max_schatten_versatz: i32
+    max_affin_koeffizient: i32
+    max_affin_verschiebung: i32
+    max_affin_ursprung: i32
+    max_animationen_flaeche: u32
+    max_animationen_client: u32
+    reserviert_ausrichtung: u32
+    min_dauer_ns: u64
+    max_dauer_ns: u64
+    max_zeitleiste_ns: u64
+    max_arbeit_pro_bild: u64
+    max_scratch_bytes: u64
+
+# = MooCompEffectState (effects_protocol.h:103-112), 96 Byte, verschachtelte
+# Strukturen flach ausgeschrieben (gleiche Offsets bei natuerlicher
+# Ausrichtung): corners @24, shadow @32, backdrop @48, affine @64.
+struktur KompEffektZustand:
+    aktiv_maske: u64
+    pflicht_maske: u64
+    rueckfall: u32
+    reserviert: u32
+    ecke_ol: u16
+    ecke_or: u16
+    ecke_ur: u16
+    ecke_ul: u16
+    schatten_x: i32
+    schatten_y: i32
+    schatten_unschaerfe: u16
+    schatten_ausbreitung: u16
+    schatten_r: u8
+    schatten_g: u8
+    schatten_b: u8
+    schatten_a: u8
+    hg_unschaerfe: u16
+    hg_saettigung: u16
+    tint_r: u8
+    tint_g: u8
+    tint_b: u8
+    tint_a: u8
+    tint_mix: u8
+    rauschen: u8
+    hg_reserviert: u16
+    rauschen_saat: u32
+    m11: i32
+    m12: i32
+    m21: i32
+    m22: i32
+    tx: i32
+    ty: i32
+    ursprung_x: i32
+    ursprung_y: i32
+
+# C :74-111. 1 = gueltig, 0 = ungueltig. ACHTUNG Unterschied zu
+# animation.c:16-73: hier KEINE Pruefung per_surface <= per_client (exakt C).
+@nativ
+@einstieg
+funktion moo_n_effect_limits_valid(limits: u64) -> u32:
+    unsicher:
+        wenn limits == 0:
+            gib_zurück 0
+        setze l: ptr[KompZustLimits] auf zeiger(limits)
+        wenn l.reserviert != 0:
+            gib_zurück 0
+        wenn l.reserviert_ausrichtung != 0:
+            gib_zurück 0
+        wenn l.max_eckradius > 4096:
+            gib_zurück 0
+        wenn l.max_schatten_unschaerfe > 64:
+            gib_zurück 0
+        wenn l.max_schatten_ausbreitung > 64:
+            gib_zurück 0
+        wenn l.max_hintergrund_unschaerfe > 32:
+            gib_zurück 0
+        wenn l.max_saettigung < 256:
+            gib_zurück 0
+        wenn l.max_saettigung > 1024:
+            gib_zurück 0
+        wenn l.max_schatten_versatz < 0:
+            gib_zurück 0
+        wenn l.max_schatten_versatz > 4096:
+            gib_zurück 0
+        wenn l.max_affin_koeffizient < 65536:
+            gib_zurück 0
+        wenn l.max_affin_koeffizient > 1048576:
+            gib_zurück 0
+        wenn l.max_affin_verschiebung < 0:
+            gib_zurück 0
+        wenn l.max_affin_verschiebung > 2147418112:
+            gib_zurück 0
+        wenn l.max_affin_ursprung < 0:
+            gib_zurück 0
+        wenn l.max_affin_ursprung > 2147418112:
+            gib_zurück 0
+        wenn l.max_animationen_flaeche == 0:
+            gib_zurück 0
+        wenn l.max_animationen_flaeche > 8:
+            gib_zurück 0
+        wenn l.max_animationen_client == 0:
+            gib_zurück 0
+        wenn l.max_animationen_client > 64:
+            gib_zurück 0
+        wenn l.min_dauer_ns < 1000000:
+            gib_zurück 0
+        wenn l.min_dauer_ns > l.max_dauer_ns:
+            gib_zurück 0
+        wenn l.max_dauer_ns > 600000000000:
+            gib_zurück 0
+        wenn l.max_dauer_ns > l.max_zeitleiste_ns:
+            gib_zurück 0
+        wenn l.max_zeitleiste_ns > 3600000000000:
+            gib_zurück 0
+        wenn l.max_arbeit_pro_bild == 0:
+            gib_zurück 0
+        wenn l.max_arbeit_pro_bild > 268435456:
+            gib_zurück 0
+        wenn l.max_scratch_bytes == 0:
+            gib_zurück 0
+        wenn l.max_scratch_bytes > 67108864:
+            gib_zurück 0
+        gib_zurück 1
+
+# C :113-126. MooCompEffectStateConfig = {u64 capabilities; Limits @8}, 88 Byte.
+# C kopiert ueber einen lokalen Kandidaten (alias-sicher). Hier gleichwertig:
+# erst die 80 Limit-Bytes ueberlappungssicher (memmove-Richtung) nach
+# ergebnis+8, danach capabilities nach ergebnis+0. Fehler schreiben nichts.
+@nativ
+@einstieg
+funktion moo_n_effect_state_config_init(ergebnis: u64, faehigkeiten: u64, limits: u64) -> u32:
+    unsicher:
+        wenn ergebnis == 0:
+            gib_zurück 1
+        wenn limits == 0:
+            gib_zurück 1
+        wenn faehigkeiten > 255:
+            gib_zurück 1
+        wenn moo_n_effect_limits_valid(limits) == 0:
+            gib_zurück 1
+        setze quelle: ptr[u8] auf zeiger(limits)
+        setze ziel: ptr[u8] auf zeiger(ergebnis + 8)
+        setze i: u64 auf 0
+        wenn ergebnis + 8 <= limits:
+            solange i < 80:
+                ziel[i] = quelle[i]
+                setze i auf i + 1
+        sonst:
+            setze i auf 80
+            solange i > 0:
+                setze i auf i - 1
+                ziel[i] = quelle[i]
+        setze kopf: ptr[u64] auf zeiger(ergebnis)
+        kopf[0] = faehigkeiten
+        gib_zurück 0
+
+# C :128-133. 1 = Affin neutral (Einheit, keine Verschiebung/Ursprung).
+@nativ
+funktion affin_neutral(z: ptr[KompEffektZustand]) -> u32:
+    unsicher:
+        wenn z.m11 != 65536:
+            gib_zurück 0
+        wenn z.m12 != 0:
+            gib_zurück 0
+        wenn z.m21 != 0:
+            gib_zurück 0
+        wenn z.m22 != 65536:
+            gib_zurück 0
+        wenn z.tx != 0:
+            gib_zurück 0
+        wenn z.ty != 0:
+            gib_zurück 0
+        wenn z.ursprung_x != 0:
+            gib_zurück 0
+        wenn z.ursprung_y != 0:
+            gib_zurück 0
+        gib_zurück 1
+
+# C :135-170. 1 = gueltig. Masken ausserhalb V2 (> 0xFF), Pflicht ohne Aktiv,
+# reservierte Felder, Rueckfall > ALLOW_APPROXIMATE (2) und jede nicht
+# neutrale Komponente eines deaktivierten Effekts -> 0.
+@nativ
+@einstieg
+funktion moo_n_effect_state_valid(zustand: u64) -> u32:
+    unsicher:
+        wenn zustand == 0:
+            gib_zurück 0
+        setze z: ptr[KompEffektZustand] auf zeiger(zustand)
+        setze m: u64 auf z.aktiv_maske
+        wenn m > 255:
+            gib_zurück 0
+        wenn z.pflicht_maske > 255:
+            gib_zurück 0
+        wenn (z.pflicht_maske & m) != z.pflicht_maske:
+            gib_zurück 0
+        wenn z.reserviert != 0:
+            gib_zurück 0
+        wenn z.hg_reserviert != 0:
+            gib_zurück 0
+        wenn z.rueckfall > 2:
+            gib_zurück 0
+        wenn (m & 1) == 0:
+            wenn z.ecke_ol != 0:
+                gib_zurück 0
+            wenn z.ecke_or != 0:
+                gib_zurück 0
+            wenn z.ecke_ur != 0:
+                gib_zurück 0
+            wenn z.ecke_ul != 0:
+                gib_zurück 0
+        wenn (m & 2) == 0:
+            wenn z.schatten_x != 0:
+                gib_zurück 0
+            wenn z.schatten_y != 0:
+                gib_zurück 0
+            wenn z.schatten_unschaerfe != 0:
+                gib_zurück 0
+            wenn z.schatten_ausbreitung != 0:
+                gib_zurück 0
+            wenn z.schatten_r != 0:
+                gib_zurück 0
+            wenn z.schatten_g != 0:
+                gib_zurück 0
+            wenn z.schatten_b != 0:
+                gib_zurück 0
+            wenn z.schatten_a != 0:
+                gib_zurück 0
+        wenn (m & 4) == 0:
+            wenn z.hg_unschaerfe != 0:
+                gib_zurück 0
+        wenn (m & 8) == 0:
+            wenn z.hg_saettigung != 256:
+                gib_zurück 0
+        wenn (m & 16) == 0:
+            wenn z.tint_mix != 0:
+                gib_zurück 0
+            wenn z.tint_r != 0:
+                gib_zurück 0
+            wenn z.tint_g != 0:
+                gib_zurück 0
+            wenn z.tint_b != 0:
+                gib_zurück 0
+            wenn z.tint_a != 0:
+                gib_zurück 0
+        wenn (m & 32) == 0:
+            wenn z.rauschen != 0:
+                gib_zurück 0
+            wenn z.rauschen_saat != 0:
+                gib_zurück 0
+        wenn (m & 64) == 0:
+            wenn affin_neutral(z) == 0:
+                gib_zurück 0
+        gib_zurück 1
+
+# C :172-176. 1 = |v| > grenze (in i64 verglichen; negative Grenze moeglich).
+@nativ
+funktion i32_ueber(v: i32, grenze: i32) -> u32:
+    unsicher:
+        setze w: i64 auf i64(v)
+        setze g: i64 auf i64(grenze)
+        wenn w < -g:
+            gib_zurück 1
+        wenn w > g:
+            gib_zurück 1
+        gib_zurück 0
+
+# C :178-215. Bitmaske der Effekte, deren Parameter die Limits ueberschreiten,
+# geschnitten mit der aktiven Maske. Vorbedingung wie C: zustand/limits != 0.
+@nativ
+@einstieg
+funktion moo_n_effect_over_mask(zustand: u64, limits: u64) -> u64:
+    unsicher:
+        setze z: ptr[KompEffektZustand] auf zeiger(zustand)
+        setze l: ptr[KompZustLimits] auf zeiger(limits)
+        setze m: u64 auf 0
+        setze eck: u16 auf l.max_eckradius
+        setze treffer: u32 auf 0
+        wenn z.ecke_ol > eck:
+            setze treffer auf 1
+        wenn z.ecke_or > eck:
+            setze treffer auf 1
+        wenn z.ecke_ur > eck:
+            setze treffer auf 1
+        wenn z.ecke_ul > eck:
+            setze treffer auf 1
+        wenn treffer != 0:
+            setze m auf m | 1
+        setze treffer auf 0
+        wenn z.schatten_unschaerfe > l.max_schatten_unschaerfe:
+            setze treffer auf 1
+        wenn z.schatten_ausbreitung > l.max_schatten_ausbreitung:
+            setze treffer auf 1
+        wenn i32_ueber(z.schatten_x, l.max_schatten_versatz) != 0:
+            setze treffer auf 1
+        wenn i32_ueber(z.schatten_y, l.max_schatten_versatz) != 0:
+            setze treffer auf 1
+        wenn treffer != 0:
+            setze m auf m | 2
+        wenn z.hg_unschaerfe > l.max_hintergrund_unschaerfe:
+            setze m auf m | 4
+        wenn z.hg_saettigung > l.max_saettigung:
+            setze m auf m | 8
+        setze treffer auf 0
+        setze k: i32 auf l.max_affin_koeffizient
+        setze t: i32 auf l.max_affin_verschiebung
+        setze u: i32 auf l.max_affin_ursprung
+        wenn i32_ueber(z.m11, k) != 0:
+            setze treffer auf 1
+        wenn i32_ueber(z.m12, k) != 0:
+            setze treffer auf 1
+        wenn i32_ueber(z.m21, k) != 0:
+            setze treffer auf 1
+        wenn i32_ueber(z.m22, k) != 0:
+            setze treffer auf 1
+        wenn i32_ueber(z.tx, t) != 0:
+            setze treffer auf 1
+        wenn i32_ueber(z.ty, t) != 0:
+            setze treffer auf 1
+        wenn i32_ueber(z.ursprung_x, u) != 0:
+            setze treffer auf 1
+        wenn i32_ueber(z.ursprung_y, u) != 0:
+            setze treffer auf 1
+        wenn treffer != 0:
+            setze m auf m | 64
+        gib_zurück m & z.aktiv_maske
+
+# C :293-300: gepruefte u64-Multiplikation. 1 = ok (ziel geschrieben).
+@nativ
+funktion u64_mal(a: u64, b: u64, ziel: ptr[u64]) -> u32:
+    unsicher:
+        setze umax: u64 auf 0
+        setze umax auf umax - 1
+        wenn a != 0:
+            wenn b > umax / a:
+                gib_zurück 0
+        ziel[0] = a * b
+        gib_zurück 1
+
+# C :302-344. Arbeitsgewicht je Pixel: CORNER 1, SHADOW 4, BACKDROP 4,
+# SATURATION/TINT/NOISE je 1, AFFINE 2 (effects_state.h:8-12; Summe <= 14,
+# das gepruefte add aus C kann nie ueberlaufen). Scratch je Pixel: BACKDROP 32,
+# sonst SHADOW mit Unschaerfe 8, sonst 0. Wie C: arbeit wird geschrieben,
+# bevor scratch geprueft wird (scratch-Ueberlauf -> LIMIT, arbeit gesetzt).
+# Vorbedingung wie C: alle Zeiger != 0.
+@nativ
+@einstieg
+funktion moo_n_effect_estimate(zustand: u64, pixel: u64, arbeit: u64, scratch: u64) -> u32:
+    unsicher:
+        setze z: ptr[KompEffektZustand] auf zeiger(zustand)
+        setze m: u64 auf z.aktiv_maske
+        setze gewicht: u64 auf 0
+        wenn (m & 1) != 0:
+            setze gewicht auf gewicht + 1
+        wenn (m & 2) != 0:
+            setze gewicht auf gewicht + 4
+        wenn (m & 4) != 0:
+            setze gewicht auf gewicht + 4
+        wenn (m & 8) != 0:
+            setze gewicht auf gewicht + 1
+        wenn (m & 16) != 0:
+            setze gewicht auf gewicht + 1
+        wenn (m & 32) != 0:
+            setze gewicht auf gewicht + 1
+        wenn (m & 64) != 0:
+            setze gewicht auf gewicht + 2
+        setze sw: u64 auf 0
+        wenn (m & 4) != 0:
+            setze sw auf 32
+        sonst:
+            wenn (m & 2) != 0:
+                wenn z.schatten_unschaerfe != 0:
+                    setze sw auf 8
+        wenn u64_mal(pixel, gewicht, zeiger(arbeit)) == 0:
+            gib_zurück 2
+        wenn u64_mal(pixel, sw, zeiger(scratch)) == 0:
+            gib_zurück 2
+        gib_zurück 0
+

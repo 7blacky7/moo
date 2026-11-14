@@ -1,0 +1,78 @@
+[tasks.test]
+description = "Native u64-Bare-Werte auf x86_64 und AArch64 prüfen"
+run = '''
+set -eu
+cd ../../..
+out=build/p2-native-u64-bare
+mkdir -p "$out"
+compiler=compiler/target/release/moo-compiler
+src=compiler/tests/p2/native_u64_bare.moos
+for target in x86_64-bare aarch64-bare; do
+    "$compiler" compile "$src" --no-stdlib --emit-ir --target "$target" -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S --func=__moo_native.wort_add --func=__moo_native.wort_sub --func=__moo_native.wort_mul --func=__moo_native.wort_max --func=__moo_native.wort_genau "$out/$target.ll" -o "$out/$target.extract.ll"
+    if rg -q 'call .*@moo_' "$out/$target.extract.ll"; then echo 'unerwarteter Runtime-Aufruf' >&2; exit 1; fi
+    mise exec -- llc -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+done
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror compiler/tests/p2/native_u64_bare_adapter.cpp "$out/x86_64-bare.o" -o "$out/probe"
+"$out/probe"
+if "$compiler" compile "$src" --emit-ir -o "$out/hosted.ll" >"$out/hosted.log" 2>&1; then
+    echo 'Hosted-u64 wurde ungewollt freigegeben' >&2; exit 1
+fi
+rg -q -F 'Signatur wird nicht unterstützt' "$out/hosted.log"
+for case_name in aufruf div; do
+    if "$compiler" compile "compiler/tests/p2/native_u64_bare_${case_name}.moos" --no-stdlib --emit-ir --target x86_64-bare -o "$out/$case_name.ll" >"$out/$case_name.log" 2>&1; then
+        echo "Ungültiger Fall akzeptiert: $case_name" >&2; exit 1
+    fi
+done
+rg -q -F 'Dynamische native Aufrufe sind im Bare-Profil noch nicht unterstützt' "$out/aufruf.log"
+rg -q -F 'Fehlernder oder nicht unterstützter nativer Integer-Operator' "$out/div.log"
+echo 'PASS hosted- und Bare-Fehlergrenzen'
+'''
+
+[tasks.call]
+description = "Direkte native u64-Aufrufe auf Bare-Zielen prüfen"
+run = '''
+set -eu
+cd ../../..
+out=build/p2-native-u64-bare-call
+mkdir -p "$out"
+compiler=compiler/target/release/moo-compiler
+for target in x86_64-bare aarch64-bare; do
+    "$compiler" compile compiler/tests/p2/native_u64_bare_call.moos --no-stdlib --emit-ir --target "$target" -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S --recursive --func=__moo_native.rufe_wort "$out/$target.ll" -o "$out/$target.extract.ll"
+    if rg -q 'call .*@moo_' "$out/$target.extract.ll"; then echo 'unerwarteter Runtime-Aufruf' >&2; exit 1; fi
+    rg -q 'call i64 @__moo_native.addiere_eins\(i64' "$out/$target.extract.ll"
+    mise exec -- llc -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+done
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror compiler/tests/p2/native_u64_bare_call.cpp "$out/x86_64-bare.o" -o "$out/probe"
+"$out/probe"
+if "$compiler" compile compiler/tests/p2/native_u64_bare_call_typ.moos --no-stdlib --emit-ir --target x86_64-bare -o "$out/typ.ll" >"$out/typ.log" 2>&1; then
+    echo 'Nativer Rückgabetypkonflikt akzeptiert' >&2; exit 1
+fi
+rg -q -F 'falscher Typ oder falsche Argumentzahl' "$out/typ.log"
+echo 'PASS nativer Rückgabetypkonflikt'
+'''
+
+[tasks.bit]
+description = "Native u64-Bitmasken auf Bare-Zielen prüfen"
+run = '''
+set -eu
+cd ../../..
+out=build/p2-native-u64-bare-bit
+mkdir -p "$out"
+compiler=compiler/target/release/moo-compiler
+for target in x86_64-bare aarch64-bare; do
+    "$compiler" compile compiler/tests/p2/native_u64_bare_bit.moos --no-stdlib --emit-ir --target "$target" -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S --func=__moo_native.wort_und --func=__moo_native.wort_oder --func=__moo_native.wort_xor "$out/$target.ll" -o "$out/$target.extract.ll"
+    if rg -q 'call .*@moo_' "$out/$target.extract.ll"; then echo 'unerwarteter Runtime-Aufruf' >&2; exit 1; fi
+    for op in and or xor; do rg -q "  %.* = $op i64 " "$out/$target.extract.ll"; done
+    mise exec -- llc -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+done
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror compiler/tests/p2/native_u64_bare_bit.cpp "$out/x86_64-bare.o" -o "$out/probe"
+"$out/probe"
+'''
+
+

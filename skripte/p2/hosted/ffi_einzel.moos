@@ -1,0 +1,10 @@
+# P2-T66: Ein einzelner extern-C-Aufruf bleibt im bestehenden FFI-Pfad
+# (kein Systemkoerper) und ist aus main aufrufbar.
+extern "C" funktion abs(wert: i32) -> i32
+
+@nativ
+funktion betrag(wert: i32) -> i32:
+    unsicher:
+        gib_zurück abs(wert)
+
+zeige betrag(-5)

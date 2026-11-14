@@ -1,0 +1,46 @@
+[tasks.test]
+description = "Defer-Callee: Rekursion und lokaler Catch mit Heap-Rückgabe"
+dir = "{{config_root}}/../../.."
+run = '''
+set -u
+out=build/p2-defer-callee
+mkdir -p "$out"
+failed=0
+for name in rekursion catch; do
+  if ! timeout 120s compiler/target/release/moo-compiler compile "compiler/tests/p2/defer_callee_$name.moos" -o "$out/$name" >"$out/$name.compile.log" 2>&1; then
+    printf 'FAIL %s: Compile\n' "$name"; cat "$out/$name.compile.log"; failed=1; continue
+  fi
+  if ! timeout 30s "$out/$name" >"$out/$name.actual" 2>"$out/$name.err"; then
+    printf 'FAIL %s: Laufzeit\n' "$name"; cat "$out/$name.err"; failed=1; continue
+  fi
+  case "$name" in
+    rekursion) printf 'A\nDivision durch Null!\nweiter\n' >"$out/$name.expected" ;;
+    catch) printf 'innen\n7\nA\n8\ndanach\n' >"$out/$name.expected" ;;
+  esac
+  if ! cmp -s "$out/$name.expected" "$out/$name.actual"; then
+    printf 'FAIL %s: Ausgabe\n' "$name"; cat "$out/$name.actual"; failed=1; continue
+  fi
+  printf 'PASS %s\n' "$name"
+done
+exit "$failed"
+'''
+
+[tasks.heap]
+description = "Defer-Callee: Heap-Locals bei Fehler und RSS"
+dir = "{{config_root}}/../../.."
+run = '''
+set -euo pipefail
+[ "$(uname -s)" = Linux ] || { echo 'SKIP: Linux wait4 benötigt'; exit 2; }
+out=build/p2-defer-callee
+mkdir -p "$out"
+for size in 2k 8k; do
+  case "$size" in 2k) count=2000 ;; 8k) count=8000 ;; esac
+  timeout 120s compiler/target/release/moo-compiler compile "compiler/tests/p2/defer_callee_heap_$size.moos" -o "$out/heap_$size"
+  timeout 120s "$out/heap_$size" >"$out/heap_$size.out"
+  printf '%s\n%s\n' "$count" "$count" >"$out/heap_$size.expected"
+  cmp "$out/heap_$size.expected" "$out/heap_$size.out"
+  printf 'PASS heap %s: Catch und Cleanup je %s\n' "$size" "$count"
+done
+${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror compiler/tests/p2/defer_heap_rss.c -o "$out/measure"
+timeout 120s "$out/measure" "$out/heap_2k" "$out/heap_8k" | sed -e 's/200k=/2k=/g' -e 's/800k=/8k=/g'
+'''

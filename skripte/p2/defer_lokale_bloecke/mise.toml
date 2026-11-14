@@ -1,0 +1,16 @@
+[tasks.test]
+description = "Guard-/Unsafe-Locals und First-Use global in Funktionen/Methoden"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-defer-lokale-bloecke
+mkdir -p "$out"
+timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/defer_lokale_bloecke.moos -o "$out/probe"
+timeout 30s "$out/probe" > "$out/actual"
+if ! cmp -s compiler/tests/p2/defer_lokale_bloecke.expected "$out/actual"; then
+  printf 'FAIL Guard/Unsafe-Locals oder Global-First-Use\n' >&2
+  diff -u compiler/tests/p2/defer_lokale_bloecke.expected "$out/actual" >&2 || true
+  exit 1
+fi
+printf 'PASS Guard/Unsafe-Locals und Global-First-Use\n'
+'''

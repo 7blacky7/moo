@@ -1,0 +1,75 @@
+# P2-T73: native Zahlen-, Cast- und bool-Semantik (P2-T34, ADR f67bfcbd §3/§4)
+# als Win64-Exporte. zahlen_probe.c prueft die Werte unabhaengig in C,
+# zahlen_trap.c den Fehlervertrag der C-Exporte: kein Moo-Fehler ueber
+# fremde C-Frames (ADR §11), der Prozess endet per llvm.trap.
+# bool-Ergebnisse gehen als i32 ueber die C-Grenze (als(i32, ...)), weil
+# _Bool-Lowering an der C-ABI noch nicht freigegeben ist (ADR §10).
+@nativ
+@einstieg
+funktion moo_win_div(a: i32, b: i32) -> i32:
+    gib_zurück a / b
+
+@nativ
+@einstieg
+funktion moo_win_rest(a: i32, b: i32) -> i32:
+    gib_zurück a % b
+
+@nativ
+@einstieg
+funktion moo_win_links(a: u8, n: u8) -> u8:
+    gib_zurück a << n
+
+@nativ
+@einstieg
+funktion moo_win_rechts(a: i8, n: i8) -> i8:
+    gib_zurück a >> n
+
+@nativ
+@einstieg
+funktion moo_win_wrap8(a: i8) -> i8:
+    gib_zurück a + 1
+
+@nativ
+@einstieg
+funktion moo_win_als_u8(a: i32) -> u8:
+    gib_zurück als(u8, a)
+
+@nativ
+@einstieg
+funktion moo_win_wrap_u8(a: i32) -> u8:
+    gib_zurück als_wrap(u8, a)
+
+@nativ
+@einstieg
+funktion moo_win_satt_i8(a: i32) -> i8:
+    gib_zurück als_saettigend(i8, a)
+
+@nativ
+@einstieg
+funktion moo_win_satt_f(a: f64) -> u8:
+    gib_zurück als_saettigend(u8, a)
+
+@nativ
+@einstieg
+funktion moo_win_f2i(a: f64) -> i32:
+    gib_zurück als(i32, a)
+
+@nativ
+@einstieg
+funktion moo_win_rund(a: i32) -> i64:
+    gib_zurück als(i64, als(f32, a))
+
+@nativ
+@einstieg
+funktion moo_win_kleiner(a: i32, b: i32) -> i32:
+    gib_zurück als(i32, a < b)
+
+@nativ
+@einstieg
+funktion moo_win_sicher(a: i32, b: i32) -> i32:
+    gib_zurück als(i32, b != 0 und a / b > 2)
+
+@nativ
+@einstieg
+funktion moo_win_nan(a: f64, b: f64) -> i32:
+    gib_zurück als(i32, a / b == a / b)

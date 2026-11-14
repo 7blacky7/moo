@@ -5,6 +5,7 @@ description = "Eine universelle, zweisprachige Programmiersprache (DE/EN) die na
 requires-python = ">=3.12"
 dependencies = [
     "pygls>=2.1.1",
+    "psycopg[binary]>=3.2,<4",
 ]
 
 [project.scripts]

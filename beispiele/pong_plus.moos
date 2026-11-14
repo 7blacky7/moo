@@ -73,8 +73,10 @@ solange fenster_offen(win):
             setze p1_y auf p1_y - p1_speed
         wenn taste_gedrückt("s") oder taste_gedrückt("unten"):
             setze p1_y auf p1_y + p1_speed
-        wenn p1_y < 0: setze p1_y auf 0.0
-        wenn p1_y > WIN_H - PADDLE_H: setze p1_y auf WIN_H - PADDLE_H * 1.0
+        wenn p1_y < 0:
+            setze p1_y auf 0.0
+        wenn p1_y > WIN_H - PADDLE_H:
+            setze p1_y auf WIN_H - PADDLE_H * 1.0
 
         # KI-Paddle (folgt dem Ball mit Delay)
         setze ziel auf ball_y - PADDLE_H / 2
@@ -82,8 +84,10 @@ solange fenster_offen(win):
             setze p2_y auf p2_y + p2_speed
         sonst wenn p2_y > ziel + 3:
             setze p2_y auf p2_y - p2_speed
-        wenn p2_y < 0: setze p2_y auf 0.0
-        wenn p2_y > WIN_H - PADDLE_H: setze p2_y auf WIN_H - PADDLE_H * 1.0
+        wenn p2_y < 0:
+            setze p2_y auf 0.0
+        wenn p2_y > WIN_H - PADDLE_H:
+            setze p2_y auf WIN_H - PADDLE_H * 1.0
 
         # Ball bewegen
         setze ball_x auf ball_x + ball_vx
@@ -162,7 +166,8 @@ solange fenster_offen(win):
     # Game Over
     wenn game_over:
         setze gc auf "#2196F3"
-        wenn winner == 2: setze gc auf "#F44336"
+        wenn winner == 2:
+            setze gc auf "#F44336"
         zeichne_rechteck(win, WIN_W / 2 - 80, WIN_H / 2 - 25, 160, 50, gc)
         zeichne_rechteck(win, WIN_W / 2 - 78, WIN_H / 2 - 23, 156, 46, "#263238")
         # Sieger-Symbol

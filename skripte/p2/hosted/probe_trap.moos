@@ -1,0 +1,11 @@
+# P2-T66 Stufe 2a / P2-T34: Fehler im hosted Systemkoerper rufen
+# moo_native_fehler; ohne Handler beendet moo_throw den Prozess (RC 1) mit
+# Diagnose, bevor 'NICHT ERREICHT' ausgegeben wird. Bare/UEFI trappt weiterhin.
+@nativ
+funktion teile(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b
+
+unsicher:
+    zeige teile(7, 0)
+zeige "NICHT ERREICHT"

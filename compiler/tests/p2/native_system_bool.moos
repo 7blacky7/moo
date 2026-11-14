@@ -1,0 +1,15 @@
+# P2-T34: bool-Rueckgabe eines hosted Systemkoerpers kommt als Moo-Wahrheitswert
+# in die dynamische Ebene (scalar_signature -> moo_bool_fn), kein Zahlenumweg.
+@nativ
+funktion s_positiv(a: i32) -> bool:
+    unsicher:
+        gib_zurück a > 0
+@nativ
+funktion s_beides(a: i32, b: i32) -> bool:
+    unsicher:
+        gib_zurück a > 0 und b > 0
+unsicher:
+    zeige s_positiv(3)
+    zeige s_positiv(-3)
+    zeige s_beides(1, 2)
+    zeige s_beides(1, -2)

@@ -1,0 +1,74 @@
+# Zwei kurze Methoden-Schritte auf dem echten SIL-14-Modell; Original nur lesen.
+setze tok auf silben_laden("beispiele/p4_silben/run_sil14_grimm36k/tokenizer.msf")
+setze tokhash auf sha256(tok)
+setze basis auf "beispiele/p4_silben/run_sil14_grimm36k/full.mook"
+setze zustand auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+setze referenz_zustand auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+setze schichten auf zustand["netz"]["schichten"]
+setze refschichten auf referenz_zustand["netz"]["schichten"]
+setze limit auf schichten[1]["max"]
+wenn limit != 64:
+    wirf "SIL-14 Positionslaenge ungueltig"
+funktion vorlauf(eingabe):
+    setze x auf vorwaerts([schichten[0]], eingabe)
+    setze x auf vorwaerts([schichten[1]], x)
+    setze x auf x + vorwaerts([schichten[2], schichten[3]], x)
+    setze x auf x + vorwaerts([schichten[4], schichten[5], schichten[6]], x)
+    setze x auf x + vorwaerts([schichten[7], schichten[8]], x)
+    setze x auf x + vorwaerts([schichten[9], schichten[10], schichten[11]], x)
+    gib_zurück vorwaerts([schichten[12], schichten[13]], x)
+funktion referenzlauf(eingabe):
+    setze x auf vorwaerts([refschichten[0]], eingabe)
+    setze x auf vorwaerts([refschichten[1]], x)
+    setze x auf x + vorwaerts([refschichten[2], refschichten[3]], x)
+    setze x auf x + vorwaerts([refschichten[4], refschichten[5], refschichten[6]], x)
+    setze x auf x + vorwaerts([refschichten[7], refschichten[8]], x)
+    setze x auf x + vorwaerts([refschichten[9], refschichten[10], refschichten[11]], x)
+    gib_zurück vorwaerts([refschichten[12], refschichten[13]], x)
+setze eingaben auf []
+setze ziel auf []
+setze abgelehnt auf []
+setze maske auf []
+setze i auf 0
+solange i < limit:
+    eingaben.hinzufügen(0)
+    ziel.hinzufügen(0)
+    abgelehnt.hinzufügen(0)
+    maske.hinzufügen(0)
+    setze i auf i + 1
+setze ziel[63] auf 1
+setze abgelehnt[63] auf 2
+setze maske[63] auf 1
+autograd_aus()
+setze teacher auf referenzlauf(tensor_aus_liste(eingaben))
+setze params auf parameter(schichten)
+setze refparams auf parameter(refschichten)
+setze vorher auf params[0].zu_liste()
+setze refvor auf refparams[0].zu_liste()
+setze beispiel auf {"input_ids": eingaben, "target_ids": ziel, "loss_mask": maske, "lehrer_logits": teacher}
+setze dd auf {"tokenizer_id": tokhash, "lehrer_tokenizer_id": tokhash, "beispiele": [beispiel]}
+setze cfg auf {"tokenizer_id": tokhash, "sequenzlaenge": limit, "vokab": silben_info(tok)["vokab"], "params": params, "optimierer": "sgd", "rate": 0.00001, "momentum": 0, "schritte": 1, "temperatur": 2, "alpha": 0.5}
+gpu_statistik_reset()
+setze d auf trainiere_distillation(vorlauf, dd, cfg)
+setze nachdist auf params[0].zu_liste()
+setze chosen auf {"input_ids": eingaben, "target_ids": ziel, "loss_mask": maske}
+setze rejected auf {"input_ids": eingaben, "target_ids": abgelehnt, "loss_mask": maske}
+setze pd auf {"tokenizer_id": tokhash, "beispiele": [{"gewaehlt": chosen, "verworfen": rejected}]}
+setze pcfg auf {"tokenizer_id": tokhash, "sequenzlaenge": limit, "vokab": silben_info(tok)["vokab"], "params": params, "referenz_params": refparams, "referenz_forward": referenzlauf, "optimierer": "sgd", "rate": 0.00001, "momentum": 0, "schritte": 1, "beta": 0.1}
+setze p auf trainiere_praeferenzen(vorlauf, pd, pcfg)
+setze nachher auf params[0].zu_liste()
+setze refnach auf refparams[0].zu_liste()
+setze dist_geaendert auf falsch
+setze dpo_geaendert auf falsch
+setze i auf 0
+solange i < länge(vorher):
+    wenn vorher[i] != nachdist[i]:
+        setze dist_geaendert auf wahr
+    wenn nachdist[i] != nachher[i]:
+        setze dpo_geaendert auf wahr
+    wenn refvor[i] != refnach[i]:
+        wirf "Referenzparameter wurden veraendert"
+    setze i auf i + 1
+wenn nicht dist_geaendert oder nicht dpo_geaendert:
+    wirf "SIL-14: eine Methode hat Policyparameter nicht veraendert"
+zeige "DISTILL_DPO_SIL14_OK " + json_string(gpu_statistik())

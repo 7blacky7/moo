@@ -86,3 +86,60 @@ pub(crate) fn libraries(stmts: &[Stmt], triple: &str) -> Result<Vec<String>, Str
     }
     Ok(names)
 }
+
+/// MSVC-Umgebung eines COFF-Triples. GNU/MinGW/Cygwin/Itanium-Windows zaehlen
+/// nicht dazu; ein Windows-Triple ohne Umgebung ist bei LLVM MSVC.
+fn is_msvc_coff(triple: &str) -> bool {
+    triple.contains("-windows")
+        && !["-gnu", "mingw", "cygnus", "itanium"].iter().any(|env| triple.contains(env))
+}
+
+/// P2-T43: @bibliothek als eingebettete Link-Direktive. Auf MSVC-COFF wird je
+/// Bibliothek einmal `/DEFAULTLIB:<name>.lib` in `llvm.linker.options` gelegt;
+/// LLVM schreibt das in die .drectve-Sektion (wie clang bei
+/// `#pragma comment(lib, ...)`), link.exe/lld-link loesen es ohne `-l` auf.
+/// GNU-COFF bleibt ohne Direktive: GNU ld ignoriert .drectve-Bibliotheken, dort
+/// muss der Treiber `-l` uebergeben (main.rs). ELF/Mach-O/Bare: keine Aenderung.
+/// Ohne @bibliothek bleibt das Modul unveraendert (Legacy-IR).
+pub(crate) fn embed_link_options<'ctx>(
+    context: &'ctx inkwell::context::Context,
+    module: &inkwell::module::Module<'ctx>,
+    libraries: &[String],
+    triple: &str,
+) -> Result<(), String> {
+    if libraries.is_empty() || !is_msvc_coff(triple) {
+        return Ok(());
+    }
+    let mut seen = std::collections::HashSet::new();
+    for name in libraries {
+        if !seen.insert(name.as_str()) {
+            continue;
+        }
+        let option = if name.to_ascii_lowercase().ends_with(".lib") {
+            format!("/DEFAULTLIB:{name}")
+        } else {
+            format!("/DEFAULTLIB:{name}.lib")
+        };
+        let node = context.metadata_node(&[context.metadata_string(&option).into()]);
+        module.add_global_metadata("llvm.linker.options", &node)
+            .map_err(|e| format!("Link-Direktive '{option}' nicht einbettbar: {e}"))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_msvc_coff;
+
+    #[test]
+    fn msvc_coff_erkennung() {
+        assert!(is_msvc_coff("x86_64-pc-windows-msvc"));
+        assert!(is_msvc_coff("aarch64-pc-windows-msvc"));
+        assert!(is_msvc_coff("x86_64-pc-windows"));
+        assert!(!is_msvc_coff("x86_64-pc-windows-gnu"));
+        assert!(!is_msvc_coff("x86_64-w64-windows-gnu"));
+        assert!(!is_msvc_coff("x86_64-w64-mingw32"));
+        assert!(!is_msvc_coff("x86_64-unknown-linux-gnu"));
+        assert!(!is_msvc_coff("x86_64-unknown-none"));
+    }
+}

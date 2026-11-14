@@ -1,0 +1,65 @@
+# P5: Echter SIL-14-Checkpoint; 2 kurze Korrekturschritte, separates Resume.
+aus sft_adapter importiere korrektur_fenster_aufteilen
+setze ausgabe auf umgebung("P5_TEST_DIR")
+wenn ausgabe == nichts:
+    wirf "P5_TEST_DIR fehlt"
+setze tok auf silben_laden("beispiele/p4_silben/run_sil14_grimm36k/tokenizer.msf")
+setze tokhash auf sha256(tok)
+setze basis auf "beispiele/p4_silben/run_sil14_grimm36k/full.mook"
+setze z auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+setze schichten auf z["netz"]["schichten"]
+setze limit auf schichten[1]["max"]
+wenn länge(schichten) != 14 oder limit != 64:
+    wirf "SIL-14 Architektur oder Positionslaenge ungueltig"
+funktion encoder(textwert):
+    gib_zurück silben_kodiere(tok, textwert)
+funktion vorlauf(eingabe):
+    setze x auf vorwaerts([schichten[0]], eingabe)
+    setze x auf vorwaerts([schichten[1]], x)
+    setze x auf x + vorwaerts([schichten[2], schichten[3]], x)
+    setze x auf x + vorwaerts([schichten[4], schichten[5], schichten[6]], x)
+    setze x auf x + vorwaerts([schichten[7], schichten[8]], x)
+    setze x auf x + vorwaerts([schichten[9], schichten[10], schichten[11]], x)
+    gib_zurück vorwaerts([schichten[12], schichten[13]], x)
+setze pilot auf json_parse(datei_lesen("beispiele/p5/daten/pilot_lehrer_v2.json"))
+setze teile auf []
+für quelle in pilot["beispiele"]:
+    wenn quelle["herkunft"]["tokenizer_id"] != tokhash:
+        wirf "Pilot und Tokenizer stimmen nicht ueberein"
+    setze kandidat auf korrektur_fenster_aufteilen(quelle, encoder, limit, 0)
+    wenn länge(kandidat) > 1:
+        setze teile auf kandidat
+        stopp
+wenn länge(teile) < 2:
+    wirf "Kein echtes Mehrfensterbeispiel"
+setze daten auf {"tokenizer_id": tokhash, "beispiele": teile}
+setze params auf parameter(schichten)
+setze vorher auf params[0].zu_liste()
+setze konfig auf {"tokenizer_id": tokhash, "sequenzlaenge": limit, "vokab": silben_info(tok)["vokab"], "params": params, "opt": z["opt"], "encoder": encoder, "schritte": länge(teile)}
+gpu_statistik_reset()
+setze resultat auf trainiere_korrekturen(vorlauf, daten, konfig)
+setze nachher auf params[0].zu_liste()
+setze i auf 0
+setze geaendert auf falsch
+solange i < länge(vorher):
+    wenn vorher[i] != nachher[i]:
+        setze geaendert auf wahr
+    setze i auf i + 1
+wenn nicht geaendert:
+    wirf "SIL-14: Gewicht unveraendert"
+setze ziel auf ausgabe + "/sft.mook"
+wenn datei_existiert(ziel):
+    wirf "Ausgabecheckpoint existiert schon"
+setze z["opt"] auf resultat["opt"]
+setze z["schritt"] auf z["schritt"] + länge(teile)
+setze z["global_schritt"] auf z["global_schritt"] + länge(teile)
+checkpoint_speichern(z, ziel)
+setze z auf checkpoint_laden(ziel, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+setze schichten auf z["netz"]["schichten"]
+setze konfig["params"] auf parameter(schichten)
+setze konfig["opt"] auf z["opt"]
+setze fortgesetzt auf trainiere_korrekturen(vorlauf, daten, konfig)
+wenn länge(fortgesetzt["verluste"]) != länge(teile):
+    wirf "SIL-14 Resume fehlgeschlagen"
+zeige "P5 GPU " + json_string(gpu_statistik())
+zeige "P5 SIL14 SFT OK " + ziel

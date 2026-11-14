@@ -1,0 +1,33 @@
+# P2-T50: alle Elementtypen aus Moo, Grenzwerte exakt; grosse Werte per Vergleich.
+setze a auf puffer_erstellen(i8, 2)
+a[0] = -128
+a[1] = 127
+zeige a[0]
+zeige a[1]
+setze b auf puffer_erstellen(u8, 1)
+b[0] = 255
+zeige b[0]
+setze c auf puffer_erstellen(i16, 1)
+c[0] = -32768
+zeige c[0]
+setze d auf puffer_erstellen(u16, 1)
+d[0] = 65535
+zeige d[0]
+setze e auf puffer_erstellen(u32, 1)
+e[0] = 4294967295
+zeige e[0] == 4294967295
+setze f auf puffer_erstellen(i64, 1)
+f[0] = -9007199254740992
+zeige f[0] == -9007199254740992
+setze g auf puffer_erstellen(u64, 1)
+g[0] = 9007199254740992
+zeige g[0] == 9007199254740992
+setze h auf buffer_create(f32, 1)
+h[0] = 0.5
+zeige h[0] == 0.5
+setze k auf puffer_erstellen(f64, 2)
+k[1] = 0.1
+zeige k[1] == 0.1
+zeige k[0]
+setze leer auf puffer_erstellen(f64, 0)
+zeige "ok"

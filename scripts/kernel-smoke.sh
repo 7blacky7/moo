@@ -61,8 +61,10 @@ if [ ! -x "$MOO_BIN" ]; then
 fi
 [ -f "$KERNEL_SRC" ] || fail "Kernel-Quelle nicht gefunden: $KERNEL_SRC"
 
+# KERNEL_ARGS: zusaetzliche Compiler-Argumente (z. B. --lib-pfad DIR), P2-T43.
+read -r -a KERNEL_EXTRA <<<"${KERNEL_ARGS:-}"
 "$MOO_BIN" compile "$KERNEL_SRC" --no-stdlib --target x86_64-bare --kernel \
-    -o "$ELF" || fail "Kernel-Pipeline fehlgeschlagen"
+    "${KERNEL_EXTRA[@]}" -o "$ELF" || fail "Kernel-Pipeline fehlgeschlagen"
 [ -f "$ELF" ] || fail "kein ELF erzeugt: $ELF"
 echo "      OK: $ELF"
 
@@ -139,12 +141,34 @@ if [ "$QEMU_RC" -ne 0 ] && [ "$QEMU_RC" -ne 124 ]; then
   fail "qemu-system-x86_64 rc=$QEMU_RC (weder 0 noch timeout)"
 fi
 
+if [ -n "${KERNEL_MARKER:-}" ]; then
+  # P2-T43: eigene Marker, je Eintrag ein ERE fuer eine ganze serielle Zeile.
+  read -r -a MARKER <<<"$KERNEL_MARKER"
+  for m in "${MARKER[@]}"; do
+    tr -d '\r' <"$SERIAL_LOG" | grep -Eq "^${m}\$" \
+      || { sed 's/^/      | /' "$SERIAL_LOG" | tail -30; fail "Marker $m fehlt auf seriell"; }
+    echo "      OK: Marker $m"
+  done
+else
 grep -q 'MOO-KERN-OK'       "$SERIAL_LOG" || { sed 's/^/      | /' "$SERIAL_LOG" | tail -30; fail "Marker MOO-KERN-OK fehlt auf seriell"; }
 grep -q 'MOO-KERN-TICKS-OK' "$SERIAL_LOG" || { sed 's/^/      | /' "$SERIAL_LOG" | tail -30; fail "Marker MOO-KERN-TICKS-OK fehlt (PIT-Timer zaehlt nicht?)"; }
 
 echo "      OK: beide Marker auf seriell — Kernel bootet, Timer zaehlt."
 echo "      Serielle Ausgabe (Auszug):"
 grep -E 'MOO-KERN' "$SERIAL_LOG" | sed 's/^/      | /'
+fi
+if [ -n "${KERNEL_MARKER_FEHLT:-}" ]; then
+  # P2-T73: Marker, die NICHT erscheinen duerfen (Trap-Vertrag: nach einem
+  # Laufzeitfehler darf der Kernel nicht weiterlaufen); je Eintrag ein ERE.
+  read -r -a FEHLT <<<"$KERNEL_MARKER_FEHLT"
+  for m in "${FEHLT[@]}"; do
+    if tr -d '\r' <"$SERIAL_LOG" | grep -Eq "^${m}\$"; then
+      sed 's/^/      | /' "$SERIAL_LOG" | tail -30
+      fail "Marker $m erschien auf seriell, obwohl der Kernel vorher anhalten muss"
+    fi
+    echo "      OK: Marker $m fehlt wie erwartet"
+  done
+fi
 echo "############################################################"
 echo "# ERGEBNIS: ALLE 4 Phasen gruen."
 echo "############################################################"

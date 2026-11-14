@@ -1,0 +1,7 @@
+# P2-T66 negativ: Zeigerfunktionen sind aus dynamischem Moo-Code nicht aufrufbar (Stufe 2).
+@nativ
+funktion lese(p: ptr[u32]) -> u32:
+    unsicher:
+        gib_zurück p[0]
+
+zeige lese(0)

@@ -1,0 +1,33 @@
+# P2-T82: verschachtelte dynamische Operatoren und Aufrufe um reine @nativ-
+# Aufrufe innerhalb versuche:. Vorher waren native Aufrufe von den rekursiven
+# Statement-Guards ausgeschlossen: ein uebersprungener Aufruf (nichts, Flag
+# gesetzt) lief in die Folgeoperation (10 / nichts -> 'Division durch Null!'
+# ueberschrieb den Erstfehler) bzw. in Seiteneffekte (marke(nichts), marke(2)).
+# Jetzt bleibt der Erstfehler erhalten, Folgeoperationen und Seiteneffekte
+# nach dem uebersprungenen Aufruf unterbleiben.
+@nativ
+funktion ident(wert: i32) -> i32:
+    gib_zurück wert
+funktion marke(x):
+    zeige "marke " + x
+    gib_zurück x
+funktion intern(a):
+    versuche:
+        zeige (10 / ident(a)) * 2
+    fange fehler:
+        zeige "intern: " + fehler
+    gib_zurück "weiter intern"
+setze text auf "x"
+versuche:
+    zeige (10 / ident(5)) + 1
+    zeige (10 / ident(text)) + 1
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen 1: " + fehler
+versuche:
+    zeige marke(1) + marke(ident(text)) + marke(2)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen 2: " + fehler
+zeige intern(2)
+zeige intern(text)

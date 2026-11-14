@@ -42,9 +42,12 @@ funktion spawn_obj():
     wenn obj_count < MAX_OBJ:
         setze ox auf 20 + cc_rand(WIN_W - 40)
         setze typ auf cc_rand(100)
-        wenn typ < 65: setze typ auf 0
-        sonst wenn typ < 90: setze typ auf 1
-        sonst: setze typ auf 2
+        wenn typ < 65:
+            setze typ auf 0
+        sonst wenn typ < 90:
+            setze typ auf 1
+        sonst:
+            setze typ auf 2
         obj_x.hinzufügen(ox * 1.0)
         obj_y.hinzufügen(-20.0)
         obj_vy.hinzufügen(3.0 + cc_rand(40) / 10.0)
@@ -88,14 +91,18 @@ solange fenster_offen(win):
 
         # Maus → Korb
         setze korb_x auf maus_x(win) - KORB_W / 2
-        wenn korb_x < 0: setze korb_x auf 0.0
-        wenn korb_x > WIN_W - KORB_W: setze korb_x auf WIN_W - KORB_W * 1.0
+        wenn korb_x < 0:
+            setze korb_x auf 0.0
+        wenn korb_x > WIN_W - KORB_W:
+            setze korb_x auf WIN_W - KORB_W * 1.0
 
         # Spawn
         setze spawn_cd auf spawn_cd + 1
         setze spawn_rate auf 25
-        wenn frames > 1200: setze spawn_rate auf 18
-        wenn frames > 2400: setze spawn_rate auf 12
+        wenn frames > 1200:
+            setze spawn_rate auf 18
+        wenn frames > 2400:
+            setze spawn_rate auf 12
         wenn spawn_cd >= spawn_rate:
             setze spawn_cd auf 0
             spawn_obj()
@@ -170,11 +177,13 @@ solange fenster_offen(win):
         setze si auf si + 1
     # Timer
     setze rest auf SPIEL_DAUER - frames
-    wenn rest < 0: setze rest auf 0
+    wenn rest < 0:
+        setze rest auf 0
     setze bw auf rest * 120 / SPIEL_DAUER
     zeichne_rechteck(win, WIN_W / 2 - 60, 16, 120, 8, "#424242")
     setze tc auf "#4CAF50"
-    wenn rest < SPIEL_DAUER / 3: setze tc auf "#F44336"
+    wenn rest < SPIEL_DAUER / 3:
+        setze tc auf "#F44336"
     zeichne_rechteck(win, WIN_W / 2 - 60, 16, bw, 8, tc)
     # Misses
     setze mi auf 0

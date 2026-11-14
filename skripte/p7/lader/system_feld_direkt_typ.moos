@@ -1,0 +1,10 @@
+struktur Paar:
+    a: u32
+    b: u64
+@nativ
+@einstieg
+funktion feld_typ(adr: u64) -> u64:
+    unsicher:
+        setze p: ptr[Paar] auf zeiger(adr)
+        p.b = u32(2)
+        gib_zurück p.b

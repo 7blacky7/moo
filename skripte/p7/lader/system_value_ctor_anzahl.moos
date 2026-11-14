@@ -1,0 +1,10 @@
+struktur Probe:
+    a: u32
+    b: u64
+
+@nativ
+@einstieg
+funktion pruefe_ctor_anzahl() -> u64:
+    unsicher:
+        setze wert: Probe auf Probe(u32(1))
+        gib_zurück wert.b

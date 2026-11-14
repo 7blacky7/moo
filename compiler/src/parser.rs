@@ -1034,6 +1034,13 @@ impl Parser {
                         if !matches!(self.current_type(), TokenType::RParen) {
                             loop {
                                 self.parse_param(&mut params, &mut param_types, &mut defaults)?;
+                                // P2-T60: parse_param uebernimmt den Typ nur bei Name/'['
+                                // nach ':'. Ein verbliebenes ':' ist eine Annotation ohne
+                                // gueltigen Typ; parse_type liefert die echte Typdiagnose.
+                                if matches!(self.current_type(), TokenType::Colon) {
+                                    self.pos += 1;
+                                    self.parse_type()?;
+                                }
                                 if !matches!(self.current_type(), TokenType::Comma) { break; }
                                 self.pos += 1;
                             }
@@ -1043,13 +1050,26 @@ impl Parser {
                     })();
                     let parsed = match parsed {
                         Ok(params) => Some(params),
-                        Err(_) => {
-                            // Bestehende Interfaces akzeptierten beliebige Tokens
-                            // bis zur ersten ')'. Diese alten Formen bleiben parsebar.
+                        Err(err) => {
+                            // P2-T60: Ein ':' bis zur ersten ')' ist eine explizite
+                            // Typannotation (`name: Typ`). Deren Fehler wird gemeldet
+                            // statt verworfen. Nur untypisierte Altformen ohne ':'
+                            // (Bestand: compiler/tests/test_interface.moos) behalten
+                            // den toleranten Fallback mit signatures = None.
                             self.pos = start;
+                            let mut typisiert = false;
                             while !matches!(self.current_type(), TokenType::RParen | TokenType::Eof) {
+                                if matches!(self.current_type(), TokenType::Colon) { typisiert = true; }
                                 self.pos += 1;
                             }
+                            if typisiert {
+                                return Err(ParseError {
+                                    message: format!("Interface-Methode '{}': {}", method_name, err.message),
+                                    line: err.line,
+                                });
+                            }
+                            // Bestehende Interfaces akzeptierten beliebige Tokens
+                            // bis zur ersten ')'. Diese alten Formen bleiben parsebar.
                             self.eat(&TokenType::RParen)?;
                             Option::None
                         }
@@ -1590,6 +1610,22 @@ impl Parser {
                 } else {
                     Ok(Expr::Identifier(name))
                 }
+            }
+            TokenType::As => {
+                // P2-T34: als(Typ, Wert) ist der gepruefte Standardcast (ADR §4).
+                // Sonst bleibt 'als' Schluesselwort (importiere ... als ...);
+                // ohne '(' war es hier schon immer ein Fehler.
+                if !matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type), Some(TokenType::LParen)) {
+                    let got = got_description(self.current_type());
+                    return Err(ParseError {
+                        message: format!("Hier wird ein Wert erwartet (Zahl, Text, Variable, ...), aber {got} gefunden."),
+                        line: self.current().line,
+                    });
+                }
+                self.pos += 2;
+                let args = self.parse_args_list()?;
+                self.eat(&TokenType::RParen)?;
+                Ok(Expr::FunctionCall { name: "als".to_string(), args })
             }
             TokenType::Data => {
                 // Soft-Keyword: "daten" als Variable/Funktion erlaubt, ausser

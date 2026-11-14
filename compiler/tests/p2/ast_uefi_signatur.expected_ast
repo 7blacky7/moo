@@ -122,6 +122,7 @@ Program {
                                             end_line: 1,
                                             end_column: 105,
                                         },
+                                        convention: None,
                                     },
                                     line: 1,
                                     column: 77,

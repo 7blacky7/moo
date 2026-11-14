@@ -1,0 +1,45 @@
+[tasks.test]
+description = "Fehler aus moo_print im verschachtelten Defer-Frame"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-defer-print-fehler
+mkdir -p "$out"
+timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/defer_print_fehler.moos --emit-ir -o "$out/probe.ll"
+timeout 30s mise exec -- opt -passes=verify -disable-output "$out/probe.ll"
+rg -q 'call .*@moo_defer_stack_push\(' "$out/probe.ll" || { echo 'BLOCKED: kein dynamischer Frame' >&2; exit 2; }
+runtime_dir=$(strings compiler/target/release/moo-compiler | rg -o '/home/blacky/dev/moo/compiler/target/release/build/moo-compiler-[0-9a-f]+/out' | sort -u)
+[ "$(printf '%s\n' "$runtime_dir" | wc -l)" -eq 1 ]
+test -f "$runtime_dir/libmoo_runtime.a"
+mise exec -- clang++ -std=c++17 -Wall -Wextra -Werror -c compiler/tests/p2/defer_print_inject.cpp -o "$out/inject.o"
+mise exec -- clang++ "$out/probe.ll" "$out/inject.o" "$runtime_dir/libmoo_runtime.a" -Wl,--wrap=moo_print -Wl,--wrap=moo_string_new -lm -lpthread -lsqlite3 -lSDL2 -lSDL2_image -lssl -lcrypto -lvulkan -lglfw -lasound -lv4l2 -o "$out/probe"
+timeout 30s "$out/probe" >"$out/probe.out" 2>"$out/probe.err"
+printf 'PRINT_INJECTED\n' >"$out/probe.expected.err"
+printf 'CLEANUP\nCATCH\nPRINT_FEHLER\nENDE\n' >"$out/probe.expected"
+cmp "$out/probe.expected.err" "$out/probe.err"
+cmp "$out/probe.expected" "$out/probe.out" || { cat "$out/probe.out" >&2; exit 1; }
+echo 'PASS moo_print-Fehler verzweigt vor Folgeeffekten und räumt auf'
+'''
+
+[tasks.callee]
+description = "Fehler aus moo_print im verschachtelten Defer-Frame"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-defer-print-callee
+mkdir -p "$out"
+timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/defer_print_callee.moos --emit-ir -o "$out/probe.ll"
+timeout 30s mise exec -- opt -passes=verify -disable-output "$out/probe.ll"
+rg -q 'call .*@moo_defer_stack_push\(' "$out/probe.ll" || { echo 'BLOCKED: kein dynamischer Frame' >&2; exit 2; }
+runtime_dir=$(strings compiler/target/release/moo-compiler | rg -o '/home/blacky/dev/moo/compiler/target/release/build/moo-compiler-[0-9a-f]+/out' | sort -u)
+[ "$(printf '%s\n' "$runtime_dir" | wc -l)" -eq 1 ]
+test -f "$runtime_dir/libmoo_runtime.a"
+mise exec -- clang++ -std=c++17 -Wall -Wextra -Werror -c compiler/tests/p2/defer_print_inject.cpp -o "$out/inject.o"
+mise exec -- clang++ "$out/probe.ll" "$out/inject.o" "$runtime_dir/libmoo_runtime.a" -Wl,--wrap=moo_print -Wl,--wrap=moo_string_new -lm -lpthread -lsqlite3 -lSDL2 -lSDL2_image -lssl -lcrypto -lvulkan -lglfw -lasound -lv4l2 -o "$out/probe"
+timeout 30s "$out/probe" >"$out/probe.out" 2>"$out/probe.err"
+printf 'PRINT_INJECTED\n' >"$out/probe.expected.err"
+printf 'CLEANUP\nCATCH\nPRINT_FEHLER\nENDE\n' >"$out/probe.expected"
+cmp "$out/probe.expected.err" "$out/probe.err"
+cmp "$out/probe.expected" "$out/probe.out" || { cat "$out/probe.out" >&2; exit 1; }
+echo 'PASS moo_print-Fehler verzweigt vor Folgeeffekten und räumt auf'
+'''

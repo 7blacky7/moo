@@ -1,0 +1,33 @@
+# P2-T34 / ADR §13: Vorpruefung mit Status statt Fehler. teilbar(a, b) ist
+# wahr, wenn a / b und a % b definiert sind (b != 0, nicht MIN / -1);
+# verschiebbar(a, n) ist wahr fuer 0 <= n < Breite von a. Im Systemkoerper
+# erlaubt das eine Fortsetzung ohne Trap (Bare) bzw. ohne Moo-Fehler.
+@nativ
+funktion p_teilbar(a: i32, b: i32) -> bool:
+    gib_zurück teilbar(a, b)
+
+@nativ
+funktion p_verschiebbar(a: u8, n: u8) -> bool:
+    gib_zurück verschiebbar(a, n)
+
+@nativ
+funktion p_sicher(a: i32, b: i32) -> i32:
+    gib_zurück als(i32, teilbar(a, b) und a / b > 2)
+
+@nativ
+funktion s_div_oder(a: i32, b: i32, ersatz: i32) -> i32:
+    unsicher:
+        wenn teilbar(a, b):
+            gib_zurück a / b
+        gib_zurück ersatz
+
+zeige p_teilbar(7, 0)
+zeige p_teilbar(-2147483648, -1)
+zeige p_teilbar(7, 2)
+zeige p_verschiebbar(1, 8)
+zeige p_verschiebbar(1, 7)
+zeige p_sicher(7, 0)
+zeige p_sicher(7, 2)
+unsicher:
+    zeige s_div_oder(7, 0, -1)
+    zeige s_div_oder(7, 2, -1)

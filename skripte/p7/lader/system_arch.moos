@@ -1,0 +1,26 @@
+# P2-T48: ABI-Layoutprobe mit direkten Feldern, ohne C-Runtime oder OS.
+# Dieser Code muss auf x86_64-bare, x86_64-UEFI und aarch64-bare
+# dieselben Offset-/Typregeln im LLVM-IR verwenden.
+struktur Inner:
+    marke: u8
+    wert: u32
+
+@gepackt
+struktur Paket:
+    header: u8
+    innen: Inner
+    ende: u16
+
+@nativ
+@einstieg
+funktion arch_innen(p: ptr[Paket]) -> u32:
+    unsicher:
+        p.innen.wert = u32(0x11223344)
+        gib_zurück p.innen.wert
+
+@nativ
+@einstieg
+funktion arch_array(p: ptr[Paket], i: u64) -> u16:
+    unsicher:
+        p[i].ende = u16(0x1234)
+        gib_zurück p[i].ende

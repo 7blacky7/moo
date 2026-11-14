@@ -1,0 +1,264 @@
+# P2-T68: Animation-Easing und -Interpolation aus
+# compiler/runtime/moo_compositor_animation.c in nativem Moo.
+# Resultcodes wie moo_compositor_protocol.h: 0 = OK, 1 = INVALID, 2 = LIMIT.
+# Konventionen wie effekt_mathe_nativ.moos: Zeiger als u64-Adresse (NULL ->
+# INVALID exakt wie C), Ausgabeparameter heisst 'ergebnis'.
+#
+# MooCompAnimationValue = 8 x uint32_t (effects_protocol.h:184-186), hier als
+# ptr[u32] mit Index 0..7 gelesen. Kodierung (effects_protocol.h:156-171):
+# vorzeichenbehaftete Woerter: raw <= INT32_MAX -> raw, sonst raw - 2^32;
+# Farbe = 0xRRGGBBAA, jeder Kanal einzeln.
+# Fortschritt Q = MOO_COMP_ANIMATION_PROGRESS_ONE = 65535 (animation.h:8).
+# Properties: 1 OPACITY, 2 CORNERS, 3 SHADOW, 4 BACKDROP, 5 AFFINE_2D.
+# Easings: 0 LINEAR, 1 IN_QUAD, 2 OUT_QUAD, 3 IN_OUT_QUAD.
+
+# C :92-95. Kein implementierungsdefinierter u32->i32-Cast.
+@nativ
+@einstieg
+funktion moo_n_anim_decode_signed(raw: u32) -> i64:
+    unsicher:
+        wenn raw <= 2147483647:
+            gib_zurück i64(raw)
+        gib_zurück i64(raw) - 4294967296
+
+# C :97-100. Modulo 2^32.
+@nativ
+@einstieg
+funktion moo_n_anim_encode_signed(wert: i64) -> u32:
+    unsicher:
+        wenn wert >= 0:
+            gib_zurück u32(wert)
+        gib_zurück u32(wert + 4294967296)
+
+# C :102-104 |v| als u64. Ueberlauffrei auch fuer INT64_MIN (in C UB, dort
+# nie erreicht; Interpolationsprodukte bleiben unter 2^49).
+@nativ
+funktion anim_betrag(v: i64) -> u64:
+    unsicher:
+        wenn v >= 0:
+            gib_zurück u64(v)
+        gib_zurück u64(-(v + 1)) + 1
+
+# C :106-112: naechste ganze Zahl, Haelften weg von null.
+# Vorbedingung wie C: nenner != 0.
+@nativ
+@einstieg
+funktion moo_n_anim_round_signed_div(zaehler: i64, nenner: u64) -> i64:
+    unsicher:
+        setze betrag: u64 auf anim_betrag(zaehler)
+        setze gerundet: u64 auf (betrag + nenner / 2) / nenner
+        wenn zaehler < 0:
+            gib_zurück -i64(gerundet)
+        gib_zurück i64(gerundet)
+
+# C :114-118: nichtnegativ, halb-aufwaerts. u64-Addition wickelt wie in C.
+@nativ
+@einstieg
+funktion moo_n_anim_round_unsigned_div(zaehler: u64, nenner: u64) -> u64:
+    unsicher:
+        gib_zurück (zaehler + nenner / 2) / nenner
+
+# C :402-438.
+@nativ
+@einstieg
+funktion moo_n_anim_ease(easing: u32, fortschritt: u32, ergebnis: u64) -> u32:
+    unsicher:
+        wenn ergebnis == 0:
+            gib_zurück 1
+        wenn fortschritt > 65535:
+            gib_zurück 1
+        wenn easing > 3:
+            gib_zurück 1
+        setze q: u64 auf 65535
+        setze p: u64 auf u64(fortschritt)
+        setze wert: u64 auf p
+        wenn easing == 1:
+            setze wert auf moo_n_anim_round_unsigned_div(p * p, q)
+        wenn easing == 2:
+            setze inv: u64 auf q - p
+            setze wert auf q - moo_n_anim_round_unsigned_div(inv * inv, q)
+        wenn easing == 3:
+            wenn p * 2 <= q:
+                setze wert auf moo_n_anim_round_unsigned_div(2 * p * p, q)
+            sonst:
+                setze inv2: u64 auf q - p
+                setze wert auf q - moo_n_anim_round_unsigned_div(2 * inv2 * inv2, q)
+        setze o: ptr[u32] auf zeiger(ergebnis)
+        o[0] = u32(wert)
+        gib_zurück 0
+
+# C :483-497: Farbwort 0xRRGGBBAA, jeder Kanal a + round_signed((b-a)*e/Q).
+@nativ
+funktion anim_farbe_mischen(a: u32, b: u32, eased: u32) -> u32:
+    unsicher:
+        setze gepackt: u32 auf 0
+        setze schub: u32 auf 0
+        solange schub < 32:
+            setze av: i64 auf i64((a >> schub) & 255)
+            setze bv: i64 auf i64((b >> schub) & 255)
+            setze kanal: i64 auf av + moo_n_anim_round_signed_div((bv - av) * i64(eased), 65535)
+            setze gepackt auf gepackt | (u32(kanal) << schub)
+            setze schub auf schub + 8
+        gib_zurück gepackt
+
+# C :499-514: skalares Wort, vorzeichenbehaftet (decode/encode) oder als
+# nichtnegativer i64-Wert mit u32-Rueckschnitt.
+@nativ
+funktion anim_skalar_mischen(a_roh: u32, b_roh: u32, signiert: u32, eased: u32) -> u32:
+    unsicher:
+        setze a: i64 auf i64(a_roh)
+        setze b: i64 auf i64(b_roh)
+        wenn signiert != 0:
+            setze a auf moo_n_anim_decode_signed(a_roh)
+            setze b auf moo_n_anim_decode_signed(b_roh)
+        setze wert: i64 auf a + moo_n_anim_round_signed_div((b - a) * i64(eased), 65535)
+        wenn signiert != 0:
+            gib_zurück moo_n_anim_encode_signed(wert)
+        gib_zurück u32(wert)
+
+# C :440-517. Reihenfolge wie C: Ausgabe ZUERST nullen, dann Wort fuer Wort
+# aus von/nach lesen und schreiben -> identische Alias-Semantik, wenn
+# ergebnis == von oder ergebnis == nach.
+# Vorzeichenmaske: SHADOW 0x3, AFFINE_2D 0xFF; Farbwort: SHADOW 4, BACKDROP 2;
+# Diskretwort: BACKDROP 5 (noise_seed: from fuer e < Q, to nur bei e == Q).
+@nativ
+@einstieg
+funktion moo_n_anim_interpolate(eigenschaft: u32, von_wert: u64, nach: u64, eased: u32, ergebnis: u64) -> u32:
+    unsicher:
+        wenn von_wert == 0:
+            gib_zurück 1
+        wenn nach == 0:
+            gib_zurück 1
+        wenn ergebnis == 0:
+            gib_zurück 1
+        wenn eased > 65535:
+            gib_zurück 1
+        wenn eigenschaft == 0:
+            gib_zurück 1
+        wenn eigenschaft > 5:
+            gib_zurück 1
+        setze farbwort: u32 auf 4294967295
+        setze diskret: u32 auf 4294967295
+        setze vorzeichen: u32 auf 0
+        wenn eigenschaft == 3:
+            setze vorzeichen auf 3
+            setze farbwort auf 4
+        wenn eigenschaft == 4:
+            setze farbwort auf 2
+            setze diskret auf 5
+        wenn eigenschaft == 5:
+            setze vorzeichen auf 255
+        setze a: ptr[u32] auf zeiger(von_wert)
+        setze b: ptr[u32] auf zeiger(nach)
+        setze o: ptr[u32] auf zeiger(ergebnis)
+        setze i: u64 auf 0
+        solange i < 8:
+            o[i] = 0
+            setze i auf i + 1
+        setze i auf 0
+        solange i < 8:
+            setze wi: u32 auf u32(i)
+            setze wert: u32 auf 0
+            wenn wi == diskret:
+                setze wert auf b[i]
+                wenn eased < 65535:
+                    setze wert auf a[i]
+            sonst:
+                wenn wi == farbwort:
+                    setze wert auf anim_farbe_mischen(a[i], b[i], eased)
+                sonst:
+                    setze wert auf anim_skalar_mischen(a[i], b[i], (vorzeichen >> wi) & 1, eased)
+            o[i] = wert
+            setze i auf i + 1
+        gib_zurück 0
+
+# C :268-283. Richtungen: 0 NORMAL, 1 REVERSE, 2 ALTERNATE (vorwaerts bei
+# geradem play), 3 ALTERNATE_REVERSE (vorwaerts bei ungeradem play);
+# unbekannt -> 0 (rueckwaerts), wie C.
+@nativ
+@einstieg
+funktion moo_n_anim_direction_forward(richtung: u32, spiel: u64) -> u32:
+    unsicher:
+        wenn richtung == 0:
+            gib_zurück 1
+        wenn richtung == 2:
+            wenn (spiel & 1) == 0:
+                gib_zurück 1
+            gib_zurück 0
+        wenn richtung == 3:
+            wenn (spiel & 1) != 0:
+                gib_zurück 1
+            gib_zurück 0
+        gib_zurück 0
+
+# 8 Woerter MooCompAnimationValue kopieren (C: Strukturzuweisung).
+@nativ
+funktion anim_wert_kopieren(quelle: u64, ziel: u64) -> void:
+    unsicher:
+        setze q: ptr[u32] auf zeiger(quelle)
+        setze z: ptr[u32] auf zeiger(ziel)
+        setze i: u64 auf 0
+        solange i < 8:
+            z[i] = q[i]
+            setze i auf i + 1
+
+# C :285-330: reine Auswertung EINES aktiven Slots zum Zeitpunkt zeit; keine
+# Timeline-, Start-, Cancel- oder Completion-Logik. Slot-Layout
+# MooCompAnimationSlot (animation.h:30-38, 176 Byte) per Offsets:
+#   desc @8 (MooCompAnimationDesc, effects_protocol.h:207-219, 112 Byte):
+#     duration_ns @24 (u64-Index 3), repeat_count @32 (u32-Index 8),
+#     property @36 (9), easing @40 (10), direction @44 (11),
+#     from @56, to @88
+#   start_ns @152 (u64-Index 19), end_ns @160 (20), active @168 (u32-Index 42)
+# Die C-Probe sichert diese Offsets per _Static_assert.
+# Wie C: out_terminal wird vor easing/interpolate geschrieben, auch wenn diese
+# danach INVALID liefern. Vorbedingung wie C: duration_ns != 0 (validate_desc).
+@nativ
+@einstieg
+funktion moo_n_anim_eval_slot(slot: u64, zeit: u64, reduziert: u32, ergebnis: u64, terminal: u64) -> u32:
+    unsicher:
+        wenn slot == 0:
+            gib_zurück 1
+        setze s64: ptr[u64] auf zeiger(slot)
+        setze s32: ptr[u32] auf zeiger(slot)
+        wenn s32[42] == 0:
+            gib_zurück 1
+        wenn ergebnis == 0:
+            gib_zurück 1
+        wenn terminal == 0:
+            gib_zurück 1
+        setze t: ptr[u32] auf zeiger(terminal)
+        setze von_wert: u64 auf slot + 56
+        setze nach: u64 auf slot + 88
+        wenn reduziert != 0:
+            anim_wert_kopieren(nach, ergebnis)
+            t[0] = 1
+            gib_zurück 0
+        setze start: u64 auf s64[19]
+        setze ende: u64 auf s64[20]
+        setze dauer: u64 auf s64[3]
+        wenn zeit < start:
+            anim_wert_kopieren(von_wert, ergebnis)
+            t[0] = 0
+            gib_zurück 0
+        setze spiel: u64 auf 0
+        setze lokal: u64 auf 0
+        wenn zeit >= ende:
+            setze spiel auf u64(s32[8]) - 1
+            setze lokal auf dauer
+            t[0] = 1
+        sonst:
+            setze verstrichen: u64 auf zeit - start
+            setze spiel auf verstrichen / dauer
+            setze lokal auf verstrichen - spiel * dauer
+            t[0] = 0
+        setze produkt: u64 auf lokal * 65535
+        setze fortschritt: u32 auf u32(moo_n_anim_round_unsigned_div(produkt, dauer))
+        setze eased: u32 auf 0
+        setze rc: u32 auf moo_n_anim_ease(s32[10], fortschritt, adresse_von(eased))
+        wenn rc != 0:
+            gib_zurück rc
+        wenn moo_n_anim_direction_forward(s32[11], spiel) == 0:
+            setze eased auf 65535 - eased
+        gib_zurück moo_n_anim_interpolate(s32[9], von_wert, nach, eased, ergebnis)
+

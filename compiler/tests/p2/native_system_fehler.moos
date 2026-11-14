@@ -1,0 +1,11 @@
+# P2-T34: hosted Systemkoerper melden Laufzeitfehler ueber moo_native_fehler
+# statt llvm.trap; ohne Handler definierter Abbruch mit Diagnose (RC 1).
+@nativ
+funktion s_div(a: i32, b: i32) -> i32:
+    unsicher:
+        setze q: i32 auf a / b
+        gib_zurück q + 1
+unsicher:
+    zeige s_div(7, 2)
+    zeige s_div(7, 0)
+    zeige "NACH_FALSCH"

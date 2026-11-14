@@ -1,0 +1,343 @@
+# P2-T72 Modul 2: Requirements und Geometrie-Preflight aus
+# compiler/runtime/moo_compositor_effects_cpu.c:206-416 in nativem Moo.
+# Resultcodes: 0 OK, 1 INVALID, 2 LIMIT.
+#
+# Wiederverwendung per extern "C":
+#   effekt_mathe_nativ.moos (P2-T65): moo_n_affine_inverse, moo_n_affine_transform_point,
+#     moo_n_corners_normalize, moo_n_rect_expand (alle mit Zeiger-Argumenten)
+#   effekt_cpu_pixel_nativ.moos (P2-T72 Modul 1): moo_n_fx_view_valid,
+#     moo_n_fx_rect_valid, moo_n_fx_effect_valid, moo_n_fx_ranges_overlap
+#
+# MooCompEffectCpuJob (effects_cpu.h:41-55), 232 Byte:
+#   content @0, lower_z @32, target @64 (je Source/Target 32 Byte: pixels @0,
+#   buffer_bytes @8, stride @16, width @24, height @28), content_rect @96,
+#   effect @112 (MooCompEffectState: mask @112, corners @136, shadow.offset_x @144,
+#   offset_y @148, blur u16 @152, spread u16 @154, affine @176),
+#   content_opacity u8 @208, reserved[7] @209, content_scale u32 @216,
+#   reserved_scale u32 @220, max_work_units u64 @224.
+# MooCompEffectCpuStats 40 Byte: affected, work, scratch, rgba_words, mask_words.
+
+extern "C" funktion moo_n_affine_inverse(a: u64, ergebnis: u64) -> u32
+extern "C" funktion moo_n_affine_transform_point(a: u64, punkt: u64, ergebnis: u64) -> u32
+extern "C" funktion moo_n_corners_normalize(breite: i32, hoehe: i32, ecken: u64, ergebnis: u64) -> u32
+extern "C" funktion moo_n_rect_expand(rechteck: u64, radius: i32, ergebnis: u64) -> u32
+extern "C" funktion moo_n_fx_view_valid(pixel: u64, bytes: u64, zeilenabstand: u64, breite: i32, hoehe: i32) -> u32
+extern "C" funktion moo_n_fx_rect_valid(rechteck: u64) -> u32
+extern "C" funktion moo_n_fx_effect_valid(zustand: u64) -> u32
+extern "C" funktion moo_n_fx_ranges_overlap(a: u64, a_bytes: u64, b: u64, b_bytes: u64) -> u32
+
+struktur KompGeoRechteck:
+    x: i32
+    y: i32
+    breite: i32
+    hoehe: i32
+
+struktur KompGeoPunkt:
+    x: i32
+    y: i32
+
+struktur KompGeoAffin:
+    m11: i32
+    m12: i32
+    m21: i32
+    m22: i32
+    tx: i32
+    ty: i32
+    ox: i32
+    oy: i32
+
+struktur KompGeoEcken:
+    ol: u16
+    or_: u16
+    ur: u16
+    ul: u16
+
+# C :299-303. Abrunden einer Q16-Zahl Richtung -unendlich.
+@nativ
+@einstieg
+funktion moo_n_fx_q16_floor(q: i32) -> i32:
+    unsicher:
+        setze v: i64 auf i64(q)
+        wenn v >= 0:
+            gib_zurück i32(v / 65536)
+        gib_zurück i32(-((-v + 65535) / 65536))
+
+# C :305-313. Pixelmitte als Q16; 0 = Ueberlauf (nur obere Grenze, wie C).
+@nativ
+funktion geo_ausgabepunkt(x: i32, y: i32, punkt: ptr[KompGeoPunkt]) -> u32:
+    unsicher:
+        setze px: i64 auf i64(x) * 65536 + 32768
+        setze py: i64 auf i64(y) * 65536 + 32768
+        wenn px > 2147483647:
+            gib_zurück 0
+        wenn py > 2147483647:
+            gib_zurück 0
+        punkt.x = i32(px)
+        punkt.y = i32(py)
+        gib_zurück 1
+
+# C :315-345. Ausgabepixel (x,y) minus Versatz durch die Inverse in lokale
+# Rechteck-Koordinaten; sx/sy nur bei OK geschrieben. Rechteck per Zeiger.
+@nativ
+@einstieg
+funktion moo_n_fx_local_sample_checked(inverse: u64, rechteck: u64, x: i32, y: i32, versatz_x: i32, versatz_y: i32, sx: u64, sy: u64) -> u32:
+    unsicher:
+        setze p: KompGeoPunkt auf KompGeoPunkt(0, 0)
+        wenn geo_ausgabepunkt(x, y, zeiger(adresse_von(p))) == 0:
+            gib_zurück 2
+        setze px: i64 auf i64(p.x) - i64(versatz_x) * 65536
+        setze py: i64 auf i64(p.y) - i64(versatz_y) * 65536
+        wenn px < -2147483648:
+            gib_zurück 2
+        wenn px > 2147483647:
+            gib_zurück 2
+        wenn py < -2147483648:
+            gib_zurück 2
+        wenn py > 2147483647:
+            gib_zurück 2
+        p.x = i32(px)
+        p.y = i32(py)
+        setze lokal: KompGeoPunkt auf KompGeoPunkt(0, 0)
+        setze r: u32 auf moo_n_affine_transform_point(inverse, adresse_von(p), adresse_von(lokal))
+        wenn r != 0:
+            gib_zurück r
+        setze re: ptr[KompGeoRechteck] auf zeiger(rechteck)
+        setze lx: i64 auf i64(moo_n_fx_q16_floor(lokal.x)) - i64(re.x)
+        setze ly: i64 auf i64(moo_n_fx_q16_floor(lokal.y)) - i64(re.y)
+        wenn lx < -2147483648:
+            gib_zurück 2
+        wenn lx > 2147483647:
+            gib_zurück 2
+        wenn ly < -2147483648:
+            gib_zurück 2
+        wenn ly > 2147483647:
+            gib_zurück 2
+        setze ox: ptr[i32] auf zeiger(sx)
+        setze oy: ptr[i32] auf zeiger(sy)
+        ox[0] = i32(lx)
+        oy[0] = i32(ly)
+        gib_zurück 0
+
+# Vier Ecken des Ziels (0/Breite-1 x 0/Hoehe-1; y aussen, x innen wie C).
+@nativ
+funktion geo_vier_ecken(inverse: u64, rechteck: u64, job: u64, versatz_x: i32, versatz_y: i32) -> u32:
+    unsicher:
+        setze j32: ptr[i32] auf zeiger(job)
+        setze xmax: i32 auf j32[22] - 1
+        setze ymax: i32 auf j32[23] - 1
+        setze sx: i32 auf 0
+        setze sy: i32 auf 0
+        setze iy: u32 auf 0
+        solange iy < 2:
+            setze y: i32 auf 0
+            wenn iy == 1:
+                setze y auf ymax
+            setze ix: u32 auf 0
+            solange ix < 2:
+                setze x: i32 auf 0
+                wenn ix == 1:
+                    setze x auf xmax
+                setze r: u32 auf moo_n_fx_local_sample_checked(inverse, rechteck, x, y, versatz_x, versatz_y, adresse_von(sx), adresse_von(sy))
+                wenn r != 0:
+                    gib_zurück r
+                setze ix auf ix + 1
+            setze iy auf iy + 1
+        gib_zurück 0
+
+# C :355-416. Affin = effect.affine nur bei aktivem AFFINE_2D, sonst Einheit.
+@nativ
+@einstieg
+funktion moo_n_fx_geometry_preflight(job: u64) -> u32:
+    unsicher:
+        setze j64: ptr[u64] auf zeiger(job)
+        setze maske: u64 auf j64[14]
+        setze affin: KompGeoAffin auf KompGeoAffin(65536, 0, 0, 65536, 0, 0, 0, 0)
+        wenn (maske & 64) != 0:
+            setze quelle: ptr[KompGeoAffin] auf zeiger(job + 176)
+            setze affin auf quelle[0]
+        setze inverse: KompGeoAffin auf affin
+        setze r: u32 auf moo_n_affine_inverse(adresse_von(affin), adresse_von(inverse))
+        wenn r != 0:
+            gib_zurück r
+        setze rect: ptr[KompGeoRechteck] auf zeiger(job + 96)
+        setze normal: KompGeoEcken auf KompGeoEcken(0, 0, 0, 0)
+        setze r auf moo_n_corners_normalize(rect.breite, rect.hoehe, job + 136, adresse_von(normal))
+        wenn r != 0:
+            gib_zurück r
+        setze r auf geo_vier_ecken(adresse_von(inverse), job + 96, job, 0, 0)
+        wenn r != 0:
+            gib_zurück r
+        wenn (maske & 2) != 0:
+            setze j16: ptr[u16] auf zeiger(job)
+            setze j32: ptr[i32] auf zeiger(job)
+            setze ausbreitung: u32 auf u32(j16[77])
+            setze spread_r: KompGeoRechteck auf rect[0]
+            setze r auf moo_n_rect_expand(job + 96, i32(ausbreitung), adresse_von(spread_r))
+            wenn r != 0:
+                gib_zurück r
+            setze e: ptr[KompGeoEcken] auf zeiger(job + 136)
+            setze spread_e: KompGeoEcken auf e[0]
+            setze radius: u32 auf u32(spread_e.ol) + ausbreitung
+            wenn radius > 65535:
+                gib_zurück 2
+            spread_e.ol = u16(radius)
+            setze radius auf u32(spread_e.or_) + ausbreitung
+            wenn radius > 65535:
+                gib_zurück 2
+            spread_e.or_ = u16(radius)
+            setze radius auf u32(spread_e.ur) + ausbreitung
+            wenn radius > 65535:
+                gib_zurück 2
+            spread_e.ur = u16(radius)
+            setze radius auf u32(spread_e.ul) + ausbreitung
+            wenn radius > 65535:
+                gib_zurück 2
+            spread_e.ul = u16(radius)
+            setze r auf moo_n_corners_normalize(spread_r.breite, spread_r.hoehe, adresse_von(spread_e), adresse_von(normal))
+            wenn r != 0:
+                gib_zurück r
+            setze r auf geo_vier_ecken(adresse_von(inverse), adresse_von(spread_r), job, j32[36], j32[37])
+            wenn r != 0:
+                gib_zurück r
+        gib_zurück 0
+
+# Gepruefte u64-Operationen (C :32-42). 1 = ok.
+@nativ
+funktion geo_mul(a: u64, b: u64, ziel: ptr[u64]) -> u32:
+    unsicher:
+        setze umax: u64 auf 0
+        setze umax auf umax - 1
+        wenn a != 0:
+            wenn b > umax / a:
+                gib_zurück 0
+        ziel[0] = a * b
+        gib_zurück 1
+
+@nativ
+funktion geo_add(a: u64, b: u64, ziel: ptr[u64]) -> u32:
+    unsicher:
+        setze umax: u64 auf 0
+        setze umax auf umax - 1
+        wenn b > umax - a:
+            gib_zurück 0
+        ziel[0] = a + b
+        gib_zurück 1
+
+# Arbeitskosten eines Effekt-Bits addieren (C-Makro MOO_FX_ADD_WORK). 1 = ok.
+@nativ
+funktion geo_arbeit(maske: u64, bit: u64, kosten: u64, pixel: u64, arbeit: ptr[u64]) -> u32:
+    unsicher:
+        wenn (maske & bit) == 0:
+            gib_zurück 1
+        setze term: u64 auf 0
+        wenn geo_mul(pixel, kosten, zeiger(adresse_von(term))) == 0:
+            gib_zurück 0
+        wenn geo_add(arbeit[0], term, arbeit) == 0:
+            gib_zurück 0
+        gib_zurück 1
+
+# C :206-297. Pruefreihenfolge exakt wie C (inkl. INVALID fuer
+# Schatten+Backdrop ohne lower_z ERST nach den Arbeits-LIMIT-Pruefungen).
+# Ergebnis nur bei OK geschrieben (C: lokales s).
+@nativ
+@einstieg
+funktion moo_n_fx_requirements(job: u64, ergebnis: u64) -> u32:
+    unsicher:
+        wenn job == 0:
+            gib_zurück 1
+        wenn ergebnis == 0:
+            gib_zurück 1
+        setze j64: ptr[u64] auf zeiger(job)
+        setze j32: ptr[i32] auf zeiger(job)
+        setze ju32: ptr[u32] auf zeiger(job)
+        setze j8: ptr[u8] auf zeiger(job)
+        wenn moo_n_fx_view_valid(j64[0], j64[1], j64[2], j32[6], j32[7]) == 0:
+            gib_zurück 1
+        wenn moo_n_fx_view_valid(j64[8], j64[9], j64[10], j32[22], j32[23]) == 0:
+            gib_zurück 1
+        setze lz: u64 auf j64[4]
+        wenn lz != 0:
+            wenn moo_n_fx_view_valid(lz, j64[5], j64[6], j32[14], j32[15]) == 0:
+                gib_zurück 1
+            wenn j32[14] != j32[22]:
+                gib_zurück 1
+            wenn j32[15] != j32[23]:
+                gib_zurück 1
+        wenn moo_n_fx_rect_valid(job + 96) == 0:
+            gib_zurück 1
+        setze skala: u64 auf u64(ju32[54])
+        wenn skala == 0:
+            gib_zurück 1
+        wenn ju32[55] != 0:
+            gib_zurück 1
+        setze rb: u64 auf u64(ju32[26])
+        setze rh: u64 auf u64(ju32[27])
+        wenn rb * skala != u64(ju32[6]):
+            gib_zurück 1
+        wenn rh * skala != u64(ju32[7]):
+            gib_zurück 1
+        setze k: u64 auf 209
+        solange k < 216:
+            wenn j8[k] != 0:
+                gib_zurück 1
+            setze k auf k + 1
+        setze maske: u64 auf j64[14]
+        wenn moo_n_fx_effect_valid(job + 112) == 0:
+            gib_zurück 1
+        setze inhalt_bytes: u64 auf j64[2] * u64(ju32[7])
+        setze lz_bytes: u64 auf 0
+        wenn lz != 0:
+            setze lz_bytes auf j64[6] * u64(ju32[15])
+        wenn (maske & 60) != 0:
+            wenn lz != 0:
+                wenn moo_n_fx_ranges_overlap(lz, lz_bytes, j64[0], inhalt_bytes) != 0:
+                    gib_zurück 1
+        wenn j32[22] > 32767:
+            gib_zurück 2
+        wenn j32[23] > 32767:
+            gib_zurück 2
+        setze r: u32 auf moo_n_fx_geometry_preflight(job)
+        wenn r != 0:
+            gib_zurück r
+        setze pixel: u64 auf 0
+        wenn geo_mul(rb, rh, zeiger(adresse_von(pixel))) == 0:
+            gib_zurück 2
+        setze arbeit: u64 auf 0
+        setze a_p: ptr[u64] auf zeiger(adresse_von(arbeit))
+        wenn geo_arbeit(maske, 1, 1, pixel, a_p) == 0:
+            gib_zurück 2
+        wenn geo_arbeit(maske, 2, 4, pixel, a_p) == 0:
+            gib_zurück 2
+        wenn geo_arbeit(maske, 4, 4, pixel, a_p) == 0:
+            gib_zurück 2
+        wenn geo_arbeit(maske, 8, 1, pixel, a_p) == 0:
+            gib_zurück 2
+        wenn geo_arbeit(maske, 16, 1, pixel, a_p) == 0:
+            gib_zurück 2
+        wenn geo_arbeit(maske, 32, 1, pixel, a_p) == 0:
+            gib_zurück 2
+        wenn geo_arbeit(maske, 64, 2, pixel, a_p) == 0:
+            gib_zurück 2
+        wenn (maske & 60) != 0:
+            wenn (maske & 2) != 0:
+                wenn lz == 0:
+                    gib_zurück 1
+        setze worte: u64 auf 0
+        wenn (maske & 4) != 0:
+            wenn geo_mul(pixel, 4, zeiger(adresse_von(worte))) == 0:
+                gib_zurück 2
+        sonst:
+            setze j16: ptr[u16] auf zeiger(job)
+            wenn (maske & 2) != 0:
+                wenn j16[76] != 0:
+                    setze worte auf pixel
+        setze scratch: u64 auf 0
+        wenn geo_mul(worte, 8, zeiger(adresse_von(scratch))) == 0:
+            gib_zurück 2
+        setze o: ptr[u64] auf zeiger(ergebnis)
+        o[0] = pixel
+        o[1] = arbeit
+        o[2] = scratch
+        o[3] = worte
+        o[4] = 0
+        gib_zurück 0

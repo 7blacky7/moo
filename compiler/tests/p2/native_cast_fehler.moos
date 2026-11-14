@@ -1,0 +1,59 @@
+# P2-T34: gepruefte Casts melden Bereichs-, NaN-/Infinity- und Bruchteilfehler
+# vor der LLVM-Konversion; hosted fangbar in versuche:.
+@nativ
+funktion k_u8(a: i32) -> u8:
+    gib_zurück als(u8, a)
+@nativ
+funktion k_i8(a: u8) -> i8:
+    gib_zurück als(i8, a)
+@nativ
+funktion k_u32(a: i32) -> u32:
+    gib_zurück als(u32, a)
+@nativ
+funktion k_i32(a: f64) -> i32:
+    gib_zurück als(i32, a)
+@nativ
+funktion k_quot(a: f64, b: f64) -> i32:
+    gib_zurück als(i32, a / b)
+@nativ
+funktion k_f32(a: f64) -> i64:
+    gib_zurück als(i64, als(f32, a * 1e300))
+versuche:
+    zeige k_u8(300)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen u8"
+versuche:
+    zeige k_i8(200)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen i8"
+versuche:
+    zeige k_u32(-1)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen u32"
+versuche:
+    zeige k_i32(2.5)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen bruch"
+versuche:
+    zeige k_quot(0.0, 0.0)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen nan"
+versuche:
+    zeige k_quot(1.0, 0.0)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen inf"
+versuche:
+    zeige k_f32(1.0)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen f32"
+zeige k_u8(255)
+zeige k_i32(7.0)
+zeige k_f32(0.0)
+zeige "weiter"

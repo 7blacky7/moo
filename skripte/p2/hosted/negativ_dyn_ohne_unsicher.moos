@@ -1,0 +1,7 @@
+# P2-T66 Stufe 2a negativ: dyn-Aufruf eines Systemkoerpers ohne unsicher:.
+@nativ
+funktion teile(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b
+
+zeige teile(7, 2)

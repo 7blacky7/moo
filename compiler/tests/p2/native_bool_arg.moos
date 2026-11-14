@@ -1,0 +1,20 @@
+# P2-T34: bool als dynamisches Argument nativer Funktionen: nur echte
+# Wahrheitswerte (MOO_BOOL); eine Zahl ist ein fangbarer Fehler, keine
+# implizite Wahrheitsumdeutung.
+@nativ
+funktion b_und(a: bool, b: bool) -> bool:
+    gib_zurück a und b
+@nativ
+funktion b_zahl(a: bool) -> i32:
+    gib_zurück als(i32, a)
+zeige b_und(wahr, falsch)
+zeige b_und(wahr, wahr)
+zeige b_zahl(wahr)
+setze w auf 1 < 2
+zeige b_und(w, wahr)
+versuche:
+    zeige b_zahl(1)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen bool"
+zeige "weiter"

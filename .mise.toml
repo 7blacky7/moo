@@ -1,5 +1,420 @@
+[tasks.p2-abi-cpp]
+description = "P2: C-ABI C++ adapter and lifecycle reference"
+run = '''
+set -eu
+mkdir -p build/p2-abi
+${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -pedantic -c skripte/p2/abi/cpp_adapter_test.c -o build/p2-abi/cpp_adapter_test.o
+${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -pedantic -c skripte/p2/abi/cpp_adapter.cpp -o build/p2-abi/cpp_adapter.o
+${CXX:-c++} build/p2-abi/cpp_adapter_test.o build/p2-abi/cpp_adapter.o -o build/p2-abi/cpp_adapter_test
+build/p2-abi/cpp_adapter_test
+'''
+
+[tasks.p2-ffi-negativ]
+description = "P2: extern-C negative Compiletests"
+run = '''
+set -eu
+mkdir -p build/p2-abi
+for name in ffi_aufruf_ausgeschlossen ffi_bool_ausgeschlossen ffi_symbolkollision ffi_varargs ffi_aggregat; do
+  source="compiler/tests/p2/${name}.moos"
+  expected="compiler/tests/p2/${name}.expected_error"
+  log="build/p2-abi/${name}.log"
+  test -s "$expected"
+  set +e
+  timeout 30s compiler/target/release/moo-compiler compile "$source" --emit-ir -o "build/p2-abi/${name}.ll" >"$log" 2>&1
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ] || [ "$rc" -ge 128 ]; then
+    printf 'FAIL %s: unerwarteter Exit %s\n' "$name" "$rc"
+    exit 1
+  fi
+  if ! rg -q -F -f "$expected" "$log"; then
+    printf 'FAIL %s: erwartete Diagnose fehlt\n' "$name"
+    exit 1
+  fi
+  printf 'PASS %s\n' "$name"
+done
+'''
+
+[tasks.p2-m1]
+description = "P2 M1: native i32, C-ABI und C++-Adapter end-to-end"
+run = '''
+set -eu
+mise run -C skripte/p2/codegen m1-probe
+mise run -C skripte/p2/codegen foreign-error
+mise run -C skripte/p2/frontend dynamisch
+mise run -C skripte/p2/ffi integration
+mise run -C skripte/p2/ffi context
+mise run -C skripte/p2/cpp_adapter integration
+'''
+
 [tools]
 python = "3.13"
+
+[tasks.p2-bench-g5]
+description = "P2 G5 CPU benchmark phases and graphics references"
+run = "bash skripte/p2/bench/g5_runner.sh"
+
+[tasks.p2-bench-native]
+description = "P2 native integer loop vs C, gated by native compiler support"
+run = "bash skripte/p2/bench/native_runner.sh"
+
+[tasks.p2-bench-baseline]
+description = "P2 dynamic Moo vs C process baseline"
+run = "bash skripte/p2/bench/baseline_runner.sh"
+
+[tasks.p2-bench-adapter]
+description = "P2 explicit native or GPU adapter collector"
+run = "bash skripte/p2/bench/g5_adapter.sh"
+
+[tasks.p2-bench-adapter-test]
+description = "P2 adapter collector contract test using C fixture"
+run = "bash skripte/p2/bench/test_adapter.sh"
+
+[tasks.p2-bindgen-test]
+description = "P2 Rust C-header binding generator tests"
+run = "bash skripte/p2/bindgen/test_bindgen.sh"
+
+[tasks.p2-bindgen-integration]
+description = "P2 generated C binding native call and link gate"
+run = "bash skripte/p2/bindgen/test_bindgen_integration.sh"
+
+
+
+[tasks.p2-native-ir-golden]
+description = "P2: native Integer-LLVM-IR strukturell prüfen"
+run = "bash skripte/p2/codegen/ir_golden.sh"
+
+[tasks.p2-native-ir-check-selftest]
+description = "P2: IR-Golden-Checker mit synthetischen LLVM-Zeilen prüfen"
+run = "bash skripte/p2/codegen/ir_golden.sh --self-test"
+
+[tasks.p6-fixture-rollenrecht]
+description = "P6: Rollenrecht der Projekt-Spielwiese lesend prüfen"
+run = '''uv run python -c 'import os, psycopg; c=psycopg.connect(os.environ["DATABASE_URL"], connect_timeout=10); r=c.execute("SELECT rolcreaterole OR rolsuper FROM pg_roles WHERE rolname=current_user").fetchone(); print("ROLLENRECHT_JA" if r and r[0] else "ROLLENRECHT_NEIN"); c.close()' '''
+
+
+[tasks.p6-test-fixture]
+description = "P6: Abruf gegen isolierte synthetische Projekt-Fixtures prüfen"
+run = '''
+set -eu
+. "$HOME/.config/synapse/moo-p6-fixture.env"
+export SYNAPSE_LESE_DB_URL="$P6_FIXTURE_DB_URL"
+export SYNAPSE_LESE_DB_ERLAUBT="192.168.50.65:5433/moo"
+export SYNAPSE_LESE_MODUS=fixture
+uv run python skripte/p6/pruefungen/test_fixture.py -v
+'''
+
+
+[tasks.p6-fixture-seed]
+description = "P6: synthetische Fixtures in isolierten Projekt-Spielwiesen-Schemas anlegen"
+run = '''
+set -eu
+umask 077
+mkdir -p "$HOME/.config/synapse"
+: "${DATABASE_URL:?Projekt-Spielwiese muss bereitgestellt sein}"
+printf 'export P6_FIXTURE_DB_URL=%q\n' "$DATABASE_URL" > "$HOME/.config/synapse/moo-p6-fixture.env"
+. "$HOME/.config/synapse/moo-p6-fixture.env"
+export P6_FIXTURE_ERLAUBT="192.168.50.65:5433/moo"
+uv run python skripte/p6/fixtures/seed_fixture.py
+'''
+
+
+[tasks.p6-sammeln]
+description = "P6: begrenzten Datensatz mit Ledger zusammenstellen"
+run = "uv run python skripte/p6/sammeln.py"
+
+[tasks.p6-test-silben-stichprobe]
+description = "P6: Silbentokenizer auf Stufe-1-Train-Dokumentstichprobe prüfen"
+run = '''
+compiler/target/release/moo-compiler compile beispiele/p6_wissensmix/silben_stichprobe_check.moos -o build/p6/silben-stichprobe-check
+uv run python skripte/p6/pruefungen/test_silben_stichprobe.py
+'''
+
+[tasks.p6-training-parser]
+description = "P6: Parser-Tokenizer-Training durch Koordinator starten"
+run = "P6_TOKENIZER_ART=parser uv run python skripte/p6/training.py"
+
+[tasks.p6-training-bpe]
+description = "P6: BPE-Training durch Koordinator starten"
+run = "P6_TOKENIZER_ART=bpe uv run python skripte/p6/training.py"
+
+[tasks.p6-training-silben]
+description = "P6: Silbentraining durch Koordinator starten"
+run = "P6_TOKENIZER_ART=silben uv run python skripte/p6/training.py"
+
+[tasks.p6-training-zeichen]
+description = "P6: Zeichentraining durch Koordinator starten"
+run = "P6_TOKENIZER_ART=zeichen uv run python skripte/p6/training.py"
+
+[tasks.p6-parser-bpe-test]
+description = "Parser-BPE ASan/UBSan und Moo-Sprachtest"
+run = '''
+set -eu
+P6_OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo-parser-bpe.XXXXXX")"
+trap 'rm -rf "$P6_OUT"' EXIT
+P6_DIR=compiler/runtime
+P6_BASE="$P6_DIR/moo_quant.c $P6_DIR/moo_tensor.c $P6_DIR/moo_tensor_ops.c $P6_DIR/moo_ki_gpu.c $P6_DIR/moo_autograd.c $P6_DIR/moo_memory.c $P6_DIR/moo_value.c $P6_DIR/moo_print.c $P6_DIR/moo_string.c $P6_DIR/moo_dict.c $P6_DIR/moo_list.c $P6_DIR/moo_ops.c"
+for P6_MODE in address undefined; do
+  "${CC:-cc}" -std=gnu11 -D_GNU_SOURCE -g -O1 "-fsanitize=$P6_MODE" -fno-sanitize-recover=undefined -fno-omit-frame-pointer "$P6_DIR/tests/test_tokenizer_parser_asan.c" "$P6_DIR/tests/capture_free_stubs.c" "$P6_DIR/moo_tokenizer.c" "$P6_DIR/moo_tok_segment.c" "$P6_DIR/moo_silben.c" "$P6_DIR/moo_krypto.c" $P6_BASE -lm -o "$P6_OUT/test"
+  ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 "$P6_OUT/test"
+done
+compiler/target/release/moo-compiler compile beispiele/tests/p4_parser_bpe.moos -o "$P6_OUT/moos-test"
+MOO_KI_GPU=0 P4_PARSER_TOKENIZER_PFAD="$P6_OUT/parser.mbt" "$P6_OUT/moos-test"
+'''
+
+[tasks.p6-test-packing]
+description = "P6: synthetischer CPU-Packingvergleich"
+run = '''
+compiler/target/release/moo-compiler compile beispiele/p6_wissensmix/packing_vergleich.moos -o build/p6/packing-vergleich
+MOO_KI_GPU=0 build/p6/packing-vergleich
+'''
+
+[tasks.p6-test-training]
+description = "P6: synthetischer CPU-Fortsetzungstest"
+run = "uv run python skripte/p6/pruefungen/test_training.py"
+
+[tasks.p6-training-parameter]
+description = "P6: Modellparameter CPU-seitig zählen"
+run = '''
+compiler/target/release/moo-compiler compile beispiele/p6_wissensmix/parameter_10m.moos -o build/p6/parameter-10m
+MOO_KI_GPU=0 build/p6/parameter-10m
+MOO_KI_GPU=0 P6_PARAMETER_ZEICHEN=1 build/p6/parameter-10m
+'''
+
+[tasks.p6-training-build]
+description = "P6: fortsetzbares Moo-Training kompilieren"
+run = '''
+compiler/target/release/moo-compiler compile beispiele/p6_wissensmix/training_10m.moos -o build/p6/training-10m-bin
+compiler/target/release/moo-compiler compile beispiele/p6_wissensmix/fortsetzung_test.moos -o build/p6/fortsetzung-test
+'''
+
+[tasks.p6-gpu-paritaet-build]
+description = "P6: synthetisches Moo-GPU-Paritätsprogramm kompilieren"
+run = "compiler/target/release/moo-compiler compile beispiele/p6_wissensmix/gpu_paritaet.moos -o build/p6/gpu-paritaet"
+
+[tasks.p6-gpu-paritaet-cpu]
+description = "P6: synthetische CPU-Paritätsreferenz erzeugen"
+run = "MOO_KI_GPU=0 P6_PARITAET_MODUS=cpu P6_PARITAET_REFERENZ=build/p6/gpu-paritaet-referenz.json build/p6/gpu-paritaet"
+
+[tasks.p6-tensor-asan]
+description = "P6: Runtime-Sanitizerprüfungen"
+run = "bash compiler/runtime/tests/run_sanitize.sh asan"
+
+[tasks.p6-test-messlauf]
+description = "P6: Messadapter CPU-only prüfen"
+run = "uv run python skripte/p6/pruefungen/test_messlauf.py -v"
+
+[tasks.p6-messlauf-build]
+description = "P6: Moo-Messadapter kompilieren"
+run = "compiler/target/release/moo-compiler compile beispiele/p6_wissensmix/messlauf_bpe.moos -o build/p6/messlauf-bpe"
+
+[tasks.p6-messlauf]
+description = "P6: begrenzter Messlauf durch Koordinator"
+run = "uv run python skripte/p6/messlauf.py"
+
+[tasks.p6-rendern]
+description = "P6: Datensatz lokal in Trainingstext umsetzen"
+run = "uv run python skripte/p6/rendern.py"
+
+[tasks.p6-test-rendern]
+description = "P6: Renderer synthetisch prüfen"
+run = "uv run python skripte/p6/pruefungen/test_rendern.py -v"
+
+[tasks.p6-test-sammeln]
+description = "P6: Sammler, Splits und Fortsetzung synthetisch prüfen"
+run = "uv run python skripte/p6/pruefungen/test_sammeln.py -v"
+
+[tasks.p6-test-abruf]
+description = "P6: synthetische Abruf- und Resolverprüfung ohne Datenbank"
+run = "uv run python skripte/p6/pruefungen/test_abruf.py -v"
+
+
+[tasks.p6-test-synthetisch]
+description = "P6: synthetische Masken-, Referenz- und Ressourcenprüfungen ohne Datenbank"
+run = "uv run python skripte/p6/pruefungen/test_integration.py Maskierungstest -v"
+
+
+[tasks.p6-test-nur-lesen]
+description = "P6: Lesezugang und Rechte gegen Synapse-Testdatenbank prüfen"
+run = '''
+set -eu
+set -a
+. "$HOME/.config/synapse/moo-synapse-test-leser.env"
+set +a
+export SYNAPSE_LESE_DB_URL="$MOO_SYNAPSE_TEST_DB_URL"
+export SYNAPSE_LESE_DB_ERLAUBT="192.168.50.65:5433/synapse_test"
+uv run python -m unittest discover -s skripte/p6/pruefungen -p 'test_nur_lesen.py' -v
+'''
+
+
+[tasks.p6-test-integration]
+description = "P6: Maskierung und Export gegen freigegebene Synapse-Testdatenbank prüfen"
+run = '''
+set -eu
+set -a
+. "$HOME/.config/synapse/moo-synapse-test-leser.env"
+set +a
+export SYNAPSE_LESE_DB_URL="$MOO_SYNAPSE_TEST_DB_URL"
+export SYNAPSE_LESE_DB_ERLAUBT="192.168.50.65:5433/synapse_test"
+uv run python -m unittest discover -s skripte/p6/pruefungen -p 'test_integration.py' -v
+'''
+
+
+[tasks.p6-test-schema]
+description = "P6: Schemaabgleich ausschließlich gegen freigegebene Synapse-Testdatenbank"
+run = '''
+set -eu
+set -a
+. "$HOME/.config/synapse/moo-synapse-test-leser.env"
+set +a
+export SYNAPSE_LESE_DB_URL="$MOO_SYNAPSE_TEST_DB_URL"
+export SYNAPSE_LESE_DB_ERLAUBT="192.168.50.65:5433/synapse_test"
+uv run python -m unittest discover -s skripte/p6/pruefungen -p 'test_schema_abgleich.py' -v
+'''
+
+
+
+[tasks.p5-grammatik-diagnose-build]
+description = "Compile CPU grammar gate diagnostic"
+run = "compiler/target/release/moo-compiler compile beispiele/p5/grammatik_diagnose.moos -o compiler/target/p5-grammatik-diagnose"
+
+[tasks.p5-grammatik-diagnose]
+description = "Run CPU grammar gate diagnostic"
+run = "MOO_KI_GPU=0 compiler/target/p5-grammatik-diagnose"
+
+[tasks.p5-ext08-eval-build]
+description = "Compile shared P5 validation and quality probes to EXT-08 binaries"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_paar_eval.moos -o compiler/target/p5-ext08-paar-val
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_auswahl.moos -o compiler/target/p5-ext08-auswahl
+compiler/target/release/moo-compiler compile beispiele/p5/eval_train_basis.moos -o compiler/target/p5-ext08-train-eval
+compiler/target/release/moo-compiler compile beispiele/p5/qualitaet_basis.moos -o compiler/target/p5-ext08-grammatik
+compiler/target/release/moo-compiler compile beispiele/p5/forgetting_basis.moos -o compiler/target/p5-ext08-forgetting
+compiler/target/release/moo-compiler compile beispiele/p5/sampling_runner.moos -o compiler/target/p5-ext08-sampling
+'''
+
+[tasks.p5-ext08-eval-smoke]
+description = "Evaluate CPU smoke checkpoints on the frozen conditional validation set"
+run = '''
+set -eu
+: "${P5_EXT08_SMOKE_DIR:?set P5_EXT08_SMOKE_DIR to a completed smoke directory}"
+uv run python skripte/p5_ext08_eval.py
+'''
+
+[tasks.p5-ext08-eval]
+description = "Select EXT-08 checkpoints by exact conditional validation loss"
+run = "uv run python skripte/p5_ext08_eval.py"
+
+[tasks.p5-ext08-qualitaet-smoke]
+description = "Run quality probes on one CPU smoke selection"
+run = '''
+set -eu
+: "${P5_EXT08_SMOKE_DIR:?set P5_EXT08_SMOKE_DIR to an evaluated smoke directory}"
+uv run python skripte/p5_ext08_qualitaet.py
+'''
+
+[tasks.p5-ext08-qualitaet]
+description = "Evaluate EXT-08 selected checkpoints on frozen quality probes"
+run = "uv run python skripte/p5_ext08_qualitaet.py"
+
+[tasks.p5-ext08-build]
+description = "Compile shared EXT-05 trainer for optimizer comparison"
+run = "compiler/target/release/moo-compiler compile beispiele/p5/ext05_train.moos -o compiler/target/p5-ext08-train"
+
+[tasks.p5-ext08-smoke]
+description = "Run short CPU smoke for three fresh optimizers"
+run = "P5_EXT08_SMOKE=1 uv run python skripte/p5_ext08.py"
+
+[tasks.p5-ext08]
+description = "Run the bounded optimizer comparison on Vulkan"
+run = "uv run python skripte/p5_ext08.py"
+
+[tasks.p5-ext05-auswahl]
+description = "Select paired experiment checkpoints using frozen validation reports"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_auswahl.moos -o compiler/target/p5-ext05-auswahl
+MOO_KI_GPU=0 compiler/target/p5-ext05-auswahl
+'''
+
+[tasks.p5-ext05-runner-build]
+description = "Compile updated EXT-05 experiment runner"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_train.moos -o compiler/target/p5-ext05-train-next
+mv compiler/target/p5-ext05-train-next compiler/target/p5-ext05-train
+'''
+
+[tasks.p5-ext05-paar-val]
+description = "Score masked conditional loss on the 15 frozen validation pairs"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_paar_eval.moos -o compiler/target/p5-ext05-paar-val
+MOO_KI_GPU=0 compiler/target/p5-ext05-paar-val
+'''
+
+[tasks.p5-ext05-conditional-auswahl]
+description = "Score all saved checkpoints on conditional validation pairs and select them"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_paar_eval.moos -o compiler/target/p5-ext05-paar-val
+uv run python skripte/p5_ext05_eval.py
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_auswahl.moos -o compiler/target/p5-ext05-auswahl
+MOO_KI_GPU=0 compiler/target/p5-ext05-auswahl
+'''
+
+[tasks.p5-ext05-qualitaet]
+description = "Evaluate selected checkpoints on frozen train and quality baselines"
+run = '''
+set -eu
+uv run python skripte/p5_ext05_qualitaet.py
+'''
+
+[tasks.p5-ext05-train-nachholen]
+description = "Recover train NLL trajectories for the first three completed runs"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/eval_train_basis.moos -o compiler/target/p5-ext05-train-eval
+MOO_KI_GPU=0 uv run python skripte/p5_ext05_train_nachholen.py
+'''
+
+[tasks.test-p5-ext05-auswahl]
+description = "Test exact conditional selection and checkpoint hash validation"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_auswahl.moos -o compiler/target/p5-ext05-auswahl
+MOO_KI_GPU=0 uv run python skripte/p5_ext05_auswahl_test.py
+'''
+
+[tasks.p5-ext05-resume]
+description = "Resume bounded paired comparison with learning rates selected on seed 11"
+run = '''
+set -eu
+uv run python skripte/p5_ext05_resume.py
+'''
+
+[tasks.p5-ext05-bericht]
+description = "Summarize paired val-selected checkpoint and quality measurements"
+run = '''
+set -eu
+uv run python skripte/p5_ext05_bericht.py
+'''
+
+[tasks.p5-ext05-halt]
+description = "Stop the EXT-05 controller after the current GPU run finishes"
+run = '''
+set -eu
+uv run python skripte/p5_ext05_halt.py
+'''
+
+[tasks.p5-ext05]
+description = "Run bounded paired SIL-14 correction and normal-text experiments"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/ext05_train.moos -o compiler/target/p5-ext05-train
+uv run python skripte/p5_ext05.py
+'''
 
 [tasks.p4-build-compiler]
 description = "Compile the Moo compiler for P4 without running training or tests"
@@ -16,6 +431,62 @@ run = "uv run pytest tests/ -v"
 [tasks.run]
 description = "Run a .moos file"
 run = "uv run python -m moo run"
+
+[tasks.test-gfx-exposure-targets]
+description = "Native GL33 HDR exposure reduction and deterministic adaptation oracles"
+run = "bash compiler/runtime/test-gfx-exposure-targets.sh"
+
+[tasks.test-gfx-exposure]
+description = "Public HDR exposure and linear-light API in native 3D and Hybrid"
+run = "bash compiler/runtime/test-gfx-exposure.sh"
+
+[tasks.test-gfx-ao-api]
+description = "GFX AO public phase and parameter contract in native 3D and Hybrid"
+run = "bash compiler/runtime/test-gfx-ao-api.sh"
+
+[tasks.test-gfx-ao-targets]
+description = "GFX AO real GL33 resources, ambient MRT, resize and state recovery"
+run = "bash compiler/runtime/test-gfx-ao-targets.sh"
+
+[tasks.test-gfx-pbr]
+description = "GFX native PBR API validation and legacy restoration in 3D and Hybrid"
+run = "bash compiler/runtime/test-gfx-pbr.sh"
+
+[tasks.test-gfx-pbr-targets]
+description = "GFX actual GGX GLSL against independent RGB and white furnace oracles"
+run = "bash compiler/runtime/test-gfx-pbr-targets.sh"
+
+[tasks.test-gfx-hdr-targets]
+description = "GFX HDR real GL targets, resize, fault recovery and radiance"
+run = "bash compiler/runtime/test-gfx-hdr-targets.sh"
+
+[tasks.test-gfx-hdr]
+description = "GFX HDR tonemap, exposure and frame boundary correctness"
+run = "bash compiler/runtime/test-gfx-hdr.sh"
+
+[tasks.test-gfx-lifecycle]
+description = "GFX active-context lifecycle safety"
+run = "bash compiler/runtime/test-gfx-lifecycle.sh"
+
+[tasks.test-gfx-renderinfo]
+description = "GFX renderer provenance without capture"
+run = "bash compiler/runtime/test-gfx-renderinfo.sh"
+
+[tasks.test-gfx-time]
+description = "GFX fixed/live time: ASan/UBSan and private Xvfb GL33/Hybrid correctness"
+run = "bash compiler/runtime/test-gfx-time.sh"
+
+[tasks.test-gfx-water]
+description = "GFX water: real ownership, native API, Fresnel/depth radiance and alpha state"
+run = "bash compiler/runtime/test-gfx-water.sh"
+
+[tasks.test-gfx-fog]
+description = "GFX analytic height fog: quadrature, zero density, solar and additive radiance"
+run = "bash compiler/runtime/test-gfx-fog.sh"
+
+[tasks.test-gfx-roi]
+description = "GFX ROI: CPU statistics, ASan/UBSan and real Moo runtime"
+run = "bash compiler/runtime/test-gfx-roi.sh"
 
 [tasks.test-compiler]
 description = "Run compiler test suite"
@@ -603,7 +1074,7 @@ for P4_MODE in address undefined; do
   for P4_KIND in dataset tokenizer shard checkpoint; do
     case "$P4_KIND" in
       dataset) P4_EXTRA="$P4_DIR/moo_dataset.c" ;;
-      tokenizer) P4_EXTRA="$P4_DIR/moo_tokenizer.c" ;;
+      tokenizer) P4_EXTRA="$P4_DIR/moo_tokenizer.c $P4_DIR/moo_tok_segment.c $P4_DIR/moo_silben.c $P4_DIR/moo_krypto.c" ;;
       shard) P4_EXTRA="$P4_DIR/moo_shard.c" ;;
       checkpoint) P4_EXTRA="$P4_DIR/moo_nn.c $P4_DIR/moo_nn_easy.c $P4_DIR/moo_json.c" ;;
     esac
@@ -794,6 +1265,209 @@ uv run python -m skripte.p4_silben.sil13_regression
 '''
 
 
+[tasks.test-p5-optimierer-resume]
+description = "Compare four optimizer resumes with an uninterrupted synthetic run"
+run = '''
+set -eu
+P5_TEST_DIR="$(mktemp -d)"
+trap 'rm -rf "$P5_TEST_DIR"' EXIT
+export P5_TEST_DIR
+compiler/target/release/moo-compiler compile beispiele/p5/optimierer_resume_test.moos -o "$P5_TEST_DIR/test"
+"$P5_TEST_DIR/test"
+'''
+
+[tasks.test-p5-optimierer-paritaet]
+description = "Compare CPU and strict Vulkan optimizer parameters and resume"
+run = '''
+set -eu
+P5_TEST_DIR="$(mktemp -d)"
+trap 'rm -rf "$P5_TEST_DIR"' EXIT
+export P5_TEST_DIR
+compiler/target/release/moo-compiler compile beispiele/p5/optimierer_resume_test.moos -o "$P5_TEST_DIR/test"
+MOO_KI_GPU=0 MOO_KI_GPU_ERZWINGEN=0 MOO_KI_GPU_STRIKT=0 "$P5_TEST_DIR/test" > "$P5_TEST_DIR/cpu"
+MOO_KI_GPU=1 MOO_KI_GPU_ERZWINGEN=1 MOO_KI_GPU_STRIKT=1 "$P5_TEST_DIR/test" > "$P5_TEST_DIR/vulkan"
+uv run python - "$P5_TEST_DIR/cpu" "$P5_TEST_DIR/vulkan" <<'P5PY'
+import json, math, sys
+def read(path):
+    rows = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("P5 PARAM "):
+                _, _, art, index, data = line.strip().split(" ", 4)
+                key = (art, index)
+                if key in rows:
+                    raise SystemExit("duplicate parameter")
+                rows[key] = json.loads(data)
+    return rows
+a, b = map(read, sys.argv[1:])
+if len(a) != 8 or a.keys() != b.keys():
+    raise SystemExit("parameter set mismatch")
+n = 0
+for key in a:
+    if len(a[key]) != len(b[key]):
+        raise SystemExit("parameter length mismatch")
+    for x, y in zip(a[key], b[key]):
+        if not (math.isfinite(x) and math.isfinite(y) and math.isclose(x, y, rel_tol=1e-5, abs_tol=1e-5)):
+            raise SystemExit("CPU/Vulkan mismatch: " + str(key))
+        n += 1
+print("P5 OPT PARITY OK", len(a), "parameter tensors,", n, "values")
+P5PY
+'''
+
+[tasks.p5-grad-inventar-diagnose]
+description = "Compare masked CE network parameter gradients against finite differences"
+run = '''
+set -eu
+P5_DIR=compiler/runtime
+P5_OUT="$(mktemp -d)"
+trap 'rm -rf "$P5_OUT"' EXIT
+P5_BASE="$P5_DIR/moo_quant.c $P5_DIR/moo_tensor.c $P5_DIR/moo_tensor_ops.c $P5_DIR/moo_ki_gpu.c $P5_DIR/moo_autograd.c $P5_DIR/moo_memory.c $P5_DIR/moo_value.c $P5_DIR/moo_print.c $P5_DIR/moo_string.c $P5_DIR/moo_dict.c $P5_DIR/moo_list.c $P5_DIR/moo_ops.c"
+cc -std=gnu11 -D_GNU_SOURCE -DMOO_HAS_VULKAN -O1 -ffunction-sections -fdata-sections "$P5_DIR/tests/test_p5_grad_inventar.c" "$P5_DIR/tests/capture_free_stubs.c" "$P5_DIR/moo_nn.c" $P5_BASE -Wl,--gc-sections -lvulkan -lm -o "$P5_OUT/test"
+"$P5_OUT/test"
+'''
+
+[tasks.test-p5-train-orchestrierung]
+description = "Test validation selection and early stopping with real checkpoints"
+run = '''
+set -eu
+P5_TEST_DIR="$(mktemp -d)"
+trap 'rm -rf "$P5_TEST_DIR"' EXIT
+export P5_TEST_DIR
+compiler/target/release/moo-compiler compile beispiele/p5/train_orchestrierung_test.moos -o "$P5_TEST_DIR/test"
+"$P5_TEST_DIR/test"
+'''
+
+[tasks.test-p5-cpu-nur]
+description = "Check CPU-only broadcast telemetry and one-time strict warning"
+run = '''
+set -eu
+P5_OUT="$(mktemp -d)"
+trap 'rm -rf "$P5_OUT"' EXIT
+compiler/target/release/moo-compiler compile beispiele/p5/cpu_nur_test.moos -o "$P5_OUT/test"
+"$P5_OUT/test" 2> "$P5_OUT/stderr"
+if [ "${MOO_KI_GPU_STRIKT:-0}" = 1 ]; then
+  test "$(grep -c 'STRIKT: Broadcast-Operationen laufen auf CPU' "$P5_OUT/stderr")" = 1
+else
+  test ! -s "$P5_OUT/stderr"
+fi
+'''
+
+[tasks.test-p5-train-api]
+description = "Test common training dispatch on four methods"
+run = '''
+set -eu
+P5_TEST_DIR="$(mktemp -d)"
+trap 'rm -rf "$P5_TEST_DIR"' EXIT
+compiler/target/release/moo-compiler compile beispiele/p5/train_api_test.moos -o "$P5_TEST_DIR/sft"
+"$P5_TEST_DIR/sft"
+compiler/target/release/moo-compiler compile beispiele/p5/train_api_distill_test.moos -o "$P5_TEST_DIR/distill"
+"$P5_TEST_DIR/distill"
+'''
+
+[tasks.test-p5-eval]
+description = "Evaluate a synthetic checkpoint and validate normalized NLL and identity"
+run = '''
+set -eu
+P5_TEST_DIR="$(mktemp -d)"
+trap 'rm -rf "$P5_TEST_DIR"' EXIT
+export P5_TEST_DIR
+compiler/target/release/moo-compiler compile beispiele/p5/eval_test.moos -o "$P5_TEST_DIR/test"
+"$P5_TEST_DIR/test"
+'''
+
+[tasks.test-p5-eval-sanitize]
+description = "Exercise P5 evaluation ownership under ASan and UBSan"
+run = '''
+set -eu
+P5_DIR=compiler/runtime
+P5_OUT="$(mktemp -d)"
+trap 'rm -rf "$P5_OUT"' EXIT
+P5_BASE="$P5_DIR/moo_quant.c $P5_DIR/moo_tensor.c $P5_DIR/moo_tensor_ops.c $P5_DIR/moo_ki_gpu.c $P5_DIR/moo_autograd.c $P5_DIR/moo_memory.c $P5_DIR/moo_value.c $P5_DIR/moo_print.c $P5_DIR/moo_string.c $P5_DIR/moo_dict.c $P5_DIR/moo_list.c $P5_DIR/moo_ops.c"
+for P5_MODE in address undefined; do
+  cc -std=gnu11 -D_GNU_SOURCE -g -O1 "-fsanitize=$P5_MODE" -fno-sanitize-recover=undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections "$P5_DIR/tests/test_train_eval_asan.c" "$P5_DIR/tests/capture_free_stubs.c" "$P5_DIR/moo_nn.c" "$P5_DIR/moo_train_eval.c" "$P5_DIR/moo_stdlib.c" $P5_BASE -Wl,--gc-sections -lm -o "$P5_OUT/$P5_MODE"
+  ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 "$P5_OUT/$P5_MODE"
+done
+'''
+
+[tasks.test-p5-eval-sil14]
+description = "Evaluate a short synthetic text with the actual read-only SIL-14 checkpoint"
+run = '''
+set -eu
+P5_OUT="$(mktemp -d)"
+trap 'rm -rf "$P5_OUT"' EXIT
+compiler/target/release/moo-compiler compile beispiele/p5/eval_sil14.moos -o "$P5_OUT/test"
+"$P5_OUT/test"
+'''
+
+[tasks.test-p5-optimierer-sft]
+description = "Test all four optimizer variants through SFT and checkpoint resume"
+run = '''
+set -eu
+P5_TEST_DIR="$(mktemp -d)"
+trap 'rm -rf "$P5_TEST_DIR"' EXIT
+export P5_TEST_DIR
+compiler/target/release/moo-compiler compile beispiele/p5/optimierer_sft_test.moos -o "$P5_TEST_DIR/test"
+for P5_OPT_ART in sgd momentum adam adamw; do
+  export P5_OPT_ART
+  "$P5_TEST_DIR/test"
+done
+'''
+
+[tasks.test-p5-kontrastiv]
+description = "Run existing InfoNCE finite-difference and sanitizer oracles"
+run = '''
+set -eu
+P5_DIR=compiler/runtime
+P5_OUT="$(mktemp -d)"
+trap 'rm -rf "$P5_OUT"' EXIT
+P5_BASE="$P5_DIR/moo_quant.c $P5_DIR/moo_tensor.c $P5_DIR/moo_tensor_ops.c $P5_DIR/moo_ki_gpu.c $P5_DIR/moo_autograd.c $P5_DIR/moo_memory.c $P5_DIR/moo_value.c $P5_DIR/moo_print.c $P5_DIR/moo_string.c $P5_DIR/moo_dict.c $P5_DIR/moo_list.c $P5_DIR/moo_ops.c"
+for P5_MODE in address undefined; do
+  cc -std=gnu11 -D_GNU_SOURCE -g -O1 "-fsanitize=$P5_MODE" -fno-sanitize-recover=undefined -fno-omit-frame-pointer "$P5_DIR/tests/test_contrastive_asan.c" "$P5_DIR/tests/capture_free_stubs.c" "$P5_DIR/moo_contrastive.c" $P5_BASE -lm -o "$P5_OUT/$P5_MODE"
+  ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 "$P5_OUT/$P5_MODE"
+done
+'''
+
+[tasks.test-p5-kontrastiv-paritaet]
+description = "Compare InfoNCE gradients on CPU and strict Vulkan"
+run = '''
+set -eu
+P5_OUT="$(mktemp -d)"
+trap 'rm -rf "$P5_OUT"' EXIT
+compiler/target/release/moo-compiler compile beispiele/p5/kontrastiv_paritaet.moos -o "$P5_OUT/test"
+MOO_KI_GPU=0 MOO_KI_GPU_ERZWINGEN=0 MOO_KI_GPU_STRIKT=0 "$P5_OUT/test" > "$P5_OUT/cpu"
+MOO_KI_GPU=1 MOO_KI_GPU_ERZWINGEN=1 MOO_KI_GPU_STRIKT=1 "$P5_OUT/test" > "$P5_OUT/gpu"
+uv run python - "$P5_OUT/cpu" "$P5_OUT/gpu" <<'P5PY'
+import json, math, sys
+def read(path):
+    with open(path, encoding="utf-8") as f:
+        rows = [s.strip()[8:].split(" ", 1) for s in f if s.startswith("P5 INFO ")]
+    if len(rows)!=1: raise SystemExit("missing gradient output")
+    return [json.loads(s) for s in rows[0]]
+a,b=map(read,sys.argv[1:])
+if len(a)!=2 or len(b)!=2: raise SystemExit("gradient group mismatch")
+n=0
+for x,y in zip(a,b):
+    if len(x)!=9 or len(y)!=9: raise SystemExit("gradient size mismatch")
+    for p,q in zip(x,y):
+        if not (math.isfinite(p) and math.isfinite(q) and math.isclose(p,q,rel_tol=1e-4,abs_tol=1e-5)):
+            raise SystemExit("InfoNCE gradient mismatch")
+        n+=1
+if not any(abs(x)>1e-6 for row in a for x in row): raise SystemExit("zero gradient")
+print("P5 INFO PARITY OK",n,"values")
+P5PY
+'''
+
+[tasks.p6-tok-segment-asan]
+description = "Test parser tokenizer segmentation with ASan and UBSan"
+run = '''
+set -eu
+mkdir -p build/p6
+P6_DIR=compiler/runtime
+P6_BASE="$P6_DIR/moo_quant.c $P6_DIR/moo_tensor.c $P6_DIR/moo_tensor_ops.c $P6_DIR/moo_ki_gpu.c $P6_DIR/moo_autograd.c $P6_DIR/moo_memory.c $P6_DIR/moo_value.c $P6_DIR/moo_print.c $P6_DIR/moo_string.c $P6_DIR/moo_dict.c $P6_DIR/moo_list.c $P6_DIR/moo_ops.c"
+cc -std=gnu11 -D_GNU_SOURCE -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer -I"$P6_DIR" "$P6_DIR/moo_tok_segment.c" "$P6_DIR/moo_silben.c" "$P6_DIR/moo_krypto.c" "$P6_DIR/moo_error.c" "$P6_DIR/tests/test_tok_segment_asan.c" "$P6_DIR/tests/capture_test_stubs.c" $P6_BASE -lm -o build/p6/test-tok-segment-asan
+ASAN_OPTIONS=detect_leaks=1 build/p6/test-tok-segment-asan build/p6/datensatz-stufe1/text/valid.txt
+'''
+
 [tasks.p4-build-vulkan]
 description = "Build the release compiler with its default Vulkan feature"
 run = "cargo build --manifest-path compiler/Cargo.toml --release --locked"
@@ -882,131 +1556,66 @@ uv run python -m skripte.p4_silben.fix_instrument_final test "$P4_INST_VARIANT" 
 description = "Compare completed P4 reports with uniform-token baseline"
 run = "uv run python -m skripte.p4_silben.fix_instrument_final summary"
 
-[tasks.p5-grammatik-diagnose-build]
-description = "Compile CPU grammar gate diagnostic"
-run = "compiler/target/release/moo-compiler compile beispiele/p5/grammatik_diagnose.moos -o compiler/target/p5-grammatik-diagnose"
-
-[tasks.p5-grammatik-diagnose]
-description = "Run CPU grammar gate diagnostic"
-run = "MOO_KI_GPU=0 compiler/target/p5-grammatik-diagnose"
-
-[tasks.p5-ext08-eval-build]
-description = "Compile shared P5 validation and quality probes to EXT-08 binaries"
+[tasks.test-p5-sft]
+description = "Compile and run the synthetic P5 SFT learning and validation test"
 run = '''
 set -eu
-compiler/target/release/moo-compiler compile beispiele/p5/ext05_paar_eval.moos -o compiler/target/p5-ext08-paar-val
-compiler/target/release/moo-compiler compile beispiele/p5/ext05_auswahl.moos -o compiler/target/p5-ext08-auswahl
-compiler/target/release/moo-compiler compile beispiele/p5/eval_train_basis.moos -o compiler/target/p5-ext08-train-eval
-compiler/target/release/moo-compiler compile beispiele/p5/qualitaet_basis.moos -o compiler/target/p5-ext08-grammatik
-compiler/target/release/moo-compiler compile beispiele/p5/forgetting_basis.moos -o compiler/target/p5-ext08-forgetting
-compiler/target/release/moo-compiler compile beispiele/p5/sampling_runner.moos -o compiler/target/p5-ext08-sampling
+compiler/target/release/moo-compiler compile beispiele/p5/sft_test.moos -o compiler/target/p5-sft-test
+compiler/target/p5-sft-test
 '''
 
-[tasks.p5-ext08-eval-smoke]
-description = "Evaluate CPU smoke checkpoints on the frozen conditional validation set"
+[tasks.test-p5-distill-paritaet]
+description = "Compare distillation gradients and training on CPU and strict Vulkan"
 run = '''
 set -eu
-: "${P5_EXT08_SMOKE_DIR:?set P5_EXT08_SMOKE_DIR to a completed smoke directory}"
-uv run python skripte/p5_ext08_eval.py
+P5_DIR=compiler/runtime
+P5_OUT=compiler/target/p5-distill-paritaet
+mkdir -p "$P5_OUT"
+P5_BASE="$P5_DIR/moo_quant.c $P5_DIR/moo_tensor.c $P5_DIR/moo_tensor_ops.c $P5_DIR/moo_ki_gpu.c $P5_DIR/moo_autograd.c $P5_DIR/moo_memory.c $P5_DIR/moo_value.c $P5_DIR/moo_print.c $P5_DIR/moo_string.c $P5_DIR/moo_dict.c $P5_DIR/moo_list.c $P5_DIR/moo_ops.c"
+cc -std=gnu11 -D_GNU_SOURCE -DMOO_HAS_VULKAN -O1 -ffunction-sections -fdata-sections "$P5_DIR/tests/test_distill_asan.c" "$P5_DIR/tests/capture_free_stubs.c" "$P5_DIR/moo_nn.c" "$P5_DIR/moo_distill.c" "$P5_DIR/moo_dpo.c" "$P5_DIR/moo_stdlib.c" $P5_BASE -Wl,--gc-sections -lvulkan -lm -o "$P5_OUT/test"
+MOO_KI_GPU=0 "$P5_OUT/test" > "$P5_OUT/cpu.txt"
+MOO_KI_GPU=1 MOO_KI_GPU_ERZWINGEN=1 MOO_KI_GPU_STRIKT=1 "$P5_OUT/test" > "$P5_OUT/gpu.txt"
+uv run python -c 'import math,sys; read=lambda p:{x.split()[0]:x.split()[1:] for x in open(p).read().splitlines() if x.startswith(("GRAD ","DPOGRAD "))}; a=read(sys.argv[1]); b=read(sys.argv[2]); assert all(len(a[k])==len(b[k])==n and all(math.isclose(float(x),float(y),rel_tol=1e-4,abs_tol=1e-5) for x,y in zip(a[k],b[k])) for k,n in [("GRAD",6),("DPOGRAD",2)]); print("CPU/Vulkan: 6 Distillation- und 2 DPO-Gradienten innerhalb Toleranz")' "$P5_OUT/cpu.txt" "$P5_OUT/gpu.txt"
 '''
 
-[tasks.p5-ext08-eval]
-description = "Select EXT-08 checkpoints by exact conditional validation loss"
-run = "uv run python skripte/p5_ext08_eval.py"
-
-[tasks.p5-ext08-qualitaet-smoke]
-description = "Run quality probes on one CPU smoke selection"
+[tasks.test-p5-distill-dpo]
+description = "Compile and run public distillation and DPO example"
 run = '''
 set -eu
-: "${P5_EXT08_SMOKE_DIR:?set P5_EXT08_SMOKE_DIR to an evaluated smoke directory}"
-uv run python skripte/p5_ext08_qualitaet.py
+compiler/target/release/moo-compiler compile beispiele/p5/distill_dpo_test.moos -o compiler/target/p5-distill-dpo-test
+compiler/target/p5-distill-dpo-test
 '''
 
-[tasks.p5-ext08-qualitaet]
-description = "Evaluate EXT-08 selected checkpoints on frozen quality probes"
-run = "uv run python skripte/p5_ext08_qualitaet.py"
-
-[tasks.p5-ext08-build]
-description = "Compile shared EXT-05 trainer for optimizer comparison"
-run = "compiler/target/release/moo-compiler compile beispiele/p5/ext05_train.moos -o compiler/target/p5-ext08-train"
-
-[tasks.p5-ext08-smoke]
-description = "Run short CPU smoke for three fresh optimizers"
-run = "P5_EXT08_SMOKE=1 uv run python skripte/p5_ext08.py"
-
-[tasks.p5-ext08]
-description = "Run the bounded optimizer comparison on Vulkan"
-run = "uv run python skripte/p5_ext08.py"
-
-[tasks.p5-ext05-auswahl]
-description = "Select paired experiment checkpoints using frozen validation reports"
+[tasks.test-p5-distill-dpo-resume]
+description = "Check checkpoint resume for distillation and DPO"
 run = '''
 set -eu
-compiler/target/release/moo-compiler compile beispiele/p5/ext05_auswahl.moos -o compiler/target/p5-ext05-auswahl
-MOO_KI_GPU=0 compiler/target/p5-ext05-auswahl
+P5_TEST_DIR="$(mktemp -d "$PWD/build/p5-distill-resume.XXXXXX")"
+export P5_TEST_DIR
+compiler/target/release/moo-compiler compile beispiele/p5/distill_dpo_resume.moos -o "$P5_TEST_DIR/test"
+"$P5_TEST_DIR/test"
 '''
 
-[tasks.p5-ext05-runner-build]
-description = "Compile updated EXT-05 experiment runner"
+[tasks.test-p5-distill-dpo-sil14]
+description = "One distillation and DPO step on SIL-14 with full positional length"
 run = '''
 set -eu
-compiler/target/release/moo-compiler compile beispiele/p5/ext05_train.moos -o compiler/target/p5-ext05-train-next
-mv compiler/target/p5-ext05-train-next compiler/target/p5-ext05-train
+P5_TEST_DIR="$(mktemp -d "$PWD/build/p5-distill-sil14.XXXXXX")"
+compiler/target/release/moo-compiler compile beispiele/p5/distill_dpo_sil14.moos -o "$P5_TEST_DIR/test"
+"$P5_TEST_DIR/test"
 '''
 
-[tasks.p5-ext05-paar-val]
-description = "Score masked conditional loss on the 15 frozen validation pairs"
+[tasks.test-p5-ext09-smoke]
+description = "CPU smoke: DPO and combined loss on SIL-14 with isolated checkpoints"
 run = '''
 set -eu
-compiler/target/release/moo-compiler compile beispiele/p5/ext05_paar_eval.moos -o compiler/target/p5-ext05-paar-val
-MOO_KI_GPU=0 compiler/target/p5-ext05-paar-val
-'''
-
-[tasks.p5-ext05-conditional-auswahl]
-description = "Score all saved checkpoints on conditional validation pairs and select them"
-run = '''
-set -eu
-compiler/target/release/moo-compiler compile beispiele/p5/ext05_paar_eval.moos -o compiler/target/p5-ext05-paar-val
-uv run python skripte/p5_ext05_eval.py
-compiler/target/release/moo-compiler compile beispiele/p5/ext05_auswahl.moos -o compiler/target/p5-ext05-auswahl
-MOO_KI_GPU=0 compiler/target/p5-ext05-auswahl
-'''
-
-[tasks.p5-ext05-qualitaet]
-description = "Evaluate selected checkpoints on frozen train and quality baselines"
-run = '''
-set -eu
-uv run python skripte/p5_ext05_qualitaet.py
-'''
-
-[tasks.p5-ext05-train-nachholen]
-description = "Recover train NLL trajectories for the first three completed runs"
-run = '''
-set -eu
-compiler/target/release/moo-compiler compile beispiele/p5/eval_train_basis.moos -o compiler/target/p5-ext05-train-eval
-MOO_KI_GPU=0 uv run python skripte/p5_ext05_train_nachholen.py
-'''
-
-[tasks.p5-ext05-resume]
-description = "Resume bounded paired comparison with learning rates selected on seed 11"
-run = '''
-set -eu
-uv run python skripte/p5_ext05_resume.py
-'''
-
-[tasks.p5-ext05-bericht]
-description = "Summarize paired val-selected checkpoint and quality measurements"
-run = '''
-set -eu
-uv run python skripte/p5_ext05_bericht.py
-'''
-
-[tasks.p5-ext05]
-description = "Run bounded paired SIL-14 correction and normal-text experiments"
-run = '''
-set -eu
-compiler/target/release/moo-compiler compile beispiele/p5/ext05_train.moos -o compiler/target/p5-ext05-train
-uv run python skripte/p5_ext05.py
+P5_TEST_DIR="$(mktemp -d "$PWD/build/p5-ext09-smoke.XXXXXX")"
+compiler/target/release/moo-compiler compile beispiele/p5/ext09_train.moos -o "$P5_TEST_DIR/train"
+for P5_V in DPO KOMB; do
+  mkdir -p "$P5_TEST_DIR/$P5_V"
+  cp beispiele/p4_silben/run_sil14_grimm36k/full.mook "$P5_TEST_DIR/$P5_V/base.mook"
+  env MOO_KI_GPU=0 P5_EXT05_DIR="$P5_TEST_DIR/$P5_V" P5_EXT09_VARIANTE="$P5_V" P5_EXT05_SEED=11 P5_EXT05_RATE=0.0001 P5_EXT09_BETA=0.1 P5_EXT09_SMOKE=1 "$P5_TEST_DIR/train"
+done
 '''
 
 [tasks.p5-ext09-praef-val]
@@ -1027,6 +1636,10 @@ compiler/target/release/moo-compiler compile beispiele/p5/ext05_paar_eval.moos -
 compiler/target/release/moo-compiler compile beispiele/p5/ext09_praef_val.moos -o compiler/target/p5-ext09-praef-val
 '''
 
+[tasks.test-p5-ext09-ledger]
+description = "Check EXT-09 ledger parsing and exact validation selection"
+run = "uv run python skripte/p5_ext09.py --self-test"
+
 [tasks.p5-ext09]
 description = "Run budgeted EXT-09 comparison with shared GPU ledger"
 run = "uv run python skripte/p5_ext09.py"
@@ -1044,9 +1657,68 @@ compiler/target/release/moo-compiler compile beispiele/p5/ext09_praef_val.moos -
 compiler/target/release/moo-compiler compile beispiele/p5/ext10_dokument_eval.moos -o compiler/target/p5-ext10-dokument
 '''
 
+[tasks.test-p5-ext10]
+description = "Check EXT-10 dummy lock and valuation-only integration"
+run = '''
+set -eu
+uv run python skripte/p5_ext10.py --self-test
+uv run python skripte/p5_ext10.py --val-check
+'''
+
 [tasks.p5-ext10]
 description = "Run EXT-10 with the fixed manifest after explicit release"
 run = "uv run python skripte/p5_ext10.py --execute --manifest build/p5_ext10/manifest.json"
+
+
+[tasks.test-p5-ext09-daten]
+description = "Check natural preference pairs and exact window coverage"
+run = '''
+set -eu
+P5_TEST_DIR="$(mktemp -d "$PWD/build/p5-ext09-data.XXXXXX")"
+compiler/target/release/moo-compiler compile beispiele/p5/ext09_daten_test.moos -o "$P5_TEST_DIR/test"
+MOO_KI_GPU=0 "$P5_TEST_DIR/test"
+'''
+
+[tasks.test-p5-distill-sanitize]
+description = "Distillation KL finite differences and sanitizers"
+run = '''
+set -eu
+P5_DIR=compiler/runtime
+P5_OUT=compiler/target/p5-distill-sanitize
+mkdir -p "$P5_OUT"
+P5_BASE="$P5_DIR/moo_quant.c $P5_DIR/moo_tensor.c $P5_DIR/moo_tensor_ops.c $P5_DIR/moo_ki_gpu.c $P5_DIR/moo_autograd.c $P5_DIR/moo_memory.c $P5_DIR/moo_value.c $P5_DIR/moo_print.c $P5_DIR/moo_string.c $P5_DIR/moo_dict.c $P5_DIR/moo_list.c $P5_DIR/moo_ops.c"
+for P5_MODE in address undefined; do
+  cc -std=gnu11 -D_GNU_SOURCE -DMOO_HAS_VULKAN -g -O1 "-fsanitize=$P5_MODE" -fno-sanitize-recover=undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections "$P5_DIR/tests/test_distill_asan.c" "$P5_DIR/tests/capture_free_stubs.c" "$P5_DIR/moo_nn.c" "$P5_DIR/moo_distill.c" "$P5_DIR/moo_dpo.c" "$P5_DIR/moo_stdlib.c" $P5_BASE -Wl,--gc-sections -lvulkan -lm -o "$P5_OUT/$P5_MODE"
+  ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 "$P5_OUT/$P5_MODE"
+done
+'''
+
+[tasks.test-p5-train-api-sanitize]
+description = "Run P5 common dispatcher tests under ASan and UBSan"
+run = '''
+set -eu
+P5_DIR=compiler/runtime
+P5_OUT=compiler/target/p5-train-api-sanitize
+mkdir -p "$P5_OUT"
+P5_BASE="$P5_DIR/moo_quant.c $P5_DIR/moo_tensor.c $P5_DIR/moo_tensor_ops.c $P5_DIR/moo_ki_gpu.c $P5_DIR/moo_autograd.c $P5_DIR/moo_memory.c $P5_DIR/moo_value.c $P5_DIR/moo_print.c $P5_DIR/moo_string.c $P5_DIR/moo_dict.c $P5_DIR/moo_list.c $P5_DIR/moo_ops.c"
+for P5_MODE in address undefined; do
+  cc -std=gnu11 -D_GNU_SOURCE -DMOO_HAS_VULKAN -g -O1 "-fsanitize=$P5_MODE" -fno-sanitize-recover=undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections "$P5_DIR/tests/test_train_api_asan.c" "$P5_DIR/tests/capture_free_stubs.c" "$P5_DIR/moo_nn.c" "$P5_DIR/moo_sft.c" "$P5_DIR/moo_train_api.c" "$P5_DIR/moo_distill.c" "$P5_DIR/moo_dpo.c" "$P5_DIR/moo_stdlib.c" $P5_BASE -Wl,--gc-sections -lvulkan -lm -o "$P5_OUT/$P5_MODE"
+  ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 "$P5_OUT/$P5_MODE"
+done
+'''
+[tasks.test-p5-sft-sanitize]
+description = "Run P5 SFT native tests under ASan and UBSan"
+run = '''
+set -eu
+P5_DIR=compiler/runtime
+P5_OUT=compiler/target/p5-sft-sanitize
+mkdir -p "$P5_OUT"
+P5_BASE="$P5_DIR/moo_quant.c $P5_DIR/moo_tensor.c $P5_DIR/moo_tensor_ops.c $P5_DIR/moo_ki_gpu.c $P5_DIR/moo_autograd.c $P5_DIR/moo_memory.c $P5_DIR/moo_value.c $P5_DIR/moo_print.c $P5_DIR/moo_string.c $P5_DIR/moo_dict.c $P5_DIR/moo_list.c $P5_DIR/moo_ops.c"
+for P5_MODE in address undefined; do
+  cc -std=gnu11 -D_GNU_SOURCE -DMOO_HAS_VULKAN -g -O1 "-fsanitize=$P5_MODE" -fno-sanitize-recover=undefined -fno-omit-frame-pointer -ffunction-sections -fdata-sections "$P5_DIR/tests/test_sft_asan.c" "$P5_DIR/tests/capture_free_stubs.c" "$P5_DIR/moo_nn.c" "$P5_DIR/moo_sft.c" "$P5_DIR/moo_stdlib.c" $P5_BASE -Wl,--gc-sections -lvulkan -lm -o "$P5_OUT/$P5_MODE"
+  ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 "$P5_OUT/$P5_MODE"
+done
+'''
 
 [tasks.p5-pilot-generieren]
 description = "Generate 100 short SIL-14 pilot texts on CPU for teacher review"
@@ -1054,6 +1726,16 @@ run = '''
 set -eu
 compiler/target/release/moo-compiler compile beispiele/p5/generiere_pilot.moos -o compiler/target/p5-pilot-generieren
 MOO_KI_GPU=0 compiler/target/p5-pilot-generieren
+'''
+
+[tasks.test-p5-sil14-sft]
+description = "Run a full-position SIL-14 SFT and checkpoint-resume smoke test"
+run = '''
+set -eu
+P5_TEST_DIR="$(mktemp -d "$PWD/build/p5-sil14-sft.XXXXXX")"
+export P5_TEST_DIR
+compiler/target/release/moo-compiler compile beispiele/p5/korrektur_sil14_test.moos -o "$P5_TEST_DIR/test"
+"$P5_TEST_DIR/test"
 '''
 
 [tasks.p5-pilot-sampling]
@@ -1070,6 +1752,23 @@ run = '''
 set -eu
 compiler/target/release/moo-compiler compile beispiele/p5/generiere_pilot_topk.moos -o compiler/target/p5-pilot-topk
 MOO_KI_GPU=0 compiler/target/p5-pilot-topk
+'''
+
+[tasks.test-p5-pilot]
+description = "Validate teacher pilot through the SIL-14 tokenizer and SFT adapter"
+run = '''
+set -eu
+compiler/target/release/moo-compiler compile beispiele/p5/pilot_pruefen.moos -o compiler/target/p5-pilot-pruefen
+MOO_KI_GPU=0 compiler/target/p5-pilot-pruefen
+'''
+
+[tasks.test-p5-val-protokoll]
+description = "Reproduce frozen P5 splits and evaluate SIL-14 baseline on CPU"
+run = '''
+set -eu
+uv run python skripte/p5_split_pruefen.py
+compiler/target/release/moo-compiler compile beispiele/p5/eval_val_basis.moos -o compiler/target/p5-eval-val-basis
+MOO_KI_GPU=0 compiler/target/p5-eval-val-basis
 '''
 
 [tasks.p5-grammatik-baseline]

@@ -1,0 +1,13 @@
+daten klasse Punkt(x, y)
+setze a auf []
+setze i auf 0
+solange i < 100000:
+    a.hinzufügen(neu Punkt(i % 100, 2))
+    setze i auf i + 1
+setze s auf 0
+setze i auf 0
+solange i < 100000:
+    setze p auf a[i]
+    setze s auf s + p.x + p.y
+    setze i auf i + 1
+zeige s

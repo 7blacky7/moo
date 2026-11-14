@@ -1,0 +1,204 @@
+[tasks.test]
+description = "Typannotationen im Parser-AST gegen Golden prüfen"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-frontend-ast
+mkdir -p "$out"
+mise exec -- clang++ -std=c++17 -Wall -Wextra -Werror compiler/tests/p2/ast_vergleich.cpp -o "$out/vergleich"
+timeout 30s "${MOO_COMPILER:-compiler/target/release/moo-compiler}" ast compiler/tests/p2/ast_vertrag.moos >"$out/vertrag.ast"
+"$out/vergleich" compiler/tests/p2/ast_vertrag.expected_ast "$out/vertrag.ast"
+if "$out/vergleich" compiler/tests/p2/ast_vertrag.expected_ast compiler/tests/p2/ast_vertrag.moos >"$out/kontrolle.out" 2>"$out/kontrolle.err"; then
+  echo "FAIL Golden-Vergleich erkennt Abweichung nicht" >&2; exit 1
+else
+  rc=$?
+  [ "$rc" -eq 1 ] || { echo "FAIL Golden-Vergleich unbrauchbar" >&2; exit 1; }
+fi
+printf "PASS Golden-Negativkontrolle\n"
+timeout 30s "${MOO_COMPILER:-compiler/target/release/moo-compiler}" ast compiler/tests/p2/ast_import.moos --imports >"$out/import.ast"
+"$out/vergleich" compiler/tests/p2/ast_import.expected_ast "$out/import.ast"
+timeout 30s "${MOO_COMPILER:-compiler/target/release/moo-compiler}" ast compiler/tests/p2/ast_struktur_import.moos --imports >"$out/struktur-import.ast"
+"$out/vergleich" compiler/tests/p2/ast_struktur_import.expected_ast "$out/struktur-import.ast"
+timeout 30s "${MOO_COMPILER:-compiler/target/release/moo-compiler}" ast compiler/tests/p2/ast_uefi_signatur.moos >"$out/uefi.ast"
+"$out/vergleich" compiler/tests/p2/ast_uefi_signatur.expected_ast "$out/uefi.ast"
+timeout 30s "${MOO_COMPILER:-compiler/target/release/moo-compiler}" ast compiler/tests/p2/ast_u64_roh.moos >"$out/u64.ast"
+"$out/vergleich" compiler/tests/p2/ast_u64_roh.expected_ast "$out/u64.ast"
+for name in negativ_typ_klammer negativ_typ_leer ast_array_leer ast_ptr_leer ast_funktionstyp_pfeil_fehlt ast_interface_kaputt ast_interface_typ_leer; do
+  if timeout 30s "${MOO_COMPILER:-compiler/target/release/moo-compiler}" ast "compiler/tests/p2/$name.moos" >"$out/$name.out" 2>"$out/$name.err"; then
+    echo "FAIL $name: erwarteter Parserfehler blieb aus" >&2; exit 1
+  else
+    rc=$?
+    if [ "$rc" -eq 124 ] || [ "$rc" -ge 128 ]; then echo "FAIL $name: Timeout/Signal ($rc)" >&2; exit 1; fi
+  fi
+  case "$name" in
+    negativ_typ_klammer) expected="schließende eckige Klammer" ;;
+    negativ_typ_leer|ast_ptr_leer) expected="Typname erwartet" ;;
+    ast_array_leer) expected="aber RBracket gefunden" ;;
+    ast_funktionstyp_pfeil_fehlt) expected="Pfeil '->' erwartet" ;;
+    ast_interface_kaputt) expected="Interface-Methode 'lese': " ;;
+    ast_interface_typ_leer) expected="Interface-Methode 'lese': " ;;
+  esac
+  rg -q -F "$expected" "$out/$name.err" || { cat "$out/$name.err" >&2; exit 1; }
+  case "$name" in
+    ast_interface_kaputt) rg -q -F "schließende eckige Klammer" "$out/$name.err" || { cat "$out/$name.err" >&2; exit 1; } ;;
+    ast_interface_typ_leer) rg -q -F "Typname erwartet" "$out/$name.err" || { cat "$out/$name.err" >&2; exit 1; } ;;
+  esac
+  printf 'PASS %s: spezifische Parserdiagnose\n' "$name"
+done
+# P2-T60: untypisierte Interface-Altformen bleiben parsebar (Fallback + regulaer).
+for src in compiler/tests/p2/ast_interface_legacy.moos compiler/tests/test_interface.moos; do
+  timeout 30s "${MOO_COMPILER:-compiler/target/release/moo-compiler}" ast "$src" >"$out/legacy.ast" || { echo "FAIL $src: Legacy-Interface nicht mehr parsebar" >&2; exit 1; }
+  rg -q 'InterfaceDef \{' "$out/legacy.ast" || { echo "FAIL $src: InterfaceDef fehlt" >&2; exit 1; }
+done
+rg -q 'None,' "$out/legacy.ast" 2>/dev/null || :
+timeout 30s "${MOO_COMPILER:-compiler/target/release/moo-compiler}" ast compiler/tests/p2/ast_interface_legacy.moos >"$out/legacy.ast"
+rg -q 'name: "drucken"' "$out/legacy.ast" || { echo 'FAIL Legacy: regulaere Signatur drucken fehlt' >&2; exit 1; }
+printf 'PASS Interface-Altformen parsebar\n'
+'''
+
+
+[tasks.interface-diagnose]
+description = "Typfehler und Interface-Legacy-Fallback sichtbar machen"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-frontend-ast
+mkdir -p "$out"
+for name in funktion interface; do
+  if timeout 30s "${MOO_COMPILER:-compiler/target/release/moo-compiler}" ast "compiler/tests/p2/ast_$name""_kaputt.moos" >"$out/$name.out" 2>"$out/$name.err"; then
+    printf 'DIAG %s parse_rc=0\n' "$name"
+    if rg -q 'signatures: \[' "$out/$name.out"; then rg -n -A 4 'signatures: \[' "$out/$name.out"; fi
+  else
+    rc=$?
+    printf 'DIAG %s parse_rc=%s\n' "$name" "$rc"
+    cat "$out/$name.err"
+  fi
+done
+echo 'DIAG: beobachtetes Verhalten, kein Kompatibilitäts-Sollentscheid'
+'''
+
+
+[tasks.beispiele]
+description = "Parser-AST-Kompatibilität aller Beispielquellen diagnostizieren"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-frontend-ast
+mkdir -p "$out"
+find beispiele -type f -name '*.moos' -print0 >"$out/beispiele.files"
+: >"$out/beispiele.failures"
+: >"$out/beispiele.errors"
+compiler="${MOO_COMPILER:-compiler/target/release/moo-compiler}"
+before=$(sha256sum "$compiler")
+count=0
+failed=0
+while IFS= read -r -d '' src; do
+  count=$((count + 1))
+  if timeout 30s "$compiler" ast "$src" >/dev/null 2>"$out/beispiele.last-error"; then
+    :
+  else
+    rc=$?
+    failed=$((failed + 1))
+    printf '%s\t%s\n' "$rc" "$src" >>"$out/beispiele.failures"
+    printf '\n%s (rc %s)\n' "$src" "$rc" >>"$out/beispiele.errors"
+    cat "$out/beispiele.last-error" >>"$out/beispiele.errors"
+  fi
+done <"$out/beispiele.files"
+after=$(sha256sum "$compiler")
+[ "$before" = "$after" ] || { echo 'FAIL Compiler-Binary während des Laufs geändert' >&2; exit 2; }
+printf 'Parser-Beispiele: gesamt=%s fehler=%s\n%s\n' "$count" "$failed" "$before"
+[ "$count" -gt 0 ] || { echo 'FAIL keine Beispielquellen' >&2; exit 2; }
+if [ "$failed" -ne 0 ]; then cat "$out/beispiele.failures"; exit 1; fi
+'''
+
+
+[tasks.interface-import]
+description = "Schnittstellen im benannten und vollständigen Modulimport erhalten"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-frontend-ast
+mkdir -p "$out"
+for name in namen modul_import; do
+  timeout 30s "${MOO_COMPILER:-compiler/target/release/moo-compiler}" ast "compiler/tests/p2/ast_interface_$name.moos" --imports >"$out/interface-$name.ast"
+done
+rg -q 'InterfaceDef \{' "$out/interface-modul_import.ast"
+rg -q 'InterfaceSignature \{' "$out/interface-modul_import.ast"
+if ! cmp -s "$out/interface-modul_import.ast" "$out/interface-namen.ast"; then
+  echo 'FAIL benannter Import verliert oder verändert Schnittstellen-AST' >&2
+  diff -u "$out/interface-modul_import.ast" "$out/interface-namen.ast" >&2 || :
+  exit 1
+fi
+echo 'PASS Interface-Signatur bei beiden Importformen erhalten'
+'''
+
+
+[tasks.rohdaten-import]
+description = "Typisierte Rohdaten bei benanntem und vollem Import erhalten"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-frontend-ast
+mkdir -p "$out"
+for name in namen modul_import; do
+  src="compiler/tests/p2/ast_rohdaten_$name.moos"
+  timeout 30s "${MOO_COMPILER:-compiler/target/release/moo-compiler}" ast "$src" --imports >"$out/rohdaten-$name.ast"
+  timeout 120s "${MOO_COMPILER:-compiler/target/release/moo-compiler}" compile "$src" --emit-ir -o "$out/rohdaten-$name.ll"
+  timeout 30s mise exec -- opt -passes=verify -disable-output "$out/rohdaten-$name.ll"
+done
+rg -q 'RawDataU32 \{' "$out/rohdaten-modul_import.ast"
+if ! cmp -s "$out/rohdaten-modul_import.ast" "$out/rohdaten-namen.ast"; then
+  echo 'FAIL benannter Import verliert oder verändert Rohdaten-AST' >&2
+  diff -u "$out/rohdaten-modul_import.ast" "$out/rohdaten-namen.ast" >&2 || :
+  exit 1
+fi
+for name in namen modul_import; do
+  rg -Fq '@p2_rohdaten = global [2 x i32] [i32 1, i32 2]' "$out/rohdaten-$name.ll"
+done
+echo 'PASS typisierte Rohdaten bei beiden Importformen erhalten'
+'''
+
+
+[tasks.interface-alt]
+description = "Legacy-Interface-Signaturen im Beispielkorpus erfassen"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-frontend-ast
+mkdir -p "$out"
+find beispiele -type f -name '*.moos' -print0 >"$out/interface-alt.files"
+: >"$out/interface-alt.treffer"
+compiler="${MOO_COMPILER:-compiler/target/release/moo-compiler}"
+has_fallback() {
+  awk '
+    {
+      match($0, /^ */); indent=RLENGTH; text=substr($0, indent+1)
+      if (text == "signatures: [") { active=1; level=indent; next }
+      if (active && indent == level && text == "],") { active=0; next }
+      if (active && indent == level+4 && text == "None,") found=1
+    }
+    END { exit !found }
+  ' "$1"
+}
+before=$(sha256sum "$compiler")
+timeout 30s "$compiler" ast compiler/tests/p2/ast_interface_legacy.moos >"$out/interface-alt.control.ast"
+has_fallback "$out/interface-alt.control.ast" || { echo "FAIL Positivkontrolle erkennt Fallback nicht" >&2; exit 1; }
+printf "PASS Fallback-Positivkontrolle\n"
+count=0
+interfaces=0
+while IFS= read -r -d '' src; do
+  count=$((count + 1))
+  timeout 30s "$compiler" ast "$src" >"$out/interface-alt.last.ast"
+  if rg -q 'InterfaceDef \{' "$out/interface-alt.last.ast"; then interfaces=$((interfaces + 1)); fi
+  if has_fallback "$out/interface-alt.last.ast"; then
+    printf '%s\n' "$src" >>"$out/interface-alt.treffer"
+  fi
+done <"$out/interface-alt.files"
+after=$(sha256sum "$compiler")
+[ "$before" = "$after" ] || { echo 'FAIL Compiler während des Audits geändert' >&2; exit 2; }
+[ "$count" -gt 0 ] || { echo 'FAIL keine Beispielquellen' >&2; exit 2; }
+printf 'DIAG Parser-Beispiele: %s, Dateien mit InterfaceDef: %s, davon mit Legacy-Fallback: %s\n' "$count" "$interfaces" "$(wc -l <"$out/interface-alt.treffer")"
+cat "$out/interface-alt.treffer"
+printf '%s\n' "$before"
+echo 'DIAG nur beispiele/*.moos rekursiv; andere Programme und Absicht der Syntax nicht beurteilt'
+'''

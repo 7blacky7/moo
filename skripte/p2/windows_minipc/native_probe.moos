@@ -1,0 +1,25 @@
+# Nativer Moo-Kern fuer echten Windows-x64-Lauf.
+# Die identischen i32-Operationen koennen auch auf weiteren Ziel-ABIs getestet werden.
+@nativ
+@einstieg
+funktion moo_win_plus42(wert: i32) -> i32:
+    gib_zurück wert + 42
+
+@nativ
+@einstieg
+funktion moo_win_quadrat(wert: i32) -> i32:
+    gib_zurück wert * wert
+
+@nativ
+@einstieg
+funktion moo_win_kette(wert: i32) -> i32:
+    gib_zurück moo_win_plus42(wert) + moo_win_quadrat(wert)
+
+# Wirklicher Win32-Aufruf direkt aus nativem Moo.
+extern "C" funktion GetCurrentProcessId() -> u32
+
+@nativ
+@einstieg
+funktion moo_win_api_pid() -> u32:
+    unsicher:
+        gib_zurück GetCurrentProcessId()

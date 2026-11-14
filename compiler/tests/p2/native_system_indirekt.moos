@@ -1,0 +1,42 @@
+# P2-T78: Nicht-Direktform-Aufrufe hosted Systemkoerper in benannten Funktionen
+# (Aufruf in Argumentposition, in gib_zurück-Teilausdruck, in versuche: der
+# Funktion). Ein ungueltiges Argument wird wie ein Koerperfehler behandelt:
+# moo_throw setzt das Flag, der Aufruf wird uebersprungen und liefert nichts,
+# der naechste Guard faengt. Vorher: llvm.trap (native_argument_fatal_exit).
+# P2-T82: Funktionen mit solchen Aufrufen tragen einen Pruefpunkt-Ausgang;
+# in paar(text, "c") unterbleibt deshalb der Aufruf zweites(...) samt 'c'.
+@nativ
+funktion s_halb(a: i32) -> i32:
+    unsicher:
+        gib_zurück a / 2
+funktion zweites(a, b):
+    gib_zurück b
+funktion rechne(a):
+    unsicher:
+        gib_zurück zweites(1, s_halb(a))
+funktion paar(a, b):
+    unsicher:
+        zeige zweites(s_halb(a), b)
+funktion intern(a):
+    unsicher:
+        versuche:
+            setze r auf zweites(1, s_halb(a))
+            zeige r
+        fange fehler:
+            zeige "intern " + fehler
+    gib_zurück "weiter intern"
+setze text auf "x"
+versuche:
+    zeige rechne(8)
+    zeige rechne(text)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen ausdruck: " + fehler
+versuche:
+    paar(6, "b")
+    paar(text, "c")
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen argument: " + fehler
+zeige intern(10)
+zeige intern(text)

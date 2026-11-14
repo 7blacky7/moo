@@ -1,0 +1,24 @@
+# P2-T77 Batch 2: Systemkoerper in einer Funktion mit eigenen Aufraeumaktionen,
+# die zugleich selbst Aufraeumaktion einer anderen Funktion ist (Runtime-Defer-
+# Rahmen bzw. statischer Pfad, je nach Scope-Unterstuetzung). Beide Ebenen
+# raeumen genau einmal auf, der Koerperfehler erreicht den Aufrufer.
+@nativ
+funktion s_div(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b
+funktion marke(text):
+    zeige text
+funktion innen(b):
+    aufräumen: marke("innen aufgeraeumt")
+    unsicher:
+        gib_zurück s_div(8, b)
+funktion aussen(b):
+    aufräumen: innen(b)
+    gib_zurück "aussen"
+versuche:
+    zeige aussen(2)
+    zeige aussen(0)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen runtime"
+zeige "weiter"

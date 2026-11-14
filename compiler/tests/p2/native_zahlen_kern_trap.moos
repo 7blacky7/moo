@@ -1,0 +1,12 @@
+# P2-T73: Fehlervertrag im Bare-Profil (ADR §13): Division durch 0 in einem
+# Systemkoerper endet in llvm.trap, es gibt keine Moo-Ausnahme und keine
+# Runtime. Seriell erscheint 41, aber nie 42 (KERNEL_MARKER_FEHLT).
+@nativ
+funktion k_div(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b
+
+unsicher:
+    zeige 41
+    zeige k_div(7, 0)
+    zeige 42

@@ -1,0 +1,33 @@
+# P2-T34: dynamisch erkannte Fehler sind hosted fangbar (versuche:), die
+# native Funktion kehrt nach moo_native_fehler mit Nullwert zurueck.
+@nativ
+funktion z_div(a: i32, b: i32) -> i32:
+    gib_zurück a / b
+@nativ
+funktion z_rest(a: i32, b: i32) -> i32:
+    gib_zurück a % b
+@nativ
+funktion z_links(a: u8, n: u8) -> u8:
+    gib_zurück a << n
+versuche:
+    zeige z_div(7, 0)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen div"
+versuche:
+    zeige z_div(-2147483648, -1)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen min"
+versuche:
+    zeige z_rest(7, 0)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen rest"
+versuche:
+    zeige z_links(1, 8)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen shift"
+zeige z_div(7, 2)
+zeige "weiter"

@@ -152,3 +152,20 @@ skripte/hf_ki_browser_import_*.py
 
 # Build-/Gate-Artefakte (Images, pcaps, Screenshots, fremde Downloads) – nie versionieren
 /build/
+
+# --- Privat / nicht veröffentlichen (Stand 2026-11-14) ---
+# Mini-PC-/Windows-Zugangsnotizen
+Moo-MiniPC-Setup.cmd
+MEMORY-test-windows.md
+# Lokale Binaries, Screenshots, Temp-Checkpoints
+/pp
+/*.bmp
+.p5-*/
+tests/local/
+# Modell-Checkpoints und Trainingsläufe (Korpora/Modelle werden nicht veröffentlicht)
+*.mook
+*.mook.netz
+beispiele/p4_silben/run_*/
+# Volltexte/PDFs fremder Paper (nur Metadaten und eigene Analysen versionieren)
+docs/research/ki-papers/pdf/
+docs/research/ki-papers/text/

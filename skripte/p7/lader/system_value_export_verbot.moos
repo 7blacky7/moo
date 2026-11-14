@@ -1,0 +1,8 @@
+struktur Wert:
+    code: u32
+
+@nativ
+@einstieg
+funktion falsch_export(w: Wert) -> u64:
+    unsicher:
+        gib_zurück u64(w.code)

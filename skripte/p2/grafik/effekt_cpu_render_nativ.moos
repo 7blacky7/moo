@@ -1,0 +1,452 @@
+# P2-T72 Modul 4: CPU-Render aus compiler/runtime/moo_compositor_effects_cpu.c
+# (coverage :560-579, colorize :686-721, render_content :770-806; Teil 2:
+# render_shadow, render_backdrop, validate_scratch, render) in nativem Moo.
+#
+# Wiederverwendung per extern "C":
+#   effekt_cpu_pixel_nativ: round_u64, round_signed, clamp_u8, over, noise_hash, ranges_overlap
+#   effekt_cpu_geometrie_nativ: local_sample_checked, requirements
+#   effekt_cpu_blur_nativ: box_mask_h/v, box_rgba_h/v, capture
+#   effekt_mathe_nativ: rounded_coverage_a8, rect_expand, corners_normalize, affine_inverse
+#
+# Job-Offsets (MooCompEffectCpuJob, 232 Byte): content @0 (pixels @0, stride @16,
+# width @24, height @28), lower_z @32, target @64 (pixels @64, bytes @72,
+# stride @80, width @88, height @92), content_rect @96, effect @112: mask @112,
+# corners @136, shadow offset_x @144, offset_y @148, blur u16 @152, spread u16 @154,
+# color rgba @156; backdrop blur u16 @160, saturation u16 @162, tint rgba @164,
+# tint_mix u8 @168, noise u8 @169, noise_seed u32 @172; affine @176;
+# content_opacity u8 @208, content_scale u32 @216, max_work_units @224.
+#
+# Systemkoerper-Regel: jeder Name nur EINMAL pro Funktion deklariert (auch nicht
+# in Geschwister-Schleifen); 'weiter' wird nicht benutzt (Inkrement am Ende).
+
+extern "C" funktion moo_n_fx_round_u64(n: u64, d: u64) -> u64
+extern "C" funktion moo_n_fx_round_signed(n: i64, d: i64) -> i64
+extern "C" funktion moo_n_fx_clamp_u8(v: i64) -> u32
+extern "C" funktion moo_n_fx_over(ziel: u64, quelle: u64) -> void
+extern "C" funktion moo_n_comp_noise_hash(x: u32, y: u32, saat: u32) -> u32
+extern "C" funktion moo_n_fx_ranges_overlap(a: u64, a_bytes: u64, b: u64, b_bytes: u64) -> u32
+extern "C" funktion moo_n_fx_local_sample_checked(inverse: u64, rechteck: u64, x: i32, y: i32, versatz_x: i32, versatz_y: i32, sx: u64, sy: u64) -> u32
+extern "C" funktion moo_n_fx_requirements(job: u64, ergebnis: u64) -> u32
+extern "C" funktion moo_n_fx_box_mask_h(quelle: u64, ziel: u64, w: i32, h: i32, radius: u32) -> void
+extern "C" funktion moo_n_fx_box_mask_v(quelle: u64, ziel: u64, w: i32, h: i32, radius: u32) -> void
+extern "C" funktion moo_n_fx_box_rgba_h(quelle: u64, ziel: u64, w: i32, h: i32, radius: u32) -> void
+extern "C" funktion moo_n_fx_box_rgba_v(quelle: u64, ziel: u64, w: i32, h: i32, radius: u32) -> void
+extern "C" funktion moo_n_fx_capture(quelle: u64, rgba: u64) -> void
+extern "C" funktion moo_n_rounded_coverage_a8(breite: i32, hoehe: i32, ecken: u64, x: i32, y: i32, ergebnis: u64) -> u32
+extern "C" funktion moo_n_rect_expand(rechteck: u64, radius: i32, ergebnis: u64) -> u32
+extern "C" funktion moo_n_corners_normalize(breite: i32, hoehe: i32, ecken: u64, ergebnis: u64) -> u32
+extern "C" funktion moo_n_affine_inverse(a: u64, ergebnis: u64) -> u32
+
+# 4 Bytes RGBA fuer lokale Pixel (C: uint8_t p[4]/src[4]).
+struktur RenderPixel:
+    r: u8
+    g: u8
+    b: u8
+    a: u8
+
+# Zieladresse eines Pixels (C :137-140) fuer Source/Target-Beschreibung an bild.
+@nativ
+funktion render_pixel_adr(bild: u64, x: i32, y: i32) -> u64:
+    unsicher:
+        setze b64: ptr[u64] auf zeiger(bild)
+        gib_zurück b64[0] + u64(y) * b64[2] + u64(x) * 4
+
+# C :686-721. Saettigung, Tint, Rauschen in dieser Reihenfolge auf p (4 Bytes).
+@nativ
+@einstieg
+funktion moo_n_fx_colorize(job: u64, x: i32, y: i32, pixel: u64) -> void:
+    unsicher:
+        setze j64: ptr[u64] auf zeiger(job)
+        setze j8: ptr[u8] auf zeiger(job)
+        setze j16: ptr[u16] auf zeiger(job)
+        setze ju32: ptr[u32] auf zeiger(job)
+        setze maske: u64 auf j64[14]
+        setze p: ptr[u8] auf zeiger(pixel)
+        setze c: u64 auf 0
+        wenn (maske & 8) != 0:
+            setze l: i64 auf i64(moo_n_fx_round_u64(54 * u64(p[0]) + 183 * u64(p[1]) + 19 * u64(p[2]), 256))
+            setze saett: i64 auf i64(j16[81])
+            setze c auf 0
+            solange c < 3:
+                setze v: i64 auf l + moo_n_fx_round_signed((i64(p[c]) - l) * saett, 256)
+                p[c] = u8(moo_n_fx_clamp_u8(v))
+                setze c auf c + 1
+        wenn (maske & 16) != 0:
+            setze mix: u64 auf u64(j8[168])
+            setze c auf 0
+            solange c < 3:
+                p[c] = u8(moo_n_fx_round_u64(u64(p[c]) * (255 - mix) + u64(j8[164 + c]) * mix, 255))
+                setze c auf c + 1
+        wenn (maske & 32) != 0:
+            setze h: u32 auf moo_n_comp_noise_hash(u32(x), u32(y), ju32[43])
+            setze n: i64 auf i64(h >> 24) - 128
+            setze delta: i64 auf moo_n_fx_round_signed(n * i64(j8[169]), 255)
+            p[0] = u8(moo_n_fx_clamp_u8(i64(p[0]) + delta))
+            p[1] = u8(moo_n_fx_clamp_u8(i64(p[1]) + delta))
+            p[2] = u8(moo_n_fx_clamp_u8(i64(p[2]) + delta))
+
+# C :560-579. Abdeckung (0..255) des Inhalts an Ausgabepixel (x,y); Grenzen
+# gegen content.width/height (wie C), Eckenrundung nur bei CORNER_CLIP.
+@nativ
+@einstieg
+funktion moo_n_fx_coverage(job: u64, inverse: u64, ecken: u64, x: i32, y: i32) -> u32:
+    unsicher:
+        setze j32: ptr[i32] auf zeiger(job)
+        setze j64: ptr[u64] auf zeiger(job)
+        setze sx: i32 auf 0
+        setze sy: i32 auf 0
+        wenn moo_n_fx_local_sample_checked(inverse, job + 96, x, y, 0, 0, adresse_von(sx), adresse_von(sy)) != 0:
+            gib_zurück 0
+        wenn sx < 0:
+            gib_zurück 0
+        wenn sy < 0:
+            gib_zurück 0
+        wenn sx >= j32[6]:
+            gib_zurück 0
+        wenn sy >= j32[7]:
+            gib_zurück 0
+        wenn (j64[14] & 1) == 0:
+            gib_zurück 255
+        setze abdeckung: u8 auf 0
+        wenn moo_n_rounded_coverage_a8(j32[6], j32[7], ecken, sx, sy, adresse_von(abdeckung)) != 0:
+            gib_zurück 0
+        gib_zurück u32(abdeckung)
+
+# C :770-806. Inhalt (skaliert gesampelt, Deckkraft content_opacity) per
+# source-over aufs Ziel; Pixel ausserhalb des Rechtecks oder mit Abdeckung 0
+# werden uebersprungen (Abdeckung skaliert Alpha NICHT, wie C).
+@nativ
+@einstieg
+funktion moo_n_fx_render_content(job: u64, inverse: u64, ecken: u64) -> void:
+    unsicher:
+        setze j32: ptr[i32] auf zeiger(job)
+        setze j64: ptr[u64] auf zeiger(job)
+        setze j8: ptr[u8] auf zeiger(job)
+        setze ju32: ptr[u32] auf zeiger(job)
+        setze w: i32 auf j32[22]
+        setze h: i32 auf j32[23]
+        setze rb: i32 auf j32[26]
+        setze rh: i32 auf j32[27]
+        setze skala: i32 auf i32(ju32[54])
+        setze deckkraft: u64 auf u64(j8[208])
+        setze clip: u64 auf j64[14] & 1
+        setze sx: i32 auf 0
+        setze sy: i32 auf 0
+        setze abdeckung: u8 auf 0
+        setze src: RenderPixel auf RenderPixel(0, 0, 0, 0)
+        setze y: i32 auf 0
+        solange y < h:
+            setze x: i32 auf 0
+            solange x < w:
+                setze nutzen: u32 auf 0
+                wenn moo_n_fx_local_sample_checked(inverse, job + 96, x, y, 0, 0, adresse_von(sx), adresse_von(sy)) == 0:
+                    wenn sx >= 0:
+                        wenn sy >= 0:
+                            wenn sx < rb:
+                                wenn sy < rh:
+                                    setze nutzen auf 1
+                wenn nutzen != 0:
+                    setze abdeckung auf 255
+                    wenn clip != 0:
+                        wenn moo_n_rounded_coverage_a8(rb, rh, ecken, sx, sy, adresse_von(abdeckung)) != 0:
+                            setze nutzen auf 0
+                wenn nutzen != 0:
+                    wenn abdeckung == 0:
+                        setze nutzen auf 0
+                wenn nutzen != 0:
+                    setze q: ptr[u8] auf zeiger(render_pixel_adr(job, sx * skala, sy * skala))
+                    src.r = q[0]
+                    src.g = q[1]
+                    src.b = q[2]
+                    src.a = u8(moo_n_fx_round_u64(u64(q[3]) * deckkraft, 255))
+                    moo_n_fx_over(render_pixel_adr(job + 64, x, y), adresse_von(src))
+                setze x auf x + 1
+            setze y auf y + 1
+
+struktur RenderRechteck:
+    x: i32
+    y: i32
+    breite: i32
+    hoehe: i32
+
+struktur RenderEcken:
+    ol: u16
+    orr: u16
+    ur: u16
+    ul: u16
+
+struktur RenderAffin:
+    m11: i32
+    m12: i32
+    m21: i32
+    m22: i32
+    tx: i32
+    ty: i32
+    ox: i32
+    oy: i32
+
+# = MooCompEffectCpuSource/-Target (32 Byte, identisches Layout).
+struktur RenderBild:
+    pixel: u64
+    bytes: u64
+    abstand: u64
+    breite: i32
+    hoehe: i32
+
+# = MooCompEffectCpuStats (40 Byte).
+struktur RenderStats:
+    betroffen: u64
+    arbeit: u64
+    scratch: u64
+    rgba_worte: u64
+    masken_worte: u64
+
+# Schatten-Abdeckung an (x,y) im aufgeweiteten Rechteck (C :605-618 / :640-653).
+@nativ
+funktion schatten_alpha(inverse: u64, rechteck: u64, ecken: u64, x: i32, y: i32, ox: i32, oy: i32, clip: u64) -> u32:
+    unsicher:
+        setze sx: i32 auf 0
+        setze sy: i32 auf 0
+        setze a: u8 auf 0
+        wenn moo_n_fx_local_sample_checked(inverse, rechteck, x, y, ox, oy, adresse_von(sx), adresse_von(sy)) != 0:
+            gib_zurück 0
+        setze r: ptr[RenderRechteck] auf zeiger(rechteck)
+        wenn sx < 0:
+            gib_zurück 0
+        wenn sy < 0:
+            gib_zurück 0
+        wenn sx >= r.breite:
+            gib_zurück 0
+        wenn sy >= r.hoehe:
+            gib_zurück 0
+        wenn clip == 0:
+            gib_zurück 255
+        # Rueckgabe wie C '(void)': bei Fehler bleibt a = 0.
+        setze rc: u32 auf moo_n_rounded_coverage_a8(r.breite, r.hoehe, ecken, sx, sy, adresse_von(a))
+        gib_zurück u32(a)
+
+# C :581-684. Spread erweitert Rechteck und Ecken (u16 abgeschnitten wie C);
+# ohne Blur direkt source-over, mit Blur Maske -> ping, Box h/v, dann over.
+@nativ
+@einstieg
+funktion moo_n_fx_render_shadow(job: u64, inverse: u64, ping: u64, pong: u64) -> void:
+    unsicher:
+        setze j64: ptr[u64] auf zeiger(job)
+        setze j32: ptr[i32] auf zeiger(job)
+        setze j16: ptr[u16] auf zeiger(job)
+        setze j8: ptr[u8] auf zeiger(job)
+        setze rq: ptr[RenderRechteck] auf zeiger(job + 96)
+        setze spread_r: RenderRechteck auf rq[0]
+        setze eq: ptr[RenderEcken] auf zeiger(job + 136)
+        setze spread_e: RenderEcken auf eq[0]
+        setze normal: RenderEcken auf RenderEcken(0, 0, 0, 0)
+        setze w: i32 auf j32[22]
+        setze h: i32 auf j32[23]
+        setze ausbreitung: u32 auf u32(j16[77])
+        wenn ausbreitung != 0:
+            wenn moo_n_rect_expand(job + 96, i32(ausbreitung), adresse_von(spread_r)) != 0:
+                gib_zurück
+            spread_e.ol = u16(u32(spread_e.ol) + ausbreitung)
+            spread_e.orr = u16(u32(spread_e.orr) + ausbreitung)
+            spread_e.ur = u16(u32(spread_e.ur) + ausbreitung)
+            spread_e.ul = u16(u32(spread_e.ul) + ausbreitung)
+        wenn moo_n_corners_normalize(spread_r.breite, spread_r.hoehe, adresse_von(spread_e), adresse_von(normal)) != 0:
+            gib_zurück
+        setze ox: i32 auf j32[36]
+        setze oy: i32 auf j32[37]
+        setze clip: u64 auf j64[14] & 1
+        setze farbe_a: u64 auf u64(j8[159])
+        setze src: RenderPixel auf RenderPixel(j8[156], j8[157], j8[158], 0)
+        setze r_adr: u64 auf adresse_von(spread_r)
+        setze n_adr: u64 auf adresse_von(normal)
+        setze a: u32 auf 0
+        wenn j16[76] == 0:
+            setze y: i32 auf 0
+            solange y < h:
+                setze x: i32 auf 0
+                solange x < w:
+                    setze a auf schatten_alpha(inverse, r_adr, n_adr, x, y, ox, oy, clip)
+                    wenn a != 0:
+                        src.a = u8(moo_n_fx_round_u64(farbe_a * u64(a), 255))
+                        moo_n_fx_over(render_pixel_adr(job + 64, x, y), adresse_von(src))
+                    setze x auf x + 1
+                setze y auf y + 1
+            gib_zurück
+        setze maske: ptr[u32] auf zeiger(ping)
+        setze y2: i32 auf 0
+        solange y2 < h:
+            setze x2: i32 auf 0
+            solange x2 < w:
+                maske[u64(y2) * u64(w) + u64(x2)] = schatten_alpha(inverse, r_adr, n_adr, x2, y2, ox, oy, clip)
+                setze x2 auf x2 + 1
+            setze y2 auf y2 + 1
+        setze radius: u32 auf u32(j16[76])
+        moo_n_fx_box_mask_h(ping, pong, w, h, radius)
+        moo_n_fx_box_mask_v(pong, ping, w, h, radius)
+        setze y3: i32 auf 0
+        solange y3 < h:
+            setze x3: i32 auf 0
+            solange x3 < w:
+                setze i: u64 auf u64(y3) * u64(w) + u64(x3)
+                src.a = u8(moo_n_fx_round_u64(farbe_a * u64(maske[i]), 255))
+                wenn src.a != 0:
+                    moo_n_fx_over(render_pixel_adr(job + 64, x3, y3), adresse_von(src))
+                setze x3 auf x3 + 1
+            setze y3 auf y3 + 1
+
+# C :723-768. Backdrop: optional RGBA-Blur in ping/pong, dann je abgedecktem
+# Pixel entweder entmultiplizierter Blur-Wert oder lower_z, colorize, Ziel
+# ueberschreiben (kein over).
+@nativ
+@einstieg
+funktion moo_n_fx_render_backdrop(job: u64, unten: u64, inverse: u64, ecken: u64, ping: u64, pong: u64) -> void:
+    unsicher:
+        setze j64: ptr[u64] auf zeiger(job)
+        setze j32: ptr[i32] auf zeiger(job)
+        setze j16: ptr[u16] auf zeiger(job)
+        setze w: i32 auf j32[22]
+        setze h: i32 auf j32[23]
+        setze blur: u64 auf j64[14] & 4
+        wenn blur != 0:
+            wenn j16[80] != 0:
+                moo_n_fx_box_rgba_h(ping, pong, w, h, u32(j16[80]))
+                moo_n_fx_box_rgba_v(pong, ping, w, h, u32(j16[80]))
+        setze rgba: ptr[u32] auf zeiger(ping)
+        setze p: RenderPixel auf RenderPixel(0, 0, 0, 0)
+        setze y: i32 auf 0
+        solange y < h:
+            setze x: i32 auf 0
+            solange x < w:
+                wenn moo_n_fx_coverage(job, inverse, ecken, x, y) != 0:
+                    wenn blur != 0:
+                        setze i: u64 auf (u64(y) * u64(w) + u64(x)) * 4
+                        setze al: u32 auf rgba[i + 3]
+                        p.a = u8(al)
+                        p.r = 0
+                        p.g = 0
+                        p.b = 0
+                        wenn al != 0:
+                            p.r = u8(moo_n_fx_clamp_u8(i64(moo_n_fx_round_u64(u64(rgba[i]), u64(al)))))
+                            p.g = u8(moo_n_fx_clamp_u8(i64(moo_n_fx_round_u64(u64(rgba[i + 1]), u64(al)))))
+                            p.b = u8(moo_n_fx_clamp_u8(i64(moo_n_fx_round_u64(u64(rgba[i + 2]), u64(al)))))
+                    sonst:
+                        setze basis: ptr[u8] auf zeiger(render_pixel_adr(unten, x, y))
+                        p.r = basis[0]
+                        p.g = basis[1]
+                        p.b = basis[2]
+                        p.a = basis[3]
+                    moo_n_fx_colorize(job, x, y, adresse_von(p))
+                    setze d: ptr[u8] auf zeiger(render_pixel_adr(job + 64, x, y))
+                    d[0] = p.r
+                    d[1] = p.g
+                    d[2] = p.b
+                    d[3] = p.a
+                setze x auf x + 1
+            setze y auf y + 1
+
+# C :808-831. Scratch (MooCompEffectCpuScratch: ping @0, pong @8,
+# rgba_words @16) gegen Stats pruefen; Ueberlappung mit Ziel -> INVALID.
+@nativ
+@einstieg
+funktion moo_n_fx_validate_scratch(scratch: u64, stats: u64, ziel: u64) -> u32:
+    unsicher:
+        setze st: ptr[u64] auf zeiger(stats)
+        setze z64: ptr[u64] auf zeiger(ziel)
+        setze z32: ptr[u32] auf zeiger(ziel)
+        setze ziel_bytes: u64 auf z64[2] * u64(z32[7])
+        setze worte: u64 auf st[3]
+        wenn worte == 0:
+            gib_zurück 0
+        wenn scratch == 0:
+            gib_zurück 2
+        setze sc: ptr[u64] auf zeiger(scratch)
+        wenn sc[0] == 0:
+            gib_zurück 2
+        wenn sc[1] == 0:
+            gib_zurück 2
+        wenn sc[2] < worte:
+            gib_zurück 2
+        setze rb: u64 auf worte * 4
+        wenn moo_n_fx_ranges_overlap(sc[0], rb, sc[1], rb) != 0:
+            gib_zurück 1
+        wenn moo_n_fx_ranges_overlap(sc[0], rb, z64[0], ziel_bytes) != 0:
+            gib_zurück 1
+        wenn moo_n_fx_ranges_overlap(sc[1], rb, z64[0], ziel_bytes) != 0:
+            gib_zurück 1
+        gib_zurück 0
+
+# C :833-903. requirements (keine Mutation bei Fehler), Arbeitslimit,
+# Scratch- und Ueberlappungspruefungen, dann Schatten -> Capture -> Backdrop ->
+# Inhalt. out_stats optional, nur bei OK.
+@nativ
+@einstieg
+funktion moo_n_fx_render(job: u64, scratch: u64, stats_aus: u64) -> u32:
+    unsicher:
+        wenn job == 0:
+            gib_zurück 1
+        setze stats: RenderStats auf RenderStats(0, 0, 0, 0, 0)
+        setze r: u32 auf moo_n_fx_requirements(job, adresse_von(stats))
+        wenn r != 0:
+            gib_zurück r
+        setze j64: ptr[u64] auf zeiger(job)
+        setze ju32: ptr[u32] auf zeiger(job)
+        setze grenze: u64 auf j64[28]
+        wenn grenze == 0:
+            setze grenze auf 0
+            setze grenze auf grenze - 1
+        wenn stats.arbeit > grenze:
+            gib_zurück 2
+        setze r auf moo_n_fx_validate_scratch(scratch, adresse_von(stats), job + 64)
+        wenn r != 0:
+            gib_zurück r
+        setze inhalt_bytes: u64 auf j64[2] * u64(ju32[7])
+        setze ziel_bytes: u64 auf j64[10] * u64(ju32[23])
+        setze lzq: ptr[RenderBild] auf zeiger(job + 32)
+        setze unten: RenderBild auf lzq[0]
+        wenn unten.pixel == 0:
+            setze tq: ptr[RenderBild] auf zeiger(job + 64)
+            setze unten auf tq[0]
+        setze unten_bytes: u64 auf unten.abstand * u64(u32(unten.hoehe))
+        setze scratch_bytes: u64 auf stats.rgba_worte * 4
+        setze maske: u64 auf j64[14]
+        wenn moo_n_fx_ranges_overlap(j64[0], inhalt_bytes, j64[8], ziel_bytes) != 0:
+            gib_zurück 1
+        wenn (maske & 60) != 0:
+            wenn (maske & 2) != 0:
+                wenn moo_n_fx_ranges_overlap(unten.pixel, unten_bytes, j64[8], ziel_bytes) != 0:
+                    gib_zurück 1
+        setze ping: u64 auf 0
+        setze pong: u64 auf 0
+        wenn scratch != 0:
+            setze sc: ptr[u64] auf zeiger(scratch)
+            setze ping auf sc[0]
+            setze pong auf sc[1]
+        wenn scratch_bytes != 0:
+            wenn moo_n_fx_ranges_overlap(ping, scratch_bytes, unten.pixel, unten_bytes) != 0:
+                gib_zurück 1
+            wenn moo_n_fx_ranges_overlap(pong, scratch_bytes, unten.pixel, unten_bytes) != 0:
+                gib_zurück 1
+        setze affin: RenderAffin auf RenderAffin(65536, 0, 0, 65536, 0, 0, 0, 0)
+        wenn (maske & 64) != 0:
+            setze aq: ptr[RenderAffin] auf zeiger(job + 176)
+            setze affin auf aq[0]
+        setze inverse: RenderAffin auf affin
+        setze r auf moo_n_affine_inverse(adresse_von(affin), adresse_von(inverse))
+        wenn r != 0:
+            gib_zurück r
+        setze ecken: RenderEcken auf RenderEcken(0, 0, 0, 0)
+        setze rq: ptr[RenderRechteck] auf zeiger(job + 96)
+        setze r auf moo_n_corners_normalize(rq.breite, rq.hoehe, job + 136, adresse_von(ecken))
+        wenn r != 0:
+            gib_zurück r
+        wenn (maske & 2) != 0:
+            moo_n_fx_render_shadow(job, adresse_von(inverse), ping, pong)
+        wenn (maske & 4) != 0:
+            moo_n_fx_capture(adresse_von(unten), ping)
+        wenn (maske & 60) != 0:
+            moo_n_fx_render_backdrop(job, adresse_von(unten), adresse_von(inverse), adresse_von(ecken), ping, pong)
+        moo_n_fx_render_content(job, adresse_von(inverse), adresse_von(ecken))
+        wenn stats_aus != 0:
+            setze o: ptr[RenderStats] auf zeiger(stats_aus)
+            o[0] = stats
+        gib_zurück 0

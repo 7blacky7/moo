@@ -1,0 +1,6 @@
+setze i auf 0
+setze s auf 0
+solange i < 10000000:
+    setze s auf s + abs(i % 100 - 50)
+    setze i auf i + 1
+zeige s

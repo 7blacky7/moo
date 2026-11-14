@@ -1,0 +1,14 @@
+[tasks.test]
+description = "Exaktes hexadezimales u64-Literal gegen C prüfen"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-literal-hex
+mkdir -p "$out"
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -c compiler/tests/p2/literal_hex_u64.c -o "$out/hex.o"
+ar rcs "$out/libp2_hex.a" "$out/hex.o"
+timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/literal_hex_u64.moos --lib-pfad "$out" -o "$out/hex"
+result=$(timeout 30s "$out/hex")
+[ "$result" = 1 ] || { printf 'FAIL: C erhielt nicht UINT64_MAX: %s\n' "$result" >&2; exit 1; }
+printf 'PASS: 0xFFFFFFFFFFFFFFFF entspricht UINT64_MAX in C\n'
+'''

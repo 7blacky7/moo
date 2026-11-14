@@ -981,6 +981,147 @@ Der native Compiler unterstützt alle in diesem Dokument beschriebenen Features:
 Variablen, Bedingungen, Schleifen, Funktionen, Lambdas, Klassen, Vererbung,
 String-Methoden, Eingabe, Stdlib-Funktionen, Fehlerbehandlung und Match/Switch.
 
+### Native Zahlen (`@nativ`)
+
+Normale moo-Zahlen sind dynamisch (64-Bit-Gleitkomma). Für Engine-, Grafik-
+und Systemcode gibt es zusätzlich **native Funktionen** mit echten
+Maschinentypen. Sie werden mit `@nativ` markiert und brauchen für jeden
+Parameter und die Rückgabe einen Typ:
+
+```moo
+@nativ
+funktion mittel(a: i32, b: i32) -> i32:
+    gib_zurück (a + b) / 2
+
+zeige mittel(7, 4)        # 5  (Ganzzahldivision rundet zur Null)
+```
+
+Typen: `i8 i16 i32 i64` (mit Vorzeichen), `u8 u16 u32 u64` (ohne),
+`f32 f64` (Gleitkomma), `bool`. Ein Zahlenliteral nimmt den Typ aus dem
+Kontext; ohne Kontext ist eine Ganzzahl `i64`, eine Kommazahl `f64`.
+
+**Ganzzahlen** rechnen in der festen Breite: `+ - *` und das Vorzeichen
+wrappen modulo 2^N (`i8`: 127 + 1 = -128). Division rundet zur Null, der
+Rest hat das Vorzeichen des Dividenden (`-7 / 3 = -2`, `-7 % 3 = -1`).
+`<<` und `>>` arbeiten mit der Breite des linken Operanden; `>>` ist bei
+Vorzeichentypen arithmetisch, sonst logisch.
+
+**Fehlerfälle** sind definiert, nie undefiniertes Verhalten: Division oder
+Rest durch 0, `MIN / -1`, `MIN % -1` und Schiebeweiten außerhalb `0..N-1`.
+Ist der Fall schon beim Kompilieren erkennbar (`x / 0`, `x << 8` bei `u8`),
+ist es ein Compilefehler. Zur Laufzeit ist es ein normaler moo-Fehler, den
+`versuche:` fängt; ohne Handler endet das Programm mit Meldung und
+Rückgabewert 1:
+
+```moo
+@nativ
+funktion teile(a: i32, b: i32) -> i32:
+    gib_zurück a / b
+
+versuche:
+    zeige teile(7, 0)
+fange fehler:
+    zeige "Division durch Null gefangen"
+```
+
+Wer ohne Fehler weiterrechnen will (etwa im Kernel, wo ein Laufzeitfehler die
+CPU anhält), prüft vorher: `teilbar(a, b)` ist `wahr`, wenn `a / b` und
+`a % b` definiert sind; `verschiebbar(a, n)` prüft die Schiebeweite. Englisch:
+`divisible`, `shiftable`.
+
+```moo
+@nativ
+funktion teile_oder(a: i32, b: i32, ersatz: i32) -> i32:
+    unsicher:
+        wenn teilbar(a, b):
+            gib_zurück a / b
+        gib_zurück ersatz
+```
+
+Ein `unsicher:`-Körper mit Rückgabetyp muss auf jedem Weg ein `gib_zurück`
+erreichen. Fehlt `gib_zurück` ganz, lehnt der Compiler die Funktion ab. Läuft
+ein Körper, der nur auf manchen Wegen zurückkehrt, bis ans Ende, ist das
+derselbe fangbare Laufzeitfehler (Meldung „endet ohne Rückgabewert“); im
+Kernel-Profil und in C-Exporten hält wie bei jedem nativen Fehler die CPU an.
+
+Ein `unsicher:`-Körper darf auch in `versuche:` aufgerufen werden, in `main`
+wie in einer benannten Funktion: Sein Fehler landet im `fange`-Zweig wie bei
+jeder anderen nativen Funktion, auch in Funktionen mit `aufräumen:` (die
+Aufräumaktionen laufen genau einmal, der erste Fehler bleibt erhalten). Der
+Aufruf selbst steht weiterhin in `unsicher:`, weil der Körper C-artig rechnet
+(Zeiger, Überlauf wickelt).
+
+```moo
+@nativ
+funktion halbiere(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b
+
+unsicher:
+    versuche:
+        zeige halbiere(8, 0)
+    fange fehler:
+        zeige "gefangen"        # das Programm läuft weiter
+```
+
+**Gleitkomma** (`f32`, `f64`) folgt IEEE: `1.0 / 0.0` ist unendlich,
+`0.0 / 0.0` ist NaN, `NaN == NaN` ist `falsch`. Es werden keine
+Fast-Math-Umordnungen vorgenommen.
+
+**Konversionen** sind immer ausdrücklich. `als(Typ, wert)` ist der geprüfte
+Standardcast: Ganzzahlen außerhalb des Zielbereichs, Kommazahlen mit
+Bruchteil, NaN und Unendlich sind Fehler (fangbar wie oben). Wer anderes
+Verhalten will, sagt es beim Namen:
+
+```moo
+@nativ
+funktion byte(a: i32) -> u8:
+    gib_zurück als(u8, a)             # 300 -> Fehler, 200 -> 200
+
+@nativ
+funktion byte_wrap(a: i32) -> u8:
+    gib_zurück als_wrap(u8, a)        # -1 -> 255 (Bitmuster)
+
+@nativ
+funktion byte_satt(a: f64) -> u8:
+    gib_zurück als_saettigend(u8, a)  # 300.7 -> 255, -5.0 -> 0, NaN -> Fehler
+
+@nativ
+funktion gerundet(a: i32) -> i64:
+    gib_zurück als(i64, als(f32, a))  # Ganzzahl -> Float rundet, Float -> Ganzzahl prueft
+```
+
+Englische Schreibweisen: `as`, `as_wrap`, `as_saturating`.
+
+**Vergleiche und Logik** liefern `bool`; `und` und `oder` werten den rechten
+Operanden nur bei Bedarf aus (Kurzschluss), auch seine Fehler bleiben dann
+aus:
+
+```moo
+@nativ
+funktion sicher(a: i32, b: i32) -> bool:
+    gib_zurück b != 0 und a / b > 2   # b = 0 -> falsch, kein Fehler
+
+zeige sicher(7, 0)        # falsch
+zeige sicher(7, 2)        # wahr
+```
+
+**Grenze zum dynamischen Code:** Argumente werden beim Aufruf geprüft, nicht
+umgedeutet. Eine Zahl für einen `u8`-Parameter muss ganzzahlig und im
+Bereich sein, ein `bool`-Parameter braucht `wahr`/`falsch`; sonst gibt es
+einen fangbaren Fehler. Das gilt auch, wenn der Aufruf in einer Funktion
+mitten in einem Ausdruck steht (etwa als Argument einer anderen Funktion):
+der fehlerhafte Aufruf liefert `nichts`, der Fehler landet im nächsten
+`fange`. Das gilt für Systemkörper wie für reine `@nativ`-Funktionen; nur aus
+Lambdas und Methoden heraus sind dynamische Argumente weiterhin ein Compilefehler. Rückgaben kommen als moo-Zahl bzw. Wahrheitswert
+zurück, 64-Bit-Werte nur, wenn sie exakt darstellbar sind.
+
+**Ohne moo-Laufzeit** (Bare-Metal/UEFI sowie Funktionen mit `@einstieg`,
+die aus C aufgerufen werden) gibt es keinen fangbaren Fehler: dort hält ein
+Laufzeitfehler die CPU sofort an (`llvm.trap`), damit kein falscher Wert
+weiterverwendet wird. Die bestehenden Builtins `als_u8` bis `als_u64` für
+dynamischen Code bleiben unverändert (Bitmuster-Konversion).
+
 ---
 
 ## Funktionen als Werte (First-Class)

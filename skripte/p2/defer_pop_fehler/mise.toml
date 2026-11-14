@@ -1,0 +1,29 @@
+[tasks.test]
+description = "Defer-Pop unbekannte Aktion und INVALID per C++-Adapter"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-defer-pop-fehler
+mkdir -p "$out"
+timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/defer_pop_fehler.moos --emit-ir -o "$out/probe.ll"
+timeout 30s mise exec -- opt -passes=verify -disable-output "$out/probe.ll"
+rg -q 'call .*@moo_defer_stack_pop\(' "$out/probe.ll" || { echo 'BLOCKED: kein dynamischer Pop' >&2; exit 2; }
+runtime_dir=$(strings compiler/target/release/moo-compiler | rg -o '/home/blacky/dev/moo/compiler/target/release/build/moo-compiler-[0-9a-f]+/out' | sort -u)
+[ "$(printf '%s\n' "$runtime_dir" | wc -l)" -eq 1 ]
+test -f "$runtime_dir/libmoo_runtime.a"
+mise exec -- clang++ -std=c++17 -Wall -Wextra -Werror -c compiler/tests/p2/defer_pop_inject.cpp -o "$out/inject.o"
+mise exec -- clang++ "$out/probe.ll" "$out/inject.o" "$runtime_dir/libmoo_runtime.a" -Wl,--wrap=moo_defer_stack_pop -Wl,--wrap=moo_defer_stack_free -lm -lpthread -lsqlite3 -lSDL2 -lSDL2_image -lssl -lcrypto -lvulkan -lglfw -lasound -lv4l2 -o "$out/probe"
+for mode in unknown invalid; do
+  P2_POP_INJECT="$mode" timeout 30s "$out/probe" >"$out/$mode.out" 2>"$out/$mode.err"
+  if [ "$mode" = unknown ]; then
+    printf 'C\nB\nA\nCATCH\nDefer: unbekannte Aktion\nENDE\n' >"$out/$mode.expected"
+    printf 'INJECT:unknown\nPOP_COUNT:5 FREE_COUNT:1 NULL_COUNT:1 OTHER_COUNT:0\n' >"$out/$mode.expected.err"
+  else
+    printf 'CATCH\nDefer: ungueltiger Zustand\nENDE\n' >"$out/$mode.expected"
+    printf 'INJECT:invalid\nPOP_COUNT:1 FREE_COUNT:0 NULL_COUNT:1 OTHER_COUNT:0\n' >"$out/$mode.expected.err"
+  fi
+  cmp "$out/$mode.expected" "$out/$mode.out"
+  cmp "$out/$mode.expected.err" "$out/$mode.err"
+  printf 'PASS Pop %s\n' "$mode"
+done
+'''

@@ -1,0 +1,10 @@
+struktur InnereRegister:
+    code: u16
+struktur GeraeteEintrag:
+    innen: InnereRegister
+@nativ
+@einstieg
+funktion sys_neg_innen(adr: u64) -> u16:
+    unsicher:
+        setze p: ptr[GeraeteEintrag] auf zeiger(adr)
+        gib_zurück p.innen.kein_feld

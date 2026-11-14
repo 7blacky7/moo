@@ -1,0 +1,32 @@
+# P2-T74 Batch 2: dynamische Argumente an hosted Systemkoerper in versuche: auch
+# bei setze und gib_zurück (Direktpfad native_try_direct_root, vorher nur zeige).
+# Fehler im Koerper und ungueltiges Argument (Text) landen im fange-Zweig.
+@nativ
+funktion s_div(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b
+funktion teile(a, b):
+    unsicher:
+        versuche:
+            gib_zurück s_div(a, b)
+        fange fehler:
+            gib_zurück -1
+setze wert auf 9
+setze null auf 0
+unsicher:
+    versuche:
+        setze x auf s_div(wert, 3)
+        zeige x
+        setze y auf s_div(wert, null)
+        zeige "NACH_FALSCH"
+    fange fehler:
+        zeige "gefangen setze"
+    setze text auf "drei"
+    versuche:
+        setze z auf s_div(wert, text)
+        zeige "NACH_FALSCH"
+    fange fehler:
+        zeige "gefangen argument"
+zeige teile(8, 2)
+zeige teile(8, 0)
+zeige "weiter"

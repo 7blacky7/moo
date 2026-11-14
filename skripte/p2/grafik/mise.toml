@@ -1,0 +1,44 @@
+[tasks.test-cpu]
+description = "P2-Grafik: CPU-Referenz und Matrix-Differenztest"
+run = "bash test_cpu.sh"
+
+[tasks.test-mesh-large]
+description = "P2-Grafik: CPU-Referenztest für 100000 indizierte Dreiecke"
+run = "bash mesh_large.sh"
+
+[tasks.test-effekt-mathe-nativ]
+description = "P2-T65: natives Moo Q16-Effektmathe (effekt_mathe_nativ.moos) gegen moo_compositor_effects_math.c + Benchmark"
+run = "bash test_effekt_mathe_nativ.sh"
+
+[tasks.test-effekt-damage-nativ]
+description = "P2-T65: natives Moo Damage-Closure (effekt_damage_nativ.moos + rect_* aus effekt_mathe_nativ.moos) gegen moo_compositor_effects_damage.c + Benchmark"
+run = "bash test_effekt_damage_nativ.sh"
+
+[tasks.test-animation-nativ]
+description = "P2-T68: natives Moo Animation-Easing/Interpolation/Slot-Auswertung (animation_nativ.moos) gegen moo_compositor_animation.c + Benchmark"
+run = "bash test_animation_nativ.sh"
+
+[tasks.test-animation-pruefung-nativ]
+description = "P2-T69: native Animations-Validierung (animation_pruefung_nativ.moos: limits_valid/validate_value/validate_desc) gegen moo_compositor_animation.c"
+run = "bash test_animation_pruefung_nativ.sh"
+
+[tasks.test-effekt-zustand-nativ]
+description = "P2-T69: native Effekt-Zustandspruefung (effekt_zustand_nativ.moos: limits_valid/config_init/state_valid/over_mask/estimate) gegen moo_compositor_effects_state.c"
+run = "bash test_effekt_zustand_nativ.sh"
+
+[tasks.test-effekt-aufloesung-nativ]
+description = "P2-T70: native Effekt-Aufloesung + Flaechen-Effektzustand (effekt_aufloesung_nativ.moos) gegen moo_compositor_effects_state.c"
+run = "bash test_effekt_aufloesung_nativ.sh"
+
+[tasks.test-animation-zeitleiste-nativ]
+description = "P2-T71: native Animations-Timeline (animation_zeitleiste_nativ.moos: init/start/evaluate/cancel/destroy/active_count/state_hash) gegen moo_compositor_animation.c"
+run = "bash test_animation_zeitleiste_nativ.sh"
+
+[tasks.test-effekt-cpu-nativ]
+description = "P2-T72: nativer CPU-Effekt-Unterbau (effekt_cpu_*_nativ.moos) gegen moo_compositor_effects_cpu.c inkl. kompletter render-Laeufe"
+run = "bash test_effekt_cpu_nativ.sh"
+
+[tasks.test-mat4-nativ]
+description = "P2-T26: natives Moo-mat4 (mat4_nativ.moos) bitweise gegen moo_3d_math.c + Benchmark (C -O2)"
+run = "bash test_mat4_nativ.sh"
+

@@ -1,0 +1,9 @@
+[tasks.m1-probe]
+description = "M1 i32 native call and IR probe"
+dir = "{{config_root}}"
+run = "bash m1_probe.sh"
+
+[tasks.foreign-error]
+description = "M1 foreign error must stop evaluation"
+dir = "{{config_root}}"
+run = "bash foreign_error.sh"

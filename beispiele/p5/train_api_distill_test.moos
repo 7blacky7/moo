@@ -1,0 +1,37 @@
+# Kontrollbeispiel: echte Parameterupdates, fester Lehrer und DPO-Referenz.
+setze schichten auf [schicht_embedding(4, 4, 17), schicht_dicht(4, 4, "keine", 19)]
+setze referenz auf [schicht_embedding(4, 4, 17), schicht_dicht(4, 4, "keine", 19)]
+funktion vorlauf(ids):
+    gib_zurück vorwaerts(schichten, ids)
+funktion referenzlauf(ids):
+    gib_zurück vorwaerts(referenz, ids)
+setze params auf parameter(schichten)
+setze refparams auf parameter(referenz)
+setze teacher auf tensor_aus_liste([[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 4], [0, 0, 0, 0]])
+setze beispiel auf {"input_ids": [0, 1, 2, 0], "target_ids": [1, 2, 3, 0], "loss_mask": [0, 0, 1, 0], "lehrer_logits": teacher}
+setze daten auf {"tokenizer_id": "synthetisch", "lehrer_tokenizer_id": "synthetisch", "beispiele": [beispiel]}
+setze konfig auf {"tokenizer_id": "synthetisch", "sequenzlaenge": 4, "vokab": 4, "params": params, "optimierer": "sgd", "rate": 0.1, "momentum": 0, "schritte": 20, "temperatur": 2, "alpha": 0.7}
+setze konfig["methode"] auf "distillation"
+setze d auf trainiere_methode(vorlauf, daten, konfig)
+wenn d["verluste"][19] >= d["verluste"][0]:
+    wirf "Distillation-Loss ist nicht gefallen"
+setze fehlt auf falsch
+versuche:
+    trainiere_methode(vorlauf, {"tokenizer_id": "synthetisch", "lehrer_tokenizer_id": "synthetisch", "beispiele": [{"input_ids": [0, 1, 2, 0], "target_ids": [1, 2, 3, 0], "loss_mask": [0, 0, 1, 0]}]}, konfig)
+fange fehler:
+    setze fehlt auf wahr
+wenn nicht fehlt:
+    wirf "Fehlender Lehrer nicht erkannt"
+setze chosen auf {"input_ids": [0, 1, 2, 0], "target_ids": [1, 2, 3, 0], "loss_mask": [0, 0, 1, 0]}
+setze rejected auf {"input_ids": [0, 1, 2, 0], "target_ids": [1, 2, 0, 0], "loss_mask": [0, 0, 1, 0]}
+setze praef auf {"tokenizer_id": "synthetisch", "beispiele": [{"gewaehlt": chosen, "verworfen": rejected}]}
+setze cfg auf {"tokenizer_id": "synthetisch", "sequenzlaenge": 4, "vokab": 4, "params": params, "referenz_params": refparams, "referenz_forward": referenzlauf, "optimierer": "sgd", "rate": 0.1, "momentum": 0, "schritte": 20, "beta": 0.7}
+setze refvor auf refparams[0].zu_liste()[8]
+setze vorher auf params[0].zu_liste()[8]
+setze cfg["methode"] auf "praeferenzen"
+setze p auf trainiere_methode(vorlauf, praef, cfg)
+wenn p["verluste"][19] >= p["verluste"][0]:
+    wirf "DPO-Loss ist nicht gefallen"
+wenn params[0].zu_liste()[8] == vorher oder refparams[0].zu_liste()[8] != refvor:
+    wirf "Policy-Update oder Referenz-Freeze fehlgeschlagen"
+zeige "P5 TRAIN API DISTILL DPO OK"

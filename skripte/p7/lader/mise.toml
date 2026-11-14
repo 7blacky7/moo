@@ -12,17 +12,48 @@ for target in x86_64-bare x86_64-unknown-uefi; do
     mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
 done
 sel="--glob=TEXT --glob=PFAD --glob=TABELLE"
-for f in sys_summe sys_tabelle sys_text_summe sys_rufe sys_konv sys_zeiger sys_struktur sys_gerade sys_asm sys_klasse; do
+for f in sys_summe sys_tabelle sys_text_summe sys_rufe sys_konv sys_zeiger sys_struktur sys_gerade sys_asm sys_klasse sys_puffer_index sys_strukturfeld sys_registerfeld sys_gepacktes_feld sys_feld_direkt sys_feld_param sys_feld_gepackt sys_feld_verschachtelt sys_innen sys_struktur_array sys_link_feld sys_packed_innen sys_array_felder sys_array_referenzen sys_matrix sys_matrix_zeiger sys_adresse_matrix sys_adresse_zeile sys_adresse_punkt sys_adresse_struktur sys_value_copy sys_value_nested sys_value_pointer_copy sys_value_local_address sys_value_field_store sys_value_field_copy sys_value_call sys_value_nested_call; do
     sel="$sel --func=$f"
 done
 mise exec -- llvm-extract -S $sel --recursive "$out/x86_64-bare.ll" -o "$out/x86_64-bare.extract.ll"
+# P2-T56: Nur der belegte SysV-x86_64-Struktur-Slice; nicht in UEFI/AArch64
+# importieren, da deren C-ABI-Klassifikation hiervon abweicht.
+"$compiler" compile "$src/system_ffi_struct.moos" --no-stdlib --emit-ir --target x86_64-bare -o "$out/ffi-struct-sysv.ll"
+mise exec -- opt -passes=verify -disable-output "$out/ffi-struct-sysv.ll"
+rg -q 'call i32 @moo_p2_struct1' "$out/ffi-struct-sysv.ll"
+rg -q 'call i64 @moo_p2_struct2' "$out/ffi-struct-sysv.ll"
+rg -q 'call \{ i64, i32 \} @moo_p2_struct3' "$out/ffi-struct-sysv.ll"
+rg -q 'call \{ i64, i64 \} @moo_p2_struct4' "$out/ffi-struct-sysv.ll"
+rg -q 'call void @moo_p2_struct6' "$out/ffi-struct-sysv.ll"
+rg -q 'sret\(' "$out/ffi-struct-sysv.ll"
+rg -q 'byval\(' "$out/ffi-struct-sysv.ll"
+mise exec -- llvm-extract -S --func=sys_c_abi4 --func=sys_c_abi8 --func=sys_c_abi12 --func=sys_c_abi16 --func=sys_c_abi24 --recursive "$out/ffi-struct-sysv.ll" -o "$out/ffi-struct-sysv.extract.ll"
+mise exec -- llc -O2 -relocation-model=pic -filetype=obj "$out/ffi-struct-sysv.extract.ll" -o "$out/ffi-struct-sysv.o"
+# Drei native Backend-Ziele muessen das ABI-Layout derselben Moo-Struktur verifizieren.
+# Dies ist ein LLVM-/Objekt-Gate, KEIN echter AArch64-Hardwarelauf.
+for target in x86_64-bare x86_64-unknown-uefi aarch64-bare; do
+    "$compiler" compile "$src/system_arch.moos" --no-stdlib --emit-ir --target "$target" -o "$out/$target.arch.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.arch.ll"
+    mise exec -- llc -O2 -filetype=obj "$out/$target.arch.ll" -o "$out/$target.arch.o"
+    rg -q 'getelementptr i8, ptr.*i64 1' "$out/$target.arch.ll"
+    rg -q 'getelementptr i8, ptr.*i64 4' "$out/$target.arch.ll"
+    # Der Index darf beim Multiplizieren mit dem Struktur-Stride nicht
+    # unbemerkt ueberlaufen: bei zu grossem Index folgt ein LLVM-Trap.
+    rg -q 'icmp ugt i64' "$out/$target.arch.ll"
+    rg -q 'call void @llvm.trap' "$out/$target.arch.ll"
+done
+# Die Registerfeld-APIs duerfen NICHT zu normalen, optimierbaren RAM-Zugriffen werden.
+mise exec -- llvm-extract -S --func=sys_registerfeld "$out/x86_64-bare.ll" -o "$out/x86_64-bare.register.ll"
+rg -q 'load volatile i32' "$out/x86_64-bare.register.ll"
+rg -q 'store volatile i32' "$out/x86_64-bare.register.ll"
 mise exec -- llc -O2 -relocation-model=pic -filetype=obj "$out/x86_64-bare.extract.ll" -o "$out/x86_64-bare.o"
 x="$out/x86_64-unknown-uefi.ll"
 # UEFI-Ziel: Dienstaufruf mit win64 ist Zieldefault (keine explizite CC); Textkonstante UTF-16 mit 0.
 rg -q '^@PFAD = constant \[5 x i16\] \[i16 92, i16 69, i16 70, i16 73, i16 0\]' "$x"
 rg -q '^@TEXT = constant \[6 x i8\] c"MOO-OK"' "$x"
 rg -q 'call win64cc i64 %' "$out/x86_64-bare.ll"
-${CC:-cc} -std=c11 -Wall -Wextra -Werror "$src/system_probe.c" "$out/x86_64-bare.o" -o "$out/probe"
+${CC:-cc} -std=c11 -Wall -Wextra -Werror "$src/system_probe.c" \
+    skripte/p2/abi/struct_by_value.c "$out/x86_64-bare.o" "$out/ffi-struct-sysv.o" -o "$out/probe"
 "$out/probe"
 expect_fail() {  # Datei Muster
     if "$compiler" compile "$1" --no-stdlib --emit-ir --target x86_64-bare -o "$out/fail.ll" >"$out/fail.log" 2>&1; then
@@ -34,5 +65,22 @@ expect_fail "$src/system_typ_falsch.moos" 'gib_zurück erwartet u64, erhalten u3
 expect_fail "$src/system_undeklariert.moos" "'y' ist nicht deklariert"
 expect_fail "$src/system_zeiger_ohne_ziel.moos" 'zeiger(...) braucht einen Zeiger-Zieltyp'
 expect_fail "$src/system_text_laenge.moos" 'Textliteral hat 6 Einheiten, das Array 3'
+expect_fail "$src/system_feld_unbekannt.moos" "Strukturfeld 'Paar.fehlend' nicht gefunden"
+expect_fail "$src/system_zeiger_void.moos" 'ptr[void] kann nicht indiziert werden'
+expect_fail "$src/system_feld_typ_falsch.moos" 'strukturfeld_schreiben erwartet u32, erhalten u64'
+expect_fail "$src/system_feld_direkt_unbekannt.moos" "Strukturfeld 'Paar.fehlend' nicht gefunden"
+expect_fail "$src/system_feld_direkt_skalar.moos" 'Feldzugriff erfordert ptr[Struktur]'
+expect_fail "$src/system_feld_direkt_typ.moos" 'erwartet u64, erhalten u32'
+expect_fail "$src/system_feld_direkt_typname.moos" "Unbekannter nativer Typ 'NichtVorhanden'"
+expect_fail "$src/system_feld_innen_unbekannt.moos" "Strukturfeld 'InnereRegister.kein_feld' nicht gefunden"
+expect_fail "$src/system_feld_innen_aggregat.moos" 'gib_zurück erwartet u16, erhalten InnereRegister'
+expect_fail "$src/system_feld_innen_typ.moos" 'erwartet u16, erhalten u64'
+expect_fail "$src/system_value_ctor_anzahl.moos" "Struktur 'Probe' erwartet 2 Felder, bekommen 1"
+expect_fail "$src/system_value_ctor_typ.moos" 'Probe.a erwartet u32, erhalten u64'
+expect_fail "$src/system_value_copy_typ.moos" 'zwei erwartet Andere, erhalten Probe'
+expect_fail "$src/system_value_call_typ.moos" "Argument 1 von 'wert_annahme' erwartet Erwartet, erhalten Andere"
+expect_fail "$src/system_value_export_verbot.moos" 'Strukturwerte by value sind aktuell nur fuer interne Moo-Aufrufe freigegeben'
+expect_fail "$src/system_abi_20_verbot.moos" "ist noch nicht klassifiziert"
+expect_fail "$src/system_abi_mixed_verbot.moos" "ist noch nicht klassifiziert"
 echo 'PASS Systemkoerper: IR (2 Ziele), C-Gegenprobe, Negativfaelle'
 '''

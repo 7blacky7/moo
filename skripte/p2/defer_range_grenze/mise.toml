@@ -1,0 +1,30 @@
+[tasks.test]
+description = "Range-Grenze und Slice-Fallback für Defer-Callees"
+dir = "{{config_root}}/../../.."
+run = '''
+set -euo pipefail
+out=build/p2-defer-range-grenze
+mkdir -p "$out"
+for name in grenze aussen negativ slice_fallback; do
+  if [ "$name" = slice_fallback ]; then src=compiler/tests/p2/defer_slice_fallback.moos; else src=compiler/tests/p2/defer_range_$name.moos; fi
+  timeout 120s compiler/target/release/moo-compiler compile "$src" --emit-ir -o "$out/$name.ll"
+  printf 'PASS IR erzeugt: %s\n' "$name"
+done
+for name in grenze aussen negativ; do
+  sed -n '/^define .*@inner(/,/^}/p' "$out/$name.ll" > "$out/$name.inner.ll"
+done
+sed -n '/^define .*@probe(/,/^}/p' "$out/slice_fallback.ll" > "$out/slice.probe.ll"
+rg -q 'defer.frame.error' "$out/grenze.inner.ll"
+for name in aussen negativ; do
+  if rg -q 'defer.frame.error' "$out/$name.inner.ll"; then printf 'FAIL unerwarteter Guard: %s\n' "$name"; exit 1; fi
+done
+rg -q 'call .*@moo_string_slice' "$out/slice.probe.ll"
+if rg -q 'defer.frame.error' "$out/slice.probe.ll"; then echo 'FAIL unerwarteter Slice-Guard'; exit 1; fi
+printf 'PASS IR-Abgrenzung; Fallback-Semantik bleibt offen\n'
+timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/defer_range_grenze.moos -o "$out/grenze"
+timeout 30s "$out/grenze" >"$out/grenze.out"
+printf 'A\nDivision durch Null!\nweiter\n' >"$out/grenze.expected"
+cmp "$out/grenze.expected" "$out/grenze.out"
+printf 'PASS int32-Grenze: Fehlerkante und Cleanup\n'
+printf 'DIAG aussen/negativ/slice: nur IR, keine semantische Freigabe\n'
+'''

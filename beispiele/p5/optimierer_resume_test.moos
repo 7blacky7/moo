@@ -1,0 +1,62 @@
+# P5: Vollcheckpoint nach je einem Optimiererschritt gegen ununterbrochenen Lauf.
+setze wurzel auf umgebung("P5_TEST_DIR")
+wenn wurzel == nichts:
+    wirf "P5_TEST_DIR fehlt"
+
+funktion schritt(schichten, opt, x, ziel):
+    setze verlust auf mse(vorwaerts(schichten, x), ziel)
+    verlust.rueckwaerts()
+    opt.schritt()
+
+funktion sichere(schichten, opt, pfad):
+    checkpoint_speichern({"netz": schichten, "opt": opt, "schritt": 1, "tokenizer_version": "synthetisch-v1", "arch_version": "p5-resume-v1"}, pfad)
+
+funktion pruefe(art):
+    setze schichten auf [schicht_dicht(2, 2, "keine", 19)]
+    setze params auf parameter(schichten)
+    setze opt auf nichts
+    wenn art == "sgd":
+        setze opt auf optimierer_sgd(params, 0.05, 0.0)
+    sonst wenn art == "momentum":
+        setze opt auf optimierer_sgd(params, 0.05, 0.8)
+    sonst wenn art == "adam":
+        setze opt auf optimierer_adam(params, 0.05)
+    sonst:
+        setze opt auf optimierer_adamw(params, 0.05, 0.02)
+    setze x auf tensor_aus_liste([[1.0, 2.0], [2.0, 1.0]])
+    setze ziel auf tensor_aus_liste([[0.2, 0.8], [0.7, 0.1]])
+    setze vorher auf params[0].zu_liste()[0]
+    schritt(schichten, opt, x, ziel)
+    setze pfad auf wurzel + "/" + art + ".mook"
+    sichere(schichten, opt, pfad)
+    wenn params[0].zu_liste()[0] == vorher:
+        wirf "Optimierer hat Gewicht nicht geaendert"
+    schritt(schichten, opt, x, ziel)
+    sichere(schichten, opt, pfad + ".ref")
+    setze referenz auf parameter(schichten)
+    setze geladen auf checkpoint_laden(pfad, {"tokenizer_version": "synthetisch-v1", "arch_version": "p5-resume-v1"})
+    setze geladen_schichten auf geladen["netz"]["schichten"]
+    schritt(geladen_schichten, geladen["opt"], x, ziel)
+    sichere(geladen_schichten, geladen["opt"], pfad + ".resume")
+    setze wieder auf parameter(geladen_schichten)
+    wenn länge(referenz) != länge(wieder):
+        wirf "Resume Parameteranzahl"
+    setze i auf 0
+    solange i < länge(referenz):
+        setze a auf referenz[i].zu_liste()
+        setze b auf wieder[i].zu_liste()
+        zeige "P5 PARAM " + art + " " + text(i) + " " + json_string(a)
+        wenn länge(a) != länge(b):
+            wirf "Resume Parameterform"
+        setze j auf 0
+        solange j < länge(a):
+            wenn abs(a[j] - b[j]) > 0.00001:
+                wirf "Resume Gewichte unterscheiden sich"
+            setze j auf j + 1
+        setze i auf i + 1
+    zeige "P5 RESUME " + art + " OK"
+
+pruefe("sgd")
+pruefe("momentum")
+pruefe("adam")
+pruefe("adamw")

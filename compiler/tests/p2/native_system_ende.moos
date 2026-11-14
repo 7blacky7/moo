@@ -1,0 +1,12 @@
+# P2-T34: erreicht ein hosted Systemkoerper mit Rueckgabetyp das Ende ohne
+# gib_zurück, meldet er ueber moo_native_fehler 'endet ohne Rueckgabewert'
+# (ohne Handler RC 1 mit Diagnose) statt llvm.trap; Bare/UEFI trappt weiter.
+@nativ
+funktion s_ende(a: i32) -> i32:
+    unsicher:
+        wenn a > 0:
+            gib_zurück a
+unsicher:
+    zeige s_ende(5)
+    zeige s_ende(-1)
+    zeige "NACH_FALSCH"

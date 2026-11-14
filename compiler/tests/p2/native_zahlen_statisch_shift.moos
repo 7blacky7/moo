@@ -1,0 +1,5 @@
+# P2-T34 negativ: konstanter Shiftzaehler >= Breite ist ein Compilefehler.
+@nativ
+funktion z_shift(a: u8) -> u8:
+    gib_zurück a << 8
+zeige z_shift(1)

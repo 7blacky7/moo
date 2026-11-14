@@ -1,0 +1,58 @@
+# Kontrollbeispiel: echte Parameterupdates, fester Lehrer und DPO-Referenz.
+setze schichten auf [schicht_embedding(4, 4, 17), schicht_dicht(4, 4, "keine", 19)]
+setze referenz auf [schicht_embedding(4, 4, 17), schicht_dicht(4, 4, "keine", 19)]
+funktion vorlauf(ids):
+    gib_zurück vorwaerts(schichten, ids)
+funktion referenzlauf(ids):
+    gib_zurück vorwaerts(referenz, ids)
+setze params auf parameter(schichten)
+setze refparams auf parameter(referenz)
+setze teacher auf tensor_aus_liste([[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 4], [0, 0, 0, 0]])
+setze beispiel auf {"input_ids": [0, 1, 2, 0], "target_ids": [1, 2, 3, 0], "loss_mask": [0, 0, 1, 0], "lehrer_logits": teacher, "nutzlaenge": 3, "ziel_start": 2}
+setze daten auf {"tokenizer_id": "synthetisch", "lehrer_tokenizer_id": "synthetisch", "beispiele": [beispiel]}
+setze konfig auf {"tokenizer_id": "synthetisch", "sequenzlaenge": 4, "vokab": 4, "params": params, "optimierer": "sgd", "rate": 0.1, "momentum": 0, "schritte": 20, "temperatur": 2, "alpha": 0.7}
+setze sft_schichten auf [schicht_embedding(4, 4, 17), schicht_dicht(4, 4, "keine", 19)]
+funktion sft_vorlauf(ids):
+    gib_zurück vorwaerts(sft_schichten, ids)
+setze sft_cfg auf {"tokenizer_id": "synthetisch", "sequenzlaenge": 4, "vokab": 4, "params": parameter(sft_schichten), "optimierer": "sgd", "rate": 0.0001, "momentum": 0, "schritte": 2}
+setze sft_resultat auf trainiere_sft(sft_vorlauf, daten, sft_cfg)
+wenn sft_resultat["verluste"][1] >= sft_resultat["verluste"][0]:
+    wirf "SFT-Einzelmaske: Loss steigt nach kleinem Schritt"
+setze d auf trainiere_distillation(vorlauf, daten, konfig)
+wenn d["verluste"][19] >= d["verluste"][0]:
+    wirf "Distillation-Loss ist nicht gefallen"
+setze fehlt auf falsch
+versuche:
+    trainiere_distillation(vorlauf, {"tokenizer_id": "synthetisch", "lehrer_tokenizer_id": "synthetisch", "beispiele": [{"input_ids": [0, 1, 2, 0], "target_ids": [1, 2, 3, 0], "loss_mask": [0, 0, 1, 0]}]}, konfig)
+fange fehler:
+    setze fehlt auf wahr
+wenn nicht fehlt:
+    wirf "Fehlender Lehrer nicht erkannt"
+setze chosen auf {"input_ids": [0, 1, 2, 0], "target_ids": [1, 2, 3, 0], "loss_mask": [0, 0, 1, 0]}
+setze rejected auf {"input_ids": [0, 1, 2, 0], "target_ids": [1, 2, 0, 0], "loss_mask": [0, 0, 1, 0]}
+setze praef auf {"tokenizer_id": "synthetisch", "beispiele": [{"gewaehlt": chosen, "verworfen": rejected}]}
+setze cfg auf {"tokenizer_id": "synthetisch", "sequenzlaenge": 4, "vokab": 4, "params": params, "referenz_params": refparams, "referenz_forward": referenzlauf, "optimierer": "sgd", "rate": 0.1, "momentum": 0, "schritte": 20, "beta": 0.7}
+setze refvor auf refparams[0].zu_liste()[8]
+setze vorher auf params[0].zu_liste()[8]
+setze p auf trainiere_praeferenzen(vorlauf, praef, cfg)
+wenn p["verluste"][19] >= p["verluste"][0]:
+    wirf "DPO-Loss ist nicht gefallen"
+wenn params[0].zu_liste()[8] == vorher oder refparams[0].zu_liste()[8] != refvor:
+    wirf "Policy-Update oder Referenz-Freeze fehlgeschlagen"
+# Ein anderer Tokenizer braucht explizites Vokabelmapping und positionale Ausrichtung.
+setze lehrer_fremd auf tensor_aus_liste([[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,2],[0,0,0,0,0]])
+setze mapping_beispiel auf {"input_ids": [0,1,2,0], "target_ids": [1,2,3,0], "loss_mask": [0,0,1,0], "lehrer_logits": lehrer_fremd}
+setze mapping_daten auf {"tokenizer_id": "synthetisch", "lehrer_tokenizer_id": "anderer", "lehrer_mapping": [0,1,2,3,3], "lehrer_zeilen_ausgerichtet": wahr, "beispiele": [mapping_beispiel]}
+setze konfig["methode"] auf "distillation"
+setze konfig["opt"] auf d["opt"]
+setze konfig["schritte"] auf 1
+setze durch_dispatch auf trainiere_methode(vorlauf, mapping_daten, konfig)
+wenn länge(durch_dispatch["verluste"]) != 1:
+    wirf "Distillation-Dispatcher fehlgeschlagen"
+setze cfg["methode"] auf "praeferenzen"
+setze cfg["opt"] auf p["opt"]
+setze cfg["schritte"] auf 1
+setze dpo_dispatch auf trainiere_methode(vorlauf, praef, cfg)
+wenn länge(dpo_dispatch["verluste"]) != 1:
+    wirf "DPO-Dispatcher fehlgeschlagen"
+zeige "DISTILL_DPO_OK"

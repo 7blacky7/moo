@@ -1,0 +1,8 @@
+struktur Paar:
+    a: u32
+@nativ
+@einstieg
+funktion feld_unbekannt(adr: u64) -> u32:
+    unsicher:
+        setze p: ptr[Paar] auf zeiger(adr)
+        gib_zurück p.fehlend

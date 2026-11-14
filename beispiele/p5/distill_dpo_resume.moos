@@ -1,0 +1,67 @@
+# Resume-Vergleich: identischer Schritt nach Speichern/Laden.
+setze wurzel auf umgebung("P5_TEST_DIR")
+wenn wurzel == nichts:
+    wirf "P5_TEST_DIR fehlt"
+funktion vorlauf_fabrik(schichten):
+    gib_zurück (ids) => vorwaerts(schichten, ids)
+setze teacher auf tensor_aus_liste([[0,0,0,0],[0,0,0,0],[0,0,0,4],[0,0,0,0]])
+setze beispiel auf {"input_ids": [0,1,2,0], "target_ids": [1,2,3,0], "loss_mask": [0,0,1,0], "lehrer_logits": teacher}
+setze dist_daten auf {"tokenizer_id": "test", "lehrer_tokenizer_id": "test", "beispiele": [beispiel]}
+setze sch auf [schicht_embedding(4,4,17), schicht_dicht(4,4,"keine",19)]
+setze pars auf parameter(sch)
+setze vor auf vorlauf_fabrik(sch)
+setze cfg auf {"tokenizer_id": "test", "sequenzlaenge": 4, "vokab": 4, "params": pars, "optimierer": "adam", "rate": 0.01, "schritte": 3, "temperatur": 2, "alpha": 0.7}
+setze res auf trainiere_distillation(vor,dist_daten,cfg)
+setze pfad auf wurzel + "/dist.mook"
+checkpoint_speichern({"netz": sch, "opt": res["opt"], "schritt": 3}, pfad)
+setze cfg["opt"] auf res["opt"]
+setze cfg["schritte"] auf 1
+trainiere_distillation(vor,dist_daten,cfg)
+setze laden auf checkpoint_laden(pfad,{})
+setze sch2 auf laden["netz"]["schichten"]
+setze par2 auf parameter(sch2)
+setze cfg2 auf {"tokenizer_id": "test", "sequenzlaenge": 4, "vokab": 4, "params": par2, "opt": laden["opt"], "schritte": 1, "temperatur": 2, "alpha": 0.7}
+trainiere_distillation(vorlauf_fabrik(sch2),dist_daten,cfg2)
+setze i auf 0
+solange i < länge(pars):
+    setze a auf pars[i].zu_liste()
+    setze b auf par2[i].zu_liste()
+    setze j auf 0
+    solange j < länge(a):
+        wenn abs(a[j] - b[j]) > 0.00001:
+            wirf "Distillation-Resume weicht ab"
+        setze j auf j + 1
+    setze i auf i + 1
+
+setze pol auf [schicht_embedding(4,4,17), schicht_dicht(4,4,"keine",19)]
+setze ref auf [schicht_embedding(4,4,17), schicht_dicht(4,4,"keine",19)]
+setze pp auf parameter(pol)
+setze rp auf parameter(ref)
+setze pf auf vorlauf_fabrik(pol)
+setze rf auf vorlauf_fabrik(ref)
+setze chosen auf {"input_ids": [0,1,2,0], "target_ids": [1,2,3,0], "loss_mask": [0,0,1,0]}
+setze rejected auf {"input_ids": [0,1,2,0], "target_ids": [1,2,0,0], "loss_mask": [0,0,1,0]}
+setze paare auf {"tokenizer_id": "test", "beispiele": [{"gewaehlt": chosen, "verworfen": rejected}]}
+setze pcfg auf {"tokenizer_id": "test", "sequenzlaenge": 4, "vokab": 4, "params": pp, "referenz_params": rp, "referenz_forward": rf, "optimierer": "adam", "rate": 0.01, "schritte": 3, "beta": 0.7}
+setze pr auf trainiere_praeferenzen(pf,paare,pcfg)
+setze ppfad auf wurzel + "/dpo.mook"
+checkpoint_speichern({"netz": pol, "opt": pr["opt"], "schritt": 3}, ppfad)
+setze pcfg["opt"] auf pr["opt"]
+setze pcfg["schritte"] auf 1
+trainiere_praeferenzen(pf,paare,pcfg)
+setze pladen auf checkpoint_laden(ppfad,{})
+setze pol2 auf pladen["netz"]["schichten"]
+setze pp2 auf parameter(pol2)
+setze pcfg2 auf {"tokenizer_id": "test", "sequenzlaenge": 4, "vokab": 4, "params": pp2, "referenz_params": rp, "referenz_forward": rf, "opt": pladen["opt"], "schritte": 1, "beta": 0.7}
+trainiere_praeferenzen(vorlauf_fabrik(pol2),paare,pcfg2)
+setze i auf 0
+solange i < länge(pp):
+    setze a auf pp[i].zu_liste()
+    setze b auf pp2[i].zu_liste()
+    setze j auf 0
+    solange j < länge(a):
+        wenn abs(a[j] - b[j]) > 0.00001:
+            wirf "DPO-Resume weicht ab"
+        setze j auf j + 1
+    setze i auf i + 1
+zeige "DISTILL_DPO_RESUME_OK"

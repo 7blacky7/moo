@@ -1,0 +1,36 @@
+[tasks.test]
+description = "Defer: Fehlerausdruck und ungenutzte native Deklarationen"
+dir = "{{config_root}}/../../.."
+run = '''
+set -u
+out=build/p2-defer-dispatch-grenzen
+mkdir -p "$out"
+failed=0
+for name in expr throw_expr unused_native unused_extern; do
+  if ! timeout 120s compiler/target/release/moo-compiler compile "compiler/tests/p2/defer_dispatch_$name.moos" -o "$out/$name" >"$out/$name.compile.log" 2>&1; then
+    printf 'FAIL %s: Compile\n' "$name"
+    cat "$out/$name.compile.log"
+    failed=1
+    continue
+  fi
+  if ! timeout 30s "$out/$name" >"$out/$name.actual" 2>"$out/$name.err"; then
+    printf 'FAIL %s: Laufzeit\n' "$name"
+    cat "$out/$name.err"
+    failed=1
+    continue
+  fi
+  case "$name" in
+    expr) printf 'A\nfehler\nweiter\n' >"$out/$name.expected" ;;
+    throw_expr) printf 'A\nDivision durch Null!\nweiter\n' >"$out/$name.expected" ;;
+    *) printf 'runde\nrunde\nrunde\nwert\n' >"$out/$name.expected" ;;
+  esac
+  if ! cmp -s "$out/$name.expected" "$out/$name.actual"; then
+    printf 'FAIL %s: Ausgabe\n' "$name"
+    cat "$out/$name.actual"
+    failed=1
+    continue
+  fi
+  printf 'PASS %s\n' "$name"
+done
+exit "$failed"
+'''

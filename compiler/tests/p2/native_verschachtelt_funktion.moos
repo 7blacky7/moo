@@ -1,0 +1,30 @@
+# P2-T82 Batch 2: verschachtelte Operatoren/Aufrufe um reine @nativ-Aufrufe in
+# benannten Funktionen OHNE eigenes versuche:. Die Funktion erhaelt einen
+# Pruefpunkt-Ausgang (native.guard.exit): nach dem uebersprungenen Aufruf werden
+# Operanden/Argumente freigegeben, die Funktion kehrt mit nichts zurueck, der
+# Aufrufer faengt den Erstfehler. Vorher: 10 / nichts -> 'Division durch Null!'
+# ueberschrieb den Fehler, marke(nichts) und marke(2) liefen trotzdem.
+@nativ
+funktion ident(wert: i32) -> i32:
+    gib_zurück wert
+funktion marke(x):
+    zeige "marke " + x
+    gib_zurück x
+funktion rechne(a):
+    gib_zurück (10 / ident(a)) + 1
+funktion effekte(a):
+    gib_zurück marke(1) + marke(ident(a)) + marke(2)
+setze text auf "x"
+versuche:
+    zeige rechne(5)
+    zeige rechne(text)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen 1: " + fehler
+versuche:
+    zeige effekte(2)
+    zeige effekte(text)
+    zeige "NACH_FALSCH"
+fange fehler:
+    zeige "gefangen 2: " + fehler
+zeige "weiter"

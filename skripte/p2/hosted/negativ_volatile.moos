@@ -1,0 +1,7 @@
+# P2-T66 negativ: volatile_* (MMIO) ist hosted gesperrt.
+@nativ
+@einstieg
+funktion liest(p: ptr[u32]) -> u32:
+    unsicher:
+        setze x: u32 auf volatile_lesen(p)
+        gib_zurück x

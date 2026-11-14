@@ -1,0 +1,21 @@
+# P2-T43: eigene statische Bibliothek und eigene DLL aus nativem Moo aufrufen.
+# Die Funktionen sind native Systemkoerper (unsicher:) mit extern-C-Aufruf;
+# das C-Harness bibliothek_probe.c ruft sie ueber ihren Exportnamen auf.
+# Bibliotheken: bibliothek_statisch.c (Archiv) und bibliothek_dll.c (DLL).
+@bibliothek("p2_win_statisch")
+extern "C" funktion p2_win_statisch_mal3(wert: i32) -> i32
+
+@bibliothek("p2_win_dll")
+extern "C" funktion p2_win_dll_plus7(wert: i32) -> i32
+
+@nativ
+@einstieg
+funktion moo_win_lib_statisch(wert: i32) -> i32:
+    unsicher:
+        gib_zurück p2_win_statisch_mal3(wert)
+
+@nativ
+@einstieg
+funktion moo_win_lib_dll(wert: i32) -> i32:
+    unsicher:
+        gib_zurück p2_win_dll_plus7(wert)

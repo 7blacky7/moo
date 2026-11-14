@@ -1,0 +1,100 @@
+# P5 Eval: prueft Loss, genaue Byte-/Codepoint-Zaehler und Identitaetsfehler.
+setze verzeichnis auf umgebung("P5_TEST_DIR")
+wenn verzeichnis == nichts:
+    wirf "P5_TEST_DIR fehlt"
+setze tok auf zeichen_fixed_trainiere("abä", 260)
+setze vokab auf zeichen_fixed_info(tok)["vokab"]
+setze netz auf [schicht_embedding(vokab, 4, 17), schicht_dicht(4, vokab, "keine", 19)]
+setze pfad auf verzeichnis + "/eval.mook"
+checkpoint_speichern({"netz": netz, "schritt": 0, "tokenizer_version": sha256(tok), "arch_version": "p5-eval-test"}, pfad)
+funktion encoder(t):
+    gib_zurück zeichen_fixed_kodiere(tok, t)
+funktion decoder(ids):
+    gib_zurück zeichen_fixed_dekodiere(tok, ids)
+funktion fabrik(z):
+    setze sch auf z["netz"]["schichten"]
+    gib_zurück (x) => vorwaerts(sch, x)
+setze ids auf encoder("abä").zu_liste()
+wenn länge(ids) != 3:
+    wirf "unerwartete Testtoken"
+setze eingabe auf tensor_aus_liste([ids[0], ids[1], 0, 0])
+setze ziel auf tensor_aus_liste([ids[1], ids[2], 0, 0])
+setze maske auf tensor_aus_liste([1, 1, 0, 0])
+autograd_aus()
+setze erwartet auf kreuzentropie(vorwaerts(netz, eingabe), ziel, maske).zu_liste()[0] * 2
+autograd_an()
+setze config auf {"tokenizer": tok, "encoder": encoder, "decoder": decoder, "checkpoint_pfad": pfad, "arch_version": "p5-eval-test", "sequenzlaenge": 4, "vokab": vokab, "pad_id": 0}
+setze bericht auf evaluiere_modell(fabrik, {"text": "abä", "split": "val"}, config)
+setze train_bericht auf evaluiere_modell(fabrik, {"text": "abä", "split": "train"}, config)
+wenn train_bericht["split"] != "train" oder abs(train_bericht["nll"] - bericht["nll"]) > 0.0001:
+    wirf "Trainingsauswertung falsch"
+setze abgelehnt auf falsch
+versuche:
+    checkpoint_waehlen([bericht, train_bericht])
+fange fehler:
+    setze abgelehnt auf wahr
+wenn nicht abgelehnt:
+    wirf "Trainingssatz zum Ranking zugelassen"
+wenn bericht["tokens"] != 2 oder bericht["bytes"] != 3 oder bericht["codepoints"] != 2:
+    wirf "falsche Bewertungsabdeckung"
+wenn abs(bericht["nll"] - erwartet) > 0.0001:
+    wirf "NLL weicht von maskierter CE ab"
+wenn abs(bericht["nll_pro_byte"] - erwartet / 3) > 0.0001:
+    wirf "NLL pro Byte falsch"
+wenn abs(bericht["nll_pro_codepoint"] - erwartet / 2) > 0.0001:
+    wirf "NLL pro Codepoint falsch"
+wenn bericht["tokenizer_sha256"] != sha256(tok):
+    zeige "TOK " + bericht["tokenizer_sha256"] + " ERWARTET " + sha256(tok)
+    wirf "Tokenizerhash falsch"
+wenn bericht["checkpoint_sha256"] != sha256(datei_lesen(pfad)):
+    zeige "CKPT " + bericht["checkpoint_sha256"] + " ERWARTET " + sha256(datei_lesen(pfad))
+    wirf "Checkpointhash falsch"
+setze fremd auf zeichen_fixed_trainiere("xyz", 260)
+setze falsch_config auf {"tokenizer": fremd, "encoder": encoder, "decoder": decoder, "checkpoint_pfad": pfad, "arch_version": "p5-eval-test", "sequenzlaenge": 4, "vokab": vokab, "pad_id": 0}
+setze abgelehnt auf falsch
+versuche:
+    evaluiere_modell(fabrik, {"text": "abä", "split": "val"}, falsch_config)
+fange fehler:
+    setze abgelehnt auf wahr
+wenn nicht abgelehnt:
+    wirf "Fremder Tokenizer akzeptiert"
+setze bericht_pfad auf verzeichnis + "/metrik.json"
+wenn nicht datei_schreiben(bericht_pfad, json_string(bericht)):
+    wirf "Metrikdatei konnte nicht gespeichert werden"
+setze wiederhergestellt auf json_parse(datei_lesen(bericht_pfad))
+setze json_sieger auf checkpoint_waehlen([bericht, wiederhergestellt])
+wenn json_sieger["split"] != "val":
+    wirf "JSON-Roundtrip"
+setze besser auf {...bericht}
+setze besser["nll"] auf bericht["nll"] * 0.5
+setze besser["nll_pro_byte"] auf besser["nll"] / besser["bytes"]
+setze sieger auf checkpoint_waehlen([bericht, besser])
+wenn sieger["nll"] != besser["nll"]:
+    wirf "falscher Val-Sieger"
+setze testbericht auf {...bericht}
+setze testbericht["split"] auf "test"
+setze abgelehnt auf falsch
+versuche:
+    checkpoint_waehlen([bericht, testbericht])
+fange fehler:
+    setze abgelehnt auf wahr
+wenn nicht abgelehnt:
+    wirf "Testsatz zum Ranking zugelassen"
+setze falscher_tok auf {...bericht}
+setze falscher_tok["tokenizer_sha256"] auf sha256("anderer-tokenizer")
+setze abgelehnt auf falsch
+versuche:
+    checkpoint_waehlen([bericht, falscher_tok])
+fange fehler:
+    setze abgelehnt auf wahr
+wenn nicht abgelehnt:
+    wirf "inkompatible Tokenizer zugelassen"
+datei_schreiben(pfad, "veraendert")
+setze abgelehnt auf falsch
+versuche:
+    checkpoint_waehlen([bericht])
+fange fehler:
+    setze abgelehnt auf wahr
+wenn nicht abgelehnt:
+    wirf "geaenderter Checkpoint akzeptiert"
+zeige "P5 EVAL OK"

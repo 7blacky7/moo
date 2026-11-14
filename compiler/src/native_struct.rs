@@ -123,6 +123,15 @@ impl<'ctx> NativeStructRegistry<'ctx> {
         self.layouts.get(name)
     }
 
+    /// Liefert kanonische lokale Strukturidentitaeten fuer ptr[Struktur].
+    /// Importierte Module sind vorerst Teil derselben kompilierten Einheit;
+    /// P2-T47 muss spaeter deren eindeutige Quellmodul-Identitaet liefern.
+    pub(crate) fn nominal_types(&self, module_name: &str) -> crate::native_type_id::NominalTypes {
+        self.layouts.keys().map(|name| (
+            name.clone(), (module_name.to_string(), name.clone()),
+        )).collect()
+    }
+
     pub(crate) fn snapshot(&self) -> Result<LayoutSnapshot, String> {
         let mut result = Vec::with_capacity(self.layouts.len());
         for (name, layout) in &self.layouts {

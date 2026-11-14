@@ -1,0 +1,122 @@
+# Langtextvergleich: ausschließlich Inferenz; Ausgabe als JSON mit Originalbytes.
+# P5_CKPT und P5_SAMPLING_CONFIG sind absolute, vom Runner geprüfte Pfade.
+setze checkpoint_pfad auf umgebung("P5_CKPT")
+setze tokenizer_pfad auf umgebung("P5_TOKENIZER_PATH")
+setze config_pfad auf umgebung("P5_SAMPLING_CONFIG")
+wenn checkpoint_pfad == nichts oder tokenizer_pfad == nichts oder config_pfad == nichts:
+    wirf "Langtext: Checkpoint, Tokenizer oder Konfiguration fehlt"
+setze checkpoint_hash auf sha256(datei_lesen(checkpoint_pfad))
+setze tok auf silben_laden(tokenizer_pfad)
+setze tokenizer_hash auf sha256(tok)
+setze config_roh auf datei_lesen(config_pfad)
+setze conf auf json_parse(config_roh)
+setze ziel_tokens auf conf["neue_tokens"]
+wenn ziel_tokens < 1 oder ziel_tokens > 500 oder ziel_tokens != boden(ziel_tokens):
+    wirf "Langtext: ungueltige Tokenzahl"
+setze zustand auf checkpoint_laden(checkpoint_pfad, {"tokenizer_version": tokenizer_hash, "arch_version": "grimm-silben-250k-v1"})
+setze schichten auf zustand["netz"]["schichten"]
+wenn länge(schichten) != 14:
+    wirf "Langtext: unerwartete Schichtenanzahl"
+setze kontextlimit auf schichten[1]["max"]
+wenn kontextlimit != 64:
+    wirf "Langtext: erwartetes Kontextlimit 64 nicht vorhanden"
+
+# Unveränderter kausaler Vorwärtsweg des SIL-14-Modells.
+funktion vorlauf(ids):
+    setze x auf vorwaerts([schichten[0]], ids)
+    setze x auf vorwaerts([schichten[1]], x)
+    setze x auf x + vorwaerts([schichten[2], schichten[3]], x)
+    setze x auf x + vorwaerts([schichten[4], schichten[5], schichten[6]], x)
+    setze x auf x + vorwaerts([schichten[7], schichten[8]], x)
+    setze x auf x + vorwaerts([schichten[9], schichten[10], schichten[11]], x)
+    gib_zurück vorwaerts([schichten[12], schichten[13]], x)
+
+# Deterministisches Maximum; Gleichstände bevorzugen die kleinere Token-ID.
+funktion argmax(werte):
+    setze best auf 0
+    setze i auf 1
+    solange i < länge(werte):
+        wenn werte[i] > werte[best]:
+            setze best auf i
+        setze i auf i + 1
+    gib_zurück best
+
+# Gleicher PRNG wie im vorhandenen P5-Sampler, je Probe neu initialisiert.
+setze zufallszustand auf 1
+funktion ziehe_topk(werte, top_k):
+    global zufallszustand
+    setze beste auf []
+    setze gesamtsumme auf 0
+    setze k auf 0
+    solange k < top_k:
+        setze best auf -1
+        setze i auf 0
+        solange i < länge(werte):
+            wenn nicht beste.enthält(i):
+                wenn best < 0 oder werte[i] > werte[best]:
+                    setze best auf i
+            setze i auf i + 1
+        beste.hinzufügen(best)
+        setze gesamtsumme auf gesamtsumme + werte[best]
+        setze k auf k + 1
+    wenn gesamtsumme <= 0:
+        wirf "Langtext: leere Sampling-Verteilung"
+    setze zufallszustand auf zufallszustand * 48271
+    setze zufallszustand auf zufallszustand - boden(zufallszustand / 2147483647) * 2147483647
+    setze grenze auf zufallszustand / 2147483647 * gesamtsumme
+    setze kumuliert auf 0
+    für token in beste:
+        setze kumuliert auf kumuliert + werte[token]
+        wenn grenze < kumuliert:
+            gib_zurück token
+    gib_zurück beste[länge(beste) - 1]
+
+# Feste neue Tokenzahl, kein Abbruch am Satzende und kein Byte-Abschneiden.
+funktion generiere(prompt, temperatur, top_k, seed):
+    global zufallszustand
+    setze zufallszustand auf seed
+    setze ids auf silben_kodiere(tok, prompt).zu_liste()
+    setze erzeugt auf []
+    setze schritt auf 0
+    solange schritt < ziel_tokens:
+        setze start auf max(0, länge(ids) - kontextlimit)
+        setze kontext auf []
+        setze i auf start
+        solange i < länge(ids):
+            kontext.hinzufügen(ids[i])
+            setze i auf i + 1
+        setze logits auf vorlauf(tensor_aus_liste(kontext))
+        setze letzte auf logits.zeilen(länge(kontext) - 1, länge(kontext))
+        setze token auf 0
+        wenn temperatur == 0:
+            setze token auf argmax(letzte.zu_liste())
+        sonst:
+            setze token auf ziehe_topk((letzte / temperatur).softmax().zu_liste(), top_k)
+        ids.hinzufügen(token)
+        erzeugt.hinzufügen(token)
+        setze schritt auf schritt + 1
+    setze rohbytes auf string_zu_bytes(silben_dekodiere(tok, tensor_aus_liste(erzeugt)))
+    gib_zurück {"token_ids": erzeugt, "rohbytes": rohbytes}
+
+autograd_aus()
+zeige json_string({"ereignis": "start", "schritt": zustand["schritt"], "checkpoint_sha256": checkpoint_hash, "tokenizer_sha256": tokenizer_hash, "config_sha256": sha256(config_roh), "kontext": kontextlimit, "neue_tokens": ziel_tokens})
+für prompt in conf["prompts"]:
+    für modus in conf["modi"]:
+        wenn modus["temperatur"] < 0 oder modus["temperatur"] > 2:
+            wirf "Langtext: Temperatur ungueltig"
+        wenn modus["temperatur"] > 0 und (modus["top_k"] < 1 oder modus["top_k"] > silben_info(tok)["vokab"]):
+            wirf "Langtext: top_k ungueltig"
+        für seed in modus["seeds"]:
+            wenn seed < 1 oder seed >= 2147483647 oder seed != boden(seed):
+                wirf "Langtext: Seed ungueltig"
+            setze ergebnis auf generiere(prompt, modus["temperatur"], modus["top_k"], seed)
+            setze ergebnis["ereignis"] auf "probe"
+            setze ergebnis["prompt"] auf prompt
+            setze ergebnis["modus"] auf modus["name"]
+            setze ergebnis["temperatur"] auf modus["temperatur"]
+            setze ergebnis["top_k"] auf modus["top_k"]
+            setze ergebnis["seed"] auf seed
+            zeige json_string(ergebnis)
+wenn sha256(datei_lesen(checkpoint_pfad)) != checkpoint_hash:
+    wirf "Langtext: Checkpoint wurde waehrend der Inferenz veraendert"
+zeige json_string({"ereignis": "fertig", "checkpoint_unveraendert": wahr})

@@ -1,0 +1,17 @@
+# P2 G5: Allokation/Fuellen und anschliessender Lese-Kern separat.
+setze t0 auf zeit()
+setze werte auf []
+setze i auf 0
+solange i < 10000000:
+    werte.hinzufügen(i % 100)
+    setze i auf i + 1
+setze t1 auf zeit()
+setze i auf 0
+setze summe auf 0
+solange i < 10000000:
+    setze summe auf summe + werte[i]
+    setze i auf i + 1
+setze t2 auf zeit()
+zeige t1 - t0
+zeige t2 - t1
+zeige summe

@@ -1,0 +1,27 @@
+# P2-T81: zweites Moo-Programm ruft die aus Moo gebaute DLL moo_win_probe.dll
+# (skripte/p2/windows_minipc/native_probe.moos, -o moo_win_probe.dll, P2-T79).
+# Die Signaturen kommen aus der beim DLL-Build erzeugten Moo-Schnittstelle
+# moo_win_probe_schnittstelle.moos (@bibliothek + extern "C"), gefunden ueber
+# --lib-pfad; nichts wird von Hand abgeschrieben. Lauf: hosted_ffi.sh.
+importiere "moo_win_probe_schnittstelle"
+
+@nativ
+funktion plus42(wert: i32) -> i32:
+    unsicher:
+        gib_zurück moo_win_plus42(wert)
+
+@nativ
+funktion quadrat(wert: i32) -> i32:
+    unsicher:
+        gib_zurück moo_win_quadrat(wert)
+
+@nativ
+funktion kette(wert: i32) -> i32:
+    unsicher:
+        gib_zurück moo_win_kette(wert)
+
+unsicher:
+    zeige plus42(0)
+    zeige plus42(-12)
+    zeige quadrat(-5)
+    zeige kette(4)

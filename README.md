@@ -11,6 +11,36 @@ funktion fibonacci(n):
 zeige fibonacci(20)
 ```
 
+## Aktueller Entwicklungsstand (November 2026)
+
+moo ist ein aktives Ein-Personen-Projekt, das mit KI-Agenten entwickelt wird.
+Vieles läuft bereits stabil, einige Bereiche sind bewusst noch im Umbau.
+Damit klar ist, was fertig ist und was noch kommt:
+
+### KI-Stack
+
+| Bereich | Stand | Was noch ansteht |
+|---|---|---|
+| Tensoren, Autograd, Transformer-Bausteine, Vulkan-GPU-Training | **funktioniert** (siehe „Was kann moo heute?“) | laufende Optimierungen |
+| Trainingsmethoden direkt aus Moo aufrufbar (SGD/Adam/AdamW, SFT mit Masken, Lehrer-Korrektur, Distillation, DPO, Evaluation, Checkpoint/Resume) | **17 von 20 Schritten fertig** — Beispiele in `beispiele/p5/` | Messlauf ~1-Mio.-Parameter-Modell, Training vollständig GPU-resident machen, Vergleichstraining 3 × 10-Mio.-Modelle (BPE / Silbe / Zeichen) |
+| Deutscher Silben-Tokenizer (zusätzlich zu Zeichen- und Byte-BPE-Tokenizer) | **14 von 17 Schritten fertig** — `beispiele/p4_silben/`, `skripte/p4_silben/` | Neutraining eines kleinen Silbenmodells (36.000 Schritte), syntaxbewusster Tokenizer für Code |
+| GPU-Vergleich SGD vs. JEV-Steuerung | geplant, noch nicht gestartet | — |
+| Adaptive Sparse-Berechnung / hierarchisches MoE-Routing | **Forschungsidee**, nur geplant | gesamte Umsetzung |
+
+Hinweis: Trainingskorpora, eigene Testdaten und Modell-Checkpoints sind
+absichtlich **nicht** im Repository. Die Beispiele zeigen die API; zum
+Nachtrainieren braucht man eigene Texte.
+
+### Sprache und Compiler
+
+- **Native Ebene (`@nativ`)** — echte Maschinentypen (i8…u64, f32/f64, bool),
+  C-kompatible Strukturen, C-/C++-FFI für Engine- und Grafikcode: **in Arbeit**
+  (ca. 30 von 74 Schritten). Der bestehende dynamische Moo-Code bleibt unverändert.
+  Teile davon sind fertig und getestet (u. a. native Zahlen/Casts, nativer
+  CPU-Compositor), anderes ist noch nicht abschließend geprüft.
+- **Eigener Kernel + UEFI-Loader in Moo:** Loader und minimaler Kern laufen
+  in QEMU, Boot auf echter Hardware steht noch aus.
+
 ## Wo ist was?
 
 - **Bauen & ausführen:** siehe `DEPENDENCIES.md`, dann

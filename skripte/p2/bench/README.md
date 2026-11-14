@@ -1,0 +1,7 @@
+# P2-Baseline
+
+Aufruf im Projektverzeichnis: `mise run p2-bench-baseline`. Der vorhandene Release-Compiler wird verwendet, nicht neu gebaut. C wird mit -O2 gebaut; sieben Fälle, fünf Rohmessungen je Variante, Mediane, Faktoren, CPU-Info, Flags und Input-Hashes stehen in `build/p2-bench/baseline-shell/result.json`. Jeder Prozess hat 120 s Timeout und wird auf die erste zulässige CPU gepinnt. Der C-Zeitmesser nutzt CLOCK_MONOTONIC; ein fehlerhafter Prozess oder Prüfsummen-/Hashdrift lässt den Lauf fehlschlagen.
+
+Gemessen wird Prozesszeit einschließlich Allokation, Initialisierung, Ausgabe und Freigabe; das ist kein isolierter Kernel. Die Listen werden für die Prüfsumme vollständig durchlaufen; dies gehört zur Messzeit. Prüfwerte dienen als grober Plausibilitätscheck, kein vollständiger Differenztest. Moo-Zahlen sind double, die Vektor- und Matrixreferenzen float; Eingaben sind exakt darstellbare Ganzzahlen. Objektfall vergleicht Moo-Datenobjekte mit C-Strukturen, nicht gleiche Speicherlayouts. Builtin ist abs gegen einen nicht inlinebaren C-Aufruf. Rauschen ruft in C denselben Noise-Kern wie das Moo-Builtin auf. Kein nativer Moo-Pfad und keine GPU werden gemessen. Faktoren sind Ist-Baselines, keine zugesagten Zielwerte.
+
+Die getrennten G5-Phasen stehen in G5.md; ein eigener nativer Summenvergleich ist mit `mise run p2-bench-native` vorbereitet und benötigt einen einsatzfähigen nativen Funktions- und Übergangspfad. Snapshot- und Legacy-Gates bleiben gesondert.

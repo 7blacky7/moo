@@ -1,0 +1,17 @@
+[tasks.test]
+description = "Methoden-Fallthrough: Konstruktor- und Receiver-Lebensdauer"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-defer-konstruktor
+mkdir -p "$out"
+timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/defer_methode_konstruktor.moos -o "$out/probe"
+timeout 30s "$out/probe" > "$out/actual"
+printf '10\n10\n22\n22\n22\n30\n30\n30\n40\n41\n' > "$out/expected"
+if ! cmp -s "$out/expected" "$out/actual"; then
+  printf 'FAIL Konstruktor-/Receiver-Folgezugriff\n' >&2
+  cat "$out/actual" >&2
+  exit 1
+fi
+printf 'PASS Konstruktoren, Default-Argument, Receiver und Data-Class-Heapfeld\n'
+'''

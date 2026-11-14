@@ -1,8 +1,17 @@
+# P2-T80: reine @nativ-Funktion als Teilausdruck innerhalb versuche: (Nicht-
+# Direktform): gueltig rechnet, ungueltiges Argument wird gefangen. Vorher
+# Compilefehler 'nur in main ausserhalb von try'.
 @nativ
 funktion summe(a: i32, b: i32) -> i32:
     gib_zurück a + b
+funktion zweites(a, b):
+    gib_zurück b
 setze wert auf 20
+setze text auf "x"
 versuche:
     zeige 1 + summe(wert, 1)
+    zeige zweites(0, summe(text, 1))
+    zeige "NACH_FALSCH"
 fange fehler:
-    zeige "gefangen"
+    zeige "gefangen " + fehler
+zeige "weiter"

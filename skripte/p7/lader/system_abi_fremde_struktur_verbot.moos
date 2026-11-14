@@ -1,0 +1,15 @@
+# Nominale Verschiedenheit darf trotz identischen C-Layouts NICHT
+# als gleichartige Strukturwertsignatur akzeptiert werden.
+struktur Erstes:
+    wort: u32
+
+struktur Zweites:
+    wort: u32
+
+extern "C" funktion p2_fremde_strukturen(a: Erstes, b: Zweites) -> Erstes
+
+@nativ
+@einstieg
+funktion pruefe_sperre(adr: u64) -> u64:
+    unsicher:
+        gib_zurück adr

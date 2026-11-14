@@ -1,0 +1,206 @@
+[tasks.pointer-rekursion-zukunft]
+description = "P7: Zukunftsgate rekursive Pointer und by-value-Zyklusdiagnose"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/pointer_rekursion_zukunft.sh"
+
+
+[tasks.ms-abi-referenz]
+description = "P7: Linux-x86_64 C/C++-Referenz ms_abi mit zehn Argumenten"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/ms_abi_reference.sh"
+
+
+[tasks.pointer-layout-referenz]
+description = "P7: C/C++-Layoutorakel für Daten- und Funktionszeigerfelder"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/pointer_layout.sh"
+
+[tasks.pointer-layout-zukunft]
+description = "P7: Zukunftsgate Moo-Struktur mit Zeigerfeldern"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/pointer_layout_zukunft.sh"
+
+
+[tasks.indirekt-referenz]
+description = "P2/P7: C/C++-Referenz indirekte ABI-Aufrufe"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/indirect_reference.sh"
+
+
+[tasks.indirekt-zukunft]
+description = "P2/P7: Zukunftsgate typisierter indirekter Fremdaufruf"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/indirekt.sh"
+
+
+[tasks.uefi-runtime]
+description = "P7: QEMU/OVMF mit echtem Moo-Serienmarker"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/uefi_runtime.sh"
+
+
+[tasks.uefi-abi]
+description = "P7: UEFI-MooValue-Runtime-ABI und Zielkontrollen"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/uefi_abi.sh"
+
+
+[tasks.struct-reference]
+description = "P2: C-Referenz Struct-by-value 4 bis 24 Byte"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/struct_reference.sh"
+
+[tasks.callback-reference]
+description = "P2: C-Referenz qsort und synchroner user_data Callback"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/callback_reference.sh"
+
+[tasks.cross-defer-windows]
+description = "P2: Windows Defer-/Fehler-ABI Cross-IR und COFF"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/cross_defer_windows.sh"
+
+[tasks.ieee]
+description = "P2: Float-FFI IEEE-Randwerte über C"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/ieee.sh"
+
+[tasks.cross-float]
+description = "P2: Float-FFI Windows und AArch64 Cross-IR"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/cross_float.sh"
+
+[tasks.void]
+description = "P2: C void-Aufruf mit beobachtbarem Effekt"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/void.sh"
+
+[tasks.cross-void]
+description = "P2: void-Mischsignatur Windows und AArch64 Cross-IR"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/cross_void.sh"
+
+[tasks.mixed]
+description = "P2: gemischte skalare FFI-Signatur mit Rueckgabe"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/mixed.sh"
+
+[tasks.cross-mixed]
+description = "P2: gemischte skalare FFI-Rueckgaben Windows/AArch64"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/cross_mixed.sh"
+
+[tasks.i16]
+description = "P2: i16/u16 FFI-Grenzwerte und Bereichsfehler"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/i16.sh"
+
+[tasks.cross-i16]
+description = "P2: i16/u16 FFI-Aufrufe Windows und AArch64"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/cross_i16.sh"
+
+[tasks.i64]
+description = "P2: i64/u64 FFI Exaktheit und Grenzwerte"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/i64.sh"
+
+[tasks.cross-i64]
+description = "P2: i64/u64 FFI-Aufrufe Windows und AArch64"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/cross_i64.sh"
+
+[tasks.u32]
+description = "P2: u32 FFI-Grenzwerte und Fehlerpfade"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/u32.sh"
+
+[tasks.integration]
+description = "P2 M1: libc abs durch nativen extern-C-Aufruf"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/test.sh"
+
+[tasks.libm]
+description = "P2: libm sinf/powf/pow durch native FFI"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/libm.sh"
+
+[tasks.context]
+description = "P2 M1: unerlaubte native FFI-Kontexte ablehnen"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/context.sh"
+
+[tasks.schmal]
+description = "P2: C-ABI-Erweiterung fuer i8/u8"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/schmal.sh"
+
+[tasks.klein-roundtrip]
+description = "P2: native i8/u8-Signaturen durch C"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/klein_roundtrip.sh"
+
+[tasks.bare-link]
+description = "P2: Bare-FFI-Objektmetadaten und statisches Archiv"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/bare_link.sh"
+
+[tasks.wertalias]
+description = "P2: Funktionswertbindung und Defer-Diagnose"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/wertalias.sh"
+
+[tasks.reachability]
+description = "P2: FFI-Aufrufgrenzen und Lambda-Alias-Fallback"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/reachability.sh"
+
+[tasks.i64-defer-zukunft]
+description = "P2: 64-Bit-FFI mit Cleanup und lokalem Catch"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/i64_defer_zukunft.sh"
+
+[tasks.callback-geschlossen]
+description = "P2: nicht freigegebene Callback-Deklarationen ablehnen"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/callback_geschlossen.sh"
+
+[tasks.cross-u32]
+description = "P2: u32 FFI Windows/AArch64 Cross-IR und Objekte"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/cross_u32.sh"
+
+[tasks.cross-aarch64]
+description = "P2: AArch64-Linux-C-ABI Cross-IR und ELF"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/cross_aarch64.sh"
+
+[tasks.cross-windows]
+description = "P2: Windows-x64-C-ABI Cross-IR und COFF"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/cross_windows.sh"
+
+[tasks.dynamisch]
+description = "P2: dynamische C-Bibliothek aus Moo aufrufen"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/dynamisch.sh"
+
+[tasks.indirekt-uefi]
+description = "P2: indirekter 10-Argumente-Aufruf unter QEMU/UEFI"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/indirekt_uefi.sh"
+
+[tasks.indirekt-void-teil]
+description = "P2: begrenzter indirekter void-C-Aufruf"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/indirekt_void_teil.sh"
+
+[tasks.indirekt-teil]
+description = "P2: begrenzter indirekter C-Aufruf"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/indirekt_teil.sh"
+
+[tasks.ziel]
+description = "P2: zielabhaengige Bibliotheksnamen"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/ziel.sh"

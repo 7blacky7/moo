@@ -1,0 +1,24 @@
+# P2-T43: komplettes Moo-Programm (dynamisches main) ruft ueber @nativ/unsicher:
+# eine eigene statische Bibliothek (p2_win_statisch) und eine eigene DLL
+# (p2_win_dll) auf. Quellen: skripte/p2/windows_minipc/bibliothek_{statisch,dll}.c.
+# Lauf auf dem N100: skripte/p2/windows_minipc/hosted_ffi.sh.
+@bibliothek("p2_win_statisch")
+extern "C" funktion p2_win_statisch_mal3(wert: i32) -> i32
+@bibliothek("p2_win_dll")
+extern "C" funktion p2_win_dll_plus7(wert: i32) -> i32
+
+@nativ
+funktion statisch_mal3(wert: i32) -> i32:
+    unsicher:
+        gib_zurück p2_win_statisch_mal3(wert)
+
+@nativ
+funktion dll_plus7(wert: i32) -> i32:
+    unsicher:
+        gib_zurück p2_win_dll_plus7(wert)
+
+unsicher:
+    zeige statisch_mal3(14)
+    zeige dll_plus7(35)
+    zeige statisch_mal3(-5)
+    zeige dll_plus7(-7)

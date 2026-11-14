@@ -1,0 +1,5 @@
+# P2-T34 negativ: konstante Null als Divisor ist ein Compilefehler.
+@nativ
+funktion z_null(a: i32) -> i32:
+    gib_zurück a / 0
+zeige z_null(1)
