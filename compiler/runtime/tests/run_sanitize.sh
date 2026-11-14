@@ -323,7 +323,7 @@ EXTRA_HARNESSES=(
   "test_audio_asan.c|moo_audio.c moo_frame.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_memory.c moo_value.c moo_print.c moo_string.c moo_dict.c moo_list.c moo_ops.c moo_gif_handle.c moo_gif.c moo_video_handle.c moo_video.c|-lm"
   "test_gif_core_asan.c|moo_gif.c|-lm"
   "test_gif_wiring_asan.c|moo_gif.c moo_gif_handle.c moo_frame.c moo_value.c moo_memory.c moo_string.c moo_dict.c moo_error.c moo_print.c moo_list.c moo_ops.c moo_quant.c moo_tensor.c moo_tensor_ops.c moo_ki_gpu.c moo_autograd.c moo_video_handle.c moo_video.c|-lm"
-  "test_sim_input_asan.c|moo_3d.c tests/sim_input_extra_stubs.c|-lm"
+  "test_sim_input_asan.c|moo_3d.c tests/sim_input_extra_stubs.c|-Isdl_stub_include -lm"
   #   video_wiring: MOO_VIDEO-Core (moo_video.c) + immer-gebauter Heap-Wrapper
   #               (moo_video_handle.c) + Core-Runtime. moo_memory.c->moo_release()
   #               dispatcht MOO_VIDEO->moo_video_handle_free (P009-V0); die uebrigen

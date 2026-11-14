@@ -147,6 +147,7 @@ jobs:
 
           "LLVM_SYS_181_PREFIX=$llvmRoot" >> $env:GITHUB_ENV
           "LIBCLANG_PATH=$llvmBin" >> $env:GITHUB_ENV
+          "CFLAGS_x86_64_pc_windows_msvc=/std:c11" >> $env:GITHUB_ENV
           "MOO_CLANG=$($buildClang.Replace('\','/'))" >> $env:GITHUB_ENV
           "MOO_LLD=$($lld.Replace('\','/'))" >> $env:GITHUB_ENV
           "CC=$($sanClang.Replace('\','/'))" >> $env:GITHUB_ENV
