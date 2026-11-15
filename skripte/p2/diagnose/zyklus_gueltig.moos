@@ -1,0 +1,4 @@
+# P2-T99 (Review 2be97766): wert wird ueber C weitergereicht und ist in D definiert (RC 0).
+aus zyklus_c importiere wert, c_eins
+zeige wert()
+zeige c_eins()

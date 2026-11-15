@@ -1,0 +1,8 @@
+# Aliase und unbekannte Rückgaben dürfen keine sicheren Elementtypen erfinden.
+setze xs: Liste[Zahl] auf [1]
+setze ys auf xs
+ys.hinzufügen("text")
+funktion wert():
+    gib_zurück "text"
+xs.hinzufügen(wert())
+zeige xs

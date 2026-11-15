@@ -1,0 +1,4 @@
+importiere "./kollision_modul_a"
+funktion hilfe():
+    gib_zurück "nutzer"
+zeige hilfe()

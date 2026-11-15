@@ -1,0 +1,20 @@
+# P2-T29 S3 (Review 0fc5ac15): solange-Rumpf bindet fuer die naechste Runde
+# neu. Kontrolle (Zeile 18) bleibt ein Fehler.
+klasse Box:
+    funktion append(wert: Text):
+        gib_zurück wert
+funktion mach():
+    gib_zurück neu Box()
+setze xs: Liste[Zahl] auf []
+setze n auf 0
+solange n < 2:
+    wenn n == 1:
+        xs.append("passt")
+    setze xs auf mach()
+    setze n auf n + 1
+setze ys: Liste[Zahl] auf []
+setze m auf 0
+solange m < 1:
+    ys.append("x")
+    setze m auf m + 1
+zeige "ok"

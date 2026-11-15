@@ -37,14 +37,25 @@ struct Cli {
     /// Typpruefung zur Compilezeit (P2-T29, M-T*); vorerst nur auf Wunsch
     #[arg(long = "typpruefung", global = true)]
     typpruefung: bool,
+    /// Typpruefung an; IHRE Hinweise (M-T*, M-H001, M-H006) werden Fehler.
+    /// Hinweise anderer Phasen (z. B. Lexer M-H007) bleiben Hinweise.
+    /// Unabhaengig von MOO_STRENG (Laufzeit des erzeugten Programms).
+    #[arg(long = "typ-streng", global = true)]
+    typ_streng: bool,
 }
 
 /// P2-T29: `--typpruefung` (Standard aus, bis die Pruefung freigegeben ist).
 static TYPPRUEFUNG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// P2-T29 S4: `--typ-streng` (schliesst --typpruefung ein).
+static TYP_STRENG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn typpruefung_einschalten_falls_gewuenscht() {
-    if TYPPRUEFUNG.load(std::sync::atomic::Ordering::Relaxed) {
+    let streng = TYP_STRENG.load(std::sync::atomic::Ordering::Relaxed);
+    if streng || TYPPRUEFUNG.load(std::sync::atomic::Ordering::Relaxed) {
         crate::typpruefung::aktivieren();
+    }
+    if streng {
+        crate::typpruefung::streng_aktivieren();
     }
 }
 
@@ -191,6 +202,7 @@ fn main() {
         Err(e) => { eprintln!("{e}"); std::process::exit(2); }
     }
     TYPPRUEFUNG.store(cli.typpruefung, std::sync::atomic::Ordering::Relaxed);
+    TYP_STRENG.store(cli.typ_streng, std::sync::atomic::Ordering::Relaxed);
 
     match cli.command {
         Commands::Bindgen { header, prefix, include, allow_partial } => {
@@ -444,6 +456,43 @@ struct ModulKontext {
     namen: std::collections::HashMap<PathBuf, std::rc::Rc<std::collections::HashSet<String>>>,
     /// Strukturname -> Datei der ersten Definition (Kollision mit beiden Pfaden).
     strukturen: std::collections::HashMap<String, PathBuf>,
+    /// P2-T99: Top-Level-Name -> alle Vorkommen (erstes je Datei und Art;
+    /// Herkunft fuer M-I004/M-I005, Review 9502d95c).
+    definitionen: std::collections::HashMap<String, Vec<Definition>>,
+    /// P2-T99: kanonischer Pfad der Hauptdatei (Benutzerseite einer Kollision).
+    hauptdatei: Option<PathBuf>,
+    /// P2-T99: Zahl der gemeldeten M-I004 (Abbruch nach dem Aufloesen).
+    kollisionen: usize,
+    /// P2-T99 (Review 2be97766): kanonischer Pfad -> nur SELBST definierte Namen.
+    definiert: std::collections::HashMap<PathBuf, std::collections::HashSet<String>>,
+    /// P2-T99 (Review 2be97766): kanonischer Pfad -> per `aus x importiere a`
+    /// weitergegebene Namen mit den kanonischen Quellmodulen.
+    weitergaben: std::collections::HashMap<PathBuf, std::collections::HashMap<String, Vec<PathBuf>>>,
+    /// P2-T99 (Review 2be97766): selektive Importe, die nur ueber eine
+    /// Weitergabe gedeckt sind; nach dem Aufloesen bis zu einer echten
+    /// Definition verfolgt, sonst M-I002.
+    offene_weitergaben: Vec<OffeneWeitergabe>,
+}
+
+/// P2-T99 (Review 2be97766): `aus modul importiere name`, der nur ueber eine
+/// Weitergabe des Moduls gedeckt ist.
+struct OffeneWeitergabe {
+    datei: String,
+    zeile: usize,
+    modul: String,
+    name: String,
+    modul_datei: String,
+    kanonisch: PathBuf,
+}
+
+/// P2-T99: Herkunft einer Top-Level-Definition.
+#[derive(Clone)]
+struct Definition {
+    /// Anzeigepfad (relativ zum Arbeitsverzeichnis, wenn moeglich).
+    datei: String,
+    kanonisch: PathBuf,
+    zeile: usize,
+    art: &'static str,
 }
 
 /// Qualifizierer `q` aus `importiere m` bzw. `importiere m als q`; gilt nur
@@ -476,6 +525,46 @@ fn eigene_namen(stmts: &[ast::Stmt]) -> std::collections::HashSet<String> {
     namen
 }
 
+/// P2-T99 (Review 9502d95c): Namen, die eine Datei ausdruecklich mit
+/// `aus x importiere a, b` holt; sie gelten fuer M-I002 und `q.name` als ihre
+/// eigenen (Weitergabe). Ein voller `importiere x` gibt nichts weiter (E2).
+/// Review 2be97766: je Name die kanonischen Quellmodule, damit eine Kette
+/// (auch ein Zyklus) bis zu einer echten Definition verfolgt werden kann.
+fn weitergegebene_namen(
+    stmts: &[ast::Stmt],
+    dir: &std::path::Path,
+    lib_paths: &[PathBuf],
+) -> std::collections::HashMap<String, Vec<PathBuf>> {
+    let mut weitergaben: std::collections::HashMap<String, Vec<PathBuf>> = std::collections::HashMap::new();
+    for stmt in stmts {
+        let ast::Stmt::Import { module, names, .. } = stmt else { continue };
+        if names.is_empty() { continue; }
+        // Nicht gefundene Module meldet die Rekursion als M-I001.
+        let Some(pfad) = find_module(module, dir, lib_paths) else { continue };
+        let kanonisch = pfad.canonicalize().unwrap_or(pfad);
+        for name in names {
+            weitergaben.entry(name.clone()).or_default().push(kanonisch.clone());
+        }
+    }
+    weitergaben
+}
+
+/// P2-T99 (Review 2be97766): Ist `name` im Modul `kanonisch` selbst definiert
+/// oder ueber eine Weitergabekette bis zu einer echten Definition erreichbar?
+/// `besucht` bricht Zyklen ab; ein Zyklus ohne Definition liefert false.
+fn weitergabe_definiert(
+    kontext: &ModulKontext,
+    kanonisch: &std::path::Path,
+    name: &str,
+    besucht: &mut std::collections::HashSet<PathBuf>,
+) -> bool {
+    if !besucht.insert(kanonisch.to_path_buf()) { return false; }
+    if kontext.definiert.get(kanonisch).is_some_and(|n| n.contains(name)) { return true; }
+    kontext.weitergaben.get(kanonisch)
+        .and_then(|w| w.get(name))
+        .is_some_and(|quellen| quellen.iter().any(|q| weitergabe_definiert(kontext, q, name, besucht)))
+}
+
 /// Strukturen einer Datei gegen das Programm pruefen: im globalen Namensraum
 /// ist ein Strukturname programmweit eindeutig (E4), die Meldung nennt beide Dateien.
 fn strukturen_registrieren(
@@ -502,6 +591,81 @@ fn strukturen_registrieren(
     Ok(())
 }
 
+/// P2-T99: Art einer Top-Level-Definition fuer die Kollisionspruefung.
+/// Struktur gegen Struktur prueft strukturen_registrieren, extern gegen extern
+/// ist dasselbe C-Symbol; gemischt (z. B. Struktur gegen Funktion) zaehlt.
+fn definitions_art(stmt: &ast::Stmt) -> Option<(&str, &'static str)> {
+    use ast::Stmt as S;
+    Some(match stmt {
+        S::FunctionDef { name, .. } => (name.as_str(), "Funktion"),
+        S::ClassDef { name, .. } => (name.as_str(), "Klasse"),
+        S::DataClassDef { name, .. } => (name.as_str(), "Datenklasse"),
+        S::InterfaceDef { name, .. } => (name.as_str(), "Schnittstelle"),
+        S::ConstAssignment { name, .. } | S::NativeConst { name, .. } | S::RawDataU32 { name, .. } => {
+            (name.as_str(), "Konstante")
+        }
+        S::StructDef { name, .. } => (name.as_str(), "Struktur"),
+        S::ExternC { name, .. } => (name.as_str(), "Extern"),
+        S::Assignment { name, .. } => (name.as_str(), "Variable"),
+        _ => return None,
+    })
+}
+
+/// P2-T99: Top-Level-Definitionen einer Datei gegen alle bisher bekannten
+/// pruefen. Im Inline-Modell gibt es je Name genau eine globale Definition;
+/// die zuerst eingefuegte gewinnt still (codegen Duplikat-Guard), auch fuer
+/// Aufrufe IM Modul. Darum ist derselbe Name aus zwei Dateien ein Fehler
+/// (M-I004), mit einer Variablen beteiligt ein Hinweis (M-I005: gemeinsamer
+/// globaler Zustand). Ort ist die Benutzerdefinition, sonst die spaetere
+/// Moduldefinition. Dieselbe Datei (Rautenimport, Neuzuweisung) bleibt still.
+fn definitionen_registrieren(stmts: &[ast::Stmt], datei: &std::path::Path, kontext: &mut ModulKontext) {
+    let kanonisch = datei.canonicalize().unwrap_or_else(|_| datei.to_path_buf());
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let anzeige = kanonisch.strip_prefix(&cwd).unwrap_or(datei).display().to_string();
+    let hauptdatei = kontext.hauptdatei.clone();
+    for stmt in stmts {
+        let stmt = if let ast::Stmt::Export(inner, _) = stmt { inner.as_ref() } else { stmt };
+        let Some((name, art)) = definitions_art(stmt) else { continue };
+        let neu = Definition { datei: anzeige.clone(), kanonisch: kanonisch.clone(), zeile: stmt.zeile(), art };
+        // Review 9502d95c: ALLE Vorkommen je Name halten (erstes je Datei und
+        // Art), sonst verdeckt eine zuerst gesehene Variable die spaetere
+        // Funktions-Kollision zweier Module.
+        let bisher = kontext.definitionen.get(name).cloned().unwrap_or_default();
+        if bisher.iter().any(|e| e.kanonisch == neu.kanonisch && e.art == neu.art) {
+            continue;
+        }
+        kontext.definitionen.entry(name.to_string()).or_default().push(neu.clone());
+        let fremd = || bisher.iter().filter(|e| e.kanonisch != neu.kanonisch);
+        let vertraeglich = |a: &str, b: &str| a == b && (a == "Struktur" || a == "Extern");
+        let hart = fremd().find(|e| e.art != "Variable" && neu.art != "Variable" && !vertraeglich(e.art, neu.art));
+        let weich = fremd().find(|e| e.art == "Variable" || neu.art == "Variable");
+        let Some(alt) = hart.or(weich).cloned() else { continue };
+        let (hier, dort) = if hauptdatei.as_ref() == Some(&alt.kanonisch) { (&alt, &neu) } else { (&neu, &alt) };
+        let benutzer = hauptdatei.as_ref() == Some(&hier.kanonisch);
+        let d = if hier.art == "Variable" || dort.art == "Variable" {
+            diagnose::Diagnose::hinweis("M-I005", format!(
+                "{} '{name}' gibt es auch in {}:{} ({}); beide teilen denselben globalen Namen",
+                hier.art, dort.datei, dort.zeile, dort.art))
+                .vorschlag("Umbenennen, falls kein gemeinsamer Zustand gewollt ist")
+        } else {
+            kontext.kollisionen += 1;
+            let (meldung, vorschlag) = if benutzer {
+                (format!(
+                    "{} '{name}' ist schon im Modul {}:{} definiert ({}); Module werden in einen gemeinsamen Namensraum eingefügt, eine Definition würde die andere still ersetzen, auch für Aufrufe im Modul",
+                    hier.art, dort.datei, dort.zeile, dort.art),
+                 format!("Eigene {} umbenennen; auch `aus … importiere …` fügt alle Definitionen des Moduls ein, auch interne Helfer", hier.art))
+            } else {
+                (format!(
+                    "{} '{name}' ist auch in {}:{} definiert ({}); im gemeinsamen Namensraum gilt nur eine, die andere wird still ersetzt, auch für Aufrufe im Modul",
+                    hier.art, dort.datei, dort.zeile, dort.art),
+                 "Eine der Definitionen umbenennen oder sie aus dem anderen Modul importieren statt sie zu kopieren".to_string())
+            };
+            diagnose::Diagnose::fehler("M-I004", meldung).vorschlag(vorschlag)
+        };
+        diagnose::melden(d.datei(hier.datei.clone()).ort(hier.zeile, 0).gefunden(format!("{}:{}", dort.datei, dort.zeile)));
+    }
+}
+
 /// Löst Imports AST-basiert auf: parst jedes Modul genau einmal (visited) und
 /// fügt seine Definitionen inline in EINEN globalen Namensraum vor dem
 /// importierenden Programm ein (kein Präfix, keine Alias-Funktionen).
@@ -514,7 +678,25 @@ fn resolve_modules(
     lib_paths: &[PathBuf],
 ) -> Result<(), String> {
     let mut kontext = ModulKontext::default();
-    resolve_modules_mit(program, datei, visited, lib_paths, &mut kontext)
+    // P2-T99: eigene Definitionen der Hauptdatei zuerst (Benutzerseite).
+    kontext.hauptdatei = Some(datei.canonicalize().unwrap_or_else(|_| datei.to_path_buf()));
+    definitionen_registrieren(&program.statements, datei, &mut kontext);
+    resolve_modules_mit(program, datei, visited, lib_paths, &mut kontext)?;
+    // P2-T99 (Review 2be97766): ein nur weitergegebener Name muss irgendwo in
+    // der Kette echt definiert sein; ein Zyklus ohne Definition ist M-I002.
+    for offen in &kontext.offene_weitergaben {
+        let mut besucht = std::collections::HashSet::new();
+        if !weitergabe_definiert(&kontext, &offen.kanonisch, &offen.name, &mut besucht) {
+            return Err(diagnose::melde_fehler(diagnose::Diagnose::fehler("M-I002", format!(
+                "Modul '{}' definiert '{}' nicht, es reicht den Namen nur weiter und in der Importkette gibt es keine Definition (aus {} importiere {}; Modul {})",
+                offen.modul, offen.name, offen.modul, offen.name, offen.modul_datei
+            )).datei(offen.datei.clone()).ort(offen.zeile, 0)));
+        }
+    }
+    match kontext.kollisionen {
+        0 => Ok(()),
+        n => Err(format!("{n} doppelte Definition(en) aus verschiedenen Dateien (M-I004)")),
+    }
 }
 
 /// Loest die Importe einer Datei auf (rekursiv fuer jedes neu besuchte Modul).
@@ -544,9 +726,20 @@ fn resolve_modules_mit(
                         let mut mod_program = parse_file(&mod_path)?;
                         // P2-T29: Modul vor dem Inlining pruefen (Meldung mit Moduldatei).
                         typpruefung::pruefe_datei(&mod_program, &mod_path.display().to_string());
-                        let eigene = eigene_namen(&mod_program.statements);
+                        let definiert = eigene_namen(&mod_program.statements);
+                        // Review 9502d95c: ausdruecklich per `aus x importiere a`
+                        // geholte Namen gibt das Modul weiter (primzahl -> mathe).
+                        // Review 2be97766: getrennt gemerkt; gedeckt erst durch
+                        // eine echte Definition irgendwo in der Kette.
+                        let mod_dir = mod_path.parent().unwrap_or(std::path::Path::new("."));
+                        let weitergaben = weitergegebene_namen(&mod_program.statements, mod_dir, lib_paths);
+                        let mut eigene = definiert.clone();
+                        eigene.extend(weitergaben.keys().cloned());
                         strukturen_registrieren(&mod_program.statements, &mod_path, kontext)?;
+                        definitionen_registrieren(&mod_program.statements, &mod_path, kontext);
                         kontext.namen.insert(canonical.clone(), std::rc::Rc::new(eigene));
+                        kontext.definiert.insert(canonical.clone(), definiert);
+                        kontext.weitergaben.insert(canonical.clone(), weitergaben);
                         // Rekursiv Imports im Modul aufloesen
                         resolve_modules_mit(&mut mod_program, &mod_path, visited, lib_paths, kontext)?;
                         neues_modul = Some(mod_program);
@@ -567,6 +760,20 @@ fn resolve_modules_mit(
                     } else {
                         // O2: unbekannter Name in `aus m importiere x` ist ein Fehler mit Herkunft.
                         for name in names {
+                            // Review 2be97766: nur weitergegeben -> nach dem Aufloesen
+                            // bis zu einer echten Definition verfolgen.
+                            let selbst = kontext.definiert.get(&canonical).is_some_and(|n| n.contains(name));
+                            if !selbst && modul_namen.contains(name) {
+                                kontext.offene_weitergaben.push(OffeneWeitergabe {
+                                    datei: datei.display().to_string(),
+                                    zeile: *line,
+                                    modul: module.clone(),
+                                    name: name.clone(),
+                                    modul_datei: mod_path.display().to_string(),
+                                    kanonisch: canonical.clone(),
+                                });
+                                continue;
+                            }
                             if !modul_namen.contains(name) {
                                 return Err(diagnose::melde_fehler(diagnose::Diagnose::fehler("M-I002", format!(
                                     "Modul '{module}' definiert '{name}' nicht (aus {module} importiere {name}; Modul {})",

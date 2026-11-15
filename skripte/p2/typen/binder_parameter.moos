@@ -1,0 +1,20 @@
+# P2-T29 S3: Parameter verschatten; annotierter Parameter ist Vertrag, bis er
+# neu gebunden wird. Kontrolle (Zeile 16) bleibt ein Fehler.
+klasse Box:
+    funktion append(wert: Text):
+        gib_zurück wert
+funktion mach():
+    gib_zurück neu Box()
+setze xs: Liste[Zahl] auf []
+funktion f(xs):
+    xs.append("passt")
+f(neu Box())
+funktion g(ys: Liste[Zahl]):
+    setze ys auf mach()
+    ys.append("passt")
+funktion h(zs: Liste[Zahl]):
+    zs.append("x")
+funktion k(ws: Liste[Zahl]):
+    für ws in [neu Box()]:
+        ws.append("passt")
+zeige "ok"

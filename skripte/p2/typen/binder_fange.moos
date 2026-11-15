@@ -1,0 +1,24 @@
+# P2-T29 S3 (Review 0fc5ac15): Fangvariable bindet neu; der Fang kann nach
+# einer Neuzuweisung in versuche beginnen. Kontrolle (Zeile 23) bleibt ein Fehler.
+klasse Box:
+    funktion append(wert: Text):
+        gib_zurück wert
+funktion mach():
+    gib_zurück neu Box()
+setze xs: Liste[Zahl] auf []
+versuche:
+    wirf "fehler"
+fange xs:
+    xs.append("passt")
+setze ys: Liste[Zahl] auf []
+versuche:
+    setze ys auf mach()
+    wirf "abbruch"
+fange f:
+    ys.append("passt")
+setze zs: Liste[Zahl] auf []
+versuche:
+    wirf "x"
+fange f:
+    zs.append("x")
+zeige "ok"

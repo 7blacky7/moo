@@ -1,0 +1,22 @@
+# P1-T506: WebSocket-Fixture (deutsche Namen), ohne Netzwerk.
+importiere websocket
+
+setze fehler auf 0
+
+funktion pruefe(name, bedingung):
+    wenn bedingung:
+        zeige "PASS " + name
+    sonst:
+        zeige "FAIL " + name
+        setze fehler auf fehler + 1
+
+setze e auf ws_daten_ereignis(1, [104, 105])
+pruefe("typ", e["typ"] == "text")
+pruefe("daten", e["daten"] == "hi")
+setze verbinde auf ws_verbinde
+setze verbinde_headers auf ws_verbinde_mit_headers
+
+wenn fehler == 0:
+    zeige "STDLIB-EN websocket de PASS"
+sonst:
+    zeige "STDLIB-EN websocket de FAIL"

@@ -1,0 +1,5 @@
+importiere "./kollision_modul_a"
+importiere "./kollision_modul_b"
+funktion oeffentlich():
+    gib_zurück "nutzer"
+zeige b_nutzt()

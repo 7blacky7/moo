@@ -1,0 +1,15 @@
+# Reviews 255aca1c und 0fc5ac15: Schleifenwerte und Binder sind unsicher.
+klasse Box:
+    funktion append(wert: Text):
+        gib_zurück wert
+setze xs: Liste[Zahl] auf []
+für xs in [neu Box()]:
+    xs.append("passt")
+setze i auf 0
+setze a auf 0
+solange i < 2:
+    setze a auf b
+    setze b auf 1
+    setze i auf i + 1
+setze c: Text auf a
+zeige c

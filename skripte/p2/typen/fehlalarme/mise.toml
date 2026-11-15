@@ -1,0 +1,4 @@
+[tasks.test]
+description = "P2-T29: Fehlalarm-Regressionen mit Typprüfung"
+dir = "{{config_root}}/../../../.."
+run = "bash skripte/p2/typen/fehlalarme/test.sh"

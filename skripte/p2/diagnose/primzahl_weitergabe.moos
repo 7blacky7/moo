@@ -1,0 +1,4 @@
+aus primzahl importiere ist_primzahl, ggt, klemme
+zeige ggt(12, 18)
+zeige ist_primzahl(7)
+zeige klemme(5, 0, 3)

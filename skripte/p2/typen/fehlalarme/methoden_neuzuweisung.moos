@@ -1,0 +1,10 @@
+# Review fc83a96d: Unbekannte Neuzuweisung kann den Empfänger ändern.
+klasse Box:
+    funktion append(wert: Text):
+        gib_zurück wert
+funktion make_box():
+    gib_zurück neu Box()
+setze xs: Liste[Zahl] auf []
+setze xs auf make_box()
+xs.append("passt")
+zeige "ok"

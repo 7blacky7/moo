@@ -10827,20 +10827,11 @@ impl<'ctx> CodeGen<'ctx> {
                 self.call_rt(function, &compiled_args, "call")
             }
             Expr::MethodCall { object, method, args } => {
-                // Crystal-inspiriert: Typ-Warnung bei inkompatiblen Methoden
-                if let Some(typ) = self.infer_type(object) {
-                    let list_methods = &["append", "hinzufügen", "pop", "sort", "sortieren", "reverse", "umkehren", "join", "leeren", "entfernen", "einfügen"];
-                    let string_methods = &["upper", "gross", "lower", "klein", "trim", "trimmen", "split", "teilen", "replace", "ersetzen"];
-                    let dict_methods = &["keys", "schlüssel", "has", "hat"];
-
-                    let mismatch = match typ {
-                        "Zahl" => list_methods.contains(&method.as_str()) || string_methods.contains(&method.as_str()) || dict_methods.contains(&method.as_str()),
-                        "Text" => list_methods.contains(&method.as_str()) || dict_methods.contains(&method.as_str()),
-                        "Liste" => string_methods.contains(&method.as_str()) || dict_methods.contains(&method.as_str()),
-                        "Dict" => list_methods.contains(&method.as_str()) || string_methods.contains(&method.as_str()),
-                        "Bool" => list_methods.contains(&method.as_str()) || string_methods.contains(&method.as_str()) || dict_methods.contains(&method.as_str()),
-                        _ => false,
-                    };
+                // Crystal-inspiriert: Typ-Warnung bei inkompatiblen Methoden.
+                // P2-T29 S4: Mit --typpruefung meldet der Vorpass M-H001
+                // (dominanzsicher, mit --typ-streng ein Fehler); hier nur ohne ihn.
+                if let Some(typ) = self.infer_type(object).filter(|_| !crate::typpruefung::aktiv()) {
+                    let mismatch = crate::typpruefung::methode_unpassend(typ, method);
                     if mismatch {
                         if let Expr::Identifier(name) = object.as_ref() {
                             let hinweis = self.diag_ort(crate::diagnose::Diagnose::hinweis("M-H001", format!(

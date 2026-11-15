@@ -1,0 +1,8 @@
+# Review 08e9b482: Globale Werte können durch Funktionsaufrufe wechseln.
+setze x: Zahl auf 1
+funktion mutiere():
+    global x
+    setze x auf "text"
+mutiere()
+setze y: Text auf x
+zeige y

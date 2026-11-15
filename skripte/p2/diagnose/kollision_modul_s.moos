@@ -1,0 +1,3 @@
+# P2-T99: Modul mit Struktur Stern (Fixture).
+struktur Stern:
+    x: f32

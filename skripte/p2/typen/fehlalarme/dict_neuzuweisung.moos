@@ -1,0 +1,7 @@
+# Nach unbekannter Neuzuweisung ist der Empfänger kein sicher bekanntes Dict.
+funktion wert():
+    gib_zurück {"a": "text"}
+setze d: Dict[Text, Zahl] auf {"a": 1}
+setze d auf wert()
+d["b"] = "text"
+zeige d

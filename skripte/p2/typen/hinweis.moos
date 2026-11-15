@@ -1,0 +1,36 @@
+# P2-T29 S4: M-H006 nur fuer sicher unsinnige Operatoren zwischen Zahl und Text.
+setze n auf 5
+setze t auf "5"
+zeige t - 1
+zeige n / "2"
+zeige t % 2
+zeige 7 % t
+wenn n == "5":
+    zeige "nie"
+wenn n != t:
+    zeige "immer"
+zeige n < "a"
+zeige t * t
+zeige t ** 2
+setze z auf 1
+z.append(1)
+# Still: gewollte Operatoren, Text gegen Text, Bool, Listen, Unsicheres.
+zeige "a" * 2
+zeige n + "x"
+zeige t + t
+zeige "b" > "a"
+zeige t == "5"
+zeige wahr + 1
+zeige [1, 2] - 1
+funktion f(p):
+    gib_zurück p - 1
+zeige f(3)
+wenn n > 0:
+    setze u auf "7"
+zeige u - 1
+setze m auf 1
+setze m auf "a"
+zeige m - 1
+setze g auf (t) => t - 1
+zeige g(3)
+zeige zahl(t) - 1

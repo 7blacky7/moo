@@ -1,0 +1,4 @@
+importiere "./kollision_modul_a"
+importiere "./kollision_modul_b"
+setze hilfe auf 0
+zeige b_nutzt()

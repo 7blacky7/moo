@@ -94,20 +94,20 @@ English rendering of `beispiele/ui_login_demo.moos`:
 
 ```moo
 import ui
-ui_baue(g, "Login", 340, 260, [
+ui_build(g, "Login", 340, 260, [
     [setup_login_form, ["Username:", "Password:", 100, on_login, on_cancel]],
     [setup_status_bar, ["Ready", "v1.0"]],
 ])
-ui_show(g["hFenster"])
+ui_show(g["hWindow"])
 ui_run()
 ```
 
 English rendering of `beispiele/ui_snapshot_demo.moos`:
 
 ```moo
-ui_widget_id_setze(g["btnSave"], "save")
+ui_widget_set_id(g["btnSave"], "save")
 func do_snapshot():
-    set ok to ui_test_snapshot_mit_sidecar(g["hFenster"], "snapshots/demo1")
+    set ok to ui_test_snapshot_with_sidecar(g["hWindow"], "snapshots/demo1")
 ```
 
 ## 5. Network and database — also in pure moo
@@ -119,17 +119,17 @@ English rendering of `beispiele/dns_selftest.moos` (selftest without network):
 ```moo
 import dns
 set a_resp to parse_response(build_packet(1, TYP_A, [1, 2, 3, 4]))
-check("A value", a_resp["antworten"][0]["rdata"] == "1.2.3.4")
+check("A value", a_resp["answers"][0]["rdata"] == "1.2.3.4")
 ```
 
 English rendering of `beispiele/websocket_client_selftest.moos`:
 
 ```moo
 import websocket
-set ws to ws_verbinde(url, 10000)
-ws.sende_text("hello websocket")
-set text_event to ws.empfange()
-check("text echo", text_event["daten"] == "hello websocket")
+set ws to ws_connect(url, 10000)
+ws.send_text("hello websocket")
+set text_event to ws.receive()
+check("text echo", text_event["data"] == "hello websocket")
 ```
 
 English rendering of `beispiele/domain/db/bench/pg_test.moos` (Postgres protocol in moo):

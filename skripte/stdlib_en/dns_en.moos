@@ -1,0 +1,33 @@
+# P1-T506: DNS fixture (English names), no network.
+import dns
+
+set errors to 0
+
+func check(name, condition):
+    if condition:
+        show "PASS " + name
+    else:
+        show "FAIL " + name
+        set errors to errors + 1
+
+func packet(id, kind, rdata):
+    set question to [7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, kind, 0, 1]
+    set answer to [192, 12, 0, kind, 0, 1, 0, 0, 0, 60, 0, len(rdata)]
+    set p to [0, id, 129, 128, 0, 1, 0, 1, 0, 0, 0, 0]
+    bytes_anhaengen(p, question)
+    bytes_anhaengen(p, answer)
+    bytes_anhaengen(p, rdata)
+    return p
+
+set r to parse_response(packet(1, TYP_A, [1, 2, 3, 4]))
+check("answers", r["answers"][0]["rdata"] == "1.2.3.4")
+check("answers equal antworten", r["answers"][0]["rdata"] == r["antworten"][0]["rdata"])
+check("type", r["answers"][0]["type"] == TYP_A)
+check("dns_type_name", dns_type_name(TYP_A) == "A")
+set resolver_factory to dns_resolver
+set resolve_function to dns_resolve
+
+if errors == 0:
+    show "STDLIB-EN dns en PASS"
+else:
+    show "STDLIB-EN dns en FAIL"

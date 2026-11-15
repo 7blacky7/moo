@@ -45,3 +45,31 @@ funktion verdopple(p: Zahl):
     setze ergebnis: Text auf p
     gib_zurück ergebnis
 zeige verdopple(2)
+
+# Review 255aca1c: Vorwaertsreferenz, Kette, Zweig, Schleife. Der spaetere
+# Wert eines gelesenen Namens faerbt den frueheren Wert nicht.
+setze va auf vb
+setze vb auf 1
+setze vc: Text auf va
+zeige vc
+
+setze ka auf kb
+setze kb auf kc
+setze kc auf 1
+setze kd: Text auf ka
+zeige kd
+
+wenn x > 0:
+    setze zb auf 1
+setze za auf zb
+setze zc: Text auf za
+zeige zc
+
+setze li auf 0
+setze la auf 0
+solange li < 2:
+    setze la auf lb
+    setze lb auf 1
+    setze li auf li + 1
+setze lc: Text auf la
+zeige lc

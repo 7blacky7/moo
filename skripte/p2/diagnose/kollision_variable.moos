@@ -1,0 +1,3 @@
+importiere "./kollision_modul_a"
+setze zustand auf 5
+zeige zustand

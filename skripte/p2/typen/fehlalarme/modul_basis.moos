@@ -1,0 +1,6 @@
+# Modulprüfung und eigenständiges Prüfen dürfen keine Fehlalarme erzeugen.
+exportiere funktion modul_wert():
+    setze x auf "text"
+    setze y: Text auf x
+    setze x: Zahl auf 1
+    gib_zurück y

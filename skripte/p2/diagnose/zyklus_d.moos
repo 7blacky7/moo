@@ -1,0 +1,4 @@
+# P2-T99 (Review 2be97766): gueltiger Zyklus, Teil D: definiert wert, holt c_eins aus C.
+aus zyklus_c importiere c_eins
+funktion wert():
+    gib_zurück 7

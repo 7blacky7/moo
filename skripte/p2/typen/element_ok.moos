@@ -1,0 +1,65 @@
+# P2-T29 S3: keine Fehlalarme bei Element- und Feldtypen.
+setze leer: Liste[Zahl] auf []
+setze zahlen: Liste[Zahl] auf [1, 2]
+zahlen.hinzufügen(3)
+zahlen[0] = 4
+funktion liefert():
+    gib_zurück "x"
+zahlen.hinzufügen(liefert())
+setze frei auf [1, "a"]
+frei.hinzufügen("b")
+setze g: Liste[Zahl] auf [1]
+funktion mutiere():
+    global g
+    g.hinzufügen("x")
+mutiere()
+g[0] = "y"
+wenn falsch:
+    setze z: Liste[Zahl] auf [1]
+setze z auf ["a"]
+z.hinzufügen("b")
+klasse Basis:
+    funktion erstelle():
+        selbst.x = 1
+setze b auf neu Basis()
+b.x = "a"
+daten klasse Paar(links, rechts)
+setze q auf neu Paar(1, "x")
+q.links = "neu"
+setze ds: Dict[Text, Zahl] auf {"a": 1}
+ds["b"] = 2
+setze verschachtelt: Liste[Liste[Zahl]] auf [[1], ["a"]]
+zeige leer
+zeige zahlen
+zeige frei
+zeige g
+zeige z
+zeige b.x
+zeige q
+zeige ds
+zeige verschachtelt
+
+# Review fc83a96d: nach unbekannter Neuzuweisung ist der Empfaenger unsicher
+# (direkt, im Zweig, in der Schleife).
+klasse Box:
+    funktion append(wert: Text):
+        gib_zurück wert
+funktion make_box():
+    gib_zurück neu Box()
+setze bx: Liste[Zahl] auf []
+setze bx auf make_box()
+bx.append("passt")
+setze by: Liste[Zahl] auf []
+wenn wahr:
+    setze by auf make_box()
+by.append("passt")
+setze bl: Liste[Zahl] auf []
+setze li auf 0
+solange li < 1:
+    setze bl auf make_box()
+    setze li auf li + 1
+bl.append("passt")
+setze bd: Dict[Text, Zahl] auf {"a": 1}
+setze bd auf make_box()
+bd["b"] = "x"
+zeige "ok"

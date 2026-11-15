@@ -1,0 +1,23 @@
+# P1-T506: WebSocket fixture (English names), no network.
+import websocket
+
+set errors to 0
+
+func check(name, condition):
+    if condition:
+        show "PASS " + name
+    else:
+        show "FAIL " + name
+        set errors to errors + 1
+
+set e to ws_daten_ereignis(1, [104, 105])
+check("type", e["type"] == "text")
+check("data", e["data"] == "hi")
+check("german keys stay", e["typ"] == e["type"] and e["daten"] == e["data"])
+set connect to ws_connect
+set connect_headers to ws_connect_with_headers
+
+if errors == 0:
+    show "STDLIB-EN websocket en PASS"
+else:
+    show "STDLIB-EN websocket en FAIL"

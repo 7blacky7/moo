@@ -261,9 +261,12 @@ funktion parse_response(buf):
         a["klasse"] = klass
         a["ttl"] = ttl
         a["rdata"] = rdata
+        a["type"] = typ
+        a["class"] = klass
         antworten.hinzufügen(a)
         setze i auf i + 1
     r["antworten"] = antworten
+    r["answers"] = antworten
     gib_zurück r
 
 # ------------------------------------------------------------
@@ -284,6 +287,11 @@ funktion typ_name(t):
     wenn t == TYP_TXT:
         gib_zurück "TXT"
     gib_zurück "TYPE" + text(t)
+
+# Englischer Name (P1-T506), mit Modulpräfix: Imports inlinen alle Moduldefinitionen,
+# ein generischer Name würde gleichnamige Benutzerfunktionen still überschreiben.
+funktion dns_type_name(t):
+    gib_zurück typ_name(t)
 
 funktion rcode_text(rc):
     wenn rc == 0:
@@ -323,9 +331,21 @@ klasse DnsResolver:
             wirf "dns_moo: Transaktions-ID stimmt nicht ueberein"
         gib_zurück resp
 
+    # Englischer Alias (P1-T506)
+    funktion resolve(name, qtype):
+        gib_zurück selbst.aufloesen(name, qtype)
+
 funktion dns_moo_resolver(server_host="1.1.1.1", server_port=53):
     gib_zurück neu DnsResolver(server_host, server_port)
 
 funktion dns_moo_aufloesen(name, qtyp=TYP_A, server_host="1.1.1.1", server_port=53):
     setze resolver auf neu DnsResolver(server_host, server_port)
     gib_zurück resolver.aufloesen(name, qtyp)
+
+# Englische Namen (P1-T506)
+funktion dns_resolver(server_host="1.1.1.1", server_port=53):
+    gib_zurück neu DnsResolver(server_host, server_port)
+
+funktion dns_resolve(name, qtype=TYP_A, server_host="1.1.1.1", server_port=53):
+    setze resolver auf neu DnsResolver(server_host, server_port)
+    gib_zurück resolver.aufloesen(name, qtype)

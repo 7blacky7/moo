@@ -493,3 +493,29 @@ funktion ui_test_sequenz(fenster, ordner, aktionen_liste):
             ergebnisse.hinzufügen(erg)
         setze i auf i + 1
     gib_zurück ergebnisse
+
+
+
+# Englische Namen (P1-T506): dünne Weiterleitungen auf die deutschen Funktionen.
+funktion ui_test_snapshot_with_sidecar(window, base_path):
+    gib_zurück ui_test_snapshot_mit_sidecar(window, base_path)
+
+
+funktion ui_test_snapshot_series(window, folder, prefix, frames, interval_ms):
+    gib_zurück ui_test_snapshot_serie(window, folder, prefix, frames, interval_ms)
+
+
+funktion ui_test_click_id(window, id):
+    gib_zurück ui_test_klick_id(window, id)
+
+
+funktion ui_test_set_text_id(window, id, text):
+    gib_zurück ui_test_text_setze_id(window, id, text)
+
+
+funktion ui_test_action(window, action_dict):
+    gib_zurück ui_test_aktion(window, action_dict)
+
+
+funktion ui_test_sequence(window, folder, actions):
+    gib_zurück ui_test_sequenz(window, folder, actions)

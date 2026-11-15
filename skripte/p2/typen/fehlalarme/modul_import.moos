@@ -1,0 +1,3 @@
+# Die importierte Datei wird vor dem Einfügen mit eigenem Kontext geprüft.
+aus "./modul_basis" importiere modul_wert
+zeige modul_wert()

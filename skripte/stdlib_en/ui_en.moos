@@ -1,0 +1,13 @@
+# P1-T506: UI fixture (English names). Opens no window, only checks that the names resolve.
+import ui
+
+set build to ui_build
+set debug_build to ui_debug_build
+set widget_id to ui_widget_set_id
+set snapshot to ui_test_snapshot_with_sidecar
+set series to ui_test_snapshot_series
+set click to ui_test_click_id
+set set_text to ui_test_set_text_id
+set action to ui_test_action
+set sequence to ui_test_sequence
+show "STDLIB-EN ui en PASS"

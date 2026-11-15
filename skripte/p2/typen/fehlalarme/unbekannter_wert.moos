@@ -1,0 +1,6 @@
+# Review da045f85: Eine Annotation beweist keinen unbekannten Rückgabewert.
+funktion wert():
+    gib_zurück "text"
+setze x: Zahl auf wert()
+setze y: Text auf x
+zeige y

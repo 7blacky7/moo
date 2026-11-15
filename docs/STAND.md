@@ -88,16 +88,29 @@ Ziel: Typfehler vor der Ausführung mit Datei:Zeile und Vorschlag, JSON-Diagnose
 - **GPU im KI-Beispiel:** per `MOO_KI_GPU_ERZWINGEN=1` (docs/KI_MIT_MOO.md, Abschnitt 4.5); ob die GPU genutzt wurde, zeigt `gpu_statistik()`. `ki_sprachmodell_gpu.moos` ist ausdrücklich ein Lern-Demonstrator, kein Chatbot.
 - Trainingskorpora, eigene Testdaten und Modell-Checkpoints sind absichtlich nicht im Repository.
 
-## Englische Aliase: Lücken (Stand 15.11.2026)
+## Englische Namen und Lücken (Stand 15.11.2026)
 
-Für `README.en.md` wurden alle Schnipsel auf englische Schlüsselwörter (`spec/tokens.yaml`) und die englischen Aliase der Builtins (in `compiler/src/codegen.rs` als "deutsch" | "englisch" hinterlegt) umgestellt. Dabei fehlen für diese Namen englische Aliase; sie stehen deshalb in der englischen README noch auf Deutsch:
+`README.en.md` nutzt englische Schlüsselwörter (`spec/tokens.yaml`), die englischen Aliase der Builtins (in `compiler/src/codegen.rs` als "deutsch" | "englisch" hinterlegt) und seit P1-T506 englische Namen für die stdlib-Module `ui`, `ui_test`, `websocket` und `dns`.
 
-- **stdlib in moo (keine Aliase möglich):** `ui_baue`, `setup_login_form`, `setup_status_bar`, `ui_widget_id_setze`, `ui_test_snapshot_mit_sidecar`, `ws_verbinde`, die Methoden `sende_text` und `empfange` des WebSocket-Objekts. Die Dict-Schlüssel `hFenster`, `daten`, `antworten` und `pfad` sind deutsch; die Variable `TYP_A` ist stdlib-seitig definiert.
-- **Builtins ohne englischen Alias in `codegen.rs`:** `web_json`, `gpu_statistik`, `kern_idt_init`, `kern_pic_remap`, `kern_timer_init`, `kern_alloc` (nur Alias `kern_reserviere`), außerdem `interrupts_an` (nur das Mnemonic `sti`). Der Präfix `kern_` ist deutsch; `mse` und `test_frame_save_bmp` sind bereits englisch.
-- **Bare-Metal-Modul `beispiele/uefi/netz_treiber.moos`:** `nt_anzahl`, `nt_log` u. a.
-- **Im dynamischen Code heißt die Länge `len`,** nicht `length` (`length` hat sich nur in nativen Funktionen bewährt; im dynamischen Code meldete `pruefe` „Funktion 'length' nicht gefunden“).
+### Erledigt (P1-T506)
 
-Geprüft am 15.11.2026 mit `moo-compiler pruefe` bzw. `run` (Repo-Root als Arbeitsverzeichnis, wegen `stdlib/`): KI-Training, Voxel, UI (Login und Snapshot), DNS, WebSocket, Postgres-Hilfsfunktion `int32_be`, Webserver, Kamera, Kernel (`--no-stdlib --target x86_64-bare`) bestehen die Prüfung ohne Fehler. Ausgeführt wurden zusätzlich `@native`-Quadratsumme (332833500), `int32_be(258)` (`[0, 0, 1, 2]`), die `check`-Funktion und die englische Fassung des `qsort`-Rückrufs mit der erwarteten Ausgabe (0, -2147483648, -3, -3, 5, 2147483647). Der UEFI-Schnipsel (`from "./netz_treiber" import …`) wurde nicht einzeln geprüft, weil er das Modul im selben Ordner braucht. Die geprüften Programme sind auf Vollständigkeit der Hilfsfunktionen (`check`, `build_packet`, `x`, `target`) ergänzt; die README zeigt Auszüge daraus.
+- **Weiterleitungen** in denselben Modulen (es gibt keinen Alias-Mechanismus im Modulsystem): `ui_build`, `ui_debug_build`, `ui_widget_set_id`, `ui_test_snapshot_with_sidecar`, `ui_test_snapshot_series`, `ui_test_click_id`, `ui_test_set_text_id`, `ui_test_action`, `ui_test_sequence`, `ws_connect`, `ws_connect_with_headers`, `dns_resolver`, `dns_resolve`, `dns_type_name`. WebSocket-Methoden: `send_text`, `send_bytes`, `receive`, `close`; DNS-Methode: `resolve`.
+- **Zusätzliche englische Dict-Schlüssel:** UI-Container `hWindow`, `width`, `height`; WebSocket-Ereignisse `type`, `data`, `reason`; DNS-Antworten `answers`, je Eintrag `type` und `class`. Die deutschen Namen und Schlüssel bleiben unverändert.
+- **Namensregel (Review a458937c):** Alle neuen Top-Level-Namen tragen den Modulpräfix (`dns_`, `ws_`, `ui_`). `importiere` inlint alle Moduldefinitionen, und bei gleichem Namen gewinnt die erste Funktion; ein generisches `type_name` hatte deshalb eine gleichnamige Benutzerfunktion still überschrieben. `skripte/stdlib_en/collision.moos` sichert das ab. Gegen alle Funktionen im Index (inklusive `beispiele/`, `compiler/tests`, `skripte/`) wurde geprüft: Keine weitere Funktion trägt einen der neuen Namen.
+- `setup_login_form` und `setup_status_bar` waren schon englisch.
+
+### Noch offen
+
+- **Builtins ohne englischen Alias in `codegen.rs`:** `web_json`, `gpu_statistik`, `kern_idt_init`, `kern_pic_remap`, `kern_timer_init`, `kern_alloc` (nur Alias `kern_reserviere`), `interrupts_an` (nur das Mnemonic `sti`). Der Präfix `kern_` ist deutsch; `mse` und `test_frame_save_bmp` sind bereits englisch. Das ist eine Compiler-Änderung und nicht Teil von P1-T506.
+- **Weitere stdlib-Module:** `ui_komponenten`, `ui_layout`, `ui_aktionen`, `ui_bind`, `ui_liste`, `ui_leinwand`, `ui_introspect`; die Ergebnis-Dicts von `ui_test_aktion`; die DNS-Konstanten (`TYP_A` usw.).
+- **Runtime und Treiber:** der Dict-Schlüssel `pfad` der Webanfrage (`web_accept`) und das Bare-Metal-Modul `beispiele/uefi/netz_treiber.moos` (`nt_anzahl`, `nt_log` u. a.).
+- **Länge:** Im dynamischen Code heißt sie `len`, nicht `length`; `length` hat sich nur in nativen Funktionen bewährt (im dynamischen Code meldete `pruefe` „Funktion 'length' nicht gefunden“).
+
+### Geprüft am 15.11.2026
+
+- **`moo-compiler pruefe` (Repo-Root als Arbeitsverzeichnis, wegen `stdlib/`):** KI-Training, Voxel, Webserver, Kamera, Kernel (`--no-stdlib --target x86_64-bare`) und die vier stdlib-Schnipsel der README (UI-Login, UI-Snapshot, DNS, WebSocket) bestehen ohne Fehler.
+- **Ausgeführt:** `@native`-Quadratsumme (332833500), `int32_be(258)` (`[0, 0, 1, 2]`), die `check`-Funktion, das DNS-Schnipsel (`PASS A value`) und die englische Fassung des `qsort`-Rückrufs mit der erwarteten Ausgabe (0, -2147483648, -3, -3, 5, 2147483647). Fixtures: `bash skripte/stdlib_en/test.sh` (7 von 7) und `bash skripte/stdlib_en/websocket_e2e.sh` (PASS).
+- **Nicht geprüft:** der UEFI-Schnipsel (`from "./netz_treiber" import …`), weil er das Modul im selben Ordner braucht; die UI-Schnipsel wurden nur mit `pruefe` geprüft, nicht mit einem Fenster ausgeführt (das Review hat die englische UI mit Xvfb separat belegt, Job 6a2cdc5f). Die geprüften Programme sind um Hilfsfunktionen (`check`, `build_packet`, `x`, `target`) ergänzt; die README zeigt Auszüge daraus.
 
 ## Root-Inhalt
 

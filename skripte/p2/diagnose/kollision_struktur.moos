@@ -1,0 +1,4 @@
+importiere "./kollision_modul_s"
+funktion Stern():
+    gib_zurück 1
+zeige Stern()

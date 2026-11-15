@@ -1,0 +1,9 @@
+[tasks.test]
+description = "P1-T506: englische stdlib-Namen (dns, websocket, ui, ui_test) gegen die deutschen Namen"
+dir = "{{config_root}}/../.."
+run = "bash skripte/stdlib_en/test.sh"
+
+[tasks.websocket-e2e]
+description = "P1-T506: WebSocket-Client mit englischen Methoden gegen den moo-Testserver (IPv4)"
+dir = "{{config_root}}/../.."
+run = "bash skripte/stdlib_en/websocket_e2e.sh"

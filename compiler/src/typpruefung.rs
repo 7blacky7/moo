@@ -13,6 +13,9 @@
 //! - Ein Variablenzugriff zaehlt nur, wenn eine Zuweisung ihn dominiert
 //!   (sequenziell im selben Block oder aussen davor; Zweige und Schleifen
 //!   geben nichts nach aussen weiter, nur `unsicher:` laeuft immer).
+//!   Das gilt auch fuer die Namen, aus denen ein zugewiesener Wert
+//!   abgeleitet wird: sie muessen an DIESER Zuweisung dominiert sein
+//!   (keine Vorwaertsreferenz, Review 255aca1c).
 //! - Neuzuweisung wird nur gegen eine dominierende, im Bereich eindeutige
 //!   Annotation geprueft (nicht bei global mutierbaren Namen).
 //! - `nichts` statt eines Werts ist ein Hinweis (optionaler Wert).
@@ -20,9 +23,19 @@
 //!
 //! Meldungen: M-T001 Zuweisung/Konstante/Neuzuweisung/Standardwert,
 //! M-T002 Argumenttyp, M-T003 Rueckgabe, M-T004 Argumentzahl (Hinweis: der
-//! Codegen fuellt fehlende mit nichts, verwirft ueberzaehlige). Geprueft
+//! Codegen fuellt fehlende mit nichts, verwirft ueberzaehlige), M-T005
+//! Element-/Feldtyp (S3: Liste[T]/Dict[K, V] bei Literal, Neuzuweisung,
+//! Index-Zuweisung und hinzufügen/append; Felder eigener Datenklassen bei
+//! neu D(...) und d.feld = wert; gelesene Elemente bleiben unbekannt). Geprueft
 //! werden nur eigene Funktionen/Methoden der Datei; Builtins, Importe,
 //! @nativ/extern bleiben still. Der Pass aendert den AST nicht.
+//!
+//! S4: M-H006 (Hinweis) fuer sicher unsinnige Operatoren zwischen Zahl und
+//! Text, so wie die Laufzeit sie ausfuehrt (Text zaehlt in Rechnungen als 0,
+//! == zwischen verschiedenen Typen ist nie wahr). M-H001 (Methode passt nicht
+//! zum Typ) kommt mit `--typpruefung` aus diesem Pass statt aus dem Codegen.
+//! `--typ-streng` schaltet den Pass ein und macht SEINE Hinweise zu Fehlern;
+//! Hinweise anderer Phasen (Lexer, Codegen) bleiben Hinweise.
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -74,6 +87,13 @@ fn ist_nativ(decorators: &[Decorator]) -> bool {
     decorators.iter().any(|d| d.name == "nativ" || d.name == "native")
 }
 
+/// S3: Elementtypen einer generischen Annotation (Liste[T], Dict[K, V]).
+#[derive(Debug, Clone, PartialEq)]
+enum Elem {
+    Liste(Ty),
+    Dict(Ty, Ty),
+}
+
 /// Signatur einer eigenen Funktion/Methode (S2).
 #[derive(Debug, Clone)]
 struct Signatur {
@@ -86,6 +106,8 @@ struct Signatur {
 thread_local! {
     static AKTIV: Cell<bool> = const { Cell::new(false) };
     static FEHLER: Cell<usize> = const { Cell::new(0) };
+    /// S4: `--typ-streng` (Hinweise dieses Passes werden Fehler).
+    static STRENG: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Schaltet den Pass fuer das laufende Kommando ein (compile/pruefe mit
@@ -94,12 +116,28 @@ pub fn aktivieren() {
     AKTIV.with(|a| a.set(true));
 }
 
+/// S4: `--typ-streng`: Hinweise DIESES Passes werden Fehler (nicht die des
+/// Lexers oder des Codegens).
+pub fn streng_aktivieren() {
+    STRENG.with(|s| s.set(true));
+}
+
+/// Laeuft der Pass? Dann meldet der Codegen M-H001 nicht selbst.
+pub fn aktiv() -> bool {
+    AKTIV.with(|a| a.get())
+}
+
 /// Prueft eine Quelldatei, falls der Pass aktiv ist, und meldet die Befunde.
 pub fn pruefe_datei(program: &Program, datei: &str) {
     if !AKTIV.with(|a| a.get()) {
         return;
     }
-    for d in pruefe(program, datei) {
+    let streng = STRENG.with(|s| s.get());
+    for mut d in pruefe(program, datei) {
+        if streng && d.schwere == Schwere::Hinweis {
+            d.schwere = Schwere::Fehler;
+            d.meldung.push_str(" (--typ-streng)");
+        }
         if d.schwere == Schwere::Fehler {
             FEHLER.with(|f| f.set(f.get() + 1));
         }
@@ -123,6 +161,7 @@ pub fn pruefe(program: &Program, datei: &str) -> Vec<Diagnose> {
         fremd: HashSet::new(),
         funktionen: HashMap::new(),
         methoden: HashMap::new(),
+        datenklassen: HashMap::new(),
         lokal: Vec::new(),
         befunde: Vec::new(),
     };
@@ -148,6 +187,8 @@ struct Pruefer<'d> {
     funktionen: HashMap<String, Option<Signatur>>,
     /// (Klasse, Methode) -> Signatur; None = mehrfach definiert oder @nativ.
     methoden: HashMap<(String, String), Option<Signatur>>,
+    /// S3: eigene Datenklassen -> (Feld, Typ); None = mehrdeutig.
+    datenklassen: HashMap<String, Option<Vec<(String, Ty)>>>,
     /// Lokale Namen der umschliessenden Bereiche (verschatten Funktionen).
     lokal: Vec<HashSet<String>>,
     befunde: Vec<Diagnose>,
@@ -156,10 +197,14 @@ struct Pruefer<'d> {
 /// Variablen eines Bereichs (Hauptprogramm, Funktion, Klassenkoerper, Test).
 #[derive(Default)]
 struct Bereich<'a> {
-    /// Alle zugewiesenen Werte je Name (auch die annotierter Zuweisungen).
-    werte: HashMap<String, Vec<&'a Expr>>,
+    /// Alle zugewiesenen Werte je Name (auch die annotierter Zuweisungen),
+    /// je mit den gelesenen Namen, die an dieser Zuweisung schon dominiert
+    /// zugewiesen sind (Review 255aca1c).
+    werte: HashMap<String, Vec<(&'a Expr, HashSet<String>)>>,
     /// Alle Annotationen je Name (inkl. Parameter).
     annotiert: HashMap<String, Vec<Ty>>,
+    /// S3: Elementannotation je Annotation (None = nicht generisch).
+    element_annotiert: HashMap<String, Vec<Option<Elem>>>,
     /// Namen ohne sicheren Wert: Parameter, global, Schleife, Fang, +=, Muster.
     unsicher: HashSet<String>,
     /// Von aussen mutierbar (`global`): keine Deklarationspruefung.
@@ -171,6 +216,11 @@ struct Bereich<'a> {
 struct Fluss {
     zugewiesen: HashSet<String>,
     deklariert: HashMap<String, Ty>,
+    /// S3: dominierende, eindeutige Elementannotation.
+    elemente: HashMap<String, Elem>,
+    /// S3 (Review fc83a96d): Namen, deren aktueller Wert sicher die
+    /// deklarierte Liste bzw. das Dict ist (nur dann Index/hinzufügen pruefen).
+    empfaenger: HashSet<String>,
 }
 
 /// Sicht fuer die Ableitung: Bereichstypen, optional nur dominiert
@@ -228,6 +278,18 @@ impl<'d> Pruefer<'d> {
                     let sig = if anzahl.get(name).copied().unwrap_or(0) == 1 { self.signatur(stmt) } else { None };
                     self.funktionen.insert(name.clone(), sig);
                 }
+                Stmt::DataClassDef { name, fields, field_types, .. } => {
+                    let felder: Vec<(String, Ty)> = fields.iter().enumerate()
+                        .map(|(i, feld)| {
+                            let typ = field_types.get(i).and_then(|t| t.as_ref())
+                                .map(|t| self.aus_annotation(t))
+                                .unwrap_or(Ty::Unbekannt);
+                            (feld.clone(), typ)
+                        })
+                        .collect();
+                    let eintrag = (!self.datenklassen.contains_key(name)).then_some(felder);
+                    self.datenklassen.insert(name.clone(), eintrag);
+                }
                 Stmt::ExternC { name, .. } => {
                     self.funktionen.insert(name.clone(), None);
                 }
@@ -241,6 +303,18 @@ impl<'d> Pruefer<'d> {
                     }
                 }
                 _ => {}
+            }
+        }
+        // Eine gleichnamige normale Klasse macht die Datenklasse mehrdeutig.
+        for stmt in stmts {
+            let stmt = match stmt {
+                Stmt::Export(inner, _) => inner.as_ref(),
+                other => other,
+            };
+            if let Stmt::ClassDef { name, .. } = stmt {
+                if let Some(eintrag) = self.datenklassen.get_mut(name) {
+                    *eintrag = None;
+                }
             }
         }
     }
@@ -315,6 +389,25 @@ impl<'d> Pruefer<'d> {
             "bool" | "boolean" | "wahrheitswert" => Ty::Bool,
             "nichts" | "none" => Ty::Nichts,
             _ => Ty::Unbekannt,
+        }
+    }
+
+    /// S3: Elementtypen einer Annotation Liste[T] bzw. Dict[K, V]; None bei
+    /// anderen Annotationen, eigenen/fremden Namen oder lauter Unbekannt.
+    fn aus_element_annotation(&self, ty: &TypeRef) -> Option<Elem> {
+        let TypeKind::Generic { name, args } = &ty.kind else { return None };
+        if self.klassen.contains_key(name) || self.fremd.contains(name) {
+            return None;
+        }
+        let klein = name.to_lowercase();
+        let elem = match (klein.as_str(), args.as_slice()) {
+            ("liste" | "list", [t]) => Elem::Liste(self.aus_annotation(t)),
+            ("dict" | "wörterbuch" | "woerterbuch", [k, v]) => Elem::Dict(self.aus_annotation(k), self.aus_annotation(v)),
+            _ => return None,
+        };
+        match elem {
+            Elem::Liste(Ty::Unbekannt) | Elem::Dict(Ty::Unbekannt, Ty::Unbekannt) => None,
+            elem => Some(elem),
         }
     }
 
@@ -393,49 +486,62 @@ impl<'d> Pruefer<'d> {
 
     /// Variablen eines Bereichs einsammeln (ohne verschachtelte Funktionen,
     /// Klassen und Tests: die haben eigene Bereiche).
-    fn sammeln<'a>(&self, stmts: &'a [Stmt], b: &mut Bereich<'a>) {
+    fn sammeln<'a>(&self, stmts: &'a [Stmt], b: &mut Bereich<'a>, dom: &mut HashSet<String>) {
         for stmt in stmts {
             match stmt {
                 Stmt::Assignment { name, ty, value, .. } | Stmt::ConstAssignment { name, ty, value, .. } => {
                     if let Some(ty) = ty {
                         let typ = self.aus_annotation(ty);
                         b.annotiert.entry(name.clone()).or_default().push(typ);
+                        b.element_annotiert.entry(name.clone()).or_default().push(self.aus_element_annotation(ty));
                     }
-                    b.werte.entry(name.clone()).or_default().push(value);
+                    let mut gelesen = HashSet::new();
+                    gelesene_namen(value, &mut gelesen);
+                    gelesen.retain(|n| dom.contains(n));
+                    b.werte.entry(name.clone()).or_default().push((value, gelesen));
+                    dom.insert(name.clone());
                 }
                 Stmt::CompoundAssignment { name, .. } => {
                     b.unsicher.insert(name.clone());
                 }
                 Stmt::For { var_name, body, .. } | Stmt::ParallelFor { var_name, body, .. } => {
                     b.unsicher.insert(var_name.clone());
-                    self.sammeln(body, b);
+                    let mut innen = dom.clone();
+                    innen.insert(var_name.clone());
+                    self.sammeln(body, b, &mut innen);
                 }
                 Stmt::TryCatch { try_body, catch_var, catch_body, .. } => {
                     if let Some(var) = catch_var {
                         b.unsicher.insert(var.clone());
                     }
-                    self.sammeln(try_body, b);
-                    self.sammeln(catch_body, b);
+                    self.sammeln(try_body, b, &mut dom.clone());
+                    let mut innen = dom.clone();
+                    if let Some(var) = catch_var {
+                        innen.insert(var.clone());
+                    }
+                    self.sammeln(catch_body, b, &mut innen);
                 }
                 Stmt::Global(namen, _) => {
                     b.unsicher.extend(namen.iter().cloned());
                     b.global.extend(namen.iter().cloned());
                 }
                 Stmt::If { body, else_body, .. } => {
-                    self.sammeln(body, b);
-                    self.sammeln(else_body, b);
+                    self.sammeln(body, b, &mut dom.clone());
+                    self.sammeln(else_body, b, &mut dom.clone());
                 }
-                Stmt::While { body, .. } | Stmt::UnsafeBlock { body, .. } => self.sammeln(body, b),
-                Stmt::Guard { else_body, .. } => self.sammeln(else_body, b),
+                Stmt::While { body, .. } => self.sammeln(body, b, &mut dom.clone()),
+                // `unsicher:` laeuft immer: sein Fluss gilt danach weiter.
+                Stmt::UnsafeBlock { body, .. } => self.sammeln(body, b, dom),
+                Stmt::Guard { else_body, .. } => self.sammeln(else_body, b, &mut dom.clone()),
                 Stmt::Match { cases, .. } => {
                     for (muster, _, body) in cases {
                         if let Some(muster) = muster {
                             namen_in(muster, &mut b.unsicher);
                         }
-                        self.sammeln(body, b);
+                        self.sammeln(body, b, &mut dom.clone());
                     }
                 }
-                Stmt::Export(inner, _) => self.sammeln(std::slice::from_ref(inner.as_ref()), b),
+                Stmt::Export(inner, _) => self.sammeln(std::slice::from_ref(inner.as_ref()), b, dom),
                 _ => {}
             }
         }
@@ -452,8 +558,12 @@ impl<'d> Pruefer<'d> {
             let mut geaendert = false;
             for name in &kandidaten {
                 let typ = {
-                    let s = Sicht { env: &env, nur: None };
-                    b.werte[*name].iter().map(|wert| self.ableiten(wert, &s)).reduce(vereinen).unwrap_or(Ty::Unbekannt)
+                    // Jeder Wert nur mit den Namen, die an seiner Zuweisung
+                    // schon dominiert zugewiesen sind (Review 255aca1c).
+                    b.werte[*name].iter()
+                        .map(|(wert, dom)| self.ableiten(wert, &Sicht { env: &env, nur: Some(dom) }))
+                        .reduce(vereinen)
+                        .unwrap_or(Ty::Unbekannt)
                 };
                 if env.get(*name) != Some(&typ) {
                     env.insert((*name).clone(), typ);
@@ -474,20 +584,34 @@ impl<'d> Pruefer<'d> {
         annotationen.iter().all(|t| t == erster).then(|| erster.clone())
     }
 
-    fn bereich_pruefen(&mut self, stmts: &[Stmt], parameter: Vec<(String, Option<Ty>)>, globale: HashSet<String>, k: &Kontext) {
+    /// S3: eindeutige Elementannotation eines Namens (alle Annotationen
+    /// generisch und gleich).
+    fn element_einheitlich(b: &Bereich, name: &str) -> Option<Elem> {
+        let annotationen = b.element_annotiert.get(name)?;
+        let erster = annotationen.first()?.as_ref()?;
+        annotationen.iter().all(|t| t.as_ref() == Some(erster)).then(|| erster.clone())
+    }
+
+    fn bereich_pruefen(&mut self, stmts: &[Stmt], parameter: Vec<(String, Option<Ty>, Option<Elem>)>, globale: HashSet<String>, k: &Kontext) {
         let mut b = Bereich::default();
         b.unsicher.extend(globale.iter().cloned());
         b.global = globale;
         let mut fluss = Fluss::default();
-        for (name, typ) in parameter {
+        for (name, typ, elem) in parameter {
             b.unsicher.insert(name.clone());
             fluss.zugewiesen.insert(name.clone());
             if let Some(typ) = typ {
+                b.element_annotiert.entry(name.clone()).or_default().push(elem.clone());
+                if let Some(elem) = elem {
+                    fluss.elemente.insert(name.clone(), elem);
+                    fluss.empfaenger.insert(name.clone());
+                }
                 b.annotiert.entry(name.clone()).or_default().push(typ.clone());
                 fluss.deklariert.insert(name, typ);
             }
         }
-        self.sammeln(stmts, &mut b);
+        let mut dom = fluss.zugewiesen.clone();
+        self.sammeln(stmts, &mut b, &mut dom);
         let lokal: HashSet<String> = b.werte.keys().chain(b.annotiert.keys()).chain(b.unsicher.iter())
             .cloned()
             .collect();
@@ -507,13 +631,36 @@ impl<'d> Pruefer<'d> {
             match stmt {
                 Stmt::Assignment { zeile, name, ty, value }
                 | Stmt::ConstAssignment { zeile, name, ty, value } => {
+                    let wert_ty = self.ableiten(value, &Sicht { env, nur: Some(&fluss.zugewiesen) });
                     self.zuweisung_pruefen(*zeile, name, ty.as_ref(), value, b, env, &fluss, k);
                     fluss.zugewiesen.insert(name.clone());
                     if ty.is_some() && !b.global.contains(name) {
                         if let Some(typ) = Self::einheitlich(b, name) {
                             fluss.deklariert.insert(name.clone(), typ);
                         }
+                        if let Some(elem) = Self::element_einheitlich(b, name) {
+                            fluss.elemente.insert(name.clone(), elem);
+                        }
                     }
+                    // Review fc83a96d: Empfaenger nur, solange der aktuelle Wert
+                    // sicher die deklarierte Liste bzw. das Dict ist.
+                    match (fluss.elemente.get(name), &wert_ty) {
+                        (Some(Elem::Liste(_)), Ty::Liste) | (Some(Elem::Dict(..)), Ty::Dict) => {
+                            fluss.empfaenger.insert(name.clone());
+                        }
+                        _ => {
+                            fluss.empfaenger.remove(name);
+                        }
+                    }
+                }
+                Stmt::IndexAssignment { zeile, object, index, value } => {
+                    self.index_zuweisung_pruefen(*zeile, object, index, value, b, env, &fluss, k);
+                }
+                Stmt::PropertyAssignment { zeile, object, property, value } => {
+                    self.feld_zuweisung_pruefen(*zeile, object, property, value, env, &fluss, k);
+                }
+                Stmt::Expression(Expr::MethodCall { object, method, args }, zeile) => {
+                    self.anhaengen_pruefen(*zeile, object, method, args, b, env, &fluss, k);
                 }
                 Stmt::Return(wert, zeile) => {
                     if let Some(erwartet) = &k.rueckgabe {
@@ -540,21 +687,28 @@ impl<'d> Pruefer<'d> {
                     self.block_pruefen(body, b, env, k, &fluss);
                     self.block_pruefen(else_body, b, env, k, &fluss);
                 }
+                // Review 0fc5ac15: ab der zweiten Runde gilt, was der Rumpf
+                // selbst neu bindet (Schleifenrueckfluss).
                 Stmt::While { body, .. } => {
-                    self.block_pruefen(body, b, env, k, &fluss);
+                    let innen = Self::ohne_empfaenger(&fluss, body, &[]);
+                    self.block_pruefen(body, b, env, k, &innen);
                 }
                 // `unsicher:` laeuft immer: sein Fluss gilt danach weiter.
                 Stmt::UnsafeBlock { body, .. } => {
                     fluss = self.block_pruefen(body, b, env, k, &fluss);
                 }
                 Stmt::For { var_name, body, .. } | Stmt::ParallelFor { var_name, body, .. } => {
-                    let mut innen = fluss.clone();
+                    // Der Binder bindet bei jedem Eintritt neu, dazu der Rueckfluss.
+                    let mut innen = Self::ohne_empfaenger(&fluss, body, &[var_name]);
                     innen.zugewiesen.insert(var_name.clone());
                     self.block_pruefen(body, b, env, k, &innen);
                 }
                 Stmt::TryCatch { try_body, catch_var, catch_body, .. } => {
                     self.block_pruefen(try_body, b, env, k, &fluss);
-                    let mut innen = fluss.clone();
+                    // Der Fang bindet seine Variable und kann nach jedem Teil
+                    // von try_body beginnen.
+                    let binder: Vec<&String> = catch_var.iter().collect();
+                    let mut innen = Self::ohne_empfaenger(&fluss, try_body, &binder);
                     if let Some(var) = catch_var {
                         innen.zugewiesen.insert(var.clone());
                     }
@@ -582,14 +736,38 @@ impl<'d> Pruefer<'d> {
                 }
                 _ => {}
             }
+            // Review fc83a96d/0fc5ac15: was jedes andere Statement neu bindet
+            // (Zweig, Schleife, try, Guard, match, +=, Definition, Import), ist
+            // danach als Empfaenger unsicher. Zuweisung, `unsicher:` und export
+            // fuehren ihren Fluss selbst. Muster binden nichts (`fall xs:`
+            // vergleicht); zuweisungen_in nimmt ihre Namen trotzdem mit.
+            if !matches!(stmt, Stmt::Assignment { .. } | Stmt::ConstAssignment { .. }
+                | Stmt::UnsafeBlock { .. } | Stmt::Export(..)) {
+                let mut namen = HashSet::new();
+                zuweisungen_in(std::slice::from_ref(stmt), &mut namen);
+                fluss.empfaenger.retain(|n| !namen.contains(n));
+            }
         }
         fluss
+    }
+
+    /// Review 0fc5ac15: Fluss beim Eintritt in einen Rumpf ohne die
+    /// Empfaenger-Fakten der Namen, die der Binder (Schleifenvariable,
+    /// Fangvariable) oder `stmts` (Schleifenrueckfluss, abgebrochenes try)
+    /// neu binden koennen.
+    fn ohne_empfaenger(fluss: &Fluss, stmts: &[Stmt], binder: &[&String]) -> Fluss {
+        let mut namen: HashSet<String> = binder.iter().map(|n| (*n).clone()).collect();
+        zuweisungen_in(stmts, &mut namen);
+        let mut innen = fluss.clone();
+        innen.empfaenger.retain(|n| !namen.contains(n));
+        innen
     }
 
     #[allow(clippy::too_many_arguments)]
     fn zuweisung_pruefen(&mut self, zeile: usize, name: &str, ty: Option<&TypeRef>, wert: &Expr,
                          b: &Bereich, env: &HashMap<String, Ty>, fluss: &Fluss, k: &Kontext) {
-        let gefunden = self.ableiten(wert, &Sicht { env, nur: Some(&fluss.zugewiesen) });
+        let s = Sicht { env, nur: Some(&fluss.zugewiesen) };
+        let gefunden = self.ableiten(wert, &s);
         match ty {
             Some(annotation) => {
                 let erwartet = self.aus_annotation(annotation);
@@ -602,6 +780,9 @@ impl<'d> Pruefer<'d> {
                         .gefunden(gefunden.name())
                         .vorschlag(format!("Wert anpassen oder die Annotation auf {} ändern", gefunden.name()));
                     self.melden(d, k);
+                }
+                if let Some(elem) = self.aus_element_annotation(annotation) {
+                    self.literal_elemente_pruefen(&elem, wert, name, &s, zeile, k);
                 }
             }
             None => {
@@ -624,6 +805,11 @@ impl<'d> Pruefer<'d> {
                             "Wert anpassen oder für den {}-Wert eine eigene Variable verwenden",
                             gefunden.name()));
                     self.melden(d, k);
+                }
+                if let Some(elem) = fluss.elemente.get(name).cloned() {
+                    if Self::element_einheitlich(b, name).as_ref() == Some(&elem) {
+                        self.literal_elemente_pruefen(&elem, wert, name, &s, zeile, k);
+                    }
                 }
             }
         }
@@ -678,11 +864,38 @@ impl<'d> Pruefer<'d> {
                 for arg in args {
                     self.ausdruck_pruefen(arg, s, zeile, k);
                 }
+                // S4: M-H001 kommt mit --typpruefung von hier (dominanzsicher),
+                // nicht aus dem Codegen.
+                if let Expr::Identifier(name) = object.as_ref() {
+                    let typ = self.ableiten(object, s);
+                    let t = typ.name();
+                    if typ.eingebaut() && methode_unpassend(t, method) {
+                        let d = Diagnose::hinweis("M-H001", format!(
+                            "'{name}' ist vom Typ {t}, aber '.{method}()' ist nicht fuer {t} definiert"))
+                            .ort(zeile, 0)
+                            .gefunden(t);
+                        self.melden(d, k);
+                    }
+                }
                 // `selbst.m()` kann ein Override einer Unterklasse treffen: still.
                 if let Ty::Objekt(klasse) = self.ableiten(object, s) {
                     if let Some(sig) = self.methode_sig(&klasse, method) {
                         self.aufruf_pruefen(&sig, &format!("{klasse}.{method}"), args, s, zeile, k);
                     }
+                }
+            }
+            // S3: neu D(...) gegen die Feldtypen einer eigenen Datenklasse.
+            Expr::New { class_name, args } => {
+                for arg in args {
+                    self.ausdruck_pruefen(arg, s, zeile, k);
+                }
+                if args.iter().any(|a| matches!(a, Expr::Spread(_))) {
+                    return;
+                }
+                let Some(Some(felder)) = self.datenklassen.get(class_name).cloned() else { return };
+                for (i, (arg, (feld, erwartet))) in args.iter().zip(felder.iter()).enumerate() {
+                    let gefunden = self.ableiten(arg, s);
+                    self.element_melden(erwartet, &gefunden, format!("Feld {} ('{feld}') von '{class_name}'", i + 1), zeile, k);
                 }
             }
             // Rechts einer Pipe bekommt der Aufruf ein implizites erstes Argument.
@@ -737,11 +950,61 @@ impl<'d> Pruefer<'d> {
                 });
             }
             _ => {
+                if let Expr::BinaryOp { left, op, right } = e {
+                    self.operator_pruefen(left, op, right, s, zeile, k);
+                }
                 for kind in kinder(e) {
                     self.ausdruck_pruefen(kind, s, zeile, k);
                 }
             }
         }
+    }
+
+    /// S4 (M-H006): sicher unsinnige Operatoren zwischen Zahl und Text, so wie
+    /// die Laufzeit sie ausfuehrt (moo_ops.c): Text zaehlt in Rechnungen als 0
+    /// (moo_as_number), == zwischen verschiedenen Typen ist nie wahr. Still
+    /// bleiben Text * Zahl (Wiederholung), + (Verkettung), Text gegen Text
+    /// verglichen, Bool, Listen und alles Unsichere.
+    fn operator_pruefen(&mut self, left: &Expr, op: &BinOp, right: &Expr, s: &Sicht, zeile: usize, k: &Kontext) {
+        use BinOp::*;
+        let (l, r) = (self.ableiten(left, s), self.ableiten(right, s));
+        let zahl_oder_text = |t: &Ty| matches!(t, Ty::Zahl | Ty::Text);
+        if !zahl_oder_text(&l) || !zahl_oder_text(&r) {
+            return;
+        }
+        let (lt, rt) = (l == Ty::Text, r == Ty::Text);
+        let was = format!("{} {} {}", l.name(), symbol(op), r.name());
+        let umwandeln = "Den Text vorher mit zahl(...) in eine Zahl umwandeln";
+        let angleichen = "Beide Seiten in denselben Typ bringen (zahl(...) oder text(...))";
+        let (meldung, vorschlag) = match op {
+            Div if rt => (format!(
+                "Division {was}: der Text als Divisor zählt als 0, die Division wirft „Division durch Null!“ und liefert nichts"),
+                umwandeln),
+            Mod if rt => (format!(
+                "Rest {was}: der Text als Divisor zählt als 0, das Ergebnis ist keine Zahl (NaN)"),
+                umwandeln),
+            Sub | Div | Mod | Pow if lt || rt => (format!(
+                "Rechnung {was}: Text zählt hier als 0, nicht als die Zahl darin; das Ergebnis ist unsinnig"),
+                umwandeln),
+            Mul if lt && rt => (format!(
+                "Rechnung {was}: beide Texte zählen hier als 0, das Ergebnis ist immer 0"),
+                umwandeln),
+            Eq if lt != rt => (format!(
+                "Vergleich {was} ist immer falsch: Werte verschiedener Typen sind nie gleich"),
+                angleichen),
+            NotEq if lt != rt => (format!(
+                "Vergleich {was} ist immer wahr: Werte verschiedener Typen sind nie gleich"),
+                angleichen),
+            Less | Greater | LessEq | GreaterEq if lt != rt => (format!(
+                "Größenvergleich {was}: der Text zählt als 0, verglichen wird nur die Zahl mit 0"),
+                umwandeln),
+            _ => return,
+        };
+        let d = Diagnose::hinweis("M-H006", meldung)
+            .ort(zeile, 0)
+            .gefunden(was)
+            .vorschlag(vorschlag);
+        self.melden(d, k);
     }
 
     /// Prueft `f` mit verschatteten Namen: sie verlieren ihren Typ und
@@ -800,6 +1063,110 @@ impl<'d> Pruefer<'d> {
         }
     }
 
+    /// S3 (M-T005): sichere Elemente eines Listen-/Dict-Literals gegen die
+    /// deklarierten Elementtypen. Spread und unsichere Elemente bleiben still.
+    fn literal_elemente_pruefen(&mut self, elem: &Elem, wert: &Expr, name: &str, s: &Sicht, zeile: usize, k: &Kontext) {
+        match (elem, wert) {
+            (Elem::Liste(t), Expr::List(teile)) => {
+                for (i, teil) in teile.iter().enumerate() {
+                    if matches!(teil, Expr::Spread(_)) {
+                        continue;
+                    }
+                    let gefunden = self.ableiten(teil, s);
+                    self.element_melden(t, &gefunden, format!("Element {} von '{name}'", i + 1), zeile, k);
+                }
+            }
+            (Elem::Dict(kt, vt), Expr::Dict(paare)) => {
+                for (schluessel, wert) in paare {
+                    let gk = self.ableiten(schluessel, s);
+                    self.element_melden(kt, &gk, format!("Schlüssel in '{name}'"), zeile, k);
+                    let gv = self.ableiten(wert, s);
+                    self.element_melden(vt, &gv, format!("Wert in '{name}'"), zeile, k);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn element_melden(&mut self, erwartet: &Ty, gefunden: &Ty, was: String, zeile: usize, k: &Kontext) {
+        if let Some(schwere) = self.urteil(erwartet, gefunden) {
+            let d = Diagnose::neu("M-T005", schwere, format!(
+                "{was} ist {}, erwartet {}", gefunden.name(), erwartet.name()))
+                .ort(zeile, 0)
+                .erwartet(erwartet.name())
+                .gefunden(gefunden.name())
+                .vorschlag(format!("Wert anpassen oder den deklarierten Typ auf {} ändern", gefunden.name()));
+            self.melden(d, k);
+        }
+    }
+
+    /// S3: deklarierte Elementtypen eines lokalen Namens, nur bei
+    /// dominierender, im Bereich eindeutiger Annotation (nicht global).
+    fn elemente_von(object: &Expr, b: &Bereich, fluss: &Fluss) -> Option<(String, Elem)> {
+        let Expr::Identifier(name) = object else { return None };
+        if b.global.contains(name) {
+            return None;
+        }
+        if !fluss.empfaenger.contains(name) {
+            return None;
+        }
+        let elem = fluss.elemente.get(name)?;
+        (Self::element_einheitlich(b, name).as_ref() == Some(elem)).then(|| (name.clone(), elem.clone()))
+    }
+
+    /// S3: `xs[i] = wert` (Liste: Element; Dict: Schluessel und Wert).
+    #[allow(clippy::too_many_arguments)]
+    fn index_zuweisung_pruefen(&mut self, zeile: usize, object: &Expr, index: &Expr, wert: &Expr,
+                               b: &Bereich, env: &HashMap<String, Ty>, fluss: &Fluss, k: &Kontext) {
+        let Some((name, elem)) = Self::elemente_von(object, b, fluss) else { return };
+        let s = Sicht { env, nur: Some(&fluss.zugewiesen) };
+        match &elem {
+            Elem::Liste(t) => {
+                let gefunden = self.ableiten(wert, &s);
+                self.element_melden(t, &gefunden, format!("Element von '{name}'"), zeile, k);
+            }
+            Elem::Dict(kt, vt) => {
+                let gk = self.ableiten(index, &s);
+                self.element_melden(kt, &gk, format!("Schlüssel von '{name}'"), zeile, k);
+                let gv = self.ableiten(wert, &s);
+                self.element_melden(vt, &gv, format!("Wert von '{name}'"), zeile, k);
+            }
+        }
+    }
+
+    /// S3: `xs.hinzufügen(wert)` / `xs.append(wert)` als Statement.
+    #[allow(clippy::too_many_arguments)]
+    fn anhaengen_pruefen(&mut self, zeile: usize, object: &Expr, method: &str, args: &[Expr],
+                         b: &Bereich, env: &HashMap<String, Ty>, fluss: &Fluss, k: &Kontext) {
+        if !matches!(method, "append" | "hinzufügen") || args.len() != 1 || matches!(args[0], Expr::Spread(_)) {
+            return;
+        }
+        let Some((name, Elem::Liste(t))) = Self::elemente_von(object, b, fluss) else { return };
+        let gefunden = self.ableiten(&args[0], &Sicht { env, nur: Some(&fluss.zugewiesen) });
+        self.element_melden(&t, &gefunden, format!("Neues Element von '{name}'"), zeile, k);
+    }
+
+    /// S3: Feldzuweisung an eine sichere Instanz einer eigenen Datenklasse
+    /// ohne Unterklasse. `selbst.x` und normale Klassen bleiben still.
+    #[allow(clippy::too_many_arguments)]
+    fn feld_zuweisung_pruefen(&mut self, zeile: usize, object: &Expr, feld: &str, wert: &Expr,
+                              env: &HashMap<String, Ty>, fluss: &Fluss, k: &Kontext) {
+        let s = Sicht { env, nur: Some(&fluss.zugewiesen) };
+        let Ty::Objekt(klasse) = self.ableiten(object, &s) else { return };
+        let Some(erwartet) = self.feldtyp(&klasse, feld) else { return };
+        let gefunden = self.ableiten(wert, &s);
+        self.element_melden(&erwartet, &gefunden, format!("Feld '{feld}' von '{klasse}'"), zeile, k);
+    }
+
+    /// Deklarierter Feldtyp einer eindeutigen Datenklasse ohne Unterklasse.
+    fn feldtyp(&self, klasse: &str, feld: &str) -> Option<Ty> {
+        if self.klassen.values().any(|eltern| eltern.as_deref() == Some(klasse)) {
+            return None;
+        }
+        let felder = self.datenklassen.get(klasse)?.as_ref()?;
+        felder.iter().find(|(name, _)| name == feld).map(|(_, t)| t.clone())
+    }
+
     fn funktion_pruefen(&mut self, stmt: &Stmt, klasse: Option<&str>) {
         let Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators, .. } = stmt else {
             return;
@@ -833,7 +1200,8 @@ impl<'d> Pruefer<'d> {
                     self.melden(d, &kontext);
                 }
             }
-            parameter.push((param.clone(), erwartet));
+            let elem = annotation.and_then(|t| self.aus_element_annotation(t));
+            parameter.push((param.clone(), erwartet, elem));
         }
         self.bereich_pruefen(body, parameter, HashSet::new(), &kontext);
     }
@@ -904,6 +1272,33 @@ fn funktionsnamen_zaehlen(stmts: &[Stmt], anzahl: &mut HashMap<String, usize>) {
             Stmt::Export(inner, _) => funktionsnamen_zaehlen(std::slice::from_ref(inner.as_ref()), anzahl),
             _ => {}
         }
+    }
+}
+
+/// M-H001: Methode, die es fuer den eingebauten Typ nicht gibt. Eine Tabelle
+/// fuer beide Wege (Codegen ohne, dieser Pass mit --typpruefung).
+pub fn methode_unpassend(typ: &str, method: &str) -> bool {
+    const LISTE: &[&str] = &["append", "hinzufügen", "pop", "sort", "sortieren", "reverse", "umkehren", "join", "leeren", "entfernen", "einfügen"];
+    const TEXT: &[&str] = &["upper", "gross", "lower", "klein", "trim", "trimmen", "split", "teilen", "replace", "ersetzen"];
+    const DICT: &[&str] = &["keys", "schlüssel", "has", "hat"];
+    let (liste, text, dict) = (LISTE.contains(&method), TEXT.contains(&method), DICT.contains(&method));
+    match typ {
+        "Zahl" | "Bool" => liste || text || dict,
+        "Text" => liste || dict,
+        "Liste" => text || dict,
+        "Dict" => liste || text,
+        _ => false,
+    }
+}
+
+/// Quelltextzeichen eines Operators (fuer Meldungen).
+fn symbol(op: &BinOp) -> &'static str {
+    use BinOp::*;
+    match op {
+        Add => "+", Sub => "-", Mul => "*", Div => "/", Mod => "%", Pow => "**",
+        Eq => "==", NotEq => "!=", Less => "<", Greater => ">", LessEq => "<=", GreaterEq => ">=",
+        And => "und", Or => "oder",
+        BitAnd => "&", BitOr => "|", BitXor => "^", LShift => "<<", RShift => ">>",
     }
 }
 
@@ -980,5 +1375,76 @@ fn globale_sammeln(stmts: &[Stmt], out: &mut HashSet<String>) {
             Stmt::Export(inner, _) => globale_sammeln(std::slice::from_ref(inner.as_ref()), out),
             _ => {}
         }
+    }
+}
+
+/// Namen, die Statements (auch in Unterbloecken, nicht in eigenen
+/// Bereichen) neu binden (Review fc83a96d).
+fn zuweisungen_in(stmts: &[Stmt], out: &mut HashSet<String>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Assignment { name, .. } | Stmt::ConstAssignment { name, .. } | Stmt::CompoundAssignment { name, .. } => {
+                out.insert(name.clone());
+            }
+            Stmt::For { var_name, body, .. } | Stmt::ParallelFor { var_name, body, .. } => {
+                out.insert(var_name.clone());
+                zuweisungen_in(body, out);
+            }
+            Stmt::TryCatch { try_body, catch_var, catch_body, .. } => {
+                if let Some(var) = catch_var {
+                    out.insert(var.clone());
+                }
+                zuweisungen_in(try_body, out);
+                zuweisungen_in(catch_body, out);
+            }
+            Stmt::If { body, else_body, .. } => {
+                zuweisungen_in(body, out);
+                zuweisungen_in(else_body, out);
+            }
+            Stmt::While { body, .. } | Stmt::UnsafeBlock { body, .. } => zuweisungen_in(body, out),
+            Stmt::Guard { else_body, .. } => zuweisungen_in(else_body, out),
+            Stmt::Match { cases, .. } => {
+                for (muster, _, body) in cases {
+                    if let Some(muster) = muster {
+                        namen_in(muster, out);
+                    }
+                    zuweisungen_in(body, out);
+                }
+            }
+            // Review 0fc5ac15: Definitionen, Importe und global binden den
+            // Namen ebenfalls neu.
+            Stmt::FunctionDef { name, .. } | Stmt::ExternC { name, .. } | Stmt::ClassDef { name, .. }
+            | Stmt::DataClassDef { name, .. } | Stmt::StructDef { name, .. } | Stmt::InterfaceDef { name, .. }
+            | Stmt::RawDataU32 { name, .. } | Stmt::NativeConst { name, .. } => {
+                out.insert(name.clone());
+            }
+            Stmt::Import { names, alias, .. } => {
+                out.extend(names.iter().cloned());
+                out.extend(alias.iter().cloned());
+            }
+            Stmt::Global(namen, _) => out.extend(namen.iter().cloned()),
+            Stmt::Export(inner, _) => zuweisungen_in(std::slice::from_ref(inner.as_ref()), out),
+            _ => {}
+        }
+    }
+}
+
+/// Namen, die `ableiten` in einem Ausdruck liest (Bezeichner ueber
+/// Operatoren und Ternaer): Grundlage der Dominanzpruefung je Zuweisung.
+fn gelesene_namen(expr: &Expr, out: &mut HashSet<String>) {
+    match expr {
+        Expr::Identifier(name) => {
+            out.insert(name.clone());
+        }
+        Expr::BinaryOp { left, right, .. } => {
+            gelesene_namen(left, out);
+            gelesene_namen(right, out);
+        }
+        Expr::UnaryOp { operand, .. } => gelesene_namen(operand, out),
+        Expr::Ternary { then_val, else_val, .. } => {
+            gelesene_namen(then_val, out);
+            gelesene_namen(else_val, out);
+        }
+        _ => {}
     }
 }

@@ -1,0 +1,4 @@
+importiere "./kollision_raute_x"
+importiere "./kollision_modul_a"
+zeige x_wert()
+zeige oeffentlich()

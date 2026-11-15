@@ -1,0 +1,22 @@
+# P2-T29 S3 (Review 0fc5ac15): die Schleifenvariable bindet neu, der Rumpf
+# bindet fuer die naechste Runde neu. Kontrolle (Zeile 21) bleibt ein Fehler.
+klasse Box:
+    funktion append(wert: Text):
+        gib_zurück wert
+funktion mach():
+    gib_zurück neu Box()
+setze xs: Liste[Zahl] auf []
+für xs in [neu Box()]:
+    xs.append("passt")
+setze ys: Liste[Zahl] auf []
+für i in [1, 2]:
+    wenn i == 2:
+        ys.append("passt")
+    setze ys auf mach()
+setze ds: Dict[Text, Zahl] auf {"a": 1}
+für ds in [{"x": "y"}]:
+    ds["b"] = "c"
+setze zs: Liste[Zahl] auf []
+für i in [1]:
+    zs.append("x")
+zeige "ok"

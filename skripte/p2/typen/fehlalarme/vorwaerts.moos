@@ -1,0 +1,10 @@
+# Review 255aca1c: Ein später zugewiesener Name färbt frühere Werte nicht.
+setze a auf b
+setze b auf 1
+setze c: Text auf a
+setze ka auf kb
+setze kb auf kc
+setze kc auf 1
+setze kd: Text auf ka
+zeige c
+zeige kd

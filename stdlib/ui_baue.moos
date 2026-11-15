@@ -56,8 +56,11 @@ funktion ui_flags(resizable = falsch, maximiert = falsch, fullscreen = falsch, m
 funktion ui_baue(container, titel, breite, hoehe, setups, resizable = falsch, maximiert = falsch, parent = nichts):
     setze flags auf ui_flags(resizable, maximiert)
     container["hFenster"] = ui_fenster(titel, breite, hoehe, flags, parent)
+    container["hWindow"] = container["hFenster"]
     container["breite"] = breite
     container["hoehe"] = hoehe
+    container["width"] = breite
+    container["height"] = hoehe
 
     für eintrag in setups:
         setze funk auf eintrag[0]
@@ -73,8 +76,11 @@ funktion ui_debug_baue(container, titel, breite, hoehe, setups, resizable = fals
     zeige "[ui_baue] Fenster '" + titel + "' " + breite + "x" + hoehe
     setze flags auf ui_flags(resizable, maximiert)
     container["hFenster"] = ui_fenster(titel, breite, hoehe, flags, parent)
+    container["hWindow"] = container["hFenster"]
     container["breite"] = breite
     container["hoehe"] = hoehe
+    container["width"] = breite
+    container["height"] = hoehe
 
     setze i auf 0
     für eintrag in setups:
@@ -88,3 +94,16 @@ funktion ui_debug_baue(container, titel, breite, hoehe, setups, resizable = fals
         setze i auf i + 1
 
     gib_zurück wahr
+
+
+# Englische Namen (P1-T506): dünne Weiterleitungen
+funktion ui_build(container, title, width, height, setups, resizable = falsch, maximized = falsch, parent = nichts):
+    gib_zurück ui_baue(container, title, width, height, setups, resizable, maximized, parent)
+
+
+funktion ui_debug_build(container, title, width, height, setups, resizable = falsch, maximized = falsch, parent = nichts):
+    gib_zurück ui_debug_baue(container, title, width, height, setups, resizable, maximized, parent)
+
+
+funktion ui_widget_set_id(widget, id):
+    gib_zurück ui_widget_id_setze(widget, id)

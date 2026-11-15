@@ -149,5 +149,73 @@ timeout 30s "$compiler" pruefe "$d/ok.moos" --diagnose=xml > /dev/null 2> "$out/
 rc=$?
 [ "$rc" -eq 2 ] || fail "--diagnose=xml: RC $rc statt 2"
 
+# 9. P2-T99: derselbe Top-Level-Name aus zwei Dateien (M-I004 Fehler,
+# M-I005 Hinweis bei Variablen); Rautenimport still; stdlib entdoppelt.
+pruef kollision_nutzer
+[ "$rc" -eq 1 ] || fail "kollision_nutzer: RC $rc statt 1"
+hat kollision_nutzer "$d/kollision_nutzer.moos:2: Fehler M-I004: Funktion 'hilfe' ist schon im Modul $d/kollision_modul_a.moos:2 definiert (Funktion)"
+hat kollision_nutzer "Vorschlag: Eigene Funktion umbenennen"
+pruef kollision_selektiv
+[ "$rc" -eq 1 ] || fail "kollision_selektiv: RC $rc statt 1"
+hat kollision_selektiv "$d/kollision_selektiv.moos:2: Fehler M-I004: Funktion 'hilfe' ist schon im Modul $d/kollision_modul_a.moos:2 definiert"
+pruef_json kollision_modul_modul
+[ "$rc" -eq 1 ] || fail "kollision_modul_modul: RC $rc statt 1"
+json kollision_modul_modul '.errors == 2 and .hints == 0 and ([.diagnostics[].code] | unique) == ["M-I004"]'
+json kollision_modul_modul '[.diagnostics[] | (.file | split("/") | last) + ":" + (.line|tostring)] == ["kollision_modul_modul.moos:3", "kollision_modul_b.moos:2"]'
+json kollision_modul_modul '.diagnostics[1].found == "skripte/p2/diagnose/kollision_modul_a.moos:2"'
+pruef_json kollision_variable
+[ "$rc" -eq 0 ] || fail "kollision_variable: RC $rc statt 0"
+json kollision_variable '.errors == 0 and .hints == 1 and .diagnostics[0].code == "M-I005" and .diagnostics[0].line == 2'
+pruef_json kollision_raute
+[ "$rc" -eq 0 ] || fail "kollision_raute: RC $rc statt 0"
+json kollision_raute '.errors == 0 and .hints == 0'
+rm -f "$out/kollision.bin"
+timeout 120s "$compiler" compile "$d/kollision_nutzer.moos" -o "$out/kollision.bin" > "$out/kollision_compile.out" 2> "$out/kollision_compile.err"
+rc=$?
+[ "$rc" -eq 1 ] || fail "compile kollision_nutzer: RC $rc statt 1"
+[ ! -e "$out/kollision.bin" ] || fail "compile kollision_nutzer: Binary trotz M-I004"
+timeout 120s "$compiler" pruefe compiler/tests/test_stdlib_voll.moos --diagnose=json > "$out/stdlib_voll.out" 2> "$out/stdlib_voll.json"
+rc=$?
+[ "$rc" -eq 0 ] || fail "test_stdlib_voll (mathe+primzahl): RC $rc statt 0"
+json stdlib_voll '.errors == 0 and ([.diagnostics[] | select(.code == "M-I004" or .code == "M-I005")] | length) == 0'
+# 9b. Review 9502d95c: eine zuerst gesehene Variable verdeckt die Funktions-
+# Kollision zweier Module nicht (beide Importreihenfolgen); Struktur gegen
+# Funktion zaehlt; primzahl gibt ggt/ist_primzahl/klemme aus mathe weiter.
+for v in zuerst:kollision_modul_b.moos:kollision_modul_a.moos spaet:kollision_modul_a.moos:kollision_modul_b.moos; do
+  name="kollision_variable_${v%%:*}"; rest="${v#*:}"; ort="${rest%%:*}"; anderer="${rest#*:}"
+  pruef_json "$name"
+  [ "$rc" -eq 1 ] || fail "$name: RC $rc statt 1"
+  json "$name" '.errors == 1 and .hints == 1'
+  json "$name" "[.diagnostics[] | .code + \"@\" + (.file | split(\"/\") | last) + \":\" + (.line|tostring)] | sort == [\"M-I004@$ort:2\", \"M-I005@$name.moos:3\"]"
+  json "$name" "[.diagnostics[] | select(.code == \"M-I004\") | .found] == [\"$d/$anderer:2\"]"
+  rm -f "$out/$name.bin"
+  timeout 120s "$compiler" compile "$d/$name.moos" -o "$out/$name.bin" > /dev/null 2>&1
+  [ ! -e "$out/$name.bin" ] || fail "$name: Binary trotz M-I004"
+done
+pruef kollision_struktur
+[ "$rc" -eq 1 ] || fail "kollision_struktur: RC $rc statt 1"
+hat kollision_struktur "$d/kollision_struktur.moos:2: Fehler M-I004: Funktion 'Stern' ist schon im Modul $d/kollision_modul_s.moos:2 definiert (Struktur)"
+for name in primzahl_weitergabe primzahl_mit_mathe; do
+  pruef_json "$name"
+  [ "$rc" -eq 0 ] || fail "$name: RC $rc statt 0"
+  json "$name" '.errors == 0 and .hints == 0'
+done
+rm -f "$out/primzahl_weitergabe.bin"
+timeout 120s "$compiler" compile "$d/primzahl_weitergabe.moos" -o "$out/primzahl_weitergabe.bin" > /dev/null 2>&1 || fail "primzahl_weitergabe: compile RC $?"
+[ "$(timeout 30s "$out/primzahl_weitergabe.bin" 2>&1 | tr '\n' ' ')" = "6 wahr 3 " ] || fail "primzahl_weitergabe: Ausgabe $(timeout 30s "$out/primzahl_weitergabe.bin" 2>&1 | tr '\n' ' ')"
+# 9c. Review 2be97766: ein Zyklus selektiver Weitergaben ohne echte Definition
+# ist M-I002; ein gueltiger Zyklus (Definition am Ende der Kette) bleibt still.
+pruef_json zyklus_ohne_definition
+[ "$rc" -eq 1 ] || fail "zyklus_ohne_definition: RC $rc statt 1"
+json zyklus_ohne_definition '.errors >= 1 and ([.diagnostics[].code] | index("M-I002")) != null'
+pruef_json zyklus_gueltig
+[ "$rc" -eq 0 ] || fail "zyklus_gueltig: RC $rc statt 0"
+json zyklus_gueltig '.errors == 0 and .hints == 0'
+rm -f "$out/zyklus_gueltig.bin"
+timeout 120s "$compiler" compile "$d/zyklus_gueltig.moos" -o "$out/zyklus_gueltig.bin" > /dev/null 2>&1 || fail "zyklus_gueltig: compile RC $?"
+[ "$(timeout 30s "$out/zyklus_gueltig.bin" 2>&1 | tr '\n' ' ')" = "7 1 " ] || fail "zyklus_gueltig: Ausgabe $(timeout 30s "$out/zyklus_gueltig.bin" 2>&1 | tr '\n' ' ')"
+timeout 30s "$compiler" erklaere M-I004 > "$out/erklaere_i4.out" 2>&1 || fail "erklaere M-I004: RC $?"
+rg -q -F "M-I004 – Doppelte Definition aus zwei Dateien" "$out/erklaere_i4.out" || fail "erklaere M-I004: Eintrag fehlt"
+
 if [ "$fehler" -ne 0 ]; then echo "FAIL P2-T97 diagnose"; exit 1; fi
-echo "PASS P2-T97 diagnose: mehrere Syntax-/Lexerfehler mit Zeile:Spalte, Import M-I002 (inkl. Altfall), M-C001 mit Zeile+Vorschlag, Hinweis RC0, Stmt-Zeilen (B5b/B5c), JSON-Schema, pruefe/check, erklaere/explain"
+echo "PASS P2-T97 diagnose: mehrere Syntax-/Lexerfehler mit Zeile:Spalte, Import M-I002 (inkl. Altfall), M-C001 mit Zeile+Vorschlag, Hinweis RC0, Stmt-Zeilen (B5b/B5c), JSON-Schema, pruefe/check, erklaere/explain; P2-T99 M-I004 (Benutzer/selektiv/Modul-Modul, compile ohne Binary), M-I005 Variable, Raute still, stdlib mathe+primzahl; Variable verdeckt nichts (beide Reihenfolgen), Struktur/Funktion, primzahl-Weitergabe; Weitergabe-Zyklus ohne Definition M-I002, gueltiger Zyklus RC 0"

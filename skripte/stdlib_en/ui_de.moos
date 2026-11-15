@@ -1,0 +1,9 @@
+# P1-T506: UI-Fixture (deutsche Namen). Oeffnet kein Fenster, prueft nur, dass die Namen aufloesbar sind.
+importiere ui
+
+setze baue auf ui_baue
+setze snapshot auf ui_test_snapshot_mit_sidecar
+setze klick auf ui_test_klick_id
+setze text_setzen auf ui_test_text_setze_id
+setze aktion auf ui_test_aktion
+zeige "STDLIB-EN ui de PASS"

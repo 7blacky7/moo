@@ -1,0 +1,30 @@
+# P1-T506: DNS-Fixture (deutsche Namen), ohne Netzwerk.
+importiere dns
+
+setze fehler auf 0
+
+funktion pruefe(name, bedingung):
+    wenn bedingung:
+        zeige "PASS " + name
+    sonst:
+        zeige "FAIL " + name
+        setze fehler auf fehler + 1
+
+funktion paket(id, typ, rdata):
+    setze frage auf [7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, typ, 0, 1]
+    setze antwort auf [192, 12, 0, typ, 0, 1, 0, 0, 0, 60, 0, länge(rdata)]
+    setze p auf [0, id, 129, 128, 0, 1, 0, 1, 0, 0, 0, 0]
+    bytes_anhaengen(p, frage)
+    bytes_anhaengen(p, antwort)
+    bytes_anhaengen(p, rdata)
+    gib_zurück p
+
+setze r auf parse_response(paket(1, TYP_A, [1, 2, 3, 4]))
+pruefe("antworten", r["antworten"][0]["rdata"] == "1.2.3.4")
+pruefe("typ", r["antworten"][0]["typ"] == TYP_A)
+pruefe("typ_name", typ_name(TYP_A) == "A")
+
+wenn fehler == 0:
+    zeige "STDLIB-EN dns de PASS"
+sonst:
+    zeige "STDLIB-EN dns de FAIL"

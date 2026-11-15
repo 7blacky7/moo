@@ -336,9 +336,13 @@ funktion ws_daten_ereignis(opcode, payload):
     wenn opcode == WS_OPCODE_TEXT:
         e["typ"] = "text"
         e["daten"] = bytes_neu(payload)
+        e["type"] = "text"
+        e["data"] = e["daten"]
     sonst:
         e["typ"] = "binary"
         e["daten"] = payload
+        e["type"] = "binary"
+        e["data"] = payload
     gib_zurück e
 
 klasse WebSocketClient:
@@ -385,6 +389,8 @@ klasse WebSocketClient:
                 ping_event["typ"] = "ping"
                 ping_event["opcode"] = opcode
                 ping_event["daten"] = bytes_neu(payload)
+                ping_event["type"] = "ping"
+                ping_event["data"] = ping_event["daten"]
                 gib_zurück ping_event
 
             wenn opcode == WS_OPCODE_PONG:
@@ -392,6 +398,8 @@ klasse WebSocketClient:
                 pong_event["typ"] = "pong"
                 pong_event["opcode"] = opcode
                 pong_event["daten"] = bytes_neu(payload)
+                pong_event["type"] = "pong"
+                pong_event["data"] = pong_event["daten"]
                 gib_zurück pong_event
 
             wenn opcode == WS_OPCODE_CLOSE:
@@ -412,6 +420,8 @@ klasse WebSocketClient:
                 close_event["opcode"] = opcode
                 close_event["code"] = code
                 close_event["grund"] = grund
+                close_event["type"] = "close"
+                close_event["reason"] = grund
                 gib_zurück close_event
 
             wenn opcode == WS_OPCODE_CONT:
@@ -463,8 +473,28 @@ klasse WebSocketClient:
             selbst.geschlossen = wahr
         gib_zurück nichts
 
+    # Englische Aliase (P1-T506): dünne Weiterleitungen auf die deutschen Methoden.
+    funktion send_text(textwert):
+        gib_zurück selbst.sende_text(textwert)
+
+    funktion send_bytes(bytes):
+        gib_zurück selbst.sende_bytes(bytes)
+
+    funktion receive():
+        gib_zurück selbst.empfange()
+
+    funktion close(code=1000, reason=""):
+        gib_zurück selbst.schliessen(code, reason)
+
 funktion ws_verbinde(url, timeout_ms=10000):
     gib_zurück neu WebSocketClient(url, {}, timeout_ms)
 
 funktion ws_verbinde_mit_headers(url, headers, timeout_ms=10000):
+    gib_zurück neu WebSocketClient(url, headers, timeout_ms)
+
+# Englische Namen (P1-T506)
+funktion ws_connect(url, timeout_ms=10000):
+    gib_zurück neu WebSocketClient(url, {}, timeout_ms)
+
+funktion ws_connect_with_headers(url, headers, timeout_ms=10000):
     gib_zurück neu WebSocketClient(url, headers, timeout_ms)

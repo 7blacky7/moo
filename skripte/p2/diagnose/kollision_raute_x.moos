@@ -1,0 +1,4 @@
+# P2-T99: importiert Modul A ebenfalls (Rautenimport, Fixture).
+importiere "./kollision_modul_a"
+funktion x_wert():
+    gib_zurück a_nutzt()

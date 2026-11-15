@@ -1,0 +1,9 @@
+# Lambda-Parameter verschatten gleichnamige Funktionen und Werte.
+funktion f(x: Zahl) -> Zahl:
+    gib_zurück x
+funktion rufe(f):
+    gib_zurück f("text")
+setze cb auf (x) => x
+setze werte auf (x) => [x, "text"]
+zeige rufe(cb)
+zeige werte(1)

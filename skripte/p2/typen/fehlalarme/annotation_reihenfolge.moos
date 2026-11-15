@@ -1,0 +1,5 @@
+# Review 08e9b482: Eine spätere Annotation gilt nicht rückwirkend.
+setze x auf "text"
+setze y: Text auf x
+setze x: Zahl auf 1
+zeige y

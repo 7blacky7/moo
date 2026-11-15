@@ -1,0 +1,11 @@
+# Review da045f85: Eine bedingte Annotation dominiert den Folgecode nicht.
+setze x auf 1
+wenn falsch:
+    setze x: Zahl auf 2
+setze x auf "text"
+zeige x
+wenn falsch:
+    setze b auf 1
+setze a auf b
+setze c: Text auf a
+zeige c

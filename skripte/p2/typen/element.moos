@@ -1,0 +1,18 @@
+# P2-T29 S3 (M-T005): Element-, Dict- und Feldtypen.
+setze xs: Liste[Zahl] auf [1, "zwei", 3]
+setze d: Dict[Text, Zahl] auf {"a": 1, "b": "x"}
+xs[0] = "null"
+d["c"] = wahr
+xs.hinzufügen("vier")
+xs.append(nichts)
+daten klasse Punkt(x: Zahl, y: Zahl)
+setze p auf neu Punkt(1, "zwei")
+p.x = "eins"
+setze xs auf [5, "sechs"]
+zeige xs
+zeige d
+zeige p
+funktion summe(werte: Liste[Zahl]):
+    werte.hinzufügen("x")
+    gib_zurück werte
+zeige summe([1])

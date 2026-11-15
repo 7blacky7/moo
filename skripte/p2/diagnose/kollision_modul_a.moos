@@ -1,0 +1,8 @@
+# P2-T99: Modul A (Fixture). hilfe ist ein interner Helfer.
+funktion hilfe():
+    gib_zurück "A"
+funktion a_nutzt():
+    gib_zurück hilfe()
+funktion oeffentlich():
+    gib_zurück "a"
+setze zustand auf 0

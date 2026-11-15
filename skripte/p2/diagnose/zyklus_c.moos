@@ -1,0 +1,4 @@
+# P2-T99 (Review 2be97766): gueltiger Zyklus, Teil C: reicht wert aus D weiter.
+aus zyklus_d importiere wert
+funktion c_eins():
+    gib_zurück 1

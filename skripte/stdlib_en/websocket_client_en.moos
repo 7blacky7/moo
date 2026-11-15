@@ -1,0 +1,33 @@
+# P1-T506: English WebSocket client for the E2E run (translation of beispiele/websocket_client_selftest.moos).
+import websocket
+
+func check(name, condition):
+    if not condition:
+        throw "WEBSOCKET FAIL " + name
+    show "PASS " + name
+
+set url to env("WS_TEST_URL")
+if url == none:
+    set url to "ws://localhost:9001"
+
+set ws to ws_connect(url, 10000)
+ws.send_text("hello websocket")
+set text_event to ws.receive()
+check("text type", text_event["type"] == "text")
+check("text echo", text_event["data"] == "hello websocket")
+
+set binary_text to "abc" * 100
+set binary_payload to bytes_to_list(binary_text)
+ws.send_bytes(binary_payload)
+set binary_event to ws.receive()
+check("binary type", binary_event["type"] == "binary")
+check("binary length", len(binary_event["data"]) == 300)
+check("binary content", bytes_new(binary_event["data"]) == binary_text)
+
+ws.ping("probe")
+set pong_event to ws.receive()
+check("pong type", pong_event["type"] == "pong")
+check("pong content", pong_event["data"] == "probe")
+
+ws.close(1000, "done")
+show "WEBSOCKET-CLIENT PASS"

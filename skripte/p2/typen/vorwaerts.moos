@@ -1,0 +1,5 @@
+# P2-T29 (Review 255aca1c): eine dominierte Kette bleibt ein sicherer Fehler.
+setze pb auf 1
+setze pa auf pb
+setze pc: Text auf pa
+zeige pc

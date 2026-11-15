@@ -1,0 +1,5 @@
+# P2-T99: Modul B (Fixture), definiert ebenfalls hilfe.
+funktion hilfe():
+    gib_zurück "B"
+funktion b_nutzt():
+    gib_zurück hilfe()

@@ -1,0 +1,36 @@
+# P1-T506 (Review a458937c): Benutzerfunktionen mit generischen Namen duerfen von den
+# englischen stdlib-Namen nicht ueberschrieben werden (Imports inlinen alle Moduldefinitionen).
+importiere dns
+importiere websocket
+importiere ui
+
+setze fehler auf 0
+
+funktion pruefe(name, bedingung):
+    wenn bedingung:
+        zeige "PASS " + name
+    sonst:
+        zeige "FAIL " + name
+        setze fehler auf fehler + 1
+
+funktion type_name(x):
+    gib_zurück "custom"
+
+funktion resolve(x):
+    gib_zurück "custom"
+
+funktion send_text(x):
+    gib_zurück "custom"
+
+funktion receive():
+    gib_zurück "custom"
+
+pruefe("type_name", type_name(1) == "custom")
+pruefe("resolve", resolve(1) == "custom")
+pruefe("send_text", send_text(1) == "custom")
+pruefe("receive", receive() == "custom")
+
+wenn fehler == 0:
+    zeige "STDLIB-EN collision PASS"
+sonst:
+    zeige "STDLIB-EN collision FAIL"

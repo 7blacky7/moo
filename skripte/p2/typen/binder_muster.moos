@@ -1,0 +1,18 @@
+# P2-T29 S3: Muster binden nichts (`fall xs:` vergleicht, gemessen); xs bleibt
+# im Fall die Liste (Zeile 11 Fehler). Neuzuweisung im Fall gilt danach.
+klasse Box:
+    funktion append(wert: Text):
+        gib_zurück wert
+funktion mach():
+    gib_zurück neu Box()
+setze xs: Liste[Zahl] auf []
+prüfe 5:
+    fall xs:
+        xs.append("x")
+    fall 5:
+        setze xs auf mach()
+        xs.append("passt")
+    standard:
+        zeige "nein"
+xs.append("passt")
+zeige "ok"

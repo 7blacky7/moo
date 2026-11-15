@@ -1,0 +1,15 @@
+# P2-T29 S3/S4: Lambda-Parameter verschatten (Rumpf ist ein Ausdruck, kein
+# Element-/Operatorbefund). Kontrolle aussen (Zeile 14) bleibt ein Fehler.
+klasse Box:
+    funktion append(wert: Text):
+        gib_zurück wert
+funktion mach():
+    gib_zurück neu Box()
+setze xs: Liste[Zahl] auf []
+setze f auf (xs) => xs.append("passt")
+zeige f(neu Box())
+setze n auf "text"
+setze g auf (n) => n - 1
+zeige g(3)
+xs.append("x")
+zeige "ok"

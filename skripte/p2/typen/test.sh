@@ -38,6 +38,44 @@ pruef fluss
 [ "$rc" -eq 0 ] || fail "fluss: RC $rc statt 0"
 ohne fluss "M-T"
 
+# 1c. Review 255aca1c: dominierte Kette (Variable aus Variable) bleibt ein Fehler
+pruef vorwaerts
+[ "$rc" -eq 1 ] || fail "vorwaerts: RC $rc statt 1"
+hat vorwaerts "$d/vorwaerts.moos:4:"
+hat vorwaerts "Fehler M-T001: 'pc' ist als Text annotiert, der Wert ist aber Zahl"
+hat vorwaerts "1 Fehler"
+
+# 1d. S3: Element-, Dict- und Feldtypen (M-T005), nichts als Hinweis
+pruef element
+[ "$rc" -eq 1 ] || fail "element: RC $rc statt 1"
+hat element "$d/element.moos:2: Fehler M-T005: Element 2 von 'xs' ist Text, erwartet Zahl"
+hat element "$d/element.moos:3: Fehler M-T005: Wert in 'd' ist Text, erwartet Zahl"
+hat element "$d/element.moos:4: Fehler M-T005: Element von 'xs' ist Text, erwartet Zahl"
+hat element "$d/element.moos:5: Fehler M-T005: Wert von 'd' ist Bool, erwartet Zahl"
+hat element "$d/element.moos:6: Fehler M-T005: Neues Element von 'xs' ist Text, erwartet Zahl"
+hat element "$d/element.moos:7: Hinweis M-T005: Neues Element von 'xs' ist Nichts, erwartet Zahl"
+hat element "$d/element.moos:9: Fehler M-T005: Feld 2 ('y') von 'Punkt' ist Text, erwartet Zahl"
+hat element "$d/element.moos:10: Fehler M-T005: Feld 'x' von 'Punkt' ist Text, erwartet Zahl"
+hat element "$d/element.moos:11: Fehler M-T005: Element 2 von 'xs' ist Text, erwartet Zahl"
+hat element "$d/element.moos:16: Fehler M-T005: Neues Element von 'werte' ist Text, erwartet Zahl"
+hat element "9 Fehler, 1 Hinweis"
+pruef_json element
+json element '[.diagnostics[].line] == [2, 3, 4, 5, 6, 7, 9, 10, 11, 16]'
+json element '([.diagnostics[].code] | unique) == ["M-T005"]'
+pruef element_ok
+[ "$rc" -eq 0 ] || fail "element_ok: RC $rc statt 0"
+ohne element_ok "M-T"
+
+# 1e. S3 Binder (Review 0fc5ac15): je Binderform keine Fehlalarme; die
+# Kontrolle je Datei bleibt genau ein M-T005-Fehler.
+for b in fuer:21 solange:18 fange:23 muster:11 lambda:14 parameter:16; do
+  name="binder_${b%%:*}"; zeile="${b##*:}"
+  pruef_json "$name"
+  [ "$rc" -eq 1 ] || fail "$name: RC $rc statt 1"
+  json "$name" "[.diagnostics[] | .code + \":\" + (.line|tostring)] == [\"M-T005:$zeile\"]"
+  json "$name" '.errors == 1 and .hints == 0'
+done
+
 # 2. Eigene Klasse Zahl geht vor dem eingebauten Typnamen; Objekt darf nichts sein
 pruef eigene_klasse
 [ "$rc" -eq 0 ] || fail "eigene_klasse: RC $rc statt 0"
@@ -109,5 +147,54 @@ rg -q -F "M-T001 – Typ passt nicht zur Annotation" "$out/erklaere.out" || fail
 timeout 30s "$compiler" erklaere M-T003 > "$out/erklaere3.out" 2>&1 || fail "erklaere M-T003: RC $?"
 rg -q -F "M-T003 – Rueckgabetyp passt nicht" "$out/erklaere3.out" || fail "erklaere M-T003: Eintrag fehlt"
 
+# 8. S4: M-H006 (Operator Zahl/Text) und M-H001 aus dem Vorpass, nur Hinweise
+pruef hinweis
+[ "$rc" -eq 0 ] || fail "hinweis: RC $rc statt 0"
+hat hinweis "$d/hinweis.moos:4: Hinweis M-H006: Rechnung Text - Zahl: Text zählt hier als 0"
+hat hinweis "$d/hinweis.moos:5: Hinweis M-H006: Division Zahl / Text: der Text als Divisor zählt als 0, die Division wirft"
+hat hinweis "$d/hinweis.moos:7: Hinweis M-H006: Rest Zahl % Text: der Text als Divisor zählt als 0, das Ergebnis ist keine Zahl (NaN)"
+hat hinweis "$d/hinweis.moos:8: Hinweis M-H006: Vergleich Zahl == Text ist immer falsch"
+hat hinweis "$d/hinweis.moos:10: Hinweis M-H006: Vergleich Zahl != Text ist immer wahr"
+hat hinweis "$d/hinweis.moos:12: Hinweis M-H006: Größenvergleich Zahl < Text: der Text zählt als 0"
+hat hinweis "$d/hinweis.moos:13: Hinweis M-H006: Rechnung Text * Text: beide Texte zählen hier als 0"
+hat hinweis "$d/hinweis.moos:16: Hinweis M-H001: 'z' ist vom Typ Zahl, aber '.append()' ist nicht fuer Zahl definiert"
+pruef_json hinweis
+json hinweis '.errors == 0 and .hints == 10'
+json hinweis '[.diagnostics[].line] == [4, 5, 6, 7, 8, 10, 12, 13, 14, 16]'
+json hinweis '[.diagnostics[] | select(.line != 16) | .code] | unique == ["M-H006"]'
+
+# 8b. --typ-streng: Hinweise der Typpruefung werden Fehler (nach und vor dem
+# Subcommand; compile ohne Binary); Lexer-Hinweise bleiben Hinweise.
+timeout 120s "$compiler" pruefe --typ-streng "$d/hinweis.moos" --diagnose=json > "$out/streng.out" 2> "$out/streng.json"
+rc=$?
+[ "$rc" -eq 1 ] || fail "streng: RC $rc statt 1"
+json streng '.errors == 10 and .hints == 0'
+json streng '[.diagnostics[] | .message | endswith(" (--typ-streng)")] | all'
+timeout 120s "$compiler" --typ-streng pruefe "$d/hinweis.moos" > "$out/streng_vorn.out" 2> "$out/streng_vorn.err"
+rc=$?
+[ "$rc" -eq 1 ] || fail "streng vorn: RC $rc statt 1"
+hat streng_vorn "$d/hinweis.moos:4: Fehler M-H006:"
+hat streng_vorn "$d/hinweis.moos:16: Fehler M-H001:"
+rm -f "$out/hinweis.bin"
+timeout 120s "$compiler" compile --typ-streng "$d/hinweis.moos" -o "$out/hinweis.bin" > "$out/streng_compile.out" 2> "$out/streng_compile.err"
+rc=$?
+[ "$rc" -eq 1 ] || fail "streng compile: RC $rc statt 1"
+[ ! -e "$out/hinweis.bin" ] || fail "streng compile: Binary trotz Fehler"
+timeout 120s "$compiler" pruefe --typ-streng "$d/streng_lexer.moos" --diagnose=json > "$out/streng_lexer.out" 2> "$out/streng_lexer.json"
+rc=$?
+[ "$rc" -eq 0 ] || fail "streng_lexer: RC $rc statt 0"
+json streng_lexer '.errors == 0 and .hints == 1 and .diagnostics[0].code == "M-H007"'
+timeout 120s "$compiler" pruefe --typ-streng "$d/element_ok.moos" > "$out/streng_ok.out" 2> "$out/streng_ok.err"
+rc=$?
+[ "$rc" -eq 0 ] || fail "streng element_ok: RC $rc statt 0"
+
+# 8c. Ohne Flags unveraendert: M-H001 weiter aus dem Codegen, kein M-H006
+timeout 120s "$compiler" pruefe "$d/hinweis.moos" --diagnose=json > "$out/hinweis_aus.out" 2> "$out/hinweis_aus.json"
+rc=$?
+[ "$rc" -eq 0 ] || fail "hinweis ohne Flag: RC $rc statt 0"
+json hinweis_aus '.errors == 0 and .hints == 1 and .diagnostics[0].code == "M-H001" and .diagnostics[0].line == 16'
+timeout 30s "$compiler" erklaere M-H006 > "$out/erklaere6.out" 2>&1 || fail "erklaere M-H006: RC $?"
+rg -q -F "M-H006 – Unsinniger Operator zwischen Zahl und Text" "$out/erklaere6.out" || fail "erklaere M-H006: Eintrag fehlt"
+
 if [ "$fehler" -ne 0 ]; then echo "FAIL P2-T29 typen"; exit 1; fi
-echo "PASS P2-T29 typen S1: M-T001 (Zuweisung, Konstante, Neuzuweisung, Standardwert), M-T003 (Wert, ohne Wert), Moduldatei, eigene Klasse vor Typname, compile ohne Binary, erklaere"
+echo "PASS P2-T29 typen S1: M-T001 (Zuweisung, Konstante, Neuzuweisung, Standardwert), M-T003 (Wert, ohne Wert), Moduldatei, eigene Klasse vor Typname, compile ohne Binary, erklaere; S3 Binder (fuer, solange, fange, Muster, Lambda, Parameter); S4 M-H006/M-H001 als Hinweis, --typ-streng (nur Typ-Hinweise, vor/nach Subcommand, compile), Lexer bleibt Hinweis"
