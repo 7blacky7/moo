@@ -103,6 +103,15 @@ Belege: die Fixtures `compiler/tests/p2/native_wert_*`. Der direkte Aufruf einer
 
 Die Texte der Diagnosen: `moo-compiler erklaere M-N001` (Katalog in `compiler/src/diagnose.rs`).
 
+### Direkte native Aufrufe: Argumentzahl und Rekursion (seit Commit e9a3809)
+
+Belege: die Fixtures `compiler/tests/p2/native_call_arity*` und `native_call_rekursion_*`.
+
+- **M-N004, falsche Argumentzahl:** Ruft Code eine `@nativ`-Funktion direkt mit einer anderen Argumentzahl auf, als ihre Signatur hat, meldet der Compiler M-N004 (die Meldung nennt erwartete und übergebene Anzahl). Mit Fixture belegt sind drei Aufrufer: eine andere `@nativ`-Funktion (`native_call_arity`; Diagnose ohne Zeilenangabe), dynamischer Code (`native_call_arity_dyn`; mit Zeilenangabe) und eine `@nativ`-Funktion mit Kontrollfluss (`wenn`), also ein Systemkörper (`native_call_arity_system`; mit Zeilenangabe). Bei einem nativen Funktionswert gibt es keinen Compilefehler: dort prüft die Laufzeit die Argumentzahl und meldet einen fangbaren Fehler (siehe oben).
+- **Rekursion und Zyklen:** Rekursive und wechselseitig rekursive `@nativ`-Funktionen laufen. Belegt: Fakultät mit `wenn`-Rekursion, Wechselrekursion (`gerade`/`ungerade`) und eine reine `@nativ`-Funktion, die eine rekursive aufruft (`native_call_rekursion_lauf`: Ausgaben 120, 121, wahr, wahr). Laut Fixture-Kommentar erfasst der Aufrufgraph alle Anweisungsformen; belegt ist ein rekursiver Aufruf in einer Index-Zuweisung (`native_call_rekursion_formen`: Ausgabe 3).
+
+Den Katalogtext zeigt `moo-compiler erklaere M-N004`.
+
 ### Einzelmessung Schleife
 
 Schleife mit 10^8 Durchläufen, Host cachyos-x64, je 3 Läufe, Ergebnis in allen Varianten 3088707712:
