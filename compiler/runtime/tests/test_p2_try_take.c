@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L /* setenv */
 #include "../moo_runtime.h"
 #include <assert.h>
 #include <stdlib.h>
@@ -32,6 +33,9 @@ static MooValue make_error(void) {
 /* moo_native_fehler (moo_error.c) erzeugt seine Meldung per moo_string_new;
    der Stub zaehlt sie wie jeden anderen Fehlerwert. */
 MooValue moo_string_new(const char* chars) { (void)chars; return make_error(); }
+/* P2-T95: moo_error.c formatiert Hinweistexte ueber moo_to_string; dieser Test
+   loest nur den strengen Pfad aus (MOO_STRENG=1), der keinen Text formatiert. */
+MooValue moo_to_string(MooValue v) { (void)v; assert(!"moo_to_string unerwartet"); return moo_none(); }
 
 int main(void) {
     assert(moo_try_take_error().tag == MOO_NONE);
@@ -129,6 +133,8 @@ int main(void) {
         moo_try_leave();
         assert(write(fd[1], "C", 1) == 1);
         close(fd[1]);
+        /* P2-T95: ohne Handler bricht nur MOO_STRENG=1 ab (Standard: Hinweis). */
+        setenv("MOO_STRENG", "1", 1);
         moo_throw(saved_child); /* no outer handler: exits with code 1 */
         _exit(99);
     }

@@ -31,6 +31,8 @@ UNUSED_FREE(moo_mikro_free)
 UNUSED_FREE(moo_buffer_free)
 UNUSED_FREE(moo_struct_box_free)
 void moo_print(MooValue value) { (void)value; abort(); }
+/* P2-T95: moo_error.c formatiert Hinweistexte ueber moo_to_string; hier unerreicht. */
+MooValue moo_to_string(MooValue value) { (void)value; abort(); }
 
 int main(void) {
     assert(moo_defer_oom_value(NULL) == MOO_DEFER_INVALID);

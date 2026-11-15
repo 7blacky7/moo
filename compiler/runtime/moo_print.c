@@ -2,6 +2,16 @@
 #include "moo_runtime.h"
 #include "moo_struct_dyn.h" /* P2-T49: Ausgabe von Strukturwerten */
 
+/* P2-T44: Faellt eine Teilkonversion (moo_string_concat, geschachteltes
+ * moo_to_string) mit moo_throw aus, kehrt der Wurf im try-Kontext zurueck und
+ * concat liefert "". Die Formatierung bricht dann sofort ab: keine weiteren
+ * concat-Aufrufe (ein zweiter Wurf wuerde den Erstfehler ueberschreiben),
+ * Zwischenwerte sind an dieser Stelle schon genau einmal freigegeben, das
+ * leere Ergebnis (+1 owning) geht an den Aufrufer. Ein beim Eintritt bereits
+ * gesetztes Flag zaehlt nicht als neuer Fehler: moo_throw ohne Handler druckt
+ * mit MOO_STRENG=1 die Meldung selbst ueber moo_print (moo_error.c). */
+#define MOO_PRINT_ABBRUCH(vorher) (moo_error_flag && !(vorher))
+
 MooValue moo_to_string(MooValue v) {
     char buf[64];
     switch (v.tag) {
@@ -25,6 +35,7 @@ MooValue moo_to_string(MooValue v) {
             // (d.h. item.tag != MOO_STRING). Bei String-Items ist item_str
             // das Item selbst (to_string Pass-Through) → NICHT releasen.
             MooList* l = MV_LIST(v);
+            int vorher = moo_error_flag;
             MooValue result = moo_string_new("[");
             for (int32_t i = 0; i < l->length; i++) {
                 if (i > 0) {
@@ -32,25 +43,32 @@ MooValue moo_to_string(MooValue v) {
                     MooValue t = moo_string_concat(result, sep);
                     moo_release(result); moo_release(sep);
                     result = t;
+                    if (MOO_PRINT_ABBRUCH(vorher)) return result;
                 }
                 if (l->items[i].tag == MOO_STRING) {
                     MooValue q1 = moo_string_new("\"");
                     MooValue t1 = moo_string_concat(result, q1);
                     moo_release(result); moo_release(q1);
                     result = t1;
+                    if (MOO_PRINT_ABBRUCH(vorher)) return result;
                     // Item selbst ist geliehen → concat fasst es nicht an.
                     MooValue t2 = moo_string_concat(result, l->items[i]);
                     moo_release(result);
                     result = t2;
+                    if (MOO_PRINT_ABBRUCH(vorher)) return result;
                     MooValue q2 = moo_string_new("\"");
                     MooValue t3 = moo_string_concat(result, q2);
                     moo_release(result); moo_release(q2);
                     result = t3;
+                    if (MOO_PRINT_ABBRUCH(vorher)) return result;
                 } else {
+                    // Ein Fehler im geschachtelten moo_to_string liefert "" mit
+                    // gesetztem Flag; concat gibt dann ebenfalls "" zurueck.
                     MooValue item_str = moo_to_string(l->items[i]);
                     MooValue t = moo_string_concat(result, item_str);
                     moo_release(result); moo_release(item_str);
                     result = t;
+                    if (MOO_PRINT_ABBRUCH(vorher)) return result;
                 }
             }
             MooValue close = moo_string_new("]");
@@ -64,6 +82,7 @@ MooValue moo_to_string(MooValue v) {
             // ebenfalls geliehen (dict-owned). moo_to_string fuer String-Value
             // liefert das Value selbst zurueck → NICHT releasen.
             MooDict* d = MV_DICT(v);
+            int vorher = moo_error_flag;
             MooValue result = moo_string_new("{");
             bool first = true;
             for (int32_t i = 0; i < d->capacity; i++) {
@@ -73,12 +92,14 @@ MooValue moo_to_string(MooValue v) {
                     MooValue t = moo_string_concat(result, sep);
                     moo_release(result); moo_release(sep);
                     result = t;
+                    if (MOO_PRINT_ABBRUCH(vorher)) return result;
                 }
                 first = false;
                 MooValue q1 = moo_string_new("\"");
                 MooValue t1 = moo_string_concat(result, q1);
                 moo_release(result); moo_release(q1);
                 result = t1;
+                if (MOO_PRINT_ABBRUCH(vorher)) return result;
 
                 MooValue key;
                 key.tag = MOO_STRING;
@@ -86,11 +107,13 @@ MooValue moo_to_string(MooValue v) {
                 MooValue t2 = moo_string_concat(result, key);
                 moo_release(result);
                 result = t2;
+                if (MOO_PRINT_ABBRUCH(vorher)) return result;
 
                 MooValue qc = moo_string_new("\": ");
                 MooValue t3 = moo_string_concat(result, qc);
                 moo_release(result); moo_release(qc);
                 result = t3;
+                if (MOO_PRINT_ABBRUCH(vorher)) return result;
 
                 if (d->entries[i].value.tag == MOO_STRING) {
                     MooValue t4 = moo_string_concat(result, d->entries[i].value);
@@ -102,6 +125,7 @@ MooValue moo_to_string(MooValue v) {
                     moo_release(result); moo_release(vs);
                     result = t4;
                 }
+                if (MOO_PRINT_ABBRUCH(vorher)) return result;
             }
             MooValue close = moo_string_new("}");
             MooValue final_r = moo_string_concat(result, close);
@@ -145,7 +169,11 @@ MooValue moo_to_string(MooValue v) {
 }
 
 void moo_print(MooValue v) {
+    // P2-T44: nach einem neuen Konvertierungsfehler keine Ausgabe; der Fehler
+    // liegt im try-Zustand und wird vom Compiler nach dem Statement geprueft.
+    // Mit beim Eintritt gesetztem Flag (MOO_STRENG-Meldung) wird gedruckt.
+    int vorher = moo_error_flag;
     MooValue s = moo_to_string(v);
-    printf("%s\n", MV_STR(s)->chars);
+    if (!MOO_PRINT_ABBRUCH(vorher)) printf("%s\n", MV_STR(s)->chars);
     if (v.tag != MOO_STRING) moo_release(s);
 }

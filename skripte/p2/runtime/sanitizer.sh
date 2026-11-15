@@ -16,6 +16,11 @@ flags=(-std=c11 -Wall -Wextra -Werror -g -O1 -fno-omit-frame-pointer -fsanitize=
 "${CC:-cc}" "${flags[@]}" \
   "$project_root/compiler/runtime/moo_error.c" \
   "$project_root/compiler/runtime/tests/test_p2_try_take.c" -o "$build_dir/try_take"
+# P2-T44: Ausgabeabbruch nach Konvertierungsfehler (moo_print.c + moo_error.c).
+"${CC:-cc}" "${flags[@]}" \
+  "$project_root/compiler/runtime/moo_error.c" \
+  "$project_root/compiler/runtime/moo_print.c" \
+  "$project_root/compiler/runtime/tests/test_p2_print_abbruch.c" -o "$build_dir/print_abbruch"
 "${CC:-cc}" "${flags[@]}" -c "$project_root/compiler/runtime/moo_buffer.c" -o "$build_dir/buffer_cpp.o"
 "${CC:-cc}" "${flags[@]}" -c "$project_root/compiler/runtime/moo_struct_box.c" -o "$build_dir/struct_box_cpp.o"
 "${CC:-cc}" "${flags[@]}" -c "$project_root/compiler/runtime/moo_defer_stack.c" -o "$build_dir/defer_stack_cpp.o"
@@ -57,5 +62,6 @@ ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$build_dir/buffer_ind
 ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$build_dir/leihe_maske"
 ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$build_dir/buffer_cpp"
 ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$build_dir/try_take"
+ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$build_dir/print_abbruch"
 ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$build_dir/buffer"
 ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$build_dir/struct_box"

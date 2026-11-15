@@ -155,7 +155,9 @@ static void unbehandelt_ohne_versuche(MooValue error) {
     char zusammenfassung[192];
     if (moo_fehler_ort) {
         ort_text(moo_fehler_ort->datei, moo_fehler_ort->zeile, ort, sizeof ort);
-        snprintf(zusammenfassung, sizeof zusammenfassung, "der unbehandelte Fehler in %s%s",
+        /* Ortsangabe begrenzt: die Zusammenfassung ist ohnehin auf 192 Zeichen
+         * gekappt; ohne Grenze bricht -Werror=format-truncation das Sanitizer-Gate. */
+        snprintf(zusammenfassung, sizeof zusammenfassung, "der unbehandelte Fehler in %s%.120s",
                  moo_fehler_ort->funktion ? moo_fehler_ort->funktion : "Hauptprogramm", ort);
     } else {
         snprintf(zusammenfassung, sizeof zusammenfassung, "der unbehandelte Laufzeitfehler „%.120s“", text);
@@ -197,7 +199,8 @@ void moo_fehler_unbehandelt(const MooFehlerStelle* stelle) {
     char ort[512];
     ort_text(stelle->datei, stelle->zeile, ort, sizeof ort);
     char zusammenfassung[192];
-    snprintf(zusammenfassung, sizeof zusammenfassung, "der unbehandelte Fehler in %s beim Aufruf von %s%s",
+    /* Ortsangabe begrenzt wie in unbehandelt_ohne_versuche (Zusammenfassung 192). */
+    snprintf(zusammenfassung, sizeof zusammenfassung, "der unbehandelte Fehler in %s beim Aufruf von %s%.100s",
              funktion, aufruf, ort);
     int streng = moo_fehler_streng();
     if (streng || hinweis_zaehlen(stelle, text, zusammenfassung)) {

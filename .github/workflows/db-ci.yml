@@ -133,7 +133,8 @@ jobs:
         run: |
           set -euo pipefail
           smoke="$RUNNER_TEMP/moo-db-ci/postgres_wire_smoke.moos"
-          head -n 1035 "$GITHUB_WORKSPACE/beispiele/domain/db/postgres_client.moos" > "$smoke"
+          # Ganze Bibliothek (nur Definitionen); eine feste Zeilenzahl bricht, sobald die Datei waechst.
+          cp "$GITHUB_WORKSPACE/beispiele/domain/db/postgres_client.moos" "$smoke"
           cat >> "$smoke" <<'MOO'
           setze c auf neu PgClient("127.0.0.1", 5432, "moo_ci", "moo_ci", "moo-ci-password")
           c.verbinde()
@@ -377,7 +378,8 @@ jobs:
         run: |
           set -euo pipefail
           smoke="$RUNNER_TEMP/moo-db-ci/postgres_wire_smoke.moos"
-          head -n 1035 "$GITHUB_WORKSPACE/beispiele/domain/db/postgres_client.moos" > "$smoke"
+          # Ganze Bibliothek (nur Definitionen); eine feste Zeilenzahl bricht, sobald die Datei waechst.
+          cp "$GITHUB_WORKSPACE/beispiele/domain/db/postgres_client.moos" "$smoke"
           cat >> "$smoke" <<'MOO'
           setze c auf neu PgClient("127.0.0.1", 5432, "moo_ci", "moo_ci", "moo-ci-password")
           c.verbinde()
