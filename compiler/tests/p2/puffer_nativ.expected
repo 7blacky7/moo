@@ -5,7 +5,7 @@
 102
 200
 gefangen: Nativer Laufzeitfehler (Division, Shift, Index oder Konversion) in 'lesen'
-gefangen: Native Funktion erwartet einen Puffer mit passendem Elementtyp (puffer[T])
+gefangen: Native Funktion erwartet puffer[f32], erhalten Puffer mit anderem Elementtyp
 4
 2.25
 0
@@ -19,8 +19,8 @@ i64 1665 333
 u64 1665 333
 f32 22.5 1.5
 f64 22.5 1.5
-gefangen: Native Funktion erwartet einen Puffer mit passendem Elementtyp (puffer[T])
+gefangen: Native Funktion erwartet puffer[f32], erhalten Puffer mit anderem Elementtyp
 nach Pinfehler anhaengbar: 11
-gefangen: Native Funktion erwartet einen Puffer mit passendem Elementtyp (puffer[T])
+gefangen: Native Funktion erwartet puffer[f32], erhalten Liste
 gefangen: Nativer Laufzeitfehler (Division, Shift, Index oder Konversion) in 'lesen'
 nach Indexfehler anhaengbar: 3

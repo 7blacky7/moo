@@ -1,0 +1,7 @@
+# P2-T56 E3: ueberausgerichtete Struktur (> 16) by value an C bleibt Compilefehler
+# (Plan 91033131 E5; ffi_abi::klassifiziere).
+@ausrichten(32)
+struktur Gross:
+    a: u64
+
+extern "C" funktion gross_nehmen(g: Gross) -> void

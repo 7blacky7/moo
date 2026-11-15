@@ -1,0 +1,18 @@
+# P2-T28 (Plan 607b20ba A1): Multiboot2-Kopf als gewoehnliche native Konstante.
+# 24 Byte, gepackt (Typalignment 1), Objektalignment 8, Sektion .multiboot2,
+# benutzt. Pruefsumme modulo 2^32 nur ueber ausdrueckliche Umlaufform (ADR).
+@gepackt
+struktur Mb2Kopf:
+    magic: u32
+    architektur: u32
+    laenge: u32
+    pruefsumme: u32
+    ende_typ: u16
+    ende_flags: u16
+    ende_groesse: u32
+
+@nativ
+@sektion(".multiboot2")
+@ausrichten(8)
+@benutzt
+konstante MB2_KOPF: Mb2Kopf auf Mb2Kopf(0xE85250D6, 0, groesse_von(Mb2Kopf), als_wrap(u32, 0 - (0xE85250D6 + 0 + groesse_von(Mb2Kopf))), 0, 0, 8)

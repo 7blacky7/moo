@@ -117,17 +117,27 @@ int gl33_chunk_alloc(GL33Chunk* chunks) {
     return -1; /* no free slot */
 }
 
-void gl33_chunk_upload(GL33Chunk* chunks, int id, MeshBuilder* mb) {
-    if (id < 0 || id >= MAX_GL33_CHUNKS || !chunks[id].is_used) return;
-
-    GL33Chunk* c = &chunks[id];
-
+/* Gemeinsamer Upload (P2-T25): Eckpunkte und optionale u32-Indizes in VBO/EBO,
+ * Attributeinrichtung einmal fuer beide Wege. */
+static void gl33_chunk_upload_raw(GL33Chunk* c, const void* ecken, int anzahl,
+                                  const unsigned int* indizes, int index_anzahl) {
     glBindVertexArray(c->vao);
     glBindBuffer(GL_ARRAY_BUFFER, c->vbo);
     glBufferData(GL_ARRAY_BUFFER,
-                 mb->count * (int)sizeof(MooVertex),
-                 mb->vertices,
+                 (GLsizeiptr)anzahl * (GLsizeiptr)sizeof(MooVertex),
+                 ecken,
                  GL_STATIC_DRAW);
+    if (indizes && index_anzahl > 0) {
+        if (!c->ebo) glGenBuffers(1, &c->ebo);
+        /* Bindung wird im VAO gespeichert. */
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, c->ebo);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                     (GLsizeiptr)index_anzahl * (GLsizeiptr)sizeof(unsigned int),
+                     indizes, GL_STATIC_DRAW);
+        c->index_count = index_anzahl;
+    } else {
+        c->index_count = 0;
+    }
 
     /* Attribute 0: position (vec3) */
     glEnableVertexAttribArray(0);
@@ -146,9 +156,24 @@ void gl33_chunk_upload(GL33Chunk* chunks, int id, MeshBuilder* mb) {
 
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
+    /* EBO erst nach dem VAO loesen, sonst ginge die VAO-Bindung verloren. */
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
-    c->vertex_count = mb->count;
+    c->vertex_count = anzahl;
     c->is_compiled = true;
+}
+
+void gl33_chunk_upload(GL33Chunk* chunks, int id, MeshBuilder* mb) {
+    if (id < 0 || id >= MAX_GL33_CHUNKS || !chunks[id].is_used) return;
+    gl33_chunk_upload_raw(&chunks[id], mb->vertices, mb->count, NULL, 0);
+}
+
+int gl33_chunk_upload_data(GL33Chunk* chunks, int id, const float* ecken9, int ecken,
+                           const unsigned int* indizes, int index_anzahl) {
+    if (id < 0 || id >= MAX_GL33_CHUNKS || !chunks[id].is_used) return 8;
+    /* Normalenglaettung gilt hier nicht: die Daten des Aufrufers sind massgeblich. */
+    gl33_chunk_upload_raw(&chunks[id], ecken9, ecken, indizes, index_anzahl);
+    return 0;
 }
 
 void gl33_chunk_draw(GL33Chunk* chunks, int id) {
@@ -157,7 +182,12 @@ void gl33_chunk_draw(GL33Chunk* chunks, int id) {
     if (!c->is_compiled || c->vertex_count == 0) return;
 
     glBindVertexArray(c->vao);
-    glDrawArrays(GL_TRIANGLES, 0, c->vertex_count);
+    if (c->index_count > 0) {
+        /* P2-T25: indiziert (gilt auch fuer den Schattenpass, gleicher Weg). */
+        glDrawElements(GL_TRIANGLES, c->index_count, GL_UNSIGNED_INT, (void*)0);
+    } else {
+        glDrawArrays(GL_TRIANGLES, 0, c->vertex_count);
+    }
     glBindVertexArray(0);
 }
 
@@ -167,6 +197,7 @@ void gl33_chunk_delete(GL33Chunk* chunks, int id) {
     if (!c->is_used) return;
 
     if (c->vbo) glDeleteBuffers(1, &c->vbo);
+    if (c->ebo) glDeleteBuffers(1, &c->ebo);
     if (c->vao) glDeleteVertexArrays(1, &c->vao);
     memset(c, 0, sizeof(GL33Chunk));
 }

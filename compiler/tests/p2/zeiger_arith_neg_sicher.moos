@@ -1,0 +1,4 @@
+# P2-T17 E3 negativ: Zeigerarithmetik im sicheren Koerper nur in unsicher:.
+@nativ
+funktion f(p: ptr[i32]) -> ptr[i32]:
+    gib_zurück p + 1

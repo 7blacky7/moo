@@ -1,0 +1,82 @@
+# Tensor (f32) und Frame (u8) ohne Kopie als puffer[T] an native Kerne.
+# @liest(1) markiert Parameter 1 als nur gelesen (Leihgabe); Schreiben in place.
+# Falscher Elementtyp und Liste statt Puffer sind fangbar.
+# Aus compiler/tests/p2/tensor_ansicht.moos.
+@nativ
+@liest(1)
+funktion summe(t: puffer[f32]) -> f64:
+    unsicher:
+        setze s: f64 auf 0.0
+        setze i: u64 auf 0
+        solange i < länge(t):
+            setze s auf s + als(f64, t[i])
+            setze i auf i + 1
+        gib_zurück s
+
+@nativ
+funktion skaliere(t: puffer[f32], faktor: f32) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(t):
+            t[i] = t[i] * faktor
+            setze i auf i + 1
+        gib_zurück länge(t)
+
+@nativ
+@liest(1)
+funktion zaehle_i32(t: puffer[i32]) -> u64:
+    unsicher:
+        gib_zurück länge(t)
+
+@nativ
+@liest(1)
+funktion hell(p: puffer[u8]) -> u64:
+    unsicher:
+        setze s: u64 auf 0
+        setze i: u64 auf 0
+        solange i < länge(p):
+            setze s auf s + als(u64, p[i])
+            setze i auf i + 1
+        gib_zurück s
+
+@nativ
+funktion invertiere(p: puffer[u8]) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(p):
+            p[i] = 255 - p[i]
+            setze i auf i + 1
+        gib_zurück länge(p)
+
+setze t auf tensor_aus_liste([1, 2, 3, 4.5])
+unsicher:
+    zeige summe(t)
+    zeige skaliere(t, 2.0)
+zeige t.zu_liste()
+unsicher:
+    zeige summe(t)
+
+setze bild auf tensor_aus_liste([1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1]).umformen([2, 2, 4])
+setze f auf frame_aus_tensor(bild)
+unsicher:
+    zeige hell(f)
+    zeige invertiere(f)
+    zeige hell(f)
+
+versuche:
+    unsicher:
+        zeige zaehle_i32(t)
+fange fehler:
+    zeige fehler
+versuche:
+    unsicher:
+        zeige summe(f)
+fange fehler:
+    zeige fehler
+setze liste auf [1, 2, 3]
+versuche:
+    unsicher:
+        zeige summe(liste)
+fange fehler:
+    zeige fehler
+zeige "fertig"

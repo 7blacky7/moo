@@ -1,0 +1,28 @@
+# P2-T8 (Review 49a04c50): erster Lesezugriff ueber den Callee und in
+# Match-Muster/-Waechter vor einer spaeteren Zuweisung -> globale Variable.
+setze cb auf (x) => x + 1
+setze grenze auf 5
+setze schwelle auf 3
+
+funktion mit_callee():
+    zeige cb(1)
+    setze cb auf (x) => x + 10
+
+funktion mit_muster(v):
+    prüfe v:
+        fall grenze:
+            zeige "gleich"
+    setze grenze auf 6
+
+funktion mit_waechter(v):
+    prüfe v:
+        fall n wenn n > schwelle:
+            zeige "gross"
+    setze schwelle auf 9
+
+mit_callee()
+zeige cb(1)
+mit_muster(5)
+zeige grenze
+mit_waechter(4)
+zeige schwelle

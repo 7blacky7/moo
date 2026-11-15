@@ -111,6 +111,9 @@ void vk_chunk_delete(VkChunkSystem* cs, int id);
 void vk_chunk_system_cleanup(VkChunkSystem* cs);
 
 /* === Memory Type Helper === */
+/* Liefert VK_MOO_KEIN_SPEICHERTYP, wenn kein passender Speichertyp existiert
+ * (P2-T25, Re-Review 6008ef18); Aufrufer muessen das vor Allocate pruefen. */
+#define VK_MOO_KEIN_SPEICHERTYP UINT32_MAX
 uint32_t vk_find_memory_type(VkPhysicalDevice phys,
                              uint32_t type_filter,
                              VkMemoryPropertyFlags props);

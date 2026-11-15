@@ -1,0 +1,11 @@
+195
+Grüße
+Gr
+wahr
+puffer_als_text: kein gueltiges UTF-8
+puffer_als_text: Laenge ausserhalb des Puffers
+puffer_als_text erwartet puffer[u8]
+puffer_aus_text erwartet einen Text
+0
+falsch
+falsch

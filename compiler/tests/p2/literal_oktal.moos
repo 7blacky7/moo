@@ -1,0 +1,17 @@
+# P2-T5 (Plan b1f51d65 A1/A2): Oktal 0o/0O dynamisch und nativ; fuehrende
+# Null bleibt dezimal; Praefixliteral ohne Ziffern liefert dynamisch 0 mit
+# Compilerwarnung (Gate prueft stderr).
+@nativ
+funktion okt_u8() -> u8:
+    gib_zurück 0o377
+
+@nativ
+funktion okt_i64() -> i64:
+    gib_zurück -0o777
+
+zeige 0o17
+zeige 0O7
+zeige 010
+zeige okt_u8()
+zeige okt_i64()
+zeige 0x

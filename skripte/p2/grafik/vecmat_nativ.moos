@@ -1,0 +1,105 @@
+# P2-T16 (Plan 3f03704a D2): C-Exporte ueber Zeiger fuer den bitweisen
+# Differenztest (test_vecmat_nativ.c) gegen compiler/runtime/moo_3d_math.c und
+# mat_ref.c. Ausgabe darf Eingaben aliasieren (erg == m usw.).
+importiere vektor
+
+@nativ
+@einstieg
+funktion moo_n_vm_mat4_vec4(erg: ptr[vec4], m: ptr[mat4], v: ptr[vec4]) -> void:
+    unsicher:
+        erg[0] = m[0] * v[0]
+
+@nativ
+@einstieg
+funktion moo_n_vm_mat4_mul(erg: ptr[mat4], a: ptr[mat4], b: ptr[mat4]) -> void:
+    unsicher:
+        erg[0] = a[0] * b[0]
+
+@nativ
+@einstieg
+funktion moo_n_vm_mat4_vec4_viele(erg: ptr[vec4], m: ptr[mat4], v: ptr[vec4], n: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < n:
+            erg[i] = m[0] * v[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+funktion moo_n_vm_identity(m: ptr[mat4]) -> void:
+    unsicher:
+        m[0] = mat4_einheit()
+
+@nativ
+@einstieg
+funktion moo_n_vm_translate(m: ptr[mat4], x: f32, y: f32, z: f32) -> void:
+    unsicher:
+        m[0] = m[0] * mat4_verschiebung(vec3(x, y, z))
+
+@nativ
+@einstieg
+funktion moo_n_vm_scale(m: ptr[mat4], x: f32, y: f32, z: f32) -> void:
+    unsicher:
+        m[0] = m[0] * mat4_skalierung(vec3(x, y, z))
+
+@nativ
+@einstieg
+funktion moo_n_vm_rotate(m: ptr[mat4], grad: f32, x: f32, y: f32, z: f32) -> void:
+    unsicher:
+        m[0] = m[0] * mat4_drehung(grad, vec3(x, y, z))
+
+@nativ
+@einstieg
+funktion moo_n_vm_perspective(m: ptr[mat4], fov: f32, seiten: f32, nah: f32, fern: f32) -> void:
+    unsicher:
+        m[0] = mat4_perspektive(fov, seiten, nah, fern)
+
+@nativ
+@einstieg
+funktion moo_n_vm_lookat(m: ptr[mat4], ex: f32, ey: f32, ez: f32, lx: f32, ly: f32, lz: f32, ux: f32, uy: f32, uz: f32) -> void:
+    unsicher:
+        m[0] = mat4_blick(vec3(ex, ey, ez), vec3(lx, ly, lz), vec3(ux, uy, uz))
+
+@nativ
+@einstieg
+funktion moo_n_vm_ortho(m: ptr[mat4], l: f32, r: f32, b: f32, t: f32, n: f32, f: f32) -> void:
+    unsicher:
+        m[0] = mat4_orthografisch(l, r, b, t, n, f)
+
+# Vektoroperatoren: erg = ((a + b) * s - a / s) * b, dazu -a.
+@nativ
+@einstieg
+funktion moo_n_vm_ops(erg: ptr[vec4], neg: ptr[vec4], a: ptr[vec4], b: ptr[vec4], s: f32) -> void:
+    unsicher:
+        erg[0] = ((a[0] + b[0]) * s - a[0] / s) * b[0]
+        neg[0] = -a[0]
+
+@nativ
+@einstieg
+funktion moo_n_vm_punkt(a: ptr[vec4], b: ptr[vec4]) -> f32:
+    unsicher:
+        gib_zurück punkt(a[0], b[0])
+
+@nativ
+@einstieg
+funktion moo_n_vm_kreuz(erg: ptr[vec3], a: ptr[vec3], b: ptr[vec3]) -> void:
+    unsicher:
+        erg[0] = kreuz(a[0], b[0])
+
+@nativ
+@einstieg
+funktion moo_n_vm_betrag(a: ptr[vec3]) -> f32:
+    unsicher:
+        gib_zurück betrag(a[0])
+
+@nativ
+@einstieg
+funktion moo_n_vm_normalisiere(erg: ptr[vec3], a: ptr[vec3]) -> void:
+    unsicher:
+        erg[0] = normalisiere(a[0])
+
+@nativ
+@einstieg
+funktion moo_n_vm_gleich(a: ptr[mat4], b: ptr[mat4]) -> bool:
+    unsicher:
+        gib_zurück a[0] == b[0]

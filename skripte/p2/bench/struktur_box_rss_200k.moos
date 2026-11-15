@@ -1,0 +1,35 @@
+# P2-T49 C4 (Plan 38c59c64): Leckstress Strukturwerte, 200k Rundlaeufe
+# (Gegenstueck struktur_box_rss_800k.moos, gleicher Koerper). Je Runde:
+# dynamischer Konstruktor, nativer Rundlauf (Box -> Kopie -> sret -> Box),
+# Sicht schreiben/lesen, gefangener Grenzfehler (Zahl statt Struktur).
+struktur Innen:
+    x: f32
+    y: f32
+
+struktur Teil:
+    id: u32
+    pos: Innen
+
+@nativ
+funktion schieben(t: Teil, dx: f32) -> Teil:
+    unsicher:
+        setze r: Teil auf t
+        r.pos.x = r.pos.x + dx
+        gib_zurück r
+
+setze k auf 0
+setze summe auf 0
+solange k < 200000:
+    setze t auf Teil(k, Innen(1, 2))
+    unsicher:
+        setze u auf schieben(t, 1)
+    setze p auf u.pos
+    p.y = 5
+    setze summe auf summe + u.pos.x + p.y
+    versuche:
+        unsicher:
+            setze v auf schieben(5, 1)
+    fange e:
+        setze fehler auf e
+    setze k auf k + 1
+zeige summe

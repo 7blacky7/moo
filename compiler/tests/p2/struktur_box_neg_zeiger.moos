@@ -1,0 +1,15 @@
+# P2-T49 C3 (Plan 38c59c64 E5/O3): Strukturen mit Zeigerfeldern sind nicht
+# boxbar; die native Funktion bleibt intern aufrufbar, der dynamische Aufruf
+# nennt den Grund.
+struktur MitZeiger:
+    p: ptr[i32]
+    n: i32
+
+@nativ
+funktion n_von(m: MitZeiger) -> i32:
+    unsicher:
+        gib_zurück m.n
+
+setze m auf nichts
+unsicher:
+    zeige n_von(m)

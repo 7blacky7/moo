@@ -1,0 +1,180 @@
+# P2-T55 (Plan f5b52a0b A6, E2): FFI-Einzelform hosted fangbar wie reine
+# @nativ-Aufrufe. Kontexte: main in versuche:, benannte Funktion (Aufrufer
+# faengt), Funktion mit aufräumen, aufräumen-Aktion selbst, Teilausdruck
+# `c(x) + marke()`, Methode, Lambda. Fehlerarten: Argument nicht wandelbar (C
+# wird NICHT gerufen: C_GUARD_AUFGERUFEN fehlt), f32 ausserhalb des Bereichs,
+# i64-Ergebnis nicht exakt (C gerufen: C_RETURN_AUFGERUFEN, Ergebnis
+# verworfen), Rückruf-Fehler aus gespeichertem C-Rückruf. Formen: Rückgabe, void.
+# C-Gegenstellen: compiler/tests/p2/ffi_i64.c, skripte/p2/ffi/rueckruf_gegenstelle.c.
+@bibliothek("p2_i64")
+extern "C" funktion p2_i64_guard(wert: i64) -> i64
+@bibliothek("p2_i64")
+extern "C" funktion p2_i64_inexact() -> i64
+@bibliothek("m")
+extern "C" funktion sinf(x: f32) -> f32
+extern "C" funktion srand(seed: u32) -> void
+@bibliothek("p2_rueckruf")
+extern "C" funktion rr_merke(cb: ptr[fn(i32, ptr[u8]) -> i32], ud: ptr[u8]) -> void
+@bibliothek("p2_rueckruf")
+extern "C" funktion rr_loese_aus(x: i32) -> i32
+
+@nativ
+funktion c_guard(w: i64) -> i64:
+    unsicher:
+        gib_zurück p2_i64_guard(w)
+
+@nativ
+funktion c_inexakt() -> i64:
+    unsicher:
+        gib_zurück p2_i64_inexact()
+
+@nativ
+funktion c_sinus(x: f32) -> f32:
+    unsicher:
+        gib_zurück sinf(x)
+
+@nativ
+funktion c_saat(s: u32) -> void:
+    unsicher:
+        srand(s)
+
+@nativ
+funktion c_loese(x: i32) -> i32:
+    unsicher:
+        gib_zurück rr_loese_aus(x)
+
+@nativ
+@rückruf(0)
+funktion teile(i: i32, ud: ptr[u8]) -> i32:
+    unsicher:
+        gib_zurück 70 / (7 - i)
+
+@nativ
+funktion merke() -> i32:
+    unsicher:
+        rr_merke(teile, nichts)
+        gib_zurück 0
+
+funktion marke():
+    zeige "MARKE_FALSCH"
+    gib_zurück 1
+
+funktion sauber():
+    zeige "CLEANUP"
+
+funktion ohne_try():
+    zeige c_inexakt()
+    zeige "NACH_FALSCH"
+
+funktion mit_aufraeumen(w):
+    aufräumen: sauber()
+    zeige c_guard(w)
+    zeige "NACH_FALSCH"
+
+funktion aktion_fehlt():
+    aufräumen: c_inexakt()
+    zeige "KOERPER"
+
+funktion teilausdruck():
+    zeige c_inexakt() + marke()
+    zeige "NACH_FALSCH"
+
+funktion rueckruf_teil():
+    zeige c_loese(7) + marke()
+    zeige "NACH_FALSCH"
+
+klasse K:
+    funktion m(x):
+        gib_zurück c_guard(x)
+
+setze g auf (x) => c_guard(x)
+setze gross auf 9223372036854775808
+# 10^42 > FLT_MAX: nicht als f32 darstellbar
+setze minus auf -1
+setze riesig auf 1000000000000000000000000000000000000000000
+
+zeige "== Erfolg"
+zeige c_guard(5)
+zeige c_sinus(0)
+c_saat(1)
+unsicher:
+    merke()
+zeige c_loese(5)
+
+zeige "== 1 main versuche: Argument"
+versuche:
+    zeige c_guard(gross)
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+zeige "== 2 main versuche: Ergebnis"
+versuche:
+    zeige c_inexakt()
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+zeige "== 3 main versuche: f32"
+versuche:
+    zeige c_sinus(riesig)
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+zeige "== 4 main versuche: Rückruf"
+versuche:
+    zeige c_loese(7)
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+zeige "== 5 void Argument"
+versuche:
+    c_saat(minus)
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+zeige "== 6 Funktion ohne versuche"
+versuche:
+    ohne_try()
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+zeige "== 7 Funktion mit aufräumen"
+versuche:
+    mit_aufraeumen(gross)
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+zeige "== 8 aufräumen-Aktion"
+versuche:
+    aktion_fehlt()
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+zeige "== 9 Teilausdruck in Funktion"
+versuche:
+    teilausdruck()
+fange f:
+    zeige "gefangen: " + f
+zeige "== 10 Rückruf-Teilausdruck in Funktion"
+versuche:
+    rueckruf_teil()
+fange f:
+    zeige "gefangen: " + f
+zeige "== 11 Teilausdruck in main versuche"
+versuche:
+    zeige c_inexakt() + marke()
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+zeige "== 12 Methode"
+versuche:
+    zeige neu K().m(gross)
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+zeige "== 13 Lambda"
+versuche:
+    zeige g(gross)
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+zeige "fertig"

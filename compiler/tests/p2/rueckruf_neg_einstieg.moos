@@ -1,0 +1,8 @@
+# P2-T21/T57 E-3 (E10): @einstieg-Exporte haben bereits die C-ABI.
+@nativ
+@einstieg
+@rückruf
+funktion f(x: i32) -> i32:
+    gib_zurück x + 1
+
+zeige 1

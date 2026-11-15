@@ -1,0 +1,7 @@
+# P2-T23/T53 E2: ein opaker Typ ist nur Zeigerziel, nie Feldwert.
+@opak struktur P2Zaehler
+
+struktur Huelle:
+    innen: P2Zaehler
+
+zeige 1

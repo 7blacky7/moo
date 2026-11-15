@@ -1,0 +1,13 @@
+# P2-T83 B3 (Review 6315dba0): Alias eines @liest-Parameters ist ein
+# Compilefehler (ueber den Alias koennte geschrieben werden).
+@nativ
+@liest(1)
+funktion ueber_alias(t: puffer[f32]) -> u64:
+    unsicher:
+        setze q: puffer[f32] auf t
+        q[0] = 0.0
+        gib_zurück länge(q)
+
+setze t auf tensor_aus_liste([1, 2])
+unsicher:
+    zeige ueber_alias(t)

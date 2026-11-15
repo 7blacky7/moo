@@ -1,0 +1,37 @@
+# P2-T85 D1: nativer Aufruf im Konstruktor (erstelle) und Griff im Feld.
+@nativ
+funktion halb(a: i32) -> i32:
+    unsicher:
+        gib_zurück a / 2
+
+klasse A:
+    funktion erstelle(x):
+        unsicher:
+            selbst.wert = halb(x)
+
+    funktion lies():
+        gib_zurück selbst.wert
+
+    funktion summe(n):
+        setze w auf puffer_erstellen(i32, n)
+        setze i auf 0
+        solange i < n:
+            w[i] = i + 1
+            setze i auf i + 1
+        unsicher:
+            setze s auf psumme(w)
+        gib_zurück s
+
+@nativ
+funktion psumme(p: puffer[i32]) -> i64:
+    unsicher:
+        setze s: i64 auf 0
+        setze i: u64 auf 0
+        solange i < länge(p):
+            setze s auf s + als(i64, p[i])
+            setze i auf i + 1
+        gib_zurück s
+
+setze a auf neu A(10)
+zeige a.lies()
+zeige a.summe(4)

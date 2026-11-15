@@ -1,0 +1,78 @@
+# P2-T21/T57 Batch E (Plan f4655d20 E-4): @rückruf-Thunks verschiedener
+# C-Signaturen fuer das Clang-Orakel (skripte/p2/ffi/rueckruf_orakel.sh,
+# Gegenstueck skripte/p2/ffi/rueckruf_orakel.c): schmale Ganzzahlen mit
+# signext/zeroext, bool, f32/f64, Zeiger, Strukturwerte (zwei Achtbytes,
+# Float-Struktur, 24 Byte/sret), void; r_teile ist hosted fehlbar.
+struktur Paar:
+    a: i32
+    b: i64
+
+struktur V3:
+    x: f32
+    y: f32
+    z: f32
+
+struktur G24:
+    a: u64
+    b: u64
+    c: u64
+
+@nativ
+@rückruf
+funktion r_i8(a: i8, b: u8) -> i8:
+    unsicher:
+        gib_zurück a
+
+@nativ
+@rückruf
+funktion r_i16(a: i16, b: u16) -> u16:
+    unsicher:
+        gib_zurück b
+
+@nativ
+@rückruf
+funktion r_bool(a: bool) -> bool:
+    unsicher:
+        gib_zurück a
+
+@nativ
+@rückruf
+funktion r_f(a: f32, b: f64) -> f64:
+    unsicher:
+        gib_zurück b
+
+@nativ
+@rückruf
+funktion r_ptr(p: ptr[void], q: ptr[Paar]) -> ptr[void]:
+    unsicher:
+        gib_zurück p
+
+@nativ
+@rückruf
+funktion r_paar(p: Paar) -> Paar:
+    unsicher:
+        gib_zurück p
+
+@nativ
+@rückruf
+funktion r_v3(v: V3) -> V3:
+    unsicher:
+        gib_zurück v
+
+@nativ
+@rückruf
+funktion r_g24(g: G24) -> G24:
+    unsicher:
+        gib_zurück g
+
+@nativ
+@rückruf
+funktion r_void(x: i32) -> void:
+    unsicher:
+        setze y: i32 auf x
+
+@nativ
+@rückruf(0)
+funktion r_teile(a: i32, b: i32) -> i32:
+    unsicher:
+        gib_zurück a / b

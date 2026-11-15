@@ -1,3 +1,5 @@
+# P2-T19/T56 Batch D: C-Export mit Strukturwert -> C-ABI-Thunk falsch_export
+# vor __moo_native.falsch_export (frueher gesperrt).
 struktur Wert:
     code: u32
 

@@ -1,0 +1,6 @@
+# P2-T51 E5 negativ (b): geliehener Zeiger per Index in fremden Speicher.
+@nativ
+funktion f(tabelle: ptr[ptr[i32]]) -> void:
+    unsicher:
+        setze x: i32 auf 1
+        tabelle[0] = zeiger(adresse_von(x))

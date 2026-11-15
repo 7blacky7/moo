@@ -27,6 +27,9 @@ static void* g_ctx = NULL;
 /* Single active context only. Pointer-backed handles are not generation IDs:
  * allocator address reuse after close is not distinguishable from a new handle. */
 static MooValue g_active_window = { .tag = MOO_NONE };
+/* P2-T25 (Review c7071266): Netz-Platzbuch und offener chunk_begin gehoeren zum
+ * Backendkontext und werden bei jedem Kontextwechsel explizit geleert. */
+static void netz_front_zuruecksetzen(void);
 
 void moo_3d_register_window(MooValue win, void* ctx) {
     if (ctx && ctx == g_ctx && g_backend &&
@@ -47,12 +50,14 @@ void moo_3d_detach_external(void* ctx) {
     g_active_window.tag = MOO_NONE;
     g_ctx = NULL;
     g_backend = NULL;
+    netz_front_zuruecksetzen();
 }
 
 /* P6: extern hook — Hybrid-Renderer kann sich als aktives 3D-Backend
  * registrieren, sodass raum_*-Calls auf das Hybrid-Fenster zeichnen. */
 void moo_3d_attach_external(void* backend, void* ctx) {
     g_active_window.tag = MOO_NONE;
+    netz_front_zuruecksetzen();
     g_backend = (Moo3DBackend*)backend;
     g_ctx = ctx;
 }
@@ -243,6 +248,7 @@ static Color3 parse_color3(MooValue c) {
 
 MooValue moo_3d_create(MooValue title, MooValue w, MooValue h) {
     g_active_window.tag = MOO_NONE;
+    netz_front_zuruecksetzen();
     const char* backend_name = getenv("MOO_3D_BACKEND");
     if (!backend_name) backend_name = "gl33";
 
@@ -876,12 +882,17 @@ MooValue moo_3d_chunk_create(void) {
     return moo_number((double)id);
 }
 
+/* P2-T25: offener chunk_begin (Hochladen eines Netzes waehrenddessen ist ein Fehler). */
+static int g_chunk_offen = 0;
+
 void moo_3d_chunk_begin(MooValue chunk_id) {
     if (!g_backend || !g_ctx) return;
+    g_chunk_offen = 1;
     g_backend->chunk_begin(g_ctx, (int)moo_as_number(chunk_id));
 }
 
 void moo_3d_chunk_end(void) {
+    g_chunk_offen = 0;
     if (!g_backend || !g_ctx) return;
     g_backend->chunk_end(g_ctx);
 }
@@ -894,6 +905,105 @@ void moo_3d_chunk_draw(MooValue chunk_id) {
 void moo_3d_chunk_delete(MooValue chunk_id) {
     if (!g_backend || !g_ctx) return;
     g_backend->chunk_delete(g_ctx, (int)moo_as_number(chunk_id));
+}
+
+/* ============================================================
+ * P2-T25 (Plan 962e249a; GFX-Bezug P1-T478/T491): Retained-Netz.
+ * Ein Netz IST ein Chunk (Griff = Chunk-Nummer), direkt aus Speicher gefuellt.
+ * Reine C-Schnittstelle ohne MooValue fuer extern "C" aus nativem Moo
+ * (stdlib/netz.moos). Fehlercodes (0 = ok, Erstellen liefert -Code):
+ * 1 kein Backend, 2 nicht unterstuetzt, 3 Anzahl nicht durch 3 teilbar,
+ * 4 Index >= Eckpunktzahl, 5 Anzahl ueber der Grenze, 6 kein freier Platz,
+ * 7 offener chunk_begin, 8 ungueltiges Netz/Zeiger, 10 Hochladen im Backend
+ * fehlgeschlagen.
+ * ============================================================ */
+#include <string.h>
+#define MOO_NETZ_PLAETZE 8192
+#define MOO_NETZ_MAX_ECKEN 16777216ull
+#define MOO_NETZ_MAX_INDIZES 50331648ull
+static unsigned char g_netz_platz[MOO_NETZ_PLAETZE];
+static int g_netz_anzahl = 0;
+
+/* Platzbuch gilt je Backendkontext: Erstellen, Attach und Detach/Schliessen
+ * leeren es explizit (keine Zeigeridentitaet als Generation, Review c7071266). */
+static void netz_front_zuruecksetzen(void) {
+    memset(g_netz_platz, 0, sizeof g_netz_platz);
+    g_netz_anzahl = 0;
+    g_chunk_offen = 0;
+}
+
+static int netz_gueltig(int id) {
+    return id >= 0 && id < MOO_NETZ_PLAETZE && g_netz_platz[id];
+}
+
+int moo_3d_netz_erstellen(void) {
+    if (!g_backend || !g_ctx) return -1;
+    if (!g_backend->chunk_upload) return -2;
+    int id = g_backend->chunk_create(g_ctx);
+    if (id < 0) return -6;
+    if (id >= MOO_NETZ_PLAETZE) { g_backend->chunk_delete(g_ctx, id); return -6; }
+    if (!g_netz_platz[id]) { g_netz_platz[id] = 1; g_netz_anzahl++; }
+    return id;
+}
+
+int moo_3d_netz_hochladen(int id, const float* ecken9, uint64_t ecken,
+                          const uint32_t* indizes, uint64_t index_anzahl) {
+    if (!g_backend || !g_ctx) return 1;
+    if (!g_backend->chunk_upload) return 2;
+    if (g_chunk_offen) return 7;
+    if (!netz_gueltig(id)) return 8;
+    if (ecken > MOO_NETZ_MAX_ECKEN || index_anzahl > MOO_NETZ_MAX_INDIZES) return 5;
+    if (ecken > 0 && !ecken9) return 8;
+    if (index_anzahl > 0) {
+        if (!indizes) return 8;
+        if (index_anzahl % 3 != 0) return 3;
+        for (uint64_t i = 0; i < index_anzahl; i++) {
+            if ((uint64_t)indizes[i] >= ecken) return 4;
+        }
+    } else if (ecken % 3 != 0) {
+        return 3;
+    }
+    return g_backend->chunk_upload(g_ctx, id, ecken9, (int)ecken,
+                                   index_anzahl > 0 ? indizes : NULL, (int)index_anzahl);
+}
+
+int moo_3d_netz_zeichnen(int id, const float* m16) {
+    if (!g_backend || !g_ctx) return 1;
+    if (!netz_gueltig(id)) return 0; /* Nach Freigabe: sicheres Nichtstun (E5). */
+    if (m16) {
+        if (!g_backend->mult_matrix || !g_backend->push_matrix || !g_backend->pop_matrix) return 2;
+        g_backend->push_matrix(g_ctx);
+        g_backend->mult_matrix(g_ctx, m16);
+        g_backend->chunk_draw(g_ctx, id);
+        g_backend->pop_matrix(g_ctx);
+    } else {
+        g_backend->chunk_draw(g_ctx, id);
+    }
+    return 0;
+}
+
+int moo_3d_netz_zeichnen_hier(int id) {
+    return moo_3d_netz_zeichnen(id, NULL);
+}
+
+/* mat4 by value (Moo: struct aus vier vec4-Spalten, 64 Byte, Spaltenordnung);
+ * gleiches Speicherbild wie float[16]. */
+typedef struct { float m[16]; } MooNetzMat4;
+int moo_3d_netz_zeichnen_mat(int id, MooNetzMat4 m) {
+    return moo_3d_netz_zeichnen(id, m.m);
+}
+
+int moo_3d_netz_freigeben(int id) {
+    if (!g_backend || !g_ctx) return 1;
+    if (!netz_gueltig(id)) return 0; /* doppelte Freigabe: sicheres Nichtstun */
+    g_backend->chunk_delete(g_ctx, id);
+    g_netz_platz[id] = 0;
+    g_netz_anzahl--;
+    return 0;
+}
+
+int moo_3d_netz_belegt(void) {
+    return g_netz_anzahl;
 }
 
 /* ========================================================

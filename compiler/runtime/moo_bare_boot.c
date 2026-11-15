@@ -35,7 +35,9 @@ struct __attribute__((packed)) Mb2Header {
 /* P012-E1: Multiboot2 ist ein x86-BOOT-PROTOKOLL — der Header darf NICHT
  * in ARM64-Images landen (kein Multiboot2-Raspi/virt-Mix). qemu-virt
  * bootet das aarch64-ELF direkt via -kernel, ganz ohne Multiboot. */
-#if defined(__x86_64__)
+/* P2-T28 (Plan 607b20ba B2): MOO_BARE_MB2_AUS_MOO setzt build_kernel, wenn das
+ * Moo-Programm den Kopf selbst als native Konstante in .multiboot2 liefert. */
+#if defined(__x86_64__) && !defined(MOO_BARE_MB2_AUS_MOO)
 __attribute__((section(".multiboot2"), used, aligned(8)))
 const struct Mb2Header g_mb2_header = {
     .magic         = MB2_MAGIC,

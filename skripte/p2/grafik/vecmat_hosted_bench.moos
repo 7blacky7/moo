@@ -1,0 +1,53 @@
+# P2-T16 (Plan 3f03704a D4, Review #38135): Hosted-Benchmark - dynamischer
+# Aufruf einer @nativ-Funktion ueber puffer[vec4] mit 10^6 Elementen (mat4 als
+# Wert aus dynamischem Moo, Puffer fuer die Dauer des Aufrufs gepinnt).
+# Ausgabe: 7 Laufzeiten in ms (je eine Zeile), danach die Pruefsumme.
+# Eingabe ganzzahlig (exakt in f32/f64): die C-Basis bench_vecmat_hosted.c
+# rechnet dieselbe Formel und muss dieselbe Pruefsumme liefern.
+importiere vektor
+
+@nativ
+funktion eingabe(p: puffer[vec4]) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(p):
+            p[i] = vec4(als(f32, i % 7), als(f32, i % 5), als(f32, i % 3), 1.0)
+            setze i auf i + 1
+        gib_zurück länge(p)
+
+@nativ
+funktion transformiere_alle(ziel: puffer[vec4], m: mat4, quelle: puffer[vec4]) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(quelle):
+            ziel[i] = m * quelle[i]
+            setze i auf i + 1
+        gib_zurück länge(quelle)
+
+@nativ
+funktion pruefsumme(p: puffer[vec4]) -> f64:
+    unsicher:
+        setze s: f64 auf 0.0
+        setze i: u64 auf 0
+        solange i < länge(p):
+            setze v: vec4 auf p[i]
+            setze s auf s + als(f64, v.x) + als(f64, v.y) + als(f64, v.z) + als(f64, v.w)
+            setze i auf i + 1
+        gib_zurück s
+
+setze n auf 1000000
+setze quelle auf puffer_erstellen(vec4, n)
+setze ziel auf puffer_erstellen(vec4, n)
+setze m auf mat4(vec4(1, 2, 3, 4), vec4(5, 6, 7, 8), vec4(9, 10, 11, 12), vec4(13, 14, 15, 16))
+unsicher:
+    eingabe(quelle)
+setze lauf auf 0
+solange lauf < 7:
+    setze t0 auf zeit()
+    unsicher:
+        transformiere_alle(ziel, m, quelle)
+    setze t1 auf zeit()
+    zeige (t1 - t0) * 1000
+    setze lauf auf lauf + 1
+unsicher:
+    zeige pruefsumme(ziel)

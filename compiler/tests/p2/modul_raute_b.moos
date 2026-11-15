@@ -1,0 +1,15 @@
+importiere modul_raute_c als c
+
+@nativ
+funktion b_summe(p: c.RPunkt) -> i32:
+    gib_zurück p.x + p.y
+
+@nativ
+funktion b_puffer(p: puffer[c.RPunkt]) -> i32:
+    unsicher:
+        setze s: i32 auf 0
+        setze i: u64 auf 0
+        solange i < länge(p):
+            setze s auf s + p[i].x + p[i].y
+            setze i auf i + 1
+        gib_zurück s

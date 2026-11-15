@@ -1,0 +1,52 @@
+# vec2/vec3/vec4 und mat4 als Sprachtypen (f32, mat4 spaltenweise).
+# Operatoren komponentenweise, mat4 * vec4, punkt/kreuz/betrag/normalisiere
+# (englisch: dot/cross/magnitude/normalize), Felder, Strukturfeld, puffer[vec3].
+# Abgeleitet aus compiler/tests/p2/vecmat_typen.moos.
+struktur Teilchen:
+    pos: vec3
+    masse: f32
+
+@nativ
+funktion summe(a: vec3, b: vec3) -> vec3:
+    gib_zurück a + b
+
+@nativ
+funktion punkt_kreuz(a: vec3, b: vec3) -> vec4:
+    setze k: vec3 auf kreuz(a, b)
+    gib_zurück vec4(k.x, k.y, k.z, punkt(a, b))
+
+@nativ
+funktion norm(v: vec3) -> vec4:
+    setze n: vec3 auf normalisiere(v)
+    gib_zurück vec4(n.x, n.y, n.z, betrag(v))
+
+@nativ
+funktion transformiere(m: mat4, v: vec4) -> vec4:
+    gib_zurück m * v
+
+@nativ
+funktion teilchen_schritt(t: Teilchen, dt: f32) -> Teilchen:
+    setze r: Teilchen auf t
+    r.pos = r.pos + vec3(1.0, 0.0, 0.0) * dt
+    r.pos.y = r.pos.y - t.masse
+    gib_zurück r
+
+@nativ
+funktion puffer_fuellen(p: puffer[vec3]) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(p):
+            setze f: f32 auf als(f32, i)
+            p[i] = vec3(f, f + 1.0, f + 2.0)
+            setze i auf i + 1
+        gib_zurück länge(p)
+
+setze m auf mat4(vec4(1, 2, 3, 4), vec4(5, 6, 7, 8), vec4(9, 10, 11, 12), vec4(13, 14, 15, 16))
+zeige summe(vec3(1, 2, 3), vec3(0.5, 0.25, -3))
+zeige punkt_kreuz(vec3(1, 2, 3), vec3(4, 5, 6))
+zeige norm(vec3(3, 0, 4))
+zeige transformiere(m, vec4(1, 1, 1, 1))
+zeige teilchen_schritt(Teilchen(vec3(1, 2, 3), 0.5), 4)
+setze p auf puffer_erstellen(vec3, 3)
+unsicher:
+    zeige puffer_fuellen(p)

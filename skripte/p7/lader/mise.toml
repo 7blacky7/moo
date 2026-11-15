@@ -12,7 +12,7 @@ for target in x86_64-bare x86_64-unknown-uefi; do
     mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
 done
 sel="--glob=TEXT --glob=PFAD --glob=TABELLE --glob=E3_TABELLE"
-for f in sys_summe sys_tabelle sys_text_summe sys_rufe sys_konv sys_zeiger sys_struktur sys_gerade sys_asm sys_klasse sys_puffer_index sys_strukturfeld sys_registerfeld sys_gepacktes_feld sys_feld_direkt sys_feld_param sys_feld_gepackt sys_feld_verschachtelt sys_innen sys_struktur_array sys_link_feld sys_packed_innen sys_array_felder sys_array_referenzen sys_matrix sys_matrix_zeiger sys_adresse_matrix sys_adresse_zeile sys_adresse_punkt sys_adresse_struktur sys_value_copy sys_value_nested sys_value_pointer_copy sys_value_local_address sys_value_field_store sys_value_field_copy sys_value_call sys_value_nested_call sys_e3_arrays sys_e3_null sys_e3_float sys_e3_struktur_array sys_e3_overlap sys_e3_alias sys_e3_ausgerichtet; do
+for f in sys_summe sys_tabelle sys_text_summe sys_rufe sys_konv sys_zeiger sys_struktur sys_gerade sys_asm sys_klasse sys_puffer_index sys_strukturfeld sys_registerfeld sys_gepacktes_feld sys_feld_direkt sys_feld_param sys_feld_gepackt sys_feld_verschachtelt sys_innen sys_struktur_array sys_link_feld sys_packed_innen sys_array_felder sys_array_referenzen sys_matrix sys_matrix_zeiger sys_adresse_matrix sys_adresse_zeile sys_adresse_punkt sys_adresse_struktur sys_value_copy sys_value_nested sys_value_pointer_copy sys_value_local_address sys_value_field_store sys_value_field_copy sys_value_call sys_value_nested_call sys_e3_arrays sys_e3_null sys_e3_float sys_e3_struktur_array sys_e3_overlap sys_e3_alias sys_e3_ausgerichtet sys_mmio; do
     sel="$sel --func=$f"
 done
 mise exec -- llvm-extract -S $sel --recursive "$out/x86_64-bare.ll" -o "$out/x86_64-bare.extract.ll"
@@ -46,6 +46,12 @@ done
 mise exec -- llvm-extract -S --func=sys_registerfeld "$out/x86_64-bare.ll" -o "$out/x86_64-bare.register.ll"
 rg -q 'load volatile i32' "$out/x86_64-bare.register.ll"
 rg -q 'store volatile i32' "$out/x86_64-bare.register.ll"
+# P2-T17 D1: volatile_* auf speichergestuetztem Register - nach O2 bleiben
+# ein volatiler Store und zwei volatile Loads einzeln erhalten.
+mise exec -- llvm-extract -S --func=sys_mmio "$out/x86_64-bare.ll" -o "$out/x86_64-bare.mmio.ll"
+mise exec -- opt -O2 -S "$out/x86_64-bare.mmio.ll" -o "$out/x86_64-bare.mmio.o2.ll"
+[ "$(rg -c 'load volatile i32' "$out/x86_64-bare.mmio.o2.ll")" = 2 ] || { echo 'MMIO: volatile Loads nicht einzeln erhalten' >&2; exit 1; }
+[ "$(rg -c 'store volatile i32' "$out/x86_64-bare.mmio.o2.ll")" = 1 ] || { echo 'MMIO: volatiler Store fehlt' >&2; exit 1; }
 mise exec -- llc -O2 -relocation-model=pic -filetype=obj "$out/x86_64-bare.extract.ll" -o "$out/x86_64-bare.o"
 x="$out/x86_64-unknown-uefi.ll"
 # UEFI-Ziel: Dienstaufruf mit win64 ist Zieldefault (keine explizite CC); Textkonstante UTF-16 mit 0.
@@ -79,7 +85,6 @@ expect_fail "$src/system_value_ctor_anzahl.moos" "Struktur 'Probe' erwartet 2 Fe
 expect_fail "$src/system_value_ctor_typ.moos" 'Probe.a erwartet u32, erhalten u64'
 expect_fail "$src/system_value_copy_typ.moos" 'zwei erwartet Andere, erhalten Probe'
 expect_fail "$src/system_value_call_typ.moos" "Argument 1 von 'wert_annahme' erwartet Erwartet, erhalten Andere"
-expect_fail "$src/system_value_export_verbot.moos" 'Strukturwerte by value sind aktuell nur fuer interne Moo-Aufrufe freigegeben'
 # P2-T56: frueher gesperrte Formen laufen ueber den allgemeinen Klassifizierer;
 # erwartete declare-Zeilen sind gegen Clang (x86_64-unknown-none) belegt.
 expect_decl() {  # Datei erwartete-declare-Zeile [Ziel]
@@ -89,6 +94,9 @@ expect_decl() {  # Datei erwartete-declare-Zeile [Ziel]
 }
 expect_decl "$src/system_abi_20_sret.moos" 'declare void @foo_struct20(ptr noalias sret({ i32, i32, i32, i32, i32 }) align 4, ptr byval({ i32, i32, i32, i32, i32 }) align 8)'
 expect_decl "$src/system_abi_mixed16.moos" 'declare { double, i64 } @moo_p2_struct_mixed(double, i64)'
+# Batch D: @einstieg mit Strukturwert -> C-ABI-Thunk (Clang: {u32} -> i32), SysV und Win64.
+expect_decl "$src/system_value_export.moos" 'define i64 @falsch_export(i32 %0) {'
+expect_decl "$src/system_value_export.moos" 'define i64 @falsch_export(i32 %0) {' x86_64-pc-windows-msvc
 # Cross-Konvention: Extension-Attribute nach effektiver ABI (Review db841fb9).
 expect_decl "$src/system_abi_konvention.moos" 'declare win64cc i8 @cc_win64(i64, i8, i16)' x86_64-unknown-linux-gnu
 expect_decl "$src/system_abi_konvention.moos" 'declare zeroext i8 @cc_sysv64(i64, i8 signext, i16 zeroext)' x86_64-unknown-linux-gnu

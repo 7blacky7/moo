@@ -1,0 +1,29 @@
+# P2-T23/T53 Batch A (Plan 36aca1f2 A3): Text-Bruecke puffer[u8] <-> Text
+# (UTF-8-Bytes, strikt geprueft) und Griff-Abfragen ohne nativen Griff.
+setze p auf puffer_aus_text("Grüße")
+zeige p[2]
+zeige puffer_als_text(p)
+zeige puffer_als_text(p, 2)
+setze leer auf puffer_aus_text("")
+zeige puffer_als_text(leer) == ""
+p[1] = 255
+versuche:
+    zeige puffer_als_text(p)
+fange fehler:
+    zeige fehler
+versuche:
+    zeige puffer_als_text(p, 99)
+fange fehler:
+    zeige fehler
+setze z auf puffer_erstellen(i32, 2)
+versuche:
+    zeige puffer_als_text(z)
+fange fehler:
+    zeige fehler
+versuche:
+    zeige puffer_aus_text(5)
+fange fehler:
+    zeige fehler
+zeige griffe_offen()
+zeige griff_gültig(nichts)
+zeige griff_gültig(5)

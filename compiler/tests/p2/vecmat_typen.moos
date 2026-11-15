@@ -1,0 +1,135 @@
+# P2-T16 (Plan 3f03704a D1): eingebaute vec2/vec3/vec4/mat4 als Sprachtypen.
+# Operatoren (+ - * / Negation, Skalar), punkt/kreuz/betrag/normalisiere samt
+# englischer Namen, mat4 * vec4, mat4 * mat4, mat4 +/- mat4, == und !=,
+# Felder lesen/schreiben (auch m.s3.x); als Parameter, Rueckgabe, Local,
+# Arrayelement, Strukturfeld und puffer[vec3]. Aufruf aus dynamischem Moo.
+struktur Teilchen:
+    pos: vec3
+    masse: f32
+
+@nativ
+funktion summe(a: vec3, b: vec3) -> vec3:
+    gib_zurück a + b
+
+@nativ
+funktion rechnung(a: vec4, b: vec4, s: f32) -> vec4:
+    setze d: vec4 auf a - b
+    gib_zurück d * s + 2.0 * a / s - (-b)
+
+@nativ
+funktion produkt(a: vec2, b: vec2) -> vec2:
+    gib_zurück a * b / vec2(2.0, 4.0)
+
+@nativ
+funktion punkt_kreuz(a: vec3, b: vec3) -> vec4:
+    setze k: vec3 auf kreuz(a, b)
+    gib_zurück vec4(k.x, k.y, k.z, punkt(a, b))
+
+@nativ
+funktion englisch(a: vec3, b: vec3) -> vec4:
+    setze k: vec3 auf cross(a, b)
+    gib_zurück vec4(k.x, k.z, magnitude(a), dot(a, b))
+
+@nativ
+funktion norm(v: vec3) -> vec4:
+    setze n: vec3 auf normalisiere(v)
+    gib_zurück vec4(n.x, n.y, n.z, betrag(v))
+
+@nativ
+funktion norm_englisch(v: vec2) -> vec2:
+    gib_zurück normalize(v)
+
+@nativ
+funktion transformiere(m: mat4, v: vec4) -> vec4:
+    gib_zurück m * v
+
+@nativ
+funktion verkette(a: mat4, b: mat4) -> mat4:
+    gib_zurück a * b
+
+@nativ
+funktion matsumme(a: mat4, b: mat4) -> mat4:
+    setze c: mat4 auf a + b
+    gib_zurück c - b + a
+
+@nativ
+funktion gleich(a: vec3, b: vec3) -> bool:
+    gib_zurück a == b
+
+@nativ
+funktion ungleich(a: mat4, b: mat4) -> bool:
+    gib_zurück a != b
+
+@nativ
+funktion felder(m: mat4) -> f32:
+    setze k: mat4 auf m
+    k.s3.x = 7.0
+    k.s0 = vec4(1.0, 0.0, 0.0, 0.0)
+    gib_zurück k.s3.x + k.s0.x + m.s1.y + k.s1.y
+
+@nativ
+funktion array_summe(s: f32) -> vec3:
+    setze a: [vec3; 2] auf [vec3(1.0, 2.0, 3.0), vec3(4.0, 5.0, 6.0)]
+    a[1] = a[0] * s
+    gib_zurück a[0] + a[1]
+
+@nativ
+funktion teilchen_schritt(t: Teilchen, dt: f32) -> Teilchen:
+    setze r: Teilchen auf t
+    r.pos = r.pos + vec3(1.0, 0.0, 0.0) * dt
+    r.pos.y = r.pos.y - t.masse
+    gib_zurück r
+
+@nativ
+funktion puffer_fuellen(p: puffer[vec3]) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(p):
+            setze f: f32 auf als(f32, i)
+            p[i] = vec3(f, f + 1.0, f + 2.0)
+            setze i auf i + 1
+        gib_zurück länge(p)
+
+@nativ
+funktion puffer_summe(p: puffer[vec3]) -> vec3:
+    unsicher:
+        setze s: vec3 auf vec3()
+        setze i: u64 auf 0
+        solange i < länge(p):
+            setze s auf s + p[i]
+            setze i auf i + 1
+        gib_zurück s
+
+@nativ
+funktion vec_gleich_zahl(a: vec4) -> bool:
+    gib_zurück a == a
+
+setze m auf mat4(vec4(1, 2, 3, 4), vec4(5, 6, 7, 8), vec4(9, 10, 11, 12), vec4(13, 14, 15, 16))
+setze e auf mat4(vec4(1, 0, 0, 0), vec4(0, 1, 0, 0), vec4(0, 0, 1, 0), vec4(0, 0, 0, 1))
+zeige summe(vec3(1, 2, 3), vec3(0.5, 0.25, -3))
+zeige rechnung(vec4(1, 2, 3, 4), vec4(4, 3, 2, 1), 2)
+zeige produkt(vec2(3, 5), vec2(2, 4))
+zeige punkt_kreuz(vec3(1, 0, 0), vec3(0, 1, 0))
+zeige punkt_kreuz(vec3(1, 2, 3), vec3(4, 5, 6))
+zeige englisch(vec3(3, 0, 4), vec3(1, 2, 3))
+zeige norm(vec3(3, 0, 4))
+zeige norm(vec3(0, 0, 0))
+zeige norm_englisch(vec2(0, 2))
+zeige transformiere(m, vec4(1, 1, 1, 1))
+zeige transformiere(e, vec4(-1, 2.5, 0, 1))
+zeige verkette(m, e) == m
+zeige verkette(e, m)
+zeige verkette(m, m)
+zeige matsumme(m, e)
+zeige gleich(vec3(1, 2, 3), vec3(1, 2, 3))
+zeige gleich(vec3(1, 2, 3), vec3(1, 2, 4))
+zeige ungleich(m, e)
+zeige ungleich(m, m)
+zeige felder(m)
+zeige array_summe(2)
+zeige teilchen_schritt(Teilchen(vec3(1, 2, 3), 0.5), 4)
+setze p auf puffer_erstellen(vec3, 3)
+unsicher:
+    zeige puffer_fuellen(p)
+    zeige puffer_summe(p)
+zeige vec_gleich_zahl(vec4(1, 2, 3, 4))

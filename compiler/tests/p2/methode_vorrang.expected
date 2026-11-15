@@ -1,0 +1,25 @@
+stapel-hinzufügen
+101
+stapel-schliessen
+1
+101
+stapel-schliessen
+101
+1
+stapel-hinzufügen
+102
+1
+3
+[1, 2, 3, 4]
+2
+3
+stapel-schliessen
+1
+stapel-hinzufügen
+101
+2
+[9, 8]
+7
+nichts
+schliessen()/close() ist fuer Objekt nicht definiert
+ende

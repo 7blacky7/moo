@@ -1,0 +1,125 @@
+# P2-T49 (Plan 38c59c64 C2): fangbare Fehler an der Strukturgrenze. Falscher
+# Typ (Zahl, layoutgleiche andere Struktur) erreicht die native Funktion nicht
+# (Seiteneffekt-Marke im Puffer bleibt 1); Bereich, Bruch, bool, i64 > 2^53,
+# unbekanntes Feld, Arrayfeld, falscher Feldtyp. Die Folgeanweisung laeuft nie;
+# Werte bleiben nach dem Fehler unveraendert.
+struktur Innen:
+    x: f32
+    y: f32
+
+struktur Anders:
+    x: f32
+    y: f32
+
+struktur Klein:
+    k: u8
+    an: bool
+
+struktur Gross:
+    v: i64
+
+struktur MitArray:
+    werte: [i32; 3]
+    n: u8
+
+struktur Huelle:
+    innen: Innen
+
+@nativ
+funktion markiere(p: puffer[i32], v: Innen) -> f32:
+    unsicher:
+        p[0] = p[0] + 1
+        gib_zurück v.x
+
+@nativ
+funktion gross() -> Gross:
+    unsicher:
+        gib_zurück Gross(9007199254740993)
+
+# Review #38118: Strukturergebnis nach fangbarem Fehler wird nicht geboxt.
+@nativ
+funktion innen_geteilt(a: i32, b: i32) -> Innen:
+    unsicher:
+        setze q: i32 auf a / b
+        gib_zurück Innen(1, 2)
+
+setze marke auf puffer_erstellen(i32, 1)
+setze i auf Innen(1, 2)
+unsicher:
+    zeige markiere(marke, i)
+versuche:
+    unsicher:
+        zeige markiere(marke, 5)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+versuche:
+    unsicher:
+        zeige markiere(marke, Anders(1, 2))
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+zeige marke[0]
+versuche:
+    setze k auf Klein(300, wahr)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+versuche:
+    setze k auf Klein(1.5, wahr)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+versuche:
+    setze k auf Klein(1, 1)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+unsicher:
+    setze g auf gross()
+zeige g
+versuche:
+    setze v auf g.v
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+versuche:
+    setze v auf i.z
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+setze m auf MitArray()
+versuche:
+    setze v auf m.werte
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+versuche:
+    i.x = "a"
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+setze h auf Huelle(i)
+versuche:
+    h.innen = Anders(1, 2)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+versuche:
+    i.z = 1
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+setze r auf "vorher"
+versuche:
+    unsicher:
+        setze r auf innen_geteilt(1, 0)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+zeige r
+unsicher:
+    zeige innen_geteilt(6, 3)
+zeige i
+zeige h
+zeige "ende"

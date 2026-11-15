@@ -1,0 +1,418 @@
+# P2-T19/T56 Batch E (Plan 91033131): Struktur-ABI-Matrix, Moo-Seite.
+# Moo -> C: extern "C" mit verschiedenen Strukturen, Skalar-/void-Mischung,
+# GP-/SSE-Registerdruck, 24-Byte sret/byval, {u8,u16}, bool-Rueckgabe.
+# C -> Moo: @einstieg-Exporte mit Strukturwerten (C-ABI-Thunks).
+# C-Gegenstelle und Hauptprogramm: skripte/p2/abi/abi_matrix.c.
+struktur V3:
+    x: f32
+    y: f32
+    z: f32
+
+struktur P2:
+    a: u64
+    b: u64
+
+struktur G24:
+    a: u64
+    b: u64
+    c: u64
+
+struktur K4:
+    t: u8
+    w: u16
+
+extern "C" funktion abi_v3_skal(v: V3, f: f32) -> V3
+extern "C" funktion abi_zwei(v: V3, p: P2) -> u64
+extern "C" funktion abi_g24(x: G24, k: u64) -> G24
+extern "C" funktion abi_druck(a: u64, b: u64, c: u64, d: u64, e: u64, f: u64, p: P2, v: V3) -> u64
+extern "C" funktion abi_k4(k: K4, d: f64) -> K4
+extern "C" funktion abi_k4_gleich(a: K4, b: K4) -> bool
+
+# --- Moo -> C ---
+
+@nativ
+@einstieg
+funktion probe_v3(adr: u64) -> u32:
+    unsicher:
+        setze eingabe: V3 auf V3(1.0, 2.0, 3.0)
+        setze ergebnis: V3 auf abi_v3_skal(eingabe, 2.0)
+        setze ziel: ptr[V3] auf zeiger(adr)
+        ziel[0] = ergebnis
+        wenn ergebnis.z == 6.0:
+            gib_zurück u32(1)
+        gib_zurück u32(0)
+
+@nativ
+@einstieg
+funktion probe_zwei(k: u64) -> u64:
+    unsicher:
+        setze v: V3 auf V3(1.0, 2.0, 3.0)
+        setze p: P2 auf P2(k, u64(20))
+        gib_zurück abi_zwei(v, p)
+
+@nativ
+@einstieg
+funktion probe_g24(adr: u64) -> u64:
+    unsicher:
+        setze eingabe: G24 auf G24(u64(1), u64(2), u64(3))
+        setze ergebnis: G24 auf abi_g24(eingabe, u64(100))
+        setze ziel: ptr[G24] auf zeiger(adr)
+        ziel[0] = ergebnis
+        gib_zurück ergebnis.c
+
+@nativ
+@einstieg
+funktion probe_druck(start: u64) -> u64:
+    unsicher:
+        setze p: P2 auf P2(u64(7), u64(8))
+        setze v: V3 auf V3(1.0, 2.0, 3.0)
+        gib_zurück abi_druck(start, u64(2), u64(3), u64(4), u64(5), u64(6), p, v)
+
+@nativ
+@einstieg
+funktion probe_k4(adr: u64) -> u32:
+    unsicher:
+        setze eingabe: K4 auf K4(u8(4), u16(1000))
+        setze ergebnis: K4 auf abi_k4(eingabe, 24.0)
+        setze ziel: ptr[K4] auf zeiger(adr)
+        ziel[0] = ergebnis
+        gib_zurück u32(ergebnis.w)
+
+@nativ
+@einstieg
+funktion probe_k4_gleich(w: u16) -> bool:
+    unsicher:
+        setze a: K4 auf K4(u8(1), u16(2))
+        setze b: K4 auf K4(u8(1), w)
+        gib_zurück abi_k4_gleich(a, b)
+
+# --- C -> Moo ---
+
+@nativ
+@einstieg
+funktion moo_v3_add(a: V3, b: V3) -> V3:
+    unsicher:
+        setze r: V3 auf V3(a.x + b.x, a.y + b.y, a.z + b.z)
+        gib_zurück r
+
+@nativ
+@einstieg
+funktion moo_v3_summe(v: V3) -> f32:
+    unsicher:
+        gib_zurück v.x + v.y + v.z
+
+@nativ
+@einstieg
+funktion moo_g24_summe(g: G24, k: u64) -> u64:
+    unsicher:
+        gib_zurück g.a + g.b + g.c + k
+
+@nativ
+@einstieg
+funktion moo_g24_plus(g: G24, k: u64) -> G24:
+    unsicher:
+        setze r: G24 auf G24(g.a + k, g.b + k, g.c + k)
+        gib_zurück r
+
+@nativ
+@einstieg
+funktion moo_druck(a: u64, b: u64, c: u64, d: u64, e: u64, f: u64, p: P2, v: V3, k: K4) -> u64:
+    unsicher:
+        gib_zurück a + b + c + d + e + f + p.a + p.b + u64(k.w) + u64(k.t)
+
+@nativ
+@einstieg
+funktion moo_k4(k: K4, b: bool) -> K4:
+    unsicher:
+        wenn b:
+            setze r: K4 auf K4(k.t + u8(1), k.w + u16(1))
+            gib_zurück r
+        gib_zurück k
+
+# --- Nachzug Review 1e51cd93: A2-Formen (Identitaet Moo->C und C->Moo) ---
+struktur P8:
+    a: u32
+    b: u32
+
+struktur PU:
+    p: ptr[u8]
+    n: u32
+
+struktur FU:
+    f: f32
+    n: u32
+
+struktur Innen:
+    t: u8
+    w: f32
+
+struktur Nest:
+    i: Innen
+    k: [u16; 3]
+
+struktur B3:
+    a: u8
+    b: u8
+    c: u8
+
+struktur B5:
+    x: [u8; 5]
+
+struktur B6:
+    a: u16
+    b: u16
+    c: u16
+
+struktur B7:
+    x: [u8; 7]
+
+struktur D1:
+    x: f64
+
+struktur D2:
+    x: f64
+    y: f64
+
+struktur F4:
+    x: f32
+    y: f32
+    z: f32
+    w: f32
+
+struktur D4:
+    x: f64
+    y: f64
+    z: f64
+    w: f64
+
+struktur MischEin:
+    x: FU
+    y: D2
+    z: B3
+
+extern "C" funktion abi_id_P8(x: P8) -> P8
+extern "C" funktion abi_id_PU(x: PU) -> PU
+extern "C" funktion abi_id_FU(x: FU) -> FU
+extern "C" funktion abi_id_Nest(x: Nest) -> Nest
+extern "C" funktion abi_id_B3(x: B3) -> B3
+extern "C" funktion abi_id_B5(x: B5) -> B5
+extern "C" funktion abi_id_B6(x: B6) -> B6
+extern "C" funktion abi_id_B7(x: B7) -> B7
+extern "C" funktion abi_id_D1(x: D1) -> D1
+extern "C" funktion abi_id_D2(x: D2) -> D2
+extern "C" funktion abi_id_F4(x: F4) -> F4
+extern "C" funktion abi_id_D4(x: D4) -> D4
+extern "C" funktion abi_misch(a: u64, b: f64, p: ptr[void], c: u64, d: f64, e: u64, x: FU, y: D2, z: B3) -> f64
+extern "C" funktion abi_setze(ziel: ptr[P8], wert: P8, n: Nest) -> void
+
+@nativ
+@einstieg
+funktion probe_id_P8(ein: u64, ziel_adr: u64) -> u32:
+    unsicher:
+        setze q: ptr[P8] auf zeiger(ein)
+        setze z: ptr[P8] auf zeiger(ziel_adr)
+        z[0] = abi_id_P8(q[0])
+        gib_zurück u32(1)
+
+@nativ
+@einstieg
+funktion moo_id_P8(x: P8) -> P8:
+    unsicher:
+        gib_zurück x
+
+@nativ
+@einstieg
+funktion probe_id_PU(ein: u64, ziel_adr: u64) -> u32:
+    unsicher:
+        setze q: ptr[PU] auf zeiger(ein)
+        setze z: ptr[PU] auf zeiger(ziel_adr)
+        z[0] = abi_id_PU(q[0])
+        gib_zurück u32(1)
+
+@nativ
+@einstieg
+funktion moo_id_PU(x: PU) -> PU:
+    unsicher:
+        gib_zurück x
+
+@nativ
+@einstieg
+funktion probe_id_FU(ein: u64, ziel_adr: u64) -> u32:
+    unsicher:
+        setze q: ptr[FU] auf zeiger(ein)
+        setze z: ptr[FU] auf zeiger(ziel_adr)
+        z[0] = abi_id_FU(q[0])
+        gib_zurück u32(1)
+
+@nativ
+@einstieg
+funktion moo_id_FU(x: FU) -> FU:
+    unsicher:
+        gib_zurück x
+
+@nativ
+@einstieg
+funktion probe_id_Nest(ein: u64, ziel_adr: u64) -> u32:
+    unsicher:
+        setze q: ptr[Nest] auf zeiger(ein)
+        setze z: ptr[Nest] auf zeiger(ziel_adr)
+        z[0] = abi_id_Nest(q[0])
+        gib_zurück u32(1)
+
+@nativ
+@einstieg
+funktion moo_id_Nest(x: Nest) -> Nest:
+    unsicher:
+        gib_zurück x
+
+@nativ
+@einstieg
+funktion probe_id_B3(ein: u64, ziel_adr: u64) -> u32:
+    unsicher:
+        setze q: ptr[B3] auf zeiger(ein)
+        setze z: ptr[B3] auf zeiger(ziel_adr)
+        z[0] = abi_id_B3(q[0])
+        gib_zurück u32(1)
+
+@nativ
+@einstieg
+funktion moo_id_B3(x: B3) -> B3:
+    unsicher:
+        gib_zurück x
+
+@nativ
+@einstieg
+funktion probe_id_B5(ein: u64, ziel_adr: u64) -> u32:
+    unsicher:
+        setze q: ptr[B5] auf zeiger(ein)
+        setze z: ptr[B5] auf zeiger(ziel_adr)
+        z[0] = abi_id_B5(q[0])
+        gib_zurück u32(1)
+
+@nativ
+@einstieg
+funktion moo_id_B5(x: B5) -> B5:
+    unsicher:
+        gib_zurück x
+
+@nativ
+@einstieg
+funktion probe_id_B6(ein: u64, ziel_adr: u64) -> u32:
+    unsicher:
+        setze q: ptr[B6] auf zeiger(ein)
+        setze z: ptr[B6] auf zeiger(ziel_adr)
+        z[0] = abi_id_B6(q[0])
+        gib_zurück u32(1)
+
+@nativ
+@einstieg
+funktion moo_id_B6(x: B6) -> B6:
+    unsicher:
+        gib_zurück x
+
+@nativ
+@einstieg
+funktion probe_id_B7(ein: u64, ziel_adr: u64) -> u32:
+    unsicher:
+        setze q: ptr[B7] auf zeiger(ein)
+        setze z: ptr[B7] auf zeiger(ziel_adr)
+        z[0] = abi_id_B7(q[0])
+        gib_zurück u32(1)
+
+@nativ
+@einstieg
+funktion moo_id_B7(x: B7) -> B7:
+    unsicher:
+        gib_zurück x
+
+@nativ
+@einstieg
+funktion probe_id_D1(ein: u64, ziel_adr: u64) -> u32:
+    unsicher:
+        setze q: ptr[D1] auf zeiger(ein)
+        setze z: ptr[D1] auf zeiger(ziel_adr)
+        z[0] = abi_id_D1(q[0])
+        gib_zurück u32(1)
+
+@nativ
+@einstieg
+funktion moo_id_D1(x: D1) -> D1:
+    unsicher:
+        gib_zurück x
+
+@nativ
+@einstieg
+funktion probe_id_D2(ein: u64, ziel_adr: u64) -> u32:
+    unsicher:
+        setze q: ptr[D2] auf zeiger(ein)
+        setze z: ptr[D2] auf zeiger(ziel_adr)
+        z[0] = abi_id_D2(q[0])
+        gib_zurück u32(1)
+
+@nativ
+@einstieg
+funktion moo_id_D2(x: D2) -> D2:
+    unsicher:
+        gib_zurück x
+
+@nativ
+@einstieg
+funktion probe_id_F4(ein: u64, ziel_adr: u64) -> u32:
+    unsicher:
+        setze q: ptr[F4] auf zeiger(ein)
+        setze z: ptr[F4] auf zeiger(ziel_adr)
+        z[0] = abi_id_F4(q[0])
+        gib_zurück u32(1)
+
+@nativ
+@einstieg
+funktion moo_id_F4(x: F4) -> F4:
+    unsicher:
+        gib_zurück x
+
+@nativ
+@einstieg
+funktion probe_id_D4(ein: u64, ziel_adr: u64) -> u32:
+    unsicher:
+        setze q: ptr[D4] auf zeiger(ein)
+        setze z: ptr[D4] auf zeiger(ziel_adr)
+        z[0] = abi_id_D4(q[0])
+        gib_zurück u32(1)
+
+@nativ
+@einstieg
+funktion moo_id_D4(x: D4) -> D4:
+    unsicher:
+        gib_zurück x
+
+# Drei verschiedene Strukturen unter gemischtem u64/f64/ptr-Druck.
+@nativ
+@einstieg
+funktion probe_misch(ein: u64) -> f64:
+    unsicher:
+        setze q: ptr[MischEin] auf zeiger(ein)
+        setze m: MischEin auf q[0]
+        gib_zurück abi_misch(u64(1), 2.0, zeiger(ein), u64(3), 4.0, u64(5), m.x, m.y, m.z)
+
+@nativ
+@einstieg
+funktion moo_misch(a: u64, b: f64, p: ptr[void], c: u64, d: f64, e: u64, x: FU, y: D2, z: B3) -> f64:
+    unsicher:
+        setze ganz: u64 auf a + c + e + u64(x.n) + u64(z.a) + u64(z.b) + u64(z.c)
+        gib_zurück als(f64, ganz) + b + d + als(f64, x.f) + y.x + y.y
+
+# void mit Struktur- und verschachteltem Argument (Arrayfeld).
+@nativ
+@einstieg
+funktion probe_setze(ziel: u64, ein_wert: u64, ein_nest: u64) -> u32:
+    unsicher:
+        setze w: ptr[P8] auf zeiger(ein_wert)
+        setze n: ptr[Nest] auf zeiger(ein_nest)
+        abi_setze(zeiger(ziel), w[0], n[0])
+        gib_zurück u32(1)
+
+@nativ
+@einstieg
+funktion moo_setze(ziel: ptr[P8], wert: P8, n: Nest) -> void:
+    unsicher:
+        ziel[0] = P8(wert.a + u32(n.k[2]), wert.b + u32(n.i.t))

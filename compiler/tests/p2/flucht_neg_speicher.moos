@@ -1,0 +1,9 @@
+# P2-T51 E5 negativ (b): geliehener Zeiger in Speicher hinter einem Parameter.
+struktur Halter:
+    z: ptr[i32]
+
+@nativ
+funktion f(h: ptr[Halter]) -> void:
+    unsicher:
+        setze x: i32 auf 1
+        h.z = zeiger(adresse_von(x))

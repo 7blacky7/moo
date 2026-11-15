@@ -1,0 +1,8 @@
+# P2-T85 E5: im Lambda nur als ganzer Koerper; 10 / nativ(x) wuerde nach einem
+# Fehler mit nichts weiterrechnen (Erstfehler-Verlust) -> Compilefehler.
+@nativ
+funktion teile(a: i64, b: i64) -> i64:
+    gib_zurück a / b
+
+setze f auf (x) => 10 / teile(100, x)
+zeige f(5)

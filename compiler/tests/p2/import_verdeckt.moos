@@ -1,0 +1,6 @@
+# P2-T47 E3: eine Variable gleichen Namens verdeckt den Modulalias (altes
+# Verhalten: die Variable gilt), der Compiler warnt.
+importiere modul_import_matrix als m
+daten klasse Huelle(MGRENZE: i32)
+setze m auf neu Huelle(99)
+zeige m.MGRENZE

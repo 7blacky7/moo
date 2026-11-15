@@ -8,9 +8,17 @@ neural networks up to transformers, training on CPU or Vulkan GPU, tokenizers
 (character, BPE, German syllables) and training methods such as SFT, distillation,
 DPO and evaluation.
 
-moo is a German-keyword language: `zeige` = print, `setze … auf` = set … to,
-`solange` = while, `funktion` = function. Most built-ins also have English aliases
-(see section 6).
+moo supports both English and German keywords equally (`show` / `zeige`,
+`set … to` / `setze … auf`, `while` / `solange`, `func` / `funktion`), and
+most built-in functions and methods also have English aliases (see section 6).
+German and English keywords/aliases can be mixed freely in the same file:
+
+```moo
+set x to tensor_from_list([[1, 2], [3, 4]])
+setze y auf tensor_einsen([2, 2])
+set z to x + y
+zeige "Mixed: " + str(z.zu_liste())   # -> Mixed: [2, 3, 4, 5]
+```
 
 All commands are run from the repository root.
 
@@ -154,7 +162,7 @@ alias mooc="$PWD/compiler/target/release/moo-compiler"
 First test – a file `hello.moos`:
 
 ```moo
-zeige "Hello world"
+show "Hello world"
 ```
 
 ```sh
@@ -180,21 +188,21 @@ The language itself (German): [docs/lernen.md](lernen.md).
 ### 4.1 Tensor, autograd and a small network (XOR) – `beispiele/ki_xor.moos`
 
 The full low-level path: create tensors, build layers, compute the loss,
-`rueckwaerts()` (backward/autograd), optimizer step.
+`.backward()` (autograd), optimizer step.
 
 ```moo
-setze x auf tensor_aus_liste([[0,0],[0,1],[1,0],[1,1]])
-setze ziel auf tensor_aus_liste([[0],[1],[1],[0]])
-setze netz auf [schicht_dicht(2, 8, "tanh", 7), schicht_dicht(8, 1, "sigmoid", 8)]
-setze opt auf optimierer_adam(parameter(netz), 0.05)
-setze i auf 0
-solange i < 400:
-    setze fehler auf mse(vorwaerts(netz, x), ziel)
-    fehler.rueckwaerts()
-    opt.schritt()
-    setze i auf i + 1
-autograd_aus()
-zeige "Vorhersage (Ziel 0,1,1,0): " + text(vorwaerts(netz, x).zu_liste())
+set x to tensor_from_list([[0,0],[0,1],[1,0],[1,1]])
+set target to tensor_from_list([[0],[1],[1],[0]])
+set net to [layer_dense(2, 8, "tanh", 7), layer_dense(8, 1, "sigmoid", 8)]
+set opt to optimizer_adam(parameters(net), 0.05)
+set i to 0
+while i < 400:
+    set loss to mse(forward(net, x), target)
+    loss.backward()
+    opt.step()
+    set i to i + 1
+autograd_off()
+show "Prediction (target 0,1,1,0): " + str(forward(net, x).to_list())
 ```
 
 ```sh
@@ -211,20 +219,20 @@ Vorhersage (Ziel 0,1,1,0): [0.00425452, 0.995528, 0.995059, 0.0050562]
 ### 4.2 The "child's play" API: train, save, load – `beispiele/ki_kinderleicht.moos`
 
 ```moo
-setze netz auf ki_netz([schicht_dicht(2, 8, "tanh", 7), schicht_dicht(8, 1, "sigmoid", 8)])
-setze verlauf auf netz.trainiere(daten, ziele, {"epochen": 400, "rate": 0.05, "batch": 4, "ausgabe": 0})
-zeige "Genauigkeit: " + text(netz.genauigkeit(daten, ziele))
-netz.speichern("/tmp/xor_netz.mook")
-setze kopie auf ki_laden("/tmp/xor_netz.mook")
+set net to ai_net([layer_dense(2, 8, "tanh", 7), layer_dense(8, 1, "sigmoid", 8)])
+set history to net.train(data, targets, {"epochen": 400, "rate": 0.05, "batch": 4, "ausgabe": 0})
+show "Accuracy: " + str(net.accuracy(data, targets))
+net.save("/tmp/xor_netz.mook")
+set copy to ai_load("/tmp/xor_netz.mook")
 ```
 
 ```sh
 mooc run beispiele/ki_kinderleicht.moos
 ```
 
-Output (verified): `Genauigkeit: 1` (accuracy); the loaded network gives exactly the
-same prediction. Options are passed as a dict (`epochen` = epochs, `rate` = learning
-rate). Models are stored in the `.mook` format.
+Output (verified): `Accuracy: 1` (the German repo example prints `Genauigkeit: 1`); the loaded network gives exactly the
+same prediction. Options are passed as a dict whose keys remain German (`"epochen"` = epochs, `"rate"` = learning
+rate, `"batch"`, `"ausgabe"` = logging interval). Models are stored in the `.mook` format.
 
 ### 4.3 Tokenizers: characters and German syllables – `beispiele/p4_silben_demo.moos`
 
@@ -233,12 +241,12 @@ patterns in `compiler/runtime/data/silben/`), saves, loads and checks the round 
 Key lines:
 
 ```moo
-setze muster auf datei_lesen("compiler/runtime/data/silben/dehyphn-x-2024-02-28.pat")
-setze ct auf zeichen_fixed_trainiere(korpus, 320)
-setze st auf silben_trainiere(korpus, 320, muster)
-silben_speichern(st, s_pfad)
-setze sl auf silben_laden(s_pfad)
-silben_dekodiere(sl, silben_kodiere(sl, probe))
+set patterns to file_read("compiler/runtime/data/silben/dehyphn-x-2024-02-28.pat")
+set ct to char_fixed_train(corpus, 320)
+set st to syllable_train(corpus, 320, patterns)
+syllable_save(st, s_path)
+set sl to syllable_load(s_path)
+syllable_decode(sl, syllable_encode(sl, probe))
 ```
 
 The example needs an **empty, existing** working directory:
@@ -249,11 +257,11 @@ MOO_P4_DEMO_DIR=/tmp/p4demo mooc run beispiele/p4_silben_demo.moos
 # Output (verified): P4 DEMO OK
 ```
 
-A BPE tokenizer works the same way with `tokenizer_trainiere(korpus, vokabgroesse)`,
-`tokenizer_kodiere` / `tokenizer_dekodiere` / `tokenizer_speichern` / `tokenizer_laden`
+A BPE tokenizer works the same way with `tokenizer_train(corpus, vocab_size)`,
+`tokenizer_encode` / `tokenizer_decode` / `tokenizer_save` / `tokenizer_load`
 (see `beispiele/p4_silben/train_tokenizers.moos`, `beispiele/tests/p4_tokenizer_api.moos`).
-For simple character language models there is `text_tokenizer(text)`, which returns a
-dict with `ids`, `vokab` and `id_zu_zeichen`.
+For simple character language models there is `char_tokenizer(text)`, which returns a
+dict with German keys `ids`, `vokab` and `id_zu_zeichen`.
 
 ### 4.4 Small language model (transformer) – `beispiele/ki_sprachmodell.moos`
 
@@ -261,23 +269,23 @@ A mini transformer (2 blocks, dim 64, about 120k parameters) learns Grimm's fair
 tales character by character. A learning demonstrator, not a chatbot. Structure:
 
 ```moo
-setze tok auf text_tokenizer(korpus)
-setze emb  auf schicht_embedding(vokab, dim, 1)
-setze pos  auf schicht_position(block, dim, "gelernt", 2)
-setze att1 auf schicht_attention(dim, koepfe, 3)
+set tok to char_tokenizer(corpus)
+set emb  to layer_embedding(vocab, dim, 1)
+set pos  to layer_position(block, dim, "learned", 2)
+set att1 to layer_attention(dim, heads, 3)
 # ...
-funktion modell(ids_block):
-    setze x auf vorwaerts([emb], ids_block)
-    setze x auf vorwaerts([pos], x)
-    setze x auf x + vorwaerts([ln1a, att1], x)     # residual via autograd
+func model(ids_block):
+    set x to forward([emb], ids_block)
+    set x to forward([pos], x)
+    set x to x + forward([ln1a, att1], x)     # residual via autograd
     # ...
-setze verlust auf kreuzentropie(modell(ids.zeilen(p, p + block)), ids.zeilen(p + 1, p + block + 1))
-verlust.rueckwaerts()
-gradienten_kappen(params, 1.0)
-opt.schritt()
+set loss to cross_entropy(model(ids.rows(0, block)), ids.rows(1, block + 1))
+loss.backward()
+clip_gradients(params, 1.0)
+opt.step()
 ```
 
-Generation runs under `autograd_aus()` with greedy or temperature sampling.
+Generation runs under `autograd_off()` with greedy or temperature sampling.
 
 ```sh
 ./skripte/maerchen_download.sh          # downloads the corpus to beispiele/daten/maerchen.txt
@@ -336,28 +344,29 @@ Tests via mise, e.g. `mise run test-p5-train-api` (all tasks: `mise tasks`).
 
 | Function | Purpose |
 |---|---|
-| `tensor_aus_liste`, `tensor_nullen`, `tensor_einsen`, `tensor_zufall` | create tensors (from list, zeros, ones, random) |
-| `.zu_liste()`, `.zeilen(a, b)`, `.groesse()`, `.softmax()` | tensor methods (to list, rows, shape, softmax) |
-| `autograd_an`, `autograd_aus`, `autograd_reset`, `.rueckwaerts()` | control autograd / compute gradients |
-| `schicht_dicht`, `schicht_faltung`, `schicht_pooling`, `schicht_flach`, `schicht_dropout` | basic layers (dense, conv, pooling, flatten, dropout) |
-| `schicht_embedding`, `schicht_position`, `schicht_attention`, `schicht_layernorm`, `schicht_rmsnorm`, `schicht_ffn_gated`, `schicht_moe`, `schicht_attnres` | transformer building blocks |
-| `vorwaerts(schichten, x)`, `parameter(schichten)` | forward pass, trainable parameters |
-| `mse`, `kreuzentropie` | loss functions (MSE, cross-entropy) |
-| `optimierer_sgd`, `optimierer_adam`, `optimierer_adamw`, `.schritt()`, `gradienten_kappen` | optimization (step, gradient clipping) |
-| `ki_netz`, `.trainiere`, `.vorhersage`, `.genauigkeit`, `.speichern`, `ki_laden` | child's-play API (train, predict, accuracy, save, load) |
-| `checkpoint_speichern`, `checkpoint_laden`, `checkpoint_rotieren`, `checkpoint_waehlen` | checkpoints (`.mook`) |
-| `shard_schreiben`, `shard_info`, `shard_pruefen`, `shard_fenster`, `shard_fenster_maske`, `shard_reihenfolge`, `shard_split` | streaming token shards |
-| `trainiere_sft`, `trainiere_korrekturen`, `trainiere_distillation`, `trainiere_praeferenzen`, `trainiere_methode`, `evaluiere_modell` | post-training & evaluation |
-| `text_tokenizer` | simple character tokenizer |
-| `tokenizer_trainiere`, `tokenizer_trainiere_parser`, `tokenizer_kodiere`, `tokenizer_kodiere_stapel`, `tokenizer_dekodiere`, `tokenizer_speichern`, `tokenizer_laden`, `tokenizer_info`, `tokenizer_hash` | BPE tokenizer (incl. parser BPE) |
-| `tokenizer_chat_init`, `tokenizer_spezial_id`, `tokenizer_rendern` | chat / special tokens & rendering |
-| `silben_trainiere`, `silben_grenzen`, `silben_kodiere`, `silben_dekodiere`, `silben_speichern`, `silben_laden`, `silben_info`, `silben_hash`, `silben_hash64` | German syllable tokenizer |
-| `zeichen_fixed_trainiere`, `zeichen_fixed_kodiere`, `zeichen_fixed_dekodiere`, `zeichen_fixed_speichern`, `zeichen_fixed_laden` | fixed character tokenizer |
-| `BildModell` (`importiere ki_bild_easy`, `.beschreibe(frame)`) | high-level stdlib API ("image → text") |
-| `gpu_statistik`, `gpu_statistik_reset` | check GPU usage |
+| `tensor_from_list`, `tensor_zeros`, `tensor_ones`, `tensor_random` | create tensors (from list, zeros, ones, random) |
+| `.to_list()`, `.rows(a, b)`, `.size()`, `.softmax()` | tensor methods (to list, rows, shape, softmax) |
+| `autograd_on`, `autograd_off`, `autograd_reset`, `.backward()` | control autograd / compute gradients |
+| `layer_dense`, `layer_conv2d`, `layer_pooling`, `layer_flatten`, `layer_dropout` | basic layers (dense, conv, pooling, flatten, dropout) |
+| `layer_embedding`, `layer_position`, `layer_attention`, `layer_layernorm`, `layer_rmsnorm`, `layer_ffn_gated`, `layer_moe`, `layer_attnres` | transformer building blocks |
+| `forward(layers, x)`, `parameters(layers)` | forward pass, trainable parameters |
+| `mse`, `cross_entropy` | loss functions (MSE, cross-entropy) |
+| `optimizer_sgd`, `optimizer_adam`, `optimizer_adamw`, `.step()`, `clip_gradients` | optimization (step, gradient clipping) |
+| `ai_net`, `.train`, `.predict`, `.accuracy`, `.save`, `ai_load` | child's-play API (train, predict, accuracy, save, load) |
+| `checkpoint_save`, `checkpoint_load`, `checkpoint_rotate`, `checkpoint_waehlen` *(German only)* | checkpoints (`.mook`) |
+| `shard_write`, `shard_info`, `shard_check`, `shard_window`, `shard_mask_window`, `shard_order`, `shard_split` | streaming token shards |
+| `trainiere_sft`, `trainiere_korrekturen`, `trainiere_distillation`, `trainiere_praeferenzen`, `trainiere_methode`, `evaluiere_modell` *(German only)* | post-training & evaluation |
+| `char_tokenizer` | simple character tokenizer |
+| `tokenizer_train`, `tokenizer_trainiere_parser` *(German only)*, `tokenizer_encode`, `tokenizer_encode_batch`, `tokenizer_decode`, `tokenizer_save`, `tokenizer_load`, `tokenizer_info`, `tokenizer_hash` | BPE tokenizer (incl. parser BPE) |
+| `chat_tokenizer`, `tokenizer_special_id`, `tokenizer_render` | chat / special tokens & rendering |
+| `syllable_train`, `syllable_boundaries`, `syllable_encode`, `syllable_decode`, `syllable_save`, `syllable_load`, `syllable_info`, `syllable_hash`, `syllable_hash64` | German syllable tokenizer |
+| `char_fixed_train`, `char_fixed_encode`, `char_fixed_decode`, `char_fixed_save`, `char_fixed_load` | fixed character tokenizer |
+| `BildModell` (`import ki_bild_easy`, `.beschreibe(frame)` — *German stdlib class/method*) | high-level stdlib API ("image → text") |
+| `gpu_statistik`, `gpu_statistik_reset` *(German only)* | check GPU usage |
 
-Many functions also have English aliases (e.g. `tensor_from_list`, `autograd_off`,
-`tokenizer_encode`, `checkpoint_save`, `shard_write`, `syllable_boundaries`).
+All functions above also have German counterparts (e.g. `tensor_aus_liste`, `autograd_aus`,
+`tokenizer_kodiere`, `checkpoint_speichern`, `shard_schreiben`, `silben_grenzen`); the few
+built-ins without an English alias are marked *(German only)* above.
 
 ## 7. More examples and documents
 

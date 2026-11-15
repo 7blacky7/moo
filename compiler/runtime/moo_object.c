@@ -1,4 +1,5 @@
 #include "moo_runtime.h"
+#include "moo_struct_dyn.h" /* P2-T49: Feldzugriff auf Strukturwerte */
 
 MooValue moo_object_new(const char* class_name) {
     MooValue v;
@@ -35,6 +36,8 @@ MooValue moo_object_get(MooValue obj_val, const char* prop) {
         // nichts mehr freigeben.
         return result;
     }
+    // P2-T49 (Plan 38c59c64 A3): Strukturwert, Feld ueber die Laufzeitbeschreibung.
+    if (obj_val.tag == MOO_STRUCT) return moo_struct_feld_get(obj_val, prop);
     if (obj_val.tag != MOO_OBJECT) {
         return moo_none();
     }
@@ -62,6 +65,11 @@ void moo_object_set(MooValue obj_val, const char* prop, MooValue value) {
         MooValue key = moo_string_new(prop);
         // moo_dict_set uebernimmt Ownership von key und value (transfer).
         moo_dict_set(obj_val, key, value);
+        return;
+    }
+    // P2-T49 A3: Strukturfeld schreiben (value wird dort auf jedem Pfad verbraucht).
+    if (obj_val.tag == MOO_STRUCT) {
+        moo_struct_feld_set(obj_val, prop, value);
         return;
     }
     if (obj_val.tag != MOO_OBJECT) {

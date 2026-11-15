@@ -1,0 +1,6 @@
+# P2-T16 E5: der Skalar einer Vektorrechnung ist f32 (keine i32-Umwandlung).
+@nativ
+funktion f(a: vec3, n: i32) -> vec3:
+    gib_zurück a * n
+
+zeige f(vec3(1, 2, 3), 2)

@@ -1,0 +1,28 @@
+# P2-T21/T57 Batch E (Plan f4655d20 E4c, R2): Fehler in einem fehlbaren
+# Rueckruf ohne aktives versuche: -> moo_throw beendet den Prozess bereits im
+# Rueckruf mit Diagnose und RC 1 (definierter Abbruch, kein Unwinding durch C).
+struktur Kontext:
+    aufrufe: i32
+    wert: i32
+
+@bibliothek("p2_rueckruf")
+extern "C" funktion rr_wiederhole(n: i32, cb: ptr[fn(i32, ptr[Kontext]) -> i32], ud: ptr[Kontext]) -> i32
+
+@nativ
+@rückruf(0)
+funktion teile(i: i32, k: ptr[Kontext]) -> i32:
+    unsicher:
+        k.aufrufe = k.aufrufe + 1
+        gib_zurück 10 / (2 - i)
+
+@nativ
+funktion lauf(n: i32) -> i32:
+    unsicher:
+        setze k: Kontext auf Kontext(0, 0)
+        setze r: i32 auf rr_wiederhole(n, teile, zeiger(adresse_von(k)))
+        gib_zurück r
+
+zeige "vor"
+unsicher:
+    zeige lauf(5)
+zeige "NICHT ERREICHT"

@@ -1,0 +1,21 @@
+# P2-T83 B3 (Plan f3217c27, Review 6315dba0): ein @liest-Parameter darf nicht
+# an einen schreibbaren puffer-Parameter weitergegeben werden - sonst bliebe die
+# Tensor-Maske nach realem Host-Schreiben faelschlich gueltig.
+@nativ
+funktion nullen_kern(t: puffer[f32]) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(t):
+            t[i] = 0.0
+            setze i auf i + 1
+        gib_zurück länge(t)
+
+@nativ
+@liest(1)
+funktion nur_lesen(t: puffer[f32]) -> u64:
+    unsicher:
+        gib_zurück nullen_kern(t)
+
+setze t auf tensor_aus_liste([1, 2])
+unsicher:
+    zeige nur_lesen(t)

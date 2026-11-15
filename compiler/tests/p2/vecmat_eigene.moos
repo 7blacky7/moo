@@ -1,0 +1,21 @@
+# P2-T16 (Plan 3f03704a E2, Freigabe #38101 O2): eine eigene struktur vec2
+# ueberdeckt die eingebaute (Compiler-Warnung, keine eingebauten Operatoren);
+# eine eigene Funktion punkt gewinnt gegen die eingebaute. vec3 bleibt eingebaut.
+struktur vec2:
+    a: i32
+    b: i32
+
+@nativ
+funktion punkt(a: vec3, b: vec3) -> f32:
+    gib_zurück a.x * 100.0 + b.x
+
+@nativ
+funktion eigen(v: vec2) -> i32:
+    gib_zurück v.a + v.b
+
+@nativ
+funktion probe(a: vec3, b: vec3) -> f32:
+    gib_zurück punkt(a, b) + betrag(b)
+
+zeige eigen(vec2(3, 4))
+zeige probe(vec3(1, 2, 3), vec3(0, 3, 4))

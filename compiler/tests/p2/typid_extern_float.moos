@@ -1,0 +1,6 @@
+# P2-T51 C2 negativ: ptr[f32] an extern-C-Parameter ptr[i32].
+extern "C" funktion c_i32(p: ptr[i32]) -> i32
+@nativ
+funktion f(p: ptr[f32]) -> i32:
+    unsicher:
+        gib_zurück c_i32(p)

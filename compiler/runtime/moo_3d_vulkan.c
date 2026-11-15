@@ -128,7 +128,20 @@ typedef struct {
     int8_t sim_keys[GLFW_KEY_LAST + 1];
     /* Maus-Delta-Sim (consume-on-read), SEPARAT von sim_x/sim_y (Pos). */
     float sim_delta_x, sim_delta_y;
+    /* P2-T25 (Re-Review 0f585c26): Zeichenauftraege des Bildes in Aufrufreihenfolge,
+     * damit dasselbe Netz mehrfach je Bild (z. B. mit verschiedenen Matrizen)
+     * gezeichnet werden kann. */
+    struct VkZeichenAuftrag* auftraege;
+    int auftrag_anzahl, auftrag_kapazitaet;
 } VulkanContext;
+
+typedef struct VkZeichenAuftrag {
+    int slot;
+    float mvp[16];
+    float alpha;
+    float wave[3];
+    float spec[2];
+} VkZeichenAuftrag;
 
 /* Forward decl */
 static void vk_scroll_callback(GLFWwindow* w, double xoff, double yoff);
@@ -256,8 +269,21 @@ static int create_depth(VulkanContext* ctx) {
         .allocationSize = req.size,
         .memoryTypeIndex = vk_find_memory_type(ctx->phys_device, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
     };
-    vkAllocateMemory(ctx->device, &alloc, NULL, &ctx->depth_memory);
-    vkBindImageMemory(ctx->device, ctx->depth_image, ctx->depth_memory, 0);
+    /* P2-T25 (Re-Review 6008ef18): Speichertyp, Allocate und Bind pruefen. */
+    if (alloc.memoryTypeIndex == VK_MOO_KEIN_SPEICHERTYP
+        || vkAllocateMemory(ctx->device, &alloc, NULL, &ctx->depth_memory) != VK_SUCCESS) {
+        vkDestroyImage(ctx->device, ctx->depth_image, NULL);
+        ctx->depth_image = VK_NULL_HANDLE;
+        ctx->depth_memory = VK_NULL_HANDLE;
+        return -1;
+    }
+    if (vkBindImageMemory(ctx->device, ctx->depth_image, ctx->depth_memory, 0) != VK_SUCCESS) {
+        vkFreeMemory(ctx->device, ctx->depth_memory, NULL);
+        vkDestroyImage(ctx->device, ctx->depth_image, NULL);
+        ctx->depth_image = VK_NULL_HANDLE;
+        ctx->depth_memory = VK_NULL_HANDLE;
+        return -1;
+    }
 
     VkImageViewCreateInfo view_info = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -756,25 +782,28 @@ static void vk_swap(void* raw) {
         vk_mesh_collector_reset(&ctx->mesh_collector);
     }
 
-    /* Nur per chunk_draw angeforderte Chunks zeichnen (gleiche Semantik wie GL33).
-     * Alpha wurde beim chunk_draw-Aufruf eingefroren und geht als Push-Constant mit. */
-    for (int i = 0; i < MAX_VK_CHUNKS; i++) {
-        VkChunkSlot* slot = &ctx->chunk_sys.slots[i];
-        if (slot->is_used && slot->is_compiled && slot->draw_requested) {
-            pc.alpha = slot->draw_alpha;
-            pc.waveAmp = slot->draw_wave[0];
-            pc.waveFreq = slot->draw_wave[1];
-            pc.waveSpeed = slot->draw_wave[2];
-            pc.specStrength = slot->draw_spec[0];
-            pc.specPower = slot->draw_spec[1];
-            vkCmdPushConstants(cmd, ctx->pipeline_layout,
-                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
-            VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &slot->vertex_buf.buffer, &offset);
-            vkCmdDraw(cmd, (uint32_t)slot->vertex_count, 1, 0, 0);
-            slot->draw_requested = false;
-        }
+    /* Per chunk_draw angeforderte Chunks in Aufrufreihenfolge zeichnen (gleiche
+     * Semantik wie GL33, auch mehrfach dasselbe Netz). MVP/Alpha/Welle/Glanz
+     * wurden beim chunk_draw-Aufruf eingefroren (P2-T25). */
+    for (int i = 0; i < ctx->auftrag_anzahl; i++) {
+        const VkZeichenAuftrag* a = &ctx->auftraege[i];
+        if (a->slot < 0 || a->slot >= MAX_VK_CHUNKS) continue;
+        VkChunkSlot* slot = &ctx->chunk_sys.slots[a->slot];
+        if (!slot->is_used || !slot->is_compiled || !slot->vertex_buf.buffer || slot->vertex_count <= 0) continue;
+        memcpy(pc.mvp, a->mvp, 64);
+        pc.alpha = a->alpha;
+        pc.waveAmp = a->wave[0];
+        pc.waveFreq = a->wave[1];
+        pc.waveSpeed = a->wave[2];
+        pc.specStrength = a->spec[0];
+        pc.specPower = a->spec[1];
+        vkCmdPushConstants(cmd, ctx->pipeline_layout,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+        VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &slot->vertex_buf.buffer, &offset);
+        vkCmdDraw(cmd, (uint32_t)slot->vertex_count, 1, 0, 0);
     }
+    ctx->auftrag_anzahl = 0;
 
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
@@ -798,6 +827,9 @@ static void vk_close(void* raw) {
 
     vk_chunk_system_cleanup(&ctx->chunk_sys);
     vk_mesh_collector_free(&ctx->mesh_collector);
+    free(ctx->auftraege);
+    ctx->auftraege = NULL;
+    ctx->auftrag_anzahl = ctx->auftrag_kapazitaet = 0;
     if (ctx->stream_vbo.buffer)
         vk_moo_buffer_destroy(ctx->device, &ctx->stream_vbo);
 
@@ -862,22 +894,18 @@ static void vk_pop_matrix(void* raw) {
     moo_matrix_stack_pop(&ctx->matrix_stack);
 }
 
+/* P2-T25 (Befund beim Review-Fix c7071266): mat4_translate/mat4_rotate
+ * multiplizieren in-place (m = m * T); frueher wurde hier eine uninitialisierte
+ * lokale Matrix uebergeben. Seit Chunks die Matrix zum chunk_draw-Zeitpunkt
+ * nutzen, war das sichtbar. Jetzt wie GL33 direkt auf die aktuelle Matrix. */
 static void vk_translate(void* raw, float x, float y, float z) {
     VulkanContext* ctx = (VulkanContext*)raw;
-    float t[16];
-    mat4_translate(t, x, y, z);
-    float result[16];
-    mat4_multiply(result, ctx->matrix_stack.current, t);
-    memcpy(ctx->matrix_stack.current, result, 64);
+    mat4_translate(ctx->matrix_stack.current, x, y, z);
 }
 
 static void vk_rotate(void* raw, float angle, float ax, float ay, float az) {
     VulkanContext* ctx = (VulkanContext*)raw;
-    float r[16];
-    mat4_rotate(r, angle, ax, ay, az);
-    float result[16];
-    mat4_multiply(result, ctx->matrix_stack.current, r);
-    memcpy(ctx->matrix_stack.current, result, 64);
+    mat4_rotate(ctx->matrix_stack.current, angle, ax, ay, az);
 }
 
 static void vk_cube(void* raw, float x, float y, float z, float size, float r, float g, float b) {
@@ -1021,19 +1049,72 @@ static void vk_chunk_draw_fn(void* raw, int id) {
     if (!ctx || id < 0 || id >= MAX_VK_CHUNKS) return;
     VkChunkSlot* slot = &ctx->chunk_sys.slots[id];
     if (!slot->is_used || !slot->is_compiled) return;
-    /* Draw-Request fuer diesen Frame; Alpha zum Aufruf-Zeitpunkt einfrieren. */
-    slot->draw_requested = true;
-    slot->draw_alpha = ctx->draw_alpha;
-    slot->draw_wave[0] = ctx->draw_wave[0];
-    slot->draw_wave[1] = ctx->draw_wave[1];
-    slot->draw_wave[2] = ctx->draw_wave[2];
-    slot->draw_spec[0] = ctx->draw_spec[0];
-    slot->draw_spec[1] = ctx->draw_spec[1];
+    /* Zeichenauftrag fuer dieses Bild anhaengen (P2-T25, Re-Review 0f585c26):
+     * MVP, Alpha, Welle und Glanz zum Aufrufzeitpunkt einfrieren, damit Chunks
+     * wie in GL33 der aktuellen Modelmatrix folgen und mehrfach zeichnen. */
+    if (ctx->auftrag_anzahl >= ctx->auftrag_kapazitaet) {
+        int kap = ctx->auftrag_kapazitaet ? ctx->auftrag_kapazitaet * 2 : 64;
+        VkZeichenAuftrag* neu = (VkZeichenAuftrag*)realloc(ctx->auftraege, sizeof(VkZeichenAuftrag) * (size_t)kap);
+        if (!neu) return;   /* kein Speicher: Zeichnung entfaellt, Zustand bleibt gueltig */
+        ctx->auftraege = neu;
+        ctx->auftrag_kapazitaet = kap;
+    }
+    VkZeichenAuftrag* a = &ctx->auftraege[ctx->auftrag_anzahl++];
+    a->slot = id;
+    float mv[16];
+    mat4_multiply(mv, ctx->view, ctx->matrix_stack.current);
+    mat4_multiply(a->mvp, ctx->projection, mv);
+    a->alpha = ctx->draw_alpha;
+    a->wave[0] = ctx->draw_wave[0];
+    a->wave[1] = ctx->draw_wave[1];
+    a->wave[2] = ctx->draw_wave[2];
+    a->spec[0] = ctx->draw_spec[0];
+    a->spec[1] = ctx->draw_spec[1];
 }
 
 static void vk_chunk_delete_fn(void* raw, int id) {
     VulkanContext* ctx = (VulkanContext*)raw;
     vk_chunk_delete(&ctx->chunk_sys, id);
+}
+
+/* P2-T25 (Plan 962e249a, Stufe 1; Review c7071266): Netz ueber einen eigenen
+ * temporaeren Sammler (der Immediate-Sammler des Bildes bleibt unberuehrt);
+ * Indizes beim Hochladen aufgeloest. Backendfehler -> 10; ein leeres Netz
+ * leert den Slot definiert. Die Matrix gilt zum chunk_draw-Zeitpunkt. */
+static int vk_chunk_upload_fn(void* raw, int id, const float* ecken9, int ecken,
+                              const uint32_t* indizes, int index_anzahl) {
+    VulkanContext* ctx = (VulkanContext*)raw;
+    if (!ctx) return 1;
+    if (ctx->active_chunk >= 0) return 7;
+    if (id < 0 || id >= MAX_VK_CHUNKS || !ctx->chunk_sys.slots[id].is_used) return 8;
+    VkChunkSlot* slot = &ctx->chunk_sys.slots[id];
+    int anzahl = index_anzahl > 0 ? index_anzahl : ecken;
+    if (anzahl == 0) {
+        if (slot->vertex_buf.buffer) vk_moo_buffer_destroy(ctx->chunk_sys.device, &slot->vertex_buf);
+        slot->vertex_count = 0;
+        slot->is_compiled = false;
+        return 0;
+    }
+    VkMeshCollector tmp;
+    vk_mesh_collector_init(&tmp);
+    for (int k = 0; k < anzahl; k++) {
+        uint32_t e = index_anzahl > 0 ? indizes[k] : (uint32_t)k;
+        const float* v = ecken9 + 9u * (size_t)e;
+        vk_mesh_collector_add_vertex(&tmp,
+            v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8]);
+    }
+    int rc = vk_chunk_upload(&ctx->chunk_sys, id, &tmp,
+        ctx->framebuffers[0], ctx->swapchain_extent, NULL, 0);
+    vk_mesh_collector_free(&tmp);
+    return rc == 0 ? 0 : 10;
+}
+
+static void vk_mult_matrix(void* raw, const float m[16]) {
+    VulkanContext* ctx = (VulkanContext*)raw;
+    if (!ctx || !m) return;
+    float result[16];
+    mat4_multiply(result, ctx->matrix_stack.current, m);
+    memcpy(ctx->matrix_stack.current, result, 64);
 }
 
 /* === Export Backend === */
@@ -1589,4 +1670,6 @@ Moo3DBackend moo_backend_vulkan = {
     .simulate_key = vk_simulate_key,
     .simulate_mouse_delta = vk_simulate_mouse_delta,
     .simulate_reset = vk_simulate_reset,
+    .chunk_upload = vk_chunk_upload_fn,
+    .mult_matrix = vk_mult_matrix,
 };

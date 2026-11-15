@@ -1,0 +1,7 @@
+# P2-T85 D3 (E7): native Methoden selbst bleiben nicht unterstuetzt.
+klasse K:
+    @nativ
+    funktion m(a: i32) -> i32:
+        gib_zurück a
+
+zeige neu K().m(3)

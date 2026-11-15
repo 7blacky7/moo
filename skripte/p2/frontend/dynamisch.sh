@@ -41,17 +41,8 @@ for name in funktion try_verschachtelt; do
   fi
   echo "PASS Kontext $name (P2-T80: hosted @nativ in benannter Funktion / versuche:-Teilausdruck)"
 done
-# Fail-closed: aus Lambdas bleibt es ein Compilefehler mit Kontextdiagnose.
-set +e
-timeout 30s "$compiler" compile compiler/tests/p2/m1_dyn_lambda.moos -o "$dir/lambda" > "$dir/lambda.compile.log" 2>&1
-rc=$?
-set -e
-if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ] || [ "$rc" -ge 128 ]; then
-  echo "FAIL lambda: unerwarteter Compiler-Exit $rc" >&2
-  exit 1
-fi
-if ! rg -q -F 'nicht in Lambdas/Methoden' "$dir/lambda.compile.log"; then
-  echo "FAIL lambda: Kontextdiagnose fehlt" >&2
-  exit 1
-fi
-echo "PASS Kontext lambda bleibt Compilefehler (fail-closed)"
+# P2-T85 (im_standardrahmen) / P2-T55: Lambdas tragen den Propagationsrahmen;
+# der fruehere fail-closed-Negativfall ist jetzt ein Positivtest.
+timeout 30s "$compiler" compile compiler/tests/p2/m1_dyn_lambda.moos -o "$dir/lambda"
+[ "$(timeout 30s "$dir/lambda")" = 3 ] || { echo "FAIL lambda: Ausgabe statt 3" >&2; exit 1; }
+echo "PASS Kontext lambda (P2-T85: @nativ mit dynamischem Argument aus Lambda)"

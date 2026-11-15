@@ -1,0 +1,12 @@
+# P2-T83 B3 (Plan f3217c27): puffer_zeiger auf einen @liest-Parameter ist
+# ausserhalb von unsicher: ein Compilefehler (in unsicher: bewusstes Escape, R3).
+# Bestand: sichere Koerper duerfen puffer_zeiger sonst ohne unsicher: nutzen.
+@nativ
+@liest(1)
+funktion adresse(t: puffer[f32]) -> u64:
+    setze z: ptr[f32] auf puffer_zeiger(t)
+    gib_zurück länge(t)
+
+setze t auf tensor_aus_liste([1, 2])
+unsicher:
+    zeige adresse(t)

@@ -1,0 +1,7 @@
+importiere modul_import_matrix als m
+
+@nativ
+funktion f(p: x.MPunkt) -> i32:
+    gib_zurück 1
+
+zeige 1

@@ -1,0 +1,6 @@
+# P2-T16 E5: keine stille Mischung verschiedener Vektortypen.
+@nativ
+funktion f(a: vec3, b: vec4) -> vec3:
+    gib_zurück a + b
+
+zeige f(vec3(1, 2, 3), vec4(1, 2, 3, 4))

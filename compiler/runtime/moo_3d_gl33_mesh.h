@@ -60,11 +60,17 @@ typedef struct {
     int vertex_count;
     bool is_compiled;
     bool is_used;
+    /* P2-T25: optionaler Indexpuffer (index_count > 0 -> glDrawElements). */
+    unsigned int ebo;
+    int index_count;
 } GL33Chunk;
 
 void gl33_chunk_system_init(GL33Chunk* chunks);
 int  gl33_chunk_alloc(GL33Chunk* chunks);
 void gl33_chunk_upload(GL33Chunk* chunks, int id, MeshBuilder* mb);
+/* P2-T25: VBO (und EBO) direkt aus Aufruferspeicher; 0 = ok, 8 = ungueltige Nummer. */
+int  gl33_chunk_upload_data(GL33Chunk* chunks, int id, const float* ecken9, int ecken,
+                            const unsigned int* indizes, int index_anzahl);
 void gl33_chunk_draw(GL33Chunk* chunks, int id);
 void gl33_chunk_delete(GL33Chunk* chunks, int id);
 

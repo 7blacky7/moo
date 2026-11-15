@@ -1,0 +1,3 @@
+# P2-T83 C4: Basis zur RSS-Messung - derselbe 10^7-Tensor, kein nativer Aufruf.
+setze t auf tensor_einsen([10000000])
+zeige "angelegt"

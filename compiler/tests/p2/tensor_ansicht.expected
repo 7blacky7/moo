@@ -1,0 +1,14 @@
+10.5
+4
+[2, 4, 6, 9]
+21
+4
+[3, 6, 9, 12]
+30
+2550
+16
+1530
+Native Funktion erwartet puffer[i32], erhalten Tensor (Tensoren nur als puffer[f32])
+Native Funktion erwartet puffer[f32], erhalten Frame (Frames nur als puffer[u8])
+Native Funktion erwartet puffer[f32], erhalten Liste
+fertig

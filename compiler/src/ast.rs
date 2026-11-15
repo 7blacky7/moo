@@ -273,6 +273,8 @@ pub enum Stmt {
         module: std::string::String,
         names: Vec<std::string::String>,
         alias: Option<std::string::String>,
+        /// Quellzeile der Importanweisung (Diagnose mit Herkunft, P2-T47).
+        line: usize,
     },
     Export(Box<Stmt>),
     /// `global a, b` in einer Funktion: Zuweisungen an a/b gehen an die

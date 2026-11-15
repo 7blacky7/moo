@@ -22,11 +22,23 @@ for name in i64_input_out u64_input_out i64_inexact u64_inexact i64_nearmin_inex
             grep -Fq C_RETURN_AUFGERUFEN "$out/$name.log" ;;
     esac
 done
+# P2-T55 (Plan f5b52a0b A5): 64-Bit-FFI bei vorhandenem aufraeumen ist seit
+# P2-T55 erlaubt (vorher Compilefehler). Unbehandelter Fehler: RC 1 mit
+# Diagnose, Ergebnisfehler nach genau einem C-Aufruf, Argumentfehler ohne
+# C-Aufruf, aufraeumen hoechstens einmal (Bestand: unbehandelte Fehler beenden
+# den Prozess ohne aufraeumen, wie bei wirf und reinen @nativ-Fehlern).
 for name in result arg loop; do
-    if timeout 120s "$compiler" compile "compiler/tests/p2/ffi_i64_defer_${name}.moos" --emit-ir -o "$out/defer_$name.ll" >"$out/defer_$name.log" 2>&1; then
-        printf 'Wide-FFI nach aufraeumen unerwartet akzeptiert: %s\n' "$name" >&2
-        exit 1
-    fi
-    grep -Fq 'Native 64-Bit-FFI bei vorhandenem aufräumen ist noch nicht unterstützt' "$out/defer_$name.log"
+    timeout 120s "$compiler" compile "compiler/tests/p2/ffi_i64_defer_${name}.moos" --lib-pfad "$out" -o "$out/defer_$name"
+    set +e
+    timeout 30s "$out/defer_$name" >"$out/defer_$name.log" 2>&1
+    rc=$?
+    set -e
+    (( rc == 1 )) || { cat "$out/defer_$name.log" >&2; printf 'Wide-FFI mit aufraeumen: RC %s statt 1 (%s)\n' "$rc" "$name" >&2; exit 1; }
+    grep -Fq 'Native Funktion' "$out/defer_$name.log"
+    (( $(grep -c cleanup "$out/defer_$name.log" || true) <= 1 )) || { printf 'aufraeumen mehrfach: %s\n' "$name" >&2; exit 1; }
+    case "$name" in
+        result|loop) (( $(grep -c C_RETURN_AUFGERUFEN "$out/defer_$name.log") == 1 )) \
+            || { printf 'C-Aufruf nicht genau einmal: %s\n' "$name" >&2; exit 1; } ;;
+    esac
 done
 printf 'i64/u64 FFI Exaktheit und Grenzfehler: PASS\n'

@@ -1,0 +1,8 @@
+# P2-T21/T57 E-3 (E4b): fehlbarer Rueckruf mit Ergebnis braucht @rückruf(fehlerwert).
+@nativ
+@rückruf
+funktion f(x: i32, u: ptr[void]) -> i32:
+    unsicher:
+        gib_zurück 10 / x
+
+zeige 1

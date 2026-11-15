@@ -89,6 +89,8 @@ fn main() {
         .file("runtime/moo_defer_stack.c")
         .file("runtime/moo_defer_error.c")
         .file("runtime/moo_struct_box.c") // P2-T14: Strukturbox-Speicherkern
+        .file("runtime/moo_struct_dyn.c") // P2-T49: Strukturwerte in dynamischem Moo
+        .file("runtime/moo_handle.c") // P2-T23/T53: Griff auf fremde Zeiger
         .file("runtime/moo_native_math.c") // P2-T58: Float-%/** fuer native Funktionen (freestanding, kein libm)
         .file("runtime/moo_frame.c")
         .file("runtime/moo_surface_core.c") // P016-O1: freestanding RGBA8-Rasterkern

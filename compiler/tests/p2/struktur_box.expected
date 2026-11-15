@@ -1,0 +1,24 @@
+Innen(x: 3, y: 4)
+7
+Teil(id: 7, pos: Innen(x: 3, y: 4), masse: 10, aktiv: wahr)
+Teil(id: 8, pos: Innen(x: 3.5, y: 4), masse: 10, aktiv: falsch)
+Teil(id: 7, pos: Innen(x: 3, y: 4), masse: 10, aktiv: wahr)
+3
+Innen(x: 3.5, y: 9)
+Innen(x: 1.25, y: 9)
+42
+[Innen(x: 30, y: 4), Innen(x: 0, y: 0)]
+4
+30
+34
+3
+Breit(a: -128, b: 255, c: -32768, d: 65535, e: -2147483648, f: 4294967295, g: -9007199254740992, h: 9007199254740992, k: 1.5, m: 2.25)
+wahr
+-9007199254740992
+wahr
+falsch
+falsch
+wahr
+MitArray(werte: [1, 2, 3], n: 4)
+10
+MitArray(werte: [0, 0, 0], n: 0)

@@ -1,0 +1,110 @@
+# P2-T93 (Befund dbea7b86): wirf verhaelt sich unabhaengig von unsicher:-Bloecken
+# gleich - der Fehler propagiert, die werfende Funktion und ihre Aufrufer brechen
+# ab (keine NACH_*-Ausgabe), aufraeumen laeuft genau einmal. Matrix: Callee
+# mit/ohne unsicher:, Aufrufer mit/ohne aufraeumen, wirf in derselben Funktion.
+funktion sauber():
+    zeige "CLEANUP"
+
+funktion g_plain(s):
+    wenn s < 0:
+        wirf "plain"
+    zeige "NACH_G_PLAIN"
+    gib_zurück s
+
+funktion g_unsicher(s):
+    setze t auf 0
+    unsicher:
+        setze t auf s
+    wenn t < 0:
+        wirf "unsicher"
+    zeige "NACH_G_UNSICHER"
+    gib_zurück t
+
+funktion h_plain_plain(s):
+    zeige g_plain(s)
+    zeige "NACH_H1"
+
+funktion h_plain_unsicher(s):
+    zeige g_unsicher(s)
+    zeige "NACH_H2"
+
+funktion h_aufr_plain(s):
+    aufräumen: sauber()
+    zeige g_plain(s)
+    zeige "NACH_H3"
+
+funktion h_aufr_unsicher(s):
+    aufräumen: sauber()
+    zeige g_unsicher(s)
+    zeige "NACH_H4"
+
+funktion selbst_unsicher(s):
+    aufräumen: sauber()
+    setze t auf 0
+    unsicher:
+        setze t auf s
+    wenn t < 0:
+        wirf "selbst unsicher"
+    zeige "NACH_H5"
+
+funktion selbst_plain(s):
+    aufräumen: sauber()
+    wenn s < 0:
+        wirf "selbst plain"
+    zeige "NACH_H6"
+
+funktion plain_ohne_aufr(s):
+    setze q auf 1
+    wenn s < 0:
+        wirf "plain ohne aufr"
+    zeige "NACH_H8"
+
+funktion unsicher_ohne_aufr(s):
+    unsicher:
+        setze q auf 1
+    wenn s < 0:
+        wirf "ohne aufr"
+    zeige "NACH_H7"
+
+versuche:
+    h_plain_plain(-1)
+    zeige "NACH_T1"
+fange f:
+    zeige "1 " + f
+versuche:
+    h_plain_unsicher(-1)
+    zeige "NACH_T2"
+fange f:
+    zeige "2 " + f
+versuche:
+    h_aufr_plain(-1)
+    zeige "NACH_T3"
+fange f:
+    zeige "3 " + f
+versuche:
+    h_aufr_unsicher(-1)
+    zeige "NACH_T4"
+fange f:
+    zeige "4 " + f
+versuche:
+    selbst_unsicher(-1)
+    zeige "NACH_T5"
+fange f:
+    zeige "5 " + f
+versuche:
+    selbst_plain(-1)
+    zeige "NACH_T6"
+fange f:
+    zeige "6 " + f
+versuche:
+    unsicher_ohne_aufr(-1)
+    zeige "NACH_T7"
+fange f:
+    zeige "7 " + f
+versuche:
+    plain_ohne_aufr(-1)
+    zeige "NACH_T8"
+fange f:
+    zeige "8 " + f
+h_aufr_unsicher(5)
+zeige "fertig"

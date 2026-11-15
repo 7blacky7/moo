@@ -1,0 +1,8 @@
+# P2-T21/T57 E-3 (E4b): Fehlerwert muss im Ergebnistyp liegen (kein stiller Wrap).
+@nativ
+@rückruf(300)
+funktion f(x: u8, u: ptr[void]) -> u8:
+    unsicher:
+        gib_zurück 10 / x
+
+zeige 1

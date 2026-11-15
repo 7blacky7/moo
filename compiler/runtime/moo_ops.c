@@ -1,4 +1,6 @@
+#include "moo_handle.h" /* P2-T23/T53: Gleichheit von Griffen */
 #include "moo_runtime.h"
+#include "moo_struct_dyn.h" /* P2-T49: Gleichheit von Strukturwerten */
 
 #if defined(_MSC_VER)
 #define MOO_OPTIMIZE_O3
@@ -213,6 +215,8 @@ MooValue moo_eq(MooValue a, MooValue b) {
         case MOO_STRING: return moo_string_compare(a, b);
         case MOO_BOOL:   return moo_bool(MV_BOOL(a) == MV_BOOL(b));
         case MOO_NONE:   return moo_bool(true);
+        case MOO_HANDLE: return moo_bool(moo_handle_equal(a, b));
+        case MOO_STRUCT: return moo_bool(moo_struct_gleich(a, b));
         default:         return moo_bool(false);
     }
 }

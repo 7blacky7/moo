@@ -23,12 +23,13 @@
 1. Nur skalare Ganzzahl-/Gleitkommaparameter, Pointer und `void` verwenden. `bool`, Aggregate und Funktionstypen by value lehnt der Compiler derzeit ab; für `bool` stattdessen eine Ganzzahl (`i32` oder `u8`) in einer C-Hülle verwenden.
 2. Deklaration schreiben: `@bibliothek(linux="name")` und `extern "C" funktion name(a: i8, b: u8) -> i32`. Aufrufe stehen in einer `@nativ`-Funktion innerhalb von `unsicher:`.
 3. Mit einem C-Gegenprogramm je Zielsystem prüfen (Vorlage: Tests `bibliothek_ziel_*`, `ffi_i64*` in `compiler/tests/p2`).
-4. Callbacks und `vec`/`mat` sind nicht freigegeben und gehören nicht in produktive Bindungen.
-5. C++ nur über einen `extern "C"`-Adapter mit opakem Handle anbinden; der Adapter fängt Exceptions ab.
+4. Rückrufe: Die Moo-Funktion als `@nativ` und `@rückruf` schreiben und als `ptr[fn(...) -> R]` übergeben (`beispiele/nativ/10_rueckruf.moos`); Zustand über einen `user_data`-Zeiger, bei fehlbaren Rückrufen mit Fehlerwert `@rückruf(wert)`. Strukturen dürfen by value über die Grenze (`beispiele/nativ/11_struktur_by_value.moos`), feste Arrays und bloße Funktionstypen by value nicht.
+5. C++ nur über einen `extern "C"`-Adapter mit opakem Handle anbinden; der Adapter fängt Exceptions ab. Der Handle ist `@opak struktur Name`, die Freigabefunktion trägt `@verbraucht(1)` (`beispiele/nativ/12_opaker_griff.moos`, Muster mit Adapter: Test `cpp_griff`).
+6. Daten ohne Kopie übergeben: Tensor und Frame gehen als `puffer[f32]` beziehungsweise `puffer[u8]`, rein lesende Parameter mit `@liest(n)` (`beispiele/nativ/08_leihgabe_liest.moos`). Vektoren und Matrizen als `vec3`/`mat4` statt als Zahlenlisten (`beispiele/nativ/06_vec_mat.moos`); Zeigerarithmetik nur in `unsicher:` (`beispiele/nativ/07_zeiger.moos`).
 
 ## 4. Dynamische Daten über die Grenze reichen
 
-Zahlen oberhalb 2^53 sind nicht jede exakt im dynamischen Pfad darstellbar; der Übergang meldet dann einen Grenzfehler. Ein exakter Integer-Container ist erst eine spätere Stufe.
+Zahlen oberhalb 2^53 sind nicht jede exakt im dynamischen Pfad darstellbar; der Übergang meldet dann einen Grenzfehler. Ein exakter Integer-Container ist erst eine spätere Stufe. Strukturen dagegen laufen als Wert verlustfrei über die Grenze und sind in dynamischem Code als Box nutzbar (`beispiele/nativ/13_struktur_dynamisch.moos`). Native Funktionen dürfen aus Methoden und Lambdas aufgerufen werden; ein Fehler dort ist mit `versuche:` fangbar (`beispiele/nativ/09_aufruf_aus_methoden.moos`).
 
 ## 5. Prüfliste vor dem Merge
 

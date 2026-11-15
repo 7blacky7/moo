@@ -1,0 +1,25 @@
+vec3(x: 1.5, y: 2.25, z: 0)
+vec4(x: -1, y: 3, z: 7, w: 11)
+vec2(x: 3, y: 5)
+vec4(x: 0, y: 0, z: 1, w: 0)
+vec4(x: -3, y: 6, z: -3, w: 32)
+vec4(x: -8, y: 6, z: 5, w: 15)
+vec4(x: 0.6, y: 0, z: 0.8, w: 5)
+vec4(x: 0, y: 0, z: 0, w: 0)
+vec2(x: 0, y: 1)
+vec4(x: 28, y: 32, z: 36, w: 40)
+vec4(x: -1, y: 2.5, z: 0, w: 1)
+wahr
+mat4(s0: vec4(x: 1, y: 2, z: 3, w: 4), s1: vec4(x: 5, y: 6, z: 7, w: 8), s2: vec4(x: 9, y: 10, z: 11, w: 12), s3: vec4(x: 13, y: 14, z: 15, w: 16))
+mat4(s0: vec4(x: 90, y: 100, z: 110, w: 120), s1: vec4(x: 202, y: 228, z: 254, w: 280), s2: vec4(x: 314, y: 356, z: 398, w: 440), s3: vec4(x: 426, y: 484, z: 542, w: 600))
+mat4(s0: vec4(x: 2, y: 4, z: 6, w: 8), s1: vec4(x: 10, y: 12, z: 14, w: 16), s2: vec4(x: 18, y: 20, z: 22, w: 24), s3: vec4(x: 26, y: 28, z: 30, w: 32))
+wahr
+falsch
+wahr
+falsch
+20
+vec3(x: 3, y: 6, z: 9)
+Teilchen(pos: vec3(x: 5, y: 1.5, z: 3), masse: 0.5)
+3
+vec3(x: 3, y: 6, z: 9)
+wahr

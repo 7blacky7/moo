@@ -23,6 +23,21 @@ description = "P2 Bindgen: echten C++-Adapterheader verarbeiten"
 dir = "{{config_root}}/../../.."
 run = "bash skripte/p2/cpp_adapter/test.sh bindgen"
 
+[tasks.griff]
+description = "P2-T23/T53: C++-Objekt als Moo-Griff (Klasse, Vektor, Text, Exception, Freigabeschutz) + Negativ"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/cpp_adapter/test.sh c && bash skripte/p2/cpp_adapter/test.sh griff"
+
+[tasks.griff-sanitize]
+description = "P2-T23/T53: Moo-Griff gegen ASan/UBSan-instrumentierten C++-Adapter"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/cpp_adapter/test.sh griff-sanitize"
+
+[tasks.puffer]
+description = "P2-T55/T17 D2: Moo-Puffer an C++ aus Funktion/versuche:/aufraeumen, Exception -> wirf, ASan/UBSan/LSan"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/cpp_adapter/test.sh puffer"
+
 [tasks.sanitize]
 description = "P2 C++-Adapter: ASan und UBSan"
 dir = "{{config_root}}/../../.."

@@ -52,11 +52,46 @@ zweifache deterministische Generierung aus dem tatsächlichen Adapterheader.
 `throw` prüft die explizite Umsetzung des C-Fehlercodes in einen gefangenen
 Moo-Fehler, einschließlich erfolgreichem Aufruf und Fortsetzung danach.
 
-`mise run -C skripte/p2/cpp_adapter handle-zukunft` ist ein separates, derzeit
-rotes Zukunftsgate: Moo soll einen opaken Handle erzeugen, lesen und freigeben.
-Es setzt native Pointer und FFI in Funktionen voraus. Im geplanten Lauf werden
-C++-Adapter und -Harness mit ASan/UBSan instrumentiert, das extrahierte Moo-IR
-aber nicht; ASan/LSan prüft unter anderem Lecks des Adapters. Das ist keine
-vollständige Instrumentierung des Moo-Codes oder der Moo-Runtime.
-Der Integrationslauf benötigt einen Compiler mit dem nativen FFI-Slice.
-Das Beispiel ist auf Linux getestet; Windows ist damit nicht abgedeckt.
+`mise run -C skripte/p2/cpp_adapter handle-zukunft` (seit den hosted
+Systemkörpern grün): ein nativer Körper erzeugt, liest und gibt ein Handle
+innerhalb EINER Funktion frei; Adapter und Harness laufen unter ASan/UBSan,
+das extrahierte Moo-IR ist nicht instrumentiert.
+
+## Griffe: C++-Objekte in dynamischem Moo (P2-T23/T53)
+
+```sh
+mise run -C skripte/p2/cpp_adapter griff
+mise run -C skripte/p2/cpp_adapter griff-sanitize
+```
+
+Muster (Beispiel: `compiler/tests/p2/cpp_griff.moos`, Klasse `P2Zaehler` in
+`m1_cpp_adapter.cpp`):
+
+- **Opaker Typ je Klasse:** `@opak struktur P2Zaehler` (ohne Körper). Er ist
+  nur Zeigerziel `ptr[P2Zaehler]`, nie Wert, Feld oder Layout. Die C-Seite
+  deklariert `typedef struct P2Zaehler P2Zaehler;`.
+- **Griff:** Liefert ein nativer Körper `ptr[Name]` (oder `ptr[void]`) an
+  dynamisches Moo, entsteht ein Griff (`<Griff>`, Typname `Griff`); `NULL`
+  wird `nichts`. Ein Griff ist nicht aus Zahlen herstellbar und trägt die
+  Typ-ID seines Zeigerziels: ein Griff auf `ptr[void]` oder einen anderen
+  opaken Typ wird vor dem Aufruf als fangbarer Fehler abgewiesen.
+- **Besitz:** Die freigebende Funktion trägt `@verbraucht(n)`; danach ist der
+  Griff (auch über Aliase) freigegeben: Gebrauch und Doppelfreigabe sind
+  fangbare Fehler VOR dem Fremdaufruf. Es gibt keinen Finalizer: Freigabe
+  ausdrücklich (z. B. in `aufräumen:`). `griffe_offen()` zählt nicht
+  freigegebene Griffe, `griff_gültig(h)` prüft einen Griff.
+- **Argumente:** Griffe sind in Stufe 1 Variablen oder `nichts` (Nullzeiger).
+- **Text und Vektoren** laufen nur als (Zeiger, Länge): `puffer[i32]` mit
+  `puffer_zeiger`/`länge`, Text über `puffer_aus_text(t)` bzw.
+  `puffer_als_text(p, n)` (striktes UTF-8). Keine NUL-terminierten
+  Zeichenketten, keine STL-Typen an der Grenze.
+- **Exceptions** fängt jede Adapterfunktion; sie liefert einen Fehlercode und
+  legt die Meldung thread-lokal ab (`p2_letzter_fehler`). Die Moo-Seite liest
+  sie in einen `puffer[u8]` und wirft sie (`wirf puffer_als_text(f, n)`).
+
+Grenzen: Native Aufrufe aus Methoden/Lambdas sind noch gesperrt (eine C++-
+Klasse lässt sich daher noch nicht als Moo-Klasse kapseln). Zerstört C++ ein
+Objekt selbst, kann der Griff das nicht erkennen. `griff-sanitize` linkt das
+Moo-Programm gegen den ASan/UBSan-instrumentierten Adapter (Moo-Code und
+Runtime selbst sind nicht instrumentiert; C++-Lecks prüft `lebende() == 0`).
+Windows: noch nicht ausgeführt.

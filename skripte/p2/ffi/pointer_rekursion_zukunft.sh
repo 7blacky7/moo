@@ -23,4 +23,12 @@ grep -Eqi 'rekurs|zykl|kreis' "$out/wertzyklus.log"
 grep -Eqi 'unbekannt|nicht definiert|nicht gefunden' "$out/fn_unbekannt.log"
 grep -Eqi 'doppelt|bereits definiert|mehrfach' "$out/duplikat.log"
 grep -Eqi 'void.*parameter|parameter.*void' "$out/void_parameter.log"
-printf 'Pointer-Selbst-/Vorwärtsreferenz und Negativdiagnosen PASS; kein Moo/C-Layoutvergleich\n'
+# P2-T51 C4: Moo/C-Layoutvergleich der rekursiven Strukturen (Header +
+# _Static_assert, Ziel-C-Compiler), inkl. hosted x86_64.
+clang_bin="${CLANG:-clang}"
+for ziel in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-msvc x86_64-unknown-none; do
+    "$compiler" layout compiler/tests/p2/struktur_pointer_rekursiv.moos --target "$ziel" --c-header > "$out/$ziel.h"
+    grep -q '_Static_assert' "$out/$ziel.h" || { echo "FEHLER: Header $ziel ohne Layout-Asserts" >&2; exit 1; }
+    mise exec -- "$clang_bin" --target="$ziel" -std=c11 -ffreestanding -fsyntax-only -Wall -Wextra -Werror -x c "$out/$ziel.h"
+done
+printf 'Pointer-Selbst-/Vorwaertsreferenz, Negativdiagnosen und Moo/C-Layout (4 Ziele inkl. hosted) PASS\n'

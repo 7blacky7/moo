@@ -1,0 +1,76 @@
+# Native Aufrufe aus Methoden und Lambdas: Ein Fehler (hier Division durch Null)
+# setzt das Fehlerflag, der Rahmen gibt seine Locals frei, der Aufrufer fängt in
+# versuche:. Aus compiler/tests/p2/native_rahmen.moos.
+@nativ
+funktion teile(a: i64, b: i64) -> i64:
+    gib_zurück a / b
+
+@nativ
+funktion halb(a: i32) -> i32:
+    unsicher:
+        gib_zurück a / 2
+
+klasse Rechner:
+    funktion erstelle(basis):
+        selbst.basis = basis
+        selbst.spur = 0
+
+    funktion rechne(n):
+        setze q auf teile(selbst.basis, n)
+        selbst.spur = selbst.spur + 1
+        gib_zurück q
+
+    funktion zweifach(n):
+        gib_zurück teile(selbst.basis, n) + teile(selbst.basis, n)
+
+    funktion system(a):
+        unsicher:
+            gib_zurück halb(a)
+
+klasse Kind(Rechner):
+    funktion erstelle(basis):
+        selbst.basis = basis
+        selbst.spur = 0
+
+    funktion doppelt(n):
+        gib_zurück selbst.rechne(n) * 2
+
+setze r auf neu Rechner(100)
+zeige r.rechne(4)
+zeige r.zweifach(5)
+zeige r.system(7)
+versuche:
+    zeige r.rechne(0)
+    zeige "NICHT ERREICHT"
+fange fehler:
+    zeige fehler
+zeige r.spur
+versuche:
+    zeige r.zweifach(0)
+    zeige "NICHT ERREICHT"
+fange fehler:
+    zeige "zweifach gefangen"
+setze k auf neu Kind(60)
+zeige k.doppelt(3)
+versuche:
+    zeige k.doppelt(0)
+fange fehler:
+    zeige "geerbt gefangen"
+
+setze f auf (x) => teile(1000, x)
+zeige f(8)
+versuche:
+    zeige f(0)
+    zeige "NICHT ERREICHT"
+fange fehler:
+    zeige "lambda gefangen"
+setze faktor auf 3
+setze g auf (x) => teile(x * faktor, 2)
+zeige g(10)
+versuche:
+    setze h auf (x) => teile(x, 0)
+    zeige h(5)
+    zeige "NICHT ERREICHT"
+fange fehler:
+    zeige "lambda im versuche gefangen"
+zeige "fertig"

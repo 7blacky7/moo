@@ -230,10 +230,14 @@ if ! cmp -s "$work/product-inventory" "$work/product-inventory-after" ||
     echo "FAIL: compiler, source/import snapshot or toolchain changed during capture"
 fi
 
+# Grosse Listen als Datei: ein einzelnes Argument darf 128 KiB nicht ueberschreiten
+# (MAX_ARG_STRLEN), sonst "Argument list too long".
+printf '%s' "$sources_json" > "$work/sources.json"
+printf '%s' "$imports_json" > "$work/imports.json"
 jq -s --arg compiler "$compiler_sha" --arg input "$input_sha" --arg imports "$import_sha" \
   --arg tools "$toolchain_sha" --arg snapshot "$snapshot_ref" --arg batch "$batch_ref" \
   --arg inventory "$product_inventory_sha" --argjson profiles "$profiles" --argjson drift "$drift" \
-  --argjson sources "$sources_json" --argjson import_files "$imports_json" \
+  --slurpfile sources_d "$work/sources.json" --slurpfile import_d "$work/imports.json" \
   --argjson tool_entries "$toolchain_json" --argjson failures "$fail" '
   {format:2,compiler_sha256:$compiler,normalization:"module-header-root-v2",
    synapse_batch:(if $batch == "" then null else $batch end),
@@ -242,8 +246,8 @@ jq -s --arg compiler "$compiler_sha" --arg input "$input_sha" --arg imports "$im
    snapshot_ref:(if $snapshot == "" then null else $snapshot end),
    snapshot_ref_attestation:"caller-provided-unverified",
    profiles:$profiles,snapshot_drift:$drift,failure_count:$failures,
-   source_snapshot:{contract:"legacy-ir-sources-v1",sha256:$input,files:$sources},
-   import_snapshot:{contract:"moo-find-module-candidates-v1",sha256:$imports,files:$import_files},
+   source_snapshot:{contract:"legacy-ir-sources-v1",sha256:$input,files:$sources_d[0]},
+   import_snapshot:{contract:"moo-find-module-candidates-v1",sha256:$imports,files:$import_d[0]},
    toolchain_snapshot:{contract:"legacy-ir-toolchain-v1",sha256:$tools,entries:$tool_entries},
    files:from_entries}
 ' "$work/entries" > "$output"

@@ -1,0 +1,34 @@
+# P2-T49 (Plan 38c59c64 C5): Strukturwert by value aus C++ (C-ABI, T19/T56)
+# wird als MOO_STRUCT-Box in dynamischem Moo gelesen und geaendert und als
+# Wert an C++ zurueckgegeben; die Box selbst bleibt unveraendert (Kopie).
+struktur P2Punkt:
+    x: f32
+    y: f32
+    gewicht: i32
+
+@bibliothek("p2_m1_cpp")
+@bibliothek("stdc++")
+extern "C" funktion p2_punkt_neu(x: f32, y: f32, gewicht: i32) -> P2Punkt
+@bibliothek("p2_m1_cpp")
+extern "C" funktion p2_punkt_skaliert(punkt: P2Punkt, faktor: f32) -> P2Punkt
+
+@nativ
+funktion punkt_neu(x: f32, y: f32, g: i32) -> P2Punkt:
+    unsicher:
+        gib_zurück p2_punkt_neu(x, y, g)
+
+@nativ
+funktion punkt_skaliert(p: P2Punkt, f: f32) -> P2Punkt:
+    unsicher:
+        gib_zurück p2_punkt_skaliert(p, f)
+
+unsicher:
+    setze p auf punkt_neu(1.5, 2, 3)
+zeige p
+p.gewicht = p.gewicht + 10
+p.x = 4
+unsicher:
+    setze q auf punkt_skaliert(p, 2)
+zeige q
+zeige p
+zeige q.gewicht - p.gewicht

@@ -1,0 +1,14 @@
+# P2-T83 E3: ein @liest-Parameter darf im Koerper nicht beschrieben werden.
+@nativ
+@liest(1)
+funktion nullen(t: puffer[f32]) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(t):
+            t[i] = 0.0
+            setze i auf i + 1
+        gib_zurück länge(t)
+
+setze t auf tensor_aus_liste([1, 2])
+unsicher:
+    zeige nullen(t)

@@ -1,0 +1,63 @@
+# P2-T51 E5 (Plan f5b52a0b C1) positiv: geliehene Zeiger lokal nutzen und als
+# Argument weitergeben ist erlaubt: lokale verkettete Struktur, Ausgabeparameter
+# fuellen (Wert, kein Zeiger), Puffer an C (Zeiger + Laenge), Rechnung ueber
+# Adressen mit Zahlergebnis.
+struktur Knoten:
+    wert: i32
+    naechster: ptr[Knoten]
+
+extern "C" funktion memset(ziel: ptr[u8], wert: i32, anzahl: u64) -> ptr[u8]
+
+@nativ
+funktion kette() -> i32:
+    unsicher:
+        setze c: Knoten auf Knoten(3, nichts)
+        setze b: Knoten auf Knoten(2, zeiger(adresse_von(c)))
+        setze a: Knoten auf Knoten(1, zeiger(adresse_von(b)))
+        setze s: i32 auf 0
+        setze k: ptr[Knoten] auf zeiger(adresse_von(a))
+        solange k != nichts:
+            setze s auf s * 10 + k.wert
+            setze k auf k.naechster
+        gib_zurück s
+
+@nativ
+funktion fuelle(ziel_p: ptr[i32], wert: i32) -> void:
+    unsicher:
+        setze lokal: i32 auf wert * 2
+        setze p: ptr[i32] auf zeiger(adresse_von(lokal))
+        ziel_p[0] = p[0] + 1
+
+@nativ
+funktion ausgabe() -> i32:
+    unsicher:
+        setze ziel: i32 auf 0
+        fuelle(zeiger(adresse_von(ziel)), 20)
+        gib_zurück ziel
+
+@nativ
+funktion nullen(p: puffer[u8]) -> u64:
+    unsicher:
+        memset(puffer_zeiger(p), 0, länge(p))
+        setze a: ptr[u8] auf puffer_zeiger(p)
+        setze e: ptr[u8] auf a + länge(p)
+        gib_zurück u64(e - a)
+
+# Review 65d12ed4: gemischte Zeigerdifferenz (geliehen - normaler ptr[T] und
+# umgekehrt, auch puffer_zeiger - Parameter) ist ein i64-Abstand und darf
+# zurueckgegeben werden (nur Compilenachweis, Werte sind adressabhaengig).
+@nativ
+funktion mischabstand(p: ptr[i32], q: puffer[i32]) -> i64:
+    unsicher:
+        setze x: i32 auf 1
+        setze a: ptr[i32] auf zeiger(adresse_von(x))
+        setze d: i64 auf (a - p) + (p - a)
+        gib_zurück d + (puffer_zeiger(q) - p) + (p - puffer_zeiger(q))
+
+setze p auf puffer_erstellen(u8, 4)
+p[0] = 9
+unsicher:
+    zeige kette()
+    zeige ausgabe()
+    zeige nullen(p)
+zeige p[0]

@@ -1,0 +1,37 @@
+# nativ_kern.moos — Kernel mit Multiboot2-Kopf und Treiberteil in nativem Moo
+# (P2-T28, Plan 607b20ba C1; Bootloader-Bezug P1-T118).
+#
+# Build:  moo-compiler compile beispiele/kernel/nativ_kern.moos \
+#             --no-stdlib --target x86_64-bare --kernel -o nativ_kern.elf
+# Test:   mise run -C skripte/p2/bare kernel-nativ (GRUB-ISO + QEMU ohne Fenster)
+#
+# Der Multiboot2-Kopf ist eine gewoehnliche native Konstante in .multiboot2;
+# die Pipeline laesst dann den C-Kopf g_mb2_header weg. Der Treiber setzt COM1
+# selbst auf und sendet den Marker MOO-NATIV-KERN-OK; hallo_kern.moos bleibt
+# unveraendert die Referenz mit C-Kopf.
+importiere nativ_seriell
+
+@gepackt
+struktur Mb2Kopf:
+    magic: u32
+    architektur: u32
+    laenge: u32
+    pruefsumme: u32
+    ende_typ: u16
+    ende_flags: u16
+    ende_groesse: u32
+
+@nativ
+@sektion(".multiboot2")
+@ausrichten(8)
+@benutzt
+konstante MB2_KOPF: Mb2Kopf auf Mb2Kopf(0xE85250D6, 0, groesse_von(Mb2Kopf), als_wrap(u32, 0 - (0xE85250D6 + 0 + groesse_von(Mb2Kopf))), 0, 0, 8)
+
+funktion main():
+    unsicher:
+        com1_init_nativ()
+        nativ_marker_senden()
+        vga_nativ_schreiben()
+        interrupts_aus()
+        solange wahr:
+            halt()

@@ -1,0 +1,58 @@
+# Retained-Netz (P2-T25): ein farbiges Gitter wird EINMAL in nativem Moo in
+# einen puffer[Eckpunkt] geschrieben, als Netz hochgeladen und jedes Bild nur
+# noch gezeichnet (keine Dreiecksaufrufe pro Bild). Drehung ueber mat4 aus
+# stdlib/vektor.moos. Beenden: Fenster schliessen oder ESC.
+importiere netz3d
+importiere vektor
+
+@nativ
+funktion gitter(p: puffer[Eckpunkt], idx: puffer[u32], n: u32) -> u64:
+    setze s: f32 auf 2.0 / als(f32, n)
+    setze nn: vec3 auf vec3(0.0, 0.0, 1.0)
+    unsicher:
+        setze j: u32 auf 0
+        solange j < n:
+            setze i: u32 auf 0
+            solange i < n:
+                setze zelle: u64 auf als(u64, j) * als(u64, n) + als(u64, i)
+                setze x0: f32 auf -1.0 + als(f32, i) * s
+                setze x1: f32 auf x0 + s
+                setze y0: f32 auf -1.0 + als(f32, j) * s
+                setze y1: f32 auf y0 + s
+                setze f: vec3 auf vec3(als(f32, i) / als(f32, n), als(f32, j) / als(f32, n), 0.6)
+                setze b: u64 auf zelle * 4
+                p[b] = Eckpunkt(vec3(x0, y0, 0.0), f, nn)
+                p[b + 1] = Eckpunkt(vec3(x1, y0, 0.0), f, nn)
+                p[b + 2] = Eckpunkt(vec3(x1, y1, 0.0), f, nn)
+                p[b + 3] = Eckpunkt(vec3(x0, y1, 0.0), f, nn)
+                setze k: u64 auf zelle * 6
+                setze bb: u32 auf als_wrap(u32, b)
+                idx[k] = bb
+                idx[k + 1] = bb + 1
+                idx[k + 2] = bb + 2
+                idx[k + 3] = bb
+                idx[k + 4] = bb + 2
+                idx[k + 5] = bb + 3
+                setze i auf i + 1
+            setze j auf j + 1
+        gib_zurück länge(p)
+
+setze n auf 64
+setze win auf raum_erstelle("Netz3D Gitter", 800, 600)
+setze ecken auf puffer_erstellen(Eckpunkt, n * n * 4)
+setze idx auf puffer_erstellen(u32, n * n * 6)
+unsicher:
+    gitter(ecken, idx, n)
+setze netz auf netz3d_erstellen(ecken, idx)
+zeige "Netz mit " + text(2 * n * n) + " Dreiecken hochgeladen"
+setze winkel auf 0
+solange raum_offen(win) und nicht raum_taste(win, "escape"):
+    raum_löschen(win, 0.05, 0.06, 0.09)
+    raum_perspektive(win, 60, 0.1, 100)
+    raum_kamera(win, 0, 0, 3, 0, 0, 0)
+    raum_umgebungslicht(win, 0.5)
+    netz3d_zeichnen(netz, mat4_drehung(winkel, vec3(0.3, 1.0, 0.0)))
+    raum_aktualisieren(win)
+    setze winkel auf winkel + 0.5
+netz3d_freigeben(netz)
+raum_schliessen(win)

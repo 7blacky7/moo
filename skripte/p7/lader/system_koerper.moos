@@ -567,6 +567,19 @@ funktion sys_e3_ausgerichtet(adr: u64) -> u64:
         setze rest: u64 auf adresse_von(blk) % 32 + adresse_von(bs[0]) % 32
         gib_zurück rest * 1000 + (adresse_von(bs[1]) - adresse_von(bs[0])) + u64(stoerer) - 1
 
+# P2-T17 D1 (Plan f5b52a0b): volatile_schreiben/volatile_lesen auf einem
+# speichergestuetzten "Register" (MMIO nur Bare, O4). Zwei Lesezugriffe bleiben
+# nach O2 zwei Loads (IR-Probe in mise.toml, Gegenprobe system_probe.c).
+@nativ
+@einstieg
+funktion sys_mmio(adr: u64, wert: u32) -> u32:
+    unsicher:
+        setze reg: ptr[u32] auf zeiger(adr)
+        volatile_schreiben(reg, wert)
+        setze a: u32 auf volatile_lesen(reg)
+        setze b: u32 auf volatile_lesen(reg)
+        gib_zurück a + b
+
 # T63: Slot und Zeiger auf denselben Slot sehen dieselben Bytes.
 @nativ
 @einstieg

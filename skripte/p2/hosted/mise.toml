@@ -1,3 +1,15 @@
 [tasks.test-hosted-linux]
 description = "P2-T66: hosted x86_64-Linux Systemkoerper (Zeiger/Struktur/Mehrstatement) ohne Bare-Triple: IR, Executable, C-Link, FFI-Pfad, Negativfaelle, Windows-IR, Mat4 bitgleich"
 run = "bash test_hosted_linux.sh"
+
+[tasks.zeiger-arith]
+description = "P2-T17: Zeigerarithmetik p+n/n+p/p-n/p-q und zeiger(p)-Umdeutung (positiv, IR ohne inbounds, 7 Negativfaelle)"
+run = "bash zeiger_arith.sh"
+
+[tasks.flucht]
+description = "P2-T51: Fluchtpruefung geliehener Zeiger (Rueckgabe, fremder Speicher, Struktur; Positiv: lokale Kette, Ausgabeparameter, Puffer an C)"
+run = "bash flucht.sh"
+
+[tasks.typid]
+description = "P2-T51 C2: Zeigertyp-Identitaet an extern C, @nativ und indirekten Aufrufen (9 Negativfaelle, ptr[void]-Positivfall)"
+run = "bash typid.sh"

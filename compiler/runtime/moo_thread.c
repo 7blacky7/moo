@@ -33,6 +33,8 @@ static void* thread_runner_posix(void* raw);
 
 static void* thread_runner_common(void* raw) {
     MooThreadArgs* targs = (MooThreadArgs*)raw;
+    /* P2-T21/T57 D: fehlbare C-Rueckrufe sind auf Moo-Threads erlaubt. */
+    moo_native_thread_markieren();
     MooValue arg = targs->arg;
     MooValue result;
     if (targs->env) {

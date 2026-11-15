@@ -50,7 +50,8 @@ uint32_t vk_find_memory_type(VkPhysicalDevice phys,
         }
     }
     fprintf(stderr, "moo Vulkan: passender Memory-Typ nicht gefunden\n");
-    return 0;
+    /* P2-T25 (Re-Review 6008ef18): 0 ist ein gueltiger Index, daher Sentinel. */
+    return VK_MOO_KEIN_SPEICHERTYP;
 }
 
 /* ========================================================
@@ -83,13 +84,19 @@ int vk_moo_buffer_create(VkDevice device, VkPhysicalDevice phys,
         .memoryTypeIndex = vk_find_memory_type(phys, mem_req.memoryTypeBits, props),
     };
 
-    if (vkAllocateMemory(device, &alloc_info, NULL, &out->memory) != VK_SUCCESS) {
+    if (alloc_info.memoryTypeIndex == VK_MOO_KEIN_SPEICHERTYP
+        || vkAllocateMemory(device, &alloc_info, NULL, &out->memory) != VK_SUCCESS) {
         fprintf(stderr, "moo Vulkan: Memory-Allokierung fehlgeschlagen\n");
         vkDestroyBuffer(device, out->buffer, NULL);
+        memset(out, 0, sizeof(VkMooBuffer));   /* P2-T25: kein haengender Handle */
         return -1;
     }
 
-    vkBindBufferMemory(device, out->buffer, out->memory, 0);
+    if (vkBindBufferMemory(device, out->buffer, out->memory, 0) != VK_SUCCESS) {
+        fprintf(stderr, "moo Vulkan: Buffer-Bindung fehlgeschlagen\n");
+        vk_moo_buffer_destroy(device, out);
+        return -1;
+    }
     out->size = size;
     return 0;
 }
@@ -122,50 +129,61 @@ int vk_moo_buffer_staged_upload(VkDevice device, VkPhysicalDevice phys,
             &staging) != 0)
         return -1;
 
-    vk_moo_buffer_upload(device, &staging, data, size);
-
-    /* Create device-local dst buffer if not already allocated */
-    if (!dst->buffer) {
-        if (vk_moo_buffer_create(device, phys, size,
-                VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                dst) != 0) {
-            vk_moo_buffer_destroy(device, &staging);
-            return -1;
-        }
+    if (vk_moo_buffer_upload(device, &staging, data, size) != 0) {
+        vk_moo_buffer_destroy(device, &staging);
+        return -1;
     }
 
-    /* Copy staging → dst via one-shot command buffer */
+    /* P2-T25 (Re-Review 0f585c26): Ziel immer frisch und temporaer; der Aufrufer
+     * uebernimmt es erst bei vollstaendigem Erfolg (dst bleibt sonst unberuehrt). */
+    VkMooBuffer neu = {0};
+    if (vk_moo_buffer_create(device, phys, size,
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            &neu) != 0) {
+        vk_moo_buffer_destroy(device, &staging);
+        return -1;
+    }
+
+    /* Copy staging → neu via one-shot command buffer; jedes Ergebnis pruefen. */
     VkCommandBufferAllocateInfo cmd_alloc = {
         .sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool        = pool,
         .level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1,
     };
-    VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(device, &cmd_alloc, &cmd);
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    int ok = vkAllocateCommandBuffers(device, &cmd_alloc, &cmd) == VK_SUCCESS;
 
     VkCommandBufferBeginInfo begin = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
-    vkBeginCommandBuffer(cmd, &begin);
+    if (ok) ok = vkBeginCommandBuffer(cmd, &begin) == VK_SUCCESS;
+    if (ok) {
+        VkBufferCopy region = { .size = size };
+        vkCmdCopyBuffer(cmd, staging.buffer, neu.buffer, 1, &region);
+        ok = vkEndCommandBuffer(cmd) == VK_SUCCESS;
+    }
+    if (ok) {
+        VkSubmitInfo submit = {
+            .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1,
+            .pCommandBuffers    = &cmd,
+        };
+        ok = vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS;
+        if (ok) ok = vkQueueWaitIdle(queue) == VK_SUCCESS;
+    }
 
-    VkBufferCopy region = { .size = size };
-    vkCmdCopyBuffer(cmd, staging.buffer, dst->buffer, 1, &region);
-
-    vkEndCommandBuffer(cmd);
-
-    VkSubmitInfo submit = {
-        .sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .commandBufferCount = 1,
-        .pCommandBuffers    = &cmd,
-    };
-    vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE);
-    vkQueueWaitIdle(queue);
-
-    vkFreeCommandBuffers(device, pool, 1, &cmd);
+    if (cmd != VK_NULL_HANDLE) vkFreeCommandBuffers(device, pool, 1, &cmd);
     vk_moo_buffer_destroy(device, &staging);
+    if (!ok) {
+        fprintf(stderr, "moo Vulkan: Staging-Kopie fehlgeschlagen\n");
+        vk_moo_buffer_destroy(device, &neu);
+        return -1;
+    }
+    if (dst->buffer) vk_moo_buffer_destroy(device, dst);
+    *dst = neu;
     return 0;
 }
 
@@ -290,11 +308,10 @@ int vk_chunk_upload(VkChunkSystem* cs, int id, VkMeshCollector* mc,
 
     VkChunkSlot* slot = &cs->slots[id];
 
-    /* Upload vertex data via staging */
+    /* Upload vertex data via staging. P2-T25 (Re-Review 0f585c26): Der alte
+     * Puffer wird erst nach vollstaendigem Erfolg ersetzt (staged_upload tauscht
+     * atomar); bei Fehler bleibt der Slot mit alter Geometrie gueltig. */
     VkDeviceSize buf_size = (VkDeviceSize)mc->count * sizeof(VkMooVertex);
-    if (slot->vertex_buf.buffer)
-        vk_moo_buffer_destroy(cs->device, &slot->vertex_buf);
-
     if (vk_moo_buffer_staged_upload(cs->device, cs->phys_device,
             cs->cmd_pool, cs->gfx_queue,
             mc->vertices, buf_size, &slot->vertex_buf) != 0)

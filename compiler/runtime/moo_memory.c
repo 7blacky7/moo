@@ -10,7 +10,8 @@ static inline bool is_heap_type(uint64_t tag) {
            tag == MOO_DB_STMT || tag == MOO_WINDOW || tag == MOO_WEBSERVER ||
            tag == MOO_VOXELWORLD || tag == MOO_FRAME || tag == MOO_GIF ||
            tag == MOO_VIDEO || tag == MOO_TENSOR || tag == MOO_KAMERA ||
-           tag == MOO_MIKRO || tag == MOO_SURFACE || tag == MOO_BUFFER || tag == MOO_STRUCT;
+           tag == MOO_MIKRO || tag == MOO_SURFACE || tag == MOO_BUFFER || tag == MOO_STRUCT ||
+           tag == MOO_HANDLE;
 }
 
 extern void moo_socket_free(void* ptr);
@@ -137,6 +138,12 @@ void moo_release(MooValue v) {
             break;
         case MOO_STRUCT:
             moo_struct_box_free(moo_val_as_ptr(v));
+            break;
+        case MOO_HANDLE:
+            /* P2-T23/T53: die Griff-Box besitzt keine fremden Ressourcen (kein
+               Finalizer); direkt freigeben, damit Harnesses mit fester
+               Quellliste ohne moo_handle.c linkbar bleiben. */
+            free(moo_val_as_ptr(v));
             break;
         case MOO_SURFACE:
 #ifdef MOO_HAS_SURFACE

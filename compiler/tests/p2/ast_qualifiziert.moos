@@ -1,0 +1,8 @@
+importiere modul_import_matrix als m
+
+@nativ
+funktion f(p: m.MPunkt, z: ptr[m.MPunkt]) -> i32:
+    gib_zurück m.MGRENZE
+
+zeige m.m_skalar(1, 2.0)
+setze d auf neu m.MDaten(1, "x")

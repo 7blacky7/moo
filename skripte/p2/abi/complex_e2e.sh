@@ -58,7 +58,7 @@ for target in x86_64-pc-windows-gnu x86_64-pc-windows-msvc; do
               moo_p2_pressure12_5 moo_p2_pressure12_6 \
               moo_p2_pressure16_5 moo_p2_pressure_mixed6 \
               moo_p2_pair12_pressure3 moo_p2_pressure_float4_6; do
-        rg -q "declare void @$fn\\(ptr sret" "$datei"
+        rg -q "declare void @$fn\\(ptr noalias sret" "$datei"
     done
     rg -q 'declare i64 @moo_p2_pair8\(i64, i64\)' "$datei"
     rg -q 'declare i64 @moo_p2_pressure\(i64, i64, i64, i64, i64, i64, i64\)' "$datei"
@@ -68,28 +68,17 @@ for target in x86_64-pc-windows-gnu x86_64-pc-windows-msvc; do
     fi
 done
 
-# Negative ABI-Scope-Grenzen bleiben erhalten.
-if "$compiler" compile skripte/p7/lader/system_abi_pressure_multireg_verbot.moos \
-    --target x86_64-bare --emit-ir -o "$out/negativ-pressure.ll" \
-    >"$out/negativ-pressure.log" 2>&1; then
-    echo "UNZULAESSIG: mehr als sechs u64-Praefixe freigegeben" >&2
-    exit 1
-fi
-rg -q 'bis zu 6 u64-Praefixe' "$out/negativ-pressure.log"
-if "$compiler" compile skripte/p7/lader/system_abi_fremde_struktur_verbot.moos \
-    --target x86_64-pc-windows-gnu --emit-ir -o "$out/negativ-fremd.ll" \
-    >"$out/negativ-fremd.log" 2>&1; then
-    echo "UNZULAESSIG: zwei verschieden nominalisierte Strukturen als eine ABI freigegeben" >&2
-    exit 1
-fi
-rg -q 'gleichartige Strukturargumente' "$out/negativ-fremd.log"
-if "$compiler" compile skripte/p7/lader/system_abi_drei_strukturen_verbot.moos \
-    --target x86_64-pc-windows-gnu --emit-ir -o "$out/negativ-drei.ll" \
-    >"$out/negativ-drei.log" 2>&1; then
-    echo "UNZULAESSIG: drei Struct-Parameter freigegeben" >&2
-    exit 1
-fi
-rg -q '1..2 Strukturargumente' "$out/negativ-drei.log"
+# P2-T56 (Plan 91033131, allgemeiner Klassifizierer ffi_abi): die frueheren
+# Scope-Grenzen (mehr als sechs u64-Praefixe, verschiedene Strukturen, drei
+# Strukturargumente) sind aufgehoben - die Formen muessen uebersetzen und
+# verifizieren. Signaturgenau gegen Clang prueft skripte/p2/ffi/abi_matrix.sh.
+for frueher in system_abi_pressure_multireg_verbot:x86_64-bare \
+               system_abi_fremde_struktur_verbot:x86_64-pc-windows-gnu \
+               system_abi_drei_strukturen_verbot:x86_64-pc-windows-gnu; do
+    datei="${frueher%%:*}"; ziel="${frueher#*:}"
+    "$compiler" compile "skripte/p7/lader/$datei.moos" --target "$ziel" --emit-ir -o "$out/frueher-$datei.ll"
+    opt -passes=verify -disable-output "$out/frueher-$datei.ll"
+done
 
 # Linux: bestaetigt echte SSE-/INTEGER- und Packed-byval-Uebergabe.
 gcc -std=c11 -O2 -Wall -Wextra -Werror -no-pie -I skripte/p2/abi \

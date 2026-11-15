@@ -2,6 +2,22 @@
 description = "MB2 C-Referenzobjekt unter Linux pruefen"
 run = "bash header_reference.sh"
 
+[tasks.header-nativ]
+description = "P2-T28: Multiboot2-Kopf als native Moo-Konstante gegen die C-Referenz"
+run = "bash header_nativ.sh header"
+
+[tasks.rohdaten-gleich]
+description = "P2-T28: typisierte [u32; N]-Konstante gegen @rohdaten_u32"
+run = "bash header_nativ.sh rohdaten"
+
+[tasks.laufzeitfrei]
+description = "P2-T28: reiner nativer Bare-Code ruft keine moo_*-Laufzeit"
+run = "bash kernel_nativ.sh laufzeitfrei"
+
+[tasks.kernel-nativ]
+description = "P2-T28: Kernel mit Moo-Multiboot2-Kopf und nativem Treiber (GRUB/QEMU ohne Fenster)"
+run = "bash kernel_nativ.sh alle"
+
 [tasks.kernel-reference]
 description = "Bestehenden GRUB-/QEMU-Kernel headless pruefen"
 run = "bash kernel_reference.sh"

@@ -1,0 +1,18 @@
+# Struktur by value über die C-Grenze: libc-div liefert div_t als Wert.
+# Eine native Funktion mit unsicher:-Körper wird nur aus unsicher: aufgerufen.
+# Erwartete Ausgabe: 302, -302
+struktur DivT:
+    quot: i32
+    rem: i32
+
+extern "C" funktion div(a: i32, b: i32) -> DivT
+
+@nativ
+funktion teile(a: i32, b: i32) -> i32:
+    unsicher:
+        setze r: DivT auf div(a, b)
+        gib_zurück r.quot * 100 + r.rem
+
+unsicher:
+    zeige teile(17, 5)
+    zeige teile(-17, 5)

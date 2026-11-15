@@ -1,0 +1,20 @@
+1
+gefangen: Struktur Innen erwartet, erhalten: Zahl
+gefangen: Struktur Innen erwartet, erhalten: Anders
+1
+gefangen: Struktur Klein.k: Wert 300 passt nicht in u8 (Ganzzahl im Bereich bzw. Kommazahl)
+gefangen: Struktur Klein.k: Wert 1.5 passt nicht in u8 (Ganzzahl im Bereich bzw. Kommazahl)
+gefangen: Struktur Klein.an erwartet einen Wahrheitswert, erhalten: Zahl
+Gross(v: 9007199254740993)
+gefangen: Struktur Gross.v: 64-Bit-Wert nicht exakt als Moo-Zahl darstellbar
+gefangen: Struktur Innen hat kein Feld 'z' (Felder: x, y)
+gefangen: Struktur MitArray.werte: Arrayfelder sind dynamisch noch nicht zugreifbar (nur in nativen Funktionen)
+gefangen: Struktur Innen.x erwartet eine Zahl (f32), erhalten: Text
+gefangen: Struktur Huelle.innen erwartet Innen, erhalten: Anders
+gefangen: Struktur Innen hat kein Feld 'z' (Felder: x, y)
+gefangen: Nativer Laufzeitfehler (Division, Shift, Index oder Konversion) in 'innen_geteilt'
+vorher
+Innen(x: 1, y: 2)
+Innen(x: 1, y: 2)
+Huelle(innen: Innen(x: 1, y: 2))
+ende

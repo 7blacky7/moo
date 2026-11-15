@@ -268,6 +268,21 @@ impl Lexer {
         Ok((Token::new(TokenType::String(result), line, col), i))
     }
 
+    /// P2-T5 (Plan b1f51d65 A2): Wert eines 0x/0b/0o-Literals fuer den
+    /// dynamischen Weg. Ohne Ziffern oder groesser als u64 bleibt er wie bisher
+    /// 0 (ADR: nicht beilaeufig verschaerfen), aber nicht mehr still: Warnung
+    /// mit Zeile und Rohtext. Der native Weg lehnt solche Literale ab.
+    fn praefix_wert(ziffern: &str, basis: u32, roh: &[char], line: usize) -> f64 {
+        match u64::from_str_radix(ziffern, basis) {
+            Ok(wert) => wert as f64,
+            Err(_) => {
+                let roh: String = roh.iter().collect();
+                eprintln!("Warnung: Zeile {line}: Zahlliteral '{roh}' hat keine Ziffern oder ist groesser als u64; dynamischer Wert 0");
+                0.0
+            }
+        }
+    }
+
     fn read_number(&self, chars: &[char], start: usize, line: usize, col: usize) -> (Token, usize) {
         let mut i = start;
 
@@ -277,7 +292,7 @@ impl Lexer {
             let hex_start = i;
             while i < chars.len() && chars[i].is_ascii_hexdigit() { i += 1; }
             let hex_str: String = chars[hex_start..i].iter().collect();
-            let value = u64::from_str_radix(&hex_str, 16).unwrap_or(0) as f64;
+            let value = Self::praefix_wert(&hex_str, 16, &chars[start..i], line);
             return (Token::number(value, line, col, chars[start..i].iter().collect()), i);
         }
 
@@ -287,7 +302,18 @@ impl Lexer {
             let bin_start = i;
             while i < chars.len() && (chars[i] == '0' || chars[i] == '1') { i += 1; }
             let bin_str: String = chars[bin_start..i].iter().collect();
-            let value = u64::from_str_radix(&bin_str, 2).unwrap_or(0) as f64;
+            let value = Self::praefix_wert(&bin_str, 2, &chars[start..i], line);
+            return (Token::number(value, line, col, chars[start..i].iter().collect()), i);
+        }
+
+        // P2-T5 (Plan b1f51d65 A1): Oktal 0o17 (nativer Weg: codegen_native
+        // integer_literal kennt 0o bereits). Fuehrende Null allein bleibt dezimal.
+        if chars[i] == '0' && i + 1 < chars.len() && (chars[i + 1] == 'o' || chars[i + 1] == 'O') {
+            i += 2;
+            let okt_start = i;
+            while i < chars.len() && ('0'..='7').contains(&chars[i]) { i += 1; }
+            let okt_str: String = chars[okt_start..i].iter().collect();
+            let value = Self::praefix_wert(&okt_str, 8, &chars[start..i], line);
             return (Token::number(value, line, col, chars[start..i].iter().collect()), i);
         }
 
@@ -300,6 +326,19 @@ impl Lexer {
                 has_dot = true;
             }
             i += 1;
+        }
+
+        // P2-T5 (Plan b1f51d65 O3): Exponent 1e-6 / 2.5E+3 gehoert zum
+        // Zahltoken, nativ und dynamisch gleich. Nur mit mindestens einer
+        // Exponentenziffer; `1e`, `1e+` oder `1eabc` bleiben getrennte Tokens,
+        // damit der native Parser seine Exponent-Diagnose behaelt.
+        if i < chars.len() && (chars[i] == 'e' || chars[i] == 'E') {
+            let mut j = i + 1;
+            if j < chars.len() && (chars[j] == '+' || chars[j] == '-') { j += 1; }
+            let ziffern_start = j;
+            while j < chars.len() && chars[j].is_ascii_digit() { j += 1; }
+            let folgt_bezeichner = j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_');
+            if j > ziffern_start && !folgt_bezeichner { i = j; }
         }
 
         let num_str: String = chars[start..i].iter().collect();

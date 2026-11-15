@@ -572,11 +572,16 @@ void moo_smart_close(MooValue v) {
             // ein Linker-Fehler; echte 3D-Programme brauchen ein 3D-Feature.
             break;
 #endif
-        default:
-            // Channels (MooObject) und alles andere → channel_close
-            // (das ignoriert non-channel objects safe).
-            moo_channel_close(v);
+        case MOO_CHANNEL:  moo_channel_close(v); break;
+        default: {
+            // P2-T87 (Befund 9ff1eb58): moo_channel_close prueft den Tag nicht;
+            // auf Objekten/anderen Werten korrumpierte der fruehere Fallback den
+            // Speicher (Mutex auf fremdem Speicher). Jetzt fangbarer Fehler.
+            char text[128];
+            snprintf(text, sizeof(text), "schliessen()/close() ist fuer %s nicht definiert", moo_type_name(v));
+            moo_throw(moo_error(text));
             break;
+        }
     }
 }
 

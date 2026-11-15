@@ -18,32 +18,23 @@ for form in namen pfad; do
 done
 '''
 
-[tasks.diagnose]
-description = "Namespace- und qualifizierte Typimporte diagnostizieren"
+[tasks.import-audit]
+description = "P2-T47: Modulaufloesung aller Beispiele alt gegen neu (neue Importfehler)"
 dir = "{{config_root}}/../../.."
-run = '''
-set -u
-out=build/p2-frontend-module
-mkdir -p "$out"
-for form in alias typ_pfad typ_einfach unbekannt; do
-  src="compiler/tests/p2/import_kern_$form.moos"
-  if timeout 120s compiler/target/release/moo-compiler compile "$src" --emit-ir -o "$out/$form.ll" >"$out/$form.log" 2>&1; then rc=0; else rc=$?; fi
-  printf 'DIAG %s compile_rc=%s\n' "$form" "$rc"
-  if [ "$rc" -ne 0 ]; then cat "$out/$form.log"; fi
-done
-echo 'DIAG: kein Namespace-/Typ-Semantikgate; Laufzeit und korrekte Auflösung gesondert prüfen'
-'''
+run = "bash skripte/p2/frontend_module/import_audit.sh"
+
+[tasks.matrix]
+description = "P2-T47: Importmatrix (4 Formen x 8 Arten), Rautenimport, qualifizierte Namen, Negativfaelle"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend_module/import_matrix.sh"
+
+# Fruehere Diagnose-Tasks: jetzt Teil des echten Gates `matrix`.
+[tasks.diagnose]
+description = "Namespace- und qualifizierte Typimporte (Gate, siehe matrix)"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend_module/import_matrix.sh"
 
 [tasks.zwei-module-diagnose]
-description = "Gleichnamige Strukturtypen aus zwei aliased Modulen diagnostizieren"
+description = "Gleichnamige Strukturtypen aus zwei Modulen (Gate, siehe matrix)"
 dir = "{{config_root}}/../../.."
-run = '''
-set -u
-out=build/p2-frontend-module
-mkdir -p "$out"
-if timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/import_qualifiziert_kollision.moos --emit-ir -o "$out/zwei-module.ll" >"$out/zwei-module.log" 2>&1; then rc=0; else rc=$?; fi
-printf 'DIAG zwei-module compile_rc=%s\n' "$rc"
-if [ "$rc" -ne 0 ]; then cat "$out/zwei-module.log"; fi
-if [ "$rc" -eq 124 ] || [ "$rc" -ge 128 ]; then exit "$rc"; fi
-echo 'DIAG: kein Semantikgate für qualifizierte Identität'
-'''
+run = "bash skripte/p2/frontend_module/import_matrix.sh"

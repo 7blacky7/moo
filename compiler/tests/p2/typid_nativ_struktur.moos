@@ -1,0 +1,13 @@
+# P2-T51 C2 negativ: ptr[B] an @nativ-Parameter ptr[A].
+struktur A:
+    x: i32
+struktur B:
+    x: i32
+@nativ
+funktion g(p: ptr[A]) -> i32:
+    unsicher:
+        gib_zurück p.x
+@nativ
+funktion f(p: ptr[B]) -> i32:
+    unsicher:
+        gib_zurück g(p)

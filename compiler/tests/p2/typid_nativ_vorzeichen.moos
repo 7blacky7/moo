@@ -1,0 +1,9 @@
+# P2-T51 C2 negativ: ptr[i32] an @nativ-Parameter ptr[u32].
+@nativ
+funktion g(p: ptr[u32]) -> u32:
+    unsicher:
+        gib_zurück p[0]
+@nativ
+funktion f(p: ptr[i32]) -> u32:
+    unsicher:
+        gib_zurück g(p)

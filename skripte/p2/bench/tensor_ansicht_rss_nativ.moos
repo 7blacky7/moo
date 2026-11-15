@@ -1,0 +1,21 @@
+# P2-T83 C4 (Plan f3217c27): Tensor mit 10^7 f32-Elementen (40 MB) fuenfmal
+# kopierfrei an einen nativen Kern. Gegenstueck: tensor_ansicht_rss_basis.moos
+# (nur anlegen). Messung: compiler/tests/p2/defer_heap_rss.c (Delta < 10 MiB).
+@nativ
+@liest(1)
+funktion summe(t: puffer[f32]) -> f64:
+    unsicher:
+        setze s: f64 auf 0.0
+        setze i: u64 auf 0
+        solange i < länge(t):
+            setze s auf s + als(f64, t[i])
+            setze i auf i + 1
+        gib_zurück s
+
+setze t auf tensor_einsen([10000000])
+setze runde auf 0
+solange runde < 5:
+    unsicher:
+        setze s auf summe(t)
+    setze runde auf runde + 1
+zeige s

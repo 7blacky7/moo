@@ -1,0 +1,14 @@
+# P2-T21/T57 E-3 (E8/F1): hosted liefert adresse_von(<native Funktion>) keinen
+# C-Funktionszeiger mehr (interne Moo-Konvention); dafuer gibt es @rückruf.
+@nativ
+funktion f(x: i32) -> i32:
+    unsicher:
+        gib_zurück x
+
+@nativ
+funktion lauf() -> u64:
+    unsicher:
+        gib_zurück adresse_von(f)
+
+unsicher:
+    zeige lauf()

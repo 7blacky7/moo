@@ -1,0 +1,25 @@
+# P2-T47 (Plan b1f51d65 E4): wie cpp_struktur.moos, aber Struktur und
+# extern "C" kommen aus einem importierten Modul (Alias c); Strukturwert
+# by value hin und zurueck ueber C++. Gleiche Ausgabe wie cpp_struktur.
+importiere modul_cpp_struktur als c
+
+@nativ
+funktion punkt_neu(x: f32, y: f32, g: i32) -> c.P2Punkt:
+    unsicher:
+        gib_zurück c.p2_punkt_neu(x, y, g)
+
+@nativ
+funktion punkt_skaliert(p: c.P2Punkt, f: f32) -> c.P2Punkt:
+    unsicher:
+        gib_zurück c.p2_punkt_skaliert(p, f)
+
+unsicher:
+    setze p auf punkt_neu(1.5, 2, 3)
+zeige p
+p.gewicht = p.gewicht + 10
+p.x = 4
+unsicher:
+    setze q auf punkt_skaliert(p, 2)
+zeige q
+zeige p
+zeige q.gewicht - p.gewicht

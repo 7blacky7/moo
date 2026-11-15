@@ -1,0 +1,44 @@
+# P2-T25 (Plan 962e249a C1/C3): netz3d ohne aktives 3D-Backend. Erstellen,
+# Zeichnen und Freigeben werfen fangbar; der Puffer bleibt danach nutzbar
+# (Pin geloest, Groessenaenderung moeglich).
+importiere netz3d
+importiere vektor
+
+@nativ
+funktion fuellen(p: puffer[Eckpunkt]) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(p):
+            p[i] = Eckpunkt(vec3(als(f32, i), 0.0, 0.0), vec3(1.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0))
+            setze i auf i + 1
+        gib_zurück länge(p)
+
+setze ecken auf puffer_erstellen(Eckpunkt, 3)
+setze idx auf puffer_erstellen(u32, 0)
+unsicher:
+    zeige fuellen(ecken)
+versuche:
+    netz3d_erstellen(ecken, idx)
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+versuche:
+    netz3d_zeichnen_hier(0)
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+versuche:
+    netz3d_zeichnen(0, mat4_verschiebung(vec3(1.0, 0.0, 0.0)))
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+versuche:
+    mesh_free(0)
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+unsicher:
+    zeige netz3d_belegt()
+puffer_anhängen(idx, 2)
+zeige länge(idx)
+zeige "fertig"

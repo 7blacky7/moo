@@ -1,0 +1,34 @@
+# P2-T8 (Plan b1f51d65 D1): erste Nutzung einer globalen Variable in einem
+# unsicher:-Block, in aufraeumen (textuell zuerst: global, first-access-wins),
+# ueber ?? und in neu-Argumenten.
+setze zaehler auf 10
+setze basis auf 3
+daten klasse Kiste(wert)
+
+funktion melde(w):
+    zeige w
+
+funktion in_unsicher():
+    unsicher:
+        zeige zaehler
+    setze zaehler auf zaehler + 1
+
+funktion in_aufraeumen():
+    aufräumen: melde(basis)
+    setze basis auf 7
+    zeige "koerper"
+
+funktion mit_nullish():
+    setze basis auf basis ?? 0
+    zeige basis
+
+funktion mit_neu():
+    setze k auf neu Kiste(basis)
+    zeige k.wert
+
+in_unsicher()
+zeige zaehler
+in_aufraeumen()
+zeige basis
+mit_nullish()
+mit_neu()

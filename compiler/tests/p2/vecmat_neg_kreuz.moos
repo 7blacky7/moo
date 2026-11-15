@@ -1,0 +1,6 @@
+# P2-T16 E4: kreuz ist nur fuer vec3 definiert.
+@nativ
+funktion f(a: vec2, b: vec2) -> vec2:
+    gib_zurück kreuz(a, b)
+
+zeige 1

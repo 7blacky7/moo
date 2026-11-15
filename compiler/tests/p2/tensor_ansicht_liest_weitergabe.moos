@@ -1,0 +1,25 @@
+# P2-T83 B3 (Review 6315dba0) Positivfall: ein @liest-Parameter darf an einen
+# Pufferparameter weitergegeben werden, der selbst @liest ist; puffer_zeiger in
+# unsicher: bleibt erlaubt (R3). Die Tensor-Maske bleibt unveraendert.
+@nativ
+@liest(1)
+funktion summe_kern(t: puffer[f32]) -> f32:
+    unsicher:
+        setze s: f32 auf 0.0
+        setze i: u64 auf 0
+        solange i < länge(t):
+            setze s auf s + t[i]
+            setze i auf i + 1
+        gib_zurück s
+
+@nativ
+@liest(1)
+funktion summe(t: puffer[f32]) -> f32:
+    unsicher:
+        setze z: ptr[f32] auf puffer_zeiger(t)
+        gib_zurück summe_kern(t)
+
+setze t auf tensor_aus_liste([1.5, 2, 3])
+unsicher:
+    zeige summe(t)
+zeige t.zu_liste()

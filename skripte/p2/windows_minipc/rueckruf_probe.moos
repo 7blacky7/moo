@@ -1,0 +1,127 @@
+# P2-T21/T57 Batch E (Plan f4655d20 E-5): @rückruf auf echtem Windows x64.
+# Runtime-freie C-Exporte (@einstieg) rufen C-Funktionen mit Moo-Rueckrufen:
+# CRT-qsort mit Moo-Vergleicher, user_data, void, Strukturwert (Win64: 16 Byte
+# per Referenz), gespeicherter Rueckruf, fremder Thread (CreateThread).
+# Fehlbarer Rueckruf ohne Runtime: schwacher Hook trappt, kein Fortlauf.
+# C: rueckruf_probe.c / rueckruf_trap.c + skripte/p2/ffi/rueckruf_gegenstelle.c.
+struktur Zahl:
+    w: i32
+
+struktur Kontext:
+    aufrufe: i32
+    wert: i32
+
+struktur Paar:
+    a: i32
+    b: i64
+
+extern "C" funktion qsort(basis: ptr[Zahl], anzahl: u64, groesse: u64, vergleich: ptr[fn(ptr[Zahl], ptr[Zahl]) -> i32]) -> void
+extern "C" funktion rr_wiederhole(n: i32, cb: ptr[fn(i32, ptr[Kontext]) -> i32], ud: ptr[Kontext]) -> i32
+extern "C" funktion rr_melde(n: i32, cb: ptr[fn(i32, ptr[Kontext]) -> void], ud: ptr[Kontext]) -> void
+extern "C" funktion rr_merke(cb: ptr[fn(i32, ptr[Kontext]) -> i32], ud: ptr[Kontext]) -> void
+extern "C" funktion rr_loese_aus(x: i32) -> i32
+extern "C" funktion rr_tausche(cb: ptr[fn(Paar) -> Paar], a: i32, b: i64) -> i64
+extern "C" funktion rr_auf_thread(cb: ptr[fn(i32, ptr[Kontext]) -> i32], ud: ptr[Kontext], x: i32) -> i32
+
+@nativ
+@rückruf
+funktion vergleiche(a: ptr[Zahl], b: ptr[Zahl]) -> i32:
+    unsicher:
+        wenn a.w < b.w:
+            gib_zurück -1
+        wenn a.w > b.w:
+            gib_zurück 1
+        gib_zurück 0
+
+@nativ
+@rückruf
+funktion besuche(i: i32, k: ptr[Kontext]) -> i32:
+    unsicher:
+        k.aufrufe = k.aufrufe + 1
+        k.wert = k.wert + i
+        gib_zurück i + 1
+
+@nativ
+@rückruf
+funktion melde(i: i32, k: ptr[Kontext]) -> void:
+    unsicher:
+        k.aufrufe = k.aufrufe + 1
+        k.wert = k.wert + i * i
+
+@nativ
+@rückruf
+funktion tausche(p: Paar) -> Paar:
+    unsicher:
+        gib_zurück Paar(p.a + 1, p.b * 2)
+
+@nativ
+@rückruf
+funktion verdopple(x: i32, k: ptr[Kontext]) -> i32:
+    gib_zurück x * 2
+
+@nativ
+@rückruf(0)
+funktion teile(i: i32, k: ptr[Kontext]) -> i32:
+    unsicher:
+        k.aufrufe = k.aufrufe + 1
+        gib_zurück 10 / (2 - i)
+
+@nativ
+@einstieg
+funktion moo_win_rr_sortiere(adr: u64, n: u64) -> u32:
+    unsicher:
+        qsort(zeiger(adr), n, 4, vergleiche)
+        gib_zurück 1
+
+@nativ
+@einstieg
+funktion moo_win_rr_besuche(n: i32) -> i32:
+    unsicher:
+        setze k: Kontext auf Kontext(0, 0)
+        setze r: i32 auf rr_wiederhole(n, besuche, zeiger(adresse_von(k)))
+        gib_zurück k.aufrufe * 10000 + k.wert * 100 + r
+
+@nativ
+@einstieg
+funktion moo_win_rr_melde(n: i32) -> i32:
+    unsicher:
+        setze k: Kontext auf Kontext(0, 0)
+        rr_melde(n, melde, zeiger(adresse_von(k)))
+        gib_zurück k.aufrufe * 100 + k.wert
+
+@nativ
+@einstieg
+funktion moo_win_rr_tausche(a: i32, b: i64) -> i64:
+    unsicher:
+        setze r: i64 auf rr_tausche(tausche, a, b)
+        gib_zurück r
+
+@nativ
+@einstieg
+funktion moo_win_rr_merke() -> i32:
+    unsicher:
+        rr_merke(verdopple, nichts)
+        gib_zurück 1
+
+@nativ
+@einstieg
+funktion moo_win_rr_loese_aus(x: i32) -> i32:
+    unsicher:
+        setze r: i32 auf rr_loese_aus(x)
+        gib_zurück r
+
+@nativ
+@einstieg
+funktion moo_win_rr_thread(x: i32) -> i32:
+    unsicher:
+        setze k: Kontext auf Kontext(0, 0)
+        setze r: i32 auf rr_auf_thread(besuche, zeiger(adresse_von(k)), x)
+        gib_zurück k.aufrufe * 10000 + r
+
+@nativ
+@einstieg
+funktion moo_win_rr_teile(n: i32) -> i32:
+    unsicher:
+        setze k: Kontext auf Kontext(0, 0)
+        setze r: i32 auf rr_wiederhole(n, teile, zeiger(adresse_von(k)))
+        gib_zurück r

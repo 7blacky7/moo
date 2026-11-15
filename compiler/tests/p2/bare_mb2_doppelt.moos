@@ -1,0 +1,10 @@
+# P2-T28 B3: genau ein Multiboot2-Kopf.
+@nativ
+@sektion(".multiboot2")
+@benutzt
+konstante KOPF_A: [u32; 2] auf [1, 2]
+
+@nativ
+@sektion(".multiboot2")
+@benutzt
+konstante KOPF_B: [u32; 2] auf [3, 4]

@@ -125,8 +125,21 @@ static void* gl21_create_window(const char* title, int w, int h) {
 static void gl21_close(void* vctx) {
     GL21Context* ctx = (GL21Context*)vctx;
     if (!ctx) return;
-    glfwDestroyWindow(ctx->window);
-    ctx->window = NULL;
+    /* P2-T25 (Review c7071266): Display-Listen und Slots gehoeren zum Kontext;
+     * im eigenen Kontext loeschen, Slots leeren, dann Fenster und ctx freigeben. */
+    if (ctx->window) {
+        glfwMakeContextCurrent(ctx->window);
+        if (g_active_chunk != -1) glEndList();
+        for (int i = 0; i < MAX_CHUNKS; i++) {
+            if (g_chunks[i].is_used) glDeleteLists(g_chunks[i].list_id, 1);
+        }
+        glfwMakeContextCurrent(NULL);
+        glfwDestroyWindow(ctx->window);
+        ctx->window = NULL;
+    }
+    memset(g_chunks, 0, sizeof g_chunks);
+    g_active_chunk = -1;
+    free(ctx);
 }
 
 static int gl21_is_open(void* vctx) {
@@ -409,6 +422,36 @@ static void gl21_chunk_delete(void* vctx, int id) {
     g_chunks[id].is_used = false;
 }
 
+/* P2-T25 (Plan 962e249a, Stufe 1): Netz als Display-Liste; Indizes werden beim
+ * Hochladen aufgeloest (gleiches Bild, kein Speichervorteil). Eckpunkt = 9 f32
+ * (Position, Farbe, Normale); Zeichenfolge wie gl21_triangle_colors. */
+static int gl21_chunk_upload(void* vctx, int id, const float* ecken9, int ecken,
+                             const uint32_t* indizes, int index_anzahl) {
+    (void)vctx;
+    (void)ecken;
+    if (g_active_chunk != -1) return 7;
+    if (id < 0 || id >= MAX_CHUNKS || !g_chunks[id].is_used) return 8;
+    int anzahl = index_anzahl > 0 ? index_anzahl : ecken;
+    glNewList(g_chunks[id].list_id, GL_COMPILE);
+    glBegin(GL_TRIANGLES);
+    for (int k = 0; k < anzahl; k++) {
+        uint32_t e = index_anzahl > 0 ? indizes[k] : (uint32_t)k;
+        const float* v = ecken9 + 9u * (size_t)e;
+        glNormal3f(v[6], v[7], v[8]);
+        glColor4f(v[3], v[4], v[5], gl21_alpha);
+        glVertex3f(v[0], v[1], v[2]);
+    }
+    glEnd();
+    glEndList();
+    g_chunks[id].is_compiled = true;
+    return 0;
+}
+
+static void gl21_mult_matrix(void* vctx, const float m[16]) {
+    (void)vctx;
+    if (m) glMultMatrixf(m);
+}
+
 // ============================================================
 // Maus
 // ============================================================
@@ -684,4 +727,6 @@ Moo3DBackend moo_backend_gl21 = {
     .simulate_key = gl21_simulate_key,
     .simulate_mouse_delta = gl21_simulate_mouse_delta,
     .simulate_reset = gl21_simulate_reset,
+    .chunk_upload = gl21_chunk_upload,
+    .mult_matrix = gl21_mult_matrix,
 };

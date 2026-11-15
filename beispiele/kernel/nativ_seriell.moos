@@ -1,0 +1,53 @@
+# nativ_seriell.moos — serielle Ausgabe (COM1) und VGA-Text in nativem Moo
+# (P2-T28, Plan 607b20ba C2). Ohne C-Laufzeit: Port-I/O, volatile Zugriffe,
+# Text als native Konstante [u8; N] (im Bare-Profil gibt es keine Textliterale).
+# Wiederverwendbar: `importiere nativ_seriell` in Kernelbeispielen.
+
+@nativ
+konstante NATIV_MARKER: [u8; 17] auf "MOO-NATIV-KERN-OK"
+
+# COM1 selbst aufsetzen (115200 Baud, 8N1, FIFO), unabhaengig vom C-Start.
+@nativ
+funktion com1_init_nativ() -> u32:
+    unsicher:
+        port_schreibe(0x3F9, 0x00)
+        port_schreibe(0x3FB, 0x80)
+        port_schreibe(0x3F8, 0x01)
+        port_schreibe(0x3F9, 0x00)
+        port_schreibe(0x3FB, 0x03)
+        port_schreibe(0x3FA, 0xC7)
+        port_schreibe(0x3FC, 0x03)
+        gib_zurück 1
+
+# Ein Zeichen senden, sobald das Sendehalteregister leer ist (LSR Bit 5).
+@nativ
+funktion com1_senden(c: u8) -> u32:
+    unsicher:
+        setze warte: u64 auf 0
+        solange (port_lese(0x3FD) & 0x20) == 0:
+            setze warte auf warte + 1
+        port_schreibe(0x3F8, c)
+        gib_zurück 1
+
+@nativ
+funktion nativ_marker_senden() -> u32:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 17:
+            com1_senden(u8(speicher_lesen(adresse_von(NATIV_MARKER) + i, 1)))
+            setze i auf i + 1
+        com1_senden(10)
+        gib_zurück 1
+
+# Marker in Zeile 2 des VGA-Textspeichers (0xB8000), weiss auf schwarz.
+@nativ
+funktion vga_nativ_schreiben() -> u32:
+    unsicher:
+        setze adr: u64 auf 0xB8000 + 320
+        setze p: ptr[u16] auf zeiger(adr)
+        setze i: u64 auf 0
+        solange i < 17:
+            setze z: u16 auf u16(speicher_lesen(adresse_von(NATIV_MARKER) + i, 1))
+            volatile_schreiben(p, i, z + 0x0F00)
+            setze i auf i + 1
+        gib_zurück 1

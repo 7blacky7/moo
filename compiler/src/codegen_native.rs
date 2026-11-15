@@ -273,6 +273,9 @@ impl<'ctx> NValue<'ctx> {
 pub(crate) struct NativeFehler<'m, 'ctx> {
     pub(crate) module: &'m inkwell::module::Module<'ctx>,
     pub(crate) trap: bool,
+    /// P2-T84: hosted C-Export (@einstieg): statt nacktem Trap moo_native_abbruch
+    /// (Runtime: Meldung + RC 1); nur zusammen mit trap.
+    pub(crate) abbruch: bool,
     /// Name der nativen Funktion fuer die Fehlermeldung.
     pub(crate) funktion: &'m str,
 }
@@ -292,7 +295,9 @@ fn fehlerblock<'ctx>(
     let function = current.get_parent().ok_or("LLVM-Block ohne Funktion")?;
     let block = context.append_basic_block(function, &format!("native.fehler.{kennung}"));
     builder.position_at_end(block);
-    if fehler.trap {
+    if fehler.trap && fehler.abbruch {
+        emit_abbruch(context, builder, fehler.module, fehler.funktion, text)?;
+    } else if fehler.trap {
         let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.trap").ok_or("llvm.trap fehlt")?;
         let trap = intrinsic.get_declaration(fehler.module, &[]).ok_or("llvm.trap-Deklaration fehlt")?;
         builder.build_call(trap, &[], "").map_err(|e| e.to_string())?;
@@ -310,6 +315,108 @@ fn fehlerblock<'ctx>(
     }
     builder.position_at_end(current);
     Ok(block)
+}
+
+/// P2-T84 (Plan 91033131 §6): `moo_native_abbruch(text)` (noreturn) fuer Fehler
+/// in hosted C-Exporten (@einstieg). Ein Moo-Fehler kann nicht ueber einen
+/// fremden C-Frame weitergegeben werden. SCHWACHE Moduldefinition mit
+/// llvm.trap: ein ohne Runtime gelinktes Objekt traegt kein offenes Symbol und
+/// trappt wie bisher; die Moo-Runtime (moo_error.c) gibt Meldung und den
+/// anstehenden Moo-Fehler aus und beendet mit RC 1.
+pub(crate) fn native_abbruch_hook<'ctx>(
+    context: &'ctx Context,
+    module: &inkwell::module::Module<'ctx>,
+) -> Result<FunctionValue<'ctx>, String> {
+    if let Some(hook) = module.get_function("moo_native_abbruch") {
+        return Ok(hook);
+    }
+    let ptr = context.ptr_type(inkwell::AddressSpace::default());
+    let hook = module.add_function(
+        "moo_native_abbruch",
+        context.void_type().fn_type(&[ptr.into()], false),
+        Some(inkwell::module::Linkage::WeakAny),
+    );
+    hook.add_attribute(
+        inkwell::attributes::AttributeLoc::Function,
+        context.create_enum_attribute(inkwell::attributes::Attribute::get_named_enum_kind_id("noreturn"), 0),
+    );
+    let entry = context.append_basic_block(hook, "entry");
+    let builder = context.create_builder();
+    builder.position_at_end(entry);
+    let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.trap").ok_or("llvm.trap fehlt")?;
+    let trap = intrinsic.get_declaration(module, &[]).ok_or("llvm.trap-Deklaration fehlt")?;
+    builder.build_call(trap, &[], "").map_err(|e| e.to_string())?;
+    builder.build_unreachable().map_err(|e| e.to_string())?;
+    Ok(hook)
+}
+
+/// P2-T21/T57 B3 (Plan f4655d20 E5): `moo_native_rueckruf_thread(name)` am
+/// Eintritt fehlbarer hosted Rueckruf-Thunks. SCHWACHE Moduldefinition (kehrt
+/// sofort zurueck): runtime-freie Objekte bleiben linkbar; die starke Fassung in
+/// compiler/runtime/moo_error.c bricht auf Nicht-Moo-Threads (weder Hauptthread
+/// noch moo_thread_spawn) mit Diagnose + abort() ab. Erst bei Bedarf angelegt.
+pub(crate) fn native_rueckruf_thread_hook<'ctx>(
+    context: &'ctx Context,
+    module: &inkwell::module::Module<'ctx>,
+) -> Result<FunctionValue<'ctx>, String> {
+    if let Some(hook) = module.get_function("moo_native_rueckruf_thread") {
+        return Ok(hook);
+    }
+    let ptr = context.ptr_type(inkwell::AddressSpace::default());
+    let hook = module.add_function(
+        "moo_native_rueckruf_thread",
+        context.void_type().fn_type(&[ptr.into()], false),
+        Some(inkwell::module::Linkage::WeakAny),
+    );
+    let entry = context.append_basic_block(hook, "entry");
+    let builder = context.create_builder();
+    builder.position_at_end(entry);
+    builder.build_return(None).map_err(|e| e.to_string())?;
+    Ok(hook)
+}
+
+/// P2-T84: Abbruch eines hosted C-Exports an der aktuellen Builder-Position
+/// (Pure-Pfad und Systemkoerper teilen Meldung und Hook).
+pub(crate) fn emit_abbruch<'ctx>(
+    context: &'ctx Context,
+    builder: &Builder<'ctx>,
+    module: &inkwell::module::Module<'ctx>,
+    funktion: &str,
+    grund: &str,
+) -> Result<(), String> {
+    let hook = native_abbruch_hook(context, module)?;
+    let text = format!(
+        "Fehler in exportierter Funktion '{funktion}': {grund} - kann nicht ueber einen C-Aufrufer weitergegeben werden"
+    );
+    let message = builder.build_global_string_ptr(&text, "native.abbruch.text").map_err(|e| e.to_string())?;
+    builder.build_call(hook, &[message.as_pointer_value().into()], "").map_err(|e| e.to_string())?;
+    builder.build_unreachable().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// P2-T84: im hosted Export nach einem Aufruf einer Moo-internen Funktion
+/// (deren Fehler setzt nur das Flag und liefert 0) nicht weiterrechnen.
+fn abbruch_nach_aufruf<'ctx>(
+    context: &'ctx Context,
+    builder: &Builder<'ctx>,
+    fehler: NativeFehler<'_, 'ctx>,
+    callee: &str,
+) -> Result<(), String> {
+    let hook = native_fehler_offen_hook(context, fehler.module)?;
+    let flag = match builder.build_call(hook, &[], "native.fehler.offen").map_err(|e| e.to_string())?.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+        _ => return Err("moo_native_fehler_offen liefert keinen Wert".into()),
+    };
+    let offen = builder.build_int_compare(
+        inkwell::IntPredicate::NE, flag, context.i32_type().const_zero(), "native.fehler.gesetzt",
+    ).map_err(|e| e.to_string())?;
+    let abbruch = fehlerblock(context, builder, fehler, "aufruf", &format!("Fehler aus '{callee}'"))?;
+    let function = builder.get_insert_block().and_then(|block| block.get_parent())
+        .ok_or("Nativer Aufruf ohne Funktion")?;
+    let ok = context.append_basic_block(function, "native.aufruf.ok");
+    builder.build_conditional_branch(offen, abbruch, ok).map_err(|e| e.to_string())?;
+    builder.position_at_end(ok);
+    Ok(())
 }
 
 /// P2-T58 C2 (Plan 4500717b): `moo_native_fehler_offen() -> i32` als SCHWACHE
@@ -642,6 +749,11 @@ pub(crate) fn lower_nontrapping_expr<'ctx>(
             }
             let result = builder.build_call(*function, &call_args, "native.direct")
                 .map_err(|e| e.to_string())?.try_as_basic_value();
+            if fehler.trap && fehler.abbruch
+                && function.get_name().to_str().is_ok_and(|n| n.starts_with("__moo_native."))
+            {
+                abbruch_nach_aufruf(context, builder, fehler, name)?;
+            }
             match result {
                 inkwell::values::ValueKind::Basic(value) => NValue::checked(context, expected, value),
                 _ => Err("Nativer Aufruf liefert keinen Wert".into()),
@@ -892,8 +1004,19 @@ pub(crate) fn emit_nontrapping_function<'ctx>(
         // versehentliches Lesen eines noch uninitialisierten Slots.
         let local_ty = NType::from_type_ref(ty)?;
         let value = lower_nontrapping_expr(context, &builder, expr, local_ty, &slots, failure, fehler, pure_functions)?;
-        let ptr = builder.build_alloca(local_ty.llvm_type(context), name)
-            .map_err(|e| e.to_string())?;
+        // Allocas nur im Eintrittsblock: nach einer Verzweigung (P2-T84-Pruefung
+        // nach internem Callee) waere ein Alloca dynamisch und erzwaenge auf
+        // Win64 ___chkstk_ms (offenes Symbol im runtime-freien Objekt, ADR §13).
+        let ptr = if builder.get_insert_block() == Some(entry) {
+            builder.build_alloca(local_ty.llvm_type(context), name).map_err(|e| e.to_string())?
+        } else {
+            let am_anfang = context.create_builder();
+            match entry.get_first_instruction() {
+                Some(first) => am_anfang.position_before(&first),
+                None => am_anfang.position_at_end(entry),
+            }
+            am_anfang.build_alloca(local_ty.llvm_type(context), name).map_err(|e| e.to_string())?
+        };
         let slot = NSlot { ty: local_ty, ptr };
         slot.store(&builder, value)?;
         slots.insert(name.clone(), slot);
@@ -1097,11 +1220,13 @@ pub(crate) fn emit_pointer_load_function<'ctx>(
     Ok(())
 }
 
-/// M1: enger unsicherer C-Return mit skalaren i32-Parametern.
-/// Der Aufrufer darf diesen Koerper nur mit einem Vertrag verwenden, der
-/// Fehler vor der Verwendung des Resultats propagiert. Im ersten Slice
-/// beschraenkt der dynamische Aufrufpfad dies auf main ausserhalb von try.
-/// Teilweise emittierte Module muessen bei Fehler verworfen werden.
+/// M1: enger unsicherer C-Return mit skalaren Parametern (FFI-Einzelform).
+/// P2-T55: hosted fangbar wie reine @nativ-Koerper (codegen plain_fangbar).
+/// `fremd_fehlbar` (fehlbare hosted Rueckrufe im Modul): nach dem C-Aufruf
+/// wird das Moo-Fehlerflag geprueft; ist es gesetzt, kehrt der Wrapper mit
+/// Nullwert zurueck (Ergebnis verworfen, Erstfehler bleibt), im C-Export
+/// (@einstieg) Abbruch. Teilweise emittierte Module muessen bei Fehler
+/// verworfen werden.
 pub(crate) fn emit_ffi_return_function<'ctx>(
     context: &'ctx Context,
     module: &inkwell::module::Module<'ctx>,
@@ -1111,13 +1236,15 @@ pub(crate) fn emit_ffi_return_function<'ctx>(
     param_names: &[String],
     body: &[Stmt],
     fehler: NativeFehler<'_, 'ctx>,
+    fremd_fehlbar: bool,
 ) -> Result<(), String> {
     if function.get_type() != signature.llvm_type(context)
         || param_names.len() != signature.params.len()
         || match signature.result {
-            Some(result) => !matches!(result, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64)
-                || signature.params.iter().any(|ty| !matches!(ty, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64)),
-            None => signature.params.iter().any(|ty| !matches!(ty, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64)),
+            // P2-T19 Batch C: C-bool (i1) ist FFI-Werttyp.
+            Some(result) => !matches!(result, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64 | NType::Bool)
+                || signature.params.iter().any(|ty| !matches!(ty, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64 | NType::Bool)),
+            None => signature.params.iter().any(|ty| !matches!(ty, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64 | NType::Bool)),
         }
         || function.count_basic_blocks() != 0
     {
@@ -1161,6 +1288,29 @@ pub(crate) fn emit_ffi_return_function<'ctx>(
         native_args.push(lower_nontrapping_expr(context, &builder, expr, ty, &slots, failure, fehler, &HashMap::new())?);
     }
     let value = binding.emit_scalar_call(context, &builder, module, triple, &native_args, true)?;
+    if fremd_fehlbar && (!fehler.trap || fehler.abbruch) {
+        let hook = native_fehler_offen_hook(context, module)?;
+        let flag = match builder.build_call(hook, &[], "ffi.fremd.offen").map_err(|e| e.to_string())?.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+            _ => return Err("moo_native_fehler_offen liefert keinen Wert".into()),
+        };
+        let offen = builder.build_int_compare(
+            inkwell::IntPredicate::NE, flag, context.i32_type().const_zero(), "ffi.fremd.gesetzt",
+        ).map_err(|e| e.to_string())?;
+        let fehler_bb = context.append_basic_block(function, "ffi.fremd.fehler");
+        let ok_bb = context.append_basic_block(function, "ffi.fremd.ok");
+        builder.build_conditional_branch(offen, fehler_bb, ok_bb).map_err(|e| e.to_string())?;
+        builder.position_at_end(fehler_bb);
+        if fehler.abbruch {
+            emit_abbruch(context, &builder, module, fehler.funktion, "Fehler aus einem Rückruf")?;
+        } else {
+            match function.get_type().get_return_type() {
+                Some(ty) => { builder.build_return(Some(&ty.const_zero())).map_err(|e| e.to_string())?; }
+                None => { builder.build_return(None).map_err(|e| e.to_string())?; }
+            }
+        }
+        builder.position_at_end(ok_bb);
+    }
     match value {
         Some(value) => { builder.build_return(Some(&value.value)).map_err(|e| e.to_string())?; }
         None => { builder.build_return(None).map_err(|e| e.to_string())?; }

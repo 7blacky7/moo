@@ -82,9 +82,10 @@ expect_fail "$hosted_dir/negativ_zeiger_ohne_unsicher.moos" 'nur innerhalb von u
 expect_fail "$hosted_dir/negativ_dyn_aufruf.moos" 'Nativer Zeigerfunktionsaufruf'
 # Stufe 2a: skalarer Systemkoerper aus dyn nur in unsicher:, in main oder benannter Funktion.
 expect_fail "$hosted_dir/negativ_dyn_ohne_unsicher.moos" 'nur innerhalb von unsicher:'
-# Variante (b): benannte Funktionen ja, nicht aus Methoden/Lambdas.
-expect_fail "$hosted_dir/negativ_dyn_in_lambda.moos" 'keine Lambdas/Methoden'
-echo "PASS Negativfaelle: Port-I/O, volatile, Zeiger ohne unsicher, dyn->native ptr, dyn ohne unsicher, aus Methode"
+# Variante (b), seit P2-T85 positiv: Systemkoerper-Aufruf aus einer Methode.
+"$compiler" compile "$hosted_dir/negativ_dyn_in_lambda.moos" -o "$out/dyn_methode_exe"
+printf '3\n' | cmp - <("$out/dyn_methode_exe") || { echo "FEHLER: Systemkoerper aus Methode (P2-T85)" >&2; exit 1; }
+echo "PASS Negativfaelle: Port-I/O, volatile, Zeiger ohne unsicher, dyn->native ptr, dyn ohne unsicher; Methode jetzt positiv (P2-T85)"
 
 # 5a. P2-T74: Aufruf in versuche: (main und benannte Funktion) ist erlaubt, der
 #     Fehler im Koerper (moo_native_fehler) landet im fange-Zweig.
@@ -111,6 +112,40 @@ if grep -q 'NICHT ERREICHT' "$out/trap.out"; then
     cat "$out/trap.out" >&2; echo "FEHLER: Code nach dem Systemkoerper-Fehler lief" >&2; exit 1
 fi
 echo "PASS Fehler im hosted Systemkoerper: RC 1, Diagnose, kein Fortlauf (statt Trap)"
+
+# 5c. P2-T84: Fehler in einem aus C gerufenen Moo-Export (Moo -> C -> Moo) mit
+#     gelinkter Runtime und versuche: beim Moo-Aufrufer: Abbruch mit Meldung und
+#     RC 1, kein 'gefangen'/'weiter', kein Fortlauf im C-Frame. Drei Pfade:
+#     Pure-Export, Struktur-Export (C-ABI-Thunk), Export ruft fehlbare interne Fn.
+${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -c "$hosted_dir/t84_export_abbruch.c" -o "$out/t84.o"
+ar rcs "$out/libp2_t84.a" "$out/t84.o"
+"$compiler" compile "$hosted_dir/t84_export_abbruch.moos" --lib-pfad "$out" -o "$out/t84_exe"
+for wahl in teile:t84_teile paar:t84_paar intern:t84_ueber_intern; do
+    pfad="${wahl%%:*}"; export_name="${wahl#*:}"
+    set +e
+    T84_WAHL="$pfad" "$out/t84_exe" > "$out/t84_$pfad.out" 2> "$out/t84_$pfad.err"
+    t84_rc=$?
+    set -e
+    [ "$t84_rc" -eq 1 ] || { cat "$out/t84_$pfad.out" "$out/t84_$pfad.err" >&2; echo "FEHLER: T84 $pfad RC $t84_rc statt 1" >&2; exit 1; }
+    grep -qF "Fehler in exportierter Funktion '$export_name'" "$out/t84_$pfad.err" \
+        || { cat "$out/t84_$pfad.err" >&2; echo "FEHLER: T84 $pfad ohne Abbruchmeldung" >&2; exit 1; }
+    if grep -qE 'gefangen|weiter|NICHT ERREICHT' "$out/t84_$pfad.out"; then
+        cat "$out/t84_$pfad.out" >&2; echo "FEHLER: T84 $pfad lief nach dem Exportfehler weiter" >&2; exit 1
+    fi
+    head -n1 "$out/t84_$pfad.out" | grep -qxE '5|6' \
+        || { cat "$out/t84_$pfad.out" >&2; echo "FEHLER: T84 $pfad erster (fehlerfreier) Aufruf fehlt" >&2; exit 1; }
+done
+grep -qF "Anstehender Fehler" "$out/t84_intern.err" \
+    || { cat "$out/t84_intern.err" >&2; echo "FEHLER: T84 intern ohne anstehenden Moo-Fehler" >&2; exit 1; }
+# Ohne Runtime: Export-Objekt traegt moo_native_abbruch nur schwach, keine offenen Symbole.
+"$compiler" compile "$hosted_dir/t84_export_abbruch.moos" --emit-ir -o "$out/t84.ll"
+mise exec -- llvm-extract -S --func=t84_teile --func=t84_paar --func=t84_ueber_intern --recursive --keep-const-init "$out/t84.ll" -o "$out/t84.extract.ll"
+mise exec -- llc -O2 -relocation-model=pic -filetype=obj "$out/t84.extract.ll" -o "$out/t84_export.o"
+mise exec -- llvm-nm "$out/t84_export.o" | grep -qE ' [Ww] moo_native_abbruch$' \
+    || { echo "FEHLER: T84 moo_native_abbruch nicht schwach definiert" >&2; exit 1; }
+offen_t84="$(mise exec -- llvm-nm -u "$out/t84_export.o")"
+[ -z "$offen_t84" ] || { echo "FEHLER: T84 Export-Objekt mit offenen Symbolen: $offen_t84" >&2; exit 1; }
+echo "PASS P2-T84 Exportfehler: Abbruch RC 1 mit Meldung (pure, Struktur-Thunk, interner Callee), ohne Runtime schwacher Trap"
 
 # 6. Windows hosted ueber dieselbe Route (nur IR-Verify, kein Lauf).
 "$compiler" compile "$hosted_dir/probe_hosted.moos" --target x86_64-pc-windows-gnu --emit-ir -o "$out/probe.win.ll"

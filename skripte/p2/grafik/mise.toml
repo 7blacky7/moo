@@ -1,3 +1,14 @@
+[tasks.netz3d]
+description = "P2-T25: Retained-Netz Layout + ohne Fenster + GL33 im privaten Xvfb (nie Desktop)"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/grafik/netz3d.sh alle"
+
+[tasks.netz3d-messen]
+description = "P2-T25: Netz-Messung 131072 Dreiecke (Xvfb/llvmpipe, keine GPU-Leistungsaussage)"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/grafik/netz3d.sh messen"
+
+
 [tasks.test-cpu]
 description = "P2-Grafik: CPU-Referenz und Matrix-Differenztest"
 run = "bash test_cpu.sh"

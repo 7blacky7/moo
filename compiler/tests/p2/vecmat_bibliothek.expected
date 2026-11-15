@@ -1,0 +1,11 @@
+mat4(s0: vec4(x: 1, y: 0, z: 0, w: 0), s1: vec4(x: 0, y: 1, z: 0, w: 0), s2: vec4(x: 0, y: 0, z: 1, w: 0), s3: vec4(x: 0, y: 0, z: 0, w: 1))
+vec4(x: 2, y: 3, z: 4, w: 1)
+vec4(x: 3, y: 4, z: 5, w: 1)
+vec4(x: -1, y: -8.74228e-08, z: 0, w: 1)
+mat4(s0: vec4(x: 0.5, y: 0, z: 0, w: 0), s1: vec4(x: 0, y: 1, z: 0, w: 0), s2: vec4(x: 0, y: 0, z: -2, w: -1), s3: vec4(x: 0, y: 0, z: -3, w: 0))
+mat4(s0: vec4(x: 1, y: 0, z: 0, w: 0), s1: vec4(x: 0, y: 1, z: 0, w: 0), s2: vec4(x: 0, y: 0, z: 1, w: 0), s3: vec4(x: 0, y: 0, z: -5, w: 1))
+mat4(s0: vec4(x: 1, y: 0, z: 0, w: 0), s1: vec4(x: 0, y: 0.5, z: 0, w: 0), s2: vec4(x: 0, y: 0, z: -1, w: 0), s3: vec4(x: -1, y: -1, z: 0, w: 1))
+wahr
+wahr
+wahr
+wahr

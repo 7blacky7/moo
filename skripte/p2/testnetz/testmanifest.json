@@ -121,6 +121,30 @@
       "proof": "0f8927ca-7003-4e86-bd69-28c82fc4e898"
     },
     {
+      "path": "beispiele/kernel/nativ_kern.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "8fdc2d47-3869-44ca-9db1-c7819a302e6a"
+    },
+    {
+      "path": "beispiele/kernel/nativ_seriell.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "8fdc2d47-3869-44ca-9db1-c7819a302e6a"
+    },
+    {
       "path": "beispiele/kernel/pf_test.moos",
       "category": "profile",
       "args": [

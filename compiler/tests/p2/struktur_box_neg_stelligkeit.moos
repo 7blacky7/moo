@@ -1,0 +1,7 @@
+# P2-T49 C3 (Plan 38c59c64 E6): dynamischer Konstruktor - keine Argumente
+# (Nullwert) oder genau ein Wert je Feld, statisch geprueft.
+struktur Innen:
+    x: f32
+    y: f32
+
+zeige Innen(1)

@@ -1,5 +1,5 @@
-# P2-T66 (b) negativ: Systemkoerper-Aufruf aus einer Methode (kein benannter
-# Top-Level-Rahmen; gleiches gilt fuer Lambdas).
+# P2-T66 (b) war negativ; seit P2-T85 (Plan 983e8a9c) positiv: Systemkoerper-
+# Aufruf aus einer Methode (dynamischer Standardrahmen). Erwartete Ausgabe: 3.
 @nativ
 funktion teile(a: i32, b: i32) -> i32:
     unsicher:

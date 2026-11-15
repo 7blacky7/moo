@@ -23,12 +23,13 @@
 1. Use only scalar integer/float parameters, pointers and `void`. The compiler currently rejects `bool`, aggregates and function types by value; for `bool`, use an integer (`i32` or `u8`) in a C wrapper instead.
 2. Write the declaration: `@bibliothek(linux="name")` and `extern "C" funktion name(a: i8, b: u8) -> i32`. Calls go in a `@nativ` function inside `unsicher:`.
 3. Verify with a C counterpart program per target (templates: tests `bibliothek_ziel_*`, `ffi_i64*` in `compiler/tests/p2`).
-4. Callbacks and `vec`/`mat` are not released and do not belong in production bindings.
-5. Bind C++ only through an `extern "C"` adapter with an opaque handle; the adapter catches exceptions.
+4. Callbacks: write the Moo function as `@nativ` and `@rückruf` and pass it as `ptr[fn(...) -> R]` (`beispiele/nativ/10_rueckruf.moos`); carry state through a `user_data` pointer and use the error value `@rückruf(value)` for fallible callbacks. Structures may cross the boundary by value (`beispiele/nativ/11_struktur_by_value.moos`); fixed arrays and bare function types by value may not.
+5. Bind C++ only through an `extern "C"` adapter with an opaque handle; the adapter catches exceptions. The handle is `@opak struktur Name`, the release function carries `@verbraucht(1)` (`beispiele/nativ/12_opaker_griff.moos`; pattern with an adapter: test `cpp_griff`).
+6. Pass data without copying: tensors and frames go as `puffer[f32]` and `puffer[u8]`, read-only parameters with `@liest(n)` (`beispiele/nativ/08_leihgabe_liest.moos`). Use `vec3`/`mat4` instead of number lists for vectors and matrices (`beispiele/nativ/06_vec_mat.moos`); pointer arithmetic only inside `unsicher:` (`beispiele/nativ/07_zeiger.moos`).
 
 ## 4. Passing dynamic data across the boundary
 
-Not every number above 2^53 is exactly representable on the dynamic path; the transition then reports a boundary error. An exact integer container is a later step.
+Not every number above 2^53 is exactly representable on the dynamic path; the transition then reports a boundary error. An exact integer container is a later step. Structures, in contrast, cross the boundary by value without loss and can be used as boxes in dynamic code (`beispiele/nativ/13_struktur_dynamisch.moos`). Native functions may be called from methods and lambdas; an error there is catchable with `versuche:` (`beispiele/nativ/09_aufruf_aus_methoden.moos`).
 
 ## 5. Checklist before merging
 

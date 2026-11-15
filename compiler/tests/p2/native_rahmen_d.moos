@@ -1,0 +1,105 @@
+# P2-T85 D1/D2-Ergaenzung (Plan 983e8a9c, Review c23f9a29):
+# - Methode mit aufraeumen: Fehler -> Aufraeumen laeuft, Aufrufer faengt, kein
+#   Seiteneffekt nach dem Fehler; Vergleich mit gleichem Koerper als Funktion.
+# - Konstruktor mit nativem Aufruf.
+# - selbst.puffer als Pufferargument (Batch C1), auch verkettet.
+# - Lambda in map/filter (E6: Runtime-Rueckruf, Aufrufer faengt am naechsten
+#   Pruefpunkt).
+# - Lambda in guard-aktiver Funktion (B2) und mitten in einem Statement-
+#   Ausdruck definiert (A1: Guards/owned Werte bleiben draussen).
+@nativ
+funktion teile(a: i64, b: i64) -> i64:
+    gib_zurück a / b
+
+@nativ
+@liest(1)
+funktion gesamt(p: puffer[i32]) -> i64:
+    unsicher:
+        setze s: i64 auf 0
+        setze i: u64 auf 0
+        solange i < länge(p):
+            setze s auf s + als(i64, p[i])
+            setze i auf i + 1
+        gib_zurück s
+
+funktion marke(text):
+    zeige text
+
+funktion mit_aufraeumen_fn(n):
+    aufräumen: marke("fn aufgeraeumt")
+    setze q auf teile(100, n)
+    zeige "fn nach teile"
+    gib_zurück q
+
+klasse Halter:
+    funktion erstelle(n):
+        setze p auf puffer_erstellen(i32, n)
+        setze i auf 0
+        solange i < n:
+            p[i] = i + 1
+            setze i auf i + 1
+        selbst.puffer = p
+        selbst.anteil = teile(100, n)
+
+    funktion summe_feld():
+        unsicher:
+            gib_zurück gesamt(selbst.puffer)
+
+    funktion mit_aufraeumen(n):
+        aufräumen: marke("methode aufgeraeumt")
+        setze q auf teile(100, n)
+        zeige "methode nach teile"
+        gib_zurück q
+
+klasse Huelle:
+    funktion erstelle(halter):
+        selbst.innen = halter
+
+    funktion summe_kette():
+        unsicher:
+            gib_zurück gesamt(selbst.innen.puffer)
+
+funktion mit_lambda(n):
+    setze f auf (x) => teile(60, x)
+    setze a auf teile(60, n)
+    gib_zurück f(n) + a
+
+setze h auf neu Halter(4)
+zeige h.anteil
+zeige h.summe_feld()
+zeige neu Huelle(h).summe_kette()
+zeige mit_aufraeumen_fn(5)
+zeige h.mit_aufraeumen(5)
+versuche:
+    zeige mit_aufraeumen_fn(0)
+    zeige "NICHT ERREICHT"
+fange fehler:
+    zeige "fn gefangen"
+versuche:
+    zeige h.mit_aufraeumen(0)
+    zeige "NICHT ERREICHT"
+fange fehler:
+    zeige "methode gefangen"
+versuche:
+    setze k auf neu Halter(0)
+    zeige "NICHT ERREICHT"
+fange fehler:
+    zeige "konstruktor gefangen"
+
+setze zahlen auf [1, 2, 4]
+zeige zahlen.map((x) => teile(8, x))
+zeige zahlen.filter((x) => teile(8, x) > 2)
+versuche:
+    setze r auf [1, 0, 4].map((x) => teile(8, x))
+    zeige "NICHT ERREICHT"
+fange fehler:
+    zeige "map gefangen"
+
+zeige mit_lambda(3)
+versuche:
+    zeige mit_lambda(0)
+    zeige "NICHT ERREICHT"
+fange fehler:
+    zeige "guard-funktion gefangen"
+zeige [teile(10, 2), [3, 9].map((x) => teile(9, x))]
+zeige "fertig"

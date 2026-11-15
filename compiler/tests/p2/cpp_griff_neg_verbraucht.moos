@@ -1,0 +1,9 @@
+# P2-T23/T53 E3: @verbraucht(n) nur auf Griffparametern.
+@nativ
+@verbraucht(1)
+funktion f(x: i32) -> i32:
+    unsicher:
+        gib_zurück x
+
+unsicher:
+    zeige f(1)

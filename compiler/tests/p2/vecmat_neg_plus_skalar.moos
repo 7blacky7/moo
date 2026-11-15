@@ -1,0 +1,6 @@
+# P2-T16 E5: vecN + Skalar ist nicht definiert (nur * und /).
+@nativ
+funktion f(a: vec2) -> vec2:
+    gib_zurück a + 1.0
+
+zeige f(vec2(1, 2))

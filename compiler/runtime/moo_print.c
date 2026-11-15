@@ -1,4 +1,6 @@
+#include "moo_handle.h" /* P2-T23/T53: Ausgabe von Griffen */
 #include "moo_runtime.h"
+#include "moo_struct_dyn.h" /* P2-T49: Ausgabe von Strukturwerten */
 
 MooValue moo_to_string(MooValue v) {
     char buf[64];
@@ -134,7 +136,9 @@ MooValue moo_to_string(MooValue v) {
         case MOO_BUFFER:
             return moo_string_new("<Puffer>");
         case MOO_STRUCT:
-            return moo_string_new("<Struktur>");
+            return moo_struct_text(v);
+        case MOO_HANDLE:
+            return moo_string_new(moo_handle_text(v));
         default:
             return moo_string_new("<unbekannt>");
     }

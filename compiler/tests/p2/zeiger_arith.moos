@@ -1,0 +1,79 @@
+# P2-T17 (Plan f5b52a0b E3/E4, B3): Zeigerarithmetik in unsicher:-Koerpern.
+# p + n / n + p / p - n mit Schrittweite = Groesse des Zieltyps (auch
+# Struktur mit Padding), p - q als Elementabstand, n beliebiger Ganzzahltyp
+# (auch negativ), Durchlaufen eines Puffers bis zum Ende-Zeiger, Umdeutung
+# ptr[Struktur] <-> ptr[u8] mit zeiger(p), Nullvergleich, Rechnen wickelt.
+struktur Paar:
+    a: i32
+    b: i64
+
+@nativ
+funktion summe_ueber_zeiger(p: puffer[i32]) -> i64:
+    unsicher:
+        setze z: ptr[i32] auf puffer_zeiger(p)
+        setze ende: ptr[i32] auf z + länge(p)
+        setze s: i64 auf 0
+        solange z != ende:
+            setze s auf s + i64(z[0])
+            setze z auf z + 1
+        gib_zurück s
+
+@nativ
+funktion abstaende(p: puffer[i32]) -> i64:
+    unsicher:
+        setze a: ptr[i32] auf puffer_zeiger(p)
+        setze b: ptr[i32] auf a + 3
+        setze c: ptr[i32] auf b - 1
+        setze d: ptr[i32] auf 2 + a
+        setze k: i32 auf -2
+        setze e: ptr[i32] auf b + k
+        gib_zurück (b - a) * 10000 + (c - a) * 1000 + (d - a) * 100 + (e - a) * 10 + (a - b)
+
+@nativ
+funktion struktur_schritt(p: puffer[Paar]) -> i64:
+    unsicher:
+        setze a: ptr[Paar] auf puffer_zeiger(p)
+        setze b: ptr[Paar] auf a + 2
+        b.a = 7
+        setze bytes: u64 auf u64(b) - u64(a)
+        gib_zurück i64(bytes) * 100 + i64(p[2].a)
+
+@nativ
+funktion umdeuten(p: puffer[Paar]) -> i64:
+    unsicher:
+        setze a: ptr[Paar] auf puffer_zeiger(p)
+        setze roh: ptr[u8] auf zeiger(a)
+        setze roh2: ptr[u8] auf roh + 16
+        setze zweites: ptr[Paar] auf zeiger(roh2)
+        zweites.b = 99
+        gib_zurück p[1].b
+
+@nativ
+funktion null_und_wickeln(p: puffer[i32]) -> i32:
+    unsicher:
+        setze n: ptr[i32] auf nichts
+        setze a: ptr[i32] auf puffer_zeiger(p)
+        setze r: i32 auf 0
+        wenn n == nichts:
+            setze r auf r + 1
+        wenn a != nichts:
+            setze r auf r + 10
+        wenn (a - 1) + 1 == a:
+            setze r auf r + 100
+        wenn (n - 1) - n == -1:
+            setze r auf r + 1000
+        gib_zurück r
+
+setze p auf puffer_erstellen(i32, 5)
+p[0] = 1
+p[1] = 2
+p[2] = 3
+p[3] = 4
+p[4] = 5
+setze q auf puffer_erstellen(Paar, 3)
+unsicher:
+    zeige summe_ueber_zeiger(p)
+    zeige abstaende(p)
+    zeige struktur_schritt(q)
+    zeige umdeuten(q)
+    zeige null_und_wickeln(p)

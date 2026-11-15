@@ -165,21 +165,17 @@ if rg -q 'byval\(' "$ausgabe/moo-struct-msvc-extract.ll"; then
     exit 1
 fi
 
-# Nicht klassifizierte C-Aggregate bleiben unter Windows weiterhin gesperrt.
-for negativ in system_abi_20_verbot.moos system_abi_mixed_verbot.moos; do
-    if "$compiler" compile "skripte/p7/lader/$negativ" \
-        --target x86_64-pc-windows-gnu --emit-ir -o "$ausgabe/negativ.ll" \
-        >"$ausgabe/negativ.log" 2>&1; then
-        echo "Unerwartete Windows-C-ABI-Freigabe: $negativ" >&2
-        exit 1
-    fi
-    rg -q 'noch nicht klassifiziert' "$ausgabe/negativ.log" || {
-        echo "Unerwartete Windows-C-ABI-Diagnose: $negativ" >&2
-        cat "$ausgabe/negativ.log" >&2
-        exit 1
-    }
-done
-echo "PASS Moo Win64-Struct-by-value auf N100; MSVC LLVM/COFF und Negativ-Grenzen geprueft"
+# P2-T56 (Plan 91033131): frueher gesperrte Formen laufen ueber den allgemeinen
+# Klassifizierer; unter MS x64 (Groesse nicht 1/2/4/8) sret + Zeiger auf die
+# Aufruferkopie - Clang-belegt (x86_64-pc-windows-gnu).
+win_abi_pruefen() {  # Datei erwartete-declare-Zeile
+    "$compiler" compile "skripte/p7/lader/$1" --target x86_64-pc-windows-gnu --emit-ir -o "$ausgabe/abi_form.ll"
+    opt -passes=verify -disable-output "$ausgabe/abi_form.ll"
+    rg -q -x -F "$2" "$ausgabe/abi_form.ll" || { echo "Falsche Win64-C-ABI-Deklaration in $1" >&2; exit 1; }
+}
+win_abi_pruefen system_abi_20_sret.moos 'declare void @foo_struct20(ptr noalias sret({ i32, i32, i32, i32, i32 }) align 4, ptr)'
+win_abi_pruefen system_abi_mixed16.moos 'declare void @moo_p2_struct_mixed(ptr noalias sret({ double, i32, i32 }) align 8, ptr)'
+echo "PASS Moo Win64-Struct-by-value auf N100; MSVC LLVM/COFF und Win64-Klassifizierung (20 B, {f64,u32,u32}) geprueft"
 
 # P2-T56: neue Typklassen mit derselben Moo-Quelle auf Linux UND Windows.
 bash skripte/p2/abi/complex_e2e.sh "$compiler"
@@ -203,11 +199,19 @@ moo_n_matrix_stack_init moo_n_matrix_stack_push moo_n_matrix_stack_pop"
 mat4_auswahl=""
 for funktion in $mat4_funktionen; do mat4_auswahl="$mat4_auswahl --func=$funktion"; done
 # Absichtlich unquotiert: die Optionsliste wird in einzelne --func Argumente zerlegt.
-llvm-extract -S --recursive $mat4_auswahl "$ausgabe/mat4-win.ll" -o "$ausgabe/mat4-only.ll"
+# --keep-const-init (P2-T84): hosted Windows-Exporte rufen bei Fehlern
+# moo_native_abbruch(text) mit privaten Meldungskonstanten native.abbruch.text.*.
+# Ohne das Flag macht llvm-extract daraus externe Deklarationen ohne Initialisierer
+# -> undefined reference beim Link. Das vollstaendige Compiler-Modul ist korrekt;
+# nur die Teil-Extraktion muss die Konstanten mitnehmen (wie zahlen oben, Z. 43).
+llvm-extract -S --recursive --keep-const-init $mat4_auswahl "$ausgabe/mat4-win.ll" -o "$ausgabe/mat4-only.ll"
 opt -passes='default<O2>' -S "$ausgabe/mat4-only.ll" -o "$ausgabe/mat4-opt.ll"
 opt -passes=verify -disable-output "$ausgabe/mat4-opt.ll"
 llc -mtriple=x86_64-pc-windows-gnu -O2 -filetype=obj \
     "$ausgabe/mat4-opt.ll" -o "$ausgabe/mat4-win.obj"
+# Kein offenes Symbol ausser libm darf uebrig bleiben (Abbruch-Hook ist schwach definiert).
+mat4_offen="$(llvm-nm -u "$ausgabe/mat4-win.obj" | awk '{print $2}' | grep -vxE 'sinf|cosf|tanf|sqrtf' || true)"
+[ -z "$mat4_offen" ] || { echo "Win64-Mat4: unerwartete offene Symbole: $mat4_offen" >&2; exit 1; }
 # -static ist notwendig: ohne das Flag fehlte dem Testrechner libwinpthread-1.dll
 # (Windows-Exitcode 0xC0000135). Keine DLLs auf dem Testrechner installieren.
 x86_64-w64-mingw32-gcc -std=c11 -O2 -ffp-contract=off -Wall -Wextra -Werror \
@@ -220,5 +224,29 @@ fi
 "$winrm" skripte/p2/windows_minipc/smb_upload.py "$ausgabe/moo_win_mat4.exe"
 "$winrm" skripte/p2/minipc_winrm.py run "\$ErrorActionPreference='Stop'; & 'D:\\MooTest\\moo_win_mat4.exe' 200000 300000 5; if (\$LASTEXITCODE -ne 0) { throw 'Moo-Win64-Mat4-Differenztest fehlgeschlagen' }"
 echo 'PASS Windows-N100 Mat4 + Matrix-Stack: 200000 Runden, 57.6 Mio Matrixwerte + 200000 Stack-Operationen (vollstaendiger C-Moo-Memcmp, Ueber-/Unterlauf); Benchmark nur Diagnose'
+
+# P2-T21/T57 (Plan f4655d20 E-5): Moo-@rückruf als C-Funktionszeiger auf Windows x64.
+# Lokale Wine-Vorprobe NUR ueber skripte/p2/windows_minipc/wine_vorab.sh (headless,
+# winedbg aus): die Trap-Exe darf auf dem Linux-Desktop keinen Dialog oeffnen.
+# Runtime-freie Exporte rufen CRT-qsort/rr_* mit Moo-Rueckrufen (Thunks mit
+# Win64-ABI, Struktur 16 Byte per Referenz, CreateThread). Offen duerfen nur qsort
+# und die rr_*-Gegenstelle bleiben; der fehlbare Rueckruf trappt ohne Runtime.
+"$compiler" compile "$quelle/rueckruf_probe.moos" --target x86_64-pc-windows-gnu --emit-ir -o "$ausgabe/rueckruf.ll"
+opt -passes=verify -disable-output "$ausgabe/rueckruf.ll"
+# --recursive folgt nur Aufrufen; die als Wert uebergebenen Thunks __moo_rueckruf.*
+# werden daher ausdruecklich mitgenommen.
+llvm-extract -S --recursive --keep-const-init --rfunc='^(moo_win_rr_|__moo_rueckruf[.])' "$ausgabe/rueckruf.ll" -o "$ausgabe/rueckruf.extract.ll"
+llc -O2 -filetype=obj "$ausgabe/rueckruf.extract.ll" -o "$ausgabe/rueckruf.obj"
+rueckruf_offen="$(llvm-nm -u "$ausgabe/rueckruf.obj" | awk '{print $NF}' | grep -vxE 'qsort|rr_[a-z_]+' || true)"
+[ -z "$rueckruf_offen" ] || { echo "Win64-Rueckruf: unerwartete offene Symbole: $rueckruf_offen" >&2; exit 1; }
+x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror -static -static-libgcc \
+    "$quelle/rueckruf_probe.c" skripte/p2/ffi/rueckruf_gegenstelle.c "$ausgabe/rueckruf.obj" -o "$ausgabe/moo_win_rueckruf.exe"
+x86_64-w64-mingw32-gcc -std=c11 -O2 -Wall -Wextra -Werror -static -static-libgcc \
+    "$quelle/rueckruf_trap.c" skripte/p2/ffi/rueckruf_gegenstelle.c "$ausgabe/rueckruf.obj" -o "$ausgabe/moo_win_rueckruf_trap.exe"
+"$winrm" skripte/p2/windows_minipc/smb_upload.py "$ausgabe/moo_win_rueckruf.exe"
+"$winrm" skripte/p2/windows_minipc/smb_upload.py "$ausgabe/moo_win_rueckruf_trap.exe"
+"$winrm" skripte/p2/minipc_winrm.py run "\$ErrorActionPreference='Stop'; & 'D:\\MooTest\\moo_win_rueckruf.exe'; if (\$LASTEXITCODE -ne 0) { throw 'Moo-Win64-Rueckruf fehlgeschlagen' }"
+"$winrm" skripte/p2/minipc_winrm.py run "\$ErrorActionPreference='Continue'; \$ausgabe = (& 'D:\\MooTest\\moo_win_rueckruf_trap.exe' 2>&1 | Out-String); \$rc = \$LASTEXITCODE; if (\$rc -eq 0) { throw 'Moo-Win64-Rueckruf-Trap: Exitcode 0' }; if (\$ausgabe -match 'NICHT ERREICHT') { throw 'Moo-Win64-Rueckruf-Trap: Fortlauf nach dem Fehler' }; Write-Output ('MOO_WIN64_RUECKRUF_TRAP_OK exit=' + \$rc)"
+echo 'PASS Windows-N100 @rückruf: CRT-qsort, user_data, void, Struktur, gespeichert, CreateThread (14 Faelle) + Trap ohne Runtime'
 
 

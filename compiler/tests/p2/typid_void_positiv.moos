@@ -1,0 +1,14 @@
+# P2-T51 C2 / E4 positiv: ptr[T] -> ptr[void] ist als Argument still erlaubt
+# (C-Konvention), Rueckweg nur ausdruecklich mit zeiger(p).
+extern "C" funktion memset(ziel: ptr[void], wert: i32, anzahl: u64) -> ptr[void]
+@nativ
+funktion nullen(p: puffer[i32]) -> i32:
+    unsicher:
+        setze z: ptr[i32] auf puffer_zeiger(p)
+        setze r: ptr[void] auf memset(z, 0, länge(p) * 4)
+        setze zurueck: ptr[i32] auf zeiger(r)
+        gib_zurück zurueck[1]
+setze p auf puffer_erstellen(i32, 3)
+p[1] = 7
+unsicher:
+    zeige nullen(p)

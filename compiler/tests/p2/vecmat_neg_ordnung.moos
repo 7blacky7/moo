@@ -1,0 +1,6 @@
+# P2-T16 E4: Vektoren nur mit == oder != vergleichen.
+@nativ
+funktion f(a: vec3, b: vec3) -> bool:
+    gib_zurück a < b
+
+zeige f(vec3(1, 2, 3), vec3(1, 2, 4))

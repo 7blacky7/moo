@@ -57,6 +57,33 @@ printf 'PASS Interface-Altformen parsebar\n'
 '''
 
 
+[tasks.qualifiziert]
+description = "P2-T47: qualifizierte Namen im AST vor und nach --imports"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-frontend-ast
+mkdir -p "$out"
+compiler="${MOO_COMPILER:-compiler/target/release/moo-compiler}"
+src=compiler/tests/p2/ast_qualifiziert.moos
+timeout 30s "$compiler" ast "$src" >"$out/qualifiziert.vorher.ast"
+timeout 30s "$compiler" ast "$src" --imports >"$out/qualifiziert.nachher.ast"
+v="$out/qualifiziert.vorher.ast"; n="$out/qualifiziert.nachher.ast"
+# Vorher: Punkt-Typname mit exaktem Span (Zeile 4, Spalte 15 bis exklusiv 23), Import mit Zeile.
+rg -U -q 'kind: Name\(\s*"m[.]MPunkt",\s*\),\s*line: 4,\s*column: 15,\s*end_line: 4,\s*end_column: 23,' "$v" || { echo 'FAIL vorher: q.Typ/Span' >&2; exit 1; }
+rg -U -q 'Import \{\s*module: "modul_import_matrix",\s*names: \[\],\s*alias: Some\(\s*"m",\s*\),\s*line: 1,' "$v" || { echo 'FAIL vorher: Import mit Zeile' >&2; exit 1; }
+rg -q -F 'class_name: "m.MDaten"' "$v" || { echo 'FAIL vorher: neu q.Klasse' >&2; exit 1; }
+rg -q -F 'method: "m_skalar"' "$v" || { echo 'FAIL vorher: q.f() als Methodenaufruf' >&2; exit 1; }
+# Nachher: alles auf einfache Namen zurueckgefuehrt, kein Punktname mehr.
+if rg -q '"m[.]' "$n"; then echo 'FAIL nachher: Punktname uebrig' >&2; exit 1; fi
+rg -U -q 'FunctionCall \{\s*name: "m_skalar",' "$n" || { echo 'FAIL nachher: q.f() nicht aufgeloest' >&2; exit 1; }
+rg -U -q 'Return\(\s*Some\(\s*Identifier\(\s*"MGRENZE",' "$n" || { echo 'FAIL nachher: q.NAME nicht aufgeloest' >&2; exit 1; }
+rg -q -F 'class_name: "MDaten"' "$n" || { echo 'FAIL nachher: neu q.Klasse' >&2; exit 1; }
+rg -U -q 'kind: Name\(\s*"MPunkt",\s*\),\s*line: 4,\s*column: 15,' "$n" || { echo 'FAIL nachher: Span des Typs' >&2; exit 1; }
+echo 'PASS qualifizierte Formen vor und nach --imports'
+'''
+
+
 [tasks.interface-diagnose]
 description = "Typfehler und Interface-Legacy-Fallback sichtbar machen"
 dir = "{{config_root}}/../../.."

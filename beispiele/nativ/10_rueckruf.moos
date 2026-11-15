@@ -1,0 +1,37 @@
+# C-Rückruf: Moo-Vergleichsfunktion mit @rückruf an libc-qsort übergeben.
+# @rückruf erzeugt einen C-ABI-Thunk; die Funktion ist nativ und fehlerfrei.
+# Aus compiler/tests/p2/rueckruf_sicher.moos.
+# Erwartete Ausgabe: 0, -2147483648, -3, -3, 5, 2147483647
+struktur Zahl:
+    w: i32
+
+extern "C" funktion qsort(basis: ptr[Zahl], anzahl: u64, groesse: u64, vergleich: ptr[fn(ptr[Zahl], ptr[Zahl]) -> i32]) -> void
+
+@nativ
+@rückruf
+funktion vergleiche(a: ptr[Zahl], b: ptr[Zahl]) -> i32:
+    unsicher:
+        wenn a.w < b.w:
+            gib_zurück -1
+        wenn a.w > b.w:
+            gib_zurück 1
+        gib_zurück 0
+
+@nativ
+funktion lauf_sortiere(p: puffer[i32]) -> i32:
+    unsicher:
+        qsort(zeiger(u64(puffer_zeiger(p))), länge(p), 4, vergleiche)
+        gib_zurück 0
+
+setze z auf puffer_erstellen(i32, 5)
+z[0] = 5
+z[1] = -3
+z[2] = 2147483647
+z[3] = -3
+z[4] = -2147483648
+unsicher:
+    zeige lauf_sortiere(z)
+setze i auf 0
+solange i < 5:
+    zeige z[i]
+    setze i auf i + 1

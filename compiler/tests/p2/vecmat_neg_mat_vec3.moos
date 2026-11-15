@@ -1,0 +1,6 @@
+# P2-T16 E5: mat4 transformiert nur vec4 (keine stille Erweiterung von vec3).
+@nativ
+funktion f(m: mat4, v: vec3) -> vec3:
+    gib_zurück m * v
+
+zeige 1

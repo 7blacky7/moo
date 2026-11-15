@@ -1,0 +1,30 @@
+# P2-T21/T57 Batch E (Plan f4655d20 E5): ein FEHLBARER Rueckruf auf einem
+# fremden, nicht von Moo gestarteten Thread wird abgelehnt: Diagnose auf stderr
+# und abort(), ohne den globalen Fehlerzustand anzufassen und ohne den Koerper
+# auszufuehren. (Fehlerfreie Rueckrufe duerfen dort laufen: rueckruf_sicher.)
+struktur Kontext:
+    aufrufe: i32
+    wert: i32
+
+@bibliothek("p2_rueckruf")
+extern "C" funktion rr_auf_thread(cb: ptr[fn(i32, ptr[Kontext]) -> i32], ud: ptr[Kontext], x: i32) -> i32
+
+@nativ
+@rückruf(0)
+funktion teile(x: i32, k: ptr[Kontext]) -> i32:
+    unsicher:
+        k.aufrufe = k.aufrufe + 1
+        gib_zurück 10 / x
+
+@nativ
+funktion lauf(x: i32) -> i32:
+    unsicher:
+        setze k: Kontext auf Kontext(0, 0)
+        setze r: i32 auf rr_auf_thread(teile, zeiger(adresse_von(k)), x)
+        gib_zurück k.aufrufe * 100 + r
+
+versuche:
+    unsicher:
+        zeige lauf(5)
+fange fehler:
+    zeige "NICHT ERREICHT"

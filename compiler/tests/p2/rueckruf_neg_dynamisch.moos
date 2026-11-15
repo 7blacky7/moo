@@ -1,0 +1,7 @@
+# P2-T21/T57 E-3 (E7): dynamische Funktionen (und Lambdas/Methoden) sind keine
+# C-Rueckrufe; Zustand ueber das user_data-Muster.
+@rückruf
+funktion f(x):
+    gib_zurück x
+
+zeige f(1)

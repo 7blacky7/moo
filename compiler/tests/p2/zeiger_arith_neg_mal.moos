@@ -1,0 +1,6 @@
+# P2-T17 E3 negativ: nur + und - mit Zeigern.
+@nativ
+funktion f(p: ptr[i32]) -> u64:
+    unsicher:
+        setze q: ptr[i32] auf p * 2
+        gib_zurück u64(q)

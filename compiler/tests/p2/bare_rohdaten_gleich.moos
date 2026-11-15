@@ -1,0 +1,10 @@
+# P2-T28 (Plan 607b20ba A2): typisierte Konstante [u32; 4] liefert dieselben
+# Bytes wie @rohdaten_u32 mit denselben Werten.
+@nativ
+@sektion(".p2_typisiert")
+@benutzt
+konstante TYPISIERT: [u32; 4] auf [0xE85250D6, 0, 24, 0x17ADAF12]
+
+@rohdaten_u32
+@sektion(".p2_roh")
+konstante ROH auf [0xE85250D6, 0, 24, 0x17ADAF12]

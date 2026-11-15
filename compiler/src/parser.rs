@@ -785,6 +785,13 @@ impl Parser {
     fn parse_struct_def(&mut self, decorators: Vec<crate::ast::Decorator>) -> Result<Stmt, ParseError> {
         self.pos += 1; // kontextuelles struktur/struct
         let name = self.eat_identifier()?;
+        // P2-T23/T53 (Plan 36aca1f2 E2): `@opak struktur Name` ohne Koerper -
+        // nur als Zeigerziel (ptr[Name]) fuer fremde Objekte nutzbar.
+        if decorators.iter().any(|d| d.name == "opak" || d.name == "opaque")
+            && matches!(self.current_type(), TokenType::Newline | TokenType::Eof)
+        {
+            return Ok(Stmt::StructDef { name, fields: Vec::new(), decorators });
+        }
         self.eat(&TokenType::Colon)?;
         self.skip_newlines();
         self.eat(&TokenType::Indent)?;
@@ -906,6 +913,17 @@ impl Parser {
                 }
                 let end = self.eat(&TokenType::RBracket)?.clone();
                 (TypeKind::Generic { name, args }, end.line, end.column + 1)
+            } else if matches!(self.current_type(), TokenType::Dot)
+                && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type), Some(TokenType::Identifier(_)))
+            {
+                // P2-T47 (Plan b1f51d65 C1): qualifizierter Typname `q.Typ`.
+                // Der Resolver fuehrt ihn auf `Typ` zurueck oder meldet einen
+                // Fehler; ein Punktname erreicht den Codegen nie.
+                self.pos += 1;
+                let glied_token = self.current().clone();
+                let glied = self.eat_identifier()?;
+                let end_column = glied_token.column + glied.chars().count();
+                (TypeKind::Name(format!("{name}.{glied}")), glied_token.line, end_column)
             } else {
                 let end_column = start.column + name.chars().count();
                 (TypeKind::Name(name), start.line, end_column)
@@ -923,33 +941,6 @@ impl Parser {
             Ok(Some(self.parse_type()?))
         } else {
             Ok(Option::None)
-        }
-    }
-
-    /// Überspringt eine optionale Typ-Annotation (": Typ").
-    /// Nur Syntax — kein Type-Checking! (TypeScript-Ansatz: Typen als Dokumentation)
-    fn skip_type_annotation(&mut self) {
-        if matches!(self.current_type(), TokenType::Colon) {
-            // Prüfe ob danach ein Typ-Identifier kommt (nicht Indent/Newline = Block-Start)
-            if self.pos + 1 < self.tokens.len() {
-                match &self.tokens[self.pos + 1].token_type {
-                    TokenType::Identifier(_) => {
-                        self.pos += 1; // ":"
-                        self.pos += 1; // Typ-Name
-                    }
-                    _ => {} // Kein Typ → nichts tun (ist ein Block-Colon)
-                }
-            }
-        }
-    }
-
-    /// Überspringt einen optionalen Rückgabetyp ("-> Typ").
-    fn skip_return_type(&mut self) {
-        if matches!(self.current_type(), TokenType::ThinArrow) {
-            self.pos += 1; // "->"
-            if matches!(self.current_type(), TokenType::Identifier(_)) {
-                self.pos += 1; // Typ-Name
-            }
         }
     }
 
@@ -1134,6 +1125,7 @@ impl Parser {
     }
 
     fn parse_import(&mut self) -> Result<Stmt, ParseError> {
+        let line = self.current().line;
         self.pos += 1;
         let module = self.eat_module_name()?;
         let alias = if matches!(self.current_type(), TokenType::As) {
@@ -1142,10 +1134,11 @@ impl Parser {
         } else {
             Option::None
         };
-        Ok(Stmt::Import { module, names: vec![], alias })
+        Ok(Stmt::Import { module, names: vec![], alias, line })
     }
 
     fn parse_from_import(&mut self) -> Result<Stmt, ParseError> {
+        let line = self.current().line;
         self.pos += 1;
         let module = self.eat_module_name()?;
         self.eat(&TokenType::Import)?;
@@ -1154,7 +1147,7 @@ impl Parser {
             self.pos += 1;
             names.push(self.eat_identifier()?);
         }
-        Ok(Stmt::Import { module, names, alias: Option::None })
+        Ok(Stmt::Import { module, names, alias: Option::None, line })
     }
 
     fn parse_export(&mut self) -> Result<Stmt, ParseError> {
@@ -1578,7 +1571,15 @@ impl Parser {
             }
             TokenType::New => {
                 self.pos += 1;
-                let class_name = self.eat_identifier()?;
+                let mut class_name = self.eat_identifier()?;
+                // P2-T47: `neu q.Klasse(...)`; der Resolver loest den Punktnamen auf.
+                if matches!(self.current_type(), TokenType::Dot)
+                    && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type), Some(TokenType::Identifier(_)))
+                {
+                    self.pos += 1;
+                    let glied = self.eat_identifier()?;
+                    class_name = format!("{class_name}.{glied}");
+                }
                 self.eat(&TokenType::LParen)?;
                 let args = self.parse_args_list()?;
                 self.eat(&TokenType::RParen)?;

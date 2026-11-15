@@ -11,6 +11,39 @@ use crate::codegen_native::NType;
 /// Obergrenze für @ausrichten(n) an Strukturen (Seitengröße).
 pub(crate) const MAX_STRUKTUR_AUSRICHTUNG: u32 = 4096;
 
+/// P2-T49 (Plan 38c59c64 E3): Feldarten der Laufzeitbeschreibung v2
+/// (compiler/runtime/moo_struct_typed.h, MOO_FELD_*).
+pub(crate) const FELD_SKALAR: u8 = 1;
+pub(crate) const FELD_BOOL: u8 = 2;
+pub(crate) const FELD_STRUKTUR: u8 = 3;
+pub(crate) const FELD_ARRAY: u8 = 4;
+/// P2-T49 E5: MOO_MAX_ALIGN der Runtime (malloc-Ausrichtung hosted). Boxdaten
+/// kommen aus calloc; strenger ausgerichtete Strukturen sind nicht boxbar.
+pub(crate) const MAX_BOX_AUSRICHTUNG: u32 = 16;
+
+/// P2-T49: deklariertes Feld oberster Ebene der Laufzeitbeschreibung v2.
+/// Arrays flach: anzahl Elemente der Art element (Stride groesse / anzahl).
+#[derive(Clone, Debug)]
+pub(crate) struct LaufzeitFeld {
+    pub name: String,
+    pub versatz: u64,
+    pub groesse: u64,
+    pub art: u8,
+    pub element: u8,
+    pub skalar: u8,
+    pub anzahl: u64,
+    pub struktur: Option<String>,
+}
+
+/// MooBufferScalarType-Code (compiler/runtime/moo_buffer.h); bool hat keinen.
+fn skalar_code(t: NType) -> u8 {
+    match t {
+        NType::I8 => 1, NType::U8 => 2, NType::I16 => 3, NType::U16 => 4, NType::I32 => 5,
+        NType::U32 => 6, NType::I64 => 7, NType::U64 => 8, NType::F32 => 9, NType::F64 => 10,
+        NType::Bool => 0,
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct NativeStructLayout<'ctx> {
     pub llvm_type: StructType<'ctx>,
@@ -90,6 +123,57 @@ pub(crate) fn native_struct_layout<'ctx>(
 pub(crate) struct NativeStructRegistry<'ctx> {
     layouts: HashMap<String, NativeStructLayout<'ctx>>,
     visible_names: HashSet<String>,
+    /// P2-T23/T53 (Plan 36aca1f2 E2): `@opak struktur Name` - nur Zeigerziel,
+    /// ohne Layout (kein Wert, kein Feld, keine Groesse).
+    opake: HashSet<String>,
+    /// P2-T16 (Plan 3f03704a E1/E2): registrierte eingebaute vec2/vec3/vec4/
+    /// mat4 (nicht: gleichnamige eigene Strukturen).
+    eingebaut: HashSet<String>,
+}
+
+/// P2-T16 (Plan 3f03704a E1): eingebaute f32-Werttypen. vecN = N f32-
+/// Komponenten (x, y, z, w), mat4 = vier vec4-Spalten s0..s3 (bytegleich zu
+/// float[16] spaltenweise wie compiler/runtime/moo_3d_math.c). C-Layout:
+/// Groesse/Ausrichtung 8/4, 12/4, 16/4, 64/4.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VecMatArt {
+    Vec(u32),
+    Mat4,
+}
+
+impl VecMatArt {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            VecMatArt::Vec(2) => "vec2",
+            VecMatArt::Vec(3) => "vec3",
+            VecMatArt::Vec(_) => "vec4",
+            VecMatArt::Mat4 => "mat4",
+        }
+    }
+}
+
+pub(crate) const VECMAT_NAMEN: [&str; 4] = ["vec2", "vec3", "vec4", "mat4"];
+
+pub(crate) fn vecmat_art_name(name: &str) -> Option<VecMatArt> {
+    match name {
+        "vec2" => Some(VecMatArt::Vec(2)),
+        "vec3" => Some(VecMatArt::Vec(3)),
+        "vec4" => Some(VecMatArt::Vec(4)),
+        "mat4" => Some(VecMatArt::Mat4),
+        _ => None,
+    }
+}
+
+/// Felder der eingebauten Definition (Quellort 0: nicht aus dem Programm).
+pub(crate) fn vecmat_felder(name: &str) -> Option<Vec<(String, TypeRef)>> {
+    let typ = |n: &str| TypeRef { kind: TypeKind::Name(n.to_string()), line: 0, column: 0, end_line: 0, end_column: 0 };
+    let (felder, feldtyp): (&[&str], &str) = match vecmat_art_name(name)? {
+        VecMatArt::Vec(2) => (&["x", "y"], "f32"),
+        VecMatArt::Vec(3) => (&["x", "y", "z"], "f32"),
+        VecMatArt::Vec(_) => (&["x", "y", "z", "w"], "f32"),
+        VecMatArt::Mat4 => (&["s0", "s1", "s2", "s3"], "vec4"),
+    };
+    Some(felder.iter().map(|f| (f.to_string(), typ(feldtyp))).collect())
 }
 
 /// Laenge eines festen Arrays `[T; N]`: konstantes, positives Ganzzahlliteral
@@ -225,7 +309,25 @@ fn c_verbinden(basis: &str, deklarator: &str) -> String {
 pub(crate) type LayoutSnapshot = Vec<(String, u64, u32, Vec<(String, u64)>)>;
 
 impl<'ctx> NativeStructRegistry<'ctx> {
-    pub(crate) fn new() -> Self { Self { layouts: HashMap::new(), visible_names: HashSet::new() } }
+    pub(crate) fn new() -> Self {
+        Self { layouts: HashMap::new(), visible_names: HashSet::new(), opake: HashSet::new(), eingebaut: HashSet::new() }
+    }
+
+    /// P2-T23/T53: opaker Typ (nur als Zeigerziel).
+    pub(crate) fn ist_opak(&self, name: &str) -> bool {
+        self.opake.contains(name)
+    }
+
+    /// P2-T16: Art eines eingebauten Vektor-/Matrixtyps; None fuer jede andere
+    /// (auch eine gleichnamige eigene) Struktur.
+    pub(crate) fn vecmat_art(&self, name: &str) -> Option<VecMatArt> {
+        if self.eingebaut.contains(name) { vecmat_art_name(name) } else { None }
+    }
+
+    /// P2-T16: nach register_all die eingebauten Definitionen markieren.
+    pub(crate) fn markiere_eingebaut(&mut self, name: &str) {
+        self.eingebaut.insert(name.to_string());
+    }
 
     /// P7-T4 (1A): fertiges Layout einer registrierten Struktur.
     pub(crate) fn layout(&self, name: &str) -> Option<&NativeStructLayout<'ctx>> {
@@ -233,10 +335,12 @@ impl<'ctx> NativeStructRegistry<'ctx> {
     }
 
     /// Liefert kanonische lokale Strukturidentitaeten fuer ptr[Struktur].
-    /// Importierte Module sind vorerst Teil derselben kompilierten Einheit;
-    /// P2-T47 muss spaeter deren eindeutige Quellmodul-Identitaet liefern.
+    /// Importierte Module sind Teil derselben kompilierten Einheit und eines
+    /// globalen Namensraums (P2-T47, Plan b1f51d65 E1/E4): ein Strukturname ist
+    /// programmweit eindeutig, gleichnamige Strukturen aus zwei Dateien lehnt
+    /// der Resolver (main.rs strukturen_registrieren) mit beiden Pfaden ab.
     pub(crate) fn nominal_types(&self, module_name: &str) -> crate::native_type_id::NominalTypes {
-        self.layouts.keys().map(|name| (
+        self.layouts.keys().chain(self.opake.iter()).map(|name| (
             name.clone(), (module_name.to_string(), name.clone()),
         )).collect()
     }
@@ -301,11 +405,24 @@ impl<'ctx> NativeStructRegistry<'ctx> {
         }
         let mut staged = self.clone();
         staged.visible_names = names.clone();
+        // P2-T23/T53: opake Typen zuerst (kein Layout, nur Name).
+        for (name, fields, decorators) in definitions {
+            if decorators.iter().any(|d| d.name == "opak" || d.name == "opaque") {
+                if !fields.is_empty() || decorators.len() != 1 || !decorators[0].args.is_empty() {
+                    return Err(format!("@opak struktur '{name}': opake Typen haben keine Felder und keine weiteren Decorators"));
+                }
+                staged.opake.insert((*name).to_string());
+            }
+        }
         let mut pending = Vec::with_capacity(definitions.len());
-        for (index, (_, fields, _)) in definitions.iter().enumerate() {
+        for (index, (name, fields, _)) in definitions.iter().enumerate() {
+            if staged.opake.contains(*name) { continue; }
             let mut dependencies = HashSet::new();
             for (_, ty) in *fields {
                 collect_value_dependencies(ty, &names, &mut dependencies)?;
+            }
+            if let Some(opak) = dependencies.iter().find(|d| staged.opake.contains(*d)) {
+                return Err(format!("Struktur '{name}': opaker Typ '{opak}' ist nur als Zeigerziel ptr[{opak}] erlaubt"));
             }
             pending.push((index, dependencies));
         }
@@ -434,19 +551,146 @@ impl<'ctx> NativeStructRegistry<'ctx> {
     /// 64-Bit-FNV-1a ueber "Name|Groesse|Ausrichtung|feld:typ@versatz;...".
     /// Gleiche Definition -> gleiche ID; anderer Name, andere Felder oder anderes
     /// Layout -> andere ID (Grenzfehler statt stiller Fehlinterpretation).
-    /// Die Modulidentitaet importierter Strukturen folgt mit P2-T47.
+    /// Importierte Strukturen (P2-T47, E4): Typidentitaet bleibt Name + Layout;
+    /// der Name ist im globalen Namensraum programmweit eindeutig, daher
+    /// erhaelt eine Struktur bei Rautenimport dieselbe ID (Gate frontend_module matrix).
     pub(crate) fn struktur_id(&self, name: &str) -> Option<u64> {
-        let layout = self.layouts.get(name)?;
-        let mut text = format!("{name}|{}|{}|", layout.size, layout.alignment);
-        for ((feld, ty), versatz) in layout.fields.iter().zip(&layout.offsets) {
-            text.push_str(&format!("{feld}:{}@{versatz};", typ_text(ty)));
-        }
+        // P2-T23/T53: opake Typen: Identitaet nur ueber den Namen.
+        let text = if self.opake.contains(name) {
+            format!("opak|{name}")
+        } else {
+            let layout = self.layouts.get(name)?;
+            let mut text = format!("{name}|{}|{}|", layout.size, layout.alignment);
+            for ((feld, ty), versatz) in layout.fields.iter().zip(&layout.offsets) {
+                text.push_str(&format!("{feld}:{}@{versatz};", typ_text(ty)));
+            }
+            text
+        };
         let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
         for byte in text.bytes() {
             hash ^= u64::from(byte);
             hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
         }
         Some(hash.max(1))
+    }
+
+    /// P2-T49 (Plan 38c59c64 E5): darf ein Wert dieser Struktur in dynamisches
+    /// Moo (MOO_STRUCT-Box)? Nicht: opak, Ausrichtung > MAX_BOX_AUSRICHTUNG,
+    /// Zeiger-/Funktionszeigerfelder (auch verschachtelt; Lebensdauer in der
+    /// dynamischen Ebene nicht pruefbar).
+    pub(crate) fn boxbar(&self, name: &str) -> Result<(), String> {
+        self.boxbar_tiefe(name, 0)
+    }
+
+    fn boxbar_tiefe(&self, name: &str, tiefe: u32) -> Result<(), String> {
+        if self.opake.contains(name) {
+            return Err(format!("'{name}' ist opak (nur als Zeigerziel ptr[{name}])"));
+        }
+        let layout = self.layouts.get(name).ok_or_else(|| format!("unbekannte Struktur '{name}'"))?;
+        if layout.alignment > MAX_BOX_AUSRICHTUNG {
+            return Err(format!("Ausrichtung {} von '{name}' liegt ueber {MAX_BOX_AUSRICHTUNG}", layout.alignment));
+        }
+        if tiefe > 32 {
+            return Err(format!("'{name}' ist zu tief verschachtelt"));
+        }
+        for (feld, ty) in &layout.fields {
+            let (_, _, _, innen) = self.element_art(ty).map_err(|g| format!("Feld '{name}.{feld}': {g}"))?;
+            if let Some(innen) = innen { self.boxbar_tiefe(&innen, tiefe + 1)?; }
+        }
+        Ok(())
+    }
+
+    /// (Elementart, Skalarcode, Elementanzahl, Elementstruktur); Arrays (auch
+    /// verschachtelt) flach, da ihre Elemente ohne Zwischenraum liegen.
+    fn element_art(&self, ty: &TypeRef) -> Result<(u8, u8, u64, Option<String>), String> {
+        match &ty.kind {
+            TypeKind::Name(name) => {
+                if let Some(s) = NType::from_name(name) {
+                    return Ok(if s == NType::Bool { (FELD_BOOL, 0, 1, None) } else { (FELD_SKALAR, skalar_code(s), 1, None) });
+                }
+                if self.layouts.contains_key(name) {
+                    Ok((FELD_STRUKTUR, 0, 1, Some(name.clone())))
+                } else {
+                    Err(format!("Typ '{name}' hat keine Laufzeitbeschreibung"))
+                }
+            }
+            TypeKind::Array { element, length } => {
+                let n = u64::from(array_laenge(length)?);
+                let (art, skalar, anzahl, struktur) = self.element_art(element)?;
+                let anzahl = anzahl.checked_mul(n).ok_or_else(|| "Arraygroesse laeuft ueber".to_string())?;
+                Ok((art, skalar, anzahl, struktur))
+            }
+            TypeKind::Generic { name, .. } if name == "ptr" || name == "zeiger" =>
+                Err("Zeigerfelder sind in dynamischem Moo nicht erlaubt (Lebensdauer nicht pruefbar)".into()),
+            _ => Err("Feldtyp hat keine Laufzeitbeschreibung".into()),
+        }
+    }
+
+    /// P2-T49 B1: deklarierte Felder oberster Ebene (Name, Ausgabe, Gleichheit).
+    pub(crate) fn laufzeit_felder(&self, context: &'ctx Context, target: &TargetData, name: &str)
+        -> Result<Vec<LaufzeitFeld>, String>
+    {
+        let layout = self.layouts.get(name).ok_or_else(|| format!("Unbekannte Struktur '{name}'"))?;
+        let mut felder = Vec::with_capacity(layout.fields.len());
+        for ((feld, ty), versatz) in layout.fields.iter().zip(&layout.offsets) {
+            let groesse = target.get_abi_size(&self.field_type(context, target, ty)?);
+            let (element, skalar, anzahl, struktur) = self.element_art(ty)?;
+            let art = if matches!(ty.kind, TypeKind::Array { .. }) { FELD_ARRAY } else { element };
+            felder.push(LaufzeitFeld { name: feld.clone(), versatz: *versatz, groesse, art, element, skalar, anzahl, struktur });
+        }
+        Ok(felder)
+    }
+
+    /// P2-T49 B1: flache Blaetter (Pfadname wie "a.b"/"a[2]", Versatz, Groesse)
+    /// fuer Kopie mit Padding 0. Lueckenlos aufeinanderfolgende Blaetter werden
+    /// zusammengefasst (Arrays, padding-freie Folgen): weniger Laufzeitpruefung.
+    pub(crate) fn laufzeit_blaetter(&self, context: &'ctx Context, target: &TargetData, name: &str)
+        -> Result<Vec<(String, u64, u64)>, String>
+    {
+        let layout = self.layouts.get(name).ok_or_else(|| format!("Unbekannte Struktur '{name}'"))?;
+        let mut roh = Vec::new();
+        for ((feld, ty), versatz) in layout.fields.iter().zip(&layout.offsets) {
+            self.blaetter_typ(context, target, ty, feld.clone(), *versatz, &mut roh)?;
+        }
+        let mut blaetter: Vec<(String, u64, u64)> = Vec::with_capacity(roh.len());
+        for (pfad, versatz, groesse) in roh {
+            if let Some(letztes) = blaetter.last_mut() {
+                if letztes.1 + letztes.2 == versatz {
+                    letztes.2 += groesse;
+                    continue;
+                }
+            }
+            blaetter.push((pfad, versatz, groesse));
+        }
+        Ok(blaetter)
+    }
+
+    fn blaetter_typ(
+        &self, context: &'ctx Context, target: &TargetData, ty: &TypeRef, pfad: String, basis: u64,
+        out: &mut Vec<(String, u64, u64)>,
+    ) -> Result<(), String> {
+        match &ty.kind {
+            TypeKind::Name(name) => {
+                if let Some(s) = NType::from_name(name) {
+                    out.push((pfad, basis, target.get_abi_size(&s.llvm_type(context))));
+                    return Ok(());
+                }
+                let layout = self.layouts.get(name).ok_or_else(|| format!("Unbekannte Struktur '{name}'"))?;
+                for ((feld, innen), versatz) in layout.fields.iter().zip(&layout.offsets) {
+                    self.blaetter_typ(context, target, innen, format!("{pfad}.{feld}"), basis + versatz, out)?;
+                }
+                Ok(())
+            }
+            TypeKind::Array { element, length } => {
+                let n = array_laenge(length)?;
+                let stride = target.get_abi_size(&self.field_type(context, target, element)?);
+                for i in 0..u64::from(n) {
+                    self.blaetter_typ(context, target, element, format!("{pfad}[{i}]"), basis + i * stride, out)?;
+                }
+                Ok(())
+            }
+            _ => Err("Feldtyp hat keine Laufzeitbeschreibung".into()),
+        }
     }
 
     /// Rendert `ty` als C-Deklarator um `innen` (Feldname oder leer).

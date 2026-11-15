@@ -22,6 +22,36 @@ pub(crate) enum NativeTypeId {
     Nominal { module: String, name: String },
 }
 
+/// Moo-Quellschreibweise fuer Diagnosen (P2-T21/T57: Rueckruf-Signaturvergleich).
+impl std::fmt::Display for NativeTypeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NativeTypeId::Scalar(scalar) => f.write_str(match scalar {
+                ScalarType::I8 => "i8", ScalarType::I16 => "i16", ScalarType::I32 => "i32",
+                ScalarType::I64 => "i64", ScalarType::U8 => "u8", ScalarType::U16 => "u16",
+                ScalarType::U32 => "u32", ScalarType::U64 => "u64", ScalarType::F32 => "f32",
+                ScalarType::F64 => "f64", ScalarType::Bool => "bool",
+                ScalarType::ISize => "isize", ScalarType::USize => "usize",
+            }),
+            NativeTypeId::Void => f.write_str("void"),
+            NativeTypeId::Pointer { pointee, .. } => write!(f, "ptr[{pointee}]"),
+            NativeTypeId::Buffer { element } => write!(f, "puffer[{element}]"),
+            NativeTypeId::Nominal { name, .. } => f.write_str(name),
+            NativeTypeId::Function { params, result, variadic, convention } => {
+                f.write_str("fn")?;
+                if let Some(name) = convention { write!(f, "[{name}]")?; }
+                f.write_str("(")?;
+                for (index, param) in params.iter().enumerate() {
+                    if index > 0 { f.write_str(", ")?; }
+                    write!(f, "{param}")?;
+                }
+                if *variadic { f.write_str(if params.is_empty() { "..." } else { ", ..." })?; }
+                write!(f, ") -> {result}")
+            }
+        }
+    }
+}
+
 /// Key: source-visible name; value: canonical (module identity, declaration name).
 /// Import resolution and ambiguous-name rejection remain the caller's responsibility.
 pub(crate) type NominalTypes = HashMap<String, (String, String)>;

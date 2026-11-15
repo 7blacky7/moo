@@ -63,12 +63,13 @@ use inkwell::module::Module;
 use inkwell::targets::TargetData;
 use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::types::{AnyType, BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
-use inkwell::values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue};
+use inkwell::values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue, VectorValue};
 use inkwell::{AddressSpace, IntPredicate};
 
 use crate::ast::{BinOp, Expr, Stmt, TypeKind, TypeRef, UnaryOpKind};
 use crate::codegen_native::{NType, NValue, NativeParameter, NativePointerSignature};
-use crate::native_struct::NativeStructRegistry;
+use crate::native_struct::{NativeStructRegistry, VecMatArt};
+use crate::native_vecmat as vm;
 use crate::native_type_id::{resolve_type, NativeTypeId, NominalTypes, ScalarType};
 
 /// Typ eines Wertes im Systemkoerper.
@@ -232,6 +233,34 @@ pub(crate) enum PufferArt {
     Skalar(NType),
     /// Strukturname; die Laufzeit-ID liefert NativeStructRegistry::struktur_id.
     Struktur(String),
+    /// P2-T23/T53 B2 (Plan 36aca1f2 E1/E2): Griff fuer ptr[ziel] (None = ptr[void]);
+    /// verbraucht = @verbraucht(n): der Aufruf gibt das fremde Objekt frei.
+    Griff { ziel: Option<String>, verbraucht: bool },
+    /// P2-T49 (Plan 38c59c64 B2): Strukturwert by value; dyn: Box -> exklusive
+    /// Aufruferkopie (moo_struct_unbox_value), keine Leihe ueber den Aufruf.
+    Wert(String),
+}
+
+/// P2-T49 B2: Ergebnis einer dyn aufrufbaren nativen Funktion jenseits von Skalaren.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DynErgebnis {
+    /// P2-T23/T53: Zeigerergebnis als Griff (None = ptr[void]).
+    Griff(Option<String>),
+    /// Strukturwert (sret-Puffer) als neue MOO_STRUCT-Box.
+    Struktur(String),
+}
+
+/// P2-T23/T53 B2: Zeigerziel, das an der dyn-Grenze als Griff laufen darf:
+/// ptr[void] -> Some(None), ptr[Struktur] -> Some(Some(name)), sonst None.
+fn griff_ziel(ty: &STy) -> Option<Option<String>> {
+    match ty {
+        STy::Ptr(NativeTypeId::Pointer { address_space: 0, pointee }) => match pointee.as_ref() {
+            NativeTypeId::Void => Some(None),
+            NativeTypeId::Nominal { name, .. } => Some(Some(name.clone())),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -259,6 +288,10 @@ pub(crate) struct NativeCallee<'ctx> {
     /// P2-T58 C1: Callee kann hosted einen Moo-Fehler melden (fehlbare_funktionen);
     /// der Aufrufer prueft danach das Flag (call_system_value, C3).
     pub(crate) fehlbar: bool,
+    /// P2-T21/T57 B2: @rückruf-Thunk (__moo_rueckruf.<name>) und die
+    /// Funktionsidentitaet (Parameter, Ergebnis, Konventionsname), gegen die eine
+    /// erwartete ptr[fn(...)]-Stelle streng verglichen wird (Batch C).
+    pub(crate) rueckruf: Option<(FunctionValue<'ctx>, NativeTypeId)>,
 }
 
 impl<'ctx> NativeCallee<'ctx> {
@@ -268,12 +301,12 @@ impl<'ctx> NativeCallee<'ctx> {
             NativeParameter::Pointer { identity, .. } => Ok(STy::Ptr(identity.clone())),
         }).collect::<Result<Vec<_>, _>>()?;
         let result = signature.result.map(STy::from_ntype).transpose()?;
-        Ok(Self { function, params, result, fehlbar: false })
+        Ok(Self { function, params, result, fehlbar: false, rueckruf: None })
     }
 
     /// Fuer reine Moo-zu-Moo-Aufrufe mit kompletten Strukturwerten.
     pub(crate) fn from_system(function: FunctionValue<'ctx>, signature: &SystemSignature) -> Self {
-        Self { function, params: signature.params.clone(), result: signature.result.clone(), fehlbar: false }
+        Self { function, params: signature.params.clone(), result: signature.result.clone(), fehlbar: false, rueckruf: None }
     }
 }
 
@@ -288,7 +321,10 @@ impl<'ctx> NativeCallee<'ctx> {
 /// Parametern, Locals und Callee-Ergebnissen (expr_art). Float-/ % ** und
 /// unsigned ** melden nie einen Moo-Fehler; signed ** nur bei moeglicherweise
 /// negativem Exponenten. Unbekannter Typ bleibt konservativ fehlbar.
-pub(crate) fn fehlbare_funktionen(defs: &[FehlbarDef<'_>]) -> HashSet<String> {
+/// P2-T21/T57 C3: `fremd` = Namen, deren Aufruf als fehlbar gilt (extern C in
+/// Modulen mit fehlbaren Rueckrufen); dann auch Aufrufe ueber Funktionszeiger-
+/// Locals/-Parameter. Leer = bisherige Analyse.
+pub(crate) fn fehlbare_funktionen(defs: &[FehlbarDef<'_>], fremd: &HashSet<String>) -> HashSet<String> {
     let namen: HashSet<&str> = defs.iter().map(|d| d.name.as_str()).collect();
     let ergebnisse: HashMap<&str, Zahlart> = defs.iter()
         .map(|d| (d.name.as_str(), d.ergebnis.map(zahlart).unwrap_or(Zahlart::Sonst)))
@@ -307,8 +343,11 @@ pub(crate) fn fehlbare_funktionen(defs: &[FehlbarDef<'_>]) -> HashSet<String> {
         for (index, def) in defs.iter().enumerate() {
             if fehlbar.contains(&def.name) { continue; }
             let ist_fehlbar = {
-                let kontext = FehlbarKontext { namen: &namen, fehlbar: &fehlbar, typen: &typen[index], ergebnisse: &ergebnisse };
-                (def.ergebnis.is_some() && !endet_mit_rueckgabe(def.body)) || stmts_fehlbar(def.body, &kontext)
+                let kontext = FehlbarKontext { namen: &namen, fehlbar: &fehlbar, typen: &typen[index], ergebnisse: &ergebnisse, fremd };
+                // `-> void` hat kein Ergebnis, das am Koerperende fehlen koennte.
+                let hat_ergebnis = def.ergebnis
+                    .is_some_and(|ty| !matches!(&ty.kind, TypeKind::Name(n) if n == "void"));
+                (hat_ergebnis && !endet_mit_rueckgabe(def.body)) || stmts_fehlbar(def.body, &kontext)
             };
             if ist_fehlbar {
                 fehlbar.insert(def.name.clone());
@@ -316,6 +355,304 @@ pub(crate) fn fehlbare_funktionen(defs: &[FehlbarDef<'_>]) -> HashSet<String> {
             }
         }
         if !neu { return fehlbar; }
+    }
+}
+
+/// P2-T83 B3 (Plan f3217c27 E3): schreibt der Koerper per Elementzuweisung
+/// `name[i] = ...` ueber den Pufferparameter `name` (auch in Bloecken)?
+/// Weitergabe, Aliase und puffer_zeiger prueft liest_verletzung.
+pub(crate) fn schreibt_puffer(stmts: &[Stmt], name: &str) -> bool {
+    stmts.iter().any(|stmt| match stmt {
+        Stmt::IndexAssignment { object: Expr::Identifier(ziel), .. } => ziel == name,
+        Stmt::If { body, else_body, .. } => schreibt_puffer(body, name) || schreibt_puffer(else_body, name),
+        Stmt::While { body, .. } | Stmt::UnsafeBlock { body } | Stmt::For { body, .. } => schreibt_puffer(body, name),
+        _ => false,
+    })
+}
+
+/// P2-T83 B3 (Review 6315dba0): je Funktion die puffer[T]-Parameterpositionen
+/// und die @liest-Positionen (0-basiert), Grundlage fuer liest_verletzung.
+pub(crate) type LiestKarte = std::collections::HashMap<String, (Vec<bool>, std::collections::HashSet<usize>)>;
+
+pub(crate) fn liest_karte(statements: &[Stmt]) -> LiestKarte {
+    statements.iter().filter_map(|stmt| {
+        let Stmt::FunctionDef { name, param_types, decorators, .. } = stmt else { return None };
+        let puffer = param_types.iter().map(|ty| ty.as_ref().is_some_and(|ty| matches!(
+            &ty.kind, TypeKind::Generic { name, .. } if name == "puffer" || name == "buffer"))).collect();
+        let liest = decorators.iter().filter(|d| matches!(d.name.as_str(), "liest" | "reads"))
+            .filter_map(|d| match d.args.as_slice() {
+                [crate::ast::DecoratorArg::Zahl(z)] if z.fract() == 0.0 && *z >= 1.0 => Some(*z as usize - 1),
+                _ => None,
+            }).collect();
+        Some((name.clone(), (puffer, liest)))
+    }).collect()
+}
+
+/// P2-T83 B3 (Plan f3217c27, Review 6315dba0): ein @liest-Parameter `name`
+/// darf nur gelesen werden. Zulaessig sind ausschliesslich `name[i]` (lesend),
+/// `länge(name)`, die Weitergabe an einen puffer-Parameter, der selbst @liest
+/// ist, und `puffer_zeiger(name)` innerhalb von unsicher: (bewusstes Escape,
+/// R3). Jede andere Verwendung (Weitergabe an schreibbare Pufferparameter,
+/// Alias per setze, puffer_zeiger ausserhalb unsicher:) liefert den Grund.
+/// Elementzuweisungen meldet bereits schreibt_puffer.
+pub(crate) fn liest_verletzung(stmts: &[Stmt], name: &str, karte: &LiestKarte) -> Option<String> {
+    LiestPruefung { name, karte }.block(stmts, false)
+}
+
+struct LiestPruefung<'a> {
+    name: &'a str,
+    karte: &'a LiestKarte,
+}
+
+impl LiestPruefung<'_> {
+    fn block(&self, stmts: &[Stmt], unsicher: bool) -> Option<String> {
+        stmts.iter().find_map(|stmt| self.stmt(stmt, unsicher))
+    }
+
+    fn stmt(&self, stmt: &Stmt, u: bool) -> Option<String> {
+        match stmt {
+            Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
+            | Stmt::CompoundAssignment { value, .. } | Stmt::Show(value)
+            | Stmt::Expression(value) | Stmt::Return(Some(value)) => self.expr(value, u),
+            Stmt::PropertyAssignment { object, value, .. } =>
+                self.expr(object, u).or_else(|| self.expr(value, u)),
+            Stmt::IndexAssignment { object, index, value } =>
+                self.expr(object, u).or_else(|| self.expr(index, u)).or_else(|| self.expr(value, u)),
+            Stmt::If { condition, body, else_body } => self.expr(condition, u)
+                .or_else(|| self.block(body, u)).or_else(|| self.block(else_body, u)),
+            Stmt::While { condition, body } => self.expr(condition, u).or_else(|| self.block(body, u)),
+            Stmt::For { iterable, body, .. } => self.expr(iterable, u).or_else(|| self.block(body, u)),
+            Stmt::UnsafeBlock { body } => self.block(body, true),
+            _ => None,
+        }
+    }
+
+    fn expr(&self, expr: &Expr, u: bool) -> Option<String> {
+        let name = self.name;
+        match expr {
+            Expr::Identifier(n) if n == name =>
+                Some(format!("'{name}' wird als Wert weiterverwendet (Alias oder Weitergabe)")),
+            Expr::IndexAccess { object, index } => match object.as_ref() {
+                Expr::Identifier(n) if n == name => None,
+                other => self.expr(other, u),
+            }.or_else(|| self.expr(index, u)),
+            Expr::FunctionCall { name: callee, args } => args.iter().enumerate().find_map(|(i, arg)| match arg {
+                Expr::Identifier(n) if n == name => self.argument(callee, i, u),
+                other => self.expr(other, u),
+            }),
+            Expr::BinaryOp { left, right, .. } => self.expr(left, u).or_else(|| self.expr(right, u)),
+            Expr::UnaryOp { operand, .. } => self.expr(operand, u),
+            Expr::PropertyAccess { object, .. } => self.expr(object, u),
+            Expr::MethodCall { object, args, .. } =>
+                self.expr(object, u).or_else(|| args.iter().find_map(|a| self.expr(a, u))),
+            Expr::List(items) => items.iter().find_map(|a| self.expr(a, u)),
+            Expr::Ternary { condition, then_val, else_val } => self.expr(condition, u)
+                .or_else(|| self.expr(then_val, u)).or_else(|| self.expr(else_val, u)),
+            _ => None,
+        }
+    }
+
+    /// `name` steht direkt als Argument `i` von `callee`. Eigene Funktionen
+    /// haben wie bei puffer_builtin_typ Vorrang vor länge/puffer_zeiger.
+    fn argument(&self, callee: &str, i: usize, unsicher: bool) -> Option<String> {
+        let name = self.name;
+        if let Some((puffer, liest)) = self.karte.get(callee) {
+            if puffer.get(i) == Some(&true) && liest.contains(&i) { return None; }
+            return Some(format!("'{name}' wird an Parameter {} von '{callee}' weitergegeben, der nicht @liest({}) ist (schreibbarer Puffer)", i + 1, i + 1));
+        }
+        match callee {
+            "länge" | "laenge" | "length" | "len" => None,
+            "puffer_zeiger" | "buffer_pointer" if unsicher => None,
+            "puffer_zeiger" | "buffer_pointer" =>
+                Some(format!("puffer_zeiger({name}) steht ausserhalb von unsicher: (dort nur als bewusstes Escape)")),
+            _ => Some(format!("'{name}' wird an '{callee}' weitergegeben")),
+        }
+    }
+}
+
+/// P2-T51 E5 (Plan f5b52a0b C1, O2: streng, ohne Ausnahmeschalter): ein
+/// GELIEHENER Zeiger zeigt in Speicher, der nur waehrend des Aufrufs lebt:
+/// `adresse_von(x)` fuer Locals/Wertparameter (auch deren Felder/Elemente und
+/// Pufferelemente) und `puffer_zeiger(p)` (Pin endet mit dem Aufruf). Die
+/// Markierung wandert ueber lokale Zuweisungen, zeiger()/Konversionen,
+/// Rechnungen, Strukturkonstruktoren und lokale Struktur-/Arrayfelder
+/// (Fixpunkt, flussunabhaengig = bewusst konservativ). Compilefehler, wenn ein
+/// markierter Wert (a) zurueckgegeben, (b) in Speicher geschrieben wird, der
+/// nicht selbst lokal oder geliehen ist (p[i] = .., p.f = .., speicher_/
+/// volatile_schreiben), (c) in einem zurueckgegebenen Strukturwert steckt.
+/// Erlaubt: lokale Nutzung und Weitergabe als Argument (Vertrag: der
+/// Aufgerufene, auch C, behaelt den Zeiger nach der Rueckkehr nicht).
+pub(crate) fn flucht_verletzung(
+    params: &[(String, STy)], body: &[Stmt], ist_struktur: &dyn Fn(&str) -> bool,
+) -> Option<String> {
+    let mut pruefung = FluchtPruefung {
+        lokal: params.iter().map(|(n, _)| n.clone()).collect(),
+        zeiger: params.iter().filter(|(_, t)| matches!(t, STy::Ptr(_))).map(|(n, _)| n.clone()).collect(),
+        puffer: params.iter().filter(|(_, t)| matches!(t, STy::Buffer(_) | STy::StrukturPuffer(_)))
+            .map(|(n, _)| n.clone()).collect(),
+        geliehen: HashMap::new(),
+        ist_struktur,
+    };
+    pruefung.lokale(body);
+    loop {
+        let vorher = pruefung.geliehen.len();
+        pruefung.markiere(body);
+        if pruefung.geliehen.len() == vorher { break; }
+    }
+    pruefung.pruefe(body)
+}
+
+struct FluchtPruefung<'a> {
+    lokal: HashSet<String>,
+    zeiger: HashSet<String>,
+    puffer: HashSet<String>,
+    geliehen: HashMap<String, String>,
+    ist_struktur: &'a dyn Fn(&str) -> bool,
+}
+
+impl FluchtPruefung<'_> {
+    fn typ_art(ty: &TypeRef) -> Option<bool> {
+        match &ty.kind {
+            TypeKind::Generic { name, .. } if matches!(name.as_str(), "ptr" | "zeiger" | "pointer") => Some(true),
+            TypeKind::Generic { name, .. } if matches!(name.as_str(), "puffer" | "buffer") => Some(false),
+            _ => None,
+        }
+    }
+
+    fn lokale(&mut self, stmts: &[Stmt]) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Assignment { name, ty, .. } | Stmt::ConstAssignment { name, ty, .. } => {
+                    self.lokal.insert(name.clone());
+                    match ty.as_ref().and_then(Self::typ_art) {
+                        Some(true) => { self.zeiger.insert(name.clone()); }
+                        Some(false) => { self.puffer.insert(name.clone()); }
+                        None => {}
+                    }
+                }
+                Stmt::If { body, else_body, .. } => { self.lokale(body); self.lokale(else_body); }
+                Stmt::While { body, .. } | Stmt::UnsafeBlock { body } | Stmt::For { body, .. } => self.lokale(body),
+                _ => {}
+            }
+        }
+    }
+
+    fn wurzel(expr: &Expr) -> Option<&str> {
+        match expr {
+            Expr::Identifier(n) => Some(n.as_str()),
+            Expr::PropertyAccess { object, .. } | Expr::IndexAccess { object, .. } => Self::wurzel(object),
+            _ => None,
+        }
+    }
+
+    /// Speicher des eigenen Rahmens (Local/Wertparameter, kein Zeiger/Puffer).
+    fn eigener_speicher(&self, name: &str) -> bool {
+        self.lokal.contains(name) && !self.zeiger.contains(name) && !self.puffer.contains(name)
+    }
+
+    /// Zeigerausdruck nach AST: ptr-typisierter Name, zeiger(...)/puffer_zeiger(...),
+    /// p + n / n + p / p - n (aber nicht p - q, das ist ein Abstand).
+    fn ist_zeiger(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Identifier(n) => self.zeiger.contains(n),
+            Expr::FunctionCall { name, .. } =>
+                matches!(name.as_str(), "zeiger" | "pointer" | "puffer_zeiger" | "buffer_pointer"),
+            Expr::BinaryOp { op: BinOp::Add, left, right } => self.ist_zeiger(left) || self.ist_zeiger(right),
+            Expr::BinaryOp { op: BinOp::Sub, left, right } => self.ist_zeiger(left) && !self.ist_zeiger(right),
+            _ => false,
+        }
+    }
+
+    /// Quelle, falls `expr` einen geliehenen Zeiger (oder Wert mit einem) liefert.
+    fn quelle(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Identifier(n) => self.geliehen.get(n).cloned(),
+            Expr::FunctionCall { name, args } => match name.as_str() {
+                "adresse_von" | "address_of" => {
+                    let ziel = args.first()?;
+                    let wurzel = Self::wurzel(ziel)?;
+                    let direkt = matches!(ziel, Expr::Identifier(_));
+                    let geliehen = self.lokal.contains(wurzel)
+                        && (direkt || self.puffer.contains(wurzel) || !self.zeiger.contains(wurzel));
+                    geliehen.then(|| format!("adresse_von({wurzel}) zeigt in den Rahmen der Funktion"))
+                        .or_else(|| self.geliehen.get(wurzel).filter(|_| !direkt && !self.zeiger.contains(wurzel)).cloned())
+                }
+                "puffer_zeiger" | "buffer_pointer" => {
+                    let p = args.first().and_then(Self::wurzel).unwrap_or("?");
+                    Some(format!("puffer_zeiger({p}) ist nur waehrend des Aufrufs gepinnt"))
+                }
+                "zeiger" | "pointer" | "als" | "as" | "als_wrap" | "als_saettigend" =>
+                    args.iter().find_map(|a| self.quelle(a)),
+                other if conversion(other).is_some() || (self.ist_struktur)(other) =>
+                    args.iter().find_map(|a| self.quelle(a)),
+                _ => None,
+            },
+            Expr::BinaryOp { op, left, right } => {
+                // Vergleiche/Logik liefern bool; *, /, % und Shifts liefern keine
+                // Adresse (z. B. Ausrichtungsrest adresse_von(x) % 32).
+                if matches!(op, BinOp::Eq | BinOp::NotEq | BinOp::Less | BinOp::LessEq
+                    | BinOp::Greater | BinOp::GreaterEq | BinOp::And | BinOp::Or
+                    | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::LShift | BinOp::RShift) { return None; }
+                // Zeigerdifferenz p - q (beide Operanden Zeigerausdruecke, auch
+                // gemischt geliehen/normal) liefert einen i64-Abstand (Review 65d12ed4).
+                if matches!(op, BinOp::Sub) && self.ist_zeiger(left) && self.ist_zeiger(right) { return None; }
+                let (l, r) = (self.quelle(left), self.quelle(right));
+                // Differenz zweier geliehener Adressen (z. B. u64-Werte) ist ein Abstand.
+                if matches!(op, BinOp::Sub) && l.is_some() && r.is_some() { return None; }
+                l.or(r)
+            }
+            Expr::UnaryOp { op: UnaryOpKind::Not, .. } => None,
+            Expr::UnaryOp { operand, .. } => self.quelle(operand),
+            Expr::Ternary { then_val, else_val, .. } => self.quelle(then_val).or_else(|| self.quelle(else_val)),
+            // Feld/Element eines markierten lokalen Struktur-/Arraywerts; ueber
+            // einen Zeiger gelesene Werte sind Daten des Ziels, nicht der Zeiger.
+            Expr::PropertyAccess { object, .. } | Expr::IndexAccess { object, .. } => {
+                let wurzel = Self::wurzel(object)?;
+                if self.zeiger.contains(wurzel) || self.puffer.contains(wurzel) { return None; }
+                self.geliehen.get(wurzel).cloned()
+            }
+            _ => None,
+        }
+    }
+
+    fn markiere(&mut self, stmts: &[Stmt]) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Assignment { name, value, .. } | Stmt::ConstAssignment { name, value, .. } => {
+                    if let Some(q) = self.quelle(value) { self.geliehen.entry(name.clone()).or_insert(q); }
+                }
+                Stmt::PropertyAssignment { object, value, .. } | Stmt::IndexAssignment { object, value, .. } => {
+                    if let (Some(q), Some(wurzel)) = (self.quelle(value), Self::wurzel(object)) {
+                        if self.eigener_speicher(wurzel) {
+                            self.geliehen.entry(wurzel.to_string()).or_insert(q);
+                        }
+                    }
+                }
+                Stmt::If { body, else_body, .. } => { self.markiere(body); self.markiere(else_body); }
+                Stmt::While { body, .. } | Stmt::UnsafeBlock { body } | Stmt::For { body, .. } => self.markiere(body),
+                _ => {}
+            }
+        }
+    }
+
+    fn pruefe(&self, stmts: &[Stmt]) -> Option<String> {
+        stmts.iter().find_map(|stmt| match stmt {
+            Stmt::Return(Some(value)) => self.quelle(value).map(|q|
+                format!("geliehener Zeiger entkommt per gib_zurück ({q}); dauerhafte Zeiger brauchen Speicher mit eigenem Besitz (Griff)")),
+            Stmt::PropertyAssignment { object, value, .. } | Stmt::IndexAssignment { object, value, .. } => {
+                let q = self.quelle(value)?;
+                let wurzel = Self::wurzel(object).unwrap_or("?");
+                if self.eigener_speicher(wurzel) || self.geliehen.contains_key(wurzel) { return None; }
+                Some(format!("geliehener Zeiger ({q}) wird in Speicher hinter '{wurzel}' geschrieben, der den Aufruf ueberlebt"))
+            }
+            Stmt::Expression(Expr::FunctionCall { name, args }) if matches!(name.as_str(),
+                "speicher_schreiben" | "mem_write" | "volatile_schreiben" | "volatile_write") =>
+                args.iter().skip(1).find_map(|a| self.quelle(a)).map(|q|
+                    format!("geliehener Zeiger ({q}) wird per {name} in fremden Speicher geschrieben")),
+            Stmt::If { body, else_body, .. } => self.pruefe(body).or_else(|| self.pruefe(else_body)),
+            Stmt::While { body, .. } | Stmt::UnsafeBlock { body } | Stmt::For { body, .. } => self.pruefe(body),
+            _ => None,
+        })
     }
 }
 
@@ -365,6 +702,7 @@ struct FehlbarKontext<'k, 'a> {
     fehlbar: &'k HashSet<String>,
     typen: &'k HashMap<&'a str, Zahlart>,
     ergebnisse: &'k HashMap<&'a str, Zahlart>,
+    fremd: &'k HashSet<String>,
 }
 
 /// Zahlart eines Ausdrucks aus Annotationen; None = nicht bestimmbar (z. B.
@@ -458,7 +796,10 @@ fn expr_fehlbar(expr: &Expr, k: &FehlbarKontext<'_, '_>) -> bool {
         Expr::FunctionCall { name, args } => {
             let cast_fehlbar = matches!(crate::native_arithmetic::cast_art(name),
                 Some(crate::native_arithmetic::CastArt::Geprueft | crate::native_arithmetic::CastArt::Saettigend));
-            cast_fehlbar || (k.namen.contains(name.as_str()) && k.fehlbar.contains(name)) || args.iter().any(rec)
+            cast_fehlbar || (k.namen.contains(name.as_str()) && k.fehlbar.contains(name))
+                || k.fremd.contains(name.as_str())
+                || (!k.fremd.is_empty() && k.typen.contains_key(name.as_str()))
+                || args.iter().any(rec)
         }
         _ => true,
     }
@@ -512,7 +853,13 @@ impl SystemSignature {
     /// traegt die NSignature den Elementtyp NUR als Platzhalter; der zweite Wert
     /// nennt sie (Some(T)). INVARIANTE: der Adapter wandelt diese Positionen nie
     /// ueber die Skalar-Argumentpfade, sondern pinnt den Puffer.
-    pub(crate) fn dyn_signature(&self) -> Option<(crate::codegen_native::NSignature, Vec<Option<PufferArt>>)> {
+    /// P2-T23/T53 B2: ptr[void]/ptr[Struktur] als Griff - Platzhalter U64 in der
+    /// NSignature; dritter Wert: Zeigerergebnis als Griff (Some(ziel)).
+    /// P2-T49 B2: Strukturwert-Parameter als PufferArt::Wert (Platzhalter U64),
+    /// Strukturwert-Ergebnis als DynErgebnis::Struktur (NSignature ohne Ergebnis,
+    /// die Funktion schreibt in den sret-Puffer). Ob die Struktur boxbar ist,
+    /// prueft der Aufrufer (NativeStructRegistry::boxbar).
+    pub(crate) fn dyn_signature(&self) -> Option<(crate::codegen_native::NSignature, Vec<Option<PufferArt>>, Option<DynErgebnis>)> {
         let mut params = Vec::with_capacity(self.params.len());
         let mut puffer = Vec::with_capacity(self.params.len());
         for ty in &self.params {
@@ -524,16 +871,32 @@ impl SystemSignature {
                     params.push(NType::U64);
                     puffer.push(Some(PufferArt::Struktur(name.clone())));
                 }
-                _ => return None,
+                STy::Struct(NativeTypeId::Nominal { name, .. }) => {
+                    params.push(NType::U64);
+                    puffer.push(Some(PufferArt::Wert(name.clone())));
+                }
+                other => {
+                    let ziel = griff_ziel(other)?;
+                    params.push(NType::U64);
+                    puffer.push(Some(PufferArt::Griff { ziel, verbraucht: false }));
+                }
             }
         }
+        let mut ergebnis = None;
         let result = match &self.result {
             None => None,
             Some(STy::Int(t) | STy::Float(t)) => Some(*t),
             Some(STy::Bool) => Some(NType::Bool),
-            Some(_) => return None,
+            Some(STy::Struct(NativeTypeId::Nominal { name, .. })) => {
+                ergebnis = Some(DynErgebnis::Struktur(name.clone()));
+                None
+            }
+            Some(other) => {
+                ergebnis = Some(DynErgebnis::Griff(griff_ziel(other)?));
+                Some(NType::U64)
+            }
         };
-        Some((crate::codegen_native::NSignature { params, result }, puffer))
+        Some((crate::codegen_native::NSignature { params, result }, puffer, ergebnis))
     }
 
     /// P2-T50 B1: Puffer sind nur fuer interne Moo-Aufrufe freigegeben.
@@ -750,9 +1113,22 @@ struct Emitter<'a, 'ctx> {
     /// unsicher:). Unsichere Operationen nur innerhalb von unsicher:-Bloecken.
     sicher: bool,
     unsicher_tiefe: u32,
+    /// P2-T84: aus C aufrufbarer Export (@einstieg); seit P2-T56 D behalten
+    /// Struktur-Exporte den internen Namen, daher nicht am Namen ablesbar.
+    export: bool,
 }
 
 fn e(err: impl ToString) -> String { err.to_string() }
+
+/// P2-T16 (Plan 3f03704a E4, Freigabe #38101 O1): eingebaute Funktionen der
+/// Vektortypen. Die Norm heisst betrag/magnitude; `länge` bleibt Elementanzahl.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VmFunktion {
+    Punkt,
+    Kreuz,
+    Betrag,
+    Normalisiere,
+}
 
 /// Durch Basisausrichtung und Offset bewiesene Ausrichtung einer Feldadresse.
 fn field_alignment(base: u32, offset: u64) -> u32 {
@@ -814,7 +1190,84 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     /// ueber fremde C-Frames entweichen (ADR §11) und das Objekt bleibt ohne
     /// Moo-Runtime linkbar (ADR §13).
     fn fangbar(&self) -> bool {
-        self.hosted && self.function.get_name().to_str().is_ok_and(|n| n.starts_with("__moo_native."))
+        self.hosted && !self.export
+            && self.function.get_name().to_str().is_ok_and(|n| n.starts_with("__moo_native."))
+    }
+
+    /// P2-T84 (Plan 91033131 §6): hosted C-Export bricht bei Fehlern mit Diagnose
+    /// ab (moo_native_abbruch) statt einen erfundenen Wert an C zu liefern.
+    fn abbruch(&self) -> bool {
+        self.hosted && self.export
+    }
+
+    /// P2-T21/T57 C1 (Plan f4655d20 E2/E7): Funktionsname dort, wo ein
+    /// C-Funktionszeiger ptr[fn(...)] erwartet wird -> Adresse des Thunks
+    /// __moo_rueckruf.<name>, nur bei identischer Funktionsidentitaet.
+    fn rueckruf_adresse(&self, name: &str, expected: Option<&STy>) -> Result<SVal<'ctx>, String> {
+        let erwartet = match expected {
+            Some(STy::Ptr(identity @ NativeTypeId::Pointer { pointee, .. }))
+                if matches!(pointee.as_ref(), NativeTypeId::Function { .. }) => identity.clone(),
+            _ => return Err(format!(
+                "Systemkoerper: Funktion '{name}' ist als Wert nur dort erlaubt, wo ein C-Funktionszeiger ptr[fn(...)] erwartet wird"
+            )),
+        };
+        let NativeTypeId::Pointer { pointee, .. } = &erwartet else { unreachable!() };
+        let callee = self.callees.get(name).ok_or("Systemkoerper: Rueckrufziel fehlt")?;
+        let Some((thunk, identity)) = &callee.rueckruf else {
+            return Err(format!(
+                "Systemkoerper: '{name}' ist kein C-Rückruf - die Funktion braucht @rückruf (native Moo-Funktionen sind nicht automatisch C-Funktionszeiger; Zustand ueber user_data)"
+            ));
+        };
+        if identity != pointee.as_ref() {
+            return Err(format!(
+                "Systemkoerper: Rückruf '{name}' hat die Signatur {identity}, erwartet wird {}", pointee.as_ref()
+            ));
+        }
+        if self.sicher && self.unsicher_tiefe == 0 {
+            return Err(format!("Systemkoerper: C-Funktionszeiger auf '{name}' nur innerhalb von unsicher:"));
+        }
+        Ok(SVal { ty: STy::Ptr(erwartet.clone()), value: thunk.as_global_value().as_pointer_value().into() })
+    }
+
+    /// P2-T21/T57 C2: enthaelt das Modul fehlbare Rueckrufe, kann ein Fremdaufruf
+    /// (extern C, indirekt) mit anstehendem Moo-Fehler zurueckkehren -> sofort
+    /// ohne weitere Seiteneffekte zurueck (weiter_block) bzw. im Export Abbruch.
+    fn nach_fremdaufruf_pruefen(&mut self) -> Result<(), String> {
+        let moeglich = self.hosted && self.callees.values().any(|c| c.fehlbar && c.rueckruf.is_some());
+        if !moeglich || !(self.fangbar() || self.abbruch()) { return Ok(()); }
+        let hook = crate::codegen_native::native_fehler_offen_hook(self.context, self.module)?;
+        let flag = match self.builder.build_call(hook, &[], "sys.fremd.offen").map_err(e)?.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+            _ => return Err("moo_native_fehler_offen liefert keinen Wert".into()),
+        };
+        let offen = self.builder.build_int_compare(
+            IntPredicate::NE, flag, self.context.i32_type().const_zero(), "sys.fremd.gesetzt",
+        ).map_err(e)?;
+        let ziel = if self.abbruch() {
+            self.abbruch_block("Fehler aus einem Rückruf")?
+        } else {
+            self.weiter_block()?
+        };
+        let ok = self.context.append_basic_block(self.function, "sys.fremd.ok");
+        self.builder.build_conditional_branch(offen, ziel, ok).map_err(e)?;
+        self.builder.position_at_end(ok);
+        Ok(())
+    }
+
+    fn emit_abbruch(&self, grund: &str) -> Result<(), String> {
+        let name = self.function.get_name().to_str().unwrap_or("?");
+        let name = name.strip_prefix("__moo_native.").unwrap_or(name);
+        crate::codegen_native::emit_abbruch(self.context, &self.builder, self.module, name, grund)
+    }
+
+    /// Abbruchblock nach einem fehlgeschlagenen Moo-internen Callee (P2-T84).
+    fn abbruch_block(&mut self, grund: &str) -> Result<BasicBlock<'ctx>, String> {
+        let current = self.builder.get_insert_block();
+        let block = self.context.append_basic_block(self.function, "sys.abbruch");
+        self.builder.position_at_end(block);
+        self.emit_abbruch(grund)?;
+        if let Some(current) = current { self.builder.position_at_end(current); }
+        Ok(block)
     }
 
     /// P2-T58 C3 (Plan 4500717b): Ziel nach einem fehlbaren nativen Aufruf, dessen
@@ -844,6 +1297,8 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         self.builder.position_at_end(block);
         if fangbar {
             self.emit_hosted_fehler("Nativer Laufzeitfehler (Division, Shift, Index oder Konversion)")?;
+        } else if self.abbruch() {
+            self.emit_abbruch("Nativer Laufzeitfehler (Division, Shift, Index oder Konversion)")?;
         } else {
             self.emit_trap()?;
         }
@@ -1081,6 +1536,16 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 Ok(Place { ptr, alignment, origin: Origin::Fresh })
             }
             _ => {
+                // P2-T16 E3: vecmat-Rechnungen direkt in einen frischen Ort
+                // (SSA-Vektoren, komponentenweise gespeichert; kein insertvalue).
+                if let Some(art) = self.vecmat_art(ty) {
+                    if let Some((gefunden, werte)) = self.vecmat_rechnung(expr)? {
+                        if gefunden != art {
+                            return Err(format!("Systemkoerper: {what} erwartet {}, erhalten {}", art.name(), gefunden.name()));
+                        }
+                        return self.vecmat_frisch(art, &werte);
+                    }
+                }
                 // Rueckfall: Wert als Aggregat erzeugen und in einen frischen
                 // Zwischenspeicher legen.
                 let value = self.expr(expr, Some(ty))?;
@@ -1935,7 +2400,29 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 BinOp::Eq | BinOp::NotEq | BinOp::Less | BinOp::Greater | BinOp::LessEq
                 | BinOp::GreaterEq | BinOp::And | BinOp::Or => Some(STy::Bool),
                 BinOp::LShift | BinOp::RShift => self.infer(left),
-                _ => self.infer(left).or_else(|| self.infer(right)),
+                _ => {
+                    // P2-T16 E4: mat4 * vec4 = vec4; sonst bestimmt der
+                    // vecmat-Operand den Typ (auch f32 * vecN).
+                    let (l, r) = (self.infer(left), self.infer(right));
+                    // P2-T17 E3: p + n / n + p / p - n -> Zeiger, p - q -> i64.
+                    if matches!(op, BinOp::Add | BinOp::Sub) {
+                        match (&l, &r) {
+                            (Some(STy::Ptr(_)), Some(STy::Ptr(_))) if matches!(op, BinOp::Sub) =>
+                                return Some(STy::Int(NType::I64)),
+                            (Some(STy::Ptr(_)), _) => return l,
+                            (_, Some(STy::Ptr(_))) => return r,
+                            _ => {}
+                        }
+                    }
+                    let la = l.as_ref().and_then(|t| self.vecmat_art(t));
+                    let ra = r.as_ref().and_then(|t| self.vecmat_art(t));
+                    match (la, ra) {
+                        (Some(VecMatArt::Mat4), Some(VecMatArt::Vec(4))) => self.vecmat_ty(VecMatArt::Vec(4)).ok(),
+                        (Some(_), _) => l,
+                        (None, Some(_)) => r,
+                        (None, None) => l.or(r),
+                    }
+                }
             },
             Expr::FunctionCall { name, args } => {
                 if self.layouts.layout(name).is_some() { return self.struct_ty(name).ok(); }
@@ -1969,6 +2456,12 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
                 if let Some((true, bits)) = port_bits(name) { return Some(STy::Int(port_type(bits))); }
                 if let Some(callee) = self.callees.get(name) { return callee.result.clone(); }
+                if let Some((funktion, art)) = self.vecmat_funktion(name, args) {
+                    return match funktion {
+                        VmFunktion::Punkt | VmFunktion::Betrag => Some(STy::Float(NType::F32)),
+                        VmFunktion::Kreuz | VmFunktion::Normalisiere => self.vecmat_ty(art).ok(),
+                    };
+                }
                 if let Some(ty) = self.puffer_builtin_typ(name, args) { return Some(ty); }
                 if let Some(Slot { ty: STy::Ptr(NativeTypeId::Pointer { pointee, .. }), .. }) = self.slots.get(name) {
                     if let NativeTypeId::Function { result, .. } = pointee.as_ref() {
@@ -2003,6 +2496,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 Some(ty @ STy::Ptr(_)) => Ok(SVal { ty: ty.clone(), value: self.ptrt().const_null().into() }),
                 _ => Err("Systemkoerper: nichts ist nur als Nullzeiger mit Zeiger-Zieltyp erlaubt".into()),
             },
+            // P2-T21/T57 C1: Funktionsname als C-Funktionszeiger (@rückruf-Thunk).
+            Expr::Identifier(name) if !self.slots.contains_key(name) && self.callees.contains_key(name) =>
+                self.rueckruf_adresse(name, expected),
             Expr::Identifier(name) => {
                 let slot = self.slots.get(name)
                     .ok_or_else(|| format!("Systemkoerper: Name '{name}' nicht gefunden"))?;
@@ -2029,6 +2525,11 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                             }
                             _ => Err(format!("Systemkoerper: Typ von -{text} ist nicht bestimmbar")),
                         };
+                    }
+                    if self.vecmat_von(operand).is_some() {
+                        let (art, werte) = self.vecmat_rechnung(expr)?
+                            .ok_or("Systemkoerper: vecmat-Negation fehlt")?;
+                        return self.vecmat_aggregat(art, &werte);
                     }
                     let operand_ty = expected.cloned().or_else(|| self.infer(operand));
                     if let Some(STy::Float(ty)) = operand_ty {
@@ -2077,6 +2578,12 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             },
             Expr::FunctionCall { name, args } if self.layouts.layout(name).is_some() =>
                 self.struct_constructor(name, args, expected),
+            Expr::FunctionCall { name, args } if self.vecmat_funktion(name, args).is_some() => {
+                match self.vecmat_rechnung(expr)? {
+                    Some((art, werte)) => self.vecmat_aggregat(art, &werte),
+                    None => self.vecmat_skalar(name, args),
+                }
+            }
             Expr::FunctionCall { name, args } => self.call(name, args, expected, false)?
                 .ok_or_else(|| format!("Systemkoerper: '{name}' liefert keinen Wert")),
             _ => Err("Systemkoerper: Ausdruck wird nicht unterstützt".into()),
@@ -2134,6 +2641,263 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         Ok(SVal { ty, value: aggregate.into_struct_value().into() })
     }
 
+    // ---- P2-T16 (Plan 3f03704a E3-E5): vec2/vec3/vec4/mat4 ----
+
+    /// Art eines eingebauten Vektor-/Matrixtyps (gleichnamige eigene Struktur: None).
+    fn vecmat_art(&self, ty: &STy) -> Option<VecMatArt> {
+        match ty {
+            STy::Struct(NativeTypeId::Nominal { name, .. }) => self.layouts.vecmat_art(name),
+            _ => None,
+        }
+    }
+
+    fn vecmat_von(&self, expr: &Expr) -> Option<VecMatArt> {
+        self.infer(expr).and_then(|ty| self.vecmat_art(&ty))
+    }
+
+    fn vecmat_ty(&self, art: VecMatArt) -> Result<STy, String> {
+        self.struct_ty(art.name())
+    }
+
+    /// (Spalten, Bahnen je Spalte); mat4-Spalten liegen 16 Byte auseinander.
+    fn vecmat_form(art: VecMatArt) -> (u32, u32) {
+        match art {
+            VecMatArt::Mat4 => (4, 4),
+            VecMatArt::Vec(n) => (1, n),
+        }
+    }
+
+    /// Adresse und bewiesene Ausrichtung der f32-Komponente (spalte, bahn).
+    fn vecmat_adresse(&self, place: &Place<'ctx>, spalte: u32, bahn: u32) -> Result<(PointerValue<'ctx>, u32), String> {
+        let offset = u64::from(spalte * 16 + bahn * 4);
+        let address = unsafe {
+            self.builder.build_gep(
+                self.context.i8_type(), place.ptr, &[self.i64t().const_int(offset, false)], "vm.adresse",
+            )
+        }.map_err(e)?;
+        Ok((address, field_alignment(place.alignment, offset)))
+    }
+
+    /// E3: Komponenten skalar laden (Ausrichtung aus dem Place) und zu SSA-
+    /// Vektoren zusammensetzen; nie ein Laden eines LLVM-Vektortyps (kein
+    /// Ueberlesen bei vec3, kein Layout-/ABI-Wechsel).
+    fn vecmat_laden(&mut self, place: &Place<'ctx>, art: VecMatArt) -> Result<Vec<VectorValue<'ctx>>, String> {
+        let f32t = self.context.f32_type();
+        let (spalten, bahnen) = Self::vecmat_form(art);
+        let mut werte = Vec::with_capacity(spalten as usize);
+        for spalte in 0..spalten {
+            let mut vektor = f32t.vec_type(bahnen).get_undef();
+            for bahn in 0..bahnen {
+                let (address, alignment) = self.vecmat_adresse(place, spalte, bahn)?;
+                let wert = self.builder.build_load(f32t, address, "vm.lade").map_err(e)?;
+                wert.as_instruction_value().ok_or("Systemkoerper: vecmat-Load fehlt")?
+                    .set_alignment(alignment).map_err(e)?;
+                vektor = self.builder.build_insert_element(
+                    vektor, wert.into_float_value(),
+                    self.context.i32_type().const_int(u64::from(bahn), false), "vm.setze",
+                ).map_err(e)?;
+            }
+            werte.push(vektor);
+        }
+        Ok(werte)
+    }
+
+    /// E3: komponentenweise in einen frischen, ABI-ausgerichteten Ort speichern.
+    fn vecmat_frisch(&mut self, art: VecMatArt, werte: &[VectorValue<'ctx>]) -> Result<Place<'ctx>, String> {
+        let (spalten, bahnen) = Self::vecmat_form(art);
+        if werte.len() != spalten as usize {
+            return Err("Systemkoerper: vecmat-Spaltenzahl stimmt nicht".into());
+        }
+        let ty = self.vecmat_ty(art)?;
+        let (ptr, alignment) = self.entry_alloca(&ty, "vm.neu")?;
+        let place = Place { ptr, alignment, origin: Origin::Fresh };
+        for (spalte, vektor) in werte.iter().enumerate() {
+            for bahn in 0..bahnen {
+                let wert = self.builder.build_extract_element(
+                    *vektor, self.context.i32_type().const_int(u64::from(bahn), false), "vm.hole",
+                ).map_err(e)?;
+                let (address, alignment) = self.vecmat_adresse(&place, spalte as u32, bahn)?;
+                self.builder.build_store(address, wert).map_err(e)?
+                    .set_alignment(alignment).map_err(e)?;
+            }
+        }
+        Ok(place)
+    }
+
+    /// Ergebnis als Strukturwert (nur Rueckfallpfad von expr()).
+    fn vecmat_aggregat(&mut self, art: VecMatArt, werte: &[VectorValue<'ctx>]) -> Result<SVal<'ctx>, String> {
+        let place = self.vecmat_frisch(art, werte)?;
+        let ty = self.vecmat_ty(art)?;
+        let value = self.builder.build_load(ty.llvm(self.context, self.layouts)?, place.ptr, "vm.wert").map_err(e)?;
+        value.as_instruction_value().ok_or("Systemkoerper: vecmat-Load fehlt")?
+            .set_alignment(place.alignment).map_err(e)?;
+        Ok(SVal { ty, value })
+    }
+
+    /// Wert eines vecmat-Ausdrucks des erwarteten Typs als SSA-Vektoren:
+    /// Rechnungen direkt, alles andere ueber seinen Ort (struct_place).
+    fn vecmat_wert(&mut self, expr: &Expr, art: VecMatArt, what: &str) -> Result<Vec<VectorValue<'ctx>>, String> {
+        if let Some((gefunden, werte)) = self.vecmat_rechnung(expr)? {
+            if gefunden != art {
+                return Err(format!("Systemkoerper: {what} erwartet {}, erhalten {}", art.name(), gefunden.name()));
+            }
+            return Ok(werte);
+        }
+        let ty = self.vecmat_ty(art)?;
+        let place = self.struct_place(expr, &ty, what)?;
+        self.vecmat_laden(&place, art)
+    }
+
+    /// B3: eingebaute Funktion nur, wenn das erste Argument vecmat ist und kein
+    /// Local, keine @nativ- und keine extern-C-Funktion gleichen Namens existiert.
+    fn vecmat_funktion(&self, name: &str, args: &[Expr]) -> Option<(VmFunktion, VecMatArt)> {
+        let funktion = match name {
+            "punkt" | "dot" => VmFunktion::Punkt,
+            "kreuz" | "cross" => VmFunktion::Kreuz,
+            "betrag" | "magnitude" => VmFunktion::Betrag,
+            "normalisiere" | "normalize" => VmFunktion::Normalisiere,
+            _ => return None,
+        };
+        if self.callees.contains_key(name) || self.slots.contains_key(name)
+            || self.externs.get(name).is_some() || self.externs.get_abi(name).is_some()
+        {
+            return None;
+        }
+        Some((funktion, self.vecmat_von(args.first()?)?))
+    }
+
+    /// Argument von betrag/normalisiere: genau ein Vektor (kein mat4).
+    fn vecmat_einzelvektor(&mut self, name: &str, args: &[Expr], art: VecMatArt) -> Result<VectorValue<'ctx>, String> {
+        let [v] = args else { return Err(format!("Systemkoerper: {name}(v) erwartet genau einen Vektor")) };
+        if art == VecMatArt::Mat4 {
+            return Err(format!("Systemkoerper: {name} ist fuer mat4 nicht definiert"));
+        }
+        Ok(self.vecmat_wert(v, art, name)?[0])
+    }
+
+    /// f32-Ergebnisse: punkt(a, b) und betrag(v).
+    fn vecmat_skalar(&mut self, name: &str, args: &[Expr]) -> Result<SVal<'ctx>, String> {
+        let (funktion, art) = self.vecmat_funktion(name, args).ok_or("Systemkoerper: vecmat-Aufruf fehlt")?;
+        let wert = match funktion {
+            VmFunktion::Punkt => {
+                let [a, b] = args else { return Err(format!("Systemkoerper: {name}(a, b) erwartet genau zwei Vektoren")) };
+                if art == VecMatArt::Mat4 {
+                    return Err(format!("Systemkoerper: {name} ist fuer mat4 nicht definiert"));
+                }
+                let a = self.vecmat_wert(a, art, name)?[0];
+                let b = self.vecmat_wert(b, art, name)?[0];
+                vm::vec_dot(self.context, &self.builder, a, b)?
+            }
+            VmFunktion::Betrag => {
+                let v = self.vecmat_einzelvektor(name, args, art)?;
+                vm::vec_betrag(self.context, &self.builder, self.module, v)?
+            }
+            VmFunktion::Kreuz | VmFunktion::Normalisiere =>
+                return Err(format!("Systemkoerper: {name} liefert keinen Skalar")),
+        };
+        Ok(SVal { ty: STy::Float(NType::F32), value: wert.into() })
+    }
+
+    /// Rechenausdruecke mit vecmat-Ergebnis (Operatoren, Negation, kreuz,
+    /// normalisiere); None fuer alle anderen Ausdruecke, ohne Code zu erzeugen.
+    fn vecmat_rechnung(&mut self, expr: &Expr) -> Result<Option<(VecMatArt, Vec<VectorValue<'ctx>>)>, String> {
+        match expr {
+            Expr::BinaryOp { left, op, right } => self.vecmat_binaer(left, op, right),
+            Expr::UnaryOp { op: UnaryOpKind::Neg, operand } => {
+                let Some(art) = self.vecmat_von(operand) else { return Ok(None) };
+                let werte = self.vecmat_wert(operand, art, "Negation")?;
+                let negiert = werte.into_iter().map(|v| vm::vec_neg(&self.builder, v))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Some((art, negiert)))
+            }
+            Expr::FunctionCall { name, args } => match self.vecmat_funktion(name, args) {
+                Some((VmFunktion::Kreuz, art)) => {
+                    let [a, b] = args.as_slice() else {
+                        return Err(format!("Systemkoerper: {name}(a, b) erwartet genau zwei vec3"));
+                    };
+                    if art != VecMatArt::Vec(3) {
+                        return Err(format!("Systemkoerper: {name} ist nur fuer vec3 definiert, erhalten {}", art.name()));
+                    }
+                    let a = self.vecmat_wert(a, art, name)?[0];
+                    let b = self.vecmat_wert(b, art, name)?[0];
+                    Ok(Some((art, vec![vm::vec_cross(self.context, &self.builder, a, b)?])))
+                }
+                Some((VmFunktion::Normalisiere, art)) => {
+                    let v = self.vecmat_einzelvektor(name, args, art)?;
+                    Ok(Some((art, vec![vm::vec_normalisiere(self.context, &self.builder, self.module, v)?])))
+                }
+                _ => Ok(None),
+            },
+            _ => Ok(None),
+        }
+    }
+
+    /// E4/E5: Operatoren mit mindestens einem vecmat-Operanden. Keine stille
+    /// Mischung: Skalar nur als f32 bei vecN * f32, f32 * vecN, vecN / f32.
+    fn vecmat_binaer(
+        &mut self, left: &Expr, op: &BinOp, right: &Expr,
+    ) -> Result<Option<(VecMatArt, Vec<VectorValue<'ctx>>)>, String> {
+        let (vop, zeichen) = match op {
+            BinOp::Add => (vm::VecOp::Add, "+"),
+            BinOp::Sub => (vm::VecOp::Sub, "-"),
+            BinOp::Mul => (vm::VecOp::Mul, "*"),
+            BinOp::Div => (vm::VecOp::Div, "/"),
+            _ => match (self.vecmat_von(left), self.vecmat_von(right)) {
+                (None, None) => return Ok(None),
+                (Some(art), _) | (_, Some(art)) =>
+                    return Err(format!("Systemkoerper: Operator ist fuer {} nicht definiert", art.name())),
+            },
+        };
+        let (la, ra) = (self.vecmat_von(left), self.vecmat_von(right));
+        if la.is_none() && ra.is_none() {
+            return Ok(None);
+        }
+        let f32ty = STy::Float(NType::F32);
+        let ergebnis = match (la, ra) {
+            (Some(VecMatArt::Mat4), Some(VecMatArt::Mat4)) if vop == vm::VecOp::Mul => {
+                let a = self.vecmat_wert(left, VecMatArt::Mat4, "mat4 * mat4")?;
+                let b = self.vecmat_wert(right, VecMatArt::Mat4, "mat4 * mat4")?;
+                (VecMatArt::Mat4, vm::mat4_mul(self.context, &self.builder, &a, &b)?)
+            }
+            (Some(VecMatArt::Mat4), Some(VecMatArt::Vec(4))) if vop == vm::VecOp::Mul => {
+                let m = self.vecmat_wert(left, VecMatArt::Mat4, "mat4 * vec4")?;
+                let v = self.vecmat_wert(right, VecMatArt::Vec(4), "mat4 * vec4")?[0];
+                (VecMatArt::Vec(4), vec![vm::mat4_vec4(self.context, &self.builder, &m, v)?])
+            }
+            (Some(l), Some(r)) if l == r
+                && (matches!(vop, vm::VecOp::Add | vm::VecOp::Sub) || l != VecMatArt::Mat4) =>
+            {
+                let a = self.vecmat_wert(left, l, "Vektorrechnung")?;
+                let b = self.vecmat_wert(right, r, "Vektorrechnung")?;
+                let werte = a.into_iter().zip(b).map(|(x, y)| vm::vec_binary(&self.builder, vop, x, y))
+                    .collect::<Result<Vec<_>, _>>()?;
+                (l, werte)
+            }
+            (Some(VecMatArt::Vec(n)), None) if matches!(vop, vm::VecOp::Mul | vm::VecOp::Div) => {
+                let v = self.vecmat_wert(left, VecMatArt::Vec(n), "Vektor mit Skalar")?[0];
+                let s = self.expr(right, Some(&f32ty))?;
+                self.expect(&s, &f32ty, "Skalar einer Vektorrechnung")?;
+                (VecMatArt::Vec(n), vec![vm::vec_scale(self.context, &self.builder, vop, v, s.value.into_float_value())?])
+            }
+            (None, Some(VecMatArt::Vec(n))) if vop == vm::VecOp::Mul => {
+                let s = self.expr(left, Some(&f32ty))?;
+                self.expect(&s, &f32ty, "Skalar einer Vektorrechnung")?;
+                let v = self.vecmat_wert(right, VecMatArt::Vec(n), "Skalar mit Vektor")?[0];
+                (VecMatArt::Vec(n), vec![vm::vec_scale(self.context, &self.builder, vop, v, s.value.into_float_value())?])
+            }
+            _ => {
+                let name = |art: Option<VecMatArt>, x: &Expr| art.map(|a| a.name().to_string())
+                    .or_else(|| self.infer(x).map(|t| t.name()))
+                    .unwrap_or_else(|| "Zahl".to_string());
+                return Err(format!(
+                    "Systemkoerper: {} {zeichen} {} ist nicht definiert (keine stille Mischung; Skalar nur als f32 bei vecN * f32, f32 * vecN, vecN / f32; mat4 * vec4, mat4 * mat4, mat4 +/- mat4)",
+                    name(la, left), name(ra, right),
+                ));
+            }
+        };
+        Ok(Some(ergebnis))
+    }
+
     fn literal(&self, ty: NType, text: &str, negative: bool) -> Result<SVal<'ctx>, String> {
         let value = ty.integer_literal(self.context, text, negative)?;
         Ok(SVal { ty: STy::Int(ty), value: value.value })
@@ -2160,6 +2924,79 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         }
     }
 
+    /// P2-T17 E3 (Plan f5b52a0b): `p + n`, `n + p`, `p - n` mit Schrittweite =
+    /// Allokationsgroesse des Zieltyps (GEP ohne inbounds, wickelt wie eine
+    /// Adresse), `p - q` -> i64-Elementabstand (exakte Division, nur gleicher
+    /// Zieltyp). Nicht fuer ptr[void], Funktionszeiger und opake Ziele; nur in
+    /// unsicher:. n darf jede Ganzzahl sein (vorzeichenrichtig auf i64 erweitert).
+    fn zeiger_rechnung(
+        &mut self, left: &Expr, op: &BinOp, right: &Expr, lt: Option<STy>, rt: Option<STy>,
+    ) -> Result<SVal<'ctx>, String> {
+        self.verlange_unsicher("Zeigerarithmetik")?;
+        let lp = matches!(lt, Some(STy::Ptr(_)));
+        let rp = matches!(rt, Some(STy::Ptr(_)));
+        let element = |ty: &STy| -> Result<STy, String> {
+            let STy::Ptr(NativeTypeId::Pointer { pointee, .. }) = ty else {
+                return Err("Systemkoerper: Zeigerarithmetik braucht einen typisierten ptr[T]".into());
+            };
+            if matches!(pointee.as_ref(), NativeTypeId::Function { .. }) {
+                return Err("Systemkoerper: Zeigerarithmetik auf Funktionszeigern ist nicht definiert".into());
+            }
+            STy::from_identity(pointee)
+                .map_err(|_| "Systemkoerper: Zeigerarithmetik braucht einen Zieltyp mit bekannter Groesse".to_string())?
+                .ok_or_else(|| "Systemkoerper: Zeigerarithmetik auf ptr[void] ist nicht definiert (erst mit zeiger(p) auf ptr[u8] o. ae. umdeuten)".to_string())
+        };
+        match (lp, rp, op) {
+            (true, true, BinOp::Sub) => {
+                let (lt, rt) = (lt.unwrap_or(STy::Bool), rt.unwrap_or(STy::Bool));
+                if lt != rt {
+                    return Err(format!("Systemkoerper: Zeigerdifferenz nur bei gleichem Zieltyp ({} - {})", lt.name(), rt.name()));
+                }
+                let elem = element(&lt)?.llvm(self.context, self.layouts)?;
+                let a = self.expr(left, Some(&lt))?.value.into_pointer_value();
+                let b = self.expr(right, Some(&rt))?.value.into_pointer_value();
+                let ai = self.builder.build_ptr_to_int(a, self.i64t(), "sys.zdiff.a").map_err(e)?;
+                let bi = self.builder.build_ptr_to_int(b, self.i64t(), "sys.zdiff.b").map_err(e)?;
+                let bytes = self.builder.build_int_sub(ai, bi, "sys.zdiff.bytes").map_err(e)?;
+                let groesse = elem.size_of().ok_or("Systemkoerper: Zieltyp ohne Groesse")?;
+                let groesse = self.builder.build_int_cast(groesse, self.i64t(), "sys.zdiff.groesse").map_err(e)?;
+                let abstand = self.builder.build_int_exact_signed_div(bytes, groesse, "sys.zdiff").map_err(e)?;
+                Ok(SVal { ty: STy::Int(NType::I64), value: abstand.into() })
+            }
+            (true, true, _) => Err("Systemkoerper: zwischen zwei Zeigern ist nur die Differenz p - q definiert".into()),
+            (true, false, BinOp::Add | BinOp::Sub) | (false, true, BinOp::Add) => {
+                let (zeiger_expr, zahl_expr, ptr_ty) = if lp {
+                    (left, right, lt.ok_or("Zeigertyp fehlt")?)
+                } else {
+                    (right, left, rt.ok_or("Zeigertyp fehlt")?)
+                };
+                let elem = element(&ptr_ty)?.llvm(self.context, self.layouts)?;
+                let basis = self.expr(zeiger_expr, Some(&ptr_ty))?.value.into_pointer_value();
+                let zahl_ty = match self.infer(zahl_expr) {
+                    Some(ty @ STy::Int(_)) => ty,
+                    Some(other) => return Err(format!("Systemkoerper: Zeigerarithmetik erwartet eine Ganzzahl, erhalten {}", other.name())),
+                    None => STy::Int(NType::I64),
+                };
+                let zahl = self.expr(zahl_expr, Some(&zahl_ty))?;
+                let STy::Int(nt) = zahl.ty else {
+                    return Err(format!("Systemkoerper: Zeigerarithmetik erwartet eine Ganzzahl, erhalten {}", zahl.ty.name()));
+                };
+                let roh = zahl.value.into_int_value();
+                let mut schritt = if nt.is_signed_integer() {
+                    self.builder.build_int_s_extend_or_bit_cast(roh, self.i64t(), "sys.zarith.n")
+                } else {
+                    self.builder.build_int_z_extend_or_bit_cast(roh, self.i64t(), "sys.zarith.n")
+                }.map_err(e)?;
+                if matches!(op, BinOp::Sub) {
+                    schritt = self.builder.build_int_neg(schritt, "sys.zarith.neg").map_err(e)?;
+                }
+                let ptr = unsafe { self.builder.build_gep(elem, basis, &[schritt], "sys.zarith") }.map_err(e)?;
+                Ok(SVal { ty: ptr_ty, value: ptr.into() })
+            }
+            _ => Err("Systemkoerper: mit Zeigern sind nur p + n, n + p, p - n und p - q definiert".into()),
+        }
+    }
+
     fn binary(&mut self, left: &Expr, op: &BinOp, right: &Expr, expected: Option<&STy>) -> Result<SVal<'ctx>, String> {
         use crate::native_arithmetic::{CompareOp, IntOp};
         let compare = match op {
@@ -2168,6 +3005,28 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             BinOp::Greater => Some(CompareOp::Gt), BinOp::GreaterEq => Some(CompareOp::Ge),
             _ => None,
         };
+        // P2-T16 E4/E5: Vektor-/Matrixoperanden (== / != komponentenweise).
+        if compare.is_some() {
+            if let Some(art) = self.vecmat_von(left).or_else(|| self.vecmat_von(right)) {
+                if !matches!(op, BinOp::Eq | BinOp::NotEq) {
+                    return Err(format!("Systemkoerper: {} nur mit == oder != vergleichen", art.name()));
+                }
+                let a = self.vecmat_wert(left, art, "Vergleich")?;
+                let b = self.vecmat_wert(right, art, "Vergleich")?;
+                let result = vm::vecmat_gleich(self.context, &self.builder, &a, &b, matches!(op, BinOp::Eq))?;
+                return Ok(SVal { ty: STy::Bool, value: result.into() });
+            }
+        }
+        if let Some((art, werte)) = self.vecmat_binaer(left, op, right)? {
+            return self.vecmat_aggregat(art, &werte);
+        }
+        // P2-T17 E3: Zeigerarithmetik vor dem Ganzzahl-/Floatpfad.
+        if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod) {
+            let (lt, rt) = (self.infer(left), self.infer(right));
+            if matches!(lt, Some(STy::Ptr(_))) || matches!(rt, Some(STy::Ptr(_))) {
+                return self.zeiger_rechnung(left, op, right, lt, rt);
+            }
+        }
         if let Some(cmp) = compare {
             let ty = self.infer(left).or_else(|| self.infer(right))
                 .or_else(|| Self::literal_paar(left, right))
@@ -2302,6 +3161,24 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         })
     }
 
+    /// P2-T17 E4 (Plan f5b52a0b B2): ptr[T] -> ptr[void] ist als Argument still
+    /// erlaubt (C-Konvention, gleicher Adressraum, kein Funktionszeiger); jede
+    /// andere Abweichung verlangt Typgleichheit, der Rueckweg nur ausdruecklich
+    /// mit zeiger(p).
+    fn expect_argument(&self, value: &SVal<'ctx>, ty: &STy, what: &str) -> Result<(), String> {
+        if let (
+            STy::Ptr(NativeTypeId::Pointer { pointee: ziel, address_space: a }),
+            STy::Ptr(NativeTypeId::Pointer { pointee: quelle, address_space: b }),
+        ) = (ty, &value.ty) {
+            if matches!(ziel.as_ref(), NativeTypeId::Void) && a == b
+                && !matches!(quelle.as_ref(), NativeTypeId::Function { .. })
+            {
+                return Ok(());
+            }
+        }
+        self.expect(value, ty, what)
+    }
+
     fn args_for(&mut self, name: &str, args: &[Expr], params: &[STy]) -> Result<Vec<SVal<'ctx>>, String> {
         if args.len() != params.len() {
             return Err(format!("Systemkoerper: '{name}' erwartet {} Argumente, bekommen {}", params.len(), args.len()));
@@ -2309,7 +3186,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         let mut values = Vec::with_capacity(args.len());
         for (index, (arg, ty)) in args.iter().zip(params).enumerate() {
             let value = self.expr(arg, Some(ty))?;
-            self.expect(&value, ty, &format!("Argument {} von '{name}'", index + 1))?;
+            self.expect_argument(&value, ty, &format!("Argument {} von '{name}'", index + 1))?;
             values.push(value);
         }
         Ok(values)
@@ -2357,7 +3234,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
                 other => {
                     let value = self.expr(arg, Some(other))?;
-                    self.expect(&value, other, &what)?;
+                    self.expect_argument(&value, other, &what)?;
                     call_args.push(value.value.into());
                 }
             }
@@ -2381,7 +3258,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     /// call_system_value (Strukturen) und der skalare Pfad in call.
     fn nach_aufruf_pruefen(&mut self, callee: &NativeCallee<'ctx>) -> Result<(), String> {
         let intern = callee.function.get_name().to_str().is_ok_and(|n| n.starts_with("__moo_native."));
-        if !(callee.fehlbar && intern && self.fangbar()) { return Ok(()); }
+        if !(callee.fehlbar && intern && (self.fangbar() || self.abbruch())) { return Ok(()); }
         let hook = crate::codegen_native::native_fehler_offen_hook(self.context, self.module)?;
         let flag = match self.builder.build_call(hook, &[], "sys.fehler.offen").map_err(e)?.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
@@ -2390,7 +3267,13 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         let offen = self.builder.build_int_compare(
             IntPredicate::NE, flag, self.context.i32_type().const_zero(), "sys.fehler.gesetzt",
         ).map_err(e)?;
-        let weiter = self.weiter_block()?;
+        let weiter = if self.abbruch() {
+            let callee_name = callee.function.get_name().to_str().unwrap_or("?");
+            let callee_name = callee_name.strip_prefix("__moo_native.").unwrap_or(callee_name).to_string();
+            self.abbruch_block(&format!("Fehler aus '{callee_name}'"))?
+        } else {
+            self.weiter_block()?
+        };
         let ok = self.context.append_basic_block(self.function, "sys.fehler.ok");
         self.builder.build_conditional_branch(offen, weiter, ok).map_err(e)?;
         self.builder.position_at_end(ok);
@@ -2553,6 +3436,13 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     _ => return Err("zeiger(...) braucht einen Zeiger-Zieltyp aus dem Kontext (z. B. setze p: ptr[u8] auf zeiger(a))".into()),
                 };
                 let [arg] = args else { return Err("zeiger(...) erwartet genau eine Adresse".into()) };
+                // P2-T17 E4: zeiger(p) deutet einen Zeiger auf den Zieltyp aus dem
+                // Kontext um (gleiche Adresse, nur in unsicher:).
+                if let Some(quelle @ STy::Ptr(_)) = self.infer(arg) {
+                    self.verlange_unsicher("Zeigerumdeutung zeiger(p)")?;
+                    let wert = self.expr(arg, Some(&quelle))?;
+                    return Ok(Some(SVal { ty, value: wert.value }));
+                }
                 let ptr = self.address(arg)?;
                 return Ok(Some(SVal { ty, value: ptr.into() }));
             }
@@ -2568,6 +3458,14 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                         if let Some(slot) = self.slots.get(symbol) {
                             slot.ptr
                         } else if let Some(callee) = self.callees.get(symbol) {
+                            // P2-T21/T57 C4 (Plan f4655d20 E8, Koordinator F1): hosted keine
+                            // Adresse der internen Moo-Funktion (Moo-Konvention, fangbarer
+                            // Fehlervertrag); C-Funktionszeiger nur ueber @rückruf.
+                            if self.hosted {
+                                return Err(format!(
+                                    "adresse_von: '{symbol}' ist eine native Funktion; als C-Funktionszeiger nur ueber @rückruf (Name im ptr[fn(...)]-Kontext)"
+                                ));
+                            }
                             callee.function.as_global_value().as_pointer_value()
                         } else if let Some(global) = self.module.get_global(symbol) {
                             global.as_pointer_value()
@@ -2749,11 +3647,12 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             let result_ty = STy::from_identity(result)?;
             let callee_ptr = self.expr(&Expr::Identifier(name.to_string()), None)?;
             let values = self.args_for(name, args, &param_tys)?;
-            let signature = crate::ffi_types::FfiSignature::from_indirect_identity(self.triple, &identity, &NominalTypes::new())?;
+            let signature = crate::ffi_types::FfiSignature::from_indirect_identity(self.triple, &identity, self.nominals)?;
             let callee = crate::ffi_types::TypedFfiValue { value: callee_ptr.value, identity: identity.clone() };
             let typed: Vec<crate::ffi_types::TypedFfiValue<'ctx>> = values.iter()
                 .map(|v| crate::ffi_types::TypedFfiValue { value: v.value, identity: v.ty.identity() }).collect();
             let result = signature.emit_indirect_call(self.context, &self.builder, self.module, &callee, &typed, true)?;
+            self.nach_fremdaufruf_pruefen()?;
             return Ok(match (result, result_ty) {
                 (Some(value), Some(ty)) => Some(SVal { ty, value: value.value }),
                 _ => None,
@@ -2774,6 +3673,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             let binding = self.externs.get_abi(name)
                 .ok_or("C-ABI: Deklaration waehrend der Ausgabe verschwunden")?;
             let wert = binding.emit_call(self.context, &self.builder, &raw)?;
+            self.nach_fremdaufruf_pruefen()?;
             return Ok(match (result_ty, wert) {
                 (Some(ty), Some(value)) => Some(SVal { ty, value }),
                 _ => None,
@@ -2809,6 +3709,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 let kind = Attribute::get_named_enum_kind_id(attr);
                 call.add_attribute(AttributeLoc::Return, self.context.create_enum_attribute(kind, 0));
             }
+            self.nach_fremdaufruf_pruefen()?;
             return self.call_result(call, result_ty);
         }
         Err(format!("Systemkoerper: unbekannte Funktion '{name}'"))
@@ -2883,6 +3784,7 @@ pub(crate) fn emit_system_function<'ctx>(
     callees: &HashMap<String, NativeCallee<'ctx>>,
     externs: &crate::ffi_types::ExternRegistry<'ctx>,
     sicher: bool,
+    export: bool,
 ) -> Result<(), String> {
     let triple = module.get_triple();
     let triple = triple.as_str().to_str().map_err(e)?.to_string();
@@ -2918,6 +3820,14 @@ pub(crate) fn emit_system_function<'ctx>(
             "Systemkoerper '{name}' hat einen Rueckgabetyp, erreicht aber ohne gib_zurück immer sein Ende"
         ));
     }
+    // P2-T51 E5 (Plan f5b52a0b C1): Fluchtpruefung geliehener Zeiger, ebenfalls
+    // vor jeder IR-Emission.
+    let typisiert: Vec<(String, STy)> = param_names.iter().cloned().zip(signature.params.iter().cloned()).collect();
+    if let Some(grund) = flucht_verletzung(&typisiert, body, &|n| layouts.layout(n).is_some()) {
+        let name = function.get_name().to_str().unwrap_or("?");
+        let name = name.strip_prefix("__moo_native.").unwrap_or(name);
+        return Err(format!("Systemkoerper '{name}': {grund}"));
+    }
     let entry = context.append_basic_block(function, "entry");
     let entry_builder = context.create_builder();
     entry_builder.position_at_end(entry);
@@ -2925,7 +3835,7 @@ pub(crate) fn emit_system_function<'ctx>(
         context, module, target, layouts, nominals, triple: &triple, x86, hosted, function, entry,
         sret: None, builder: context.create_builder(), slots: HashMap::new(), loops: Vec::new(),
         trap: None, never: None, weiter: None, pow_fehler: None, result: me.result.clone(), callees, externs,
-        sicher, unsicher_tiefe: 0,
+        sicher, unsicher_tiefe: 0, export,
     };
     // Struktur-Rueckgabe: Parameter 0 ist der sret-Puffer des Aufrufers.
     let offset = u32::from(signature.returns_struct());
@@ -2970,6 +3880,7 @@ pub(crate) fn emit_system_function<'ctx>(
         match emitter.result {
             None => { emitter.builder.build_return(None).map_err(e)?; }
             Some(_) if emitter.fangbar() => emitter.emit_hosted_fehler("Native Funktion endet ohne Rueckgabewert")?,
+            Some(_) if emitter.abbruch() => emitter.emit_abbruch("Native Funktion endet ohne Rueckgabewert")?,
             Some(_) => emitter.emit_trap()?,
         }
     }

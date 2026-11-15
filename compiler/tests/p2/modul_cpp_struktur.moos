@@ -1,0 +1,11 @@
+# P2-T47 (Plan b1f51d65 E4): Struktur und C++-Adapterdeklarationen als Modul.
+struktur P2Punkt:
+    x: f32
+    y: f32
+    gewicht: i32
+
+@bibliothek("p2_m1_cpp")
+@bibliothek("stdc++")
+extern "C" funktion p2_punkt_neu(x: f32, y: f32, gewicht: i32) -> P2Punkt
+@bibliothek("p2_m1_cpp")
+extern "C" funktion p2_punkt_skaliert(punkt: P2Punkt, faktor: f32) -> P2Punkt

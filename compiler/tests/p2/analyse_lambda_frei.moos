@@ -1,0 +1,12 @@
+# P2-T8 (Plan b1f51d65 D1): freie Variablen in typisierten Lambdas, auch
+# innerhalb von Liste, Bedingungsausdruck und verschachteltem Lambda.
+funktion probe(y):
+    setze liste auf (x: i32) => [x, y]
+    setze wahl auf (x: i32) => x > 0 ? y : 0
+    setze innen auf (x: i32) => (z: i32) => z + y + x
+    zeige liste(1)
+    zeige wahl(1)
+    setze g auf innen(1)
+    zeige g(2)
+
+probe(5)

@@ -133,6 +133,75 @@ fn konstanten_ausdruck(context: &Context, ty: &TypeRef, value: &Expr) -> Result<
 /// Multiplikation mit Wrap modulo 2^N, 0 ** 0 = 1, negativer Exponent
 /// (signed) ist ein Compilefehler.
 fn literal_value(context: &Context, expr: &Expr, ty: NType) -> Result<i128, String> {
+    ganz_ausdruck(context, expr, ty, false)
+}
+
+fn ganz_grenzen(context: &Context, ty: NType) -> (u32, i128, i128) {
+    let bits = ty.llvm_type(context).into_int_type().get_bit_width();
+    if ty.is_signed_integer() {
+        (bits, -(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1)
+    } else {
+        (bits, 0, (1i128 << bits) - 1)
+    }
+}
+
+fn ganz_umlauf(context: &Context, wert: i128, ty: NType) -> i128 {
+    let (bits, _, _) = ganz_grenzen(context, ty);
+    let maske = (1i128 << bits) - 1;
+    let r = wert & maske;
+    if ty.is_signed_integer() && (r >> (bits - 1)) & 1 == 1 { r - (1i128 << bits) } else { r }
+}
+
+/// P2-T28 (Plan 607b20ba A1, Koordinator-O1 #38150): Ganzzahl-Konstantenausdruck
+/// aus Literalen, groesse_von/ausrichtung_von/versatz_von (vorher gefaltet) und
+/// + - * sowie unaerem Minus. Jedes Zwischenergebnis muss in den Zieltyp passen
+/// (kein stiller Umlauf, wie in @nativ-Koerpern); modulo 2^N nur innerhalb von
+/// `als_wrap(T, ausdruck)` (z. B. Multiboot2-Pruefsumme).
+fn ganz_ausdruck(context: &Context, expr: &Expr, ty: NType, umlauf: bool) -> Result<i128, String> {
+    let pruefe = |wert: Option<i128>| -> Result<i128, String> {
+        let wert = wert.ok_or_else(|| "Native Konstante: Ganzzahlueberlauf im Konstantenausdruck".to_string())?;
+        let (_, min, max) = ganz_grenzen(context, ty);
+        if !umlauf && (wert < min || wert > max) {
+            return Err(format!(
+                "Native Konstante: Ergebnis {wert} passt nicht in {ty:?}; Umlauf nur ausdruecklich mit als_wrap({}, ...)",
+                format!("{ty:?}").to_lowercase()
+            ));
+        }
+        Ok(wert)
+    };
+    match expr {
+        Expr::BinaryOp { op: op @ (BinOp::Add | BinOp::Sub | BinOp::Mul), left, right } => {
+            let l = ganz_ausdruck(context, left, ty, umlauf)?;
+            let r = ganz_ausdruck(context, right, ty, umlauf)?;
+            pruefe(match op {
+                BinOp::Add => l.checked_add(r),
+                BinOp::Sub => l.checked_sub(r),
+                _ => l.checked_mul(r),
+            })
+        }
+        Expr::UnaryOp { op: UnaryOpKind::Neg, operand } if !matches!(operand.as_ref(), Expr::NativeNumber { .. }) => {
+            let v = ganz_ausdruck(context, operand, ty, umlauf)?;
+            pruefe(v.checked_neg())
+        }
+        Expr::FunctionCall { name, args } if name == "als_wrap" => {
+            let [Expr::Identifier(ziel), inner] = args.as_slice() else {
+                return Err("als_wrap(T, ausdruck) erwartet einen Ganzzahltyp und einen Ausdruck".into());
+            };
+            let ziel_ty = NType::from_name(ziel)
+                .filter(|t| t.is_signed_integer() || matches!(t, NType::U8 | NType::U16 | NType::U32 | NType::U64))
+                .ok_or_else(|| format!("als_wrap: '{ziel}' ist kein Ganzzahltyp"))?;
+            let wert = ganz_ausdruck(context, inner, ziel_ty, true)?;
+            let gekuerzt = ganz_umlauf(context, wert, ziel_ty);
+            pruefe(Some(gekuerzt))
+        }
+        _ => {
+            let wert = literal_kern(context, expr, ty)?;
+            Ok(wert)
+        }
+    }
+}
+
+fn literal_kern(context: &Context, expr: &Expr, ty: NType) -> Result<i128, String> {
     if let Expr::BinaryOp { op: BinOp::Pow, left, right } = expr {
         let basis = literal_value(context, left, ty)?;
         let exponent = literal_value(context, right, ty)?;

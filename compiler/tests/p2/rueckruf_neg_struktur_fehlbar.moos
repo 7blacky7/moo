@@ -1,0 +1,13 @@
+# P2-T21/T57 E-3 (E4b): fehlbarer Rueckruf mit Strukturrueckgabe hat keinen
+# darstellbaren Fehlerwert.
+struktur Paar:
+    a: i32
+    b: i32
+
+@nativ
+@rückruf(0)
+funktion f(p: Paar) -> Paar:
+    unsicher:
+        gib_zurück Paar(p.a / p.b, p.b)
+
+zeige 1

@@ -1,0 +1,34 @@
+# P2-T91 (Befund aus T87): Unterklasse ohne eigenes erstelle nutzt den
+# Konstruktor der naechsten Elternklasse (auch ueber zwei Stufen); ein eigenes
+# erstelle hat Vorrang.
+klasse Tier:
+    funktion erstelle(name):
+        selbst.name = name
+        selbst.beine = 4
+
+    funktion vorstellen():
+        gib_zurück "Ich bin " + selbst.name
+
+klasse Hund(Tier):
+    funktion bellen():
+        gib_zurück selbst.name + " sagt: Wuff!"
+
+klasse Welpe(Hund):
+    funktion alter():
+        gib_zurück 1
+
+klasse Vogel(Tier):
+    funktion erstelle(name):
+        selbst.name = name
+        selbst.beine = 2
+
+setze rex auf neu Hund("Rex")
+zeige rex.vorstellen()
+zeige rex.bellen()
+zeige rex.beine
+setze bello auf neu Welpe("Bello")
+zeige bello.bellen()
+zeige bello.beine
+setze piep auf neu Vogel("Piep")
+zeige piep.beine
+zeige piep.vorstellen()

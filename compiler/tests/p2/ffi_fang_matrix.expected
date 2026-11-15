@@ -1,0 +1,39 @@
+== Erfolg
+C_GUARD_AUFGERUFEN
+5
+0
+35
+== 1 main versuche: Argument
+gefangen: Native Funktion erwartet eine darstellbare 64-Bit-Ganzzahl
+== 2 main versuche: Ergebnis
+C_RETURN_AUFGERUFEN
+gefangen: Native Funktion liefert eine nicht exakt darstellbare 64-Bit-Ganzzahl
+== 3 main versuche: f32
+gefangen: Native Funktion erwartet eine darstellbare Floatzahl
+== 4 main versuche: Rückruf
+gefangen: Nativer Laufzeitfehler (Division, Shift, Index oder Konversion) in 'teile'
+== 5 void Argument
+gefangen: Native Funktion erwartet eine u32-Ganzzahl
+== 6 Funktion ohne versuche
+C_RETURN_AUFGERUFEN
+gefangen: Native Funktion liefert eine nicht exakt darstellbare 64-Bit-Ganzzahl
+== 7 Funktion mit aufräumen
+CLEANUP
+gefangen: Native Funktion erwartet eine darstellbare 64-Bit-Ganzzahl
+== 8 aufräumen-Aktion
+KOERPER
+C_RETURN_AUFGERUFEN
+gefangen: Native Funktion liefert eine nicht exakt darstellbare 64-Bit-Ganzzahl
+== 9 Teilausdruck in Funktion
+C_RETURN_AUFGERUFEN
+gefangen: Native Funktion liefert eine nicht exakt darstellbare 64-Bit-Ganzzahl
+== 10 Rückruf-Teilausdruck in Funktion
+gefangen: Nativer Laufzeitfehler (Division, Shift, Index oder Konversion) in 'teile'
+== 11 Teilausdruck in main versuche
+C_RETURN_AUFGERUFEN
+gefangen: Native Funktion liefert eine nicht exakt darstellbare 64-Bit-Ganzzahl
+== 12 Methode
+gefangen: Native Funktion erwartet eine darstellbare 64-Bit-Ganzzahl
+== 13 Lambda
+gefangen: Native Funktion erwartet eine darstellbare 64-Bit-Ganzzahl
+fertig

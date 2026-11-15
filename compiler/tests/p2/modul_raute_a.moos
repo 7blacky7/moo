@@ -1,0 +1,14 @@
+importiere modul_raute_c
+
+@nativ
+funktion a_baue(x: i32) -> RPunkt:
+    gib_zurück RPunkt(x, x * 2)
+
+@nativ
+funktion a_fuelle(p: puffer[RPunkt]) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(p):
+            p[i] = RPunkt(als_wrap(i32, i + 1), 1)
+            setze i auf i + 1
+        gib_zurück länge(p)

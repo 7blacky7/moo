@@ -1,0 +1,12 @@
+# P2-T85 D3 (E7) war: FFI-Einzelform ausserhalb von main gesperrt, auch in
+# Lambdas. Seit P2-T55 positiv (Ausgabe 3); Dateiname bleibt fuer die Historie.
+extern "C" funktion abs(x: i32) -> i32
+
+@nativ
+funktion betrag(x: i32) -> i32:
+    unsicher:
+        gib_zurück abs(x)
+
+setze f auf (x) => betrag(x)
+unsicher:
+    zeige f(-3)

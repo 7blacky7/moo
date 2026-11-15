@@ -1,0 +1,49 @@
+# P2-T47 (Plan b1f51d65 E1): Modul fuer die Importmatrix
+# {Vollimport, benannt, Pfad, Alias} x {nativ skalar, Struktur by value,
+# ptr[Struktur], puffer[Struktur], extern C, nativ Konstante, daten klasse,
+# Schnittstelle}.
+struktur MPunkt:
+    x: i32
+    y: i32
+
+@nativ
+konstante MGRENZE: i32 auf 7
+
+extern "C" funktion abs(x: i32) -> i32
+
+daten klasse MDaten(wert: i32, name: text)
+
+schnittstelle MSchnitt:
+    funktion lesen(adresse: ptr[u8], groesse: u64) -> i32
+
+@nativ
+funktion m_skalar(a: i32, b: f64) -> f64:
+    gib_zurück als(f64, a) + b
+
+@nativ
+funktion m_verschiebe(p: MPunkt, d: i32) -> MPunkt:
+    gib_zurück MPunkt(p.x + d, p.y + d + MGRENZE)
+
+@nativ
+funktion m_ptr_x(p: ptr[MPunkt]) -> i32:
+    unsicher:
+        gib_zurück p.x
+
+@nativ
+funktion m_fuelle(p: puffer[MPunkt]) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(p):
+            p[i] = MPunkt(als_wrap(i32, i + 1), 10)
+            setze i auf i + 1
+        gib_zurück länge(p)
+
+@nativ
+funktion m_summe(p: puffer[MPunkt]) -> i32:
+    unsicher:
+        setze s: i32 auf 0
+        setze i: u64 auf 0
+        solange i < länge(p):
+            setze s auf s + p[i].x + p[i].y
+            setze i auf i + 1
+        gib_zurück s

@@ -1,0 +1,168 @@
+# P2-T23/T53 Batch C (Plan 36aca1f2 C2/C3): C++-Klasse hinter extern-C-Adapter
+# (m1_cpp_adapter.cpp) als Griff in dynamischem Moo: erzeugen in einer Funktion,
+# benutzen in anderen, Vektor als puffer[i32], Text als puffer[u8], C++-Exception
+# -> letzter_fehler -> wirf/fange, Freigabe per @verbraucht mit Schutz gegen
+# Gebrauch nach frei (auch Alias), Doppel-frei, falschen Zeigertyp und Zahl
+# statt Griff. Abschluss: keine offenen Griffe, keine lebenden C++-Objekte.
+@opak struktur P2Zaehler
+
+@bibliothek("p2_m1_cpp")
+@bibliothek("stdc++")
+extern "C" funktion p2_zaehler_neu() -> ptr[P2Zaehler]
+@bibliothek("p2_m1_cpp")
+extern "C" funktion p2_zaehler_frei(z: ptr[P2Zaehler]) -> i32
+@bibliothek("p2_m1_cpp")
+extern "C" funktion p2_zaehler_addiere(z: ptr[P2Zaehler], werte: ptr[i32], anzahl: u64) -> i32
+@bibliothek("p2_m1_cpp")
+extern "C" funktion p2_zaehler_summe(z: ptr[P2Zaehler]) -> i64
+@bibliothek("p2_m1_cpp")
+extern "C" funktion p2_zaehler_name_setzen(z: ptr[P2Zaehler], text: ptr[u8], laenge: u64) -> i32
+@bibliothek("p2_m1_cpp")
+extern "C" funktion p2_zaehler_name(z: ptr[P2Zaehler], ziel: ptr[u8], kapazitaet: u64) -> u64
+@bibliothek("p2_m1_cpp")
+extern "C" funktion p2_letzter_fehler(ziel: ptr[u8], kapazitaet: u64) -> u64
+@bibliothek("p2_m1_cpp")
+extern "C" funktion p2_zaehler_lebende() -> i64
+@bibliothek("p2_m1_cpp")
+extern "C" funktion p2_cpp_create(wert: i32) -> ptr[void]
+@bibliothek("p2_m1_cpp")
+extern "C" funktion p2_cpp_destroy(h: ptr[void]) -> i32
+
+@nativ
+funktion zaehler_neu() -> ptr[P2Zaehler]:
+    unsicher:
+        setze z: ptr[P2Zaehler] auf p2_zaehler_neu()
+        gib_zurück z
+
+@nativ
+@verbraucht(1)
+funktion zaehler_frei(z: ptr[P2Zaehler]) -> i32:
+    unsicher:
+        setze r: i32 auf p2_zaehler_frei(z)
+        gib_zurück r
+
+@nativ
+funktion zaehler_addiere(z: ptr[P2Zaehler], werte: puffer[i32]) -> i32:
+    unsicher:
+        setze r: i32 auf p2_zaehler_addiere(z, puffer_zeiger(werte), länge(werte))
+        gib_zurück r
+
+@nativ
+funktion zaehler_summe(z: ptr[P2Zaehler]) -> i64:
+    unsicher:
+        setze s: i64 auf p2_zaehler_summe(z)
+        gib_zurück s
+
+@nativ
+funktion zaehler_name_setzen(z: ptr[P2Zaehler], text: puffer[u8]) -> i32:
+    unsicher:
+        setze r: i32 auf p2_zaehler_name_setzen(z, puffer_zeiger(text), länge(text))
+        gib_zurück r
+
+@nativ
+funktion zaehler_name(z: ptr[P2Zaehler], ziel: puffer[u8]) -> u64:
+    unsicher:
+        setze n: u64 auf p2_zaehler_name(z, puffer_zeiger(ziel), länge(ziel))
+        gib_zurück n
+
+@nativ
+funktion fehlertext(ziel: puffer[u8]) -> u64:
+    unsicher:
+        setze n: u64 auf p2_letzter_fehler(puffer_zeiger(ziel), länge(ziel))
+        gib_zurück n
+
+@nativ
+funktion lebende() -> i64:
+    unsicher:
+        setze n: i64 auf p2_zaehler_lebende()
+        gib_zurück n
+
+@nativ
+funktion zahl_neu(wert: i32) -> ptr[void]:
+    unsicher:
+        setze h: ptr[void] auf p2_cpp_create(wert)
+        gib_zurück h
+
+@nativ
+@verbraucht(1)
+funktion zahl_frei(h: ptr[void]) -> i32:
+    unsicher:
+        setze r: i32 auf p2_cpp_destroy(h)
+        gib_zurück r
+
+funktion erzeuge(name):
+    setze t auf puffer_aus_text(name)
+    unsicher:
+        setze z auf zaehler_neu()
+        zaehler_name_setzen(z, t)
+    gib_zurück z
+
+funktion fuelle(z, n):
+    setze w auf puffer_erstellen(i32, n)
+    setze i auf 0
+    solange i < n:
+        w[i] = i + 1
+        setze i auf i + 1
+    unsicher:
+        setze r auf zaehler_addiere(z, w)
+    wenn r != 0:
+        setze f auf puffer_erstellen(u8, 128)
+        unsicher:
+            setze laenge auf fehlertext(f)
+        wirf puffer_als_text(f, laenge)
+    gib_zurück r
+
+funktion name_von(z):
+    setze p auf puffer_erstellen(u8, 64)
+    unsicher:
+        setze n auf zaehler_name(z, p)
+    gib_zurück puffer_als_text(p, n)
+
+setze z auf erzeuge("Zähler Eins")
+zeige z
+zeige griff_gültig(z)
+zeige griffe_offen()
+fuelle(z, 10)
+unsicher:
+    zeige zaehler_summe(z)
+zeige name_von(z)
+versuche:
+    fuelle(z, 5000)
+    zeige "NICHT ERREICHT"
+fange fehler:
+    zeige fehler
+unsicher:
+    zeige zaehler_summe(z)
+    zeige lebende()
+unsicher:
+    setze zahl auf zahl_neu(7)
+versuche:
+    unsicher:
+        zeige zaehler_summe(zahl)
+fange fehler:
+    zeige fehler
+setze fuenf auf 5
+versuche:
+    unsicher:
+        zeige zaehler_summe(fuenf)
+fange fehler:
+    zeige fehler
+setze alias auf z
+unsicher:
+    zeige zaehler_frei(z)
+    zeige zahl_frei(zahl)
+zeige griff_gültig(alias)
+zeige alias
+versuche:
+    unsicher:
+        zeige zaehler_summe(alias)
+fange fehler:
+    zeige fehler
+versuche:
+    unsicher:
+        zeige zaehler_frei(alias)
+fange fehler:
+    zeige fehler
+zeige griffe_offen()
+unsicher:
+    zeige lebende()

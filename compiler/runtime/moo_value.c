@@ -67,6 +67,7 @@ const char* moo_type_name(MooValue v) {
         case MOO_SURFACE: return "Oberflaeche";
         case MOO_BUFFER: return "Puffer";
         case MOO_STRUCT: return "Struktur";
+        case MOO_HANDLE: return "Griff";
         default:         return "Unbekannt";
     }
 }

@@ -1,0 +1,3 @@
+# A importiert C, definiert RPunkt aber nicht selbst.
+importiere modul_raute_a als a
+zeige a.RPunkt(1, 2)

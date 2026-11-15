@@ -1,0 +1,7 @@
+# P2-T49 C3: Ausrichtung ueber MOO_MAX_ALIGN (16) ist nicht boxbar.
+@ausrichten(32)
+struktur Weit:
+    x: f32
+
+setze w auf Weit(1)
+zeige w

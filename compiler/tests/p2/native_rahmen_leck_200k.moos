@@ -1,0 +1,41 @@
+# P2-T85 D4: Leckstress - 200k Fehleraufrufe je Methode und Lambda plus
+# erfolgreicher Pufferaufruf ueber selbst.puffer (C1). Gegenstueck: _800k.
+@nativ
+funktion teile(a: i64, b: i64) -> i64:
+    gib_zurück a / b
+
+@nativ
+@liest(1)
+funktion gesamt(p: puffer[i32]) -> i64:
+    unsicher:
+        gib_zurück als(i64, länge(p))
+
+klasse R:
+    funktion erstelle():
+        selbst.puffer = puffer_erstellen(i32, 4)
+
+    funktion rechne(n):
+        gib_zurück teile(100, n)
+
+    funktion laenge_feld():
+        unsicher:
+            gib_zurück gesamt(selbst.puffer)
+
+setze r auf neu R()
+setze f auf (x) => teile(100, x)
+setze i auf 0
+setze gefangen auf 0
+setze summe auf 0
+solange i < 200000:
+    versuche:
+        r.rechne(0)
+    fange fehler:
+        setze gefangen auf gefangen + 1
+    versuche:
+        f(0)
+    fange fehler:
+        setze gefangen auf gefangen + 1
+    setze summe auf summe + r.laenge_feld()
+    setze i auf i + 1
+zeige gefangen
+zeige summe

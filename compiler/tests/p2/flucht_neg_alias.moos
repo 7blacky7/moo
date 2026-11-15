@@ -1,0 +1,9 @@
+# P2-T51 E5 negativ (a): Markierung wandert ueber Alias, zeiger() und u64().
+@nativ
+funktion f(n: i32) -> u64:
+    unsicher:
+        setze x: i32 auf n
+        setze p: ptr[i32] auf zeiger(adresse_von(x))
+        setze q: ptr[u8] auf zeiger(p)
+        setze a: u64 auf u64(q) + 4
+        gib_zurück a

@@ -1,0 +1,186 @@
+# ============================================================
+# netz3d.moos — Retained-Netz (Mesh) aus puffer[Eckpunkt] / puffer[f32]
+# ============================================================
+# P2-T25 (Plan 962e249a). Ein Netz IST ein 3D-Chunk des aktiven Backends
+# (Griff = Chunk-Nummer); neu ist nur das direkte Fuellen aus Speicher plus
+# optionale u32-Indizes. Die Daten werden beim Hochladen kopiert, der Puffer
+# bleibt beim Aufrufer und ist nur waehrend des Aufrufs gepinnt.
+# Anbindung ohne Compiler-Builtins: struktur + extern "C" + @nativ-Wrapper
+# auf die C-Funktionen moo_3d_netz_* (compiler/runtime/moo_3d.c).
+#
+# NUTZUNG (nach fenster3d/raum_*-Fenster, aktives Backend):
+#   importiere netz3d
+#   setze ecken auf puffer_erstellen(Eckpunkt, 3)     # nativ fuellen
+#   setze idx auf puffer_erstellen(u32, 0)            # leer = fortlaufend
+#   setze n auf netz3d_erstellen(ecken, idx)
+#   netz3d_zeichnen_hier(n)                           # aktuelle Modelmatrix
+#   netz3d_freigeben(n)
+# Mit Matrix: netz3d_zeichnen(n, m) (m: mat4, z. B. aus stdlib/vektor.moos);
+# aus @nativ-Code der Rohweg netz3d_zeichnen_mit_roh(id, m) (liefert Fehlercode).
+# Fehler (fangbar): kein Backend, nicht unterstuetzt, Anzahl nicht durch 3
+# (bzw. f32-Laenge nicht durch 9) teilbar, Index ausserhalb, Grenze, kein
+# Platz, Hochladen waehrend chunk_beginne, ungueltiges Netz.
+
+# Bytegleich zu MooVertex (moo_3d_gl33_mesh.h): 9 x f32 = 36 Byte.
+struktur Eckpunkt:
+    position: vec3
+    farbe: vec3
+    normale: vec3
+
+extern "C" funktion moo_3d_netz_erstellen() -> i32
+extern "C" funktion moo_3d_netz_hochladen(id: i32, ecken: ptr[f32], anzahl: u64, indizes: ptr[u32], index_anzahl: u64) -> i32
+extern "C" funktion moo_3d_netz_zeichnen_mat(id: i32, m: mat4) -> i32
+extern "C" funktion moo_3d_netz_zeichnen_hier(id: i32) -> i32
+extern "C" funktion moo_3d_netz_freigeben(id: i32) -> i32
+extern "C" funktion moo_3d_netz_belegt() -> i32
+
+@nativ
+funktion netz3d_neu_roh() -> i32:
+    unsicher:
+        setze id: i32 auf moo_3d_netz_erstellen()
+        gib_zurück id
+
+@nativ
+@liest(2)
+@liest(3)
+funktion netz3d_laden_roh(id: i32, ecken: puffer[Eckpunkt], indizes: puffer[u32]) -> i32:
+    unsicher:
+        setze e: ptr[f32] auf zeiger(puffer_zeiger(ecken))
+        setze r: i32 auf moo_3d_netz_hochladen(id, e, länge(ecken), puffer_zeiger(indizes), länge(indizes))
+        gib_zurück r
+
+@nativ
+@liest(2)
+@liest(3)
+funktion netz3d_laden_f32_roh(id: i32, werte: puffer[f32], indizes: puffer[u32]) -> i32:
+    wenn länge(werte) % 9 != 0:
+        gib_zurück 9
+    unsicher:
+        setze r: i32 auf moo_3d_netz_hochladen(id, puffer_zeiger(werte), länge(werte) / 9, puffer_zeiger(indizes), länge(indizes))
+        gib_zurück r
+
+# Rohweg fuer @nativ-Code (liefert den Fehlercode); oeffentlich: netz3d_zeichnen.
+@nativ
+funktion netz3d_zeichnen_mit_roh(id: i32, m: mat4) -> i32:
+    unsicher:
+        setze r: i32 auf moo_3d_netz_zeichnen_mat(id, m)
+        gib_zurück r
+
+@nativ
+funktion netz3d_zeichnen_roh(id: i32) -> i32:
+    unsicher:
+        setze r: i32 auf moo_3d_netz_zeichnen_hier(id)
+        gib_zurück r
+
+@nativ
+funktion netz3d_freigeben_roh(id: i32) -> i32:
+    unsicher:
+        setze r: i32 auf moo_3d_netz_freigeben(id)
+        gib_zurück r
+
+@nativ
+funktion netz3d_belegt() -> i32:
+    unsicher:
+        setze r: i32 auf moo_3d_netz_belegt()
+        gib_zurück r
+
+funktion netz3d_fehler(code):
+    wenn code == 1:
+        wirf "netz3d: kein 3D-Backend aktiv"
+    wenn code == 2:
+        wirf "netz3d: vom aktiven 3D-Backend nicht unterstuetzt"
+    wenn code == 3:
+        wirf "netz3d: Eckpunkt- bzw. Indexanzahl nicht durch 3 teilbar"
+    wenn code == 4:
+        wirf "netz3d: Index ausserhalb der Eckpunkte"
+    wenn code == 5:
+        wirf "netz3d: zu viele Eckpunkte oder Indizes"
+    wenn code == 6:
+        wirf "netz3d: kein freier Platz"
+    wenn code == 7:
+        wirf "netz3d: Hochladen waehrend chunk_beginne nicht erlaubt"
+    wenn code == 8:
+        wirf "netz3d: ungueltiges Netz"
+    wenn code == 9:
+        wirf "netz3d: puffer[f32]-Laenge nicht durch 9 teilbar"
+    wenn code == 10:
+        wirf "netz3d: Hochladen im 3D-Backend fehlgeschlagen"
+    wirf "netz3d: unbekannter Fehler " + text(code)
+
+funktion netz3d_erstellen(ecken, indizes):
+    setze id auf 0
+    unsicher:
+        setze id auf netz3d_neu_roh()
+    wenn id < 0:
+        netz3d_fehler(0 - id)
+    setze code auf 0
+    unsicher:
+        setze code auf netz3d_laden_roh(id, ecken, indizes)
+    wenn code != 0:
+        unsicher:
+            netz3d_freigeben_roh(id)
+        netz3d_fehler(code)
+    gib_zurück id
+
+funktion netz3d_erstellen_f32(werte, indizes):
+    setze id auf 0
+    unsicher:
+        setze id auf netz3d_neu_roh()
+    wenn id < 0:
+        netz3d_fehler(0 - id)
+    setze code auf 0
+    unsicher:
+        setze code auf netz3d_laden_f32_roh(id, werte, indizes)
+    wenn code != 0:
+        unsicher:
+            netz3d_freigeben_roh(id)
+        netz3d_fehler(code)
+    gib_zurück id
+
+funktion netz3d_aktualisieren(netz, ecken, indizes):
+    setze code auf 0
+    unsicher:
+        setze code auf netz3d_laden_roh(netz, ecken, indizes)
+    wenn code != 0:
+        netz3d_fehler(code)
+
+# Zeichnen mit Modelmatrix (aktuelle Matrix * m), fangbare Fehler.
+funktion netz3d_zeichnen(netz, m):
+    setze code auf 0
+    unsicher:
+        setze code auf netz3d_zeichnen_mit_roh(netz, m)
+    wenn code != 0:
+        netz3d_fehler(code)
+
+funktion netz3d_zeichnen_hier(netz):
+    setze code auf 0
+    unsicher:
+        setze code auf netz3d_zeichnen_roh(netz)
+    wenn code != 0:
+        netz3d_fehler(code)
+
+funktion netz3d_freigeben(netz):
+    setze code auf 0
+    unsicher:
+        setze code auf netz3d_freigeben_roh(netz)
+    wenn code != 0:
+        netz3d_fehler(code)
+
+# Englische Namen
+funktion mesh_create(vertices, indices):
+    gib_zurück netz3d_erstellen(vertices, indices)
+
+funktion mesh_create_f32(values, indices):
+    gib_zurück netz3d_erstellen_f32(values, indices)
+
+funktion mesh_update(mesh, vertices, indices):
+    netz3d_aktualisieren(mesh, vertices, indices)
+
+funktion mesh_draw(mesh, m):
+    netz3d_zeichnen(mesh, m)
+
+funktion mesh_draw_here(mesh):
+    netz3d_zeichnen_hier(mesh)
+
+funktion mesh_free(mesh):
+    netz3d_freigeben(mesh)

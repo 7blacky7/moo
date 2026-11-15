@@ -1,0 +1,17 @@
+# P2-T21/T57 E-3: Rueckruf-Signatur i64 statt erwartet i32 -> Compilefehler.
+extern "C" funktion rr_merke(cb: ptr[fn(i32, ptr[void]) -> i32], ud: ptr[void]) -> void
+
+@nativ
+@rückruf
+funktion f(x: i64, u: ptr[void]) -> i32:
+    unsicher:
+        gib_zurück 1
+
+@nativ
+funktion lauf() -> i32:
+    unsicher:
+        rr_merke(f, nichts)
+        gib_zurück 0
+
+unsicher:
+    zeige lauf()

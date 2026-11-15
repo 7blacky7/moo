@@ -46,6 +46,7 @@ typedef enum {
     MOO_SURFACE = 26,
     MOO_BUFFER = 27,
     MOO_STRUCT = 28,
+    MOO_HANDLE = 29, /* P2-T23/T53: Griff auf fremden Zeiger (moo_handle.h) */
 } MooTag;
 
 // === Forward Declarations ===
@@ -873,6 +874,13 @@ void moo_throw(MooValue error);
 void moo_native_fehler(const char* text);
 /* P2-T58 C2: 1, wenn ein Moo-Fehler ansteht (Systemkoerper-Weitergabe). */
 int moo_native_fehler_offen(void);
+/* P2-T84: Fehler in hosted C-Export -> Meldung + RC 1 (kehrt nicht zurueck). */
+void moo_native_abbruch(const char* text);
+/* P2-T21/T57 D: Eintritt fehlbarer C-Rueckrufe; auf einem Nicht-Moo-Thread
+   Diagnose + abort(). moo_native_thread_markieren: aktuellen Thread als
+   Moo-Thread kennzeichnen (Hauptthread automatisch, moo_thread_spawn). */
+void moo_native_rueckruf_thread(const char* name);
+void moo_native_thread_markieren(void);
 void moo_try_enter(void);       // enter try block
 int moo_try_check(void);        // 1 = error occurred
 void moo_try_leave(void);       // leave try/catch

@@ -1,0 +1,6 @@
+# P2-T17 E3 negativ: Zeiger + Zeiger ist nicht definiert.
+@nativ
+funktion f(p: ptr[i32], q: ptr[i32]) -> u64:
+    unsicher:
+        setze r: ptr[i32] auf p + q
+        gib_zurück u64(r)

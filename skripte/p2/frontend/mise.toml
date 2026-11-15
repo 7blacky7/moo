@@ -1,4 +1,9 @@
 
+[tasks.wirf-unsicher]
+description = "P2-T93: wirf verhaelt sich mit und ohne unsicher:-Block identisch (gefangen, ungefangen, aufraeumen)"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/wirf_unsicher.sh"
+
 [tasks.defer-handler-diagnose]
 description = "P2 Frontend: lokaler Cleanup-Catch und Handler-Tiefe diagnostisch"
 dir = "{{config_root}}/../../.."
@@ -18,6 +23,27 @@ echo "stderr:"
 cat "$out/probe.err"
 if [ "$rc" -eq 124 ] || [ "$rc" -ge 128 ]; then exit 1; fi
 '''
+
+[tasks.analyse]
+description = "P2-T8 D1: Codegen-Analysen (Lambda-Capture, Erstnutzung global/lokal) gegen neuere AST-Knoten"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-frontend/analyse
+mkdir -p "$out"
+compiler="${MOO_COMPILER:-compiler/target/release/moo-compiler}"
+for name in analyse_lambda_frei analyse_erstnutzung analyse_callee_match; do
+  timeout 60s "$compiler" compile "compiler/tests/p2/$name.moos" -o "$out/$name"
+  timeout 30s "$out/$name" >"$out/$name.out"
+  cmp "compiler/tests/p2/$name.expected" "$out/$name.out"
+  echo "PASS $name"
+done
+'''
+
+[tasks.native-rahmen]
+description = "P2-T85: native Aufrufe aus Methoden und Lambdas"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/native_rahmen.sh"
 
 [tasks.expect-heap]
 description = "P2 Frontend: Expect-Temporaries und RSS"

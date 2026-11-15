@@ -1,0 +1,7 @@
+importiere modul_import_matrix als m
+
+@nativ
+funktion f(p: m.Fehlt) -> i32:
+    gib_zurück 1
+
+zeige 1

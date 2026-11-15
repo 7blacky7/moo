@@ -1,0 +1,5 @@
+# P2-T17 E4 negativ: zeiger(p) (Umdeutung) im sicheren Koerper nur in unsicher:.
+@nativ
+funktion f(p: ptr[i32]) -> ptr[u8]:
+    setze q: ptr[u8] auf zeiger(p)
+    gib_zurück q

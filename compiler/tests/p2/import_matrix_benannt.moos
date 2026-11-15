@@ -1,0 +1,38 @@
+# P2-T47 (Plan b1f51d65 E1): Importmatrix, Form benannter Import.
+aus modul_import_matrix importiere MPunkt, MGRENZE, abs, MDaten, MSchnitt, m_skalar, m_verschiebe, m_ptr_x, m_fuelle, m_summe
+
+@nativ
+funktion haupt_verschiebe(p: MPunkt) -> i32:
+    setze q: MPunkt auf m_verschiebe(p, 1)
+    gib_zurück q.x * 100 + q.y
+
+@nativ
+funktion haupt_ptr() -> i32:
+    unsicher:
+        setze q: MPunkt auf MPunkt(3, 4)
+        setze z: ptr[MPunkt] auf zeiger(adresse_von(q))
+        gib_zurück m_ptr_x(z)
+
+@nativ
+funktion haupt_extern(x: i32) -> i32:
+    unsicher:
+        setze r: i32 auf abs(x)
+        gib_zurück r
+
+@nativ
+funktion haupt_grenze() -> i32:
+    gib_zurück MGRENZE * 2
+
+zeige m_skalar(2, 0.5)
+zeige haupt_verschiebe(MPunkt(1, 2))
+unsicher:
+    zeige haupt_ptr()
+    zeige haupt_extern(-5)
+zeige haupt_grenze()
+setze b auf puffer_erstellen(MPunkt, 3)
+unsicher:
+    zeige m_fuelle(b)
+    zeige m_summe(b)
+setze d auf neu MDaten(5, "fuenf")
+zeige d.wert
+zeige d.name

@@ -1,0 +1,90 @@
+# P2-T85 D6 (Plan 983e8a9c) / P2-T23 (Plan 36aca1f2 F1): die C++-Klasse
+# P2Zaehler als Moo-Klasse gekapselt. Native Aufrufe laufen aus Methoden; der
+# Griff liegt im Feld selbst.griff und wird direkt als Feldzugriff uebergeben
+# (Plan 983e8a9c C1), auch an @verbraucht.
+# Methodenname bewusst 'freigeben' statt 'schliessen': eingebaute
+# Methodennamen wie schliessen/close ueberdecken derzeit Klassenmethoden
+# (eigener Befund, siehe P2-T85 Ergebnis-Thought).
+@opak struktur P2Zaehler
+
+@bibliothek("p2_m1_cpp")
+@bibliothek("stdc++")
+extern "C" funktion p2_zaehler_neu() -> ptr[P2Zaehler]
+@bibliothek("p2_m1_cpp")
+extern "C" funktion p2_zaehler_frei(z: ptr[P2Zaehler]) -> i32
+@bibliothek("p2_m1_cpp")
+extern "C" funktion p2_zaehler_addiere(z: ptr[P2Zaehler], werte: ptr[i32], anzahl: u64) -> i32
+@bibliothek("p2_m1_cpp")
+extern "C" funktion p2_zaehler_summe(z: ptr[P2Zaehler]) -> i64
+@bibliothek("p2_m1_cpp")
+extern "C" funktion p2_zaehler_lebende() -> i64
+
+@nativ
+funktion zaehler_neu() -> ptr[P2Zaehler]:
+    unsicher:
+        setze z: ptr[P2Zaehler] auf p2_zaehler_neu()
+        gib_zurück z
+
+@nativ
+@verbraucht(1)
+funktion zaehler_frei(z: ptr[P2Zaehler]) -> i32:
+    unsicher:
+        setze r: i32 auf p2_zaehler_frei(z)
+        gib_zurück r
+
+@nativ
+funktion zaehler_addiere(z: ptr[P2Zaehler], werte: puffer[i32]) -> i32:
+    unsicher:
+        setze r: i32 auf p2_zaehler_addiere(z, puffer_zeiger(werte), länge(werte))
+        gib_zurück r
+
+@nativ
+funktion zaehler_summe(z: ptr[P2Zaehler]) -> i64:
+    unsicher:
+        setze s: i64 auf p2_zaehler_summe(z)
+        gib_zurück s
+
+@nativ
+funktion lebende() -> i64:
+    unsicher:
+        setze n: i64 auf p2_zaehler_lebende()
+        gib_zurück n
+
+klasse Zaehler:
+    funktion erstelle():
+        unsicher:
+            selbst.griff = zaehler_neu()
+
+    funktion addiere(liste):
+        setze w auf puffer_erstellen(i32, länge(liste))
+        setze i auf 0
+        solange i < länge(liste):
+            w[i] = liste[i]
+            setze i auf i + 1
+        unsicher:
+            setze r auf zaehler_addiere(selbst.griff, w)
+        gib_zurück r
+
+    funktion summe():
+        unsicher:
+            gib_zurück zaehler_summe(selbst.griff)
+
+    funktion freigeben():
+        unsicher:
+            setze r auf zaehler_frei(selbst.griff)
+        gib_zurück r
+
+setze z auf neu Zaehler()
+zeige griffe_offen()
+z.addiere([1, 2, 3, 4])
+zeige z.summe()
+zeige griffe_offen()
+zeige z.freigeben()
+versuche:
+    zeige z.summe()
+    zeige "NICHT ERREICHT"
+fange fehler:
+    zeige fehler
+zeige griffe_offen()
+unsicher:
+    zeige lebende()

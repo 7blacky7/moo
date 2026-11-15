@@ -1,0 +1,101 @@
+# P2-T16 (Plan 3f03704a E6): Matrix-Konstruktoren fuer die eingebauten Typen
+# vec3/vec4/mat4 in nativem Moo. Jede Funktion liefert eine neue mat4 (reine
+# Konstruktoren); Verkettung ueber `*`, z. B. entspricht `m * mat4_verschiebung(v)`
+# mat4_translate(m, x, y, z) aus compiler/runtime/moo_3d_math.c. Gleiche
+# Operationsfolge wie die C-Referenz (bitgleich bei -ffp-contract=off).
+# Spaltenordnung: s0..s3 sind die Spalten (m[spalte*4+zeile]).
+# Englische Namen weichen den gleichnamigen C-Runtime-Symbolen aus.
+# Trigonometrie ueber libm (hosted).
+extern "C" funktion sinf(x: f32) -> f32
+extern "C" funktion cosf(x: f32) -> f32
+extern "C" funktion tanf(x: f32) -> f32
+
+@nativ
+funktion mat4_einheit() -> mat4:
+    gib_zurück mat4(vec4(1.0, 0.0, 0.0, 0.0), vec4(0.0, 1.0, 0.0, 0.0), vec4(0.0, 0.0, 1.0, 0.0), vec4(0.0, 0.0, 0.0, 1.0))
+
+# moo_3d_math.c mat4_translate: t[12..14] = x, y, z.
+@nativ
+funktion mat4_verschiebung(v: vec3) -> mat4:
+    setze m: mat4 auf mat4_einheit()
+    m.s3 = vec4(v.x, v.y, v.z, 1.0)
+    gib_zurück m
+
+# moo_3d_math.c mat4_scale: s[0], s[5], s[10].
+@nativ
+funktion mat4_skalierung(v: vec3) -> mat4:
+    gib_zurück mat4(vec4(v.x, 0.0, 0.0, 0.0), vec4(0.0, v.y, 0.0, 0.0), vec4(0.0, 0.0, v.z, 0.0), vec4(0.0, 0.0, 0.0, 1.0))
+
+# moo_3d_math.c mat4_rotate: rad = grad * (float)M_PI / 180, Achse nur bei
+# Betrag > 0 normiert, r[i] mit (1 - c) wie dort.
+@nativ
+funktion mat4_drehung(grad: f32, achse: vec3) -> mat4:
+    setze rad: f32 auf grad * 3.14159265358979323846 / 180.0
+    setze c: f32 auf 0.0
+    setze s: f32 auf 0.0
+    unsicher:
+        setze c auf cosf(rad)
+        setze s auf sinf(rad)
+    setze a: vec3 auf normalisiere(achse)
+    setze k: f32 auf 1.0 - c
+    setze s0: vec4 auf vec4(c + a.x * a.x * k, a.y * a.x * k + a.z * s, a.z * a.x * k - a.y * s, 0.0)
+    setze s1: vec4 auf vec4(a.x * a.y * k - a.z * s, c + a.y * a.y * k, a.z * a.y * k + a.x * s, 0.0)
+    setze s2: vec4 auf vec4(a.x * a.z * k + a.y * s, a.y * a.z * k - a.x * s, c + a.z * a.z * k, 0.0)
+    gib_zurück mat4(s0, s1, s2, vec4(0.0, 0.0, 0.0, 1.0))
+
+# moo_3d_math.c mat4_perspective.
+@nativ
+funktion mat4_perspektive(fov_grad: f32, seitenverhältnis: f32, nah: f32, fern: f32) -> mat4:
+    setze rad: f32 auf fov_grad * 3.14159265358979323846 / 180.0
+    setze t: f32 auf 0.0
+    unsicher:
+        setze t auf tanf(rad / 2.0)
+    setze tiefe: f32 auf fern - nah
+    setze s2: vec4 auf vec4(0.0, 0.0, (-(fern + nah)) / tiefe, -1.0)
+    setze s3: vec4 auf vec4(0.0, 0.0, (-(2.0 * fern * nah)) / tiefe, 0.0)
+    gib_zurück mat4(vec4(1.0 / (seitenverhältnis * t), 0.0, 0.0, 0.0), vec4(0.0, 1.0 / t, 0.0, 0.0), s2, s3)
+
+# moo_3d_math.c mat4_lookat: f = normalisiere(ziel - auge),
+# s = normalisiere(kreuz(f, oben)), u = kreuz(s, f).
+@nativ
+funktion mat4_blick(auge: vec3, ziel: vec3, oben: vec3) -> mat4:
+    setze f: vec3 auf normalisiere(ziel - auge)
+    setze s: vec3 auf normalisiere(kreuz(f, oben))
+    setze u: vec3 auf kreuz(s, f)
+    setze s3: vec4 auf vec4(-punkt(s, auge), -punkt(u, auge), punkt(f, auge), 1.0)
+    gib_zurück mat4(vec4(s.x, u.x, -f.x, 0.0), vec4(s.y, u.y, -f.y, 0.0), vec4(s.z, u.z, -f.z, 0.0), s3)
+
+# moo_3d_math.c mat4_ortho.
+@nativ
+funktion mat4_orthografisch(links: f32, rechts: f32, unten: f32, oben: f32, nah: f32, fern: f32) -> mat4:
+    setze s3: vec4 auf vec4((-(rechts + links)) / (rechts - links), (-(oben + unten)) / (oben - unten), (-(fern + nah)) / (fern - nah), 1.0)
+    gib_zurück mat4(vec4(2.0 / (rechts - links), 0.0, 0.0, 0.0), vec4(0.0, 2.0 / (oben - unten), 0.0, 0.0), vec4(0.0, 0.0, -2.0 / (fern - nah), 0.0), s3)
+
+# Englische Namen.
+@nativ
+funktion mat4_unit() -> mat4:
+    gib_zurück mat4_einheit()
+
+@nativ
+funktion mat4_translation(v: vec3) -> mat4:
+    gib_zurück mat4_verschiebung(v)
+
+@nativ
+funktion mat4_scaling(v: vec3) -> mat4:
+    gib_zurück mat4_skalierung(v)
+
+@nativ
+funktion mat4_rotation(degrees: f32, axis: vec3) -> mat4:
+    gib_zurück mat4_drehung(degrees, axis)
+
+@nativ
+funktion mat4_projection(fov_degrees: f32, aspect: f32, near: f32, far: f32) -> mat4:
+    gib_zurück mat4_perspektive(fov_degrees, aspect, near, far)
+
+@nativ
+funktion mat4_view(eye: vec3, target: vec3, up: vec3) -> mat4:
+    gib_zurück mat4_blick(eye, target, up)
+
+@nativ
+funktion mat4_orthographic(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> mat4:
+    gib_zurück mat4_orthografisch(left, right, bottom, top, near, far)

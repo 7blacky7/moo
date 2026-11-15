@@ -1,5 +1,12 @@
-[tasks.pointer-rekursion-zukunft]
-description = "P7: Zukunftsgate rekursive Pointer und by-value-Zyklusdiagnose"
+[tasks.abi-matrix]
+description = "P2-T19/T56: Struktur-ABI-Matrix (Moo<->C hosted Linux) + Clang-Signaturorakel linux/windows/aarch64"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/abi_matrix.sh"
+
+
+[tasks.pointer-rekursion]
+alias = "pointer-rekursion-zukunft"
+description = "P7/P2-T51: rekursive Pointer, by-value-Zyklusdiagnose und Moo/C-Layoutvergleich"
 dir = "{{config_root}}/../../.."
 run = "bash skripte/p2/ffi/pointer_rekursion_zukunft.sh"
 
@@ -15,8 +22,9 @@ description = "P7: C/C++-Layoutorakel für Daten- und Funktionszeigerfelder"
 dir = "{{config_root}}/../../.."
 run = "bash skripte/p2/ffi/pointer_layout.sh"
 
-[tasks.pointer-layout-zukunft]
-description = "P7: Zukunftsgate Moo-Struktur mit Zeigerfeldern"
+[tasks.pointer-layout]
+alias = "pointer-layout-zukunft"
+description = "P7/P2-T51: Moo-Struktur mit Zeigerfeldern, IR/Objekt und Moo/C-Layoutvergleich (5 Ziele)"
 dir = "{{config_root}}/../../.."
 run = "bash skripte/p2/ffi/pointer_layout_zukunft.sh"
 
@@ -125,8 +133,13 @@ description = "P2: libm sinf/powf/pow durch native FFI"
 dir = "{{config_root}}/../../.."
 run = "bash skripte/p2/ffi/libm.sh"
 
+[tasks.fang-matrix]
+description = "P2-T55: FFI-Einzelform fangbar (main/Funktion/versuche/aufraeumen/Teilausdruck/Methode/Lambda, Rueckruf-Fehler, ASan/LSan)"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/fang_matrix.sh"
+
 [tasks.context]
-description = "P2 M1: unerlaubte native FFI-Kontexte ablehnen"
+description = "P2 M1/T55: FFI-Einzelform in versuche:/Funktion aufrufbar, unerlaubte Kontexte ablehnen"
 dir = "{{config_root}}/../../.."
 run = "bash skripte/p2/ffi/context.sh"
 
@@ -151,7 +164,7 @@ dir = "{{config_root}}/../../.."
 run = "bash skripte/p2/ffi/wertalias.sh"
 
 [tasks.reachability]
-description = "P2: FFI-Aufrufgrenzen und Lambda-Alias-Fallback"
+description = "P2/T55: FFI-Einzelform mit aufraeumen/Catch/transitiv (Laufzeit), Funktionswert gesperrt, Lambda-Alias-Fallback"
 dir = "{{config_root}}/../../.."
 run = "bash skripte/p2/ffi/reachability.sh"
 
@@ -159,6 +172,16 @@ run = "bash skripte/p2/ffi/reachability.sh"
 description = "P2: 64-Bit-FFI mit Cleanup und lokalem Catch"
 dir = "{{config_root}}/../../.."
 run = "bash skripte/p2/ffi/i64_defer_zukunft.sh"
+
+[tasks.rueckruf]
+description = "P2-T21/T57: Moo-@rückruf als C-Funktionszeiger Linux E2E (qsort, user_data, Fehler, Reentranz, Fremdthread, ASan/UBSan/TSan, Negativ)"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/rueckruf.sh"
+
+[tasks.rueckruf-orakel]
+description = "P2-T21/T57: @rückruf-Thunks gegen Clang linux/windows/aarch64/uefi"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/ffi/rueckruf_orakel.sh"
 
 [tasks.callback-geschlossen]
 description = "P2: nicht freigegebene Callback-Deklarationen ablehnen"

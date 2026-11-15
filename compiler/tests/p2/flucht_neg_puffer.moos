@@ -1,0 +1,5 @@
+# P2-T51 E5 negativ (a): puffer_zeiger ist nur waehrend des Aufrufs gepinnt.
+@nativ
+funktion f(p: puffer[u8]) -> ptr[u8]:
+    unsicher:
+        gib_zurück puffer_zeiger(p) + 1

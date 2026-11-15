@@ -1,0 +1,130 @@
+# P2-T49 (Plan 38c59c64 C1): Strukturwerte ueber die Grenze nativ <-> dynamisch.
+# Rundlauf nativ -> dyn -> nativ (Kopie an der Grenze), verschachtelt, alle
+# Skalarbreiten, bool, Arrayfeld (nur nativ); Feld lesen/schreiben, Sicht auf
+# eine verschachtelte Struktur (auch nach Freigabe des Besitzers), Alias, Box in
+# Liste/Woerterbuch/Objektfeld, zeige, Gleichheit, dynamischer Konstruktor,
+# Aufruf aus Methode und Lambda (sicherer @nativ-Koerper ohne unsicher:).
+struktur Innen:
+    x: f32
+    y: f32
+
+struktur Anders:
+    x: f32
+    y: f32
+
+struktur Teil:
+    id: u32
+    pos: Innen
+    masse: f64
+    aktiv: bool
+
+struktur Breit:
+    a: i8
+    b: u8
+    c: i16
+    d: u16
+    e: i32
+    f: u32
+    g: i64
+    h: u64
+    k: f32
+    m: f64
+
+struktur MitArray:
+    werte: [i32; 3]
+    n: u8
+
+@nativ
+funktion neu_innen(x: f32, y: f32) -> Innen:
+    unsicher:
+        gib_zurück Innen(x, y)
+
+@nativ
+funktion verschieben(t: Teil, dx: f32) -> Teil:
+    unsicher:
+        setze r: Teil auf t
+        r.pos.x = r.pos.x + dx
+        r.id = r.id + 1
+        r.aktiv = falsch
+        gib_zurück r
+
+@nativ
+funktion breit_echo(b: Breit) -> Breit:
+    unsicher:
+        gib_zurück b
+
+@nativ
+funktion array_neu(n: u8) -> MitArray:
+    unsicher:
+        setze m: MitArray auf MitArray()
+        m.werte[0] = 1
+        m.werte[1] = 2
+        m.werte[2] = 3
+        m.n = n
+        gib_zurück m
+
+@nativ
+funktion array_summe(a: MitArray) -> i32:
+    unsicher:
+        gib_zurück a.werte[0] + a.werte[1] + a.werte[2] + als(i32, a.n)
+
+@nativ
+funktion summe_innen(v: Innen) -> f32:
+    wenn v.x > v.y:
+        gib_zurück v.x + v.y
+    gib_zurück v.y + v.x
+
+klasse Halter:
+    funktion erstelle(s):
+        selbst.s = s
+    funktion norm():
+        gib_zurück summe_innen(selbst.s)
+
+unsicher:
+    setze i auf neu_innen(3, 4)
+zeige i
+zeige i.x + i.y
+setze t auf Teil(7, i, 10, wahr)
+zeige t
+unsicher:
+    setze u auf verschieben(t, 0.5)
+zeige u
+zeige t
+i.x = 30
+zeige t.pos.x
+# Sicht: teilt den Speicher mit u und haelt u nach dessen Freigabe am Leben.
+setze p auf u.pos
+u.pos.y = 9
+zeige p
+setze u auf nichts
+p.x = 1.25
+zeige p
+# Alias: dynamisch ist eine Box ein Referenzwert.
+setze a auf t
+a.masse = 42
+zeige t.masse
+setze l auf [i, Innen()]
+zeige l
+setze w auf {"punkt": i}
+zeige w["punkt"].y
+setze h auf neu Halter(i)
+zeige h.s.x
+zeige h.norm()
+setze f auf (v) => summe_innen(v)
+zeige f(Innen(1, 2))
+setze b auf Breit(-128, 255, -32768, 65535, -2147483648, 4294967295, -9007199254740992, 9007199254740992, 1.5, 2.25)
+unsicher:
+    setze b2 auf breit_echo(b)
+zeige b2
+zeige b2 == b
+zeige b2.g
+zeige Innen(30, 4) == i
+zeige Innen(30, 5) == i
+zeige Anders(30, 4) == i
+zeige i == i
+unsicher:
+    setze m auf array_neu(4)
+zeige m
+unsicher:
+    zeige array_summe(m)
+zeige MitArray()

@@ -1,0 +1,11 @@
+# P2-T85 D3 (E7): im Bare-Profil (--no-stdlib) bleibt der dynamische Aufruf
+# nativer Funktionen aus Methoden gesperrt (P2-T43-Regeln).
+@nativ
+funktion teile(a: i64, b: i64) -> i64:
+    gib_zurück a / b
+
+klasse K:
+    funktion m(n):
+        gib_zurück teile(100, n)
+
+zeige neu K().m(4)

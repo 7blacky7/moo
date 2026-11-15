@@ -1,0 +1,12 @@
+# P2-T47 (Plan b1f51d65 E2): Rautenimport. A und B importieren C; ein
+# Strukturwert und ein puffer[RPunkt] aus A werden an B gereicht: gleiche
+# Identitaet, kein Doppeldefinitionsfehler.
+importiere modul_raute_a als a
+importiere modul_raute_b als b
+importiere modul_raute_c als c
+
+zeige b.b_summe(a.a_baue(3))
+setze p auf puffer_erstellen(c.RPunkt, 2)
+unsicher:
+    zeige a.a_fuelle(p)
+    zeige b.b_puffer(p)

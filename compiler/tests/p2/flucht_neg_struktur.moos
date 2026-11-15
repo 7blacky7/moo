@@ -1,0 +1,12 @@
+# P2-T51 E5 negativ (c): geliehener Zeiger in einem zurueckgegebenen Strukturwert.
+struktur Knoten:
+    wert: i32
+    naechster: ptr[Knoten]
+
+@nativ
+funktion f() -> Knoten:
+    unsicher:
+        setze b: Knoten auf Knoten(2, nichts)
+        setze a: Knoten auf Knoten(1, nichts)
+        a.naechster = zeiger(adresse_von(b))
+        gib_zurück a

@@ -128,16 +128,42 @@ fn pointee_supported(ty: &TypeRef) -> bool {
         TypeKind::Generic { name, args }
             if (name == "ptr" || name == "zeiger") && args.len() == 1 =>
                 pointee_supported(&args[0]),
+        // P2-T21/T57 A (Plan f4655d20 A1/A2): C-Funktionszeiger ptr[fn(...) -> R].
+        TypeKind::Function { params, return_type, .. } =>
+            params.iter().all(rueckruf_wert_zulaessig)
+                && (matches!(&return_type.kind, TypeKind::Name(n) if n == "void")
+                    || rueckruf_wert_zulaessig(return_type)),
+        _ => false,
+    }
+}
+
+/// P2-T21/T57 A1: Parameter-/Ergebnistyp einer C-Rueckruf-Signatur: Skalar
+/// (i8..u64, bool, f32, f64), Zeiger (auch ptr[Struktur], ptr[fn]) oder
+/// Strukturwert. Namen werden spaeter ueber die nominale Registry aufgeloest
+/// (unbekannte Namen scheitern dort); kein Puffer, kein Array, kein fn by value.
+pub(crate) fn rueckruf_wert_zulaessig(ty: &TypeRef) -> bool {
+    match &ty.kind {
+        TypeKind::Name(name) => name != "void",
+        TypeKind::Generic { name, args } if (name == "ptr" || name == "zeiger") && args.len() == 1 =>
+            matches!(&args[0].kind, TypeKind::Name(_)) || pointee_supported(&args[0]),
         _ => false,
     }
 }
 
 fn value_type(ty: &TypeRef) -> Result<FfiType, String> {
+    value_type_in(ty, &|_| false)
+}
+
+/// Wie value_type; zusaetzlich ptr[Struktur] (opaker C-Zeiger) fuer Namen, die
+/// `ist_struktur` als bekannte native Struktur bestaetigt (P2-T56).
+fn value_type_in(ty: &TypeRef, ist_struktur: &dyn Fn(&str) -> bool) -> Result<FfiType, String> {
     match &ty.kind {
         TypeKind::Name(name) => primitive(name).ok_or_else(||
             error(ty, "unbekannter oder nicht unterstuetzter C-Werttyp")),
         TypeKind::Generic { name, args } if name == "ptr" || name == "zeiger" => {
-            if args.len() != 1 || !pointee_supported(&args[0]) {
+            let struktur_ziel = args.len() == 1
+                && matches!(&args[0].kind, TypeKind::Name(n) if ist_struktur(n));
+            if args.len() != 1 || !(pointee_supported(&args[0]) || struktur_ziel) {
                 return Err(error(ty, "Pointer braucht genau einen unterstuetzten Zieltyp"));
             }
             Ok(FfiType::Pointer)
@@ -157,6 +183,36 @@ fn skalar_abi(target: &str, convention: u32) -> crate::ffi_abi::Abi {
         CC_WIN64 => Abi::Ms,
         _ if target.contains("-windows-") || target.contains("-uefi") => Abi::Ms,
         _ => Abi::SysV,
+    }
+}
+
+/// P2-T19 Batch E: C-Exporte (@einstieg, umbenannte Funktion mit 1:1-Parametern)
+/// tragen dieselben Extension-Attribute wie eine Clang-Definition (Befund
+/// abi-matrix: 'zeroext i1 f(i16 zeroext)'), sonst lesen C-Aufrufer nicht
+/// erweiterte bool/i8/i16-Rueckgaben. Nur FFI-Skalartypen; Rest unveraendert.
+pub(crate) fn apply_export_extensions<'ctx>(
+    context: &'ctx inkwell::context::Context,
+    function: inkwell::values::FunctionValue<'ctx>,
+    triple: &str,
+    convention: u32,
+    inputs: &[Option<TypeRef>],
+    result: Option<&TypeRef>,
+) {
+    use inkwell::attributes::{Attribute, AttributeLoc};
+    let abi = skalar_abi(triple, convention);
+    let ext = |ty: &TypeRef| match &ty.kind {
+        TypeKind::Name(name) => primitive(name).and_then(|skalar| skalar.extension_abi(abi)),
+        _ => None,
+    };
+    for (index, ty) in inputs.iter().enumerate() {
+        if let Some(name) = ty.as_ref().and_then(ext) {
+            function.add_attribute(AttributeLoc::Param(index as u32),
+                context.create_enum_attribute(Attribute::get_named_enum_kind_id(name), 0));
+        }
+    }
+    if let Some(name) = result.and_then(ext) {
+        function.add_attribute(AttributeLoc::Return,
+            context.create_enum_attribute(Attribute::get_named_enum_kind_id(name), 0));
     }
 }
 
@@ -474,14 +530,59 @@ impl<'ctx> ExternRegistry<'ctx> {
         layouts: &crate::native_struct::NativeStructRegistry<'ctx>,
         convention: u32,
     ) -> Result<(), String> {
-        use crate::ffi_abi::{Abi, ParamForm, Skalar, StrukturForm, Uebergabe};
         use inkwell::attributes::{Attribute, AttributeLoc};
-        use inkwell::types::{BasicMetadataTypeEnum, BasicType};
         if self.bindings.contains_key(name) || self.abi_bindings.contains_key(name)
             || module.get_function(name).is_some()
         {
             return Err(format!("extern C: Symbolkollision bei '{name}'"));
         }
+        let form = abi_form(context, module, target, name, inputs, result, layouts, convention)?;
+        let function = module.add_function(name, form.function_type, None);
+        if convention != CC_C {
+            function.set_call_conventions(convention);
+        }
+        for (index, attr) in &form.attrs {
+            function.add_attribute(AttributeLoc::Param(*index), *attr);
+        }
+        if let Some(ext) = form.result_ext {
+            function.add_attribute(AttributeLoc::Return, context.create_enum_attribute(Attribute::get_named_enum_kind_id(ext), 0));
+        }
+        self.abi_bindings.insert(name.to_owned(), AbiBinding {
+            function, params: inputs.to_vec(), result: result.clone(), plan: form.plan,
+            param_structs: form.param_structs, result_struct: form.result_struct,
+            param_ext: form.param_ext, result_ext: form.result_ext,
+        });
+        Ok(())
+    }
+}
+
+/// P2-T19/T56 D: C-ABI-Form einer Signatur nach ffi_abi, gemeinsam fuer
+/// extern-C-Deklarationen (declare_abi) und @einstieg-Export-Thunks.
+struct AbiForm<'ctx> {
+    function_type: inkwell::types::FunctionType<'ctx>,
+    attrs: Vec<(u32, inkwell::attributes::Attribute)>,
+    result_ext: Option<&'static str>,
+    plan: crate::ffi_abi::Signaturplan,
+    /// Je Strukturparameter (Layouttyp, Ausrichtung, Zwischenspeicher-Bytes).
+    param_structs: Vec<Option<(inkwell::types::StructType<'ctx>, u32, u32)>>,
+    result_struct: Option<(inkwell::types::StructType<'ctx>, u32, u32)>,
+    param_ext: Vec<Option<&'static str>>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn abi_form<'ctx>(
+    context: &'ctx inkwell::context::Context,
+    module: &inkwell::module::Module<'ctx>,
+    target: &inkwell::targets::TargetData,
+    name: &str,
+    inputs: &[TypeRef],
+    result: &TypeRef,
+    layouts: &crate::native_struct::NativeStructRegistry<'ctx>,
+    convention: u32,
+) -> Result<AbiForm<'ctx>, String> {
+        use crate::ffi_abi::{Abi, ParamForm, Skalar, StrukturForm, Uebergabe};
+        use inkwell::attributes::Attribute;
+        use inkwell::types::{BasicMetadataTypeEnum, BasicType};
         let triple = module.get_triple();
         let triple = triple.as_str().to_str().map_err(|e| e.to_string())?.to_string();
         let konvention = match convention {
@@ -506,7 +607,7 @@ impl<'ctx> ExternRegistry<'ctx> {
                 param_structs.push(Some((layout.llvm_type, layout.alignment, layout.size.max(16) as u32)));
             } else {
                 formen.push(None);
-                skalare.push(Some(value_type(input)?));
+                skalare.push(Some(value_type_in(input, &|n| layouts.layout(n).is_some())?));
                 param_structs.push(None);
             }
         }
@@ -522,7 +623,7 @@ impl<'ctx> ExternRegistry<'ctx> {
                 (Some(layouts.flach(context, target, &n)?), Some((layout.llvm_type, layout.alignment, layout.size.max(16) as u32)), None)
             }
             None if void => (None, None, None),
-            None => (None, None, Some(value_type(result)?)),
+            None => (None, None, Some(value_type_in(result, &|n| layouts.layout(n).is_some())?)),
         };
         let plan = crate::ffi_abi::plane(abi, &param_formen, result_form.as_ref())?;
         let ptr = context.ptr_type(inkwell::AddressSpace::default());
@@ -580,23 +681,233 @@ impl<'ctx> ExternRegistry<'ctx> {
             (None, None) => context.void_type().fn_type(&llvm_params, false),
             _ => return Err(format!("C-ABI '{name}': Rueckgabe nicht klassifizierbar")),
         };
-        let function = module.add_function(name, function_type, None);
-        if convention != CC_C {
-            function.set_call_conventions(convention);
-        }
-        for (index, attr) in attrs {
-            function.add_attribute(AttributeLoc::Param(index), attr);
-        }
-        if let Some(ext) = result_ext {
-            function.add_attribute(AttributeLoc::Return, context.create_enum_attribute(Attribute::get_named_enum_kind_id(ext), 0));
-        }
-        self.abi_bindings.insert(name.to_owned(), AbiBinding {
-            function, params: inputs.to_vec(), result: result.clone(), plan,
-            param_structs, result_struct, param_ext, result_ext,
-        });
-        Ok(())
-    }
+        Ok(AbiForm { function_type, attrs, result_ext, plan, param_structs, result_struct, param_ext })
+}
 
+/// P2-T19/T56 D1 (Plan 91033131): externer C-ABI-Thunk `name` vor der internen
+/// Moo-Funktion `internal` (Strukturparameter als Zeiger auf eine exklusive
+/// Kopie, Strukturrueckgabe ueber sret, native_system::SystemSignature).
+/// Umkehrung von AbiBinding::emit_call: Registerteile werden in einen
+/// ausgerichteten Entry-Puffer zusammengesetzt; byval-/indirekte Zeiger zeigen
+/// bereits auf eine dem Aufgerufenen gehoerende Kopie des Aufrufers.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emit_abi_export<'ctx>(
+    context: &'ctx inkwell::context::Context,
+    module: &inkwell::module::Module<'ctx>,
+    target: &inkwell::targets::TargetData,
+    name: &str,
+    internal: inkwell::values::FunctionValue<'ctx>,
+    inputs: &[TypeRef],
+    result: &TypeRef,
+    layouts: &crate::native_struct::NativeStructRegistry<'ctx>,
+    convention: u32,
+    linkage: inkwell::module::Linkage,
+    rueckruf: Option<RueckrufVertrag<'ctx>>,
+) -> Result<inkwell::values::FunctionValue<'ctx>, String> {
+    use crate::ffi_abi::Uebergabe;
+    use inkwell::attributes::{Attribute, AttributeLoc};
+    use inkwell::values::{BasicMetadataValueEnum, BasicValue};
+    let e = |err: inkwell::builder::BuilderError| err.to_string();
+    let ea = |err: inkwell::values::InstructionValueError| err.to_string();
+    if module.get_function(name).is_some() || module.get_global(name).is_some() {
+        return Err(format!("Native Funktion '{name}': @einstieg-Symbolkollision"));
+    }
+    let form = abi_form(context, module, target, name, inputs, result, layouts, convention)?;
+    let thunk = module.add_function(name, form.function_type, Some(linkage));
+    if convention != CC_C {
+        thunk.set_call_conventions(convention);
+    }
+    for (index, attr) in &form.attrs {
+        thunk.add_attribute(AttributeLoc::Param(*index), *attr);
+    }
+    if let Some(ext) = form.result_ext {
+        thunk.add_attribute(AttributeLoc::Return, context.create_enum_attribute(Attribute::get_named_enum_kind_id(ext), 0));
+    }
+    let builder = context.create_builder();
+    builder.position_at_end(context.append_basic_block(thunk, "entry"));
+    // P2-T21/T57 B1 (Plan f4655d20 E4d/E5): fehlbarer hosted Rueckruf -
+    // Thread-Pruefung und kein Koerperlauf bei bereits anstehendem Moo-Fehler.
+    let rueckruf_fehler = match &rueckruf {
+        Some(vertrag) => {
+            let thread = crate::codegen_native::native_rueckruf_thread_hook(context, module)?;
+            let text = builder.build_global_string_ptr(&vertrag.name, "rueckruf.name").map_err(e)?;
+            builder.build_call(thread, &[text.as_pointer_value().into()], "").map_err(e)?;
+            let fehler = context.append_basic_block(thunk, "rueckruf.fehler");
+            rueckruf_flag_verzweigen(context, &builder, module, thunk, fehler, "rueckruf.start")?;
+            Some(fehler)
+        }
+        None => None,
+    };
+    let i8t = context.i8_type();
+    let i64t = context.i64_type();
+    let param = |index: u32| thunk.get_nth_param(index)
+        .ok_or_else(|| format!("C-ABI-Export '{name}': Parameter {index} fehlt"));
+    let mut next = 0u32;
+    let mut args: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
+    let mut ergebnis = None;
+    match (&form.plan.rueckgabe, form.result_struct) {
+        (Some(Uebergabe::Sret), Some(_)) => {
+            args.push(param(0)?.into());
+            next = 1;
+        }
+        (Some(Uebergabe::Register(_)), Some((_, align, bytes))) => {
+            let slot = abi_entry_puffer(context, &builder, bytes, align.max(8))?;
+            args.push(slot.into());
+            ergebnis = Some(slot);
+        }
+        (None, None) => {}
+        _ => return Err(format!("C-ABI-Export '{name}': Rueckgabeplan widerspricht dem Rueckgabetyp")),
+    }
+    for index in 0..inputs.len() {
+        match (&form.plan.params[index], form.param_structs[index]) {
+            (None, None) => {
+                args.push(param(next)?.into());
+                next += 1;
+            }
+            (Some(Uebergabe::Register(teile)), Some((_, align, bytes))) => {
+                let slot = abi_entry_puffer(context, &builder, bytes, align.max(8))?;
+                for teil_index in 0..teile.len() {
+                    let ptr = unsafe {
+                        builder.build_gep(i8t, slot, &[i64t.const_int(8 * teil_index as u64, false)], "export.teil.ptr")
+                    }.map_err(e)?;
+                    builder.build_store(ptr, param(next)?).map_err(e)?.set_alignment(8).map_err(ea)?;
+                    next += 1;
+                }
+                args.push(slot.into());
+            }
+            (Some(Uebergabe::Byval { .. } | Uebergabe::Indirekt), Some(_)) => {
+                args.push(param(next)?.into());
+                next += 1;
+            }
+            _ => return Err(format!("C-ABI-Export '{name}': Parameter {} nicht klassifizierbar", index + 1)),
+        }
+    }
+    if next != thunk.count_params() {
+        return Err(format!("C-ABI-Export '{name}': Parameterzahl widerspricht dem Signaturplan"));
+    }
+    let call = builder.build_call(internal, &args, "export.innen").map_err(e)?;
+    call.set_call_convention(internal.get_call_conventions());
+    if let Some(fehler) = rueckruf_fehler {
+        rueckruf_flag_verzweigen(context, &builder, module, thunk, fehler, "rueckruf.ok")?;
+    }
+    match (&form.plan.rueckgabe, ergebnis) {
+        (Some(Uebergabe::Register(teile)), Some(slot)) => {
+            let wert = if teile.len() == 1 {
+                let wert = builder.build_load(abi_teil_typ(context, teile[0], true)?, slot, "export.rueck").map_err(e)?;
+                wert.as_instruction_value().ok_or("C-ABI: Load fehlt")?.set_alignment(8).map_err(ea)?;
+                wert
+            } else {
+                let typen = teile.iter().map(|teil| abi_teil_typ(context, *teil, false)).collect::<Result<Vec<_>, String>>()?;
+                let mut aggregat = context.struct_type(&typen, false).get_undef();
+                for (teil_index, typ) in typen.iter().enumerate() {
+                    let ptr = unsafe {
+                        builder.build_gep(i8t, slot, &[i64t.const_int(8 * teil_index as u64, false)], "export.rueck.ptr")
+                    }.map_err(e)?;
+                    let teil = builder.build_load(*typ, ptr, "export.rueck.teil").map_err(e)?;
+                    teil.as_instruction_value().ok_or("C-ABI: Load fehlt")?.set_alignment(8).map_err(ea)?;
+                    aggregat = builder.build_insert_value(aggregat, teil, teil_index as u32, "export.rueck.agg")
+                        .map_err(e)?.into_struct_value();
+                }
+                aggregat.as_basic_value_enum()
+            };
+            builder.build_return(Some(&wert)).map_err(e)?;
+        }
+        (Some(Uebergabe::Sret), _) => {
+            builder.build_return(None).map_err(e)?;
+        }
+        _ => match call.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(wert) => { builder.build_return(Some(&wert)).map_err(e)?; }
+            _ => { builder.build_return(None).map_err(e)?; }
+        },
+    }
+    if let (Some(fehler), Some(vertrag)) = (rueckruf_fehler, &rueckruf) {
+        builder.position_at_end(fehler);
+        match vertrag.fehlerwert {
+            Some(wert) => { builder.build_return(Some(&wert)).map_err(e)?; }
+            None => { builder.build_return(None).map_err(e)?; }
+        }
+    }
+    Ok(thunk)
+}
+
+/// P2-T21/T57 E4 (Plan f4655d20): Fehlervertrag eines fehlbaren hosted
+/// Rueckrufs. fehlerwert = vereinbarter Rueckgabewert an C (None bei void);
+/// der Moo-Fehler bleibt als Flag anstehen (Fehlerkanal zum Moo-Aufrufer).
+pub(crate) struct RueckrufVertrag<'ctx> {
+    pub(crate) name: String,
+    pub(crate) fehlerwert: Option<inkwell::values::BasicValueEnum<'ctx>>,
+}
+
+/// Steht ein Moo-Fehler an (moo_native_fehler_offen != 0) -> `fehler`, sonst
+/// weiter in einem neuen Block `weiter`.
+fn rueckruf_flag_verzweigen<'ctx>(
+    context: &'ctx inkwell::context::Context,
+    builder: &inkwell::builder::Builder<'ctx>,
+    module: &inkwell::module::Module<'ctx>,
+    thunk: inkwell::values::FunctionValue<'ctx>,
+    fehler: inkwell::basic_block::BasicBlock<'ctx>,
+    weiter: &str,
+) -> Result<(), String> {
+    let hook = crate::codegen_native::native_fehler_offen_hook(context, module)?;
+    let flag = match builder.build_call(hook, &[], "rueckruf.fehler.offen").map_err(|e| e.to_string())?.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+        _ => return Err("moo_native_fehler_offen liefert keinen Wert".into()),
+    };
+    let offen = builder.build_int_compare(
+        inkwell::IntPredicate::NE, flag, context.i32_type().const_zero(), "rueckruf.fehler.gesetzt",
+    ).map_err(|e| e.to_string())?;
+    let naechster = context.append_basic_block(thunk, weiter);
+    builder.build_conditional_branch(offen, fehler, naechster).map_err(|e| e.to_string())?;
+    builder.position_at_end(naechster);
+    Ok(())
+}
+
+/// P2-T21/T57 E4b: Fehlerwert aus `@rückruf(n)` fuer den Ergebnistyp - Zahlliteral
+/// streng im Zielbereich (kein Wrap), bool nur 0/1, Zeiger nur 0 (= nichts).
+pub(crate) fn rueckruf_fehlerwert<'ctx>(
+    context: &'ctx inkwell::context::Context,
+    ty: &TypeRef,
+    arg: Option<&crate::ast::DecoratorArg>,
+    name: &str,
+) -> Result<inkwell::values::BasicValueEnum<'ctx>, String> {
+    use inkwell::values::BasicValue;
+    let zahl = match arg {
+        Some(crate::ast::DecoratorArg::Zahl(zahl)) => *zahl,
+        Some(_) => return Err(format!("@rückruf an '{name}': der Fehlerwert muss ein Zahlliteral sein")),
+        None => return Err(format!(
+            "Rückruf '{name}' kann fehlschlagen; @rückruf(fehlerwert) angeben oder Fehler durch Vorprüfung (teilbar, verschiebbar, als-Prüfung) ausschließen"
+        )),
+    };
+    let skalar = value_type(ty)?;
+    let ausserhalb = || format!("@rückruf an '{name}': Fehlerwert {zahl} liegt ausserhalb von {skalar:?}");
+    Ok(match skalar {
+        FfiType::F32 => context.f32_type().const_float(zahl).as_basic_value_enum(),
+        FfiType::F64 => context.f64_type().const_float(zahl).as_basic_value_enum(),
+        FfiType::Bool if zahl == 0.0 || zahl == 1.0 =>
+            context.bool_type().const_int(zahl as u64, false).as_basic_value_enum(),
+        FfiType::Pointer if zahl == 0.0 =>
+            context.ptr_type(inkwell::AddressSpace::default()).const_null().as_basic_value_enum(),
+        FfiType::Bool | FfiType::Pointer => return Err(ausserhalb()),
+        ganz => {
+            let (min, max): (i128, i128) = match ganz {
+                FfiType::I8 => (i8::MIN.into(), i8::MAX.into()),
+                FfiType::I16 => (i16::MIN.into(), i16::MAX.into()),
+                FfiType::I32 => (i32::MIN.into(), i32::MAX.into()),
+                FfiType::I64 => (i64::MIN.into(), i64::MAX.into()),
+                FfiType::U8 => (0, u8::MAX.into()),
+                FfiType::U16 => (0, u16::MAX.into()),
+                FfiType::U32 => (0, u32::MAX.into()),
+                _ => (0, u64::MAX.into()),
+            };
+            if !zahl.is_finite() || zahl.fract() != 0.0 { return Err(ausserhalb()); }
+            let wert = zahl as i128;
+            if wert < min || wert > max { return Err(ausserhalb()); }
+            ganz.llvm_type(context).into_int_type().const_int(wert as i64 as u64, false).as_basic_value_enum()
+        }
+    })
+}
+
+impl<'ctx> ExternRegistry<'ctx> {
     pub(crate) fn declare(
         &mut self,
         context: &'ctx inkwell::context::Context,
@@ -754,6 +1065,7 @@ impl FfiSignature {
         params: &[TypeRef],
         result: &TypeRef,
         variadic: bool,
+        nominal: &crate::native_type_id::NominalTypes,
     ) -> Result<Self, String> {
         if !matches!(triple, "x86_64-unknown-linux-gnu" | "x86_64-pc-linux-gnu"
             | "x86_64-pc-windows-msvc" | "x86_64-pc-windows-gnu"
@@ -766,17 +1078,19 @@ impl FfiSignature {
         }
         let source_params = params.to_vec();
         let source_result = result.clone();
-        let params = params.iter().map(value_type).collect::<Result<Vec<_>, _>>()?;
+        let ist_struktur = |n: &str| nominal.contains_key(n);
+        let params = params.iter().map(|ty| value_type_in(ty, &ist_struktur)).collect::<Result<Vec<_>, _>>()?;
         let result = match &result.kind {
             TypeKind::Name(name) if name == "void" => None,
-            _ => Some(value_type(result)?),
+            _ => Some(value_type_in(result, &ist_struktur)?),
         };
         // Erst nach der FFI-Typmengenpruefung aufloesen: der Resolver darf
         // keine zusaetzlichen Typen oder Pointer-Calls freischalten.
-        let nominal = crate::native_type_id::NominalTypes::new();
-        let semantic_params = source_params.iter().map(|ty| crate::native_type_id::resolve_type(ty, &nominal))
+        // P2-T21/T57 A2: nominale Registry des Moduls (ptr[Struktur] in
+        // Rueckruf-Signaturen); Zusatztypen schaltet sie nicht frei.
+        let semantic_params = source_params.iter().map(|ty| crate::native_type_id::resolve_type(ty, nominal))
             .collect::<Result<Vec<_>, _>>()?;
-        let semantic_result = crate::native_type_id::resolve_type(&source_result, &nominal)?;
+        let semantic_result = crate::native_type_id::resolve_type(&source_result, nominal)?;
         Ok(Self { params, result, target: triple.to_string(), source_params, source_result: Some(source_result), semantic_params, semantic_result, convention: CC_C, semantic_convention: None })
     }
 
@@ -850,11 +1164,8 @@ impl FfiSignature {
         if args.len() != self.params.len() {
             return Err("Indirekter Aufruf: falsche Argumentzahl".into());
         }
-        // Erste Freigabe beschränkt sich auf Ganzzahlen, Pointer und void.
-        if self.params.iter().chain(self.result.iter())
-            .any(|ty| matches!(ty, FfiType::F32 | FfiType::F64)) {
-            return Err("Indirekter Aufruf: Float-Signatur noch nicht freigegeben".into());
-        }
+        // P2-T21/T57 A3: Ganzzahlen, bool, f32/f64, Pointer und void – dieselbe
+        // Signaturmenge wie fuer Rueckrufe in Gegenrichtung.
         for ((arg, ty), identity) in args.iter().zip(&self.params).zip(&self.semantic_params) {
             if &arg.identity != identity || arg.value.get_type() != ty.llvm_type(context) {
                 return Err("Indirekter Aufruf: Argumenttyp stimmt nicht".into());
@@ -916,11 +1227,15 @@ fn indirect_value_type(
         NativeTypeId::Scalar(ScalarType::U32) => FfiType::U32,
         NativeTypeId::Scalar(ScalarType::U64) => FfiType::U64,
         NativeTypeId::Scalar(ScalarType::Bool) => FfiType::Bool,
+        NativeTypeId::Scalar(ScalarType::F32) => FfiType::F32,
+        NativeTypeId::Scalar(ScalarType::F64) => FfiType::F64,
         NativeTypeId::Pointer { address_space: 0, pointee } => {
             // Nominale Datenpointee nur aus der expliziten kanonischen Registry.
             // Das verleiht weder Speicher noch Layout oder Lebensdauern Gültigkeit.
             match pointee.as_ref() {
                 NativeTypeId::Void => {},
+                // P2-T21/T57 A3: Funktionszeiger als Parameter (z. B. qsort-Vergleicher).
+                NativeTypeId::Function { variadic: false, .. } => {},
                 NativeTypeId::Nominal { module, name }
                     if !module.is_empty() && !name.is_empty()
                         && nominal.values().any(|(m, n)| m == module && n == name) => {},

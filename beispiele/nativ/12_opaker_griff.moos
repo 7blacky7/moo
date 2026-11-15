@@ -1,0 +1,39 @@
+# Opaker Griff mit @opak und @verbraucht. Dasselbe Muster gilt für eine C++-Klasse
+# hinter einem extern-"C"-Adapter (Test compiler/tests/p2/cpp_griff.moos);
+# hier mit libc-FILE als Griff, damit das Beispiel ohne eigene Bibliothek läuft.
+# Erwartete Ausgabe: 65066, 0
+@opak struktur Datei
+
+extern "C" funktion tmpfile() -> ptr[Datei]
+extern "C" funktion fputc(c: i32, f: ptr[Datei]) -> i32
+extern "C" funktion fgetc(f: ptr[Datei]) -> i32
+extern "C" funktion rewind(f: ptr[Datei]) -> void
+extern "C" funktion fclose(f: ptr[Datei]) -> i32
+
+@nativ
+funktion oeffne() -> ptr[Datei]:
+    unsicher:
+        setze f: ptr[Datei] auf tmpfile()
+        gib_zurück f
+
+@nativ
+@verbraucht(1)
+funktion schliesse(f: ptr[Datei]) -> i32:
+    unsicher:
+        setze r: i32 auf fclose(f)
+        gib_zurück r
+
+@nativ
+funktion schreibe_lies(f: ptr[Datei]) -> i32:
+    unsicher:
+        fputc(65, f)
+        fputc(66, f)
+        rewind(f)
+        setze a: i32 auf fgetc(f)
+        setze b: i32 auf fgetc(f)
+        gib_zurück a * 1000 + b
+
+unsicher:
+    setze d auf oeffne()
+    zeige schreibe_lies(d)
+    zeige schliesse(d)

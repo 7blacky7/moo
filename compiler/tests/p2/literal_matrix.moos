@@ -1,0 +1,119 @@
+# P2-T5 (Plan b1f51d65 A3): Literal-Testmatrix nativ und dynamisch.
+# Grenzwerte je Ganzzahltyp (inkl. negiertes i64-Minimum), f32/f64-Halbwegsfaelle
+# (round-half-even direkt zum Zieltyp), Subnormale, Exponentenschreibweise,
+# Unterlauf (Warnung, Gate prueft stderr), Bereich 1..3 und Kommazahl 1.5.
+@nativ
+funktion i8_min() -> i8:
+    gib_zurück -128
+
+@nativ
+funktion i8_max() -> i8:
+    gib_zurück 127
+
+@nativ
+funktion u8_max() -> u8:
+    gib_zurück 0xff
+
+@nativ
+funktion i16_min() -> i16:
+    gib_zurück -32768
+
+@nativ
+funktion u16_max() -> u16:
+    gib_zurück 65535
+
+@nativ
+funktion i32_min() -> i32:
+    gib_zurück -2147483648
+
+@nativ
+funktion u32_max() -> u32:
+    gib_zurück 0o37777777777
+
+@nativ
+funktion i64_min() -> i64:
+    gib_zurück -9223372036854775808
+
+@nativ
+funktion i64_max_ist_ok() -> bool:
+    setze x: i64 auf 9223372036854775807
+    gib_zurück x == 0x7fffffffffffffff
+
+@nativ
+funktion u64_max_ist_ok() -> bool:
+    setze x: u64 auf 18446744073709551615
+    gib_zurück x == 0xffffffffffffffff
+
+@nativ
+funktion null_negativ() -> i32:
+    gib_zurück -0
+
+@nativ
+funktion f32_halb_gerade() -> bool:
+    setze a: f32 auf 16777217.0
+    setze b: f32 auf 16777216.0
+    gib_zurück a == b
+
+@nativ
+funktion f32_halb_auf() -> bool:
+    setze a: f32 auf 16777219.0
+    setze b: f32 auf 16777220.0
+    gib_zurück a == b
+
+@nativ
+funktion f64_halb_gerade() -> bool:
+    setze a: f64 auf 9007199254740993.0
+    setze b: f64 auf 9007199254740992.0
+    gib_zurück a == b
+
+@nativ
+funktion f32_max() -> f32:
+    gib_zurück 3.4028235e38
+
+@nativ
+funktion f32_subnormal_ist_ok() -> bool:
+    setze a: f32 auf 1e-45
+    setze b: f32 auf 0.0
+    gib_zurück a > b
+
+@nativ
+funktion f64_subnormal_ist_ok() -> bool:
+    setze a: f64 auf 5e-324
+    setze b: f64 auf 0.0
+    gib_zurück a > b
+
+@nativ
+funktion f32_unterlauf() -> f32:
+    gib_zurück 1e-50
+
+@nativ
+funktion f64_exponent() -> f64:
+    gib_zurück 2.5E+3
+
+zeige i8_min()
+zeige i8_max()
+zeige u8_max()
+zeige i16_min()
+zeige u16_max()
+zeige i32_min()
+zeige u32_max()
+zeige i64_min()
+zeige i64_max_ist_ok()
+zeige u64_max_ist_ok()
+zeige null_negativ()
+zeige f32_halb_gerade()
+zeige f32_halb_auf()
+zeige f64_halb_gerade()
+zeige f32_max()
+zeige f32_subnormal_ist_ok()
+zeige f64_subnormal_ist_ok()
+zeige f32_unterlauf()
+zeige f64_exponent()
+zeige 1e-6
+zeige 2.5E+3
+zeige 1e3
+setze e5 auf 7
+zeige 1 + e5
+zeige 1.5
+für i in 1..3:
+    zeige i

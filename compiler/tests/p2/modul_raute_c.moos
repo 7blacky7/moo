@@ -1,0 +1,4 @@
+# P2-T47 E2: gemeinsames Modul des Rautenimports (A und B importieren C).
+struktur RPunkt:
+    x: i32
+    y: i32

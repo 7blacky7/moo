@@ -10,6 +10,10 @@ struct MooStructBox {
     int32_t refcount; /* Generic MooValue heap release requires first field. */
     const MooStructDescriptor* type;
     unsigned char* data;
+    /* P2-T49: Laufzeitbeschreibung v2 (NULL bei Alt-API) und, bei einer Sicht,
+     * die Wurzelbox, der data gehoert (NULL = eigene Daten). */
+    const MooStrukturTyp* typ;
+    MooStructBox* besitzer;
 };
 
 static int moo_struct_valid(const MooStructDescriptor* t) {
@@ -87,7 +91,7 @@ MooStructStatus moo_struct_box_new(const MooStructDescriptor* t, const void* src
     if (!b) return MOO_STRUCT_ALLOC;
     b->data = calloc(1, t->size);
     if (!b->data) { free(b); return MOO_STRUCT_ALLOC; }
-    b->refcount = 1; b->type = t;
+    b->refcount = 1; b->type = t; b->typ = NULL; b->besitzer = NULL;
     for (size_t i = 0; i < t->field_count; ++i) {
         const MooStructField* f = &t->fields[i];
         memcpy(b->data + f->offset, (const unsigned char*)src + f->offset, f->size);
@@ -127,8 +131,11 @@ MooStructStatus moo_struct_box_retain(MooStructBox* b) {
 void moo_struct_box_free(void* ptr) {
     MooStructBox* b = ptr;
     if (!b) return;
-    free(b->data);
+    MooStructBox* besitzer = b->besitzer;
+    if (!besitzer) free(b->data);
     free(b);
+    /* Sicht: Speicher gehoert der Wurzel, nur deren Referenz abgeben. */
+    if (besitzer) moo_struct_box_drop(besitzer);
 }
 void moo_struct_box_drop(MooStructBox* b) {
     if (b && --b->refcount == 0) moo_struct_box_free(b);
@@ -156,4 +163,89 @@ MooStructStatus moo_struct_box_set(MooStructBox* b, const char* field, const voi
     if (!f || f->size != size) return MOO_STRUCT_FIELD;
     memmove(b->data + f->offset, value, size);
     return MOO_STRUCT_OK;
+}
+
+/* ---- P2-T49 (Plan 38c59c64 A1): Laufzeitbeschreibung Version 2 ---- */
+static size_t moo_struktur_skalar_groesse(uint8_t skalar) {
+    switch (skalar) {
+    case MOO_BUFFER_I8: case MOO_BUFFER_U8: return 1;
+    case MOO_BUFFER_I16: case MOO_BUFFER_U16: return 2;
+    case MOO_BUFFER_I32: case MOO_BUFFER_U32: case MOO_BUFFER_F32: return 4;
+    case MOO_BUFFER_I64: case MOO_BUFFER_U64: case MOO_BUFFER_F64: return 8;
+    default: return 0;
+    }
+}
+
+static int moo_struktur_typ_gueltig_tiefe(const MooStrukturTyp* t, uint32_t tiefe) {
+    if (!t || tiefe > MOO_STRUKTUR_MAX_TIEFE || t->version != MOO_STRUKTUR_TYP_VERSION ||
+        !t->typ_id || !t->feld_anzahl || !t->felder || !moo_struct_valid(&t->basis)) return 0;
+    for (uint32_t i = 0; i < t->feld_anzahl; ++i) {
+        const MooStrukturFeld* f = &t->felder[i];
+        if (!f->name || !f->anzahl || !f->groesse || f->versatz > t->basis.size ||
+            f->groesse > t->basis.size - f->versatz || f->groesse % f->anzahl) return 0;
+        size_t element = f->groesse / f->anzahl;
+        if (f->art == MOO_FELD_ARRAY) {
+            if (f->element == MOO_FELD_ARRAY) return 0;
+        } else if (f->art != f->element || f->anzahl != 1) {
+            return 0;
+        }
+        switch (f->element) {
+        case MOO_FELD_SKALAR:
+            if (moo_struktur_skalar_groesse(f->skalar) != element) return 0;
+            break;
+        case MOO_FELD_BOOL:
+            if (element != 1) return 0;
+            break;
+        case MOO_FELD_STRUKTUR:
+            if (!f->struktur || f->struktur->basis.size != element ||
+                !moo_struktur_typ_gueltig_tiefe(f->struktur, tiefe + 1)) return 0;
+            break;
+        default:
+            return 0; /* Zeiger u. a. sind nicht boxbar (E5). */
+        }
+        for (uint32_t j = 0; j < i; ++j)
+            if (strcmp(f->name, t->felder[j].name) == 0) return 0;
+    }
+    return 1;
+}
+
+int moo_struktur_typ_gueltig(const MooStrukturTyp* typ) {
+    return moo_struktur_typ_gueltig_tiefe(typ, 0);
+}
+
+MooStructStatus moo_struct_box_new_typ(const MooStrukturTyp* typ, const void* source, MooStructBox** out) {
+    if (!out) return MOO_STRUCT_INVALID;
+    *out = NULL;
+    if (!moo_struktur_typ_gueltig(typ)) return MOO_STRUCT_INVALID;
+    MooStructStatus status = moo_struct_box_new(&typ->basis, source, out);
+    if (status == MOO_STRUCT_OK) (*out)->typ = typ;
+    return status;
+}
+
+MooStructStatus moo_struct_box_sicht(MooStructBox* besitzer, const MooStrukturTyp* typ,
+                                     size_t versatz, MooStructBox** out) {
+    if (!out) return MOO_STRUCT_INVALID;
+    *out = NULL;
+    if (!besitzer || !moo_struktur_typ_gueltig(typ) || versatz > besitzer->type->size ||
+        typ->basis.size > besitzer->type->size - versatz) return MOO_STRUCT_INVALID;
+    MooStructBox* wurzel = besitzer->besitzer ? besitzer->besitzer : besitzer;
+    MooStructBox* b = malloc(sizeof(*b));
+    if (!b) return MOO_STRUCT_ALLOC;
+    MooStructStatus status = moo_struct_box_retain(wurzel);
+    if (status != MOO_STRUCT_OK) { free(b); return status; }
+    b->refcount = 1;
+    b->type = &typ->basis;
+    b->data = besitzer->data + versatz;
+    b->typ = typ;
+    b->besitzer = wurzel;
+    *out = b;
+    return MOO_STRUCT_OK;
+}
+
+const MooStrukturTyp* moo_struct_box_typ(const MooStructBox* b) {
+    return b ? b->typ : NULL;
+}
+
+unsigned char* moo_struct_box_daten(const MooStructBox* b) {
+    return b ? b->data : NULL;
 }

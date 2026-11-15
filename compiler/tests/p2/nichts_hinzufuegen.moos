@@ -1,0 +1,41 @@
+# P2-T90 (Befund aus T87): hinzufügen/append auf nichts oder einer anderen
+# Nicht-Liste ist ein fangbarer Moo-Fehler statt eines Absturzes; Listen
+# bleiben unveraendert nutzbar.
+setze n auf nichts
+versuche:
+    n.hinzufügen(3)
+    zeige "NICHT ERREICHT"
+fange fehler:
+    zeige fehler
+setze zahl auf 5
+versuche:
+    zahl.append(1)
+    zeige "NICHT ERREICHT"
+fange fehler:
+    zeige fehler
+# Review 263bb18d: Heap-Argumente (Text, Liste, Woerterbuch) werden beim
+# fangbaren Fehler nicht uebernommen und vom Methodenarm freigegeben
+# (Leckfreiheit: Lauf unter LSan, skripte/p2/frontend puffer_m2.sh).
+setze runde auf 0
+solange runde < 3:
+    versuche:
+        n.hinzufügen("Text " + runde)
+        zeige "NICHT ERREICHT"
+    fange fehler:
+        zeige fehler
+    versuche:
+        zahl.append([runde, runde])
+        zeige "NICHT ERREICHT"
+    fange fehler:
+        zeige fehler
+    versuche:
+        n.append({"runde": runde})
+        zeige "NICHT ERREICHT"
+    fange fehler:
+        zeige fehler
+    setze runde auf runde + 1
+setze liste auf [1]
+liste.hinzufügen(2)
+liste.hinzufügen("drei")
+zeige liste
+zeige "ende"

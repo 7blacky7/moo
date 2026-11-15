@@ -1,0 +1,14 @@
+# P2-T47 (Review 49a04c50): ein Parameter `m` verdeckt den Modulalias nur in
+# SEINER Funktion; Funktion b und das Top-Level qualifizieren weiter.
+importiere modul_import_matrix als m
+daten klasse Huelle(MGRENZE)
+
+funktion a(m):
+    gib_zurück m.MGRENZE
+
+funktion b():
+    gib_zurück m.m_skalar(2, 0.5)
+
+zeige a(neu Huelle(99))
+zeige b()
+zeige m.m_skalar(1, 0.5)

@@ -66,15 +66,15 @@ funktion schmal_probe() -> i32:
         gib_zurück p2_ffi_schmal(-1, 255)
 ```
 
-The snippet comes from the test `bibliothek_ziel_linux`; it needs a matching C library and is therefore not an example under `beispiele/nativ/`. The first FFI increment covers fixed scalar integer/float arguments, pointers and `void`; the library can be named per target (`linux="..."`). The compiler currently rejects aggregates and function types by value (message "Aggregate und Funktionstypen by value sind nicht freigegeben") and `bool` (message "C-bool ist bis zum ABI-Nachweis nicht freigegeben"). Variadics stay rejected until target ABI lowering is demonstrated. C `_Bool`, C++ `bool` and Win32 `BOOL` require separate handling. Target triple, calling convention and data layout are selected before IR generation.
+The snippet comes from the test `bibliothek_ziel_linux`; it needs a matching C library and is therefore not an example under `beispiele/nativ/`. The first FFI increment covers fixed scalar integer/float arguments, pointers and `void`; the library can be named per target (`linux="..."`). Structures by value (parameters and returns, `beispiele/nativ/11_struktur_by_value.moos`) and C `bool` are released (P2-T19/T56). Still rejected are fixed arrays and bare function types by value (message "Aggregate und Funktionstypen by value sind nicht freigegeben"); function pointers are passed only as `ptr[fn(...) -> R]` with `@rückruf` (see below). Variadics stay rejected until target ABI lowering is demonstrated. C `_Bool`, C++ `bool` and Win32 `BOOL` require separate handling. Target triple, calling convention and data layout are selected before IR generation.
 
 Each binding specifies borrowing or transfer, lifetime, nullability, mutability, pinning, deallocator and error handling. Foreign code may retain a buffer only for the agreed duration. C++ integration starts with an `extern "C"` adapter and opaque handle; the adapter catches C++ exceptions.
 
-Callbacks (parameters of type `fn(i32) -> i32` in `extern "C"`) are not released: the compiler rejects them with the same message as aggregates. The following contract applies to the later release. Callbacks require a C ABI thunk with the exact signature. Captures use an explicit `user_data` contract. Registration and deregistration account for in-flight and later calls. Errors must not escape uncontrolled through foreign C frames; `void` callbacks require an out-of-band error channel. Foreign threads and reentrancy are either supported or explicitly rejected.
+Callbacks are released (P2-T21/T57). A top-level `@nativ` function with `@rückruf` gets a C ABI thunk and is passed as `ptr[fn(...) -> R]` (`beispiele/nativ/10_rueckruf.moos`, using libc `qsort`). Without `@rückruf` a native function is not a C function pointer; lambdas, methods and dynamic functions are not allowed, use the `user_data` pattern instead. Fallible callbacks need an agreed error value (`@rückruf(0)`, test `rueckruf_fehler`): C runs to completion and the Moo caller checks immediately afterwards. Calls from a foreign C thread are tested (`rueckruf_sicher`). In detail: callbacks require a C ABI thunk with the exact signature. Captures use an explicit `user_data` contract. Registration and deregistration account for in-flight and later calls. Errors must not escape uncontrolled through foreign C frames; `void` callbacks require an out-of-band error channel. Foreign threads and reentrancy are either supported or explicitly rejected.
 
 ## Vectors and matrices
 
-Not released: the compiler only contains scalar LLVM building blocks (`native_vecmat.rs`, f32, column-major matrix); there is no Moo syntax and no test. The following contract is the target state. `vec2`, `vec3`, `vec4` and `mat4` are mathematical `f32` value types; explicit `f64` variants are possible. A matrix transforms a column vector as matrix times vector. Matrix times matrix is matrix multiplication, vector times vector is componentwise, and dot product is a named operation. No fixed SIMD or GPU layout is assumed. Row-/column-major and std140/std430 boundaries require explicit adapters.
+Released (P2-T16): `vec2`, `vec3`, `vec4` and `mat4` are built-in language types (`beispiele/nativ/06_vec_mat.moos`). There are operators, `punkt`, `kreuz`, `betrag` and `normalisiere` (English `dot`, `cross`, `magnitude`, `normalize`), field access such as `m.s3.x`, and the types work as parameters, returns, structure fields, array elements and in `puffer[vec3]`. Integer components and mixtures are rejected (the scalar must be `f32`); `länge` stays the element count. A user-defined `struktur vec3` shadows the built-in one (test `vecmat_eigene`). `vec2`, `vec3`, `vec4` and `mat4` are mathematical `f32` value types; explicit `f64` variants are possible. A matrix transforms a column vector as matrix times vector. Matrix times matrix is matrix multiplication, vector times vector is componentwise, and dot product is a named operation. No fixed SIMD or GPU layout is assumed. Row-/column-major and std140/std430 boundaries require explicit adapters.
 
 ## Dynamic boundary and migration
 
@@ -92,7 +92,14 @@ When moving a C function, first specify its target ABI, signature, ownership, er
 | Typed buffers | implemented (basic form) | `beispiele/nativ/04_puffer.moos` |
 | Structures, `@gepackt`, fixed arrays | declaration implemented | `beispiele/nativ/05_struktur_layout.moos` |
 | `extern "C"`, `@bibliothek(target=...)`, `unsicher` | implemented for scalar signatures and pointers | tests `bibliothek_ziel_*`, `ffi_*`, `zeiger_lesen*` in `compiler/tests/p2` |
-| Arrays by value and callbacks in FFI (C `bool` and struct values are released since P2-T19/T56) | rejected (not released) | tests `ffi_aggregat`, `ffi_callback_*` |
-| `vec2/3/4`, `mat4` | compiler building blocks only, no language syntax | `compiler/src/native_vecmat.rs` |
+| Structures by value and C `bool` in FFI | implemented (P2-T19/T56) | `beispiele/nativ/11_struktur_by_value.moos` |
+| Fixed arrays and bare function types by value in FFI | rejected (not released) | test `ffi_aggregat` |
+| C callbacks `@rückruf` | implemented (P2-T21/T57) | `beispiele/nativ/10_rueckruf.moos` |
+| Opaque handles (`@opak`, `@verbraucht`), C++ via extern-C adapter | implemented (P2-T23/T53) | `beispiele/nativ/12_opaker_griff.moos`, tests `cpp_griff*` |
+| Pointer arithmetic, reinterpretation `zeiger(p)` | implemented (P2-T17/T51/T55) | `beispiele/nativ/07_zeiger.moos` |
+| Borrow `@liest` (buffer, tensor, frame without copy) | implemented (P2-T83) | `beispiele/nativ/08_leihgabe_liest.moos` |
+| Native calls from methods and lambdas | implemented (P2-T85) | `beispiele/nativ/09_aufruf_aus_methoden.moos` |
+| Structures in dynamic code | implemented (P2-T49) | `beispiele/nativ/13_struktur_dynamisch.moos` |
+| `vec2/3/4`, `mat4`, `betrag`/`magnitude` | implemented (P2-T16) | `beispiele/nativ/06_vec_mat.moos` |
 
 Linux, Windows and bare-metal claims each require their own evidence; the examples were run individually on Linux.

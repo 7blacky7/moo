@@ -92,7 +92,7 @@ fi
 echo "P2-Strukturbox-Harness: PASS"
 
 # Alle .moos Dateien mit .expected durchgehen (top-level + regression/)
-for moo_file in "$SCRIPT_DIR"/*.moos "$SCRIPT_DIR"/regression/*.moos "$SCRIPT_DIR"/p2/test_p2_dispatch.moos "$SCRIPT_DIR"/p2/test_p2_frontend_legacy.moos "$SCRIPT_DIR"/p2/ffi_deklaration.moos "$SCRIPT_DIR"/p2/struktur_layout.moos; do
+for moo_file in "$SCRIPT_DIR"/*.moos "$SCRIPT_DIR"/regression/*.moos "$SCRIPT_DIR"/p2/test_p2_dispatch.moos "$SCRIPT_DIR"/p2/methode_vorrang.moos "$SCRIPT_DIR"/p2/klasse_eltern_konstruktor.moos "$SCRIPT_DIR"/p2/nichts_hinzufuegen.moos "$SCRIPT_DIR"/p2/test_p2_frontend_legacy.moos "$SCRIPT_DIR"/p2/ffi_deklaration.moos "$SCRIPT_DIR"/p2/struktur_layout.moos; do
     [[ -f "$moo_file" ]] || continue
     test_name="$(basename "$moo_file" .moos)"
     test_dir="$(dirname "$moo_file")"

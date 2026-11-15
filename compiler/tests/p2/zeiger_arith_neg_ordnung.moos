@@ -1,0 +1,5 @@
+# P2-T17 E3 / O3 negativ: Ordnungsvergleiche auf Zeigern bleiben verboten.
+@nativ
+funktion f(p: ptr[i32], q: ptr[i32]) -> bool:
+    unsicher:
+        gib_zurück p < q

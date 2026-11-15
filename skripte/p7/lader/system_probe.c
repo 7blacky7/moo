@@ -19,6 +19,7 @@ extern void sys_klasse(uint64_t, uint64_t);
 extern uint64_t sys_puffer_index(uint64_t);
 extern uint64_t sys_strukturfeld(uint64_t);
 extern uint32_t sys_registerfeld(uint64_t);
+extern uint32_t sys_mmio(uint64_t, uint32_t);
 extern uint32_t sys_gepacktes_feld(uint64_t);
 extern uint64_t sys_feld_direkt(uint64_t);
 struct moo_paar { uint32_t a; uint64_t b; };
@@ -140,6 +141,12 @@ int main(void) {
     pruefe("strukturfeld", (int64_t)sys_strukturfeld((uint64_t)(uintptr_t)struktur), 139);
     pruefe("strukturfeld-speicher", (int64_t)struktur[1], 123);
     pruefe("registerfeld", sys_registerfeld((uint64_t)(uintptr_t)struktur), 71);
+    {
+        /* P2-T17 D1: speichergestuetztes Register, volatile geschrieben/gelesen. */
+        volatile uint32_t reg = 0;
+        pruefe("mmio", sys_mmio((uint64_t)(uintptr_t)&reg, 21), 42);
+        pruefe("mmio-register", reg, 21);
+    }
     pruefe("registerfeld-speicher", (int64_t)(uint32_t)struktur[0], 71);
     uint8_t gepacktes[5] = {0};
     pruefe("gepacktes-feld", sys_gepacktes_feld((uint64_t)(uintptr_t)gepacktes), 0x10203040);

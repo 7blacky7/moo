@@ -1,0 +1,323 @@
+# P2-T25 (Plan 962e249a C2/C3): Retained-Netz im privaten Xvfb (nie Desktop).
+# Gitter n x n in z=0 (n Zweierpotenz: alle Koordinaten exakt in f32/f64,
+# Normale exakt (0,0,1), Farben nur 0/1). (b) Chunk ueber raum_dreieck,
+# (c) Netz aus puffer[Eckpunkt] (indiziert) und puffer[f32] (fortlaufend):
+# Bilder muessen exakt gleich sein. NETZ3D_GROSS=1: n=256 (131072 Dreiecke)
+# plus Zeitmessung (a) Immediate, (b) Chunk, (c) Netz.
+importiere netz3d
+importiere vektor
+
+@nativ
+funktion gitter(p: puffer[Eckpunkt], idx: puffer[u32], n: u32) -> u64:
+    setze s: f32 auf 2.0 / als(f32, n)
+    setze nn: vec3 auf vec3(0.0, 0.0, 1.0)
+    unsicher:
+        setze j: u32 auf 0
+        solange j < n:
+            setze i: u32 auf 0
+            solange i < n:
+                setze zelle: u64 auf als(u64, j) * als(u64, n) + als(u64, i)
+                setze x0: f32 auf -1.0 + als(f32, i) * s
+                setze x1: f32 auf -1.0 + als(f32, i + 1) * s
+                setze y0: f32 auf -1.0 + als(f32, j) * s
+                setze y1: f32 auf -1.0 + als(f32, j + 1) * s
+                setze f: vec3 auf vec3(0.0, 1.0, 0.0)
+                wenn (i + j) % 2 == 0:
+                    setze f auf vec3(1.0, 0.0, 0.0)
+                setze b: u64 auf zelle * 4
+                p[b] = Eckpunkt(vec3(x0, y0, 0.0), f, nn)
+                p[b + 1] = Eckpunkt(vec3(x1, y0, 0.0), f, nn)
+                p[b + 2] = Eckpunkt(vec3(x1, y1, 0.0), f, nn)
+                p[b + 3] = Eckpunkt(vec3(x0, y1, 0.0), f, nn)
+                setze k: u64 auf zelle * 6
+                setze bb: u32 auf als_wrap(u32, b)
+                idx[k] = bb
+                idx[k + 1] = bb + 1
+                idx[k + 2] = bb + 2
+                idx[k + 3] = bb
+                idx[k + 4] = bb + 2
+                idx[k + 5] = bb + 3
+                setze i auf i + 1
+            setze j auf j + 1
+        gib_zurück länge(p)
+
+# Fortlaufend als puffer[f32]: je Zelle 6 Eckpunkte x 9 Werte.
+@nativ
+funktion gitter_f32(w: puffer[f32], n: u32) -> u64:
+    setze s: f32 auf 2.0 / als(f32, n)
+    unsicher:
+        setze j: u32 auf 0
+        solange j < n:
+            setze i: u32 auf 0
+            solange i < n:
+                setze zelle: u64 auf als(u64, j) * als(u64, n) + als(u64, i)
+                setze x0: f32 auf -1.0 + als(f32, i) * s
+                setze x1: f32 auf -1.0 + als(f32, i + 1) * s
+                setze y0: f32 auf -1.0 + als(f32, j) * s
+                setze y1: f32 auf -1.0 + als(f32, j + 1) * s
+                setze rot: f32 auf 0.0
+                setze gruen: f32 auf 1.0
+                wenn (i + j) % 2 == 0:
+                    setze rot auf 1.0
+                    setze gruen auf 0.0
+                setze e: u64 auf zelle * 54
+                setze ecke: u64 auf 0
+                solange ecke < 6:
+                    setze x: f32 auf x0
+                    setze y: f32 auf y0
+                    wenn ecke == 1:
+                        setze x auf x1
+                    wenn ecke == 2 oder ecke == 4:
+                        setze x auf x1
+                        setze y auf y1
+                    wenn ecke == 5:
+                        setze y auf y1
+                    setze o: u64 auf e + ecke * 9
+                    w[o] = x
+                    w[o + 1] = y
+                    w[o + 2] = 0.0
+                    w[o + 3] = rot
+                    w[o + 4] = gruen
+                    w[o + 5] = 0.0
+                    w[o + 6] = 0.0
+                    w[o + 7] = 0.0
+                    w[o + 8] = 1.0
+                    setze ecke auf ecke + 1
+                setze i auf i + 1
+            setze j auf j + 1
+        gib_zurück länge(w)
+
+# NETZ3D_NUR_PFADE=1 (z. B. Vulkan, dessen test_frame_grab unzuverlaessig ist):
+# Fehlschlaege nur protokollieren, damit alle Netzpfade bis zum Ende laufen.
+funktion pruefen(ok, meldung):
+    wenn nicht ok:
+        zeige "FAIL " + meldung
+        wenn umgebung("NETZ3D_NUR_PFADE") == "1":
+            gib_zurück nichts
+        wirf meldung
+    zeige meldung
+
+# Vulkan zeichnet die Befehle erst beim Swap: dort erst praesentieren, dann
+# greifen; GL greift vor dem Praesentieren (Back-Buffer).
+funktion aufnahme(win):
+    wenn umgebung("MOO_3D_BACKEND") == "vulkan":
+        raum_aktualisieren(win)
+        gib_zurück test_frame_grab(win)
+    setze b auf test_frame_grab(win)
+    raum_aktualisieren(win)
+    gib_zurück b
+
+funktion gleich(a, b):
+    setze d auf test_frame_diff(a, b)
+    gib_zurück d["geaenderte_pixel"] == 0
+
+funktion szene_anfang(win):
+    raum_löschen(win, 0.02, 0.03, 0.05)
+    raum_perspektive(win, 60, 0.1, 100)
+    raum_kamera(win, 0, 0, 3, 0, 0, 0)
+    raum_umgebungslicht(win, 0.6)
+
+funktion dreiecke(win, n):
+    setze s auf 2 / n
+    für j in 0..n:
+        für i in 0..n:
+            setze x0 auf -1 + i * s
+            setze x1 auf -1 + (i + 1) * s
+            setze y0 auf -1 + j * s
+            setze y1 auf -1 + (j + 1) * s
+            setze farbe auf (i + j) % 2 == 0 ? "#FF0000" : "#00FF00"
+            raum_dreieck(win, x0, y0, 0, x1, y0, 0, x1, y1, 0, farbe)
+            raum_dreieck(win, x0, y0, 0, x1, y1, 0, x0, y1, 0, farbe)
+
+funktion chunk_bauen(win, n):
+    setze id auf chunk_erstelle()
+    chunk_beginne(id)
+    dreiecke(win, n)
+    chunk_ende()
+    gib_zurück id
+
+funktion fehler_text(aktion):
+    versuche:
+        aktion()
+    fange f:
+        gib_zurück f
+    gib_zurück "KEIN FEHLER"
+
+# Median von genau 5 Messwerten.
+funktion median(werte):
+    werte.sortieren()
+    gib_zurück werte[2]
+
+setze gross auf umgebung("NETZ3D_GROSS") == "1"
+setze n auf gross ? 256 : 16
+setze win auf raum_erstelle("NETZ3D", 320, 240)
+versuche:
+    raum_renderzeit(win, 0)
+fange f:
+    zeige "INFO keine feste Renderzeit: " + f
+
+setze t0 auf zeit_ms()
+setze cid auf chunk_bauen(win, n)
+setze t_chunk_bau auf zeit_ms() - t0
+
+setze t0 auf zeit_ms()
+setze ecken auf puffer_erstellen(Eckpunkt, n * n * 4)
+setze idx auf puffer_erstellen(u32, n * n * 6)
+unsicher:
+    gitter(ecken, idx, n)
+setze nid auf netz3d_erstellen(ecken, idx)
+setze t_netz_bau auf zeit_ms() - t0
+
+setze werte auf puffer_erstellen(f32, n * n * 54)
+unsicher:
+    gitter_f32(werte, n)
+setze fid auf netz3d_erstellen_f32(werte, puffer_erstellen(u32, 0))
+
+szene_anfang(win)
+setze leer auf aufnahme(win)
+szene_anfang(win)
+chunk_zeichne(cid)
+setze bild_chunk auf aufnahme(win)
+szene_anfang(win)
+netz3d_zeichnen_hier(nid)
+setze bild_netz auf aufnahme(win)
+szene_anfang(win)
+netz3d_zeichnen_hier(fid)
+setze bild_f32 auf aufnahme(win)
+pruefen(nicht gleich(leer, bild_chunk), "PASS Szene sichtbar")
+pruefen(gleich(bild_chunk, bild_netz), "PASS Netz (indiziert) bildgleich zu Chunk")
+pruefen(gleich(bild_chunk, bild_f32), "PASS Netz (puffer[f32]) bildgleich zu Chunk")
+wenn gross:
+    test_frame_save_png(bild_netz, "build/p2-grafik/netz3d/netz_gross.png")
+    test_frame_save_png(bild_chunk, "build/p2-grafik/netz3d/chunk_gross.png")
+
+# Matrixweg: Netz mit mat4-Verschiebung == Chunk unter raum_verschiebe.
+szene_anfang(win)
+raum_push(win)
+raum_verschiebe(win, 0.25, 0, 0)
+chunk_zeichne(cid)
+raum_pop(win)
+setze bild_chunk_v auf aufnahme(win)
+szene_anfang(win)
+netz3d_zeichnen(nid, mat4_verschiebung(vec3(0.25, 0.0, 0.0)))
+setze bild_netz_v auf aufnahme(win)
+pruefen(nicht gleich(bild_chunk, bild_netz_v), "PASS Verschiebung wirkt")
+pruefen(gleich(bild_chunk_v, bild_netz_v), "PASS Netz mit mat4 bildgleich zu Chunk unter raum_verschiebe")
+
+# Dasselbe Netz zweimal je Bild (Re-Review 0f585c26): beide Zeichnungen sichtbar.
+szene_anfang(win)
+raum_push(win)
+raum_verschiebe(win, -0.5, 0, 0)
+chunk_zeichne(cid)
+raum_pop(win)
+raum_push(win)
+raum_verschiebe(win, 0.5, 0, 0)
+chunk_zeichne(cid)
+raum_pop(win)
+setze bild_chunk_2 auf aufnahme(win)
+szene_anfang(win)
+netz3d_zeichnen(nid, mat4_verschiebung(vec3(0.5, 0.0, 0.0)))
+setze bild_netz_1 auf aufnahme(win)
+szene_anfang(win)
+netz3d_zeichnen(nid, mat4_verschiebung(vec3(-0.5, 0.0, 0.0)))
+netz3d_zeichnen(nid, mat4_verschiebung(vec3(0.5, 0.0, 0.0)))
+setze bild_netz_2 auf aufnahme(win)
+pruefen(nicht gleich(bild_netz_1, bild_netz_2), "PASS zweite Zeichnung desselben Netzes im selben Bild sichtbar")
+pruefen(gleich(bild_chunk_2, bild_netz_2), "PASS Netz zweimal je Bild bildgleich zu Chunk zweimal")
+
+# Fehlerfaelle mit aktivem Backend (fangbar).
+setze drei auf puffer_erstellen(Eckpunkt, 3)
+setze zwei_idx auf puffer_erstellen(u32, 2)
+setze weit_idx auf puffer_erstellen(u32, 3)
+weit_idx[2] = 99
+setze zehn auf puffer_erstellen(f32, 10)
+setze vier auf puffer_erstellen(Eckpunkt, 4)
+setze kein_idx auf puffer_erstellen(u32, 0)
+zeige fehler_text(() => netz3d_erstellen(drei, zwei_idx))
+zeige fehler_text(() => netz3d_erstellen(drei, weit_idx))
+zeige fehler_text(() => netz3d_erstellen_f32(zehn, kein_idx))
+zeige fehler_text(() => netz3d_erstellen(vier, kein_idx))
+setze offen auf chunk_erstelle()
+chunk_beginne(offen)
+zeige fehler_text(() => netz3d_aktualisieren(nid, drei, kein_idx))
+chunk_ende()
+chunk_lösche(offen)
+
+# Lebensdauer: 1000x erstellen/aktualisieren/freigeben.
+setze start auf 0
+unsicher:
+    setze start auf netz3d_belegt()
+für k in 0..1000:
+    setze t auf netz3d_erstellen(drei, kein_idx)
+    netz3d_aktualisieren(t, drei, kein_idx)
+    netz3d_freigeben(t)
+setze ende auf 0
+unsicher:
+    setze ende auf netz3d_belegt()
+pruefen(start == ende, "PASS 1000x erstellen/aktualisieren/freigeben, belegt unveraendert")
+setze tot auf netz3d_erstellen(drei, kein_idx)
+netz3d_freigeben(tot)
+netz3d_zeichnen_hier(tot)
+netz3d_freigeben(tot)
+pruefen(wahr, "PASS Zeichnen und Freigeben nach Freigabe ohne Absturz")
+puffer_anhängen(kein_idx, 0)
+pruefen(länge(kein_idx) == 1, "PASS Puffer nach Hochladen veraenderbar (Pin geloest)")
+setze kein_idx auf puffer_erstellen(u32, 0)
+
+wenn gross:
+    # (a) Immediate je Bild, (b) Chunk, (c) Netz: Median ueber 5 Bilder.
+    setze ta auf []
+    setze tb auf []
+    setze tc auf []
+    für r in 0..5:
+        setze t0 auf zeit_ms()
+        szene_anfang(win)
+        dreiecke(win, n)
+        test_frame_grab(win)
+        ta.hinzufügen(zeit_ms() - t0)
+        raum_aktualisieren(win)
+        setze t0 auf zeit_ms()
+        szene_anfang(win)
+        chunk_zeichne(cid)
+        test_frame_grab(win)
+        tb.hinzufügen(zeit_ms() - t0)
+        raum_aktualisieren(win)
+        setze t0 auf zeit_ms()
+        szene_anfang(win)
+        netz3d_zeichnen_hier(nid)
+        test_frame_grab(win)
+        tc.hinzufügen(zeit_ms() - t0)
+        raum_aktualisieren(win)
+    zeige "MESS dreiecke=" + text(2 * n * n)
+    zeige "MESS aufbau_ms chunk=" + text(t_chunk_bau) + " netz=" + text(t_netz_bau)
+    zeige "MESS bild_ms_median immediate=" + text(median(ta)) + " chunk=" + text(median(tb)) + " netz=" + text(median(tc))
+    zeige "MESS renderer=" + text(test_renderer_info(win))
+
+# Leeres Update leert das Netz definiert (kein Fehler, alte Geometrie weg).
+setze leer_ecken auf puffer_erstellen(Eckpunkt, 0)
+netz3d_aktualisieren(fid, leer_ecken, kein_idx)
+szene_anfang(win)
+netz3d_zeichnen_hier(fid)
+setze bild_leer auf aufnahme(win)
+pruefen(gleich(leer, bild_leer), "PASS leeres Update leert das Netz")
+
+# Kontextwechsel (Review c7071266): Fenster mit lebenden Netzen schliessen,
+# neues Fenster beginnt leer und kann hochladen.
+raum_schliessen(win)
+zeige fehler_text(() => netz3d_erstellen(drei, kein_idx))
+setze win2 auf raum_erstelle("NETZ3D-2", 320, 240)
+setze belegt2 auf -1
+unsicher:
+    setze belegt2 auf netz3d_belegt()
+pruefen(belegt2 == 0, "PASS neues Fenster: belegt 0")
+setze n2 auf netz3d_erstellen(drei, kein_idx)
+pruefen(n2 >= 0, "PASS Hochladen im neuen Fenster")
+# Schliessen waehrend chunk_beginne darf das naechste Fenster nicht sperren.
+setze offen2 auf chunk_erstelle()
+chunk_beginne(offen2)
+raum_schliessen(win2)
+setze win3 auf raum_erstelle("NETZ3D-3", 320, 240)
+setze n3 auf netz3d_erstellen(drei, kein_idx)
+pruefen(n3 >= 0, "PASS Hochladen nach Schliessen waehrend chunk_beginne")
+raum_schliessen(win3)
+zeige "NETZ3D PASS"

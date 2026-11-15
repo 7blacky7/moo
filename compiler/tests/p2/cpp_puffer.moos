@@ -1,0 +1,54 @@
+# P2-T55/T17 D2 (Plan f5b52a0b): Moo-Puffer als (Zeiger, Laenge) an C++ aus
+# einer Funktion, aus versuche: und aus einer Funktion mit aufräumen. Ueber
+# 4096 Elemente wirft C++ intern (std::length_error), der Adapter faengt und
+# liefert INT64_MIN; Moo macht daraus einen fangbaren Fehler (wirf).
+@bibliothek("p2_m1_cpp")
+@bibliothek("stdc++")
+extern "C" funktion p2_cpp_vector_sum(werte: ptr[i32], laenge: u32) -> i64
+
+@nativ
+funktion cpp_summe(p: puffer[i32]) -> i64:
+    unsicher:
+        gib_zurück p2_cpp_vector_sum(puffer_zeiger(p), u32(länge(p)))
+
+funktion geprueft(p):
+    setze s auf 0
+    unsicher:
+        setze s auf cpp_summe(p)
+    wenn s < 0:
+        wirf "cpp fehler"
+    gib_zurück s
+
+funktion sauber():
+    zeige "CLEANUP"
+
+funktion mit_aufraeumen(p):
+    aufräumen: sauber()
+    setze s auf 0
+    unsicher:
+        setze s auf cpp_summe(p)
+    wenn s < 0:
+        wirf "cpp fehler"
+    zeige s
+    zeige "KOERPER_ENDE"
+
+setze klein auf puffer_erstellen(i32, 3)
+klein[0] = 1
+klein[1] = 2
+klein[2] = 3
+setze gross auf puffer_erstellen(i32, 5000)
+zeige geprueft(klein)
+versuche:
+    zeige geprueft(gross)
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "gefangen: " + f
+versuche:
+    mit_aufraeumen(gross)
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "aufräumen gefangen: " + f
+mit_aufraeumen(klein)
+puffer_anhängen(gross, 1)
+zeige länge(gross)
+zeige "fertig"

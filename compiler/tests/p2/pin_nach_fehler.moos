@@ -1,0 +1,52 @@
+# P2-T51 C3 (Plan f5b52a0b): ein Puffer ist nur waehrend des nativen Aufrufs
+# gepinnt. Nach einem Fehler im Koerper und nach einem Fehler aus einem
+# @rückruf (libc-qsort, Division durch null im Vergleicher) ist der Pin
+# geloest: puffer_anhängen vergroessert den Puffer, die Daten bleiben erhalten.
+# Hinweis: ein @rückruf ist selbst nativ und kann den dynamischen Puffer nicht
+# vergroessern; der Fehlerweg ueber den Rueckruf deckt den Pin-Abbau ab.
+extern "C" funktion qsort(basis: ptr[i32], anzahl: u64, groesse: u64, vergleich: ptr[fn(ptr[i32], ptr[i32]) -> i32]) -> void
+
+@nativ
+@rückruf(0)
+funktion vergleiche_teilend(a: ptr[i32], b: ptr[i32]) -> i32:
+    unsicher:
+        setze q: i32 auf 100 / a[0]
+        wenn a[0] < b[0]:
+            gib_zurück -1
+        wenn a[0] > b[0]:
+            gib_zurück 1
+        gib_zurück q * 0
+
+@nativ
+funktion sortiere_teilend(p: puffer[i32]) -> i32:
+    unsicher:
+        qsort(puffer_zeiger(p), länge(p), 4, vergleiche_teilend)
+        gib_zurück 0
+
+@nativ
+funktion teile_erstes(p: puffer[i32], d: i32) -> i32:
+    gib_zurück p[0] / d
+
+setze p auf puffer_erstellen(i32, 3)
+p[0] = 10
+p[1] = 0
+p[2] = 7
+versuche:
+    zeige teile_erstes(p, 0)
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "koerper gefangen"
+puffer_anhängen(p, 5)
+zeige länge(p)
+zeige p[0]
+zeige p[3]
+versuche:
+    unsicher:
+        zeige sortiere_teilend(p)
+    zeige "NACH_FALSCH"
+fange f:
+    zeige "rueckruf gefangen"
+puffer_anhängen(p, 6)
+zeige länge(p)
+zeige p[4]
+zeige teile_erstes(p, 1) == p[0]

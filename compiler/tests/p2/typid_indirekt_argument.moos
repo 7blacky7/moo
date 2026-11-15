@@ -1,0 +1,5 @@
+# P2-T51 C2 negativ: indirekter Aufruf ptr[fn(ptr[u32]) -> i32] mit ptr[i32].
+@nativ
+funktion f(g: ptr[fn(ptr[u32]) -> i32], p: ptr[i32]) -> i32:
+    unsicher:
+        gib_zurück g(p)

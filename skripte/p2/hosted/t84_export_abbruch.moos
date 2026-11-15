@@ -1,0 +1,47 @@
+# P2-T84 (Plan 91033131 §6): Fehler in einer aus C gerufenen exportierten
+# Moo-Funktion bei gelinkter Moo-Runtime. Der Moo-Aufrufer steht in versuche:,
+# der Fehler darf trotzdem weder gefangen werden noch im C-Frame mit einem
+# erfundenen Wert weiterlaufen: Abbruch mit Meldung und RC 1.
+# C-Gegenstelle: t84_export_abbruch.c (Pfad per T84_WAHL: teile|paar|intern).
+struktur Paar:
+    a: i64
+    b: i64
+
+@nativ
+funktion intern_teile(a: i64, b: i64) -> i64:
+    gib_zurück a / b
+
+@nativ
+@einstieg
+funktion t84_teile(a: i64, b: i64) -> i64:
+    gib_zurück a / b
+
+@nativ
+@einstieg
+funktion t84_paar(p: Paar) -> i64:
+    unsicher:
+        gib_zurück p.a / p.b
+
+@nativ
+@einstieg
+funktion t84_ueber_intern(a: i64, b: i64) -> i64:
+    gib_zurück intern_teile(a, b) + 1
+
+@bibliothek("p2_t84")
+extern "C" funktion t84_rufe(a: i64, b: i64) -> i64
+
+# Systemkoerper (nicht die FFI-Einzelform), damit der Aufruf in versuche: steht.
+@nativ
+funktion rufe(a: i64, b: i64) -> i64:
+    unsicher:
+        setze r: i64 auf t84_rufe(a, b)
+        gib_zurück r
+
+versuche:
+    unsicher:
+        zeige rufe(10, 2)
+        zeige rufe(10, 0)
+        zeige "NICHT ERREICHT"
+fange fehler:
+    zeige "gefangen"
+zeige "weiter"

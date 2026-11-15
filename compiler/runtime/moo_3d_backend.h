@@ -138,6 +138,14 @@ typedef struct {
     int   (*renderer_info)(void* ctx, MooRendererInfo* info);
     int   (*water_background)(void* ctx);
     int   (*set_water)(void* ctx, const MooWaterSettings* settings);
+    /* P2-T25 (Plan 962e249a): Chunk direkt aus Speicher fuellen. ecken9 = je
+     * Eckpunkt 9 f32 (Position, Farbe, Normale = MooVertex). indizes optional
+     * (NULL/0 = fortlaufend). Kopie beim Hochladen, kein Zeiger bleibt. 0 = ok,
+     * sonst MOO_NETZ_*-Fehlercode (moo_3d.c). NULL = nicht unterstuetzt. */
+    int   (*chunk_upload)(void* ctx, int id, const float* ecken9, int ecken,
+                          const uint32_t* indizes, int index_anzahl);
+    /* P2-T25: aktuelle Modelmatrix *= m (Spaltenordnung wie moo_3d_math.c). */
+    void  (*mult_matrix)(void* ctx, const float m[16]);
 } Moo3DBackend;
 
 // Backend-Deklarationen (je nach Feature-Flag verfuegbar)

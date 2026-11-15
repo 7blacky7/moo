@@ -1,0 +1,3 @@
+# A importiert C, definiert RPunkt aber nicht selbst.
+aus modul_raute_a importiere RPunkt
+zeige 1

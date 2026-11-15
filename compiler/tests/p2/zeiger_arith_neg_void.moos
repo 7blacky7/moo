@@ -1,0 +1,6 @@
+# P2-T17 E3 negativ: keine Arithmetik auf ptr[void].
+@nativ
+funktion f(p: ptr[void]) -> u64:
+    unsicher:
+        setze q: ptr[void] auf p + 1
+        gib_zurück u64(q)

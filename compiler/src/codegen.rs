@@ -37,6 +37,28 @@ pub mod moo_tag {
 }
 use moo_tag as tag;
 
+/// P2-T85 (Plan 983e8a9c E1): Art des aktuellen Codegen-Rahmens. Native Aufrufe
+/// mit Argumentadaptern brauchen einen dynamischen Standardrahmen (MooValue-
+/// Rueckgabe, Ende ueber emit_defers + release_function_locals).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RahmenArt { Sonstig, Funktion, Methode, Lambda }
+
+/// P2-T85 A1 (Plan 983e8a9c, Review c23f9a29): kompletter Rahmenzustand der
+/// umgebenden Funktion. rahmen_betreten sichert und neutralisiert ihn beim
+/// Eintritt in Funktion/Methode/Lambda, rahmen_verlassen stellt ihn wieder her;
+/// so sickern weder Guard-Bloecke noch owned SSA-Werte eines aeusseren
+/// Statement-Ausdrucks in den neuen Rahmen.
+struct RahmenZustand<'ctx> {
+    rahmen_art: RahmenArt,
+    native_guard_enabled: bool,
+    native_guard_exit: Option<inkwell::basic_block::BasicBlock<'ctx>>,
+    native_skip_target: Option<inkwell::basic_block::BasicBlock<'ctx>>,
+    native_try_direct: bool,
+    stmt_root_guard: bool,
+    stmt_recursive_guard: bool,
+    stmt_owned_context: Vec<StructValue<'ctx>>,
+}
+
 /// Levenshtein-Distanz fuer "Meintest du...?" Vorschlaege
 fn levenshtein(a: &str, b: &str) -> usize {
     let (la, lb) = (a.len(), b.len());
@@ -68,6 +90,21 @@ pub struct CodeGen<'ctx> {
     /// P2-T50 B4: puffer[T]-Positionen dyn aufrufbarer Systemkoerper (Some(T));
     /// native_signatures traegt dort T nur als Platzhalter (siehe dyn_signature).
     native_buffer_params: HashMap<String, Vec<Option<crate::native_system::PufferArt>>>,
+    /// P2-T23/T53 B3: dyn aufrufbare Systemkoerper mit Zeigerergebnis als Griff
+    /// (Zeigerziel: None = ptr[void], Some(Struktur)).
+    native_handle_results: HashMap<String, Option<String>>,
+    /// P2-T49 (Plan 38c59c64 B2): dyn aufrufbare Systemkoerper mit Strukturwert-
+    /// Ergebnis (Strukturname; sret-Puffer -> moo_struct_box_value).
+    native_struct_results: HashMap<String, String>,
+    /// P2-T49 E5: Grund, warum eine native Funktion mit Strukturwerten nicht aus
+    /// dynamischem Moo aufrufbar ist (Diagnose an der Aufrufstelle).
+    native_dyn_sperre: HashMap<String, String>,
+    /// P2-T49 B1: Laufzeitbeschreibungen v2 (__moo_struktur.<Name>), je Modul einmal.
+    struktur_deskriptoren: HashMap<String, PointerValue<'ctx>>,
+    /// P2-T83 B1 (Plan f3217c27 E3): @liest(n)-Pufferparameter (0-basiert) je Funktion.
+    native_read_params: HashMap<String, std::collections::HashSet<usize>>,
+    /// P2-T85 (Plan 983e8a9c E1): Art des aktuellen Rahmens (main = Sonstig).
+    rahmen_art: RahmenArt,
     /// P2-T12 C (Plan 31194239): sichere @nativ-Koerper mit Kontrollfluss im
     /// System-Emitter (Sicher-Modus); dyn. ohne unsicher: aufrufbar.
     safe_native_functions: std::collections::HashSet<String>,
@@ -127,6 +164,9 @@ pub struct CodeGen<'ctx> {
     lambda_counter: usize,
     for_iter_counter: usize,
     method_obj_counter: usize,
+    /// P2-T87: der naechste MethodCall laeuft nur ueber die Builtin-Arme
+    /// (Builtin-Zweig der Methodenweiche, Klassenpfad schon geprueft).
+    methode_nur_builtin: bool,
     // Bisher compilerseitiger Stack von Aktions-IDs im aktuellen Defer-Katalog.
     defer_stack: Vec<u32>,
     defer_catalog: defer_catalog::DeferCatalog,
@@ -152,6 +192,8 @@ pub struct CodeGen<'ctx> {
     // @rohdaten_u32 — werden am Ende von compile_program in das
     // llvm.used-Global geschrieben (DCE-Schutz).
     used_globals: Vec<PointerValue<'ctx>>,
+    /// P2-T28 (Plan 607b20ba B1): per @sektion belegte Sektionen (Name, Deklaration).
+    sektionen: Vec<(String, String)>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -193,6 +235,12 @@ impl<'ctx> CodeGen<'ctx> {
             native_functions: HashMap::new(),
             native_signatures: HashMap::new(),
             native_buffer_params: HashMap::new(),
+            native_handle_results: HashMap::new(),
+            native_struct_results: HashMap::new(),
+            native_dyn_sperre: HashMap::new(),
+            struktur_deskriptoren: HashMap::new(),
+            native_read_params: HashMap::new(),
+            rahmen_art: RahmenArt::Sonstig,
             native_ffi_functions: std::collections::HashSet::new(),
             hosted_system_functions: Vec::new(),
             safe_native_functions: std::collections::HashSet::new(),
@@ -220,6 +268,7 @@ impl<'ctx> CodeGen<'ctx> {
             lambda_counter: 0,
             for_iter_counter: 0,
             method_obj_counter: 0,
+            methode_nur_builtin: false,
             defer_stack: Vec::new(),
             defer_catalog: defer_catalog::DeferCatalog::default(),
             defer_frame: None,
@@ -234,6 +283,7 @@ impl<'ctx> CodeGen<'ctx> {
             profiling: false,
             bare_mode: false,
             used_globals: Vec::new(),
+            sektionen: Vec::new(),
         })
     }
 
@@ -458,6 +508,12 @@ impl<'ctx> CodeGen<'ctx> {
     /// Segment/Section-Form. Funktionen muessen in einer ausfuehrbaren
     /// __TEXT-Section liegen; Rohdaten gehen nach __DATA. Vollstaendige native
     /// Mach-O-Angaben (mit Komma) bleiben fuer Experten unveraendert erlaubt.
+    /// P2-T28 (Plan 607b20ba B1): ob eine native Deklaration per @sektion in
+    /// diese Sektion gelegt wurde (z. B. ".multiboot2" fuer build_kernel).
+    pub fn hat_sektion(&self, name: &str) -> bool {
+        self.sektionen.iter().any(|(n, _)| n == name)
+    }
+
     fn target_section_name(&self, requested: &str, executable: bool) -> Result<String, String> {
         let triple = self.module.get_triple();
         let triple = triple.as_str().to_str().unwrap_or("");
@@ -573,8 +629,25 @@ impl<'ctx> CodeGen<'ctx> {
             }
             match (kind, d.args.as_slice()) {
                 ("sektion", [crate::ast::DecoratorArg::Text(s)]) => {
+                    // P2-T28 (Plan 607b20ba B3): genau ein Multiboot2-Kopf, nur x86_64.
+                    if s == ".multiboot2" {
+                        let triple = self.module.get_triple();
+                        let triple = triple.as_str().to_string_lossy().into_owned();
+                        if !triple.starts_with("x86_64") {
+                            return Err(format!(
+                                "{what}: @{}(\".multiboot2\") gibt es nur fuer x86_64 (Multiboot2 ist ein x86-Bootprotokoll), Ziel ist {triple}",
+                                d.name
+                            ));
+                        }
+                        if let Some((_, frueher)) = self.sektionen.iter().find(|(n, _)| n == ".multiboot2") {
+                            return Err(format!(
+                                "{what}: Sektion .multiboot2 ist bereits durch {frueher} belegt (genau ein Multiboot2-Kopf)"
+                            ));
+                        }
+                    }
                     let section = self.target_section_name(s, executable)?;
                     global.set_section(Some(&section));
+                    self.sektionen.push((s.clone(), what.to_string()));
                 }
                 ("ausrichten", [crate::ast::DecoratorArg::Zahl(n)]) => {
                     let a = *n as u64;
@@ -631,17 +704,48 @@ impl<'ctx> CodeGen<'ctx> {
 
     // One registration path for compilation and the read-only layout diagnostic.
     fn register_native_structs(&mut self, program: &Program) -> Result<(), String> {
-        let definitions: Vec<(&str, &[(String, TypeRef)], &[Decorator])> = program.statements.iter()
+        // P2-T16 (Plan 3f03704a E1/E2): eingebaute vec2/vec3/vec4/mat4 nur bei
+        // Bedarf. Eine eigene Definition gleichen Namens (struktur, Funktion,
+        // Klasse) gewinnt; eine eigene struktur dann mit Warnung (Freigabe #38101).
+        let eigene: std::collections::HashSet<&str> = program.statements.iter()
+            .filter_map(|stmt| match stmt {
+                Stmt::StructDef { name, .. } | Stmt::FunctionDef { name, .. }
+                | Stmt::ClassDef { name, .. } | Stmt::DataClassDef { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        for stmt in &program.statements {
+            if let Stmt::StructDef { name, .. } = stmt {
+                if crate::native_struct::vecmat_art_name(name).is_some() {
+                    let warnung = format!("eigene struktur '{name}' ueberdeckt den eingebauten Typ {name} (ohne eingebaute Operatoren)");
+                    if !self.warnings.contains(&warnung) { self.warnings.push(warnung); }
+                }
+            }
+        }
+        let eingebaute: Vec<(&'static str, Vec<(String, TypeRef)>)> = crate::native_vecmat::bedarf(&program.statements)
+            .into_iter()
+            .filter(|name| !eigene.contains(name))
+            .filter_map(|name| crate::native_struct::vecmat_felder(name).map(|felder| (name, felder)))
+            .collect();
+        if eingebaute.iter().any(|(name, _)| *name == "mat4") && eigene.contains("vec4") {
+            return Err("eingebauter Typ mat4 braucht den eingebauten Typ vec4; eine eigene Definition 'vec4' verdeckt ihn".into());
+        }
+        let mut definitions: Vec<(&str, &[(String, TypeRef)], &[Decorator])> = program.statements.iter()
             .filter_map(|stmt| match stmt {
                 Stmt::StructDef { name, fields, decorators } =>
                     Some((name.as_str(), fields.as_slice(), decorators.as_slice())),
                 _ => None,
             })
             .collect();
+        let keine: &[Decorator] = &[];
+        definitions.extend(eingebaute.iter().map(|(name, felder)| (*name, felder.as_slice(), keine)));
         if !definitions.is_empty() {
             let target = self.target_data.as_ref()
                 .ok_or_else(|| "Ziel-Datenlayout für Struktur fehlt".to_string())?;
             self.native_structs.register_all(self.context, target, &definitions)?;
+        }
+        for (name, _) in &eingebaute {
+            self.native_structs.markiere_eingebaut(name);
         }
         Ok(())
     }
@@ -795,6 +899,79 @@ impl<'ctx> CodeGen<'ctx> {
         self.module.verify().map_err(|e| format!("LLVM Verifikation fehlgeschlagen: {}", e.to_string()))
     }
 
+    /// P2-T21/T57 B2 (Plan f4655d20 E1/E4/E10): je @rückruf-Funktion genau ein
+    /// Thunk __moo_rueckruf.<name> mit exakter C-Signatur (interne Linkage).
+    fn rueckruf_thunks(
+        &self,
+        program: &Program,
+        callees: &mut HashMap<String, crate::native_system::NativeCallee<'ctx>>,
+        nominals: &crate::native_type_id::NominalTypes,
+    ) -> Result<(), String> {
+        let triple = self.module.get_triple();
+        let triple = triple.as_str().to_str().map_err(|e| e.to_string())?.to_string();
+        let hosted = !self.bare_mode && !triple.starts_with("wasm");
+        for stmt in &program.statements {
+            let Stmt::FunctionDef { name, param_types, return_type, decorators, .. } = stmt else { continue };
+            let Some(deko) = decorators.iter().find(|d| matches!(d.name.as_str(), "rückruf" | "rueckruf" | "callback")) else { continue };
+            if !decorators.iter().any(|d| d.name == "nativ" || d.name == "native") {
+                return Err(format!("@rückruf an '{name}': nur für Top-Level-@nativ-Funktionen (Lambdas, Methoden und dynamische Funktionen: user_data-Muster)"));
+            }
+            if decorators.iter().any(|d| matches!(d.name.as_str(), "einstieg" | "entry")) {
+                return Err(format!("@rückruf an '{name}': @einstieg-Exporte haben bereits die C-ABI"));
+            }
+            if deko.args.len() > 1 {
+                return Err(format!("@rückruf an '{name}': höchstens ein Fehlerwert"));
+            }
+            let callee = callees.get(name).cloned()
+                .ok_or_else(|| format!("@rückruf an '{name}': diese native Funktionsart ist nicht als Rückruf nutzbar"))?;
+            let inputs = param_types.iter()
+                .map(|ty| ty.clone().ok_or_else(|| format!("@rückruf an '{name}': Parametertyp fehlt")))
+                .collect::<Result<Vec<_>, _>>()?;
+            let result = return_type.clone().unwrap_or(crate::ast::TypeRef {
+                kind: TypeKind::Name("void".into()), line: 0, column: 0, end_line: 0, end_column: 0,
+            });
+            let result_void = matches!(&result.kind, TypeKind::Name(n) if n == "void");
+            if inputs.iter().any(|ty| !crate::ffi_types::rueckruf_wert_zulaessig(ty))
+                || (!result_void && !crate::ffi_types::rueckruf_wert_zulaessig(&result))
+            {
+                return Err(format!("@rückruf an '{name}': Signatur ist kein C-Rückruf (erlaubt: i8..u64, bool, f32, f64, Zeiger, Strukturwerte; kein puffer/Array)"));
+            }
+            let convention = crate::ffi_types::decorator_call_convention(decorators, &triple)?;
+            let vertrag = if hosted && callee.fehlbar {
+                if matches!(&result.kind, TypeKind::Name(n) if self.native_structs.layout(n).is_some()) {
+                    return Err(format!("Rückruf '{name}' kann fehlschlagen und liefert eine Struktur: kein darstellbarer Fehlerwert (Fehler durch Vorprüfung ausschließen)"));
+                }
+                let fehlerwert = if result_void { None } else {
+                    Some(crate::ffi_types::rueckruf_fehlerwert(self.context, &result, deko.args.first(), name)?)
+                };
+                Some(crate::ffi_types::RueckrufVertrag { name: name.clone(), fehlerwert })
+            } else {
+                None
+            };
+            let target = self.target_data.as_ref().ok_or("Ziel-Datenlayout fuer die C-ABI fehlt")?;
+            let thunk = crate::ffi_types::emit_abi_export(
+                self.context, &self.module, target, &format!("__moo_rueckruf.{name}"), callee.function,
+                &inputs, &result, &self.native_structs, convention, inkwell::module::Linkage::Internal, vertrag,
+            ).map_err(|e| format!("@rückruf an '{name}': {e}"))?;
+            let konvention = decorators.iter().find(|d| crate::ffi_types::is_call_convention_decorator(d))
+                .and_then(|d| match d.args.as_slice() {
+                    [crate::ast::DecoratorArg::Text(text)] => Some(text.clone()),
+                    _ => None,
+                });
+            let identity = crate::native_type_id::NativeTypeId::Function {
+                params: inputs.iter().map(|ty| crate::native_type_id::resolve_type(ty, nominals))
+                    .collect::<Result<Vec<_>, _>>()?,
+                result: Box::new(crate::native_type_id::resolve_type(&result, nominals)?),
+                variadic: false,
+                convention: konvention,
+            };
+            if let Some(eintrag) = callees.get_mut(name) {
+                eintrag.rueckruf = Some((thunk, identity));
+            }
+        }
+        Ok(())
+    }
+
     fn forward_declare(&mut self, program: &Program) -> Result<(), String> {
         for stmt in &program.statements {
             if let Stmt::ExternC { name, .. } = stmt {
@@ -839,7 +1016,10 @@ impl<'ctx> CodeGen<'ctx> {
                     ).map_err(|fehler| format!("extern C '{name}': {fehler}"))?;
                 } else {
                     let convention = crate::ffi_types::decorator_call_convention(decorators, triple)?;
-                    let signature = crate::ffi_types::FfiSignature::validate(triple, &types, result, false)?
+                    let module_name = self.module.get_name().to_str()
+                        .map_err(|e| format!("Ungueltiger nativer Modulname: {e}"))?.to_string();
+                    let nominals = self.native_structs.nominal_types(&module_name);
+                    let signature = crate::ffi_types::FfiSignature::validate(triple, &types, result, false, &nominals)?
                         .with_convention(convention);
                     self.extern_bindings.declare(self.context, &self.module, name, &signature)?;
                 }
@@ -859,6 +1039,8 @@ impl<'ctx> CodeGen<'ctx> {
         let module_name = self.module.get_name().to_str()
             .map_err(|e| format!("Ungueltiger nativer Modulname: {e}"))?;
         let native_nominals = self.native_structs.nominal_types(module_name);
+        // P2-T83 B3: Puffer-/@liest-Positionen aller Funktionen (Weitergabepruefung).
+        let liest_karte = crate::native_system::liest_karte(&program.statements);
         for stmt in &program.statements {
             if let Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators } = stmt {
                 if !decorators.iter().any(|d| d.name == "nativ" || d.name == "native") { continue; }
@@ -869,6 +1051,12 @@ impl<'ctx> CodeGen<'ctx> {
                     || !decorators.iter().all(|d| (matches!(d.name.as_str(), "nativ" | "native" | "nackt" | "naked"
                             | "benutzt" | "used" | "einstieg" | "entry") && d.args.is_empty())
                         || matches!(d.name.as_str(), "sektion" | "section" | "ausrichten" | "align" | "unterbrechung" | "interrupt")
+                        // P2-T21/T57: @rückruf(fehlerwert?) - Pruefung in rueckruf_thunks.
+                        || matches!(d.name.as_str(), "rückruf" | "rueckruf" | "callback")
+                        // P2-T23/T53: @verbraucht(n) - Pruefung beim dyn-Adapter.
+                        || matches!(d.name.as_str(), "verbraucht" | "consumes")
+                        // P2-T83: @liest(n) - Pruefung beim dyn-Adapter.
+                        || matches!(d.name.as_str(), "liest" | "reads")
                         || crate::ffi_types::is_call_convention_decorator(d))
                     || program.statements.iter().filter(|s| matches!(s, Stmt::FunctionDef { name: other, .. } if other == name)).count() != 1
                     || self.module.get_function(name).is_some()
@@ -1006,8 +1194,12 @@ impl<'ctx> CodeGen<'ctx> {
                 // Pure-Slice-Form hier (Pure-Emitter kennt sie nicht); Bare-Zeiger-
                 // funktionen behalten ihren Bestandspfad.
                 let zeiger_puffer = has_pointer || returns_pointer || has_buffer;
+                // P2-T16: ebenso Strukturwerte (z. B. vec3/mat4) in Signatur oder
+                // Locals; der Pure-Emitter kennt nur Skalare.
+                let pure_ungeeignet = zeiger_puffer || struct_param || returns_struct
+                    || crate::native_system::has_struct_locals(body, &native_nominals);
                 let sicher_system = !matches!(body.as_slice(), [Stmt::UnsafeBlock { .. }])
-                    && (!crate::native_system::is_pure_slice(body) || (zeiger_puffer && !self.bare_mode))
+                    && (!crate::native_system::is_pure_slice(body) || (pure_ungeeignet && !self.bare_mode))
                     && !(self.bare_mode && (returns_struct || zeiger_puffer))
                     && (hosted_x86 || self.bare_mode);
                 if (self.bare_mode && (crate::native_system::is_system_body(body, params) || returns_struct))
@@ -1017,13 +1209,14 @@ impl<'ctx> CodeGen<'ctx> {
                         param_types, return_type.as_ref(), &native_nominals,
                     ).map_err(|e| format!("Native Funktion '{name}': {e}"))?;
                     if sig.uses_struct_values() {
-                        // Composite-C-ABI (sret/Registerklassifizierung) wird
-                        // erst in P2-T56 freigegeben. Interne Moo-Moo-Calls
-                        // sind bereits konsistent LLVM-typisiert.
-                        if convention != 0 || decorators.iter().any(|d|
+                        // P2-T19/T56 D1: C-Exporte (@einstieg) mit Strukturwerten
+                        // bekommen einen C-ABI-Thunk (ffi_types::emit_abi_export);
+                        // die interne Funktion behaelt die Moo-Konvention. Eine
+                        // fremde Aufrufkonvention ohne Export hat keinen C-Aufrufer.
+                        if convention != 0 && !decorators.iter().any(|d|
                             matches!(d.name.as_str(), "einstieg" | "entry")) {
                             return Err(format!(
-                                "Native Funktion '{name}': Strukturwerte by value sind aktuell nur fuer interne Moo-Aufrufe freigegeben"
+                                "Native Funktion '{name}': Strukturwerte mit @aufrufkonvention nur als @einstieg-Export (C-ABI-Thunk)"
                             ));
                         }
                     }
@@ -1053,11 +1246,85 @@ impl<'ctx> CodeGen<'ctx> {
                         // P2-T66 Stufe 2a: rein skalare Signatur -> aus dynamischem
                         // Moo aufrufbar; die Aufrufstelle verlangt unsicher:/main/kein try.
                         // P2-T50 B4: auch mit puffer[T]-Parametern (Pin-Adapter).
-                        if let Some((dyn_sig, puffer)) = sig.dyn_signature() {
+                        let verbraucht_dekos: Vec<_> = decorators.iter()
+                            .filter(|d| matches!(d.name.as_str(), "verbraucht" | "consumes")).collect();
+                        // P2-T49 (Plan 38c59c64 E5): Strukturwerte nur hosted und boxbar;
+                        // sonst bleibt die Funktion intern aufrufbar, die Aufrufstelle nennt den Grund.
+                        let mut dyn_form = sig.dyn_signature();
+                        if let Some((_, puffer, ergebnis)) = &dyn_form {
+                            let mut strukturen: Vec<String> = puffer.iter().filter_map(|p| match p {
+                                Some(crate::native_system::PufferArt::Wert(s)) => Some(s.clone()),
+                                _ => None,
+                            }).collect();
+                            if let Some(crate::native_system::DynErgebnis::Struktur(s)) = ergebnis { strukturen.push(s.clone()); }
+                            let grund = if !strukturen.is_empty() && self.bare_mode {
+                                Some("Strukturwerte brauchen die hosted Runtime (nicht im Bare-Profil)".to_string())
+                            } else {
+                                strukturen.iter().find_map(|s| self.native_structs.boxbar(s).err()
+                                    .map(|g| format!("Struktur '{s}' ist nicht als dynamischer Wert nutzbar: {g}")))
+                            };
+                            if let Some(grund) = grund {
+                                self.native_dyn_sperre.insert(name.clone(), grund);
+                                dyn_form = None;
+                            }
+                        }
+                        if let Some((dyn_sig, mut puffer, dyn_ergebnis)) = dyn_form {
+                            // P2-T23/T53 B3 (Plan 36aca1f2 E3): @verbraucht(n) markiert einen
+                            // Griffparameter; der Adapter schliesst den Griff nach dem Aufruf.
+                            for deko in &verbraucht_dekos {
+                                let n = match deko.args.as_slice() {
+                                    [crate::ast::DecoratorArg::Zahl(z)] if z.fract() == 0.0 && *z >= 1.0 => *z as usize,
+                                    _ => return Err(format!("@verbraucht an '{name}': genau eine Parameternummer ab 1 angeben")),
+                                };
+                                match puffer.get_mut(n - 1) {
+                                    Some(Some(crate::native_system::PufferArt::Griff { verbraucht, .. })) => *verbraucht = true,
+                                    _ => return Err(format!("@verbraucht({n}) an '{name}': Parameter {n} ist kein Griffparameter (ptr[Struktur] oder ptr[void])")),
+                                }
+                            }
+                            // P2-T83 B1 (Plan f3217c27 E3): @liest(n) nur auf Pufferparametern.
+                            let mut nur_lesen = std::collections::HashSet::new();
+                            for deko in decorators.iter().filter(|d| matches!(d.name.as_str(), "liest" | "reads")) {
+                                let n = match deko.args.as_slice() {
+                                    [crate::ast::DecoratorArg::Zahl(z)] if z.fract() == 0.0 && *z >= 1.0 => *z as usize,
+                                    _ => return Err(format!("@liest an '{name}': genau eine Parameternummer ab 1 angeben")),
+                                };
+                                match puffer.get(n - 1) {
+                                    Some(Some(crate::native_system::PufferArt::Skalar(_) | crate::native_system::PufferArt::Struktur(_))) => {
+                                        if let Some(param) = params.get(n - 1) {
+                                            if crate::native_system::schreibt_puffer(body, param) {
+                                                return Err(format!("@liest({n}) an '{name}': Parameter '{param}' ist nur-lesend, der Koerper schreibt aber Elemente ({param}[i] = ...)"));
+                                            }
+                                            // P2-T83 B3 (Review 6315dba0): auch keine Weitergabe an
+                                            // schreibbare Pufferparameter, kein Alias, puffer_zeiger nur in unsicher:.
+                                            if let Some(grund) = crate::native_system::liest_verletzung(body, param, &liest_karte) {
+                                                return Err(format!("@liest({n}) an '{name}': Parameter '{param}' ist nur-lesend, aber {grund}"));
+                                            }
+                                        }
+                                        nur_lesen.insert(n - 1);
+                                    }
+                                    _ => return Err(format!("@liest({n}) an '{name}': Parameter {n} ist kein puffer[T]-Parameter")),
+                                }
+                            }
+                            if !nur_lesen.is_empty() {
+                                self.native_read_params.insert(name.clone(), nur_lesen);
+                            }
                             if puffer.iter().any(Option::is_some) {
                                 self.native_buffer_params.insert(name.clone(), puffer);
                             }
+                            match dyn_ergebnis {
+                                Some(crate::native_system::DynErgebnis::Griff(ziel)) => {
+                                    self.native_handle_results.insert(name.clone(), ziel);
+                                }
+                                Some(crate::native_system::DynErgebnis::Struktur(s)) => {
+                                    self.native_struct_results.insert(name.clone(), s);
+                                }
+                                None => {}
+                            }
                             self.native_signatures.insert(name.clone(), dyn_sig);
+                        } else if !verbraucht_dekos.is_empty() {
+                            return Err(format!("@verbraucht an '{name}': nur fuer aus dynamischem Moo aufrufbare native Funktionen mit Griffparameter"));
+                        } else if decorators.iter().any(|d| matches!(d.name.as_str(), "liest" | "reads")) {
+                            return Err(format!("@liest an '{name}': nur fuer aus dynamischem Moo aufrufbare native Funktionen mit puffer[T]-Parameter"));
                         }
                     }
                     system_functions.insert(name.clone(), (fun, sig));
@@ -1087,14 +1354,15 @@ impl<'ctx> CodeGen<'ctx> {
                 let result_ty = sig.result;
                 let unsafe_ffi = matches!(body.as_slice(), [Stmt::UnsafeBlock { .. }]);
                 let valid = match result_ty {
-                    Some(ty) if unsafe_ffi => matches!(ty, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64)
-                        && sig.params.iter().all(|param| matches!(param, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64)),
+                    // P2-T19 Batch C: C-bool (i1, FfiType::Bool) ist FFI-Werttyp.
+                    Some(ty) if unsafe_ffi => matches!(ty, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64 | NType::Bool)
+                        && sig.params.iter().all(|param| matches!(param, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64 | NType::Bool)),
                     // P2-T34: reine native Koerper tragen jede skalare Signatur
                     // (gemischte Breiten, Float, bool); Casts/Vergleiche verbinden
                     // die Typen, der dyn-Adapter kennt alle Skalare (i64/u64 wide,
                     // Float, bool, 8-32 Bit). Erstslice-Schranke I32/I8/U8 entfaellt.
                     Some(_) => true,
-                    None => unsafe_ffi && sig.params.iter().all(|param| matches!(param, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64)),
+                    None => unsafe_ffi && sig.params.iter().all(|param| matches!(param, NType::I64 | NType::U64 | NType::I32 | NType::U32 | NType::I16 | NType::U16 | NType::I8 | NType::U8 | NType::F32 | NType::F64 | NType::Bool)),
                 };
                 if !valid {
                     return Err(format!("Native Funktion '{name}': Signatur wird nicht unterstützt"));
@@ -1128,17 +1396,45 @@ impl<'ctx> CodeGen<'ctx> {
         // P7-T4 (2A): Layout-Decorators an @nativ; @einstieg exportiert die
         // Funktion unter ihrem Moo-Namen (externe Bindung, implizit benutzt).
         for stmt in &program.statements {
-            let Stmt::FunctionDef { name, decorators, .. } = stmt else { continue };
+            let Stmt::FunctionDef { name, decorators, param_types, return_type, .. } = stmt else { continue };
             if !decorators.iter().any(|d| d.name == "nativ" || d.name == "native") { continue; }
             let Some(fun) = self.native_functions.get(name).copied() else { continue };
+            let mut export = fun;
             if decorators.iter().any(|d| d.name == "einstieg" || d.name == "entry") {
                 if name == "main" || self.module.get_function(name).is_some() || self.module.get_global(name).is_some() {
                     return Err(format!("Native Funktion '{name}': @einstieg-Symbolkollision"));
                 }
-                fun.as_global_value().set_name(name);
-                fun.set_linkage(inkwell::module::Linkage::External);
+                if system_functions.get(name).is_some_and(|(_, sig)| sig.uses_struct_values()) {
+                    // P2-T19/T56 D1: interne Funktion bleibt __moo_native.<name>
+                    // (Zeiger-auf-Kopie/sret); der Export ist ein C-ABI-Thunk.
+                    let inputs = param_types.iter()
+                        .map(|ty| ty.clone().ok_or_else(|| format!("Native Funktion '{name}': Parametertyp fehlt")))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let result = return_type.clone().unwrap_or(crate::ast::TypeRef {
+                        kind: crate::ast::TypeKind::Name("void".into()), line: 0, column: 0, end_line: 0, end_column: 0,
+                    });
+                    let triple = self.module.get_triple();
+                    let triple = triple.as_str().to_str().map_err(|e| e.to_string())?.to_string();
+                    let convention = crate::ffi_types::decorator_call_convention(decorators, &triple)?;
+                    let target = self.target_data.as_ref().ok_or("Ziel-Datenlayout fuer die C-ABI fehlt")?;
+                    export = crate::ffi_types::emit_abi_export(
+                        self.context, &self.module, target, name, fun, &inputs, &result,
+                        &self.native_structs, convention, inkwell::module::Linkage::External, None,
+                    )?;
+                } else {
+                    fun.as_global_value().set_name(name);
+                    fun.set_linkage(inkwell::module::Linkage::External);
+                    if fun.count_params() as usize == param_types.len() {
+                        let triple = self.module.get_triple();
+                        let triple = triple.as_str().to_str().map_err(|e| e.to_string())?.to_string();
+                        let convention = crate::ffi_types::decorator_call_convention(decorators, &triple)?;
+                        crate::ffi_types::apply_export_extensions(
+                            self.context, fun, &triple, convention, param_types, return_type.as_ref(),
+                        );
+                    }
+                }
             }
-            self.apply_native_layout_decorators(fun.as_global_value(), decorators, true, 1, &format!("Native Funktion '{name}'"))?;
+            self.apply_native_layout_decorators(export.as_global_value(), decorators, true, 1, &format!("Native Funktion '{name}'"))?;
         }
         crate::codegen_native::validate_pure_call_graph(&pure_bodies)?;
         crate::native_const::emit_constants(
@@ -1147,7 +1443,13 @@ impl<'ctx> CodeGen<'ctx> {
         )?;
         // P7-T5: Aufrufziele fuer Systemkoerper (alle nativen Funktionsarten).
         let mut native_callees: HashMap<String, crate::native_system::NativeCallee<'ctx>> = HashMap::new();
-        if !system_functions.is_empty() {
+        // P2-T55 A3: fehlbare hosted Rueckrufe -> FFI-Einzelform prueft nach dem
+        // C-Aufruf das Fehlerflag (wie Emitter::nach_fremdaufruf_pruefen).
+        let mut fremd_fehlbar = false;
+        let hat_rueckruf = program.statements.iter().any(|stmt| matches!(stmt,
+            Stmt::FunctionDef { decorators, .. }
+                if decorators.iter().any(|d| matches!(d.name.as_str(), "rückruf" | "rueckruf" | "callback"))));
+        if !system_functions.is_empty() || hat_rueckruf {
             for (name, (fun, sig)) in hardware_functions.iter().chain(pointer_functions.iter()) {
                 native_callees.insert(name.clone(), crate::native_system::NativeCallee::new(*fun, sig)?);
             }
@@ -1181,10 +1483,24 @@ impl<'ctx> CodeGen<'ctx> {
                     }),
                 _ => None,
             }).collect();
-            let fehlbar = crate::native_system::fehlbare_funktionen(&defs);
+            let mut fehlbar = crate::native_system::fehlbare_funktionen(&defs, &std::collections::HashSet::new());
+            // P2-T21/T57 C3: gibt es fehlbare hosted Rueckrufe, kann jeder Fremdaufruf
+            // mit anstehendem Moo-Fehler zurueckkehren -> Fremdaufrufe gelten als fehlbar.
+            let fehlbarer_rueckruf = program.statements.iter().any(|stmt| matches!(stmt,
+                Stmt::FunctionDef { name, decorators, .. }
+                    if fehlbar.contains(name)
+                        && decorators.iter().any(|d| matches!(d.name.as_str(), "rückruf" | "rueckruf" | "callback"))));
+            if fehlbarer_rueckruf && !self.bare_mode {
+                fremd_fehlbar = true;
+                let fremd: std::collections::HashSet<String> = self.extern_c_names.iter().cloned().collect();
+                fehlbar = crate::native_system::fehlbare_funktionen(&defs, &fremd);
+            }
             for (name, callee) in native_callees.iter_mut() {
                 callee.fehlbar = fehlbar.contains(name);
             }
+            // P2-T21/T57 B2 (Plan f4655d20): @rückruf-Thunks nach der Fehlbar-Analyse
+            // und vor der Koerper-Emission (Batch C sieht den Thunk im NativeCallee).
+            self.rueckruf_thunks(program, &mut native_callees, &native_nominals)?;
         }
         for stmt in &program.statements {
             match stmt {
@@ -1199,6 +1515,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 &native_nominals, *fun, sig, params, body,
                                 &native_callees, &self.extern_bindings,
                                 self.safe_native_functions.contains(name),
+                                decorators.iter().any(|d| matches!(d.name.as_str(), "einstieg" | "entry")),
                             ).map_err(|e| format!("Native Funktion '{name}': {e}"))?;
                             continue;
                         }
@@ -1239,22 +1556,26 @@ impl<'ctx> CodeGen<'ctx> {
                         // liefert einen fangbaren Moo-Fehler (moo_native_fehler).
                         // C-Exporte (@einstieg) trappen auch hosted: kein Moo-Fehler
                         // ueber fremde C-Frames (ADR §11), Objekt ohne Runtime linkbar.
-                        let trap = self.bare_mode
-                            || decorators.iter().any(|d| matches!(d.name.as_str(), "einstieg" | "entry"))
-                            || {
-                                let triple = self.module.get_triple();
-                                triple.as_str().to_str().map(|t| t.starts_with("wasm")).unwrap_or(true)
-                            };
-                        let fehler = crate::codegen_native::NativeFehler { module: &self.module, trap, funktion: name };
+                        let einstieg = decorators.iter().any(|d| matches!(d.name.as_str(), "einstieg" | "entry"));
+                        let wasm = {
+                            let triple = self.module.get_triple();
+                            triple.as_str().to_str().map(|t| t.starts_with("wasm")).unwrap_or(true)
+                        };
+                        let trap = self.bare_mode || einstieg || wasm;
+                        // P2-T84: hosted C-Export -> moo_native_abbruch statt nacktem Trap.
+                        let abbruch = einstieg && !self.bare_mode && !wasm;
+                        let fehler = crate::codegen_native::NativeFehler { module: &self.module, trap, abbruch, funktion: name };
                         if self.native_ffi_functions.contains(name) {
                             crate::codegen_native::emit_ffi_return_function(
                                 self.context, &self.module, &self.extern_bindings,
-                                fun, &sig, params, body, fehler,
-                            )?;
+                                fun, &sig, params, body, fehler, fremd_fehlbar,
+                            ).map_err(|e| format!("Native Funktion '{name}': {e}"))?;
                         } else {
+                            // Fehler mit Funktionsnamen wie im System-Emitter (Gate
+                            // frontend negativ: exponent_* erwartet "Native Funktion").
                             crate::codegen_native::emit_nontrapping_function(
                                 self.context, fun, &sig, params, body, &pure_functions, fehler,
-                            )?;
+                            ).map_err(|e| format!("Native Funktion '{name}': {e}"))?;
                         }
                         continue;
                     }
@@ -1973,6 +2294,20 @@ impl<'ctx> CodeGen<'ctx> {
                         self.builder.build_unconditional_branch(catch_bb)
                             .map_err(|e| format!("{e}"))?;
                     }
+                } else if !self.bare_mode && self.im_standardrahmen() && !self.in_main_function()
+                    && self.builder.get_insert_block().unwrap().get_terminator().is_none()
+                {
+                    // P2-T93 (Befund dbea7b86): ohne Handler im eigenen Rahmen kehrt
+                    // moo_throw nur bei aktivem Aufrufer-Handler zurueck (sonst
+                    // Prozessende). Die Funktion bricht dann ab wie an einem
+                    // Pruefpunkt (P2-T82/T92): registrierte statische aufraeumen-
+                    // Aktionen laufen, Locals frei, Rueckkehr mit nichts, Flag bleibt
+                    // gesetzt. Nachfolgender Code landet in einem toten Block.
+                    let exit = self.native_guard_exit_block()?;
+                    self.builder.build_unconditional_branch(exit).map_err(|e| format!("{e}"))?;
+                    let function = self.current_function.ok_or("wirf ohne Funktion")?;
+                    let tot = self.context.append_basic_block(function, "wirf.danach");
+                    self.builder.position_at_end(tot);
                 }
                 Ok(())
             }
@@ -2688,15 +3023,15 @@ impl<'ctx> CodeGen<'ctx> {
         // Nicht bei aufraeumen-Aktionen (statische Defers liefen sonst ausserhalb
         // ihrer Registrierungsreihenfolge), nicht im Defer-Frame (eigener
         // Handler), nicht bare/profiling, nur Top-Level-Funktionen.
-        let prev_native_guard = (self.native_guard_enabled, self.native_guard_exit.take());
-        self.native_guard_enabled = !self.bare_mode && !self.profiling && !self.defer_runtime
-            && self.defer_catalog.actions().is_empty()
-            && self.dyn_named_functions.contains(name)
-            && {
-                let mut calls = std::collections::HashSet::new();
-                Self::collect_defer_calls(body, &mut calls);
-                calls.iter().any(|callee| self.native_call_fangbar(callee))
-            };
+        // P2-T85 E1/A1: benannte Top-Level-Funktion = Standardrahmen; kompletter
+        // Rahmenzustand gesichert und neutralisiert (auch skip/direct, stmt-Guards).
+        let rahmen = self.rahmen_betreten(
+            if self.dyn_named_functions.contains(name) { RahmenArt::Funktion } else { RahmenArt::Sonstig });
+        self.native_guard_enabled = self.dyn_named_functions.contains(name) && {
+            let mut calls = std::collections::HashSet::new();
+            Self::collect_defer_calls(body, &mut calls);
+            self.native_guard_fuer(&calls)
+        };
 
         for (i, param_name) in params.iter().enumerate() {
             let alloca = self.builder.build_alloca(self.mv_type(), param_name)
@@ -2863,8 +3198,7 @@ impl<'ctx> CodeGen<'ctx> {
         self.defer_frame = prev_defer_frame;
                 self.defer_runtime = prev_defer_runtime;
                 self.defer_borrowed_handler = prev_defer_borrowed;
-        self.native_guard_enabled = prev_native_guard.0;
-        self.native_guard_exit = prev_native_guard.1;
+        self.rahmen_verlassen(rahmen);
         if let Some(bb) = prev_block {
             self.builder.position_at_end(bb);
         }
@@ -3423,6 +3757,15 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.position_at_end(entry);
                 self.variables.clear();
                 self.init_defer_frame()?;
+                // P2-T85 (Plan 983e8a9c A1/B2): Methode = Standardrahmen mit eigenem
+                // Pruefpunkt-Ausgang wie benannte Funktionen; Rahmenzustand der
+                // umgebenden Funktion sichern (kein Sprung in fremde Bloecke).
+                let rahmen = self.rahmen_betreten(RahmenArt::Methode);
+                self.native_guard_enabled = {
+                    let mut calls = std::collections::HashSet::new();
+                    Self::collect_defer_calls(method_body, &mut calls);
+                    self.native_guard_fuer(&calls)
+                };
 
                 // self/selbst ist der erste Parameter
                 let self_alloca = self.builder.build_alloca(self.mv_type(), "self")
@@ -3515,6 +3858,7 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder.build_return(Some(&none_val)).map_err(|e| format!("{e}"))?;
                 }
 
+                self.rahmen_verlassen(rahmen);
                 self.current_function = prev_fn;
                 self.variables = prev_vars;
                 self.defer_stack = prev_defers;
@@ -3983,8 +4327,8 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 // P2-T82: Systemkoerper-Aufrufe stehen in unsicher:-Bloecken;
                 // ohne Abstieg erhielt z.B. paar() keinen native.guard.exit.
-                // Fuer den Defer-Graph wirkungsneutral: runtime_defer_scope_supported
-                // lehnt UnsafeBlock ab, solche Koerper werden dort nie traversiert.
+                // P2-T93: runtime_defer_scope_supported steigt ebenfalls ab
+                // (native Aufrufe darin bleiben dort ausgeschlossen).
                 Stmt::UnsafeBlock { body } => Self::collect_defer_calls(body, names),
                 _ => {}
             }
@@ -4058,6 +4402,11 @@ impl<'ctx> CodeGen<'ctx> {
             Stmt::Guard { condition, else_body } =>
                 self.runtime_defer_expr_supported(condition)
                     && self.runtime_defer_scope_supported(else_body),
+            // P2-T93 (Befund dbea7b86): unsicher: aendert im dynamischen Code nur
+            // die Erlaubnis gefaehrlicher Builtins; die Anweisungen kompilieren
+            // wie ausserhalb. Ihre Ausdruecke bleiben einzeln geprueft (native
+            // und Speicher-Builtins sind keine defer_safe_calls -> weiter false).
+            Stmt::UnsafeBlock { body } => self.runtime_defer_scope_supported(body),
             _ => false,
         })
     }
@@ -4105,10 +4454,10 @@ impl<'ctx> CodeGen<'ctx> {
 
     /// P2-T82: hosted fangbarer @nativ-Aufruf aus dynamischem Code (Spiegel der
     /// Kriterien system_fangbar/plain_fangbar im Native-Arm von compile_expr):
-    /// skalare Signatur, kein FFI-Koerper, nicht bare/wasm, interner Name
-    /// __moo_native.* (C-Exporte verlieren ihn per set_name und trappen).
+    /// skalare Signatur (seit P2-T55 auch die FFI-Einzelform), nicht bare/wasm,
+    /// interner Name __moo_native.* (C-Exporte verlieren ihn per set_name und trappen).
     fn native_call_fangbar(&self, name: &str) -> bool {
-        if self.bare_mode || self.native_ffi_functions.contains(name) || !self.native_signatures.contains_key(name) {
+        if self.bare_mode || !self.native_signatures.contains_key(name) {
             return false;
         }
         let Some(function) = self.native_functions.get(name) else { return false; };
@@ -4138,7 +4487,6 @@ impl<'ctx> CodeGen<'ctx> {
         match expr {
             Expr::FunctionCall { name, args } =>
                 self.native_functions.contains_key(name)
-                    && !self.native_ffi_functions.contains(name)
                     && args.iter().all(|arg| match arg {
                         Expr::Identifier(_) | Expr::Number(_) => true,
                         Expr::FunctionCall { name, args } =>
@@ -4310,6 +4658,57 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(ansicht)
     }
 
+    /// P2-T23/T53 A3 (Plan 36aca1f2): Griff-Abfragen und Text-Bruecke.
+    /// griff_gültig(h) -> Wahrheitswert; griffe_offen() -> Zahl offener Griffe;
+    /// puffer_aus_text(t) -> puffer[u8] (UTF-8-Bytes); puffer_als_text(p[, n]) -> Text
+    /// (strikt UTF-8). Erstes Argument geliehen und danach freigegeben, Laenge
+    /// von der Runtime konsumiert (moo_handle.h, moo_buffer_index.h).
+    fn compile_griff_builtin(&mut self, name: &str, args: &[Expr]) -> Result<StructValue<'ctx>, String> {
+        if self.bare_mode {
+            return Err(format!("{name}: Griffe und Text-Puffer sind im Bare-Profil nicht verfuegbar"));
+        }
+        match name {
+            "griffe_offen" | "handles_open" => {
+                if !args.is_empty() {
+                    return Err(format!("{name} erwartet keine Argumente"));
+                }
+                let f = self.buffer_rt_function("moo_handle_open_count", false, 0, true);
+                self.call_rt(f, &[], "griffe_offen")
+            }
+            "puffer_als_text" | "buffer_to_text" => {
+                let (puffer, laenge) = match args {
+                    [p] => (p, None),
+                    [p, n] => (p, Some(n)),
+                    _ => return Err(format!("{name} erwartet einen Puffer und optional eine Laenge")),
+                };
+                let f = self.buffer_rt_function("moo_buffer_to_text", false, 2, true);
+                let puffer = self.compile_expr(puffer)?;
+                let laenge = match laenge {
+                    Some(n) => self.compile_expr(n)?,
+                    None => self.call_rt(self.rt.moo_none, &[], "none")?,
+                };
+                let text = self.call_rt(f, &[puffer.into(), laenge.into()], "puffer_als_text")?;
+                self.call_rt_void(self.rt.moo_release, &[puffer.into()], "puffer_als_text_rel")?;
+                Ok(text)
+            }
+            _ => {
+                let [arg] = args else {
+                    return Err(format!("{name} erwartet genau ein Argument"));
+                };
+                let symbol = if matches!(name, "puffer_aus_text" | "buffer_from_text") {
+                    "moo_buffer_from_text"
+                } else {
+                    "moo_handle_valid"
+                };
+                let f = self.buffer_rt_function(symbol, false, 1, true);
+                let wert = self.compile_expr(arg)?;
+                let ergebnis = self.call_rt(f, &[wert.into()], "griff_builtin")?;
+                self.call_rt_void(self.rt.moo_release, &[wert.into()], "griff_builtin_rel")?;
+                Ok(ergebnis)
+            }
+        }
+    }
+
     /// P2-T82: Pruefpunkt-Ausgang einer benannten Funktion ohne eigenes
     /// versuche:/aufraeumen, deren Koerper hosted fangbare @nativ-Aufrufe
     /// enthaelt (native_guard_enabled, compile_function_def). Analog zur
@@ -4318,12 +4717,21 @@ impl<'ctx> CodeGen<'ctx> {
     /// seinem Statement. Einmal je Funktion angelegt; guard_local_expr_error
     /// gibt die Werte des Statements vor dem Sprung frei. Der try_stack bleibt
     /// unberuehrt (FFI-/Systemkoerper-Schranken, native_local_catch, T74-IR).
+    /// P2-T92: sind an der Pruefstelle statische aufraeumen-Aktionen
+    /// registriert, bekommt die Stelle einen eigenen Ausgang, der genau diese
+    /// Aktionen (emit_defers: Erstfehler gesichert und danach erneut geworfen,
+    /// Reihenfolge wie compile_return) VOR dem Freigeben der Locals ausfuehrt.
     fn native_guard_exit_block(&mut self) -> Result<inkwell::basic_block::BasicBlock<'ctx>, String> {
-        if let Some(exit) = self.native_guard_exit { return Ok(exit); }
+        let mit_aufraeumen = !self.defer_stack.is_empty();
+        if !mit_aufraeumen {
+            if let Some(exit) = self.native_guard_exit { return Ok(exit); }
+        }
         let function = self.current_function.ok_or("Pruefpunkt-Ausgang ohne Funktion")?;
         let current = self.builder.get_insert_block().ok_or("Pruefpunkt-Ausgang ohne Block")?;
-        let exit = self.context.append_basic_block(function, "native.guard.exit");
+        let exit = self.context.append_basic_block(function,
+            if mit_aufraeumen { "native.guard.exit.aufraeumen" } else { "native.guard.exit" });
         self.builder.position_at_end(exit);
+        if mit_aufraeumen { self.emit_defers()?; }
         self.release_function_locals()?;
         if function.get_type().get_return_type().is_none() {
             self.builder.build_return(None).map_err(|e| e.to_string())?;
@@ -4332,7 +4740,7 @@ impl<'ctx> CodeGen<'ctx> {
             self.builder.build_return(Some(&none)).map_err(|e| e.to_string())?;
         }
         self.builder.position_at_end(current);
-        self.native_guard_exit = Some(exit);
+        if !mit_aufraeumen { self.native_guard_exit = Some(exit); }
         Ok(exit)
     }
 
@@ -4695,6 +5103,7 @@ impl<'ctx> CodeGen<'ctx> {
         &mut self,
         expr: &Expr,
         element: crate::native_system::PufferArt,
+        schreibbar: bool,
         frueher: &[(inkwell::values::PointerValue<'ctx>, StructValue<'ctx>)],
         catch: Option<inkwell::basic_block::BasicBlock<'ctx>>,
     ) -> Result<(StructValue<'ctx>, inkwell::values::PointerValue<'ctx>, StructValue<'ctx>), String> {
@@ -4704,27 +5113,30 @@ impl<'ctx> CodeGen<'ctx> {
         let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
         // Skalar: MooBufferScalarType-Code (i32, compiler/runtime/moo_buffer.h);
         // P2-T48 D: Struktur: Laufzeit-ID (i64, NativeStructRegistry::struktur_id).
-        let (symbol, typ_param, typ_arg): (&str, BasicMetadataTypeEnum<'ctx>, BasicMetadataValueEnum<'ctx>) = match &element {
+        // P2-T83 A1/B2: beides an moo_native_leihen (Puffer, Tensor, Frame).
+        let (code, id): (u64, u64) = match &element {
             PufferArt::Skalar(t) => {
                 let code: u64 = match t {
                     NType::I8 => 1, NType::U8 => 2, NType::I16 => 3, NType::U16 => 4, NType::I32 => 5,
                     NType::U32 => 6, NType::I64 => 7, NType::U64 => 8, NType::F32 => 9, NType::F64 => 10,
                     NType::Bool => return Err("puffer[bool] ist nicht freigegeben".into()),
                 };
-                ("moo_buffer_native_pin", self.context.i32_type().into(),
-                 self.context.i32_type().const_int(code, false).into())
+                (code, 0)
             }
+            PufferArt::Griff { .. } => return Err("Griffargument im Pufferpfad (interner Fehler)".into()),
+            PufferArt::Wert(_) => return Err("Strukturwert im Pufferpfad (interner Fehler)".into()),
             PufferArt::Struktur(name) => {
                 let id = self.native_structs.struktur_id(name)
                     .ok_or_else(|| format!("puffer[{name}]: Struktur-Layout fehlt"))?;
-                ("moo_buffer_native_pin_struct", self.context.i64_type().into(),
-                 self.context.i64_type().const_int(id, false).into())
+                (0, id)
             }
         };
-        let pin_fn = match self.module.get_function(symbol) {
+        let i32t = self.context.i32_type();
+        let i64t = self.context.i64_type();
+        let pin_fn = match self.module.get_function("moo_native_leihen") {
             Some(f) => f,
-            None => self.module.add_function(symbol, ptr_type.fn_type(
-                &[ptr_type.into(), typ_param, ptr_type.into(), ptr_type.into()], false,
+            None => self.module.add_function("moo_native_leihen", ptr_type.fn_type(
+                &[ptr_type.into(), i32t.into(), i64t.into(), i32t.into(), ptr_type.into(), ptr_type.into()], false,
             ), None),
         };
         let wert = self.compile_expr(expr)?;
@@ -4733,7 +5145,8 @@ impl<'ctx> CodeGen<'ctx> {
         let daten_slot = self.entry_alloca(ptr_type, "native.puffer.daten")?;
         let laenge_slot = self.entry_alloca(self.context.i64_type(), "native.puffer.laenge")?;
         let pin = self.builder.build_call(pin_fn, &[
-            wert_slot.into(), typ_arg,
+            wert_slot.into(), i32t.const_int(code, false).into(), i64t.const_int(id, false).into(),
+            i32t.const_int(u64::from(schreibbar), false).into(),
             daten_slot.into(), laenge_slot.into(),
         ], "native.puffer.pin").map_err(|e| e.to_string())?.try_as_basic_value();
         let pin = match pin {
@@ -4765,13 +5178,620 @@ impl<'ctx> CodeGen<'ctx> {
         Ok((aggregat, pin, wert))
     }
 
+    /// P2-T85 A2 (Plan 983e8a9c E4): aktiver versuche:-Handler der AKTUELLEN
+    /// Funktion (Handler umgebender Rahmen zaehlen fuer Lambdas/Methoden nicht).
+    fn rahmen_hat_handler(&self) -> bool {
+        self.try_stack.iter().any(|bb| bb.get_parent() == self.current_function)
+    }
+
+    /// P2-T85 B1: dynamischer Standardrahmen (Funktion, Methode, Lambda).
+    fn im_standardrahmen(&self) -> bool {
+        matches!(self.rahmen_art, RahmenArt::Funktion | RahmenArt::Methode | RahmenArt::Lambda)
+    }
+
+    /// P2-T82/T85 B2: Pruefpunkt-Ausgang fuer einen Rahmen mit diesen Aufrufen
+    /// (nicht bare/profiling, kein Runtime-Defer-Frame). P2-T92: statische
+    /// aufraeumen-Aktionen sind erlaubt (Ausgang je Stelle, native_guard_exit_block).
+    fn native_guard_fuer(&self, calls: &std::collections::HashSet<String>) -> bool {
+        !self.bare_mode && !self.profiling && !self.defer_runtime
+            && calls.iter().any(|callee| self.native_call_fangbar(callee))
+    }
+
+    /// P2-T49 (Plan 38c59c64 B1): konstante Laufzeitbeschreibung v2 einer Struktur
+    /// (MooStrukturTyp, compiler/runtime/moo_struct_typed.h) als private Konstante
+    /// `__moo_struktur.<Name>`, bei erstem Bedarf (rekursiv fuer verschachtelte).
+    /// Programme ohne Grenznutzung bekommen keine (E8). Layout: {i32 version,
+    /// i32 feld_anzahl, i64 typ_id, {ptr, isize, isize, isize, ptr} basis, ptr felder};
+    /// MooStrukturFeld {ptr, i32, i32, i8, i8, i8, i8, i32, ptr}; MooStructField
+    /// {ptr, isize, isize}. Natuerliches LLVM-Layout = C-Layout auf allen Zielen.
+    fn struktur_deskriptor(&mut self, name: &str) -> Result<PointerValue<'ctx>, String> {
+        if let Some(p) = self.struktur_deskriptoren.get(name) { return Ok(*p); }
+        self.native_structs.boxbar(name)
+            .map_err(|g| format!("Struktur '{name}' ist in dynamischem Moo nicht als Wert nutzbar: {g}"))?;
+        let (felder, blaetter, groesse, ausrichtung, isize_t) = {
+            let target = self.target_data.as_ref().ok_or("Ziel-Datenlayout fuer Struktur fehlt")?;
+            let layout = self.native_structs.layout(name).ok_or_else(|| format!("Struktur '{name}': Layout fehlt"))?;
+            (
+                self.native_structs.laufzeit_felder(self.context, target, name)?,
+                self.native_structs.laufzeit_blaetter(self.context, target, name)?,
+                layout.size,
+                u64::from(layout.alignment),
+                self.context.ptr_sized_int_type(target, None),
+            )
+        };
+        let typ_id = self.native_structs.struktur_id(name)
+            .ok_or_else(|| format!("Struktur '{name}': Identitaet fehlt"))?;
+        let ptr_t = self.context.ptr_type(inkwell::AddressSpace::default());
+        let i8t = self.context.i8_type();
+        let i32t = self.context.i32_type();
+        let i64t = self.context.i64_type();
+        let u32_von = |wert: u64, was: &str| u32::try_from(wert)
+            .map_err(|_| format!("Struktur '{name}': {was} zu gross fuer die Laufzeitbeschreibung"));
+        let symbol = format!("__moo_struktur.{name}");
+        let name_ptr = self.private_ctext(&format!("{symbol}.name"), name);
+        // Flache Blaetter (MooStructField).
+        let blatt_t = self.context.struct_type(&[ptr_t.into(), isize_t.into(), isize_t.into()], false);
+        let mut blatt_werte = Vec::with_capacity(blaetter.len());
+        for (i, (pfad, versatz, laenge)) in blaetter.iter().enumerate() {
+            let pfad_ptr = self.private_ctext(&format!("{symbol}.blatt.{i}"), pfad);
+            blatt_werte.push(blatt_t.const_named_struct(&[
+                pfad_ptr.into(), isize_t.const_int(*versatz, false).into(), isize_t.const_int(*laenge, false).into(),
+            ]));
+        }
+        let blatt_arr = blatt_t.const_array(&blatt_werte);
+        let blatt_g = self.module.add_global(blatt_arr.get_type(), None, &format!("{symbol}.blaetter"));
+        blatt_g.set_initializer(&blatt_arr);
+        blatt_g.set_constant(true);
+        blatt_g.set_linkage(inkwell::module::Linkage::Private);
+        // Deklarierte Felder (MooStrukturFeld), verschachtelte Beschreibungen zuerst.
+        let feld_t = self.context.struct_type(&[
+            ptr_t.into(), i32t.into(), i32t.into(), i8t.into(), i8t.into(), i8t.into(), i8t.into(), i32t.into(), ptr_t.into(),
+        ], false);
+        let mut feld_werte = Vec::with_capacity(felder.len());
+        for (i, feld) in felder.iter().enumerate() {
+            let innen = match &feld.struktur {
+                Some(s) => self.struktur_deskriptor(s)?,
+                None => ptr_t.const_null(),
+            };
+            let feld_name = self.private_ctext(&format!("{symbol}.feld.{i}"), &feld.name);
+            feld_werte.push(feld_t.const_named_struct(&[
+                feld_name.into(),
+                i32t.const_int(u64::from(u32_von(feld.versatz, "Feldversatz")?), false).into(),
+                i32t.const_int(u64::from(u32_von(feld.groesse, "Feldgroesse")?), false).into(),
+                i8t.const_int(u64::from(feld.art), false).into(),
+                i8t.const_int(u64::from(feld.element), false).into(),
+                i8t.const_int(u64::from(feld.skalar), false).into(),
+                i8t.const_zero().into(),
+                i32t.const_int(u64::from(u32_von(feld.anzahl, "Elementanzahl")?), false).into(),
+                innen.into(),
+            ]));
+        }
+        let feld_arr = feld_t.const_array(&feld_werte);
+        let feld_g = self.module.add_global(feld_arr.get_type(), None, &format!("{symbol}.felder"));
+        feld_g.set_initializer(&feld_arr);
+        feld_g.set_constant(true);
+        feld_g.set_linkage(inkwell::module::Linkage::Private);
+        let basis_t = self.context.struct_type(&[
+            ptr_t.into(), isize_t.into(), isize_t.into(), isize_t.into(), ptr_t.into(),
+        ], false);
+        let typ_t = self.context.struct_type(&[i32t.into(), i32t.into(), i64t.into(), basis_t.into(), ptr_t.into()], false);
+        let basis = basis_t.const_named_struct(&[
+            name_ptr.into(), isize_t.const_int(groesse, false).into(), isize_t.const_int(ausrichtung, false).into(),
+            isize_t.const_int(blaetter.len() as u64, false).into(), blatt_g.as_pointer_value().into(),
+        ]);
+        let typ = typ_t.const_named_struct(&[
+            i32t.const_int(2, false).into(),
+            i32t.const_int(u64::from(u32_von(felder.len() as u64, "Feldanzahl")?), false).into(),
+            i64t.const_int(typ_id, false).into(),
+            basis.into(),
+            feld_g.as_pointer_value().into(),
+        ]);
+        let typ_g = self.module.add_global(typ_t, None, &symbol);
+        typ_g.set_initializer(&typ);
+        typ_g.set_constant(true);
+        typ_g.set_linkage(inkwell::module::Linkage::Private);
+        let zeiger = typ_g.as_pointer_value();
+        self.struktur_deskriptoren.insert(name.to_string(), zeiger);
+        Ok(zeiger)
+    }
+
+    /// P2-T49: private, nullterminierte Textkonstante (Namen der Laufzeitbeschreibung).
+    fn private_ctext(&self, symbol: &str, text: &str) -> PointerValue<'ctx> {
+        let wert = self.context.const_string(text.as_bytes(), true);
+        let g = self.module.add_global(wert.get_type(), None, symbol);
+        g.set_initializer(&wert);
+        g.set_constant(true);
+        g.set_linkage(inkwell::module::Linkage::Private);
+        g.as_pointer_value()
+    }
+
+    /// P2-T49 B3: ABI-ausgerichteter, genullter Strukturslot (Eintrittsblock).
+    fn native_struct_slot(&mut self, name: &str, label: &str) -> Result<PointerValue<'ctx>, String> {
+        let layout = self.native_structs.layout(name).ok_or_else(|| format!("Struktur '{name}': Layout fehlt"))?;
+        let (ty, groesse, ausrichtung) = (layout.llvm_type, layout.size, layout.alignment);
+        let slot = self.entry_alloca(ty, label)?;
+        if let Some(alloca) = slot.as_instruction() {
+            alloca.set_alignment(ausrichtung).map_err(|e| e.to_string())?;
+        }
+        self.builder.build_memset(slot, ausrichtung, self.context.i8_type().const_zero(),
+            self.context.i64_type().const_int(groesse, false)).map_err(|e| e.to_string())?;
+        Ok(slot)
+    }
+
+    /// P2-T49 B3 (Plan 38c59c64): Strukturwert an der dyn->nativ-Grenze. Beliebiger
+    /// Ausdruck; moo_struct_unbox_value prueft typ_id und kopiert in eine exklusive,
+    /// ABI-ausgerichtete Aufruferkopie. Der MooValue wird sofort freigegeben (keine
+    /// Leihe; native Aenderungen wirken nie auf die Box, E1). Fehler: derselbe
+    /// Ausgang wie ein ungueltiges Skalarargument; Pins/Griffe gibt es zu diesem
+    /// Zeitpunkt noch nicht (sie folgen nach allen Wertargumenten).
+    fn compile_native_struct_argument(
+        &mut self,
+        expr: &Expr,
+        name: &str,
+        catch: Option<inkwell::basic_block::BasicBlock<'ctx>>,
+    ) -> Result<PointerValue<'ctx>, String> {
+        let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
+        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+        let deskriptor = self.struktur_deskriptor(name)?;
+        let unbox = match self.module.get_function("moo_struct_unbox_value") {
+            Some(f) => f,
+            None => self.module.add_function("moo_struct_unbox_value", self.context.i32_type().fn_type(
+                &[ptr_type.into(), ptr_type.into(), ptr_type.into()], false), None),
+        };
+        let wert = self.compile_expr(expr)?;
+        let wert_slot = self.entry_alloca(self.mv_type(), "native.struktur.wert")?;
+        self.builder.build_store(wert_slot, wert).map_err(|e| e.to_string())?;
+        let kopie = self.native_struct_slot(name, "native.struktur.kopie")?;
+        let ok = self.builder.build_call(unbox, &[wert_slot.into(), deskriptor.into(), kopie.into()],
+            "native.struktur.unbox").map_err(|e| e.to_string())?.try_as_basic_value();
+        let ok = match ok {
+            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+            _ => return Err("moo_struct_unbox_value liefert keinen Wert".into()),
+        };
+        self.call_rt_void(self.rt.moo_release, &[wert.into()], "native.struktur.release")?;
+        let fehlt = self.builder.build_int_compare(inkwell::IntPredicate::EQ, ok,
+            self.context.i32_type().const_zero(), "native.struktur.fehlt").map_err(|e| e.to_string())?;
+        let ok_bb = self.context.append_basic_block(function, "native.struktur.ok");
+        let fehler_bb = self.context.append_basic_block(function, "native.struktur.fehler");
+        self.builder.build_conditional_branch(fehlt, fehler_bb, ok_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(fehler_bb);
+        if let Some(target) = catch {
+            self.builder.build_unconditional_branch(target).map_err(|e| e.to_string())?;
+        } else {
+            self.native_argument_fatal_exit()?;
+        }
+        self.builder.position_at_end(ok_bb);
+        Ok(kopie)
+    }
+
+    /// P2-T49 B3: Strukturergebnis (sret-Puffer) als neue MOO_STRUCT-Box.
+    fn native_struct_box(&mut self, zeiger: PointerValue<'ctx>, name: &str) -> Result<StructValue<'ctx>, String> {
+        let deskriptor = self.struktur_deskriptor(name)?;
+        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+        let boxer = match self.module.get_function("moo_struct_box_value") {
+            Some(f) => f,
+            None => self.module.add_function("moo_struct_box_value", self.context.void_type().fn_type(
+                &[ptr_type.into(), ptr_type.into(), ptr_type.into()], false), None),
+        };
+        let out = self.entry_alloca(self.mv_type(), "native.struktur.box")?;
+        self.builder.build_call(boxer, &[deskriptor.into(), zeiger.into(), out.into()], "")
+            .map_err(|e| e.to_string())?;
+        Ok(self.builder.build_load(self.mv_type(), out, "native.struktur.boxwert")
+            .map_err(|e| e.to_string())?.into_struct_value())
+    }
+
+    /// P2-T49 B3 (Review #38118): Strukturergebnis eines nativen Aufrufs nur
+    /// boxen, wenn der Aufruf kein Fehlerflag hinterlassen hat. Auf dem
+    /// Fehlerpfad entsteht keine Heapbox (ein OOM beim Boxen koennte sonst den
+    /// Originalfehler ueberschreiben); das Ergebnis ist dann `nichts`, die
+    /// bestehende Statement-Pruefung propagiert den offenen Fehler.
+    fn native_struct_box_nach_pruefung(
+        &mut self, zeiger: PointerValue<'ctx>, name: &str,
+    ) -> Result<StructValue<'ctx>, String> {
+        let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
+        let flag = match self.builder.build_call(self.rt.moo_try_check, &[], "native.struktur.pruef")
+            .map_err(|e| e.to_string())?.try_as_basic_value()
+        {
+            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+            _ => return Err("moo_try_check liefert keinen Wert".into()),
+        };
+        let offen = self.builder.build_int_compare(inkwell::IntPredicate::NE, flag,
+            flag.get_type().const_zero(), "native.struktur.fehler_offen").map_err(|e| e.to_string())?;
+        let ergebnis = self.entry_alloca(self.mv_type(), "native.struktur.ergebnis.slot")?;
+        let box_bb = self.context.append_basic_block(function, "native.struktur.boxen");
+        let fehler_bb = self.context.append_basic_block(function, "native.struktur.ohne_box");
+        let weiter_bb = self.context.append_basic_block(function, "native.struktur.weiter");
+        self.builder.build_conditional_branch(offen, fehler_bb, box_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(box_bb);
+        let boxed = self.native_struct_box(zeiger, name)?;
+        self.builder.build_store(ergebnis, boxed).map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(weiter_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(fehler_bb);
+        let none = self.call_rt(self.rt.moo_none, &[], "native.struktur.nichts")?;
+        self.builder.build_store(ergebnis, none).map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(weiter_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(weiter_bb);
+        Ok(self.builder.build_load(self.mv_type(), ergebnis, "native.struktur.ergebnis")
+            .map_err(|e| e.to_string())?.into_struct_value())
+    }
+
+    /// P2-T49 B4 (Plan 38c59c64 E6): `Name(a, b, ...)` in dynamischem Code erzeugt
+    /// eine Box. Stelligkeit wie native_system.rs construct_struct_into (keine
+    /// Argumente = Nullwert, sonst genau ein Wert je Feld; statisch geprueft); die
+    /// Werte prueft moo_struct_new_values wie das Feldschreiben (fangbar).
+    fn compile_struktur_konstruktor(&mut self, name: &str, args: &[Expr], guard_args: bool) -> Result<StructValue<'ctx>, String> {
+        if self.bare_mode {
+            return Err(format!("Struktur '{name}': Strukturwerte in dynamischem Moo brauchen die hosted Runtime (nicht im Bare-Profil)"));
+        }
+        let feldzahl = self.native_structs.layout(name).map(|l| l.fields.len())
+            .ok_or_else(|| format!("Struktur '{name}': Layout fehlt"))?;
+        if !args.is_empty() && args.len() != feldzahl {
+            return Err(format!("Struktur '{name}' erwartet {feldzahl} Werte (oder keinen fuer den Nullwert), bekommen {}", args.len()));
+        }
+        let deskriptor = self.struktur_deskriptor(name)?;
+        let anzahl = u32::try_from(args.len()).map_err(|_| "zu viele Strukturargumente".to_string())?;
+        let feld_t = self.mv_type().array_type(anzahl.max(1));
+        let feld = self.entry_alloca(feld_t, "struktur.argumente")?;
+        let i32t = self.context.i32_type();
+        let mut werte = Vec::with_capacity(args.len());
+        for (i, arg) in args.iter().enumerate() {
+            let base = self.stmt_owned_context.len();
+            if self.stmt_recursive_guard { self.stmt_owned_context.extend_from_slice(&werte); }
+            let ergebnis = self.compile_expr(arg);
+            self.stmt_owned_context.truncate(base);
+            let wert = ergebnis?;
+            werte.push(wert);
+            if guard_args { self.guard_local_expr_error(&werte)?; }
+            let platz = unsafe {
+                self.builder.build_in_bounds_gep(feld_t, feld,
+                    &[i32t.const_zero(), i32t.const_int(i as u64, false)], "struktur.argument")
+            }.map_err(|e| e.to_string())?;
+            self.builder.build_store(platz, wert).map_err(|e| e.to_string())?;
+        }
+        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+        let neu = match self.module.get_function("moo_struct_new_values") {
+            Some(f) => f,
+            None => self.module.add_function("moo_struct_new_values", self.context.void_type().fn_type(
+                &[ptr_type.into(), ptr_type.into(), i32t.into(), ptr_type.into()], false), None),
+        };
+        let out = self.entry_alloca(self.mv_type(), "struktur.neu")?;
+        self.builder.build_call(neu, &[deskriptor.into(), feld.into(),
+            i32t.const_int(u64::from(anzahl), false).into(), out.into()], "").map_err(|e| e.to_string())?;
+        for wert in &werte {
+            self.call_rt_void(self.rt.moo_release, &[(*wert).into()], "struktur.arg_release")?;
+        }
+        Ok(self.builder.build_load(self.mv_type(), out, "struktur.wert")
+            .map_err(|e| e.to_string())?.into_struct_value())
+    }
+
+    /// P2-T23/T53 B3: Laufzeit-Typ-ID eines Griffs (0 = ptr[void], sonst Struktur-ID).
+    fn griff_typ_id(&self, ziel: Option<&str>) -> Result<u64, String> {
+        match ziel {
+            None => Ok(0),
+            Some(name) => self.native_structs.struktur_id(name)
+                .ok_or_else(|| format!("Griff ptr[{name}]: Strukturidentitaet fehlt")),
+        }
+    }
+
+    /// P2-T23/T53 B3 (Plan 36aca1f2 E1-E6): Griffargument an der dyn->nativ-Grenze.
+    /// Variable (geliehen, +1 bis nach dem Aufruf) oder `nichts` (Nullzeiger).
+    /// moo_handle_unbox prueft Griff, Zeigertyp und Zustand (freigegeben). Fehler:
+    /// eigener Wert, alle Puffer-Pins und frueheren Griffwerte dieses Aufrufs
+    /// freigeben, dann derselbe Ausgang wie bei Pufferargumenten.
+    fn compile_native_handle_argument(
+        &mut self,
+        expr: &Expr,
+        ziel: Option<&str>,
+        pins: &[(inkwell::values::PointerValue<'ctx>, StructValue<'ctx>)],
+        griffe: &[(inkwell::values::PointerValue<'ctx>, StructValue<'ctx>, bool)],
+        catch: Option<inkwell::basic_block::BasicBlock<'ctx>>,
+    ) -> Result<(inkwell::values::PointerValue<'ctx>, inkwell::values::PointerValue<'ctx>, StructValue<'ctx>), String> {
+        let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
+        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+        let i64t = self.context.i64_type();
+        let typ_id = self.griff_typ_id(ziel)?;
+        let unbox = match self.module.get_function("moo_handle_unbox") {
+            Some(f) => f,
+            None => self.module.add_function("moo_handle_unbox", self.context.i32_type().fn_type(
+                &[ptr_type.into(), i64t.into(), ptr_type.into()], false), None),
+        };
+        let wert = self.compile_expr(expr)?;
+        let wert_slot = self.entry_alloca(self.mv_type(), "native.griff.wert")?;
+        self.builder.build_store(wert_slot, wert).map_err(|e| e.to_string())?;
+        let zeiger_slot = self.entry_alloca(ptr_type, "native.griff.zeiger")?;
+        let ok = self.builder.build_call(unbox, &[
+            wert_slot.into(), i64t.const_int(typ_id, false).into(), zeiger_slot.into(),
+        ], "native.griff.unbox").map_err(|e| e.to_string())?.try_as_basic_value();
+        let ok = match ok {
+            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
+            _ => return Err("moo_handle_unbox liefert keinen Wert".into()),
+        };
+        let fehlt = self.builder.build_int_compare(inkwell::IntPredicate::EQ, ok,
+            self.context.i32_type().const_zero(), "native.griff.fehlt").map_err(|e| e.to_string())?;
+        let ok_bb = self.context.append_basic_block(function, "native.griff.ok");
+        let fehler_bb = self.context.append_basic_block(function, "native.griff.fehler");
+        self.builder.build_conditional_branch(fehlt, fehler_bb, ok_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(fehler_bb);
+        self.call_rt_void(self.rt.moo_release, &[wert.into()], "native.griff.release_fehler")?;
+        self.native_buffer_unpin(pins)?;
+        self.native_handle_release(griffe, false)?;
+        if let Some(target) = catch {
+            self.builder.build_unconditional_branch(target).map_err(|e| e.to_string())?;
+        } else {
+            self.native_argument_fatal_exit()?;
+        }
+        self.builder.position_at_end(ok_bb);
+        let zeiger = self.builder.build_load(ptr_type, zeiger_slot, "native.griff.zeiger")
+            .map_err(|e| e.to_string())?.into_pointer_value();
+        Ok((zeiger, wert_slot, wert))
+    }
+
+    /// P2-T85 C1: seiteneffektfreie Argumentform fuer Puffer/Griffe: Variable,
+    /// selbst/this oder Feldzugriff darauf (auch verkettet, ohne Aufrufe/Indizes).
+    fn ist_feldkette(expr: &Expr) -> bool {
+        match expr {
+            Expr::Identifier(_) | Expr::This => true,
+            Expr::PropertyAccess { object, .. } => Self::ist_feldkette(object),
+            _ => false,
+        }
+    }
+
+    /// P2-T85 A1: Rahmenzustand sichern und fuer den neuen Rahmen `art`
+    /// neutralisieren (Guards aus, keine Sprungziele, kein Statement-Kontext).
+    fn rahmen_betreten(&mut self, art: RahmenArt) -> RahmenZustand<'ctx> {
+        RahmenZustand {
+            rahmen_art: std::mem::replace(&mut self.rahmen_art, art),
+            native_guard_enabled: std::mem::replace(&mut self.native_guard_enabled, false),
+            native_guard_exit: self.native_guard_exit.take(),
+            native_skip_target: self.native_skip_target.take(),
+            native_try_direct: std::mem::replace(&mut self.native_try_direct, false),
+            stmt_root_guard: std::mem::replace(&mut self.stmt_root_guard, false),
+            stmt_recursive_guard: std::mem::replace(&mut self.stmt_recursive_guard, false),
+            stmt_owned_context: std::mem::take(&mut self.stmt_owned_context),
+        }
+    }
+
+    /// P2-T85 A1: Rahmenzustand der umgebenden Funktion wiederherstellen.
+    fn rahmen_verlassen(&mut self, zustand: RahmenZustand<'ctx>) {
+        self.rahmen_art = zustand.rahmen_art;
+        self.native_guard_enabled = zustand.native_guard_enabled;
+        self.native_guard_exit = zustand.native_guard_exit;
+        self.native_skip_target = zustand.native_skip_target;
+        self.native_try_direct = zustand.native_try_direct;
+        self.stmt_root_guard = zustand.stmt_root_guard;
+        self.stmt_recursive_guard = zustand.stmt_recursive_guard;
+        self.stmt_owned_context = zustand.stmt_owned_context;
+    }
+
+    /// P2-T87: Methodennamen mit eigenem Builtin-Arm in Expr::MethodCall. Muss
+    /// mit den Arm-Koepfen der Kaskade uebereinstimmen (neue Arme hier ergaenzen,
+    /// sonst ueberdeckt das Builtin gleichnamige Klassenmethoden).
+    fn ist_builtin_methode(name: &str) -> bool {
+        matches!(name,
+            "mit_gradient" | "with_gradient" | "rueckwaerts" | "rückwärts" | "backward" | "gradient"
+            | "gradient_löschen" | "gradient_loeschen" | "zero_grad" | "gradient_setzen" | "set_gradient"
+            | "matmul" | "transponieren" | "transpose" | "umformen" | "reshape" | "zeilen" | "rows"
+            | "verketten" | "concat" | "summe" | "sum" | "mittel" | "mean" | "max_wert" | "max_val"
+            | "exp" | "log" | "wurzel" | "sqrt" | "negieren" | "neg" | "hoch" | "pow"
+            | "hadamard" | "hadamard_inv" | "relu" | "sigmoid" | "tanh" | "gelu" | "softmax" | "logsoftmax"
+            | "als_dtype" | "as_dtype" | "form" | "shape" | "größe" | "groesse" | "size"
+            | "zu_liste" | "to_list" | "wert" | "value_at" | "wert_setzen" | "set_value"
+            | "schritt" | "step" | "trainiere" | "train" | "vorhersage" | "predict"
+            | "genauigkeit" | "accuracy" | "speichern" | "save"
+            | "append" | "hinzufügen" | "length" | "länge" | "pop" | "leeren" | "clear"
+            | "entfernen" | "remove_at" | "einfügen" | "einfuegen" | "insert" | "reverse" | "umkehren"
+            | "sort" | "sortieren" | "join" | "verbinden" | "contains" | "enthält" | "keys" | "schlüssel"
+            | "has" | "hat" | "upper" | "gross" | "lower" | "klein" | "trim" | "trimmen"
+            | "slice" | "teilstring" | "split" | "teilen" | "replace" | "ersetzen"
+            | "str_contains" | "text_enthält" | "warten" | "wait" | "binde" | "bind"
+            | "ausfuehren" | "ausführen" | "execute" | "abfrage" | "query"
+            | "zuruecksetzen" | "zurücksetzen" | "reset" | "fertig" | "done" | "senden" | "send"
+            | "empfangen" | "recv" | "schliessen" | "close" | "web_annehmen" | "web_accept"
+            | "antworten_mit_headers" | "respond_with_headers" | "json_antworten_mit_headers"
+            | "json_respond_with_headers" | "antworten" | "respond" | "json_antworten" | "json_respond"
+            | "starten" | "start" | "annehmen" | "accept" | "lesen" | "read" | "schreiben" | "write"
+            | "lesen_bytes" | "read_bytes" | "schreiben_bytes" | "schreibe_bytes" | "write_bytes"
+            | "timeout_setzen" | "set_timeout" | "udp_verbinden" | "udp_connect"
+            | "map" | "abbilden" | "filter" | "filtern" | "bei" | "on" | "auslösen" | "emit")
+    }
+
+    /// P2-T87: Methode einer Klasse inklusive Elternkette (None = kein Member).
+    fn klassen_methode(&self, class: &str, method: &str) -> Result<Option<FunctionValue<'ctx>>, String> {
+        let mut current = class.to_string();
+        let mut visited = std::collections::HashSet::new();
+        loop {
+            if !visited.insert(current.clone()) {
+                return Err(format!("Zyklische Klassenvererbung bei {class}"));
+            }
+            if let Some(func) = self.class_methods.get(&(current.clone(), method.to_string())) {
+                return Ok(Some(*func));
+            }
+            match self.class_parents.get(&current) {
+                Some(parent) => current = parent.clone(),
+                None => return Ok(None),
+            }
+        }
+    }
+
+    /// P2-T87 (Befund 9ff1eb58): Laufzeitweiche fuer einen Methodennamen, den
+    /// eine Klasse UND ein Builtin-Arm kennt, bei statisch unbekanntem Empfaenger.
+    /// Objekt einer Klasse mit dieser Methode (inkl. Vererbung) -> Klassenmethode;
+    /// jeder andere Empfaenger -> Builtin-Arme ueber den Receiver-Slot (der
+    /// Empfaenger wird nicht erneut ausgewertet, Argumente je Zweig genau einmal).
+    fn methoden_weiche(
+        &mut self,
+        obj: StructValue<'ctx>,
+        slot_name: &str,
+        method: &str,
+        args: &[Expr],
+    ) -> Result<StructValue<'ctx>, String> {
+        let function = self.current_function.ok_or("Methodenaufruf ohne Funktion")?;
+        let mut classes: Vec<String> = self.class_methods.keys()
+            .map(|(class, _)| class.clone()).chain(self.class_parents.keys().cloned()).collect();
+        classes.sort();
+        classes.dedup();
+        let mut kandidaten = Vec::new();
+        for class in classes {
+            if let Some(func) = self.klassen_methode(&class, method)? {
+                if func.count_params() == 0 { return Err(format!("{class}.{method} hat keinen Receiver")); }
+                kandidaten.push((class, func));
+            }
+        }
+        let result_ptr = self.entry_alloca(self.mv_type(), "weiche_ergebnis")?;
+        let ziel_ptr = self.entry_alloca(self.context.i32_type(), "weiche_ziel")?;
+        let klasse_bb = self.context.append_basic_block(function, "weiche_klasse");
+        let aufruf_bb = self.context.append_basic_block(function, "weiche_klassen_aufruf");
+        let builtin_bb = self.context.append_basic_block(function, "weiche_builtin");
+        let nach_bb = self.context.append_basic_block(function, "weiche_nach");
+        let tag_wert = self.builder.build_extract_value(obj, 0, "weiche_tag")
+            .map_err(|e| format!("{e}"))?.into_int_value();
+        let ist_objekt = self.builder.build_int_compare(inkwell::IntPredicate::EQ, tag_wert,
+            self.context.i64_type().const_int(tag::OBJECT, false), "weiche_ist_objekt").map_err(|e| format!("{e}"))?;
+        self.builder.build_conditional_branch(ist_objekt, klasse_bb, builtin_bb).map_err(|e| format!("{e}"))?;
+
+        // Klassenname gegen alle Klassen mit dieser Methode; ohne Treffer -> Builtin.
+        self.builder.position_at_end(klasse_bb);
+        let class_call = self.call_rt_abi(self.rt.moo_object_class_name, &[obj.into()], "weiche_klasse_name")?;
+        let class_ptr = match class_call.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v.into_pointer_value(),
+            _ => return Err("moo_object_class_name hat keinen Wert".to_string()),
+        };
+        let strcmp_fn = self.module.get_function("strcmp").unwrap_or_else(|| {
+            let ptr = self.context.ptr_type(inkwell::AddressSpace::default());
+            self.module.add_function("strcmp", self.context.i32_type().fn_type(&[ptr.into(), ptr.into()], false), None)
+        });
+        for (index, (class, _)) in kandidaten.iter().enumerate() {
+            let name_ptr = self.make_global_str(class, &format!("weiche_klasse_{index}"))?;
+            let cmp = match self.builder.build_call(strcmp_fn, &[class_ptr.into(), name_ptr.into()], "weiche_cmp")
+                .map_err(|e| format!("{e}"))?.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                _ => return Err("strcmp hat keinen Wert".to_string()),
+            };
+            let gleich = self.builder.build_int_compare(inkwell::IntPredicate::EQ, cmp,
+                self.context.i32_type().const_zero(), "weiche_gleich").map_err(|e| format!("{e}"))?;
+            let treffer_bb = self.context.append_basic_block(function, "weiche_treffer");
+            let weiter_bb = self.context.append_basic_block(function, "weiche_weiter");
+            self.builder.build_conditional_branch(gleich, treffer_bb, weiter_bb).map_err(|e| format!("{e}"))?;
+            self.builder.position_at_end(treffer_bb);
+            self.builder.build_store(ziel_ptr, self.context.i32_type().const_int(index as u64, false))
+                .map_err(|e| format!("{e}"))?;
+            self.builder.build_unconditional_branch(aufruf_bb).map_err(|e| format!("{e}"))?;
+            self.builder.position_at_end(weiter_bb);
+        }
+        self.builder.build_unconditional_branch(builtin_bb).map_err(|e| format!("{e}"))?;
+
+        // Klassenzweig: Argumente einmal auswerten, dann gezielt aufrufen. Der
+        // Receiver-Slot bleibt Besitzer; die Methode konsumiert eine eigene Referenz.
+        self.builder.position_at_end(aufruf_bb);
+        let mut werte = Vec::with_capacity(args.len());
+        for arg in args { werte.push(self.compile_expr(arg)?); }
+        if kandidaten.is_empty() {
+            for wert in &werte { self.call_rt_void(self.rt.moo_release, &[(*wert).into()], "weiche_arg_frei")?; }
+            self.builder.build_unconditional_branch(builtin_bb).map_err(|e| format!("{e}"))?;
+        } else {
+            let ziel = self.builder.build_load(self.context.i32_type(), ziel_ptr, "weiche_ziel_wert")
+                .map_err(|e| format!("{e}"))?.into_int_value();
+            let aufruf_bloecke: Vec<_> = kandidaten.iter()
+                .map(|_| self.context.append_basic_block(function, "weiche_methode")).collect();
+            let faelle: Vec<_> = aufruf_bloecke.iter().enumerate()
+                .map(|(index, bb)| (self.context.i32_type().const_int(index as u64, false), *bb)).collect();
+            self.builder.build_switch(ziel, aufruf_bloecke[0], &faelle).map_err(|e| format!("{e}"))?;
+            for ((_, func), bb) in kandidaten.iter().zip(&aufruf_bloecke) {
+                self.builder.position_at_end(*bb);
+                let erwartet = func.count_params() as usize;
+                self.call_rt_void(self.rt.moo_retain, &[obj.into()], "weiche_receiver")?;
+                let mut call_args: Vec<BasicMetadataValueEnum> = vec![obj.into()];
+                for wert in werte.iter().take(erwartet - 1) { call_args.push((*wert).into()); }
+                for wert in werte.iter().skip(erwartet - 1) {
+                    self.call_rt_void(self.rt.moo_release, &[(*wert).into()], "weiche_arg_ueber")?;
+                }
+                while call_args.len() < erwartet {
+                    call_args.push(self.call_rt(self.rt.moo_none, &[], "weiche_arg_none")?.into());
+                }
+                let ergebnis = self.call_rt(*func, &call_args, "weiche_methoden_ergebnis")?;
+                self.builder.build_store(result_ptr, ergebnis).map_err(|e| format!("{e}"))?;
+                self.builder.build_unconditional_branch(nach_bb).map_err(|e| format!("{e}"))?;
+            }
+        }
+
+        // Builtin-Zweig: dieselbe Methode ueber den Receiver-Slot, nur Builtin-Arme.
+        self.builder.position_at_end(builtin_bb);
+        self.methode_nur_builtin = true;
+        let builtin_ausdruck = Expr::MethodCall {
+            object: Box::new(Expr::Identifier(slot_name.to_string())),
+            method: method.to_string(),
+            args: args.to_vec(),
+        };
+        let builtin_ergebnis = self.compile_expr(&builtin_ausdruck);
+        self.methode_nur_builtin = false;
+        let builtin_ergebnis = builtin_ergebnis?;
+        self.builder.build_store(result_ptr, builtin_ergebnis).map_err(|e| format!("{e}"))?;
+        self.builder.build_unconditional_branch(nach_bb).map_err(|e| format!("{e}"))?;
+
+        self.builder.position_at_end(nach_bb);
+        Ok(self.builder.build_load(self.mv_type(), result_ptr, "weiche_wert")
+            .map_err(|e| format!("{e}"))?.into_struct_value())
+    }
+
+    /// P2-T23/T53 B3: geliehene Griffwerte eines nativen Aufrufs freigeben; nach
+    /// dem Aufruf (`nach_aufruf`) vorher @verbraucht-Griffe schliessen. Auch wenn
+    /// der Aufruf einen Fehler meldet: lieber ein Leck als Doppelfreigabe (R2).
+    fn native_handle_release(
+        &mut self,
+        griffe: &[(inkwell::values::PointerValue<'ctx>, StructValue<'ctx>, bool)],
+        nach_aufruf: bool,
+    ) -> Result<(), String> {
+        if griffe.is_empty() { return Ok(()); }
+        let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+        for (slot, wert, verbraucht) in griffe {
+            if nach_aufruf && *verbraucht {
+                let close = match self.module.get_function("moo_handle_close") {
+                    Some(f) => f,
+                    None => self.module.add_function("moo_handle_close",
+                        self.context.void_type().fn_type(&[ptr_type.into()], false), None),
+                };
+                self.builder.build_call(close, &[(*slot).into()], "").map_err(|e| e.to_string())?;
+            }
+            self.call_rt_void(self.rt.moo_release, &[(*wert).into()], "native.griff.release")?;
+        }
+        Ok(())
+    }
+
+    /// P2-T23/T53 B3: Zeigerergebnis einer nativen Funktion als Griff (NULL -> nichts).
+    fn native_handle_box(
+        &mut self,
+        zeiger: inkwell::values::PointerValue<'ctx>,
+        ziel: Option<&str>,
+    ) -> Result<StructValue<'ctx>, String> {
+        let typ_id = self.griff_typ_id(ziel)?;
+        let i64t = self.context.i64_type();
+        let boxer = match self.module.get_function("moo_handle_box") {
+            Some(f) => f,
+            None => {
+                let windows = self.windows_x64_abi();
+                let ptr = self.context.ptr_type(inkwell::AddressSpace::default());
+                let mut params: Vec<BasicMetadataTypeEnum<'ctx>> = Vec::new();
+                if windows { params.push(ptr.into()); }
+                params.extend([BasicMetadataTypeEnum::from(ptr), i64t.into()]);
+                let fn_type = if windows {
+                    self.context.void_type().fn_type(&params, false)
+                } else {
+                    self.mv_type().fn_type(&params, false)
+                };
+                self.module.add_function("moo_handle_box", fn_type, None)
+            }
+        };
+        self.call_rt(boxer, &[zeiger.into(), i64t.const_int(typ_id, false).into()], "native.griff.box")
+    }
+
     /// P2-T50 B5: Pins eines nativen Aufrufs loesen und die geliehenen Werte freigeben.
     fn native_buffer_unpin(&mut self, pins: &[(inkwell::values::PointerValue<'ctx>, StructValue<'ctx>)]) -> Result<(), String> {
         if pins.is_empty() { return Ok(()); }
         let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
-        let unpin = match self.module.get_function("moo_buffer_unpin") {
+        // P2-T83 B2: Leihe zurueckgeben (Pin loesen bzw. Tensor-Maske nach Schreiben).
+        let unpin = match self.module.get_function("moo_native_zurueck") {
             Some(f) => f,
-            None => self.module.add_function("moo_buffer_unpin",
+            None => self.module.add_function("moo_native_zurueck",
                 self.context.void_type().fn_type(&[ptr_type.into()], false), None),
         };
         for (pin, wert) in pins {
@@ -5315,7 +6335,13 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::FunctionCall { name, args } => {
                 let guard_args = std::mem::take(&mut self.stmt_root_guard) || self.stmt_recursive_guard;
                 if let Some(function) = self.native_functions.get(name).copied() {
-                    let signature = self.native_signatures.get(name).cloned().ok_or_else(|| format!("Nativer Zeigerfunktionsaufruf '{name}' ist noch nicht unterstützt"))?;
+                    let signature = match self.native_signatures.get(name).cloned() {
+                        Some(signature) => signature,
+                        None => return Err(match self.native_dyn_sperre.get(name) {
+                            Some(grund) => format!("Native Funktion '{name}' ist aus dynamischem Moo nicht aufrufbar: {grund}"),
+                            None => format!("Nativer Zeigerfunktionsaufruf '{name}' ist noch nicht unterstützt"),
+                        }),
+                    };
                     // P2-T66 Stufe 2a: hosted Systemkoerper rechnen C-artig (Zeiger,
                     // Wrap, kein Boxing), deshalb nur explizit `unsicher:` und nur in
                     // main oder einer benannten Funktion. P2-T74: Moo-interne hosted
@@ -5341,23 +6367,24 @@ impl<'ctx> CodeGen<'ctx> {
                     // benannten Funktionen und versuche:-Teilausdruecken propagieren.
                     let wasm_target = self.module.get_triple().as_str().to_str()
                         .map(|t| t.starts_with("wasm")).unwrap_or(true);
+                    // P2-T55 (Plan f5b52a0b E1): auch die FFI-Einzelform (unsicher:-
+                    // Wrapper um einen skalaren C-Aufruf) ist hosted fangbar; ihre
+                    // Argumentadapter und das Ergebnis-Boxing teilen die Fehlerausgaenge.
                     let plain_fangbar = !system_call && !self.bare_mode && !wasm_target
-                        && !self.native_ffi_functions.contains(name)
                         && function.get_name().to_str().is_ok_and(|n| n.starts_with("__moo_native."));
                     let fangbar = system_fangbar || plain_fangbar;
                     let in_main = self.current_function == self.module.get_function("main");
-                    // P2-T66 (b): benannte Top-Level-Funktionen (keine Lambdas, keine Methoden).
-                    let in_named_function = !in_main && self.current_function
-                        .and_then(|f| f.get_name().to_str().ok().map(|n| self.dyn_named_functions.contains(n)))
-                        .unwrap_or(false);
+                    // P2-T66 (b) / P2-T85 B1: dynamischer Standardrahmen (benannte
+                    // Top-Level-Funktion, Methode, Lambda) mit Fehlerausgang.
+                    let in_named_function = !in_main && self.im_standardrahmen();
                     if system_call {
                         if !self.unsafe_context {
                             return Err(format!("Aufruf des nativen Systemkoerpers '{name}' nur innerhalb von unsicher: (C-artige Semantik; Fehler sind hosted fangbar, im Bare-Profil und in C-Exporten fatal)"));
                         }
                         if !(in_main || in_named_function) {
-                            return Err(format!("Aufruf des nativen Systemkoerpers '{name}' ist nur in main oder einer benannten Funktion erlaubt (keine Lambdas/Methoden)"));
+                            return Err(format!("Aufruf des nativen Systemkoerpers '{name}' ist nur in main, einer Funktion, Methode oder einem Lambda erlaubt"));
                         }
-                        if !self.try_stack.is_empty() && !system_fangbar {
+                        if self.rahmen_hat_handler() && !system_fangbar {
                             return Err(format!("Aufruf des nativen Systemkoerpers '{name}' ist innerhalb von versuche: oder einem aufraeumen-Rahmen nur hosted erlaubt (im Bare-Profil waere ein Trap nicht fangbar)"));
                         }
                         // P2-T77: fangbare Koerper laufen in Funktionen mit aufraeumen
@@ -5375,24 +6402,26 @@ impl<'ctx> CodeGen<'ctx> {
                     // deren Fehlerpfad propagiert flag-basiert (native_argument_fatal_exit
                     // Direktform bzw. Skip-Block) statt mit dem main-Return.
                     let argument_frame_ok = in_main || ((system_call || plain_fangbar) && in_named_function);
-                    // Der aktuelle Wide-Fehlerpfad beendet main. Eine spaetere
-                    // Defer-Stelle kann in einer Schleife bereits aktiv sein; bis
-                    // zum propagierenden Cleanup-Rahmen konservativ modulweit sperren.
-                    if self.native_ffi_functions.contains(name) && !self.defer_catalog.actions().is_empty()
+                    // P2-T55 A1: hosted laeuft die FFI-Einzelform ueber plain_fangbar
+                    // (Direktform, Skip-Block, Pruefpunkt, aufraeumen-Rahmen wie reine
+                    // @nativ-Aufrufe). Nur nicht fangbare Ziele (wasm) behalten die
+                    // alten Sperren: dort beendet der Wide-Fehlerpfad main.
+                    if self.native_ffi_functions.contains(name) && !plain_fangbar
+                        && !self.defer_catalog.actions().is_empty()
                         && (matches!(signature.result, Some(crate::codegen_native::NType::I64 | crate::codegen_native::NType::U64))
                             || signature.params.iter().any(|ty| matches!(ty, crate::codegen_native::NType::I64 | crate::codegen_native::NType::U64)))
                     {
                         return Err("Native 64-Bit-FFI bei vorhandenem aufräumen ist noch nicht unterstützt".into());
                     }
-                    // Bis ein propagierender Cleanup-Rahmen existiert darf ein
-                    // Foreign-Fehler nur ohne aktiven Moo-Handler auftreten.
-                    if self.native_ffi_functions.contains(name)
+                    if self.native_ffi_functions.contains(name) && !plain_fangbar
                         && (self.current_function != self.module.get_function("main")
-                            || !self.try_stack.is_empty() || self.bare_mode)
+                            || self.rahmen_hat_handler() || self.bare_mode)
                     {
                         return Err("Native FFI-Aufrufe sind derzeit nur in main ausserhalb von try unterstützt".into());
                     }
-                    if args.len() != function.count_params() as usize {
+                    // P2-T49 B3: ein Strukturergebnis kommt ueber den sret-Puffer (Parameter 0).
+                    let struktur_ergebnis = self.native_struct_results.get(name).cloned();
+                    if args.len() + usize::from(struktur_ergebnis.is_some()) != function.count_params() as usize {
                         return Err(format!("Native Funktion '{name}': falsche Argumentzahl"));
                     }
                     if self.bare_mode {
@@ -5444,7 +6473,7 @@ impl<'ctx> CodeGen<'ctx> {
                     });
                     let skip_target = if local_catch.is_none() && !self.native_try_direct
                         && fangbar && needs_adapter
-                        && (in_named_function || (in_main && !self.try_stack.is_empty()))
+                        && (in_named_function || (in_main && self.rahmen_hat_handler()))
                     {
                         let current = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
                         Some(self.context.append_basic_block(current, "native.skip"))
@@ -5457,14 +6486,33 @@ impl<'ctx> CodeGen<'ctx> {
                     let mut native_args = Vec::with_capacity(args.len());
                     let puffer_params = self.native_buffer_params.get(name).cloned();
                     for (index, (arg, ty)) in args.iter().zip(&signature.params).enumerate() {
+                        // P2-T49 B3: Strukturwert - beliebiger Ausdruck, sofort in eine
+                        // Aufruferkopie entboxt (keine Leihe), Zeiger an die Funktion.
+                        if let Some(Some(crate::native_system::PufferArt::Wert(struktur))) = puffer_params.as_ref().and_then(|p| p.get(index)) {
+                            if adapter_catch.is_none() && (!argument_frame_ok || self.rahmen_hat_handler()) {
+                                return Err("Strukturargumente an native Funktionen sind nur hosted in main oder benannten Funktionen unterstützt (in versuche:-Teilausdruecken nur fuer fangbare Koerper)".into());
+                            }
+                            let kopie = self.compile_native_struct_argument(arg, struktur, adapter_catch)?;
+                            native_args.push(kopie.into());
+                            continue;
+                        }
                         // P2-T50 B5: Pufferpositionen tragen in signature nur einen
                         // Platzhalter (dyn_signature) und laufen nie durch die
                         // Skalarpfade; sie werden nach allen Skalaren gepinnt.
                         if puffer_params.as_ref().is_some_and(|p| matches!(p.get(index), Some(Some(_)))) {
-                            if !matches!(arg, Expr::Identifier(_)) {
-                                return Err(format!("Native Funktion '{name}': Pufferargument {} muss vorerst eine Variable sein", index + 1));
+                            let griff = puffer_params.as_ref().is_some_and(|p| matches!(p.get(index),
+                                Some(Some(crate::native_system::PufferArt::Griff { .. }))));
+                            // P2-T23/T53 E4/E6: Griffargumente Variable oder nichts (Nullzeiger).
+                            // P2-T85 C1: auch seiteneffektfreier Feldzugriff (selbst.griff,
+                            // a.b.puffer). Der Adapter liest ihn wie eine Variable (+1),
+                            // leiht ihn fuer den Aufruf und gibt ihn auf jedem Pfad frei.
+                            if griff && !(Self::ist_feldkette(arg) || matches!(arg, Expr::None)) {
+                                return Err(format!("Native Funktion '{name}': Griffargument {} muss vorerst eine Variable oder nichts sein (auch Feldzugriff wie selbst.griff)", index + 1));
                             }
-                            if adapter_catch.is_none() && (!argument_frame_ok || !self.try_stack.is_empty()) {
+                            if !griff && !Self::ist_feldkette(arg) {
+                                return Err(format!("Native Funktion '{name}': Pufferargument {} muss vorerst eine Variable sein (auch Feldzugriff wie selbst.puffer)", index + 1));
+                            }
+                            if adapter_catch.is_none() && (!argument_frame_ok || self.rahmen_hat_handler()) {
                                 return Err("Pufferargumente an native Funktionen sind nur hosted in main oder benannten Funktionen unterstützt".into());
                             }
                             native_args.push(self.context.i8_type().const_zero().into());
@@ -5473,7 +6521,7 @@ impl<'ctx> CodeGen<'ctx> {
                         if matches!(ty, crate::codegen_native::NType::I64 | crate::codegen_native::NType::U64) {
                             let local_catch = adapter_catch;
                             if local_catch.is_none()
-                                && (!argument_frame_ok || !self.try_stack.is_empty())
+                                && (!argument_frame_ok || self.rahmen_hat_handler())
                             {
                                 return Err("Dynamische 64-Bit-Argumente an native Funktionen sind nur hosted in main oder benannten Funktionen unterstützt (in versuche:-Teilausdruecken nur fuer fangbare Koerper; nicht in Lambdas/Methoden, C-Exporten, FFI-Koerpern oder im Bare-Profil)".into());
                             }
@@ -5488,7 +6536,7 @@ impl<'ctx> CodeGen<'ctx> {
                             }
                             let local_catch = adapter_catch;
                             if local_catch.is_none()
-                                && (!argument_frame_ok || !self.try_stack.is_empty())
+                                && (!argument_frame_ok || self.rahmen_hat_handler())
                             {
                                 return Err("Dynamische bool-Argumente an native Funktionen sind nur hosted in main oder benannten Funktionen unterstützt (in versuche:-Teilausdruecken nur fuer fangbare Koerper; nicht in Lambdas/Methoden, C-Exporten, FFI-Koerpern oder im Bare-Profil)".into());
                             }
@@ -5498,7 +6546,7 @@ impl<'ctx> CodeGen<'ctx> {
                         if matches!(ty, crate::codegen_native::NType::F32 | crate::codegen_native::NType::F64) {
                             let local_catch = adapter_catch;
                             if local_catch.is_none()
-                                && (!argument_frame_ok || !self.try_stack.is_empty())
+                                && (!argument_frame_ok || self.rahmen_hat_handler())
                             {
                                 return Err("Dynamische Float-Argumente an native Funktionen sind nur hosted in main oder benannten Funktionen unterstützt (in versuche:-Teilausdruecken nur fuer fangbare Koerper; nicht in Lambdas/Methoden, C-Exporten, FFI-Koerpern oder im Bare-Profil)".into());
                             }
@@ -5538,7 +6586,7 @@ impl<'ctx> CodeGen<'ctx> {
                         } else {
                             let local_catch = adapter_catch;
                             if local_catch.is_none()
-                                && (!argument_frame_ok || !self.try_stack.is_empty())
+                                && (!argument_frame_ok || self.rahmen_hat_handler())
                             {
                                 return Err("Dynamische i32-Argumente an native Funktionen sind nur hosted in main oder benannten Funktionen unterstützt (in versuche:-Teilausdruecken nur fuer fangbare Koerper; nicht in Lambdas/Methoden, C-Exporten, FFI-Koerpern oder im Bare-Profil)".into());
                             }
@@ -5553,19 +6601,54 @@ impl<'ctx> CodeGen<'ctx> {
                     if let Some(puffer) = &puffer_params {
                         for (index, element) in puffer.iter().enumerate() {
                             let Some(element) = element else { continue };
+                            if matches!(element, crate::native_system::PufferArt::Griff { .. }
+                                | crate::native_system::PufferArt::Wert(_)) { continue; }
+                            let schreibbar = !self.native_read_params.get(name).is_some_and(|s| s.contains(&index));
                             let (aggregat, pin, wert) = self.compile_native_buffer_argument(
-                                &args[index], element.clone(), &puffer_pins, adapter_catch,
+                                &args[index], element.clone(), schreibbar, &puffer_pins, adapter_catch,
                             )?;
                             native_args[index] = aggregat.into();
                             puffer_pins.push((pin, wert));
                         }
                     }
+                    // P2-T23/T53 B3: Griffe nach den Puffern (Fehler loest alle Pins).
+                    let mut griffe = Vec::new();
+                    if let Some(puffer) = &puffer_params {
+                        for (index, element) in puffer.iter().enumerate() {
+                            let Some(crate::native_system::PufferArt::Griff { ziel, verbraucht }) = element else { continue };
+                            let (zeiger, slot, wert) = self.compile_native_handle_argument(
+                                &args[index], ziel.as_deref(), &puffer_pins, &griffe, adapter_catch,
+                            )?;
+                            native_args[index] = zeiger.into();
+                            griffe.push((slot, wert, *verbraucht));
+                        }
+                    }
+                    // P2-T49 B3: sret-Puffer (ABI-ausgerichtet, genullt) als Parameter 0.
+                    let sret = match &struktur_ergebnis {
+                        Some(struktur) => {
+                            let slot = self.native_struct_slot(struktur, "native.struktur.ergebnis")?;
+                            native_args.insert(0, slot.into());
+                            Some((slot, struktur.clone()))
+                        }
+                        None => None,
+                    };
                     let call_name = if signature.result.is_some() { "native.call" } else { "" };
                     let result = self.builder.build_call(function, &native_args, call_name)
                         .map_err(|e| e.to_string())?.try_as_basic_value();
                     self.native_buffer_unpin(&puffer_pins)?;
+                    self.native_handle_release(&griffe, true)?;
                     self.native_skip_target = previous_skip;
-                    let produced = if signature.result.is_none() {
+                    let griff_ergebnis = self.native_handle_results.get(name).cloned();
+                    let produced = if let Some((slot, struktur)) = sret {
+                        // Review #38118: erst nach dem Fehlercheck boxen (Plan B3).
+                        self.native_struct_box_nach_pruefung(slot, &struktur)?
+                    } else if let Some(ziel) = griff_ergebnis {
+                        let zeiger = match result {
+                            inkwell::values::ValueKind::Basic(BasicValueEnum::PointerValue(p)) => p,
+                            _ => return Err("Native Funktion lieferte keinen Zeiger fuer den Griff".into()),
+                        };
+                        self.native_handle_box(zeiger, ziel.as_deref())?
+                    } else if signature.result.is_none() {
                         self.call_rt(self.rt.moo_none, &[], "native.void")?
                     } else {
                         let value = match result {
@@ -5609,6 +6692,17 @@ impl<'ctx> CodeGen<'ctx> {
                     self.builder.position_at_end(merge);
                     return Ok(self.builder.build_load(self.mv_type(), slot, "native.skip.result")
                         .map_err(|e| e.to_string())?.into_struct_value());
+                }
+                // P2-T49 B4: `Name(...)` einer registrierten Struktur in dynamischem
+                // Code = Strukturwert (Box). Eigene Funktionen, Variablen, Globale und
+                // Lambdas gleichen Namens behalten Vorrang (wie bei Builtins).
+                if self.native_structs.layout(name).is_some()
+                    && self.module.get_function(name).is_none()
+                    && !self.variables.contains_key(name)
+                    && !self.globals.contains_key(name)
+                    && !self.lambda_names.contains_key(name)
+                {
+                    return self.compile_struktur_konstruktor(name, args, guard_args);
                 }
                 if self.extern_c_names.contains(name) {
                     return Err(format!("extern-C-Aufruf '{name}' ist noch nicht unterstützt"));
@@ -5681,6 +6775,14 @@ impl<'ctx> CodeGen<'ctx> {
                             && !self.lambda_names.contains_key(name) =>
                     {
                         return self.compile_buffer_view(name, args);
+                    }
+                    "griff_gültig" | "griff_gueltig" | "handle_valid" | "griffe_offen" | "handles_open"
+                    | "puffer_aus_text" | "buffer_from_text" | "puffer_als_text" | "buffer_to_text"
+                        if !self.variables.contains_key(name)
+                            && !self.globals.contains_key(name)
+                            && !self.lambda_names.contains_key(name) =>
+                    {
+                        return self.compile_griff_builtin(name, args);
                     }
                     // Result-Typ (Rust-inspiriert): ok(wert) / fehler(msg)
                     "ok" => {
@@ -9545,9 +10647,33 @@ impl<'ctx> CodeGen<'ctx> {
                 // P014-A3: Tensor-Methoden nur, wenn KEINE User-Klasse den Namen
                 // definiert (Muster "abfrage"|"query"-Arm) — Klassen-Methoden
                 // gewinnen immer (raytracer Vec3.plus/mal, Kinder-Klassen).
-                let user_hat_methode = self.class_methods.keys().any(|(_, m)| m == method);
-                // Eingebaute Methoden
-                match method.as_str() {
+                // P2-T87 (Befund 9ff1eb58): Klassenmethoden haben bei Objekt-
+                // Empfaengern Vorrang vor gleichnamigen Builtin-Methoden; das
+                // Builtin gilt nur ohne gleichnamigen Member. Im Builtin-Zweig
+                // der Weiche (methode_nur_builtin) zaehlt keine Klasse mehr.
+                let nur_builtin = std::mem::take(&mut self.methode_nur_builtin);
+                let user_hat_methode = !nur_builtin && self.class_methods.keys().any(|(_, m)| m == method);
+                let mut nur_klasse = false;
+                if user_hat_methode && Self::ist_builtin_methode(method) {
+                    let static_class = match object.as_ref() {
+                        Expr::Identifier(name) => self.object_var_types.get(name).cloned(),
+                        Expr::This => self.current_class.clone(),
+                        _ => None,
+                    };
+                    let statisch = match static_class {
+                        Some(class) => self.klassen_methode(&class, method)?.is_some(),
+                        None => false,
+                    };
+                    if statisch {
+                        // Statisch bekannte Klasse mit der Methode: direkt in den
+                        // Klassen-Arm (_), keine Laufzeitpruefung noetig.
+                        nur_klasse = true;
+                    } else {
+                        return self.methoden_weiche(obj, &slot_name, method, args);
+                    }
+                }
+                // Eingebaute Methoden ("\u{0}" trifft keinen Builtin-Arm -> _)
+                match if nur_klasse { "\u{0}" } else { method.as_str() } {
                     // === Tensor-Methoden (Plan-014 A3) ===
                     // Tensor-Konvention: Runtime borrowed — obj laeuft ueber den
                     // Slot (retain_for_slot + Slot-Cleanup), Zusatz-Args werden
@@ -9740,9 +10866,43 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     "append" | "hinzufügen" => {
                         let arg = self.compile_expr(&args[0])?;
+                        // P2-T90 (Review 263bb18d): Bei einem fangbaren append-Fehler
+                        // (keine Liste, eingefroren, Kapazitaet) uebernimmt die Runtime
+                        // arg NICHT. Freigabe nur, wenn genau dieser Aufruf den Fehler
+                        // gesetzt hat (Flag vorher frei, nachher gesetzt); bei Erfolg
+                        // gehoert arg der Liste, ein schon offener Fehler bleibt unberuehrt.
+                        let fehler_vorher = if self.bare_mode { None } else {
+                            match self.builder.build_call(self.rt.moo_try_check, &[], "append.fehler_vorher")
+                                .map_err(|e| e.to_string())?.try_as_basic_value() {
+                                inkwell::values::ValueKind::Basic(v) => Some(v.into_int_value()),
+                                _ => return Err("moo_try_check fehlgeschlagen".into()),
+                            }
+                        };
                         self.call_rt_void(self.rt.moo_list_append,
                             &[obj.into(), arg.into()], "append")?;
-                        // (alter Inline-Release entfallen — Slot-Cleanup uebernimmt es)
+                        if let Some(vorher) = fehler_vorher {
+                            let nachher = match self.builder.build_call(self.rt.moo_try_check, &[], "append.fehler_nachher")
+                                .map_err(|e| e.to_string())?.try_as_basic_value() {
+                                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                                _ => return Err("moo_try_check fehlgeschlagen".into()),
+                            };
+                            let null = self.context.i32_type().const_zero();
+                            let war_frei = self.builder.build_int_compare(inkwell::IntPredicate::EQ, vorher, null, "append.war_frei")
+                                .map_err(|e| e.to_string())?;
+                            let jetzt = self.builder.build_int_compare(inkwell::IntPredicate::NE, nachher, null, "append.jetzt")
+                                .map_err(|e| e.to_string())?;
+                            let abgelehnt = self.builder.build_and(war_frei, jetzt, "append.abgelehnt")
+                                .map_err(|e| e.to_string())?;
+                            let function = self.current_function.ok_or("append ohne Funktion")?;
+                            let freigabe_bb = self.context.append_basic_block(function, "append.abgelehnt");
+                            let weiter_bb = self.context.append_basic_block(function, "append.weiter");
+                            self.builder.build_conditional_branch(abgelehnt, freigabe_bb, weiter_bb)
+                                .map_err(|e| e.to_string())?;
+                            self.builder.position_at_end(freigabe_bb);
+                            self.call_rt_void(self.rt.moo_release, &[arg.into()], "rel_append_abgelehnt")?;
+                            self.builder.build_unconditional_branch(weiter_bb).map_err(|e| e.to_string())?;
+                            self.builder.position_at_end(weiter_bb);
+                        }
                         return self.call_rt(self.rt.moo_none, &[], "none");
                     }
                     "length" | "länge" => {
@@ -9861,7 +11021,7 @@ impl<'ctx> CodeGen<'ctx> {
                         } else {
                             self.rt.moo_db_stmt_execute
                         };
-                        if !self.class_methods.keys().any(|(_, m)| m == method) {
+                        if !user_hat_methode {
                             return self.call_rt(builtin, &[obj.into()], "stmt_dispatch");
                         }
                         let mut values = Vec::with_capacity(args.len());
@@ -10439,17 +11599,26 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Expr::PropertyAccess { object, property } => {
                 let obj = self.compile_expr(object)?;
+                // P2-T49 (Befund LSan/RSS): obj ist ein +1-Temp (load_var-retain bzw.
+                // Zwischenergebnis einer Feldkette) und wurde nie freigegeben - Leck
+                // je Feldzugriff (1M `d.n`: RSS 23 MB -> 536 MB). Ergebnis von
+                // moo_length/moo_object_get ist eigenstaendig (+1; eine Struktur-Sicht
+                // haelt ihren Besitzer selbst), danach obj freigeben.
                 // Eingebaute Properties
                 match property.as_str() {
                     "length" | "länge" => {
                         // Generische Laenge: String->length, List->length, Dict->count.
                         // (Vorher hart moo_list_length -> 0 fuer Strings/Dicts.)
-                        return self.call_rt(self.rt.moo_length, &[obj.into()], "len");
+                        let laenge = self.call_rt(self.rt.moo_length, &[obj.into()], "len")?;
+                        self.call_rt_void(self.rt.moo_release, &[obj.into()], "rel_prop_obj")?;
+                        Ok(laenge)
                     }
                     _ => {
                         let prop_str = self.make_global_str(property, "prop")?;
-                        self.call_rt(self.rt.moo_object_get,
-                            &[obj.into(), prop_str.into()], "prop_get")
+                        let wert = self.call_rt(self.rt.moo_object_get,
+                            &[obj.into(), prop_str.into()], "prop_get")?;
+                        self.call_rt_void(self.rt.moo_release, &[obj.into()], "rel_prop_obj")?;
+                        Ok(wert)
                     }
                 }
             }
@@ -10496,6 +11665,8 @@ impl<'ctx> CodeGen<'ctx> {
                     (&none_val as &dyn BasicValue, then_end),
                     (&prop_val as &dyn BasicValue, else_end),
                 ]);
+                // P2-T49: wie PropertyAccess das +1-Objekt-Temp freigeben (nichts: no-op).
+                self.call_rt_void(self.rt.moo_release, &[obj.into()], "rel_opt_obj")?;
                 Ok(phi.as_basic_value().into_struct_value())
             }
             Expr::NullishCoalesce { left, right } => {
@@ -10744,12 +11915,26 @@ impl<'ctx> CodeGen<'ctx> {
                 let name_ptr = self.make_global_str(class_name, "class")?;
                 let obj = self.call_rt(self.rt.moo_object_new, &[name_ptr.into()], "obj")?;
 
-                // Konstruktor aufrufen (erstelle/create)
-                let ctor_name_de = (class_name.clone(), "erstelle".to_string());
-                let ctor_name_en = (class_name.clone(), "create".to_string());
-                let ctor_fn = self.class_methods.get(&ctor_name_de)
-                    .or_else(|| self.class_methods.get(&ctor_name_en))
-                    .copied();
+                // Konstruktor aufrufen (erstelle/create). P2-T91: ohne eigenen
+                // Konstruktor gilt der der naechsten Elternklasse (je Stufe
+                // erstelle vor create; eigener Konstruktor hat immer Vorrang).
+                let ctor_fn = {
+                    let mut current = class_name.clone();
+                    let mut besucht = std::collections::HashSet::new();
+                    loop {
+                        if !besucht.insert(current.clone()) {
+                            return Err(format!("Zyklische Klassenvererbung bei {class_name}"));
+                        }
+                        let eigener = self.class_methods.get(&(current.clone(), "erstelle".to_string()))
+                            .or_else(|| self.class_methods.get(&(current.clone(), "create".to_string())))
+                            .copied();
+                        if eigener.is_some() { break eigener; }
+                        match self.class_parents.get(&current) {
+                            Some(parent) => current = parent.clone(),
+                            None => break None,
+                        }
+                    }
+                };
 
                 if let Some(func) = ctor_fn {
                     let mut call_args: Vec<BasicMetadataValueEnum> = vec![obj.into()];
@@ -10816,6 +12001,29 @@ impl<'ctx> CodeGen<'ctx> {
                 // ausschließlich zum umgebenden Funktionsrahmen.
                 let prev_defers = std::mem::take(&mut self.defer_stack);
                 let prev_catalog = std::mem::take(&mut self.defer_catalog);
+                // P2-T85 (Plan 983e8a9c A1/E5): Lambda = Standardrahmen ohne
+                // Pruefpunkt-Ausgang; ein fangbarer nativer Aufruf ist nur als
+                // ganzer Koerper erlaubt (sonst liefe der Ausdruck nach dem Fehler
+                // mit nichts weiter -> Erstfehler-Verlust).
+                let koerper: &Expr = body;
+                {
+                    let mut calls = std::collections::HashSet::new();
+                    Self::collect_defer_calls_expr(koerper, &mut calls);
+                    let wurzel_ok = match koerper {
+                        Expr::FunctionCall { name: wurzel, args: wurzel_args } if self.native_call_fangbar(wurzel) => {
+                            let mut innen = std::collections::HashSet::new();
+                            for a in wurzel_args { Self::collect_defer_calls_expr(a, &mut innen); }
+                            !innen.iter().any(|c| self.native_call_fangbar(c))
+                        }
+                        _ => false,
+                    };
+                    if calls.iter().any(|c| self.native_call_fangbar(c)) && !wurzel_ok {
+                        return Err("Lambda: ein nativer Aufruf ist nur als ganzer Lambda-Koerper erlaubt, z.B. (x) => nativ(x); sonst als Funktion schreiben (Fehler duerfen nicht mit nichts weiterlaufen)".into());
+                    }
+                }
+                // P2-T85 A1: Lambda wird mitten in einem aeusseren Ausdruck
+                // kompiliert - dessen Guards und owned Werte bleiben draussen.
+                let rahmen = self.rahmen_betreten(RahmenArt::Lambda);
 
                 self.current_function = Some(function);
                 self.builder.position_at_end(entry);
@@ -10850,6 +12058,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.emit_defers()?;
                 self.release_function_locals()?;
                 self.builder.build_return(Some(&result)).map_err(|e| format!("{e}"))?;
+                self.rahmen_verlassen(rahmen);
 
                 // Fuer Closure-Lambdas (free_vars non-empty): Trampoline-Function
                 // nach der Inner-Function generieren. Signatur des Trampoline:
@@ -10869,6 +12078,8 @@ impl<'ctx> CodeGen<'ctx> {
                     let tramp_entry = self.context.append_basic_block(tramp, "entry");
                     self.current_function = Some(tramp);
                     self.builder.position_at_end(tramp_entry);
+                    // P2-T85 A1: Trampolin = Sonstig (kein Standardrahmen).
+                    let rahmen_tramp = self.rahmen_betreten(RahmenArt::Sonstig);
 
                     // Argumente fuer inner-Aufruf: erst user-Params, dann Captures
                     let mut inner_args: Vec<BasicMetadataValueEnum> = Vec::new();
@@ -10900,6 +12111,7 @@ impl<'ctx> CodeGen<'ctx> {
                     };
                     self.builder.build_return(Some(&ret))
                         .map_err(|e| format!("{e}"))?;
+                    self.rahmen_verlassen(rahmen_tramp);
                     Some(tramp)
                 } else {
                     None
@@ -11526,26 +12738,60 @@ impl<'ctx> CodeGen<'ctx> {
     /// Wird genutzt um Counter-Pattern zu erkennen ('setze X auf X + 1') —
     /// solche Stellen sollen auf das Modul-globale schreiben statt eine
     /// neue lokale Alloca anzulegen.
+    /// P2-T8 (Plan b1f51d65 D1): vollstaendiger Match ohne Sammelarm, damit
+    /// neue Ausdrucksknoten hier eine Entscheidung erzwingen.
     fn expr_uses_var(expr: &Expr, name: &str) -> bool {
         match expr {
             Expr::Identifier(n) => n == name,
-            Expr::BinaryOp { left, right, .. } =>
+            Expr::BinaryOp { left, right, .. }
+            | Expr::Pipe { left, right }
+            | Expr::NullishCoalesce { left, right } =>
                 Self::expr_uses_var(left, name) || Self::expr_uses_var(right, name),
+            Expr::Range { start, end } =>
+                Self::expr_uses_var(start, name) || Self::expr_uses_var(end, name),
             Expr::UnaryOp { operand, .. } => Self::expr_uses_var(operand, name),
-            Expr::FunctionCall { args, .. } => args.iter().any(|a| Self::expr_uses_var(a, name)),
+            Expr::Spread(inner) => Self::expr_uses_var(inner, name),
+            // Der Callee kann ein Funktionswert in einer Variable sein (wie in
+            // collect_free_vars): `cb()` liest `cb`.
+            Expr::FunctionCall { name: callee, args } =>
+                callee == name || args.iter().any(|a| Self::expr_uses_var(a, name)),
+            Expr::New { args, .. } | Expr::List(args) =>
+                args.iter().any(|a| Self::expr_uses_var(a, name)),
             Expr::MethodCall { object, args, .. } =>
                 Self::expr_uses_var(object, name) || args.iter().any(|a| Self::expr_uses_var(a, name)),
-            Expr::PropertyAccess { object, .. } => Self::expr_uses_var(object, name),
+            Expr::PropertyAccess { object, .. } | Expr::OptionalChain { object, .. } =>
+                Self::expr_uses_var(object, name),
             Expr::IndexAccess { object, index } =>
                 Self::expr_uses_var(object, name) || Self::expr_uses_var(index, name),
             Expr::Ternary { condition, then_val, else_val } =>
                 Self::expr_uses_var(condition, name)
                     || Self::expr_uses_var(then_val, name)
                     || Self::expr_uses_var(else_val, name),
-            Expr::List(items) => items.iter().any(|i| Self::expr_uses_var(i, name)),
             Expr::Dict(pairs) => pairs.iter().any(|(k, v)|
                 Self::expr_uses_var(k, name) || Self::expr_uses_var(v, name)),
-            _ => false,
+            Expr::MatchExpr { value, cases } =>
+                Self::expr_uses_var(value, name)
+                    || cases.iter().any(|(muster, waechter, ergebnis)|
+                        muster.as_ref().is_some_and(|m| Self::expr_uses_var(m, name))
+                            || waechter.as_ref().is_some_and(|w| Self::expr_uses_var(w, name))
+                            || Self::expr_uses_var(ergebnis, name)),
+            // Ein Lambda liest die aeussere Variable, sofern kein eigener
+            // Parameter sie verdeckt.
+            Expr::Lambda { params, body, .. } =>
+                !params.iter().any(|p| p == name) && Self::expr_uses_var(body, name),
+            Expr::ListComprehension { expr, var_name, iterable, condition } =>
+                Self::expr_uses_var(iterable, name)
+                    || (var_name != name
+                        && (Self::expr_uses_var(expr, name)
+                            || condition.as_ref().is_some_and(|c| Self::expr_uses_var(c, name)))),
+            Expr::QueryExpr { var_name, source, where_cond, order_expr, select_expr } =>
+                Self::expr_uses_var(source, name)
+                    || (var_name != name
+                        && (where_cond.as_ref().is_some_and(|w| Self::expr_uses_var(w, name))
+                            || order_expr.as_ref().is_some_and(|o| Self::expr_uses_var(o, name))
+                            || Self::expr_uses_var(select_expr, name))),
+            Expr::Number(_) | Expr::NativeNumber { .. } | Expr::String(_) | Expr::Boolean(_)
+            | Expr::None | Expr::This => false,
         }
     }
 
@@ -11625,7 +12871,26 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Stmt::Match { value, cases } => {
                 if Self::expr_uses_var(value, name) { return Some(false); }
-                for (_, _, body) in cases {
+                for (muster, waechter, body) in cases {
+                    // Muster/Waechter in Textreihenfolge (Review 49a04c50). Wie in
+                    // compile_match: Bezeichner MIT Waechter und Dict-Werte binden
+                    // (erster lokaler Write), sonst ist das Muster ein Vergleichswert.
+                    match muster {
+                        Some(Expr::Identifier(n)) if waechter.is_some() => {
+                            if n == name { return Some(true); }
+                        }
+                        Some(Expr::Dict(paare)) => {
+                            for (schluessel, wert) in paare {
+                                if Self::expr_uses_var(schluessel, name) { return Some(false); }
+                                if matches!(wert, Expr::Identifier(n) if n == name) { return Some(true); }
+                            }
+                        }
+                        Some(m) => { if Self::expr_uses_var(m, name) { return Some(false); } }
+                        None => {}
+                    }
+                    if let Some(w) = waechter {
+                        if Self::expr_uses_var(w, name) { return Some(false); }
+                    }
                     if let Some(r) = Self::first_use_is_local_write(body, name) { return Some(r); }
                 }
                 None
@@ -11639,7 +12904,21 @@ impl<'ctx> CodeGen<'ctx> {
                 if Self::expr_uses_var(object, name) || Self::expr_uses_var(index, name)
                     || Self::expr_uses_var(value, name) { Some(false) } else { None }
             }
-            _ => None,
+            // P2-T8 (Plan b1f51d65 D1): textuell erster Zugriff (first-access-wins)
+            // auch in aufraeumen, erwarte und Vor-/Nachbedingungen.
+            Stmt::Defer(value) | Stmt::Expect(value) => {
+                if Self::expr_uses_var(value, name) { Some(false) } else { None }
+            }
+            Stmt::Precondition { condition, .. } | Stmt::Postcondition { condition, .. } => {
+                if Self::expr_uses_var(condition, name) { Some(false) } else { None }
+            }
+            Stmt::TestDef { body, .. } => Self::first_use_is_local_write(body, name),
+            Stmt::Export(inner) => Self::stmt_first_use(inner, name),
+            // Eigene Geltungsbereiche, reine Deklarationen und Spruenge: kein Zugriff.
+            Stmt::Return(None) | Stmt::Break | Stmt::Continue | Stmt::Global(_)
+            | Stmt::FunctionDef { .. } | Stmt::ClassDef { .. } | Stmt::StructDef { .. }
+            | Stmt::InterfaceDef { .. } | Stmt::DataClassDef { .. } | Stmt::ExternC { .. }
+            | Stmt::RawDataU32 { .. } | Stmt::NativeConst { .. } | Stmt::Import { .. } => None,
         }
     }
 
@@ -11752,7 +13031,43 @@ impl<'ctx> CodeGen<'ctx> {
                 if let Some(o) = order_expr { Self::collect_free_vars(o, &inner, out); }
                 Self::collect_free_vars(select_expr, &inner, out);
             }
-            _ => {}
+            // P2-T8 (Plan b1f51d65 D1): vollstaendiger Match. Frueher fing ein
+            // Lambda freie Variablen in Liste, Dict, Bereich, Bedingungsausdruck,
+            // Match, neu-Argumenten und inneren Lambdas nicht ein.
+            Expr::Range { start, end } => {
+                Self::collect_free_vars(start, params, out);
+                Self::collect_free_vars(end, params, out);
+            }
+            Expr::List(items) | Expr::New { args: items, .. } => {
+                for i in items { Self::collect_free_vars(i, params, out); }
+            }
+            Expr::Dict(pairs) => {
+                for (k, v) in pairs {
+                    Self::collect_free_vars(k, params, out);
+                    Self::collect_free_vars(v, params, out);
+                }
+            }
+            Expr::OptionalChain { object, .. } => Self::collect_free_vars(object, params, out),
+            Expr::Ternary { condition, then_val, else_val } => {
+                Self::collect_free_vars(condition, params, out);
+                Self::collect_free_vars(then_val, params, out);
+                Self::collect_free_vars(else_val, params, out);
+            }
+            Expr::MatchExpr { value, cases } => {
+                Self::collect_free_vars(value, params, out);
+                for (muster, waechter, ergebnis) in cases {
+                    if let Some(m) = muster { Self::collect_free_vars(m, params, out); }
+                    if let Some(w) = waechter { Self::collect_free_vars(w, params, out); }
+                    Self::collect_free_vars(ergebnis, params, out);
+                }
+            }
+            Expr::Lambda { params: innere, body, .. } => {
+                let mut inner = params.to_vec();
+                inner.extend(innere.iter().cloned());
+                Self::collect_free_vars(body, &inner, out);
+            }
+            Expr::Number(_) | Expr::NativeNumber { .. } | Expr::String(_) | Expr::Boolean(_)
+            | Expr::None | Expr::This => {}
         }
     }
 }

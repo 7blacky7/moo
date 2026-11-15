@@ -1,0 +1,13 @@
+# P2-T93 ungefangen: wirf in einer Funktion mit unsicher:-Block ohne Handler
+# beendet den Prozess mit RC 1 und Diagnose; nichts danach laeuft.
+funktion g(s):
+    setze t auf 0
+    unsicher:
+        setze t auf s
+    wenn t < 0:
+        wirf "ungefangen"
+    zeige "NACH_G"
+    gib_zurück t
+zeige "vor"
+zeige g(-1)
+zeige "NACH_MAIN"

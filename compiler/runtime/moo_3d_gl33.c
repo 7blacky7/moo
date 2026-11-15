@@ -1618,6 +1618,24 @@ static void gl33_set_ambient(void* vctx, float level) {
  * Backend Export
  * ======================================================== */
 
+/* P2-T25 (Plan 962e249a; GFX P1-T478/T491): Netz direkt aus Speicher. */
+static int gl33_chunk_upload_fn(void* vctx, int id, const float* ecken9, int ecken,
+                                const uint32_t* indizes, int index_anzahl) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx) return 1;
+    if (ctx->active_chunk >= 0) return 7; /* offener chunk_begin */
+    return gl33_chunk_upload_data(ctx->chunks, id, ecken9, ecken,
+                                  (const unsigned int*)indizes, index_anzahl);
+}
+
+static void gl33_mult_matrix(void* vctx, const float m[16]) {
+    GL33Context* ctx = (GL33Context*)vctx;
+    if (!ctx || !m) return;
+    float tmp[16];
+    mat4_multiply(tmp, ctx->modelview.current, m);
+    memcpy(ctx->modelview.current, tmp, sizeof tmp);
+}
+
 /* Forward-Decls fuer Helfer die nach der Vtable definiert sind. */
 int gl33_screenshot_bmp(void* ctx_void, const char* path);
 static uint8_t* gl33_grab_rgba(void* ctx_void, int* out_w, int* out_h);
@@ -1697,6 +1715,8 @@ Moo3DBackend moo_backend_gl33 = {
     .renderer_info   = gl33_renderer_info,
     .water_background = gl33_water_background,
     .set_water = gl33_set_water,
+    .chunk_upload = gl33_chunk_upload_fn,
+    .mult_matrix = gl33_mult_matrix,
 };
 
 /* ========================================================

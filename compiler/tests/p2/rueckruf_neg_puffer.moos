@@ -1,0 +1,8 @@
+# P2-T21/T57 E-3 (A1): puffer ist kein C-Rueckruf-Parameter.
+@nativ
+@rückruf
+funktion f(p: puffer[i32]) -> i32:
+    unsicher:
+        gib_zurück 0
+
+zeige 1

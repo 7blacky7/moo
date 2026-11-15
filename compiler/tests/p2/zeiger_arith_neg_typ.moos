@@ -1,0 +1,5 @@
+# P2-T17 E3 negativ: Zeigerdifferenz nur bei gleichem Zieltyp.
+@nativ
+funktion f(p: ptr[i32], q: ptr[u32]) -> i64:
+    unsicher:
+        gib_zurück p - q

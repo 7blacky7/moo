@@ -1,0 +1,65 @@
+# Strukturwerte in dynamischem Code: Rundlauf nativ -> dynamisch -> nativ
+# (Kopie an der Grenze), Feld lesen/schreiben, Sicht auf eine verschachtelte
+# Struktur, Alias, Struktur in Liste, Wörterbuch und Objektfeld, Aufruf aus
+# Methode und Lambda. Abgeleitet aus compiler/tests/p2/struktur_box.moos.
+struktur Innen:
+    x: f32
+    y: f32
+
+struktur Teil:
+    id: u32
+    pos: Innen
+    masse: f64
+    aktiv: bool
+
+@nativ
+funktion neu_innen(x: f32, y: f32) -> Innen:
+    unsicher:
+        gib_zurück Innen(x, y)
+
+@nativ
+funktion verschieben(t: Teil, dx: f32) -> Teil:
+    unsicher:
+        setze r: Teil auf t
+        r.pos.x = r.pos.x + dx
+        r.id = r.id + 1
+        r.aktiv = falsch
+        gib_zurück r
+
+@nativ
+funktion summe_innen(v: Innen) -> f32:
+    wenn v.x > v.y:
+        gib_zurück v.x + v.y
+    gib_zurück v.y + v.x
+
+klasse Halter:
+    funktion erstelle(s):
+        selbst.s = s
+    funktion norm():
+        gib_zurück summe_innen(selbst.s)
+
+unsicher:
+    setze i auf neu_innen(3, 4)
+zeige i
+setze t auf Teil(7, i, 10, wahr)
+unsicher:
+    setze u auf verschieben(t, 0.5)
+zeige u
+zeige t
+# Sicht: teilt den Speicher mit u.
+setze p auf u.pos
+u.pos.y = 9
+zeige p
+# Alias: dynamisch ist eine Box ein Referenzwert.
+setze a auf t
+a.masse = 42
+zeige t.masse
+setze l auf [i, Innen()]
+zeige l
+setze w auf {"punkt": i}
+zeige w["punkt"].y
+setze h auf neu Halter(i)
+zeige h.norm()
+setze f auf (v) => summe_innen(v)
+zeige f(Innen(1, 2))
+zeige Innen(3, 4) == i

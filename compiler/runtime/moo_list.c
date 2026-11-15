@@ -1,4 +1,5 @@
 #include "moo_runtime.h"
+#include <stdio.h>
 #include <string.h>
 
 MooValue moo_list_new(int32_t initial_capacity) {
@@ -37,6 +38,16 @@ static void list_grow(MooList* l) {
 }
 
 void moo_list_append(MooValue list, MooValue item) {
+    // P2-T90: Empfaenger ohne Listentag (z.B. nichts.hinzufügen(x)) war ein
+    // Nullzeiger-/Fremdspeicherzugriff. Jetzt fangbarer Fehler; item wird wie
+    // beim Einfrieren NICHT uebernommen (Konvention der Aufrufer).
+    if (list.tag != MOO_LIST) {
+        char text[128];
+        snprintf(text, sizeof(text), "hinzufügen()/append() erwartet eine Liste, erhalten %s",
+                 moo_type_name(list));
+        moo_throw(moo_error(text));
+        return;
+    }
     MooList* l = MV_LIST(list);
     if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return; }
     if (l->length >= l->capacity) {

@@ -158,10 +158,9 @@ fn main() {
             let result = (|| -> Result<ast::Program, String> {
                 let mut program = parse_file(&file)?;
                 if imports {
-                    let dir = file.parent().unwrap_or(std::path::Path::new("."));
                     let mut visited = std::collections::HashSet::new();
                     visited.insert(file.canonicalize().unwrap_or_else(|_| file.clone()));
-                    resolve_modules(&mut program, dir, &mut visited, &[])?;
+                    resolve_modules(&mut program, file.as_path(), &mut visited, &[])?;
                 }
                 Ok(program)
             })();
@@ -233,10 +232,9 @@ fn layout_json_string(value: &str) -> String {
 // Gemeinsame Quelle für `layout` (JSON) und `layout --c-header`.
 fn layout_program(file: &PathBuf) -> Result<ast::Program, String> {
     let mut program = parse_file(file)?;
-    let dir = file.parent().unwrap_or(std::path::Path::new("."));
     let mut visited = std::collections::HashSet::new();
     visited.insert(file.canonicalize().unwrap_or_else(|_| file.clone()));
-    resolve_modules(&mut program, dir, &mut visited, &[])?;
+    resolve_modules(&mut program, file.as_path(), &mut visited, &[])?;
     Ok(program)
 }
 
@@ -347,181 +345,6 @@ fn find_module(name: &str, dir: &std::path::Path, lib_paths: &[PathBuf]) -> Opti
     None
 }
 
-/// Sammelt alle Funktionsnamen aus einem AST
-fn collect_function_names(stmts: &[ast::Stmt]) -> std::collections::HashSet<String> {
-    stmts.iter().filter_map(|s| {
-        if let ast::Stmt::FunctionDef { name, .. } = s { Some(name.clone()) } else { None }
-    }).collect()
-}
-
-/// Prefixed FunctionCall-Namen in einer Expression — ALLE Varianten abgedeckt
-fn prefix_expr(expr: &ast::Expr, prefix: &str, names: &std::collections::HashSet<String>) -> ast::Expr {
-    let pe = |e: &ast::Expr| -> ast::Expr { prefix_expr(e, prefix, names) };
-    let pe_box = |e: &ast::Expr| -> Box<ast::Expr> { Box::new(pe(e)) };
-    let pe_vec = |v: &[ast::Expr]| -> Vec<ast::Expr> { v.iter().map(|e| pe(e)).collect() };
-    let pe_opt = |o: &Option<Box<ast::Expr>>| -> Option<Box<ast::Expr>> {
-        o.as_ref().map(|e| pe_box(e))
-    };
-
-    match expr {
-        ast::Expr::FunctionCall { name, args } => {
-            let new_name = if names.contains(name) {
-                format!("{prefix}__{name}")
-            } else {
-                name.clone()
-            };
-            ast::Expr::FunctionCall { name: new_name, args: pe_vec(args) }
-        }
-        ast::Expr::MethodCall { object, method, args } => ast::Expr::MethodCall {
-            object: pe_box(object), method: method.clone(), args: pe_vec(args),
-        },
-        ast::Expr::BinaryOp { left, op, right } => ast::Expr::BinaryOp {
-            left: pe_box(left), op: op.clone(), right: pe_box(right),
-        },
-        ast::Expr::UnaryOp { op, operand } => ast::Expr::UnaryOp {
-            op: op.clone(), operand: pe_box(operand),
-        },
-        ast::Expr::Lambda { params, param_types, body } => ast::Expr::Lambda {
-            params: params.clone(), param_types: param_types.clone(), body: pe_box(body),
-        },
-        ast::Expr::List(elems) => ast::Expr::List(pe_vec(elems)),
-        ast::Expr::Dict(pairs) => ast::Expr::Dict(
-            pairs.iter().map(|(k, v)| (pe(k), pe(v))).collect()
-        ),
-        ast::Expr::ListComprehension { expr, var_name, iterable, condition } => {
-            ast::Expr::ListComprehension {
-                expr: pe_box(expr), var_name: var_name.clone(),
-                iterable: pe_box(iterable), condition: pe_opt(condition),
-            }
-        }
-        ast::Expr::IndexAccess { object, index } => ast::Expr::IndexAccess {
-            object: pe_box(object), index: pe_box(index),
-        },
-        ast::Expr::PropertyAccess { object, property } => ast::Expr::PropertyAccess {
-            object: pe_box(object), property: property.clone(),
-        },
-        ast::Expr::Pipe { left, right } => ast::Expr::Pipe {
-            left: pe_box(left), right: pe_box(right),
-        },
-        ast::Expr::Spread(inner) => ast::Expr::Spread(pe_box(inner)),
-        ast::Expr::NullishCoalesce { left, right } => ast::Expr::NullishCoalesce {
-            left: pe_box(left), right: pe_box(right),
-        },
-        ast::Expr::OptionalChain { object, property } => ast::Expr::OptionalChain {
-            object: pe_box(object), property: property.clone(),
-        },
-        ast::Expr::Range { start, end } => ast::Expr::Range {
-            start: pe_box(start), end: pe_box(end),
-        },
-        ast::Expr::New { class_name, args } => ast::Expr::New {
-            class_name: class_name.clone(), args: pe_vec(args),
-        },
-        // Literale + einfache Knoten: keine Sub-Expressions
-        other => other.clone(),
-    }
-}
-
-/// Prefixed FunctionCall-Namen in Statements
-fn prefix_stmts(stmts: &[ast::Stmt], prefix: &str, names: &std::collections::HashSet<String>) -> Vec<ast::Stmt> {
-    stmts.iter().map(|s| prefix_stmt(s, prefix, names)).collect()
-}
-
-fn prefix_stmt(stmt: &ast::Stmt, prefix: &str, names: &std::collections::HashSet<String>) -> ast::Stmt {
-    match stmt {
-        ast::Stmt::Assignment { name, ty, value } => ast::Stmt::Assignment {
-            name: name.clone(), ty: ty.clone(), value: prefix_expr(value, prefix, names),
-        },
-        ast::Stmt::ConstAssignment { name, ty, value } => ast::Stmt::ConstAssignment {
-            name: name.clone(), ty: ty.clone(), value: prefix_expr(value, prefix, names),
-        },
-        ast::Stmt::Show(e) => ast::Stmt::Show(prefix_expr(e, prefix, names)),
-        ast::Stmt::Return(Some(e)) => ast::Stmt::Return(Some(prefix_expr(e, prefix, names))),
-        ast::Stmt::If { condition, body, else_body } => ast::Stmt::If {
-            condition: prefix_expr(condition, prefix, names),
-            body: prefix_stmts(body, prefix, names),
-            else_body: prefix_stmts(else_body, prefix, names),
-        },
-        ast::Stmt::While { condition, body } => ast::Stmt::While {
-            condition: prefix_expr(condition, prefix, names),
-            body: prefix_stmts(body, prefix, names),
-        },
-        ast::Stmt::For { var_name, iterable, body } => ast::Stmt::For {
-            var_name: var_name.clone(),
-            iterable: prefix_expr(iterable, prefix, names),
-            body: prefix_stmts(body, prefix, names),
-        },
-        ast::Stmt::Expression(e) => ast::Stmt::Expression(prefix_expr(e, prefix, names)),
-        other => other.clone(),
-    }
-}
-
-/// Prefixed alle FunctionDef-Namen UND interne Aufrufe in einem AST mit "modul__"
-fn prefix_functions(stmts: &[ast::Stmt], prefix: &str) -> Vec<ast::Stmt> {
-    let func_names = collect_function_names(stmts);
-    stmts.iter().map(|stmt| {
-        match stmt {
-            ast::Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators } => {
-                ast::Stmt::FunctionDef {
-                    name: format!("{prefix}__{name}"),
-                    params: params.clone(),
-                    param_types: param_types.clone(),
-                    return_type: return_type.clone(),
-                    defaults: defaults.clone(),
-                    body: prefix_stmts(body, prefix, &func_names),
-                    decorators: decorators.clone(),
-                }
-            }
-            // Export: FunctionDef darin prefixen (KEIN rekursiver prefix_functions Aufruf!)
-            ast::Stmt::Export(inner) => {
-                if let ast::Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators } = inner.as_ref() {
-                    ast::Stmt::Export(Box::new(ast::Stmt::FunctionDef {
-                        name: format!("{prefix}__{name}"),
-                        params: params.clone(),
-                        param_types: param_types.clone(),
-                        return_type: return_type.clone(),
-                        defaults: defaults.clone(),
-                        body: prefix_stmts(body, prefix, &func_names),
-                        decorators: decorators.clone(),
-                    }))
-                } else {
-                    stmt.clone()
-                }
-            }
-            // Nicht-Funktionen (z.B. Variablen-Initialisierung) auch mit reinnehmen
-            other => other.clone(),
-        }
-    }).collect()
-}
-
-/// Erzeugt Alias-Funktionen: func(args) → modul__func(args)
-/// Fuer "aus mathe importiere sin, cos" → sin ruft mathe__sin auf
-fn create_alias_functions(stmts: &[ast::Stmt], prefix: &str, names: &[String]) -> Vec<ast::Stmt> {
-    let mut aliases = Vec::new();
-    for stmt in stmts {
-        if let ast::Stmt::FunctionDef { name, params, param_types, return_type, .. } = stmt {
-            // Nur wenn der Name (ohne Prefix) in der Import-Liste ist
-            let bare_name = name.strip_prefix(&format!("{prefix}__")).unwrap_or(name);
-            if names.contains(&bare_name.to_string()) {
-                // Alias: funktion sin(a): gib_zurück mathe__sin(a)
-                let call = ast::Expr::FunctionCall {
-                    name: name.clone(), // prefixed name
-                    args: params.iter().map(|p| ast::Expr::Identifier(p.clone())).collect(),
-                };
-                aliases.push(ast::Stmt::FunctionDef {
-                    name: bare_name.to_string(),
-                    params: params.clone(),
-                    param_types: param_types.clone(),
-                    return_type: return_type.clone(),
-                    defaults: params.iter().map(|_| None).collect(),
-                    body: vec![ast::Stmt::Return(Some(call))],
-                    decorators: vec![],
-                });
-            }
-        }
-    }
-    aliases
-}
-
 /// Wickelt einen `exportiere X`-Wrapper (Stmt::Export) zu seinem inneren Statement aus.
 /// Das Modulsystem ist inline-basiert; `exportiere` ist nur ein Sichtbarkeits-Marker und
 /// darf die Definition nicht vor codegen verstecken (codegen behandelt Stmt::Export nicht,
@@ -533,32 +356,145 @@ fn strip_export(stmt: ast::Stmt) -> ast::Stmt {
     }
 }
 
-/// Löst Imports AST-basiert auf: parst Module, prefixed Funktionen, erzeugt Aliases
+/// P2-T47 (Plan b1f51d65 C2/C3/C5): Wissen ueber bereits geparste Module,
+/// auch fuer Rautenimporte (Modul schon von anderer Stelle eingefuegt).
+#[derive(Default)]
+struct ModulKontext {
+    /// Kanonischer Pfad -> Namen, die das Modul SELBST auf oberster Ebene
+    /// definiert (ohne die seiner Importe; Plan E2, Review 49a04c50).
+    namen: std::collections::HashMap<PathBuf, std::rc::Rc<std::collections::HashSet<String>>>,
+    /// Strukturname -> Datei der ersten Definition (Kollision mit beiden Pfaden).
+    strukturen: std::collections::HashMap<String, PathBuf>,
+}
+
+/// Qualifizierer `q` aus `importiere m` bzw. `importiere m als q`; gilt nur
+/// in der importierenden Datei.
+struct Qualifizierer {
+    modul: String,
+    alias: bool,
+    namen: std::rc::Rc<std::collections::HashSet<String>>,
+}
+
+/// Namen, die eine Datei selbst auf oberster Ebene definiert.
+fn eigene_namen(stmts: &[ast::Stmt]) -> std::collections::HashSet<String> {
+    let mut namen = std::collections::HashSet::new();
+    for stmt in stmts {
+        let stmt = if let ast::Stmt::Export(inner) = stmt { inner.as_ref() } else { stmt };
+        match stmt {
+            ast::Stmt::FunctionDef { name, .. }
+            | ast::Stmt::ExternC { name, .. }
+            | ast::Stmt::RawDataU32 { name, .. }
+            | ast::Stmt::NativeConst { name, .. }
+            | ast::Stmt::StructDef { name, .. }
+            | ast::Stmt::ClassDef { name, .. }
+            | ast::Stmt::InterfaceDef { name, .. }
+            | ast::Stmt::DataClassDef { name, .. }
+            | ast::Stmt::Assignment { name, .. }
+            | ast::Stmt::ConstAssignment { name, .. } => { namen.insert(name.clone()); }
+            _ => {}
+        }
+    }
+    namen
+}
+
+/// Strukturen einer Datei gegen das Programm pruefen: im globalen Namensraum
+/// ist ein Strukturname programmweit eindeutig (E4), die Meldung nennt beide Dateien.
+fn strukturen_registrieren(
+    stmts: &[ast::Stmt],
+    datei: &std::path::Path,
+    kontext: &mut ModulKontext,
+) -> Result<(), String> {
+    let kanonisch = datei.canonicalize().unwrap_or_else(|_| datei.to_path_buf());
+    for stmt in stmts {
+        let stmt = if let ast::Stmt::Export(inner) = stmt { inner.as_ref() } else { stmt };
+        if let ast::Stmt::StructDef { name, .. } = stmt {
+            match kontext.strukturen.get(name) {
+                Some(erste) if *erste != kanonisch => {
+                    return Err(format!(
+                        "Struktur '{name}' ist bereits definiert: {} und {}",
+                        erste.display(), kanonisch.display()
+                    ));
+                }
+                Some(_) => {}
+                None => { kontext.strukturen.insert(name.clone(), kanonisch.clone()); }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Löst Imports AST-basiert auf: parst jedes Modul genau einmal (visited) und
+/// fügt seine Definitionen inline in EINEN globalen Namensraum vor dem
+/// importierenden Programm ein (kein Präfix, keine Alias-Funktionen).
+/// Qualifizierte Schreibweisen `q.name(...)`, `q.NAME`, `q.Typ` der Datei
+/// werden danach geprueft auf den einfachen Namen zurueckgefuehrt (E2/E3).
 fn resolve_modules(
     program: &mut ast::Program,
-    file_dir: &std::path::Path,
+    datei: &std::path::Path,
     visited: &mut std::collections::HashSet<PathBuf>,
     lib_paths: &[PathBuf],
 ) -> Result<(), String> {
+    let mut kontext = ModulKontext::default();
+    resolve_modules_mit(program, datei, visited, lib_paths, &mut kontext)
+}
+
+/// Loest die Importe einer Datei auf (rekursiv fuer jedes neu besuchte Modul).
+fn resolve_modules_mit(
+    program: &mut ast::Program,
+    datei: &std::path::Path,
+    visited: &mut std::collections::HashSet<PathBuf>,
+    lib_paths: &[PathBuf],
+    kontext: &mut ModulKontext,
+) -> Result<(), String> {
+    let file_dir = datei.parent().unwrap_or(std::path::Path::new("."));
     let mut imported_stmts: Vec<ast::Stmt> = Vec::new();
     let mut remaining_stmts: Vec<ast::Stmt> = Vec::new();
+    let mut qualifizierer: std::collections::HashMap<String, Qualifizierer> = std::collections::HashMap::new();
 
     for stmt in program.statements.drain(..) {
         match &stmt {
-            ast::Stmt::Import { module, names, .. } => {
+            ast::Stmt::Import { module, names, alias, line } => {
                 if let Some(mod_path) = find_module(module, file_dir, lib_paths) {
                     let canonical = mod_path.canonicalize().unwrap_or(mod_path.clone());
-                    if visited.contains(&canonical) {
-                        continue; // Zirkulaeren Import vermeiden
+                    let mut neues_modul = None;
+                    if !visited.contains(&canonical) {
+                        visited.insert(canonical.clone());
+                        // Modul parsen; eigene Namen VOR der Rekursion merken,
+                        // damit auch ein Zyklus/Rautenimport sie findet. E2: nur
+                        // die SELBST definierten Namen, nicht die seiner Importe.
+                        let mut mod_program = parse_file(&mod_path)?;
+                        let eigene = eigene_namen(&mod_program.statements);
+                        strukturen_registrieren(&mod_program.statements, &mod_path, kontext)?;
+                        kontext.namen.insert(canonical.clone(), std::rc::Rc::new(eigene));
+                        // Rekursiv Imports im Modul aufloesen
+                        resolve_modules_mit(&mut mod_program, &mod_path, visited, lib_paths, kontext)?;
+                        neues_modul = Some(mod_program);
                     }
-                    visited.insert(canonical);
-
-                    // Modul parsen
-                    let mut mod_program = parse_file(&mod_path)?;
-
-                    // Rekursiv Imports im Modul aufloesen
-                    let mod_dir = mod_path.parent().unwrap_or(std::path::Path::new("."));
-                    resolve_modules(&mut mod_program, mod_dir, visited, lib_paths)?;
+                    let modul_namen = kontext.namen.get(&canonical).cloned().unwrap_or_default();
+                    if names.is_empty() {
+                        let q = match alias {
+                            Some(a) => a.clone(),
+                            None => std::path::Path::new(module).file_stem()
+                                .map(|s| s.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| module.clone()),
+                        };
+                        qualifizierer.insert(q, Qualifizierer {
+                            modul: module.clone(),
+                            alias: alias.is_some(),
+                            namen: modul_namen.clone(),
+                        });
+                    } else {
+                        // O2: unbekannter Name in `aus m importiere x` ist ein Fehler mit Herkunft.
+                        for name in names {
+                            if !modul_namen.contains(name) {
+                                return Err(format!(
+                                    "{}:{line}: Modul '{module}' definiert '{name}' nicht (aus {module} importiere {name}; Modul {})",
+                                    datei.display(), mod_path.display()
+                                ));
+                            }
+                        }
+                    }
+                    let Some(mod_program) = neues_modul else { continue };
 
                     if names.is_empty() {
                         // "importiere mathe" → ALLE Statements direkt einfuegen (kein Prefix!)
@@ -569,8 +505,8 @@ fn resolve_modules(
                         // (Funktionen, Klassen, Interfaces, DataClasses; exportiere ausgewickelt) plus alle
                         // Variablen/Konstanten und Rohdaten. Nur ausfuehrbare Top-Level-Statements werden
                         // verworfen, damit ein Import keine Seiteneffekte ausloest. Im inline-
-                        // Modell ist das `names`-Filter rein informativ: sonst muessten Klassen
-                        // und transitiv genutzte Helfer eines Moduls einzeln importiert werden.
+                        // Modell bleibt jede Definition des Moduls erhalten (Helfer, Klassen);
+                        // die Namensliste wird gegen die eigenen Namen des Moduls geprueft.
                         for mod_stmt in mod_program.statements {
                             match strip_export(mod_stmt) {
                                 s @ (ast::Stmt::FunctionDef { .. }
@@ -581,6 +517,7 @@ fn resolve_modules(
                                     | ast::Stmt::DataClassDef { .. }
                                     | ast::Stmt::Assignment { .. }
                                     | ast::Stmt::ConstAssignment { .. }
+                                    | ast::Stmt::NativeConst { .. }
                                     | ast::Stmt::RawDataU32 { .. }) => {
                                     imported_stmts.push(s);
                                 }
@@ -601,10 +538,345 @@ fn resolve_modules(
         }
     }
 
+    // Eigene Strukturen gegen die importierten pruefen (beide Pfade in der Meldung).
+    strukturen_registrieren(&remaining_stmts, datei, kontext)?;
+
+    // Qualifizierte Schreibweisen der EIGENEN Anweisungen aufloesen (E2/E3).
+    // Variablenvorrang lexikalisch: globale Bindungen = Top-Level-Variablen der
+    // Datei und globale Variablen der importierten Module; Parameter/Lokale
+    // gelten nur in ihrem Geltungsbereich (Scope-Stack im Laeufer).
+    let mut global = std::collections::HashSet::new();
+    for stmt in &imported_stmts {
+        if let ast::Stmt::Assignment { name, .. } | ast::Stmt::ConstAssignment { name, .. } = stmt {
+            global.insert(name.clone());
+        }
+    }
+    sammle_bindungen(&remaining_stmts, &mut global);
+    let mut laeufer = QualiLaeufer {
+        tabelle: &qualifizierer,
+        global,
+        scopes: Vec::new(),
+        gewarnt: std::collections::HashSet::new(),
+        datei,
+    };
+    laeufer.stmts(&mut remaining_stmts)?;
+
     // Importierte Statements VOR dem Hauptprogramm einfuegen
     imported_stmts.extend(remaining_stmts);
     program.statements = imported_stmts;
     Ok(())
+}
+
+/// Namen, die Anweisungen in IHREM Geltungsbereich binden (Zuweisungen,
+/// Schleifen-, catch- und Match-Binder). Steigt in Bloecke ab, aber nicht in
+/// Funktionen, Klassen, Tests oder Lambdas (eigene Geltungsbereiche).
+fn sammle_bindungen(stmts: &[ast::Stmt], out: &mut std::collections::HashSet<String>) {
+    use ast::Stmt as S;
+    for s in stmts {
+        match s {
+            S::Assignment { name, .. } | S::ConstAssignment { name, .. }
+            | S::CompoundAssignment { name, .. } => { out.insert(name.clone()); }
+            S::For { var_name, body, .. } | S::ParallelFor { var_name, body, .. } => {
+                out.insert(var_name.clone());
+                sammle_bindungen(body, out);
+            }
+            S::If { body, else_body, .. } => {
+                sammle_bindungen(body, out);
+                sammle_bindungen(else_body, out);
+            }
+            S::While { body, .. } | S::UnsafeBlock { body } | S::Guard { else_body: body, .. } => {
+                sammle_bindungen(body, out);
+            }
+            S::TryCatch { try_body, catch_var, catch_body } => {
+                if let Some(v) = catch_var { out.insert(v.clone()); }
+                sammle_bindungen(try_body, out);
+                sammle_bindungen(catch_body, out);
+            }
+            S::Match { cases, .. } => {
+                for (muster, waechter, body) in cases {
+                    match muster {
+                        Some(ast::Expr::Identifier(n)) if waechter.is_some() => { out.insert(n.clone()); }
+                        Some(ast::Expr::Dict(paare)) => {
+                            for (_, wert) in paare {
+                                if let ast::Expr::Identifier(n) = wert { out.insert(n.clone()); }
+                            }
+                        }
+                        _ => {}
+                    }
+                    sammle_bindungen(body, out);
+                }
+            }
+            S::Export(inner) => sammle_bindungen(std::slice::from_ref(inner.as_ref()), out),
+            // Eigene Geltungsbereiche oder ohne Bindung.
+            _ => {}
+        }
+    }
+}
+
+/// P2-T47 (Plan b1f51d65 C2): AST-Laeufer fuer qualifizierte Namen. Vollstaendige
+/// Matches ohne Sammelarm: ein neuer AST-Knoten erzwingt hier eine Entscheidung.
+/// Variablenvorrang lexikalisch (Review 49a04c50): `global` plus Scope-Stack.
+struct QualiLaeufer<'a> {
+    tabelle: &'a std::collections::HashMap<String, Qualifizierer>,
+    global: std::collections::HashSet<String>,
+    scopes: Vec<std::collections::HashSet<String>>,
+    gewarnt: std::collections::HashSet<String>,
+    datei: &'a std::path::Path,
+}
+
+impl QualiLaeufer<'_> {
+    fn gebunden(&self, q: &str) -> bool {
+        self.global.contains(q) || self.scopes.iter().any(|s| s.contains(q))
+    }
+
+    /// Ob `q.name` auf die Moduldefinition `name` zurueckgefuehrt wird. Eine an
+    /// dieser Stelle sichtbare Variable `q` hat Vorrang (Warnung bei Alias). Ohne
+    /// Alias bleibt ein unbekanntes Mitglied beim Bestandsverhalten (Variable
+    /// bzw. eingebauter Namensraum gleichen Namens); mit Alias ist es ein Fehler.
+    fn ziel(&mut self, q: &str, name: &str) -> Result<bool, String> {
+        let Some(ql) = self.tabelle.get(q) else { return Ok(false) };
+        if self.gebunden(q) {
+            if ql.alias && self.gewarnt.insert(q.to_string()) {
+                eprintln!(
+                    "Warnung: {}: Modulalias '{q}' (Modul '{}') wird von einer Variable gleichen Namens verdeckt; '{q}.{name}' greift auf die Variable zu",
+                    self.datei.display(), ql.modul
+                );
+            }
+            return Ok(false);
+        }
+        if ql.namen.contains(name) { return Ok(true); }
+        if ql.alias {
+            return Err(format!(
+                "{}: Modul '{}' (Alias '{q}') definiert '{name}' nicht",
+                self.datei.display(), ql.modul
+            ));
+        }
+        Ok(false)
+    }
+
+    /// Punktname `q.Name` (Typ oder `neu q.Klasse`) auf `Name` zurueckfuehren.
+    fn punktname(&self, name: &mut String, ort: &str) -> Result<(), String> {
+        if let Some((q, glied)) = name.split_once('.') {
+            let Some(ql) = self.tabelle.get(q) else {
+                return Err(format!(
+                    "{}{ort}: Unbekannter Modulqualifizierer '{q}' in '{name}'",
+                    self.datei.display()
+                ));
+            };
+            if !ql.namen.contains(glied) {
+                return Err(format!(
+                    "{}{ort}: Modul '{}' definiert '{glied}' nicht",
+                    self.datei.display(), ql.modul
+                ));
+            }
+            *name = glied.to_string();
+        }
+        Ok(())
+    }
+
+    fn typ(&mut self, ty: &mut ast::TypeRef) -> Result<(), String> {
+        match &mut ty.kind {
+            ast::TypeKind::Name(name) => {
+                let ort = format!(":{}", ty.line);
+                self.punktname(name, &ort)?;
+            }
+            ast::TypeKind::Generic { args, .. } => {
+                for arg in args { self.typ(arg)?; }
+            }
+            ast::TypeKind::Array { element, length } => {
+                self.typ(element)?;
+                self.expr(length)?;
+            }
+            ast::TypeKind::Function { params, return_type, .. } => {
+                for p in params { self.typ(p)?; }
+                self.typ(return_type)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn typ_opt(&mut self, ty: &mut Option<ast::TypeRef>) -> Result<(), String> {
+        if let Some(t) = ty { self.typ(t)?; }
+        Ok(())
+    }
+
+    fn expr_opt(&mut self, e: &mut Option<Box<ast::Expr>>) -> Result<(), String> {
+        if let Some(e) = e { self.expr(e)?; }
+        Ok(())
+    }
+
+    fn expr(&mut self, e: &mut ast::Expr) -> Result<(), String> {
+        use ast::Expr as E;
+        match e {
+            E::Number(_) | E::NativeNumber { .. } | E::String(_) | E::Boolean(_) | E::None
+            | E::Identifier(_) | E::This => {}
+            E::BinaryOp { left, right, .. }
+            | E::NullishCoalesce { left, right }
+            | E::Pipe { left, right } => { self.expr(left)?; self.expr(right)?; }
+            E::UnaryOp { operand, .. } => self.expr(operand)?,
+            E::Spread(inner) => self.expr(inner)?,
+            E::FunctionCall { args, .. } | E::List(args) => {
+                for a in args { self.expr(a)?; }
+            }
+            E::New { class_name, args } => {
+                self.punktname(class_name, "")?;
+                for a in args { self.expr(a)?; }
+            }
+            E::MethodCall { object, method, args } => {
+                for a in args.iter_mut() { self.expr(a)?; }
+                let q = if let E::Identifier(q) = object.as_ref() { Some(q.clone()) } else { None };
+                if let Some(q) = q {
+                    if self.ziel(&q, method)? {
+                        let neu = E::FunctionCall { name: method.clone(), args: std::mem::take(args) };
+                        *e = neu;
+                        return Ok(());
+                    }
+                }
+                self.expr(object)?;
+            }
+            E::PropertyAccess { object, property } => {
+                let q = if let E::Identifier(q) = object.as_ref() { Some(q.clone()) } else { None };
+                if let Some(q) = q {
+                    if self.ziel(&q, property)? {
+                        let neu = E::Identifier(property.clone());
+                        *e = neu;
+                        return Ok(());
+                    }
+                }
+                self.expr(object)?;
+            }
+            E::OptionalChain { object, .. } => self.expr(object)?,
+            E::IndexAccess { object, index } => { self.expr(object)?; self.expr(index)?; }
+            E::Range { start, end } => { self.expr(start)?; self.expr(end)?; }
+            E::ListComprehension { expr, var_name, iterable, condition } => {
+                self.expr(iterable)?;
+                self.scopes.push(std::iter::once(var_name.clone()).collect());
+                let r = self.expr(expr).and_then(|_| self.expr_opt(condition));
+                self.scopes.pop();
+                r?;
+            }
+            E::Dict(pairs) => {
+                for (k, v) in pairs { self.expr(k)?; self.expr(v)?; }
+            }
+            E::Lambda { params, param_types, body } => {
+                for t in param_types.iter_mut() { self.typ_opt(t)?; }
+                self.scopes.push(params.iter().cloned().collect());
+                let r = self.expr(body);
+                self.scopes.pop();
+                r?;
+            }
+            E::Ternary { condition, then_val, else_val } => {
+                self.expr(condition)?;
+                self.expr(then_val)?;
+                self.expr(else_val)?;
+            }
+            E::MatchExpr { value, cases } => {
+                self.expr(value)?;
+                for (muster, waechter, ergebnis) in cases {
+                    if let Some(m) = muster { self.expr(m)?; }
+                    if let Some(w) = waechter { self.expr(w)?; }
+                    self.expr(ergebnis)?;
+                }
+            }
+            E::QueryExpr { var_name, source, where_cond, order_expr, select_expr } => {
+                self.expr(source)?;
+                self.scopes.push(std::iter::once(var_name.clone()).collect());
+                let r = self.expr_opt(where_cond)
+                    .and_then(|_| self.expr_opt(order_expr))
+                    .and_then(|_| self.expr(select_expr));
+                self.scopes.pop();
+                r?;
+            }
+        }
+        Ok(())
+    }
+
+    fn stmts(&mut self, stmts: &mut [ast::Stmt]) -> Result<(), String> {
+        for s in stmts { self.stmt(s)?; }
+        Ok(())
+    }
+
+    /// Eigener Geltungsbereich (Funktion, Test): Parameter + lokale Binder.
+    fn im_scope(&mut self, mut namen: std::collections::HashSet<String>, body: &mut [ast::Stmt]) -> Result<(), String> {
+        sammle_bindungen(body, &mut namen);
+        self.scopes.push(namen);
+        let r = self.stmts(body);
+        self.scopes.pop();
+        r
+    }
+
+    fn stmt(&mut self, s: &mut ast::Stmt) -> Result<(), String> {
+        use ast::Stmt as S;
+        match s {
+            S::Assignment { ty, value, .. } | S::ConstAssignment { ty, value, .. } => {
+                self.typ_opt(ty)?;
+                self.expr(value)?;
+            }
+            S::CompoundAssignment { value, .. } => self.expr(value)?,
+            S::PropertyAssignment { object, value, .. } => { self.expr(object)?; self.expr(value)?; }
+            S::IndexAssignment { object, index, value } => {
+                self.expr(object)?;
+                self.expr(index)?;
+                self.expr(value)?;
+            }
+            S::Show(e) | S::Throw(e) | S::Expression(e) | S::Defer(e) | S::Expect(e) => self.expr(e)?,
+            S::If { condition, body, else_body } => {
+                self.expr(condition)?;
+                self.stmts(body)?;
+                self.stmts(else_body)?;
+            }
+            S::While { condition, body } => { self.expr(condition)?; self.stmts(body)?; }
+            S::For { iterable, body, .. } | S::ParallelFor { iterable, body, .. } => {
+                self.expr(iterable)?;
+                self.stmts(body)?;
+            }
+            S::Precondition { condition, .. } | S::Postcondition { condition, .. } => self.expr(condition)?,
+            S::FunctionDef { params, param_types, return_type, defaults, body, .. } => {
+                for t in param_types.iter_mut() { self.typ_opt(t)?; }
+                self.typ_opt(return_type)?;
+                for d in defaults.iter_mut().flatten() { self.expr(d)?; }
+                let namen = params.iter().cloned().collect();
+                self.im_scope(namen, body)?;
+            }
+            S::ExternC { params, result, .. } => {
+                for (_, t) in params { self.typ(t)?; }
+                self.typ(result)?;
+            }
+            S::RawDataU32 { ty, value, .. } => { self.typ_opt(ty)?; self.expr(value)?; }
+            S::NativeConst { ty, value, .. } => { self.typ(ty)?; self.expr(value)?; }
+            S::Return(value) => { if let Some(v) = value { self.expr(v)?; } }
+            S::Break | S::Continue | S::Import { .. } | S::Global(_) => {}
+            S::StructDef { fields, .. } => { for (_, t) in fields { self.typ(t)?; } }
+            S::ClassDef { body, .. } => self.stmts(body)?,
+            S::InterfaceDef { signatures, .. } => {
+                for sig in signatures.iter_mut().flatten() {
+                    for t in sig.param_types.iter_mut() { self.typ_opt(t)?; }
+                    for d in sig.defaults.iter_mut().flatten() { self.expr(d)?; }
+                    self.typ_opt(&mut sig.return_type)?;
+                }
+            }
+            S::TryCatch { try_body, catch_body, .. } => {
+                self.stmts(try_body)?;
+                self.stmts(catch_body)?;
+            }
+            S::Export(inner) => self.stmt(inner)?,
+            S::Match { value, cases } => {
+                self.expr(value)?;
+                for (muster, waechter, body) in cases {
+                    if let Some(m) = muster { self.expr(m)?; }
+                    if let Some(w) = waechter { self.expr(w)?; }
+                    self.stmts(body)?;
+                }
+            }
+            S::Guard { condition, else_body } => { self.expr(condition)?; self.stmts(else_body)?; }
+            S::DataClassDef { field_types, .. } => {
+                for t in field_types.iter_mut() { self.typ_opt(t)?; }
+            }
+            S::UnsafeBlock { body } => self.stmts(body)?,
+            S::TestDef { body, .. } => self.im_scope(std::collections::HashSet::new(), body)?,
+        }
+        Ok(())
+    }
 }
 
 /// Findet die Wurzel der Compiler-Quellen (enthaelt runtime/moo_bare.c).
@@ -720,6 +992,14 @@ fn build_kernel(
         }
         None => Vec::new(),
     };
+    // P2-T28 (Plan 607b20ba B2; Bootloader-Bezug P1-T118): liefert das Programm
+    // eine native Konstante in .multiboot2, laesst moo_bare_boot.c den C-Header
+    // aus. Ohne solche Konstante bleibt alles bytegleich (GRUB-Referenz).
+    let mut board_defines = board_defines;
+    if compiler.hat_sektion(".multiboot2") {
+        println!("[moo-kernel] Multiboot2-Kopf aus Moo (.multiboot2), C-Header g_mb2_header entfaellt");
+        board_defines.push("-DMOO_BARE_MB2_AUS_MOO=1".to_string());
+    }
 
     let src_root = kernel_source_root().ok_or_else(|| {
         "Kernel-Runtime nicht gefunden: weder CARGO_MANIFEST_DIR noch exe-relativ \
@@ -1415,11 +1695,10 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     let mut program = parse_file(file)?;
 
     // Module AST-basiert auflösen
-    let file_dir = file.parent().unwrap_or(std::path::Path::new("."));
     let mut visited = std::collections::HashSet::new();
     let canonical = file.canonicalize().unwrap_or(file.clone());
     visited.insert(canonical);
-    resolve_modules(&mut program, file_dir, &mut visited, lib_paths)?;
+    resolve_modules(&mut program, file.as_path(), &mut visited, lib_paths)?;
     let link_triple = codegen::CodeGen::resolve_triple(target.unwrap_or("native"));
     let libraries = ffi_link::libraries(&program.statements, &link_triple)?;
 

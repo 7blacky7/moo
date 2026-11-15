@@ -1,0 +1,6 @@
+# P2-T51 E5 negativ (a): Adresse eines Locals per gib_zurück.
+@nativ
+funktion f() -> ptr[i32]:
+    unsicher:
+        setze x: i32 auf 5
+        gib_zurück zeiger(adresse_von(x))

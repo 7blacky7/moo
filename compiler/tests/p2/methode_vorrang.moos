@@ -1,0 +1,105 @@
+# P2-T87 (Befund 9ff1eb58): Klassenmethoden mit Builtin-Namen (hinzufügen,
+# länge, schliessen) haben bei Objekt-Empfaengern Vorrang; das Builtin gilt nur
+# ohne gleichnamigen Member. Abgedeckt: statisch bekannter Empfaenger,
+# dynamischer Empfaenger (Parameter, Listenelement, Feld), Vererbung,
+# selbst.methode(), Builtins auf Liste/Text im selben Programm, Objekt ohne
+# Member -> Builtin (schliessen: fangbarer Fehler statt Speicherfehler),
+# Argumente genau einmal ausgewertet.
+setze protokoll auf []
+
+funktion marke(w):
+    protokoll.hinzufügen(w)
+    gib_zurück w
+
+klasse Stapel:
+    funktion erstelle():
+        selbst.daten = []
+        selbst.zu = 0
+
+    funktion hinzufügen(w):
+        selbst.daten.hinzufügen(w * 10)
+        gib_zurück "stapel-hinzufügen"
+
+    funktion länge():
+        gib_zurück 100 + selbst.daten.länge()
+
+    funktion schliessen():
+        selbst.zu = selbst.zu + 1
+        gib_zurück "stapel-schliessen"
+
+    funktion selbst_laenge():
+        gib_zurück selbst.länge()
+
+klasse Unterstapel(Stapel):
+    funktion erstelle():
+        selbst.daten = [7]
+        selbst.zu = 0
+
+    funktion marker():
+        gib_zurück 1
+
+klasse Fremd:
+    funktion erstelle():
+        selbst.x = 1
+
+funktion schliesse(ding):
+    gib_zurück ding.schliessen()
+
+funktion laenge_von(ding):
+    gib_zurück ding.länge()
+
+setze s auf neu Stapel()
+zeige s.hinzufügen(1)
+zeige s.länge()
+zeige s.schliessen()
+zeige s.zu
+zeige s.selbst_laenge()
+
+setze u auf neu Unterstapel()
+zeige schliesse(u)
+zeige laenge_von(u)
+zeige u.zu
+
+setze dinge auf [s, u]
+zeige dinge[1].hinzufügen(marke(5))
+zeige dinge[1].länge()
+zeige länge(protokoll)
+
+setze liste auf [1, 2, 3]
+zeige laenge_von(liste)
+liste.hinzufügen(marke(4))
+zeige liste
+zeige länge(protokoll)
+zeige laenge_von("abc")
+
+# Feld-Empfaenger (Review dd971691): Objektfeld -> Klassenmethode,
+# Listenfeld -> Builtin, beide ueber die Laufzeitweiche.
+klasse Halter:
+    funktion erstelle():
+        selbst.stapel = neu Stapel()
+        selbst.liste = [9]
+
+setze h auf neu Halter()
+zeige h.stapel.schliessen()
+zeige h.stapel.zu
+zeige h.stapel.hinzufügen(4)
+zeige h.stapel.länge()
+h.liste.hinzufügen(8)
+zeige h.liste.länge()
+zeige h.liste
+
+# Realer Builtin-Pfad (Review dd971691): ein Channel im selben Programm wie
+# Stapel.schliessen -> moo_smart_close -> moo_channel_close.
+setze k auf kanal(2)
+k.senden(7)
+zeige k.empfangen()
+k.schliessen()
+zeige k.empfangen()
+
+setze f auf neu Fremd()
+versuche:
+    zeige schliesse(f)
+    zeige "NICHT ERREICHT"
+fange fehler:
+    zeige fehler
+zeige "ende"

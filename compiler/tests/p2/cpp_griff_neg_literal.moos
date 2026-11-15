@@ -1,0 +1,10 @@
+# P2-T23/T53 E6: Griffargumente sind in Stufe 1 Variablen oder nichts.
+@opak struktur P2Zaehler
+
+@nativ
+funktion summe(z: ptr[P2Zaehler]) -> i64:
+    unsicher:
+        gib_zurück 0
+
+unsicher:
+    zeige summe(5)
