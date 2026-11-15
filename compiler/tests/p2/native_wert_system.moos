@@ -1,0 +1,7 @@
+# Systemkörper (unsicher:) als Wert: nicht möglich (M-N001).
+@nativ
+funktion wert_roh(x: i64) -> i64:
+    unsicher:
+        gib_zurück x
+
+setze f auf wert_roh

@@ -649,6 +649,7 @@ struct MooFunc {
     char* name;
     MooValue* captured; // Capture-Array (retain-t) oder NULL
     int32_t n_captured; // Anzahl gebundener Captures oder 0
+    int32_t strikt;     // 1: moo_func_call_N prueft die Argumentzahl (native Funktionswerte)
 };
 
 // === Object ===
@@ -817,6 +818,8 @@ MooValue moo_func_with_captures(void* tramp_ptr, int32_t arity,
                                 const char* name,
                                 MooValue* caps, int32_t n);
 MooValue moo_func_captured_at(MooFunc* fn, int32_t i);
+void moo_func_strikt(MooValue f, const char* name);
+bool moo_func_aritaet_ok(MooFunc* fn, int32_t n);
 MooValue moo_func_call_0(MooValue func);
 MooValue moo_func_call_1(MooValue func, MooValue a0);
 MooValue moo_func_call_2(MooValue func, MooValue a0, MooValue a1);

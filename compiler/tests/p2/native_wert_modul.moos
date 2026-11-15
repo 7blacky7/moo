@@ -1,0 +1,4 @@
+# Modul für native_wert_import.moos.
+@nativ
+funktion modul_quadrat(x: i64) -> i64:
+    gib_zurück x * x

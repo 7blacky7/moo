@@ -1,0 +1,10 @@
+# Strukturparameter: nativer Funktionswert nicht möglich (M-N001).
+struktur WertPunkt:
+    x: f64
+    y: f64
+
+@nativ
+funktion wert_summe(p: WertPunkt) -> f64:
+    gib_zurück p.x + p.y
+
+setze f auf wert_summe

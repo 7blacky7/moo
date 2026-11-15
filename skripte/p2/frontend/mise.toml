@@ -340,6 +340,11 @@ description = "P2 Frontend: direkte native i32-Aufrufe und LLVM-IR"
 dir = "{{config_root}}/../../.."
 run = "bash skripte/p2/frontend/native_calls.sh"
 
+[tasks.native-wert]
+description = "P2 Frontend: native Funktionswerte (Thunk, fangbare Laufzeitfehler, Leckprobe, M-N001/M-N002/M-N003)"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/native_wert.sh"
+
 [tasks.try-flow]
 description = "P2 Frontend: Handler bei verschachteltem Return und Schleifensprüngen"
 dir = "{{config_root}}/../../.."

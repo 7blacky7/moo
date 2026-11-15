@@ -99,6 +99,12 @@ pub struct CodeGen<'ctx> {
     /// P2-T49 E5: Grund, warum eine native Funktion mit Strukturwerten nicht aus
     /// dynamischem Moo aufrufbar ist (Diagnose an der Aufrufstelle).
     native_dyn_sperre: HashMap<String, String>,
+    /// Native Funktionswerte: Thunk (Lambda-Funktion) und Anzeigename je
+    /// @nativ-Name, einmal je Modul erzeugt.
+    native_wert_thunks: HashMap<String, (FunctionValue<'ctx>, PointerValue<'ctx>)>,
+    /// Der zuletzt uebersetzte Ausdruck war ein nativer Funktionswert (map/filter
+    /// geben ihn nach dem Aufruf frei).
+    nativer_wert_erzeugt: bool,
     /// P2-T49 B1: Laufzeitbeschreibungen v2 (__moo_struktur.<Name>), je Modul einmal.
     struktur_deskriptoren: HashMap<String, PointerValue<'ctx>>,
     /// P2-T83 B1 (Plan f3217c27 E3): @liest(n)-Pufferparameter (0-basiert) je Funktion.
@@ -248,6 +254,8 @@ impl<'ctx> CodeGen<'ctx> {
             native_handle_results: HashMap::new(),
             native_struct_results: HashMap::new(),
             native_dyn_sperre: HashMap::new(),
+            native_wert_thunks: HashMap::new(),
+            nativer_wert_erzeugt: false,
             struktur_deskriptoren: HashMap::new(),
             native_read_params: HashMap::new(),
             rahmen_art: RahmenArt::Sonstig,
@@ -4642,6 +4650,93 @@ impl<'ctx> CodeGen<'ctx> {
     /// Kriterien system_fangbar/plain_fangbar im Native-Arm von compile_expr):
     /// skalare Signatur (seit P2-T55 auch die FFI-Einzelform), nicht bare/wasm,
     /// interner Name __moo_native.* (C-Exporte verlieren ihn per set_name und trappen).
+    /// @nativ-Funktion als Funktionswert (Grenze nativ -> dynamisch). Der Thunk ist
+    /// ein synthetisches Lambda `(a0, ..) => name(a0, ..)`: Er nutzt die Argument-
+    /// adapter (Tag, Bereich, Exaktheit), das Ergebnis-Boxing und den Fehlerausgang
+    /// des dynamischen Direktaufrufs und entsteht nur bei Wertnutzung. Direkte und
+    /// nativ->nativ-Aufrufe bleiben ohne Box. moo_func_strikt laesst moo_func_call_N
+    /// die Argumentzahl vor dem Aufruf pruefen (Moo-Fehler statt Ersatzwert).
+    fn nativer_funktionswert(&mut self, name: &str) -> Result<StructValue<'ctx>, String> {
+        let zeile = self.diag_zeile;
+        let wasm_target = self.module.get_triple().as_str().to_str()
+            .map(|t| t.starts_with("wasm")).unwrap_or(true);
+        if self.bare_mode || wasm_target {
+            return Err(crate::diagnose::vormerken("M-N002", zeile, format!(
+                "Nativer Funktionswert '{name}' ist nur hosted verfügbar (nicht im Bare-/UEFI-Profil und nicht für wasm); '{name}' dort direkt aufrufen")));
+        }
+        let sperre: Option<String> = match self.native_signatures.get(name) {
+            None => Some(self.native_dyn_sperre.get(name).cloned()
+                .unwrap_or_else(|| "Zeigersignatur".into())),
+            Some(_) if self.native_struct_results.contains_key(name) => Some("Strukturergebnis".into()),
+            Some(_) if self.native_handle_results.contains_key(name) => Some("Zeigerergebnis".into()),
+            Some(_) if self.native_buffer_params.get(name)
+                .is_some_and(|p| p.iter().any(Option::is_some)) => Some("Struktur-, Zeiger- oder Pufferparameter".into()),
+            Some(_) => None,
+        };
+        if let Some(grund) = sperre {
+            return Err(crate::diagnose::vormerken("M-N001", zeile, format!(
+                "Nativer Funktionswert '{name}': als Wert sind nur Signaturen aus Zahlen und Wahrheitswerten möglich ({grund}); '{name}' direkt aufrufen oder in eine Moo-Funktion einpacken")));
+        }
+        let function = *self.native_functions.get(name).ok_or("Native Funktion fehlt")?;
+        if self.hosted_system_functions.contains(&function) && !self.safe_native_functions.contains(name) {
+            return Err(crate::diagnose::vormerken("M-N001", zeile, format!(
+                "Nativer Funktionswert '{name}': Systemkörper sind nur in unsicher: aufrufbar und deshalb kein Wert; eine Moo-Funktion mit unsicher: als Hülle verwenden")));
+        }
+        if !self.native_call_fangbar(name) {
+            return Err(crate::diagnose::vormerken("M-N001", zeile, format!(
+                "Nativer Funktionswert '{name}': nur hosted fangbare @nativ-Funktionen sind als Wert möglich (C-Exporte und Bare-Körper nicht); '{name}' direkt aufrufen")));
+        }
+        let anzahl = self.native_signatures.get(name).map(|s| s.params.len()).unwrap_or(0);
+        let (wert, name_ptr) = match self.native_wert_thunks.get(name).copied() {
+            Some((thunk_fn, name_ptr)) => {
+                // Thunk schon erzeugt: nur einen neuen Funktionswert darauf bauen.
+                let thunk_name = thunk_fn.get_name().to_string_lossy().into_owned();
+                let callable_fn = self.windows_callable_wrapper(thunk_fn, &thunk_name)?;
+                let fn_ptr = callable_fn.as_global_value().as_pointer_value();
+                let arity = self.context.i32_type().const_int(anzahl as u64, false);
+                let wert = self.call_rt(self.rt.moo_func_new,
+                    &[fn_ptr.into(), arity.into(), name_ptr.into()], "nw_wert")?;
+                (wert, name_ptr)
+            }
+            None => {
+                let params: Vec<String> = (0..anzahl).map(|i| format!("__nw_arg{i}")).collect();
+                let thunk = Expr::Lambda {
+                    params: params.clone(),
+                    param_types: vec![None; anzahl],
+                    body: Box::new(Expr::FunctionCall {
+                        zeile,
+                        name: name.to_string(),
+                        args: params.iter().map(|p| Expr::Identifier(p.clone())).collect(),
+                    }),
+                };
+                let lambda_name = format!("__lambda_{}", self.lambda_counter);
+                let wert = self.compile_expr(&thunk)?;
+                let thunk_fn = self.module.get_function(&lambda_name)
+                    .ok_or_else(|| format!("Nativer Funktionswert '{name}': Thunk fehlt"))?;
+                let name_ptr = self.make_global_str(name, &format!("__nwname_{name}"))?;
+                self.native_wert_thunks.insert(name.to_string(), (thunk_fn, name_ptr));
+                (wert, name_ptr)
+            }
+        };
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let strikt = match self.module.get_function("moo_func_strikt") {
+            Some(f) => f,
+            None => {
+                // MSVC x64: das 16-Byte-MooValue geht indirekt (call_rt_void).
+                let wert_typ: BasicMetadataTypeEnum = if self.windows_x64_abi() {
+                    ptr_type.into()
+                } else {
+                    self.mv_type().into()
+                };
+                self.module.add_function("moo_func_strikt",
+                    self.context.void_type().fn_type(&[wert_typ, ptr_type.into()], false), None)
+            }
+        };
+        self.call_rt_void(strikt, &[wert.into(), name_ptr.into()], "nw_strikt")?;
+        self.nativer_wert_erzeugt = true;
+        Ok(wert)
+    }
+
     fn native_call_fangbar(&self, name: &str) -> bool {
         if self.bare_mode || !self.native_signatures.contains_key(name) {
             return false;
@@ -6441,10 +6536,11 @@ impl<'ctx> CodeGen<'ctx> {
                     return Ok(v);
                 }
                 if self.native_functions.contains_key(name) {
-                    return Err(format!("Nativer Funktionswert '{name}' ist noch nicht unterstützt"));
+                    return self.nativer_funktionswert(name);
                 }
                 if self.extern_c_names.contains(name) {
-                    return Err(format!("extern-C-Funktionswert '{name}' ist noch nicht unterstützt"));
+                    return Err(crate::diagnose::vormerken("M-N003", self.diag_zeile, format!(
+                        "extern-C-Funktionswert '{name}' ist nicht möglich: als Moo-Wert eine @nativ-Hülle verwenden (@nativ-Funktion, die '{name}' in unsicher: aufruft); C-Funktionszeiger über @rückruf")));
                 }
                 if let Some(llvm_fn) = self.module.get_function(name) {
                     let callable_fn = self.windows_callable_wrapper(llvm_fn, name)?;
@@ -11651,9 +11747,16 @@ impl<'ctx> CodeGen<'ctx> {
                             self.call_rt_void(self.rt.moo_list_append,
                                 &[current_result.into(), mapped_val.into()], "append")?;
                         } else {
+                            self.nativer_wert_erzeugt = false;
                             let fn_val = self.compile_expr(lambda)?;
+                            let fn_freigeben = std::mem::take(&mut self.nativer_wert_erzeugt);
                             let mapped_val = self.call_rt(self.rt.moo_func_call_1,
                                 &[fn_val.into(), element.into()], "map_call")?;
+                            // moo_func_call_1 leiht den Funktionswert; ein je Element
+                            // neu erzeugter nativer Funktionswert wird hier freigegeben.
+                            if fn_freigeben {
+                                self.call_rt_void(self.rt.moo_release, &[fn_val.into()], "rel_map_fn")?;
+                            }
                             let current_result = self.builder.build_load(self.mv_type(), result_ptr, "res")
                                 .map_err(|e| format!("{e}"))?.into_struct_value();
                             self.call_rt_void(self.rt.moo_list_append,
@@ -11732,9 +11835,16 @@ impl<'ctx> CodeGen<'ctx> {
                             }
                             self.compile_expr(body)?
                         } else {
+                            self.nativer_wert_erzeugt = false;
                             let fn_val = self.compile_expr(lambda)?;
-                            self.call_rt(self.rt.moo_func_call_1,
-                                &[fn_val.into(), element.into()], "filter_call")?
+                            let fn_freigeben = std::mem::take(&mut self.nativer_wert_erzeugt);
+                            let test_val = self.call_rt(self.rt.moo_func_call_1,
+                                &[fn_val.into(), element.into()], "filter_call")?;
+                            // Wie bei list.map: nativen Funktionswert nach dem Aufruf freigeben.
+                            if fn_freigeben {
+                                self.call_rt_void(self.rt.moo_release, &[fn_val.into()], "rel_filter_fn")?;
+                            }
+                            test_val
                         };
                         {
                             let is_true = self.call_rt_abi(self.rt.moo_is_truthy,

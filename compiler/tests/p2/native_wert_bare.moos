@@ -1,0 +1,6 @@
+# Bare-/UEFI-Profil: native Funktionswerte nicht verfügbar (M-N002).
+@nativ
+funktion wert_quadrat(x: i64) -> i64:
+    gib_zurück x * x
+
+setze f auf wert_quadrat

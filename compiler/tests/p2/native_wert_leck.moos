@@ -1,0 +1,17 @@
+# Ein nativer Funktionswert in map/filter wird je Element erzeugt und nach
+# dem Aufruf wieder freigegeben (Leckprobe unter LSan im Gate).
+@nativ
+funktion plus1(a: i64) -> i64:
+    gib_zurück a + 1
+
+@nativ
+funktion gerade(a: i64) -> bool:
+    gib_zurück a % 2 == 0
+
+funktion arbeite():
+    setze xs auf [1, 2, 3, 4, 5]
+    setze erg auf xs.map(plus1)
+    zeige erg
+    zeige xs.filter(gerade)
+
+arbeite()

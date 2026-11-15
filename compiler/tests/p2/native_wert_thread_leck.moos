@@ -1,0 +1,13 @@
+# Arityfehler beim Thread-Start in versuche: gefangen; Funktionswert und
+# Argument werden im Fehlerpfad freigegeben (Leckprobe unter LSan im Gate).
+@nativ
+funktion plus(a: i64, b: i64) -> i64:
+    gib_zurück a + b
+
+funktion arbeite():
+    versuche:
+        setze t auf starte(plus, "argument")
+    fange e:
+        zeige e
+
+arbeite()

@@ -1,0 +1,5 @@
+# Importierte @nativ-Funktion: Direktaufruf und Funktionswert.
+importiere native_wert_modul
+zeige modul_quadrat(6)
+setze g auf modul_quadrat
+zeige g(7)

@@ -166,6 +166,8 @@ void moo_event_emit(MooValue obj, MooValue event_name) {
         MooValue cb = callbacks->items[i];
         if (cb.tag == MOO_FUNC) {
             MooFunc* fn = MV_FUNC(cb);
+            // Strikte (native) Funktionswerte nur mit passender Argumentzahl.
+            if (!moo_func_aritaet_ok(fn, 1)) continue;
             // Closure- vs. Plain-Call-Konvention (vgl. moo_thread.c)
             if (fn->n_captured > 0) {
                 typedef MooValue (*MooTramp1)(MooFunc*, MooValue);

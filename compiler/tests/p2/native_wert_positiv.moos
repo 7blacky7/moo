@@ -1,0 +1,40 @@
+# Native Funktionswerte: @nativ-Funktion als Wert, als Rückruf-Argument und in
+# map/filter. Der direkte Aufruf bleibt daneben unverändert.
+@nativ
+funktion quadrat(x: i64) -> i64:
+    gib_zurück x * x
+
+@nativ
+funktion halb(x: f64) -> f64:
+    gib_zurück x / 2.0
+
+@nativ
+funktion ist_gross(x: i32) -> bool:
+    gib_zurück x > 10
+
+@nativ
+funktion stufe(x: i32) -> i32:
+    wenn x > 0:
+        gib_zurück 1
+    gib_zurück 0
+
+@nativ
+funktion summe3(a: i32, b: i32, c: i32) -> i32:
+    gib_zurück a + b + c
+
+funktion anwenden(g, x):
+    gib_zurück g(x)
+
+setze f auf quadrat
+zeige f(3)
+zeige anwenden(quadrat, 4)
+zeige [1, 2, 3].map(quadrat)
+setze h auf halb
+zeige h(5)
+zeige [5, 20, 11].filter(ist_gross)
+setze s auf stufe
+zeige s(7)
+zeige s(-7)
+setze t auf summe3
+zeige t(1, 2, 3)
+zeige quadrat(9)

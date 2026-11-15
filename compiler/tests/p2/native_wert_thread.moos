@@ -1,0 +1,18 @@
+# Thread-Start mit nativem Funktionswert: der Thread ruft mit genau einem
+# Argument; ein zweistelliger nativer Wert ist ein fangbarer Arityfehler.
+@nativ
+funktion quadrat(x: i64) -> i64:
+    gib_zurück x * x
+
+@nativ
+funktion plus(a: i64, b: i64) -> i64:
+    gib_zurück a + b
+
+setze t auf starte(quadrat, 6)
+zeige t.warten()
+versuche:
+    setze u auf starte(plus, 4)
+    zeige u.warten()
+fange e:
+    zeige "gefangen: " + e
+zeige "DANACH"

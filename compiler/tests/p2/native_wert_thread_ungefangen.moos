@@ -1,0 +1,9 @@
+# Ohne versuche: der Arityfehler beim Thread-Start wird gemeldet, warten auf
+# den fehlenden Thread ist ebenfalls ein Fehler, das Programm stürzt nicht ab.
+@nativ
+funktion plus(a: i64, b: i64) -> i64:
+    gib_zurück a + b
+
+setze t auf starte(plus, 4)
+zeige t.warten()
+zeige "ENDE"

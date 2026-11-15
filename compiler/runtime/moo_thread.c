@@ -97,6 +97,14 @@ static void moo_mutex_unlock_thread(MooThread* t) {
 }
 
 MooValue moo_thread_spawn(MooValue func, MooValue arg) {
+    // Strikte (native) Funktionswerte: der Thread ruft mit genau einem Argument.
+    if (func.tag == MOO_FUNC && !moo_func_aritaet_ok(MV_FUNC(func), 1)) {
+        // Der Codegen uebergibt Funktion und Argument owning (+1); ohne
+        // Thread gibt der Fehlerpfad beide hier frei.
+        moo_release(func);
+        moo_release(arg);
+        return moo_none();
+    }
     MooThread* t = (MooThread*)malloc(sizeof(MooThread));
     t->refcount = 1;
     t->done = false;
@@ -144,6 +152,12 @@ MooValue moo_thread_spawn(MooValue func, MooValue arg) {
 }
 
 MooValue moo_thread_wait(MooValue thread) {
+    // Kein Thread (z. B. starte nach einem Arityfehler ohne versuche:):
+    // Moo-Fehler statt Zugriff auf fremden Speicher.
+    if (thread.tag != MOO_THREAD) {
+        moo_throw(moo_string_new("warten: der Wert ist kein Thread"));
+        return moo_none();
+    }
     MooThread* t = (MooThread*)moo_val_as_ptr(thread);
     void* retval = NULL;
 #ifdef _WIN32
@@ -175,6 +189,10 @@ MooValue moo_thread_wait(MooValue thread) {
 }
 
 MooValue moo_thread_done(MooValue thread) {
+    if (thread.tag != MOO_THREAD) {
+        moo_throw(moo_string_new("fertig: der Wert ist kein Thread"));
+        return moo_none();
+    }
     MooThread* t = (MooThread*)moo_val_as_ptr(thread);
     moo_mutex_lock_thread(t);
     bool d = t->done;

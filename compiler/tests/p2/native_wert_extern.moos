@@ -1,0 +1,6 @@
+# extern-C-Name direkt als Wert: nicht möglich (M-N003); die @nativ-Hülle
+# ist der Weg (siehe native_wert_positiv.moos / ffi_defer_reach_funktionswert).
+@bibliothek("m")
+extern "C" funktion sinf(x: f32) -> f32
+
+setze f auf sinf

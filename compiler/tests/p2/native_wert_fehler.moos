@@ -1,0 +1,39 @@
+# Laufzeitfehler beim Aufruf eines nativen Funktionswerts sind fangbar und
+# stoppen vor dem nativen Aufruf: falsche Argumentzahl, falscher Typ,
+# nicht exakter Wert, Bereich. Danach läuft das Programm normal weiter.
+@nativ
+funktion quadrat(x: i64) -> i64:
+    gib_zurück x * x
+
+@nativ
+funktion klein(x: i8) -> i8:
+    gib_zurück x
+
+setze f auf quadrat
+versuche:
+    zeige f(1, 2)
+fange e:
+    zeige "gefangen: " + e
+versuche:
+    zeige f()
+fange e:
+    zeige "gefangen: " + e
+versuche:
+    zeige f("x")
+fange e:
+    zeige "gefangen: " + e
+versuche:
+    zeige f(1.5)
+fange e:
+    zeige "gefangen: " + e
+setze k auf klein
+versuche:
+    zeige k(300)
+fange e:
+    zeige "gefangen: " + e
+versuche:
+    zeige [1, 2].map(k)
+    zeige ["a"].map(f)
+fange e:
+    zeige "gefangen: " + e
+zeige f(12)

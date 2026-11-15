@@ -197,6 +197,7 @@ MooValue moo_func_new(void* fn_ptr, int32_t arity, const char* name) {
     f->name = name ? strdup(name) : NULL;
     f->captured = NULL;
     f->n_captured = 0;
+    f->strikt = 0;
     MooValue v;
     v.tag = MOO_FUNC;
     moo_val_set_ptr(&v, f);
@@ -218,12 +219,37 @@ MooValue moo_func_captured_at(MooFunc* fn, int32_t i) {
 // Waehlen plain- oder Closure-Call-Konvention basierend auf n_captured.
 // Werden u.a. von list.map / list.filter und von Variable-Aufrufen genutzt,
 // wo der Codegen keine direkte LLVM-Function kennt.
+// Native Funktionswerte: der Codegen markiert ihren MooFunc als strikt und gibt
+// ihm den Namen der @nativ-Funktion (fuer Fehlermeldungen).
+void moo_func_strikt(MooValue f, const char* name) {
+    if (f.tag != MOO_FUNC) return;
+    MooFunc* fn = MV_FUNC(f);
+    fn->strikt = 1;
+    if (name) {
+        if (fn->name) free(fn->name);
+        fn->name = strdup(name);
+    }
+}
+
+// Strikte Funktionswerte: Argumentzahl vor dem Aufruf pruefen. Bei Abweichung
+// Moo-Fehler statt Aufruf; der Aufrufer gibt dann die Argumente frei. Auch
+// moo_thread_spawn und Objekt-Ereignisse (direkter fn_ptr-Aufruf) pruefen so.
+bool moo_func_aritaet_ok(MooFunc* fn, int32_t n) {
+    if (!fn->strikt || fn->arity == n) return true;
+    char text[200];
+    snprintf(text, sizeof text, "Funktion '%s' erwartet %d Argument%s, bekommen %d",
+             fn->name ? fn->name : "?", (int)fn->arity, fn->arity == 1 ? "" : "e", (int)n);
+    moo_throw(moo_string_new(text));
+    return false;
+}
+
 MooValue moo_func_call_0(MooValue func) {
     if (func.tag != MOO_FUNC) {
         moo_throw(moo_string_new("Aufruf auf Nicht-Funktion"));
         return moo_none();
     }
     MooFunc* fn = MV_FUNC(func);
+    if (!moo_func_aritaet_ok(fn, 0)) return moo_none();
     if (fn->n_captured > 0) {
         MooValue (*tramp)(MooFunc*) = (MooValue(*)(MooFunc*))fn->fn_ptr;
         return tramp(fn);
@@ -238,6 +264,10 @@ MooValue moo_func_call_1(MooValue func, MooValue a0) {
         return moo_none();
     }
     MooFunc* fn = MV_FUNC(func);
+    if (!moo_func_aritaet_ok(fn, 1)) {
+        moo_release(a0);
+        return moo_none();
+    }
     if (fn->n_captured > 0) {
         MooValue (*tramp)(MooFunc*, MooValue) =
             (MooValue(*)(MooFunc*, MooValue))fn->fn_ptr;
@@ -253,6 +283,10 @@ MooValue moo_func_call_2(MooValue func, MooValue a0, MooValue a1) {
         return moo_none();
     }
     MooFunc* fn = MV_FUNC(func);
+    if (!moo_func_aritaet_ok(fn, 2)) {
+        moo_release(a0); moo_release(a1);
+        return moo_none();
+    }
     if (fn->n_captured > 0) {
         MooValue (*tramp)(MooFunc*, MooValue, MooValue) =
             (MooValue(*)(MooFunc*, MooValue, MooValue))fn->fn_ptr;
@@ -269,6 +303,10 @@ MooValue moo_func_call_3(MooValue func, MooValue a0, MooValue a1, MooValue a2) {
         return moo_none();
     }
     MooFunc* fn = MV_FUNC(func);
+    if (!moo_func_aritaet_ok(fn, 3)) {
+        moo_release(a0); moo_release(a1); moo_release(a2);
+        return moo_none();
+    }
     if (fn->n_captured > 0) {
         MooValue (*tramp)(MooFunc*, MooValue, MooValue, MooValue) =
             (MooValue(*)(MooFunc*, MooValue, MooValue, MooValue))fn->fn_ptr;
@@ -285,6 +323,10 @@ MooValue moo_func_call_4(MooValue func, MooValue a0, MooValue a1, MooValue a2, M
         return moo_none();
     }
     MooFunc* fn = MV_FUNC(func);
+    if (!moo_func_aritaet_ok(fn, 4)) {
+        moo_release(a0); moo_release(a1); moo_release(a2); moo_release(a3);
+        return moo_none();
+    }
     if (fn->n_captured > 0) {
         MooValue (*tramp)(MooFunc*, MooValue, MooValue, MooValue, MooValue) =
             (MooValue(*)(MooFunc*, MooValue, MooValue, MooValue, MooValue))fn->fn_ptr;
@@ -301,6 +343,10 @@ MooValue moo_func_call_5(MooValue func, MooValue a0, MooValue a1, MooValue a2, M
         return moo_none();
     }
     MooFunc* fn = MV_FUNC(func);
+    if (!moo_func_aritaet_ok(fn, 5)) {
+        moo_release(a0); moo_release(a1); moo_release(a2); moo_release(a3); moo_release(a4);
+        return moo_none();
+    }
     if (fn->n_captured > 0) {
         MooValue (*tramp)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue) =
             (MooValue(*)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue))fn->fn_ptr;
@@ -317,6 +363,10 @@ MooValue moo_func_call_6(MooValue func, MooValue a0, MooValue a1, MooValue a2, M
         return moo_none();
     }
     MooFunc* fn = MV_FUNC(func);
+    if (!moo_func_aritaet_ok(fn, 6)) {
+        moo_release(a0); moo_release(a1); moo_release(a2); moo_release(a3); moo_release(a4); moo_release(a5);
+        return moo_none();
+    }
     if (fn->n_captured > 0) {
         MooValue (*tramp)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue) =
             (MooValue(*)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue))fn->fn_ptr;
@@ -333,6 +383,10 @@ MooValue moo_func_call_7(MooValue func, MooValue a0, MooValue a1, MooValue a2, M
         return moo_none();
     }
     MooFunc* fn = MV_FUNC(func);
+    if (!moo_func_aritaet_ok(fn, 7)) {
+        moo_release(a0); moo_release(a1); moo_release(a2); moo_release(a3); moo_release(a4); moo_release(a5); moo_release(a6);
+        return moo_none();
+    }
     if (fn->n_captured > 0) {
         MooValue (*tramp)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue) =
             (MooValue(*)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue))fn->fn_ptr;
@@ -349,6 +403,10 @@ MooValue moo_func_call_8(MooValue func, MooValue a0, MooValue a1, MooValue a2, M
         return moo_none();
     }
     MooFunc* fn = MV_FUNC(func);
+    if (!moo_func_aritaet_ok(fn, 8)) {
+        moo_release(a0); moo_release(a1); moo_release(a2); moo_release(a3); moo_release(a4); moo_release(a5); moo_release(a6); moo_release(a7);
+        return moo_none();
+    }
     if (fn->n_captured > 0) {
         MooValue (*tramp)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue) =
             (MooValue(*)(MooFunc*, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue, MooValue))fn->fn_ptr;
@@ -386,6 +444,7 @@ MooValue moo_func_with_captures(void* tramp_ptr, int32_t arity,
         f->captured = NULL;
         f->n_captured = 0;
     }
+    f->strikt = 0;
     MooValue v;
     v.tag = MOO_FUNC;
     moo_val_set_ptr(&v, f);
