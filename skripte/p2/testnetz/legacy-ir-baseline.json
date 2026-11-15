@@ -1,11 +1,11 @@
 {
   "format": 2,
-  "compiler_sha256": "486ddfc979e192e5aaa4fd1ee66a4ea46b2f19c0cbb82b26418ebfbc035868e8",
+  "compiler_sha256": "104008b145ac1f1418ef557e8769c5ece710ffa6e37a00a8fb66892d8c40d966",
   "normalization": "module-header-root-v2",
   "batch": null,
   "provenance_attestation": "caller-provided-unverified",
-  "compiler_runtime_inventory_sha256": "d96bde849ef8fe1e893929330d25238b1e698173dbfd3f9ca1b2e3912e00d329",
-  "snapshot_ref": "61ecafbf8a6b237265250654ddad018e358c845e",
+  "compiler_runtime_inventory_sha256": "bf646ca3d243ce91aee346885599dd9c194e97b5f490eccfb1b4d40be8c3ddab",
+  "snapshot_ref": null,
   "snapshot_ref_attestation": "caller-provided-unverified",
   "profiles": {
     "beispiele/bootloader/stage2.moos": [
@@ -558,7 +558,7 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "8d618a6454194a974349f20ef274f27941aa35d1747b6a32b968ca038bcff6a3",
+    "sha256": "e2e597ed5e2a9c639c78fe2cdf5d2994e16975a0753695260efb7b80f753abe7",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -1362,11 +1362,18 @@
       "compiler/tests/p2/native_u64_bare_call_typ.moos": "6953d8d1ad4b96900dadaf12404af1b1fa4ddc04b13daa168d4f70a8f40edf99",
       "compiler/tests/p2/native_u64_bare_div.moos": "30885825e2c16fd85e817925db91ab0d708b0064bae5169c40863ec1738396b9",
       "compiler/tests/p2/native_uefi_float.moos": "09ed2037f7edc24738051ec398b3c4a9c64d23b98e409a6d468dd30b44bdbaa8",
+      "compiler/tests/p2/native_verbund.moos": "6906dc26f3f7c4d4fd6c81b214e589a3ef7e9e654610bff109bff833c217bc05",
+      "compiler/tests/p2/native_verbund_aufruf.moos": "3f5255a56604f99917e6c246074d2ebd852c32d03e0d01bcd27bf88e611477cb",
+      "compiler/tests/p2/native_verbund_aufruf_tief.moos": "e1c47127d71c65410df7677644e9cad1e7ec6e3258780d6b4873acff79cbe825",
+      "compiler/tests/p2/native_verbund_feld.moos": "355db8779c98ba52ed6cbcab9cf61b8576e42344836a1f1b5fdabf6ec1f0e441",
+      "compiler/tests/p2/native_verbund_index.moos": "41a55892f7931e0e2bc1e65e193edb65618467902acd680ba4698d5214e03a5c",
+      "compiler/tests/p2/native_verbund_typ.moos": "a7e0422725fc7fb8a36904659ee209fb6f54924d2d41a1c11d4a3214a65713c6",
       "compiler/tests/p2/native_verschachtelt_funktion.moos": "56d3514f637269f1b74cbf1eb067363b79e401304ce4f1f7dcf3b43a95079850",
       "compiler/tests/p2/native_verschachtelt_try.moos": "80d9b6d3e03e3c305c0283a31ef8da879e3f91cef869c2a01025a9d04654e94b",
       "compiler/tests/p2/native_wert_bare.moos": "30e976c9948cb58731f28285a06254476251c360bca747888deccd9c33ae709d",
       "compiler/tests/p2/native_wert_extern.moos": "fd601533c3eef2d203e377ca42126a1ddc88ef49df054e59928006d0ac09efd8",
       "compiler/tests/p2/native_wert_fehler.moos": "9a26f449f0f3b2c8d67bcefef22b2d6f990919d69a37fe9e1be70dc578d5c112",
+      "compiler/tests/p2/native_wert_grenzen.moos": "d325bcc55932d476c61152d5acad60675d29bc623e06a2461a5ec4751a51c990",
       "compiler/tests/p2/native_wert_import.moos": "20037c0ccb58d402d8a7aaaf5daf1090085e95256355d098e91eabc0369658a7",
       "compiler/tests/p2/native_wert_leck.moos": "db7f6719c4667aaad63329f2c544bd8c98989c19528e9bf5201e36c7019671a1",
       "compiler/tests/p2/native_wert_modul.moos": "8d276fd816ccf89b23e5f956025d992681fb7b32f5c0c48ce46801d21cfc2cfa",
@@ -2177,7 +2184,7 @@
     },
     "beispiele/eval_r1_attnres_lm.moos": {
       "status": "ok",
-      "sha256": "55e6170bbf4d9bf7c12ed7bf1fcdbb13a4fbbb138944bb8688d0c327114f2334"
+      "sha256": "42623da4a40484508c5655a5a2e4cacd66f9fb66dbaebafd498375d585823df4"
     },
     "beispiele/explorer.moos": {
       "status": "ok",
@@ -2233,23 +2240,23 @@
     },
     "beispiele/fluxmail/fluxmail_ui.moos": {
       "status": "ok",
-      "sha256": "f6136976678a7f791adf9d2200c5cf43966c4a35eae7d3faab19d6b7fe7fc84c"
+      "sha256": "365b5bdcf1790319510d2b3be04649272172d019c0c4dd810b87f583c807aee3"
     },
     "beispiele/fluxmail/fluxmail_ui_detail.moos": {
       "status": "ok",
-      "sha256": "4a8d44fe89be6cf24d7dbc9d9849b577ab3f5ab5ee7a769139e10ebfcc71d9b0"
+      "sha256": "17cc15380b34ce8bffa5e86bb342a7e7f32b51b53245fae2a9dd2656206e4ee4"
     },
     "beispiele/fluxmail/fluxmail_ui_liste.moos": {
       "status": "ok",
-      "sha256": "8d83bfa8ba8cf411fb3fddb467b1e783eeaa86ebea94b7bfcaeffd02697529f1"
+      "sha256": "cb1263035db73ce1d71d49ff65bc6801995a6304ea231ea7bc4d4360e9636b2e"
     },
     "beispiele/fluxmail/fluxmail_ui_sidebar.moos": {
       "status": "ok",
-      "sha256": "3c47a39f865ae9b818f6525fa0dd141a93f4b7ea9e0126b13bac7ffd37f4d538"
+      "sha256": "5d79b8421c36fbd31de9e41692be7dd384332f2e72d02209b71ffac9a9164a03"
     },
     "beispiele/fluxmail/script.moos": {
       "status": "ok",
-      "sha256": "11befe018440ff06216de2fdb6eb76c5149e6df843c2702a9251736423886e1f"
+      "sha256": "cfa75258574e381fb87c91f385a2e494e59d13652ed690d7d85f7e1d4052a200"
     },
     "beispiele/frogger.moos": {
       "status": "ok",
@@ -2513,7 +2520,7 @@
     },
     "beispiele/moo_aero_csd.moos": {
       "status": "ok",
-      "sha256": "3dc58b859b18f58c704772c9eb23cf2a177408b313ebf629f0e6df61dbb0829e"
+      "sha256": "ae2976e3050c95a2b82646fc000e96babc50550c9e8283d7b992a98e098c928e"
     },
     "beispiele/moo_aero_csd_host.moos": {
       "status": "ok",
@@ -2521,15 +2528,15 @@
     },
     "beispiele/moo_desktop.moos": {
       "status": "ok",
-      "sha256": "cd205fc5d1739d9eb363551e26662bf48c32753f61bac4bd93ee51a6580ca561"
+      "sha256": "d16d999247daba1395f7a108eed20f1ddb88b856a7b40c1805a9a5fb193ce4dd"
     },
     "beispiele/moo_glass_drag.moos": {
       "status": "ok",
-      "sha256": "b0e0f217c9c983170a9711a6652ab851ff6515bfff6f6420fb23c67f89be8d9b"
+      "sha256": "81f7e683a2090e7853af9069e54124c6d0e3288dd0a58bd6d2091904666dcd10"
     },
     "beispiele/moo_glass_gallery.moos": {
       "status": "ok",
-      "sha256": "3e1ed422639564f71fcdd9b9af8e4429b45dae46d639796d5eb22a5c5b867dfd"
+      "sha256": "2fff85193a7c4df38d7625c815b8f55475b368c829b62f7d7cdb7d800a0ad932"
     },
     "beispiele/moo_protokoll/demo.moos": {
       "status": "ok",
@@ -2541,11 +2548,11 @@
     },
     "beispiele/moo_widgets_host.moos": {
       "status": "ok",
-      "sha256": "f6e498d79fff729e0c8052fa68bd0b2e28e6aecf93cb9ca7d3d088d1ed01d946"
+      "sha256": "d9186746cd76c4a2d2268635bcd001b8f0291ebe5600c05fe07a7d77e4bc1cae"
     },
     "beispiele/moos_desktop_demo.moos": {
       "status": "ok",
-      "sha256": "92903e59358357e456915363d15080ffb42c3cb3077978a861deee0095a2ccf2"
+      "sha256": "4771637350b4d4ca6ae5a7f22051c6d87da95d7f697fbf83d86c3ad5b1e4be1c"
     },
     "beispiele/mqtt_broker.moos": {
       "status": "ok",
@@ -2837,11 +2844,11 @@
     },
     "beispiele/p5/pilot_pruefen.moos": {
       "status": "ok",
-      "sha256": "65cd04bf819cb7dcbee94ffa9fc13b48583c3fb341213ae54fb6211fe2032bf7"
+      "sha256": "e5fe4b49d776a2339f90a87e48b86ed375d30edc65ba5994131e33e9746661b1"
     },
     "beispiele/p5/praeferenz_adapter.moos": {
       "status": "ok",
-      "sha256": "c11c99a1eed0f8674d91fbc0feddfdda38f0901b43c98406419da985a15ddbfa"
+      "sha256": "469c293f5b273d5e1603e96a3cb9a82deadc7fb1795dacbad2e734361ff13e6f"
     },
     "beispiele/p5/qualitaet_basis.moos": {
       "status": "ok",
@@ -2853,11 +2860,11 @@
     },
     "beispiele/p5/sft_adapter.moos": {
       "status": "ok",
-      "sha256": "7023927f8e7a1e4fba6d4e422622ecb87419bc8d202f986c271e3990d186dfad"
+      "sha256": "b46b2f41d50fd9817f25ac0694a03d29d70ceadf9894947987181ac487b1e13b"
     },
     "beispiele/p5/sft_test.moos": {
       "status": "ok",
-      "sha256": "95ddbf8d58fac0f18e8135636f90fe38fc62f4a101a46da403ecb84acb41af55"
+      "sha256": "ce2d706973d3e2e9613a0f25ef204ab5979922d38b9951494fafdf2dd45ee21f"
     },
     "beispiele/p5/train_api_distill_test.moos": {
       "status": "ok",
@@ -2865,7 +2872,7 @@
     },
     "beispiele/p5/train_api_test.moos": {
       "status": "ok",
-      "sha256": "ba2350f8dd1900fc50292d8ecaa881f149c6363b7fb031a284539db1f7854471"
+      "sha256": "86158441be58f6e7dc5d44f9a700e2311d495727acac1ad64927a391ffb7680f"
     },
     "beispiele/p5/train_orchestrierung.moos": {
       "status": "ok",
@@ -3089,7 +3096,7 @@
     },
     "beispiele/tests/top_level_loop_ownership_test.moos": {
       "status": "ok",
-      "sha256": "56d1dac875715998626213c7a77ffa6633d3b87fb84999197787bd492f7dfd63"
+      "sha256": "3e5d0df35f6c07a26929137895f337e5ed552dd9d1fec22948bfcdcac7590cb5"
     },
     "beispiele/tests/type_of_ownership_test.moos": {
       "status": "ok",
@@ -3097,27 +3104,27 @@
     },
     "beispiele/tests/ui_binding_test.moos": {
       "status": "ok",
-      "sha256": "4b8922a5ced554f374b6c09b6d64572e7082655c8601c0c183acd5d56942bfba"
+      "sha256": "3759e3e5863ae7b2aa1ec88ecb2d584f76c635e6bfc3bcfc6a2085a5b8792043"
     },
     "beispiele/tests/ui_canvas_test.moos": {
       "status": "ok",
-      "sha256": "7fee1e96da04dad08a2922f95540fb7ba12d49f2f51c3263a9b69dc6d4b8a3dd"
+      "sha256": "67410ecd057ed4817ee7f55d642844d1d404295a9f7b770b6515230ab7840f76"
     },
     "beispiele/tests/ui_layout_test.moos": {
       "status": "ok",
-      "sha256": "25164f0bc504941e931da140c36c2d95c00afd0174a0c2aa8b6ecd55a9e6b0af"
+      "sha256": "90483e6ff71f963b4518f051e6d64edd29fc715465a972bfbba8254f606ab3c5"
     },
     "beispiele/tests/ui_moo_a11y_metadata_test.moos": {
       "status": "ok",
-      "sha256": "4af4b238d430cb2d84a4b2c15b31867bd8659ac5fb35368e0849a5bf920886e3"
+      "sha256": "626ff314e9ea788480cb42ef93b3037ae3e613f1772f6de18a50e4700e45ebb0"
     },
     "beispiele/tests/ui_moo_container_test.moos": {
       "status": "ok",
-      "sha256": "1d5cd52139806f5973ade66f1e8246e54b76004bf49a44eebc6233e960f5c059"
+      "sha256": "e811814c6399ccf83d4ab4917f8aa2433c099dcf11941155945ab2bce1424078"
     },
     "beispiele/tests/ui_moo_contract_test.moos": {
       "status": "ok",
-      "sha256": "a4c482f60ef5f8df1c70e981eac33a2be97f3c35652a31c7becd24ef9e233121"
+      "sha256": "6a527fc8ecac27b8a41096298a99d6c9f8816e8b5f517337b4c4d68e4a834864"
     },
     "beispiele/tests/ui_moo_effects_contract_test.moos": {
       "status": "ok",
@@ -3129,71 +3136,71 @@
     },
     "beispiele/tests/ui_moo_frame_test.moos": {
       "status": "ok",
-      "sha256": "a33c983e4f0e0dbc7ab72dbe00dc11a3a3dfe57882d5bd19126418a1aa6cd58d"
+      "sha256": "0a54215be70755d87826944f1f9add61bc3f7dc75219b183d6743045ccf077c7"
     },
     "beispiele/tests/ui_moo_frame_unavailable_test.moos": {
       "status": "ok",
-      "sha256": "faf14697103b1badd906aabda7f8a4f5bdbff55ba07c4bc63d9ade586177fcca"
+      "sha256": "1ef9807f31a2298364af8120f0bbb7a1895cc474c7f219742393007b79adc0be"
     },
     "beispiele/tests/ui_moo_ime_event_contract_test.moos": {
       "status": "ok",
-      "sha256": "0ce1b7459238ee06c632ac1091ad4324fe59a6db108c0e59f826a97762ac17a2"
+      "sha256": "20fb625ec6ede396375a8654fd73fb85095102276646dd3c835b1d25954b5420"
     },
     "beispiele/tests/ui_moo_import_link_test.moos": {
       "status": "ok",
-      "sha256": "ae3db78ed415e01181f8cd7d5a9524878649e3923fd46f69a18159b481ecd12a"
+      "sha256": "440b4c8a983b7775fbe659c32f7e8111580cf39e40f465c334e08c9e15590c48"
     },
     "beispiele/tests/ui_moo_kern_test.moos": {
       "status": "ok",
-      "sha256": "9dd058dba96f68fea050b82227ad84b2d04ad4f186c50ebd69d2b2eb00633bd9"
+      "sha256": "0753d7066d69e197a44106f2f4232282e846ba9e77b270b847351f9cc583075b"
     },
     "beispiele/tests/ui_moo_lifecycle_test.moos": {
       "status": "ok",
-      "sha256": "8970f592c243a8c747d80a2a05b587ed0da95f5a6a2d1e992e822174b983231b"
+      "sha256": "36f636e40709dfc09a61d89f608ef5f65255ff35765485878b0e85e71e4741ce"
     },
     "beispiele/tests/ui_moo_mock_backend_test.moos": {
       "status": "ok",
-      "sha256": "021df1a36efc9408ef7bce51e968f744c5fd71285eeaaa0e6c9b9b7a0dbd8476"
+      "sha256": "9e70ce8875cc1ad76351e1675c695a4952a4248263614e0a8191fcef6daa2df1"
     },
     "beispiele/tests/ui_moo_public_contract_test.moos": {
       "status": "ok",
-      "sha256": "80a6ee8dc16ab4c57389013c3097f2dcd10c7eeeb8c92785bcbd9ce4e3292f58"
+      "sha256": "e86596c4bccbae70731aa89ae7d3cba9d0896ab0a2603ff8a3f05c969d086330"
     },
     "beispiele/tests/ui_moo_surface_golden_test.moos": {
       "status": "ok",
-      "sha256": "47bff8f3b130ec67b76c8255069c3ca7348e32805bafbdf786e4f44999fad538"
+      "sha256": "91c7189c053b395b3c374b56d899d2b21884d43e348a91f1cc83ceac257a7de8"
     },
     "beispiele/tests/ui_moo_surface_primitives_test.moos": {
       "status": "ok",
-      "sha256": "b5902fa2f99dea85853e91f34ed429680a096fc0000478b643726399921cf873"
+      "sha256": "effdb938f3ee2146e07bd0eb4770e1bfee0da68a336f24f9ce21d8971eb7fd62"
     },
     "beispiele/tests/ui_moo_text_foundation_test.moos": {
       "status": "ok",
-      "sha256": "d82f462e8b6eb3e7d42293dde62b29ae0afb1609804c8359ccc4f45cbb9a2147"
+      "sha256": "1ad11196ca3ce9d855a7ac996a9212f0d17c2e6e94790c317cadbbddd8dfa0f2"
     },
     "beispiele/tests/ui_moo_visuell_test.moos": {
       "status": "ok",
-      "sha256": "ba436125a846d7fd0020bd034926c36fb9f425256fa61c15343c9d2a1c74a30d"
+      "sha256": "a3d1403918374db440335658c87c1ec51df0e6bb650412f43452cc7ed7aecc6b"
     },
     "beispiele/tests/ui_moo_widgets_test.moos": {
       "status": "ok",
-      "sha256": "d25a316bc6caca1892c4a7f3109245a6540b5e2d9f55f60a20f43c936b1dde75"
+      "sha256": "2c770f49c372ac1f653882d998d6cb35afea8d61e9c21c926f612fed4c32b38a"
     },
     "beispiele/tests/ui_shortcuts_test.moos": {
       "status": "ok",
-      "sha256": "b7bedbfb3937474837e526fd66a8b504ff206f02aa2c4da1f6a62bacc03107d0"
+      "sha256": "ccd7a5366fcd5f02eebfa763e8b5951e42a5c408319d336f979ba6a9a2e87314"
     },
     "beispiele/tests/ui_table_test.moos": {
       "status": "ok",
-      "sha256": "b8388d737a38f8aaf17c48419172974a27bf0a42e2cb464ffcc86751284ab359"
+      "sha256": "0465337b176f7bd6bbd1bdcf5318847ddecd224632fad655f825d459ae44104f"
     },
     "beispiele/tests/ui_tray_lifecycle_test.moos": {
       "status": "ok",
-      "sha256": "9c372d6cf75f03c7df484fc8198365323dfaf5b2ad922b9b8770b79ea763817d"
+      "sha256": "75c2f3e82bfa46c37aaf5403fd16a6305b274d2d6a6c7e1f7261b021161015bc"
     },
     "beispiele/tests/ui_uimoo1_smoke.moos": {
       "status": "ok",
-      "sha256": "985fe2bd5e93095eb8198efb976d46525b0d08695a6e8480cf5fe7b1122287c6"
+      "sha256": "3741cce5721dcde168964d7b846b04cea08a40c86554c918c51e58c74bc52622"
     },
     "beispiele/tetris.moos": {
       "status": "ok",
@@ -3241,75 +3248,75 @@
     },
     "beispiele/ui_automation_demo.moos": {
       "status": "ok",
-      "sha256": "4ce28422e9bb113e0615812f39100e4fb22c82441c4b402a31460790b2d32fd7"
+      "sha256": "1f37770656bfbde4eea5a93c5cf4f2a363c8b56e451b7510cba6645d705ffc82"
     },
     "beispiele/ui_binding_demo.moos": {
       "status": "ok",
-      "sha256": "0d4aa08cd02064cc8908ff36eeb922b8ad5b00848d89d62a909d982ced517ce9"
+      "sha256": "d321bf9bbbc837a568b6842d70786306151a66390194f36f61170325672194d9"
     },
     "beispiele/ui_canvas_mouse_demo.moos": {
       "status": "ok",
-      "sha256": "fd25b844c790f62fdbe6b3b75c29d8993d390d35da849e1eb8fd7e377096d9b0"
+      "sha256": "c2caac1d56be0d6bf83ea8692057f9f2e81814dbbc02d4ce1fec45c83fc185c4"
     },
     "beispiele/ui_file_browser_demo.moos": {
       "status": "ok",
-      "sha256": "17daf115392858b025d46f17546fd5255edf13d5ef72d67100327d2891d76fea"
+      "sha256": "f62864c2a4b8409320cc917559d3701aeb19f52c77f4ce5ed29ddfae641ad2c7"
     },
     "beispiele/ui_introspect_demo.moos": {
       "status": "ok",
-      "sha256": "88b40b022c1279a66ec5e549b7a41b9fe98997b41f1d86cfa58a11eaaa6af117"
+      "sha256": "fab260b9a00deb370446248218f30604d5b0e5dd3e5641865c632897b6f97220"
     },
     "beispiele/ui_introspection_smoke.moos": {
       "status": "ok",
-      "sha256": "099ac40d09989220256c53e4d1600866824b61ba6a929aedc46f1dcd76af51ba"
+      "sha256": "b9e420735b481d42379db7794fd39d77f1e769e23eaf9cb536d355bd3fdd9eb4"
     },
     "beispiele/ui_layout_demo.moos": {
       "status": "ok",
-      "sha256": "78d6509f03e5c1696f443a25a208a50fa95a3e2955da80660343342d4f21b3fe"
+      "sha256": "1f25d443840056f3c1d87035e666775bd95f3834bd3da804ecf0704c28e6884e"
     },
     "beispiele/ui_leinwand_demo.moos": {
       "status": "ok",
-      "sha256": "febe5dde042370730ca44028d042cd1121e1c8b1e273d0f530bad71ad0fb0b9e"
+      "sha256": "e0ff093bf442519c8accb5eb8b98f495608cfeeb6073affbf0daa5f703cda690"
     },
     "beispiele/ui_login_demo.moos": {
       "status": "ok",
-      "sha256": "d9df1438c563c26a230e62ea91187af918814cad4fdeec5ebf45795ac6b7b273"
+      "sha256": "20914363ecbf774df351fb96a4e629383842f2b69514df2b6ab5335578b226d6"
     },
     "beispiele/ui_modular_app.moos": {
       "status": "ok",
-      "sha256": "3de3ee6deb2408f9a13e0ceae8f9dac6d88eb815b693d709a026256e2b9a3eb4"
+      "sha256": "94bcee9d0a1664768ff3caeb11e0da9fc9eae9480e1218e5cd14c7a8bd4edeac"
     },
     "beispiele/ui_moo_demo.moos": {
       "status": "ok",
-      "sha256": "9366163dbe3d9d189d1ef3a1957d4ceeebc6bfe5de306e478f984c3d4a339bcd"
+      "sha256": "fcf90f669bbc383c18e41a8f24818bbff336f027db7aa2f01b4c77e5cf003321"
     },
     "beispiele/ui_moo_spiel_overlay.moos": {
       "status": "ok",
-      "sha256": "4412b3dc2137c8a5df47cc120dedcad487aea1a3020951bbb24a175891151afb"
+      "sha256": "30c939ff6000140beb1588e323d313218ae70a713ef3be5b5b7c937b8da05b05"
     },
     "beispiele/ui_settings_demo.moos": {
       "status": "ok",
-      "sha256": "f47bfe6fdacc0b570b7a156f24f778f5b8a4bdef37c3bf10d7c9073428c1de11"
+      "sha256": "b77741966e1f776e8c30228692dd714fa86f1c4739793db831ca36e2684bca74"
     },
     "beispiele/ui_shortcut_smoke.moos": {
       "status": "ok",
-      "sha256": "4b45a642dfc109be549a67d4e12a47b805fa8ae7bd876362d9377bee1e6e08f1"
+      "sha256": "9ec0a02a9d4d4063fbb5623d7dea87e6af6ee9f1bee151be87a491b36a5d4480"
     },
     "beispiele/ui_shortcuts_demo.moos": {
       "status": "ok",
-      "sha256": "181b16d01ea49704abeb43eda1bc0bb8b6c29f68ed19ac0e6879bf18b6e57f99"
+      "sha256": "b5745ff6099d3f3aabbf2666cb99aca003e11df53cd5d7eaa901d632255ab5cd"
     },
     "beispiele/ui_snapshot_demo.moos": {
       "status": "ok",
-      "sha256": "f8c609d2bc5e5ef52fba71836f1aafdd90837964b9b8bb32f0a736747db68bc1"
+      "sha256": "0884dc47482fb175b4619231f72578b7c905766f63716e896209a7321759bf70"
     },
     "beispiele/ui_table_demo.moos": {
       "status": "ok",
-      "sha256": "ddc9a19ee58e9f3694f41501a4e61ebd26f2d5046631cba8ff9cf6a49099edad"
+      "sha256": "d3a3e5ab753f0f0ae1c299c2d50f55dd857ce35881ee1cb648397c55534cfefa"
     },
     "beispiele/ui_wizard_demo.moos": {
       "status": "ok",
-      "sha256": "8fca3a55234a2eec60e5485581be6b7ea6dbaa1eaf26df081a8a633bdbb7c18f"
+      "sha256": "6c1d1ece3bc9722c31b49aa74bbcf1cb23c3fccc15b9147bdf8758451a66253d"
     },
     "beispiele/voxel_kamera_video_selftest.moos": {
       "status": "ok",
