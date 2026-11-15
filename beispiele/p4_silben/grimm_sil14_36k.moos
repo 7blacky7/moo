@@ -93,7 +93,12 @@ setze fenster_summe auf 0
 setze checkpoints auf []
 setze opt auf optimierer_sgd(parameter(alle), rate, 0.9)
 wenn datei_existiert(ckpt_pfad):
-    setze geladen auf checkpoint_laden(ckpt_pfad, {"tokenizer_version": sha256(tok), "arch_version": "grimm-silben-250k-v1"})
+    setze geladen auf nichts
+    versuche:
+        setze geladen auf checkpoint_laden(ckpt_pfad, {"tokenizer_version": sha256(tok), "arch_version": "grimm-silben-250k-v1"})
+    fange lade_fehler:
+        zeige "SIL-14: checkpoint_laden fehlgeschlagen: " + lade_fehler
+        beende(1)
     setze alle auf geladen["netz"]["schichten"]
     setze opt auf geladen["opt"]
     setze start_schritt auf geladen["schritt"]

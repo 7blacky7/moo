@@ -12,7 +12,12 @@ wenn silben_kodiere(original, "Zucker").zu_liste()[0] == silben_kodiere(umgeordn
 setze n auf ki_netz([schicht_embedding(260, 8, 1), schicht_dicht(8, 260, "keine", 2)])
 setze ck auf dir + "/model.mook"
 checkpoint_speichern({"netz": n, "schritt": 0, "tokenizer_version": silben_hash(original), "arch_version": "identity-test"}, ck)
-checkpoint_laden(ck, {"tokenizer_version": silben_hash(original), "arch_version": "identity-test"})
+# Selftest: Das Laden mit der passenden Identitaet muss gelingen; sonst FAIL und RC 1.
+versuche:
+    checkpoint_laden(ck, {"tokenizer_version": silben_hash(original), "arch_version": "identity-test"})
+fange lade_fehler:
+    zeige "P4 IDENTITY FAIL: checkpoint_laden mit passender Identitaet: " + lade_fehler
+    beende(1)
 für anders in [umgeordnet, regel]:
     setze abgelehnt auf falsch
     versuche:

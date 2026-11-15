@@ -631,7 +631,16 @@ setze zustand auf {}
 zustand["netz"] = cnetz
 zustand["schritt"] = 1
 checkpoint_speichern(zustand, "/tmp/v3b_ckpt.mook")
-setze z2 auf checkpoint_laden("/tmp/v3b_ckpt.mook")
+# Selftest: Ist der Checkpoint nicht ladbar, gibt es FAIL und RC 1 (statt Weiterrechnen mit nichts).
+setze z2 auf nichts
+versuche:
+    setze z2 auf checkpoint_laden("/tmp/v3b_ckpt.mook")
+fange fehler:
+    zeige "checkpoint_laden fehlgeschlagen: " + text(fehler)
+wenn z2 == nichts:
+    zeige "GATE 3 roundtrip -> falsch (Checkpoint nicht ladbar)"
+    zeige "SELFTEST_RESULT: FAIL ki_multimodal_audio"
+    beende(1)
 setze sch2 auf z2["netz"]["schichten"]
 M["f1"] = sch2[0]
 M["p1"] = sch2[1]

@@ -45,8 +45,14 @@ checkpoint_speichern({"netz": cnetz, "schritt": 0, "tokenizer_version": ch, "arc
 checkpoint_speichern({"netz": snetz, "schritt": 0, "tokenizer_version": sh, "arch_version": arch}, sc_pfad)
 # Die Erwartung ist nicht optional: sie stammt vom tatsächlich geladenen
 # Tokenizer und verhindert das Verwechseln verschiedener Vokabulare.
-setze cg auf checkpoint_laden(cc_pfad, {"tokenizer_version": zeichen_fixed_hash(cl), "arch_version": arch})
-setze sg auf checkpoint_laden(sc_pfad, {"tokenizer_version": silben_hash(sl), "arch_version": arch})
+setze cg auf nichts
+setze sg auf nichts
+versuche:
+    setze cg auf checkpoint_laden(cc_pfad, {"tokenizer_version": zeichen_fixed_hash(cl), "arch_version": arch})
+    setze sg auf checkpoint_laden(sc_pfad, {"tokenizer_version": silben_hash(sl), "arch_version": arch})
+fange lade_fehler:
+    zeige "P4 DEMO FAIL: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 wenn cg["tokenizer_version"] != ch oder sg["tokenizer_version"] != sh:
     wirf "Checkpoint-Identität stimmt nicht"
 zeige "P4 DEMO OK"

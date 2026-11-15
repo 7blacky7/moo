@@ -50,10 +50,19 @@ mkdir -p -- "$(dirname "$output")"
 work="$(mktemp -d "$(dirname "$output")/.legacy-ir.XXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
 
+filter_local_examples() {
+    local file
+    while IFS= read -r -d '' file; do
+        case "$file" in
+          beispiele/p6_wissensmix/feintuning_*.moos|beispiele/p6_wissensmix/*_import.moos) ;;
+          *) printf '%s\0' "$file" ;;
+        esac
+    done
+}
 list_sources() {
     { find compiler/tests -maxdepth 1 -type f -name '*.moos' -print0
       find beispiele -type f -name '*.moos' -print0
-    } | sort -z
+    } | filter_local_examples | sort -z
 }
 list_import_candidates() {
     local root
@@ -123,7 +132,7 @@ list_sources > "$work/sources"
 [[ -s "$work/sources" ]] || { echo "No source files" >&2; exit 2; }
 write_hash_inventory "$work/sources" "$work/source-inventory"
 input_sha="$(sha256sum "$work/source-inventory" | awk '{print $1}')"
-list_import_candidates | sort -zu > "$work/import-candidates"
+list_import_candidates | filter_local_examples | sort -zu > "$work/import-candidates"
 write_hash_inventory "$work/import-candidates" "$work/import-inventory"
 import_sha="$(sha256sum "$work/import-inventory" | awk '{print $1}')"
 toolchain_snapshot > "$work/toolchain"
@@ -215,7 +224,7 @@ done < "$work/sources"
 
 list_sources > "$work/sources-after"
 write_hash_inventory "$work/sources-after" "$work/source-inventory-after"
-list_import_candidates | sort -zu > "$work/import-candidates-after"
+list_import_candidates | filter_local_examples | sort -zu > "$work/import-candidates-after"
 write_hash_inventory "$work/import-candidates-after" "$work/import-inventory-after"
 product_inventory > "$work/product-inventory-after"
 toolchain_snapshot > "$work/toolchain-after"
@@ -240,7 +249,7 @@ jq -s --arg compiler "$compiler_sha" --arg input "$input_sha" --arg imports "$im
   --slurpfile sources_d "$work/sources.json" --slurpfile import_d "$work/imports.json" \
   --argjson tool_entries "$toolchain_json" --argjson failures "$fail" '
   {format:2,compiler_sha256:$compiler,normalization:"module-header-root-v2",
-   synapse_batch:(if $batch == "" then null else $batch end),
+   batch:(if $batch == "" then null else $batch end),
    provenance_attestation:"caller-provided-unverified",
    compiler_runtime_inventory_sha256:$inventory,
    snapshot_ref:(if $snapshot == "" then null else $snapshot end),

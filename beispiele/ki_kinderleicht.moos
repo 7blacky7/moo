@@ -16,6 +16,14 @@ netz.speichern("/tmp/xor_netz.mook")
 zeige "Vorhersage (Ziel 0,1,1,0): " + text(netz.vorhersage(daten).zu_liste())
 
 # --- Beweis: das geladene Netz sagt exakt dasselbe ---
-setze kopie auf ki_laden("/tmp/xor_netz.mook")
+# ki_laden wirft, wenn die Datei fehlt oder defekt ist: Meldung und normales Ende.
+setze kopie auf nichts
+versuche:
+    setze kopie auf ki_laden("/tmp/xor_netz.mook")
+fange fehler:
+    zeige "Netz laden fehlgeschlagen: " + text(fehler)
+wenn kopie == nichts:
+    zeige "Beispiel wird beendet."
+    beende(0)
 zeige "Geladen:                   " + text(kopie.vorhersage(daten).zu_liste())
 zeige "Fehler Anfang -> Ende: " + text(verlauf[0]) + " -> " + text(verlauf[länge(verlauf) - 1])

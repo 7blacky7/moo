@@ -151,7 +151,15 @@ setze fenster_summe auf 0
 setze checkpoints auf []
 setze opt auf optimierer_sgd(parameter(alle), rate, 0.9)
 wenn datei_existiert(ckpt_pfad):
-    setze geladen auf checkpoint_laden(ckpt_pfad)
+    # Resume: Ist der Checkpoint nicht ladbar, gibt es eine Meldung und ein normales Ende.
+    setze geladen auf nichts
+    versuche:
+        setze geladen auf checkpoint_laden(ckpt_pfad)
+    fange fehler:
+        zeige "Checkpoint laden fehlgeschlagen: " + text(fehler)
+    wenn geladen == nichts:
+        zeige "Resume nicht moeglich: " + ckpt_pfad + " pruefen oder entfernen. Beispiel wird beendet."
+        beende(0)
     setze alle auf geladen["netz"]["schichten"]
     setze opt auf geladen["opt"]
     setze start_schritt auf geladen["schritt"]

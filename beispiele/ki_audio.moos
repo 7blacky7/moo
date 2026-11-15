@@ -117,7 +117,15 @@ solange note_id < frequenzen.länge():
 
 setze wav_pfad auf "/tmp/ki_audio_tonleiter.wav"
 wav_schreiben(wav_pfad, tonleiter)
-setze audio auf wav_lesen(wav_pfad)
+# wav_lesen wirft, wenn die Datei fehlt oder defekt ist: Meldung und normales Ende.
+setze audio auf nichts
+versuche:
+    setze audio auf wav_lesen(wav_pfad)
+fange fehler:
+    zeige "WAV lesen fehlgeschlagen: " + text(fehler)
+wenn audio == nichts:
+    zeige "Beispiel wird beendet."
+    beende(0)
 setze audio_bild auf spektrogramm(audio["daten"], 64, 32)
 zeige "WAV: rate=" + text(audio["rate"]) + " samples=" + text(audio["daten"].form())
 zeige "Tonleiter-Spektrogramm: " + text(audio_bild.form())

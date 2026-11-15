@@ -56,7 +56,11 @@ wenn art == "char":
     setze tok auf zeichen_fixed_laden(tokpfad)
     setze info auf zeichen_fixed_info(tok)
 sonst wenn art == "bpe":
-    setze tok auf tokenizer_laden(tokpfad)
+    versuche:
+        setze tok auf tokenizer_laden(tokpfad)
+    fange lade_fehler:
+        zeige "P4: tokenizer_laden fehlgeschlagen: " + lade_fehler
+        beende(1)
     setze info auf tokenizer_info(tok)
 sonst wenn art == "syllable":
     setze tok auf silben_laden(tokpfad)
@@ -64,7 +68,12 @@ sonst wenn art == "syllable":
 sonst:
     wirf "P4-Train: unbekannter Tokenizer"
 setze tokenhash auf sha256(tok)
-setze zustand auf checkpoint_laden(ckpfad, {"tokenizer_version": tokenhash, "arch_version": "p4-gpt2-v1"})
+setze zustand auf nichts
+versuche:
+    setze zustand auf checkpoint_laden(ckpfad, {"tokenizer_version": tokenhash, "arch_version": "p4-gpt2-v1"})
+fange lade_fehler:
+    zeige "P4: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze schichten auf zustand["netz"]["schichten"]
 setze opt auf zustand["opt"]
 wenn opt == nichts oder länge(schichten) != 14:
@@ -140,7 +149,12 @@ setze anfragen auf json_parse(datei_lesen(umgebung("P4_GENERATION_PATH")))
 setze vor auf generiere(schichten, anfragen)
 datei_schreiben(umgebung("P4_BEFORE_PATH"), json_string({"ids": vor, "training_ms": dauer, "gpu": statistik}))
 checkpoint_speichern(zustand, ziel)
-setze geladen auf checkpoint_laden(ziel, {"tokenizer_version": tokenhash, "arch_version": "p4-gpt2-v1"})
+setze geladen auf nichts
+versuche:
+    setze geladen auf checkpoint_laden(ziel, {"tokenizer_version": tokenhash, "arch_version": "p4-gpt2-v1"})
+fange lade_fehler:
+    zeige "P4: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze nach auf generiere(geladen["netz"]["schichten"], anfragen)
 datei_schreiben(umgebung("P4_AFTER_PATH"), json_string({"ids": nach}))
 zeige "P4 PARITAET OK"

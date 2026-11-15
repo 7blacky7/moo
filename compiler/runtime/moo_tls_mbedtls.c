@@ -112,7 +112,7 @@ static void mbed_err(char* errbuf, int errlen, const char* msg, int ret) {
 static int mbed_sock_send(void* ctx, const unsigned char* buf, size_t len) {
     moo_sockfd_t fd = *(moo_sockfd_t*)ctx;
     int part = len > (size_t)INT_MAX ? INT_MAX : (int)len;
-    moo_ssize_t n = send(fd, (const char*)buf, part, 0);
+    moo_ssize_t n = moo_send(fd, buf, (size_t)part, 0);
     if (n >= 0) return (int)n;
 #ifdef _WIN32
     int e = WSAGetLastError();

@@ -1,15 +1,23 @@
 importiere websocket
 
 funktion pruefe(name, bedingung):
+    # Selftest: Ein unbehandeltes wirf bricht den Lauf nicht ab (der Test endete trotz FAIL mit
+    # "WEBSOCKET-CLIENT PASS"); deshalb FAIL melden und mit RC 1 beenden.
     wenn nicht bedingung:
-        wirf "WEBSOCKET FAIL " + name
+        zeige "WEBSOCKET FAIL " + name
+        beende(1)
     zeige "PASS " + name
 
 setze url auf umgebung("WS_TEST_URL")
 wenn url == nichts:
     setze url auf "ws://localhost:9001"
 
-setze ws auf ws_verbinde(url, 10000)
+setze ws auf nichts
+versuche:
+    setze ws auf ws_verbinde(url, 10000)
+fange fehler:
+    zeige "WEBSOCKET FAIL Verbindung: " + text(fehler)
+    beende(1)
 ws.sende_text("hallo websocket")
 setze text_event auf ws.empfange()
 pruefe("Text-Typ", text_event["typ"] == "text")

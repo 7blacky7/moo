@@ -236,8 +236,10 @@ funktion nf_fnv1a_f32_liste(h, werte):
 
 # ============================================================
 # Laengengenaues Lesen: TCP liefert Teilstuecke, daher Schleife.
-# Leerer Rueckgabewert von lesen_bytes = Timeout/EOF -> harter
-# Abbruch (wirf).
+# Leerer Rueckgabewert von lesen_bytes = Timeout/EOF -> Fehler (wirf)
+# und Rueckgabe nichts. Ein unbehandeltes wirf bricht die Funktion nicht ab;
+# ohne die Rueckgabe lief die Schleife weiter und der Aufrufer rechnete mit
+# leeren Daten (Folgefehler "falsche MAGIC").
 # ============================================================
 funktion nf_lies_genau(sock, n):
     setze buf auf []
@@ -246,6 +248,7 @@ funktion nf_lies_genau(sock, n):
         setze teil auf sock.lesen_bytes(rest)
         wenn teil.länge() == 0:
             wirf "netz_frame: Verbindung geschlossen oder Timeout (lies_genau)"
+            gib_zurück nichts
         setze k auf 0
         solange k < teil.länge():
             buf.hinzufügen(teil[k])
@@ -284,10 +287,14 @@ funktion nf_frame_senden(sock, typ, step, param_anzahl, payload):
 # Frame empfangen -> Dict {version, typ, step, param_anzahl, payload}
 # Wirft bei MAGIC-, Groessen- oder CRC-Fehler.
 funktion nf_frame_empfangen(sock):
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – nf_lies_genau wirft bei EOF/Timeout und gibt nichts zurück; nf_frame_empfangen bricht dann sofort mit nichts ab (keine Folgefehler), der Fehler erreicht das versuche des Aufrufers (z. B. hello_pruefen in ki_verteilt) – ändern: Aufrufer fängt mit versuche:/fange
     setze kopf auf nf_lies_genau(sock, 24)
+    wenn kopf == nichts:
+        gib_zurück nichts
     setze magic auf nf_get_u32(kopf, 0)
     wenn magic != 825246797:
         wirf "netz_frame: falsche MAGIC (kein MOODIST01-Frame)"
+        gib_zurück nichts
     setze version auf nf_get_u16(kopf, 4)
     setze typ auf nf_get_u16(kopf, 6)
     setze step auf nf_get_u32(kopf, 8)
@@ -296,14 +303,19 @@ funktion nf_frame_empfangen(sock):
     setze crc_erwartet auf nf_get_u32(kopf, 20)
     wenn plen > 67108864:
         wirf "netz_frame: PAYLOAD_LAENGE ueber MAX_FRAME (64 MiB)"
+        gib_zurück nichts
     setze payload auf []
     wenn plen > 0:
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – nf_lies_genau wirft bei EOF/Timeout und gibt nichts zurück; nf_frame_empfangen bricht dann sofort mit nichts ab (keine Folgefehler), der Fehler erreicht das versuche des Aufrufers (z. B. hello_pruefen in ki_verteilt) – ändern: Aufrufer fängt mit versuche:/fange
         setze payload auf nf_lies_genau(sock, plen)
+        wenn payload == nichts:
+            gib_zurück nichts
     setze c auf nf_crc32_update(4294967295, kopf, 0, 20)
     setze c auf nf_crc32_update(c, payload, 0, plen)
     setze c auf c ^ 4294967295
     wenn c != crc_erwartet:
         wirf "netz_frame: CRC-Fehler (Frame beschaedigt)"
+        gib_zurück nichts
     setze f auf {}
     f["version"] = version
     f["typ"] = typ

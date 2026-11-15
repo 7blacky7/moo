@@ -43,16 +43,35 @@ setze ecken auf puffer_erstellen(Eckpunkt, n * n * 4)
 setze idx auf puffer_erstellen(u32, n * n * 6)
 unsicher:
     gitter(ecken, idx, n)
-setze netz auf netz3d_erstellen(ecken, idx)
+# netz3d_erstellen wirft bei fehlendem Backend, zu vielen Eckpunkten usw.: Meldung, Fenster schliessen,
+# normales Ende. (Gemessen: ohne versuche liefe der Aufruf mit einer ungueltigen Netz-Nummer weiter.)
+setze netz auf nichts
+setze netz_ok auf wahr
+versuche:
+    setze netz auf netz3d_erstellen(ecken, idx)
+fange fehler:
+    setze netz_ok auf falsch
+    zeige "Netz konnte nicht erstellt werden: " + text(fehler)
+wenn nicht netz_ok:
+    raum_schliessen(win)
+    beende(0)
 zeige "Netz mit " + text(2 * n * n) + " Dreiecken hochgeladen"
 setze winkel auf 0
-solange raum_offen(win) und nicht raum_taste(win, "escape"):
+setze zeichnen_ok auf wahr
+solange zeichnen_ok und raum_offen(win) und nicht raum_taste(win, "escape"):
     raum_löschen(win, 0.05, 0.06, 0.09)
     raum_perspektive(win, 60, 0.1, 100)
     raum_kamera(win, 0, 0, 3, 0, 0, 0)
     raum_umgebungslicht(win, 0.5)
-    netz3d_zeichnen(netz, mat4_drehung(winkel, vec3(0.3, 1.0, 0.0)))
+    versuche:
+        netz3d_zeichnen(netz, mat4_drehung(winkel, vec3(0.3, 1.0, 0.0)))
+    fange fehler:
+        setze zeichnen_ok auf falsch
+        zeige "Zeichnen fehlgeschlagen: " + text(fehler)
     raum_aktualisieren(win)
     setze winkel auf winkel + 0.5
-netz3d_freigeben(netz)
+versuche:
+    netz3d_freigeben(netz)
+fange fehler:
+    zeige "Netz freigeben fehlgeschlagen: " + text(fehler)
 raum_schliessen(win)

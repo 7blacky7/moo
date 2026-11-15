@@ -6,7 +6,16 @@
 # dieser Test beweist Format-Kompatibilitaet in beide Richtungen.
 # Erwartet: Forward-Ergebnis exakt [2.5, 5] (Referenz im Script).
 # ============================================================
-setze gewichte auf safetensors_laden("/tmp/moo_f1_ref.safetensors")
+# safetensors_laden wirft, wenn die Referenzdatei fehlt: Meldung mit Hinweis und normales Ende.
+setze gewichte auf nichts
+versuche:
+    setze gewichte auf safetensors_laden("/tmp/moo_f1_ref.safetensors")
+fange fehler:
+    zeige "safetensors laden fehlgeschlagen: " + text(fehler)
+    zeige "Vorher ausfuehren: python3 skripte/make_ref_safetensors.py"
+wenn gewichte == nichts:
+    zeige "Beispiel wird beendet."
+    beende(0)
 zeige "Geladene Tensoren: w=" + text(gewichte["w"].form()) + " b=" + text(gewichte["b"].form())
 
 setze x auf tensor_aus_liste([[1, 2]])

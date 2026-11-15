@@ -18,7 +18,11 @@ wenn art == "char":
     setze tok auf zeichen_fixed_laden(tokpfad)
     setze info auf zeichen_fixed_info(tok)
 sonst wenn art == "bpe":
-    setze tok auf tokenizer_laden(tokpfad)
+    versuche:
+        setze tok auf tokenizer_laden(tokpfad)
+    fange lade_fehler:
+        zeige "P4: tokenizer_laden fehlgeschlagen: " + lade_fehler
+        beende(1)
     setze info auf tokenizer_info(tok)
 sonst wenn art == "syllable":
     setze tok auf silben_laden(tokpfad)
@@ -26,7 +30,12 @@ sonst wenn art == "syllable":
 sonst:
     wirf "P4-Train: unbekannter Tokenizer"
 setze tokenhash auf sha256(tok)
-setze zustand auf checkpoint_laden(ckpfad, {"tokenizer_version": tokenhash, "arch_version": "p4-gpt2-v1"})
+setze zustand auf nichts
+versuche:
+    setze zustand auf checkpoint_laden(ckpfad, {"tokenizer_version": tokenhash, "arch_version": "p4-gpt2-v1"})
+fange lade_fehler:
+    zeige "P4: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze schichten auf zustand["netz"]["schichten"]
 setze opt auf zustand["opt"]
 wenn opt == nichts oder länge(schichten) != 14:

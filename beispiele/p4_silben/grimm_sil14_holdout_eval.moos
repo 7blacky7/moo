@@ -3,7 +3,12 @@ setze dir auf "beispiele/p4_silben/run_sil14_grimm36k/"
 setze roh auf datei_lesen(dir + "holdout.txt")
 setze tok auf silben_laden(dir + "tokenizer.msf")
 setze ids auf silben_kodiere(tok, roh)
-setze zustand auf checkpoint_laden(dir + "full.mook", {"tokenizer_version": sha256(tok), "arch_version": "grimm-silben-250k-v1"})
+setze zustand auf nichts
+versuche:
+    setze zustand auf checkpoint_laden(dir + "full.mook", {"tokenizer_version": sha256(tok), "arch_version": "grimm-silben-250k-v1"})
+fange lade_fehler:
+    zeige "SIL-14: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze alle auf zustand["netz"]["schichten"]
 funktion vorhersage(eingabe):
     setze x auf vorwaerts([alle[0]], eingabe)

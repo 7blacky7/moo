@@ -70,7 +70,11 @@ wenn art == "char":
     setze tok auf zeichen_fixed_laden(tokpfad)
     setze info auf zeichen_fixed_info(tok)
 sonst wenn art == "bpe":
-    setze tok auf tokenizer_laden(tokpfad)
+    versuche:
+        setze tok auf tokenizer_laden(tokpfad)
+    fange lade_fehler:
+        zeige "P4 GPU-PARITAET FAIL: tokenizer_laden: " + lade_fehler
+        beende(1)
     setze info auf tokenizer_info(tok)
 sonst wenn art == "syllable":
     setze tok auf silben_laden(tokpfad)
@@ -134,11 +138,22 @@ netz.speichern(ziel + ".netz")
 checkpoint_speichern({"netz": netz, "opt": opt, "schritt": 3, "global_schritt": 3, "tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"}, ziel)
 # Host-Materialisierung erst NACH dem Speichern, damit sie den Bug nicht verdeckt.
 setze parameter_vor auf parameter_beleg(alle)
-setze geladen auf checkpoint_laden(ziel, {"tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"})
+setze geladen auf nichts
+versuche:
+    setze geladen auf checkpoint_laden(ziel, {"tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"})
+fange lade_fehler:
+    zeige "P4 GPU-PARITAET FAIL: checkpoint_laden: " + lade_fehler
+    beende(1)
 setze neu_schichten auf geladen["netz"]["schichten"]
 setze parameter_nach auf parameter_beleg(neu_schichten)
 setze nach auf generiere(neu_schichten, anfragen)
-setze netz_schichten auf ki_laden(ziel + ".netz")["schichten"]
+setze netz_geladen auf nichts
+versuche:
+    setze netz_geladen auf ki_laden(ziel + ".netz")
+fange lade_fehler:
+    zeige "P4 GPU-PARITAET FAIL: ki_laden: " + lade_fehler
+    beende(1)
+setze netz_schichten auf netz_geladen["schichten"]
 setze parameter_netz auf parameter_beleg(netz_schichten)
 setze nach_netz auf generiere(netz_schichten, anfragen)
 datei_schreiben(umgebung("P4_DIAG_RESULT"), json_string({"before": vor, "after": nach, "after_netz": nach_netz, "params_before": parameter_vor, "params_after": parameter_nach, "params_netz": parameter_netz, "gpu": train_gpu}))

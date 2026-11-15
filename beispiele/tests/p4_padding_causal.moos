@@ -9,7 +9,13 @@ funktion p4_vorlauf(schichten, ids):
     gib_zurück vorwaerts([schichten[12], schichten[13]], x)
 
 setze tok auf zeichen_fixed_laden(umgebung("P4_TOKENIZER_PATH"))
-setze geladen auf checkpoint_laden(umgebung("P4_CHECKPOINT"), {"tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"})
+# Selftest: Ein nicht ladbarer Checkpoint meldet FAIL und beendet mit RC 1.
+setze geladen auf nichts
+versuche:
+    setze geladen auf checkpoint_laden(umgebung("P4_CHECKPOINT"), {"tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"})
+fange lade_fehler:
+    zeige "P4 PADDING-CAUSAL FAIL: checkpoint_laden: " + lade_fehler
+    beende(1)
 setze schichten auf geladen["netz"]["schichten"]
 autograd_aus()
 setze kurz auf p4_vorlauf(schichten, [1, 2, 3])

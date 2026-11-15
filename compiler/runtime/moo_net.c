@@ -143,6 +143,7 @@ intptr_t moo_net_tcp_connect_timeout(const char* host, int port, int timeout_ms,
     }
     int one = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, MOO_SOPT(&one), sizeof(one));
+    moo_sock_nosigpipe(fd);  /* P2-T102 */
     return (intptr_t)fd;
 }
 
@@ -304,6 +305,7 @@ MooValue moo_socket_accept(MooValue server) {
         moo_throw(moo_string_new("Accept fehlgeschlagen"));
         return moo_none();
     }
+    moo_sock_nosigpipe(client_fd);  /* P2-T102 */
 
     return make_socket(client_fd, SOCK_STREAM, false);
 }
@@ -333,7 +335,7 @@ static bool moo_socket_send_all(MooSocket* s, const char* data, size_t len) {
     while (off < len) {
         size_t rest = len - off;
         int part = rest > (size_t)INT_MAX ? INT_MAX : (int)rest;
-        moo_ssize_t n = send(s->fd, data + off, part, 0);
+        moo_ssize_t n = moo_send(s->fd, data + off, (size_t)part, 0);
         if (n < 0) {
 #ifdef _WIN32
             if (WSAGetLastError() == WSAEINTR) continue;

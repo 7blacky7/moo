@@ -78,8 +78,14 @@ setze netz auf ki_netz([schicht_embedding(256, 8, 1), schicht_dicht(8, 256, "kei
 setze pfad auf dir + "/checkpoint.mook"
 checkpoint_speichern({"netz": netz, "schritt": 0, "tokenizer_version": silben_hash(s),
                      "arch_version": "p4-moo-test"}, pfad)
-setze geladen auf checkpoint_laden(pfad, {"tokenizer_version": silben_hash(s),
-                                         "arch_version": "p4-moo-test"})
+# Selftest: Ein nicht ladbarer Checkpoint meldet FAIL und beendet mit RC 1 (ein unbehandeltes wirf
+# bricht den Lauf nicht ab).
+setze geladen auf nichts
+versuche:
+    setze geladen auf checkpoint_laden(pfad, {"tokenizer_version": silben_hash(s), "arch_version": "p4-moo-test"})
+fange lade_fehler:
+    zeige "P4 TOKENIZER-API FAIL: checkpoint_laden: " + lade_fehler
+    beende(1)
 wenn geladen["tokenizer_version"] != silben_hash(s):
     wirf "Checkpoint-Identität"
 setze fehl auf falsch

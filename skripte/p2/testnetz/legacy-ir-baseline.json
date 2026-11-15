@@ -1,10 +1,10 @@
 {
   "format": 2,
-  "compiler_sha256": "b3cb5c997c45c88ddf0b5200b57c0807940d4e9af197c993ce91c4b6eac16721",
+  "compiler_sha256": "a5a0f4c8c9d6ff2c3c9997fc9b82e10408d237f72f82caac9d6fefd6d2b02c6c",
   "normalization": "module-header-root-v2",
-  "synapse_batch": null,
+  "batch": null,
   "provenance_attestation": "caller-provided-unverified",
-  "compiler_runtime_inventory_sha256": "161a37b088b8b478ee87fc51c8332080c07514139a6ba6d4690aa47c064ae519",
+  "compiler_runtime_inventory_sha256": "51d11749ff501c16d248907fc8d5fa066991142cd20c04516c60a7a8a9b9a3fd",
   "snapshot_ref": null,
   "snapshot_ref_attestation": "caller-provided-unverified",
   "profiles": {
@@ -83,9 +83,9 @@
   "failure_count": 0,
   "source_snapshot": {
     "contract": "legacy-ir-sources-v1",
-    "sha256": "eed2f87ae83e526a711cf156984b64f8c982ac59aaf440d3bdf0934ab1e2e979",
+    "sha256": "53b9ebb8625717b8ca4ca34d9fa5c0b31c331c2ca28b4b53420560515406750c",
     "files": {
-      "beispiele/adressbuch.moos": "cf706634d9fe6d21dabd304559802458468d94a9a7ab31465641a7cce218ef6b",
+      "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
       "beispiele/artillery.moos": "44ef8b634aa8baee81b1602af31dd70837ca8726e230092520e27aae3e5636f6",
       "beispiele/ascii_editor.moos": "434d6ec655b669dea190256b98dc3844c10031b4e771aa997919aa090c1f55d6",
@@ -101,7 +101,7 @@
       "beispiele/brawler_selftest.moos": "6062a1a6500711012dfcf75b0d2c255127ef6f87987e9064e7f30d9f17c5d299",
       "beispiele/breakout.moos": "d0abd013957d1b6cbb7cbd01b260c05f88c12fafe3884865c180175b49f4b78e",
       "beispiele/bubble_shooter.moos": "95b18c5d903fe6ebbbff5c6091f19fa1968093b3c1b88a01d6e6aea741b604a9",
-      "beispiele/chat/chat_server.moos": "044993a117611eca2f3b404206184f5739970cc4a560fbc80269c824532df197",
+      "beispiele/chat/chat_server.moos": "567ac7499c1ff4366749c2ef3213a02bcebd797eaece656231dfed80bbf7dc83",
       "beispiele/city_builder/buildings.moos": "f7494810a712f4dcaf43e3f146267ed6482ef68f46be026a329d0303b1b30a25",
       "beispiele/city_builder/city_builder.moos": "495767ed8d0d247796f403f5e73b1d97608ce77821667f3efe5bb6ac7c9b9d6e",
       "beispiele/city_builder/grid.moos": "2b1d1dc76ffe5f4fb95f01f4ccbe6b1693181ade282d3609d5efead5ce347840",
@@ -113,28 +113,28 @@
       "beispiele/datei_suche.moos": "235c410fda433721f095c6296e8995e8b029e2954ba2774c08baa9d4be3d7b69",
       "beispiele/defender.moos": "03c445def63b22de84a17a9d8b139d58366ca7bc1d43e146aebdb94dc8f7df31",
       "beispiele/dns_resolver.moos": "3680aaf81ea0121c8ddb0ce16a8ad6fffd1531d90e86e3c183e7dc5dffeb095d",
-      "beispiele/dns_selftest.moos": "b83285af76eccd3867e0599d62239702641872ee2bda0ae6a86253f9bb088fbd",
-      "beispiele/domain/db/bench/bench.moos": "92379a0df679a554cf0ba3be18ac8166769014159c8616ed214c80b25befc6a8",
+      "beispiele/dns_selftest.moos": "966af86a2437d6d8996977fe1789f7c96cdcff3e535ffddc2d96510b4439c91a",
+      "beispiele/domain/db/bench/bench.moos": "eee11933a78f4ec68a1eb7e8ecd068614b081236561d3993ae28661141196787",
       "beispiele/domain/db/bench/bench_baseline_perfphase.moos": "8ed034670f92ff927e24ec37294235026a6f1cbded4f4e753fbedbf9ae9560b6",
       "beispiele/domain/db/bench/bench_binary.moos": "2502aaa1f51bfaadf7791938cfe859303c5f296cafa0c8433076e3753170dff4",
       "beispiele/domain/db/bench/bench_copy.moos": "42c9c06c0076113c7765f631d4d8cec645b1d7a9f873af865ce1b5b15d3bdade",
       "beispiele/domain/db/bench/bench_pipelining.moos": "14b1d17d82e34099786d3318172d4c3fba74bf4b987c1eb9cf040593c00d144d",
       "beispiele/domain/db/bench/bench_pool.moos": "f0130b91b9bd5365eb6532068f42e42f41ef21daec615138f49fad40074548a4",
       "beispiele/domain/db/bench/bench_prepared.moos": "aa75a9ee7dd85b86cc16f4b7f9b6b630b95fb443116cabd16f3eeb22b58589a9",
-      "beispiele/domain/db/bench/bench_scram.moos": "f3704b45f75d304644187d2227fae3c1c23a274a24b06abb0fd657ff03b62c50",
+      "beispiele/domain/db/bench/bench_scram.moos": "ac175012203bd5ff1a523b996f397e7c33de7baa8625b7b040781c1df95791e0",
       "beispiele/domain/db/bench/multiline_smoke.moos": "69b05d0d94a77c3a4bbd2d204a7732ab552473b9a90328001247b6143428dffd",
-      "beispiele/domain/db/bench/pg_test.moos": "e9c4ae3b07c57b8af806a2cf3a55545b400cfa1c6c2771efdb491b23a1c818e8",
+      "beispiele/domain/db/bench/pg_test.moos": "61a65f6c7e0964fd80f873115dcae130100eb40f1bb9e7d44d98c619bb45f2da",
       "beispiele/domain/db/bench/scram_crypto_smoke.moos": "05f5201eac747f0318dcb5d4db8673082482095f4296217b9ad090bd5cbd57b0",
-      "beispiele/domain/db/bench/scram_e2e_smoke.moos": "9ff067abe5157d6f9b9a677d8b3f051aac780cec00cd43a6856f1428a8e65c95",
-      "beispiele/domain/db/blog_engine.moos": "d83b569e53a6af94266f84d055fbc3fe5bcc5da5bed19b155ef9f4d90cc8950b",
-      "beispiele/domain/db/blog_engine_v2.moos": "9405fb647afc23b56f488408ef92434ebb4f3ae32d5630322ad828d279f60386",
-      "beispiele/domain/db/chat_server_prepared.moos": "ac3ea3a3fbeed1e17515aad2a44ab7104d6fb86f47cee13ac9d70dadd57a9a21",
+      "beispiele/domain/db/bench/scram_e2e_smoke.moos": "5c59d47feb046acf7f5b32bcb607a3e3c23251e53f6d9af4dacd5f3d577c10f2",
+      "beispiele/domain/db/blog_engine.moos": "b31f01c27879b27bd5145dcec0892c0d085b071bba7103b4cf60314940a08149",
+      "beispiele/domain/db/blog_engine_v2.moos": "034d297557713dcdf1a0777971647e3370761e8ace1b335205af88b2fb23037a",
+      "beispiele/domain/db/chat_server_prepared.moos": "c204038e2de22ba935c5e2257975e43c6195cdf7bcf35974ecdb3af09643009b",
       "beispiele/domain/db/mini_db.moos": "3c203e5f0fc7aa9a9966731d278e1545ad3c1a741ff7ae9324e179672bbaa462",
-      "beispiele/domain/db/mini_sql.moos": "f3bf1197fd2ddb2dcfb1fa073f5deeaa2815d04f8e7fb21d60afa68acd33b57b",
-      "beispiele/domain/db/mysql_client.moos": "395331f46e88c311426182d0d94bd9f0a9de5c63f0b078962dedca9462b91756",
-      "beispiele/domain/db/postgres_client.moos": "926a09ff1338fe10fa8915d3df94ef81644cfcc69aa562a84cc1cfb2b8989a5f",
-      "beispiele/domain/db/postgres_client_smoke.moos": "cb85312bcdabc05303c14ffcad1bf2b07176c5e930700b809774ebe16dd5c7df",
-      "beispiele/domain/db/redis_client.moos": "9165ad434846c3faa9f82002540f00dfa8e9a5136f6eeffb00068a03cf0c3efe",
+      "beispiele/domain/db/mini_sql.moos": "2945ccf074b21682e521d0d23ada763601734d4d611f700e1a09db0268ca80a3",
+      "beispiele/domain/db/mysql_client.moos": "03100fbc81fb5090cab7361583bedb8c4d2645399362eb7e3e22d326516cc124",
+      "beispiele/domain/db/postgres_client.moos": "69ba80f43b82242ce082177301fe51ddf5aea180b2a8f23b4c4944e686981705",
+      "beispiele/domain/db/postgres_client_smoke.moos": "799788928601f6468c5c9bdf03423d9352ad28d16a807c2bce7f85c6f18053c3",
+      "beispiele/domain/db/redis_client.moos": "6171ec6b0d75b34678c2acd3d952ef536ff876dcd582e4af46780db160713a6b",
       "beispiele/domain/game/testscreens/test_breakout.moos": "801e827c60b2f846eb2859cceaa0d79598579abaf0123276891670731a4e0e9f",
       "beispiele/domain/game/testscreens/test_match3.moos": "d1b517b36a345eb8fbd3024b7f68bc84a663d18b30735ccbb4692d4489392f13",
       "beispiele/domain/game/testscreens/test_minesweeper.moos": "22ca75078d259c4cd62fe927362174efdacf296ceb7336ab7224e49c364b6544",
@@ -159,16 +159,16 @@
       "beispiele/domain/system/kernel_test_builtins.moos": "287f9306cf95524936ff213805a6f08279c2bcc4afcd402f378e7cb0d0ff7138",
       "beispiele/domain/system/tar_reader.moos": "5fdbba392fe8bdad503af532e53c3745ec2726f92594bedd2327219a34d9c213",
       "beispiele/domain/system/x86dis.moos": "3400af7428ec7504807d8d43e55bc9c0c44996cb5b2797464833c63b2fb2583a",
-      "beispiele/domain/web/http_api.moos": "c77bd8c1195388609d140ab6209a2a8eb843fdc1514a7c271cbc2320e3eb97ee",
-      "beispiele/domain/web/http_api_cors.moos": "e64c9aa1df55c180899fbdc0eb3556b33d7ae513e573e8121b4c7205591f0b50",
-      "beispiele/domain/web/proxy.moos": "2a4532a3fcc621f12ac36185443519d5bfc862729560dbd8b1106554550e931a",
-      "beispiele/domain/web/websocket_server.moos": "9742feb8e5fbb38939b24d7f619253c5c955dd7848db8a2914427932787b8ef9",
+      "beispiele/domain/web/http_api.moos": "9aa2a0aa283f8c81746bda5d9b99ac0d3a5ef78694c43d70582a4a981ccb080a",
+      "beispiele/domain/web/http_api_cors.moos": "410f5f8018d46f0e407477f6141596b212a88dd1f5c5063ce32636b9d49dd7ec",
+      "beispiele/domain/web/proxy.moos": "0749e5847b758c97dc7308987663e129af1972089acc1ee7caab47613eccaed1",
+      "beispiele/domain/web/websocket_server.moos": "1cbc55104b22df5bdff4b4b1f905b21f739cb529a4f6b93ee693ede1415d556a",
       "beispiele/domain/web/wetter_api.moos": "6b9c692612bfb3065381b969ad96f8486c63098a91347ba5f9367fb2bfd406eb",
       "beispiele/doodle_jump.moos": "ee2153aeeac29f2bcf095d6120c871ae8c66452f4bbcd320f7db17c785f58dd0",
       "beispiele/dungeon.moos": "e49f5ceb28a7fbcff911e108ba9fcb39dcd847f3ca474a3003cc8ba583b053d2",
       "beispiele/dungeon_selftest.moos": "bb1c833c699fded3cc71061f442a7bc800d1bc1f16de3789c441abc18b9abd85",
       "beispiele/eval_m6b_mini_lm.moos": "f5ca4e6fde8dc2c976509bf91c19c749474de0c6b0ac4be1648433610bf9a135",
-      "beispiele/eval_m6b_mnist.moos": "0a40194d523893e7ed8b103b75f27acc7cbfa5767551d31c6cc2c46f67357755",
+      "beispiele/eval_m6b_mnist.moos": "e9638ff0a0516848911c85ebbbe83c6a8ac0ec19830104ce4aef6d362a36a0ef",
       "beispiele/eval_q1_hadamard_mini_lm.moos": "7c2635ea7a97983924ed7f82c2ac376e740e6f3176d261da119dc322a5e7682d",
       "beispiele/eval_q2_kv_cache_lm.moos": "43b6d21fa9c42d13e9e7eb8b4cdf2d936ffde5ea5395e47489c817a2293d9131",
       "beispiele/eval_q3_lloyd_max_codebuch.moos": "37c0ac8267d1fed2fb2f48fc07c2b8238dc4189da061d36f91f8225ec52919fb",
@@ -180,11 +180,11 @@
       "beispiele/fighter_selftest.moos": "11b6f0d4d3cd9d396006f3465c3ea756a558d99f60c7e539b60520c100762c78",
       "beispiele/flappy.moos": "1eb2588733df48a683b5d5880df52f3bbb3eab6cef7d26c9278409b0d2e54a35",
       "beispiele/fluxmail/fluxmail_aktionen.moos": "7cc95cd0deb32b5e6f22bd157e46059f4138cd0792fb5ecfa9f0a3af302dcd80",
-      "beispiele/fluxmail/fluxmail_imap.moos": "037f35e69c0f41addfe88fb822dabdfc8ef867170b13119f11c6cacb2f71385c",
+      "beispiele/fluxmail/fluxmail_imap.moos": "5fb5d1daae5fb164b559a6526cc2904e7eb52377d39287b2c9de1d36c8071f3e",
       "beispiele/fluxmail/fluxmail_krypto.moos": "dc9dff823e71dd7fbc5af54103afe54f33d959610d6f19c8baa9bc471baf1dd8",
       "beispiele/fluxmail/fluxmail_modell.moos": "a5e7fc1fc090a2d198eee20afea59d1d36a4dc827763073d429b99fc6f165b4b",
       "beispiele/fluxmail/fluxmail_netz.moos": "896558b04739301e910222a8b49102822522f4c48271b0bb6a51e9ba47f97cb9",
-      "beispiele/fluxmail/fluxmail_smtp.moos": "42d829396b569abd36d72235117f9ce0c3956722fe52ff2953559c1b7ce5babc",
+      "beispiele/fluxmail/fluxmail_smtp.moos": "e8dc7d4dc214c83746f23b16a4b0459c10876c4c76225eb2250e62954a905f34",
       "beispiele/fluxmail/fluxmail_speicher.moos": "7fee4d5f22be9b8ba9984ec2e7bd72ebd66dbbef19c65d147fa725f48a27a63f",
       "beispiele/fluxmail/fluxmail_ui.moos": "013e5b79daa8e58c1740b6a0b7d3a2f77bf88cb40e223b890098e3557b951e21",
       "beispiele/fluxmail/fluxmail_ui_detail.moos": "6488867f64013bc546e6501747e9946c1cd777f83dbb094ff3a09bcebae18a99",
@@ -198,12 +198,12 @@
       "beispiele/gif_encoder.moos": "8af5ec1114a44b1f9a4f6a981482ac2cc10cf027074597754aaaa999e13b6fc9",
       "beispiele/gif_smoke.moos": "e70512f4802a9f0f85ae50a96328b2413d361761298e3d52bafc7d8a651b1fc1",
       "beispiele/golf.moos": "3fab04a9cfeb06ce1b1a3bf961ade6a94f8d89c8340f1104ad53135505efc0d9",
-      "beispiele/grafik/netz3d_gitter.moos": "20c5c815e99f6541d9325066e9bd809686b472e11249027c108c7d1195f53cf9",
+      "beispiele/grafik/netz3d_gitter.moos": "c4e55e8fd6d3dba6b8c23f71018d32b98881256dfa8111682e8bc565c0514d6e",
       "beispiele/grafik_demo.moos": "6f08e637f7ab2edee1656b8d7c8696dc33f59b24cdc63ddb75818e9910b9a8dc",
       "beispiele/gravity_well.moos": "0cb8c0eb1b86409db9cd0b3d15965758e7d062a9847790036f319322e6d305e8",
       "beispiele/helicopter.moos": "c52bb9f0c2e88bb13aeb14d648735da2816215ddd1d702a59775bd6831a93ea9",
       "beispiele/http_https_smoke.moos": "c11959b480cdedf438a55cfcca9ced67246898d06f8d9a940dd32ab57f593dea",
-      "beispiele/http_native_selftest.moos": "a6402f9c7422e47dffa8a4b9972af8d93a5d572e9cebd4299a8d3b27e2ddb734",
+      "beispiele/http_native_selftest.moos": "42686a4283f996da8221223de8e5c5a15bf8a8178e430b9c32658012a6043532",
       "beispiele/invaders.moos": "e324e6815755ca413080625a2695866355629f9abbd540746e6085415f8df308",
       "beispiele/json_schema.moos": "b3dc429118d16122fa68ad0d196ce9b205905a61f286757c756c3ebd0be079f1",
       "beispiele/kernel/arm64_test.moos": "ac9f0f96ffd3a936f6da673bfffe89129901d26e64484b4419d2c62057a938f1",
@@ -213,29 +213,29 @@
       "beispiele/kernel/pf_test.moos": "046e309dd3e5eb2819719d1184dd2b845bc9e70fb2b25f9ce16ffed3b2653fc5",
       "beispiele/kernel/stackprot_test.moos": "6485c43be186b58c5e5faf173a3811ebbe82a54efc4dd7366216889c176ea485",
       "beispiele/kernel/uefi_kern.moos": "2fb8ec71d45b0b1cacf2db1ea00387a6f1b0ebc75b0f75efd127d669b3a4ad98",
-      "beispiele/ki_audio.moos": "0cf50094e622158f8bee19785488bc97fd0d4791af1897834faf5da671b2bcb5",
+      "beispiele/ki_audio.moos": "8452da4d523562e87d2f2a07ab5892fe1d948989ac4f843cbc22210b68c414fe",
       "beispiele/ki_bild_beschreiben.moos": "1f78813f9cfb79e773be73d52615deefcf7596aea928c35eb1ac0d402be86b5e",
       "beispiele/ki_capture_loopback_gate.moos": "9c04f712ed4de449ac8c0f23b984d50eb89da24578da8db79f14c05e94851f67",
       "beispiele/ki_denken.moos": "d835ec81284880afb6740cbe1356efd2771872ee7b3c712ac2bb54294b3dcb81",
       "beispiele/ki_embeddings.moos": "002ac6fa1ec69513979b9e13fa83e4c7e8f65895aec2a9e813aa6d5b7e33d9d7",
       "beispiele/ki_grpo.moos": "c5a51b565e8e0a94a68d614eb2b96abdc3fa57447d462e676661721824d43877",
       "beispiele/ki_kamera_live.moos": "207b8f83d39cb34b87700abd7f063cdc603580c9b4845ae2bf0a989cba2596ea",
-      "beispiele/ki_kinderleicht.moos": "4a8fe5ac1d5c9515ce25197631d56f8294e4f13f090565e8e0a9a16f1e414ea8",
+      "beispiele/ki_kinderleicht.moos": "d671eeee368021a4ccbfb91c4f14790e43f7bee39792d53581afb71b7baeab51",
       "beispiele/ki_mikro_spektrum.moos": "da09e5bc65c6d99f0e3b75c4982a6857dd143b017b60192d9281ea1d65df5c88",
-      "beispiele/ki_mnist.moos": "ebb4378de31f6ae62da066cafda41fa04e7b11b4e1c84f73efb16ca3479a4574",
+      "beispiele/ki_mnist.moos": "0f68017764a7e36064f0244ed0bd6bbb7e3e6dbc0e3cd5c2e36eb359ee58cb8f",
       "beispiele/ki_mnist_conv.moos": "3d15bf55936307497170241140d8ff261d3396e32e32632a40e9c6e1a7e29c55",
-      "beispiele/ki_moe.moos": "d2249cdfd4f62fc4e23e7f70771f17c9e6a7b1cbf6b7f869246b1e0676627036",
+      "beispiele/ki_moe.moos": "5b63dc97de66d2bb47980f1bd7ee87a8205f586d5eefdeec017485aabed35490",
       "beispiele/ki_mtp.moos": "3ad8e4beb55bfbfd7aa12da649ec1175699b197eec14a4a542b42d7313af15c4",
       "beispiele/ki_multimodal.moos": "96cbfdac7ea75e52d14a5782951b093f9297118af244d4d7be1beedd112d0852",
-      "beispiele/ki_multimodal_audio.moos": "dabe0e1b9d1e8a4d3a19ac5a3128c70568abebed8bc35d49b7c8058fd1ea2959",
-      "beispiele/ki_multimodal_farbe.moos": "030d6aef4ef40d07af2266eb89f14cbdb73c1661c6c2c1d25842aa5449cb66ae",
-      "beispiele/ki_multimodal_joint.moos": "ad163806bb968c1e78de1528aed9d7ea0e917343a7f73a3bcd398a8893b48a21",
-      "beispiele/ki_multimodal_vision.moos": "5184bc73201372908df92280c224b889804e1aa0484484d0ccb6f4387d2ea389",
+      "beispiele/ki_multimodal_audio.moos": "03c8850906a35ea9c10b0f74fea7462580123b91becad5a33419690c26ff11f5",
+      "beispiele/ki_multimodal_farbe.moos": "7d10d28111baaaa5e88987724859cf6fbd8686a875ffb3adbf00807e8dea7a98",
+      "beispiele/ki_multimodal_joint.moos": "e0725334c2d33d78e1225f5773f4325c1ed139de4174ddd8c8d003f62b5c62e1",
+      "beispiele/ki_multimodal_vision.moos": "0b02948e4107130c2a3d09edbff16d971ddc35664cec9ae29ee0e99504424655",
       "beispiele/ki_pong_auge.moos": "ebf5e3cd2e97d2f24e5e4803b13888856d34900af76f0bc79cd57755bf1a5e17",
-      "beispiele/ki_safetensors_import.moos": "3c5e9d65e658f13ca18b5d538a75e3790aa4418ae1e80d18c59c0d12a541e9b7",
+      "beispiele/ki_safetensors_import.moos": "9a8253de591b84582a4e2d5d47b91102dad652671537477a29aedb2eb14311c2",
       "beispiele/ki_sprachmodell.moos": "19671ba221d19d56b41acc7bcb8a18bc1e9d774f68a3ab1b9e53d32380624d53",
-      "beispiele/ki_sprachmodell_gpu.moos": "f9496ab631ae8146cefd2e6133e27b86bdb41656b29bc42884d0aab4744837c5",
-      "beispiele/ki_verteilt.moos": "e3f3d4173b337061a2af769e532a7f1e65c84b47360ffe14034dafdf51197707",
+      "beispiele/ki_sprachmodell_gpu.moos": "e33ca823de03cb671f09d2c856bc4a57ba4f76359c8c5a0ab3f9dfc01457c01e",
+      "beispiele/ki_verteilt.moos": "3833de9eb7b9a7ef04b459fe228640eb4b0cf08601c978f21367083a81c86380",
       "beispiele/ki_xor.moos": "11fdc5f09e1fb5402f737c1ac9d8780e682f53f4bbff2e12c4a2009eaee7c110",
       "beispiele/kip/d2_mini_lm.moos": "d659e72fbd92db53ec962fdf4fb9e4454d9f0432d713a5f206e285c53cabe8d2",
       "beispiele/lemmings.moos": "2c5ef0bb04bb4cb25b21ba61cc36b8eefc07db94ea3ebab6a9972cde0305a521",
@@ -253,8 +253,8 @@
       "beispiele/mine_run.moos": "241b9e8a79b36095c8b9bada1171682f18f99b03c476094ee6ac9f669491722b",
       "beispiele/minesweeper.moos": "aaa1c3e5b42648d4003ff134c7650cc3635f525256a3efc50f7243be66563652",
       "beispiele/mini_lisp.moos": "1b5dd5165d3be7d4a7740e2e35eefc5430f0bfe7d62651c0b3a735270e13ef70",
-      "beispiele/mini_redis/mini_redis.moos": "6b767d82b886f7ca089fd2cda12f978c18d3df42ba33ab5aa23f6c3fdec4ed42",
-      "beispiele/mini_redis/test_client.moos": "ac014270b49e8e9b50ac9b7aa984c4df515b3d8f57400873ddf92f0b71fc6221",
+      "beispiele/mini_redis/mini_redis.moos": "ad3c28a14baa568eccb6b979814d539421c3c90ac2a8ea8ec859206d418607c8",
+      "beispiele/mini_redis/test_client.moos": "e4f773751a85b15789176f5d1425e8e2b6e972966b8b5cccc9ff036852cf25e7",
       "beispiele/missile_command.moos": "60d1f723aa5823205c42e344ad6819a7fa7eebe7eb916d25ef975a0ec44975c5",
       "beispiele/moo_aero_csd.moos": "6c09e2399348a30a7b0a8f73114d1b7c7f656d94a1b7cde7b83b2465c589c4fb",
       "beispiele/moo_aero_csd_host.moos": "473c8221de34fd49fc8e9181f8c954e092d9ab51342915607f00beb5352b082b",
@@ -265,7 +265,7 @@
       "beispiele/moo_protokoll/protokoll.moos": "1b073f04861c1d5ad1ede43f67fe501af8fe63f66f3441ec7b2df4398d84368d",
       "beispiele/moo_widgets_host.moos": "8a242369ae2d99ca2fdca56ba3aed6bc9eae54c399c10830ad099115b2a5ea72",
       "beispiele/moos_desktop_demo.moos": "8959bd3bd35191a045eef70688655576e6c13d246b87bd6fd062ce48361bb914",
-      "beispiele/mqtt_broker.moos": "a811d1ea9fc410726b11d30f75dd54a0764a6689e682122aca527d1d09771269",
+      "beispiele/mqtt_broker.moos": "ecf85baf544a2f5c9e4afc5aa987cea37914620913bb1585671b639c22422ff6",
       "beispiele/nativ/01_native_funktionen.moos": "69a73db05fbf0f1a1d9a6edc899117158bdce5edda5f65445cbed5b6010b03ea",
       "beispiele/nativ/02_ganzzahl_semantik.moos": "3854b1f18566d62597dd209a22107fe3563d8a3858c889b881f6f27361ad6ed1",
       "beispiele/nativ/03_casts.moos": "a3ad2c1f1991815d1a4bb56196dc79bec692006d34b2dc33a6ac9a2a626981af",
@@ -279,9 +279,9 @@
       "beispiele/nativ/11_struktur_by_value.moos": "b65df2d1f3cef4b1f6ba5144e83ea3002f0ee374a67c15438746e59bd718e0bc",
       "beispiele/nativ/12_opaker_griff.moos": "575d4939842968a3a2511cd780c6f5f540563a20e9c51724897ddb8bc39d6a2a",
       "beispiele/nativ/13_struktur_dynamisch.moos": "5b9021ca7182dfa3c7b0afe848976f31f4d0c94209fcf9709dfe8389d1d9b02c",
-      "beispiele/netz_foundation_selftest.moos": "b4ba5f8701b2be5eae5aef98a414dc87370e67148643159b0c121ca802cbedb6",
-      "beispiele/netz_frame_selftest.moos": "6dc94ac65db4e13504e73f3e012d3300fbc6f231cc1685a0fc25c8667cded9c4",
-      "beispiele/netz_large_write_selftest.moos": "aa28fe2325e465f2db3adccf784f9a54b6c228a5f76a908cf12039a8f2a9b765",
+      "beispiele/netz_foundation_selftest.moos": "96f159051f9d0182513147bea9a085f2fe465e49ddf6d0c2ce6b61c293be3ba7",
+      "beispiele/netz_frame_selftest.moos": "1c47f6def85bbd3a1848c1c1aefedc540c6b0758129459539ed76f5ee736a927",
+      "beispiele/netz_large_write_selftest.moos": "7c57de42266f0c32d0b9c384af1340de6c1aed28926cec11dd3df1341f24c4a3",
       "beispiele/neuralnet.moos": "dafa1176e8b8f9a3874e0bc4d389e9c240b99034ed62aa655a615ca718f3ed8f",
       "beispiele/p2_bench/builtin.moos": "e82a245be55d3941a8d8bbdba3a0c02f6b912d1a23c051eb4a934670587831b8",
       "beispiele/p2_bench/fuellen.moos": "e5b68a8aff861ebdd55a7ca684f6c54b661c114cc6f3078a68001b76d95fc411",
@@ -291,23 +291,23 @@
       "beispiele/p2_bench/rauschen.moos": "564ed0292cd5e0354256dc2b55c316d744215bff158c76e1355590f9f4136577",
       "beispiele/p2_bench/summe.moos": "1fded1be6a173ce8b41e47f7b3da3c3d7fb303746e606589e00a55891c380220",
       "beispiele/p2_bench/vektor.moos": "8d0723a1b9e1e90884a977bdc6726d51465335891ef37f4d01473df7796335f9",
-      "beispiele/p4_silben/diagnose_paritaet.moos": "842d1e33c4255bb813d824e8cdd6ff5ae523e91925b02d14218b97ad0c9a5b45",
-      "beispiele/p4_silben/diagnose_sil13.moos": "2281fa5ab63b1d10d65aea567a2797ae90d314649be93b8f488ef56af90622f1",
-      "beispiele/p4_silben/encode.moos": "1bafc061e3b8976f723a274808a2bf42c1d71666068c2910bcbe5ab052733ba6",
-      "beispiele/p4_silben/grimm_sil14_36k.moos": "dcb15faf2e0abb6bef3776b3f430b1ccc9533e312219380ad6e5190746c34176",
-      "beispiele/p4_silben/grimm_sil14_checkpoint_eval.moos": "cb40957734a2ca5b4db36a665aa371871337bc52a54e01d9e4901c4af1316f84",
-      "beispiele/p4_silben/grimm_sil14_holdout_eval.moos": "dea74107a09ee68fef2c510712e5e0ccaa83fcbb7224c0d167b34bbc9c6bed11",
-      "beispiele/p4_silben/grimm_sil14_smoke.moos": "03547a59cbe529dd4b27e0a4079890816d116e56a1f985018a2a1f404ba40e54",
-      "beispiele/p4_silben/grimm_sil14_smoke_paritaet.moos": "7ea39f7ef60f1e198218170792d26e068e22db8d7c656c0468f9274bcd4a3ad0",
-      "beispiele/p4_silben/init_model.moos": "5fc8f07c71ce038d319a0d211e978b05d3dc3d0fc74ceff333b262600306421b",
-      "beispiele/p4_silben/logits.moos": "82978227e9e13cae5445f177fe4fe9d9931662ae5614294ac030d389830aef70",
-      "beispiele/p4_silben/logits_batch.moos": "3ba5d7dec4958bf6018ffde72446b1318d8efa49a45275e7d71d97843b632353",
-      "beispiele/p4_silben/train_diagnose.moos": "af7f14c782c263b836e67dafa98c7fa649c24a6568ad53ea8b17c2f3d4a09576",
-      "beispiele/p4_silben/train_paritaet.moos": "0884554545debb53f1a0207fe6a94b24c085d302f397a96fb273ad8ce0b33b6c",
-      "beispiele/p4_silben/train_paritaet_instrumentiert.moos": "2ffc9ccd7190545ddb3c03134c3728bae0d943d8429996cbe1f50c9fe06a69cf",
+      "beispiele/p4_silben/diagnose_paritaet.moos": "a99e58f6b717d4aad6b10d3f91e8948f6adf5578dee5bc3062005ac5ba2f276c",
+      "beispiele/p4_silben/diagnose_sil13.moos": "12bfff5628a8bd30310fa45cf57d034514dd4ca8c6798b7977d78728ad6ec792",
+      "beispiele/p4_silben/encode.moos": "0fe84a78bb5b8efff2ceb4c22b697c3fbb132e7707c1c61f1879570803e95063",
+      "beispiele/p4_silben/grimm_sil14_36k.moos": "8cc083b81708af867d2a40f5fc042af80617d461338381c3cbf4cdba846a3478",
+      "beispiele/p4_silben/grimm_sil14_checkpoint_eval.moos": "549909891d29ea64621c411d6ad3fffa8f623f569e736715aef19ddac267b41c",
+      "beispiele/p4_silben/grimm_sil14_holdout_eval.moos": "ffd95ae950798de5300097bb846d276e3b7477dca496783395e850c342dcaafd",
+      "beispiele/p4_silben/grimm_sil14_smoke.moos": "49a85b396e61c2f5bf4713271017032bb0137e5eab42c4c6e9e5fb9d0ce6b64d",
+      "beispiele/p4_silben/grimm_sil14_smoke_paritaet.moos": "fbbf7401daf5591c776872c0d7c07b4dfcd80e28cfe5d5d25c1de6d65bb589ea",
+      "beispiele/p4_silben/init_model.moos": "d53a3ea71334777c6284ed8252aa5ac41fc67f998406c3991fa2d313d5d488c3",
+      "beispiele/p4_silben/logits.moos": "17ac608fa077cbdec7d4a702d68e63c90142ba46571c407e9b66dceea5174768",
+      "beispiele/p4_silben/logits_batch.moos": "80998a1868ed2878095d87fc0432a7c9be370eb665f8fbdab4703937c7f425c3",
+      "beispiele/p4_silben/train_diagnose.moos": "211c74fc12535c5e8cf3119ef3b4deed9face135c9bba7c804fdec8d367252df",
+      "beispiele/p4_silben/train_paritaet.moos": "21e61a98bcd77f5721a6021ed5aa26664e70634b5b67e0a4168b21d17d9308e0",
+      "beispiele/p4_silben/train_paritaet_instrumentiert.moos": "d159d7977f72db8631c25428ef5c62bdcd9a6b2767688af5344ee998017ea928",
       "beispiele/p4_silben/train_tokenizers.moos": "b194d0ff214fc327a1ba90d2cbc071cf5edbd956638bf24a3408b997583a3ce0",
-      "beispiele/p4_silben/train_window.moos": "ea1ce23e9bf2fe8ddf82d5fd5ca0b4af488d11500f5c1d26505c9b60b88c2654",
-      "beispiele/p4_silben_demo.moos": "32eac8e3f32812f87024984c9114e78731cd69306705d8ba5a1f3d9bbe6d8b85",
+      "beispiele/p4_silben/train_window.moos": "0302786b4d3e7d75ff0d9c8b47dc08c5ae843878162f152baa39461233fabd93",
+      "beispiele/p4_silben_demo.moos": "2f68b66dc0d2c5439e3e64388d220c8a867d22ed90746d2522bcaa3cfb2e8eaa",
       "beispiele/p5/cpu_nur_test.moos": "8339e47cb3777dc3df05168b8e9b79128874ff720ef932705bd45c0c10ce6971",
       "beispiele/p5/distill_dpo_resume.moos": "e4723e3d5c039d0955a13d11e6d4ef02af88ea21eed4bf6e706e9611834021c4",
       "beispiele/p5/distill_dpo_sil14.moos": "b5979a4b2836934583a3f25961a9bec4bd60eb3d5b75edefcc6b98fc21a643f3",
@@ -347,10 +347,8 @@
       "beispiele/p5/train_api_test.moos": "68ed89bcd185f1ce748742a87cd964c97334979d8273b257b9f88c3c8e2ac99b",
       "beispiele/p5/train_orchestrierung.moos": "a5500bcfbf08a65017e7ea17df1c0b8e50784474c0b8da26e673eb815b6dc5a7",
       "beispiele/p5/train_orchestrierung_test.moos": "2cd804886cc9cee6670bb5bae8479965a065e9da7dc7215ec509f74659ba2be0",
-      "beispiele/p6_wissensmix/feintuning_llammlein.moos": "01f220064eb881b97156e3145494a858d47be3587f8ac697eb21a185a9c5b2ed",
       "beispiele/p6_wissensmix/fortsetzung_test.moos": "ecd52b262bf60fcbba38c4f9fe09cac92565f51716bf683011b819bb85c04dc0",
       "beispiele/p6_wissensmix/gpu_paritaet.moos": "65cf9ee08844379cabc9b6442755a1ec7819faf4597634470a8cb334d87a78f2",
-      "beispiele/p6_wissensmix/llammlein_import.moos": "4967d00708a52a6d0860727f10fe30786f12ed7bc70431e3e8c051b9af3df65a",
       "beispiele/p6_wissensmix/messlauf_bpe.moos": "e41c5d7e5a1ba255c8f3e38e6806682c0ec9d2d1470f964088dd545100843455",
       "beispiele/p6_wissensmix/packing_vergleich.moos": "711c0106b444136060487c5cb681f4b1187fe17be2780569be04e195989f1f70",
       "beispiele/p6_wissensmix/parameter_10m.moos": "15249a79384d9656499ddc07d11aa839a2f7c9456b5393e0fbf523cbbca174f6",
@@ -369,10 +367,10 @@
       "beispiele/pipes.moos": "146b15fdcdc48a2953bd9ddff5b643400caaec87e60a47173142b58ef4205e3e",
       "beispiele/pivot.moos": "3a5205f2becceab6d9c537a8e59219ebef0df2d4d3df76d32053311e10ffa527",
       "beispiele/platformer.moos": "442e2d24fe84c2c48f24f42724f18ed489343fd2cec2c65fccce5f31034b14c1",
-      "beispiele/playground/playground.moos": "dcb1e8c65ecfaadb353a737fb336b86ec862a9b9257f5be4c3bf8a56919fd615",
-      "beispiele/playground/playground_server.moos": "27dd9c1494e43e4dbcbb9b668bf89ed3049a7f98640cbc353528b5eb80072448",
-      "beispiele/playground/test_body.moos": "667c2aa190a77275c17e9cf3db1bb6f275370178368095230834be85883622ce",
-      "beispiele/playground/test_web.moos": "9d46ea45756850d3ac09306aa2c081ba1fcdbeffe31ed999f36017e6fb9b0b1b",
+      "beispiele/playground/playground.moos": "4723da90ad41e217077b961081067f0913c60a8f5455f039650d94ea8c223fa8",
+      "beispiele/playground/playground_server.moos": "65a4e980ca35bc66fd8b025a28334fe6b0f55d66a1ffc0c92be59b2b7be30ab6",
+      "beispiele/playground/test_body.moos": "84394801a6a0256c2c9f731cc1bcfb21943b9a31997110b7e6a606799db2fb82",
+      "beispiele/playground/test_web.moos": "d8437853686f801900398c6c0be562d1be8f91ce65eee0c508dae3a8ceba3489",
       "beispiele/png_encoder.moos": "342dd0e74f8ee57dd1b36a926f4a3f9157d3c5b48a4377c665c5c5ca662cd503",
       "beispiele/pong.moos": "1ee9959480dfe95a0bea2c07abafdd2083ff7a52a59d2f73ff23346ae0ecda53",
       "beispiele/pong_plus.moos": "0675a8164f0a12881466cfade5f3dd0fabeeb1ad0a28d071f3b02936e77522a3",
@@ -397,7 +395,7 @@
       "beispiele/sokoban.moos": "9b6d2f21d8d577ebf1b2b85a027139197c563f001d9f7bb75b637e5df8c06210",
       "beispiele/solitaire.moos": "dbe9f8e5702cda5537d8f5a39e0e5ed24ee45554b29bfdfa6561b56ad84bf709",
       "beispiele/space_shooter.moos": "727cdd87366b51fc7af81c58078503360f56431971e282a23b952ca0dccdcdbf",
-      "beispiele/stackvm.moos": "c4240987eb347013fce0f8c105c409c89448b716aace6395227327c366af9a63",
+      "beispiele/stackvm.moos": "29ac570f6f8cf0465a0a1199c87cb74c76c2598d878dc71f90f145664488661f",
       "beispiele/strategie.moos": "f51c72ce2d8c7495da8c485cecde8c0dddb42a234e0d736c8a703ca1d0ba2871",
       "beispiele/sudoku.moos": "0094d625626bfc7e6a2822344bbdc2dd896e085f980ee26c639656ce24ac722b",
       "beispiele/survival.moos": "f4676d5c9fc9d03c68840208e1f673e68c2594b05e33b7b11e2fce03448f612b",
@@ -407,12 +405,12 @@
       "beispiele/td_procgen.moos": "87c965064479d2849624ecadd67d7974b6d5e37c208b10899a88c13bfa4b693b",
       "beispiele/test_api_smoke.moos": "5ddfbd133e9905aaaed46fcb2ec9113da154a3ccebe8ba8844d0b6c353491df3",
       "beispiele/tests/indirect_call_ownership_test.moos": "b428d2de125775a6d0a421aeeb507101730b499ebfff5da30ca4d202a5790d9b",
-      "beispiele/tests/p4_checkpoint_gpu_paritaet.moos": "fe4c7735dd854bfa277e4918167d85a9745c10eda594e468028550b86035e897",
-      "beispiele/tests/p4_identity_negative.moos": "9f088600a97ad3a329a82fdeab3214750d53905d9c5b443425dd5e90ae245417",
+      "beispiele/tests/p4_checkpoint_gpu_paritaet.moos": "bfa733222dd3ac74375959c52b783888d10f947ac950c82182c207706fd8428f",
+      "beispiele/tests/p4_identity_negative.moos": "a82a77351bd37ebb92a5f807b17fca8afe4fde036188b26f51137e91ec20ab12",
       "beispiele/tests/p4_mask_gradient.moos": "11c4fc38238bd0f4675c1de47d469437e13b7df37a42a2f5b2560a3082c345ad",
-      "beispiele/tests/p4_padding_causal.moos": "47c42fd5519c391f0ed46d00b06de9ad88d6c9f0579cf51d31d7c0c54e3ec94c",
-      "beispiele/tests/p4_parser_bpe.moos": "6fade19690a2042e31d816912e4e7a9e60e93e8f011042df513e380fd7cdfc43",
-      "beispiele/tests/p4_tokenizer_api.moos": "b00f7179b29aacaed34446327ecee66d42bf91ca72b6ff95fec1293460549bca",
+      "beispiele/tests/p4_padding_causal.moos": "0270543764714d2e00342e20b0c30d0bc425c5c4234eb48ecd728e02979403f9",
+      "beispiele/tests/p4_parser_bpe.moos": "f819db342732739c7dcd2af757eb3c88bddfab3c1117fd853834740507d5f1ca",
+      "beispiele/tests/p4_tokenizer_api.moos": "552d3dd84fc1bd0eaa081c1f6f73737e6f081fd44f0136350726c94e45ba8062",
       "beispiele/tests/top_level_loop_ownership_test.moos": "9b5745fa44f128468a561315c065a5a7b807ce8348cf99585b74c50810567d68",
       "beispiele/tests/type_of_ownership_test.moos": "6e1a4da7ce14dc30281bdb2a32702c2b421a5c8193273c52c3027113e5d66aa6",
       "beispiele/tests/ui_binding_test.moos": "de8d72549518088a0c885b65156e15eb34da1e30055503e06b2e9c61a41b581c",
@@ -474,7 +472,7 @@
       "beispiele/voxel_sandbox.moos": "be7da7f7b351c437aebe3427b7f8eba15d61a7d456580b3c7b81a451203c364f",
       "beispiele/voxel_sandbox_selftest.moos": "56bd8bd02455863afebc6d0907242473cffc4b515f625756f5442ad73d94fdeb",
       "beispiele/voxel_sandbox_selftest_vulkan.moos": "ad358a03a13569680b0da415101f7fbeb64bd8af02652d140757f50ac2ba03c5",
-      "beispiele/websocket_client_selftest.moos": "6db8b49d0cf45ef464f67af3bd8d847bfb92682a69c220c796d36407a6a6dc36",
+      "beispiele/websocket_client_selftest.moos": "0a2009d8e7ea68cc83c7a92d8ac2aa6c568b359b12becb2fe830b90909904fe8",
       "beispiele/websocket_wss_smoke.moos": "e5738aec24137e3d3965f5c31f27e0b3fbd719f4ad9b3976283233992bf9d254",
       "beispiele/whack.moos": "e7c39aee24e5a33c525523d37bbc5822aadf48249d206e674d3ced6ffe0cb271",
       "beispiele/windows_tls_smoke.moos": "c2c8eb42a1dca4a1da50cd3bfa668e14e2928ae85e2657f5096e68f3441480eb",
@@ -573,9 +571,9 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "6f33dc35554e96bd9199f85ab511ae83f3c8364d150db340c0f4c5aca01a24f4",
+    "sha256": "f980823cd6798d5dccffade59b4539911affd03a50ee2b268dd06f93b3263a39",
     "files": {
-      "beispiele/adressbuch.moos": "cf706634d9fe6d21dabd304559802458468d94a9a7ab31465641a7cce218ef6b",
+      "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
       "beispiele/artillery.moos": "44ef8b634aa8baee81b1602af31dd70837ca8726e230092520e27aae3e5636f6",
       "beispiele/ascii_editor.moos": "434d6ec655b669dea190256b98dc3844c10031b4e771aa997919aa090c1f55d6",
@@ -591,7 +589,7 @@
       "beispiele/brawler_selftest.moos": "6062a1a6500711012dfcf75b0d2c255127ef6f87987e9064e7f30d9f17c5d299",
       "beispiele/breakout.moos": "d0abd013957d1b6cbb7cbd01b260c05f88c12fafe3884865c180175b49f4b78e",
       "beispiele/bubble_shooter.moos": "95b18c5d903fe6ebbbff5c6091f19fa1968093b3c1b88a01d6e6aea741b604a9",
-      "beispiele/chat/chat_server.moos": "044993a117611eca2f3b404206184f5739970cc4a560fbc80269c824532df197",
+      "beispiele/chat/chat_server.moos": "567ac7499c1ff4366749c2ef3213a02bcebd797eaece656231dfed80bbf7dc83",
       "beispiele/city_builder/buildings.moos": "f7494810a712f4dcaf43e3f146267ed6482ef68f46be026a329d0303b1b30a25",
       "beispiele/city_builder/city_builder.moos": "495767ed8d0d247796f403f5e73b1d97608ce77821667f3efe5bb6ac7c9b9d6e",
       "beispiele/city_builder/grid.moos": "2b1d1dc76ffe5f4fb95f01f4ccbe6b1693181ade282d3609d5efead5ce347840",
@@ -603,28 +601,28 @@
       "beispiele/datei_suche.moos": "235c410fda433721f095c6296e8995e8b029e2954ba2774c08baa9d4be3d7b69",
       "beispiele/defender.moos": "03c445def63b22de84a17a9d8b139d58366ca7bc1d43e146aebdb94dc8f7df31",
       "beispiele/dns_resolver.moos": "3680aaf81ea0121c8ddb0ce16a8ad6fffd1531d90e86e3c183e7dc5dffeb095d",
-      "beispiele/dns_selftest.moos": "b83285af76eccd3867e0599d62239702641872ee2bda0ae6a86253f9bb088fbd",
-      "beispiele/domain/db/bench/bench.moos": "92379a0df679a554cf0ba3be18ac8166769014159c8616ed214c80b25befc6a8",
+      "beispiele/dns_selftest.moos": "966af86a2437d6d8996977fe1789f7c96cdcff3e535ffddc2d96510b4439c91a",
+      "beispiele/domain/db/bench/bench.moos": "eee11933a78f4ec68a1eb7e8ecd068614b081236561d3993ae28661141196787",
       "beispiele/domain/db/bench/bench_baseline_perfphase.moos": "8ed034670f92ff927e24ec37294235026a6f1cbded4f4e753fbedbf9ae9560b6",
       "beispiele/domain/db/bench/bench_binary.moos": "2502aaa1f51bfaadf7791938cfe859303c5f296cafa0c8433076e3753170dff4",
       "beispiele/domain/db/bench/bench_copy.moos": "42c9c06c0076113c7765f631d4d8cec645b1d7a9f873af865ce1b5b15d3bdade",
       "beispiele/domain/db/bench/bench_pipelining.moos": "14b1d17d82e34099786d3318172d4c3fba74bf4b987c1eb9cf040593c00d144d",
       "beispiele/domain/db/bench/bench_pool.moos": "f0130b91b9bd5365eb6532068f42e42f41ef21daec615138f49fad40074548a4",
       "beispiele/domain/db/bench/bench_prepared.moos": "aa75a9ee7dd85b86cc16f4b7f9b6b630b95fb443116cabd16f3eeb22b58589a9",
-      "beispiele/domain/db/bench/bench_scram.moos": "f3704b45f75d304644187d2227fae3c1c23a274a24b06abb0fd657ff03b62c50",
+      "beispiele/domain/db/bench/bench_scram.moos": "ac175012203bd5ff1a523b996f397e7c33de7baa8625b7b040781c1df95791e0",
       "beispiele/domain/db/bench/multiline_smoke.moos": "69b05d0d94a77c3a4bbd2d204a7732ab552473b9a90328001247b6143428dffd",
-      "beispiele/domain/db/bench/pg_test.moos": "e9c4ae3b07c57b8af806a2cf3a55545b400cfa1c6c2771efdb491b23a1c818e8",
+      "beispiele/domain/db/bench/pg_test.moos": "61a65f6c7e0964fd80f873115dcae130100eb40f1bb9e7d44d98c619bb45f2da",
       "beispiele/domain/db/bench/scram_crypto_smoke.moos": "05f5201eac747f0318dcb5d4db8673082482095f4296217b9ad090bd5cbd57b0",
-      "beispiele/domain/db/bench/scram_e2e_smoke.moos": "9ff067abe5157d6f9b9a677d8b3f051aac780cec00cd43a6856f1428a8e65c95",
-      "beispiele/domain/db/blog_engine.moos": "d83b569e53a6af94266f84d055fbc3fe5bcc5da5bed19b155ef9f4d90cc8950b",
-      "beispiele/domain/db/blog_engine_v2.moos": "9405fb647afc23b56f488408ef92434ebb4f3ae32d5630322ad828d279f60386",
-      "beispiele/domain/db/chat_server_prepared.moos": "ac3ea3a3fbeed1e17515aad2a44ab7104d6fb86f47cee13ac9d70dadd57a9a21",
+      "beispiele/domain/db/bench/scram_e2e_smoke.moos": "5c59d47feb046acf7f5b32bcb607a3e3c23251e53f6d9af4dacd5f3d577c10f2",
+      "beispiele/domain/db/blog_engine.moos": "b31f01c27879b27bd5145dcec0892c0d085b071bba7103b4cf60314940a08149",
+      "beispiele/domain/db/blog_engine_v2.moos": "034d297557713dcdf1a0777971647e3370761e8ace1b335205af88b2fb23037a",
+      "beispiele/domain/db/chat_server_prepared.moos": "c204038e2de22ba935c5e2257975e43c6195cdf7bcf35974ecdb3af09643009b",
       "beispiele/domain/db/mini_db.moos": "3c203e5f0fc7aa9a9966731d278e1545ad3c1a741ff7ae9324e179672bbaa462",
-      "beispiele/domain/db/mini_sql.moos": "f3bf1197fd2ddb2dcfb1fa073f5deeaa2815d04f8e7fb21d60afa68acd33b57b",
-      "beispiele/domain/db/mysql_client.moos": "395331f46e88c311426182d0d94bd9f0a9de5c63f0b078962dedca9462b91756",
-      "beispiele/domain/db/postgres_client.moos": "926a09ff1338fe10fa8915d3df94ef81644cfcc69aa562a84cc1cfb2b8989a5f",
-      "beispiele/domain/db/postgres_client_smoke.moos": "cb85312bcdabc05303c14ffcad1bf2b07176c5e930700b809774ebe16dd5c7df",
-      "beispiele/domain/db/redis_client.moos": "9165ad434846c3faa9f82002540f00dfa8e9a5136f6eeffb00068a03cf0c3efe",
+      "beispiele/domain/db/mini_sql.moos": "2945ccf074b21682e521d0d23ada763601734d4d611f700e1a09db0268ca80a3",
+      "beispiele/domain/db/mysql_client.moos": "03100fbc81fb5090cab7361583bedb8c4d2645399362eb7e3e22d326516cc124",
+      "beispiele/domain/db/postgres_client.moos": "69ba80f43b82242ce082177301fe51ddf5aea180b2a8f23b4c4944e686981705",
+      "beispiele/domain/db/postgres_client_smoke.moos": "799788928601f6468c5c9bdf03423d9352ad28d16a807c2bce7f85c6f18053c3",
+      "beispiele/domain/db/redis_client.moos": "6171ec6b0d75b34678c2acd3d952ef536ff876dcd582e4af46780db160713a6b",
       "beispiele/domain/game/testscreens/test_breakout.moos": "801e827c60b2f846eb2859cceaa0d79598579abaf0123276891670731a4e0e9f",
       "beispiele/domain/game/testscreens/test_match3.moos": "d1b517b36a345eb8fbd3024b7f68bc84a663d18b30735ccbb4692d4489392f13",
       "beispiele/domain/game/testscreens/test_minesweeper.moos": "22ca75078d259c4cd62fe927362174efdacf296ceb7336ab7224e49c364b6544",
@@ -649,16 +647,16 @@
       "beispiele/domain/system/kernel_test_builtins.moos": "287f9306cf95524936ff213805a6f08279c2bcc4afcd402f378e7cb0d0ff7138",
       "beispiele/domain/system/tar_reader.moos": "5fdbba392fe8bdad503af532e53c3745ec2726f92594bedd2327219a34d9c213",
       "beispiele/domain/system/x86dis.moos": "3400af7428ec7504807d8d43e55bc9c0c44996cb5b2797464833c63b2fb2583a",
-      "beispiele/domain/web/http_api.moos": "c77bd8c1195388609d140ab6209a2a8eb843fdc1514a7c271cbc2320e3eb97ee",
-      "beispiele/domain/web/http_api_cors.moos": "e64c9aa1df55c180899fbdc0eb3556b33d7ae513e573e8121b4c7205591f0b50",
-      "beispiele/domain/web/proxy.moos": "2a4532a3fcc621f12ac36185443519d5bfc862729560dbd8b1106554550e931a",
-      "beispiele/domain/web/websocket_server.moos": "9742feb8e5fbb38939b24d7f619253c5c955dd7848db8a2914427932787b8ef9",
+      "beispiele/domain/web/http_api.moos": "9aa2a0aa283f8c81746bda5d9b99ac0d3a5ef78694c43d70582a4a981ccb080a",
+      "beispiele/domain/web/http_api_cors.moos": "410f5f8018d46f0e407477f6141596b212a88dd1f5c5063ce32636b9d49dd7ec",
+      "beispiele/domain/web/proxy.moos": "0749e5847b758c97dc7308987663e129af1972089acc1ee7caab47613eccaed1",
+      "beispiele/domain/web/websocket_server.moos": "1cbc55104b22df5bdff4b4b1f905b21f739cb529a4f6b93ee693ede1415d556a",
       "beispiele/domain/web/wetter_api.moos": "6b9c692612bfb3065381b969ad96f8486c63098a91347ba5f9367fb2bfd406eb",
       "beispiele/doodle_jump.moos": "ee2153aeeac29f2bcf095d6120c871ae8c66452f4bbcd320f7db17c785f58dd0",
       "beispiele/dungeon.moos": "e49f5ceb28a7fbcff911e108ba9fcb39dcd847f3ca474a3003cc8ba583b053d2",
       "beispiele/dungeon_selftest.moos": "bb1c833c699fded3cc71061f442a7bc800d1bc1f16de3789c441abc18b9abd85",
       "beispiele/eval_m6b_mini_lm.moos": "f5ca4e6fde8dc2c976509bf91c19c749474de0c6b0ac4be1648433610bf9a135",
-      "beispiele/eval_m6b_mnist.moos": "0a40194d523893e7ed8b103b75f27acc7cbfa5767551d31c6cc2c46f67357755",
+      "beispiele/eval_m6b_mnist.moos": "e9638ff0a0516848911c85ebbbe83c6a8ac0ec19830104ce4aef6d362a36a0ef",
       "beispiele/eval_q1_hadamard_mini_lm.moos": "7c2635ea7a97983924ed7f82c2ac376e740e6f3176d261da119dc322a5e7682d",
       "beispiele/eval_q2_kv_cache_lm.moos": "43b6d21fa9c42d13e9e7eb8b4cdf2d936ffde5ea5395e47489c817a2293d9131",
       "beispiele/eval_q3_lloyd_max_codebuch.moos": "37c0ac8267d1fed2fb2f48fc07c2b8238dc4189da061d36f91f8225ec52919fb",
@@ -670,11 +668,11 @@
       "beispiele/fighter_selftest.moos": "11b6f0d4d3cd9d396006f3465c3ea756a558d99f60c7e539b60520c100762c78",
       "beispiele/flappy.moos": "1eb2588733df48a683b5d5880df52f3bbb3eab6cef7d26c9278409b0d2e54a35",
       "beispiele/fluxmail/fluxmail_aktionen.moos": "7cc95cd0deb32b5e6f22bd157e46059f4138cd0792fb5ecfa9f0a3af302dcd80",
-      "beispiele/fluxmail/fluxmail_imap.moos": "037f35e69c0f41addfe88fb822dabdfc8ef867170b13119f11c6cacb2f71385c",
+      "beispiele/fluxmail/fluxmail_imap.moos": "5fb5d1daae5fb164b559a6526cc2904e7eb52377d39287b2c9de1d36c8071f3e",
       "beispiele/fluxmail/fluxmail_krypto.moos": "dc9dff823e71dd7fbc5af54103afe54f33d959610d6f19c8baa9bc471baf1dd8",
       "beispiele/fluxmail/fluxmail_modell.moos": "a5e7fc1fc090a2d198eee20afea59d1d36a4dc827763073d429b99fc6f165b4b",
       "beispiele/fluxmail/fluxmail_netz.moos": "896558b04739301e910222a8b49102822522f4c48271b0bb6a51e9ba47f97cb9",
-      "beispiele/fluxmail/fluxmail_smtp.moos": "42d829396b569abd36d72235117f9ce0c3956722fe52ff2953559c1b7ce5babc",
+      "beispiele/fluxmail/fluxmail_smtp.moos": "e8dc7d4dc214c83746f23b16a4b0459c10876c4c76225eb2250e62954a905f34",
       "beispiele/fluxmail/fluxmail_speicher.moos": "7fee4d5f22be9b8ba9984ec2e7bd72ebd66dbbef19c65d147fa725f48a27a63f",
       "beispiele/fluxmail/fluxmail_ui.moos": "013e5b79daa8e58c1740b6a0b7d3a2f77bf88cb40e223b890098e3557b951e21",
       "beispiele/fluxmail/fluxmail_ui_detail.moos": "6488867f64013bc546e6501747e9946c1cd777f83dbb094ff3a09bcebae18a99",
@@ -688,12 +686,12 @@
       "beispiele/gif_encoder.moos": "8af5ec1114a44b1f9a4f6a981482ac2cc10cf027074597754aaaa999e13b6fc9",
       "beispiele/gif_smoke.moos": "e70512f4802a9f0f85ae50a96328b2413d361761298e3d52bafc7d8a651b1fc1",
       "beispiele/golf.moos": "3fab04a9cfeb06ce1b1a3bf961ade6a94f8d89c8340f1104ad53135505efc0d9",
-      "beispiele/grafik/netz3d_gitter.moos": "20c5c815e99f6541d9325066e9bd809686b472e11249027c108c7d1195f53cf9",
+      "beispiele/grafik/netz3d_gitter.moos": "c4e55e8fd6d3dba6b8c23f71018d32b98881256dfa8111682e8bc565c0514d6e",
       "beispiele/grafik_demo.moos": "6f08e637f7ab2edee1656b8d7c8696dc33f59b24cdc63ddb75818e9910b9a8dc",
       "beispiele/gravity_well.moos": "0cb8c0eb1b86409db9cd0b3d15965758e7d062a9847790036f319322e6d305e8",
       "beispiele/helicopter.moos": "c52bb9f0c2e88bb13aeb14d648735da2816215ddd1d702a59775bd6831a93ea9",
       "beispiele/http_https_smoke.moos": "c11959b480cdedf438a55cfcca9ced67246898d06f8d9a940dd32ab57f593dea",
-      "beispiele/http_native_selftest.moos": "a6402f9c7422e47dffa8a4b9972af8d93a5d572e9cebd4299a8d3b27e2ddb734",
+      "beispiele/http_native_selftest.moos": "42686a4283f996da8221223de8e5c5a15bf8a8178e430b9c32658012a6043532",
       "beispiele/invaders.moos": "e324e6815755ca413080625a2695866355629f9abbd540746e6085415f8df308",
       "beispiele/json_schema.moos": "b3dc429118d16122fa68ad0d196ce9b205905a61f286757c756c3ebd0be079f1",
       "beispiele/kernel/arm64_test.moos": "ac9f0f96ffd3a936f6da673bfffe89129901d26e64484b4419d2c62057a938f1",
@@ -703,29 +701,29 @@
       "beispiele/kernel/pf_test.moos": "046e309dd3e5eb2819719d1184dd2b845bc9e70fb2b25f9ce16ffed3b2653fc5",
       "beispiele/kernel/stackprot_test.moos": "6485c43be186b58c5e5faf173a3811ebbe82a54efc4dd7366216889c176ea485",
       "beispiele/kernel/uefi_kern.moos": "2fb8ec71d45b0b1cacf2db1ea00387a6f1b0ebc75b0f75efd127d669b3a4ad98",
-      "beispiele/ki_audio.moos": "0cf50094e622158f8bee19785488bc97fd0d4791af1897834faf5da671b2bcb5",
+      "beispiele/ki_audio.moos": "8452da4d523562e87d2f2a07ab5892fe1d948989ac4f843cbc22210b68c414fe",
       "beispiele/ki_bild_beschreiben.moos": "1f78813f9cfb79e773be73d52615deefcf7596aea928c35eb1ac0d402be86b5e",
       "beispiele/ki_capture_loopback_gate.moos": "9c04f712ed4de449ac8c0f23b984d50eb89da24578da8db79f14c05e94851f67",
       "beispiele/ki_denken.moos": "d835ec81284880afb6740cbe1356efd2771872ee7b3c712ac2bb54294b3dcb81",
       "beispiele/ki_embeddings.moos": "002ac6fa1ec69513979b9e13fa83e4c7e8f65895aec2a9e813aa6d5b7e33d9d7",
       "beispiele/ki_grpo.moos": "c5a51b565e8e0a94a68d614eb2b96abdc3fa57447d462e676661721824d43877",
       "beispiele/ki_kamera_live.moos": "207b8f83d39cb34b87700abd7f063cdc603580c9b4845ae2bf0a989cba2596ea",
-      "beispiele/ki_kinderleicht.moos": "4a8fe5ac1d5c9515ce25197631d56f8294e4f13f090565e8e0a9a16f1e414ea8",
+      "beispiele/ki_kinderleicht.moos": "d671eeee368021a4ccbfb91c4f14790e43f7bee39792d53581afb71b7baeab51",
       "beispiele/ki_mikro_spektrum.moos": "da09e5bc65c6d99f0e3b75c4982a6857dd143b017b60192d9281ea1d65df5c88",
-      "beispiele/ki_mnist.moos": "ebb4378de31f6ae62da066cafda41fa04e7b11b4e1c84f73efb16ca3479a4574",
+      "beispiele/ki_mnist.moos": "0f68017764a7e36064f0244ed0bd6bbb7e3e6dbc0e3cd5c2e36eb359ee58cb8f",
       "beispiele/ki_mnist_conv.moos": "3d15bf55936307497170241140d8ff261d3396e32e32632a40e9c6e1a7e29c55",
-      "beispiele/ki_moe.moos": "d2249cdfd4f62fc4e23e7f70771f17c9e6a7b1cbf6b7f869246b1e0676627036",
+      "beispiele/ki_moe.moos": "5b63dc97de66d2bb47980f1bd7ee87a8205f586d5eefdeec017485aabed35490",
       "beispiele/ki_mtp.moos": "3ad8e4beb55bfbfd7aa12da649ec1175699b197eec14a4a542b42d7313af15c4",
       "beispiele/ki_multimodal.moos": "96cbfdac7ea75e52d14a5782951b093f9297118af244d4d7be1beedd112d0852",
-      "beispiele/ki_multimodal_audio.moos": "dabe0e1b9d1e8a4d3a19ac5a3128c70568abebed8bc35d49b7c8058fd1ea2959",
-      "beispiele/ki_multimodal_farbe.moos": "030d6aef4ef40d07af2266eb89f14cbdb73c1661c6c2c1d25842aa5449cb66ae",
-      "beispiele/ki_multimodal_joint.moos": "ad163806bb968c1e78de1528aed9d7ea0e917343a7f73a3bcd398a8893b48a21",
-      "beispiele/ki_multimodal_vision.moos": "5184bc73201372908df92280c224b889804e1aa0484484d0ccb6f4387d2ea389",
+      "beispiele/ki_multimodal_audio.moos": "03c8850906a35ea9c10b0f74fea7462580123b91becad5a33419690c26ff11f5",
+      "beispiele/ki_multimodal_farbe.moos": "7d10d28111baaaa5e88987724859cf6fbd8686a875ffb3adbf00807e8dea7a98",
+      "beispiele/ki_multimodal_joint.moos": "e0725334c2d33d78e1225f5773f4325c1ed139de4174ddd8c8d003f62b5c62e1",
+      "beispiele/ki_multimodal_vision.moos": "0b02948e4107130c2a3d09edbff16d971ddc35664cec9ae29ee0e99504424655",
       "beispiele/ki_pong_auge.moos": "ebf5e3cd2e97d2f24e5e4803b13888856d34900af76f0bc79cd57755bf1a5e17",
-      "beispiele/ki_safetensors_import.moos": "3c5e9d65e658f13ca18b5d538a75e3790aa4418ae1e80d18c59c0d12a541e9b7",
+      "beispiele/ki_safetensors_import.moos": "9a8253de591b84582a4e2d5d47b91102dad652671537477a29aedb2eb14311c2",
       "beispiele/ki_sprachmodell.moos": "19671ba221d19d56b41acc7bcb8a18bc1e9d774f68a3ab1b9e53d32380624d53",
-      "beispiele/ki_sprachmodell_gpu.moos": "f9496ab631ae8146cefd2e6133e27b86bdb41656b29bc42884d0aab4744837c5",
-      "beispiele/ki_verteilt.moos": "e3f3d4173b337061a2af769e532a7f1e65c84b47360ffe14034dafdf51197707",
+      "beispiele/ki_sprachmodell_gpu.moos": "e33ca823de03cb671f09d2c856bc4a57ba4f76359c8c5a0ab3f9dfc01457c01e",
+      "beispiele/ki_verteilt.moos": "3833de9eb7b9a7ef04b459fe228640eb4b0cf08601c978f21367083a81c86380",
       "beispiele/ki_xor.moos": "11fdc5f09e1fb5402f737c1ac9d8780e682f53f4bbff2e12c4a2009eaee7c110",
       "beispiele/kip/d2_mini_lm.moos": "d659e72fbd92db53ec962fdf4fb9e4454d9f0432d713a5f206e285c53cabe8d2",
       "beispiele/lemmings.moos": "2c5ef0bb04bb4cb25b21ba61cc36b8eefc07db94ea3ebab6a9972cde0305a521",
@@ -743,8 +741,8 @@
       "beispiele/mine_run.moos": "241b9e8a79b36095c8b9bada1171682f18f99b03c476094ee6ac9f669491722b",
       "beispiele/minesweeper.moos": "aaa1c3e5b42648d4003ff134c7650cc3635f525256a3efc50f7243be66563652",
       "beispiele/mini_lisp.moos": "1b5dd5165d3be7d4a7740e2e35eefc5430f0bfe7d62651c0b3a735270e13ef70",
-      "beispiele/mini_redis/mini_redis.moos": "6b767d82b886f7ca089fd2cda12f978c18d3df42ba33ab5aa23f6c3fdec4ed42",
-      "beispiele/mini_redis/test_client.moos": "ac014270b49e8e9b50ac9b7aa984c4df515b3d8f57400873ddf92f0b71fc6221",
+      "beispiele/mini_redis/mini_redis.moos": "ad3c28a14baa568eccb6b979814d539421c3c90ac2a8ea8ec859206d418607c8",
+      "beispiele/mini_redis/test_client.moos": "e4f773751a85b15789176f5d1425e8e2b6e972966b8b5cccc9ff036852cf25e7",
       "beispiele/missile_command.moos": "60d1f723aa5823205c42e344ad6819a7fa7eebe7eb916d25ef975a0ec44975c5",
       "beispiele/moo_aero_csd.moos": "6c09e2399348a30a7b0a8f73114d1b7c7f656d94a1b7cde7b83b2465c589c4fb",
       "beispiele/moo_aero_csd_host.moos": "473c8221de34fd49fc8e9181f8c954e092d9ab51342915607f00beb5352b082b",
@@ -755,7 +753,7 @@
       "beispiele/moo_protokoll/protokoll.moos": "1b073f04861c1d5ad1ede43f67fe501af8fe63f66f3441ec7b2df4398d84368d",
       "beispiele/moo_widgets_host.moos": "8a242369ae2d99ca2fdca56ba3aed6bc9eae54c399c10830ad099115b2a5ea72",
       "beispiele/moos_desktop_demo.moos": "8959bd3bd35191a045eef70688655576e6c13d246b87bd6fd062ce48361bb914",
-      "beispiele/mqtt_broker.moos": "a811d1ea9fc410726b11d30f75dd54a0764a6689e682122aca527d1d09771269",
+      "beispiele/mqtt_broker.moos": "ecf85baf544a2f5c9e4afc5aa987cea37914620913bb1585671b639c22422ff6",
       "beispiele/nativ/01_native_funktionen.moos": "69a73db05fbf0f1a1d9a6edc899117158bdce5edda5f65445cbed5b6010b03ea",
       "beispiele/nativ/02_ganzzahl_semantik.moos": "3854b1f18566d62597dd209a22107fe3563d8a3858c889b881f6f27361ad6ed1",
       "beispiele/nativ/03_casts.moos": "a3ad2c1f1991815d1a4bb56196dc79bec692006d34b2dc33a6ac9a2a626981af",
@@ -769,9 +767,9 @@
       "beispiele/nativ/11_struktur_by_value.moos": "b65df2d1f3cef4b1f6ba5144e83ea3002f0ee374a67c15438746e59bd718e0bc",
       "beispiele/nativ/12_opaker_griff.moos": "575d4939842968a3a2511cd780c6f5f540563a20e9c51724897ddb8bc39d6a2a",
       "beispiele/nativ/13_struktur_dynamisch.moos": "5b9021ca7182dfa3c7b0afe848976f31f4d0c94209fcf9709dfe8389d1d9b02c",
-      "beispiele/netz_foundation_selftest.moos": "b4ba5f8701b2be5eae5aef98a414dc87370e67148643159b0c121ca802cbedb6",
-      "beispiele/netz_frame_selftest.moos": "6dc94ac65db4e13504e73f3e012d3300fbc6f231cc1685a0fc25c8667cded9c4",
-      "beispiele/netz_large_write_selftest.moos": "aa28fe2325e465f2db3adccf784f9a54b6c228a5f76a908cf12039a8f2a9b765",
+      "beispiele/netz_foundation_selftest.moos": "96f159051f9d0182513147bea9a085f2fe465e49ddf6d0c2ce6b61c293be3ba7",
+      "beispiele/netz_frame_selftest.moos": "1c47f6def85bbd3a1848c1c1aefedc540c6b0758129459539ed76f5ee736a927",
+      "beispiele/netz_large_write_selftest.moos": "7c57de42266f0c32d0b9c384af1340de6c1aed28926cec11dd3df1341f24c4a3",
       "beispiele/neuralnet.moos": "dafa1176e8b8f9a3874e0bc4d389e9c240b99034ed62aa655a615ca718f3ed8f",
       "beispiele/p2_bench/builtin.moos": "e82a245be55d3941a8d8bbdba3a0c02f6b912d1a23c051eb4a934670587831b8",
       "beispiele/p2_bench/fuellen.moos": "e5b68a8aff861ebdd55a7ca684f6c54b661c114cc6f3078a68001b76d95fc411",
@@ -781,23 +779,23 @@
       "beispiele/p2_bench/rauschen.moos": "564ed0292cd5e0354256dc2b55c316d744215bff158c76e1355590f9f4136577",
       "beispiele/p2_bench/summe.moos": "1fded1be6a173ce8b41e47f7b3da3c3d7fb303746e606589e00a55891c380220",
       "beispiele/p2_bench/vektor.moos": "8d0723a1b9e1e90884a977bdc6726d51465335891ef37f4d01473df7796335f9",
-      "beispiele/p4_silben/diagnose_paritaet.moos": "842d1e33c4255bb813d824e8cdd6ff5ae523e91925b02d14218b97ad0c9a5b45",
-      "beispiele/p4_silben/diagnose_sil13.moos": "2281fa5ab63b1d10d65aea567a2797ae90d314649be93b8f488ef56af90622f1",
-      "beispiele/p4_silben/encode.moos": "1bafc061e3b8976f723a274808a2bf42c1d71666068c2910bcbe5ab052733ba6",
-      "beispiele/p4_silben/grimm_sil14_36k.moos": "dcb15faf2e0abb6bef3776b3f430b1ccc9533e312219380ad6e5190746c34176",
-      "beispiele/p4_silben/grimm_sil14_checkpoint_eval.moos": "cb40957734a2ca5b4db36a665aa371871337bc52a54e01d9e4901c4af1316f84",
-      "beispiele/p4_silben/grimm_sil14_holdout_eval.moos": "dea74107a09ee68fef2c510712e5e0ccaa83fcbb7224c0d167b34bbc9c6bed11",
-      "beispiele/p4_silben/grimm_sil14_smoke.moos": "03547a59cbe529dd4b27e0a4079890816d116e56a1f985018a2a1f404ba40e54",
-      "beispiele/p4_silben/grimm_sil14_smoke_paritaet.moos": "7ea39f7ef60f1e198218170792d26e068e22db8d7c656c0468f9274bcd4a3ad0",
-      "beispiele/p4_silben/init_model.moos": "5fc8f07c71ce038d319a0d211e978b05d3dc3d0fc74ceff333b262600306421b",
-      "beispiele/p4_silben/logits.moos": "82978227e9e13cae5445f177fe4fe9d9931662ae5614294ac030d389830aef70",
-      "beispiele/p4_silben/logits_batch.moos": "3ba5d7dec4958bf6018ffde72446b1318d8efa49a45275e7d71d97843b632353",
-      "beispiele/p4_silben/train_diagnose.moos": "af7f14c782c263b836e67dafa98c7fa649c24a6568ad53ea8b17c2f3d4a09576",
-      "beispiele/p4_silben/train_paritaet.moos": "0884554545debb53f1a0207fe6a94b24c085d302f397a96fb273ad8ce0b33b6c",
-      "beispiele/p4_silben/train_paritaet_instrumentiert.moos": "2ffc9ccd7190545ddb3c03134c3728bae0d943d8429996cbe1f50c9fe06a69cf",
+      "beispiele/p4_silben/diagnose_paritaet.moos": "a99e58f6b717d4aad6b10d3f91e8948f6adf5578dee5bc3062005ac5ba2f276c",
+      "beispiele/p4_silben/diagnose_sil13.moos": "12bfff5628a8bd30310fa45cf57d034514dd4ca8c6798b7977d78728ad6ec792",
+      "beispiele/p4_silben/encode.moos": "0fe84a78bb5b8efff2ceb4c22b697c3fbb132e7707c1c61f1879570803e95063",
+      "beispiele/p4_silben/grimm_sil14_36k.moos": "8cc083b81708af867d2a40f5fc042af80617d461338381c3cbf4cdba846a3478",
+      "beispiele/p4_silben/grimm_sil14_checkpoint_eval.moos": "549909891d29ea64621c411d6ad3fffa8f623f569e736715aef19ddac267b41c",
+      "beispiele/p4_silben/grimm_sil14_holdout_eval.moos": "ffd95ae950798de5300097bb846d276e3b7477dca496783395e850c342dcaafd",
+      "beispiele/p4_silben/grimm_sil14_smoke.moos": "49a85b396e61c2f5bf4713271017032bb0137e5eab42c4c6e9e5fb9d0ce6b64d",
+      "beispiele/p4_silben/grimm_sil14_smoke_paritaet.moos": "fbbf7401daf5591c776872c0d7c07b4dfcd80e28cfe5d5d25c1de6d65bb589ea",
+      "beispiele/p4_silben/init_model.moos": "d53a3ea71334777c6284ed8252aa5ac41fc67f998406c3991fa2d313d5d488c3",
+      "beispiele/p4_silben/logits.moos": "17ac608fa077cbdec7d4a702d68e63c90142ba46571c407e9b66dceea5174768",
+      "beispiele/p4_silben/logits_batch.moos": "80998a1868ed2878095d87fc0432a7c9be370eb665f8fbdab4703937c7f425c3",
+      "beispiele/p4_silben/train_diagnose.moos": "211c74fc12535c5e8cf3119ef3b4deed9face135c9bba7c804fdec8d367252df",
+      "beispiele/p4_silben/train_paritaet.moos": "21e61a98bcd77f5721a6021ed5aa26664e70634b5b67e0a4168b21d17d9308e0",
+      "beispiele/p4_silben/train_paritaet_instrumentiert.moos": "d159d7977f72db8631c25428ef5c62bdcd9a6b2767688af5344ee998017ea928",
       "beispiele/p4_silben/train_tokenizers.moos": "b194d0ff214fc327a1ba90d2cbc071cf5edbd956638bf24a3408b997583a3ce0",
-      "beispiele/p4_silben/train_window.moos": "ea1ce23e9bf2fe8ddf82d5fd5ca0b4af488d11500f5c1d26505c9b60b88c2654",
-      "beispiele/p4_silben_demo.moos": "32eac8e3f32812f87024984c9114e78731cd69306705d8ba5a1f3d9bbe6d8b85",
+      "beispiele/p4_silben/train_window.moos": "0302786b4d3e7d75ff0d9c8b47dc08c5ae843878162f152baa39461233fabd93",
+      "beispiele/p4_silben_demo.moos": "2f68b66dc0d2c5439e3e64388d220c8a867d22ed90746d2522bcaa3cfb2e8eaa",
       "beispiele/p5/cpu_nur_test.moos": "8339e47cb3777dc3df05168b8e9b79128874ff720ef932705bd45c0c10ce6971",
       "beispiele/p5/distill_dpo_resume.moos": "e4723e3d5c039d0955a13d11e6d4ef02af88ea21eed4bf6e706e9611834021c4",
       "beispiele/p5/distill_dpo_sil14.moos": "b5979a4b2836934583a3f25961a9bec4bd60eb3d5b75edefcc6b98fc21a643f3",
@@ -837,10 +835,8 @@
       "beispiele/p5/train_api_test.moos": "68ed89bcd185f1ce748742a87cd964c97334979d8273b257b9f88c3c8e2ac99b",
       "beispiele/p5/train_orchestrierung.moos": "a5500bcfbf08a65017e7ea17df1c0b8e50784474c0b8da26e673eb815b6dc5a7",
       "beispiele/p5/train_orchestrierung_test.moos": "2cd804886cc9cee6670bb5bae8479965a065e9da7dc7215ec509f74659ba2be0",
-      "beispiele/p6_wissensmix/feintuning_llammlein.moos": "01f220064eb881b97156e3145494a858d47be3587f8ac697eb21a185a9c5b2ed",
       "beispiele/p6_wissensmix/fortsetzung_test.moos": "ecd52b262bf60fcbba38c4f9fe09cac92565f51716bf683011b819bb85c04dc0",
       "beispiele/p6_wissensmix/gpu_paritaet.moos": "65cf9ee08844379cabc9b6442755a1ec7819faf4597634470a8cb334d87a78f2",
-      "beispiele/p6_wissensmix/llammlein_import.moos": "4967d00708a52a6d0860727f10fe30786f12ed7bc70431e3e8c051b9af3df65a",
       "beispiele/p6_wissensmix/messlauf_bpe.moos": "e41c5d7e5a1ba255c8f3e38e6806682c0ec9d2d1470f964088dd545100843455",
       "beispiele/p6_wissensmix/packing_vergleich.moos": "711c0106b444136060487c5cb681f4b1187fe17be2780569be04e195989f1f70",
       "beispiele/p6_wissensmix/parameter_10m.moos": "15249a79384d9656499ddc07d11aa839a2f7c9456b5393e0fbf523cbbca174f6",
@@ -859,10 +855,10 @@
       "beispiele/pipes.moos": "146b15fdcdc48a2953bd9ddff5b643400caaec87e60a47173142b58ef4205e3e",
       "beispiele/pivot.moos": "3a5205f2becceab6d9c537a8e59219ebef0df2d4d3df76d32053311e10ffa527",
       "beispiele/platformer.moos": "442e2d24fe84c2c48f24f42724f18ed489343fd2cec2c65fccce5f31034b14c1",
-      "beispiele/playground/playground.moos": "dcb1e8c65ecfaadb353a737fb336b86ec862a9b9257f5be4c3bf8a56919fd615",
-      "beispiele/playground/playground_server.moos": "27dd9c1494e43e4dbcbb9b668bf89ed3049a7f98640cbc353528b5eb80072448",
-      "beispiele/playground/test_body.moos": "667c2aa190a77275c17e9cf3db1bb6f275370178368095230834be85883622ce",
-      "beispiele/playground/test_web.moos": "9d46ea45756850d3ac09306aa2c081ba1fcdbeffe31ed999f36017e6fb9b0b1b",
+      "beispiele/playground/playground.moos": "4723da90ad41e217077b961081067f0913c60a8f5455f039650d94ea8c223fa8",
+      "beispiele/playground/playground_server.moos": "65a4e980ca35bc66fd8b025a28334fe6b0f55d66a1ffc0c92be59b2b7be30ab6",
+      "beispiele/playground/test_body.moos": "84394801a6a0256c2c9f731cc1bcfb21943b9a31997110b7e6a606799db2fb82",
+      "beispiele/playground/test_web.moos": "d8437853686f801900398c6c0be562d1be8f91ce65eee0c508dae3a8ceba3489",
       "beispiele/png_encoder.moos": "342dd0e74f8ee57dd1b36a926f4a3f9157d3c5b48a4377c665c5c5ca662cd503",
       "beispiele/pong.moos": "1ee9959480dfe95a0bea2c07abafdd2083ff7a52a59d2f73ff23346ae0ecda53",
       "beispiele/pong_plus.moos": "0675a8164f0a12881466cfade5f3dd0fabeeb1ad0a28d071f3b02936e77522a3",
@@ -887,7 +883,7 @@
       "beispiele/sokoban.moos": "9b6d2f21d8d577ebf1b2b85a027139197c563f001d9f7bb75b637e5df8c06210",
       "beispiele/solitaire.moos": "dbe9f8e5702cda5537d8f5a39e0e5ed24ee45554b29bfdfa6561b56ad84bf709",
       "beispiele/space_shooter.moos": "727cdd87366b51fc7af81c58078503360f56431971e282a23b952ca0dccdcdbf",
-      "beispiele/stackvm.moos": "c4240987eb347013fce0f8c105c409c89448b716aace6395227327c366af9a63",
+      "beispiele/stackvm.moos": "29ac570f6f8cf0465a0a1199c87cb74c76c2598d878dc71f90f145664488661f",
       "beispiele/strategie.moos": "f51c72ce2d8c7495da8c485cecde8c0dddb42a234e0d736c8a703ca1d0ba2871",
       "beispiele/sudoku.moos": "0094d625626bfc7e6a2822344bbdc2dd896e085f980ee26c639656ce24ac722b",
       "beispiele/survival.moos": "f4676d5c9fc9d03c68840208e1f673e68c2594b05e33b7b11e2fce03448f612b",
@@ -897,12 +893,12 @@
       "beispiele/td_procgen.moos": "87c965064479d2849624ecadd67d7974b6d5e37c208b10899a88c13bfa4b693b",
       "beispiele/test_api_smoke.moos": "5ddfbd133e9905aaaed46fcb2ec9113da154a3ccebe8ba8844d0b6c353491df3",
       "beispiele/tests/indirect_call_ownership_test.moos": "b428d2de125775a6d0a421aeeb507101730b499ebfff5da30ca4d202a5790d9b",
-      "beispiele/tests/p4_checkpoint_gpu_paritaet.moos": "fe4c7735dd854bfa277e4918167d85a9745c10eda594e468028550b86035e897",
-      "beispiele/tests/p4_identity_negative.moos": "9f088600a97ad3a329a82fdeab3214750d53905d9c5b443425dd5e90ae245417",
+      "beispiele/tests/p4_checkpoint_gpu_paritaet.moos": "bfa733222dd3ac74375959c52b783888d10f947ac950c82182c207706fd8428f",
+      "beispiele/tests/p4_identity_negative.moos": "a82a77351bd37ebb92a5f807b17fca8afe4fde036188b26f51137e91ec20ab12",
       "beispiele/tests/p4_mask_gradient.moos": "11c4fc38238bd0f4675c1de47d469437e13b7df37a42a2f5b2560a3082c345ad",
-      "beispiele/tests/p4_padding_causal.moos": "47c42fd5519c391f0ed46d00b06de9ad88d6c9f0579cf51d31d7c0c54e3ec94c",
-      "beispiele/tests/p4_parser_bpe.moos": "6fade19690a2042e31d816912e4e7a9e60e93e8f011042df513e380fd7cdfc43",
-      "beispiele/tests/p4_tokenizer_api.moos": "b00f7179b29aacaed34446327ecee66d42bf91ca72b6ff95fec1293460549bca",
+      "beispiele/tests/p4_padding_causal.moos": "0270543764714d2e00342e20b0c30d0bc425c5c4234eb48ecd728e02979403f9",
+      "beispiele/tests/p4_parser_bpe.moos": "f819db342732739c7dcd2af757eb3c88bddfab3c1117fd853834740507d5f1ca",
+      "beispiele/tests/p4_tokenizer_api.moos": "552d3dd84fc1bd0eaa081c1f6f73737e6f081fd44f0136350726c94e45ba8062",
       "beispiele/tests/top_level_loop_ownership_test.moos": "9b5745fa44f128468a561315c065a5a7b807ce8348cf99585b74c50810567d68",
       "beispiele/tests/type_of_ownership_test.moos": "6e1a4da7ce14dc30281bdb2a32702c2b421a5c8193273c52c3027113e5d66aa6",
       "beispiele/tests/ui_binding_test.moos": "de8d72549518088a0c885b65156e15eb34da1e30055503e06b2e9c61a41b581c",
@@ -964,7 +960,7 @@
       "beispiele/voxel_sandbox.moos": "be7da7f7b351c437aebe3427b7f8eba15d61a7d456580b3c7b81a451203c364f",
       "beispiele/voxel_sandbox_selftest.moos": "56bd8bd02455863afebc6d0907242473cffc4b515f625756f5442ad73d94fdeb",
       "beispiele/voxel_sandbox_selftest_vulkan.moos": "ad358a03a13569680b0da415101f7fbeb64bd8af02652d140757f50ac2ba03c5",
-      "beispiele/websocket_client_selftest.moos": "6db8b49d0cf45ef464f67af3bd8d847bfb92682a69c220c796d36407a6a6dc36",
+      "beispiele/websocket_client_selftest.moos": "0a2009d8e7ea68cc83c7a92d8ac2aa6c568b359b12becb2fe830b90909904fe8",
       "beispiele/websocket_wss_smoke.moos": "e5738aec24137e3d3965f5c31f27e0b3fbd719f4ad9b3976283233992bf9d254",
       "beispiele/whack.moos": "e7c39aee24e5a33c525523d37bbc5822aadf48249d206e674d3ced6ffe0cb271",
       "beispiele/windows_tls_smoke.moos": "c2c8eb42a1dca4a1da50cd3bfa668e14e2928ae85e2657f5096e68f3441480eb",
@@ -1413,6 +1409,7 @@
       "compiler/tests/p2/negativ_u8_ueberlauf.moos": "62785fc05289127d318779cea7b06ccc9dc6165a943b3f490694192fd534ab72",
       "compiler/tests/p2/netz3d_ohne_fenster.moos": "43eb9b0f7206fc54b46d1636de45cb70e626914d1972708682b2e2a11c904108",
       "compiler/tests/p2/netz3d_szene.moos": "8e17af365f5b75af6534510aa589d17a0db9ddc2abbe13211b4e5e451ddc024e",
+      "compiler/tests/p2/netz_sigpipe.moos": "599214d088a5bb64ad264d75659e98fde733be8da259493dceccfff6e5cf92d1",
       "compiler/tests/p2/nichts_hinzufuegen.moos": "17a5f1ae8290f646a243bcc3cce06f6a1820e34d9a4fff98db036aa5807a59fb",
       "compiler/tests/p2/pin_nach_fehler.moos": "1596948a838236278ca03e8bc823f113bcaf0a5130c425fdf50cee590dbf733d",
       "compiler/tests/p2/positiv_annotationen.moos": "763038039eebf2ef191d43b14394e0e40f78f8f889e8ac0af2abcbd354225a34",
@@ -1551,6 +1548,7 @@
       "compiler/tests/p2/try_flow_nested_caller.moos": "1c85215ae3bb63a638e2c281ec9e693c3cc6f63db88a7d8f7191800a6bd66d33",
       "compiler/tests/p2/try_flow_nested_unhandled.moos": "d9bce00094dc5cd29d5ff11132fc81b61d66209661fa4809aab79e37f3b7dbc4",
       "compiler/tests/p2/try_flow_return_tief.moos": "d59b6db9f219cc175011474ea600cf82d1d148e973a5c75a182787626977b0a1",
+      "compiler/tests/p2/try_flow_sprung_fehler.moos": "72842ebfc3d31f48be3e1c4f1bf18ab8b7503cfbcb316c33f9a620d328471dba",
       "compiler/tests/p2/try_flow_throw_tief.moos": "2f23bceb31a8490174f05e056c911001cbd42847f87d7e62aceb160c807304b7",
       "compiler/tests/p2/try_index_argument.moos": "f21fc7a5086c3ba4681610f177afe9f2036df5a0a266b6965d9d353878cde652",
       "compiler/tests/p2/try_index_binary.moos": "4f93a07cbdc11ee27a6180ff77aca699877a2b819b05f21627551ea29aa041dd",
@@ -1776,8 +1774,8 @@
       "stdlib/liste.moos": "867c17a65e63bacd53d5c93090f1f29da1d7dbd4d13f76d16ddfb0ea31dae52b",
       "stdlib/mathe.moos": "cde2c5bd66e078e8d7c5d5c852e5ac554c0ce14fb4f0fd01d0f6408ac2d74173",
       "stdlib/mini.moos": "c93a02fab67baff0142ba0209e5f092c1bcac5a942d8313b58e087ac0011cc74",
-      "stdlib/netz3d.moos": "ff72683ced2d9cb8e8591cf6e545a1a0c1df3998641c0185a39d9d83fbd24311",
-      "stdlib/netz_frame.moos": "2e613a9a6c89190fdc9f788ae5a399e4f0f3edc8a862d424717096d43132022b",
+      "stdlib/netz3d.moos": "fe7bbeea1b4d7da723d0c831c42c7d7c2a77927a793859c3fe7f9a0be85fe200",
+      "stdlib/netz_frame.moos": "8567e47e3faa198a95a7f05266b5267d1765343738eee55e632f326dca02a477",
       "stdlib/primzahl.moos": "b1d9d13094b34e11be420dd42d1605bbfd28da0e8761e59fca678ac462a77744",
       "stdlib/text.moos": "dedfaa9164b38d4114982aebe42cfa8a68d4a404f496a9e61362e8fc77b043f3",
       "stdlib/ui.moos": "0111007f8d26cca2597c071b0a05309329ee0e5956fe96f2ab9062a9ba5bef66",
@@ -1832,7 +1830,7 @@
   "files": {
     "beispiele/adressbuch.moos": {
       "status": "ok",
-      "sha256": "49daaf075fc7f78c4f685e11e004f168d1ba7b2cf21d50c033cd77a6e774dfc1"
+      "sha256": "db4d703cd4e7fe3389d917ec03df7fe3273d231e96f54a11d845af9e303faf76"
     },
     "beispiele/adventure.moos": {
       "status": "ok",
@@ -1896,7 +1894,7 @@
     },
     "beispiele/chat/chat_server.moos": {
       "status": "ok",
-      "sha256": "4ba95bc44fd3d62fe47b47354ef59812987a1ff3759b4fd5f7c57eb3a6d7f7df"
+      "sha256": "8a991e57f64ff78ca89e0d8887a98a07986797ddf4d14aa7738108cb0bf89bd6"
     },
     "beispiele/city_builder/buildings.moos": {
       "status": "ok",
@@ -1948,35 +1946,35 @@
     },
     "beispiele/domain/db/bench/bench.moos": {
       "status": "ok",
-      "sha256": "8a1af13bf0b42899901c2f4fb6d6b14a0b26c030f0a7c98dc2fd1e9b54843edf"
+      "sha256": "0ee4dc77f0dcf5a159311283219b95d2770b32d1e24b77a8449741357ccfcfb6"
     },
     "beispiele/domain/db/bench/bench_baseline_perfphase.moos": {
       "status": "ok",
-      "sha256": "40469a3999291010fe6165cad27510faef193c83c68e1e048ebe689193fd8ae9"
+      "sha256": "ea9b5cc7276de80406349024d03beb0d0ae1383cfb4faba6d6c6dd5af787800e"
     },
     "beispiele/domain/db/bench/bench_binary.moos": {
       "status": "ok",
-      "sha256": "36c4022b0fb9243f68ebead5a0f37b31a6e053f942bafccb6207b17b8f17181a"
+      "sha256": "f50edff8e00f934b6eff1b0ee686b8d24df9114a8c6d32807dfbec6ff6b81af3"
     },
     "beispiele/domain/db/bench/bench_copy.moos": {
       "status": "ok",
-      "sha256": "bd00005800063cc26d3dc23b5a0bcef30ceb5fb2137524aa2576ab167cd7fcac"
+      "sha256": "505d7552aec32c58b269ffb3a2bb59375ae00d105552aa8661bf7faca104cda8"
     },
     "beispiele/domain/db/bench/bench_pipelining.moos": {
       "status": "ok",
-      "sha256": "4f73c5b564c02483088e826b4a84bcf7c35ee4f3a29c901d53f4804da26bc82e"
+      "sha256": "3bfd15e8ebd28f2f4b33552c218f3f17ef71be89ddc37091be0c56c68dd5f74f"
     },
     "beispiele/domain/db/bench/bench_pool.moos": {
       "status": "ok",
-      "sha256": "2ff4db08a80293e526815f791387b1b5f52d43155b7736c14249256dcc841295"
+      "sha256": "1b81e03e895d0385ad5c3336e479f77e1f0abcce9690c3628aae9b85e13024e6"
     },
     "beispiele/domain/db/bench/bench_prepared.moos": {
       "status": "ok",
-      "sha256": "2559942d96027deb6b8e1da9df5ec64e270365bc31ffb4c14532c10519815c2e"
+      "sha256": "20eea3d00c4b6e086f56dc3becc7354acb0bbe35bf853cf50c1ed2cea29a1faa"
     },
     "beispiele/domain/db/bench/bench_scram.moos": {
       "status": "ok",
-      "sha256": "af7b3b27f0bc5a79840bfabb87a9598f2ea84b2efe3f51c89c59c77dd0cf5f23"
+      "sha256": "429b271097164e66ebdee7517f8d8fd9c5a76762cb0e75a67fbdd53b2fdd8d5b"
     },
     "beispiele/domain/db/bench/multiline_smoke.moos": {
       "status": "ok",
@@ -1984,7 +1982,7 @@
     },
     "beispiele/domain/db/bench/pg_test.moos": {
       "status": "ok",
-      "sha256": "8a74218a81f7c71fe22d12d538bcf8e6dffac6b0448fdb0af52f9273a7a1db3b"
+      "sha256": "0f958e895556c60185ea64c9d09ebbe83f2b8d78c2130d9c0e5ba8c9d7936af1"
     },
     "beispiele/domain/db/bench/scram_crypto_smoke.moos": {
       "status": "ok",
@@ -1992,19 +1990,19 @@
     },
     "beispiele/domain/db/bench/scram_e2e_smoke.moos": {
       "status": "ok",
-      "sha256": "b0b518f2571401ae129aa703292bd45aa79df6fcd9325949edfe0814ac1b0960"
+      "sha256": "9d4de85708fded8a91b00d1f1f077b01edef9bfbb4b90a1e192a2348056818e9"
     },
     "beispiele/domain/db/blog_engine.moos": {
       "status": "ok",
-      "sha256": "37dfd179dacba171a78269389807af835c85d6e8aebb0ff12710a743dcb7bda3"
+      "sha256": "628203852ae82ecd5bd577e254a76720b99ff003ca81484f5fc34708a1c8c2c7"
     },
     "beispiele/domain/db/blog_engine_v2.moos": {
       "status": "ok",
-      "sha256": "5ff54d499bbe47dcc541754483699fab9838cf4765fc0163f7f0369bf906f231"
+      "sha256": "0fda0d88828bc3d194e93a672b53293f34dffa0ac5859b340590382c0c03747a"
     },
     "beispiele/domain/db/chat_server_prepared.moos": {
       "status": "ok",
-      "sha256": "1326077a14f9d523cf47ee3a9082bed766f5a8b67f5e7687746ddf86000c3caf"
+      "sha256": "6e517eb64dbdaea8b5e51d84d49145985c8b42292ac234b212cc4499c892acc4"
     },
     "beispiele/domain/db/mini_db.moos": {
       "status": "ok",
@@ -2012,23 +2010,23 @@
     },
     "beispiele/domain/db/mini_sql.moos": {
       "status": "ok",
-      "sha256": "cb8d00d95518df7f577188a2d22c2507c26667192757d4eefd2f2ff086770676"
+      "sha256": "d6d350691e558745857464508e13790bf65b367887425dbac9ad581f6ae09e58"
     },
     "beispiele/domain/db/mysql_client.moos": {
       "status": "ok",
-      "sha256": "9863df38e5e52b4c3561fe4a503461812903cb129f139a503aa6536ee4eea135"
+      "sha256": "b7ac144ebe059f0d4b36cd2b8576b10b770aaffc9739231e915844e4acc51495"
     },
     "beispiele/domain/db/postgres_client.moos": {
       "status": "ok",
-      "sha256": "a71d64ee5dfb96e1ba2a7d1af53ddd7a78709892ca8a282fe00be7d4e7341871"
+      "sha256": "e7cec382489f74ee74f1cdfc77fdfdf8c2570338ed368b62722dec8b5d60b24d"
     },
     "beispiele/domain/db/postgres_client_smoke.moos": {
       "status": "ok",
-      "sha256": "d723111782a622b7de63cd84485e3f770e4576d7746b432eb26fd537b6016c91"
+      "sha256": "8a3886e9e0974c182ced8b1a44e5b87631b1c0bbb15aa7f128c4943ba4e9da9d"
     },
     "beispiele/domain/db/redis_client.moos": {
       "status": "ok",
-      "sha256": "0e161f664912fea1f24c5fe8402f0bc55a6b3daecdb3368a1e5f7a9c560c3992"
+      "sha256": "cf84dcc7e9aa3ac5f8474e79c2b2ec22ff0c35d74f6cb44507068138c9c50da7"
     },
     "beispiele/domain/game/testscreens/test_breakout.moos": {
       "status": "ok",
@@ -2128,19 +2126,19 @@
     },
     "beispiele/domain/web/http_api.moos": {
       "status": "ok",
-      "sha256": "9f75d305c152316edee21520f65d50f05203fe1945c3fc14653934b0560343c0"
+      "sha256": "8f1d897f6586ced358cd608b285aa0474dc38d74b4c5459000acd87c2fd4236d"
     },
     "beispiele/domain/web/http_api_cors.moos": {
       "status": "ok",
-      "sha256": "e32a5da35174f70071eb70f25eac22f4f2fa50b823de970a8710cd3397c963bd"
+      "sha256": "801270fec2ac05b69f24488786da2c137c34acd1ebc12cdd0d414718383b3fe8"
     },
     "beispiele/domain/web/proxy.moos": {
       "status": "ok",
-      "sha256": "00218f10c4b528150ab0eae8fb58641bbb3f40ef0e789abb2c5016dcff59f842"
+      "sha256": "ed9686006151754992f08d199d9006aa2ecb9f0df66328aa0f6bd7bf2f00afb3"
     },
     "beispiele/domain/web/websocket_server.moos": {
       "status": "ok",
-      "sha256": "97c5f7c8a9963c69f44666dc85cebe1e17261b59f3fabe9dd2d8d28890ba6495"
+      "sha256": "f81f7fc427e699d1d6e8006b4ac5bc4bf9ae2a408494dbb69bdbb2d647e2e07c"
     },
     "beispiele/domain/web/wetter_api.moos": {
       "status": "ok",
@@ -2164,7 +2162,7 @@
     },
     "beispiele/eval_m6b_mnist.moos": {
       "status": "ok",
-      "sha256": "792c8f9ff252905f70d536489f1661a8d13e2d7dbac3a2a68a463395e9c6e46d"
+      "sha256": "d976e26322b6d97a7d77ad54416c6f250ece04794187634fe852c67b2cbdab19"
     },
     "beispiele/eval_q1_hadamard_mini_lm.moos": {
       "status": "ok",
@@ -2212,7 +2210,7 @@
     },
     "beispiele/fluxmail/fluxmail_imap.moos": {
       "status": "ok",
-      "sha256": "2a9c5267519288f541a2651bec5cde5e81ece076c53a00b7659770258718c5de"
+      "sha256": "83c55df3d487a00b5c6f60948f63649389dd43bb25065febd51705a1e38aa32f"
     },
     "beispiele/fluxmail/fluxmail_krypto.moos": {
       "status": "ok",
@@ -2284,7 +2282,7 @@
     },
     "beispiele/grafik/netz3d_gitter.moos": {
       "status": "ok",
-      "sha256": "300e313a8b434ff55492bfe8b3ae44ea8f92463bad233a2b0654847df36afc41"
+      "sha256": "0e137b5b3da9eb644b0fa1b65bfe5ab6b85c9c5cf75cc1725e2c8c61060c8590"
     },
     "beispiele/grafik_demo.moos": {
       "status": "ok",
@@ -2304,7 +2302,7 @@
     },
     "beispiele/http_native_selftest.moos": {
       "status": "ok",
-      "sha256": "b8fb55b93ee24caba51f3ad32e7cd4a42a922d8cf9b615a9cfa60b952ac78861"
+      "sha256": "0dd5f3e07dad7e74168770813e6172b09c5cd394b49f7f9edce241ba31aa3908"
     },
     "beispiele/invaders.moos": {
       "status": "ok",
@@ -2340,11 +2338,11 @@
     },
     "beispiele/kernel/uefi_kern.moos": {
       "status": "ok",
-      "sha256": "9b804e2a728de5d2f96c61d5d152815e8167863c773ab7edf6a56a9cacd55e27"
+      "sha256": "41771ac650e53787f957cf94920509e10efd4250e8723ff30ae0765ddc7fff55"
     },
     "beispiele/ki_audio.moos": {
       "status": "ok",
-      "sha256": "0e9c83270309423b5b2f774dc9f590c67003d5fa09a58cbbec8b7ee97f9984cd"
+      "sha256": "aa9df296355e0beda3da0b7076c5bfc55683ba3bcd11282294b6a6ade1cda5e3"
     },
     "beispiele/ki_bild_beschreiben.moos": {
       "status": "ok",
@@ -2372,7 +2370,7 @@
     },
     "beispiele/ki_kinderleicht.moos": {
       "status": "ok",
-      "sha256": "f9cdc6af88d317960c47f66ea1b8820c8c14e2cc2680d9c84b9e3bfca601668d"
+      "sha256": "00d4a98f2aed57760bfa15bd613e9ba83f95f35bf7721b06592b9df874d7266e"
     },
     "beispiele/ki_mikro_spektrum.moos": {
       "status": "ok",
@@ -2380,7 +2378,7 @@
     },
     "beispiele/ki_mnist.moos": {
       "status": "ok",
-      "sha256": "42a37049041a188343fd8daceec5cefc3dbd50ebf3ccb70dfad43606a9f989c1"
+      "sha256": "af04a729fc5435612940d935b0017b8cb3cbfa085b2ab38bf133bebed5e85d91"
     },
     "beispiele/ki_mnist_conv.moos": {
       "status": "ok",
@@ -2388,7 +2386,7 @@
     },
     "beispiele/ki_moe.moos": {
       "status": "ok",
-      "sha256": "aef28bf0cfe9803c49afa7c1fe114e41989ce86b5a07ec98dcf04a85a87285b7"
+      "sha256": "3f2546f943375c2e383345df30176f0928de3caacd3d45334b548680fd41365a"
     },
     "beispiele/ki_mtp.moos": {
       "status": "ok",
@@ -2400,19 +2398,19 @@
     },
     "beispiele/ki_multimodal_audio.moos": {
       "status": "ok",
-      "sha256": "29d0a47f2a7cfd8959363eee566971bfc12b24178ac6e0c74ff9ed7e40a7f052"
+      "sha256": "79519d742094f8de81273e30d1a529c8f8c81fcb9458d48ff0ceef18d497fdc5"
     },
     "beispiele/ki_multimodal_farbe.moos": {
       "status": "ok",
-      "sha256": "dffcd40bf752e0781b9fdf8bdffbe6b767d54a7d9820e7e9cee2e57e5717fe8a"
+      "sha256": "c68e6c281bd5090ebd106f5da85e542377be2bf62c2f4cfde9a3fd43469f8fc7"
     },
     "beispiele/ki_multimodal_joint.moos": {
       "status": "ok",
-      "sha256": "29a2f6dc6677dfd10b51574c0a9cdd3b65ddc36a4f08d6a3be945341a8aa3ffa"
+      "sha256": "4bca61d8a172a7efeaaea227cdb5ae9f4a8acdebec34f69fa0a2b8c7ad07c6ba"
     },
     "beispiele/ki_multimodal_vision.moos": {
       "status": "ok",
-      "sha256": "a2bf16944fe52c57505e19fe38ee51a2c7c5e13178feb1deb9e9ad5c108a6a95"
+      "sha256": "cf1b1c358358ea828ceaec228cf77a3cf2e35a6ff0b1bb449f6883272084c677"
     },
     "beispiele/ki_pong_auge.moos": {
       "status": "ok",
@@ -2420,7 +2418,7 @@
     },
     "beispiele/ki_safetensors_import.moos": {
       "status": "ok",
-      "sha256": "872f23ee41ce3f58534a7ccbf213c83aa960d688e5c668e630f3299970af0acc"
+      "sha256": "6f78db6c20f9055ac58678b1e9506fad04c74f88afea296c92d4fcabe2648486"
     },
     "beispiele/ki_sprachmodell.moos": {
       "status": "ok",
@@ -2428,11 +2426,11 @@
     },
     "beispiele/ki_sprachmodell_gpu.moos": {
       "status": "ok",
-      "sha256": "cd8bfb0689773012fac8a73357aa22ad9ec6c4f6bb3e80b1c00757a57ada31fa"
+      "sha256": "6ed21c5407cc171ad3b5822a2af81ba92a4e8c913c2430dc4cd50ede496f781a"
     },
     "beispiele/ki_verteilt.moos": {
       "status": "ok",
-      "sha256": "ce102ec75f26b8249e0a8fe8ad7df255bcfda814850326caba0fd6124dc13047"
+      "sha256": "bea423d819f0a39af3dc5050c6277370dc9df28d8214e3b6dcd0260789b2cbe2"
     },
     "beispiele/ki_xor.moos": {
       "status": "ok",
@@ -2504,11 +2502,11 @@
     },
     "beispiele/mini_redis/mini_redis.moos": {
       "status": "ok",
-      "sha256": "87fd67c209eda72e82f9f8aea33eee88acbbeb25648a00d683b2d5941a84dac7"
+      "sha256": "d61423a95d9bab2dce37bb57c6639487048bd0dce5fbec5d9faa3d82461d11f6"
     },
     "beispiele/mini_redis/test_client.moos": {
       "status": "ok",
-      "sha256": "114814197c52496c8013d4be2877be3c4ae54904bfc7244b416dd4fc36d7f960"
+      "sha256": "c414ce2512cfe821b09404830fabaaf4f5a4bef8d596793cee9222dd1876360d"
     },
     "beispiele/missile_command.moos": {
       "status": "ok",
@@ -2552,7 +2550,7 @@
     },
     "beispiele/mqtt_broker.moos": {
       "status": "ok",
-      "sha256": "01b0a613c59809da7fe522ad1f6b9871120df8036358eadd36131cae96ec234b"
+      "sha256": "f19ea0e7bf4536537bd9b3fa18756ed17b2f0ad0719cec871ffb39ee93ce39c3"
     },
     "beispiele/nativ/01_native_funktionen.moos": {
       "status": "ok",
@@ -2564,7 +2562,7 @@
     },
     "beispiele/nativ/03_casts.moos": {
       "status": "ok",
-      "sha256": "b870943621b500c4967101cf37dabd08471b884179bd1d9c55311813f738debb"
+      "sha256": "8c1b208ff7a400cab8798f7f011c4969ed5611c137e915bfed91435288d21905"
     },
     "beispiele/nativ/04_puffer.moos": {
       "status": "ok",
@@ -2576,7 +2574,7 @@
     },
     "beispiele/nativ/06_vec_mat.moos": {
       "status": "ok",
-      "sha256": "d1829d5de784b0a5b98076e3f3e8d5d20ac747c88359b4cf98ffde896031b4ac"
+      "sha256": "a21e766adcffa05420ff1d88393058ce1b655b96a9ab3612004c5687a4501976"
     },
     "beispiele/nativ/07_zeiger.moos": {
       "status": "ok",
@@ -2612,11 +2610,11 @@
     },
     "beispiele/netz_frame_selftest.moos": {
       "status": "ok",
-      "sha256": "2252b7d61532fe5a8dbbacb8507eae25d3450b0ee9c656784a771cc3e4c4acb1"
+      "sha256": "2d27a03a6824c393e525bfe907c94539dce9246180aeb024eb44918ec406217a"
     },
     "beispiele/netz_large_write_selftest.moos": {
       "status": "ok",
-      "sha256": "4eba9be79f95f5eec047ed324ac9a8d05be9d0a1b41faf10ad69bf891ac2fec6"
+      "sha256": "dfd942f9f67ae6ea562b0cdf3a45f2874ae12b89bddf82c8415befce3208e71c"
     },
     "beispiele/neuralnet.moos": {
       "status": "ok",
@@ -2656,59 +2654,59 @@
     },
     "beispiele/p4_silben/diagnose_paritaet.moos": {
       "status": "ok",
-      "sha256": "891b340d6eb530306ca23b57683748d12937aa8a2e6fdc88ce45b3afcdc43eff"
+      "sha256": "851a0f4e70bc0a319128cb3926e1f00d801ee47779c6e1f73ecffc0d1018e6b7"
     },
     "beispiele/p4_silben/diagnose_sil13.moos": {
       "status": "ok",
-      "sha256": "670b996c1a0b9575b730c57fe901241e2e325356129c973201f943b10b252a91"
+      "sha256": "e0ccc5f33afecf731ba40b3a56e9bacd77e761fca89a0c69aeb1baf0829d461c"
     },
     "beispiele/p4_silben/encode.moos": {
       "status": "ok",
-      "sha256": "fc65e1ba3007f4afc44ca785e8b49f140f71dac60cd2273655582cfe1d8ac4ae"
+      "sha256": "9a0882df47ad15b2426f6f7adfb4bfa9829ba698126bd236c5f53c010dafcffc"
     },
     "beispiele/p4_silben/grimm_sil14_36k.moos": {
       "status": "ok",
-      "sha256": "ca237c087f4d9dca1a0414e33ab3cc6ab3e67334f1a64170bd47a89f5fd15565"
+      "sha256": "938f417fe8e97e8a6abf1185dd336bbc8514f86ded25f5d62238148b7698c784"
     },
     "beispiele/p4_silben/grimm_sil14_checkpoint_eval.moos": {
       "status": "ok",
-      "sha256": "335c3b81aa9233f8bf1e1e2cdf4f6e5494ecfdb955c467fbfd2f87bdb4c11984"
+      "sha256": "6b1b701d4d7286118993329648cbf98d9f069d0243048cfb7f6b33ef29a4f4c1"
     },
     "beispiele/p4_silben/grimm_sil14_holdout_eval.moos": {
       "status": "ok",
-      "sha256": "05a9fe00e5bd1e3f45f61e3f705bfafe77a1bb0facfd9a73b19580aa5666a28b"
+      "sha256": "3a0521b01cb31468caf189a31a6ed4bfdb81f3b95705f6827306e4bac4fd2d6c"
     },
     "beispiele/p4_silben/grimm_sil14_smoke.moos": {
       "status": "ok",
-      "sha256": "16e9093aef643818e6bf9cd75a0477f675bd055d061ac7dc4f090a7d95190919"
+      "sha256": "1e988f244b21ebf6639bb720d8ef898c459405549c3f1a9d97ed05478a5c494e"
     },
     "beispiele/p4_silben/grimm_sil14_smoke_paritaet.moos": {
       "status": "ok",
-      "sha256": "c72d0abb02245370cbc509a608fa6eebc15545d9357a6356c8a7223f6340a1a1"
+      "sha256": "43176c102732fb061a8b2f35ad599f0c0a8f6c8f8dbc94ea26890f6f99ae0e7f"
     },
     "beispiele/p4_silben/init_model.moos": {
       "status": "ok",
-      "sha256": "13e1fb25fb3ca8ad3e0d01dd2e34103bf21e9c934bb85b539ebe20b68665aebb"
+      "sha256": "42bd9d04eeb10a6e6bb38f0f6b51940b3bea7a5f1b238be83b9be8cab2698c76"
     },
     "beispiele/p4_silben/logits.moos": {
       "status": "ok",
-      "sha256": "3474f25e1bd7cc7efd91c7756e8ff46836755415386645b3a1607432352f352c"
+      "sha256": "908a78789621a16634cc3ffd30bc900635f0d0e46e3bf52df145740ecaacbf77"
     },
     "beispiele/p4_silben/logits_batch.moos": {
       "status": "ok",
-      "sha256": "92f2a4bbdbd76f716acdf8f1ec3f80d7ef322dc28ce5cb88a35bdc6200093340"
+      "sha256": "b6ec98e8c0ece585fe416563309247eea5cb6a572dbd8b95a21f8852510d41a8"
     },
     "beispiele/p4_silben/train_diagnose.moos": {
       "status": "ok",
-      "sha256": "a9511776d95fde2dc5241472aff369c003261ce4d04a45fa005629b8ea35bdc2"
+      "sha256": "06f1a0a16a61094b0577611dd89d285e4347e3bb44fa01152b8451c264ab427e"
     },
     "beispiele/p4_silben/train_paritaet.moos": {
       "status": "ok",
-      "sha256": "12c31189e536731648f3c4ef1af72060b859560f91988d28b7bc8962848cb367"
+      "sha256": "7884cdf2227cd98f32a0c13c95e12feb6299a25c8fd72e4cea3ef6be08510a9c"
     },
     "beispiele/p4_silben/train_paritaet_instrumentiert.moos": {
       "status": "ok",
-      "sha256": "3bbf365ece2249c82857db6e5d384eb95d26162d5ad48f57da09d622d98bf793"
+      "sha256": "bf81156f36bc51f98563b6322d04582066e31a3acd76523a569bc02011e681d7"
     },
     "beispiele/p4_silben/train_tokenizers.moos": {
       "status": "ok",
@@ -2716,11 +2714,11 @@
     },
     "beispiele/p4_silben/train_window.moos": {
       "status": "ok",
-      "sha256": "b2f88f81a2cc4c2723919d6621fddfb32313e00560b7226e0e745b687ef96ec2"
+      "sha256": "128647ecec210fe7bb64705991fb496b72c9f4239b7bd7c4193e79e544a2b418"
     },
     "beispiele/p4_silben_demo.moos": {
       "status": "ok",
-      "sha256": "e2217d969de37d5a699f00eee15693c5ac1e482b988ba9786f591e9b378f6b15"
+      "sha256": "aeaca80d2ab21d059d6c556cc6fd572f4b05ac56fceb2abcf97bb8f36f1687a2"
     },
     "beispiele/p5/cpu_nur_test.moos": {
       "status": "ok",
@@ -2878,10 +2876,6 @@
       "status": "ok",
       "sha256": "b579f3f38aaffb4565e168113858eec2cbec36fbcdfce09d2c7eceec7031395f"
     },
-    "beispiele/p6_wissensmix/feintuning_llammlein.moos": {
-      "status": "ok",
-      "sha256": "9c1f5da44da70dc4237801e5641437dcca99307a1a69a4264c399bada054d228"
-    },
     "beispiele/p6_wissensmix/fortsetzung_test.moos": {
       "status": "ok",
       "sha256": "289dae2d5a550d4b2f7940e3715d1f647c4080f029895b7d56495166c02bd38f"
@@ -2889,10 +2883,6 @@
     "beispiele/p6_wissensmix/gpu_paritaet.moos": {
       "status": "ok",
       "sha256": "e803667c296366f8c33d11f0862fb7316279f8df460299898bdc74508d611d71"
-    },
-    "beispiele/p6_wissensmix/llammlein_import.moos": {
-      "status": "ok",
-      "sha256": "4a5afd34c739ceb19a5b9188c8658de6d167ee04bb4484ec4275cfb5545d1715"
     },
     "beispiele/p6_wissensmix/messlauf_bpe.moos": {
       "status": "ok",
@@ -2968,19 +2958,19 @@
     },
     "beispiele/playground/playground.moos": {
       "status": "ok",
-      "sha256": "43f9a283e694d307f9074ac4a3dd132ea49859b2343845e548a190c1e0737d2e"
+      "sha256": "8611135a2bffbbcb1ab3bb38c89ee508ec360dab5b866ca25e21deb06ca70e96"
     },
     "beispiele/playground/playground_server.moos": {
       "status": "ok",
-      "sha256": "26cddf50249b8baeebd777501f2f1c720e5df42d8c0fa08754732ec60bf6f830"
+      "sha256": "e0783dbe04254b4313e55ab784310378427b864c0992806f56c22c9840a0bb17"
     },
     "beispiele/playground/test_body.moos": {
       "status": "ok",
-      "sha256": "37a78599aa82874d81e53e55f0181f750dd161ad144bf3bb3d4fafede1dd12bc"
+      "sha256": "9babd7ece465428233a1c57d2ce7ea5912c720db376300fa809688cbd5443f20"
     },
     "beispiele/playground/test_web.moos": {
       "status": "ok",
-      "sha256": "ce4edd7965008e238e01c0ea77041e8b45e7ee37bab17f1a07c2c0df116083fa"
+      "sha256": "3e7386b6e52d660d34520a94466e339af8fc5ae28187d9c1ae84e73a86874ef2"
     },
     "beispiele/png_encoder.moos": {
       "status": "ok",
@@ -3080,7 +3070,7 @@
     },
     "beispiele/stackvm.moos": {
       "status": "ok",
-      "sha256": "01632c497082b92b8af99f3150228ad415381eabc559460480372ea66da2f17a"
+      "sha256": "f357f813836581bf6378fb8b588bc469f9dc3c32dfbe60d2ef6b960bfcbefafd"
     },
     "beispiele/strategie.moos": {
       "status": "ok",
@@ -3120,11 +3110,11 @@
     },
     "beispiele/tests/p4_checkpoint_gpu_paritaet.moos": {
       "status": "ok",
-      "sha256": "22cdc84f8a0fd43b44c4b372cf505f8193822909aadaf8a91ea398a74e6402ed"
+      "sha256": "059b48497eb32327519e0c70945a5cb7ba7317e8c6752f2dfe8880e9280a6c55"
     },
     "beispiele/tests/p4_identity_negative.moos": {
       "status": "ok",
-      "sha256": "0b95e715f1a8ac1e9114022527ec26a1c6c8015d9e3e3cbc92819fdacb824466"
+      "sha256": "0024799a675de34042106afbcbf1129f725c124c2842f14bc1b2c26bf9c67329"
     },
     "beispiele/tests/p4_mask_gradient.moos": {
       "status": "ok",
@@ -3132,15 +3122,15 @@
     },
     "beispiele/tests/p4_padding_causal.moos": {
       "status": "ok",
-      "sha256": "d2a1b8e1d77362cfbb2a93f99fe97061b3215f4e323e71773b1de061f0b6de2d"
+      "sha256": "c2f5e2879526d107f915216afc74459e4f8ffec159bbe1f16d35dbd849d1ddfb"
     },
     "beispiele/tests/p4_parser_bpe.moos": {
       "status": "ok",
-      "sha256": "529717161c0ecbf3389213567b0af2344224bcb6cd8a9f75408b9042b1a6c4c2"
+      "sha256": "d5b5c1c41f8278a219a8a1a211119f613104f98fddc5b6a89b140208f6229721"
     },
     "beispiele/tests/p4_tokenizer_api.moos": {
       "status": "ok",
-      "sha256": "ec2baa77a748a306d9b36fb5784e116ab11d787939d59fba02d82606a97331fd"
+      "sha256": "7e2a9df410031777e8857dbfb69b071f128896b13b54ab744d72a860faa70b97"
     },
     "beispiele/tests/top_level_loop_ownership_test.moos": {
       "status": "ok",
@@ -3388,7 +3378,7 @@
     },
     "beispiele/websocket_client_selftest.moos": {
       "status": "ok",
-      "sha256": "63aa66f6d1a492210dc0a0716fa0c40deb08df7e2df120cd8aa76a6fddd1b974"
+      "sha256": "1b6b1b6d9e0cb2aa8201486261ffaea04c6a4661d7bfb7144253e5511f649659"
     },
     "beispiele/websocket_wss_smoke.moos": {
       "status": "ok",

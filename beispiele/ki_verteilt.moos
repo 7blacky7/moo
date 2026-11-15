@@ -173,34 +173,60 @@ funktion hello_senden(sock):
     nf_put_u32(p, INIT_FP)
     nf_put_u32(p, gesamt)
     nf_put_u32(p, GATE_STEPS)
+    # HINWEIS(P2-T102): Schreibt die Runtime auf eine vom Peer zurueckgesetzte Verbindung, kann der
+    # Prozess bis zur Uebernahme von P2-T102 per SIGPIPE (RC 141) enden statt kontrolliert abzubrechen.
+    # Das Beispiel umgeht das nicht.
     nf_frame_senden(sock, NF_TYP_HELLO, 0, P_ANZ, p)
 
+# Rueckgabe: 1 bei passendem HELLO, 0 bei Mismatch (die Gegenstelle lebt, GATE 3), -1 bei
+# Transportfehler (Empfang fehlgeschlagen, Gegenstelle weg). Ein unbehandeltes wirf bricht den
+# Lauf nicht ab, deshalb melden die Aufrufer den Abbruch selbst.
 funktion hello_pruefen(sock):
-    setze f auf nf_frame_empfangen(sock)
+    setze f auf nichts
+    versuche:
+        setze f auf nf_frame_empfangen(sock)
+    fange fehler:
+        zeige "HELLO: Empfang fehlgeschlagen: " + text(fehler)
+        gib_zurück -1
+    wenn f == nichts:
+        zeige "HELLO: kein Frame empfangen"
+        gib_zurück -1
     wenn f["typ"] != NF_TYP_HELLO:
-        wirf "HELLO erwartet, anderer Frame-Typ"
+        zeige "HELLO erwartet, anderer Frame-Typ"
+        gib_zurück 0
     setze pl auf f["payload"]
     setze fp auf nf_get_u32(pl, 0)
     setze ge auf nf_get_u32(pl, 4)
     setze gs auf nf_get_u32(pl, 8)
     wenn fp != INIT_FP:
         zeige "HELLO-MISMATCH: Modell-Fingerprint unterschiedlich (Seed?)"
-        wirf "HELLO-Fingerprint-Mismatch (GATE 3)"
+        gib_zurück 0
     wenn ge != gesamt oder gs != GATE_STEPS:
-        wirf "HELLO-Mismatch: Param-Anzahl oder Schrittzahl"
+        zeige "HELLO-Mismatch: Param-Anzahl oder Schrittzahl"
+        gib_zurück 0
     zeige "HELLO ok: Fingerprint " + text(INIT_FP) + " uebereinstimmend"
+    gib_zurück 1
 
 # ---- SYNC (GATE 2): Parameter-Fingerprint alle 100 Steps ----
 funktion sync_senden(sock, schritt):
     setze p auf []
     nf_put_u32(p, param_fingerprint())
     nf_put_u32(p, schritt)
+    # HINWEIS(P2-T102): Schreiben auf eine zurueckgesetzte Verbindung kann bis P2-T102 per SIGPIPE
+    # (RC 141) enden; das Beispiel umgeht das nicht.
     nf_frame_senden(sock, NF_TYP_SYNC, schritt, P_ANZ, p)
 
+# Rueckgabe: wahr, wenn ein SYNC-Frame ankam (MATCH oder MISMATCH wird gemeldet), sonst falsch.
 funktion sync_pruefen(sock, schritt):
-    setze f auf nf_frame_empfangen(sock)
+    setze f auf nichts
+    versuche:
+        setze f auf nf_frame_empfangen(sock)
+    fange fehler:
+        zeige "SYNC: Empfang fehlgeschlagen: " + text(fehler)
+        gib_zurück falsch
     wenn f["typ"] != NF_TYP_SYNC:
-        wirf "SYNC erwartet"
+        zeige "SYNC erwartet"
+        gib_zurück falsch
     setze pl auf f["payload"]
     setze fp auf nf_get_u32(pl, 0)
     setze meins auf param_fingerprint()
@@ -208,6 +234,7 @@ funktion sync_pruefen(sock, schritt):
         zeige "GATE2 step " + text(schritt) + " FP=" + text(meins) + " MATCH"
     sonst:
         zeige "GATE2 step " + text(schritt) + " MISMATCH mein=" + text(meins) + " fremd=" + text(fp)
+    gib_zurück wahr
 
 # ============================================================
 # Ein verteilter Schritt (Leader ODER Follower)
@@ -225,17 +252,27 @@ funktion schritt_verteilt(sock, s, ist_leader, opt):
     setze verlust auf v.zu_liste()[0]
     setze g_own auf grad_flach()
 
+    # Der Austausch laeuft in versuche:; bei einem Netz- oder Frame-Fehler gibt es eine Meldung
+    # und die Rueckgabe nichts (die Aufrufer brechen dann ab).
+    # HINWEIS(P2-T102): Schreibt der Austausch auf eine vom Peer zurueckgesetzte Verbindung, kann der
+    # Prozess bis P2-T102 per SIGPIPE (RC 141) enden; das Beispiel umgeht das nicht.
     setze g_remote auf nichts
-    wenn ist_leader == 1:
-        # Leader sendet zuerst, liest danach
-        nf_frame_senden(sock, NF_TYP_GRAD, s, gesamt, nf_f32_liste_zu_payload(g_own))
-        setze fr auf nf_frame_empfangen(sock)
-        setze g_remote auf nf_payload_zu_f32_liste(fr["payload"], gesamt)
-    sonst:
-        # Follower liest zuerst, sendet danach
-        setze fr auf nf_frame_empfangen(sock)
-        setze g_remote auf nf_payload_zu_f32_liste(fr["payload"], gesamt)
-        nf_frame_senden(sock, NF_TYP_GRAD, s, gesamt, nf_f32_liste_zu_payload(g_own))
+    versuche:
+        wenn ist_leader == 1:
+            # Leader sendet zuerst, liest danach
+            nf_frame_senden(sock, NF_TYP_GRAD, s, gesamt, nf_f32_liste_zu_payload(g_own))
+            setze fr auf nf_frame_empfangen(sock)
+            setze g_remote auf nf_payload_zu_f32_liste(fr["payload"], gesamt)
+        sonst:
+            # Follower liest zuerst, sendet danach
+            setze fr auf nf_frame_empfangen(sock)
+            setze g_remote auf nf_payload_zu_f32_liste(fr["payload"], gesamt)
+            nf_frame_senden(sock, NF_TYP_GRAD, s, gesamt, nf_f32_liste_zu_payload(g_own))
+    fange fehler:
+        zeige "Gradientenaustausch Schritt " + text(s) + " fehlgeschlagen: " + text(fehler)
+        gib_zurück nichts
+    wenn g_remote == nichts:
+        gib_zurück nichts
 
     # Kanonische Block-Reihenfolge: block1 zuerst, block2 danach
     setze g_avg auf nichts
@@ -287,7 +324,14 @@ funktion lauf_lokal():
 # ROLLE: Leader (Block 1, sendet zuerst)
 # ============================================================
 funktion lauf_leader():
-    setze srv auf tcp_server(PORT)
+    setze srv auf nichts
+    versuche:
+        setze srv auf tcp_server(PORT)
+    fange fehler:
+        zeige "LEADER: tcp_server auf Port " + text(PORT) + " fehlgeschlagen: " + text(fehler)
+    wenn srv == nichts:
+        zeige "LEADER: kein Server-Socket — Abbruch"
+        gib_zurück
     srv.timeout_setzen(300)
     zeige "ROLLE leader: warte auf Follower an Port " + text(PORT)
     setze sock auf nichts
@@ -302,11 +346,16 @@ funktion lauf_leader():
         gib_zurück
     sock.timeout_setzen(20000)
     hello_senden(sock)
-    hello_pruefen(sock)
+    wenn hello_pruefen(sock) != 1:
+        zeige "LEADER: HELLO fehlgeschlagen — Abbruch"
+        gib_zurück
     setze opt auf optimierer_sgd(params, RATE, 0.0)
     setze s auf 0
     solange s < GATE_STEPS:
         setze verlust auf schritt_verteilt(sock, s, 1, opt)
+        wenn verlust == nichts:
+            zeige "LEADER: Schritt " + text(s) + " fehlgeschlagen — Abbruch"
+            gib_zurück
         zeige "L1BITS " + text(s) + " " + text(nf_f32_bits(verlust))
         wenn ((s + 1) - boden((s + 1) / SYNC_INTERVALL) * SYNC_INTERVALL) == 0:
             sync_senden(sock, s + 1)
@@ -332,15 +381,26 @@ funktion lauf_follower():
         gib_zurück
     sock.timeout_setzen(20000)
     # Rollen-Reihenfolge: Follower liest HELLO zuerst, sendet danach
-    hello_pruefen(sock)
-    hello_senden(sock)
+    setze hello_status auf hello_pruefen(sock)
+    # Bei Transportfehler (-1) wird nichts mehr gesendet (kein Schreiben auf eine tote Verbindung).
+    # Bei Mismatch (0) sendet der Follower sein HELLO noch, damit auch der Leader den Mismatch meldet.
+    wenn hello_status != -1:
+        hello_senden(sock)
+    wenn hello_status != 1:
+        zeige "FOLLOWER: HELLO fehlgeschlagen — Abbruch"
+        gib_zurück
     setze opt auf optimierer_sgd(params, RATE, 0.0)
     setze s auf 0
     solange s < GATE_STEPS:
         setze verlust auf schritt_verteilt(sock, s, 0, opt)
+        wenn verlust == nichts:
+            zeige "FOLLOWER: Schritt " + text(s) + " fehlgeschlagen — Abbruch"
+            gib_zurück
         zeige "F2BITS " + text(s) + " " + text(nf_f32_bits(verlust))
         wenn ((s + 1) - boden((s + 1) / SYNC_INTERVALL) * SYNC_INTERVALL) == 0:
-            sync_pruefen(sock, s + 1)
+            wenn nicht sync_pruefen(sock, s + 1):
+                zeige "FOLLOWER: SYNC fehlgeschlagen — Abbruch"
+                gib_zurück
         setze s auf s + 1
     zeige "FOLLOWER FERTIG"
 

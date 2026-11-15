@@ -5,8 +5,18 @@
 # Gate: >95% Test-Genauigkeit, <5min CPU, seed-reproduzierbar.
 # ============================================================
 zeige "Lade MNIST ..."
-setze training auf mnist_laden("daten/mnist/train")
-setze test auf mnist_laden("daten/mnist/t10k")
+# mnist_laden wirft, wenn die Daten fehlen: Meldung mit Hinweis und normales Ende.
+setze training auf nichts
+setze test auf nichts
+versuche:
+    setze training auf mnist_laden("daten/mnist/train")
+    setze test auf mnist_laden("daten/mnist/t10k")
+fange fehler:
+    zeige "MNIST laden fehlgeschlagen: " + text(fehler)
+    zeige "Vorher ausfuehren: ./skripte/mnist_download.sh"
+wenn training == nichts oder test == nichts:
+    zeige "Beispiel wird beendet."
+    beende(0)
 zeige "Trainingsbilder: " + text(training["bilder"].form())
 zeige "Testbilder:      " + text(test["bilder"].form())
 

@@ -1,0 +1,25 @@
+# P2-T102: Schreiben auf einen Socket, dessen Gegenseite geschlossen ist,
+# wirft einen fangbaren Moo-Fehler statt den Prozess per SIGPIPE zu beenden.
+konstante PORT auf 47251
+
+setze server auf tcp_server(PORT)
+setze client auf tcp_verbinde("127.0.0.1", PORT)
+setze gegenseite auf server.annehmen()
+gegenseite.schliessen()
+
+setze runden auf 0
+setze gefangen auf falsch
+solange runden < 200 und nicht gefangen:
+    setze runden auf runden + 1
+    versuche:
+        client.schreiben("ping\n")
+    fange fehler:
+        zeige "GEFANGEN " + fehler
+        setze gefangen auf wahr
+    schlafe(0.01)
+
+wenn nicht gefangen:
+    zeige "KEIN_FEHLER"
+client.schliessen()
+server.schliessen()
+zeige "ENDE"

@@ -70,7 +70,11 @@ wenn art == "char":
     setze tok auf zeichen_fixed_laden(tokpfad)
     setze info auf zeichen_fixed_info(tok)
 sonst wenn art == "bpe":
-    setze tok auf tokenizer_laden(tokpfad)
+    versuche:
+        setze tok auf tokenizer_laden(tokpfad)
+    fange lade_fehler:
+        zeige "P4: tokenizer_laden fehlgeschlagen: " + lade_fehler
+        beende(1)
     setze info auf tokenizer_info(tok)
 sonst wenn art == "syllable":
     setze tok auf silben_laden(tokpfad)
@@ -104,7 +108,12 @@ setze anfragen auf json_parse(datei_lesen(umgebung("P4_GENERATION_PATH")))
 setze vor auf generiere(alle, anfragen)
 setze parameter_vor auf parameter_beleg(alle)
 checkpoint_speichern({"netz": netz, "opt": opt, "schritt": 0, "global_schritt": 0, "tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"}, ziel)
-setze geladen auf checkpoint_laden(ziel, {"tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"})
+setze geladen auf nichts
+versuche:
+    setze geladen auf checkpoint_laden(ziel, {"tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"})
+fange lade_fehler:
+    zeige "P4: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze neu_schichten auf geladen["netz"]["schichten"]
 setze parameter_nach auf parameter_beleg(neu_schichten)
 setze nach auf generiere(neu_schichten, anfragen)

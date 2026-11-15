@@ -167,6 +167,7 @@ MooValue moo_web_accept(MooValue server) {
     if (MOO_SOCK_BAD(client_fd)) {
         return moo_none();
     }
+    moo_sock_nosigpipe(client_fd);  /* P2-T102 */
 
     // Request lesen
     char buf[8192] = {0};
@@ -212,8 +213,8 @@ MooValue moo_web_respond(MooValue request, MooValue body, MooValue status_code) 
         "\r\n",
         status, status_text, body_len);
 
-    send(client_fd, header, (int)strlen(header), 0);
-    if (body_len > 0) send(client_fd, body_str, body_len, 0);
+    moo_send(client_fd, header, (int)strlen(header), 0);
+    if (body_len > 0) moo_send(client_fd, body_str, body_len, 0);
     moo_closesock(client_fd);
 
     return moo_none();
@@ -240,8 +241,8 @@ MooValue moo_web_json(MooValue request, MooValue data) {
         "\r\n",
         json_len);
 
-    send(client_fd, header, (int)strlen(header), 0);
-    send(client_fd, json_str, json_len, 0);
+    moo_send(client_fd, header, (int)strlen(header), 0);
+    moo_send(client_fd, json_str, json_len, 0);
     moo_closesock(client_fd);
 
     return moo_none();
@@ -277,7 +278,7 @@ MooValue moo_web_file(MooValue request, MooValue filepath) {
     if (filepath.tag != MOO_STRING) {
         // 400 Bad Request
         const char* err = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
-        send(client_fd, err, (int)strlen(err), 0);
+        moo_send(client_fd, err, (int)strlen(err), 0);
     moo_closesock(client_fd);
         return moo_none();
     }
@@ -287,7 +288,7 @@ MooValue moo_web_file(MooValue request, MooValue filepath) {
     // Sicherheit: keine .. im Pfad (Path-Traversal verhindern)
     if (strstr(path, "..")) {
         const char* err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n";
-        send(client_fd, err, (int)strlen(err), 0);
+        moo_send(client_fd, err, (int)strlen(err), 0);
     moo_closesock(client_fd);
         return moo_none();
     }
@@ -295,7 +296,7 @@ MooValue moo_web_file(MooValue request, MooValue filepath) {
     FILE* f = fopen(path, "rb");
     if (!f) {
         const char* err = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\nDatei nicht gefunden";
-        send(client_fd, err, (int)strlen(err), 0);
+        moo_send(client_fd, err, (int)strlen(err), 0);
     moo_closesock(client_fd);
         return moo_none();
     }
@@ -314,13 +315,13 @@ MooValue moo_web_file(MooValue request, MooValue filepath) {
         "Connection: close\r\n"
         "\r\n",
         ctype, size);
-    send(client_fd, header, (int)strlen(header), 0);
+    moo_send(client_fd, header, (int)strlen(header), 0);
 
     // Datei in Chunks senden
     char buf[8192];
     size_t n;
     while ((n = fread(buf, 1, sizeof(buf), f)) > 0) {
-        send(client_fd, buf, (int)n, 0);
+        moo_send(client_fd, buf, (int)n, 0);
     }
     fclose(f);
     moo_closesock(client_fd);
@@ -393,8 +394,8 @@ MooValue moo_web_template(MooValue request, MooValue html, MooValue vars) {
         "Connection: close\r\n"
         "\r\n",
         out_len);
-    send(client_fd, header, (int)strlen(header), 0);
-    send(client_fd, out, out_len, 0);
+    moo_send(client_fd, header, (int)strlen(header), 0);
+    moo_send(client_fd, out, out_len, 0);
     free(out);
     moo_closesock(client_fd);
 
@@ -427,7 +428,7 @@ static void write_extra_headers(moo_sockfd_t client_fd, MooValue headers, bool* 
         const char* vs = (v.tag == MOO_STRING) ? MV_STR(v)->chars : "";
         char line[1024];
         int n = snprintf(line, sizeof(line), "%s: %s\r\n", kn, vs);
-        if (n > 0 && n < (int)sizeof(line)) send(client_fd, line, n, 0);
+        if (n > 0 && n < (int)sizeof(line)) moo_send(client_fd, line, n, 0);
     }
 }
 
@@ -451,7 +452,7 @@ MooValue moo_web_respond_with_headers(MooValue request, MooValue body, MooValue 
 
     char start_line[128];
     int sn = snprintf(start_line, sizeof(start_line), "HTTP/1.1 %d %s\r\n", status, status_text);
-    send(client_fd, start_line, sn, 0);
+    moo_send(client_fd, start_line, sn, 0);
 
     bool seen_ct = false;
     write_extra_headers(client_fd, headers, &seen_ct);
@@ -461,9 +462,9 @@ MooValue moo_web_respond_with_headers(MooValue request, MooValue body, MooValue 
         "%sContent-Length: %d\r\nConnection: close\r\n\r\n",
         seen_ct ? "" : "Content-Type: text/html; charset=utf-8\r\n",
         body_len);
-    send(client_fd, fixed, fn, 0);
+    moo_send(client_fd, fixed, fn, 0);
 
-    if (body_len > 0) send(client_fd, body_str, body_len, 0);
+    if (body_len > 0) moo_send(client_fd, body_str, body_len, 0);
     moo_closesock(client_fd);
     return moo_none();
 }
@@ -487,7 +488,7 @@ MooValue moo_web_json_with_headers(MooValue request, MooValue data, MooValue sta
 
     char start_line[128];
     int sn = snprintf(start_line, sizeof(start_line), "HTTP/1.1 %d %s\r\n", status, status_text);
-    send(client_fd, start_line, sn, 0);
+    moo_send(client_fd, start_line, sn, 0);
 
     bool seen_ct = false;
     write_extra_headers(client_fd, headers, &seen_ct);
@@ -497,9 +498,9 @@ MooValue moo_web_json_with_headers(MooValue request, MooValue data, MooValue sta
         "%sContent-Length: %d\r\nConnection: close\r\n\r\n",
         seen_ct ? "" : "Content-Type: application/json; charset=utf-8\r\n",
         json_len);
-    send(client_fd, fixed, fn, 0);
+    moo_send(client_fd, fixed, fn, 0);
 
-    send(client_fd, json_str, json_len, 0);
+    moo_send(client_fd, json_str, json_len, 0);
     moo_closesock(client_fd);
     return moo_none();
 }

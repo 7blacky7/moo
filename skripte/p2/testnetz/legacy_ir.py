@@ -28,6 +28,13 @@ def normalize_ir(data):
     return text.encode("utf-8")
 
 
+def list_sources():
+    candidates = set((ROOT / "compiler/tests").glob("*.moos")) | set((ROOT / "beispiele").rglob("*.moos"))
+    local_dir = ROOT / "beispiele/p6_wissensmix"
+    return sorted(p for p in candidates if not (p.parent == local_dir and
+                  (p.name.startswith("feintuning_") or p.name.endswith("_import.moos"))))
+
+
 def capture_one(source, compiler, work, timeout, profiles):
     relative = source.relative_to(ROOT).as_posix()
     ir = work / (digest(relative.encode()) + ".ll")
@@ -59,8 +66,7 @@ def main():
     compiler = args.compiler.resolve()
     if not compiler.is_file() or not os.access(compiler, os.X_OK):
         parser.error("compiler binary is missing or not executable")
-    sources = sorted(set((ROOT / "compiler/tests").glob("*.moos")) |
-                     set((ROOT / "beispiele").rglob("*.moos")))
+    sources = list_sources()
     if not sources:
         parser.error("no sources found")
     profiles = {}
@@ -99,8 +105,7 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
             pairs = list(pool.map(lambda p: capture_one(p, compiler, Path(tmp), args.timeout, profiles), sources))
     results = dict(pairs)
-    current_sources = sorted(set((ROOT / "compiler/tests").glob("*.moos")) |
-                             set((ROOT / "beispiele").rglob("*.moos")))
+    current_sources = list_sources()
     drift = (binary_hash != digest(compiler.read_bytes()) or current_sources != sources
              or any(digest(p.read_bytes()) != source_hashes[p.relative_to(ROOT).as_posix()]
                     for p in sources))

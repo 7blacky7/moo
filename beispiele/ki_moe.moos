@@ -79,7 +79,16 @@ zeige "CHECK-C PASS (Vergleichslauf gelaufen)"
 # --- (d) .mook-Roundtrip ---
 autograd_aus()
 netz.speichern("/tmp/moe1.mook")
-setze kopie auf ki_laden("/tmp/moe1.mook")
+# Gate: Schlaegt das Laden fehl, meldet der Check FAIL und das Programm endet mit RC 1.
+setze kopie auf nichts
+versuche:
+    setze kopie auf ki_laden("/tmp/moe1.mook")
+fange fehler:
+    zeige "ki_laden fehlgeschlagen: " + text(fehler)
+wenn kopie == nichts:
+    zeige "CHECK-D FAIL (Laden fehlgeschlagen)"
+    zeige "MOE-GATE ENDE"
+    beende(1)
 kopie.speichern("/tmp/moe2.mook")
 setze v1 auf text(vorwaerts(netz, x).zu_liste())
 setze v2 auf text(vorwaerts(kopie, x).zu_liste())

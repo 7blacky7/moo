@@ -3,7 +3,12 @@ setze pfad auf umgebung("MOO_EVAL_CKPT")
 wenn pfad == nichts:
     wirf "MOO_EVAL_CKPT fehlt"
 setze tok auf silben_laden("beispiele/p4_silben/run_sil14_grimm36k/tokenizer.msf")
-setze z auf checkpoint_laden(pfad, {"tokenizer_version": sha256(tok), "arch_version": "grimm-silben-250k-v1"})
+setze z auf nichts
+versuche:
+    setze z auf checkpoint_laden(pfad, {"tokenizer_version": sha256(tok), "arch_version": "grimm-silben-250k-v1"})
+fange lade_fehler:
+    zeige "SIL-14: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze schichten auf z["netz"]["schichten"]
 wenn länge(schichten) != 14:
     wirf "Schichtanzahl ungueltig"

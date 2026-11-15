@@ -14,6 +14,9 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <unistd.h>
+#include <errno.h>
+#include <pthread.h>
+#include <stdint.h>
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
@@ -22,6 +25,79 @@
 /* Shared TCP-Connect (DNS + optionaler Connect-Timeout) aus moo_net.c. */
 extern intptr_t moo_net_tcp_connect_timeout(const char* host, int port, int timeout_ms,
                                             char* errbuf, int errlen);
+
+/* P2-T102: Der Standard-Socket-BIO von OpenSSL schreibt per write(); auf einem
+ * vom Gegenueber geschlossenen Socket loest das SIGPIPE aus und beendet den
+ * Prozess (RC 141). Eigener Socket-BIO: Schreiben ueber moo_send (send mit
+ * MSG_NOSIGNAL), Lesen ueber recv. Kein Eingriff in Signalmasken oder Handler,
+ * fremde und anstehende SIGPIPE bleiben unberuehrt. Der fd gehoert weiter
+ * OsslConn (ossl_schliesse schliesst ihn); der BIO schliesst nichts. */
+static int moo_bio_write(BIO* b, const char* buf, int len) {
+    int fd = (int)(intptr_t)BIO_get_data(b);
+    BIO_clear_retry_flags(b);
+    if (len <= 0) return 0;
+    moo_ssize_t n = moo_send(fd, buf, (size_t)len, 0);
+    if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) BIO_set_retry_write(b);
+    return (int)n;
+}
+
+static int moo_bio_read(BIO* b, char* buf, int len) {
+    int fd = (int)(intptr_t)BIO_get_data(b);
+    BIO_clear_retry_flags(b);
+    if (len <= 0) return 0;
+    moo_ssize_t n = recv(fd, buf, (size_t)len, 0);
+    if (n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) BIO_set_retry_read(b);
+    return (int)n;
+}
+
+static int moo_bio_puts(BIO* b, const char* text) {
+    size_t laenge = strlen(text);
+    return moo_bio_write(b, text, laenge > (size_t)INT_MAX ? INT_MAX : (int)laenge);
+}
+
+static long moo_bio_ctrl(BIO* b, int cmd, long num, void* ptr) {
+    (void)b; (void)num; (void)ptr;
+    switch (cmd) {
+        case BIO_CTRL_FLUSH: return 1;  /* ungepuffert */
+        case BIO_CTRL_DUP:   return 1;
+        default:             return 0;
+    }
+}
+
+static int moo_bio_create(BIO* b) {
+    BIO_set_data(b, NULL);
+    BIO_set_init(b, 0);
+    return 1;
+}
+
+static int moo_bio_destroy(BIO* b) {
+    return b != NULL;  /* fd schliesst ossl_schliesse */
+}
+
+static BIO_METHOD* moo_bio_methode_wert = NULL;
+static pthread_once_t moo_bio_methode_einmal = PTHREAD_ONCE_INIT;
+
+static void moo_bio_methode_anlegen(void) {
+    BIO_METHOD* m = BIO_meth_new(BIO_get_new_index() | BIO_TYPE_SOURCE_SINK, "moo-socket-nosignal");
+    if (!m) return;
+    if (!BIO_meth_set_write(m, moo_bio_write) || !BIO_meth_set_read(m, moo_bio_read) ||
+        !BIO_meth_set_puts(m, moo_bio_puts) || !BIO_meth_set_ctrl(m, moo_bio_ctrl) ||
+        !BIO_meth_set_create(m, moo_bio_create) || !BIO_meth_set_destroy(m, moo_bio_destroy)) {
+        BIO_meth_free(m);
+        return;
+    }
+    moo_bio_methode_wert = m;
+}
+
+static BIO* moo_bio_neu(int fd) {
+    pthread_once(&moo_bio_methode_einmal, moo_bio_methode_anlegen);
+    if (!moo_bio_methode_wert) return NULL;
+    BIO* b = BIO_new(moo_bio_methode_wert);
+    if (!b) return NULL;
+    BIO_set_data(b, (void*)(intptr_t)fd);
+    BIO_set_init(b, 1);
+    return b;
+}
 
 typedef struct {
     SSL*     ssl;
@@ -55,7 +131,13 @@ static void* ossl_wrap_fd(int fd, const char* host, char* errbuf, int errlen) {
 
     SSL* ssl = SSL_new(ctx);
     if (!ssl) { SSL_CTX_free(ctx); close(fd); ossl_err(errbuf, errlen, "SSL_new fehlgeschlagen"); return NULL; }
-    SSL_set_fd(ssl, fd);
+    BIO* bio = moo_bio_neu(fd);
+    if (!bio) {
+        SSL_free(ssl); SSL_CTX_free(ctx); close(fd);
+        ossl_err(errbuf, errlen, "TLS-Socket-BIO nicht anlegbar");
+        return NULL;
+    }
+    SSL_set_bio(ssl, bio, bio);  /* gleicher BIO lesend/schreibend: eine Referenz */
     SSL_set_tlsext_host_name(ssl, host);                       /* SNI */
     SSL_set_hostflags(ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
     SSL_set1_host(ssl, host);                                  /* Hostname-Verifikation */

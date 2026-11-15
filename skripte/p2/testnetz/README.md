@@ -3,7 +3,7 @@
 Der IR-Runner nutzt das vorhandene Release-Binary, baut nichts und führt keine
 Moo-Programme aus. Der separate Ausgabe-Runner unten führt ausgewählte
 Programme ausdrücklich aus. Der IR-Runner erfasst top-level `compiler/tests/*.moos` und rekursiv
-`beispiele/**/*.moos`. Beispiele benötigen teils Imports oder besondere
+`beispiele/**/*.moos`. Lokale P6-Feintuning- und Importbeispiele sind aus Quell- und Importinventar ausgeschlossen; übrige Beispiele bleiben enthalten. Beispiele benötigen teils Imports oder besondere
 Compiler-Optionen; Fehler und Zeitüberschreitungen werden ausdrücklich im
 Manifest markiert und bewirken Exit 1. Ein identischer Fehler ist kein grünes
 IR-Gate.

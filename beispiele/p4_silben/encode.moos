@@ -10,7 +10,13 @@ setze ids auf nichts
 wenn art == "char":
     setze ids auf zeichen_fixed_kodiere(zeichen_fixed_laden(tokpfad), text)
 sonst wenn art == "bpe":
-    setze ids auf tokenizer_kodiere(tokenizer_laden(tokpfad), text)
+    setze bpe_tok auf nichts
+    versuche:
+        setze bpe_tok auf tokenizer_laden(tokpfad)
+    fange lade_fehler:
+        zeige "P4: tokenizer_laden fehlgeschlagen: " + lade_fehler
+        beende(1)
+    setze ids auf tokenizer_kodiere(bpe_tok, text)
 sonst wenn art == "syllable":
     setze ids auf silben_kodiere(silben_laden(tokpfad), text)
 sonst:

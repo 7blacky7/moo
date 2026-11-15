@@ -4,6 +4,11 @@ ROOT="$(cd "$(dirname "$BASH_SOURCE")/../../.." && pwd)"
 baseline="${1:-$ROOT/skripte/p2/testnetz/legacy-ir-baseline.json}"
 compare="$ROOT/skripte/p2/testnetz/legacy_ir_compare.sh"
 [[ -f "$baseline" ]] || { echo "Baseline missing: $baseline" >&2; exit 2; }
+jq -e '
+  has("batch") and ([keys[] | select(endswith("_batch"))] | length == 0) and
+  ([.files, .source_snapshot.files, .import_snapshot.files] |
+   all(.[] | keys[]; (test("^beispiele/p6_wissensmix/(feintuning_.*|.*_import)\\.moos$") | not)))
+' "$baseline" >/dev/null || { echo "Baseline contains excluded metadata or local examples" >&2; exit 1; }
 mkdir -p "$ROOT/build"
 work="$(mktemp -d "$ROOT/build/.legacy-ir-selftest.XXXXXX")"
 trap 'rm -rf -- "$work"' EXIT

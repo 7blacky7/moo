@@ -9,7 +9,13 @@ wenn tokenizer_dekodiere(a, ids) != text:
     wirf "Parser-Roundtrip"
 setze pfad auf umgebung("P4_PARSER_TOKENIZER_PFAD")
 tokenizer_speichern(a, pfad)
-setze geladen auf tokenizer_laden(pfad)
+# Selftest: Ein nicht ladbarer Tokenizer meldet FAIL und beendet mit RC 1.
+setze geladen auf nichts
+versuche:
+    setze geladen auf tokenizer_laden(pfad)
+fange lade_fehler:
+    zeige "P4 PARSER-BPE FAIL: tokenizer_laden: " + lade_fehler
+    beende(1)
 wenn tokenizer_hash(a) != tokenizer_hash(geladen):
     wirf "Parser-Speichern/Laden"
 wenn tokenizer_dekodiere(geladen, tokenizer_kodiere(geladen, text)) != text:

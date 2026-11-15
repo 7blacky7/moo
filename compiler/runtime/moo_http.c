@@ -417,7 +417,7 @@ static bool http_was_interrupted(void) {
 
 static int http_transport_write(HttpTransport* t, const char* data, int len) {
     if (t->secure) return t->tls_backend->schreibe(t->tls, data, len);
-    return (int)send(t->fd, data, len, 0);
+    return (int)moo_send(t->fd, data, (size_t)len, 0);
 }
 
 static int http_transport_read(HttpTransport* t, char* data, int max) {

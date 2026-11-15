@@ -85,6 +85,11 @@ setze eingabe auf tensor_aus_liste(kurz)
 setze direkt auf vorwaerts_stufen(alle, eingabe)
 checkpoint_speichern({"netz": netz, "opt": opt, "schritt": 3, "global_schritt": 3, "tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"}, ziel)
 setze gesichert auf vorwaerts_stufen(alle, eingabe)
-setze geladen auf checkpoint_laden(ziel, {"tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"})
+setze geladen auf nichts
+versuche:
+    setze geladen auf checkpoint_laden(ziel, {"tokenizer_version": sha256(tok), "arch_version": "p4-gpt2-v1"})
+fange lade_fehler:
+    zeige "P4: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze nach_laden auf vorwaerts_stufen(geladen["netz"]["schichten"], eingabe)
 datei_schreiben(umgebung("P4_DIAG_RESULT"), json_string({"direkt": direkt, "gesichert": gesichert, "geladen": nach_laden, "gpu": gpu}))

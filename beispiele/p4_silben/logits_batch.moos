@@ -9,13 +9,22 @@ setze tok auf nichts
 wenn art == "char":
     setze tok auf zeichen_fixed_laden(tokpfad)
 sonst wenn art == "bpe":
-    setze tok auf tokenizer_laden(tokpfad)
+    versuche:
+        setze tok auf tokenizer_laden(tokpfad)
+    fange lade_fehler:
+        zeige "P4: tokenizer_laden fehlgeschlagen: " + lade_fehler
+        beende(1)
 sonst wenn art == "syllable":
     setze tok auf silben_laden(tokpfad)
 sonst:
     wirf "P4-Batch: unbekannter Tokenizer"
 setze h auf sha256(tok)
-setze geladen auf checkpoint_laden(ckpfad, {"tokenizer_version": h, "arch_version": "p4-gpt2-v1"})
+setze geladen auf nichts
+versuche:
+    setze geladen auf checkpoint_laden(ckpfad, {"tokenizer_version": h, "arch_version": "p4-gpt2-v1"})
+fange lade_fehler:
+    zeige "P4: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze schichten auf geladen["netz"]["schichten"]
 wenn länge(schichten) != 14:
     wirf "P4-Batch: unerwartete Architektur"
