@@ -161,12 +161,14 @@ funktion parse_rdata(buf, off, laenge, typ):
             setze i auf i + 1
         gib_zurück s
     wenn typ == TYP_CNAME oder typ == TYP_NS:
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – lies_name wirft bei abgeschnittenem Paket oder Pointer-Zyklus; ohne versuche beim Aufrufer nur Hinweis und parse_rdata läuft mit einem Teilergebnis weiter (gemessen in dns_selftest, RC 0), mit versuche wird gefangen – ändern: Aufrufer fängt mit versuche:/fange
         setze erg auf lies_name(buf, off)
         gib_zurück erg[0]
     wenn typ == TYP_MX:
         wenn laenge < 3:
             wirf "dns_moo: MX-Record zu kurz"
         setze prio auf lies_be16(buf, off)
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – lies_name wirft bei abgeschnittenem Paket oder Pointer-Zyklus; ohne versuche beim Aufrufer nur Hinweis und parse_rdata läuft mit einem Teilergebnis weiter (gemessen in dns_selftest, RC 0), mit versuche wird gefangen – ändern: Aufrufer fängt mit versuche:/fange
         setze erg auf lies_name(buf, off + 2)
         gib_zurück text(prio) + " " + erg[0]
     wenn typ == TYP_TXT:
@@ -232,6 +234,7 @@ funktion parse_response(buf):
     setze off auf 12
     setze i auf 0
     solange i < r["qdcount"]:
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – lies_name wirft bei abgeschnittenem Paket oder Pointer-Zyklus; ohne versuche beim Aufrufer nur Hinweis und parse_response läuft mit einem Teilergebnis weiter (gemessen in dns_selftest, RC 0), mit versuche wird gefangen – ändern: Aufrufer fängt mit versuche:/fange
         setze erg auf lies_name(buf, off)
         setze off auf erg[1]
         wenn off + 4 > länge(buf):
@@ -241,6 +244,7 @@ funktion parse_response(buf):
     setze antworten auf []
     setze i auf 0
     solange i < r["ancount"]:
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – lies_name wirft bei abgeschnittenem Paket oder Pointer-Zyklus; ohne versuche beim Aufrufer nur Hinweis und parse_response läuft mit einem Teilergebnis weiter (gemessen in dns_selftest, RC 0), mit versuche wird gefangen – ändern: Aufrufer fängt mit versuche:/fange
         setze erg auf lies_name(buf, off)
         setze name auf erg[0]
         setze off auf erg[1]
@@ -253,6 +257,7 @@ funktion parse_response(buf):
         setze off auf off + 10
         wenn off + rdlen > länge(buf):
             wirf "dns_moo: Answer-RDATA abgeschnitten"
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – parse_rdata wirft bei ungültiger Datenlänge (z. B. A-Record nicht 4 Bytes); ohne versuche beim Aufrufer nur Hinweis und parse_response läuft mit einem Teilergebnis weiter (gemessen in dns_selftest, RC 0), mit versuche wird gefangen – ändern: Aufrufer fängt mit versuche:/fange
         setze rdata auf parse_rdata(buf, off, rdlen, typ)
         setze off auf off + rdlen
         setze a auf {}
@@ -318,6 +323,7 @@ klasse DnsResolver:
         setze id auf selbst.next_id
         setze selbst.next_id auf id + 1
         setze query auf baue_query(id, name, qtyp)
+        # FEHLERPFAD(M-F002): bewusst ungeschützt – udp_socket wirft bei Socket- oder Bindefehler; ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft mit nichts weiter (RC 0), mit versuche wird gefangen – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/dns_resolver.moos)
         setze sock auf udp_socket(0)
         sock.timeout_setzen(3000)
         sock.udp_verbinden(selbst.server_host, selbst.server_port)
@@ -326,6 +332,7 @@ klasse DnsResolver:
         sock.schliessen()
         wenn länge(daten) < 12:
             wirf "dns_moo: leere oder zu kurze DNS-Antwort"
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – parse_response wirft bei defektem Paket (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft mit einem Teilergebnis weiter (gemessen in dns_selftest, RC 0), mit versuche wird gefangen – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/dns_selftest.moos)
         setze resp auf parse_response(daten)
         wenn resp["id"] != id:
             wirf "dns_moo: Transaktions-ID stimmt nicht ueberein"
@@ -333,6 +340,7 @@ klasse DnsResolver:
 
     # Englischer Alias (P1-T506)
     funktion resolve(name, qtype):
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – DnsResolver.aufloesen reicht Fehler von Socket und Paketprüfung weiter (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/dns_resolver.moos)
         gib_zurück selbst.aufloesen(name, qtype)
 
 funktion dns_moo_resolver(server_host="1.1.1.1", server_port=53):
@@ -340,6 +348,7 @@ funktion dns_moo_resolver(server_host="1.1.1.1", server_port=53):
 
 funktion dns_moo_aufloesen(name, qtyp=TYP_A, server_host="1.1.1.1", server_port=53):
     setze resolver auf neu DnsResolver(server_host, server_port)
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – DnsResolver.aufloesen reicht Fehler von Socket und Paketprüfung weiter (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/dns_resolver.moos)
     gib_zurück resolver.aufloesen(name, qtyp)
 
 # Englische Namen (P1-T506)
@@ -348,4 +357,5 @@ funktion dns_resolver(server_host="1.1.1.1", server_port=53):
 
 funktion dns_resolve(name, qtype=TYP_A, server_host="1.1.1.1", server_port=53):
     setze resolver auf neu DnsResolver(server_host, server_port)
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – DnsResolver.aufloesen reicht Fehler von Socket und Paketprüfung weiter (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/dns_resolver.moos)
     gib_zurück resolver.aufloesen(name, qtype)

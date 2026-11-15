@@ -58,6 +58,7 @@ klasse BildModell:
         selbst.id_zu_zeichen = tok["id_zu_zeichen"]
 
         # Gelernte Schichten laden (Reihenfolge = cnetz in ki_multimodal.moos).
+        # FEHLERPFAD(M-F002): bewusst ungeschützt – checkpoint_laden wirft, wenn die Datei fehlt, nicht lesbar ist oder ungültigen Inhalt hat (gemessen: fehlende Datei und Textdatei statt Checkpoint werden mit der jeweiligen Meldung gefangen, z. B. „das ist kein .mook/Checkpoint (Kopf kaputt)“); eine Architekturprüfung gibt es NICHT: ein Checkpoint mit anderer Schichtzahl (gemessen: 1 Schicht) wird ohne Fehler akzeptiert und die Felder aus sch[...] bleiben nichts. Ohne versuche beim Aufrufer nur Hinweis und der Konstruktor läuft mit nichts weiter (RC 0) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/ki_bild_beschreiben.moos prüft geladen == falsch); Architektur nur prüfbar über checkpoint_laden(pfad, {"arch_version": ...}) mit gesetzter arch_version
         setze z auf checkpoint_laden(pfad)
         setze sch auf z["netz"]["schichten"]
         selbst.f1 = sch[0]

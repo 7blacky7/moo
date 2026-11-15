@@ -9,7 +9,12 @@ wenn th != "20ef4b48638359a42141de61ff30d38be7f723c7fe8c612506e9d67f59b62eed":
     wirf "Tokenizer geaendert"
 funktion encoder(t):
     gib_zurück silben_kodiere(tok,t)
-setze z auf checkpoint_laden(ck, {"tokenizer_version": th, "arch_version": "grimm-silben-250k-v1"})
+setze z auf nichts
+versuche:
+    setze z auf checkpoint_laden(ck, {"tokenizer_version": th, "arch_version": "grimm-silben-250k-v1"})
+fange lade_fehler:
+    zeige "P5: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze sch auf z["netz"]["schichten"]
 wenn länge(sch) != 14 oder sch[1]["max"] != 64:
     wirf "Architektur falsch"
@@ -66,7 +71,12 @@ für paar in pilot:
         wenn paar["original"] == paar["korrektur"]:
             nicht_bewertbar.hinzufügen(paar["aufgabe_id"])
         sonst:
-            setze p auf praferenz_paar(paar,encoder,64,0)
+            setze p auf nichts
+            versuche:
+                setze p auf praferenz_paar(paar,encoder,64,0)
+            fange lade_fehler:
+                zeige "P5: praferenz_paar fehlgeschlagen: " + lade_fehler
+                beende(1)
             setze c auf nll(p["gewaehlt"])
             setze r auf nll(p["verworfen"])
             logprobs.hinzufügen({"id": paar["aufgabe_id"], "gewaehlt": -c, "verworfen": -r})

@@ -1,0 +1,19 @@
+vec4(x: 1, y: 2, z: 3, w: 4)
+vec4(x: 13, y: 14, z: 15, w: 16)
+dvec4(x: 9, y: 10, z: 11, w: 12)
+9
+0.2
+14
+mat4(s0: vec4(x: 1, y: 2, z: 3, w: 4), s1: vec4(x: -1, y: -2, z: -3, w: -4), s2: vec4(x: 9, y: 10, z: 11, w: 12), s3: vec4(x: 13, y: 14, z: 15, w: 16))
+dmat4(s0: dvec4(x: 1, y: 2, z: 3, w: 5), s1: dvec4(x: 5, y: 6, z: 7, w: 8), s2: dvec4(x: 9, y: 10, z: 11, w: 99.5), s3: dvec4(x: 13, y: 14, z: 15, w: 16))
+vec4(x: 10, y: 2, z: 3, w: 4)
+vec4(x: 34, y: 40, z: 33, w: 36)
+34
+46
+12
+2
+4
+1
+gefangen: Nativer Laufzeitfehler (Division, Shift, Index oder Konversion) in 'spalte'
+gefangen: Nativer Laufzeitfehler (Division, Shift, Index oder Konversion) in 'komponente'
+gefangen: Nativer Laufzeitfehler (Division, Shift, Index oder Konversion) in 'element'

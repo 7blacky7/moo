@@ -17,7 +17,12 @@ checkpoint_speichern({"netz": sch, "opt": res["opt"], "schritt": 3}, pfad)
 setze cfg["opt"] auf res["opt"]
 setze cfg["schritte"] auf 1
 trainiere_distillation(vor,dist_daten,cfg)
-setze laden auf checkpoint_laden(pfad,{})
+setze laden auf nichts
+versuche:
+    setze laden auf checkpoint_laden(pfad,{})
+fange lade_fehler:
+    zeige "P5: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze sch2 auf laden["netz"]["schichten"]
 setze par2 auf parameter(sch2)
 setze cfg2 auf {"tokenizer_id": "test", "sequenzlaenge": 4, "vokab": 4, "params": par2, "opt": laden["opt"], "schritte": 1, "temperatur": 2, "alpha": 0.7}
@@ -49,7 +54,12 @@ checkpoint_speichern({"netz": pol, "opt": pr["opt"], "schritt": 3}, ppfad)
 setze pcfg["opt"] auf pr["opt"]
 setze pcfg["schritte"] auf 1
 trainiere_praeferenzen(pf,paare,pcfg)
-setze pladen auf checkpoint_laden(ppfad,{})
+setze pladen auf nichts
+versuche:
+    setze pladen auf checkpoint_laden(ppfad,{})
+fange lade_fehler:
+    zeige "P5: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze pol2 auf pladen["netz"]["schichten"]
 setze pp2 auf parameter(pol2)
 setze pcfg2 auf {"tokenizer_id": "test", "sequenzlaenge": 4, "vokab": 4, "params": pp2, "referenz_params": rp, "referenz_forward": rf, "opt": pladen["opt"], "schritte": 1, "beta": 0.7}

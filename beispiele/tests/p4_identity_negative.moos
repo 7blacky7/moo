@@ -4,11 +4,14 @@ setze original auf silben_laden(dir + "/original.msf")
 setze umgeordnet auf silben_laden(dir + "/reordered.msf")
 setze regel auf silben_laden(dir + "/rules.msf")
 wenn silben_info(original)["vokab"] != silben_info(umgeordnet)["vokab"] oder silben_info(original)["vokab"] != silben_info(regel)["vokab"]:
-    wirf "Vokabulargrößen unterscheiden sich"
+    zeige "Vokabulargrößen unterscheiden sich"
+    beende(1)
 wenn silben_hash(original) == silben_hash(umgeordnet) oder silben_hash(original) == silben_hash(regel):
-    wirf "Identität unterscheidet sich nicht"
+    zeige "Identität unterscheidet sich nicht"
+    beende(1)
 wenn silben_kodiere(original, "Zucker").zu_liste()[0] == silben_kodiere(umgeordnet, "Zucker").zu_liste()[0]:
-    wirf "Tokenzuordnung unverändert"
+    zeige "Tokenzuordnung unverändert"
+    beende(1)
 setze n auf ki_netz([schicht_embedding(260, 8, 1), schicht_dicht(8, 260, "keine", 2)])
 setze ck auf dir + "/model.mook"
 checkpoint_speichern({"netz": n, "schritt": 0, "tokenizer_version": silben_hash(original), "arch_version": "identity-test"}, ck)
@@ -25,7 +28,8 @@ für anders in [umgeordnet, regel]:
     fange fehler:
         setze abgelehnt auf wahr
     wenn nicht abgelehnt:
-        wirf "Fremde Tokenizeridentität akzeptiert"
+        zeige "Fremde Tokenizeridentität akzeptiert"
+        beende(1)
 für datei in ["version.msf", "truncated.msf"]:
     setze abgelehnt auf falsch
     versuche:
@@ -33,5 +37,6 @@ für datei in ["version.msf", "truncated.msf"]:
     fange fehler:
         setze abgelehnt auf wahr
     wenn nicht abgelehnt:
-        wirf "Ungültiges Artefakt akzeptiert"
+        zeige "Ungültiges Artefakt akzeptiert"
+        beende(1)
 zeige "P4 IDENTITY OK"

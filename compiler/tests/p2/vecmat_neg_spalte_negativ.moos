@@ -1,0 +1,6 @@
+# P2-T89 C (Review c7eddc37): m[-1] ist ein konstanter Index ausserhalb (M-M001), kein u64-Literalfehler.
+@nativ
+funktion f(m: mat4) -> vec4:
+    gib_zurück m[-1]
+
+zeige f(mat4())

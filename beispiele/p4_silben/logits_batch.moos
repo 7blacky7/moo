@@ -4,7 +4,8 @@ setze tokpfad auf umgebung("P4_TOKENIZER_PATH")
 setze ckpfad auf umgebung("P4_CHECKPOINT")
 setze anfragenpfad auf umgebung("P4_REQUESTS_PATH")
 wenn art == nichts oder tokpfad == nichts oder ckpfad == nichts oder anfragenpfad == nichts:
-    wirf "P4-Batch: Umgebungsvariablen fehlen"
+    zeige "P4-Batch: Umgebungsvariablen fehlen"
+    beende(1)
 setze tok auf nichts
 wenn art == "char":
     setze tok auf zeichen_fixed_laden(tokpfad)
@@ -17,7 +18,8 @@ sonst wenn art == "bpe":
 sonst wenn art == "syllable":
     setze tok auf silben_laden(tokpfad)
 sonst:
-    wirf "P4-Batch: unbekannter Tokenizer"
+    zeige "P4-Batch: unbekannter Tokenizer"
+    beende(1)
 setze h auf sha256(tok)
 setze geladen auf nichts
 versuche:
@@ -27,10 +29,12 @@ fange lade_fehler:
     beende(1)
 setze schichten auf geladen["netz"]["schichten"]
 wenn länge(schichten) != 14:
-    wirf "P4-Batch: unerwartete Architektur"
+    zeige "P4-Batch: unerwartete Architektur"
+    beende(1)
 setze anfragen auf json_parse(datei_lesen(anfragenpfad))
 wenn länge(anfragen) < 1 oder länge(anfragen) > 32:
-    wirf "P4-Batch: ungültige Anfragezahl"
+    zeige "P4-Batch: ungültige Anfragezahl"
+    beende(1)
 setze ergebnisse auf []
 autograd_aus()
 für anfrage in anfragen:
@@ -42,7 +46,8 @@ für anfrage in anfragen:
     für id in prefix:
         kontext.hinzufügen(id)
     wenn länge(kontext) == 0:
-        wirf "P4-Batch: abgeschnittenes Fenster ohne Kontext"
+        zeige "P4-Batch: abgeschnittenes Fenster ohne Kontext"
+        beende(1)
     setze x auf vorwaerts([schichten[0]], tensor_aus_liste(kontext))
     setze x auf vorwaerts([schichten[1]], x)
     setze x auf x + vorwaerts([schichten[2], schichten[3]], x)

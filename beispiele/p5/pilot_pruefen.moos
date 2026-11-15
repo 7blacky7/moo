@@ -11,7 +11,12 @@ setze geprueft auf 0
 für eintrag in daten["beispiele"]:
     wenn eintrag["akzeptiert"] != wahr oder eintrag["herkunft"]["tokenizer_id"] != tokhash:
         wirf "Pilot: ungeprueftes Paar oder Tokenizerkonflikt"
-    setze fenster auf korrektur_fenster_aufteilen(eintrag, kodierer, 64, 0)
+    setze fenster auf nichts
+    versuche:
+        setze fenster auf korrektur_fenster_aufteilen(eintrag, kodierer, 64, 0)
+    fange lade_fehler:
+        zeige "P5: korrektur_fenster_aufteilen fehlgeschlagen: " + lade_fehler
+        beende(1)
     setze promptzahl auf kodierer(eintrag["herkunft"]["prompt"]).groesse()
     setze zielzahl auf kodierer(eintrag["korrektur"]).groesse()
     setze gesehen auf []

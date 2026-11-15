@@ -185,6 +185,7 @@ solange k < länge(direkt):
     setze k auf k + 1
 zeige "RELOAD_MAX_DIFF " + text(maximum)
 wenn maximum > 0.0001:
-    wirf "GPU und Reload stimmen nicht hinreichend ueberein"
+    zeige "GPU und Reload stimmen nicht hinreichend ueberein"
+    beende(1)
 zeige "FINISHED"
 zeige gpu_statistik()

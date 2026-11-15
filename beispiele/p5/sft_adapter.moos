@@ -35,6 +35,7 @@ funktion korrektur_fenster(paar, encoder, sequenzlaenge, pad):
     wenn paar["akzeptiert"] != wahr oder paar["aufgabe"] == "" oder paar["original"] == "" oder paar["korrektur"] == "" oder paar["begruendung"] == "":
         wirf "Korrektur-Adapter: nur begruendete gepruefte Paare"
     setze prompt auf paar["aufgabe"] + "\n" + paar["original"] + "\n"
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – sft_fenster wirft bei ungültigen Längen oder Tokenbezug; ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft mit nichts weiter (RC 0), die p5-Adapter und -Tests rufen korrektur_fenster in versuche: auf und enden bei Fehler mit RC 1 – ändern: Aufrufer fängt mit versuche:/fange
     setze fenster auf sft_fenster(encoder(prompt).zu_liste(), encoder(paar["korrektur"]).zu_liste(), sequenzlaenge, pad)
     setze fenster["akzeptiert"] auf wahr
     setze fenster["aufgabe"] auf paar["aufgabe"]

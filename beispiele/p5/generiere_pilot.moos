@@ -2,7 +2,12 @@
 # Keine Modell-/Tokenizeraenderung; Datensaetze werden vom Lehrer separat geprueft.
 setze tok auf silben_laden("beispiele/p4_silben/run_sil14_grimm36k/tokenizer.msf")
 setze ckpfad auf "beispiele/p4_silben/run_sil14_grimm36k/full.mook"
-setze zustand auf checkpoint_laden(ckpfad, {"tokenizer_version": sha256(tok), "arch_version": "grimm-silben-250k-v1"})
+setze zustand auf nichts
+versuche:
+    setze zustand auf checkpoint_laden(ckpfad, {"tokenizer_version": sha256(tok), "arch_version": "grimm-silben-250k-v1"})
+fange lade_fehler:
+    zeige "P5: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze schichten auf zustand["netz"]["schichten"]
 funktion vorlauf(ids):
     setze x auf vorwaerts([schichten[0]], ids)

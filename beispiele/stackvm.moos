@@ -106,7 +106,7 @@ funktion parse_one(tokens, state):
     wenn tk == "(":
         setze items auf []
         solange state["pos"] < tokens.länge() und tokens[state["pos"]] != ")":
-            # FEHLERPFAD(M-F001): bewusst ungeschützt – parse_one wirft bei Syntaxfehler (fehlende Klammer, unerwartetes Ende) und der Parser läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode – ändern: parse nur innerhalb von versuche:/fange aufrufen
+            # FEHLERPFAD(M-F001): bewusst ungeschützt – parse_one wirft bei Syntaxfehler (fehlende Klammer, unerwartetes Ende) und der Parser läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode – ändern: parse nur innerhalb von versuche:/fange aufrufen
             items.hinzufügen(parse_one(tokens, state))
         wenn state["pos"] >= tokens.länge():
             wirf "Fehlende )"
@@ -131,7 +131,7 @@ funktion parse(src):
     state["pos"] = 0
     setze roots auf []
     solange state["pos"] < tokens.länge():
-        # FEHLERPFAD(M-F001): bewusst ungeschützt – parse_one wirft bei Syntaxfehler (fehlende Klammer, unerwartetes Ende) und der Parser läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode – ändern: parse nur innerhalb von versuche:/fange aufrufen
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – parse_one wirft bei Syntaxfehler (fehlende Klammer, unerwartetes Ende) und der Parser läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode – ändern: parse nur innerhalb von versuche:/fange aufrufen
         roots.hinzufügen(parse_one(tokens, state))
     gib_zurück roots
 
@@ -218,9 +218,9 @@ funktion compile_expr(ctx, node, locals):
     setze op auf head["v"]
 
     wenn op == "+" oder op == "-" oder op == "*" oder op == "/" oder op == "<" oder op == ">" oder op == "=":
-        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
         compile_expr(ctx, kinder[1], locals)
-        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
         compile_expr(ctx, kinder[2], locals)
         wenn op == "+":
             emit_byte(ctx, 0x03)
@@ -241,7 +241,7 @@ funktion compile_expr(ctx, node, locals):
     wenn op == "set":
         setze name auf kinder[1]["v"]
         setze s auf slot_fuer(locals, name)
-        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
         compile_expr(ctx, kinder[2], locals)
         emit_byte(ctx, 0x0B)
         emit_byte(ctx, s)
@@ -251,7 +251,7 @@ funktion compile_expr(ctx, node, locals):
         gib_zurück nichts
 
     wenn op == "print":
-        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
         compile_expr(ctx, kinder[1], locals)
         emit_byte(ctx, 0x10)
         emit_byte(ctx, 0x01)
@@ -259,19 +259,19 @@ funktion compile_expr(ctx, node, locals):
         gib_zurück nichts
 
     wenn op == "if":
-        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
         compile_expr(ctx, kinder[1], locals)
         emit_byte(ctx, 0x0D)
         setze jmpz_pos auf ctx["code"].länge()
         emit_s16be(ctx, 0)
-        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
         compile_expr(ctx, kinder[2], locals)
         emit_byte(ctx, 0x0C)
         setze jmp_pos auf ctx["code"].länge()
         emit_s16be(ctx, 0)
         setze else_start auf ctx["code"].länge()
         patch_s16_at(ctx, jmpz_pos, else_start - jmpz_pos - 2)
-        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
         compile_expr(ctx, kinder[3], locals)
         setze nach_else auf ctx["code"].länge()
         patch_s16_at(ctx, jmp_pos, nach_else - jmp_pos - 2)
@@ -279,12 +279,12 @@ funktion compile_expr(ctx, node, locals):
 
     wenn op == "while":
         setze loop_start auf ctx["code"].länge()
-        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
         compile_expr(ctx, kinder[1], locals)
         emit_byte(ctx, 0x0D)
         setze jmpz_pos auf ctx["code"].länge()
         emit_s16be(ctx, 0)
-        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
         compile_expr(ctx, kinder[2], locals)
         emit_byte(ctx, 0x02)  # POP result
         emit_byte(ctx, 0x0C)
@@ -302,7 +302,7 @@ funktion compile_expr(ctx, node, locals):
         setze i auf 1
         setze m auf kinder.länge()
         solange i < m:
-            # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
+            # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
             compile_expr(ctx, kinder[i], locals)
             wenn i + 1 < m:
                 emit_byte(ctx, 0x02)  # pop alle ausser letztem
@@ -313,7 +313,7 @@ funktion compile_expr(ctx, node, locals):
     # Push args in Reihenfolge, dann CALL
     setze i auf 1
     solange i < kinder.länge():
-        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
         compile_expr(ctx, kinder[i], locals)
         setze i auf i + 1
     setze argc auf kinder.länge() - 1
@@ -347,7 +347,7 @@ funktion compile_fun(ctx, node):
     f["params"] = params.länge()
     ctx["funcs"][name] = f
 
-    # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
     compile_expr(ctx, body, locals)
     emit_byte(ctx, 0x0F)  # RET
 
@@ -368,7 +368,7 @@ funktion compile_programm(src):
     solange i < trees.länge():
         setze t auf trees[i]
         wenn t["typ"] == "list" und t["v"].länge() > 0 und t["v"][0]["typ"] == "sym" und t["v"][0]["v"] == "fun":
-            # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_fun reicht Fehler aus compile_expr weiter und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
+            # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_fun reicht Fehler aus compile_expr weiter und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
             compile_fun(ctx, t)
         sonst:
             main_trees.hinzufügen(t)
@@ -380,7 +380,7 @@ funktion compile_programm(src):
     setze main_locals auf {}
     setze i auf 0
     solange i < main_trees.länge():
-        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung, Test übersprungen; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – compile_expr wirft bei Syntaxfehler oder unbekannter Funktion und der Compiler läuft danach weiter; der Fehler erreicht das versuche in run_programm (Meldung und RC 1; gemessen), ohne versuche nur Hinweis und unvollständiger Bytecode (die VM hängt) – ändern: compile_programm nur innerhalb von versuche:/fange aufrufen
         compile_expr(ctx, main_trees[i], main_locals)
         emit_byte(ctx, 0x02)  # pop jedes top-level result
         setze i auf i + 1
@@ -532,8 +532,8 @@ funktion vm_run(code):
 funktion run_programm(quelle, label):
     zeige ""
     zeige "--- " + label + " ---"
-    # Compilerfehler (Syntax, unbekannte Funktion) werden hier gefangen: Meldung und Test
-    # uebersprungen. Ohne das lief die VM mit unvollstaendigem Bytecode weiter und hing endlos.
+    # Compilerfehler (Syntax, unbekannte Funktion) werden hier gefangen: Meldung und Abbruch mit
+    # RC 1 (P2-T103). Ohne das lief die VM mit unvollstaendigem Bytecode weiter und hing endlos.
     setze code auf nichts
     setze kompiliert auf wahr
     versuche:
@@ -542,8 +542,8 @@ funktion run_programm(quelle, label):
         setze kompiliert auf falsch
         zeige "  Compiler-Fehler: " + text(fehler)
     wenn nicht kompiliert:
-        zeige "  (kein Bytecode, Test uebersprungen)"
-        gib_zurück nichts
+        zeige "  FEHLER: kein Bytecode, Abbruch"
+        beende(1)
     zeige "  Bytecode: " + text(code.länge()) + " bytes"
     setze stack auf vm_run(code)
     wenn stack.länge() > 0:

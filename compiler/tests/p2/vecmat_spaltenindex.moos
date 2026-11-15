@@ -1,0 +1,118 @@
+# P2-T89 C: Spaltenindex m[i] (mat4/dmat4 -> vec4/dvec4) und Komponentenindex
+# v[i] (vecN/dvecN -> f32/f64), lesend und als Zuweisungsziel, konstant und
+# zur Laufzeit; Index ausserhalb fangbar (trap_block, wie feste Arrays).
+# Review c7eddc37: auch auf Zwischenwerten in rein skalaren Funktionen.
+struktur Kamera:
+    sicht: mat4
+    ort: dvec3
+
+@nativ
+funktion spalte(m: mat4, i: u64) -> vec4:
+    gib_zurück m[i]
+
+@nativ
+funktion dspalte(m: dmat4, i: u64) -> dvec4:
+    gib_zurück m[i]
+
+@nativ
+funktion komponente(v: vec3, i: u64) -> f32:
+    gib_zurück v[i]
+
+@nativ
+funktion dkomponente(v: dvec2, i: u64) -> f64:
+    gib_zurück v[i]
+
+@nativ
+funktion element(m: dmat4, i: u64, j: u64) -> f64:
+    gib_zurück m[i][j]
+
+@nativ
+funktion setze_spalte(m: mat4, i: u64, s: vec4) -> mat4:
+    setze k: mat4 auf m
+    k[i] = s
+    gib_zurück k
+
+@nativ
+funktion setze_element(m: dmat4, i: u64, j: u64, x: f64) -> dmat4:
+    setze k: dmat4 auf m
+    k[i][j] = x
+    k[0].w = k[0].w + 1.0
+    gib_zurück k
+
+@nativ
+funktion setze_komponente(v: vec4, i: u64, x: f32) -> vec4:
+    setze w: vec4 auf v
+    w[i] = x
+    gib_zurück w
+
+@nativ
+funktion konstant(m: mat4) -> vec4:
+    gib_zurück m[0] + m[3] * 2.0 + vec4(m[1][2], m[2].y, 0.0, 0.0)
+
+@nativ
+funktion spur(m: dmat4) -> f64:
+    setze s: f64 auf 0.0
+    setze i: u64 auf 0
+    solange i < 4:
+        setze s auf s + m[i][i]
+        setze i auf i + 1
+    gib_zurück s
+
+@nativ
+funktion feld(k: Kamera) -> f64:
+    setze r: Kamera auf k
+    r.sicht[1][1] = 42.0
+    r.ort[2] = r.ort[0] + r.ort[1]
+    gib_zurück als(f64, r.sicht[1].y) + r.ort[2]
+
+@nativ
+funktion lokales_array(i: u64) -> f32:
+    setze a: [vec3; 2] auf [vec3(1.0, 2.0, 3.0), vec3(4.0, 5.0, 6.0)]
+    a[1][i] = 9.0
+    gib_zurück a[1][i] + a[0][2]
+
+@nativ
+funktion temp_spalte(x: f32, i: u64) -> f32:
+    gib_zurück vec4(x, 1.0, 2.0, 3.0)[i]
+
+@nativ
+funktion temp_feld(x: f32) -> f32:
+    gib_zurück vec4(x, 1.0, 2.0, 3.0).y + betrag(vec3(x, 0.0, 0.0))
+
+@nativ
+funktion temp_doppelt(x: f64, i: u64) -> f64:
+    gib_zurück (dvec3(x, 2.0, 3.0) * 2.0)[i]
+
+setze m auf mat4(vec4(1, 2, 3, 4), vec4(5, 6, 7, 8), vec4(9, 10, 11, 12), vec4(13, 14, 15, 16))
+setze d auf dmat4(dvec4(1, 2, 3, 4), dvec4(5, 6, 7, 8), dvec4(9, 10, 11, 12), dvec4(13, 14, 15, 16))
+zeige spalte(m, 0)
+zeige spalte(m, 3)
+zeige dspalte(d, 2)
+zeige komponente(vec3(7, 8, 9), 2)
+zeige dkomponente(dvec2(0.1, 0.2), 1)
+zeige element(d, 3, 1)
+zeige setze_spalte(m, 1, vec4(-1, -2, -3, -4))
+zeige setze_element(d, 2, 3, 99.5)
+zeige setze_komponente(vec4(1, 2, 3, 4), 0, 10)
+zeige konstant(m)
+zeige spur(d)
+zeige feld(Kamera(m, dvec3(1.5, 2.5, 0)))
+zeige lokales_array(1)
+zeige temp_spalte(5, 2)
+zeige temp_feld(-3)
+zeige temp_doppelt(0.5, 0)
+versuche:
+    zeige spalte(m, 4)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+versuche:
+    zeige komponente(vec3(1, 2, 3), 3)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e
+versuche:
+    zeige element(d, 0, 4)
+    zeige "NACH_FALSCH"
+fange e:
+    zeige "gefangen: " + e

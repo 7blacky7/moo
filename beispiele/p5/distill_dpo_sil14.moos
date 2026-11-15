@@ -2,8 +2,18 @@
 setze tok auf silben_laden("beispiele/p4_silben/run_sil14_grimm36k/tokenizer.msf")
 setze tokhash auf sha256(tok)
 setze basis auf "beispiele/p4_silben/run_sil14_grimm36k/full.mook"
-setze zustand auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
-setze referenz_zustand auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+setze zustand auf nichts
+versuche:
+    setze zustand auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+fange lade_fehler:
+    zeige "P5: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
+setze referenz_zustand auf nichts
+versuche:
+    setze referenz_zustand auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+fange lade_fehler:
+    zeige "P5: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze schichten auf zustand["netz"]["schichten"]
 setze refschichten auf referenz_zustand["netz"]["schichten"]
 setze limit auf schichten[1]["max"]

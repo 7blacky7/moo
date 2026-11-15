@@ -103,3 +103,45 @@ funktion moo_n_vm_normalisiere(erg: ptr[vec3], a: ptr[vec3]) -> void:
 funktion moo_n_vm_gleich(a: ptr[mat4], b: ptr[mat4]) -> bool:
     unsicher:
         gib_zurück a[0] == b[0]
+
+# P2-T89: f64 (dvec4/dmat4) gegen p2_dmat4_* (mat_ref.c) und dref_* in
+# test_vecmat_nativ.c (Trigonometrie dort ueber moo_native_sin/cos/tan).
+@nativ
+@einstieg
+funktion moo_n_vm_dmat4_dvec4(erg: ptr[dvec4], m: ptr[dmat4], v: ptr[dvec4]) -> void:
+    unsicher:
+        erg[0] = m[0] * v[0]
+
+@nativ
+@einstieg
+funktion moo_n_vm_dmat4_mul(erg: ptr[dmat4], a: ptr[dmat4], b: ptr[dmat4]) -> void:
+    unsicher:
+        erg[0] = a[0] * b[0]
+
+@nativ
+@einstieg
+funktion moo_n_vm_drotate(m: ptr[dmat4], grad: f64, x: f64, y: f64, z: f64) -> void:
+    unsicher:
+        m[0] = m[0] * dmat4_drehung(grad, dvec3(x, y, z))
+
+@nativ
+@einstieg
+funktion moo_n_vm_dperspective(m: ptr[dmat4], fov: f64, seiten: f64, nah: f64, fern: f64) -> void:
+    unsicher:
+        m[0] = dmat4_perspektive(fov, seiten, nah, fern)
+
+# P2-T89 C: Spaltenindex lesend (erg = m[i]) und als Ziel (m[j][k] = x).
+@nativ
+@einstieg
+funktion moo_n_vm_spalte(erg: ptr[vec4], m: ptr[mat4], i: u64, j: u64, k: u64, x: f32) -> void:
+    unsicher:
+        setze lokal: mat4 auf m[0]
+        erg[0] = lokal[i]
+        lokal[j][k] = x
+        m[0] = lokal
+
+@nativ
+@einstieg
+funktion moo_n_vm_dspalte(m: ptr[dmat4], i: u64, j: u64) -> f64:
+    unsicher:
+        gib_zurück m[0][i][j]

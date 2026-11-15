@@ -1,0 +1,89 @@
+# P2-T89 (Plan 0a44c07a D): sin/cos/tan (f64/f32) und stdlib/vektor-Drehung
+# (dmat4/mat4 mit Komponentenindex v[i]) im Bare-Profil. Die Kernel-Pipeline
+# linkt compiler/runtime/moo_native_math.c (moo_native_sin/cos/tan[f]); das
+# nm-Gate von kernel-smoke belegt: kein offenes Symbol, also kein sinf/cosf/
+# tanf aus libm. Werte per als_saettigend (abgeschnitten; als() waere
+# geprueft und trappt bei Nachkommastellen). Erwartete serielle Zeilen:
+# 479425 877582 546302 84147 936752 218503 1000 8660 32 40
+# (32/40: Befund #38466, vecmat-Zwischenwert und -Local in SICHEREN Koerpern.)
+importiere vektor
+
+@nativ
+funktion b_sin(x: f64) -> f64:
+    gib_zurück sin(x)
+@nativ
+funktion b_cos(x: f64) -> f64:
+    gib_zurück cos(x)
+@nativ
+funktion b_tan(x: f64) -> f64:
+    gib_zurück tan(x)
+@nativ
+funktion b_sin32(x: f32) -> f32:
+    gib_zurück sin(x)
+@nativ
+funktion b_tan32(x: f32) -> f32:
+    gib_zurück tan(x)
+@nativ
+funktion k_sin() -> i32:
+    unsicher:
+        gib_zurück als_saettigend(i32, b_sin(0.5) * 1000000.0)
+@nativ
+funktion k_cos() -> i32:
+    unsicher:
+        gib_zurück als_saettigend(i32, b_cos(0.5) * 1000000.0)
+@nativ
+funktion k_tan() -> i32:
+    unsicher:
+        gib_zurück als_saettigend(i32, b_tan(0.5) * 1000000.0)
+@nativ
+funktion k_sin32() -> i32:
+    unsicher:
+        gib_zurück als_saettigend(i32, b_sin32(1.0) * 100000.0)
+@nativ
+funktion k_cos_gross() -> i32:
+    unsicher:
+        gib_zurück als_saettigend(i32, b_cos(1000000.0) * 1000000.0)
+@nativ
+funktion k_tan32() -> i32:
+    unsicher:
+        gib_zurück als_saettigend(i32, b_tan32(-2.0) * 100000.0)
+@nativ
+funktion k_dreh() -> i32:
+    unsicher:
+        setze m: dmat4 auf dmat4_drehung(90.0, dvec3(0.0, 0.0, 1.0))
+        setze v: dvec4 auf m * dvec4(1.0, 0.0, 0.0, 1.0)
+        gib_zurück als_saettigend(i32, v[1] * 1000.0 + 0.5)
+@nativ
+funktion k_dreh32() -> i32:
+    unsicher:
+        setze m: mat4 auf mat4_drehung(30.0, vec3(0.0, 0.0, 1.0))
+        setze v: vec4 auf m * vec4(1.0, 0.0, 0.0, 1.0)
+        gib_zurück als_saettigend(i32, v[0] * 10000.0)
+@nativ
+funktion k_temp(i: u64) -> i32:
+    gib_zurück als_saettigend(i32, vec4(10.0, 20.0, 30.0, 40.0)[i] + vec4(1.0, 2.0, 3.0, 4.0).y)
+@nativ
+funktion k_lokal(i: u64) -> i32:
+    setze v: dvec4 auf dvec4(1.0, 2.0, 3.0, 4.0)
+    gib_zurück als_saettigend(i32, v[i] * 10.0)
+# Bare-main ruft nur unsicher:-Systemkoerper (P2-T43 Option A); die sicheren
+# Koerper oben laufen ueber diese Huellen.
+@nativ
+funktion k_temp_huelle() -> i32:
+    unsicher:
+        gib_zurück k_temp(2)
+@nativ
+funktion k_lokal_huelle() -> i32:
+    unsicher:
+        gib_zurück k_lokal(3)
+unsicher:
+    zeige k_sin()
+    zeige k_cos()
+    zeige k_tan()
+    zeige k_sin32()
+    zeige k_cos_gross()
+    zeige k_tan32()
+    zeige k_dreh()
+    zeige k_dreh32()
+    zeige k_temp_huelle()
+    zeige k_lokal_huelle()

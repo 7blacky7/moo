@@ -5,7 +5,11 @@
  * grosse Exponentdifferenz, gleiche Betraege) bitgleich zu C fmod/fmodf.
  * pow/powf: Sonderfalltabelle C99 F.9.4.4 bitgenau (signbit, Inf, NaN-
  * Eigenschaft), exakte Faelle exakt, Zufallslauf mit ULP-Abstand <= 1.
- * Nichtendliche und Null-Referenzen muessen bitgleich sein (auch powf). */
+ * Nichtendliche und Null-Referenzen muessen bitgleich sein (auch powf).
+ * P2-T89 B: sin/cos/tan und sinf/cosf/tanf: Sonderwerte (+-0, +-Inf, NaN,
+ * Subnormale) bitgleich, Zufallslauf (Bereiche, k*pi/2, alle Bitmuster) mit
+ * ULP-Abstand <= 1; Muller-Fall 0x1.6ac5b262ca1ffp+849 gegen die exakten
+ * Werte (Befund 7e2e1ddc: glibc liegt dort 8 bzw. 14 ULP daneben). */
 #include "../moo_native_math.h"
 #include <float.h>
 #include <math.h>
@@ -202,7 +206,77 @@ int main(void) {
             if (df > max_ulp_f) max_ulp_f = df;
         }
     }
-    printf("moo_native_math: %ld Faelle, %d Fehler, fmod %ld Paare, fmodf %ld Paare, pow max ULP = %lld, powf max ULP = %lld\n",
-           faelle, fehler, paare_fmod, paare_fmodf, max_ulp, max_ulp_f);
-    return (fehler != 0 || max_ulp > 1 || max_ulp_f > 1 || paare_fmod < 1000000 || paare_fmodf < 1000000) ? 1 : 0;
+    /* P2-T89 B: Trigonometrie. */
+    const double sonder_t[] = { 0.0, -0.0, INFINITY, -INFINITY, NAN, 0x1p-1074, -0x1p-1074, 0x1.8p-1030, -0x1.8p-1030 };
+    for (unsigned i = 0; i < sizeof sonder_t / sizeof sonder_t[0]; i++) {
+        double x = sonder_t[i];
+        float xf = (float)x;
+        faelle += 6;
+        if (!gleich(moo_native_sin(x), sin(x))) { fehler++; printf("FAIL sin %a\n", x); }
+        if (!gleich(moo_native_cos(x), cos(x))) { fehler++; printf("FAIL cos %a\n", x); }
+        if (!gleich(moo_native_tan(x), tan(x))) { fehler++; printf("FAIL tan %a\n", x); }
+        if (!gleichf(moo_native_sinf(xf), sinf(xf))) { fehler++; printf("FAIL sinf %a\n", (double)xf); }
+        if (!gleichf(moo_native_cosf(xf), cosf(xf))) { fehler++; printf("FAIL cosf %a\n", (double)xf); }
+        if (!gleichf(moo_native_tanf(xf), tanf(xf))) { fehler++; printf("FAIL tanf %a\n", (double)xf); }
+    }
+    const float sonder_tf[] = { 0x1p-149f, -0x1p-149f, 0x1.8p-130f, -0x1.8p-130f };
+    for (unsigned i = 0; i < sizeof sonder_tf / sizeof sonder_tf[0]; i++) {
+        float xf = sonder_tf[i];
+        faelle += 3;
+        if (!gleichf(moo_native_sinf(xf), sinf(xf))) { fehler++; printf("FAIL sinf %a\n", (double)xf); }
+        if (!gleichf(moo_native_cosf(xf), cosf(xf))) { fehler++; printf("FAIL cosf %a\n", (double)xf); }
+        if (!gleichf(moo_native_tanf(xf), tanf(xf))) { fehler++; printf("FAIL tanf %a\n", (double)xf); }
+    }
+    /* Muller-Fall: x mod pi/2 ~ 2^-61; Referenz exakt (Machin, 3000 Bit). */
+    faelle += 2;
+    if (!gleich(moo_native_cos(0x1.6ac5b262ca1ffp+849), -0x1.14ae72e6ba22fp-61)) { fehler++; printf("FAIL cos Muller\n"); }
+    if (!gleich(moo_native_tan(0x1.6ac5b262ca1ffp+849), -0x1.d9ba9a7975636p+60)) { fehler++; printf("FAIL tan Muller\n"); }
+    long long max_trig = 0, max_trig_f = 0;
+    for (long k = 0; k < 300000; k++) {
+        double x;
+        switch (k % 5) {
+            case 0: x = gleichverteilt(-10, 10); break;
+            case 1: x = gleichverteilt(-1e6, 1e6); break;
+            case 2: x = (double)(int64_t)gleichverteilt(-1e5, 1e5) * 1.5707963267948966; break;
+            case 3: x = gleichverteilt(-0.8, 0.8); break;
+            default: x = aus_bits(lcg()); break;
+        }
+        double at[3] = { moo_native_sin(x), moo_native_cos(x), moo_native_tan(x) };
+        double rt[3] = { sin(x), cos(x), tan(x) };
+        for (int j = 0; j < 3; j++) {
+            faelle++;
+            if (!isfinite(rt[j]) || rt[j] == 0.0) {
+                if (!gleich(at[j], rt[j])) { if (++fehler < 8) printf("FAIL trig[%d] %a: %a statt %a\n", j, x, at[j], rt[j]); }
+            } else {
+                long long d = isfinite(at[j]) ? llabs(ord(at[j]) - ord(rt[j])) : 1LL << 62;
+                if (d > max_trig) max_trig = d;
+                if (d > 1 && fehler < 8) printf("ULP trig[%d] %a: %a statt %a\n", j, x, at[j], rt[j]);
+            }
+        }
+        float xf;
+        switch (k % 4) {
+            case 0: xf = (float)gleichverteilt(-10, 10); break;
+            case 1: xf = (float)gleichverteilt(-1e5, 1e5); break;
+            case 2: xf = (float)gleichverteilt(-0.8, 0.8); break;
+            default: xf = aus_bits_f((uint32_t)(lcg() >> 32)); break;
+        }
+        float af[3] = { moo_native_sinf(xf), moo_native_cosf(xf), moo_native_tanf(xf) };
+        float rf[3] = { sinf(xf), cosf(xf), tanf(xf) };
+        for (int j = 0; j < 3; j++) {
+            faelle++;
+            if (!isfinite(rf[j]) || rf[j] == 0.0f) {
+                if (!gleichf(af[j], rf[j])) {
+                    if (++fehler < 8) printf("FAIL trigf[%d] %a: %a statt %a\n", j, (double)xf, (double)af[j], (double)rf[j]);
+                }
+            } else {
+                long long d = isfinite(af[j]) ? llabs(ordf(af[j]) - ordf(rf[j])) : 1LL << 62;
+                if (d > max_trig_f) max_trig_f = d;
+            }
+        }
+    }
+    printf("moo_native_math: %ld Faelle, %d Fehler, fmod %ld Paare, fmodf %ld Paare, pow max ULP = %lld, powf max ULP = %lld, "
+           "sin/cos/tan max ULP = %lld, f32 max ULP = %lld\n",
+           faelle, fehler, paare_fmod, paare_fmodf, max_ulp, max_ulp_f, max_trig, max_trig_f);
+    return (fehler != 0 || max_ulp > 1 || max_ulp_f > 1 || max_trig > 1 || max_trig_f > 1
+            || paare_fmod < 1000000 || paare_fmodf < 1000000) ? 1 : 0;
 }

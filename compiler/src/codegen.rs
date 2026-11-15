@@ -1294,7 +1294,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let hosted_system = hosted_x86 && !self.bare_mode && !ffi_single
                     && matches!(body.as_slice(), [Stmt::UnsafeBlock { .. }])
                     && (returns_struct || struct_param || has_pointer || returns_pointer || has_buffer
-                        || crate::native_system::has_struct_locals(body, &native_nominals)
+                        || crate::native_system::has_struct_values(body, &native_nominals)
                         || crate::native_system::is_system_body(body, params));
                 // P2-T12 C2 (Plan 31194239): sichere Koerper mit Kontrollfluss
                 // (wenn/solange/für, Neuzuweisung, unsicher:-Inseln) laufen im
@@ -1308,9 +1308,16 @@ impl<'ctx> CodeGen<'ctx> {
                 // P2-T16: ebenso Strukturwerte (z. B. vec3/mat4) in Signatur oder
                 // Locals; der Pure-Emitter kennt nur Skalare.
                 let pure_ungeeignet = zeiger_puffer || struct_param || returns_struct
-                    || crate::native_system::has_struct_locals(body, &native_nominals);
+                    || crate::native_system::has_struct_values(body, &native_nominals);
+                // P2-T89 (Befund #38466): auch Bare-sichere Pure-Slices mit
+                // Strukturwerten (vec4(...)[i], Struktur-Local/-Parameter) laufen
+                // im System-Emitter im Sicher-Modus; Bare-Strukturrueckgaben und
+                // Zeiger/Puffer behalten ihre Pfade (Ausschluss unten).
+                let bare_strukturwerte = self.bare_mode && (struct_param
+                    || crate::native_system::has_struct_values(body, &native_nominals));
                 let sicher_system = !matches!(body.as_slice(), [Stmt::UnsafeBlock { .. }])
-                    && (!crate::native_system::is_pure_slice(body) || (pure_ungeeignet && !self.bare_mode))
+                    && (!crate::native_system::is_pure_slice(body) || (pure_ungeeignet && !self.bare_mode)
+                        || bare_strukturwerte)
                     && !(self.bare_mode && (returns_struct || zeiger_puffer))
                     && (hosted_x86 || self.bare_mode);
                 if (self.bare_mode && (crate::native_system::is_system_body(body, params) || returns_struct))

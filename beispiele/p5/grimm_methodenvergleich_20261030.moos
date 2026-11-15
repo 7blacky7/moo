@@ -7,7 +7,12 @@ wenn ausgabe == nichts:
 setze tok auf silben_laden("beispiele/p4_silben/run_sil14_grimm36k/tokenizer.msf")
 setze tokhash auf sha256(tok)
 setze basis auf "beispiele/p4_silben/run_sil14_grimm36k/full.mook"
-setze z auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+setze z auf nichts
+versuche:
+    setze z auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+fange lade_fehler:
+    zeige "P5: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze schichten auf z["netz"]["schichten"]
 setze limit auf schichten[1]["max"]
 wenn länge(schichten) != 14 oder limit != 64:
@@ -27,7 +32,12 @@ setze teile auf []
 für quelle in pilot["beispiele"]:
     wenn quelle["herkunft"]["tokenizer_id"] != tokhash:
         wirf "Pilot und Tokenizer stimmen nicht ueberein"
-    setze kandidat auf korrektur_fenster_aufteilen(quelle, encoder, limit, 0)
+    setze kandidat auf nichts
+    versuche:
+        setze kandidat auf korrektur_fenster_aufteilen(quelle, encoder, limit, 0)
+    fange lade_fehler:
+        zeige "P5: korrektur_fenster_aufteilen fehlgeschlagen: " + lade_fehler
+        beende(1)
     wenn länge(kandidat) > 1:
         setze teile auf kandidat
         stopp

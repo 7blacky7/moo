@@ -3,10 +3,12 @@ setze text auf "Äpfel und Birnen. Äpfel und Birnen.\n```moo\n  setze x auf 42\
 setze a auf tokenizer_trainiere_parser(text, 300)
 setze b auf tokenizer_trainiere_parser(text, 300)
 wenn tokenizer_hash(a) != tokenizer_hash(b):
-    wirf "Parser-Tokenizer nicht deterministisch"
+    zeige "Parser-Tokenizer nicht deterministisch"
+    beende(1)
 setze ids auf tokenizer_kodiere(a, text)
 wenn tokenizer_dekodiere(a, ids) != text:
-    wirf "Parser-Roundtrip"
+    zeige "Parser-Roundtrip"
+    beende(1)
 setze pfad auf umgebung("P4_PARSER_TOKENIZER_PFAD")
 tokenizer_speichern(a, pfad)
 # Selftest: Ein nicht ladbarer Tokenizer meldet FAIL und beendet mit RC 1.
@@ -17,7 +19,9 @@ fange lade_fehler:
     zeige "P4 PARSER-BPE FAIL: tokenizer_laden: " + lade_fehler
     beende(1)
 wenn tokenizer_hash(a) != tokenizer_hash(geladen):
-    wirf "Parser-Speichern/Laden"
+    zeige "Parser-Speichern/Laden"
+    beende(1)
 wenn tokenizer_dekodiere(geladen, tokenizer_kodiere(geladen, text)) != text:
-    wirf "Parser-Roundtrip nach Laden"
+    zeige "Parser-Roundtrip nach Laden"
+    beende(1)
 zeige "PARSER BPE OK"

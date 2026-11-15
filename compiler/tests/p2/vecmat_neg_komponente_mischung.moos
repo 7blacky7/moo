@@ -1,0 +1,8 @@
+# P2-T89 C: eine vec3-Komponente ist f32; ein f64-Wert wird nicht still verengt.
+@nativ
+funktion f(v: vec3, x: f64) -> vec3:
+    setze w: vec3 auf v
+    w[1] = x
+    gib_zurück w
+
+zeige f(vec3(), 1.0)

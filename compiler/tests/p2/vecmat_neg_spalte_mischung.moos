@@ -1,0 +1,8 @@
+# P2-T89 C: eine mat4-Spalte ist vec4; dvec4 wird nicht still umgewandelt.
+@nativ
+funktion f(m: mat4) -> mat4:
+    setze k: mat4 auf m
+    k[0] = dvec4(1.0, 2.0, 3.0, 4.0)
+    gib_zurück k
+
+zeige f(mat4())

@@ -4,7 +4,8 @@ setze art auf umgebung("P4_TOKENIZER_KIND")
 setze tokpfad auf umgebung("P4_TOKENIZER_PATH")
 setze textpfad auf umgebung("P4_TEXT_PATH")
 wenn art == nichts oder tokpfad == nichts oder textpfad == nichts:
-    wirf "P4-Encoder: Umgebungsvariablen fehlen"
+    zeige "P4-Encoder: Umgebungsvariablen fehlen"
+    beende(1)
 setze text auf datei_lesen(textpfad)
 setze ids auf nichts
 wenn art == "char":
@@ -20,5 +21,6 @@ sonst wenn art == "bpe":
 sonst wenn art == "syllable":
     setze ids auf silben_kodiere(silben_laden(tokpfad), text)
 sonst:
-    wirf "P4-Encoder: unbekannter Tokenizer"
+    zeige "P4-Encoder: unbekannter Tokenizer"
+    beende(1)
 zeige json_string(ids.zu_liste())

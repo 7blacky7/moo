@@ -1,0 +1,8 @@
+# P2-T89 C: konstanter Komponentenindex ausserhalb von vec3 ist ein Compilefehler (M-M001).
+@nativ
+funktion f(v: vec3) -> vec3:
+    setze w: vec3 auf v
+    w[3] = 1.0
+    gib_zurück w
+
+zeige f(vec3())

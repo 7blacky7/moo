@@ -77,4 +77,20 @@ lld-link /subsystem:efi_application /entry:moo_uefi_start /nodefaultlib /opt:ref
     /out:"$out/uefi_float.efi" "$out/uefi_float.obj" "$out/uefi_native_math.obj" "$out/uefi_fltused.obj"
 file "$out/uefi_float.efi" | grep -qiE 'EFI.*application|PE32\+' || { echo "FEHLER: kein PE32+-EFI-Binary" >&2; exit 1; }
 echo "PASS UEFI-Link Float-%/**: Export aus x86_64-unknown-uefi + moo_native_math.c -> EFI-Application"
+# 7. P2-T89: sin/cos/tan (f64/f32, auch |x| = 1e6) und stdlib/vektor-Drehung
+#    (dmat4/mat4, Komponentenindex v[i]; auch in sicheren Koerpern mit
+#    Zwischenwert vec4(...)[i] und dvec4-Local) im Bare-Profil ueber moo_native_sin/
+#    cos/tan[f]; kein sinf/cosf/tanf/sin/cos/tan aus libm, nm-Gate ohne offenes
+#    Symbol. QEMU liefert die gekappten Werte (gleich hosted C mit libm).
+"$compiler" compile "$tests/native_zahlen_kern_trig.moos" --no-stdlib --target x86_64-bare --emit-ir -o "$out/kern_trig.ll"
+mise exec -- opt -passes=verify -disable-output "$out/kern_trig.ll"
+for f in moo_native_sin moo_native_cos moo_native_tan moo_native_sinf moo_native_cosf moo_native_tanf; do
+    grep -qE "call (double|float) @$f\(" "$out/kern_trig.ll" || { echo "FEHLER: Bare-Trigonometrie ohne $f" >&2; exit 1; }
+done
+if grep -qE 'call .*@(sin|cos|tan|sinf|cosf|tanf|llvm\.(sin|cos|tan)[^(]*)\(' "$out/kern_trig.ll"; then
+    echo "FEHLER: Bare-Trigonometrie ueber libm/llvm-Intrinsic" >&2; exit 1
+fi
+MOO_BIN="$compiler" KERNEL_MARKER='479425 877582 546302 84147 936752 218503 1000 8660 32 40' \
+    bash scripts/kernel-smoke.sh "$tests/native_zahlen_kern_trig.moos"
+echo "PASS Bare Trigonometrie: moo_native_sin/cos/tan[f] im Kernel, vektor-Drehung dmat4/mat4, keine libm"
 echo "PASS P2-T73 Bare: IR-Vertrag, QEMU-Werte, QEMU-Trap"

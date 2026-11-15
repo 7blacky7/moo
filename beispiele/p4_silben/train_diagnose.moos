@@ -9,9 +9,11 @@ setze fensterpfad auf umgebung("P4_WINDOWS_PATH")
 setze erwarteter_hash auf umgebung("P4_WINDOWS_SHA256")
 setze manifesthash auf umgebung("P4_MANIFEST_SHA256")
 wenn art == nichts oder tokpfad == nichts oder ckpfad == nichts oder ziel == nichts oder fensterpfad == nichts oder erwarteter_hash == nichts oder manifesthash == nichts:
-    wirf "P4-Train: Umgebungsvariablen fehlen"
+    zeige "P4-Train: Umgebungsvariablen fehlen"
+    beende(1)
 wenn datei_existiert(ziel):
-    wirf "P4-Train: Ausgabe-Checkpoint existiert bereits"
+    zeige "P4-Train: Ausgabe-Checkpoint existiert bereits"
+    beende(1)
 setze tok auf nichts
 setze info auf nichts
 wenn art == "char":
@@ -28,7 +30,8 @@ sonst wenn art == "syllable":
     setze tok auf silben_laden(tokpfad)
     setze info auf silben_info(tok)
 sonst:
-    wirf "P4-Train: unbekannter Tokenizer"
+    zeige "P4-Train: unbekannter Tokenizer"
+    beende(1)
 setze tokenhash auf sha256(tok)
 setze zustand auf nichts
 versuche:
@@ -39,19 +42,24 @@ fange lade_fehler:
 setze schichten auf zustand["netz"]["schichten"]
 setze opt auf zustand["opt"]
 wenn opt == nichts oder länge(schichten) != 14:
-    wirf "P4-Train: Checkpoint braucht Optimizer und 14 Schichten"
+    zeige "P4-Train: Checkpoint braucht Optimizer und 14 Schichten"
+    beende(1)
 setze kontextlimit auf schichten[1]["max"]
 wenn kontextlimit == nichts oder kontextlimit < 2 oder kontextlimit > 4096 oder kontextlimit != boden(kontextlimit):
-    wirf "P4-Train: ungueltiges Positionslimit"
+    zeige "P4-Train: ungueltiges Positionslimit"
+    beende(1)
 setze roh auf datei_lesen(fensterpfad)
 wenn sha256(roh) != erwarteter_hash:
-    wirf "P4-Train: Fensterdatei verändert"
+    zeige "P4-Train: Fensterdatei verändert"
+    beende(1)
 setze paket auf json_parse(roh)
 wenn paket["manifest_sha256"] != manifesthash oder paket["tokenizer_sha256"] != tokenhash:
-    wirf "P4-Train: Manifest oder Tokenizer passt nicht"
+    zeige "P4-Train: Manifest oder Tokenizer passt nicht"
+    beende(1)
 setze fenster auf paket["windows"]
 wenn länge(fenster) < 1 oder länge(fenster) > 100000:
-    wirf "P4-Train: ungültige Fensterzahl"
+    zeige "P4-Train: ungültige Fensterzahl"
+    beende(1)
 setze vokab auf info["vokab"]
 # Sämtliche Form- und Maskenfehler werden vor dem ersten Optimiererschritt
 # erkannt. Train-only-Zuordnung und Bytebezug prüft zusätzlich der Runner.
@@ -61,22 +69,27 @@ für f in fenster:
     setze maske auf f["loss_mask"]
     setze n auf länge(eingaben)
     wenn n < 1 oder n > kontextlimit oder länge(ziele) != n oder länge(maske) != n:
-        wirf "P4-Train: Eingabe- und Zielform ungültig"
+        zeige "P4-Train: Eingabe- und Zielform ungültig"
+        beende(1)
     setze i auf 0
     setze aktive auf 0
     solange i < n:
         wenn maske[i] != 0 und maske[i] != 1:
-            wirf "P4-Train: Verlustmaske muss binär sein"
+            zeige "P4-Train: Verlustmaske muss binär sein"
+            beende(1)
         setze aktive auf aktive + maske[i]
         setze a auf eingaben[i]
         setze b auf ziele[i]
         wenn a < 0 oder a >= vokab oder a != boden(a) oder b < 0 oder b >= vokab oder b != boden(b):
-            wirf "P4-Train: ungültige Token-ID"
+            zeige "P4-Train: ungültige Token-ID"
+            beende(1)
         wenn i + 1 < n und eingaben[i + 1] != b:
-            wirf "P4-Train: Next-Token-Verschiebung inkonsistent"
+            zeige "P4-Train: Next-Token-Verschiebung inkonsistent"
+            beende(1)
         setze i auf i + 1
     wenn aktive == 0:
-        wirf "P4-Train: Verlustmaske ist leer"
+        zeige "P4-Train: Verlustmaske ist leer"
+        beende(1)
 
 autograd_an()
 für f in fenster:

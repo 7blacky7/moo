@@ -3,12 +3,13 @@
 # Konstruktoren); Verkettung ueber `*`, z. B. entspricht `m * mat4_verschiebung(v)`
 # mat4_translate(m, x, y, z) aus compiler/runtime/moo_3d_math.c. Gleiche
 # Operationsfolge wie die C-Referenz (bitgleich bei -ffp-contract=off).
-# Spaltenordnung: s0..s3 sind die Spalten (m[spalte*4+zeile]).
+# Spaltenordnung: s0..s3 sind die Spalten (m[spalte*4+zeile], Spalte als m[i]).
 # Englische Namen weichen den gleichnamigen C-Runtime-Symbolen aus.
-# Trigonometrie ueber libm (hosted).
-extern "C" funktion sinf(x: f32) -> f32
-extern "C" funktion cosf(x: f32) -> f32
-extern "C" funktion tanf(x: f32) -> f32
+# P2-T89 (Freigabe #38178 O2): Trigonometrie ueber die eingebauten sin/cos/tan
+# (moo_native_sinf/cosf/tanf, ohne libm, auch Bare/UEFI; hoechstens 1 ULP).
+# Bitgleich ist die Gegenprobe daher mit moo_native_* statt libm-sinf
+# (skripte/p2/grafik/test_mat4_nativ.c). dmat4_*: dieselben Konstruktoren in
+# f64 (dvec3/dvec4/dmat4) mit gleicher Operationsfolge.
 
 @nativ
 funktion mat4_einheit() -> mat4:
@@ -31,11 +32,8 @@ funktion mat4_skalierung(v: vec3) -> mat4:
 @nativ
 funktion mat4_drehung(grad: f32, achse: vec3) -> mat4:
     setze rad: f32 auf grad * 3.14159265358979323846 / 180.0
-    setze c: f32 auf 0.0
-    setze s: f32 auf 0.0
-    unsicher:
-        setze c auf cosf(rad)
-        setze s auf sinf(rad)
+    setze c: f32 auf cos(rad)
+    setze s: f32 auf sin(rad)
     setze a: vec3 auf normalisiere(achse)
     setze k: f32 auf 1.0 - c
     setze s0: vec4 auf vec4(c + a.x * a.x * k, a.y * a.x * k + a.z * s, a.z * a.x * k - a.y * s, 0.0)
@@ -47,9 +45,7 @@ funktion mat4_drehung(grad: f32, achse: vec3) -> mat4:
 @nativ
 funktion mat4_perspektive(fov_grad: f32, seitenverhältnis: f32, nah: f32, fern: f32) -> mat4:
     setze rad: f32 auf fov_grad * 3.14159265358979323846 / 180.0
-    setze t: f32 auf 0.0
-    unsicher:
-        setze t auf tanf(rad / 2.0)
+    setze t: f32 auf tan(rad / 2.0)
     setze tiefe: f32 auf fern - nah
     setze s2: vec4 auf vec4(0.0, 0.0, (-(fern + nah)) / tiefe, -1.0)
     setze s3: vec4 auf vec4(0.0, 0.0, (-(2.0 * fern * nah)) / tiefe, 0.0)
@@ -99,3 +95,80 @@ funktion mat4_view(eye: vec3, target: vec3, up: vec3) -> mat4:
 @nativ
 funktion mat4_orthographic(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> mat4:
     gib_zurück mat4_orthografisch(left, right, bottom, top, near, far)
+
+# P2-T89 A: f64-Konstruktoren (dmat4), Operationsfolge wie die mat4-Varianten.
+@nativ
+funktion dmat4_einheit() -> dmat4:
+    gib_zurück dmat4(dvec4(1.0, 0.0, 0.0, 0.0), dvec4(0.0, 1.0, 0.0, 0.0), dvec4(0.0, 0.0, 1.0, 0.0), dvec4(0.0, 0.0, 0.0, 1.0))
+
+@nativ
+funktion dmat4_verschiebung(v: dvec3) -> dmat4:
+    setze m: dmat4 auf dmat4_einheit()
+    m.s3 = dvec4(v.x, v.y, v.z, 1.0)
+    gib_zurück m
+
+@nativ
+funktion dmat4_skalierung(v: dvec3) -> dmat4:
+    gib_zurück dmat4(dvec4(v.x, 0.0, 0.0, 0.0), dvec4(0.0, v.y, 0.0, 0.0), dvec4(0.0, 0.0, v.z, 0.0), dvec4(0.0, 0.0, 0.0, 1.0))
+
+@nativ
+funktion dmat4_drehung(grad: f64, achse: dvec3) -> dmat4:
+    setze rad: f64 auf grad * 3.14159265358979323846 / 180.0
+    setze c: f64 auf cos(rad)
+    setze s: f64 auf sin(rad)
+    setze a: dvec3 auf normalisiere(achse)
+    setze k: f64 auf 1.0 - c
+    setze s0: dvec4 auf dvec4(c + a.x * a.x * k, a.y * a.x * k + a.z * s, a.z * a.x * k - a.y * s, 0.0)
+    setze s1: dvec4 auf dvec4(a.x * a.y * k - a.z * s, c + a.y * a.y * k, a.z * a.y * k + a.x * s, 0.0)
+    setze s2: dvec4 auf dvec4(a.x * a.z * k + a.y * s, a.y * a.z * k - a.x * s, c + a.z * a.z * k, 0.0)
+    gib_zurück dmat4(s0, s1, s2, dvec4(0.0, 0.0, 0.0, 1.0))
+
+@nativ
+funktion dmat4_perspektive(fov_grad: f64, seitenverhältnis: f64, nah: f64, fern: f64) -> dmat4:
+    setze rad: f64 auf fov_grad * 3.14159265358979323846 / 180.0
+    setze t: f64 auf tan(rad / 2.0)
+    setze tiefe: f64 auf fern - nah
+    setze s2: dvec4 auf dvec4(0.0, 0.0, (-(fern + nah)) / tiefe, -1.0)
+    setze s3: dvec4 auf dvec4(0.0, 0.0, (-(2.0 * fern * nah)) / tiefe, 0.0)
+    gib_zurück dmat4(dvec4(1.0 / (seitenverhältnis * t), 0.0, 0.0, 0.0), dvec4(0.0, 1.0 / t, 0.0, 0.0), s2, s3)
+
+@nativ
+funktion dmat4_blick(auge: dvec3, ziel: dvec3, oben: dvec3) -> dmat4:
+    setze f: dvec3 auf normalisiere(ziel - auge)
+    setze s: dvec3 auf normalisiere(kreuz(f, oben))
+    setze u: dvec3 auf kreuz(s, f)
+    setze s3: dvec4 auf dvec4(-punkt(s, auge), -punkt(u, auge), punkt(f, auge), 1.0)
+    gib_zurück dmat4(dvec4(s.x, u.x, -f.x, 0.0), dvec4(s.y, u.y, -f.y, 0.0), dvec4(s.z, u.z, -f.z, 0.0), s3)
+
+@nativ
+funktion dmat4_orthografisch(links: f64, rechts: f64, unten: f64, oben: f64, nah: f64, fern: f64) -> dmat4:
+    setze s3: dvec4 auf dvec4((-(rechts + links)) / (rechts - links), (-(oben + unten)) / (oben - unten), (-(fern + nah)) / (fern - nah), 1.0)
+    gib_zurück dmat4(dvec4(2.0 / (rechts - links), 0.0, 0.0, 0.0), dvec4(0.0, 2.0 / (oben - unten), 0.0, 0.0), dvec4(0.0, 0.0, -2.0 / (fern - nah), 0.0), s3)
+
+@nativ
+funktion dmat4_unit() -> dmat4:
+    gib_zurück dmat4_einheit()
+
+@nativ
+funktion dmat4_translation(v: dvec3) -> dmat4:
+    gib_zurück dmat4_verschiebung(v)
+
+@nativ
+funktion dmat4_scaling(v: dvec3) -> dmat4:
+    gib_zurück dmat4_skalierung(v)
+
+@nativ
+funktion dmat4_rotation(degrees: f64, axis: dvec3) -> dmat4:
+    gib_zurück dmat4_drehung(degrees, axis)
+
+@nativ
+funktion dmat4_projection(fov_degrees: f64, aspect: f64, near: f64, far: f64) -> dmat4:
+    gib_zurück dmat4_perspektive(fov_degrees, aspect, near, far)
+
+@nativ
+funktion dmat4_view(eye: dvec3, target: dvec3, up: dvec3) -> dmat4:
+    gib_zurück dmat4_blick(eye, target, up)
+
+@nativ
+funktion dmat4_orthographic(left: f64, right: f64, bottom: f64, top: f64, near: f64, far: f64) -> dmat4:
+    gib_zurück dmat4_orthografisch(left, right, bottom, top, near, far)

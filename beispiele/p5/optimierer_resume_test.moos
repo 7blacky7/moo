@@ -34,7 +34,12 @@ funktion pruefe(art):
     schritt(schichten, opt, x, ziel)
     sichere(schichten, opt, pfad + ".ref")
     setze referenz auf parameter(schichten)
-    setze geladen auf checkpoint_laden(pfad, {"tokenizer_version": "synthetisch-v1", "arch_version": "p5-resume-v1"})
+    setze geladen auf nichts
+    versuche:
+        setze geladen auf checkpoint_laden(pfad, {"tokenizer_version": "synthetisch-v1", "arch_version": "p5-resume-v1"})
+    fange lade_fehler:
+        zeige "P5 RESUME " + art + " FAIL: checkpoint_laden: " + lade_fehler
+        beende(1)
     setze geladen_schichten auf geladen["netz"]["schichten"]
     schritt(geladen_schichten, geladen["opt"], x, ziel)
     sichere(geladen_schichten, geladen["opt"], pfad + ".resume")
@@ -56,7 +61,10 @@ funktion pruefe(art):
         setze i auf i + 1
     zeige "P5 RESUME " + art + " OK"
 
-pruefe("sgd")
-pruefe("momentum")
-pruefe("adam")
-pruefe("adamw")
+# pruefe wirft bei Abweichung; ein unbehandeltes wirf bricht den Lauf nicht ab. Deshalb FAIL + RC 1.
+für art_name in ["sgd", "momentum", "adam", "adamw"]:
+    versuche:
+        pruefe(art_name)
+    fange lade_fehler:
+        zeige "P5 RESUME " + art_name + " FAIL: " + lade_fehler
+        beende(1)

@@ -9,7 +9,8 @@ setze ckpfad auf umgebung("P4_CHECKPOINT")
 setze prefix_json auf umgebung("P4_PREFIX_JSON")
 setze pos auf zahl(umgebung("P4_POSITION"))
 wenn art == nichts oder tokpfad == nichts oder ckpfad == nichts oder prefix_json == nichts oder pos == nichts:
-    wirf "P4-Scorer: Umgebungsvariablen fehlen"
+    zeige "P4-Scorer: Umgebungsvariablen fehlen"
+    beende(1)
 setze tok auf nichts
 wenn art == "char":
     setze tok auf zeichen_fixed_laden(tokpfad)
@@ -22,7 +23,8 @@ sonst wenn art == "bpe":
 sonst wenn art == "syllable":
     setze tok auf silben_laden(tokpfad)
 sonst:
-    wirf "P4-Scorer: unbekannter Tokenizer"
+    zeige "P4-Scorer: unbekannter Tokenizer"
+    beende(1)
 setze h auf sha256(tok)
 setze geladen auf nichts
 versuche:
@@ -32,7 +34,8 @@ fange lade_fehler:
     beende(1)
 setze schichten auf geladen["netz"]["schichten"]
 wenn länge(schichten) != 14:
-    wirf "P4-Scorer: unerwartete Architektur"
+    zeige "P4-Scorer: unerwartete Architektur"
+    beende(1)
 setze prefix auf json_parse(prefix_json)
 setze kontext auf []
 # BOS nur dann, wenn das Präfix am Dokumentanfang beginnt.
@@ -41,7 +44,8 @@ wenn pos == länge(prefix):
 für id in prefix:
     kontext.hinzufügen(id)
 wenn länge(kontext) == 0:
-    wirf "P4-Scorer: abgeschnittenes Fenster ohne Kontext"
+    zeige "P4-Scorer: abgeschnittenes Fenster ohne Kontext"
+    beende(1)
 autograd_aus()
 setze x auf vorwaerts([schichten[0]], tensor_aus_liste(kontext))
 setze x auf vorwaerts([schichten[1]], x)

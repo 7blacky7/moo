@@ -1,7 +1,8 @@
 # SIL-14: Inferenzvergleich bestehender Checkpoints (kein Training).
 setze pfad auf umgebung("MOO_EVAL_CKPT")
 wenn pfad == nichts:
-    wirf "MOO_EVAL_CKPT fehlt"
+    zeige "MOO_EVAL_CKPT fehlt"
+    beende(1)
 setze tok auf silben_laden("beispiele/p4_silben/run_sil14_grimm36k/tokenizer.msf")
 setze z auf nichts
 versuche:
@@ -11,7 +12,8 @@ fange lade_fehler:
     beende(1)
 setze schichten auf z["netz"]["schichten"]
 wenn länge(schichten) != 14:
-    wirf "Schichtanzahl ungueltig"
+    zeige "Schichtanzahl ungueltig"
+    beende(1)
 funktion modell(e):
     setze x auf vorwaerts([schichten[0]], e)
     setze x auf vorwaerts([schichten[1]], x)

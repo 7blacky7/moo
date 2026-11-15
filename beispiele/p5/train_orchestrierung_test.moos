@@ -29,14 +29,24 @@ setze daten auf {"tokenizer_id": sha256(tok), "beispiele": [sample]}
 setze basis auf {"netz": sch, "schritt": 0, "tokenizer_version": sha256(tok), "arch_version": "p5-orch-v1"}
 setze ecfg auf {"tokenizer": tok, "encoder": enc, "decoder": dec, "arch_version": "p5-orch-v1", "sequenzlaenge": 4, "vokab": vokab, "pad_id": 0}
 setze cfg auf {"methode": "sft", "tokenizer_id": sha256(tok), "sequenzlaenge": 4, "vokab": vokab, "params": parameter(sch), "optimierer": "sgd", "rate": 0.1, "schritte": 10, "val": {"daten": {"text": "aa", "split": "val"}, "intervall_schritte": 1}, "checkpoint": {"ordner": ordner, "jeweils_bei_val": wahr}, "auswahl": "beste_val", "fruehstopp": {"geduld_evals": 1, "min_verbesserung": 0}}
-setze r auf trainiere_mit_val(vorlauf, daten, cfg, basis, fabrik, ecfg)
+setze r auf nichts
+versuche:
+    setze r auf trainiere_mit_val(vorlauf, daten, cfg, basis, fabrik, ecfg)
+fange lade_fehler:
+    zeige "P5 ORCHESTRIERUNG FAIL: trainiere_mit_val: " + lade_fehler
+    beende(1)
 wenn nicht r["fruehstopp"] oder r["schritte"] != 2 oder länge(r["val_berichte"]) != 2:
     wirf "Fruehstopp fehlgeschlagen"
 wenn r["val_berichte"][1]["nll_pro_byte"] <= r["val_berichte"][0]["nll_pro_byte"]:
     wirf "Val hat sich nicht verschlechtert"
 wenn r["bester_checkpoint"]["checkpoint_sha256"] != r["val_berichte"][0]["checkpoint_sha256"]:
     wirf "Falscher Checkpoint"
-setze geladen auf checkpoint_laden(r["bester_checkpoint"]["checkpoint_pfad"], {"tokenizer_version": sha256(tok), "arch_version": "p5-orch-v1"})
+setze geladen auf nichts
+versuche:
+    setze geladen auf checkpoint_laden(r["bester_checkpoint"]["checkpoint_pfad"], {"tokenizer_version": sha256(tok), "arch_version": "p5-orch-v1"})
+fange lade_fehler:
+    zeige "P5 ORCHESTRIERUNG FAIL: checkpoint_laden: " + lade_fehler
+    beende(1)
 wenn geladen["schritt"] != 1:
     wirf "Gespeicherter Schritt falsch"
 setze vor_kollision auf parameter(sch)[0].zu_liste()[0]
@@ -61,7 +71,12 @@ wenn nicht abgelehnt:
 setze einfach auf {...cfg}
 setze einfach["val"] auf nichts
 setze einfach["schritte"] auf 1
-setze direkt auf trainiere_mit_val(vorlauf, daten, einfach, basis, fabrik, ecfg)
+setze direkt auf nichts
+versuche:
+    setze direkt auf trainiere_mit_val(vorlauf, daten, einfach, basis, fabrik, ecfg)
+fange lade_fehler:
+    zeige "P5 ORCHESTRIERUNG FAIL: trainiere_mit_val: " + lade_fehler
+    beende(1)
 wenn länge(direkt["verluste"]) != 1:
     wirf "Delegation ohne Val fehlgeschlagen"
 setze resume_cfg auf {...cfg}
@@ -70,8 +85,18 @@ setze resume_cfg["opt"] auf r["opt"]
 setze resume_zustand auf {...basis}
 setze resume_zustand["schritt"] auf 100
 setze resume_zustand["global_schritt"] auf 200
-setze fortsetzung auf trainiere_mit_val(vorlauf, daten, resume_cfg, resume_zustand, fabrik, ecfg)
-setze wieder auf checkpoint_laden(fortsetzung["bester_checkpoint"]["checkpoint_pfad"], {"tokenizer_version": sha256(tok), "arch_version": "p5-orch-v1"})
+setze fortsetzung auf nichts
+versuche:
+    setze fortsetzung auf trainiere_mit_val(vorlauf, daten, resume_cfg, resume_zustand, fabrik, ecfg)
+fange lade_fehler:
+    zeige "P5 ORCHESTRIERUNG FAIL: trainiere_mit_val (Resume): " + lade_fehler
+    beende(1)
+setze wieder auf nichts
+versuche:
+    setze wieder auf checkpoint_laden(fortsetzung["bester_checkpoint"]["checkpoint_pfad"], {"tokenizer_version": sha256(tok), "arch_version": "p5-orch-v1"})
+fange lade_fehler:
+    zeige "P5 ORCHESTRIERUNG FAIL: checkpoint_laden (Resume): " + lade_fehler
+    beende(1)
 wenn wieder["schritt"] != 101 oder wieder["global_schritt"] != 201:
     wirf "Resume-Schrittzaehler falsch"
 zeige "P5 ORCHESTRIERUNG OK"

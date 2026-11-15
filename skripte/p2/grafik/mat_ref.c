@@ -20,3 +20,18 @@ void p2_mat4_vec4(float out[4], const float m[16], const float v[4]) {
                  + m[8+row]*v[2] + m[12+row]*v[3];
     memcpy(out, tmp, sizeof tmp);
 }
+void p2_dmat4_mul(double out[16], const double a[16], const double b[16]) {
+    double tmp[16];
+    for (int col = 0; col < 4; ++col)
+        for (int row = 0; row < 4; ++row)
+            tmp[col*4+row] = a[row]*b[col*4] + a[4+row]*b[col*4+1]
+                           + a[8+row]*b[col*4+2] + a[12+row]*b[col*4+3];
+    memcpy(out, tmp, sizeof tmp);
+}
+void p2_dmat4_vec4(double out[4], const double m[16], const double v[4]) {
+    double tmp[4];
+    for (int row = 0; row < 4; ++row)
+        tmp[row] = m[row]*v[0] + m[4+row]*v[1]
+                 + m[8+row]*v[2] + m[12+row]*v[3];
+    memcpy(out, tmp, sizeof tmp);
+}

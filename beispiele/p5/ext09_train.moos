@@ -32,11 +32,21 @@ setze basis auf ordner + "/base.mook"
 wenn sha256(datei_lesen(basis)) != "2edc53610bd0207563540c0941b67fb5bf63f3ca70442099a78dd4b56ad6ca2d":
     wirf "EXT-05: Basischeckpoint veraendert"
 zeige "EXT09_PHASE " + json_string({"phase": "policy_laden_start", "ms": zeit_ms() - phase_start_ms})
-setze z auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+setze z auf nichts
+versuche:
+    setze z auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+fange lade_fehler:
+    zeige "P5: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 zeige "EXT09_PHASE " + json_string({"phase": "policy_laden_ende", "ms": zeit_ms() - phase_start_ms})
 setze schichten auf z["netz"]["schichten"]
 zeige "EXT09_PHASE " + json_string({"phase": "referenz_laden_start", "ms": zeit_ms() - phase_start_ms})
-setze referenz_zustand auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+setze referenz_zustand auf nichts
+versuche:
+    setze referenz_zustand auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+fange lade_fehler:
+    zeige "P5: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 zeige "EXT09_PHASE " + json_string({"phase": "referenz_laden_ende", "ms": zeit_ms() - phase_start_ms})
 setze refschichten auf referenz_zustand["netz"]["schichten"]
 funktion referenzlauf(x):
@@ -54,10 +64,22 @@ wenn länge(paare) != 70:
 setze fenster auf []
 setze praef auf []
 für paar in paare:
-    für f in korrektur_fenster_aufteilen(paar, encoder, 64, 0):
+    setze fenster_liste auf nichts
+    versuche:
+        setze fenster_liste auf korrektur_fenster_aufteilen(paar, encoder, 64, 0)
+    fange lade_fehler:
+        zeige "P5: korrektur_fenster_aufteilen fehlgeschlagen: " + lade_fehler
+        beende(1)
+    für f in fenster_liste:
         fenster.hinzufügen(f)
     wenn paar["original"] != paar["korrektur"]:
-        praef.hinzufügen(praferenz_paar(paar, encoder, 64, 0))
+        setze praef_paar auf nichts
+        versuche:
+            setze praef_paar auf praferenz_paar(paar, encoder, 64, 0)
+        fange lade_fehler:
+            zeige "P5: praferenz_paar fehlgeschlagen: " + lade_fehler
+            beende(1)
+        praef.hinzufügen(praef_paar)
 wenn länge(praef) != 69 oder länge(fenster) != 77:
     wirf "EXT-09: unerwartete Paar-/Fensterzahl"
 setze zufall auf seed

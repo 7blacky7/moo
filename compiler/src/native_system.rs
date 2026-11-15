@@ -1345,6 +1345,56 @@ impl SystemSignature {
     }
 }
 
+/// Review c7eddc37: `-<Literal>` (ungleich 0) als Index liegt ausserhalb jedes
+/// u64-Bereichs; liefert die Anzeige ("-1") fuer M-M001.
+fn negatives_index_literal(index: &Expr) -> Option<String> {
+    match index {
+        Expr::UnaryOp { op: UnaryOpKind::Neg, operand } => match operand.as_ref() {
+            Expr::NativeNumber { text, legacy, .. } if *legacy != 0.0 => Some(format!("-{text}")),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Review c7eddc37 (#38462): Strukturwerte auch nur als Zwischenwert
+/// (vec4(...)[i], vec4(...).y, betrag(vec3(...)), Punkt(...).x) brauchen den
+/// System-Emitter; der Pure-Emitter kennt nur Skalare (vorher M-C000).
+pub(crate) fn has_struct_values(body: &[Stmt], nominals: &NominalTypes) -> bool {
+    has_struct_locals(body, nominals) || body.iter().any(|stmt| stmt_baut_struktur(stmt, nominals))
+}
+
+fn stmt_baut_struktur(stmt: &Stmt, n: &NominalTypes) -> bool {
+    let e = |x: &Expr| expr_baut_struktur(x, n);
+    let b = |body: &[Stmt]| body.iter().any(|s| stmt_baut_struktur(s, n));
+    match stmt {
+        Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
+        | Stmt::CompoundAssignment { value, .. } | Stmt::Show(value, _)
+        | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) => e(value),
+        Stmt::PropertyAssignment { object, value, .. } => e(object) || e(value),
+        Stmt::IndexAssignment { object, index, value, .. } => e(object) || e(index) || e(value),
+        Stmt::If { condition, body, else_body, .. } => e(condition) || b(body) || b(else_body),
+        Stmt::While { condition, body, .. } => e(condition) || b(body),
+        Stmt::For { iterable, body, .. } => e(iterable) || b(body),
+        Stmt::UnsafeBlock { body, .. } => b(body),
+        _ => false,
+    }
+}
+
+fn expr_baut_struktur(expr: &Expr, n: &NominalTypes) -> bool {
+    let e = |x: &Expr| expr_baut_struktur(x, n);
+    match expr {
+        Expr::FunctionCall { name, args, .. } =>
+            n.contains_key(name) || crate::native_struct::vecmat_art_name(name).is_some() || args.iter().any(e),
+        Expr::BinaryOp { left, right, .. } => e(left) || e(right),
+        Expr::UnaryOp { operand, .. } => e(operand),
+        Expr::PropertyAccess { object, .. } => e(object),
+        Expr::IndexAccess { object, index } => e(object) || e(index),
+        Expr::List(items) => items.iter().any(e),
+        _ => false,
+    }
+}
+
 /// Nur Bestandsformen ausnehmen, die ein engerer Pfad bereits abdeckt.
 pub(crate) fn is_system_body(body: &[Stmt], params: &[String]) -> bool {
     let inner = match body {
@@ -1353,7 +1403,11 @@ pub(crate) fn is_system_body(body: &[Stmt], params: &[String]) -> bool {
     };
     match inner {
         [] => false,
-        [Stmt::Return(Some(Expr::IndexAccess { .. }), _)] => false,
+        // P2-T89 C: der enge Zeigerpfad (codegen_native::emit_pointer_load_function)
+        // kennt nur p[i] auf einem Parameter; m[0][i], p.feld[i] usw. laufen im
+        // Systemkoerper (vorher Compilefehler im engen Pfad).
+        [Stmt::Return(Some(Expr::IndexAccess { object, .. }), _)]
+            if matches!(object.as_ref(), Expr::Identifier(n) if params.contains(n)) => false,
         [Stmt::Return(Some(Expr::FunctionCall { name, .. }), _)]
         | [Stmt::Expression(Expr::FunctionCall { name, .. }, _)] => !params.contains(name),
         _ => true,
@@ -2169,6 +2223,10 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     FieldKind::Array { .. } => None,
                 };
             }
+            // P2-T89 C: m[i] ist eine vec4-Spalte, nicht die Matrix selbst.
+            if self.vecmat_von(object).is_some() {
+                return self.infer(expr).as_ref().and_then(|ty| self.struct_name_from_type(ty));
+            }
             if let Some(name) = self.infer(object).as_ref().and_then(|ty| self.struct_name_from_type(ty)) {
                 return Some(name);
             }
@@ -2198,6 +2256,19 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     /// beweisbar. Ein freier ptr[T], MMIO oder ein gepacktes Feld erhaelt
     /// weiterhin align 1: sein Sprachtyp allein garantiert keine Adresse.
     fn local_array_alignment(&self, object: &Expr) -> u32 {
+        // P2-T89 C: Spalte/Bahn eines vecmat-Orts liegt auf einem Vielfachen
+        // der Komponentengroesse k; mehr als k nie, weniger, wenn der Ort
+        // selbst nichts beweist (freier Zeiger, Zwischenwert: align 1).
+        if let Some(art) = self.vecmat_von(object) {
+            let k = Self::vecmat_komponente(art);
+            let basis = match object {
+                Expr::Identifier(name) if self.slots.contains_key(name) => k,
+                Expr::PropertyAccess { object: owner, property } => self.local_field_alignment(owner, property),
+                Expr::IndexAccess { object: inner, .. } => self.local_array_alignment(inner),
+                _ => 1,
+            };
+            return basis.min(k);
+        }
         // P2-T50 B2: Pufferelemente liegen ABI-ausgerichtet (calloc, Start als
         // Vielfaches der Elementgroesse, moo_buffer.c).
         if let Some(STy::Buffer(t)) = self.infer(object) {
@@ -2317,6 +2388,10 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     /// ein normaler Zugriff; fuer MMIO ist ausdruecklich volatile_* zu nutzen.
     /// Der Aufrufer im unsicher-Block verantwortet Gueltigkeit und Grenzen.
     fn pointer_index(&mut self, object: &Expr, index: &Expr) -> Result<(PointerValue<'ctx>, STy), String> {
+        // P2-T89 C: m[i] (Spalte von mat4/dmat4) und v[i] (Bahn von vecN/dvecN).
+        if let Some(art) = self.vecmat_von(object) {
+            return self.vecmat_index(object, index, art);
+        }
         if let Some((address, field)) = self.array_field_index(object, index)? {
             return match field {
                 FieldKind::Value(ty) => Ok((address, ty)),
@@ -2356,6 +2431,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         // Slot; Index grenzgeprueft (trap_block), Stride aus dem LLVM-Arraytyp.
         if let Some(array_ty @ STy::Array { .. }) = self.infer(object) {
             let STy::Array { element, length } = &array_ty else { return Err("Systemkoerper: Arraytyp fehlt".into()) };
+            if let Some(anzeige) = negatives_index_literal(index) {
+                return Err(self.index_ausserhalb(&anzeige, u64::from(*length)));
+            }
             let basis = self.array_basis(object)?;
             let position = self.expr(index, Some(&STy::Int(NType::U64)))?;
             self.expect(&position, &STy::Int(NType::U64), "Arrayindex")?;
@@ -2397,6 +2475,58 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         Ok((ptr, element))
     }
 
+    /// P2-T89 C (Plan 0a44c07a, O4): Spaltenindex m[i] auf mat4/dmat4
+    /// (Ergebnis vec4/dvec4) und Bahnenindex v[i] auf vecN/dvecN (Ergebnis
+    /// f32/f64), lesend und als Zuweisungsziel. Ein konstanter Index ausserhalb
+    /// ist ein Compilefehler (M-M001), sonst prueft die Laufzeit wie bei festen
+    /// Arrays (u64, UGE -> trap_block). Adresse ueber Bytes wie vecmat_adresse
+    /// (Spalte 4*k, Bahn k; k = 4 bzw. 8 Byte).
+    fn vecmat_index(
+        &mut self, object: &Expr, index: &Expr, art: VecMatArt,
+    ) -> Result<(PointerValue<'ctx>, STy), String> {
+        let was = if art.ist_matrix() { "Spaltenindex" } else { "Komponentenindex" };
+        let ty = self.vecmat_ty(art)?;
+        let place = self.struct_place(object, &ty, was)?;
+        let k = u64::from(Self::vecmat_komponente(art));
+        let (anzahl, schritt, element) = if art.ist_matrix() {
+            (4u64, 4 * k, self.vecmat_ty(art.vektor(4))?)
+        } else {
+            (u64::from(art.bahnen()), k, STy::Float(art.element()))
+        };
+        // Review c7eddc37: m[-1]/v[-1] ist ein konstanter Index ausserhalb
+        // (M-M001 mit Zeile), nicht erst ein u64-Literalfehler (M-C000).
+        if let Some(anzeige) = negatives_index_literal(index) {
+            return Err(crate::diagnose::vormerken("M-M001", self.zeile, format!(
+                "Systemkoerper: konstanter {was} {anzeige} liegt ausserhalb von {} (gueltig 0..{}); der Zugriff wuerde immer fehlschlagen",
+                art.name(), anzahl - 1)));
+        }
+        let position = self.expr(index, Some(&STy::Int(NType::U64)))?;
+        self.expect(&position, &STy::Int(NType::U64), was)?;
+        let raw = position.value.into_int_value();
+        if let Some(konstant) = raw.get_zero_extended_constant() {
+            if konstant >= anzahl {
+                let anzeige = if (konstant as i64) < 0 { (konstant as i64).to_string() } else { konstant.to_string() };
+                return Err(crate::diagnose::vormerken("M-M001", self.zeile, format!(
+                    "Systemkoerper: konstanter {was} {anzeige} liegt ausserhalb von {} (gueltig 0..{}); der Zugriff wuerde immer fehlschlagen",
+                    art.name(), anzahl - 1)));
+            }
+        }
+        let ausserhalb = self.builder.build_int_compare(
+            IntPredicate::UGE, raw, self.i64t().const_int(anzahl, false), "vm.index.ausserhalb",
+        ).map_err(e)?;
+        let fehler = self.trap_block()?;
+        let gueltig = self.context.append_basic_block(self.function, "vm.index.gueltig");
+        self.builder.build_conditional_branch(ausserhalb, fehler, gueltig).map_err(e)?;
+        self.builder.position_at_end(gueltig);
+        let offset = self.builder.build_int_mul(
+            raw, self.i64t().const_int(schritt, false), "vm.index.offset",
+        ).map_err(e)?;
+        let address = unsafe {
+            self.builder.build_gep(self.context.i8_type(), place.ptr, &[offset], "vm.index")
+        }.map_err(e)?;
+        Ok((address, element))
+    }
+
     /// Feldarray an einer typisierten Struktur: Grenzen werden vor dem
     /// Adressieren ueberprueft, Elementgroesse aus Ziel-ABI statt MooValue.
     /// Keine inbounds-Behauptung fuer vom Aufrufer gelieferte Pointer.
@@ -2420,6 +2550,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             _ => return Ok(None),
         };
         let FieldKind::Array { element, length, stride } = field else { return Ok(None) };
+        if let Some(anzeige) = negatives_index_literal(index) {
+            return Err(self.index_ausserhalb(&anzeige, length));
+        }
         let position = self.expr(index, Some(&STy::Int(NType::U64)))?;
         self.expect(&position, &STy::Int(NType::U64), "Arrayindex")?;
         let raw = position.value.into_int_value();
@@ -2467,6 +2600,13 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             };
         }
         if let Expr::IndexAccess { object: base, index } = object {
+            // P2-T89 C: Spalte m[i] einer mat4/dmat4 als vec4-Basis (m[i].x).
+            if self.vecmat_von(base).is_some() {
+                let (address, ty) = self.pointer_index(base, index)?;
+                let name = self.struct_name_from_type(&ty).ok_or(
+                    "Systemkoerper: Feldzugriff auf v[i] (eine Komponente ist kein Vektor)")?;
+                return Ok((address, name));
+            }
             // P2-T48 D: p[i] auf puffer[Struktur] (grenzgeprueft) als Strukturbasis.
             if matches!(self.infer(base), Some(STy::StrukturPuffer(_))) {
                 let (address, ty) = self.pointer_index(base, index)?;
@@ -2546,6 +2686,14 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
             }
         }
+        // Review c7eddc37: Strukturwert als Zwischenwert (vec4(...).y, (a + b).x,
+        // f().feld) ist kein Zeiger: in einen frischen Ort legen, Feld daraus.
+        if let Some(ty @ STy::Struct(_)) = self.infer(object) {
+            let name = self.struct_name_from_type(&ty)
+                .ok_or("Systemkoerper: unbekannter nativer Strukturwert")?;
+            let place = self.struct_place(object, &ty, "Feldzugriff")?;
+            return Ok((place.ptr, name));
+        }
         self.verlange_unsicher("Feldzugriff ueber ptr[Struktur]")?;
         let ty = self.infer(object)
             .ok_or("Systemkoerper: Feldzugriff erfordert ptr[Struktur]")?;
@@ -2602,9 +2750,14 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             return Ok(());
         }
         let anzeige = if (k as i64) < 0 { (k as i64).to_string() } else { k.to_string() };
+        Err(self.index_ausserhalb(&anzeige, length))
+    }
+
+    /// M-M001-Text fuer [T; N]: konstanter_index und negative Literale.
+    fn index_ausserhalb(&self, anzeige: &str, length: u64) -> String {
         let gueltig = if length == 0 { "das Array ist leer".to_string() } else { format!("gueltig 0..{}", length - 1) };
-        Err(crate::diagnose::vormerken("M-M001", self.zeile, format!(
-            "Systemkoerper: konstanter Index {anzeige} liegt ausserhalb von [T; {length}] ({gueltig}); der Zugriff wuerde immer fehlschlagen")))
+        crate::diagnose::vormerken("M-M001", self.zeile, format!(
+            "Systemkoerper: konstanter Index {anzeige} liegt ausserhalb von [T; {length}] ({gueltig}); der Zugriff wuerde immer fehlschlagen"))
     }
 
     fn stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
@@ -2825,6 +2978,14 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                         FieldKind::Value(ty) => Some(ty),
                         FieldKind::Embedded(name) => self.struct_ty(&name).ok(),
                         FieldKind::Array { .. } => None,
+                    };
+                }
+                // P2-T89 C: m[i] -> vec4/dvec4, v[i] -> f32/f64.
+                if let Some(art) = self.vecmat_von(object) {
+                    return if art.ist_matrix() {
+                        self.vecmat_ty(art.vektor(4)).ok()
+                    } else {
+                        Some(STy::Float(art.element()))
                     };
                 }
                 match self.infer(object) {

@@ -9,15 +9,20 @@ setze heads auf zahl(umgebung("P4_HEADS"))
 setze block auf zahl(umgebung("P4_CONTEXT"))
 setze versteckt auf zahl(umgebung("P4_HIDDEN"))
 wenn art == nichts oder tokpfad == nichts oder ziel == nichts oder seed == nichts oder dim == nichts oder heads == nichts oder block == nichts oder versteckt == nichts:
-    wirf "P4-Init: Umgebungsvariablen fehlen"
+    zeige "P4-Init: Umgebungsvariablen fehlen"
+    beende(1)
 wenn datei_existiert(ziel):
-    wirf "P4-Init: Checkpoint existiert bereits"
+    zeige "P4-Init: Checkpoint existiert bereits"
+    beende(1)
 wenn seed < 0 oder seed > 1000000000 oder seed != boden(seed):
-    wirf "P4-Init: Seed ungültig"
+    zeige "P4-Init: Seed ungültig"
+    beende(1)
 wenn dim < 1 oder dim > 512 oder dim != boden(dim) oder heads < 1 oder heads > 16 oder heads != boden(heads) oder dim - boden(dim / heads) * heads != 0:
-    wirf "P4-Init: Dimension/Köpfe ungültig"
+    zeige "P4-Init: Dimension/Köpfe ungültig"
+    beende(1)
 wenn block < 2 oder block > 4096 oder block != boden(block) oder versteckt < 1 oder versteckt > 4096 oder versteckt != boden(versteckt):
-    wirf "P4-Init: Kontext/FF-Dimension ungültig"
+    zeige "P4-Init: Kontext/FF-Dimension ungültig"
+    beende(1)
 setze tok auf nichts
 setze info auf nichts
 wenn art == "char":
@@ -34,10 +39,12 @@ sonst wenn art == "syllable":
     setze tok auf silben_laden(tokpfad)
     setze info auf silben_info(tok)
 sonst:
-    wirf "P4-Init: unbekannter Tokenizer"
+    zeige "P4-Init: unbekannter Tokenizer"
+    beende(1)
 setze vokab auf info["vokab"]
 wenn 2 * vokab * dim + 4 * dim * versteckt > 8000000:
-    wirf "P4-Init: Modellgröße über dem Ressourcenlimit"
+    zeige "P4-Init: Modellgröße über dem Ressourcenlimit"
+    beende(1)
 setze emb auf schicht_embedding(vokab, dim, seed + 1)
 setze pos auf schicht_position(block, dim, "gelernt", seed + 2)
 setze ln1a auf schicht_layernorm(dim)

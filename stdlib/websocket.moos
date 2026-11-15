@@ -96,11 +96,13 @@ funktion ws_url_parse(url):
         wenn klammer + 1 < länge(autoritaet):
             wenn autoritaet[klammer + 1] != ":":
                 wirf "websocket: ungueltige IPv6-Autoritaet"
+            # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_port_lesen wirft bei ungültigem Port (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
             setze port auf ws_port_lesen(autoritaet.teilstring(klammer + 2, länge(autoritaet)))
     sonst:
         setze doppelpunkt auf ws_finde(autoritaet, ":", 0)
         wenn doppelpunkt >= 0:
             setze host auf autoritaet.teilstring(0, doppelpunkt)
+            # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_port_lesen wirft bei ungültigem Port (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
             setze port auf ws_port_lesen(autoritaet.teilstring(doppelpunkt + 1, länge(autoritaet)))
         sonst:
             setze host auf autoritaet
@@ -120,8 +122,10 @@ funktion ws_transport_oeffne(info, timeout_ms):
     setze transport auf {}
     transport["sicher"] = info["sicher"]
     wenn info["sicher"]:
+        # FEHLERPFAD(M-F002): bewusst ungeschützt – tls_verbinde wirft bei Verbindungs- oder Zertifikatsfehler (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft mit nichts weiter (RC 0), mit versuche wird gefangen (gemessen am Beispiel imap_verbinden) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         transport["handle"] = tls_verbinde(info["host"], info["port"], timeout_ms)
     sonst:
+        # FEHLERPFAD(M-F002): bewusst ungeschützt – tcp_verbinde wirft bei Verbindungsfehler (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft mit nichts weiter (RC 0), mit versuche wird gefangen (gemessen: Peer-Fehler erreicht den Aufrufer) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         setze sock auf tcp_verbinde(info["host"], info["port"])
         sock.timeout_setzen(timeout_ms)
         transport["handle"] = sock
@@ -214,10 +218,13 @@ funktion ws_handshake(verbindung, headers):
     setze req auf req + "Connection: Upgrade\r\n"
     setze req auf req + "Sec-WebSocket-Key: " + schluessel + "\r\n"
     setze req auf req + "Sec-WebSocket-Version: 13\r\n"
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_zusatz_header wirft bei ungültigen Zusatz-Headern (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
     setze req auf req + ws_zusatz_header(headers)
     setze req auf req + "\r\n"
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_transport_sende wirft bei Schreibfehler (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen, die Meldung kann der letzte Folgefehler sein) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
     ws_transport_sende(verbindung.transport, bytes_zu_liste(req))
 
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_lies_header wirft bei EOF oder Timeout (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und ws_handshake läuft weiter und meldet dann das fehlende 101 (gemessen: Peer schließt sofort, kein Hänger) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
     setze antwort auf ws_lies_header(verbindung)
     setze zeilen auf antwort.teilen("\r\n")
     wenn länge(zeilen) == 0 oder länge(zeilen[0]) < 12 oder zeilen[0].teilstring(9, 12) != "101":
@@ -295,6 +302,7 @@ funktion ws_client_frame(opcode, payload, fin=wahr):
     gib_zurück frame_bytes
 
 funktion ws_server_frame_lesen(verbindung):
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_lies_genau wirft bei EOF oder Timeout (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen: kein Hänger bei sofort schließendem Peer) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
     setze kopf auf ws_lies_genau(verbindung, 2)
     setze b0 auf kopf[0]
     setze b1 auf kopf[1]
@@ -309,9 +317,11 @@ funktion ws_server_frame_lesen(verbindung):
     wenn maskiert:
         wirf "websocket: Server-Frames duerfen nicht maskiert sein"
     wenn n == 126:
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_lies_genau wirft bei EOF oder Timeout (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen: kein Hänger bei sofort schließendem Peer) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         setze ext auf ws_lies_genau(verbindung, 2)
         setze n auf ext[0] * 256 + ext[1]
     sonst wenn n == 127:
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_lies_genau wirft bei EOF oder Timeout (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen: kein Hänger bei sofort schließendem Peer) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         setze ext auf ws_lies_genau(verbindung, 8)
         wenn ext[0] != 0 oder ext[1] != 0 oder ext[2] != 0 oder ext[3] != 0:
             wirf "websocket: 64-Bit-Frame ueber Moo-Groessenlimit"
@@ -323,6 +333,7 @@ funktion ws_server_frame_lesen(verbindung):
 
     setze payload auf []
     wenn n > 0:
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_lies_genau wirft bei EOF oder Timeout (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen: kein Hänger bei sofort schließendem Peer) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         setze payload auf ws_lies_genau(verbindung, n)
     setze frame auf {}
     frame["fin"] = fin
@@ -347,23 +358,28 @@ funktion ws_daten_ereignis(opcode, payload):
 
 klasse WebSocketClient:
     funktion erstelle(url, headers, timeout_ms):
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_url_parse wirft bei ungültiger URL oder Port (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         selbst.info = ws_url_parse(url)
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_transport_oeffne wirft bei Verbindungsfehler (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         selbst.transport = ws_transport_oeffne(selbst.info, timeout_ms)
         selbst.geschlossen = falsch
         selbst.close_gesendet = falsch
         selbst.fragment_opcode = 0
         selbst.fragment_payload = []
         selbst.schluessel = ""
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_handshake wirft bei abgelehntem Upgrade oder EOF (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen: gefangen wird "Server hat Upgrade nicht mit 101 bestaetigt") – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         ws_handshake(selbst, headers)
 
     funktion sende_text(textwert):
         wenn selbst.geschlossen:
             wirf "websocket: Verbindung ist geschlossen"
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_transport_sende wirft bei Schreibfehler (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen, die Meldung kann der letzte Folgefehler sein) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         ws_transport_sende(selbst.transport, ws_client_frame(WS_OPCODE_TEXT, bytes_zu_liste(textwert)))
 
     funktion sende_bytes(bytes):
         wenn selbst.geschlossen:
             wirf "websocket: Verbindung ist geschlossen"
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_transport_sende wirft bei Schreibfehler (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen, die Meldung kann der letzte Folgefehler sein) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         ws_transport_sende(selbst.transport, ws_client_frame(WS_OPCODE_BINARY, bytes))
 
     funktion ping(textwert=""):
@@ -372,18 +388,21 @@ klasse WebSocketClient:
         setze payload auf bytes_zu_liste(textwert)
         wenn länge(payload) > 125:
             wirf "websocket: Ping-Payload zu gross"
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_transport_sende wirft bei Schreibfehler (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen, die Meldung kann der letzte Folgefehler sein) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         ws_transport_sende(selbst.transport, ws_client_frame(WS_OPCODE_PING, payload))
 
     funktion empfange():
         wenn selbst.geschlossen:
             wirf "websocket: Verbindung ist geschlossen"
         solange wahr:
+            # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_server_frame_lesen wirft bei Protokoll- oder Netzfehler (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen, die Meldung kann der letzte Folgefehler sein) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
             setze frame auf ws_server_frame_lesen(selbst)
             setze opcode auf frame["opcode"]
             setze payload auf frame["payload"]
             setze fin auf frame["fin"]
 
             wenn opcode == WS_OPCODE_PING:
+                # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_transport_sende wirft bei Schreibfehler (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen, die Meldung kann der letzte Folgefehler sein) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
                 ws_transport_sende(selbst.transport, ws_client_frame(WS_OPCODE_PONG, payload))
                 setze ping_event auf {}
                 ping_event["typ"] = "ping"
@@ -411,6 +430,7 @@ klasse WebSocketClient:
                     setze code auf payload[0] * 256 + payload[1]
                     setze grund auf bytes_neu(ws_liste_abschnitt(payload, 2, länge(payload)))
                 wenn nicht selbst.close_gesendet:
+                    # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_transport_sende wirft bei Schreibfehler (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen, die Meldung kann der letzte Folgefehler sein) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
                     ws_transport_sende(selbst.transport, ws_client_frame(WS_OPCODE_CLOSE, payload))
                     selbst.close_gesendet = wahr
                 ws_transport_schliesse(selbst.transport)
@@ -456,6 +476,7 @@ klasse WebSocketClient:
         wenn länge(grund_bytes) > 123:
             wirf "websocket: Close-Grund zu lang"
         ws_bytes_anhaengen(payload, grund_bytes)
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – ws_transport_sende wirft bei Schreibfehler (Vertrag der Bibliothek); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen, die Meldung kann der letzte Folgefehler sein) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         ws_transport_sende(selbst.transport, ws_client_frame(WS_OPCODE_CLOSE, payload))
         selbst.close_gesendet = wahr
 
@@ -475,15 +496,19 @@ klasse WebSocketClient:
 
     # Englische Aliase (P1-T506): dünne Weiterleitungen auf die deutschen Methoden.
     funktion send_text(textwert):
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – send_text reicht den Fehler von sende_text weiter; ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen, die Meldung kann der letzte Folgefehler sein) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         gib_zurück selbst.sende_text(textwert)
 
     funktion send_bytes(bytes):
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – send_bytes reicht den Fehler von sende_bytes weiter; ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen, die Meldung kann der letzte Folgefehler sein) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         gib_zurück selbst.sende_bytes(bytes)
 
     funktion receive():
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – receive reicht den Fehler von empfange weiter; ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen, die Meldung kann der letzte Folgefehler sein) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         gib_zurück selbst.empfange()
 
     funktion close(code=1000, reason=""):
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – close reicht den Fehler von schliessen weiter; ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft weiter (RC 0), mit versuche wird gefangen (gemessen, die Meldung kann der letzte Folgefehler sein) – ändern: Aufrufer fängt mit versuche:/fange (Beispiel: beispiele/websocket_client_selftest.moos)
         gib_zurück selbst.schliessen(code, reason)
 
 funktion ws_verbinde(url, timeout_ms=10000):

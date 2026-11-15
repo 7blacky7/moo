@@ -69,7 +69,7 @@ ${CC:-cc} -std=c11 -O2 -ffp-contract=off -Wall -Wextra -Werror -no-pie -I"$proje
 # `importiere vektor` sucht ./stdlib relativ zum Arbeitsverzeichnis.
 cd "$project_dir"
 t="$project_dir/compiler/tests/p2"
-for n in vecmat_typen vecmat_bibliothek vecmat_eigene; do
+for n in vecmat_typen vecmat_bibliothek vecmat_eigene vecmat_spaltenindex; do
     "$compiler" compile "$t/$n.moos" -o "$out/$n" >"$out/$n.compile" 2>&1 \
         || { cat "$out/$n.compile" >&2; echo "FEHLER: $n kompiliert nicht" >&2; exit 1; }
     "$out/$n" >"$out/$n.out"
@@ -83,7 +83,15 @@ for fall in "vecmat_neg_mischung:vec3 + vec4 ist nicht definiert" \
             "vecmat_neg_plus_skalar:vec2 + Zahl ist nicht definiert" \
             "vecmat_neg_ordnung:vec3 nur mit == oder != vergleichen" \
             "vecmat_neg_mat_vec3:mat4 * vec3 ist nicht definiert" \
-            "vecmat_neg_kreuz:kreuz ist nur fuer vec3 definiert"; do
+            "vecmat_neg_kreuz:kreuz ist nur fuer vec3/dvec3 definiert" \
+            "vecmat_neg_spalte_konstant:M-M001" \
+            "vecmat_neg_komponente_konstant:konstanter Komponentenindex 3 liegt ausserhalb von vec3" \
+            "vecmat_neg_spalte_mischung:erwartet vec4, erhalten dvec4" \
+            "vecmat_neg_komponente_mischung:erwartet f32, erhalten f64" \
+            "vecmat_neg_komponente_feld:eine Komponente ist kein Vektor" \
+            "vecmat_neg_spalte_negativ:konstanter Spaltenindex -1 liegt ausserhalb von mat4" \
+            "vecmat_neg_komponente_negativ:konstanter Komponentenindex -1 liegt ausserhalb von vec3" \
+            "native_array_neg_negativ:konstanter Index -1 liegt ausserhalb von [T; 3]"; do
     n="${fall%%:*}"; grund="${fall#*:}"
     if "$compiler" compile "$t/$n.moos" -o "$out/$n" >"$out/$n.err" 2>&1; then
         echo "FEHLER: $n: Compilefehler erwartet" >&2; exit 1
@@ -130,8 +138,12 @@ echo "PASS vecmat IR-Gate (inkl. insertvalue-Ausschluss je Funktion)"
 "$compiler" compile "$grafik_dir/vecmat_nativ.moos" --no-stdlib \
     --target x86_64-bare -o "$out/vecmat_nativ.roh.o"
 mise exec -- llvm-objcopy --localize-symbol=main "$out/vecmat_nativ.roh.o" "$out/vecmat_nativ.o"
+# P2-T89: stdlib/vektor rechnet sin/cos/tan ueber moo_native_* (ohne libm);
+# das Objekt referenziert sie, die C-Gegenprobe nutzt dieselben Funktionen.
 ${CC:-cc} -std=c11 -O2 -ffp-contract=off -Wall -Wextra -Werror -no-pie -I"$grafik_dir" \
+    -I"$project_dir/compiler/runtime" \
     "$grafik_dir/test_vecmat_nativ.c" "$grafik_dir/mat_ref.c" "$project_dir/compiler/runtime/moo_3d_math.c" \
+    "$project_dir/compiler/runtime/moo_native_math.c" \
     "$out/vecmat_nativ.o" -lm -o "$out/test_vecmat_nativ"
 "$out/test_vecmat_nativ" "${MOO_VECMAT_RUNDEN:-20000}" "${MOO_VECMAT_BENCH_N:-1000000}" 7
 

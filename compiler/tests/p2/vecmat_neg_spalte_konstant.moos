@@ -1,0 +1,6 @@
+# P2-T89 C: konstanter Spaltenindex ausserhalb von mat4 ist ein Compilefehler (M-M001).
+@nativ
+funktion f(m: mat4) -> vec4:
+    gib_zurück m[4]
+
+zeige f(mat4())

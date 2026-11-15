@@ -1,0 +1,6 @@
+# P2-T89 C: v[i] ist eine Komponente (f32), kein Vektor mit Feldern.
+@nativ
+funktion f(v: vec4) -> f32:
+    gib_zurück v[1].x
+
+zeige f(vec4())

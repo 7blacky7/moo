@@ -18,4 +18,5 @@ funktion praferenz_paar(paar, encoder, sequenzlaenge, pad):
     wenn gleich:
         wirf "DPO-Adapter: Praeferenz ist nach Tokenisierung identisch"
     setze negativ_paar auf {"prompt": prompt, "akzeptiert": wahr, "aufgabe": paar["aufgabe"], "original": paar["original"], "korrektur": paar["original"], "begruendung": paar["begruendung"], "art": paar["art"]}
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – korrektur_fenster_aufteilen wirft bei ungültigen Paaren (beide Aufrufe in dieser Zeile); ohne versuche beim Aufrufer nur Hinweis und die Funktion läuft mit nichts weiter (RC 0), die p5-Adapter rufen praferenz_paar in versuche: auf und enden bei Fehler mit RC 1 – ändern: Aufrufer fängt mit versuche:/fange
     gib_zurück {"gewaehlt": korrektur_fenster_aufteilen(paar, encoder, sequenzlaenge, pad), "verworfen": korrektur_fenster_aufteilen(negativ_paar, encoder, sequenzlaenge, pad)}

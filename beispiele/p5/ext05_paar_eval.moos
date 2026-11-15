@@ -9,7 +9,12 @@ wenn th != "20ef4b48638359a42141de61ff30d38be7f723c7fe8c612506e9d67f59b62eed":
     wirf "Tokenizer geaendert"
 funktion encoder(t):
     gib_zurück silben_kodiere(tok, t)
-setze z auf checkpoint_laden(ck, {"tokenizer_version": th, "arch_version": "grimm-silben-250k-v1"})
+setze z auf nichts
+versuche:
+    setze z auf checkpoint_laden(ck, {"tokenizer_version": th, "arch_version": "grimm-silben-250k-v1"})
+fange lade_fehler:
+    zeige "P5: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze sch auf z["netz"]["schichten"]
 wenn länge(sch) != 14 oder sch[1]["max"] != 64:
     wirf "Architektur falsch"
@@ -49,7 +54,13 @@ für paar in pilot["beispiele"]:
         für byte in bytes_zu_liste(paar["korrektur"]):
             wenn byte < 128 oder byte >= 192:
                 setze codepoints auf codepoints + 1
-        für f in korrektur_fenster_aufteilen(paar, encoder, 64, 0):
+        setze fenster_liste auf nichts
+        versuche:
+            setze fenster_liste auf korrektur_fenster_aufteilen(paar, encoder, 64, 0)
+        fange lade_fehler:
+            zeige "P5: korrektur_fenster_aufteilen fehlgeschlagen: " + lade_fehler
+            beende(1)
+        für f in fenster_liste:
             setze aktiv auf 0
             für m in f["loss_mask"]:
                 setze aktiv auf aktiv + m

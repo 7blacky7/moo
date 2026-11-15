@@ -32,7 +32,12 @@ setze folge auf {"tokenizer_id": "synthetisch-v1", "sequenzlaenge": 4,
     "vokab": 4, "params": params, "opt": opt, "schritte": 1}
 trainiere_sft(vorlauf, daten, folge)
 checkpoint_speichern({"netz": sch, "opt": opt}, pfad + ".ref")
-setze geladen auf checkpoint_laden(pfad, {"tokenizer_version": "synthetisch-v1", "arch_version": "p5-sft-opt-v1"})
+setze geladen auf nichts
+versuche:
+    setze geladen auf checkpoint_laden(pfad, {"tokenizer_version": "synthetisch-v1", "arch_version": "p5-sft-opt-v1"})
+fange lade_fehler:
+    zeige "P5 SFT-OPT FAIL: checkpoint_laden: " + lade_fehler
+    beende(1)
 setze sch2 auf geladen["netz"]["schichten"]
 setze params2 auf parameter(sch2)
 setze vorlauf2 auf erzeuge_vorlauf(sch2)

@@ -4,6 +4,9 @@
  * Nutzlast. Alias (erg == Eingabe) und Sonderwerte (+-0, +-Inf, NaN,
  * Denormale, FLT_MAX). Benchmark: 10^6 mat4*vec4 und mat4*mat4, Median aus
  * 7 Laeufen, Pruefsummen muessen gleich sein.
+ * P2-T89: rotate/perspective gegen dieselbe Formel mit moo_native_sinf/cosf/
+ * tanf (stdlib/vektor nutzt die eingebauten sin/cos/tan, nicht libm);
+ * dmat4/dvec4 gegen p2_dmat4_* und dref_*; Spaltenindex m[i], m[j][k].
  * Argumente: [runden] [bench_n] [bench_laeufe] */
 #define _POSIX_C_SOURCE 200809L /* clock_gettime unter -std=c11 */
 #include <float.h>
@@ -15,6 +18,7 @@
 #include <time.h>
 
 #include "mat_ref.h"
+#include "moo_native_math.h"
 
 void mat4_identity(float *m);
 void mat4_multiply(float *result, const float *a, const float *b);
@@ -44,6 +48,12 @@ float moo_n_vm_betrag(const float *a);
 void moo_n_vm_normalisiere(float *erg, const float *a);
 /* Moo bool = i1 ohne zeroext: nur Bit 0 auswerten. */
 uint8_t moo_n_vm_gleich(const float *a, const float *b);
+void moo_n_vm_dmat4_dvec4(double *erg, const double *m, const double *v);
+void moo_n_vm_dmat4_mul(double *erg, const double *a, const double *b);
+void moo_n_vm_drotate(double *m, double grad, double x, double y, double z);
+void moo_n_vm_dperspective(double *m, double fov, double seiten, double nah, double fern);
+void moo_n_vm_spalte(float *erg, float *m, uint64_t i, uint64_t j, uint64_t k, float x);
+double moo_n_vm_dspalte(const double *m, uint64_t i, uint64_t j);
 
 static uint64_t zustand = 0x9E3779B97F4A7C15ull;
 static uint64_t zufall(void) {
@@ -98,6 +108,92 @@ static void ref_normalisiere(float *e, const float *a) {
     e[0] = x; e[1] = y; e[2] = z;
 }
 
+/* moo_3d_math.c mat4_rotate/mat4_perspective, Trigonometrie ueber moo_native_*. */
+static void ref_rotate(float *m, float angle_deg, float ax, float ay, float az) {
+    float rad = angle_deg * (float)3.14159265358979323846 / 180.0f;
+    float c = moo_native_cosf(rad), s = moo_native_sinf(rad);
+    float len = sqrtf(ax*ax + ay*ay + az*az);
+    if (len > 0) { ax /= len; ay /= len; az /= len; }
+    float r[16];
+    mat4_identity(r);
+    r[0]  = c + ax*ax*(1-c);
+    r[1]  = ay*ax*(1-c) + az*s;
+    r[2]  = az*ax*(1-c) - ay*s;
+    r[4]  = ax*ay*(1-c) - az*s;
+    r[5]  = c + ay*ay*(1-c);
+    r[6]  = az*ay*(1-c) + ax*s;
+    r[8]  = ax*az*(1-c) + ay*s;
+    r[9]  = ay*az*(1-c) - ax*s;
+    r[10] = c + az*az*(1-c);
+    float tmp[16];
+    mat4_multiply(tmp, m, r);
+    memcpy(m, tmp, 16 * sizeof(float));
+}
+static void ref_perspective(float *m, float fov_deg, float aspect, float near_val, float far_val) {
+    memset(m, 0, 16 * sizeof(float));
+    float rad = fov_deg * (float)3.14159265358979323846 / 180.0f;
+    float tanHalf = moo_native_tanf(rad / 2.0f);
+    m[0]  = 1.0f / (aspect * tanHalf);
+    m[5]  = 1.0f / tanHalf;
+    m[10] = -(far_val + near_val) / (far_val - near_val);
+    m[11] = -1.0f;
+    m[14] = -(2.0f * far_val * near_val) / (far_val - near_val);
+}
+
+/* f64: Werte, Bitvergleich, Referenzen (gleiche Operationsfolge wie vektor.moos). */
+static double dwert(int modus) {
+    uint64_t r = zufall();
+    if (modus == 0 || (r & 7) < 5) return ((double)(r >> 11) / 9007199254740992.0) * 16.0 - 8.0;
+    if ((r & 7) == 5) return (double)sonder[(r >> 8) % (sizeof sonder / sizeof *sonder)];
+    uint64_t bits = zufall();
+    double d; memcpy(&d, &bits, sizeof d); return d;
+}
+static void dfuellen(double *p, int n, int modus) { for (int i = 0; i < n; ++i) p[i] = dwert(modus); }
+static int dgleich_bits(double a, double b) {
+    if (isnan(a) && isnan(b)) return 1;
+    return memcmp(&a, &b, sizeof a) == 0;
+}
+static void dvergleiche(const char *was, const double *moo, const double *ref, int n) {
+    for (int i = 0; i < n; ++i) {
+        if (!dgleich_bits(moo[i], ref[i])) {
+            if (fehler < 10)
+                fprintf(stderr, "ABWEICHUNG %s[%d]: moo=%a ref=%a\n", was, i, moo[i], ref[i]);
+            ++fehler;
+            return;
+        }
+    }
+}
+static void dref_rotate(double *m, double grad, double ax, double ay, double az) {
+    double rad = grad * 3.14159265358979323846 / 180.0;
+    double c = moo_native_cos(rad), s = moo_native_sin(rad);
+    double len = sqrt(ax*ax + ay*ay + az*az);
+    if (len > 0) { ax /= len; ay /= len; az /= len; }
+    double k = 1.0 - c, r[16];
+    memset(r, 0, sizeof r);
+    r[15] = 1.0;
+    r[0]  = c + ax*ax*k;
+    r[1]  = ay*ax*k + az*s;
+    r[2]  = az*ax*k - ay*s;
+    r[4]  = ax*ay*k - az*s;
+    r[5]  = c + ay*ay*k;
+    r[6]  = az*ay*k + ax*s;
+    r[8]  = ax*az*k + ay*s;
+    r[9]  = ay*az*k - ax*s;
+    r[10] = c + az*az*k;
+    p2_dmat4_mul(m, m, r);
+}
+static void dref_perspective(double *m, double fov, double aspect, double nah, double fern) {
+    memset(m, 0, 16 * sizeof(double));
+    double rad = fov * 3.14159265358979323846 / 180.0;
+    double t = moo_native_tan(rad / 2.0);
+    double tiefe = fern - nah;
+    m[0]  = 1.0 / (aspect * t);
+    m[5]  = 1.0 / t;
+    m[10] = (-(fern + nah)) / tiefe;
+    m[11] = -1.0;
+    m[14] = (-(2.0 * fern * nah)) / tiefe;
+}
+
 static double jetzt(void) {
     struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
     return (double)t.tv_sec + (double)t.tv_nsec * 1e-9;
@@ -138,13 +234,38 @@ int main(int argc, char **argv) {
         moo_n_vm_translate(e1, v[0], v[1], v[2]); mat4_translate(e2, v[0], v[1], v[2]); vergleiche("translate", e1, e2, 16);
         moo_n_vm_scale(e1, w[0], w[1], w[2]); mat4_scale(e2, w[0], w[1], w[2]); vergleiche("scale", e1, e2, 16);
         float grad = modus ? s : s * 45.0f;
-        moo_n_vm_rotate(e1, grad, w[0], w[1], w[3]); mat4_rotate(e2, grad, w[0], w[1], w[3]); vergleiche("rotate", e1, e2, 16);
-        moo_n_vm_perspective(e1, v[0] * 20.0f, v[1], v[2], v[3]); mat4_perspective(e2, v[0] * 20.0f, v[1], v[2], v[3]);
+        moo_n_vm_rotate(e1, grad, w[0], w[1], w[3]); ref_rotate(e2, grad, w[0], w[1], w[3]); vergleiche("rotate", e1, e2, 16);
+        moo_n_vm_perspective(e1, v[0] * 20.0f, v[1], v[2], v[3]); ref_perspective(e2, v[0] * 20.0f, v[1], v[2], v[3]);
         vergleiche("perspective", e1, e2, 16);
         moo_n_vm_lookat(e1, m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
         mat4_lookat(e2, m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]); vergleiche("lookat", e1, e2, 16);
         moo_n_vm_ortho(e1, b[0], b[1], b[2], b[3], b[4], b[5]); mat4_ortho(e2, b[0], b[1], b[2], b[3], b[4], b[5]);
         vergleiche("ortho", e1, e2, 16);
+
+        double dm[16], db[16], dv[4], d1[16], d2[16];
+        dfuellen(dm, 16, modus); dfuellen(db, 16, modus); dfuellen(dv, 4, modus);
+        double ds = dwert(modus);
+        moo_n_vm_dmat4_dvec4(d1, dm, dv); p2_dmat4_vec4(d2, dm, dv); dvergleiche("dmat4*dvec4", d1, d2, 4);
+        moo_n_vm_dmat4_mul(d1, dm, db); p2_dmat4_mul(d2, dm, db); dvergleiche("dmat4*dmat4", d1, d2, 16);
+        memcpy(d1, dm, sizeof dm); memcpy(d2, dm, sizeof dm);
+        moo_n_vm_dmat4_mul(d1, d1, d1); p2_dmat4_mul(d2, d2, d2); dvergleiche("dmat4*dmat4 alias", d1, d2, 16);
+        memcpy(d1, dm, sizeof dm); memcpy(d2, dm, sizeof dm);
+        double dgrad = modus ? ds : ds * 45.0;
+        moo_n_vm_drotate(d1, dgrad, db[0], db[1], db[3]); dref_rotate(d2, dgrad, db[0], db[1], db[3]);
+        dvergleiche("drotate", d1, d2, 16);
+        moo_n_vm_dperspective(d1, dv[0] * 20.0, dv[1], dv[2], dv[3]); dref_perspective(d2, dv[0] * 20.0, dv[1], dv[2], dv[3]);
+        dvergleiche("dperspective", d1, d2, 16);
+        {
+            uint64_t r = zufall(), si = r & 3, sj = (r >> 2) & 3, sk = (r >> 4) & 3;
+            float sm[16], se[4], sr[16];
+            memcpy(sm, m, sizeof sm); memcpy(sr, m, sizeof sr);
+            sr[4 * sj + sk] = s;
+            moo_n_vm_spalte(se, sm, si, sj, sk, s);
+            vergleiche("spalte m[i]", se, m + 4 * si, 4);
+            vergleiche("spalte m[j][k] = x", sm, sr, 16);
+            double dx = moo_n_vm_dspalte(dm, si, sj);
+            dvergleiche("dspalte m[i][j]", &dx, &dm[4 * si + sj], 1);
+        }
 
         moo_n_vm_ops(n1, e1, v, w, s); ref_ops(n2, e2, v, w, s);
         vergleiche("ops", n1, n2, 4); vergleiche("neg", e1, e2, 4);

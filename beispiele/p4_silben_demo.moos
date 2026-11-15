@@ -4,14 +4,16 @@
 # Nur mit gültigem UTF-8 ohne NUL; IDs sind artefaktgebunden.
 setze ziel auf umgebung("MOO_P4_DEMO_DIR")
 wenn ziel == nichts oder ziel == "":
-    wirf "MOO_P4_DEMO_DIR muss ein leeres Arbeitsverzeichnis benennen"
+    zeige "MOO_P4_DEMO_DIR muss ein leeres Arbeitsverzeichnis benennen"
+    beende(1)
 
 setze c_pfad auf ziel + "/zeichen.mcf"
 setze s_pfad auf ziel + "/silben.msf"
 setze cc_pfad auf ziel + "/zeichen.mook"
 setze sc_pfad auf ziel + "/silben.mook"
 wenn datei_existiert(c_pfad) oder datei_existiert(s_pfad) oder datei_existiert(cc_pfad) oder datei_existiert(sc_pfad):
-    wirf "Ausgabedatei existiert bereits"
+    zeige "Ausgabedatei existiert bereits"
+    beende(1)
 
 # Die Regeldatei ist Bestandteil des Silbenartefakts. Eigene Beispiele
 # verwenden nur diesen kurzen Demo-Korpus, niemals einen Testsatz.
@@ -28,11 +30,14 @@ setze sl auf silben_laden(s_pfad)
 setze ch auf zeichen_fixed_hash(cl)
 setze sh auf silben_hash(sl)
 wenn ch != zeichen_fixed_hash(ct) oder sh != silben_hash(st):
-    wirf "Tokenizer-Hash nach Laden verändert"
+    zeige "Tokenizer-Hash nach Laden verändert"
+    beende(1)
 wenn zeichen_fixed_dekodiere(cl, zeichen_fixed_kodiere(cl, probe)) != probe:
-    wirf "Zeichen-Roundtrip fehlgeschlagen"
+    zeige "Zeichen-Roundtrip fehlgeschlagen"
+    beende(1)
 wenn silben_dekodiere(sl, silben_kodiere(sl, probe)) != probe:
-    wirf "Silben-Roundtrip fehlgeschlagen"
+    zeige "Silben-Roundtrip fehlgeschlagen"
+    beende(1)
 
 # Je ein minimaler untrainierter Modellzustand: Embedding-/Kopfgröße kommt
 # aus dem tatsächlichen Vokabular. Beide Checkpoints bleiben getrennt.
@@ -54,5 +59,6 @@ fange lade_fehler:
     zeige "P4 DEMO FAIL: checkpoint_laden fehlgeschlagen: " + lade_fehler
     beende(1)
 wenn cg["tokenizer_version"] != ch oder sg["tokenizer_version"] != sh:
-    wirf "Checkpoint-Identität stimmt nicht"
+    zeige "Checkpoint-Identität stimmt nicht"
+    beende(1)
 zeige "P4 DEMO OK"

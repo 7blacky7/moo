@@ -1,0 +1,8 @@
+# P2-T89 C (Review c7eddc37): v[-1] als Zuweisungsziel ist ein konstanter Index ausserhalb (M-M001).
+@nativ
+funktion f(v: vec3) -> vec3:
+    setze w: vec3 auf v
+    w[-1] = 1.0
+    gib_zurück w
+
+zeige f(vec3())

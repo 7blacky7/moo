@@ -27,7 +27,12 @@ funktion fabrik(zustand):
 setze basis auf ordner + "/base.mook"
 wenn sha256(datei_lesen(basis)) != "2edc53610bd0207563540c0941b67fb5bf63f3ca70442099a78dd4b56ad6ca2d":
     wirf "EXT-05: Basischeckpoint veraendert"
-setze z auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+setze z auf nichts
+versuche:
+    setze z auf checkpoint_laden(basis, {"tokenizer_version": tokhash, "arch_version": "grimm-silben-250k-v1"})
+fange lade_fehler:
+    zeige "P5: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 setze schichten auf z["netz"]["schichten"]
 wenn länge(schichten) != 14 oder schichten[1]["max"] != 64:
     wirf "EXT-05: Architektur falsch"
@@ -41,7 +46,13 @@ wenn länge(paare) != 70:
     wirf "EXT-05: falsche Anzahl Trainingspaare"
 setze fenster auf []
 für paar in paare:
-    für f in korrektur_fenster_aufteilen(paar, encoder, 64, 0):
+    setze fenster_liste auf nichts
+    versuche:
+        setze fenster_liste auf korrektur_fenster_aufteilen(paar, encoder, 64, 0)
+    fange lade_fehler:
+        zeige "P5: korrektur_fenster_aufteilen fehlgeschlagen: " + lade_fehler
+        beende(1)
+    für f in fenster_liste:
         fenster.hinzufügen(f)
 setze zufall auf seed
 setze i auf länge(fenster) - 1

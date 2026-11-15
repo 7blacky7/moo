@@ -331,7 +331,7 @@ funktion lauf_leader():
         zeige "LEADER: tcp_server auf Port " + text(PORT) + " fehlgeschlagen: " + text(fehler)
     wenn srv == nichts:
         zeige "LEADER: kein Server-Socket — Abbruch"
-        gib_zurück
+        beende(1)
     srv.timeout_setzen(300)
     zeige "ROLLE leader: warte auf Follower an Port " + text(PORT)
     setze sock auf nichts
@@ -343,19 +343,19 @@ funktion lauf_leader():
             setze warte auf warte + 1
     wenn sock == nichts:
         zeige "LEADER: kein Follower — Abbruch"
-        gib_zurück
+        beende(1)
     sock.timeout_setzen(20000)
     hello_senden(sock)
     wenn hello_pruefen(sock) != 1:
         zeige "LEADER: HELLO fehlgeschlagen — Abbruch"
-        gib_zurück
+        beende(1)
     setze opt auf optimierer_sgd(params, RATE, 0.0)
     setze s auf 0
     solange s < GATE_STEPS:
         setze verlust auf schritt_verteilt(sock, s, 1, opt)
         wenn verlust == nichts:
             zeige "LEADER: Schritt " + text(s) + " fehlgeschlagen — Abbruch"
-            gib_zurück
+            beende(1)
         zeige "L1BITS " + text(s) + " " + text(nf_f32_bits(verlust))
         wenn ((s + 1) - boden((s + 1) / SYNC_INTERVALL) * SYNC_INTERVALL) == 0:
             sync_senden(sock, s + 1)
@@ -378,7 +378,7 @@ funktion lauf_follower():
             schlafe(0.05)
     wenn sock == nichts:
         zeige "FOLLOWER: keine Verbindung — Abbruch"
-        gib_zurück
+        beende(1)
     sock.timeout_setzen(20000)
     # Rollen-Reihenfolge: Follower liest HELLO zuerst, sendet danach
     setze hello_status auf hello_pruefen(sock)
@@ -388,19 +388,19 @@ funktion lauf_follower():
         hello_senden(sock)
     wenn hello_status != 1:
         zeige "FOLLOWER: HELLO fehlgeschlagen — Abbruch"
-        gib_zurück
+        beende(1)
     setze opt auf optimierer_sgd(params, RATE, 0.0)
     setze s auf 0
     solange s < GATE_STEPS:
         setze verlust auf schritt_verteilt(sock, s, 0, opt)
         wenn verlust == nichts:
             zeige "FOLLOWER: Schritt " + text(s) + " fehlgeschlagen — Abbruch"
-            gib_zurück
+            beende(1)
         zeige "F2BITS " + text(s) + " " + text(nf_f32_bits(verlust))
         wenn ((s + 1) - boden((s + 1) / SYNC_INTERVALL) * SYNC_INTERVALL) == 0:
             wenn nicht sync_pruefen(sock, s + 1):
                 zeige "FOLLOWER: SYNC fehlgeschlagen — Abbruch"
-                gib_zurück
+                beende(1)
         setze s auf s + 1
     zeige "FOLLOWER FERTIG"
 

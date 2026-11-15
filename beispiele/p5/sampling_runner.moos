@@ -9,7 +9,12 @@ setze config_text auf datei_lesen("beispiele/p5/daten/sampling_prompts.json")
 wenn sha256(config_text) != "44b45262831453a97ca7e67307689d8ae4a0f3a9ab7b3810df3b6dd4d73d9b69":
     wirf "Sampling-Konfiguration geaendert"
 setze conf auf json_parse(config_text)
-setze zustand auf checkpoint_laden(ckpfad, {"tokenizer_version": sha256(tok), "arch_version": "grimm-silben-250k-v1"})
+setze zustand auf nichts
+versuche:
+    setze zustand auf checkpoint_laden(ckpfad, {"tokenizer_version": sha256(tok), "arch_version": "grimm-silben-250k-v1"})
+fange lade_fehler:
+    zeige "P5: checkpoint_laden fehlgeschlagen: " + lade_fehler
+    beende(1)
 wenn sha256(datei_lesen(ckpfad)) != roh_hash:
     wirf "Checkpoint beim Laden geaendert"
 setze schichten auf zustand["netz"]["schichten"]

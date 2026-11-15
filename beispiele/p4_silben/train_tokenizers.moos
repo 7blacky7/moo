@@ -3,15 +3,18 @@ setze quelle auf umgebung("P4_TRAIN_CORPUS")
 setze erwartet auf umgebung("P4_TRAIN_CORPUS_SHA256")
 setze ziel auf umgebung("P4_TOKENIZER_DIR")
 wenn quelle == nichts oder erwartet == nichts oder ziel == nichts:
-    wirf "P4-Tokenizer: Umgebungsvariablen fehlen"
+    zeige "P4-Tokenizer: Umgebungsvariablen fehlen"
+    beende(1)
 setze korpus auf datei_lesen(quelle)
 wenn sha256(korpus) != erwartet:
-    wirf "P4-Tokenizer: Korpus-Hash stimmt nicht"
+    zeige "P4-Tokenizer: Korpus-Hash stimmt nicht"
+    beende(1)
 setze cp auf ziel + "/char.mcf"
 setze bp auf ziel + "/bpe.mbt"
 setze sp auf ziel + "/syllable.msf"
 wenn datei_existiert(cp) oder datei_existiert(bp) oder datei_existiert(sp):
-    wirf "P4-Tokenizer: Ausgabe existiert bereits"
+    zeige "P4-Tokenizer: Ausgabe existiert bereits"
+    beende(1)
 setze muster auf datei_lesen("compiler/runtime/data/silben/dehyphn-x-2024-02-28.pat")
 setze c auf zeichen_fixed_trainiere(korpus, 512)
 setze b auf tokenizer_trainiere(korpus, 512)

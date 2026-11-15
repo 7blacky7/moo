@@ -42,7 +42,12 @@ funktion test_encoder(s):
     wenn s == "Das Ziel":
         gib_zurück tensor_aus_liste([2, 2])
     gib_zurück tensor_aus_liste([3, 3])
-setze paar auf korrektur_fenster({"akzeptiert": wahr, "aufgabe": "Korrigiere", "original": "Das Original", "korrektur": "Das Ziel", "begruendung": "Synthetischer Kontrollfall"}, test_encoder, 4, 0)
+setze paar auf nichts
+versuche:
+    setze paar auf korrektur_fenster({"akzeptiert": wahr, "aufgabe": "Korrigiere", "original": "Das Original", "korrektur": "Das Ziel", "begruendung": "Synthetischer Kontrollfall"}, test_encoder, 4, 0)
+fange lade_fehler:
+    zeige "P5 SFT-TEST FAIL: korrektur_fenster: " + lade_fehler
+    beende(1)
 setze konfig["encoder"] auf test_encoder
 setze konfig["opt"] auf ergebnis["opt"]
 setze konfig["schritte"] auf 2
@@ -72,7 +77,12 @@ funktion test_lang(s):
         gib_zurück tensor_aus_liste([0, 1])
     gib_zurück tensor_aus_liste([2, 2, 2, 2, 2, 2])
 setze lang auf {"prompt": "p", "akzeptiert": wahr, "aufgabe": "Korrigiere", "original": "Modell", "korrektur": "Ziel", "begruendung": "Kontrollfall"}
-setze teile auf korrektur_fenster_aufteilen(lang, test_lang, 4, 0)
+setze teile auf nichts
+versuche:
+    setze teile auf korrektur_fenster_aufteilen(lang, test_lang, 4, 0)
+fange lade_fehler:
+    zeige "P5 SFT-TEST FAIL: korrektur_fenster_aufteilen: " + lade_fehler
+    beende(1)
 wenn länge(teile) != 3:
     wirf "Fensteranzahl ungueltig"
 setze anzahl auf 0
