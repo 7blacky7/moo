@@ -390,7 +390,7 @@ built-ins without an English alias are marked *(German only)* above.
 - [docs/kip/](kip/) – design and contract documents for the AI stack (dtypes,
   GPU residency, distributed training, serving, post-training; German).
 
-## 9. Compiler diagnostics for agents (P2-T97)
+## 9. Compiler diagnostics for agents
 
 Every compiler diagnostic has a code, a severity, a location and a German message.
 The compiler collects **all** lexer and syntax errors of a run instead of stopping
@@ -441,11 +441,16 @@ Diagnostic catalog (source of truth: `compiler/src/diagnose.rs`, `moo-compiler e
 | M-C003 / M-C004 | Too few arguments for a built-in (exact or minimum count, derived from the code generator at build time; `moo-compiler builtins` lists them) / hint: surplus arguments are not evaluated |
 | M-C999 | Internal compiler error (caught Rust panic, or the compiler thread could not start); a compiler bug, not a program error |
 | M-C000 / M-N000 | Other code generation error / error in native code (`@nativ`, structs) – location: file + function, line if known |
+| M-N001 | A `@nativ` function is used as a value (`setze f auf name`, `liste.map(name)`, callback argument) although that is not possible for it: its parameters or result are not numbers or booleans (structs, pointers, buffers), it has a system body (`unsicher:`) or it is a C export. Exception: a scalar hosted wrapper whose `unsicher:` body only calls an `extern "C"` function is allowed as a value; other `unsicher:` bodies are not. Call it directly or use a Moo function as a wrapper |
+| M-N002 | Native function value in the bare-metal/UEFI profile (the catalog also names `wasm`): only the direct call of the `@nativ` function is possible |
+| M-N003 | A function declared with `extern "C"` is used as a value; it is not a moo value; wrap the C call in a scalar `@nativ` function (see the exception at M-N001) |
 | M-H001 … M-H005 | Hints: type mismatch on a method, own struct shadows a built-in type, module alias shadowed, float literal rounds to zero, unknown target |
 | M-W000 | Tool or command line error (outside the source) |
 
-Reserved ranges: `M-T` type checking (P2-T29), `M-M` memory (P2-T98), `M-F` error paths (P2-T96).
-Runtime hints for unhandled errors (`Hinweis: unbehandelter Fehler ...`, P2-T95) are printed
+Native function values: in hosted programs a `@nativ` function can be stored in a variable (`setze f auf quadrat`), passed as an argument, used in `map`/`filter`, imported from a module and started as a thread (`starte(quadrat, 6)`; the thread calls it with exactly one argument). A call through the value checks the argument count and the argument types before the native call: a wrong count, a wrong type, a non-integral value for an integer parameter or an out-of-range value (for example `300` for `i8`) is a runtime error that `versuche:` can catch, and the program continues normally. What is not possible is reported at compile time: M-N001 (see table), M-N002 (bare/UEFI), M-N003 (`extern "C"` as a value). Evidence: the fixtures `compiler/tests/p2/native_wert_*`.
+
+Reserved ranges: `M-T` type checking, `M-M` memory, `M-F` error paths.
+Runtime hints for unhandled errors (`Hinweis: unbehandelter Fehler ...`) are printed
 by the running program, not by the compiler.
 
 Known limits: code generation stops at its first error (lexer and parser collect all);

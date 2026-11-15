@@ -79,8 +79,29 @@ Featuretabelle aus `dokumentation/p2/sprachreferenz-entwurf-de.md` (Stand 14.11.
 | Native Aufrufe aus Methoden und Lambdas | implementiert laut Tabelle; die Bestandsaufnahme meldet sie als gesperrt (zu prüfen) | `beispiele/nativ/09_aufruf_aus_methoden.moos` |
 | Strukturen in dynamischem Code | implementiert | `beispiele/nativ/13_struktur_dynamisch.moos` |
 | `vec2/3/4`, `mat4`, `betrag`/`magnitude` | implementiert | `beispiele/nativ/06_vec_mat.moos` |
+| `@nativ`-Funktion als Wert (Variable, `map`/`filter`, Callback, Thread-Start, Import) | implementiert in hosted-Programmen, Grenzen siehe unten | `compiler/tests/p2/native_wert_positiv.moos` |
 
 Die 13 Beispiele unter `beispiele/nativ/` laufen alle (13 von 13).
+
+### Native Funktionswerte (seit Commit 5386eaf)
+
+Belege: die Fixtures `compiler/tests/p2/native_wert_*`. Der direkte Aufruf einer `@nativ`-Funktion bleibt unverändert.
+
+**Was geht (hosted):**
+
+- Als Variable: `setze f auf quadrat`, danach `f(3)`; als Argument einer Moo-Funktion (`anwenden(quadrat, 4)`); in `map` und `filter` (`[1, 2, 3].map(quadrat)`, `[5, 20, 11].filter(ist_gross)`). Getestet mit den Parametertypen `i64`, `f64`, `i32`, `bool` und mit mehreren Parametern (`native_wert_positiv`).
+- Importiert aus einem Modul: Direktaufruf und Funktionswert (`native_wert_import`).
+- Als Thread-Start: `starte(quadrat, 6)` ruft die Funktion mit genau einem Argument; `t.warten()` liefert 36 (`native_wert_thread`).
+- Prüfung beim Aufruf über den Wert, vor dem nativen Aufruf und mit `versuche:` fangbar: falsche Argumentzahl („Funktion 'quadrat' erwartet 1 Argument, bekommen 2“), falscher Typ, nicht exakter Wert (`1.5` für `i64`) und Bereichsüberlauf (`300` für `i8`). Danach läuft das Programm normal weiter (`native_wert_fehler`). Dieselbe Argumentzahl-Prüfung gilt beim Thread-Start: ein zweistelliger nativer Wert mit einem Argument ist ein fangbarer Fehler (`native_wert_thread`).
+- Speicher: Wird der `@nativ`-Name direkt an `map`/`filter` übergeben (`xs.map(plus1)`), wird der Funktionswert je Element erzeugt und nach dem Aufruf freigegeben; dazu läuft laut Fixture-Kommentar eine Leckprobe unter LSan im Gate (`native_wert_leck`, nur dieser Fall). **Bekannte Einschränkung (wird behoben):** Wird der Funktionswert zuvor an eine Variable gebunden (`setze f auf plus`, dann `xs.map(f)`), leckt er unter LSan.
+
+**Was nicht geht (Compilefehler):**
+
+- **M-N001:** Die Funktion ist als Wert nicht verwendbar, wenn ihre Parameter oder ihr Ergebnis keine Zahlen oder Wahrheitswerte sind. Der Fehlerkatalog nennt Strukturen, Zeiger und Puffer, außerdem Systemkörper (`unsicher:`) und C-Exporte. Mit Fixture belegt sind ein Strukturparameter (`native_wert_struktur`) und ein `unsicher:`-Körper, der nur einen Wert zurückgibt (`native_wert_system`). **Ausnahme:** Die skalare hosted FFI-Einzelform ist als Wert erlaubt, also eine `@nativ`-Hülle mit skalaren Parametern und Ergebnis, deren `unsicher:`-Körper nur eine `extern "C"`-Funktion aufruft (`ffi_defer_reach_funktionswert`: `ffi_sinus(x: f32) -> f32` ruft `sinf`, der Wert wird über eine Variable aufgerufen). Weitere `unsicher:`-Körper sind damit nicht freigegeben. Ausweg sonst: die Funktion direkt aufrufen oder eine Moo-Funktion als Hülle benutzen.
+- **M-N002:** Im Bare-/UEFI-Profil sind native Funktionswerte nicht verfügbar (`native_wert_bare`); der Fehlerkatalog nennt auch `wasm`. Dort ist nur der direkte Aufruf möglich, weil Funktionswerte und Fehlerkanal die hosted Laufzeit brauchen.
+- **M-N003:** Eine mit `extern "C"` deklarierte Funktion ist kein moo-Wert (`native_wert_extern`, Beispiel `sinf`). Der Weg ist eine `@nativ`-Hülle um den C-Aufruf in der skalaren FFI-Einzelform (siehe Ausnahme bei M-N001); C-Funktionszeiger für C-Bibliotheken entstehen über `@rückruf`.
+
+Die Texte der Diagnosen: `moo-compiler erklaere M-N001` (Katalog in `compiler/src/diagnose.rs`).
 
 ### Einzelmessung Schleife
 
