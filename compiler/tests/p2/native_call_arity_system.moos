@@ -1,0 +1,13 @@
+# Aufruf aus einem Systemkoerper (Kontrollfluss) mit falscher Argumentzahl:
+# Diagnose M-N004.
+@nativ
+funktion p2_arity_ziel(x: i64) -> i64:
+    gib_zurück x
+
+@nativ
+funktion p2_arity_stufe(x: i64) -> i64:
+    wenn x > 0:
+        gib_zurück p2_arity_ziel(x, x)
+    gib_zurück 0
+
+zeige p2_arity_stufe(3)

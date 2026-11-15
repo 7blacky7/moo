@@ -1152,6 +1152,10 @@ impl<'ctx> CodeGen<'ctx> {
         let native_nominals = self.native_structs.nominal_types(module_name);
         // P2-T83 B3: Puffer-/@liest-Positionen aller Funktionen (Weitergabepruefung).
         let liest_karte = crate::native_system::liest_karte(&program.statements);
+        // Rekursion pfadunabhaengig: reine Koerper auf einem nativen Aufrufzyklus
+        // (und ihre nativen Aufrufer) laufen wie Koerper mit Kontrollfluss im
+        // System-Emitter (Sicher-Modus); die Pure-Form bleibt zyklusfrei.
+        let zyklische_natives = crate::codegen_native::zyklische_native_funktionen(&program.statements);
         for stmt in &program.statements {
             if let Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators, .. } = stmt {
                 if !decorators.iter().any(|d| d.name == "nativ" || d.name == "native") { continue; }
@@ -1325,7 +1329,7 @@ impl<'ctx> CodeGen<'ctx> {
                     || crate::native_system::has_struct_values(body, &native_nominals));
                 let sicher_system = !matches!(body.as_slice(), [Stmt::UnsafeBlock { .. }])
                     && (!crate::native_system::is_pure_slice(body) || (pure_ungeeignet && !self.bare_mode)
-                        || bare_strukturwerte)
+                        || bare_strukturwerte || zyklische_natives.contains(name))
                     && !(self.bare_mode && (returns_struct || zeiger_puffer))
                     && (hosted_x86 || self.bare_mode);
                 if (self.bare_mode && (crate::native_system::is_system_body(body, params) || returns_struct))
@@ -6883,8 +6887,11 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     // P2-T49 B3: ein Strukturergebnis kommt ueber den sret-Puffer (Parameter 0).
                     let struktur_ergebnis = self.native_struct_results.get(name).cloned();
-                    if args.len() + usize::from(struktur_ergebnis.is_some()) != function.count_params() as usize {
-                        return Err(format!("Native Funktion '{name}': falsche Argumentzahl"));
+                    let erwartet = (function.count_params() as usize)
+                        .saturating_sub(usize::from(struktur_ergebnis.is_some()));
+                    if args.len() != erwartet {
+                        return Err(crate::diagnose::vormerken("M-N004", self.diag_zeile,
+                            crate::codegen_native::aritaet_meldung(name, erwartet, args.len())));
                     }
                     if self.bare_mode {
                         // P2-T43 (#37326): runtime-frei nur Systemkoerper mit Literal-/

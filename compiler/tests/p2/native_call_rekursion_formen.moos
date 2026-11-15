@@ -1,0 +1,15 @@
+# Rekursiver Aufruf in einer Index-Zuweisung: der Aufrufgraph erfasst alle
+# Anweisungsformen, der reine Aufrufer laeuft ebenfalls im Systemkoerper.
+@nativ
+funktion p2_rek_index(n: u64) -> u64:
+    wenn n <= 0:
+        gib_zurück 0
+    setze v: vec4 auf vec4(0.0, 0.0, 0.0, 0.0)
+    v[p2_rek_index(n - 1)] = 1.0
+    gib_zurück n
+
+@nativ
+funktion p2_rek_index_oben(n: u64) -> u64:
+    gib_zurück p2_rek_index(n) + 1
+
+zeige p2_rek_index_oben(2)

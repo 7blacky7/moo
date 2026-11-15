@@ -27,4 +27,4 @@ fi
 timeout 60s "$compiler" compile compiler/tests/p2/ffi_defer_reach_lambda.moos -o "$out/lambda"
 actual=$(timeout 30s "$out/lambda")
 [[ "$actual" == $'42\nCLEANUP' ]] || { printf 'Lambda-Ausgabe unerwartet: %s\n' "$actual" >&2; exit 1; }
-printf 'FFI-Einzelform mit aufraeumen/Catch/transitiv (Laufzeit), Funktionswert gesperrt, Lambda-Fallback: PASS\n'
+printf 'FFI-Einzelform mit aufraeumen/Catch/transitiv (Laufzeit), @nativ-Huelle als Funktionswert (extern-C-Name als Wert bleibt gesperrt, M-N003), Lambda-Fallback: PASS\n'

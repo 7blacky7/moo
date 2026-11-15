@@ -1,0 +1,28 @@
+# Rekursion pfadunabhaengig: wenn-Rekursion, Wechselrekursion und ein reiner
+# @nativ-Aufrufer einer rekursiven Funktion (laeuft ebenfalls im Systemkoerper).
+@nativ
+funktion p2_rek_fak(n: i64) -> i64:
+    wenn n <= 1:
+        gib_zurück 1
+    gib_zurück n * p2_rek_fak(n - 1)
+
+@nativ
+funktion p2_rek_fak_plus(n: i64) -> i64:
+    gib_zurück p2_rek_fak(n) + 1
+
+@nativ
+funktion p2_rek_gerade(n: i64) -> bool:
+    wenn n == 0:
+        gib_zurück wahr
+    gib_zurück p2_rek_ungerade(n - 1)
+
+@nativ
+funktion p2_rek_ungerade(n: i64) -> bool:
+    wenn n == 0:
+        gib_zurück falsch
+    gib_zurück p2_rek_gerade(n - 1)
+
+zeige p2_rek_fak(5)
+zeige p2_rek_fak_plus(5)
+zeige p2_rek_gerade(10)
+zeige p2_rek_ungerade(7)

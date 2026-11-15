@@ -19,8 +19,25 @@ inside && /call .*@moo_(number|to_number|new_number)/ {boxing=1}
 END {if (!forward || !backward || boxing) exit 1}
 ' "$out.ll"
 echo "PASS direkte i32-Vorwärts-/Rückwärtsaufrufe und Ausgabe"
+# Rekursion: Pure-Form mit Selbst- bzw. Wechselaufruf laeuft im Systemkoerper
+# (kompiliert, IR gueltig; ohne Abbruchbedingung endet sie erst zur Laufzeit).
+for name in rekursiv zyklus; do
+  timeout 30s "$compiler" compile "compiler/tests/p2/native_call_${name}.moos" --emit-ir -o "build/p2-frontend/native_calls/$name.ll"
+  mise exec -- opt -passes=verify -disable-output "build/p2-frontend/native_calls/$name.ll"
+done
+src=compiler/tests/p2/native_call_rekursion_lauf.moos
+out=build/p2-frontend/native_calls/rekursion_lauf
+timeout 30s "$compiler" compile "$src" -o "$out"
+timeout 30s "$out" > "$out.out"
+cmp compiler/tests/p2/native_call_rekursion_lauf.expected "$out.out"
+src=compiler/tests/p2/native_call_rekursion_formen.moos
+out=build/p2-frontend/native_calls/rekursion_formen
+timeout 30s "$compiler" compile "$src" -o "$out"
+timeout 30s "$out" > "$out.out"
+cmp compiler/tests/p2/native_call_rekursion_formen.expected "$out.out"
+echo "PASS Rekursion (Pure-Form umgeleitet, wenn-/Wechselrekursion, reiner Aufrufer)"
 failed=0
-for name in arity typ rekursiv zyklus ffi_transitiv doppelt; do
+for name in arity arity_dyn arity_system typ ffi_transitiv doppelt; do
   src="compiler/tests/p2/native_call_${name}.moos"
   expected="compiler/tests/p2/native_call_${name}.expected_error"
   out="build/p2-frontend/native_calls/$name"

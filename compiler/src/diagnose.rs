@@ -506,6 +506,8 @@ pub const KATALOG: &[Eintrag] = &[
         erklaerung: "Native Funktionswerte brauchen die hosted Moo-Laufzeit (Funktionswerte, Fehlerkanal). Im Bare-/UEFI-Profil und fuer wasm ist nur der direkte Aufruf der @nativ-Funktion moeglich." },
     Eintrag { code: "M-N003", titel: "extern-C-Funktion als Wert",
         erklaerung: "Eine mit extern \"C\" deklarierte Funktion ist kein Moo-Wert. Fuer einen Funktionswert eine @nativ-Huelle schreiben, die die C-Funktion in unsicher: aufruft; sie ist als Wert erlaubt (siehe M-N001). C-Funktionszeiger fuer C-Bibliotheken entstehen ueber @rueckruf." },
+    Eintrag { code: "M-N004", titel: "Falsche Argumentzahl fuer eine native Funktion",
+        erklaerung: "Eine @nativ-Funktion wird direkt (aus dynamischem oder nativem Code) mit einer anderen Argumentzahl aufgerufen, als ihre Signatur hat. Die Meldung nennt erwartete und uebergebene Anzahl. Bei einem nativen Funktionswert prueft die Laufzeit die Argumentzahl und meldet einen fangbaren Fehler." },
     Eintrag { code: "M-M001", titel: "Konstanter Index ausserhalb eines festen Arrays",
         erklaerung: "Ein Index, der schon beim Uebersetzen feststeht, liegt ausserhalb eines Arrays fester Laenge [T; N] (gueltig 0..N-1); der Zugriff wuerde immer fehlschlagen. Nicht konstante Indizes prueft weiter die Laufzeit (Trap). Puffer haben eine Laufzeitlaenge und werden nur zur Laufzeit geprueft." },
     Eintrag { code: "M-M002", titel: "Geliehener Zeiger entkommt",

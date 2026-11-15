@@ -1,0 +1,7 @@
+# Direktaufruf einer @nativ-Funktion aus dynamischem Code mit falscher
+# Argumentzahl: Diagnose M-N004 mit Zeile.
+@nativ
+funktion p2_arity_quadrat(x: i64) -> i64:
+    gib_zurück x * x
+
+zeige p2_arity_quadrat(1, 2)

@@ -3838,7 +3838,8 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
 
     fn args_for(&mut self, name: &str, args: &[Expr], params: &[STy]) -> Result<Vec<SVal<'ctx>>, String> {
         if args.len() != params.len() {
-            return Err(format!("Systemkoerper: '{name}' erwartet {} Argumente, bekommen {}", params.len(), args.len()));
+            return Err(crate::diagnose::vormerken("M-N004", self.zeile,
+                crate::codegen_native::aritaet_meldung(name, params.len(), args.len())));
         }
         let mut values = Vec::with_capacity(args.len());
         for (index, (arg, ty)) in args.iter().zip(params).enumerate() {
@@ -3858,7 +3859,8 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         &mut self, name: &str, callee: &NativeCallee<'ctx>, args: &[Expr],
     ) -> Result<(inkwell::values::CallSiteValue<'ctx>, Option<(PointerValue<'ctx>, STy)>), String> {
         if args.len() != callee.params.len() {
-            return Err(format!("Systemkoerper: '{name}' erwartet {} Argumente, bekommen {}", callee.params.len(), args.len()));
+            return Err(crate::diagnose::vormerken("M-N004", self.zeile,
+                crate::codegen_native::aritaet_meldung(name, callee.params.len(), args.len())));
         }
         let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = Vec::with_capacity(args.len() + 1);
         let mut attributes: Vec<(u32, Vec<Attribute>)> = Vec::new();

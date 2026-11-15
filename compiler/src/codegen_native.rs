@@ -753,10 +753,14 @@ pub(crate) fn lower_nontrapping_expr<'ctx>(
             let value = lower_nontrapping_expr(context, builder, arg, expected, slots, failure, fehler, pure_functions)?;
             crate::native_arithmetic::float_trig(context, builder, fehler.module, art, value)
         }
-        Expr::FunctionCall { name, args, .. } => {
+        Expr::FunctionCall { name, args, zeile } => {
             let (function, signature) = pure_functions.get(name)
                 .ok_or_else(|| format!("Nicht-reines natives Aufrufziel '{name}'"))?;
-            if signature.result != Some(expected) || args.len() != signature.params.len()
+            if args.len() != signature.params.len() {
+                return Err(crate::diagnose::vormerken("M-N004", *zeile,
+                    aritaet_meldung(name, signature.params.len(), args.len())));
+            }
+            if signature.result != Some(expected)
                 || function.get_type() != signature.llvm_type(context)
             {
                 return Err(format!("Native Funktion '{name}': falscher Typ oder falsche Argumentzahl"));
@@ -903,6 +907,174 @@ impl<'ctx> NSlot<'ctx> {
 /// erzeugt weder dynamische Thunks noch aktiviert er den @nativ-Einstieg.
 /// Prueft den gesamten reinen Aufrufgraphen vor Emission auf Zyklen und
 /// unbekannte bzw. nicht reine Ziele; damit bleiben alle Calls nichttrappend.
+/// Meldung fuer eine falsche Argumentzahl beim Aufruf einer nativen Funktion.
+pub(crate) fn aritaet_meldung(name: &str, erwartet: usize, bekommen: usize) -> String {
+    let wort = if erwartet == 1 { "Argument" } else { "Argumente" };
+    format!("Native Funktion '{name}' erwartet {erwartet} {wort}, bekommen {bekommen}")
+}
+
+/// @nativ-Funktionen, die auf einem nativen Aufrufzyklus liegen oder (transitiv)
+/// eine solche Funktion aufrufen. Die Pure-Form ist zyklusfrei
+/// (validate_pure_call_graph); diese Funktionen laufen im System-Emitter.
+pub(crate) fn zyklische_native_funktionen(statements: &[Stmt]) -> std::collections::HashSet<String> {
+    use std::collections::HashSet;
+    // Erschoepfend ueber alle Ausdrucks- und Anweisungsformen (kein `_`-Arm):
+    // eine neue AST-Form muss hier bewusst eingeordnet werden. Methodennamen
+    // sind keine nativen Aufrufziele; Empfaenger und Argumente zaehlen.
+    fn expr_aufrufe(expr: &Expr, aufrufe: &mut HashSet<String>) {
+        let mut alle = |es: &[Expr], aufrufe: &mut HashSet<String>| for e in es { expr_aufrufe(e, aufrufe); };
+        match expr {
+            Expr::Number(_) | Expr::NativeNumber { .. } | Expr::String(_) | Expr::Boolean(_)
+            | Expr::None | Expr::Identifier(_) | Expr::This => {}
+            Expr::FunctionCall { name, args, .. } => {
+                aufrufe.insert(name.clone());
+                alle(args, aufrufe);
+            }
+            Expr::New { args, .. } => alle(args, aufrufe),
+            Expr::MethodCall { object, args, .. } => {
+                expr_aufrufe(object, aufrufe);
+                alle(args, aufrufe);
+            }
+            Expr::BinaryOp { left, right, .. } | Expr::NullishCoalesce { left, right }
+            | Expr::Pipe { left, right } => {
+                expr_aufrufe(left, aufrufe);
+                expr_aufrufe(right, aufrufe);
+            }
+            Expr::UnaryOp { operand: inner, .. } | Expr::PropertyAccess { object: inner, .. }
+            | Expr::OptionalChain { object: inner, .. } | Expr::Spread(inner)
+            | Expr::Lambda { body: inner, .. } => expr_aufrufe(inner, aufrufe),
+            Expr::IndexAccess { object: a, index: b } | Expr::Range { start: a, end: b } => {
+                expr_aufrufe(a, aufrufe);
+                expr_aufrufe(b, aufrufe);
+            }
+            Expr::List(elemente) => alle(elemente, aufrufe),
+            Expr::Dict(paare) => for (k, v) in paare {
+                expr_aufrufe(k, aufrufe);
+                expr_aufrufe(v, aufrufe);
+            },
+            Expr::ListComprehension { expr, iterable, condition, .. } => {
+                expr_aufrufe(expr, aufrufe);
+                expr_aufrufe(iterable, aufrufe);
+                if let Some(c) = condition { expr_aufrufe(c, aufrufe); }
+            }
+            Expr::Ternary { condition, then_val, else_val } => {
+                expr_aufrufe(condition, aufrufe);
+                expr_aufrufe(then_val, aufrufe);
+                expr_aufrufe(else_val, aufrufe);
+            }
+            Expr::MatchExpr { value, cases } => {
+                expr_aufrufe(value, aufrufe);
+                for (muster, waechter, ergebnis) in cases {
+                    if let Some(m) = muster { expr_aufrufe(m, aufrufe); }
+                    if let Some(w) = waechter { expr_aufrufe(w, aufrufe); }
+                    expr_aufrufe(ergebnis, aufrufe);
+                }
+            }
+            Expr::QueryExpr { source, where_cond, order_expr, select_expr, .. } => {
+                expr_aufrufe(source, aufrufe);
+                if let Some(w) = where_cond { expr_aufrufe(w, aufrufe); }
+                if let Some(o) = order_expr { expr_aufrufe(o, aufrufe); }
+                expr_aufrufe(select_expr, aufrufe);
+            }
+        }
+    }
+    fn stmt_aufrufe(body: &[Stmt], aufrufe: &mut HashSet<String>) {
+        for stmt in body {
+            match stmt {
+                Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
+                | Stmt::CompoundAssignment { value, .. } | Stmt::RawDataU32 { value, .. }
+                | Stmt::NativeConst { value, .. } | Stmt::Show(value, _) | Stmt::Throw(value, _)
+                | Stmt::Expression(value, _) | Stmt::Defer(value, _) | Stmt::Expect(value, _)
+                | Stmt::Return(Some(value), _)
+                | Stmt::Precondition { condition: value, .. } | Stmt::Postcondition { condition: value, .. } =>
+                    expr_aufrufe(value, aufrufe),
+                Stmt::PropertyAssignment { object, value, .. } => {
+                    expr_aufrufe(object, aufrufe);
+                    expr_aufrufe(value, aufrufe);
+                }
+                Stmt::IndexAssignment { object, index, value, .. } => {
+                    expr_aufrufe(object, aufrufe);
+                    expr_aufrufe(index, aufrufe);
+                    expr_aufrufe(value, aufrufe);
+                }
+                Stmt::If { condition, body, else_body, .. } => {
+                    expr_aufrufe(condition, aufrufe);
+                    stmt_aufrufe(body, aufrufe);
+                    stmt_aufrufe(else_body, aufrufe);
+                }
+                Stmt::While { condition, body, .. } => {
+                    expr_aufrufe(condition, aufrufe);
+                    stmt_aufrufe(body, aufrufe);
+                }
+                Stmt::For { iterable, body, .. } | Stmt::ParallelFor { iterable, body, .. } => {
+                    expr_aufrufe(iterable, aufrufe);
+                    stmt_aufrufe(body, aufrufe);
+                }
+                Stmt::Guard { condition, else_body, .. } => {
+                    expr_aufrufe(condition, aufrufe);
+                    stmt_aufrufe(else_body, aufrufe);
+                }
+                Stmt::Match { value, cases, .. } => {
+                    expr_aufrufe(value, aufrufe);
+                    for (muster, waechter, rumpf) in cases {
+                        if let Some(m) = muster { expr_aufrufe(m, aufrufe); }
+                        if let Some(w) = waechter { expr_aufrufe(w, aufrufe); }
+                        stmt_aufrufe(rumpf, aufrufe);
+                    }
+                }
+                Stmt::TryCatch { try_body, catch_body, .. } => {
+                    stmt_aufrufe(try_body, aufrufe);
+                    stmt_aufrufe(catch_body, aufrufe);
+                }
+                Stmt::FunctionDef { defaults, body, .. } => {
+                    for d in defaults.iter().flatten() { expr_aufrufe(d, aufrufe); }
+                    stmt_aufrufe(body, aufrufe);
+                }
+                Stmt::UnsafeBlock { body, .. } | Stmt::ClassDef { body, .. } | Stmt::TestDef { body, .. } =>
+                    stmt_aufrufe(body, aufrufe),
+                Stmt::Export(inner, _) => stmt_aufrufe(std::slice::from_ref(inner.as_ref()), aufrufe),
+                Stmt::Return(None, _) | Stmt::Break(_) | Stmt::Continue(_) | Stmt::ExternC { .. }
+                | Stmt::StructDef { .. } | Stmt::InterfaceDef { .. } | Stmt::Import { .. }
+                | Stmt::Global(..) | Stmt::DataClassDef { .. } => {}
+            }
+        }
+    }
+    let mut graph: HashMap<String, HashSet<String>> = HashMap::new();
+    for stmt in statements {
+        if let Stmt::FunctionDef { name, body, decorators, .. } = stmt {
+            if decorators.iter().any(|d| d.name == "nativ" || d.name == "native") {
+                let mut aufrufe = HashSet::new();
+                stmt_aufrufe(body, &mut aufrufe);
+                graph.insert(name.clone(), aufrufe);
+            }
+        }
+    }
+    // Eine Funktion liegt auf einem Zyklus, wenn sie von sich selbst aus erreichbar ist.
+    let mut ergebnis = HashSet::new();
+    for (start, kanten) in &graph {
+        let mut stapel: Vec<&String> = kanten.iter().collect();
+        let mut gesehen = HashSet::new();
+        while let Some(knoten) = stapel.pop() {
+            if knoten == start {
+                ergebnis.insert(start.clone());
+                break;
+            }
+            if !gesehen.insert(knoten.clone()) { continue; }
+            if let Some(weiter) = graph.get(knoten) { stapel.extend(weiter.iter()); }
+        }
+    }
+    // Aufrufer zyklischer Funktionen ebenso (die Pure-Form ruft nur reine Ziele).
+    loop {
+        let neu: Vec<String> = graph.iter()
+            .filter(|(n, aufrufe)| !ergebnis.contains(*n) && aufrufe.iter().any(|a| ergebnis.contains(a)))
+            .map(|(n, _)| n.clone())
+            .collect();
+        if neu.is_empty() { break; }
+        ergebnis.extend(neu);
+    }
+    ergebnis
+}
+
 pub(crate) fn validate_pure_call_graph(bodies: &HashMap<String, &[Stmt]>) -> Result<(), String> {
     fn expr_calls(expr: &Expr, calls: &mut Vec<String>) -> Result<(), String> {
         match expr {
