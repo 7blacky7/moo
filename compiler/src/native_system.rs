@@ -470,6 +470,201 @@ impl LiestPruefung<'_> {
     }
 }
 
+/// P2-T98 S3 (M-M005): erster Rohzugriff ausserhalb eines unsicher:-Blocks
+/// eines @nativ-Koerpers als (Builtin, Zeile). Erfasst nur Builtins, die in
+/// keinem nativen Pfad ohne unsicher: erlaubt sind (zeiger, adresse_von,
+/// speicher_*); puffer_zeiger/länge bleiben erlaubt, volatile_* und andere
+/// Hardware-Intrinsics meldet classify_body (MissingUnsafe). Spaetere Pfade
+/// (reiner Kern, Systemkoerper) melden sonst nur M-C000/M-N000.
+pub(crate) fn rohzugriff_ohne_unsicher(body: &[Stmt]) -> Option<(String, usize)> {
+    // Alle Aliase DE/EN (Review 8d6be1e5); volatile_*, port_*, Barrieren und
+    // assembler meldet classify_body, puffer_zeiger/länge sind erlaubt.
+    fn roh(name: &str) -> bool {
+        matches!(name, "zeiger" | "pointer" | "adresse_von" | "address_of"
+            | "speicher_lesen" | "mem_read" | "speicher_schreiben" | "mem_write"
+            | "strukturfeld_lesen" | "struct_field_read" | "strukturfeld_schreiben" | "struct_field_write"
+            | "registerfeld_lesen" | "register_field_read" | "registerfeld_schreiben" | "register_field_write")
+    }
+    fn ausdruck(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::FunctionCall { name, args, .. } => if roh(name) { Some(name.clone()) } else { args.iter().find_map(ausdruck) },
+            Expr::BinaryOp { left, right, .. } => ausdruck(left).or_else(|| ausdruck(right)),
+            Expr::UnaryOp { operand, .. } => ausdruck(operand),
+            Expr::PropertyAccess { object, .. } => ausdruck(object),
+            Expr::IndexAccess { object, index } => ausdruck(object).or_else(|| ausdruck(index)),
+            Expr::MethodCall { object, args, .. } => ausdruck(object).or_else(|| args.iter().find_map(ausdruck)),
+            Expr::List(items) => items.iter().find_map(ausdruck),
+            Expr::Ternary { condition, then_val, else_val } =>
+                ausdruck(condition).or_else(|| ausdruck(then_val)).or_else(|| ausdruck(else_val)),
+            _ => None,
+        }
+    }
+    body.iter().find_map(|stmt| {
+        let treffer = match stmt {
+            Stmt::UnsafeBlock { .. } => return None,
+            Stmt::If { condition, body, else_body, .. } => return ausdruck(condition).map(|n| (n, stmt.zeile()))
+                .or_else(|| rohzugriff_ohne_unsicher(body)).or_else(|| rohzugriff_ohne_unsicher(else_body)),
+            Stmt::While { condition, body, .. } => return ausdruck(condition).map(|n| (n, stmt.zeile()))
+                .or_else(|| rohzugriff_ohne_unsicher(body)),
+            Stmt::For { iterable, body, .. } => return ausdruck(iterable).map(|n| (n, stmt.zeile()))
+                .or_else(|| rohzugriff_ohne_unsicher(body)),
+            Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
+            | Stmt::CompoundAssignment { value, .. } | Stmt::Show(value, _)
+            | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) => ausdruck(value),
+            Stmt::PropertyAssignment { object, value, .. } => ausdruck(object).or_else(|| ausdruck(value)),
+            Stmt::IndexAssignment { object, index, value, .. } =>
+                ausdruck(object).or_else(|| ausdruck(index)).or_else(|| ausdruck(value)),
+            _ => None,
+        };
+        treffer.map(|n| (n, stmt.zeile()))
+    })
+}
+
+/// P2-T98 S4 (M-M003): Nutzung nach Freigabe in eindeutigen Faellen. Ein
+/// Aufruf `f(.., p, ..)` als eigene Anweisung (auch `setze r auf f(..)`), dessen
+/// Parameter n laut @verbraucht(n) freigegeben wird, beendet den Besitz an der
+/// Variablen p. Jede spaetere Nutzung von p im selben Block ist ein Fehler, eine
+/// zweite Freigabe ebenso; unsicher: zaehlt als derselbe Block, innere Bloecke
+/// werden mit durchsucht. Nutzung heisst: p direkt als Aufrufargument
+/// (ea0e9eae). Konservativ (bleibt Laufzeit): Neuzuweisung von p
+/// oder eine unbekannte Anweisungsart beendet die Suche, ebenso gib_zurück/
+/// stopp/weiter/wirf; eine Freigabe nur in einem Zweig gilt nach dem Zweig
+/// nicht; Schleifen ueber Iterationen, Aliasse und Felder werden nicht
+/// verfolgt. adresse_von(p) (Adresse der Variablen) ist keine Nutzung.
+pub(crate) fn freigabe_verletzung(body: &[Stmt], frei: &dyn Fn(&str, usize) -> bool) -> Option<(String, usize)> {
+    // Koordinator nach 196dbf18: wird irgendwo die Adresse von p genommen
+    // (adresse_von(p)), kann p ueber den Zeiger neu belegt werden; M-M003 bleibt
+    // fuer p still (wie M-M004 ueber FluchtPruefung::adressiert).
+    let mut adressiert = HashSet::new();
+    FluchtPruefung::adressen(body, &mut adressiert);
+    freigabe_in(body, frei, &adressiert)
+}
+
+fn freigabe_in(body: &[Stmt], frei: &dyn Fn(&str, usize) -> bool, adressiert: &HashSet<String>) -> Option<(String, usize)> {
+    let mut linear = Vec::new();
+    freigabe_flach(body, &mut linear);
+    for (k, stmt) in linear.iter().enumerate() {
+        let innen = match stmt {
+            Stmt::If { body, else_body, .. } =>
+                freigabe_in(body, frei, adressiert).or_else(|| freigabe_in(else_body, frei, adressiert)),
+            Stmt::While { body, .. } | Stmt::For { body, .. } => freigabe_in(body, frei, adressiert),
+            _ => None,
+        };
+        if innen.is_some() { return innen; }
+        for (f, p) in freigaben(stmt, frei) {
+            if adressiert.contains(p) { continue; }
+            for spaeter in &linear[k + 1..] {
+                match freigabe_nutzung(spaeter, p, frei) {
+                    FreiNutzung::Keine => {}
+                    FreiNutzung::Ende => break,
+                    FreiNutzung::Lesen(zeile, true) => return Some((format!(
+                        "'{p}' wird ein zweites Mal freigegeben (schon durch '{f}', @verbraucht); doppelte Freigabe. Vorschlag: nur einmal freigeben"), zeile)),
+                    FreiNutzung::Lesen(zeile, false) => return Some((format!(
+                        "'{p}' wird nach der Freigabe durch '{f}' (@verbraucht) weiter genutzt; der Speicher gehoert nicht mehr dem Aufrufer. Vorschlag: '{p}' vor dem Aufruf von '{f}' fertig nutzen oder neu zuweisen"), zeile)),
+                }
+                if matches!(spaeter, Stmt::Return(..) | Stmt::Break(_) | Stmt::Continue(_) | Stmt::Throw(..)) { break; }
+            }
+        }
+    }
+    None
+}
+
+/// unsicher:-Bloecke sind kein eigener Kontrollfluss: flach in die Folge.
+fn freigabe_flach<'s>(body: &'s [Stmt], aus: &mut Vec<&'s Stmt>) {
+    for stmt in body {
+        match stmt {
+            Stmt::UnsafeBlock { body, .. } => freigabe_flach(body, aus),
+            _ => aus.push(stmt),
+        }
+    }
+}
+
+/// (Funktion, Variable) je bloss uebergebener Variable, die der Aufruf laut
+/// @verbraucht freigibt; nur der Aufruf als ganze Anweisung bzw. Zuweisungswert.
+fn freigaben<'s>(stmt: &'s Stmt, frei: &dyn Fn(&str, usize) -> bool) -> Vec<(&'s str, &'s str)> {
+    let (ziel, wert) = match stmt {
+        Stmt::Expression(wert, _) => (None, wert),
+        Stmt::Assignment { name, value, .. } | Stmt::ConstAssignment { name, value, .. } => (Some(name.as_str()), value),
+        _ => return Vec::new(),
+    };
+    let Expr::FunctionCall { name, args, .. } = wert else { return Vec::new() };
+    args.iter().enumerate().filter_map(|(i, a)| match a {
+        Expr::Identifier(p) if frei(name.as_str(), i) && ziel != Some(p.as_str()) => Some((name.as_str(), p.as_str())),
+        _ => None,
+    }).collect()
+}
+
+enum FreiNutzung { Keine, Ende, Lesen(usize, bool) }
+
+/// Koordinator nach ea0e9eae: als Nutzung zaehlt nur die ganze Variable p als
+/// direktes Argument eines Aufrufs (auch eine zweite Freigabe). Felder,
+/// Elemente, Aliase, Rechnungen, Vergleiche und Umwandlungen bleiben still.
+fn freigabe_liest(expr: &Expr, p: &str) -> bool {
+    let l = |e: &Expr| freigabe_liest(e, p);
+    let direkt = |args: &[Expr]| args.iter().any(|a| matches!(a, Expr::Identifier(n) if n == p));
+    match expr {
+        Expr::FunctionCall { name, args, .. } => {
+            let rein = matches!(name.as_str(), "adresse_von" | "address_of" | "zeiger" | "pointer"
+                | "als" | "as" | "als_wrap" | "als_saettigend") || conversion(name).is_some();
+            (!rein && direkt(args)) || args.iter().any(l)
+        }
+        Expr::MethodCall { object, args, .. } => direkt(args) || l(object) || args.iter().any(l),
+        Expr::List(args) => args.iter().any(l),
+        Expr::BinaryOp { left, right, .. } => l(left) || l(right),
+        Expr::UnaryOp { operand, .. } => l(operand),
+        Expr::PropertyAccess { object, .. } => l(object),
+        Expr::IndexAccess { object, index } => l(object) || l(index),
+        Expr::Ternary { condition, then_val, else_val } => l(condition) || l(then_val) || l(else_val),
+        _ => false,
+    }
+}
+
+/// Erstes Ereignis fuer p in `stmt`: Nutzung (Zeile, zweite Freigabe?),
+/// Neuzuweisung bzw. Unklares (Ende) oder nichts.
+fn freigabe_nutzung(stmt: &Stmt, p: &str, frei: &dyn Fn(&str, usize) -> bool) -> FreiNutzung {
+    let lesen = |e: &Expr| freigabe_liest(e, p);
+    let treffer = || FreiNutzung::Lesen(stmt.zeile(), freigaben(stmt, frei).iter().any(|(_, q)| *q == p));
+    let folge = |stmts: &[Stmt]| {
+        for s in stmts {
+            match freigabe_nutzung(s, p, frei) {
+                FreiNutzung::Keine => {}
+                anderes => return anderes,
+            }
+            if matches!(s, Stmt::Return(..) | Stmt::Break(_) | Stmt::Continue(_) | Stmt::Throw(..)) { break; }
+        }
+        FreiNutzung::Keine
+    };
+    match stmt {
+        Stmt::Assignment { name, value, .. } | Stmt::ConstAssignment { name, value, .. } => {
+            if lesen(value) { treffer() } else if name == p { FreiNutzung::Ende } else { FreiNutzung::Keine }
+        }
+        Stmt::CompoundAssignment { name, value, .. } =>
+            if lesen(value) { treffer() } else if name == p { FreiNutzung::Ende } else { FreiNutzung::Keine },
+        Stmt::Show(value, _) | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) | Stmt::Throw(value, _) =>
+            if lesen(value) { treffer() } else { FreiNutzung::Keine },
+        Stmt::Return(None, _) | Stmt::Break(_) | Stmt::Continue(_) => FreiNutzung::Keine,
+        Stmt::PropertyAssignment { object, value, .. } =>
+            if lesen(object) || lesen(value) { treffer() } else { FreiNutzung::Keine },
+        Stmt::IndexAssignment { object, index, value, .. } =>
+            if lesen(object) || lesen(index) || lesen(value) { treffer() } else { FreiNutzung::Keine },
+        Stmt::If { condition, body, else_body, .. } => {
+            if lesen(condition) { return FreiNutzung::Lesen(stmt.zeile(), false); }
+            match folge(body) { FreiNutzung::Keine => folge(else_body), anderes => anderes }
+        }
+        Stmt::While { condition, body, .. } => {
+            if lesen(condition) { return FreiNutzung::Lesen(stmt.zeile(), false); }
+            folge(body)
+        }
+        Stmt::For { var_name, iterable, body, .. } => {
+            if lesen(iterable) { return FreiNutzung::Lesen(stmt.zeile(), false); }
+            if var_name == p { return FreiNutzung::Ende; }
+            folge(body)
+        }
+        Stmt::UnsafeBlock { body, .. } => folge(body),
+        _ => FreiNutzung::Ende,
+    }
+}
+
 /// P2-T51 E5 (Plan f5b52a0b C1, O2: streng, ohne Ausnahmeschalter): ein
 /// GELIEHENER Zeiger zeigt in Speicher, der nur waehrend des Aufrufs lebt:
 /// `adresse_von(x)` fuer Locals/Wertparameter (auch deren Felder/Elemente und
@@ -484,7 +679,8 @@ impl LiestPruefung<'_> {
 /// Aufgerufene, auch C, behaelt den Zeiger nach der Rueckkehr nicht).
 pub(crate) fn flucht_verletzung(
     params: &[(String, STy)], body: &[Stmt], ist_struktur: &dyn Fn(&str) -> bool,
-) -> Option<String> {
+    behaelt: &dyn Fn(&str, usize) -> bool,
+) -> Option<(&'static str, String, usize)> {
     let mut pruefung = FluchtPruefung {
         lokal: params.iter().map(|(n, _)| n.clone()).collect(),
         zeiger: params.iter().filter(|(_, t)| matches!(t, STy::Ptr(_))).map(|(n, _)| n.clone()).collect(),
@@ -492,14 +688,22 @@ pub(crate) fn flucht_verletzung(
             .map(|(n, _)| n.clone()).collect(),
         geliehen: HashMap::new(),
         ist_struktur,
+        behaelt,
+        adressiert: HashSet::new(),
     };
     pruefung.lokale(body);
+    FluchtPruefung::adressen(body, &mut pruefung.adressiert);
     loop {
         let vorher = pruefung.geliehen.len();
         pruefung.markiere(body);
         if pruefung.geliehen.len() == vorher { break; }
     }
-    pruefung.pruefe(body)
+    let flucht = pruefung.pruefe(body);
+    let behalten = pruefung.behalten_fluss(body, &mut HashMap::new()).map(|(g, z)| ("M-M004", g, z));
+    match (flucht, behalten) {
+        (Some(a), Some(b)) => Some(if b.2 < a.2 { b } else { a }),
+        (a, b) => a.or(b),
+    }
 }
 
 struct FluchtPruefung<'a> {
@@ -508,6 +712,11 @@ struct FluchtPruefung<'a> {
     puffer: HashSet<String>,
     geliehen: HashMap<String, String>,
     ist_struktur: &'a dyn Fn(&str) -> bool,
+    /// P2-T98 S5: extern-Parameter mit @behaelt(n) (Name, 0-basiert).
+    behaelt: &'a dyn Fn(&str, usize) -> bool,
+    /// P2-T98 S5-Fix: Namen, deren Adresse genommen wird; sie koennen ueber den
+    /// Zeiger ueberschrieben werden, M-M004 bleibt fuer sie still.
+    adressiert: HashSet<String>,
 }
 
 impl FluchtPruefung<'_> {
@@ -572,9 +781,9 @@ impl FluchtPruefung<'_> {
                     let ziel = args.first()?;
                     let wurzel = Self::wurzel(ziel)?;
                     let direkt = matches!(ziel, Expr::Identifier(_));
-                    let geliehen = self.lokal.contains(wurzel)
+                    let im_rahmen = self.lokal.contains(wurzel)
                         && (direkt || self.puffer.contains(wurzel) || !self.zeiger.contains(wurzel));
-                    geliehen.then(|| format!("adresse_von({wurzel}) zeigt in den Rahmen der Funktion"))
+                    im_rahmen.then(|| format!("adresse_von({wurzel}) zeigt in den Rahmen der Funktion"))
                         .or_else(|| self.geliehen.get(wurzel).filter(|_| !direkt && !self.zeiger.contains(wurzel)).cloned())
                 }
                 "puffer_zeiger" | "buffer_pointer" => {
@@ -615,6 +824,28 @@ impl FluchtPruefung<'_> {
         }
     }
 
+    /// P2-T98 S5 (Koordinator nach ea0e9eae): die Quelle selbst, nur fuer eine
+    /// ganze Variable: `adresse_von(lokal)` bzw. `puffer_zeiger(b)`.
+    fn quelle_direkt(&self, expr: &Expr) -> Option<String> {
+        let Expr::FunctionCall { name, args, .. } = expr else { return None };
+        let [Expr::Identifier(n)] = args.as_slice() else { return None };
+        match name.as_str() {
+            "adresse_von" | "address_of" if self.lokal.contains(n) =>
+                Some(format!("adresse_von({n}) zeigt in den Rahmen der Funktion")),
+            "puffer_zeiger" | "buffer_pointer" => Some(format!("puffer_zeiger({n}) ist nur waehrend des Aufrufs gepinnt")),
+            _ => None,
+        }
+    }
+
+    /// M-M004 nur sicher: eine ganze lokale Variable mit sicherem Leihstand oder
+    /// die Quelle selbst als Argument. Felder, Elemente, Aliase, Rechnungen = still.
+    fn geliehen_direkt(&self, arg: &Expr, stand: &HashMap<String, String>) -> Option<String> {
+        match arg {
+            Expr::Identifier(n) => stand.get(n).cloned(),
+            other => self.quelle_direkt(other),
+        }
+    }
+
     fn markiere(&mut self, stmts: &[Stmt]) {
         for stmt in stmts {
             match stmt {
@@ -635,8 +866,184 @@ impl FluchtPruefung<'_> {
         }
     }
 
-    fn pruefe(&self, stmts: &[Stmt]) -> Option<String> {
+    /// P2-T98 S2: Code, Grund und Zeile der ersten Flucht (M-M002). Der
+    /// flussunabhaengige Fixpunkt ist hier gewollt (E5 O2: streng).
+    fn pruefe(&self, stmts: &[Stmt]) -> Option<(&'static str, String, usize)> {
         stmts.iter().find_map(|stmt| match stmt {
+            Stmt::If { body, else_body, .. } => self.pruefe(body).or_else(|| self.pruefe(else_body)),
+            Stmt::While { body, .. } | Stmt::For { body, .. } | Stmt::UnsafeBlock { body, .. } => self.pruefe(body),
+            _ => self.pruefe_anweisung(stmt).map(|grund| ("M-M002", grund, stmt.zeile())),
+        })
+    }
+
+    /// P2-T98 S5 (M-M004), flussgenau (Review 0856b43c): `stand` enthaelt nur
+    /// Namen, die an DIESER Stelle sicher einen geliehenen Zeiger halten. Eine
+    /// Neuzuweisung mit nicht geliehenem Wert hebt die Markierung auf; nach
+    /// wenn/sonst gilt die Schnittmenge beider Zweige; in Schleifen gelten im
+    /// Koerper zugewiesene Namen als unsicher; gib_zurück/stopp/weiter beenden
+    /// den Block. Unsicher heisst still (Laufzeit), nie Fehlalarm. Markiert wird
+    /// nur `setze p auf adresse_von(lokal)`/`puffer_zeiger(b)` (Koordinator nach
+    /// ea0e9eae); Felder, Elemente, Aliase und Rechnungen bleiben still.
+    fn behalten_fluss(&self, stmts: &[Stmt], stand: &mut HashMap<String, String>) -> Option<(String, usize)> {
+        for stmt in stmts {
+            let zeile = stmt.zeile();
+            match stmt {
+                Stmt::If { condition, body, else_body, .. } => {
+                    if let Some(g) = self.behalten(condition, stand) { return Some((g, zeile)); }
+                    let (mut dann, mut sonst) = (stand.clone(), stand.clone());
+                    if let Some(t) = self.behalten_fluss(body, &mut dann) { return Some(t); }
+                    if let Some(t) = self.behalten_fluss(else_body, &mut sonst) { return Some(t); }
+                    *stand = dann.into_iter().filter(|(n, _)| sonst.contains_key(n)).collect();
+                }
+                Stmt::While { condition, body, .. } => {
+                    Self::schleife_unsicher(body, stand);
+                    if let Some(g) = self.behalten(condition, stand) { return Some((g, zeile)); }
+                    if let Some(t) = self.behalten_fluss(body, &mut stand.clone()) { return Some(t); }
+                }
+                Stmt::For { var_name, iterable, body, .. } => {
+                    if let Some(g) = self.behalten(iterable, stand) { return Some((g, zeile)); }
+                    stand.remove(var_name);
+                    Self::schleife_unsicher(body, stand);
+                    if let Some(t) = self.behalten_fluss(body, &mut stand.clone()) { return Some(t); }
+                }
+                Stmt::UnsafeBlock { body, .. } => {
+                    if let Some(t) = self.behalten_fluss(body, stand) { return Some(t); }
+                }
+                Stmt::Assignment { name, value, .. } | Stmt::ConstAssignment { name, value, .. } => {
+                    if let Some(g) = self.behalten(value, stand) { return Some((g, zeile)); }
+                    match self.quelle_direkt(value) {
+                        Some(q) if !self.adressiert.contains(name) => { stand.insert(name.clone(), q); }
+                        _ => { stand.remove(name); }
+                    }
+                }
+                Stmt::CompoundAssignment { name, value, .. } => {
+                    if let Some(g) = self.behalten(value, stand) { return Some((g, zeile)); }
+                    stand.remove(name);
+                }
+                Stmt::Return(..) | Stmt::Break(_) | Stmt::Continue(_) =>
+                    return self.behalten_anweisung(stmt, stand).map(|g| (g, zeile)),
+                Stmt::TryCatch { .. } | Stmt::Match { .. } | Stmt::Guard { .. } | Stmt::ParallelFor { .. } => stand.clear(),
+                _ => {
+                    if let Some(g) = self.behalten_anweisung(stmt, stand) { return Some((g, zeile)); }
+                }
+            }
+        }
+        None
+    }
+
+    /// Schleifenkopf: im Koerper (auch verschachtelt) zugewiesene Namen koennen
+    /// aus einer frueheren Iteration einen anderen Wert tragen.
+    fn schleife_unsicher(body: &[Stmt], stand: &mut HashMap<String, String>) {
+        let mut namen = HashSet::new();
+        if Self::zugewiesen(body, &mut namen) { stand.retain(|n, _| !namen.contains(n)); } else { stand.clear(); }
+    }
+
+    /// Sammelt zugewiesene Namen; false bei einer nicht verfolgten Blockform.
+    fn zugewiesen(stmts: &[Stmt], namen: &mut HashSet<String>) -> bool {
+        stmts.iter().all(|stmt| match stmt {
+            Stmt::Assignment { name, .. } | Stmt::ConstAssignment { name, .. }
+            | Stmt::CompoundAssignment { name, .. } => { namen.insert(name.clone()); true }
+            Stmt::PropertyAssignment { object, .. } | Stmt::IndexAssignment { object, .. } => {
+                if let Some(w) = Self::wurzel(object) { namen.insert(w.to_string()); }
+                true
+            }
+            Stmt::If { body, else_body, .. } => Self::zugewiesen(body, namen) && Self::zugewiesen(else_body, namen),
+            Stmt::For { var_name, body, .. } => { namen.insert(var_name.clone()); Self::zugewiesen(body, namen) }
+            Stmt::While { body, .. } | Stmt::UnsafeBlock { body, .. } => Self::zugewiesen(body, namen),
+            Stmt::TryCatch { .. } | Stmt::Match { .. } | Stmt::Guard { .. } | Stmt::ParallelFor { .. } => false,
+            _ => true,
+        })
+    }
+
+    /// Namen, deren Adresse irgendwo genommen wird (adresse_von(n...)).
+    fn adressen(stmts: &[Stmt], out: &mut HashSet<String>) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
+                | Stmt::CompoundAssignment { value, .. } | Stmt::Show(value, _)
+                | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) | Stmt::Defer(value, _) =>
+                    Self::adressen_expr(value, out),
+                Stmt::PropertyAssignment { object, value, .. } => {
+                    Self::adressen_expr(object, out); Self::adressen_expr(value, out);
+                }
+                Stmt::IndexAssignment { object, index, value, .. } => {
+                    Self::adressen_expr(object, out); Self::adressen_expr(index, out); Self::adressen_expr(value, out);
+                }
+                Stmt::If { condition, body, else_body, .. } => {
+                    Self::adressen_expr(condition, out); Self::adressen(body, out); Self::adressen(else_body, out);
+                }
+                Stmt::While { condition: e, body, .. } | Stmt::For { iterable: e, body, .. } => {
+                    Self::adressen_expr(e, out); Self::adressen(body, out);
+                }
+                Stmt::UnsafeBlock { body, .. } => Self::adressen(body, out),
+                _ => {}
+            }
+        }
+    }
+
+    fn adressen_expr(expr: &Expr, out: &mut HashSet<String>) {
+        match expr {
+            Expr::FunctionCall { name, args, .. } => {
+                if matches!(name.as_str(), "adresse_von" | "address_of") {
+                    if let Some(w) = args.first().and_then(Self::wurzel) { out.insert(w.to_string()); }
+                }
+                for a in args { Self::adressen_expr(a, out); }
+            }
+            Expr::MethodCall { object, args, .. } => {
+                Self::adressen_expr(object, out);
+                for a in args { Self::adressen_expr(a, out); }
+            }
+            Expr::BinaryOp { left, right, .. } => { Self::adressen_expr(left, out); Self::adressen_expr(right, out); }
+            Expr::UnaryOp { operand, .. } => Self::adressen_expr(operand, out),
+            Expr::PropertyAccess { object, .. } => Self::adressen_expr(object, out),
+            Expr::IndexAccess { object, index } => { Self::adressen_expr(object, out); Self::adressen_expr(index, out); }
+            Expr::List(items) => for a in items { Self::adressen_expr(a, out); },
+            Expr::Ternary { condition, then_val, else_val } => {
+                Self::adressen_expr(condition, out); Self::adressen_expr(then_val, out); Self::adressen_expr(else_val, out);
+            }
+            _ => {}
+        }
+    }
+
+    /// P2-T98 S5 (M-M004): ein geliehener Zeiger geht an einen extern-Parameter
+    /// mit @behaelt(n); C speichert ihn ueber den Aufruf hinaus, danach zeigt er
+    /// ins Leere. Ohne @behaelt bleibt die Weitergabe erlaubt (Vertrag: C
+    /// behaelt den Zeiger nicht).
+    fn behalten(&self, expr: &Expr, geliehen: &HashMap<String, String>) -> Option<String> {
+        match expr {
+            Expr::FunctionCall { name, args, .. } => args.iter().enumerate().find_map(|(i, a)| {
+                if !(self.behaelt)(name.as_str(), i) { return None; }
+                self.geliehen_direkt(a, geliehen).map(|q| format!(
+                    "geliehener Zeiger ({q}) geht an Parameter {} von '{name}', der ihn laut @behaelt({}) ueber den Aufruf hinaus speichert; Vorschlag: die Daten global, in einem Puffer mit eigenem Besitz oder per Griff halten",
+                    i + 1, i + 1))
+            }).or_else(|| args.iter().find_map(|a| self.behalten(a, geliehen))),
+            Expr::BinaryOp { left, right, .. } => self.behalten(left, geliehen).or_else(|| self.behalten(right, geliehen)),
+            Expr::UnaryOp { operand, .. } => self.behalten(operand, geliehen),
+            Expr::PropertyAccess { object, .. } => self.behalten(object, geliehen),
+            Expr::IndexAccess { object, index } => self.behalten(object, geliehen).or_else(|| self.behalten(index, geliehen)),
+            Expr::MethodCall { object, args, .. } =>
+                self.behalten(object, geliehen).or_else(|| args.iter().find_map(|a| self.behalten(a, geliehen))),
+            Expr::List(items) => items.iter().find_map(|a| self.behalten(a, geliehen)),
+            Expr::Ternary { condition, then_val, else_val } => self.behalten(condition, geliehen)
+                .or_else(|| self.behalten(then_val, geliehen)).or_else(|| self.behalten(else_val, geliehen)),
+            _ => None,
+        }
+    }
+
+    fn behalten_anweisung(&self, stmt: &Stmt, geliehen: &HashMap<String, String>) -> Option<String> {
+        match stmt {
+            Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
+            | Stmt::CompoundAssignment { value, .. } | Stmt::Show(value, _)
+            | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) => self.behalten(value, geliehen),
+            Stmt::PropertyAssignment { object, value, .. } => self.behalten(object, geliehen).or_else(|| self.behalten(value, geliehen)),
+            Stmt::IndexAssignment { object, index, value, .. } =>
+                self.behalten(object, geliehen).or_else(|| self.behalten(index, geliehen)).or_else(|| self.behalten(value, geliehen)),
+            _ => None,
+        }
+    }
+
+    fn pruefe_anweisung(&self, stmt: &Stmt) -> Option<String> {
+        match stmt {
             Stmt::Return(Some(value), _) => self.quelle(value).map(|q|
                 format!("geliehener Zeiger entkommt per gib_zurück ({q}); dauerhafte Zeiger brauchen Speicher mit eigenem Besitz (Griff)")),
             Stmt::PropertyAssignment { object, value, .. } | Stmt::IndexAssignment { object, value, .. } => {
@@ -649,10 +1056,8 @@ impl FluchtPruefung<'_> {
                 "speicher_schreiben" | "mem_write" | "volatile_schreiben" | "volatile_write") =>
                 args.iter().skip(1).find_map(|a| self.quelle(a)).map(|q|
                     format!("geliehener Zeiger ({q}) wird per {name} in fremden Speicher geschrieben")),
-            Stmt::If { body, else_body, .. } => self.pruefe(body).or_else(|| self.pruefe(else_body)),
-            Stmt::While { body, .. } | Stmt::UnsafeBlock { body, .. } | Stmt::For { body, .. } => self.pruefe(body),
             _ => None,
-        })
+        }
     }
 }
 
@@ -1031,6 +1436,21 @@ fn port_bits(name: &str) -> Option<(bool, u32)> {
     })
 }
 
+/// P2-T98 (M-I006): Builtins, die in @nativ-Koerpern nur innerhalb von
+/// unsicher: stehen duerfen (Rohzeiger, Speicher, Hardware) bzw. ein bewusstes
+/// Escape sind (puffer_zeiger). Eigene Funktionen und extern duerfen sie nicht
+/// verschatten (main.rs definitionen_registrieren), sonst waere offen, ob
+/// `zeiger(x)` die eigene Funktion oder den Rohzugriff meint.
+pub(crate) fn ist_unsicheres_builtin(name: &str) -> bool {
+    port_bits(name).is_some() || barrier(name).is_some() || matches!(name,
+        "zeiger" | "pointer" | "adresse_von" | "address_of" | "speicher_lesen" | "mem_read"
+        | "speicher_schreiben" | "mem_write" | "puffer_zeiger" | "buffer_pointer"
+        | "volatile_lesen" | "volatile_read" | "volatile_schreiben" | "volatile_write"
+        | "strukturfeld_lesen" | "struct_field_read" | "strukturfeld_schreiben" | "struct_field_write"
+        | "registerfeld_lesen" | "register_field_read" | "registerfeld_schreiben" | "register_field_write"
+        | "assembler")
+}
+
 fn barrier(name: &str) -> Option<u8> {
     Some(match name {
         "speicherbarriere" | "memory_barrier" => 0,
@@ -1116,6 +1536,8 @@ struct Emitter<'a, 'ctx> {
     /// P2-T84: aus C aufrufbarer Export (@einstieg); seit P2-T56 D behalten
     /// Struktur-Exporte den internen Namen, daher nicht am Namen ablesbar.
     export: bool,
+    /// P2-T98: Quellzeile der gerade uebersetzten Anweisung (M-M001/M-M005).
+    zeile: usize,
 }
 
 fn e(err: impl ToString) -> String { err.to_string() }
@@ -1224,7 +1646,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             ));
         }
         if self.sicher && self.unsicher_tiefe == 0 {
-            return Err(format!("Systemkoerper: C-Funktionszeiger auf '{name}' nur innerhalb von unsicher:"));
+            return Err(crate::diagnose::vormerken("M-M005", self.zeile, format!("Systemkoerper: C-Funktionszeiger auf '{name}' nur innerhalb von unsicher:")));
         }
         Ok(SVal { ty: STy::Ptr(erwartet.clone()), value: thunk.as_global_value().as_pointer_value().into() })
     }
@@ -1938,6 +2360,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             let position = self.expr(index, Some(&STy::Int(NType::U64)))?;
             self.expect(&position, &STy::Int(NType::U64), "Arrayindex")?;
             let position = position.value.into_int_value();
+            self.konstanter_index(position, u64::from(*length))?;
             let ausserhalb = self.builder.build_int_compare(
                 inkwell::IntPredicate::UGE, position, self.i64t().const_int(u64::from(*length), false), "sys.array.ausserhalb",
             ).map_err(e)?;
@@ -2000,6 +2423,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         let position = self.expr(index, Some(&STy::Int(NType::U64)))?;
         self.expect(&position, &STy::Int(NType::U64), "Arrayindex")?;
         let raw = position.value.into_int_value();
+        self.konstanter_index(raw, length)?;
         let outside = self.builder.build_int_compare(
             IntPredicate::UGE, raw, self.i64t().const_int(length, false), "sys.array.bounds",
         ).map_err(e)?;
@@ -2162,12 +2586,31 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     /// P2-T12 A: im sicheren Koerper nur innerhalb von unsicher: erlaubt.
     fn verlange_unsicher(&self, was: &str) -> Result<(), String> {
         if self.sicher && self.unsicher_tiefe == 0 {
-            return Err(format!("Systemkoerper: {was} ist nur innerhalb von unsicher: erlaubt (sicherer @nativ-Koerper)"));
+            // P2-T98 S3: M-M005 mit Zeile und Vorschlag.
+            return Err(crate::diagnose::vormerken("M-M005", self.zeile, format!(
+                "Systemkoerper: {was} ist nur innerhalb von unsicher: erlaubt (sicherer @nativ-Koerper); Vorschlag: die Zeile in einen unsicher:-Block einschliessen")));
         }
         Ok(())
     }
 
+    /// P2-T98 S1 (M-M001): ein schon beim Uebersetzen feststehender Index
+    /// ausserhalb eines festen Arrays [T; N] ist ein Compilefehler; nicht
+    /// konstante Indizes prueft weiter die Laufzeit (trap_block).
+    fn konstanter_index(&self, position: inkwell::values::IntValue<'ctx>, length: u64) -> Result<(), String> {
+        let Some(k) = position.get_zero_extended_constant() else { return Ok(()) };
+        if k < length {
+            return Ok(());
+        }
+        let anzeige = if (k as i64) < 0 { (k as i64).to_string() } else { k.to_string() };
+        let gueltig = if length == 0 { "das Array ist leer".to_string() } else { format!("gueltig 0..{}", length - 1) };
+        Err(crate::diagnose::vormerken("M-M001", self.zeile, format!(
+            "Systemkoerper: konstanter Index {anzeige} liegt ausserhalb von [T; {length}] ({gueltig}); der Zugriff wuerde immer fehlschlagen")))
+    }
+
     fn stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+        if stmt.zeile() > 0 {
+            self.zeile = stmt.zeile();
+        }
         match stmt {
             Stmt::UnsafeBlock { body, .. } => {
                 self.unsicher_tiefe += 1;
@@ -3366,7 +3809,8 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 || self.layouts.layout(name).is_some()
                 || self.puffer_builtin_typ(name, args).is_some();
             if !erlaubt {
-                return Err(format!("Systemkoerper: Aufruf '{name}' ist nur innerhalb von unsicher: erlaubt (sicherer @nativ-Koerper; ohne unsicher: erlaubt: als/als_wrap/als_saettigend, teilbar/verschiebbar/potenzierbar, andere @nativ-Funktionen, Strukturkonstruktoren, länge/puffer_zeiger)"));
+                // P2-T98 S3: M-M005 mit Zeile.
+                return Err(crate::diagnose::vormerken("M-M005", self.zeile, format!("Systemkoerper: Aufruf '{name}' ist nur innerhalb von unsicher: erlaubt (sicherer @nativ-Koerper; ohne unsicher: erlaubt: als/als_wrap/als_saettigend, teilbar/verschiebbar/potenzierbar, andere @nativ-Funktionen, Strukturkonstruktoren, länge/puffer_zeiger)")));
             }
         }
         // P2-T34 / ADR §13: Vorpruefung mit bool-Status statt Trap: teilbar(a, b),
@@ -3876,10 +4320,17 @@ pub(crate) fn emit_system_function<'ctx>(
     // P2-T51 E5 (Plan f5b52a0b C1): Fluchtpruefung geliehener Zeiger, ebenfalls
     // vor jeder IR-Emission.
     let typisiert: Vec<(String, STy)> = param_names.iter().cloned().zip(signature.params.iter().cloned()).collect();
-    if let Some(grund) = flucht_verletzung(&typisiert, body, &|n| layouts.layout(n).is_some()) {
-        let name = function.get_name().to_str().unwrap_or("?");
-        let name = name.strip_prefix("__moo_native.").unwrap_or(name);
-        return Err(format!("Systemkoerper '{name}': {grund}"));
+    let name = function.get_name().to_str().unwrap_or("?");
+    let name = name.strip_prefix("__moo_native.").unwrap_or(name);
+    if let Some((code, grund, zeile)) = flucht_verletzung(
+        &typisiert, body, &|n| layouts.layout(n).is_some(), &|f, i| externs.behaelt(f, i),
+    ) {
+        // P2-T98 S2/S5: M-M002 Flucht bzw. M-M004 @behaelt, mit Zeile.
+        return Err(crate::diagnose::vormerken(code, zeile, format!("Systemkoerper '{name}': {grund}")));
+    }
+    // P2-T98 S4 (M-M003): Nutzung nach Freigabe durch extern mit @verbraucht(n).
+    if let Some((grund, zeile)) = freigabe_verletzung(body, &|f, i| externs.gibt_frei(f, i)) {
+        return Err(crate::diagnose::vormerken("M-M003", zeile, format!("Systemkoerper '{name}': {grund}")));
     }
     let entry = context.append_basic_block(function, "entry");
     let entry_builder = context.create_builder();
@@ -3888,7 +4339,7 @@ pub(crate) fn emit_system_function<'ctx>(
         context, module, target, layouts, nominals, triple: &triple, x86, hosted, function, entry,
         sret: None, builder: context.create_builder(), slots: HashMap::new(), loops: Vec::new(),
         trap: None, never: None, weiter: None, pow_fehler: None, result: me.result.clone(), callees, externs,
-        sicher, unsicher_tiefe: 0, export,
+        sicher, unsicher_tiefe: 0, export, zeile: 0,
     };
     // Struktur-Rueckgabe: Parameter 0 ist der sret-Puffer des Aufrufers.
     let offset = u32::from(signature.returns_struct());

@@ -1,0 +1,10 @@
+# P2-T98 S3 (M-M005): sicherer Koerper mit unsicher:-Block, Rohzugriff ausserhalb.
+@nativ
+funktion lies(adr: u64) -> u64:
+    setze n: u64 auf 1
+    unsicher:
+        setze n auf 2
+    setze p: ptr[u64] auf zeiger(adr)
+    gib_zurück n
+
+zeige 1

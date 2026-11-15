@@ -1,0 +1,32 @@
+# P2-T96 (#38315, Review 049ea57c): je Paar (Aufrufer, gerufene Funktion) ein
+# Hinweis mit Zahl weiterer Aufrufe; lokal gebundene Namen bleiben still.
+funktion g(x):
+    wenn x > 1:
+        wirf "kaputt in g"
+    gib_zurück x
+
+funktion f(x):
+    setze a auf g(x)
+    setze b auf g(x + 1)
+    gib_zurück a + b + g(0)
+
+funktion schatten_lambda():
+    setze g auf (x) => x + 1
+    gib_zurück g(2)
+
+funktion schatten_param(g):
+    gib_zurück g(1)
+
+funktion zwei_lambdas():
+    setze l1 auf (x) => g(x)
+    setze l2 auf (x) => g(x + 1)
+    gib_zurück l1(1) + l2(1)
+
+zeige schatten_lambda()
+zeige schatten_param((x) => x)
+setze h auf (g) => g(1)
+zeige h((x) => x)
+versuche:
+    zeige f(1)
+fange e:
+    zeige e

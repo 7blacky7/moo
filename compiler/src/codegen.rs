@@ -814,8 +814,14 @@ impl<'ctx> CodeGen<'ctx> {
         }
         if let Err(e) = &ergebnis {
             if !crate::diagnose::hat_fehler() {
-                let code = if self.diag_in_nativ() { "M-N000" } else { "M-C000" };
-                crate::diagnose::melden(self.diag_ort(crate::diagnose::Diagnose::fehler(code, e.clone())));
+                let standard = if self.diag_in_nativ() { "M-N000" } else { "M-C000" };
+                // P2-T98: vorgemerkter Speicherfehler-Code (M-M...) samt Zeile.
+                let (code, zeile) = crate::diagnose::vorgemerkt(e).unwrap_or((standard, 0));
+                let mut d = crate::diagnose::Diagnose::fehler(code, e.clone());
+                if zeile > 0 {
+                    d = d.ort(zeile, 0);
+                }
+                crate::diagnose::melden(self.diag_ort(d));
             }
         }
         ergebnis
@@ -1058,6 +1064,9 @@ impl<'ctx> CodeGen<'ctx> {
         // von ihrer Reihenfolge im Quelltext.
         for stmt in &program.statements {
             if let Stmt::ExternC { name, params, result, decorators, .. } = stmt {
+                // P2-T98 S4/S5: Besitzvertrag @verbraucht(n)/@behaelt(n).
+                let vertrag = crate::ffi_types::extern_vertrag(name, params.len(), decorators)?;
+                self.extern_bindings.setze_vertrag(name, vertrag);
                 let triple = self.module.get_triple();
                 let triple = triple.as_str().to_str().map_err(|e| format!("Ungueltiges Ziel-Triple: {e}"))?;
                 let types: Vec<TypeRef> = params.iter().map(|(_, ty)| ty.clone()).collect();
@@ -1154,9 +1163,17 @@ impl<'ctx> CodeGen<'ctx> {
                 {
                     return Err(format!("Native Funktion '{name}': @unterbrechung verlangt einen Hardwarekörper (unsicher: ...) ohne @nackt/@aufrufkonvention; Sonderfälle als @nackt-Trampolin"));
                 }
+                // P2-T98 S3: Rohzugriff ausserhalb unsicher: ist M-M005 mit Zeile,
+                // fuer reine wie fuer Systemkoerper (vorher M-C000 ohne Zeile).
+                if let Some((roh, zeile)) = crate::native_system::rohzugriff_ohne_unsicher(body) {
+                    return Err(crate::diagnose::vormerken("M-M005", zeile, format!(
+                        "Native Funktion '{name}': Aufruf '{roh}' ist nur innerhalb von unsicher: erlaubt (Rohzugriff erfordert unsicher); Vorschlag: die Zeile in einen unsicher:-Block einschliessen")));
+                }
                 match crate::native_hardware::classify_body(body) {
-                    crate::native_hardware::BodyKind::MissingUnsafe => {
-                        return Err(format!("Native Funktion '{name}': Hardwarezugriff erfordert unsicher"));
+                    crate::native_hardware::BodyKind::MissingUnsafe(zeile) => {
+                        // P2-T98 S3: M-M005 mit Zeile des ersten Hardwarezugriffs.
+                        return Err(crate::diagnose::vormerken("M-M005", zeile, format!(
+                            "Native Funktion '{name}': Hardwarezugriff erfordert unsicher (Vorschlag: den Zugriff in einen unsicher:-Block einschliessen)")));
                     }
                     crate::native_hardware::BodyKind::Hardware => {
                         if !self.bare_mode {

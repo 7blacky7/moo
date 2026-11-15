@@ -1,0 +1,67 @@
+# P2-T98 S5 Gegenfaelle: fremde Adresse an @behaelt, geliehener Zeiger an
+# einen extern ohne @behaelt (Vertrag: C behaelt ihn nicht).
+@behaelt(1)
+extern "C" funktion moo_t98_merke(daten: u64) -> void
+extern "C" funktion moo_t98_lies(daten: u64) -> u64
+extern "C" funktion moo_t98_belege(ziel: u64) -> void
+
+@nativ
+funktion probe(adr: u64) -> u64:
+    setze x: u64 auf adr
+    unsicher:
+        moo_t98_merke(adr)
+        gib_zurück moo_t98_lies(adresse_von(x))
+
+# Review 0856b43c: Neuzuweisung mit nicht geliehenem Wert hebt die Markierung
+# auf (linear, in beiden Zweigen); nur in einem Zweig geliehen = unsicher, still.
+@nativ
+funktion neu_zugewiesen(n: u64) -> u64:
+    setze x: u64 auf n
+    unsicher:
+        setze p: u64 auf adresse_von(x)
+        setze p auf 0
+        moo_t98_merke(p)
+        setze q: u64 auf adresse_von(x)
+        wenn n > 1:
+            setze q auf 0
+        sonst:
+            setze q auf n
+        moo_t98_merke(q)
+        setze r: u64 auf 0
+        wenn n > 2:
+            setze r auf adresse_von(x)
+        moo_t98_merke(r)
+    gib_zurück x
+
+# Koordinator nach ea0e9eae: Feld (auch das geliehene), Alias und Rechnung am
+# @behaelt-Parameter bleiben Laufzeit.
+struktur Paar:
+    a: u64
+    b: u64
+
+@nativ
+funktion grenzen(n: u64) -> u64:
+    setze x: u64 auf n
+    unsicher:
+        setze s: Paar auf Paar(0, 0)
+        s.a = adresse_von(x)
+        moo_t98_merke(s.b)
+        moo_t98_merke(s.a)
+        setze p: u64 auf adresse_von(x)
+        setze q: u64 auf p
+        moo_t98_merke(q)
+        moo_t98_merke(p + 8)
+        moo_t98_merke(adresse_von(x) + 8)
+    gib_zurück x
+
+# Koordinator nach 196dbf18: adresse_von(p) an ein extern kann p neu belegen.
+@nativ
+funktion neu_belegt(n: u64) -> u64:
+    setze x: u64 auf n
+    unsicher:
+        setze p: u64 auf adresse_von(x)
+        moo_t98_belege(adresse_von(p))
+        moo_t98_merke(p)
+    gib_zurück x
+
+zeige 1

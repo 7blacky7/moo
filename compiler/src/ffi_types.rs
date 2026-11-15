@@ -332,6 +332,42 @@ pub(crate) struct ExternRegistry<'ctx> {
     bindings: std::collections::HashMap<String, ExternBinding<'ctx>>,
     /// P2-T19/T56 B: Signaturen nach dem allgemeinen Klassifizierer (ffi_abi).
     abi_bindings: std::collections::HashMap<String, AbiBinding<'ctx>>,
+    /// P2-T98 S4/S5: Besitzvertraege (@verbraucht/@behaelt) je extern C.
+    vertraege: std::collections::HashMap<String, ExternVertrag>,
+}
+
+/// P2-T98 S4/S5 (Entscheid #38292): Besitzvertrag eines extern C, 0-basiert.
+/// `frei`: @verbraucht(n)/@consumes(n) wie an @nativ (P2-T23/T53), der Aufruf
+/// gibt das Objekt hinter Parameter n frei; danach gehoert es nicht mehr dem
+/// Aufrufer (weitere Nutzung M-M003). `behaelt`: @behaelt(n)/@behält/@retains,
+/// C speichert den Wert aus Parameter n ueber den Aufruf hinaus (ein geliehener
+/// Zeiger dort ist M-M004). Der Parametertyp ist frei (Zeiger oder Handle-Zahl).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ExternVertrag {
+    pub(crate) frei: Vec<usize>,
+    pub(crate) behaelt: Vec<usize>,
+}
+
+/// Liest den Besitzvertrag aus den Decorators eines extern C (n ab 1).
+pub(crate) fn extern_vertrag(name: &str, parameter: usize, decorators: &[crate::ast::Decorator]) -> Result<ExternVertrag, String> {
+    let mut vertrag = ExternVertrag::default();
+    for d in decorators {
+        let ziel = match d.name.as_str() {
+            "verbraucht" | "consumes" => &mut vertrag.frei,
+            "behaelt" | "behält" | "retains" => &mut vertrag.behaelt,
+            _ => continue,
+        };
+        let n = match d.args.as_slice() {
+            [crate::ast::DecoratorArg::Zahl(n)] if n.fract() == 0.0 && *n >= 1.0 && *n <= parameter as f64 => *n as usize - 1,
+            _ => return Err(format!(
+                "extern C '{name}': @{} erwartet genau eine Parameternummer 1..{parameter}, z.B. @{}(1)", d.name, d.name)),
+        };
+        if ziel.contains(&n) {
+            return Err(format!("extern C '{name}': @{}({}) ist doppelt angegeben", d.name, n + 1));
+        }
+        ziel.push(n);
+    }
+    Ok(vertrag)
 }
 
 /// P2-T19/T56 B (Plan 91033131): extern-C-Signatur mit Strukturwerten nach dem
@@ -517,6 +553,19 @@ impl<'ctx> AbiBinding<'ctx> {
 }
 
 impl<'ctx> ExternRegistry<'ctx> {
+    /// P2-T98 S4/S5: Besitzvertrag eines extern C ablegen bzw. abfragen.
+    pub(crate) fn setze_vertrag(&mut self, name: &str, vertrag: ExternVertrag) {
+        self.vertraege.insert(name.to_string(), vertrag);
+    }
+
+    pub(crate) fn gibt_frei(&self, name: &str, parameter: usize) -> bool {
+        self.vertraege.get(name).is_some_and(|v| v.frei.contains(&parameter))
+    }
+
+    pub(crate) fn behaelt(&self, name: &str, parameter: usize) -> bool {
+        self.vertraege.get(name).is_some_and(|v| v.behaelt.contains(&parameter))
+    }
+
     pub(crate) fn get_abi(&self, name: &str) -> Option<&AbiBinding<'ctx>> {
         self.abi_bindings.get(name)
     }

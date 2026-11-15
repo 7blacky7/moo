@@ -1,0 +1,9 @@
+# P2-T98 (M-I006): eigene Definitionen verschatten unsichere Builtins nicht.
+@nativ
+funktion zeiger(x: u64) -> u64:
+    gib_zurück x + 1
+
+funktion adresse_von(x):
+    gib_zurück x
+
+zeige zeiger(1)

@@ -1,0 +1,10 @@
+# P2-T96 (Proben zu 6078a97b): h wird erst NACH k Top-Level-Variable; k ruft weiter die werfende Funktion h.
+# Erwartet: genau ein M-F001 in k (Zeile 7).
+funktion h(x):
+    wirf "kaputt in h"
+
+funktion k():
+    gib_zurück h(3)
+
+setze h auf (x) => x * 2
+zeige k()

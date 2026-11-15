@@ -1,0 +1,52 @@
+# P2-T98 S4 Gegenfaelle: Nutzung vor der Freigabe, Neuzuweisung danach,
+# Freigabe nur in einem Zweig (bleibt Laufzeit), adresse_von ist keine Nutzung.
+extern "C" funktion moo_t98_neu(n: u64) -> ptr[void]
+@verbraucht(1)
+extern "C" funktion moo_t98_frei(p: ptr[void]) -> void
+extern "C" funktion moo_t98_nutze(p: ptr[void]) -> u64
+extern "C" funktion moo_t98_belege(ziel: u64) -> void
+
+@nativ
+funktion probe(n: u64) -> u64:
+    setze s: u64 auf 0
+    unsicher:
+        setze p: ptr[void] auf moo_t98_neu(n)
+        setze s auf s + moo_t98_nutze(p)
+        moo_t98_frei(p)
+        setze a: u64 auf adresse_von(p)
+        setze p auf moo_t98_neu(n)
+        setze s auf s + moo_t98_nutze(p)
+        wenn a == 0:
+            setze s auf 1
+        wenn n > 1:
+            moo_t98_frei(p)
+        setze s auf s + moo_t98_nutze(p)
+        moo_t98_frei(p)
+    gib_zurück s
+
+# Koordinator nach ea0e9eae: nur die ganze Variable direkt an einem Aufruf
+# zaehlt; Alias und Umwandlung nach der Freigabe bleiben Laufzeit.
+@nativ
+funktion grenzen(n: u64) -> u64:
+    setze s: u64 auf 0
+    unsicher:
+        setze p: ptr[void] auf moo_t98_neu(n)
+        moo_t98_frei(p)
+        setze q: ptr[void] auf p
+        setze s auf s + moo_t98_nutze(q)
+        setze r: ptr[u64] auf zeiger(p)
+    gib_zurück s
+
+# Koordinator nach 196dbf18: adresse_von(p) an ein extern kann p neu belegen;
+# danach ist p fuer M-M003 unsicher und bleibt still.
+@nativ
+funktion neu_belegt(n: u64) -> u64:
+    setze s: u64 auf 0
+    unsicher:
+        setze p: ptr[void] auf moo_t98_neu(n)
+        moo_t98_frei(p)
+        moo_t98_belege(adresse_von(p))
+        setze s auf moo_t98_nutze(p)
+    gib_zurück s
+
+zeige 1

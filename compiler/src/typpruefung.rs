@@ -122,6 +122,11 @@ pub fn streng_aktivieren() {
     STRENG.with(|s| s.set(true));
 }
 
+/// P2-T96: `--typ-streng` gilt auch fuer M-F001 (fehlerpfade.rs).
+pub fn streng() -> bool {
+    STRENG.with(|s| s.get())
+}
+
 /// Laeuft der Pass? Dann meldet der Codegen M-H001 nicht selbst.
 pub fn aktiv() -> bool {
     AKTIV.with(|a| a.get())

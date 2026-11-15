@@ -1,0 +1,7 @@
+# P2-T98 S3 (M-M005): englische Aliase (mem_read) ohne unsicher: wie die deutschen.
+@nativ
+funktion lies(adr: u64) -> u64:
+    setze n: u64 auf 1
+    gib_zurück mem_read(adr, 8) + n
+
+zeige 1

@@ -214,8 +214,79 @@ json zyklus_gueltig '.errors == 0 and .hints == 0'
 rm -f "$out/zyklus_gueltig.bin"
 timeout 120s "$compiler" compile "$d/zyklus_gueltig.moos" -o "$out/zyklus_gueltig.bin" > /dev/null 2>&1 || fail "zyklus_gueltig: compile RC $?"
 [ "$(timeout 30s "$out/zyklus_gueltig.bin" 2>&1 | tr '\n' ' ')" = "7 1 " ] || fail "zyklus_gueltig: Ausgabe $(timeout 30s "$out/zyklus_gueltig.bin" 2>&1 | tr '\n' ' ')"
+# 10. P2-T98 Batch 1: Speicherfehler statisch (nur sichere Faelle) mit Code,
+# Datei und Zeile: M-M001 konstanter Index, M-M002 Flucht, M-M005 unsicher:.
+for v in speicher_index_feld:M-M001:9 speicher_index_lokal:M-M001:6 speicher_flucht:M-M002:7 \
+         speicher_unsicher:M-M005:5 speicher_unsicher_gemischt:M-M005:7 speicher_unsicher_adresse:M-M005:5 speicher_unsicher_mem_read:M-M005:5; do
+  name="${v%%:*}"; rest="${v#*:}"; code="${rest%%:*}"; zeile="${rest#*:}"
+  pruef_json "$name"
+  [ "$rc" -eq 1 ] || fail "$name: RC $rc statt 1"
+  json "$name" ".errors == 1 and .diagnostics[0].code == \"$code\" and .diagnostics[0].line == $zeile and (.diagnostics[0].file | endswith(\"$name.moos\"))"
+done
+pruef_json speicher_index_feld_ok
+[ "$rc" -eq 0 ] || fail "speicher_index_feld_ok: RC $rc statt 0"
+json speicher_index_feld_ok '.errors == 0'
+# P2-T98 M-I006: eigene Funktion verschattet ein unsicheres Builtin (zeiger @nativ, adresse_von dynamisch).
+pruef_json speicher_verschattet
+[ "$rc" -eq 1 ] || fail "speicher_verschattet: RC $rc statt 1"
+json speicher_verschattet '.errors == 2 and [.diagnostics[] | .code + ":" + (.line|tostring)] == ["M-I006:2", "M-I006:6"] and (.diagnostics[0].suggestion | test("umbenennen"))'
+timeout 30s "$compiler" erklaere M-I006 > "$out/erklaere_i6.out" 2>&1 || fail "erklaere M-I006: RC $?"
+# P2-T98 Batch 2: M-M003 Nutzung nach Freigabe (@verbraucht an extern), M-M004 @behaelt.
+for v in speicher_frei_nutzung:M-M003:11 speicher_frei_doppelt:M-M003:13 speicher_behaelt:M-M004:9 speicher_behaelt_variable:M-M004:12; do
+  name="${v%%:*}"; rest="${v#*:}"; code="${rest%%:*}"; zeile="${rest#*:}"
+  pruef_json "$name"
+  [ "$rc" -eq 1 ] || fail "$name: RC $rc statt 1"
+  json "$name" ".errors == 1 and .diagnostics[0].code == \"$code\" and .diagnostics[0].line == $zeile and (.diagnostics[0].file | endswith(\"$name.moos\"))"
+done
+json speicher_frei_doppelt '.diagnostics[0].message | test("zweites Mal")'
+for name in speicher_frei_ok speicher_behaelt_ok; do
+  pruef_json "$name"
+  [ "$rc" -eq 0 ] || fail "$name: RC $rc statt 0"
+  json "$name" '.errors == 0'
+done
+for c in M-M003 M-M004; do
+  timeout 30s "$compiler" erklaere "$c" > "$out/erklaere_$c.out" 2>&1 || fail "erklaere $c: RC $?"
+done
+for c in M-M001 M-M002 M-M005; do
+  timeout 30s "$compiler" erklaere "$c" > "$out/erklaere_$c.out" 2>&1 || fail "erklaere $c: RC $?"
+done
 timeout 30s "$compiler" erklaere M-I004 > "$out/erklaere_i4.out" 2>&1 || fail "erklaere M-I004: RC $?"
 rg -q -F "M-I004 – Doppelte Definition aus zwei Dateien" "$out/erklaere_i4.out" || fail "erklaere M-I004: Eintrag fehlt"
 
+# 11. P2-T96: M-F001 unbehandelte wirf-Pfade (nur mit --typpruefung, #38315; innerste
+#     Stelle je Kette, je Paar Aufrufer/gerufene Funktion ein Hinweis, lokal gebundene Namen still).
+F='[.diagnostics[] | select(.code == "M-F001")]'
+pruef_json fehlerpfad_kette
+[ "$rc" -eq 0 ] || fail "fehlerpfad_kette ohne Schalter: RC $rc statt 0"
+json fehlerpfad_kette "$F | length == 0"
+pruef_json fehlerpfad_kette --typpruefung
+[ "$rc" -eq 0 ] || fail "fehlerpfad_kette: RC $rc statt 0"
+json fehlerpfad_kette "$F"' | length == 1 and .[0].line == 9 and (.[0].message | test("wirf in .g., .*fehlerpfad_kette.moos:5") and test("f. läuft"))'
+pruef_json fehlerpfad_still --typpruefung
+[ "$rc" -eq 0 ] || fail "fehlerpfad_still: RC $rc statt 0"
+json fehlerpfad_still "$F | length == 0"
+pruef_json fehlerpfad_klasse --typpruefung
+[ "$rc" -eq 0 ] || fail "fehlerpfad_klasse: RC $rc statt 0"
+json fehlerpfad_klasse "$F | map(.line) == [14, 22, 23]"
+pruef_json fehlerpfad_modul --typpruefung
+[ "$rc" -eq 0 ] || fail "fehlerpfad_modul: RC $rc statt 0"
+json fehlerpfad_modul "$F"' | length == 1 and .[0].line == 3 and (.[0].file | endswith("fehlerpfad_modul.moos")) and (.[0].message | test("fehlerpfad_lib.moos:4"))'
+pruef_json fehlerpfad_paar --typpruefung
+[ "$rc" -eq 0 ] || fail "fehlerpfad_paar: RC $rc statt 0"
+pruef_json fehlerpfad_global --typpruefung
+[ "$rc" -eq 0 ] || fail "fehlerpfad_global: RC $rc statt 0"
+json fehlerpfad_global "$F | length == 0"
+pruef_json fehlerpfad_global --typ-streng
+[ "$rc" -eq 0 ] || fail "fehlerpfad_global --typ-streng: RC $rc statt 0 (Fehlalarm)"
+pruef_json fehlerpfad_global_spaet --typpruefung
+[ "$rc" -eq 0 ] || fail "fehlerpfad_global_spaet: RC $rc statt 0"
+json fehlerpfad_global_spaet "$F"' | length == 1 and .[0].line == 7 and .[0].function == "k"'
+json fehlerpfad_paar "$F"' | map(.line) == [9, 21, 22] and (.[0].message | test("und 2 weitere Aufrufe")) and .[1].function == "zwei_lambdas.<lambda@21>" and .[2].function == "zwei_lambdas.<lambda@22>"'
+timeout 120s "$compiler" pruefe --typ-streng "$d/fehlerpfad_kette.moos" --diagnose=json > "$out/fp_streng.out" 2> "$out/fp_streng.json"
+rc=$?
+[ "$rc" -eq 1 ] || fail "fehlerpfad --typ-streng: RC $rc statt 1"
+json fp_streng '.errors == 1 and .diagnostics[0].code == "M-F001" and (.diagnostics[0].message | endswith(" (--typ-streng)"))'
+timeout 30s "$compiler" erklaere M-F001 > "$out/erklaere_f1.out" 2>&1 || fail "erklaere M-F001: RC $?"
+
 if [ "$fehler" -ne 0 ]; then echo "FAIL P2-T97 diagnose"; exit 1; fi
-echo "PASS P2-T97 diagnose: mehrere Syntax-/Lexerfehler mit Zeile:Spalte, Import M-I002 (inkl. Altfall), M-C001 mit Zeile+Vorschlag, Hinweis RC0, Stmt-Zeilen (B5b/B5c), JSON-Schema, pruefe/check, erklaere/explain; P2-T99 M-I004 (Benutzer/selektiv/Modul-Modul, compile ohne Binary), M-I005 Variable, Raute still, stdlib mathe+primzahl; Variable verdeckt nichts (beide Reihenfolgen), Struktur/Funktion, primzahl-Weitergabe; Weitergabe-Zyklus ohne Definition M-I002, gueltiger Zyklus RC 0"
+echo "PASS P2-T97 diagnose: mehrere Syntax-/Lexerfehler mit Zeile:Spalte, Import M-I002 (inkl. Altfall), M-C001 mit Zeile+Vorschlag, Hinweis RC0, Stmt-Zeilen (B5b/B5c), JSON-Schema, pruefe/check, erklaere/explain; P2-T99 M-I004 (Benutzer/selektiv/Modul-Modul, compile ohne Binary), M-I005 Variable, Raute still, stdlib mathe+primzahl; Variable verdeckt nichts (beide Reihenfolgen), Struktur/Funktion, primzahl-Weitergabe; Weitergabe-Zyklus ohne Definition M-I002, gueltiger Zyklus RC 0; P2-T98 M-M001/M-M002/M-M005 mit Zeile, nicht konstanter Index RC 0"

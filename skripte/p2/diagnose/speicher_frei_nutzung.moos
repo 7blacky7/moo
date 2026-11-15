@@ -1,0 +1,13 @@
+# P2-T98 S4 (M-M003): ganze Variable nach Freigabe direkt an einen Aufruf uebergeben.
+extern "C" funktion moo_t98_neu(n: u64) -> ptr[void]
+@verbraucht(1)
+extern "C" funktion moo_t98_frei(p: ptr[void]) -> void
+extern "C" funktion moo_t98_nutze(p: ptr[void]) -> u64
+@nativ
+funktion probe(n: u64) -> u64:
+    unsicher:
+        setze p: ptr[void] auf moo_t98_neu(n)
+        moo_t98_frei(p)
+        gib_zurück moo_t98_nutze(p)
+
+zeige 1

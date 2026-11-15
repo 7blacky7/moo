@@ -1,0 +1,16 @@
+# P2-T96 Fehlalarm-Gate (Review 6078a97b): g ist VOR f als Top-Level-Variable
+# gebunden, f ruft also das Lambda (kein Wurf, Ausgabe 3). Erwartet: kein M-F001, --typ-streng RC 0.
+funktion g(x):
+    wirf "kaputt in g"
+
+setze g auf (x) => x + 1
+
+funktion f():
+    gib_zurück g(2)
+
+funktion setze_g():
+    global g
+    setze g auf (x) => x * 3
+
+setze_g()
+zeige f()

@@ -1,0 +1,5 @@
+# P2-T96: Modul mit werfender Funktion (gehoert zu fehlerpfad_modul.moos).
+funktion lade(name):
+    wenn name == "":
+        wirf "leerer Name"
+    gib_zurück name

@@ -69,6 +69,8 @@ pub(crate) fn libraries(stmts: &[Stmt], triple: &str) -> Result<Vec<String>, Str
                         }
                         // P7-T4 (7A): Pruefung und Absenkung im Codegen (ffi_types).
                         "aufrufkonvention" | "calling_convention" => {}
+                        // P2-T98 S4/S5: Besitzvertrag, Pruefung in ffi_types::extern_vertrag.
+                        "verbraucht" | "consumes" | "behaelt" | "behält" | "retains" => {}
                         other => return Err(format!(
                             "Decorator '@{other}' fuer extern C noch nicht unterstuetzt"
                         )),

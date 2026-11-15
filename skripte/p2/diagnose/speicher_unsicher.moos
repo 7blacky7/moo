@@ -1,0 +1,8 @@
+# P2-T98 S3 (M-M005): Rohzeigerzugriff ohne unsicher:.
+@nativ
+funktion lies(adr: u64) -> u64:
+    setze n: u64 auf 1
+    setze p: ptr[u64] auf zeiger(adr)
+    gib_zurück p[0] + n
+
+zeige 1

@@ -1,0 +1,18 @@
+# P2-T96 (M-F001): g wirft ungeschuetzt, f ruft g ohne versuche: (innerste Stelle),
+# h ruft f ohne versuche: (kein zweiter Hinweis), das Hauptprogramm ruft h geschuetzt.
+funktion g(x):
+    wenn x > 1:
+        wirf "kaputt in g"
+    gib_zurück x
+
+funktion f(x):
+    setze y auf g(x)
+    gib_zurück y + 1
+
+funktion h(x):
+    gib_zurück f(x)
+
+versuche:
+    zeige h(2)
+fange e:
+    zeige e

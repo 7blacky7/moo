@@ -1,0 +1,3 @@
+# P2-T96: Wurf in einem importierten Modul; der Hinweis nennt Modul-Datei:Zeile.
+aus "./fehlerpfad_lib" importiere lade
+zeige lade("a")

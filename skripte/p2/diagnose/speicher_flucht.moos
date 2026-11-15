@@ -1,0 +1,10 @@
+# P2-T98 S2 (M-M002): Adresse eines Locals verlaesst die Funktion.
+@nativ
+funktion adresse() -> u64:
+    unsicher:
+        setze x: u64 auf 5
+        wenn x > 1:
+            gib_zurück adresse_von(x)
+        gib_zurück 0
+
+zeige 1

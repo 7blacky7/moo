@@ -347,6 +347,27 @@ pub fn hat_fehler() -> bool {
     LAUF.with(|l| l.borrow().diagnosen.hat_fehler())
 }
 
+// P2-T98: Code und Zeile fuer Fehler, deren Fehlerweg nur ein String ist
+// (nativer Codegen). compile_program uebernimmt sie statt M-N000, wenn der
+// Err-Text die vorgemerkte Meldung enthaelt (Rueckfallpfade, die einen
+// Fehler verwerfen, beeinflussen spaetere Meldungen dadurch nicht).
+thread_local! {
+    static VORGEMERKT: RefCell<Vec<(String, &'static str, usize)>> = RefCell::new(Vec::new());
+}
+
+/// Merkt Code und Zeile fuer `meldung` vor und liefert die Meldung zurueck.
+pub fn vormerken(code: &'static str, zeile: usize, meldung: String) -> String {
+    VORGEMERKT.with(|v| v.borrow_mut().push((meldung.clone(), code, zeile)));
+    meldung
+}
+
+/// Code und Zeile der zuletzt vorgemerkten Meldung, die in `fehler` steckt.
+pub fn vorgemerkt(fehler: &str) -> Option<(&'static str, usize)> {
+    VORGEMERKT.with(|v| v.borrow().iter().rev()
+        .find(|(m, _, _)| fehler.contains(m.as_str()))
+        .map(|(_, code, zeile)| (*code, *zeile)))
+}
+
 /// Setzt die Datei an allen bisher gemeldeten Diagnosen ohne Datei (z. B.
 /// Lexer-Hinweise wie M-H007, der Lexer kennt den Dateinamen nicht).
 pub fn datei_nachtragen(datei: &str) {
@@ -439,6 +460,8 @@ pub const KATALOG: &[Eintrag] = &[
         erklaerung: "Derselbe Top-Level-Name (Funktion, Klasse, Datenklasse, Schnittstelle, Konstante, Struktur, extern; nicht Struktur gegen Struktur oder extern gegen extern) ist in der Datei und einem importierten Modul oder in zwei Modulen definiert. Module werden inline in EINEN Namensraum eingefuegt; es gilt nur die zuerst eingefuegte Definition, die andere wuerde still ersetzt, auch fuer Aufrufe im Modul. `aus m importiere x` fuegt ebenfalls alle Definitionen von m ein, auch interne Helfer. Eine Definition umbenennen oder aus dem anderen Modul importieren statt kopieren." },
     Eintrag { code: "M-I005", titel: "Gleichnamige Top-Level-Variable",
         erklaerung: "Eine Top-Level-Variable der Datei oder eines Moduls traegt denselben Namen wie eine Variable oder Definition einer anderen Datei. Beide teilen denselben globalen Namen (gemeinsamer Zustand); das kann gewollte Konfiguration sein. Sonst umbenennen." },
+    Eintrag { code: "M-I006", titel: "Unsicheres Builtin verschattet",
+        erklaerung: "Eine Funktion oder ein extern traegt den Namen eines unsicheren Builtins (zeiger, adresse_von, speicher_lesen/-schreiben, puffer_zeiger, volatile_*, port_*, Barrieren, assembler, struktur-/registerfeld_*). Dann waere nicht eindeutig, ob ein Aufruf die eigene Definition oder den Rohzugriff meint, und die unsicher:-Pruefung liesse sich umgehen. Die eigene Definition umbenennen." },
     Eintrag { code: "M-I000", titel: "Importfehler",
         erklaerung: "Sonstiger Fehler beim Aufloesen von Modulen." },
     Eintrag { code: "M-C001", titel: "Funktion unbekannt",
@@ -449,6 +472,16 @@ pub const KATALOG: &[Eintrag] = &[
         erklaerung: "Sonstiger Fehler bei der Codeerzeugung. Ort: Datei und Funktion; die Zeile, soweit bekannt." },
     Eintrag { code: "M-N000", titel: "Fehler in nativem Code",
         erklaerung: "Fehler beim Uebersetzen einer @nativ-Funktion, einer Struktur oder einer nativen Konstante (Typen, Layout, Zeiger, Hardwarezugriff)." },
+    Eintrag { code: "M-M001", titel: "Konstanter Index ausserhalb eines festen Arrays",
+        erklaerung: "Ein Index, der schon beim Uebersetzen feststeht, liegt ausserhalb eines Arrays fester Laenge [T; N] (gueltig 0..N-1); der Zugriff wuerde immer fehlschlagen. Nicht konstante Indizes prueft weiter die Laufzeit (Trap). Puffer haben eine Laufzeitlaenge und werden nur zur Laufzeit geprueft." },
+    Eintrag { code: "M-M002", titel: "Geliehener Zeiger entkommt",
+        erklaerung: "Ein Zeiger auf Speicher, der nur waehrend des Aufrufs lebt (adresse_von eines Locals oder Parameters, puffer_zeiger), wird zurueckgegeben oder in Speicher geschrieben, der den Aufruf ueberlebt. Nach dem Ende der Funktion zeigt er ins Leere. Dauerhafte Zeiger brauchen Speicher mit eigenem Besitz (Griff, Puffer, globale Daten)." },
+    Eintrag { code: "M-M003", titel: "Nutzung nach Freigabe",
+        erklaerung: "Ein extern mit @verbraucht(n) gibt das Objekt hinter Parameter n frei; danach gehoert es nicht mehr dem Aufrufer. Wird dieselbe Variable im selben Block danach noch genutzt oder ein zweites Mal freigegeben, ist das sicher ein Fehler. Gemeldet werden nur eindeutige Faelle; Neuzuweisung, Freigabe nur in einem Zweig, Schleifen ueber Iterationen und Aliasse bleiben der Laufzeit ueberlassen." },
+    Eintrag { code: "M-M004", titel: "C behaelt geliehenen Zeiger",
+        erklaerung: "Ein extern mit @behaelt(n) speichert den Wert aus Parameter n ueber den Aufruf hinaus (z. B. user_data eines Rueckrufs). Ein geliehener Zeiger (adresse_von eines Locals oder Parameters, puffer_zeiger) zeigt nach dem Ende der Funktion ins Leere. Die Daten global, in einem Puffer mit eigenem Besitz oder per Griff halten." },
+    Eintrag { code: "M-M005", titel: "Rohzugriff ohne unsicher:",
+        erklaerung: "Zeigerumwandlung, adresse_von, speicher_lesen/-schreiben, Hardwarezugriffe und andere Rohzugriffe sind in einer @nativ-Funktion nur innerhalb eines unsicher:-Blocks erlaubt. Die betroffene Zeile in unsicher: einschliessen." },
     Eintrag { code: "M-H001", titel: "Typ-Hinweis",
         erklaerung: "Der Compiler kennt den Typ eines Werts und die Operation passt nicht dazu (z. B. Listenmethode auf einer Zahl). Ohne Typangabe ist das ein Hinweis; das Programm wird trotzdem erzeugt. Mit --typpruefung meldet ihn die Typpruefung, mit --typ-streng ist er ein Fehler." },
     Eintrag { code: "M-H002", titel: "Eigene Struktur ueberdeckt eingebauten Typ",
@@ -473,6 +506,8 @@ pub const KATALOG: &[Eintrag] = &[
         erklaerung: "gib_zurück liefert sicher einen anderen Typ als der Rueckgabetyp der Funktion (-> T). `gib_zurück` ohne Wert liefert Nichts." },
     Eintrag { code: "M-T005", titel: "Element- oder Feldtyp passt nicht",
         erklaerung: "Ein Element einer als Liste[T] bzw. Dict[K, V] annotierten Variable (Literal, Index-Zuweisung, hinzufügen/append) oder ein Feld einer eigenen Datenklasse (neu D(...), d.feld = wert) hat sicher einen anderen Typ als deklariert. `nichts` ist nur ein Hinweis. Gelesene Elemente gelten als unbekannt; normale Klassen, selbst.feld und Spread werden nicht geprueft." },
+    Eintrag { code: "M-F001", titel: "Fehler kann unbehandelt durchlaufen",
+        erklaerung: "Die aufgerufene Funktion wirft selbst einen Fehler (wirf ausserhalb ihres versuche-Teils), und der Aufruf steht nicht in versuche:. Zur Laufzeit meldet Moo den Fehler als Hinweis und der Aufrufer laeuft mit offenem Fehler weiter, bis ein aeusseres versuche: ihn faengt. Je Kette wird nur die innerste Stelle gemeldet, je Paar aus aufrufender und gerufener Funktion ein Hinweis (weitere Stellen als Anzahl). Abhilfe: versuche: um den Aufruf legen. Die Pruefung laeuft mit --typpruefung; mit --typ-streng ist es ein Fehler. Geprueft werden Namensaufrufe, selbst.m() und neu K(); Methoden anderer Objekte, Funktionswerte, als Variable gebundene Namen (Parameter, lokale Variablen, global-Anweisung, Lambda-Parameter sowie globale Variablen, die vor der aufrufenden Funktion gebunden sind) und Top-Level-Code importierter Module bleiben ungeprueft." },
     Eintrag { code: "M-W000", titel: "Werkzeug- oder Aufruffehler",
         erklaerung: "Fehler ausserhalb des Quelltexts: Kommandozeile, Dateien, Linker, externe Werkzeuge." },
 ];

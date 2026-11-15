@@ -1,0 +1,24 @@
+# P2-T96: selbst.m(), neu K() mit werfendem erstelle und Weiterwurf im fange-Teil.
+klasse Konto:
+    funktion erstelle(stand):
+        wenn stand < 0:
+            wirf "negativ"
+        selbst.stand = stand
+
+    funktion abbuchen(betrag):
+        wenn betrag > selbst.stand:
+            wirf "zu wenig"
+        selbst.stand = selbst.stand - betrag
+
+    funktion alles():
+        selbst.abbuchen(selbst.stand)
+
+funktion durchreichen(x):
+    versuche:
+        wirf "innen"
+    fange e:
+        wirf "weiter"
+
+setze k auf neu Konto(5)
+durchreichen(1)
+k.alles()

@@ -4,6 +4,7 @@ mod boards;
 mod codegen;
 mod codegen_native;
 mod diagnose;
+mod fehlerpfade;
 mod ffi_types;
 mod ffi_link;
 mod native_arithmetic;
@@ -463,6 +464,8 @@ struct ModulKontext {
     hauptdatei: Option<PathBuf>,
     /// P2-T99: Zahl der gemeldeten M-I004 (Abbruch nach dem Aufloesen).
     kollisionen: usize,
+    /// P2-T98: Zahl der gemeldeten M-I006 (Verschattung unsicherer Builtins).
+    verschattungen: usize,
     /// P2-T99 (Review 2be97766): kanonischer Pfad -> nur SELBST definierte Namen.
     definiert: std::collections::HashMap<PathBuf, std::collections::HashSet<String>>,
     /// P2-T99 (Review 2be97766): kanonischer Pfad -> per `aus x importiere a`
@@ -635,6 +638,15 @@ fn definitionen_registrieren(stmts: &[ast::Stmt], datei: &std::path::Path, konte
             continue;
         }
         kontext.definitionen.entry(name.to_string()).or_default().push(neu.clone());
+        // P2-T98 (Entscheid Koordinator, c5622262): Funktion/extern darf kein
+        // unsicheres Builtin verschatten, sonst ist die unsicher:-Pruefung umgehbar.
+        if matches!(art, "Funktion" | "Extern") && native_system::ist_unsicheres_builtin(name) {
+            kontext.verschattungen += 1;
+            diagnose::melden(diagnose::Diagnose::fehler("M-I006", format!(
+                "{art} '{name}' verschattet das unsichere Builtin '{name}'; ob ein Aufruf die eigene Definition oder den Rohzugriff meint, waere nicht eindeutig und die unsicher:-Pruefung umgehbar"))
+                .vorschlag(format!("Die eigene {art} umbenennen, z. B. '{name}_eigen'"))
+                .datei(neu.datei.clone()).ort(neu.zeile, 0).gefunden(name.to_string()));
+        }
         let fremd = || bisher.iter().filter(|e| e.kanonisch != neu.kanonisch);
         let vertraeglich = |a: &str, b: &str| a == b && (a == "Struktur" || a == "Extern");
         let hart = fremd().find(|e| e.art != "Variable" && neu.art != "Variable" && !vertraeglich(e.art, neu.art));
@@ -693,9 +705,10 @@ fn resolve_modules(
             )).datei(offen.datei.clone()).ort(offen.zeile, 0)));
         }
     }
-    match kontext.kollisionen {
-        0 => Ok(()),
-        n => Err(format!("{n} doppelte Definition(en) aus verschiedenen Dateien (M-I004)")),
+    match (kontext.kollisionen, kontext.verschattungen) {
+        (0, 0) => Ok(()),
+        (0, n) => Err(format!("{n} Definition(en) verschatten unsichere Builtins (M-I006)")),
+        (n, _) => Err(format!("{n} doppelte Definition(en) aus verschiedenen Dateien (M-I004)")),
     }
 }
 
@@ -792,7 +805,8 @@ fn resolve_modules_mit(
                             ast::Stmt::Export(inner, _) => inner.as_ref(),
                             other => other,
                         };
-                        if let ast::Stmt::FunctionDef { name, .. } = definition {
+                        // P2-T96: auch Klassen (Datei ihrer Methoden fuer M-F001).
+                        if let ast::Stmt::FunctionDef { name, .. } | ast::Stmt::ClassDef { name, .. } = definition {
                             program.funktion_quellen.entry(name.clone())
                                 .or_insert_with(|| mod_path.display().to_string());
                         }
@@ -1996,13 +2010,17 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     // P2-T29: Typpruefung je Datei (Module in resolve_modules), Abbruch vor dem Codegen.
     typpruefung_einschalten_falls_gewuenscht();
     typpruefung::pruefe_datei(&program, &file.display().to_string());
+    // P2-T96: Top-Level der Hauptdatei vor dem Inlining (Fehlerpfade mit richtiger Datei).
+    let haupt_statements = program.statements.clone();
 
     // Module AST-basiert auflösen
     let mut visited = std::collections::HashSet::new();
     let canonical = file.canonicalize().unwrap_or(file.clone());
     visited.insert(canonical);
     resolve_modules(&mut program, file.as_path(), &mut visited, lib_paths)?;
+    fehlerpfade::pruefe(&haupt_statements, &program, &file.display().to_string());
     typpruefung::ergebnis()?;
+    fehlerpfade::ergebnis()?;
     let link_triple = codegen::CodeGen::resolve_triple(target.unwrap_or("native"));
     let libraries = ffi_link::libraries(&program.statements, &link_triple)?;
 
@@ -2447,10 +2465,13 @@ fn pruefe(file: &PathBuf, target: Option<&str>, lib_paths: &[PathBuf], no_stdlib
     // P2-T29: Typpruefung je Datei (Module in resolve_modules), Abbruch vor dem Codegen.
     typpruefung_einschalten_falls_gewuenscht();
     typpruefung::pruefe_datei(&program, &file.display().to_string());
+    let haupt_statements = program.statements.clone();
     let mut visited = std::collections::HashSet::new();
     visited.insert(file.canonicalize().unwrap_or(file.clone()));
     resolve_modules(&mut program, file.as_path(), &mut visited, lib_paths)?;
+    fehlerpfade::pruefe(&haupt_statements, &program, &file.display().to_string());
     typpruefung::ergebnis()?;
+    fehlerpfade::ergebnis()?;
     let link_triple = codegen::CodeGen::resolve_triple(target.unwrap_or("native"));
     ffi_link::libraries(&program.statements, &link_triple)?;
     let context = inkwell::context::Context::create();

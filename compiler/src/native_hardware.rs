@@ -88,8 +88,8 @@ pub(crate) enum BodyKind {
     Other,
     /// `unsicher:` mit ausschliesslich Hardware-Intrinsics.
     Hardware,
-    /// Hardware-Intrinsic ausserhalb von `unsicher`.
-    MissingUnsafe,
+    /// Hardware-Intrinsic ausserhalb von `unsicher` (Zeile des ersten, P2-T98).
+    MissingUnsafe(usize),
 }
 
 pub(crate) fn classify_body(body: &[Stmt]) -> BodyKind {
@@ -99,8 +99,8 @@ pub(crate) fn classify_body(body: &[Stmt]) -> BodyKind {
         }
         return BodyKind::Other;
     }
-    if body.iter().any(|stmt| intrinsic_stmt(stmt).is_some()) {
-        return BodyKind::MissingUnsafe;
+    if let Some(stmt) = body.iter().find(|stmt| intrinsic_stmt(stmt).is_some()) {
+        return BodyKind::MissingUnsafe(stmt.zeile());
     }
     BodyKind::Other
 }

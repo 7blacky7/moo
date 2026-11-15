@@ -1,0 +1,15 @@
+# P2-T98 S5 (M-M004): ganze lokale Variable mit geliehenem Zeiger direkt an @behaelt.
+@behaelt(1)
+extern "C" funktion moo_t98_merke(daten: u64) -> void
+
+@nativ
+funktion probe(n: u64) -> u64:
+    setze x: u64 auf n
+    unsicher:
+        setze p: u64 auf adresse_von(x)
+        wenn n > 1:
+            setze x auf n
+        moo_t98_merke(p)
+    gib_zurück x
+
+zeige 1

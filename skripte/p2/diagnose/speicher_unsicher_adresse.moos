@@ -1,0 +1,7 @@
+# P2-T98 S3 (M-M005): adresse_von ohne unsicher:.
+@nativ
+funktion adr() -> u64:
+    setze x: u64 auf 1
+    gib_zurück adresse_von(x)
+
+zeige 1

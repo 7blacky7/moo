@@ -1,0 +1,29 @@
+# P2-T96 Gegenfaelle: geschuetzter Aufruf, Wurf nur im versuche-Teil, Methode
+# auf fremdem Objekt (nicht aufgeloest), wirf direkt im Hauptprogramm.
+funktion g(x):
+    wirf "kaputt"
+
+funktion sicher(x):
+    versuche:
+        wirf "intern"
+    fange e:
+        gib_zurück 0
+    gib_zurück x
+
+funktion f(x):
+    versuche:
+        g(x)
+    fange e:
+        zeige e
+    gib_zurück sicher(x)
+
+klasse Box:
+    funktion leere():
+        wirf "leer"
+
+setze b auf neu Box()
+versuche:
+    b.leere()
+fange e:
+    zeige e
+zeige f(1)
