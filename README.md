@@ -169,7 +169,7 @@ kamera_schliessen(kamera)
 
 ## 7. Kernel, UEFI und eigener Netzwerktreiber
 
-moo erzeugt Bare-Metal-Programme: einen x86_64-Kernel im Multiboot2-Format (getestet unter QEMU), UEFI-Anwendungen als PE32+ und AArch64 auf QEMU-virt. Der Loader und der Netzwerktreiber sind in moo geschrieben; auf echter Hardware nachgewiesen (Intel N100, Stand 01.11.2026) sind UEFI-Boot mit moo-Oberfläche und der I226-V-Treiber mit Link. Der Kernel-Unterbau besteht noch überwiegend aus C; MoOS ist **in Arbeit** (Plan P7: 7 von 16 Schritten). Scheduler, Prozesse, Dateisystem und PCI-Verwaltung fehlen noch.
+moo erzeugt Bare-Metal-Programme: einen x86_64-Kernel im Multiboot2-Format (getestet unter QEMU), UEFI-Anwendungen als PE32+ und AArch64 auf QEMU-virt. Der Loader und der Netzwerktreiber sind in moo geschrieben; auf echter Hardware nachgewiesen (Intel N100, Stand 01.11.2026) sind UEFI-Boot mit moo-Oberfläche und der I226-V-Treiber mit Link. Der Kernel-Unterbau besteht noch überwiegend aus C; MoOS ist **in Arbeit** (7 von 16 Planschritten). Scheduler, Prozesse, Dateisystem und PCI-Verwaltung fehlen noch.
 
 Aus `beispiele/uefi/hallo_uefi.moos`:
 
@@ -231,11 +231,13 @@ Reifegrad: getestet.
 
 ## Für KI-Agenten (Vision, in Arbeit)
 
-moo soll sich gut von KI-Agenten programmieren lassen: einheitliche Diagnosen mit Fehlercode, JSON-Ausgabe (`--diagnose=json`) und `moo pruefe` sind in Review (P2-T97). Die Typprüfung vor der Ausführung mit Datei:Zeile und Vorschlag folgt. Das ist noch nicht fertig; heute gibt es Compilefehler mit Zeile und Spalte.
+moo soll sich gut von KI-Agenten programmieren lassen: einheitliche Diagnosen mit Fehlercode, JSON-Ausgabe (`--diagnose=json`) und `moo pruefe` sind in Review. Eine begrenzte Prüfung vor der Ausführung gibt es bereits (`moo-compiler pruefe --typpruefung`, siehe unten); die vollständige Typprüfung mit Datei:Zeile und Vorschlag folgt. Das ist noch nicht fertig; belegt sind heute Compilefehler mit Zeile und Spalte sowie die begrenzten Hinweise des folgenden Absatzes.
+
+Bereits belegt (Commits 35d1f77, 3e579b5, b5cb6ee): Der Compiler prüft die Argumentzahl von Builtins (Aritätstabelle für 1256 Builtins) und meldet falsche Aufrufe als Diagnose M-C003/M-C004 statt mit einem Compiler-Absturz; ein Auffangnetz meldet unerwartete interne Fehler als M-C999. `moo-compiler pruefe --typpruefung` gibt begrenzte Hinweise: M-F001 bei einem Aufruf einer Funktion, die per `wirf` einen Fehler werfen kann, und M-F002 bei bestimmten Builtins (u. a. Netz, Datenbank, Laden), die bei äußerem Fehlschlag werfen, jeweils ohne `versuche:`. Erfasst werden nicht alle unbehandelten Aufrufe. Ein Fehler vor `weiter`/`stopp` springt zum innersten lokalen `fange`. Die Runtime bricht die Ausgabe nach einem Formatierungsfehler ab, und ein Schreiben auf eine vom Peer geschlossene Netzverbindung ist ein moo-Fehler statt eines Prozessendes per SIGPIPE (RC 141). Für ausgewählte Beispiele (die P4-Silben-Adapter, `ki_verteilt`, `stackvm`) ist gemessen, dass Fehler mit Meldung und RC 1 enden; Umfang und Messungen stehen in [docs/STAND.md](docs/STAND.md).
 
 ## Ausblick
 
-Geplant, noch nicht begonnen: ein A/B-Vergleich von GPU-Trainingsläufen (P3), adaptive Sparse-Berechnung im KI-Stack (P8) und adaptive Suche mit schnellem Methoden-Dispatch im Sprachkern (P9).
+Geplant, noch nicht begonnen: ein A/B-Vergleich von GPU-Trainingsläufen, adaptive Sparse-Berechnung im KI-Stack und adaptive Suche mit schnellem Methoden-Dispatch im Sprachkern.
 
 ## Schnellstart
 
@@ -267,6 +269,8 @@ Mehr: [ARCHITECTURE.md](ARCHITECTURE.md), [spec/runtime_layers.md](spec/runtime_
 ## Stand
 
 Alpha, ein aktives Ein-Personen-Projekt, entwickelt mit KI-Agenten. Dateiendung `.moos`. Planliste 15.11.2026: Hauptroadmap 423 von 504 Schritten, native Ebene 74 von 89, KI-Trainingsmethoden 17 von 20, Silben-Tokenizer 14 von 17, MoOS 7 von 16. Reifegrade, Schwächen und offene Punkte: **[docs/STAND.md](docs/STAND.md)**.
+
+Stand 15.11.2026, noch nicht veröffentlicht: Der Spaltenindex `m[i]` auf `mat4`/`dmat4` liefert eine Spalte als `vec4`/`dvec4`, `v[i]` auf `vecN`/`dvecN` eine Komponente, lesend und als Zuweisungsziel; ein konstanter Index außerhalb des Bereichs ist der Compilefehler M-M001, ein Laufzeitindex außerhalb löst einen Trap aus (in hosted-Programmen fangbar). In `stdlib/vektor.moos` rechnet die Trigonometrie über die eingebauten `sin`/`cos`/`tan` ohne libm, dazu kommen neue `dmat4_*`-Konstruktoren. Außerdem enden Fehlerpfade in den P4-Beispielen, in `ki_verteilt` und in `stackvm` mit Meldung und RC 1; die P5-Beispiele und die stdlib-Module `websocket`, `dns` und `ki_bild_easy` sind bei Fehlerpfaden überarbeitet (bewusst belassene Stellen tragen einen `FEHLERPFAD`-Kommentar). Belege: `skripte/p2/grafik/test_mat4_nativ.sh` (Differenztest über 20000 Runden ohne Abweichung) und `compiler/runtime/tests/test_p2_native_math.c` unter ASan und UBSan ohne Fehler.
 
 ## Dokumentation
 

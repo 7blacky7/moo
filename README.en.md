@@ -171,7 +171,7 @@ camera_close(camera)
 
 ## 7. Kernel, UEFI and own network driver
 
-moo produces bare-metal programs: an x86_64 kernel in Multiboot2 format (tested under QEMU), UEFI applications as PE32+ and AArch64 on QEMU-virt. The loader and the network driver are written in moo; demonstrated on real hardware (Intel N100, as of 1 Nov 2026) are UEFI boot with a moo interface and the I226-V driver with link. The kernel foundation is still mostly C; MoOS is **work in progress** (plan P7: 7 of 16 steps). Scheduler, processes, file system and PCI management are still missing.
+moo produces bare-metal programs: an x86_64 kernel in Multiboot2 format (tested under QEMU), UEFI applications as PE32+ and AArch64 on QEMU-virt. The loader and the network driver are written in moo; demonstrated on real hardware (Intel N100, as of 1 Nov 2026) are UEFI boot with a moo interface and the I226-V driver with link. The kernel foundation is still mostly C; MoOS is **work in progress** (7 of 16 plan steps). Scheduler, processes, file system and PCI management are still missing.
 
 English rendering of `beispiele/uefi/hallo_uefi.moos`:
 
@@ -235,11 +235,13 @@ Maturity: tested.
 
 ## For AI agents (vision, work in progress)
 
-moo should be easy for AI agents to program: unified diagnostics with error codes, JSON output (`--diagnose=json`) and `moo check` (German: `moo pruefe`) are in review (P2-T97). Type checking before execution, with file:line and a suggestion, follows. This is not finished; today there are compile errors with line and column.
+moo should be easy for AI agents to program: unified diagnostics with error codes, JSON output (`--diagnose=json`) and `moo check` (German: `moo pruefe`) are in review. A limited check before execution already exists (`moo-compiler pruefe --typpruefung`, see below); the full type check with file:line and a suggestion follows. This is not finished; what is verified today are compile errors with line and column and the limited hints described in the next paragraph.
+
+Already verified (commits 35d1f77, 3e579b5, b5cb6ee): the compiler checks the argument count of builtins (arity table for 1256 builtins) and reports wrong calls as diagnostic M-C003/M-C004 instead of crashing; a safety net reports unexpected internal errors as M-C999. `moo-compiler pruefe --typpruefung` (German for `check`) gives limited hints: M-F001 for a call to a function that can throw an error via `wirf` (throw), and M-F002 for certain builtins (among them network, database, loading) that throw on an external failure, each without `versuche:` (try). Not every unhandled call is detected. An error before `weiter`/`stopp` (continue/break) jumps to the innermost local `fange` (catch). The runtime aborts output after a formatting error, and writing to a network connection closed by the peer is a moo error instead of the process dying from SIGPIPE (RC 141). For selected examples (the P4 syllable adapters, `ki_verteilt`, `stackvm`) it is measured that errors end with a message and RC 1; scope and measurements are in [docs/STAND.md](docs/STAND.md) (German).
 
 ## Outlook
 
-Planned, not yet started: an A/B comparison of GPU training runs (P3), adaptive sparse computation in the AI stack (P8), and adaptive search with fast method dispatch in the language core (P9).
+Planned, not yet started: an A/B comparison of GPU training runs, adaptive sparse computation in the AI stack, and adaptive search with fast method dispatch in the language core.
 
 ## Quick start
 
@@ -271,6 +273,8 @@ More: [ARCHITECTURE.md](ARCHITECTURE.md), [spec/runtime_layers.md](spec/runtime_
 ## Status
 
 Alpha, an active one-person project developed with AI agents. File extension `.moos`. Plan status 15 Nov 2026: main roadmap 423 of 504 steps, native level 74 of 89, AI training methods 17 of 20, syllable tokenizer 14 of 17, MoOS 7 of 16. Maturity levels, weaknesses and open items: **[docs/STAND.md](docs/STAND.md)** (German).
+
+As of 15 Nov 2026, not yet published: the column index `m[i]` on `mat4`/`dmat4` yields a column as `vec4`/`dvec4`, `v[i]` on `vecN`/`dvecN` a component, readable and as an assignment target; a constant out-of-range index is the compile error M-M001, an out-of-range runtime index triggers a trap (catchable in hosted programs). In `stdlib/vektor.moos` the trigonometry uses the built-in `sin`/`cos`/`tan` without libm, plus new `dmat4_*` constructors. Error paths in the P4 examples, in `ki_verteilt` and in `stackvm` also end with a message and RC 1; the P5 examples and the stdlib modules `websocket`, `dns` and `ki_bild_easy` have reworked error paths (places left on purpose carry a `FEHLERPFAD` comment). Evidence: `skripte/p2/grafik/test_mat4_nativ.sh` (differential test over 20000 rounds without deviation) and `compiler/runtime/tests/test_p2_native_math.c` under ASan and UBSan without errors.
 
 ## Documentation
 
