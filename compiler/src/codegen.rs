@@ -1655,6 +1655,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 let result = return_type.as_ref().ok_or("Nativer Rückgabetyp fehlt")?;
                                 crate::codegen_native::emit_indirect_return_function(
                                     self.context, &self.module, *fun, sig, params, param_types, result, body,
+                                    &native_nominals,
                                 )?;
                             } else {
                                 let triple = self.module.get_triple();

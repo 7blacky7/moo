@@ -1080,9 +1080,10 @@ pub(crate) fn emit_indirect_return_function<'ctx>(
     param_types: &[Option<TypeRef>],
     return_type: &TypeRef,
     body: &[Stmt],
+    nominal: &crate::native_type_id::NominalTypes,
 ) -> Result<(), String> {
     use crate::ffi_types::{FfiSignature, TypedFfiValue};
-    use crate::native_type_id::{resolve_type, NominalTypes};
+    use crate::native_type_id::resolve_type;
     if function.get_type() != signature.llvm_type(context)
         || param_names.len() != signature.params.len()
         || param_types.len() != signature.params.len()
@@ -1100,19 +1101,21 @@ pub(crate) fn emit_indirect_return_function<'ctx>(
         },
         _ => return Err("Indirekter extern-C-Aufruf erfordert unsicher".into()),
     };
-    let nominal = NominalTypes::new();
+    // Nominal-Tabelle des Moduls statt einer leeren Tabelle, sonst
+    // scheitert jede Struktur in der Signatur (ptr[fn(ptr[S]) -> T]) mit
+    // "Unbekannter nativer Typ".
     let parameter = |name: &str| -> Result<TypedFfiValue<'ctx>, String> {
         let index = param_names.iter().position(|candidate| candidate == name)
             .ok_or_else(|| format!("Unbekannter nativer Parameter '{name}'"))?;
         let source = param_types[index].as_ref().ok_or("Nativer Parametertyp fehlt")?;
-        let identity = resolve_type(source, &nominal)?;
+        let identity = resolve_type(source, nominal)?;
         let value = function.get_nth_param(index as u32).ok_or("LLVM-Parameter fehlt")?;
         Ok(TypedFfiValue { value, identity })
     };
     let callee = parameter(callee_name)?;
     let triple = module.get_triple();
     let triple = triple.as_str().to_str().map_err(|e| e.to_string())?;
-    let ffi = FfiSignature::from_indirect_identity(triple, &callee.identity, &nominal)?;
+    let ffi = FfiSignature::from_indirect_identity(triple, &callee.identity, nominal)?;
     let mut values = Vec::with_capacity(args.len());
     for arg in args {
         match arg {
@@ -1120,7 +1123,7 @@ pub(crate) fn emit_indirect_return_function<'ctx>(
             _ => return Err("Indirekter Aufruf erwartet vorerst Parameterargumente".into()),
         }
     }
-    let expected_result = resolve_type(return_type, &nominal)?;
+    let expected_result = resolve_type(return_type, nominal)?;
     let entry = context.append_basic_block(function, "entry");
     let builder = context.create_builder();
     builder.position_at_end(entry);
