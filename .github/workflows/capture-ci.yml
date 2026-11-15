@@ -67,10 +67,10 @@ jobs:
           nn="moo_nn.c moo_nn_easy.c moo_json.c moo_dataset.c"
 
           build_run test_capture_asan \
-            "$rt/moo_capture.c $rt/moo_capture_camera_stub.c $rt/moo_capture_audio_stub.c $rt/moo_frame.c $rt/moo_quant.c $rt/moo_tensor.c $rt/moo_tensor_ops.c $rt/moo_ki_gpu.c $rt/moo_autograd.c $rt/moo_memory.c $rt/moo_value.c $rt/moo_error.c $rt/moo_print.c $rt/moo_string.c $rt/moo_dict.c $rt/moo_list.c $rt/moo_ops.c $rt/moo_gif_handle.c $rt/moo_gif.c $rt/moo_video_handle.c $rt/moo_video.c" \
+            "$rt/moo_capture.c $rt/moo_capture_camera_stub.c $rt/moo_capture_audio_stub.c capture_test_stubs.c $rt/moo_frame.c $rt/moo_quant.c $rt/moo_tensor.c $rt/moo_tensor_ops.c $rt/moo_ki_gpu.c $rt/moo_autograd.c $rt/moo_memory.c $rt/moo_value.c $rt/moo_error.c $rt/moo_print.c $rt/moo_string.c $rt/moo_dict.c $rt/moo_list.c $rt/moo_ops.c $rt/moo_gif_handle.c $rt/moo_gif.c $rt/moo_video_handle.c $rt/moo_video.c" \
             "-lm"
           build_run test_capture_pull_ops_asan \
-            "$rt/moo_capture.c $rt/moo_capture_pull.c $rt/moo_frame.c $rt/moo_quant.c $rt/moo_tensor.c $rt/moo_tensor_ops.c $rt/moo_ki_gpu.c $rt/moo_autograd.c $rt/moo_memory.c $rt/moo_value.c $rt/moo_print.c $rt/moo_string.c $rt/moo_dict.c $rt/moo_list.c $rt/moo_ops.c" \
+            "$rt/moo_capture.c $rt/moo_capture_pull.c capture_test_stubs.c $rt/moo_frame.c $rt/moo_quant.c $rt/moo_tensor.c $rt/moo_tensor_ops.c $rt/moo_ki_gpu.c $rt/moo_autograd.c $rt/moo_memory.c $rt/moo_value.c $rt/moo_print.c $rt/moo_string.c $rt/moo_dict.c $rt/moo_list.c $rt/moo_ops.c" \
             "-lm"
           build_run test_capture_v4l2_ops_asan \
             "$rt/moo_capture_v4l2.c $rt/moo_capture_audio_stub.c capture_test_stubs.c $rt/moo_capture.c $rt/moo_memory.c $rt/moo_value.c $rt/moo_error.c $rt/moo_print.c $rt/moo_string.c $rt/moo_dict.c $rt/moo_list.c $rt/moo_ops.c $rt/moo_frame.c $rt/moo_gif_handle.c $rt/moo_gif.c $rt/moo_video_handle.c $rt/moo_video.c $rt/moo_quant.c $rt/moo_tensor.c $rt/moo_tensor_ops.c $rt/moo_ki_gpu.c $rt/moo_autograd.c $rt/moo_nn.c $rt/moo_nn_easy.c $rt/moo_json.c $rt/moo_dataset.c" \
