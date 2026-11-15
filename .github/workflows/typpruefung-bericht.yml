@@ -27,18 +27,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install LLVM 18 + Runtime-Abhaengigkeiten
+      - name: Install LLVM 22 + Runtime-Abhaengigkeiten
         run: |
+          # P2-T105: LLVM 22 aus apt.llvm.org (Ubuntu liefert nur bis 18/19/20).
+          . /etc/os-release
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
           sudo apt-get update
-          # Wie 3d-backends.yml (gl33); LLVM passend zu compiler/Cargo.toml (inkwell llvm18-1).
+          # Wie 3d-backends.yml (gl33); LLVM passend zu compiler/Cargo.toml (inkwell llvm22-1, P2-T105).
           sudo apt-get install -y \
-            llvm-18-dev libpolly-18-dev libclang-18-dev \
+            llvm-22-dev libpolly-22-dev libclang-22-dev \
             libglfw3-dev libgl1-mesa-dev \
             libsdl2-dev libsdl2-image-dev \
             libcurl4-openssl-dev libsqlite3-dev \
             pkg-config jq
-          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
-          echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> $GITHUB_ENV
+          echo "LLVM_SYS_221_PREFIX=/usr/lib/llvm-22" >> $GITHUB_ENV
+          echo "LLVM_SYS_221_STRICT_VERSIONING=1" >> $GITHUB_ENV
+          echo "LIBCLANG_PATH=/usr/lib/llvm-22/lib" >> $GITHUB_ENV
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable

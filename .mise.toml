@@ -1,3 +1,89 @@
+# P2-T105: eine LLVM-Version ueberall (22.x: System, mise-Werkzeuge, CI).
+# llvm-sys 221 (inkwell llvm22-1) nimmt nur dieses Prefix und bricht bei einer
+# anderen Version ab (STRICT), statt still eine neuere zu binden; aendert sich
+# ein Wert, rechnet der llvm-sys-Build-Cache neu. Pruefung: mise run llvm-check.
+# Ein schon gesetzter Wert (CI: /usr/lib/llvm-22, conda, brew llvm@22) gewinnt.
+[env]
+LLVM_SYS_221_PREFIX = "{{ get_env(name='LLVM_SYS_221_PREFIX', default='/usr') }}"
+LLVM_SYS_221_STRICT_VERSIONING = "1"
+
+[tasks.llvm-check]
+description = "P2-T105: genau LLVM 22.1.x am LLVM_SYS_221_PREFIX, Werkzeuge und Compiler-Binary"
+run = '''
+set -eu
+soll=22.1
+fehler=0
+prefix="${LLVM_SYS_221_PREFIX:-}"
+[ -n "$prefix" ] || { echo "FEHLER: LLVM_SYS_221_PREFIX ist nicht gesetzt" >&2; exit 1; }
+pruefe() {
+  echo "$1 $2"
+  case "$2" in
+    "$soll".*) ;;
+    *) echo "FEHLER: $1 ist '$2', erwartet LLVM $soll.x" >&2; fehler=1 ;;
+  esac
+}
+# 1. llvm-config genau am Prefix, den llvm-sys 221 nutzt (STRICT).
+cfg="$prefix/bin/llvm-config"
+[ -x "$cfg" ] || { echo "FEHLER: $cfg fehlt (LLVM_SYS_221_PREFIX=$prefix)" >&2; exit 1; }
+if ! v="$("$cfg" --version 2>&1)"; then
+  echo "FEHLER: '$cfg --version' schlug fehl: $v" >&2; exit 1
+fi
+pruefe "$cfg" "$v"
+[ "${LLVM_SYS_221_STRICT_VERSIONING:-}" = 1 ] || { echo "FEHLER: LLVM_SYS_221_STRICT_VERSIONING ist nicht 1" >&2; fehler=1; }
+# 2. Werkzeuge: geprueft wird das EFFEKTIV ausgefuehrte (PATH wie bei
+#    `mise exec -- <werkzeug>` in den Skripten); fehlt es, ist das ein Fehler.
+#    Liegt am Prefix ein anderes, wird es zusaetzlich geprueft.
+pruefe_werkzeug() {
+  local aus ver
+  if ! aus="$("$2" --version 2>&1)"; then
+    echo "FEHLER: '$2 --version' schlug fehl" >&2; fehler=1; return
+  fi
+  ver="$(printf '%s' "$aus" | tr -c '0-9.' ' ' | tr ' ' '\n' | awk -F. 'NF>=3 && $1!="" && $2!="" && $3!="" {print; exit}')"
+  pruefe "$1" "${ver:-unbekannt}"
+}
+for w in opt llc llvm-nm llvm-extract llvm-objcopy clang ld.lld lld-link; do
+  eff="$(command -v "$w" || true)"
+  if [ -z "$eff" ]; then
+    echo "FEHLER: $w nicht im PATH ('mise exec -- $w' waere nicht ausfuehrbar)" >&2; fehler=1
+  else
+    pruefe_werkzeug "$w (effektiv: $eff)" "$eff"
+  fi
+  if [ -x "$prefix/bin/$w" ] && [ "$prefix/bin/$w" != "$eff" ]; then
+    pruefe_werkzeug "$w (Prefix: $prefix/bin/$w)" "$prefix/bin/$w"
+  fi
+done
+# 3. Compiler-Binary, fail-closed: muss existieren, ausfuehrbar sein und die
+#    zur Laufzeit geladene LLVM-Version melden (moo-compiler llvm-version,
+#    LLVMGetVersion; gilt fuer statisch und dynamisch gebundenes LLVM).
+bin="${MOO_COMPILER:-compiler/target/release/moo-compiler}"
+if [ ! -f "$bin" ] || [ ! -x "$bin" ]; then
+  echo "FEHLER: Compiler-Binary '$bin' fehlt oder ist nicht ausfuehrbar (bauen oder MOO_COMPILER setzen)" >&2
+  exit 1
+fi
+if ! aus="$("$bin" llvm-version 2>&1)"; then aus=""; fi
+v="$(printf '%s\n' "$aus" | awk '$1 == "LLVM" {print $2; exit}')"
+if [ -z "$v" ]; then
+  echo "FEHLER: '$bin' meldet keine LLVM-Version ('llvm-version' fehlt: kein oder zu alter moo-compiler)" >&2
+  fehler=1
+else
+  pruefe "$bin (geladenes LLVM)" "$v"
+fi
+# Zusatz: dynamisch gebundene libLLVM muss zur selben Version passen.
+case "$(uname -s)" in
+  Linux)  lib="$(readelf -d "$bin" 2>/dev/null | grep -oE 'libLLVM[^]]*' | head -1 || true)" ;;
+  Darwin) lib="$(otool -L "$bin" 2>/dev/null | grep -oE 'libLLVM[^ ]*' | head -1 || true)" ;;
+  *)      lib="" ;;
+esac
+if [ -n "$lib" ]; then
+  echo "$bin -> $lib"
+  case "$lib" in
+    "libLLVM.so.$soll"|"libLLVM.so.$soll".*|libLLVM-22.so|libLLVM.dylib|libLLVM-22.dylib) ;;
+    *) echo "FEHLER: $bin bindet '$lib' statt LLVM $soll (alter llvm-sys-Cache? cargo clean -p llvm-sys)" >&2; fehler=1 ;;
+  esac
+fi
+exit "$fehler"
+'''
+
 [tasks.p2-abi-cpp]
 description = "P2: C-ABI C++ adapter and lifecycle reference"
 run = '''
@@ -155,7 +241,7 @@ trap 'rm -rf "$P6_OUT"' EXIT
 P6_DIR=compiler/runtime
 P6_BASE="$P6_DIR/moo_quant.c $P6_DIR/moo_tensor.c $P6_DIR/moo_tensor_ops.c $P6_DIR/moo_ki_gpu.c $P6_DIR/moo_autograd.c $P6_DIR/moo_memory.c $P6_DIR/moo_value.c $P6_DIR/moo_print.c $P6_DIR/moo_string.c $P6_DIR/moo_dict.c $P6_DIR/moo_list.c $P6_DIR/moo_ops.c"
 for P6_MODE in address undefined; do
-  "${CC:-cc}" -std=gnu11 -D_GNU_SOURCE -g -O1 "-fsanitize=$P6_MODE" -fno-sanitize-recover=undefined -fno-omit-frame-pointer "$P6_DIR/tests/test_tokenizer_parser_asan.c" "$P6_DIR/tests/capture_free_stubs.c" "$P6_DIR/moo_tokenizer.c" "$P6_DIR/moo_tok_segment.c" "$P6_DIR/moo_silben.c" "$P6_DIR/moo_krypto.c" $P6_BASE -lm -o "$P6_OUT/test"
+  "${CC:-cc}" -std=gnu11 -D_GNU_SOURCE -g -O1 "-fsanitize=$P6_MODE" -fno-sanitize-recover=undefined -fno-omit-frame-pointer -I"$P6_DIR" "$P6_DIR/tests/test_tokenizer_parser_asan.c" "$P6_DIR/tests/capture_free_stubs.c" "$P6_DIR/moo_tokenizer.c" "$P6_DIR/moo_tok_segment.c" "$P6_DIR/moo_silben.c" "$P6_DIR/moo_krypto.c" $P6_BASE -lm -o "$P6_OUT/test"
   ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 "$P6_OUT/test"
 done
 compiler/target/release/moo-compiler compile beispiele/tests/p4_parser_bpe.moos -o "$P6_OUT/moos-test"

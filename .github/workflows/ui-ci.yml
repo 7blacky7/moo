@@ -90,17 +90,22 @@ jobs:
       - name: Install Linux deps (GTK3, LLVM 18, SDL2, sqlite)
         if: matrix.os == 'ubuntu-latest'
         run: |
+          # P2-T105: LLVM 22 aus apt.llvm.org (Ubuntu liefert nur bis 18/19/20).
+          . /etc/os-release
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
           sudo apt-get update
-          # WICHTIG: LLVM-Version muss zu `features = ["llvm18-1"]` in
-          # compiler/Cargo.toml passen (llvm-sys 181). Die Default-LLVM auf
-          # ubuntu-latest ist v14 — wir brauchen explizit v18.
+          # WICHTIG: LLVM-Version muss zu `features = ["llvm22-1"]` in
+          # compiler/Cargo.toml passen (llvm-sys 221, P2-T105). Die Default-LLVM auf
+          # ubuntu-latest ist v14 — wir brauchen explizit v22 (apt.llvm.org).
           sudo apt-get install -y \
-            llvm-18-dev libpolly-18-dev libclang-18-dev \
+            llvm-22-dev libpolly-22-dev libclang-22-dev \
             libgtk-3-dev libappindicator3-dev \
             libsdl2-dev libsdl2-image-dev \
             libsqlite3-dev pkg-config
-          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
-          echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> $GITHUB_ENV
+          echo "LLVM_SYS_221_PREFIX=/usr/lib/llvm-22" >> $GITHUB_ENV
+          echo "LLVM_SYS_221_STRICT_VERSIONING=1" >> $GITHUB_ENV
+          echo "LIBCLANG_PATH=/usr/lib/llvm-22/lib" >> $GITHUB_ENV
 
       # Windows: Der offizielle LLVM-Windows-Installer enthaelt kein
       # llvm-config.exe, und vcpkg baut LLVM aus Source (zu langsam/instabil).
@@ -113,9 +118,9 @@ jobs:
           environment-name: moo-llvm
           create-args: >-
             -c conda-forge
-            llvmdev=18.1.*
-            clangdev=18.1.*
-            lld=18.1.*
+            llvmdev=22.1.*
+            clangdev=22.1.*
+            lld=22.1.*
             zstd
             zlib
             libxml2
@@ -207,7 +212,8 @@ jobs:
             if (!(Test-Path $ziel)) { Write-Host "WARNUNG: $name nicht aufloesbar" }
           }
 
-          echo "LLVM_SYS_181_PREFIX=$condaPrefix\Library" >> $env:GITHUB_ENV
+          echo "LLVM_SYS_221_PREFIX=$condaPrefix\Library" >> $env:GITHUB_ENV
+          echo "LLVM_SYS_221_STRICT_VERSIONING=1" >> $env:GITHUB_ENV
           echo "LIBCLANG_PATH=$condaPrefix\Library\bin" >> $env:GITHUB_ENV
           echo "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
           echo "CFLAGS_x86_64_pc_windows_msvc=/std:c11" >> $env:GITHUB_ENV
@@ -228,14 +234,15 @@ jobs:
           # Cocoa/AppKit/Foundation sind im System. Wir brauchen nur
           # LLVM (fuer inkwell) und die C-Libraries der Core-Runtime.
           brew update
-          brew install llvm@18 sdl2 sdl2_image openssl@3
+          brew install llvm@22 sdl2 sdl2_image openssl@3
           # sqlite3 ist im System vorhanden (macOS SDK); HTTP braucht keine libcurl-Dev-Lib mehr.
-          LLVM_PREFIX="$(brew --prefix llvm@18)"
+          LLVM_PREFIX="$(brew --prefix llvm@22)"
           SDL2_PREFIX="$(brew --prefix sdl2)"
           SDL2_IMAGE_PREFIX="$(brew --prefix sdl2_image)"
           OPENSSL_PREFIX="$(brew --prefix openssl@3)"
           echo "LIBCLANG_PATH=${LLVM_PREFIX}/lib" >> $GITHUB_ENV
-          echo "LLVM_SYS_181_PREFIX=${LLVM_PREFIX}" >> $GITHUB_ENV
+          echo "LLVM_SYS_221_PREFIX=${LLVM_PREFIX}" >> $GITHUB_ENV
+          echo "LLVM_SYS_221_STRICT_VERSIONING=1" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=${SDL2_PREFIX}/lib/pkgconfig:${SDL2_IMAGE_PREFIX}/lib/pkgconfig:${OPENSSL_PREFIX}/lib/pkgconfig:${LLVM_PREFIX}/lib/pkgconfig" >> $GITHUB_ENV
           # SDL2-Header liegen unter dem Homebrew-Prefix; OpenSSL ist keg-only
           # und muss deshalb ebenfalls explizit in den C-/Linkpfad.
@@ -392,7 +399,7 @@ jobs:
           Get-ChildItem $resourceDir -Recurse -Filter "clang_rt.builtins*.lib" -File -ErrorAction SilentlyContinue |
             Copy-Item -Destination "$sdk\lib" -Force
 
-          $condaBin = Join-Path $env:LLVM_SYS_181_PREFIX "bin"
+          $condaBin = Join-Path $env:LLVM_SYS_221_PREFIX "bin"
           $vcpkgBin = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin"
           foreach ($dir in @($condaBin, $vcpkgBin)) {
             if (Test-Path $dir) {

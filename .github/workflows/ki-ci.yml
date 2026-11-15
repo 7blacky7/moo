@@ -69,16 +69,21 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
+          # P2-T105: LLVM 22 aus apt.llvm.org (Ubuntu liefert nur bis 18/19/20).
+          . /etc/os-release
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
           sudo apt-get update
           sudo apt-get install -y \
-            clang-18 llvm-18-dev libpolly-18-dev libclang-18-dev \
+            clang-22 llvm-22-dev libpolly-22-dev libclang-22-dev \
             libgtk-3-dev libappindicator3-dev \
             libglfw3-dev libgl1-mesa-dev libvulkan-dev glslang-tools \
             libsdl2-dev libsdl2-image-dev libsqlite3-dev libssl-dev \
             libv4l-dev libasound2-dev pkg-config python3
-          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
-          echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> "$GITHUB_ENV"
-          echo "CC=clang-18" >> "$GITHUB_ENV"
+          echo "LLVM_SYS_221_PREFIX=/usr/lib/llvm-22" >> "$GITHUB_ENV"
+          echo "LLVM_SYS_221_STRICT_VERSIONING=1" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=/usr/lib/llvm-22/lib" >> "$GITHUB_ENV"
+          echo "CC=clang-22" >> "$GITHUB_ENV"
 
       - name: Install Windows LLVM
         if: matrix.os == 'windows-latest'
@@ -87,9 +92,9 @@ jobs:
           environment-name: moo-llvm
           create-args: >-
             -c conda-forge
-            llvmdev=18.1.*
-            clangdev=18.1.*
-            lld=18.1.*
+            llvmdev=22.1.*
+            clangdev=22.1.*
+            lld=22.1.*
             zstd
             zlib
             libxml2
@@ -145,7 +150,8 @@ jobs:
           $nativeTmp = Join-Path ([IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE)) "tmp"
           New-Item -ItemType Directory -Force -Path $nativeTmp | Out-Null
 
-          "LLVM_SYS_181_PREFIX=$llvmRoot" >> $env:GITHUB_ENV
+          "LLVM_SYS_221_PREFIX=$llvmRoot" >> $env:GITHUB_ENV
+          "LLVM_SYS_221_STRICT_VERSIONING=1" >> $env:GITHUB_ENV
           "LIBCLANG_PATH=$llvmBin" >> $env:GITHUB_ENV
           "MOO_CLANG=$($buildClang.Replace('\','/'))" >> $env:GITHUB_ENV
           "MOO_LLD=$($lld.Replace('\','/'))" >> $env:GITHUB_ENV
@@ -167,15 +173,16 @@ jobs:
         shell: bash
         run: |
           brew update
-          brew install llvm@18 sdl2 sdl2_image glfw vulkan-loader openssl@3
-          LLVM_PREFIX="$(brew --prefix llvm@18)"
+          brew install llvm@22 sdl2 sdl2_image glfw vulkan-loader openssl@3
+          LLVM_PREFIX="$(brew --prefix llvm@22)"
           SDL2_PREFIX="$(brew --prefix sdl2)"
           SDL2_IMAGE_PREFIX="$(brew --prefix sdl2_image)"
           GLFW_PREFIX="$(brew --prefix glfw)"
           VULKAN_PREFIX="$(brew --prefix vulkan-loader)"
           VULKAN_HEADERS_PREFIX="$(brew --prefix vulkan-headers)"
           OPENSSL_PREFIX="$(brew --prefix openssl@3)"
-          echo "LLVM_SYS_181_PREFIX=$LLVM_PREFIX" >> "$GITHUB_ENV"
+          echo "LLVM_SYS_221_PREFIX=$LLVM_PREFIX" >> "$GITHUB_ENV"
+          echo "LLVM_SYS_221_STRICT_VERSIONING=1" >> "$GITHUB_ENV"
           echo "LIBCLANG_PATH=$LLVM_PREFIX/lib" >> "$GITHUB_ENV"
           echo "CPATH=$SDL2_PREFIX/include:$SDL2_PREFIX/include/SDL2:$SDL2_IMAGE_PREFIX/include:$SDL2_IMAGE_PREFIX/include/SDL2:$GLFW_PREFIX/include:$VULKAN_HEADERS_PREFIX/include:$OPENSSL_PREFIX/include:${CPATH:-}" >> "$GITHUB_ENV"
           echo "LIBRARY_PATH=$SDL2_PREFIX/lib:$SDL2_IMAGE_PREFIX/lib:$GLFW_PREFIX/lib:$VULKAN_PREFIX/lib:$OPENSSL_PREFIX/lib:${LIBRARY_PATH:-}" >> "$GITHUB_ENV"

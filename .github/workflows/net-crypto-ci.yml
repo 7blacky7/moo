@@ -91,14 +91,19 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
+          # P2-T105: LLVM 22 aus apt.llvm.org (Ubuntu liefert nur bis 18/19/20).
+          . /etc/os-release
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
+          echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
           sudo apt-get update
           sudo apt-get install -y \
-            clang-18 llvm-18-dev libpolly-18-dev libclang-18-dev \
+            clang-22 llvm-22-dev libpolly-22-dev libclang-22-dev \
             libsdl2-dev libsdl2-image-dev libsqlite3-dev libssl-dev \
             pkg-config binutils
-          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
-          echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> "$GITHUB_ENV"
-          echo "CC=clang-18" >> "$GITHUB_ENV"
+          echo "LLVM_SYS_221_PREFIX=/usr/lib/llvm-22" >> "$GITHUB_ENV"
+          echo "LLVM_SYS_221_STRICT_VERSIONING=1" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=/usr/lib/llvm-22/lib" >> "$GITHUB_ENV"
+          echo "CC=clang-22" >> "$GITHUB_ENV"
 
       - name: Install Windows LLVM and SQLite
         if: matrix.os == 'windows-latest'
@@ -107,9 +112,9 @@ jobs:
           environment-name: moo-llvm
           create-args: >-
             -c conda-forge
-            llvmdev=18.1.*
-            clangdev=18.1.*
-            lld=18.1.*
+            llvmdev=22.1.*
+            clangdev=22.1.*
+            lld=22.1.*
             sqlite
             zstd
             zlib
@@ -191,7 +196,8 @@ jobs:
           "MOO_WIN_VCVARS=$vcvars" >> $env:GITHUB_ENV
           "MOO_WIN_LLVM_ROOT=$llvmRoot" >> $env:GITHUB_ENV
           "CARGO_HOME=$cargoHome" >> $env:GITHUB_ENV
-          "LLVM_SYS_181_PREFIX=$llvmRoot" >> $env:GITHUB_ENV
+          "LLVM_SYS_221_PREFIX=$llvmRoot" >> $env:GITHUB_ENV
+          "LLVM_SYS_221_STRICT_VERSIONING=1" >> $env:GITHUB_ENV
           "LIBCLANG_PATH=$llvmBin" >> $env:GITHUB_ENV
           "CFLAGS_x86_64_pc_windows_msvc=/std:c11" >> $env:GITHUB_ENV
           "MOO_CLANG=$clang" >> $env:GITHUB_ENV
@@ -209,13 +215,14 @@ jobs:
         shell: bash
         run: |
           brew update
-          brew install llvm@18 sdl2 sdl2_image openssl@3 sqlite
-          LLVM_PREFIX="$(brew --prefix llvm@18)"
+          brew install llvm@22 sdl2 sdl2_image openssl@3 sqlite
+          LLVM_PREFIX="$(brew --prefix llvm@22)"
           SDL2_PREFIX="$(brew --prefix sdl2)"
           SDL2_IMAGE_PREFIX="$(brew --prefix sdl2_image)"
           OPENSSL_PREFIX="$(brew --prefix openssl@3)"
           SQLITE_PREFIX="$(brew --prefix sqlite)"
-          echo "LLVM_SYS_181_PREFIX=$LLVM_PREFIX" >> "$GITHUB_ENV"
+          echo "LLVM_SYS_221_PREFIX=$LLVM_PREFIX" >> "$GITHUB_ENV"
+          echo "LLVM_SYS_221_STRICT_VERSIONING=1" >> "$GITHUB_ENV"
           echo "LIBCLANG_PATH=$LLVM_PREFIX/lib" >> "$GITHUB_ENV"
           echo "CPATH=$SDL2_PREFIX/include:$SDL2_PREFIX/include/SDL2:$SDL2_IMAGE_PREFIX/include:$SDL2_IMAGE_PREFIX/include/SDL2:$OPENSSL_PREFIX/include:$SQLITE_PREFIX/include:${CPATH:-}" >> "$GITHUB_ENV"
           echo "LIBRARY_PATH=$SDL2_PREFIX/lib:$SDL2_IMAGE_PREFIX/lib:$OPENSSL_PREFIX/lib:$SQLITE_PREFIX/lib:${LIBRARY_PATH:-}" >> "$GITHUB_ENV"
