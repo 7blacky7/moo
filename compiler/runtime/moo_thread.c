@@ -47,12 +47,10 @@ static void* thread_runner_common(void* raw) {
             (MooValue (*)(MooValue))targs->fn_ptr;
         result = plain(arg);
     }
+    // Closure-Environment und Extra-Retain des Arguments haelt der Thread-Wert
+    // (halt_func/halt_arg); der Worker gibt sie nicht frei, damit kein zweiter
+    // Thread gleichzeitig denselben (nicht atomaren) Refcount aendert.
     free(targs);
-    // Arg-Retain aus moo_thread_spawn freigeben. Die Funktion hat mit
-    // arg als Parameter gearbeitet (Function-Exit-Cleanup released den
-    // Parameter-Slot) — der zusaetzliche retain hier haelt die Struktur
-    // fuer den gesamten Thread-Lauf lebendig.
-    moo_release(arg);
 
     MooValue* heap_result = (MooValue*)malloc(sizeof(MooValue));
     *heap_result = result;
@@ -96,6 +94,15 @@ static void moo_mutex_unlock_thread(MooThread* t) {
 #endif
 }
 
+// Laufzeitreferenzen eines Threads freigeben: nur nach dem Join und nur im
+// Thread, der den Thread-Wert haelt; danach auf nichts gesetzt (einmalig).
+static void moo_thread_halt_freigeben(MooThread* t) {
+    moo_release(t->halt_func);
+    moo_release(t->halt_arg);
+    t->halt_func = moo_none();
+    t->halt_arg = moo_none();
+}
+
 MooValue moo_thread_spawn(MooValue func, MooValue arg) {
     // Strikte (native) Funktionswerte: der Thread ruft mit genau einem Argument.
     if (func.tag == MOO_FUNC && !moo_func_aritaet_ok(MV_FUNC(func), 1)) {
@@ -110,6 +117,8 @@ MooValue moo_thread_spawn(MooValue func, MooValue arg) {
     t->done = false;
     t->result.tag = MOO_NONE;
     t->result.data = 0;
+    t->halt_func = moo_none();
+    t->halt_arg = moo_none();
 #ifdef _WIN32
     t->retval = NULL;
 #endif
@@ -124,18 +133,26 @@ MooValue moo_thread_spawn(MooValue func, MooValue arg) {
     targs->owner = t;
 #endif
 
-    // Closure-Environment am Leben halten bis Thread fertig ist.
-    if (targs->env) moo_retain(func);
-    // Arg muss ebenfalls bis Thread-Ende leben. Ohne diesen retain
-    // wuerde der Caller den arg-Temp beim Return freigeben (Function-
-    // Exit-Cleanup), der Thread griffe auf freed memory zu.
+    // Der Codegen uebergibt func owning (+1). Plain-Funktion: nur fn_ptr wird
+    // gebraucht, der Funktionswert wird hier freigegeben. Closure: die +1 haelt
+    // das Environment; der Thread-Wert gibt sie nach dem Join frei.
+    if (targs->env) {
+        t->halt_func = func;
+    } else {
+        moo_release(func);
+    }
+    // Arg muss ebenfalls bis Thread-Ende leben (die +1 des Aufrufers verbraucht
+    // der Parameter-Slot der Funktion). Den Extra-Retain haelt der Thread-Wert.
     moo_retain(arg);
+    t->halt_arg = arg;
 
 #ifdef _WIN32
     t->thread = CreateThread(NULL, 0, thread_runner_win, targs, 0, &t->thread_id);
     if (!t->thread) {
+        // Ohne Thread: die +1 des Aufrufers fuer arg sowie die gehaltenen
+        // Referenzen (Extra-Retain, Closure-Environment) freigeben.
         moo_release(arg);
-        if (targs->env) moo_release(func);
+        moo_thread_halt_freigeben(t);
         free(targs);
         free(t);
         moo_throw(moo_string_new("Thread erstellen fehlgeschlagen"));
@@ -169,6 +186,7 @@ MooValue moo_thread_wait(MooValue thread) {
 #else
     pthread_join(t->thread, &retval);
 #endif
+    moo_thread_halt_freigeben(t);
 
     moo_mutex_lock_thread(t);
     if (retval) {
@@ -379,6 +397,7 @@ void moo_thread_free(void* ptr) {
     }
     pthread_mutex_destroy(&t->mutex);
 #endif
+    moo_thread_halt_freigeben(t);
     moo_release(t->result);
     free(t);
 }

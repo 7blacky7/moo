@@ -1,0 +1,19 @@
+# starte mit Funktionswerten: Plain-Funktion und @nativ werden nach dem Start
+# freigegeben, eine Closure nach dem Thread-Lauf (Leckprobe unter LSan).
+funktion quadrat(x):
+    gib_zurück x * x
+
+@nativ
+funktion nquadrat(x: i64) -> i64:
+    gib_zurück x * x
+
+funktion arbeite():
+    setze t1 auf starte(quadrat, 6)
+    zeige t1.warten()
+    setze t2 auf starte(nquadrat, 7)
+    zeige t2.warten()
+    setze k auf 3
+    setze t3 auf starte((x) => x * k, 4)
+    zeige t3.warten()
+
+arbeite()

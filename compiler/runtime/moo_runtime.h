@@ -694,6 +694,11 @@ struct MooThread {
 #else
     pthread_mutex_t mutex;
 #endif
+    // Referenzen fuer die Laufzeit des Threads (Closure-Environment, Argument).
+    // Der Worker fasst ihre Refcounts nicht an; freigegeben werden sie nach dem
+    // Join im Thread, der den Thread-Wert haelt (moo_thread_wait/moo_thread_free).
+    MooValue halt_func;
+    MooValue halt_arg;
 };
 
 // === Channel (Go-Style, buffered) ===

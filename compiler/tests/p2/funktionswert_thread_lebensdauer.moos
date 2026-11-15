@@ -1,0 +1,20 @@
+# Closure-Thread, dessen Funktionswert der Hauptthread waehrend des Laufs
+# freigibt: die Laufzeitreferenzen gibt erst warten nach dem Join frei
+# (TSan-Gegentest im Gate native-wert, kein Datenrennen am Refcount).
+funktion langsam(x, k):
+    schlafe(0.002)
+    gib_zurück x + k
+
+funktion lauf():
+    setze k auf 8
+    setze f auf (x) => langsam(x, k)
+    setze t auf starte(f, 4)
+    setze f auf nichts
+    gib_zurück t.warten()
+
+setze i auf 0
+setze summe auf 0
+solange i < 20:
+    setze summe auf summe + lauf()
+    setze i auf i + 1
+zeige summe

@@ -102,9 +102,6 @@ pub struct CodeGen<'ctx> {
     /// Native Funktionswerte: Thunk (Lambda-Funktion) und Anzeigename je
     /// @nativ-Name, einmal je Modul erzeugt.
     native_wert_thunks: HashMap<String, (FunctionValue<'ctx>, PointerValue<'ctx>)>,
-    /// Der zuletzt uebersetzte Ausdruck war ein nativer Funktionswert (map/filter
-    /// geben ihn nach dem Aufruf frei).
-    nativer_wert_erzeugt: bool,
     /// P2-T49 B1: Laufzeitbeschreibungen v2 (__moo_struktur.<Name>), je Modul einmal.
     struktur_deskriptoren: HashMap<String, PointerValue<'ctx>>,
     /// P2-T83 B1 (Plan f3217c27 E3): @liest(n)-Pufferparameter (0-basiert) je Funktion.
@@ -255,7 +252,6 @@ impl<'ctx> CodeGen<'ctx> {
             native_struct_results: HashMap::new(),
             native_dyn_sperre: HashMap::new(),
             native_wert_thunks: HashMap::new(),
-            nativer_wert_erzeugt: false,
             struktur_deskriptoren: HashMap::new(),
             native_read_params: HashMap::new(),
             rahmen_art: RahmenArt::Sonstig,
@@ -4737,7 +4733,6 @@ impl<'ctx> CodeGen<'ctx> {
             }
         };
         self.call_rt_void(strikt, &[wert.into(), name_ptr.into()], "nw_strikt")?;
-        self.nativer_wert_erzeugt = true;
         Ok(wert)
     }
 
@@ -11754,16 +11749,12 @@ impl<'ctx> CodeGen<'ctx> {
                             self.call_rt_void(self.rt.moo_list_append,
                                 &[current_result.into(), mapped_val.into()], "append")?;
                         } else {
-                            self.nativer_wert_erzeugt = false;
                             let fn_val = self.compile_expr(lambda)?;
-                            let fn_freigeben = std::mem::take(&mut self.nativer_wert_erzeugt);
                             let mapped_val = self.call_rt(self.rt.moo_func_call_1,
                                 &[fn_val.into(), element.into()], "map_call")?;
-                            // moo_func_call_1 leiht den Funktionswert; ein je Element
-                            // neu erzeugter nativer Funktionswert wird hier freigegeben.
-                            if fn_freigeben {
-                                self.call_rt_void(self.rt.moo_release, &[fn_val.into()], "rel_map_fn")?;
-                            }
+                            // compile_expr liefert den Funktionswert owning (+1, je Element
+                            // neu bzw. aus der Variablen geladen); moo_func_call_1 leiht ihn.
+                            self.call_rt_void(self.rt.moo_release, &[fn_val.into()], "rel_map_fn")?;
                             let current_result = self.builder.build_load(self.mv_type(), result_ptr, "res")
                                 .map_err(|e| format!("{e}"))?.into_struct_value();
                             self.call_rt_void(self.rt.moo_list_append,
@@ -11842,15 +11833,11 @@ impl<'ctx> CodeGen<'ctx> {
                             }
                             self.compile_expr(body)?
                         } else {
-                            self.nativer_wert_erzeugt = false;
                             let fn_val = self.compile_expr(lambda)?;
-                            let fn_freigeben = std::mem::take(&mut self.nativer_wert_erzeugt);
                             let test_val = self.call_rt(self.rt.moo_func_call_1,
                                 &[fn_val.into(), element.into()], "filter_call")?;
-                            // Wie bei list.map: nativen Funktionswert nach dem Aufruf freigeben.
-                            if fn_freigeben {
-                                self.call_rt_void(self.rt.moo_release, &[fn_val.into()], "rel_filter_fn")?;
-                            }
+                            // Wie bei list.map: Funktionswert (+1) nach dem Aufruf freigeben.
+                            self.call_rt_void(self.rt.moo_release, &[fn_val.into()], "rel_filter_fn")?;
                             test_val
                         };
                         {

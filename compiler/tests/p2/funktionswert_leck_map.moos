@@ -1,0 +1,36 @@
+# Funktionswerte in map/filter (benannte Funktion, Lambda, @nativ; direkt und
+# ueber eine Variable; Fehler im Rueckruf) werden je Element freigegeben
+# (Leckprobe unter LSan im Gate native-wert).
+funktion plus1(a):
+    gib_zurück a + 1
+
+funktion gross(a):
+    gib_zurück a > 2
+
+@nativ
+funktion nplus1(a: i64) -> i64:
+    gib_zurück a + 1
+
+funktion pruefe(a):
+    wenn a > 2:
+        wirf "zu gross"
+    gib_zurück a
+
+funktion arbeite():
+    setze xs auf [1, 2, 3, 4, 5]
+    zeige xs.map(plus1)
+    setze f auf plus1
+    zeige xs.map(f)
+    setze g auf (a) => a * 2
+    zeige xs.map(g)
+    setze h auf nplus1
+    zeige xs.map(h)
+    zeige xs.filter(gross)
+    setze k auf gross
+    zeige xs.filter(k)
+    versuche:
+        zeige xs.map(pruefe)
+    fange e:
+        zeige "gefangen: " + e
+
+arbeite()
