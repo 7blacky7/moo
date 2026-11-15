@@ -15,8 +15,11 @@
 //! eine Klasse m definiert. Sonst still: Methoden auf anderen Objekten,
 //! Funktionswerte, Rueckrufe, aufraeumen-Ausdruecke, Testbloecke, @nativ.
 //! Lambda-Koerper laufen erst beim Aufruf, sie gelten deshalb nie als
-//! geschuetzt. Stufe 1 kennt nur `wirf` (O3); Builtins folgen spaeter mit
-//! kuratierter, belegter Liste. Grenze (O5): Top-Level-Code importierter
+//! geschuetzt. Stufe 2 (#38339): Aufrufe
+//! fehlbarer Builtins (FEHLBARE_BUILTINS) melden M-F002, eigene Funktionen
+//! gleichen Namens gehen vor (wie im Codegen). Hinweise in stdlib-Modulen
+//! entfallen; die stdlib-Funktion gilt dann selbst als werfend (Fixpunkt) und
+//! der Aufruf im eigenen Code bekommt M-F001. Grenze (O5): Top-Level-Code importierter
 //! Module wird nicht geprueft (nach dem Inlining fehlt die Datei).
 //! `--typ-streng` macht M-F001 zum Fehler mit Abbruch vor dem Codegen (O2).
 //!
@@ -50,6 +53,8 @@ thread_local! {
 struct Wurf {
     datei: String,
     zeile: usize,
+    /// Stufe 2 (Q3): stdlib-Funktion wirft ueber diesen Aufruf (Builtin oder Funktion).
+    ueber: Option<String>,
 }
 
 /// Wo gerade geprueft wird (fuer Ort und Meldungstext).
@@ -78,6 +83,13 @@ struct Pass<'a> {
     lambdas: HashMap<(String, usize), usize>,
     /// Je Funktion/Klasse: Top-Level-Variablen, die vor ihrer Definition gebunden sind.
     global_vor: HashMap<String, HashSet<String>>,
+    /// Stufe 2: Namen ALLER eigenen Funktionen (auch nicht werfende, @nativ);
+    /// sie haben im Codegen Vorrang vor gleichnamigen Builtins (codegen.rs:6980).
+    nutzer: HashSet<String>,
+    /// Stufe 2 (Q3): Sammellauf, nur stdlib-Wurfstellen nachtragen, nichts melden.
+    nur_sammeln: bool,
+    /// Stufe 2 (Q3): im Sammellauf neue Wurfstelle gefunden.
+    neu: bool,
 }
 
 fn ist_nativ(decorators: &[Decorator]) -> bool {
@@ -90,6 +102,55 @@ fn ohne_export(stmt: &Stmt) -> &Stmt {
         Stmt::Export(inner, _) => ohne_export(inner),
         other => other,
     }
+}
+
+/// P2-T96 Stufe 2 (Plan d888a365, Entscheid #38339): Builtins, deren Laufzeit bei
+/// aeusserem Fehlschlag (Netz, Datenbank, Datei fehlt/kaputt) moo_throw ruft.
+/// Jede Gruppe mit Laufzeitprobe „WIRFT“ (moo-t96e, build/opus-t96/stufe2/proben,
+/// Jobs c88959a9, 7781acb8, 2c53d5eb); Kommentar = Laufzeitmeldung.
+/// Bewusst NICHT: datei_lesen/datei_zeilen/datei_schreiben & Co. (still "" bzw.
+/// falsch), JSON (kein moo_throw), Methoden (Empfaenger statisch unbekannt),
+/// Geraete/UI (zurueckgestellt), Speichern ohne Probe (checkpoint_speichern,
+/// tokenizer_speichern, shard_schreiben, tls_starttls) und Wuerfe nur bei
+/// Programmierfehlern (Argumente, Form, Index, Division, Grenzen).
+const FEHLBARE_BUILTINS: &[(&[&str], &str)] = &[
+    (&["tcp_verbinde", "tcp_connect"], "Verbindung fehlgeschlagen"), // moo_net.c moo_tcp_connect: "TCP-Verbindung fehlgeschlagen"
+    (&["tcp_server"], "Bind/Listen fehlgeschlagen"), // moo_net.c moo_tcp_server: "Bind oder Listen fehlgeschlagen"
+    (&["udp_socket"], "Socket/Bind fehlgeschlagen"), // moo_net.c moo_udp_socket: "Socket oder Bind fehlgeschlagen"
+    (&["tls_verbinde", "tls_connect"], "Verbindung/Handshake fehlgeschlagen"), // moo_tls.c: "tls_verbinde: TCP-Verbindung fehlgeschlagen"
+    (&["web_server", "web_erstelle"], "Bind/Listen fehlgeschlagen"), // moo_web.c moo_web_server: "WebServer: Bind fehlgeschlagen"
+    (&["db_verbinde", "db_connect", "dbv"], "Datenbank nicht zu öffnen"), // moo_db.c: "Konnte Datenbank nicht oeffnen"
+    (&["db_ausführen", "db_execute", "dbe"], "SQL-Fehler"), // moo_db.c: "SQL-Fehler in ..."
+    (&["db_abfrage", "db_query", "dba"], "SQL-Fehler"), // moo_db.c: "SQL-Fehler in ..."
+    (&["db_ausführen_mit_params", "db_execute_with_params"], "SQL-Fehler"), // moo_db.c (Entscheid B1)
+    (&["db_abfrage_mit_params", "db_query_with_params"], "SQL-Fehler"), // moo_db.c (Entscheid B1)
+    (&["db_vorbereite", "db_prepare"], "SQL-Fehler"), // moo_db.c (Entscheid B1)
+    (&["ki_laden", "ai_load", "netz_laden"], "Datei fehlt oder ist kaputt"), // moo_nn_easy.c: "ki_laden: kann ... nicht oeffnen"
+    (&["safetensors_laden", "safetensors_load"], "Datei fehlt oder ist kaputt"), // moo_nn_easy.c: "safetensors_laden: kann ... nicht oeffnen"
+    (&["checkpoint_laden", "checkpoint_load"], "Datei fehlt oder ist kaputt"), // moo_nn_easy.c: "checkpoint_laden: kann ... nicht oeffnen"
+    (&["checkpoint_rotieren", "checkpoint_rotate"], "Verzeichnis nicht lesbar"), // moo_nn_easy.c: "checkpoint_rotieren: Verzeichnis ... nicht lesbar"
+    (&["tokenizer_laden", "tokenizer_load"], "Datei fehlt oder ist kaputt"), // moo_tokenizer.c: "tokenizer_laden: kann ... nicht oeffnen"
+    (&["mnist_laden", "mnist_load"], "Datei fehlt oder ist kaputt"), // moo_dataset.c: "mnist_laden: kann ... nicht oeffnen"
+    (&["datensatz_csv", "dataset_csv"], "Datei fehlt"), // moo_dataset.c: "datensatz_csv: kann ... nicht oeffnen"
+    (&["bild_laden", "image_load"], "Datei fehlt oder ist kaputt"), // moo_dataset.c: "bild_laden: kann ... nicht oeffnen"
+    (&["wav_lesen", "wav_read"], "Datei fehlt oder ist kaputt"), // moo_audio.c: "wav_lesen: Datei konnte nicht geoeffnet werden"
+    (&["shard_info"], "Datei fehlt oder ist kaputt"), // moo_shard.c: "shard_info: kann Datei nicht oeffnen"
+    (&["shard_fenster", "shard_window"], "Datei fehlt oder ist kaputt"), // moo_shard.c: "shard_fenster: kann Datei nicht oeffnen"
+    (&["shard_fenster_maske", "shard_mask_window"], "Datei fehlt oder ist kaputt"), // moo_shard.c: "shard_fenster_maske: kann Datei nicht oeffnen"
+    (&["shard_reihenfolge", "shard_order"], "Datei fehlt oder ist kaputt"), // moo_shard.c: "shard_reihenfolge: kann Datei nicht oeffnen"
+];
+
+/// Kurzgrund, wenn `name` ein fehlbares Builtin ist.
+fn builtin_grund(name: &str) -> Option<&'static str> {
+    FEHLBARE_BUILTINS.iter().find(|(namen, _)| namen.contains(&name)).map(|(_, grund)| *grund)
+}
+
+/// Modul im Baum eines stdlib-Verzeichnisses (find_module: <dir>/stdlib, <exe>/stdlib,
+/// <cwd>/stdlib), auch verschachtelt (stdlib/tief/x.moos). Review 1bdc285e: normalisierter
+/// Pfad (../ und Symlinks aufgeloest), irgendein Ordner darueber heisst stdlib.
+fn ist_stdlib(datei: &str) -> bool {
+    let pfad = std::fs::canonicalize(datei).unwrap_or_else(|_| std::path::PathBuf::from(datei));
+    pfad.parent().is_some_and(|p| p.components().any(|c| c.as_os_str() == "stdlib"))
 }
 
 /// Zeile des ersten `wirf` ausserhalb eines versuche-Teils; verschachtelte
@@ -161,16 +222,20 @@ impl<'a> Pass<'a> {
     fn sammeln(&mut self, stmts: &[Stmt]) {
         for stmt in stmts {
             match ohne_export(stmt) {
-                Stmt::FunctionDef { name, body, decorators, .. } if !ist_nativ(decorators) => {
+                Stmt::FunctionDef { name, body, decorators, .. } => {
+                    self.nutzer.insert(name.clone());
+                    if ist_nativ(decorators) {
+                        continue;
+                    }
                     if let Some(zeile) = wurfstelle(body) {
                         let datei = self.datei_von(name);
-                        self.funktionen.insert(name.clone(), Wurf { datei, zeile });
+                        self.funktionen.insert(name.clone(), Wurf { datei, zeile, ueber: None });
                     }
                 }
                 Stmt::ClassDef { name: klasse, body, .. } => {
                     for m in body {
                         if let Stmt::FunctionDef { name, body, .. } = ohne_export(m) {
-                            let wurf = wurfstelle(body).map(|zeile| Wurf { datei: self.datei_von(klasse), zeile });
+                            let wurf = wurfstelle(body).map(|zeile| Wurf { datei: self.datei_von(klasse), zeile, ueber: None });
                             self.methoden.entry(name.clone()).or_default().push((klasse.clone(), wurf));
                         }
                     }
@@ -191,7 +256,41 @@ impl<'a> Pass<'a> {
         wurf.clone().map(|w| (format!("{k}.{name}"), w))
     }
 
-    fn melde(&mut self, ort: &Ort<'_>, zeile: usize, name: &str, wurf: &Wurf) {
+    /// Q3 (#38339): Funktion bzw. Methode am stdlib-Ort wirft ueber den Aufruf von `name`.
+    fn stdlib_wurf(&mut self, ort: &Ort<'_>, zeile: usize, name: &str) {
+        let Some(f) = ort.funktion.as_deref() else { return };
+        if f.contains(".<lambda@") {
+            return; // Lambda-Koerper: wer ihn aufruft, ist statisch unbekannt
+        }
+        let wurf = Wurf { datei: ort.datei.to_string(), zeile, ueber: Some(name.to_string()) };
+        match ort.klasse {
+            Some(k) => {
+                let m = f.strip_prefix(&format!("{k}.")).unwrap_or(f);
+                let eintrag = self.methoden.get_mut(m).and_then(|l| l.iter_mut().find(|(kl, _)| kl == k));
+                if let Some((_, w @ None)) = eintrag {
+                    *w = Some(wurf);
+                    self.neu = true;
+                }
+            }
+            None => {
+                if !self.funktionen.contains_key(f) {
+                    self.funktionen.insert(f.to_string(), wurf);
+                    self.neu = true;
+                }
+            }
+        }
+    }
+
+    /// `wurf` = werfende Funktion (M-F001); None = fehlbares Builtin (M-F002).
+    fn melde(&mut self, ort: &Ort<'_>, zeile: usize, name: &str, wurf: Option<&Wurf>) {
+        // Q3: in stdlib-Modulen nichts melden, die Funktion gilt als werfend.
+        if ort.datei != self.haupt && ist_stdlib(ort.datei) {
+            self.stdlib_wurf(ort, zeile, name);
+            return;
+        }
+        if self.nur_sammeln {
+            return;
+        }
         let schluessel = (ort.datei.to_string(), ort.funktion.clone(), name.to_string());
         if let Some(&i) = self.paare.get(&schluessel) {
             self.weitere[i] += 1;
@@ -203,9 +302,16 @@ impl<'a> Pass<'a> {
             Some(f) => format!("'{f}' läuft"),
             None => "das Hauptprogramm läuft".to_string(),
         };
-        let mut d = Diagnose::hinweis("M-F001", format!(
-            "Aufruf von '{name}' kann einen Fehler werfen (wirf in '{name}', {}:{}) und ist hier nicht mit versuche: geschützt; {wer} danach mit offenem Fehler weiter",
-            wurf.datei, wurf.zeile))
+        let (code, text) = match wurf {
+            Some(Wurf { datei, zeile, ueber: None }) => ("M-F001", format!(
+                "Aufruf von '{name}' kann einen Fehler werfen (wirf in '{name}', {datei}:{zeile}) und ist hier nicht mit versuche: geschützt; {wer} danach mit offenem Fehler weiter")),
+            Some(Wurf { datei, zeile, ueber: Some(u) }) => ("M-F001", format!(
+                "Aufruf von '{name}' kann einen Fehler werfen ('{u}' in '{name}', {datei}:{zeile}) und ist hier nicht mit versuche: geschützt; {wer} danach mit offenem Fehler weiter")),
+            None => ("M-F002", format!(
+                "Aufruf von '{name}' kann bei äußerem Fehlschlag einen Laufzeitfehler werfen ({}) und ist hier nicht mit versuche: geschützt; {wer} danach mit offenem Fehler weiter",
+                builtin_grund(name).unwrap_or("Builtin"))),
+        };
+        let mut d = Diagnose::hinweis(code, text)
             .datei(ort.datei)
             .ort(zeile, 0)
             .vorschlag(format!("versuche: um den Aufruf von '{name}' legen"));
@@ -276,7 +382,10 @@ impl<'a> Pass<'a> {
                 let z = if *z > 0 { *z } else { zeile };
                 if !geschuetzt && !ort.lokal.contains(name) {
                     if let Some(wurf) = self.funktionen.get(name).cloned() {
-                        self.melde(ort, z, name, &wurf);
+                        self.melde(ort, z, name, Some(&wurf));
+                    } else if !self.nutzer.contains(name) && builtin_grund(name).is_some() {
+                        // Stufe 2: fehlbares Builtin (M-F002); eigene Funktionen gehen vor.
+                        self.melde(ort, z, name, None);
                     }
                 }
                 self.exprs(args, ort, geschuetzt, z);
@@ -284,7 +393,7 @@ impl<'a> Pass<'a> {
             Expr::MethodCall { object, method, args } => {
                 if !geschuetzt && matches!(object.as_ref(), Expr::This) && ort.klasse.is_some() {
                     if let Some((name, wurf)) = self.methode(method, None) {
-                        self.melde(ort, zeile, &name, &wurf);
+                        self.melde(ort, zeile, &name, Some(&wurf));
                     }
                 }
                 self.expr(object, ort, geschuetzt, zeile);
@@ -293,7 +402,7 @@ impl<'a> Pass<'a> {
             Expr::New { class_name, args } => {
                 if !geschuetzt {
                     if let Some((name, wurf)) = self.methode("erstelle", Some(class_name)) {
-                        self.melde(ort, zeile, &name, &wurf);
+                        self.melde(ort, zeile, &name, Some(&wurf));
                     }
                 }
                 self.exprs(args, ort, geschuetzt, zeile);
@@ -317,7 +426,7 @@ impl<'a> Pass<'a> {
                     if ort.lokal.contains(name) {
                         // als Variable gebunden: nicht sicher aufloesbar (049ea57c, 6078a97b)
                     } else if let Some(wurf) = self.funktionen.get(name).cloned() {
-                        self.melde(ort, zeile, name, &wurf);
+                        self.melde(ort, zeile, name, Some(&wurf));
                     }
                 }
                 self.expr(right, ort, geschuetzt, zeile);
@@ -404,6 +513,9 @@ pub fn pruefe(haupt: &[Stmt], program: &Program, datei: &str) {
         paare: HashMap::new(),
         weitere: Vec::new(),
         lambdas: HashMap::new(),
+        nutzer: HashSet::new(),
+        nur_sammeln: false,
+        neu: false,
         global_vor: {
             let mut vor = HashMap::new();
             let mut bisher = HashSet::new();
@@ -419,9 +531,18 @@ pub fn pruefe(haupt: &[Stmt], program: &Program, datei: &str) {
         },
     };
     pass.sammeln(&program.statements);
-    if pass.funktionen.is_empty() && pass.methoden.values().flatten().all(|(_, w)| w.is_none()) {
-        return;
+    // Q3 (#38339): stdlib-Funktionen, die ungeschuetzt werfen lassen, als werfend
+    // nachtragen (Fixpunkt ueber Aufrufketten innerhalb der stdlib).
+    pass.nur_sammeln = true;
+    loop {
+        pass.neu = false;
+        pass.definitionen(&program.statements);
+        pass.lambdas.clear();
+        if !pass.neu {
+            break;
+        }
     }
+    pass.nur_sammeln = false;
     pass.definitionen(&program.statements);
     let ort = Ort { datei, funktion: None, klasse: None, lokal: lokale(&[], haupt) };
     pass.stmts(haupt, &ort, false);

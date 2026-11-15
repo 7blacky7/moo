@@ -1,0 +1,5 @@
+# P2-T96 Stufe 2 (Review 1bdc285e): stdlib-Erkennung erfasst den ganzen Baum unter
+# stdlib/ (normalisierter Pfad, auch ../); Hinweis am Nutzeraufruf, nicht im Modul.
+aus "./stdlib/tief/../tief/fp_tief" importiere tief_verbinde
+
+zeige tief_verbinde("127.0.0.1")

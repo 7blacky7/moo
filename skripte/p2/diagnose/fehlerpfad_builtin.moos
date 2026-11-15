@@ -1,0 +1,32 @@
+# P2-T96 Stufe 2 (#38339): fehlbare Builtins melden M-F002 (nur mit --typpruefung).
+funktion verbinde():
+    gib_zurück tcp_verbinde("127.0.0.1", 1)
+
+funktion geschuetzt():
+    versuche:
+        gib_zurück db_verbinde("sqlite:///nicht/da/x.db")
+    fange e:
+        gib_zurück nichts
+
+funktion still_ersatzwert():
+    gib_zurück datei_lesen("/nicht/da.txt")
+
+funktion verdeckt(ki_laden):
+    gib_zurück ki_laden("x")
+
+funktion mehrfach():
+    setze a auf bild_laden("a.png")
+    setze b auf bild_laden("b.png")
+    gib_zurück [a, b]
+
+funktion mnist_laden(pfad):
+    gib_zurück pfad
+
+funktion eigen():
+    gib_zurück mnist_laden("x")
+
+funktion aufrufer():
+    gib_zurück verbinde()
+
+setze lese auf (pfad) => wav_lesen(pfad)
+zeige still_ersatzwert()

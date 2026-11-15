@@ -288,5 +288,30 @@ rc=$?
 json fp_streng '.errors == 1 and .diagnostics[0].code == "M-F001" and (.diagnostics[0].message | endswith(" (--typ-streng)"))'
 timeout 30s "$compiler" erklaere M-F001 > "$out/erklaere_f1.out" 2>&1 || fail "erklaere M-F001: RC $?"
 
+# 11b. P2-T96 Stufe 2 (#38339): M-F002 fehlbare Builtins (eigene Funktion gleichen
+#      Namens geht vor, Parameter verdeckt, Ersatzwert-Builtins still); Q3: in
+#      stdlib-Modulen kein Hinweis, die stdlib-Funktion wirft, der Nutzeraufruf bekommt M-F001.
+F2='[.diagnostics[] | select(.code == "M-F002")]'
+pruef_json fehlerpfad_builtin --typpruefung
+[ "$rc" -eq 0 ] || fail "fehlerpfad_builtin: RC $rc statt 0"
+json fehlerpfad_builtin "$F2"' | map(.line) == [3, 18, 31] and .[0].function == "verbinde" and (.[0].message | test("tcp_verbinde.*Verbindung fehlgeschlagen")) and (.[1].message | test("und 1 weiterer Aufruf")) and .[2].function == "Hauptprogramm.<lambda@31>"'
+json fehlerpfad_builtin "$F | length == 0"
+pruef_json fehlerpfad_builtin
+json fehlerpfad_builtin "$F2 | length == 0"
+pruef_json fehlerpfad_stdlib --typpruefung
+[ "$rc" -eq 0 ] || fail "fehlerpfad_stdlib: RC $rc statt 0"
+json fehlerpfad_stdlib "$F"' | map(.line) == [6, 9] and all(.[]; .file | endswith("fehlerpfad_stdlib.moos")) and (.[0].message | test("std_verbinde. in .std_weiter., .*stdlib/fp_std_modul.moos:6")) and (.[1].message | test("tcp_verbinde. in .std_verbinde., .*stdlib/fp_std_modul.moos:3"))'
+json fehlerpfad_stdlib "$F2 | length == 0"
+pruef_json fehlerpfad_stdlib_tief --typpruefung
+[ "$rc" -eq 0 ] || fail "fehlerpfad_stdlib_tief: RC $rc statt 0"
+json fehlerpfad_stdlib_tief "$F"' | length == 1 and .[0].line == 5 and (.[0].file | endswith("fehlerpfad_stdlib_tief.moos")) and (.[0].message | test("tcp_verbinde. in .tief_verbinde."))'
+json fehlerpfad_stdlib_tief "$F2 | length == 0"
+timeout 120s "$compiler" pruefe --typ-streng "$d/fehlerpfad_builtin.moos" --diagnose=json > "$out/fp2_streng.out" 2> "$out/fp2_streng.json"
+rc=$?
+[ "$rc" -eq 1 ] || fail "fehlerpfad_builtin --typ-streng: RC $rc statt 1"
+json fp2_streng '.errors == 3 and ([.diagnostics[] | select(.code == "M-F002")] | length == 3)'
+timeout 30s "$compiler" erklaere M-F002 > "$out/erklaere_f2.out" 2>&1 || fail "erklaere M-F002: RC $?"
+rg -q -F "M-F002" "$out/erklaere_f2.out" || fail "erklaere M-F002: Eintrag fehlt"
+
 if [ "$fehler" -ne 0 ]; then echo "FAIL P2-T97 diagnose"; exit 1; fi
-echo "PASS P2-T97 diagnose: mehrere Syntax-/Lexerfehler mit Zeile:Spalte, Import M-I002 (inkl. Altfall), M-C001 mit Zeile+Vorschlag, Hinweis RC0, Stmt-Zeilen (B5b/B5c), JSON-Schema, pruefe/check, erklaere/explain; P2-T99 M-I004 (Benutzer/selektiv/Modul-Modul, compile ohne Binary), M-I005 Variable, Raute still, stdlib mathe+primzahl; Variable verdeckt nichts (beide Reihenfolgen), Struktur/Funktion, primzahl-Weitergabe; Weitergabe-Zyklus ohne Definition M-I002, gueltiger Zyklus RC 0; P2-T98 M-M001/M-M002/M-M005 mit Zeile, nicht konstanter Index RC 0"
+echo "PASS P2-T97 diagnose: mehrere Syntax-/Lexerfehler mit Zeile:Spalte, Import M-I002 (inkl. Altfall), M-C001 mit Zeile+Vorschlag, Hinweis RC0, Stmt-Zeilen (B5b/B5c), JSON-Schema, pruefe/check, erklaere/explain; P2-T99 M-I004 (Benutzer/selektiv/Modul-Modul, compile ohne Binary), M-I005 Variable, Raute still, stdlib mathe+primzahl; Variable verdeckt nichts (beide Reihenfolgen), Struktur/Funktion, primzahl-Weitergabe; Weitergabe-Zyklus ohne Definition M-I002, gueltiger Zyklus RC 0; P2-T98 M-M001/M-M002/M-M005 mit Zeile, nicht konstanter Index RC 0; P2-T96 M-F001/M-F002 inkl. stdlib-Weitergabe"

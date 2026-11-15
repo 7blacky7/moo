@@ -1,10 +1,10 @@
 {
   "format": 2,
-  "compiler_sha256": "a8f15ab7c27bb8b85f30fe0ab44eea84d337cbba51d93b9d2e2c740a4cdda66c",
+  "compiler_sha256": "b3cb5c997c45c88ddf0b5200b57c0807940d4e9af197c993ce91c4b6eac16721",
   "normalization": "module-header-root-v2",
   "synapse_batch": null,
   "provenance_attestation": "caller-provided-unverified",
-  "compiler_runtime_inventory_sha256": "20c777f8e441108c27b07ca15e81dbc5fd8109e9e536cb420107c5f7bde6d8a1",
+  "compiler_runtime_inventory_sha256": "161a37b088b8b478ee87fc51c8332080c07514139a6ba6d4690aa47c064ae519",
   "snapshot_ref": null,
   "snapshot_ref_attestation": "caller-provided-unverified",
   "profiles": {
@@ -83,7 +83,7 @@
   "failure_count": 0,
   "source_snapshot": {
     "contract": "legacy-ir-sources-v1",
-    "sha256": "03860771caad9feadf05bd7b0cbffe3fb99454d27ce1ac7b6e6222ef97e46056",
+    "sha256": "eed2f87ae83e526a711cf156984b64f8c982ac59aaf440d3bdf0934ab1e2e979",
     "files": {
       "beispiele/adressbuch.moos": "cf706634d9fe6d21dabd304559802458468d94a9a7ab31465641a7cce218ef6b",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -162,7 +162,7 @@
       "beispiele/domain/web/http_api.moos": "c77bd8c1195388609d140ab6209a2a8eb843fdc1514a7c271cbc2320e3eb97ee",
       "beispiele/domain/web/http_api_cors.moos": "e64c9aa1df55c180899fbdc0eb3556b33d7ae513e573e8121b4c7205591f0b50",
       "beispiele/domain/web/proxy.moos": "2a4532a3fcc621f12ac36185443519d5bfc862729560dbd8b1106554550e931a",
-      "beispiele/domain/web/websocket_server.moos": "fe9ec1388b6ef67884796724b6f121bb582f3474cf7a31e497f5a4bfb4e80f5f",
+      "beispiele/domain/web/websocket_server.moos": "9742feb8e5fbb38939b24d7f619253c5c955dd7848db8a2914427932787b8ef9",
       "beispiele/domain/web/wetter_api.moos": "6b9c692612bfb3065381b969ad96f8486c63098a91347ba5f9367fb2bfd406eb",
       "beispiele/doodle_jump.moos": "ee2153aeeac29f2bcf095d6120c871ae8c66452f4bbcd320f7db17c785f58dd0",
       "beispiele/dungeon.moos": "e49f5ceb28a7fbcff911e108ba9fcb39dcd847f3ca474a3003cc8ba583b053d2",
@@ -573,7 +573,7 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "7b2a350de70c93d13bf83e0f0a25f9a6925a0c4126d7eb015078466e3f585b49",
+    "sha256": "6f33dc35554e96bd9199f85ab511ae83f3c8364d150db340c0f4c5aca01a24f4",
     "files": {
       "beispiele/adressbuch.moos": "cf706634d9fe6d21dabd304559802458468d94a9a7ab31465641a7cce218ef6b",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -652,7 +652,7 @@
       "beispiele/domain/web/http_api.moos": "c77bd8c1195388609d140ab6209a2a8eb843fdc1514a7c271cbc2320e3eb97ee",
       "beispiele/domain/web/http_api_cors.moos": "e64c9aa1df55c180899fbdc0eb3556b33d7ae513e573e8121b4c7205591f0b50",
       "beispiele/domain/web/proxy.moos": "2a4532a3fcc621f12ac36185443519d5bfc862729560dbd8b1106554550e931a",
-      "beispiele/domain/web/websocket_server.moos": "fe9ec1388b6ef67884796724b6f121bb582f3474cf7a31e497f5a4bfb4e80f5f",
+      "beispiele/domain/web/websocket_server.moos": "9742feb8e5fbb38939b24d7f619253c5c955dd7848db8a2914427932787b8ef9",
       "beispiele/domain/web/wetter_api.moos": "6b9c692612bfb3065381b969ad96f8486c63098a91347ba5f9367fb2bfd406eb",
       "beispiele/doodle_jump.moos": "ee2153aeeac29f2bcf095d6120c871ae8c66452f4bbcd320f7db17c785f58dd0",
       "beispiele/dungeon.moos": "e49f5ceb28a7fbcff911e108ba9fcb39dcd847f3ca474a3003cc8ba583b053d2",
@@ -2140,7 +2140,7 @@
     },
     "beispiele/domain/web/websocket_server.moos": {
       "status": "ok",
-      "sha256": "f24da73d75551c12467a0e53bcbb1c2d1125680014f07b0dca834da3b90a37d8"
+      "sha256": "97c5f7c8a9963c69f44666dc85cebe1e17261b59f3fabe9dd2d8d28890ba6495"
     },
     "beispiele/domain/web/wetter_api.moos": {
       "status": "ok",

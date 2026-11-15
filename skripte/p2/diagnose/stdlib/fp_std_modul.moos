@@ -1,0 +1,12 @@
+# Test-Modul im stdlib-Verzeichnis (P2-T96 Stufe 2, Q3; gehoert zu fehlerpfad_stdlib.moos).
+funktion std_verbinde(host):
+    gib_zurück tcp_verbinde(host, 1)
+
+funktion std_weiter(host):
+    gib_zurück std_verbinde(host)
+
+funktion std_sicher(host):
+    versuche:
+        gib_zurück tcp_verbinde(host, 1)
+    fange e:
+        gib_zurück nichts

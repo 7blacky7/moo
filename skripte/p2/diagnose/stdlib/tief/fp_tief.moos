@@ -1,0 +1,3 @@
+# Test-Modul in stdlib/tief (P2-T96 Stufe 2, Review 1bdc285e; gehoert zu fehlerpfad_stdlib_tief.moos).
+funktion tief_verbinde(host):
+    gib_zurück tcp_verbinde(host, 1)

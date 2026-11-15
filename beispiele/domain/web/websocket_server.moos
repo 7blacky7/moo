@@ -241,7 +241,14 @@ funktion bearbeite_client(sock, client_id):
     setze laeuft auf wahr
     setze anzahl auf 0
     solange laeuft:
-        setze frame auf lies_frame(sock)
+        # lies_frame wirft bei Protokollverletzungen (RSV-Bits, unmaskiert, zu gross):
+        # Meldung ausgeben und die Verbindung wie bei EOF sauber beenden.
+        setze frame auf nichts
+        versuche:
+            setze frame auf lies_frame(sock)
+        fange fehler:
+            zeige "[" + text(client_id) + "] Protokollfehler: " + text(fehler)
+            setze frame auf nichts
         wenn frame == nichts:
             setze laeuft auf falsch
         sonst:

@@ -1,0 +1,10 @@
+# P2-T96 Stufe 2 (#38339, Q3): Hinweise in stdlib-Modulen entfallen; die
+# stdlib-Funktion gilt als werfend, gemeldet wird der Aufruf hier (M-F001).
+aus fp_std_modul importiere std_verbinde, std_weiter, std_sicher
+
+funktion nutzer():
+    gib_zurück std_weiter("127.0.0.1")
+
+zeige std_sicher("127.0.0.1")
+zeige std_verbinde("127.0.0.1")
+zeige nutzer()
