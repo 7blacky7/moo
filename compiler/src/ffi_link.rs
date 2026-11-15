@@ -44,7 +44,7 @@ fn selected_library<'a>(args: &'a [DecoratorArg], triple: &str) -> Result<&'a st
 pub(crate) fn libraries(stmts: &[Stmt], triple: &str) -> Result<Vec<String>, String> {
     fn visit(stmt: &Stmt, names: &mut Vec<String>, triple: &str) -> Result<(), String> {
         match stmt {
-            Stmt::Export(inner) => visit(inner, names, triple)?,
+            Stmt::Export(inner, _) => visit(inner, names, triple)?,
             Stmt::ExternC { decorators, .. } => {
                 for decorator in decorators {
                     match decorator.name.as_str() {

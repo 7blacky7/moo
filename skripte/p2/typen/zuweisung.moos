@@ -1,0 +1,11 @@
+# P2-T29 S1: M-T001 bei Zuweisung, Konstante, Neuzuweisung und Standardwert.
+setze n: Zahl auf "drei"
+konstante NAME: Text auf 42
+setze ok: Bool auf 1 < 2
+setze z: Zahl auf 1
+setze z auf "eins"
+
+funktion f(x: Zahl = "null"):
+    gib_zurück x
+
+zeige f(1)

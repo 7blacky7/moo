@@ -1,0 +1,4 @@
+[tasks.test]
+description = "P2-T29: Typpruefung zur Compilezeit (M-T001, M-T003)"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/typen/test.sh"

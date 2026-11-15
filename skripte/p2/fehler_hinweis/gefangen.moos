@@ -1,0 +1,12 @@
+# P2-T95: lokal mit versuche: gefangen -> kein Hinweis.
+funktion g():
+    wirf "kaputt in g"
+
+funktion f():
+    versuche:
+        g()
+    fange e:
+        zeige "f faengt: " + e
+    gib_zurück 2
+
+zeige f()

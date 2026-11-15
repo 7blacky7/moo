@@ -76,7 +76,7 @@ rg -q -F 'class_name: "m.MDaten"' "$v" || { echo 'FAIL vorher: neu q.Klasse' >&2
 rg -q -F 'method: "m_skalar"' "$v" || { echo 'FAIL vorher: q.f() als Methodenaufruf' >&2; exit 1; }
 # Nachher: alles auf einfache Namen zurueckgefuehrt, kein Punktname mehr.
 if rg -q '"m[.]' "$n"; then echo 'FAIL nachher: Punktname uebrig' >&2; exit 1; fi
-rg -U -q 'FunctionCall \{\s*name: "m_skalar",' "$n" || { echo 'FAIL nachher: q.f() nicht aufgeloest' >&2; exit 1; }
+rg -U -q 'FunctionCall \{\s*zeile: [0-9]+,\s*name: "m_skalar",' "$n" || { echo 'FAIL nachher: q.f() nicht aufgeloest' >&2; exit 1; }
 rg -U -q 'Return\(\s*Some\(\s*Identifier\(\s*"MGRENZE",' "$n" || { echo 'FAIL nachher: q.NAME nicht aufgeloest' >&2; exit 1; }
 rg -q -F 'class_name: "MDaten"' "$n" || { echo 'FAIL nachher: neu q.Klasse' >&2; exit 1; }
 rg -U -q 'kind: Name\(\s*"MPunkt",\s*\),\s*line: 4,\s*column: 15,' "$n" || { echo 'FAIL nachher: Span des Typs' >&2; exit 1; }

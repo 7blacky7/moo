@@ -1,0 +1,4 @@
+funktion rechne(a):
+    gib_zurück a * 2
+
+zeige rechen(2)

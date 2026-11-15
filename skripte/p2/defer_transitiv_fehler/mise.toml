@@ -7,7 +7,8 @@ out=build/p2-defer-transitiv-fehler
 mkdir -p "$out"
 compiler=${P2_COMPILER:-compiler/target/release/moo-compiler}
 timeout 120s "$compiler" compile compiler/tests/p2/defer_transitiv_fehler.moos -o "$out/probe"
-if timeout 30s "$out/probe" >"$out/actual" 2>"$out/err"; then
+# P2-T95: Abbruchvertrag nur noch mit MOO_STRENG=1.
+if MOO_STRENG=1 timeout 30s "$out/probe" >"$out/actual" 2>"$out/err"; then
   printf 'FAIL: unbehandelter Fehler meldet Exit 0\n' >&2
   cat "$out/actual" >&2
   exit 1

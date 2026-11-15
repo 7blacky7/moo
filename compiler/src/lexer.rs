@@ -7,6 +7,14 @@ pub struct LexerError {
     pub message: String,
     pub line: usize,
     pub column: usize,
+    /// P2-T97: Diagnosecode (M-L...).
+    pub code: &'static str,
+}
+
+impl LexerError {
+    pub fn diagnose(&self) -> crate::diagnose::Diagnose {
+        crate::diagnose::Diagnose::fehler(self.code, self.message.clone()).ort(self.line, self.column)
+    }
 }
 
 impl std::fmt::Display for LexerError {
@@ -27,7 +35,16 @@ impl Lexer {
     }
 
     pub fn tokenize(&mut self, source: &str) -> Result<Vec<Token>, LexerError> {
+        let (tokens, mut fehler) = self.tokenize_alle(source);
+        if fehler.is_empty() { Ok(tokens) } else { Err(fehler.remove(0)) }
+    }
+
+    /// P2-T97: alle Lexerfehler eines Laufs sammeln. Eine fehlerhafte Zeile
+    /// verliert ihre Tokens (Layout-Tokens bleiben), dann geht es mit der
+    /// naechsten Zeile weiter.
+    pub fn tokenize_alle(&mut self, source: &str) -> (Vec<Token>, Vec<LexerError>) {
         let mut tokens = Vec::new();
+        let mut fehler = Vec::new();
 
         for (line_num, line_text) in source.lines().enumerate() {
             let line = line_num + 1;
@@ -43,8 +60,14 @@ impl Lexer {
             self.handle_indent(indent, line, &mut tokens);
 
             // Zeile tokenisieren
-            self.tokenize_line(stripped, line, indent, &mut tokens)?;
-            tokens.push(Token::new(TokenType::Newline, line, 0));
+            let start = tokens.len();
+            if let Err(err) = self.tokenize_line(stripped, line, indent, &mut tokens) {
+                tokens.truncate(start);
+                fehler.push(err);
+            }
+            // Spalte des Zeilenendes (1-basiert, hinter dem letzten Zeichen):
+            // Ort fuer Diagnosen wie "':' erwartet, aber Zeilenende gefunden".
+            tokens.push(Token::new(TokenType::Newline, line, line_text.chars().count() + 1));
         }
 
         // Alle offenen Indents schließen
@@ -74,7 +97,7 @@ impl Lexer {
             }
         }).collect();
 
-        Ok(filtered)
+        (filtered, fehler)
     }
 
     fn handle_indent(&mut self, indent: usize, line: usize, tokens: &mut Vec<Token>) {
@@ -215,7 +238,7 @@ impl Lexer {
                 i += 1;
             } else {
                 return Err(LexerError {
-                    message: format!("Unbekanntes Zeichen: '{ch}'"),
+                    message: format!("Unbekanntes Zeichen: '{ch}'"), code: "M-L001",
                     line: line_num,
                     column: col,
                 });
@@ -258,7 +281,7 @@ impl Lexer {
 
         if i >= chars.len() {
             return Err(LexerError {
-                message: "String nicht geschlossen".to_string(),
+                message: "String nicht geschlossen".to_string(), code: "M-L002",
                 line,
                 column: col,
             });
@@ -277,7 +300,16 @@ impl Lexer {
             Ok(wert) => wert as f64,
             Err(_) => {
                 let roh: String = roh.iter().collect();
-                eprintln!("Warnung: Zeile {line}: Zahlliteral '{roh}' hat keine Ziffern oder ist groesser als u64; dynamischer Wert 0");
+                // Review 5bab9d1a: ueber den Diagnose-Sammler, damit der
+                // JSON-Modus nur das eine Objekt schreibt und hints zaehlt.
+                crate::diagnose::melden(
+                    crate::diagnose::Diagnose::hinweis("M-H007", format!(
+                        "Zahlliteral '{roh}' hat keine Ziffern oder ist groesser als u64; dynamischer Wert 0"
+                    ))
+                    .ort(line, 0)
+                    .gefunden(roh.clone())
+                    .vorschlag("Ziffern nach dem Praefix ergaenzen (z. B. 0x1F) oder einen kleineren Wert schreiben."),
+                );
                 0.0
             }
         }
@@ -399,7 +431,7 @@ impl Lexer {
                 }
                 if i >= chars.len() {
                     return Err(LexerError {
-                        message: "f-String: '}' fehlt".to_string(),
+                        message: "f-String: '}' fehlt".to_string(), code: "M-L003",
                         line,
                         column: col,
                     });
@@ -427,7 +459,7 @@ impl Lexer {
 
         if i >= chars.len() {
             return Err(LexerError {
-                message: "f-String nicht geschlossen".to_string(),
+                message: "f-String nicht geschlossen".to_string(), code: "M-L004",
                 line,
                 column: col,
             });

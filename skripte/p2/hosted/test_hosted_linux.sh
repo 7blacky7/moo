@@ -102,7 +102,7 @@ echo "PASS P2-T74 Systemkoerper in versuche: Fehler gefangen in main und benannt
 #     Diagnose ("Unbehandelter Fehler: ..."), kein 'NICHT ERREICHT'.
 "$compiler" compile "$hosted_dir/probe_trap.moos" -o "$out/trap_exe"
 set +e
-"$out/trap_exe" > "$out/trap.out" 2> "$out/trap.err"
+MOO_STRENG=1 "$out/trap_exe" > "$out/trap.out" 2> "$out/trap.err"  # P2-T95: Abbruch nur mit MOO_STRENG=1
 trap_rc=$?
 set -e
 [ "$trap_rc" -eq 1 ] || { echo "FEHLER: Fehler im Systemkoerper lieferte RC $trap_rc statt 1" >&2; exit 1; }

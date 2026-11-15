@@ -225,6 +225,9 @@ pub(crate) fn bedarf(stmts: &[Stmt]) -> BTreeSet<&'static str> {
     if scan.gefunden.contains("mat4") {
         scan.gefunden.insert("vec4");
     }
+    if scan.gefunden.contains("dmat4") {
+        scan.gefunden.insert("dvec4");
+    }
     scan.gefunden
 }
 
@@ -280,26 +283,26 @@ impl Bedarf {
                 self.typ(ty);
                 self.expr(value);
             }
-            Stmt::CompoundAssignment { value, .. } | Stmt::Show(value) | Stmt::Throw(value)
-            | Stmt::Expression(value) | Stmt::Defer(value) | Stmt::Expect(value)
+            Stmt::CompoundAssignment { value, .. } | Stmt::Show(value, _) | Stmt::Throw(value, _)
+            | Stmt::Expression(value, _) | Stmt::Defer(value, _) | Stmt::Expect(value, _)
             | Stmt::Precondition { condition: value, .. }
             | Stmt::Postcondition { condition: value, .. } => self.expr(value),
-            Stmt::Return(value) => self.optional(value),
+            Stmt::Return(value, _) => self.optional(value),
             Stmt::PropertyAssignment { object, value, .. } => {
                 self.expr(object);
                 self.expr(value);
             }
-            Stmt::IndexAssignment { object, index, value } => {
+            Stmt::IndexAssignment { object, index, value, .. } => {
                 self.expr(object);
                 self.expr(index);
                 self.expr(value);
             }
-            Stmt::If { condition, body, else_body } => {
+            Stmt::If { condition, body, else_body, .. } => {
                 self.expr(condition);
                 self.stmts(body);
                 self.stmts(else_body);
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 self.expr(condition);
                 self.stmts(body);
             }
@@ -307,7 +310,7 @@ impl Bedarf {
                 self.expr(iterable);
                 self.stmts(body);
             }
-            Stmt::Guard { condition, else_body } => {
+            Stmt::Guard { condition, else_body, .. } => {
                 self.expr(condition);
                 self.stmts(else_body);
             }
@@ -325,7 +328,7 @@ impl Bedarf {
                 self.typ(result);
             }
             Stmt::StructDef { fields, .. } => fields.iter().for_each(|(_, t)| self.typ(t)),
-            Stmt::ClassDef { body, .. } | Stmt::UnsafeBlock { body } | Stmt::TestDef { body, .. } =>
+            Stmt::ClassDef { body, .. } | Stmt::UnsafeBlock { body, .. } | Stmt::TestDef { body, .. } =>
                 self.stmts(body),
             Stmt::InterfaceDef { signatures, .. } => {
                 for signatur in signatures.iter().flatten() {
@@ -337,8 +340,8 @@ impl Bedarf {
                 self.stmts(try_body);
                 self.stmts(catch_body);
             }
-            Stmt::Export(inner) => self.stmt(inner),
-            Stmt::Match { value, cases } => {
+            Stmt::Export(inner, _) => self.stmt(inner),
+            Stmt::Match { value, cases, .. } => {
                 self.expr(value);
                 for (muster, waechter, body) in cases {
                     self.optional(muster);
@@ -347,13 +350,13 @@ impl Bedarf {
                 }
             }
             Stmt::DataClassDef { field_types, .. } => self.typen(field_types),
-            Stmt::Break | Stmt::Continue | Stmt::Import { .. } | Stmt::Global(_) => {}
+            Stmt::Break(_) | Stmt::Continue(_) | Stmt::Import { .. } | Stmt::Global(_, _) => {}
         }
     }
 
     fn expr(&mut self, expr: &Expr) {
         match expr {
-            Expr::FunctionCall { name, args } => {
+            Expr::FunctionCall { name, args, .. } => {
                 if self.nativ { self.name(name); }
                 self.exprs(args);
             }

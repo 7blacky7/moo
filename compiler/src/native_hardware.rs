@@ -76,8 +76,8 @@ fn is_read(kind: Intrinsic) -> bool {
 
 fn intrinsic_stmt(stmt: &Stmt) -> Option<(Intrinsic, &[Expr], bool)> {
     match stmt {
-        Stmt::Expression(Expr::FunctionCall { name, args }) => classify(name).map(|k| (k, args.as_slice(), false)),
-        Stmt::Return(Some(Expr::FunctionCall { name, args })) => classify(name).map(|k| (k, args.as_slice(), true)),
+        Stmt::Expression(Expr::FunctionCall { name, args, .. }, _) => classify(name).map(|k| (k, args.as_slice(), false)),
+        Stmt::Return(Some(Expr::FunctionCall { name, args, .. }), _) => classify(name).map(|k| (k, args.as_slice(), true)),
         _ => None,
     }
 }
@@ -93,7 +93,7 @@ pub(crate) enum BodyKind {
 }
 
 pub(crate) fn classify_body(body: &[Stmt]) -> BodyKind {
-    if let [Stmt::UnsafeBlock { body: inner }] = body {
+    if let [Stmt::UnsafeBlock { body: inner, .. }] = body {
         if !inner.is_empty() && inner.iter().all(|stmt| intrinsic_stmt(stmt).is_some()) {
             return BodyKind::Hardware;
         }
@@ -572,7 +572,7 @@ pub(crate) fn emit_hardware_function<'ctx>(
         return Err("Doppelter nativer Parametername".into());
     }
     let inner = match body {
-        [Stmt::UnsafeBlock { body }] => body.as_slice(),
+        [Stmt::UnsafeBlock { body, .. }] => body.as_slice(),
         _ => return Err("Hardwarezugriff erfordert unsicher".into()),
     };
     let entry = context.append_basic_block(function, "entry");

@@ -124,7 +124,7 @@ fn konstanten_ausdruck(context: &Context, ty: &TypeRef, value: &Expr) -> Result<
         literal
     };
     let typ = if scalar == NType::F32 { "f32" } else { "f64" };
-    Ok(Some(Expr::FunctionCall { name: "als".into(), args: vec![Expr::Identifier(typ.into()), literal] }))
+    Ok(Some(Expr::FunctionCall { name: "als".into(), args: vec![Expr::Identifier(typ.into()), literal], zeile: 0 }))
 }
 
 /// Exakter Wert eines (ggf. negierten) Integerliterals fuer den Typ `ty`.
@@ -173,6 +173,18 @@ fn ganz_ausdruck(context: &Context, expr: &Expr, ty: NType, umlauf: bool) -> Res
         Expr::BinaryOp { op: op @ (BinOp::Add | BinOp::Sub | BinOp::Mul), left, right } => {
             let l = ganz_ausdruck(context, left, ty, umlauf)?;
             let r = ganz_ausdruck(context, right, ty, umlauf)?;
+            if umlauf {
+                // Review acbff6e0: innerhalb als_wrap jedes Zwischenergebnis modulo
+                // 2^N (Operanden <= 64 Bit; i128-wrapping ist modulo 2^128 und damit
+                // kongruent modulo 2^N), z. B. als_wrap(u64, MAX * MAX) = 1.
+                let (l, r) = (ganz_umlauf(context, l, ty), ganz_umlauf(context, r, ty));
+                let roh = match op {
+                    BinOp::Add => l.wrapping_add(r),
+                    BinOp::Sub => l.wrapping_sub(r),
+                    _ => l.wrapping_mul(r),
+                };
+                return Ok(ganz_umlauf(context, roh, ty));
+            }
             pruefe(match op {
                 BinOp::Add => l.checked_add(r),
                 BinOp::Sub => l.checked_sub(r),
@@ -181,9 +193,12 @@ fn ganz_ausdruck(context: &Context, expr: &Expr, ty: NType, umlauf: bool) -> Res
         }
         Expr::UnaryOp { op: UnaryOpKind::Neg, operand } if !matches!(operand.as_ref(), Expr::NativeNumber { .. }) => {
             let v = ganz_ausdruck(context, operand, ty, umlauf)?;
+            if umlauf {
+                return Ok(ganz_umlauf(context, ganz_umlauf(context, v, ty).wrapping_neg(), ty));
+            }
             pruefe(v.checked_neg())
         }
-        Expr::FunctionCall { name, args } if name == "als_wrap" => {
+        Expr::FunctionCall { name, args, .. } if name == "als_wrap" => {
             let [Expr::Identifier(ziel), inner] = args.as_slice() else {
                 return Err("als_wrap(T, ausdruck) erwartet einen Ganzzahltyp und einen Ausdruck".into());
             };
@@ -195,10 +210,44 @@ fn ganz_ausdruck(context: &Context, expr: &Expr, ty: NType, umlauf: bool) -> Res
             pruefe(Some(gekuerzt))
         }
         _ => {
-            let wert = literal_kern(context, expr, ty)?;
-            Ok(wert)
+            // Review 4571f610: innerhalb als_wrap gilt ein Literal exakt (auch
+            // ausserhalb des Zieltyps, z. B. als_wrap(u8, 256)); gekuerzt wird
+            // erst am Ende von als_wrap.
+            if umlauf {
+                if let Some(wert) = literal_roh(expr) { return wert; }
+            }
+            literal_kern(context, expr, ty)
         }
     }
+}
+
+/// Exakter Wert eines (ggf. negierten) Ganzzahlliterals ohne Bereichspruefung
+/// (nur im Umlaufmodus von als_wrap). None = kein Ganzzahlliteral.
+fn literal_roh(expr: &Expr) -> Option<Result<i128, String>> {
+    let (text, negativ) = match expr {
+        Expr::NativeNumber { text, .. } => (text, false),
+        Expr::UnaryOp { op: UnaryOpKind::Neg, operand } => match operand.as_ref() {
+            Expr::NativeNumber { text, .. } => (text, true),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let (ziffern, basis) = if let Some(s) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        (s, 16)
+    } else if let Some(s) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
+        (s, 2)
+    } else if let Some(s) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
+        (s, 8)
+    } else {
+        (text.as_str(), 10)
+    };
+    if ziffern.is_empty() || !ziffern.chars().all(|c| c.is_digit(basis)) {
+        return None;
+    }
+    Some(u128::from_str_radix(ziffern, basis).ok()
+        .and_then(|v| i128::try_from(v).ok())
+        .map(|v| if negativ { -v } else { v })
+        .ok_or_else(|| format!("als_wrap: Literal '{text}' ist zu gross")))
 }
 
 fn literal_kern(context: &Context, expr: &Expr, ty: NType) -> Result<i128, String> {
@@ -282,9 +331,9 @@ impl<'a, 'ctx> Folder<'a, 'ctx> {
         Ok(match expr {
             // P7-T5: adresse_von(NAME) nimmt die Adresse, nicht den gefalteten Wert.
             Expr::FunctionCall { name, .. } if name == "adresse_von" || name == "address_of" => expr.clone(),
-            Expr::FunctionCall { name, args } => match query(name) {
+            Expr::FunctionCall { name, args, .. } => match query(name) {
                 Some(kind) => number(i128::from(self.query(kind, name, args)?)),
-                None => Expr::FunctionCall { name: name.clone(), args: args.iter().map(fold).collect::<Result<_, _>>()? },
+                None => Expr::FunctionCall { name: name.clone(), args: args.iter().map(fold).collect::<Result<_, _>>()?, zeile: 0 },
             },
             Expr::Identifier(name) if !shadow.contains(name) => match self.scalars.get(name) {
                 Some(value) => number(*value),
@@ -308,35 +357,36 @@ impl<'a, 'ctx> Folder<'a, 'ctx> {
 
     fn stmts(&self, body: &[Stmt], shadow: &HashSet<String>) -> Result<Vec<Stmt>, String> {
         body.iter().map(|stmt| Ok(match stmt {
-            Stmt::Return(Some(value)) => Stmt::Return(Some(self.expr(value, shadow)?)),
-            Stmt::Expression(value) => Stmt::Expression(self.expr(value, shadow)?),
-            Stmt::UnsafeBlock { body } => Stmt::UnsafeBlock { body: self.stmts(body, shadow)? },
-            Stmt::If { condition, body, else_body } => Stmt::If {
+            Stmt::Return(Some(value), zeile) => Stmt::Return(Some(self.expr(value, shadow)?), *zeile),
+            Stmt::Expression(value, zeile) => Stmt::Expression(self.expr(value, shadow)?, *zeile),
+            Stmt::UnsafeBlock { zeile, body } => Stmt::UnsafeBlock { zeile: *zeile, body: self.stmts(body, shadow)? },
+            Stmt::If { zeile, condition, body, else_body } => Stmt::If {
+                zeile: *zeile,
                 condition: self.expr(condition, shadow)?,
                 body: self.stmts(body, shadow)?,
                 else_body: self.stmts(else_body, shadow)?,
             },
-            Stmt::While { condition, body } => Stmt::While {
-                condition: self.expr(condition, shadow)?, body: self.stmts(body, shadow)?,
+            Stmt::While { zeile, condition, body } => Stmt::While {
+                zeile: *zeile, condition: self.expr(condition, shadow)?, body: self.stmts(body, shadow)?,
             },
-            Stmt::Assignment { name, ty, value } => Stmt::Assignment {
-                name: name.clone(), ty: ty.clone(), value: self.expr(value, shadow)?,
+            Stmt::Assignment { zeile, name, ty, value } => Stmt::Assignment {
+                zeile: *zeile, name: name.clone(), ty: ty.clone(), value: self.expr(value, shadow)?,
             },
-            Stmt::ConstAssignment { name, ty, value } => Stmt::ConstAssignment {
-                name: name.clone(), ty: ty.clone(), value: self.expr(value, shadow)?,
+            Stmt::ConstAssignment { zeile, name, ty, value } => Stmt::ConstAssignment {
+                zeile: *zeile, name: name.clone(), ty: ty.clone(), value: self.expr(value, shadow)?,
             },
             // P2-T48: auch Ziel und Wert von p[i] = …, p.feld = …, x += … und zeige
             // falten; sonst bleibt z. B. `q[0] = KONST` ein unbekannter Bezeichner.
-            Stmt::CompoundAssignment { name, op, value } => Stmt::CompoundAssignment {
-                name: name.clone(), op: op.clone(), value: self.expr(value, shadow)?,
+            Stmt::CompoundAssignment { zeile, name, op, value } => Stmt::CompoundAssignment {
+                zeile: *zeile, name: name.clone(), op: op.clone(), value: self.expr(value, shadow)?,
             },
-            Stmt::PropertyAssignment { object, property, value } => Stmt::PropertyAssignment {
-                object: self.expr(object, shadow)?, property: property.clone(), value: self.expr(value, shadow)?,
+            Stmt::PropertyAssignment { zeile, object, property, value } => Stmt::PropertyAssignment {
+                zeile: *zeile, object: self.expr(object, shadow)?, property: property.clone(), value: self.expr(value, shadow)?,
             },
-            Stmt::IndexAssignment { object, index, value } => Stmt::IndexAssignment {
-                object: self.expr(object, shadow)?, index: self.expr(index, shadow)?, value: self.expr(value, shadow)?,
+            Stmt::IndexAssignment { zeile, object, index, value } => Stmt::IndexAssignment {
+                zeile: *zeile, object: self.expr(object, shadow)?, index: self.expr(index, shadow)?, value: self.expr(value, shadow)?,
             },
-            Stmt::Show(value) => Stmt::Show(self.expr(value, shadow)?),
+            Stmt::Show(value, zeile) => Stmt::Show(self.expr(value, shadow)?, *zeile),
             other => other.clone(),
         })).collect()
     }
@@ -346,7 +396,7 @@ fn collect_locals(body: &[Stmt], names: &mut HashSet<String>) {
     for stmt in body {
         match stmt {
             Stmt::Assignment { name, .. } | Stmt::ConstAssignment { name, .. } => { names.insert(name.clone()); }
-            Stmt::UnsafeBlock { body } | Stmt::While { body, .. } => collect_locals(body, names),
+            Stmt::UnsafeBlock { body, .. } | Stmt::While { body, .. } => collect_locals(body, names),
             Stmt::If { body, else_body, .. } => { collect_locals(body, names); collect_locals(else_body, names); }
             _ => {}
         }
@@ -418,26 +468,28 @@ pub(crate) fn fold_program<'ctx>(
         }
     }
     let statements = program.statements.iter().map(|stmt| Ok(match stmt {
-        Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators }
+        Stmt::FunctionDef { zeile, name, params, param_types, return_type, defaults, body, decorators }
             if is_native(decorators) =>
         {
             let mut shadow: HashSet<String> = params.iter().cloned().collect();
             collect_locals(body, &mut shadow);
             Stmt::FunctionDef {
+                zeile: *zeile,
                 name: name.clone(), params: params.clone(), param_types: param_types.clone(),
                 return_type: return_type.clone(), defaults: defaults.clone(),
                 body: folder.stmts(body, &shadow).map_err(|e| format!("Native Funktion '{name}': {e}"))?,
                 decorators: decorators.clone(),
             }
         }
-        Stmt::NativeConst { name, ty, value, decorators } => Stmt::NativeConst {
+        Stmt::NativeConst { zeile, name, ty, value, decorators } => Stmt::NativeConst {
+            zeile: *zeile,
             name: name.clone(), ty: text_length(ty, value),
             value: folder.expr(value, &empty).map_err(|e| format!("Native Konstante '{name}': {e}"))?,
             decorators: decorators.clone(),
         },
         other => other.clone(),
     })).collect::<Result<Vec<_>, String>>()?;
-    Ok(Program { statements })
+    Ok(Program { statements, funktion_quellen: Default::default() })
 }
 
 struct Emitter<'a, 'ctx> {
@@ -481,7 +533,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             return Ok(llvm.into_int_type().const_int(value as u64, false).into());
         }
         match (&ty.kind, expr) {
-            (TypeKind::Name(name), Expr::FunctionCall { name: ctor, args }) if name == ctor => {
+            (TypeKind::Name(name), Expr::FunctionCall { name: ctor, args, .. }) if name == ctor => {
                 let layout = self.registry.layout(name)
                     .ok_or_else(|| format!("'{name}' ist keine native Struktur"))?;
                 if args.len() != layout.fields.len() {
@@ -571,7 +623,7 @@ pub(crate) fn emit_constants<'ctx>(
 ) -> Result<(), String> {
     let constants: Vec<(&String, &TypeRef, &Expr, &Vec<Decorator>)> = program.statements.iter()
         .filter_map(|stmt| match stmt {
-            Stmt::NativeConst { name, ty, value, decorators } => Some((name, ty, value, decorators)),
+            Stmt::NativeConst { name, ty, value, decorators, .. } => Some((name, ty, value, decorators)),
             _ => None,
         })
         .collect();

@@ -1,0 +1,4 @@
+struktur Schalter:
+    an: ptr[bool]
+
+zeige 1

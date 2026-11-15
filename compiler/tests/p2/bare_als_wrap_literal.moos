@@ -1,0 +1,6 @@
+# P2-T28 (Review 4571f610): als_wrap nimmt auch Literale ausserhalb des
+# Zieltyps modulo 2^N; erwartete Bytes 00 ff ff 2a.
+@nativ
+@sektion(".p2_wrap")
+@benutzt
+konstante WRAP: [u8; 4] auf [als_wrap(u8, 256), als_wrap(u8, 0x1FF), als_wrap(u8, -1), als_wrap(u8, 0x12A)]

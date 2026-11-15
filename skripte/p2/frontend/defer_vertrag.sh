@@ -10,7 +10,9 @@ for name in lifo fehler ursprung bedingt schleife catch_return rekursion unbehan
   if [ "$rc" -ne 0 ]; then
     echo "FAIL $name: Compile-Exit $rc"; failed=1; continue
   fi
-  timeout 10s "$out" > "$out.out" 2> "$out.err"
+  # P2-T95: Abbruchvertrag nur noch mit MOO_STRENG=1 (Standard: Hinweis + Weiterlauf).
+  streng=0; [ "$name" = unbehandelt ] && streng=1
+  MOO_STRENG=$streng timeout 10s "$out" > "$out.out" 2> "$out.err"
   rc=$?
   if [ "$name" = unbehandelt ]; then
     if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ] || [ "$rc" -ge 128 ] || ! rg -q -F 'Unbehandelter Fehler' "$out.err" || ! cmp -s "compiler/tests/p2/defer_vertrag_${name}.expected" "$out.out"; then

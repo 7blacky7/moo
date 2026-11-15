@@ -10,7 +10,7 @@ impl Parser {
             TokenType::String(abi) if abi == "C" => self.pos += 1,
             _ => return Err(ParseError {
                 message: "extern erwartet die ABI-Bezeichnung \"C\"".to_string(),
-                line: self.current().line,
+                ..ParseError::bei(self.current())
             }),
         }
         self.eat(&TokenType::Func)?;
@@ -22,14 +22,14 @@ impl Parser {
                 if matches!(self.current_type(), TokenType::Spread) {
                     return Err(ParseError {
                         message: "Variadische extern-C-Signaturen sind nicht unterstützt".to_string(),
-                        line: self.current().line,
+                        ..ParseError::bei(self.current())
                     });
                 }
                 let param_name = self.eat_identifier()?;
                 if params.iter().any(|(existing, _)| existing == &param_name) {
                     return Err(ParseError {
                         message: format!("Doppelter extern-Parameter '{param_name}'"),
-                        line: self.current().line,
+                        ..ParseError::bei(self.current())
                     });
                 }
                 self.eat(&TokenType::Colon)?;
@@ -42,6 +42,6 @@ impl Parser {
         self.eat(&TokenType::RParen)?;
         self.eat(&TokenType::ThinArrow)?;
         let result = self.parse_type()?;
-        Ok(Stmt::ExternC { name, params, result, decorators })
+        Ok(Stmt::ExternC { zeile: 0, name, params, result, decorators })
     }
 }

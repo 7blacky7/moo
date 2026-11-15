@@ -1,0 +1,3 @@
+# P2-T29 S1: Modul mit Typfehler; die Meldung nennt diese Datei.
+funktion modul_wert() -> Zahl:
+    gib_zurück "kein Wert"

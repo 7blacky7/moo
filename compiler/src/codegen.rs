@@ -123,6 +123,11 @@ pub struct CodeGen<'ctx> {
     // hosted fangbaren @nativ-Aufrufen ohne eigenes versuche:/aufraeumen
     // (native_guard_exit_block); try_stack bleibt davon unberuehrt.
     native_guard_enabled: bool,
+    /// P2-T95: Quellzeile der gerade uebersetzten wirf-Anweisung.
+    wirf_zeile: usize,
+    /// P2-T95: Hauptquelldatei und Quelldatei je Modulfunktion (Hinweise).
+    quelldatei: Option<String>,
+    funktion_quellen: HashMap<String, String>,
     native_guard_exit: Option<inkwell::basic_block::BasicBlock<'ctx>>,
     native_try_zero_arg_users: std::collections::HashSet<String>,
     variables: HashMap<String, PointerValue<'ctx>>,
@@ -164,6 +169,9 @@ pub struct CodeGen<'ctx> {
     lambda_counter: usize,
     for_iter_counter: usize,
     method_obj_counter: usize,
+    // Receiver-Slots der Methodenaufrufe, die direkt in main angelegt wurden.
+    // Der main-Epilog gibt genau diese frei (fang_matrix, #38221).
+    main_mcall_slots: Vec<PointerValue<'ctx>>,
     /// P2-T87: der naechste MethodCall laeuft nur ueber die Builtin-Arme
     /// (Builtin-Zweig der Methodenweiche, Klassenpfad schon geprueft).
     methode_nur_builtin: bool,
@@ -178,7 +186,9 @@ pub struct CodeGen<'ctx> {
     defer_borrowed_handler: Option<inkwell::basic_block::BasicBlock<'ctx>>,
     // Crystal-inspiriert: Typ-Tracking fuer Warnungen (kein Enforcement!)
     variable_types: HashMap<String, &'static str>,
-    warnings: Vec<String>,
+    warnings: Vec<crate::diagnose::Diagnose>,
+    /// P2-T97: Quellzeile fuer Diagnosen (0 = unbekannt), siehe compile_stmt.
+    diag_zeile: usize,
     // Rust-inspiriert: unsafe-Kontext Flag
     unsafe_context: bool,
     // Test-Framework: registrierte Tests (display_name, fn_name)
@@ -248,6 +258,9 @@ impl<'ctx> CodeGen<'ctx> {
             native_try_direct: false,
             native_skip_target: None,
             native_guard_enabled: false,
+            wirf_zeile: 0,
+            quelldatei: None,
+            funktion_quellen: HashMap::new(),
             native_guard_exit: None,
             native_try_zero_arg_users: std::collections::HashSet::new(),
             variables: HashMap::new(),
@@ -268,6 +281,7 @@ impl<'ctx> CodeGen<'ctx> {
             lambda_counter: 0,
             for_iter_counter: 0,
             method_obj_counter: 0,
+            main_mcall_slots: Vec::new(),
             methode_nur_builtin: false,
             defer_stack: Vec::new(),
             defer_catalog: defer_catalog::DeferCatalog::default(),
@@ -278,6 +292,7 @@ impl<'ctx> CodeGen<'ctx> {
             defer_borrowed_handler: None,
             variable_types: HashMap::new(),
             warnings: Vec::new(),
+            diag_zeile: 0,
             unsafe_context: false,
             test_names: Vec::new(),
             profiling: false,
@@ -483,7 +498,7 @@ impl<'ctx> CodeGen<'ctx> {
                     _ => Err("Nur arithmetische Operatoren in konstanten Ausdruecken".to_string()),
                 }
             }
-            Expr::FunctionCall { name, args } => {
+            Expr::FunctionCall { name, args, .. } => {
                 if let Some(bits) = Self::fixed_cast_bits(name) {
                     if args.len() != 1 {
                         return Err(format!("{name} erwartet genau 1 Argument"));
@@ -575,6 +590,13 @@ impl<'ctx> CodeGen<'ctx> {
                 "rohdaten_u32" | "rawdata_u32" => {}
                 "sektion" | "section" => match d.args.as_slice() {
                     [crate::ast::DecoratorArg::Text(s)] => {
+                        // P2-T28 (Review 4571f610): der Multiboot2-Kopf ist eine @nativ konstante.
+                        if s == ".multiboot2" {
+                            return Err(format!(
+                                "@{}(\".multiboot2\") ist nur fuer eine @nativ konstante (Multiboot2-Kopf) zulaessig, nicht fuer @rohdaten_u32",
+                                d.name
+                            ));
+                        }
                         let section = self.target_section_name(s, false)?;
                         g.set_section(Some(&section));
                     }
@@ -631,6 +653,13 @@ impl<'ctx> CodeGen<'ctx> {
                 ("sektion", [crate::ast::DecoratorArg::Text(s)]) => {
                     // P2-T28 (Plan 607b20ba B3): genau ein Multiboot2-Kopf, nur x86_64.
                     if s == ".multiboot2" {
+                        // Review 4571f610: genau eine @nativ konstante ist der Kopf.
+                        if executable {
+                            return Err(format!(
+                                "{what}: @{}(\".multiboot2\") ist nur fuer eine @nativ konstante (Multiboot2-Kopf) zulaessig",
+                                d.name
+                            ));
+                        }
                         let triple = self.module.get_triple();
                         let triple = triple.as_str().to_string_lossy().into_owned();
                         if !triple.starts_with("x86_64") {
@@ -717,8 +746,9 @@ impl<'ctx> CodeGen<'ctx> {
         for stmt in &program.statements {
             if let Stmt::StructDef { name, .. } = stmt {
                 if crate::native_struct::vecmat_art_name(name).is_some() {
-                    let warnung = format!("eigene struktur '{name}' ueberdeckt den eingebauten Typ {name} (ohne eingebaute Operatoren)");
-                    if !self.warnings.contains(&warnung) { self.warnings.push(warnung); }
+                    let warnung = self.diag_ort(crate::diagnose::Diagnose::hinweis("M-H002",
+                        format!("eigene struktur '{name}' ueberdeckt den eingebauten Typ {name} (ohne eingebaute Operatoren)")));
+                    if !self.warnings.iter().any(|w| w.meldung == warnung.meldung) { self.warnings.push(warnung); }
                 }
             }
         }
@@ -732,7 +762,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
         let mut definitions: Vec<(&str, &[(String, TypeRef)], &[Decorator])> = program.statements.iter()
             .filter_map(|stmt| match stmt {
-                Stmt::StructDef { name, fields, decorators } =>
+                Stmt::StructDef { name, fields, decorators, .. } =>
                     Some((name.as_str(), fields.as_slice(), decorators.as_slice())),
                 _ => None,
             })
@@ -769,7 +799,30 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     /// Kompiliert ein ganzes Programm
+    /// P2-T95: Quelldatei der Hauptdatei fuer Fehlerhinweise (Datei:Zeile).
+    pub fn set_quelldatei(&mut self, datei: &str) {
+        self.quelldatei = Some(datei.to_string());
+    }
+
+    /// P2-T97: Codegen mit einheitlichen Diagnosen. Hinweise (self.warnings)
+    /// gehen an den Diagnose-Sammler; ein Fehler ohne strukturierte Diagnose
+    /// bekommt hier Code (M-N000 in nativem Code, sonst M-C000) und Ort.
     pub fn compile_program(&mut self, program: &Program) -> Result<(), String> {
+        let ergebnis = self.compile_program_kern(program);
+        for hinweis in std::mem::take(&mut self.warnings) {
+            crate::diagnose::melden(hinweis);
+        }
+        if let Err(e) = &ergebnis {
+            if !crate::diagnose::hat_fehler() {
+                let code = if self.diag_in_nativ() { "M-N000" } else { "M-C000" };
+                crate::diagnose::melden(self.diag_ort(crate::diagnose::Diagnose::fehler(code, e.clone())));
+            }
+        }
+        ergebnis
+    }
+
+    fn compile_program_kern(&mut self, program: &Program) -> Result<(), String> {
+        self.funktion_quellen = program.funktion_quellen.clone();
         self.register_native_structs(program)?;
         // P7-T4 (1A): Layoutabfragen und skalare native Konstanten falten.
         let folded = crate::native_const::fold_program(
@@ -868,6 +921,18 @@ impl<'ctx> CodeGen<'ctx> {
                     self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_main_local")?;
                 }
             }
+            // Receiver-Slots der Methodenaufrufe (siehe MethodCall) gehoeren
+            // ebenfalls zum Main-Frame. In Funktionen gibt sie
+            // release_function_locals frei; in main blieb der letzte temporaere
+            // Receiver (z. B. `neu K().m()`) sonst bis Prozessende unerreichbar
+            // (LSan-Befund skripte/p2/ffi/fang_matrix.sh, Fall 12). Freigegeben
+            // wird nur, was bei der Anlage in main_mcall_slots registriert wurde,
+            // kein Namensfilter: Benutzer-Locals sind oben schon freigegeben.
+            for ptr in self.main_mcall_slots.clone() {
+                let val = self.builder.build_load(self.mv_type(), ptr, "main_mcall_exit")
+                    .map_err(|e| format!("{e}"))?.into_struct_value();
+                self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_main_mcall")?;
+            }
             self.builder.build_return(Some(&i32_type.const_int(0, false)))
                 .map_err(|e| format!("Return-Fehler: {e}"))?;
         }
@@ -891,10 +956,8 @@ impl<'ctx> CodeGen<'ctx> {
         // P7-T4 (7A): direkte Aufrufe erben @aufrufkonvention ihres Ziels.
         crate::ffi_types::sync_direct_call_conventions(&self.module)?;
 
-        // Typ-Warnungen ausgeben (Crystal-inspiriert)
-        for w in &self.warnings {
-            eprintln!("Warnung: {w}");
-        }
+        // Typ-Hinweise (Crystal-inspiriert) meldet compile_program an den
+        // Diagnose-Sammler (P2-T97), auch wenn danach ein Fehler folgt.
 
         self.module.verify().map_err(|e| format!("LLVM Verifikation fehlgeschlagen: {}", e.to_string()))
     }
@@ -994,7 +1057,7 @@ impl<'ctx> CodeGen<'ctx> {
         // Alle C-Signaturen vor nativen Funktionskoerpern erfassen, unabhaengig
         // von ihrer Reihenfolge im Quelltext.
         for stmt in &program.statements {
-            if let Stmt::ExternC { name, params, result, decorators } = stmt {
+            if let Stmt::ExternC { name, params, result, decorators, .. } = stmt {
                 let triple = self.module.get_triple();
                 let triple = triple.as_str().to_str().map_err(|e| format!("Ungueltiges Ziel-Triple: {e}"))?;
                 let types: Vec<TypeRef> = params.iter().map(|(_, ty)| ty.clone()).collect();
@@ -1042,7 +1105,7 @@ impl<'ctx> CodeGen<'ctx> {
         // P2-T83 B3: Puffer-/@liest-Positionen aller Funktionen (Weitergabepruefung).
         let liest_karte = crate::native_system::liest_karte(&program.statements);
         for stmt in &program.statements {
-            if let Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators } = stmt {
+            if let Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators, .. } = stmt {
                 if !decorators.iter().any(|d| d.name == "nativ" || d.name == "native") { continue; }
                 use crate::codegen_native::{NType, NSignature};
                 if params.len() != param_types.len() || defaults.iter().any(Option::is_some)
@@ -1170,10 +1233,10 @@ impl<'ctx> CodeGen<'ctx> {
                 // uebernimmt der Systemkoerper: der skalare FFI-Emitter kennt
                 // keine Zeiger (ffi_types.rs scalar_parameters/scalar_result).
                 let ffi_single = !(has_pointer || returns_pointer || struct_param || returns_struct || has_buffer)
-                    && matches!(body.as_slice(), [Stmt::UnsafeBlock { body: inner }]
+                    && matches!(body.as_slice(), [Stmt::UnsafeBlock { body: inner, .. }]
                     if matches!(inner.as_slice(),
-                        [Stmt::Return(Some(Expr::FunctionCall { name, .. }))]
-                        | [Stmt::Expression(Expr::FunctionCall { name, .. })]
+                        [Stmt::Return(Some(Expr::FunctionCall { name, .. }), _)]
+                        | [Stmt::Expression(Expr::FunctionCall { name, .. }, _)]
                         if self.extern_c_names.contains(name)));
                 // P2-T66: hosted x86_64 (Linux/Windows, Usermode) nutzt den
                 // Systemkoerper fuer unsicher:-Koerper mit Zeigern, Struktur-
@@ -1505,7 +1568,7 @@ impl<'ctx> CodeGen<'ctx> {
         for stmt in &program.statements {
             match stmt {
                 Stmt::ExternC { .. } => {}
-                Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators } => {
+                Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators, .. } => {
                     if decorators.iter().any(|d| d.name == "nativ" || d.name == "native") {
                         if let Some((fun, sig)) = system_functions.get(name) {
                             let target = self.target_data.as_ref()
@@ -1532,8 +1595,8 @@ impl<'ctx> CodeGen<'ctx> {
                         if let Some((fun, sig)) = pointer_functions.get(name) {
                             let target = self.target_data.as_ref()
                                 .ok_or("Ziel-Datenlayout für Zeiger fehlt")?;
-                            if matches!(body.as_slice(), [Stmt::UnsafeBlock { body }]
-                                if matches!(body.as_slice(), [Stmt::Return(Some(Expr::FunctionCall { .. }))] | [Stmt::Expression(Expr::FunctionCall { .. })])) {
+                            if matches!(body.as_slice(), [Stmt::UnsafeBlock { body, .. }]
+                                if matches!(body.as_slice(), [Stmt::Return(Some(Expr::FunctionCall { .. }), _)] | [Stmt::Expression(Expr::FunctionCall { .. }, _)])) {
                                 let result = return_type.as_ref().ok_or("Nativer Rückgabetyp fehlt")?;
                                 crate::codegen_native::emit_indirect_return_function(
                                     self.context, &self.module, *fun, sig, params, param_types, result, body,
@@ -1675,7 +1738,8 @@ impl<'ctx> CodeGen<'ctx> {
             // Wenn es schon ein Triple ist, direkt verwenden
             other if other.contains('-') => other.to_string(),
             other => {
-                eprintln!("Warnung: Unbekanntes Target '{other}', verwende als Triple");
+                crate::diagnose::melden(crate::diagnose::Diagnose::hinweis("M-H005",
+                    format!("Unbekanntes Target '{other}', verwende als Triple")));
                 other.to_string()
             }
         }
@@ -2117,7 +2181,21 @@ impl<'ctx> CodeGen<'ctx> {
 
     // === Statement-Kompilierung ===
 
+    /// P2-T97: Diagnosezeile je Statement: die eigene (B5b, 0 = unbekannt), bis
+    /// ein innerer Knoten mit Zeile (Aufruf, wirf) sie praezisiert; nach Erfolg gilt wieder die des
+    /// umgebenden Statements, nach einem Fehler bleibt die innerste stehen.
+    /// So ist eine gemeldete Zeile richtig oder fehlt, aber nie veraltet.
     fn compile_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+        let aussen = self.diag_zeile;
+        self.diag_zeile = stmt.zeile();
+        let ergebnis = self.compile_stmt_kern(stmt);
+        if ergebnis.is_ok() {
+            self.diag_zeile = aussen;
+        }
+        ergebnis
+    }
+
+    fn compile_stmt_kern(&mut self, stmt: &Stmt) -> Result<(), String> {
         let guarded = self.defer_runtime || self.defer_borrowed_handler.is_some();
         let result = match stmt {
             Stmt::ExternC { .. } => Err("extern C ist noch nicht implementiert".to_string()),
@@ -2154,7 +2232,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.guard_local_expr_error(&[val])?;
                 self.store_var(name, val)
             }
-            Stmt::CompoundAssignment { name, op, value } => {
+            Stmt::CompoundAssignment { name, op, value, .. } => {
                 let current = self.load_var(name)?;
                 let rhs = self.compile_expr(value)?;
                 let func = match op.as_str() {
@@ -2166,7 +2244,7 @@ impl<'ctx> CodeGen<'ctx> {
                     &[current.into(), rhs.into()], "compound")?;
                 self.store_var(name, result)
             }
-            Stmt::PropertyAssignment { object, property, value } => {
+            Stmt::PropertyAssignment { object, property, value, .. } => {
                 let obj = self.compile_expr(object)?;
                 let val = self.compile_expr(value)?;
                 let prop_str = self.make_global_str(property, "prop")?;
@@ -2175,7 +2253,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.call_rt_void(self.rt.moo_release, &[obj.into()], "rel_obj_propset")?;
                 Ok(())
             }
-            Stmt::IndexAssignment { object, index, value } => {
+            Stmt::IndexAssignment { object, index, value, .. } => {
                 let obj = self.compile_statement_expr(object)?;
                 self.guard_local_expr_error(&[obj])?;
                 let idx = self.compile_owned_statement_expr(index, &[obj])?;
@@ -2191,7 +2269,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.call_rt_void(self.rt.moo_release, &[obj.into()], "rel_obj")?;
                 Ok(())
             }
-            Stmt::Show(expr) => {
+            Stmt::Show(expr, _) => {
                 // Direktpfad fuer native Argumentadapter in versuche: (P2-T66,
                 // Kriterium in native_try_direct_root; P2-T74 auch setze/gib_zurück).
                 let val = self.compile_statement_expr_direct(expr)?;
@@ -2202,13 +2280,13 @@ impl<'ctx> CodeGen<'ctx> {
                 self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_show")?;
                 Ok(())
             }
-            Stmt::If { condition, body, else_body } => {
+            Stmt::If { condition, body, else_body, .. } => {
                 self.compile_if(condition, body, else_body)
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 self.compile_while(condition, body)
             }
-            Stmt::For { var_name, iterable, body } => {
+            Stmt::For { var_name, iterable, body, .. } => {
                 self.compile_for(var_name, iterable, body)
             }
             Stmt::FunctionDef { name, params, defaults, body, decorators, .. } => {
@@ -2248,15 +2326,15 @@ impl<'ctx> CodeGen<'ctx> {
             Stmt::DataClassDef { name, fields, .. } => {
                 self.compile_data_class(name, fields)
             }
-            Stmt::Return(value) => self.compile_return(value),
-            Stmt::Break => {
+            Stmt::Return(value, _) => self.compile_return(value),
+            Stmt::Break(_) => {
                 if let Some((_, after_bb, target_depth)) = self.loop_stack.last().copied() {
                     self.leave_loop_handlers(target_depth)?;
                     self.builder.build_unconditional_branch(after_bb).map_err(|e| format!("{e}"))?;
                 }
                 Ok(())
             }
-            Stmt::Continue => {
+            Stmt::Continue(_) => {
                 if let Some((cond_bb, _, target_depth)) = self.loop_stack.last().copied() {
                     self.leave_loop_handlers(target_depth)?;
                     self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
@@ -2270,12 +2348,16 @@ impl<'ctx> CodeGen<'ctx> {
                 // Interfaces sind nur syntaktischer Zucker — kein Runtime-Code
                 Ok(())
             }
-            Stmt::TryCatch { try_body, catch_var, catch_body } => {
+            Stmt::TryCatch { try_body, catch_var, catch_body, .. } => {
                 self.compile_try_catch(try_body, catch_var, catch_body)
             }
             // ERDE-13: reine Deklaration, wirkt in compile_function_def (keine Local-Alloca).
-            Stmt::Global(_) => Ok(()),
-            Stmt::Throw(expr) => {
+            Stmt::Global(_, _) => Ok(()),
+            Stmt::Throw(expr, wirf_zeile) => {
+                self.wirf_zeile = *wirf_zeile;
+                if *wirf_zeile > 0 {
+                    self.diag_zeile = *wirf_zeile;
+                }
                 let val = self.compile_statement_expr(expr)?;
                 self.guard_local_expr_error(&[val])?;
                 if self.defer_runtime && !self.try_stack.iter().any(|bb| bb.get_parent() == self.current_function) {
@@ -2285,7 +2367,14 @@ impl<'ctx> CodeGen<'ctx> {
                     self.route_runtime_defer_error(has, first, None, true)?;
                     return Ok(());
                 }
-                self.call_rt_void(self.rt.moo_throw, &[val.into()], "throw")?;
+                // P2-T95: Wurfort fuer den Hinweis bei unbehandeltem Fehler.
+                if self.bare_mode {
+                    self.call_rt_void(self.rt.moo_throw, &[val.into()], "throw")?;
+                } else {
+                    let ort = self.fehler_ort_konstante()?;
+                    let throw_ort = self.fehler_rt_funktion("moo_throw_ort", true);
+                    self.call_rt_void(throw_ort, &[val.into(), ort.into()], "throw")?;
+                }
                 // Wenn wir in einem try-Block sind: sofort zum innersten catch_bb
                 // branchen. Das terminiert den aktuellen Block und stellt sicher,
                 // dass Code nach 'wirf' (inkl. return) nicht ausgefuehrt wird.
@@ -2311,10 +2400,10 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 Ok(())
             }
-            Stmt::Match { value, cases } => {
+            Stmt::Match { value, cases, .. } => {
                 self.compile_match(value, cases)
             }
-            Stmt::Defer(expr) => {
+            Stmt::Defer(expr, _) => {
                 let id = self.defer_catalog.id_for(expr)
                     .ok_or("Defer-Aktionsstelle fehlt im Funktionskatalog")?;
                 if !self.defer_runtime {
@@ -2358,10 +2447,10 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.position_at_end(success);
                 Ok(())
             }
-            Stmt::Guard { condition, else_body } => {
+            Stmt::Guard { condition, else_body, .. } => {
                 self.compile_guard(condition, else_body)
             }
-            Stmt::UnsafeBlock { body } => {
+            Stmt::UnsafeBlock { body, .. } => {
                 // Rust-inspiriert: unsafe_context erlaubt gefaehrliche Operationen
                 let prev = self.unsafe_context;
                 self.unsafe_context = true;
@@ -2369,7 +2458,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.unsafe_context = prev;
                 result
             }
-            Stmt::Expression(expr) => {
+            Stmt::Expression(expr, _) => {
                 // Ergebnis wird nicht konsumiert → Expression-Temp freigeben,
                 // sonst leakt z.B. eine nackte `d[k]`-Zeile den Return-Ref.
                 let guarded = self.defer_runtime || self.defer_borrowed_handler.is_some();
@@ -2391,12 +2480,12 @@ impl<'ctx> CodeGen<'ctx> {
                 self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_expr_stmt")?;
                 Ok(())
             }
-            Stmt::ParallelFor { var_name, iterable, body } => {
+            Stmt::ParallelFor { var_name, iterable, body, .. } => {
                 // Fallback: als normale For-Schleife kompilieren
                 // EHRLICH: Echte Parallelisierung braucht thread-sichere Codegen
                 self.compile_for(var_name, iterable, body)
             }
-            Stmt::Precondition { condition, message } | Stmt::Postcondition { condition, message } => {
+            Stmt::Precondition { condition, message, .. } | Stmt::Postcondition { condition, message, .. } => {
                 let cond_val = self.compile_expr(condition)?;
                 let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
                     &[cond_val.into()], "contract").map_err(|e| format!("{e}"))?;
@@ -2419,7 +2508,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.position_at_end(ok_bb);
                 Ok(())
             }
-            Stmt::TestDef { name, body } => {
+            Stmt::TestDef { name, body, .. } => {
                 // Test-Framework: teste "name": body → generiert Funktion __test_<name>
                 // und registriert den Namen fuer teste_alle()
                 let fn_name = format!("__test_{}", name.replace(' ', "_").replace('"', ""));
@@ -2485,7 +2574,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.test_names.push((name.clone(), fn_name));
                 Ok(())
             }
-            Stmt::Expect(expr) => {
+            Stmt::Expect(expr, _) => {
                 // erwarte expr → wenn falsch, print Fehler + return false
                 let val = self.compile_expr(expr)?;
                 let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
@@ -2957,6 +3046,12 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 "sektion" | "section" => match d.args.as_slice() {
                     [crate::ast::DecoratorArg::Text(s)] => {
+                        if s == ".multiboot2" {
+                            return Err(format!(
+                                "@{}(\".multiboot2\") ist nur fuer eine @nativ konstante (Multiboot2-Kopf) zulaessig, nicht fuer Funktionen",
+                                d.name
+                            ));
+                        }
                         let section = self.target_section_name(s, true)?;
                         function.as_global_value().set_section(Some(&section));
                     }
@@ -3082,7 +3177,7 @@ impl<'ctx> CodeGen<'ctx> {
         // ERDE-13: `global x` auf Funktionsebene -> keine Local-Alloca, store_var
         // schreibt in das Top-Level-Global.
         let global_decls: Vec<String> = body.iter()
-            .filter_map(|s| if let Stmt::Global(names) = s { Some(names.clone()) } else { None })
+            .filter_map(|s| if let Stmt::Global(names, _) = s { Some(names.clone()) } else { None })
             .flatten()
             .collect();
         for g in &global_decls {
@@ -3822,7 +3917,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let none_val = self.mv_type().const_named_struct(&[none_init.into(), zero_data.into()]);
                 let local_names = Self::collect_all_var_names(method_body);
                 let global_decls: Vec<String> = method_body.iter()
-                    .filter_map(|s| if let Stmt::Global(names) = s { Some(names.clone()) } else { None })
+                    .filter_map(|s| if let Stmt::Global(names, _) = s { Some(names.clone()) } else { None })
                     .flatten()
                     .collect();
                 for g in &global_decls {
@@ -4234,7 +4329,7 @@ impl<'ctx> CodeGen<'ctx> {
     fn runtime_defer_expr_supported(&self, expr: &Expr) -> bool {
         if !self.recursive_statement_expr_supported(expr) { return false; }
         match expr {
-            Expr::FunctionCall { name, args } =>
+            Expr::FunctionCall { name, args, .. } =>
                 self.defer_safe_calls.contains(name)
                     && args.iter().all(|arg| self.runtime_defer_expr_supported(arg)),
             Expr::BinaryOp { left, right, .. } =>
@@ -4256,7 +4351,7 @@ impl<'ctx> CodeGen<'ctx> {
                 Stmt::FunctionDef { body, .. } | Stmt::ClassDef { body, .. }
                 | Stmt::TestDef { body, .. } | Stmt::While { body, .. }
                 | Stmt::For { body, .. } | Stmt::ParallelFor { body, .. }
-                | Stmt::UnsafeBlock { body } => Self::collect_defer_lambda_aliases(body, names),
+                | Stmt::UnsafeBlock { body, .. } => Self::collect_defer_lambda_aliases(body, names),
                 Stmt::If { body, else_body, .. } => {
                     Self::collect_defer_lambda_aliases(body, names);
                     Self::collect_defer_lambda_aliases(else_body, names);
@@ -4278,7 +4373,7 @@ impl<'ctx> CodeGen<'ctx> {
     // Baeume verwendet; dort sind alle anderen Ausdrucksformen ausgeschlossen.
     fn collect_defer_calls_expr(expr: &Expr, names: &mut std::collections::HashSet<String>) {
         match expr {
-            Expr::FunctionCall { name, args } => {
+            Expr::FunctionCall { name, args, .. } => {
                 names.insert(name.clone());
                 for arg in args { Self::collect_defer_calls_expr(arg, names); }
             }
@@ -4301,15 +4396,15 @@ impl<'ctx> CodeGen<'ctx> {
         for stmt in stmts {
             match stmt {
                 Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
-                | Stmt::Show(value) | Stmt::Throw(value) | Stmt::Expression(value)
-                | Stmt::Defer(value) | Stmt::Return(Some(value)) =>
+                | Stmt::Show(value, _) | Stmt::Throw(value, _) | Stmt::Expression(value, _)
+                | Stmt::Defer(value, _) | Stmt::Return(Some(value), _) =>
                     Self::collect_defer_calls_expr(value, names),
-                Stmt::If { condition, body, else_body } => {
+                Stmt::If { condition, body, else_body, .. } => {
                     Self::collect_defer_calls_expr(condition, names);
                     Self::collect_defer_calls(body, names);
                     Self::collect_defer_calls(else_body, names);
                 }
-                Stmt::While { condition, body } => {
+                Stmt::While { condition, body, .. } => {
                     Self::collect_defer_calls_expr(condition, names);
                     Self::collect_defer_calls(body, names);
                 }
@@ -4321,7 +4416,7 @@ impl<'ctx> CodeGen<'ctx> {
                     Self::collect_defer_calls(try_body, names);
                     Self::collect_defer_calls(catch_body, names);
                 }
-                Stmt::Guard { condition, else_body } => {
+                Stmt::Guard { condition, else_body, .. } => {
                     Self::collect_defer_calls_expr(condition, names);
                     Self::collect_defer_calls(else_body, names);
                 }
@@ -4329,7 +4424,7 @@ impl<'ctx> CodeGen<'ctx> {
                 // ohne Abstieg erhielt z.B. paar() keinen native.guard.exit.
                 // P2-T93: runtime_defer_scope_supported steigt ebenfalls ab
                 // (native Aufrufe darin bleiben dort ausgeschlossen).
-                Stmt::UnsafeBlock { body } => Self::collect_defer_calls(body, names),
+                Stmt::UnsafeBlock { body, .. } => Self::collect_defer_calls(body, names),
                 _ => {}
             }
         }
@@ -4382,15 +4477,15 @@ impl<'ctx> CodeGen<'ctx> {
     fn runtime_defer_scope_supported(&self, stmts: &[Stmt]) -> bool {
         stmts.iter().all(|stmt| match stmt {
             Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
-            | Stmt::Show(value) | Stmt::Throw(value) | Stmt::Expression(value)
-            | Stmt::Defer(value) | Stmt::Return(Some(value)) =>
+            | Stmt::Show(value, _) | Stmt::Throw(value, _) | Stmt::Expression(value, _)
+            | Stmt::Defer(value, _) | Stmt::Return(Some(value), _) =>
                 self.runtime_defer_expr_supported(value),
-            Stmt::Return(None) | Stmt::Break | Stmt::Continue | Stmt::Global(_) => true,
-            Stmt::If { condition, body, else_body } =>
+            Stmt::Return(None, _) | Stmt::Break(_) | Stmt::Continue(_) | Stmt::Global(_, _) => true,
+            Stmt::If { condition, body, else_body, .. } =>
                 self.runtime_defer_expr_supported(condition)
                     && self.runtime_defer_scope_supported(body)
                     && self.runtime_defer_scope_supported(else_body),
-            Stmt::While { condition, body } =>
+            Stmt::While { condition, body, .. } =>
                 self.runtime_defer_expr_supported(condition)
                     && self.runtime_defer_scope_supported(body),
             Stmt::For { iterable, body, .. } =>
@@ -4399,14 +4494,14 @@ impl<'ctx> CodeGen<'ctx> {
             Stmt::TryCatch { try_body, catch_body, .. } =>
                 self.runtime_defer_scope_supported(try_body)
                     && self.runtime_defer_scope_supported(catch_body),
-            Stmt::Guard { condition, else_body } =>
+            Stmt::Guard { condition, else_body, .. } =>
                 self.runtime_defer_expr_supported(condition)
                     && self.runtime_defer_scope_supported(else_body),
             // P2-T93 (Befund dbea7b86): unsicher: aendert im dynamischen Code nur
             // die Erlaubnis gefaehrlicher Builtins; die Anweisungen kompilieren
             // wie ausserhalb. Ihre Ausdruecke bleiben einzeln geprueft (native
             // und Speicher-Builtins sind keine defer_safe_calls -> weiter false).
-            Stmt::UnsafeBlock { body } => self.runtime_defer_scope_supported(body),
+            Stmt::UnsafeBlock { body, .. } => self.runtime_defer_scope_supported(body),
             _ => false,
         })
     }
@@ -4438,9 +4533,9 @@ impl<'ctx> CodeGen<'ctx> {
             // Erstfehler bleibt erhalten (vorher lief z.B. 10 / nichts in
             // 'Division durch Null!', moo_ops.c) und Folgeaufrufe mit dem
             // nichts-Ergebnis unterbleiben.
-            Expr::FunctionCall { name, args } if self.native_call_fangbar(name) =>
+            Expr::FunctionCall { name, args, .. } if self.native_call_fangbar(name) =>
                 args.iter().all(|a| self.recursive_statement_expr_supported(a)),
-            Expr::FunctionCall { name, args } =>
+            Expr::FunctionCall { name, args, .. } =>
                 !self.native_functions.contains_key(name)
                     && !self.extern_c_names.contains(name)
                     && !self.lambda_names.contains_key(name)
@@ -4485,11 +4580,11 @@ impl<'ctx> CodeGen<'ctx> {
         // benannte Funktion die Form fuer die flag-basierte Propagation
         // (native_argument_fatal_exit, P2-T74 Batch 4).
         match expr {
-            Expr::FunctionCall { name, args } =>
+            Expr::FunctionCall { name, args, .. } =>
                 self.native_functions.contains_key(name)
                     && args.iter().all(|arg| match arg {
                         Expr::Identifier(_) | Expr::Number(_) => true,
-                        Expr::FunctionCall { name, args } =>
+                        Expr::FunctionCall { name, args, .. } =>
                             args.is_empty() && self.native_try_zero_arg_users.contains(name),
                         Expr::UnaryOp { op: UnaryOpKind::Neg, operand } =>
                             matches!(operand.as_ref(), Expr::Number(_)),
@@ -4746,6 +4841,149 @@ impl<'ctx> CodeGen<'ctx> {
 
     /// Prueft eigene Expression-Resultate vor einem weiteren Seiteneffekt.
     /// Die Fehlerausbreitung innerhalb verschachtelter Ausdruecke bleibt separat.
+    /// P2-T95: Laufzeitfunktion des Hinweiskanals bei Bedarf deklarieren:
+    /// moo_throw_ort(MooValue, const MooFehlerOrt*) bzw.
+    /// moo_fehler_unbehandelt(const MooFehlerStelle*). MooValue wie moo_throw
+    /// (Windows-x64 indirekt, call_rt_void passt an).
+    fn fehler_rt_funktion(&self, symbol: &str, mit_wert: bool) -> FunctionValue<'ctx> {
+        if let Some(function) = self.module.get_function(symbol) {
+            return function;
+        }
+        let ptr = self.context.ptr_type(inkwell::AddressSpace::default());
+        let mut params: Vec<BasicMetadataTypeEnum<'ctx>> = Vec::new();
+        if mit_wert {
+            params.push(if self.windows_x64_abi() { ptr.into() } else { self.mv_type().into() });
+        }
+        params.push(ptr.into());
+        self.module.add_function(symbol, self.context.void_type().fn_type(&params, false), None)
+    }
+
+    /// P2-T95: Name der aktuellen Moo-Funktion fuer Hinweise (main = None).
+    fn fehler_funktionsname(&self) -> Option<String> {
+        let function = self.current_function?;
+        let name = function.get_name().to_str().ok()?.to_string();
+        if name == "main" { None } else { Some(name) }
+    }
+
+    /// P2-T95: Quelldatei der aktuellen Funktion (Modulfunktion oder Hauptdatei).
+    /// Nur der Dateiname: keine Host-Pfade im IR (reproduzierbar, Legacy-IR-Gate).
+    fn fehler_datei(&self) -> Option<String> {
+        let name = self.fehler_funktionsname();
+        let pfad = name.and_then(|n| self.funktion_quellen.get(&n).cloned()).or_else(|| self.quelldatei.clone())?;
+        std::path::Path::new(&pfad).file_name().map(|d| d.to_string_lossy().into_owned())
+    }
+
+    /// P2-T97: Moo-Name der aktuellen Funktion fuer Diagnosen (ohne nativen Praefix).
+    fn diag_funktion(&self) -> Option<String> {
+        let name = self.fehler_funktionsname()?;
+        Some(name.strip_prefix("__moo_native.").unwrap_or(&name).to_string())
+    }
+
+    fn diag_in_nativ(&self) -> bool {
+        let roh = self.fehler_funktionsname();
+        roh.as_deref().is_some_and(|n| n.starts_with("__moo_native."))
+            || self.diag_funktion().is_some_and(|n| self.native_functions.contains_key(&n))
+    }
+
+    /// P2-T97: Funktion und Datei (Pfad wie angegeben; Modulfunktion = Moduldatei)
+    /// ergaenzen, soweit die Diagnose sie nicht selbst traegt.
+    fn diag_ort(&self, mut d: crate::diagnose::Diagnose) -> crate::diagnose::Diagnose {
+        if d.funktion.is_none() {
+            d.funktion = self.diag_funktion();
+        }
+        if d.zeile == 0 {
+            d.zeile = self.diag_zeile;
+        }
+        if d.datei.is_none() {
+            d.datei = d.funktion.as_ref().and_then(|n| self.funktion_quellen.get(n).cloned())
+                .or_else(|| self.quelldatei.clone());
+        }
+        d
+    }
+
+    /// P2-T97: strukturierten Fehler ablegen; liefert die Meldung als Err-Text.
+    fn diag_fehler(&self, d: crate::diagnose::Diagnose) -> String {
+        let meldung = d.meldung.clone();
+        crate::diagnose::melden(self.diag_ort(d));
+        meldung
+    }
+
+    fn fehler_text_ptr(&self, text: Option<&str>) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        match text {
+            Some(text) => Ok(self.builder.build_global_string_ptr(text, "moo.hinweis.text")
+                .map_err(|e| e.to_string())?.as_pointer_value()),
+            None => Ok(self.context.ptr_type(inkwell::AddressSpace::default()).const_null()),
+        }
+    }
+
+    /// P2-T95: statischer MooFehlerOrt {funktion, datei, zeile} der wirf-Stelle.
+    fn fehler_ort_konstante(&mut self) -> Result<inkwell::values::PointerValue<'ctx>, String> {
+        let funktion = self.fehler_funktionsname();
+        let funktion = self.fehler_text_ptr(funktion.as_deref())?;
+        let datei = self.fehler_datei();
+        let datei = self.fehler_text_ptr(datei.as_deref())?;
+        let i64t = self.context.i64_type();
+        let zeile = i64t.const_int(self.wirf_zeile as u64, false);
+        let ptr = self.context.ptr_type(inkwell::AddressSpace::default());
+        let ty = self.context.struct_type(&[ptr.into(), ptr.into(), i64t.into()], false);
+        let global = self.module.add_global(ty, None, "moo.fehler.ort");
+        global.set_linkage(inkwell::module::Linkage::Private);
+        global.set_constant(true);
+        global.set_initializer(&ty.const_named_struct(&[funktion.into(), datei.into(), zeile.into()]));
+        Ok(global.as_pointer_value())
+    }
+
+    /// P2-T95 (User-Entscheid): Nach einem Moo-Aufruf in einem Rahmen OHNE
+    /// eigenen Pruefweg (kein lokales versuche:, kein Laufzeit-Defer-Rahmen,
+    /// kein geliehener Handler, kein native_guard) laeuft der Aufrufer nach
+    /// einem Callee-Fehler weiter. Steht ein Fehler an, meldet die Laufzeit das
+    /// einmal (moo_fehler_unbehandelt); der Fehler bleibt fuer den aeusseren
+    /// Pruefpunkt anstehend. main braucht keine Pruefung: ohne eigenes versuche:
+    /// ist dort die Tiefe 0, und moo_throw hat den Fehler schon gemeldet.
+    fn fehler_hinweis_nach_aufruf(&mut self, aufruf: &str, zeile: usize) -> Result<(), String> {
+        if self.bare_mode || self.in_main_function() || self.defer_runtime
+            || self.defer_borrowed_handler.is_some() || self.native_guard_enabled
+        {
+            return Ok(());
+        }
+        let Some(function) = self.current_function else { return Ok(()) };
+        if self.try_stack.iter().any(|bb| bb.get_parent() == Some(function)) {
+            return Ok(());
+        }
+        let funktion = self.fehler_funktionsname();
+        let funktion = self.fehler_text_ptr(funktion.as_deref())?;
+        let aufruf_ptr = self.fehler_text_ptr(Some(aufruf))?;
+        let datei = self.fehler_datei();
+        let datei = self.fehler_text_ptr(datei.as_deref())?;
+        let i64t = self.context.i64_type();
+        let ptr = self.context.ptr_type(inkwell::AddressSpace::default());
+        let ty = self.context.struct_type(&[ptr.into(), ptr.into(), ptr.into(), i64t.into()], false);
+        let stelle = self.module.add_global(ty, None, "moo.fehler.stelle");
+        stelle.set_linkage(inkwell::module::Linkage::Private);
+        stelle.set_constant(true);
+        stelle.set_initializer(&ty.const_named_struct(&[
+            funktion.into(), aufruf_ptr.into(), datei.into(), i64t.const_int(zeile as u64, false).into(),
+        ]));
+        let pending = self.builder.build_call(self.rt.moo_try_check, &[], "fehler.anstehend")
+            .map_err(|e| e.to_string())?.try_as_basic_value();
+        let pending = match pending {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("moo_try_check fehlgeschlagen".into()),
+        };
+        let anstehend = self.builder.build_int_compare(
+            inkwell::IntPredicate::NE, pending, self.context.i32_type().const_zero(), "fehler.anstehend.ja",
+        ).map_err(|e| e.to_string())?;
+        let hinweis = self.context.append_basic_block(function, "fehler.hinweis");
+        let weiter = self.context.append_basic_block(function, "fehler.weiter");
+        self.builder.build_conditional_branch(anstehend, hinweis, weiter).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(hinweis);
+        let melden = self.fehler_rt_funktion("moo_fehler_unbehandelt", false);
+        self.builder.build_call(melden, &[stelle.as_pointer_value().into()], "").map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(weiter).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(weiter);
+        Ok(())
+    }
+
     fn guard_local_expr_error(&mut self, values: &[StructValue<'ctx>]) -> Result<(), String> {
         if self.bare_mode { return Ok(()); }
         let function = self.current_function.unwrap();
@@ -6332,7 +6570,11 @@ impl<'ctx> CodeGen<'ctx> {
                 self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_un")?;
                 Ok(res)
             }
-            Expr::FunctionCall { name, args } => {
+            Expr::FunctionCall { name, args, zeile: aufruf_zeile } => {
+                let aufruf_zeile = *aufruf_zeile;
+                if aufruf_zeile > 0 {
+                    self.diag_zeile = aufruf_zeile;
+                }
                 let guard_args = std::mem::take(&mut self.stmt_root_guard) || self.stmt_recursive_guard;
                 if let Some(function) = self.native_functions.get(name).copied() {
                     let signature = match self.native_signatures.get(name).cloned() {
@@ -6471,9 +6713,14 @@ impl<'ctx> CodeGen<'ctx> {
                             && !matches!(arg, Expr::UnaryOp { op: crate::ast::UnaryOpKind::Neg, operand }
                                 if matches!(operand.as_ref(), Expr::Number(_))),
                     });
-                    let skip_target = if local_catch.is_none() && !self.native_try_direct
+                    // P2-T95: main ohne Handler ebenfalls (auch Direktform): moo_throw
+                    // beendet das Programm nicht mehr (Hinweis, Fehler verworfen), der
+                    // Aufruf liefert nichts und main laeuft weiter statt return 1.
+                    let main_ohne_handler = in_main && !self.rahmen_hat_handler();
+                    let skip_target = if local_catch.is_none()
+                        && (!self.native_try_direct || main_ohne_handler)
                         && fangbar && needs_adapter
-                        && (in_named_function || (in_main && self.rahmen_hat_handler()))
+                        && (in_named_function || in_main)
                     {
                         let current = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
                         Some(self.context.append_basic_block(current, "native.skip"))
@@ -6747,7 +6994,9 @@ impl<'ctx> CodeGen<'ctx> {
                         let none_val = self.call_rt(self.rt.moo_none, &[], "none_default")?;
                         call_args.push(none_val.into());
                     }
-                    return self.call_rt(func, &call_args, "user_call");
+                    let ergebnis = self.call_rt(func, &call_args, "user_call")?;
+                    self.fehler_hinweis_nach_aufruf(name, aufruf_zeile)?;
+                    return Ok(ergebnis);
                 }
 
                 // Builtin-Funktionen pruefen
@@ -10534,11 +10783,15 @@ impl<'ctx> CodeGen<'ctx> {
                             }
                             func_iter = f.get_next_function();
                         }
-                        return Err(if suggestion.is_empty() {
+                        let mut d = crate::diagnose::Diagnose::fehler("M-C001", if suggestion.is_empty() {
                             format!("Funktion '{name}' nicht gefunden.")
                         } else {
                             format!("Funktion '{name}' nicht gefunden. Meintest du '{suggestion}'?")
-                        });
+                        }).gefunden(name.to_string());
+                        if !suggestion.is_empty() {
+                            d = d.vorschlag(format!("Meintest du '{suggestion}'?"));
+                        }
+                        return Err(self.diag_fehler(d));
                     }
                 };
                 let mut compiled_args: Vec<BasicMetadataValueEnum> = Vec::new();
@@ -10590,9 +10843,10 @@ impl<'ctx> CodeGen<'ctx> {
                     };
                     if mismatch {
                         if let Expr::Identifier(name) = object.as_ref() {
-                            self.warnings.push(format!(
+                            let hinweis = self.diag_ort(crate::diagnose::Diagnose::hinweis("M-H001", format!(
                                 "'{name}' ist vom Typ {typ}, aber '.{method}()' ist nicht fuer {typ} definiert"
-                            ));
+                            )));
+                            self.warnings.push(hinweis);
                         }
                     }
                 }
@@ -10609,7 +10863,9 @@ impl<'ctx> CodeGen<'ctx> {
                 //   editieren zu muessen.
                 // - Die Match-Kaskade nutzt weiterhin die lokale Variable
                 //   `obj` (nicht den Slot), damit LLVM dominance trivial bleibt.
-                let slot_name = format!("__mcall_obj_{}", self.method_obj_counter);
+                // Der Punkt ist kein Bezeichnerzeichen: Der Slot kann keinen
+                // gleichnamigen Benutzer-Local in self.variables ueberschreiben.
+                let slot_name = format!("__mcall_obj.{}", self.method_obj_counter);
                 self.method_obj_counter += 1;
                 let func_cur = self.current_function.unwrap();
                 let entry_bb = func_cur.get_first_basic_block().unwrap();
@@ -10626,6 +10882,9 @@ impl<'ctx> CodeGen<'ctx> {
                 let none_struct = self.mv_type().const_named_struct(&[none_tag.into(), zero_data.into()]);
                 self.builder.build_store(obj_slot, none_struct).map_err(|e| format!("{e}"))?;
                 self.variables.insert(slot_name.clone(), obj_slot);
+                if self.in_main_function() {
+                    self.main_mcall_slots.push(obj_slot);
+                }
                 self.builder.position_at_end(current_block);
 
                 // Pre-Release der letzten Schleifeniteration im Slot (sonst
@@ -11590,10 +11849,13 @@ impl<'ctx> CodeGen<'ctx> {
                         let suggestion = known.iter()
                             .filter(|k| levenshtein(method, k) <= 2)
                             .min_by_key(|k| levenshtein(method, k));
-                        return match suggestion {
-                            Some(s) => Err(format!("Methode '{method}' nicht gefunden. Meintest du '{s}'?")),
-                            None => Err(format!("Methode '{method}' nicht gefunden.")),
+                        let d = match suggestion {
+                            Some(s) => crate::diagnose::Diagnose::fehler("M-C002",
+                                format!("Methode '{method}' nicht gefunden. Meintest du '{s}'?"))
+                                .vorschlag(format!("Meintest du '{s}'?")),
+                            None => crate::diagnose::Diagnose::fehler("M-C002", format!("Methode '{method}' nicht gefunden.")),
                         };
+                        return Err(self.diag_fehler(d.gefunden(method.to_string())));
                     }
                 }
             }
@@ -12010,7 +12272,7 @@ impl<'ctx> CodeGen<'ctx> {
                     let mut calls = std::collections::HashSet::new();
                     Self::collect_defer_calls_expr(koerper, &mut calls);
                     let wurzel_ok = match koerper {
-                        Expr::FunctionCall { name: wurzel, args: wurzel_args } if self.native_call_fangbar(wurzel) => {
+                        Expr::FunctionCall { name: wurzel, args: wurzel_args, .. } if self.native_call_fangbar(wurzel) => {
                             let mut innen = std::collections::HashSet::new();
                             for a in wurzel_args { Self::collect_defer_calls_expr(a, &mut innen); }
                             !innen.iter().any(|c| self.native_call_fangbar(c))
@@ -12313,7 +12575,7 @@ impl<'ctx> CodeGen<'ctx> {
                 // a |> f(b, c) wird zu f(a, b, c)
                 let left_val = self.compile_expr(left)?;
                 match right.as_ref() {
-                    Expr::FunctionCall { name, args } => {
+                    Expr::FunctionCall { name, args, .. } => {
                         // Builtin-Check ueberspringen, direkt als Funktionsaufruf mit left als erstem Arg
                         let actual_name = self.lambda_names.get(name)
                             .cloned()
@@ -12753,7 +13015,7 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::Spread(inner) => Self::expr_uses_var(inner, name),
             // Der Callee kann ein Funktionswert in einer Variable sein (wie in
             // collect_free_vars): `cb()` liest `cb`.
-            Expr::FunctionCall { name: callee, args } =>
+            Expr::FunctionCall { name: callee, args, .. } =>
                 callee == name || args.iter().any(|a| Self::expr_uses_var(a, name)),
             Expr::New { args, .. } | Expr::List(args) =>
                 args.iter().any(|a| Self::expr_uses_var(a, name)),
@@ -12831,26 +13093,26 @@ impl<'ctx> CodeGen<'ctx> {
     fn stmt_first_use(stmt: &Stmt, name: &str) -> Option<bool> {
         match stmt {
             Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
-            | Stmt::Show(value) | Stmt::Throw(value) | Stmt::Return(Some(value))
-            | Stmt::Expression(value) | Stmt::CompoundAssignment { value, .. } => {
+            | Stmt::Show(value, _) | Stmt::Throw(value, _) | Stmt::Return(Some(value), _)
+            | Stmt::Expression(value, _) | Stmt::CompoundAssignment { value, .. } => {
                 if Self::expr_uses_var(value, name) { Some(false) } else { None }
             }
-            Stmt::If { condition, body, else_body } => {
+            Stmt::If { condition, body, else_body, .. } => {
                 if Self::expr_uses_var(condition, name) { return Some(false); }
                 if let Some(r) = Self::first_use_is_local_write(body, name) { return Some(r); }
                 Self::first_use_is_local_write(else_body, name)
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 if Self::expr_uses_var(condition, name) { return Some(false); }
                 Self::first_use_is_local_write(body, name)
             }
-            Stmt::Guard { condition, else_body } => {
+            Stmt::Guard { condition, else_body, .. } => {
                 if Self::expr_uses_var(condition, name) { return Some(false); }
                 Self::first_use_is_local_write(else_body, name)
             }
-            Stmt::UnsafeBlock { body } => Self::first_use_is_local_write(body, name),
-            Stmt::For { var_name, iterable, body }
-            | Stmt::ParallelFor { var_name, iterable, body } => {
+            Stmt::UnsafeBlock { body, .. } => Self::first_use_is_local_write(body, name),
+            Stmt::For { var_name, iterable, body, .. }
+            | Stmt::ParallelFor { var_name, iterable, body, .. } => {
                 // First-access-wins: Liest das Iterable denselben Namen,
                 // bleibt der Name fuer die GANZE Funktion global (auch der
                 // spaetere Binder). Ohne diesen Read ist der Binder der erste
@@ -12869,7 +13131,7 @@ impl<'ctx> CodeGen<'ctx> {
                 if catch_var.as_ref().is_some_and(|v| v == name) { return Some(true); }
                 Self::first_use_is_local_write(catch_body, name)
             }
-            Stmt::Match { value, cases } => {
+            Stmt::Match { value, cases, .. } => {
                 if Self::expr_uses_var(value, name) { return Some(false); }
                 for (muster, waechter, body) in cases {
                     // Muster/Waechter in Textreihenfolge (Review 49a04c50). Wie in
@@ -12900,22 +13162,22 @@ impl<'ctx> CodeGen<'ctx> {
                     Some(false)
                 } else { None }
             }
-            Stmt::IndexAssignment { object, index, value } => {
+            Stmt::IndexAssignment { object, index, value, .. } => {
                 if Self::expr_uses_var(object, name) || Self::expr_uses_var(index, name)
                     || Self::expr_uses_var(value, name) { Some(false) } else { None }
             }
             // P2-T8 (Plan b1f51d65 D1): textuell erster Zugriff (first-access-wins)
             // auch in aufraeumen, erwarte und Vor-/Nachbedingungen.
-            Stmt::Defer(value) | Stmt::Expect(value) => {
+            Stmt::Defer(value, _) | Stmt::Expect(value, _) => {
                 if Self::expr_uses_var(value, name) { Some(false) } else { None }
             }
             Stmt::Precondition { condition, .. } | Stmt::Postcondition { condition, .. } => {
                 if Self::expr_uses_var(condition, name) { Some(false) } else { None }
             }
             Stmt::TestDef { body, .. } => Self::first_use_is_local_write(body, name),
-            Stmt::Export(inner) => Self::stmt_first_use(inner, name),
+            Stmt::Export(inner, _) => Self::stmt_first_use(inner, name),
             // Eigene Geltungsbereiche, reine Deklarationen und Spruenge: kein Zugriff.
-            Stmt::Return(None) | Stmt::Break | Stmt::Continue | Stmt::Global(_)
+            Stmt::Return(None, _) | Stmt::Break(_) | Stmt::Continue(_) | Stmt::Global(_, _)
             | Stmt::FunctionDef { .. } | Stmt::ClassDef { .. } | Stmt::StructDef { .. }
             | Stmt::InterfaceDef { .. } | Stmt::DataClassDef { .. } | Stmt::ExternC { .. }
             | Stmt::RawDataU32 { .. } | Stmt::NativeConst { .. } | Stmt::Import { .. } => None,
@@ -12936,7 +13198,7 @@ impl<'ctx> CodeGen<'ctx> {
                     names.extend(Self::collect_all_var_names(body));
                     names.extend(Self::collect_all_var_names(else_body));
                 }
-                Stmt::While { body, .. } | Stmt::UnsafeBlock { body } => {
+                Stmt::While { body, .. } | Stmt::UnsafeBlock { body, .. } => {
                     names.extend(Self::collect_all_var_names(body));
                 }
                 Stmt::Guard { else_body, .. } => {
@@ -12982,7 +13244,7 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::UnaryOp { operand, .. } => {
                 Self::collect_free_vars(operand, params, out);
             }
-            Expr::FunctionCall { name, args } => {
+            Expr::FunctionCall { name, args, .. } => {
                 // Der Callee kann selbst ein freier Funktionswert sein, z. B.
                 // `() => cb()` mit `cb` als Parameter der aeusseren Funktion.
                 // Der spaetere self.variables-Filter stellt sicher, dass nur

@@ -13,7 +13,9 @@ for name in nested_unhandled nested_caller defer_unhandled break_outside continu
     failed=1
     continue
   fi
-  timeout 30s "$out" > "$out.out" 2> "$out.err"
+  # P2-T95: Abbruchvertrag nur noch mit MOO_STRENG=1 (Standard: Hinweis + Weiterlauf).
+  case "$name" in nested_unhandled|defer_unhandled|break_outside|continue_outside) streng=1 ;; *) streng=0 ;; esac
+  MOO_STRENG=$streng timeout 30s "$out" > "$out.out" 2> "$out.err"
   rc=$?
   case "$name" in
     nested_unhandled|defer_unhandled|break_outside|continue_outside)

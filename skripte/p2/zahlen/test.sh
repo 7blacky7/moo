@@ -43,7 +43,8 @@ echo "PASS versuche: Division durch Null, MIN/-1, Rest durch Null, Shift 8 auf u
 # 4. Unbehandelt: moo_throw beendet den Prozess mit RC 1 und Meldung, nichts danach.
 "$compiler" compile "$tests/native_zahlen_unbehandelt.moos" -o "$out/unbehandelt"
 set +e
-"$out/unbehandelt" > "$out/unbehandelt.out" 2> "$out/unbehandelt.err"
+# P2-T95: Abbruchvertrag nur noch mit MOO_STRENG=1 (Standard: Hinweis + Weiterlauf).
+MOO_STRENG=1 "$out/unbehandelt" > "$out/unbehandelt.out" 2> "$out/unbehandelt.err"
 rc=$?
 set -e
 [ "$rc" -eq 1 ] || { echo "FEHLER: unbehandelter Zahlenfehler lieferte RC $rc statt 1" >&2; exit 1; }
@@ -117,7 +118,7 @@ grep -qF 'call void @moo_native_fehler(ptr' <<<"$s_div_ir" || { echo "FEHLER: mo
 if grep -qF 'llvm.trap' <<<"$s_div_ir"; then echo "FEHLER: hosted Systemkoerper s_div trappt noch" >&2; exit 1; fi
 "$compiler" compile "$tests/native_system_fehler.moos" -o "$out/system_fehler"
 set +e
-"$out/system_fehler" > "$out/system_fehler.out" 2> "$out/system_fehler.err"
+MOO_STRENG=1 "$out/system_fehler" > "$out/system_fehler.out" 2> "$out/system_fehler.err"
 rc=$?
 set -e
 [ "$rc" -eq 1 ] || { echo "FEHLER: Systemkoerper-Fehler lieferte RC $rc statt 1" >&2; exit 1; }
@@ -156,7 +157,7 @@ if grep -qF 'llvm.trap' <<<"$s_ende_ir"; then echo "FEHLER: hosted Systemkoerper
 grep -qF "endet ohne Rueckgabewert in 's_ende'" "$out/system_ende.ll" || { echo "FEHLER: Diagnosetext fuer Funktionsende fehlt im IR" >&2; exit 1; }
 "$compiler" compile "$tests/native_system_ende.moos" -o "$out/system_ende"
 set +e
-"$out/system_ende" > "$out/system_ende.out" 2> "$out/system_ende.err"
+MOO_STRENG=1 "$out/system_ende" > "$out/system_ende.out" 2> "$out/system_ende.err"
 rc=$?
 set -e
 [ "$rc" -eq 1 ] || { echo "FEHLER: Funktionsende ohne Rueckgabe lieferte RC $rc statt 1" >&2; exit 1; }
@@ -395,7 +396,7 @@ if grep -q 'native.fehler' <<<"$upow_ir"; then echo "FEHLER: upow mit Fehlerbloc
 if grep -qE 'call .*@(pow|powf|llvm\.pow)' <<<"$ipow_ir$upow_ir"; then echo "FEHLER: Integer-** ruft eine Bibliotheksfunktion" >&2; exit 1; fi
 "$compiler" compile "$tests/native_pow_unbehandelt.moos" -o "$out/pow_unbehandelt"
 set +e
-"$out/pow_unbehandelt" > "$out/pow_unbehandelt.out" 2> "$out/pow_unbehandelt.err"
+MOO_STRENG=1 "$out/pow_unbehandelt" > "$out/pow_unbehandelt.out" 2> "$out/pow_unbehandelt.err"
 rc=$?
 set -e
 [ "$rc" -eq 1 ] || { echo "FEHLER: unbehandelter Potenzfehler RC $rc statt 1" >&2; exit 1; }

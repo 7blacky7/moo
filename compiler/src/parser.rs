@@ -5,10 +5,47 @@ mod ffi;
 use crate::ast::*;
 use crate::tokens::{Token, TokenType};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ParseError {
     pub message: String,
     pub line: usize,
+    /// P2-T97: 1-basierte Spalte (0 = unbekannt), Diagnosecode und
+    /// strukturierte Teile fuer `--diagnose=json`.
+    pub column: usize,
+    pub code: &'static str,
+    pub erwartet: Option<String>,
+    pub gefunden: Option<String>,
+    pub vorschlag: Option<String>,
+}
+
+impl ParseError {
+    /// Ort und Standardcode M-S000; die Meldung setzt der Aufrufer per
+    /// Struct-Update (`ParseError { message, ..ParseError::bei(tok) }`).
+    pub fn an(line: usize, column: usize) -> Self {
+        ParseError {
+            message: String::new(),
+            line,
+            column,
+            code: "M-S000",
+            erwartet: None,
+            gefunden: None,
+            vorschlag: None,
+        }
+    }
+
+    pub fn bei(tok: &Token) -> Self {
+        Self::an(tok.line, tok.column)
+    }
+
+    /// Einheitliche Diagnose (Datei setzt der Aufrufer).
+    pub fn diagnose(&self) -> crate::diagnose::Diagnose {
+        let mut d = crate::diagnose::Diagnose::fehler(self.code, self.message.clone())
+            .ort(self.line, self.column);
+        d.erwartet = self.erwartet.clone();
+        d.gefunden = self.gefunden.clone();
+        d.vorschlag = self.vorschlag.clone();
+        d
+    }
 }
 
 impl std::fmt::Display for ParseError {
@@ -108,37 +145,109 @@ impl Parser {
         Self { tokens, pos: 0, errors: Vec::new(), native_context: false }
     }
 
-    pub fn parse(&mut self) -> Result<Program, ParseError> {
-        let statements = self.parse_block_body(true)?;
-        if !self.errors.is_empty() {
-            // Gib den ersten Fehler als Result zurück, aber zeige alle
-            let mut msg = format!("{} Fehler gefunden:", self.errors.len());
-            for err in &self.errors {
-                msg.push_str(&format!("\n  Zeile {}: {}", err.line, err.message));
+    /// P2-T97: alle Syntaxfehler eines Laufs einzeln (Recovery je Statement,
+    /// auch innerhalb von Bloecken).
+    pub fn parse_alle(&mut self) -> Result<Program, Vec<ParseError>> {
+        let statements = match self.parse_block_body(true) {
+            Ok(statements) => statements,
+            Err(err) => {
+                self.errors.push(err);
+                Vec::new()
             }
-            return Err(ParseError {
-                message: msg,
-                line: self.errors[0].line,
-            });
+        };
+        if !self.errors.is_empty() {
+            return Err(std::mem::take(&mut self.errors));
         }
-        Ok(Program { statements })
+        Ok(Program { statements, funktion_quellen: Default::default() })
     }
 
-    /// Springt zum nächsten Statement (nach Newline/Dedent) bei einem Parse-Fehler
-    fn sync_to_next_statement(&mut self) {
-        // Garantiert Progression: konsumiert bis Newline (inkl.) oder stoppt bei EOF.
-        // Dedent wird mit verschluckt, sonst Endlosschleife im top-level Recovery nach
-        // Fehlern in nested Blocks (Dedent bleibt als naechstes Token stehen).
+    pub fn parse(&mut self) -> Result<Program, ParseError> {
+        self.parse_alle().map_err(|fehler| {
+            // Ein Result, das alle Fehler nennt (bisherige Sammelmeldung).
+            let mut msg = format!("{} Fehler gefunden:", fehler.len());
+            for err in &fehler {
+                msg.push_str(&format!("\n  Zeile {}: {}", err.line, err.message));
+            }
+            ParseError { message: msg, ..fehler[0].clone() }
+        })
+    }
+
+    /// Springt zum nächsten Statement (nach Newline) bei einem Parse-Fehler.
+    /// `im_block` (P2-T97): ein Dedent beendet den umgebenden Block und bleibt
+    /// stehen; top-level wird er wie bisher verschluckt. Progression: der
+    /// Aufrufer ruft parse_statement nie auf Dedent/Eof, daher steht hier
+    /// entweder ein konsumierbares Token oder es wurde schon konsumiert.
+    fn sync_to_next_statement(&mut self, im_block: bool) {
         loop {
             match self.current_type() {
                 TokenType::Eof => return,
+                TokenType::Dedent if im_block => return,
                 TokenType::Newline => {
                     self.pos += 1;
-                    return;
+                    break;
                 }
                 _ => self.pos += 1,
             }
         }
+        // Ein direkt folgender eingerueckter Block gehoert zum fehlerhaften
+        // Kopf (z. B. `wenn x` ohne ':'): ganz ueberspringen, sonst entstehen
+        // Folgefehler und der umgebende Block endet zu frueh.
+        if matches!(self.current_type(), TokenType::Indent) {
+            let mut tiefe = 0usize;
+            loop {
+                match self.current_type() {
+                    TokenType::Eof => return,
+                    TokenType::Indent => {
+                        tiefe += 1;
+                        self.pos += 1;
+                    }
+                    TokenType::Dedent => {
+                        self.pos += 1;
+                        tiefe -= 1;
+                        if tiefe == 0 {
+                            return;
+                        }
+                    }
+                    _ => self.pos += 1,
+                }
+            }
+        }
+    }
+
+    /// P2-T29 S5: Nach einem Statement muss die Zeile enden. Einfache
+    /// Statements stehen danach vor Zeilenende/Dateiende/Dedent; Block-
+    /// Statements haben ihr abschliessendes Dedent (oder Zeilenende) schon
+    /// konsumiert. Sonst wurde ein Rest der Zeile nicht verstanden, z. B.
+    /// `setze z auf 3 über 4` (bisher still als zweites Statement gelesen).
+    fn statement_ende(&self) -> Result<(), ParseError> {
+        if matches!(self.current_type(), TokenType::Newline | TokenType::Eof | TokenType::Dedent) {
+            return Ok(());
+        }
+        if self.pos > 0
+            && matches!(self.tokens[self.pos - 1].token_type, TokenType::Newline | TokenType::Dedent)
+        {
+            return Ok(());
+        }
+        let gefunden = match token_description(self.current_type()) {
+            "Token" => got_description(self.current_type()),
+            text => text.to_string(),
+        };
+        // Entscheid #38228: Der Vorschlag nennt den richtigen Schreibweg.
+        // Klammer hinter fertigem Ausdruck (z. B. `x[i](f())`) war bisher
+        // still ein zweites Statement.
+        let vorschlag = match self.current_type() {
+            TokenType::LParen | TokenType::LBracket =>
+                "Eine Klammer direkt hinter einem fertigen Ausdruck ist kein Aufruf. Aufruf: Funktionsname direkt vor '(' (f(x)); Wert aus Index oder Liste erst zuweisen (setze f auf x[i]) und dann f(...) aufrufen; ein eigener Ausdruck gehoert in eine eigene Zeile.",
+            _ => "Ueberzaehlige Angabe entfernen, einen Operator ergaenzen oder sie in eine eigene Zeile schreiben.",
+        };
+        Err(ParseError {
+            message: format!("Zeilenende erwartet, aber {gefunden} gefunden. Der Rest der Zeile gehoert zu keinem Ausdruck."),
+            code: "M-S003",
+            erwartet: Some("Zeilenende".to_string()),
+            gefunden: Some(gefunden),
+            vorschlag: Some(vorschlag.to_string()),
+            ..ParseError::bei(self.current())
+        })
     }
 
     // --- Hilfsfunktionen ---
@@ -169,7 +278,11 @@ impl Parser {
             };
             Err(ParseError {
                 message: format!("{expected_desc} erwartet, aber {got_desc} gefunden.{hint}"),
-                line: self.current().line,
+                code: "M-S001",
+                erwartet: Some(expected_desc.to_string()),
+                gefunden: Some(got_desc.to_string()),
+                vorschlag: Some(hint.trim()).filter(|h| !h.is_empty()).map(str::to_string),
+                ..ParseError::bei(self.current())
             })
         }
     }
@@ -210,7 +323,11 @@ impl Parser {
             let hint = keyword_name_hint(self.current_type());
             Err(ParseError {
                 message: format!("Name/Bezeichner erwartet, aber {got_desc} gefunden.{hint}"),
-                line: self.current().line,
+                code: "M-S002",
+                erwartet: Some("Name/Bezeichner".to_string()),
+                gefunden: Some(got_desc.to_string()),
+                vorschlag: Some(hint.trim()).filter(|h| !h.is_empty()).map(str::to_string),
+                ..ParseError::bei(self.current())
             })
         }
     }
@@ -245,13 +362,19 @@ impl Parser {
                 }
                 _ => {
                     match self.parse_statement() {
-                        Ok(stmt) => stmts.push(stmt),
-                        Err(err) if top_level => {
-                            // Error Recovery: Fehler sammeln, zum nächsten Statement springen
-                            self.errors.push(err);
-                            self.sync_to_next_statement();
+                        Ok(stmt) => {
+                            stmts.push(stmt);
+                            if let Err(err) = self.statement_ende() {
+                                self.errors.push(err);
+                                self.sync_to_next_statement(!top_level);
+                            }
                         }
-                        Err(err) => return Err(err), // In Blöcken nicht recovern
+                        Err(err) => {
+                            // Error Recovery (P2-T97 auch in Blöcken): Fehler sammeln,
+                            // zum nächsten Statement springen; der Block bleibt offen.
+                            self.errors.push(err);
+                            self.sync_to_next_statement(!top_level);
+                        }
                     }
                 }
             }
@@ -262,7 +385,15 @@ impl Parser {
 
     // --- Statements ---
 
+    /// P2-T97 B5b: jedes Statement traegt die Zeile seines ersten Tokens.
     fn parse_statement(&mut self) -> Result<Stmt, ParseError> {
+        let zeile = self.current().line;
+        let mut stmt = self.parse_statement_kern()?;
+        stmt.zeile_setzen_wenn_leer(zeile);
+        Ok(stmt)
+    }
+
+    fn parse_statement_kern(&mut self) -> Result<Stmt, ParseError> {
         match self.current_type().clone() {
             // Soft-Keyword: `global name[, name]` nur wenn ein Name folgt;
             // `global` bleibt als normaler Variablenname nutzbar.
@@ -305,6 +436,7 @@ impl Parser {
                             self.pos += 1;
                             let value = self.parse_expression()?;
                             return Ok(Stmt::PropertyAssignment {
+                                zeile: 0,
                                 object: *object.clone(),
                                 property: property.clone(),
                                 value,
@@ -317,6 +449,7 @@ impl Parser {
                             self.pos += 1;
                             let value = self.parse_expression()?;
                             return Ok(Stmt::IndexAssignment {
+                                zeile: 0,
                                 object: *object.clone(),
                                 index: *index.clone(),
                                 value,
@@ -329,25 +462,25 @@ impl Parser {
                                 self.pos += 1;
                                 let value = self.parse_expression()?;
                                 return Ok(Stmt::CompoundAssignment {
-                                    name: name.clone(), op: "+=".to_string(), value,
+                                    zeile: 0, name: name.clone(), op: "+=".to_string(), value,
                                 });
                             }
                             TokenType::MinusAssign => {
                                 self.pos += 1;
                                 let value = self.parse_expression()?;
                                 return Ok(Stmt::CompoundAssignment {
-                                    name: name.clone(), op: "-=".to_string(), value,
+                                    zeile: 0, name: name.clone(), op: "-=".to_string(), value,
                                 });
                             }
                             _ => {}
                         }
                     }
-                    Ok(Stmt::Expression(expr))
+                    Ok(Stmt::Expression(expr, 0))
                 }
             }
             TokenType::Return => self.parse_return(),
-            TokenType::Break => { self.pos += 1; Ok(Stmt::Break) }
-            TokenType::Continue => { self.pos += 1; Ok(Stmt::Continue) }
+            TokenType::Break => { self.pos += 1; Ok(Stmt::Break(0)) }
+            TokenType::Continue => { self.pos += 1; Ok(Stmt::Continue(0)) }
             TokenType::Class => self.parse_class_def(),
             TokenType::Interface => self.parse_interface_def(),
             TokenType::Try => {
@@ -358,7 +491,7 @@ impl Parser {
                     self.parse_try_catch()
                 } else {
                     let expr = self.parse_expression()?;
-                    Ok(Stmt::Expression(expr))
+                    Ok(Stmt::Expression(expr, 0))
                 }
             }
             TokenType::Throw => self.parse_throw(),
@@ -372,7 +505,7 @@ impl Parser {
                     self.parse_match()
                 } else {
                     let expr = self.parse_expression()?;
-                    Ok(Stmt::Expression(expr))
+                    Ok(Stmt::Expression(expr, 0))
                 }
             }
             TokenType::Defer => self.parse_defer(),
@@ -380,7 +513,7 @@ impl Parser {
             TokenType::Unsafe => {
                 self.pos += 1;
                 let body = self.parse_block_body(false)?;
-                Ok(Stmt::UnsafeBlock { body })
+                Ok(Stmt::UnsafeBlock { zeile: 0, body })
             }
             TokenType::Test if matches!(
                 self.tokens.get(self.pos + 1).map(|t| &t.token_type),
@@ -395,7 +528,7 @@ impl Parser {
                     self.eat_identifier()?
                 };
                 let body = self.parse_block_body(false)?;
-                Ok(Stmt::TestDef { name, body })
+                Ok(Stmt::TestDef { zeile: 0, name, body })
             }
             TokenType::Expect => {
                 // Soft-Keyword: 'erwarte' als Test-Assertion nur wenn das
@@ -405,11 +538,11 @@ impl Parser {
                 if matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
                             Some(TokenType::LParen)) {
                     let expr = self.parse_expression()?;
-                    Ok(Stmt::Expression(expr))
+                    Ok(Stmt::Expression(expr, 0))
                 } else {
                     self.pos += 1;
                     let expr = self.parse_expression()?;
-                    Ok(Stmt::Expect(expr))
+                    Ok(Stmt::Expect(expr, 0))
                 }
             }
             _ => {
@@ -421,6 +554,7 @@ impl Parser {
                         self.pos += 1;
                         let value = self.parse_expression()?;
                         return Ok(Stmt::PropertyAssignment {
+                            zeile: 0,
                             object: *object.clone(),
                             property: property.clone(),
                             value,
@@ -434,6 +568,7 @@ impl Parser {
                         self.pos += 1;
                         let value = self.parse_expression()?;
                         return Ok(Stmt::IndexAssignment {
+                            zeile: 0,
                             object: *object.clone(),
                             index: *index.clone(),
                             value,
@@ -448,6 +583,7 @@ impl Parser {
                             self.pos += 1;
                             let value = self.parse_expression()?;
                             return Ok(Stmt::CompoundAssignment {
+                                zeile: 0,
                                 name: name.clone(),
                                 op: "+=".to_string(),
                                 value,
@@ -457,6 +593,7 @@ impl Parser {
                             self.pos += 1;
                             let value = self.parse_expression()?;
                             return Ok(Stmt::CompoundAssignment {
+                                zeile: 0,
                                 name: name.clone(),
                                 op: "-=".to_string(),
                                 value,
@@ -466,7 +603,7 @@ impl Parser {
                     }
                 }
 
-                Ok(Stmt::Expression(expr))
+                Ok(Stmt::Expression(expr, 0))
             }
         }
     }
@@ -485,18 +622,18 @@ impl Parser {
             let value = self.parse_expression()?;
             return match lhs {
                 Expr::PropertyAccess { object, property } => Ok(Stmt::PropertyAssignment {
-                    object: *object,
+                    zeile: 0, object: *object,
                     property,
                     value,
                 }),
                 Expr::IndexAccess { object, index } => Ok(Stmt::IndexAssignment {
-                    object: *object,
+                    zeile: 0, object: *object,
                     index: *index,
                     value,
                 }),
                 _ => Err(ParseError {
                     message: "Nach 'setze' wird ein Name, 'selbst.X', 'selbst[i]' oder 'obj[i]' erwartet.".to_string(),
-                    line: self.current().line,
+                    ..ParseError::bei(self.current())
                 }),
             };
         }
@@ -535,10 +672,10 @@ impl Parser {
             let value = self.parse_expression()?;
             return match lhs {
                 Expr::PropertyAccess { object, property } => Ok(Stmt::PropertyAssignment {
-                    object: *object, property, value,
+                    zeile: 0, object: *object, property, value,
                 }),
                 Expr::IndexAccess { object, index } => Ok(Stmt::IndexAssignment {
-                    object: *object, index: *index, value,
+                    zeile: 0, object: *object, index: *index, value,
                 }),
                 _ => unreachable!(),
             };
@@ -547,7 +684,7 @@ impl Parser {
         let ty = self.parse_optional_annotation()?;
         self.eat(&TokenType::To)?;
         let value = self.parse_expression()?;
-        Ok(Stmt::Assignment { name, ty, value })
+        Ok(Stmt::Assignment { zeile: 0, name, ty, value })
     }
 
     fn parse_const_assignment(&mut self) -> Result<Stmt, ParseError> {
@@ -557,16 +694,18 @@ impl Parser {
         let ty = self.parse_optional_annotation()?;
         self.eat(&TokenType::To)?;
         let value = self.parse_expression()?;
-        Ok(Stmt::ConstAssignment { name, ty, value })
+        Ok(Stmt::ConstAssignment { zeile: 0, name, ty, value })
     }
 
     fn parse_show(&mut self) -> Result<Stmt, ParseError> {
         self.pos += 1;
         let value = self.parse_expression()?;
-        Ok(Stmt::Show(value))
+        Ok(Stmt::Show(value, 0))
     }
 
     fn parse_if(&mut self) -> Result<Stmt, ParseError> {
+        // Eigene Zeile: `sonst wenn` ruft parse_if direkt, nicht parse_statement.
+        let zeile = self.current().line;
         self.pos += 1; // if/wenn
         let condition = self.parse_expression()?;
         let body = self.parse_block_body(false)?;
@@ -582,14 +721,14 @@ impl Parser {
             }
         }
 
-        Ok(Stmt::If { condition, body, else_body })
+        Ok(Stmt::If { zeile, condition, body, else_body })
     }
 
     fn parse_while(&mut self) -> Result<Stmt, ParseError> {
         self.pos += 1;
         let condition = self.parse_expression()?;
         let body = self.parse_block_body(false)?;
-        Ok(Stmt::While { condition, body })
+        Ok(Stmt::While { zeile: 0, condition, body })
     }
 
     fn parse_for(&mut self) -> Result<Stmt, ParseError> {
@@ -598,7 +737,7 @@ impl Parser {
         self.eat(&TokenType::In)?;
         let iterable = self.parse_expression()?;
         let body = self.parse_block_body(false)?;
-        Ok(Stmt::For { var_name, iterable, body })
+        Ok(Stmt::For { zeile: 0, var_name, iterable, body })
     }
 
     fn parse_parallel_for(&mut self) -> Result<Stmt, ParseError> {
@@ -608,7 +747,7 @@ impl Parser {
         self.eat(&TokenType::In)?;
         let iterable = self.parse_expression()?;
         let body = self.parse_block_body(false)?;
-        Ok(Stmt::ParallelFor { var_name, iterable, body })
+        Ok(Stmt::ParallelFor { zeile: 0, var_name, iterable, body })
     }
 
     fn parse_precondition(&mut self) -> Result<Stmt, ParseError> {
@@ -625,7 +764,7 @@ impl Parser {
         } else {
             "Vorbedingung verletzt".to_string()
         };
-        Ok(Stmt::Precondition { condition, message })
+        Ok(Stmt::Precondition { zeile: 0, condition, message })
     }
 
     fn parse_postcondition(&mut self) -> Result<Stmt, ParseError> {
@@ -642,7 +781,7 @@ impl Parser {
         } else {
             "Nachbedingung verletzt".to_string()
         };
-        Ok(Stmt::Postcondition { condition, message })
+        Ok(Stmt::Postcondition { zeile: 0, condition, message })
     }
 
     fn parse_decorated_function(&mut self) -> Result<Stmt, ParseError> {
@@ -666,7 +805,7 @@ impl Parser {
                                 TokenType::String(value) => { self.pos += 1; value }
                                 _ => return Err(ParseError {
                                     message: "Benanntes Bibliotheksargument erwartet ein Text-Literal".to_string(),
-                                    line: self.current().line,
+                                    ..ParseError::bei(self.current())
                                 }),
                             };
                             args.push(crate::ast::DecoratorArg::NamedText { name: key, value });
@@ -682,7 +821,7 @@ impl Parser {
                         _ => {
                             return Err(ParseError {
                                 message: "Decorator-Argument muss Zahl- oder Text-Literal sein".to_string(),
-                                line: self.current().line,
+                                ..ParseError::bei(self.current())
                             });
                         }
                     }
@@ -709,7 +848,7 @@ impl Parser {
             let ty = self.parse_optional_annotation()?;
             self.eat(&TokenType::To)?;
             let value = self.parse_expression()?;
-            return Ok(Stmt::RawDataU32 { name, ty, value, decorators });
+            return Ok(Stmt::RawDataU32 { zeile: 0, name, ty, value, decorators });
         }
         // P7-T4 (1A): @nativ konstante NAME: T = wert (Literale exakt wie in @nativ).
         if matches!(self.current_type(), TokenType::Const)
@@ -718,20 +857,21 @@ impl Parser {
             self.pos += 1; // konstante/const
             let name = self.eat_identifier()?;
             let line = self.current().line;
+            let column = self.current().column;
             // Typ (Arraylängen) und Wert als exakte Rohlexeme wie in @nativ.
             let previous_native = self.native_context;
             self.native_context = true;
             let parsed = (|| {
                 let ty = self.parse_optional_annotation()?.ok_or_else(|| ParseError {
                     message: "Native Konstante braucht eine Typannotation (konstante name: Typ auf wert)".to_string(),
-                    line,
+                    ..ParseError::an(line, column)
                 })?;
                 self.eat(&TokenType::To)?;
                 Ok((ty, self.parse_expression()?))
             })();
             self.native_context = previous_native;
             let (ty, value) = parsed?;
-            return Ok(Stmt::NativeConst { name, ty, value, decorators });
+            return Ok(Stmt::NativeConst { zeile: 0, name, ty, value, decorators });
         }
         if matches!(self.current_type(), TokenType::Identifier(name) if name == "extern") {
             return self.parse_extern_c(decorators);
@@ -739,7 +879,7 @@ impl Parser {
         if !matches!(self.current_type(), TokenType::Func) {
             return Err(ParseError {
                 message: "funktion/func nach Decorator erwartet".to_string(),
-                line: self.current().line,
+                ..ParseError::bei(self.current())
             });
         }
         self.parse_function_def_with_decorators(decorators)
@@ -775,7 +915,7 @@ impl Parser {
                 Option::None
             };
             let body = self.parse_block_body(false)?;
-            Ok(Stmt::FunctionDef { name, params, param_types, return_type, defaults, body, decorators })
+            Ok(Stmt::FunctionDef { zeile: 0, name, params, param_types, return_type, defaults, body, decorators })
         })();
         // Auch bei Parserfehler und bei verschachtelten Funktionen restaurieren.
         self.native_context = previous_native;
@@ -790,7 +930,7 @@ impl Parser {
         if decorators.iter().any(|d| d.name == "opak" || d.name == "opaque")
             && matches!(self.current_type(), TokenType::Newline | TokenType::Eof)
         {
-            return Ok(Stmt::StructDef { name, fields: Vec::new(), decorators });
+            return Ok(Stmt::StructDef { zeile: 0, name, fields: Vec::new(), decorators });
         }
         self.eat(&TokenType::Colon)?;
         self.skip_newlines();
@@ -805,7 +945,7 @@ impl Parser {
                     TokenType::Dedent => { self.pos += 1; break; }
                     TokenType::Eof => return Err(ParseError {
                         message: "Strukturblock nicht abgeschlossen".to_string(),
-                        line: self.current().line,
+                        ..ParseError::bei(self.current())
                     }),
                     _ => {
                         let field = self.eat_identifier()?;
@@ -814,14 +954,14 @@ impl Parser {
                         if !matches!(self.current_type(), TokenType::Newline | TokenType::Dedent | TokenType::Eof) {
                             return Err(ParseError {
                                 message: "Zeilenende nach Strukturfeld erwartet".to_string(),
-                                line: self.current().line,
+                                ..ParseError::bei(self.current())
                             });
                         }
                         fields.push((field, ty));
                     }
                 }
             }
-            Ok(Stmt::StructDef { name, fields, decorators })
+            Ok(Stmt::StructDef { zeile: 0, name, fields, decorators })
         })();
         self.native_context = previous_native;
         result
@@ -833,7 +973,7 @@ impl Parser {
         if !matches!(self.current_type(), TokenType::Class) {
             return Err(ParseError {
                 message: "klasse/class nach daten/data erwartet".to_string(),
-                line: self.current().line,
+                ..ParseError::bei(self.current())
             });
         }
         self.pos += 1; // class/klasse
@@ -856,7 +996,7 @@ impl Parser {
             }
         }
         self.eat(&TokenType::RParen)?;
-        Ok(Stmt::DataClassDef { name, fields, field_types })
+        Ok(Stmt::DataClassDef { zeile: 0, name, fields, field_types })
     }
 
     /// Rekursive Typgrammatik, ausschließlich in explizitem Typkontext.
@@ -877,7 +1017,7 @@ impl Parser {
                 TokenType::Identifier(name) => { self.pos += 1; name }
                 _ => return Err(ParseError {
                     message: "Typname erwartet".to_string(),
-                    line: self.current().line,
+                    ..ParseError::bei(self.current())
                 }),
             };
             if name == "fn" && matches!(self.current_type(), TokenType::LParen | TokenType::LBracket) {
@@ -969,9 +1109,9 @@ impl Parser {
     fn parse_return(&mut self) -> Result<Stmt, ParseError> {
         self.pos += 1;
         if matches!(self.current_type(), TokenType::Newline | TokenType::Eof | TokenType::Dedent) {
-            Ok(Stmt::Return(Option::None))
+            Ok(Stmt::Return(Option::None, 0))
         } else {
-            Ok(Stmt::Return(Some(self.parse_expression()?)))
+            Ok(Stmt::Return(Some(self.parse_expression()?), 0))
         }
     }
 
@@ -997,7 +1137,7 @@ impl Parser {
             }
         }
         let body = self.parse_block_body(false)?;
-        Ok(Stmt::ClassDef { name, parent, interfaces, body })
+        Ok(Stmt::ClassDef { zeile: 0, name, parent, interfaces, body })
     }
 
     fn parse_interface_def(&mut self) -> Result<Stmt, ParseError> {
@@ -1056,7 +1196,7 @@ impl Parser {
                             if typisiert {
                                 return Err(ParseError {
                                     message: format!("Interface-Methode '{}': {}", method_name, err.message),
-                                    line: err.line,
+                                    ..ParseError::an(err.line, err.column)
                                 });
                             }
                             // Bestehende Interfaces akzeptierten beliebige Tokens
@@ -1076,11 +1216,11 @@ impl Parser {
                 }
                 _ => return Err(ParseError {
                     message: "funktion/func in Interface erwartet".to_string(),
-                    line: self.current().line,
+                    ..ParseError::bei(self.current())
                 }),
             }
         }
-        Ok(Stmt::InterfaceDef { name, methods, signatures })
+        Ok(Stmt::InterfaceDef { zeile: 0, name, methods, signatures })
     }
 
     fn parse_try_catch(&mut self) -> Result<Stmt, ParseError> {
@@ -1094,13 +1234,14 @@ impl Parser {
             Option::None
         };
         let catch_body = self.parse_block_body(false)?;
-        Ok(Stmt::TryCatch { try_body, catch_var, catch_body })
+        Ok(Stmt::TryCatch { zeile: 0, try_body, catch_var, catch_body })
     }
 
     fn parse_throw(&mut self) -> Result<Stmt, ParseError> {
+        let zeile = self.current().line;
         self.pos += 1;
         let value = self.parse_expression()?;
-        Ok(Stmt::Throw(value))
+        Ok(Stmt::Throw(value, zeile))
     }
 
     fn parse_global_decl(&mut self) -> Result<Stmt, ParseError> {
@@ -1110,7 +1251,7 @@ impl Parser {
             self.pos += 1;
             names.push(self.eat_identifier()?);
         }
-        Ok(Stmt::Global(names))
+        Ok(Stmt::Global(names, 0))
     }
 
     /// Modulname fuer importiere/aus: Bezeichner (`mathe`) oder Pfad-String
@@ -1153,14 +1294,14 @@ impl Parser {
     fn parse_export(&mut self) -> Result<Stmt, ParseError> {
         self.pos += 1;
         let stmt = self.parse_statement()?;
-        Ok(Stmt::Export(Box::new(stmt)))
+        Ok(Stmt::Export(Box::new(stmt), 0))
     }
 
     fn parse_defer(&mut self) -> Result<Stmt, ParseError> {
         self.pos += 1; // defer/aufräumen
         self.eat(&TokenType::Colon)?;
         let expr = self.parse_expression()?;
-        Ok(Stmt::Defer(expr))
+        Ok(Stmt::Defer(expr, 0))
     }
 
     fn parse_guard(&mut self) -> Result<Stmt, ParseError> {
@@ -1172,7 +1313,7 @@ impl Parser {
         }
         self.eat(&TokenType::Else)?;
         let else_body = self.parse_block_body(false)?;
-        Ok(Stmt::Guard { condition, else_body })
+        Ok(Stmt::Guard { zeile: 0, condition, else_body })
     }
 
     fn parse_match(&mut self) -> Result<Stmt, ParseError> {
@@ -1217,12 +1358,12 @@ impl Parser {
                 }
                 _ => return Err(ParseError {
                     message: format!("fall/case oder standard/default erwartet"),
-                    line: self.current().line,
+                    ..ParseError::bei(self.current())
                 }),
             }
         }
 
-        Ok(Stmt::Match { value, cases })
+        Ok(Stmt::Match { zeile: 0, value, cases })
     }
 
     // --- Expressions ---
@@ -1457,7 +1598,7 @@ impl Parser {
     /// Pfad bleiben die historischen Tokens und das f64-Verhalten unverändert.
     fn parse_native_number(&mut self, token: Token, legacy: f64) -> Result<Expr, ParseError> {
         let mut text = token.number_text.ok_or_else(|| ParseError {
-            message: "Zahlliteral ohne Quelltext".to_string(), line: token.line,
+            message: "Zahlliteral ohne Quelltext".to_string(), ..ParseError::an(token.line, token.column)
         })?;
         // Der Legacy-Lexer trennt 0o... in Number(0) und Identifier(o...).
         if text == "0" && self.current().line == token.line
@@ -1496,7 +1637,7 @@ impl Parser {
             if digits.is_empty() || !digits.chars().all(|ch| ch.to_digit(base).is_some()) {
                 return Err(ParseError {
                     message: format!("Ungültiges Zahl-Literal '{text}' zur Basis {base}"),
-                    line: token.line,
+                    ..ParseError::an(token.line, token.column)
                 });
             }
         }
@@ -1534,7 +1675,7 @@ impl Parser {
                 if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
                     return Err(ParseError {
                         message: format!("Ungültiger Exponent im Zahl-Literal '{text}'"),
-                        line: token.line,
+                        ..ParseError::an(token.line, token.column)
                     });
                 }
             }
@@ -1607,7 +1748,7 @@ impl Parser {
                         self.parse_args_list()?
                     };
                     self.eat(&TokenType::RParen)?;
-                    Ok(Expr::FunctionCall { name, args })
+                    Ok(Expr::FunctionCall { name, args, zeile: self.tokens[self.pos - 1].line })
                 } else {
                     Ok(Expr::Identifier(name))
                 }
@@ -1620,13 +1761,13 @@ impl Parser {
                     let got = got_description(self.current_type());
                     return Err(ParseError {
                         message: format!("Hier wird ein Wert erwartet (Zahl, Text, Variable, ...), aber {got} gefunden."),
-                        line: self.current().line,
+                        ..ParseError::bei(self.current())
                     });
                 }
                 self.pos += 2;
                 let args = self.parse_args_list()?;
                 self.eat(&TokenType::RParen)?;
-                Ok(Expr::FunctionCall { name: "als".to_string(), args })
+                Ok(Expr::FunctionCall { name: "als".to_string(), args, zeile: self.tokens[self.pos - 1].line })
             }
             TokenType::Data => {
                 // Soft-Keyword: "daten" als Variable/Funktion erlaubt, ausser
@@ -1636,7 +1777,7 @@ impl Parser {
                     let got = got_description(self.current_type());
                     return Err(ParseError {
                         message: format!("Hier wird ein Wert erwartet (Zahl, Text, Variable, ...), aber {got} gefunden."),
-                        line: self.current().line,
+                        ..ParseError::bei(self.current())
                     });
                 }
                 self.pos += 1;
@@ -1645,7 +1786,7 @@ impl Parser {
                     self.pos += 1;
                     let args = self.parse_args_list()?;
                     self.eat(&TokenType::RParen)?;
-                    Ok(Expr::FunctionCall { name, args })
+                    Ok(Expr::FunctionCall { name, args, zeile: self.tokens[self.pos - 1].line })
                 } else {
                     Ok(Expr::Identifier(name))
                 }
@@ -1658,7 +1799,7 @@ impl Parser {
                     let got = got_description(self.current_type());
                     return Err(ParseError {
                         message: format!("Hier wird ein Wert erwartet (Zahl, Text, Variable, ...), aber {got} gefunden."),
-                        line: self.current().line,
+                        ..ParseError::bei(self.current())
                     });
                 }
                 self.pos += 1;
@@ -1667,7 +1808,7 @@ impl Parser {
                     self.pos += 1;
                     let args = self.parse_args_list()?;
                     self.eat(&TokenType::RParen)?;
-                    Ok(Expr::FunctionCall { name, args })
+                    Ok(Expr::FunctionCall { name, args, zeile: self.tokens[self.pos - 1].line })
                 } else {
                     Ok(Expr::Identifier(name))
                 }
@@ -1680,7 +1821,7 @@ impl Parser {
                     let got = got_description(self.current_type());
                     return Err(ParseError {
                         message: format!("Hier wird ein Wert erwartet (Zahl, Text, Variable, ...), aber {got} gefunden."),
-                        line: self.current().line,
+                        ..ParseError::bei(self.current())
                     });
                 }
                 self.pos += 1;
@@ -1689,7 +1830,7 @@ impl Parser {
                     self.pos += 1;
                     let args = self.parse_args_list()?;
                     self.eat(&TokenType::RParen)?;
-                    Ok(Expr::FunctionCall { name, args })
+                    Ok(Expr::FunctionCall { name, args, zeile: self.tokens[self.pos - 1].line })
                 } else {
                     Ok(Expr::Identifier(name))
                 }
@@ -1717,7 +1858,7 @@ impl Parser {
                         self.pos += 1;
                         let args = self.parse_args_list()?;
                         self.eat(&TokenType::RParen)?;
-                        Ok(Expr::FunctionCall { name, args })
+                        Ok(Expr::FunctionCall { name, args, zeile: self.tokens[self.pos - 1].line })
                     } else {
                         Ok(Expr::Identifier(name))
                     }
@@ -1731,7 +1872,7 @@ impl Parser {
                     self.pos += 1;
                     let args = self.parse_args_list()?;
                     self.eat(&TokenType::RParen)?;
-                    Ok(Expr::FunctionCall { name, args })
+                    Ok(Expr::FunctionCall { name, args, zeile: self.tokens[self.pos - 1].line })
                 } else {
                     Ok(Expr::Identifier(name))
                 }
@@ -1749,7 +1890,7 @@ impl Parser {
                 let got = got_description(self.current_type());
                 Err(ParseError {
                     message: format!("Hier wird ein Wert erwartet (Zahl, Text, Variable, ...), aber {got} gefunden."),
-                    line: self.current().line,
+                    ..ParseError::bei(self.current())
                 })
             }
         }
@@ -1981,7 +2122,7 @@ impl Parser {
                 }
                 _ => return Err(ParseError {
                     message: "fall/case oder standard/default erwartet".to_string(),
-                    line: self.current().line,
+                    ..ParseError::bei(self.current())
                 }),
             }
         }

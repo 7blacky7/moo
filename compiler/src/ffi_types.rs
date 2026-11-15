@@ -124,7 +124,9 @@ fn primitive(name: &str) -> Option<FfiType> {
 
 fn pointee_supported(ty: &TypeRef) -> bool {
     match &ty.kind {
-        TypeKind::Name(name) => name == "void" || primitive(name).is_some(),
+        // bool ist als C-Wert erlaubt, als Zeigerziel nicht: Speicherbild von
+        // _Bool (nur 0/1 gueltig) ist kein freigegebener Moo-Vertrag.
+        TypeKind::Name(name) => name == "void" || (name != "bool" && primitive(name).is_some()),
         TypeKind::Generic { name, args }
             if (name == "ptr" || name == "zeiger") && args.len() == 1 =>
                 pointee_supported(&args[0]),
@@ -144,8 +146,9 @@ fn pointee_supported(ty: &TypeRef) -> bool {
 pub(crate) fn rueckruf_wert_zulaessig(ty: &TypeRef) -> bool {
     match &ty.kind {
         TypeKind::Name(name) => name != "void",
+        // P2-T97 (34119): ptr[bool] auch in Rueckruf-Signaturen nicht.
         TypeKind::Generic { name, args } if (name == "ptr" || name == "zeiger") && args.len() == 1 =>
-            matches!(&args[0].kind, TypeKind::Name(_)) || pointee_supported(&args[0]),
+            matches!(&args[0].kind, TypeKind::Name(n) if n != "bool") || pointee_supported(&args[0]),
         _ => false,
     }
 }
@@ -163,6 +166,10 @@ fn value_type_in(ty: &TypeRef, ist_struktur: &dyn Fn(&str) -> bool) -> Result<Ff
         TypeKind::Generic { name, args } if name == "ptr" || name == "zeiger" => {
             let struktur_ziel = args.len() == 1
                 && matches!(&args[0].kind, TypeKind::Name(n) if ist_struktur(n));
+            if crate::native_type_id::hat_bool_zeigerziel(ty) {
+                return Err(error(ty, &format!("Pointer braucht genau einen unterstuetzten Zieltyp: {}",
+                    crate::native_type_id::BOOL_ZEIGERZIEL)));
+            }
             if args.len() != 1 || !(pointee_supported(&args[0]) || struktur_ziel) {
                 return Err(error(ty, "Pointer braucht genau einen unterstuetzten Zieltyp"));
             }
@@ -1233,6 +1240,9 @@ fn indirect_value_type(
             // Nominale Datenpointee nur aus der expliziten kanonischen Registry.
             // Das verleiht weder Speicher noch Layout oder Lebensdauern Gültigkeit.
             match pointee.as_ref() {
+                // P2-T97 (34119): auch bei indirekten Aufrufen kein Bool-Zeigerziel.
+                NativeTypeId::Scalar(ScalarType::Bool) =>
+                    return Err(format!("Indirekter Aufruf: {}", crate::native_type_id::BOOL_ZEIGERZIEL)),
                 NativeTypeId::Void => {},
                 // P2-T21/T57 A3: Funktionszeiger als Parameter (z. B. qsort-Vergleicher).
                 NativeTypeId::Function { variadic: false, .. } => {},

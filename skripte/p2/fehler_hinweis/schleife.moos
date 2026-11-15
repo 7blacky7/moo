@@ -1,0 +1,17 @@
+# P2-T95: dieselbe Stelle in einer Schleife -> ein Hinweis plus Zaehler.
+funktion g(i):
+    wenn i % 2 == 0:
+        wirf "gerade " + text(i)
+    gib_zurück i
+
+funktion f():
+    setze summe auf 0
+    setze i auf 0
+    solange i < 5:
+        g(i)
+        setze summe auf summe + 1
+        setze i auf i + 1
+    gib_zurück summe
+
+zeige f()
+zeige "ende main"

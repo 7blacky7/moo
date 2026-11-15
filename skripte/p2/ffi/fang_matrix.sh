@@ -44,3 +44,11 @@ PATH="$PWD/$out/san:$PATH" "$compiler" compile "$t/ffi_fang_matrix.moos" --lib-p
 ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$out/san/matrix" > "$out/san/matrix.out"
 diff -u "$t/ffi_fang_matrix.expected" "$out/san/matrix.out"
 echo 'PASS FFI-Fangmatrix unter ASan/UBSan/LSan'
+
+# #38221: Receiver-Slots der Methodenaufrufe (main-Register) gegen gleichnamige
+# Benutzer-Locals: kein Ueberschreiben, keine Doppelfreigabe, kein Leck.
+PATH="$PWD/$out/san:$PATH" "$compiler" compile "$t/mcall_slot_kollision.moos" -o "$out/san/kollision" \
+    > "$out/san/kollision.log" 2>&1 || { cat "$out/san/kollision.log" >&2; exit 1; }
+ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$out/san/kollision" > "$out/san/kollision.out"
+diff -u "$t/mcall_slot_kollision.expected" "$out/san/kollision.out"
+echo 'PASS Receiver-Slots vs. gleichnamige Benutzer-Locals unter ASan/UBSan/LSan'

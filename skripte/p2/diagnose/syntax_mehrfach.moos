@@ -1,0 +1,10 @@
+funktion f(x):
+    wenn x > 1
+        zeige "gross"
+    setze y 5
+    gib_zurück x
+
+funktion g():
+    zeige 1
+
+setze z auf )

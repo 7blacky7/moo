@@ -1,0 +1,16 @@
+# P2-T95 Fall B: aeusseres versuche:, Zwischenfunktion ohne Handler -> Hinweis
+# an der Aufrufstelle, f laeuft weiter, das aeussere versuche: faengt.
+funktion g():
+    wirf "kaputt in g"
+
+funktion f():
+    g()
+    zeige "f laeuft weiter"
+    gib_zurück 1
+
+versuche:
+    zeige f()
+    zeige "nach f im versuche"
+fange e:
+    zeige "gefangen: " + e
+zeige "ende main"

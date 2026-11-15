@@ -1,0 +1,18 @@
+# P2-T29 S2: Aufrufe eigener Funktionen und Methoden gegen ihre Signatur.
+funktion flaeche(breite: Zahl, hoehe: Zahl) -> Zahl:
+    gib_zurück breite * hoehe
+
+funktion gruss(name: Text, anrede: Text = "Hallo") -> Text:
+    gib_zurück anrede + " " + name
+
+klasse Konto:
+    funktion einzahlen(betrag: Zahl):
+        gib_zurück betrag
+
+zeige flaeche("drei", 4)
+zeige flaeche(3)
+zeige flaeche(1, 2, 3)
+zeige gruss("Ada")
+zeige gruss(nichts)
+setze k auf neu Konto()
+zeige k.einzahlen("viel")

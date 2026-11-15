@@ -33,7 +33,16 @@ negativ() { # name
   if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ] || [ "$rc" -ge 128 ]; then
     echo "FAIL $name: unerwarteter Exit $rc"; fehler=1; return
   fi
-  if ! rg -q -F -f "$t/$name.expected_error" "$out/$name.log"; then
+  # P2-T97 (#38204): Kopfzeile ist jetzt `datei:zeile: Fehler M-XXXX: meldung`.
+  # Ein Fixture mit altem Praefix `datei.moos:N: ` wird als Ort + Meldung geprueft.
+  local erwartet
+  erwartet=$(cat "$t/$name.expected_error")
+  if [[ "$erwartet" =~ ^([^:]+\.moos):([0-9]+):\ (.*)$ ]]; then
+    if ! rg -q -F -- "${BASH_REMATCH[1]}:${BASH_REMATCH[2]}: Fehler M-" "$out/$name.log" \
+       || ! rg -q -F -- "${BASH_REMATCH[3]}" "$out/$name.log"; then
+      echo "FAIL $name: erwartete Diagnose fehlt"; cat "$out/$name.log"; fehler=1; return
+    fi
+  elif ! rg -q -F -f "$t/$name.expected_error" "$out/$name.log"; then
     echo "FAIL $name: erwartete Diagnose fehlt"; cat "$out/$name.log"; fehler=1; return
   fi
   echo "PASS $name (Diagnose)"

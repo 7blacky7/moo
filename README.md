@@ -1,6 +1,18 @@
 # moo
 
-Eine zweisprachige Programmiersprache (Deutsch/Englisch gleichwertig) mit nativer LLVM-Kompilierung, handgeschriebener C-Runtime und Python-Toolchain — vom Hallo-Welt über 3D-Spiele und Webserver bis zum eigenen OS-Kernel und LLM-Training auf der GPU.
+**Deutsch** · [English](README.en.md)
+
+**Eine Sprache vom Skript bis zum Kernel — auf Deutsch oder Englisch, dynamisch bequem und nativ schnell.**
+
+moo wird mit LLVM zu nativem Code kompiliert, die Laufzeit ist in C geschrieben. Dieselbe Sprache trägt Skripte, KI-Training auf der GPU, 3D-Spiele, eigene Oberflächen, Netzwerkprotokolle in reinem moo und einen UEFI-Loader mit eigenem Netzwerktreiber, der auf echter Hardware gebootet wurde.
+
+> **Top-Highlight: moo auf echter Hardware.** Eine UEFI-Anwendung in moo bootet vom USB-Stick auf einem Mini-PC mit Intel N100 und zeigt die von moo gezeichnete MoOS-Oberfläche. Ein eigener I226-V-Netzwerktreiber in moo lief dort und meldete auf Port 0 den Link mit 100 Mbit. *Auf echter Hardware nachgewiesen, Stand 01.11.2026; mit dem neuesten Stand wurde der Hardwarelauf noch nicht wiederholt.*
+
+Reifegrade in dieser README: **getestet** (automatische Tests oder Gates), **funktioniert**, **teilweise**, **in Arbeit**. Die Details mit Schwächen stehen in [docs/STAND.md](docs/STAND.md).
+
+## 1. Zwei Ebenen, Deutsch und Englisch
+
+Deutsch und Englisch sind gleichwertig; die Schlüsselwörter stehen in `spec/tokens.yaml` und werden in der CI geprüft. Normaler Code ist dynamisch und bequem. Mit `@nativ` und Typen wird eine Funktion zu Maschinencode ohne Boxing. Reifegrad: Sprache getestet, native Ebene funktioniert.
 
 ```moo
 funktion fibonacci(n):
@@ -11,121 +23,260 @@ funktion fibonacci(n):
 zeige fibonacci(20)
 ```
 
-> **Neu hier?** Bauen, ausführen und KI programmieren mit moo: **[docs/KI_MIT_MOO.md](docs/KI_MIT_MOO.md)** — Schritt für Schritt mit lauffähigen Beispielen (Tensoren, neuronale Netze, Tokenizer, Training auf CPU/GPU).
+Dasselbe auf Englisch (beide Schreibweisen lassen sich in einer Datei mischen):
 
-## Aktueller Entwicklungsstand (November 2026)
+```moo
+func fibonacci(n):
+    if n <= 1:
+        return n
+    return fibonacci(n - 1) + fibonacci(n - 2)
 
-moo ist ein aktives Ein-Personen-Projekt, das mit KI-Agenten entwickelt wird.
-Vieles läuft bereits stabil, einige Bereiche sind bewusst noch im Umbau.
-Damit klar ist, was fertig ist und was noch kommt:
-
-### KI-Stack (Schwerpunkt)
-
-| Bereich | Stand | Was noch ansteht |
-|---|---|---|
-| Tensoren, Autograd, Transformer-Bausteine, Vulkan-GPU-Training | **funktioniert** (siehe „Was kann moo heute?“) | laufende Optimierungen |
-| Trainingsmethoden direkt aus Moo aufrufbar (SGD/Adam/AdamW, SFT mit Masken, Lehrer-Korrektur, Distillation, DPO, Evaluation, Checkpoint/Resume) | **17 von 20 Schritten fertig** — Beispiele in `beispiele/p5/` | Messlauf ~1-Mio.-Parameter-Modell, Training vollständig GPU-resident machen, Vergleichstraining 3 × 10-Mio.-Modelle (BPE / Silbe / Zeichen) |
-| Deutscher Silben-Tokenizer (zusätzlich zu Zeichen- und Byte-BPE-Tokenizer) | **14 von 17 Schritten fertig** — `beispiele/p4_silben/`, `skripte/p4_silben/` | Neutraining eines kleinen Silbenmodells (36.000 Schritte), syntaxbewusster Tokenizer für Code |
-| Adaptive Sparse-Berechnung / hierarchisches MoE-Routing | **Forschungsidee**, nur geplant | gesamte Umsetzung |
-
-Hinweis: Trainingskorpora, eigene Testdaten und Modell-Checkpoints sind
-absichtlich **nicht** im Repository. Die Beispiele zeigen die API; zum
-Nachtrainieren braucht man eigene Texte.
-
-### Gesamtprojekt
-
-| Bereich | Stand | Was noch ansteht |
-|---|---|---|
-| **Sprache, Compiler, C-Runtime, Stdlib** (DE/EN-Keywords, Klassen, Pattern Matching, Threads, LLVM-Backend) | **funktioniert** — Hauptroadmap 422 von 503 Schritten erledigt | 23 von 467 Beispiel-/Testquellen kompilieren derzeit noch nicht (bekannt, dokumentiert) |
-| **Native Ebene `@nativ`** — echte Maschinentypen (i8…u64, f32/f64, bool), C-kompatible Strukturen, C-/C++-FFI für Engine- und Grafikcode | **in Arbeit** (ca. 30 von 74 Schritten) — native Zahlen/Casts und nativer CPU-Compositor fertig und getestet | typisierte Puffer, Vektortypen, FFI vollständig, C++-Adapter, Bindungsgenerator, Grafik-Benchmark gegen C. Der dynamische Moo-Code bleibt unverändert |
-| **Grafik & Spiele** (2D/3D über GL33/GL21/Vulkan, Voxel-Engine, Testwelt „ERDE“) | **funktioniert** | sichtbare Qualitätsstufe: HDR/Belichtung, Wasser, GGX-Material, Nebel, AO, Schatten |
-| **Native UI** (Plattform-Controls unter Linux/Windows/macOS) | **funktioniert** | Windows-Geometrie-/Lebenszyklus-Tests, GTK/Cocoa-Randfälle, echte Tastatur-Automation |
-| **`ui_moo`** — eigenes Widget-/Designsystem komplett in Moo | **in Arbeit** | Abnahme auf Desktop-, Spiel- und späterem OS-Backend |
-| **Windows-Installer in Moo** (Toolchain ohne manuelle Abhängigkeiten) | geplant | Installer-Vertrag, Installationslogik + UI in Moo, Windows-E2E-Test |
-| **MoOS — eigener Kernel + UEFI-Loader in Moo** | **teilweise** — Moo-UEFI-App zeigt Ausgabe auf echter Hardware, Netzwerk-Boot (PXE/HTTP) und eigener I226-V-Netzwerktreiber laufen | Loader komplett in Moo (in Arbeit), Kernel-Einstieg mit Framebuffer-Konsole, Speicher/Interrupts/Timer/Tastatur, Boot vom USB-Stick, TCP/IP |
-| **Sprachkern: adaptive Suche/Indizierung, schneller Methoden-Dispatch** | geplant | gesamte Umsetzung |
-| **Werkzeuge** (LSP, Formatter, VSCode-Extension, Browser-Playground, Doku-Seite) | **funktioniert** | — |
-
-## Wo ist was?
-
-- **Bauen & ausführen:** siehe `DEPENDENCIES.md`, dann
-  `cd compiler && cargo build --release` und
-  `./compiler/target/release/moo-compiler run <datei>.moos`.
-- **Sprache lernen:** [`docs/lernen.md`](docs/lernen.md). Bauen, Ausführen und KI-Stack: [`docs/KI_MIT_MOO.md`](docs/KI_MIT_MOO.md) (English: [`docs/AI_WITH_MOO.md`](docs/AI_WITH_MOO.md)).
-- **Referenz aller Builtins:** [moolang-docs](https://7blacky7.github.io/moolang-docs/).
-- **Beispiele:** `beispiele/` mit Zonen `domain/{web,db,game,system}/` plus lose Showcases (Taxonomie in `spec/examples_taxonomy.md`), KI-Beispiele unter `beispiele/ki_*.moos`, Evaluationsläufe unter `beispiele/eval_*.moos` sowie Pipelines in `beispiele/p4_silben/`, `beispiele/p5/` und `beispiele/p6_wissensmix/`.
-- **KI-/LLM-Stack:** Design-Docs unter `docs/kip/` (Zielprofil, DType, GPU-Verträge, Serving/Post-Training), Gate-Skripte unter `skripte/kip_*`.
-- **Kernel & Bootloader:** `beispiele/kernel/`, Pipeline via `moo-compiler compile --target x86_64-bare --no-stdlib --kernel`, Smoke-Gates `kernel-smoke*.sh`/`loader-smoke.sh`.
-- **Architektur in 5 Minuten:** [`ARCHITECTURE.md`](ARCHITECTURE.md).
-
-## Wie ist das Projekt strukturiert?
-
-```
-compiler/   Rust-Compiler (compiler/src) + C-Runtime (compiler/runtime) + Tests
-            runtime/shader_ki/  Vulkan-Compute-Shader (Tensor-Ops, SPIR-V)
-src/moo/    Python-Toolchain: LSP, Formatter, Transpiler
-stdlib/     moo-Stdlib-Module (mathe, liste, text, ...)
-beispiele/  Lauffähige .moos-Programme (130+ Samples; Zonen: domain/{web,db,game,system})
-skripte/    KIP-/GPU-Gate-Skripte (Coverage, LM-Trainings-Gates, QA-Verträge)
-scratch/    Ad-hoc-Skripte, nicht CI-relevant (siehe scratch/README.md)
-docs/       Benutzer-Doku (mkdocs-Material) + docs/kip/ (KI-Design-Docs)
-editors/    VSCode-Extension + LSP-Client
-spec/       Spezifikation (Single Source of Truth, u.a. tokens.yaml)
-scripts/    Hilfsskripte
-website/    Landingpage + Browser-Playground
+show fibonacci(20)
 ```
 
-Details: siehe [ARCHITECTURE.md](ARCHITECTURE.md).
+Beide Programme geben `6765` aus. Die native Ebene:
 
-## Was kann moo heute?
+```moo
+@nativ
+funktion quadratsumme(n: i64) -> i64:
+    setze s: i64 auf 0
+    für i in 0..n:
+        setze s auf s + i * i
+    gib_zurück s
 
-- **Sprache:** DE/EN-Keywords frei mischbar (`spec/tokens.yaml` als SSoT), Klassen,
-  Pattern Matching, Lambdas, Data-Klassen, f-Strings, Comprehensions, Try/Catch,
-  Threads/Channels, Refcount-Speichermodell mit ASan/UBSan-Gates.
-- **KI/LLM-Runtime:** Tensoren mit dynamischem Autograd (Gradcheck-Gate über die
-  komplette Op-Registry), NN-Layer bis Transformer (RMSNorm, RoPE inkl.
-  Kontext-Skalierung, GQA/MQA, SwiGLU, KV-Cache, MoE, MTP/Speculative Decoding,
-  GRPO-Toy), bf16-Mixed-Precision, byte-level BPE-Tokenizer, Streaming-Dataloader,
-  exakte Voll-Checkpoints (CPU und Cross-Device), Sequence Packing, Activation
-  Checkpointing. MNIST- und Char-LM-Gates deterministisch reproduzierbar.
-- **GPU-Compute (Vulkan):** residentes Training komplett auf der GPU — Matmul,
-  Elementwise, Reduktionen, Softmax/CE, Norm-Kerne, RoPE-/Head-Slicing-Kernels,
-  residente SGD/Adam-Schritte und Gradienten-Akkumulation; STRIKT-Modus beweist
-  „kein stiller CPU-Fallback" per Telemetrie. CPU↔GPU-Loss-Kurven-Parität als Gate.
-- **Grafik & Spiele:** 2D/3D (GL33/GL21/Vulkan), Voxel-Engine mit
-  Palette-Kompression, Licht/Specular/Tageszeit/Wellen/Transparenz,
-  Test-API mit Input-Simulation, Screenshot-, GIF- und MP4-Capture.
-- **System & Bare-Metal:** OS-Kernel in moo (x86_64 Multiboot2 + Long Mode,
-  ARM64 qemu-virt mit UART/Timer), eigener Bootloader-Pfad (Stage2, UEFI-App
-  PE32+), Port-I/O-, MSR-, MMIO-Builtins, `--emit elf|flat|sector`,
-  Cross-Targets für ARM, RISC-V, WASM und weitere; Windows-Port (Winsock2).
-- **Ökosystem:** LSP + VSCode-Extension, Formatter, Web-Playground,
-  Webserver/DB/HTTP/JSON/Regex in der Stdlib.
+zeige quadratsumme(1000)
+```
 
-## Status
+Ausgabe: `332833500`. In einer Einzelmessung (Schleife mit 10^8 Durchläufen) brauchte `@nativ` 0,033–0,039 s, C mit `-O2` 0,071–0,073 s, dynamischer Code 4,9 s.
 
-Alpha — Dateiendung final: `.moos` (MooScript-Quellen; `.moo` wird als
-Alt-Endung weiterhin gelesen). Der Sprachkern ist stabil,
-die Runtime wird kontinuierlich konsolidiert. Qualitätsdisziplin: kein
-Feature ohne echten Test, `run_all` bleibt QEMU-/GPU-frei, GPU-/Kernel-Beweise
-laufen über eigene Gate-Skripte auf echter Hardware, Doppel-Verifikation
-für Meilenstein-Abschlüsse. Laufende Arbeitsstränge: siehe `spec/` und
-`docs/kip/`.
+## 2. KI-Training, auch auf der GPU
 
-## Root-Inhalt — was ist dauerhaft, was ist Altlast?
+Tensoren mit Autograd (Gradienten-Prüfung über die gesamte Operationsliste), Netzschichten bis zum Transformer, Optimierer, Fine-Tuning mit SFT, Distillation und DPO sowie BPE- und Silben-Tokenizer. Training läuft optional über Vulkan-Compute mit 28 Shadern; ein Strikt-Modus und `gpu_statistik()` zeigen, ob wirklich die GPU gerechnet hat. Reifegrad: Autograd getestet, Rest funktioniert (eine GPU belegt).
 
-Dauerhaft im Root:
-`README.md`, `ARCHITECTURE.md`, `DEPENDENCIES.md`, `LICENSE` (folgt),
-`pyproject.toml`, `.gitignore`, `.github/`.
+Aus `beispiele/ki_xor.moos` (komplettes Training in 14 Zeilen):
 
-Alles andere ist Code- oder Doku-Verzeichnis (`compiler/`, `src/`,
-`stdlib/`, `beispiele/`, `docs/`, `editors/`, `scripts/`, `skripte/`,
-`spec/`, `scratch/`, `tests/`, `tools/`, `website/`). Die
-Phase-B-Aufräumung (W1–W3) ist **abgeschlossen** — Root ist frei von
-losen `test_*.moos`-Dateien. Bitte weiterhin keine neuen losen
-`test_*.moos` im Root anlegen (siehe `scratch/README.md`). Details zum
-Verlauf: `spec/phase_b_progress.md`.
+```moo
+setze netz auf [schicht_dicht(2, 8, "tanh", 7), schicht_dicht(8, 1, "sigmoid", 8)]
+setze opt auf optimierer_adam(parameter(netz), 0.05)
+solange i < 400:
+    setze fehler auf mse(vorwaerts(netz, x), ziel)
+    fehler.rueckwaerts()
+    opt.schritt()
+```
+
+Anleitung: [docs/KI_MIT_MOO.md](docs/KI_MIT_MOO.md).
+
+## 3. 3D, Voxel und Sichtprüfung ohne Monitor
+
+Eine `raum_*`-API für 3D auf OpenGL 2.1, OpenGL 3.3 und Vulkan mit Licht, Schatten, Nebel, Bloom, Himmel und Tageszeit; eine Voxel-Engine für ganze Welten. Spiele lassen sich ohne Bildschirm prüfen: Eine Test-API simuliert Eingaben, liest Pixel zurück und speichert Bilder; ein eigener GIF-Encoder ist eingebaut. Reifegrad: 3D und Voxel funktionieren auf allen drei Backends (OpenGL 2.1, OpenGL 3.3, Vulkan), Test-API getestet.
+
+Aus `beispiele/voxel_sandbox_selftest.moos`:
+
+```moo
+setze welt auf voxel_welt_neu(1337)
+für gcx in (0 - GEN_RADIUS)..(GEN_RADIUS + 1):
+    für gcy in (0 - GEN_RADIUS)..(GEN_RADIUS + 1):
+        setze chunks_neu auf chunks_neu + voxel_generieren(welt, gcx, gcy)
+setze win auf fenster_unified("voxel selftest", WIN_B, WIN_H)
+raum_perspektive(win, 70.0, 0.1, 300.0)
+setze info auf test_fenster_info(win)
+```
+
+Ausgeführt wird der Selftest laut Dateikopf headless: `xvfb-run -a -s "-screen 0 1280x800x24" env MOO_3D_BACKEND=gl33 moo-compiler run <datei>`.
+
+## 4. Eigene Oberflächen und UI-Tests
+
+Selbst gezeichnete Widgets ohne GTK auf X11, Wayland und Windows, mit Layout, Menüs, Zwischenablage, Glass-Theme und Compositor. UI-Tests nehmen einen Screenshot samt JSON-Beschreibung (Snapshot mit Sidecar) auf und klicken Widgets über ihre ID. Reifegrad: Linux und Windows funktionieren, UI-Tests getestet; macOS ist blind nachgezogen und nicht geprüft.
+
+Aus `beispiele/ui_login_demo.moos`:
+
+```moo
+importiere ui
+ui_baue(g, "Login", 340, 260, [
+    [setup_login_form, ["Benutzername:", "Passwort:", 100, on_login, on_cancel]],
+    [setup_status_bar, ["Bereit", "v1.0"]],
+])
+ui_zeige(g["hFenster"])
+ui_laufen()
+```
+
+Aus `beispiele/ui_snapshot_demo.moos`:
+
+```moo
+ui_widget_id_setze(g["btnSpeichern"], "speichern")
+funktion do_snapshot():
+    setze ok auf ui_test_snapshot_mit_sidecar(g["hFenster"], "beispiele/snapshots/demo1")
+```
+
+## 5. Netz und Datenbank — auch in reinem moo
+
+TCP, UDP, HTTP-Server und -Client sowie TLS 1.3 sind eingebaut (getestet); SQLite, JSON, Regex, Dateien, Threads und Kanäle ebenso. Darüber liegen Protokolle, die komplett in moo geschrieben sind: ein DNS-Resolver, ein WebSocket-Client und ein PostgreSQL-Client einschließlich SCRAM-Anmeldung. Reifegrad: Eingebautes getestet, Protokolle in moo funktionieren.
+
+Aus `beispiele/dns_selftest.moos` (Selftest ohne Netz):
+
+```moo
+importiere dns
+setze a_resp auf parse_response(kopf(1, TYP_A, [1, 2, 3, 4]))
+pruefe("A-Wert", a_resp["antworten"][0]["rdata"] == "1.2.3.4")
+```
+
+Aus `beispiele/websocket_client_selftest.moos`:
+
+```moo
+importiere websocket
+setze ws auf ws_verbinde(url, 10000)
+ws.sende_text("hallo websocket")
+setze text_event auf ws.empfange()
+pruefe("Text-Echo", text_event["daten"] == "hallo websocket")
+```
+
+Aus `beispiele/domain/db/bench/pg_test.moos` (Postgres-Protokoll in moo):
+
+```moo
+funktion int32_be(n):
+    setze b0 auf boden(n / (256 * 256 * 256)) % 256
+    setze b1 auf boden(n / (256 * 256)) % 256
+    setze b2 auf boden(n / 256) % 256
+    setze b3 auf n % 256
+    gib_zurück [b0, b1, b2, b3]
+```
+
+Aus `beispiele/domain/web/http_api.moos` (gekürzt):
+
+```moo
+setze server auf web_server(3000)
+solange wahr:
+    setze req auf server.web_annehmen()
+    setze pfad auf req["pfad"]
+    # ...
+    wenn pfad == "/api/status":
+        web_json(req, {"sprache": "moo", "todos": länge(todos)})
+        weiter
+```
+
+## 6. Kamera und Mikrofon
+
+Kamera- und Audio-Capture: unter Windows über Media Foundation und WASAPI (auf Hardware geprüft), unter Linux über V4L2 und ALSA (mit Mock-Tests). Kameraframes lassen sich in Tensoren umwandeln; PNG- und WAV-Dateien schreibt reines moo; `beispiele/ki_audio.moos` macht aus Audio ein Spektrogramm für ein Netz. Aufnahme sowie WAV und Spektrogramm sind da, die Wiedergabe über Lautsprecher folgt. Reifegrad: funktioniert.
+
+Aus `beispiele/ki_kamera_live.moos`:
+
+```moo
+setze kamera auf kamera_oeffnen()
+setze frame auf kamera_frame(kamera, 1000)
+test_frame_save_bmp(frame, "/tmp/ki_kamera_live.bmp")
+kamera_schliessen(kamera)
+```
+
+## 7. Kernel, UEFI und eigener Netzwerktreiber
+
+moo erzeugt Bare-Metal-Programme: einen x86_64-Kernel im Multiboot2-Format (getestet unter QEMU), UEFI-Anwendungen als PE32+ und AArch64 auf QEMU-virt. Der Loader und der Netzwerktreiber sind in moo geschrieben; auf echter Hardware nachgewiesen (Intel N100, Stand 01.11.2026) sind UEFI-Boot mit moo-Oberfläche und der I226-V-Treiber mit Link. Der Kernel-Unterbau besteht noch überwiegend aus C; MoOS ist **in Arbeit** (Plan P7: 7 von 16 Schritten). Scheduler, Prozesse, Dateisystem und PCI-Verwaltung fehlen noch.
+
+Aus `beispiele/uefi/hallo_uefi.moos`:
+
+```moo
+aus "./netz_treiber" importiere nt_pci_init, nt_ports_oeffnen, nt_anzahl, nt_port, nt_link, nt_udp_log, nt_log, nt_status_text, nt_dma, nt_dez
+
+funktion netz_log(ports, puf, text):
+    setze n auf nt_anzahl(ports)
+    wenn n == 0:
+        kern_netz_sende(text)
+        gib_zurück nichts
+    nt_log(ports, puf, text)
+```
+
+Aus `beispiele/kernel/hallo_kern.moos` (Build: `compile --no-stdlib --target x86_64-bare --kernel`):
+
+```moo
+setze adresse auf kern_alloc(64)
+kern_seriell_hex(adresse)
+kern_frei(adresse)
+kern_idt_init()
+kern_pic_remap(0x20, 0x28)
+kern_timer_init(100)
+```
+
+## 8. C-Bibliotheken anbinden
+
+`extern "C"`, Rückrufe, Strukturen by value, opake Griffe und C++ über Adapter; der Bindungsgenerator `moo-compiler bindgen` erzeugt aus C-Headern einen Entwurf, `layout --c-header` prüft Strukturlayouts. Reifegrad: funktioniert; Zeiger und `unsicher` nur teilweise.
+
+Aus `beispiele/nativ/10_rueckruf.moos` — eine moo-Funktion als Vergleichsrückruf für `qsort` aus libc:
+
+```moo
+extern "C" funktion qsort(basis: ptr[Zahl], anzahl: u64, groesse: u64, vergleich: ptr[fn(ptr[Zahl], ptr[Zahl]) -> i32]) -> void
+
+@nativ
+@rückruf
+funktion vergleiche(a: ptr[Zahl], b: ptr[Zahl]) -> i32:
+    unsicher:
+        wenn a.w < b.w:
+            gib_zurück -1
+        # ...
+
+# in lauf_sortiere:
+        qsort(zeiger(u64(puffer_zeiger(p))), länge(p), 4, vergleiche)
+```
+
+## 9. Testkultur
+
+Sanitizer-Läufe (Speicher- und Undefined-Behavior-Prüfung) auf drei Betriebssystemen, ein Gesamtlauf `run_all`, eine Konformanz-Suite (Stufen G0–G7), Gradienten-Prüfung für die KI-Operationen und zehn CI-Workflows; die GitHub-CI läuft auf Linux, Windows und macOS grün. Beispiele schreiben ihre Tests selbst in moo, etwa so (aus `beispiele/websocket_client_selftest.moos`):
+
+```moo
+funktion pruefe(name, bedingung):
+    wenn nicht bedingung:
+        wirf "WEBSOCKET FAIL " + name
+    zeige "PASS " + name
+```
+
+Reifegrad: getestet.
+
+## Für KI-Agenten (Vision, in Arbeit)
+
+moo soll sich gut von KI-Agenten programmieren lassen: einheitliche Diagnosen mit Fehlercode, JSON-Ausgabe (`--diagnose=json`) und `moo pruefe` sind in Review (P2-T97). Die Typprüfung vor der Ausführung mit Datei:Zeile und Vorschlag folgt. Das ist noch nicht fertig; heute gibt es Compilefehler mit Zeile und Spalte.
+
+## Ausblick
+
+Geplant, noch nicht begonnen: ein A/B-Vergleich von GPU-Trainingsläufen (P3), adaptive Sparse-Berechnung im KI-Stack (P8) und adaptive Suche mit schnellem Methoden-Dispatch im Sprachkern (P9).
+
+## Schnellstart
+
+```bash
+cd compiler && cargo build --release
+./target/release/moo-compiler run ../beispiele/fibonacci.moos
+./target/release/moo-compiler compile ../beispiele/nativ/03_casts.moos -o casts
+```
+
+Voraussetzungen: [DEPENDENCIES.md](DEPENDENCIES.md). Alle Ziele (x86_64, x86, ARM, AArch64, RISC-V, MIPS, PowerPC, WebAssembly, Windows und Freestanding-Varianten): `moo-compiler targets`.
+
+## Wie es funktioniert
+
+Der Compiler (Rust, `compiler/src`) übersetzt moo über LLVM 18 (Crate `inkwell`) in nativen Code und bindet die C-Runtime (`compiler/runtime`) ein. Dynamischer Code läuft über die Runtime; `@nativ`-Funktionen werden direkt mit Maschinentypen übersetzt.
+
+```
+compiler/   Compiler (Rust), C-Runtime, Tests
+stdlib/     Stdlib-Module in moo: ui, ui_moo, websocket, dns, welt, vektor …
+beispiele/  lauffähige .moos-Programme
+docs/       Benutzer-Doku
+spec/       Spezifikation (u. a. tokens.yaml)
+src/moo/    Python-Werkzeuge (LSP, Formatter, Transpiler), nicht der Hauptpfad
+editors/    VSCode-Extension (klein)
+website/    Landingpage und Playground (serverseitig)
+```
+
+Mehr: [ARCHITECTURE.md](ARCHITECTURE.md), [spec/runtime_layers.md](spec/runtime_layers.md).
+
+## Stand
+
+Alpha, ein aktives Ein-Personen-Projekt, entwickelt mit KI-Agenten. Dateiendung `.moos`. Planliste 15.11.2026: Hauptroadmap 423 von 504 Schritten, native Ebene 74 von 89, KI-Trainingsmethoden 17 von 20, Silben-Tokenizer 14 von 17, MoOS 7 von 16. Reifegrade, Schwächen und offene Punkte: **[docs/STAND.md](docs/STAND.md)**.
+
+## Dokumentation
+
+- Sprache lernen: [docs/lernen.md](docs/lernen.md)
+- KI mit moo: [docs/KI_MIT_MOO.md](docs/KI_MIT_MOO.md) · English: [docs/AI_WITH_MOO.md](docs/AI_WITH_MOO.md)
+- 3D: [docs/raum_3d.md](docs/raum_3d.md); Oberflächen: [docs/ui_moo.md](docs/ui_moo.md); TLS unter Windows: [docs/windows_tls.md](docs/windows_tls.md)
+- Architektur: [ARCHITECTURE.md](ARCHITECTURE.md), Abhängigkeiten: [DEPENDENCIES.md](DEPENDENCIES.md)
+- Referenz aller Builtins: [moolang-docs](https://7blacky7.github.io/moolang-docs/)
+- Native Ebene: [Sprachreferenz-Entwurf](dokumentation/p2/sprachreferenz-entwurf-de.md), [Migrationsleitfaden](dokumentation/p2/migrationsleitfaden-de.md)
 
 ## Lizenz
 
-Wird vor v1.0 festgelegt. Bis dahin: Open Source, Details im Projekt.
+Wird vor v1.0 festgelegt. Das Repository enthält derzeit keine LICENSE-Datei.

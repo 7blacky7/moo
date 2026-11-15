@@ -1,0 +1,1 @@
+extern "C" funktion p2_cb_ergebnis(f: ptr[fn(i32) -> ptr[bool]]) -> void

@@ -79,9 +79,20 @@ setze rolle auf umgebung("NET_LARGE_ROLE")
 setze port_text auf umgebung("NET_LARGE_PORT")
 setze port auf zahl(port_text)
 
+# Seit P2-T95 beendet ein unbehandeltes wirf das Programm nicht mehr (nur
+# Hinweis); ein Selbsttest meldet Fehler daher explizit mit RC 1.
 wenn rolle == "server":
-    server_lauf(port)
+    versuche:
+        server_lauf(port)
+    fange fehler:
+        zeige "NET-LARGE SERVER FAIL: " + fehler
+        beende(1)
 sonst wenn rolle == "client":
-    client_lauf(port)
+    versuche:
+        client_lauf(port)
+    fange fehler:
+        zeige "NET-LARGE CLIENT FAIL: " + fehler
+        beende(1)
 sonst:
-    wirf "NET_LARGE_ROLE muss server oder client sein"
+    zeige "NET_LARGE_ROLE muss server oder client sein"
+    beende(1)

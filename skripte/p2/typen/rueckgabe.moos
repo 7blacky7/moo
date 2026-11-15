@@ -1,0 +1,15 @@
+# P2-T29 S1: M-T003 bei gib_zurück gegen den Rückgabetyp.
+funktion name() -> Text:
+    gib_zurück 7
+
+funktion zahl_oder_nichts(x) -> Zahl:
+    wenn x > 0:
+        gib_zurück x
+    gib_zurück
+
+funktion passt() -> Zahl:
+    gib_zurück 1 + 2
+
+zeige name()
+zeige zahl_oder_nichts(1)
+zeige passt()

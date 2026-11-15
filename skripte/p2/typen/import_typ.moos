@@ -1,0 +1,2 @@
+aus "./typ_modul" importiere modul_wert
+zeige modul_wert()

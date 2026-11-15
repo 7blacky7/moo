@@ -56,6 +56,28 @@ impl std::fmt::Display for NativeTypeId {
 /// Import resolution and ambiguous-name rejection remain the caller's responsibility.
 pub(crate) type NominalTypes = HashMap<String, (String, String)>;
 
+/// P2-T97 (34119): bool ist als C-Wert erlaubt, als Zeigerziel in keiner
+/// Typposition (direkt, verschachtelt, Rueckruf-Signatur, Strukturfeld,
+/// indirekter Aufruf): das Speicherbild von _Bool ist kein Moo-Vertrag.
+pub(crate) const BOOL_ZEIGERZIEL: &str =
+    "ptr[bool] ist nicht freigegeben: bool ist als Wert erlaubt, als Zeigerziel nicht (Speicherbild von _Bool ist kein Moo-Vertrag); ptr[u8] mit 0/1 verwenden";
+
+/// Enthaelt die Quelltypangabe irgendwo ptr[bool]/zeiger[bool]?
+pub(crate) fn hat_bool_zeigerziel(ty: &TypeRef) -> bool {
+    match &ty.kind {
+        TypeKind::Name(_) => false,
+        TypeKind::Generic { name, args } => {
+            ((name == "ptr" || name == "zeiger")
+                && args.len() == 1
+                && matches!(&args[0].kind, TypeKind::Name(n) if n == "bool"))
+                || args.iter().any(hat_bool_zeigerziel)
+        }
+        TypeKind::Array { element, .. } => hat_bool_zeigerziel(element),
+        TypeKind::Function { params, return_type, .. } =>
+            params.iter().any(hat_bool_zeigerziel) || hat_bool_zeigerziel(return_type),
+    }
+}
+
 pub(crate) fn resolve_type(ty: &TypeRef, nominal: &NominalTypes) -> Result<NativeTypeId, String> {
     match &ty.kind {
         TypeKind::Name(name) => {
@@ -81,6 +103,9 @@ pub(crate) fn resolve_type(ty: &TypeRef, nominal: &NominalTypes) -> Result<Nativ
         TypeKind::Generic { name, args } if name == "ptr" || name == "zeiger" => {
             if args.len() != 1 { return Err("Zeiger benötigt genau einen Zieltyp".into()); }
             let pointee = resolve_type(&args[0], nominal)?;
+            if pointee == NativeTypeId::Scalar(ScalarType::Bool) {
+                return Err(BOOL_ZEIGERZIEL.into());
+            }
             Ok(NativeTypeId::Pointer { address_space: 0, pointee: Box::new(pointee) })
         }
         TypeKind::Generic { name, args } if name == "puffer" || name == "buffer" => {

@@ -28,7 +28,8 @@ for n in puffer_m2_index_ende puffer_m2_index_negativ puffer_m2_laenge_negativ p
          puffer_m2_laenge_text puffer_m2_wert_overflow puffer_m2_wert_bruch; do
   timeout 30s "$compiler" compile "$t/$n.moos" -o "$d/$n"
   set +e
-  timeout 30s "$d/$n" > "$d/$n.out" 2> "$d/$n.err"
+  # P2-T95: Abbruchvertrag nur noch mit MOO_STRENG=1 (Standard: Hinweis + Weiterlauf).
+  MOO_STRENG=1 timeout 30s "$d/$n" > "$d/$n.out" 2> "$d/$n.err"
   rc=$?
   set -e
   if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ] || [ "$rc" -ge 128 ]; then

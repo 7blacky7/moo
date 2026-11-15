@@ -1,2 +1,1 @@
-5
-marke
+compiler/tests/p2/puffer_syntax_collision_effect.moos:6:28: Fehler M-S003: Zeilenende erwartet, aber öffnende Klammer '(' gefunden.

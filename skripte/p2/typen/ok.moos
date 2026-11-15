@@ -1,0 +1,29 @@
+# P2-T29 S1: passende Annotationen, keine Typmeldung.
+setze a: Zahl auf 3
+setze b: Text auf "hallo"
+setze c: Bool auf a > 2
+setze d: Liste auf [1, 2]
+setze e: Dict auf {"x": 1}
+konstante MAX: Zahl auf 10 * 2
+setze f: Zahl auf a + MAX
+setze g auf 5
+setze h: Zahl auf g
+setze a auf a + 1
+setze k: Zahl auf länge(d)
+
+funktion doppelt(x: Zahl) -> Zahl:
+    gib_zurück x * 2
+
+funktion gruss(name: Text = "Welt") -> Text:
+    gib_zurück "Hallo " + name
+
+funktion beliebig(x) -> Zahl:
+    gib_zurück x
+
+zeige doppelt(f)
+zeige gruss()
+zeige beliebig(h)
+zeige b
+zeige c
+zeige e
+zeige k

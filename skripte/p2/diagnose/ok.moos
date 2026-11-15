@@ -1,0 +1,3 @@
+funktion h():
+    gib_zurück 1
+zeige h()

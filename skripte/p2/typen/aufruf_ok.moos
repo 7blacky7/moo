@@ -1,0 +1,9 @@
+# P2-T29 S2: keine Meldung bei passenden oder ungeprüften Aufrufen.
+funktion f(x: Zahl) -> Zahl:
+    gib_zurück x
+
+funktion rufe(f):
+    gib_zurück f("text")
+
+zeige f(1 + 2)
+zeige f(länge([1]))

@@ -1,0 +1,5 @@
+@nativ
+funktion ruf(f: ptr[fn(ptr[bool]) -> void]) -> i32:
+    gib_zurück 0
+
+zeige 1

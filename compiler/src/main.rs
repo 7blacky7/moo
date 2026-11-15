@@ -3,6 +3,7 @@ mod bindgen;
 mod boards;
 mod codegen;
 mod codegen_native;
+mod diagnose;
 mod ffi_types;
 mod ffi_link;
 mod native_arithmetic;
@@ -19,6 +20,7 @@ mod native_vecmat;
 mod parser;
 mod runtime_bindings;
 mod tokens;
+mod typpruefung;
 
 use clap::{Parser as ClapParser, Subcommand};
 use std::path::{Path, PathBuf};
@@ -29,6 +31,21 @@ use std::process::Command;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+    /// Diagnoseformat: text (Standard) | json (ein JSON-Objekt auf stderr, fuer Agenten/Werkzeuge)
+    #[arg(long = "diagnose", global = true, default_value = "text", value_name = "FORMAT")]
+    diagnose: String,
+    /// Typpruefung zur Compilezeit (P2-T29, M-T*); vorerst nur auf Wunsch
+    #[arg(long = "typpruefung", global = true)]
+    typpruefung: bool,
+}
+
+/// P2-T29: `--typpruefung` (Standard aus, bis die Pruefung freigegeben ist).
+static TYPPRUEFUNG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn typpruefung_einschalten_falls_gewuenscht() {
+    if TYPPRUEFUNG.load(std::sync::atomic::Ordering::Relaxed) {
+        crate::typpruefung::aktivieren();
+    }
 }
 
 #[derive(Subcommand)]
@@ -112,6 +129,30 @@ enum Commands {
         /// Die .moos-Quelldatei
         file: PathBuf,
     },
+    /// Nur pruefen: lexen, parsen, Module aufloesen, Code erzeugen und verifizieren – ohne Binary (P2-T97)
+    #[command(name = "pruefe", alias = "check")]
+    Pruefe {
+        /// Die .moos-Quelldatei
+        file: PathBuf,
+        /// Ziel-Architektur wie bei compile
+        #[arg(long)]
+        target: Option<String>,
+        /// Zusätzlicher Bibliotheks-Suchpfad, mehrfach verwendbar.
+        #[arg(long = "lib-pfad", alias = "lib-path")]
+        lib_paths: Vec<PathBuf>,
+        /// Bare-Metal wie bei compile
+        #[arg(long)]
+        no_stdlib: bool,
+        /// Kernel-Builtins (kern_*) erlauben wie bei compile
+        #[arg(long = "erlaube-kern")]
+        erlaube_kern: bool,
+    },
+    /// Diagnosecode erklären (ohne Code: Katalog auflisten)
+    #[command(name = "erklaere", alias = "explain")]
+    Erklaere {
+        /// z. B. M-S001
+        code: Option<String>,
+    },
     /// Interaktiver Modus (REPL)
     Repl,
     /// Verfuegbare Cross-Compilation Targets anzeigen
@@ -145,6 +186,11 @@ enum PaketAction {
 
 fn main() {
     let cli = Cli::parse();
+    match diagnose::Format::parse(&cli.diagnose) {
+        Ok(format) => diagnose::setze_format(format),
+        Err(e) => { eprintln!("{e}"); std::process::exit(2); }
+    }
+    TYPPRUEFUNG.store(cli.typpruefung, std::sync::atomic::Ordering::Relaxed);
 
     match cli.command {
         Commands::Bindgen { header, prefix, include, allow_partial } => {
@@ -165,30 +211,39 @@ fn main() {
                 Ok(program)
             })();
             match result {
-                Ok(program) => println!("{program:#?}"),
-                Err(e) => { eprintln!("Fehler: {e}"); std::process::exit(1); }
+                Ok(program) => { println!("{program:#?}"); diagnosen_abschliessen(); }
+                Err(e) => mit_diagnosen(Err(e)),
             }
         }
         Commands::Layout { file, target, c_header } => {
             let target = target.as_deref().unwrap_or("native");
             let result = if c_header { layout_c_header(&file, target) } else { layout_diagnostic(&file, target) };
             match result {
-                Ok(header) if c_header => print!("{header}"),
-                Ok(json) => println!("{json}"),
-                Err(e) => { eprintln!("Fehler: {e}"); std::process::exit(1); }
+                Ok(header) if c_header => { print!("{header}"); diagnosen_abschliessen(); }
+                Ok(json) => { println!("{json}"); diagnosen_abschliessen(); }
+                Err(e) => mit_diagnosen(Err(e)),
             }
         }
         Commands::Compile { file, output, emit_ir, target, lib_paths, no_stdlib, linker_script, entry, profile, erlaube_kern, kernel, emit, board } => {
             if let Err(e) = compile(&file, output.as_deref(), emit_ir, target.as_deref(), no_stdlib, linker_script.as_deref(), entry.as_deref(), profile, erlaube_kern, kernel, &emit, board.as_deref(), &lib_paths) {
-                eprintln!("Fehler: {e}");
-                std::process::exit(1);
+                mit_diagnosen(Err(e));
+            } else {
+                diagnosen_abschliessen();
             }
         }
         Commands::Run { file } => {
-            if let Err(e) = run(&file) {
-                eprintln!("Fehler: {e}");
-                std::process::exit(1);
+            mit_diagnosen(run(&file));
+        }
+        Commands::Pruefe { file, target, lib_paths, no_stdlib, erlaube_kern } => {
+            let ergebnis = pruefe(&file, target.as_deref(), &lib_paths, no_stdlib, erlaube_kern);
+            let ok = ergebnis.is_ok();
+            mit_diagnosen(ergebnis);
+            if ok && !matches!(diagnose_format(&cli.diagnose), diagnose::Format::Json) {
+                println!("✓ Geprüft: {} (keine Fehler)", file.display());
             }
+        }
+        Commands::Erklaere { code } => {
+            mit_diagnosen(erklaere(code.as_deref()));
         }
         Commands::Repl => {
             repl();
@@ -213,20 +268,27 @@ fn main() {
     }
 }
 
-// JSON string encoding without assumptions about identifiers or target names.
-fn layout_json_string(value: &str) -> String {
-    use std::fmt::Write;
-    let mut out = String::from("\"");
-    for ch in value.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            c if (c as u32) < 0x20 => { write!(&mut out, "\\u{:04x}", c as u32).unwrap(); }
-            c => out.push(c),
-        }
+// JSON-Stringkodierung: gemeinsamer Encoder in diagnose.rs (P2-T97).
+use diagnose::json_string as layout_json_string;
+
+/// P2-T97: Diagnosen des Kommandos einmal ausgeben; bei Fehlern RC 1.
+fn diagnosen_abschliessen() {
+    if diagnose::abschliessen() {
+        std::process::exit(1);
     }
-    out.push('"');
-    out
+}
+
+/// P2-T97: Ergebnis eines Kommandos mit Diagnosen abschliessen. Ein Err-Text
+/// ohne strukturierte Diagnose wird als M-W000 gemeldet.
+fn mit_diagnosen(ergebnis: Result<(), String>) {
+    if let Err(e) = ergebnis {
+        diagnose::fehler_aus_text(e);
+    }
+    diagnosen_abschliessen();
+}
+
+fn diagnose_format(wert: &str) -> diagnose::Format {
+    diagnose::Format::parse(wert).unwrap_or_default()
 }
 
 // Gemeinsame Quelle für `layout` (JSON) und `layout --c-header`.
@@ -273,13 +335,30 @@ fn layout_diagnostic(file: &PathBuf, target: &str) -> Result<String, String> {
 
 /// Parst eine .moos-Datei zu einem AST
 fn parse_file(file: &PathBuf) -> Result<ast::Program, String> {
-    let source = std::fs::read_to_string(file)
-        .map_err(|e| format!("Datei '{}' lesen fehlgeschlagen: {e}", file.display()))?;
-    let mut lex = lexer::Lexer::new();
-    // Dateiname in jede Meldung: bei importierten Modulen sonst nicht zuordenbar.
-    let tokens = lex.tokenize(&source).map_err(|e| format!("{}: {e}", file.display()))?;
+    let datei = file.display().to_string();
+    let source = std::fs::read_to_string(file).map_err(|e| diagnose::melde_fehler(
+        diagnose::Diagnose::fehler("M-I003", format!("Datei '{datei}' lesen fehlgeschlagen: {e}")).datei(datei.clone())
+    ))?;
+    // P2-T97: alle Lexer- bzw. Syntaxfehler der Datei strukturiert melden;
+    // Dateiname an jeder Diagnose (importierte Module bleiben zuordenbar).
+    let (tokens, lex_fehler) = lexer::Lexer::new().tokenize_alle(&source);
+    // Lexer-Hinweise (M-H007) entstehen ohne Datei; hier nachtragen.
+    diagnose::datei_nachtragen(&datei);
+    if let Some(erster) = lex_fehler.first() {
+        let text = format!("{datei}: {erster}");
+        for e in &lex_fehler {
+            diagnose::melden(e.diagnose().datei(datei.clone()));
+        }
+        return Err(text);
+    }
     let mut par = parser::Parser::new(tokens);
-    par.parse().map_err(|e| format!("{}: {e}", file.display()))
+    par.parse_alle().map_err(|fehler| {
+        let text = format!("{datei}: {}", fehler[0]);
+        for e in &fehler {
+            diagnose::melden(e.diagnose().datei(datei.clone()));
+        }
+        text
+    })
 }
 
 /// Findet die Quelldatei fuer ein Modul (relativ zum Import-Ort oder in packages).
@@ -351,7 +430,7 @@ fn find_module(name: &str, dir: &std::path::Path, lib_paths: &[PathBuf]) -> Opti
 /// wuerde die umschlossene Funktion/Klasse also stillschweigend verwerfen).
 fn strip_export(stmt: ast::Stmt) -> ast::Stmt {
     match stmt {
-        ast::Stmt::Export(inner) => *inner,
+        ast::Stmt::Export(inner, _) => *inner,
         other => other,
     }
 }
@@ -379,7 +458,7 @@ struct Qualifizierer {
 fn eigene_namen(stmts: &[ast::Stmt]) -> std::collections::HashSet<String> {
     let mut namen = std::collections::HashSet::new();
     for stmt in stmts {
-        let stmt = if let ast::Stmt::Export(inner) = stmt { inner.as_ref() } else { stmt };
+        let stmt = if let ast::Stmt::Export(inner, _) = stmt { inner.as_ref() } else { stmt };
         match stmt {
             ast::Stmt::FunctionDef { name, .. }
             | ast::Stmt::ExternC { name, .. }
@@ -406,7 +485,7 @@ fn strukturen_registrieren(
 ) -> Result<(), String> {
     let kanonisch = datei.canonicalize().unwrap_or_else(|_| datei.to_path_buf());
     for stmt in stmts {
-        let stmt = if let ast::Stmt::Export(inner) = stmt { inner.as_ref() } else { stmt };
+        let stmt = if let ast::Stmt::Export(inner, _) = stmt { inner.as_ref() } else { stmt };
         if let ast::Stmt::StructDef { name, .. } = stmt {
             match kontext.strukturen.get(name) {
                 Some(erste) if *erste != kanonisch => {
@@ -463,6 +542,8 @@ fn resolve_modules_mit(
                         // damit auch ein Zyklus/Rautenimport sie findet. E2: nur
                         // die SELBST definierten Namen, nicht die seiner Importe.
                         let mut mod_program = parse_file(&mod_path)?;
+                        // P2-T29: Modul vor dem Inlining pruefen (Meldung mit Moduldatei).
+                        typpruefung::pruefe_datei(&mod_program, &mod_path.display().to_string());
                         let eigene = eigene_namen(&mod_program.statements);
                         strukturen_registrieren(&mod_program.statements, &mod_path, kontext)?;
                         kontext.namen.insert(canonical.clone(), std::rc::Rc::new(eigene));
@@ -487,14 +568,28 @@ fn resolve_modules_mit(
                         // O2: unbekannter Name in `aus m importiere x` ist ein Fehler mit Herkunft.
                         for name in names {
                             if !modul_namen.contains(name) {
-                                return Err(format!(
-                                    "{}:{line}: Modul '{module}' definiert '{name}' nicht (aus {module} importiere {name}; Modul {})",
-                                    datei.display(), mod_path.display()
-                                ));
+                                return Err(diagnose::melde_fehler(diagnose::Diagnose::fehler("M-I002", format!(
+                                    "Modul '{module}' definiert '{name}' nicht (aus {module} importiere {name}; Modul {})",
+                                    mod_path.display()
+                                )).datei(datei.display().to_string()).ort(*line, 0)));
                             }
                         }
                     }
                     let Some(mod_program) = neues_modul else { continue };
+                    // P2-T95: Quelldatei je Modulfunktion fuer Fehlerhinweise (Datei:Zeile).
+                    for (funktion, quelle) in &mod_program.funktion_quellen {
+                        program.funktion_quellen.entry(funktion.clone()).or_insert_with(|| quelle.clone());
+                    }
+                    for mod_stmt in &mod_program.statements {
+                        let definition = match mod_stmt {
+                            ast::Stmt::Export(inner, _) => inner.as_ref(),
+                            other => other,
+                        };
+                        if let ast::Stmt::FunctionDef { name, .. } = definition {
+                            program.funktion_quellen.entry(name.clone())
+                                .or_insert_with(|| mod_path.display().to_string());
+                        }
+                    }
 
                     if names.is_empty() {
                         // "importiere mathe" → ALLE Statements direkt einfuegen (kein Prefix!)
@@ -527,10 +622,10 @@ fn resolve_modules_mit(
                     }
                 } else {
                     // Frueher still verworfen -> spaeter nur 'Funktion nicht gefunden'.
-                    return Err(format!(
+                    return Err(diagnose::melde_fehler(diagnose::Diagnose::fehler("M-I001", format!(
                         "Modul '{module}' nicht gefunden (gesucht in: {})",
                         module_search_locations(module, file_dir, lib_paths).join(", ")
-                    ));
+                    )).datei(datei.display().to_string()).ort(*line, 0)));
                 }
             }
             // Eigene Statements der Datei (inkl. same-file `exportiere funktion/klasse`)
@@ -584,10 +679,10 @@ fn sammle_bindungen(stmts: &[ast::Stmt], out: &mut std::collections::HashSet<Str
                 sammle_bindungen(body, out);
                 sammle_bindungen(else_body, out);
             }
-            S::While { body, .. } | S::UnsafeBlock { body } | S::Guard { else_body: body, .. } => {
+            S::While { body, .. } | S::UnsafeBlock { body, .. } | S::Guard { else_body: body, .. } => {
                 sammle_bindungen(body, out);
             }
-            S::TryCatch { try_body, catch_var, catch_body } => {
+            S::TryCatch { try_body, catch_var, catch_body, .. } => {
                 if let Some(v) = catch_var { out.insert(v.clone()); }
                 sammle_bindungen(try_body, out);
                 sammle_bindungen(catch_body, out);
@@ -606,7 +701,7 @@ fn sammle_bindungen(stmts: &[ast::Stmt], out: &mut std::collections::HashSet<Str
                     sammle_bindungen(body, out);
                 }
             }
-            S::Export(inner) => sammle_bindungen(std::slice::from_ref(inner.as_ref()), out),
+            S::Export(inner, _) => sammle_bindungen(std::slice::from_ref(inner.as_ref()), out),
             // Eigene Geltungsbereiche oder ohne Bindung.
             _ => {}
         }
@@ -637,37 +732,36 @@ impl QualiLaeufer<'_> {
         let Some(ql) = self.tabelle.get(q) else { return Ok(false) };
         if self.gebunden(q) {
             if ql.alias && self.gewarnt.insert(q.to_string()) {
-                eprintln!(
-                    "Warnung: {}: Modulalias '{q}' (Modul '{}') wird von einer Variable gleichen Namens verdeckt; '{q}.{name}' greift auf die Variable zu",
-                    self.datei.display(), ql.modul
-                );
+                diagnose::melden(diagnose::Diagnose::hinweis("M-H003", format!(
+                    "Modulalias '{q}' (Modul '{}') wird von einer Variable gleichen Namens verdeckt; '{q}.{name}' greift auf die Variable zu",
+                    ql.modul
+                )).datei(self.datei.display().to_string()));
             }
             return Ok(false);
         }
         if ql.namen.contains(name) { return Ok(true); }
         if ql.alias {
-            return Err(format!(
-                "{}: Modul '{}' (Alias '{q}') definiert '{name}' nicht",
-                self.datei.display(), ql.modul
-            ));
+            return Err(diagnose::melde_fehler(diagnose::Diagnose::fehler("M-I002", format!(
+                "Modul '{}' (Alias '{q}') definiert '{name}' nicht", ql.modul
+            )).datei(self.datei.display().to_string())));
         }
         Ok(false)
     }
 
     /// Punktname `q.Name` (Typ oder `neu q.Klasse`) auf `Name` zurueckfuehren.
-    fn punktname(&self, name: &mut String, ort: &str) -> Result<(), String> {
+    /// `zeile` 0 = unbekannt (P2-T97: Diagnose mit Datei/Zeile).
+    fn punktname(&self, name: &mut String, zeile: usize) -> Result<(), String> {
         if let Some((q, glied)) = name.split_once('.') {
+            let datei = self.datei.display().to_string();
             let Some(ql) = self.tabelle.get(q) else {
-                return Err(format!(
-                    "{}{ort}: Unbekannter Modulqualifizierer '{q}' in '{name}'",
-                    self.datei.display()
-                ));
+                return Err(diagnose::melde_fehler(diagnose::Diagnose::fehler("M-I000", format!(
+                    "Unbekannter Modulqualifizierer '{q}' in '{name}'"
+                )).datei(datei).ort(zeile, 0)));
             };
             if !ql.namen.contains(glied) {
-                return Err(format!(
-                    "{}{ort}: Modul '{}' definiert '{glied}' nicht",
-                    self.datei.display(), ql.modul
-                ));
+                return Err(diagnose::melde_fehler(diagnose::Diagnose::fehler("M-I002", format!(
+                    "Modul '{}' definiert '{glied}' nicht", ql.modul
+                )).datei(datei).ort(zeile, 0)));
             }
             *name = glied.to_string();
         }
@@ -677,8 +771,7 @@ impl QualiLaeufer<'_> {
     fn typ(&mut self, ty: &mut ast::TypeRef) -> Result<(), String> {
         match &mut ty.kind {
             ast::TypeKind::Name(name) => {
-                let ort = format!(":{}", ty.line);
-                self.punktname(name, &ort)?;
+                self.punktname(name, ty.line)?;
             }
             ast::TypeKind::Generic { args, .. } => {
                 for arg in args { self.typ(arg)?; }
@@ -719,7 +812,7 @@ impl QualiLaeufer<'_> {
                 for a in args { self.expr(a)?; }
             }
             E::New { class_name, args } => {
-                self.punktname(class_name, "")?;
+                self.punktname(class_name, 0)?;
                 for a in args { self.expr(a)?; }
             }
             E::MethodCall { object, method, args } => {
@@ -727,7 +820,7 @@ impl QualiLaeufer<'_> {
                 let q = if let E::Identifier(q) = object.as_ref() { Some(q.clone()) } else { None };
                 if let Some(q) = q {
                     if self.ziel(&q, method)? {
-                        let neu = E::FunctionCall { name: method.clone(), args: std::mem::take(args) };
+                        let neu = E::FunctionCall { name: method.clone(), args: std::mem::take(args), zeile: 0 };
                         *e = neu;
                         return Ok(());
                     }
@@ -814,18 +907,18 @@ impl QualiLaeufer<'_> {
             }
             S::CompoundAssignment { value, .. } => self.expr(value)?,
             S::PropertyAssignment { object, value, .. } => { self.expr(object)?; self.expr(value)?; }
-            S::IndexAssignment { object, index, value } => {
+            S::IndexAssignment { object, index, value, .. } => {
                 self.expr(object)?;
                 self.expr(index)?;
                 self.expr(value)?;
             }
-            S::Show(e) | S::Throw(e) | S::Expression(e) | S::Defer(e) | S::Expect(e) => self.expr(e)?,
-            S::If { condition, body, else_body } => {
+            S::Show(e, _) | S::Throw(e, _) | S::Expression(e, _) | S::Defer(e, _) | S::Expect(e, _) => self.expr(e)?,
+            S::If { condition, body, else_body, .. } => {
                 self.expr(condition)?;
                 self.stmts(body)?;
                 self.stmts(else_body)?;
             }
-            S::While { condition, body } => { self.expr(condition)?; self.stmts(body)?; }
+            S::While { condition, body, .. } => { self.expr(condition)?; self.stmts(body)?; }
             S::For { iterable, body, .. } | S::ParallelFor { iterable, body, .. } => {
                 self.expr(iterable)?;
                 self.stmts(body)?;
@@ -844,8 +937,8 @@ impl QualiLaeufer<'_> {
             }
             S::RawDataU32 { ty, value, .. } => { self.typ_opt(ty)?; self.expr(value)?; }
             S::NativeConst { ty, value, .. } => { self.typ(ty)?; self.expr(value)?; }
-            S::Return(value) => { if let Some(v) = value { self.expr(v)?; } }
-            S::Break | S::Continue | S::Import { .. } | S::Global(_) => {}
+            S::Return(value, _) => { if let Some(v) = value { self.expr(v)?; } }
+            S::Break(_) | S::Continue(_) | S::Import { .. } | S::Global(_, _) => {}
             S::StructDef { fields, .. } => { for (_, t) in fields { self.typ(t)?; } }
             S::ClassDef { body, .. } => self.stmts(body)?,
             S::InterfaceDef { signatures, .. } => {
@@ -859,8 +952,8 @@ impl QualiLaeufer<'_> {
                 self.stmts(try_body)?;
                 self.stmts(catch_body)?;
             }
-            S::Export(inner) => self.stmt(inner)?,
-            S::Match { value, cases } => {
+            S::Export(inner, _) => self.stmt(inner)?,
+            S::Match { value, cases, .. } => {
                 self.expr(value)?;
                 for (muster, waechter, body) in cases {
                     if let Some(m) = muster { self.expr(m)?; }
@@ -868,11 +961,11 @@ impl QualiLaeufer<'_> {
                     self.stmts(body)?;
                 }
             }
-            S::Guard { condition, else_body } => { self.expr(condition)?; self.stmts(else_body)?; }
+            S::Guard { condition, else_body, .. } => { self.expr(condition)?; self.stmts(else_body)?; }
             S::DataClassDef { field_types, .. } => {
                 for t in field_types.iter_mut() { self.typ_opt(t)?; }
             }
-            S::UnsafeBlock { body } => self.stmts(body)?,
+            S::UnsafeBlock { body, .. } => self.stmts(body)?,
             S::TestDef { body, .. } => self.im_scope(std::collections::HashSet::new(), body)?,
         }
         Ok(())
@@ -1693,12 +1786,16 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     };
     // Haupt-Datei parsen
     let mut program = parse_file(file)?;
+    // P2-T29: Typpruefung je Datei (Module in resolve_modules), Abbruch vor dem Codegen.
+    typpruefung_einschalten_falls_gewuenscht();
+    typpruefung::pruefe_datei(&program, &file.display().to_string());
 
     // Module AST-basiert auflösen
     let mut visited = std::collections::HashSet::new();
     let canonical = file.canonicalize().unwrap_or(file.clone());
     visited.insert(canonical);
     resolve_modules(&mut program, file.as_path(), &mut visited, lib_paths)?;
+    typpruefung::ergebnis()?;
     let link_triple = codegen::CodeGen::resolve_triple(target.unwrap_or("native"));
     let libraries = ffi_link::libraries(&program.statements, &link_triple)?;
 
@@ -1706,6 +1803,7 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     let context = inkwell::context::Context::create();
     let module_name = file.file_stem().unwrap().to_str().unwrap();
     let mut compiler = codegen::CodeGen::new(&context, module_name, target.unwrap_or("native"))?;
+    compiler.set_quelldatei(&file.display().to_string());
     if profile {
         compiler.set_profiling(true);
     }
@@ -2135,6 +2233,47 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     Ok(())
 }
 
+/// P2-T97: `pruefe` – wie compile bis einschliesslich Codegen und LLVM-Verifikation,
+/// aber ohne Objektdatei/Linken. Schnelle Rueckmeldung fuer Agenten.
+fn pruefe(file: &PathBuf, target: Option<&str>, lib_paths: &[PathBuf], no_stdlib: bool, erlaube_kern: bool) -> Result<(), String> {
+    let mut program = parse_file(file)?;
+    // P2-T29: Typpruefung je Datei (Module in resolve_modules), Abbruch vor dem Codegen.
+    typpruefung_einschalten_falls_gewuenscht();
+    typpruefung::pruefe_datei(&program, &file.display().to_string());
+    let mut visited = std::collections::HashSet::new();
+    visited.insert(file.canonicalize().unwrap_or(file.clone()));
+    resolve_modules(&mut program, file.as_path(), &mut visited, lib_paths)?;
+    typpruefung::ergebnis()?;
+    let link_triple = codegen::CodeGen::resolve_triple(target.unwrap_or("native"));
+    ffi_link::libraries(&program.statements, &link_triple)?;
+    let context = inkwell::context::Context::create();
+    let module_name = file.file_stem().and_then(|s| s.to_str()).unwrap_or("pruefe");
+    let mut compiler = codegen::CodeGen::new(&context, module_name, target.unwrap_or("native"))?;
+    compiler.set_quelldatei(&file.display().to_string());
+    let is_bare_target = target.map(|t| t.contains("-bare")).unwrap_or(false);
+    compiler.set_bare_mode(no_stdlib || is_bare_target || erlaube_kern);
+    compiler.compile_program(&program)
+}
+
+/// P2-T97: `erklaere [CODE]` – Katalogeintrag bzw. ganzer Katalog.
+fn erklaere(code: Option<&str>) -> Result<(), String> {
+    match code {
+        None => {
+            for e in diagnose::KATALOG {
+                println!("{:<7} {}", e.code, e.titel);
+            }
+            Ok(())
+        }
+        Some(code) => {
+            let e = diagnose::eintrag(code).ok_or_else(|| format!(
+                "Unbekannter Diagnosecode '{code}' (Liste: moo-compiler erklaere)"
+            ))?;
+            println!("{} – {}\n\n{}", e.code, e.titel, e.erklaerung);
+            Ok(())
+        }
+    }
+}
+
 fn run(file: &PathBuf) -> Result<(), String> {
     let tmp_dir = std::env::temp_dir();
     #[cfg(target_os = "windows")]
@@ -2144,6 +2283,8 @@ fn run(file: &PathBuf) -> Result<(), String> {
     let tmp_output = tmp_dir.join(tmp_name);
 
     compile(file, Some(&tmp_output), false, None, false, None, None, false, false, false, "elf", None, &[])?;
+    // P2-T97: Hinweise vor der Ausfuehrung zeigen (run endet per exit).
+    diagnosen_abschliessen();
 
     let status = Command::new(&tmp_output)
         .status()
@@ -2220,12 +2361,15 @@ fn repl() {
         unsafe { std::env::set_var("MOO_QUIET", "1"); }
         match compile(&tmp_src, Some(&tmp_bin), false, None, false, None, None, false, false, false, "elf", None, &[]) {
             Ok(()) => {
+                diagnose::abschliessen();
                 // Erfolgreich kompiliert — ausfuehren (ohne den "Kompiliert" Output)
                 let _ = Command::new(&tmp_bin).status();
                 history.push(new_code);
             }
             Err(e) => {
-                eprintln!("Fehler: {e}");
+                // P2-T97: Diagnosen je Eingabe ausgeben und Sammler leeren.
+                diagnose::fehler_aus_text(e);
+                diagnose::abschliessen();
             }
         }
 

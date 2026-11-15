@@ -1,0 +1,17 @@
+# P2-T95: h -> f -> g, nur EIN Hinweis (erster Rahmen ohne Pruefweg).
+funktion g():
+    wirf "tief"
+
+funktion f():
+    g()
+    zeige "f weiter"
+
+funktion h():
+    f()
+    zeige "h weiter"
+
+versuche:
+    h()
+    zeige "nach h"
+fange e:
+    zeige "gefangen: " + e

@@ -1,0 +1,47 @@
+# P2-T29 S1 (Review 08e9b482): keine Fehlalarme. Spaetere Annotation,
+# global mutierter Wert, Zweig mit anderem Typ, Schleife.
+setze x auf "text"
+setze y: Text auf x
+setze x: Zahl auf 1
+zeige y
+
+setze g: Zahl auf 1
+funktion mutiere():
+    global g
+    setze g auf "text"
+mutiere()
+setze h: Text auf g
+zeige h
+
+setze w auf 1
+wenn x > 0:
+    setze w auf "eins"
+setze v: Zahl auf w
+zeige v
+
+setze i auf 0
+setze s auf 0
+solange i < 3:
+    setze s auf "runde"
+    setze i auf i + 1
+setze t: Text auf s
+zeige t
+
+# Review da045f85: unbekannte rechte Seite; Annotation im nicht betretenen Zweig.
+funktion liefert():
+    gib_zurück "text"
+setze q: Zahl auf liefert()
+setze r: Text auf q
+zeige r
+
+setze u auf 1
+wenn falsch:
+    setze u: Zahl auf 2
+setze u auf "text"
+zeige u
+
+# Parameter: Wert unbekannt, Neuzuweisung nur gegen die Annotation.
+funktion verdopple(p: Zahl):
+    setze ergebnis: Text auf p
+    gib_zurück ergebnis
+zeige verdopple(2)

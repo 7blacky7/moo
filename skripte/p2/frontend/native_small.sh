@@ -32,7 +32,8 @@ for name in i8_lo i8_hi u8_lo u8_hi i8_bruch i8_text i8_nan i8_inf i8_minus_inf 
     echo "FAIL $name: Kompilierung"; failed=1; continue
   fi
   set +e
-  timeout 30s "$out" > "$out.out" 2> "$out.err"
+  # P2-T95: Abbruchvertrag nur noch mit MOO_STRENG=1 (Standard: Hinweis + Weiterlauf).
+  MOO_STRENG=1 timeout 30s "$out" > "$out.out" 2> "$out.err"
   rc=$?
   set -e
   if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ] || [ "$rc" -ge 128 ] ||

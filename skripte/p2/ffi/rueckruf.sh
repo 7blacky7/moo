@@ -36,7 +36,7 @@ echo 'PASS Rueckruf Linux: qsort/user_data/void/Struktur/gespeichert/Fremdthread
 
 # --- 2. Ungefangen und fehlbar auf fremdem Thread ---
 set +e
-"$out/rueckruf_ungefangen" > "$out/ungefangen.out" 2> "$out/ungefangen.err"; rc_u=$?
+MOO_STRENG=1 "$out/rueckruf_ungefangen" > "$out/ungefangen.out" 2> "$out/ungefangen.err"; rc_u=$?  # P2-T95: Abbruch nur mit MOO_STRENG=1
 "$out/rueckruf_fremdthread" > "$out/fremdthread.out" 2> "$out/fremdthread.err"; rc_f=$?
 set -e
 [ "$rc_u" -eq 1 ] || { cat "$out/ungefangen.out" "$out/ungefangen.err" >&2; echo "FEHLER: ungefangen RC $rc_u statt 1" >&2; exit 1; }

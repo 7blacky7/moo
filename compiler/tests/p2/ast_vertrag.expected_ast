@@ -1,6 +1,7 @@
 Program {
     statements: [
         FunctionDef {
+            zeile: 1,
             name: "p2_ast_typisiert",
             params: [
                 "p",
@@ -102,6 +103,7 @@ Program {
             ],
             body: [
                 Assignment {
+                    zeile: 2,
                     name: "anzahl",
                     ty: Some(
                         TypeRef {
@@ -119,6 +121,7 @@ Program {
                     ),
                 },
                 ConstAssignment {
+                    zeile: 3,
                     name: "kapazitaet",
                     ty: Some(
                         TypeRef {
@@ -141,11 +144,13 @@ Program {
                             0.0,
                         ),
                     ),
+                    4,
                 ),
             ],
             decorators: [],
         },
         FunctionDef {
+            zeile: 6,
             name: "p2_ast_untypisiert",
             params: [
                 "x",
@@ -164,11 +169,13 @@ Program {
                             "x",
                         ),
                     ),
+                    7,
                 ),
             ],
             decorators: [],
         },
         DataClassDef {
+            zeile: 9,
             name: "P2AstDaten",
             fields: [
                 "adresse",
@@ -213,6 +220,7 @@ Program {
             ],
         },
         InterfaceDef {
+            zeile: 11,
             name: "P2AstSchnitt",
             methods: [
                 "lesen",
@@ -296,11 +304,13 @@ Program {
             ],
         },
         ClassDef {
+            zeile: 15,
             name: "P2AstKlasse",
             parent: None,
             interfaces: [],
             body: [
                 FunctionDef {
+                    zeile: 16,
                     name: "lesen",
                     params: [
                         "wert",
@@ -339,6 +349,7 @@ Program {
                                     "wert",
                                 ),
                             ),
+                            17,
                         ),
                     ],
                     decorators: [],
@@ -346,6 +357,7 @@ Program {
             ],
         },
         Assignment {
+            zeile: 19,
             name: "p2_ast_lambda",
             ty: None,
             value: Lambda {
@@ -371,4 +383,5 @@ Program {
             },
         },
     ],
+    funktion_quellen: {},
 }

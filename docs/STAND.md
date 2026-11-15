@@ -1,0 +1,104 @@
+# Stand des Projekts (15.11.2026)
+
+Quellen: Koordinator-Inventar (Thought `15b5f725`, acht Stack-Analysen über code_intel, Pläne und Memories; nur lesend, nichts ausgeführt) mit Korrektur `ea8564c1` (Hardwarebeleg), Planliste vom 15.11.2026. Reifegrade: **G** funktioniert und getestet, **F** funktioniert, **T** teilweise, **P** geplant.
+
+moo ist ein aktives Ein-Personen-Projekt, das mit KI-Agenten entwickelt wird.
+
+## Fortschritt je Arbeitsstrang
+
+| Strang | Erledigt |
+|---|---|
+| P1 Hauptroadmap (Sprache, Compiler, Runtime, Stdlib, UI) | 423 von 504 |
+| P2 Native Ebene `@nativ` (aktiv) | 74 von 89 |
+| P3 GPU-Training A/B | 0 von 6 |
+| P4 Silben-Tokenizer | 14 von 17 |
+| P5 Trainingsmethoden | 17 von 20 |
+| P7 MoOS-Kern in moo | 7 von 16 |
+| P8 Adaptive Sparse-Berechnung / MoE-Routing | 0 von 26 |
+| P9 Sprachkern: adaptive Suche, Methoden-Dispatch | 0 von 16 |
+
+## Reifegrade und Schwächen
+
+| Bereich | Reifegrad | Schwächen |
+|---|---|---|
+| Sprache und Compiler | DE/EN-Schlüsselwörter aus `spec/tokens.yaml` (CI-Prüfung) G; `versuche`/`wirf`/`aufräumen` und Refcount G (ASan/LSan); Pattern Matching, Lambdas/Closures, Comprehensions, Module F; `@nativ`, `struktur`, `puffer`, `vec`/`mat` F; `extern "C"` + `@rückruf` F; `bindgen` F; Zeiger/`unsicher` T | native Aufrufe in Methoden und Lambdas gesperrt; `codegen.rs` hat über 13.000 Zeilen; Diagnosen (`diagnose.rs`, P2-T97) im Review; f-Strings und `@bibliothek` nicht belegt (zu prüfen) |
+| KI | Tensor/Autograd mit Gradcheck über die ganze Registry G; Netze bis Transformer (RoPE, GQA, MoE-Schicht) F; SGD/Adam/AdamW F; SFT/DPO/Distillation F; BPE- und Silben-Tokenizer F; Dataloader, Checkpoints F; Vulkan-Compute (28 Shader, bit-identischer CPU-Fallback, Strikt-Modus, `gpu_statistik`) F, eine GPU belegt | GRPO ohne Implementierung (P1-T201 steht auf erledigt, Widerspruch); nur f32; P8/P9 geplant |
+| Grafik und 3D | SDL2-2D; eine `raum_*`-API für GL21/GL33/Vulkan; Licht, Schatten (PCF), Nebel, Bloom, Himmel/Tageszeit, Texturen G/F; Voxel-Engine F (GL33 und Vulkan); Test-API mit Input-Simulation und Pixel-Assert G; GIF-Encoder G; MP4 über ffmpeg T | Vulkan-Chunk-Draws laufen absichtlich inline in `vk_swap` (`moo_3d_vulkan_mem.c`); der visuelle Vulkan-Voxel-Test (P1-T79) und der Vulkan-Screenshot (P1-T30) sind erledigt; HDR/PBR/Wasser T; keine Physik-Engine; GL21 ohne Screenshot |
+| Oberflächen | selbst gezeichnete Widgets ohne GTK auf X11/Wayland/Win32 F; Glass-Theme und Compositor (ASan) F; Layout, Menüs, Clipboard; UI-Tests (Snapshot + JSON-Sidecar, Klick per ID) G | macOS blind nachgezogen; keine nativen Dateidialoge; GTK-Altpfad läuft parallel |
+| Netz und Daten | TCP/UDP, HTTP Server/Client G; TLS 1.3 G (net-crypto-ci); DNS, WebSocket-Client, PostgreSQL-Client (SCRAM) in reinem moo F; SQLite F; SHA-256/HMAC/PBKDF2/CSPRNG G (NIST); JSON G; Regex F; Dateien; Threads/Channels F | keine Zeit-/Datums-API; AES/ChaCha/X25519 als Builtins nicht belegt (P1-T373–375 stehen auf erledigt, Widerspruch); kein WebSocket-Server; kein async |
+| Multimedia | Kamera/Mikro Windows (Media Foundation, WASAPI) G auf Hardware; Linux V4L2/ALSA mit Mock-Tests G; Frame↔Tensor F; MP4 ohne Shell; PNG-/WAV-Writer in reinem moo | Wiedergabe über Lautsprecher folgt (Aufnahme, WAV und Spektrogramm sind da); Bilder laden geht über `sprite_laden` (PNG, SDL2_image) und den Bildlader der Datensätze (`moo_dataset.c`); `ki_capture_loopback_gate` evtl. defekt ("rgb"-Modus) |
+| System und Bare-Metal | x86_64-Multiboot2-Kernel G (QEMU-Gate); UEFI-App PE32+ G (QEMU) und auf echter Hardware; BIOS-Loader Stage 1/2 F; ARM64 auf qemu-virt F; Port-I/O/MSR/MMIO/IDT/PIC/PIT F; `@unterbrechung`; `--emit elf\|flat\|sector`; Windows-EXE per Cross F; WASM T | Kernel-Unterbau überwiegend C (P7: 7 von 16); kein Scheduler, keine Prozesse, kein VFS, kein PCI-Management; Doku zum Netzboot widersprüchlich |
+| Werkzeuge | Sanitizer-Gates auf 3 Betriebssystemen G; `run_all` G; Konformanz G0–G7 G; 10 CI-Workflows, GitHub-CI grün auf Linux, Windows und macOS | Python-Toolchain (LSP, Formatter, Transpiler, docgen) ohne Tests, vermutlich Legacy; VSCode-Extension klein (33 Zeilen); Playground serverseitig, kein WASM im Browser; Windows-Installer geplant; Pakete lösen nur Pfade auf |
+
+## Hardwarebeleg
+
+- **UEFI-Boot auf echter Hardware:** Die moo-UEFI-App bootet vom USB-Stick auf dem Testrechner (Glovary N100, AMI UEFI) und zeigt die von moo gezeichnete MoOS-Oberfläche (Thought `428c3f4c`, P7-T2).
+- **Eigener I226-V-Netzwerktreiber in moo:** lief auf dem N100, Port 0 meldet Link mit 100 Mbit (P7-T15, Thought `c32b6028`, Hardwarebeleg `a1c0394a`). Die Netzwerk-Konsole über die I226-V funktionierte (P7-T9, `9ad7cd7a`, damals noch mit iPXE-Treiber).
+- **Stand 01.11.2026.** Ein erneuter Hardwarelauf mit dem neuesten Stand steht aus.
+
+## Zu prüfende Widersprüche
+
+GRPO (Plan sagt erledigt, Code fehlt), AES/ChaCha/X25519 als Builtins, f-Strings und `@bibliothek`, `ki_capture_loopback_gate` ("rgb"), Netzboot P7-T10. Diese Punkte stehen deshalb nicht oder nur als „in Arbeit“ in der README. Die frühere README übertrieb außerdem: macOS-UI sowie LSP und Playground als fertig.
+
+## P2: Native Ebene `@nativ`
+
+Featuretabelle aus `dokumentation/p2/sprachreferenz-entwurf-de.md` (Stand 14.11.2026). Die Beispiele wurden auf Linux einzeln ausgeführt; Geltung für Windows und Bare setzt eigene Nachweise voraus.
+
+| Bereich | Stand | Beleg |
+|---|---|---|
+| `@nativ`-Funktionen, Vorwärtsaufrufe | implementiert | `beispiele/nativ/01_native_funktionen.moos` |
+| Ganzzahlsemantik (Division, Rest, Shifts, Wrap) | implementiert | `beispiele/nativ/02_ganzzahl_semantik.moos` |
+| Casts `als`, `als_wrap`, `als_saettigend` | implementiert | `beispiele/nativ/03_casts.moos` |
+| Typisierte Puffer | implementiert (Grundform) | `beispiele/nativ/04_puffer.moos` |
+| Strukturen, `@gepackt`, feste Arrays | Deklaration implementiert | `beispiele/nativ/05_struktur_layout.moos` |
+| `extern "C"`, `@bibliothek(ziel=...)`, `unsicher` | implementiert für skalare Signaturen und Pointer | Tests in `compiler/tests/p2` |
+| Strukturen by value und C-`bool` in FFI | implementiert | `beispiele/nativ/11_struktur_by_value.moos` |
+| Feste Arrays und bloße Funktionstypen by value in FFI | abgelehnt (nicht freigegeben) | Test `ffi_aggregat` |
+| C-Rückrufe `@rückruf` | implementiert | `beispiele/nativ/10_rueckruf.moos` |
+| Opake Griffe, C++ über extern-C-Adapter | implementiert | `beispiele/nativ/12_opaker_griff.moos` |
+| Zeigerarithmetik, Umdeutung `zeiger(p)` | implementiert | `beispiele/nativ/07_zeiger.moos` |
+| Leihgabe `@liest` | implementiert | `beispiele/nativ/08_leihgabe_liest.moos` |
+| Native Aufrufe aus Methoden und Lambdas | implementiert laut Tabelle; das Inventar meldet sie als gesperrt (zu prüfen) | `beispiele/nativ/09_aufruf_aus_methoden.moos` |
+| Strukturen in dynamischem Code | implementiert | `beispiele/nativ/13_struktur_dynamisch.moos` |
+| `vec2/3/4`, `mat4`, `betrag`/`magnitude` | implementiert | `beispiele/nativ/06_vec_mat.moos` |
+
+Die 13 Beispiele unter `beispiele/nativ/` laufen alle (13 von 13).
+
+### Einzelmessung Schleife
+
+Schleife mit 10^8 Durchläufen, Host cachyos-x64, je 3 Läufe, Ergebnis in allen Varianten 3088707712:
+
+| Variante | Laufzeit |
+|---|---|
+| C, `cc -O2` | 0,071–0,073 s |
+| moo `@nativ` | 0,033–0,039 s (ca. 1,9× schneller als das C-Programm) |
+| moo dynamisch | 4,931 s (1 Lauf) |
+
+Einzelmessung eines einzelnen Programms, keine allgemeine Aussage über Geschwindigkeit. Das C-Vergleichsprogramm liegt nicht im Repository.
+
+### Typprüfung und Rückmeldung für Agenten (in Arbeit)
+
+Ziel: Typfehler vor der Ausführung mit Datei:Zeile und Vorschlag, JSON-Diagnosen, unbehandelter Fehler stürzt nicht ab (`MOO_STRENG=1` bricht ab), Typangaben bleiben freiwillig. Einheitliche Diagnosen mit Fehlercode, `--diagnose=json` und `moo pruefe` sind in Review (P2-T97); die Typprüfung folgt (P2-T29, T95–T98). Belegt ist heute: Compilefehler mit Zeile und Spalte.
+
+## Was für die README selbst geprüft wurde
+
+- **Ausgeführt (15.11.2026):** Fibonacci in DE und EN (6765), eine `@nativ`-Quadratsumme in DE und EN (332833500), `beispiele/fibonacci.moos`, die 13 Beispiele unter `beispiele/nativ/` (Abnahme durch den Koordinator).
+- **Nur gelesen, nicht ausgeführt:** alle weiteren Schnipsel der README (KI, 3D, UI, DNS, WebSocket, PostgreSQL, Webserver, Kamera, UEFI, Kernel). Der Kernel `beispiele/kernel/hallo_kern.moos` baut zu einem ELF, wurde dabei aber nicht gebootet.
+- **Reifegrade** stammen aus dem Koordinator-Inventar (nur lesend erhoben), nicht aus eigenen Läufen.
+- **GPU im KI-Beispiel:** per `MOO_KI_GPU_ERZWINGEN=1` (docs/KI_MIT_MOO.md, Abschnitt 4.5); ob die GPU genutzt wurde, zeigt `gpu_statistik()`. `ki_sprachmodell_gpu.moos` ist ausdrücklich ein Lern-Demonstrator, kein Chatbot.
+- Trainingskorpora, eigene Testdaten und Modell-Checkpoints sind absichtlich nicht im Repository.
+
+## Englische Aliase: Lücken (Stand 15.11.2026)
+
+Für `README.en.md` wurden alle Schnipsel auf englische Schlüsselwörter (`spec/tokens.yaml`) und die englischen Aliase der Builtins (in `compiler/src/codegen.rs` als "deutsch" | "englisch" hinterlegt) umgestellt. Dabei fehlen für diese Namen englische Aliase; sie stehen deshalb in der englischen README noch auf Deutsch:
+
+- **stdlib in moo (keine Aliase möglich):** `ui_baue`, `setup_login_form`, `setup_status_bar`, `ui_widget_id_setze`, `ui_test_snapshot_mit_sidecar`, `ws_verbinde`, die Methoden `sende_text` und `empfange` des WebSocket-Objekts. Die Dict-Schlüssel `hFenster`, `daten`, `antworten` und `pfad` sind deutsch; die Variable `TYP_A` ist stdlib-seitig definiert.
+- **Builtins ohne englischen Alias in `codegen.rs`:** `web_json`, `gpu_statistik`, `kern_idt_init`, `kern_pic_remap`, `kern_timer_init`, `kern_alloc` (nur Alias `kern_reserviere`), außerdem `interrupts_an` (nur das Mnemonic `sti`). Der Präfix `kern_` ist deutsch; `mse` und `test_frame_save_bmp` sind bereits englisch.
+- **Bare-Metal-Modul `beispiele/uefi/netz_treiber.moos`:** `nt_anzahl`, `nt_log` u. a.
+- **Im dynamischen Code heißt die Länge `len`,** nicht `length` (`length` hat sich nur in nativen Funktionen bewährt; im dynamischen Code meldete `pruefe` „Funktion 'length' nicht gefunden“).
+
+Geprüft am 15.11.2026 mit `moo-compiler pruefe` bzw. `run` (Repo-Root als Arbeitsverzeichnis, wegen `stdlib/`): KI-Training, Voxel, UI (Login und Snapshot), DNS, WebSocket, Postgres-Hilfsfunktion `int32_be`, Webserver, Kamera, Kernel (`--no-stdlib --target x86_64-bare`) bestehen die Prüfung ohne Fehler. Ausgeführt wurden zusätzlich `@native`-Quadratsumme (332833500), `int32_be(258)` (`[0, 0, 1, 2]`), die `check`-Funktion und die englische Fassung des `qsort`-Rückrufs mit der erwarteten Ausgabe (0, -2147483648, -3, -3, 5, 2147483647). Der UEFI-Schnipsel (`from "./netz_treiber" import …`) wurde nicht einzeln geprüft, weil er das Modul im selben Ordner braucht. Die geprüften Programme sind auf Vollständigkeit der Hilfsfunktionen (`check`, `build_packet`, `x`, `target`) ergänzt; die README zeigt Auszüge daraus.
+
+## Root-Inhalt
+
+Dauerhaft im Root: `README.md`, `README.en.md`, `ARCHITECTURE.md`, `DEPENDENCIES.md`, `pyproject.toml`, `.gitignore`, `.github/`. Es gibt derzeit keine `LICENSE`-Datei. Alles andere sind Code- oder Doku-Verzeichnisse. Bitte keine losen `test_*.moos` im Root anlegen (siehe `scratch/README.md`).

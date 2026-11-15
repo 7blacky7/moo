@@ -1,0 +1,5 @@
+funktion f():
+    setze a auf 1
+    gib_zurück unbekannt_r
+
+zeige f()

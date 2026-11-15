@@ -11,7 +11,8 @@ echo "PASS dynamische i32-Werte und Grenzen"
 for name in bruch gross text erstes_argument zweites_argument nan plus_inf minus_inf; do
   timeout 30s "$compiler" compile "compiler/tests/p2/m1_dyn_${name}.moos" -o "$dir/$name"
   set +e
-  timeout 30s "$dir/$name" > "$dir/$name.out" 2> "$dir/$name.err"
+  # P2-T95: Abbruchvertrag nur noch mit MOO_STRENG=1 (Standard: Hinweis + Weiterlauf).
+  MOO_STRENG=1 timeout 30s "$dir/$name" > "$dir/$name.out" 2> "$dir/$name.err"
   rc=$?
   set -e
   if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ] || [ "$rc" -ge 128 ]; then

@@ -23,10 +23,15 @@ timeout 60s "$compiler" compile "$t/wirf_unsicher.moos" --emit-ir -o "$out/wirf.
 mise exec -- opt -passes=verify -disable-output "$out/wirf.ll"
 timeout 60s "$compiler" compile "$t/wirf_unsicher_ungefangen.moos" -o "$out/ungefangen"
 set +e
-timeout 10s "$out/ungefangen" > "$out/ungefangen.out" 2> "$out/ungefangen.err"
+# P2-T95: Standard = Hinweis auf stderr und Weiterlauf (RC 0); Abbruch nur mit MOO_STRENG=1.
+timeout 10s "$out/ungefangen" > "$out/ungefangen_standard.out" 2> "$out/ungefangen_standard.err"
+rc_standard=$?
+MOO_STRENG=1 timeout 10s "$out/ungefangen" > "$out/ungefangen.out" 2> "$out/ungefangen.err"
 rc=$?
 set -e
-[ "$rc" -eq 1 ] || { echo "FEHLER: ungefangen RC $rc statt 1" >&2; exit 1; }
+[ "$rc_standard" -eq 0 ] || { echo "FEHLER: ungefangen (Standard) RC $rc_standard statt 0" >&2; exit 1; }
+grep -qF 'Hinweis: unbehandelter Fehler' "$out/ungefangen_standard.err" || { echo 'FEHLER: Hinweis fehlt (Standard)' >&2; exit 1; }
+[ "$rc" -eq 1 ] || { echo "FEHLER: ungefangen (MOO_STRENG=1) RC $rc statt 1" >&2; exit 1; }
 grep -qF 'Unbehandelter Fehler' "$out/ungefangen.err" || { echo 'FEHLER: Diagnose fehlt' >&2; exit 1; }
 if grep -q 'NACH_' "$out/ungefangen.out"; then echo 'FEHLER: Code nach ungefangenem wirf lief' >&2; exit 1; fi
 echo 'PASS P2-T93 wirf mit/ohne unsicher: identisch (8 Faelle gefangen, ungefangen RC 1, IR verify)'

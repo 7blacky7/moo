@@ -809,7 +809,71 @@ fange fehler:
     zeige fehler
 ```
 
+### Unbehandelte Fehler
+
+Wird ein Fehler nirgends mit `versuche:` gefangen, stürzt das Programm **nicht** ab.
+moo gibt einen Hinweis auf der Fehlerausgabe (stderr) aus und läuft weiter. Der
+Rückgabewert des Programms ändert sich dadurch nicht.
+
+```
+funktion lade():
+    wirf "Datei fehlt"
+
+funktion start():
+    lade()
+    zeige "weiter geht's"
+
+start()
+```
+
+Ausgabe (der Hinweis steht auf stderr):
+
+```
+Hinweis: unbehandelter Fehler „Datei fehlt“
+  geworfen in lade (programm.moos:2)
+  nicht behandelt: kein versuche: im Aufrufpfad – das Programm läuft weiter
+weiter geht's
+```
+
+Gibt es weiter außen ein `versuche:`, fängt es den Fehler wie gewohnt. Eine
+Funktion dazwischen, die selbst kein `versuche:` hat, läuft nach dem Fehler aber
+weiter. moo meldet die Stelle einmal:
+
+```
+Hinweis: unbehandelter Fehler „Datei fehlt“
+  geworfen in lade (programm.moos:2)
+  nicht behandelt in start beim Aufruf von lade (programm.moos:5) – start läuft weiter
+```
+
+- Jeder Fehler wird nur einmal gemeldet, auch wenn er durch mehrere Funktionen läuft.
+- Tritt derselbe Fehler in einer Schleife immer wieder auf, erscheint der Hinweis
+  einmal. Am Programmende steht dann, wie oft es insgesamt passiert ist.
+- `nichts` als Rückgabe (z. B. „nichts gefunden“) ist kein Fehler und erzeugt keinen Hinweis.
+
+**Streng-Modus:** Mit der Umgebungsvariablen `MOO_STRENG=1` bricht das Programm bei
+einem unbehandelten Fehler mit Rückgabewert 1 ab (`Unbehandelter Fehler: …`). Das ist
+nützlich für Tests und CI, im Normalbetrieb aber aus.
+
+```bash
+MOO_STRENG=1 ./programm
+```
+
 ---
+
+### Compilerdiagnosen
+
+Der Compiler meldet jeden Fehler einheitlich mit Code, Ort und Korrekturhilfe und
+sammelt alle Syntaxfehler eines Laufs:
+
+```
+programm.moos:2:15: Fehler M-S001: Doppelpunkt ':' erwartet, aber Zeilenende gefunden. ...
+    2 |     wenn x > 1
+      |               ^
+```
+
+`moo-compiler pruefe programm.moos` prüft nur (ohne Binary), `--diagnose=json` liefert
+dieselben Diagnosen maschinenlesbar, `moo-compiler erklaere M-S001` erklärt einen Code.
+Hinweise (`Hinweis M-H…`) brechen nichts ab. Katalog und JSON-Format: `docs/AI_WITH_MOO.md`, Abschnitt 9.
 
 ## Match / Switch
 

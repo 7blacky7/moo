@@ -4,7 +4,7 @@ run = "bash header_reference.sh"
 
 [tasks.header-nativ]
 description = "P2-T28: Multiboot2-Kopf als native Moo-Konstante gegen die C-Referenz"
-run = "bash header_nativ.sh header"
+run = "bash header_nativ.sh header && bash header_nativ.sh wrap"
 
 [tasks.rohdaten-gleich]
 description = "P2-T28: typisierte [u32; N]-Konstante gegen @rohdaten_u32"

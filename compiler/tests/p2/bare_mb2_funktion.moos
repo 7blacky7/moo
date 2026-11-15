@@ -1,0 +1,5 @@
+# P2-T28 (Review 4571f610): .multiboot2 auf einer @nativ-Funktion ist ein Fehler.
+@nativ
+@sektion(".multiboot2")
+funktion kopf() -> u32:
+    gib_zurück 1

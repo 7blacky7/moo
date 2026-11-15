@@ -1,0 +1,1 @@
+extern "C" funktion p2_cb_tief(f: ptr[fn(ptr[ptr[bool]]) -> i32]) -> void

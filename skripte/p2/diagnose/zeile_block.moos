@@ -1,0 +1,4 @@
+setze a auf 1
+wenn a > 0:
+    setze b auf unbekannt_x
+zeige a

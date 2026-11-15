@@ -533,7 +533,9 @@ pub(crate) fn lower_nontrapping_expr<'ctx>(
     match expr {
         Expr::NativeNumber { text, .. } if matches!(expected, NType::F32 | NType::F64) => {
             let (value, underflow) = expected.float_literal(context, text, false)?;
-            if underflow { eprintln!("Warnung: Floatliteral '{text}' rundet auf null"); }
+            if underflow {
+                crate::diagnose::melden(crate::diagnose::Diagnose::hinweis("M-H004", format!("Floatliteral '{text}' rundet auf null")));
+            }
             Ok(value)
         },
         Expr::NativeNumber { text, .. } => expected.integer_literal(context, text, false),
@@ -572,7 +574,9 @@ pub(crate) fn lower_nontrapping_expr<'ctx>(
             if let Expr::NativeNumber { text, .. } = operand.as_ref() {
                 if matches!(expected, NType::F32 | NType::F64) {
                     let (value, underflow) = expected.float_literal(context, text, true)?;
-                    if underflow { eprintln!("Warnung: Floatliteral '-{text}' rundet auf null"); }
+                    if underflow {
+                        crate::diagnose::melden(crate::diagnose::Diagnose::hinweis("M-H004", format!("Floatliteral '-{text}' rundet auf null")));
+                    }
                     return Ok(value);
                 }
                 return expected.integer_literal(context, text, true);
@@ -688,7 +692,7 @@ pub(crate) fn lower_nontrapping_expr<'ctx>(
             }
         }
         // P2-T34 / ADR §13: Vorpruefung mit Status: teilbar(a, b), verschiebbar(a, n) -> bool.
-        Expr::FunctionCall { name, args } if crate::native_arithmetic::pruef_art(name).is_some() => {
+        Expr::FunctionCall { name, args, .. } if crate::native_arithmetic::pruef_art(name).is_some() => {
             let op = crate::native_arithmetic::pruef_art(name).ok_or("Pruefart fehlt")?;
             if expected != NType::Bool {
                 return Err(format!("{name}(...) liefert bool, hier wird {expected:?} erwartet"));
@@ -709,7 +713,7 @@ pub(crate) fn lower_nontrapping_expr<'ctx>(
         }
         // P2-T34 / ADR §4: als(T, x) gepruefter Standardcast, als_wrap(T, x),
         // als_saettigend(T, x). Der Operand wird mit seinem eigenen Typ gesenkt.
-        Expr::FunctionCall { name, args } if crate::native_arithmetic::cast_art(name).is_some() => {
+        Expr::FunctionCall { name, args, .. } if crate::native_arithmetic::cast_art(name).is_some() => {
             let art = crate::native_arithmetic::cast_art(name).ok_or("Cast-Art fehlt")?;
             let [ziel, operand] = args.as_slice() else {
                 return Err(format!("{name}(Typ, Wert) erwartet genau zwei Argumente"));
@@ -734,7 +738,22 @@ pub(crate) fn lower_nontrapping_expr<'ctx>(
             };
             crate::native_arithmetic::cast(context, builder, fehler.module, art, value, target, block)
         }
-        Expr::FunctionCall { name, args } => {
+        // P2-T89: eingebaute Winkelfunktionen (eigene @nativ-Funktion gleichen
+        // Namens gewinnt); Argument im Ergebnistyp, Aufruf moo_native_math.c.
+        Expr::FunctionCall { name, args, .. } if !pure_functions.contains_key(name)
+            && crate::native_arithmetic::trig_art(name).is_some() =>
+        {
+            let art = crate::native_arithmetic::trig_art(name).ok_or("Winkelfunktion fehlt")?;
+            let [arg] = args.as_slice() else {
+                return Err(format!("{name}(x) erwartet genau ein Argument"));
+            };
+            if !matches!(expected, NType::F32 | NType::F64) {
+                return Err(format!("{name}(x) liefert f32/f64, hier wird {expected:?} erwartet"));
+            }
+            let value = lower_nontrapping_expr(context, builder, arg, expected, slots, failure, fehler, pure_functions)?;
+            crate::native_arithmetic::float_trig(context, builder, fehler.module, art, value)
+        }
+        Expr::FunctionCall { name, args, .. } => {
             let (function, signature) = pure_functions.get(name)
                 .ok_or_else(|| format!("Nicht-reines natives Aufrufziel '{name}'"))?;
             if signature.result != Some(expected) || args.len() != signature.params.len()
@@ -824,7 +843,7 @@ fn pure_infer<'ctx>(
             BinOp::LShift | BinOp::RShift => pure_infer(left, slots, pure_functions),
             _ => operand_type(left, right, slots, pure_functions),
         },
-        Expr::FunctionCall { name, args } => {
+        Expr::FunctionCall { name, args, .. } => {
             if crate::native_arithmetic::pruef_art(name).is_some() {
                 return Some(NType::Bool);
             }
@@ -833,6 +852,10 @@ fn pure_infer<'ctx>(
                     Some(Expr::Identifier(ty)) => NType::from_name(ty),
                     _ => None,
                 };
+            }
+            if !pure_functions.contains_key(name) && crate::native_arithmetic::trig_art(name).is_some() {
+                return args.first().and_then(|a| pure_infer(a, slots, pure_functions))
+                    .filter(|ty| matches!(ty, NType::F32 | NType::F64));
             }
             pure_functions.get(name).and_then(|(_, signature)| signature.result)
         }
@@ -889,7 +912,7 @@ pub(crate) fn validate_pure_call_graph(bodies: &HashMap<String, &[Stmt]>) -> Res
                 expr_calls(left, calls)?;
                 expr_calls(right, calls)?;
             }
-            Expr::FunctionCall { name, args } => {
+            Expr::FunctionCall { name, args, .. } => {
                 // P2-T34: Casts (als/als_wrap/als_saettigend) sind Operatoren,
                 // keine Aufrufziele; ihr erstes Argument ist ein Typname.
                 if crate::native_arithmetic::cast_art(name).is_some() {
@@ -914,7 +937,16 @@ pub(crate) fn validate_pure_call_graph(bodies: &HashMap<String, &[Stmt]>) -> Res
         if !visiting.insert(name.to_owned()) {
             return Err(format!("Rekursive native Aufrufe sind noch nicht unterstützt: '{name}'"));
         }
-        let edges = graph.get(name).ok_or_else(|| format!("Nicht-reines natives Aufrufziel '{name}'"))?;
+        // P2-T89: eingebaute Winkelfunktion ohne gleichnamige reine Funktion
+        // ist ein Blatt (moo_native_math.c, nichttrappend).
+        let edges = match graph.get(name) {
+            Some(edges) => edges,
+            None if crate::native_arithmetic::trig_art(name).is_some() => {
+                done.insert(name.to_owned());
+                return Ok(());
+            }
+            None => return Err(format!("Nicht-reines natives Aufrufziel '{name}'")),
+        };
         for callee in edges { visit(callee, graph, visiting, done)?; }
         visiting.remove(name);
         done.insert(name.to_owned());
@@ -926,8 +958,8 @@ pub(crate) fn validate_pure_call_graph(bodies: &HashMap<String, &[Stmt]>) -> Res
         for stmt in *body {
             match stmt {
                 Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
-                | Stmt::Return(Some(value)) => expr_calls(value, &mut calls)?,
-                Stmt::Return(None) => {}
+                | Stmt::Return(Some(value), _) => expr_calls(value, &mut calls)?,
+                Stmt::Return(None, _) => {}
                 _ => return Err("Nativer Funktionskoerper wird noch nicht unterstützt".into()),
             }
         }
@@ -959,9 +991,9 @@ pub(crate) fn emit_nontrapping_function<'ctx>(
         return Err("Doppelter nativer Parametername".into());
     }
     let (result_expr, locals) = match (signature.result, body.split_last()) {
-        (Some(_), Some((Stmt::Return(Some(expr)), locals))) => (Some(expr), locals),
+        (Some(_), Some((Stmt::Return(Some(expr), _), locals))) => (Some(expr), locals),
         (None, None) => (None, &[][..]),
-        (None, Some((Stmt::Return(None), locals))) => (None, locals),
+        (None, Some((Stmt::Return(None, _), locals))) => (None, locals),
         _ => return Err("Nativer Funktionskoerper wird noch nicht unterstützt".into()),
     };
     for stmt in locals {
@@ -1061,9 +1093,9 @@ pub(crate) fn emit_indirect_return_function<'ctx>(
         return Err("Doppelter nativer Parametername".into());
     }
     let (callee_name, args, returns_value) = match body {
-        [Stmt::UnsafeBlock { body }] => match body.as_slice() {
-            [Stmt::Return(Some(Expr::FunctionCall { name, args }))] => (name, args, true),
-            [Stmt::Expression(Expr::FunctionCall { name, args })] => (name, args, false),
+        [Stmt::UnsafeBlock { body, .. }] => match body.as_slice() {
+            [Stmt::Return(Some(Expr::FunctionCall { name, args, .. }), _)] => (name, args, true),
+            [Stmt::Expression(Expr::FunctionCall { name, args, .. }, _)] => (name, args, false),
             _ => return Err("Indirekter Aufruf benötigt einen Rückgabe- oder void-Aufruf".into()),
         },
         _ => return Err("Indirekter extern-C-Aufruf erfordert unsicher".into()),
@@ -1126,11 +1158,11 @@ pub(crate) fn emit_pointer_load_function<'ctx>(
         return Err("Doppelter nativer Parametername".into());
     }
     let inner = match body {
-        [Stmt::UnsafeBlock { body }] => body.as_slice(),
+        [Stmt::UnsafeBlock { body, .. }] => body.as_slice(),
         _ => return Err("Zeiger dereferenzieren erfordert unsicher".into()),
     };
     let (object, index) = match inner {
-        [Stmt::Return(Some(Expr::IndexAccess { object, index }))] =>
+        [Stmt::Return(Some(Expr::IndexAccess { object, index }), _)] =>
             (object.as_ref(), index.as_ref()),
         _ => return Err("Nativer Zeigerfunktionskoerper wird noch nicht unterstützt".into()),
     };
@@ -1255,12 +1287,12 @@ pub(crate) fn emit_ffi_return_function<'ctx>(
         return Err("Doppelter nativer Parametername".into());
     }
     let inner = match body {
-        [Stmt::UnsafeBlock { body }] => body.as_slice(),
+        [Stmt::UnsafeBlock { body, .. }] => body.as_slice(),
         _ => return Err("Native FFI-Funktion verlangt einen unsicher-Block".into()),
     };
     let (name, args) = match (signature.result, inner) {
-        (Some(_), [Stmt::Return(Some(Expr::FunctionCall { name, args }))]) => (name, args),
-        (None, [Stmt::Expression(Expr::FunctionCall { name, args })]) => (name, args),
+        (Some(_), [Stmt::Return(Some(Expr::FunctionCall { name, args, .. }), _)]) => (name, args),
+        (None, [Stmt::Expression(Expr::FunctionCall { name, args, .. }, _)]) => (name, args),
         _ => return Err("Native FFI-Funktion verlangt direkten C-Aufruf mit passender Rueckgabe".into()),
     };
     let binding = registry.get(name).ok_or_else(|| format!("extern C '{name}' nicht deklariert"))?;

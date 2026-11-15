@@ -1,6 +1,7 @@
 Program {
     statements: [
         FunctionDef {
+            zeile: 1,
             name: "p2_uefi_tabelle",
             params: [
                 "system",
@@ -184,9 +185,11 @@ Program {
                             0.0,
                         ),
                     ),
+                    2,
                 ),
             ],
             decorators: [],
         },
     ],
+    funktion_quellen: {},
 }

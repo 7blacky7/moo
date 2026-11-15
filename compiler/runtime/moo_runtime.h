@@ -869,7 +869,36 @@ void moo_print(MooValue v);
 MooValue moo_to_string(MooValue v);
 
 // === Fehlerbehandlung ===
+/* P2-T95 (User-Entscheid 15.11.2026): ein unbehandelter Fehler beendet das
+ * Programm nicht. Ohne aktives versuche: (Tiefe 0) gibt moo_throw einen
+ * Hinweis auf stderr aus, verwirft den Fehler und kehrt zurueck. Laeuft ein
+ * Aufrufer ohne eigenen Pruefweg nach einem Callee-Fehler weiter (Tiefe > 0),
+ * meldet moo_fehler_unbehandelt das einmal je Fehler; der Fehler bleibt fuer
+ * den aeusseren Pruefpunkt anstehend. Gleiche Stelle wird gezaehlt statt
+ * erneut gemeldet (Zusammenfassung bei Programmende). MOO_STRENG=1: Abbruch
+ * mit RC 1 wie vor P2-T95 ("Unbehandelter Fehler: ..."). */
+typedef struct MooFehlerOrt {
+    const char* funktion;   /* werfende Funktion (NULL: Hauptprogramm) */
+    const char* datei;      /* Quelldatei oder NULL */
+    int64_t zeile;          /* 1-basiert, 0 = unbekannt */
+} MooFehlerOrt;
+typedef struct MooFehlerStelle {
+    const char* funktion;   /* Aufrufer ohne eigenen Pruefweg */
+    const char* aufruf;     /* aufgerufene Funktion */
+    const char* datei;
+    int64_t zeile;
+} MooFehlerStelle;
 void moo_throw(MooValue error);
+/* wie moo_throw, merkt zusaetzlich den Wurfort (wirf-Anweisung). */
+void moo_throw_ort(MooValue error, const MooFehlerOrt* ort);
+/* Nach einem Aufruf in einem Rahmen ohne eigenen Pruefweg: steht ein noch
+ * nicht gemeldeter Fehler an, Hinweis ausgeben (bzw. zaehlen). */
+void moo_fehler_unbehandelt(const MooFehlerStelle* stelle);
+/* Hinweiskanal (auch fuer Rueckrufe, P2-T86): ein Hinweis auf stderr, je
+ * schluessel einmal, weitere Faelle werden gezaehlt. */
+void moo_fehler_hinweis(const void* schluessel, const char* zusammenfassung, const char* text);
+/* 1 genau dann, wenn MOO_STRENG exakt "1" ist; jeder andere Wert = Standard. */
+int moo_fehler_streng(void);
 /* P2-T34: fangbarer Fehler einer nativen Ganzzahloperation (Text ist statisch). */
 void moo_native_fehler(const char* text);
 /* P2-T58 C2: 1, wenn ein Moo-Fehler ansteht (Systemkoerper-Weitergabe). */

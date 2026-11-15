@@ -1,0 +1,3 @@
+# P2-T95: Modulfunktion, die wirft (Hinweis nennt diese Datei).
+funktion werfe_im_modul():
+    wirf "aus dem Modul"

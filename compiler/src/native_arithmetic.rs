@@ -325,9 +325,29 @@ pub(crate) fn float_bibliothek<'ctx>(
     };
     let float_t = left.ty.llvm_type(context).into_float_type();
     let signatur = float_t.fn_type(&[float_t.into(), float_t.into()], false);
-    let funktion = match module.get_function(name) {
-        Some(f) if f.get_type() == signatur => f,
-        Some(_) => return Err(format!("{name} ist im Modul mit anderer Signatur deklariert")),
+    let funktion = bibliothek_funktion(context, module, name, signatur)?;
+    let lhs = left.value.into_float_value();
+    let rhs = right.value.into_float_value();
+    let aufruf = builder.build_call(funktion, &[lhs.into(), rhs.into()], "native.fbib")
+        .map_err(|e| e.to_string())?;
+    let wert = match aufruf.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(wert) => wert,
+        _ => return Err(format!("{name} liefert keinen Wert")),
+    };
+    NValue::checked(context, left.ty, wert)
+}
+
+/// Deklaration einer reinen moo_native_math-Funktion beim ersten Bedarf
+/// (nounwind, willreturn, memory(none)); Module ohne Bedarf bleiben unveraendert.
+fn bibliothek_funktion<'ctx>(
+    context: &'ctx Context,
+    module: &inkwell::module::Module<'ctx>,
+    name: &str,
+    signatur: inkwell::types::FunctionType<'ctx>,
+) -> Result<inkwell::values::FunctionValue<'ctx>, String> {
+    match module.get_function(name) {
+        Some(f) if f.get_type() == signatur => Ok(f),
+        Some(_) => Err(format!("{name} ist im Modul mit anderer Signatur deklariert")),
         None => {
             use inkwell::attributes::{Attribute, AttributeLoc};
             let f = module.add_function(name, signatur, None);
@@ -338,18 +358,61 @@ pub(crate) fn float_bibliothek<'ctx>(
             // memory(none): reine Funktion ohne Speicherzugriff (LLVM >= 16).
             f.add_attribute(AttributeLoc::Function,
                 context.create_enum_attribute(Attribute::get_named_enum_kind_id("memory"), 0));
-            f
+            Ok(f)
         }
+    }
+}
+
+/// P2-T89 (Freigabe #38178 O2): eingebaute Winkelfunktionen im @nativ-Koerper.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TrigArt {
+    Sin,
+    Cos,
+    Tan,
+}
+
+/// Gleiche Namen wie die dynamische Ebene (codegen.rs sinus/sin, cosinus/cos,
+/// tan) plus die korrekte deutsche Schreibweise kosinus/tangens.
+pub(crate) fn trig_art(name: &str) -> Option<TrigArt> {
+    match name {
+        "sinus" | "sin" => Some(TrigArt::Sin),
+        "kosinus" | "cosinus" | "cos" => Some(TrigArt::Cos),
+        "tangens" | "tan" => Some(TrigArt::Tan),
+        _ => None,
+    }
+}
+
+/// sin/cos/tan (Bogenmass) ueber moo_native_math.c auf jedem Ziel (hosted,
+/// Bare, UEFI): eine Semantik, gleiche Bits auf allen Plattformen, keine libm.
+/// Kein Fehlerpfad: Sonderfaelle liefern IEEE-Werte (Inf/NaN -> NaN).
+pub(crate) fn float_trig<'ctx>(
+    context: &'ctx Context,
+    builder: &Builder<'ctx>,
+    module: &inkwell::module::Module<'ctx>,
+    art: TrigArt,
+    wert: NValue<'ctx>,
+) -> Result<NValue<'ctx>, String> {
+    if !matches!(wert.ty, NType::F32 | NType::F64) || wert.value.get_type() != wert.ty.llvm_type(context) {
+        return Err("Winkelfunktion erwartet einen nativen Float-Wert (f32/f64)".into());
+    }
+    let einfach = wert.ty == NType::F32;
+    let name = match (art, einfach) {
+        (TrigArt::Sin, false) => "moo_native_sin",
+        (TrigArt::Sin, true) => "moo_native_sinf",
+        (TrigArt::Cos, false) => "moo_native_cos",
+        (TrigArt::Cos, true) => "moo_native_cosf",
+        (TrigArt::Tan, false) => "moo_native_tan",
+        (TrigArt::Tan, true) => "moo_native_tanf",
     };
-    let lhs = left.value.into_float_value();
-    let rhs = right.value.into_float_value();
-    let aufruf = builder.build_call(funktion, &[lhs.into(), rhs.into()], "native.fbib")
+    let float_t = wert.ty.llvm_type(context).into_float_type();
+    let funktion = bibliothek_funktion(context, module, name, float_t.fn_type(&[float_t.into()], false))?;
+    let aufruf = builder.build_call(funktion, &[wert.value.into_float_value().into()], "native.trig")
         .map_err(|e| e.to_string())?;
-    let wert = match aufruf.try_as_basic_value() {
-        inkwell::values::ValueKind::Basic(wert) => wert,
+    let ergebnis = match aufruf.try_as_basic_value() {
+        inkwell::values::ValueKind::Basic(ergebnis) => ergebnis,
         _ => return Err(format!("{name} liefert keinen Wert")),
     };
-    NValue::checked(context, left.ty, wert)
+    NValue::checked(context, wert.ty, ergebnis)
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -1,0 +1,8 @@
+# P2-T29 S1: eine eigene Klasse Zahl geht vor dem eingebauten Typnamen.
+klasse Zahl:
+    funktion erstelle(wert):
+        selbst.wert = wert
+
+setze z: Zahl auf neu Zahl(42)
+setze leer: Zahl auf nichts
+zeige z.wert

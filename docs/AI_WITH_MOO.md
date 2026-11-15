@@ -390,6 +390,64 @@ built-ins without an English alias are marked *(German only)* above.
 - [docs/kip/](kip/) – design and contract documents for the AI stack (dtypes,
   GPU residency, distributed training, serving, post-training; German).
 
+## 9. Compiler diagnostics for agents (P2-T97)
+
+Every compiler diagnostic has a code, a severity, a location and a German message.
+The compiler collects **all** lexer and syntax errors of a run instead of stopping
+at the first one.
+
+```bash
+moo-compiler pruefe datei.moos                    # alias: check – lex, parse, imports, codegen, LLVM verify; no binary
+moo-compiler pruefe datei.moos --diagnose=json    # exactly one JSON object on stderr
+moo-compiler erklaere M-S001                      # alias: explain – catalog entry; without code: list all
+```
+
+`--diagnose=text|json` works for `pruefe`, `compile`, `run`, `ast` and `layout`.
+Exit code: 1 if there is at least one error, 0 if there are only hints.
+
+Human format (default):
+
+```
+datei.moos:2:15: Fehler M-S001: Doppelpunkt ':' erwartet, aber Zeilenende gefunden. Nach Bedingungen ...
+    2 |     wenn x > 1
+      |               ^
+    erwartet: Doppelpunkt ':' | gefunden: Zeilenende
+1 Fehler
+```
+
+JSON format (keys in English, messages in German, unknown values are `null`):
+
+```json
+{"schema":1,"diagnostics":[{"code":"M-C001","severity":"error","file":"datei.moos","line":4,"column":null,
+  "end_column":null,"function":null,"message":"Funktion 'rechen' nicht gefunden. Meintest du 'rechne'?",
+  "expected":null,"found":"rechen","suggestion":"Meintest du 'rechne'?"}],"errors":1,"hints":0}
+```
+
+Agent workflow: run `pruefe --diagnose=json`, fix each diagnostic at `file:line:column`
+(use `expected`/`found`/`suggestion`), repeat until `errors == 0`. Hints (`severity: hint`)
+do not block the build.
+
+Diagnostic catalog (source of truth: `compiler/src/diagnose.rs`, `moo-compiler erklaere`):
+
+| Code | Meaning |
+|------|---------|
+| M-L001 / M-L002 / M-L003 / M-L004 | Unknown character / unterminated string / f-string `}` missing / f-string unterminated |
+| M-S001 | Token expected (`expected`, `found`, `suggestion` filled) |
+| M-S002 | Name/identifier expected |
+| M-S000 | Other syntax error |
+| M-I001 / M-I002 / M-I003 / M-I000 | Module not found / module does not define the name / file not readable / other import error |
+| M-C001 / M-C002 | Unknown function / unknown method (with "Meintest du ...?" suggestion) |
+| M-C000 / M-N000 | Other code generation error / error in native code (`@nativ`, structs) – location: file + function, line if known |
+| M-H001 … M-H005 | Hints: type mismatch on a method, own struct shadows a built-in type, module alias shadowed, float literal rounds to zero, unknown target |
+| M-W000 | Tool or command line error (outside the source) |
+
+Reserved ranges: `M-T` type checking (P2-T29), `M-M` memory (P2-T98), `M-F` error paths (P2-T96).
+Runtime hints for unhandled errors (`Hinweis: unbehandelter Fehler ...`, P2-T95) are printed
+by the running program, not by the compiler.
+
+Known limits: code generation stops at its first error (lexer and parser collect all);
+a missing `)` is reported at the next statement because line breaks inside brackets are joined.
+
 ## 8. Important: data and models are not in the repo
 
 Training corpora and model checkpoints are **not** included. For your own experiments

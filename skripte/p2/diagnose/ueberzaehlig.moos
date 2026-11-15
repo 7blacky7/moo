@@ -1,0 +1,5 @@
+setze z auf 3 über 4
+zeige z
+wenn wahr:
+    setze y auf (1 + 2) 5
+zeige "ende"

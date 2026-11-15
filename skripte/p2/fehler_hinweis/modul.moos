@@ -1,0 +1,11 @@
+# P2-T95: Wurfort in einer importierten Moduldatei.
+importiere modul_werfer
+
+funktion f():
+    werfe_im_modul()
+    zeige "f weiter"
+
+versuche:
+    f()
+fange e:
+    zeige "gefangen: " + e

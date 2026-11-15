@@ -10,7 +10,12 @@ result=$(timeout 30s "$out/probe")
 [[ "$result" == $'i64-exakt\ni64-min\nu64-hoch\n1\n1\ni64-hoch-exakt\nu64-hoch-exakt' ]] || { printf 'i64/u64 Ausgabe unerwartet: %s\n' "$result" >&2; exit 1; }
 for name in i64_input_out u64_input_out i64_inexact u64_inexact i64_nearmin_inexact i64_fraction_input_out u64_fraction_input_out i64_nan_input_out u64_inf_input_out i64_low_input_out u64_high_input_out; do
     timeout 120s "$compiler" compile "compiler/tests/p2/ffi_${name}.moos" --lib-pfad "$out" -o "$out/$name"
-    if timeout 30s "$out/$name" >"$out/$name.log" 2>&1; then printf 'Grenzfehler fehlt: %s\n' "$name" >&2; exit 1; fi
+    # P2-T95: Abbruch nur mit MOO_STRENG=1; Standard laeuft mit Hinweis weiter.
+    if MOO_STRENG=1 timeout 30s "$out/$name" >"$out/$name.log" 2>&1; then printf 'Grenzfehler fehlt: %s\n' "$name" >&2; exit 1; fi
+    timeout 30s "$out/$name" >"$out/$name.standard.log" 2>&1 \
+        || { printf 'Grenzfehler (Standard) beendet das Programm: %s\n' "$name" >&2; exit 1; }
+    grep -Fq 'Hinweis: unbehandelter Fehler' "$out/$name.standard.log" \
+        || { printf 'Grenzfehler (Standard) ohne Hinweis: %s\n' "$name" >&2; exit 1; }
     grep -Fq 'Native Funktion' "$out/$name.log"
     if grep -Fq DARF_NICHT_ERREICHT_WERDEN "$out/$name.log"; then exit 1; fi
     case "$name" in
@@ -30,7 +35,8 @@ done
 for name in result arg loop; do
     timeout 120s "$compiler" compile "compiler/tests/p2/ffi_i64_defer_${name}.moos" --lib-pfad "$out" -o "$out/defer_$name"
     set +e
-    timeout 30s "$out/defer_$name" >"$out/defer_$name.log" 2>&1
+    # P2-T95: Abbruchvertrag nur noch mit MOO_STRENG=1.
+    MOO_STRENG=1 timeout 30s "$out/defer_$name" >"$out/defer_$name.log" 2>&1
     rc=$?
     set -e
     (( rc == 1 )) || { cat "$out/defer_$name.log" >&2; printf 'Wide-FFI mit aufraeumen: RC %s statt 1 (%s)\n' "$rc" "$name" >&2; exit 1; }

@@ -1,0 +1,11 @@
+# P2-T95 Fall A: nirgends versuche: -> Hinweis, Fehler verworfen, Programm laeuft weiter.
+funktion g():
+    wirf "kaputt in g"
+
+funktion f():
+    g()
+    zeige "f laeuft weiter"
+    gib_zurück 1
+
+zeige f()
+zeige "ende main"

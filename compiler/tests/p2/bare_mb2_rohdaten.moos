@@ -1,0 +1,4 @@
+# P2-T28 (Review 4571f610): .multiboot2 ueber @rohdaten_u32 ist ein Fehler.
+@rohdaten_u32
+@sektion(".multiboot2")
+konstante ROH auf [1, 2]

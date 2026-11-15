@@ -13,7 +13,9 @@ for name in unhandled outer ausdruck defer; do
     failed=1
     continue
   fi
-  timeout 30s "$out" > "$out.out" 2> "$out.err"
+  # P2-T95: Abbruchvertrag nur noch mit MOO_STRENG=1 (Standard: Hinweis + Weiterlauf).
+  streng=0; [ "$name" = unhandled ] && streng=1
+  MOO_STRENG=$streng timeout 30s "$out" > "$out.out" 2> "$out.err"
   rc=$?
   if [ "$name" = unhandled ]; then
     if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ] || [ "$rc" -ge 128 ] || ! rg -q -F 'Unbehandelter Fehler' "$out.err"; then

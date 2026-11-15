@@ -223,7 +223,7 @@ impl DeferCatalog {
     fn visit(&mut self, stmts: &[Stmt]) -> Result<(), String> {
         for stmt in stmts {
             match stmt {
-                Stmt::Defer(expr) => {
+                Stmt::Defer(expr, _) => {
                     let id = u32::try_from(self.actions.len())
                         .map_err(|_| "Zu viele Defer-Aktionsstellen in einer Funktion".to_string())?;
                     self.ids.insert(expr as *const Expr as usize, id);
@@ -234,7 +234,7 @@ impl DeferCatalog {
                     self.visit(else_body)?;
                 }
                 Stmt::While { body, .. } | Stmt::For { body, .. }
-                | Stmt::ParallelFor { body, .. } | Stmt::UnsafeBlock { body } => self.visit(body)?,
+                | Stmt::ParallelFor { body, .. } | Stmt::UnsafeBlock { body, .. } => self.visit(body)?,
                 Stmt::Guard { else_body, .. } => self.visit(else_body)?,
                 Stmt::TryCatch { try_body, catch_body, .. } => {
                     self.visit(try_body)?;
@@ -249,14 +249,14 @@ impl DeferCatalog {
                 // Statement-Bloecke; Export wird im aktuellen Codegen ignoriert.
                 Stmt::Assignment { .. } | Stmt::ConstAssignment { .. }
                 | Stmt::CompoundAssignment { .. } | Stmt::PropertyAssignment { .. }
-                | Stmt::IndexAssignment { .. } | Stmt::Show(_)
+                | Stmt::IndexAssignment { .. } | Stmt::Show(_, _)
                 | Stmt::Precondition { .. } | Stmt::Postcondition { .. }
                 | Stmt::ExternC { .. } | Stmt::RawDataU32 { .. } | Stmt::NativeConst { .. }
-                | Stmt::Return(_) | Stmt::Break | Stmt::Continue
+                | Stmt::Return(_, _) | Stmt::Break(_) | Stmt::Continue(_)
                 | Stmt::StructDef { .. } | Stmt::InterfaceDef { .. }
-                | Stmt::Throw(_) | Stmt::Import { .. } | Stmt::Export(_)
-                | Stmt::Global(_) | Stmt::Expression(_) | Stmt::DataClassDef { .. }
-                | Stmt::Expect(_) => {}
+                | Stmt::Throw(..) | Stmt::Import { .. } | Stmt::Export(_, _)
+                | Stmt::Global(_, _) | Stmt::Expression(_, _) | Stmt::DataClassDef { .. }
+                | Stmt::Expect(_, _) => {}
             }
         }
         Ok(())

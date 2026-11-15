@@ -1,0 +1,13 @@
+# P2-T95: "nichts gefunden" ist kein Fehler -> kein Hinweis.
+funktion suche(liste, wert):
+    für x in liste:
+        wenn x == wert:
+            gib_zurück x
+    gib_zurück nichts
+
+funktion f():
+    setze r auf suche([1, 2, 3], 9)
+    wenn r == nichts:
+        zeige "nicht gefunden"
+
+f()

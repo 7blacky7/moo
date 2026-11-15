@@ -365,7 +365,7 @@ pub(crate) fn schreibt_puffer(stmts: &[Stmt], name: &str) -> bool {
     stmts.iter().any(|stmt| match stmt {
         Stmt::IndexAssignment { object: Expr::Identifier(ziel), .. } => ziel == name,
         Stmt::If { body, else_body, .. } => schreibt_puffer(body, name) || schreibt_puffer(else_body, name),
-        Stmt::While { body, .. } | Stmt::UnsafeBlock { body } | Stmt::For { body, .. } => schreibt_puffer(body, name),
+        Stmt::While { body, .. } | Stmt::UnsafeBlock { body, .. } | Stmt::For { body, .. } => schreibt_puffer(body, name),
         _ => false,
     })
 }
@@ -412,17 +412,17 @@ impl LiestPruefung<'_> {
     fn stmt(&self, stmt: &Stmt, u: bool) -> Option<String> {
         match stmt {
             Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
-            | Stmt::CompoundAssignment { value, .. } | Stmt::Show(value)
-            | Stmt::Expression(value) | Stmt::Return(Some(value)) => self.expr(value, u),
+            | Stmt::CompoundAssignment { value, .. } | Stmt::Show(value, _)
+            | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) => self.expr(value, u),
             Stmt::PropertyAssignment { object, value, .. } =>
                 self.expr(object, u).or_else(|| self.expr(value, u)),
-            Stmt::IndexAssignment { object, index, value } =>
+            Stmt::IndexAssignment { object, index, value, .. } =>
                 self.expr(object, u).or_else(|| self.expr(index, u)).or_else(|| self.expr(value, u)),
-            Stmt::If { condition, body, else_body } => self.expr(condition, u)
+            Stmt::If { condition, body, else_body, .. } => self.expr(condition, u)
                 .or_else(|| self.block(body, u)).or_else(|| self.block(else_body, u)),
-            Stmt::While { condition, body } => self.expr(condition, u).or_else(|| self.block(body, u)),
+            Stmt::While { condition, body, .. } => self.expr(condition, u).or_else(|| self.block(body, u)),
             Stmt::For { iterable, body, .. } => self.expr(iterable, u).or_else(|| self.block(body, u)),
-            Stmt::UnsafeBlock { body } => self.block(body, true),
+            Stmt::UnsafeBlock { body, .. } => self.block(body, true),
             _ => None,
         }
     }
@@ -436,7 +436,7 @@ impl LiestPruefung<'_> {
                 Expr::Identifier(n) if n == name => None,
                 other => self.expr(other, u),
             }.or_else(|| self.expr(index, u)),
-            Expr::FunctionCall { name: callee, args } => args.iter().enumerate().find_map(|(i, arg)| match arg {
+            Expr::FunctionCall { name: callee, args, .. } => args.iter().enumerate().find_map(|(i, arg)| match arg {
                 Expr::Identifier(n) if n == name => self.argument(callee, i, u),
                 other => self.expr(other, u),
             }),
@@ -531,7 +531,7 @@ impl FluchtPruefung<'_> {
                     }
                 }
                 Stmt::If { body, else_body, .. } => { self.lokale(body); self.lokale(else_body); }
-                Stmt::While { body, .. } | Stmt::UnsafeBlock { body } | Stmt::For { body, .. } => self.lokale(body),
+                Stmt::While { body, .. } | Stmt::UnsafeBlock { body, .. } | Stmt::For { body, .. } => self.lokale(body),
                 _ => {}
             }
         }
@@ -567,7 +567,7 @@ impl FluchtPruefung<'_> {
     fn quelle(&self, expr: &Expr) -> Option<String> {
         match expr {
             Expr::Identifier(n) => self.geliehen.get(n).cloned(),
-            Expr::FunctionCall { name, args } => match name.as_str() {
+            Expr::FunctionCall { name, args, .. } => match name.as_str() {
                 "adresse_von" | "address_of" => {
                     let ziel = args.first()?;
                     let wurzel = Self::wurzel(ziel)?;
@@ -629,7 +629,7 @@ impl FluchtPruefung<'_> {
                     }
                 }
                 Stmt::If { body, else_body, .. } => { self.markiere(body); self.markiere(else_body); }
-                Stmt::While { body, .. } | Stmt::UnsafeBlock { body } | Stmt::For { body, .. } => self.markiere(body),
+                Stmt::While { body, .. } | Stmt::UnsafeBlock { body, .. } | Stmt::For { body, .. } => self.markiere(body),
                 _ => {}
             }
         }
@@ -637,7 +637,7 @@ impl FluchtPruefung<'_> {
 
     fn pruefe(&self, stmts: &[Stmt]) -> Option<String> {
         stmts.iter().find_map(|stmt| match stmt {
-            Stmt::Return(Some(value)) => self.quelle(value).map(|q|
+            Stmt::Return(Some(value), _) => self.quelle(value).map(|q|
                 format!("geliehener Zeiger entkommt per gib_zurück ({q}); dauerhafte Zeiger brauchen Speicher mit eigenem Besitz (Griff)")),
             Stmt::PropertyAssignment { object, value, .. } | Stmt::IndexAssignment { object, value, .. } => {
                 let q = self.quelle(value)?;
@@ -645,12 +645,12 @@ impl FluchtPruefung<'_> {
                 if self.eigener_speicher(wurzel) || self.geliehen.contains_key(wurzel) { return None; }
                 Some(format!("geliehener Zeiger ({q}) wird in Speicher hinter '{wurzel}' geschrieben, der den Aufruf ueberlebt"))
             }
-            Stmt::Expression(Expr::FunctionCall { name, args }) if matches!(name.as_str(),
+            Stmt::Expression(Expr::FunctionCall { name, args, .. }, _) if matches!(name.as_str(),
                 "speicher_schreiben" | "mem_write" | "volatile_schreiben" | "volatile_write") =>
                 args.iter().skip(1).find_map(|a| self.quelle(a)).map(|q|
                     format!("geliehener Zeiger ({q}) wird per {name} in fremden Speicher geschrieben")),
             Stmt::If { body, else_body, .. } => self.pruefe(body).or_else(|| self.pruefe(else_body)),
-            Stmt::While { body, .. } | Stmt::UnsafeBlock { body } | Stmt::For { body, .. } => self.pruefe(body),
+            Stmt::While { body, .. } | Stmt::UnsafeBlock { body, .. } | Stmt::For { body, .. } => self.pruefe(body),
             _ => None,
         })
     }
@@ -691,7 +691,7 @@ fn lokale_typen<'a>(stmts: &'a [Stmt], typen: &mut HashMap<&'a str, Zahlart>) {
                 typen.insert(name.as_str(), zahlart(ty));
             }
             Stmt::If { body, else_body, .. } => { lokale_typen(body, typen); lokale_typen(else_body, typen); }
-            Stmt::While { body, .. } | Stmt::UnsafeBlock { body } | Stmt::For { body, .. } => lokale_typen(body, typen),
+            Stmt::While { body, .. } | Stmt::UnsafeBlock { body, .. } | Stmt::For { body, .. } => lokale_typen(body, typen),
             _ => {}
         }
     }
@@ -714,7 +714,7 @@ fn expr_art(expr: &Expr, k: &FehlbarKontext<'_, '_>) -> Option<Zahlart> {
             let hex = text.starts_with("0x") || text.starts_with("0X") || text.starts_with("0b") || text.starts_with("0B");
             (!hex && text.contains(['.', 'e', 'E'])).then_some(Zahlart::Float)
         }
-        Expr::FunctionCall { name, args } => {
+        Expr::FunctionCall { name, args, .. } => {
             if crate::native_arithmetic::cast_art(name).is_some() {
                 match args.first() {
                     Some(Expr::Identifier(ziel)) => NType::from_name(ziel).map(zahlart_von),
@@ -747,8 +747,8 @@ fn nicht_negatives_literal(expr: &Expr) -> bool {
 
 fn endet_mit_rueckgabe(body: &[Stmt]) -> bool {
     match body.last() {
-        Some(Stmt::Return(_)) => true,
-        Some(Stmt::UnsafeBlock { body }) => endet_mit_rueckgabe(body),
+        Some(Stmt::Return(_, _)) => true,
+        Some(Stmt::UnsafeBlock { body, .. }) => endet_mit_rueckgabe(body),
         _ => false,
     }
 }
@@ -757,16 +757,16 @@ fn stmts_fehlbar(stmts: &[Stmt], k: &FehlbarKontext<'_, '_>) -> bool {
     let ex = |e: &Expr| expr_fehlbar(e, k);
     stmts.iter().any(|stmt| match stmt {
         Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
-        | Stmt::Show(value) | Stmt::Expression(value) | Stmt::Return(Some(value)) => ex(value),
+        | Stmt::Show(value, _) | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) => ex(value),
         Stmt::CompoundAssignment { op, value, .. } =>
             op.contains('/') || op.contains('%') || op.contains('<') || op.contains('>') || ex(value),
         Stmt::PropertyAssignment { object, value, .. } => ex(object) || ex(value),
         Stmt::IndexAssignment { .. } => true,
-        Stmt::Return(None) | Stmt::Break | Stmt::Continue => false,
-        Stmt::If { condition, body, else_body } =>
+        Stmt::Return(None, _) | Stmt::Break(_) | Stmt::Continue(_) => false,
+        Stmt::If { condition, body, else_body, .. } =>
             ex(condition) || stmts_fehlbar(body, k) || stmts_fehlbar(else_body, k),
-        Stmt::While { condition, body } => ex(condition) || stmts_fehlbar(body, k),
-        Stmt::UnsafeBlock { body } => stmts_fehlbar(body, k),
+        Stmt::While { condition, body, .. } => ex(condition) || stmts_fehlbar(body, k),
+        Stmt::UnsafeBlock { body, .. } => stmts_fehlbar(body, k),
         _ => true,
     })
 }
@@ -793,7 +793,7 @@ fn expr_fehlbar(expr: &Expr, k: &FehlbarKontext<'_, '_>) -> bool {
         Expr::PropertyAccess { object, .. } => rec(object),
         Expr::IndexAccess { .. } => true,
         Expr::List(elements) => elements.iter().any(rec),
-        Expr::FunctionCall { name, args } => {
+        Expr::FunctionCall { name, args, .. } => {
             let cast_fehlbar = matches!(crate::native_arithmetic::cast_art(name),
                 Some(crate::native_arithmetic::CastArt::Geprueft | crate::native_arithmetic::CastArt::Saettigend));
             cast_fehlbar || (k.namen.contains(name.as_str()) && k.fehlbar.contains(name))
@@ -943,14 +943,14 @@ impl SystemSignature {
 /// Nur Bestandsformen ausnehmen, die ein engerer Pfad bereits abdeckt.
 pub(crate) fn is_system_body(body: &[Stmt], params: &[String]) -> bool {
     let inner = match body {
-        [Stmt::UnsafeBlock { body }] => body.as_slice(),
+        [Stmt::UnsafeBlock { body, .. }] => body.as_slice(),
         _ => return false,
     };
     match inner {
         [] => false,
-        [Stmt::Return(Some(Expr::IndexAccess { .. }))] => false,
-        [Stmt::Return(Some(Expr::FunctionCall { name, .. }))]
-        | [Stmt::Expression(Expr::FunctionCall { name, .. })] => !params.contains(name),
+        [Stmt::Return(Some(Expr::IndexAccess { .. }), _)] => false,
+        [Stmt::Return(Some(Expr::FunctionCall { name, .. }), _)]
+        | [Stmt::Expression(Expr::FunctionCall { name, .. }, _)] => !params.contains(name),
         _ => true,
     }
 }
@@ -962,7 +962,7 @@ pub(crate) fn is_system_body(body: &[Stmt], params: &[String]) -> bool {
 pub(crate) fn is_pure_slice(body: &[Stmt]) -> bool {
     let locals = match body.split_last() {
         None => return true,
-        Some((Stmt::Return(_), locals)) => locals,
+        Some((Stmt::Return(_, _), locals)) => locals,
         Some(_) => body,
     };
     locals.iter().all(|stmt| matches!(stmt,
@@ -977,8 +977,8 @@ pub(crate) fn is_pure_slice(body: &[Stmt]) -> bool {
 /// bzw. Trap), weil der Weg zum Ende dort nicht statisch sicher ist.
 fn enthaelt_rueckgabe_oder_schleife(body: &[Stmt]) -> bool {
     body.iter().any(|stmt| match stmt {
-        Stmt::Return(_) | Stmt::While { .. } | Stmt::For { .. } => true,
-        Stmt::UnsafeBlock { body } => enthaelt_rueckgabe_oder_schleife(body),
+        Stmt::Return(_, _) | Stmt::While { .. } | Stmt::For { .. } => true,
+        Stmt::UnsafeBlock { body, .. } => enthaelt_rueckgabe_oder_schleife(body),
         Stmt::If { body, else_body, .. } =>
             enthaelt_rueckgabe_oder_schleife(body) || enthaelt_rueckgabe_oder_schleife(else_body),
         _ => false,
@@ -993,7 +993,7 @@ pub(crate) fn has_struct_locals(body: &[Stmt], nominals: &NominalTypes) -> bool 
         Stmt::Assignment { ty: Some(ty), .. }
         | Stmt::ConstAssignment { ty: Some(ty), .. } =>
             matches!(&ty.kind, TypeKind::Name(name) if nominals.contains_key(name)),
-        Stmt::UnsafeBlock { body } | Stmt::While { body, .. } | Stmt::For { body, .. } =>
+        Stmt::UnsafeBlock { body, .. } | Stmt::While { body, .. } | Stmt::For { body, .. } =>
             has_struct_locals(body, nominals),
         Stmt::If { body, else_body, .. } =>
             has_struct_locals(body, nominals) || has_struct_locals(else_body, nominals),
@@ -1402,7 +1402,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     let constant = matches!(stmt, Stmt::ConstAssignment { .. });
                     self.slots.insert(name.clone(), Slot { ty: sty, ptr, constant });
                 }
-                Stmt::UnsafeBlock { body } | Stmt::While { body, .. } | Stmt::For { body, .. } => self.declare_locals(body, entry)?,
+                Stmt::UnsafeBlock { body, .. } | Stmt::While { body, .. } | Stmt::For { body, .. } => self.declare_locals(body, entry)?,
                 Stmt::If { body, else_body, .. } => {
                     self.declare_locals(body, entry)?;
                     self.declare_locals(else_body, entry)?;
@@ -1497,7 +1497,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
                 Ok(Place { ptr, alignment, origin: Origin::Memory })
             }
-            Expr::FunctionCall { name, args } if self.layouts.layout(name).is_some() => {
+            Expr::FunctionCall { name, args, .. } if self.layouts.layout(name).is_some() => {
                 let built = self.struct_ty(name)?;
                 if &built != ty {
                     return Err(format!("Systemkoerper: {what} erwartet {}, erhalten {}", ty.name(), built.name()));
@@ -1523,7 +1523,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
                 Ok(Place { ptr, alignment, origin: Origin::Memory })
             }
-            Expr::FunctionCall { name, args } if self.callees.get(name)
+            Expr::FunctionCall { name, args, .. } if self.callees.get(name)
                 .is_some_and(|callee| matches!(callee.result, Some(STy::Struct(_)))) =>
             {
                 let callee = self.callees.get(name).cloned().ok_or("Systemkoerper: Aufrufziel fehlt")?;
@@ -2169,15 +2169,15 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
 
     fn stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
-            Stmt::UnsafeBlock { body } => {
+            Stmt::UnsafeBlock { body, .. } => {
                 self.unsicher_tiefe += 1;
                 let result = self.block(body);
                 self.unsicher_tiefe -= 1;
                 result
             }
-            Stmt::Assignment { name, ty, value } => self.store(name, value, ty.is_some()),
-            Stmt::ConstAssignment { name, ty: Some(_), value } => self.store(name, value, true),
-            Stmt::PropertyAssignment { object, property, value } => {
+            Stmt::Assignment { name, ty, value, .. } => self.store(name, value, ty.is_some()),
+            Stmt::ConstAssignment { name, ty: Some(_), value, .. } => self.store(name, value, true),
+            Stmt::PropertyAssignment { object, property, value, .. } => {
                 let alignment = self.local_field_alignment(object, property);
                 let (ptr, ty) = self.pointer_property(object, property)?;
                 if ty.ist_aggregat() {
@@ -2192,7 +2192,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 store.set_alignment(alignment).map_err(e)?;
                 Ok(())
             }
-            Stmt::IndexAssignment { object, index, value } => {
+            Stmt::IndexAssignment { object, index, value, .. } => {
                 let alignment = self.local_array_alignment(object);
                 let (ptr, ty) = self.pointer_index(object, index)?;
                 if ty.ist_aggregat() {
@@ -2207,7 +2207,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 store.set_alignment(alignment).map_err(e)?;
                 Ok(())
             }
-            Stmt::If { condition, body, else_body } => {
+            Stmt::If { condition, body, else_body, .. } => {
                 let cond = self.condition(condition)?;
                 let then_bb = self.context.append_basic_block(self.function, "sys.dann");
                 let else_bb = self.context.append_basic_block(self.function, "sys.sonst");
@@ -2222,7 +2222,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 self.builder.position_at_end(merge);
                 Ok(())
             }
-            Stmt::While { condition, body } => {
+            Stmt::While { condition, body, .. } => {
                 let blocks = crate::native_control_flow::LoopBlocks::new(self.context, self.function);
                 self.builder.build_unconditional_branch(blocks.condition).map_err(e)?;
                 self.builder.position_at_end(blocks.condition);
@@ -2242,7 +2242,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             // der Zaehler ist im Koerper konstant und nur dort sichtbar; a >= b
             // laeuft null Mal. weiter springt in den Schritt-Block (Zaehler + 1,
             // kein Ueberlauf moeglich, da Zaehler < Ende).
-            Stmt::For { var_name, iterable, body } => {
+            Stmt::For { var_name, iterable, body, .. } => {
                 let Expr::Range { start, end } = iterable else {
                     return Err("Systemkoerper: für erwartet einen Bereich a..b; dynamische Listen/Texte sind in @nativ nicht iterierbar (puffer[T] mit Index und solange verwenden)".into());
                 };
@@ -2287,14 +2287,14 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 self.builder.position_at_end(blocks.exit);
                 Ok(())
             }
-            Stmt::Break | Stmt::Continue => {
+            Stmt::Break(_) | Stmt::Continue(_) => {
                 let (condition, exit) = *self.loops.last()
                     .ok_or("Systemkoerper: stopp/weiter ausserhalb einer Schleife")?;
-                let target = if matches!(stmt, Stmt::Break) { exit } else { condition };
+                let target = if matches!(stmt, Stmt::Break(_)) { exit } else { condition };
                 self.builder.build_unconditional_branch(target).map_err(e)?;
                 Ok(())
             }
-            Stmt::Return(value) => {
+            Stmt::Return(value, _) => {
                 match (self.result.clone(), value) {
                     (None, None) => { self.builder.build_return(None).map_err(e)?; }
                     (Some(ty @ STy::Struct(_)), Some(expr)) => {
@@ -2315,7 +2315,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
                 Ok(())
             }
-            Stmt::Expression(Expr::FunctionCall { name, args }) => {
+            Stmt::Expression(Expr::FunctionCall { name, args, .. }, _) => {
                 self.call(name, args, None, true)?;
                 Ok(())
             }
@@ -2417,14 +2417,14 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     let la = l.as_ref().and_then(|t| self.vecmat_art(t));
                     let ra = r.as_ref().and_then(|t| self.vecmat_art(t));
                     match (la, ra) {
-                        (Some(VecMatArt::Mat4), Some(VecMatArt::Vec(4))) => self.vecmat_ty(VecMatArt::Vec(4)).ok(),
+                        (Some(m), Some(v)) if m.ist_matrix() && v == m.vektor(4) => self.vecmat_ty(v).ok(),
                         (Some(_), _) => l,
                         (None, Some(_)) => r,
                         (None, None) => l.or(r),
                     }
                 }
             },
-            Expr::FunctionCall { name, args } => {
+            Expr::FunctionCall { name, args, .. } => {
                 if self.layouts.layout(name).is_some() { return self.struct_ty(name).ok(); }
                 // P2-T34: teilbar/verschiebbar liefern bool (ADR §13).
                 if crate::native_arithmetic::pruef_art(name).is_some() { return Some(STy::Bool); }
@@ -2456,9 +2456,15 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
                 if let Some((true, bits)) = port_bits(name) { return Some(STy::Int(port_type(bits))); }
                 if let Some(callee) = self.callees.get(name) { return callee.result.clone(); }
+                if self.trig_funktion(name, args).is_some() {
+                    return match args.first().and_then(|a| self.infer(a)) {
+                        Some(STy::Float(t)) => Some(STy::Float(t)),
+                        _ => None,
+                    };
+                }
                 if let Some((funktion, art)) = self.vecmat_funktion(name, args) {
                     return match funktion {
-                        VmFunktion::Punkt | VmFunktion::Betrag => Some(STy::Float(NType::F32)),
+                        VmFunktion::Punkt | VmFunktion::Betrag => Some(STy::Float(art.element())),
                         VmFunktion::Kreuz | VmFunktion::Normalisiere => self.vecmat_ty(art).ok(),
                     };
                 }
@@ -2576,15 +2582,17 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     .set_alignment(alignment).map_err(e)?;
                 Ok(SVal { ty, value })
             },
-            Expr::FunctionCall { name, args } if self.layouts.layout(name).is_some() =>
+            Expr::FunctionCall { name, args, .. } if self.layouts.layout(name).is_some() =>
                 self.struct_constructor(name, args, expected),
-            Expr::FunctionCall { name, args } if self.vecmat_funktion(name, args).is_some() => {
+            Expr::FunctionCall { name, args, .. } if self.vecmat_funktion(name, args).is_some() => {
                 match self.vecmat_rechnung(expr)? {
                     Some((art, werte)) => self.vecmat_aggregat(art, &werte),
                     None => self.vecmat_skalar(name, args),
                 }
             }
-            Expr::FunctionCall { name, args } => self.call(name, args, expected, false)?
+            Expr::FunctionCall { name, args, .. } if self.trig_funktion(name, args).is_some() =>
+                self.trig_aufruf(name, args, expected),
+            Expr::FunctionCall { name, args, .. } => self.call(name, args, expected, false)?
                 .ok_or_else(|| format!("Systemkoerper: '{name}' liefert keinen Wert")),
             _ => Err("Systemkoerper: Ausdruck wird nicht unterstützt".into()),
         }
@@ -2659,17 +2667,23 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         self.struct_ty(art.name())
     }
 
-    /// (Spalten, Bahnen je Spalte); mat4-Spalten liegen 16 Byte auseinander.
+    /// (Spalten, Bahnen je Spalte); Matrixspalten liegen 4 Komponenten
+    /// auseinander (mat4: 16 Byte, dmat4: 32 Byte).
     fn vecmat_form(art: VecMatArt) -> (u32, u32) {
-        match art {
-            VecMatArt::Mat4 => (4, 4),
-            VecMatArt::Vec(n) => (1, n),
-        }
+        if art.ist_matrix() { (4, 4) } else { (1, art.bahnen()) }
     }
 
-    /// Adresse und bewiesene Ausrichtung der f32-Komponente (spalte, bahn).
-    fn vecmat_adresse(&self, place: &Place<'ctx>, spalte: u32, bahn: u32) -> Result<(PointerValue<'ctx>, u32), String> {
-        let offset = u64::from(spalte * 16 + bahn * 4);
+    /// Komponentengroesse in Byte (f32: 4, f64: 8).
+    fn vecmat_komponente(art: VecMatArt) -> u32 {
+        if art.doppelt() { 8 } else { 4 }
+    }
+
+    /// Adresse und bewiesene Ausrichtung der Komponente (spalte, bahn).
+    fn vecmat_adresse(
+        &self, place: &Place<'ctx>, art: VecMatArt, spalte: u32, bahn: u32,
+    ) -> Result<(PointerValue<'ctx>, u32), String> {
+        let k = Self::vecmat_komponente(art);
+        let offset = u64::from(spalte * 4 * k + bahn * k);
         let address = unsafe {
             self.builder.build_gep(
                 self.context.i8_type(), place.ptr, &[self.i64t().const_int(offset, false)], "vm.adresse",
@@ -2682,14 +2696,14 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     /// Vektoren zusammensetzen; nie ein Laden eines LLVM-Vektortyps (kein
     /// Ueberlesen bei vec3, kein Layout-/ABI-Wechsel).
     fn vecmat_laden(&mut self, place: &Place<'ctx>, art: VecMatArt) -> Result<Vec<VectorValue<'ctx>>, String> {
-        let f32t = self.context.f32_type();
+        let float_t = if art.doppelt() { self.context.f64_type() } else { self.context.f32_type() };
         let (spalten, bahnen) = Self::vecmat_form(art);
         let mut werte = Vec::with_capacity(spalten as usize);
         for spalte in 0..spalten {
-            let mut vektor = f32t.vec_type(bahnen).get_undef();
+            let mut vektor = float_t.vec_type(bahnen).get_undef();
             for bahn in 0..bahnen {
-                let (address, alignment) = self.vecmat_adresse(place, spalte, bahn)?;
-                let wert = self.builder.build_load(f32t, address, "vm.lade").map_err(e)?;
+                let (address, alignment) = self.vecmat_adresse(place, art, spalte, bahn)?;
+                let wert = self.builder.build_load(float_t, address, "vm.lade").map_err(e)?;
                 wert.as_instruction_value().ok_or("Systemkoerper: vecmat-Load fehlt")?
                     .set_alignment(alignment).map_err(e)?;
                 vektor = self.builder.build_insert_element(
@@ -2716,7 +2730,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 let wert = self.builder.build_extract_element(
                     *vektor, self.context.i32_type().const_int(u64::from(bahn), false), "vm.hole",
                 ).map_err(e)?;
-                let (address, alignment) = self.vecmat_adresse(&place, spalte as u32, bahn)?;
+                let (address, alignment) = self.vecmat_adresse(&place, art, spalte as u32, bahn)?;
                 self.builder.build_store(address, wert).map_err(e)?
                     .set_alignment(alignment).map_err(e)?;
             }
@@ -2766,10 +2780,46 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         Some((funktion, self.vecmat_von(args.first()?)?))
     }
 
+    /// P2-T89 (Freigabe #38178 O2): eingebaute Winkelfunktion, wenn kein Local,
+    /// keine @nativ- und keine extern-C-Funktion gleichen Namens existiert.
+    fn trig_funktion(&self, name: &str, args: &[Expr]) -> Option<crate::native_arithmetic::TrigArt> {
+        let art = crate::native_arithmetic::trig_art(name)?;
+        if args.len() != 1 || self.callees.contains_key(name) || self.slots.contains_key(name)
+            || self.externs.get(name).is_some() || self.externs.get_abi(name).is_some()
+        {
+            return None;
+        }
+        Some(art)
+    }
+
+    /// sin/cos/tan auf f32/f64 (Bogenmass) ueber moo_native_math.c, ohne
+    /// Fehlerpfad. Typ vom Argument, sonst vom Erwartungstyp, sonst f64
+    /// (Literal ohne Kontext, ADR §2). Keine implizite Ganzzahl->Float-Wandlung.
+    fn trig_aufruf(&mut self, name: &str, args: &[Expr], expected: Option<&STy>) -> Result<SVal<'ctx>, String> {
+        let art = self.trig_funktion(name, args).ok_or("Systemkoerper: Winkelfunktion fehlt")?;
+        let arg = &args[0];
+        let ty = match self.infer(arg) {
+            Some(STy::Float(t)) => t,
+            Some(other) => return Err(format!(
+                "Systemkoerper: {name}(x) erwartet f32 oder f64, erhalten {}", other.name()
+            )),
+            None => match expected {
+                Some(STy::Float(t)) => *t,
+                _ => NType::F64,
+            },
+        };
+        let wert = self.expr(arg, Some(&STy::Float(ty)))?;
+        self.expect(&wert, &STy::Float(ty), name)?;
+        let ergebnis = crate::native_arithmetic::float_trig(
+            self.context, &self.builder, self.module, art, NValue { ty, value: wert.value },
+        )?;
+        Ok(SVal { ty: STy::Float(ty), value: ergebnis.value })
+    }
+
     /// Argument von betrag/normalisiere: genau ein Vektor (kein mat4).
     fn vecmat_einzelvektor(&mut self, name: &str, args: &[Expr], art: VecMatArt) -> Result<VectorValue<'ctx>, String> {
         let [v] = args else { return Err(format!("Systemkoerper: {name}(v) erwartet genau einen Vektor")) };
-        if art == VecMatArt::Mat4 {
+        if art.ist_matrix() {
             return Err(format!("Systemkoerper: {name} ist fuer mat4 nicht definiert"));
         }
         Ok(self.vecmat_wert(v, art, name)?[0])
@@ -2781,8 +2831,8 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         let wert = match funktion {
             VmFunktion::Punkt => {
                 let [a, b] = args else { return Err(format!("Systemkoerper: {name}(a, b) erwartet genau zwei Vektoren")) };
-                if art == VecMatArt::Mat4 {
-                    return Err(format!("Systemkoerper: {name} ist fuer mat4 nicht definiert"));
+                if art.ist_matrix() {
+                    return Err(format!("Systemkoerper: {name} ist fuer {} nicht definiert", art.name()));
                 }
                 let a = self.vecmat_wert(a, art, name)?[0];
                 let b = self.vecmat_wert(b, art, name)?[0];
@@ -2795,7 +2845,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             VmFunktion::Kreuz | VmFunktion::Normalisiere =>
                 return Err(format!("Systemkoerper: {name} liefert keinen Skalar")),
         };
-        Ok(SVal { ty: STy::Float(NType::F32), value: wert.into() })
+        Ok(SVal { ty: STy::Float(art.element()), value: wert.into() })
     }
 
     /// Rechenausdruecke mit vecmat-Ergebnis (Operatoren, Negation, kreuz,
@@ -2810,13 +2860,13 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(Some((art, negiert)))
             }
-            Expr::FunctionCall { name, args } => match self.vecmat_funktion(name, args) {
+            Expr::FunctionCall { name, args, .. } => match self.vecmat_funktion(name, args) {
                 Some((VmFunktion::Kreuz, art)) => {
                     let [a, b] = args.as_slice() else {
                         return Err(format!("Systemkoerper: {name}(a, b) erwartet genau zwei vec3"));
                     };
-                    if art != VecMatArt::Vec(3) {
-                        return Err(format!("Systemkoerper: {name} ist nur fuer vec3 definiert, erhalten {}", art.name()));
+                    if art.ist_matrix() || art.bahnen() != 3 {
+                        return Err(format!("Systemkoerper: {name} ist nur fuer vec3/dvec3 definiert, erhalten {}", art.name()));
                     }
                     let a = self.vecmat_wert(a, art, name)?[0];
                     let b = self.vecmat_wert(b, art, name)?[0];
@@ -2852,20 +2902,21 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         if la.is_none() && ra.is_none() {
             return Ok(None);
         }
-        let f32ty = STy::Float(NType::F32);
         let ergebnis = match (la, ra) {
-            (Some(VecMatArt::Mat4), Some(VecMatArt::Mat4)) if vop == vm::VecOp::Mul => {
-                let a = self.vecmat_wert(left, VecMatArt::Mat4, "mat4 * mat4")?;
-                let b = self.vecmat_wert(right, VecMatArt::Mat4, "mat4 * mat4")?;
-                (VecMatArt::Mat4, vm::mat4_mul(self.context, &self.builder, &a, &b)?)
+            (Some(l), Some(r)) if l.ist_matrix() && r == l && vop == vm::VecOp::Mul => {
+                let was = format!("{0} * {0}", l.name());
+                let a = self.vecmat_wert(left, l, &was)?;
+                let b = self.vecmat_wert(right, r, &was)?;
+                (l, vm::mat4_mul(self.context, &self.builder, &a, &b)?)
             }
-            (Some(VecMatArt::Mat4), Some(VecMatArt::Vec(4))) if vop == vm::VecOp::Mul => {
-                let m = self.vecmat_wert(left, VecMatArt::Mat4, "mat4 * vec4")?;
-                let v = self.vecmat_wert(right, VecMatArt::Vec(4), "mat4 * vec4")?[0];
-                (VecMatArt::Vec(4), vec![vm::mat4_vec4(self.context, &self.builder, &m, v)?])
+            (Some(l), Some(r)) if l.ist_matrix() && r == l.vektor(4) && vop == vm::VecOp::Mul => {
+                let was = format!("{} * {}", l.name(), r.name());
+                let m = self.vecmat_wert(left, l, &was)?;
+                let v = self.vecmat_wert(right, r, &was)?[0];
+                (r, vec![vm::mat4_vec4(self.context, &self.builder, &m, v)?])
             }
             (Some(l), Some(r)) if l == r
-                && (matches!(vop, vm::VecOp::Add | vm::VecOp::Sub) || l != VecMatArt::Mat4) =>
+                && (matches!(vop, vm::VecOp::Add | vm::VecOp::Sub) || !l.ist_matrix()) =>
             {
                 let a = self.vecmat_wert(left, l, "Vektorrechnung")?;
                 let b = self.vecmat_wert(right, r, "Vektorrechnung")?;
@@ -2873,24 +2924,26 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     .collect::<Result<Vec<_>, _>>()?;
                 (l, werte)
             }
-            (Some(VecMatArt::Vec(n)), None) if matches!(vop, vm::VecOp::Mul | vm::VecOp::Div) => {
-                let v = self.vecmat_wert(left, VecMatArt::Vec(n), "Vektor mit Skalar")?[0];
-                let s = self.expr(right, Some(&f32ty))?;
-                self.expect(&s, &f32ty, "Skalar einer Vektorrechnung")?;
-                (VecMatArt::Vec(n), vec![vm::vec_scale(self.context, &self.builder, vop, v, s.value.into_float_value())?])
+            (Some(l), None) if !l.ist_matrix() && matches!(vop, vm::VecOp::Mul | vm::VecOp::Div) => {
+                let skalar = STy::Float(l.element());
+                let v = self.vecmat_wert(left, l, "Vektor mit Skalar")?[0];
+                let s = self.expr(right, Some(&skalar))?;
+                self.expect(&s, &skalar, "Skalar einer Vektorrechnung")?;
+                (l, vec![vm::vec_scale(self.context, &self.builder, vop, v, s.value.into_float_value())?])
             }
-            (None, Some(VecMatArt::Vec(n))) if vop == vm::VecOp::Mul => {
-                let s = self.expr(left, Some(&f32ty))?;
-                self.expect(&s, &f32ty, "Skalar einer Vektorrechnung")?;
-                let v = self.vecmat_wert(right, VecMatArt::Vec(n), "Skalar mit Vektor")?[0];
-                (VecMatArt::Vec(n), vec![vm::vec_scale(self.context, &self.builder, vop, v, s.value.into_float_value())?])
+            (None, Some(r)) if !r.ist_matrix() && vop == vm::VecOp::Mul => {
+                let skalar = STy::Float(r.element());
+                let s = self.expr(left, Some(&skalar))?;
+                self.expect(&s, &skalar, "Skalar einer Vektorrechnung")?;
+                let v = self.vecmat_wert(right, r, "Skalar mit Vektor")?[0];
+                (r, vec![vm::vec_scale(self.context, &self.builder, vop, v, s.value.into_float_value())?])
             }
             _ => {
                 let name = |art: Option<VecMatArt>, x: &Expr| art.map(|a| a.name().to_string())
                     .or_else(|| self.infer(x).map(|t| t.name()))
                     .unwrap_or_else(|| "Zahl".to_string());
                 return Err(format!(
-                    "Systemkoerper: {} {zeichen} {} ist nicht definiert (keine stille Mischung; Skalar nur als f32 bei vecN * f32, f32 * vecN, vecN / f32; mat4 * vec4, mat4 * mat4, mat4 +/- mat4)",
+                    "Systemkoerper: {} {zeichen} {} ist nicht definiert (keine stille Mischung; Skalar nur als f32 bei vecN * f32, f32 * vecN, vecN / f32 bzw. als f64 bei dvecN; mat4 * vec4, mat4 * mat4, mat4 +/- mat4 und ebenso dmat4 mit dvec4; f32- und f64-Typen nie gemischt)",
                     name(la, left), name(ra, right),
                 ));
             }
@@ -2907,7 +2960,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     fn float_literal(&self, ty: NType, text: &str, negative: bool) -> Result<SVal<'ctx>, String> {
         let (value, underflow) = ty.float_literal(self.context, text, negative)?;
         if underflow {
-            eprintln!("Warnung: Floatliteral '{text}' rundet auf null");
+            crate::diagnose::melden(crate::diagnose::Diagnose::hinweis("M-H004", format!("Floatliteral '{text}' rundet auf null")));
         }
         Ok(SVal { ty: STy::Float(ty), value: value.value })
     }

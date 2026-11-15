@@ -1,0 +1,3 @@
+setze zahl auf 5
+setze x auf zahl.append(1)
+zeige "weiter"

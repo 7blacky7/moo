@@ -1,0 +1,23 @@
+# P2-T97 (#38221): Benutzer-Locals, die wie die internen Receiver-Slots
+# heissen, duerfen weder ueberschrieben noch doppelt freigegeben werden.
+klasse K:
+    funktion m(x):
+        gib_zurück x + 1
+
+funktion f():
+    setze __mcall_obj_0 auf [7]
+    setze __mcall_obj_1 auf [8]
+    zeige neu K().m(1)
+    zeige neu K().m(2)
+    zeige __mcall_obj_0
+    zeige __mcall_obj_1
+
+setze __mcall_obj_0 auf [1, 2, 3]
+setze __mcall_obj_1 auf [9]
+setze __mcall_obj_user auf [4, 5]
+zeige neu K().m(5)
+zeige neu K().m(6)
+zeige __mcall_obj_0
+zeige __mcall_obj_1
+zeige __mcall_obj_user
+f()

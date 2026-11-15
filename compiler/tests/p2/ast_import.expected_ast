@@ -1,6 +1,7 @@
 Program {
     statements: [
         FunctionDef {
+            zeile: 2,
             name: "wert",
             params: [
                 "x",
@@ -39,12 +40,14 @@ Program {
                             "x",
                         ),
                     ),
+                    3,
                 ),
             ],
             decorators: [],
         },
         Show(
             FunctionCall {
+                zeile: 3,
                 name: "wert",
                 args: [
                     Number(
@@ -52,6 +55,10 @@ Program {
                     ),
                 ],
             },
+            3,
         ),
     ],
+    funktion_quellen: {
+        "wert": "compiler/tests/p2/typmodul.moos",
+    },
 }

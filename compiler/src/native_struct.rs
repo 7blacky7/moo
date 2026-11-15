@@ -136,9 +136,14 @@ pub(crate) struct NativeStructRegistry<'ctx> {
 /// float[16] spaltenweise wie compiler/runtime/moo_3d_math.c). C-Layout:
 /// Groesse/Ausrichtung 8/4, 12/4, 16/4, 64/4.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// P2-T89 (Freigabe #38178 O1): f64-Gegenstuecke dvec2/dvec3/dvec4/dmat4
+/// (GLSL/glm-Konvention), C-Layout 16/8, 24/8, 32/8, 128/8; dmat4 = vier
+/// dvec4-Spalten (bytegleich zu double[16] spaltenweise).
 pub(crate) enum VecMatArt {
     Vec(u32),
     Mat4,
+    DVec(u32),
+    DMat4,
 }
 
 impl VecMatArt {
@@ -148,11 +153,42 @@ impl VecMatArt {
             VecMatArt::Vec(3) => "vec3",
             VecMatArt::Vec(_) => "vec4",
             VecMatArt::Mat4 => "mat4",
+            VecMatArt::DVec(2) => "dvec2",
+            VecMatArt::DVec(3) => "dvec3",
+            VecMatArt::DVec(_) => "dvec4",
+            VecMatArt::DMat4 => "dmat4",
         }
+    }
+
+    /// f64-Variante (dvecN/dmat4).
+    pub(crate) fn doppelt(self) -> bool {
+        matches!(self, VecMatArt::DVec(_) | VecMatArt::DMat4)
+    }
+
+    pub(crate) fn ist_matrix(self) -> bool {
+        matches!(self, VecMatArt::Mat4 | VecMatArt::DMat4)
+    }
+
+    /// Bahnen je Spalte (Vektor: Dimension, Matrix: 4).
+    pub(crate) fn bahnen(self) -> u32 {
+        match self {
+            VecMatArt::Vec(n) | VecMatArt::DVec(n) => n,
+            VecMatArt::Mat4 | VecMatArt::DMat4 => 4,
+        }
+    }
+
+    /// Vektor gleicher Elementbreite mit n Bahnen (Spaltentyp: vektor(4)).
+    pub(crate) fn vektor(self, n: u32) -> VecMatArt {
+        if self.doppelt() { VecMatArt::DVec(n) } else { VecMatArt::Vec(n) }
+    }
+
+    /// Komponententyp f32 bzw. f64.
+    pub(crate) fn element(self) -> NType {
+        if self.doppelt() { NType::F64 } else { NType::F32 }
     }
 }
 
-pub(crate) const VECMAT_NAMEN: [&str; 4] = ["vec2", "vec3", "vec4", "mat4"];
+pub(crate) const VECMAT_NAMEN: [&str; 8] = ["vec2", "vec3", "vec4", "mat4", "dvec2", "dvec3", "dvec4", "dmat4"];
 
 pub(crate) fn vecmat_art_name(name: &str) -> Option<VecMatArt> {
     match name {
@@ -160,6 +196,10 @@ pub(crate) fn vecmat_art_name(name: &str) -> Option<VecMatArt> {
         "vec3" => Some(VecMatArt::Vec(3)),
         "vec4" => Some(VecMatArt::Vec(4)),
         "mat4" => Some(VecMatArt::Mat4),
+        "dvec2" => Some(VecMatArt::DVec(2)),
+        "dvec3" => Some(VecMatArt::DVec(3)),
+        "dvec4" => Some(VecMatArt::DVec(4)),
+        "dmat4" => Some(VecMatArt::DMat4),
         _ => None,
     }
 }
@@ -167,11 +207,16 @@ pub(crate) fn vecmat_art_name(name: &str) -> Option<VecMatArt> {
 /// Felder der eingebauten Definition (Quellort 0: nicht aus dem Programm).
 pub(crate) fn vecmat_felder(name: &str) -> Option<Vec<(String, TypeRef)>> {
     let typ = |n: &str| TypeRef { kind: TypeKind::Name(n.to_string()), line: 0, column: 0, end_line: 0, end_column: 0 };
-    let (felder, feldtyp): (&[&str], &str) = match vecmat_art_name(name)? {
-        VecMatArt::Vec(2) => (&["x", "y"], "f32"),
-        VecMatArt::Vec(3) => (&["x", "y", "z"], "f32"),
-        VecMatArt::Vec(_) => (&["x", "y", "z", "w"], "f32"),
+    let art = vecmat_art_name(name)?;
+    let skalar = if art.doppelt() { "f64" } else { "f32" };
+    let (felder, feldtyp): (&[&str], &str) = match art {
         VecMatArt::Mat4 => (&["s0", "s1", "s2", "s3"], "vec4"),
+        VecMatArt::DMat4 => (&["s0", "s1", "s2", "s3"], "dvec4"),
+        _ => match art.bahnen() {
+            2 => (&["x", "y"], skalar),
+            3 => (&["x", "y", "z"], skalar),
+            _ => (&["x", "y", "z", "w"], skalar),
+        },
     };
     Some(felder.iter().map(|f| (f.to_string(), typ(feldtyp))).collect())
 }
@@ -204,6 +249,8 @@ pub(crate) fn array_laenge(length: &Expr) -> Result<u32, String> {
 /// and retain it for later canonical type resolution before any use/call.
 fn validate_pointer_target(ty: &TypeRef, names: &HashSet<String>) -> Result<(), String> {
     match &ty.kind {
+        // P2-T97 (34119): kein Bool-Zeigerziel, auch nicht in Strukturfeldern.
+        TypeKind::Name(name) if name == "bool" => Err(crate::native_type_id::BOOL_ZEIGERZIEL.into()),
         TypeKind::Name(name) if name == "void" || NType::from_name(name).is_some() || names.contains(name) => Ok(()),
         TypeKind::Name(name) => Err(format!("Unbekannter Pointer-Zieltyp '{name}'")),
         TypeKind::Generic { name, args } if (name == "ptr" || name == "zeiger") && args.len() == 1 =>
