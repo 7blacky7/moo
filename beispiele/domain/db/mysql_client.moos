@@ -14,11 +14,25 @@
 # das Handshake komplett aber ueberspringen die Auth-Scramble.
 # ============================================================
 
-konstante HOST auf "127.0.0.1"
-konstante PORT auf 3307
-konstante USER auf "moouser"
-konstante PASS auf "mootest"
-konstante DB auf "mootest"
+# Zugang per Umgebung umstellbar (Standard: bisherige Werte):
+# MOO_MYSQL_HOST, MOO_MYSQL_PORT, MOO_MYSQL_USER, MOO_MYSQL_PASS, MOO_MYSQL_DB.
+setze HOST auf umgebung("MOO_MYSQL_HOST")
+wenn HOST == nichts:
+    setze HOST auf "127.0.0.1"
+setze PORT auf 3307
+setze mysql_port_env auf umgebung("MOO_MYSQL_PORT")
+wenn mysql_port_env != nichts:
+    setze PORT auf zahl(mysql_port_env)
+setze USER auf umgebung("MOO_MYSQL_USER")
+wenn USER == nichts:
+    setze USER auf "moouser"
+setze PASS auf umgebung("MOO_MYSQL_PASS")
+wenn PASS == nichts:
+    zeige "FEHLER: MOO_MYSQL_PASS nicht gesetzt (MySQL-Passwort per Umgebung angeben)"
+    beende(0)
+setze DB auf umgebung("MOO_MYSQL_DB")
+wenn DB == nichts:
+    setze DB auf "mootest"
 
 # --- Byte/Int Helper (Little-Endian) ---
 funktion le_u16(bs, off):
@@ -152,7 +166,14 @@ klasse MyConn:
 zeige "=== moo MySQL-Client ==="
 zeige "Verbinde mit " + HOST + ":" + text(PORT)
 
-setze sock auf tcp_verbinde(HOST, PORT)
+# tcp_verbinde wirft bei Verbindungsfehlern: Meldung und normales Ende statt Absturz.
+setze sock auf nichts
+versuche:
+    setze sock auf tcp_verbinde(HOST, PORT)
+fange fehler:
+    zeige "Verbindung fehlgeschlagen: " + text(fehler)
+wenn sock == nichts:
+    beende(0)
 setze conn auf neu MyConn(sock)
 
 # 1. Handshake lesen

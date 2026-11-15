@@ -194,6 +194,8 @@ dependencies = [
  "clap",
  "inkwell",
  "pkg-config",
+ "proc-macro2",
+ "syn",
 ]
 
 [[package]]

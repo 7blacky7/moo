@@ -501,7 +501,14 @@ zeige "  Port: " + text(PORT)
 zeige "================================================"
 
 setze broker auf neu Broker()
-setze server auf tcp_server(PORT)
+# tcp_server wirft, wenn der Port nicht geoeffnet werden kann: Meldung und normales Ende.
+setze server auf nichts
+versuche:
+    setze server auf tcp_server(PORT)
+fange fehler:
+    zeige "Port " + text(PORT) + " kann nicht geoeffnet werden: " + text(fehler)
+wenn server == nichts:
+    beende(0)
 server.timeout_setzen(50)
 zeige "Listening on " + text(PORT) + " ..."
 

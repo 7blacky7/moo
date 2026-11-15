@@ -3,32 +3,57 @@
 
 zeige "=== moo Adressbuch ==="
 
+# Datenbankfehler (gesperrte Datei, SQL-Fehler) werden gemeldet; das Adressbuch
+# laeuft danach weiter bzw. endet ohne Absturz.
+funktion sicher_ausfuehren(db, sql):
+    versuche:
+        db_ausführen(db, sql)
+        gib_zurück wahr
+    fange fehler:
+        zeige "Datenbankfehler: " + text(fehler)
+        gib_zurück falsch
+
+funktion sicher_abfrage(db, sql):
+    versuche:
+        gib_zurück db_abfrage(db, sql)
+    fange fehler:
+        zeige "Datenbankfehler: " + text(fehler)
+        gib_zurück []
+
 # Datenbank oeffnen/erstellen
-setze db auf db_verbinde("adressbuch.db")
-db_ausführen(db, "CREATE TABLE IF NOT EXISTS kontakte (id INTEGER PRIMARY KEY, name TEXT, email TEXT, telefon TEXT)")
+# db_verbinde verlangt das Schema sqlite:///<absoluter Pfad> (relative Pfade gehen nicht).
+setze db auf nichts
+versuche:
+    setze db auf db_verbinde("sqlite:///tmp/adressbuch.db")
+fange fehler:
+    zeige "Datenbank konnte nicht geoeffnet werden: " + text(fehler)
+wenn db == nichts:
+    zeige "Adressbuch wird beendet."
+    beende(0)
+sicher_ausfuehren(db, "CREATE TABLE IF NOT EXISTS kontakte (id INTEGER PRIMARY KEY, name TEXT, email TEXT, telefon TEXT)")
 
 funktion kontakt_hinzufuegen(db):
     setze name auf eingabe("Name: ")
     setze email auf eingabe("Email: ")
     setze telefon auf eingabe("Telefon: ")
-    db_ausführen(db, "INSERT INTO kontakte (name, email, telefon) VALUES ('" + name + "', '" + email + "', '" + telefon + "')")
-    zeige "Kontakt hinzugefuegt!"
+    wenn sicher_ausfuehren(db, "INSERT INTO kontakte (name, email, telefon) VALUES ('" + name + "', '" + email + "', '" + telefon + "')"):
+        zeige "Kontakt hinzugefuegt!"
 
 funktion kontakte_auflisten(db):
-    setze ergebnis auf db_abfrage(db, "SELECT id, name, email, telefon FROM kontakte ORDER BY name")
+    setze ergebnis auf sicher_abfrage(db, "SELECT id, name, email, telefon FROM kontakte ORDER BY name")
     für kontakt in ergebnis:
         zeige kontakt
 
 funktion kontakt_suchen(db):
     setze suchbegriff auf eingabe("Suche: ")
-    setze ergebnis auf db_abfrage(db, "SELECT id, name, email FROM kontakte WHERE name LIKE '%" + suchbegriff + "%'")
+    setze ergebnis auf sicher_abfrage(db, "SELECT id, name, email FROM kontakte WHERE name LIKE '%" + suchbegriff + "%'")
     für kontakt in ergebnis:
         zeige kontakt
 
 funktion kontakt_loeschen(db):
     setze id auf eingabe("ID: ")
-    db_ausführen(db, "DELETE FROM kontakte WHERE id = " + id)
-    zeige "Geloescht."
+    wenn sicher_ausfuehren(db, "DELETE FROM kontakte WHERE id = " + id):
+        zeige "Geloescht."
 
 # Hauptmenue
 solange wahr:

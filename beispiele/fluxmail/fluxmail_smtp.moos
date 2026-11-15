@@ -12,6 +12,7 @@
 # ============================================================
 
 funktion smtp_verbinden(host, port):
+    # FEHLERPFAD(M-F002): bewusst ungeschützt – tls_verbinde wirft bei Verbindungsfehler; der einzige Aufrufer smtp_senden fängt das in versuche: (Meldung "SMTP-Fehler", Rückgabe falsch; gemessen mit geschlossenem Port) – ändern: nur nötig für weitere Aufrufer ohne versuche:, dann Aufruf hier in versuche:/fange kapseln und nichts zurückgeben
     gib_zurück tls_verbinde(host, port)
 
 funktion smtp_lies_begruessung(verb):

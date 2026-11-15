@@ -266,7 +266,25 @@ klasse PgClient:
         gib_zurück wahr
 
     funktion verbinde():
-        selbst.sock = tcp_verbinde(selbst.host, selbst.port)
+        # Erneutes Verbinden: Zustand der vorherigen Verbindung verwerfen, sonst bleibt
+        # ready=wahr nach einem fehlgeschlagenen Versuch stehen.
+        wenn selbst.sock != nichts:
+            versuche:
+                selbst.sock.schliessen()
+            fange alt_fehler:
+                setze alt_ignoriert auf 0
+        selbst.sock = nichts
+        selbst.ready = falsch
+        selbst.letzte_fehler = nichts
+        selbst.server_version = ""
+        selbst.backend_pid = 0
+        selbst.scram_server_verified = falsch
+        # tcp_verbinde wirft bei Verbindungsfehlern: als letzte_fehler melden, ready bleibt falsch.
+        versuche:
+            selbst.sock = tcp_verbinde(selbst.host, selbst.port)
+        fange fehler:
+            selbst.letzte_fehler = "Verbindung fehlgeschlagen: " + text(fehler)
+            gib_zurück falsch
         setze sm auf neu StartupMessage(selbst.user, selbst.datenbank)
         selbst.sock.schreibe_bytes(sm.zu_bytes())
         selbst.empfange_bis_ready()

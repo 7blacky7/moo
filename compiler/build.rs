@@ -65,7 +65,11 @@ fn windows_gnu_runtime_bauen(target_windows: bool) {
     }
 }
 
+// P2-T100: Builtin-Aritaet aus src/codegen.rs (OUT_DIR/builtin_aritaet.rs).
+mod build_aritaet;
+
 fn main() {
+    build_aritaet::erzeugen();
     let mut build = cc::Build::new();
 
     // P013: Target-OS korrekt ermitteln. In build.rs ist cfg!(target_os) das

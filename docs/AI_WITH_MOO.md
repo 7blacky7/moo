@@ -434,9 +434,12 @@ Diagnostic catalog (source of truth: `compiler/src/diagnose.rs`, `moo-compiler e
 | M-L001 / M-L002 / M-L003 / M-L004 | Unknown character / unterminated string / f-string `}` missing / f-string unterminated |
 | M-S001 | Token expected (`expected`, `found`, `suggestion` filled) |
 | M-S002 | Name/identifier expected |
+| M-S004 | Nested too deeply (parentheses, blocks, operator/call/index chains count together). The limit depends on the compiler thread's stack: normally 1000 levels (512 MiB), under a memory limit (`ulimit -v`) 250 (128 MiB) or 62 (32 MiB); the message names the active limit |
 | M-S000 | Other syntax error |
 | M-I001 / M-I002 / M-I003 / M-I000 | Module not found / module does not define the name / file not readable / other import error |
 | M-C001 / M-C002 | Unknown function / unknown method (with "Meintest du ...?" suggestion) |
+| M-C003 / M-C004 | Too few arguments for a built-in (exact or minimum count, derived from the code generator at build time; `moo-compiler builtins` lists them) / hint: surplus arguments are not evaluated |
+| M-C999 | Internal compiler error (caught Rust panic, or the compiler thread could not start); a compiler bug, not a program error |
 | M-C000 / M-N000 | Other code generation error / error in native code (`@nativ`, structs) – location: file + function, line if known |
 | M-H001 … M-H005 | Hints: type mismatch on a method, own struct shadows a built-in type, module alias shadowed, float literal rounds to zero, unknown target |
 | M-W000 | Tool or command line error (outside the source) |

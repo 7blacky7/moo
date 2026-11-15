@@ -10,12 +10,23 @@
 # Starten:     ./chat_server_p   (Port 4001 — parallel zu Original moeglich)
 # ============================================================
 
-setze db auf db_verbinde("sqlite:///tmp/moo_chat_prepared.db")
-db_ausführen(db, "CREATE TABLE IF NOT EXISTS nachrichten (id INTEGER PRIMARY KEY AUTOINCREMENT, raum TEXT, nick TEXT, text TEXT, zeit REAL)")
-db_ausführen(db, "CREATE INDEX IF NOT EXISTS idx_raum ON nachrichten(raum, id)")
+# Start: Datenbank, Tabelle, Index und Prepared Statement. Schlaegt etwas fehl, gibt es eine
+# Meldung und ein normales Ende statt eines Absturzes.
+setze db auf nichts
+setze INSERT_STMT auf nichts
+versuche:
+    setze db auf db_verbinde("sqlite:///tmp/moo_chat_prepared.db")
+    db_ausführen(db, "CREATE TABLE IF NOT EXISTS nachrichten (id INTEGER PRIMARY KEY AUTOINCREMENT, raum TEXT, nick TEXT, text TEXT, zeit REAL)")
+    db_ausführen(db, "CREATE INDEX IF NOT EXISTS idx_raum ON nachrichten(raum, id)")
 
-# Prepared Statement fuer Insert (1x kompiliert, beliebig oft binden).
-setze INSERT_STMT auf db_vorbereite(db, "INSERT INTO nachrichten (raum, nick, text, zeit) VALUES (:raum, :nick, :text, :zeit)")
+    # Prepared Statement fuer Insert (1x kompiliert, beliebig oft binden).
+    setze INSERT_STMT auf db_vorbereite(db, "INSERT INTO nachrichten (raum, nick, text, zeit) VALUES (:raum, :nick, :text, :zeit)")
+fange fehler:
+    zeige "Datenbank-Initialisierung fehlgeschlagen: " + text(fehler)
+    setze db auf nichts
+wenn db == nichts:
+    zeige "Chat-Server wird beendet."
+    beende(0)
 
 setze html auf datei_lesen("beispiele/chat/index.html")
 
@@ -27,7 +38,11 @@ funktion nachricht_speichern(raum, nick, nachricht_text):
     INSERT_STMT.ausfuehren()
 
 funktion history_holen(raum, seit_id):
-    gib_zurück db_abfrage_mit_params(db, "SELECT id, nick, text, zeit FROM nachrichten WHERE raum = ? AND id > ? ORDER BY id LIMIT 50", [raum, seit_id])
+    versuche:
+        gib_zurück db_abfrage_mit_params(db, "SELECT id, nick, text, zeit FROM nachrichten WHERE raum = ? AND id > ? ORDER BY id LIMIT 50", [raum, seit_id])
+    fange fehler:
+        zeige "Datenbankfehler (history): " + text(fehler)
+        gib_zurück []
 
 funktion json_antwort_liste(req, zeilen):
     setze liste auf []
@@ -36,7 +51,14 @@ funktion json_antwort_liste(req, zeilen):
         liste.hinzufügen(eintrag)
     web_json(req, {"messages": liste, "ok": wahr})
 
-setze server auf web_server(4001)
+# web_server wirft, wenn der Port nicht geoeffnet werden kann: Meldung und normales Ende.
+setze server auf nichts
+versuche:
+    setze server auf web_server(4001)
+fange fehler:
+    zeige "Server konnte nicht gestartet werden (Port 4001): " + text(fehler)
+wenn server == nichts:
+    beende(0)
 zeige "=== moo Chat-Server (prepared) auf Port 4001 ==="
 
 solange wahr:

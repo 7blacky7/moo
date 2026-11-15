@@ -28,17 +28,20 @@ funktion lies_bis(sock, ziel):
     gib_zurück gesamt
 
 funktion server_lauf(port):
+    # FEHLERPFAD(M-F002): bewusst ungeschützt – Bind/Listen-Fehler bleibt in server_lauf unbehandelt: Hinweis auf stderr, server_lauf läuft weiter; erst die Prüfung am Ende wirft NET-LARGE SERVER FAIL, das das Hauptprogramm fängt (Meldung, beende(1)) – ändern: tcp_server in versuche:/fange kapseln, Meldung ausgeben und beende(1)
     setze server auf tcp_server(port)
     server.timeout_setzen(15000)
 
     setze text_client auf server.annehmen()
     text_client.timeout_setzen(15000)
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – lies_bis wirft bei EOF/Überlänge, in server_lauf unbehandelt: Hinweis auf stderr, server_lauf läuft weiter; die Prüfung am Ende wirft NET-LARGE SERVER FAIL, das das Hauptprogramm fängt (Meldung, beende(1)); der Treiber prüft zusätzlich die PASS-Zeilen – ändern: Aufruf in versuche:/fange kapseln, FAIL melden und beende(1)
     setze text_n auf lies_bis(text_client, BYTES_GESAMT)
     text_client.schreiben("TEXT:" + text(text_n))
     text_client.schliessen()
 
     setze bytes_client auf server.annehmen()
     bytes_client.timeout_setzen(15000)
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – lies_bis wirft bei EOF/Überlänge, in server_lauf unbehandelt: Hinweis auf stderr, server_lauf läuft weiter; die Prüfung am Ende wirft NET-LARGE SERVER FAIL, das das Hauptprogramm fängt (Meldung, beende(1)); der Treiber prüft zusätzlich die PASS-Zeilen – ändern: Aufruf in versuche:/fange kapseln, FAIL melden und beende(1)
     setze bytes_n auf lies_bis(bytes_client, BYTES_GESAMT)
     bytes_client.schreiben("BYTES:" + text(bytes_n))
     bytes_client.schliessen()
@@ -54,6 +57,7 @@ funktion client_lauf(port):
     wenn länge(payload) != BYTES_GESAMT:
         wirf "netz-large: falsche Testpayload-Laenge"
 
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – verbinde_mit_retry wirft nach erschöpften Versuchen, in client_lauf unbehandelt: Hinweis auf stderr, client_lauf läuft weiter; ein späterer Wurf fängt das Hauptprogramm (NET-LARGE CLIENT FAIL, beende(1); Probe ohne Server: RC 1) – ändern: Aufruf in versuche:/fange kapseln, Meldung ausgeben und beende(1)
     setze text_sock auf verbinde_mit_retry("localhost", port)
     text_sock.timeout_setzen(15000)
     text_sock.schreiben(payload)
@@ -65,6 +69,7 @@ funktion client_lauf(port):
     setze bytes_payload auf bytes_zu_liste(payload)
     wenn länge(bytes_payload) != BYTES_GESAMT:
         wirf "netz-large: Byte-Konvertierung falsch"
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – verbinde_mit_retry wirft nach erschöpften Versuchen, in client_lauf unbehandelt: Hinweis auf stderr, client_lauf läuft weiter; ein späterer Wurf fängt das Hauptprogramm (NET-LARGE CLIENT FAIL, beende(1); Probe ohne Server: RC 1) – ändern: Aufruf in versuche:/fange kapseln, Meldung ausgeben und beende(1)
     setze bytes_sock auf verbinde_mit_retry("localhost", port)
     bytes_sock.timeout_setzen(15000)
     bytes_sock.schreibe_bytes(bytes_payload)

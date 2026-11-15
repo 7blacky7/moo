@@ -392,6 +392,26 @@ pub fn fehler_aus_text(text: impl Into<String>) {
 
 /// Gibt alle Diagnosen auf stderr aus und leert den Sammler (Text: nur wenn
 /// etwas vorliegt; JSON: immer genau ein Objekt). Ergebnis: Fehler dabei?
+/// P2-T100: Ausgabe aus dem Panic-Hook. Legt `d` ab und gibt alle Diagnosen
+/// aus; ist der Sammler gerade gesperrt (Panic waehrend des Meldens), nur `d`
+/// als Kopfzeile.
+pub fn notfall_abschliessen(d: Diagnose) {
+    let text = LAUF.try_with(|l| match l.try_borrow_mut() {
+        Ok(mut l) => {
+            if !l.diagnosen.liste.contains(&d) {
+                l.diagnosen.push(d.clone());
+            }
+            let format = l.format;
+            Some(std::mem::take(&mut l.diagnosen).ausgeben(format))
+        }
+        Err(_) => None,
+    }).ok().flatten();
+    match text {
+        Some(text) => eprint!("{text}"),
+        None => eprintln!("{}", d.kopfzeile()),
+    }
+}
+
 pub fn abschliessen() -> bool {
     let (ds, format) = LAUF.with(|l| {
         let mut l = l.borrow_mut();
@@ -448,6 +468,8 @@ pub const KATALOG: &[Eintrag] = &[
         erklaerung: "Hier muss ein Bezeichner (Variablen-, Funktions- oder Typname) stehen. Schluesselwoerter sind als Name nur eingeschraenkt erlaubt." },
     Eintrag { code: "M-S003", titel: "Zeilenende erwartet",
         erklaerung: "Nach einem vollstaendigen Statement steht noch etwas in derselben Zeile (z. B. `setze z auf 3 über 4`). Jedes Statement endet mit der Zeile; den Rest entfernen, einen fehlenden Operator ergaenzen oder ihn in eine eigene Zeile schreiben." },
+    Eintrag { code: "M-S004", titel: "Zu tief verschachtelt",
+        erklaerung: "Der Syntaxbaum waere tiefer als die Grenze des Compilers (Klammern, Bloecke, Operatorketten wie a + b + c ..., Aufruf- und Indexketten zaehlen zusammen). Die Pruefung und Uebersetzung laufen rekursiv ueber diese Tiefe; statt eines Absturzes meldet der Parser die Stelle. Die Grenze haengt vom Stack des Compiler-Threads ab: regulaer 1000 Ebenen (512 MiB), unter einem Speicherlimit (ulimit -v) 250 (128 MiB) bzw. 62 (32 MiB). Teilausdruecke in Variablen oder Funktionen auslagern." },
     Eintrag { code: "M-S000", titel: "Syntaxfehler",
         erklaerung: "Sonstiger Fehler beim Parsen. Die Meldung nennt das Konstrukt." },
     Eintrag { code: "M-I001", titel: "Modul nicht gefunden",
@@ -468,6 +490,12 @@ pub const KATALOG: &[Eintrag] = &[
         erklaerung: "Die aufgerufene Funktion ist weder definiert noch importiert noch eingebaut. Der Vorschlag nennt einen aehnlichen bekannten Namen." },
     Eintrag { code: "M-C002", titel: "Methode unbekannt",
         erklaerung: "Die Methode ist fuer den Empfaenger nicht definiert. Der Vorschlag nennt eine aehnliche Methode." },
+    Eintrag { code: "M-C003", titel: "Zu wenige Argumente fuer ein Builtin",
+        erklaerung: "Eine eingebaute Funktion wurde mit weniger Argumenten aufgerufen, als sie liest. Die Meldung nennt erwartete (exakt oder mindestens) und gefundene Anzahl. Geprueft werden Builtins, deren Anzahl der Compiler beim Bau eindeutig aus dem Codegen ableitet; eine eigene Funktion gleichen Namens hat Vorrang und wird nicht geprueft. `moo-compiler builtins` listet die Anzahl." },
+    Eintrag { code: "M-C004", titel: "Ueberzaehlige Argumente fuer ein Builtin",
+        erklaerung: "Die eingebaute Funktion liest eine feste Anzahl Argumente, und es wurden mehr uebergeben. Die ueberzaehligen Argumente werden nicht ausgewertet; ihre Nebenwirkungen (Ausgaben, Aufrufe) finden nicht statt. Das Programm wird trotzdem erzeugt. In importierten stdlib-Modulen still." },
+    Eintrag { code: "M-C999", titel: "Interner Compilerfehler",
+        erklaerung: "Der Compiler ist auf einen Zustand gestossen, den er nicht behandelt (Rust-Panic). Statt abzustuerzen meldet er die interne Meldung mit Rust-Ort und, soweit bekannt, den innersten offenen Builtin-Aufruf. Das ist ein Fehler im Compiler, nicht im Programm; bitte mit Quelldatei melden. MOO_PANIK_ROH=1 zeigt die rohe Rust-Ausgabe. Nicht abgefangen werden Abbrueche ohne Unwinding (Signale aus C/LLVM, Stapelueberlauf)." },
     Eintrag { code: "M-C000", titel: "Uebersetzungsfehler",
         erklaerung: "Sonstiger Fehler bei der Codeerzeugung. Ort: Datei und Funktion; die Zeile, soweit bekannt." },
     Eintrag { code: "M-N000", titel: "Fehler in nativem Code",

@@ -313,5 +313,48 @@ json fp2_streng '.errors == 3 and ([.diagnostics[] | select(.code == "M-F002")] 
 timeout 30s "$compiler" erklaere M-F002 > "$out/erklaere_f2.out" 2>&1 || fail "erklaere M-F002: RC $?"
 rg -q -F "M-F002" "$out/erklaere_f2.out" || fail "erklaere M-F002: Eintrag fehlt"
 
+# 12. P2-T100: Builtin-Aritaet aus dem Codegen (build_aritaet.rs, fail-closed).
+#     Zu wenige Argumente M-C003 statt Panic (auch verschachtelt), zu viele
+#     Hinweis M-C004 (RC 0, Rest nicht ausgewertet), eigene Funktion geht vor.
+C3='[.diagnostics[] | select(.code == "M-C003")]'
+C4='[.diagnostics[] | select(.code == "M-C004")]'
+pruef_json aritaet_zu_wenig
+[ "$rc" -eq 1 ] || fail "aritaet_zu_wenig: RC $rc statt 1"
+json aritaet_zu_wenig "$C3"' | length == 1 and .[0].line == 3 and (.[0].message | test("shard_reihenfolge. braucht 3 Argumente, bekommen 1")) and .[0].expected == "3 Argumente" and .[0].found == "1"'
+json aritaet_zu_wenig '[.diagnostics[] | select(.code == "M-C999")] | length == 0'
+pruef_json aritaet_verschachtelt
+[ "$rc" -eq 1 ] || fail "aritaet_verschachtelt: RC $rc statt 1"
+json aritaet_verschachtelt "$C3"' | length == 1 and .[0].line == 5 and (.[0].message | test("bekommen 2"))'
+pruef_json aritaet_zu_viel
+[ "$rc" -eq 0 ] || fail "aritaet_zu_viel: RC $rc statt 0"
+json aritaet_zu_viel "$C4"' | length == 1 and .[0].line == 6 and .[0].severity == "hint" and (.[0].message | test("liest nur 1 Argument"))'
+pruef_json aritaet_vorrang
+[ "$rc" -eq 0 ] || fail "aritaet_vorrang: RC $rc statt 0"
+json aritaet_vorrang '.diagnostics | length == 0'
+timeout 30s "$compiler" builtins > "$out/builtins.json" 2> "$out/builtins.err" || fail "builtins: RC $?"
+jq -e '.tabelliert > 800 and ([.builtins[] | select(.name == "shard_reihenfolge")][0] | .argumente == 3 and .exakt) and ([.builtins[] | select(.argumente == null and (.grund | not))] | length == 0)' "$out/builtins.json" > /dev/null || fail "builtins: Tabelle unerwartet"
+# 12b. P2-T100 (#38365): zu tiefe Verschachtelung ist M-S004 mit Ort statt
+#      Stack Overflow; knapp darunter uebersetzt der Compiler (grosser Stack).
+wdh() { local s="$1" n="$2" o=""; for ((i=0;i<n;i++)); do o+="$s"; done; printf '%s' "$o"; }
+tief() { # name inhalt: pruefe --diagnose=json auf generierter Datei
+  printf '%s\n' "$2" > "$out/$1.moos"
+  timeout 120s "$compiler" pruefe "$out/$1.moos" --diagnose=json > "$out/$1.json.out" 2> "$out/$1.json"
+  rc=$?
+}
+tief tief_klammern "zeige $(wdh '(' 2048)1$(wdh ')' 2048)"
+[ "$rc" -eq 1 ] || fail "tief_klammern: RC $rc statt 1"
+json tief_klammern '[.diagnostics[] | select(.code == "M-S004")] | length == 1 and .[0].line == 1'
+tief tief_kette "zeige 1$(wdh '+1' 1500)"
+[ "$rc" -eq 1 ] || fail "tief_kette: RC $rc statt 1"
+json tief_kette '[.diagnostics[] | select(.code == "M-S004")] | length == 1'
+tief tief_grenze "zeige $(wdh '(' 990)1$(wdh ')' 990) + 1$(wdh '+1' 5)"
+[ "$rc" -eq 0 ] || fail "tief_grenze: RC $rc statt 0"
+timeout 120s "$compiler" compile "$out/tief_grenze.moos" -o "$out/tief_grenze.bin" > /dev/null 2>&1 || fail "tief_grenze compile: RC $?"
+[ "$("$out/tief_grenze.bin")" = "7" ] || fail "tief_grenze: Ausgabe falsch"
+
+for c in M-C003 M-C004 M-C999 M-S004; do
+  timeout 30s "$compiler" erklaere $c > "$out/erklaere_$c.out" 2>&1 || fail "erklaere $c: RC $?"
+done
+
 if [ "$fehler" -ne 0 ]; then echo "FAIL P2-T97 diagnose"; exit 1; fi
-echo "PASS P2-T97 diagnose: mehrere Syntax-/Lexerfehler mit Zeile:Spalte, Import M-I002 (inkl. Altfall), M-C001 mit Zeile+Vorschlag, Hinweis RC0, Stmt-Zeilen (B5b/B5c), JSON-Schema, pruefe/check, erklaere/explain; P2-T99 M-I004 (Benutzer/selektiv/Modul-Modul, compile ohne Binary), M-I005 Variable, Raute still, stdlib mathe+primzahl; Variable verdeckt nichts (beide Reihenfolgen), Struktur/Funktion, primzahl-Weitergabe; Weitergabe-Zyklus ohne Definition M-I002, gueltiger Zyklus RC 0; P2-T98 M-M001/M-M002/M-M005 mit Zeile, nicht konstanter Index RC 0; P2-T96 M-F001/M-F002 inkl. stdlib-Weitergabe"
+echo "PASS P2-T97 diagnose: mehrere Syntax-/Lexerfehler mit Zeile:Spalte, Import M-I002 (inkl. Altfall), M-C001 mit Zeile+Vorschlag, Hinweis RC0, Stmt-Zeilen (B5b/B5c), JSON-Schema, pruefe/check, erklaere/explain; P2-T99 M-I004 (Benutzer/selektiv/Modul-Modul, compile ohne Binary), M-I005 Variable, Raute still, stdlib mathe+primzahl; Variable verdeckt nichts (beide Reihenfolgen), Struktur/Funktion, primzahl-Weitergabe; Weitergabe-Zyklus ohne Definition M-I002, gueltiger Zyklus RC 0; P2-T98 M-M001/M-M002/M-M005 mit Zeile, nicht konstanter Index RC 0; P2-T96 M-F001/M-F002 inkl. stdlib-Weitergabe; P2-T100 M-C003/M-C004 Aritaet, Vorrang, builtins-Tabelle, M-S004 Tiefe statt Stack Overflow"

@@ -4,7 +4,7 @@ cd "$(dirname "$0")/../../.."
 mkdir -p build/p2-frontend/flow
 compiler=compiler/target/release/moo-compiler
 failed=0
-for name in nested_unhandled nested_caller defer_unhandled break_outside continue_outside break_inside continue_inside break_outer continue_outer defer_heap main_erfolg main_fehler main_defer_erfolg main_defer_fehler main_defer_ende return_tief main_return_tief throw_tief; do
+for name in nested_unhandled nested_caller defer_unhandled break_outside continue_outside break_inside continue_inside break_outer continue_outer defer_heap main_erfolg main_fehler main_defer_erfolg main_defer_fehler main_defer_ende return_tief main_return_tief throw_tief sprung_fehler; do
   out="build/p2-frontend/flow/$name"
   timeout 30s "$compiler" compile "compiler/tests/p2/try_flow_${name}.moos" -o "$out" > "$out.compile.log" 2>&1
   rc=$?

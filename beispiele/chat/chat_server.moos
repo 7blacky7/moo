@@ -8,9 +8,18 @@
 # ============================================================
 
 # --- Datenbank initialisieren ---
-setze db auf db_verbinde("sqlite:///tmp/moo_chat.db")
-db_ausführen(db, "CREATE TABLE IF NOT EXISTS nachrichten (id INTEGER PRIMARY KEY AUTOINCREMENT, raum TEXT, nick TEXT, text TEXT, zeit REAL)")
-db_ausführen(db, "CREATE INDEX IF NOT EXISTS idx_raum ON nachrichten(raum, id)")
+# Schlägt etwas fehl (Datei nicht beschreibbar, SQL-Fehler), gibt es eine Meldung und ein normales Ende.
+setze db auf nichts
+versuche:
+    setze db auf db_verbinde("sqlite:///tmp/moo_chat.db")
+    db_ausführen(db, "CREATE TABLE IF NOT EXISTS nachrichten (id INTEGER PRIMARY KEY AUTOINCREMENT, raum TEXT, nick TEXT, text TEXT, zeit REAL)")
+    db_ausführen(db, "CREATE INDEX IF NOT EXISTS idx_raum ON nachrichten(raum, id)")
+fange fehler:
+    zeige "Datenbank-Initialisierung fehlgeschlagen: " + text(fehler)
+    setze db auf nichts
+wenn db == nichts:
+    zeige "Chat-Server wird beendet."
+    beende(0)
 
 # --- HTML laden ---
 setze html auf datei_lesen("beispiele/chat/index.html")
@@ -25,13 +34,21 @@ funktion nachricht_speichern(raum, nick, nachricht_text):
     setze escaped_text auf sql_bereinigen(nachricht_text)
     setze escaped_raum auf sql_bereinigen(raum)
     setze sql auf "INSERT INTO nachrichten (raum, nick, text, zeit) VALUES ('" + escaped_raum + "', '" + escaped_nick + "', '" + escaped_text + "', " + text(jetzt) + ")"
-    db_ausführen(db, sql)
+    versuche:
+        db_ausführen(db, sql)
+        gib_zurück wahr
+    fange fehler:
+        zeige "SQL-Fehler: " + text(fehler)
+        gib_zurück falsch
 
 funktion history_holen(raum, seit_id):
     setze escaped_raum auf sql_bereinigen(raum)
     setze sql auf "SELECT id, nick, text, zeit FROM nachrichten WHERE raum = '" + escaped_raum + "' AND id > " + text(seit_id) + " ORDER BY id LIMIT 50"
-    setze zeilen auf db_abfrage(db, sql)
-    gib_zurück zeilen
+    versuche:
+        gib_zurück db_abfrage(db, sql)
+    fange fehler:
+        zeige "SQL-Fehler: " + text(fehler)
+        gib_zurück nichts
 
 funktion json_antwort_liste(req, zeilen):
     setze liste auf []
@@ -41,7 +58,14 @@ funktion json_antwort_liste(req, zeilen):
     web_json(req, {"messages": liste, "ok": wahr})
 
 # --- Server starten ---
-setze server auf web_server(4000)
+# web_server wirft, wenn der Port nicht geoeffnet werden kann: Meldung und normales Ende.
+setze server auf nichts
+versuche:
+    setze server auf web_server(4000)
+fange fehler:
+    zeige "Server konnte nicht gestartet werden (Port 4000): " + text(fehler)
+wenn server == nichts:
+    beende(0)
 zeige "=== moo Chat-Server ==="
 zeige "http://localhost:4000"
 zeige "Raeume: #allgemein, #moo-dev, #offtopic"
@@ -72,7 +96,9 @@ solange wahr:
         setze body_json auf json_lesen(body)
         setze nick auf body_json["nick"]
         setze raum auf body_json["raum"]
-        nachricht_speichern(raum, "*", nick + " ist dem Raum beigetreten")
+        wenn nicht nachricht_speichern(raum, "*", nick + " ist dem Raum beigetreten"):
+            web_antworten(req, "500 Internal Error", 500)
+            weiter
         zeige nick + " → #" + raum
         web_json(req, {"ok": wahr, "nick": nick, "raum": raum})
         weiter
@@ -83,7 +109,9 @@ solange wahr:
         setze nick auf body_json["nick"]
         setze raum auf body_json["raum"]
         setze nachricht auf body_json["text"]
-        nachricht_speichern(raum, nick, nachricht)
+        wenn nicht nachricht_speichern(raum, nick, nachricht):
+            web_antworten(req, "500 Internal Error", 500)
+            weiter
         zeige "[" + raum + "] " + nick + ": " + nachricht
         web_json(req, {"ok": wahr})
         weiter
@@ -104,6 +132,9 @@ solange wahr:
                     wenn kv[0] == "seit":
                         setze seit_id auf zahl(kv[1])
         setze zeilen auf history_holen(raum, seit_id)
+        wenn zeilen == nichts:
+            web_antworten(req, "500 Internal Error", 500)
+            weiter
         json_antwort_liste(req, zeilen)
         weiter
 
@@ -112,6 +143,9 @@ solange wahr:
     wenn länge(pfad_teile) >= 3 und pfad_teile[0] == "api" und pfad_teile[1] == "history":
         setze raum auf pfad_teile[2]
         setze zeilen auf history_holen(raum, 0)
+        wenn zeilen == nichts:
+            web_antworten(req, "500 Internal Error", 500)
+            weiter
         json_antwort_liste(req, zeilen)
         weiter
 

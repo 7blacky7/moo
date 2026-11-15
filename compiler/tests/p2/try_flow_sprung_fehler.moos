@@ -1,0 +1,73 @@
+# P2-T101: Ein Fehler aus einem Aufruf direkt vor weiter/stopp im selben
+# wenn-Zweig wird vom umgebenden versuche: gefangen, nicht verschluckt.
+funktion route():
+    wirf "route_fehler"
+    gib_zurück "ROUTE_FALSCH"
+
+# 1) versuche in der Schleife, weiter nach fehlerndem Aufruf
+setze i auf 0
+solange i < 2:
+    setze i auf i + 1
+    versuche:
+        wenn i == 1:
+            route()
+            weiter
+        zeige "NACH_WENN"
+        zeige i
+    fange f:
+        zeige "FANG1"
+        zeige f
+zeige "ENDE1"
+
+# 2) dasselbe mit stopp
+setze j auf 0
+solange j < 3:
+    setze j auf j + 1
+    versuche:
+        wenn j == 2:
+            route()
+            stopp
+        zeige j
+    fange f:
+        zeige "FANG2"
+zeige "ENDE2"
+
+# 3) versuche ausserhalb der Schleife: sofort fangen, keine weitere Runde
+setze k auf 0
+versuche:
+    solange k < 3:
+        setze k auf k + 1
+        wenn k == 1:
+            route()
+            weiter
+        zeige "SCHLEIFE_LIEF_WEITER"
+fange f:
+    zeige "FANG3"
+zeige k
+
+# 4) Dispatch-Muster in einer Funktion
+funktion dispatch():
+    setze n auf 0
+    solange n < 2:
+        setze n auf n + 1
+        versuche:
+            wenn n == 1:
+                route()
+                weiter
+            zeige "D_NACH"
+        fange f:
+            zeige "D_FANG"
+    gib_zurück "D_ENDE"
+zeige dispatch()
+
+# 5) ohne Fehler bleibt weiter unveraendert
+setze m auf 0
+versuche:
+    solange m < 3:
+        setze m auf m + 1
+        wenn m < 3:
+            weiter
+        zeige "M_LETZTE"
+fange f:
+    zeige "M_FALSCH"
+zeige m

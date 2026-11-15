@@ -3,7 +3,14 @@
 # Commands: PING, SET, GET, DEL, KEYS, EXISTS, FLUSHALL
 # EHRLICH: Inline ohne Funktionen wegen "globale Variablen in Funktionen"-Bug.
 
-setze server auf tcp_server(6379)
+# tcp_server wirft, wenn der Port nicht geoeffnet werden kann: Meldung und normales Ende.
+setze server auf nichts
+versuche:
+    setze server auf tcp_server(6379)
+fange fehler:
+    zeige "Server konnte nicht gestartet werden (Port 6379): " + text(fehler)
+wenn server == nichts:
+    beende(0)
 zeige "Mini-Redis laeuft auf Port 6379"
 
 setze store auf {}

@@ -1,0 +1,6 @@
+# P2-T100: zu viele Argumente -> Hinweis M-C004 (RC 0); marke() wird nicht ausgewertet.
+funktion marke():
+    zeige "marke"
+    gib_zurück 1
+
+zeige länge([1, 2], marke())

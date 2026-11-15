@@ -8,7 +8,14 @@
 setze html auf datei_lesen("beispiele/playground/index.html")
 
 # Server starten
-setze server auf web_server(8080)
+# web_server wirft, wenn der Port nicht geoeffnet werden kann: Meldung und normales Ende.
+setze server auf nichts
+versuche:
+    setze server auf web_server(8080)
+fange fehler:
+    zeige "Server konnte nicht gestartet werden (Port 8080): " + text(fehler)
+wenn server == nichts:
+    beende(0)
 zeige "moo Playground: http://localhost:8080"
 
 # Request-Loop

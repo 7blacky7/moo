@@ -4,8 +4,20 @@
 # dieselben Namen definieren (M-I004/M-I005).
 aus "./postgres_client" importiere PgClient
 
-setze HOST auf "192.168.50.65"
+# Host und Port lassen sich per Umgebung umstellen (MOO_PG_HOST, MOO_PG_PORT, Standard:
+# bisheriger Testserver). Das SCRAM-Passwort kommt ausschliesslich aus MOO_PG_SCRAM_PW;
+# fehlt es, meldet der Smoke-Test das und endet mit beende(1).
+setze HOST auf umgebung("MOO_PG_HOST")
+wenn HOST == nichts:
+    setze HOST auf "192.168.50.65"
 setze PORT auf 5433
+setze port_env auf umgebung("MOO_PG_PORT")
+wenn port_env != nichts:
+    setze PORT auf zahl(port_env)
+setze SCRAM_PW auf umgebung("MOO_PG_SCRAM_PW")
+wenn SCRAM_PW == nichts:
+    zeige "FEHLER: MOO_PG_SCRAM_PW nicht gesetzt (Passwort des SCRAM-Testusers per Umgebung angeben)"
+    beende(1)
 
 setze ok auf 0
 setze fail auf 0
@@ -37,7 +49,7 @@ t.schliesse()
 
 zeige ""
 zeige "--- moo_scram (SCRAM-SHA-256) ---"
-setze s auf neu PgClient(HOST, PORT, "moo_scram", "moo_scram", "xjJ6FnbwV9KX43nnBT9PoOHTuJVw")
+setze s auf neu PgClient(HOST, PORT, "moo_scram", "moo_scram", SCRAM_PW)
 s.verbinde()
 check("scram: ready", s.ready)
 check("scram: backend_pid > 0", s.backend_pid > 0)

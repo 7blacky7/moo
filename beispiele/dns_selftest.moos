@@ -32,6 +32,7 @@ funktion kopf(id, typ, rdata):
     bytes_anhaengen(paket, rdata)
     gib_zurück paket
 
+# FEHLERPFAD(M-F001): bewusst ungeschützt – parse_response wirft bei defektem Paket, unbehandelt: Hinweis auf stderr, Lauf geht weiter (RC 0), die folgende pruefe-Zeile zählt FAIL (Probe: DNS-SELFTEST FAIL n); erst dns_selftest.sh wertet das fehlende DNS-SELFTEST PASS als Fehler (Exit 1) – ändern: Aufruf in versuche:/fange kapseln, FAIL zählen und am Ende beende(1)
 setze a_resp auf parse_response(kopf(1, TYP_A, [1, 2, 3, 4]))
 pruefe("A-ID", a_resp["id"] == 1)
 pruefe("A-Wert", a_resp["antworten"][0]["rdata"] == "1.2.3.4")
@@ -41,6 +42,7 @@ setze aaaa_bytes auf [
     32, 1, 13, 184, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 1
 ]
+# FEHLERPFAD(M-F001): bewusst ungeschützt – parse_response wirft bei defektem Paket, unbehandelt: Hinweis auf stderr, Lauf geht weiter (RC 0), die folgende pruefe-Zeile zählt FAIL (Probe: DNS-SELFTEST FAIL n); erst dns_selftest.sh wertet das fehlende DNS-SELFTEST PASS als Fehler (Exit 1) – ändern: Aufruf in versuche:/fange kapseln, FAIL zählen und am Ende beende(1)
 setze aaaa_resp auf parse_response(kopf(2, TYP_AAAA, aaaa_bytes))
 pruefe("AAAA-ID", aaaa_resp["id"] == 2)
 pruefe("AAAA-Wert", aaaa_resp["antworten"][0]["rdata"] == "2001:0db8:0000:0000:0000:0000:0000:0001")
@@ -50,6 +52,7 @@ setze cname_bytes auf [
     7, 101, 120, 97, 109, 112, 108, 101,
     0
 ]
+# FEHLERPFAD(M-F001): bewusst ungeschützt – parse_response wirft bei defektem Paket, unbehandelt: Hinweis auf stderr, Lauf geht weiter (RC 0), die folgende pruefe-Zeile zählt FAIL (Probe: DNS-SELFTEST FAIL n); erst dns_selftest.sh wertet das fehlende DNS-SELFTEST PASS als Fehler (Exit 1) – ändern: Aufruf in versuche:/fange kapseln, FAIL zählen und am Ende beende(1)
 setze cname_resp auf parse_response(kopf(3, TYP_CNAME, cname_bytes))
 pruefe("CNAME-ID", cname_resp["id"] == 3)
 pruefe("CNAME-Wert", cname_resp["antworten"][0]["rdata"] == "target.example")

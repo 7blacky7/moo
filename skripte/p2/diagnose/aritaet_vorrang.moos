@@ -1,0 +1,5 @@
+# P2-T100: eigene Funktion gleichen Namens geht vor (keine M-C003/M-C004).
+funktion shard_reihenfolge(x):
+    gib_zurück x
+
+zeige shard_reihenfolge(7)

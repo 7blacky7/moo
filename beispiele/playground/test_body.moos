@@ -1,4 +1,10 @@
-setze server auf web_server(8080)
+setze server auf nichts
+versuche:
+    setze server auf web_server(8080)
+fange fehler:
+    zeige "Server konnte nicht gestartet werden (Port 8080): " + text(fehler)
+wenn server == nichts:
+    beende(0)
 zeige "Body-Test Server auf 8080"
 solange wahr:
     setze req auf server.web_annehmen()

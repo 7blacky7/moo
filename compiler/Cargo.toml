@@ -26,6 +26,15 @@ wayland_ui = []
 #   cargo build --release --no-default-features --features x11_ui
 x11_ui = []
 
+[dev-dependencies]
+# P2-T100: Gegentests der Aritaetsableitung (build_aritaet.rs als Testmodul).
+syn = { version = "2", features = ["full", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+
 [build-dependencies]
 cc = "1"
+# P2-T100: Aritaet der Builtins aus src/codegen.rs ableiten (build_aritaet.rs).
+syn = { version = "2", features = ["full", "visit"] }
+# P2-T100: Zeile/Spalte der args[N]-Stellen (span-locations ausserhalb von Proc-Macros).
+proc-macro2 = { version = "1", features = ["span-locations"] }
 pkg-config = "0.3"

@@ -1,0 +1,5 @@
+# P2-T100: verschachtelt; der innere Aufruf ist falsch, gemeldet wird er.
+funktion f(x):
+    gib_zurück x
+
+zeige f(shard_reihenfolge(1, 2))

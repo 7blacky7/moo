@@ -131,7 +131,24 @@ klasse PgClient:
         selbst.backend_pid = 0
 
     funktion verbinde():
-        selbst.sock = tcp_verbinde(selbst.host, selbst.port)
+        # Erneutes Verbinden: Zustand der vorherigen Verbindung verwerfen, sonst bleibt
+        # ready=wahr nach einem fehlgeschlagenen Versuch stehen.
+        wenn selbst.sock != nichts:
+            versuche:
+                selbst.sock.schliessen()
+            fange alt_fehler:
+                setze alt_ignoriert auf 0
+        selbst.sock = nichts
+        selbst.ready = falsch
+        selbst.letzte_fehler = nichts
+        selbst.server_version = ""
+        selbst.backend_pid = 0
+        # tcp_verbinde wirft bei Verbindungsfehlern: als letzte_fehler melden, ready bleibt falsch.
+        versuche:
+            selbst.sock = tcp_verbinde(selbst.host, selbst.port)
+        fange fehler:
+            selbst.letzte_fehler = "Verbindung fehlgeschlagen: " + text(fehler)
+            gib_zurück falsch
         setze sm auf neu StartupMessage(selbst.user, selbst.datenbank)
         selbst.sock.schreibe_bytes(sm.zu_bytes())
         selbst.empfange_bis_ready()
@@ -330,7 +347,22 @@ zeige "================================================"
 
 zeige ""
 zeige "--- Test 1: Verbinden ---"
-setze db auf neu PgClient("192.168.50.65", 5433, "moo_bench", "moo_bench")
+# Host, Port, Benutzer und Datenbank lassen sich per Umgebung umstellen (Standard: bisheriger
+# Testserver, trust-Auth): MOO_PG_HOST, MOO_PG_PORT, MOO_PG_USER, MOO_PG_DB.
+setze pg_host auf umgebung("MOO_PG_HOST")
+wenn pg_host == nichts:
+    setze pg_host auf "192.168.50.65"
+setze pg_port auf 5433
+setze pg_port_env auf umgebung("MOO_PG_PORT")
+wenn pg_port_env != nichts:
+    setze pg_port auf zahl(pg_port_env)
+setze pg_user auf umgebung("MOO_PG_USER")
+wenn pg_user == nichts:
+    setze pg_user auf "moo_bench"
+setze pg_db auf umgebung("MOO_PG_DB")
+wenn pg_db == nichts:
+    setze pg_db auf "moo_bench"
+setze db auf neu PgClient(pg_host, pg_port, pg_user, pg_db)
 db.verbinde()
 check("ready nach Handshake", db.ready)
 check("backend_pid > 0", db.backend_pid > 0)

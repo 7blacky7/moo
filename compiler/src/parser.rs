@@ -133,16 +133,67 @@ fn got_description(tt: &TokenType) -> String {
     }
 }
 
+/// P2-T100: Hoechste Tiefe des Syntaxbaums (Klammern, Bloecke, Operator-
+/// und Postfixketten zusammen) fuer einen Compiler-Stack von
+/// MAX_TIEFE_REFERENZ_STACK; gemessen: 990 Ebenen durch Parser, Typpruefung
+/// und Codegen. Darueber M-S004 statt Stack Overflow. main.rs setzt das
+/// Budget proportional zum tatsaechlich gestarteten Stack.
+pub const MAX_TIEFE_STANDARD: usize = 1000;
+pub const MAX_TIEFE_REFERENZ_STACK: usize = 512 * 1024 * 1024;
+static MAX_TIEFE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(MAX_TIEFE_STANDARD);
+
+/// Tiefenbudget fuer einen Stack von `stack` Bytes (proportional zur Messung).
+pub fn tiefe_fuer_stack(stack: usize) -> usize {
+    MAX_TIEFE_STANDARD * (stack / (1024 * 1024)) / (MAX_TIEFE_REFERENZ_STACK / (1024 * 1024))
+}
+
+pub fn setze_max_tiefe(tiefe: usize) {
+    MAX_TIEFE.store(tiefe, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn max_tiefe() -> usize {
+    MAX_TIEFE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     errors: Vec<ParseError>,
     native_context: bool,
+    /// P2-T100: aktuelle Tiefe im Syntaxbaum (siehe MAX_TIEFE_STANDARD).
+    tiefe: usize,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0, errors: Vec::new(), native_context: false }
+        Self { tokens, pos: 0, errors: Vec::new(), native_context: false, tiefe: 0 }
+    }
+
+    /// P2-T100: eine Ebene tiefer (Verschachtelung oder Kettenglied).
+    /// Zurueckgesetzt wird ueber `mit_tiefe` auf allen Wegen (auch Err).
+    fn glied(&mut self) -> Result<(), ParseError> {
+        self.tiefe += 1;
+        let grenze = max_tiefe();
+        if self.tiefe > grenze {
+            return Err(ParseError {
+                message: format!(
+                    "Zu tief verschachtelt: mehr als {grenze} Ebenen (Klammern, Bloecke, Operator- oder Aufrufketten). \
+                     Die Grenze haengt vom verfuegbaren Stack bzw. Speicherlimit ab (regulaer {MAX_TIEFE_STANDARD})."
+                ),
+                code: "M-S004",
+                vorschlag: Some("Teilausdruecke in Variablen oder Funktionen auslagern.".into()),
+                ..ParseError::bei(self.current())
+            });
+        }
+        Ok(())
+    }
+
+    /// P2-T100: fuehrt `f` aus und stellt danach die Tiefe wieder her.
+    fn mit_tiefe<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, ParseError>) -> Result<T, ParseError> {
+        let basis = self.tiefe;
+        let r = f(self);
+        self.tiefe = basis;
+        r
     }
 
     /// P2-T97: alle Syntaxfehler eines Laufs einzeln (Recovery je Statement,
@@ -339,6 +390,15 @@ impl Parser {
     }
 
     fn parse_block_body(&mut self, top_level: bool) -> Result<Vec<Stmt>, ParseError> {
+        self.mit_tiefe(|p| {
+            if !top_level {
+                p.glied()?;
+            }
+            p.parse_block_body_kern(top_level)
+        })
+    }
+
+    fn parse_block_body_kern(&mut self, top_level: bool) -> Result<Vec<Stmt>, ParseError> {
         let mut stmts = Vec::new();
 
         if !top_level {
@@ -1001,6 +1061,13 @@ impl Parser {
 
     /// Rekursive Typgrammatik, ausschließlich in explizitem Typkontext.
     fn parse_type(&mut self) -> Result<crate::ast::TypeRef, ParseError> {
+        self.mit_tiefe(|p| {
+            p.glied()?;
+            p.parse_type_kern()
+        })
+    }
+
+    fn parse_type_kern(&mut self) -> Result<crate::ast::TypeRef, ParseError> {
         use crate::ast::{TypeKind, TypeRef};
 
         let start = self.current().clone();
@@ -1369,6 +1436,11 @@ impl Parser {
     // --- Expressions ---
 
     fn parse_expression(&mut self) -> Result<Expr, ParseError> {
+        self.mit_tiefe(|p| p.parse_expression_kern())
+    }
+
+    fn parse_expression_kern(&mut self) -> Result<Expr, ParseError> {
+        self.glied()?;
         let expr = self.parse_pipe()?;
         // Ternary: expr ? then_val : else_val
         if matches!(self.current_type(), TokenType::Question) {
@@ -1386,9 +1458,14 @@ impl Parser {
     }
 
     fn parse_pipe(&mut self) -> Result<Expr, ParseError> {
+        self.mit_tiefe(|p| p.parse_pipe_kern())
+    }
+
+    fn parse_pipe_kern(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_nullish_coalesce()?;
         while matches!(self.current_type(), TokenType::Pipe) {
             self.pos += 1;
+            self.glied()?;
             let right = self.parse_nullish_coalesce()?;
             left = Expr::Pipe { left: Box::new(left), right: Box::new(right) };
         }
@@ -1396,9 +1473,14 @@ impl Parser {
     }
 
     fn parse_nullish_coalesce(&mut self) -> Result<Expr, ParseError> {
+        self.mit_tiefe(|p| p.parse_nullish_coalesce_kern())
+    }
+
+    fn parse_nullish_coalesce_kern(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_or()?;
         while matches!(self.current_type(), TokenType::NullishCoalesce) {
             self.pos += 1;
+            self.glied()?;
             let right = self.parse_or()?;
             left = Expr::NullishCoalesce { left: Box::new(left), right: Box::new(right) };
         }
@@ -1406,9 +1488,14 @@ impl Parser {
     }
 
     fn parse_or(&mut self) -> Result<Expr, ParseError> {
+        self.mit_tiefe(|p| p.parse_or_kern())
+    }
+
+    fn parse_or_kern(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_and()?;
         while matches!(self.current_type(), TokenType::Or) {
             self.pos += 1;
+            self.glied()?;
             let right = self.parse_and()?;
             left = Expr::BinaryOp { left: Box::new(left), op: BinOp::Or, right: Box::new(right) };
         }
@@ -1416,9 +1503,14 @@ impl Parser {
     }
 
     fn parse_and(&mut self) -> Result<Expr, ParseError> {
+        self.mit_tiefe(|p| p.parse_and_kern())
+    }
+
+    fn parse_and_kern(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_not()?;
         while matches!(self.current_type(), TokenType::And) {
             self.pos += 1;
+            self.glied()?;
             let right = self.parse_not()?;
             left = Expr::BinaryOp { left: Box::new(left), op: BinOp::And, right: Box::new(right) };
         }
@@ -1426,8 +1518,13 @@ impl Parser {
     }
 
     fn parse_not(&mut self) -> Result<Expr, ParseError> {
+        self.mit_tiefe(|p| p.parse_not_kern())
+    }
+
+    fn parse_not_kern(&mut self) -> Result<Expr, ParseError> {
         if matches!(self.current_type(), TokenType::Not) {
             self.pos += 1;
+            self.glied()?;
             let operand = self.parse_not()?;
             Ok(Expr::UnaryOp { op: UnaryOpKind::Not, operand: Box::new(operand) })
         } else {
@@ -1436,6 +1533,10 @@ impl Parser {
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, ParseError> {
+        self.mit_tiefe(|p| p.parse_comparison_kern())
+    }
+
+    fn parse_comparison_kern(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_bitwise()?;
         loop {
             let op = match self.current_type() {
@@ -1448,6 +1549,7 @@ impl Parser {
                 _ => break,
             };
             self.pos += 1;
+            self.glied()?;
             let right = self.parse_bitwise()?;
             left = Expr::BinaryOp { left: Box::new(left), op, right: Box::new(right) };
         }
@@ -1455,6 +1557,10 @@ impl Parser {
     }
 
     fn parse_bitwise(&mut self) -> Result<Expr, ParseError> {
+        self.mit_tiefe(|p| p.parse_bitwise_kern())
+    }
+
+    fn parse_bitwise_kern(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_addition()?;
         loop {
             let op = match self.current_type() {
@@ -1466,6 +1572,7 @@ impl Parser {
                 _ => break,
             };
             self.pos += 1;
+            self.glied()?;
             let right = self.parse_addition()?;
             left = Expr::BinaryOp { left: Box::new(left), op, right: Box::new(right) };
         }
@@ -1473,10 +1580,15 @@ impl Parser {
     }
 
     fn parse_addition(&mut self) -> Result<Expr, ParseError> {
+        self.mit_tiefe(|p| p.parse_addition_kern())
+    }
+
+    fn parse_addition_kern(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_multiplication()?;
         // Range: 0..10, 2..n+1 — rechte Seite als vollständige Addition parsen
         if matches!(self.current_type(), TokenType::Range) {
             self.pos += 1;
+            self.glied()?;
             let right = self.parse_addition()?;
             return Ok(Expr::Range { start: Box::new(left), end: Box::new(right) });
         }
@@ -1487,6 +1599,7 @@ impl Parser {
                 _ => break,
             };
             self.pos += 1;
+            self.glied()?;
             let right = self.parse_multiplication()?;
             left = Expr::BinaryOp { left: Box::new(left), op, right: Box::new(right) };
         }
@@ -1494,6 +1607,10 @@ impl Parser {
     }
 
     fn parse_multiplication(&mut self) -> Result<Expr, ParseError> {
+        self.mit_tiefe(|p| p.parse_multiplication_kern())
+    }
+
+    fn parse_multiplication_kern(&mut self) -> Result<Expr, ParseError> {
         let mut left = self.parse_power()?;
         loop {
             let op = match self.current_type() {
@@ -1503,6 +1620,7 @@ impl Parser {
                 _ => break,
             };
             self.pos += 1;
+            self.glied()?;
             let right = self.parse_power()?;
             left = Expr::BinaryOp { left: Box::new(left), op, right: Box::new(right) };
         }
@@ -1510,9 +1628,14 @@ impl Parser {
     }
 
     fn parse_power(&mut self) -> Result<Expr, ParseError> {
+        self.mit_tiefe(|p| p.parse_power_kern())
+    }
+
+    fn parse_power_kern(&mut self) -> Result<Expr, ParseError> {
         let left = self.parse_unary()?;
         if matches!(self.current_type(), TokenType::Power) {
             self.pos += 1;
+            self.glied()?;
             let right = self.parse_power()?; // Rechts-assoziativ
             Ok(Expr::BinaryOp { left: Box::new(left), op: BinOp::Pow, right: Box::new(right) })
         } else {
@@ -1521,12 +1644,18 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Expr, ParseError> {
+        self.mit_tiefe(|p| p.parse_unary_kern())
+    }
+
+    fn parse_unary_kern(&mut self) -> Result<Expr, ParseError> {
         if matches!(self.current_type(), TokenType::Minus) {
             self.pos += 1;
+            self.glied()?;
             let operand = self.parse_postfix()?;
             Ok(Expr::UnaryOp { op: UnaryOpKind::Neg, operand: Box::new(operand) })
         } else if matches!(self.current_type(), TokenType::BitNot) {
             self.pos += 1;
+            self.glied()?;
             let operand = self.parse_postfix()?;
             Ok(Expr::UnaryOp { op: UnaryOpKind::BitNot, operand: Box::new(operand) })
         } else {
@@ -1535,6 +1664,10 @@ impl Parser {
     }
 
     fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
+        self.mit_tiefe(|p| p.parse_postfix_kern())
+    }
+
+    fn parse_postfix_kern(&mut self) -> Result<Expr, ParseError> {
         let mut node = self.parse_primary()?;
 
         loop {
@@ -1577,6 +1710,7 @@ impl Parser {
                 }
                 _ => break,
             }
+            self.glied()?;
         }
 
         Ok(node)

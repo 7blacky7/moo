@@ -201,6 +201,7 @@ klasse Parser:
         wenn t["wert"] == "CREATE":
             gib_zurück selbst.parse_create()
         wenn t["wert"] == "INSERT":
+            # FEHLERPFAD(M-F001): bewusst ungeschützt – parse_insert wirft bei fehlendem Wert in VALUES, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
             gib_zurück selbst.parse_insert()
         wenn t["wert"] == "SELECT":
             gib_zurück selbst.parse_select()
@@ -211,12 +212,17 @@ klasse Parser:
         wirf "Unbekanntes Statement: " + t["wert"]
 
     funktion parse_create():
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_kw wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_kw("CREATE")
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_kw wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_kw("TABLE")
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         setze name auf selbst.erwarte_typ("ident")["wert"]
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_typ("lparen")
         setze spalten auf []
         solange wahr:
+            # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
             setze c auf selbst.erwarte_typ("ident")["wert"]
             spalten.hinzufügen(c)
             setze nx auf selbst.peek()
@@ -224,14 +230,20 @@ klasse Parser:
                 selbst.consume()
             sonst:
                 stopp
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_typ("rparen")
         gib_zurück {"op": "create", "tabelle": name, "spalten": spalten}
 
     funktion parse_insert():
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_kw wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_kw("INSERT")
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_kw wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_kw("INTO")
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         setze name auf selbst.erwarte_typ("ident")["wert"]
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_kw wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_kw("VALUES")
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_typ("lparen")
         setze werte auf []
         solange wahr:
@@ -247,6 +259,7 @@ klasse Parser:
                 selbst.consume()
             sonst:
                 stopp
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_typ("rparen")
         gib_zurück {"op": "insert", "tabelle": name, "werte": werte}
 
@@ -254,13 +267,16 @@ klasse Parser:
         setze t auf selbst.peek()
         wenn t["typ"] == "kw" und t["wert"] == "WHERE":
             selbst.consume()
+            # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
             setze col auf selbst.erwarte_typ("ident")["wert"]
+            # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
             setze op auf selbst.erwarte_typ("op")["wert"]
             setze v auf selbst.consume()
             gib_zurück {"spalte": col, "op": op, "wert": v["wert"]}
         gib_zurück nichts
 
     funktion parse_select():
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_kw wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_kw("SELECT")
         setze spalten auf []
         setze t auf selbst.peek()
@@ -269,6 +285,7 @@ klasse Parser:
             spalten.hinzufügen("*")
         sonst:
             solange wahr:
+                # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
                 setze c auf selbst.erwarte_typ("ident")["wert"]
                 spalten.hinzufügen(c)
                 setze nx auf selbst.peek()
@@ -276,7 +293,9 @@ klasse Parser:
                     selbst.consume()
                 sonst:
                     stopp
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_kw wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_kw("FROM")
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         setze tab auf selbst.erwarte_typ("ident")["wert"]
         setze bedingung auf selbst.parse_where()
         setze sortierung auf nichts
@@ -284,7 +303,9 @@ klasse Parser:
         setze nx auf selbst.peek()
         wenn nx["typ"] == "kw" und nx["wert"] == "ORDER":
             selbst.consume()
+            # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_kw wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
             selbst.erwarte_kw("BY")
+            # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
             setze ocol auf selbst.erwarte_typ("ident")["wert"]
             setze richtung auf "ASC"
             setze nx2 auf selbst.peek()
@@ -296,23 +317,32 @@ klasse Parser:
         setze nx auf selbst.peek()
         wenn nx["typ"] == "kw" und nx["wert"] == "LIMIT":
             selbst.consume()
+            # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
             setze l auf selbst.erwarte_typ("num")["wert"]
             setze limit auf l
         gib_zurück {"op": "select", "spalten": spalten, "tabelle": tab, "where": bedingung, "order": sortierung, "limit": limit}
 
     funktion parse_update():
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_kw wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_kw("UPDATE")
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         setze tab auf selbst.erwarte_typ("ident")["wert"]
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_kw wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_kw("SET")
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         setze col auf selbst.erwarte_typ("ident")["wert"]
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_typ("op")
         setze v auf selbst.consume()
         setze bedingung auf selbst.parse_where()
         gib_zurück {"op": "update", "tabelle": tab, "spalte": col, "wert": v["wert"], "where": bedingung}
 
     funktion parse_delete():
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_kw wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_kw("DELETE")
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_kw wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         selbst.erwarte_kw("FROM")
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – erwarte_typ wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht weiter (RC 0), im versuche des Aufrufers wird gefangen (Meldung kann leer sein) – ändern: Engine.execute in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         setze tab auf selbst.erwarte_typ("ident")["wert"]
         setze bedingung auf selbst.parse_where()
         gib_zurück {"op": "delete", "tabelle": tab, "where": bedingung}
@@ -330,7 +360,9 @@ klasse Engine:
         setze lex auf neu Lexer(sql)
         setze toks auf lex.tokenisiere()
         setze p auf neu Parser(toks)
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – Parser.parse wirft bei Syntaxfehler, unbehandelt nur Hinweis auf stderr und der Lauf geht mit leerem Ergebnis weiter (RC 0), im versuche des Aufrufers von execute wird gefangen (Meldung kann leer sein) – ändern: Aufruf in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         setze stmt auf p.parse()
+        # FEHLERPFAD(M-F001): bewusst ungeschützt – Engine.run wirft bei unbekannter Operation, Verhalten wie beim Parse-Aufruf oben – ändern: Aufruf in versuche:/fange kapseln und {"status": "fehler"} zurückgeben
         gib_zurück selbst.run(stmt)
 
     funktion run(stmt):

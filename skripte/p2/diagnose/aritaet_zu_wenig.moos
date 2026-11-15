@@ -1,0 +1,3 @@
+# P2-T100: zu wenige Argumente -> M-C003 statt Compiler-Panic.
+setze a auf 1
+zeige shard_reihenfolge(a)

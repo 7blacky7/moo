@@ -1,10 +1,12 @@
 mod ast;
 mod bindgen;
 mod boards;
+mod builtin_aritaet;
 mod codegen;
 mod codegen_native;
 mod diagnose;
 mod fehlerpfade;
+mod interner_fehler;
 mod ffi_types;
 mod ffi_link;
 mod native_arithmetic;
@@ -165,6 +167,9 @@ enum Commands {
         /// z. B. M-S001
         code: Option<String>,
     },
+    /// Builtin-Funktionen mit Argumentzahl als JSON (P2-T100, fuer Gates)
+    #[command(name = "builtins", hide = true)]
+    Builtins,
     /// Interaktiver Modus (REPL)
     Repl,
     /// Verfuegbare Cross-Compilation Targets anzeigen
@@ -196,8 +201,52 @@ enum PaketAction {
     },
 }
 
+/// P2-T100: Stack-Stufen des Compiler-Threads. Parser, Typpruefung und
+/// Codegen rekursieren ueber die Tiefe des Syntaxbaums; das Tiefenbudget
+/// (M-S004) wird an den Stack gekoppelt, der wirklich startet
+/// (parser::tiefe_fuer_stack: 512 MiB -> 1000, 128 MiB -> 250, 32 MiB -> 62).
+/// Reserviert, nicht belegt. Kein Lauf auf dem Hauptthread: startet keine
+/// Stufe, bricht der Compiler mit M-C999 ab (fail-closed, nie Stack Overflow).
+const COMPILER_STACKS: [usize; 3] = [512 * 1024 * 1024, 128 * 1024 * 1024, 32 * 1024 * 1024];
+
 fn main() {
-    let cli = Cli::parse();
+    let cli = std::sync::Arc::new(std::sync::Mutex::new(Some(Cli::parse())));
+    for &stack in &COMPILER_STACKS {
+        parser::setze_max_tiefe(parser::tiefe_fuer_stack(stack));
+        let cli_faden = cli.clone();
+        let faden = std::thread::Builder::new()
+            .name("moo-compiler".into())
+            .stack_size(stack)
+            .spawn(move || {
+                if let Some(cli) = cli_faden.lock().ok().and_then(|mut c| c.take()) {
+                    main_kern(cli);
+                }
+            });
+        if let Ok(faden) = faden {
+            // Panics faengt der Hook im Compiler-Thread (M-C999, exit 1); hier
+            // landet nur ein Panic mit MOO_PANIK_ROH=1 (Rust-Standard-RC 101).
+            if faden.join().is_err() {
+                std::process::exit(101);
+            }
+            return;
+        }
+    }
+    if let Some(cli) = cli.lock().ok().and_then(|mut c| c.take()) {
+        if let Ok(format) = diagnose::Format::parse(&cli.diagnose) {
+            diagnose::setze_format(format);
+        }
+    }
+    let mib: Vec<String> = COMPILER_STACKS.iter().map(|s| (s / (1024 * 1024)).to_string()).collect();
+    diagnose::melden(diagnose::Diagnose::fehler("M-C999", format!(
+        "Interner Compilerfehler: Compiler-Thread konnte nicht starten (Stack {} MiB nicht verfuegbar, z. B. ulimit -v).",
+        mib.join("/"))));
+    diagnose::abschliessen();
+    std::process::exit(1);
+}
+
+fn main_kern(cli: Cli) {
+    // P2-T100: Panics im Compiler-Thread werden Diagnose M-C999 statt Absturz.
+    interner_fehler::netz_installieren();
     match diagnose::Format::parse(&cli.diagnose) {
         Ok(format) => diagnose::setze_format(format),
         Err(e) => { eprintln!("{e}"); std::process::exit(2); }
@@ -257,6 +306,9 @@ fn main() {
         }
         Commands::Erklaere { code } => {
             mit_diagnosen(erklaere(code.as_deref()));
+        }
+        Commands::Builtins => {
+            println!("{}", builtin_aritaet::als_json());
         }
         Commands::Repl => {
             repl();

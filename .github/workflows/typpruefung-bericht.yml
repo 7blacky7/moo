@@ -1,0 +1,83 @@
+name: Typpruefung-Bericht
+
+# P2 (Koordinator 15.11.2026): `moo-compiler pruefe --typpruefung` ueber
+# beispiele/ und stdlib/ als Bericht. Zunaechst NICHT fehlschlagend: Ergebnis
+# in der Job-Zusammenfassung und als Artefakt `typpruefung-bericht`.
+# Scanner (Bestand): skripte/p2/fehler_hinweis/f001_scan.sh, fail-closed.
+# Scanner-RC 2 = Werkzeugfehler (Timeout, Signal, ungueltiges JSON): dann ist
+# der Bericht KEIN gueltiger Nullbefund, die Zusammenfassung sagt das.
+
+on:
+  pull_request:
+    paths:
+      - "compiler/**"
+      - "stdlib/**"
+      - "beispiele/**"
+      - "skripte/p2/fehler_hinweis/**"
+      - ".github/workflows/typpruefung-bericht.yml"
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  bericht:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM 18 + Runtime-Abhaengigkeiten
+        run: |
+          sudo apt-get update
+          # Wie 3d-backends.yml (gl33); LLVM passend zu compiler/Cargo.toml (inkwell llvm18-1).
+          sudo apt-get install -y \
+            llvm-18-dev libpolly-18-dev libclang-18-dev \
+            libglfw3-dev libgl1-mesa-dev \
+            libsdl2-dev libsdl2-image-dev \
+            libcurl4-openssl-dev libsqlite3-dev \
+            pkg-config jq
+          echo "LLVM_SYS_181_PREFIX=/usr/lib/llvm-18" >> $GITHUB_ENV
+          echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> $GITHUB_ENV
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo build (gl33)
+        working-directory: compiler
+        run: cargo build --release --no-default-features --features gl33
+
+      - name: pruefe --typpruefung ueber beispiele + stdlib
+        run: |
+          set +e
+          mkdir -p bericht
+          bash skripte/p2/fehler_hinweis/f001_scan.sh --erlaube-pruefe-fehler beispiele stdlib \
+            > bericht/typpruefung.tsv 2> bericht/typpruefung.err
+          rc=$?
+          summe=$(grep '^SUMME' bericht/typpruefung.tsv || echo "SUMME fehlt")
+          {
+            echo "## Typpruefung-Bericht (nicht fehlschlagend)"
+            echo
+            echo "Scanner-RC: $rc (0 = vollstaendig, 1 = pruefe-Fehler, 2 = Werkzeugfehler, dann kein gueltiger Nullbefund)"
+            echo
+            echo "\`$summe\`"
+            echo
+            echo "| Code | Anzahl |"
+            echo "|---|---|"
+            cut -f1 bericht/typpruefung.tsv | grep -E '^(M-|PRUEFE-RC1)' | sort | uniq -c | sort -rn \
+              | awk '{print "| " $2 " | " $1 " |"}'
+            if [ -s bericht/typpruefung.err ]; then
+              echo
+              echo '```'
+              head -n 40 bericht/typpruefung.err
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Bericht hochladen
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: typpruefung-bericht
+          path: bericht/

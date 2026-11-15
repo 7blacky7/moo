@@ -296,7 +296,17 @@ zeige "  Port: " + text(lauf_port)
 zeige "  Test:  wscat -c ws://localhost:" + text(lauf_port)
 zeige "================================================"
 
-setze server auf tcp_server(lauf_port)
+# tcp_server wirft, wenn der Port nicht geoeffnet werden kann (belegt, keine Rechte).
+# Normal: Meldung und Programmende ohne Absturz; im Testlauf (ONESHOT) Exitcode 1.
+setze server auf nichts
+versuche:
+    setze server auf tcp_server(lauf_port)
+fange fehler:
+    zeige "Server konnte nicht gestartet werden (Port " + text(lauf_port) + "): " + text(fehler)
+wenn server == nichts:
+    wenn einmal:
+        beende(1)
+    beende(0)
 server.timeout_setzen(15000)
 zeige "Listening on port " + text(lauf_port) + " ..."
 

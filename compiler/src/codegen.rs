@@ -808,7 +808,38 @@ impl<'ctx> CodeGen<'ctx> {
     /// gehen an den Diagnose-Sammler; ein Fehler ohne strukturierte Diagnose
     /// bekommt hier Code (M-N000 in nativem Code, sonst M-C000) und Ort.
     pub fn compile_program(&mut self, program: &Program) -> Result<(), String> {
-        let ergebnis = self.compile_program_kern(program);
+        // P2-T100: letztes Netz. Ein Panic im Codegen wird M-C999 mit Ort und
+        // innerstem offenen Builtin-Aufruf statt eines Absturzes.
+        let ergebnis = match crate::interner_fehler::im_netz(|| self.compile_program_kern(program)) {
+            Ok(ergebnis) => ergebnis,
+            Err(panik) => {
+                // Nachweislich ein Lesen ueber das Ende der Argumente des
+                // innersten Builtin-Aufrufs (exakte args[..]-Stelle, Laenge =
+                // Argumentzahl): Nutzerfehler M-C003. Sonst M-C999.
+                let ueberlauf = panik.aufruf.as_ref().zip(panik.ort.as_ref()).and_then(|(a, (datei, z, s))| {
+                    crate::builtin_aritaet::args_ueberlauf(&a.name, a.anzahl, datei, *z, *s, &panik.nachricht)
+                        .map(|index| (a, index + 1))
+                });
+                let mut d = match ueberlauf {
+                    Some((a, mindestens)) => {
+                        let wort = if mindestens == 1 { "Argument" } else { "Argumente" };
+                        crate::diagnose::Diagnose::fehler("M-C003", format!(
+                            "'{}' braucht mindestens {mindestens} {wort}, bekommen {}.", a.name, a.anzahl))
+                            .erwartet(format!("mindestens {mindestens} {wort}"))
+                            .gefunden(format!("{}", a.anzahl))
+                            .vorschlag(format!("'{}' mit mindestens {mindestens} {} aufrufen.", a.name,
+                                if mindestens == 1 { "Argument" } else { "Argumenten" }))
+                    }
+                    None => crate::diagnose::Diagnose::fehler("M-C999", panik.meldung()),
+                };
+                if let Some(a) = panik.aufruf.as_ref().filter(|a| a.zeile > 0) {
+                    d = d.ort(a.zeile, 0);
+                }
+                let meldung = d.meldung.clone();
+                crate::diagnose::melden(self.diag_ort(d));
+                Err(meldung)
+            }
+        };
         for hinweis in std::mem::take(&mut self.warnings) {
             crate::diagnose::melden(hinweis);
         }
@@ -2346,6 +2377,8 @@ impl<'ctx> CodeGen<'ctx> {
             Stmt::Return(value, _) => self.compile_return(value),
             Stmt::Break(_) => {
                 if let Some((_, after_bb, target_depth)) = self.loop_stack.last().copied() {
+                    // P2-T101: anstehenden Fehler vor dem Sprung zum lokalen Catch.
+                    self.fehler_vor_schleifensprung()?;
                     self.leave_loop_handlers(target_depth)?;
                     self.builder.build_unconditional_branch(after_bb).map_err(|e| format!("{e}"))?;
                 }
@@ -2353,6 +2386,8 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Stmt::Continue(_) => {
                 if let Some((cond_bb, _, target_depth)) = self.loop_stack.last().copied() {
+                    // P2-T101: anstehenden Fehler vor dem Sprung zum lokalen Catch.
+                    self.fehler_vor_schleifensprung()?;
                     self.leave_loop_handlers(target_depth)?;
                     self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
                 }
@@ -2844,6 +2879,37 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         self.builder.position_at_end(merge_bb);
+        Ok(())
+    }
+
+    /// P2-T101: weiter/abbrechen springen aus einem verschachtelten Block, bevor
+    /// der Pruefpunkt des umgebenden versuche: (nach dem Top-Level-Statement)
+    /// laeuft. Ein anstehender Fehler (z. B. aus `route()` direkt davor im selben
+    /// wenn-Zweig) waere sonst verloren: moo_try_leave loescht ihn bei Tiefe 0,
+    /// oder die Schleife liefe mit gesetztem Flag weiter. Wie compile_return
+    /// (ret_check): anstehend -> innerster lokaler Catch; ohne lokalen Catch
+    /// entsteht kein zusaetzlicher Code.
+    fn fehler_vor_schleifensprung(&self) -> Result<(), String> {
+        if self.bare_mode { return Ok(()); }
+        let func = self.current_function.ok_or("Schleifensprung ohne Funktion")?;
+        let Some(catch_bb) = self.try_stack.iter().rev().copied()
+            .find(|bb| bb.get_parent() == Some(func) && Some(*bb) != self.defer_borrowed_handler)
+        else {
+            return Ok(());
+        };
+        let pending = self.builder.build_call(self.rt.moo_try_check, &[], "sprung_check")
+            .map_err(|e| e.to_string())?.try_as_basic_value();
+        let pending = match pending {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("moo_try_check fehlgeschlagen".into()),
+        };
+        let is_error = self.builder.build_int_compare(
+            inkwell::IntPredicate::NE, pending, self.context.i32_type().const_zero(), "sprung_error",
+        ).map_err(|e| e.to_string())?;
+        let ok_bb = self.context.append_basic_block(func, "sprung_ok");
+        self.builder.build_conditional_branch(is_error, catch_bb, ok_bb)
+            .map_err(|e| e.to_string())?;
+        self.builder.position_at_end(ok_bb);
         Ok(())
     }
 
@@ -4916,6 +4982,39 @@ impl<'ctx> CodeGen<'ctx> {
                 .or_else(|| self.quelldatei.clone());
         }
         d
+    }
+
+    /// P2-T100: Argumentzahl eines Builtins pruefen (Tabelle aus dem Build).
+    /// Zu wenige: Fehler M-C003 (der Arm laese sonst ueber das Ende der
+    /// Argumente). Zu viele, nur bei exakter Anzahl: Hinweis M-C004 (der Rest
+    /// wird nicht ausgewertet), still in importierten stdlib-Modulen.
+    fn builtin_aritaet_pruefen(&mut self, name: &str, erwartet: usize, exakt: bool, anzahl: usize) -> Result<(), String> {
+        let wort = |n: usize| if n == 1 { "Argument" } else { "Argumente" };
+        let mindestens = if exakt { "" } else { "mindestens " };
+        if anzahl < erwartet {
+            let d = crate::diagnose::Diagnose::fehler("M-C003", format!(
+                "'{name}' braucht {mindestens}{erwartet} {}, bekommen {anzahl}.", wort(erwartet)))
+                .erwartet(format!("{mindestens}{erwartet} {}", wort(erwartet)))
+                .gefunden(format!("{anzahl}"))
+                .vorschlag(format!("'{name}' mit {mindestens}{erwartet} {} aufrufen.",
+                    if erwartet == 1 { "Argument" } else { "Argumenten" }));
+            return Err(self.diag_fehler(d));
+        }
+        if exakt && anzahl > erwartet {
+            let d = self.diag_ort(crate::diagnose::Diagnose::hinweis("M-C004", format!(
+                "'{name}' liest nur {erwartet} {}; {}.", wort(erwartet),
+                if anzahl - erwartet == 1 { "das ueberzaehlige wird nicht ausgewertet".to_string() }
+                else { format!("die {} ueberzaehligen werden nicht ausgewertet", anzahl - erwartet) })))
+                .erwartet(format!("{erwartet} {}", wort(erwartet)))
+                .gefunden(format!("{anzahl}"));
+            let stdlib_modul = d.datei.as_deref().is_some_and(|datei| {
+                Some(datei) != self.quelldatei.as_deref() && crate::fehlerpfade::ist_stdlib(datei)
+            });
+            if !stdlib_modul && !self.warnings.contains(&d) {
+                self.warnings.push(d);
+            }
+        }
+        Ok(())
     }
 
     /// P2-T97: strukturierten Fehler ablegen; liefert die Meldung als Err-Text.
@@ -7014,6 +7113,16 @@ impl<'ctx> CodeGen<'ctx> {
                     let ergebnis = self.call_rt(func, &call_args, "user_call")?;
                     self.fehler_hinweis_nach_aufruf(name, aufruf_zeile)?;
                     return Ok(ergebnis);
+                }
+
+                // P2-T100: Aufrufkontext fuer das Panic-Netz (M-C999) und
+                // Argumentzahl aus der Build-Tabelle (nur Builtins mit
+                // nachweisbar exakter Anzahl; Nutzerfunktionen sind oben
+                // schon abgezweigt).
+                let _aufruf_wache = crate::interner_fehler::aufruf_betreten(
+                    name, args.len(), if aufruf_zeile > 0 { aufruf_zeile } else { self.diag_zeile });
+                if let Some((erwartet, exakt)) = crate::builtin_aritaet::erwartet(name) {
+                    self.builtin_aritaet_pruefen(name, erwartet, exakt, args.len())?;
                 }
 
                 // Builtin-Funktionen pruefen

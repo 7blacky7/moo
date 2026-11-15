@@ -79,6 +79,7 @@ funktion unit_tests():
 
 # ---- Server-Rolle: nimmt einen Client an und echot GRAD-Frames ----
 funktion server_lauf(port):
+    # FEHLERPFAD(M-F002): bewusst ungeschützt – Bind/Listen-Fehler bleibt unbehandelt: Hinweis auf stderr, der Server läuft mit nichts weiter; erkannt nur indirekt, weil der Client-Lauf scheitert und netz_frame_selftest.sh kein SELFTEST PASS findet (RESULT: FAIL, Exit 1) – ändern: tcp_server in versuche:/fange kapseln, Meldung ausgeben und beende(1)
     setze srv auf tcp_server(port)
     srv.timeout_setzen(200)
     setze sock auf nichts
@@ -112,6 +113,7 @@ funktion server_lauf(port):
 # ---- Client-Rolle: Treiber mit PASS/FAIL ----
 funktion client_lauf(host, port):
     setze fails auf 0
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – verbinde_mit_retry wirft nach erschöpften Versuchen, unbehandelt: Hinweis auf stderr, client_lauf läuft mit nichts weiter, die folgenden Tests zählen als FAIL (SELFTEST FAIL, beende(1)); netz_frame_selftest.sh sucht SELFTEST PASS – ändern: Aufruf in versuche:/fange kapseln, Meldung ausgeben und beende(1)
     setze sock auf verbinde_mit_retry(host, port)
     sock.timeout_setzen(10000)
     zeige "== Socket-Tests (Loopback " + host + ":" + text(port) + ") =="
@@ -119,6 +121,7 @@ funktion client_lauf(host, port):
     # Test A: kleiner Frame, Echo, bit-identisch
     setze wa auf [1.0, 0 - 2.5, 3.14159, 0.0, 100.0, 0 - 0.001, nf_pow2(0 - 140)]
     nf_frame_senden(sock, NF_TYP_GRAD, 1, wa.länge(), nf_f32_liste_zu_payload(wa))
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – nf_frame_empfangen wirft bei Frame-/Netzfehler, unbehandelt: Hinweis auf stderr, Lauf geht mit nichts weiter, der Test zählt als FAIL (Probe ohne Server: 4× FAIL, SELFTEST FAIL, RC 1) – ändern: Aufruf in versuche:/fange kapseln und den Test gezielt als FAIL melden
     setze ea auf nf_frame_empfangen(sock)
     setze ra auf nf_payload_zu_f32_liste(ea["payload"], ea["param_anzahl"])
     wenn f32_listen_gleich(wa, ra) und ea["step"] == 1 und ea["typ"] == NF_TYP_GRAD:
@@ -130,6 +133,7 @@ funktion client_lauf(host, port):
     # Test B: 400 KB Frame -> erzwingt Teilstueck-Lesen
     setze wb auf mach_werte(100000)
     nf_frame_senden(sock, NF_TYP_GRAD, 2, wb.länge(), nf_f32_liste_zu_payload(wb))
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – nf_frame_empfangen wirft bei Frame-/Netzfehler, unbehandelt: Hinweis auf stderr, Lauf geht mit nichts weiter, der Test zählt als FAIL (Probe ohne Server: 4× FAIL, SELFTEST FAIL, RC 1) – ändern: Aufruf in versuche:/fange kapseln und den Test gezielt als FAIL melden
     setze eb auf nf_frame_empfangen(sock)
     setze rb auf nf_payload_zu_f32_liste(eb["payload"], eb["param_anzahl"])
     wenn eb["param_anzahl"] == 100000 und f32_listen_gleich(wb, rb):
@@ -143,6 +147,7 @@ funktion client_lauf(host, port):
     setze roh auf nf_frame_bauen(NF_TYP_GRAD, 3, wc.länge(), nf_f32_liste_zu_payload(wc))
     roh[24] = (roh[24] + 1) % 256
     sock.schreibe_bytes(roh)
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – nf_frame_empfangen wirft bei Frame-/Netzfehler, unbehandelt: Hinweis auf stderr, Lauf geht mit nichts weiter, der Test zählt als FAIL (Probe ohne Server: 4× FAIL, SELFTEST FAIL, RC 1) – ändern: Aufruf in versuche:/fange kapseln und den Test gezielt als FAIL melden
     setze ec auf nf_frame_empfangen(sock)
     wenn ec["typ"] == NF_TYP_SYNC und ec["param_anzahl"] == 57005:
         zeige "  PASS Test C: CRC-Fehler serverseitig erkannt"
@@ -167,6 +172,7 @@ funktion client_lauf(host, port):
     sock.schreibe_bytes(teil1)
     schlafe(0.1)
     sock.schreibe_bytes(teil2)
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – nf_frame_empfangen wirft bei Frame-/Netzfehler, unbehandelt: Hinweis auf stderr, Lauf geht mit nichts weiter, der Test zählt als FAIL (Probe ohne Server: 4× FAIL, SELFTEST FAIL, RC 1) – ändern: Aufruf in versuche:/fange kapseln und den Test gezielt als FAIL melden
     setze ed auf nf_frame_empfangen(sock)
     setze rd auf nf_payload_zu_f32_liste(ed["payload"], ed["param_anzahl"])
     wenn f32_listen_gleich(wd, rd) und ed["step"] == 4:

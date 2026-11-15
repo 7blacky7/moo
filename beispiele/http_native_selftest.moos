@@ -15,7 +15,14 @@ funktion antworte(sock, status, headers, body):
     sock.schliessen()
 
 funktion server_lauf(port):
-    setze server auf tcp_server(port)
+    # Selftest: Schlaegt der Bind fehl (Port belegt), meldet er FAIL und endet mit RC 1. Ohne diese
+    # Pruefung lief der Thread mit nichts weiter und der Client hing am fremden Listener.
+    setze server auf nichts
+    versuche:
+        setze server auf tcp_server(port)
+    fange bind_fehler:
+        zeige "HTTP-NATIVE SELFTEST FAIL: tcp_server: " + text(bind_fehler)
+        beende(1)
     setze i auf 0
     solange i < 5:
         setze client auf server.annehmen()

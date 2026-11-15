@@ -148,7 +148,7 @@ fn builtin_grund(name: &str) -> Option<&'static str> {
 /// Modul im Baum eines stdlib-Verzeichnisses (find_module: <dir>/stdlib, <exe>/stdlib,
 /// <cwd>/stdlib), auch verschachtelt (stdlib/tief/x.moos). Review 1bdc285e: normalisierter
 /// Pfad (../ und Symlinks aufgeloest), irgendein Ordner darueber heisst stdlib.
-fn ist_stdlib(datei: &str) -> bool {
+pub(crate) fn ist_stdlib(datei: &str) -> bool {
     let pfad = std::fs::canonicalize(datei).unwrap_or_else(|_| std::path::PathBuf::from(datei));
     pfad.parent().is_some_and(|p| p.components().any(|c| c.as_os_str() == "stdlib"))
 }

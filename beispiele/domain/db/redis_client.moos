@@ -7,8 +7,14 @@
 # Testet gegen lokalen Docker-Redis (moo-test-redis auf Port 6380).
 # ============================================================
 
-konstante HOST auf "127.0.0.1"
-konstante PORT auf 6380
+# Host und Port per Umgebung umstellbar (Standard: bisherige Werte): MOO_REDIS_HOST, MOO_REDIS_PORT.
+setze HOST auf umgebung("MOO_REDIS_HOST")
+wenn HOST == nichts:
+    setze HOST auf "127.0.0.1"
+setze PORT auf 6380
+setze redis_port_env auf umgebung("MOO_REDIS_PORT")
+wenn redis_port_env != nichts:
+    setze PORT auf zahl(redis_port_env)
 konstante CRLF auf "\r\n"
 
 # --- Read-Buffer fuer inkrementelles Lesen vom Socket ---
@@ -17,6 +23,9 @@ klasse RespBuf:
         selbst.sock = sock
         selbst.buf = ""
 
+    # Wirft bei geschlossenem Socket. zeile() und bytes() rufen fuellen() in versuche: auf und
+    # verlassen ihre Leseschleife dann sofort; ohne das lief die Schleife bei geschlossenem
+    # Socket endlos (Probe: Timeout, RC 124).
     funktion fuellen():
         setze data auf selbst.sock.lesen(65536)
         wenn data == nichts:
@@ -38,12 +47,20 @@ klasse RespBuf:
                         selbst.buf = selbst.buf.slice(idx + 2, blen)
                         gib_zurück line
                 setze idx auf idx + 1
-            selbst.fuellen()
+            versuche:
+                selbst.fuellen()
+            fange fuell_fehler:
+                wirf fuell_fehler
+                gib_zurück nichts
 
     funktion bytes(n):
         # Braucht genau n+2 Bytes (mit \r\n)
         solange länge(selbst.buf) < n + 2:
-            selbst.fuellen()
+            versuche:
+                selbst.fuellen()
+            fange fuell_fehler:
+                wirf fuell_fehler
+                gib_zurück nichts
         setze part auf selbst.buf.slice(0, n)
         selbst.buf = selbst.buf.slice(n + 2, länge(selbst.buf))
         gib_zurück part
@@ -129,12 +146,15 @@ funktion decode_resp(rbuf):
 # --- Redis-Client als Dict (keine Methoden — Klassen-Method-Chaining
 # triggert aktuell einen Runtime-Crash bei mehreren verschachtelten
 # selbst.x.y() Aufrufen. Freie Funktionen bleiben stabil.) ---
+# Wirft bei Verbindungsfehlern; das Testprogramm unten faengt das mit versuche:.
 funktion redis_verbinde(host, port):
     setze c auf {}
+    # FEHLERPFAD(M-F002): bewusst ungeschützt – tcp_verbinde wirft bei Verbindungsfehler und das versuche im Hauptprogramm fängt das (Meldung, normales Ende; geprüft mit geschlossenem Port) – ändern: nur nötig für Aufrufer ohne versuche: tcp_verbinde hier in versuche:/fange kapseln und nichts zurückgeben
     c["sock"] = tcp_verbinde(host, port)
     c["rbuf"] = neu RespBuf(c["sock"])
     gib_zurück c
 
+# Wirft bei Redis-Fehlern (-ERR) und Protokollfehlern.
 funktion redis_befehl(c, args):
     setze req auf encode_req(args)
     c["sock"].schreiben(req)
@@ -161,22 +181,31 @@ funktion redis_befehl(c, args):
     wirf "Unbekannter RESP-Typ: " + typ
 
 funktion redis_ping(c):
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – redis_befehl wirft bei Redis-/Protokollfehler oder geschlossenem Socket, unbehandelt nur Hinweis auf stderr, der Wrapper liefert nichts und der Lauf geht weiter (RC 0; Probe geschlossener Socket), im versuche des Aufrufers wird gefangen – ändern: Aufruf in versuche:/fange kapseln und nichts zurückgeben
     gib_zurück redis_befehl(c, ["PING"])
 funktion redis_set(c, k, v):
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – redis_befehl wirft bei Redis-/Protokollfehler oder geschlossenem Socket, unbehandelt nur Hinweis auf stderr, der Wrapper liefert nichts und der Lauf geht weiter (RC 0; Probe geschlossener Socket), im versuche des Aufrufers wird gefangen – ändern: Aufruf in versuche:/fange kapseln und nichts zurückgeben
     gib_zurück redis_befehl(c, ["SET", k, v])
 funktion redis_get(c, k):
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – redis_befehl wirft bei Redis-/Protokollfehler oder geschlossenem Socket, unbehandelt nur Hinweis auf stderr, der Wrapper liefert nichts und der Lauf geht weiter (RC 0; Probe geschlossener Socket), im versuche des Aufrufers wird gefangen – ändern: Aufruf in versuche:/fange kapseln und nichts zurückgeben
     gib_zurück redis_befehl(c, ["GET", k])
 funktion redis_del(c, k):
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – redis_befehl wirft bei Redis-/Protokollfehler oder geschlossenem Socket, unbehandelt nur Hinweis auf stderr, der Wrapper liefert nichts und der Lauf geht weiter (RC 0; Probe geschlossener Socket), im versuche des Aufrufers wird gefangen – ändern: Aufruf in versuche:/fange kapseln und nichts zurückgeben
     gib_zurück redis_befehl(c, ["DEL", k])
 funktion redis_incr(c, k):
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – redis_befehl wirft bei Redis-/Protokollfehler oder geschlossenem Socket, unbehandelt nur Hinweis auf stderr, der Wrapper liefert nichts und der Lauf geht weiter (RC 0; Probe geschlossener Socket), im versuche des Aufrufers wird gefangen – ändern: Aufruf in versuche:/fange kapseln und nichts zurückgeben
     gib_zurück redis_befehl(c, ["INCR", k])
 funktion redis_keys(c, pattern):
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – redis_befehl wirft bei Redis-/Protokollfehler oder geschlossenem Socket, unbehandelt nur Hinweis auf stderr, der Wrapper liefert nichts und der Lauf geht weiter (RC 0; Probe geschlossener Socket), im versuche des Aufrufers wird gefangen – ändern: Aufruf in versuche:/fange kapseln und nichts zurückgeben
     gib_zurück redis_befehl(c, ["KEYS", pattern])
 funktion redis_flushall(c):
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – redis_befehl wirft bei Redis-/Protokollfehler oder geschlossenem Socket, unbehandelt nur Hinweis auf stderr, der Wrapper liefert nichts und der Lauf geht weiter (RC 0; Probe geschlossener Socket), im versuche des Aufrufers wird gefangen – ändern: Aufruf in versuche:/fange kapseln und nichts zurückgeben
     gib_zurück redis_befehl(c, ["FLUSHALL"])
 funktion redis_lpush(c, k, v):
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – redis_befehl wirft bei Redis-/Protokollfehler oder geschlossenem Socket, unbehandelt nur Hinweis auf stderr, der Wrapper liefert nichts und der Lauf geht weiter (RC 0; Probe geschlossener Socket), im versuche des Aufrufers wird gefangen – ändern: Aufruf in versuche:/fange kapseln und nichts zurückgeben
     gib_zurück redis_befehl(c, ["LPUSH", k, v])
 funktion redis_lrange(c, k, a, b):
+    # FEHLERPFAD(M-F001): bewusst ungeschützt – redis_befehl wirft bei Redis-/Protokollfehler oder geschlossenem Socket, unbehandelt nur Hinweis auf stderr, der Wrapper liefert nichts und der Lauf geht weiter (RC 0; Probe geschlossener Socket), im versuche des Aufrufers wird gefangen – ändern: Aufruf in versuche:/fange kapseln und nichts zurückgeben
     gib_zurück redis_befehl(c, ["LRANGE", k, text(a), text(b)])
 funktion redis_close(c):
     c["sock"].schliessen()
@@ -197,7 +226,14 @@ funktion check(label, ist, checkt):
 zeige "=== moo Redis-Client ==="
 zeige "Verbinde mit " + HOST + ":" + text(PORT) + "..."
 
-setze r auf redis_verbinde(HOST, PORT)
+setze r auf nichts
+versuche:
+    setze r auf redis_verbinde(HOST, PORT)
+fange fehler:
+    zeige "Verbindung fehlgeschlagen: " + text(fehler)
+wenn r == nichts:
+    zeige "Redis-Client wird beendet."
+    beende(0)
 zeige "Verbunden."
 
 # Test 1: PING

@@ -15,6 +15,7 @@ funktion tcp_verbinde_retry(host, port):
     wirf "tcp retry erschoepft"
 
 funktion tcp_server_lauf(port):
+    # FEHLERPFAD(M-F002): bewusst ungeschützt – Bind/Listen-Fehler bleibt unbehandelt: Hinweis auf stderr, Lauf geht mit nichts weiter (RC 0), erkannt nur über den Ausgabevergleich in netz_foundation_selftest.sh – ändern: tcp_server in versuche:/fange kapseln, Meldung ausgeben und beende(1)
     setze server auf tcp_server(port)
     setze i auf 0
     solange i < 2:
@@ -27,6 +28,7 @@ funktion tcp_server_lauf(port):
     gib_zurück 1
 
 funktion udp_server_lauf(_):
+    # FEHLERPFAD(M-F002): bewusst ungeschützt – Socket/Bind-Fehler bleibt unbehandelt: Hinweis auf stderr, Lauf geht mit nichts weiter (RC 0), erkannt nur über den Ausgabevergleich in netz_foundation_selftest.sh – ändern: udp_socket in versuche:/fange kapseln, Meldung ausgeben und beende(1)
     setze sock auf udp_socket(UDP_SERVER_PORT)
     sock.udp_verbinden("localhost", UDP_CLIENT_PORT)
     setze text auf sock.lesen(64)
@@ -35,11 +37,13 @@ funktion udp_server_lauf(_):
     gib_zurück 1
 
 setze tcp_thread auf starte(tcp_server_lauf, TCP_PORT)
+# FEHLERPFAD(M-F001): bewusst ungeschützt – tcp_verbinde_retry wirft nach erschöpften Versuchen, unbehandelt: Hinweis auf stderr, Lauf geht mit nichts weiter (RC 0), erkannt nur über den Ausgabevergleich in netz_foundation_selftest.sh – ändern: Aufruf in versuche:/fange kapseln, Meldung ausgeben und beende(1)
 setze tcp_dns auf tcp_verbinde_retry("localhost", TCP_PORT)
 tcp_dns.schreiben("dns")
 zeige tcp_dns.lesen(64)
 tcp_dns.schliessen()
 
+# FEHLERPFAD(M-F001): bewusst ungeschützt – tcp_verbinde_retry wirft nach erschöpften Versuchen, unbehandelt: Hinweis auf stderr, Lauf geht mit nichts weiter (RC 0), erkannt nur über den Ausgabevergleich in netz_foundation_selftest.sh – ändern: Aufruf in versuche:/fange kapseln, Meldung ausgeben und beende(1)
 setze tcp_v6 auf tcp_verbinde_retry("::1", TCP_PORT)
 tcp_v6.schreiben("v6")
 zeige tcp_v6.lesen(64)
@@ -48,6 +52,7 @@ zeige tcp_thread.warten()
 
 setze udp_thread auf starte(udp_server_lauf, 0)
 schlafe(0.02)
+# FEHLERPFAD(M-F002): bewusst ungeschützt – Socket/Bind-Fehler bleibt unbehandelt: Hinweis auf stderr, Lauf geht mit nichts weiter (RC 0), erkannt nur über den Ausgabevergleich in netz_foundation_selftest.sh – ändern: udp_socket in versuche:/fange kapseln, Meldung ausgeben und beende(1)
 setze udp_client auf udp_socket(UDP_CLIENT_PORT)
 udp_client.udp_verbinden("localhost", UDP_SERVER_PORT)
 udp_client.schreiben("dns")

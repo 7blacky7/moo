@@ -21,7 +21,15 @@ funktion extrahiere_session(cookie_header):
             gib_zurück t2.teilstring(8, länge(t2))
     gib_zurück ""
 
-setze server auf web_server(3001)
+# web_server wirft, wenn der Port nicht geoeffnet werden kann (belegt, keine Rechte):
+# Meldung und normales Programmende statt Absturz.
+setze server auf nichts
+versuche:
+    setze server auf web_server(3001)
+fange fehler:
+    zeige "Server konnte nicht gestartet werden (Port 3001): " + text(fehler)
+wenn server == nichts:
+    beende(0)
 zeige "=== moo REST API (CORS + Cookies) auf Port 3001 ==="
 
 solange wahr:

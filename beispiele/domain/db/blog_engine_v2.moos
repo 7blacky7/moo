@@ -12,16 +12,57 @@
 
 zeige "=== moo Blog v2 (prepared + cookies) ==="
 
-setze db auf db_verbinde("sqlite:///tmp/blog_v2.db")
-db_ausführen(db, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password_hash TEXT, email TEXT)")
-db_ausführen(db, "CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY, title TEXT, content TEXT, author TEXT, created_at TEXT)")
-db_ausführen(db, "CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, expires TEXT)")
+# Start: Datenbank oeffnen, Tabellen und Demo-User anlegen. Schlaegt etwas fehl
+# (Datei nicht beschreibbar, SQL-Fehler), gibt es eine Meldung und ein normales Ende.
+setze db auf nichts
+versuche:
+    setze db auf db_verbinde("sqlite:///tmp/blog_v2.db")
+    db_ausführen(db, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password_hash TEXT, email TEXT)")
+    db_ausführen(db, "CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY, title TEXT, content TEXT, author TEXT, created_at TEXT)")
+    db_ausführen(db, "CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY, user_id INTEGER, token TEXT, expires TEXT)")
 
-# Demo-User anlegen
-setze vorhanden auf db_abfrage_mit_params(db, "SELECT id FROM users WHERE username = ?", ["admin"])
-wenn länge(vorhanden) == 0:
-    db_ausführen_mit_params(db, "INSERT INTO users (username, password_hash, email) VALUES (?, ?, ?)", ["admin", sha256("admin123"), "admin@example.com"])
-    zeige "Admin-User angelegt (admin/admin123)"
+    # Demo-User anlegen
+    setze vorhanden auf db_abfrage_mit_params(db, "SELECT id FROM users WHERE username = ?", ["admin"])
+    # Das Admin-Passwort kommt nur aus der Umgebung (MOO_BLOG_ADMIN_PW), nie aus dem Code.
+    setze admin_pw auf umgebung("MOO_BLOG_ADMIN_PW")
+    wenn länge(vorhanden) == 0:
+        wenn admin_pw == nichts oder admin_pw == "":
+            zeige "Hinweis: MOO_BLOG_ADMIN_PW nicht gesetzt, Admin-User wird nicht angelegt."
+        sonst:
+            db_ausführen_mit_params(db, "INSERT INTO users (username, password_hash, email) VALUES (?, ?, ?)", ["admin", sha256(admin_pw), "admin@example.com"])
+            zeige "Admin-User angelegt (Passwort aus MOO_BLOG_ADMIN_PW)"
+fange fehler:
+    zeige "Datenbank-Initialisierung fehlgeschlagen: " + text(fehler)
+    setze db auf nichts
+wenn db == nichts:
+    zeige "Blog v2 wird beendet."
+    beende(0)
+
+# SQL-Hilfen mit eigenem versuche: Bei einem SQL-Fehler gibt es eine Meldung und die Rueckgabe
+# nichts (abfrage) bzw. falsch (ausfuehren). Die Routen antworten dann mit 500. Ohne diese
+# Hilfen laeuft eine Route nach einem SQL-Fehler mit nichts weiter und antwortet mit 200;
+# das versuche/fange der Server-Schleife greift bei diesen Fehlern nicht.
+funktion sql_abfrage_sicher(db, sql, params):
+    versuche:
+        gib_zurück db_abfrage_mit_params(db, sql, params)
+    fange fehler:
+        zeige "SQL-Fehler: " + text(fehler)
+        gib_zurück nichts
+
+funktion sql_abfrage_ohne_params_sicher(db, sql):
+    versuche:
+        gib_zurück db_abfrage(db, sql)
+    fange fehler:
+        zeige "SQL-Fehler: " + text(fehler)
+        gib_zurück nichts
+
+funktion sql_ausfuehren_sicher(db, sql, params):
+    versuche:
+        db_ausführen_mit_params(db, sql, params)
+        gib_zurück wahr
+    fange fehler:
+        zeige "SQL-Fehler: " + text(fehler)
+        gib_zurück falsch
 
 funktion escape_html(t):
     setze x auf t.ersetzen("&", "&amp;")
@@ -56,14 +97,22 @@ funktion extract_session(cookie_header):
             gib_zurück t2.teilstring(8, länge(t2))
     gib_zurück ""
 
+# Rückgabe: Benutzername, nichts (keine oder ungültige Session) oder falsch (SQL-Fehler:
+# die Antwort 500 ist dann schon gesendet, der Aufrufer bricht ohne weitere Antwort ab).
 funktion aktuellen_user(db, req):
     setze token auf extract_session(req["headers"]["cookie"])
     wenn token == "":
         gib_zurück nichts
-    setze rows auf db_abfrage_mit_params(db, "SELECT user_id FROM sessions WHERE token = ?", [token])
+    setze rows auf sql_abfrage_sicher(db, "SELECT user_id FROM sessions WHERE token = ?", [token])
+    wenn rows == nichts:
+        req.antworten("500 Internal Error", 500)
+        gib_zurück falsch
     wenn länge(rows) == 0:
         gib_zurück nichts
-    setze users auf db_abfrage_mit_params(db, "SELECT username FROM users WHERE id = ?", [rows[0]["user_id"]])
+    setze users auf sql_abfrage_sicher(db, "SELECT username FROM users WHERE id = ?", [rows[0]["user_id"]])
+    wenn users == nichts:
+        req.antworten("500 Internal Error", 500)
+        gib_zurück falsch
     wenn länge(users) == 0:
         gib_zurück nichts
     gib_zurück users[0]["username"]
@@ -81,7 +130,12 @@ funktion navigation(user):
 
 funktion route_index(db, req):
     setze user auf aktuellen_user(db, req)
-    setze posts auf db_abfrage(db, "SELECT id, title, author, created_at FROM posts ORDER BY id DESC")
+    wenn user == falsch:
+        gib_zurück nichts
+    setze posts auf sql_abfrage_ohne_params_sicher(db, "SELECT id, title, author, created_at FROM posts ORDER BY id DESC")
+    wenn posts == nichts:
+        req.antworten("500 Internal Error", 500)
+        gib_zurück nichts
     setze html auf layout_head() + navigation(user) + "<h1>moo Blog</h1>"
     wenn länge(posts) == 0:
         setze html auf html + "<p>Noch keine Posts.</p>"
@@ -91,7 +145,12 @@ funktion route_index(db, req):
 
 funktion route_post_show(db, req, id):
     setze user auf aktuellen_user(db, req)
-    setze rows auf db_abfrage_mit_params(db, "SELECT title, content, author, created_at FROM posts WHERE id = ?", [zahl(id)])
+    wenn user == falsch:
+        gib_zurück nichts
+    setze rows auf sql_abfrage_sicher(db, "SELECT title, content, author, created_at FROM posts WHERE id = ?", [zahl(id)])
+    wenn rows == nichts:
+        req.antworten("500 Internal Error", 500)
+        gib_zurück nichts
     wenn länge(rows) == 0:
         req.antworten("Post nicht gefunden", 404)
         gib_zurück nichts
@@ -108,22 +167,31 @@ funktion route_login_post(db, req):
     wenn nicht form.hat("username") oder nicht form.hat("password"):
         req.antworten("Bad request", 400)
         gib_zurück nichts
-    setze rows auf db_abfrage_mit_params(db, "SELECT id FROM users WHERE username = ? AND password_hash = ?", [form["username"], sha256(form["password"])])
+    setze rows auf sql_abfrage_sicher(db, "SELECT id FROM users WHERE username = ? AND password_hash = ?", [form["username"], sha256(form["password"])])
+    wenn rows == nichts:
+        req.antworten("500 Internal Error", 500)
+        gib_zurück nichts
     wenn länge(rows) == 0:
         req.antworten(layout_head() + "<h1>Login fehlgeschlagen</h1><a href='/login'>Erneut</a>" + layout_foot(), 401)
         gib_zurück nichts
     setze token auf sha256("sess_" + text(zeit()) + "_moo")
-    db_ausführen_mit_params(db, "INSERT INTO sessions (user_id, token, expires) VALUES (?, ?, ?)", [rows[0]["id"], token, "2099-01-01"])
+    wenn nicht sql_ausfuehren_sicher(db, "INSERT INTO sessions (user_id, token, expires) VALUES (?, ?, ?)", [rows[0]["id"], token, "2099-01-01"]):
+        req.antworten("500 Internal Error", 500)
+        gib_zurück nichts
     req.antworten_mit_headers(layout_head() + "<h1>Willkommen " + escape_html(form["username"]) + "</h1><p><a href='/'>Zur Startseite</a></p>" + layout_foot(), 200, {"Set-Cookie": "session=" + token + "; Path=/; HttpOnly", "Content-Type": "text/html; charset=utf-8"})
 
 funktion route_logout(db, req):
     setze token auf extract_session(req["headers"]["cookie"])
     wenn token != "":
-        db_ausführen_mit_params(db, "DELETE FROM sessions WHERE token = ?", [token])
+        wenn nicht sql_ausfuehren_sicher(db, "DELETE FROM sessions WHERE token = ?", [token]):
+            req.antworten("500 Internal Error", 500)
+            gib_zurück nichts
     req.antworten_mit_headers(layout_head() + "<h1>Abgemeldet</h1><a href='/'>Start</a>" + layout_foot(), 200, {"Set-Cookie": "session=; Path=/; Max-Age=0", "Content-Type": "text/html; charset=utf-8"})
 
 funktion route_new_get(db, req):
     setze user auf aktuellen_user(db, req)
+    wenn user == falsch:
+        gib_zurück nichts
     wenn user == nichts:
         req.antworten("Login erforderlich", 401)
         gib_zurück nichts
@@ -131,6 +199,8 @@ funktion route_new_get(db, req):
 
 funktion route_new_post(db, req):
     setze user auf aktuellen_user(db, req)
+    wenn user == falsch:
+        gib_zurück nichts
     wenn user == nichts:
         req.antworten("Login erforderlich", 401)
         gib_zurück nichts
@@ -138,10 +208,19 @@ funktion route_new_post(db, req):
     wenn nicht form.hat("title") oder nicht form.hat("content"):
         req.antworten("Bad request", 400)
         gib_zurück nichts
-    db_ausführen_mit_params(db, "INSERT INTO posts (title, content, author, created_at) VALUES (?, ?, ?, datetime('now'))", [form["title"], form["content"], user])
+    wenn nicht sql_ausfuehren_sicher(db, "INSERT INTO posts (title, content, author, created_at) VALUES (?, ?, ?, datetime('now'))", [form["title"], form["content"], user]):
+        req.antworten("500 Internal Error", 500)
+        gib_zurück nichts
     req.antworten(layout_head() + "<h1>Gespeichert</h1><a href='/'>Zurueck</a>" + layout_foot(), 200)
 
-setze server auf web_server(3002)
+# web_server wirft, wenn der Port nicht geoeffnet werden kann: Meldung und normales Ende.
+setze server auf nichts
+versuche:
+    setze server auf web_server(3002)
+fange fehler:
+    zeige "Server konnte nicht gestartet werden (Port 3002): " + text(fehler)
+wenn server == nichts:
+    beende(0)
 zeige "Blog v2 laeuft auf http://localhost:3002"
 
 solange wahr:

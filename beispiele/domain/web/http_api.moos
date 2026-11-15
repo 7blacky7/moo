@@ -19,7 +19,15 @@ funktion fibonacci(n):
         setze a auf temp
     gib_zurück b
 
-setze server auf web_server(3000)
+# web_server wirft, wenn der Port nicht geoeffnet werden kann (belegt, keine Rechte):
+# Meldung und normales Programmende statt Absturz.
+setze server auf nichts
+versuche:
+    setze server auf web_server(3000)
+fange fehler:
+    zeige "Server konnte nicht gestartet werden (Port 3000): " + text(fehler)
+wenn server == nichts:
+    beende(0)
 zeige "=== moo REST API auf Port 3000 ==="
 zeige "Endpoints: /api/todos (GET/POST), /api/status, /api/fib"
 

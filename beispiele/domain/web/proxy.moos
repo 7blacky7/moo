@@ -68,7 +68,12 @@ funktion handle(client, verb_nr):
         gib_zurück [0, 0]
 
     # 2. Upstream verbinden
-    setze up auf tcp_verbinde(UPSTREAM_HOST, UPSTREAM_PORT)
+    # tcp_verbinde wirft bei Verbindungsfehlern: wie 'nichts' behandeln (Meldung, Client schliessen).
+    setze up auf nichts
+    versuche:
+        setze up auf tcp_verbinde(UPSTREAM_HOST, UPSTREAM_PORT)
+    fange fehler:
+        zeige "[" + text(verb_nr) + "] Upstream-Fehler: " + text(fehler)
     wenn up == nichts:
         zeige "[" + text(verb_nr) + "] Upstream-Verbindung fehlgeschlagen"
         client.schliessen()
@@ -90,7 +95,14 @@ zeige "=== moo TCP Reverse-Proxy ==="
 zeige "Listen: 0.0.0.0:" + text(LISTEN_PORT)
 zeige "Upstream: " + UPSTREAM_HOST + ":" + text(UPSTREAM_PORT)
 
-setze server auf tcp_server(LISTEN_PORT)
+# tcp_server wirft, wenn der Port nicht geoeffnet werden kann: Meldung und normales Programmende.
+setze server auf nichts
+versuche:
+    setze server auf tcp_server(LISTEN_PORT)
+fange fehler:
+    zeige "Server konnte nicht gestartet werden (Port " + text(LISTEN_PORT) + "): " + text(fehler)
+wenn server == nichts:
+    beende(0)
 zeige "Server gestartet, warte auf Verbindungen..."
 
 setze verb_counter auf 0

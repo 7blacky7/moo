@@ -1,6 +1,13 @@
 # Test-Client fuer Mini-Redis
 
-setze client auf tcp_verbinde("127.0.0.1", 6379)
+# tcp_verbinde wirft bei Verbindungsfehler: Meldung und normales Ende.
+setze client auf nichts
+versuche:
+    setze client auf tcp_verbinde("127.0.0.1", 6379)
+fange fehler:
+    zeige "Verbindung fehlgeschlagen: " + text(fehler)
+wenn client == nichts:
+    beende(0)
 zeige "Verbunden mit Redis"
 
 client.schreiben("PING\r\n")

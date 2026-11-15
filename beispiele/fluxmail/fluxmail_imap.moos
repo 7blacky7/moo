@@ -21,6 +21,7 @@ funktion imap_tag_neu(zaehler):
 
 funktion imap_verbinden(host, port):
     # IMAPS: TLS von Anfang an (Port 993), Cert-Verifikation default AN.
+    # FEHLERPFAD(M-F002): bewusst ungeschützt – tls_verbinde wirft bei Verbindungsfehler; imap_verbinden hat im Projekt keinen Aufrufer, ohne versuche: beim Aufrufer nur Hinweis auf stderr und Rückgabe nichts (RC 0), mit versuche: wird gefangen (gemessen mit geschlossenem Port) – ändern: Aufruf in versuche:/fange kapseln und nichts zurückgeben
     gib_zurück tls_verbinde(host, port)
 
 funktion imap_befehl(verb, tag, befehl):
