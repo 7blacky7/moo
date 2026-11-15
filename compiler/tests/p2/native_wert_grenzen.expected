@@ -1,0 +1,17 @@
+[100, 50, 20]
+NACH_MAP
+CLEANUP map
+CLEANUP map
+gefangen map: Native Division durch Null oder MIN/-1 in 'kehrwert'
+[1, 2, 5]
+NACH_FILTER
+WEITER
+gefangen filter: Nativer Rest durch Null oder MIN/-1 in 'teilbar'
+WEITER
+2
+CLEANUP wert
+gefangen innen: Native Division durch Null oder MIN/-1 in 'teile'
+aussen weiter
+CLEANUP aussen
+gefangen main: Native Division durch Null oder MIN/-1 in 'teile'
+ENDE

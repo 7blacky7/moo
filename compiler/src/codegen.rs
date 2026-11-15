@@ -5202,6 +5202,71 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
+    /// Nativer Funktionswert an der Grenze nativ -> dynamisch (ADR: kein
+    /// Ersatzwert): nach einem indirekten Aufruf prueft die Laufzeit „Fehler
+    /// gesetzt UND Funktionswert nativ (strikt)“. Liefert die Bedingung nur, wenn
+    /// es einen Fehlerausgang gibt (lokales fange oder Standardrahmen ausser main);
+    /// Moo-Funktionswerte behalten die bisherige Semantik (Bedingung bleibt 0).
+    fn nativer_wert_fehler(&mut self, fn_val: StructValue<'ctx>)
+        -> Result<Option<inkwell::values::IntValue<'ctx>>, String>
+    {
+        if !self.nativer_wert_ausgang_vorhanden() { return Ok(None); }
+        let pruef = match self.module.get_function("moo_func_nativ_fehler") {
+            Some(f) => f,
+            None => {
+                // MSVC x64: das 16-Byte-MooValue geht indirekt (call_rt_abi).
+                let wert_typ: BasicMetadataTypeEnum = if self.windows_x64_abi() {
+                    self.context.ptr_type(AddressSpace::default()).into()
+                } else {
+                    self.mv_type().into()
+                };
+                self.module.add_function("moo_func_nativ_fehler",
+                    self.context.i32_type().fn_type(&[wert_typ], false), None)
+            }
+        };
+        let ergebnis = self.call_rt_abi(pruef, &[fn_val.into()], "nw_fehler")?.try_as_basic_value();
+        let ergebnis = match ergebnis {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("moo_func_nativ_fehler fehlgeschlagen".into()),
+        };
+        let gesetzt = self.builder.build_int_compare(inkwell::IntPredicate::NE, ergebnis,
+            self.context.i32_type().const_zero(), "nw_fehler_gesetzt").map_err(|e| e.to_string())?;
+        Ok(Some(gesetzt))
+    }
+
+    fn nativer_wert_ausgang_vorhanden(&self) -> bool {
+        if self.bare_mode || self.defer_runtime { return false; }
+        let Some(function) = self.current_function else { return false; };
+        self.try_stack.iter().any(|bb| bb.get_parent() == Some(function))
+            || (self.im_standardrahmen() && !self.in_main_function())
+    }
+
+    /// Bricht bei `bedingung` wie der native Direktaufruf ab: eigene Werte und
+    /// Statement-Temporaries freigeben, dann zum lokalen fange bzw. zum
+    /// Pruefpunkt-Ausgang (aufraeumen-Aktionen, Locals, Rueckkehr mit nichts).
+    fn nativer_wert_abbruch(&mut self, bedingung: inkwell::values::IntValue<'ctx>,
+        values: &[StructValue<'ctx>]) -> Result<(), String>
+    {
+        let function = self.current_function.ok_or("Nativer Funktionswert ohne Funktion")?;
+        let local_catch = self.try_stack.iter().rev().copied().find(|bb| bb.get_parent() == Some(function));
+        let ziel = match local_catch {
+            Some(bb) => bb,
+            None => self.native_guard_exit_block()?,
+        };
+        let fehler_bb = self.context.append_basic_block(function, "nw_abbruch");
+        let ok_bb = self.context.append_basic_block(function, "nw_ok");
+        self.builder.build_conditional_branch(bedingung, fehler_bb, ok_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(fehler_bb);
+        let freigeben: Vec<StructValue<'ctx>> = values.iter().rev()
+            .chain(self.stmt_owned_context.iter().rev()).copied().collect();
+        for value in freigeben {
+            self.call_rt_void(self.rt.moo_release, &[value.into()], "rel_nw_abbruch")?;
+        }
+        self.builder.build_unconditional_branch(ziel).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(ok_bb);
+        Ok(())
+    }
+
     fn guard_local_expr_error(&mut self, values: &[StructValue<'ctx>]) -> Result<(), String> {
         if self.bare_mode { return Ok(()); }
         let function = self.current_function.unwrap();
@@ -10990,6 +11055,8 @@ impl<'ctx> CodeGen<'ctx> {
                                 &compiled_args,
                                 &format!("indirect_{name}"),
                             )?;
+                            // Nativer Funktionswert mit Fehler: kein Ersatzwert.
+                            let nativ_fehler = self.nativer_wert_fehler(fn_val)?;
                             // load_var created an owning function temporary.
                             // moo_func_call_N only borrows it; the generated
                             // callee owns the forwarded argument temporaries.
@@ -10998,6 +11065,9 @@ impl<'ctx> CodeGen<'ctx> {
                                 &[fn_val.into()],
                                 "rel_indirect_fn",
                             )?;
+                            if let Some(bedingung) = nativ_fehler {
+                                self.nativer_wert_abbruch(bedingung, &[result])?;
+                            }
                             return Ok(result);
                         }
                         // Weder LLVM-Function noch Variable → Fehler mit Suggestion
@@ -11711,6 +11781,17 @@ impl<'ctx> CodeGen<'ctx> {
                             .map_err(|e| format!("{e}"))?;
 
                         let func = self.current_function.unwrap();
+                        // Nativer Funktionswert mit Fehler: Schleife abbrechen, danach
+                        // wie der native Direktaufruf ohne Ersatzwert verlassen.
+                        let nw_merker = if !matches!(lambda, Expr::Lambda { .. }) && self.nativer_wert_ausgang_vorhanden() {
+                            let merker = self.builder.build_alloca(self.context.bool_type(), "map_nw_abbruch")
+                                .map_err(|e| format!("{e}"))?;
+                            self.builder.build_store(merker, self.context.bool_type().const_zero())
+                                .map_err(|e| format!("{e}"))?;
+                            Some(merker)
+                        } else {
+                            None
+                        };
                         let cond_bb = self.context.append_basic_block(func, "map_cond");
                         let body_bb = self.context.append_basic_block(func, "map_body");
                         let after_bb = self.context.append_basic_block(func, "map_after");
@@ -11752,9 +11833,24 @@ impl<'ctx> CodeGen<'ctx> {
                             let fn_val = self.compile_expr(lambda)?;
                             let mapped_val = self.call_rt(self.rt.moo_func_call_1,
                                 &[fn_val.into(), element.into()], "map_call")?;
+                            let nativ_fehler = match nw_merker {
+                                Some(_) => self.nativer_wert_fehler(fn_val)?,
+                                None => None,
+                            };
                             // compile_expr liefert den Funktionswert owning (+1, je Element
                             // neu bzw. aus der Variablen geladen); moo_func_call_1 leiht ihn.
                             self.call_rt_void(self.rt.moo_release, &[fn_val.into()], "rel_map_fn")?;
+                            if let (Some(merker), Some(bedingung)) = (nw_merker, nativ_fehler) {
+                                self.builder.build_store(merker, bedingung).map_err(|e| format!("{e}"))?;
+                                let abbruch_bb = self.context.append_basic_block(func, "map_nw_stopp");
+                                let weiter_bb = self.context.append_basic_block(func, "map_nw_weiter");
+                                self.builder.build_conditional_branch(bedingung, abbruch_bb, weiter_bb)
+                                    .map_err(|e| format!("{e}"))?;
+                                self.builder.position_at_end(abbruch_bb);
+                                self.call_rt_void(self.rt.moo_release, &[mapped_val.into()], "rel_map_nw")?;
+                                self.builder.build_unconditional_branch(after_bb).map_err(|e| format!("{e}"))?;
+                                self.builder.position_at_end(weiter_bb);
+                            }
                             let current_result = self.builder.build_load(self.mv_type(), result_ptr, "res")
                                 .map_err(|e| format!("{e}"))?.into_struct_value();
                             self.call_rt_void(self.rt.moo_list_append,
@@ -11771,6 +11867,11 @@ impl<'ctx> CodeGen<'ctx> {
                         self.builder.position_at_end(after_bb);
                         let final_result = self.builder.build_load(self.mv_type(), result_ptr, "map_final")
                             .map_err(|e| format!("{e}"))?.into_struct_value();
+                        if let Some(merker) = nw_merker {
+                            let abbruch = self.builder.build_load(self.context.bool_type(), merker, "map_nw")
+                                .map_err(|e| format!("{e}"))?.into_int_value();
+                            self.nativer_wert_abbruch(abbruch, &[final_result])?;
+                        }
                         return Ok(final_result);
                     }
                     "filter" | "filtern" => {
@@ -11801,6 +11902,16 @@ impl<'ctx> CodeGen<'ctx> {
                             .map_err(|e| format!("{e}"))?;
 
                         let func = self.current_function.unwrap();
+                        // Wie list.map: nativer Funktionswert mit Fehler bricht ab.
+                        let nw_merker = if !matches!(lambda, Expr::Lambda { .. }) && self.nativer_wert_ausgang_vorhanden() {
+                            let merker = self.builder.build_alloca(self.context.bool_type(), "filter_nw_abbruch")
+                                .map_err(|e| format!("{e}"))?;
+                            self.builder.build_store(merker, self.context.bool_type().const_zero())
+                                .map_err(|e| format!("{e}"))?;
+                            Some(merker)
+                        } else {
+                            None
+                        };
                         let cond_bb = self.context.append_basic_block(func, "filter_cond");
                         let body_bb = self.context.append_basic_block(func, "filter_body");
                         let after_bb = self.context.append_basic_block(func, "filter_after");
@@ -11836,8 +11947,23 @@ impl<'ctx> CodeGen<'ctx> {
                             let fn_val = self.compile_expr(lambda)?;
                             let test_val = self.call_rt(self.rt.moo_func_call_1,
                                 &[fn_val.into(), element.into()], "filter_call")?;
+                            let nativ_fehler = match nw_merker {
+                                Some(_) => self.nativer_wert_fehler(fn_val)?,
+                                None => None,
+                            };
                             // Wie bei list.map: Funktionswert (+1) nach dem Aufruf freigeben.
                             self.call_rt_void(self.rt.moo_release, &[fn_val.into()], "rel_filter_fn")?;
+                            if let (Some(merker), Some(bedingung)) = (nw_merker, nativ_fehler) {
+                                self.builder.build_store(merker, bedingung).map_err(|e| format!("{e}"))?;
+                                let abbruch_bb = self.context.append_basic_block(func, "filter_nw_stopp");
+                                let weiter_bb = self.context.append_basic_block(func, "filter_nw_weiter");
+                                self.builder.build_conditional_branch(bedingung, abbruch_bb, weiter_bb)
+                                    .map_err(|e| format!("{e}"))?;
+                                self.builder.position_at_end(abbruch_bb);
+                                self.call_rt_void(self.rt.moo_release, &[test_val.into()], "rel_filter_nw")?;
+                                self.builder.build_unconditional_branch(after_bb).map_err(|e| format!("{e}"))?;
+                                self.builder.position_at_end(weiter_bb);
+                            }
                             test_val
                         };
                         {
@@ -11884,6 +12010,11 @@ impl<'ctx> CodeGen<'ctx> {
                         self.builder.position_at_end(after_bb);
                         let final_result = self.builder.build_load(self.mv_type(), result_ptr, "filter_final")
                             .map_err(|e| format!("{e}"))?.into_struct_value();
+                        if let Some(merker) = nw_merker {
+                            let abbruch = self.builder.build_load(self.context.bool_type(), merker, "filter_nw")
+                                .map_err(|e| format!("{e}"))?.into_int_value();
+                            self.nativer_wert_abbruch(abbruch, &[final_result])?;
+                        }
                         return Ok(final_result);
                     }
                     // Event-Methoden: obj.bei("klick", cb) / obj.on("click", cb)

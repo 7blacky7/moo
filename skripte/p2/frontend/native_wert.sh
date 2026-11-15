@@ -9,7 +9,7 @@ mkdir -p "$out"
 failed=0
 
 # Positiv: Ausgabe gegen .expected (Wert, Rückruf, map/filter, Import, Fehler).
-for name in positiv import fehler thread leck; do
+for name in positiv import fehler thread leck grenzen; do
   src="compiler/tests/p2/native_wert_${name}.moos"
   if timeout 60s "$compiler" compile "$src" -o "$out/$name" > "$out/$name.log" 2>&1 \
      && timeout 30s "$out/$name" > "$out/$name.out" 2>&1 \
@@ -65,7 +65,7 @@ if [ -n "$asan" ] && [ -f "$asan" ]; then
     echo "FAIL leck: LSan meldet Lecks (siehe $out/leck.lsan.log)"; failed=1
   fi
   # Funktionswerte in map/filter und starte (alle Arten): Ausgabe und LSan.
-  for name in funktionswert_leck_map funktionswert_leck_thread; do
+  for name in funktionswert_leck_map funktionswert_leck_thread native_wert_grenzen; do
     if timeout 60s "$compiler" compile "compiler/tests/p2/$name.moos" -o "$out/$name" > "$out/$name.log" 2>&1 \
        && LD_PRELOAD="$asan" ASAN_OPTIONS=detect_leaks=1 timeout 60s "$out/$name" > "$out/$name.lsan.log" 2>&1 \
        && timeout 30s "$out/$name" > "$out/$name.out" 2>&1 \

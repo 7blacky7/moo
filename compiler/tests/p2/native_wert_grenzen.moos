@@ -1,0 +1,61 @@
+# Nativer Funktionswert an Defer-/versuche-Grenzen (ADR: kein Ersatzwert an der
+# nativen Grenze): ein Fehler im nativen Wert verlaesst die Funktion wie der
+# native Direktaufruf (aufraeumen laeuft, kein Weiterlaufen); map/filter brechen ab.
+@nativ
+funktion teile(a: i64, b: i64) -> i64:
+    gib_zurück a / b
+
+@nativ
+funktion kehrwert(x: i64) -> i64:
+    gib_zurück 100 / x
+
+@nativ
+funktion teilbar(x: i64) -> bool:
+    gib_zurück 10 % x == 0
+
+funktion sauber(name):
+    zeige "CLEANUP " + name
+
+funktion wert_in_rahmen():
+    aufräumen: sauber("wert")
+    setze f auf teile
+    zeige f(6, 3)
+    zeige f(1, 0)
+    zeige "NACH_FEHLER"
+
+funktion map_in_rahmen(xs):
+    aufräumen: sauber("map")
+    zeige xs.map(kehrwert)
+    zeige "NACH_MAP"
+
+funktion filter_in_versuche(xs):
+    versuche:
+        zeige xs.filter(teilbar)
+        zeige "NACH_FILTER"
+    fange e:
+        zeige "gefangen filter: " + e
+    zeige "WEITER"
+
+funktion aussen():
+    aufräumen: sauber("aussen")
+    versuche:
+        wert_in_rahmen()
+    fange e:
+        zeige "gefangen innen: " + e
+    zeige "aussen weiter"
+
+versuche:
+    map_in_rahmen([1, 2, 5])
+    map_in_rahmen([1, 0, 5])
+fange e:
+    zeige "gefangen map: " + e
+filter_in_versuche([1, 2, 5])
+filter_in_versuche([1, 0, 2])
+aussen()
+setze g auf teile
+versuche:
+    zeige g(1, 0)
+    zeige "NACH_MAIN"
+fange e:
+    zeige "gefangen main: " + e
+zeige "ENDE"

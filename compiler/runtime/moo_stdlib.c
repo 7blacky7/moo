@@ -243,6 +243,12 @@ bool moo_func_aritaet_ok(MooFunc* fn, int32_t n) {
     return false;
 }
 
+// Nativer Funktionswert nach einem Aufruf: Fehler gesetzt und Wert strikt
+// (nativ)? Der Codegen bricht dann wie beim nativen Direktaufruf ab.
+int32_t moo_func_nativ_fehler(MooValue f) {
+    return (f.tag == MOO_FUNC && MV_FUNC(f)->strikt && moo_try_check()) ? 1 : 0;
+}
+
 MooValue moo_func_call_0(MooValue func) {
     if (func.tag != MOO_FUNC) {
         moo_throw(moo_string_new("Aufruf auf Nicht-Funktion"));
