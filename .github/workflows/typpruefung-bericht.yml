@@ -29,12 +29,12 @@ jobs:
 
       - name: Install LLVM 22 + Runtime-Abhaengigkeiten
         run: |
-          # P2-T105: LLVM 22 aus apt.llvm.org (Ubuntu liefert nur bis 18/19/20).
+          # LLVM 22 aus apt.llvm.org (Ubuntu liefert nur bis 18/19/20).
           . /etc/os-release
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
           echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
           sudo apt-get update
-          # Wie 3d-backends.yml (gl33); LLVM passend zu compiler/Cargo.toml (inkwell llvm22-1, P2-T105).
+          # Wie 3d-backends.yml (gl33); LLVM passend zu compiler/Cargo.toml (inkwell llvm22-1).
           sudo apt-get install -y \
             llvm-22-dev libpolly-22-dev libclang-22-dev \
             libglfw3-dev libgl1-mesa-dev \

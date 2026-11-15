@@ -1,4 +1,4 @@
-# P2-T105: eine LLVM-Version ueberall (22.x: System, mise-Werkzeuge, CI).
+# Eine LLVM-Version ueberall (22.x: System, mise-Werkzeuge, CI).
 # llvm-sys 221 (inkwell llvm22-1) nimmt nur dieses Prefix und bricht bei einer
 # anderen Version ab (STRICT), statt still eine neuere zu binden; aendert sich
 # ein Wert, rechnet der llvm-sys-Build-Cache neu. Pruefung: mise run llvm-check.
@@ -8,7 +8,7 @@ LLVM_SYS_221_PREFIX = "{{ get_env(name='LLVM_SYS_221_PREFIX', default='/usr') }}
 LLVM_SYS_221_STRICT_VERSIONING = "1"
 
 [tasks.llvm-check]
-description = "P2-T105: genau LLVM 22.1.x am LLVM_SYS_221_PREFIX, Werkzeuge und Compiler-Binary"
+description = "Genau LLVM 22.1.x am LLVM_SYS_221_PREFIX, Werkzeuge und Compiler-Binary"
 run = '''
 set -eu
 soll=22.1

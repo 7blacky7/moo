@@ -90,13 +90,13 @@ jobs:
       - name: Install Linux deps (GTK3, LLVM 18, SDL2, sqlite)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          # P2-T105: LLVM 22 aus apt.llvm.org (Ubuntu liefert nur bis 18/19/20).
+          # LLVM 22 aus apt.llvm.org (Ubuntu liefert nur bis 18/19/20).
           . /etc/os-release
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc >/dev/null
           echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
           sudo apt-get update
           # WICHTIG: LLVM-Version muss zu `features = ["llvm22-1"]` in
-          # compiler/Cargo.toml passen (llvm-sys 221, P2-T105). Die Default-LLVM auf
+          # compiler/Cargo.toml passen (llvm-sys 221). Die Default-LLVM auf
           # ubuntu-latest ist v14 — wir brauchen explizit v22 (apt.llvm.org).
           sudo apt-get install -y \
             llvm-22-dev libpolly-22-dev libclang-22-dev \

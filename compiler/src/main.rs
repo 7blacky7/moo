@@ -170,7 +170,7 @@ enum Commands {
     /// Builtin-Funktionen mit Argumentzahl als JSON (P2-T100, fuer Gates)
     #[command(name = "builtins", hide = true)]
     Builtins,
-    /// Zur Laufzeit geladene LLVM-Version (P2-T105, fuer `mise run llvm-check`)
+    /// Zur Laufzeit geladene LLVM-Version (fuer `mise run llvm-check`)
     #[command(name = "llvm-version", hide = true)]
     LlvmVersion,
     /// Interaktiver Modus (REPL)
@@ -314,7 +314,7 @@ fn main_kern(cli: Cli) {
             println!("{}", builtin_aritaet::als_json());
         }
         Commands::LlvmVersion => {
-            // P2-T105: tatsaechlich geladene Bibliothek (statisch oder dynamisch).
+            // Tatsaechlich geladene Bibliothek (statisch oder dynamisch).
             let (major, minor, patch) = inkwell::support::get_llvm_version();
             println!("LLVM {major}.{minor}.{patch}");
         }
