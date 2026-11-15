@@ -1,11 +1,11 @@
 {
   "format": 2,
-  "compiler_sha256": "d097210c6ecae52a275cbcd18b1b37de1c38253d8bf3d0e1dd5e2b119e27e5b9",
+  "compiler_sha256": "486ddfc979e192e5aaa4fd1ee66a4ea46b2f19c0cbb82b26418ebfbc035868e8",
   "normalization": "module-header-root-v2",
   "batch": null,
   "provenance_attestation": "caller-provided-unverified",
-  "compiler_runtime_inventory_sha256": "8eba81952799d530f0d297d2e0d1bf68aa8f902b479ebe610bbb6a3ee16d8bef",
-  "snapshot_ref": "5386eaf2e3df116088d52809bbf3daa2e63b7338",
+  "compiler_runtime_inventory_sha256": "d96bde849ef8fe1e893929330d25238b1e698173dbfd3f9ca1b2e3912e00d329",
+  "snapshot_ref": "61ecafbf8a6b237265250654ddad018e358c845e",
   "snapshot_ref_attestation": "caller-provided-unverified",
   "profiles": {
     "beispiele/bootloader/stage2.moos": [
@@ -558,7 +558,7 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "77b04e16b6b66eceb17e899d672beb8853dd63ef3a7a5fd5eb92bcd8d7b7b451",
+    "sha256": "8d618a6454194a974349f20ef274f27941aa35d1747b6a32b968ca038bcff6a3",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -1169,6 +1169,9 @@
       "compiler/tests/p2/flucht_neg_speicher.moos": "a8f8b2927846efceea5ec5103354ceaf3600a3567ec802f23c5a33d9c749d445",
       "compiler/tests/p2/flucht_neg_struktur.moos": "0bdf93d9be27b30fef892237c7f7896281143192bf58bfa619799dbb9175d45e",
       "compiler/tests/p2/flucht_positiv.moos": "22d26a3e486ee9c7b31a5e7cf31d2921ccfbfc2996106e330dfe7f40ac919f80",
+      "compiler/tests/p2/funktionswert_leck_map.moos": "730e3fff8beb45d0b7999efc87c1acf13710887ba4890f07fbcdc731120431dc",
+      "compiler/tests/p2/funktionswert_leck_thread.moos": "4fa958406a9f7c52ce44eb67d58ec9d4164118f10e2ddfe0bd259aac9db4ddca",
+      "compiler/tests/p2/funktionswert_thread_lebensdauer.moos": "fa13f8d67ea50fd9c14dceacdb5d81c6ae1ff5ce5896755be048e4e764649a96",
       "compiler/tests/p2/griff_text.moos": "ec0c72cc260deca12d8f9fd6ba9e4c2274982498b0579a81b67ed2ae76e466b3",
       "compiler/tests/p2/guard_fallback_funktion.moos": "c425b9c2ede500b1850c82273af39f982ea618e127d76c4dc13474813910234b",
       "compiler/tests/p2/guard_fallback_main.moos": "e524f67303d9c7227ff36f85ee361115ef0fcadeb2895e5be9a239b45e382a94",
@@ -1263,9 +1266,13 @@
       "compiler/tests/p2/native_bool.moos": "a916d41933d6932f3651d7ce2a3f54f42a93599d1fe34f93bdd7509bf6c282c6",
       "compiler/tests/p2/native_bool_arg.moos": "e4ad403e782d006c2ac00739b7b1cfbcbcce2fb59e3600c52ade33d8ee3f6632",
       "compiler/tests/p2/native_call_arity.moos": "65e20d6f0f80ba50891ae58b6152f0c5beaede84388674c27941081a477e0fad",
+      "compiler/tests/p2/native_call_arity_dyn.moos": "29b501c24600bd1455b75443105cc23bfd7d4ce90af0fa1cf1b02fcf047d6025",
+      "compiler/tests/p2/native_call_arity_system.moos": "2be1188c221bcac3a9c39bc0d1f77190562a86e71d7ce49e358bc9ca0f70718f",
       "compiler/tests/p2/native_call_doppelt.moos": "4bcd4776c2f2fc4cccf212233facecb695807998e6226a1bff07a4f08eb72012",
       "compiler/tests/p2/native_call_ffi_transitiv.moos": "abd0b14531f2872a0a06856a63d3503446034b58e5070001f9cf5c2f95ad2d5c",
       "compiler/tests/p2/native_call_positiv.moos": "42677721c538ba175736a945053ede5d098cfc90d6a5f6976cdbaa4f558b1d94",
+      "compiler/tests/p2/native_call_rekursion_formen.moos": "54cb4c8961e9ae0181988fe78ad1384ef36bae6c55b1a3b7cd3e4fa09c1507a7",
+      "compiler/tests/p2/native_call_rekursion_lauf.moos": "7355e992460e86cd7aa4419a957fe468532e01b6438e57ae996240a3d59e69de",
       "compiler/tests/p2/native_call_rekursiv.moos": "f421cbffcf330127d09bc0bf57a33d912bf225d49dd67da114fd9caea79bc17f",
       "compiler/tests/p2/native_call_typ.moos": "8cd07225580b6165728c197e54f2818be22a24155f15674c596122e18a15c44e",
       "compiler/tests/p2/native_call_zyklus.moos": "6475acd228e80e295183baa1cf362b874b678a9b6dfb1a04ccec464ad20a5a5f",
@@ -3598,11 +3605,11 @@
     },
     "compiler/tests/test_list_filter_chain.moos": {
       "status": "ok",
-      "sha256": "805833d530c96276d33843d555b58820e17d4aef4138b6d390c1d59bad05919a"
+      "sha256": "ddc76d5f8d2b8a47575e8fdcb0998dd63da46a7169f89f2f83981ef902596b65"
     },
     "compiler/tests/test_list_map_lambda.moos": {
       "status": "ok",
-      "sha256": "eb60cec650a60ffaaee9c611b73114f08c669c0ba3178cfa604d4b08cd320d8a"
+      "sha256": "84b79a812926bb05b7a2d60cf828f12b12e7bed8d086522632456878a58b8741"
     },
     "compiler/tests/test_lists.moos": {
       "status": "ok",
