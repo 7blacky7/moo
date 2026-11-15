@@ -1,0 +1,7 @@
+# += an einen Index mit Aufruf im Ziel: M-S005 mit Hinweis auf die
+# einmalige Auswertung (ausgeschrieben liefe f() zweimal).
+funktion f():
+    gib_zurück 0
+
+setze xs auf [1, 2, 3]
+xs[f()] += 5

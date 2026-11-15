@@ -1,0 +1,8 @@
+# += mit unpassendem Typ: dieselbe Diagnose wie bei x = x + wert.
+@nativ
+funktion typ(n: i32) -> i32:
+    setze x: i32 auf n
+    x += 1.5
+    gib_zurück x
+
+zeige typ(1)

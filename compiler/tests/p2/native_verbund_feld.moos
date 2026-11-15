@@ -1,0 +1,12 @@
+# += an ein Feld: klare Syntaxdiagnose M-S005 (ausschreiben).
+struktur P2VerbundPunkt:
+    x: i32
+    y: i32
+
+@nativ
+funktion feld(n: i32) -> i32:
+    setze p: P2VerbundPunkt auf P2VerbundPunkt(1, 2)
+    p.x += n
+    gib_zurück p.x
+
+zeige feld(3)

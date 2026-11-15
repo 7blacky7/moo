@@ -17,7 +17,19 @@ cmp "$t/$n.expected" "$d/$n.out"
 if grep -q 'NACH_FALSCH' "$d/$n.out"; then echo "FAIL $n: Code nach dem Fehler lief" >&2; exit 1; fi
 echo "PASS $n"
 
+# Zusammengesetzte Zuweisung (+=, -=) an Variablen in nativen Koerpern.
+n=native_verbund
+timeout 30s "$compiler" compile "$t/$n.moos" -o "$d/$n"
+timeout 30s "$d/$n" > "$d/$n.out"
+cmp "$t/$n.expected" "$d/$n.out"
+echo "PASS $n"
+
 for fall in "native_fluss_neg_zaehler:kann nicht neu gesetzt werden" \
+            "native_verbund_feld:M-S005" \
+            "native_verbund_index:v[i] = v[i] - 1" \
+            "native_verbund_aufruf:zweimal ausgewertet" \
+            "native_verbund_aufruf_tief:zweimal ausgewertet" \
+            "native_verbund_typ:Ungueltiges Ganzzahlliteral" \
             "native_fluss_neg_nach:ist nicht deklariert" \
             "native_fluss_neg_float:braucht Ganzzahlgrenzen" \
             "native_fluss_neg_liste:erwartet einen Bereich a..b" \
@@ -50,4 +62,4 @@ mise exec -- opt -passes=verify -disable-output "$d/bare.ll"
 grep -q 'llvm.trap' "$d/bare.ll" || { echo "FAIL bare: kein llvm.trap" >&2; exit 1; }
 if grep -q 'moo_native_fehler' "$d/bare.ll"; then echo "FAIL bare: moo_native_fehler im Bare-IR" >&2; exit 1; fi
 grep -q 'native.loop.step' "$d/bare.ll" || { echo "FAIL bare: kein Schritt-Block" >&2; exit 1; }
-echo "PASS P2-T12 nativer Kontrollfluss: 19 Ausgaben, 10 Compilefehler, IR (verify, Schritt-Block, O2 ohne call/alloca), Bare-IR (llvm.trap)"
+echo "PASS P2-T12 nativer Kontrollfluss: 19 Ausgaben, Verbundzuweisung, 15 Compilefehler, IR (verify, Schritt-Block, O2 ohne call/alloca), Bare-IR (llvm.trap)"

@@ -2773,6 +2773,21 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             }
             Stmt::Assignment { name, ty, value, .. } => self.store(name, value, ty.is_some()),
             Stmt::ConstAssignment { name, ty: Some(_), value, .. } => self.store(name, value, true),
+            // Zusammengesetzte Zuweisung an eine Variable: dieselbe Semantik wie
+            // `x = x op wert` (Typpruefung, Ueberlauf- und Fehlerregeln des Operators).
+            Stmt::CompoundAssignment { name, op, value, .. } => {
+                let op = match op.as_str() {
+                    "+=" => crate::ast::BinOp::Add,
+                    "-=" => crate::ast::BinOp::Sub,
+                    _ => return Err(format!("Systemkoerper: Operator '{op}' wird nicht unterstützt")),
+                };
+                let neu = Expr::BinaryOp {
+                    left: Box::new(Expr::Identifier(name.clone())),
+                    op,
+                    right: Box::new(value.clone()),
+                };
+                self.store(name, &neu, false)
+            }
             Stmt::PropertyAssignment { object, property, value, .. } => {
                 let alignment = self.local_field_alignment(object, property);
                 let (ptr, ty) = self.pointer_property(object, property)?;

@@ -331,9 +331,10 @@ impl<'a, 'ctx> Folder<'a, 'ctx> {
         Ok(match expr {
             // P7-T5: adresse_von(NAME) nimmt die Adresse, nicht den gefalteten Wert.
             Expr::FunctionCall { name, .. } if name == "adresse_von" || name == "address_of" => expr.clone(),
-            Expr::FunctionCall { name, args, .. } => match query(name) {
+            Expr::FunctionCall { name, args, zeile } => match query(name) {
                 Some(kind) => number(i128::from(self.query(kind, name, args)?)),
-                None => Expr::FunctionCall { name: name.clone(), args: args.iter().map(fold).collect::<Result<_, _>>()?, zeile: 0 },
+                // Die Quellzeile bleibt erhalten (Diagnosen in nativen Koerpern).
+                None => Expr::FunctionCall { name: name.clone(), args: args.iter().map(fold).collect::<Result<_, _>>()?, zeile: *zeile },
             },
             Expr::Identifier(name) if !shadow.contains(name) => match self.scalars.get(name) {
                 Some(value) => number(*value),

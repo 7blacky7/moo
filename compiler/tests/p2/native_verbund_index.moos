@@ -1,0 +1,8 @@
+# -= an einen Index: klare Syntaxdiagnose M-S005 (ausschreiben).
+@nativ
+funktion index(n: i32) -> i32:
+    setze v: vec4 auf vec4(1.0, 2.0, 3.0, 4.0)
+    v[0] -= 1.0
+    gib_zurück n
+
+zeige index(1)

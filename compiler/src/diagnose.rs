@@ -470,6 +470,8 @@ pub const KATALOG: &[Eintrag] = &[
         erklaerung: "Nach einem vollstaendigen Statement steht noch etwas in derselben Zeile (z. B. `setze z auf 3 über 4`). Jedes Statement endet mit der Zeile; den Rest entfernen, einen fehlenden Operator ergaenzen oder ihn in eine eigene Zeile schreiben." },
     Eintrag { code: "M-S004", titel: "Zu tief verschachtelt",
         erklaerung: "Der Syntaxbaum waere tiefer als die Grenze des Compilers (Klammern, Bloecke, Operatorketten wie a + b + c ..., Aufruf- und Indexketten zaehlen zusammen). Die Pruefung und Uebersetzung laufen rekursiv ueber diese Tiefe; statt eines Absturzes meldet der Parser die Stelle. Die Grenze haengt vom Stack des Compiler-Threads ab: regulaer 1000 Ebenen (512 MiB), unter einem Speicherlimit (ulimit -v) 250 (128 MiB) bzw. 62 (32 MiB). Teilausdruecke in Variablen oder Funktionen auslagern." },
+    Eintrag { code: "M-S005", titel: "Zusammengesetzte Zuweisung nur an Variablen",
+        erklaerung: "`+=` und `-=` gibt es nur fuer eine Variable (x += 1). An ein Feld, einen Index oder einen anderen Ausdruck wird ausgeschrieben zugewiesen: p.x = p.x + n, v[i] = v[i] - 1. Enthaelt das Ziel einen Aufruf (a[f()]), den Teil vorher einer Variablen zuweisen (setze i auf f()), damit er nur einmal ausgewertet wird. In nativen Koerpern gilt fuer x += wert dieselbe Semantik wie fuer x = x + wert." },
     Eintrag { code: "M-S000", titel: "Syntaxfehler",
         erklaerung: "Sonstiger Fehler beim Parsen. Die Meldung nennt das Konstrukt." },
     Eintrag { code: "M-I001", titel: "Modul nicht gefunden",

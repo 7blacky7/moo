@@ -270,6 +270,31 @@ impl Parser {
     /// Statements haben ihr abschliessendes Dedent (oder Zeilenende) schon
     /// konsumiert. Sonst wurde ein Rest der Zeile nicht verstanden, z. B.
     /// `setze z auf 3 über 4` (bisher still als zweites Statement gelesen).
+    /// M-S005: `+=`/`-=` an einem Ziel, das keine Variable ist. Der Vorschlag
+    /// nennt den passenden Operator; enthaelt das Ziel einen Aufruf, weist er
+    /// auf die einmalige Auswertung hin (ausgeschrieben liefe der Aufruf zweimal).
+    fn verbund_fehler(&self, ziel: Option<&Expr>) -> ParseError {
+        let (op, zeichen) = if matches!(self.current_type(), TokenType::PlusAssign) {
+            ("+=", "+")
+        } else {
+            ("-=", "-")
+        };
+        let mut vorschlag = format!(
+            "Ausschreiben: ziel = ziel {zeichen} wert, z. B. p.x = p.x {zeichen} n oder v[i] = v[i] {zeichen} 1.");
+        if ziel.is_some_and(ausdruck_hat_aufruf) {
+            vorschlag.push_str(&format!(
+                " Das Ziel enthält einen Aufruf und würde ausgeschrieben zweimal ausgewertet: den Teil vorher einer Variablen zuweisen (z. B. setze i auf f(), dann a[i] = a[i] {zeichen} wert)."));
+        }
+        ParseError {
+            message: format!("Zusammengesetzte Zuweisung '{op}' ist nur an eine Variable möglich, nicht an ein Feld, einen Index oder einen anderen Ausdruck."),
+            code: "M-S005",
+            erwartet: Some("Variable vor '+=' bzw. '-='".to_string()),
+            gefunden: Some(op.to_string()),
+            vorschlag: Some(vorschlag),
+            ..ParseError::bei(self.current())
+        }
+    }
+
     fn statement_ende(&self) -> Result<(), ParseError> {
         if matches!(self.current_type(), TokenType::Newline | TokenType::Eof | TokenType::Dedent) {
             return Ok(());
@@ -278,6 +303,11 @@ impl Parser {
             && matches!(self.tokens[self.pos - 1].token_type, TokenType::Newline | TokenType::Dedent)
         {
             return Ok(());
+        }
+        // `+=`/`-=` hinter einem Feld, Index oder anderem Ausdruck: zusammengesetzte
+        // Zuweisung gibt es nur fuer Variablen (Ziel einmal ausgewertet).
+        if matches!(self.current_type(), TokenType::PlusAssign | TokenType::MinusAssign) {
+            return Err(self.verbund_fehler(None));
         }
         let gefunden = match token_description(self.current_type()) {
             "Token" => got_description(self.current_type()),
@@ -535,6 +565,9 @@ impl Parser {
                             _ => {}
                         }
                     }
+                    if matches!(self.current_type(), TokenType::PlusAssign | TokenType::MinusAssign) {
+                        return Err(self.verbund_fehler(Some(&expr)));
+                    }
                     Ok(Stmt::Expression(expr, 0))
                 }
             }
@@ -662,11 +695,15 @@ impl Parser {
                         _ => {}
                     }
                 }
+                if matches!(self.current_type(), TokenType::PlusAssign | TokenType::MinusAssign) {
+                    return Err(self.verbund_fehler(Some(&expr)));
+                }
 
                 Ok(Stmt::Expression(expr, 0))
             }
         }
     }
+
 
     fn parse_assignment(&mut self) -> Result<Stmt, ParseError> {
         self.pos += 1; // set/setze
@@ -2281,5 +2318,31 @@ impl Parser {
             pairs.push((key, val));
             Ok(())
         }
+    }
+}
+
+/// Enthaelt ein Zuweisungsziel einen Aufruf (Seiteneffekt bei mehrfacher Auswertung)?
+/// Erschoepfend ueber alle Ausdrucksformen (kein `_`-Arm): eine neue Form muss
+/// hier bewusst eingeordnet werden. Ein Pipe ist ein Aufruf; ein Lambda wird beim
+/// Auswerten des Ziels nur erzeugt, nicht ausgefuehrt.
+fn ausdruck_hat_aufruf(expr: &Expr) -> bool {
+    let a = |e: &Expr| ausdruck_hat_aufruf(e);
+    match expr {
+        Expr::FunctionCall { .. } | Expr::MethodCall { .. } | Expr::New { .. } | Expr::Pipe { .. } => true,
+        Expr::Number(_) | Expr::NativeNumber { .. } | Expr::String(_) | Expr::Boolean(_) | Expr::None
+        | Expr::Identifier(_) | Expr::This | Expr::Lambda { .. } => false,
+        Expr::IndexAccess { object: x, index: y } | Expr::Range { start: x, end: y }
+        | Expr::BinaryOp { left: x, right: y, .. } | Expr::NullishCoalesce { left: x, right: y } => a(x) || a(y),
+        Expr::PropertyAccess { object: x, .. } | Expr::OptionalChain { object: x, .. }
+        | Expr::UnaryOp { operand: x, .. } | Expr::Spread(x) => a(x),
+        Expr::List(elemente) => elemente.iter().any(a),
+        Expr::Dict(paare) => paare.iter().any(|(k, v)| a(k) || a(v)),
+        Expr::Ternary { condition, then_val, else_val } => a(condition) || a(then_val) || a(else_val),
+        Expr::ListComprehension { expr, iterable, condition, .. } =>
+            a(expr) || a(iterable) || condition.as_deref().is_some_and(a),
+        Expr::MatchExpr { value, cases } => a(value) || cases.iter().any(|(muster, waechter, ergebnis)|
+            muster.as_ref().is_some_and(a) || waechter.as_ref().is_some_and(a) || a(ergebnis)),
+        Expr::QueryExpr { source, where_cond, order_expr, select_expr, .. } =>
+            a(source) || where_cond.as_deref().is_some_and(a) || order_expr.as_deref().is_some_and(a) || a(select_expr),
     }
 }

@@ -1,0 +1,50 @@
+# Zusammengesetzte Zuweisung (+=, -=) an Variablen in nativen Koerpern:
+# dieselbe Semantik wie x = x op wert (Typen, Ueberlauf, Schleifen, Aufrufe).
+@nativ
+funktion summe(n: i64) -> i64:
+    setze s: i64 auf 0
+    setze i: i64 auf 0
+    solange i < n:
+        i += 1
+        s += i
+    gib_zurück s
+
+@nativ
+funktion countdown(n: i32) -> i32:
+    setze x: i32 auf n
+    x -= 3
+    x -= 2
+    gib_zurück x
+
+@nativ
+funktion halbe(x: f64) -> f64:
+    setze y: f64 auf x
+    y += 0.5
+    y -= 0.25
+    gib_zurück y
+
+@nativ
+funktion rek(n: i64) -> i64:
+    wenn n <= 0:
+        gib_zurück 0
+    setze x: i64 auf 1
+    x += rek(n - 1)
+    gib_zurück x
+
+@nativ
+funktion rek_oben(n: i64) -> i64:
+    gib_zurück rek(n) + 1
+
+@nativ
+funktion byte_plus(n: u8) -> u8:
+    setze x: u8 auf n
+    x += 10
+    gib_zurück x
+
+zeige summe(10)
+zeige countdown(10)
+zeige halbe(1.0)
+zeige rek(4)
+zeige rek_oben(4)
+zeige byte_plus(5)
+zeige byte_plus(250)
