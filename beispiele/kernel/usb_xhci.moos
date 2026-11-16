@@ -10,9 +10,167 @@ aus "../uefi/hardware_pci" importiere nt_mmio_lese32, nt_mmio_schreibe32, nt_mmi
 # 8/9 Event Index/Cycle,10 Slot,11 DCI,12/13 EP0 Index/Cycle,
 # 14/15 IN Index/Cycle,16 bereit,17 ausstehender IN-TRB,18 TSC/us,
 # 19 Fehlerstufe,20 Reports,21 letzter Report,22 Completion-Slot,
-# 23 physische BAR,24 CapsLock,25 neue Tastendruecke.
+# 23 physische BAR,24 CapsLock,25 neue Tastendruecke,
+# 26 Meldungs-Callback,27 PPC,28 MaxPorts,29 BDF,
+# 30 Keyboard-Interface,31 Endpoint,32 Paketgroesse,33 bInterval,34 Konfig,35 Protocol-Caps.
 @nativ
-statisch XH: [u64; 26] auf 0
+statisch XH: [u64; 36] auf 0
+
+# Diagnose ueber die gemeinsame Konsole/COM1/UDP-Senke.
+@nativ
+konstante XH_T_HCS1: [u8; _] auf "MOO-KERNEL USB HCSPARAMS1 "
+@nativ
+konstante XH_T_HCS2: [u8; _] auf "MOO-KERNEL USB HCSPARAMS2 "
+@nativ
+konstante XH_T_HCC1: [u8; _] auf "MOO-KERNEL USB HCCPARAMS1 "
+@nativ
+konstante XH_T_BDF: [u8; _] auf "MOO-KERNEL USB CONTROLLER BDF "
+@nativ
+konstante XH_T_PROTO_KOPF: [u8; _] auf "MOO-KERNEL USB PROTOCOL CAP "
+@nativ
+konstante XH_T_PROTO_NAME: [u8; _] auf "MOO-KERNEL USB PROTOCOL NAME "
+@nativ
+konstante XH_T_PROTO_PORTS: [u8; _] auf "MOO-KERNEL USB PROTOCOL PORTBEREICH "
+@nativ
+konstante XH_T_PROTO_SLOT: [u8; _] auf "MOO-KERNEL USB PROTOCOL SLOT "
+@nativ
+konstante XH_T_PROTO_PSI: [u8; _] auf "MOO-KERNEL USB PROTOCOL PSI "
+@nativ
+konstante XH_T_PORT: [u8; _] auf "MOO-KERNEL USB PORT "
+@nativ
+konstante XH_T_PHASE: [u8; _] auf "MOO-KERNEL USB PHASE "
+@nativ
+konstante XH_T_PROTOKOLL: [u8; _] auf "MOO-KERNEL USB PORT PROTOKOLL "
+@nativ
+konstante XH_T_PORTSC: [u8; _] auf "MOO-KERNEL USB PORTSC "
+@nativ
+konstante XH_T_CCS: [u8; _] auf "MOO-KERNEL USB CCS "
+@nativ
+konstante XH_T_PED: [u8; _] auf "MOO-KERNEL USB PED "
+@nativ
+konstante XH_T_PR: [u8; _] auf "MOO-KERNEL USB PR "
+@nativ
+konstante XH_T_PLS: [u8; _] auf "MOO-KERNEL USB PLS "
+@nativ
+konstante XH_T_PP: [u8; _] auf "MOO-KERNEL USB PP "
+@nativ
+konstante XH_T_SPEED: [u8; _] auf "MOO-KERNEL USB SPEED "
+@nativ
+konstante XH_T_CSC: [u8; _] auf "MOO-KERNEL USB CSC "
+@nativ
+konstante XH_T_CSC_GESEHEN: [u8; _] auf "MOO-KERNEL USB CSC GESEHEN "
+@nativ
+konstante XH_T_VID: [u8; _] auf "MOO-KERNEL USB VID "
+@nativ
+konstante XH_T_PID: [u8; _] auf "MOO-KERNEL USB PID "
+@nativ
+konstante XH_T_KLASSE: [u8; _] auf "MOO-KERNEL USB GERAETEKLASSE "
+@nativ
+konstante XH_T_INTERFACE: [u8; _] auf "MOO-KERNEL USB BOOT KEYBOARD INTERFACE "
+@nativ
+konstante XH_T_EP: [u8; _] auf "MOO-KERNEL USB BOOT KEYBOARD ENDPOINT "
+
+@nativ
+statisch XH_PROTO: [u8; 256] auf 0
+@nativ
+statisch XH_CSC: [u8; 256] auf 0
+
+@nativ
+funktion xh_log(adr: u64, wert: u64) -> void:
+    unsicher:
+        wenn xh(26) != 0:
+            setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(xh(26))
+            log(adr, wert)
+
+# Phasen: 0 vor HC-Reset, 1 danach, 2 nach Power/CCS-Wartezeit;
+# 3 vor Port-Reset, 4 danach, 5 nach Recovery.
+@nativ
+funktion xh_port_bild(port: u64, phase: u64) -> void:
+    unsicher:
+        setze v: u32 auf nt_mmio_lese32(xh(1) + 0x400 + (port - 1) * 16)
+        wenn (v & 0x20000) != 0:
+            speicher_schreiben(adresse_von(XH_CSC) + port, 1, 1)
+        xh_log(adresse_von(XH_T_PORT), port)
+        xh_log(adresse_von(XH_T_PHASE), phase)
+        xh_log(adresse_von(XH_T_PROTOKOLL), u64(speicher_lesen(adresse_von(XH_PROTO) + port, 1)))
+        xh_log(adresse_von(XH_T_PORTSC), u64(v))
+        xh_log(adresse_von(XH_T_CCS), u64(v & 1))
+        xh_log(adresse_von(XH_T_PED), u64((v >> 1) & 1))
+        xh_log(adresse_von(XH_T_PR), u64((v >> 4) & 1))
+        xh_log(adresse_von(XH_T_PLS), u64((v >> 5) & 15))
+        xh_log(adresse_von(XH_T_PP), u64((v >> 9) & 1))
+        xh_log(adresse_von(XH_T_SPEED), u64((v >> 10) & 15))
+        xh_log(adresse_von(XH_T_CSC), u64((v >> 17) & 1))
+        xh_log(adresse_von(XH_T_CSC_GESEHEN), u64(speicher_lesen(adresse_von(XH_CSC) + port, 1)))
+
+@nativ
+funktion xh_ports_bild(phase: u64) -> void:
+    unsicher:
+        setze port: u64 auf 1
+        solange port <= xh(28):
+            xh_port_bild(port, phase)
+            setze port auf port + 1
+
+# ID2 liefert USB2/USB3-Portbereiche, unabhaengig von aktueller Speed-ID.
+@nativ
+funktion xh_protokoll(cap: u64, e: u64, kopf: u32) -> bool:
+    unsicher:
+        setze bereich: u32 auf nt_mmio_lese32(cap + e + 8)
+        setze erster: u64 auf u64(bereich & 255)
+        setze anzahl: u64 auf u64((bereich >> 8) & 255)
+        setze major: u8 auf u8(kopf >> 24)
+        setze i: u64 auf 0
+        setze psi: u64 auf u64(bereich >> 28)
+        xh_log(adresse_von(XH_T_PROTO_KOPF), u64(kopf))
+        xh_log(adresse_von(XH_T_PROTO_NAME), u64(nt_mmio_lese32(cap + e + 4)))
+        xh_log(adresse_von(XH_T_PROTO_PORTS), u64(bereich))
+        xh_log(adresse_von(XH_T_PROTO_SLOT), u64(nt_mmio_lese32(cap + e + 12)))
+        wenn erster == 0 oder anzahl == 0 oder erster + anzahl > xh(28) + 1 oder e + 16 + psi * 4 > 0x100000:
+            gib_zurück falsch
+        solange i < psi:
+            xh_log(adresse_von(XH_T_PROTO_PSI), u64(nt_mmio_lese32(cap + e + 16 + i * 4)))
+            setze i auf i + 1
+        wenn nt_mmio_lese32(cap + e + 4) != 0x20425355 oder (major != 2 und major != 3):
+            gib_zurück wahr
+        setze i auf erster
+        solange i < erster + anzahl:
+            wenn speicher_lesen(adresse_von(XH_PROTO) + i, 1) != 0:
+                gib_zurück falsch
+            speicher_schreiben(adresse_von(XH_PROTO) + i, major, 1)
+            setze i auf i + 1
+        xh_setze(35, xh(35) + 1)
+        gib_zurück wahr
+
+# Gemeinsame 1-s-Frist fuer ALLE Ports: ein frueher Boot-Stick beendet
+# das Warten auf einen spaeter sichtbaren Unifying-Empfaenger nicht.
+@nativ
+funktion xh_ports_vorbereiten() -> void:
+    unsicher:
+        setze port: u64 auf 1
+        setze p: u64 auf 0
+        setze v: u32 auf 0
+        setze start: u64 auf 0
+        solange port <= xh(28):
+            setze p auf xh(1) + 0x400 + (port - 1) * 16
+            setze v auf nt_mmio_lese32(p)
+            wenn xh(27) != 0 und (v & 512) == 0:
+                nt_mmio_schreibe32(p, (v & 0x0E00C200) | 512)
+            setze port auf port + 1
+        setze start auf takt()
+        solange takt() - start < 1000000 * xh(18):
+            setze port auf 1
+            solange port <= xh(28):
+                setze p auf xh(1) + 0x400 + (port - 1) * 16
+                setze v auf nt_mmio_lese32(p)
+                wenn (v & 0x20000) != 0:
+                    speicher_schreiben(adresse_von(XH_CSC) + port, 1, 1)
+                    # CSC ist RW1C; nur das beobachtete Bit quittieren.
+                    nt_mmio_schreibe32(p, (v & 0x0E00C200) | 0x20000)
+                setze port auf port + 1
+            xh_warte_us(10000)
+        xh_ports_bild(2)
+
+
 
 @nativ
 funktion xh(f: u64) -> u64:
@@ -167,6 +325,8 @@ funktion xh_controller(bdf: u32, bi: u64, map: u64) -> bool:
         setze n: u64 auf 0
         setze v: u32 auf 0
         setze scratch: u64 auf 0
+        xh_setze(29, u64(bdf))
+        xh_log(adresse_von(XH_T_BDF), u64(bdf))
         xh_setze(19, 11)
         wenn (bar & 1) != 0:
             gib_zurück falsch
@@ -191,10 +351,17 @@ funktion xh_controller(bdf: u32, bi: u64, map: u64) -> bool:
         xh_setze(5, 32)
         wenn (nt_mmio_lese32(cap + 16) & 4) != 0:
             xh_setze(5, 64)
+        xh_setze(27, u64((nt_mmio_lese32(cap + 16) >> 3) & 1))
+        xh_setze(28, u64(nt_mmio_lese32(cap + 4) >> 24))
+        xh_null(adresse_von(XH_PROTO), 256)
+        xh_null(adresse_von(XH_CSC), 256)
+        xh_log(adresse_von(XH_T_HCS1), u64(nt_mmio_lese32(cap + 4)))
+        xh_log(adresse_von(XH_T_HCS2), u64(nt_mmio_lese32(cap + 8)))
+        xh_log(adresse_von(XH_T_HCC1), u64(nt_mmio_lese32(cap + 16)))
         xh_setze(19, 13)
         setze e auf u64(nt_mmio_lese32(cap + 16) >> 16) * 4
         solange e != 0 und n < 256:
-            wenn e >= 65536:
+            wenn e + 16 > 0x100000:
                 gib_zurück falsch
             setze v auf nt_mmio_lese32(cap + e)
             wenn (v & 255) == 1:
@@ -203,6 +370,9 @@ funktion xh_controller(bdf: u32, bi: u64, map: u64) -> bool:
                     gib_zurück falsch
                 # SMI-Enable-Bits aus, Statusbits quittieren.
                 nt_mmio_schreibe32(cap + e + 4, 0xE0000000)
+            wenn (v & 255) == 2:
+                wenn nicht xh_protokoll(cap, e, v):
+                    gib_zurück falsch
             wenn ((v >> 8) & 255) == 0:
                 setze e auf 0
             sonst:
@@ -210,12 +380,14 @@ funktion xh_controller(bdf: u32, bi: u64, map: u64) -> bool:
             setze n auf n + 1
         wenn e != 0:
             gib_zurück falsch
+        xh_ports_bild(0)
         xh_setze(19, 2)
         wenn nicht xh_stop():
             gib_zurück falsch
         nt_mmio_schreibe32(xh(1), 2)
         wenn nicht xh_warte_bit(xh(1), 2, 0) oder nicht xh_warte_bit(xh(1) + 4, 1 << 11, 0):
             gib_zurück falsch
+        xh_ports_bild(1)
         wenn (nt_mmio_lese32(xh(1) + 8) & 1) == 0 oder (nt_mmio_lese32(cap + 4) & 255) == 0:
             gib_zurück falsch
         xh_null(xh(4), 64 * 4096)
@@ -244,25 +416,49 @@ funktion xh_controller(bdf: u32, bi: u64, map: u64) -> bool:
         nt_mmio_schreibe32(xh(3) + 0x20, 0)
         nt_mmio_schreibe32(xh(1) + 0x38, 1)
         nt_mmio_glocke32(xh(1), 1)
-        gib_zurück xh_warte_bit(xh(1) + 4, 1, 0)
+        wenn nicht xh_warte_bit(xh(1) + 4, 1, 0):
+            gib_zurück falsch
+        xh_ports_vorbereiten()
+        gib_zurück wahr
 
 @nativ
 funktion xh_port(port: u64) -> u64:
     unsicher:
         setze p: u64 auf xh(1) + 0x400 + (port - 1) * 16
         setze v: u32 auf nt_mmio_lese32(p)
+        setze protokoll: u8 auf speicher_lesen(adresse_von(XH_PROTO) + port, 1)
         setze reset: u32 auf 16
-        wenn (v & 1) == 0:
+        setze ok: bool auf wahr
+        xh_port_bild(port, 3)
+        wenn (v & 1) == 0 oder (protokoll != 2 und protokoll != 3):
             gib_zurück 0
-        nt_mmio_schreibe32(p, (v & 0xE00C200) | 512)
-        xh_warte_us(100000)
-        wenn ((v >> 10) & 15) >= 4:
+        wenn (v & 0x20000) != 0:
+            speicher_schreiben(adresse_von(XH_CSC) + port, 1, 1)
+            nt_mmio_schreibe32(p, (v & 0x0E00C200) | 0x20000)
+            xh_warte_us(100000)
+            setze v auf nt_mmio_lese32(p)
+            wenn (v & 1) == 0:
+                gib_zurück 0
+        # USB2: PR. USB3: U0/PED erhalten, sonst WPR. Auswahl aus ID2.
+        wenn protokoll == 3:
             setze reset auf 0x80000000
-        nt_mmio_schreibe32(p, (nt_mmio_lese32(p) & 0xE00C200) | reset)
-        wenn nicht xh_warte_bit(p, reset, 0) oder nicht xh_warte_bit(p, 3, 3):
+            wenn (v & 3) == 3 und ((v >> 5) & 15) == 0:
+                setze reset auf 0
+        wenn reset != 0:
+            nt_mmio_schreibe32(p, (v & 0x0E00C200) | reset)
+            setze ok auf xh_warte_bit(p, reset, 0)
+            wenn ok:
+                setze ok auf xh_warte_bit(p, 3, 3)
+        xh_port_bild(port, 4)
+        wenn nicht ok:
             gib_zurück 0
         xh_warte_us(10000)
-        gib_zurück u64((nt_mmio_lese32(p) >> 10) & 15)
+        xh_port_bild(port, 5)
+        setze v auf nt_mmio_lese32(p)
+        wenn (v & 3) != 3 oder ((v >> 5) & 15) != 0:
+            gib_zurück 0
+        nt_mmio_schreibe32(p, (v & 0x0E00C200) | (v & 0x00FE0000))
+        gib_zurück u64((v >> 10) & 15)
 
 @nativ
 funktion xh_ep0(mps: u64) -> void:
@@ -274,6 +470,55 @@ funktion xh_ep0(mps: u64) -> void:
 
 # Ergebnis 1 nur fuer Interface Class=3/Subclass=1/Protocol=1, AltSetting=0
 # und einen Interrupt-IN-Endpunkt. Alle Deskriptorlaengen werden begrenzt.
+# Vorhandene Boot-Keyboard-Auswahl als eigener, bounds-gepruefter Parser.
+# Composite HID: Boot-Maus und Report-HID ueberspringen, Alternate0 und
+# Klassen-Tripel 03/01/01 plus Interrupt-IN im selben Interface verlangen.
+@nativ
+funktion xh_boot_interface(desc: u64, laenge: u64) -> bool:
+    unsicher:
+        setze pos: u64 auf 0
+        setze n: u64 auf 0
+        setze typ: u64 auf 0
+        setze hid: u64 auf 0
+        setze ep: u64 auf 0
+        setze paket: u64 auf 0
+        setze intervall: u64 auf 0
+        setze boot: bool auf falsch
+        xh_setze(30, 0)
+        xh_setze(31, 0)
+        xh_setze(32, 0)
+        xh_setze(33, 0)
+        xh_setze(34, 0)
+        wenn laenge < 9 oder laenge > 4096:
+            gib_zurück falsch
+        wenn speicher_lesen(desc, 1) < 9 oder speicher_lesen(desc + 1, 1) != 2 oder u64(speicher_lesen(desc + 2, 2)) != laenge oder speicher_lesen(desc + 5, 1) == 0:
+            gib_zurück falsch
+        solange pos + 2 <= laenge:
+            setze n auf u64(speicher_lesen(desc + pos, 1))
+            setze typ auf u64(speicher_lesen(desc + pos + 1, 1))
+            wenn n < 2 oder pos + n > laenge:
+                gib_zurück falsch
+            wenn typ == 4:
+                wenn n < 9:
+                    gib_zurück falsch
+                setze boot auf speicher_lesen(desc + pos + 3, 1) == 0 und speicher_lesen(desc + pos + 4, 1) != 0 und speicher_lesen(desc + pos + 5, 1) == 3 und speicher_lesen(desc + pos + 6, 1) == 1 und speicher_lesen(desc + pos + 7, 1) == 1
+                setze hid auf u64(speicher_lesen(desc + pos + 2, 1))
+            wenn typ == 5 und boot:
+                wenn n < 7:
+                    gib_zurück falsch
+                setze ep auf u64(speicher_lesen(desc + pos + 2, 1))
+                setze paket auf u64(speicher_lesen(desc + pos + 4, 2)) & 2047
+                setze intervall auf u64(speicher_lesen(desc + pos + 6, 1))
+                wenn (ep & 0x80) != 0 und (ep & 0x70) == 0 und (ep & 15) != 0 und (speicher_lesen(desc + pos + 3, 1) & 3) == 3 und paket >= 8 und paket <= 1024 und intervall != 0:
+                    xh_setze(30, hid)
+                    xh_setze(31, ep)
+                    xh_setze(32, paket)
+                    xh_setze(33, intervall)
+                    xh_setze(34, u64(speicher_lesen(desc + 5, 1)))
+                    gib_zurück wahr
+            setze pos auf pos + n
+        gib_zurück falsch
+
 @nativ
 funktion xh_geraet(port: u64, speed: u64) -> bool:
     unsicher:
@@ -330,6 +575,11 @@ funktion xh_geraet(port: u64, speed: u64) -> bool:
             speicher_schreiben(input + 2 * xh(5) + 4, u32((n << 16) | 38), 4)
             wenn nicht xh_befehl(input, (13 << 10) | u32(xh(10) << 24)):
                 gib_zurück falsch
+        wenn nicht xh_control(0x0012000001000680, desc, 18):
+            gib_zurück falsch
+        xh_log(adresse_von(XH_T_KLASSE), u64(speicher_lesen(desc + 4, 1)))
+        xh_log(adresse_von(XH_T_VID), u64(speicher_lesen(desc + 8, 2)))
+        xh_log(adresse_von(XH_T_PID), u64(speicher_lesen(desc + 10, 2)))
         wenn nicht xh_control(0x0009000002000680, desc, 9):
             gib_zurück falsch
         wenn speicher_lesen(desc, 1) < 9 oder speicher_lesen(desc + 1, 1) != 2:
@@ -339,28 +589,16 @@ funktion xh_geraet(port: u64, speed: u64) -> bool:
             gib_zurück falsch
         wenn nicht xh_control((laenge << 48) | 0x02000680, desc, u32(laenge)):
             gib_zurück falsch
-        setze konfig auf u64(speicher_lesen(desc + 5, 1))
-        solange pos + 2 <= laenge:
-            setze n auf u64(speicher_lesen(desc + pos, 1))
-            setze typ auf u64(speicher_lesen(desc + pos + 1, 1))
-            wenn n < 2 oder pos + n > laenge:
-                gib_zurück falsch
-            wenn typ == 4:
-                setze boot auf falsch
-                wenn n >= 9:
-                    setze boot auf speicher_lesen(desc + pos + 3, 1) == 0 und speicher_lesen(desc + pos + 5, 1) == 3 und speicher_lesen(desc + pos + 6, 1) == 1 und speicher_lesen(desc + pos + 7, 1) == 1
-                    wenn boot:
-                        setze hid_nummer auf u64(speicher_lesen(desc + pos + 2, 1))
-            wenn typ == 5 und boot und n >= 7:
-                setze ep auf u64(speicher_lesen(desc + pos + 2, 1))
-                setze paket auf u64(speicher_lesen(desc + pos + 4, 2)) & 2047
-                setze intervall auf u64(speicher_lesen(desc + pos + 6, 1))
-                wenn (ep & 0x80) != 0 und (ep & 15) != 0 und (speicher_lesen(desc + pos + 3, 1) & 3) == 3:
-                    stopp
-                setze ep auf 0
-            setze pos auf pos + n
-        wenn ep == 0 oder paket < 8 oder paket > 1024 oder intervall == 0 oder konfig == 0:
+        wenn nicht xh_boot_interface(desc, laenge):
+            xh_log(adresse_von(XH_T_INTERFACE), 0xFFFFFFFF)
             gib_zurück falsch
+        setze hid_nummer auf xh(30)
+        setze ep auf xh(31)
+        setze paket auf xh(32)
+        setze intervall auf xh(33)
+        setze konfig auf xh(34)
+        xh_log(adresse_von(XH_T_INTERFACE), hid_nummer)
+        xh_log(adresse_von(XH_T_EP), ep)
         xh_setze(19, 6)
         wenn nicht xh_control((konfig << 16) | 0x0900, 0, 0):
             gib_zurück falsch
@@ -466,13 +704,14 @@ funktion xh_in_anfordern() -> void:
         nt_mmio_glocke32(xh(2) + xh(10) * 4, u32(xh(11)))
 
 @nativ
-funktion usb_starten(dma: u64, tsc_us: u64, bi: u64, map: u64) -> bool:
+funktion usb_starten(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64) -> bool:
     unsicher:
         setze bdf: u32 auf 0
         setze port: u64 auf 0
         setze ports: u64 auf 0
         setze speed: u64 auf 0
-        xh_null(adresse_von(XH), 26 * 8)
+        xh_null(adresse_von(XH), 36 * 8)
+        xh_setze(26, log)
         xh_setze(4, dma)
         xh_setze(18, tsc_us)
         wenn dma == 0 oder (dma & 4095) != 0 oder dma >= 0xFFF00000 oder tsc_us == 0:

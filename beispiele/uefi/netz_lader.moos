@@ -62,18 +62,19 @@ funktion tb_z(st, zahl):
     feld_setzen(st, 8, nt_dez(feld(st, 16), feld(st, 8), zahl))
 
 funktion tb_h(st, wert, stellen):
-    setze p auf feld(st, 16)
-    setze pos auf feld(st, 8)
-    setze i auf stellen - 1
-    solange i >= 0:
-        setze d auf (wert >> (i * 4)) & 15
-        wenn d < 10:
-            nt_b8(p, pos, 48 + d)
-        sonst:
-            nt_b8(p, pos, 55 + d)
-        setze pos auf pos + 1
-        setze i auf i - 1
-    feld_setzen(st, 8, pos)
+    unsicher:
+        setze p auf feld(st, 16)
+        setze pos auf feld(st, 8)
+        setze i auf stellen - 1
+        solange i >= 0:
+            setze d auf (wert >> (i * 4)) & 15
+            wenn d < 10:
+                nt_b8(p, pos, 48 + d)
+            sonst:
+                nt_b8(p, pos, 55 + d)
+            setze pos auf pos + 1
+            setze i auf i - 1
+        feld_setzen(st, 8, pos)
 
 funktion tb_ip(st, ip):
     tb_z(st, (ip >> 24) & 255)
@@ -157,12 +158,13 @@ funktion melde(st, text):
 
 # ---------------- Ablauf ----------------
 funktion erster_link(ports):
-    setze i auf 0
-    solange i < nt_anzahl(ports):
-        wenn nt_link(nt_port(ports, i)):
-            gib_zurück i
-        setze i auf i + 1
-    gib_zurück -1
+    unsicher:
+        setze i auf 0
+        solange i < nt_anzahl(ports):
+            wenn nt_link(nt_port(ports, i)):
+                gib_zurück i
+            setze i auf i + 1
+        gib_zurück -1
 
 funktion hex_lesen(p, o, e):
     setze wert auf 0

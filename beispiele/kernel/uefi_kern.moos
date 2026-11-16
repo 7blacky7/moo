@@ -21,6 +21,7 @@
 aus "moo_bootvertrag" importiere MooBootInfo, BOOT_MAGIE
 aus "usb_xhci" importiere usb_starten, usb_report_pruefen, xh, xh_setze, xh_event, xh_stop, xh_in_anfordern, xh_neue_taste, xh_ascii
 aus "../uefi/hardware_pci" importiere takt
+aus "../uefi/netz_geraet" importiere nt_finde, nt_bar, nt_oeffnen_in, nt_link, nt_senden, nt_udp_rahmen, nt_kopiere, pci_lese32, pci_schreibe32
 
 # UEFI-Speicherdeskriptor (Spec 2.10, 7.2 GetMemoryMap); Schrittweite aus der Boot-Info.
 struktur EfiSpeicherDeskriptor:
@@ -586,6 +587,7 @@ funktion zeichen(z: u8) -> void:
         setze x: u64 auf 0
         setze y: u64 auf 0
         seriell(z)
+        netz_zeichen(z)
         wenn kon(versatz_von(Konsole, k_aktiv)) == 0:
             gib_zurück
         setze skala auf kon(versatz_von(Konsole, k_skala))
@@ -1384,10 +1386,13 @@ funktion paging_einrichten(bi: u64, max_phys: u64, fb: u64, fb_groesse: u64) -> 
 
 # Separates UC-MMIO-Fenster im vorhandenen oberen Kern-Adressraum.
 # PDPT[509] liegt unterhalb des Kernfensters [510]; keine Identitaetsannahme
-# fuer 64-Bit-PCI-BARs. Nur bei angehaltenem Geraet neu belegen.
+# fuer 64-Bit-PCI-BARs. Jeder Aufruf belegt neue Eintraege, laufende NIC/USB
+# behalten ihre bisherigen Abbildungen.
 @nativ
 @ausrichten(4096)
 statisch PD_MMIO: [u64; 512] auf 0
+@nativ
+statisch MMIO_NAECHSTE: [u64; 1] auf 0
 
 @nativ
 funktion kern_mmio_abbilden(bi: u64, basis: u64, bytes: u64) -> u64:
@@ -1396,17 +1401,17 @@ funktion kern_mmio_abbilden(bi: u64, basis: u64, bytes: u64) -> u64:
         setze seiten: u64 auf (offset + bytes + 0x1FFFFF) / 0x200000
         setze pd: u64 auf adresse_von(PD_MMIO)
         setze i: u64 auf 0
-        wenn bytes == 0 oder bytes > 0x10000000 oder basis >= 0x1000000000000 oder seiten > 512:
+        setze naechste: u64 auf speicher_lesen(adresse_von(MMIO_NAECHSTE), 8)
+        wenn bytes == 0 oder bytes > 0x10000000 oder basis >= 0x1000000000000 oder naechste + seiten > 512:
             gib_zurück 0
-        solange i < 512:
-            speicher_schreiben(pd + i * 8, 0, 8)
-            wenn i < seiten:
-                # Present/RW/PS plus PWT/PCD (PAT-Standard: UC).
-                speicher_schreiben(pd + i * 8, ((basis & 0xFFFFFFFFFFE00000) + i * 0x200000) | 0x9B, 8)
+        solange i < seiten:
+            # Jede BAR behaelt ihr UC-Fenster; Netz und USB laufen gleichzeitig.
+            speicher_schreiben(pd + (naechste + i) * 8, ((basis & 0xFFFFFFFFFFE00000) + i * 0x200000) | 0x9B, 8)
             setze i auf i + 1
+        speicher_schreiben(adresse_von(MMIO_NAECHSTE), naechste + seiten, 8)
         speicher_schreiben(adresse_von(PDPT_KERN) + 509 * 8, physisch(bi, pd) | 3, 8)
         cr3_laden(physisch(bi, adresse_von(PML4)))
-        gib_zurück 0xFFFFFFFF40000000 + offset
+        gib_zurück 0xFFFFFFFF40000000 + naechste * 0x200000 + offset
 
 # ---------------- Page-Frame-Allocator und Kernel-Heap ----------------
 @nativ
@@ -1696,6 +1701,7 @@ funktion usb_poll() -> void:
                     meldung(adresse_von(T_USB_TASTE), u64(c))
                     zeichen(c)
                     zeichen(10)
+                    eingabe_taste(c)
             setze i auf i + 1
         # Fehlerreports duerfen den gehaltenen Zustand nicht loeschen.
         wenn (report & 0xFF00) == 0:
@@ -1709,6 +1715,196 @@ funktion usb_poll() -> void:
             wenn code == 1:
                 xh_setze(21, report)
         xh_in_anfordern()
+
+# ---------------- Netz-Log nach ExitBootServices ----------------
+# Fruehe Bootzeilen bleiben bis zur PFA/Paging/PCI-Initialisierung erhalten.
+# Drahtformat: derselbe Ethernet/IPv4/UDP-Broadcast wie hallo_uefi (Port 7777).
+@nativ
+statisch NETZ_PORTS: [u64; 8] auf 0
+@nativ
+statisch NETZ_PCI: [u64; 4] auf 0
+# Anzahl NICs, aktiv, Fruehzeichen, Zeilenlaenge, verworfene Rahmen, Sende-Sperre.
+@nativ
+statisch NETZ: [u64; 6] auf 0
+@nativ
+statisch NETZ_FRUEH: [u8; 32768] auf 0
+@nativ
+statisch NETZ_ZEILE: [u8; 1472] auf 0
+@nativ
+statisch NETZ_PAKET: [u8; 1514] auf 0
+@nativ
+konstante T_NETZ: [u8; _] auf "MOO-KERNEL NETZ PORTS "
+@nativ
+konstante T_NETZ_BDF: [u8; _] auf "MOO-KERNEL NETZ BDF "
+@nativ
+konstante T_NETZ_BAR: [u8; _] auf "MOO-KERNEL NETZ BAR "
+@nativ
+konstante T_NETZ_DMA: [u8; _] auf "MOO-KERNEL NETZ DMA "
+@nativ
+konstante T_NETZ_LINK: [u8; _] auf "MOO-KERNEL NETZ LINK "
+@nativ
+konstante T_NETZ_STOP_FEHLER: [u8; _] auf "MOO-KERNEL NETZ DMA-STOP FEHLER BDF "
+
+@nativ
+funktion netz_senden(laenge: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        setze nic: u64 auf 0
+        setze zustand: u64 auf adresse_von(NETZ)
+        wenn speicher_lesen(zustand + 40, 8) != 0:
+            gib_zurück
+        speicher_schreiben(zustand + 40, 1, 8)
+        nt_kopiere(adresse_von(NETZ_PAKET) + 42, adresse_von(NETZ_ZEILE), laenge)
+        solange i < speicher_lesen(zustand, 8):
+            setze nic auf speicher_lesen(adresse_von(NETZ_PORTS) + i * 8, 8)
+            wenn nt_link(nic):
+                wenn nicht nt_senden(nic, adresse_von(NETZ_PAKET), nt_udp_rahmen(adresse_von(NETZ_PAKET), nic, laenge)):
+                    speicher_schreiben(zustand + 32, speicher_lesen(zustand + 32, 8) + 1, 8)
+            setze i auf i + 1
+        speicher_schreiben(zustand + 40, 0, 8)
+
+@nativ
+funktion netz_zeichen(z: u8) -> void:
+    unsicher:
+        setze zustand: u64 auf adresse_von(NETZ)
+        setze n: u64 auf speicher_lesen(zustand + 16, 8)
+        wenn speicher_lesen(zustand + 8, 8) == 0:
+            wenn n < 32768:
+                speicher_schreiben(adresse_von(NETZ_FRUEH) + n, z, 1)
+                speicher_schreiben(zustand + 16, n + 1, 8)
+            sonst:
+                speicher_schreiben(zustand + 32, speicher_lesen(zustand + 32, 8) + 1, 8)
+            gib_zurück
+        setze n auf speicher_lesen(zustand + 24, 8)
+        wenn z == 10:
+            netz_senden(n)
+            speicher_schreiben(zustand + 24, 0, 8)
+            gib_zurück
+        wenn z == 13:
+            gib_zurück
+        speicher_schreiben(adresse_von(NETZ_ZEILE) + n, z, 1)
+        setze n auf n + 1
+        wenn n == 1472:
+            netz_senden(n)
+            setze n auf 0
+        speicher_schreiben(zustand + 24, n, 8)
+
+@nativ
+funktion netz_starten(bi: u64, tsc_us: u64) -> u64:
+    unsicher:
+        setze pci: u64 auf adresse_von(NETZ_PCI)
+        setze zustand: u64 auf adresse_von(NETZ)
+        setze typ: u64 auf 2
+        setze nummer: u64 auf 0
+        setze bdf: i64 auf -1
+        setze bar: u64 auf 0
+        setze mmio: u64 auf 0
+        setze dma: u64 auf 0
+        setze n: u64 auf 0
+        setze i: u64 auf 0
+        setze j: u64 auf 0
+        setze link: u64 auf 0
+        setze start: u64 auf 0
+        # Konfigurationsmechanismus 1: kein Firmware-ECAM-Zeiger nach EBS.
+        speicher_schreiben(pci + 16, 255, 8)
+        solange typ > 0:
+            setze nummer auf 0
+            setze bdf auf nt_finde(pci, typ, nummer)
+            solange bdf >= 0 und n < 8:
+                # Auch ein Initfehler darf keinen alten UEFI-DMA-Ring weiterbetreiben.
+                pci_schreibe32(pci, u64(bdf), 4, pci_lese32(pci, u64(bdf), 4) & 0xFFFB)
+                wenn (pci_lese32(pci, u64(bdf), 4) & 4) != 0:
+                    meldung(adresse_von(T_NETZ_STOP_FEHLER), u64(bdf))
+                    anhalten()
+                setze bar auf nt_bar(pci, u64(bdf))
+                setze mmio auf 0
+                setze dma auf 0
+                wenn bar != 0 und tsc_us != 0:
+                    setze mmio auf kern_mmio_abbilden(bi, bar, 0x20000)
+                    setze dma auf pfa_nehme(20)
+                meldung(adresse_von(T_NETZ_BDF), u64(bdf))
+                meldung(adresse_von(T_NETZ_BAR), bar)
+                meldung(adresse_von(T_NETZ_DMA), dma)
+                wenn bar != 0 und mmio != 0 und dma != 0:
+                    setze j auf 0
+                    solange j < 20 * 4096:
+                        speicher_schreiben(dma + j, 0, 8)
+                        setze j auf j + 8
+                    wenn nt_oeffnen_in(pci, u64(bdf), dma, mmio, tsc_us):
+                        speicher_schreiben(adresse_von(NETZ_PORTS) + n * 8, dma, 8)
+                        setze n auf n + 1
+                setze nummer auf nummer + 1
+                setze bdf auf nt_finde(pci, typ, nummer)
+            setze typ auf typ - 1
+        speicher_schreiben(zustand, n, 8)
+        setze start auf takt()
+        solange n != 0 und link == 0 und takt() - start < tsc_us * 3000000:
+            setze i auf 0
+            solange i < n:
+                wenn nt_link(speicher_lesen(adresse_von(NETZ_PORTS) + i * 8, 8)):
+                    setze link auf link + 1
+                setze i auf i + 1
+            assembler(ziel="x86_64", code="pause", clobber=[])
+        speicher_schreiben(zustand + 8, 1, 8)
+        setze i auf 0
+        solange i < speicher_lesen(zustand + 16, 8):
+            netz_zeichen(speicher_lesen(adresse_von(NETZ_FRUEH) + i, 1))
+            setze i auf i + 1
+        meldung(adresse_von(T_NETZ_LINK), link)
+        gib_zurück n
+
+# Fester Eingabebereich unterhalb der rollenden Diagnosekonsole.
+@nativ
+statisch EINGABE: [u8; 256] auf 0
+@nativ
+statisch EINGABE_N: [u64; 1] auf 0
+@nativ
+konstante T_EINGABE: [u8; _] auf "EINGABE"
+
+@nativ
+funktion eingabe_zeigen() -> void:
+    unsicher:
+        setze s: u64 auf adresse_von(SCHIRM)
+        setze breite: u64 auf speicher_lesen(s + versatz_von(Schirm, s_breite), 8)
+        setze boden: u64 auf speicher_lesen(s + versatz_von(Schirm, s_hoehe), 8) - 80
+        setze kern: u64 auf speicher_lesen(s + versatz_von(Schirm, s_kern), 8)
+        setze n: u64 auf speicher_lesen(adresse_von(EINGABE_N), 8)
+        wenn kon(versatz_von(Konsole, k_aktiv)) == 0:
+            gib_zurück
+        moo_surface_core_rect(zeiger(kern), 40, i32(boden), i32(breite) - 80, 60, rgba(20, 55, 75))
+        moo_surface_core_text_3x5(zeiger(kern), 52, i32(boden + 6), 2, zeiger(adresse_von(T_EINGABE)), 7, rgba(200, 230, 255))
+        moo_surface_core_text_3x5(zeiger(kern), 52, i32(boden + 28), 3, zeiger(adresse_von(EINGABE)), n, rgba(255, 230, 160))
+        moo_surface_core_rect(zeiger(kern), i32(52 + n * 12), i32(boden + 45), 8, 2, rgba(255, 196, 64))
+        schirm_zeilen(boden, boden + 60)
+
+@nativ
+funktion eingabe_taste(c: u8) -> void:
+    unsicher:
+        setze breite: u64 auf speicher_lesen(adresse_von(SCHIRM) + versatz_von(Schirm, s_breite), 8)
+        setze n: u64 auf speicher_lesen(adresse_von(EINGABE_N), 8)
+        setze max: u64 auf 0
+        setze i: u64 auf 1
+        wenn kon(versatz_von(Konsole, k_aktiv)) == 0 oder breite < 160:
+            gib_zurück
+        setze max auf (breite - 116) / 12
+        wenn max > 255:
+            setze max auf 255
+        wenn c == 8:
+            wenn n > 0:
+                setze n auf n - 1
+        sonst wenn c >= 32 und c <= 126:
+            wenn n == max:
+                solange i < n:
+                    speicher_schreiben(adresse_von(EINGABE) + i - 1, speicher_lesen(adresse_von(EINGABE) + i, 1), 1)
+                    setze i auf i + 1
+                setze n auf n - 1
+            speicher_schreiben(adresse_von(EINGABE) + n, c, 1)
+            setze n auf n + 1
+        sonst:
+            # Noch keine Kommandoausfuehrung: Enter laesst den Text sichtbar.
+            gib_zurück
+        speicher_schreiben(adresse_von(EINGABE_N), n, 8)
+        eingabe_zeigen()
 
 # ---------------- Kern ----------------
 @nativ
@@ -1803,10 +1999,14 @@ funktion kern_haupt(bi: u64) -> void:
         sonst:
             meldung(adresse_von(T_PAGING_NEIN), maxphys)
             anhalten()
+        # Eigene NIC-DMA-Ringe muessen vor Freigabe ihrer alten UEFI-Arena stehen.
+        setze idt_ok auf idt_einrichten()
+        setze tsc auf tsc_kalibrieren()
+        meldung(adresse_von(T_TSC), tsc)
+        meldung(adresse_von(T_NETZ), netz_starten(bi, tsc))
         # Erst hinter dem eigenen CR3 werden Loader- und Firmware-Tabellen frei.
         setze tabellen_frei auf pfa_bootspeicher_freigeben(bi)
         meldung(adresse_von(T_TABELLEN), tabellen_frei)
-        setze idt_ok auf idt_einrichten()
         meldung(adresse_von(T_IDT), u64(idt_ok))
         setze rsdp auf speicher_lesen(bi + versatz_von(MooBootInfo, acpi_rsdp), 8)
         meldung(adresse_von(T_RSDP), rsdp)
@@ -1815,8 +2015,6 @@ funktion kern_haupt(bi: u64) -> void:
             setze acpi_ok auf acpi_starten(rsdp)
         meldung(adresse_von(T_ACPI), acpi_ok)
         meldung(adresse_von(T_FORMATE), formate_pruefen())
-        setze tsc auf tsc_kalibrieren()
-        meldung(adresse_von(T_TSC), tsc)
         # Bildschirm: alles ueber den Surface-Kern in den Rueckpuffer, dann Present.
         setze schirm_ok auf fb != 0 und breite >= 160 und hoehe >= 200 und breite <= 3840 und hoehe <= 2160 und format <= 2 und stride >= breite
         wenn nicht schirm_ok:
@@ -1849,7 +2047,8 @@ funktion kern_haupt(bi: u64) -> void:
                 setze t0 auf takt()
                 schirm_zeilen(0, hoehe)
                 setze t_neu auf takt() - t0
-                konsole_starten(40, 300, breite - 40, hoehe - 20, 2, u64(rgba(200, 230, 255)), u64(rgba(32, 96, 128)))
+                konsole_starten(40, 300, breite - 40, hoehe - 100, 2, u64(rgba(200, 230, 255)), u64(rgba(32, 96, 128)))
+                eingabe_zeigen()
                 setze t0 auf takt()
                 text(adresse_von(T_KON1))
                 setze t_zeile auf takt() - t0
@@ -1884,7 +2083,7 @@ funktion kern_haupt(bi: u64) -> void:
         meldung(adresse_von(T_USB_TEST), u64(usb_report_pruefen()))
         # PFA besitzt die DMA-Seiten dauerhaft. Kein Firmware-Speicher wird benutzt.
         setze usb_dma auf pfa_nehme(64)
-        setze usb_ok auf usb_starten(usb_dma, tsc, bi, adresse_von(kern_mmio_abbilden))
+        setze usb_ok auf usb_starten(usb_dma, tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung))
         meldung(adresse_von(T_USB_BAR), xh(23))
         meldung(adresse_von(T_USB_CAP), xh(0))
         meldung(adresse_von(T_USB_DMA), usb_dma)

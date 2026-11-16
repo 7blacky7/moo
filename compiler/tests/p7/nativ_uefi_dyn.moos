@@ -80,6 +80,28 @@ funktion zeile(w):
     ziffern(w)
     z(10)
 
+
+aus "../../../beispiele/kernel/usb_xhci" importiere xh_boot_interface, xh
+@nativ
+konstante USB_TEST_COMPOSITE: [u8; 66] auf [9, 2, 66, 0, 3, 1, 0, 128, 50, 9, 4, 0, 0, 1, 3, 1, 2, 0, 7, 5, 129, 3, 8, 0, 10, 9, 4, 1, 0, 1, 3, 0, 0, 0, 7, 5, 130, 3, 16, 0, 10, 9, 4, 3, 0, 1, 3, 1, 1, 0, 9, 33, 17, 1, 0, 1, 34, 63, 0, 7, 5, 131, 3, 8, 0, 10]
+@nativ
+konstante USB_TEST_MAUS: [u8; 25] auf [9, 2, 25, 0, 1, 1, 0, 128, 50, 9, 4, 0, 0, 1, 3, 1, 2, 0, 7, 5, 129, 3, 8, 0, 10]
+@nativ
+konstante USB_TEST_ALTERNATE: [u8; 25] auf [9, 2, 25, 0, 1, 1, 0, 128, 50, 9, 4, 0, 1, 1, 3, 1, 1, 0, 7, 5, 129, 3, 8, 0, 10]
+@nativ
+konstante USB_TEST_KAPUTT: [u8; 11] auf [9, 2, 11, 0, 1, 1, 0, 128, 50, 0, 4]
+
+@nativ
+funktion usb_interface_test() -> u64:
+    unsicher:
+        wenn nicht xh_boot_interface(adresse_von(USB_TEST_COMPOSITE), 66):
+            gib_zurück 0
+        wenn xh(30) != 3 oder xh(31) != 0x83 oder xh(32) != 8 oder xh(33) != 10 oder xh(34) != 1:
+            gib_zurück 0
+        wenn xh_boot_interface(adresse_von(USB_TEST_MAUS), 25) oder xh_boot_interface(adresse_von(USB_TEST_ALTERNATE), 25) oder xh_boot_interface(adresse_von(USB_TEST_KAPUTT), 11) oder xh_boot_interface(adresse_von(USB_TEST_COMPOSITE), 65):
+            gib_zurück 0
+        gib_zurück 2023
+
 # Einstieg aus uefi_entry.c (wie netz_e1000.moos); Aufrufe also in einer
 # benannten Funktion, nicht in main.
 funktion moo_efi_haupt():
@@ -106,4 +128,5 @@ funktion moo_efi_haupt():
         hw_kratz_schreibe(165)
         hw_lesebarriere()
         zeile(hw_kratz_lese())
+        zeile(usb_interface_test())
         zeile(999)

@@ -40,11 +40,12 @@ aus "./netz_treiber" importiere nt_pci_init, nt_ports_oeffnen, nt_anzahl, nt_por
 # P7-T15: Logzeile auf allen eigenen Ports (Moo-I226-Treiber) mit Link senden;
 # ohne eigene Ports wie bisher ueber die Firmware-Netzschnittstelle (SNP).
 funktion netz_log(ports, puf, text):
-    setze n auf nt_anzahl(ports)
-    wenn n == 0:
-        kern_netz_sende(text)
-        gib_zurück nichts
-    nt_log(ports, puf, text)
+    unsicher:
+        setze n auf nt_anzahl(ports)
+        wenn n == 0:
+            kern_netz_sende(text)
+            gib_zurück nichts
+        nt_log(ports, puf, text)
 
 funktion sende(c):
     unsicher:
@@ -74,12 +75,13 @@ funktion marker_i226(n):
     sende(10)
 
 funktion irgendein_link(ports):
-    setze i auf 0
-    solange i < nt_anzahl(ports):
-        wenn nt_link(nt_port(ports, i)):
-            gib_zurück wahr
-        setze i auf i + 1
-    gib_zurück falsch
+    unsicher:
+        setze i auf 0
+        solange i < nt_anzahl(ports):
+            wenn nt_link(nt_port(ports, i)):
+                gib_zurück wahr
+            setze i auf i + 1
+        gib_zurück falsch
 
 # 'MOO-UEFI-MOO\n': der in moo kompilierte Code laeuft.
 funktion marker_moo():

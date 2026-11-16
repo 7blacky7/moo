@@ -51,43 +51,27 @@
 #     iPXE src/drivers/net/intel.c:267-350, 396-440, 540-550 (Tag v2.0.0,
 #     Commit 12798ec29a); auf dem N100 mit iPXE belegt (Thought 9ad7cd7a).
 #
-# SPEICHERMODELL: UEFI bildet identisch ab, kern_alloc-Adressen sind DMA-Adressen.
+# SPEICHERMODELL: Dieser UEFI-Adapter liefert kern_alloc-RAM (identisch/DMA).
+# Der gemeinsame native Treiber steht in netz_geraet.moos: 20 zusammenhaengende
+# Seiten je NIC, getrennte physische DMA- und virtuelle MMIO-Adressen.
+# Der Moo-Kern stellt PFA-Seiten und sein eigenes UC-Paging bereit.
 # Geraeteregister und PCI-Konfiguration laufen seit P7-T18 ueber die @nativ-
 # Zugriffsschicht unten (ADR P7-T3 Variante A): volatile 32-Bit-Zugriffe mit
 # exakter Breite, registerfeld_lesen fuer STATUS, port_*32 fuer CF8/CFC und echte
 # Barrieren (schreibbarriere vor jeder Tuerklingel, lesebarriere nach RX-DD).
 # speicher_lesen/-schreiben bleibt nur fuer gewoehnlichen RAM (Zustandsblock,
 # Deskriptoren, Puffer) - das ist der Uebergangsweg, kein Registerzugriff mehr.
-# Nur Polling, keine Interrupts. Der CF8/CFC-Weg ist im QEMU-Gate (q35, ECAM)
-# nicht ausgefuehrt.
+# Nur Polling, keine Interrupts. UEFI nutzt ECAM oder CF8/CFC; der Kern nutzt
+# CF8/CFC (auch im Kern-UDP-Gate mit e1000 ausgefuehrt).
 
 # ---------------- Hardwarezugriff (@nativ, Variante A) ----------------
 # Kopf des Registerblocks (8254x SDM / I210 DS:22633-22634).
-struktur NtRegKopf:
-    ctrl: u32
-    reserviert: u32
-    status: u32
-
-aus "hardware_pci" importiere nt_mmio_lese32, nt_mmio_schreibe32, nt_mmio_glocke32, nt_cfg_lese32, nt_cfg_schreibe32
-
-@nativ
-funktion nt_status_lesen(mmio: u64) -> u32:
-    unsicher:
-        gib_zurück registerfeld_lesen(NtRegKopf, status, mmio)
+aus "netz_geraet" importiere nt_status_lesen, nt_desk_fertig, nt_kopiere, nt_b8, nt_b16, pci_lese32, pci_schreibe32, nt_typ, nt_finde, nt_bar, nt_oeffnen_in, nt_warte_us, nt_port, nt_anzahl, nt_senden, nt_empfangen, nt_mac, nt_reg, nt_reg_setze, nt_reg_glocke, nt_status, nt_link, nt_tempo, nt_ringe_init, nt_tx_aufraeumen, nt_tx_gesendet, nt_tx_verworfen, nt_ring_senden, nt_ring_empfangen, e1000_eeprom, e1000_init, i226_init, nt_udp_rahmen
+aus "hardware_pci" importiere takt
 
 # DD-Bit (Bit 0) im Statusbyte eines Deskriptors (DMA-RAM, vom Geraet
 # geschrieben). Ist es gesetzt, trennt die Lesebarriere es von den folgenden
 # Lesezugriffen auf Laenge und Puffer.
-@nativ
-funktion nt_desk_fertig(status_adresse: u64) -> bool:
-    unsicher:
-        setze p: ptr[u8] auf zeiger(status_adresse)
-        wenn (volatile_lesen(p) & 1) == 0:
-            gib_zurück falsch
-        lesebarriere()
-        gib_zurück wahr
-
-
 #
 # ZUSTAND je nic (192 Byte): 0 Typ, 8 MMIO, 16 bdf, 24 MAC 0-3, 32 MAC 4-5,
 #   40 TX-Ring, 48 TX-Puffer, 56 TX-Ende, 64 RX-Ring, 72 RX-Puffer, 80 RX-naechster,
@@ -110,38 +94,8 @@ funktion nt_dma(groesse):
             setze i auf i + 8
         gib_zurück a
 
-funktion nt_kopiere(ziel, quelle, laenge):
-    unsicher:
-        setze i auf 0
-        solange i < laenge:
-            speicher_schreiben(ziel + i, speicher_lesen(quelle + i, 1), 1)
-            setze i auf i + 1
-
-funktion nt_b8(p, off, wert):
-    unsicher:
-        speicher_schreiben(p + off, wert & 255, 1)
-
-funktion nt_b16(p, off, wert):
-    nt_b8(p, off, wert >> 8)
-    nt_b8(p, off + 1, wert)
-
 # ---------------- PCI ----------------
 # bdf = Bus << 8 | Geraet << 3 | Funktion.
-funktion pci_lese32(pci, bdf, off):
-    unsicher:
-        setze basis auf speicher_lesen(pci, 8)
-        wenn basis != 0:
-            gib_zurück nt_mmio_lese32(basis + (bdf << 12) + off)
-        gib_zurück nt_cfg_lese32(0x80000000 | (bdf << 8) | (off & 0xFC))
-
-funktion pci_schreibe32(pci, bdf, off, wert):
-    unsicher:
-        setze basis auf speicher_lesen(pci, 8)
-        wenn basis != 0:
-            nt_mmio_schreibe32(basis + (bdf << 12) + off, wert)
-        sonst:
-            nt_cfg_schreibe32(0x80000000 | (bdf << 8) | (off & 0xFC), wert)
-
 # ACPI: RSDP -> XSDT (oder RSDT) -> Tabelle mit Signatur "MCFG". 0 = keine.
 funktion nt_acpi_mcfg():
     unsicher:
@@ -179,107 +133,56 @@ funktion nt_pci_init():
         gib_zurück pci
 
 # Treibertyp aus Vendor/Device-ID (id = Device << 16 | Vendor): 1 e1000, 2 I226, 0 unbekannt.
-funktion nt_typ(id):
-    wenn (id & 0xFFFF) != 0x8086:
-        gib_zurück 0
-    setze geraet auf id >> 16
-    # 82540EM (QEMU "e1000"), 82545EM, 82543GC, 82544GC/EI, 82541PI
-    wenn geraet == 0x100E oder geraet == 0x100F oder geraet == 0x1004 oder geraet == 0x1008 oder geraet == 0x1076:
-        gib_zurück 1
-    # I226-LM, I226-V, I226-IT, I226 ohne NVM (igc_hw.h:29-33)
-    wenn geraet == 0x125B oder geraet == 0x125C oder geraet == 0x125D oder geraet == 0x125F:
-        gib_zurück 2
-    gib_zurück 0
-
 # k-tes Geraet (ab 0) vom Typ typ; -1 = keins.
-funktion nt_finde(pci, typ, nummer):
-    unsicher:
-        setze treffer auf 0
-        setze bus auf speicher_lesen(pci + 8, 8)
-        setze letzter auf speicher_lesen(pci + 16, 8)
-        solange bus <= letzter:
-            setze dev auf 0
-            solange dev < 32:
-                setze fn auf 0
-                solange fn < 8:
-                    setze bdf auf (bus << 8) | (dev << 3) | fn
-                    setze id auf pci_lese32(pci, bdf, 0)
-                    wenn nt_typ(id) == typ:
-                        wenn treffer == nummer:
-                            gib_zurück bdf
-                        setze treffer auf treffer + 1
-                    setze fn auf fn + 1
-                    # Nur Mehrfunktionsgeraete (Header-Typ Bit 7) haben Funktionen 1..7.
-                    wenn fn == 1:
-                        wenn (id & 0xFFFF) == 0xFFFF:
-                            setze fn auf 8
-                        sonst:
-                            wenn ((pci_lese32(pci, bdf, 12) >> 16) & 0x80) == 0:
-                                setze fn auf 8
-                setze dev auf dev + 1
-            setze bus auf bus + 1
-        gib_zurück -1
-
 # Kompatibel zu P7-T14: Suche nach exakter Vendor/Device-ID.
 funktion nt_suche(pci, vendor, device, nummer):
-    setze typ auf nt_typ((device << 16) | vendor)
-    wenn typ == 0:
+    unsicher:
+        setze typ auf nt_typ((device << 16) | vendor)
+        wenn typ == 0:
+            gib_zurück -1
+        setze k auf 0
+        setze bdf auf nt_finde(pci, typ, 0)
+        solange bdf >= 0:
+            wenn (pci_lese32(pci, bdf, 0) >> 16) == device:
+                wenn k == nummer:
+                    gib_zurück bdf
+                setze k auf k + 1
+            setze bdf auf nt_finde_nach(pci, typ, bdf)
         gib_zurück -1
-    setze k auf 0
-    setze bdf auf nt_finde(pci, typ, 0)
-    solange bdf >= 0:
-        wenn (pci_lese32(pci, bdf, 0) >> 16) == device:
-            wenn k == nummer:
-                gib_zurück bdf
-            setze k auf k + 1
-        setze bdf auf nt_finde_nach(pci, typ, bdf)
-    gib_zurück -1
-
 # Naechstes Geraet vom Typ nach bdf (fuer nt_suche).
 funktion nt_finde_nach(pci, typ, bdf):
-    setze i auf 0
-    setze b auf nt_finde(pci, typ, 0)
-    solange b >= 0 und b != bdf:
-        setze i auf i + 1
-        setze b auf nt_finde(pci, typ, i)
-    wenn b < 0:
-        gib_zurück -1
-    gib_zurück nt_finde(pci, typ, i + 1)
-
+    unsicher:
+        setze i auf 0
+        setze b auf nt_finde(pci, typ, 0)
+        solange b >= 0 und b != bdf:
+            setze i auf i + 1
+            setze b auf nt_finde(pci, typ, i)
+        wenn b < 0:
+            gib_zurück -1
+        gib_zurück nt_finde(pci, typ, i + 1)
 # ---------------- Rahmen: Oeffnen, Dispatch ----------------
+# UEFI-Adapter: ein zusammenhaengender Block; der Kern gibt eigene PFA-Seiten.
 funktion nt_oeffnen(pci, bdf):
     unsicher:
         wenn bdf < 0:
             gib_zurück 0
-        setze typ auf nt_typ(pci_lese32(pci, bdf, 0))
-        wenn typ == 0:
-            gib_zurück 0
-        # Command-Register: Memory Space (Bit 1) + Bus Master (Bit 2) an.
-        setze cmd auf pci_lese32(pci, bdf, 4)
-        pci_schreibe32(pci, bdf, 4, (cmd & 0xFFFF) | 6)
-        setze bar auf pci_lese32(pci, bdf, 16)
-        wenn (bar & 1) != 0:
-            gib_zurück 0
-        setze mmio auf bar & 0xFFFFFFF0
-        wenn (bar & 6) == 4:
-            setze mmio auf mmio + pci_lese32(pci, bdf, 20) * 4294967296
+        setze mmio auf nt_bar(pci, bdf)
         wenn mmio == 0:
             gib_zurück 0
-        setze nic auf nt_dma(192)
+        setze nic auf nt_dma(20 * 4096)
         wenn nic == 0:
             gib_zurück 0
-        speicher_schreiben(nic, typ, 8)
-        speicher_schreiben(nic + 8, mmio, 8)
-        speicher_schreiben(nic + 16, bdf, 8)
-        setze ok auf falsch
-        wenn typ == 1:
-            setze ok auf e1000_init(nic)
-        wenn typ == 2:
-            setze ok auf i226_init(nic)
-        wenn ok == falsch:
+        setze anfang auf takt()
+        kern_warte_us(1000)
+        setze tsc_us auf (takt() - anfang) / 1000
+        wenn nicht nt_oeffnen_in(pci, bdf, nic, mmio, tsc_us):
             gib_zurück 0
         gib_zurück nic
 
+# Gemeinsame physische BAR-Ermittlung, noch ohne Registerzugriff.
+# nic: 20 genullte zusammenhaengende DMA-Seiten (identisch abgebildetes RAM).
+# mmio darf eine getrennte virtuelle UC-Abbildung der physischen BAR sein.
+# Kein Firmwareaufruf: Zeitbasis ist der vom Aufrufer kalibrierte TSC.
 # Alle Geraete eines Typs oeffnen (max. 8). Auch Ports, deren Init scheitert,
 # zaehlen nicht; @0 Anzahl offener Ports, @8+8i nic.
 funktion nt_ports_oeffnen(pci, typ):
@@ -298,422 +201,107 @@ funktion nt_ports_oeffnen(pci, typ):
         speicher_schreiben(ports, n, 8)
         gib_zurück ports
 
-funktion nt_port(ports, i):
-    unsicher:
-        gib_zurück speicher_lesen(ports + 8 + i * 8, 8)
-
-funktion nt_anzahl(ports):
-    unsicher:
-        gib_zurück speicher_lesen(ports, 8)
-
-funktion nt_senden(nic, quelle, laenge):
-    wenn nic == 0:
-        gib_zurück falsch
-    gib_zurück nt_ring_senden(nic, quelle, laenge)
-
-funktion nt_empfangen(nic, ziel):
-    wenn nic == 0:
-        gib_zurück 0
-    gib_zurück nt_ring_empfangen(nic, ziel)
-
-funktion nt_mac(nic, i):
-    unsicher:
-        wenn i < 4:
-            gib_zurück (speicher_lesen(nic + 24, 8) >> (i * 8)) & 255
-        gib_zurück (speicher_lesen(nic + 32, 8) >> ((i - 4) * 8)) & 255
-
 # Registerzugriff ueber die @nativ-Schicht; nic + 8 ist RAM (Zustandsblock).
-funktion nt_reg(nic, reg):
-    unsicher:
-        gib_zurück nt_mmio_lese32(speicher_lesen(nic + 8, 8) + reg)
-
-funktion nt_reg_setze(nic, reg, wert):
-    unsicher:
-        nt_mmio_schreibe32(speicher_lesen(nic + 8, 8) + reg, wert)
-
 # Ende-Register (Tuerklingel) mit Schreibbarriere davor.
-funktion nt_reg_glocke(nic, reg, wert):
-    unsicher:
-        nt_mmio_glocke32(speicher_lesen(nic + 8, 8) + reg, wert)
-
-funktion nt_status(nic):
-    unsicher:
-        gib_zurück nt_status_lesen(speicher_lesen(nic + 8, 8))
-
 # STATUS (0x0008) Bit 1 = LU, bei e1000 (8254x SDM) und I210/I226 (DS:23550) gleich.
-funktion nt_link(nic):
-    wenn nic == 0:
-        gib_zurück falsch
-    gib_zurück (nt_status(nic) & 2) != 0
-
 # Geschwindigkeit in Mbit/s, 0 = kein Link. STATUS Bits 7:6: 00 10, 01 100,
 # 1x 1000; beim I226 zusaetzlich Bit 22 = 2500 (igc_defines.h:233).
-funktion nt_tempo(nic):
-    unsicher:
-        wenn nic == 0:
-            gib_zurück 0
-        setze s auf nt_status(nic)
-        wenn (s & 2) == 0:
-            gib_zurück 0
-        wenn speicher_lesen(nic, 8) == 2 und (s & 0x400000) != 0:
-            gib_zurück 2500
-        setze bits auf (s >> 6) & 3
-        wenn bits == 0:
-            gib_zurück 10
-        wenn bits == 1:
-            gib_zurück 100
-        gib_zurück 1000
-
 # ---------------- Gemeinsame Ringlogik (Legacy-Deskriptoren) ----------------
 # Registerblock je Queue ab basis: +0 BAL, +4 BAH, +8 LEN, +0x10 Kopf, +0x18 Ende,
 # +0x28 Queue-Steuerung (nur I226: ENABLE Bit 25, setzt Kopf/Ende zurueck).
-funktion nt_ringe_init(nic, rxbasis, txbasis, mit_enable):
-    unsicher:
-        speicher_schreiben(nic + 88, rxbasis, 8)
-        speicher_schreiben(nic + 96, txbasis, 8)
-        setze ring auf nt_dma(16 * 16)
-        setze puffer auf nt_dma(16 * 2048)
-        setze tring auf nt_dma(16 * 16)
-        setze tpuffer auf nt_dma(16 * 2048)
-        wenn ring == 0 oder puffer == 0 oder tring == 0 oder tpuffer == 0:
-            gib_zurück falsch
-        speicher_schreiben(nic + 112, 0, 8)
-        speicher_schreiben(nic + 120, 0, 8)
-        speicher_schreiben(nic + 128, 0, 8)
-        setze i auf 0
-        solange i < 16:
-            speicher_schreiben(ring + i * 16, puffer + i * 2048, 8)
-            setze i auf i + 1
-        speicher_schreiben(nic + 40, tring, 8)
-        speicher_schreiben(nic + 48, tpuffer, 8)
-        speicher_schreiben(nic + 56, 0, 8)
-        speicher_schreiben(nic + 64, ring, 8)
-        speicher_schreiben(nic + 72, puffer, 8)
-        speicher_schreiben(nic + 80, 0, 8)
-        nt_reg_setze(nic, rxbasis, ring & 0xFFFFFFFF)
-        nt_reg_setze(nic, rxbasis + 4, (ring >> 32) & 0xFFFFFFFF)
-        nt_reg_setze(nic, rxbasis + 8, 16 * 16)
-        nt_reg_setze(nic, txbasis, tring & 0xFFFFFFFF)
-        nt_reg_setze(nic, txbasis + 4, (tring >> 32) & 0xFFFFFFFF)
-        nt_reg_setze(nic, txbasis + 8, 16 * 16)
-        wenn mit_enable:
-            nt_reg_setze(nic, rxbasis + 0x28, nt_reg(nic, rxbasis + 0x28) | 0x2000000)
-            nt_reg_setze(nic, txbasis + 0x28, nt_reg(nic, txbasis + 0x28) | 0x2000000)
-            setze n auf 0
-            solange ((nt_reg(nic, rxbasis + 0x28) & nt_reg(nic, txbasis + 0x28)) & 0x2000000) == 0 und n < 100:
-                kern_warte_us(1000)
-                setze n auf n + 1
-            wenn n >= 100:
-                gib_zurück falsch
-        sonst:
-            nt_reg_setze(nic, rxbasis + 0x10, 0)
-            nt_reg_setze(nic, txbasis + 0x10, 0)
-        nt_reg_setze(nic, txbasis + 0x18, 0)
-        # 15 von 16 Empfangsdeskriptoren an die Hardware geben.
-        nt_reg_setze(nic, rxbasis + 0x18, 15)
-        gib_zurück wahr
-
 # TX-Rueckgewinnung: Deskriptoren ab dem aeltesten offenen (nic+112) gelten als
 # erledigt, wenn die Hardware STA.DD gesetzt hat ODER das Kopfregister TDH schon
 # dahinter steht (alles vor dem Kopf ist verarbeitet). Beides, weil sich das
 # Zurueckschreiben von DD je nach Schwellwerten verzoegern kann.
-funktion nt_tx_aufraeumen(nic):
-    unsicher:
-        setze ende auf speicher_lesen(nic + 56, 8)
-        setze alt auf speicher_lesen(nic + 112, 8)
-        setze kopf auf nt_reg(nic, speicher_lesen(nic + 96, 8) + 0x10) & 15
-        setze ring auf speicher_lesen(nic + 40, 8)
-        solange alt != ende und (alt != kopf oder (speicher_lesen(ring + alt * 16 + 12, 1) & 1) != 0):
-            setze alt auf (alt + 1) % 16
-        speicher_schreiben(nic + 112, alt, 8)
-
-funktion nt_tx_gesendet(nic):
-    unsicher:
-        gib_zurück speicher_lesen(nic + 120, 8)
-
-funktion nt_tx_verworfen(nic):
-    unsicher:
-        gib_zurück speicher_lesen(nic + 128, 8)
-
-funktion nt_ring_senden(nic, quelle, laenge):
-    unsicher:
-        wenn laenge <= 0 oder laenge > 1514:
-            gib_zurück falsch
-        # Platz im Ring? Ein Rueckgewinnungsversuch, sonst sofort verwerfen und
-        # zaehlen - nie warten (Befund N100 run5: Wartezeit summierte sich je Zeile).
-        nt_tx_aufraeumen(nic)
-        wenn (speicher_lesen(nic + 56, 8) + 1) % 16 == speicher_lesen(nic + 112, 8):
-            speicher_schreiben(nic + 128, speicher_lesen(nic + 128, 8) + 1, 8)
-            gib_zurück falsch
-        setze ende auf speicher_lesen(nic + 56, 8)
-        setze desk auf speicher_lesen(nic + 40, 8) + ende * 16
-        setze puf auf speicher_lesen(nic + 48, 8) + ende * 2048
-        nt_kopiere(puf, quelle, laenge)
-        speicher_schreiben(desk, puf, 8)
-        # Laenge @8 (16 Bit), CSO @10 = 0, CMD @11 = EOP (0) | IFCS (1) | RS (3).
-        speicher_schreiben(desk + 8, laenge | (0x0B << 24), 4)
-        speicher_schreiben(desk + 12, 0, 4)
-        setze naechst auf (ende + 1) % 16
-        speicher_schreiben(nic + 56, naechst, 8)
-        nt_reg_glocke(nic, speicher_lesen(nic + 96, 8) + 0x18, naechst)
-        speicher_schreiben(nic + 120, speicher_lesen(nic + 120, 8) + 1, 8)
-        # Kein Warten auf STA.DD: zurueckgewonnen wird beim naechsten Senden.
-        gib_zurück wahr
-
-funktion nt_ring_empfangen(nic, ziel):
-    unsicher:
-        setze i auf speicher_lesen(nic + 80, 8)
-        setze desk auf speicher_lesen(nic + 64, 8) + i * 16
-        # STATUS @12: DD (Bit 0); Laenge @8 (16 Bit, ohne FCS wegen SECRC).
-        wenn nt_desk_fertig(desk + 12) == falsch:
-            gib_zurück 0
-        setze laenge auf speicher_lesen(desk + 8, 2)
-        nt_kopiere(ziel, speicher_lesen(nic + 72, 8) + i * 2048, laenge)
-        speicher_schreiben(desk + 12, 0, 4)
-        # Deskriptor an die Hardware zurueckgeben (Ende-Register der RX-Queue).
-        nt_reg_glocke(nic, speicher_lesen(nic + 88, 8) + 0x18, i)
-        speicher_schreiben(nic + 80, (i + 1) % 16, 8)
-        gib_zurück laenge
-
 # ---------------- e1000 (Intel 8254x) ----------------
 # EEPROM-Wort ueber EERD (0x0014): Start Bit 0, Adresse Bits 15:8, Fertig Bit 4, Daten 31:16.
-funktion e1000_eeprom(nic, adresse):
-    nt_reg_setze(nic, 0x0014, (adresse << 8) | 1)
-    setze n auf 0
-    solange n < 100000:
-        setze v auf nt_reg(nic, 0x0014)
-        wenn (v & 0x10) != 0:
-            gib_zurück (v >> 16) & 0xFFFF
-        setze n auf n + 1
-    gib_zurück -1
-
-funktion e1000_init(nic):
-    unsicher:
-        # 1) Software-Reset: CTRL.RST (Bit 26), loescht sich selbst.
-        nt_reg_setze(nic, 0x0000, nt_reg(nic, 0x0000) | 0x4000000)
-        setze n auf 0
-        solange (nt_reg(nic, 0x0000) & 0x4000000) != 0 und n < 100000:
-            setze n auf n + 1
-        wenn n >= 100000:
-            gib_zurück falsch
-        # 2) Interrupts maskieren (IMC 0x00D8), anstehende quittieren (ICR 0x00C0 lesen).
-        nt_reg_setze(nic, 0x00D8, 0xFFFFFFFF)
-        nt_reg(nic, 0x00C0)
-        # 3) Link: SLU (Bit 6) + ASDE (Bit 5) an; LRST (3), ILOS (7), VME (30), PHY_RST (31) aus.
-        nt_reg_setze(nic, 0x0000, (nt_reg(nic, 0x0000) | 0x60) & 0x3FFFFF77)
-        # 4) Multicast-Tabelle (MTA 0x5200, 128 Eintraege) leeren.
-        setze i auf 0
-        solange i < 128:
-            nt_reg_setze(nic, 0x5200 + i * 4, 0)
-            setze i auf i + 1
-        # 5) MAC: RAL0/RAH0 (0x5400/0x5404, AV = Bit 31), sonst aus dem EEPROM (Worte 0..2).
-        setze ral auf nt_reg(nic, 0x5400)
-        setze rah auf nt_reg(nic, 0x5404)
-        wenn (rah & 0x80000000) == 0:
-            setze w0 auf e1000_eeprom(nic, 0)
-            setze w1 auf e1000_eeprom(nic, 1)
-            setze w2 auf e1000_eeprom(nic, 2)
-            wenn w0 < 0 oder w1 < 0 oder w2 < 0:
-                gib_zurück falsch
-            setze ral auf w0 | (w1 << 16)
-            setze rah auf w2
-            nt_reg_setze(nic, 0x5400, ral)
-            nt_reg_setze(nic, 0x5404, (rah & 0xFFFF) | 0x80000000)
-        speicher_schreiben(nic + 24, ral, 8)
-        speicher_schreiben(nic + 32, rah & 0xFFFF, 8)
-        speicher_schreiben(nic + 104, 1, 8)
-        # 6) Ringe (Legacy-Registerbasis RX 0x2800, TX 0x3800, ohne Queue-Enable).
-        wenn nt_ringe_init(nic, 0x2800, 0x3800, falsch) == falsch:
-            gib_zurück falsch
-        # RCTL (0x0100): EN (1) | BAM (15) | SECRC (26); BSIZE 00 = 2048 Byte.
-        nt_reg_setze(nic, 0x0100, 0x2 | 0x8000 | 0x4000000)
-        # TIPG (0x0410) laut SDM fuer Kupfer: IPGT 10, IPGR1 8, IPGR2 6.
-        nt_reg_setze(nic, 0x0410, 0x0060200A)
-        # TCTL (0x0400): EN (1) | PSP (3) | CT 0x10 (11:4) | COLD 0x40 (21:12).
-        nt_reg_setze(nic, 0x0400, 0x2 | 0x8 | 0x100 | 0x40000)
-        gib_zurück wahr
-
 # ---------------- I226 (Grundlage I210-DS 333016, Quellen siehe Kopf) ----------------
-funktion i226_init(nic):
-    unsicher:
-        # 0) MAC sichern, bevor der Reset die Empfangsadressen anfasst (RAL0/RAH0, AV Bit 31).
-        setze ral auf nt_reg(nic, 0x5400)
-        setze rah auf nt_reg(nic, 0x5404)
-        # 1) Paketpuffer auf die Standardwerte setzen, dann CTRL.RST (Bit 26), 20 ms warten.
-        nt_reg_setze(nic, 0x2404, 0xA2)
-        nt_reg_setze(nic, 0x3404, 0x04000014)
-        setze ctrl auf nt_reg(nic, 0x0000)
-        nt_reg_setze(nic, 0x0000, ctrl | 0x4000000)
-        kern_warte_us(20000)
-        setze n auf 0
-        solange (nt_reg(nic, 0x0000) & 0x4000000) != 0 und n < 100:
-            kern_warte_us(1000)
-            setze n auf n + 1
-        wenn n >= 100:
-            gib_zurück falsch
-        # 2) Interrupts maskieren (IMC 0x150C), anstehende quittieren (ICR 0x1500 lesen).
-        nt_reg_setze(nic, 0x150C, 0xFFFFFFFF)
-        nt_reg(nic, 0x1500)
-        # 3) Link: SLU (6) + ASDE (5) an; LRST (3), FRCSPD (11), FRCDPLX (12) aus.
-        setze ctrl auf (ctrl | 0x60) & 0xFFFFE7F7
-        nt_reg_setze(nic, 0x0000, ctrl)
-        kern_warte_us(20000)
-        # 4) Ohne Link zusaetzlich PHY-Reset (CTRL.RST | CTRL.PHY_RST Bit 31), dann CTRL zurueck.
-        wenn (nt_reg(nic, 0x0008) & 2) == 0:
-            nt_reg_setze(nic, 0x0000, ctrl | 0x4000000 | 0x80000000)
-            kern_warte_us(20000)
-            nt_reg_setze(nic, 0x0000, ctrl)
-            kern_warte_us(20000)
-            nt_reg_setze(nic, 0x150C, 0xFFFFFFFF)
-            nt_reg(nic, 0x1500)
-        # 5) MAC: gesicherte Adresse, sonst die nach dem Reset aus dem NVM geladene.
-        wenn (rah & 0x80000000) == 0:
-            setze ral auf nt_reg(nic, 0x5400)
-            setze rah auf nt_reg(nic, 0x5404)
-        wenn (rah & 0x80000000) == 0:
-            speicher_schreiben(nic + 104, 0, 8)
-        sonst:
-            nt_reg_setze(nic, 0x5400, ral)
-            nt_reg_setze(nic, 0x5404, (rah & 0xFFFF) | 0x80000000)
-            speicher_schreiben(nic + 104, 1, 8)
-        speicher_schreiben(nic + 24, ral, 8)
-        speicher_schreiben(nic + 32, rah & 0xFFFF, 8)
-        # 6) Multicast-Tabelle (0x5200, 128 Eintraege) leeren.
-        setze i auf 0
-        solange i < 128:
-            nt_reg_setze(nic, 0x5200 + i * 4, 0)
-            setze i auf i + 1
-        # 7) Ringe: Queue 0 RX 0xC000, TX 0xE000, mit Queue-Enable (Bit 25).
-        wenn nt_ringe_init(nic, 0xC000, 0xE000, wahr) == falsch:
-            gib_zurück falsch
-        # 8) TCTL: EN | PSP | CT 0x0F | COLD 0x40 (alte CT/COLD-Felder loeschen).
-        nt_reg_setze(nic, 0x0400, (nt_reg(nic, 0x0400) & 0xFFC0000F) | 0x2 | 0x8 | 0xF0 | 0x40000)
-        # 9) RCTL: EN | BAM | SECRC, BSIZE 2048 (Bits 17:16 und BSEX 25 = 0).
-        nt_reg_setze(nic, 0x0100, (nt_reg(nic, 0x0100) & 0xFDFCFFFF) | 0x2 | 0x8000 | 0x4000000)
-        gib_zurück wahr
-
 # Logzeile als UDP-Broadcast nur auf Ports mit Link senden; Ports ohne Link
 # werden nicht befuellt. Rueckgabe: Anzahl Ports, auf denen gesendet wurde.
 funktion nt_log(ports, puffer, text):
-    setze n auf 0
-    setze i auf 0
-    solange i < nt_anzahl(ports):
-        setze nic auf nt_port(ports, i)
-        wenn nt_link(nic):
-            wenn nt_udp_log(nic, puffer, text):
-                setze n auf n + 1
-        setze i auf i + 1
-    gib_zurück n
-
+    unsicher:
+        setze n auf 0
+        setze i auf 0
+        solange i < nt_anzahl(ports):
+            setze nic auf nt_port(ports, i)
+            wenn nt_link(nic):
+                wenn nt_udp_log(nic, puffer, text):
+                    setze n auf n + 1
+            setze i auf i + 1
+        gib_zurück n
 # Multicast-Rahmen annehmen (RCTL.MPE, Bit 4; 8254x SDM und I210-DS gleich),
 # z. B. fuer den Empfangstest mit "ping -6 ff02::1" vom Linux-PC (P7-T10).
 funktion nt_multicast_an(nic):
-    wenn nic != 0:
-        nt_reg_setze(nic, 0x0100, nt_reg(nic, 0x0100) | 0x10)
-
+    unsicher:
+        wenn nic != 0:
+            nt_reg_setze(nic, 0x0100, nt_reg(nic, 0x0100) | 0x10)
 # ---------------- Rahmenbau: UDP-Log und Statustext ----------------
 # Ethernet-Broadcast + IPv4 0.0.0.0 -> 255.255.255.255 + UDP 7777 -> 7777.
 # Nutzlast liegt bereits bei puffer + 42 (laenge Byte). Rueckgabe: Rahmenlaenge.
-funktion nt_udp_rahmen(p, nic, laenge):
-    unsicher:
-        setze i auf 0
-        solange i < 6:
-            nt_b8(p, i, 255)
-            nt_b8(p, 6 + i, nt_mac(nic, i))
-            nt_b8(p, 26 + i, 0)
-            setze i auf i + 1
-        nt_b16(p, 12, 0x0800)
-        nt_b8(p, 14, 0x45)
-        nt_b8(p, 15, 0)
-        nt_b16(p, 16, 20 + 8 + laenge)
-        nt_b16(p, 18, 0)
-        nt_b16(p, 20, 0)
-        nt_b8(p, 22, 64)
-        nt_b8(p, 23, 17)
-        nt_b16(p, 24, 0)
-        setze i auf 0
-        solange i < 4:
-            nt_b8(p, 26 + i, 0)
-            nt_b8(p, 30 + i, 255)
-            setze i auf i + 1
-        # IPv4-Kopfpruefsumme: Einerkomplement der 16-Bit-Summe ueber 20 Byte.
-        setze summe auf 0
-        setze i auf 0
-        solange i < 20:
-            setze summe auf summe + speicher_lesen(p + 14 + i, 1) * 256 + speicher_lesen(p + 15 + i, 1)
-            setze i auf i + 2
-        solange summe > 0xFFFF:
-            setze summe auf (summe & 0xFFFF) + (summe >> 16)
-        nt_b16(p, 24, 0xFFFF - summe)
-        nt_b16(p, 34, 7777)
-        nt_b16(p, 36, 7777)
-        nt_b16(p, 38, 8 + laenge)
-        nt_b16(p, 40, 0)
-        gib_zurück 42 + laenge
-
 funktion nt_udp_log(nic, puffer, text):
-    setze laenge auf kern_text_in_puffer(text, puffer + 42, 1472)
-    wenn laenge <= 0:
-        gib_zurück falsch
-    gib_zurück nt_senden(nic, puffer, nt_udp_rahmen(puffer, nic, laenge))
-
+    unsicher:
+        setze laenge auf kern_text_in_puffer(text, puffer + 42, 1472)
+        wenn laenge <= 0:
+            gib_zurück falsch
+        gib_zurück nt_senden(nic, puffer, nt_udp_rahmen(puffer, nic, laenge))
 # Dezimalzahl ab off schreiben, neue Position zurueck.
 funktion nt_dez(p, off, wert):
-    setze stellen auf 1
-    setze t auf 10
-    solange wert >= t:
-        setze stellen auf stellen + 1
-        setze t auf t * 10
-    setze i auf stellen - 1
-    setze rest auf wert
-    solange i >= 0:
-        nt_b8(p, off + i, 48 + (rest % 10))
-        setze rest auf (rest - (rest % 10)) / 10
-        setze i auf i - 1
-    gib_zurück off + stellen
-
+    unsicher:
+        setze stellen auf 1
+        setze t auf 10
+        solange wert >= t:
+            setze stellen auf stellen + 1
+            setze t auf t * 10
+        setze i auf stellen - 1
+        setze rest auf wert
+        solange i >= 0:
+            nt_b8(p, off + i, 48 + (rest % 10))
+            setze rest auf (rest - (rest % 10)) / 10
+            setze i auf i - 1
+        gib_zurück off + stellen
 # "I226 FEHLT" ohne Ports, sonst "I226 0:- 1:2500 2:-" (Port:Tempo bzw. - ohne Link).
 funktion nt_status_text(ports, puffer):
-    nt_b8(puffer, 0, 73)
-    nt_b8(puffer, 1, 50)
-    nt_b8(puffer, 2, 50)
-    nt_b8(puffer, 3, 54)
-    setze o auf 4
-    setze n auf nt_anzahl(ports)
-    wenn n == 0:
-        # " FEHLT"
-        nt_b8(puffer, 4, 32)
-        nt_b8(puffer, 5, 70)
-        nt_b8(puffer, 6, 69)
-        nt_b8(puffer, 7, 72)
-        nt_b8(puffer, 8, 76)
-        nt_b8(puffer, 9, 84)
-        gib_zurück kern_text_aus_puffer(puffer, 10)
-    setze i auf 0
-    solange i < n:
+    unsicher:
+        nt_b8(puffer, 0, 73)
+        nt_b8(puffer, 1, 50)
+        nt_b8(puffer, 2, 50)
+        nt_b8(puffer, 3, 54)
+        setze o auf 4
+        setze n auf nt_anzahl(ports)
+        wenn n == 0:
+            # " FEHLT"
+            nt_b8(puffer, 4, 32)
+            nt_b8(puffer, 5, 70)
+            nt_b8(puffer, 6, 69)
+            nt_b8(puffer, 7, 72)
+            nt_b8(puffer, 8, 76)
+            nt_b8(puffer, 9, 84)
+            gib_zurück kern_text_aus_puffer(puffer, 10)
+        setze i auf 0
+        solange i < n:
+            nt_b8(puffer, o, 32)
+            setze o auf nt_dez(puffer, o + 1, i)
+            nt_b8(puffer, o, 58)
+            setze tempo auf nt_tempo(nt_port(ports, i))
+            wenn tempo == 0:
+                nt_b8(puffer, o + 1, 45)
+                setze o auf o + 2
+            sonst:
+                setze o auf nt_dez(puffer, o + 1, tempo)
+            setze i auf i + 1
+        # Summe gesendet/verworfen ueber alle Ports (Diagnose).
+        setze tx auf 0
+        setze verw auf 0
+        setze i auf 0
+        solange i < n:
+            setze tx auf tx + nt_tx_gesendet(nt_port(ports, i))
+            setze verw auf verw + nt_tx_verworfen(nt_port(ports, i))
+            setze i auf i + 1
         nt_b8(puffer, o, 32)
-        setze o auf nt_dez(puffer, o + 1, i)
-        nt_b8(puffer, o, 58)
-        setze tempo auf nt_tempo(nt_port(ports, i))
-        wenn tempo == 0:
-            nt_b8(puffer, o + 1, 45)
-            setze o auf o + 2
-        sonst:
-            setze o auf nt_dez(puffer, o + 1, tempo)
-        setze i auf i + 1
-    # Summe gesendet/verworfen ueber alle Ports (Diagnose).
-    setze tx auf 0
-    setze verw auf 0
-    setze i auf 0
-    solange i < n:
-        setze tx auf tx + nt_tx_gesendet(nt_port(ports, i))
-        setze verw auf verw + nt_tx_verworfen(nt_port(ports, i))
-        setze i auf i + 1
-    nt_b8(puffer, o, 32)
-    nt_b8(puffer, o + 1, 84)
-    nt_b8(puffer, o + 2, 88)
-    nt_b8(puffer, o + 3, 32)
-    setze o auf nt_dez(puffer, o + 4, tx)
-    nt_b8(puffer, o, 47)
-    setze o auf nt_dez(puffer, o + 1, verw)
-    gib_zurück kern_text_aus_puffer(puffer, o)
+        nt_b8(puffer, o + 1, 84)
+        nt_b8(puffer, o + 2, 88)
+        nt_b8(puffer, o + 3, 32)
+        setze o auf nt_dez(puffer, o + 4, tx)
+        nt_b8(puffer, o, 47)
+        setze o auf nt_dez(puffer, o + 1, verw)
+        gib_zurück kern_text_aus_puffer(puffer, o)

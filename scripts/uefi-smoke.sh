@@ -68,6 +68,8 @@ RT_SOURCES=(moo_bare.c moo_bare_alloc.c moo_freestanding_mem.c moo_surface_core.
 CFLAGS=(--target=x86_64-w64-windows-gnu -std=c11 -O2 -ffreestanding -fno-stack-protector
         -mno-stack-arg-probe -ffunction-sections -fdata-sections -DMOO_BARE)
 WAIT_S="${MOO_UEFI_WAIT:-45}"
+QEMU_ACCEL=()
+[ "${MOO_UEFI_KVM:-0}" != 1 ] || QEMU_ACCEL+=(-enable-kvm -cpu host)
 
 fail() { echo "      FAIL: $*"; echo "# ERGEBNIS: ROT"; exit 1; }
 phase() { echo "############################################################"; echo "# PHASE $1: $2"; }
@@ -91,6 +93,46 @@ else
   OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo_uefi_smoke.XXXXXX")"
   trap 'rm -rf "$OUT"' EXIT
 fi
+
+# UDP-Nutzlasten gegen jede vollstaendige COM1-Kernzeile pruefen (auch vor NIC-Init).
+kern_netz_pruefen() {
+  uv run --no-project python - "$1" "$2" <<'PY'
+import collections, pathlib, struct, sys
+raw = pathlib.Path(sys.argv[1]).read_bytes()
+assert raw[:4] in (b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4")
+endian = "<" if raw[0] == 0xd4 else ">"
+assert struct.unpack_from(endian + "I", raw, 20)[0] == 1
+packets, pos = [], 24
+while pos + 16 <= len(raw):
+    size = struct.unpack_from(endian + "I", raw, pos + 8)[0]
+    frame = raw[pos + 16:pos + 16 + size]
+    pos += 16 + size
+    if len(frame) < 42 or frame[12:14] != b"\x08\x00" or frame[23] != 17:
+        continue
+    ip = frame[14:]
+    ihl = (ip[0] & 15) * 4
+    if len(ip) < ihl + 8:
+        continue
+    udp = ip[ihl:]
+    if struct.unpack_from("!HH", udp) != (7777, 7777):
+        continue
+    assert frame[:6] == b"\xff" * 6
+    assert ip[12:20] == b"\x00" * 4 + b"\xff" * 4
+    assert sum(struct.unpack("!" + "H" * (ihl // 2), ip[:ihl])) % 65535 == 0
+    length = struct.unpack_from("!H", udp, 4)[0]
+    assert 8 <= length <= len(udp)
+    packets.append(udp[8:length].decode("ascii"))
+serial = pathlib.Path(sys.argv[2]).read_bytes().replace(b"\r", b"").decode("ascii", "replace")
+assert "MOO-KERNEL START\n" in serial
+lines = [line for line in serial[serial.index("MOO-KERNEL START\n"):].splitlines() if line]
+missing = collections.Counter(lines) - collections.Counter(packets)
+assert not missing, "Kernzeilen fehlen im UDP: " + repr(missing)
+assert "MOO-KERNEL OK" in packets
+assert serial.index("MOO-KERNEL NETZ PORTS ") < serial.index("MOO-KERNEL TABELLEN FREI ")
+assert "MOO-KERNEL NETZ DMA-STOP FEHLER" not in serial
+print("      OK: %d COM1-Kernzeilen im UDP-pcap (%d Datagramme), Port 7777/IPv4-Pruefsumme" % (len(lines), len(packets)))
+PY
+}
 
 if [ "$PRUEFUNG" = "kern" ]; then
   # P7-T5: UEFI-Loader in Moo (beispiele/uefi/moo_lader.moos) laedt den Moo-Kern
@@ -148,13 +190,25 @@ if [ "$PRUEFUNG" = "kern" ]; then
   mkfifo "$OUT/monitor.in" || fail "FIFO fuer QEMU-Monitor nicht anlegbar"
   exec 3<>"$OUT/monitor.in"
   KERN_QEMU=()
-  [ "${MOO_UEFI_KVM:-0}" != 1 ] || KERN_QEMU+=(-enable-kvm -cpu host)
+  [ "${MOO_UEFI_DIAG:-0}" != 1 ] || KERN_QEMU+=(-d int,guest_errors,cpu_reset -D "$OUT/cpu.log")
+  NETZ="${MOO_UEFI_NETZ:-1}"
+  if [ "$NETZ" = 1 ]; then
+    KERN_QEMU+=(-netdev user,id=n0 -device e1000,netdev=n0,romfile=
+      -object filter-dump,id=klog,netdev=n0,file="$OUT/net.pcap")
+  else
+    KERN_QEMU+=(-net none)
+  fi
   USB="${MOO_UEFI_USB:-1}"
-  [ "$USB" != 1 ] || KERN_QEMU+=(-device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0)
-  timeout --foreground $((WAIT_S + 60))s qemu-system-x86_64 "${KERN_QEMU[@]}" \
+  if [ "$USB" = 1 ]; then
+    KERN_QEMU+=(-device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0)
+  elif [ "$USB" = hub ]; then
+    KERN_QEMU+=(-device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1
+      -device usb-kbd,bus=xhci.0,port=1.1)
+  fi
+  timeout --foreground $((WAIT_S + 60))s qemu-system-x86_64 "${QEMU_ACCEL[@]}" "${KERN_QEMU[@]}" \
       -drive if=pflash,format=raw,unit=0,readonly=on,file="$KOVMF_CODE" \
       -drive if=pflash,format=raw,unit=1,file="$OUT/vars.fd" \
-      -drive format=raw,file="$OUT/uefi.img" -net none \
+      -drive format=raw,file="$OUT/uefi.img" \
       -m 256M -vga std -display none -no-reboot -monitor stdio \
       -serial file:"$OUT/serial.log" -debugcon file:"$OUT/debug.log" -global isa-debugcon.iobase=0xe9 \
       <"$OUT/monitor.in" >"$OUT/monitor.log" 2>&1 &
@@ -181,7 +235,8 @@ if [ "$PRUEFUNG" = "kern" ]; then
     sleep 0.2
     for ((j = 0; j < 140; j++)); do
       printf 'sendkey c 60\n' >&3
-      sleep 0.12
+      # Genug Abstand fuer Release-Report und sichtbares Present unter VM-Last.
+    sleep 0.25
     done
   fi
   sleep 1
@@ -221,9 +276,23 @@ if [ "$PRUEFUNG" = "kern" ]; then
     done
     USB_C="$(grep -acF 'MOO-KERNEL USB TASTE 0000000000000063' "$OUT/serial.log")"
     [ "$USB_C" -ge 135 ] || fail "USB-Ringumlauf: nur $USB_C von 140 Tastendruecken"
-  else
+  elif [ "$USB" = 0 ]; then
     grep -aqF "MOO-KERNEL TASTATUR SCAN 000000000000001E" "$OUT/serial.log" || fail "PS/2 Scan 0x1E fehlt"
+  elif [ "$USB" = hub ]; then
+    grep -aqF "MOO-KERNEL USB GERAETEKLASSE 0000000000000009" "$OUT/serial.log" || fail "Hub nicht als Klasse9 diagnostiziert"
+    grep -aqF "MOO-KERNEL USB BEREIT POLLING 0000000000000000" "$OUT/serial.log" || fail "Hub faelschlich als Boot-Keyboard bereit"
+    grep -aqF "MOO-KERNEL USB TASTE " "$OUT/serial.log" && fail "Hub-Negativfall meldet erfundene Eingabe"
+    echo "      OK: USB-Tastatur hinter Hub als Diagnose-/Negativfall (Hubtreiber weiterhin offen)"
   fi
+  if [ "$USB" != 0 ]; then
+    for m in "HCSPARAMS1" "HCSPARAMS2" "HCCPARAMS1" "PROTOCOL CAP" "PROTOCOL PORTBEREICH" "PORTSC" "CCS" "PED" "PR" "PLS" "PP" "SPEED" "CSC GESEHEN"; do
+      grep -aqF "MOO-KERNEL USB $m " "$OUT/serial.log" || fail "USB-Diagnose fehlt: $m"
+    done
+    for phase in 0 1 2 3 4 5; do
+      grep -aqF "MOO-KERNEL USB PHASE 000000000000000$phase" "$OUT/serial.log" || fail "USB-Snapshot Phase$phase fehlt"
+    done
+  fi
+  [ "$NETZ" != 1 ] || kern_netz_pruefen "$OUT/net.pcap" "$OUT/serial.log" || fail "Kern-Netz-Log unvollstaendig"
   # Reihenfolge: Kern laeuft erst NACH ExitBootServices.
   Z_EBS="$(grep -an 'MOO-LADER EXITBOOTSERVICES OK' "$OUT/serial.log" | head -1 | cut -d: -f1)"
   Z_KERN="$(grep -an 'MOO-KERNEL START' "$OUT/serial.log" | head -1 | cut -d: -f1)"
@@ -267,6 +336,11 @@ if [ "$PRUEFUNG" = "kern" ]; then
     KON="$(magick "$OUT/screenshot.png" -crop 2000x200+0+296 +repage -format %c histogram:info:- 2>/dev/null | awk '/\(200,230,255/{print $1}' | tr -d ':')"
     [ -n "$KON" ] && [ "$KON" -gt 200 ] || fail "Konsolentext (200,230,255) im Bereich y=296..496 fehlt ('$KON' Pixel)"
     echo "      OK: Konsolentext $KON Pixel in der Konsolenfarbe"
+    if [ "$USB" = 1 ]; then
+      EINGABE_PIXEL="$(magick "$OUT/screenshot.png" -gravity South -crop 2000x80+0+0 +repage -format %c histogram:info:- 2>/dev/null | awk '/[(]255,230,160/{print $1}' | tr -d ':')"
+      [ -n "$EINGABE_PIXEL" ] && [ "$EINGABE_PIXEL" -gt 100 ] || fail "Fester Eingabetext nach Scroll-/Ringstress fehlt"
+      echo "      OK: Fester Eingabebereich nach 140 Tasten und Konsolen-Scroll: $EINGABE_PIXEL Textpixel"
+    fi
   fi
   tr -d '\000\r' <"$OUT/serial.log" | grep -aE "MOO-KERNEL (MESS|TSC)" | sed 's/^/      Messung: /'
   if command -v tesseract >/dev/null 2>&1; then
@@ -275,7 +349,7 @@ if [ "$PRUEFUNG" = "kern" ]; then
   fi
   # Negativfall: ohne Kern-Datei kein ExitBootServices, Fehlermeldung, Rueckkehr zur Firmware.
   : >"$OUT/serial-ohne.log"
-  timeout --foreground 40s qemu-system-x86_64 \
+  timeout --foreground 40s qemu-system-x86_64 "${QEMU_ACCEL[@]}" \
       -drive if=pflash,format=raw,unit=0,readonly=on,file="$KOVMF_CODE" \
       -drive if=pflash,format=raw,unit=1,file="$OUT/vars-ohne.fd" \
       -drive format=raw,file="$OUT/ohne-kern.img" -net none \
@@ -412,9 +486,7 @@ if [ "$PRUEFUNG" = "e1000" ]; then
   # (ACPI-MCFG); die NIC laeuft ohne Option-ROM, OVMF bindet sie also nicht.
   # slirp beantwortet die ARP-Anfrage nach 10.0.2.2 -> Empfangsbeweis.
   # P7-T18: MOO_UEFI_KVM=1 startet mit KVM (Messlaeufe); Standard bleibt TCG.
-  KVM_OPT=""
-  [ "${MOO_UEFI_KVM:-0}" = "1" ] && KVM_OPT="-enable-kvm -cpu host"
-  timeout --foreground $((WAIT_S + 30))s qemu-system-x86_64 -machine q35 $KVM_OPT \
+  timeout --foreground $((WAIT_S + 30))s qemu-system-x86_64 "${QEMU_ACCEL[@]}" -machine q35 \
       -drive if=pflash,format=raw,unit=0,readonly=on,file="$OVMF_CODE" \
       -drive if=pflash,format=raw,unit=1,file="$OUT/vars.fd" \
       -drive format=raw,file="$DISK" \
@@ -474,7 +546,7 @@ if [ "$PRUEFUNG" = "nativ" ] || [ "$PRUEFUNG" = "nativ-trap" ]; then
   # Die App schreibt Zeilen "N <wert>" auf COM1. nativ: alle Werte exakt
   # (u64 2^60+8, i64 -6e18-1), danach ruft sie sich als nativ-trap mit dem
   # Negativfall auf (256 an u8 -> Trap, keine Folgezeile).
-  timeout --foreground $((WAIT_S + 30))s qemu-system-x86_64 -machine q35 \
+  timeout --foreground $((WAIT_S + 30))s qemu-system-x86_64 "${QEMU_ACCEL[@]}" -machine q35 \
       -drive if=pflash,format=raw,unit=0,readonly=on,file="$OVMF_CODE" \
       -drive if=pflash,format=raw,unit=1,file="$OUT/vars.fd" \
       -drive format=raw,file="$DISK" \
@@ -496,7 +568,7 @@ if [ "$PRUEFUNG" = "nativ" ] || [ "$PRUEFUNG" = "nativ-trap" ]; then
   if [ "$PRUEFUNG" = "nativ" ]; then
     # P7-T19: "N 3"/"N 90" = u64 aus @nativ als Laenge/Adresse an kern_text_in_puffer.
     # P7-T22: "N 700481670"/"N 165" = reine Hardwarekoerper (Port-I/O) dynamisch gerufen.
-    for m in "N -12345" "N 213" "N 1152921504606846984" "N -6000000000000000001" "N 1" "N 3" "N 90" "N 700481670" "N 165" "N 999"; do
+    for m in "N -12345" "N 213" "N 1152921504606846984" "N -6000000000000000001" "N 1" "N 3" "N 90" "N 700481670" "N 165" "N 2023" "N 999"; do
       tr -d '\r' <"$SERIAL_LOG" | grep -qax -- "$m" || fail "Zeile '$m' fehlt auf COM1"
     done
     echo "      OK: dynamische Argumente, exakte i64/u64-Argumente und -Rueckgaben im UEFI-Profil"
@@ -543,7 +615,7 @@ if [ "$PRUEFUNG" = "lader" ]; then
   lader_qemu() {  # tftp-Verzeichnis, Serial-Log, Pcap, Endemuster
     cp "$OVMF_VARS" "$OUT/vars-lader.fd"
     : >"$2"
-    timeout --foreground $((WAIT_S + 60))s qemu-system-x86_64 -machine q35 \
+    timeout --foreground $((WAIT_S + 60))s qemu-system-x86_64 "${QEMU_ACCEL[@]}" -machine q35 \
         -drive if=pflash,format=raw,unit=0,readonly=on,file="$OVMF_CODE" \
         -drive if=pflash,format=raw,unit=1,file="$OUT/vars-lader.fd" \
         -drive format=raw,file="$DISK" \
@@ -600,12 +672,14 @@ if [ "$PRUEFUNG" = "netz-kern" ]; then
   done
   cp "$OVMF_VARS" "$OUT/vars-netz.fd"
   : >"$SERIAL_LOG"; : >"$DEBUG_LOG"
-  timeout --foreground $((WAIT_S + 60))s qemu-system-x86_64 -machine q35 \
+  NETZ_KERN_QEMU=()
+  timeout --foreground $((WAIT_S + 60))s qemu-system-x86_64 "${QEMU_ACCEL[@]}" -machine q35 "${NETZ_KERN_QEMU[@]}" \
       -drive if=pflash,format=raw,unit=0,readonly=on,file="$OVMF_CODE" \
       -drive if=pflash,format=raw,unit=1,file="$OUT/vars-netz.fd" \
       -drive format=raw,file="$DISK" \
       -m 512M -vga std -display none -no-reboot -monitor none \
       -netdev user,id=n0,tftp="$OUT/tftp" -device e1000,netdev=n0,mac=52:54:00:12:34:58,romfile= \
+      -object filter-dump,id=nklog,netdev=n0,file="$OUT/net.pcap" \
       -serial file:"$SERIAL_LOG" -debugcon file:"$DEBUG_LOG" -global isa-debugcon.iobase=0xe9 \
       >"$OUT/qemu-netz.log" 2>&1 &
   QPID=$!
@@ -623,6 +697,7 @@ if [ "$PRUEFUNG" = "netz-kern" ]; then
     grep -aqF -- "$m" "$SERIAL_LOG" || fail "Netz-Kern: '$m' fehlt"
   done
   grep -aq "MOO-LADER FEHLER" "$SERIAL_LOG" && fail "Netz-Kern: Fehler gemeldet"
+  kern_netz_pruefen "$OUT/net.pcap" "$SERIAL_LOG" || fail "Netz-Boot: Kern-Netz-Log unvollstaendig"
   echo "      OK: Netz-Lader -> TFTP moo.efi + moo.kern -> Uebergabe -> Moo-Loader -> ExitBootServices -> Moo-Kern"
   if [ -n "${MOO_UEFI_OUT:-}" ]; then
     (cd "$OUT" && sha256sum BOOTX64.EFI tftp/moo.efi tftp/moo.efi.pruef tftp/moo.kern tftp/moo.kern.pruef serial.log >sha256.txt) && sed 's/^/      sha256: /' "$OUT/sha256.txt"
@@ -635,7 +710,7 @@ fi
 # QEMU-Monitor ueber FIFO: nach dem Rueckkehr-Marker 'screendump', dann 'quit'.
 mkfifo "$OUT/monitor.in" || fail "FIFO fuer QEMU-Monitor nicht anlegbar"
 exec 3<>"$OUT/monitor.in"
-timeout --foreground $((WAIT_S + 30))s qemu-system-x86_64 \
+timeout --foreground $((WAIT_S + 30))s qemu-system-x86_64 "${QEMU_ACCEL[@]}" \
     -drive if=pflash,format=raw,unit=0,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,unit=1,file="$OUT/vars.fd" \
     -drive format=raw,file="$DISK" \

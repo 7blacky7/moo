@@ -131,7 +131,9 @@ grub-mkrescue -o "$OUT/moo.iso" "$ISO_DIR" >"$OUT/grub.log" 2>&1 \
 
 SERIAL_LOG="$OUT/serial.log"
 # Der Kernel endet in cli/hlt — QEMU laeuft weiter, timeout (rc 124) ist erwartet.
-timeout --foreground 25s qemu-system-x86_64 \
+QEMU_ACCEL=()
+[ "${MOO_KERNEL_KVM:-0}" != 1 ] || QEMU_ACCEL+=(-enable-kvm -cpu host)
+timeout --foreground 25s qemu-system-x86_64 "${QEMU_ACCEL[@]}" \
     -cdrom "$OUT/moo.iso" -m 128M \
     -display none -no-reboot -serial stdio \
     > "$SERIAL_LOG" 2>&1

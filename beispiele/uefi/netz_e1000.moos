@@ -12,7 +12,7 @@
 #   MOO-E1000-TX <n>  MOO-E1000-ARP <0|1>  MOO-E1000-FEHLER <schritt>  MOO-E1000-ENDE
 # Gate: MOO_UEFI_PRUEFUNG=e1000 bash scripts/uefi-smoke.sh
 
-aus "./netz_treiber" importiere nt_pci_init, nt_suche, nt_finde, nt_oeffnen, nt_senden, nt_empfangen, nt_mac, nt_link, nt_tempo, nt_typ, nt_dma, nt_b8, nt_b16, nt_udp_log, nt_udp_rahmen, nt_status_text, nt_ringe_init, nt_tx_gesendet, nt_tx_verworfen, nt_log
+aus "./netz_treiber" importiere nt_pci_init, nt_suche, nt_finde, nt_oeffnen, nt_senden, nt_empfangen, nt_mac, nt_link, nt_tempo, nt_typ, nt_dma, nt_b8, nt_b16, nt_udp_log, nt_udp_rahmen, nt_status_text, nt_ringe_init, nt_reg, nt_tx_gesendet, nt_tx_verworfen, nt_log
 
 funktion z(c):
     unsicher:
@@ -61,28 +61,29 @@ funktion zeile_ende():
 
 # ARP-Anfrage: wer hat 10.0.2.2? Antwort an 10.0.2.15.
 funktion arp_anfrage(p, nic):
-    setze i auf 0
-    solange i < 6:
-        nt_b8(p, i, 255)
-        nt_b8(p, 6 + i, nt_mac(nic, i))
-        nt_b8(p, 22 + i, nt_mac(nic, i))
-        nt_b8(p, 32 + i, 0)
-        setze i auf i + 1
-    nt_b16(p, 12, 0x0806)
-    nt_b16(p, 14, 1)
-    nt_b16(p, 16, 0x0800)
-    nt_b8(p, 18, 6)
-    nt_b8(p, 19, 4)
-    nt_b16(p, 20, 1)
-    nt_b8(p, 28, 10)
-    nt_b8(p, 29, 0)
-    nt_b8(p, 30, 2)
-    nt_b8(p, 31, 15)
-    nt_b8(p, 38, 10)
-    nt_b8(p, 39, 0)
-    nt_b8(p, 40, 2)
-    nt_b8(p, 41, 2)
-    gib_zurück 42
+    unsicher:
+        setze i auf 0
+        solange i < 6:
+            nt_b8(p, i, 255)
+            nt_b8(p, 6 + i, nt_mac(nic, i))
+            nt_b8(p, 22 + i, nt_mac(nic, i))
+            nt_b8(p, 32 + i, 0)
+            setze i auf i + 1
+        nt_b16(p, 12, 0x0806)
+        nt_b16(p, 14, 1)
+        nt_b16(p, 16, 0x0800)
+        nt_b8(p, 18, 6)
+        nt_b8(p, 19, 4)
+        nt_b16(p, 20, 1)
+        nt_b8(p, 28, 10)
+        nt_b8(p, 29, 0)
+        nt_b8(p, 30, 2)
+        nt_b8(p, 31, 15)
+        nt_b8(p, 38, 10)
+        nt_b8(p, 39, 0)
+        nt_b8(p, 40, 2)
+        nt_b8(p, 41, 2)
+        gib_zurück 42
 
 # ARP-Antwort (Opcode 2) von 10.0.2.2?
 funktion ist_arp_antwort(p, laenge):
@@ -147,7 +148,7 @@ funktion selbsttests():
         setze f auf f + pruefe(nt_status_text(zwei, tpuf) == "I226 0:2500 1:- TX 0/0")
         # TX-Ring voll, Hardware schreitet nie fort (Schein-Ring im RAM): nicht
         # blockieren, 15 senden, 5 verwerfen; nach Kopf-Fortschritt wieder senden.
-        setze tn auf nt_dma(192)
+        setze tn auf nt_dma(20 * 4096)
         setze tregs auf nt_dma(65536)
         speicher_schreiben(tn, 1, 8)
         speicher_schreiben(tn + 8, tregs, 8)
@@ -231,13 +232,13 @@ funktion moo_efi_haupt():
         zeile_ende()
         # Logzeilen ueber 3 Ports: echte e1000, Schein-Port mit Link aber
         # festgefahrenem Ring (Hardware schreitet nie fort), Schein-Port ohne Link.
-        setze klemmt auf nt_dma(192)
+        setze klemmt auf nt_dma(20 * 4096)
         setze kregs auf nt_dma(65536)
         speicher_schreiben(klemmt, 1, 8)
         speicher_schreiben(klemmt + 8, kregs, 8)
         nt_ringe_init(klemmt, 0x2800, 0x3800, falsch)
         speicher_schreiben(kregs + 8, 2, 4)
-        setze tot auf nt_dma(192)
+        setze tot auf nt_dma(20 * 4096)
         setze tregs2 auf nt_dma(65536)
         speicher_schreiben(tot, 1, 8)
         speicher_schreiben(tot + 8, tregs2, 8)
@@ -263,7 +264,8 @@ funktion moo_efi_haupt():
         setze versuche auf 0
         solange arp == 0 und versuche < 3:
             setze n auf 0
-            solange arp == 0 und n < 3000000:
+            setze frist auf kern_ticks() + 1000000
+            solange arp == 0 und kern_ticks() < frist:
                 setze laenge auf nt_empfangen(nic, empfang)
                 wenn laenge > 0 und ist_arp_antwort(empfang, laenge):
                     setze arp auf 1
@@ -273,6 +275,26 @@ funktion moo_efi_haupt():
             setze versuche auf versuche + 1
         wort(65, 82, 80, 0, 0, 0)
         hex(arp, 1)
+        zeile_ende()
+        # Empfangsdiagnose: Ring, Register, Deskriptor, letzte Nutzlast.
+        wort(82, 88, 0, 0, 0, 0)
+        hex(speicher_lesen(nic + 64, 8), 12)
+        z(32)
+        hex(nt_reg(nic, 0x2800), 8)
+        z(32)
+        hex(nt_reg(nic, 0x2808), 8)
+        z(32)
+        hex(nt_reg(nic, 0x2810), 4)
+        z(32)
+        hex(nt_reg(nic, 0x2818), 4)
+        z(32)
+        hex(speicher_lesen(speicher_lesen(nic + 64, 8) + 8, 8), 16)
+        z(32)
+        hex(speicher_lesen(nic + 80, 8), 2)
+        z(32)
+        hex(speicher_lesen(empfang + 12, 2), 4)
+        z(32)
+        hex(speicher_lesen(empfang + 20, 2), 4)
         zeile_ende()
         # P7-T18 Messung (Mikrosekunden, kern_ticks): MESS <RAM-Register 100000x>
         # <MMIO STATUS 10000x> <2000 UDP-Rahmen senden>. Nur Ausgabe, kein Gate.

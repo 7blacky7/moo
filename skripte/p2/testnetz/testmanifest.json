@@ -13,6 +13,14 @@
   },
   "cases": [
     {
+      "path": "beispiele/uefi/netz_geraet.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T24: gemeinsamer nativer e1000/I226-Geraetekern; Standalone-IR und Kernel-/UEFI-KVM-Smoke"
+    },
+    {
       "path": "beispiele/kernel/usb_xhci.moos",
       "category": "profile",
       "args": ["--no-stdlib", "--target", "x86_64-bare"],

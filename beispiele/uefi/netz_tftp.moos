@@ -42,8 +42,9 @@ funktion nn_r32(p, o):
     gib_zurück (nn_r16(p, o) << 16) | nn_r16(p, o + 2)
 
 funktion nn_b32(p, o, wert):
-    nt_b16(p, o, (wert >> 16) & 0xFFFF)
-    nt_b16(p, o + 2, wert & 0xFFFF)
+    unsicher:
+        nt_b16(p, o, (wert >> 16) & 0xFFFF)
+        nt_b16(p, o + 2, wert & 0xFFFF)
 
 funktion nn_feld(ctx, o):
     unsicher:
@@ -66,16 +67,17 @@ funktion nn_kontext(nic, eigene_ip, server_ip):
 
 # Ethernet-Kopf: Ziel-MAC (lo = Byte 0-3, hi = Byte 4-5, wie im nic-Block), eigene MAC, Typ.
 funktion nn_eth(ctx, p, lo, hi, typ):
-    setze nic auf nn_feld(ctx, 0)
-    setze i auf 0
-    solange i < 6:
-        wenn i < 4:
-            nt_b8(p, i, (lo >> (i * 8)) & 255)
-        sonst:
-            nt_b8(p, i, (hi >> ((i - 4) * 8)) & 255)
-        nt_b8(p, 6 + i, nt_mac(nic, i))
-        setze i auf i + 1
-    nt_b16(p, 12, typ)
+    unsicher:
+        setze nic auf nn_feld(ctx, 0)
+        setze i auf 0
+        solange i < 6:
+            wenn i < 4:
+                nt_b8(p, i, (lo >> (i * 8)) & 255)
+            sonst:
+                nt_b8(p, i, (hi >> ((i - 4) * 8)) & 255)
+            nt_b8(p, 6 + i, nt_mac(nic, i))
+            setze i auf i + 1
+        nt_b16(p, 12, typ)
 
 # MAC aus 6 Bytes ab p+o als (lo, hi) in ctx-Felder schreiben.
 funktion nn_mac_merken(ctx, p, o, feld):
@@ -86,28 +88,29 @@ funktion nn_mac_merken(ctx, p, o, feld):
 
 # ARP: op 1 Anfrage (an Broadcast), op 2 Antwort (an Anfrager).
 funktion nn_arp(ctx, op, ziel_lo, ziel_hi, ziel_ip):
-    setze p auf nn_feld(ctx, 48)
-    setze nic auf nn_feld(ctx, 0)
-    nn_eth(ctx, p, ziel_lo, ziel_hi, 0x0806)
-    nt_b16(p, 14, 1)
-    nt_b16(p, 16, 0x0800)
-    nt_b8(p, 18, 6)
-    nt_b8(p, 19, 4)
-    nt_b16(p, 20, op)
-    setze i auf 0
-    solange i < 6:
-        nt_b8(p, 22 + i, nt_mac(nic, i))
-        wenn op == 1:
-            nt_b8(p, 32 + i, 0)
-        sonst:
-            wenn i < 4:
-                nt_b8(p, 32 + i, (ziel_lo >> (i * 8)) & 255)
+    unsicher:
+        setze p auf nn_feld(ctx, 48)
+        setze nic auf nn_feld(ctx, 0)
+        nn_eth(ctx, p, ziel_lo, ziel_hi, 0x0806)
+        nt_b16(p, 14, 1)
+        nt_b16(p, 16, 0x0800)
+        nt_b8(p, 18, 6)
+        nt_b8(p, 19, 4)
+        nt_b16(p, 20, op)
+        setze i auf 0
+        solange i < 6:
+            nt_b8(p, 22 + i, nt_mac(nic, i))
+            wenn op == 1:
+                nt_b8(p, 32 + i, 0)
             sonst:
-                nt_b8(p, 32 + i, (ziel_hi >> ((i - 4) * 8)) & 255)
-        setze i auf i + 1
-    nn_b32(p, 28, nn_feld(ctx, 8))
-    nn_b32(p, 38, ziel_ip)
-    gib_zurück nt_senden(nic, p, 42)
+                wenn i < 4:
+                    nt_b8(p, 32 + i, (ziel_lo >> (i * 8)) & 255)
+                sonst:
+                    nt_b8(p, 32 + i, (ziel_hi >> ((i - 4) * 8)) & 255)
+            setze i auf i + 1
+        nn_b32(p, 28, nn_feld(ctx, 8))
+        nn_b32(p, 38, ziel_ip)
+        gib_zurück nt_senden(nic, p, 42)
 
 funktion nn_arp_anfrage(ctx):
     gib_zurück nn_arp(ctx, 1, 0xFFFFFFFF, 0xFFFF, nn_feld(ctx, 16))
@@ -125,63 +128,65 @@ funktion nn_ip_pruefsumme(p, o):
 
 # Unicast-UDP an den Server; Nutzlast liegt schon ab Sendepuffer + 42.
 funktion nn_udp_senden(ctx, sport, dport, laenge):
-    setze p auf nn_feld(ctx, 48)
-    nn_eth(ctx, p, nn_feld(ctx, 24), nn_feld(ctx, 32), 0x0800)
-    nt_b8(p, 14, 0x45)
-    nt_b8(p, 15, 0)
-    nt_b16(p, 16, 20 + 8 + laenge)
-    nt_b16(p, 18, 0)
-    nt_b16(p, 20, 0x4000)
-    nt_b8(p, 22, 64)
-    nt_b8(p, 23, 17)
-    nt_b16(p, 24, 0)
-    nn_b32(p, 26, nn_feld(ctx, 8))
-    nn_b32(p, 30, nn_feld(ctx, 16))
-    nt_b16(p, 24, nn_ip_pruefsumme(p, 14))
-    nt_b16(p, 34, sport)
-    nt_b16(p, 36, dport)
-    nt_b16(p, 38, 8 + laenge)
-    nt_b16(p, 40, 0)
-    gib_zurück nt_senden(nn_feld(ctx, 0), p, 42 + laenge)
+    unsicher:
+        setze p auf nn_feld(ctx, 48)
+        nn_eth(ctx, p, nn_feld(ctx, 24), nn_feld(ctx, 32), 0x0800)
+        nt_b8(p, 14, 0x45)
+        nt_b8(p, 15, 0)
+        nt_b16(p, 16, 20 + 8 + laenge)
+        nt_b16(p, 18, 0)
+        nt_b16(p, 20, 0x4000)
+        nt_b8(p, 22, 64)
+        nt_b8(p, 23, 17)
+        nt_b16(p, 24, 0)
+        nn_b32(p, 26, nn_feld(ctx, 8))
+        nn_b32(p, 30, nn_feld(ctx, 16))
+        nt_b16(p, 24, nn_ip_pruefsumme(p, 14))
+        nt_b16(p, 34, sport)
+        nt_b16(p, 36, dport)
+        nt_b16(p, 38, 8 + laenge)
+        nt_b16(p, 40, 0)
+        gib_zurück nt_senden(nn_feld(ctx, 0), p, 42 + laenge)
 
 # Einen Rahmen abholen und auswerten. Rueckgabe: Laenge der UDP-Nutzlast fuer
 # unseren Port vom Server (Offset/Quellport in ctx 96/104), sonst 0.
 funktion nn_poll(ctx):
-    setze r auf nn_feld(ctx, 56)
-    setze n auf nt_empfangen(nn_feld(ctx, 0), r)
-    wenn n <= 0:
-        gib_zurück 0
-    nn_setze(ctx, 64, nn_feld(ctx, 64) + 1)
-    setze typ auf nn_r16(r, 12)
-    wenn typ == 0x0806 und n >= 42:
-        setze op auf nn_r16(r, 20)
-        # Anfrage nach unserer IP beantworten (sonst erreicht uns der Server nicht).
-        wenn op == 1 und nn_r32(r, 38) == nn_feld(ctx, 8):
-            setze lo auf nn_r8(r, 22) | (nn_r8(r, 23) << 8) | (nn_r8(r, 24) << 16) | (nn_r8(r, 25) << 24)
-            setze hi auf nn_r8(r, 26) | (nn_r8(r, 27) << 8)
-            nn_arp(ctx, 2, lo, hi, nn_r32(r, 28))
-            nn_setze(ctx, 88, nn_feld(ctx, 88) + 1)
-        wenn op == 2 und nn_r32(r, 28) == nn_feld(ctx, 16):
-            nn_mac_merken(ctx, r, 22, 24)
-            nn_setze(ctx, 40, 1)
-        gib_zurück 0
-    wenn typ != 0x0800 oder n < 42:
-        gib_zurück 0
-    setze ihl auf (nn_r8(r, 14) & 15) * 4
-    wenn nn_r8(r, 23) != 17 oder nn_r32(r, 30) != nn_feld(ctx, 8) oder nn_r32(r, 26) != nn_feld(ctx, 16):
-        gib_zurück 0
-    # Fragmente (MF oder Offset) werden nicht unterstuetzt.
-    wenn (nn_r16(r, 20) & 0x3FFF) != 0:
-        gib_zurück 0
-    setze u auf 14 + ihl
-    wenn nn_r16(r, u + 2) != nn_feld(ctx, 72):
-        gib_zurück 0
-    setze laenge auf nn_r16(r, u + 4) - 8
-    wenn laenge < 0 oder u + 8 + laenge > n:
-        gib_zurück 0
-    nn_setze(ctx, 96, u + 8)
-    nn_setze(ctx, 104, nn_r16(r, u))
-    gib_zurück laenge
+    unsicher:
+        setze r auf nn_feld(ctx, 56)
+        setze n auf nt_empfangen(nn_feld(ctx, 0), r)
+        wenn n <= 0:
+            gib_zurück 0
+        nn_setze(ctx, 64, nn_feld(ctx, 64) + 1)
+        setze typ auf nn_r16(r, 12)
+        wenn typ == 0x0806 und n >= 42:
+            setze op auf nn_r16(r, 20)
+            # Anfrage nach unserer IP beantworten (sonst erreicht uns der Server nicht).
+            wenn op == 1 und nn_r32(r, 38) == nn_feld(ctx, 8):
+                setze lo auf nn_r8(r, 22) | (nn_r8(r, 23) << 8) | (nn_r8(r, 24) << 16) | (nn_r8(r, 25) << 24)
+                setze hi auf nn_r8(r, 26) | (nn_r8(r, 27) << 8)
+                nn_arp(ctx, 2, lo, hi, nn_r32(r, 28))
+                nn_setze(ctx, 88, nn_feld(ctx, 88) + 1)
+            wenn op == 2 und nn_r32(r, 28) == nn_feld(ctx, 16):
+                nn_mac_merken(ctx, r, 22, 24)
+                nn_setze(ctx, 40, 1)
+            gib_zurück 0
+        wenn typ != 0x0800 oder n < 42:
+            gib_zurück 0
+        setze ihl auf (nn_r8(r, 14) & 15) * 4
+        wenn nn_r8(r, 23) != 17 oder nn_r32(r, 30) != nn_feld(ctx, 8) oder nn_r32(r, 26) != nn_feld(ctx, 16):
+            gib_zurück 0
+        # Fragmente (MF oder Offset) werden nicht unterstuetzt.
+        wenn (nn_r16(r, 20) & 0x3FFF) != 0:
+            gib_zurück 0
+        setze u auf 14 + ihl
+        wenn nn_r16(r, u + 2) != nn_feld(ctx, 72):
+            gib_zurück 0
+        setze laenge auf nn_r16(r, u + 4) - 8
+        wenn laenge < 0 oder u + 8 + laenge > n:
+            gib_zurück 0
+        nn_setze(ctx, 96, u + 8)
+        nn_setze(ctx, 104, nn_r16(r, u))
+        gib_zurück laenge
 
 # ARP-Aufloesung der Server-MAC: Anfrage, dann bis zu ms Millisekunden lauschen.
 funktion nn_arp_aufloesen(ctx, ms):
@@ -199,49 +204,53 @@ funktion nn_arp_aufloesen(ctx, ms):
 # ---------------- TFTP (RFC 1350, Optionen RFC 2347-2349) ----------------
 # Text an Position o in p schreiben (mit 0-Byte), neue Position zurueck.
 funktion nn_tz(p, o, text):
-    setze n auf kern_text_in_puffer(text, p + o, 256)
-    nt_b8(p, o + n, 0)
-    gib_zurück o + n + 1
+    unsicher:
+        setze n auf kern_text_in_puffer(text, p + o, 256)
+        nt_b8(p, o + n, 0)
+        gib_zurück o + n + 1
 
 # Anfrage vorbereiten und senden. ziel/max: Zielpuffer fuer die Datei.
 funktion nn_tftp_start(ctx, name, ziel, max):
-    setze q auf nn_feld(ctx, 192)
-    nt_b16(q, 0, 1)
-    setze o auf nn_tz(q, 2, name)
-    setze o auf nn_tz(q, o, "octet")
-    setze o auf nn_tz(q, o, "blksize")
-    setze o auf nn_tz(q, o, "1428")
-    setze o auf nn_tz(q, o, "tsize")
-    setze o auf nn_tz(q, o, "0")
-    nn_setze(ctx, 200, o)
-    # Neuer Quellport je Uebertragung (TID).
-    nn_setze(ctx, 72, 49152 + ((nn_feld(ctx, 72) - 49152 + 1) % 8000))
-    nn_setze(ctx, 80, 0)
-    nn_setze(ctx, 112, 1)
-    nn_setze(ctx, 120, 0)
-    nn_setze(ctx, 128, 512)
-    nn_setze(ctx, 136, 0)
-    nn_setze(ctx, 144, 0)
-    nn_setze(ctx, 152, 0)
-    nn_setze(ctx, 160, 0)
-    nn_setze(ctx, 168, 0)
-    nn_setze(ctx, 208, ziel)
-    nn_setze(ctx, 216, max)
-    nn_tftp_rrq(ctx)
+    unsicher:
+        setze q auf nn_feld(ctx, 192)
+        nt_b16(q, 0, 1)
+        setze o auf nn_tz(q, 2, name)
+        setze o auf nn_tz(q, o, "octet")
+        setze o auf nn_tz(q, o, "blksize")
+        setze o auf nn_tz(q, o, "1428")
+        setze o auf nn_tz(q, o, "tsize")
+        setze o auf nn_tz(q, o, "0")
+        nn_setze(ctx, 200, o)
+        # Neuer Quellport je Uebertragung (TID).
+        nn_setze(ctx, 72, 49152 + ((nn_feld(ctx, 72) - 49152 + 1) % 8000))
+        nn_setze(ctx, 80, 0)
+        nn_setze(ctx, 112, 1)
+        nn_setze(ctx, 120, 0)
+        nn_setze(ctx, 128, 512)
+        nn_setze(ctx, 136, 0)
+        nn_setze(ctx, 144, 0)
+        nn_setze(ctx, 152, 0)
+        nn_setze(ctx, 160, 0)
+        nn_setze(ctx, 168, 0)
+        nn_setze(ctx, 208, ziel)
+        nn_setze(ctx, 216, max)
+        nn_tftp_rrq(ctx)
 
 funktion nn_tftp_rrq(ctx):
-    setze p auf nn_feld(ctx, 48)
-    nt_kopiere(p + 42, nn_feld(ctx, 192), nn_feld(ctx, 200))
-    nn_setze(ctx, 176, 1)
-    nn_udp_senden(ctx, nn_feld(ctx, 72), 69, nn_feld(ctx, 200))
+    unsicher:
+        setze p auf nn_feld(ctx, 48)
+        nt_kopiere(p + 42, nn_feld(ctx, 192), nn_feld(ctx, 200))
+        nn_setze(ctx, 176, 1)
+        nn_udp_senden(ctx, nn_feld(ctx, 72), 69, nn_feld(ctx, 200))
 
 funktion nn_tftp_ack(ctx, block):
-    setze p auf nn_feld(ctx, 48)
-    nt_b16(p, 42, 4)
-    nt_b16(p, 44, block)
-    nn_setze(ctx, 176, 4)
-    nn_setze(ctx, 184, block)
-    nn_udp_senden(ctx, nn_feld(ctx, 72), nn_feld(ctx, 80), 4)
+    unsicher:
+        setze p auf nn_feld(ctx, 48)
+        nt_b16(p, 42, 4)
+        nt_b16(p, 44, block)
+        nn_setze(ctx, 176, 4)
+        nn_setze(ctx, 184, block)
+        nn_udp_senden(ctx, nn_feld(ctx, 72), nn_feld(ctx, 80), 4)
 
 # Dezimalzahl aus Bytes ab p+o (bis 0-Byte oder Ende e).
 funktion nn_dez_lesen(p, o, e):
@@ -271,57 +280,58 @@ funktion nn_oack(ctx, p, o, e):
 # Einen Schritt der Uebertragung. Rueckgabe: 0 laeuft, 1 fertig, <0 Fehler
 # (-1 Ziel zu klein, -2 Zeitueberschreitung, -5 TFTP-ERROR, Code in ctx 168).
 funktion nn_tftp_schritt(ctx):
-    setze n auf nn_poll(ctx)
-    wenn n < 4:
-        # Leerlauf: nach ~0,5 s letzte Sendung wiederholen, nach 12 Versuchen aufgeben.
-        kern_warte_us(100)
-        nn_setze(ctx, 144, nn_feld(ctx, 144) + 1)
-        wenn nn_feld(ctx, 144) >= 5000:
-            nn_setze(ctx, 144, 0)
-            nn_setze(ctx, 152, nn_feld(ctx, 152) + 1)
-            wenn nn_feld(ctx, 152) > 12:
-                gib_zurück -2
-            wenn nn_feld(ctx, 176) == 1:
-                nn_tftp_rrq(ctx)
-            sonst:
-                nn_tftp_ack(ctx, nn_feld(ctx, 184))
-        gib_zurück 0
-    setze r auf nn_feld(ctx, 56)
-    setze o auf nn_feld(ctx, 96)
-    setze quelle auf nn_feld(ctx, 104)
-    # Erste Antwort legt den Server-TID fest; fremde TIDs ignorieren.
-    wenn nn_feld(ctx, 80) == 0:
-        nn_setze(ctx, 80, quelle)
-    wenn quelle != nn_feld(ctx, 80):
-        gib_zurück 0
-    nn_setze(ctx, 144, 0)
-    nn_setze(ctx, 152, 0)
-    setze op auf nn_r16(r, o)
-    wenn op == 5:
-        nn_setze(ctx, 168, nn_r16(r, o + 2))
-        gib_zurück -5
-    wenn op == 6:
-        nn_oack(ctx, r, o + 2, o + n)
-        nn_tftp_ack(ctx, 0)
-        gib_zurück 0
-    wenn op != 3:
-        gib_zurück 0
-    setze block auf nn_r16(r, o + 2)
-    setze daten auf n - 4
-    wenn block == nn_feld(ctx, 112):
-        setze bisher auf nn_feld(ctx, 120)
-        wenn bisher + daten > nn_feld(ctx, 216):
-            gib_zurück -1
-        nt_kopiere(nn_feld(ctx, 208) + bisher, r + o + 4, daten)
-        nn_setze(ctx, 120, bisher + daten)
+    unsicher:
+        setze n auf nn_poll(ctx)
+        wenn n < 4:
+            # Leerlauf: nach ~0,5 s letzte Sendung wiederholen, nach 12 Versuchen aufgeben.
+            kern_warte_us(100)
+            nn_setze(ctx, 144, nn_feld(ctx, 144) + 1)
+            wenn nn_feld(ctx, 144) >= 5000:
+                nn_setze(ctx, 144, 0)
+                nn_setze(ctx, 152, nn_feld(ctx, 152) + 1)
+                wenn nn_feld(ctx, 152) > 12:
+                    gib_zurück -2
+                wenn nn_feld(ctx, 176) == 1:
+                    nn_tftp_rrq(ctx)
+                sonst:
+                    nn_tftp_ack(ctx, nn_feld(ctx, 184))
+            gib_zurück 0
+        setze r auf nn_feld(ctx, 56)
+        setze o auf nn_feld(ctx, 96)
+        setze quelle auf nn_feld(ctx, 104)
+        # Erste Antwort legt den Server-TID fest; fremde TIDs ignorieren.
+        wenn nn_feld(ctx, 80) == 0:
+            nn_setze(ctx, 80, quelle)
+        wenn quelle != nn_feld(ctx, 80):
+            gib_zurück 0
+        nn_setze(ctx, 144, 0)
+        nn_setze(ctx, 152, 0)
+        setze op auf nn_r16(r, o)
+        wenn op == 5:
+            nn_setze(ctx, 168, nn_r16(r, o + 2))
+            gib_zurück -5
+        wenn op == 6:
+            nn_oack(ctx, r, o + 2, o + n)
+            nn_tftp_ack(ctx, 0)
+            gib_zurück 0
+        wenn op != 3:
+            gib_zurück 0
+        setze block auf nn_r16(r, o + 2)
+        setze daten auf n - 4
+        wenn block == nn_feld(ctx, 112):
+            setze bisher auf nn_feld(ctx, 120)
+            wenn bisher + daten > nn_feld(ctx, 216):
+                gib_zurück -1
+            nt_kopiere(nn_feld(ctx, 208) + bisher, r + o + 4, daten)
+            nn_setze(ctx, 120, bisher + daten)
+            nn_tftp_ack(ctx, block)
+            nn_setze(ctx, 112, (block + 1) % 65536)
+            wenn daten < nn_feld(ctx, 128):
+                gib_zurück 1
+            gib_zurück 0
+        # Doppelter Block (unser ACK ging verloren): ACK wiederholen.
         nn_tftp_ack(ctx, block)
-        nn_setze(ctx, 112, (block + 1) % 65536)
-        wenn daten < nn_feld(ctx, 128):
-            gib_zurück 1
         gib_zurück 0
-    # Doppelter Block (unser ACK ging verloren): ACK wiederholen.
-    nn_tftp_ack(ctx, block)
-    gib_zurück 0
 
 # ---------------- CRC32 (wie gzip) ----------------
 funktion nn_crc_tabelle():
