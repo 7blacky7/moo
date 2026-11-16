@@ -11,14 +11,14 @@
 # Linux v6.12 drivers/watchdog/iTCO_wdt.c:75-83 Register;218-231
 # NO_REBOOT bei Version>=6 in TCO1_CNT[0], nicht im alten PMC/GCS.
 # Diese Diagnose schreibt KEIN TCO-/SMI-/PMC-/PCI-Konfigurationsregister.
-aus "../uefi/hardware_pci" importiere takt, nt_cfg_lese32
+aus "../uefi/hardware_pci" importiere takt, nt_cfg_lese32, nt_mmio_lese32, nt_mmio_schreibe32
 
 # Im ELF eindeutig markierter Testvertrag. Der Runner darf nur die Daten
 # einer privaten Build-Kopie konfigurieren, niemals den Quelltext.
 @nativ
 statisch TESTLAUF_KONFIG: [u64; 4] auf [0x353254504F4F4D21, 90, 180, 0]
 @nativ
-statisch TESTLAUF_ZUSTAND: [u64; 7] auf 0
+statisch TESTLAUF_ZUSTAND: [u64; 10] auf 0
 @nativ
 konstante TL_RESET: [u8; _] auf "MOO-KERNEL NEUSTART "
 @nativ
@@ -49,6 +49,18 @@ konstante TL_NR: [u8; _] auf "MOO-KERNEL TCO NO_REBOOT "
 konstante TL_NUR: [u8; _] auf "MOO-KERNEL TCO NUR LESEN "
 @nativ
 konstante TL_FEHLT: [u8; _] auf "MOO-KERNEL TCO NICHT BELEGT "
+@nativ
+konstante TL_TCO_AN: [u8; _] auf "MOO-KERNEL TCO SCHARF GESAMT-SEKUNDEN "
+@nativ
+konstante TL_TCO_TMR_NEU: [u8; _] auf "MOO-KERNEL TCO TMR NACH SCHARF "
+@nativ
+konstante TL_TCO_CNT_NEU: [u8; _] auf "MOO-KERNEL TCO CNT NACH SCHARF "
+@nativ
+konstante TL_TCO_PING: [u8; _] auf "MOO-KERNEL TCO BEDIENT "
+@nativ
+konstante TL_TCO_NEIN: [u8; _] auf "MOO-KERNEL TCO SCHARFSCHALTUNG VERWEIGERT "
+@nativ
+konstante TL_TCO_SAFETY: [u8; _] auf "MOO-KERNEL TCO SAFETY OHNE BEDIENUNG "
 
 @nativ
 funktion testlauf_konfig(index: u64) -> u64:
@@ -120,6 +132,23 @@ funktion testlauf_starten(fadt: u64, bi: u64, tsc: u64, map: u64, loggen: u64) -
                     tl_setze(2, raum)
         log(adresse_von(TL_FADT), tl_wert(0))
         testlauf_tco_lesen(loggen)
+        setze modus: u64 auf testlauf_konfig(3)
+        setze scharf: bool auf falsch
+        wenn modus != 0:
+            wenn tsc != 0:
+                wenn modus == 1 oder modus == 2:
+                    setze scharf auf tl_tco_n100(testlauf_konfig(2))
+                sonst wenn modus == 100 oder modus == 101:
+                    setze scharf auf tl_tco_ich9(bi, map, testlauf_konfig(2))
+            wenn scharf:
+                log(adresse_von(TL_TCO_AN), testlauf_konfig(2))
+                log(adresse_von(TL_TCO_TMR_NEU), u64(port_lese16(u16(tl_wert(6) + 0x12))))
+                log(adresse_von(TL_TCO_CNT_NEU), u64(port_lese16(u16(tl_wert(6) + 8))))
+                wenn modus == 2 oder modus == 101:
+                    log(adresse_von(TL_TCO_SAFETY), testlauf_konfig(2))
+            sonst:
+                log(adresse_von(TL_TCO_NEIN), modus)
+                tl_setze(9, 1)
 
 @nativ
 funktion tl_warten(ms: u64) -> void:
@@ -166,7 +195,111 @@ funktion testlauf_neustart(loggen: u64) -> void:
 funktion testlauf_poll(loggen: u64) -> void:
     unsicher:
         setze sekunden: u64 auf testlauf_konfig(1)
+        wenn tl_wert(9) != 0:
+            testlauf_neustart(loggen)
+        wenn tl_wert(7) != 0 und (testlauf_konfig(3) == 2 oder testlauf_konfig(3) == 101):
+            # Sicherheitsnachweis: echter Stillstand, IRQs aus, keine Soft-Resetfolge.
+            assembler(ziel="x86_64", code="cli", clobber=[])
+            solange wahr:
+                assembler(ziel="x86_64", code="hlt", clobber=[])
+        tl_tco_bedienen(loggen)
         # 0 bedeutet interaktiv. Ein fehlender kalibrierter TSC darf einen
         # befristeten Test nicht endlos machen: dann nach Diagnose resetten.
         wenn sekunden > 0 und (tl_wert(3) == 0 oder (takt() - tl_wert(4)) / tl_wert(3) >= sekunden):
             testlauf_neustart(loggen)
+
+
+# Intel 759604-003: Reset erfolgt beim ZWEITEN Ablauf (38.1.5).
+# Daher ist ein Timerintervall die Haelfte der gewuenschten Gesamtzeit.
+# 0.6s/Tick, aufgerundet; Linux iTCO_wdt liefert Register/Status/Startfolge,
+# seine gemeldete Timeout-Semantik wird hier nicht als Gesamtzeit uebernommen.
+@nativ
+funktion testlauf_tco_ticks(sekunden: u64) -> u16:
+    wenn sekunden < 6 oder sekunden > 600:
+        gib_zurück 0
+    gib_zurück als(u16, (sekunden * 5 + 5) / 6)
+
+@nativ
+funktion tl_tco_start(basis: u64, sekunden: u64) -> bool:
+    unsicher:
+        wenn basis == 0 oder basis > 0xFFE0 oder (basis & 31) != 0:
+            gib_zurück falsch
+        setze ticks: u16 auf testlauf_tco_ticks(sekunden)
+        setze cnt: u16 auf port_lese16(u16(basis + 8))
+        setze alt: u16 auf port_lese16(u16(basis + 0x12))
+        wenn ticks == 0 oder (cnt & 0x800) == 0:
+            gib_zurück falsch
+        port_schreibe16(u16(basis + 0x12), (alt & 0xFC00) | ticks)
+        wenn (port_lese16(u16(basis + 0x12)) & 0x3FF) != ticks:
+            port_schreibe16(u16(basis + 0x12), alt)
+            gib_zurück falsch
+        # Nur die Timeout-Statusbits quittieren, keine fremden W1C-Ereignisse.
+        port_schreibe16(u16(basis + 4), 8)
+        port_schreibe16(u16(basis + 6), 2)
+        port_schreibe16(u16(basis), 1)
+        port_schreibe16(u16(basis + 8), cnt & 0xF7FF)
+        wenn (port_lese16(u16(basis + 8)) & 0x801) != 0:
+            port_schreibe16(u16(basis + 8), cnt | 0x800)
+            port_schreibe16(u16(basis + 0x12), alt)
+            gib_zurück falsch
+        tl_setze(5, takt())
+        tl_setze(6, basis)
+        tl_setze(7, 1)
+        gib_zurück wahr
+
+# Ausschliesslich die auf dem N100 gelesene Konfiguration d3ea9834.
+# TCO_LOCK[12] betrifft SMI_EN.TCO_EN, NICHT TCO_TMR_HALT[11].
+# Linux v6.12 iTCO_wdt:488-531 nutzt fuer v6 ebenfalls kein SMI_EN.
+@nativ
+funktion tl_tco_n100(sekunden: u64) -> bool:
+    unsicher:
+        wenn nt_cfg_lese32(0x8000FC00) != 0x54A38086 oder nt_cfg_lese32(0x8000FC50) != 0x401 oder nt_cfg_lese32(0x8000FC54) != 0x101:
+            gib_zurück falsch
+        wenn port_lese16(u16(0x408)) != 0x1800 oder (port_lese16(u16(0x406)) & 4) != 0:
+            gib_zurück falsch
+        # NO_REBOOT muss bereits 0 sein. Kein Firmware-/PMC-Override.
+        gib_zurück tl_tco_start(0x400, sekunden)
+
+# Opt-in-Emulatorpfad, NICHT als N100-Beleg verwenden.
+# Intel ICH9 DS316972: PMBASE+60 TCO, RCBA+3410 GCS.NO_REBOOT[5].
+# QEMU v11.0.1 hw/acpi/ich9_tco.c:49-78: zwei Timerablaeufe, je0.6s.
+@nativ
+funktion tl_tco_ich9(bi: u64, map: u64, sekunden: u64) -> bool:
+    unsicher:
+        setze abbilden: ptr[fn[sysv64](u64, u64, u64) -> u64] auf zeiger(map)
+        setze pm: u64 auf u64(nt_cfg_lese32(0x8000F840) & 0xFF80)
+        setze rcba: u64 auf u64(nt_cfg_lese32(0x8000F8F0) & 0xFFFFC000)
+        setze gcs: u64 auf 0
+        setze wert: u32 auf 0
+        setze cnt: u16 auf 0
+        setze smi: u32 auf 0
+        wenn nt_cfg_lese32(0x8000F800) != 0x29188086 oder pm == 0 oder rcba == 0 oder (nt_cfg_lese32(0x8000F8F0) & 1) == 0 oder (nt_cfg_lese32(0x8000F844) & 0x80) == 0:
+            gib_zurück falsch
+        setze rcba auf abbilden(bi, rcba, 0x4000)
+        wenn rcba == 0:
+            gib_zurück falsch
+        setze gcs auf rcba + 0x3410
+        setze wert auf nt_mmio_lese32(gcs)
+        setze cnt auf port_lese16(u16(pm + 0x68))
+        setze smi auf port_lese32(u16(pm + 0x30))
+        wenn (cnt & 0x1000) != 0 und (smi & 0x2000) != 0:
+            gib_zurück falsch
+        port_schreibe16(u16(pm + 0x68), cnt | 0x800)
+        port_schreibe32(u16(pm + 0x30), smi & 0xFFFFDFFF)
+        nt_mmio_schreibe32(gcs, wert & 0xFFFFFFDF)
+        wenn (nt_mmio_lese32(gcs) & 0x20) != 0 oder (port_lese32(u16(pm + 0x30)) & 0x2000) != 0:
+            gib_zurück falsch
+        gib_zurück tl_tco_start(pm + 0x60, sekunden)
+
+@nativ
+funktion tl_tco_bedienen(loggen: u64) -> void:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        wenn tl_wert(7) == 0:
+            gib_zurück
+        wenn takt() - tl_wert(5) >= tl_wert(3):
+            port_schreibe16(u16(tl_wert(6)), 1)
+            tl_setze(5, takt())
+            tl_setze(8, tl_wert(8) + 1)
+            wenn tl_wert(8) == 1 oder (tl_wert(8) % 10) == 0:
+                log(adresse_von(TL_TCO_PING), tl_wert(8))

@@ -2069,6 +2069,7 @@ funktion kern_haupt(bi: u64) -> void:
             setze fadt_reset auf acpi_tabelle(rsdp, 0x50434146)
         testlauf_starten(fadt_reset, bi, tsc, adresse_von(kern_mmio_abbilden), adresse_von(meldung))
         netz_spuelen()
+        testlauf_poll(adresse_von(meldung))
         meldung(adresse_von(T_FORMATE), formate_pruefen())
         # Bildschirm: alles ueber den Surface-Kern in den Rueckpuffer, dann Present.
         setze schirm_ok auf fb != 0 und breite >= 160 und hoehe >= 200 und breite <= 3840 und hoehe <= 2160 und format <= 2 und stride >= breite
