@@ -13,6 +13,22 @@
   },
   "cases": [
     {
+      "path": "beispiele/kernel/usb_xhci.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T23: eigenstaendiges typisiertes Treibermodul, Hardwarelauf im kern-Smoke"
+    },
+    {
+      "path": "beispiele/uefi/hardware_pci.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T23: gemeinsame native Hardwarezugriffe, Netz-/Kern-Smoke"
+    },
+    {
       "path": "beispiele/kernel/uefi_kern.moos",
       "category": "profile",
       "args": [

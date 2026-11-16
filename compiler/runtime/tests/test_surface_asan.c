@@ -404,6 +404,19 @@ static void test_core_contract(void) {
           "3x5 width overflow rejected");
     CHECK(moo_surface_core_text_3x5(&core, 0, 0, 1, "A?", 2u, green),
           "3x5 text draw");
+    CHECK(moo_surface_core_clear(&core, (MooSurfaceColor){0,0,0,255}),
+          "clear for punctuation");
+    CHECK(moo_surface_core_text_3x5(&core, 0, 0, 1, ":,", 2u, green),
+          "3x5 colon and comma");
+    for (i = 0u; i < 40u; ++i) {
+        const unsigned x = (unsigned)(i % 8u), y = (unsigned)(i / 8u);
+        const bool ink = (x == 1u && (y == 1u || y == 3u)) ||
+                         (x == 5u && y == 3u) || (x == 4u && y == 4u);
+        CHECK(moo_surface_core_read_pixel(&core, (int32_t)x, (int32_t)y, &got) &&
+              got.g == (ink ? 255u : 0u), "punctuation exact pixels");
+    }
+    CHECK(moo_surface_core_text_width_3x5(":,", 2u, 1, &width) && width == 7,
+          "punctuation keeps existing advance");
 
     for (i = 0u; i < 64u; ++i) {
         CHECK(guarded[i] == 0xc3, "core prefix canary");

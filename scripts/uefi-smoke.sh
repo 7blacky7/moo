@@ -147,7 +147,11 @@ if [ "$PRUEFUNG" = "kern" ]; then
   : >"$OUT/serial.log"; : >"$OUT/debug.log"; rm -f "$OUT/monitor.in" "$OUT/screenshot.png"
   mkfifo "$OUT/monitor.in" || fail "FIFO fuer QEMU-Monitor nicht anlegbar"
   exec 3<>"$OUT/monitor.in"
-  timeout --foreground $((WAIT_S + 30))s qemu-system-x86_64 \
+  KERN_QEMU=()
+  [ "${MOO_UEFI_KVM:-0}" != 1 ] || KERN_QEMU+=(-enable-kvm -cpu host)
+  USB="${MOO_UEFI_USB:-1}"
+  [ "$USB" != 1 ] || KERN_QEMU+=(-device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0)
+  timeout --foreground $((WAIT_S + 60))s qemu-system-x86_64 "${KERN_QEMU[@]}" \
       -drive if=pflash,format=raw,unit=0,readonly=on,file="$KOVMF_CODE" \
       -drive if=pflash,format=raw,unit=1,file="$OUT/vars.fd" \
       -drive format=raw,file="$OUT/uefi.img" -net none \
@@ -157,7 +161,9 @@ if [ "$PRUEFUNG" = "kern" ]; then
   QPID=$!
   KEY_SENT=0
   for ((i = 0; i < WAIT_S; i++)); do
-    if [ "$KEY_SENT" -eq 0 ] && grep -aqF "MOO-KERNEL TASTATUR BEREIT 0000000000000001" "$OUT/serial.log" 2>/dev/null; then
+    BEREIT="MOO-KERNEL TASTATUR BEREIT 0000000000000001"
+    [ "$USB" != 1 ] || BEREIT="MOO-KERNEL USB BEREIT POLLING 0000000000000001"
+    if [ "$KEY_SENT" -eq 0 ] && grep -aqF "$BEREIT" "$OUT/serial.log" 2>/dev/null; then
       printf 'sendkey a\n' >&3
       KEY_SENT=1
     fi
@@ -166,7 +172,20 @@ if [ "$PRUEFUNG" = "kern" ]; then
     kill -0 "$QPID" 2>/dev/null || break
     sleep 1
   done
+  # USB bleibt nach OK aktiv: Shift und mehr als 256 Press/Release-Reports
+  # pruefen Event-Cycle sowie Link-TRB/Cycle des Transfer-Rings.
+  if [ "$USB" = 1 ] && grep -aq "MOO-KERNEL OK" "$OUT/serial.log"; then
+    printf 'screendump %s -f png\n' "$OUT/boot-screenshot.png" >&3
+    for ((j = 0; j < 15; j++)); do [ -s "$OUT/boot-screenshot.png" ] && break; sleep 0.1; done
+    printf 'sendkey shift-b 60\n' >&3
+    sleep 0.2
+    for ((j = 0; j < 140; j++)); do
+      printf 'sendkey c 60\n' >&3
+      sleep 0.12
+    done
+  fi
   sleep 1
+  printf 'info registers\ninfo lapic\n' >&3
   printf 'screendump %s -f png\n' "$OUT/screenshot.png" >&3
   for ((i = 0; i < 15; i++)); do [ -s "$OUT/screenshot.png" ] && break; sleep 1; done
   printf 'quit\n' >&3 2>/dev/null || true; exec 3>&-; wait "$QPID" 2>/dev/null
@@ -188,10 +207,23 @@ if [ "$PRUEFUNG" = "kern" ]; then
            "MOO-KERNEL AUSNAHME TEST 0000000000000001" "MOO-KERNEL TIMER QUELLE 0000000000000001" \
            "MOO-KERNEL TIMER STARTWERT " "MOO-KERNEL TIMER TICKS " \
            "MOO-KERNEL TASTATUR BEREIT 0000000000000001" \
-           "MOO-KERNEL TASTATUR SCAN 000000000000001E" \
+           "MOO-KERNEL USB REPORT-TEST 0000000000000001" \
+           "MOO-KONSOLE: SPEICHER, IDT, ACPI" \
            "MOO-KERNEL MESS PRESENT-TAKTE " "MOO-KERNEL OK"; do
     grep -aqF -- "$m" "$OUT/serial.log" || fail "Marker fehlt: '$m'"
   done
+  if [ "$USB" = 1 ]; then
+    for m in "MOO-KERNEL USB BEREIT POLLING 0000000000000001" \
+             "MOO-KERNEL USB HID 0000000000000004" \
+             "MOO-KERNEL USB TASTE 0000000000000061" \
+             "MOO-KERNEL USB TASTE 0000000000000042"; do
+      grep -aqF "$m" "$OUT/serial.log" || fail "USB-Marker fehlt: $m"
+    done
+    USB_C="$(grep -acF 'MOO-KERNEL USB TASTE 0000000000000063' "$OUT/serial.log")"
+    [ "$USB_C" -ge 135 ] || fail "USB-Ringumlauf: nur $USB_C von 140 Tastendruecken"
+  else
+    grep -aqF "MOO-KERNEL TASTATUR SCAN 000000000000001E" "$OUT/serial.log" || fail "PS/2 Scan 0x1E fehlt"
+  fi
   # Reihenfolge: Kern laeuft erst NACH ExitBootServices.
   Z_EBS="$(grep -an 'MOO-LADER EXITBOOTSERVICES OK' "$OUT/serial.log" | head -1 | cut -d: -f1)"
   Z_KERN="$(grep -an 'MOO-KERNEL START' "$OUT/serial.log" | head -1 | cut -d: -f1)"
@@ -206,14 +238,14 @@ if [ "$PRUEFUNG" = "kern" ]; then
   done
   KARTE="$(grep -ao 'MOO-KERNEL KARTE-ANZ [0-9A-F]*' "$OUT/serial.log" | awk '{print $3}')"
   [ "$((16#$KARTE))" -gt 0 ] || fail "Speicherkarte im Kern leer"
-  PFA="$(grep -ao 'MOO-KERNEL PFA FREI-SEITEN [0-9A-F]*' "$OUT/serial.log" | awk '{print $4}')"
-  TABELLEN="$(grep -ao 'MOO-KERNEL TABELLEN FREI [0-9A-F]*' "$OUT/serial.log" | awk '{print $4}')"
+  PFA="$(grep -ao 'MOO-KERNEL PFA FREI-SEITEN [0-9A-F]*' "$OUT/serial.log" | awk 'NR==1{print $4}')"
+  TABELLEN="$(grep -ao 'MOO-KERNEL TABELLEN FREI [0-9A-F]*' "$OUT/serial.log" | awk 'NR==1{print $4}')"
   TICKS="$(grep -ao 'MOO-KERNEL TIMER TICKS [0-9A-F]*' "$OUT/serial.log" | awk '{print $4}')"
   [ "$((16#$PFA))" -gt 0 ] || fail "PFA meldet keine freien Seiten"
   [ "$((16#$TABELLEN))" -gt 0 ] || fail "Firmware-/Loader-Seitentabellen nicht freigegeben"
   [ "$((16#$TICKS))" -ge 3 ] || fail "LAPIC-Timer lieferte weniger als drei Ticks"
   [ "$KEY_SENT" -eq 1 ] || fail "QEMU sendkey a wurde nicht ausgeloest"
-  echo "      OK: Loader -> ExitBootServices (Zeile $Z_EBS) -> Kern (Zeile $Z_KERN), Sprung $SPRUNG = ELF-Einstieg, Boot-Info identisch, $((16#$KARTE)) Kartendeskriptoren, $((16#$PFA)) freie Frames, $((16#$TABELLEN)) alte Tabellenseiten, $((16#$TICKS)) Timer-Ticks, PS/2 Scan 0x1E"
+  echo "      OK: Loader -> ExitBootServices (Zeile $Z_EBS) -> Kern (Zeile $Z_KERN), Sprung $SPRUNG = ELF-Einstieg, Boot-Info identisch, $((16#$KARTE)) Kartendeskriptoren, $((16#$PFA)) freie Frames, $((16#$TABELLEN)) alte Tabellenseiten, $((16#$TICKS)) Timer-Ticks, Eingabepfad USB=$USB"
   [ -s "$OUT/screenshot.png" ] || fail "kein Screenshot"
   if command -v magick >/dev/null 2>&1; then
     # Hintergrund (32,96,128) direkt vom Kern, Balken (255,196,64) ueber moo_surface_core.

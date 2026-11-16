@@ -1,0 +1,44 @@
+# Gemeinsamer Hardwarezugriff fuer PCI-Treiber (ADR P7-T3, Variante A).
+# Aus netz_treiber.moos uebernommen; dieselben Helfer fuer Netz und USB.
+
+@nativ
+funktion nt_mmio_lese32(adresse: u64) -> u32:
+    unsicher:
+        setze p: ptr[u32] auf zeiger(adresse)
+        gib_zurück volatile_lesen(p)
+
+@nativ
+funktion nt_mmio_schreibe32(adresse: u64, wert: u32) -> void:
+    unsicher:
+        setze p: ptr[u32] auf zeiger(adresse)
+        volatile_schreiben(p, wert)
+
+# Tuerklingel (Ende-Register einer Queue): erst muessen Deskriptor- und
+# Pufferstores im RAM sichtbar sein, dann darf das Geraet sie lesen.
+@nativ
+funktion nt_mmio_glocke32(adresse: u64, wert: u32) -> void:
+    unsicher:
+        schreibbarriere()
+        setze p: ptr[u32] auf zeiger(adresse)
+        volatile_schreiben(p, wert)
+
+# PCI-Konfigurationsmechanismus #1 (Port CF8/CFC), adresse inkl. Bit 31.
+# Reine Hardwarekoerper (nur Intrinsics), seit P7-T22 dynamisch aufrufbar.
+@nativ
+funktion nt_cfg_lese32(adresse: u32) -> u32:
+    unsicher:
+        port_schreibe32(u16(0xCF8), adresse)
+        gib_zurück port_lese32(u16(0xCFC))
+
+@nativ
+funktion nt_cfg_schreibe32(adresse: u32, wert: u32) -> void:
+    unsicher:
+        port_schreibe32(u16(0xCF8), adresse)
+        port_schreibe32(u16(0xCFC), wert)
+
+# Gemeinsame CPU-Zeitbasis fuer den Kern und seine PCI-Treiber.
+@nativ
+funktion takt() -> u64:
+    unsicher:
+        gib_zurück assembler(ziel="x86_64", code="rdtsc; shlq $$32, %rdx; orq %rdx, %rax", ausgang="={rax}", clobber=["rdx"])
+

@@ -19,6 +19,8 @@
 
 # Vertrag Loader -> Kern: eine Quelle fuer beide Seiten.
 aus "moo_bootvertrag" importiere MooBootInfo, BOOT_MAGIE
+aus "usb_xhci" importiere usb_starten, usb_report_pruefen, xh, xh_setze, xh_event, xh_stop, xh_in_anfordern, xh_neue_taste, xh_ascii
+aus "../uefi/hardware_pci" importiere takt
 
 # UEFI-Speicherdeskriptor (Spec 2.10, 7.2 GetMemoryMap); Schrittweite aus der Boot-Info.
 struktur EfiSpeicherDeskriptor:
@@ -188,6 +190,21 @@ extern "C" funktion moo_surface_core_text_3x5(kern: ptr[u8], x: i32, y: i32, ska
 konstante T_START: [u8; _] auf "MOO-KERNEL START\n"
 
 @nativ
+konstante T_USB_BEREIT: [u8; _] auf "MOO-KERNEL USB BEREIT POLLING "
+@nativ
+konstante T_USB_FEHLER: [u8; _] auf "MOO-KERNEL USB FEHLERSTUFE "
+@nativ
+konstante T_USB_CAP: [u8; _] auf "MOO-KERNEL USB CAP "
+@nativ
+konstante T_USB_BAR: [u8; _] auf "MOO-KERNEL USB BAR "
+@nativ
+konstante T_USB_DMA: [u8; _] auf "MOO-KERNEL USB DMA "
+@nativ
+konstante T_USB_TEST: [u8; _] auf "MOO-KERNEL USB REPORT-TEST "
+@nativ
+konstante T_SICHT: [u8; _] auf "MOO-KONSOLE: SPEICHER, IDT, ACPI\n"
+
+@nativ
 konstante T_MAGIE: [u8; _] auf "MOO-KERNEL FEHLER: BOOT-MAGIE "
 
 @nativ
@@ -346,10 +363,6 @@ funktion ein8(port: u16) -> u8:
     unsicher:
         gib_zurück port_lese(port)
 
-@nativ
-funktion takt() -> u64:
-    unsicher:
-        gib_zurück assembler(ziel="x86_64", code="rdtsc; shlq $$32, %rdx; orq %rdx, %rax", ausgang="={rax}", clobber=["rdx"])
 
 # TSC-Takte je Mikrosekunde ueber PIT-Kanal 2 (50 ms, Modus 0). 0 = unbekannt.
 @nativ
@@ -1369,6 +1382,32 @@ funktion paging_einrichten(bi: u64, max_phys: u64, fb: u64, fb_groesse: u64) -> 
         cr3_laden(physisch(bi, pml4))
         gib_zurück physisch(bi, pml4)
 
+# Separates UC-MMIO-Fenster im vorhandenen oberen Kern-Adressraum.
+# PDPT[509] liegt unterhalb des Kernfensters [510]; keine Identitaetsannahme
+# fuer 64-Bit-PCI-BARs. Nur bei angehaltenem Geraet neu belegen.
+@nativ
+@ausrichten(4096)
+statisch PD_MMIO: [u64; 512] auf 0
+
+@nativ
+funktion kern_mmio_abbilden(bi: u64, basis: u64, bytes: u64) -> u64:
+    unsicher:
+        setze offset: u64 auf basis & 0x1FFFFF
+        setze seiten: u64 auf (offset + bytes + 0x1FFFFF) / 0x200000
+        setze pd: u64 auf adresse_von(PD_MMIO)
+        setze i: u64 auf 0
+        wenn bytes == 0 oder bytes > 0x10000000 oder basis >= 0x1000000000000 oder seiten > 512:
+            gib_zurück 0
+        solange i < 512:
+            speicher_schreiben(pd + i * 8, 0, 8)
+            wenn i < seiten:
+                # Present/RW/PS plus PWT/PCD (PAT-Standard: UC).
+                speicher_schreiben(pd + i * 8, ((basis & 0xFFFFFFFFFFE00000) + i * 0x200000) | 0x9B, 8)
+            setze i auf i + 1
+        speicher_schreiben(adresse_von(PDPT_KERN) + 509 * 8, physisch(bi, pd) | 3, 8)
+        cr3_laden(physisch(bi, adresse_von(PML4)))
+        gib_zurück 0xFFFFFFFF40000000 + offset
+
 # ---------------- Page-Frame-Allocator und Kernel-Heap ----------------
 @nativ
 funktion pfa_wert(index: u64) -> u64:
@@ -1614,6 +1653,63 @@ funktion rgba(r: u64, g: u64, b: u64) -> u32:
     unsicher:
         gib_zurück u32(r | (g << 8) | (b << 16) | 0xFF000000)
 
+@nativ
+konstante T_USB_TASTE: [u8; _] auf "MOO-KERNEL USB TASTE "
+@nativ
+konstante T_USB_HID: [u8; _] auf "MOO-KERNEL USB HID "
+@nativ
+konstante T_USB_HALT: [u8; _] auf "MOO-KERNEL USB ANGEHALTEN CODE "
+
+# Nicht blockierend: nur vorhandene Event-TRBs abarbeiten. Der LAPIC-Timer
+# weckt die Hauptschleife; der xHCI-Interrupter bleibt ausgeschaltet.
+@nativ
+funktion usb_poll() -> void:
+    unsicher:
+        setze code: u32 auf 0
+        setze report: u64 auf 0
+        setze i: u64 auf 2
+        setze usage: u64 auf 0
+        setze c: u8 auf 0
+        wenn xh(16) == 0:
+            gib_zurück
+        setze code auf xh_event(32, xh(17))
+        wenn code == 0:
+            gib_zurück
+        wenn code != 1:
+            xh_setze(16, 0)
+            xh_setze(19, u64(code) + 256)
+            meldung(adresse_von(T_USB_HALT), u64(code))
+            xh_stop()
+            gib_zurück
+        lesebarriere()
+        setze report auf speicher_lesen(xh(4) + 36864, 8)
+        xh_setze(20, xh(20) + 1)
+        solange i < 8:
+            setze usage auf xh_neue_taste(report, xh(21), i)
+            wenn usage != 0:
+                meldung(adresse_von(T_USB_HID), usage)
+                xh_setze(25, xh(25) + 1)
+                wenn usage == 57:
+                    xh_setze(24, xh(24) ^ 1)
+                setze c auf xh_ascii(usage, report & 255, xh(24) != 0)
+                wenn c != 0:
+                    meldung(adresse_von(T_USB_TASTE), u64(c))
+                    zeichen(c)
+                    zeichen(10)
+            setze i auf i + 1
+        # Fehlerreports duerfen den gehaltenen Zustand nicht loeschen.
+        wenn (report & 0xFF00) == 0:
+            setze i auf 2
+            setze code auf 1
+            solange i < 8:
+                setze usage auf (report >> (i * 8)) & 255
+                wenn usage >= 1 und usage <= 3:
+                    setze code auf 0
+                setze i auf i + 1
+            wenn code == 1:
+                xh_setze(21, report)
+        xh_in_anfordern()
+
 # ---------------- Kern ----------------
 @nativ
 @einstieg
@@ -1638,6 +1734,10 @@ funktion kern_haupt(bi: u64) -> void:
         setze ok: u8 auf 0
         setze rip: u64 auf 0
         setze cr3: u64 auf 0
+        setze pfa_frei: u64 auf 0
+        setze idt_ok: bool auf falsch
+        setze usb_ok: bool auf falsch
+        setze usb_dma: u64 auf 0
         setze heap_ok: bool auf falsch
         setze tabellen_frei: u64 auf 0
         setze acpi_ok: u64 auf 0
@@ -1690,7 +1790,8 @@ funktion kern_haupt(bi: u64) -> void:
         meldung(adresse_von(T_FREI), frei / 256)
         meldung(adresse_von(T_MAXPHYS), maxphys)
         # PFA und Heap laufen vor dem Paging-Wechsel nur auf ConventionalMemory.
-        meldung(adresse_von(T_PFA), pfa_starten(bi, maxphys))
+        setze pfa_frei auf pfa_starten(bi, maxphys)
+        meldung(adresse_von(T_PFA), pfa_frei)
         setze heap_ok auf heap_starten()
         wenn heap_ok:
             setze heap_ok auf heap_pruefen()
@@ -1705,7 +1806,8 @@ funktion kern_haupt(bi: u64) -> void:
         # Erst hinter dem eigenen CR3 werden Loader- und Firmware-Tabellen frei.
         setze tabellen_frei auf pfa_bootspeicher_freigeben(bi)
         meldung(adresse_von(T_TABELLEN), tabellen_frei)
-        meldung(adresse_von(T_IDT), u64(idt_einrichten()))
+        setze idt_ok auf idt_einrichten()
+        meldung(adresse_von(T_IDT), u64(idt_ok))
         setze rsdp auf speicher_lesen(bi + versatz_von(MooBootInfo, acpi_rsdp), 8)
         meldung(adresse_von(T_RSDP), rsdp)
         wenn rsdp != 0:
@@ -1752,6 +1854,14 @@ funktion kern_haupt(bi: u64) -> void:
                 text(adresse_von(T_KON1))
                 setze t_zeile auf takt() - t0
                 text(adresse_von(T_KON2))
+                # Fruehe Resultate unveraendert auf dem jetzt aktiven Bildschirm spiegeln.
+                # Die Werte sind die Boot-Snapshots, keine zweite Initialisierung.
+                meldung(adresse_von(T_PFA), pfa_frei)
+                meldung(adresse_von(T_HEAP), u64(heap_ok))
+                meldung(adresse_von(T_TABELLEN), tabellen_frei)
+                meldung(adresse_von(T_IDT), u64(idt_ok))
+                meldung(adresse_von(T_ACPI), acpi_ok)
+                text(adresse_von(T_SICHT))
                 meldung(adresse_von(T_ALT), t_alt)
                 meldung(adresse_von(T_NEU), t_neu)
                 wenn tsc != 0:
@@ -1771,9 +1881,20 @@ funktion kern_haupt(bi: u64) -> void:
         sonst:
             meldung(adresse_von(T_TASTATUR_BEREIT), 0)
             text(adresse_von(T_TASTATUR_FEHLT))
+        meldung(adresse_von(T_USB_TEST), u64(usb_report_pruefen()))
+        # PFA besitzt die DMA-Seiten dauerhaft. Kein Firmware-Speicher wird benutzt.
+        setze usb_dma auf pfa_nehme(64)
+        setze usb_ok auf usb_starten(usb_dma, tsc, bi, adresse_von(kern_mmio_abbilden))
+        meldung(adresse_von(T_USB_BAR), xh(23))
+        meldung(adresse_von(T_USB_CAP), xh(0))
+        meldung(adresse_von(T_USB_DMA), usb_dma)
+        meldung(adresse_von(T_USB_BEREIT), u64(usb_ok))
+        wenn nicht usb_ok:
+            meldung(adresse_von(T_USB_FEHLER), xh(19))
         wenn timer_start != 0:
             unterbrechungen_an()
-            solange (hw(10) < 3 oder (tastatur_ok und hw(11) == 0)) und warte < 1000:
+            solange (hw(10) < 3 oder (tastatur_ok und nicht usb_ok und hw(11) == 0) oder (usb_ok und xh(25) == 0)) und warte < 1000:
+                usb_poll()
                 bis_unterbrechung_warten()
                 setze warte auf warte + 1
             unterbrechungen_aus()
@@ -1781,4 +1902,11 @@ funktion kern_haupt(bi: u64) -> void:
         wenn tastatur_ok:
             meldung(adresse_von(T_TASTATUR_SCAN), hw(11))
         text(adresse_von(T_OK))
+        # Tastatur bleibt nach dem Bootbeweis benutzbar. Polling bei jedem Timer-Tick.
+        wenn usb_ok:
+            unterbrechungen_an()
+            solange wahr:
+                usb_poll()
+                wenn timer_start != 0:
+                    bis_unterbrechung_warten()
         anhalten()

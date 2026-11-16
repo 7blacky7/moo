@@ -68,26 +68,7 @@ struktur NtRegKopf:
     reserviert: u32
     status: u32
 
-@nativ
-funktion nt_mmio_lese32(adresse: u64) -> u32:
-    unsicher:
-        setze p: ptr[u32] auf zeiger(adresse)
-        gib_zurück volatile_lesen(p)
-
-@nativ
-funktion nt_mmio_schreibe32(adresse: u64, wert: u32) -> void:
-    unsicher:
-        setze p: ptr[u32] auf zeiger(adresse)
-        volatile_schreiben(p, wert)
-
-# Tuerklingel (Ende-Register einer Queue): erst muessen Deskriptor- und
-# Pufferstores im RAM sichtbar sein, dann darf das Geraet sie lesen.
-@nativ
-funktion nt_mmio_glocke32(adresse: u64, wert: u32) -> void:
-    unsicher:
-        schreibbarriere()
-        setze p: ptr[u32] auf zeiger(adresse)
-        volatile_schreiben(p, wert)
+aus "hardware_pci" importiere nt_mmio_lese32, nt_mmio_schreibe32, nt_mmio_glocke32, nt_cfg_lese32, nt_cfg_schreibe32
 
 @nativ
 funktion nt_status_lesen(mmio: u64) -> u32:
@@ -106,19 +87,7 @@ funktion nt_desk_fertig(status_adresse: u64) -> bool:
         lesebarriere()
         gib_zurück wahr
 
-# PCI-Konfigurationsmechanismus #1 (Port CF8/CFC), adresse inkl. Bit 31.
-# Reine Hardwarekoerper (nur Intrinsics), seit P7-T22 dynamisch aufrufbar.
-@nativ
-funktion nt_cfg_lese32(adresse: u32) -> u32:
-    unsicher:
-        port_schreibe32(u16(0xCF8), adresse)
-        gib_zurück port_lese32(u16(0xCFC))
 
-@nativ
-funktion nt_cfg_schreibe32(adresse: u32, wert: u32) -> void:
-    unsicher:
-        port_schreibe32(u16(0xCF8), adresse)
-        port_schreibe32(u16(0xCFC), wert)
 #
 # ZUSTAND je nic (192 Byte): 0 Typ, 8 MMIO, 16 bdf, 24 MAC 0-3, 32 MAC 4-5,
 #   40 TX-Ring, 48 TX-Puffer, 56 TX-Ende, 64 RX-Ring, 72 RX-Puffer, 80 RX-naechster,

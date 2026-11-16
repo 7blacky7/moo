@@ -587,7 +587,7 @@ bool moo_surface_core_line(MooSurfaceCore* core, int32_t x0, int32_t y0,
 }
 
 static const uint8_t* moo_surface_glyph(unsigned char c) {
-    static const uint8_t glyphs[40][5] = {
+    static const uint8_t glyphs[42][5] = {
         {7,5,7,5,5},{6,5,6,5,6},{7,4,4,4,7},{6,5,5,5,6},
         {7,4,6,4,7},{7,4,6,4,4},{7,4,5,5,7},{5,5,7,5,5},
         {7,2,2,2,7},{1,1,1,5,7},{5,5,6,5,5},{4,4,4,4,7},
@@ -598,7 +598,8 @@ static const uint8_t* moo_surface_glyph(unsigned char c) {
         {7,5,5,5,7},{2,6,2,2,7},{7,1,7,4,7},{7,1,7,1,7},
         {5,5,7,1,1},{7,4,7,1,7},{7,4,7,5,7},{7,1,1,1,1},
         {7,5,7,5,7},{7,5,7,1,7},
-        {0,0,0,0,0},{0,0,7,0,0},{0,0,0,0,2},{2,0,2,2,2}
+        {0,0,0,0,0},{0,0,7,0,0},{0,0,0,0,2},{2,0,2,2,2},
+        {0,2,0,2,0},{0,0,0,2,4} /* ':' und ','; vorhandene Indizes bleiben stabil. */
     };
     static const uint8_t question[5] = {7,1,3,0,2};
     if (c >= 'a' && c <= 'z') c = (unsigned char)(c - 'a' + 'A');
@@ -608,6 +609,8 @@ static const uint8_t* moo_surface_glyph(unsigned char c) {
     if (c == '-') return glyphs[37];
     if (c == '.') return glyphs[38];
     if (c == '!') return glyphs[39];
+    if (c == ':') return glyphs[40];
+    if (c == ',') return glyphs[41];
     return question;
 }
 

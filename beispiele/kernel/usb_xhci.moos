@@ -1,0 +1,510 @@
+# P7-T23: eigener xHCI-Hosttreiber, Hardware-Syntax A.
+# xHCI 1.2: Register/Contexts/TRBs; USB 2.0 Kap.9; HID 1.11 Boot Keyboard.
+# Polling, EIN direkt am Rootport angeschlossenes Boot-Keyboard.
+# Keine Hubs, Maus, Hotplug, MSI/INTx. Kein Firmwaredienst nach ExitBootServices.
+# DMA kommt als zusammenhaengender, identisch gemappter PFA-Block (64 Seiten).
+# Endliche Wartezeiten; bei Fehler Controller anhalten, DMA niemals wiedergeben.
+aus "../uefi/hardware_pci" importiere nt_mmio_lese32, nt_mmio_schreibe32, nt_mmio_glocke32, nt_cfg_lese32, nt_cfg_schreibe32, takt
+
+# 0 CAP,1 OP,2 DB,3 RT,4 DMA,5 Contextgroesse,6/7 CMD Index/Cycle,
+# 8/9 Event Index/Cycle,10 Slot,11 DCI,12/13 EP0 Index/Cycle,
+# 14/15 IN Index/Cycle,16 bereit,17 ausstehender IN-TRB,18 TSC/us,
+# 19 Fehlerstufe,20 Reports,21 letzter Report,22 Completion-Slot,
+# 23 physische BAR,24 CapsLock,25 neue Tastendruecke.
+@nativ
+statisch XH: [u64; 26] auf 0
+
+@nativ
+funktion xh(f: u64) -> u64:
+    unsicher:
+        gib_zurück speicher_lesen(adresse_von(XH) + f * 8, 8)
+
+@nativ
+funktion xh_setze(f: u64, w: u64) -> void:
+    unsicher:
+        speicher_schreiben(adresse_von(XH) + f * 8, w, 8)
+
+@nativ
+funktion xh_null(p: u64, n: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < n:
+            speicher_schreiben(p + i, 0, 8)
+            setze i auf i + 8
+
+# TSC ist bereits vom vorhandenen Kern kalibriert.
+@nativ
+funktion xh_warte_us(us: u64) -> void:
+    unsicher:
+        setze start: u64 auf takt()
+        solange takt() - start < us * xh(18):
+            assembler(ziel="x86_64", code="pause", clobber=["memory"])
+
+@nativ
+funktion xh_warte_bit(p: u64, maske: u32, soll: u32) -> bool:
+    unsicher:
+        setze start: u64 auf takt()
+        solange takt() - start < 1000000 * xh(18):
+            wenn (nt_mmio_lese32(p) & maske) == soll:
+                gib_zurück wahr
+        gib_zurück falsch
+
+@nativ
+funktion xh_reg64(p: u64, w: u64) -> void:
+    unsicher:
+        nt_mmio_schreibe32(p, u32(w))
+        nt_mmio_schreibe32(p + 4, u32(w >> 32))
+
+# Producer: Parameter/Status vor dem Cycle-Bit publizieren. Link-TRB am Ende
+# toggelt Cycle (TC=1); pro Ring ist hoechstens ein TD gleichzeitig ausstehend.
+@nativ
+funktion xh_trb(seite: u64, indexfeld: u64, parameter: u64, status: u32, steuer: u32) -> u64:
+    unsicher:
+        setze basis: u64 auf xh(4) + seite * 4096
+        setze index: u64 auf xh(indexfeld)
+        setze cycle: u64 auf xh(indexfeld + 1)
+        setze p: u64 auf basis + index * 16
+        speicher_schreiben(p, parameter, 8)
+        speicher_schreiben(p + 8, status, 4)
+        schreibbarriere()
+        nt_mmio_schreibe32(p + 12, steuer | u32(cycle))
+        setze index auf index + 1
+        wenn index == 255:
+            speicher_schreiben(basis + 4080, basis, 8)
+            speicher_schreiben(basis + 4088, 0, 4)
+            schreibbarriere()
+            nt_mmio_schreibe32(basis + 4092, (6 << 10) | 2 | u32(cycle) | (steuer & 16))
+            setze index auf 0
+            setze cycle auf cycle ^ 1
+        xh_setze(indexfeld, index)
+        xh_setze(indexfeld + 1, cycle)
+        gib_zurück p
+
+# Event-Verbrauch: Cycle volatil pruefen, danach lesebarriere. ERDP mit EHB.
+# Nur das passende Completion-Event wird akzeptiert, Port-Events mitverbraucht.
+@nativ
+funktion xh_event(typ: u32, erwartet: u64) -> u32:
+    unsicher:
+        setze p: u64 auf xh(4) + 8192 + xh(8) * 16
+        setze steuer: u32 auf nt_mmio_lese32(p + 12)
+        setze code: u32 auf 0
+        setze parameter: u64 auf 0
+        wenn (steuer & 1) != u32(xh(9)):
+            gib_zurück 0
+        lesebarriere()
+        setze parameter auf speicher_lesen(p, 8)
+        wenn ((steuer >> 10) & 63) == typ und parameter == erwartet:
+            setze code auf u32(speicher_lesen(p + 8, 4)) >> 24
+            xh_setze(22, u64(steuer >> 24))
+            # Kurze Interrupt-Reports werden vom Aufrufer verworfen, nicht als 8 Byte gelesen.
+            wenn typ == 32 und (speicher_lesen(p + 8, 4) & 0xFFFFFF) != 0:
+                setze code auf 255
+        xh_setze(8, xh(8) + 1)
+        wenn xh(8) == 256:
+            xh_setze(8, 0)
+            xh_setze(9, xh(9) ^ 1)
+        xh_reg64(xh(3) + 0x38, (xh(4) + 8192 + xh(8) * 16) | 8)
+        gib_zurück code
+
+@nativ
+funktion xh_abschluss(typ: u32, p: u64) -> bool:
+    unsicher:
+        setze start: u64 auf takt()
+        setze code: u32 auf 0
+        solange takt() - start < 1000000 * xh(18):
+            setze code auf xh_event(typ, p)
+            wenn code != 0:
+                gib_zurück code == 1
+        gib_zurück falsch
+
+@nativ
+funktion xh_befehl(parameter: u64, steuer: u32) -> bool:
+    unsicher:
+        setze p: u64 auf xh_trb(1, 6, parameter, 0, steuer)
+        nt_mmio_glocke32(xh(2), 0)
+        gib_zurück xh_abschluss(33, p)
+
+# Control-TD: Setup mit Immediate Data, optional Data, Status mit IOC.
+# xHCI vergibt USB-Adresse durch Address Device, kein manuelles SET_ADDRESS.
+@nativ
+funktion xh_control(setup: u64, daten: u64, laenge: u32) -> bool:
+    unsicher:
+        setze trt: u32 auf 0
+        setze p: u64 auf 0
+        wenn laenge != 0:
+            setze trt auf 3 << 16
+        xh_trb(6, 12, setup, 8, (2 << 10) | 64 | 16 | trt)
+        wenn laenge != 0:
+            xh_trb(6, 12, daten, laenge, (3 << 10) | (1 << 16) | 16)
+        setze trt auf 1 << 16
+        wenn laenge != 0:
+            setze trt auf 0
+        setze p auf xh_trb(6, 12, 0, 0, (4 << 10) | 32 | trt)
+        nt_mmio_glocke32(xh(2) + xh(10) * 4, 1)
+        gib_zurück xh_abschluss(32, p)
+
+# PCI-Mechanismus 1 durchsucht Segment 0; Klasse/Subklasse/ProgIF exakt.
+@nativ
+funktion xh_pci(bdf: u32, off: u32) -> u32:
+    unsicher:
+        gib_zurück nt_cfg_lese32(0x80000000 | (bdf << 8) | off)
+
+@nativ
+funktion xh_stop() -> bool:
+    unsicher:
+        wenn xh(1) == 0:
+            gib_zurück wahr
+        nt_mmio_schreibe32(xh(1), 0)
+        gib_zurück xh_warte_bit(xh(1) + 4, 1, 1)
+
+# Controller-Reset und Eigentumsuebernahme gemaess USB Legacy Support.
+@nativ
+funktion xh_controller(bdf: u32, bi: u64, map: u64) -> bool:
+    unsicher:
+        setze bar: u32 auf xh_pci(bdf, 16)
+        setze cap: u64 auf u64(bar & 0xFFFFFFF0)
+        setze e: u64 auf 0
+        setze n: u64 auf 0
+        setze v: u32 auf 0
+        setze scratch: u64 auf 0
+        xh_setze(19, 11)
+        wenn (bar & 1) != 0:
+            gib_zurück falsch
+        wenn (bar & 6) == 4:
+            setze cap auf cap | (u64(xh_pci(bdf, 20)) << 32)
+        xh_setze(0, cap)
+        xh_setze(23, cap)
+        xh_setze(19, 12)
+        wenn cap == 0:
+            gib_zurück falsch
+        setze abbilden: ptr[fn[sysv64](u64, u64, u64) -> u64] auf zeiger(map)
+        setze cap auf abbilden(bi, cap, 1048576)
+        wenn cap == 0:
+            gib_zurück falsch
+        nt_cfg_schreibe32(0x80000004 | (bdf << 8), (xh_pci(bdf, 4) & 0xFFFF) | 0x406)
+        xh_setze(0, cap)
+        wenn (nt_mmio_lese32(cap) & 255) < 32 oder (nt_mmio_lese32(cap + 20) & 0xFFFFFFFC) >= 0xFF000 oder (nt_mmio_lese32(cap + 24) & 0xFFFFFFE0) >= 0xFF000:
+            gib_zurück falsch
+        xh_setze(1, cap + u64(nt_mmio_lese32(cap) & 255))
+        xh_setze(2, cap + u64(nt_mmio_lese32(cap + 20) & 0xFFFFFFFC))
+        xh_setze(3, cap + u64(nt_mmio_lese32(cap + 24) & 0xFFFFFFE0))
+        xh_setze(5, 32)
+        wenn (nt_mmio_lese32(cap + 16) & 4) != 0:
+            xh_setze(5, 64)
+        xh_setze(19, 13)
+        setze e auf u64(nt_mmio_lese32(cap + 16) >> 16) * 4
+        solange e != 0 und n < 256:
+            wenn e >= 65536:
+                gib_zurück falsch
+            setze v auf nt_mmio_lese32(cap + e)
+            wenn (v & 255) == 1:
+                nt_mmio_schreibe32(cap + e, v | (1 << 24))
+                wenn nicht xh_warte_bit(cap + e, 1 << 16, 0):
+                    gib_zurück falsch
+                # SMI-Enable-Bits aus, Statusbits quittieren.
+                nt_mmio_schreibe32(cap + e + 4, 0xE0000000)
+            wenn ((v >> 8) & 255) == 0:
+                setze e auf 0
+            sonst:
+                setze e auf e + u64((v >> 8) & 255) * 4
+            setze n auf n + 1
+        wenn e != 0:
+            gib_zurück falsch
+        xh_setze(19, 2)
+        wenn nicht xh_stop():
+            gib_zurück falsch
+        nt_mmio_schreibe32(xh(1), 2)
+        wenn nicht xh_warte_bit(xh(1), 2, 0) oder nicht xh_warte_bit(xh(1) + 4, 1 << 11, 0):
+            gib_zurück falsch
+        wenn (nt_mmio_lese32(xh(1) + 8) & 1) == 0 oder (nt_mmio_lese32(cap + 4) & 255) == 0:
+            gib_zurück falsch
+        xh_null(xh(4), 64 * 4096)
+        setze v auf nt_mmio_lese32(cap + 8)
+        setze scratch auf u64(((v >> 27) & 31) | (((v >> 21) & 31) << 5))
+        wenn scratch > 54:
+            gib_zurück falsch
+        wenn scratch != 0:
+            speicher_schreiben(xh(4), xh(4) + 2048, 8)
+            setze n auf 0
+            solange n < scratch:
+                speicher_schreiben(xh(4) + 2048 + n * 8, xh(4) + (10 + n) * 4096, 8)
+                setze n auf n + 1
+        xh_setze(6, 0)
+        xh_setze(7, 1)
+        xh_setze(8, 0)
+        xh_setze(9, 1)
+        speicher_schreiben(xh(4) + 12288, xh(4) + 8192, 8)
+        speicher_schreiben(xh(4) + 12296, 256, 4)
+        schreibbarriere()
+        xh_reg64(xh(1) + 0x30, xh(4))
+        xh_reg64(xh(1) + 0x18, (xh(4) + 4096) | 1)
+        nt_mmio_schreibe32(xh(3) + 0x28, 1)
+        xh_reg64(xh(3) + 0x30, xh(4) + 12288)
+        xh_reg64(xh(3) + 0x38, xh(4) + 8192)
+        nt_mmio_schreibe32(xh(3) + 0x20, 0)
+        nt_mmio_schreibe32(xh(1) + 0x38, 1)
+        nt_mmio_glocke32(xh(1), 1)
+        gib_zurück xh_warte_bit(xh(1) + 4, 1, 0)
+
+@nativ
+funktion xh_port(port: u64) -> u64:
+    unsicher:
+        setze p: u64 auf xh(1) + 0x400 + (port - 1) * 16
+        setze v: u32 auf nt_mmio_lese32(p)
+        setze reset: u32 auf 16
+        wenn (v & 1) == 0:
+            gib_zurück 0
+        nt_mmio_schreibe32(p, (v & 0xE00C200) | 512)
+        xh_warte_us(100000)
+        wenn ((v >> 10) & 15) >= 4:
+            setze reset auf 0x80000000
+        nt_mmio_schreibe32(p, (nt_mmio_lese32(p) & 0xE00C200) | reset)
+        wenn nicht xh_warte_bit(p, reset, 0) oder nicht xh_warte_bit(p, 3, 3):
+            gib_zurück 0
+        xh_warte_us(10000)
+        gib_zurück u64((nt_mmio_lese32(p) >> 10) & 15)
+
+@nativ
+funktion xh_ep0(mps: u64) -> void:
+    unsicher:
+        setze ep: u64 auf xh(4) + 16384 + 2 * xh(5)
+        speicher_schreiben(ep + 4, u32((mps << 16) | 38), 4)
+        speicher_schreiben(ep + 8, (xh(4) + 24576) | 1, 8)
+        speicher_schreiben(ep + 16, 8, 4)
+
+# Ergebnis 1 nur fuer Interface Class=3/Subclass=1/Protocol=1, AltSetting=0
+# und einen Interrupt-IN-Endpunkt. Alle Deskriptorlaengen werden begrenzt.
+@nativ
+funktion xh_geraet(port: u64, speed: u64) -> bool:
+    unsicher:
+        setze input: u64 auf xh(4) + 16384
+        setze desc: u64 auf xh(4) + 32768
+        setze mps: u64 auf 8
+        setze laenge: u64 auf 0
+        setze pos: u64 auf 0
+        setze n: u64 auf 0
+        setze typ: u64 auf 0
+        setze hid_nummer: u64 auf 0
+        setze boot: bool auf falsch
+        setze ep: u64 auf 0
+        setze paket: u64 auf 0
+        setze intervall: u64 auf 0
+        setze konfig: u64 auf 0
+        xh_setze(19, 4)
+        wenn nicht xh_befehl(0, 9 << 10):
+            gib_zurück falsch
+        xh_setze(10, xh(22))
+        wenn xh(10) == 0:
+            gib_zurück falsch
+        xh_null(input, 8192)
+        xh_null(xh(4) + 24576, 8192)
+        xh_setze(12, 0)
+        xh_setze(13, 1)
+        xh_setze(14, 0)
+        xh_setze(15, 1)
+        speicher_schreiben(xh(4) + xh(10) * 8, xh(4) + 20480, 8)
+        speicher_schreiben(input + 4, 3, 4)
+        speicher_schreiben(input + xh(5), u32((speed << 20) | (1 << 27)), 4)
+        speicher_schreiben(input + xh(5) + 4, u32(port << 16), 4)
+        wenn speed == 3:
+            setze mps auf 64
+        wenn speed >= 4:
+            setze mps auf 512
+        xh_ep0(mps)
+        wenn nicht xh_befehl(input, (11 << 10) | u32(xh(10) << 24)):
+            gib_zurück falsch
+        xh_setze(19, 5)
+        wenn nicht xh_control(0x0008000001000680, desc, 8):
+            gib_zurück falsch
+        setze n auf u64(speicher_lesen(desc + 7, 1))
+        wenn speed >= 4:
+            wenn n != 9:
+                gib_zurück falsch
+            setze n auf 512
+        wenn n != 8 und n != 16 und n != 32 und n != 64 und n != 512:
+            gib_zurück falsch
+        wenn n != mps:
+            speicher_schreiben(input, 0, 4)
+            speicher_schreiben(input + 4, 2, 4)
+            # Evaluate Context aktualisiert nur MPS, der bestehende Dequeue bleibt.
+            speicher_schreiben(input + 2 * xh(5) + 4, u32((n << 16) | 38), 4)
+            wenn nicht xh_befehl(input, (13 << 10) | u32(xh(10) << 24)):
+                gib_zurück falsch
+        wenn nicht xh_control(0x0009000002000680, desc, 9):
+            gib_zurück falsch
+        wenn speicher_lesen(desc, 1) < 9 oder speicher_lesen(desc + 1, 1) != 2:
+            gib_zurück falsch
+        setze laenge auf u64(speicher_lesen(desc + 2, 2))
+        wenn laenge < 9 oder laenge > 4096:
+            gib_zurück falsch
+        wenn nicht xh_control((laenge << 48) | 0x02000680, desc, u32(laenge)):
+            gib_zurück falsch
+        setze konfig auf u64(speicher_lesen(desc + 5, 1))
+        solange pos + 2 <= laenge:
+            setze n auf u64(speicher_lesen(desc + pos, 1))
+            setze typ auf u64(speicher_lesen(desc + pos + 1, 1))
+            wenn n < 2 oder pos + n > laenge:
+                gib_zurück falsch
+            wenn typ == 4:
+                setze boot auf falsch
+                wenn n >= 9:
+                    setze boot auf speicher_lesen(desc + pos + 3, 1) == 0 und speicher_lesen(desc + pos + 5, 1) == 3 und speicher_lesen(desc + pos + 6, 1) == 1 und speicher_lesen(desc + pos + 7, 1) == 1
+                    wenn boot:
+                        setze hid_nummer auf u64(speicher_lesen(desc + pos + 2, 1))
+            wenn typ == 5 und boot und n >= 7:
+                setze ep auf u64(speicher_lesen(desc + pos + 2, 1))
+                setze paket auf u64(speicher_lesen(desc + pos + 4, 2)) & 2047
+                setze intervall auf u64(speicher_lesen(desc + pos + 6, 1))
+                wenn (ep & 0x80) != 0 und (ep & 15) != 0 und (speicher_lesen(desc + pos + 3, 1) & 3) == 3:
+                    stopp
+                setze ep auf 0
+            setze pos auf pos + n
+        wenn ep == 0 oder paket < 8 oder paket > 1024 oder intervall == 0 oder konfig == 0:
+            gib_zurück falsch
+        xh_setze(19, 6)
+        wenn nicht xh_control((konfig << 16) | 0x0900, 0, 0):
+            gib_zurück falsch
+        # SET_PROTOCOL(Boot=0), Interface-Empfaenger, danach SET_IDLE(0).
+        wenn nicht xh_control((hid_nummer << 32) | 0x0B21, 0, 0):
+            gib_zurück falsch
+        wenn nicht xh_control((hid_nummer << 32) | 0x0A21, 0, 0):
+            gib_zurück falsch
+        xh_setze(11, (ep & 15) * 2 + 1)
+        xh_null(input, 4096)
+        speicher_schreiben(input + 4, u32(1 | (u64(1) << xh(11))), 4)
+        speicher_schreiben(input + xh(5), u32((speed << 20) | (xh(11) << 27)), 4)
+        speicher_schreiben(input + xh(5) + 4, u32(port << 16), 4)
+        # Full-/Low-Speed: bInterval in ms -> aufgerundetes log2 in 125us-Einheiten.
+        wenn speed <= 2:
+            setze n auf 1
+            setze typ auf 0
+            solange n < intervall * 8:
+                setze n auf n * 2
+                setze typ auf typ + 1
+            setze intervall auf typ
+        sonst:
+            wenn intervall > 16:
+                gib_zurück falsch
+            setze intervall auf intervall - 1
+        setze ep auf input + (xh(11) + 1) * xh(5)
+        speicher_schreiben(ep, u32(intervall << 16), 4)
+        speicher_schreiben(ep + 4, u32((paket << 16) | 62), 4)
+        speicher_schreiben(ep + 8, (xh(4) + 28672) | 1, 8)
+        speicher_schreiben(ep + 16, u32((paket << 16) | 8), 4)
+        wenn nicht xh_befehl(input, (12 << 10) | u32(xh(10) << 24)):
+            gib_zurück falsch
+        xh_setze(16, 1)
+        xh_setze(19, 0)
+        gib_zurück wahr
+
+
+@nativ
+konstante XH_ZAHLEN: [u8; _] auf "1234567890"
+@nativ
+konstante XH_SHIFT_ZAHLEN: [u8; _] auf "!@#$%^&*()"
+@nativ
+konstante XH_ZEICHEN: [u8; 12] auf [45,61,91,93,92,35,59,39,96,44,46,47]
+@nativ
+konstante XH_SHIFT_ZEICHEN: [u8; 12] auf [95,43,123,125,124,126,58,34,126,60,62,63]
+
+# USB Usage -> ASCII (US-Belegung), Shift/CapsLock; Steuer-/Alt-Kombinationen
+# bleiben als HID-Marker sichtbar und erzeugen keinen druckbaren Text.
+@nativ
+funktion xh_ascii(usage: u64, mods: u64, caps: bool) -> u8:
+    unsicher:
+        setze shift: bool auf (mods & 0x22) != 0
+        wenn (mods & 0xDD) != 0:
+            gib_zurück 0
+        wenn usage >= 4 und usage <= 29:
+            wenn shift != caps:
+                gib_zurück u8(usage + 61)
+            gib_zurück u8(usage + 93)
+        wenn usage >= 30 und usage <= 39:
+            wenn shift:
+                gib_zurück speicher_lesen(adresse_von(XH_SHIFT_ZAHLEN) + usage - 30, 1)
+            gib_zurück speicher_lesen(adresse_von(XH_ZAHLEN) + usage - 30, 1)
+        wenn usage == 40:
+            gib_zurück 10
+        wenn usage == 43:
+            gib_zurück 9
+        wenn usage == 44:
+            gib_zurück 32
+        wenn usage >= 45 und usage <= 56:
+            wenn shift:
+                gib_zurück speicher_lesen(adresse_von(XH_SHIFT_ZEICHEN) + usage - 45, 1)
+            gib_zurück speicher_lesen(adresse_von(XH_ZEICHEN) + usage - 45, 1)
+        gib_zurück 0
+
+# Rollover/POSTFail/ErrorUndefined und reserviertes Byte verwerfen.
+# Gleiche Usage im alten Report oder zweimal im neuen erzeugt keine Wiederholung.
+@nativ
+funktion xh_neue_taste(report: u64, vorher: u64, index: u64) -> u64:
+    unsicher:
+        setze usage: u64 auf (report >> (index * 8)) & 255
+        setze j: u64 auf 2
+        wenn index < 2 oder index > 7 oder (report & 0xFF00) != 0:
+            gib_zurück 0
+        solange j < 8:
+            wenn ((report >> (j * 8)) & 255) >= 1 und ((report >> (j * 8)) & 255) <= 3:
+                gib_zurück 0
+            wenn ((vorher >> (j * 8)) & 255) == usage:
+                gib_zurück 0
+            wenn j < index und ((report >> (j * 8)) & 255) == usage:
+                gib_zurück 0
+            setze j auf j + 1
+        gib_zurück usage
+
+@nativ
+funktion usb_report_pruefen() -> bool:
+    unsicher:
+        gib_zurück xh_ascii(4, 0, falsch) == 97 und xh_ascii(4, 2, falsch) == 65 und xh_ascii(4, 0, wahr) == 65 und xh_ascii(4, 2, wahr) == 97 und xh_ascii(55, 0, falsch) == 46 und xh_ascii(30, 2, falsch) == 33 und xh_neue_taste(0x0000000000040000, 0, 2) == 4 und xh_neue_taste(0x0000000000040000, 0x0000000000040000, 2) == 0 und xh_neue_taste(0x0000000001040000, 0, 2) == 0 und xh_neue_taste(0x0000000004040000, 0, 3) == 0
+
+@nativ
+funktion xh_in_anfordern() -> void:
+    unsicher:
+        xh_setze(17, xh_trb(7, 14, xh(4) + 36864, 8, (1 << 10) | 32 | 4))
+        nt_mmio_glocke32(xh(2) + xh(10) * 4, u32(xh(11)))
+
+@nativ
+funktion usb_starten(dma: u64, tsc_us: u64, bi: u64, map: u64) -> bool:
+    unsicher:
+        setze bdf: u32 auf 0
+        setze port: u64 auf 0
+        setze ports: u64 auf 0
+        setze speed: u64 auf 0
+        xh_null(adresse_von(XH), 26 * 8)
+        xh_setze(4, dma)
+        xh_setze(18, tsc_us)
+        wenn dma == 0 oder (dma & 4095) != 0 oder dma >= 0xFFF00000 oder tsc_us == 0:
+            xh_setze(19, 1)
+            gib_zurück falsch
+        xh_setze(19, 10)
+        solange bdf < 65536:
+            wenn (xh_pci(bdf, 0) & 0xFFFF) == 0xFFFF:
+                wenn (bdf & 7) == 0:
+                    setze bdf auf bdf + 7
+            sonst wenn (xh_pci(bdf, 8) >> 8) == 0x0C0330:
+                xh_setze(19, 1)
+                xh_setze(10, 0)
+                wenn xh_controller(bdf, bi, map):
+                    xh_setze(19, 3)
+                    setze ports auf u64(nt_mmio_lese32(xh(0) + 4) >> 24)
+                    setze port auf 1
+                    solange port <= ports:
+                        setze speed auf xh_port(port)
+                        wenn speed >= 1 und speed <= 4:
+                            wenn xh_geraet(port, speed):
+                                xh_in_anfordern()
+                                gib_zurück wahr
+                            wenn xh(10) != 0:
+                                wenn nicht xh_befehl(0, (10 << 10) | u32(xh(10) << 24)):
+                                    xh_stop()
+                                    gib_zurück falsch
+                                xh_setze(10, 0)
+                        setze port auf port + 1
+                wenn nicht xh_stop():
+                    gib_zurück falsch
+            setze bdf auf bdf + 1
+        gib_zurück falsch
+
+
